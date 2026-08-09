@@ -222,8 +222,12 @@ function formatLogDate(): string {
   return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}`;
 }
 
+const FLOOR_PLAN_OPTIONS = ["1R", "1K", "1DK", "1LDK", "2K", "2DK", "2LDK", "3LDK"] as const;
+
 type EditFields = {
   desired_area: string; floor_plan: string;
+  area_input: string; station_input: string;
+  shikirei_free: boolean;
   rent_min: string; rent_max: string;
   walk_minutes: string; move_in_time: string;
   building_age: string; initial_cost_limit: string;
@@ -233,9 +237,30 @@ type EditFields = {
   other_requests: string; property_memo: string;
 };
 
+function parseAreaStation(desired_area: string | null | undefined): { area_input: string; station_input: string } {
+  if (!desired_area) return { area_input: "", station_input: "" };
+  const tokens = desired_area.split(/[・、,\n]+/).map((t) => t.trim()).filter(Boolean);
+  const stationTokens: string[] = [];
+  const areaTokens: string[] = [];
+  for (const t of tokens) {
+    if (/駅|線/.test(t)) stationTokens.push(t);
+    else areaTokens.push(t);
+  }
+  return { area_input: areaTokens.join("・"), station_input: stationTokens.join("・") };
+}
+
+function detectShikireiFlag(c: Customer): boolean {
+  const text = `${c.preferences ?? ""} ${c.ng_points ?? ""} ${c.other_requests ?? ""}`;
+  return /敷礼なし|敷金礼金なし|敷金礼金0|敷金0礼金0|敷0礼0/.test(text);
+}
+
 function toEditFields(c: Customer): EditFields {
+  const { area_input, station_input } = parseAreaStation(c.desired_area);
   return {
     desired_area:       c.desired_area       ?? "",
+    area_input,
+    station_input,
+    shikirei_free:      detectShikireiFlag(c),
     floor_plan:         c.floor_plan         ?? "",
     rent_min:           c.rent_min           ? String(Math.floor(c.rent_min / 10000)) : "",
     rent_max:           c.rent_max           ? String(Math.floor(c.rent_max / 10000)) : "",
@@ -254,7 +279,7 @@ function toEditFields(c: Customer): EditFields {
 }
 
 function emptyEditFields(): EditFields {
-  return { desired_area:"", floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"" };
+  return { desired_area:"", area_input:"", station_input:"", shikirei_free:false, floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"" };
 }
 
 // popup.js の parseAreaMin と同一ロジック
@@ -718,9 +743,22 @@ function CustomersPageInner() {
   const saveEdit = async () => {
     if (!editId || !editFields || editSaving) return;
     setEditSaving(true);
+    // 地域/駅 を merged して desired_area に戻す
+    const merged_area = [editFields.area_input.trim(), editFields.station_input.trim()]
+      .filter(Boolean).join("・");
+    // 敷礼なしバッジ → ng_points に反映
+    const SHIKIREI = "敷礼なし";
+    let ngVal = editFields.ng_points;
+    if (editFields.shikirei_free) {
+      if (!ngVal.includes(SHIKIREI)) {
+        ngVal = ngVal.trim() ? `${ngVal.trim()}・${SHIKIREI}` : SHIKIREI;
+      }
+    } else {
+      ngVal = ngVal.split(/[・、,]/).filter((t) => t.trim() !== SHIKIREI).join("・");
+    }
     const patch = {
       id: editId,
-      desired_area:       editFields.desired_area       || null,
+      desired_area:       merged_area                    || null,
       floor_plan:         editFields.floor_plan         || null,
       rent_min:           editFields.rent_min           ? Number(editFields.rent_min) * 10000           : null,
       rent_max:           editFields.rent_max           ? Number(editFields.rent_max) * 10000           : null,
@@ -732,7 +770,7 @@ function CustomersPageInner() {
       floor_area_max:     editFields.floor_area_max     ? Number(editFields.floor_area_max)              : null,
       pet:                editFields.pet === "true" ? true : editFields.pet === "false" ? false : null,
       preferences:        editFields.preferences        || null,
-      ng_points:          editFields.ng_points          || null,
+      ng_points:          ngVal                         || null,
       other_requests:     editFields.other_requests     || null,
       property_memo:      editFields.property_memo      || null,
     };
@@ -791,8 +829,13 @@ function CustomersPageInner() {
         }
       }
       const f = emptyEditFields();
+      const parsedDesiredArea = p.desired_area != null ? String(p.desired_area) : f.desired_area;
+      const parsedAreaStation = parseAreaStation(parsedDesiredArea);
       const preview: EditFields = {
-        desired_area:       p.desired_area       != null ? String(p.desired_area)       : f.desired_area,
+        desired_area:       parsedDesiredArea,
+        area_input:         parsedAreaStation.area_input,
+        station_input:      parsedAreaStation.station_input,
+        shikirei_free:      false,
         floor_plan:         p.floor_plan         != null ? String(p.floor_plan)         : f.floor_plan,
         rent_min:           p.rent_min           != null ? String(Math.floor((p.rent_min as number)/10000)) : f.rent_min,
         rent_max:           p.rent_max           != null ? String(Math.floor((p.rent_max as number)/10000)) : f.rent_max,
@@ -2640,10 +2683,48 @@ function CustomersPageInner() {
               <button onClick={() => { setEditId(null); setEditFields(null); }} className="text-[#aaa] text-xl leading-none">✕</button>
             </div>
             <div className="px-5 py-4 space-y-3">
-              <Field label="エリア" placeholder="例: 城東区・東大阪市"
-                value={editFields.desired_area} onChange={(v) => setEditFields((f) => f && ({ ...f, desired_area: v }))} />
-              <Field label="間取り" placeholder="例: 1LDK・2DK"
-                value={editFields.floor_plan} onChange={(v) => setEditFields((f) => f && ({ ...f, floor_plan: v }))} />
+              <Field label="地域" placeholder="例: 城東区・東大阪市・摂津市"
+                value={editFields.area_input} onChange={(v) => setEditFields((f) => f && ({ ...f, area_input: v }))} />
+              <Field label="駅・路線" placeholder="例: 阪急京都線・梅田駅"
+                value={editFields.station_input} onChange={(v) => setEditFields((f) => f && ({ ...f, station_input: v }))} />
+              {/* 間取り バッジ選択 */}
+              <div>
+                <label className="text-[11px] font-semibold text-[#8696a0] mb-1.5 block">間取り（複数選択可）</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {FLOOR_PLAN_OPTIONS.map((opt) => {
+                    const isSelected = editFields.floor_plan.split(/[・、,\s]+/).includes(opt);
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => {
+                          const curr = editFields.floor_plan.split(/[・、,\s]+/).filter((x) => (FLOOR_PLAN_OPTIONS as readonly string[]).includes(x));
+                          const next = curr.includes(opt) ? curr.filter((x) => x !== opt) : [...curr, opt];
+                          setEditFields((f) => f && ({ ...f, floor_plan: next.join("・") }));
+                        }}
+                        className={`text-[12px] font-bold px-3 py-1 rounded-full border transition-colors ${
+                          isSelected ? "bg-[#1565C0] text-white border-[#1565C0]" : "bg-[#f8f9fa] text-[#333] border-[#e9edef]"
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {/* 敷礼なしバッジ */}
+              <div>
+                <label className="text-[11px] font-semibold text-[#8696a0] mb-1.5 block">敷金礼金</label>
+                <button
+                  type="button"
+                  onClick={() => setEditFields((f) => f && ({ ...f, shikirei_free: !f.shikirei_free }))}
+                  className={`text-[12px] font-bold px-4 py-1 rounded-full border transition-colors ${
+                    editFields.shikirei_free ? "bg-[#1565C0] text-white border-[#1565C0]" : "bg-[#f8f9fa] text-[#333] border-[#e9edef]"
+                  }`}
+                >
+                  {editFields.shikirei_free ? "敷礼なし ✓" : "敷礼なし"}
+                </button>
+              </div>
               <div className="flex gap-2">
                 <div className="flex-1">
                   <Field label="㎡数 下限" placeholder="例: 25" type="number"
