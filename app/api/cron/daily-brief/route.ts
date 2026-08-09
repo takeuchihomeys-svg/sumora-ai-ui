@@ -321,7 +321,7 @@ export async function GET(req: NextRequest) {
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   const [{ data: hannou }, { data: saiyuusen }, { data: bukkenDashi }] = await Promise.all([
-    // 【反応あり】= お客さんから返信が来ている（24h以内・flagなし）
+    // 【新着】= お客さんから返信が来ている（24h以内・flagなし）
     supabase.from("conversations")
       .select("id, customer_name, status, last_message, last_sender, is_hot, updated_at")
       .eq("last_sender", "customer").eq("is_flagged", false).eq("line_status", "active")
@@ -371,7 +371,7 @@ export async function GET(req: NextRequest) {
         const preview = msgPreview(c.last_message ?? null);
         return `・${c.customer_name || "名称未設定"}　${time}${preview ? `\n　${preview}` : ""}`;
       });
-      parts.push(`【反応あり】返信来てる。今すぐ対応して。\n${lines.join("\n")}`);
+      parts.push(`【新着】返信来てる。今すぐ対応して。\n${lines.join("\n")}`);
     }
 
     if (saiyuusen && saiyuusen.length > 0) {
@@ -450,7 +450,7 @@ export async function GET(req: NextRequest) {
       const preview = msgPreview(c.last_message ?? null);
       return `・${c.customer_name || "名称未設定"}　${time}${preview ? ` ${preview}` : ""}`;
     });
-    eveningParts.push(`【反応あり】今日中に全員返して。\n${lines.join("\n")}`);
+    eveningParts.push(`【新着】今日中に全員返して。\n${lines.join("\n")}`);
   }
 
   if (saiyuusen && saiyuusen.length > 0) {

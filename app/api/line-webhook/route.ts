@@ -243,6 +243,11 @@ async function handleTextMessage(
     await autoUpgradeToHot(db, userId).catch((e) => console.warn("[line-webhook] autoUpgradeToHot:", e));
   });
 
+  // 最優先（is_flagged）客からの返信 → @鈴木メンション即時通知
+  after(async () => {
+    await notifySuzukiReply(db, convId, text).catch((e) => console.warn("[notifySuzukiReply]", e));
+  });
+
   // ── 申込フォーム自動検知 → ステータスを申込・審査中(applying)に自動昇格 ──
   // これまでUI上の手動バナーしか経路がなく、会話を開いていないと遷移漏れしていた。
   // isFormatMessage より先に判定する（記入済みフォームの①②番号で希望条件と誤解析されるのを防ぐ）。
@@ -905,30 +910,92 @@ async function autoDetectTask(
   }
 }
 
-async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: string) {
-  const { data } = await db
-    .from("hanbancyo_settings")
-    .select("value")
-    .eq("key", "group_id")
+// 最優先（is_flagged）客が返信 → @鈴木メンション + 【最優先】リスト即時通知
+async function notifySuzukiReply(db: ReturnType<typeof getDb>, convId: string, msgText: string) {
+  const { data: conv } = await db
+    .from("conversations")
+    .select("customer_name, is_flagged")
+    .eq("id", convId)
     .maybeSingle();
-  const groupId = data?.value as string | undefined;
+  if (!conv?.is_flagged) return; // 最優先フラグがある顧客のみ通知
+
+  let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
+  if (!groupId) {
+    const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
+    groupId = (grpRow?.value as string) ?? null;
+  }
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
   if (!groupId || !token) return;
+
+  const { data: suzukiRow } = await db.from("hanbancyo_settings").select("value").eq("key", "suzuki_line_user_id").maybeSingle();
+  const suzukiUserId = suzukiRow?.value as string | undefined;
+
+  // 現在の【最優先】リスト
+  const { data: saiyuusen } = await db
+    .from("conversations")
+    .select("customer_name, status, updated_at")
+    .eq("is_flagged", true).eq("line_status", "active")
+    .not("status", "in", "(closed_won,closed_lost,lost)")
+    .order("updated_at", { ascending: true })
+    .limit(5);
+
+  const name = (conv.customer_name as string) || "名称未設定";
+  const preview = msgText.slice(0, 25) + (msgText.length > 25 ? "…" : "");
+
+  const lines: string[] = [
+    `﻿@鈴木 祥平 【最優先】${name}から返信きた！`,
+    `「${preview}」`,
+    "今すぐ対応して。",
+  ];
+
+  if (saiyuusen && saiyuusen.length > 0) {
+    lines.push("", "【最優先リスト】");
+    (saiyuusen as { customer_name: string | null }[]).forEach(c =>
+      lines.push(`・${c.customer_name || "名称未設定"}`)
+    );
+  }
+
+  const text = lines.join("\n");
+  type MentionMsg = { type: "text"; text: string; mentionees?: { index: number; length: number; type: "user"; userId: string }[] };
+  const message: MentionMsg = suzukiUserId
+    ? { type: "text", text, mentionees: [{ index: 0, length: 7, type: "user", userId: suzukiUserId }] }
+    : { type: "text", text };
+
+  try {
+    await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: groupId, messages: [message] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) {
+    console.warn("[notifySuzukiReply] push failed:", e);
+  }
+}
+
+async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: string) {
+  let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
+  if (!groupId) {
+    const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
+    groupId = (grpRow?.value as string) ?? null;
+  }
+  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
+  if (!groupId || !token) return;
+
+  const { data: suzukiRow } = await db.from("hanbancyo_settings").select("value").eq("key", "suzuki_line_user_id").maybeSingle();
+  const suzukiUserId = suzukiRow?.value as string | undefined;
+
+  const text = `﻿@鈴木 祥平 ${customerName}から返信きた！今が熱い。今すぐ詰めて。`;
+  type MentionMsg = { type: "text"; text: string; mentionees?: { index: number; length: number; type: "user"; userId: string }[] };
+  const message: MentionMsg = suzukiUserId
+    ? { type: "text", text, mentionees: [{ index: 0, length: 7, type: "user", userId: suzukiUserId }] }
+    : { type: "text", text };
 
   try {
     const res = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        to: groupId,
-        messages: [{
-          type: "text",
-          text: `🔥 ${customerName}さんから返信きた！！\n今が熱いからとことん詰める！！`,
-        }],
-      }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: groupId, messages: [message] }),
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
