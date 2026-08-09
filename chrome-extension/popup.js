@@ -2384,9 +2384,14 @@ function openInstructions(siteKey) {
           }
         }
         // 2駅ペア間の中間駅を展開（「本町〜南森町」のような範囲指定に対応）
-        for (let i = 0; i < resolvedStations.length - 1; i++) {
-          const intermediate = expandStationRange(resolvedStations[i], resolvedStations[i + 1]);
-          intermediate.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+        // ガード: 〜/～/から〜までのような範囲記号がある場合のみ展開する
+        // カンマ区切りの独立した駅リスト（例: 十三、野田阪神、福島）では展開しない
+        const hasRangeSyntax = /[〜～]|から.{0,5}まで/.test(adjAreaClean);
+        if (hasRangeSyntax) {
+          for (let i = 0; i < resolvedStations.length - 1; i++) {
+            const intermediate = expandStationRange(resolvedStations[i], resolvedStations[i + 1]);
+            intermediate.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+          }
         }
         // 「江坂まで20分」等のパターン → METRO_GRAPH Dijkstra で到達可能駅を一括展開
         const transitRe = /([^\s、。,　]{1,10}?)駅?(?:まで|から)(\d+)分/g;

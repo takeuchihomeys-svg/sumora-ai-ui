@@ -1500,10 +1500,15 @@ function resolveConditionsLocal(baseConditions, opts) {
   }
 
   // ⑤ 「AからBまで」: 連続する解決済み駅ペア間の中間駅を展開
-  for (let i = 0; i + 1 < resolvedStations.length; i++) {
-    expandStationRange(resolvedStations[i], resolvedStations[i + 1]).forEach(mid => {
-      if (!col.station_names.includes(mid)) col.station_names.push(mid);
-    });
+  // 範囲記号（〜／～／からXXまで）が元のエリア文字列に含まれる場合のみ展開する
+  // カンマ区切りの独立した駅リスト（例: 京橋,天王寺）では展開しない
+  const hasRangeSyntax = /[〜～]|から.{0,5}まで/.test(desired_area);
+  if (hasRangeSyntax) {
+    for (let i = 0; i + 1 < resolvedStations.length; i++) {
+      expandStationRange(resolvedStations[i], resolvedStations[i + 1]).forEach(mid => {
+        if (!col.station_names.includes(mid)) col.station_names.push(mid);
+      });
+    }
   }
 
   // ⑥ itandi / REINS 路線名（収集済みリアプロ正規路線名から変換）
