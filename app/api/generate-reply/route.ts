@@ -797,7 +797,11 @@ function buildGenerationMessages(
     : "";
 
   // 退去予定/入居中を決定論的に検出 → 最優先ブロックを注入（テキスト検出漏れによる誤内覧提案を防止）
-  const resolvedPropertyStatus = detectPropertyStatus(history, customerMessage, propertyStatus);
+  // テンプレートモード（templateNoteが渡されている）では会話履歴テキストから検出しない。
+  // 過去会話に「退去予定」「入居中」が含まれていても現在の物件とは無関係な誤検知を防ぐ。
+  const resolvedPropertyStatus = templateNote
+    ? (propertyStatus && propertyStatus !== "unknown" ? propertyStatus : "unknown")
+    : detectPropertyStatus(history, customerMessage, propertyStatus);
   const propertyStatusNote = buildPropertyStatusNote(resolvedPropertyStatus);
 
   // 内覧日時の具体的提案はAIXの「内覧へ」ボタン専用。generate-replyでは絶対に具体的日時を出さない
