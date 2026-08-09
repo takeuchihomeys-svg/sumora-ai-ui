@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -10,7 +9,7 @@ export async function GET() {
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
   if (!token) return NextResponse.json({ error: "token未設定" }, { status: 500 });
 
-  const text = `しょーへい！！一個頼みがある！！\nスモラ・イエヤス・ギガ賃貸のどれかのLINE公式アカウントに「テスト」って一回送ってくれ！！\nメンション通知の設定に必要やから！！これだけでOK！！`;
+  const text = `しょーへい！！さっきの件まだ待ってる！！\nスモラかイエヤスかギガ賃貸のLINEに「テスト」って一行送るだけやから！！\nメンションが機能するようになるから絶対やって！！`;
 
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
