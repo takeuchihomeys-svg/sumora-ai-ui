@@ -704,6 +704,7 @@ function buildAreaRouteCodes(c, mode = "auto") {
   }
 
   const parts = parseAreaTokens(rawArea);
+  const _stationRoutePairs = []; // 駅モード用: greedy covering set 計算に使用
   for (const part of parts) {
     if (mode === "ward") {
       // 地域モード: WARD_CODE_MAP → NEIGHBORHOOD_WARD_MAP のみ。路線IDは追加しない
@@ -740,16 +741,10 @@ function buildAreaRouteCodes(c, mode = "auto") {
         if (_pfxR?.type === "station") station = _pfxR.resolved;
       }
       const stationKey = station || part;
-      const lines = getHubLines(stationKey); // ハブ駅展開（梅田→御堂筋+谷町+四つ橋+阪急3線+阪神+JR等）
-      // lineNameToRouteId で表記ゆれ吸収（学習データの「大阪市高速電気軌道御堂筋線」等もroute_idに変換できる）
-      lines.forEach(l => { const id = lineNameToRouteId(l); if (id && !route_ids.includes(id)) route_ids.push(id); });
-      // 漢字↔ひらがなエイリアスの路線も追加（難波→なんば でOsaka Metro、なんば→難波 で南海）
-      const _ROUTE_ALIASES = { "難波": "なんば", "なんば": "難波" };
-      const _aliasKey = stationKey && _ROUTE_ALIASES[stationKey];
-      if (_aliasKey) {
-        const _aliasLines = STATION_LINE_MAP[_aliasKey] || [];
-        _aliasLines.forEach(l => { const id = lineNameToRouteId(l); if (id && !route_ids.includes(id)) route_ids.push(id); });
-      }
+      const lines = getHubLines(stationKey);
+      const _stIds = [];
+      lines.forEach(l => { const id = lineNameToRouteId(l); if (id && !_stIds.includes(id)) _stIds.push(id); });
+      _stationRoutePairs.push({ stationKey, routeIds: _stIds });
       continue;
     }
     // auto: 従来の自動判定
@@ -788,6 +783,24 @@ function buildAreaRouteCodes(c, mode = "auto") {
     if (ward && WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward])) city_codes.push(WARD_CODE_MAP[ward]);
     const lines = getHubLines(stationKey); // ハブ駅展開
     lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
+  }
+  // 駅モード: greedy minimum covering set（全指定駅を最少路線数でカバーする路線を選択）
+  if (mode === "station" && _stationRoutePairs.length > 0) {
+    const _covered = new Set();
+    while (_covered.size < _stationRoutePairs.length) {
+      const _counts = {};
+      _stationRoutePairs.forEach((p, i) => {
+        if (_covered.has(i)) return;
+        p.routeIds.forEach(rid => { _counts[rid] = (_counts[rid] || 0) + 1; });
+      });
+      let _bestRoute = null, _bestCount = 0;
+      Object.keys(_counts).forEach(rid => {
+        if (_counts[rid] > _bestCount) { _bestRoute = Number(rid); _bestCount = _counts[rid]; }
+      });
+      if (!_bestRoute) break;
+      if (!route_ids.includes(_bestRoute)) route_ids.push(_bestRoute);
+      _stationRoutePairs.forEach((p, i) => { if (p.routeIds.includes(_bestRoute)) _covered.add(i); });
+    }
   }
   return { city_codes, route_ids };
 }

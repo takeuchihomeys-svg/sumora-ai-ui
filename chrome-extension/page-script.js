@@ -1136,8 +1136,8 @@
       showWarnToast("駅条件を優先し、地域条件はスキップしました。");
     }
 
-    // 沿線 form state を事前セット（モーダルを開いた時に反映される可能性あり）
-    if (hasRoutes) {
+    // 沿線 form state を事前セット（駅指定なしの場合のみ。駅指定ありはモーダル内で完結させる）
+    if (hasRoutes && !hasStation) {
       setCheckboxes("route_id[]", cond.route_ids);
     }
 
