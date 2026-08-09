@@ -824,6 +824,18 @@
       var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
       if (petCb && !petCb.checked) petCb.click();
     }
+    if (cond.shikirei_free) {
+      // 敷金・礼金なしチェックボックス: ラベルテキストで検索してクリック
+      var sLabels = document.querySelectorAll('label');
+      for (var si = 0; si < sLabels.length; si++) {
+        var sTxt = (sLabels[si].textContent || '').replace(/[\s　]/g, '');
+        if (sTxt === '敷金・礼金なし' || sTxt === '敷金礼金なし') {
+          var sInp = sLabels[si].querySelector('input[type="checkbox"]');
+          if (sInp && !sInp.checked) { sInp.click(); console.log('[AX] 敷金・礼金なしをチェック'); }
+          break;
+        }
+      }
+    }
     if (cond.rp_update_days) {
       // 更新日フィルター（update_date select: 1/3/7/14日以内）
       // 検索フォームページにのみ存在するため、存在確認してからセット

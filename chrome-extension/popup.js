@@ -1408,6 +1408,12 @@ function parseAreaMin(prefs) {
   return m ? Number(m[1]) : null;
 }
 
+// 敷金礼金なし希望の検出（ng_points / preferences / other_requests から）
+function detectShikireiFlag(c) {
+  const text = `${c.preferences || ""} ${c.ng_points || ""} ${c.other_requests || ""}`;
+  return /敷礼なし|敷金礼金なし|敷金礼金0|敷金0礼金0|敷0礼0/.test(text);
+}
+
 function formatYen(n) {
   if (!n) return null;
   if (n >= 10000) return (n / 10000).toFixed(1) + "万円";
@@ -2573,6 +2579,7 @@ function openInstructions(siteKey) {
           area_max:        adjAreaMax ? Number(adjAreaMax) : (c.floor_area_max || null),
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
+          shikirei_free: detectShikireiFlag(c),
           rp_update_days: adjUpdateDays ? Number(adjUpdateDays) : null,
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
         },
