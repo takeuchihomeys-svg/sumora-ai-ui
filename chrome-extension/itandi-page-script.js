@@ -568,6 +568,7 @@
 
     // 非ブロッキング警告トースト（alert()はJS実行を止めるため自動モードで使用禁止）
     function showItandiWarnToast(msg) {
+      console.log('[AX] ' + msg);
       var t = document.createElement('div');
       t.textContent = '[AX] ' + msg;
       t.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:99999;'

@@ -257,7 +257,7 @@
   // fill-done の配送まで止めてしまうため使用禁止）
   function showWarnToast(msg) {
     try {
-      console.warn('[AX] ' + msg);
+      console.log('[AX] ' + msg);
       var t = document.createElement('div');
       t.textContent = '⚠️ ' + msg;
       t.style.cssText = 'position:fixed;top:16px;right:16px;z-index:2147483647;' +
