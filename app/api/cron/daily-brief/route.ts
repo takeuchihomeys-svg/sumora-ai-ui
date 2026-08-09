@@ -134,55 +134,6 @@ const DEADLINE_PUSH_MESSAGES = [
   "定時ギリギリやけど残りを全部返してから終わりにして！！お客さんを待たせるな。",
 ];
 
-// ── しょーへい 今月ターゲットリスト ───────────────────────────────────
-// ※このリストはしょーへいが毎日物件出しする固定ターゲット
-// ※ターゲット外から返信きたり新規来たら追加する
-
-const SUZUKI_TARGET_CLOSE = [
-  "ゆそひ（申込中）",
-  "あかねさん弟（申込中）",
-  "Hayato",
-  "はるか",
-  "福田",
-  "福田紹介",
-  "SHIGI",
-  "Hitomi",
-  "あい",
-  "隼人（相見積もりワンチャン）",
-  "₍˄•༝•˄₎◞✩",
-  "きえ",
-  "アヤ",
-  "ミウラ",
-];
-
-const SUZUKI_TARGET_HOT = [
-  "うの",
-  "あさみさんの家（他業者行く前に絶対動いて！！）",
-  "S",
-  "さくら",
-  "🐈",
-  "masaya",
-  "うえはら",
-  "飛翔",
-  "もえか",
-  "ヨンミン",
-  "舞桜",
-  "E",
-];
-
-function buildTargetSection(): string {
-  const closeLines = SUZUKI_TARGET_CLOSE.map(n => `・${n}`).join("\n");
-  const hotLines = SUZUKI_TARGET_HOT.map(n => `・${n}`).join("\n");
-  return [
-    "【今月のターゲット】全員物件出しして！！",
-    "▶ 決まる（最優先）",
-    closeLines,
-    "",
-    "▶ アツい（追撃必須）",
-    hotLines,
-  ].join("\n");
-}
-
 // ── 鈴木 祥平 LINE User ID 解決 ──────────────────────────────────────
 
 const SUZUKI_NAME = "鈴木 祥平";
@@ -432,20 +383,43 @@ export async function GET(req: NextRequest) {
       ? `昨日${yesterdayCount}件動かしてたな。ナイス！！\n\n`
       : "";
 
-    const targetText = [
-      "【しょーへいの今日のターゲット全リスト】",
-      "",
-      "▶ 決まる（最優先）",
-      ...SUZUKI_TARGET_CLOSE.map(n => `・${n}`),
-      "",
-      "▶ アツい（追撃必須）",
-      ...SUZUKI_TARGET_HOT.map(n => `・${n}`),
-    ].join("\n");
+    const parts: string[] = [];
+
+    // 【要対応】= しょーへいのターゲット（is_flagged=true）
+    if (saiyuusen && saiyuusen.length > 0) {
+      const lines = (saiyuusen as ConvRow[]).map(c => {
+        const statusLabel = STATUS_LABELS[c.status ?? ""] ?? c.status ?? "状況不明";
+        const time = elapsedLabel(c.updated_at);
+        const replyMark = c.last_sender === "customer" ? "【返信あり】" : "";
+        return `・${c.customer_name || "名称未設定"}（${statusLabel}）${replyMark}${time}`;
+      });
+      parts.push(`【しょーへいのターゲット（要対応）】全員物件出して！！\n${lines.join("\n")}`);
+    } else {
+      parts.push("【しょーへいのターゲット（要対応）】\n要対応なし");
+    }
+
+    // 返信あり（要対応外からも来てたら追加で表示）
+    if (hannou && hannou.length > 0) {
+      const lines = (hannou as ConvRow[]).map(c => {
+        const time = elapsedLabel(c.updated_at);
+        const preview = msgPreview(c.last_message ?? null);
+        return `・${c.customer_name || "名称未設定"}　${time}${preview ? `　${preview}` : ""}`;
+      });
+      parts.push(`【返信あり】今すぐ全員返して！！\n${lines.join("\n")}`);
+    }
+
+    // 新規問い合わせ
+    if (shinchaku && shinchaku.length > 0) {
+      const lines = (shinchaku as ConvRow[]).map(c => {
+        return `・${c.customer_name || "名称未設定"}　${elapsedLabel(c.created_at)}登録`;
+      });
+      parts.push(`【新規問い合わせ】今日中に返して！！\n${lines.join("\n")}`);
+    }
 
     const fullText = [
       `${mentionPrefix} ${yesterdayPraise}${pickByDay(MORNING_OPENERS)}`,
       "",
-      targetText,
+      parts.join("\n\n"),
       "",
       "──────────────────",
       `全員に物件出して返信して！！それがしょーへいの今日の全仕事！！`,
@@ -481,20 +455,45 @@ export async function GET(req: NextRequest) {
     ? `今日ここまで${todayDoneCount}件動かしてる。ナイス！！\n\n`
     : "";
 
-  const eveningTargetText = [
-    "【今日のターゲット残り確認】全員出せた？",
-    "",
-    "▶ 決まる",
-    ...SUZUKI_TARGET_CLOSE.map(n => `・${n}`),
-    "",
-    "▶ アツい",
-    ...SUZUKI_TARGET_HOT.map(n => `・${n}`),
-  ].join("\n");
+  const eveningParts: string[] = [];
+
+  if (saiyuusen && saiyuusen.length > 0) {
+    const lines = (saiyuusen as ConvRow[]).map(c => {
+      const statusLabel = STATUS_LABELS[c.status ?? ""] ?? c.status ?? "状況不明";
+      const time = elapsedLabel(c.updated_at);
+      const replyMark = c.last_sender === "customer" ? "【返信あり】" : "";
+      return `・${c.customer_name || "名称未設定"}（${statusLabel}）${replyMark}${time}`;
+    });
+    eveningParts.push(`【しょーへいのターゲット（要対応）残り確認】全員出せた？\n${lines.join("\n")}`);
+  } else {
+    eveningParts.push("【しょーへいのターゲット（要対応）残り確認】\n要対応なし。今日の物件出し完了！！");
+  }
+
+  if (hannou && hannou.length > 0) {
+    const lines = (hannou as ConvRow[]).map(c => {
+      const time = elapsedLabel(c.updated_at);
+      const preview = msgPreview(c.last_message ?? null);
+      return `・${c.customer_name || "名称未設定"}　${time}${preview ? `　${preview}` : ""}`;
+    });
+    eveningParts.push(`【返信あり】今日中に全員返して！！\n${lines.join("\n")}`);
+  }
+
+  if (shinchaku && shinchaku.length > 0) {
+    const unanswered = (shinchaku as ConvRow[]).filter(c =>
+      c.status === "first_reply" || c.status === "condition_hearing"
+    );
+    if (unanswered.length > 0) {
+      const lines = unanswered.map(c =>
+        `・${c.customer_name || "名称未設定"}　${elapsedLabel(c.created_at)}登録`
+      );
+      eveningParts.push(`【新規・未対応】今夜中に返して！！\n${lines.join("\n")}`);
+    }
+  }
 
   const eveningText = [
     `${mentionPrefix} ${todayPraise}${pickByDay(EVENING_OPENERS)}`,
     "",
-    eveningTargetText,
+    eveningParts.join("\n\n"),
     "",
     "──────────────────",
     `今日中にターゲット全員物件出して返信して！！`,
