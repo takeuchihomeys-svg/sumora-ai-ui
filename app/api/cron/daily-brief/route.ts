@@ -422,8 +422,7 @@ export async function GET(req: NextRequest) {
       ? `昨日${yesterdayCount}件動かしてたな。ナイス！！\n\n`
       : "";
 
-    // ── ターゲット全リスト（固定＋動的追加を1ブロックに統合）──────────────
-    const targetBlock: string[] = [
+    const targetText = [
       "【しょーへいの今日のターゲット全リスト】",
       "",
       "▶ 決まる（最優先）",
@@ -431,62 +430,14 @@ export async function GET(req: NextRequest) {
       "",
       "▶ アツい（追撃必須）",
       ...SUZUKI_TARGET_HOT.map(n => `・${n}`),
-    ];
-
-    // 返信来たやつ（ターゲット外含め全員）→ 追加アツい
-    if (hannou && hannou.length > 0) {
-      targetBlock.push("", "▶ 追加アツい（返信来たやつ・ターゲット追加）");
-      (hannou as ConvRow[]).forEach(c => {
-        const time = elapsedLabel(c.updated_at);
-        const preview = msgPreview(c.last_message ?? null);
-        targetBlock.push(`・${c.customer_name || "名称未設定"}　${time}${preview ? `　${preview}` : ""}`);
-      });
-    }
-
-    // 新規問い合わせ → リストに追加ターゲットとして追記
-    if (shinchaku && shinchaku.length > 0) {
-      targetBlock.push("", "▶ 新規問い合わせ（追加ターゲット）");
-      (shinchaku as ConvRow[]).forEach(c => {
-        const time = elapsedLabel(c.created_at);
-        targetBlock.push(`・${c.customer_name || "名称未設定"}　${time}登録`);
-      });
-    }
-
-    const parts: string[] = [targetBlock.join("\n")];
-
-    // 最優先（flag付き）= 緊急対応が必要なやつ
-    if (saiyuusen && saiyuusen.length > 0) {
-      const lines = (saiyuusen as ConvRow[]).map(c => {
-        const time = elapsedLabel(c.updated_at);
-        const replyMark = c.last_sender === "customer" ? "[返信あり]" : "";
-        const action = ["viewing", "estimate_request", "availability_check"].includes(c.status ?? "")
-          ? " → 内覧アポ"
-          : ["application", "applying"].includes(c.status ?? "")
-          ? " → 申込クロージング"
-          : "";
-        return `・${c.customer_name || "名称未設定"}　${time}${replyMark}${action}`;
-      });
-      parts.push(`【最優先】今すぐ対応して！！\n${lines.join("\n")}`);
-    }
-
-    // 物件出しリスト（DB上のアクティブ客参考リスト）
-    if (bukkenRows.length > 0) {
-      const bukkenLines = buildBukkenLines(bukkenRows);
-      parts.push(
-        [
-          `【物件出しリスト参考】（直近アクティブ${totalBukken}件）`,
-          ...bukkenLines,
-        ].join("\n")
-      );
-    }
+    ].join("\n");
 
     const fullText = [
       `${mentionPrefix} ${yesterdayPraise}${pickByDay(MORNING_OPENERS)}`,
       "",
-      parts.join("\n\n"),
+      targetText,
       "",
       "──────────────────",
-      `優先順：最優先 → 決まる → アツい → 追加アツい → 新規`,
       `全員に物件出して返信して！！それがしょーへいの今日の全仕事！！`,
       "",
       pickByDay(MORNING_CLOSERS),
