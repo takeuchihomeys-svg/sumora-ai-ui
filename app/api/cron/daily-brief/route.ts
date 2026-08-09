@@ -112,9 +112,9 @@ const EVENING_CLOSERS = [
 ];
 
 const DEADLINE_DONE_MESSAGES = [
-  "今日よく動けた。ありがとう。",
-  "定時までにちゃんとやってくれた。助かった。",
-  "今日の動き完璧だった。明日もよろしく。",
+  "このペース続けて。",
+  "明日もよろしく。",
+  "完璧だった。",
 ];
 
 const DEADLINE_PUSH_MESSAGES = [
@@ -283,7 +283,7 @@ export async function GET(req: NextRequest) {
 
     if (doneCount >= 15) {
       const praise = pickByDay(DEADLINE_DONE_MESSAGES);
-      deadlineText = `${mentionPrefix} 19時。今日は${doneCount}人対応できた。${praise}`;
+      deadlineText = `${mentionPrefix} 19時。今日${doneCount}人動かした。ナイス！！ ${praise}`;
     } else {
       const push = pickByDay(DEADLINE_PUSH_MESSAGES);
       const remainLines = remainingList.slice(0, 10).map((c, i) => {
@@ -351,6 +351,18 @@ export async function GET(req: NextRequest) {
 
   // ── 朝メッセージ ──────────────────────────────────────────────────────
   if (!isEvening) {
+    // 昨日のスタッフ活動件数チェック
+    const yesterdayStart = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const { count: yesterdayCount } = await supabase
+      .from("conversations")
+      .select("id", { count: "exact", head: true })
+      .eq("last_sender", "staff")
+      .gt("updated_at", yesterdayStart)
+      .lt("updated_at", todayStart);
+    const yesterdayPraise = (yesterdayCount ?? 0) >= 5
+      ? `昨日${yesterdayCount}件動かしてたな。ナイス！！\n\n`
+      : "";
+
     const parts: string[] = [];
 
     if (hannou && hannou.length > 0) {
@@ -392,7 +404,7 @@ export async function GET(req: NextRequest) {
     }
 
     const fullText = [
-      `${mentionPrefix} ${pickByDay(MORNING_OPENERS)}`,
+      `${mentionPrefix} ${yesterdayPraise}${pickByDay(MORNING_OPENERS)}`,
       "",
       `今日の物件出しリスト。is_hot ${hotCount}人 + 7日以内アクティブ ${fillCount}人 = 計${totalBukken}人。直近に返信あった順。`,
       "",
@@ -420,6 +432,16 @@ export async function GET(req: NextRequest) {
   }
 
   // ── 夕方メッセージ（JST 18:00）────────────────────────────────────────
+  // 今日のスタッフ活動件数チェック
+  const { count: todayDoneCount } = await supabase
+    .from("conversations")
+    .select("id", { count: "exact", head: true })
+    .eq("last_sender", "staff")
+    .gt("updated_at", todayStart);
+  const todayPraise = (todayDoneCount ?? 0) >= 8
+    ? `今日ここまで${todayDoneCount}件動かしてる。ナイス！！\n\n`
+    : "";
+
   const eveningParts: string[] = [];
 
   if (hannou && hannou.length > 0) {
@@ -460,7 +482,7 @@ export async function GET(req: NextRequest) {
   }
 
   const eveningText = [
-    `${mentionPrefix} ${pickByDay(EVENING_OPENERS)}`,
+    `${mentionPrefix} ${todayPraise}${pickByDay(EVENING_OPENERS)}`,
     "",
     `18時時点・残り対応（反応あり${hannou?.length ?? 0}人・最優先${saiyuusen?.length ?? 0}人）`,
     "",
