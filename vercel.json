@@ -5,6 +5,10 @@
       "schedule": "0 1 * * *"
     },
     {
+      "path": "/api/cron/daily-brief?mode=evening",
+      "schedule": "0 9 * * *"
+    },
+    {
       "path": "/api/cron/generate-pending-drafts",
       "schedule": "* * * * *"
     },

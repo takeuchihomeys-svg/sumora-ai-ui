@@ -39,12 +39,65 @@ function msgPreview(msg: string | null, max = 22): string {
   return `「${s.slice(0, max)}${s.length > max ? "…" : ""}」`;
 }
 
+// ── 人間味ある声かけ（曜日ローテーション）────────────────────────────
+
+// JST曜日: 0=日 1=月 2=火 3=水 4=木 5=金 6=土
+function getJSTDayOfWeek(): number {
+  const utcMs = Date.now();
+  const jstMs = utcMs + 9 * 60 * 60 * 1000;
+  return new Date(jstMs).getDay();
+}
+
+const MORNING_OPENERS = [
+  "日曜日もお願いします🙏 休みの日でも動いてくれてるお客さんいます。よろしくお願いします！",
+  "今週も始まりましたね！月曜の朝から一気にいきましょう。要対応から潰していきましょう🔥",
+  "火曜日です。昨日の勢いそのまま続けていきましょう！",
+  "週の折り返し、水曜日です。今日もしっかりいきましょう💪",
+  "木曜日です。週末まであと少し。今日も全力でいきましょう！",
+  "金曜日です！週末前に全部片付けていきましょう🔥 ここが踏ん張りどころです。",
+  "土曜日もよろしくお願いします！お客さんは休日こそ動いてます。",
+];
+
+const MORNING_CLOSERS = [
+  "今日も鈴木さんに頼ってます。よろしくお願いします🙏",
+  "上から順番に一気にいきましょう！",
+  "要対応から潰してったら、あとは熱い客を攻める流れでいきましょう🔥",
+  "返信が早いほどアポに繋がります。今日もよろしく！",
+  "一緒に頑張っていきましょう💪 鈴木さんならできます！",
+  "お客さんが待ってます。今日もよろしくお願いします！",
+  "着実にこなしていきましょう。いつも頑張ってくれてありがとうございます🙏",
+];
+
+const EVENING_OPENERS = [
+  "日曜日もここまでお疲れ様でした。ラストスパートだけお願いします🔥",
+  "月曜日の締め、お疲れ様です！残りの対応だけやりきって終わりにしましょう。",
+  "火曜日のラストスパートです！あと少しだけ一緒に頑張りましょう💪",
+  "水曜日の夕方です。週の折り返し、今日中に全部返しておきましょう！",
+  "木曜日のラストです。明日の自分を楽にするために、今日やりきりましょう🙏",
+  "金曜夕方！週末前にここをきれいにして気持ちよく終わりましょう🔥",
+  "土曜日もここまでありがとうございます。残りのお客さんだけもうひと踏ん張り！",
+];
+
+const EVENING_CLOSERS = [
+  "今日は本当によく頑張ってくれました。残りだけお願いします🙏",
+  "ここを返したら今日は終わりにしていいです。あと少しだけ！",
+  "夕方の時間帯、お客さんも返事しやすいです。今がチャンスです！",
+  "今日頑張った分、明日の自分が楽になります。いきましょう💪",
+  "残り対応を全部返したら、今日はゆっくり休んでください🙏",
+  "鈴木さんの対応でお客さんが助かってます。もうひと踏ん張りよろしく🔥",
+  "今日も1日本当にお疲れ様でした。最後だけよろしくお願いします！",
+];
+
+function pickByDay<T>(arr: T[]): T {
+  return arr[getJSTDayOfWeek() % arr.length];
+}
+
 // ── 鈴木 祥平 LINE User ID 解決（DBキャッシュ → Group Members API） ──────
+
 const SUZUKI_NAME = "鈴木 祥平";
 const SUZUKI_CACHE_KEY = "suzuki_line_user_id";
 
 async function resolveSuzukiUserId(groupId: string, token: string): Promise<string | null> {
-  // 1. DBキャッシュ確認
   const { data: cached } = await supabase
     .from("hanbancyo_settings")
     .select("value")
@@ -52,7 +105,6 @@ async function resolveSuzukiUserId(groupId: string, token: string): Promise<stri
     .maybeSingle();
   if (cached?.value) return cached.value as string;
 
-  // 2. LINE Group Members IDs API でメンバー一覧取得
   const idsRes = await fetch(`https://api.line.me/v2/bot/group/${groupId}/members/ids`, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(8_000),
@@ -60,7 +112,6 @@ async function resolveSuzukiUserId(groupId: string, token: string): Promise<stri
   if (!idsRes.ok) return null;
   const { memberIds } = (await idsRes.json()) as { memberIds: string[] };
 
-  // 3. 各メンバーのプロフィールを確認して「鈴木 祥平」を探す
   for (const uid of memberIds) {
     const profileRes = await fetch(
       `https://api.line.me/v2/bot/group/${groupId}/member/${uid}`,
@@ -69,7 +120,6 @@ async function resolveSuzukiUserId(groupId: string, token: string): Promise<stri
     if (!profileRes.ok) continue;
     const profile = (await profileRes.json()) as { displayName?: string; userId?: string };
     if (profile.displayName === SUZUKI_NAME && profile.userId) {
-      // 4. DBにキャッシュして次回以降は即座に返す
       await supabase
         .from("hanbancyo_settings")
         .upsert({ key: SUZUKI_CACHE_KEY, value: profile.userId }, { onConflict: "key" });
@@ -79,18 +129,52 @@ async function resolveSuzukiUserId(groupId: string, token: string): Promise<stri
   return null;
 }
 
+// ── LINE push ─────────────────────────────────────────────────────────
+
+async function pushLineMessage(
+  groupId: string,
+  token: string,
+  text: string,
+  suzukiUserId: string | null
+): Promise<{ ok: boolean; error?: string }> {
+  type MentionMessage =
+    | { type: "text"; text: string }
+    | { type: "text"; text: string; mentionees: { index: number; length: number; type: "user"; userId: string }[] };
+
+  const message: MentionMessage = suzukiUserId
+    ? { type: "text", text, mentionees: [{ index: 0, length: 7, type: "user", userId: suzukiUserId }] }
+    : { type: "text", text };
+
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: groupId, messages: [message] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      return { ok: false, error: body };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // ── Route handler ─────────────────────────────────────────────────────
 
-const COOLDOWN_KEY = "daily_brief_last_sent_at";
-
 export async function GET(req: NextRequest) {
-  // Auth
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  // Cooldown guard — prevent Vercel retry double-sends (23h window)
+  const mode = req.nextUrl.searchParams.get("mode") ?? "morning";
+  const isEvening = mode === "evening";
+  const COOLDOWN_KEY = isEvening ? "daily_brief_evening_last_sent_at" : "daily_brief_morning_last_sent_at";
+  const COOLDOWN_HOURS = 6; // 朝・夜それぞれ6h以内の再送信を防ぐ
+
   const { data: lastSentRow } = await supabase
     .from("hanbancyo_settings")
     .select("value")
@@ -99,146 +183,168 @@ export async function GET(req: NextRequest) {
 
   if (lastSentRow?.value) {
     const elapsed = Date.now() - new Date(lastSentRow.value as string).getTime();
-    if (elapsed < 23 * 60 * 60 * 1000) {
-      return NextResponse.json({ ok: true, skipped: true, reason: "cooldown (23h)" });
+    if (elapsed < COOLDOWN_HOURS * 60 * 60 * 1000) {
+      return NextResponse.json({ ok: true, skipped: true, reason: `cooldown (${COOLDOWN_HOURS}h)` });
     }
   }
 
   // LINE config
-  let groupId: string | null =
-    process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
+  let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
   if (!groupId) {
     const { data } = await supabase
-      .from("hanbancyo_settings")
-      .select("value")
-      .eq("key", "group_id")
-      .maybeSingle();
+      .from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
     groupId = (data?.value as string) ?? null;
   }
 
   const token =
     process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ??
     process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN ??
-    process.env.LINE_CHANNEL_ACCESS_TOKEN ??
-    null;
+    process.env.LINE_CHANNEL_ACCESS_TOKEN ?? null;
 
   if (!groupId || !token) {
     return NextResponse.json({ ok: false, error: "LINE config missing" }, { status: 500 });
   }
 
-  // 鈴木 祥平の LINE User ID を取得（DB キャッシュ → なければ Group Members API で検索）
   const suzukiUserId = await resolveSuzukiUserId(groupId, token);
 
-  // ── Parallel DB queries ─────────────────────────────────────────────
-  const sixHoursAgo  = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // ── DB queries ───────────────────────────────────────────────────────
+  const sixHoursAgo  = new Date(Date.now() - 6  * 60 * 60 * 1000).toISOString();
+  const sevenDaysAgo = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000).toISOString();
   const CLOSED = "(closed_won,closed_lost,lost)";
 
-  const [
-    { data: yotaiou },
-    { data: noreply },
-    { data: hot },
-  ] = await Promise.all([
-    // A: 要対応 — flagged + customer spoke last
-    supabase
-      .from("conversations")
+  const [{ data: yotaiou }, { data: noreply }, { data: hot }] = await Promise.all([
+    supabase.from("conversations")
       .select("id, customer_name, status, last_message, updated_at")
-      .eq("is_flagged", true)
-      .eq("last_sender", "customer")
-      .eq("line_status", "active")
-      .not("status", "in", CLOSED)
-      .order("updated_at", { ascending: true })
-      .limit(8),
+      .eq("is_flagged", true).eq("last_sender", "customer").eq("line_status", "active")
+      .not("status", "in", CLOSED).order("updated_at", { ascending: true }).limit(8),
 
-    // B: 返信できていない — not flagged, customer waiting 6h+
-    supabase
-      .from("conversations")
+    supabase.from("conversations")
       .select("id, customer_name, status, last_message, updated_at")
-      .eq("last_sender", "customer")
-      .eq("is_flagged", false)
-      .eq("line_status", "active")
-      .not("status", "in", CLOSED)
-      .lt("updated_at", sixHoursAgo)
-      .order("updated_at", { ascending: true })
-      .limit(8),
+      .eq("last_sender", "customer").eq("is_flagged", false).eq("line_status", "active")
+      .not("status", "in", CLOSED).lt("updated_at", sixHoursAgo)
+      .order("updated_at", { ascending: true }).limit(8),
 
-    // C: 熱い — is_hot, active in last 7 days
-    supabase
-      .from("conversations")
+    supabase.from("conversations")
       .select("id, customer_name, status, last_sender, updated_at")
-      .eq("is_hot", true)
-      .eq("line_status", "active")
-      .not("status", "in", CLOSED)
-      .gt("updated_at", sevenDaysAgo)
-      .order("updated_at", { ascending: false })
-      .limit(6),
+      .eq("is_hot", true).eq("line_status", "active")
+      .not("status", "in", CLOSED).gt("updated_at", sevenDaysAgo)
+      .order("updated_at", { ascending: false }).limit(6),
   ]);
 
-  // ── Build message sections ──────────────────────────────────────────
   type ConvRow = {
-    id: string;
-    customer_name: string | null;
-    status: string | null;
-    last_message?: string | null;
-    last_sender?: string | null;
-    updated_at: string | null;
+    id: string; customer_name: string | null; status: string | null;
+    last_message?: string | null; last_sender?: string | null; updated_at: string | null;
   };
 
+  // ── 朝メッセージ ─────────────────────────────────────────────────────
+  if (!isEvening) {
+    const sections: string[] = [];
+
+    if (yotaiou && yotaiou.length > 0) {
+      const lines = (yotaiou as ConvRow[]).map((c, i) => {
+        const time = elapsedLabel(c.updated_at);
+        const preview = msgPreview(c.last_message ?? null);
+        return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time}${preview ? `\n   ${preview}` : ""}`;
+      });
+      sections.push(`━━ 🚨 要対応（${yotaiou.length}人）━━\nお客さんが返信待ちです。\n\n${lines.join("\n\n")}`);
+    }
+
+    if (noreply && noreply.length > 0) {
+      const lines = (noreply as ConvRow[]).map((c, i) => {
+        const time = elapsedLabel(c.updated_at);
+        const preview = msgPreview(c.last_message ?? null);
+        return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time}${preview ? `\n   ${preview}` : ""}`;
+      });
+      sections.push(`━━ ⏰ 返信できていない（${noreply.length}人）━━\nflagなし・でも返事待ちです。\n\n${lines.join("\n\n")}`);
+    }
+
+    if (hot && hot.length > 0) {
+      const lines = (hot as ConvRow[]).map((c, i) => {
+        const statusLabel = STATUS_LABELS[c.status ?? ""] ?? (c.status ?? "");
+        const time = elapsedLabel(c.updated_at);
+        const replyMark = c.last_sender === "customer" ? " ⚡返信待ち" : "";
+        return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time} → ${statusLabel}${replyMark}`;
+      });
+      sections.push(`━━ 🔥 今日の熱い客（${hot.length}人）━━\nアポ・申込を狙いにいきましょう！\n\n${lines.join("\n")}`);
+    }
+
+    if (sections.length === 0) {
+      return NextResponse.json({ ok: true, skipped: true, reason: "no customers to report" });
+    }
+
+    const totalUrgent = (yotaiou?.length ?? 0) + (noreply?.length ?? 0);
+    const mentionPrefix = "﻿@鈴木 祥平";
+
+    const fullText = [
+      `${mentionPrefix} ${pickByDay(MORNING_OPENERS)}`,
+      "",
+      `今日の対応リストです（要対応${yotaiou?.length ?? 0}人・返信待ち${noreply?.length ?? 0}人）`,
+      "",
+      sections.join("\n\n"),
+      "",
+      "──────────────────",
+      "🎯 今日の目標",
+      "　内覧アポ 3件 ／ 申込 1件",
+      "",
+      totalUrgent > 0
+        ? `${pickByDay(MORNING_CLOSERS)}`
+        : "今日もよろしくお願いします！",
+    ].join("\n");
+
+    const result = await pushLineMessage(groupId, token, fullText, suzukiUserId);
+    if (!result.ok) {
+      console.error("[daily-brief morning] LINE push failed:", result.error);
+      return NextResponse.json({ ok: false, error: result.error }, { status: 500 });
+    }
+
+    await supabase.from("hanbancyo_settings")
+      .upsert({ key: COOLDOWN_KEY, value: new Date().toISOString() }, { onConflict: "key" });
+
+    return NextResponse.json({ ok: true, sent: true, mode: "morning",
+      yotaiou: yotaiou?.length ?? 0, noreply: noreply?.length ?? 0, hot: hot?.length ?? 0 });
+  }
+
+  // ── 夕方メッセージ（ラストスパート）────────────────────────────────
   const sections: string[] = [];
 
-  // A section — 要対応
   if (yotaiou && yotaiou.length > 0) {
     const lines = (yotaiou as ConvRow[]).map((c, i) => {
-      const time    = elapsedLabel(c.updated_at);
+      const time = elapsedLabel(c.updated_at);
       const preview = msgPreview(c.last_message ?? null);
-      return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time}${preview ? `\n   ${preview}` : ""}`;
+      return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time}${preview ? ` ${preview}` : ""}`;
     });
-    sections.push(
-      `━━ 🚨 要対応（${yotaiou.length}人）━━\nお客さんが返信待ちです。\n\n${lines.join("\n\n")}`
-    );
+    sections.push(`🚨 まだ返せてない要対応（${yotaiou.length}人）\n${lines.join("\n")}`);
   }
 
-  // B section — 返信できていない
   if (noreply && noreply.length > 0) {
     const lines = (noreply as ConvRow[]).map((c, i) => {
-      const time    = elapsedLabel(c.updated_at);
+      const time = elapsedLabel(c.updated_at);
       const preview = msgPreview(c.last_message ?? null);
-      return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time}${preview ? `\n   ${preview}` : ""}`;
+      return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time}${preview ? ` ${preview}` : ""}`;
     });
-    sections.push(
-      `━━ ⏰ 返信できていない（${noreply.length}人）━━\nflagなし・でも返事待ちです。\n\n${lines.join("\n\n")}`
-    );
+    sections.push(`⏰ 返信できていない（${noreply.length}人）\n${lines.join("\n")}`);
   }
 
-  // C section — 熱い客
   if (hot && hot.length > 0) {
     const lines = (hot as ConvRow[]).map((c, i) => {
       const statusLabel = STATUS_LABELS[c.status ?? ""] ?? (c.status ?? "");
-      const time        = elapsedLabel(c.updated_at);
-      const replyMark   = c.last_sender === "customer" ? " ⚡返信待ち" : "";
-      return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time} → ${statusLabel}${replyMark}`;
+      const replyMark = c.last_sender === "customer" ? " ⚡" : "";
+      return `${i + 1}. ${c.customer_name || "名称未設定"} → ${statusLabel}${replyMark}`;
     });
-    sections.push(
-      `━━ 🔥 今日の熱い客（${hot.length}人）━━\nアポ・申込を狙いにいきましょう！\n\n${lines.join("\n")}`
-    );
+    sections.push(`🔥 熱い客（${hot.length}人）まだ間に合います！\n${lines.join("\n")}`);
   }
 
-  // Skip if nothing to report
   if (sections.length === 0) {
     return NextResponse.json({ ok: true, skipped: true, reason: "no customers to report" });
   }
 
-  // ── Build full message text ─────────────────────────────────────────
-  const totalUrgent = (yotaiou?.length ?? 0) + (noreply?.length ?? 0);
-
-  // @mention: ﻿ は LINE メンションのアンカー文字（position 0）
-  // "@鈴木 祥平" = 6文字。スパン（﻿ + @鈴木 祥平）= 7文字
+  const totalRemaining = (yotaiou?.length ?? 0) + (noreply?.length ?? 0);
   const mentionPrefix = "﻿@鈴木 祥平";
 
-  const fullText = [
-    `${mentionPrefix} おはようございます☀️`,
+  const eveningText = [
+    `${mentionPrefix} ${pickByDay(EVENING_OPENERS)}`,
     "",
-    `今日の対応リストです（要対応${yotaiou?.length ?? 0}人・返信待ち${noreply?.length ?? 0}人）`,
+    `18時時点・残り対応リスト（${totalRemaining}人・ラストスパートです）`,
     "",
     sections.join("\n\n"),
     "",
@@ -246,69 +352,18 @@ export async function GET(req: NextRequest) {
     "🎯 今日の目標",
     "　内覧アポ 3件 ／ 申込 1件",
     "",
-    totalUrgent > 0
-      ? `上${totalUrgent}人、今日中に潰していきましょう💪`
-      : "今日もやっていきましょう💪",
+    pickByDay(EVENING_CLOSERS),
   ].join("\n");
 
-  // ── LINE push with optional @mention ───────────────────────────────
-  type MentionMessage =
-    | { type: "text"; text: string }
-    | {
-        type: "text";
-        text: string;
-        mentionees: { index: number; length: number; type: "user"; userId: string }[];
-      };
-
-  const message: MentionMessage = suzukiUserId
-    ? {
-        type: "text",
-        text: fullText,
-        mentionees: [
-          {
-            index: 0,   // ﻿ position
-            length: 7,  // ﻿ (1) + @鈴木 祥平 (6) = 7 chars
-            type: "user",
-            userId: suzukiUserId,
-          },
-        ],
-      }
-    : { type: "text", text: fullText };
-
-  try {
-    const res = await fetch("https://api.line.me/v2/bot/message/push", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ to: groupId, messages: [message] }),
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.error("[daily-brief] LINE push failed:", res.status, body);
-      return NextResponse.json({ ok: false, error: body }, { status: 500 });
-    }
-  } catch (e) {
-    console.error("[daily-brief] LINE push error:", e);
-    return NextResponse.json(
-      { ok: false, error: e instanceof Error ? e.message : String(e) },
-      { status: 500 }
-    );
+  const result = await pushLineMessage(groupId, token, eveningText, suzukiUserId);
+  if (!result.ok) {
+    console.error("[daily-brief evening] LINE push failed:", result.error);
+    return NextResponse.json({ ok: false, error: result.error }, { status: 500 });
   }
 
-  // 送信時刻を記録（クールダウンガード用）
-  await supabase
-    .from("hanbancyo_settings")
+  await supabase.from("hanbancyo_settings")
     .upsert({ key: COOLDOWN_KEY, value: new Date().toISOString() }, { onConflict: "key" });
 
-  return NextResponse.json({
-    ok: true,
-    sent: true,
-    yotaiou:  yotaiou?.length  ?? 0,
-    noreply:  noreply?.length  ?? 0,
-    hot:      hot?.length      ?? 0,
-  });
+  return NextResponse.json({ ok: true, sent: true, mode: "evening",
+    yotaiou: yotaiou?.length ?? 0, noreply: noreply?.length ?? 0, hot: hot?.length ?? 0 });
 }
