@@ -993,29 +993,51 @@ async function notifySuzukiReply(db: ReturnType<typeof getDb>, convId: string, m
   const { data: suzukiRow } = await db.from("hanbancyo_settings").select("value").eq("key", "suzuki_line_user_id").maybeSingle();
   const suzukiUserId = suzukiRow?.value as string | undefined;
 
-  // 現在の【最優先】リスト
-  const { data: saiyuusen } = await db
-    .from("conversations")
-    .select("customer_name, status, updated_at")
-    .eq("is_flagged", true).eq("line_status", "active")
-    .not("status", "in", "(closed_won,closed_lost,lost)")
-    .order("updated_at", { ascending: true })
-    .limit(5);
+  const STATUS_LABELS: Record<string, string> = {
+    new_inquiry: "新規", hot: "毎日", property_search: "物件出し",
+    pending: "検討中", applying: "申込中", screening: "審査中",
+    contract: "契約", closed_won: "成約",
+  };
+
+  // ターゲット全リスト取得
+  const [{ data: flagged }, { data: hotList }] = await Promise.all([
+    db.from("conversations")
+      .select("customer_name, status")
+      .eq("is_flagged", true).eq("line_status", "active")
+      .not("status", "in", "(closed_won,closed_lost,lost)")
+      .order("updated_at", { ascending: true })
+      .limit(20),
+    db.from("conversations")
+      .select("customer_name")
+      .eq("is_hot", true).eq("line_status", "active")
+      .not("status", "in", "(closed_won,closed_lost,lost)")
+      .order("updated_at", { ascending: true })
+      .limit(10),
+  ]);
 
   const name = (conv.customer_name as string) || "名称未設定";
   const preview = msgText.slice(0, 25) + (msgText.length > 25 ? "…" : "");
-  const label = conv.is_flagged ? "【最優先】" : "【熱い客】";
-  const callToAction = conv.is_flagged ? "今すぐ対応して！！" : "今が熱い！！今すぐ詰めて！！";
 
   const lines: string[] = [
-    `@鈴木 祥平 ${label}${name}から返信きた！！`,
+    `@鈴木 祥平 【熱い客】${name}から返信きた！！`,
     `「${preview}」`,
-    callToAction,
+    "今が熱い！！今すぐ詰めて！！",
   ];
 
-  if (saiyuusen && saiyuusen.length > 0) {
-    lines.push("", "【最優先リスト】");
-    (saiyuusen as { customer_name: string | null }[]).forEach(c =>
+  lines.push("", "【しょーへいの今日のターゲット全リスト】");
+
+  if (flagged && flagged.length > 0) {
+    lines.push("", "► 決まる（最優先）");
+    (flagged as { customer_name: string | null; status: string | null }[]).forEach(c => {
+      const statusLabel = STATUS_LABELS[c.status ?? ""] ?? c.status ?? "";
+      const suffix = statusLabel ? `（${statusLabel}）` : "";
+      lines.push(`・${c.customer_name || "名称未設定"}${suffix}`);
+    });
+  }
+
+  if (hotList && hotList.length > 0) {
+    lines.push("", "► アツい（追撃必須）");
+    (hotList as { customer_name: string | null }[]).forEach(c =>
       lines.push(`・${c.customer_name || "名称未設定"}`)
     );
   }
