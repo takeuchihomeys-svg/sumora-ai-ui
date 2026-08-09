@@ -784,25 +784,11 @@ function buildAreaRouteCodes(c, mode = "auto") {
     const lines = getHubLines(stationKey); // ハブ駅展開
     lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
   }
-  // 駅モード: greedy minimum covering set（全指定駅を最少路線数でカバーする路線を選択）
-  // ※ LINE_ROUTE_MAP の路線IDは文字列（"6603"等）なので Number() 変換禁止。文字列のまま比較する
+  // 駅モード: 各駅の全沿線IDをそのまま追加（駅に紐づく全路線を対象にする）
   if (mode === "station" && _stationRoutePairs.length > 0) {
-    const _covered = new Set();
-    let _guard = 0;
-    while (_covered.size < _stationRoutePairs.length && _guard++ < 50) {
-      const _counts = {};
-      _stationRoutePairs.forEach((p, i) => {
-        if (_covered.has(i)) return;
-        p.routeIds.forEach(rid => { _counts[rid] = (_counts[rid] || 0) + 1; });
-      });
-      let _bestRoute = null, _bestCount = 0;
-      Object.keys(_counts).forEach(rid => {
-        if (_counts[rid] > _bestCount) { _bestRoute = rid; _bestCount = _counts[rid]; }
-      });
-      if (_bestRoute === null) break;
-      if (!route_ids.includes(_bestRoute)) route_ids.push(_bestRoute);
-      _stationRoutePairs.forEach((p, i) => { if (p.routeIds.includes(_bestRoute)) _covered.add(i); });
-    }
+    _stationRoutePairs.forEach(p => {
+      p.routeIds.forEach(rid => { if (!route_ids.includes(rid)) route_ids.push(rid); });
+    });
   }
   return { city_codes, route_ids };
 }
