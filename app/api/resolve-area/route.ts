@@ -405,6 +405,7 @@ interface ResolveAreaResponse {
   reins:   { station_pairs: Array<{ line: string; station: string | null }>; ward_names: string[] };
   new_stations: Array<{ token: string; ward: string; realpro_lines: string[]; itandi_lines: string[]; reins_line: string | null }>;
   new_regions:  Array<{ token: string; ward: string }>;
+  suggested_walk_minutes?: number | null;  // walk/bicycle制約から抽出した徒歩分数
 }
 
 export async function POST(req: NextRequest) {
@@ -695,7 +696,17 @@ commute_constraints: 通勤・通学・乗り換え制約
               (ai.commute_constraints ?? []).map(async (constraint) => {
                 const { base_station, max_minutes, max_transfers, transport_mode } = constraint;
                 // 自転車・徒歩はDeepSeek展開不要
-                if (transport_mode === "bicycle" || transport_mode === "walk") return;
+                if (transport_mode === "bicycle" || transport_mode === "walk") {
+                  // 徒歩・自転車モードはDeepSeek展開をスキップするが、max_minutesをsuggested_walk_minutesとして記録
+                  if (max_minutes && !result.suggested_walk_minutes) {
+                    result.suggested_walk_minutes = max_minutes;
+                  }
+                  // base_stationは駅として直接 station_names に追加（展開はしない）
+                  if (base_station && !result.realpro.station_names.includes(base_station)) {
+                    result.realpro.station_names.push(base_station);
+                  }
+                  return;
+                }
 
                 if (max_transfers !== undefined && max_transfers !== null) {
                   // 乗り換え制約: 路線名ベースで展開（resolveLineInternalフィルタ済み）

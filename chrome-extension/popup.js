@@ -2000,7 +2000,7 @@ function openInstructions(siteKey) {
     showUnknownWarn(computeUnknownTokens(selectedCustomer.desired_area || selectedCustomer.area || ""));
 
     autofillBtn.onclick = async () => {
-      const c = selectedCustomer;
+      let c = selectedCustomer;
       const adjArea      = document.getElementById("adj-area").value.trim();
       const adjRentMax   = document.getElementById("adj-rent-max").value;
       const adjAreaMin   = document.getElementById("adj-area-min").value;
@@ -2014,6 +2014,11 @@ function openInstructions(siteKey) {
 
       // 路線名・未登録地名をAPIで解決（itandi用途: 路線名→itandi路線名変換が必須）
       const apiData = await resolveAreaWithAPI(rawArea, "auto");
+      // resolve-area APIのレスポンスからstation_names/route_idsに加え、
+      // suggested_walk_minutes が返ってきた場合はcustomerのwalk_minutesが未設定の場合のみフォールバックとして使用
+      if (apiData?.suggested_walk_minutes && !c.walk_minutes) {
+        c = { ...c, walk_minutes: apiData.suggested_walk_minutes };
+      }
 
       // 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
       if (_areaModeSource === "auto" && apiData?.realpro) {

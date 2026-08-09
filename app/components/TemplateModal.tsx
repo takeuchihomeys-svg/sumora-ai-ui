@@ -705,7 +705,7 @@ interface TemplateModalProps {
   onRefresh?: () => void;
   customerName?: string;
   conversationState?: string;
-  recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
+  recentMessages?: Array<{ sender: string; text: string; imageUrl?: string; isAix?: boolean }>;
   linkedCustomer?: { id: string; name: string; conditions: string };
   initialCategory?: string;
   highlightKeyword?: string;
@@ -2313,8 +2313,13 @@ export default function TemplateModal({
     // AIXカテゴリのテンプレートの場合、AIXが送信したテキストをベースとして渡す
     // → generate-reply側でAIX最適化モードに切り替わり、会話全体ではなくそのテキストのみを改善する
     const isAixCategoryTemplate = tmpl.category.includes("AIX");
-    const aixSourceMessage = isAixCategoryTemplate && postAixContext?.sentMessage
-      ? postAixContext.sentMessage
+    // AIXカテゴリのテンプレートは「直前にAIXで送った文」を最適化のベースにする
+    // 優先順位: ① postAixContext（AIX送信直後のバナー経由） ② recentMessagesの最後のAIXスタッフ送信
+    const lastAixSentFromHistory = isAixCategoryTemplate
+      ? recentMessages?.slice().reverse().find(m => m.sender === "staff" && m.isAix && m.text)?.text
+      : undefined;
+    const aixSourceMessage = isAixCategoryTemplate
+      ? (postAixContext?.sentMessage || lastAixSentFromHistory || undefined)
       : undefined;
     try {
       // 新: generate-reply のテンプレート最適化モード（Step1状況分析 + 全プロンプトスタック + Sonnet）

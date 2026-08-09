@@ -8699,7 +8699,7 @@ export default function Home() {
           customerName={preferredCustomerName}
           conversationState={selectedConversation.status}
           recentMessages={(selectedConversation.messages || []).slice(-25).map((m: Message) => ({
-            sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, rawCreatedAt: m.rawCreatedAt,
+            sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, rawCreatedAt: m.rawCreatedAt, isAix: m.isAix || false,
           }))}
           staffMessagedToday={(() => {
             const msgs = selectedConversation.messages || [];
