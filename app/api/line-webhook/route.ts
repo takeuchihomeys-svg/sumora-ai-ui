@@ -953,11 +953,11 @@ async function notifyNewCustomer(db: ReturnType<typeof getDb>, convId: string, c
   const name = customerName || "名称未設定";
   const countNote = (todayNewCount ?? 0) > 1 ? `（今日${todayNewCount}人目）` : "（今日初めての新着！）";
 
-  const text = `﻿@鈴木 祥平 【新着】${name}が入ってきた！！${countNote}\n第一印象で全部決まるから！！今日中に必ず返して！！`;
+  const text = `@鈴木 祥平 【新着】${name}が入ってきた！！${countNote}\n第一印象で全部決まるから！！今日中に必ず返して！！`;
 
   type MentionMsg = { type: "text"; text: string; mentionees?: { index: number; length: number; type: "user"; userId: string }[] };
   const message: MentionMsg = suzukiUserId
-    ? { type: "text", text, mentionees: [{ index: 0, length: 7, type: "user", userId: suzukiUserId }] }
+    ? { type: "text", text, mentionees: [{ index: 0, length: 6, type: "user", userId: suzukiUserId }] }
     : { type: "text", text };
 
   try {
@@ -1007,7 +1007,7 @@ async function notifySuzukiReply(db: ReturnType<typeof getDb>, convId: string, m
   const callToAction = conv.is_flagged ? "今すぐ対応して！！" : "今が熱い！！今すぐ詰めて！！";
 
   const lines: string[] = [
-    `﻿@鈴木 祥平 ${label}${name}から返信きた！！`,
+    `@鈴木 祥平 ${label}${name}から返信きた！！`,
     `「${preview}」`,
     callToAction,
   ];
@@ -1022,7 +1022,7 @@ async function notifySuzukiReply(db: ReturnType<typeof getDb>, convId: string, m
   const text = lines.join("\n");
   type MentionMsg = { type: "text"; text: string; mentionees?: { index: number; length: number; type: "user"; userId: string }[] };
   const message: MentionMsg = suzukiUserId
-    ? { type: "text", text, mentionees: [{ index: 0, length: 7, type: "user", userId: suzukiUserId }] }
+    ? { type: "text", text, mentionees: [{ index: 0, length: 6, type: "user", userId: suzukiUserId }] }
     : { type: "text", text };
 
   try {
@@ -1049,10 +1049,10 @@ async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: 
   const { data: suzukiRow } = await db.from("hanbancyo_settings").select("value").eq("key", "suzuki_line_user_id").maybeSingle();
   const suzukiUserId = suzukiRow?.value as string | undefined;
 
-  const text = `﻿@鈴木 祥平 ${customerName}から返信きた！！今が熱い！！今すぐ詰めて！！`;
+  const text = `@鈴木 祥平 ${customerName}から返信きた！！今が熱い！！今すぐ詰めて！！`;
   type MentionMsg = { type: "text"; text: string; mentionees?: { index: number; length: number; type: "user"; userId: string }[] };
   const message: MentionMsg = suzukiUserId
-    ? { type: "text", text, mentionees: [{ index: 0, length: 7, type: "user", userId: suzukiUserId }] }
+    ? { type: "text", text, mentionees: [{ index: 0, length: 6, type: "user", userId: suzukiUserId }] }
     : { type: "text", text };
 
   try {
