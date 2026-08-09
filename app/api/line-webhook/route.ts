@@ -910,14 +910,14 @@ async function autoDetectTask(
   }
 }
 
-// 最優先（is_flagged）客が返信 → @鈴木メンション + 【最優先】リスト即時通知
+// 最優先（is_flagged）または熱い（is_hot）客が返信 → @鈴木メンション + 【最優先】リスト即時通知
 async function notifySuzukiReply(db: ReturnType<typeof getDb>, convId: string, msgText: string) {
   const { data: conv } = await db
     .from("conversations")
-    .select("customer_name, is_flagged")
+    .select("customer_name, is_flagged, is_hot")
     .eq("id", convId)
     .maybeSingle();
-  if (!conv?.is_flagged) return; // 最優先フラグがある顧客のみ通知
+  if (!conv?.is_flagged && !conv?.is_hot) return; // 最優先 or 熱い客のみ通知
 
   let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
   if (!groupId) {
@@ -941,11 +941,13 @@ async function notifySuzukiReply(db: ReturnType<typeof getDb>, convId: string, m
 
   const name = (conv.customer_name as string) || "名称未設定";
   const preview = msgText.slice(0, 25) + (msgText.length > 25 ? "…" : "");
+  const label = conv.is_flagged ? "【最優先】" : "【熱い客】";
+  const callToAction = conv.is_flagged ? "今すぐ対応して。" : "今が熱い。詰めて。";
 
   const lines: string[] = [
-    `﻿@鈴木 祥平 【最優先】${name}から返信きた！`,
+    `﻿@鈴木 祥平 ${label}${name}から返信きた！`,
     `「${preview}」`,
-    "今すぐ対応して。",
+    callToAction,
   ];
 
   if (saiyuusen && saiyuusen.length > 0) {
