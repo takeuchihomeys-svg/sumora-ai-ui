@@ -208,22 +208,25 @@ export async function GET(req: NextRequest) {
   const suzukiUserId = await resolveSuzukiUserId(groupId, token);
 
   // ── DB queries ───────────────────────────────────────────────────────
-  const sixHoursAgo  = new Date(Date.now() - 6  * 60 * 60 * 1000).toISOString();
-  const sevenDaysAgo = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000).toISOString();
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const sevenDaysAgo       = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000).toISOString();
   const CLOSED = "(closed_won,closed_lost,lost)";
 
   const [{ data: yotaiou }, { data: noreply }, { data: hot }] = await Promise.all([
+    // 🚨 要対応: flagあり・お客さん返信待ち
     supabase.from("conversations")
       .select("id, customer_name, status, last_message, updated_at")
       .eq("is_flagged", true).eq("last_sender", "customer").eq("line_status", "active")
       .not("status", "in", CLOSED).order("updated_at", { ascending: true }).limit(8),
 
+    // ⚡ 24h以内にやり取りあり・返信できていないお客さん（flagなし）
     supabase.from("conversations")
       .select("id, customer_name, status, last_message, updated_at")
       .eq("last_sender", "customer").eq("is_flagged", false).eq("line_status", "active")
-      .not("status", "in", CLOSED).lt("updated_at", sixHoursAgo)
-      .order("updated_at", { ascending: true }).limit(8),
+      .not("status", "in", CLOSED).gt("updated_at", twentyFourHoursAgo)
+      .order("updated_at", { ascending: true }).limit(10),
 
+    // 🔥 熱い客: is_hot=true・7日以内アクティブ
     supabase.from("conversations")
       .select("id, customer_name, status, last_sender, updated_at")
       .eq("is_hot", true).eq("line_status", "active")
@@ -243,19 +246,21 @@ export async function GET(req: NextRequest) {
     if (yotaiou && yotaiou.length > 0) {
       const lines = (yotaiou as ConvRow[]).map((c, i) => {
         const time = elapsedLabel(c.updated_at);
+        const statusLabel = STATUS_LABELS[c.status ?? ""] ?? (c.status ?? "");
         const preview = msgPreview(c.last_message ?? null);
-        return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time}${preview ? `\n   ${preview}` : ""}`;
+        return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${statusLabel} ｜ ${time}\n   ${preview || "（メッセージ確認して今すぐ返信！）"}`;
       });
-      sections.push(`━━ 🚨 要対応（${yotaiou.length}人）━━\nお客さんが返信待ちです。\n\n${lines.join("\n\n")}`);
+      sections.push(`━━ 🚨 最優先・今すぐ返信（${yotaiou.length}人）━━\n返信が来てます。今すぐ対応してください🔥\n\n${lines.join("\n\n")}`);
     }
 
     if (noreply && noreply.length > 0) {
       const lines = (noreply as ConvRow[]).map((c, i) => {
         const time = elapsedLabel(c.updated_at);
+        const statusLabel = STATUS_LABELS[c.status ?? ""] ?? (c.status ?? "");
         const preview = msgPreview(c.last_message ?? null);
-        return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time}${preview ? `\n   ${preview}` : ""}`;
+        return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${statusLabel} ｜ ${time}\n   ${preview || "（内容確認して返信！）"}`;
       });
-      sections.push(`━━ ⏰ 返信できていない（${noreply.length}人）━━\nflagなし・でも返事待ちです。\n\n${lines.join("\n\n")}`);
+      sections.push(`━━ ⚡ 24h以内やり取り・返信待ち（${noreply.length}人）━━\n昨日〜今日やり取りしてるお客さん。まだ返せていません！\n\n${lines.join("\n\n")}`);
     }
 
     if (hot && hot.length > 0) {
@@ -263,9 +268,14 @@ export async function GET(req: NextRequest) {
         const statusLabel = STATUS_LABELS[c.status ?? ""] ?? (c.status ?? "");
         const time = elapsedLabel(c.updated_at);
         const replyMark = c.last_sender === "customer" ? " ⚡返信待ち" : "";
-        return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time} → ${statusLabel}${replyMark}`;
+        const action = ["viewing", "estimate_request", "availability_check"].includes(c.status ?? "")
+          ? " → 内覧アポ詰める！"
+          : ["application", "applying"].includes(c.status ?? "")
+          ? " → 申込クロージング！"
+          : " → 物件提案・次アクション！";
+        return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${statusLabel} ｜ ${time}${replyMark}${action}`;
       });
-      sections.push(`━━ 🔥 今日の熱い客（${hot.length}人）━━\nアポ・申込を狙いにいきましょう！\n\n${lines.join("\n")}`);
+      sections.push(`━━ 🔥 熱い客・今日中に詰める（${hot.length}人）━━\nここで内覧アポ・申込につなげていきましょう！\n\n${lines.join("\n")}`);
     }
 
     if (sections.length === 0) {
@@ -278,13 +288,14 @@ export async function GET(req: NextRequest) {
     const fullText = [
       `${mentionPrefix} ${pickByDay(MORNING_OPENERS)}`,
       "",
-      `今日の対応リストです（要対応${yotaiou?.length ?? 0}人・返信待ち${noreply?.length ?? 0}人）`,
+      `📋 本日の対応リスト（要対応${yotaiou?.length ?? 0}人・24h返信待ち${noreply?.length ?? 0}人・熱い客${hot?.length ?? 0}人）`,
       "",
       sections.join("\n\n"),
       "",
       "──────────────────",
       "🎯 今日の目標",
       "　内覧アポ 3件 ／ 申込 1件",
+      "　上から順番に詰めていきましょう🔥",
       "",
       totalUrgent > 0
         ? `${pickByDay(MORNING_CLOSERS)}`
@@ -310,28 +321,35 @@ export async function GET(req: NextRequest) {
   if (yotaiou && yotaiou.length > 0) {
     const lines = (yotaiou as ConvRow[]).map((c, i) => {
       const time = elapsedLabel(c.updated_at);
+      const statusLabel = STATUS_LABELS[c.status ?? ""] ?? (c.status ?? "");
       const preview = msgPreview(c.last_message ?? null);
-      return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time}${preview ? ` ${preview}` : ""}`;
+      return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${statusLabel} ｜ ${time}${preview ? ` ${preview}` : ""}`;
     });
-    sections.push(`🚨 まだ返せてない要対応（${yotaiou.length}人）\n${lines.join("\n")}`);
+    sections.push(`🚨 最優先・今すぐ返信（${yotaiou.length}人）\n今日中に必ず返してください！\n${lines.join("\n")}`);
   }
 
   if (noreply && noreply.length > 0) {
     const lines = (noreply as ConvRow[]).map((c, i) => {
       const time = elapsedLabel(c.updated_at);
+      const statusLabel = STATUS_LABELS[c.status ?? ""] ?? (c.status ?? "");
       const preview = msgPreview(c.last_message ?? null);
-      return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${time}${preview ? ` ${preview}` : ""}`;
+      return `${i + 1}. ${c.customer_name || "名称未設定"} ｜ ${statusLabel} ｜ ${time}${preview ? ` ${preview}` : ""}`;
     });
-    sections.push(`⏰ 返信できていない（${noreply.length}人）\n${lines.join("\n")}`);
+    sections.push(`⚡ 24h以内やり取り・返信待ち（${noreply.length}人）\n今日中にここだけ返してください！\n${lines.join("\n")}`);
   }
 
   if (hot && hot.length > 0) {
     const lines = (hot as ConvRow[]).map((c, i) => {
       const statusLabel = STATUS_LABELS[c.status ?? ""] ?? (c.status ?? "");
-      const replyMark = c.last_sender === "customer" ? " ⚡" : "";
-      return `${i + 1}. ${c.customer_name || "名称未設定"} → ${statusLabel}${replyMark}`;
+      const replyMark = c.last_sender === "customer" ? " ⚡返信待ち" : "";
+      const action = ["viewing", "estimate_request", "availability_check"].includes(c.status ?? "")
+        ? " → 内覧アポ！"
+        : ["application", "applying"].includes(c.status ?? "")
+        ? " → 申込！"
+        : "";
+      return `${i + 1}. ${c.customer_name || "名称未設定"} → ${statusLabel}${replyMark}${action}`;
     });
-    sections.push(`🔥 熱い客（${hot.length}人）まだ間に合います！\n${lines.join("\n")}`);
+    sections.push(`🔥 熱い客（${hot.length}人）夕方が勝負です！\n${lines.join("\n")}`);
   }
 
   if (sections.length === 0) {
