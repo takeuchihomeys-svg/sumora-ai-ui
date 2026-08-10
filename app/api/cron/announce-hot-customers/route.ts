@@ -80,20 +80,13 @@ export async function GET(req: NextRequest) {
   const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
   const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
 
-  // ① 🎯ターゲット / 🔥アツい（14日以内）/ 物件出し要 / 3日フォローアップ を並列取得
-  const [{ data: targetCustomers }, { data: hotConvs }, { data: propCustomers }, { data: staleConvs }] = await Promise.all([
-    // 🎯 今月決まりそうなお客さん（申込中・審査中・契約中）
-    supabase
-      .from("property_customers")
-      .select("id, customer_name, status, account, updated_at")
-      .in("status", ["applying", "screening", "contract"])
-      .order("updated_at", { ascending: false })
-      .limit(20),
-
+  // 🔥アツい（14日以内）/ 物件出し要 / 3日フォローアップ を並列取得
+  const [{ data: hotConvs }, { data: propCustomers }, { data: staleConvs }] = await Promise.all([
     // 🔥 マークされた会話（14日以内の活動のみ・古いis_hotを除外）
+    // ※ property_customers.status も取得し、申込以降（applying/screening/contract）を除外する
     supabase
       .from("conversations")
-      .select("id, customer_name, account, last_message, last_sender, updated_at, property_customer_id, property_customers(last_property_sent_at, hot_confirmed_at)")
+      .select("id, customer_name, account, last_message, last_sender, updated_at, property_customer_id, property_customers(last_property_sent_at, hot_confirmed_at, status)")
       .eq("is_hot", true)
       .gte("updated_at", fourteenDaysAgo)
       .order("updated_at", { ascending: false })
@@ -124,8 +117,11 @@ export async function GET(req: NextRequest) {
     last_message: string | null; last_sender: string | null; updated_at: string | null;
     property_customer_id: string | null;
     // Supabaseのリレーションは常に配列で返る
-    property_customers: { last_property_sent_at: string | null; hot_confirmed_at: string | null }[] | null;
+    property_customers: { last_property_sent_at: string | null; hot_confirmed_at: string | null; status: string | null }[] | null;
   };
+
+  // 申込以降（申込中/審査中/契約中）は別ツールで管理するため除外
+  const POST_APPLICATION = new Set(["applying", "screening", "contract"]);
 
   // 今日の開始（JST 00:00 = UTC 前日15:00）
   const _jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
@@ -139,50 +135,33 @@ export async function GET(req: NextRequest) {
     return !!(sent || confirmed);
   };
 
-  // 🔥会話に紐付いているproperty_customer_idのセット（重複排除用）
+  // 🔥会話：申込以降を除外してからIDセットを構築
+  const hotRows = (hotConvs as HotConvRow[] ?? []).filter((c) => {
+    const pcStatus = c.property_customers?.[0]?.status ?? null;
+    return !POST_APPLICATION.has(pcStatus ?? "");
+  });
   const hotLinkedPcIds = new Set(
-    (hotConvs as HotConvRow[] ?? []).map((c) => c.property_customer_id).filter(Boolean) as string[]
+    hotRows.map((c) => c.property_customer_id).filter(Boolean) as string[]
   );
 
-  // 🎯ターゲットのIDセット（📦との重複排除用）
-  type TargetCustomer = { id: string; customer_name: string | null; status: string | null; account: string | null; updated_at: string | null };
-  const targetList = targetCustomers as TargetCustomer[] ?? [];
-  const targetPcIds = new Set(targetList.map((c) => c.id));
-
-  // 物件出しが実際に必要な人だけに絞り、🔥・🎯と重複する人は除外
+  // 物件出しが実際に必要な人だけに絞り、🔥と重複する人は除外
   type PropCustomer = { id: string; customer_name: string | null; status: string | null; last_property_sent_at: string | null; account: string | null };
   const needsPropList = (propCustomers as PropCustomer[] ?? []).filter((c) =>
     needsPropertyAction(c.status ?? "", c.last_property_sent_at ?? null) &&
-    !hotLinkedPcIds.has(c.id) &&
-    !targetPcIds.has(c.id)
+    !hotLinkedPcIds.has(c.id)
   );
 
   // どれも0件ならスキップ
-  if (targetList.length === 0 && (!hotConvs || hotConvs.length === 0) && needsPropList.length === 0 && (!staleConvs || staleConvs.length === 0)) {
+  if (hotRows.length === 0 && needsPropList.length === 0 && (!staleConvs || staleConvs.length === 0)) {
     return NextResponse.json({ ok: true, skipped: true, reason: "no actions needed" });
   }
 
   const hour = getJSTHour();
   const sections: string[] = [];
 
-  // 🎯ターゲット（今月決まりそう）セクション
-  const TARGET_STATUS_LABEL: Record<string, string> = {
-    applying: "申込中", screening: "審査中", contract: "契約中",
-  };
-  if (targetList.length > 0) {
-    const lines = targetList.map((c, i) => {
-      const name = c.customer_name || "名称未設定";
-      const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
-      const label = TARGET_STATUS_LABEL[c.status ?? ""] ?? c.status ?? "";
-      const time = relTime(c.updated_at);
-      return `${i + 1}. ${name}（${acct}）— ${label}　${time}`;
-    });
-    sections.push(`🎯 決まりそうリスト（${targetList.length}人）\n\n${lines.join("\n")}`);
-  }
-
-  // 🔥セクション（14日以内の活動のみ）
-  if (hotConvs && hotConvs.length > 0) {
-    const rows = hotConvs as HotConvRow[];
+  // 🔥セクション（14日以内・申込以降除外）
+  if (hotRows.length > 0) {
+    const rows = hotRows;
     const doneCount = rows.filter((c) =>
       isDoneToday(c.property_customers) ||
       (c.last_sender !== "customer" && !!c.updated_at && new Date(c.updated_at) >= todayStart)
@@ -205,7 +184,7 @@ export async function GET(req: NextRequest) {
       const preview = (c.last_message ?? "").slice(0, 18) + ((c.last_message ?? "").length > 18 ? "…" : "");
       return `${i + 1}. ${name}（${acct}）\n   ${actionMark}　${replyMark} ${time}\n   └ ${preview}`;
     });
-    sections.push(`🔥 あついお客さん（${rows.length}人・14日以内 / ✅${doneCount}名対応済）\n\n${lines.join("\n\n")}`);
+    sections.push(`🔥 あついお客さん（${rows.length}人 / ✅${doneCount}名対応済）\n\n${lines.join("\n\n")}`);
   }
 
   // 📦物件出し要セクション
@@ -257,5 +236,5 @@ export async function GET(req: NextRequest) {
     { onConflict: "key" }
   );
 
-  return NextResponse.json({ ok: true, target: targetList.length, hot: hotConvs?.length ?? 0, needsProp: needsPropList.length, stale: staleList.length });
+  return NextResponse.json({ ok: true, hot: hotRows.length, needsProp: needsPropList.length, stale: staleList.length });
 }
