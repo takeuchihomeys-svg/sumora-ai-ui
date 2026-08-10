@@ -16,7 +16,7 @@ const ACCOUNT_CONFIG: Record<Account, { label: string; grad: string; accent: str
 
 // アカウント別仲介手数料デフォルト
 const ACCOUNT_COMMISSION: Record<Account, { commission: number; commissionTax: number }> = {
-  sumora: { commission: 2980, commissionTax: 298 },
+  sumora: { commission: 2980, commissionTax: 0 },
   ieyasu: { commission: 0,    commissionTax: 0 },
   giga:   { commission: 0,    commissionTax: 0 },
 };
@@ -377,9 +377,12 @@ export default function EstimatePage() {
       if (key === "guaranteeRate") {
         updated.guarantee = Math.round(calcGuaranteeBase(prev.rent, prev.managementFee, prev.waterFee) * (Number(value) || 0) / 100);
       }
-      // 仲介手数料変更時に消費税を自動計算（10%）
+      // 仲介手数料変更時: スモラは消費税0固定、他は10%自動計算
       if (key === "commission") {
-        updated.commissionTax = Math.round((Number(value) || 0) * 0.1);
+        const tax = ACCOUNT_COMMISSION[account].commissionTax === 0
+          ? 0
+          : Math.round((Number(value) || 0) * 0.1);
+        updated.commissionTax = tax;
       }
       // 駐車場手数料変更時も同様
       if (key === "parkingCommission") {
