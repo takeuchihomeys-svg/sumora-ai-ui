@@ -255,6 +255,7 @@ export default function EstimatePage() {
   const reviewRef = useRef<HTMLDivElement>(null);
   const printRef = useRef<HTMLDivElement>(null);
   const [capturing, setCapturing] = useState(false);
+  const [showParkingEditor, setShowParkingEditor] = useState(false);
   const [lineModal, setLineModal] = useState(false);
   const [lineText, setLineText] = useState("");
   const [lineCopied, setLineCopied] = useState(false);
@@ -977,7 +978,49 @@ export default function EstimatePage() {
                     クリーニング代は退去時清算（初期費用から除外）
                   </label>
                 </div>
-                <div className="mt-2 text-right">
+                {/* 駐車場追加エディタ */}
+                {(showParkingEditor || (items.parkingMonthly > 0 || items.parkingDeposit > 0)) && (
+                  <div className="mt-2 rounded-xl bg-[#e8f5e9] p-3 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-[#2E7D32]">🅿 駐車場費用</span>
+                      <button
+                        onClick={() => { setItems((prev) => prev ? { ...prev, parkingMonthly: 0, parkingDeposit: 0 } : prev); setShowParkingEditor(false); }}
+                        className="text-[11px] text-[#9e9e9e] active:opacity-60"
+                      >削除</button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-[#667781] shrink-0 w-24">翌月駐車場代</span>
+                      <input
+                        type="number"
+                        min="0"
+                        className="w-28 rounded-lg border border-[#c8e6c9] px-2 py-1 text-[12px] outline-none focus:border-[#4CAF50]"
+                        value={items.parkingMonthly || ""}
+                        placeholder="0"
+                        onChange={(e) => setItems((prev) => prev ? { ...prev, parkingMonthly: Number(e.target.value) || 0 } : prev)}
+                      />
+                      <span className="text-[11px] text-[#667781]">円</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-[#667781] shrink-0 w-24">駐車場保証金</span>
+                      <input
+                        type="number"
+                        min="0"
+                        className="w-28 rounded-lg border border-[#c8e6c9] px-2 py-1 text-[12px] outline-none focus:border-[#4CAF50]"
+                        value={items.parkingDeposit || ""}
+                        placeholder="0"
+                        onChange={(e) => setItems((prev) => prev ? { ...prev, parkingDeposit: Number(e.target.value) || 0 } : prev)}
+                      />
+                      <span className="text-[11px] text-[#667781]">円</span>
+                    </div>
+                  </div>
+                )}
+                <div className="mt-2 flex items-center justify-between">
+                  {!(showParkingEditor || items.parkingMonthly > 0 || items.parkingDeposit > 0) ? (
+                    <button
+                      onClick={() => setShowParkingEditor(true)}
+                      className="rounded-full border border-[#4CAF50] px-3 py-1 text-[11px] font-bold text-[#2E7D32] active:opacity-70"
+                    >🅿 駐車場を追加</button>
+                  ) : <div />}
                   <button
                     onClick={addOtherItem}
                     className="rounded-full px-3 py-1 text-[11px] font-bold text-white"

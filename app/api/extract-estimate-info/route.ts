@@ -122,8 +122,8 @@ export async function POST(req: NextRequest) {
   "keyExchange": 鍵交換代（数値。不明なら0）,
   "cleaning": クリーニング代（数値。不明なら0）,
   "cleaningAtDeparture": クリーニング代が「退去時清算」「退去時精算」「退去時」の場合はtrue（入居時に支払わず退去時に精算するため初期費用から除外）、入居時支払いの場合はfalse（不明はfalse）,
-  "parkingDeposit": 駐車場保証金（数値。不明なら0）,
-  "parkingMonthly": 翌月駐車場代（数値。不明なら0）,
+  "parkingDeposit": 0,
+  "parkingMonthly": 0,
   "otherItems": [{"item": "項目名", "amount": 税込金額数値}],
   "discountAmount": 割引額（数値、正数で。不明なら0）,
   "discountNote": "割引の説明（あれば）",
@@ -141,6 +141,7 @@ export async function POST(req: NextRequest) {
 - 【退去時費用の除外】退去時・退去時清算・退去時精算・退去時支払い・退去時 ¥〇〇 等の文言が付いた費用は一切初期費用に含めない。室内清掃費用・ルームクリーニング・ハウスクリーニング代が退去時扱いの場合はcleaning: 0、cleaningAtDeparture: true。退去時と分かる費用はotherItemsにも絶対に入れない
 - 【業務委託料の除外】業務委託料・業者委託料・業者手数料・事務委託料・管理委託料は不動産会社への報酬であり入居者の初期費用ではない。commission・parkingCommission・otherItems等いかなるフィールドにも含めない
 - 【年間保証料・年次費用の除外】年間保証料・年次保証料・年間更新料・年次更新料等、毎年発生する年次費用は初期費用ではない。otherItemsにも含めない（初回のみ発生する初期保証料guaranteeとは別扱い）
+- 【駐車場・駐輪場費用の除外】駐車場代・駐輪場代・駐車場保証金・駐車場月額・バイク置き場代等は必ずparkingDeposit: 0、parkingMonthly: 0とする。otherItemsにも含めない（ユーザーが必要な場合のみ手動追加するため）
 - monthlyGuaranteeFee: 「月額保証料」「保証料(月額)」等の毎月支払う保証料。otherItemsには入れずこのフィールドに入れる（初回保証料guaranteeとは別）
 - 日割賃料は抽出不要（入居日から自動計算するため）
 - 不明な項目は0または空文字
