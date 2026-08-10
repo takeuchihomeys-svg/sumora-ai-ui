@@ -870,9 +870,9 @@ function buildGenerationMessages(
     const parts: string[] = [];
     if (closingStrategyFromAnalysis) parts.push(`AIが判断した成約への一手: ${closingStrategyFromAnalysis}`);
     if (closingPatternFromSummary) parts.push(`この会話の成約ポイント: ${closingPatternFromSummary}`);
-    if (nextActionFromSummary) parts.push(`今すぐ打つべき次の一手: ${nextActionFromSummary}`);
+    if (nextActionFromSummary) parts.push(`今すぐ打つべき次の一手（スタッフへの行動方針）: ${nextActionFromSummary}`);
     if (parts.length === 0) return "";
-    return `【🎯 最優先指示 — フェーズ別パターンより上位・この返信で必ず実行すること】\n${parts.join("\n")}\n`;
+    return `【🎯 最優先指示 — フェーズ別パターンより上位・この返信で必ず実行すること】\n${parts.join("\n")}\n⚠️ 上記はスタッフへの行動方針であり、物件の事実情報ではありません。「退去予定」「空き予定」「〜月末まで」等の具体的な期日・空室情報は、会話履歴やDBで確認された事実でない限りLINEメッセージ本文に断言・創作しないこと。\n`;
   })();
 
   const prompt = `${propertyStatusNote}
