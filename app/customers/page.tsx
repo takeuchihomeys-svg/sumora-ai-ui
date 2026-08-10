@@ -2255,29 +2255,40 @@ function CustomersPageInner() {
                   <>
                     {/* 物件探し中：条件チップ */}
                     <div className="border-t border-[#f0f2f5] px-4 py-2.5">
-                      {/* 地域/駅バッジ（ON=実色固定 / OFF=グレー） */}
+                      {/* 地域/駅バッジ（自動推定=実色/枠線なし・手動固定=実色/✓） */}
                       {c.status !== "pending" && (() => {
                         const _cm: "auto" | "ward" | "station" | "both" =
                           (areaModeByCustomer[c.id] ?? c.area_mode ?? "auto") as "auto" | "ward" | "station" | "both";
-                        const _wM = _cm === "ward" || _cm === "both";
-                        const _sM = _cm === "station" || _cm === "both";
+                        const _isManual = _cm !== "auto";
+                        // 手動設定がある場合はそれを使用、auto の場合は条件から推定
+                        const effectiveModes = getEffectiveSearchModes(c);
+                        const _wM = _isManual ? (_cm === "ward" || _cm === "both") : effectiveModes.includes("ward");
+                        const _sM = _isManual ? (_cm === "station" || _cm === "both") : effectiveModes.includes("station");
                         return (
                           <div className="flex items-center gap-1 mb-1.5" onClick={(e) => e.stopPropagation()}>
                             <button
                               onClick={() => handleAreaModeToggle(c, "ward")}
-                              className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold border transition-colors active:scale-95 ${
-                                _wM ? "bg-teal-600 text-white border-transparent" : "bg-white text-gray-300 border-gray-200"
+                              className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold transition-colors active:scale-95 ${
+                                _wM
+                                  ? _isManual
+                                    ? "bg-teal-600 text-white border border-transparent"
+                                    : "bg-teal-100 text-teal-700 border border-teal-400"
+                                  : "bg-white text-gray-300 border border-gray-200"
                               }`}
                             >
-                              {_wM ? "✓ 地域" : "地域"}
+                              {_isManual && _wM ? "✓ 地域" : "地域"}
                             </button>
                             <button
                               onClick={() => handleAreaModeToggle(c, "station")}
-                              className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold border transition-colors active:scale-95 ${
-                                _sM ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-300 border-gray-200"
+                              className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold transition-colors active:scale-95 ${
+                                _sM
+                                  ? _isManual
+                                    ? "bg-blue-600 text-white border border-transparent"
+                                    : "bg-blue-100 text-blue-700 border border-blue-400"
+                                  : "bg-white text-gray-300 border border-gray-200"
                               }`}
                             >
-                              {_sM ? "✓ 駅" : "駅"}
+                              {_isManual && _sM ? "✓ 駅" : "駅"}
                             </button>
                           </div>
                         );
