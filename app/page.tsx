@@ -622,6 +622,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
+  const [showAixHotPanel, setShowAixHotPanel] = useState(false);
   const [suggestedAixAction, setSuggestedAixAction] = useState<string | null>(null);
   const [showCondPanel, setShowCondPanel] = useState(false);
   const [aixInspectLabel, setAixInspectLabel] = useState<string | null>(null);
@@ -5317,6 +5318,16 @@ export default function Home() {
               </button>
               {/* 右端ボタン群 */}
               <div className="absolute right-0 flex items-center">
+                {/* AIXパネルボタン（アツい・要対応リスト） */}
+                <button
+                  onClick={() => setShowAixHotPanel(true)}
+                  className="flex items-center justify-center px-2 py-1 mr-0.5"
+                  title="AIXリスト（アツい・要対応）"
+                >
+                  <span className="rounded-lg border border-[#1565C0]/40 bg-[#e8f4fd] px-2 py-0.5 text-[11px] font-black text-[#1565C0] leading-tight">
+                    AIX
+                  </span>
+                </button>
                 {/* AIX送信対象フィルターボタン */}
                 <button
                   onClick={() => setStatusFilter((prev) => prev === "aix_target" ? "all" : "aix_target")}
@@ -9241,6 +9252,61 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* AIXパネル — アツい・要対応リスト */}
+      {showAixHotPanel && (() => {
+        const now = Date.now();
+        const ms14d = 14 * 86400_000;
+        const ACCT: Record<string, string> = { sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ", hasu: "ハス" };
+        const hotList = conversations.filter((c) => c.isHot && !c.isPostApply && now - new Date(c.updatedAt ?? "").getTime() <= ms14d);
+        const flaggedList = conversations.filter((c) => c.isFlagged && !c.isPostApply);
+        const renderRow = (c: Conversation) => (
+          <div
+            key={c.id}
+            className="flex items-center gap-3 px-5 py-3 border-b border-[#f0f2f5] last:border-b-0 active:bg-[#f5f6f6] cursor-pointer"
+            onClick={() => { setSelectedId(c.id); setShowAixHotPanel(false); }}
+          >
+            <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-black shrink-0 overflow-hidden" style={{ background: "linear-gradient(135deg,#1565C0,#2196F3)" }}>
+              {c.profileImageUrl
+                ? <img src={c.profileImageUrl} alt="" className="w-full h-full object-cover" />
+                : (c.customerName?.trim()?.charAt(0) ?? "?")}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0 mb-0.5">
+                <span className="text-[13px] font-bold text-[#111b21] truncate">{c.customerName}</span>
+                {c.account && <span className="text-[9px] font-bold text-[#8696a0] shrink-0">{ACCT[c.account] ?? c.account}</span>}
+                {c.isFlagged && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-bold text-white shrink-0">要対応</span>}
+              </div>
+              <div className="text-[11px] text-[#8696a0] truncate">{c.lastMessage ?? ""}</div>
+            </div>
+          </div>
+        );
+        const Section = ({ title, badge, color, items }: { title: string; badge: number; color: string; items: Conversation[] }) => (
+          <div className="border-b border-[#f0f2f5] last:border-b-0">
+            <div className="flex items-center gap-2 px-5 py-3 bg-[#f8f9fa] sticky top-0">
+              <span className="text-[13px] font-black text-[#111b21]">{title}</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold text-white ${color}`}>{badge}</span>
+            </div>
+            {items.length === 0
+              ? <div className="px-5 py-4 text-[12px] text-[#8696a0]">該当なし</div>
+              : items.map(renderRow)}
+          </div>
+        );
+        return (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={(e) => { if (e.target === e.currentTarget) setShowAixHotPanel(false); }}>
+            <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: "75svh" }}>
+              <div className="flex items-center justify-between px-5 py-4 flex-shrink-0" style={{ background: "linear-gradient(135deg,#0d1b3e 0%,#1565C0 100%)" }}>
+                <span className="text-base font-black text-white tracking-tight">AIX</span>
+                <button onClick={() => setShowAixHotPanel(false)} className="text-white/70 text-xl leading-none active:opacity-60">✕</button>
+              </div>
+              <div className="overflow-y-auto flex-1 pb-6">
+                <Section title="🔥 アツい" badge={hotList.length} color="bg-orange-400" items={hotList} />
+                <Section title="🚨 要対応" badge={flaggedList.length} color="bg-red-500" items={flaggedList} />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ハンバーガーメニューモーダル */}
       {showHamburgerMenu && (
