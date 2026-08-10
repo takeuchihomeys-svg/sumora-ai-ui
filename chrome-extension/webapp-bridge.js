@@ -70,6 +70,6 @@ window.addEventListener("message", (e) => {
 
 chrome.runtime.onMessage.addListener(function(msg) {
   if (msg && msg.type === "axlx-batch-customer-done") {
-    window.postMessage({ from: "aixlinx-batch-customer-done" }, "*");
+    window.postMessage({ from: "aixlinx-batch-customer-done", customerId: msg.customerId || null }, "*");
   }
 });

@@ -773,6 +773,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 site:         "realpro",
                 areaMode:     _areaMode,
                 is_wide:      _isWide,
+                auto_send_all: !!(msg.auto_send_all),
               }, function(resp) {
                 if (chrome.runtime.lastError) {
                   console.log("[webapp-search] tabs.sendMessage エラー:", chrome.runtime.lastError.message);
@@ -853,6 +854,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               site:         "itandi",
               areaMode:     _areaMode,
               is_wide:      _isWide,
+              auto_send_all: !!(msg.auto_send_all),
             }, function(resp) {
               if (chrome.runtime.lastError) {
                 console.log("[webapp-search] itandi tabs.sendMessage エラー:", chrome.runtime.lastError.message);

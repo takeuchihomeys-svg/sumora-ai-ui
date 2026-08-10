@@ -442,6 +442,7 @@ function CustomersPageInner() {
   const [batchDone, setBatchDone] = useState<boolean>(false);
   const batchListRef = useRef<Customer[]>([]);
   const batchIsFlaggedRef = useRef<boolean>(false);
+  const batchIndexRef = useRef<number>(0);
 
   // 改善13: 会話ログの自動スクロール用。顧客IDごとにスクロールコンテナのDOM参照を保持し、
   // メッセージ読み込み完了（msgCache更新）時に最下部（最新メッセージ）へスクロールする
@@ -1465,6 +1466,7 @@ function CustomersPageInner() {
     const targets = sorted.filter((c) => !isDoneToday(c));
     batchListRef.current = targets;
     setBatchIndex(0);
+    batchIndexRef.current = 0;
     setBatchMode(true);
     if (targets.length > 0) {
       // 全員まとめてキューに追加（30秒以内にPC Chrome拡張が処理開始）
@@ -1486,15 +1488,18 @@ function CustomersPageInner() {
   };
 
   const goNextBatch = () => {
-    const next = batchIndex + 1;
+    const next = batchIndexRef.current + 1;
     if (next >= batchListRef.current.length) {
       setBatchMode(false);
       setBatchIndex(0);
+      batchIndexRef.current = 0;
+      batchIsFlaggedRef.current = false;
       setBatchDone(true);
       setTimeout(() => setBatchDone(false), 4000);
       return;
     }
     setBatchIndex(next);
+    batchIndexRef.current = next;
     const nextCustomer = batchListRef.current[next];
     if (batchIsFlaggedRef.current) {
       fireFlaggedSearch(nextCustomer);
@@ -1519,6 +1524,11 @@ function CustomersPageInner() {
     const onBatchCustomerDone = (e: MessageEvent) => {
       if (e.data?.from !== "aixlinx-batch-customer-done") return;
       if (!batchIsFlaggedRef.current) return;
+      const doneId = e.data?.customerId != null ? String(e.data.customerId) : null;
+      const currentId = batchListRef.current[batchIndexRef.current]?.id != null
+        ? String(batchListRef.current[batchIndexRef.current].id)
+        : null;
+      if (doneId && currentId && doneId !== currentId) return;
       goNextBatch();
     };
     window.addEventListener("message", onBatchCustomerDone);

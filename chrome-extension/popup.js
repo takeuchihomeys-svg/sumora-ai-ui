@@ -2423,6 +2423,8 @@ function openInstructions(siteKey) {
     showUnknownWarn(computeUnknownTokens(selectedCustomer.desired_area || selectedCustomer.area || ""));
 
     autofillBtn.onclick = async () => {
+      const isAutomated_itandi = !!autofillBtn.dataset.automated;
+      const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
       let c = selectedCustomer;
       const adjArea      = document.getElementById("adj-area").value.trim();
       const adjRentMax   = document.getElementById("adj-rent-max").value;
@@ -2631,7 +2633,7 @@ function openInstructions(siteKey) {
       } catch (_) { /* ignore */ }
       // underbar（iframe）モード: postMessage経由 / サイドパネルモード: chrome.tabs.sendMessage経由
       if (isUnderbar) {
-        window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions }, "*");
+        window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions, source: isAutoSendAll_itandi ? "flagged_batch" : (isAutomated_itandi ? "automated" : "manual") }, "*");
       } else {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
           if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "axlx-itandi-autofill", conditions }, () => {
@@ -3177,6 +3179,7 @@ document.addEventListener("DOMContentLoaded", () => {
             aBtn.dataset.auto_send_all = cmd.auto_send_all ? "1" : "";
             aBtn.click();
             delete aBtn.dataset.automated;
+            delete aBtn.dataset.auto_send_all;
           }
         }, _autoClickDelay);
       }
@@ -3216,6 +3219,7 @@ document.addEventListener("DOMContentLoaded", () => {
           aBtn.dataset.auto_send_all = cmd.auto_send_all ? "1" : "";
           aBtn.click();
           delete aBtn.dataset.automated;
+          delete aBtn.dataset.auto_send_all;
         }
       }, _autoClickDelay2);
     }
@@ -3491,6 +3495,7 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           if (aBtn) {
             aBtn.dataset.auto_send_all = msg.auto_send_all ? "1" : "";
             aBtn.click(); // display:noneでもonclickは発火する
+            delete aBtn.dataset.auto_send_all;
             sendResponse({ ok: true });
           } else {
             sendResponse({ ok: false });

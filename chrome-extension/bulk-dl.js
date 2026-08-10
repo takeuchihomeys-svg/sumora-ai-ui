@@ -27,6 +27,7 @@
 
   function clearAutoSendState() {
     try { sessionStorage.removeItem(AUTO_SEND_KEY); } catch (e) {}
+    _autoSendArmed = false;
   }
 
   function findPrintBtns() {
@@ -283,7 +284,7 @@
       if (!e.data || e.data.from !== "axlx-customer-response") return;
       clearTimeout(timer);
       window.removeEventListener("message", handler);
-      callback(e.data.name || null, e.data.conditions || null);
+      callback(e.data.name || null, e.data.conditions || null, e.data.id || null);
     };
     window.addEventListener("message", handler);
     window.postMessage({ from: "axlx-get-customer" }, "*");
@@ -614,7 +615,7 @@
       }
     } else {
       clearAutoSendState();
-      try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done" }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+      try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function() { void chrome.runtime.lastError; }); } catch (_) {}
       var countEl = document.getElementById("axlx-count");
       if (countEl) countEl.textContent = "全ページ送信完了！";
       console.log("[AXLX bulk-dl] 全ページ自動送信が完了しました。（" + state.currentPage + "ページ処理済み）");
@@ -693,8 +694,8 @@
   // ── 全ページ自動送信: エントリポイント ────────────────────────────────────
   function autoSendAllPages() {
     if (getAutoSendState()) return; // 既に動作中
-    getCustomerFromPopup(function (name, conditions) {
-      var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions };
+    getCustomerFromPopup(function (name, conditions, customerId) {
+      var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions, customerId: customerId || null };
       setAutoSendState(state);
       autoSendOnePage(state, function (ok) {
         tryNext(state);
