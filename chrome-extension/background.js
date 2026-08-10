@@ -1881,7 +1881,7 @@ function _buildBatchConditions(c, isWide) {
   }
   return {
     is_wide: !!isWide, // 修正5: page-script 側の広ロジック（間取り拡張等）に伝搬
-    area_mode: c.area_mode || null, // webapp経由で渡されたarea_modeをpage-scriptに伝搬
+    area_mode: (c.area_mode === 'both') ? null : (c.area_mode || null), // 'both'はnull(自動判定)にフォールバック
     rent_max: c.rent_max || null,
     rent_min: c.rent_min || null,
     walk_minutes: c.walk_minutes || null,
@@ -2197,13 +2197,14 @@ async function _scrapeAndCompareForCustomer(customer) {
     (baseConditions.stations && baseConditions.stations.length)
   );
   // page-script.js の area_mode suppression と同じロジックでチェックする（guard が suppression後の実態を見るため）
+  // 'both' は _buildBatchConditions で null に変換済みのため ここには届かないが念のため null と同等扱い
   var _am = mergedConditions.area_mode;
   var hasAreaResolved = (_am === "ward")
     ? (mergedCityCodes.length > 0 || !!mergedDetailWard)
     : (_am === "station")
       ? (mergedStations.length > 0 || mergedRoutes.length > 0)
       : (mergedStations.length > 0 || mergedRoutes.length > 0 ||
-         mergedCityCodes.length > 0 || !!mergedDetailWard);
+         mergedCityCodes.length > 0 || !!mergedDetailWard); // null/auto/'both'は両方チェック
   if (hasAreaInput && !hasAreaResolved) {
     var utList = (mergedConditions.unknown_tokens || []).join(", ");
     throw new Error(

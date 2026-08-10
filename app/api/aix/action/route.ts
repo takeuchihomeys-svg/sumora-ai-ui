@@ -1143,13 +1143,6 @@ ${SMORA_COMMON_RULES}`;
       if (propertyName || roomNumber) {
         const roomSuffix = roomNumber ? ` ${roomNumber}号室` : "";
         parts.push(`【${propertyName}${roomSuffix}】`);
-        // 月額費用（家賃・共益費）をOCRで読み取れた場合は明示して反映
-        if (rent > 0 || managementFee > 0) {
-          const rentPart = rent > 0 ? `家賃${rent.toLocaleString()}円` : "";
-          const mgmtPart = managementFee > 0 ? `共益費${managementFee.toLocaleString()}円` : "";
-          const monthlyParts = [rentPart, mgmtPart].filter(Boolean);
-          parts.push(`月額：${monthlyParts.join("・")}`);
-        }
         parts.push("");
       }
 

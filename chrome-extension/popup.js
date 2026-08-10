@@ -3169,8 +3169,10 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         openInstructions(cmd.site);
         // Step ④a: setupAreaModeSelector の自動判定をウェブアプリのボタン押下で上書きする
-        if (cmd.areaMode === 'station' || cmd.areaMode === 'ward') {
-          var btnEl = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
+        // 'both' のとき: 1回目は ward として実行（2回目の station は webapp が 10秒後に発火）
+        if (cmd.areaMode === 'station' || cmd.areaMode === 'ward' || cmd.areaMode === 'both') {
+          var _modeBtn = (cmd.areaMode === 'station') ? 'btn-mode-station' : 'btn-mode-ward';
+          var btnEl = document.getElementById(_modeBtn);
           if (btnEl) btnEl.click();
         }
         // Step ④ auto-click: autofill-btnをユーザー操作に近い遅延で自動クリックする
@@ -3212,8 +3214,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (wBtnEl2) wBtnEl2.click();
       }
       openInstructions(cmd.site);
-      if (cmd.areaMode === 'station' || cmd.areaMode === 'ward') {
-        var btnEl2 = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
+      // 'both' のとき: 1回目は ward として実行（2回目の station は webapp が 10秒後に発火）
+      if (cmd.areaMode === 'station' || cmd.areaMode === 'ward' || cmd.areaMode === 'both') {
+        var _modeBtn2 = (cmd.areaMode === 'station') ? 'btn-mode-station' : 'btn-mode-ward';
+        var btnEl2 = document.getElementById(_modeBtn2);
         if (btnEl2) btnEl2.click();
       }
       // Step ④ auto-click (onChanged path)

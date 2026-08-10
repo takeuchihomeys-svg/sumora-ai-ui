@@ -1773,7 +1773,8 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS adjacent_ok BOOLEAN DEFA
 -- rp_update_days: アプリから設定する更新日フィルター上書き（1/3/7/14日・NULLは自動計算）（2026-08-08）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS rp_update_days INTEGER;
 
--- area_mode: 物件検索モード（auto/ward/station）をDBに永続化（2026-08-08追加）
+-- area_mode: 物件検索モード（auto/ward/station/both）をDBに永続化（2026-08-08追加）
+-- 'auto'=自動判定 / 'ward'=地域のみ / 'station'=駅のみ / 'both'=両方同時検索。DEFAULT 'auto'
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS area_mode TEXT DEFAULT 'auto';
 
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）

@@ -230,6 +230,7 @@ type EditFields = {
   desired_area: string; floor_plan: string;
   area_input: string; station_input: string;
   shikirei_free: boolean;
+  area_mode_ward: boolean; area_mode_station: boolean;
   rent_min: string; rent_max: string;
   walk_minutes: string; move_in_time: string;
   building_age: string; initial_cost_limit: string;
@@ -258,11 +259,14 @@ function detectShikireiFlag(c: Customer): boolean {
 
 function toEditFields(c: Customer): EditFields {
   const { area_input, station_input } = parseAreaStation(c.desired_area);
+  const am = c.area_mode ?? "auto";
   return {
     desired_area:       c.desired_area       ?? "",
     area_input,
     station_input,
     shikirei_free:      detectShikireiFlag(c),
+    area_mode_ward:     am === "ward" || am === "both",
+    area_mode_station:  am === "station" || am === "both",
     floor_plan:         c.floor_plan         ?? "",
     rent_min:           c.rent_min           ? String(Math.floor(c.rent_min / 10000)) : "",
     rent_max:           c.rent_max           ? String(Math.floor(c.rent_max / 10000)) : "",
@@ -281,7 +285,7 @@ function toEditFields(c: Customer): EditFields {
 }
 
 function emptyEditFields(): EditFields {
-  return { desired_area:"", area_input:"", station_input:"", shikirei_free:false, floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"" };
+  return { desired_area:"", area_input:"", station_input:"", shikirei_free:false, area_mode_ward:false, area_mode_station:false, floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"" };
 }
 
 // popup.js の parseAreaMin と同一ロジック
@@ -394,16 +398,25 @@ function CustomersPageInner() {
   // 修正: error時に automation_commands.error_message を保持して表示（未ログイン等が竹内さんに見える）
   const [scrapeCompareErrors, setScrapeCompareErrors] = useState<Record<string, string>>({});
   // 地域/駅 検索モード切替（リアプロ/itandi/レインズ共通・顧客ごと）
-  // セッション内のみ保持しDB保存しない（popup.js の currentAreaMode と同じ揮発設計）。
-  // "auto" = 従来の自動判定（decideLocationMode）にそのまま委ねる = デフォルト
-  const [areaModeByCustomer, setAreaModeByCustomer] = useState<Record<string, "auto" | "ward" | "station">>({});
-  const getAreaMode = (id: string): "auto" | "ward" | "station" => areaModeByCustomer[id] ?? "auto";
-  const getAutoAreaMode = (c: Customer): "ward" | "station" | "auto" => {
+  // DB永続化済み（PATCH /api/property-customers で即時保存）
+  // "auto" = 顧客データから自動推定 / "ward" = 地域のみ / "station" = 駅のみ / "both" = 両方同時検索
+  const [areaModeByCustomer, setAreaModeByCustomer] = useState<Record<string, "auto" | "ward" | "station" | "both">>({});
+  const getAreaMode = (id: string): "auto" | "ward" | "station" | "both" => areaModeByCustomer[id] ?? "auto";
+  // getEffectiveSearchModes: UI バッジ表示・firePropertySearch・startBatchSearch の単一真実源
+  // 手動設定(ward/station/both)を優先し、auto/nullのときは顧客データから推定する
+  const getEffectiveSearchModes = (c: Customer): ("ward" | "station")[] => {
+    const sessionMode = areaModeByCustomer[c.id] ?? null;
+    const stored = sessionMode ?? c.area_mode ?? null;
+    if (stored === "ward") return ["ward"];
+    if (stored === "station") return ["station"];
+    if (stored === "both") return ["ward", "station"];
+    // 'auto' または null: 顧客データから推定
     const hasArea = !!(c.desired_area?.trim());
     const hasStation = !!(c.stations?.length);
-    if (hasArea && !hasStation) return "ward";
-    if (!hasArea && hasStation) return "station";
-    return "auto";
+    if (hasArea && hasStation) return ["ward", "station"];
+    if (hasArea) return ["ward"];
+    if (hasStation) return ["station"];
+    return ["ward"]; // データなし時のデフォルトは地域モード
   };
   // ポーリングinterval / idle復帰timeout をアンマウント時に確実に停止するための保持
   const scrapePollIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
@@ -481,10 +494,10 @@ function CustomersPageInner() {
       if (res.ok) {
         const data: Customer[] = await res.json();
         setCustomers(data);
-        const initModes: Record<string, "auto" | "ward" | "station"> = {};
+        const initModes: Record<string, "auto" | "ward" | "station" | "both"> = {};
         for (const c of data) {
-          if (c.area_mode === "ward" || c.area_mode === "station") {
-            initModes[c.id] = c.area_mode;
+          if (c.area_mode === "ward" || c.area_mode === "station" || c.area_mode === "both") {
+            initModes[c.id] = c.area_mode as "ward" | "station" | "both";
           }
         }
         if (Object.keys(initModes).length > 0) {
@@ -683,6 +696,29 @@ function CustomersPageInner() {
     setUpdateDaysUpdating(null);
   };
 
+  // 地域/駅バッジのトグル: ward/station を独立にON/OFF。PATCH で即時保存
+  const handleAreaModeToggle = (c: Customer, toggleMode: "ward" | "station") => {
+    const curMode: "auto" | "ward" | "station" | "both" =
+      (areaModeByCustomer[c.id] ?? c.area_mode ?? "auto") as "auto" | "ward" | "station" | "both";
+    let newMode: "auto" | "ward" | "station" | "both";
+    if (toggleMode === "ward") {
+      if (curMode === "ward")    newMode = "auto";
+      else if (curMode === "both")    newMode = "station";
+      else if (curMode === "station") newMode = "both";
+      else                            newMode = "ward"; // auto → ward
+    } else {
+      if (curMode === "station")      newMode = "auto";
+      else if (curMode === "both")    newMode = "ward";
+      else if (curMode === "ward")    newMode = "both";
+      else                            newMode = "station"; // auto → station
+    }
+    setAreaModeByCustomer((prev) => ({ ...prev, [c.id]: newMode }));
+    fetch("/api/property-customers", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: c.id, area_mode: newMode }),
+    }).catch(() => {});
+  };
+
   const addCustomer = async () => {
     if (!newName.trim() || addLoading) return;
     setAddLoading(true);
@@ -853,6 +889,10 @@ function CustomersPageInner() {
       ng_points:          ngVal                         || null,
       other_requests:     editFields.other_requests     || null,
       property_memo:      editFields.property_memo      || null,
+      area_mode:          editFields.area_mode_ward && editFields.area_mode_station ? "both"
+                          : editFields.area_mode_ward ? "ward"
+                          : editFields.area_mode_station ? "station"
+                          : "auto",
     };
     const res = await fetch("/api/property-customers", {
       method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -861,6 +901,11 @@ function CustomersPageInner() {
     if (res.ok) {
       const updated = await res.json();
       setCustomers((p) => p.map((c) => c.id === editId ? { ...c, ...updated } : c));
+      // area_mode を saveEdit 後に areaModeByCustomer へも同期
+      const savedAreaMode = (updated as Customer).area_mode ?? "auto";
+      if (editId) {
+        setAreaModeByCustomer((prev) => ({ ...prev, [editId]: savedAreaMode as "auto" | "ward" | "station" | "both" }));
+      }
       // 条件更新後: 紐付き客はAI要約を自動再生成
       const editedC = customers.find((c) => c.id === editId);
       if (editedC?.is_linked) void generateSummary({ ...editedC, ...updated } as Customer);
@@ -916,6 +961,8 @@ function CustomersPageInner() {
         area_input:         parsedAreaStation.area_input,
         station_input:      parsedAreaStation.station_input,
         shikirei_free:      false,
+        area_mode_ward:     f.area_mode_ward,
+        area_mode_station:  f.area_mode_station,
         floor_plan:         p.floor_plan         != null ? String(p.floor_plan)         : f.floor_plan,
         rent_min:           p.rent_min           != null ? String(Math.floor((p.rent_min as number)/10000)) : f.rent_min,
         rent_max:           p.rent_max           != null ? String(Math.floor((p.rent_max as number)/10000)) : f.rent_max,
@@ -1098,8 +1145,10 @@ function CustomersPageInner() {
     };
 
     // 拡張へ渡す生の顧客条件（resolve は拡張側で実施 = popupと同等）
+    // 'both' は拡張が直接処理できないため null（自動判定）にフォールバック
+    const _scrapeAreaMode = (() => { const m = getAreaMode(c.id); return m === "both" ? null : m; })();
     const rawConditions = {
-      area_mode:    getAreaMode(c.id),
+      area_mode:    _scrapeAreaMode,
       rent_max:     c.rent_max      ?? null,
       rent_min:     c.rent_min      ?? null,
       walk_minutes: c.walk_minutes  ?? null,
@@ -1178,7 +1227,7 @@ function CustomersPageInner() {
           payload: {
             customer_id: c.id, customer_name: c.customer_name, is_wide: isWide,
             conditions: {
-              area_mode: getAreaMode(c.id),
+              area_mode: _scrapeAreaMode,
               rent_max: c.rent_max ?? undefined,
               rent_min: c.rent_min ?? undefined,
               walk_minutes: c.walk_minutes ?? undefined,
@@ -1425,9 +1474,17 @@ function CustomersPageInner() {
   // 修正11: キュー投入失敗を消えない赤色エラーとして保持（キー: c.id + "-" + site [+ "-wide"]）
   const [queueErrors, setQueueErrors] = useState<Record<string, string>>({});
   const queuePropertySearch = async (c: Customer, sites: string[] = ["realnetpro", "itandi"], isWide: boolean = false) => {
-    // 拡張ツールには生データをそのまま渡す（拡張側で resolve-search-conditions を実行するため事前変換不要）
-    // webapp で事前変換すると拡張側と二重変換になりバグの原因になる
-    const extHandled = await firePropertySearch(c, sites, isWide);
+    // 'both' モード: ward で即時実行 → 10秒後に station で再実行（拡張直接パスのみ）
+    const modes = getEffectiveSearchModes(c);
+    const isBoth = modes.includes("ward") && modes.includes("station");
+    const primaryMode: "ward" | "station" = isBoth ? "ward" : (modes[0] ?? "ward");
+
+    const extHandled = await firePropertySearch(c, sites, isWide, primaryMode);
+
+    if (isBoth && extHandled) {
+      // 拡張直接パスで both の場合: 10秒後に station でも発火
+      setTimeout(() => { void firePropertySearch(c, sites, isWide, "station"); }, 10000);
+    }
 
     const key = c.id + "-" + sites[0] + (isWide ? "-wide" : "");
     setQueueErrors((prev) => {
@@ -1445,13 +1502,12 @@ function CustomersPageInner() {
     }
 
     // クロスデバイス対応（拡張未検出時のみ）: サーバー経由でキューに追加
+    // 'both' のサーバーキューは background.js が area_mode=null(自動判定)で処理する
     try {
       const res = await fetch("/api/automation/trigger", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // 修正5: is_wide をキューへ伝搬（trigger API が payload.is_wide として保存）
-        // area_mode: 地域/駅モードもキュー経路へ伝搬（"auto"=従来の自動判定）
-        body: JSON.stringify({ customer_ids: [c.id], sites, is_wide: isWide, area_mode: getAreaMode(c.id), force: true }),
+        body: JSON.stringify({ customer_ids: [c.id], sites, is_wide: isWide, force: true }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setSearchQueued(key);
@@ -1466,17 +1522,16 @@ function CustomersPageInner() {
     }
   };
 
-  // 要対応一括検索用: エリア/駅の有無に応じて自動モード判定し発火
-  // 両方ある場合は ward で発火後、5秒後に station でも自動発火する
+  // 要対応一括検索用: getEffectiveSearchModes でモード判定し発火
+  // 両方(ward+station)のとき ward で発火後、5秒後に station でも自動発火する
   const fireFlaggedSearch = (c: Customer, site: "realnetpro" | "itandi" | "reins" = "realnetpro") => {
     const sitesArr = [site];
-    const hasArea = !!(c.desired_area?.trim());
-    const hasStation = !!(c.stations?.length);
-    if (hasArea && hasStation) {
+    const modes = getEffectiveSearchModes(c);
+    if (modes.includes("ward") && modes.includes("station")) {
       void firePropertySearch(c, sitesArr, false, "ward", true);
       setTimeout(() => { void firePropertySearch(c, sitesArr, false, "station", true); }, 5000);
     } else {
-      const mode = getAutoAreaMode(c);
+      const mode: "ward" | "station" = modes[0] ?? "ward";
       void firePropertySearch(c, sitesArr, false, mode, true);
     }
   };
@@ -2200,6 +2255,43 @@ function CustomersPageInner() {
                   <>
                     {/* 物件探し中：条件チップ */}
                     <div className="border-t border-[#f0f2f5] px-4 py-2.5">
+                      {/* 地域/駅バッジ（手動ON=実色 / 自動推定=薄色 / OFF=グレー） */}
+                      {c.status !== "pending" && (() => {
+                        const _cm: "auto" | "ward" | "station" | "both" =
+                          (areaModeByCustomer[c.id] ?? c.area_mode ?? "auto") as "auto" | "ward" | "station" | "both";
+                        const _isManual = _cm !== "auto";
+                        const _wM = _cm === "ward" || _cm === "both";
+                        const _sM = _cm === "station" || _cm === "both";
+                        const _hA = !!(c.desired_area?.trim());
+                        const _hS = !!(c.stations?.length);
+                        return (
+                          <div className="flex items-center gap-1 mb-1.5" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => handleAreaModeToggle(c, "ward")}
+                              className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold border transition-colors ${
+                                _wM ? "bg-teal-600 text-white border-transparent"
+                                : (!_isManual && _hA) ? "bg-teal-50 text-teal-600 border-teal-400"
+                                : "bg-white text-gray-300 border-gray-200"
+                              }`}
+                              title={_wM ? "地域で検索（手動）クリックで解除" : (!_isManual && _hA) ? "地域で検索（自動）クリックで確定" : "地域検索OFF（クリックで地域ON）"}
+                            >
+                              地域
+                            </button>
+                            <button
+                              onClick={() => handleAreaModeToggle(c, "station")}
+                              className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold border transition-colors ${
+                                _sM ? "bg-blue-600 text-white border-transparent"
+                                : (!_isManual && _hS) ? "bg-blue-50 text-blue-600 border-blue-400"
+                                : "bg-white text-gray-300 border-gray-200"
+                              }`}
+                              title={_sM ? "駅で検索（手動）クリックで解除" : (!_isManual && _hS) ? "駅で検索（自動）クリックで確定" : "駅検索OFF（クリックで駅ON）"}
+                            >
+                              駅
+                            </button>
+                            {!_isManual && <span className="text-[8px] text-gray-400">自動</span>}
+                          </div>
+                        );
+                      })()}
                       {/* 元の条件 */}
                       {(c.desired_area || c.floor_plan || c.floor_area_min || c.floor_area_max || c.pet != null || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.building_age || c.initial_cost_limit || c.preferences || c.ng_points) ? (
                         <>
@@ -2562,31 +2654,7 @@ function CustomersPageInner() {
                   {/* 物件検索ボタン（サイト別3ペア: 通常 + 広） */}
                   {c.status !== "pending" && !isApplying(c.status) && (
                     <div className="flex gap-1.5 flex-wrap">
-                      {/* 地域/駅モード切替（3セグメントピル・6ボタン共通・セッション内のみ有効） */}
-                      <div
-                        className="flex items-center self-start overflow-hidden rounded-xl border border-gray-200 bg-white"
-                        title="地域で検索 or 駅で検索（リアプロ/itandi/レインズ共通）"
-                      >
-                        {([["auto", "自動"], ["ward", "地域"], ["station", "駅"]] as const).map(([m, lbl]) => (
-                          <button
-                            key={m}
-                            onClick={() => {
-                              setAreaModeByCustomer((prev) => ({ ...prev, [c.id]: m }));
-                              fetch("/api/property-customers", {
-                                method: "PATCH", headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ id: c.id, area_mode: m }),
-                              }).catch(() => {});
-                            }}
-                            className={`px-1.5 py-1.5 text-[10px] font-bold transition-colors ${
-                              getAreaMode(c.id) === m
-                                ? "bg-blue-600 text-white"
-                                : "bg-white text-gray-400"
-                            }`}
-                          >
-                            {lbl}
-                          </button>
-                        ))}
-                      </div>
+                      {/* 地域/駅バッジは条件チップエリアへ移動済み（ここでは非表示） */}
                       {/* リアプロ（修正11: 状態表示 + 実行中の連打ガード。広は c.id+"-wide" で状態分離） */}
                       {(() => {
                         const stN = scrapeCompareStatus[c.id] ?? "idle";
@@ -2967,6 +3035,36 @@ function CustomersPageInner() {
                 value={editFields.area_input} onChange={(v) => setEditFields((f) => f && ({ ...f, area_input: v }))} />
               <Field label="駅・路線" placeholder="例: 阪急京都線・梅田駅"
                 value={editFields.station_input} onChange={(v) => setEditFields((f) => f && ({ ...f, station_input: v }))} />
+              {/* 検索モード */}
+              <div>
+                <label className="text-[11px] font-semibold text-[#8696a0] mb-1.5 block">検索モード（両OFF=自動判定）</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditFields((f) => f && ({ ...f, area_mode_ward: !f.area_mode_ward }))}
+                    className={`text-[12px] font-bold px-4 py-1 rounded-full border transition-colors ${
+                      editFields.area_mode_ward ? "bg-teal-600 text-white border-teal-600" : "bg-[#f8f9fa] text-[#333] border-[#e9edef]"
+                    }`}
+                  >
+                    {editFields.area_mode_ward ? "地域で検索 ✓" : "地域で検索"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditFields((f) => f && ({ ...f, area_mode_station: !f.area_mode_station }))}
+                    className={`text-[12px] font-bold px-4 py-1 rounded-full border transition-colors ${
+                      editFields.area_mode_station ? "bg-blue-600 text-white border-blue-600" : "bg-[#f8f9fa] text-[#333] border-[#e9edef]"
+                    }`}
+                  >
+                    {editFields.area_mode_station ? "駅で検索 ✓" : "駅で検索"}
+                  </button>
+                </div>
+                <p className="text-[10px] text-[#8696a0] mt-1">
+                  {editFields.area_mode_ward && editFields.area_mode_station ? "両方同時検索（both）"
+                    : editFields.area_mode_ward ? "地域のみ（ward）"
+                    : editFields.area_mode_station ? "駅のみ（station）"
+                    : "自動判定（auto）"}
+                </p>
+              </div>
               {/* 間取り バッジ選択 */}
               <div>
                 <label className="text-[11px] font-semibold text-[#8696a0] mb-1.5 block">間取り（複数選択可）</label>
