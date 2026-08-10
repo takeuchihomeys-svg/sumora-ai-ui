@@ -47,7 +47,19 @@ async function getGroupId(): Promise<string | null> {
   return data?.value ?? null;
 }
 
-async function pushToLine(to: string, text: string) {
+async function getSuzukiUserId(): Promise<string | null> {
+  const { data } = await supabase
+    .from("hanbancyo_settings")
+    .select("value")
+    .eq("key", "suzuki_line_user_id")
+    .maybeSingle();
+  return data?.value ?? null;
+}
+
+async function pushToLine(to: string, text: string, suzukiUserId?: string | null) {
+  const message = suzukiUserId
+    ? { type: "textV2", text: `{0}\n${text}`, substitution: { "0": { type: "mention", mentionee: { type: "user", userId: suzukiUserId } } } }
+    : { type: "text", text };
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
@@ -56,7 +68,7 @@ async function pushToLine(to: string, text: string) {
     },
     body: JSON.stringify({
       to,
-      messages: [{ type: "text", text }],
+      messages: [message],
     }),
     signal: AbortSignal.timeout(10_000),
   });
@@ -109,7 +121,7 @@ export async function POST(req: NextRequest) {
   if (!TOKEN) {
     return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
   }
-  const groupId = await getGroupId();
+  const [groupId, suzukiUserId] = await Promise.all([getGroupId(), getSuzukiUserId()]);
   if (!groupId) {
     return NextResponse.json({ ok: false, error: "グループIDが未設定です" }, { status: 400 });
   }
@@ -140,7 +152,7 @@ export async function POST(req: NextRequest) {
 
   // 物件リストと名言を並行生成
   const [, quote] = await Promise.all([
-    pushToLine(groupId, lines.join("\n")),
+    pushToLine(groupId, lines.join("\n"), suzukiUserId),
     generateQuote(hotCount, customers.length),
   ]);
 

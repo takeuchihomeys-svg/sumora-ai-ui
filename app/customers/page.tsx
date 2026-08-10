@@ -398,6 +398,13 @@ function CustomersPageInner() {
   // "auto" = 従来の自動判定（decideLocationMode）にそのまま委ねる = デフォルト
   const [areaModeByCustomer, setAreaModeByCustomer] = useState<Record<string, "auto" | "ward" | "station">>({});
   const getAreaMode = (id: string): "auto" | "ward" | "station" => areaModeByCustomer[id] ?? "auto";
+  const getAutoAreaMode = (c: Customer): "ward" | "station" | "auto" => {
+    const hasArea = !!(c.desired_area?.trim());
+    const hasStation = !!(c.stations?.length);
+    if (hasArea && !hasStation) return "ward";
+    if (!hasArea && hasStation) return "station";
+    return "auto";
+  };
   // ポーリングinterval / idle復帰timeout をアンマウント時に確実に停止するための保持
   const scrapePollIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
   const scrapeIdleTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
@@ -434,6 +441,7 @@ function CustomersPageInner() {
   const [batchIndex, setBatchIndex] = useState<number>(0);
   const [batchDone, setBatchDone] = useState<boolean>(false);
   const batchListRef = useRef<Customer[]>([]);
+  const batchIsFlaggedRef = useRef<boolean>(false);
 
   // 改善13: 会話ログの自動スクロール用。顧客IDごとにスクロールコンテナのDOM参照を保持し、
   // メッセージ読み込み完了（msgCache更新）時に最下部（最新メッセージ）へスクロールする
@@ -1344,6 +1352,7 @@ function CustomersPageInner() {
     c: Customer,
     sites: string[] = ["realnetpro", "itandi"],
     isWide: boolean = false,
+    areaMode?: "ward" | "station" | "auto",
   ): Promise<boolean> => {
     // ACKリスナーは postMessage 発火前に登録しておく
     const ackPromise = new Promise<boolean>((resolve) => {
@@ -1372,7 +1381,7 @@ function CustomersPageInner() {
       customerId:   String(c.id),
       customerName: c.customer_name ?? null,
       is_wide:      isWide,
-      area_mode:    getAreaMode(c.id),
+      area_mode:    areaMode ?? getAreaMode(c.id),
     };
     let delay = 0;
     for (const site of sites) {
@@ -1434,8 +1443,24 @@ function CustomersPageInner() {
     }
   };
 
+  // 要対応一括検索用: エリア/駅の有無に応じて自動モード判定し発火
+  // 両方ある場合は ward で発火後、5秒後に station でも自動発火する
+  const fireFlaggedSearch = (c: Customer) => {
+    const hasArea = !!(c.desired_area?.trim());
+    const hasStation = !!(c.stations?.length);
+    if (hasArea && hasStation) {
+      void firePropertySearch(c, ["realnetpro", "itandi"], false, "ward");
+      setTimeout(() => { void firePropertySearch(c, ["realnetpro", "itandi"], false, "station"); }, 5000);
+    } else {
+      const mode = getAutoAreaMode(c);
+      void firePropertySearch(c, ["realnetpro", "itandi"], false, mode);
+    }
+  };
+
   const startBatchSearch = async () => {
-    setFilterMode("linked");
+    const isFlagged = filterMode === "flagged";
+    batchIsFlaggedRef.current = isFlagged;
+    if (!isFlagged) setFilterMode("linked");
     const targets = sorted.filter((c) => !isDoneToday(c));
     batchListRef.current = targets;
     setBatchIndex(0);
@@ -1451,7 +1476,11 @@ function CustomersPageInner() {
       } catch (e) {
         console.error("[batch trigger] error:", e);
       }
-      void firePropertySearch(targets[0]);
+      if (isFlagged) {
+        fireFlaggedSearch(targets[0]);
+      } else {
+        void firePropertySearch(targets[0]);
+      }
     }
   };
 
@@ -1465,14 +1494,24 @@ function CustomersPageInner() {
       return;
     }
     setBatchIndex(next);
-    void firePropertySearch(batchListRef.current[next]);
+    const nextCustomer = batchListRef.current[next];
+    if (batchIsFlaggedRef.current) {
+      fireFlaggedSearch(nextCustomer);
+    } else {
+      void firePropertySearch(nextCustomer);
+    }
   };
 
   const goPrevBatch = () => {
     const prev = batchIndex - 1;
     if (prev < 0) return;
     setBatchIndex(prev);
-    void firePropertySearch(batchListRef.current[prev]);
+    const prevCustomer = batchListRef.current[prev];
+    if (batchIsFlaggedRef.current) {
+      fireFlaggedSearch(prevCustomer);
+    } else {
+      void firePropertySearch(prevCustomer);
+    }
   };
 
   // タイムアウト/エラー/拡張なし → 1秒後にステータスをidleにリセット（すぐ別のお客さんを検索できるようにする）
@@ -1650,7 +1689,7 @@ function CustomersPageInner() {
           </button>
 
           {/* バッチ物件検索起動ボタン（紐付きタブのみ・バッチ非実行中のみ） */}
-          {filterMode === "linked" && !batchMode && (
+          {(filterMode === "linked" || filterMode === "flagged") && !batchMode && (
             <button
               onClick={startBatchSearch}
               className="shrink-0 h-9 rounded-xl px-2.5 flex items-center justify-center text-[11px] font-bold text-white active:scale-95 transition-transform"
