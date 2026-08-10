@@ -3035,39 +3035,31 @@ function CustomersPageInner() {
                 value={editFields.area_input} onChange={(v) => setEditFields((f) => f && ({ ...f, area_input: v }))} />
               <Field label="駅・路線" placeholder="例: 阪急京都線・梅田駅"
                 value={editFields.station_input} onChange={(v) => setEditFields((f) => f && ({ ...f, station_input: v }))} />
-              {/* 検索モード */}
+              {/* 間取り バッジ選択 + 地域/駅バッジ */}
               <div>
-                <label className="text-[11px] font-semibold text-[#8696a0] mb-1.5 block">検索モード（両OFF=自動判定）</label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditFields((f) => f && ({ ...f, area_mode_ward: !f.area_mode_ward }))}
-                    className={`text-[12px] font-bold px-4 py-1 rounded-full border transition-colors ${
-                      editFields.area_mode_ward ? "bg-teal-600 text-white border-teal-600" : "bg-[#f8f9fa] text-[#333] border-[#e9edef]"
-                    }`}
-                  >
-                    {editFields.area_mode_ward ? "地域で検索 ✓" : "地域で検索"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditFields((f) => f && ({ ...f, area_mode_station: !f.area_mode_station }))}
-                    className={`text-[12px] font-bold px-4 py-1 rounded-full border transition-colors ${
-                      editFields.area_mode_station ? "bg-blue-600 text-white border-blue-600" : "bg-[#f8f9fa] text-[#333] border-[#e9edef]"
-                    }`}
-                  >
-                    {editFields.area_mode_station ? "駅で検索 ✓" : "駅で検索"}
-                  </button>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[11px] font-semibold text-[#8696a0]">間取り（複数選択可）</label>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setEditFields((f) => f && ({ ...f, area_mode_ward: !f.area_mode_ward }))}
+                      className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border transition-colors ${
+                        editFields.area_mode_ward ? "bg-teal-600 text-white border-teal-600" : "bg-white text-[#8696a0] border-[#d1d7db]"
+                      }`}
+                    >
+                      {editFields.area_mode_ward ? "✓ 地域" : "地域"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditFields((f) => f && ({ ...f, area_mode_station: !f.area_mode_station }))}
+                      className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border transition-colors ${
+                        editFields.area_mode_station ? "bg-blue-600 text-white border-blue-600" : "bg-white text-[#8696a0] border-[#d1d7db]"
+                      }`}
+                    >
+                      {editFields.area_mode_station ? "✓ 駅" : "駅"}
+                    </button>
+                  </div>
                 </div>
-                <p className="text-[10px] text-[#8696a0] mt-1">
-                  {editFields.area_mode_ward && editFields.area_mode_station ? "両方同時検索（both）"
-                    : editFields.area_mode_ward ? "地域のみ（ward）"
-                    : editFields.area_mode_station ? "駅のみ（station）"
-                    : "自動判定（auto）"}
-                </p>
-              </div>
-              {/* 間取り バッジ選択 */}
-              <div>
-                <label className="text-[11px] font-semibold text-[#8696a0] mb-1.5 block">間取り（複数選択可）</label>
                 <div className="flex flex-wrap gap-1.5">
                   {FLOOR_PLAN_OPTIONS.map((opt) => {
                     const isSelected = editFields.floor_plan.split(/[・、,\s]+/).includes(opt);
