@@ -440,9 +440,11 @@ function CustomersPageInner() {
   const [batchMode, setBatchMode] = useState<boolean>(false);
   const [batchIndex, setBatchIndex] = useState<number>(0);
   const [batchDone, setBatchDone] = useState<boolean>(false);
+  const [batchSiteDropdown, setBatchSiteDropdown] = useState<boolean>(false);
   const batchListRef = useRef<Customer[]>([]);
   const batchIsFlaggedRef = useRef<boolean>(false);
   const batchIndexRef = useRef<number>(0);
+  const batchSiteRef = useRef<"realnetpro" | "itandi" | "reins">("realnetpro");
 
   // 改善13: 会話ログの自動スクロール用。顧客IDごとにスクロールコンテナのDOM参照を保持し、
   // メッセージ読み込み完了（msgCache更新）時に最下部（最新メッセージ）へスクロールする
@@ -1447,19 +1449,22 @@ function CustomersPageInner() {
 
   // 要対応一括検索用: エリア/駅の有無に応じて自動モード判定し発火
   // 両方ある場合は ward で発火後、5秒後に station でも自動発火する
-  const fireFlaggedSearch = (c: Customer) => {
+  const fireFlaggedSearch = (c: Customer, site: "realnetpro" | "itandi" | "reins" = "realnetpro") => {
+    const sitesArr = [site];
     const hasArea = !!(c.desired_area?.trim());
     const hasStation = !!(c.stations?.length);
     if (hasArea && hasStation) {
-      void firePropertySearch(c, ["realnetpro", "itandi"], false, "ward", true);
-      setTimeout(() => { void firePropertySearch(c, ["realnetpro", "itandi"], false, "station", true); }, 5000);
+      void firePropertySearch(c, sitesArr, false, "ward", true);
+      setTimeout(() => { void firePropertySearch(c, sitesArr, false, "station", true); }, 5000);
     } else {
       const mode = getAutoAreaMode(c);
-      void firePropertySearch(c, ["realnetpro", "itandi"], false, mode, true);
+      void firePropertySearch(c, sitesArr, false, mode, true);
     }
   };
 
-  const startBatchSearch = async () => {
+  const startBatchSearch = async (site: "realnetpro" | "itandi" | "reins") => {
+    batchSiteRef.current = site;
+    setBatchSiteDropdown(false);
     const isFlagged = filterMode === "flagged";
     batchIsFlaggedRef.current = isFlagged;
     if (!isFlagged) setFilterMode("linked");
@@ -1469,20 +1474,19 @@ function CustomersPageInner() {
     batchIndexRef.current = 0;
     setBatchMode(true);
     if (targets.length > 0) {
-      // 全員まとめてキューに追加（30秒以内にPC Chrome拡張が処理開始）
       try {
         await fetch("/api/automation/trigger", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ customer_ids: targets.map((c) => c.id), sites: ["realnetpro", "itandi"], force: true }),
+          body: JSON.stringify({ customer_ids: targets.map((c) => c.id), sites: [site], force: true }),
         });
       } catch (e) {
         console.error("[batch trigger] error:", e);
       }
       if (isFlagged) {
-        fireFlaggedSearch(targets[0]);
+        fireFlaggedSearch(targets[0], site);
       } else {
-        void firePropertySearch(targets[0]);
+        void firePropertySearch(targets[0], [site]);
       }
     }
   };
@@ -1502,10 +1506,17 @@ function CustomersPageInner() {
     batchIndexRef.current = next;
     const nextCustomer = batchListRef.current[next];
     if (batchIsFlaggedRef.current) {
-      fireFlaggedSearch(nextCustomer);
+      fireFlaggedSearch(nextCustomer, batchSiteRef.current);
     } else {
-      void firePropertySearch(nextCustomer);
+      void firePropertySearch(nextCustomer, [batchSiteRef.current]);
     }
+  };
+
+  const stopBatchSearch = () => {
+    setBatchMode(false);
+    setBatchIndex(0);
+    batchIndexRef.current = 0;
+    batchIsFlaggedRef.current = false;
   };
 
   const goPrevBatch = () => {
@@ -1514,9 +1525,9 @@ function CustomersPageInner() {
     setBatchIndex(prev);
     const prevCustomer = batchListRef.current[prev];
     if (batchIsFlaggedRef.current) {
-      fireFlaggedSearch(prevCustomer);
+      fireFlaggedSearch(prevCustomer, batchSiteRef.current);
     } else {
-      void firePropertySearch(prevCustomer);
+      void firePropertySearch(prevCustomer, [batchSiteRef.current]);
     }
   };
 
@@ -1657,7 +1668,7 @@ function CustomersPageInner() {
                 {batchIndex + 1 >= batchListRef.current.length ? "完了" : "次へ →"}
               </button>
               <button
-                onClick={() => { setBatchMode(false); setBatchIndex(0); }}
+                onClick={stopBatchSearch}
                 className="rounded-lg px-1.5 py-1 text-[11px] text-white/60 active:scale-95"
               >
                 ✕
@@ -1709,16 +1720,56 @@ function CustomersPageInner() {
             )}
           </button>
 
-          {/* バッチ物件検索起動ボタン（紐付きタブのみ・バッチ非実行中のみ） */}
-          {(filterMode === "linked" || filterMode === "flagged") && !batchMode && (
-            <button
-              onClick={startBatchSearch}
-              className="shrink-0 h-9 rounded-xl px-2.5 flex items-center justify-center text-[11px] font-bold text-white active:scale-95 transition-transform"
-              style={{ background: "rgba(251,146,60,0.6)", border: "1px solid rgba(251,146,60,0.4)" }}
-              title="紐付き顧客を順番に物件検索"
-            >
-              一括
-            </button>
+          {/* バッチ物件検索ボタン：バッチ中はプログレス表示、非実行中はドロップダウン */}
+          {(filterMode === "linked" || filterMode === "flagged") && (
+            <div className="relative shrink-0">
+              {batchMode ? (
+                <div className="flex items-center gap-1 h-9 rounded-xl px-2.5 text-[11px] font-bold text-white"
+                  style={{ background: "rgba(251,146,60,0.85)", border: "1px solid rgba(251,146,60,0.6)" }}>
+                  <span className="tabular-nums">{batchIndex + 1}/{batchListRef.current.length}</span>
+                  <button
+                    onClick={stopBatchSearch}
+                    className="ml-0.5 text-white/90 text-[13px] leading-none active:scale-90 transition-transform"
+                    title="一括検索を停止"
+                  >
+                    ■
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setBatchSiteDropdown((v) => !v)}
+                    className="shrink-0 h-9 rounded-xl px-2.5 flex items-center gap-1 justify-center text-[11px] font-bold text-white active:scale-95 transition-transform"
+                    style={{ background: "rgba(251,146,60,0.6)", border: "1px solid rgba(251,146,60,0.4)" }}
+                    title="一括検索するサイトを選ぶ"
+                  >
+                    一括<span className="text-[9px] opacity-70">▼</span>
+                  </button>
+                  {batchSiteDropdown && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setBatchSiteDropdown(false)} />
+                      <div className="absolute right-0 top-full mt-1 z-50 rounded-xl overflow-hidden shadow-2xl"
+                        style={{ background: "#1a2a4a", border: "1px solid rgba(255,255,255,0.18)", minWidth: "110px" }}>
+                        {([
+                          { key: "realnetpro", label: "🖥 リアプロ" },
+                          { key: "itandi",     label: "🏢 itandi" },
+                          { key: "reins",      label: "📋 レインズ" },
+                        ] as const).map(({ key, label }) => (
+                          <button
+                            key={key}
+                            onClick={() => void startBatchSearch(key)}
+                            className="w-full px-4 py-2.5 text-left text-sm font-bold text-white active:bg-white/20"
+                            style={{ borderBottom: key !== "reins" ? "1px solid rgba(255,255,255,0.08)" : "none" }}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
           )}
         </div>
       </div>
