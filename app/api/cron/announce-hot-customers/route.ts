@@ -13,17 +13,20 @@ function getTodayJSTStart(): Date {
   return new Date(jstNow.getTime() - 9 * 60 * 60 * 1000);
 }
 
-// status → 優先度（小さいほど上位表示）
-function getStatusPriority(status: string | null): number {
-  switch (status) {
-    case "viewing":               return 1; // 内覧調整
-    case "estimate_request":      return 2; // 見積書作成
-    case "availability_check":    return 3; // 空室確認（物件送る）
-    case "property_recommendation":
-    case "proposing":             return 4; // 物件提案
-    default:                      return 5;
-  }
+// ☑ (AIX約束あり・未送信) → ・(未対応) → ✅ (AIX済み) の優先度
+function getMarkPriority(staffInfo: { hasAix: boolean; hasStaff: boolean } | undefined): number {
+  if (!staffInfo) return 1;      // ・未対応
+  if (staffInfo.hasAix) return 2; // ✅ AIX済み（後回しでOK）
+  return 0;                       // ☑ AIX未送信（約束あり・最優先）
 }
+
+const MOTIVATIONS = [
+  "全部✅にしたら今日は最強の一日や🔥",
+  "✅埋めた分だけ契約に近づく⚡️",
+  "今日の行動が来月の結果になる🎯",
+  "全✅目指してGO🚀",
+  "鈴木なら絶対全部いける💪",
+];
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -200,19 +203,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, removed: toRemove.length, sent: 0 });
   }
 
-  // ソート: ① ステータス優先度（内覧→見積→空室確認→物件） ② 返信来てる人 ③ 待機時間長い順
+  // ソート: ① ☑(AIX約束未送信) → ・(未対応) → ✅(AIX済み) ② 直近やり取り順（updated_at DESC）
   const sorted = [...activeList].sort((a, b) => {
-    const pa = getStatusPriority(a.status);
-    const pb = getStatusPriority(b.status);
-    if (pa !== pb) return pa - pb;
-
-    const aWaiting = a.last_sender === "customer" ? 0 : 1;
-    const bWaiting = b.last_sender === "customer" ? 0 : 1;
-    if (aWaiting !== bWaiting) return aWaiting - bWaiting;
+    const ma = getMarkPriority(staffMsgMap.get(a.id));
+    const mb = getMarkPriority(staffMsgMap.get(b.id));
+    if (ma !== mb) return ma - mb;
 
     return (
-      new Date(a.updated_at ?? "").getTime() -
-      new Date(b.updated_at ?? "").getTime()
+      new Date(b.updated_at ?? "").getTime() -
+      new Date(a.updated_at ?? "").getTime()
     );
   });
 
@@ -224,11 +223,15 @@ export async function GET(req: NextRequest) {
     return `${mark}${name}`;
   });
 
+  const motivation = MOTIVATIONS[Math.floor(Date.now() / (24 * 3600 * 1000)) % MOTIVATIONS.length];
+
   const message = [
     "【しょーへいの今日のターゲット全リスト】",
     "",
     "► 決まる（最優先）",
     lines.join("\n"),
+    "",
+    motivation,
     "",
     `AIX LINX より ${hour}:00`,
   ].join("\n");
