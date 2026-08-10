@@ -336,7 +336,7 @@ function CustomersPageInner() {
   const searchParams = useSearchParams();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading]     = useState(true);
-  const [filterMode, setFilterMode] = useState<"linked" | "all" | "urgent" | "applying">("linked");
+  const [filterMode, setFilterMode] = useState<"linked" | "all" | "urgent" | "applying" | "flagged">("linked");
   const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [sentUpdating, setSentUpdating]   = useState<string | null>(null);
   const [viewedUpdating, setViewedUpdating]   = useState<string | null>(null);
@@ -510,6 +510,8 @@ function CustomersPageInner() {
       list = customers.filter((c) => isApplying(c.status));
     } else if (filterMode === "all") {
       list = customers.filter((c) => !isApplying(c.status));
+    } else if (filterMode === "flagged") {
+      list = customers.filter((c) => c.linked_conversation?.is_flagged && !isApplying(c.status));
     } else {
       list = customers.filter((c) => c.is_linked && !isApplying(c.status));
     }
@@ -607,6 +609,7 @@ function CustomersPageInner() {
   const replyCount     = customers.filter((c) => urgency(c) === "reply" && !isApplying(c.status)).length;
   const urgentCount    = customers.filter((c) => c.is_linked && urgency(c) === "property" && !isApplying(c.status)).length;
   const applyingCount  = customers.filter((c) => isApplying(c.status)).length;
+  const flaggedCount   = customers.filter((c) => c.linked_conversation?.is_flagged && !isApplying(c.status)).length;
 
   const markSent = async (id: string) => {
     setSentUpdating(id);
@@ -1553,6 +1556,12 @@ function CustomersPageInner() {
             className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterMode === "all" ? "bg-white text-[#1565C0]" : "border border-white/25 text-white/70"}`}
           >
             全員 {customers.filter((c) => !isApplying(c.status)).length}
+          </button>
+          <button
+            onClick={() => setFilterMode("flagged")}
+            className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterMode === "flagged" ? "bg-red-500 text-white" : "border border-white/25 text-white/70"}`}
+          >
+            🔥 要対応 {flaggedCount}
           </button>
         </div>
 
