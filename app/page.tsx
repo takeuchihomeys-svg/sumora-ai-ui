@@ -6913,6 +6913,15 @@ export default function Home() {
                 {activeAixFlow ? `${AIX_ACTION_META[activeAixFlow]?.label} ×` : "AIX"}
               </button>
 
+              {/* ✅ 確認したショートカットボタン */}
+              <button
+                onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); }}
+                className="shrink-0 rounded-full border border-[#4CAF50] bg-white px-3 py-1.5 text-xs font-bold text-[#2E7D32] shadow-sm active:scale-95 transition-all duration-75"
+                title="AIX「確認した」を直接開く"
+              >
+                ✓ 確認した
+              </button>
+
               {/* ✨ sparkleボタン（本文あり→メニュー・本文なし→スパークルモーダル） */}
               <div ref={sparkleMenuRef} className="relative shrink-0">
                 {showSparkleMenu && (
