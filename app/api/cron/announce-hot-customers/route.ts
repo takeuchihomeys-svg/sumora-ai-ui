@@ -48,6 +48,14 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // しょーへい（鈴木祥平）の LINE UserID（メンション用）
+  const { data: suzukiRow } = await supabase
+    .from("hanbancyo_settings")
+    .select("value")
+    .eq("key", "suzuki_line_user_id")
+    .maybeSingle();
+  const suzukiUserId: string | null = suzukiRow?.value ?? null;
+
   // LINE グループID・トークン
   let targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
   if (!targetId) {
@@ -225,7 +233,7 @@ export async function GET(req: NextRequest) {
 
   const motivation = MOTIVATIONS[Math.floor(Date.now() / (24 * 3600 * 1000)) % MOTIVATIONS.length];
 
-  const message = [
+  const bodyText = [
     "【しょーへいの今日のターゲット全リスト】",
     "",
     "► 決まる（最優先）",
@@ -236,10 +244,24 @@ export async function GET(req: NextRequest) {
     `AIX LINX より ${hour}:00`,
   ].join("\n");
 
+  // しょーへいのUserIDがあればtextV2メンション、なければ通常テキスト
+  const lineMessage = suzukiUserId
+    ? {
+        type: "textV2",
+        text: `{0}\n${bodyText}`,
+        substitution: {
+          "0": {
+            type: "mention",
+            mentionee: { type: "user", userId: suzukiUserId },
+          },
+        },
+      }
+    : { type: "text", text: bodyText };
+
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ to: targetId, messages: [{ type: "text", text: message }] }),
+    body: JSON.stringify({ to: targetId, messages: [lineMessage] }),
     signal: AbortSignal.timeout(10_000),
   });
 
