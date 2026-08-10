@@ -623,7 +623,6 @@ export default function Home() {
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
   const [showAixHotPanel, setShowAixHotPanel] = useState(false);
-  const [showFlaggedPanel, setShowFlaggedPanel] = useState(false);
   const [suggestedAixAction, setSuggestedAixAction] = useState<string | null>(null);
   const [showCondPanel, setShowCondPanel] = useState(false);
   const [aixInspectLabel, setAixInspectLabel] = useState<string | null>(null);
@@ -5329,26 +5328,26 @@ export default function Home() {
                     AIX
                   </span>
                 </button>
-                {/* 要対応パネルボタン（鈴木担当） */}
+                {/* 要対応フィルターボタン（鈴木担当） */}
                 <button
-                  onClick={() => setShowFlaggedPanel(true)}
+                  onClick={() => { setStatusFilter((prev) => prev === "flagged" ? "all" : "flagged"); setShowGroupFilter(false); }}
                   className="relative flex items-center justify-center p-1"
                   title="要対応リスト（鈴木担当）"
                 >
                   <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
                     <circle cx="13" cy="13.5" r="10.5"
-                      fill={flaggedConvIds.size > 0 ? "#fff0f0" : "transparent"}
-                      stroke={flaggedConvIds.size > 0 ? "#ef4444" : "#aaaaaa"}
+                      fill={statusFilter === "flagged" ? "#fff0f0" : "transparent"}
+                      stroke={statusFilter === "flagged" ? "#ef4444" : "#aaaaaa"}
                       strokeWidth="1.8"
                     />
-                    <circle cx="9.8" cy="12" r="1.3" fill={flaggedConvIds.size > 0 ? "#ef4444" : "#aaaaaa"}/>
-                    <circle cx="16.2" cy="12" r="1.3" fill={flaggedConvIds.size > 0 ? "#ef4444" : "#aaaaaa"}/>
-                    <path d="M9.5 15.5 Q13 19 16.5 15.5" stroke={flaggedConvIds.size > 0 ? "#ef4444" : "#aaaaaa"} strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                    <circle cx="9.8" cy="12" r="1.3" fill={statusFilter === "flagged" ? "#ef4444" : "#aaaaaa"}/>
+                    <circle cx="16.2" cy="12" r="1.3" fill={statusFilter === "flagged" ? "#ef4444" : "#aaaaaa"}/>
+                    <path d="M9.5 15.5 Q13 19 16.5 15.5" stroke={statusFilter === "flagged" ? "#ef4444" : "#aaaaaa"} strokeWidth="1.5" fill="none" strokeLinecap="round"/>
                     <path d="M21 3.5 L21.55 5.2 L23.2 5.7 L21.55 6.2 L21 7.9 L20.45 6.2 L18.8 5.7 L20.45 5.2 Z"
-                      fill={flaggedConvIds.size > 0 ? "#ef4444" : "#cccccc"}
+                      fill={statusFilter === "flagged" ? "#ef4444" : "#cccccc"}
                     />
                   </svg>
-                  {flaggedConvIds.size > 0 && (
+                  {flaggedConvIds.size > 0 && statusFilter !== "flagged" && (
                     <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
                   )}
                 </button>
@@ -9309,49 +9308,6 @@ export default function Home() {
         );
       })()}
 
-      {/* 要対応パネル — 鈴木担当リスト */}
-      {showFlaggedPanel && (() => {
-        const ACCT: Record<string, string> = { sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ", hasu: "ハス" };
-        const flaggedList = conversations.filter((c) => c.isFlagged);
-        const renderFlaggedRow = (c: Conversation) => (
-          <div
-            key={c.id}
-            className="flex items-center gap-3 px-5 py-3 border-b border-[#f0f2f5] last:border-b-0 active:bg-[#fff0f0] cursor-pointer"
-            onClick={() => { openConversation(c.id); setShowFlaggedPanel(false); }}
-          >
-            <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-black shrink-0 overflow-hidden" style={{ background: "linear-gradient(135deg,#ef4444,#f97316)" }}>
-              {c.profileImageUrl
-                ? <img src={c.profileImageUrl} alt="" className="w-full h-full object-cover" />
-                : (c.customerName?.trim()?.charAt(0) ?? "?")}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 min-w-0 mb-0.5">
-                <span className="text-[13px] font-bold text-[#111b21] truncate">{c.customerName}</span>
-                {c.account && <span className="text-[9px] font-bold text-[#8696a0] shrink-0">{ACCT[c.account] ?? c.account}</span>}
-              </div>
-              <div className="text-[11px] text-[#8696a0] truncate">{c.lastMessage ?? ""}</div>
-            </div>
-          </div>
-        );
-        return (
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={(e) => { if (e.target === e.currentTarget) setShowFlaggedPanel(false); }}>
-            <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: "75svh" }}>
-              <div className="flex items-center justify-between px-5 py-4 flex-shrink-0" style={{ background: "linear-gradient(135deg,#7f1d1d 0%,#ef4444 100%)" }}>
-                <div>
-                  <span className="text-base font-black text-white tracking-tight">🚨 要対応</span>
-                  <span className="ml-2 text-[11px] text-white/70">鈴木担当・瞬発力が必要</span>
-                </div>
-                <button onClick={() => setShowFlaggedPanel(false)} className="text-white/70 text-xl leading-none active:opacity-60">✕</button>
-              </div>
-              <div className="overflow-y-auto flex-1 pb-6">
-                {flaggedList.length === 0
-                  ? <div className="px-5 py-8 text-center text-[13px] text-[#8696a0]">要対応なし</div>
-                  : flaggedList.map(renderFlaggedRow)}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* ハンバーガーメニューモーダル */}
       {showHamburgerMenu && (
