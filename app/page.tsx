@@ -2415,9 +2415,10 @@ export default function Home() {
 
     return (
       filteredConversations.find((conversation) => conversation.id === selectedId) ??
+      conversations.find((conversation) => conversation.id === selectedId) ??
       filteredConversations[0]
     );
-  }, [filteredConversations, selectedId]);
+  }, [filteredConversations, conversations, selectedId]);
 
   // line_message_id → message.id のルックアップ（引用スクロール用）
   const lineMessageIdToMsgId = useMemo(() => {
