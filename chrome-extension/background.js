@@ -2202,6 +2202,14 @@ async function _scrapeAllItandiPages(tabId) {
   var maxPages = 10; // itandi は通常 1〜5 ページ程度。安全マージンで 10 ページ上限
   for (var page = 0; page < maxPages; page++) {
     var props = await _scrapeItandiPage(tabId);
+    // 修正: スクレイプ失敗（error オブジェクト）と0件を区別する
+    if (props && props.error) {
+      if (page === 0) {
+        throw new Error("itandiスクレイプ失敗: " + props.error);
+      }
+      console.warn("[itandiScrape] page " + (page + 1) + " scrape error: " + props.error + " → 打ち切り");
+      break;
+    }
     console.log("[itandiScrape] page " + (page + 1) + ": " + props.length + "件");
     if (props.length === 0) break;
     allProperties = allProperties.concat(props);

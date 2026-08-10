@@ -19,7 +19,8 @@
     "*://*.realnetpro.com/*",
     "https://itandibb.com/*",
     "https://system.reins.jp/*",
-    "http://localhost:3000/*"
+    "http://localhost:3000/*",
+    "https://wfwsmwxakhyxobytszoq.supabase.co/*"
   ],
   "permissions": [
     "sidePanel",

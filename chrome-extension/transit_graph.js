@@ -9158,3 +9158,4 @@ const TRANSIT_GRAPH =
 
 // For Node.js (build/test usage)
 if (typeof module !== "undefined") module.exports = { TRANSIT_GRAPH };
+window.TRANSIT_GRAPH = TRANSIT_GRAPH;

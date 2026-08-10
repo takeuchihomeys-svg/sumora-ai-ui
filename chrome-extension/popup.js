@@ -639,14 +639,15 @@ function getStationsWithinMinutes(startStation, maxMinutes) {
   if (!window.TRANSIT_GRAPH || !TRANSIT_GRAPH[startStation]) return [];
 
   const minTime = {};
-  minTime[startStation] = 0;
+  minTime[startStation + '|'] = 0;
   const queue = [{ station: startStation, line: null, minutes: 0 }];
 
   while (queue.length) {
     queue.sort((a, b) => a.minutes - b.minutes);
     const { station, line, minutes } = queue.shift();
 
-    if (minutes > (minTime[station] ?? Infinity) + 0.1) continue;
+    const stateKey = station + '|' + (line || '');
+    if (minutes > (minTime[stateKey] ?? Infinity) + 0.1) continue;
 
     const node = TRANSIT_GRAPH[station];
     if (!node) continue;
@@ -660,15 +661,24 @@ function getStationsWithinMinutes(startStation, maxMinutes) {
       const penalty = (line && line !== edgeLine && edgeLine !== "transfer") ? 3 : 0;
       const total   = minutes + edgeTime + penalty;
 
-      if (total <= maxMinutes && (minTime[neighbor] === undefined || minTime[neighbor] > total)) {
-        minTime[neighbor] = total;
+      const neighborKey = neighbor + '|' + (edgeLine || '');
+      if (total <= maxMinutes && (minTime[neighborKey] === undefined || minTime[neighborKey] > total)) {
+        minTime[neighborKey] = total;
         queue.push({ station: neighbor, line: edgeLine, minutes: total });
       }
     }
   }
 
-  return Object.entries(minTime)
-    .filter(([s]) => s !== startStation)
+  // station|line キーから駅ごとの最短時間を集約（マルチ路線ハブの重複を除去）
+  const stationMin = {};
+  for (const [key, t] of Object.entries(minTime)) {
+    const [s] = key.split('|');
+    if (s !== startStation && (stationMin[s] === undefined || stationMin[s] > t)) {
+      stationMin[s] = t;
+    }
+  }
+
+  return Object.entries(stationMin)
     .sort((a, b) => a[1] - b[1])
     .map(([s, t]) => ({ station: s, minutes: Math.round(t) }));
 }
@@ -763,6 +773,17 @@ function parseAreaCondition(text) {
  */
 function applyParsedCondition(parsed) {
   if (!parsed) return;
+
+  // 不明な駅名はバナーを出さずサイレントスキップ（misleading UX防止）
+  const stationExists = parsed.station && (
+    (typeof STATION_LINE_MAP !== 'undefined' && STATION_LINE_MAP[parsed.station]) ||
+    (typeof window.TRANSIT_GRAPH !== 'undefined' && window.TRANSIT_GRAPH[parsed.station])
+  );
+  if (!stationExists) {
+    console.warn('[applyParsedCondition] 未知の駅名のためスキップ:', parsed.station);
+    return;
+  }
+
   const row = document.getElementById('transfer-search-row');
   if (!row) return; // View 3 以外では何もしない
 
@@ -798,7 +819,13 @@ function applyParsedCondition(parsed) {
   if (parsed.mode === 'time') {
     setSearchMode('time');
     const sel = document.getElementById('maxMinutes');
-    if (sel) sel.value = String(parsed.minutes || 30);
+    if (sel) {
+      const MINUTE_OPTIONS = [15, 20, 30, 45, 60];
+      const snappedMinutes = MINUTE_OPTIONS.reduce((best, opt) =>
+        Math.abs(opt - (parsed.minutes || 30)) < Math.abs(best - (parsed.minutes || 30)) ? opt : best
+      );
+      sel.value = String(snappedMinutes);
+    }
     banner.textContent = `🤖 自動設定済み: ${parsed.station} から ${parsed.minutes}分以内`;
   } else {
     setSearchMode('transfer');
