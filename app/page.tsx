@@ -623,6 +623,7 @@ export default function Home() {
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
   const [showAixHotPanel, setShowAixHotPanel] = useState(false);
+  const [showFlaggedPanel, setShowFlaggedPanel] = useState(false);
   const [suggestedAixAction, setSuggestedAixAction] = useState<string | null>(null);
   const [showCondPanel, setShowCondPanel] = useState(false);
   const [aixInspectLabel, setAixInspectLabel] = useState<string | null>(null);
@@ -5328,27 +5329,27 @@ export default function Home() {
                     AIX
                   </span>
                 </button>
-                {/* AIX送信対象フィルターボタン */}
+                {/* 要対応パネルボタン（鈴木担当） */}
                 <button
-                  onClick={() => setStatusFilter((prev) => prev === "aix_target" ? "all" : "aix_target")}
+                  onClick={() => setShowFlaggedPanel(true)}
                   className="relative flex items-center justify-center p-1"
-                  title="AIX送信対象のみ表示"
+                  title="要対応リスト（鈴木担当）"
                 >
                   <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
                     <circle cx="13" cy="13.5" r="10.5"
-                      fill={statusFilter === "aix_target" ? "#fff7ed" : "transparent"}
-                      stroke={statusFilter === "aix_target" ? "#f97316" : "#aaaaaa"}
+                      fill={flaggedConvIds.size > 0 ? "#fff0f0" : "transparent"}
+                      stroke={flaggedConvIds.size > 0 ? "#ef4444" : "#aaaaaa"}
                       strokeWidth="1.8"
                     />
-                    <circle cx="9.8" cy="12" r="1.3" fill={statusFilter === "aix_target" ? "#f97316" : "#aaaaaa"}/>
-                    <circle cx="16.2" cy="12" r="1.3" fill={statusFilter === "aix_target" ? "#f97316" : "#aaaaaa"}/>
-                    <path d="M9.5 15.5 Q13 19 16.5 15.5" stroke={statusFilter === "aix_target" ? "#f97316" : "#aaaaaa"} strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                    <circle cx="9.8" cy="12" r="1.3" fill={flaggedConvIds.size > 0 ? "#ef4444" : "#aaaaaa"}/>
+                    <circle cx="16.2" cy="12" r="1.3" fill={flaggedConvIds.size > 0 ? "#ef4444" : "#aaaaaa"}/>
+                    <path d="M9.5 15.5 Q13 19 16.5 15.5" stroke={flaggedConvIds.size > 0 ? "#ef4444" : "#aaaaaa"} strokeWidth="1.5" fill="none" strokeLinecap="round"/>
                     <path d="M21 3.5 L21.55 5.2 L23.2 5.7 L21.55 6.2 L21 7.9 L20.45 6.2 L18.8 5.7 L20.45 5.2 Z"
-                      fill={statusFilter === "aix_target" ? "#f97316" : "#cccccc"}
+                      fill={flaggedConvIds.size > 0 ? "#ef4444" : "#cccccc"}
                     />
                   </svg>
-                  {aixTargetCount > 0 && (
-                    <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-orange-500" />
+                  {flaggedConvIds.size > 0 && (
+                    <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
                   )}
                 </button>
                 {/* AI検索ボタン */}
@@ -9253,18 +9254,18 @@ export default function Home() {
         </div>
       )}
 
-      {/* AIXパネル — アツい・要対応リスト */}
+      {/* AIXパネル — アツい・次AIXで送るリスト */}
       {showAixHotPanel && (() => {
         const now = Date.now();
         const ms14d = 14 * 86400_000;
         const ACCT: Record<string, string> = { sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ", hasu: "ハス" };
         const hotList = conversations.filter((c) => c.isHot && !c.isPostApply && now - new Date(c.updatedAt ?? "").getTime() <= ms14d);
-        const flaggedList = conversations.filter((c) => c.isFlagged && !c.isPostApply);
-        const renderRow = (c: Conversation) => (
+        const aixTargetList = conversations.filter((c) => c.suggestedNextAix || (c.suggestedAixMeta && c.lastSender === "customer"));
+        const renderRow = (c: Conversation, onClose: () => void) => (
           <div
             key={c.id}
             className="flex items-center gap-3 px-5 py-3 border-b border-[#f0f2f5] last:border-b-0 active:bg-[#f5f6f6] cursor-pointer"
-            onClick={() => { setSelectedId(c.id); setShowAixHotPanel(false); }}
+            onClick={() => { setSelectedId(c.id); onClose(); }}
           >
             <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-black shrink-0 overflow-hidden" style={{ background: "linear-gradient(135deg,#1565C0,#2196F3)" }}>
               {c.profileImageUrl
@@ -9275,13 +9276,13 @@ export default function Home() {
               <div className="flex items-center gap-1.5 min-w-0 mb-0.5">
                 <span className="text-[13px] font-bold text-[#111b21] truncate">{c.customerName}</span>
                 {c.account && <span className="text-[9px] font-bold text-[#8696a0] shrink-0">{ACCT[c.account] ?? c.account}</span>}
-                {c.isFlagged && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-bold text-white shrink-0">要対応</span>}
+                {c.suggestedNextAix && <span className="rounded-full bg-[#1565C0] px-1.5 py-0.5 text-[9px] font-bold text-white shrink-0 truncate max-w-[80px]">{c.suggestedNextAix}</span>}
               </div>
               <div className="text-[11px] text-[#8696a0] truncate">{c.lastMessage ?? ""}</div>
             </div>
           </div>
         );
-        const Section = ({ title, badge, color, items }: { title: string; badge: number; color: string; items: Conversation[] }) => (
+        const Section = ({ title, badge, color, items, onClose }: { title: string; badge: number; color: string; items: Conversation[]; onClose: () => void }) => (
           <div className="border-b border-[#f0f2f5] last:border-b-0">
             <div className="flex items-center gap-2 px-5 py-3 bg-[#f8f9fa] sticky top-0">
               <span className="text-[13px] font-black text-[#111b21]">{title}</span>
@@ -9289,7 +9290,7 @@ export default function Home() {
             </div>
             {items.length === 0
               ? <div className="px-5 py-4 text-[12px] text-[#8696a0]">該当なし</div>
-              : items.map(renderRow)}
+              : items.map((c) => renderRow(c, onClose))}
           </div>
         );
         return (
@@ -9300,8 +9301,52 @@ export default function Home() {
                 <button onClick={() => setShowAixHotPanel(false)} className="text-white/70 text-xl leading-none active:opacity-60">✕</button>
               </div>
               <div className="overflow-y-auto flex-1 pb-6">
-                <Section title="🔥 アツい" badge={hotList.length} color="bg-orange-400" items={hotList} />
-                <Section title="🚨 要対応" badge={flaggedList.length} color="bg-red-500" items={flaggedList} />
+                <Section title="🔥 アツい" badge={hotList.length} color="bg-orange-400" items={hotList} onClose={() => setShowAixHotPanel(false)} />
+                <Section title="🎯 次AIXで送る" badge={aixTargetList.length} color="bg-[#1565C0]" items={aixTargetList} onClose={() => setShowAixHotPanel(false)} />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 要対応パネル — 鈴木担当リスト */}
+      {showFlaggedPanel && (() => {
+        const ACCT: Record<string, string> = { sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ", hasu: "ハス" };
+        const flaggedList = conversations.filter((c) => c.isFlagged);
+        const renderFlaggedRow = (c: Conversation) => (
+          <div
+            key={c.id}
+            className="flex items-center gap-3 px-5 py-3 border-b border-[#f0f2f5] last:border-b-0 active:bg-[#fff0f0] cursor-pointer"
+            onClick={() => { setSelectedId(c.id); setShowFlaggedPanel(false); }}
+          >
+            <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-black shrink-0 overflow-hidden" style={{ background: "linear-gradient(135deg,#ef4444,#f97316)" }}>
+              {c.profileImageUrl
+                ? <img src={c.profileImageUrl} alt="" className="w-full h-full object-cover" />
+                : (c.customerName?.trim()?.charAt(0) ?? "?")}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0 mb-0.5">
+                <span className="text-[13px] font-bold text-[#111b21] truncate">{c.customerName}</span>
+                {c.account && <span className="text-[9px] font-bold text-[#8696a0] shrink-0">{ACCT[c.account] ?? c.account}</span>}
+              </div>
+              <div className="text-[11px] text-[#8696a0] truncate">{c.lastMessage ?? ""}</div>
+            </div>
+          </div>
+        );
+        return (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={(e) => { if (e.target === e.currentTarget) setShowFlaggedPanel(false); }}>
+            <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: "75svh" }}>
+              <div className="flex items-center justify-between px-5 py-4 flex-shrink-0" style={{ background: "linear-gradient(135deg,#7f1d1d 0%,#ef4444 100%)" }}>
+                <div>
+                  <span className="text-base font-black text-white tracking-tight">🚨 要対応</span>
+                  <span className="ml-2 text-[11px] text-white/70">鈴木担当・瞬発力が必要</span>
+                </div>
+                <button onClick={() => setShowFlaggedPanel(false)} className="text-white/70 text-xl leading-none active:opacity-60">✕</button>
+              </div>
+              <div className="overflow-y-auto flex-1 pb-6">
+                {flaggedList.length === 0
+                  ? <div className="px-5 py-8 text-center text-[13px] text-[#8696a0]">要対応なし</div>
+                  : flaggedList.map(renderFlaggedRow)}
               </div>
             </div>
           </div>
