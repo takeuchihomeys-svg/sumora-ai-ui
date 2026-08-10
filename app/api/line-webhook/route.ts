@@ -385,6 +385,14 @@ async function handleTextMessage(
     }
   });
 
+  // after() C: エリア指定検知 → resolve-area抽出 → desired_area更新 + LINE通知
+  if (isAreaSpecificationMessage(text)) {
+    after(async () => {
+      await detectAndAnnounceAreaChange(db, convId, text)
+        .catch((e) => console.warn("[detectAndAnnounceAreaChange]", e));
+    });
+  }
+
   return true;
 }
 
@@ -469,6 +477,15 @@ function isFormatMessage(text: string): boolean {
     return hasStrong || hasDigit;
   }
   return false;
+}
+
+// エリア指定メッセージ検知（autoParseFormatのisFormatMessageより先に通過したもの専用）
+// 保守的条件: 市区町村サフィックス付きトークンが2個以上、またはトリガーワードと1個以上の組み合わせ
+function isAreaSpecificationMessage(text: string): boolean {
+  if (isFormatMessage(text)) return false; // autoParseFormat handles this
+  const matches = text.match(/[^\s]{1,6}[都道府県市区町村]/g) ?? [];
+  const hasTrigger = /辺り|あたり|周辺|エリア|で探|希望/.test(text);
+  return matches.length >= 2 || (matches.length >= 1 && hasTrigger);
 }
 
 // JST タイムスタンプ（新着要望のログに使用）
@@ -1098,6 +1115,92 @@ async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: 
     }
   } catch (e) {
     console.warn("[notifyHanbancyoGroup] push failed:", e);
+  }
+}
+
+// ── エリア指定検知 → resolve-area抽出 → desired_area更新 + LINE通知 ──────────
+// isAreaSpecificationMessage() をパスしたメッセージのみ呼ばれる（after()内で実行）
+async function detectAndAnnounceAreaChange(
+  db: ReturnType<typeof getDb>,
+  convId: string,
+  msgText: string,
+): Promise<void> {
+  try {
+    // conversations から property_customer_id を取得
+    const { data: conv } = await db
+      .from("conversations")
+      .select("property_customer_id")
+      .eq("id", convId)
+      .maybeSingle();
+    if (!conv?.property_customer_id) return; // 紐付けなし → スキップ
+
+    // resolve-area API でエリア名を抽出（Claude Haiku が自然言語を解釈）
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+      ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
+    const areaRes = await fetch(`${baseUrl}/api/resolve-area`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ desired_area: msgText }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!areaRes.ok) {
+      console.warn("[detectAndAnnounceAreaChange] resolve-area failed:", areaRes.status);
+      return;
+    }
+    const areaJson = await areaRes.json() as {
+      realpro?: { areas?: string[] };
+      itandi?: { areas?: string[] };
+    };
+    const extractedAreas: string[] = areaJson.realpro?.areas ?? areaJson.itandi?.areas ?? [];
+    if (extractedAreas.length === 0) return; // 抽出失敗 → サイレントスキップ
+
+    // property_customers の既存エリアを取得
+    const { data: pc } = await db
+      .from("property_customers")
+      .select("id, desired_area, area, customer_name, assignee")
+      .eq("id", conv.property_customer_id as string)
+      .single();
+    if (!pc) return;
+
+    // ADDマージ: 既存エリアと重複を排除して結合（condition-merge.ts の ADD ロジックと同等）
+    const oldArea = (pc.desired_area as string | null) ?? (pc.area as string | null) ?? "";
+    const existing = oldArea.split(/[・、,]+/).filter(Boolean);
+    const merged = [...new Set([...existing, ...extractedAreas])].join("・");
+    if (merged === existing.join("・")) return; // 変化なし → 通知不要
+
+    await db.from("property_customers")
+      .update({ desired_area: merged, updated_at: new Date().toISOString() })
+      .eq("id", pc.id as string);
+
+    // LINE スタッフグループに通知
+    let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
+    if (!groupId) {
+      const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
+      groupId = (grpRow?.value as string) ?? null;
+    }
+    const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
+    if (!groupId || !token) return;
+
+    const { data: suzukiRow } = await db.from("hanbancyo_settings").select("value").eq("key", "suzuki_line_user_id").maybeSingle();
+    const suzukiUserId = suzukiRow?.value as string | undefined;
+
+    const customerName = (pc.customer_name as string | null) ?? "お客様";
+    const oldAreaDisplay = oldArea || "（未設定）";
+    const bodyText = `【地域指定】${customerName}さんから地域変更\n${oldAreaDisplay} → ${merged}\n※条件に反映済み`;
+
+    const message = suzukiUserId
+      ? { type: "textV2", text: `{0} ${bodyText}`, substitution: { "0": { type: "mention", mentionee: { type: "user", userId: suzukiUserId } } } }
+      : { type: "text", text: bodyText };
+
+    await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: groupId, messages: [message] }),
+      signal: AbortSignal.timeout(10_000),
+    }).catch((e) => console.warn("[detectAndAnnounceAreaChange] LINE push failed:", e));
+  } catch (e) {
+    console.warn("[detectAndAnnounceAreaChange] error:", e);
   }
 }
 
