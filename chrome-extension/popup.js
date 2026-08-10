@@ -688,6 +688,130 @@ function setSearchMode(mode) {
   if (selectedSite) renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
 }
 
+// ── エリア条件テキスト自動パース ─────────────────────────────────────
+
+const AREA_STATION_ALIASES = {
+  "大阪梅田": "梅田",
+  "てんのうじ": "天王寺",
+  "テンノウジ": "天王寺",
+  "おおさか": "大阪",
+  "うめだ": "梅田",
+};
+
+/**
+ * parseAreaCondition(text)
+ * DB の desired_area / area フィールドをパースしてオブジェクトを返す
+ * mode: "time"     → { station, mode, minutes }
+ * mode: "transfer" → { station, mode, transfers }
+ * mode: "vicinity" → { station, mode }
+ * 複数条件 → Array  /  認識不能 → null
+ */
+function parseAreaCondition(text) {
+  if (!text || typeof text !== "string") return null;
+
+  function kanjiToNum(s) {
+    if (/^\d+$/.test(s)) return parseInt(s, 10);
+    const T = { 零:0, 〇:0, 一:1, 二:2, 三:3, 四:4, 五:5, 六:6, 七:7, 八:8, 九:9, 十:10, 百:100 };
+    let r = 0, cur = 0;
+    for (const ch of s) {
+      const n = T[ch];
+      if (n == null) continue;
+      if (n >= 10) { r += (cur || 1) * n; cur = 0; } else cur = n;
+    }
+    return r + cur;
+  }
+
+  function normalizeStation(raw) {
+    const name = raw.replace(/(?:駅|から|まで|へ|で)$/, "").trim();
+    if (!name || /^[零〇一二三四五六七八九十百\d]+$/.test(name)) return null;
+    return AREA_STATION_ALIASES[name] || name;
+  }
+
+  const NUM = `(?:\\d+|[零〇一二三四五六七八九十百]+)`;
+
+  function parseSingle(t) {
+    t = t.trim();
+    if (!t) return null;
+    let m;
+    // 直通
+    m = t.match(/^(.+?)(?:駅)?直通$/);
+    if (m) { const s = normalizeStation(m[1]); if (s) return { station: s, mode: "transfer", transfers: 0 }; }
+    // 所要時間
+    m = t.match(new RegExp(`^(.+?)(?:駅)?(?:から|まで|へ)?(?:(?:電車|徒歩)で?)?(${NUM})分(?:以内|くらい|程度|圏内)?$`));
+    if (m) { const s = normalizeStation(m[1]); if (s) return { station: s, mode: "time", minutes: kanjiToNum(m[2]) }; }
+    // 乗り換え
+    m = t.match(new RegExp(`^(.+?)(?:駅)?(?:から|まで|で)?乗り換え(?:(なし|ゼロ)|(${NUM})回?(?:以内|まで)?)$`));
+    if (m) { const s = normalizeStation(m[1]); if (s) return { station: s, mode: "transfer", transfers: m[2] ? 0 : kanjiToNum(m[3]) }; }
+    // 周辺
+    m = t.match(/^(.+?)(?:駅)?(?:周辺|付近|エリア|近く|近辺|界隈)$/);
+    if (m) { const s = normalizeStation(m[1]); if (s) return { station: s, mode: "vicinity" }; }
+    return null;
+  }
+
+  const parts = text.split(/[、，,・\/]/);
+  if (parts.length > 1) {
+    const results = parts.map(parseSingle).filter(Boolean);
+    if (results.length === 0) return null;
+    return results.length === 1 ? results[0] : results;
+  }
+  return parseSingle(text);
+}
+
+/**
+ * applyParsedCondition(parsed)
+ * parseAreaCondition の結果を Transfer UI に反映し、自動認識バナーを表示する
+ */
+function applyParsedCondition(parsed) {
+  if (!parsed) return;
+  const row = document.getElementById('transfer-search-row');
+  if (!row) return; // View 3 以外では何もしない
+
+  // バナー表示（クリックで即消し・4秒で自動消滅）
+  let banner = document.getElementById('auto-parse-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'auto-parse-banner';
+    banner.style.cssText = [
+      'position:fixed', 'bottom:68px', 'left:50%', 'transform:translateX(-50%)',
+      'background:#1565C0', 'color:#fff', 'padding:5px 14px', 'border-radius:20px',
+      'font-size:12px', 'cursor:pointer', 'z-index:9999',
+      'box-shadow:0 2px 8px rgba(0,0,0,.3)', 'white-space:nowrap', 'transition:opacity .3s',
+    ].join(';');
+    banner.onclick = () => banner.remove();
+    document.body.appendChild(banner);
+  }
+
+  if (parsed.mode === 'vicinity') {
+    banner.textContent = `🤖 ${parsed.station} 周辺を自動認識`;
+    setTimeout(() => banner?.remove(), 3000);
+    return;
+  }
+
+  // チェックボックスON・オプション表示
+  const cb = document.getElementById('enableTransfer');
+  if (cb && !cb.checked) {
+    cb.checked = true;
+    const opts = document.getElementById('transfer-options');
+    if (opts) opts.style.display = 'flex';
+  }
+
+  if (parsed.mode === 'time') {
+    setSearchMode('time');
+    const sel = document.getElementById('maxMinutes');
+    if (sel) sel.value = String(parsed.minutes || 30);
+    banner.textContent = `🤖 自動設定済み: ${parsed.station} から ${parsed.minutes}分以内`;
+  } else {
+    setSearchMode('transfer');
+    const sel = document.getElementById('maxTransfers');
+    if (sel) sel.value = String(parsed.transfers ?? 1);
+    const transferLabel = parsed.transfers === 0 ? '直通' : `乗り換え${parsed.transfers}回以内`;
+    banner.textContent = `🤖 自動設定済み: ${parsed.station} ${transferLabel}`;
+  }
+
+  updateTransferCountLabel();
+  setTimeout(() => banner?.remove(), 4000);
+}
+
 function getExpandedStations(startStation) {
   const enabled = document.getElementById('enableTransfer')?.checked;
   if (!enabled) return [startStation];
@@ -2061,6 +2185,21 @@ function preloadAdjForm(c) {
   const regDateEl = document.getElementById("adj-reg-date");
   if (regDateEl && !c.last_property_sent_at) {
     regDateEl.value = "";
+  }
+
+  // エリア条件を自動パースしてTransfer UIに反映
+  const _rawAreaForParse = c.desired_area || c.area || '';
+  if (_rawAreaForParse) {
+    const _parsed = parseAreaCondition(_rawAreaForParse);
+    const _first = Array.isArray(_parsed) ? _parsed[0] : _parsed;
+    if (_first) {
+      applyParsedCondition(_first);
+      // 複数条件がある場合はlabelのtitleにヒントを追加
+      if (Array.isArray(_parsed) && _parsed.length > 1) {
+        const label = document.getElementById('transfer-count-label');
+        if (label) label.title = '他にも: ' + _parsed.slice(1).map(p => p.station + (p.minutes ? ` ${p.minutes}分以内` : '')).join('、');
+      }
+    }
   }
 }
 
