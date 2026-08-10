@@ -146,7 +146,7 @@ export async function GET(req: NextRequest) {
       const lastText = text || (imageUrls.length > 0 ? "[画像]" : "");
       const { error: convUpdateErr } = await supabase
         .from("conversations")
-        .update({ last_message: lastText, last_sender: "staff", updated_at: sentAt.toISOString(), ai_draft: null, is_flagged: false })
+        .update({ last_message: lastText, last_sender: "staff", updated_at: sentAt.toISOString(), ai_draft: null })
         .eq("id", msg.conversation_id as string);
       if (convUpdateErr) {
         console.error("[send-scheduled] conversations更新失敗:", convUpdateErr.message, "id:", msg.id);
