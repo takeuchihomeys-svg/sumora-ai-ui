@@ -9265,7 +9265,7 @@ export default function Home() {
           <div
             key={c.id}
             className="flex items-center gap-3 px-5 py-3 border-b border-[#f0f2f5] last:border-b-0 active:bg-[#f5f6f6] cursor-pointer"
-            onClick={() => { setSelectedId(c.id); onClose(); }}
+            onClick={() => { openConversation(c.id); onClose(); }}
           >
             <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-black shrink-0 overflow-hidden" style={{ background: "linear-gradient(135deg,#1565C0,#2196F3)" }}>
               {c.profileImageUrl
@@ -9317,7 +9317,7 @@ export default function Home() {
           <div
             key={c.id}
             className="flex items-center gap-3 px-5 py-3 border-b border-[#f0f2f5] last:border-b-0 active:bg-[#fff0f0] cursor-pointer"
-            onClick={() => { setSelectedId(c.id); setShowFlaggedPanel(false); }}
+            onClick={() => { openConversation(c.id); setShowFlaggedPanel(false); }}
           >
             <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-black shrink-0 overflow-hidden" style={{ background: "linear-gradient(135deg,#ef4444,#f97316)" }}>
               {c.profileImageUrl
