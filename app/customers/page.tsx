@@ -2255,40 +2255,30 @@ function CustomersPageInner() {
                   <>
                     {/* 物件探し中：条件チップ */}
                     <div className="border-t border-[#f0f2f5] px-4 py-2.5">
-                      {/* 地域/駅バッジ（手動ON=実色 / 自動推定=薄色 / OFF=グレー） */}
+                      {/* 地域/駅バッジ（ON=実色固定 / OFF=グレー） */}
                       {c.status !== "pending" && (() => {
                         const _cm: "auto" | "ward" | "station" | "both" =
                           (areaModeByCustomer[c.id] ?? c.area_mode ?? "auto") as "auto" | "ward" | "station" | "both";
-                        const _isManual = _cm !== "auto";
                         const _wM = _cm === "ward" || _cm === "both";
                         const _sM = _cm === "station" || _cm === "both";
-                        const _hA = !!(c.desired_area?.trim());
-                        const _hS = !!(c.stations?.length);
                         return (
                           <div className="flex items-center gap-1 mb-1.5" onClick={(e) => e.stopPropagation()}>
                             <button
                               onClick={() => handleAreaModeToggle(c, "ward")}
-                              className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold border transition-colors ${
-                                _wM ? "bg-teal-600 text-white border-transparent"
-                                : (!_isManual && _hA) ? "bg-teal-50 text-teal-600 border-teal-400"
-                                : "bg-white text-gray-300 border-gray-200"
+                              className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold border transition-colors active:scale-95 ${
+                                _wM ? "bg-teal-600 text-white border-transparent" : "bg-white text-gray-300 border-gray-200"
                               }`}
-                              title={_wM ? "地域で検索（手動）クリックで解除" : (!_isManual && _hA) ? "地域で検索（自動）クリックで確定" : "地域検索OFF（クリックで地域ON）"}
                             >
-                              地域
+                              {_wM ? "✓ 地域" : "地域"}
                             </button>
                             <button
                               onClick={() => handleAreaModeToggle(c, "station")}
-                              className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold border transition-colors ${
-                                _sM ? "bg-blue-600 text-white border-transparent"
-                                : (!_isManual && _hS) ? "bg-blue-50 text-blue-600 border-blue-400"
-                                : "bg-white text-gray-300 border-gray-200"
+                              className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold border transition-colors active:scale-95 ${
+                                _sM ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-300 border-gray-200"
                               }`}
-                              title={_sM ? "駅で検索（手動）クリックで解除" : (!_isManual && _hS) ? "駅で検索（自動）クリックで確定" : "駅検索OFF（クリックで駅ON）"}
                             >
-                              駅
+                              {_sM ? "✓ 駅" : "駅"}
                             </button>
-                            {!_isManual && <span className="text-[8px] text-gray-400">自動</span>}
                           </div>
                         );
                       })()}
