@@ -2425,6 +2425,7 @@ function openInstructions(siteKey) {
     autofillBtn.onclick = async () => {
       const isAutomated_itandi = !!autofillBtn.dataset.automated;
       const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
+      const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得
       let c = selectedCustomer;
       const adjArea      = document.getElementById("adj-area").value.trim();
       const adjRentMax   = document.getElementById("adj-rent-max").value;
@@ -2588,7 +2589,7 @@ function openInstructions(siteKey) {
 
       const conditions = {
         rent_max:        itandiEffectiveRentMax,
-        area_mode:       currentAreaMode,
+        area_mode:       _lockedMode_itandi || currentAreaMode,
         shikirei_free:   detectShikireiFlag(c),
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
         building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
@@ -2709,7 +2710,8 @@ function openInstructions(siteKey) {
       // pendingPopupCmd（自動バッチ）経由の click か手動クリックかを区別
       const isAutomated = !!autofillBtn.dataset.automated;
       const isAutoSendAll = !!autofillBtn.dataset.auto_send_all;
-      const c = selectedCustomer;
+      const _lockedMode = autofillBtn.dataset.area_mode_locked || null; // await前に取得（非同期後は dataset が削除済み）
+      const c = c0;
       // 調整フォームの値を優先して使う
       const adjArea     = document.getElementById("adj-area").value.trim();
       const adjRentMax  = document.getElementById("adj-rent-max").value;
@@ -2915,7 +2917,7 @@ function openInstructions(siteKey) {
         action: "autofill",
         source: isAutoSendAll ? "flagged_batch" : (isAutomated ? "automated" : "manual"),
         conditions: {
-          area_mode:     currentAreaMode,
+          area_mode:     _lockedMode || currentAreaMode,
           rent_min:      adjC.rent_min,
           rent_max:      rpEffectiveRentMax,
           walk_minutes:  adjC.walk_minutes,
@@ -2951,7 +2953,7 @@ function openInstructions(siteKey) {
           floor_plan:   adjC.floor_plan || null,
           building_age: adjC.building_age || null,
           area_min:     adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || null),
-          customer_name: selectedCustomer.customer_name,
+          customer_name: c.customer_name,
         }});
       } catch (_) { /* ignore */ }
       autofillBtn.textContent = "⏳ 検索中...";
@@ -2961,13 +2963,14 @@ function openInstructions(siteKey) {
     };
   } else if (siteKey === "reins") {
     adjForm.style.display = "block";
-    preloadAdjForm(selectedCustomer);
-    setupAreaModeSelector(selectedCustomer, "reins");
+    const c0 = selectedCustomer;
+    preloadAdjForm(c0);
+    setupAreaModeSelector(c0, "reins");
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ REINSに自動入力";
     autofillBtn.className = "autofill-btn";
     autofillBtn.onclick = async () => {
-      const adjC = buildAdjCustomer(selectedCustomer);
+      const adjC = buildAdjCustomer(c0);
       renderInstrSteps("reins", adjC);
 
       // ボタン押下が絶対ルール: currentAreaMode で駅 or 地域を決定
@@ -3072,7 +3075,7 @@ function openInstructions(siteKey) {
           floor_plan:   conditions.floor_plan || null,
           building_age: conditions.building_age || null,
           area_min:     conditions.area_min || null,
-          customer_name: selectedCustomer.customer_name,
+          customer_name: c0.customer_name,
         }});
       } catch (_) { /* ignore */ }
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -3171,15 +3174,18 @@ document.addEventListener("DOMContentLoaded", () => {
           if (btnEl) btnEl.click();
         }
         // Step ④ auto-click: autofill-btnをユーザー操作に近い遅延で自動クリックする
+        var _lockedAreaMode = currentAreaMode; // 顧客切替・API非同期コールバックによる上書きを防ぐ
         var _autoClickDelay = 800 + Math.floor(Math.random() * 400); // 800-1200ms
         setTimeout(function() {
           var aBtn = document.getElementById('autofill-btn');
           if (aBtn && aBtn.style.display !== 'none') {
             aBtn.dataset.automated = "1"; // 自動バッチであることを onclick ハンドラに伝える
             aBtn.dataset.auto_send_all = cmd.auto_send_all ? "1" : "";
+            aBtn.dataset.area_mode_locked = _lockedAreaMode;
             aBtn.click();
             delete aBtn.dataset.automated;
             delete aBtn.dataset.auto_send_all;
+            delete aBtn.dataset.area_mode_locked;
           }
         }, _autoClickDelay);
       }
@@ -3211,15 +3217,18 @@ document.addEventListener("DOMContentLoaded", () => {
         if (btnEl2) btnEl2.click();
       }
       // Step ④ auto-click (onChanged path)
+      var _lockedAreaMode2 = currentAreaMode; // 顧客切替・API非同期コールバックによる上書きを防ぐ
       var _autoClickDelay2 = 800 + Math.floor(Math.random() * 400);
       setTimeout(function() {
         var aBtn = document.getElementById('autofill-btn');
         if (aBtn && aBtn.style.display !== 'none') {
           aBtn.dataset.automated = "1"; // 自動バッチであることを onclick ハンドラに伝える
           aBtn.dataset.auto_send_all = cmd.auto_send_all ? "1" : "";
+          aBtn.dataset.area_mode_locked = _lockedAreaMode2;
           aBtn.click();
           delete aBtn.dataset.automated;
           delete aBtn.dataset.auto_send_all;
+          delete aBtn.dataset.area_mode_locked;
         }
       }, _autoClickDelay2);
     }
@@ -3312,7 +3321,13 @@ document.addEventListener("DOMContentLoaded", () => {
               setTimeout(r, 800 + Math.floor(Math.random() * 400));
             });
             var aBtn = document.getElementById('autofill-btn');
-            if (aBtn) aBtn.click();
+            if (aBtn) {
+              aBtn.dataset.automated = "1";
+              aBtn.dataset.auto_send_all = e.data.auto_send_all ? "1" : "";
+              aBtn.click();
+              delete aBtn.dataset.automated;
+              delete aBtn.dataset.auto_send_all;
+            }
           }
         })();
       }

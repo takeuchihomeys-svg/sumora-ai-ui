@@ -602,7 +602,7 @@
   // autoSendOnePage の onDone コールバックと start() 内の再開処理で共通利用する。
   function tryNext(state) {
     if (hasNextPageBtn()) {
-      setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName });
+      setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null });
       var clicked = clickNextPageBtn();
       if (!clicked) {
         clearAutoSendState();

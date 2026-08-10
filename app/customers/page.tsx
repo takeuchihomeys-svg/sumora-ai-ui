@@ -1486,7 +1486,7 @@ function CustomersPageInner() {
       if (isFlagged) {
         fireFlaggedSearch(targets[0], site);
       } else {
-        void firePropertySearch(targets[0], [site]);
+        void firePropertySearch(targets[0], [site], false, undefined, true);
       }
     }
   };
@@ -1508,7 +1508,7 @@ function CustomersPageInner() {
     if (batchIsFlaggedRef.current) {
       fireFlaggedSearch(nextCustomer, batchSiteRef.current);
     } else {
-      void firePropertySearch(nextCustomer, [batchSiteRef.current]);
+      void firePropertySearch(nextCustomer, [batchSiteRef.current], false, undefined, true);
     }
   };
 
@@ -1523,11 +1523,12 @@ function CustomersPageInner() {
     const prev = batchIndex - 1;
     if (prev < 0) return;
     setBatchIndex(prev);
+    batchIndexRef.current = prev;
     const prevCustomer = batchListRef.current[prev];
     if (batchIsFlaggedRef.current) {
       fireFlaggedSearch(prevCustomer, batchSiteRef.current);
     } else {
-      void firePropertySearch(prevCustomer, [batchSiteRef.current]);
+      void firePropertySearch(prevCustomer, [batchSiteRef.current], false, undefined, true);
     }
   };
 

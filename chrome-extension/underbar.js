@@ -478,6 +478,7 @@
         site:         msg.site,
         areaMode:     msg.areaMode,
         is_wide:      msg.is_wide,
+        auto_send_all: msg.auto_send_all,
       }, "*");
       sendResponse({ ok: true });
     };
