@@ -654,8 +654,10 @@ CREATE TABLE IF NOT EXISTS viewings (
   status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'done', 'cancelled')),
   pre_announce_sent BOOLEAN DEFAULT FALSE,
   post_announce_sent BOOLEAN DEFAULT FALSE,
+  cheer_sent BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE viewings ADD COLUMN IF NOT EXISTS cheer_sent BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS idx_viewings_date ON viewings(viewing_date);
 CREATE INDEX IF NOT EXISTS idx_viewings_conversation ON viewings(conversation_id);
 ALTER TABLE viewings DISABLE ROW LEVEL SECURITY;

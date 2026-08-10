@@ -54,10 +54,37 @@ export async function GET(req: NextRequest) {
 
   const { todayJST, nowMinutes } = getJSTMinutes();
 
+  // しょーへい（鈴木祥平）の LINE UserID（メンション用）
+  const { data: suzukiRow } = await supabase
+    .from("hanbancyo_settings")
+    .select("value")
+    .eq("key", "suzuki_line_user_id")
+    .maybeSingle();
+  const suzukiUserId: string | null = suzukiRow?.value ?? null;
+
+  // メンション付き or 通常テキスト送信
+  async function sendWithMention(cfg: { targetId: string; token: string }, text: string): Promise<boolean> {
+    const msg = suzukiUserId
+      ? { type: "textV2", text: `{0}\n${text}`, substitution: { "0": { type: "mention", mentionee: { type: "user", userId: suzukiUserId } } } }
+      : { type: "text", text };
+    try {
+      const res = await fetch("https://api.line.me/v2/bot/message/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
+        body: JSON.stringify({ to: cfg.targetId, messages: [msg] }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) { console.error("[viewing-announce] LINE mention push failed:", res.status, await res.text().catch(() => "")); return false; }
+      return true;
+    } catch (err) {
+      console.error("[viewing-announce] LINE mention push error:", err); return false;
+    }
+  }
+
   // 今日の内覧を取得
   const { data: viewings, error } = await supabase
     .from("viewings")
-    .select("id, customer_name, viewing_time, pre_announce_sent, post_announce_sent")
+    .select("id, customer_name, viewing_time, pre_announce_sent, post_announce_sent, cheer_sent")
     .eq("viewing_date", todayJST)
     .eq("status", "scheduled")
     .limit(50);
@@ -87,6 +114,27 @@ export async function GET(req: NextRequest) {
           const h = parseInt(parts[0], 10);
           const m = parseInt(parts[1], 10);
           if (Number.isFinite(h) && Number.isFinite(m)) viewingMinutes = h * 60 + m;
+        }
+      }
+
+      // ── 30分前チアーメッセージ（しょーへいへの応援） ──
+      if (!v.cheer_sent && viewingMinutes !== null) {
+        const cheerStart = viewingMinutes - 30;
+        const cheerEnd   = viewingMinutes - 25; // 5分の受付ウィンドウ
+        if (nowMinutes >= cheerStart && nowMinutes < cheerEnd) {
+          const cheerText = `🔥 ${customerName}さんの内覧まであと30分！！\nいける！！しょーへい頑張れ💪✨`;
+          const { data: casData, error: upErr } = await supabase
+            .from("viewings")
+            .update({ cheer_sent: true })
+            .eq("id", v.id as string)
+            .eq("cheer_sent", false)
+            .select("id");
+          if (upErr) { console.error("[viewing-announce] cheer_sent CAS error:", upErr.message); }
+          else if (casData && casData.length > 0) {
+            const sent = await sendWithMention(cfg, cheerText);
+            if (sent) announced++;
+            else await supabase.from("viewings").update({ cheer_sent: false }).eq("id", v.id as string);
+          }
         }
       }
 
