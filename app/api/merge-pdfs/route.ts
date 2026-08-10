@@ -113,7 +113,8 @@ function buildLineMessage(
 
   // お客さん名 物件（リアプロ）から始める
   if (customerName) {
-    lines.push(`${customerName} 物件（リアプロ）`);
+    const nameWithSan = customerName.endsWith("さん") ? customerName : `${customerName}さん`;
+    lines.push(`${nameWithSan} 物件（リアプロ）`);
   } else {
     lines.push(`物件（リアプロ）`);
   }

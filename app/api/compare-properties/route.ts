@@ -114,27 +114,21 @@ function buildLineMessage(
 
   scored.forEach((s, i) => {
     const prop = propMap.get(s.building_name);
+    const isBest = best && s.building_name === best.building_name && s.room === best.room;
+    const star = isBest ? "🌟 " : "";
     const roomStr = s.room ? ` ${s.room}` : "";
     const rentStr = prop ? formatRent(prop.rent) : "不明";
     const planStr = prop?.floor_plan ? ` / ${prop.floor_plan}` : "";
     const areaStr = prop?.area ? ` / ${prop.area}㎡` : "";
     const stationStr = prop?.station_info ? `\n   ${prop.station_info}` : "";
 
-    lines.push(`${i + 1}. ${s.building_name}${roomStr} ★${s.score}/10`);
+    lines.push(`${i + 1}. ${star}${s.building_name}${roomStr} ★${s.score}/10`);
     lines.push(`   ${rentStr}${planStr}${areaStr}${stationStr}`);
     lines.push(`   ${s.comment}`);
+    if (isBest && best.reason) {
+      lines.push(`   💬 ${best.reason}`);
+    }
   });
-
-  if (best) {
-    const roomStr = best.room ? ` ${best.room}` : "";
-    lines.push(
-      "",
-      "🥇 最もオススメの物件:",
-      "━━━━━━━━━━━━━━",
-      `【${best.building_name}${roomStr}】`,
-      best.reason
-    );
-  }
 
   return lines.join("\n");
 }
@@ -269,16 +263,30 @@ export async function POST(req: NextRequest) {
     const prompt = `お客さんの条件:
 ${condLines.length > 0 ? condLines.join("\n") : "（条件情報なし）"}
 
-以下の物件をお客さんの条件に照らし合わせて評価してください。
-各物件に1〜10点のスコアと30文字以内の一言コメントをつけてください。
-最後に最もオススメの物件を1つ選んでください（条件への合致度・コストパフォーマンスを重視）。
+以下の物件をお客さんの条件に照らし合わせて厳密に評価してください。
+
+【スコア基準（1〜10点）】
+- 9〜10点: 条件を完全に満たし、積極的にオススメできる最高の選択肢
+- 7〜8点: ほぼ条件通り、一部要確認があるが良い選択肢
+- 4〜6点: 条件と一部不一致（間取り・家賃・徒歩時間のいずれかが外れる）
+- 1〜3点: 条件と大きく外れ、お客さんには合わない
+
+【厳格な減点ルール】
+- 賃料上限を超える → 大幅減点（条件外のため推薦不可レベル）
+- 間取りが希望と異なる → 4点以下
+- 徒歩時間が希望を大きく超える（+5分以上）→ 2点減点
+- 築年数が希望より大幅に古い（+10年以上）→ 2点減点
+- NGポイントに該当する要素がある → 大幅減点
+- ペット条件が合わない → 大幅減点
+
+【コメント】30文字以内で具体的に（例:「家賃・間取り完全一致」「家賃が予算内で広い」「築古だが設備良好」「間取りが条件外」「賃料が上限超過」）
 
 物件一覧:
 ${propListText}
 
 必ずJSON形式のみで返してください（マークダウン・説明文は一切不要）:
 {
-  "scored": [{"building_name": "建物名", "room": "部屋番号（なければ空文字）", "score": 8, "comment": "条件にぴったり"}],
+  "scored": [{"building_name": "建物名", "room": "部屋番号（なければ空文字）", "score": 8, "comment": "具体的なコメント"}],
   "best": {"building_name": "建物名", "room": "部屋番号（なければ空文字）", "reason": "なぜ最優秀か（50文字以内）"}
 }`;
 

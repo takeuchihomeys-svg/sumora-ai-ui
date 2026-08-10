@@ -189,20 +189,29 @@
 
     var name = "";
     var cur = row ? row.parentElement : null;
+    var UI_TEXTS = ["検索条件を表示", "検索条件", "条件を表示", "条件を隠す", "詳細を表示", "詳細を閉じる", "閉じる", "次へ", "前へ", "表示", "印刷", "選択", "一覧に戻る"];
     while (cur && !name) {
       var prev = cur.previousElementSibling;
       if (prev) {
         var h = prev.querySelector("h2,h3,h4,.building-name,td b,td strong");
         if (h) { name = h.textContent.trim(); break; }
         var txt = prev.textContent.trim();
-        if (txt && txt.length < 40) { name = txt; break; }
+        var isUIText = UI_TEXTS.indexOf(txt) !== -1;
+        var hasInteractive = !!(prev.querySelector("button, input[type=button], input[type=submit]"));
+        if (txt && txt.length < 40 && !isUIText && !hasInteractive) { name = txt; break; }
       }
       cur = cur.parentElement;
     }
     if (!name && row) {
       var tbl = row.closest("table");
       var before = tbl && tbl.previousElementSibling;
-      if (before) name = before.textContent.trim().split("\n")[0].trim().slice(0, 30);
+      if (before) {
+        var bTxt = before.textContent.trim().split("\n")[0].trim().slice(0, 30);
+        if (UI_TEXTS.indexOf(bTxt) === -1) name = bTxt;
+      }
+    }
+    if (!name) {
+      console.log("[extractCard] 建物名取得失敗 - row:", row, "btn:", btn);
     }
 
     var cells = row ? Array.from(row.querySelectorAll("td")) : [];
