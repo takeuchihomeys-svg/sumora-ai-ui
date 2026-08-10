@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import html2canvas from "html2canvas";
 import BottomNav from "../components/BottomNav";
 import type { ExtractedEstimate } from "../api/extract-estimate-info/route";
@@ -255,6 +255,8 @@ export default function EstimatePage() {
   const reviewRef = useRef<HTMLDivElement>(null);
   const printRef = useRef<HTMLDivElement>(null);
   const [capturing, setCapturing] = useState(false);
+  const [autoModeStatus, setAutoModeStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [autoModeMessage, setAutoModeMessage] = useState("");
   const [showParkingEditor, setShowParkingEditor] = useState(false);
   const [lineModal, setLineModal] = useState(false);
   const [lineText, setLineText] = useState("");
@@ -342,6 +344,63 @@ export default function EstimatePage() {
       setExtracting(false);
     }
   };
+
+  const handleAutoMode = useCallback(async () => {
+    setAutoModeStatus("running");
+    setAutoModeMessage("物件サイトを確認中...");
+    try {
+      let site = "unknown";
+      if (images.length > 0) {
+        try {
+          const idRes = await fetch("/api/identify-property-site", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ images: images.map(({ base64, mimeType }) => ({ base64, mimeType })) }),
+          });
+          const idData = await idRes.json() as { ok: boolean; site?: string };
+          if (idData.ok && idData.site) site = idData.site;
+        } catch { /* site判定失敗は無視 */ }
+      }
+      setAutoModeMessage("物件詳細を取得中...");
+      const result = await new Promise<{ ok: boolean; text?: string; error?: string }>((resolve) => {
+        const timeout = setTimeout(() => {
+          window.removeEventListener("message", handler);
+          resolve({ ok: false, error: "タイムアウト（Chrome拡張が応答しません）" });
+        }, 20000);
+        const handler = (e: MessageEvent) => {
+          if (e.data?.from === "aixlinx-estimate-data") {
+            clearTimeout(timeout);
+            window.removeEventListener("message", handler);
+            resolve({ ok: true, text: e.data.text || "" });
+          }
+          if (e.data?.from === "aixlinx-estimate-error") {
+            clearTimeout(timeout);
+            window.removeEventListener("message", handler);
+            resolve({ ok: false, error: e.data.error || "取得に失敗しました" });
+          }
+        };
+        window.addEventListener("message", handler);
+        window.postMessage({ from: "aixlinx-webapp-estimate-auto", site }, "*");
+      });
+      if (!result.ok || !result.text) {
+        setAutoModeStatus("error");
+        setAutoModeMessage(result.error || "取得に失敗しました");
+        return;
+      }
+      setSupplementaryText(result.text);
+      setAutoModeStatus("done");
+      setAutoModeMessage("取得完了！AIで読み取り中...");
+      setTimeout(async () => {
+        setAutoModeStatus("idle");
+        setAutoModeMessage("");
+        await handleExtract();
+      }, 500);
+    } catch (e) {
+      setAutoModeStatus("error");
+      setAutoModeMessage("エラーが発生しました");
+      console.error("[handleAutoMode]", e);
+    }
+  }, [images, handleExtract]);
 
   const updateItem = (key: keyof EditableItems, value: string | number) => {
     setItems((prev) => {
@@ -782,6 +841,29 @@ export default function EstimatePage() {
 
             {extractError && (
               <div className="rounded-xl bg-red-50 px-4 py-3 text-[13px] text-red-600">{extractError}</div>
+            )}
+
+            {/* 自動モードボタン */}
+            <button
+              onClick={handleAutoMode}
+              disabled={autoModeStatus === "running" || extracting}
+              className="w-full rounded-full py-3.5 text-[14px] font-bold text-white shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+              style={{ background: "linear-gradient(135deg,#1b5e20,#43a047)" }}
+            >
+              {autoModeStatus === "running" ? (
+                <>
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  {autoModeMessage || "自動取得中..."}
+                </>
+              ) : (
+                "🤖 自動モード（拡張から物件情報取得）"
+              )}
+            </button>
+            {autoModeStatus === "error" && autoModeMessage && (
+              <div className="rounded-xl bg-amber-50 px-4 py-3 text-[12px] text-amber-700">{autoModeMessage}</div>
+            )}
+            {autoModeStatus === "done" && (
+              <div className="rounded-xl bg-green-50 px-4 py-3 text-[12px] text-green-700">✓ 物件情報を取得しました</div>
             )}
 
             {/* AI読み取りボタン */}

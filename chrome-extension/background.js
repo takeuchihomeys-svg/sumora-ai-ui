@@ -947,6 +947,138 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── 見積書自動モード: 開いている物件詳細タブをスクレイプ ─────────────────
+  if (msg.type === "axlx-estimate-auto") {
+    var _site = msg.site || "unknown";
+    (async function() {
+      try {
+        var allTabs = await chrome.tabs.query({});
+        var realproDetailTabs = allTabs.filter(function(t) {
+          return t.url && t.url.includes("realnetpro.com") &&
+            (t.url.includes("room_detail") || t.url.includes("/detail"));
+        });
+        var itandiDetailTabs = allTabs.filter(function(t) {
+          return t.url && t.url.includes("itandibb.com") && t.url.includes("rent_rooms");
+        });
+        var targetTabs = [];
+        if (_site === "realnetpro") {
+          targetTabs = realproDetailTabs.length > 0 ? realproDetailTabs :
+            allTabs.filter(function(t) { return t.url && t.url.includes("realnetpro.com"); });
+        } else if (_site === "itandi") {
+          targetTabs = itandiDetailTabs.length > 0 ? itandiDetailTabs :
+            allTabs.filter(function(t) { return t.url && t.url.includes("itandibb.com"); });
+        } else {
+          targetTabs = realproDetailTabs.concat(itandiDetailTabs);
+          if (targetTabs.length === 0) {
+            targetTabs = allTabs.filter(function(t) {
+              return t.url && (t.url.includes("realnetpro.com") || t.url.includes("itandibb.com"));
+            });
+          }
+        }
+        if (targetTabs.length === 0) {
+          sendResponse({ ok: false, error: "リアプロ/itandiの物件詳細ページが見つかりません。物件詳細ページを開いてからお試しください。" });
+          return;
+        }
+        var targetTab = targetTabs.sort(function(a, b) {
+          return ((b.lastAccessed || 0) - (a.lastAccessed || 0));
+        })[0];
+        var isRealpro = !!(targetTab.url && targetTab.url.includes("realnetpro.com"));
+        var estimateTabId = targetTab.id;
+        if (!estimateTabId) { sendResponse({ ok: false, error: "タブIDが取得できません" }); return; }
+        var scrapeResults = await chrome.scripting.executeScript({
+          target: { tabId: estimateTabId },
+          world: "MAIN",
+          func: function() {
+            var lines = [];
+            var titleEl = document.querySelector("h1, h2, .property-name, .room-name, .building-name");
+            if (titleEl) lines.push("物件名: " + titleEl.innerText.trim());
+            document.querySelectorAll("table").forEach(function(table) {
+              table.querySelectorAll("tr").forEach(function(row) {
+                var ths = Array.from(row.querySelectorAll("th"));
+                var tds = Array.from(row.querySelectorAll("td"));
+                if (ths.length > 0 && tds.length > 0) {
+                  ths.forEach(function(th, i) {
+                    var val = tds[i] ? tds[i].innerText.trim() : "";
+                    var label = th.innerText.trim();
+                    if (label && val && val.length < 300) lines.push(label + ": " + val);
+                  });
+                } else if (tds.length >= 2 && ths.length === 0) {
+                  for (var i = 0; i < tds.length - 1; i += 2) {
+                    var l = tds[i].innerText.trim();
+                    var v = tds[i + 1].innerText.trim();
+                    if (l && v && v.length < 300) lines.push(l + ": " + v);
+                  }
+                }
+              });
+            });
+            document.querySelectorAll("dl").forEach(function(dl) {
+              var dts = Array.from(dl.querySelectorAll("dt"));
+              var dds = Array.from(dl.querySelectorAll("dd"));
+              dts.forEach(function(dt, i) {
+                if (dds[i]) {
+                  var l = dt.innerText.trim();
+                  var v = dds[i].innerText.trim();
+                  if (l && v && v.length < 300) lines.push(l + ": " + v);
+                }
+              });
+            });
+            return lines.filter(function(x) { return x.trim().length > 0; }).join("\n");
+          }
+        });
+        var pageText = (scrapeResults && scrapeResults[0] && scrapeResults[0].result) || "";
+        var page2Text = "";
+        if (isRealpro) {
+          try {
+            var currentUrl = targetTab.url || "";
+            var page2Url = currentUrl.includes("page=") ?
+              currentUrl.replace(/page=\d+/, "page=2") :
+              currentUrl + (currentUrl.includes("?") ? "&" : "?") + "page=2";
+            var page2Results = await chrome.scripting.executeScript({
+              target: { tabId: estimateTabId },
+              world: "MAIN",
+              func: function(url) {
+                return fetch(url, { credentials: "include" })
+                  .then(function(r) { return r.text(); })
+                  .then(function(html) {
+                    var parser = new DOMParser();
+                    var doc = parser.parseFromString(html, "text/html");
+                    var lines = [];
+                    doc.querySelectorAll("table tr").forEach(function(row) {
+                      var ths = Array.from(row.querySelectorAll("th"));
+                      var tds = Array.from(row.querySelectorAll("td"));
+                      if (ths.length > 0 && tds.length > 0) {
+                        ths.forEach(function(th, i) {
+                          var val = tds[i] ? tds[i].innerText.trim() : "";
+                          var label = th.innerText.trim();
+                          if (label && val && val.length < 300) lines.push(label + ": " + val);
+                        });
+                      }
+                    });
+                    return lines.join("\n");
+                  })
+                  .catch(function() { return ""; });
+              },
+              args: [page2Url]
+            });
+            page2Text = (page2Results && page2Results[0] && page2Results[0].result) || "";
+          } catch (_) { /* page2取得失敗は無視 */ }
+        }
+        var siteName = isRealpro ? "リアプロ" : "itandi";
+        var fullText = "【" + siteName + " 物件詳細】\n" + pageText;
+        if (page2Text) fullText += "\n\n【" + siteName + " 次ページ詳細】\n" + page2Text;
+        if (!pageText) {
+          sendResponse({ ok: false, error: "ページから情報を取得できませんでした。詳細ページを開いているか確認してください。" });
+          return;
+        }
+        sendResponse({ ok: true, text: fullText });
+      } catch (e) {
+        console.error("[axlx-estimate-auto] error:", e);
+        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    })();
+    return true;
+  }
+
   // ── WebApp から直接スクレイプ+比較トリガー ──────────────────────────────
   // WebApp の UI から「物件を比較」ボタンを押すと送られるメッセージ。
   // 既存の _webappAutofill でリアプロを検索条件付きで開いた後、
@@ -1834,12 +1966,35 @@ async function _batchAutofill(customer, site, isWide) {
         console.warn("[batchAutofill] realnetpro resolve失敗（デフォルト条件で続行）:", e.message || e);
       }
     }
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: "MAIN",
-      func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
-      args: [conds]
+    // popup.js 経由で完全条件構築（Dijkstra路線展開・API判定含む）を実行する
+    // 個別検索（axlx-webapp-search）と同一フロー: chrome.tabs.sendMessage → underbar.js → popup.js → page-script.js
+    var batchRpSwitched = await new Promise(function(resolve) {
+      chrome.tabs.sendMessage(tab.id, {
+        type:         "axlx-switch-customer",
+        customerId:   String(customer.id),
+        customerName: customer.customer_name || null,
+        site:         "realpro",
+        areaMode:     customer.area_mode || null,
+        is_wide:      isWide,
+        auto_send_all: false,
+      }, function(resp) {
+        if (chrome.runtime.lastError) {
+          console.warn("[batchAutofill] realnetpro axlx-switch-customer error:", chrome.runtime.lastError.message);
+          resolve(false); return;
+        }
+        resolve(!!(resp && resp.ok));
+      });
     });
+    if (!batchRpSwitched) {
+      // フォールバック: underbar.js / popup.js 未応答 → 解決済み条件で直接 fill
+      console.warn("[batchAutofill] realnetpro: axlx-switch-customer 未応答 → executeScript fallback");
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
+        args: [conds]
+      });
+    }
   } else if (site === "itandi") {
     // itandi: itandi-content.js 経由で axlx-itandi-fill-exec を postMessage
     // itandi-page-script.js（world:MAIN）が message リスナーで受信して検索を実行する

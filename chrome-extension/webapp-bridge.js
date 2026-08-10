@@ -42,6 +42,23 @@ window.addEventListener("message", (e) => {
     return;
   }
 
+  // ── estimate-auto: 見積書自動モード（物件詳細ページを自動スクレイプ）──────
+  if (e.data && e.data.from === "aixlinx-webapp-estimate-auto") {
+    var site = e.data.site || "unknown";
+    chrome.runtime.sendMessage(
+      { type: "axlx-estimate-auto", site: site },
+      function(resp) {
+        void chrome.runtime.lastError;
+        if (resp && resp.ok) {
+          window.postMessage({ from: "aixlinx-estimate-data", text: resp.text }, "*");
+        } else {
+          window.postMessage({ from: "aixlinx-estimate-error", error: (resp && resp.error) || "不明なエラー" }, "*");
+        }
+      }
+    );
+    return;
+  }
+
   // ② ペイロード検証
   if (!e.data || e.data.from !== "aixlinx-webapp") return;
   const { site, conditions } = e.data;
