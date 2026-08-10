@@ -1002,60 +1002,59 @@ async function notifySuzukiReply(db: ReturnType<typeof getDb>, convId: string, m
   const { data: suzukiRow } = await db.from("hanbancyo_settings").select("value").eq("key", "suzuki_line_user_id").maybeSingle();
   const suzukiUserId = suzukiRow?.value as string | undefined;
 
-  const STATUS_LABELS: Record<string, string> = {
-    new_inquiry: "新規", hot: "毎日", property_search: "物件出し",
-    pending: "検討中", applying: "申込中", screening: "審査中",
-    contract: "契約", closed_won: "成約",
-  };
+  // ターゲット全リスト取得（申込以降は除外）
+  const { data: flagged } = await db
+    .from("conversations")
+    .select("id, customer_name, updated_at")
+    .eq("is_flagged", true)
+    .not("status", "in", "(applying,screening,contract,closed_won,closed_lost,lost)")
+    .order("updated_at", { ascending: false })
+    .limit(35);
 
-  // ターゲット全リスト取得
-  const [{ data: flagged }, { data: hotList }] = await Promise.all([
-    db.from("conversations")
-      .select("customer_name, status")
-      .eq("is_flagged", true).eq("line_status", "active")
-      .not("status", "in", "(closed_won,closed_lost,lost)")
-      .order("updated_at", { ascending: true })
-      .limit(20),
-    db.from("conversations")
-      .select("customer_name")
-      .eq("is_hot", true).eq("line_status", "active")
-      .not("status", "in", "(closed_won,closed_lost,lost)")
-      .order("updated_at", { ascending: true })
-      .limit(10),
-  ]);
+  // 今日のスタッフメッセージ（✅/☑判定）
+  const jstMidnight = new Date(Date.now() + 9 * 3600000);
+  jstMidnight.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(jstMidnight.getTime() - 9 * 3600000);
+  const flaggedIds = (flagged ?? []).map((c) => c.id as string);
+  const staffMsgMap = new Map<string, { hasAix: boolean }>();
+  if (flaggedIds.length > 0) {
+    const { data: todayMsgs } = await db
+      .from("messages")
+      .select("conversation_id, is_aix_generated")
+      .eq("sender", "staff")
+      .gte("created_at", todayStart.toISOString())
+      .in("conversation_id", flaggedIds);
+    for (const m of todayMsgs ?? []) {
+      const prev = staffMsgMap.get(m.conversation_id) ?? { hasAix: false };
+      staffMsgMap.set(m.conversation_id, { hasAix: prev.hasAix || !!m.is_aix_generated });
+    }
+  }
+
+  // ☑(AIX未送信) → ・(未対応) → ✅(AIX済み) の優先ソート
+  const getMarkPrio = (id: string) => { const i = staffMsgMap.get(id); if (!i) return 1; return i.hasAix ? 2 : 0; };
+  const getMark     = (id: string) => { const i = staffMsgMap.get(id); if (!i) return "・"; return i.hasAix ? "✅" : "☑"; };
+  const sorted = [...(flagged ?? [])].sort((a, b) => getMarkPrio(a.id as string) - getMarkPrio(b.id as string));
 
   const name = (conv.customer_name as string) || "名称未設定";
   const preview = msgText.slice(0, 25) + (msgText.length > 25 ? "…" : "");
 
-  const lines: string[] = [
-    `@鈴木 祥平 【熱い客】${name}から返信きた！！`,
+  const bodyLines: string[] = [
+    `【熱い客】${name}から返信きた！！`,
     `「${preview}」`,
     "今が熱い！！今すぐ詰めて！！",
+    "",
+    "【しょーへいの今日のターゲット全リスト】",
   ];
 
-  lines.push("", "【しょーへいの今日のターゲット全リスト】");
-
-  if (flagged && flagged.length > 0) {
-    lines.push("", "► 決まる（最優先）");
-    (flagged as { customer_name: string | null; status: string | null }[]).forEach(c => {
-      const statusLabel = STATUS_LABELS[c.status ?? ""] ?? c.status ?? "";
-      const suffix = statusLabel ? `（${statusLabel}）` : "";
-      lines.push(`・${c.customer_name || "名称未設定"}${suffix}`);
-    });
+  if (sorted.length > 0) {
+    bodyLines.push("", "► 決まる（最優先）");
+    sorted.forEach((c) => bodyLines.push(`${getMark(c.id as string)}${c.customer_name || "名称未設定"}`));
   }
 
-  if (hotList && hotList.length > 0) {
-    lines.push("", "► アツい（追撃必須）");
-    (hotList as { customer_name: string | null }[]).forEach(c =>
-      lines.push(`・${c.customer_name || "名称未設定"}`)
-    );
-  }
-
-  const text = lines.join("\n");
-  type MentionMsg = { type: "text"; text: string; mentionees?: { index: number; length: number; type: "user"; userId: string }[] };
-  const message: MentionMsg = suzukiUserId
-    ? { type: "text", text, mentionees: [{ index: 0, length: 6, type: "user", userId: suzukiUserId }] }
-    : { type: "text", text };
+  const bodyText = bodyLines.join("\n");
+  const message = suzukiUserId
+    ? { type: "textV2", text: `{0} ${bodyText}`, substitution: { "0": { type: "mention", mentionee: { type: "user", userId: suzukiUserId } } } }
+    : { type: "text", text: bodyText };
 
   try {
     await fetch("https://api.line.me/v2/bot/message/push", {
