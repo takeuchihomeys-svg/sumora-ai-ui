@@ -441,6 +441,7 @@ function CustomersPageInner() {
   const [batchIndex, setBatchIndex] = useState<number>(0);
   const [batchDone, setBatchDone] = useState<boolean>(false);
   const [batchSiteDropdown, setBatchSiteDropdown] = useState<boolean>(false);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const batchListRef = useRef<Customer[]>([]);
   const batchIsFlaggedRef = useRef<boolean>(false);
   const batchIndexRef = useRef<number>(0);
@@ -1468,7 +1469,9 @@ function CustomersPageInner() {
     const isFlagged = filterMode === "flagged";
     batchIsFlaggedRef.current = isFlagged;
     if (!isFlagged) setFilterMode("linked");
-    const targets = sorted.filter((c) => !isDoneToday(c));
+    const targets = checkedIds.size > 0
+      ? sorted.filter((c) => checkedIds.has(String(c.id)))
+      : sorted.filter((c) => !isDoneToday(c));
     batchListRef.current = targets;
     setBatchIndex(0);
     batchIndexRef.current = 0;
@@ -1721,6 +1724,27 @@ function CustomersPageInner() {
             )}
           </button>
 
+          {/* 全選択ボタン（filterMode条件付き・非batchMode時のみ） */}
+          {(filterMode === "linked" || filterMode === "flagged") && !batchMode && (
+            <button
+              onClick={() => {
+                if (checkedIds.size > 0) {
+                  setCheckedIds(new Set());
+                } else {
+                  setCheckedIds(new Set(sorted.map((c) => String(c.id))));
+                }
+              }}
+              className="shrink-0 h-9 rounded-xl px-2.5 text-[11px] font-bold active:scale-95 transition-transform"
+              style={{
+                background: checkedIds.size > 0 ? "rgba(33,150,243,0.85)" : "rgba(176,190,197,0.4)",
+                border: checkedIds.size > 0 ? "1px solid rgba(33,150,243,0.6)" : "1px solid rgba(176,190,197,0.3)",
+                color: checkedIds.size > 0 ? "white" : "#607D8B",
+              }}
+            >
+              {checkedIds.size > 0 ? `✓解除(${checkedIds.size})` : "全選択"}
+            </button>
+          )}
+
           {/* バッチ物件検索ボタン：バッチ中はプログレス表示、非実行中はドロップダウン */}
           {(filterMode === "linked" || filterMode === "flagged") && (
             <div className="relative shrink-0">
@@ -1744,7 +1768,7 @@ function CustomersPageInner() {
                     style={{ background: "rgba(251,146,60,0.6)", border: "1px solid rgba(251,146,60,0.4)" }}
                     title="一括検索するサイトを選ぶ"
                   >
-                    一括<span className="text-[9px] opacity-70">▼</span>
+                    {checkedIds.size > 0 ? `一括(${checkedIds.size})` : "一括"}<span className="text-[9px] opacity-70">▼</span>
                   </button>
                   {batchSiteDropdown && (
                     <>
@@ -1971,12 +1995,36 @@ function CustomersPageInner() {
               : [];
 
             return (
-              <div id={`customer-card-${c.id}`} key={c.id} className="mx-3 mt-2.5 rounded-2xl overflow-hidden shadow-sm"
+              <div id={`customer-card-${c.id}`} key={c.id} className="mx-3 mt-2.5 rounded-2xl overflow-hidden shadow-sm flex items-stretch"
                 style={{ border: `1.5px solid ${borderColor}`, background: "#fff" }}>
+
+                {/* ── チェックボックス（batchMode中は非表示） ── */}
+                {!batchMode && (
+                  <button
+                    className="shrink-0 flex items-center justify-center px-3 active:bg-[#f5f6f6]"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCheckedIds((prev) => {
+                        const s = new Set(prev);
+                        if (s.has(String(c.id))) s.delete(String(c.id)); else s.add(String(c.id));
+                        return s;
+                      });
+                    }}
+                    style={{ background: checkedIds.has(String(c.id)) ? "transparent" : "transparent" }}
+                  >
+                    {checkedIds.has(String(c.id)) ? (
+                      <span className="flex h-5 w-5 items-center justify-center rounded" style={{ background: "#2196F3", border: "2px solid #2196F3" }}>
+                        <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><polyline points="1,4 4,7 9,1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      </span>
+                    ) : (
+                      <span className="flex h-5 w-5 items-center justify-center rounded" style={{ border: "2px solid #b0bec5", background: "white" }} />
+                    )}
+                  </button>
+                )}
 
                 {/* ── ヘッダー行 ── */}
                 <button
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
+                  className="flex flex-1 items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
                   onClick={() => {
                     if (longPressActivated.current) { longPressActivated.current = false; return; }
                     setExpandedId(isExp ? null : c.id);
