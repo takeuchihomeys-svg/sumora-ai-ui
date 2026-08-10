@@ -2328,7 +2328,8 @@ export default function Home() {
     if (statusFilter === "hot_flag") {
       result = result.filter((c) => hotConvIds.has(c.id));
     } else if (statusFilter === "flagged") {
-      result = result.filter((c) => flaggedConvIds.has(c.id));
+      const postApplyStatuses = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
+      result = result.filter((c) => flaggedConvIds.has(c.id) && !postApplyStatuses.has(STATUS_ALIAS[c.status] ?? c.status));
     } else if (statusFilter === "aix_target") {
       // AIXバッジと同一条件: 次にAIXボタンで対応すべき顧客
       result = result.filter(
