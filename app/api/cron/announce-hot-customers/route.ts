@@ -59,11 +59,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
   }
 
-  // is_flagged=true の会話を全取得（ステータス問わず・申込以降も含む）
+  // is_flagged=true の会話を取得（申込中以降は除外）
   const { data: flaggedConvs, error: convError } = await supabase
     .from("conversations")
     .select("id, customer_name, account, last_message, last_sender, updated_at, status")
     .eq("is_flagged", true)
+    .not("status", "in", "(applying,screening,contract,closed_won,closed_lost)")
     .order("updated_at", { ascending: false })
     .limit(50);
 
@@ -125,12 +126,11 @@ export async function GET(req: NextRequest) {
 
   const hour = getJSTHour();
 
-  // 各行フォーマット: ✅/☑/・ + 名前（status）
+  // 各行フォーマット: ✅/☑/・ + 名前
   const lines = sorted.map((c) => {
     const mark = getActionMark(c.id);
     const name = c.customer_name || "名称未設定";
-    const status = c.status || "";
-    return `${mark}${name}（${status}）`;
+    return `${mark}${name}`;
   });
 
   const message = [
