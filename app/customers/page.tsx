@@ -1618,25 +1618,15 @@ function CustomersPageInner() {
         style={{ background: "linear-gradient(135deg, #0d1b3e 0%, #1565C0 100%)", paddingTop: "max(env(safe-area-inset-top), 14px)" }}
       >
         <div className="flex items-center justify-between mb-2.5">
-          <div className="flex items-center gap-2">
-            <span className="text-[18px] font-black text-white tracking-tight">お客さん</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[18px] font-black text-white tracking-tight shrink-0">お客さん</span>
             {replyCount > 0 && (
-              <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold text-white">
+              <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold text-white shrink-0">
                 未返信 {replyCount}件
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {(batchMode || activeCmdCount > 0) && (
-              <button
-                onClick={() => void stopAllSearch()}
-                disabled={stopLoading}
-                className="rounded-xl px-3 py-1.5 text-xs font-bold text-white active:opacity-70 disabled:opacity-50"
-                style={{ background: "rgba(239,68,68,0.75)", border: "1px solid rgba(239,68,68,0.9)" }}
-              >
-                {stopLoading ? "停止中…" : "検索ストップ"}
-              </button>
-            )}
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => setShowAixPanel(true)}
               className="rounded-xl border border-white/30 px-3 py-1.5 text-xs font-bold text-white active:opacity-70"
@@ -1653,6 +1643,19 @@ function CustomersPageInner() {
             </button>
           </div>
         </div>
+
+        {/* 検索ストップバナー（検索中のみ） */}
+        {(batchMode || activeCmdCount > 0) && (
+          <button
+            onClick={() => void stopAllSearch()}
+            disabled={stopLoading}
+            className="w-full mb-2 rounded-xl py-2 text-sm font-bold text-white active:opacity-70 disabled:opacity-50 flex items-center justify-center gap-2"
+            style={{ background: "rgba(239,68,68,0.85)", border: "1px solid rgba(239,68,68,0.9)" }}
+          >
+            <span className="text-base leading-none">■</span>
+            {stopLoading ? "停止中…" : "検索ストップ（タップで全停止）"}
+          </button>
+        )}
 
         {/* フィルター */}
         <div className="flex gap-2 mb-2 flex-wrap">
