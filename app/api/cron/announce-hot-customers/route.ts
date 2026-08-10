@@ -77,18 +77,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
   }
 
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
   const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
 
-  // ① 🔥マークされた会話 / 物件出し要 / 3日フォローアップ を並列取得
-  const [{ data: hotConvs }, { data: propCustomers }, { data: staleConvs }] = await Promise.all([
+  // ① 🎯ターゲット / 🔥アツい（14日以内）/ 物件出し要 / 3日フォローアップ を並列取得
+  const [{ data: targetCustomers }, { data: hotConvs }, { data: propCustomers }, { data: staleConvs }] = await Promise.all([
+    // 🎯 今月決まりそうなお客さん（申込中・審査中・契約中）
+    supabase
+      .from("property_customers")
+      .select("id, customer_name, status, account, updated_at")
+      .in("status", ["applying", "screening", "contract"])
+      .order("updated_at", { ascending: false })
+      .limit(20),
+
+    // 🔥 マークされた会話（14日以内の活動のみ・古いis_hotを除外）
     supabase
       .from("conversations")
       .select("id, customer_name, account, last_message, last_sender, updated_at, property_customer_id, property_customers(last_property_sent_at, hot_confirmed_at)")
       .eq("is_hot", true)
+      .gte("updated_at", fourteenDaysAgo)
       .order("updated_at", { ascending: false })
       .limit(30),
 
-    // ② 物件出し要のお客さん（hot/new_inquiry/property_search）
+    // 📦 物件出し要のお客さん（hot/new_inquiry/property_search）
     supabase
       .from("property_customers")
       .select("id, customer_name, status, last_property_sent_at, account")
@@ -96,7 +107,7 @@ export async function GET(req: NextRequest) {
       .order("updated_at", { ascending: false })
       .limit(30),
 
-    // ③ 3日以上お客さんから連絡あり・未返信（🔥でない会話）
+    // ⏰ 3日以上お客さんから連絡あり・未返信（🔥でない会話）
     supabase
       .from("conversations")
       .select("id, customer_name, account, last_message, updated_at")
@@ -133,22 +144,43 @@ export async function GET(req: NextRequest) {
     (hotConvs as HotConvRow[] ?? []).map((c) => c.property_customer_id).filter(Boolean) as string[]
   );
 
-  // 物件出しが実際に必要な人だけに絞り、🔥と重複する人は除外
+  // 🎯ターゲットのIDセット（📦との重複排除用）
+  type TargetCustomer = { id: string; customer_name: string | null; status: string | null; account: string | null; updated_at: string | null };
+  const targetList = targetCustomers as TargetCustomer[] ?? [];
+  const targetPcIds = new Set(targetList.map((c) => c.id));
+
+  // 物件出しが実際に必要な人だけに絞り、🔥・🎯と重複する人は除外
   type PropCustomer = { id: string; customer_name: string | null; status: string | null; last_property_sent_at: string | null; account: string | null };
   const needsPropList = (propCustomers as PropCustomer[] ?? []).filter((c) =>
     needsPropertyAction(c.status ?? "", c.last_property_sent_at ?? null) &&
-    !hotLinkedPcIds.has(c.id)
+    !hotLinkedPcIds.has(c.id) &&
+    !targetPcIds.has(c.id)
   );
 
   // どれも0件ならスキップ
-  if ((!hotConvs || hotConvs.length === 0) && needsPropList.length === 0 && (!staleConvs || staleConvs.length === 0)) {
+  if (targetList.length === 0 && (!hotConvs || hotConvs.length === 0) && needsPropList.length === 0 && (!staleConvs || staleConvs.length === 0)) {
     return NextResponse.json({ ok: true, skipped: true, reason: "no actions needed" });
   }
 
   const hour = getJSTHour();
   const sections: string[] = [];
 
-  // 🔥セクション
+  // 🎯ターゲット（今月決まりそう）セクション
+  const TARGET_STATUS_LABEL: Record<string, string> = {
+    applying: "申込中", screening: "審査中", contract: "契約中",
+  };
+  if (targetList.length > 0) {
+    const lines = targetList.map((c, i) => {
+      const name = c.customer_name || "名称未設定";
+      const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
+      const label = TARGET_STATUS_LABEL[c.status ?? ""] ?? c.status ?? "";
+      const time = relTime(c.updated_at);
+      return `${i + 1}. ${name}（${acct}）— ${label}　${time}`;
+    });
+    sections.push(`🎯 決まりそうリスト（${targetList.length}人）\n\n${lines.join("\n")}`);
+  }
+
+  // 🔥セクション（14日以内の活動のみ）
   if (hotConvs && hotConvs.length > 0) {
     const rows = hotConvs as HotConvRow[];
     const doneCount = rows.filter((c) =>
@@ -173,7 +205,7 @@ export async function GET(req: NextRequest) {
       const preview = (c.last_message ?? "").slice(0, 18) + ((c.last_message ?? "").length > 18 ? "…" : "");
       return `${i + 1}. ${name}（${acct}）\n   ${actionMark}　${replyMark} ${time}\n   └ ${preview}`;
     });
-    sections.push(`🔥 あついお客さん（${rows.length}人 / ✅${doneCount}名対応済）\n\n${lines.join("\n\n")}`);
+    sections.push(`🔥 あついお客さん（${rows.length}人・14日以内 / ✅${doneCount}名対応済）\n\n${lines.join("\n\n")}`);
   }
 
   // 📦物件出し要セクション
@@ -225,5 +257,5 @@ export async function GET(req: NextRequest) {
     { onConflict: "key" }
   );
 
-  return NextResponse.json({ ok: true, hot: hotConvs?.length ?? 0, needsProp: needsPropList.length, stale: staleList.length });
+  return NextResponse.json({ ok: true, target: targetList.length, hot: hotConvs?.length ?? 0, needsProp: needsPropList.length, stale: staleList.length });
 }

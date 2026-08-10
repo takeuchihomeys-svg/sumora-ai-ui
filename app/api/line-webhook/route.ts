@@ -393,22 +393,31 @@ async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
     .from("property_customers")
     .select("id, status, customer_name")
     .eq("line_user_id", userId)
-    .in("status", ["new_inquiry", "property_search"])
+    // proposing/hot ステータスのお客さんもis_hot=trueにする（再メッセージ対応）
+    .in("status", ["new_inquiry", "property_search", "hot", "proposing"])
     .limit(1)
     .maybeSingle();
   if (data?.id) {
     const now = new Date().toISOString();
-    await Promise.all([
-      db.from("property_customers")
-        .update({ status: "hot", updated_at: now })
-        .eq("id", data.id),
-      // 会話一覧の🔥マークも連動して更新
-      db.from("conversations")
-        .update({ is_hot: true, updated_at: now })
-        .eq("line_user_id", userId)
-        .eq("is_hot", false),
-    ]);
-    notifyHanbancyoGroup(db, data.customer_name ?? "").catch((e) => console.warn("[line-webhook] autoUpgradeToHot notify:", e));
+    const shouldUpgradePropStatus = data.status === "new_inquiry" || data.status === "property_search";
+    const convUpdate = db.from("conversations")
+      .update({ is_hot: true, updated_at: now })
+      .eq("line_user_id", userId)
+      .eq("is_hot", false);
+    if (shouldUpgradePropStatus) {
+      await Promise.all([
+        convUpdate,
+        db.from("property_customers")
+          .update({ status: "hot", updated_at: now })
+          .eq("id", data.id),
+      ]);
+    } else {
+      await convUpdate;
+    }
+    // ステータス格上げ時のみ売上番長に通知（hot/proposing の再メッセージは通知しない）
+    if (shouldUpgradePropStatus) {
+      notifyHanbancyoGroup(db, data.customer_name ?? "").catch((e) => console.warn("[line-webhook] autoUpgradeToHot notify:", e));
+    }
   }
 }
 
