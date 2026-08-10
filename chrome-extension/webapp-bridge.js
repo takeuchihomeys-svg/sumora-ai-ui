@@ -55,8 +55,9 @@ window.addEventListener("message", (e) => {
     window.postMessage({ from: "aixlinx-webapp-received", site: site }, "*");
   } catch (_e) { /* ignore */ }
 
+  const auto_send_all = !!(e.data.auto_send_all);
   chrome.runtime.sendMessage(
-    { type: "axlx-webapp-search", site, conditions },
+    { type: "axlx-webapp-search", site, conditions, auto_send_all },
     (resp) => {
       if (chrome.runtime.lastError) {
         console.warn("[webapp-bridge] sendMessage error:", chrome.runtime.lastError.message);
@@ -65,4 +66,10 @@ window.addEventListener("message", (e) => {
       console.log("[webapp-bridge] background response:", resp);
     }
   );
+});
+
+chrome.runtime.onMessage.addListener(function(msg) {
+  if (msg && msg.type === "axlx-batch-customer-done") {
+    window.postMessage({ from: "aixlinx-batch-customer-done" }, "*");
+  }
 });

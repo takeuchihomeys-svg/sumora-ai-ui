@@ -1353,6 +1353,7 @@ function CustomersPageInner() {
     sites: string[] = ["realnetpro", "itandi"],
     isWide: boolean = false,
     areaMode?: "ward" | "station" | "auto",
+    autoSendAll: boolean = false,
   ): Promise<boolean> => {
     // ACKリスナーは postMessage 発火前に登録しておく
     const ackPromise = new Promise<boolean>((resolve) => {
@@ -1387,9 +1388,9 @@ function CustomersPageInner() {
     for (const site of sites) {
       const s = site;
       if (delay === 0) {
-        window.postMessage({ from: "aixlinx-webapp", site: s, conditions }, "*");
+        window.postMessage({ from: "aixlinx-webapp", site: s, conditions, auto_send_all: autoSendAll }, "*");
       } else {
-        setTimeout(() => window.postMessage({ from: "aixlinx-webapp", site: s, conditions }, "*"), delay);
+        setTimeout(() => window.postMessage({ from: "aixlinx-webapp", site: s, conditions, auto_send_all: autoSendAll }, "*"), delay);
       }
       delay += 3000;
     }
@@ -1449,11 +1450,11 @@ function CustomersPageInner() {
     const hasArea = !!(c.desired_area?.trim());
     const hasStation = !!(c.stations?.length);
     if (hasArea && hasStation) {
-      void firePropertySearch(c, ["realnetpro", "itandi"], false, "ward");
-      setTimeout(() => { void firePropertySearch(c, ["realnetpro", "itandi"], false, "station"); }, 5000);
+      void firePropertySearch(c, ["realnetpro", "itandi"], false, "ward", true);
+      setTimeout(() => { void firePropertySearch(c, ["realnetpro", "itandi"], false, "station", true); }, 5000);
     } else {
       const mode = getAutoAreaMode(c);
-      void firePropertySearch(c, ["realnetpro", "itandi"], false, mode);
+      void firePropertySearch(c, ["realnetpro", "itandi"], false, mode, true);
     }
   };
 
@@ -1513,6 +1514,16 @@ function CustomersPageInner() {
       void firePropertySearch(prevCustomer);
     }
   };
+
+  useEffect(() => {
+    const onBatchCustomerDone = (e: MessageEvent) => {
+      if (e.data?.from !== "aixlinx-batch-customer-done") return;
+      if (!batchIsFlaggedRef.current) return;
+      goNextBatch();
+    };
+    window.addEventListener("message", onBatchCustomerDone);
+    return () => window.removeEventListener("message", onBatchCustomerDone);
+  }, []);
 
   // タイムアウト/エラー/拡張なし → 1秒後にステータスをidleにリセット（すぐ別のお客さんを検索できるようにする）
   useEffect(() => {

@@ -808,6 +808,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               site:         "realpro",
               areaMode:     _areaMode,
               is_wide:      _isWide,
+              auto_send_all: !!(msg.auto_send_all),
             }
           });
           sendResponse({ ok: true });
@@ -1388,6 +1389,20 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     _notifyFillDone(msg.site || null, msg.error || null);
     sendResponse({ ok: true });
     return true;
+  }
+  return false;
+});
+
+chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  if (msg && msg.type === "axlx-batch-customer-done") {
+    (async () => {
+      try {
+        const tabs = await chrome.tabs.query({ url: ["https://sumora-ai-ui.vercel.app/*", "http://localhost:3000/*"] });
+        for (const tab of tabs) {
+          try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-batch-customer-done" }); } catch (_) {}
+        }
+      } catch (_) {}
+    })();
   }
   return false;
 });

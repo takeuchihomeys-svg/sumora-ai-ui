@@ -2706,6 +2706,7 @@ function openInstructions(siteKey) {
     autofillBtn.onclick = async () => {
       // pendingPopupCmd（自動バッチ）経由の click か手動クリックかを区別
       const isAutomated = !!autofillBtn.dataset.automated;
+      const isAutoSendAll = !!autofillBtn.dataset.auto_send_all;
       const c = selectedCustomer;
       // 調整フォームの値を優先して使う
       const adjArea     = document.getElementById("adj-area").value.trim();
@@ -2910,7 +2911,7 @@ function openInstructions(siteKey) {
       window.parent.postMessage({
         from: "aixlinx-underbar",
         action: "autofill",
-        source: isAutomated ? "automated" : "manual",
+        source: isAutoSendAll ? "flagged_batch" : (isAutomated ? "automated" : "manual"),
         conditions: {
           area_mode:     currentAreaMode,
           rent_min:      adjC.rent_min,
@@ -3173,6 +3174,7 @@ document.addEventListener("DOMContentLoaded", () => {
           var aBtn = document.getElementById('autofill-btn');
           if (aBtn && aBtn.style.display !== 'none') {
             aBtn.dataset.automated = "1"; // 自動バッチであることを onclick ハンドラに伝える
+            aBtn.dataset.auto_send_all = cmd.auto_send_all ? "1" : "";
             aBtn.click();
             delete aBtn.dataset.automated;
           }
@@ -3211,6 +3213,7 @@ document.addEventListener("DOMContentLoaded", () => {
         var aBtn = document.getElementById('autofill-btn');
         if (aBtn && aBtn.style.display !== 'none') {
           aBtn.dataset.automated = "1"; // 自動バッチであることを onclick ハンドラに伝える
+          aBtn.dataset.auto_send_all = cmd.auto_send_all ? "1" : "";
           aBtn.click();
           delete aBtn.dataset.automated;
         }
@@ -3486,6 +3489,7 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           });
           var aBtn = document.getElementById('autofill-btn');
           if (aBtn) {
+            aBtn.dataset.auto_send_all = msg.auto_send_all ? "1" : "";
             aBtn.click(); // display:noneでもonclickは発火する
             sendResponse({ ok: true });
           } else {
