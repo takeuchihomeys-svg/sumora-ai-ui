@@ -447,6 +447,24 @@ function CustomersPageInner() {
   const batchIndexRef = useRef<number>(0);
   const batchSiteRef = useRef<"realnetpro" | "itandi" | "reins">("realnetpro");
 
+  // 検索ストップ: DB上のpending/runningコマンド件数を追跡（15秒ポーリング）
+  const [activeCmdCount, setActiveCmdCount] = useState<number>(0);
+  const [stopLoading, setStopLoading] = useState<boolean>(false);
+  useEffect(() => {
+    const checkActiveCmds = async () => {
+      try {
+        const { count } = await supabase
+          .from("automation_commands")
+          .select("id", { count: "exact", head: true })
+          .in("status", ["pending", "running"]);
+        setActiveCmdCount(count ?? 0);
+      } catch { /* 一時的な失敗は無視 */ }
+    };
+    void checkActiveCmds();
+    const iv = setInterval(() => void checkActiveCmds(), 15000);
+    return () => clearInterval(iv);
+  }, []);
+
   // 改善13: 会話ログの自動スクロール用。顧客IDごとにスクロールコンテナのDOM参照を保持し、
   // メッセージ読み込み完了（msgCache更新）時に最下部（最新メッセージ）へスクロールする
   const msgLogRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -1522,6 +1540,26 @@ function CustomersPageInner() {
     batchIsFlaggedRef.current = false;
   };
 
+  // スマホからPC拡張の検索を強制停止する:
+  //  1. Supabase の pending/running コマンドを cancelled に更新
+  //  2. Realtime broadcast で拡張に stop_command を送信（バッチループを即座に中断）
+  //  3. フロントの batchMode もリセット
+  const stopAllSearch = async () => {
+    if (stopLoading) return;
+    setStopLoading(true);
+    try {
+      await fetch("/api/automation/stop", { method: "POST" });
+      stopBatchSearch();
+      setActiveCmdCount(0);
+      // 同一ブラウザの拡張にも停止を通知
+      window.postMessage({ from: "aixlinx-stop-batch" }, "*");
+    } catch (e) {
+      console.error("[stopAllSearch]", e);
+    } finally {
+      setStopLoading(false);
+    }
+  };
+
   const goPrevBatch = () => {
     const prev = batchIndex - 1;
     if (prev < 0) return;
@@ -1589,6 +1627,16 @@ function CustomersPageInner() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {(batchMode || activeCmdCount > 0) && (
+              <button
+                onClick={() => void stopAllSearch()}
+                disabled={stopLoading}
+                className="rounded-xl px-3 py-1.5 text-xs font-bold text-white active:opacity-70 disabled:opacity-50"
+                style={{ background: "rgba(239,68,68,0.75)", border: "1px solid rgba(239,68,68,0.9)" }}
+              >
+                {stopLoading ? "停止中…" : "検索ストップ"}
+              </button>
+            )}
             <button
               onClick={() => setShowAixPanel(true)}
               className="rounded-xl border border-white/30 px-3 py-1.5 text-xs font-bold text-white active:opacity-70"
@@ -1672,7 +1720,7 @@ function CustomersPageInner() {
                 {batchIndex + 1 >= batchListRef.current.length ? "完了" : "次へ →"}
               </button>
               <button
-                onClick={stopBatchSearch}
+                onClick={() => void stopAllSearch()}
                 className="rounded-lg px-1.5 py-1 text-[11px] text-white/60 active:scale-95"
               >
                 ✕
@@ -2022,9 +2070,12 @@ function CustomersPageInner() {
                   </button>
                 )}
 
+                {/* ── メインコンテンツ（ヘッダー＋展開）を縦積みラッパーで包む ── */}
+                <div className="flex-1 flex flex-col min-w-0">
+
                 {/* ── ヘッダー行 ── */}
                 <button
-                  className="flex flex-1 items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
+                  className="flex items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
                   onClick={() => {
                     if (longPressActivated.current) { longPressActivated.current = false; return; }
                     setExpandedId(isExp ? null : c.id);
@@ -2822,6 +2873,7 @@ function CustomersPageInner() {
                     </div>
                   </div>
                 )}
+                </div>{/* ── /メインコンテンツ ── */}
               </div>
             );
           })

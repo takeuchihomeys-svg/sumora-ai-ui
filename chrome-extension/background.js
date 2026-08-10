@@ -1016,6 +1016,11 @@ function _sbConnect() {
         if (msg.topic === _SB_CMD_CHANNEL && msg.event === "broadcast" && msg.payload && msg.payload.event === "scrape_command") {
           _sbHandleCommand(msg.payload.payload || {});
         }
+        // スマホのストップボタンからのストップ信号 → バッチループを中断するフラグをセット
+        if (msg.topic === _SB_CMD_CHANNEL && msg.event === "broadcast" && msg.payload && msg.payload.event === "stop_command") {
+          console.log("[SB-RT] stop_command 受信 → batchStopRequested = true");
+          chrome.storage.local.set({ batchStopRequested: true });
+        }
       } catch(_) { /* ignore */ }
     };
     _sbWs.onclose = function() {
@@ -1525,6 +1530,17 @@ async function _pollAndRunBatch() {
 }
 
 async function _runBatchSearch(command) {
+  // ── stop_all: スマホのストップボタンから DB 経由で届いたストップコマンド ──
+  if (command.command_type === "stop_all") {
+    console.log("[batch] stop_all コマンド受信 → バッチを中断");
+    await chrome.storage.local.set({ batchStopRequested: true });
+    await _updateBatchCommand(command.id, { status: "done", completed_at: new Date().toISOString() });
+    return;
+  }
+
+  // バッチ開始時にストップフラグをクリア（前回の残留を防ぐ）
+  await chrome.storage.local.set({ batchStopRequested: false });
+
   // ── scrape_and_compare: WebApp（リアプロボタン）からのスクレイプ比較依頼 ────
   if (command.command_type === "scrape_and_compare") {
     await _updateBatchCommand(command.id, { status: "running" });
@@ -1598,6 +1614,13 @@ async function _runBatchSearch(command) {
   var batchErrors = []; // 修正12: サイト別の失敗を集約してサーバーへ可視化する
 
   for (var i = 0; i < targets.length; i++) {
+    // ストップフラグをチェック（スマホのストップボタンまたは stop_all コマンドで設定される）
+    var _stopSt = await chrome.storage.local.get("batchStopRequested");
+    if (_stopSt.batchStopRequested) {
+      console.log("[batch] ストップ要求を検知 → バッチ中断 (処理済み:", i, "/ 全体:", targets.length, ")");
+      await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
+      return;
+    }
     var customer = targets[i];
     for (var j = 0; j < sites.length; j++) {
       var batchSite = sites[j];
