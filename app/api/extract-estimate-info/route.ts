@@ -137,11 +137,12 @@ export async function POST(req: NextRequest) {
 - otherItemsの金額は【必ず税込金額のまま】記入すること。÷1.1の計算は絶対にしない。書いてある数字をそのまま使う
 - guarantee・insurance・keyExchange・cleaning等も税込のまま書いてある数字を使う（÷1.1しない）
 - guaranteeRate: 「エポス30%→」「JRAG50%/70%」等から保証料率を抽出。複数ある場合は最低率（例: 30）。記載がなければ50
-- cleaningAtDeparture: 「退去時清算」「退去時精算」「退去時 ¥○○」等の記載があればtrue。入居時に支払う場合はfalse
+- cleaningAtDeparture: 「退去時清算」「退去時精算」「退去時 ¥○○」「退去時」等の記載があればtrue。入居時に支払う場合はfalse
+- 【退去時費用の除外】退去時・退去時清算・退去時精算・退去時支払い・退去時 ¥〇〇 等の文言が付いた費用は一切初期費用に含めない。室内清掃費用・ルームクリーニング・ハウスクリーニング代が退去時扱いの場合はcleaning: 0、cleaningAtDeparture: true。退去時と分かる費用はotherItemsにも絶対に入れない
 - monthlyGuaranteeFee: 「月額保証料」「保証料(月額)」等の毎月支払う保証料。otherItemsには入れずこのフィールドに入れる（初回保証料guaranteeとは別）
 - 日割賃料は抽出不要（入居日から自動計算するため）
 - 不明な項目は0または空文字
-- otherItemsには上記フィールドに当てはまらない費用のみ入れる`;
+- otherItemsには上記フィールドに当てはまらない【入居時のみ】の費用を入れる。退去時費用は絶対に含めない`;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const contentParts: any[] = images.map((img) =>
