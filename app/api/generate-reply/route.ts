@@ -784,7 +784,12 @@ function buildGenerationMessages(
   const quickPatterns = `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
   const smoraRulesNote = `\n${promptOverrides?.smoraRules ?? SMORA_RULES}`;
-  const replyContentNote = `\n${promptOverrides?.replyContentRules ?? REPLY_CONTENT_RULES}`;
+  // AIXテンプレート最適化モード（templateNote指定時）では通常返信専用の内容規約を注入しない
+  // — テンプレはAIX固有の長文・表現が正であり、通常返信の内容制限が品質を壊すため
+  // — 通常返信（templateNote=空）のみ適用することで、両者の品質を独立に管理できる
+  const replyContentNote = templateNote
+    ? ""
+    : `\n${promptOverrides?.replyContentRules ?? REPLY_CONTENT_RULES}`;
   const curatedReplyRulesNote = `\n${CURATED_REPLY_RULES}`;
   // AIXルールはgenerate-reply（一般LINE返信）には注入しない（aix/action専用）
   // 管理UIでオーバーライドが明示設定された場合のみ注入
