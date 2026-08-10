@@ -1018,7 +1018,8 @@ function _sbConnect() {
         }
         // スマホのストップボタンからのストップ信号 → バッチループを中断するフラグをセット
         if (msg.topic === _SB_CMD_CHANNEL && msg.event === "broadcast" && msg.payload && msg.payload.event === "stop_command") {
-          console.log("[SB-RT] stop_command 受信 → batchStopRequested = true");
+          console.log("[SB-RT] stop_command 受信 → _batchShouldStop = true");
+          _batchShouldStop = true; // Fix 2: 同期フラグを即時セット
           chrome.storage.local.set({ batchStopRequested: true });
         }
       } catch(_) { /* ignore */ }
@@ -1358,6 +1359,12 @@ async function _getAutomationKeyHeader() {
 // 作成しておき、シグナル受信（true）またはタイムアウト（false）を待つ。
 var _fillDoneWaiters = [];
 
+// Fix 2: モジュールレベルの同期ストップフラグ。
+// chrome.storage.local.get の非同期ラグなしに即座に参照できる。
+// stop_command (Realtime WebSocket) と axlx-force-stop-batch (window.postMessage 経由)
+// の両方で true にセットする。バッチ開始時に false へリセットする。
+var _batchShouldStop = false;
+
 // resolve 値は { timedOut: boolean, error: string|null } に統一。
 // error は page-script.js が fill-done に載せたエラー内容（フォールバック検索は実行済み）。
 function _notifyFillDone(site, error) {
@@ -1376,7 +1383,19 @@ function _notifyFillDone(site, error) {
 function _createFillDoneWaiter(site, timeoutMs) {
   return new Promise(function (resolve) {
     var entry = { site: site || null, resolve: resolve, timer: null };
+    // Fix 3: _batchShouldStop を 500ms ごとにポーリングし、true になったら即解決する。
+    // これにより 90秒ブロッキングが最大 500ms 遅延に短縮される。
+    var stopInterval = setInterval(function () {
+      if (!_batchShouldStop) return;
+      clearInterval(stopInterval);
+      clearTimeout(entry.timer);
+      var idx = _fillDoneWaiters.indexOf(entry);
+      if (idx >= 0) _fillDoneWaiters.splice(idx, 1);
+      console.log("[fill-done-waiter] _batchShouldStop 検知 → stopped:true で解決");
+      resolve({ timedOut: false, stopped: true, error: null });
+    }, 500);
     entry.timer = setTimeout(function () {
+      clearInterval(stopInterval);
       var idx = _fillDoneWaiters.indexOf(entry);
       if (idx >= 0) _fillDoneWaiters.splice(idx, 1);
       resolve({ timedOut: true, error: null });
@@ -1386,6 +1405,18 @@ function _createFillDoneWaiter(site, timeoutMs) {
 }
 
 // content script からの fill-done 中継を受信
+// Fix 5: underbar.js が中継する Web アプリのストップボタン信号を受信する
+chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  if (msg && msg.type === "axlx-force-stop-batch") {
+    console.log("[batch] axlx-force-stop-batch 受信 → _batchShouldStop = true");
+    _batchShouldStop = true; // Fix 2: 同期フラグを即時セット
+    chrome.storage.local.set({ batchStopRequested: true });
+    sendResponse({ ok: true });
+    return true;
+  }
+  return false;
+});
+
 chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg && msg.type === "axlx-fill-done") {
     if (msg.error) {
@@ -1490,6 +1521,20 @@ async function _pollAndRunBatch() {
     var json = await res.json();
     if (!json.command) return;
     var cmd = json.command;
+    // Fix 6: stop_all は batchRunning ロック中でも即時にフラグをセットする。
+    // 既存の _runBatchSearch 冒頭でも処理されるが、ここで先行してフラグを立てることで
+    // 実行中バッチへのシグナル到達を早める。
+    if (cmd.command_type === "stop_all") {
+      console.log("[batch] Fix6: stop_all を pending から検出 → _batchShouldStop = true");
+      _batchShouldStop = true;
+      await chrome.storage.local.set({ batchStopRequested: true });
+      // ロック中の場合はコマンドを完了扱いにして終了（_runBatchSearch を呼ばない）
+      var lockSt = await chrome.storage.local.get("batchRunning");
+      if (lockSt.batchRunning) {
+        await _updateBatchCommand(cmd.id, { status: "done", completed_at: new Date().toISOString() });
+        return;
+      }
+    }
     // 修正④b: コマンド受信時にポップアップを開き、スタッフに実行中を通知する。
     // chrome.action.openPopup() は Chrome 127 未満またはユーザージェスチャなし環境で失敗するため
     // try/catch でラップし、失敗時は赤バッジ '!' を 10秒表示してアイコンクリックを促す。
@@ -1533,12 +1578,14 @@ async function _runBatchSearch(command) {
   // ── stop_all: スマホのストップボタンから DB 経由で届いたストップコマンド ──
   if (command.command_type === "stop_all") {
     console.log("[batch] stop_all コマンド受信 → バッチを中断");
+    _batchShouldStop = true; // Fix 2: 同期フラグも立てる
     await chrome.storage.local.set({ batchStopRequested: true });
     await _updateBatchCommand(command.id, { status: "done", completed_at: new Date().toISOString() });
     return;
   }
 
   // バッチ開始時にストップフラグをクリア（前回の残留を防ぐ）
+  _batchShouldStop = false; // Fix 2: 同期フラグもリセット
   await chrome.storage.local.set({ batchStopRequested: false });
 
   // ── scrape_and_compare: WebApp（リアプロボタン）からのスクレイプ比較依頼 ────
@@ -1614,15 +1661,26 @@ async function _runBatchSearch(command) {
   var batchErrors = []; // 修正12: サイト別の失敗を集約してサーバーへ可視化する
 
   for (var i = 0; i < targets.length; i++) {
-    // ストップフラグをチェック（スマホのストップボタンまたは stop_all コマンドで設定される）
+    // ストップフラグをチェック（同期フラグを優先、フォールバックで storage も確認）
+    if (_batchShouldStop) {
+      console.log("[batch] ストップ要求を検知（同期）→ バッチ中断 (処理済み:", i, "/ 全体:", targets.length, ")");
+      await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
+      return;
+    }
     var _stopSt = await chrome.storage.local.get("batchStopRequested");
     if (_stopSt.batchStopRequested) {
-      console.log("[batch] ストップ要求を検知 → バッチ中断 (処理済み:", i, "/ 全体:", targets.length, ")");
+      console.log("[batch] ストップ要求を検知（storage）→ バッチ中断 (処理済み:", i, "/ 全体:", targets.length, ")");
       await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
       return;
     }
     var customer = targets[i];
     for (var j = 0; j < sites.length; j++) {
+      // Fix 4: サイト間でも同期フラグを確認し、ストップ要求があれば即中断する
+      if (_batchShouldStop) {
+        console.log("[batch] Fix4: _batchShouldStop 検知 (j=" + j + ") → バッチ中断");
+        await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
+        return;
+      }
       var batchSite = sites[j];
       try {
         // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
@@ -1654,6 +1712,12 @@ async function _runBatchSearch(command) {
           await new Promise(function(r) { setTimeout(r, 3000); });
         }
       } catch (e) {
+        // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して i ループも抜ける
+        if (e && e.message === "__BATCH_STOPPED__") {
+          console.log("[batch] __BATCH_STOPPED__ 受信 → バッチ中断");
+          await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
+          return;
+        }
         console.error("[batch] error:", customer.id, batchSite, e);
         batchErrors.push(customer.id + "/" + batchSite + ": " + ((e && e.message) || e));
       }
@@ -2166,6 +2230,10 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   // page-script.js 側は85秒のフェイルセーフで必ず fill-done を送る）
   // resolve 値は { timedOut, error } 形式（_createFillDoneWaiter 参照）
   var fillDone = fillDonePromise ? await fillDonePromise : null;
+  // Fix 3: stopped:true の場合はストップ要求によるキャンセル（エラーではない）
+  if (fillDone && fillDone.stopped) {
+    throw new Error("__BATCH_STOPPED__");
+  }
   if (!fillDone || fillDone.timedOut) {
     throw new Error("リアプロ検索完了シグナル（fill-done）が90秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
   }
@@ -2265,8 +2333,12 @@ async function _scrapeAllItandiPages(tabId) {
 // 修正4: 固定8秒待ちを廃止し、itandi-page-script.js の検索実行シグナル（fill-done）を待つ。
 // fillDonePromise は autofill 発火「前」に _createFillDoneWaiter("itandi", 90000) で作成しておくこと。
 async function _scrapeAndCompareItandi(fillDonePromise, customerId, customerName, conditions) {
-  // resolve 値は { timedOut, error } 形式（_createFillDoneWaiter 参照）
+  // resolve 値は { timedOut, error, stopped } 形式（_createFillDoneWaiter 参照）
   var fillDone = fillDonePromise ? await fillDonePromise : null;
+  // Fix 3: stopped:true の場合はストップ要求によるキャンセル（エラーではない）
+  if (fillDone && fillDone.stopped) {
+    throw new Error("__BATCH_STOPPED__");
+  }
   if (!fillDone || fillDone.timedOut) {
     throw new Error("itandi 検索完了シグナル（fill-done）が90秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
   }

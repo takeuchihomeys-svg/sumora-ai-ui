@@ -455,6 +455,15 @@
     window.postMessage({ from: "axlx-customer-response", name: e.data.name, id: e.data.id ?? null, conditions: e.data.conditions ?? null }, "*");
   });
 
+  // ── Fix 1: Web アプリのストップボタン → 拡張への即時停止信号中継 ────────────
+  // stopAllSearch()（customers/page.tsx）が postMessage({ from:'aixlinx-stop-batch' }) を送る。
+  // underbar.js がそれを受け取り chrome.runtime.sendMessage で background.js に転送する。
+  window.addEventListener("message", function(e) {
+    if (!e.data || e.data.from !== "aixlinx-stop-batch") return;
+    console.log("[underbar] aixlinx-stop-batch 受信 → axlx-force-stop-batch を background.js へ送信");
+    chrome.runtime.sendMessage({ type: "axlx-force-stop-batch" });
+  });
+
   // ── background.js からの顧客切替指示を popup.js iframe に中継 ────────────────
   // chrome.runtime.sendMessage でiframe直接に届けると frame登録ラグで失敗するため
   // chrome.tabs.sendMessage(content script経路) → postMessage(iframe) の2段中継を使う
