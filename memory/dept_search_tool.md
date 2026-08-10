@@ -180,6 +180,8 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | | 片町線追加(徳庵/住道)・大阪梅田に阪神本線追加 |
 | 2026-05-20 | NEIGHBORHOOD_WARD_MAP大幅拡充（60+エントリ追加）: 城東区(稲田本町・稲田新町・稲嶋等)・平野区(長吉西・川筋・川保本町・加美・瓜破等)・東住吉区・生野区・旭区・西成区・住吉区・阿倍野区・淀川区・東大阪市・枚方市・高槻市・茨木市・八尾市 #43-GK新設 |
 | 2026-05-20 | 新メンバー追加: #43-GK（大阪地域博士・NEIGHBORHOOD_WARD_MAP守護者）・#43-EK（大阪駅博士・不明トークン第一相談窓口）・#43-AX・#43-RG・#43-WD・#43-WX |
+| 2026-08-10 | 乗り換えグラフDB実装: build-transit-graph.js自動生成→transit_graph.js（422駅・全沿線・1048エッジ）。getStationsWithinTransfers() BFS追加。乗り換えN回UI（enableTransfer/maxTransfers）追加。popup.htmlスクリプト順: popup-maps.js→transit_graph.js→popup.js |
+| 2026-08-10 | BFS走査バグ修正: node.adjはオブジェクトのためfor..ofが失敗→Object.values(node.adj)でedge.to/edge.lineを取り出すよう修正 |
 
 ---
 

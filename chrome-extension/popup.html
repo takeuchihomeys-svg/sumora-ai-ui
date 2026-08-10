@@ -111,6 +111,22 @@
         <div id="mode-desc" class="mode-desc">条件ぴったりで検索</div>
       </div>
 
+      <!-- 乗り換え検索 -->
+      <div id="transfer-search-row" style="display:none; margin:8px 12px 0; padding:8px; background:#f0f4ff; border-radius:8px; font-size:13px;">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="enableTransfer">
+          <span>乗り換え検索</span>
+        </label>
+        <div id="transfer-options" style="display:none; margin-top:6px; align-items:center; gap:8px;">
+          <select id="maxTransfers" style="border:1px solid #ccc; border-radius:6px; padding:4px 8px; font-size:13px;">
+            <option value="0">直通のみ（乗り換えなし）</option>
+            <option value="1" selected>1回以内</option>
+            <option value="2">2回以内</option>
+          </select>
+          <span id="transfer-count-label" style="color:#666; font-size:12px;"></span>
+        </div>
+      </div>
+
       <div class="instr-scroll">
         <div id="instr-customer-card" class="instr-card"></div>
         <div id="instr-steps" class="steps-list"></div>
@@ -231,6 +247,7 @@
     </div>
   </div>
   <script src="popup-maps.js"></script>
+  <script src="transit_graph.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

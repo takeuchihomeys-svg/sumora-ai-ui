@@ -589,6 +589,50 @@ function getAdjacentStations(stationName, lines) {
   return [...adj];
 }
 
+// BFS: startStation から maxTransfers 回乗換以内で到達できる全駅を返す
+// TRANSIT_GRAPH (transit_graph.js) を参照。未ロード時は startStation のみ返す
+function getStationsWithinTransfers(startStation, maxTransfers) {
+  if (!window.TRANSIT_GRAPH || !TRANSIT_GRAPH[startStation]) return [startStation];
+
+  const results = new Set([startStation]);
+  // BFS: state = { station, line, transfers }
+  const queue = [{ station: startStation, line: null, transfers: 0 }];
+  const visited = new Map(); // "station|line" → min transfers used
+
+  while (queue.length) {
+    const { station, line, transfers } = queue.shift();
+    const node = TRANSIT_GRAPH[station];
+    if (!node) continue;
+
+    // 隣接駅（同一路線・乗換なし or 路線変更で+1）
+    for (const edge of Object.values(node.adj || {})) {
+      const neighbor = edge.to;
+      const edgeLine = edge.line;
+      const cost = (line && line !== edgeLine) ? 1 : 0;
+      const newT = transfers + cost;
+      const key = neighbor + '|' + edgeLine;
+      if (newT <= maxTransfers && (!visited.has(key) || visited.get(key) > newT)) {
+        visited.set(key, newT);
+        results.add(neighbor);
+        queue.push({ station: neighbor, line: edgeLine, transfers: newT });
+      }
+    }
+
+    // 名称乗換（物理的な徒歩接続、例: 梅田↔大阪）
+    if (transfers < maxTransfers) {
+      for (const xfer of (node.transfers || [])) {
+        if (!results.has(xfer)) {
+          results.add(xfer);
+          queue.push({ station: xfer, line: null, transfers: transfers + 1 });
+        }
+      }
+    }
+  }
+
+  results.delete(startStation);
+  return [...results];
+}
+
 // 「AからBまで」範囲指定の中間駅を展開する
 // ① 同一路線上に両駅がある → その間の全駅を返す
 // ② ない場合 → 1ホップ探索（A路線の駅 X が B路線にも属する → X〜Bの中間駅を返す）
@@ -1723,6 +1767,43 @@ function openSiteView(customer) {
 }
 
 // ── View 3: Instructions ───────────────────────────────────────────
+
+// 乗り換え検索UIの表示制御（駅が選択されているときのみ表示）
+function updateTransferUI() {
+  const row = document.getElementById('transfer-search-row');
+  if (!row) return;
+  const area = document.getElementById('adj-area')?.value.trim()
+    || (selectedCustomer && (selectedCustomer.desired_area || selectedCustomer.area || ''));
+  const toks = area ? parseAreaTokens(area) : [];
+  const hasStation = toks.some(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, '')] || LEARNED_STATION_MAP[t]);
+  row.style.display = hasStation ? 'block' : 'none';
+  if (!hasStation) {
+    const cb = document.getElementById('enableTransfer');
+    if (cb) cb.checked = false;
+    const opts = document.getElementById('transfer-options');
+    if (opts) opts.style.display = 'none';
+  }
+}
+
+function updateTransferCountLabel() {
+  const label = document.getElementById('transfer-count-label');
+  if (!label) return;
+  const enabled = document.getElementById('enableTransfer')?.checked;
+  if (!enabled) { label.textContent = ''; return; }
+  const maxT = parseInt(document.getElementById('maxTransfers')?.value || '1', 10);
+  const area = document.getElementById('adj-area')?.value.trim()
+    || (selectedCustomer && (selectedCustomer.desired_area || selectedCustomer.area || ''));
+  const toks = area ? parseAreaTokens(area) : [];
+  const stations = toks.filter(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, '')] || LEARNED_STATION_MAP[t]);
+  if (!stations.length) { label.textContent = ''; return; }
+  let total = 0;
+  for (const st of stations) {
+    const nearby = getStationsWithinTransfers(st, maxT);
+    total += nearby.length;
+  }
+  label.textContent = `+${total}駅が対象`;
+}
+
 function syncModeButtons() {
   const modeDescs = { pinpoint: "条件ぴったりで検索", wide: "エリア・家賃・広さを少し広げて検索" };
   document.querySelectorAll(".mode-btn").forEach((b) => {
@@ -1921,11 +2002,29 @@ function calcUpdateDays(dateStr, status) {
 }
 
 function buildAdjCustomer(c) {
-  const adjArea    = document.getElementById("adj-area").value.trim();
+  let adjArea      = document.getElementById("adj-area").value.trim();
   const adjRentMax = document.getElementById("adj-rent-max").value;
   const adjWalk    = document.getElementById("adj-walk").value;
   const adjAge     = document.getElementById("adj-age").value;
   const adjFloor   = document.getElementById("adj-floor").value.trim();
+
+  // 乗り換え検索が有効なら隣接駅をエリア文字列に追加
+  const transferEnabled = document.getElementById("enableTransfer")?.checked;
+  if (transferEnabled) {
+    const maxT = parseInt(document.getElementById("maxTransfers")?.value || "1", 10);
+    const baseArea = adjArea || c.desired_area || c.area || "";
+    const toks = parseAreaTokens(baseArea);
+    const extra = new Set();
+    for (const st of toks) {
+      if (STATION_LINE_MAP[st] || STATION_LINE_MAP[st.replace(/[町村]$/, "")] || LEARNED_STATION_MAP[st]) {
+        getStationsWithinTransfers(st, maxT).forEach(s => extra.add(s));
+      }
+    }
+    if (extra.size > 0) {
+      adjArea = [baseArea, ...[...extra]].join("・");
+    }
+  }
+
   return {
     ...c,
     desired_area: adjArea    || c.desired_area || c.area || null,
@@ -2044,6 +2143,7 @@ function openInstructions(siteKey) {
   document.getElementById("instr-title").textContent = cfg.icon + " " + cfg.name;
   syncModeButtons();
   renderInstrSteps(siteKey);
+  updateTransferUI();
 
   // 他サイトへのクロスサイトボタン
   const crossBar = document.getElementById("cross-site-bar");
@@ -3003,6 +3103,18 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
   syncModeButtons();
+
+  // 乗り換え検索チェックボックス
+  document.getElementById("enableTransfer")?.addEventListener("change", function() {
+    const opts = document.getElementById("transfer-options");
+    if (opts) opts.style.display = this.checked ? "flex" : "none";
+    updateTransferCountLabel();
+    if (selectedSite) renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+  });
+  document.getElementById("maxTransfers")?.addEventListener("change", () => {
+    updateTransferCountLabel();
+    if (selectedSite) renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+  });
 
   document.getElementById("search-input").addEventListener("input", (e) => {
     filterCustomers(e.target.value);
