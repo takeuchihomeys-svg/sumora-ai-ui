@@ -70,8 +70,14 @@ function emotionTemperature(emotion?: string): number {
 }
 
 // ─── 初回挨拶文（greetingNote と冒頭強制置換で共用・二重定義禁止）─────────────
+// 「名称未設定」はLINEプロフィール取得失敗時のプレースホルダー。名前として絶対に使わない。
+function sanitizeCustomerName(name: string): string {
+  if (!name || name === "名称未設定") return "";
+  return name;
+}
 function buildFirstGreeting(customerName: string): string {
-  return `${customerName ? `${customerName}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！`;
+  const n = sanitizeCustomerName(customerName);
+  return `${n ? `${n}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！`;
 }
 
 // ─── f-8: センシティブ案件ゲート（線引き質問#10の回答確定に基づく）──────────────
@@ -519,7 +525,7 @@ function buildGenerationMessages(
     ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み。今回は絶対に使わない。「はい！！」「かしこまりました！！」など短い言葉で直接本文から始める。`
     : (state === "first_reply" && isFirstEverReply)
       ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「${buildFirstGreeting(customerName)}」で始める（一字一句変更・省略禁止）。「お世話になっております」「夜分遅くに失礼致します」は絶対禁止。`
-      : `\n【⏰ 挨拶ルール・最優先】現在${jstHour}時台（JST）。今回の冒頭は「〇〇さんお世話になっております！！」を使う。「夜分遅くに失礼致します」は返信時には絶対禁止（スタッフから先に連絡するときのみ使う言葉）。`;
+      : `\n【⏰ 挨拶ルール・最優先】現在${jstHour}時台（JST）。今回の冒頭は「${sanitizeCustomerName(customerName) ? `${sanitizeCustomerName(customerName)}さんお世話になっております！！` : "お世話になっております！！"}」を使う。「夜分遅くに失礼致します」は返信時には絶対禁止（スタッフから先に連絡するときのみ使う言葉）。`;
 
   const managementNote = isWeekend
     ? `\n【管理会社の状況・必ず守ること】本日は土日。物件の募集状況確認（空室確認）は土日でも可能なので「確認させていただきます！確認出来次第ご連絡させていただきます！！」と伝えてよい。ただし交渉（フリーレント・値引き・条件変更・審査再挑戦など）は土日不可。交渉が必要な場合は「月曜日一番で管理会社に交渉させていただきます！！」と伝える。`
@@ -531,7 +537,8 @@ function buildGenerationMessages(
 
   const dateNote = `\n【📅 今日の日付（JST・必ず基準にすること）】${getJSTDateString()} — 「明日」「明後日」「今週」などの相対表現や具体的な日付（○日）は全てこの日付を起点に計算すること`;
 
-  const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
+  const _cleanName = sanitizeCustomerName(customerName);
+  const nameNote = _cleanName ? `お客様名：${_cleanName}さん` : "お客様名：不明（名前なしで返信すること・「名称未設定」は絶対に使わない）";
   const conditionsNote = customerConditions
     ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。条件の重複記載はしない。`
     : "";
