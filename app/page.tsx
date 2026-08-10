@@ -5682,6 +5682,20 @@ export default function Home() {
                             👀内覧済
                           </span>
                         )}
+                        {statusFilter === "flagged" && (() => {
+                          const jstToday = new Date(Math.floor((Date.now() + 9 * 3600000) / 86400000) * 86400000 - 9 * 3600000);
+                          let hasAixToday = false;
+                          let hasStaffToday = false;
+                          for (const m of conversation.messages) {
+                            if (m.sender === "staff" && m.rawCreatedAt && new Date(m.rawCreatedAt) >= jstToday) {
+                              if (m.isAix) hasAixToday = true;
+                              else hasStaffToday = true;
+                            }
+                          }
+                          if (hasAixToday) return <span key="today-reply-badge" className="shrink-0 leading-none text-sm" title="今日AIXで返信済み">✅</span>;
+                          if (hasStaffToday) return <span key="today-reply-badge" className="shrink-0 leading-none text-sm" title="今日手動で返信済み">☑</span>;
+                          return null;
+                        })()}
                         {(activeTasks[conversation.id] ?? []).map((task) => {
                           if (task.task_type === "property_check") {
                             const days = Math.floor((Date.now() - new Date(task.created_at).getTime()) / 86400000);

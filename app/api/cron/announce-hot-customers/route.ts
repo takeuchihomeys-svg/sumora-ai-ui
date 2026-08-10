@@ -1,48 +1,21 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 export const maxDuration = 60;
-
-const ACCOUNT_LABEL: Record<string, string> = {
-  sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ賃貸", hasu: "ハス",
-};
-
-function relTime(d?: string | null): string {
-  if (!d) return "不明";
-  const diff = Date.now() - new Date(d).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 60) return `${m}分前`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}時間前`;
-  return `${Math.floor(h / 24)}日前`;
-}
 
 function getJSTHour(): number {
   return (new Date().getUTCHours() + 9) % 24;
 }
 
-// 物件出しが必要か判定
-function needsPropertyAction(status: string, lastSentAt: string | null): boolean {
-  if (status === "new_inquiry") return true;
-  // B04: setHours はサーバー（UTC）ローカルタイムを使うため JST と 9h ずれる。
-  //      UTC ms に +9h して UTC midnight を JST midnight として扱う。
-  const jstOffsetMs = 9 * 3600 * 1000;
-  const todayJst = new Date(Math.floor((Date.now() + jstOffsetMs) / 86400000) * 86400000 - jstOffsetMs);
-  if (status === "hot") return !lastSentAt || new Date(lastSentAt) < todayJst;
-  if (status === "property_search") {
-    if (!lastSentAt) return true;
-    return (Date.now() - new Date(lastSentAt).getTime()) / 86400000 >= 3;
-  }
-  return false;
+/** JST 今日の 00:00:00 を UTC の Date として返す */
+function getTodayJSTStart(): Date {
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  jstNow.setUTCHours(0, 0, 0, 0);
+  return new Date(jstNow.getTime() - 9 * 60 * 60 * 1000);
 }
 
-const PROP_STATUS_LABEL: Record<string, string> = {
-  new_inquiry: "新規",
-  hot: "毎日出し",
-  property_search: "物件出し",
-};
-
 export async function GET(req: NextRequest) {
+  // 認証チェック（CRON_SECRET）
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -50,7 +23,6 @@ export async function GET(req: NextRequest) {
   }
 
   // CRON-004: クールダウンガード（90分以内の重複送信を防ぐ）
-  // Vercel cron は失敗時リトライするため同じ内容が二重送信される可能性がある
   const { data: cooldownRow } = await supabase
     .from("hanbancyo_settings")
     .select("value")
@@ -63,158 +35,112 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // LINE グループID
   let targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
-  // フォールバック: hanbancyo_settings テーブルの group_id を使う
   if (!targetId) {
-    const { data: grpRow } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
+    const { data: grpRow } = await supabase
+      .from("hanbancyo_settings")
+      .select("value")
+      .eq("key", "group_id")
+      .maybeSingle();
     targetId = grpRow?.value ?? null;
   }
   if (!targetId) {
-    return NextResponse.json({ ok: false, error: "LINE_STAFF_GROUP_ID not configured (env) and hanbancyo_settings group_id not set (db)" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "LINE_STAFF_GROUP_ID not configured (env) and hanbancyo_settings group_id not set (db)" },
+      { status: 500 }
+    );
   }
-  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
+
+  const token =
+    process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ??
+    process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
   if (!token) {
     return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
   }
 
-  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
-  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  // is_flagged=true の会話を全取得（ステータス問わず・申込以降も含む）
+  const { data: flaggedConvs, error: convError } = await supabase
+    .from("conversations")
+    .select("id, customer_name, account, last_message, last_sender, updated_at, status")
+    .eq("is_flagged", true)
+    .order("updated_at", { ascending: false })
+    .limit(50);
 
-  // 🔥アツい（14日以内）/ 物件出し要 / 3日フォローアップ を並列取得
-  const [{ data: hotConvs }, { data: propCustomers }, { data: staleConvs }] = await Promise.all([
-    // 🔥 マークされた会話（14日以内の活動のみ・古いis_hotを除外）
-    // ※ property_customers.status も取得し、申込以降（applying/screening/contract）を除外する
-    supabase
-      .from("conversations")
-      .select("id, customer_name, account, last_message, last_sender, updated_at, property_customer_id, property_customers(last_property_sent_at, hot_confirmed_at, status)")
-      .eq("is_hot", true)
-      .gte("updated_at", fourteenDaysAgo)
-      .order("updated_at", { ascending: false })
-      .limit(30),
-
-    // 📦 物件出し要のお客さん（hot/new_inquiry/property_search）
-    supabase
-      .from("property_customers")
-      .select("id, customer_name, status, last_property_sent_at, account")
-      .in("status", ["new_inquiry", "hot", "property_search"])
-      .order("updated_at", { ascending: false })
-      .limit(30),
-
-    // ⏰ 3日以上お客さんから連絡あり・未返信（🔥でない会話）
-    supabase
-      .from("conversations")
-      .select("id, customer_name, account, last_message, updated_at")
-      .eq("last_sender", "customer")
-      .eq("is_hot", false)
-      .neq("status", "closed_won")
-      .lt("updated_at", threeDaysAgo)
-      .order("updated_at", { ascending: true })
-      .limit(10),
-  ]);
-
-  type HotConvRow = {
-    id: string; customer_name: string | null; account: string | null;
-    last_message: string | null; last_sender: string | null; updated_at: string | null;
-    property_customer_id: string | null;
-    // Supabaseのリレーションは常に配列で返る
-    property_customers: { last_property_sent_at: string | null; hot_confirmed_at: string | null; status: string | null }[] | null;
-  };
-
-  // 申込以降（申込中/審査中/契約中）は別ツールで管理するため除外
-  const POST_APPLICATION = new Set(["applying", "screening", "contract"]);
-
-  // 今日の開始（JST 00:00 = UTC 前日15:00）
-  const _jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  _jstNow.setUTCHours(0, 0, 0, 0);
-  const todayStart = new Date(_jstNow.getTime() - 9 * 60 * 60 * 1000);
-  const isDoneToday = (pc: HotConvRow["property_customers"]) => {
-    const row = pc?.[0]; // 配列の先頭のみ参照
-    if (!row) return false;
-    const sent = row.last_property_sent_at && new Date(row.last_property_sent_at) >= todayStart;
-    const confirmed = row.hot_confirmed_at && new Date(row.hot_confirmed_at) >= todayStart;
-    return !!(sent || confirmed);
-  };
-
-  // 🔥会話：申込以降を除外してからIDセットを構築
-  const hotRows = (hotConvs as HotConvRow[] ?? []).filter((c) => {
-    const pcStatus = c.property_customers?.[0]?.status ?? null;
-    return !POST_APPLICATION.has(pcStatus ?? "");
-  });
-  const hotLinkedPcIds = new Set(
-    hotRows.map((c) => c.property_customer_id).filter(Boolean) as string[]
-  );
-
-  // 物件出しが実際に必要な人だけに絞り、🔥と重複する人は除外
-  type PropCustomer = { id: string; customer_name: string | null; status: string | null; last_property_sent_at: string | null; account: string | null };
-  const needsPropList = (propCustomers as PropCustomer[] ?? []).filter((c) =>
-    needsPropertyAction(c.status ?? "", c.last_property_sent_at ?? null) &&
-    !hotLinkedPcIds.has(c.id)
-  );
-
-  // どれも0件ならスキップ
-  if (hotRows.length === 0 && needsPropList.length === 0 && (!staleConvs || staleConvs.length === 0)) {
-    return NextResponse.json({ ok: true, skipped: true, reason: "no actions needed" });
+  if (convError) {
+    console.error("announce-hot-customers conv error:", convError);
+    return NextResponse.json({ ok: false, error: convError.message }, { status: 500 });
   }
+
+  const convList = flaggedConvs ?? [];
+  if (convList.length === 0) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "no flagged customers" });
+  }
+
+  // JST 今日の開始時刻
+  const todayStart = getTodayJSTStart();
+
+  // 対象会話IDリスト
+  const convIds = convList.map((c) => c.id);
+
+  // 今日のスタッフメッセージを一括取得（is_aix_generated の有無も取る）
+  const { data: todayStaffMsgs } = await supabase
+    .from("messages")
+    .select("conversation_id, is_aix_generated")
+    .eq("sender", "staff")
+    .gte("created_at", todayStart.toISOString())
+    .in("conversation_id", convIds);
+
+  // conversation_id → { hasAix, hasStaff } のマップを構築
+  const staffMsgMap = new Map<string, { hasAix: boolean; hasStaff: boolean }>();
+  for (const msg of todayStaffMsgs ?? []) {
+    const existing = staffMsgMap.get(msg.conversation_id) ?? { hasAix: false, hasStaff: false };
+    staffMsgMap.set(msg.conversation_id, {
+      hasAix: existing.hasAix || !!msg.is_aix_generated,
+      hasStaff: true,
+    });
+  }
+
+  /**
+   * ✅ = 今日 AIX で送信（is_aix_generated=true のスタッフメッセージが今日ある）
+   * ☑  = 今日スタッフが返信したが AIX でない
+   * ・ = 今日スタッフ返信なし
+   */
+  function getActionMark(convId: string): string {
+    const info = staffMsgMap.get(convId);
+    if (!info) return "・";
+    return info.hasAix ? "✅" : "☑";
+  }
+
+  // ソート: お客様からの返信あり（last_sender='customer'）を先頭、次に待機時間長い順（updated_at 昇順）
+  const sorted = [...convList].sort((a, b) => {
+    const aWaiting = a.last_sender === "customer" ? 0 : 1;
+    const bWaiting = b.last_sender === "customer" ? 0 : 1;
+    if (aWaiting !== bWaiting) return aWaiting - bWaiting;
+    return (
+      new Date(a.updated_at ?? "").getTime() -
+      new Date(b.updated_at ?? "").getTime()
+    );
+  });
 
   const hour = getJSTHour();
-  const sections: string[] = [];
 
-  // 🔥セクション（14日以内・申込以降除外）
-  if (hotRows.length > 0) {
-    const rows = hotRows;
-    const doneCount = rows.filter((c) =>
-      isDoneToday(c.property_customers) ||
-      (c.last_sender !== "customer" && !!c.updated_at && new Date(c.updated_at) >= todayStart)
-    ).length;
-    const lines = rows.map((c, i) => {
-      const name = c.customer_name || "名称未設定";
-      const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
-      const time = relTime(c.updated_at);
-      const replyMark = c.last_sender === "customer" ? "⏰ 未返信" : "返信済";
-      // スタッフが今日返信 or 物件を送った/確認した → ✅対応済
-      const staffActedToday = c.last_sender !== "customer" && !!c.updated_at &&
-        new Date(c.updated_at) >= todayStart;
-      const repliedRecently = c.last_sender !== "customer" && !!c.updated_at &&
-        (Date.now() - new Date(c.updated_at).getTime()) < 24 * 60 * 60 * 1000;
-      const actionMark = (isDoneToday(c.property_customers) || staffActedToday)
-        ? "✅ 本日対応済"
-        : repliedRecently
-          ? "💬 返信済"
-          : "❌ 未対応";
-      const preview = (c.last_message ?? "").slice(0, 18) + ((c.last_message ?? "").length > 18 ? "…" : "");
-      return `${i + 1}. ${name}（${acct}）\n   ${actionMark}　${replyMark} ${time}\n   └ ${preview}`;
-    });
-    sections.push(`🔥 あついお客さん（${rows.length}人 / ✅${doneCount}名対応済）\n\n${lines.join("\n\n")}`);
-  }
+  // 各行フォーマット: ✅/☑/・ + 名前（status）
+  const lines = sorted.map((c) => {
+    const mark = getActionMark(c.id);
+    const name = c.customer_name || "名称未設定";
+    const status = c.status || "";
+    return `${mark}${name}（${status}）`;
+  });
 
-  // 📦物件出し要セクション
-  if (needsPropList.length > 0) {
-    const lines = needsPropList.map((c, i) => {
-      const name = c.customer_name || "名称未設定";
-      const label = PROP_STATUS_LABEL[c.status ?? ""] ?? c.status ?? "";
-      const sentLabel = c.last_property_sent_at
-        ? `${Math.floor((Date.now() - new Date(c.last_property_sent_at).getTime()) / 86400000)}日前送信`
-        : "未送信";
-      return `${i + 1}. ${name} — ${label} ${sentLabel}`;
-    });
-    sections.push(`📦 物件出し要（${needsPropList.length}人）\n\n${lines.join("\n")}`);
-  }
-
-  // ⏰ 3日以上未返信セクション（朝10時のみ表示 — CRON-003: cronはUTC 01:00=JST 10:00起動のため10時が正）
-  type StaleConvRow = { id: string; customer_name: string | null; account: string | null; last_message: string | null; updated_at: string | null };
-  const staleList = staleConvs as StaleConvRow[] ?? [];
-  if (staleList.length > 0 && hour >= 10 && hour < 11) {
-    const lines = staleList.map((c, i) => {
-      const name = c.customer_name || "名称未設定";
-      const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
-      const days = Math.floor((Date.now() - new Date(c.updated_at ?? "").getTime()) / 86400000);
-      const preview = (c.last_message ?? "").slice(0, 20) + ((c.last_message ?? "").length > 20 ? "…" : "");
-      return `${i + 1}. ${name}（${acct}）— ${days}日前\n   └ ${preview}`;
-    });
-    sections.push(`⏰ 3日以上未返信（${staleList.length}人）\n\n${lines.join("\n\n")}`);
-  }
-
-  const message = `${sections.join("\n\n——————\n\n")}\n\nAIX LINX より ${hour}:00`;
+  const message = [
+    "【しょーへいの今日のターゲット全リスト】",
+    "",
+    "► 決まる（最優先）",
+    lines.join("\n"),
+    "",
+    `AIX LINX より ${hour}:00`,
+  ].join("\n");
 
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
@@ -229,12 +155,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: text }, { status: 500 });
   }
 
-  // CRON-004: 送信成功後にクールダウン用タイムスタンプを更新（upsert）
-  // void だとサーバーレス環境でレスポンス返却後に upsert が完了せず重複送信リスクがあるため await する
+  // CRON-004: 送信成功後にクールダウン用タイムスタンプを更新
   await supabase.from("hanbancyo_settings").upsert(
     { key: "announce_hot_last_sent_at", value: new Date().toISOString() },
     { onConflict: "key" }
   );
 
-  return NextResponse.json({ ok: true, hot: hotRows.length, needsProp: needsPropList.length, stale: staleList.length });
+  return NextResponse.json({ ok: true, flagged: convList.length, sent: sorted.length });
 }
