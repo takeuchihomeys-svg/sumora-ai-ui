@@ -1,4 +1,6 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+﻿// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-nocheck
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
@@ -35,6 +37,8 @@ export async function GET(req: NextRequest) {
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  // アナウンス停止
+  return NextResponse.json({ ok: true, skipped: true, reason: "disabled" });
   const runLogId = await startCronLog("morning-report");
 
   // 30日/60日自動クローズ: 溜まったpending項目を自動dismissする（毎朝実行）

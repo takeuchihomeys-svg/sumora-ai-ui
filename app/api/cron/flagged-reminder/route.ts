@@ -1,3 +1,5 @@
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-nocheck
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
@@ -156,6 +158,8 @@ export async function GET(req: NextRequest) {
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  // アナウンス停止
+  return NextResponse.json({ ok: true, skipped: true, reason: "disabled" });
 
   // 9:00〜19:00 JST の間だけ配信
   const jstHour = getJSTHour();

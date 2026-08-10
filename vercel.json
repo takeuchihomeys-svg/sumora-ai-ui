@@ -21,10 +21,6 @@
       "schedule": "* * * * *"
     },
     {
-      "path": "/api/cron/flagged-reminder",
-      "schedule": "*/30 0-10 * * *"
-    },
-    {
       "path": "/api/cron/viewing-announce",
       "schedule": "*/30 * * * *"
     },
@@ -43,10 +39,6 @@
     {
       "path": "/api/cron/evening-reminder",
       "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/cron/morning-report",
-      "schedule": "45 0 * * *"
     },
     {
       "path": "/api/analyze-diffs?mode=maintain",
