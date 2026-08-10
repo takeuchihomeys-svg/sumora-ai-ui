@@ -2352,6 +2352,12 @@ export default function Home() {
           c.messages.some((m) => m.text?.toLowerCase().includes(q))
       );
     }
+    // 要対応モードは直近やり取り順（updatedAt DESC）
+    if (statusFilter === "flagged") {
+      return [...result].sort((a, b) =>
+        new Date(b.updatedAt ?? "").getTime() - new Date(a.updatedAt ?? "").getTime()
+      );
+    }
     // 内覧済みを上位に優先表示（同一グループ内は updatedAt 順を維持）
     return [...result].sort((a, b) => {
       if (a.hasViewed && !b.hasViewed) return -1;
@@ -4057,7 +4063,7 @@ export default function Home() {
       const isFirstStaffReply = !selectedConversation.messages.some((m) => m.sender === "staff");
       const currentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
       const isSendingImages = anyImageSent;
-      const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null, is_flagged: false };
+      const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null };
       if (isFirstStaffReply && (!selectedConversation.status || currentStatus === "hearing")) convUpdate.status = "hearing";
       // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
       if (isSendingImages && currentStatus === "hearing") convUpdate.status = "proposing";
