@@ -4098,8 +4098,7 @@ export default function Home() {
           })
       );
 
-      // 返信したら要対応フラグをクリア
-      setFlaggedConvIds((prev) => { const next = new Set(prev); next.delete(selectedConversation.id); return next; });
+      // 要対応フラグはユーザーが明示的にトグルするまで維持する（自動クリア禁止）
       // G-14: AI提案バナーを無視して手動送信した場合をログ記録（fire-and-forget）
       // 高1: APIが期待する snake_case + action:"log" 形式で送る（旧camelCase形式は unknown action で全件破棄されていた）
       {
