@@ -606,8 +606,8 @@ function getStationsWithinTransfers(startStation, maxTransfers) {
 
     // 隣接駅（同一路線・乗換なし or 路線変更で+1）
     for (const edge of Object.values(node.adj || {})) {
-      const neighbor = edge.to;
-      const edgeLine = edge.line;
+      const neighbor = edge[0] ?? edge.to;
+      const edgeLine = edge[1] ?? edge.line;
       const cost = (line && line !== edgeLine) ? 1 : 0;
       const newT = transfers + cost;
       const key = neighbor + '|' + edgeLine;
@@ -631,6 +631,73 @@ function getStationsWithinTransfers(startStation, maxTransfers) {
 
   results.delete(startStation);
   return [...results];
+}
+
+// Dijkstra: startStation から maxMinutes 分以内で到達できる全駅を返す
+// 戻り値: [{ station, minutes }, ...] （到達時間昇順、出発駅を除く）
+function getStationsWithinMinutes(startStation, maxMinutes) {
+  if (!window.TRANSIT_GRAPH || !TRANSIT_GRAPH[startStation]) return [];
+
+  const minTime = {};
+  minTime[startStation] = 0;
+  const queue = [{ station: startStation, line: null, minutes: 0 }];
+
+  while (queue.length) {
+    queue.sort((a, b) => a.minutes - b.minutes);
+    const { station, line, minutes } = queue.shift();
+
+    if (minutes > (minTime[station] ?? Infinity) + 0.1) continue;
+
+    const node = TRANSIT_GRAPH[station];
+    if (!node) continue;
+
+    for (const edge of Object.values(node.adj || {})) {
+      const neighbor = edge[0] ?? edge.to;
+      const edgeLine  = edge[1] ?? edge.line;
+      const edgeTime  = edge[2] ?? edge.time ?? 3;
+
+      // 路線切り替えペナルティ（transfer エッジ自体にはペナルティ不要）
+      const penalty = (line && line !== edgeLine && edgeLine !== "transfer") ? 3 : 0;
+      const total   = minutes + edgeTime + penalty;
+
+      if (total <= maxMinutes && (minTime[neighbor] === undefined || minTime[neighbor] > total)) {
+        minTime[neighbor] = total;
+        queue.push({ station: neighbor, line: edgeLine, minutes: total });
+      }
+    }
+  }
+
+  return Object.entries(minTime)
+    .filter(([s]) => s !== startStation)
+    .sort((a, b) => a[1] - b[1])
+    .map(([s, t]) => ({ station: s, minutes: Math.round(t) }));
+}
+
+function getStationNamesWithinMinutes(startStation, maxMinutes) {
+  return getStationsWithinMinutes(startStation, maxMinutes).map(r => r.station);
+}
+
+let currentSearchMode = 'transfer';
+function setSearchMode(mode) {
+  currentSearchMode = mode;
+  document.getElementById('transferCountDiv').style.display = mode === 'transfer' ? 'flex' : 'none';
+  document.getElementById('travelTimeDiv').style.display = mode === 'time' ? 'flex' : 'none';
+  document.getElementById('modeTransfer').classList.toggle('active-mode', mode === 'transfer');
+  document.getElementById('modeTime').classList.toggle('active-mode', mode === 'time');
+  updateTransferCountLabel();
+  if (selectedSite) renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+}
+
+function getExpandedStations(startStation) {
+  const enabled = document.getElementById('enableTransfer')?.checked;
+  if (!enabled) return [startStation];
+  if (currentSearchMode === 'time') {
+    const maxMin = parseInt(document.getElementById('maxMinutes')?.value || '30');
+    return [startStation, ...getStationNamesWithinMinutes(startStation, maxMin)];
+  } else {
+    const maxT = parseInt(document.getElementById('maxTransfers')?.value || '1');
+    return [startStation, ...getStationsWithinTransfers(startStation, maxT)];
+  }
 }
 
 // 「AからBまで」範囲指定の中間駅を展開する
@@ -1790,18 +1857,25 @@ function updateTransferCountLabel() {
   if (!label) return;
   const enabled = document.getElementById('enableTransfer')?.checked;
   if (!enabled) { label.textContent = ''; return; }
-  const maxT = parseInt(document.getElementById('maxTransfers')?.value || '1', 10);
   const area = document.getElementById('adj-area')?.value.trim()
     || (selectedCustomer && (selectedCustomer.desired_area || selectedCustomer.area || ''));
   const toks = area ? parseAreaTokens(area) : [];
   const stations = toks.filter(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, '')] || LEARNED_STATION_MAP[t]);
   if (!stations.length) { label.textContent = ''; return; }
   let total = 0;
-  for (const st of stations) {
-    const nearby = getStationsWithinTransfers(st, maxT);
-    total += nearby.length;
+  if (currentSearchMode === 'time') {
+    const maxMin = parseInt(document.getElementById('maxMinutes')?.value || '30', 10);
+    for (const st of stations) {
+      total += getStationNamesWithinMinutes(st, maxMin).length;
+    }
+    label.textContent = `+${total}駅が対象（${maxMin}分以内）`;
+  } else {
+    const maxT = parseInt(document.getElementById('maxTransfers')?.value || '1', 10);
+    for (const st of stations) {
+      total += getStationsWithinTransfers(st, maxT).length;
+    }
+    label.textContent = `+${total}駅が対象`;
   }
-  label.textContent = `+${total}駅が対象`;
 }
 
 function syncModeButtons() {
@@ -2011,13 +2085,23 @@ function buildAdjCustomer(c) {
   // 乗り換え検索が有効なら隣接駅をエリア文字列に追加
   const transferEnabled = document.getElementById("enableTransfer")?.checked;
   if (transferEnabled) {
-    const maxT = parseInt(document.getElementById("maxTransfers")?.value || "1", 10);
     const baseArea = adjArea || c.desired_area || c.area || "";
     const toks = parseAreaTokens(baseArea);
     const extra = new Set();
-    for (const st of toks) {
-      if (STATION_LINE_MAP[st] || STATION_LINE_MAP[st.replace(/[町村]$/, "")] || LEARNED_STATION_MAP[st]) {
-        getStationsWithinTransfers(st, maxT).forEach(s => extra.add(s));
+    const isTimeMode = currentSearchMode === "time";
+    if (isTimeMode) {
+      const maxMins = parseInt(document.getElementById("maxMinutes")?.value || "30", 10);
+      for (const st of toks) {
+        if (STATION_LINE_MAP[st] || STATION_LINE_MAP[st.replace(/[町村]$/, "")] || LEARNED_STATION_MAP[st]) {
+          getStationNamesWithinMinutes(st, maxMins).forEach(s => extra.add(s));
+        }
+      }
+    } else {
+      const maxT = parseInt(document.getElementById("maxTransfers")?.value || "1", 10);
+      for (const st of toks) {
+        if (STATION_LINE_MAP[st] || STATION_LINE_MAP[st.replace(/[町村]$/, "")] || LEARNED_STATION_MAP[st]) {
+          getStationsWithinTransfers(st, maxT).forEach(s => extra.add(s));
+        }
       }
     }
     if (extra.size > 0) {
@@ -3112,6 +3196,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (selectedSite) renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
   });
   document.getElementById("maxTransfers")?.addEventListener("change", () => {
+    updateTransferCountLabel();
+    if (selectedSite) renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+  });
+  document.getElementById("maxMinutes")?.addEventListener("change", () => {
     updateTransferCountLabel();
     if (selectedSite) renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
   });

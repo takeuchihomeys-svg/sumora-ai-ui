@@ -170,6 +170,12 @@ body {
 .mode-btn.active.wide {
   border-color: #e65100; background: #fff3e0; color: #e65100;
 }
+/* 乗換モード切替ボタン（transfer-options内） */
+#transfer-options .mode-btn {
+  flex: none; padding: 4px 10px; border-radius: 6px;
+  border: 1px solid #ccc; background: #fff; font-size: 12px; cursor: pointer; font-weight: normal;
+}
+.active-mode { background: #1565C0; color: #fff; border-color: #1565C0; }
 .mode-desc {
   font-size: 10px; color: #adb5bd;
   padding: 4px 2px; text-align: center;

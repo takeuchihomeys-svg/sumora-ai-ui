@@ -111,19 +111,37 @@
         <div id="mode-desc" class="mode-desc">条件ぴったりで検索</div>
       </div>
 
-      <!-- 乗り換え検索 -->
+      <!-- 乗り換え・時間検索 -->
       <div id="transfer-search-row" style="display:none; margin:8px 12px 0; padding:8px; background:#f0f4ff; border-radius:8px; font-size:13px;">
-        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-bottom:6px;">
           <input type="checkbox" id="enableTransfer">
-          <span>乗り換え検索</span>
+          <span style="font-weight:bold;">🚃 周辺駅も含めて検索</span>
         </label>
-        <div id="transfer-options" style="display:none; margin-top:6px; align-items:center; gap:8px;">
-          <select id="maxTransfers" style="border:1px solid #ccc; border-radius:6px; padding:4px 8px; font-size:13px;">
-            <option value="0">直通のみ（乗り換えなし）</option>
-            <option value="1" selected>1回以内</option>
-            <option value="2">2回以内</option>
-          </select>
-          <span id="transfer-count-label" style="color:#666; font-size:12px;"></span>
+        <div id="transfer-options" style="display:none; gap:8px; flex-direction:column;">
+          <!-- 検索モード切替 -->
+          <div style="display:flex; gap:4px;">
+            <button id="modeTransfer" class="mode-btn active-mode" onclick="setSearchMode('transfer')">🔄 乗り換え回数</button>
+            <button id="modeTime" class="mode-btn" onclick="setSearchMode('time')">⏱ 所要時間</button>
+          </div>
+          <!-- 乗り換え回数モード -->
+          <div id="transferCountDiv" style="display:flex; align-items:center; gap:6px;">
+            <select id="maxTransfers" style="border:1px solid #ccc; border-radius:6px; padding:4px 8px; font-size:13px;">
+              <option value="0">直通のみ</option>
+              <option value="1" selected>1回以内</option>
+              <option value="2">2回以内</option>
+            </select>
+          </div>
+          <!-- 所要時間モード -->
+          <div id="travelTimeDiv" style="display:none; align-items:center; gap:6px;">
+            <select id="maxMinutes" style="border:1px solid #ccc; border-radius:6px; padding:4px 8px; font-size:13px;">
+              <option value="15">15分以内</option>
+              <option value="20">20分以内</option>
+              <option value="30">30分以内</option>
+              <option value="45" selected>45分以内</option>
+              <option value="60">60分以内</option>
+            </select>
+          </div>
+          <div id="transfer-count-label" style="color:#555; font-size:11px; margin-top:2px;"></div>
         </div>
       </div>
 
