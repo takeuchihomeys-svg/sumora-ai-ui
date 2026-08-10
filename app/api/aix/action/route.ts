@@ -1134,8 +1134,9 @@ ${SMORA_COMMON_RULES}`;
 
       const standardCommission = Math.round(rent * 1.1);
       const actualCommission   = commission + commTax;
-      // 仲介手数料がOCRで読み取れない/0円の場合、家賃×1.1がそのまま節約額に乗り過大表示になるため節約額表示をスキップ
-      const savings = actualCommission === 0 ? 0 : Math.max(0, standardCommission - actualCommission + discount);
+      // イエヤスのように仲介手数料0円が正当なアカウントでも節約額を正しく表示するため、
+      // page.tsx と同じロジック（ガードなし）に統一する
+      const savings = Math.max(0, standardCommission - actualCommission + discount);
 
       const parts: string[] = [];
 
