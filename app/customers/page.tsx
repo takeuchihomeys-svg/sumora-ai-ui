@@ -14,6 +14,8 @@ type LinkedConv = {
   status?: string | null;
   profile_image_url?: string | null;
   customer_name?: string | null;
+  is_hot?: boolean | null;
+  is_flagged?: boolean | null;
 };
 
 type SummaryJson = {
@@ -424,6 +426,9 @@ function CustomersPageInner() {
   // ボックス / リスト 切り替え
   const [viewMode, setViewMode] = useState<"list" | "box">("list");
 
+  // AIXパネル（アツい・要対応・ターゲット一覧）
+  const [showAixPanel, setShowAixPanel] = useState(false);
+
   // バッチ物件検索
   const [batchMode, setBatchMode] = useState<boolean>(false);
   const [batchIndex, setBatchIndex] = useState<number>(0);
@@ -517,6 +522,48 @@ function CustomersPageInner() {
   const completedList = useMemo(() =>
     base.filter((c) => isDoneToday(c)),
   [base]);
+
+  // AIXパネル用データ（is_hot・is_flagged・ターゲットを既存customersから導出、追加フェッチなし）
+  const AIX_14D_MS = 14 * 86400_000;
+  const aixPanelData = useMemo(() => {
+    const hot: Customer[] = [];
+    const flagged: Customer[] = [];
+    const target: Customer[] = [];
+    const hotIds = new Set<string>();
+    const flaggedIds = new Set<string>();
+    const now = Date.now();
+
+    for (const c of customers) {
+      if (isApplying(c.status)) continue;
+      const conv = c.linked_conversation;
+      const updAt = conv?.updated_at ? new Date(conv.updated_at).getTime() : 0;
+      if (conv?.is_hot && now - updAt <= AIX_14D_MS) {
+        hot.push(c);
+        hotIds.add(c.id);
+      }
+      if (conv?.is_flagged) {
+        flagged.push(c);
+        flaggedIds.add(c.id);
+      }
+    }
+
+    // ターゲット: 物件出し対象・アツいと重複しない、最終送信が古い順
+    customers
+      .filter((c) =>
+        !isApplying(c.status) &&
+        ["new_inquiry", "hot", "property_search"].includes(c.status) &&
+        !hotIds.has(c.id)
+      )
+      .sort((a, b) => {
+        const ta = a.last_property_sent_at ? new Date(a.last_property_sent_at).getTime() : 0;
+        const tb = b.last_property_sent_at ? new Date(b.last_property_sent_at).getTime() : 0;
+        return ta - tb;
+      })
+      .slice(0, 30)
+      .forEach((c) => target.push(c));
+
+    return { hot, flagged, target };
+  }, [customers]);
 
   const sorted = useMemo(() =>
     base
@@ -1463,13 +1510,22 @@ function CustomersPageInner() {
               </span>
             )}
           </div>
-          <button
-            onClick={() => setShowAdd(true)}
-            className="rounded-xl border border-white/30 px-3 py-1.5 text-xs font-bold text-white active:opacity-70"
-            style={{ background: "rgba(255,255,255,0.13)" }}
-          >
-            ＋ 追加
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowAixPanel(true)}
+              className="rounded-xl border border-white/30 px-3 py-1.5 text-xs font-bold text-white active:opacity-70"
+              style={{ background: "rgba(255,255,255,0.13)" }}
+            >
+              AIX
+            </button>
+            <button
+              onClick={() => setShowAdd(true)}
+              className="rounded-xl border border-white/30 px-3 py-1.5 text-xs font-bold text-white active:opacity-70"
+              style={{ background: "rgba(255,255,255,0.13)" }}
+            >
+              ＋ 追加
+            </button>
+          </div>
         </div>
 
         {/* フィルター */}
@@ -2988,6 +3044,79 @@ function CustomersPageInner() {
         </div>
       )}
 
+      {/* AIXパネル — アツい・要対応・ターゲット顧客一覧 */}
+      {showAixPanel && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAixPanel(false); }}
+        >
+          <div
+            className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col overflow-hidden"
+            style={{ maxHeight: "75svh" }}
+          >
+            {/* パネルヘッダー */}
+            <div
+              className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+              style={{ background: "linear-gradient(135deg, #0d1b3e 0%, #1565C0 100%)" }}
+            >
+              <span className="text-base font-black text-white tracking-tight">AIX</span>
+              <button
+                onClick={() => setShowAixPanel(false)}
+                className="text-white/70 text-xl leading-none active:opacity-60"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* スクロール可能なボディ */}
+            <div className="overflow-y-auto flex-1 pb-6">
+              <AixPanelSection
+                title="🔥 アツい"
+                badge={aixPanelData.hot.length}
+                badgeColor="bg-orange-400"
+                emptyLabel="アツい顧客なし（14日以内）"
+                items={aixPanelData.hot.map((c) => ({
+                  id: c.id,
+                  name: c.customer_name,
+                  account: c.linked_conversation?.account ?? c.account,
+                  status: c.status,
+                  subLabel: c.linked_conversation?.updated_at ? relTime(c.linked_conversation.updated_at) : "",
+                  flagged: !!c.linked_conversation?.is_flagged,
+                }))}
+              />
+              <AixPanelSection
+                title="🚨 要対応"
+                badge={aixPanelData.flagged.length}
+                badgeColor="bg-red-500"
+                emptyLabel="要対応顧客なし"
+                items={aixPanelData.flagged.map((c) => ({
+                  id: c.id,
+                  name: c.customer_name,
+                  account: c.linked_conversation?.account ?? c.account,
+                  status: c.status,
+                  subLabel: c.linked_conversation?.updated_at ? relTime(c.linked_conversation.updated_at) : "",
+                  flagged: true,
+                }))}
+              />
+              <AixPanelSection
+                title="🎯 ターゲット"
+                badge={aixPanelData.target.length}
+                badgeColor="bg-blue-500"
+                emptyLabel="物件出し対象なし"
+                items={aixPanelData.target.map((c) => ({
+                  id: c.id,
+                  name: c.customer_name,
+                  account: c.linked_conversation?.account ?? c.account,
+                  status: c.status,
+                  subLabel: c.last_property_sent_at ? `最終送信 ${relTime(c.last_property_sent_at)}` : "未送信",
+                  flagged: false,
+                }))}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       <BottomNav />
     </div>
   );
@@ -3027,6 +3156,82 @@ function Field({
       ) : (
         <input type={type} className={base} placeholder={placeholder} value={value}
           onChange={(e) => onChange(e.target.value)} />
+      )}
+    </div>
+  );
+}
+
+type AixPanelItem = {
+  id: string;
+  name: string;
+  account?: string | null;
+  status: string;
+  subLabel: string;
+  flagged: boolean;
+};
+
+function AixPanelSection({
+  title, badge, badgeColor, emptyLabel, items,
+}: {
+  title: string;
+  badge: number;
+  badgeColor: string;
+  emptyLabel: string;
+  items: AixPanelItem[];
+}) {
+  return (
+    <div className="border-b border-[#f0f2f5] last:border-b-0">
+      <div className="flex items-center gap-2 px-5 py-3 bg-[#f8f9fa] sticky top-0">
+        <span className="text-[13px] font-black text-[#111b21]">{title}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold text-white ${badgeColor}`}>
+          {badge}
+        </span>
+      </div>
+      {items.length === 0 ? (
+        <div className="px-5 py-4 text-[12px] text-[#8696a0]">{emptyLabel}</div>
+      ) : (
+        <ul>
+          {items.map((item) => {
+            const s = PROP_STATUS[item.status];
+            return (
+              <li
+                key={item.id}
+                className="flex items-center gap-3 px-5 py-3 border-b border-[#f0f2f5] last:border-b-0 active:bg-[#f5f6f6]"
+              >
+                <div
+                  className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-black shrink-0"
+                  style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
+                >
+                  {item.name?.trim()?.charAt(0) ?? "?"}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-[13px] font-bold text-[#111b21] truncate">{item.name}</span>
+                    {item.account && (
+                      <span className="text-[9px] font-bold text-[#8696a0] shrink-0">
+                        {ACCT_LABEL[item.account] ?? item.account}
+                      </span>
+                    )}
+                    {item.flagged && (
+                      <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-bold text-white shrink-0">
+                        要対応
+                      </span>
+                    )}
+                  </div>
+                  {item.subLabel && (
+                    <div className="text-[11px] text-[#8696a0] mt-0.5">{item.subLabel}</div>
+                  )}
+                </div>
+                {s && (
+                  <span className="flex items-center gap-1 shrink-0">
+                    <span className={`w-2 h-2 rounded-full ${s.dot}`} />
+                    <span className="text-[10px] font-semibold text-[#54656f]">{s.label}</span>
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );
