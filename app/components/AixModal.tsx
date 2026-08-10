@@ -596,6 +596,7 @@ export default function AixModal({
   // 物件オススメ専用: 特に強調するポイント（複数選択可）。テンプレートモーダルから引き継ぐ場合は initialFocusPoints で渡す
   const [recommendFocusPoints, setRecommendFocusPoints] = useState<string[]>(initialFocusPoints ?? []);
   const [recSimpleMode, setRecSimpleMode] = useState(false);
+  const [ackCheckPreset, setAckCheckPreset] = useState<"daihyo_initial_cost" | null>(null);
   const [loading, setLoading] = useState(false);
   type GenPhase = "idle" | "uploading" | "prepare" | "generating" | "finalizing";
   const [genPhase, setGenPhase] = useState<GenPhase>("idle");
@@ -5760,6 +5761,34 @@ export default function AixModal({
                     : "💬 未選択 → AIがLINEの会話から待ち合わせ時間を自動読み取りして文を生成します"}
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* 確認します: 代表確認ピッカー */}
+          {actionType === "acknowledge_check" && (
+            <div className="mb-3">
+              <label className="text-xs font-semibold text-[#54656f] mb-1.5 block">確認タイプ（任意）</label>
+              <button
+                type="button"
+                onClick={() => {
+                  const isSelected = ackCheckPreset === "daihyo_initial_cost";
+                  if (isSelected) {
+                    setAckCheckPreset(null);
+                    setInputText("");
+                  } else {
+                    setAckCheckPreset("daihyo_initial_cost");
+                    setInputText("かしこまりました！！弊社代表に初期費用更に割引可能か確認させていただきます！！代表からの許可あり次第ご連絡させて頂きます！！");
+                  }
+                  setPreview("");
+                }}
+                className={`rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors ${
+                  ackCheckPreset === "daihyo_initial_cost"
+                    ? "border-[#607D8B] bg-[#607D8B] text-white"
+                    : "border-[#d1d7db] bg-white text-[#667781]"
+                }`}
+              >
+                {ackCheckPreset === "daihyo_initial_cost" ? "✓ " : ""}代表確認（初期費用）
+              </button>
             </div>
           )}
 
