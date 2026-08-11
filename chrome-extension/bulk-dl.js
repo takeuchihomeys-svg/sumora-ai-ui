@@ -28,7 +28,18 @@
 
   function clearAutoSendState() {
     try { sessionStorage.removeItem(AUTO_SEND_KEY); } catch (e) {}
-    _autoSendArmed = false;
+    // _autoSendArmed が true の場合: 次顧客の fill-done 受信済みで新結果待ち中。
+    // ここで false にすると次顧客の Case A が永遠に発火しないため inject() を再呼び出し。
+    // （_scrapeAndSendRealpro 高速化により前顧客の PDF 送信完了前に次顧客の autofill が
+    //   始まるようになり、Case A が getAutoSendState() ガードで弾かれたまま放置される
+    //   問題への対処: clearAutoSendState 後にもう一度 Case A を試みる）
+    if (_autoSendArmed) {
+      _pendingAutoSendDispatched = false;
+      console.log("[AXLX bulk-dl] clearAutoSendState: 次顧客がarm済み → inject() 再試行");
+      setTimeout(inject, 200);
+    } else {
+      _autoSendArmed = false;
+    }
   }
 
   function findPrintBtns() {
@@ -77,7 +88,10 @@
       }
     }
     // Case B: AJAXページネーション継続（tryNext がページ遷移後に inject() が再実行される）
-    else if (tracked.length > 0 && !_pendingAutoSendDispatched) {
+    // !_autoSendArmed: fill-done 受信直後（新顧客の新結果待ち中）は Case B を発火させない。
+    // armed 中に発火すると前顧客の state（getAutoSendState）を使って
+    // 次顧客の DOM 結果を前顧客名で誤送信するバグが発生する。
+    else if (!_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched) {
       var _resumeState = getAutoSendState();
       if (_resumeState && _resumeState.active) {
         _pendingAutoSendDispatched = true;
