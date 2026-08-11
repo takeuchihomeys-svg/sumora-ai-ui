@@ -1409,26 +1409,23 @@
     ];
 
     function _fwScanRows() {
+      // DevTools確認済み（2026-08-11）:
+      // 詳細ボタンは <a class="hide_text hide_detail" href="#" target="_blank">詳細</a>
+      // → background.js が chrome.tabs.onUpdated で捕捉するため、
+      //   ここでは「クリック成功したか」を返すだけでよい。
+      // href を返す必要はなく、クリックして true を返す。
       for (var _ri = 0; _ri < _ROW_SELS.length; _ri++) {
         var rows = Array.from(document.querySelectorAll(_ROW_SELS[_ri]));
         for (var _rj = 0; _rj < rows.length; _rj++) {
           var row = rows[_rj];
           var rowText = row.innerText || row.textContent || "";
           if (!_fwRoomRe.test(rowText)) continue;
-          // DevTools確認済み（2026-08-11）:
-          // 詳細ボタンはhref="#"でJavaScript起動のため取得不可。
-          // 各部屋行には factsheet.php?id=XXXX&org=1 リンクがあるのでそれを使う。
-          var link =
-            row.querySelector('a[href*="factsheet.php"]') ||
-            row.querySelector('a[href*="room_detail"]') ||
-            row.querySelector('a[href*="/detail"]') ||
-            row.querySelector('a[href*="detail.php"]') ||
-            row.querySelector('a[href*="detail?"]') ||
-            (Array.from(row.querySelectorAll("a[href]")).find(function(a) {
-              return !a.href.startsWith("javascript:") && !a.href.endsWith("#") && !a.href.includes("display=building");
-            }) || null);
-          if (link && link.href) {
-            return link.href;
+          var detailLink = Array.from(row.querySelectorAll("a")).find(function(a) {
+            return (a.innerText || "").trim() === "詳細";
+          });
+          if (detailLink) {
+            detailLink.click();
+            return "clicked"; // background.js はこの値は使わない（タブ監視で捕捉）
           }
         }
       }

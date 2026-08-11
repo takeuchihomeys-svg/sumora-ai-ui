@@ -1162,25 +1162,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        // ── Step 4: 結果行をスキャン（AJAX更新・ページ遷移どちらも対応, 最大25秒）────
-        // page-script.js が AJAX の場合に href を書き込む可能性もあるが
-        // ページ遷移で page-script.js が消えてもこちらで独立してスキャンする。
-        var _epDetailHref = null;
+        // ── Step 4: room_detail タブ監視 + 号室行の「詳細」ボタンクリック ─────────
+        // DevTools確認済み（2026-08-11）:
+        // 詳細ボタンは <a class="hide_text hide_detail" href="#" target="_blank">詳細</a>
+        // → target="_blank" でブラウザが room_detail.php?id=...&gr=... を新タブで開く
+        // → window.open は呼ばれないため URL は取得不可。chrome.tabs.onUpdated で捕捉する。
+        var _epDetailTabId = null;
+        var _epTabFound = false;
         var _epRoomNumEsc = _epRoomNum.replace(/号室?$/, "").trim()
-          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // 正規表現エスケープ
-        var _epRoomRe = new RegExp("(?<![0-9])" + _epRoomNumEsc + "(?![0-9])");
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-        for (var _ep2 = 0; _ep2 < 50 && !_epDetailHref; _ep2++) {
+        var _epTabUpdatedL = function(tabId, changeInfo, tab) {
+          if (_epTabFound) return;
+          var url = (tab && tab.url) || (changeInfo && changeInfo.url) || "";
+          if (url.includes("room_detail.php") && changeInfo.status === "complete") {
+            _epTabFound = true;
+            _epDetailTabId = tabId;
+          }
+        };
+        chrome.tabs.onUpdated.addListener(_epTabUpdatedL);
+
+        // ── Step 5: 号室に一致する行の「詳細」ボタンをクリック（最大25秒ポーリング）
+        var _epClicked = false;
+        for (var _ep2 = 0; _ep2 < 50 && !_epClicked; _ep2++) {
           await new Promise(function(r) { setTimeout(r, 500); });
           try {
-            var _epScan = await chrome.scripting.executeScript({
+            var _epClickRes = await chrome.scripting.executeScript({
               target: { tabId: _epListTabId },
               world: "MAIN",
               func: function(roomReStr) {
-                // page-script.js がすでに href を設定していれば使う
-                var cached = window.__axlxEstimateSearchResult;
-                if (cached && cached.href) return cached.href;
-
                 var roomRe = new RegExp(roomReStr);
                 var ROW_SELS = [
                   "table.result-list tbody tr",
@@ -1191,52 +1201,49 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 for (var sel of ROW_SELS) {
                   var rows = Array.from(document.querySelectorAll(sel));
                   for (var row of rows) {
-                    var rowText = row.innerText || row.textContent || "";
-                    if (!roomRe.test(rowText)) continue;
-                    // DevTools確認済み（2026-08-11）:
-                    // 詳細ボタンはhref="#"でJavaScript起動のため取得不可。
-                    // 各部屋行には factsheet.php?id=XXXX&org=1 リンクがある。
-                    var link =
-                      row.querySelector('a[href*="factsheet.php"]') ||
-                      row.querySelector('a[href*="room_detail"]') ||
-                      row.querySelector('a[href*="/detail"]') ||
-                      row.querySelector('a[href*="detail.php"]') ||
-                      row.querySelector('a[href*="detail?"]') ||
-                      (Array.from(row.querySelectorAll("a[href]")).find(function(a) {
-                        return !a.href.startsWith("javascript:") && !a.href.endsWith("#") && !a.href.includes("display=building");
-                      }) || null);
-                    if (link && link.href) {
-                      return link.href;
+                    if (!roomRe.test(row.innerText || row.textContent || "")) continue;
+                    // class="hide_text hide_detail" target="_blank" のリンクをクリック
+                    var detailLink = Array.from(row.querySelectorAll("a")).find(function(a) {
+                      return (a.innerText || "").trim() === "詳細";
+                    });
+                    if (detailLink) {
+                      detailLink.click();
+                      return true;
                     }
                   }
                 }
-                return null;
+                return false;
               },
               args: ["(?<![0-9])" + _epRoomNumEsc + "(?![0-9])"],
             });
-            var _epHr = _epScan && _epScan[0] && _epScan[0].result;
-            if (_epHr) { _epDetailHref = _epHr; }
-          } catch (_) {
-            // ページ遷移中のエラーは無視してリトライ
-          }
+            _epClicked = !!(_epClickRes && _epClickRes[0] && _epClickRes[0].result);
+          } catch (_) { /* ページ遷移中の一時エラーは無視 */ }
         }
 
-        if (!_epDetailHref) {
+        if (!_epClicked) {
+          chrome.tabs.onUpdated.removeListener(_epTabUpdatedL);
           sendResponse({ ok: false, error: "号室「" + _epRoomNum + "」が検索結果に見つかりませんでした（物件名: " + _epPropName + "）" });
           return;
         }
 
-        // ── Step 5: 詳細URLを新タブで開く ──────────────────────────────────────
-        var _epDetailTab = await chrome.tabs.create({ url: _epDetailHref, active: false });
-        await _batchWaitForTabComplete(_epDetailTab.id);
-        await new Promise(function(r) { setTimeout(r, 1500); });
+        // room_detail タブが開いてロード完了するまで待つ（最大20秒）
+        for (var _ep3 = 0; _ep3 < 40 && !_epDetailTabId; _ep3++) {
+          await new Promise(function(r) { setTimeout(r, 500); });
+        }
+        chrome.tabs.onUpdated.removeListener(_epTabUpdatedL);
+
+        if (!_epDetailTabId) {
+          sendResponse({ ok: false, error: "詳細ページ（room_detail.php）が開きませんでした。リアプロにログインしているか確認してください。" });
+          return;
+        }
+        await new Promise(function(r) { setTimeout(r, 500); });
 
         // ── Step 6: 「客付業者様へ」セクションの innerText を抽出 ────────────────
         // リアプロ詳細ページは page=1 と page=2 に分割されている場合がある。
         // まず現在のページ（page=1 相当）でセクションを探し、
         // 見つからなければ page=2 を fetch して探す。
         var _epExtract = await chrome.scripting.executeScript({
-          target: { tabId: _epDetailTab.id },
+          target: { tabId: _epDetailTabId },
           world: "MAIN",
           func: function() {
             function extractBrokerSection(doc) {
@@ -1307,10 +1314,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         // ── Step 7: 詳細タブを閉じる ─────────────────────────────────────────────
-        await chrome.tabs.remove(_epDetailTab.id).catch(function() {});
+        await chrome.tabs.remove(_epDetailTabId).catch(function() {});
 
         if (!_epBrokerText) {
-          sendResponse({ ok: false, error: "詳細ページに「客付業者様へ」セクションが見つかりませんでした（URLを確認: " + _epDetailHref + "）" });
+          sendResponse({ ok: false, error: "詳細ページ（room_detail.php）に「客付業者様へ」セクションが見つかりませんでした。" });
           return;
         }
 
