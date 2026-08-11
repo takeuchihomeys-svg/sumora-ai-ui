@@ -853,6 +853,13 @@ function CustomersPageInner() {
     if (res.ok) {
       const updated = await res.json();
       setCustomers((p) => p.map((c) => c.id === id ? { ...c, ...updated } : c));
+      // LINEグループに物件確認完了を通知
+      const customer = customers.find((c) => c.id === id);
+      const name = customer?.customer_name || "名称未設定";
+      fetch("/api/notify-group", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `☑ ${name} 物件確認完了` }),
+      }).catch(() => {});
     }
     setViewedUpdating(null);
   };

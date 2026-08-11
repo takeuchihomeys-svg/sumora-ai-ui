@@ -119,10 +119,23 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  function getActionMark(convId: string): string {
+  // 今日「物件確認した」顧客の customer_name セット（property_customers.property_viewed_at が今日）
+  const customerNames = convList.map((c) => c.customer_name).filter(Boolean) as string[];
+  const { data: viewedRows } = customerNames.length > 0
+    ? await supabase
+        .from("property_customers")
+        .select("customer_name")
+        .in("customer_name", customerNames)
+        .gte("property_viewed_at", todayStart.toISOString())
+    : { data: [] };
+  const viewedTodayNames = new Set((viewedRows ?? []).map((r) => r.customer_name));
+
+  function getActionMark(convId: string, customerName: string | null): string {
     const info = staffMsgMap.get(convId);
-    if (!info) return "・";
-    return info.hasAix ? "✅" : "☑";
+    const propertyViewed = !!customerName && viewedTodayNames.has(customerName);
+    if (!info && !propertyViewed) return "・";
+    if (info?.hasAix) return "✅";
+    return "☑"; // スタッフLINE送信済み or 物件確認済み
   }
 
   // 直近30日のメッセージ（AIX無視日数カウント用）
@@ -226,7 +239,7 @@ export async function GET(req: NextRequest) {
   const hour = getJSTHour();
 
   const lines = sorted.map((c) => {
-    const mark = getActionMark(c.id);
+    const mark = getActionMark(c.id, c.customer_name);
     const name = c.customer_name || "名称未設定";
     return `${mark}${name}`;
   });

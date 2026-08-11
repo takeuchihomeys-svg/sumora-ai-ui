@@ -1047,10 +1047,18 @@ async function notifySuzukiReply(db: ReturnType<typeof getDb>, convId: string, m
     }
   }
 
-  // ☑(AIX未送信) → ・(未対応) → ✅(AIX済み) の優先ソート
-  const getMarkPrio = (id: string) => { const i = staffMsgMap.get(id); if (!i) return 1; return i.hasAix ? 2 : 0; };
-  const getMark     = (id: string) => { const i = staffMsgMap.get(id); if (!i) return "・"; return i.hasAix ? "✅" : "☑"; };
-  const sorted = [...(flagged ?? [])].sort((a, b) => getMarkPrio(a.id as string) - getMarkPrio(b.id as string));
+  // 今日「物件確認した」顧客セット（property_customers.property_viewed_at が今日）
+  const flaggedNames = (flagged ?? []).map((c) => c.customer_name as string).filter(Boolean);
+  const { data: viewedRows2 } = flaggedNames.length > 0
+    ? await db.from("property_customers").select("customer_name")
+        .in("customer_name", flaggedNames).gte("property_viewed_at", todayStart.toISOString())
+    : { data: [] };
+  const viewedNames2 = new Set((viewedRows2 ?? []).map((r) => r.customer_name as string));
+
+  // ☑(AIX未送信 or 物件確認済み) → ・(未対応) → ✅(AIX済み) の優先ソート
+  const getMarkPrio = (id: string, nm: string) => { const i = staffMsgMap.get(id); if (!i && !viewedNames2.has(nm)) return 1; if (i?.hasAix) return 2; return 0; };
+  const getMark     = (id: string, nm: string) => { const i = staffMsgMap.get(id); if (!i && !viewedNames2.has(nm)) return "・"; if (i?.hasAix) return "✅"; return "☑"; };
+  const sorted = [...(flagged ?? [])].sort((a, b) => getMarkPrio(a.id as string, a.customer_name as string) - getMarkPrio(b.id as string, b.customer_name as string));
 
   const name = (conv.customer_name as string) || "名称未設定";
   const preview = msgText.slice(0, 25) + (msgText.length > 25 ? "…" : "");
@@ -1065,7 +1073,7 @@ async function notifySuzukiReply(db: ReturnType<typeof getDb>, convId: string, m
 
   if (sorted.length > 0) {
     bodyLines.push("", "► 決まる（最優先）");
-    sorted.forEach((c) => bodyLines.push(`${getMark(c.id as string)}${c.customer_name || "名称未設定"}`));
+    sorted.forEach((c) => bodyLines.push(`${getMark(c.id as string, c.customer_name as string)}${c.customer_name || "名称未設定"}`));
   }
 
   const bodyText = bodyLines.join("\n");
