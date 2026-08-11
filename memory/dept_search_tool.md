@@ -184,6 +184,7 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-08-10 | BFS走査バグ修正: node.adjはオブジェクトのためfor..ofが失敗→Object.values(node.adj)でedge.to/edge.lineを取り出すよう修正 |
 | 2026-08-11 | **itandi ハブ駅展開実装**: popup.js itandiLines構築ループをSTATION_HUB_MAP対応に変更。梅田→[梅田,東梅田,西梅田,大阪梅田,大阪]等、全ハブ駅のDB/静的マップ路線を集約（リアプロと同等の路線数を選択）。stationNames構築にもハブ展開追加（各路線モーダルで駅クリックが効くよう）。commit 38bbbe3 |
 | 2026-08-11 | **ITANDI_LINE_MAP_FILL欠落キー追加**: 能勢電鉄妙見線/日生線・近鉄信貴線・近鉄西信貴ケーブル線をITANDI_LINE_MAP_FILLに追加（STATION_LINE_MAPで使われるリアプロ路線名なのに変換エントリが無かった）。commit 38bbbe3 |
+| 2026-08-12 | **v2.5.0: 顧客間条件混線バグ完全修正（Fable5調査→実装）** commit 876b95d。[CRITICAL-1] `_fillDoneWaiters`に`customerId`追加 → `_notifyFillDone(site, customerId, error)`が一致したウェイターのみ解決（顧客Aの遅延fill-doneが顧客Bのウェイターを誤解決するバグ根絶）。[CRITICAL-1] content.js/itandi-content.js に`axlx-set-fill-customer`受信処理追加 → fill-done relay時に`customerId`を付与。`_batchAutofill`の各サイト分岐でswitch-customer送信前に`axlx-set-fill-customer`を送信。[HIGH-1] `_batchCustomerDoneWaiters`に`customerId`追加 → `_notifyBatchCustomerDone(customerId, propertyCount)`でフィルタ。[HIGH-2] popup.js: `searchMode` reset 3箇所に`else`分岐追加（`is_wide=false`時も`pinpoint`ボタンをクリック・前顧客のwide状態引継ぎバグ防止）。 |
 
 ---
 
