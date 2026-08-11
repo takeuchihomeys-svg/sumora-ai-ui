@@ -2542,15 +2542,47 @@ function openInstructions(siteKey) {
         !/[都道府県市区郡]/.test(t)
       );
 
-      // itandi路線名に変換（ITANDI_LINE_MAP_FILL）、重複排除
-      const itandiLines = allRpLines.flatMap(l => {
-        const v = ITANDI_LINE_MAP_FILL[l];
-        if (!v) return [];
-        return Array.isArray(v) ? v : [v];
-      }).filter((v, i, arr) => arr.indexOf(v) === i);
-      // API補完: 路線名トークン由来の itandi 路線名を追加
+      // DB優先でitandi路線名を構築（LEARNED_STATION_MAP = station_map全件キャッシュ）
+      const itandiLines = [];
+      const _itandiUnknown = [];
+      tokens.forEach(function(tok) {
+        const dbEntry = LEARNED_STATION_MAP[tok];
+        if (dbEntry && dbEntry.itandi_lines && dbEntry.itandi_lines.length > 0) {
+          dbEntry.itandi_lines.forEach(function(l) { if (!itandiLines.includes(l)) itandiLines.push(l); });
+        } else {
+          // DBにない → 静的マップフォールバック
+          var rpLines = STATION_LINE_MAP[tok] || [];
+          if (!rpLines.length && LEARNED_STATION_MAP[tok]?.realpro_lines?.length) {
+            rpLines = LEARNED_STATION_MAP[tok].realpro_lines;
+          }
+          rpLines.forEach(function(l) {
+            var v = ITANDI_LINE_MAP_FILL[l];
+            (Array.isArray(v) ? v : (v ? [v] : [])).forEach(function(m) {
+              if (!itandiLines.includes(m)) itandiLines.push(m);
+            });
+          });
+          if (!dbEntry?.itandi_lines?.length) _itandiUnknown.push(tok);
+        }
+      });
+      // API補完（resolve-area の結果も追加）
       if (apiData?.itandi?.line_names) {
-        apiData.itandi.line_names.forEach(n => { if (!itandiLines.includes(n)) itandiLines.push(n); });
+        apiData.itandi.line_names.forEach(function(n) { if (!itandiLines.includes(n)) itandiLines.push(n); });
+      }
+      // 未知トークンを非同期でDB解決（次回以降のLEARNED_STATION_MAP更新）
+      if (_itandiUnknown.length > 0) {
+        fetch(API_BASE + "/api/itandi-resolve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tokens: _itandiUnknown }),
+          signal: AbortSignal.timeout(10000),
+        }).then(function(r) { return r.ok ? r.json() : null; }).then(function(data) {
+          if (!data || !data.resolved) return;
+          Object.entries(data.resolved).forEach(function([tok, info]) {
+            if (info.itandi_lines && info.itandi_lines.length > 0) {
+              LEARNED_STATION_MAP[tok] = Object.assign({}, LEARNED_STATION_MAP[tok], info);
+            }
+          });
+        }).catch(function() {});
       }
 
       // 所在地名: NEIGHBORHOOD_WARD_MAP → 市区郡テキスト → STATION_WARD_MAP の優先順
