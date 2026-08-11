@@ -353,7 +353,10 @@ async function handleTextMessage(
       const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
         ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
-      // ai_summary 自動更新（fire-and-forget）
+      // 申込以降ステータスはai_summary・ai_draft生成不要（bg-async/cronのSKIP_STATUSESと一致させること）
+      if (["applying", "application", "screening", "contract", "closed_won", "closed_lost"].includes(convStatus)) return;
+
+      // ai_summary 自動更新（fire-and-forget）- 申込以降は上でreturnしているため不要
       if (pcId) {
         fetch(`${baseUrl}/api/customer-summary`, {
           method: "POST",
@@ -361,9 +364,6 @@ async function handleTextMessage(
           body: JSON.stringify({ customer_id: pcId, conversation_id: convId, fetch_from_db: true }),
         }).catch(() => {});
       }
-
-      // 申込以降ステータスはai_draft生成不要（bg-async/cronのSKIP_STATUSESと一致させること）
-      if (["applying", "application", "screening", "contract", "closed_won", "closed_lost"].includes(convStatus)) return;
 
       // 60秒デバウンス維持（cron fallback / バースト時の統合生成として機能し続ける）
       await db.from("conversations")
