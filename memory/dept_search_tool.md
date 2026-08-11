@@ -515,6 +515,12 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 ## 🔁 引き継ぎ事項（次セッションへ）
 
 - 現在のバージョン: **v2.4.8**（manifest.json 記載）
+- **2026-08-11 バッチ0件停止バグ修正 + 0件LINEアナウンス**:
+  - `bulk-dl.js`: 0件タイムアウトを **1200ms → 4000ms** に延長（遅いAJAX検索で0件誤判定するバグ修正。1人目0件→2人目で止まる現象の根本原因）
+  - `bulk-dl.js`: `axlx-batch-customer-done` に `propertyCount: 0` を付加して0件確定を伝播
+  - `background.js`: `_notifyBatchCustomerDone(propertyCount)` で propertyCount を waiter に伝播
+  - `background.js`: リアプロ・itandi 両方で 0件検出時に `/api/notify-group` API 経由で LINE グループ通知（「🔍【物件0件】〇〇さんのリアプロ検索が0件でした」）
+  - `app/api/notify-group/route.ts`: LINE グループ汎用通知エンドポイント新設
 - **2026-08-11 itandi バッチ検索を popup.js 経由に統一**: `background.js` `_batchAutofill` の itandi 分岐を変更。旧: `axlx-itandi-autofill` を itandi-content.js に直送信（popup.js バイパス）→ 新: `axlx-switch-customer` → `underbar.js` → `popup.js`（ITANDI_LINE_MAP_FILL・Dijkstra 路線展開含む完全条件構築）で リアプロと同一フロー。フォールバックあり（popup.js 未応答時は旧方式）。`underbar.js` も変更: itandi-autofill ハンドラの `source !== "automated"` 条件を削除し `axlx-itandi-autofill-initiated` を常に送信（バッチ・手動どちらでも itandi-bulk-dl.js 自動送信フローが起動するよう統一）。
 - **2026-08-10 一括検索バグ修正**: `background.js` の `_batchAutofill` realnetpro 分岐を修正。旧: `executeScript` で直接 `"aixlinx-fill"` 注入（popup.js をバイパスして Dijkstra 路線展開なし）→ 新: `chrome.tabs.sendMessage("axlx-switch-customer")` → `underbar.js` → `popup.js` で完全条件構築（個別検索と同一フロー）。フォールバックあり（popup.js 未応答時は旧方式）。
 - **✅ 2026-06-07 a34f535 が最も安定したベースライン（竹内悠馬確認済み）**
