@@ -189,7 +189,7 @@
 
     var name = "";
     var cur = row ? row.parentElement : null;
-    var UI_TEXTS = ["検索条件を表示", "検索条件", "条件を表示", "条件を隠す", "詳細を表示", "詳細を閉じる", "閉じる", "次へ", "前へ", "表示", "印刷", "選択", "一覧に戻る"];
+    var UI_TEXTS = ["検索条件を表示", "検索条件", "条件を表示", "条件を隠す", "詳細を表示", "詳細を閉じる", "閉じる", "次へ", "前へ", "表示", "印刷", "選択", "一覧に戻る", "リスト検索", "リスト", "検索結果"];
     while (cur && !name) {
       var prev = cur.previousElementSibling;
       if (prev) {
@@ -221,6 +221,35 @@
       if (before) {
         var bTxt = before.textContent.trim().split("\n")[0].trim().slice(0, 30);
         if (UI_TEXTS.indexOf(bTxt) === -1) name = bTxt;
+      }
+    }
+    // Fallback: tbody内の前の行を遡って建物名ヘッダー行を探す（リアプロ形式）
+    // tbody.previousElementSibling が undefined の場合（建物名が同一tbody内のヘッダー行に混在）
+    if (!name && row) {
+      var _prevRow = row.previousElementSibling;
+      var SKIP_PATTERNS = /万円|㎡|m[²2]|徒歩|印刷|PDF|空室|審査|空き|ヶ月|^\d+\s*分前|^[0-9]+$|^\d+点$|^\d+階$/;
+      var SKIP_PREFIX = /^住所|^〒|^沿線|^TEL|^Tel|^tel|^\d{2,4}[-‐]|^株式会社|^有限会社|^合同会社/;
+      for (var _pi = 0; _pi < 8 && _prevRow && !name; _pi++, _prevRow = _prevRow.previousElementSibling) {
+        // 印刷用PDFを含む行はルームデータ行なのでスキップ
+        if (_prevRow.textContent.includes("印刷用PDF")) continue;
+        // h系タグ・building-nameクラス優先
+        var _hEl = _prevRow.querySelector("h2,h3,h4,.building-name,td b,td strong,[class*='building'],[class*='name']");
+        if (_hEl) {
+          var _hTxt = _hEl.textContent.trim();
+          if (_hTxt && _hTxt.length >= 2 && _hTxt.length <= 40 && UI_TEXTS.indexOf(_hTxt) === -1 && !SKIP_PATTERNS.test(_hTxt) && !SKIP_PREFIX.test(_hTxt)) {
+            name = _hTxt; break;
+          }
+        }
+        // セルを1つずつチェックして建物名らしい文字列を探す
+        var _rCells = Array.from(_prevRow.querySelectorAll("td,th"));
+        for (var _ri = 0; _ri < _rCells.length && !name; _ri++) {
+          var _rTxt = _rCells[_ri].textContent.replace(/\s+/g, " ").trim();
+          if (_rTxt.length < 2 || _rTxt.length > 40) continue;
+          if (UI_TEXTS.indexOf(_rTxt) !== -1) continue;
+          if (SKIP_PATTERNS.test(_rTxt)) continue;
+          if (SKIP_PREFIX.test(_rTxt)) continue;
+          name = _rTxt;
+        }
       }
     }
     if (!name) {
