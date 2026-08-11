@@ -1943,31 +1943,9 @@ async function _batchAutofill(customer, site, isWide) {
   }
 
   if (site === "realnetpro") {
-    // itandi分岐と同様: resolve-search-conditions API で city_codes/route_ids/station_names を解決する
-    // _buildBatchConditions は raw (areas/lines/stations) しか返さないため、
-    // page-script.js の decideLocationMode が参照する解決済みフィールドを補完する必要がある
-    if ((conds.areas && conds.areas.length) || (conds.lines && conds.lines.length) || (conds.stations && conds.stations.length)) {
-      try {
-        // ローカルファースト解決（静的マップで解決できればAPI不要・未解決トークンのみAPIフォールバック）
-        var resolvedRealnetpro = await _resolveLocalFirst(conds, isWide);
-        if (resolvedRealnetpro.city_codes && resolvedRealnetpro.city_codes.length) {
-          conds.city_codes = resolvedRealnetpro.city_codes;
-        }
-        if (resolvedRealnetpro.route_ids && resolvedRealnetpro.route_ids.length) {
-          conds.route_ids = resolvedRealnetpro.route_ids;
-        }
-        if (resolvedRealnetpro.station_names && resolvedRealnetpro.station_names.length) {
-          conds.station_names = resolvedRealnetpro.station_names;
-        }
-        if (resolvedRealnetpro.detail_ward) {
-          conds.detail_ward = resolvedRealnetpro.detail_ward;
-        }
-      } catch (e) {
-        console.warn("[batchAutofill] realnetpro resolve失敗（デフォルト条件で続行）:", e.message || e);
-      }
-    }
     // popup.js 経由で完全条件構築（Dijkstra路線展開・API判定含む）を実行する
     // 個別検索（axlx-webapp-search）と同一フロー: chrome.tabs.sendMessage → underbar.js → popup.js → page-script.js
+    // ★ switch-customer を先に送り、resolveLocalFirst はその後実行（フォーム入力を即時開始させるため）
     var batchRpSwitched = await new Promise(function(resolve) {
       chrome.tabs.sendMessage(tab.id, {
         type:         "axlx-switch-customer",
@@ -1994,6 +1972,27 @@ async function _batchAutofill(customer, site, isWide) {
         func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
         args: [conds]
       });
+    }
+    // switch-customer 送信後に _resolveLocalFirst を実行（_scrapeAndSendRealpro 用の条件補完）
+    // フォーム入力はすでに popup.js 側で開始済みのため、ここでのAPI呼び出しが遅延しても問題なし
+    if ((conds.areas && conds.areas.length) || (conds.lines && conds.lines.length) || (conds.stations && conds.stations.length)) {
+      try {
+        var resolvedRealnetpro = await _resolveLocalFirst(conds, isWide);
+        if (resolvedRealnetpro.city_codes && resolvedRealnetpro.city_codes.length) {
+          conds.city_codes = resolvedRealnetpro.city_codes;
+        }
+        if (resolvedRealnetpro.route_ids && resolvedRealnetpro.route_ids.length) {
+          conds.route_ids = resolvedRealnetpro.route_ids;
+        }
+        if (resolvedRealnetpro.station_names && resolvedRealnetpro.station_names.length) {
+          conds.station_names = resolvedRealnetpro.station_names;
+        }
+        if (resolvedRealnetpro.detail_ward) {
+          conds.detail_ward = resolvedRealnetpro.detail_ward;
+        }
+      } catch (e) {
+        console.warn("[batchAutofill] realnetpro resolve失敗（デフォルト条件で続行）:", e.message || e);
+      }
     }
   } else if (site === "itandi") {
     // itandi: itandi-content.js 経由で axlx-itandi-fill-exec を postMessage
