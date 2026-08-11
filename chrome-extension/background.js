@@ -1314,7 +1314,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         // ── Step 7: 詳細タブを閉じる ─────────────────────────────────────────────
-        await chrome.tabs.remove(_epDetailTabId).catch(function() {});
+        // _epListTabId と同じタブになっていた場合（target="_blank"が効かなかった等）は閉じない
+        if (_epDetailTabId !== _epListTabId) {
+          await chrome.tabs.remove(_epDetailTabId).catch(function() {});
+        }
 
         if (!_epBrokerText) {
           sendResponse({ ok: false, error: "詳細ページ（room_detail.php）に「客付業者様へ」セクションが見つかりませんでした。" });

@@ -1391,64 +1391,9 @@
     window.__axlxEstimateSearchResult = { ok: true, triggered: true };
     _fwBtn.click();
 
-    // ── 結果行スキャン（AJAX更新の場合: ページ遷移しないため自力でhrefを取得可能）────
-    // ページ遷移した場合はこのポーリングが自動停止し、background.js が引き継ぐ。
-    var _fwStart  = Date.now();
-    var _fwMaxMs  = 18000; // 18秒（background.js の25秒ポーリングより短く設定）
-    // 号室番号から「号室」「号」のサフィックスを除去して数字のみにする
-    var _fwRNumCore = _fwRoomNum.replace(/号室?$/, "").trim();
-    var _fwRNumEsc  = _fwRNumCore.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    var _fwRoomRe   = new RegExp("(?<![0-9])" + _fwRNumEsc + "(?![0-9])");
-
-    // 【実装前確認必須】リアプロの結果行セレクターを DevTools で特定して更新する
-    var _ROW_SELS = [
-      "table.result-list tbody tr",
-      "table.list tbody tr",
-      ".room-list tr",
-      "tbody tr",
-    ];
-
-    function _fwScanRows() {
-      // DevTools確認済み（2026-08-11）:
-      // 詳細ボタンは <a class="hide_text hide_detail" href="#" target="_blank">詳細</a>
-      // → background.js が chrome.tabs.onUpdated で捕捉するため、
-      //   ここでは「クリック成功したか」を返すだけでよい。
-      // href を返す必要はなく、クリックして true を返す。
-      for (var _ri = 0; _ri < _ROW_SELS.length; _ri++) {
-        var rows = Array.from(document.querySelectorAll(_ROW_SELS[_ri]));
-        for (var _rj = 0; _rj < rows.length; _rj++) {
-          var row = rows[_rj];
-          var rowText = row.innerText || row.textContent || "";
-          if (!_fwRoomRe.test(rowText)) continue;
-          var detailLink = Array.from(row.querySelectorAll("a")).find(function(a) {
-            return (a.innerText || "").trim() === "詳細";
-          });
-          if (detailLink) {
-            detailLink.click();
-            return "clicked"; // background.js はこの値は使わない（タブ監視で捕捉）
-          }
-        }
-      }
-      return null;
-    }
-
-    function _fwPoll() {
-      // 既に href が設定済みならポーリング終了
-      if (window.__axlxEstimateSearchResult && window.__axlxEstimateSearchResult.href) return;
-      // タイムアウト: background.js に委ねる（triggered フラグは維持したまま終了）
-      if (Date.now() - _fwStart > _fwMaxMs) return;
-
-      var href = _fwScanRows();
-      if (href) {
-        window.__axlxEstimateSearchResult = { ok: true, href: href };
-        return;
-      }
-
-      setTimeout(_fwPoll, 600);
-    }
-
-    // 検索クリック後 1.5 秒待ってからポーリング開始（結果の描画を待つ）
-    setTimeout(_fwPoll, 1500);
+    // 詳細ボタンのクリックは background.js の Step 5 が chrome.tabs.onUpdated で
+    // 捕捉しながら行う。page-script.js は search triggered を通知するだけでよい。
+    // （旧実装で _fwPoll/_fwScanRows がクリックすると background.js と二重クリックになるため廃止）
   });
 
   window.addEventListener("message", function(e) {
