@@ -821,6 +821,8 @@
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "axlx-autofill-initiated") return;
     _autofillInitiated = true;
+    // 前バッチ中断で残留したsessionStorage状態をクリア（Case Aの!getAutoSendState()チェックがブロックされるバグ対策）
+    try { sessionStorage.removeItem(AUTO_SEND_KEY); } catch (_) {}
     _preAutofillBtns = new Set(findPrintBtns());
     _pendingAutoSendDispatched = false;
     console.log("[AXLX bulk-dl] autofill initiated, snapshot=" + _preAutofillBtns.size + "btn");
@@ -844,6 +846,16 @@
     // Case A は _autoSendArmed=false のまま inject() を空振りしてしまう。
     // fill-done 後に inject() を再呼び出しして Case A を確実に到達させる。
     setTimeout(inject, 50);
+    // _hasNewBtn=false フォールバック: AJAXがDOMを再利用しCase Aが起動しなかった場合の安全網
+    // 2秒後もまだarmed+tracked>0+送信未開始なら _hasNewBtn チェックをバイパスして強制送信
+    setTimeout(function () {
+      if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
+        _autoSendArmed = false;
+        _pendingAutoSendDispatched = true;
+        console.log("[AXLX bulk-dl] 2秒フォールバック: hasNewBtn=false バイパス → 自動送信開始");
+        setTimeout(autoSendAllPages, 200);
+      }
+    }, 2000);
     // 0件デッドロック対策: 4秒後（inject debounce 400ms + AJAX反映待ち 3.6秒）に
     // まだ armed のまま tracked=0 なら物件なし確定 → batch-customer-done を即送信
     // ※ 1.2秒だと遅いAJAX（1〜3秒かかる検索）を0件と誤判定するケースがあったため4秒に延長
