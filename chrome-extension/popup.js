@@ -3532,10 +3532,8 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           var aBtn = document.getElementById('autofill-btn');
           if (aBtn) {
             aBtn.dataset.auto_send_all = msg.auto_send_all ? "1" : "";
-            aBtn.dataset.automated = "1"; // bulk-dl.js の自動送信を抑止（バッチ中は source="automated" にする）
             aBtn.click(); // display:noneでもonclickは発火する
             delete aBtn.dataset.auto_send_all;
-            delete aBtn.dataset.automated;
             sendResponse({ ok: true });
           } else {
             sendResponse({ ok: false });

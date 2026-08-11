@@ -10,6 +10,7 @@
   var _autoSendArmed = false;            // fill-done 受信後、新結果待ちフラグ
   var _autofillInitiated = false;        // 手動autofillボタン押下フラグ（fill-done到着前）
   var _preAutofillBtns = new Set();      // autofill前の 印刷用PDF ボタンスナップショット
+  var _pendingCustomerForAutoSend = null; // autofill開始時点の顧客スナップショット（名前ずれ防止）
 
   // ── 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
@@ -227,18 +228,31 @@
     // tbody.previousElementSibling が undefined の場合（建物名が同一tbody内のヘッダー行に混在）
     if (!name && row) {
       var _prevRow = row.previousElementSibling;
-      var SKIP_PATTERNS = /万円|㎡|m[²2]|徒歩|印刷|PDF|空室|審査|空き|ヶ月|^\d+\s*分前|^[0-9]+$|^\d+点$|^\d+階$/;
+      var SKIP_PATTERNS = /万円|㎡|m[²2]|徒歩|印刷|PDF|空室|審査|空き|ヶ月|^\d+\s*分前|^[0-9]+$|^\d+点$|^\d+階$|[○◯〇].*点|^\d+\.\d|^相談|^即/;
       var SKIP_PREFIX = /^住所|^〒|^沿線|^TEL|^Tel|^tel|^\d{2,4}[-‐]|^株式会社|^有限会社|^合同会社/;
       for (var _pi = 0; _pi < 8 && _prevRow && !name; _pi++, _prevRow = _prevRow.previousElementSibling) {
         // 印刷用PDFを含む行はルームデータ行なのでスキップ
         if (_prevRow.textContent.includes("印刷用PDF")) continue;
         // h系タグ・building-nameクラス優先
-        var _hEl = _prevRow.querySelector("h2,h3,h4,.building-name,td b,td strong,[class*='building'],[class*='name']");
+        var _hEl = _prevRow.querySelector("h2,h3,h4,.building-name,td b,td strong,[class*='building'],[class*='title']");
         if (_hEl) {
           var _hTxt = _hEl.textContent.trim();
           if (_hTxt && _hTxt.length >= 2 && _hTxt.length <= 40 && UI_TEXTS.indexOf(_hTxt) === -1 && !SKIP_PATTERNS.test(_hTxt) && !SKIP_PREFIX.test(_hTxt)) {
             name = _hTxt; break;
           }
+        }
+        // innerText の行分割でも試みる（建物名が改行区切りで別要素に入っていない場合）
+        if (!name) {
+          var _rowLines = (_prevRow.innerText || _prevRow.textContent || "").split(/[\n\r]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+          for (var _li = 0; _li < _rowLines.length && !name; _li++) {
+            var _ls = _rowLines[_li];
+            if (_ls.length < 2 || _ls.length > 40) continue;
+            if (UI_TEXTS.indexOf(_ls) !== -1) continue;
+            if (SKIP_PATTERNS.test(_ls)) continue;
+            if (SKIP_PREFIX.test(_ls)) continue;
+            name = _ls;
+          }
+          if (name) break;
         }
         // セルを1つずつチェックして建物名らしい文字列を探す
         var _rCells = Array.from(_prevRow.querySelectorAll("td,th"));
@@ -544,6 +558,18 @@
       var rent = rentMatch
         ? Math.round(parseFloat(rentMatch[1].replace(/[,，]/g, "")) * 10000)
         : null;
+      // 円表記フォールバック（リアプロは 48,000円 形式で表示する場合がある）
+      if (rent === null) {
+        var rentYenText = allTexts.find(function (t) {
+          if (!/^[0-9,，]+\s*円$/.test(t)) return false;
+          var v = parseInt(t.replace(/[,，円\s]/g, ""), 10);
+          return v >= 10000; // 1万円以上を賃料とみなす
+        }) || "";
+        var rentYenMatch = rentYenText.match(/([0-9,，]+)\s*円/);
+        if (rentYenMatch) {
+          rent = parseInt(rentYenMatch[1].replace(/[,，]/g, ""), 10);
+        }
+      }
 
       // 管理費・共益費（円表記で、万円を含まない短いセル）
       var mgmtText = allTexts.find(function (t) {
@@ -754,13 +780,21 @@
   // ── 全ページ自動送信: エントリポイント ────────────────────────────────────
   function autoSendAllPages() {
     if (getAutoSendState()) return; // 既に動作中
-    getCustomerFromPopup(function (name, conditions, customerId) {
-      var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions, customerId: customerId || null };
+    var _snap = _pendingCustomerForAutoSend;
+    _pendingCustomerForAutoSend = null;
+    if (_snap && _snap.name) {
+      // autofill開始時点でスナップショット済みのお客さん名を使う（名前ずれ防止）
+      var state = { active: true, currentPage: 1, customerName: _snap.name, customerConditions: _snap.conditions || null, customerId: _snap.customerId || null };
       setAutoSendState(state);
-      autoSendOnePage(state, function (ok) {
-        tryNext(state);
+      autoSendOnePage(state, function (ok) { tryNext(state); });
+    } else {
+      // スナップショットなし（手動操作など）→ 従来通りpopupから取得
+      getCustomerFromPopup(function (name, conditions, customerId) {
+        var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions, customerId: customerId || null };
+        setAutoSendState(state);
+        autoSendOnePage(state, function (ok) { tryNext(state); });
       });
-    });
+    }
   }
 
   // ── underbar.js からの全ページ自動送信シグナル受信 ───────────────────────
@@ -771,6 +805,13 @@
     _preAutofillBtns = new Set(findPrintBtns());
     _pendingAutoSendDispatched = false;
     console.log("[AXLX bulk-dl] autofill initiated, snapshot=" + _preAutofillBtns.size + "btn");
+    // バッチ中の名前ずれ防止: autofill開始時点のお客さん名をここでスナップショット
+    // autoSendAllPages() 発火時には popup が次の顧客に切り替わっている可能性があるため
+    _pendingCustomerForAutoSend = null;
+    getCustomerFromPopup(function(name, conditions, customerId) {
+      _pendingCustomerForAutoSend = { name: name, conditions: conditions, customerId: customerId };
+      console.log("[AXLX bulk-dl] autofill initiated: customer snapshot =", name);
+    });
   });
 
   // Step2: fill-done 受信 → arm（スナップショット外の新結果が出たら Case A で発動）
