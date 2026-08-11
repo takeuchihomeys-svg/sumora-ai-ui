@@ -1857,15 +1857,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg && msg.type === "axlx-batch-customer-done") {
     // _scrapeAndSendRealpro の待機を解除して次顧客へ進む（propertyCount: 0 なら0件確定）
     _notifyBatchCustomerDone(msg.propertyCount != null ? msg.propertyCount : null);
-    // Webアプリタブにも通知（バッチ進捗UI更新のため）
-    (async () => {
-      try {
-        const tabs = await chrome.tabs.query({ url: ["https://sumora-ai-ui.vercel.app/*", "http://localhost:3000/*"] });
-        for (const tab of tabs) {
-          try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-batch-customer-done" }); } catch (_) {}
-        }
-      } catch (_) {}
-    })();
+    // Webアプリへの進捗通知は _runBatchSearch の顧客ループ完了後に一元化（リアプロ/itandi/レインズ全サイト対応）
   }
   return false;
 });
@@ -2148,6 +2140,13 @@ async function _runBatchSearch(command) {
       }
     }
     await _updateBatchCommand(command.id, { processed_customers: i + 1 });
+    // Webアプリタブに顧客完了を通知（リアプロ/itandi/レインズ全サイト対応・バッチ進捗カウンター更新）
+    try {
+      var _webTabs = await chrome.tabs.query({ url: ["https://sumora-ai-ui.vercel.app/*", "http://localhost:3000/*"] });
+      for (var _wi = 0; _wi < _webTabs.length; _wi++) {
+        try { await chrome.tabs.sendMessage(_webTabs[_wi].id, { type: "axlx-batch-customer-done" }); } catch (_ignore) {}
+      }
+    } catch (_ignore) {}
   }
 
   // 修正12: 全件失敗なら status:'error'、一部失敗でも error_message に記録して可視化
