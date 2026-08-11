@@ -188,9 +188,16 @@
 })();
 
 // background.js からの自動入力トリガー（executeScript を使わずに sendMessage 経由で呼ぶ）
+var _pendingFillCustomerId = null; // axlx-set-fill-customer で設定される現在処理中の顧客ID
 if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     if (msg.type === "axlx-ping") {
+      sendResponse({ ok: true });
+      return true;
+    }
+    // fill-done relay に customerId を付与するため、autofill 前に顧客IDをセットしておく
+    if (msg.type === "axlx-set-fill-customer") {
+      _pendingFillCustomerId = msg.customerId || null;
       sendResponse({ ok: true });
       return true;
     }
@@ -203,13 +210,16 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
   });
 }
 
-// 修正4: page-script.js の検索実行完了シグナル（aixlinx-fill-done）を background.js へ中継する
-// background 側の _createFillDoneWaiter がこれを待ってからスクレイプを開始する
+// 修正4+CRITICAL1: page-script.js の検索実行完了シグナル（aixlinx-fill-done）を background.js へ中継する
+// customerId を含めることで、別顧客のウェイターを誤解決するバグを防止する
 window.addEventListener("message", function (e) {
   if (e.source !== window || !e.data || e.data.from !== "aixlinx-fill-done") return;
   try {
-    chrome.runtime.sendMessage({ type: "axlx-fill-done", site: "realnetpro" }, function () {
-      // background が待機していない場合の lastError は無視
+    chrome.runtime.sendMessage({
+      type: "axlx-fill-done",
+      site: "realnetpro",
+      customerId: _pendingFillCustomerId || null,
+    }, function () {
       void chrome.runtime.lastError;
     });
   } catch (err) {

@@ -833,7 +833,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (!_cid) { sendResponse({ ok: false, error: "no customerId" }); return; }
 
           // fill-done後にスクレイプ→LINE送信するため先に作成
-          var _siteFillDone = _createFillDoneWaiter("itandi", 90000);
+          var _siteFillDone = _createFillDoneWaiter("itandi", String(_cid), 90000);
 
           // itandiタブを探す（なければ新規作成）
           var _allTabs = await chrome.tabs.query({});
@@ -844,6 +844,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             await new Promise(function(r) { setTimeout(r, 2000); });
           }
           console.log("[webapp-search] itandiタブ:", _itandiTab.url);
+          // itandi-content.js に現在の顧客IDを通知（fill-done relay に customerId を付与するため）
+          try { await chrome.tabs.sendMessage(_itandiTab.id, { type: "axlx-set-fill-customer", customerId: String(_cid) }); } catch(_) {}
 
           // underbar.js → popup.js 経由でリアプロと同じ仕組みで自動入力
           var _directOk = await new Promise(function(resolve) {
@@ -1432,7 +1434,7 @@ async function _runScrapeAndCompare(customerId, conditions) {
   var _scAreaMode = (conditions && conditions.area_mode) || null;
   var _scCustName = (conditions && conditions.customerName) || null;
 
-  var fillDonePromise = _createFillDoneWaiter("realnetpro", 90000);
+  var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, 90000);
 
   var _scAllTabs = await chrome.tabs.query({});
   var _scRealTab = _scAllTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
@@ -1441,6 +1443,8 @@ async function _runScrapeAndCompare(customerId, conditions) {
   if (_scRealTab && customerId) {
     try {
       await chrome.tabs.update(_scRealTab.id, { active: true });
+      // content.js に現在の顧客IDを通知（fill-done relay に customerId を付与するため）
+      try { await chrome.tabs.sendMessage(_scRealTab.id, { type: "axlx-set-fill-customer", customerId: String(customerId) }); } catch(_) {}
       var _directResp = await new Promise(function(resolve) {
         chrome.tabs.sendMessage(_scRealTab.id, {
           type:         "axlx-switch-customer",
@@ -1752,10 +1756,15 @@ var _batchShouldStop = false;
 
 // resolve 値は { timedOut: boolean, error: string|null } に統一。
 // error は page-script.js が fill-done に載せたエラー内容（フォールバック検索は実行済み）。
-function _notifyFillDone(site, error) {
+function _notifyFillDone(site, customerId, error) {
   var remaining = [];
   _fillDoneWaiters.forEach(function (w) {
-    if (!w.site || !site || w.site === site) {
+    var siteMatch = !w.site || !site || w.site === site;
+    // customerId が両方ある場合のみ厳密一致。片方でも null なら旧来どおり site のみで解決
+    var cidMatch = (w.customerId && customerId)
+      ? String(w.customerId) === String(customerId)
+      : true;
+    if (siteMatch && cidMatch) {
       clearTimeout(w.timer);
       w.resolve({ timedOut: false, error: error || null });
     } else {
@@ -1765,9 +1774,9 @@ function _notifyFillDone(site, error) {
   _fillDoneWaiters = remaining;
 }
 
-function _createFillDoneWaiter(site, timeoutMs) {
+function _createFillDoneWaiter(site, customerId, timeoutMs) {
   return new Promise(function (resolve) {
-    var entry = { site: site || null, resolve: resolve, timer: null };
+    var entry = { site: site || null, customerId: customerId || null, resolve: resolve, timer: null };
     // Fix 3: _batchShouldStop を 500ms ごとにポーリングし、true になったら即解決する。
     // これにより 90秒ブロッキングが最大 500ms 遅延に短縮される。
     var stopInterval = setInterval(function () {
@@ -1794,18 +1803,27 @@ function _createFillDoneWaiter(site, timeoutMs) {
 // _scrapeAndSendRealpro はこの Promise が解決するまで次顧客への移行を待つ。
 var _batchCustomerDoneWaiters = [];
 
-function _notifyBatchCustomerDone(propertyCount) {
+function _notifyBatchCustomerDone(customerId, propertyCount) {
+  var remaining = [];
   _batchCustomerDoneWaiters.forEach(function(w) {
-    clearInterval(w.stopInterval);
-    clearTimeout(w.timer);
-    w.resolve({ ok: true, propertyCount: propertyCount != null ? propertyCount : null });
+    // customerId が両方ある場合のみ厳密一致。片方でも null なら全解決（フォールバック）
+    var match = (w.customerId && customerId)
+      ? String(w.customerId) === String(customerId)
+      : true;
+    if (match) {
+      clearInterval(w.stopInterval);
+      clearTimeout(w.timer);
+      w.resolve({ ok: true, propertyCount: propertyCount != null ? propertyCount : null });
+    } else {
+      remaining.push(w);
+    }
   });
-  _batchCustomerDoneWaiters = [];
+  _batchCustomerDoneWaiters = remaining;
 }
 
 function _createBatchCustomerDoneWaiter(customerId, timeoutMs) {
   return new Promise(function(resolve) {
-    var entry = { resolve: resolve, timer: null, stopInterval: null };
+    var entry = { customerId: customerId || null, resolve: resolve, timer: null, stopInterval: null };
     entry.stopInterval = setInterval(function() {
       if (!_batchShouldStop) return;
       clearInterval(entry.stopInterval);
@@ -1846,7 +1864,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     } else {
       console.log("[fill-done] 受信 site=" + (msg.site || "unknown"));
     }
-    _notifyFillDone(msg.site || null, msg.error || null);
+    _notifyFillDone(msg.site || null, msg.customerId || null, msg.error || null);
     sendResponse({ ok: true });
     return true;
   }
@@ -1856,7 +1874,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg && msg.type === "axlx-batch-customer-done") {
     // _scrapeAndSendRealpro の待機を解除して次顧客へ進む（propertyCount: 0 なら0件確定）
-    _notifyBatchCustomerDone(msg.propertyCount != null ? msg.propertyCount : null);
+    _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null);
     // Webアプリへの進捗通知は _runBatchSearch の顧客ループ完了後に一元化（リアプロ/itandi/レインズ全サイト対応）
   }
   return false;
@@ -2102,8 +2120,9 @@ async function _runBatchSearch(command) {
       try {
         // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
         // リアプロ・itandi ともモーダル操作/ページロードで60秒を超えることがあるため90秒に統一
+        // customerId を渡して他顧客の遅延 fill-done が誤解決しないよう保護する
         var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
-          ? _createFillDoneWaiter(batchSite, 90000)
+          ? _createFillDoneWaiter(batchSite, String(customer.id), 90000)
           : null;
         // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
         var resolvedBatchConds = await _batchAutofill(customer, batchSite, batchIsWide);
@@ -2238,6 +2257,8 @@ async function _batchAutofill(customer, site, isWide) {
     // popup.js 経由で完全条件構築（Dijkstra路線展開・API判定含む）を実行する
     // 個別検索（axlx-webapp-search）と同一フロー: chrome.tabs.sendMessage → underbar.js → popup.js → page-script.js
     // ★ switch-customer を先に送り、resolveLocalFirst はその後実行（フォーム入力を即時開始させるため）
+    // content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
+    try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: String(customer.id) }); } catch(_) {}
     var batchRpSwitched = await new Promise(function(resolve) {
       chrome.tabs.sendMessage(tab.id, {
         type:         "axlx-switch-customer",
@@ -2292,6 +2313,8 @@ async function _batchAutofill(customer, site, isWide) {
   } else if (site === "itandi") {
     // popup.js 経由で完全条件構築（ITANDI_LINE_MAP_FILL・Dijkstra路線展開含む）を実行する
     // リアプロと同一フロー: chrome.tabs.sendMessage → underbar.js → popup.js → itandi-page-script.js
+    // itandi-content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
+    try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: String(customer.id) }); } catch(_) {}
     var batchItandiSwitched = await new Promise(function(resolve) {
       chrome.tabs.sendMessage(tab.id, {
         type:          "axlx-switch-customer",
@@ -2688,7 +2711,7 @@ async function _scrapeAndCompareForCustomer(customer) {
 
   // Phase 3〜6: fill-done 待機 → スクレイプ → AI比較+LINE送信
   // 修正4: 固定8秒待ちを廃止。ウェイターは autofill 発火「前」に作成する
-  var fillDonePromise = _createFillDoneWaiter("realnetpro", 90000);
+  var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, 90000);
   await _webappAutofill("realnetpro", mergedConditions);
   await _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, mergedConditions);
 }

@@ -3214,10 +3214,13 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!c) return;
       openSiteView(c);
       if (cmd.site) {
-        // webappで「広げて検索」が押された場合はwideモードに切り替え（openInstructions前に実行）
+        // 顧客切替のたびに searchMode を明示的にセット（前顧客の wide 状態が引き継がれるバグを防止）
         if (cmd.is_wide) {
           var wBtnEl = document.querySelector('.mode-btn[data-mode="wide"]');
           if (wBtnEl) wBtnEl.click();
+        } else {
+          var pBtnEl = document.querySelector('.mode-btn[data-mode="pinpoint"]');
+          if (pBtnEl) pBtnEl.click();
         }
         openInstructions(cmd.site);
         // Step ④a: setupAreaModeSelector の自動判定をウェブアプリのボタン押下で上書きする
@@ -3260,10 +3263,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!c) return;
     openSiteView(c);
     if (cmd.site) {
-      // webappで「広げて検索」が押された場合はwideモードに切り替え（openInstructions前に実行）
+      // 顧客切替のたびに searchMode を明示的にセット（前顧客の wide 状態が引き継がれるバグを防止）
       if (cmd.is_wide) {
         var wBtnEl2 = document.querySelector('.mode-btn[data-mode="wide"]');
         if (wBtnEl2) wBtnEl2.click();
+      } else {
+        var pBtnEl2 = document.querySelector('.mode-btn[data-mode="pinpoint"]');
+        if (pBtnEl2) pBtnEl2.click();
       }
       openInstructions(cmd.site);
       // 'both' のとき: 1回目は ward として実行（2回目の station は webapp が 10秒後に発火）
@@ -3362,9 +3368,13 @@ document.addEventListener("DOMContentLoaded", () => {
           }
           openSiteView(c);
           if (e.data.site) {
+            // 顧客切替のたびに searchMode を明示的にセット（前顧客の wide 状態が引き継がれるバグを防止）
             if (e.data.is_wide) {
               var wBtn = document.querySelector('.mode-btn[data-mode="wide"]');
               if (wBtn) wBtn.click();
+            } else {
+              var pBtn = document.querySelector('.mode-btn[data-mode="pinpoint"]');
+              if (pBtn) pBtn.click();
             }
             openInstructions(e.data.site);
             if (e.data.areaMode === 'station' || e.data.areaMode === 'ward') {
