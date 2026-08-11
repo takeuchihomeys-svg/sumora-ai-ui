@@ -4336,7 +4336,7 @@ export default function Home() {
           fetch("/api/line-tasks", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName }),
+            body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName, silent: true }),
           }).then(async (r) => {
             if (!r.ok) return;
             const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
@@ -4685,7 +4685,7 @@ export default function Home() {
         fetch("/api/line-tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: selectedConversation.customerName }),
+          body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: selectedConversation.customerName, silent: true }),
         }).then((r) => r.json()).then((data: unknown) => {
           const d = data as { ok: boolean; id?: string; created_at?: string };
           if (d.ok && d.id && d.created_at) {
@@ -9128,7 +9128,7 @@ export default function Home() {
                       fetch("/api/line-tasks", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName }),
+                        body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName, silent: true }),
                       }).then(async (r) => {
                         if (!r.ok) return;
                         const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
@@ -9210,7 +9210,7 @@ export default function Home() {
                     fetch("/api/line-tasks", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName }),
+                      body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName, silent: true }),
                     }).then(async (r) => {
                       if (!r.ok) return;
                       const d = await r.json() as { ok: boolean; id?: string; created_at?: string };

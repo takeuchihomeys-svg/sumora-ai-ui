@@ -84,9 +84,10 @@ export async function POST(req: NextRequest) {
     conversation_id: string;
     task_type: "property_check" | "property_send" | "estimate_sheet";
     customer_name: string;
+    silent?: boolean; // true: LINE グループへのアナウンスをスキップ（自動作成時）
   };
 
-  const { conversation_id, task_type, customer_name } = body;
+  const { conversation_id, task_type, customer_name, silent } = body;
   if (!conversation_id || !task_type) {
     return NextResponse.json({ ok: false, error: "missing fields" }, { status: 400 });
   }
@@ -115,11 +116,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: error?.message }, { status: 500 });
   }
 
-  const label = TASK_LABEL[task_type] ?? task_type;
-  const emoji = TASK_EMOJI[task_type] ?? "📋";
-  const text = `${emoji}【${label}依頼】\n${customer_name}さんの${label}を開始しました\n担当スタッフ: 対応よろしくお願いします！`;
-
-  sendGroupMessage(text).catch(console.error);
+  if (!silent) {
+    const label = TASK_LABEL[task_type] ?? task_type;
+    const emoji = TASK_EMOJI[task_type] ?? "📋";
+    const text = `${emoji}【${label}依頼】\n${customer_name}さんの${label}を開始しました\n担当スタッフ: 対応よろしくお願いします！`;
+    sendGroupMessage(text).catch(console.error);
+  }
 
   return NextResponse.json({ ok: true, id: task.id, created_at: task.created_at });
 }
