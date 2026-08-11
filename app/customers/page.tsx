@@ -1477,6 +1477,13 @@ function CustomersPageInner() {
   // 修正11: キュー投入失敗を消えない赤色エラーとして保持（キー: c.id + "-" + site [+ "-wide"]）
   const [queueErrors, setQueueErrors] = useState<Record<string, string>>({});
   const queuePropertySearch = async (c: Customer, sites: string[] = ["realnetpro", "itandi"], isWide: boolean = false) => {
+    const key = c.id + "-" + sites[0] + (isWide ? "-wide" : "");
+
+    // 即時視覚フィードバック（楽観的更新）: 拡張応答待ち(~1.5秒)のラグを解消
+    setSearchQueued(key);
+    setQueueErrors((prev) => { const n = { ...prev }; delete n[key]; return n; });
+    const clearTimer = setTimeout(() => setSearchQueued(null), 3000);
+
     // 'both' モード: ward で即時実行 → 10秒後に station で再実行（拡張直接パスのみ）
     const modes = getEffectiveSearchModes(c);
     const isBoth = modes.includes("ward") && modes.includes("station");
@@ -1489,18 +1496,9 @@ function CustomersPageInner() {
       setTimeout(() => { void firePropertySearch(c, sites, isWide, "station"); }, 10000);
     }
 
-    const key = c.id + "-" + sites[0] + (isWide ? "-wide" : "");
-    setQueueErrors((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-
     if (extHandled) {
       // 修正6: 同一ブラウザの拡張が処理を引き受けた → キュー投入をスキップして
       // 即時経路+キュー経路の二重実行（検索・AI採点・LINE送信が2回）を防ぐ
-      setSearchQueued(key);
-      setTimeout(() => setSearchQueued(null), 3000);
       return;
     }
 
@@ -1513,10 +1511,10 @@ function CustomersPageInner() {
         body: JSON.stringify({ customer_ids: [c.id], sites, is_wide: isWide, force: true }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setSearchQueued(key);
-      setTimeout(() => setSearchQueued(null), 3000);
     } catch (e) {
       console.error("[queue search] error:", e);
+      clearTimeout(clearTimer);
+      setSearchQueued(null);
       // 修正11: 従来は無音失敗。消えない赤色エラー表示に変更（再押下でクリア）
       setQueueErrors((prev) => ({
         ...prev,
