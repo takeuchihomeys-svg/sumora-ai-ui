@@ -20,6 +20,29 @@
       .trim();
   }
 
+  // itandi BB での駅名表記ゆれ対応（漢字↔ひらがな・別称）
+  var ITANDI_STATION_ALIAS_MAP = {
+    "難波":       ["難波", "なんば"],
+    "なんば":     ["なんば", "難波"],
+    "大阪難波":   ["大阪難波", "難波", "なんば"],
+    "天王寺":     ["天王寺", "大阪阿部野橋"],
+    "大阪阿部野橋": ["大阪阿部野橋", "天王寺"],
+    "北浜":       ["北浜", "大阪北浜"],
+    "大阪北浜":   ["大阪北浜", "北浜"],
+  };
+  function getStationAliases(name) {
+    return ITANDI_STATION_ALIAS_MAP[name] || [name];
+  }
+
+  function isTargetStation(lblText, stNames) {
+    var t = lblText.replace(/駅$/, "").trim();
+    return stNames.some(function(sn) {
+      return getStationAliases(sn).some(function(alias) {
+        return norm(alias) === norm(t);
+      });
+    });
+  }
+
   function isVis(el) {
     var r = el.getBoundingClientRect();
     return r.width > 0 || r.height > 0;
@@ -312,12 +335,13 @@
           // 全路線完了 → 駅リスト描画待ち（JR複数路線対応で2500msに延長）
           setTimeout(function () {
             // 連続検索での残留チェック解除（今回の対象外駅をデセレクト）
+            // エイリアス考慮: 難波↔なんば など表記違いでも同一駅なら残す
             var _dialog = document.querySelector('[role="dialog"]');
             if (_dialog) {
               [].slice.call(_dialog.querySelectorAll('input[type="checkbox"]:checked')).forEach(function(inp) {
                 var _lbl = inp.closest ? inp.closest('label') : null;
-                var _lblText = (_lbl ? _lbl.textContent.trim() : "").replace(/駅$/, "");
-                if (stNames.indexOf(_lblText) === -1 && stNames.indexOf(norm(_lblText)) === -1) {
+                var _lblText = (_lbl ? _lbl.textContent.trim() : "");
+                if (!isTargetStation(_lblText, stNames)) {
                   inp.click();
                 }
               });
@@ -336,25 +360,31 @@
                 stIdx++;
 
                 // 駅ラベル検索（路線名への誤ヒット防止のため完全一致優先）
+                // エイリアス全候補を試す（難波↔なんば 等の表記ゆれ対応）
                 function tryClickStation(name) {
-                  var n = norm(name);
-                  var lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
-                    return norm(l.textContent.trim()) === n;
-                  });
-                  if (!lbl) {
-                    lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
-                      var inp = l.querySelector("input[type='checkbox']");
-                      var txt = l.textContent.trim();
-                      return inp && txt.length <= 8 && norm(txt).includes(n);
+                  var aliases = getStationAliases(name);
+                  for (var ai = 0; ai < aliases.length; ai++) {
+                    var n = norm(aliases[ai]);
+                    var lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
+                      return norm(l.textContent.trim()) === n;
                     });
+                    if (!lbl) {
+                      lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
+                        var inp = l.querySelector("input[type='checkbox']");
+                        var txt = l.textContent.trim();
+                        return inp && txt.length <= 8 && norm(txt).includes(n);
+                      });
+                    }
+                    if (lbl) {
+                      try { lbl.scrollIntoView({ behavior: "instant", block: "nearest" }); } catch (e) {}
+                      var inp = lbl.querySelector("input[type='checkbox']");
+                      if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
+                      if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
+                      console.log("[AX] 駅クリック: " + name + (aliases[ai] !== name ? " (alias→" + aliases[ai] + ")" : ""));
+                      return true;
+                    }
                   }
-                  if (!lbl) return false;
-                  try { lbl.scrollIntoView({ behavior: "instant", block: "nearest" }); } catch (e) {}
-                  var inp = lbl.querySelector("input[type='checkbox']");
-                  if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
-                  if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
-                  console.log("[AX] 駅クリック: " + name);
-                  return true;
+                  return false;
                 }
 
                 var found = tryClickStation(stName);
