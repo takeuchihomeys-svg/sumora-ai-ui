@@ -1079,6 +1079,243 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ──────────────────────────────────────────────────────────────────────────────
+  // axlx-estimate-realpro-search
+  // リアプロ main.php でフリーワード検索 → 号室マッチ行のhref取得 → 詳細タブ開いて
+  // 「客付業者様へ」セクションを抽出 → 補足情報フィールドに注入
+  // ──────────────────────────────────────────────────────────────────────────────
+  if (msg.type === "axlx-estimate-realpro-search") {
+    var _epPropName = (msg.propertyName || "").trim();
+    var _epRoomNum  = (msg.roomNumber   || "").trim();
+
+    if (!_epPropName) {
+      sendResponse({ ok: false, error: "物件名が指定されていません" });
+      return true;
+    }
+
+    (async function() {
+      try {
+        var MAIN_PHP_URL = "https://www.realnetpro.com/main.php";
+
+        // ── Step 1: リアプロ main.php タブを探す or 作成 ───────────────────────
+        var _epAllTabs = await chrome.tabs.query({});
+
+        // main.php 上のタブを優先（page-script.js が注入されているため）
+        var _epMainTab = _epAllTabs
+          .filter(function(t) { return t.url && t.url.startsWith(MAIN_PHP_URL); })
+          .sort(function(a, b) { return (b.lastAccessed || 0) - (a.lastAccessed || 0); })[0];
+
+        if (!_epMainTab) {
+          // main.php 以外の realnetpro タブがあればそこへナビゲート
+          var _epAnyReal = _epAllTabs.find(function(t) {
+            return t.url && t.url.includes("realnetpro.com") && !t.url.includes("room_detail");
+          });
+          if (_epAnyReal) {
+            await chrome.tabs.update(_epAnyReal.id, { url: MAIN_PHP_URL, active: false });
+            _epMainTab = { id: _epAnyReal.id };
+          } else {
+            _epMainTab = await chrome.tabs.create({ url: MAIN_PHP_URL, active: false });
+          }
+          await _batchWaitForTabComplete(_epMainTab.id);
+          // page-script.js が document_start → document_idle で注入されるまで待機
+          await new Promise(function(r) { setTimeout(r, 2500); });
+        }
+
+        var _epListTabId = _epMainTab.id;
+
+        // ── Step 2: page-script.js へ window.postMessage でフリーワード検索を指示 ──
+        await chrome.scripting.executeScript({
+          target: { tabId: _epListTabId },
+          world: "MAIN",
+          func: function(propName, roomNum) {
+            window.__axlxEstimateSearchResult = undefined;
+            window.postMessage({
+              from: "axlx-realpro-freeword-search",
+              propertyName: propName,
+              roomNumber: roomNum,
+            }, "*");
+          },
+          args: [_epPropName, _epRoomNum],
+        });
+
+        // ── Step 3: page-script.js が検索ボタンをクリックしたか確認（triggered フラグ, 最大6秒）
+        var _epTriggered = false;
+        for (var _ep1 = 0; _ep1 < 12; _ep1++) {
+          await new Promise(function(r) { setTimeout(r, 500); });
+          try {
+            var _epTrigPoll = await chrome.scripting.executeScript({
+              target: { tabId: _epListTabId },
+              world: "MAIN",
+              func: function() { return window.__axlxEstimateSearchResult; },
+            });
+            var _epTrigRes = _epTrigPoll && _epTrigPoll[0] && _epTrigPoll[0].result;
+            if (_epTrigRes && _epTrigRes.triggered) { _epTriggered = true; break; }
+            if (_epTrigRes && _epTrigRes.ok === false) {
+              // page-script.js がエラーを設定した（フリーワード欄や検索ボタンが見つからない等）
+              sendResponse({ ok: false, error: _epTrigRes.error || "フリーワード検索の起動に失敗しました" });
+              return;
+            }
+          } catch (_) { /* ページ遷移中に executeScript が一時的に失敗することがある */ }
+        }
+        if (!_epTriggered) {
+          sendResponse({ ok: false, error: "フリーワード検索が開始されませんでした（page-script.jsが応答しません。リアプロ main.php が開かれているか確認してください）" });
+          return;
+        }
+
+        // ── Step 4: 結果行をスキャン（AJAX更新・ページ遷移どちらも対応, 最大25秒）────
+        // page-script.js が AJAX の場合に href を書き込む可能性もあるが
+        // ページ遷移で page-script.js が消えてもこちらで独立してスキャンする。
+        var _epDetailHref = null;
+        var _epRoomNumEsc = _epRoomNum.replace(/号室?$/, "").trim()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // 正規表現エスケープ
+        var _epRoomRe = new RegExp("(?<![0-9])" + _epRoomNumEsc + "(?![0-9])");
+
+        for (var _ep2 = 0; _ep2 < 50 && !_epDetailHref; _ep2++) {
+          await new Promise(function(r) { setTimeout(r, 500); });
+          try {
+            var _epScan = await chrome.scripting.executeScript({
+              target: { tabId: _epListTabId },
+              world: "MAIN",
+              func: function(roomReStr) {
+                // page-script.js がすでに href を設定していれば使う
+                var cached = window.__axlxEstimateSearchResult;
+                if (cached && cached.href) return cached.href;
+
+                var roomRe = new RegExp(roomReStr);
+                var ROW_SELS = [
+                  "table.result-list tbody tr",
+                  "table.list tbody tr",
+                  ".room-list tr",
+                  "tbody tr",
+                ];
+                for (var sel of ROW_SELS) {
+                  var rows = Array.from(document.querySelectorAll(sel));
+                  for (var row of rows) {
+                    var rowText = row.innerText || row.textContent || "";
+                    if (!roomRe.test(rowText)) continue;
+                    var link =
+                      row.querySelector('a[href*="room_detail"]') ||
+                      row.querySelector('a[href*="/detail"]') ||
+                      row.querySelector('a[href*="detail.php"]') ||
+                      row.querySelector('a[href*="detail?"]') ||
+                      row.querySelector("a[href]");
+                    if (link && link.href && !link.href.startsWith("javascript:")) {
+                      return link.href;
+                    }
+                  }
+                }
+                return null;
+              },
+              args: ["(?<![0-9])" + _epRoomNumEsc + "(?![0-9])"],
+            });
+            var _epHr = _epScan && _epScan[0] && _epScan[0].result;
+            if (_epHr) { _epDetailHref = _epHr; }
+          } catch (_) {
+            // ページ遷移中のエラーは無視してリトライ
+          }
+        }
+
+        if (!_epDetailHref) {
+          sendResponse({ ok: false, error: "号室「" + _epRoomNum + "」が検索結果に見つかりませんでした（物件名: " + _epPropName + "）" });
+          return;
+        }
+
+        // ── Step 5: 詳細URLを新タブで開く ──────────────────────────────────────
+        var _epDetailTab = await chrome.tabs.create({ url: _epDetailHref, active: false });
+        await _batchWaitForTabComplete(_epDetailTab.id);
+        await new Promise(function(r) { setTimeout(r, 1500); });
+
+        // ── Step 6: 「客付業者様へ」セクションの innerText を抽出 ────────────────
+        // リアプロ詳細ページは page=1 と page=2 に分割されている場合がある。
+        // まず現在のページ（page=1 相当）でセクションを探し、
+        // 見つからなければ page=2 を fetch して探す。
+        var _epExtract = await chrome.scripting.executeScript({
+          target: { tabId: _epDetailTab.id },
+          world: "MAIN",
+          func: function() {
+            function extractBrokerSection(doc) {
+              // 戦略1: 「客付業者」を含む見出し要素 → その親コンテナ
+              var headings = Array.from(doc.querySelectorAll("h1,h2,h3,h4,th,dt,strong,b,td"));
+              for (var h of headings) {
+                var ht = (h.innerText || h.textContent || "").trim();
+                if (!ht.includes("客付")) continue;
+                var container = h.closest("section,article,table,dl,.block,.section,.card") || h.parentElement;
+                if (!container) continue;
+                var text = (container.innerText || "")
+                  .replace(/[ \t]+/g, " ")
+                  .replace(/\n{3,}/g, "\n\n")
+                  .trim();
+                if (text && text.length > 5) return text;
+              }
+              // 戦略2: 「客付業者」を含むテキストノードを持つ末端要素を収集
+              var blocks = Array.from(doc.querySelectorAll("p,li,dd,span,div")).filter(function(el) {
+                return el.children.length === 0 && (el.innerText || "").includes("客付");
+              });
+              if (blocks.length > 0) {
+                return blocks.map(function(b) { return b.innerText.trim(); }).join("\n");
+              }
+              return null;
+            }
+
+            var text = extractBrokerSection(document);
+            if (text) return { text: "【客付業者様へ】\n" + text, page2Url: null };
+
+            // page=2 が必要な場合: URLを構築して返す（fetchはMAIN worldで実施）
+            var currentUrl = location.href;
+            var page2Url = currentUrl.includes("page=")
+              ? currentUrl.replace(/page=\d+/, "page=2")
+              : currentUrl + (currentUrl.includes("?") ? "&" : "?") + "page=2";
+            return { text: null, page2Url: page2Url };
+          },
+        });
+
+        var _epExtractRes = _epExtract && _epExtract[0] && _epExtract[0].result;
+        var _epBrokerText = _epExtractRes && _epExtractRes.text;
+
+        // page=1 で見つからなければ page=2 を fetch
+        if (!_epBrokerText && _epExtractRes && _epExtractRes.page2Url) {
+          var _epPage2 = await chrome.scripting.executeScript({
+            target: { tabId: _epDetailTab.id },
+            world: "MAIN",
+            func: function(url) {
+              return fetch(url, { credentials: "include" }).then(function(r) { return r.text(); }).then(function(html) {
+                var doc = new DOMParser().parseFromString(html, "text/html");
+                var headings = Array.from(doc.querySelectorAll("h1,h2,h3,h4,th,dt,strong,b,td"));
+                for (var h of headings) {
+                  var ht = (h.innerText || h.textContent || "").trim();
+                  if (!ht.includes("客付")) continue;
+                  var container = h.closest("section,article,table,dl,.block,.section") || h.parentElement;
+                  if (!container) continue;
+                  var text = (container.innerText || "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+                  if (text && text.length > 5) return text;
+                }
+                return null;
+              }).catch(function() { return null; });
+            },
+            args: [_epExtractRes.page2Url],
+          });
+          var _epPage2Text = _epPage2 && _epPage2[0] && _epPage2[0].result;
+          if (_epPage2Text) {
+            _epBrokerText = "【客付業者様へ（詳細2ページ目）】\n" + _epPage2Text;
+          }
+        }
+
+        // ── Step 7: 詳細タブを閉じる ─────────────────────────────────────────────
+        await chrome.tabs.remove(_epDetailTab.id).catch(function() {});
+
+        if (!_epBrokerText) {
+          sendResponse({ ok: false, error: "詳細ページに「客付業者様へ」セクションが見つかりませんでした（URLを確認: " + _epDetailHref + "）" });
+          return;
+        }
+
+        sendResponse({ ok: true, text: _epBrokerText });
+      } catch (err) {
+        sendResponse({ ok: false, error: "エラー: " + String(err) });
+      }
+    })();
+    return true; // async sendResponse
+  }
+
   // ── WebApp から直接スクレイプ+比較トリガー ──────────────────────────────
   // WebApp の UI から「物件を比較」ボタンを押すと送られるメッセージ。
   // 既存の _webappAutofill でリアプロを検索条件付きで開いた後、

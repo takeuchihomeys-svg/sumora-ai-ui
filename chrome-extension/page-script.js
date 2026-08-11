@@ -1314,6 +1314,141 @@
     }); // _doReset end
   }
 
+  // ── axlx-realpro-freeword-search: フリーワード検索ハンドラー ────────────────
+  // background.js が executeScript 経由で送った postMessage を受けて
+  // フリーワード入力 → 検索クリック を行う。
+  // 結果行スキャンは AJAX 更新の場合のみ担当（ページ遷移した場合は background.js が引き継ぐ）
+  window.addEventListener("message", function(e) {
+    if (!e.data || e.data.from !== "axlx-realpro-freeword-search") return;
+    var _fwPropName = (e.data.propertyName || "").trim();
+    var _fwRoomNum  = (e.data.roomNumber   || "").trim();
+
+    window.__axlxEstimateSearchResult = undefined;
+
+    // ── フリーワード入力欄を探す ─────────────────────────────────────────────
+    // DevTools調査済み（2026-08-11）: リアプロ main.php の実DOM確認
+    // index 30: type="search" name="keyword" → これが正しいフリーワード欄
+    var _FW_SELECTORS = [
+      'input[name="keyword"]',
+      'input[type="search"]',
+      'input[name="free_word"]',
+      'input[name="freeword"]',
+      'input[name="building_name"]',
+      'input[name="search_word"]',
+      '#free_word',
+      '#freeword',
+      'input[placeholder*="フリーワード"]',
+      'input[placeholder*="物件名"]',
+      'input[placeholder*="建物名"]',
+    ];
+
+    var _fwInput = null;
+    for (var _si = 0; _si < _FW_SELECTORS.length; _si++) {
+      _fwInput = document.querySelector(_FW_SELECTORS[_si]);
+      if (_fwInput) break;
+    }
+
+    if (!_fwInput) {
+      window.__axlxEstimateSearchResult = {
+        ok: false,
+        error: "フリーワード入力欄が見つかりません（DevToolsで document.querySelectorAll('input[type=text]') を実行してセレクターを確認してください）",
+      };
+      return;
+    }
+
+    // ── 物件名をセット ────────────────────────────────────────────────────────
+    _fwInput.focus();
+    _fwInput.value = _fwPropName;
+    // React / Vue 等のバインディングにも対応するため複数イベントを発火
+    ["input", "change", "keyup"].forEach(function(ev) {
+      _fwInput.dispatchEvent(new Event(ev, { bubbles: true }));
+    });
+
+    // ── 検索ボタンをクリック（page-script.js 既存の clickSearch セレクターを流用）──
+    // div.go_search は DevTools 診断済みの確定セレクター
+    var _fwBtn =
+      document.querySelector("div.go_search") ||
+      document.querySelector("div.go_search_submit") ||
+      (function() {
+        var candidates = Array.from(document.querySelectorAll("button, input[type='submit'], div[onclick], a"));
+        return candidates.find(function(el) {
+          var t = (el.textContent || el.value || "").trim();
+          return ["住居検索", "検索", "物件を検索する", "条件で検索"].some(function(kw) { return t.includes(kw); });
+        });
+      })();
+
+    if (!_fwBtn) {
+      window.__axlxEstimateSearchResult = {
+        ok: false,
+        error: "検索ボタンが見つかりません（div.go_search が存在しない可能性があります）",
+      };
+      return;
+    }
+
+    // triggered フラグを立ててから検索開始
+    // → background.js がこのフラグを確認して結果スキャンのポーリングを開始する
+    // → ページ遷移で page-script.js が消えても background.js が独立してスキャンを継続できる
+    window.__axlxEstimateSearchResult = { ok: true, triggered: true };
+    _fwBtn.click();
+
+    // ── 結果行スキャン（AJAX更新の場合: ページ遷移しないため自力でhrefを取得可能）────
+    // ページ遷移した場合はこのポーリングが自動停止し、background.js が引き継ぐ。
+    var _fwStart  = Date.now();
+    var _fwMaxMs  = 18000; // 18秒（background.js の25秒ポーリングより短く設定）
+    // 号室番号から「号室」「号」のサフィックスを除去して数字のみにする
+    var _fwRNumCore = _fwRoomNum.replace(/号室?$/, "").trim();
+    var _fwRNumEsc  = _fwRNumCore.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    var _fwRoomRe   = new RegExp("(?<![0-9])" + _fwRNumEsc + "(?![0-9])");
+
+    // 【実装前確認必須】リアプロの結果行セレクターを DevTools で特定して更新する
+    var _ROW_SELS = [
+      "table.result-list tbody tr",
+      "table.list tbody tr",
+      ".room-list tr",
+      "tbody tr",
+    ];
+
+    function _fwScanRows() {
+      for (var _ri = 0; _ri < _ROW_SELS.length; _ri++) {
+        var rows = Array.from(document.querySelectorAll(_ROW_SELS[_ri]));
+        for (var _rj = 0; _rj < rows.length; _rj++) {
+          var row = rows[_rj];
+          var rowText = row.innerText || row.textContent || "";
+          if (!_fwRoomRe.test(rowText)) continue;
+          // 詳細リンクを探す（優先順: room_detail > /detail > 汎用 a[href]）
+          var link =
+            row.querySelector('a[href*="room_detail"]') ||
+            row.querySelector('a[href*="/detail"]') ||
+            row.querySelector('a[href*="detail.php"]') ||
+            row.querySelector('a[href*="detail?"]') ||
+            row.querySelector("a[href]");
+          if (link && link.href && !link.href.startsWith("javascript:")) {
+            return link.href;
+          }
+        }
+      }
+      return null;
+    }
+
+    function _fwPoll() {
+      // 既に href が設定済みならポーリング終了
+      if (window.__axlxEstimateSearchResult && window.__axlxEstimateSearchResult.href) return;
+      // タイムアウト: background.js に委ねる（triggered フラグは維持したまま終了）
+      if (Date.now() - _fwStart > _fwMaxMs) return;
+
+      var href = _fwScanRows();
+      if (href) {
+        window.__axlxEstimateSearchResult = { ok: true, href: href };
+        return;
+      }
+
+      setTimeout(_fwPoll, 600);
+    }
+
+    // 検索クリック後 1.5 秒待ってからポーリング開始（結果の描画を待つ）
+    setTimeout(_fwPoll, 1500);
+  });
+
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "aixlinx-fill") return;
     try {
