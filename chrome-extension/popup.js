@@ -2546,22 +2546,30 @@ function openInstructions(siteKey) {
       const itandiLines = [];
       const _itandiUnknown = [];
       tokens.forEach(function(tok) {
-        const dbEntry = LEARNED_STATION_MAP[tok];
-        if (dbEntry && dbEntry.itandi_lines && dbEntry.itandi_lines.length > 0) {
-          dbEntry.itandi_lines.forEach(function(l) { if (!itandiLines.includes(l)) itandiLines.push(l); });
-        } else {
-          // DBにない → 静的マップフォールバック
-          var rpLines = STATION_LINE_MAP[tok] || [];
-          if (!rpLines.length && LEARNED_STATION_MAP[tok]?.realpro_lines?.length) {
-            rpLines = LEARNED_STATION_MAP[tok].realpro_lines;
-          }
-          rpLines.forEach(function(l) {
-            var v = ITANDI_LINE_MAP_FILL[l];
-            (Array.isArray(v) ? v : (v ? [v] : [])).forEach(function(m) {
-              if (!itandiLines.includes(m)) itandiLines.push(m);
+        // ハブ駅展開: 梅田→[梅田,東梅田,西梅田,大阪梅田,大阪]等、全ハブ駅の路線を集約
+        var hubList = (STATION_HUB_MAP && STATION_HUB_MAP[tok]) ? STATION_HUB_MAP[tok] : [tok];
+        hubList.forEach(function(hubTok) {
+          var dbEntry = LEARNED_STATION_MAP[hubTok];
+          if (dbEntry && dbEntry.itandi_lines && dbEntry.itandi_lines.length > 0) {
+            dbEntry.itandi_lines.forEach(function(l) { if (!itandiLines.includes(l)) itandiLines.push(l); });
+          } else {
+            // DBにない → 静的マップフォールバック
+            var rpLines = STATION_LINE_MAP[hubTok] || [];
+            if (!rpLines.length && dbEntry && dbEntry.realpro_lines && dbEntry.realpro_lines.length) {
+              rpLines = dbEntry.realpro_lines;
+            }
+            rpLines.forEach(function(l) {
+              var v = ITANDI_LINE_MAP_FILL[l];
+              (Array.isArray(v) ? v : (v ? [v] : [])).forEach(function(m) {
+                if (!itandiLines.includes(m)) itandiLines.push(m);
+              });
             });
-          });
-          if (!dbEntry?.itandi_lines?.length) _itandiUnknown.push(tok);
+          }
+        });
+        // 未知（DBにitandi_linesが無い）はAPIで解決
+        var origEntry = LEARNED_STATION_MAP[tok];
+        if (!origEntry || !origEntry.itandi_lines || !origEntry.itandi_lines.length) {
+          _itandiUnknown.push(tok);
         }
       });
       // API補完（resolve-area の結果も追加）
@@ -2594,6 +2602,14 @@ function openInstructions(siteKey) {
       let stationNames = null;
       if (!isWardArea_itandi && matchedStations.length > 0) {
         stationNames = [...matchedStations];
+        // ハブ駅展開: 梅田→東梅田/西梅田/大阪梅田 等、各路線モーダルで駅クリックが効くよう全ハブ駅名を追加
+        matchedStations.forEach(function(st) {
+          if (STATION_HUB_MAP && STATION_HUB_MAP[st]) {
+            STATION_HUB_MAP[st].forEach(function(hubSt) {
+              if (!stationNames.includes(hubSt)) stationNames.push(hubSt);
+            });
+          }
+        });
         if (searchMode === "wide") {
           matchedStations.forEach(st => {
             const stLines = STATION_LINE_MAP[st] || [];
