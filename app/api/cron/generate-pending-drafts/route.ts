@@ -76,12 +76,14 @@ async function run() {
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // ① 60秒以上前〜10分以内にpendingになった会話（デバウンス経過・古すぎるものは除外）
+  // bg-async が10分以内にクレーム済み（draft_attempted_at）の会話はフェッチ段階でスキップ（二重Sonnet防止）
   const { data: pendingConvs, error } = await db
     .from("conversations")
     .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at, draft_fail_count")
     .not("draft_pending_at", "is", null)
     .lte("draft_pending_at", threshold)
     .gte("draft_pending_at", tenMinutesAgo)
+    .or("draft_attempted_at.is.null,draft_attempted_at.lt." + tenMinutesAgo)
     .limit(5); // 3→5: 同時多数メッセージ時の処理件数を増やす
 
   // ② 取りこぼし救済: pending_atなし（または10分以上前の古いpending）・下書きなし・24時間以内・未返信
@@ -176,7 +178,7 @@ async function run() {
     // 先にpendingをクリアして重複処理を防ぐ ＋ 生成試行時刻をDBに記録
     // （失敗しても draft_attempted_at から10分間はorphanedクエリの再試行対象外になる）
     // MEDIUM-4: 楽観的ロック — 複数インスタンスが同一会話を同時にクレームしても1つしか成功しない
-    // ①pending  → draft_pending_at がまだセットされている行のみ更新
+    // ①pending  → draft_pending_at がまだセットされている かつ bg-async が未クレーム（draft_attempted_at）の行のみ更新
     // ②orphaned → draft_pending_at は NULL のため .not(pending,is,null) では絶対に成立しない。
     //             draft_attempted_at（未試行 or 10分以上前）をロック条件に使う
     const claimBase = db.from("conversations")
@@ -184,7 +186,7 @@ async function run() {
       .eq("id", convId);
     const { data: claimed, error: markErr } = await (conv.__source === "orphaned"
       ? claimBase.or("draft_attempted_at.is.null,draft_attempted_at.lt." + tenMinutesAgo)
-      : claimBase.not("draft_pending_at", "is", null)
+      : claimBase.not("draft_pending_at", "is", null).or("draft_attempted_at.is.null,draft_attempted_at.lt." + tenMinutesAgo)
     ).select("id");
     if (markErr) {
       // マーク失敗のまま生成すると毎分再処理＋二重生成になるためスキップ
