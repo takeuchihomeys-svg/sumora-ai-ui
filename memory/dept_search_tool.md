@@ -182,6 +182,8 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-05-20 | 新メンバー追加: #43-GK（大阪地域博士・NEIGHBORHOOD_WARD_MAP守護者）・#43-EK（大阪駅博士・不明トークン第一相談窓口）・#43-AX・#43-RG・#43-WD・#43-WX |
 | 2026-08-10 | 乗り換えグラフDB実装: build-transit-graph.js自動生成→transit_graph.js（422駅・全沿線・1048エッジ）。getStationsWithinTransfers() BFS追加。乗り換えN回UI（enableTransfer/maxTransfers）追加。popup.htmlスクリプト順: popup-maps.js→transit_graph.js→popup.js |
 | 2026-08-10 | BFS走査バグ修正: node.adjはオブジェクトのためfor..ofが失敗→Object.values(node.adj)でedge.to/edge.lineを取り出すよう修正 |
+| 2026-08-11 | **itandi ハブ駅展開実装**: popup.js itandiLines構築ループをSTATION_HUB_MAP対応に変更。梅田→[梅田,東梅田,西梅田,大阪梅田,大阪]等、全ハブ駅のDB/静的マップ路線を集約（リアプロと同等の路線数を選択）。stationNames構築にもハブ展開追加（各路線モーダルで駅クリックが効くよう）。commit 38bbbe3 |
+| 2026-08-11 | **ITANDI_LINE_MAP_FILL欠落キー追加**: 能勢電鉄妙見線/日生線・近鉄信貴線・近鉄西信貴ケーブル線をITANDI_LINE_MAP_FILLに追加（STATION_LINE_MAPで使われるリアプロ路線名なのに変換エントリが無かった）。commit 38bbbe3 |
 
 ---
 
@@ -515,6 +517,14 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 ## 🔁 引き継ぎ事項（次セッションへ）
 
 - 現在のバージョン: **v2.4.8**（manifest.json 記載）
+- **2026-08-11 itandi station_map DB統合**:
+  - `/api/itandi-resolve` 新設: station_map テーブルの itandi_lines カラムを直接返す itandi 専用軽量API。入力: `{ tokens: string[] }`、出力: `{ resolved: {[token]: {itandi_lines, ward}}, unknown_tokens }`
+  - `popup.js` L2545〜: itandiLines 構築を `LEARNED_STATION_MAP[token].itandi_lines`（DB全件キャッシュ）優先に変更。DB未登録駅のみ `ITANDI_LINE_MAP_FILL` 静的変換にフォールバック
+  - 未知トークンを /api/itandi-resolve で fire-and-forget 解決し LEARNED_STATION_MAP を更新（次回以降に反映）
+  - これにより「難波」→「なんば（御堂筋線）」等の正確な itandi 路線名が使われる（STATION_LINE_MAP の南海本線誤マッピングを克服）
+- **2026-08-11 一括検索で物件が送られないバグ修正 (bulk-dl.js)**:
+  - `axlx-autofill-initiated` ハンドラで sessionStorage(`axlx_auto_send`)を即時クリア → 前バッチ中断で残留した stale state が次バッチの Case A `!getAutoSendState()` チェックをブロックするバグを修正
+  - fill-done ハンドラに **2秒フォールバックタイマー** 追加 → AJAX がDOM要素を再利用して `_hasNewBtn = false` になり Case A が起動しないケースを救済（`_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched` の条件が2秒後も成立していれば強制送信）
 - **2026-08-11 バッチ0件停止バグ修正 + 0件LINEアナウンス**:
   - `bulk-dl.js`: 0件タイムアウトを **1200ms → 4000ms** に延長（遅いAJAX検索で0件誤判定するバグ修正。1人目0件→2人目で止まる現象の根本原因）
   - `bulk-dl.js`: `axlx-batch-customer-done` に `propertyCount: 0` を付加して0件確定を伝播
