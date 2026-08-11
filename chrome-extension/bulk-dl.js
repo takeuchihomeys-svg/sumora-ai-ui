@@ -844,20 +844,21 @@
     // Case A は _autoSendArmed=false のまま inject() を空振りしてしまう。
     // fill-done 後に inject() を再呼び出しして Case A を確実に到達させる。
     setTimeout(inject, 50);
-    // 0件デッドロック対策: 1.2秒後（inject debounce 400ms + AJAX反映待ち）に
+    // 0件デッドロック対策: 4秒後（inject debounce 400ms + AJAX反映待ち 3.6秒）に
     // まだ armed のまま tracked=0 なら物件なし確定 → batch-customer-done を即送信
+    // ※ 1.2秒だと遅いAJAX（1〜3秒かかる検索）を0件と誤判定するケースがあったため4秒に延長
     setTimeout(function () {
       if (_autoSendArmed && tracked.length === 0) {
         _autoSendArmed = false;
         console.log("[AXLX bulk-dl] fill-done 後 0件確定 → batch-customer-done を即送信");
         try {
           chrome.runtime.sendMessage(
-            { type: "axlx-batch-customer-done", customerId: null },
+            { type: "axlx-batch-customer-done", customerId: null, propertyCount: 0 },
             function () { void chrome.runtime.lastError; }
           );
         } catch (_) {}
       }
-    }, 1200);
+    }, 4000);
   });
 
   // ── メッセージリスナー（background.js からのスクレイプ指示）──────────────

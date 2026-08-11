@@ -1794,11 +1794,11 @@ function _createFillDoneWaiter(site, timeoutMs) {
 // _scrapeAndSendRealpro はこの Promise が解決するまで次顧客への移行を待つ。
 var _batchCustomerDoneWaiters = [];
 
-function _notifyBatchCustomerDone() {
+function _notifyBatchCustomerDone(propertyCount) {
   _batchCustomerDoneWaiters.forEach(function(w) {
     clearInterval(w.stopInterval);
     clearTimeout(w.timer);
-    w.resolve({ ok: true });
+    w.resolve({ ok: true, propertyCount: propertyCount != null ? propertyCount : null });
   });
   _batchCustomerDoneWaiters = [];
 }
@@ -1855,8 +1855,8 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 
 chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg && msg.type === "axlx-batch-customer-done") {
-    // _scrapeAndSendRealpro の待機を解除して次顧客へ進む
-    _notifyBatchCustomerDone();
+    // _scrapeAndSendRealpro の待機を解除して次顧客へ進む（propertyCount: 0 なら0件確定）
+    _notifyBatchCustomerDone(msg.propertyCount != null ? msg.propertyCount : null);
     // Webアプリタブにも通知（バッチ進捗UI更新のため）
     (async () => {
       try {
@@ -2723,6 +2723,14 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   } else {
     console.log("[scrapeAndCompare] 全ページ送信完了 customer=" + customerId);
   }
+  // 0件時 → LINEグループへアナウンス
+  if (batchDone && batchDone.propertyCount === 0 && customerName) {
+    fetch(SUMORA_BATCH_API + "/api/notify-group", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんのリアプロ検索が0件でした" })
+    }).catch(function() {});
+  }
   return 0;
 }
 
@@ -2816,6 +2824,13 @@ async function _scrapeAndCompareItandi(fillDonePromise, customerId, customerName
 
   if (properties.length === 0) {
     console.warn("[itandiScrape] 物件0件のためAPIスキップ");
+    if (customerName) {
+      fetch(SUMORA_BATCH_API + "/api/notify-group", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんのitandi検索が0件でした" })
+      }).catch(function() {});
+    }
     return;
   }
 
