@@ -1789,6 +1789,43 @@ function _createFillDoneWaiter(site, timeoutMs) {
   });
 }
 
+// ── 全ページ送信完了（axlx-batch-customer-done）待機インフラ ─────────────────────────
+// bulk-dl.js が tryNext→全ページ完了時に chrome.runtime.sendMessage で通知する。
+// _scrapeAndSendRealpro はこの Promise が解決するまで次顧客への移行を待つ。
+var _batchCustomerDoneWaiters = [];
+
+function _notifyBatchCustomerDone() {
+  _batchCustomerDoneWaiters.forEach(function(w) {
+    clearInterval(w.stopInterval);
+    clearTimeout(w.timer);
+    w.resolve({ ok: true });
+  });
+  _batchCustomerDoneWaiters = [];
+}
+
+function _createBatchCustomerDoneWaiter(customerId, timeoutMs) {
+  return new Promise(function(resolve) {
+    var entry = { resolve: resolve, timer: null, stopInterval: null };
+    entry.stopInterval = setInterval(function() {
+      if (!_batchShouldStop) return;
+      clearInterval(entry.stopInterval);
+      clearTimeout(entry.timer);
+      var idx = _batchCustomerDoneWaiters.indexOf(entry);
+      if (idx >= 0) _batchCustomerDoneWaiters.splice(idx, 1);
+      console.log("[batch-done-waiter] _batchShouldStop 検知 → stopped:true で解決");
+      resolve({ stopped: true });
+    }, 500);
+    entry.timer = setTimeout(function() {
+      clearInterval(entry.stopInterval);
+      var idx = _batchCustomerDoneWaiters.indexOf(entry);
+      if (idx >= 0) _batchCustomerDoneWaiters.splice(idx, 1);
+      console.warn("[batch-done-waiter] " + timeoutMs / 1000 + "秒タイムアウト customer=" + customerId);
+      resolve({ timedOut: true });
+    }, timeoutMs || 300000);
+    _batchCustomerDoneWaiters.push(entry);
+  });
+}
+
 // content script からの fill-done 中継を受信
 // Fix 5: underbar.js が中継する Web アプリのストップボタン信号を受信する
 chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
@@ -1818,6 +1855,9 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 
 chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg && msg.type === "axlx-batch-customer-done") {
+    // _scrapeAndSendRealpro の待機を解除して次顧客へ進む
+    _notifyBatchCustomerDone();
+    // Webアプリタブにも通知（バッチ進捗UI更新のため）
     (async () => {
       try {
         const tabs = await chrome.tabs.query({ url: ["https://sumora-ai-ui.vercel.app/*", "http://localhost:3000/*"] });
@@ -2628,54 +2668,36 @@ async function _scrapeAndCompareForCustomer(customer) {
   await _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, mergedConditions);
 }
 
-// ── 修正4+7+12: リアプロの fill-done 待機 → 全ページスクレイプ → AI比較+LINE送信 ──
-// fillDonePromise は autofill 発火「前」に _createFillDoneWaiter("realnetpro", 90000)
-// で作成しておくこと。失敗（シグナル未着・タブ不在・スクレイプ全失敗）は throw して
-// 呼び出し元（scrape_and_compare / 通常バッチ）が status:'error' として記録できるようにする。
+// ── リアプロの fill-done 待機 → bulk-dl.js 全ページ送信完了待機 ──
+// bulk-dl.js の autoSendAllPages が全ページ送信後に axlx-batch-customer-done を送る。
+// background.js はその完了を待ってから次顧客へ移る（ページ競合を防ぐ）。
 async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, conditions) {
-  // 修正4: 検索実行シグナルを待つ（所在地・沿線駅モーダル経由だと入力に15〜60秒かかる上、
-  // タブのページロード時間もこの待機予算から消費されるため90秒に設定。
-  // page-script.js 側は85秒のフェイルセーフで必ず fill-done を送る）
-  // resolve 値は { timedOut, error } 形式（_createFillDoneWaiter 参照）
+  // fill-done を待つ（検索実行完了シグナル）
   var fillDone = fillDonePromise ? await fillDonePromise : null;
-  // Fix 3: stopped:true の場合はストップ要求によるキャンセル（エラーではない）
   if (fillDone && fillDone.stopped) {
     throw new Error("__BATCH_STOPPED__");
   }
   if (!fillDone || fillDone.timedOut) {
-    throw new Error("リアプロ検索完了シグナル（fill-done）が90秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
+    throw new Error("リアプロ検索完了シグナル（fill-done）が90秒以内に届きませんでした。");
   }
   if (fillDone.error) {
-    // fallbackSearchWithoutArea はエラー送信のみで検索を実行しないため、
-    // スクレイプすると前回結果やエリア条件なし全件を誤送信する。中止する。
-    throw new Error("page-script側エラー（スクレイプ中止）: " + fillDone.error);
-  }
-  // 検索結果の描画完了を待つ
-  await new Promise(function (r) { setTimeout(r, 3000); });
-
-  // リアプロタブを取得
-  var allTabs = await chrome.tabs.query({});
-  var realproTab = allTabs.find(function (t) {
-    return t.url && t.url.includes("realnetpro.com");
-  });
-  if (!realproTab) {
-    throw new Error("リアプロのタブが見つかりません");
+    throw new Error("page-script側エラー（スキップ）: " + fillDone.error);
   }
 
-  // 全ページスクレイピング（最大10ページ）— 1ページ目のスクレイプ失敗は throw（修正12）
-  var properties = await _scrapeAllRealproPages(realproTab.id);
-  console.log("[scrapeAndCompare] customer=" + customerId + " scraped=" + properties.length + "件");
-
-  if (properties.length === 0) {
-    console.warn("[scrapeAndCompare] 物件0件のためAPIスキップ");
-    return 0;
+  // fill-done 受信後、bulk-dl.js が axlx-autofill-initiated → autoSendAllPages → 全ページPDF送信
+  // axlx-batch-customer-done シグナルで全ページ送信完了を待つ（最大5分）
+  // これにより次顧客のautofillがページを書き換える前に現顧客の送信が確実に完了する
+  console.log("[scrapeAndCompare] fill-done 受信 → 全ページ送信完了を待機 customer=" + customerId);
+  var batchDone = await _createBatchCustomerDoneWaiter(customerId, 300000);
+  if (batchDone && batchDone.stopped) {
+    throw new Error("__BATCH_STOPPED__");
   }
-
-  // merge-pdfs側でAIランキング+LINE送信済みのため compare-properties LINE送信は廃止
-  // （2通→1通統合: buildLineMessage内でオススメ物件を先頭表示）
-  // await _sendPropertiesToBackend(_normalizeRealproProperties(properties), customerId, conditions, customerName);
-  console.log("[scrapeAndCompare] realnetpro LINE送信スキップ（merge-pdfsで送信済み） scraped=" + properties.length + "件");
-  return properties.length;
+  if (batchDone && batchDone.timedOut) {
+    console.warn("[scrapeAndCompare] 全ページ送信完了シグナルが5分以内に届きませんでした（次顧客へ続行） customer=" + customerId);
+  } else {
+    console.log("[scrapeAndCompare] 全ページ送信完了 customer=" + customerId);
+  }
+  return 0;
 }
 
 // ===== itandi スクレイプ支援関数 =====

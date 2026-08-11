@@ -354,10 +354,9 @@
     if (a === "autofill") {
       // page-script.jsのリスナーに転送（ページのJS文脈で動かす）
       window.postMessage({ from: "aixlinx-fill", conditions: e.data.conditions }, "*");
-      // 手動クリック時のみ全ページ自動送信を予約（自動バッチは source:"automated" で区別）
-      if (e.data.source !== "automated") {
-        window.postMessage({ from: "axlx-autofill-initiated" }, "*");
-      }
+      // バッチ・手動どちらも bulk-dl.js の全ページ自動送信フローを起動する
+      // （background.js は axlx-batch-customer-done を待って次顧客へ移るため競合しない）
+      window.postMessage({ from: "axlx-autofill-initiated" }, "*");
     }
     if (a === "itandi-autofill") {
       // itandi-content.jsに転送（chrome.tabsがiframe内で使えないためpostMessage経由）
