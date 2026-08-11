@@ -583,6 +583,20 @@
       });
       var closeDelay = 0;
       if (closeBtn) {
+        // ★ 修正: モーダルが開いている場合、閉じる前に路線・駅の選択をクリア
+        // リアプロのモーダルはJS内部状態を持ちフォームDOM操作では消えないため
+        // 閉じる前にlabel.one_line（路線）とstation_code[]（駅）をクリックして解除する
+        try {
+          Array.prototype.slice.call(document.querySelectorAll('label.one_line')).forEach(function(lbl) {
+            if (!isVisible(lbl)) return;
+            var cb = lbl.querySelector('input[type="checkbox"]');
+            if (cb && cb.checked) cb.click();
+          });
+          Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]:checked'))
+            .filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); })
+            .forEach(function(inp) { inp.click(); });
+          console.log("[AX] _doReset: モーダル内の路線・駅選択をクリア");
+        } catch (_e) { /* ignore */ }
         // click() の同期例外で callback 未到達（= fill-done 永久欠落）にならないよう try-catch
         try { closeBtn.click(); closeDelay = 400; console.log("[AX] モーダルを閉じました"); }
         catch (err) { console.error("[AX] _doReset: モーダル閉じで例外（続行）", err); }
@@ -1207,6 +1221,12 @@
               }
               return false; // まだ描画されていない
             }
+            // ★ 修正: 前顧客の路線選択残留をクリア（モーダルのJS内部状態）
+            // _doReset のフォームDOM操作では消えないため、モーダル表示中に直接クリック解除する
+            vis.forEach(function(lbl) {
+              var cb = lbl.querySelector('input[type="checkbox"]');
+              if (cb && cb.checked) { try { cb.click(); } catch(e) {} }
+            });
             if (hasRoutes) clickLineButtons(cond.route_ids);
             return true;
           },
