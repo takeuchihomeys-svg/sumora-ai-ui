@@ -829,8 +829,25 @@ function EstimatePageContent() {
 
             {/* 画像アップロードエリア */}
             <section>
-              <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accent }}>
-                資料画像（物件資料・料金表・請求書など）
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[12px] font-bold" style={{ color: cfg.accent }}>
+                  資料画像（物件資料・料金表・請求書など）
+                </span>
+                <button
+                  onClick={handleAutoMode}
+                  disabled={autoModeStatus === "running" || extracting}
+                  className="rounded-full px-3 py-1 text-[11px] font-bold text-white disabled:opacity-50 flex items-center gap-1"
+                  style={{ background: "linear-gradient(135deg,#1b5e20,#43a047)" }}
+                >
+                  {autoModeStatus === "running" ? (
+                    <>
+                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      取得中...
+                    </>
+                  ) : (
+                    "自動モード"
+                  )}
+                </button>
               </div>
               <div
                 className="rounded-2xl border-2 border-dashed border-[#b3d4f5] bg-white p-4 text-center"
@@ -933,22 +950,6 @@ function EstimatePageContent() {
               <div className="rounded-xl bg-red-50 px-4 py-3 text-[13px] text-red-600">{extractError}</div>
             )}
 
-            {/* 自動モードボタン */}
-            <button
-              onClick={handleAutoMode}
-              disabled={autoModeStatus === "running" || extracting}
-              className="w-full rounded-full py-3.5 text-[14px] font-bold text-white shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
-              style={{ background: "linear-gradient(135deg,#1b5e20,#43a047)" }}
-            >
-              {autoModeStatus === "running" ? (
-                <>
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  {autoModeMessage || "自動取得中..."}
-                </>
-              ) : (
-                "🤖 自動モード（拡張から物件情報取得）"
-              )}
-            </button>
             {autoModeStatus === "error" && autoModeMessage && (
               <div className="rounded-xl bg-amber-50 px-4 py-3 text-[12px] text-amber-700">{autoModeMessage}</div>
             )}
