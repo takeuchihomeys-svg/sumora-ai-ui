@@ -360,11 +360,9 @@
     }
     if (a === "itandi-autofill") {
       // itandi-content.jsに転送（chrome.tabsがiframe内で使えないためpostMessage経由）
+      // バッチ・手動どちらも itandi-bulk-dl.js の全ページ自動送信フローを起動する
+      window.postMessage({ from: "axlx-itandi-autofill-initiated" }, "*");
       window.postMessage({ from: "aixlinx-itandi-fill", conditions: e.data.conditions }, "*");
-      // 手動クリック時のみ自動送信を予約（バッチ処理はbackground.js経由で別フロー）
-      if (e.data.source !== "automated") {
-        window.postMessage({ from: "axlx-itandi-autofill-initiated" }, "*");
-      }
     }
     if (a === "copy" && typeof e.data.text === "string") {
       // Clipboard APIは一切使わずexecCommandのみでコピー

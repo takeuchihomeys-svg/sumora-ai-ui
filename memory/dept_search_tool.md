@@ -515,6 +515,7 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 ## 🔁 引き継ぎ事項（次セッションへ）
 
 - 現在のバージョン: **v2.4.8**（manifest.json 記載）
+- **2026-08-11 itandi バッチ検索を popup.js 経由に統一**: `background.js` `_batchAutofill` の itandi 分岐を変更。旧: `axlx-itandi-autofill` を itandi-content.js に直送信（popup.js バイパス）→ 新: `axlx-switch-customer` → `underbar.js` → `popup.js`（ITANDI_LINE_MAP_FILL・Dijkstra 路線展開含む完全条件構築）で リアプロと同一フロー。フォールバックあり（popup.js 未応答時は旧方式）。`underbar.js` も変更: itandi-autofill ハンドラの `source !== "automated"` 条件を削除し `axlx-itandi-autofill-initiated` を常に送信（バッチ・手動どちらでも itandi-bulk-dl.js 自動送信フローが起動するよう統一）。
 - **2026-08-10 一括検索バグ修正**: `background.js` の `_batchAutofill` realnetpro 分岐を修正。旧: `executeScript` で直接 `"aixlinx-fill"` 注入（popup.js をバイパスして Dijkstra 路線展開なし）→ 新: `chrome.tabs.sendMessage("axlx-switch-customer")` → `underbar.js` → `popup.js` で完全条件構築（個別検索と同一フロー）。フォールバックあり（popup.js 未応答時は旧方式）。
 - **✅ 2026-06-07 a34f535 が最も安定したベースライン（竹内悠馬確認済み）**
 - 拡張ツールはChromeに手動インストール済み（開発者モード）

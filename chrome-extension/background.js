@@ -2291,22 +2291,45 @@ async function _batchAutofill(customer, site, isWide) {
       }
     }
   } else if (site === "itandi") {
-    // itandi: itandi-content.js 経由で axlx-itandi-fill-exec を postMessage
-    // itandi-page-script.js（world:MAIN）が message リスナーで受信して検索を実行する
-    var itandiSent = await new Promise(function(resolve) {
-      chrome.tabs.sendMessage(tab.id, { type: "axlx-itandi-autofill", conditions: conds }, function(resp) {
-        resolve(!chrome.runtime.lastError && !!(resp && resp.ok));
+    // popup.js 経由で完全条件構築（ITANDI_LINE_MAP_FILL・Dijkstra路線展開含む）を実行する
+    // リアプロと同一フロー: chrome.tabs.sendMessage → underbar.js → popup.js → itandi-page-script.js
+    var batchItandiSwitched = await new Promise(function(resolve) {
+      chrome.tabs.sendMessage(tab.id, {
+        type:          "axlx-switch-customer",
+        customerId:    String(customer.id),
+        customerName:  customer.customer_name || null,
+        site:          "itandi",
+        areaMode:      customer.area_mode || null,
+        is_wide:       isWide,
+        auto_send_all: false,
+      }, function(resp) {
+        if (chrome.runtime.lastError) {
+          console.warn("[batchAutofill] itandi axlx-switch-customer error:", chrome.runtime.lastError.message);
+          resolve(false); return;
+        }
+        resolve(!!(resp && resp.ok));
       });
     });
-    if (!itandiSent) {
-      // フォールバック: executeScript で MAIN world に直接 postMessage
-      console.warn("[batchAutofill] itandi sendMessage未確認, executeScript fallback");
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        world: "MAIN",
-        func: function(c) { window.postMessage({ from: "axlx-itandi-fill-exec", conditions: c }, "*"); },
-        args: [conds]
+    if (!batchItandiSwitched) {
+      // フォールバック: underbar.js / popup.js 未応答 → 解決済み条件で直接 fill
+      console.warn("[batchAutofill] itandi: axlx-switch-customer 未応答 → direct fallback");
+      var itandiFbSent = await new Promise(function(resolve) {
+        chrome.tabs.sendMessage(tab.id, { type: "axlx-itandi-autofill", conditions: conds }, function(resp) {
+          resolve(!chrome.runtime.lastError && !!(resp && resp.ok));
+        });
       });
+      if (!itandiFbSent) {
+        console.warn("[batchAutofill] itandi sendMessage未確認, executeScript fallback");
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: function(c) {
+            window.postMessage({ from: "axlx-itandi-autofill-initiated" }, "*");
+            window.postMessage({ from: "axlx-itandi-fill-exec", conditions: c }, "*");
+          },
+          args: [conds]
+        });
+      }
     }
   } else {
     // reins
