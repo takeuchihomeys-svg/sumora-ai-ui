@@ -199,6 +199,19 @@
         var isUIText = UI_TEXTS.indexOf(txt) !== -1;
         var hasInteractive = !!(prev.querySelector("button, input[type=button], input[type=submit]"));
         if (txt && txt.length < 40 && !isUIText && !hasInteractive) { name = txt; break; }
+        // ★ 修正: ボタンのある建物情報カード（物件室一覧等）からも建物名を抽出
+        // リアプロ建物ごと表示では建物名ヘッダーがボタンを含む要素に入るためhasInteractiveでスキップされていた
+        if (hasInteractive && !isUIText) {
+          var rawLines = (prev.innerText || txt).split(/[\n\r]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+          for (var li2 = 0; li2 < rawLines.length; li2++) {
+            var seg = rawLines[li2];
+            if (seg.length < 2 || seg.length > 40) continue;
+            if (/^住所|^〒|^沿線|^TEL|^Tel|^tel|^\d{2,4}-|^株式会社|^有限会社/.test(seg)) continue;
+            if (UI_TEXTS.indexOf(seg) !== -1) continue;
+            name = seg; break;
+          }
+          if (name) break;
+        }
       }
       cur = cur.parentElement;
     }
@@ -293,14 +306,23 @@
       if (!e.data || e.data.from !== "axlx-customer-response") return;
       clearTimeout(timer);
       window.removeEventListener("message", handler);
-      callback(e.data.name || null, e.data.conditions || null, e.data.id || null);
+      if (e.data.name) {
+        callback(e.data.name, e.data.conditions || null, e.data.id || null);
+      } else {
+        // popup未選択 → storage から最後の顧客名をフォールバック
+        chrome.storage.local.get("current_customer_name", function(data) {
+          callback(data.current_customer_name || null, e.data.conditions || null, e.data.id || null);
+        });
+      }
     };
     window.addEventListener("message", handler);
     window.postMessage({ from: "axlx-get-customer" }, "*");
-    // 800ms 以内に応答がなければ null で続行（アンダーバー外から使った場合など）
+    // 800ms 以内に応答がなければ storage から最後の顧客名をフォールバック
     timer = setTimeout(function () {
       window.removeEventListener("message", handler);
-      callback(null, null);
+      chrome.storage.local.get("current_customer_name", function(data) {
+        callback(data.current_customer_name || null, null, null);
+      });
     }, 800);
   }
 
