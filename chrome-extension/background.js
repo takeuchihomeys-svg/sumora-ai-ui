@@ -2262,7 +2262,10 @@ async function _batchAutofill(customer, site, isWide) {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         world: "MAIN",
-        func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
+        func: function(c) {
+          window.postMessage({ from: "axlx-autofill-initiated" }, "*");
+          window.postMessage({ from: "aixlinx-fill", conditions: c }, "*");
+        },
         args: [conds]
       });
     }
