@@ -3422,8 +3422,23 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.querySelectorAll(".site-btn").forEach((btn) => {
+    if (!btn.dataset.site) return; // estimate-btn 等 data-site なしのボタンはスキップ
     btn.addEventListener("click", () => {
       openInstructions(btn.dataset.site);
+    });
+  });
+
+  // ── 見積書ボタン（View 2） ──────────────────────────────────────────
+  document.getElementById("estimate-btn")?.addEventListener("click", () => {
+    if (!selectedCustomer) {
+      alert("お客さんを選択してください");
+      return;
+    }
+    const rent = selectedCustomer.rent_max || selectedCustomer.max_rent || 0;
+    const customerName = encodeURIComponent(selectedCustomer.customer_name || "");
+    const account = encodeURIComponent(selectedCustomer.account || "");
+    chrome.tabs.create({
+      url: `${API_BASE}/estimate?autoMode=true&rent=${rent}&customerName=${customerName}&account=${account}`,
     });
   });
 });

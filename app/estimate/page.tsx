@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import html2canvas from "html2canvas";
 import BottomNav from "../components/BottomNav";
 import type { ExtractedEstimate } from "../api/extract-estimate-info/route";
@@ -262,6 +263,50 @@ export default function EstimatePage() {
   const [lineText, setLineText] = useState("");
   const [lineCopied, setLineCopied] = useState(false);
 
+  const searchParams = useSearchParams();
+
+  // URLパラメータ自動セット（Chrome拡張 View2 からの遷移用）
+  // ?autoMode=true&rent=X&customerName=Y&account=Z を検知して items を初期化し Step2 へ遷移する
+  // deps は searchParams のみ。URL params はページマウント時点で確定しユーザー操作で変化しないため
+  // setState 関数は安定参照なので deps に含めない（ESLint exhaustive-deps 対象外）
+  useEffect(() => {
+    const autoMode = searchParams.get("autoMode");
+    if (autoMode !== "true") return;
+
+    const rentParam = searchParams.get("rent");
+    const customerNameParam = searchParams.get("customerName");
+    const accountParam = searchParams.get("account");
+
+    // アカウントをセット（不正値は "sumora" にフォールバック）
+    const validAccounts: Account[] = ["sumora", "ieyasu", "giga"];
+    const newAccount: Account =
+      accountParam !== null && validAccounts.includes(accountParam as Account)
+        ? (accountParam as Account)
+        : "sumora";
+    setAccount(newAccount);
+
+    // アカウントのデフォルト値（commission / commissionTax を含む）で空 items を生成し、
+    // URL パラメータで受け取った値を上書きする
+    const blank = makeBlankItems(newAccount, "");
+
+    if (rentParam !== null) {
+      const rent = Number(rentParam) || 0;
+      blank.rent = rent;
+      blank.nextRent = rent;
+      // 家賃変更に合わせて保証料も再計算（共益費・水道代はまだ 0）
+      blank.guarantee = Math.round(
+        calcGuaranteeBase(rent, blank.managementFee, blank.waterFee) * blank.guaranteeRate / 100
+      );
+    }
+
+    if (customerNameParam !== null) {
+      blank.customerName = customerNameParam;
+    }
+
+    setItems(blank);
+    setStep("review");
+  }, [searchParams]);
+
   const handleFileSelect = (files: FileList | null) => {
     if (!files) return;
     const MAX_SIZE = 3 * 1024 * 1024; // 3MB
@@ -349,6 +394,51 @@ export default function EstimatePage() {
     setAutoModeStatus("running");
     setAutoModeMessage("物件サイトを確認中...");
     try {
+      // ─ 新フロー: AI読み取り済みの物件名・号室でリアプロを自動検索 ─
+      if (items?.propertyName) {
+        setAutoModeMessage("リアプロで物件を検索中...");
+        const result = await new Promise<{ ok: boolean; text?: string; error?: string }>((resolve) => {
+          const timeout = setTimeout(() => {
+            window.removeEventListener("message", handler);
+            resolve({ ok: false, error: "タイムアウト（Chrome拡張が応答しません）" });
+          }, 45000); // 検索+詳細取得の合計で時間がかかるため45秒
+          const handler = (e: MessageEvent) => {
+            if (e.data?.from === "aixlinx-estimate-search-data") {
+              clearTimeout(timeout);
+              window.removeEventListener("message", handler);
+              resolve({ ok: true, text: e.data.text || "" });
+            }
+            if (e.data?.from === "aixlinx-estimate-search-error") {
+              clearTimeout(timeout);
+              window.removeEventListener("message", handler);
+              resolve({ ok: false, error: e.data.error || "取得に失敗しました" });
+            }
+          };
+          window.addEventListener("message", handler);
+          window.postMessage({
+            from: "aixlinx-webapp-estimate-search",
+            propertyName: items.propertyName,
+            roomNumber: items.roomNumber ?? "",
+          }, "*");
+        });
+
+        if (!result.ok || !result.text) {
+          setAutoModeStatus("error");
+          setAutoModeMessage(result.error || "取得に失敗しました");
+          return;
+        }
+        setSupplementaryText(result.text);
+        setAutoModeStatus("done");
+        setAutoModeMessage("取得完了！AIで読み取り中...");
+        setTimeout(async () => {
+          setAutoModeStatus("idle");
+          setAutoModeMessage("");
+          await handleExtract();
+        }, 500);
+        return; // 新フロー終了 ← 旧フローには落ちない
+      }
+
+      // ─ 旧フロー: 開いている詳細タブからスクレイプ（items未設定時フォールバック）─
       let site = "unknown";
       if (images.length > 0) {
         try {
@@ -362,32 +452,32 @@ export default function EstimatePage() {
         } catch { /* site判定失敗は無視 */ }
       }
       setAutoModeMessage("物件詳細を取得中...");
-      const result = await new Promise<{ ok: boolean; text?: string; error?: string }>((resolve) => {
+      const fallbackResult = await new Promise<{ ok: boolean; text?: string; error?: string }>((resolve) => {
         const timeout = setTimeout(() => {
-          window.removeEventListener("message", handler);
+          window.removeEventListener("message", fallbackHandler);
           resolve({ ok: false, error: "タイムアウト（Chrome拡張が応答しません）" });
         }, 20000);
-        const handler = (e: MessageEvent) => {
+        const fallbackHandler = (e: MessageEvent) => {
           if (e.data?.from === "aixlinx-estimate-data") {
             clearTimeout(timeout);
-            window.removeEventListener("message", handler);
+            window.removeEventListener("message", fallbackHandler);
             resolve({ ok: true, text: e.data.text || "" });
           }
           if (e.data?.from === "aixlinx-estimate-error") {
             clearTimeout(timeout);
-            window.removeEventListener("message", handler);
+            window.removeEventListener("message", fallbackHandler);
             resolve({ ok: false, error: e.data.error || "取得に失敗しました" });
           }
         };
-        window.addEventListener("message", handler);
+        window.addEventListener("message", fallbackHandler);
         window.postMessage({ from: "aixlinx-webapp-estimate-auto", site }, "*");
       });
-      if (!result.ok || !result.text) {
+      if (!fallbackResult.ok || !fallbackResult.text) {
         setAutoModeStatus("error");
-        setAutoModeMessage(result.error || "取得に失敗しました");
+        setAutoModeMessage(fallbackResult.error || "取得に失敗しました");
         return;
       }
-      setSupplementaryText(result.text);
+      setSupplementaryText(fallbackResult.text);
       setAutoModeStatus("done");
       setAutoModeMessage("取得完了！AIで読み取り中...");
       setTimeout(async () => {
@@ -400,7 +490,7 @@ export default function EstimatePage() {
       setAutoModeMessage("エラーが発生しました");
       console.error("[handleAutoMode]", e);
     }
-  }, [images, handleExtract]);
+  }, [images, items, handleExtract]); // ← items を追加
 
   const updateItem = (key: keyof EditableItems, value: string | number) => {
     setItems((prev) => {
