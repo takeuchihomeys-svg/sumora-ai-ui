@@ -1415,14 +1415,19 @@
           var row = rows[_rj];
           var rowText = row.innerText || row.textContent || "";
           if (!_fwRoomRe.test(rowText)) continue;
-          // 詳細リンクを探す（優先順: room_detail > /detail > 汎用 a[href]）
+          // DevTools確認済み（2026-08-11）:
+          // 詳細ボタンはhref="#"でJavaScript起動のため取得不可。
+          // 各部屋行には factsheet.php?id=XXXX&org=1 リンクがあるのでそれを使う。
           var link =
+            row.querySelector('a[href*="factsheet.php"]') ||
             row.querySelector('a[href*="room_detail"]') ||
             row.querySelector('a[href*="/detail"]') ||
             row.querySelector('a[href*="detail.php"]') ||
             row.querySelector('a[href*="detail?"]') ||
-            row.querySelector("a[href]");
-          if (link && link.href && !link.href.startsWith("javascript:")) {
+            (Array.from(row.querySelectorAll("a[href]")).find(function(a) {
+              return !a.href.startsWith("javascript:") && !a.href.endsWith("#") && !a.href.includes("display=building");
+            }) || null);
+          if (link && link.href) {
             return link.href;
           }
         }
