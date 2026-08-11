@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import html2canvas from "html2canvas";
 import BottomNav from "../components/BottomNav";
@@ -235,7 +235,7 @@ function makeBlankItems(account: Account, moveInDate = ""): EditableItems {
   };
 }
 
-export default function EstimatePage() {
+function EstimatePageContent() {
   const [account, setAccount] = useState<Account>("sumora");
   const [step, setStep] = useState<Step>("input");
   const cfg = ACCOUNT_CONFIG[account];
@@ -1513,5 +1513,19 @@ export default function EstimatePage() {
         </div>
       )}
     </main>
+  );
+}
+
+export default function EstimatePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[calc(100svh-56px)] items-center justify-center">
+          <span className="text-[#667781] text-[13px]">読み込み中...</span>
+        </div>
+      }
+    >
+      <EstimatePageContent />
+    </Suspense>
   );
 }
