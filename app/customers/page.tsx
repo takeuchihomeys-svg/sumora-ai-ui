@@ -1570,7 +1570,10 @@ function CustomersPageInner() {
       if (isFlagged) {
         fireFlaggedSearch(targets[0], site);
       } else {
-        void firePropertySearch(targets[0], [site], false, undefined, true);
+        // 通常バッチ: background.js が全顧客を自動処理するため webapp から autofill は不要。
+        // firePropertySearch を呼ぶと background.js の autofill と競合し条件混線バグの原因となる。
+        // poll-now でアラーム30秒待ちをスキップして即時処理開始だけ指示する。
+        window.postMessage({ from: "aixlinx-webapp-poll-now" }, "*");
       }
     }
   };
@@ -1591,9 +1594,8 @@ function CustomersPageInner() {
     const nextCustomer = batchListRef.current[next];
     if (batchIsFlaggedRef.current) {
       fireFlaggedSearch(nextCustomer, batchSiteRef.current);
-    } else {
-      void firePropertySearch(nextCustomer, [batchSiteRef.current], false, undefined, true);
     }
+    // 通常バッチ: background.js が自動処理するため検索は発火しない（表示ナビゲーションのみ）
   };
 
   const stopBatchSearch = () => {
@@ -1631,9 +1633,8 @@ function CustomersPageInner() {
     const prevCustomer = batchListRef.current[prev];
     if (batchIsFlaggedRef.current) {
       fireFlaggedSearch(prevCustomer, batchSiteRef.current);
-    } else {
-      void firePropertySearch(prevCustomer, [batchSiteRef.current], false, undefined, true);
     }
+    // 通常バッチ: background.js が自動処理するため検索は発火しない（表示ナビゲーションのみ）
   };
 
   useEffect(() => {
