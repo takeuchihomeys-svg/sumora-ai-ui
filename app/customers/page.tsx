@@ -1634,13 +1634,29 @@ function CustomersPageInner() {
   useEffect(() => {
     const onBatchCustomerDone = (e: MessageEvent) => {
       if (e.data?.from !== "aixlinx-batch-customer-done") return;
-      if (!batchIsFlaggedRef.current) return;
-      const doneId = e.data?.customerId != null ? String(e.data.customerId) : null;
-      const currentId = batchListRef.current[batchIndexRef.current]?.id != null
-        ? String(batchListRef.current[batchIndexRef.current].id)
-        : null;
-      if (doneId && currentId && doneId !== currentId) return;
-      goNextBatch();
+      if (batchIsFlaggedRef.current) {
+        // フラグモード: ID確認して次顧客の検索を発火
+        const doneId = e.data?.customerId != null ? String(e.data.customerId) : null;
+        const currentId = batchListRef.current[batchIndexRef.current]?.id != null
+          ? String(batchListRef.current[batchIndexRef.current].id)
+          : null;
+        if (doneId && currentId && doneId !== currentId) return;
+        goNextBatch();
+      } else {
+        // 通常バッチ: background.js が自動処理するため検索は発火しない、インデックスだけ進める
+        const next = batchIndexRef.current + 1;
+        if (next >= batchListRef.current.length) {
+          setBatchMode(false);
+          setBatchIndex(0);
+          batchIndexRef.current = 0;
+          batchIsFlaggedRef.current = false;
+          setBatchDone(true);
+          setTimeout(() => setBatchDone(false), 4000);
+        } else {
+          setBatchIndex(next);
+          batchIndexRef.current = next;
+        }
+      }
     };
     window.addEventListener("message", onBatchCustomerDone);
     return () => window.removeEventListener("message", onBatchCustomerDone);
@@ -1874,6 +1890,11 @@ function CustomersPageInner() {
                   >
                     ■
                   </button>
+                </div>
+              ) : batchDone ? (
+                <div className="flex items-center h-9 rounded-xl px-3 text-[11px] font-bold text-white"
+                  style={{ background: "rgba(34,197,94,0.85)", border: "1px solid rgba(34,197,94,0.6)" }}>
+                  完了
                 </div>
               ) : (
                 <>

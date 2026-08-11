@@ -39,6 +39,7 @@
       setTimeout(inject, 200);
     } else {
       _autoSendArmed = false;
+      _pendingAutoSendDispatched = false;
     }
   }
 
@@ -839,6 +840,10 @@
     _autoSendArmed = true;
     _autofillInitiated = false;
     console.log("[AXLX bulk-dl] fill-done 受信 → 全ページ自動送信 armed");
+    // AJAX完了はfill-done到着より先にMutationObserverが走るため、
+    // Case A は _autoSendArmed=false のまま inject() を空振りしてしまう。
+    // fill-done 後に inject() を再呼び出しして Case A を確実に到達させる。
+    setTimeout(inject, 50);
     // 0件デッドロック対策: 1.2秒後（inject debounce 400ms + AJAX反映待ち）に
     // まだ armed のまま tracked=0 なら物件なし確定 → batch-customer-done を即送信
     setTimeout(function () {
