@@ -2671,13 +2671,10 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     return 0;
   }
 
-  // AI比較 + 売上番長LINE送信（修正1: フィールド名を API 形式へ変換してから送信）
-  await _sendPropertiesToBackend(
-    _normalizeRealproProperties(properties),
-    customerId,
-    conditions,
-    customerName
-  );
+  // merge-pdfs側でAIランキング+LINE送信済みのため compare-properties LINE送信は廃止
+  // （2通→1通統合: buildLineMessage内でオススメ物件を先頭表示）
+  // await _sendPropertiesToBackend(_normalizeRealproProperties(properties), customerId, conditions, customerName);
+  console.log("[scrapeAndCompare] realnetpro LINE送信スキップ（merge-pdfsで送信済み） scraped=" + properties.length + "件");
   return properties.length;
 }
 

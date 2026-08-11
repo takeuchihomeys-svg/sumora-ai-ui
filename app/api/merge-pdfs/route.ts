@@ -111,16 +111,30 @@ function buildLineMessage(
 ): string {
   const lines: string[] = [];
 
-  // お客さん名 物件（リアプロ）から始める
+  // ヘッダー
   if (customerName) {
     const nameWithSan = customerName.endsWith("さん") ? customerName : `${customerName}さん`;
     lines.push(`${nameWithSan} 物件（リアプロ）`);
   } else {
     lines.push(`物件（リアプロ）`);
   }
+
+  // 🌟一番オススメ（🌟付き物件の先頭に単独表示）
+  if (propertySummaries && propertySummaries.length > 0) {
+    const topPick = propertySummaries.find(s => s.split("\n")[0].includes("🌟"));
+    if (topPick) {
+      lines.push("━━━━━━━━━━━━━━");
+      lines.push("🌟 一番オススメ");
+      const topLines = topPick.split("\n");
+      const topName = topLines[0].replace(/^【\d+🌟】\s*/, "").trim();
+      if (topName) lines.push(topName);
+      topLines.slice(1).forEach(l => { if (l.trim()) lines.push(l); });
+    }
+  }
+
   lines.push("━━━━━━━━━━━━━━");
 
-  // 物件サマリー（1件ずつ）
+  // 物件一覧
   if (propertySummaries && propertySummaries.length > 0) {
     propertySummaries.forEach((summary) => {
       lines.push(summary);
