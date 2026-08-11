@@ -59,6 +59,24 @@ window.addEventListener("message", (e) => {
     return;
   }
 
+  // ── estimate-search: 物件名+号室でリアプロ自動検索（新フロー）────────────
+  if (e.data && e.data.from === "aixlinx-webapp-estimate-search") {
+    var propName = e.data.propertyName || "";
+    var roomNum = e.data.roomNumber || "";
+    chrome.runtime.sendMessage(
+      { type: "axlx-estimate-realpro-search", propertyName: propName, roomNumber: roomNum },
+      function(resp) {
+        void chrome.runtime.lastError;
+        if (resp && resp.ok) {
+          window.postMessage({ from: "aixlinx-estimate-search-data", text: resp.text }, "*");
+        } else {
+          window.postMessage({ from: "aixlinx-estimate-search-error", error: (resp && resp.error) || "取得に失敗しました" }, "*");
+        }
+      }
+    );
+    return;
+  }
+
   // ② ペイロード検証
   if (!e.data || e.data.from !== "aixlinx-webapp") return;
   const { site, conditions } = e.data;
