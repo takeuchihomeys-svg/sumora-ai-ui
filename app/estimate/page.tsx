@@ -394,8 +394,32 @@ function EstimatePageContent() {
     setAutoModeStatus("running");
     setAutoModeMessage("物件サイトを確認中...");
     try {
-      // ─ 新フロー: AI読み取り済みの物件名・号室でリアプロを自動検索 ─
-      if (items?.propertyName) {
+      // ─ 使用する物件名・号室（stateから、または画像から抽出） ─
+      let effectivePropertyName = items?.propertyName ?? "";
+      let effectiveRoomNumber   = items?.roomNumber   ?? "";
+
+      // ─ Step 0: 物件名未設定 + 画像あり → まず物件名だけ先読み ─
+      if (!effectivePropertyName && images.length > 0) {
+        setAutoModeMessage("物件名を読み取り中...");
+        try {
+          const preRes = await fetch("/api/extract-estimate-info", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              images: images.map(({ base64, mimeType }) => ({ base64, mimeType })),
+              supplementaryText,
+            }),
+          });
+          const preData = await preRes.json() as { ok: boolean; extracted?: ExtractedEstimate };
+          if (preData.ok && preData.extracted?.propertyName) {
+            effectivePropertyName = preData.extracted.propertyName;
+            effectiveRoomNumber   = preData.extracted.roomNumber ?? "";
+          }
+        } catch { /* 抽出失敗は無視して旧フローへ */ }
+      }
+
+      // ─ 新フロー: 物件名があればリアプロをフリーワード検索 ─
+      if (effectivePropertyName) {
         setAutoModeMessage("リアプロで物件を検索中...");
         const result = await new Promise<{ ok: boolean; text?: string; error?: string }>((resolve) => {
           const timeout = setTimeout(() => {
@@ -417,8 +441,8 @@ function EstimatePageContent() {
           window.addEventListener("message", handler);
           window.postMessage({
             from: "aixlinx-webapp-estimate-search",
-            propertyName: items.propertyName,
-            roomNumber: items.roomNumber ?? "",
+            propertyName: effectivePropertyName,
+            roomNumber: effectiveRoomNumber,
           }, "*");
         });
 
@@ -490,7 +514,7 @@ function EstimatePageContent() {
       setAutoModeMessage("エラーが発生しました");
       console.error("[handleAutoMode]", e);
     }
-  }, [images, items, handleExtract]); // ← items を追加
+  }, [images, items, supplementaryText, handleExtract]);
 
   const updateItem = (key: keyof EditableItems, value: string | number) => {
     setItems((prev) => {

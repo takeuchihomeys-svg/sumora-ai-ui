@@ -3430,7 +3430,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ── 見積書クイックボタン（View 1・紐付け済みタブ右）──────────────────────────
   document.getElementById("estimate-quick-btn")?.addEventListener("click", () => {
-    chrome.tabs.create({ url: `${API_BASE}/estimate?autoMode=true` });
+    chrome.tabs.create({ url: `${API_BASE}/estimate` });
   });
 
   // ── 見積書ボタン（View 2） ──────────────────────────────────────────
