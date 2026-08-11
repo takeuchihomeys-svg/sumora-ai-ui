@@ -179,12 +179,21 @@ async function pushLineMessage(
   text: string,
   suzukiUserId: string | null
 ): Promise<{ ok: boolean; error?: string }> {
-  type MentionMessage =
-    | { type: "text"; text: string }
-    | { type: "text"; text: string; mentionees: { index: number; length: number; type: "user"; userId: string }[] };
+  // @鈴木 祥平 プレフィックスを除いた本文（textV2 の {0} 置換後に続く部分）
+  const MENTION_PREFIX = "@鈴木 祥平 ";
+  const bodyText = text.startsWith(MENTION_PREFIX) ? text.slice(MENTION_PREFIX.length) : text;
 
-  const message: MentionMessage = suzukiUserId
-    ? { type: "text", text, mentionees: [{ index: 0, length: 6, type: "user", userId: suzukiUserId }] }
+  const message = suzukiUserId
+    ? {
+        type: "textV2",
+        text: `{0} ${bodyText}`,
+        substitution: {
+          "0": {
+            type: "mention",
+            mentionee: { type: "user", userId: suzukiUserId },
+          },
+        },
+      }
     : { type: "text", text };
 
   try {
@@ -340,11 +349,11 @@ export async function GET(req: NextRequest) {
       .not("status", "in", CLOSED).gt("updated_at", twentyFourHoursAgo)
       .order("updated_at", { ascending: false }).limit(10),
 
-    // 【最優先】= staffがflagした要対応客
+    // 【最優先】= staffがflagした要対応客（最近フラグが立ったものを優先して最大15件）
     supabase.from("conversations")
       .select("id, customer_name, status, last_message, last_sender, is_hot, updated_at")
       .eq("is_flagged", true).eq("line_status", "active")
-      .not("status", "in", CLOSED).order("updated_at", { ascending: true }).limit(8),
+      .not("status", "in", CLOSED).order("updated_at", { ascending: false }).limit(15),
 
     // 【物件出し】= is_hot優先で20件（is_hotが少なければ7日以内アクティブで補完）
     supabase.from("conversations")
