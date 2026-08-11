@@ -1777,6 +1777,9 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS rp_update_days INTEGER;
 -- 'auto'=自動判定 / 'ward'=地域のみ / 'station'=駅のみ / 'both'=両方同時検索。DEFAULT 'auto'
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS area_mode TEXT DEFAULT 'auto';
 
+-- last_judged_at: bulk-judge-knowledge が審査した時刻（重複審査防止・14日フィルター用）（2026-08-11）
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS last_judged_at TIMESTAMPTZ;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

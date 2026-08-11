@@ -4,7 +4,7 @@ import { canInsertAiQuestion, buildRuleConflictQuestion } from "@/app/lib/ai-fee
 
 export const maxDuration = 300; // Vercel Pro: 5分まで延長
 
-const BATCH_SIZE = 10; // parallel Sonnet calls per batch
+const BATCH_SIZE = 10; // parallel Haiku calls per batch
 const MAX_AI_QUESTIONS = 100; // AI質問登録の上限
 
 export async function GET(req: NextRequest) {
@@ -21,13 +21,15 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(parseInt(req.nextUrl.searchParams.get("limit") ?? "200"), 300);
   const offset = parseInt(req.nextUrl.searchParams.get("offset") ?? "0");
 
-  // 1. Fetch hypothesis items (importance>=7, not phrase) with paging
+  // 1. Fetch hypothesis items (importance>=8, not phrase, not judged in last 14 days) with paging
+  const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
   const { data: items } = await supabase
     .from("ai_reply_knowledge")
     .select("id, title, content, category, conversation_state, importance, correct_count, wrong_count, apply_count")
     .eq("hypothesis_status", "hypothesis")
     .neq("category", "phrase")
-    .gte("importance", 7)
+    .gte("importance", 8)
+    .or(`last_judged_at.is.null,last_judged_at.lt.${cutoff}`)
     .order("importance", { ascending: false })
     .range(offset, offset + limit - 1);
 
@@ -40,6 +42,7 @@ export async function GET(req: NextRequest) {
 
   // 3. Batch process with Sonnet
   const confirmed: string[] = [];
+  const judgedIds: string[] = [];
   const questions: Array<{
     id: string;
     title: string;
@@ -80,12 +83,11 @@ export async function GET(req: NextRequest) {
 
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        signal: AbortSignal.timeout(8_000),
+        signal: AbortSignal.timeout(10_000),
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
-          model: "claude-sonnet-5",
-          max_tokens: 500,
-          thinking: { type: "disabled" },
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 300,
           messages: [{
             role: "user",
             content: `賃貸仲介AIのナレッジ品質審査員として判定してください。
@@ -123,6 +125,7 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何�
     for (const r of results) {
       if (r.status === "fulfilled" && r.value) {
         const v = r.value;
+        if (v.verdict !== "skip") judgedIds.push(v.id);
         if (v.verdict === "confirm") {
           const vConfirmed = v as { importance?: number; correct_count?: number };
           if ((vConfirmed.importance ?? 0) >= 9 && (vConfirmed.correct_count ?? 0) >= 2) {
@@ -151,6 +154,11 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何�
         confirmedCount++;
       }
     }
+  }
+
+  // Update last_judged_at for all judged items to prevent re-review within 14 days
+  if (judgedIds.length > 0) {
+    await supabase.from("ai_reply_knowledge").update({ last_judged_at: new Date().toISOString() }).in("id", judgedIds);
   }
 
   // 5. Deduplicate questions: group by conversation_state + category
