@@ -200,15 +200,17 @@
         var isUIText = UI_TEXTS.indexOf(txt) !== -1;
         var hasInteractive = !!(prev.querySelector("button, input[type=button], input[type=submit]"));
         if (txt && txt.length < 40 && !isUIText && !hasInteractive) { name = txt; break; }
-        // ★ 修正: ボタンのある建物情報カード（物件室一覧等）からも建物名を抽出
-        // リアプロ建物ごと表示では建物名ヘッダーがボタンを含む要素に入るためhasInteractiveでスキップされていた
-        if (hasInteractive && !isUIText) {
+        // ★ 修正: 建物情報カード（住所・沿線を含む長テキスト、またはボタン付き要素）から建物名を抽出
+        // リアプロは建物名ヘッダーが <a>タグのみでhasInteractive=falseになるが住所・沿線を含む
+        var looksLikeBuildingCard = txt.length > 40 && /住所|沿線|Tel\s*:|TEL\s*:/.test(txt);
+        if (!isUIText && (hasInteractive || looksLikeBuildingCard)) {
           var rawLines = (prev.innerText || txt).split(/[\n\r]+/).map(function(s) { return s.trim(); }).filter(Boolean);
           for (var li2 = 0; li2 < rawLines.length; li2++) {
             var seg = rawLines[li2];
             if (seg.length < 2 || seg.length > 40) continue;
-            if (/^住所|^〒|^沿線|^TEL|^Tel|^tel|^\d{2,4}-|^株式会社|^有限会社/.test(seg)) continue;
+            if (/^住所|^〒|^沿線|^TEL|^Tel|^tel|^\d{2,4}-|^株式会社|^有限会社|^お問合せ|^問合せ/.test(seg)) continue;
             if (UI_TEXTS.indexOf(seg) !== -1) continue;
+            if (/PDF|600件|万円|㎡|徒歩|印刷|並べ替え|デフォルト/.test(seg)) continue;
             name = seg; break;
           }
           if (name) break;
