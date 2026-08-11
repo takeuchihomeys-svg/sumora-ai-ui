@@ -1861,7 +1861,7 @@ function CustomersPageInner() {
           </button>
 
           {/* 全選択ボタン（filterMode条件付き・非batchMode時のみ） */}
-          {(filterMode === "linked" || filterMode === "flagged") && !batchMode && (
+          {(filterMode === "linked" || filterMode === "flagged" || filterMode === "others") && !batchMode && (
             <button
               onClick={() => {
                 if (checkedIds.size > 0) {
@@ -1882,7 +1882,7 @@ function CustomersPageInner() {
           )}
 
           {/* バッチ物件検索ボタン：バッチ中はプログレス表示、非実行中はドロップダウン */}
-          {(filterMode === "linked" || filterMode === "flagged") && (
+          {(filterMode === "linked" || filterMode === "flagged" || filterMode === "others") && (
             <div className="relative shrink-0">
               {batchMode ? (
                 <div className="flex items-center gap-1 h-9 rounded-xl px-2.5 text-[11px] font-bold text-white"
