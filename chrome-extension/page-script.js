@@ -618,6 +618,20 @@
             .forEach(function(cb) { cb.checked = false; cb.dispatchEvent(new Event("change", {bubbles:true})); });
         });
 
+        // 敷金・礼金なし チェックボックスをリセット（ラベルテキストで特定するため name リストに含められない）
+        // 前顧客が敷礼なし希望 → 次顧客が希望なし のとき残留するバグの修正
+        ;(function() {
+          var sLabels = document.querySelectorAll('label');
+          for (var si = 0; si < sLabels.length; si++) {
+            var sTxt = (sLabels[si].textContent || '').replace(/[\s　]/g, '');
+            if (sTxt === '敷金・礼金なし' || sTxt === '敷金礼金なし') {
+              var sInp = sLabels[si].querySelector('input[type="checkbox"]');
+              if (sInp && sInp.checked) { sInp.click(); }
+              break;
+            }
+          }
+        })();
+
         // セレクト系をリセット（structured_date=築年数 / square_meter=面積 も select要素）
         // update_date: 前顧客の更新日フィルターが残留すると次顧客の検索が絞られるバグの修正
         var selectNames = ["rental_cost1", "rental_cost2", "transportation_id",
