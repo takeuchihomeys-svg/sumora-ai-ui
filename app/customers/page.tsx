@@ -510,19 +510,22 @@ function CustomersPageInner() {
 
   const fetchCustomers = async () => {
     try {
-      const res = await fetch("/api/property-customers");
+      const res = await fetch("/api/property-customers", { cache: "no-store" });
       if (res.ok) {
         const data: Customer[] = await res.json();
         setCustomers(data);
-        const initModes: Record<string, "auto" | "ward" | "station" | "both"> = {};
-        for (const c of data) {
-          if (c.area_mode === "ward" || c.area_mode === "station" || c.area_mode === "both") {
-            initModes[c.id] = c.area_mode as "ward" | "station" | "both";
+        // DB最新データでareaModeByCustomerを同期（DB値が常にprev状態より優先）
+        setAreaModeByCustomer((prev) => {
+          const next = { ...prev };
+          for (const c of data) {
+            if (c.area_mode === "ward" || c.area_mode === "station" || c.area_mode === "both") {
+              next[c.id] = c.area_mode as "ward" | "station" | "both";
+            } else {
+              delete next[c.id];
+            }
           }
-        }
-        if (Object.keys(initModes).length > 0) {
-          setAreaModeByCustomer((prev) => ({ ...initModes, ...prev }));
-        }
+          return next;
+        });
       }
     } catch (err) {
       console.error("[fetchCustomers] failed:", err);
@@ -933,6 +936,10 @@ function CustomersPageInner() {
         return;
       }
       const updated = await res.json() as Customer | null;
+      // PATCHレスポンスで即時楽観的更新（fetchCustomersの結果を待たずにUIに反映）
+      if (updated) {
+        setCustomers((prev) => prev.map((c) => c.id === updated.id ? { ...c, ...updated } : c));
+      }
       // 「条件に反映する」経由の場合: 生テキストを「反映済み」ログエントリに変換
       if (convertRawOnSave.current && convertRawOnSave.current.id === editId) {
         const { raw } = convertRawOnSave.current;

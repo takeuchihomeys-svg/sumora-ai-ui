@@ -69,7 +69,9 @@ export async function GET() {
     is_linked: convMap.has(c.id),
     linked_conversation: convMap.get(c.id) ?? null,
   }));
-  return NextResponse.json(result);
+  return NextResponse.json(result, {
+    headers: { "Cache-Control": "no-store, must-revalidate" },
+  });
 }
 
 export async function POST(req: NextRequest) {
