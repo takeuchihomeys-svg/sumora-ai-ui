@@ -207,8 +207,8 @@
         ward_names:     null,
         ward_town_map:  null,
         town_area:      null,
-        itandi_lines:   [],
-        station_names:  [],
+        itandi_lines:   c.itandi_lines   || [],
+        station_names:  c.station_names  || (c.station ? [c.station] : []),
         unknown_tokens: null,
       };
     }

@@ -55,8 +55,10 @@
   }
 
   // label内のcheckboxを優先（React対応）
-  function clickLabel(text) {
-    var lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
+  // container: 検索スコープ（省略時はdocument全体。ダイアログ内操作時は必ず渡す）
+  function clickLabel(text, container) {
+    var root = container || document;
+    var lbl = [].slice.call(root.querySelectorAll("label")).find(function (l) {
       return textMatch(l.textContent, text) && isVis(l);
     });
     if (!lbl) return false;
@@ -311,10 +313,16 @@
     function pollLineList() {
       var _p = 0;
       function _poll() {
-        var hasLineLabels = [].slice.call(document.querySelectorAll("label")).some(function(l) {
+        // ダイアログ内のチェックボックスのみ対象（メインフォームの間取り等に誤反応しないため）
+        var _dlg = document.querySelector('[role="dialog"]')
+                || document.querySelector('[class*="Modal"]')
+                || document.querySelector('[class*="modal"]');
+        var root = _dlg || document;
+        var hasLineLabels = [].slice.call(root.querySelectorAll("label")).some(function(l) {
           return l.querySelector("input[type='checkbox']") && isVis(l);
         });
-        if (hasLineLabels) { startClickLines(); return; }
+        if (hasLineLabels && _dlg) { startClickLines(_dlg); return; }
+        if (hasLineLabels && !_dlg) { startClickLines(null); return; } // フォールバック
         if (++_p >= 25) {
           console.warn("[AX] selectItandiLines: 路線リスト5s未描画 → 中断");
           _abort(); return;
@@ -323,7 +331,7 @@
       }
       _poll();
     }
-    function startClickLines() {
+    function startClickLines(dlg) {
       var lineIdx = 0;
       var anyLineClicked = false;
       function clickNextLine() {
@@ -421,7 +429,7 @@
           }, 2500);
           return;
         }
-        if (clickLabel(lineNames[lineIdx])) anyLineClicked = true;
+        if (clickLabel(lineNames[lineIdx], dlg)) anyLineClicked = true;
         lineIdx++;
         setTimeout(clickNextLine, 800);
       }
