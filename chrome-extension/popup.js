@@ -3535,9 +3535,9 @@ document.addEventListener("DOMContentLoaded", () => {
           }, 300);
         });
       } else {
-        // タブがなければ新しく開く（お客さん情報付き）
+        // タブがなければ見積書ページを開く（アップロードステップで開いて画像→自動モード）
         chrome.tabs.create({
-          url: `${API_BASE}/estimate?autoMode=true&rent=${rent}&customerName=${customerName}&account=${account}`,
+          url: `${API_BASE}/estimate`,
         });
       }
     });
