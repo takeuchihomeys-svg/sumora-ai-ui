@@ -579,6 +579,7 @@
           customer_name:       customerName || null,
           property_summaries:  propertySummaries,
           customer_conditions: customerConditions || null,
+          site:                "itandi",
         }, function (resp) {
           finalizeSend();
           lineBtn.disabled    = false;

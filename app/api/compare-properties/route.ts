@@ -97,7 +97,8 @@ function buildLineMessage(
   customerName: string,
   properties: PropertyItem[],
   scored: ScoredItem[],
-  best: BestItem | null
+  best: BestItem | null,
+  sourceLabel?: string,
 ): string {
   // building_name → PropertyItem の逆引きマップ
   const propMap = new Map<string, PropertyItem>();
@@ -105,8 +106,9 @@ function buildLineMessage(
     propMap.set(p.building_name, p);
   }
 
+  const siteSuffix = sourceLabel ? `（${sourceLabel}）` : "";
   const lines: string[] = [
-    `🏠【${customerName}さん 物件検索結果】`,
+    `🏠【${customerName}さん 物件検索結果${siteSuffix}】`,
     "",
     `📋 候補物件一覧（${scored.length}件）:`,
     "━━━━━━━━━━━━━━",
@@ -151,6 +153,7 @@ export async function POST(req: NextRequest) {
       };
       customerName?: string;
       lineGroupId?: string;
+      site?: string;
     };
 
     // ─── バリデーション ──────────────────────────────────────────────────────
@@ -342,7 +345,8 @@ ${propListText}
     if (TOKEN && scored.length > 0) {
       const groupId = await getGroupId(body.lineGroupId);
       if (groupId) {
-        const lineMsg = buildLineMessage(customerName, properties, scored, best);
+        const siteLabel = body.site === "itandi" ? "itandi" : body.site === "realpro" ? "リアプロ" : undefined;
+        const lineMsg = buildLineMessage(customerName, properties, scored, best, siteLabel);
         lineSent = await pushToLine(groupId, lineMsg);
       } else {
         console.warn("[compare-properties] LINE group_id 未設定のためスキップ");

@@ -637,7 +637,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const cookie_str = await getRealproCookies();
-        const { urls, customer_name, property_summaries, customer_conditions } = msg;
+        const { urls, customer_name, property_summaries, customer_conditions, site } = msg;
         const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
 
         const data = await callMergeApi({
@@ -648,6 +648,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           customer_name: customer_name || null,
           property_summaries: property_summaries || null,
           customer_conditions: customer_conditions || null,
+          site: site || null,
         });
 
         sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
@@ -692,6 +693,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           customer_name:       msg.customer_name || null,
           property_summaries:  msg.property_summaries || null,
           customer_conditions: msg.customer_conditions || null,
+          site:                msg.site || null,
         });
         sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
       } catch (e) {
@@ -2645,9 +2647,10 @@ async function _scrapeAllRealproPages(tabId) {
 }
 
 // スクレイプ結果を /api/compare-properties に POST する
-async function _sendPropertiesToBackend(properties, customerId, conditions, customerName) {
+async function _sendPropertiesToBackend(properties, customerId, conditions, customerName, site) {
   var body = { properties: properties, customerId: customerId, conditions: conditions };
   if (customerName) body.customerName = customerName;
+  if (site) body.site = site;
   // 修正9: サーバー側 maxDuration=120 と整合させ120秒に延長（途中Abort→再送によるLINE二重送信リスクを減らす）
   var resp = await fetch(SUMORA_BATCH_API + "/api/compare-properties", {
     method: "POST",
@@ -2884,7 +2887,7 @@ async function _scrapeAndCompareItandi(fillDonePromise, customerId, customerName
   }
 
   // AI比較 + 売上番長グループへ LINE 送信
-  await _sendPropertiesToBackend(properties, customerId, conditions, customerName);
+  await _sendPropertiesToBackend(properties, customerId, conditions, customerName, "itandi");
 }
 
 // ===== END: 自動化バッチ検索 =====

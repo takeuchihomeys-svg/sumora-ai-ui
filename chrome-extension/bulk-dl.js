@@ -415,6 +415,7 @@
         customer_name: customerName || null,
         property_summaries: propertySummaries,
         customer_conditions: customerConditions || null,
+        site: "realpro",
       }, function (resp) {
         lineBtn.disabled = false;
         if (chrome.runtime.lastError) {
@@ -773,6 +774,7 @@
         customer_name: state.customerName || null,
         property_summaries: batch.summaries,
         customer_conditions: state.customerConditions || null,
+        site: "realpro",
       }, function (resp) {
         if (chrome.runtime.lastError) {
           clearAutoSendState();

@@ -210,9 +210,10 @@ export async function POST(req: NextRequest) {
       customer_name?: string | null;
       property_summaries?: string[] | null;
       customer_conditions?: string | null;
+      site?: string | null;
     };
 
-    const { pdf_data, pdf_urls, cookie_str, file_name, send_to_line, customer_name, property_summaries, customer_conditions } = body;
+    const { pdf_data, pdf_urls, cookie_str, file_name, send_to_line, customer_name, property_summaries, customer_conditions, site } = body;
 
     // PDF データを収集
     let pdfBase64List: string[] = [];
@@ -297,7 +298,8 @@ export async function POST(req: NextRequest) {
           merged.getPageCount(),
           customer_name,
           rankedSummaries,
-          (pdf_urls && pdf_urls.length > 0) ? "itandi" : "リアプロ",
+          site === "itandi" ? "itandi" : site === "realpro" ? "リアプロ" :
+            (pdf_urls && pdf_urls.some(u => !u.includes("realnetpro"))) ? "itandi" : "リアプロ",
         );
         await pushLineMessage(groupId, lineText);
         return NextResponse.json({ ok: true, line_sent: true, url: blob.url });
