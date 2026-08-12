@@ -526,6 +526,16 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - **2026-08-11 一括検索で物件が送られないバグ修正 (bulk-dl.js)**:
   - `axlx-autofill-initiated` ハンドラで sessionStorage(`axlx_auto_send`)を即時クリア → 前バッチ中断で残留した stale state が次バッチの Case A `!getAutoSendState()` チェックをブロックするバグを修正
   - fill-done ハンドラに **2秒フォールバックタイマー** 追加 → AJAX がDOM要素を再利用して `_hasNewBtn = false` になり Case A が起動しないケースを救済（`_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched` の条件が2秒後も成立していれば強制送信）
+- **2026-08-12 梅田20分圏内の駅選択不完全バグ修正（Fable5調査済み）**:
+  - **根本原因**: `popup.js` autofill onclick の Dijkstra が `getReachableStations()`（METRO_GRAPH: 大阪メトロ9路線のみ）を使っていた → JR東海道本線・大阪環状線途中駅に到達不可。新大阪が偶然選ばれた理由: 御堂筋線の新大阪を選択 → page-script.js の `selectStationsByName` が同名駅全路線クリックするため東海道本線の新大阪も選ばれていた
+  - **副根本原因**: 「梅田まで**徒歩**20分」の regex が `徒歩` を挟むためマッチしなかった（`transitRe`・`hasCommutePattern`・`parseAreaTokens` の3箇所）
+  - **修正ファイル（popup.js）**:
+    1. L294: `hasCommutePattern` regex に `(?:徒歩|電車|バス|歩いて)?` を挿入
+    2. L484-485: `parseAreaTokens` の `まで/から\d+分` regex に「徒歩」対応
+    3. L498: `parseAreaTokens` に `(?:徒歩|電車|バス|歩いて)?\d+分(?:以内|圏内)` 除去パターン追加
+    4. L2879-2890: `transitRe` に「徒歩」対応 + `getReachableStations` → `getStationNamesWithinMinutes`（TRANSIT_GRAPH: 436駅・JR含む全路線）に変更
+  - **修正ファイル（resolution-core.js）**: L1133 `parseAreaTokens` に「徒歩N分以内」除去パターン追加
+  - **修正効果**: 梅田から20分圏内に塚本(8分)・福島(7分)・天満(7分)・野田(9分)・西九条(10分)等JR・環状線途中駅が正しく station_names に追加される
 - **2026-08-11 バッチ0件停止バグ修正 + 0件LINEアナウンス**:
   - `bulk-dl.js`: 0件タイムアウトを **1200ms → 4000ms** に延長（遅いAJAX検索で0件誤判定するバグ修正。1人目0件→2人目で止まる現象の根本原因）
   - `bulk-dl.js`: `axlx-batch-customer-done` に `propertyCount: 0` を付加して0件確定を伝播

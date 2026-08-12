@@ -291,7 +291,7 @@ async function resolveAreaWithAPI(rawArea, areaMode) {
 
   // 「まで30分」「から20分」等の通勤時間制約パターンは parseAreaTokens が剥ぎ取るため
   // ローカル解決が成功していてもAPIを呼ぶ必要がある（近隣駅展開のため）
-  const hasCommutePattern = /まで\d+分|から\d+分|へ\d+分/.test(rawArea);
+  const hasCommutePattern = /(?:まで|から|へ)(?:徒歩|電車|バス|歩いて)?\d+分/.test(rawArea);
   // 乗り換えなし・直通は parseAreaTokens が路線展開するが制約情報は失われるためAPI必須
   const hasTransferNone = /乗り換えなし|直通/.test(rawArea);
   // 通いやすい・アクセスしやすい系は自然言語解析（Haiku）でないと意図が取れない
@@ -481,8 +481,8 @@ function parseAreaTokens(rawArea) {
   rawArea = rawArea.replace(/([^\s,、・\/（(]*(?:市内|府内))の([^\s,、・\/（(]+線)/g, "$1,$2");
   // 「江坂まで20分くらいの」→「江坂」（時間ベースエリア表現から目的駅名を抽出）
   // 数字+分 が続く「まで」「から」は場所指定用。AからBまで展開より先に処理する。
-  rawArea = rawArea.replace(/([^\s,、・\/（(]{1,8})駅?まで\d+分[^,、・\/]*/g, "$1");
-  rawArea = rawArea.replace(/([^\s,、・\/（(]{1,8})駅?から\d+分[^,、・\/]*/g, "$1");
+  rawArea = rawArea.replace(/([^\s,、・\/（(]{1,8})駅?まで(?:徒歩|電車|バス|歩いて)?\d+分[^,、・\/]*/g, "$1");
+  rawArea = rawArea.replace(/([^\s,、・\/（(]{1,8})駅?から(?:徒歩|電車|バス|歩いて)?\d+分[^,、・\/]*/g, "$1");
   // 「AあたりからBあたりまで」「AからBまで」「A〜B」「A～B」→ 両端点をカンマで展開
   const expanded = rawArea
     .replace(/([^\s,、・\/～〜]+?)あたりから([^\s,、・\/～〜]+?)あたりまで/g, "$1,$2")
@@ -496,6 +496,7 @@ function parseAreaTokens(rawArea) {
                 .replace(/以南$|以北$|以西$|以東$/, "") // 方向サフィックスを除去
                 .replace(/の[南北東西](の方)?$|の方$/, "") // 「八尾の南の方」→「八尾」「東淀川の方」→「東淀川」
                 .replace(/通勤\d+分圏内|通勤\d+分以内|\d+分圏内/g, "") // 「通勤20分圏内」などを除去
+                .replace(/(?:徒歩|電車|バス|歩いて)?\d+分(?:以内|圏内)/g, "") // 「徒歩20分以内」などを除去
                 .replace(/駅|周辺|付近|近く|近辺|沿線|エリア|あたり/g, "")
                 .replace(/[かや]$/, "")  // 「〜駅か」→駅除去後に残る末尾助詞を除去
                 .trim())
@@ -2875,19 +2876,20 @@ function openInstructions(siteKey) {
             intermediate.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
           }
         }
-        // 「江坂まで20分」等のパターン → METRO_GRAPH Dijkstra で到達可能駅を一括展開
-        const transitRe = /([^\s、。,　]{1,10}?)駅?(?:まで|から)(\d+)分/g;
+        // 「江坂まで20分」「梅田まで徒歩20分」等のパターン → TRANSIT_GRAPH Dijkstra で到達可能駅を一括展開（JR・環状線含む全路線）
+        const transitRe = /([^\s、。,　]{1,10}?)駅?(?:まで|から)(?:徒歩|電車|バス|歩いて)?(\d+)分/g;
         let _tm;
         while ((_tm = transitRe.exec(adjAreaClean)) !== null) {
           let tgt = _tm[1].replace(/駅$/, '').trim();
-          // 「阪急茨木市」「JR高槻」等: METRO_GRAPHのノードは純粋な駅名で登録されているため
+          // 「阪急茨木市」「JR高槻」等: TRANSIT_GRAPHのノードは純粋な駅名で登録されているため
           // 路線会社プレフィックスを除去してから検索する（例: 阪急茨木市→茨木市）
           for (const _pfx of LINE_PREFIXES_TO_STRIP) {
             if (tgt.startsWith(_pfx) && tgt.length > _pfx.length) { tgt = tgt.slice(_pfx.length).trim(); break; }
           }
           const maxMin = parseInt(_tm[2], 10);
-          if (typeof getReachableStations === 'function' && tgt && maxMin > 0 && maxMin <= 90) {
-            getReachableStations(tgt, maxMin).forEach(s => {
+          // TRANSIT_GRAPH（JR・環状線含む全436駅）でDijkstra展開する
+          if (typeof getStationNamesWithinMinutes === 'function' && tgt && maxMin > 0 && maxMin <= 90) {
+            getStationNamesWithinMinutes(tgt, maxMin).forEach(s => {
               if (!realpro_station_names.includes(s)) realpro_station_names.push(s);
             });
           }
