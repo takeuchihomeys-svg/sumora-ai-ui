@@ -67,6 +67,8 @@ type Customer = {
   stations?: string[] | null;
   rp_update_days?: number | null;
   area_mode?: string | null;
+  commute_station?: string | null;
+  commute_minutes?: number | null;
 };
 
 // 物件比較（🏠 物件比較）の結果型
@@ -238,6 +240,7 @@ type EditFields = {
   pet: string;
   preferences: string; ng_points: string;
   other_requests: string; property_memo: string;
+  commute_station: string; commute_minutes: string;
 };
 
 function parseAreaStation(desired_area: string | null | undefined): { area_input: string; station_input: string } {
@@ -255,6 +258,21 @@ function parseAreaStation(desired_area: string | null | undefined): { area_input
 function detectShikireiFlag(c: Customer): boolean {
   const text = `${c.preferences ?? ""} ${c.ng_points ?? ""} ${c.other_requests ?? ""}`;
   return /敷礼なし|敷金礼金なし|敷金礼金0|敷金0礼金0|敷0礼0/.test(text);
+}
+
+function AreaTags({ c }: { c: Customer }) {
+  if (!c.desired_area) return null;
+  const mode = c.area_mode ?? "auto";
+  const { area_input, station_input } = parseAreaStation(c.desired_area);
+  if (mode === "ward") return <Tag label="地域" value={c.desired_area} />;
+  if (mode === "station") return <Tag label="駅" value={c.desired_area} />;
+  if (!area_input && !station_input) return <Tag label="エリア" value={c.desired_area} />;
+  return (
+    <>
+      {area_input && <Tag label="地域" value={area_input} />}
+      {station_input && <Tag label="駅" value={station_input} />}
+    </>
+  );
 }
 
 function toEditFields(c: Customer): EditFields {
@@ -281,11 +299,13 @@ function toEditFields(c: Customer): EditFields {
     ng_points:          c.ng_points          ?? "",
     other_requests:     c.other_requests     ?? "",
     property_memo:      c.property_memo      ?? "",
+    commute_station:    c.commute_station    ?? "",
+    commute_minutes:    c.commute_minutes    ? String(c.commute_minutes) : "",
   };
 }
 
 function emptyEditFields(): EditFields {
-  return { desired_area:"", area_input:"", station_input:"", shikirei_free:false, area_mode_ward:false, area_mode_station:false, floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"" };
+  return { desired_area:"", area_input:"", station_input:"", shikirei_free:false, area_mode_ward:false, area_mode_station:false, floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"", commute_station:"", commute_minutes:"" };
 }
 
 // popup.js の parseAreaMin と同一ロジック
@@ -894,6 +914,8 @@ function CustomersPageInner() {
       initial_cost_limit: editFields.initial_cost_limit ? Number(editFields.initial_cost_limit) * 10000 : null,
       floor_area_min:     editFields.floor_area_min     ? Number(editFields.floor_area_min)              : null,
       floor_area_max:     editFields.floor_area_max     ? Number(editFields.floor_area_max)              : null,
+      commute_station:    editFields.commute_station    || null,
+      commute_minutes:    editFields.commute_minutes    ? Number(editFields.commute_minutes)             : null,
       pet:                editFields.pet === "true" ? true : editFields.pet === "false" ? false : null,
       preferences:        editFields.preferences        || null,
       ng_points:          ngVal                         || null,
@@ -987,6 +1009,8 @@ function CustomersPageInner() {
         ng_points:          p.ng_points          != null ? String(p.ng_points)          : f.ng_points,
         other_requests:     p.other_requests     != null ? String(p.other_requests)     : f.other_requests,
         property_memo:      f.property_memo,
+        commute_station:    f.commute_station,
+        commute_minutes:    f.commute_minutes,
       };
       setParsedPreview(preview);
     } finally {
@@ -2000,15 +2024,18 @@ function CustomersPageInner() {
                     {isExp && (
                       <>
                         <div className="border-t border-[#f0f2f5] px-4 py-2.5">
-                          {(c.desired_area || c.floor_plan || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.initial_cost_limit || c.preferences || c.ng_points) ? (
+                          {(c.desired_area || c.floor_plan || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.initial_cost_limit || c.preferences || c.ng_points || c.pet != null || c.commute_station || detectShikireiFlag(c)) ? (
                             <>
                               <div className="flex flex-wrap gap-1.5 mb-1.5">
-                                {c.desired_area && <Tag label="エリア" value={c.desired_area} />}
+                                <AreaTags c={c} />
                                 {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
                                 {(c.rent_min || c.rent_max) && <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />}
                                 {c.walk_minutes && <Tag label="徒歩" value={`${c.walk_minutes}分`} />}
+                                {c.commute_station && c.commute_minutes && <Tag label="通勤" value={`${c.commute_station}まで${c.commute_minutes}分`} />}
                                 {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
                                 {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
+                                {c.pet === true && <Tag label="ペット" value="飼育あり" />}
+                                {detectShikireiFlag(c) && <Tag label="敷礼0" value="敷礼なし" />}
                               </div>
                               {c.preferences && <p className="text-[11px] text-[#555] mb-0.5"><span className="font-semibold text-[#8696a0]">希望　</span>{c.preferences}</p>}
                               {c.ng_points    && <p className="text-[11px] text-[#555]"><span className="font-semibold text-[#8696a0]">NG　　</span>{c.ng_points}</p>}
@@ -2331,13 +2358,13 @@ function CustomersPageInner() {
                         );
                       })()}
                       {/* 元の条件 */}
-                      {(c.desired_area || c.floor_plan || c.floor_area_min || c.floor_area_max || c.pet != null || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.building_age || c.initial_cost_limit || c.preferences || c.ng_points) ? (
+                      {(c.desired_area || c.floor_plan || c.floor_area_min || c.floor_area_max || c.pet != null || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.building_age || c.initial_cost_limit || c.preferences || c.ng_points || c.commute_station || detectShikireiFlag(c)) ? (
                         <>
                           {condLines.length > 0 && (
                             <p className="text-[9px] font-bold text-[#8696a0] mb-1 tracking-wide">元の条件</p>
                           )}
                           <div className="flex flex-wrap gap-1.5">
-                            {c.desired_area && <Tag label="エリア" value={c.desired_area} />}
+                            <AreaTags c={c} />
                             {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
                             {(c.floor_area_min || c.floor_area_max) && (
                               <Tag label="広さ" value={
@@ -2352,9 +2379,11 @@ function CustomersPageInner() {
                               <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
                             )}
                             {c.walk_minutes && <Tag label="徒歩" value={`${c.walk_minutes}分`} />}
+                            {c.commute_station && c.commute_minutes && <Tag label="通勤" value={`${c.commute_station}まで${c.commute_minutes}分`} />}
                             {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
                             {c.building_age && <Tag label="築年" value={`${c.building_age}年`} />}
                             {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
+                            {detectShikireiFlag(c) && <Tag label="敷礼0" value="敷礼なし" />}
                           </div>
                           {(c.preferences || c.ng_points) && (
                             <div className="mt-1.5 space-y-0.5">
@@ -3173,6 +3202,16 @@ function CustomersPageInner() {
                 <div className="flex-1">
                   <Field label="築年数以内" placeholder="20" type="number"
                     value={editFields.building_age} onChange={(v) => setEditFields((f) => f && ({ ...f, building_age: v }))} />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-2" style={{ flex: 2 }}>
+                  <Field label="通勤先の駅（指定ある場合）" placeholder="例: 梅田駅・天王寺駅"
+                    value={editFields.commute_station} onChange={(v) => setEditFields((f) => f && ({ ...f, commute_station: v }))} />
+                </div>
+                <div className="flex-1">
+                  <Field label="通勤時間（分）" placeholder="30" type="number"
+                    value={editFields.commute_minutes} onChange={(v) => setEditFields((f) => f && ({ ...f, commute_minutes: v }))} />
                 </div>
               </div>
               <Field label="入居時期" placeholder="例: 7月・なるべく早く"

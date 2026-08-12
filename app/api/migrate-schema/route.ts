@@ -1780,6 +1780,10 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS area_mode TEXT DEFAULT '
 -- last_judged_at: bulk-judge-knowledge が審査した時刻（重複審査防止・14日フィルター用）（2026-08-11）
 ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS last_judged_at TIMESTAMPTZ;
 
+-- 通勤先駅・通勤時間（指定ある顧客用。徒歩分とは別バッジで表示）（2026-08-12）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS commute_station TEXT;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS commute_minutes INTEGER;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
