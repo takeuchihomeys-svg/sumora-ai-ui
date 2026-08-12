@@ -85,7 +85,7 @@
         _pendingAutoSendDispatched = true;
         try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
         console.log("[AXLX bulk-dl] Case A: 新結果検出 → 自動送信開始");
-        setTimeout(autoSendAllPages, 800);
+        setTimeout(autoSendAllPages, 600 + Math.floor(Math.random() * 600));
       }
     }
     // Case B: AJAXページネーション継続（tryNext がページ遷移後に inject() が再実行される）
@@ -99,7 +99,7 @@
         console.log("[AXLX bulk-dl] Case B: AJAXページネーション継続 P" + _resumeState.currentPage);
         setTimeout(function () {
           autoSendOnePage(_resumeState, function (ok) { tryNext(_resumeState); });
-        }, 800);
+        }, 700 + Math.floor(Math.random() * 700));
       }
     }
   }
@@ -193,7 +193,7 @@
       document.getElementById("axlx-count").textContent = (i + 1) + "/" + targets.length + " DL中";
       targets[i].btn.click();
       i++;
-      setTimeout(next, 1800);
+      setTimeout(next, 1200 + Math.floor(Math.random() * 1600));
     }
     next();
   }
