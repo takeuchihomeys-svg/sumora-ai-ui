@@ -2151,7 +2151,15 @@ function setupAreaModeSelector(c, siteKey) {
   _areaModeSource = "auto";
   setMode(defaultMode);
   btnStation.onclick = () => { _areaModeSource = "user"; setMode("station"); };
-  btnWard.onclick    = () => { _areaModeSource = "user"; setMode("ward"); };
+  btnWard.onclick    = () => {
+    // 通勤時間パターン（「梅田から20分以内」等）は駅モードでのみ有効。地域モードへの切替をブロック
+    const _rawCurrent = (document.getElementById("adj-area")?.value || "").trim();
+    if (/(?:まで|から|へ)(?:電車|バス|徒歩|歩いて)?\d+分/.test(_rawCurrent)) {
+      showToast && showToast("「〇〇から△分以内」は駅タブで処理されます", "info");
+      return;
+    }
+    _areaModeSource = "user"; setMode("ward");
+  };
 
   // 自動判定が曖昧（静的マップで判定できなかった）場合 → APIで補完
   // resolveAreaWithAPI はキャッシュがあれば即返る。未知トークンがなければ null を返してスキップ。
@@ -2876,32 +2884,33 @@ function openInstructions(siteKey) {
             intermediate.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
           }
         }
-        // 「梅田から20分以内」→ 電車通勤N分圏内（Dijkstra展開）
-        // 「梅田まで徒歩20分」→ 徒歩で到達できる圏内（対象駅＋ハブ駅のみ・Dijkstra不要）
-        // ※ モード（徒歩/電車）を区別するためキャプチャグループに変更: _tm[2]=mode _tm[3]=minutes
+      }
+      // ★ station/ward モードに関わらず常に実行: 通勤時間パターン（「梅田から20分以内」等）のDijkstra展開
+      // ward モードに切り替わっても Dijkstra で駅を展開し、強制的に station モードに昇格させる
+      {
         const transitRe = /([^\s、。,　]{1,10}?)駅?(?:まで|から)(徒歩|電車|バス|歩いて)?(\d+)分/g;
         let _tm;
         while ((_tm = transitRe.exec(adjAreaClean)) !== null) {
           let tgt = _tm[1].replace(/駅$/, '').trim();
-          const modeStr = _tm[2] || '';  // 徒歩/電車/バス/歩いて or ''
+          const modeStr = _tm[2] || '';
           const maxMin  = parseInt(_tm[3], 10);
-          // 路線会社プレフィックスを除去する（例: 阪急茨木市→茨木市）
           for (const _pfx of LINE_PREFIXES_TO_STRIP) {
             if (tgt.startsWith(_pfx) && tgt.length > _pfx.length) { tgt = tgt.slice(_pfx.length).trim(); break; }
           }
           if (!tgt || !(maxMin > 0) || maxMin > 90) continue;
           const isWalkMode = modeStr === '徒歩' || modeStr === '歩いて';
           if (isWalkMode) {
-            // 「梅田まで徒歩20分」= 徒歩圏内 → 対象駅とハブ駅（梅田エリア全体）のみ追加
-            // Dijkstraで広範に展開すると「電車で梅田まで20分」と同じ結果になるため展開しない
             const hubSt = (STATION_HUB_MAP && STATION_HUB_MAP[tgt]) ? STATION_HUB_MAP[tgt] : [tgt];
             hubSt.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
           } else {
-            // 「梅田から20分以内」= 電車N分通勤圏内 → TRANSIT_GRAPH Dijkstra展開（JR・環状線含む）
             if (typeof getStationNamesWithinMinutes === 'function') {
-              getStationNamesWithinMinutes(tgt, maxMin).forEach(s => {
-                if (!realpro_station_names.includes(s)) realpro_station_names.push(s);
-              });
+              const _reached = getStationNamesWithinMinutes(tgt, maxMin);
+              _reached.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+              // 駅が見つかった場合は ward モードでも station モードに強制昇格
+              if (_reached.length > 0 && currentAreaMode !== 'station') {
+                currentAreaMode = 'station';
+                updateAreaModeUI && updateAreaModeUI();
+              }
             }
           }
         }

@@ -316,8 +316,5 @@ export async function GET(req: NextRequest) {
     ok: true,
     sent: true,
     count: entries.length,
-    property: propBlock.length,
-    urgent: urgentBlock.length,
-    normal: normalBlock.length,
   });
 }
