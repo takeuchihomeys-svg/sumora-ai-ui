@@ -79,7 +79,7 @@
 
     // Case A: fill-done 受信済み かつ スナップショット前にない新しい結果が出た
     if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
-      var _hasNewBtn = tracked.some(function(item) { return !_preAutofillBtns.has(item.btn); });
+      var _hasNewBtn = tracked.some(function(item) { var k = item.btn.href || item.btn.getAttribute('href') || ''; return k && !_preAutofillBtns.has(k); });
       if (_hasNewBtn) {
         _autoSendArmed = false;
         _pendingAutoSendDispatched = true;
@@ -823,7 +823,8 @@
     _autofillInitiated = true;
     // 前バッチ中断で残留したsessionStorage状態をクリア（Case Aの!getAutoSendState()チェックがブロックされるバグ対策）
     try { sessionStorage.removeItem(AUTO_SEND_KEY); } catch (_) {}
-    _preAutofillBtns = new Set(findPrintBtns());
+    // href URL をキーにしたスナップショット（DOM参照ではなくURL比較でAJAX再利用を正しく検出）
+    _preAutofillBtns = new Set(findPrintBtns().map(function(b) { return b.href || b.getAttribute('href') || ''; }));
     _pendingAutoSendDispatched = false;
     console.log("[AXLX bulk-dl] autofill initiated, snapshot=" + _preAutofillBtns.size + "btn");
     // バッチ中の名前ずれ防止: autofill開始時点のお客さん名をここでスナップショット
@@ -834,7 +835,7 @@
       console.log("[AXLX bulk-dl] autofill initiated: customer snapshot =", name);
       // BUG-D修正: fill-done が先着していた場合、スナップショット確定後に再チェックして安全起動
       if (_autoSendArmed && !_pendingAutoSendDispatched && !getAutoSendState()) {
-        var _hasNBsnap = tracked.some(function(item) { return !_preAutofillBtns.has(item.btn); });
+        var _hasNBsnap = tracked.some(function(item) { var k = item.btn.href || item.btn.getAttribute('href') || ''; return k && !_preAutofillBtns.has(k); });
         if (_hasNBsnap) {
           _autoSendArmed = false;
           _pendingAutoSendDispatched = true;
@@ -859,7 +860,7 @@
     // BUG-A修正: _hasNewBtn チェックをここでも実行し、前顧客DOM残留時は発火しない
     setTimeout(function () {
       if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
-        var _hasNewBtn2s = tracked.some(function(item) { return !_preAutofillBtns.has(item.btn); });
+        var _hasNewBtn2s = tracked.some(function(item) { var k = item.btn.href || item.btn.getAttribute('href') || ''; return k && !_preAutofillBtns.has(k); });
         if (!_hasNewBtn2s) {
           console.log("[AXLX bulk-dl] 2秒フォールバック: hasNewBtn=false → 見送り（前顧客 DOM 残留）");
           return;

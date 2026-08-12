@@ -2719,6 +2719,7 @@ function openInstructions(siteKey) {
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "🔍 リアプロで自動検索";
     autofillBtn.className = "autofill-btn";
+    autofillBtn.disabled = false; // 前顧客のfill-done未着で残ったdisabledをリセット
     // ボタン表示と同時に未登録地名チェック
     showUnknownWarn(computeUnknownTokens(selectedCustomer.desired_area || selectedCustomer.area || ""));
 
@@ -3682,10 +3683,13 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
         // 顧客サイト選択ビューに切り替え（selectedCustomer を更新し view-site を表示）
         openSiteView(c);
         if (msg.site) {
-          // wide モードが指定されていれば先にクリック（pendingPopupCmd パスと同様）
+          // wide モードを正しく切り替え（else がないと前顧客の wide が引き継がれる）
           if (msg.is_wide) {
             var wBtnEl = document.querySelector('.mode-btn[data-mode="wide"]');
             if (wBtnEl) wBtnEl.click();
+          } else {
+            var pBtnEl = document.querySelector('.mode-btn[data-mode="pinpoint"]');
+            if (pBtnEl) pBtnEl.click();
           }
           // サイト別手順ビューを開く（selectedSite を更新）
           openInstructions(msg.site);

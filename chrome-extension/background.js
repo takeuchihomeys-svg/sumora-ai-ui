@@ -2411,14 +2411,22 @@ function _buildBatchConditions(c, isWide) {
 
 function _batchWaitForTabComplete(tabId) {
   return new Promise(function(resolve) {
+    var resolved = false;
     var listener = function(id, info) {
-      if (id === tabId && info.status === "complete") {
+      if (id === tabId && info.status === "complete" && !resolved) {
+        resolved = true;
         chrome.tabs.onUpdated.removeListener(listener);
         resolve();
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
-    setTimeout(resolve, 15000);
+    setTimeout(function() {
+      if (!resolved) {
+        resolved = true;
+        chrome.tabs.onUpdated.removeListener(listener); // リスナーリーク防止
+        resolve();
+      }
+    }, 15000);
   });
 }
 
