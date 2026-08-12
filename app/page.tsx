@@ -8631,7 +8631,7 @@ export default function Home() {
           onClose={closeTemplateModal}
           initialSearch={templateInitialSearch}
           postAixContext={
-            templateOpenContext === "post_aix" && postAixTemplateMap[selectedConversation.id]
+            postAixTemplateMap[selectedConversation.id]
               ? {
                   conversationId: selectedConversation.id,
                   actionType: postAixTemplateMap[selectedConversation.id]?.actionType ?? "",
