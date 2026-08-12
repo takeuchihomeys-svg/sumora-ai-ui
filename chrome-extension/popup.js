@@ -289,9 +289,9 @@ async function resolveAreaWithAPI(rawArea, areaMode) {
   // 数字始まり・1文字トークンしかない場合はAPIを無駄打ちしない
   const hasMeaningfulToken = toks.some(t => t.length >= 2 && !/^[0-9０-９]/.test(t));
 
-  // 「まで30分」「から20分」等の通勤時間制約パターンは parseAreaTokens が剥ぎ取るため
-  // ローカル解決が成功していてもAPIを呼ぶ必要がある（近隣駅展開のため）
-  const hasCommutePattern = /(?:まで|から|へ)(?:徒歩|電車|バス|歩いて)?\d+分/.test(rawArea);
+  // 「梅田から20分以内」「梅田まで電車20分」等の電車通勤時間制約パターンでAPIを呼ぶ
+  // 「梅田まで徒歩20分」（徒歩モード）はtransitReで対象駅のみ追加するので API不要
+  const hasCommutePattern = /(?:まで|から|へ)(?:電車|バス)?\d+分/.test(rawArea);
   // 乗り換えなし・直通は parseAreaTokens が路線展開するが制約情報は失われるためAPI必須
   const hasTransferNone = /乗り換えなし|直通/.test(rawArea);
   // 通いやすい・アクセスしやすい系は自然言語解析（Haiku）でないと意図が取れない
@@ -2876,22 +2876,33 @@ function openInstructions(siteKey) {
             intermediate.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
           }
         }
-        // 「江坂まで20分」「梅田まで徒歩20分」等のパターン → TRANSIT_GRAPH Dijkstra で到達可能駅を一括展開（JR・環状線含む全路線）
-        const transitRe = /([^\s、。,　]{1,10}?)駅?(?:まで|から)(?:徒歩|電車|バス|歩いて)?(\d+)分/g;
+        // 「梅田から20分以内」→ 電車通勤N分圏内（Dijkstra展開）
+        // 「梅田まで徒歩20分」→ 徒歩で到達できる圏内（対象駅＋ハブ駅のみ・Dijkstra不要）
+        // ※ モード（徒歩/電車）を区別するためキャプチャグループに変更: _tm[2]=mode _tm[3]=minutes
+        const transitRe = /([^\s、。,　]{1,10}?)駅?(?:まで|から)(徒歩|電車|バス|歩いて)?(\d+)分/g;
         let _tm;
         while ((_tm = transitRe.exec(adjAreaClean)) !== null) {
           let tgt = _tm[1].replace(/駅$/, '').trim();
-          // 「阪急茨木市」「JR高槻」等: TRANSIT_GRAPHのノードは純粋な駅名で登録されているため
-          // 路線会社プレフィックスを除去してから検索する（例: 阪急茨木市→茨木市）
+          const modeStr = _tm[2] || '';  // 徒歩/電車/バス/歩いて or ''
+          const maxMin  = parseInt(_tm[3], 10);
+          // 路線会社プレフィックスを除去する（例: 阪急茨木市→茨木市）
           for (const _pfx of LINE_PREFIXES_TO_STRIP) {
             if (tgt.startsWith(_pfx) && tgt.length > _pfx.length) { tgt = tgt.slice(_pfx.length).trim(); break; }
           }
-          const maxMin = parseInt(_tm[2], 10);
-          // TRANSIT_GRAPH（JR・環状線含む全436駅）でDijkstra展開する
-          if (typeof getStationNamesWithinMinutes === 'function' && tgt && maxMin > 0 && maxMin <= 90) {
-            getStationNamesWithinMinutes(tgt, maxMin).forEach(s => {
-              if (!realpro_station_names.includes(s)) realpro_station_names.push(s);
-            });
+          if (!tgt || !(maxMin > 0) || maxMin > 90) continue;
+          const isWalkMode = modeStr === '徒歩' || modeStr === '歩いて';
+          if (isWalkMode) {
+            // 「梅田まで徒歩20分」= 徒歩圏内 → 対象駅とハブ駅（梅田エリア全体）のみ追加
+            // Dijkstraで広範に展開すると「電車で梅田まで20分」と同じ結果になるため展開しない
+            const hubSt = (STATION_HUB_MAP && STATION_HUB_MAP[tgt]) ? STATION_HUB_MAP[tgt] : [tgt];
+            hubSt.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+          } else {
+            // 「梅田から20分以内」= 電車N分通勤圏内 → TRANSIT_GRAPH Dijkstra展開（JR・環状線含む）
+            if (typeof getStationNamesWithinMinutes === 'function') {
+              getStationNamesWithinMinutes(tgt, maxMin).forEach(s => {
+                if (!realpro_station_names.includes(s)) realpro_station_names.push(s);
+              });
+            }
           }
         }
       }
