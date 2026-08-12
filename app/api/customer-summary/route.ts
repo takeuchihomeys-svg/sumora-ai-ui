@@ -3,11 +3,13 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
 
-const model = new ChatAnthropic({
-  model: "claude-sonnet-5",
-  maxTokens: 600,
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
-});
+function getModel() {
+  return new ChatAnthropic({
+    model: "claude-sonnet-5",
+    maxTokens: 600,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+  });
+}
 
 // ── 構造化JSON出力プロンプト ──────────────────────────────────────────────
 const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
@@ -516,7 +518,7 @@ export async function POST(req: NextRequest) {
       c.last_message         && `最後のメッセージ（${c.last_message_sender === "customer" ? "お客さん" : "スタッフ"}）:「${c.last_message}」`,
     ].filter(Boolean).join("\n") + learnedPatternsNote + nextActionRulesNote + inspectionFactNote + conversationHistory;
 
-    const res = await model.invoke([
+    const res = await getModel().invoke([
       new SystemMessage(systemPrompt),
       new HumanMessage(info),
     ]);
