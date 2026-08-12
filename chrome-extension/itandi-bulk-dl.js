@@ -142,7 +142,7 @@
         _autoSendArmed = false;
         _pendingAutoSendDispatched = true;
         console.log("[AXLX itandi] 新結果検出 → 全ページ自動送信開始");
-        setTimeout(autoSendAllPages, 800);
+        setTimeout(autoSendAllPages, 500 + Math.floor(Math.random() * 700));
       }
     }
   }
@@ -406,7 +406,7 @@
                 console.log("[AXLX] 物件名(download属性):", dlName);
               }
               resolve({ b64: b64captured, name: dlName });
-            }, 250);
+            }, 150 + Math.floor(Math.random() * 250));
           };
           window.addEventListener("message", pdfHandler);
           // JSフック失敗時フォールバック：background.jsにダウンロード監視を依頼
@@ -421,11 +421,11 @@
           setTimeout(function() {
             pdfBtn.click();
             setStatusBar("PDFキャプチャ待機中...(最大60秒)");
-          }, 60);
+          }, 40 + Math.floor(Math.random() * 60));
         }
 
         // ラジオ選択後500ms待機してからPDFボタン探索開始
-        setTimeout(findAndClickPdf, 500);
+        setTimeout(findAndClickPdf, 300 + Math.floor(Math.random() * 450));
       }
 
       // 物件資料ボタンをクリック（画面外の場合はスクロールして確実にクリックできる状態にする）
@@ -446,7 +446,7 @@
         console.log("[AXLX] モーダル検出 (class=" + modal.className.slice(0, 60) + ")");
         setStatusBar("モーダル検出・2秒待機...");
         // 黄金ルール#4: itandiモーダルは1000msでは描画未完了→2000ms待機
-        setTimeout(interactWithModal, 2000);
+        setTimeout(interactWithModal, 1400 + Math.floor(Math.random() * 1400));
       }
 
       modalObs = new MutationObserver(tryDetectModal);
@@ -474,7 +474,7 @@
       closeModal();
       pdfHookInjected = false;
       ensurePdfHook();
-      await sleep(1200);
+      await sleep(700 + Math.floor(Math.random() * 1200));
       return captureOnePdf(btn);
     }
   }
@@ -627,13 +627,13 @@
           pdfBase64List.push(b64);
           capturedNames.push(name);
           closeModal();
-          return sleep(1000); // モーダルが完全に閉じるのを待つ（500ms→1000ms）
+          return sleep(500 + Math.floor(Math.random() * 1200)); // モーダルが完全に閉じるのを待つ（500ms→1000ms）
         })
         .then(function () { processNext(i + 1); })
         .catch(function (e) {
           console.warn("[AXLX] PDF取得失敗（リトライ後も失敗） " + (i + 1) + "件目:", e.message);
           closeModal();
-          sleep(1200).then(function () { processNext(i + 1); });
+          sleep(600 + Math.floor(Math.random() * 1600)).then(function () { processNext(i + 1); });
         });
     }
 
@@ -697,8 +697,8 @@
                 );
               } catch (_) {}
             }
-          }, 2000);
-        }, 1000);
+          }, 1200 + Math.floor(Math.random() * 1600));
+        }, 600 + Math.floor(Math.random() * 1000));
       });
     });
   }
@@ -736,7 +736,7 @@
     _autofillInitiated = false;
     console.log("[AXLX itandi] fill-done 受信 → 全ページ自動送信 armed");
     // DOMがまだ更新中の場合がある → 1.5秒後に明示的にinject()を呼んで新ボタンを検出
-    setTimeout(function() { inject(); }, 1500);
+    setTimeout(function() { inject(); }, 900 + Math.floor(Math.random() * 1300));
   });
 
   // ── MutationObserver（チェックボックスの再注入） ──────────────────────
@@ -754,7 +754,7 @@
       return true; // チェックボックスなし
     });
     if (uninj.length > 0) {
-      injectTimer = setTimeout(function () { inject(); injectTimer = null; }, 400);
+      injectTimer = setTimeout(function () { inject(); injectTimer = null; }, 250 + Math.floor(Math.random() * 350));
     }
   });
 
@@ -779,7 +779,7 @@
   function start() {
     ensureBar();
     ensurePdfHook();
-    setTimeout(inject, 1500);
+    setTimeout(inject, 900 + Math.floor(Math.random() * 1300));
     mutObs.observe(document.body, { childList: true, subtree: true });
   }
 
@@ -788,5 +788,5 @@
   } else {
     start();
   }
-  window.addEventListener("load", function () { setTimeout(inject, 2500); });
+  window.addEventListener("load", function () { setTimeout(inject, 1800 + Math.floor(Math.random() * 1400)); });
 })();
