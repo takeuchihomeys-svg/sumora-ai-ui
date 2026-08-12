@@ -388,6 +388,8 @@ function CustomersPageInner() {
   const [editId, setEditId]         = useState<string | null>(null);
   const [editFields, setEditFields] = useState<EditFields | null>(null);
   const [editSaving, setEditSaving] = useState(false);
+  const [organizeResult, setOrganizeResult] = useState<{ area_input: string; station_input: string; changes: string[] } | null>(null);
+  const [organizeLoading, setOrganizeLoading] = useState(false);
 
   // 条件ログ展開（3件以上のとき「もっと見る」）
   const [expandedCondIds, setExpandedCondIds] = useState<Set<string>>(new Set());
@@ -884,6 +886,25 @@ function CustomersPageInner() {
 
   const openEdit = (c: Customer) => { convertRawOnSave.current = null; setEditId(c.id); setEditFields(toEditFields(c)); };
 
+  const handleOrganizeAreaStation = async () => {
+    if (!editFields || organizeLoading) return;
+    setOrganizeLoading(true);
+    try {
+      const res = await fetch("/api/organize-area-station", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ area_input: editFields.area_input, station_input: editFields.station_input }),
+      });
+      if (!res.ok) throw new Error("API error");
+      const data = await res.json() as { area_input: string; station_input: string; changes: string[] };
+      setOrganizeResult(data);
+    } catch {
+      alert("自動整理に失敗しました");
+    } finally {
+      setOrganizeLoading(false);
+    }
+  };
+
   const saveEdit = async () => {
     if (!editId || !editFields || editSaving) return;
     setEditSaving(true);
@@ -963,7 +984,7 @@ function CustomersPageInner() {
       setEditSaving(false);
       return;
     }
-    setEditId(null); setEditFields(null); setEditSaving(false);
+    setEditId(null); setEditFields(null); setEditSaving(false); setOrganizeResult(null);
   };
 
   // 条件追加: AIでテキスト or 画像→構造化フィールドを自動解析
@@ -3102,13 +3123,73 @@ function CustomersPageInner() {
                 <h2 className="font-bold text-[#111b21] text-[15px]">条件更新</h2>
                 <p className="text-[11px] text-[#8696a0]">{customers.find((c) => c.id === editId)?.customer_name}</p>
               </div>
-              <button onClick={() => { setEditId(null); setEditFields(null); }} className="text-[#aaa] text-xl leading-none">✕</button>
+              <button onClick={() => { setEditId(null); setEditFields(null); setOrganizeResult(null); }} className="text-[#aaa] text-xl leading-none">✕</button>
             </div>
             <div className="px-5 py-4 space-y-3">
               <Field label="地域" placeholder="例: 城東区・東大阪市・摂津市"
                 value={editFields.area_input} onChange={(v) => setEditFields((f) => f && ({ ...f, area_input: v }))} />
               <Field label="駅・路線" placeholder="例: 阪急京都線・梅田駅"
                 value={editFields.station_input} onChange={(v) => setEditFields((f) => f && ({ ...f, station_input: v }))} />
+              {/* 地域・駅 自動整理ボタン */}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleOrganizeAreaStation}
+                  disabled={organizeLoading}
+                  className="text-[11px] font-bold px-3 py-1 rounded-full border border-purple-400 text-purple-600 bg-purple-50 active:bg-purple-100 disabled:opacity-50"
+                >
+                  {organizeLoading ? "整理中..." : "✨ 地域・駅を自動整理"}
+                </button>
+              </div>
+              {/* 自動整理 確認ダイアログ */}
+              {organizeResult && (
+                <div className="rounded-xl border border-purple-200 bg-purple-50 p-3 space-y-2">
+                  <p className="text-[12px] font-bold text-purple-700">✨ 自動整理の結果</p>
+                  {organizeResult.changes.length === 0 ? (
+                    <p className="text-[11px] text-[#8696a0]">変更なし（すでに正しく整理されています）</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {organizeResult.changes.map((c, i) => (
+                        <li key={i} className="text-[11px] text-purple-800">• {c}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="text-[11px] text-[#555] space-y-0.5">
+                    <p>地域: <span className="font-bold">{organizeResult.area_input || "（空）"}</span></p>
+                    <p>駅: <span className="font-bold">{organizeResult.station_input || "（空）"}</span></p>
+                  </div>
+                  {organizeResult.changes.length > 0 && (
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditFields((f) => f && ({ ...f, area_input: organizeResult.area_input, station_input: organizeResult.station_input }));
+                          setOrganizeResult(null);
+                        }}
+                        className="flex-1 text-[12px] font-bold py-2 rounded-xl bg-purple-600 text-white"
+                      >
+                        反映する
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOrganizeResult(null)}
+                        className="flex-1 text-[12px] font-bold py-2 rounded-xl bg-white border border-[#d1d7db] text-[#555]"
+                      >
+                        キャンセル
+                      </button>
+                    </div>
+                  )}
+                  {organizeResult.changes.length === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setOrganizeResult(null)}
+                      className="w-full text-[12px] font-bold py-1.5 rounded-xl bg-white border border-[#d1d7db] text-[#555]"
+                    >
+                      閉じる
+                    </button>
+                  )}
+                </div>
+              )}
               {/* 間取り バッジ選択 + 地域/駅バッジ */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
