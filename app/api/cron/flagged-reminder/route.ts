@@ -167,7 +167,7 @@ export async function GET(req: NextRequest) {
 
   // 30分以内に既に送信済みなら重複送信しない（Cron リトライ対策）
   const COOLDOWN_KEY = "flagged_reminder_last_sent_at";
-  const cooldownMins = 30;
+  const cooldownMins = 55;
   const { data: lastSentRow } = await supabase
     .from("hanbancyo_settings").select("value").eq("key", COOLDOWN_KEY).maybeSingle();
   if (lastSentRow?.value) {

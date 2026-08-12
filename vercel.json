@@ -46,7 +46,7 @@
     },
     {
       "path": "/api/cron/flagged-reminder",
-      "schedule": "*/30 * * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/analyze-diffs?mode=maintain",
