@@ -2679,16 +2679,21 @@ export default function Home() {
       setViewportHeight(vv.height);
       setViewportTop(vv.offsetTop); // iOSスクロール時にmainのtopも追従
       if (kh > 100) {
+        // double-RAF: 1枚目のRAFはReactのstate更新（setViewportHeight等）が
+        // DOMに反映される前に動くため、<main>の高さがまだ古い値のままになる。
+        // 2枚目のRAFでReactの再描画後に確実に正しいサイズでスクロールする。
         requestAnimationFrame(() => {
-          if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-          const ta = textareaRef.current;
-          if (ta && document.activeElement === ta) {
-            ta.scrollTop = ta.scrollHeight;
-          }
-          const ae = document.activeElement;
-          if (ae instanceof HTMLTextAreaElement && bottomPanelRef.current?.contains(ae)) {
-            ae.scrollIntoView({ block: "nearest" });
-          }
+          requestAnimationFrame(() => {
+            if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+            const ta = textareaRef.current;
+            if (ta && document.activeElement === ta) {
+              ta.scrollTop = ta.scrollHeight;
+            }
+            const ae = document.activeElement;
+            if (ae instanceof HTMLTextAreaElement && bottomPanelRef.current?.contains(ae)) {
+              ae.scrollIntoView({ block: "nearest" });
+            }
+          });
         });
       }
     };
@@ -6506,9 +6511,10 @@ export default function Home() {
             ref={bottomPanelRef}
             className="border-t border-[#e9edef] bg-white px-2 pt-1.5 md:px-3"
             style={{
+              flexShrink: 0,
               paddingBottom: keyboardHeight > 100 ? "4px" : "max(10px, env(safe-area-inset-bottom))",
               overflowY: keyboardHeight > 100 ? "auto" : "visible",
-              maxHeight: keyboardHeight > 100 ? `${Math.min((viewportHeight ?? 500) - 80, 520)}px` : "none",
+              maxHeight: keyboardHeight > 100 ? `${Math.min((viewportHeight ?? 500) - 160, 520)}px` : "none",
               touchAction: keyboardHeight > 100 ? "pan-y" : "auto",
             }}
           >
@@ -7638,15 +7644,15 @@ export default function Home() {
                   }}
                   onFocus={() => {
                     setInputFocused(true);
-                    // キーボードが開いたら focused textarea がキーボードの上に来るようスクロール
+                    // 300msは早すぎる: キーボードがまだ開き途中でkeyboardHeight>100未満のため
+                    // bottomPanelのoverflowY="visible"のままで、scrollIntoViewが
+                    // iOSのdocument windowスクロールに fallback → viewportTopが増加し
+                    // <main>がキーボードの下にずれてさらに悪化する。
+                    // 700msで確実にキーボード展開完了・React再描画後に実行する。
                     setTimeout(() => {
                       const ta = textareaRef.current;
-                      if (ta) ta.scrollIntoView({ behavior: "smooth", block: "end" });
-                    }, 300);
-                    setTimeout(() => {
-                      const ta = textareaRef.current;
-                      if (ta && document.activeElement === ta) ta.scrollIntoView({ block: "nearest" });
-                    }, 650);
+                      if (ta && document.activeElement === ta) ta.scrollIntoView({ block: "end" });
+                    }, 700);
                   }}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
@@ -7711,10 +7717,9 @@ export default function Home() {
                       onFocus={e => {
                         setInputFocused(true);
                         const el = e.currentTarget;
-                        setTimeout(() => { el.scrollIntoView({ behavior: "smooth", block: "end" }); }, 300);
                         setTimeout(() => {
-                          if (document.activeElement === el) el.scrollIntoView({ block: "nearest" });
-                        }, 650);
+                          if (document.activeElement === el) el.scrollIntoView({ block: "end" });
+                        }, 700);
                       }}
                       onBlur={() => setInputFocused(false)}
                       rows={3}
