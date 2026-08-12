@@ -108,15 +108,17 @@ function buildLineMessage(
   pageCount: number,
   customerName: string | null | undefined,
   propertySummaries: string[] | null | undefined,
+  sourceLabel?: string,
 ): string {
   const lines: string[] = [];
+  const src = sourceLabel || "リアプロ";
 
   // ヘッダー
   if (customerName) {
     const nameWithSan = customerName.endsWith("さん") ? customerName : `${customerName}さん`;
-    lines.push(`${nameWithSan} 物件（リアプロ）`);
+    lines.push(`${nameWithSan} 物件（${src}）`);
   } else {
-    lines.push(`物件（リアプロ）`);
+    lines.push(`物件（${src}）`);
   }
 
   // 🌟一番オススメ（🌟付き物件の先頭に単独表示）
@@ -295,6 +297,7 @@ export async function POST(req: NextRequest) {
           merged.getPageCount(),
           customer_name,
           rankedSummaries,
+          (pdf_urls && pdf_urls.length > 0) ? "itandi" : "リアプロ",
         );
         await pushLineMessage(groupId, lineText);
         return NextResponse.json({ ok: true, line_sent: true, url: blob.url });

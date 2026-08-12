@@ -2430,7 +2430,7 @@ function openInstructions(siteKey) {
     preloadAdjForm(selectedCustomer);
     setupAreaModeSelector(selectedCustomer, "itandi");
     autofillBtn.style.display = "block";
-    autofillBtn.textContent = "⚡ itandiに自動入力";
+    autofillBtn.textContent = "🔍 itandiで自動検索";
     autofillBtn.className = "autofill-btn";
     // ボタン表示と同時に未登録地名チェック（クリック前に気づける）
     showUnknownWarn(computeUnknownTokens(selectedCustomer.desired_area || selectedCustomer.area || ""));
@@ -2711,7 +2711,7 @@ function openInstructions(siteKey) {
       autofillBtn.textContent = "✓ 自動検索中...";
       autofillBtn.classList.add("done");
       setTimeout(() => {
-        autofillBtn.textContent = "⚡ itandiに自動入力";
+        autofillBtn.textContent = "🔍 itandiで自動検索";
         autofillBtn.classList.remove("done");
       }, 8000);
     };
@@ -3357,7 +3357,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (e.data?.from === "aixlinx-fill-done") {
         const btn = document.getElementById("autofill-btn");
         if (btn) {
-          btn.textContent = "🔍 リアプロで自動検索";
+          const _resetLabel = selectedSite === "itandi" ? "🔍 itandiで自動検索"
+            : selectedSite === "reins" ? "⚡ REINSに自動入力"
+            : "🔍 リアプロで自動検索";
+          btn.textContent = _resetLabel;
           btn.classList.remove("searching", "done");
           btn.disabled = false;
         }
