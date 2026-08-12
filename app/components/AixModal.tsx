@@ -1658,6 +1658,8 @@ export default function AixModal({
         if (initialPickupType && initialPickupType !== "新着1件") body.pickup_type = initialPickupType;
         // 自動抽出した退去予定日を注入（OCR誤読防止）
         if (propMoveOutDate) body.move_out_date = propMoveOutDate;
+        // 見積書同封フラグ（シンプルモードも含む）
+        if (recommendEstimateFile) body.has_estimate = true;
       } else if (actionType === "property_send") {
         if (sendImageFiles.length > 0) {
           const urls = await Promise.all(sendImageFiles.map((f, i) => uploadImageCached(f, i)));
