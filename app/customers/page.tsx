@@ -921,22 +921,19 @@ function CustomersPageInner() {
                           : editFields.area_mode_station ? "station"
                           : "auto",
     };
-    const res = await fetch("/api/property-customers", {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setCustomers((p) => p.map((c) => c.id === editId ? { ...c, ...updated } : c));
-      // area_mode を saveEdit 後に areaModeByCustomer へも同期
-      const savedAreaMode = (updated as Customer).area_mode ?? "auto";
-      if (editId) {
-        setAreaModeByCustomer((prev) => ({ ...prev, [editId]: savedAreaMode as "auto" | "ward" | "station" | "both" }));
+    try {
+      const res = await fetch("/api/property-customers", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        alert(`保存に失敗しました: ${(errJson as { error?: string }).error ?? res.status}`);
+        setEditSaving(false);
+        return;
       }
-      // 条件更新後: 紐付き客はAI要約を自動再生成
-      const editedC = customers.find((c) => c.id === editId);
-      if (editedC?.is_linked) void generateSummary({ ...editedC, ...updated } as Customer);
-      // 「条件に反映する」経由の場合: 生テキストを「反映済み」ログエントリに変換（削除しない）
+      const updated = await res.json() as Customer | null;
+      // 「条件に反映する」経由の場合: 生テキストを「反映済み」ログエントリに変換
       if (convertRawOnSave.current && convertRawOnSave.current.id === editId) {
         const { raw } = convertRawOnSave.current;
         convertRawOnSave.current = null;
@@ -948,8 +945,16 @@ function CustomersPageInner() {
           method: "PATCH", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: editId, additional_conditions: logified || null }),
         });
-        setCustomers((p) => p.map((c) => c.id === editId ? { ...c, additional_conditions: logified || null } : c));
       }
+      // 条件更新後: 紐付き客はAI要約を自動再生成
+      const editedC = customers.find((c) => c.id === editId);
+      if (editedC?.is_linked && updated) void generateSummary({ ...editedC, ...updated } as Customer);
+      // DBから再取得して確実にUIに反映（楽観的更新ではなくDB確定値を使う）
+      await fetchCustomers();
+    } catch (e) {
+      alert(`保存中にエラーが発生しました: ${e instanceof Error ? e.message : String(e)}`);
+      setEditSaving(false);
+      return;
     }
     setEditId(null); setEditFields(null); setEditSaving(false);
   };
