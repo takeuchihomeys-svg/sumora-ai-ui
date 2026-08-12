@@ -33,6 +33,10 @@
       "schedule": "0 1,3,5,7,9,11 * * *"
     },
     {
+      "path": "/api/cron/announce-sonota",
+      "schedule": "30 0 * * *"
+    },
+    {
       "path": "/api/cron/update-knowledge",
       "schedule": "30 17 * * *"
     },
