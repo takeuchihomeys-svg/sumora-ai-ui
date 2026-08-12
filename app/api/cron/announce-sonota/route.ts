@@ -8,7 +8,7 @@ function getJSTHour(): number {
 }
 
 const COOLDOWN_KEY = "announce_sonota_last_sent_at";
-const COOLDOWN_MS = 20 * 60 * 60 * 1000; // 20時間（1日1回ガード）
+const COOLDOWN_MS = 3 * 60 * 60 * 1000; // 3時間（10:00/14:00/19:00の3回ガード）
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");

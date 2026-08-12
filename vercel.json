@@ -34,7 +34,7 @@
     },
     {
       "path": "/api/cron/announce-sonota",
-      "schedule": "30 0 * * *"
+      "schedule": "0 1,5,10 * * *"
     },
     {
       "path": "/api/cron/update-knowledge",
