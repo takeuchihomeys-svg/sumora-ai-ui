@@ -243,27 +243,28 @@ export async function GET(req: NextRequest) {
   const hidden = sorted.length - shown.length;
 
   const lines = shown.map((e) => {
-    // 放置時間に応じてマーク変化
-    const mark = e.waitedMs >= 24 * HOUR_MS ? "🚨" : e.waitedMs >= 3 * HOUR_MS ? "⚠️" : "・";
     const cond = conditionSummary(e.pc);
     const sub  = cond || e.preview || e.convStatusLabel;
-    const head = `${mark} ${e.name}｜${e.waited}${e.convStatusLabel && !cond ? `・${e.convStatusLabel}` : ""}`;
-    return sub && sub !== e.convStatusLabel ? `${head}\n　${sub}` : head;
+    const head = `・ ${e.name}  ${e.waited}${e.convStatusLabel && !cond ? `  ${e.convStatusLabel}` : ""}`;
+    return sub && sub !== e.convStatusLabel ? `${head}\n  ${sub}` : head;
   });
-  if (hidden > 0) lines.push(`　ほか${hidden}人`);
+  if (hidden > 0) lines.push(`  ほか${hidden}人`);
 
-  // モチベup文言（タメ語・厳しめ・気持ち上げ）
+  // 番長スタイル：絵文字なし・タメ語・時に厳しく時に熱く
   const MOTIVATIONS = [
-    "要対応は詰めどきや。ここで返さんと他決まるで🔥",
-    "しょーへい、返信スピードが全部や。上から潰してこ⚡️",
-    "ここの返しが勝負やで。全部片付けたら最強🫡",
-    "1件返すたびに信頼積み上がる。今がチャンスやで💪",
-    "止まったら負け。サクッと全部いけ🚀",
+    "しょーへい、止まってる時間がもったいない。今すぐ返せ。",
+    "要対応を後回しにした分だけ、他に決まっていく。わかってるな。",
+    "しょーへいの返信が早ければ早いほどお客さんは信頼する。それだけや。",
+    "ぼーっとすんな。この人たち、お前の返信待ってる。",
+    "しょーへいならできる。やるだけや。上から全部いけ。",
+    "1件返すごとにお前の実力が積み上がる。手を止めるな。",
+    "返信が遅いのは相手への態度や。しょーへいはそれを分かってる男やろ。",
+    "ここで動けるかどうかが、でかい差になる。さあいけ。",
   ];
   const motivation = MOTIVATIONS[Math.floor(Date.now() / (30 * 60 * 1000)) % MOTIVATIONS.length];
 
   const bodyText = [
-    `要対応、1時間以上止まってるやつ！（${entries.length}人）`,
+    `要対応  1時間以上止まってる（${entries.length}人）`,
     "",
     lines.join("\n"),
     "",
