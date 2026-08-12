@@ -606,6 +606,7 @@ export default function AixModal({
   const autoConvMatchFiredRef = useRef(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string>("");
+  const [preview2, setPreview2] = useState<string>(""); // 申込催促系：1分後送信の2通目
   const [aiDraft, setAiDraft] = useState<string>("");
   // condition_hearing: APIが返す条件フォームテンプレ（「フォームのみ送る」ボタンで別送する。マウント時にクライアント側でも組み立て）
   const [hearingFormText, setHearingFormText] = useState<string>("");
@@ -933,6 +934,7 @@ export default function AixModal({
   useEffect(() => {
     setRecSimpleMode(false);
     setPreview("");
+    setPreview2("");
     setAixNotice("");
     uploadCacheRef.current.clear(); // ① 会話が変わったら画像アップロードキャッシュをクリア
     sentStepRef.current = {}; // ② 送信済みステップもリセット
@@ -946,7 +948,7 @@ export default function AixModal({
   // unmount時に進行中のAI生成リクエストを中断（loading固まり防止）
   useEffect(() => () => { genAbortRef.current?.abort(); }, []);
   // initialAppSubMode（picker/バナー経由の指定）をマウント時に潰さないよう、初期値を尊重してリセット
-  useEffect(() => { setAppSubMode(initialAppSubMode ?? null); setPreview(""); }, [actionType, initialAppSubMode]);
+  useEffect(() => { setAppSubMode(initialAppSubMode ?? null); setPreview(""); setPreview2(""); }, [actionType, initialAppSubMode]);
   useEffect(() => { setAiActionComponents(null); }, [actionType, conversationId]);
   // actionType 変更時に保証会社確認用ステートをリセット
   useEffect(() => {
@@ -2106,6 +2108,14 @@ export default function AixModal({
       }
       setAiDraft(generatedMsg);
       setPreview(useEmoji ? generatedMsg : stripEmoji(generatedMsg));
+      // 申込催促系：2通目の締め文を自動生成（1分後送信）
+      if (actionType === "application_push" || (actionType === "followup_revive" && followupSubMode === "apply_supplement")) {
+        const _n = customerName ? (/(さん|様)$/.test(customerName) ? customerName : `${customerName}さん`) : "お客様";
+        const msg2 = `ご不明点等出てきましたら何時でもお気軽にご質問ください😊！！\n${_n}がご満足いくご入居が出来ますよう全力でサポートさせて頂きます！！`;
+        setPreview2(useEmoji ? msg2 : stripEmoji(msg2));
+      } else {
+        setPreview2("");
+      }
       if (data.ai_components) setAiActionComponents(data.ai_components as Record<string, string>);
       setAixNotice(data.notice || "");
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
@@ -2655,6 +2665,13 @@ export default function AixModal({
           return;
         } else {
           await sendAsAix(preview, uploadedImageUrl);
+          // 申込催促系：2通目を1分後に送信
+          if (preview2.trim()) {
+            const _captured2 = preview2.trim();
+            const _capturedSend = onSend;
+            onDelayedSend?.(60, async () => { await _capturedSend(_captured2, undefined, true); });
+            setPreview2("");
+          }
         }
       }
 
@@ -5887,6 +5904,22 @@ export default function AixModal({
               {(preview.includes("[物件名]") || preview.includes("[物件名と号室]")) && (
                 <div className="mt-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-600">
                   ⚠️ 物件名が特定できませんでした。送信前に直接編集してください。
+                </div>
+              )}
+              {/* 2通目プレビュー（1分後送信） */}
+              {preview2 && (
+                <div className="mt-3">
+                  <div className="mb-1 flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold text-orange-600">⏱ 1分後に自動送信（2通目）</span>
+                    <span className="text-[10px] text-[#8696a0]">タップして編集</span>
+                  </div>
+                  <textarea
+                    value={preview2}
+                    onChange={(e) => setPreview2(e.target.value)}
+                    rows={3}
+                    className="w-full resize-none rounded-2xl border-2 border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-[#111b21] outline-none focus:border-orange-400"
+                    style={{ fontFamily: "inherit" }}
+                  />
                 </div>
               )}
               {aixNotice && (
