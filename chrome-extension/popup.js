@@ -1925,9 +1925,12 @@ function renderCustomerRow(c, dimmed) {
 // ── View 2: Site selection ─────────────────────────────────────────
 function openSiteView(customer) {
   selectedCustomer = customer;
-  // ★ 顧客選択時に名前をstorageに保存（全ページ送る時のLINEヘッダー名フォールバック用）
+  // ★ 顧客選択時に名前・IDをstorageに保存（全ページ送る時のLINEヘッダー名フォールバック用）
   if (customer.customer_name) {
-    chrome.storage.local.set({ current_customer_name: customer.customer_name });
+    chrome.storage.local.set({
+      current_customer_name: customer.customer_name,
+      current_customer_id: customer.id || null
+    });
   }
   document.getElementById("site-customer-name").textContent = customer.customer_name;
 

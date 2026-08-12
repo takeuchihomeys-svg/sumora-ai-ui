@@ -1828,10 +1828,10 @@ var _batchCustomerDoneWaiters = [];
 function _notifyBatchCustomerDone(customerId, propertyCount) {
   var remaining = [];
   _batchCustomerDoneWaiters.forEach(function(w) {
-    // customerId が両方ある場合のみ厳密一致。片方でも null なら全解決（フォールバック）
+    // 両方 null でない場合は厳密一致。両方 null の場合のみ全解決（null信号が全waitersを誤解決するバグ防止）
     var match = (w.customerId && customerId)
       ? String(w.customerId) === String(customerId)
-      : true;
+      : (!w.customerId && !customerId);
     if (match) {
       clearInterval(w.stopInterval);
       clearTimeout(w.timer);

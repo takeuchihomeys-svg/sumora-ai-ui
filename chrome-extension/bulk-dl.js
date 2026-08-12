@@ -369,19 +369,19 @@
       if (e.data.name) {
         callback(e.data.name, e.data.conditions || null, e.data.id || null);
       } else {
-        // popup未選択 → storage から最後の顧客名をフォールバック
-        chrome.storage.local.get("current_customer_name", function(data) {
-          callback(data.current_customer_name || null, e.data.conditions || null, e.data.id || null);
+        // popup未選択 → storage から最後の顧客名・IDをフォールバック
+        chrome.storage.local.get(["current_customer_name", "current_customer_id"], function(data) {
+          callback(data.current_customer_name || null, e.data.conditions || null, data.current_customer_id || e.data.id || null);
         });
       }
     };
     window.addEventListener("message", handler);
     window.postMessage({ from: "axlx-get-customer" }, "*");
-    // 800ms 以内に応答がなければ storage から最後の顧客名をフォールバック
+    // 800ms 以内に応答がなければ storage から最後の顧客名・IDをフォールバック
     timer = setTimeout(function () {
       window.removeEventListener("message", handler);
-      chrome.storage.local.get("current_customer_name", function(data) {
-        callback(data.current_customer_name || null, null, null);
+      chrome.storage.local.get(["current_customer_name", "current_customer_id"], function(data) {
+        callback(data.current_customer_name || null, null, data.current_customer_id || null);
       });
     }, 800);
   }
@@ -670,6 +670,7 @@
       for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
         if ((el.tagName === "A" || el.tagName === "BUTTON") && el.offsetParent !== null) {
           if (_isDisabledEl(el)) break;
+          if (el.tagName === 'A' && el.href && el.href === location.href) break; // self-link = same page
           return true;
         }
       }
@@ -678,7 +679,9 @@
       '[aria-label*="次"], .pagination-next, .page-next, a.next, button.next'
     );
     for (var i = 0; i < candidates.length; i++) {
-      if (candidates[i].offsetParent !== null && !_isDisabledEl(candidates[i])) return true;
+      var c = candidates[i];
+      if (c.offsetParent !== null && !_isDisabledEl(c) &&
+          !(c.tagName === 'A' && c.href && c.href === location.href)) return true;
     }
     return false;
   }
@@ -696,6 +699,7 @@
       for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
         if ((el.tagName === "A" || el.tagName === "BUTTON") && el.offsetParent !== null) {
           if (_isDisabledEl(el)) break;
+          if (el.tagName === 'A' && el.href && el.href === location.href) break; // self-link = same page
           el.click();
           return true;
         }
@@ -706,8 +710,10 @@
       '[aria-label*="次"], .pagination-next, .page-next, a.next, button.next'
     );
     for (var i = 0; i < candidates.length; i++) {
-      if (candidates[i].offsetParent !== null && !_isDisabledEl(candidates[i])) {
-        candidates[i].click();
+      var c = candidates[i];
+      if (c.offsetParent !== null && !_isDisabledEl(c) &&
+          !(c.tagName === 'A' && c.href && c.href === location.href)) {
+        c.click();
         return true;
       }
     }
@@ -718,13 +724,14 @@
   // autoSendOnePage の onDone コールバックと start() 内の再開処理で共通利用する。
   function tryNext(state) {
     if (hasNextPageBtn()) {
-      setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null });
       var clicked = clickNextPageBtn();
       if (!clicked) {
         clearAutoSendState();
         try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: 0 }, function() { void chrome.runtime.lastError; }); } catch (_) {}
         alert("次ページへの遷移に失敗しました。手動で操作してください。");
       } else {
+        // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
+        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null });
         // AJAX: 次のinject()でCase Bが拾えるようにリセット
         // ページリロード: _pendingAutoSendDispatched は再初期化されるので問題なし
         _pendingAutoSendDispatched = false;
