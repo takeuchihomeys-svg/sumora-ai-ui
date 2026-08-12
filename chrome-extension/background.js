@@ -885,14 +885,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           sendResponse({ ok: true });
 
-          // fill完了後にスクレイプ+LINE送信
-          _scrapeAndCompareItandi(
+          // fill完了後: リアプロと同様に fill-done + batch-customer-done 待機（itandi-bulk-dl.js 経由）
+          _scrapeAndSendRealpro(
             _siteFillDone,
             String(_cid),
             _custName,
-            conditions
+            conditions,
+            "itandi"
           ).catch(function(e) {
-            console.error("[webapp-search] itandi _scrapeAndCompareItandi error:", e.message || e);
+            console.error("[webapp-search] itandi _scrapeAndSendRealpro error:", e.message || e);
           });
         } catch (e) {
           console.error("[webapp-search] itandi error:", e);
@@ -2800,110 +2801,6 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     }).catch(function() {});
   }
   return 0;
-}
-
-// ===== itandi スクレイプ支援関数 =====
-
-// itandi タブに axlx-scrape-itandi メッセージを送り、物件配列を受け取る
-// 修正: content script 無応答は [] ではなく {error: msg} を返す（_scrapeRealproPage と統一）
-// _scrapeAllItandiPages で error を検知して throw させることで
-// 「0件」と「スクレイプ失敗」を区別できるようにする
-async function _scrapeItandiPage(tabId) {
-  return new Promise(function (resolve) {
-    chrome.tabs.sendMessage(tabId, { type: "axlx-scrape-itandi" }, function (resp) {
-      if (chrome.runtime.lastError || !resp) {
-        var errMsg = (chrome.runtime.lastError && chrome.runtime.lastError.message) || "no response";
-        console.warn("[itandiScrape] _scrapeItandiPage: no response from tab " + tabId +
-          " (" + errMsg + ")");
-        resolve({ error: errMsg });
-        return;
-      }
-      resolve(resp.properties || []);
-    });
-  });
-}
-
-// itandi の「次へ」ボタンをクリック。クリックできた場合は true を返す
-async function _clickNextPageItandi(tabId) {
-  return new Promise(function (resolve) {
-    chrome.tabs.sendMessage(tabId, { type: "axlx-click-next-page-itandi" }, function (resp) {
-      if (chrome.runtime.lastError || !resp) { resolve(false); return; }
-      resolve(resp.clicked === true);
-    });
-  });
-}
-
-// 最大 maxPages ページを巡回してすべての itandi 物件データを収集する
-async function _scrapeAllItandiPages(tabId) {
-  var allProperties = [];
-  var maxPages = 10; // itandi は通常 1〜5 ページ程度。安全マージンで 10 ページ上限
-  for (var page = 0; page < maxPages; page++) {
-    var props = await _scrapeItandiPage(tabId);
-    // 修正: スクレイプ失敗（error オブジェクト）と0件を区別する
-    if (props && props.error) {
-      if (page === 0) {
-        throw new Error("itandiスクレイプ失敗: " + props.error);
-      }
-      console.warn("[itandiScrape] page " + (page + 1) + " scrape error: " + props.error + " → 打ち切り");
-      break;
-    }
-    console.log("[itandiScrape] page " + (page + 1) + ": " + props.length + "件");
-    if (props.length === 0) break;
-    allProperties = allProperties.concat(props);
-    var hasNext = await _clickNextPageItandi(tabId);
-    if (!hasNext) break;
-    // 次ページ読み込みを待つ
-    await new Promise(function (r) { setTimeout(r, 2000); });
-  }
-  return allProperties;
-}
-
-// itandi の autofill 完了後にスクレイプ + /api/compare-properties で AI比較 + LINE送信する
-// 修正4: 固定8秒待ちを廃止し、itandi-page-script.js の検索実行シグナル（fill-done）を待つ。
-// fillDonePromise は autofill 発火「前」に _createFillDoneWaiter("itandi", 90000) で作成しておくこと。
-async function _scrapeAndCompareItandi(fillDonePromise, customerId, customerName, conditions) {
-  // resolve 値は { timedOut, error, stopped } 形式（_createFillDoneWaiter 参照）
-  var fillDone = fillDonePromise ? await fillDonePromise : null;
-  // Fix 3: stopped:true の場合はストップ要求によるキャンセル（エラーではない）
-  if (fillDone && fillDone.stopped) {
-    throw new Error("__BATCH_STOPPED__");
-  }
-  if (!fillDone || fillDone.timedOut) {
-    throw new Error("itandi 検索完了シグナル（fill-done）が90秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
-  }
-  if (fillDone.error) {
-    console.warn("[fill-done] itandi page-script側エラー（スクレイプは続行）: " + fillDone.error);
-  }
-  // 検索結果の描画完了を待つ
-  await new Promise(function (r) { setTimeout(r, 3000); });
-
-  // itandi タブを取得
-  var allTabs = await chrome.tabs.query({});
-  var itandiTab = allTabs.find(function (t) {
-    return t.url && t.url.includes("itandibb.com");
-  });
-  if (!itandiTab) {
-    throw new Error("itandiのタブが見つかりません"); // 修正12: 無音の欠落を検知可能にする
-  }
-
-  // 全ページスクレイプ（最大 10 ページ）
-  var properties = await _scrapeAllItandiPages(itandiTab.id);
-  console.log("[itandiScrape] customer=" + customerId + " scraped=" + properties.length + "件");
-
-  if (properties.length === 0) {
-    console.warn("[itandiScrape] 物件0件のためAPIスキップ");
-    if (customerName) {
-      fetch(SUMORA_BATCH_API + "/api/notify-group", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんのitandi検索が0件でした" })
-      }).catch(function() {});
-    }
-    return;
-  }
-
-  // AI比較 + 売上番長グループへ LINE 送信
-  await _sendPropertiesToBackend(properties, customerId, conditions, customerName, "itandi");
 }
 
 // ===== END: 自動化バッチ検索 =====

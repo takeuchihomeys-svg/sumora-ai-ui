@@ -556,6 +556,7 @@
           alert("PDFが1件も取得できませんでした");
           lineBtn.disabled    = false;
           lineBtn.textContent = lineOrig;
+          if (onComplete) onComplete(false, 0); // バッチハング防止: axlx-batch-customer-done を確実に送る
           return;
         }
 
