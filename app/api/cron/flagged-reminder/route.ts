@@ -235,59 +235,37 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // 放置が長い順
-  const byWaited = (a: Entry, b: Entry) => b.waitedMs - a.waitedMs;
-
-  // 物件出し必須 / 1日以上放置 / それ以外 に分類
-  const propBlock    = entries.filter((e) => e.needsProperty).sort(byWaited);
-  const rest         = entries.filter((e) => !e.needsProperty).sort(byWaited);
-  const urgentBlock  = rest.filter((e) => e.waitedMs >= 24 * HOUR_MS);
-  const normalBlock  = rest.filter((e) => e.waitedMs < 24 * HOUR_MS);
+  // 放置が長い順にソート（全員まとめて1リスト）
+  const sorted = [...entries].sort((a, b) => b.waitedMs - a.waitedMs);
 
   // ── メッセージ本文生成 ──
-  const blocks: string[] = [];
+  const shown  = sorted.slice(0, NORMAL_DISPLAY_LIMIT);
+  const hidden = sorted.length - shown.length;
 
-  if (propBlock.length > 0) {
-    const lines = propBlock.map((e) => {
-      const head = `🏠 ${e.name}｜${e.waited}`;
-      const detail = conditionSummary(e.pc) || e.preview || e.convStatusLabel;
-      return detail ? `${head}\n　${detail}` : head;
-    });
-    blocks.push(`━━ 🏠 物件も出してあげて！（${propBlock.length}人）━━\n${lines.join("\n")}`);
-  }
+  const lines = shown.map((e) => {
+    // 放置時間に応じてマーク変化
+    const mark = e.waitedMs >= 24 * HOUR_MS ? "🚨" : e.waitedMs >= 3 * HOUR_MS ? "⚠️" : "・";
+    const cond = conditionSummary(e.pc);
+    const sub  = cond || e.preview || e.convStatusLabel;
+    const head = `${mark} ${e.name}｜${e.waited}${e.convStatusLabel && !cond ? `・${e.convStatusLabel}` : ""}`;
+    return sub && sub !== e.convStatusLabel ? `${head}\n　${sub}` : head;
+  });
+  if (hidden > 0) lines.push(`　ほか${hidden}人`);
 
-  if (urgentBlock.length > 0) {
-    const lines = urgentBlock.map((e) => {
-      const head = `🚨 ${e.name}｜${e.waited}${e.convStatusLabel ? `・${e.convStatusLabel}` : ""}`;
-      return e.preview ? `${head}\n　${e.preview}` : head;
-    });
-    blocks.push(`━━ 🚨 まず謝って返信！（${urgentBlock.length}人）━━\nまる1日以上お待たせしてます\n${lines.join("\n")}`);
-  }
-
-  if (normalBlock.length > 0) {
-    const shown  = normalBlock.slice(0, NORMAL_DISPLAY_LIMIT);
-    const hidden = normalBlock.length - shown.length;
-    const lines  = shown.map((e) => {
-      const head = `⏰ ${e.name}｜${e.waited}${e.convStatusLabel ? `・${e.convStatusLabel}` : ""}`;
-      return e.preview ? `${head}\n　${e.preview}` : head;
-    });
-    if (hidden > 0) lines.push(`　ほか${hidden}人`);
-    blocks.push(`━━ ⏰ 今すぐ返信！（${normalBlock.length}人）━━\n${lines.join("\n")}`);
-  }
-
-  // モチベup締め文言（状況に応じて変化）
-  const motivations = [
-    "要対応のお客さんは今が一番熱い状態です🔥 鈴木さんの素早い返信が成約の決め手になります！",
-    "スピード返信がそのままお客さんの信頼につながります💪 上から順にサクッと返しちゃいましょう！",
-    "要対応はチャンスのかたまりです✨ 鈴木さんのひと言がお客さんの人生を変えます！頑張って！",
-    "今日も返信の神！鈴木さんの丁寧な対応でお客さんに安心を届けましょう🙌",
+  // モチベup文言（タメ語・厳しめ・気持ち上げ）
+  const MOTIVATIONS = [
+    "要対応は詰めどきや。ここで返さんと他決まるで🔥",
+    "しょーへい、返信スピードが全部や。上から潰してこ⚡️",
+    "ここの返しが勝負やで。全部片付けたら最強🫡",
+    "1件返すたびに信頼積み上がる。今がチャンスやで💪",
+    "止まったら負け。サクッと全部いけ🚀",
   ];
-  const motivation = motivations[new Date().getMinutes() % motivations.length];
+  const motivation = MOTIVATIONS[Math.floor(Date.now() / (30 * 60 * 1000)) % MOTIVATIONS.length];
 
   const bodyText = [
-    `⏰ 要対応のお客さんから1時間以上お返事できていません！（${entries.length}人）`,
+    `要対応、1時間以上止まってるやつ！（${entries.length}人）`,
     "",
-    blocks.join("\n\n"),
+    lines.join("\n"),
     "",
     motivation,
   ].join("\n");
