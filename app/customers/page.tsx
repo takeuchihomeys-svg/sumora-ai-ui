@@ -243,6 +243,23 @@ type EditFields = {
   commute_station: string; commute_minutes: string;
 };
 
+/** 一時調整: ephemeral per-customer search condition overrides.
+ *  Stored in React state only. Never written to Supabase. Cleared on page refresh. */
+type TempAdj = {
+  area_input:        string;  // エリア（地域テキスト）
+  station_input:     string;  // 駅・路線テキスト
+  rent_min:          string;  // 家賃下限（万）空文字=変更なし
+  rent_max:          string;  // 家賃上限（万）
+  floor_area_min:    string;  // 面積下限 m2
+  floor_area_max:    string;  // 面積上限 m2
+  walk_minutes:      string;  // 徒歩（分）
+  building_age:      string;  // 築年数以内
+  floor_plan:        string;  // 間取り（スペース区切り）
+  pet:               string;  // "" | "true" | "false"
+  area_mode_ward:    boolean; // 地域検索 ON/OFF override
+  area_mode_station: boolean; // 駅検索 ON/OFF override
+};
+
 function parseAreaStation(desired_area: string | null | undefined): { area_input: string; station_input: string } {
   if (!desired_area) return { area_input: "", station_input: "" };
   const tokens = desired_area.split(/[・、,\n]+/).map((t) => t.trim()).filter(Boolean);
@@ -306,6 +323,26 @@ function toEditFields(c: Customer): EditFields {
 
 function emptyEditFields(): EditFields {
   return { desired_area:"", area_input:"", station_input:"", shikirei_free:false, area_mode_ward:false, area_mode_station:false, floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"", commute_station:"", commute_minutes:"" };
+}
+
+/** Seeds a TempAdj draft from the DB customer (same unit conversions as toEditFields). */
+function customerToTempAdj(c: Customer): TempAdj {
+  const { area_input, station_input } = parseAreaStation(c.desired_area);
+  const am = c.area_mode ?? "auto";
+  return {
+    area_input,
+    station_input,
+    rent_min:       c.rent_min       ? String(Math.floor(c.rent_min  / 10000)) : "",
+    rent_max:       c.rent_max       ? String(Math.floor(c.rent_max  / 10000)) : "",
+    floor_area_min: c.floor_area_min ? String(c.floor_area_min) : "",
+    floor_area_max: c.floor_area_max ? String(c.floor_area_max) : "",
+    walk_minutes:   c.walk_minutes   ? String(c.walk_minutes)   : "",
+    building_age:   c.building_age   ? String(c.building_age)   : "",
+    floor_plan:     c.floor_plan     ?? "",
+    pet:            c.pet === true ? "true" : c.pet === false ? "false" : "",
+    area_mode_ward:    am === "ward" || am === "both",
+    area_mode_station: am === "station" || am === "both",
+  };
 }
 
 // popup.js の parseAreaMin と同一ロジック
@@ -424,6 +461,11 @@ function CustomersPageInner() {
   // "auto" = 顧客データから自動推定 / "ward" = 地域のみ / "station" = 駅のみ / "both" = 両方同時検索
   const [areaModeByCustomer, setAreaModeByCustomer] = useState<Record<string, "auto" | "ward" | "station" | "both">>({});
   const getAreaMode = (id: string): "auto" | "ward" | "station" | "both" => areaModeByCustomer[id] ?? "auto";
+
+  // 一時調整: ephemeral per-customer condition overrides. Never persisted to DB.
+  const [tempAdj, setTempAdj] = useState<Record<string, TempAdj>>({});
+  const [tempAdjOpen, setTempAdjOpen] = useState<string | null>(null); // customer.id of open modal
+  const [tempAdjDraft, setTempAdjDraft] = useState<TempAdj | null>(null); // in-modal draft
   // getEffectiveSearchModes: UI バッジ表示・firePropertySearch・startBatchSearch の単一真実源
   // 手動設定(ward/station/both)を優先し、auto/nullのときは顧客データから推定する
   const getEffectiveSearchModes = (c: Customer): ("ward" | "station")[] => {
@@ -1206,25 +1248,29 @@ function CustomersPageInner() {
       scrapeIdleTimeoutsRef.current.add(t);
     };
 
+    // 一時調整を適用した顧客条件を使用する
+    const merged = getMergedCustomer(c);
+
     // 拡張へ渡す生の顧客条件（resolve は拡張側で実施 = popupと同等）
     // 'both' は拡張が直接処理できないため null（自動判定）にフォールバック
-    const _scrapeAreaMode = (() => { const m = getAreaMode(c.id); return m === "both" ? null : m; })();
+    const _scrapeAreaMode = (() => { const m = merged.area_mode ?? getAreaMode(c.id); return m === "both" ? null : (m as "auto" | "ward" | "station" | null); })();
     const rawConditions = {
       area_mode:    _scrapeAreaMode,
-      rent_max:     c.rent_max      ?? null,
-      rent_min:     c.rent_min      ?? null,
-      walk_minutes: c.walk_minutes  ?? null,
-      floor_plan:   c.floor_plan    ?? null,
-      building_age: c.building_age  ?? null,
-      area_min:     c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? null,
-      area_max:     c.floor_area_max ?? null,
-      pet_ok:       resolvePetOk(c),
-      desired_area: c.desired_area  ?? null,
+      rent_max:     merged.rent_max      ?? null,
+      rent_min:     merged.rent_min      ?? null,
+      walk_minutes: merged.walk_minutes  ?? null,
+      floor_plan:   merged.floor_plan    ?? null,
+      building_age: merged.building_age  ?? null,
+      area_min:     merged.floor_area_min ?? parseAreaMin(merged.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? null,
+      area_max:     merged.floor_area_max ?? null,
+      pet_ok:       resolvePetOk(merged),
+      desired_area: merged.desired_area  ?? null,
       lines:        c.lines         ?? [] as string[],
       stations:     c.stations      ?? [] as string[],
       structure_types: parseStructureTypes(c.preferences, c.other_requests),
       rp_update_days:  c.rp_update_days ?? calcRpUpdateDays(c.last_property_sent_at),
       is_wide:      isWide,
+      ...(tempAdj[c.id] ? { temp_adj: tempAdj[c.id] } : {}),
     };
 
     // ① 拡張への直接送信 → 1.5秒以内にACKが返れば直接パスで完結
@@ -1266,12 +1312,12 @@ function CustomersPageInner() {
     // broadcast で拡張ツールが即時受信 → 30秒ポーリング待ちを解消。polling は backup として存続。
     try {
       let resolved: ResolvedSearchConditions | null = null;
-      if (c.desired_area?.trim() || (c.lines?.length ?? 0) > 0 || (c.stations?.length ?? 0) > 0) {
+      if (merged.desired_area?.trim() || (c.lines?.length ?? 0) > 0 || (c.stations?.length ?? 0) > 0) {
         try {
           const res = await fetch("/api/resolve-search-conditions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ desired_area: c.desired_area ?? "", lines: c.lines ?? [], stations: c.stations ?? [], is_wide: isWide, rent_max: c.rent_max ?? null, building_age: c.building_age ?? null }),
+            body: JSON.stringify({ desired_area: merged.desired_area ?? "", lines: c.lines ?? [], stations: c.stations ?? [], is_wide: isWide, rent_max: merged.rent_max ?? null, building_age: merged.building_age ?? null }),
           });
           if (res.ok) {
             resolved = await res.json() as ResolvedSearchConditions;
@@ -1290,15 +1336,15 @@ function CustomersPageInner() {
             customer_id: c.id, customer_name: c.customer_name, is_wide: isWide,
             conditions: {
               area_mode: _scrapeAreaMode,
-              rent_max: c.rent_max ?? undefined,
-              rent_min: c.rent_min ?? undefined,
-              walk_minutes: c.walk_minutes ?? undefined,
-              floor_plan: c.floor_plan ?? undefined,
-              building_age: c.building_age ?? undefined,
-              area_min: c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? undefined,
-              area_max: c.floor_area_max ?? undefined,
-              pet_ok: resolvePetOk(c),
-              desired_area: c.desired_area ?? undefined,
+              rent_max: merged.rent_max ?? undefined,
+              rent_min: merged.rent_min ?? undefined,
+              walk_minutes: merged.walk_minutes ?? undefined,
+              floor_plan: merged.floor_plan ?? undefined,
+              building_age: merged.building_age ?? undefined,
+              area_min: merged.floor_area_min ?? parseAreaMin(merged.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? undefined,
+              area_max: merged.floor_area_max ?? undefined,
+              pet_ok: resolvePetOk(merged),
+              desired_area: merged.desired_area ?? undefined,
               lines: c.lines ?? [], stations: c.stations ?? [],
               city_codes: resolved?.city_codes ?? [], station_names: resolved?.station_names ?? [],
               route_ids: resolved?.route_ids ?? [], itandi_line_names: resolved?.itandi_line_names ?? [],
@@ -1477,6 +1523,31 @@ function CustomersPageInner() {
     is_wide?: boolean;
   };
 
+  /** Returns Customer with TempAdj overrides applied. Returns c unchanged if no adj active. */
+  const getMergedCustomer = (c: Customer): Customer => {
+    const adj = tempAdj[c.id];
+    if (!adj) return c;
+    const combined = [adj.area_input, adj.station_input].filter(Boolean).join("・");
+    const newAreaMode: string =
+      adj.area_mode_ward && adj.area_mode_station ? "both"
+      : adj.area_mode_ward   ? "ward"
+      : adj.area_mode_station ? "station"
+      : c.area_mode ?? "auto";
+    return {
+      ...c,
+      desired_area:   combined || c.desired_area,
+      rent_max:       adj.rent_max       ? Math.round(parseFloat(adj.rent_max)       * 10000) : c.rent_max,
+      rent_min:       adj.rent_min       ? Math.round(parseFloat(adj.rent_min)       * 10000) : c.rent_min,
+      walk_minutes:   adj.walk_minutes   ? parseInt(adj.walk_minutes)                : c.walk_minutes,
+      building_age:   adj.building_age   ? parseInt(adj.building_age)                : c.building_age,
+      floor_plan:     adj.floor_plan     || c.floor_plan,
+      floor_area_min: adj.floor_area_min ? parseFloat(adj.floor_area_min)            : c.floor_area_min,
+      floor_area_max: adj.floor_area_max ? parseFloat(adj.floor_area_max)            : c.floor_area_max,
+      pet:            adj.pet !== ""     ? (adj.pet === "true")                      : c.pet,
+      area_mode:      newAreaMode,
+    };
+  };
+
   // 修正6: 戻り値を Promise<boolean> に変更。
   // webapp-bridge.js（Chrome拡張）が postMessage を受領すると即時に
   // { from: "aixlinx-webapp-received" } を返すため、それを1.5秒待って
@@ -1516,6 +1587,7 @@ function CustomersPageInner() {
       customerName: c.customer_name ?? null,
       is_wide:      isWide,
       area_mode:    areaMode ?? getAreaMode(c.id),
+      ...(tempAdj[c.id] ? { temp_adj: tempAdj[c.id] } : {}),
     };
     let delay = 0;
     for (const site of sites) {
@@ -1543,16 +1615,19 @@ function CustomersPageInner() {
     setQueueErrors((prev) => { const n = { ...prev }; delete n[key]; return n; });
     const clearTimer = setTimeout(() => setSearchQueued(null), 3000);
 
+    // 一時調整を適用した顧客を使う（area_modeのオーバーライドを反映）
+    const mergedC = getMergedCustomer(c);
+
     // 'both' モード: ward で即時実行 → 10秒後に station で再実行（拡張直接パスのみ）
-    const modes = getEffectiveSearchModes(c);
+    const modes = getEffectiveSearchModes(mergedC);
     const isBoth = modes.includes("ward") && modes.includes("station");
     const primaryMode: "ward" | "station" = isBoth ? "ward" : (modes[0] ?? "ward");
 
-    const extHandled = await firePropertySearch(c, sites, isWide, primaryMode);
+    const extHandled = await firePropertySearch(mergedC, sites, isWide, primaryMode);
 
     if (isBoth && extHandled) {
       // 拡張直接パスで both の場合: 10秒後に station でも発火
-      setTimeout(() => { void firePropertySearch(c, sites, isWide, "station"); }, 10000);
+      setTimeout(() => { void firePropertySearch(mergedC, sites, isWide, "station"); }, 10000);
     }
 
     if (extHandled) {
@@ -2277,6 +2352,9 @@ function CustomersPageInner() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
                       <span className="text-[14px] font-bold text-[#111b21] truncate">{c.customer_name}</span>
+                      {tempAdj[c.id] && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300 shrink-0">調整中</span>
+                      )}
                       {conv?.account && (
                         <span className="shrink-0 rounded-full bg-[#e9edef] px-1.5 py-0.5 text-[9px] font-bold text-[#667781]">
                           {ACCT_LABEL[conv.account] ?? conv.account}
@@ -2827,6 +2905,20 @@ function CustomersPageInner() {
                           {searchQueued === c.id + "-reins-wide" ? "✓" : "↔️"} 広
                         </button>
                       </div>
+                      {/* 一時調整ボタン */}
+                      <button
+                        onClick={() => {
+                          setTempAdjOpen(c.id);
+                          setTempAdjDraft(tempAdj[c.id] ?? customerToTempAdj(c));
+                        }}
+                        className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition-transform ${
+                          tempAdj[c.id]
+                            ? "border-amber-400 bg-amber-100 text-amber-800 ring-1 ring-amber-300"
+                            : "border-gray-200 bg-white text-gray-500"
+                        }`}
+                      >
+                        {tempAdj[c.id] ? "🔧 調整中" : "🔧 一時調整"}
+                      </button>
                     </div>
                   )}
                   {/* 更新日フィルター（自動計算 or アプリで上書き） */}
@@ -3591,6 +3683,213 @@ function CustomersPageInner() {
                   flagged: false,
                 }))}
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 一時調整モーダル ── */}
+      {tempAdjOpen && tempAdjDraft && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end"
+          style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setTempAdjOpen(null);
+              setTempAdjDraft(null);
+            }
+          }}
+        >
+          <div
+            className="w-full rounded-t-2xl bg-white overflow-y-auto"
+            style={{ maxHeight: "85svh", paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* ヘッダー */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f2f5] sticky top-0 bg-white z-10 border-l-4 border-l-amber-400">
+              <div>
+                <h2 className="font-bold text-[#111b21] text-[15px]">🔧 一時調整</h2>
+                <p className="text-[11px] text-[#8696a0]">DBは変更しません — ページを閉じるとリセット</p>
+              </div>
+              <button
+                onClick={() => { setTempAdjOpen(null); setTempAdjDraft(null); }}
+                className="text-[#aaa] text-xl leading-none"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* ボディ */}
+            <div className="px-5 py-4 space-y-3">
+              {/* エリア */}
+              <Field
+                label="エリア"
+                placeholder="例: 城東区・東大阪市"
+                value={tempAdjDraft.area_input}
+                onChange={(v) => setTempAdjDraft((d) => d && ({ ...d, area_input: v }))}
+              />
+              {/* 駅・路線 */}
+              <Field
+                label="駅・路線"
+                placeholder="例: 阪急京都線・梅田駅"
+                value={tempAdjDraft.station_input}
+                onChange={(v) => setTempAdjDraft((d) => d && ({ ...d, station_input: v }))}
+              />
+              {/* 地域/駅 モードバッジ */}
+              <div>
+                <label className="text-[11px] font-semibold text-[#8696a0] mb-1.5 block">検索モード</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTempAdjDraft((d) => d && ({ ...d, area_mode_ward: !d.area_mode_ward }))}
+                    className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border transition-colors ${
+                      tempAdjDraft.area_mode_ward ? "bg-teal-600 text-white border-teal-600" : "bg-white text-[#8696a0] border-[#d1d7db]"
+                    }`}
+                  >
+                    {tempAdjDraft.area_mode_ward ? "✓ 地域" : "地域"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTempAdjDraft((d) => d && ({ ...d, area_mode_station: !d.area_mode_station }))}
+                    className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border transition-colors ${
+                      tempAdjDraft.area_mode_station ? "bg-blue-600 text-white border-blue-600" : "bg-white text-[#8696a0] border-[#d1d7db]"
+                    }`}
+                  >
+                    {tempAdjDraft.area_mode_station ? "✓ 駅" : "駅"}
+                  </button>
+                </div>
+              </div>
+              {/* 家賃 */}
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <Field
+                    label="家賃 下限（万）"
+                    placeholder="5"
+                    type="number"
+                    value={tempAdjDraft.rent_min}
+                    onChange={(v) => setTempAdjDraft((d) => d && ({ ...d, rent_min: v }))}
+                  />
+                </div>
+                <div className="flex-1">
+                  <Field
+                    label="家賃 上限（万）"
+                    placeholder="7"
+                    type="number"
+                    value={tempAdjDraft.rent_max}
+                    onChange={(v) => setTempAdjDraft((d) => d && ({ ...d, rent_max: v }))}
+                  />
+                </div>
+              </div>
+              {/* 面積 */}
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <Field
+                    label="面積 下限（㎡）"
+                    placeholder="25"
+                    type="number"
+                    value={tempAdjDraft.floor_area_min}
+                    onChange={(v) => setTempAdjDraft((d) => d && ({ ...d, floor_area_min: v }))}
+                  />
+                </div>
+                <div className="flex-1">
+                  <Field
+                    label="面積 上限（㎡）"
+                    placeholder="50"
+                    type="number"
+                    value={tempAdjDraft.floor_area_max}
+                    onChange={(v) => setTempAdjDraft((d) => d && ({ ...d, floor_area_max: v }))}
+                  />
+                </div>
+              </div>
+              {/* 徒歩・築年数 */}
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <Field
+                    label="徒歩（分）"
+                    placeholder="15"
+                    type="number"
+                    value={tempAdjDraft.walk_minutes}
+                    onChange={(v) => setTempAdjDraft((d) => d && ({ ...d, walk_minutes: v }))}
+                  />
+                </div>
+                <div className="flex-1">
+                  <Field
+                    label="築年数以内"
+                    placeholder="20"
+                    type="number"
+                    value={tempAdjDraft.building_age}
+                    onChange={(v) => setTempAdjDraft((d) => d && ({ ...d, building_age: v }))}
+                  />
+                </div>
+              </div>
+              {/* 間取り */}
+              <div>
+                <label className="text-[11px] font-semibold text-[#8696a0] mb-1.5 block">間取り（複数選択可）</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {FLOOR_PLAN_OPTIONS.map((opt) => {
+                    const isSelected = tempAdjDraft.floor_plan.split(/[・、,\s]+/).includes(opt);
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => {
+                          const curr = tempAdjDraft.floor_plan.split(/[・、,\s]+/).filter((x) => (FLOOR_PLAN_OPTIONS as readonly string[]).includes(x));
+                          const next = curr.includes(opt) ? curr.filter((x) => x !== opt) : [...curr, opt];
+                          setTempAdjDraft((d) => d && ({ ...d, floor_plan: next.join(" ") }));
+                        }}
+                        className={`text-[12px] font-bold px-3 py-1 rounded-full border transition-colors ${
+                          isSelected ? "bg-[#1565C0] text-white border-[#1565C0]" : "bg-[#f8f9fa] text-[#333] border-[#e9edef]"
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {/* ペット */}
+              <div>
+                <label className="text-[11px] font-semibold text-[#8696a0] mb-1 block">ペット飼育</label>
+                <select
+                  value={tempAdjDraft.pet}
+                  onChange={(e) => setTempAdjDraft((d) => d && ({ ...d, pet: e.target.value }))}
+                  className="w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3]"
+                >
+                  <option value="">未設定（DB値を使用）</option>
+                  <option value="true">あり（ペット飼育している）</option>
+                  <option value="false">なし</option>
+                </select>
+              </div>
+            </div>
+
+            {/* フッター */}
+            <div className="border-t border-[#f0f2f5] flex gap-2 px-4 py-3 sticky bottom-0 bg-white">
+              <button
+                type="button"
+                onClick={() => {
+                  setTempAdj((prev) => {
+                    const n = { ...prev };
+                    delete n[tempAdjOpen!];
+                    return n;
+                  });
+                  setTempAdjOpen(null);
+                  setTempAdjDraft(null);
+                }}
+                className="flex-1 py-3 rounded-xl font-bold text-sm border border-[#d1d7db] bg-white text-[#667781] active:bg-[#f0f2f5]"
+              >
+                DBの値に戻す
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTempAdj((prev) => ({ ...prev, [tempAdjOpen!]: tempAdjDraft! }));
+                  setTempAdjOpen(null);
+                  setTempAdjDraft(null);
+                }}
+                className="flex-1 py-3 rounded-xl font-bold text-sm bg-amber-500 text-white active:bg-amber-600"
+              >
+                適用
+              </button>
             </div>
           </div>
         </div>
