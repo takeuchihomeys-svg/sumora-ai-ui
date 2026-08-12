@@ -516,6 +516,16 @@ function EstimatePageContent() {
     }
   }, [images, items, supplementaryText, handleExtract]);
 
+  // Chrome拡張ポップアップの「見積書自動」ボタンから自動モードをトリガーできるよう
+  // handleAutoMode をグローバルに公開する
+  useEffect(() => {
+    const w = window as unknown as { __axlxRunEstimateAuto?: () => void };
+    w.__axlxRunEstimateAuto = handleAutoMode;
+    return () => {
+      delete w.__axlxRunEstimateAuto;
+    };
+  }, [handleAutoMode]);
+
   const updateItem = (key: keyof EditableItems, value: string | number) => {
     setItems((prev) => {
       if (!prev) return prev;

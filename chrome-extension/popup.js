@@ -3500,8 +3500,46 @@ document.addEventListener("DOMContentLoaded", () => {
     const rent = selectedCustomer.rent_max || selectedCustomer.max_rent || 0;
     const customerName = encodeURIComponent(selectedCustomer.customer_name || "");
     const account = encodeURIComponent(selectedCustomer.account || "");
-    chrome.tabs.create({
-      url: `${API_BASE}/estimate?autoMode=true&rent=${rent}&customerName=${customerName}&account=${account}`,
+
+    // 既存の見積書タブを探す
+    chrome.tabs.query({}, function (tabs) {
+      var estimateTab = null;
+      for (var i = 0; i < tabs.length; i++) {
+        if (tabs[i].url && tabs[i].url.includes(API_BASE + "/estimate")) {
+          estimateTab = tabs[i];
+          break;
+        }
+      }
+
+      if (estimateTab && estimateTab.id) {
+        // 既存タブがあれば前面に出して自動モードをトリガー
+        var tabId = estimateTab.id;
+        chrome.tabs.update(tabId, { active: true }, function () {
+          setTimeout(function () {
+            chrome.scripting.executeScript({
+              target: { tabId: tabId },
+              world: "MAIN",
+              func: function () {
+                if (typeof window.__axlxRunEstimateAuto === "function") {
+                  window.__axlxRunEstimateAuto();
+                  return true;
+                }
+                return false;
+              },
+            }, function (results) {
+              var triggered = results && results[0] && results[0].result;
+              if (!triggered) {
+                alert("見積書ページが準備できていません。\n画像をアップロードしてから再度お試しください。");
+              }
+            });
+          }, 300);
+        });
+      } else {
+        // タブがなければ新しく開く（お客さん情報付き）
+        chrome.tabs.create({
+          url: `${API_BASE}/estimate?autoMode=true&rent=${rent}&customerName=${customerName}&account=${account}`,
+        });
+      }
     });
   });
 });
