@@ -2344,7 +2344,8 @@ export default function TemplateModal({
           // 予約送信待ちのAIXメッセージを渡す（物件情報の優先ソース）
           pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
           vacatingDate: vacatingDates[tmpl.id] ?? null,
-          staffMessagedToday: staffMessagedToday ?? false,
+          // AIXテンプレートは「お世話になっております」固定（AIX送信済みでも「お待たせ致しました」にしない）
+          staffMessagedToday: isAixCategoryTemplate ? false : (staffMessagedToday ?? false),
           // AIXカテゴリ: AIXが送信したテキストをベースに最適化（会話全体から生成しない）
           ...(aixSourceMessage !== undefined ? { aixSourceMessage } : {}),
         }),
