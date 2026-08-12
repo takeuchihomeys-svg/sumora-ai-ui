@@ -645,11 +645,6 @@ function CustomersPageInner() {
         const ua = URGENCY_ORDER[urgency(a)];
         const ub = URGENCY_ORDER[urgency(b)];
         if (ua !== ub) return ua - ub;
-        // 同一urgencyグループ内で内覧済み（inspection.done=true）を上位表示
-        const aInspected = summaryJsons[a.id]?.inspection?.done === true;
-        const bInspected = summaryJsons[b.id]?.inspection?.done === true;
-        if (aInspected && !bInspected) return -1;
-        if (!aInspected && bInspected) return 1;
         const ta = a.last_property_sent_at ? new Date(a.last_property_sent_at).getTime() : 0;
         const tb = b.last_property_sent_at ? new Date(b.last_property_sent_at).getTime() : 0;
         return tb - ta;

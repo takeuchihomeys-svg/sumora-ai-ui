@@ -2358,12 +2358,10 @@ export default function Home() {
         new Date(b.updatedAt ?? "").getTime() - new Date(a.updatedAt ?? "").getTime()
       );
     }
-    // 内覧済みを上位に優先表示（同一グループ内は updatedAt 順を維持）
-    return [...result].sort((a, b) => {
-      if (a.hasViewed && !b.hasViewed) return -1;
-      if (!a.hasViewed && b.hasViewed) return 1;
-      return 0;
-    });
+    // updatedAt 順（最新やり取り優先）
+    return [...result].sort((a, b) =>
+      new Date(b.updatedAt ?? "").getTime() - new Date(a.updatedAt ?? "").getTime()
+    );
   }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds]);
 
   // AIX送信対象（AIXバッジと同一条件）の件数
