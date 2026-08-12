@@ -180,7 +180,7 @@ export async function GET(req: NextRequest) {
   // 1時間前のタイムスタンプ（1時間以上返信が止まっている会話のみ対象）
   const oneHourAgo = new Date(Date.now() - HOUR_MS).toISOString();
 
-  // 要対応 かつ お客さんが最後に送信 かつ 1時間以上未返信 の会話を取得
+  // 要対応 かつ 1時間以上更新なし（last_senderは問わない）の会話を取得
   const { data: flagged, error } = await supabase
     .from("conversations")
     .select(
@@ -188,7 +188,6 @@ export async function GET(req: NextRequest) {
       "property_customers(status, last_property_sent_at, desired_area, area, floor_plan, layout, rent_max, max_rent)"
     )
     .eq("is_flagged", true)
-    .eq("last_sender", "customer")
     .lt("updated_at", oneHourAgo)
     .not("status", "in", "(closed_won,closed_lost)")
     .order("updated_at", { ascending: true })
