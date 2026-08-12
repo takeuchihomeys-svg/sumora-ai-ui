@@ -2870,8 +2870,21 @@ function openInstructions(siteKey) {
             const _stAlias = _STATION_DOM_ALIASES[station];
             if (_stAlias && !realpro_station_names.includes(_stAlias)) realpro_station_names.push(_stAlias);
             if (searchMode === "wide") {
-              const adj = getAdjacentStations(station, STATION_LINE_MAP[station] || []);
-              adj.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+              const stLines = STATION_LINE_MAP[station] || [];
+              const adj = getAdjacentStations(station, stLines);
+              adj.forEach(s => {
+                // クロスライン汚染チェック: adj駅sが複数路線に存在し、
+                // いずれかの共通路線でsがtarget駅に隣接しない場合は除外
+                // 例: 十三→大阪梅田(京都線adj)は神戸線・宝塚線でも大阪梅田が選択されてしまうため除外
+                const sLines = STATION_LINE_MAP[s] || [];
+                const shared = sLines.filter(l => stLines.includes(l));
+                const safe = shared.every(function(l) {
+                  const ord = LINE_STATION_ORDER[l] || LEARNED_LINE_ORDER[l] || [];
+                  const idxS = ord.indexOf(s), idxT = ord.indexOf(station);
+                  return idxS >= 0 && idxT >= 0 && Math.abs(idxT - idxS) <= 1;
+                });
+                if (safe && !realpro_station_names.includes(s)) realpro_station_names.push(s);
+              });
             }
           }
         }
