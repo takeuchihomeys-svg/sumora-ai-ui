@@ -777,14 +777,14 @@
         if (chrome.runtime.lastError) {
           clearAutoSendState();
           if (countEl) countEl.textContent = "送信エラー";
-          try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+          try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
           alert("全ページ送信エラー: " + chrome.runtime.lastError.message);
           return;
         }
         if (!resp || !resp.ok) {
           clearAutoSendState();
           if (countEl) countEl.textContent = "送信エラー";
-          try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+          try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
           alert("全ページ送信エラー:\n" + (resp ? resp.error : "応答なし"));
           return;
         }
@@ -832,6 +832,15 @@
     getCustomerFromPopup(function(name, conditions, customerId) {
       _pendingCustomerForAutoSend = { name: name, conditions: conditions, customerId: customerId };
       console.log("[AXLX bulk-dl] autofill initiated: customer snapshot =", name);
+      // BUG-D修正: fill-done が先着していた場合、スナップショット確定後に再チェックして安全起動
+      if (_autoSendArmed && !_pendingAutoSendDispatched && !getAutoSendState()) {
+        var _hasNBsnap = tracked.some(function(item) { return !_preAutofillBtns.has(item.btn); });
+        if (_hasNBsnap) {
+          _autoSendArmed = false;
+          _pendingAutoSendDispatched = true;
+          setTimeout(autoSendAllPages, 200);
+        }
+      }
     });
   });
 
@@ -847,25 +856,32 @@
     // fill-done 後に inject() を再呼び出しして Case A を確実に到達させる。
     setTimeout(inject, 50);
     // _hasNewBtn=false フォールバック: AJAXがDOMを再利用しCase Aが起動しなかった場合の安全網
-    // 2秒後もまだarmed+tracked>0+送信未開始なら _hasNewBtn チェックをバイパスして強制送信
+    // BUG-A修正: _hasNewBtn チェックをここでも実行し、前顧客DOM残留時は発火しない
     setTimeout(function () {
       if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
+        var _hasNewBtn2s = tracked.some(function(item) { return !_preAutofillBtns.has(item.btn); });
+        if (!_hasNewBtn2s) {
+          console.log("[AXLX bulk-dl] 2秒フォールバック: hasNewBtn=false → 見送り（前顧客 DOM 残留）");
+          return;
+        }
         _autoSendArmed = false;
         _pendingAutoSendDispatched = true;
-        console.log("[AXLX bulk-dl] 2秒フォールバック: hasNewBtn=false バイパス → 自動送信開始");
+        console.log("[AXLX bulk-dl] 2秒フォールバック: hasNewBtn=true → 自動送信開始");
         setTimeout(autoSendAllPages, 200);
       }
     }, 2000);
     // 0件デッドロック対策: 4秒後（inject debounce 400ms + AJAX反映待ち 3.6秒）に
     // まだ armed のまま tracked=0 なら物件なし確定 → batch-customer-done を即送信
     // ※ 1.2秒だと遅いAJAX（1〜3秒かかる検索）を0件と誤判定するケースがあったため4秒に延長
+    // BUG-C修正: タイマー設定時点でIDをキャプチャ（4秒後に_pendingCustomerForAutoSendがnullになりうるため）
+    var _armed0ItemCid = (_pendingCustomerForAutoSend && _pendingCustomerForAutoSend.customerId) || null;
     setTimeout(function () {
       if (_autoSendArmed && tracked.length === 0) {
         _autoSendArmed = false;
         console.log("[AXLX bulk-dl] fill-done 後 0件確定 → batch-customer-done を即送信");
         try {
           chrome.runtime.sendMessage(
-            { type: "axlx-batch-customer-done", customerId: null, propertyCount: 0 },
+            { type: "axlx-batch-customer-done", customerId: _armed0ItemCid, propertyCount: 0 },
             function () { void chrome.runtime.lastError; }
           );
         } catch (_) {}

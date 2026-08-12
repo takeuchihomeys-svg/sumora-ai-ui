@@ -686,6 +686,8 @@
   }
 
   function _autoSendOnePage(customerName, customerId, customerConditions, onComplete) {
+    // BUG-B修正: 顧客切り替え時に前顧客のrowKeyを必ずリセット（混入バグ対策）
+    checkedKeys.clear();
     // 全選択
     tracked.forEach(function(t) { t.cb.checked = true; checkedKeys.add(t.rowKey); });
     updateBar();
