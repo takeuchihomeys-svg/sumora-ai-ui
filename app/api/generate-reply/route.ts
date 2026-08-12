@@ -28,12 +28,14 @@ export const maxDuration = 300;
 
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
 // Step1（分析）: Sonnet — 感情・本音・成約戦略の精度重視
-const analysisModel = new ChatAnthropic({
-  model: "claude-sonnet-5",
-  maxTokens: 2048, // AIX推薦フィールド追加により分析JSONが尻切れになりJSON.parse失敗するリスクがあるため1536から引き上げ
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
-  clientOptions: { timeout: 45_000 },
-});
+function createAnalysisModel() {
+  return new ChatAnthropic({
+    model: "claude-sonnet-5",
+    maxTokens: 2048,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+    clientOptions: { timeout: 45_000 },
+  });
+}
 
 // Step2（生成）: Sonnet — 品質重視
 // 中6: temperature は ai_summary_json.emotion に応じて可変（0.3〜0.5）のためリクエスト毎に生成する
@@ -400,7 +402,7 @@ ${customerMessage}
 }`;
 
   try {
-    const res = await analysisModel.invoke([
+    const res = await createAnalysisModel().invoke([
       new SystemMessage(ANALYSIS_SYSTEM),
       new HumanMessage(prompt),
     ]);
@@ -1004,7 +1006,7 @@ ${conditions}${historyNote}
 
 例: 「梅田エリアで1LDK・家賃8万以内を探している。内覧済みで申込を検討中。審査に不安あり。」
 要約のみ返答（説明不要）:`;
-    const res = await analysisModel.invoke([new HumanMessage(summaryPrompt)]);
+    const res = await createAnalysisModel().invoke([new HumanMessage(summaryPrompt)]);
     warnIfTruncated(res.response_metadata?.stop_reason, summaryPrompt.length);
     return typeof res.content === "string" ? res.content.trim() : "";
   } catch (err) {

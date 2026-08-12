@@ -7,18 +7,22 @@ import { validateAndClean } from "@/app/lib/validate-reply";
 
 export const maxDuration = 30;
 
-const analysisModel = new ChatAnthropic({
-  model: "claude-haiku-4-5-20251001",
-  maxTokens: 1024,
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
-});
+function getAnalysisModel() {
+  return new ChatAnthropic({
+    model: "claude-haiku-4-5-20251001",
+    maxTokens: 1024,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+  });
+}
 
-const generationModel = new ChatAnthropic({
-  model: "claude-sonnet-5",
-  maxTokens: 2000,
-  temperature: 0.65,
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
-});
+function getGenerationModel() {
+  return new ChatAnthropic({
+    model: "claude-sonnet-5",
+    maxTokens: 2000,
+    temperature: 0.65,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+  });
+}
 
 const PATTERN_LABELS = ["A", "B", "C"] as const;
 
@@ -60,7 +64,7 @@ function getJSTDayEnd(): Date {
 async function analyzeCustomer(message: string, history: string, state: string, name: string): Promise<string> {
   const prompt = `【営業フェーズ】${state}\n【お客様名】${name || "不明"}\n【直近の会話履歴】\n${history || "なし"}\n【最新メッセージ】\n${message}\n\n以下をJSONで分析してください：\n{"emotion":"","real_need":"","approach":"","tone":"","questions":[],"hesitancy_pattern":null,"future_timeline":null,"repeated_concern":null,"current_property":null}`;
   try {
-    const res = await analysisModel.invoke([
+    const res = await getAnalysisModel().invoke([
       new SystemMessage("あなたは賃貸仲介の営業コーチです。JSONのみで返答。"),
       new HumanMessage(prompt),
     ]);
@@ -418,7 +422,7 @@ ${customerMessage}
 上記⭐実例の文体・言い回し・感嘆符・絵文字を完全に再現しながら、[A]王道案・[B]安心案・[C]別切り口案の3案を生成してください。[B]はAに補足を加えて不安を解消する案、[C]はA・Bと全く異なる切り口で書くこと。`;
 
   try {
-    const res = await generationModel.invoke([
+    const res = await getGenerationModel().invoke([
       new SystemMessage(systemPrompt),
       new HumanMessage(userPrompt),
     ]);

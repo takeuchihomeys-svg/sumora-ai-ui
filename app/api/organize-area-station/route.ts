@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage } from "@langchain/core/messages";
 
-const model = new ChatAnthropic({
-  model: "claude-haiku-4-5-20251001",
-  maxTokens: 512,
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
-});
+function getModel() {
+  return new ChatAnthropic({
+    model: "claude-haiku-4-5-20251001",
+    maxTokens: 512,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+  });
+}
 
 export async function POST(req: NextRequest) {
   let area_input = "";
@@ -40,7 +42,7 @@ JSONのみ返してください（コードブロック不要）:
 {"area_input":"整理後の地域","station_input":"整理後の駅","changes":["変更内容の説明文"]}`;
 
   try {
-    const res = await model.invoke([new HumanMessage(prompt)]);
+    const res = await getModel().invoke([new HumanMessage(prompt)]);
     const text = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) {
