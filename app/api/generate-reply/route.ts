@@ -1833,7 +1833,12 @@ export async function POST(req: NextRequest) {
     const historyForTemplate = aixSourceMessage
       ? history
           .split(/\n(?=(?:スモラ|お客様):)/)
-          .filter(seg => !seg.includes("(AI提案)") && !seg.includes("AIX物件提案"))
+          .filter(seg =>
+            !seg.includes("(AI提案)") &&
+            !seg.includes("AIX物件提案") &&
+            // 直前以外のAIX物件オススメ（🌟始まり）を除外して過去物件の混入を防ぐ
+            !(seg.startsWith("スモラ:") && seg.includes("🌟"))
+          )
           .join("\n")
       : history;
 

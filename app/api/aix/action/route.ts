@@ -1017,6 +1017,10 @@ ${SMORA_COMMON_RULES}`;
           message_text = message_text.slice(_starIdx);
         }
       }
+      // 見積書同封時は締め文を追加
+      if (has_estimate) {
+        message_text += "\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！";
+      }
 
     // ── 💰 見積書送る ─────────────────────────────────────────────
     // ※ 見積書本体はOCR（JSON抽出）＋テンプレート組み立て式（AI自由生成なし・金額を壊さない）。
