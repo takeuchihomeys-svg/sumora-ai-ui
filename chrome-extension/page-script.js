@@ -642,12 +642,17 @@
           if (el) { el.selectedIndex = 0; el.dispatchEvent(new Event("change", {bubbles:true})); }
         });
 
-        // テキスト・数値入力をクリア（required_timeのみ input 要素）
-        var textNames = ["required_time"];
+        // テキスト・数値入力をクリア
+        var textNames = ["required_time", "keyword", "free_word", "freeword", "building_name", "search_word"];
         textNames.forEach(function(name) {
           var el = document.querySelector("input[name='" + name + "']");
           if (el && el.value) { el.value = ""; el.dispatchEvent(new Event("change", {bubbles:true})); }
         });
+        // type="search" 形式のフリーワード欄も念のためクリア
+        ;(function() {
+          var sw = document.querySelector('input[type="search"]');
+          if (sw && sw.value) { sw.value = ""; sw.dispatchEvent(new Event("change", {bubbles:true})); }
+        })();
 
         console.log("[AX] フォーム手動クリア完了 → 条件入力開始");
         } catch (err) {
