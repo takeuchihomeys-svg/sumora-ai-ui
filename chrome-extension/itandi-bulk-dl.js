@@ -587,7 +587,7 @@
             var errMsg = resp ? resp.error : (chrome.runtime.lastError ? chrome.runtime.lastError.message : "不明");
             alert("LINE送信エラー:\n" + errMsg);
             lineBtn.textContent = lineOrig;
-            if (onComplete) onComplete(false);
+            if (onComplete) onComplete(false, 0);
             return;
           }
           // 選択をリセット
@@ -606,7 +606,7 @@
               body: JSON.stringify({ customer_id: customerId }),
             }).catch(function () {});
           }
-          if (onComplete) onComplete(true);
+          if (onComplete) onComplete(true, pdfBase64List.length);
         });
         return;
       }
@@ -661,13 +661,22 @@
   function autoSendAllPages() {
     if (_autoSendInProgress) return;
     _autoSendInProgress = true;
+    var _totalSentCount = 0; // 全ページ合計送信件数（axlx-batch-customer-done に渡す）
     getCustomerFromPopup(function(customerName, customerId, customerConditions) {
-      _autoSendOnePage(customerName, customerId, customerConditions, function done(ok) {
+      _autoSendOnePage(customerName, customerId, customerConditions, function done(ok, count) {
+        if (ok && count) _totalSentCount += count;
         var clicked = clickNextPage();
         if (!clicked) {
           _autoSendInProgress = false;
           _pendingAutoSendDispatched = false;
-          console.log("[AXLX itandi] 全ページ送信完了");
+          console.log("[AXLX itandi] 全ページ送信完了 totalSent=" + _totalSentCount);
+          // リアプロ(bulk-dl.js)と同様に background.js へ完了シグナルを送る
+          try {
+            chrome.runtime.sendMessage(
+              { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount },
+              function () { void chrome.runtime.lastError; }
+            );
+          } catch (_) {}
           return;
         }
         // 次ページのDOM更新を待ってから再送
@@ -679,6 +688,13 @@
             } else {
               _autoSendInProgress = false;
               _pendingAutoSendDispatched = false;
+              // 次ページに物件がなかった（ページ移動後0件）→ 完了シグナル
+              try {
+                chrome.runtime.sendMessage(
+                  { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount },
+                  function () { void chrome.runtime.lastError; }
+                );
+              } catch (_) {}
             }
           }, 2000);
         }, 1000);

@@ -2148,13 +2148,14 @@ async function _runBatchSearch(command) {
         // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
         var resolvedBatchConds = await _batchAutofill(customer, batchSite, batchIsWide);
         if (batchSite === "itandi") {
-          // itandi の場合: autofill後にスクレイプ+AI比較+LINE送信を実行
-          // 解決済み条件（itandi_lines を含む）を渡すことで compare-properties API に正しい路線情報を届ける
-          await _scrapeAndCompareItandi(
+          // itandi の場合: リアプロと同じく fill-done + batch-customer-done を待つ形に統一
+          // itandi-bulk-dl.js の autoSendAllPages が axlx-batch-customer-done シグナルを送信する
+          await _scrapeAndSendRealpro(
             fillDoneP,
             String(customer.id),
             customer.customer_name || null,
-            resolvedBatchConds || _buildBatchConditions(customer, batchIsWide)
+            resolvedBatchConds || _buildBatchConditions(customer, batchIsWide),
+            "itandi"
           );
         } else if (batchSite === "realnetpro") {
           // 修正7: 通常バッチのリアプロ分岐にもスクレイプ→AI比較→LINE送信を追加
@@ -2749,14 +2750,15 @@ async function _scrapeAndCompareForCustomer(customer) {
 // ── リアプロの fill-done 待機 → bulk-dl.js 全ページ送信完了待機 ──
 // bulk-dl.js の autoSendAllPages が全ページ送信後に axlx-batch-customer-done を送る。
 // background.js はその完了を待ってから次顧客へ移る（ページ競合を防ぐ）。
-async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, conditions) {
+async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, conditions, siteLabel) {
+  var _site = siteLabel || "リアプロ";
   // fill-done を待つ（検索実行完了シグナル）
   var fillDone = fillDonePromise ? await fillDonePromise : null;
   if (fillDone && fillDone.stopped) {
     throw new Error("__BATCH_STOPPED__");
   }
   if (!fillDone || fillDone.timedOut) {
-    throw new Error("リアプロ検索完了シグナル（fill-done）が90秒以内に届きませんでした。");
+    throw new Error(_site + " 検索完了シグナル（fill-done）が90秒以内に届きませんでした。");
   }
   if (fillDone.error) {
     throw new Error("page-script側エラー（スキップ）: " + fillDone.error);
@@ -2777,7 +2779,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
       fetch(SUMORA_BATCH_API + "/api/notify-group", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: "⚠️【送信タイムアウト】" + customerName + "さんのリアプロ送信完了シグナルが届きませんでした（手動確認してください）" })
+        body: JSON.stringify({ text: "⚠️【送信タイムアウト】" + customerName + "さんの" + _site + "送信完了シグナルが届きませんでした（手動確認してください）" })
       }).catch(function() {});
     }
   } else {
@@ -2788,7 +2790,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     fetch(SUMORA_BATCH_API + "/api/notify-group", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんのリアプロ検索が0件でした" })
+      body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした" })
     }).catch(function() {});
   }
   return 0;
