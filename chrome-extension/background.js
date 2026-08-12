@@ -1290,7 +1290,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // page=1 で見つからなければ page=2 を fetch
         if (!_epBrokerText && _epExtractRes && _epExtractRes.page2Url) {
           var _epPage2 = await chrome.scripting.executeScript({
-            target: { tabId: _epDetailTab.id },
+            target: { tabId: _epDetailTabId },
             world: "MAIN",
             func: function(url) {
               return fetch(url, { credentials: "include" }).then(function(r) { return r.text(); }).then(function(html) {
