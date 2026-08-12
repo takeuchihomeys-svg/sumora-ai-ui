@@ -650,6 +650,16 @@
 
   // ── ページネーション: 次ページボタンの存在確認（クリックなし）──────────────
   // clickNextPageBtn と同じ探索ロジックで true/false のみ返す。
+  function _isDisabledEl(el) {
+    return el.disabled ||
+      el.getAttribute('aria-disabled') === 'true' ||
+      el.getAttribute('disabled') !== null ||
+      el.classList.contains('disabled') ||
+      el.classList.contains('is-disabled') ||
+      el.classList.contains('btn-disabled') ||
+      el.classList.contains('pagination-disabled');
+  }
+
   function hasNextPageBtn() {
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     var node;
@@ -659,6 +669,7 @@
       var el = node.parentElement;
       for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
         if ((el.tagName === "A" || el.tagName === "BUTTON") && el.offsetParent !== null) {
+          if (_isDisabledEl(el)) break;
           return true;
         }
       }
@@ -667,7 +678,7 @@
       '[aria-label*="次"], .pagination-next, .page-next, a.next, button.next'
     );
     for (var i = 0; i < candidates.length; i++) {
-      if (candidates[i].offsetParent !== null) return true;
+      if (candidates[i].offsetParent !== null && !_isDisabledEl(candidates[i])) return true;
     }
     return false;
   }
@@ -684,6 +695,7 @@
       var el = node.parentElement;
       for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
         if ((el.tagName === "A" || el.tagName === "BUTTON") && el.offsetParent !== null) {
+          if (_isDisabledEl(el)) break;
           el.click();
           return true;
         }
@@ -694,7 +706,7 @@
       '[aria-label*="次"], .pagination-next, .page-next, a.next, button.next'
     );
     for (var i = 0; i < candidates.length; i++) {
-      if (candidates[i].offsetParent !== null) {
+      if (candidates[i].offsetParent !== null && !_isDisabledEl(candidates[i])) {
         candidates[i].click();
         return true;
       }
@@ -710,6 +722,7 @@
       var clicked = clickNextPageBtn();
       if (!clicked) {
         clearAutoSendState();
+        try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: 0 }, function() { void chrome.runtime.lastError; }); } catch (_) {}
         alert("次ページへの遷移に失敗しました。手動で操作してください。");
       } else {
         // AJAX: 次のinject()でCase Bが拾えるようにリセット
