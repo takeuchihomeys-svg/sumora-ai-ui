@@ -45,6 +45,10 @@
       "schedule": "0 8 * * *"
     },
     {
+      "path": "/api/cron/flagged-reminder",
+      "schedule": "*/30 * * * *"
+    },
+    {
       "path": "/api/analyze-diffs?mode=maintain",
       "schedule": "0 18 * * *"
     },

@@ -158,16 +158,14 @@ export async function GET(req: NextRequest) {
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  // アナウンス停止
-  return NextResponse.json({ ok: true, skipped: true, reason: "disabled" });
 
-  // 9:00〜19:00 JST の間だけ配信
+  // 9:00〜20:00 JST の間だけ配信
   const jstHour = getJSTHour();
-  if (jstHour < 9 || jstHour >= 19) {
-    return NextResponse.json({ ok: true, skipped: true, reason: `JST ${jstHour}時 — 配信時間外（9:00〜19:00のみ）` });
+  if (jstHour < 9 || jstHour >= 20) {
+    return NextResponse.json({ ok: true, skipped: true, reason: `JST ${jstHour}時 — 配信時間外（9:00〜20:00のみ）` });
   }
 
-  // B02: 30分以内に既に送信済みなら重複送信しない（Cron リトライ対策）
+  // 30分以内に既に送信済みなら重複送信しない（Cron リトライ対策）
   const COOLDOWN_KEY = "flagged_reminder_last_sent_at";
   const cooldownMins = 30;
   const { data: lastSentRow } = await supabase
@@ -179,7 +177,10 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 要対応の会話を全取得（property_customers を LEFT JOIN）
+  // 1時間前のタイムスタンプ（1時間以上返信が止まっている会話のみ対象）
+  const oneHourAgo = new Date(Date.now() - HOUR_MS).toISOString();
+
+  // 要対応 かつ お客さんが最後に送信 かつ 1時間以上未返信 の会話を取得
   const { data: flagged, error } = await supabase
     .from("conversations")
     .select(
@@ -187,16 +188,18 @@ export async function GET(req: NextRequest) {
       "property_customers(status, last_property_sent_at, desired_area, area, floor_plan, layout, rent_max, max_rent)"
     )
     .eq("is_flagged", true)
+    .eq("last_sender", "customer")
+    .lt("updated_at", oneHourAgo)
     .not("status", "in", "(closed_won,closed_lost)")
     .order("updated_at", { ascending: true })
     .limit(50);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   if (!flagged || flagged.length === 0) {
-    return NextResponse.json({ ok: true, sent: false, count: 0 });
+    return NextResponse.json({ ok: true, sent: false, count: 0, reason: "1時間以上未返信の要対応なし" });
   }
 
-  // LINEグループ設定（物件出しグループ）
+  // LINEグループ設定
   let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
   if (!groupId) {
     const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
@@ -208,6 +211,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "LINE config missing" }, { status: 500 });
   }
 
+  // 鈴木のユーザーID取得（@メンション用）
+  const { data: suzukiRow } = await supabase
+    .from("hanbancyo_settings")
+    .select("value")
+    .eq("key", "suzuki_line_user_id")
+    .maybeSingle();
+  const suzukiUserId = (suzukiRow?.value as string) ?? null;
+
   // ── エントリ化 ──
   const rows = flagged as unknown as ConversationRow[];
   const entries: Entry[] = rows.map((row) => {
@@ -218,84 +229,88 @@ export async function GET(req: NextRequest) {
       waitedMs,
       waited: elapsedLabel(row.updated_at),
       convStatusLabel: STATUS_LABELS[row.status ?? ""] ?? (row.status ?? ""),
-      preview: makePreview(row, 22),
+      preview: makePreview(row, 24),
       pc,
       needsProperty: needsPropertySend(pc?.status ?? null, pc?.last_property_sent_at ?? null),
     };
   });
 
-  // 放置が長い順（waitedMs 降順）
+  // 放置が長い順
   const byWaited = (a: Entry, b: Entry) => b.waitedMs - a.waitedMs;
 
-  // ① 物件出し必須グループ
-  const propBlock = entries.filter((e) => e.needsProperty).sort(byWaited);
-  // ② 通常返信グループ → 1日以上放置 / それ以外 に分割
-  const rest = entries.filter((e) => !e.needsProperty).sort(byWaited);
-  const urgentBlock = rest.filter((e) => e.waitedMs >= 24 * HOUR_MS);
-  const normalBlock = rest.filter((e) => e.waitedMs < 24 * HOUR_MS);
+  // 物件出し必須 / 1日以上放置 / それ以外 に分類
+  const propBlock    = entries.filter((e) => e.needsProperty).sort(byWaited);
+  const rest         = entries.filter((e) => !e.needsProperty).sort(byWaited);
+  const urgentBlock  = rest.filter((e) => e.waitedMs >= 24 * HOUR_MS);
+  const normalBlock  = rest.filter((e) => e.waitedMs < 24 * HOUR_MS);
 
-  // 放置度マーク
-  const mark = (e: Entry) => (e.waitedMs >= 48 * HOUR_MS ? "🚨" : e.waitedMs >= 24 * HOUR_MS ? "⚠️" : "・");
-
+  // ── メッセージ本文生成 ──
   const blocks: string[] = [];
 
-  // ━━ 🏠 まず物件を出す ━━
   if (propBlock.length > 0) {
     const lines = propBlock.map((e) => {
-      const head = `${mark(e)} ${e.name} ｜ ${e.waited}${e.waitedMs >= 48 * HOUR_MS ? " 放置" : ""}`;
+      const head = `🏠 ${e.name}｜${e.waited}`;
       const detail = conditionSummary(e.pc) || e.preview || e.convStatusLabel;
-      return detail ? `${head}\n　　${detail}` : head;
+      return detail ? `${head}\n　${detail}` : head;
     });
-    blocks.push(
-      `━━ 🏠 まず物件を出す（${propBlock.length}人）━━\n今日まだ1件も送れてない人たち\n\n${lines.join("\n")}`
-    );
+    blocks.push(`━━ 🏠 物件も出してあげて！（${propBlock.length}人）━━\n${lines.join("\n")}`);
   }
 
-  // ━━ 🚨 まず謝って返信 ━━
   if (urgentBlock.length > 0) {
     const lines = urgentBlock.map((e) => {
-      const head = `・ ${e.name} ｜ ${e.waited}${e.convStatusLabel ? ` ・${e.convStatusLabel}` : ""}`;
-      return e.preview ? `${head}\n　　${e.preview}` : head;
+      const head = `🚨 ${e.name}｜${e.waited}${e.convStatusLabel ? `・${e.convStatusLabel}` : ""}`;
+      return e.preview ? `${head}\n　${e.preview}` : head;
     });
-    blocks.push(
-      `━━ 🚨 まず謝って返信（${urgentBlock.length}人）━━\nまる1日以上お待たせしてます\n\n${lines.join("\n")}`
-    );
+    blocks.push(`━━ 🚨 まず謝って返信！（${urgentBlock.length}人）━━\nまる1日以上お待たせしてます\n${lines.join("\n")}`);
   }
 
-  // ━━ 💬 ふつうに返信 ━━
   if (normalBlock.length > 0) {
-    const shown = normalBlock.slice(0, NORMAL_DISPLAY_LIMIT);
+    const shown  = normalBlock.slice(0, NORMAL_DISPLAY_LIMIT);
     const hidden = normalBlock.length - shown.length;
-    const lines = shown.map((e) => {
-      const head = `・ ${e.name} ${e.waited}${e.convStatusLabel ? ` ${e.convStatusLabel}` : ""}`;
-      return e.preview ? `${head}\n　　${e.preview}` : head;
+    const lines  = shown.map((e) => {
+      const head = `⏰ ${e.name}｜${e.waited}${e.convStatusLabel ? `・${e.convStatusLabel}` : ""}`;
+      return e.preview ? `${head}\n　${e.preview}` : head;
     });
-    if (hidden > 0) lines.push(`　　ほか${hidden}人（管理画面の要対応タブに出てます）`);
-    blocks.push(`━━ 💬 ふつうに返信（${normalBlock.length}人）━━\n\n${lines.join("\n")}`);
+    if (hidden > 0) lines.push(`　ほか${hidden}人`);
+    blocks.push(`━━ ⏰ 今すぐ返信！（${normalBlock.length}人）━━\n${lines.join("\n")}`);
   }
 
-  const priorityCount = propBlock.length + urgentBlock.length;
-  const closing =
-    priorityCount > 0
-      ? propBlock.length > 0 && urgentBlock.length > 0
-        ? "上の2ブロックだけでも今日中に潰したいです🔥"
-        : "上のブロックだけでも今日中に潰したいです🔥"
-      : "サクッと上から返しちゃいましょう💪";
+  // モチベup締め文言（状況に応じて変化）
+  const motivations = [
+    "要対応のお客さんは今が一番熱い状態です🔥 鈴木さんの素早い返信が成約の決め手になります！",
+    "スピード返信がそのままお客さんの信頼につながります💪 上から順にサクッと返しちゃいましょう！",
+    "要対応はチャンスのかたまりです✨ 鈴木さんのひと言がお客さんの人生を変えます！頑張って！",
+    "今日も返信の神！鈴木さんの丁寧な対応でお客さんに安心を届けましょう🙌",
+  ];
+  const motivation = motivations[new Date().getMinutes() % motivations.length];
 
-  const text = [
-    greeting(jstHour),
-    `いま ${entries.length}人 お待たせしてます。上から順にお願いします🙏`,
+  const bodyText = [
+    `⏰ 要対応のお客さんから1時間以上お返事できていません！（${entries.length}人）`,
     "",
     blocks.join("\n\n"),
     "",
-    closing,
+    motivation,
   ].join("\n");
+
+  // @鈴木メンション付き textV2 メッセージ（鈴木IDがない場合は通常テキスト）
+  const message = suzukiUserId
+    ? {
+        type: "textV2",
+        text: `{mention} ${bodyText}`,
+        substitution: {
+          mention: {
+            type: "mention",
+            mentionee: { type: "user", userId: suzukiUserId },
+          },
+        },
+      }
+    : { type: "text", text: bodyText };
 
   try {
     const res = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+      body: JSON.stringify({ to: groupId, messages: [message] }),
       signal: AbortSignal.timeout(10_000),
     });
 
@@ -305,7 +320,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: body }, { status: 500 });
     }
   } catch (e) {
-    // AbortSignal.timeout（10秒）やネットワークエラーをここで捕捉
     console.error("[flagged-reminder] LINE push error:", e);
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : String(e) },
@@ -313,7 +327,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // B02: 送信成功後にタイムスタンプを記録（次回 Cron の冪等チェック用）
+  // 送信成功後にタイムスタンプを記録
   await supabase.from("hanbancyo_settings").upsert(
     { key: COOLDOWN_KEY, value: new Date().toISOString() },
     { onConflict: "key" }
