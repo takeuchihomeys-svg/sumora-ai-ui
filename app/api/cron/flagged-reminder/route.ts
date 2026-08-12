@@ -165,6 +165,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: true, reason: `JST ${jstHour}時 — 配信時間外（9:00〜20:00のみ）` });
   }
 
+  // お盆期間スキップ・メンション制御
+  // 8/12: 締めの手動LINEを送ったので今日の自動配信はスキップ
+  // 8/13〜8/15: 鈴木お盆休み中のため自動配信は続けるがメンションなし
+  const jstDateStr = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+  if (jstDateStr === "2026-08-12") {
+    return NextResponse.json({ ok: true, skipped: true, reason: "8/12 鈴木への締めLINEを送信済み — 今日の自動配信はスキップ" });
+  }
+  const suzukiObon = jstDateStr >= "2026-08-13" && jstDateStr <= "2026-08-15";
+
   // 30分以内に既に送信済みなら重複送信しない（Cron リトライ対策）
   const COOLDOWN_KEY = "flagged_reminder_last_sent_at";
   const cooldownMins = 55;
@@ -216,7 +225,8 @@ export async function GET(req: NextRequest) {
     .select("value")
     .eq("key", "suzuki_line_user_id")
     .maybeSingle();
-  const suzukiUserId = (suzukiRow?.value as string) ?? null;
+  // お盆中はメンションしない
+  const suzukiUserId = suzukiObon ? null : ((suzukiRow?.value as string) ?? null);
 
   // ── エントリ化 ──
   const rows = flagged as unknown as ConversationRow[];
