@@ -2314,12 +2314,10 @@ export default function TemplateModal({
     // → generate-reply側でAIX最適化モードに切り替わり、会話全体ではなくそのテキストのみを改善する
     const isAixCategoryTemplate = tmpl.category.includes("AIX");
     // AIXカテゴリのテンプレートは「直前にAIXで送った文」を最適化のベースにする
-    // 優先順位: ① postAixContext（AIX送信直後のバナー経由） ② recentMessagesの最後のAIXスタッフ送信
-    const lastAixSentFromHistory = isAixCategoryTemplate
-      ? recentMessages?.slice().reverse().find(m => m.sender === "staff" && m.isAix && m.text)?.text
-      : undefined;
+    // postAixContext がある場合（AIX送信直後のバナー経由）のみ AIX ソースを使う
+    // 手動でテンプレートを開いた場合は会話履歴の古い AIX を拾わない（別のお客さんの物件情報混入防止）
     const aixSourceMessage = isAixCategoryTemplate
-      ? (postAixContext?.sentMessage || lastAixSentFromHistory || undefined)
+      ? (postAixContext?.sentMessage || undefined)
       : undefined;
     try {
       // 新: generate-reply のテンプレート最適化モード（Step1状況分析 + 全プロンプトスタック + Sonnet）
