@@ -2188,6 +2188,12 @@ async function _runBatchSearch(command) {
         try { await chrome.tabs.sendMessage(_webTabs[_wi].id, { type: "axlx-batch-customer-done" }); } catch (_ignore) {}
       }
     } catch (_ignore) {}
+    // 次顧客がいる場合のみ: 人間らしい間隔（3〜8秒ランダム）を挿入
+    if (i < targets.length - 1) {
+      var _interCustomerDelay = 3000 + Math.floor(Math.random() * 5000);
+      console.log("[batch] 次顧客まで待機 " + _interCustomerDelay + "ms");
+      await new Promise(function(r) { setTimeout(r, _interCustomerDelay); });
+    }
   }
 
   // 修正12: 全件失敗なら status:'error'、一部失敗でも error_message に記録して可視化
