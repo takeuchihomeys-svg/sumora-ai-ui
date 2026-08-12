@@ -1531,6 +1531,9 @@ async function _sbHandleCommand(payload) {
   }
 
   console.log("[SB-RT] scrape_command 受信 → popup.js完全フローで実行 customerId=" + customerId);
+  // 前回ストップで残留したフラグをクリア（_runBatchSearch 経路と同様）
+  _batchShouldStop = false;
+  await chrome.storage.local.set({ batchStopRequested: false });
   await chrome.storage.local.set({ batchRunning: { running: true, startedAt: Date.now() }, batchCommandId: commandId });
   if (commandId) _updateBatchCommand(commandId, { status: "running" }).catch(function() {});
 

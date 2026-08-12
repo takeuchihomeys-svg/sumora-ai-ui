@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
     .from("automation_commands")
     .select("id, customer_ids, sites, payload")
     .eq("command_type", "batch_property_search")
+    .not("status", "eq", "cancelled")  // cancelledはデデュープ対象外（ストップ後の再検索を通す）
     .gte("created_at", fiveMinAgo)
     .order("created_at", { ascending: false })
     .limit(20);
