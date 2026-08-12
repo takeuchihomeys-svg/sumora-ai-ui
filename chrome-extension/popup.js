@@ -3501,13 +3501,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const customerName = encodeURIComponent(selectedCustomer.customer_name || "");
     const account = encodeURIComponent(selectedCustomer.account || "");
 
-    // 既存の見積書タブを探す
+    // 既存の見積書タブ & リアプロタブを探す
     chrome.tabs.query({}, function (tabs) {
       var estimateTab = null;
+      var realproTab = null;
       for (var i = 0; i < tabs.length; i++) {
         if (tabs[i].url && tabs[i].url.includes(API_BASE + "/estimate")) {
           estimateTab = tabs[i];
-          break;
+        }
+        if (!realproTab && tabs[i].url && tabs[i].url.includes("realnetpro.com")) {
+          realproTab = tabs[i];
         }
       }
 
@@ -3534,8 +3537,50 @@ document.addEventListener("DOMContentLoaded", () => {
             });
           }, 300);
         });
+      } else if (realproTab && realproTab.id) {
+        // リアプロタブがあればフリーワードを読んで直接検索
+        var rpTabId = realproTab.id;
+        chrome.scripting.executeScript({
+          target: { tabId: rpTabId },
+          world: "MAIN",
+          func: function() {
+            var sels = [
+              'input[name="keyword"]',
+              'input[type="search"]',
+              'input[name="free_word"]',
+              'input[name="freeword"]',
+              'input[name="building_name"]',
+              'input[placeholder*="フリーワード"]',
+              'input[placeholder*="物件名"]',
+            ];
+            for (var i = 0; i < sels.length; i++) {
+              var el = document.querySelector(sels[i]);
+              if (el && el.value && el.value.trim()) return el.value.trim();
+            }
+            return "";
+          }
+        }, function(results) {
+          var fwValue = (results && results[0] && results[0].result) || "";
+          if (fwValue) {
+            // フリーワードに値あり → リアプロ自動検索（background.jsが見積書ページを開く）
+            chrome.runtime.sendMessage({
+              type: "axlx-estimate-realpro-search",
+              propertyName: fwValue,
+              roomNumber: "",
+              fromPopup: true
+            }, function(resp) {
+              void chrome.runtime.lastError;
+              if (!resp || !resp.ok) {
+                alert("リアプロ検索エラー: " + ((resp && resp.error) || "不明なエラー"));
+              }
+            });
+          } else {
+            // フリーワード空 → 見積書ページを開く
+            chrome.tabs.create({ url: `${API_BASE}/estimate` });
+          }
+        });
       } else {
-        // タブがなければ見積書ページを開く（アップロードステップで開いて画像→自動モード）
+        // リアプロタブも見つからなければ見積書ページを開く
         chrome.tabs.create({
           url: `${API_BASE}/estimate`,
         });

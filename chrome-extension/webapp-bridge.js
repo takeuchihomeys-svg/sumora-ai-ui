@@ -77,6 +77,17 @@ window.addEventListener("message", (e) => {
     return;
   }
 
+  // ── pending-supplementary: ポップアップ経由で保存された補足情報を取得 ────
+  if (e.data && e.data.from === "aixlinx-webapp-request-pending-supplementary") {
+    chrome.runtime.sendMessage({ type: "axlx-get-pending-supplementary" }, function(resp) {
+      void chrome.runtime.lastError;
+      if (resp && resp.ok && resp.text) {
+        window.postMessage({ from: "aixlinx-estimate-pending-supplementary", text: resp.text }, "*");
+      }
+    });
+    return;
+  }
+
   // ② ペイロード検証
   if (!e.data || e.data.from !== "aixlinx-webapp") return;
   const { site, conditions } = e.data;

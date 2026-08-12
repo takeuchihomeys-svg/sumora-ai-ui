@@ -526,6 +526,20 @@ function EstimatePageContent() {
     };
   }, [handleAutoMode]);
 
+  // ポップアップ経由で開かれた場合（?pendingSupp=1）: Chrome拡張からsupplementaryTextを受け取る
+  useEffect(() => {
+    if (!window.location.search.includes("pendingSupp=1")) return;
+    const handler = (e: MessageEvent) => {
+      if (e.data?.from === "aixlinx-estimate-pending-supplementary" && e.data?.text) {
+        setSupplementaryText(e.data.text as string);
+      }
+    };
+    window.addEventListener("message", handler);
+    // webapp-bridge.js に取得リクエストを送る（マウント後に送ることでリスナーが先に登録される）
+    window.postMessage({ from: "aixlinx-webapp-request-pending-supplementary" }, "*");
+    return () => window.removeEventListener("message", handler);
+  }, []);
+
   const updateItem = (key: keyof EditableItems, value: string | number) => {
     setItems((prev) => {
       if (!prev) return prev;

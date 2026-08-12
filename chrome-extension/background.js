@@ -1326,11 +1326,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
+        // fromPopup の場合: supplementaryText を storage に保存し、見積書ページを開く
+        if (msg.fromPopup) {
+          await chrome.storage.local.set({ axlx_pending_supplementary: _epBrokerText });
+          await chrome.tabs.create({ url: "https://sumora-ai-ui.vercel.app/estimate?pendingSupp=1", active: true });
+        }
+
         sendResponse({ ok: true, text: _epBrokerText });
       } catch (err) {
         sendResponse({ ok: false, error: "エラー: " + String(err) });
       }
     })();
+    return true; // async sendResponse
+  }
+
+  // ── ポップアップ経由で保存された supplementaryText を返す ────────────────
+  if (msg.type === "axlx-get-pending-supplementary") {
+    chrome.storage.local.get("axlx_pending_supplementary", function(result) {
+      var text = result.axlx_pending_supplementary || null;
+      if (text) chrome.storage.local.remove("axlx_pending_supplementary");
+      sendResponse({ ok: !!text, text: text });
+    });
     return true; // async sendResponse
   }
 
