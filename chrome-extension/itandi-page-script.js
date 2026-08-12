@@ -380,7 +380,8 @@
                       lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
                         var inp = l.querySelector("input[type='checkbox']");
                         var txt = l.textContent.trim();
-                        return inp && txt.length <= 8 && norm(txt).includes(n);
+                        var nt = norm(txt), nn = norm(n);
+                        return inp && nt.length <= 8 && nt.includes(nn) && (nt.length - nn.length) <= 1;
                       });
                     }
                     if (lbl) {
@@ -396,8 +397,8 @@
                 }
 
                 var found = tryClickStation(stName);
-                if (!found) {
-                  console.log("[AX] 駅未発見: " + stName + " → JR沿線フォールバック開始");
+                if (!found && stName.startsWith("JR")) {
+                  console.log("[AX] 駅未発見(JR駅): " + stName + " → JR沿線フォールバック開始");
                   var jrLabels = [].slice.call(document.querySelectorAll("label")).filter(function (l) {
                     var inp = l.querySelector("input[type='checkbox']");
                     return inp && !inp.checked && norm(l.textContent).includes("JR") && isVis(l);

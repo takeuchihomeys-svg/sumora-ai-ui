@@ -566,7 +566,7 @@ commute_constraints: 通勤・通学・乗り換え制約
 出力: {"stations":[],"lines":["御堂筋線"],"areas":["梅田"],"commute_constraints":[]}
 
 入力: "難波・心斎橋"
-出力: {"stations":[],"lines":[],"areas":["難波","心斎橋"],"commute_constraints":[]}
+出力: {"stations":["難波","心斎橋"],"lines":[],"areas":[],"commute_constraints":[]}
 
 入力: "梅田から20分圏内"
 出力: {"stations":["梅田"],"lines":[],"areas":[],"commute_constraints":[{"base_station":"梅田","max_minutes":20}]}
