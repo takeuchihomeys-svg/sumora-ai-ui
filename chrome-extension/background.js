@@ -2772,6 +2772,14 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   }
   if (batchDone && batchDone.timedOut) {
     console.warn("[scrapeAndCompare] 全ページ送信完了シグナルが5分以内に届きませんでした（次顧客へ続行） customer=" + customerId);
+    // タイムアウト時も運用者へ通知（シグナル未着の安全網）
+    if (customerName) {
+      fetch(SUMORA_BATCH_API + "/api/notify-group", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "⚠️【送信タイムアウト】" + customerName + "さんのリアプロ送信完了シグナルが届きませんでした（手動確認してください）" })
+      }).catch(function() {});
+    }
   } else {
     console.log("[scrapeAndCompare] 全ページ送信完了 customer=" + customerId);
   }

@@ -879,15 +879,24 @@
     // BUG-C修正: タイマー設定時点でIDをキャプチャ（4秒後に_pendingCustomerForAutoSendがnullになりうるため）
     var _armed0ItemCid = (_pendingCustomerForAutoSend && _pendingCustomerForAutoSend.customerId) || null;
     setTimeout(function () {
-      if (_autoSendArmed && tracked.length === 0) {
-        _autoSendArmed = false;
-        console.log("[AXLX bulk-dl] fill-done 後 0件確定 → batch-customer-done を即送信");
-        try {
-          chrome.runtime.sendMessage(
-            { type: "axlx-batch-customer-done", customerId: _armed0ItemCid, propertyCount: 0 },
-            function () { void chrome.runtime.lastError; }
-          );
-        } catch (_) {}
+      if (_autoSendArmed) {
+        // BUG-E修正: tracked.length === 0 ではなく「新ボタンが1件もない」で判定する。
+        // AJAXがDOMを再利用すると前顧客のボタンが残り tracked.length > 0 のまま0件を誤検出しなかった。
+        // !_hasAnyNewBtnNow = 前スナップショット外のボタンが皆無 → 0件確定（前DOM残留でも正しく発火）。
+        var _hasAnyNewBtnNow = tracked.some(function(item) {
+          var k = item.btn.href || item.btn.getAttribute('href') || '';
+          return k && !_preAutofillBtns.has(k);
+        });
+        if (!_hasAnyNewBtnNow) {
+          _autoSendArmed = false;
+          console.log("[AXLX bulk-dl] fill-done 後 新ボタンなし確定（tracked=" + tracked.length + ", 前DOMと一致） → batch-customer-done を即送信");
+          try {
+            chrome.runtime.sendMessage(
+              { type: "axlx-batch-customer-done", customerId: _armed0ItemCid, propertyCount: 0 },
+              function () { void chrome.runtime.lastError; }
+            );
+          } catch (_) {}
+        }
       }
     }, 4000);
   });
