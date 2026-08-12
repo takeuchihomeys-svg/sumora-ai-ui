@@ -2202,7 +2202,10 @@ function preloadAdjForm(c) {
   // 最終送信日：last_property_sent_at から初期値セット
   const lastSentEl = document.getElementById("adj-last-sent-date");
   if (lastSentEl) {
-    const initDate = c.last_property_sent_at ? c.last_property_sent_at.split("T")[0] : "";
+    // JSTの日付で表示する（UTCのsplit("T")[0]だと早朝送信時に1日ズレる）
+    const initDate = c.last_property_sent_at
+      ? new Date(new Date(c.last_property_sent_at).getTime() + 9 * 3600 * 1000).toISOString().split("T")[0]
+      : "";
     lastSentEl.value = initDate;
     lastSentEl.oninput = () => {
       const el = document.getElementById("adj-update-days");
@@ -2247,7 +2250,10 @@ function calcUpdateDays(dateStr, status) {
   if (!dateStr) {
     return ""; // 初めての物件出し → 絞り込まない
   }
-  const daysSince = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+  // new Date("YYYY-MM-DD") はUTC深夜0時として解釈されJSTと9時間ズレる。
+  // +09:00 を明示してJST深夜0時基準で日数を計算する。
+  const jstMidnight = new Date(dateStr + "T00:00:00+09:00");
+  const daysSince = Math.floor((Date.now() - jstMidnight.getTime()) / 86400000);
   if (daysSince <= 1) return "1";
   if (daysSince <= 3) return "3";
   if (daysSince <= 7) return "7";
