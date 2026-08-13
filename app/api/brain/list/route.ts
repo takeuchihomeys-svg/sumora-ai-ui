@@ -64,7 +64,7 @@ async function generateBrainSummary(
   propertyCustomerId: string | null,
 ): Promise<SuggestedAixMeta> {
   // Fetch last 15 messages and customer conditions in parallel
-  const [msgResult, pcResult, examplesResult, checkpointsResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult] = await Promise.all([
     supabase
       .from("messages")
       .select("sender, text, created_at")
@@ -93,6 +93,15 @@ async function generateBrainSummary(
       .eq("conversation_id", conversationId)
       .order("checkpoint_index", { ascending: false })
       .limit(2),
+    // Sent properties for this customer (duplicate/history awareness)
+    propertyCustomerId
+      ? supabase
+          .from("sent_properties")
+          .select("property_name, room_no, sent_at")
+          .eq("property_customer_id", propertyCustomerId)
+          .order("sent_at", { ascending: false })
+          .limit(10)
+      : Promise.resolve({ data: null }),
   ]);
 
   const { data: messages, error } = msgResult;
@@ -130,7 +139,14 @@ async function generateBrainSummary(
     ? `\n【過去の会話まとめ（セーブポイント）】\n${checkpoints.map((cp) => `■ ブロック${cp.checkpoint_index}: ${cp.summary ?? ""}${cp.key_facts ? ` / ${cp.key_facts}` : ""}`).join("\n")}`
     : "";
 
-  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${examplesText}${checkpointText}
+  // Sent properties — what has already been proposed to this customer
+  type SentProp = { property_name: string; room_no: string; sent_at: string };
+  const sentProps = ((sentPropsResult.data ?? []) as SentProp[]);
+  const sentPropsText = sentProps.length > 0
+    ? `\n【すでに送付済みの物件（${sentProps.length}件）】\n${sentProps.map((p) => `- ${p.property_name} ${p.room_no}（${new Date(p.sent_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}送付）`).join("\n")}`
+    : "";
+
+  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${examplesText}${checkpointText}${sentPropsText}
 
 会話履歴:
 ${history}
