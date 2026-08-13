@@ -489,12 +489,12 @@ async function handleTextMessage(
         : null;
 
       const notifyLines: string[] = [
-        `📩 ${customerName}さんからLINEが来ました`,
+        `${customerName}さんからLINEきた`,
         "",
-        `💡 脳の指示: ${brainInstruction || "（分析中…）"}`,
+        `次やること: ${brainInstruction || "（分析中）"}`,
       ];
-      if (closingStrategy) notifyLines.push(`📋 戦略: ${closingStrategy}`);
-      if (aixLabel) notifyLines.push(`🎯 推奨AIX: ${aixLabel}`);
+      if (closingStrategy) notifyLines.push(`戦略: ${closingStrategy}`);
+      if (aixLabel) notifyLines.push(`AIX: ${aixLabel}`);
       const notifyText = notifyLines.join("\n");
 
       await fetch(`${baseUrl}/api/notify-group`, {
