@@ -174,26 +174,35 @@
         setTimeout(function() {
           clickItandiRadio("大阪府") || clickItandiRadio("大阪");
           setTimeout(function() {
-            // 市名で始まる全区チェックボックスをまとめてON
+            // 市名で始まる全区ラベルを取得（radio・checkbox両対応）
             var npfx = norm(batchCity);
             var labels = [].slice.call(document.querySelectorAll("label")).filter(function(l) {
-              return l.querySelector("input[type='checkbox']") && norm(l.textContent.trim()).startsWith(npfx);
-            });
-            var checked = 0;
-            labels.forEach(function(l) {
               var inp = l.querySelector("input");
-              if (inp && !inp.checked) { l.click(); checked++; }
+              return inp && (inp.type === "radio" || inp.type === "checkbox")
+                     && norm(l.textContent.trim()).startsWith(npfx);
             });
-            console.log("[AX] batchCity: " + batchCity + " → " + checked + "区チェック");
-            if (checked === 0) {
-              // チェックボックスが見つからなかった場合は1件ずつフォールバック
-              console.warn("[AX] batchCity: checkbox not found, fallback to one-by-one");
+            console.log("[AX] batchCity: " + batchCity + " → ラベル発見数: " + labels.length);
+            if (labels.length === 0) {
+              console.warn("[AX] batchCity: 対象ラベル未発見 → 1件ずつに切り替え");
               safeConfirm(function() { openNextWardModal(); });
               return;
             }
-            setTimeout(function() {
-              safeConfirm(function() { onDone(); });
-            }, 800);
+            // 各区を600ms間隔でクリック（ITANDIのJS処理を待つため）
+            var clickIdx = 0;
+            function clickNextWardLabel() {
+              if (clickIdx >= labels.length) {
+                console.log("[AX] batchCity: 全" + labels.length + "区クリック完了 → 確定");
+                setTimeout(function() {
+                  safeConfirm(function() { onDone(); });
+                }, 800);
+                return;
+              }
+              var l = labels[clickIdx++];
+              l.click();
+              console.log("[AX] batchCity: クリック " + clickIdx + "/" + labels.length + ": " + l.textContent.trim());
+              setTimeout(clickNextWardLabel, 600);
+            }
+            clickNextWardLabel();
           }, 1000);
         }, 800);
       }, 2000);
