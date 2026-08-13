@@ -1829,7 +1829,7 @@ ALTER TABLE closing_strategy_logs DISABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS sent_properties (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   property_customer_id UUID REFERENCES property_customers(id) ON DELETE CASCADE,
-  conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
   property_name TEXT NOT NULL,
   room_no TEXT NOT NULL,
   image_url TEXT,
