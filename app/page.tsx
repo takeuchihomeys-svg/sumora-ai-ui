@@ -4920,7 +4920,30 @@ export default function Home() {
     aixFileInputRef.current?.click();
   };
 
-  const openAixDirect = (type: AixActionType) => {
+  const openAixDirect = (type: AixActionType, skipAutoTemplate?: boolean) => {
+    // AUTO-TEMPLATE: AIXボタン直押し時、win_rate順でキャッシュからベストテンプレートを自動選択
+    if (!skipAutoTemplate) {
+      const autoCategory = AIX_ACTION_META[type]?.templateCategory;
+      if (autoCategory) {
+        const matching = templateCache
+          .filter((t) => t.category === autoCategory)
+          .sort((a, b) => (b.win_rate ?? 0) - (a.win_rate ?? 0) || (b.use_count ?? 0) - (a.use_count ?? 0));
+        const best = matching[0] ?? null;
+        if (best) {
+          setPendingTemplateSource({ id: best.id, name: best.label, category: best.category });
+          setPendingTemplateStructure(best.structure ?? null);
+          setPendingTemplateSample(best.text ?? null);
+        } else {
+          setPendingTemplateSource(null);
+          setPendingTemplateStructure(null);
+          setPendingTemplateSample(null);
+        }
+      } else {
+        setPendingTemplateSource(null);
+        setPendingTemplateStructure(null);
+        setPendingTemplateSample(null);
+      }
+    }
     // CHAIN-2: AIXボタンを押した瞬間に新しいチェーンセッションを開始
     if (selectedConversation?.id) startAixSession(selectedConversation.id);
     // H2: 採択率最高のサブモードをデフォルト選択としてセット（明示指定があればそちらを優先）
@@ -7396,22 +7419,27 @@ export default function Home() {
                       {brainMeta.note}
                     </span>
                     {brainBtnLabel && (
-                      <button onClick={() => {
-                        setDismissedBrainHintIds((prev) => new Set([...prev, id]));
-                        setShowAixMenu(false);
-                        setAixInspectLabel(null);
-                        if (brainAction === "estimate_sheet") {
-                          setActiveAixFlow(brainAction);
-                          setShowTemplateModal(true);
-                        } else if (Object.keys(AIX_ACTION_META).includes(brainAction)) {
-                          setActiveAixFlow(brainAction);
-                          openAixDirect(brainAction);
-                        }
-                      }}
-                        className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                        style={{ background: `linear-gradient(135deg, ${brainBtnColor}, ${brainBtnColor}cc)` }}>
-                        {brainBtnLabel}
-                      </button>
+                      <div className="shrink-0 flex flex-col items-center gap-0.5">
+                        <button onClick={() => {
+                          setDismissedBrainHintIds((prev) => new Set([...prev, id]));
+                          setShowAixMenu(false);
+                          setAixInspectLabel(null);
+                          if (brainAction === "estimate_sheet") {
+                            setActiveAixFlow(brainAction);
+                            setShowTemplateModal(true);
+                          } else if (Object.keys(AIX_ACTION_META).includes(brainAction)) {
+                            setActiveAixFlow(brainAction);
+                            openAixDirect(brainAction);
+                          }
+                        }}
+                          className="rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                          style={{ background: `linear-gradient(135deg, ${brainBtnColor}, ${brainBtnColor}cc)` }}>
+                          {brainBtnLabel}
+                        </button>
+                        {brainAction !== "estimate_sheet" && (
+                          <span style={{ fontSize: "9px", opacity: 0.5, color: "#7C3AED" }}>テンプレ自動選択</span>
+                        )}
+                      </div>
                     )}
                     <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
                       className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
@@ -8755,7 +8783,7 @@ export default function Home() {
             const validActiveFlow = activeAixFlow && activeAixFlow !== "greeting_viewing" && Object.keys(AIX_ACTION_META).includes(activeAixFlow) ? activeAixFlow as AixActionType : undefined;
             const action: AixActionType = categoryDerivedAction ?? validActiveFlow ?? "property_recommendation";
             if (action === "estimate_sheet" || action === "property_check_result" || action === "property_send" || action === "meeting_place" || action === "condition_hearing") {
-              openAixDirect(action);
+              openAixDirect(action, true); // skipAutoTemplate: ユーザーが明示選択したテンプレを上書きしない
             } else {
               openAixWithImagePicker(action);
             }
