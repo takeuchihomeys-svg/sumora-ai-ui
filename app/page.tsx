@@ -919,6 +919,9 @@ export default function Home() {
   const [aiSearchMessageIds, setAiSearchMessageIds] = useState<Record<string, string[]>>({});
   const [showHamburgerMenu, setShowHamburgerMenu] = useState(false);
   const [aixSearchMode, setAixSearchMode] = useState(false);
+  const [showBrainView, setShowBrainView] = useState(false);
+  const [brainConversations, setBrainConversations] = useState<Conversation[]>([]);
+  const [brainLoading, setBrainLoading] = useState(false);
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
   const [replyExamplesCount, setReplyExamplesCount] = useState<number | null>(null);
@@ -5363,11 +5366,18 @@ export default function Home() {
                     <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
                   )}
                 </button>
-                {/* AI検索ボタン */}
+                {/* AI検索ボタン / Brainビュー */}
                 <button
-                  onClick={() => { setAixSearchMode(true); setAiSearchIds(null); setAiSearchMessageIds({}); setSearchQuery(""); }}
+                  onClick={() => {
+                    const flagged = conversations.filter((c) => {
+                      if (c.lastSender !== "customer") return false;
+                      return true;
+                    });
+                    setBrainConversations(flagged);
+                    setShowBrainView(true);
+                  }}
                   className="flex items-center justify-center p-1"
-                  title="AIで検索"
+                  title="今日やること"
                 >
                   <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
                     <circle cx="10" cy="10" r="7" stroke={aixSearchMode ? "#06C755" : "#aaaaaa"} strokeWidth="2.5"/>
@@ -12843,6 +12853,141 @@ export default function Home() {
           </div>
         </div>
       )}
+      {/* Brain View — 今日やること */}
+      {showBrainView && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-white"
+          style={{ maxHeight: "100dvh", overflowY: "auto" }}
+        >
+          {/* ヘッダー */}
+          <div
+            className="flex items-center justify-between px-4 py-3 shrink-0 border-b border-[#e9edef]"
+            style={{ background: "linear-gradient(135deg,#0d1b3e 0%,#1565C0 100%)" }}
+          >
+            <span className="text-[17px] font-black text-white tracking-tight">🧠 今日やること</span>
+            <button
+              onClick={() => setShowBrainView(false)}
+              className="text-white/70 text-xl leading-none px-2 py-1 active:opacity-60"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* カウント */}
+          <div className="px-4 py-2 text-[11px] text-[#8696a0] shrink-0 border-b border-[#f0f2f5]">
+            要対応 {brainConversations.length} 件
+          </div>
+
+          {/* リスト */}
+          <div className="flex-1 overflow-y-auto">
+            {brainLoading ? (
+              <div className="flex items-center justify-center py-16 text-[13px] text-[#8696a0]">
+                読み込み中...
+              </div>
+            ) : brainConversations.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-2">
+                <span className="text-4xl">🎉</span>
+                <span className="text-[14px] font-bold text-[#111b21]">すべて対応済み！</span>
+                <span className="text-[12px] text-[#8696a0]">要対応の顧客はいません</span>
+              </div>
+            ) : (
+              brainConversations.map((conv) => {
+                const note = conv.suggestedAixMeta?.note ?? null;
+                const action = conv.suggestedAixMeta?.action ?? conv.suggestedNextAix ?? null;
+                const actionMeta = action ? AIX_ACTION_META[action as keyof typeof AIX_ACTION_META] : null;
+                const actionColor = actionMeta?.color ?? "#7C3AED";
+                const ageMins = conv.updatedAt
+                  ? Math.floor((Date.now() - new Date(conv.updatedAt).getTime()) / 60000)
+                  : null;
+                const ageLabel = ageMins === null ? "" : ageMins < 60
+                  ? `${ageMins}分前`
+                  : ageMins < 1440
+                  ? `${Math.floor(ageMins / 60)}時間前`
+                  : `${Math.floor(ageMins / 1440)}日前`;
+
+                return (
+                  <button
+                    key={conv.id}
+                    className="flex w-full items-center gap-3 px-4 py-4 text-left border-b border-[#f0f2f5] active:bg-[#f5f6f6] bg-white"
+                    onClick={() => {
+                      setShowBrainView(false);
+                      openConversation(conv.id);
+                    }}
+                  >
+                    {/* アバター */}
+                    <div className="shrink-0">
+                      {conv.profileImageUrl ? (
+                        <img
+                          src={conv.profileImageUrl}
+                          alt={conv.customerName}
+                          className="h-12 w-12 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
+                          {getInitial(conv.customerName)}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* コンテンツ */}
+                    <div className="flex-1 min-w-0">
+                      {/* 名前行 */}
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <span className="truncate text-[14px] font-semibold text-[#111b21]">
+                            {conv.customerName}
+                          </span>
+                          <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-bold text-orange-600">
+                            要対応
+                          </span>
+                          {(conv.suggestedNextAix || conv.suggestedAixMeta) && (
+                            <span
+                              className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold text-white"
+                              style={{ backgroundColor: actionColor }}
+                            >
+                              {actionMeta?.label ?? "AIX"}
+                            </span>
+                          )}
+                        </div>
+                        {ageLabel && (
+                          <span className="text-[10px] text-[#b0b8be] shrink-0">{ageLabel}</span>
+                        )}
+                      </div>
+
+                      {/* AI提案メモ行 */}
+                      {note ? (
+                        <div
+                          className="truncate text-[11px] font-medium"
+                          style={{ color: actionColor }}
+                        >
+                          → {note}
+                        </div>
+                      ) : conv.suggestedNextAix ? (
+                        <div
+                          className="truncate text-[11px] font-medium"
+                          style={{ color: actionColor }}
+                        >
+                          → {actionMeta?.label ?? conv.suggestedNextAix}
+                        </div>
+                      ) : (
+                        <div className="truncate text-[11px] text-[#b0b8be]">
+                          AI分析中...
+                        </div>
+                      )}
+
+                      {/* 最終メッセージプレビュー */}
+                      <div className="truncate text-[11px] text-[#b0b8be] mt-0.5">
+                        {conv.lastMessage}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
     </main>
   );
 }
