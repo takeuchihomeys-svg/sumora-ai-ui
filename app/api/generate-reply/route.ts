@@ -1892,7 +1892,7 @@ export async function POST(req: NextRequest) {
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
-    const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules] = await Promise.all([
+    const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, checkpointsData] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext, conversationId)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0 }; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
@@ -1921,8 +1921,28 @@ export async function POST(req: NextRequest) {
       isTemplateOptimize && templateCategory
         ? fetchCategoryAdaptationRules(templateCategory)
         : Promise.resolve(""),
+      // 過去の会話セーブポイント（チェックポイント）— 長期会話の文脈を補完
+      conversationId
+        ? (async () => {
+            try {
+              const { data } = await supabase
+                .from("conversation_checkpoints")
+                .select("checkpoint_index, summary, key_facts")
+                .eq("conversation_id", conversationId)
+                .order("checkpoint_index", { ascending: true })
+                .limit(3);
+              return data ?? [];
+            } catch { return []; }
+          })()
+        : Promise.resolve([]),
     ]);
-    const resolvedSummary = customerSummary || autoSummary;
+    // Build checkpoint note for prompt injection
+    type CheckpointRow = { checkpoint_index: number; summary: string | null; key_facts: string | null };
+    const checkpoints = checkpointsData as CheckpointRow[];
+    const checkpointNote = checkpoints.length > 0
+      ? `\n【会話履歴サマリー（過去のセーブポイント — 長期会話の文脈）】\n${checkpoints.map((cp) => `■ 第${cp.checkpoint_index}ブロック: ${cp.summary ?? ""}${cp.key_facts ? ` / ${cp.key_facts}` : ""}`).join("\n")}`
+      : "";
+    const resolvedSummary = (customerSummary || autoSummary) + checkpointNote;
     const resolvedSummaryJson = bodySummaryJson ?? fetchedSummaryJson ?? undefined;
     // GAP-3: Cross-table deduplication — dbRules（ai_prompt_rules）と knowledge（ai_reply_knowledge）の
     // 内容重複を除去する。HUMAN-*/FEEDBACK-*がai_prompt_rulesとai_reply_knowledgeの両方に存在する場合、

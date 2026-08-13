@@ -191,6 +191,10 @@
     {
       "path": "/api/cron/aix-weekly-learning",
       "schedule": "30 18 * * 0"
+    },
+    {
+      "path": "/api/cron/create-checkpoints",
+      "schedule": "0 */6 * * *"
     }
   ]
 }

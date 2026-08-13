@@ -1784,6 +1784,26 @@ ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS last_judged_at TIMESTAMP
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS commute_station TEXT;
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS commute_minutes INTEGER;
 
+-- ── conversation_checkpoints: 会話チェックポイント（15件ごとのAI要約）（2026-08-13）──
+-- 15件ごとのメッセージブロックをHaikuが要約・重要事実を抽出して保存する。
+-- generate-reply が長期会話でも全履歴を読まずに文脈を把握するための圧縮メモリ。
+-- checkpoint_index: 1=messages 1-15, 2=messages 16-30, ...
+-- key_facts: [{"type":"property_sent","value":"2LDK 3件送付"}, ...]
+-- conversation_stage: hearing/proposing/applying/contract（チェックポイント生成時点のステージ）
+CREATE TABLE IF NOT EXISTS conversation_checkpoints (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  checkpoint_index INTEGER NOT NULL,
+  message_count_at_creation INTEGER NOT NULL,
+  summary TEXT NOT NULL,
+  key_facts JSONB DEFAULT '[]',
+  conversation_stage TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(conversation_id, checkpoint_index)
+);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_conversation ON conversation_checkpoints(conversation_id, checkpoint_index DESC);
+ALTER TABLE conversation_checkpoints DISABLE ROW LEVEL SECURITY;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

@@ -14,7 +14,7 @@ const SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost"];
 const URGENT_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 // Max conversations to run Haiku brain-summary for in a single request (cost/latency guard)
-const MAX_HAIKU_PER_REQUEST = 10;
+const MAX_HAIKU_PER_REQUEST = 30;
 
 type SuggestedAixMeta = {
   action: string;
@@ -47,7 +47,7 @@ async function generateBrainSummary(
   propertyCustomerId: string | null,
 ): Promise<SuggestedAixMeta> {
   // Fetch last 15 messages and customer conditions in parallel
-  const [msgResult, pcResult, examplesResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult] = await Promise.all([
     supabase
       .from("messages")
       .select("sender, text, created_at")
@@ -69,6 +69,13 @@ async function generateBrainSummary(
       .eq("is_starred", true)
       .order("created_at", { ascending: false })
       .limit(3),
+    // Latest 2 checkpoints for long-conversation context
+    supabase
+      .from("conversation_checkpoints")
+      .select("checkpoint_index, summary, key_facts, conversation_stage")
+      .eq("conversation_id", conversationId)
+      .order("checkpoint_index", { ascending: false })
+      .limit(2),
   ]);
 
   const { data: messages, error } = msgResult;
@@ -99,7 +106,14 @@ async function generateBrainSummary(
     ? `\n過去のスタッフ優良返信例:\n${examples.map((e) => `- ${e.sent_reply ?? ""}`).join("\n")}`
     : "";
 
-  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${examplesText}
+  // Checkpoint summaries for long-conversation context (セーブポイント)
+  type Checkpoint = { checkpoint_index: number; summary: string | null; key_facts: string | null; conversation_stage: string | null };
+  const checkpoints = ((checkpointsResult.data ?? []) as Checkpoint[]).reverse(); // oldest first
+  const checkpointText = checkpoints.length > 0
+    ? `\n【過去の会話まとめ（セーブポイント）】\n${checkpoints.map((cp) => `■ ブロック${cp.checkpoint_index}: ${cp.summary ?? ""}${cp.key_facts ? ` / ${cp.key_facts}` : ""}`).join("\n")}`
+    : "";
+
+  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${examplesText}${checkpointText}
 
 会話履歴:
 ${history}

@@ -1504,11 +1504,20 @@ export default function Home() {
   // Fix 1: Brain View リアルタイム自動更新
   // conversations が Realtime や 30 秒ポーリングで更新されるたびに
   // brainConversations を再フィルタリングして最新状態を反映する
+  // FIX P1: Brain View リアルタイム自動更新 — merge ではなく上書き禁止
+  // 30秒ポーリングで conversations が更新されるたびに呼ばれるが、
+  // suggestedAixMeta が確定済みのエントリは既存値を保持して上書きしない
   useEffect(() => {
     if (!showBrainView) return;
-    setBrainConversations(
-      conversations.filter((c) => c.lastSender === "customer")
-    );
+    const customerConvs = conversations.filter((c) => c.lastSender === "customer");
+    setBrainConversations((prev) => {
+      const existingMap = new Map(prev.map((c) => [c.id, c]));
+      return customerConvs.map((c) => {
+        const existing = existingMap.get(c.id);
+        if (existing?.suggestedAixMeta) return { ...c, suggestedAixMeta: existing.suggestedAixMeta };
+        return c;
+      });
+    });
   }, [conversations, showBrainView]);
 
   useEffect(() => {
@@ -5387,21 +5396,28 @@ export default function Home() {
                     setShowBrainView(true);
                     // Fix 3: (2) バックグラウンドで /api/brain/list を叩き、最新の suggested_aix_meta をマージ
                     setBrainLoading(true);
-                    fetch("/api/brain/list")
-                      .then((r) => r.ok ? r.json() : null)
-                      .then((list: Array<{ id: string; suggested_aix_meta: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional" } | null }> | null) => {
-                        if (!list) return;
-                        // Fix 3: (3) 返ってきた suggested_aix_meta を brainConversations の各エントリにマージ
-                        setBrainConversations((prev) =>
-                          prev.map((c) => {
-                            const fresh = list.find((r) => r.id === c.id);
-                            if (!fresh) return c;
-                            return { ...c, suggestedAixMeta: fresh.suggested_aix_meta ?? c.suggestedAixMeta };
-                          })
-                        );
-                      })
-                      .catch(() => { /* ネットワークエラーは無視。state は既に populated */ })
-                      .finally(() => setBrainLoading(false));
+                    // FIX P2: 全件自動処理 — 未処理が残っている限り最大5回繰り返し取得
+                    const fetchBrain = (iter: number) => {
+                      fetch("/api/brain/list")
+                        .then((r) => (r.ok ? r.json() : null))
+                        .then((list: Array<{ id: string; suggested_aix_meta: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional" } | null }> | null) => {
+                          if (!list) return;
+                          setBrainConversations((prev) =>
+                            prev.map((c) => {
+                              const fresh = list.find((r) => r.id === c.id);
+                              if (!fresh) return c;
+                              return { ...c, suggestedAixMeta: fresh.suggested_aix_meta ?? c.suggestedAixMeta };
+                            })
+                          );
+                          // まだ未処理エントリがあれば3秒後に次のバッチを取得（最大5回）
+                          if (iter < 5 && list.some((item) => !item.suggested_aix_meta)) {
+                            setTimeout(() => fetchBrain(iter + 1), 3000);
+                          }
+                        })
+                        .catch(() => { /* ネットワークエラーは無視。state は既に populated */ })
+                        .finally(() => { if (iter === 1) setBrainLoading(false); });
+                    };
+                    fetchBrain(1);
                   }}
                   className="flex items-center justify-center p-1"
                   title="今日やること"
