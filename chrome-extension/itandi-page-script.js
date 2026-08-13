@@ -143,6 +143,62 @@
     var wardNames = Array.isArray(wardNamesInput) ? wardNamesInput : (wardNamesInput ? [wardNamesInput] : []);
     if (!wardNames.length) return false;
 
+    // 同一市の全区が対象かつ町域指定なし → 1回のモーダルで全区を一括チェック
+    function getCityPrefix(w) {
+      var m = w.match(/^([^\s　]+?[市])/);
+      return m ? m[1] : null;
+    }
+    var batchCity = (function() {
+      if (wardNames.length < 2) return null;
+      var hasTowns = wardNames.some(function(w) { return wardTownMap && wardTownMap[w] && wardTownMap[w].length; });
+      if (hasTowns) return null;
+      var prefix = getCityPrefix(wardNames[0]);
+      if (!prefix) return null;
+      var allSame = wardNames.every(function(w) { return w.startsWith(prefix); });
+      return allSame ? prefix : null;
+    })();
+
+    // 市全域バッチ選択: 1回のモーダルで全区チェックボックスをまとめて選択
+    function openBatchCityModal() {
+      var opened = clickBtn("所在地で絞り込む") || clickBtn("所在地を絞り込む")
+                || clickBtn("所在地で絞り込み") || clickBtn("エリアで絞り込む")
+                || clickBtn("エリアを絞り込む") || clickBtn("エリアで絞り込み")
+                || clickBtn("地域で絞り込む") || clickBtn("地域を絞り込む")
+                || clickBtn("地域で絞り込み");
+      if (!opened) {
+        console.log("[AX] batchCity: modal button not found, fallback to one-by-one");
+        openNextWardModal(); return;
+      }
+      setTimeout(function() {
+        clickItandiRadio("近畿");
+        setTimeout(function() {
+          clickItandiRadio("大阪府") || clickItandiRadio("大阪");
+          setTimeout(function() {
+            // 市名で始まる全区チェックボックスをまとめてON
+            var npfx = norm(batchCity);
+            var labels = [].slice.call(document.querySelectorAll("label")).filter(function(l) {
+              return l.querySelector("input[type='checkbox']") && norm(l.textContent.trim()).startsWith(npfx);
+            });
+            var checked = 0;
+            labels.forEach(function(l) {
+              var inp = l.querySelector("input");
+              if (inp && !inp.checked) { l.click(); checked++; }
+            });
+            console.log("[AX] batchCity: " + batchCity + " → " + checked + "区チェック");
+            if (checked === 0) {
+              // チェックボックスが見つからなかった場合は1件ずつフォールバック
+              console.warn("[AX] batchCity: checkbox not found, fallback to one-by-one");
+              safeConfirm(function() { openNextWardModal(); });
+              return;
+            }
+            setTimeout(function() {
+              safeConfirm(function() { onDone(); });
+            }, 800);
+          }, 1000);
+        }, 800);
+      }, 2000);
+    }
+
     function clickItandiRadio(text) {
       var n = norm(text);
       var labels = [].slice.call(document.querySelectorAll("label"));
@@ -270,7 +326,11 @@
       }, 2000);
     }
 
-    openNextWardModal();
+    if (batchCity) {
+      openBatchCityModal();
+    } else {
+      openNextWardModal();
+    }
     return true;
   }
 
