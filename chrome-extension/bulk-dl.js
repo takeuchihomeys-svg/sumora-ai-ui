@@ -660,6 +660,13 @@
       el.classList.contains('pagination-disabled');
   }
 
+  // position:fixed な要素は offsetParent===null になるため getBoundingClientRect で可視判定する
+  function _isElVisible(el) {
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
   function hasNextPageBtn() {
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     var node;
@@ -668,7 +675,7 @@
       if (t !== "次" && t !== "次へ" && t !== "次のページ" && t !== ">" && t !== ">>") continue;
       var el = node.parentElement;
       for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
-        if ((el.tagName === "A" || el.tagName === "BUTTON") && el.offsetParent !== null) {
+        if ((el.tagName === "A" || el.tagName === "BUTTON") && _isElVisible(el)) {
           if (_isDisabledEl(el)) break;
           if (el.tagName === 'A' && el.href && el.href === location.href) break; // self-link = same page
           return true;
@@ -680,7 +687,7 @@
     );
     for (var i = 0; i < candidates.length; i++) {
       var c = candidates[i];
-      if (c.offsetParent !== null && !_isDisabledEl(c) &&
+      if (_isElVisible(c) && !_isDisabledEl(c) &&
           !(c.tagName === 'A' && c.href && c.href === location.href)) return true;
     }
     return false;
@@ -697,7 +704,7 @@
       if (t !== "次" && t !== "次へ" && t !== "次のページ" && t !== ">" && t !== ">>") continue;
       var el = node.parentElement;
       for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
-        if ((el.tagName === "A" || el.tagName === "BUTTON") && el.offsetParent !== null) {
+        if ((el.tagName === "A" || el.tagName === "BUTTON") && _isElVisible(el)) {
           if (_isDisabledEl(el)) break;
           if (el.tagName === 'A' && el.href && el.href === location.href) break; // self-link = same page
           el.click();
@@ -711,7 +718,7 @@
     );
     for (var i = 0; i < candidates.length; i++) {
       var c = candidates[i];
-      if (c.offsetParent !== null && !_isDisabledEl(c) &&
+      if (_isElVisible(c) && !_isDisabledEl(c) &&
           !(c.tagName === 'A' && c.href && c.href === location.href)) {
         c.click();
         return true;
@@ -728,7 +735,9 @@
       if (!clicked) {
         clearAutoSendState();
         try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: 0 }, function() { void chrome.runtime.lastError; }); } catch (_) {}
-        alert("次ページへの遷移に失敗しました。手動で操作してください。");
+        console.error("[AXLX bulk-dl] 次ページへの遷移に失敗しました（次ページボタンが見つからない）");
+        var countEl2 = document.getElementById("axlx-count");
+        if (countEl2) countEl2.textContent = "次ページ遷移エラー";
       } else {
         // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
         setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null });
@@ -760,62 +769,83 @@
 
     var urls = getSelectedUrls();
     if (!urls.length) {
-      onDone(true);
+      // DOM がまだレンダリング中の可能性があるため最大4秒ポーリングして待つ
+      var _pollWait = 0;
+      var _pollTimer = setInterval(function () {
+        inject();
+        tracked.forEach(function (t) { t.cb.checked = true; });
+        updateBar();
+        var urls2 = getSelectedUrls();
+        _pollWait += 200;
+        if (urls2.length > 0 || _pollWait >= 4000) {
+          clearInterval(_pollTimer);
+          if (!urls2.length) {
+            console.warn("[AXLX bulk-dl] autoSendOnePage: " + _pollWait + "ms待機後も物件なし → スキップ");
+            onDone(true);
+            return;
+          }
+          // ポーリング中に物件が出た → 処理継続
+          _doSend(urls2);
+        }
+      }, 200);
       return;
     }
+    _doSend(urls);
 
-    var selectedTargets = tracked.filter(function (t) { return t.cb.checked; });
-    var propertySummaries = selectedTargets.map(function (t, i) {
-      return buildPropertySummary(extractCard(t.btn), i);
-    });
-
-    // 20件ずつバッチに分割して順番に送信（一括送信はタイムアウトするため）
-    var batches = [];
-    for (var i = 0; i < urls.length; i += BATCH_SIZE) {
-      batches.push({
-        urls: urls.slice(i, i + BATCH_SIZE),
-        summaries: propertySummaries.slice(i, i + BATCH_SIZE),
+    function _doSend(sendUrls) {
+      var selectedTargets = tracked.filter(function (t) { return t.cb.checked; });
+      var propertySummaries = selectedTargets.map(function (t, i) {
+        return buildPropertySummary(extractCard(t.btn), i);
       });
-    }
 
-    var batchIndex = 0;
-    function sendNextBatch() {
-      if (batchIndex >= batches.length) {
-        onDone(true);
-        return;
+      // 20件ずつバッチに分割して順番に送信（一括送信はタイムアウトするため）
+      var batches = [];
+      for (var i = 0; i < sendUrls.length; i += BATCH_SIZE) {
+        batches.push({
+          urls: sendUrls.slice(i, i + BATCH_SIZE),
+          summaries: propertySummaries.slice(i, i + BATCH_SIZE),
+        });
       }
-      var batch = batches[batchIndex];
-      if (countEl) {
-        countEl.textContent = "P" + state.currentPage + " 送信中 (" + (batchIndex + 1) + "/" + batches.length + ")";
-      }
-      chrome.runtime.sendMessage({
-        type: "axlx-send-to-line",
-        urls: batch.urls,
-        customer_name: state.customerName || null,
-        property_summaries: batch.summaries,
-        customer_conditions: state.customerConditions || null,
-        site: "realpro",
-      }, function (resp) {
-        if (chrome.runtime.lastError) {
-          clearAutoSendState();
-          if (countEl) countEl.textContent = "送信エラー";
-          try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
-          alert("全ページ送信エラー: " + chrome.runtime.lastError.message);
+
+      var batchIndex = 0;
+      function sendNextBatch() {
+        if (batchIndex >= batches.length) {
+          onDone(true);
           return;
         }
-        if (!resp || !resp.ok) {
-          clearAutoSendState();
-          if (countEl) countEl.textContent = "送信エラー";
-          try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
-          alert("全ページ送信エラー:\n" + (resp ? resp.error : "応答なし"));
-          return;
+        var batch = batches[batchIndex];
+        if (countEl) {
+          countEl.textContent = "P" + state.currentPage + " 送信中 (" + (batchIndex + 1) + "/" + batches.length + ")";
         }
-        batchIndex++;
-        sendNextBatch();
-      });
-    }
+        chrome.runtime.sendMessage({
+          type: "axlx-send-to-line",
+          urls: batch.urls,
+          customer_name: state.customerName || null,
+          property_summaries: batch.summaries,
+          customer_conditions: state.customerConditions || null,
+          site: "realpro",
+        }, function (resp) {
+          if (chrome.runtime.lastError) {
+            clearAutoSendState();
+            if (countEl) countEl.textContent = "送信エラー（次顧客へ）";
+            console.error("[AXLX bulk-dl] 送信エラー:", chrome.runtime.lastError.message);
+            try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+            return;
+          }
+          if (!resp || !resp.ok) {
+            clearAutoSendState();
+            if (countEl) countEl.textContent = "送信エラー（次顧客へ）";
+            console.error("[AXLX bulk-dl] 送信エラー:", resp ? resp.error : "応答なし");
+            try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+            return;
+          }
+          batchIndex++;
+          sendNextBatch();
+        });
+      }
 
-    sendNextBatch();
+      sendNextBatch();
+    }
   }
 
   // ── 全ページ自動送信: エントリポイント ────────────────────────────────────
