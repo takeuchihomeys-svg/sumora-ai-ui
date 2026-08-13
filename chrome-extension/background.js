@@ -2139,46 +2139,59 @@ async function _runBatchSearch(command) {
         return;
       }
       var batchSite = sites[j];
-      try {
-        // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
-        // リアプロ・itandi ともモーダル操作/ページロードで60秒を超えることがあるため90秒に統一
-        // customerId を渡して他顧客の遅延 fill-done が誤解決しないよう保護する
-        var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
-          ? _createFillDoneWaiter(batchSite, String(customer.id), 90000)
-          : null;
-        // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
-        var resolvedBatchConds = await _batchAutofill(customer, batchSite, batchIsWide);
-        if (batchSite === "itandi") {
-          // itandi の場合: リアプロと同じく fill-done + batch-customer-done を待つ形に統一
-          // itandi-bulk-dl.js の autoSendAllPages が axlx-batch-customer-done シグナルを送信する
-          await _scrapeAndSendRealpro(
-            fillDoneP,
-            String(customer.id),
-            customer.customer_name || null,
-            resolvedBatchConds || _buildBatchConditions(customer, batchIsWide),
-            "itandi"
-          );
-        } else if (batchSite === "realnetpro") {
-          // 修正7: 通常バッチのリアプロ分岐にもスクレイプ→AI比較→LINE送信を追加
-          // （従来は autofill + 3秒 sleep のみで結果がどこにも届かなかった）
-          await _scrapeAndSendRealpro(
-            fillDoneP,
-            String(customer.id),
-            customer.customer_name || null,
-            resolvedBatchConds || _buildBatchConditions(customer, batchIsWide)
-          );
-        } else {
-          await new Promise(function(r) { setTimeout(r, 3000); });
+      // area_mode='both': 地域（ward）と駅（station）を別々に2回検索・送信
+      var areaModePasses = (customer.area_mode === 'both') ? ['ward', 'station'] : [null];
+      for (var k = 0; k < areaModePasses.length; k++) {
+        if (k > 0) {
+          // 地域→駅の切り替えインターバル（5〜10秒）
+          var _betweenModeDelay = 5000 + Math.floor(Math.random() * 5000);
+          console.log("[batch] both顧客: 地域→駅 切り替え待機 " + _betweenModeDelay + "ms");
+          await new Promise(function(r) { setTimeout(r, _betweenModeDelay); });
         }
-      } catch (e) {
-        // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して i ループも抜ける
-        if (e && e.message === "__BATCH_STOPPED__") {
-          console.log("[batch] __BATCH_STOPPED__ 受信 → バッチ中断");
-          await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
-          return;
+        var effectiveCustomer = areaModePasses[k]
+          ? Object.assign({}, customer, { area_mode: areaModePasses[k] })
+          : customer;
+        try {
+          // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
+          // リアプロ・itandi ともモーダル操作/ページロードで60秒を超えることがあるため90秒に統一
+          // customerId を渡して他顧客の遅延 fill-done が誤解決しないよう保護する
+          var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
+            ? _createFillDoneWaiter(batchSite, String(effectiveCustomer.id), 90000)
+            : null;
+          // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
+          var resolvedBatchConds = await _batchAutofill(effectiveCustomer, batchSite, batchIsWide);
+          if (batchSite === "itandi") {
+            // itandi の場合: リアプロと同じく fill-done + batch-customer-done を待つ形に統一
+            // itandi-bulk-dl.js の autoSendAllPages が axlx-batch-customer-done シグナルを送信する
+            await _scrapeAndSendRealpro(
+              fillDoneP,
+              String(effectiveCustomer.id),
+              effectiveCustomer.customer_name || null,
+              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide),
+              "itandi"
+            );
+          } else if (batchSite === "realnetpro") {
+            // 修正7: 通常バッチのリアプロ分岐にもスクレイプ→AI比較→LINE送信を追加
+            // （従来は autofill + 3秒 sleep のみで結果がどこにも届かなかった）
+            await _scrapeAndSendRealpro(
+              fillDoneP,
+              String(effectiveCustomer.id),
+              effectiveCustomer.customer_name || null,
+              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide)
+            );
+          } else {
+            await new Promise(function(r) { setTimeout(r, 3000); });
+          }
+        } catch (e) {
+          // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して全ループを抜ける
+          if (e && e.message === "__BATCH_STOPPED__") {
+            console.log("[batch] __BATCH_STOPPED__ 受信 → バッチ中断");
+            await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
+            return;
+          }
+          console.error("[batch] error:", effectiveCustomer.id, batchSite, areaModePasses[k] || "auto", e);
+          batchErrors.push(effectiveCustomer.id + "/" + batchSite + "/" + (areaModePasses[k] || "auto") + ": " + ((e && e.message) || e));
         }
-        console.error("[batch] error:", customer.id, batchSite, e);
-        batchErrors.push(customer.id + "/" + batchSite + ": " + ((e && e.message) || e));
       }
     }
     await _updateBatchCommand(command.id, { processed_customers: i + 1 });
