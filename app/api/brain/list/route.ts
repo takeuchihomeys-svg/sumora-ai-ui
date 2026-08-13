@@ -36,18 +36,42 @@ type BrainConversation = {
 };
 
 /**
- * Calls Claude Haiku with the last 5 messages for a conversation and returns
- * a lightweight brain summary shaped as SuggestedAixMeta so it can be cached
- * in conversations.suggested_aix_meta.
+ * Calls Claude Haiku with enriched context (last 15 messages, customer conditions,
+ * conversation status) and returns a SuggestedAixMeta to cache in conversations.
+ * FIX #02: enforcement_level is now dynamic based on urgency.
  */
-async function generateBrainSummary(conversationId: string): Promise<SuggestedAixMeta> {
-  const { data: messages, error } = await supabase
-    .from("messages")
-    .select("sender, text, created_at")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: false })
-    .limit(5);
+async function generateBrainSummary(
+  conversationId: string,
+  isUrgent: boolean,
+  convStatus: string | null,
+  propertyCustomerId: string | null,
+): Promise<SuggestedAixMeta> {
+  // Fetch last 15 messages and customer conditions in parallel
+  const [msgResult, pcResult, examplesResult] = await Promise.all([
+    supabase
+      .from("messages")
+      .select("sender, text, created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .limit(15),
+    propertyCustomerId
+      ? supabase
+          .from("property_customers")
+          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences")
+          .eq("id", propertyCustomerId)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    // Recent starred reply examples for this conversation (context for Haiku)
+    supabase
+      .from("ai_reply_examples")
+      .select("sent_reply, is_starred")
+      .eq("conversation_id", conversationId)
+      .eq("is_starred", true)
+      .order("created_at", { ascending: false })
+      .limit(3),
+  ]);
 
+  const { data: messages, error } = msgResult;
   if (error || !messages || messages.length === 0) return null;
 
   // Reverse so the history reads oldest → newest
@@ -56,7 +80,26 @@ async function generateBrainSummary(conversationId: string): Promise<SuggestedAi
     .map((m) => `[${m.sender}] ${m.text ?? "（画像/添付）"}`)
     .join("\n");
 
-  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
+  // Build customer conditions context
+  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null } | null;
+  const pc = (pcResult.data ?? null) as PC;
+  const condParts: string[] = [];
+  if (pc?.desired_area) condParts.push(`エリア: ${pc.desired_area}`);
+  if (pc?.floor_plan) condParts.push(`間取り: ${pc.floor_plan}`);
+  if (pc?.rent_max) condParts.push(`家賃上限: ${Math.floor((pc.rent_max as number) / 10000)}万`);
+  if (pc?.move_in_time) condParts.push(`入居: ${pc.move_in_time}`);
+  if (pc?.preferences) condParts.push(`希望: ${pc.preferences}`);
+  const condText = condParts.length > 0 ? `\n顧客条件: ${condParts.join(" / ")}` : "";
+
+  const statusText = convStatus ? `\n現在のステータス: ${convStatus}` : "";
+
+  // Recent starred examples (good replies) for this customer
+  const examples = (examplesResult.data ?? []) as Array<{ sent_reply: string | null; is_starred: boolean | null }>;
+  const examplesText = examples.length > 0
+    ? `\n過去のスタッフ優良返信例:\n${examples.map((e) => `- ${e.sent_reply ?? ""}`).join("\n")}`
+    : "";
+
+  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${examplesText}
 
 会話履歴:
 ${history}
@@ -81,11 +124,13 @@ ${history}
       aix?: string | null;
     };
 
+    // FIX #02: enforcement_level is "required" for urgent conversations (customer replied < 2h ago),
+    // otherwise "recommended"
     return {
       action: parsed.aix ?? "follow_up",
       note: parsed.action ?? "",
       source: "analysis_step1",
-      enforcement_level: "recommended",
+      enforcement_level: isUrgent ? "required" : "recommended",
     };
   } catch {
     return null;
@@ -125,7 +170,13 @@ export async function GET(_req: NextRequest) {
   if (toProcess.length > 0) {
     const summaries = await Promise.all(
       toProcess.map(async (conv) => {
-        const meta = await generateBrainSummary(conv.id);
+        const isUrgent = Date.now() - new Date(conv.updated_at).getTime() <= URGENT_WINDOW_MS;
+        const meta = await generateBrainSummary(
+          conv.id,
+          isUrgent,
+          conv.status,
+          conv.property_customer_id,
+        );
         return { id: conv.id, meta };
       })
     );

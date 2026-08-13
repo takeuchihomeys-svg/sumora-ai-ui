@@ -393,6 +393,55 @@ async function handleTextMessage(
     });
   }
 
+  // after() D: FIX #09 — suggest-next-action → notify-group（顧客別スタッフ指示を通知）
+  // 返信受信後にAIが次アクションを提案し、スタッフグループLINEに送信する（fire-and-forget）
+  after(async () => {
+    try {
+      const { data: convData } = await db
+        .from("conversations")
+        .select("customer_name")
+        .eq("id", convId)
+        .maybeSingle();
+      const customerName = (convData?.customer_name as string | null) || "お客様";
+
+      const baseUrl =
+        process.env.NEXT_PUBLIC_SITE_URL ??
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
+      const suggestRes = await fetch(`${baseUrl}/api/suggest-next-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: convId, customer_message: text }),
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!suggestRes.ok) return;
+
+      const suggestion = await suggestRes.json() as {
+        action?: string | null;
+        reason?: string | null;
+        note?: string | null;
+      } | null;
+      if (!suggestion?.action) return;
+
+      const noteOrReason = suggestion.note || suggestion.reason || "";
+      const lines = [
+        `${customerName}さんから返信がありました`,
+        `▶ 次のアクション: ${suggestion.action}`,
+      ];
+      if (noteOrReason) lines.push(noteOrReason);
+      const notifyText = lines.join("\n");
+
+      await fetch(`${baseUrl}/api/notify-group`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: notifyText }),
+        signal: AbortSignal.timeout(5_000),
+      });
+    } catch (e) {
+      console.warn("[line-webhook] suggest-notify error:", e);
+    }
+  });
+
   return true;
 }
 

@@ -4008,10 +4008,12 @@ export default function Home() {
       const trailerSaysPropertyCheck = !!(consumedAix && /物件確認/.test(consumedAix.action));
 
       // 送信に成功した分だけ入力欄をクリア（失敗した分は残して再送できるようにする）
+      // FIX #11: suggestedAix は送信後も30秒以上持続させる（スタッフへの指示を送信後も表示）
+      // → 会話切替・新ドラフトロード・再生成・✕クリアのいずれかで自動クリアされる
       if (textSent || !textToSend) {
         setReplyDraft("");
         setReplyQuality(null); // B-2: 送信後は品質判定をリセット
-        setSuggestedAix(null);
+        // setSuggestedAix(null) は意図的に省略: ドラフト送信後も📌指示を持続表示する
       }
       if (imageUrls.length > 0) {
         if (sentImageUrls.length === imageUrls.length) {
