@@ -38,6 +38,20 @@ const ACCOUNTS: AccountConfig[] = [
   },
 ];
 
+// ── P1: AIXアクション日本語ラベル（LINE通知リッチ化用）─────────────────────
+const AIX_LABEL_JP: Record<string, string> = {
+  property_recommendation: "物件オススメ送信",
+  property_send: "物件を送る",
+  viewing_invite: "内覧誘導",
+  application_push: "申込促進",
+  property_check_result: "物件確認",
+  estimate_sheet: "見積書送付",
+  meeting_place: "待ち合わせ確定",
+  acknowledge_check: "反応確認",
+  followup_revive: "追客フォロー",
+  condition_hearing: "条件ヒアリング",
+};
+
 // ── 同一ユーザーのレート制限（3秒以内の連続AI解析をスキップ）─────────────
 // 注意: このMapはインスタンス内のみ有効（Vercelサーバーレスでは複数インスタンスが
 // 並行動作するためベストエフォート）。クロスインスタンスの実質的な保護は
@@ -292,6 +306,9 @@ async function handleTextMessage(
 
     if (applyFormDetected) {
       // .in(PRE_APPLY_STATUSES)ガードで冪等（既にapplying以降なら何もしない）＋成約/失注からのダウングレード防止
+      // P2: 更新前に現ステータスを取得（conversation_stage_history 記録用）
+      const { data: convPreApply } = await db.from("conversations").select("status").eq("id", convId).maybeSingle();
+      const applyFromStatus = convPreApply?.status as string | null;
       const { data: updated, error: applyErr } = await db
         .from("conversations")
         .update({ status: "applying", updated_at: now })
@@ -302,6 +319,16 @@ async function handleTextMessage(
         console.error(`[line-webhook] applying自動昇格失敗: conv=${convId}`, applyErr.message);
       } else if ((updated ?? []).length > 0) {
         console.log(`[line-webhook] 申込フォーム検知 → applying自動昇格: conv=${convId} type=${detectSource}`);
+        // P2: ステータス変遷を記録
+        void (async () => {
+          const { error: stageErr } = await db.from("conversation_stage_history").insert({
+            conversation_id: convId,
+            from_status: applyFromStatus,
+            to_status: "applying",
+            trigger: "customer_message",
+          });
+          if (stageErr) console.warn("[stage_history] apply-form:", stageErr.message);
+        })();
       } else {
         console.log(`[line-webhook] 申込フォーム検知（ステータス変更なし・既にapplying以降）: conv=${convId}`);
       }
@@ -314,11 +341,27 @@ async function handleTextMessage(
   // ※申込フォームと判定済みのメッセージは希望条件として誤解析しない
   if (!applyFormDetected && isFormatMessage(text)) {
     // hearing/first_reply 状態なら proposing に自動昇格
-    await db
+    // P2: 更新前に現ステータスを取得（conversation_stage_history 記録用）
+    const { data: convPreProp } = await db.from("conversations").select("status").eq("id", convId).maybeSingle();
+    const proposeFromStatus = convPreProp?.status as string | null;
+    const { data: proposeUpdated } = await db
       .from("conversations")
       .update({ status: "proposing" })
       .eq("id", convId)
-      .in("status", ["hearing", "first_reply"]);
+      .in("status", ["hearing", "first_reply"])
+      .select("id");
+    // P2: ステータス変遷を記録（実際に変わった場合のみ）
+    if ((proposeUpdated ?? []).length > 0) {
+      void (async () => {
+        const { error: stageErr } = await db.from("conversation_stage_history").insert({
+          conversation_id: convId,
+          from_status: proposeFromStatus,
+          to_status: "proposing",
+          trigger: "customer_message",
+        });
+        if (stageErr) console.warn("[stage_history] proposing:", stageErr.message);
+      })();
+    }
   }
 
   // タスク自動検知（物件確認・物件出し）
@@ -393,6 +436,19 @@ async function handleTextMessage(
     });
   }
 
+  // after() E: P4 — カジュアル返信から条件を自動抽出
+  // isFormatMessage が false（autoParseFormat 非対象）かつ申込フォームでもない返信が対象
+  // スタッフの直近メッセージに条件ヒアリングの文脈がある場合のみ Haiku で抽出・保存
+  if (!applyFormDetected && !isFormatMessage(text) && text.length >= 5) {
+    after(async () => {
+      try {
+        await extractConditionsFromCasualReply(db, convId, text);
+      } catch (e) {
+        console.warn("[line-webhook] extractConditionsFromCasualReply:", e);
+      }
+    });
+  }
+
   // after() D: FIX #09 — suggest-next-action → notify-group（顧客別スタッフ指示を通知）
   // 返信受信後にAIが次アクションを提案し、スタッフグループLINEに送信する（fire-and-forget）
   after(async () => {
@@ -420,16 +476,26 @@ async function handleTextMessage(
         action?: string | null;
         reason?: string | null;
         note?: string | null;
+        scene_hint?: string | null;
+        action_label?: string | null;
       } | null;
       if (!suggestion?.action) return;
 
-      const noteOrReason = suggestion.note || suggestion.reason || "";
-      const lines = [
-        `${customerName}さんから返信がありました`,
-        `▶ 次のアクション: ${suggestion.action}`,
+      // P1: リッチ通知 — 脳の指示・戦略・推奨AIXをスタッフグループに通知
+      const brainInstruction = suggestion.note || suggestion.reason || null;
+      const closingStrategy = suggestion.scene_hint || null;
+      const aixLabel = suggestion.action
+        ? (AIX_LABEL_JP[suggestion.action] ?? suggestion.action_label ?? suggestion.action)
+        : null;
+
+      const notifyLines: string[] = [
+        `📩 ${customerName}さんからLINEが来ました`,
+        "",
+        `💡 脳の指示: ${brainInstruction || "（分析中…）"}`,
       ];
-      if (noteOrReason) lines.push(noteOrReason);
-      const notifyText = lines.join("\n");
+      if (closingStrategy) notifyLines.push(`📋 戦略: ${closingStrategy}`);
+      if (aixLabel) notifyLines.push(`🎯 推奨AIX: ${aixLabel}`);
+      const notifyText = notifyLines.join("\n");
 
       await fetch(`${baseUrl}/api/notify-group`, {
         method: "POST",
@@ -828,6 +894,122 @@ JSONのみ返してください。説明文・コードブロック・マーク�
   // 売上番長グループに通知（新規のみ）
   if (isNewCustomer) {
     notifyFormatReceived(db, resolvedName, parsedFields).catch((e) => console.warn("[line-webhook] notifyFormatReceived:", e));
+  }
+}
+
+// ── P4: カジュアル返信から物件希望条件を自動抽出 ────────────────────────────
+// isFormatMessage() が false のメッセージ（真のカジュアル返信）が対象。
+// スタッフの直近メッセージが条件ヒアリング文脈のとき Haiku で条件を抽出し
+// property_customers を部分 UPDATE する（NULL フィールドは更新しない）。
+async function extractConditionsFromCasualReply(
+  db: ReturnType<typeof getDb>,
+  convId: string,
+  customerText: string,
+): Promise<void> {
+  // 直近のスタッフメッセージを取得
+  const { data: lastStaffMsg } = await db
+    .from("messages")
+    .select("text")
+    .eq("conversation_id", convId)
+    .eq("sender", "staff")
+    .not("text", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const staffText = lastStaffMsg?.text as string | null;
+  if (!staffText) return;
+
+  // スタッフの質問が条件ヒアリング文脈かを確認（対象外は即リターン）
+  const isConditionContext = /ご希望|エリア|間取り|家賃|いつ|駅|どこ|条件|予算|入居|徒歩|築/.test(staffText);
+  if (!isConditionContext) return;
+
+  // conversations から property_customer_id を取得
+  const { data: conv } = await db
+    .from("conversations")
+    .select("property_customer_id")
+    .eq("id", convId)
+    .maybeSingle();
+  const pcId = conv?.property_customer_id as string | null;
+  if (!pcId) return; // 紐付けなし → スキップ
+
+  // Haiku で条件を抽出（JSON のみ返す）
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    timeout: 20_000,
+    maxRetries: 1,
+  });
+
+  let extracted: Record<string, unknown>;
+  try {
+    const res = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 300,
+      system: "あなたは不動産営業アシスタントです。JSONのみで回答してください。",
+      messages: [{
+        role: "user",
+        content: `お客さんの返信から物件希望条件を抽出してください。
+
+【スタッフの質問】
+${staffText.slice(0, 200)}
+
+【お客さんの返信】
+${customerText.slice(0, 300)}
+
+読み取れた条件のみ以下の形式で返してください（不明な項目は省略してください）:
+{
+  "desired_area": "希望エリア・駅名",
+  "floor_plan": "間取り（例: 1LDK）",
+  "rent_max": 最高家賃（円・整数。「8万」→80000）,
+  "rent_min": 最低家賃（円・整数）,
+  "walk_minutes": 徒歩分数（整数）,
+  "move_in_time": "入居時期（例: 9月、来月）",
+  "building_age": 築年数上限（整数）,
+  "initial_cost_limit": 初期費用上限（円・整数）,
+  "other_requests": "その他要望"
+}`,
+      }],
+    });
+
+    const rawText = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
+    const m = rawText.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
+    if (!m) return;
+    extracted = JSON.parse(m[0]) as Record<string, unknown>;
+  } catch {
+    return; // Haiku 失敗 → サイレントスキップ
+  }
+
+  // 家賃バリデーション（autoParseFormat と同ロジック）
+  for (const f of ["rent_min", "rent_max", "initial_cost_limit"]) {
+    const v = extracted[f];
+    if (typeof v === "number" && v > 0) {
+      if (v <= 300) extracted[f] = v * 10000;
+      else if (v > 500000 && f !== "initial_cost_limit") extracted[f] = v / 10;
+    }
+  }
+
+  // 非 null・非空 フィールドのみ UPDATE 対象にする（既存条件を上書きしすぎない）
+  const CONDITION_FIELDS = [
+    "desired_area", "floor_plan", "rent_max", "rent_min",
+    "walk_minutes", "move_in_time", "building_age", "initial_cost_limit", "other_requests",
+  ];
+  const updates: Record<string, unknown> = {};
+  for (const f of CONDITION_FIELDS) {
+    const v = extracted[f];
+    if (v !== null && v !== undefined && v !== "") updates[f] = v;
+  }
+
+  if (Object.keys(updates).length === 0) return; // 抽出条件なし → スキップ
+
+  const { error: updateErr } = await db
+    .from("property_customers")
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq("id", pcId);
+
+  if (updateErr) {
+    console.warn("[line-webhook] P4 property_customers update failed:", updateErr.message);
+  } else {
+    console.log(`[line-webhook] P4 条件抽出: conv=${convId} fields=${Object.keys(updates).join(",")}`);
   }
 }
 
@@ -1358,6 +1540,16 @@ async function autoPromoteApplyingOnFormImage(
       console.error(`[line-webhook] 画像申込書→applying昇格失敗: conv=${convId}`, error.message);
     } else if ((updated ?? []).length > 0) {
       console.log(`[line-webhook] 申込書依頼後の画像受信 → applying自動昇格: conv=${convId}`);
+      // P2: ステータス変遷を記録（status は上部の SELECT で取得済み）
+      void (async () => {
+        const { error: stageErr } = await db.from("conversation_stage_history").insert({
+          conversation_id: convId,
+          from_status: status,
+          to_status: "applying",
+          trigger: "customer_message",
+        });
+        if (stageErr) console.warn("[stage_history] image-applying:", stageErr.message);
+      })();
     }
   } catch (e) {
     console.warn("[line-webhook] autoPromoteApplyingOnFormImage:", e);

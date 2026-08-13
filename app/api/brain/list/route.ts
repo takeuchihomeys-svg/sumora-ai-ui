@@ -23,6 +23,7 @@ type SuggestedAixMeta = {
   enforcement_level: "required" | "recommended";
   closing_strategy?: string;
   template_hint?: string;
+  next_steps?: string[];  // ["今日: 内覧日調整", "内覧後: 見積書送付", "来週: 申込プッシュ"]
 } | null;
 
 // Canonical mapping from AIX action key → staff guidance note
@@ -233,12 +234,12 @@ ${AIX_CAPABILITY_MAP}
 ${history}
 
 回答形式（JSONのみ・説明文不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/property_recommendation/meeting_place/greeting_viewing/null）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で（例：8/16内覧後に割引見積を再提示し申込へ誘導する）", "template_hint": "このお客さんに合うテンプレートのトーン・スタイルのヒント（20字以内、例：丁寧語・プッシュ弱め）"}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/property_recommendation/meeting_place/greeting_viewing/null）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で（例：8/16内覧後に割引見積を再提示し申込へ誘導する）", "template_hint": "このお客さんに合うテンプレートのトーン・スタイルのヒント（20字以内、例：丁寧語・プッシュ弱め）", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2（次回）: 具体的アクション", "Step3（その次）: 具体的アクション"]}`;
 
   try {
     const response = await client.messages.create({
       model: HAIKU,
-      max_tokens: 384,
+      max_tokens: 512,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -252,6 +253,7 @@ ${history}
       aix?: string | null;
       closing_strategy?: string;
       template_hint?: string;
+      next_steps?: string[];
     };
 
     // Use a canonical action key from AIX_BRAIN_NOTES if Haiku returned one we recognise.
@@ -279,6 +281,7 @@ ${history}
       enforcement_level: isUrgent ? "required" : "recommended",
       closing_strategy: parsed.closing_strategy || undefined,
       template_hint: parsed.template_hint || undefined,
+      next_steps: Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
     };
   } catch {
     return null;

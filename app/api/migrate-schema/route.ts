@@ -1840,6 +1840,20 @@ CREATE INDEX IF NOT EXISTS idx_sent_props_customer ON sent_properties(property_c
 CREATE INDEX IF NOT EXISTS idx_sent_props_conversation ON sent_properties(conversation_id);
 ALTER TABLE sent_properties DISABLE ROW LEVEL SECURITY;
 
+-- ── conversation_stage_history: 会話ステータス変遷履歴（P2: 2026-08-14追加）──
+-- conversations.status の変化を時系列で記録する。自動昇格・手動変更・AIXアクションの追跡に使用。
+-- trigger: 'customer_message' | 'staff_reply' | 'manual' | 'aix_action'
+CREATE TABLE IF NOT EXISTS conversation_stage_history (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+  from_status TEXT,
+  to_status TEXT NOT NULL,
+  changed_at TIMESTAMPTZ DEFAULT NOW(),
+  trigger TEXT DEFAULT 'manual'
+);
+CREATE INDEX IF NOT EXISTS idx_stage_history_conv ON conversation_stage_history(conversation_id, changed_at DESC);
+ALTER TABLE conversation_stage_history DISABLE ROW LEVEL SECURITY;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
