@@ -1824,6 +1824,22 @@ CREATE INDEX IF NOT EXISTS idx_closing_logs_outcome
   ON closing_strategy_logs(outcome, proposed_at DESC);
 ALTER TABLE closing_strategy_logs DISABLE ROW LEVEL SECURITY;
 
+-- 送付物件履歴（2026-08-13追加）
+-- AIX物件オススメ送信時に物件名・号室をVision OCRで記録。重複送付防止・送付履歴追跡に使用
+CREATE TABLE IF NOT EXISTS sent_properties (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  property_customer_id UUID REFERENCES property_customers(id) ON DELETE CASCADE,
+  conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
+  property_name TEXT NOT NULL,
+  room_no TEXT NOT NULL,
+  image_url TEXT,
+  source TEXT DEFAULT 'vision',
+  sent_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sent_props_customer ON sent_properties(property_customer_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sent_props_conversation ON sent_properties(conversation_id);
+ALTER TABLE sent_properties DISABLE ROW LEVEL SECURITY;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

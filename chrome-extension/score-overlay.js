@@ -8,9 +8,11 @@
   const BADGE_CLASS = "axlx-score-badge";
   const BAR_ID      = "axlx-score-bar";
 
-  let storedConditions = null;
-  let scoreTimer       = null;
-  let observing        = false;
+  let storedConditions   = null;
+  let scoreTimer         = null;
+  let observing          = false;
+  let sentPropertiesList = null;  // null=未取得, Array=取得済み
+  let sentFetching       = false; // 重複フェッチ防止フラグ
 
   // ── HTML エスケープ ─────────────────────────────────────────────
   function esc(s) {
@@ -224,6 +226,95 @@
     }
   }
 
+  // ── 送済みバッジを物件カードに注入 ──────────────────────────
+  var DUP_BADGE_CLASS = "axlx-dup-badge";
+
+  function injectDupBadge(el, sentAt) {
+    el.querySelectorAll("." + DUP_BADGE_CLASS).forEach(function (b) { b.remove(); });
+
+    var d   = new Date(sentAt);
+    var lbl = (d.getMonth() + 1) + "月" + d.getDate() + "日";
+
+    var badge = document.createElement("span");
+    badge.className = DUP_BADGE_CLASS;
+    badge.style.cssText = [
+      "background:#c62828;color:#fff;",
+      "font-size:11px;font-weight:700;",
+      "padding:2px 8px;border-radius:10px;",
+      "display:inline-block;margin:3px 4px 3px 0;",
+      "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
+      "box-shadow:0 1px 4px rgba(0,0,0,0.3);",
+      "white-space:nowrap;vertical-align:middle;",
+      "position:relative;z-index:11;flex-shrink:0;",
+    ].join("");
+    badge.textContent = "送済み " + lbl;
+    badge.title       = "この物件は " + lbl + " に送信済みです";
+
+    // スコアバッジの直後に挿入（なければ先頭）
+    var scoreBadge = el.querySelector("." + BADGE_CLASS);
+    if (scoreBadge && scoreBadge.nextSibling) {
+      el.insertBefore(badge, scoreBadge.nextSibling);
+    } else if (scoreBadge) {
+      el.appendChild(badge);
+    } else if (el.firstChild) {
+      el.insertBefore(badge, el.firstChild);
+    } else {
+      el.appendChild(badge);
+    }
+  }
+
+  // ── 号室番号をカードテキストから抽出 ──────────────────────
+  function extractRoomNo(text) {
+    // "101号室", "B202号室", "1-201号室" など
+    var m = text.match(/([A-Za-z0-9\-]{1,6})\s*号室/);
+    if (m) return m[1] + "号室";
+    // 4桁数字 (e.g. "0101") — REINS 等で号室表記なしの場合
+    var m2 = text.match(/\b(0[1-9]\d{2}|\d{3,4})\b/);
+    return m2 ? m2[1] : null;
+  }
+
+  // ── 送済みリストをAPIから1回だけ取得 ─────────────────────
+  function fetchSentProperties(propertyCustomerId) {
+    if (sentFetching || !propertyCustomerId) return;
+    sentFetching       = true;
+    sentPropertiesList = null;
+
+    var url = "https://sumora-ai-ui.vercel.app/api/check-property-duplicate" +
+              "?property_customer_id=" + encodeURIComponent(String(propertyCustomerId));
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        sentPropertiesList = Array.isArray(data.list) ? data.list : [];
+        sentFetching       = false;
+        if (sentPropertiesList.length > 0) runDupCheck();
+      })
+      .catch(function () {
+        sentPropertiesList = [];
+        sentFetching       = false;
+      });
+  }
+
+  // ── 全カードに送済みバッジを適用 ─────────────────────────
+  function runDupCheck() {
+    if (!sentPropertiesList || sentPropertiesList.length === 0) return;
+    var cards = findPropertyContainers();
+    cards.forEach(function (card) {
+      var text   = (card.innerText || "").trim();
+      var roomNo = extractRoomNo(text);
+      if (!roomNo) return;
+      var rn = roomNo.trim().toLowerCase();
+      var match = null;
+      for (var i = 0; i < sentPropertiesList.length; i++) {
+        var row = sentPropertiesList[i];
+        if (row.room_no && row.room_no.trim().toLowerCase() === rn) {
+          match = row;
+          break;
+        }
+      }
+      if (match) injectDupBadge(card, match.sent_at);
+    });
+  }
+
   // ── 全物件カードにスコアを一括適用 ──────────────────────────
   function runScoring() {
     if (!storedConditions) return;
@@ -242,6 +333,8 @@
     if (scored > 0) {
       console.log("[AX-SCORE] " + scored + "件にスコアを表示");
     }
+    // 送済みバッジも合わせて適用（フェッチ済みの場合のみ）
+    runDupCheck();
   }
 
   // ── 条件バー（ページ上部固定・お客さん名+条件一覧を表示） ───
@@ -297,6 +390,12 @@
       chrome.storage.session.get("axlx_score_data", function (data) {
         if (!data || !data.axlx_score_data) return;
         storedConditions = data.axlx_score_data;
+        // 顧客が変わった場合は送済みリストをリセットしてフェッチ
+        if (storedConditions.property_customer_id) {
+          sentPropertiesList = null;
+          sentFetching       = false;
+          fetchSentProperties(storedConditions.property_customer_id);
+        }
         showConditionBar();
         runScoring();
         startObserver();
@@ -325,6 +424,12 @@
         if (area !== "session" || !changes.axlx_score_data) return;
         storedConditions = changes.axlx_score_data.newValue;
         if (!storedConditions) return;
+        // 顧客切り替えを検出したら送済みリストをリセット・再フェッチ
+        if (storedConditions.property_customer_id) {
+          sentPropertiesList = null;
+          sentFetching       = false;
+          fetchSentProperties(storedConditions.property_customer_id);
+        }
         showConditionBar();
         setTimeout(runScoring, 500);
         startObserver();

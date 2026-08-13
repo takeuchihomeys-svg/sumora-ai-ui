@@ -1937,12 +1937,13 @@ function openSiteView(customer) {
   // スコアオーバーレイ用にお客さん条件をセッションに保存
   try {
     chrome.storage.session.set({ axlx_score_data: {
-      rent_max:     customer.rent_max || customer.max_rent || null,
-      walk_minutes: customer.walk_minutes || null,
-      floor_plan:   customer.floor_plan || customer.layout || null,
-      building_age: customer.building_age || null,
-      area_min:     customer.floor_area_min || customer.area_min || null,
-      customer_name: customer.customer_name,
+      rent_max:             customer.rent_max || customer.max_rent || null,
+      walk_minutes:         customer.walk_minutes || null,
+      floor_plan:           customer.floor_plan || customer.layout || null,
+      building_age:         customer.building_age || null,
+      area_min:             customer.floor_area_min || customer.area_min || null,
+      customer_name:        customer.customer_name,
+      property_customer_id: customer.id || null,
     }});
   } catch (_) { /* ignore（非extension環境での実行対策）*/ }
 
@@ -2706,12 +2707,13 @@ function openInstructions(siteKey) {
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
         chrome.storage.session.set({ axlx_score_data: {
-          rent_max:     conditions.rent_max,
-          walk_minutes: conditions.walk_minutes || null,
-          floor_plan:   conditions.floor_plan || null,
-          building_age: conditions.building_age || null,
-          area_min:     conditions.area_min || null,
-          customer_name: selectedCustomer.customer_name,
+          rent_max:             conditions.rent_max,
+          walk_minutes:         conditions.walk_minutes || null,
+          floor_plan:           conditions.floor_plan || null,
+          building_age:         conditions.building_age || null,
+          area_min:             conditions.area_min || null,
+          customer_name:        selectedCustomer.customer_name,
+          property_customer_id: selectedCustomer.id || null,
         }});
       } catch (_) { /* ignore */ }
       // underbar（iframe）モード: postMessage経由 / サイドパネルモード: chrome.tabs.sendMessage経由
@@ -3057,12 +3059,13 @@ function openInstructions(siteKey) {
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
         chrome.storage.session.set({ axlx_score_data: {
-          rent_max:     rpEffectiveRentMax,
-          walk_minutes: adjC.walk_minutes || null,
-          floor_plan:   adjC.floor_plan || null,
-          building_age: adjC.building_age || null,
-          area_min:     adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || null),
-          customer_name: c.customer_name,
+          rent_max:             rpEffectiveRentMax,
+          walk_minutes:         adjC.walk_minutes || null,
+          floor_plan:           adjC.floor_plan || null,
+          building_age:         adjC.building_age || null,
+          area_min:             adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || null),
+          customer_name:        c.customer_name,
+          property_customer_id: c.id || null,
         }});
       } catch (_) { /* ignore */ }
       autofillBtn.textContent = "⏳ 検索中...";
@@ -3179,12 +3182,13 @@ function openInstructions(siteKey) {
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
         chrome.storage.session.set({ axlx_score_data: {
-          rent_max:     conditions.rent_max,
-          walk_minutes: conditions.walk_minutes || null,
-          floor_plan:   conditions.floor_plan || null,
-          building_age: conditions.building_age || null,
-          area_min:     conditions.area_min || null,
-          customer_name: c0.customer_name,
+          rent_max:             conditions.rent_max,
+          walk_minutes:         conditions.walk_minutes || null,
+          floor_plan:           conditions.floor_plan || null,
+          building_age:         conditions.building_age || null,
+          area_min:             conditions.area_min || null,
+          customer_name:        c0.customer_name,
+          property_customer_id: c0.id || null,
         }});
       } catch (_) { /* ignore */ }
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

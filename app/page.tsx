@@ -4576,6 +4576,16 @@ export default function Home() {
         .select();
       if (imgError) throw imgError;
       insertedImageMsgId = imgRow?.[0]?.id ? String(imgRow[0].id) : null;
+      // Fire-and-forget: extract property info from staff-sent images
+      fetch("/api/extract-property-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_url: imageUrl,
+          conversation_id: selectedConversation.id,
+          property_customer_id: selectedConversation.propertyCustomerId ?? null,
+        }),
+      }).catch(() => {}); // fire-and-forget
       newMessages.push({
         id: String(imgRow?.[0]?.id || crypto.randomUUID()),
         sender: "staff",
