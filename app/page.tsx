@@ -3679,7 +3679,7 @@ export default function Home() {
     if (sendLongPressedRef.current) { sendLongPressedRef.current = false; return; }
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
-    setShowSendConfirm(true);
+    void executeSend();
   };
 
   const fetchNextAction = async (convId: string) => {
