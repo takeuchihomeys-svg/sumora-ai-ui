@@ -1699,7 +1699,7 @@ export default function Home() {
     const pollInterval = setInterval(() => {
       fetchConversationsAndMessages(true);
       refreshActiveTasks();
-    }, 6_000);
+    }, 30_000); // Realtimeが差分を拾うため30秒で十分（6秒は入力中ラグの原因）
 
     // カレンダーアラーム（1分ごとに予定開始15分前・開始時刻を通知）
     const calendarAlarm = setInterval(async () => {
@@ -3934,6 +3934,7 @@ export default function Home() {
             method: "POST",
             headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
             body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrls[i], account: selectedConversation.account }),
+            signal: AbortSignal.timeout(30_000),
           });
           if (!lineRes.ok) {
             const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string; errorCode?: string };
@@ -3953,6 +3954,7 @@ export default function Home() {
             method: "POST",
             headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
             body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account }),
+            signal: AbortSignal.timeout(30_000),
           });
           if (!lineRes.ok) {
             const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string; errorCode?: string };

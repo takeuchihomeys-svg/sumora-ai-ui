@@ -2294,16 +2294,19 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             try {
               controller.enqueue(encoder.encode("（AI返信の生成に失敗しました。再生成をお試しください）"));
             } catch { /* controller already closed */ }
-            // ❌ 失敗時: draft_pending_at をクリアして永続pendingを防止
-            // ※ draft_attempted_at は意図的に触らない（残す＝10分間はorphanedクエリでリトライされない）
-            // ※ draft_error_at カラムは conversations に存在しないためエラー時刻は記録しない（追加時はここで記録すること）
+            // ストリームを先に閉じてクライアントの generating=true を即解放する
+            // Supabaseのクリーンアップは fire-and-forget でバックグラウンド実行
+            try { controller.close(); } catch { /* already closed */ }
             if (conversationId && !isTemplateOptimize) {
-              const { error: clearErr } = await supabase
+              void supabase
                 .from("conversations")
                 .update({ draft_pending_at: null })
-                .eq("id", conversationId);
-              if (clearErr) console.error("[generate-reply] draft_pending_at clear error:", conversationId, clearErr.message);
+                .eq("id", conversationId)
+                .then(({ error: clearErr }) => {
+                  if (clearErr) console.error("[generate-reply] draft_pending_at clear error:", conversationId, clearErr.message);
+                });
             }
+            return;
           }
           controller.close();
         },

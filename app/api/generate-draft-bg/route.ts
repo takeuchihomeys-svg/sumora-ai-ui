@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
         // ※ generate-reply 側も ai_draft を保存するが同一内容の冪等上書きのため二重化の実害なし
         conversationId: convId,
       }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(90_000), // generate-reply Step1だけで最大45秒かかるため90秒必要
     });
 
     if (!draftRes.ok || !draftRes.body) {
