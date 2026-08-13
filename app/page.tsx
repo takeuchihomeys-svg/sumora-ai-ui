@@ -1501,6 +1501,16 @@ export default function Home() {
     };
   }, [showSparkleMenu]);
 
+  // Fix 1: Brain View リアルタイム自動更新
+  // conversations が Realtime や 30 秒ポーリングで更新されるたびに
+  // brainConversations を再フィルタリングして最新状態を反映する
+  useEffect(() => {
+    if (!showBrainView) return;
+    setBrainConversations(
+      conversations.filter((c) => c.lastSender === "customer")
+    );
+  }, [conversations, showBrainView]);
+
   useEffect(() => {
     // SW登録 + 通知許可 + Web Push登録
     if (typeof window !== "undefined" && "Notification" in window) {
@@ -5369,12 +5379,27 @@ export default function Home() {
                 {/* AI検索ボタン / Brainビュー */}
                 <button
                   onClick={() => {
-                    const flagged = conversations.filter((c) => {
-                      if (c.lastSender !== "customer") return false;
-                      return true;
-                    });
+                    // Fix 3: (1) まず現在の conversations state から即座に表示
+                    const flagged = conversations.filter((c) => c.lastSender === "customer");
                     setBrainConversations(flagged);
                     setShowBrainView(true);
+                    // Fix 3: (2) バックグラウンドで /api/brain/list を叩き、最新の suggested_aix_meta をマージ
+                    setBrainLoading(true);
+                    fetch("/api/brain/list")
+                      .then((r) => r.ok ? r.json() : null)
+                      .then((list: Array<{ id: string; suggested_aix_meta: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional" } | null }> | null) => {
+                        if (!list) return;
+                        // Fix 3: (3) 返ってきた suggested_aix_meta を brainConversations の各エントリにマージ
+                        setBrainConversations((prev) =>
+                          prev.map((c) => {
+                            const fresh = list.find((r) => r.id === c.id);
+                            if (!fresh) return c;
+                            return { ...c, suggestedAixMeta: fresh.suggested_aix_meta ?? c.suggestedAixMeta };
+                          })
+                        );
+                      })
+                      .catch(() => { /* ネットワークエラーは無視。state は既に populated */ })
+                      .finally(() => setBrainLoading(false));
                   }}
                   className="flex items-center justify-center p-1"
                   title="今日やること"
