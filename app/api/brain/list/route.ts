@@ -19,9 +19,22 @@ const MAX_HAIKU_PER_REQUEST = 30;
 type SuggestedAixMeta = {
   action: string;
   note: string;
-  source?: string;
-  enforcement_level?: "required" | "recommended" | "optional";
+  source: string;
+  enforcement_level: "required" | "recommended";
 } | null;
+
+// Canonical mapping from AIX action key → staff guidance note
+// Keys must match AIX_ACTION_META keys in page.tsx
+const AIX_BRAIN_NOTES: Record<string, string> = {
+  viewing_invite:        "内覧日程の候補を提示してください → AIX【内覧日調整】で日時を選択して送信してください",
+  property_send:         "物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
+  estimate_sheet:        "見積書が届いたら → AIX【見積書送る】で読み取って自動計算＋カバーメッセージを生成できます",
+  application_push:      "AIX【申込へ！】でクロージングメッセージを生成できます",
+  condition_hearing:     "AIX【条件ヒアリング】ボタンで既知情報をスキップした形式で送れます",
+  acknowledge_check:     "送信後 → AIX【確認します】で管理会社への空室確認＋見積書依頼を送ってください（宛先は管理会社です）",
+  followup_revive:       "AIX【追客する】で再接触メッセージを生成できます",
+  property_check_result: "管理会社から返答が来たら → AIX【物件確認した（募集状況）】で結果報告文を生成してください",
+};
 
 type BrainConversation = {
   id: string;
@@ -119,7 +132,7 @@ async function generateBrainSummary(
 ${history}
 
 回答形式（JSONのみ・説明文不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "関連するAIXタイプまたはnull（viewing_invite/property_send/estimate_sheet/follow_up/application_push/null）"}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/null）"}`;
 
   try {
     const response = await client.messages.create({
@@ -138,12 +151,14 @@ ${history}
       aix?: string | null;
     };
 
-    // FIX #02: enforcement_level is "required" for urgent conversations (customer replied < 2h ago),
-    // otherwise "recommended"
+    // Use a canonical action key from AIX_BRAIN_NOTES if Haiku returned one we recognise.
+    // If the aix value is unknown or null, fall back to empty string so the row still gets saved
+    // (prevents infinite re-analysis on every brain/list request).
+    const aix = parsed.aix && AIX_BRAIN_NOTES[parsed.aix] ? parsed.aix : null;
     return {
-      action: parsed.aix ?? "follow_up",
-      note: parsed.action ?? "",
-      source: "analysis_step1",
+      action: aix ?? "",
+      note: aix ? AIX_BRAIN_NOTES[aix] : (parsed.action ?? ""),
+      source: "brain",
       enforcement_level: isUrgent ? "required" : "recommended",
     };
   } catch {

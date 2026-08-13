@@ -788,6 +788,9 @@ export default function Home() {
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  const [dismissedBrainHintIds, setDismissedBrainHintIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedBrainHintIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const [dismissedApplyStep1Ids, setDismissedApplyStep1Ids] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep1Ids") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -1450,6 +1453,10 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedEstimateSheetIds", JSON.stringify([...dismissedEstimateSheetIds])); } catch {}
   }, [dismissedEstimateSheetIds]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedBrainHintIds", JSON.stringify([...dismissedBrainHintIds])); } catch {}
+  }, [dismissedBrainHintIds]);
 
   useEffect(() => {
     try { sessionStorage.setItem("dismissedApplyStep1Ids", JSON.stringify([...dismissedApplyStep1Ids])); } catch {}
@@ -6268,28 +6275,41 @@ export default function Home() {
             );
           })()}
 
-          {!(inputFocused && keyboardHeight > 100) && (activeTasks[selectedConversation.id]?.length ?? 0) > 0 && (
-            <div className="flex items-center gap-2 border-b border-[#a5d6a7] px-4 py-2" style={{ background: "linear-gradient(90deg, #e8f5e9, #f1f8e9)" }}>
-              <svg className="h-3.5 w-3.5 shrink-0 text-[#2e7d32]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M4 11a9 9 0 0 1 9 9" /><path d="M4 4a16 16 0 0 1 16 16" /><circle cx="5" cy="19" r="1" fill="currentColor" />
-              </svg>
-              <span className="text-[12px] font-bold text-[#1b5e20]">
-                やること: {(() => {
-                  const TASK_LABEL_MAP: Record<string, string> = {
-                    property_check: "物件確認",
-                    property_send: "物件ピックアップした",
-                    estimate_sheet: "見積書対応中",
-                  };
-                  const counts: Record<string, number> = {};
-                  for (const t of activeTasks[selectedConversation.id]) {
-                    const lbl = TASK_LABEL_MAP[t.task_type] ?? t.task_type;
-                    counts[lbl] = (counts[lbl] ?? 0) + 1;
-                  }
-                  return Object.entries(counts).map(([lbl, n]) => n > 1 ? `${n}件${lbl}` : lbl).join("・");
-                })()}
-              </span>
-            </div>
-          )}
+          {!(inputFocused && keyboardHeight > 100) && (() => {
+            const tasks = activeTasks[selectedConversation.id] ?? [];
+            const brainNote = selectedConversation.suggestedAixMeta?.note;
+            if (tasks.length > 0) return (
+              <div className="flex items-center gap-2 border-b border-[#a5d6a7] px-4 py-2" style={{ background: "linear-gradient(90deg, #e8f5e9, #f1f8e9)" }}>
+                <svg className="h-3.5 w-3.5 shrink-0 text-[#2e7d32]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M4 11a9 9 0 0 1 9 9" /><path d="M4 4a16 16 0 0 1 16 16" /><circle cx="5" cy="19" r="1" fill="currentColor" />
+                </svg>
+                <span className="text-[12px] font-bold text-[#1b5e20]">
+                  やること: {(() => {
+                    const TASK_LABEL_MAP: Record<string, string> = {
+                      property_check: "物件確認",
+                      property_send: "物件ピックアップした",
+                      estimate_sheet: "見積書対応中",
+                    };
+                    const counts: Record<string, number> = {};
+                    for (const t of tasks) {
+                      const lbl = TASK_LABEL_MAP[t.task_type] ?? t.task_type;
+                      counts[lbl] = (counts[lbl] ?? 0) + 1;
+                    }
+                    return Object.entries(counts).map(([lbl, n]) => n > 1 ? `${n}件${lbl}` : lbl).join("・");
+                  })()}
+                </span>
+              </div>
+            );
+            if (brainNote) return (
+              <div className="flex items-center gap-2 border-b border-[#c5cae9] px-4 py-2" style={{ background: "linear-gradient(90deg, #e8eaf6, #f3f4ff)" }}>
+                <svg className="h-3.5 w-3.5 shrink-0 text-[#3949ab]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M4 11a9 9 0 0 1 9 9" /><path d="M4 4a16 16 0 0 1 16 16" /><circle cx="5" cy="19" r="1" fill="currentColor" />
+                </svg>
+                <span className="text-[12px] font-bold text-[#283593] truncate">{brainNote}</span>
+              </div>
+            );
+            return null;
+          })()}
 
           {/* 申込フォーム自動検知バナー */}
           {isApplyFormDetected && !dismissedApplyFormIds.has(applyFormDismissKey) && (
@@ -7349,34 +7369,54 @@ export default function Home() {
                 </div>
               );
 
-              // P5: 見積書（初期費用キーワード検知）※フォーマット送信時は除外（⑦初期費用が含まれるため誤検知する）／スタッフ返信済みなら出さない
-              if (customerIsLastSender && /初期費用|見積|費用.*教|いくら|金額.*教|費用感/.test(lastCustomerText) && !((lastCustomerText.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length >= 2) && !dismissedEstimateSheetIds.has(id)) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-amber-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>初期費用の確認 → AIX 見積書送る</span>
-                  <button onClick={() => {
-                    setDismissedEstimateSheetIds((prev) => new Set([...prev, id]));
-                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
-                    const convName = selectedConversation.customerName;
-                    if (!(activeTasks[id] ?? []).some((t) => t.task_type === "estimate_sheet")) {
-                      fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ conversation_id: id, task_type: "estimate_sheet", customer_name: convName }),
-                      }).then(async (r) => {
-                        const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
-                        if (d.ok && d.id && d.created_at) setActiveTasks((prev) => {
-                          const ex = prev[id] ?? [];
-                          if (ex.some((x) => x.task_type === "estimate_sheet")) return prev;
-                          return { ...prev, [id]: [...ex, { id: d.id!, task_type: "estimate_sheet", created_at: d.created_at!, customer_name: convName }] };
-                        });
-                      }).catch(() => {});
-                    }
-                    setShowTemplateModal(true);
-                  }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>AIX 見積書送る</button>
-                  <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
-                    className="shrink-0 text-amber-400 text-[11px] font-bold">✕</button>
-                </div>
-              );
+              // P5: 脳駆動ヒントボックス（suggestedAixMeta から action+note を読んで提示）
+              // 旧: 初期費用キーワードregex検知 → 廃止し、AI分析結果を使う
+              const brainMeta = selectedConversation.suggestedAixMeta;
+              if (brainMeta?.action && brainMeta.note && !dismissedBrainHintIds.has(id)) {
+                const BRAIN_AIX_LABELS: Record<string, string> = {
+                  estimate_sheet:          "AIX 見積書送る",
+                  property_check_result:   "AIX 物件確認した",
+                  acknowledge_check:       "AIX 確認します",
+                  viewing_invite:          "AIX 内覧日調整",
+                  meeting_place:           "AIX 待ち合わせ",
+                  application_push:        "AIX 申込へ！",
+                  property_send:           "AIX 物件ピックアップ",
+                  property_recommendation: "AIX 物件オススメ",
+                  condition_hearing:       "AIX 条件ヒアリング",
+                  followup_revive:         "AIX 追客する",
+                };
+                const brainBtnLabel = BRAIN_AIX_LABELS[brainMeta.action];
+                const brainBtnColor = AIX_ACTION_META[brainMeta.action]?.color ?? "#7C3AED";
+                const brainAction = brainMeta.action as AixActionType;
+                return (
+                  <div className="mx-1 mb-1 rounded-2xl border-2 border-violet-400 bg-violet-50 px-3 py-2 flex items-center gap-2">
+                    <span className="text-[12px] font-bold text-violet-700 flex-1 min-w-0">
+                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                      {brainMeta.note}
+                    </span>
+                    {brainBtnLabel && (
+                      <button onClick={() => {
+                        setDismissedBrainHintIds((prev) => new Set([...prev, id]));
+                        setShowAixMenu(false);
+                        setAixInspectLabel(null);
+                        if (brainAction === "estimate_sheet") {
+                          setActiveAixFlow(brainAction);
+                          setShowTemplateModal(true);
+                        } else if (Object.keys(AIX_ACTION_META).includes(brainAction)) {
+                          setActiveAixFlow(brainAction);
+                          openAixDirect(brainAction);
+                        }
+                      }}
+                        className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                        style={{ background: `linear-gradient(135deg, ${brainBtnColor}, ${brainBtnColor}cc)` }}>
+                        {brainBtnLabel}
+                      </button>
+                    )}
+                    <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
+                      className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
+                  </div>
+                );
+              }
 
               // P5.5: 物件確認した（property_checkタスクがある場合は物件ピックアップしたより優先）
               // ただし suggestPropertyRecommendMap[id] がある場合は P4（物件オススメ）を優先する
