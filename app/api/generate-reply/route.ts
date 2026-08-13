@@ -134,7 +134,8 @@ async function deriveSuggestedAix(
   customerMessage?: string,
   analysisAixAction?: string | null,
   analysisAixEnforcement?: "required" | "recommended" | "optional" | null,
-): Promise<{ action: string; note: string; source: string; enforcement_level: "required" | "recommended" | "optional" } | null> {
+  closingStrategy?: string,
+): Promise<{ action: string; note: string; source: string; enforcement_level: "required" | "recommended" | "optional"; closing_strategy?: string } | null> {
   // 退去予定/入居中の物件では現地内覧が不可のため viewing_invite（内覧日調整）は提案しない。
   // 代わりに空室確認（acknowledge_check）または申込で先に確保（application_push）を優先する。
   // 初回対応フェーズはAIX誘導不要（初回挨拶が主目的）
@@ -164,6 +165,7 @@ async function deriveSuggestedAix(
         note: "同じマンション内の別の号室／別価格帯のお部屋をご希望です → AIX【1件特にオススメする】または【物件ピックアップした】で同棟の条件に合う部屋を検索してお送りください（「確認します」は不要です）",
         source: "same_building_regex",
         enforcement_level: "required" as const,
+        closing_strategy: closingStrategy || undefined,
       };
     }
   }
@@ -192,6 +194,7 @@ async function deriveSuggestedAix(
         note: "初期費用・見積書のご質問です → AIX【見積書送る】で最大限割引した御見積書を作成してお送りください（AI返信案は作成宣言のみ・見積書本体と金額内訳は必ずAIXから送ってください）",
         source: "estimate_regex",
         enforcement_level: "required" as const,
+        closing_strategy: closingStrategy || undefined,
       };
     }
   }
@@ -205,7 +208,7 @@ async function deriveSuggestedAix(
         "viewing_invite",
         "お客様が内覧希望です → AIX【内覧日調整】で日程候補を送ってください",
       );
-      return { ...redirected, source: "viewing_intent_regex", enforcement_level: "required" as const };
+      return { ...redirected, source: "viewing_intent_regex", enforcement_level: "required" as const, closing_strategy: closingStrategy || undefined };
     }
   }
   // ─── Step 1: suggest-next-action（DB学習ルール）に問い合わせ（3秒タイムアウト） ───
@@ -234,6 +237,7 @@ async function deriveSuggestedAix(
             ...redirected,
             source: data.source ?? "trigger_rule",
             enforcement_level: enforcementLevelTrigger,
+            closing_strategy: closingStrategy || undefined,
           };
         }
       }
@@ -267,6 +271,7 @@ async function deriveSuggestedAix(
         ...redirectedAnalysis,
         source: "analysis_step1",
         enforcement_level: analysisEnfLevel,
+        closing_strategy: closingStrategy || undefined,
       };
     }
   }
@@ -2134,6 +2139,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       } catch { return null; }
     })();
 
+    // Step1分析の closing_strategy（「どうやったら決まるか」の内容）を deriveSuggestedAix に渡す
+    const analysisClosingStrategy = (() => {
+      try {
+        const p = JSON.parse(analysis) as Record<string, unknown>;
+        return typeof p.closing_strategy === "string" && p.closing_strategy ? p.closing_strategy : undefined;
+      } catch { return undefined; }
+    })();
+
     const encoder = new TextEncoder();
     return new Response(
       new ReadableStream({
@@ -2276,7 +2289,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             }
             // テンプレート最適化モードはトレーラーを一切付けない（ボディ＝純粋な最適化テキスト）
             if (!isTemplateOptimize) {
-              const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction, analysisAixEnforcement);
+              const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction, analysisAixEnforcement, analysisClosingStrategy);
               if (suggestedAix) {
                 controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
               }

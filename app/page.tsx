@@ -48,7 +48,7 @@ type Conversation = {
   isFlagged?: boolean;
   hasViewed?: boolean;
   aiDraft?: string | null;
-  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional" } | null;
+  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string } | null;
   suggestedNextAix?: string | null;
   messages: Message[];
 };
@@ -69,7 +69,7 @@ type SupabaseConversationRow = {
   is_flagged?: boolean | null;
   has_viewed?: boolean | null;
   ai_draft?: string | null;
-  suggested_aix_meta?: { action: string; note: string } | null;
+  suggested_aix_meta?: { action: string; note: string; closing_strategy?: string } | null;
   suggested_next_aix?: string | null;
 };
 
@@ -571,7 +571,7 @@ export default function Home() {
   const [displaySource, setDisplaySource] = useState<"ai_draft" | "optimized" | null>(null);
   const draftIsAi = displaySource !== null; // AI生成の下書きがテキストエリアに入っているか（displaySourceから導出）
   const [replyQuality, setReplyQuality] = useState<{ auto_ok: boolean; is_applying_docs: boolean } | null>(null); // B-2: AI文案の品質判定バッジ
-  const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional" } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
+  const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
   const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
@@ -5407,7 +5407,7 @@ export default function Home() {
                     const fetchBrain = (iter: number) => {
                       fetch("/api/brain/list")
                         .then((r) => (r.ok ? r.json() : null))
-                        .then((list: Array<{ id: string; suggested_aix_meta: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional" } | null }> | null) => {
+                        .then((list: Array<{ id: string; suggested_aix_meta: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string } | null }> | null) => {
                           if (!list) return;
                           setBrainConversations((prev) =>
                             prev.map((c) => {
@@ -5977,24 +5977,24 @@ export default function Home() {
                     ＋
                   </button>
                 </div>
-                {lc.ai_summary && (() => {
-                  const summary = lc.ai_summary as string;
-                  // ★決まるパターン: 以降のテキストをどこにあっても抽出
-                  const closingMatch = summary.match(/★決まるパターン[:：]\s*([\s\S]+?)(?=・|$)/);
-                  const closingText = closingMatch?.[1]?.replace(/\*+/g, "").trim() ?? null;
-                  // 決まるパターン・次のアクション行を除いたプロフィール
-                  const profileBullets = summary
-                    .replace(/★決まるパターン[:：][\s\S]+?(?=・|$)/, "")
-                    .replace(/・?次のアクション[\s\S]+?(?=・|$)/, "")
-                    .replace(/\*+/g, "")
-                    .trim();
-                  if (!closingText && !profileBullets) return null;
+                {(() => {
+                  // 「どうやったら決まるか」: suggested_aix_meta.closing_strategy から読む（Step1 Sonnet分析 or Haiku brain）
+                  const closingStrategy = selectedConversation.suggestedAixMeta?.closing_strategy ?? null;
+                  // AI分析 詳細（プロフィール）: 引き続き ai_summary から読む（★決まるパターン行を除外）
+                  const profileBullets = lc.ai_summary
+                    ? (lc.ai_summary as string)
+                        .replace(/★決まるパターン[:：][\s\S]+?(?=・|$)/, "")
+                        .replace(/・?次のアクション[\s\S]+?(?=・|$)/, "")
+                        .replace(/\*+/g, "")
+                        .trim()
+                    : "";
+                  if (!closingStrategy && !profileBullets) return null;
                   return (
                     <div className="mt-2 border-t border-[#f0f2f5] pt-1.5 space-y-1.5">
-                      {closingText && (
+                      {closingStrategy && (
                         <div className="rounded-xl border border-red-400 bg-red-50 px-3 py-2">
                           <p className="text-[11px] font-bold text-red-500 mb-0.5">🔴 どうやったら決まるか</p>
-                          <p className="text-[13px] font-bold leading-snug text-red-700">{closingText}</p>
+                          <p className="text-[13px] font-bold leading-snug text-red-700">{closingStrategy}</p>
                         </div>
                       )}
                       {profileBullets && (

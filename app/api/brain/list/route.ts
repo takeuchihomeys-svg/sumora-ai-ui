@@ -21,6 +21,7 @@ type SuggestedAixMeta = {
   note: string;
   source: string;
   enforcement_level: "required" | "recommended";
+  closing_strategy?: string;
 } | null;
 
 // Canonical mapping from AIX action key → staff guidance note
@@ -132,7 +133,7 @@ async function generateBrainSummary(
 ${history}
 
 回答形式（JSONのみ・説明文不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/null）"}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/null）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で（例：8/16内覧後に割引見積を再提示し申込へ誘導する）"}`;
 
   try {
     const response = await client.messages.create({
@@ -149,6 +150,7 @@ ${history}
       action?: string;
       reason?: string;
       aix?: string | null;
+      closing_strategy?: string;
     };
 
     // Use a canonical action key from AIX_BRAIN_NOTES if Haiku returned one we recognise.
@@ -160,6 +162,7 @@ ${history}
       note: aix ? AIX_BRAIN_NOTES[aix] : (parsed.action ?? ""),
       source: "brain",
       enforcement_level: isUrgent ? "required" : "recommended",
+      closing_strategy: parsed.closing_strategy || undefined,
     };
   } catch {
     return null;
