@@ -173,37 +173,52 @@
         clickItandiRadio("近畿");
         setTimeout(function() {
           clickItandiRadio("大阪府") || clickItandiRadio("大阪");
-          setTimeout(function() {
-            // 市名で始まる全区ラベルを取得（radio・checkbox両対応）
-            var npfx = norm(batchCity);
+          // 大阪府クリック後、区リストのレンダリングをポーリングで待つ
+          var npfx = norm(batchCity);
+          var pollTries = 0;
+          function pollForWardLabels() {
+            // 標準label検索（name=""の区radioも含む）
             var labels = [].slice.call(document.querySelectorAll("label")).filter(function(l) {
-              var inp = l.querySelector("input");
-              return inp && (inp.type === "radio" || inp.type === "checkbox")
-                     && norm(l.textContent.trim()).startsWith(npfx);
+              var inp = l.querySelector("input[type='radio'], input[type='checkbox']");
+              if (!inp) return false;
+              var ltxt = norm(l.textContent.trim());
+              return ltxt.startsWith(npfx) && !ltxt.startsWith(norm("大阪府")) && !ltxt.startsWith(norm("近畿"));
             });
-            console.log("[AX] batchCity: " + batchCity + " → ラベル発見数: " + labels.length);
+            // フォールバック: input[name=""]（ITANDI区radio固有構造）で再検索
             if (labels.length === 0) {
-              console.warn("[AX] batchCity: 対象ラベル未発見 → 1件ずつに切り替え");
-              safeConfirm(function() { openNextWardModal(); });
-              return;
+              [].slice.call(document.querySelectorAll('input[type="radio"][name=""]')).forEach(function(inp) {
+                var pl = inp.closest ? inp.closest("label") : inp.parentElement;
+                if (pl && norm(pl.textContent.trim()).startsWith(npfx)) {
+                  if (labels.indexOf(pl) === -1) labels.push(pl);
+                }
+              });
             }
-            // 各区を600ms間隔でクリック（ITANDIのJS処理を待つため）
-            var clickIdx = 0;
-            function clickNextWardLabel() {
-              if (clickIdx >= labels.length) {
-                console.log("[AX] batchCity: 全" + labels.length + "区クリック完了 → 確定");
-                setTimeout(function() {
-                  safeConfirm(function() { onDone(); });
-                }, 800);
-                return;
+            console.log("[AX] batchCity poll" + (pollTries + 1) + ": " + batchCity + " → " + labels.length + "件");
+            if (labels.length > 0) {
+              // 各区を600ms間隔でクリック（ITANDIのJS処理を待つため）
+              var clickIdx = 0;
+              function clickNextWardLabel() {
+                if (clickIdx >= labels.length) {
+                  console.log("[AX] batchCity: 全" + labels.length + "区クリック完了 → 確定");
+                  setTimeout(function() {
+                    safeConfirm(function() { onDone(); });
+                  }, 800);
+                  return;
+                }
+                var l = labels[clickIdx++];
+                l.click();
+                console.log("[AX] batchCity: クリック " + clickIdx + "/" + labels.length + ": " + l.textContent.trim());
+                setTimeout(clickNextWardLabel, 600);
               }
-              var l = labels[clickIdx++];
-              l.click();
-              console.log("[AX] batchCity: クリック " + clickIdx + "/" + labels.length + ": " + l.textContent.trim());
-              setTimeout(clickNextWardLabel, 600);
+              clickNextWardLabel();
+            } else if (pollTries++ < 15) {
+              setTimeout(pollForWardLabels, 400); // 400ms×15回=最大6秒待機
+            } else {
+              console.warn("[AX] batchCity: 6秒タイムアウト → 1件ずつに切り替え");
+              safeConfirm(function() { openNextWardModal(); });
             }
-            clickNextWardLabel();
-          }, 1000);
+          }
+          setTimeout(pollForWardLabels, 500);
         }, 800);
       }, 2000);
     }
