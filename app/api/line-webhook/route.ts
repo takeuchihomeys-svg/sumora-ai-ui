@@ -233,7 +233,7 @@ async function handleTextMessage(
 
   await db
     .from("conversations")
-    .update({ last_message: text, last_sender: "customer", updated_at: now, is_flagged: true })
+    .update({ last_message: text, last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
     .eq("id", convId);
 
   updateProfileAsync(db, userId, convId, account, text, now);
@@ -1305,7 +1305,7 @@ async function handleImageMessageSave(
 
   await db
     .from("conversations")
-    .update({ last_message: "[画像]", last_sender: "customer", updated_at: now, is_flagged: true })
+    .update({ last_message: "[画像]", last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
     .eq("id", convId);
 
   // スタッフが申込書の記入を依頼した直後の顧客画像 → 記入済み申込書の可能性大 → applying自動昇格
