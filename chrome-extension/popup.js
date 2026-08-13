@@ -2537,9 +2537,21 @@ function openInstructions(siteKey) {
 
       // 地域トークン収集: NEIGHBORHOOD_WARD_MAP → LEARNED_WARD_MAP の順（守口市等も対象）
       // resolveWardLoose で「鶴見区横堤」→「大阪市鶴見区」のような部分一致も解決
+      // 「大阪市内」「大阪市」は ITANDI の batchCity（全区一括選択）を正しく動かすため、
+      // WARD_CODE_MAP 内の全 大阪市XX区 に展開してから neighborhoodTokens を構築する
+      const wardExpandedTokens = [];
+      for (const t of tokens) {
+        if (/^大阪市(内)?$/.test(t)) {
+          Object.keys(WARD_CODE_MAP)
+            .filter(k => k.startsWith("大阪市"))
+            .forEach(k => { if (!wardExpandedTokens.includes(k)) wardExpandedTokens.push(k); });
+        } else {
+          wardExpandedTokens.push(t);
+        }
+      }
       const neighborhoodTokens = currentAreaMode === "ward"
-        ? tokens.filter(t => resolveWardLoose(t) || WARD_CODE_MAP[t])
-        : tokens.filter(t => resolveWardLoose(t) && !STATION_LINE_MAP[t]);
+        ? wardExpandedTokens.filter(t => resolveWardLoose(t) || WARD_CODE_MAP[t])
+        : wardExpandedTokens.filter(t => resolveWardLoose(t) && !STATION_LINE_MAP[t]);
       const neighborhoodWard = neighborhoodTokens.length > 0
         ? (resolveWardLoose(neighborhoodTokens[0]) || neighborhoodTokens[0])
         : null;
