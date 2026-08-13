@@ -269,6 +269,12 @@
 
       // モーダル内で「12枚」ラジオ選択 → PDFを出力クリック
       function interactWithModal() {
+        // ガード: 所在地選択モーダル（regionName ラジオあり）はitandi-page-script.jsが処理するのでスキップ
+        if (document.querySelector('input[name="regionName"]') || document.querySelector('input[name="prefectureId"]')) {
+          console.log("[AXLX] 所在地選択モーダル検出 → interactWithModal スキップ");
+          return;
+        }
+
         // ── 「間取り図＋写真12枚」ラジオ選択 ────────────────────────────
         // 黄金ルール#1: MUI hidden radioはlabel.click()が正解（inp.click()は無効）
         function clickRadioLabel(inputEl) {
