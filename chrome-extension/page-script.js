@@ -570,7 +570,7 @@
         if (_t0 === '検索条件を表示' || _t0 === '▼検索条件を表示' || _t0 === '▶検索条件を表示') { showFormBtn = se0; break; }
       }
       if (showFormBtn) {
-        try { showFormBtn.click(); showFormDelay = 800; console.log("[AX] 検索条件を表示 クリック → フォーム展開待機"); }
+        try { showFormBtn.click(); showFormDelay = 650 + Math.floor(Math.random() * 450); console.log("[AX] 検索条件を表示 クリック → フォーム展開待機"); }
         catch (e) { console.error("[AX] _doReset: 検索条件を表示クリックで例外（続行）", e); }
       }
 
@@ -598,7 +598,7 @@
           console.log("[AX] _doReset: モーダル内の路線・駅選択をクリア");
         } catch (_e) { /* ignore */ }
         // click() の同期例外で callback 未到達（= fill-done 永久欠落）にならないよう try-catch
-        try { closeBtn.click(); closeDelay = 400; console.log("[AX] モーダルを閉じました"); }
+        try { closeBtn.click(); closeDelay = 320 + Math.floor(Math.random() * 200); console.log("[AX] モーダルを閉じました"); }
         catch (err) { console.error("[AX] _doReset: モーダル閉じで例外（続行）", err); }
       }
 
@@ -659,7 +659,7 @@
           // クリア失敗でも条件入力は続行する（静かに停止すると fill-done が来なくなる）
           console.error("[AX] _doReset クリア中の例外（続行）", err);
         }
-        setTimeout(callback, 300); // 短い安定待機のみ
+        setTimeout(callback, 240 + Math.floor(Math.random() * 150)); // 短い安定待機のみ（ランダム）
       }, closeDelay);
 
       }, showFormDelay); // Step0: 検索条件を表示 展開待機
@@ -912,7 +912,7 @@
           warnNone = "未解決の地名: " + cond.unknown_tokens.join("、") + "\n" + warnNone;
         }
         showWarnToast(warnNone);
-        setTimeout(clickSearch, 300);
+        setTimeout(clickSearch, 240 + Math.floor(Math.random() * 160));
         return;
       }
       if (hasModalWard) {
@@ -959,8 +959,8 @@
                   showWarnToast(em);
                   notifyDone(em);
                 }
-              }, 700);
-            }, 300);
+              }, 600 + Math.floor(Math.random() * 300));
+            }, 240 + Math.floor(Math.random() * 160));
             return;
           }
           // city_codes もない → 全件検索になるため中止
@@ -1022,13 +1022,13 @@
                 console.log('[AX] ensureWardButtonY: Y確認 → callback');
                 callback();
               } else {
-                waitForClick(isWardButtonY, callback, 15, 300, 300, function() {
+                waitForClick(isWardButtonY, callback, 15, 300, 240 + Math.floor(Math.random() * 160), function() {
                   console.log('[AX] ensureWardButtonY: タイムアウト → 強制callback');
                   callback();
                 });
               }
-            }, 400);
-          }, 300);
+            }, 320 + Math.floor(Math.random() * 200));
+          }, 240 + Math.floor(Math.random() * 160));
         }
 
         // STEP1: 「所在地絞り込み＋」が出るまで待ってクリック
@@ -1067,20 +1067,20 @@
                           console.log('[AX] STEP5完了: 町字クリック済 → 閉じる待機');
                           waitForClick(closeAreaModal, function() {
                             console.log('[AX] STEP6完了: モーダル閉じた → 検索');
-                            setTimeout(clickSearch, 800);
+                            setTimeout(clickSearch, 650 + Math.floor(Math.random() * 450));
                           },
-                          20, 500, 600,
+                          20, 500, 500 + Math.floor(Math.random() * 350),
                           function() {
                             // 閉じるボタンが見つからなくても検索を試みる（clickSearch が必ず notifyDone）
                             console.warn('[AX] STEP6: モーダルを閉じられず → そのまま検索');
-                            setTimeout(clickSearch, 800);
+                            setTimeout(clickSearch, 650 + Math.floor(Math.random() * 450));
                           });
                         },
-                        30, 500, 600,
+                        30, 500, 500 + Math.floor(Math.random() * 350),
                         function() { fallbackSearchWithoutArea('「' + townNamesForStep5.join('、') + '」の地域ボタンが見つかりませんでした。'); }
                       );
                     },
-                    30, 500, 600,
+                    30, 500, 500 + Math.floor(Math.random() * 350),
                     function() { fallbackSearchWithoutArea('「詳細な地域の設定へ進む」ボタンが見つかりませんでした。'); }
                   );
                 }
@@ -1094,16 +1094,16 @@
                     console.log('[AX] STEP3後確認: N状態 → ensureWardButtonY');
                     ensureWardButtonY(startSTEP4);
                   }
-                }, 300);
+                }, 240 + Math.floor(Math.random() * 160));
               } else {
                 // 広げて検索: 市区郡まで選択して閉じる（詳細地域には進まない）
                 waitForClick(closeAreaModal, function() {
-                  setTimeout(clickSearch, 800);
+                  setTimeout(clickSearch, 650 + Math.floor(Math.random() * 450));
                 },
-                20, 500, 600,
+                20, 500, 500 + Math.floor(Math.random() * 350),
                 function() {
                   console.warn('[AX] モーダルを閉じられず → そのまま検索');
-                  setTimeout(clickSearch, 800);
+                  setTimeout(clickSearch, 650 + Math.floor(Math.random() * 450));
                 });
               }
             }
@@ -1152,21 +1152,21 @@
                   waitForClick(
                     function() { return clickWardPrecise([wardFull, wardShort]); },
                     doAfterWard,
-                    30, 500, 600,
+                    30, 500, 500 + Math.floor(Math.random() * 350),
                     function() { fallbackSearchWithoutArea('「' + wardFull + '」の市区郡ボタンが見つかりませんでした。'); }
                   );
                 }
               },
-              30, 500, 600,
+              30, 500, 500 + Math.floor(Math.random() * 350),
               function() { fallbackSearchWithoutArea('大阪府または市区郡の選択ができませんでした。'); }
             );
           },
-          30, 500, 600,
+          30, 500, 500 + Math.floor(Math.random() * 350),
           function() { fallbackSearchWithoutArea('「所在地絞り込み」ボタンが見つかりませんでした。'); }
         );
       } else {
         // area && !hasModalWard: 直接チェック（T=150ms）反映後に検索（none は上で処理済み）
-        setTimeout(function() { clickSearch(); }, 700);
+        setTimeout(function() { clickSearch(); }, 600 + Math.floor(Math.random() * 300));
       }
       return;
     }

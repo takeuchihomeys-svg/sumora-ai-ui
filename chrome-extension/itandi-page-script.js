@@ -188,6 +188,7 @@
           var npfx = norm(batchCity);
           var pollTries = 0;
           function pollForWardLabels() {
+
             // 標準label検索（name=""の区radioも含む）
             var labels = [].slice.call(document.querySelectorAll("label")).filter(function(l) {
               var inp = l.querySelector("input[type='radio'], input[type='checkbox']");
@@ -206,20 +207,24 @@
             }
             console.log("[AX] batchCity poll" + (pollTries + 1) + ": " + batchCity + " → " + labels.length + "件");
             if (labels.length > 0) {
-              // 各区を600ms間隔でクリック（ITANDIのJS処理を待つため）
+              // 各区を500-900ms間隔（ランダム）でクリック（ITANDIのJS処理を待つため）
               var clickIdx = 0;
               function clickNextWardLabel() {
                 if (clickIdx >= labels.length) {
                   console.log("[AX] batchCity: 全" + labels.length + "区クリック完了 → 確定");
                   setTimeout(function() {
                     safeConfirm(function() { onDone(); });
-                  }, 800);
+                  }, 700 + Math.floor(Math.random() * 400));
                   return;
                 }
                 var l = labels[clickIdx++];
                 l.click();
                 console.log("[AX] batchCity: クリック " + clickIdx + "/" + labels.length + ": " + l.textContent.trim());
-                setTimeout(clickNextWardLabel, 600);
+                // 8%の確率で追加ポーズ（800-1500ms）、それ以外は500-900ms
+                var _wardDelay = (Math.random() < 0.08)
+                  ? (800 + Math.floor(Math.random() * 700))
+                  : (500 + Math.floor(Math.random() * 400));
+                setTimeout(clickNextWardLabel, _wardDelay);
               }
               clickNextWardLabel();
             } else if (pollTries++ < 15) {
@@ -230,8 +235,8 @@
             }
           }
           setTimeout(pollForWardLabels, 500);
-        }, 800);
-      }, 2000);
+        }, 700 + Math.floor(Math.random() * 400)); // 近畿クリック後 700-1100ms
+      }, 1800 + Math.floor(Math.random() * 600)); // モーダル展開後 1800-2400ms
     }
 
     function clickItandiRadio(text) {
@@ -284,7 +289,7 @@
                 || clickBtn("地域で絞り込み");
       if (!opened) {
         console.log("[AX] selectItandiArea: modal button not found for " + wName);
-        setTimeout(openNextWardModal, 1000);
+        setTimeout(openNextWardModal, 800 + Math.floor(Math.random() * 400));
         return;
       }
 
@@ -336,14 +341,14 @@
                     });
                     console.log("[AX] 町域合計: " + totalSelected + "件選択");
                     setTimeout(function () {
-                      safeConfirm(function () { setTimeout(openNextWardModal, 800); });
-                    }, 1000);
-                  }, 800);
-                }, 800);
+                      safeConfirm(function () { setTimeout(openNextWardModal, 700 + Math.floor(Math.random() * 400)); });
+                    }, 800 + Math.floor(Math.random() * 400));
+                  }, 700 + Math.floor(Math.random() * 400)); // 全域解除後 → 町域チェック開始まで
+                }, 700 + Math.floor(Math.random() * 400)); // 区ラジオ選択後 → 全域チェック解除まで
               } else {
                 setTimeout(function () {
-                  safeConfirm(function () { setTimeout(openNextWardModal, 800); });
-                }, 800);
+                  safeConfirm(function () { setTimeout(openNextWardModal, 700 + Math.floor(Math.random() * 400)); });
+                }, 700 + Math.floor(Math.random() * 400));
               }
             }
 
@@ -351,14 +356,14 @@
               console.log("[AX] selectItandiArea: ward not found, retry: " + wName);
               setTimeout(function () {
                 clickItandiRadio(wName) || (shortName ? clickItandiRadio(shortName) : false);
-                setTimeout(afterWardSelected, 500);
-              }, 1000);
+                setTimeout(afterWardSelected, 400 + Math.floor(Math.random() * 300));
+              }, 800 + Math.floor(Math.random() * 400));
             } else {
-              setTimeout(afterWardSelected, 500);
+              setTimeout(afterWardSelected, 400 + Math.floor(Math.random() * 300));
             }
-          }, 1000);
-        }, 800);
-      }, 2000);
+          }, 800 + Math.floor(Math.random() * 400)); // 大阪府クリック後 → 区ラジオ選択まで
+        }, 700 + Math.floor(Math.random() * 400)); // 近畿クリック後 → 大阪府クリックまで
+      }, 1800 + Math.floor(Math.random() * 600)); // モーダル展開後 1800-2400ms
     }
 
     if (batchCity) {
@@ -456,7 +461,7 @@
                   setTimeout(function () {
                     clickBtn("確定");
                     setTimeout(onDone, 1500);
-                  }, 700);
+                  }, 600 + Math.floor(Math.random() * 300));
                   return;
                 }
                 var stName = stNames[stIdx];
@@ -507,14 +512,14 @@
                     console.log("[AX] JR路線を追加: " + addedLines.join(" / "));
                     setTimeout(function () {
                       if (!tryClickStation(stName)) console.log("[AX] JRフォールバック後も駅未発見: " + stName);
-                      setTimeout(clickNextStation, 700);
+                      setTimeout(clickNextStation, 500 + Math.floor(Math.random() * 400));
                     }, 1500);
                   } else {
                     console.log("[AX] 追加できるJR路線なし。駅をスキップ: " + stName);
-                    setTimeout(clickNextStation, 700);
+                    setTimeout(clickNextStation, 500 + Math.floor(Math.random() * 400));
                   }
                 } else {
-                  setTimeout(clickNextStation, 700);
+                  setTimeout(clickNextStation, 500 + Math.floor(Math.random() * 400));
                 }
               }
               clickNextStation();
@@ -527,7 +532,7 @@
         }
         if (clickLabel(lineNames[lineIdx], dlg)) anyLineClicked = true;
         lineIdx++;
-        setTimeout(clickNextLine, 800);
+        setTimeout(clickNextLine, 600 + Math.floor(Math.random() * 400));
       }
       clickNextLine();
     }
