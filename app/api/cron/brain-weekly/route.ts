@@ -60,8 +60,8 @@ async function analyzeConversation(
   conversationId: string,
   convStatus: string | null,
   propertyCustomerId: string | null,
-): Promise<{ action: string; note: string; source: string; enforcement_level: string; closing_strategy?: string; template_hint?: string; next_steps?: string[] } | null> {
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult] = await Promise.all([
+): Promise<{ action: string; note: string; source: string; enforcement_level: string; closing_strategy?: string; template_hint?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply" } | null> {
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult] = await Promise.all([
     supabase
       .from("messages")
       .select("sender, text, created_at")
@@ -122,6 +122,20 @@ async function analyzeConversation(
       .like("category", "AIX%")
       .order("win_rate", { ascending: false })
       .limit(5),
+    // BOUNDARY rules: which triggers must be escalated to AIX vs auto-reply
+    supabase
+      .from("ai_prompt_rules")
+      .select("rule_text, rule_key, priority")
+      .eq("is_active", true)
+      .like("rule_key", "BOUNDARY-%")
+      .order("priority", { ascending: false })
+      .limit(15),
+    supabase
+      .from("trigger_action_rules")
+      .select("keyword, action_type, confidence")
+      .like("keyword", "BOUNDARY%")
+      .order("confidence", { ascending: false })
+      .limit(10),
   ]);
 
   const messages = msgResult.data;
@@ -129,7 +143,10 @@ async function analyzeConversation(
 
   const history = [...messages]
     .reverse()
-    .map((m: { sender: string; text: string | null }) => `[${m.sender}] ${m.text ?? "（画像/添付）"}`)
+    .map((m: { sender: string; text: string | null }) => {
+      const label = m.sender === "ai" ? "[AI自動返信]" : m.sender === "staff" ? "[スタッフ/AIX]" : "[顧客]";
+      return `${label} ${m.text ?? "（画像/添付）"}`;
+    })
     .join("\n");
 
   type PC = { desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null } | null;
@@ -181,7 +198,22 @@ async function analyzeConversation(
     ? `\n【高成約率テンプレート（参考）】\n${topTemplates.map((t) => `- ${t.category}: ${t.label} (成約率: ${((t.win_rate ?? 0) * 100).toFixed(0)}%, ${t.use_count ?? 0}回使用)`).join("\n")}`
     : "";
 
-  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${promptRulesText}${knowledgeText}${examplesText}${checkpointText}${sentPropsText}${templatesText}
+  // BOUNDARY rules — determines when AIX escalation is required vs auto-reply allowed
+  type BoundaryRule = { rule_text: string; rule_key: string; priority: number };
+  type BoundaryTrigger = { keyword: string; action_type: string; confidence: number };
+  const boundaryPromptRules = (boundaryPromptRulesResult.data ?? []) as BoundaryRule[];
+  const boundaryTriggerRules = (boundaryTriggerRulesResult.data ?? []) as BoundaryTrigger[];
+  const boundaryLines: string[] = [
+    ...boundaryPromptRules.map((r) =>
+      r.rule_key.endsWith("-gr") ? `- ${r.rule_text} → 自動返信禁止` : `- ${r.rule_text} → AIX: ${r.rule_key}`
+    ),
+    ...boundaryTriggerRules.map((t) => `- ${t.keyword} → AIX: ${t.action_type}`),
+  ];
+  const boundaryText = boundaryLines.length > 0
+    ? `\n【境界ルール（AIXエスカレーション条件）】\n${boundaryLines.join("\n")}`
+    : "";
+
+  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${promptRulesText}${knowledgeText}${boundaryText}${examplesText}${checkpointText}${sentPropsText}${templatesText}
 
 ${AIX_CAPABILITY_MAP}
 
@@ -189,7 +221,7 @@ ${AIX_CAPABILITY_MAP}
 ${history}
 
 回答形式（JSONのみ・説明文不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/property_recommendation/meeting_place/greeting_viewing/null）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "このお客さんに合うテンプレートのトーン・スタイルのヒント（20字以内、例：丁寧語・プッシュ弱め）", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2（次回）: 具体的アクション", "Step3（その次）: 具体的アクション"]}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/property_recommendation/meeting_place/greeting_viewing/null）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "このお客さんに合うテンプレートのトーン・スタイルのヒント（20字以内、例：丁寧語・プッシュ弱め）", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2（次回）: 具体的アクション", "Step3（その次）: 具体的アクション"], "reply_mode": "aix or auto_reply（境界ルールに該当する場合はaix、そうでなければauto_reply）"}`;
 
   try {
     const response = await client.messages.create({
@@ -208,6 +240,7 @@ ${history}
       closing_strategy?: string;
       template_hint?: string;
       next_steps?: string[];
+      reply_mode?: "aix" | "auto_reply";
     };
 
     let finalAix = parsed.aix && AIX_BRAIN_NOTES[parsed.aix] ? parsed.aix : null;
@@ -233,6 +266,7 @@ ${history}
       closing_strategy: parsed.closing_strategy || undefined,
       template_hint: parsed.template_hint || undefined,
       next_steps: Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
+      reply_mode: (parsed.reply_mode === "aix" || parsed.reply_mode === "auto_reply") ? parsed.reply_mode : undefined,
     };
   } catch {
     return null;
