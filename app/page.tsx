@@ -7384,6 +7384,7 @@ export default function Home() {
                   property_recommendation: "AIX 物件オススメ",
                   condition_hearing:       "AIX 条件ヒアリング",
                   followup_revive:         "AIX 追客する",
+                  greeting_viewing:        "AIX 内覧挨拶",
                 };
                 const brainBtnLabel = BRAIN_AIX_LABELS[brainMeta.action];
                 const brainBtnColor = AIX_ACTION_META[brainMeta.action]?.color ?? "#7C3AED";

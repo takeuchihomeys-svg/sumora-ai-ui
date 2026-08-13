@@ -27,14 +27,17 @@ type SuggestedAixMeta = {
 // Canonical mapping from AIX action key → staff guidance note
 // Keys must match AIX_ACTION_META keys in page.tsx
 const AIX_BRAIN_NOTES: Record<string, string> = {
-  viewing_invite:        "内覧日程の候補を提示してください → AIX【内覧日調整】で日時を選択して送信してください",
-  property_send:         "物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
-  estimate_sheet:        "見積書が届いたら → AIX【見積書送る】で読み取って自動計算＋カバーメッセージを生成できます",
-  application_push:      "AIX【申込へ！】でクロージングメッセージを生成できます",
-  condition_hearing:     "AIX【条件ヒアリング】ボタンで既知情報をスキップした形式で送れます",
-  acknowledge_check:     "送信後 → AIX【確認します】で管理会社への空室確認＋見積書依頼を送ってください（宛先は管理会社です）",
-  followup_revive:       "AIX【追客する】で再接触メッセージを生成できます",
-  property_check_result: "管理会社から返答が来たら → AIX【物件確認した（募集状況）】で結果報告文を生成してください",
+  viewing_invite:          "内覧日程の候補を提示してください → AIX【内覧日調整】で日時を選択して送信してください",
+  property_send:           "物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
+  estimate_sheet:          "見積書が届いたら → AIX【見積書送る】で読み取って自動計算＋カバーメッセージを生成できます",
+  application_push:        "AIX【申込へ！】でクロージングメッセージを生成できます",
+  condition_hearing:       "AIX【条件ヒアリング】ボタンで既知情報をスキップした形式で送れます",
+  acknowledge_check:       "送信後 → AIX【確認します】で管理会社への空室確認＋見積書依頼を送ってください（宛先は管理会社です）",
+  followup_revive:         "AIX【追客する】で再接触メッセージを生成できます",
+  property_check_result:   "管理会社から返答が来たら → AIX【物件確認した（募集状況）】で結果報告文を生成してください",
+  property_recommendation: "お客様の条件に最も合う1件を特にオススメとしてAIX【物件オススメ】で提案してください",
+  meeting_place:           "内覧の日時・物件が確定したら → AIX【待ち合わせ】で待ち合わせ場所の案内を送ってください",
+  greeting_viewing:        "内覧前後の挨拶は → AIX【内覧挨拶】でシーンに合わせた挨拶メッセージを生成できます",
 };
 
 type BrainConversation = {
@@ -133,7 +136,7 @@ async function generateBrainSummary(
 ${history}
 
 回答形式（JSONのみ・説明文不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/null）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で（例：8/16内覧後に割引見積を再提示し申込へ誘導する）"}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/property_recommendation/meeting_place/greeting_viewing/null）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で（例：8/16内覧後に割引見積を再提示し申込へ誘導する）"}`;
 
   try {
     const response = await client.messages.create({

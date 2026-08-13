@@ -1804,6 +1804,26 @@ CREATE TABLE IF NOT EXISTS conversation_checkpoints (
 CREATE INDEX IF NOT EXISTS idx_checkpoints_conversation ON conversation_checkpoints(conversation_id, checkpoint_index DESC);
 ALTER TABLE conversation_checkpoints DISABLE ROW LEVEL SECURITY;
 
+-- ── closing_strategy_logs: クロージング戦略ログ（2026-08-13）──
+-- deriveSuggestedAix が closing_strategy を生成するたびに記録する。
+-- outcome: 'contract'（成約）/ 'lost'（失注）/ NULL（未確定）
+-- source: 'derive'（generate-reply経由）/ 'brain'（brain/list経由）
+CREATE TABLE IF NOT EXISTS closing_strategy_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  closing_strategy TEXT NOT NULL,
+  conversation_status TEXT,
+  proposed_at TIMESTAMPTZ DEFAULT NOW(),
+  outcome TEXT,
+  outcome_recorded_at TIMESTAMPTZ,
+  source TEXT DEFAULT 'derive'
+);
+CREATE INDEX IF NOT EXISTS idx_closing_logs_conversation
+  ON closing_strategy_logs(conversation_id, proposed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_closing_logs_outcome
+  ON closing_strategy_logs(outcome, proposed_at DESC);
+ALTER TABLE closing_strategy_logs DISABLE ROW LEVEL SECURITY;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

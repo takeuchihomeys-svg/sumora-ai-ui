@@ -2292,6 +2292,15 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction, analysisAixEnforcement, analysisClosingStrategy);
               if (suggestedAix) {
                 controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
+                // fire-and-forget — closing_strategyが生成されたらログに保存
+                if (suggestedAix.closing_strategy && conversationId) {
+                  supabase.from("closing_strategy_logs").insert({
+                    conversation_id: conversationId,
+                    closing_strategy: suggestedAix.closing_strategy,
+                    conversation_status: currentState ?? null,
+                    source: suggestedAix.source ?? "derive",
+                  }).then(() => {}, () => {});
+                }
               }
             }
             // includeStopReason=true（generate-pending-drafts）の場合のみ stop_reason トレーラーを付加
