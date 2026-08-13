@@ -3722,11 +3722,7 @@ ${SMORA_COMMON_RULES}`;
     } else if (action === "meeting_place") {
       // conversation_match: テンプレ固定なし・会話から日時・物件を読んで自然な待ち合わせ文を生成
       if (body.conversation_match) {
-        // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
-        if (baseMessage) {
-          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
-          return finalizeResponse(message_text);
-        }
+        // base_messageがある場合もadaptMessageToConversationは使わず再生成（テンプレ冒頭が残るため）
         const [mpDiffNote, mpStarNote, mpDbRules] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.meeting_place, currentAction, conversationId, latestCustomerMsg),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.meeting_place, latestCustomerMsg),
@@ -3746,9 +3742,9 @@ ${mpAddress ? `【住所】${mpAddress}` : ""}
 ${mpDate ? `【内覧日】${mpDate}` : ""}
 
 【この返信の目的】
-・内覧の日程・時間が確定したので「かしこまりました！！」で承認し、待ち合わせ場所を確定する
-・現地エントランスが待ち合わせ場所（物件名＋住所があれば含める）
-・会話から時間を読み取って「〇時に〇〇物件 現地エントランスお待ち合わせ」の形で締める
+・会話の流れに合わせたシンプルな冒頭1文から始める（「かしこまりました！！」は使わず、お客様の言葉・状況に沿った自然な一言）
+・次に、会話から読み取った時間・物件名（あれば）・「現地エントランスお待ち合わせ」で待ち合わせを確定する
+・物件名・住所があれば含める
 
 【重要：会話読解ルール（必ず守ること）】
 ・会話から内覧の確定日時を読み取り、そのまま確定メッセージに使う
@@ -3761,9 +3757,10 @@ ${mpDate ? `【内覧日】${mpDate}` : ""}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
+        const mpBaseHint = baseMessage ? `\n\n【参考：前回生成した待ち合わせ情報（日時・物件・住所の参考のみ。冒頭文言は使わない）】\n${baseMessage}` : "";
         const rawMP = await callClaude(
           mpSystem + mpDbRules + greetingTimeNote + mpDiffNote + mpStarNote,
-          `${recentHistory}\n\n上記の会話を読み取り、${name}への待ち合わせ確定メッセージを生成してください。`,
+          `${recentHistory}${mpBaseHint}\n\n上記の会話を読み取り、${name}への待ち合わせ確定メッセージを生成してください。`,
           currentAction
         );
         try {
