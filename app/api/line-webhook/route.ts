@@ -262,6 +262,12 @@ async function handleTextMessage(
     await notifySuzukiReply(db, convId, text).catch((e) => console.warn("[notifySuzukiReply]", e));
   });
 
+  // 顧客返信 → pending中のエンゲージメントシグナルを resolve（fire-and-forget）
+  // 成約パターンキーワード検出で positive / それ以外は neutral（時間閾値なし）
+  after(async () => {
+    await resolveEngagementSignal(db, convId, text).catch((e) => console.warn("[resolveEngagementSignal]", e));
+  });
+
   // 新規客（初メッセージ）検知 → @鈴木即時通知
   after(async () => {
     const { count: msgCount } = await db
@@ -542,6 +548,48 @@ async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
       notifyHanbancyoGroup(db, data.customer_name ?? "").catch((e) => console.warn("[line-webhook] autoUpgradeToHot notify:", e));
     }
   }
+}
+
+// ── reply_engagement_signals: 顧客返信でシグナルを resolve ────────────────────
+// スタッフ送信時（send-line-message）に作成された pending シグナルを、顧客の次の返信で確定する。
+// 時間閾値なし（LINEは返信が遅いのが普通）— 返信あり=neutral、成約パターン語検出=positive。
+const ENGAGEMENT_POSITIVE_PATTERNS = [
+  /内覧|見に行|見学|行きた|見たい|行きます/,
+  /申し込|申込|契約|決めた|決めます|お願いします/,
+  /気に入|いいね|いい感じ|良さそう|良い感じ|いい物件/,
+  /ぜひ|是非|よろしく|お願いし/,
+  /いつ|日程|日時|何日|何時|空いて/,
+];
+
+async function resolveEngagementSignal(
+  db: ReturnType<typeof getDb>,
+  convId: string,
+  customerText: string,
+): Promise<void> {
+  const { data: signal } = await db
+    .from("reply_engagement_signals")
+    .select("id, staff_sent_at")
+    .eq("conversation_id", convId)
+    .eq("signal_type", "pending")
+    .order("staff_sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!signal) return;
+
+  const minutes = Math.round((Date.now() - new Date(signal.staff_sent_at as string).getTime()) / 60000);
+  // 成約パターン基準でポジティブ判定（時間制限なし）
+  const isPositive = ENGAGEMENT_POSITIVE_PATTERNS.some((p) => p.test(customerText ?? ""));
+
+  await db
+    .from("reply_engagement_signals")
+    .update({
+      customer_replied_at: new Date().toISOString(),
+      response_minutes: minutes,
+      customer_reply_text: (customerText ?? "").slice(0, 200),
+      signal_type: isPositive ? "positive" : "neutral",
+      signal_reason: isPositive ? "成約パターンキーワード検出" : "返信あり",
+    })
+    .eq("id", signal.id as string);
 }
 
 function isFormatMessage(text: string): boolean {

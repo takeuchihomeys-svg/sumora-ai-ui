@@ -1854,6 +1854,30 @@ CREATE TABLE IF NOT EXISTS conversation_stage_history (
 CREATE INDEX IF NOT EXISTS idx_stage_history_conv ON conversation_stage_history(conversation_id, changed_at DESC);
 ALTER TABLE conversation_stage_history DISABLE ROW LEVEL SECURITY;
 
+-- ── brain_analyzed_at: 脳分析タイムスタンプ（24h TTLキャッシュ制御用）（2026-08-14追加）──
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brain_analyzed_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_conversations_brain_analyzed ON conversations(brain_analyzed_at) WHERE brain_analyzed_at IS NOT NULL;
+
+-- ── reply_engagement_signals: 返信後の顧客反応シグナル（2026-08-14追加）──
+-- スタッフ送信時に pending を作成し、顧客の次の返信で resolve する。
+-- 時間閾値なし（LINEは返信が遅いのが普通）。返信あり=neutral、成約パターン語（内覧・申込等）検出=positive。
+-- signal_type: 'pending' | 'neutral' | 'positive'
+CREATE TABLE IF NOT EXISTS reply_engagement_signals (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+  reply_example_id UUID REFERENCES ai_reply_examples(id) ON DELETE SET NULL,
+  staff_sent_at TIMESTAMPTZ NOT NULL,
+  customer_replied_at TIMESTAMPTZ,
+  response_minutes INTEGER,
+  customer_reply_text TEXT,
+  signal_type TEXT DEFAULT 'pending',
+  signal_reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_reply_engagement_conv ON reply_engagement_signals(conversation_id, staff_sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reply_engagement_type ON reply_engagement_signals(signal_type);
+ALTER TABLE reply_engagement_signals DISABLE ROW LEVEL SECURITY;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

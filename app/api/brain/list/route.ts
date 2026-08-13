@@ -85,6 +85,7 @@ type BrainConversation = {
   suggested_aix_meta: SuggestedAixMeta;
   ai_draft: string | null;
   property_customer_id: string | null;
+  brain_analyzed_at: string | null;
   is_urgent: boolean;
 };
 
@@ -325,7 +326,7 @@ export async function GET(_req: NextRequest) {
   const { data: conversations, error } = await supabase
     .from("conversations")
     .select(
-      "id, customer_name, status, updated_at, last_message, suggested_aix_meta, ai_draft, property_customer_id"
+      "id, customer_name, status, updated_at, last_message, suggested_aix_meta, ai_draft, property_customer_id, brain_analyzed_at"
     )
     .eq("last_sender", "customer")
     .not("status", "in", `(${SKIP_STATUSES.join(",")})`)
@@ -344,10 +345,17 @@ export async function GET(_req: NextRequest) {
     suggested_aix_meta: SuggestedAixMeta;
     ai_draft: string | null;
     property_customer_id: string | null;
+    brain_analyzed_at: string | null;
   }>;
 
-  // 2. Find conversations that have no brain summary yet and process them via Haiku
-  const needsSummary = rows.filter((c) => !c.suggested_aix_meta);
+  // 2. Find conversations that need a (new) brain summary via Haiku.
+  //    TTL: re-analyze if suggested_aix_meta is older than 24 h or was never set.
+  const TTL_MS = 24 * 60 * 60 * 1000;
+  const needsSummary = rows.filter((c) => {
+    if (!c.suggested_aix_meta) return true;
+    if (!c.brain_analyzed_at) return true;
+    return Date.now() - new Date(c.brain_analyzed_at).getTime() > TTL_MS;
+  });
   const toProcess = needsSummary.slice(0, MAX_HAIKU_PER_REQUEST);
 
   if (toProcess.length > 0) {
@@ -369,12 +377,12 @@ export async function GET(_req: NextRequest) {
       summaries
         .filter((s): s is { id: string; meta: NonNullable<SuggestedAixMeta> } => s.meta !== null)
         .map(async ({ id, meta }) => {
-          // Only update if still null in DB (safety guard against concurrent requests)
+          // Write both meta and the TTL timestamp.
+          // No .is("suggested_aix_meta", null) guard — TTL replaces the null-only guard.
           await supabase
             .from("conversations")
-            .update({ suggested_aix_meta: meta })
-            .eq("id", id)
-            .is("suggested_aix_meta", null);
+            .update({ suggested_aix_meta: meta, brain_analyzed_at: new Date().toISOString() })
+            .eq("id", id);
 
           // Reflect into the in-memory row so the response is up to date
           const row = rows.find((r) => r.id === id);
@@ -394,6 +402,7 @@ export async function GET(_req: NextRequest) {
     suggested_aix_meta: c.suggested_aix_meta ?? null,
     ai_draft: c.ai_draft ?? null,
     property_customer_id: c.property_customer_id ?? null,
+    brain_analyzed_at: c.brain_analyzed_at ?? null,
     is_urgent: now - new Date(c.updated_at).getTime() <= URGENT_WINDOW_MS,
   }));
 

@@ -765,6 +765,7 @@ export async function PATCH(req: NextRequest) {
 
   // 🚫 AI自己強化ループ防止: AIが生成してスタッフが無修正で送った例はLLM分析スキップ
   // was_ai_used=true && was_ai_modified=false = AIドラフトそのまま → 差分なし → 学習ノイズのみ
+  // 無修正送信 → 挿入時に自動スター済み。LLM差分分析は不要（差分がないため）。
   if ((existing.was_ai_used as boolean) && !(existing.was_ai_modified as boolean)) {
     return NextResponse.json({ ok: true, skippedAnalysis: true });
   }
@@ -1102,6 +1103,9 @@ export async function POST(req: NextRequest) {
     if (changedWithType.length > 0) replyAngle = `component_diff:${changedWithType.join(",")}`;
   }
 
+  // 無修正送信（AIドラフトをそのまま採用）は挿入時に自動スター
+  const autoStarred = wasAiUsed === true && wasAiModified === false ? true : false;
+
   const [embedding, insertResult] = await Promise.all([
     embeddingPromise,
     supabase
@@ -1113,7 +1117,7 @@ export async function POST(req: NextRequest) {
         ai_draft: aiDraft || null,
         was_ai_used: wasAiUsed,
         was_ai_modified: wasAiModified,
-        is_starred: isStarred ?? false,
+        is_starred: isStarred ?? autoStarred,
         reply_angle: replyAngle || null,
         conversation_id: conversationId || null,
         sent_at: sentAt ?? new Date().toISOString(),

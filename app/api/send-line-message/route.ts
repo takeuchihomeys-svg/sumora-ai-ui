@@ -241,5 +241,26 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Fire-and-forget: 返信後の顧客反応を計測開始（reply_engagement_signals）
+  // 時間閾値なし — 顧客の次の返信が来た時点で line-webhook 側が resolve する
+  after(async () => {
+    try {
+      const { data: convRow } = await supabase
+        .from("conversations")
+        .select("id")
+        .eq("line_user_id", line_user_id)
+        .eq("account", accountKey)
+        .maybeSingle();
+      if (!convRow?.id) return;
+      await supabase.from("reply_engagement_signals").insert({
+        conversation_id: convRow.id as string,
+        staff_sent_at: new Date().toISOString(),
+        signal_type: "pending",
+      });
+    } catch {
+      // 計測失敗は送信成功に影響させない
+    }
+  });
+
   return NextResponse.json({ ok: true, account: accountKey, sentMessageIds });
 }
