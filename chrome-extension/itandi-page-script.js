@@ -149,7 +149,18 @@
       return m ? m[1] : null;
     }
     var batchCity = (function() {
-      if (wardNames.length < 2) return null;
+      if (wardNames.length < 2) {
+        // 「大阪市内」「大阪市」のような市全域指定（1件）→ batchモードで全区選択
+        if (wardNames.length === 1) {
+          var single = wardNames[0];
+          // 「〇〇市内」パターン（popup.jsが展開できなかった市全域指定）
+          var mInner = single.match(/^([^\s　]+?[市])(内)$/);
+          if (mInner) return mInner[1];
+          // 「〇〇市」（区・町・村を含まない純粋な市名）
+          if (/^[^\s　]+[市]$/.test(single) && !/[区町村]/.test(single)) return single;
+        }
+        return null;
+      }
       var hasTowns = wardNames.some(function(w) { return wardTownMap && wardTownMap[w] && wardTownMap[w].length; });
       if (hasTowns) return null;
       var prefix = getCityPrefix(wardNames[0]);
