@@ -5,6 +5,7 @@ import { isApplicationFormMessage, hasApplyHintKeyword, PRE_APPLY_STATUSES } fro
 import { classifyByKeywords, classifyByAI, type ConditionIntent } from "@/app/lib/condition-intent";
 import { mergeConditions, type ConditionFields } from "@/app/lib/condition-merge";
 import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
+import { analyzeAndSaveBrainMeta } from "@/app/lib/brain-core";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 export const maxDuration = 120;
@@ -249,6 +250,14 @@ async function handleTextMessage(
     .from("conversations")
     .update({ last_message: text, last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
     .eq("id", convId);
+
+  // FIX(Fable5 #2): 脳分析のイベント駆動再計算 — meta を消したその場で再分析を fire-and-forget 起動。
+  // これまで分析は brain/list の読み取りパス（最大30並列Haiku）と週次cronで走っており、
+  // このwipeが週次分の成果を毎回破棄していた。分析コストは「顧客メッセージ1件につき1回」が理論最小。
+  // 失敗時は meta が null のまま残り、cron/brain-sweep（5分毎バックストップ）が拾う。
+  after(async () => {
+    await analyzeAndSaveBrainMeta(convId).catch((e) => console.warn("[line-webhook] brain analyze:", e));
+  });
 
   updateProfileAsync(db, userId, convId, account, text, now);
 
@@ -1537,6 +1546,11 @@ async function handleImageMessageSave(
     .from("conversations")
     .update({ last_message: "[画像]", last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
     .eq("id", convId);
+
+  // FIX(Fable5 #2): 画像受信でも meta を消すため、テキスト経路と同様にイベント駆動で再分析する
+  after(async () => {
+    await analyzeAndSaveBrainMeta(convId).catch((e) => console.warn("[line-webhook] brain analyze (image):", e));
+  });
 
   // スタッフが申込書の記入を依頼した直後の顧客画像 → 記入済み申込書の可能性大 → applying自動昇格
   // （画像フォームはテキスト検知できないためヒューリスティックで補完）

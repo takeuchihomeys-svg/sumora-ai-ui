@@ -25,6 +25,17 @@ const CONTRADICTION_BATCH = 30; // chunk=2: 1回のClaude呼び出しで処理�
 const AI_CLASSIFY_BATCH = 20;   // chunk=3: Stage C で処理するhypothesis件数
 const DEDUP_LIMIT = 200;        // chunk=4: 重複排除のhypothesis上位件数
 
+// FIX(Fable5 #3): 一度も適用されないまま45日経過した仮説は importance に関係なく却下する
+// （never-applied backlog: 全hypothesisの約47%が未適用のまま毎週dedup/矛盾チェックのコストだけ消費していた）
+const NEVER_APPLIED_CULL_DAYS = 45;
+
+// FIX(Fable5 #3): Stage B / Stage D の自動昇格を一時停止する（診断完了までのフリーズ）。
+// 背景: 適用済みhypothesisの正答率が約60%（コイン投げ水準）であり、この品質のまま
+// confirmed へ自動昇格させ続けるのは危険。原因診断が済んだら
+// Vercel環境変数 WEEKLY_LEARNING_AUTO_PROMOTE=true で再開する。
+// ※却下側（Stage A / rescue reject）と Stage C の AI 判定昇格は従来通り動く。
+const AUTO_PROMOTE_ENABLED = process.env.WEEKLY_LEARNING_AUTO_PROMOTE === "true";
+
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY ?? "",
   timeout: 120_000,
@@ -359,6 +370,76 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
     questionsRaised: totalQuestionsRaised,
     message: `chunk${chunk}: ${processedIds.length}件処理・${totalNewRules}件ルール保存・${totalQuestionsRaised}件AI質問起票`,
   };
+}
+
+// ── FIX(Fable5 #3): 週次学習スコアボード（learning theater → learning with a scoreboard）──
+// 「今週の学習は効いたのか？」に答えるボトムラインKPIを毎週固定記録する。
+// - unmodified_rate: AI案がそのまま送信された率（高いほどAIが役立っている）
+// - mean_edit_distance: AI案→送信文の平均文字編集距離（低いほど修正が少ない）
+// weekly_learning_metrics テーブルに week_start で upsert（chunk=1 実行時に毎回計算）。
+
+function levenshtein(a: string, b: string): number {
+  // 計算量ガード: 先頭400文字で打ち切り（LINE返信文はほぼ全て収まる）
+  const s = a.slice(0, 400);
+  const t = b.slice(0, 400);
+  if (s === t) return 0;
+  if (s.length === 0) return t.length;
+  if (t.length === 0) return s.length;
+  let prev = Array.from({ length: t.length + 1 }, (_, i) => i);
+  let curr = new Array<number>(t.length + 1);
+  for (let i = 1; i <= s.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= t.length; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[t.length];
+}
+
+async function runWeeklyMetricsRollup(): Promise<Record<string, unknown>> {
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
+    const { data: rows, error } = await supabase
+      .from("ai_reply_examples")
+      .select("ai_draft, sent_reply, was_ai_modified")
+      .eq("entry_source", "line_reply")
+      .gte("created_at", sevenDaysAgo.toISOString())
+      .not("sent_reply", "is", null)
+      .limit(2000);
+    if (error) throw new Error(error.message);
+
+    const all = (rows ?? []) as Array<{ ai_draft: string | null; sent_reply: string | null; was_ai_modified: boolean | null }>;
+    // AI案が存在した返信のみが unmodified_rate / edit distance の母集団（手書きは別カウント）
+    const withDraft = all.filter((r) => (r.ai_draft ?? "").trim().length > 0);
+    const handwritten = all.length - withDraft.length;
+    const unmodified = withDraft.filter((r) => !r.was_ai_modified).length;
+    // 未修正=距離0 も平均に含める（母集団を固定し週ごとの比較を可能にする）
+    const totalDistance = withDraft
+      .filter((r) => r.was_ai_modified)
+      .reduce((s, r) => s + levenshtein(r.ai_draft ?? "", r.sent_reply ?? ""), 0);
+    const meanEditDistance = withDraft.length > 0 ? Math.round((totalDistance / withDraft.length) * 10) / 10 : null;
+    const unmodifiedRate = withDraft.length > 0 ? Math.round((unmodified / withDraft.length) * 1000) / 1000 : null;
+
+    const weekStart = sevenDaysAgo.toISOString().slice(0, 10);
+    const { error: upsertErr } = await supabase.from("weekly_learning_metrics").upsert({
+      week_start: weekStart,
+      total_replies: all.length,
+      ai_draft_replies: withDraft.length,
+      handwritten_count: handwritten,
+      unmodified_count: unmodified,
+      unmodified_rate: unmodifiedRate,
+      mean_edit_distance: meanEditDistance,
+    }, { onConflict: "week_start" });
+    if (upsertErr) throw new Error(upsertErr.message);
+
+    console.log(`[weekly-learning] metrics rollup: week=${weekStart} total=${all.length} unmodified_rate=${unmodifiedRate} mean_edit=${meanEditDistance}`);
+    return { weekStart, totalReplies: all.length, aiDraftReplies: withDraft.length, unmodifiedRate, meanEditDistance };
+  } catch (e) {
+    console.error("[weekly-learning] metrics rollup失敗:", e);
+    return { rollupError: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 // ── chunk=2: hypothesis × confirmed 矛盾チェック ─────────────────────────────
@@ -714,6 +795,25 @@ async function runChunk3(): Promise<Record<string, unknown>> {
     autoRejected += ids.length;
   }
 
+  // Stage A (FIX Fable5 #3): never-applied backlog cull —
+  // 45日以上一度も適用されなかった仮説は importance に関係なく却下する。
+  // 検索レイヤーが45日拾わなかった仮説が今後適用される見込みは薄く、
+  // 残すと毎週の dedup・矛盾チェックのコストだけを消費し続ける。
+  // ID列挙を経由せずフィルタ付きUPDATEで一括処理（対象は数千件規模になりうる）。
+  const cullCutoff = new Date(Date.now() - NEVER_APPLIED_CULL_DAYS * 86400000).toISOString();
+  const { data: culledRows, error: cullErr } = await supabase
+    .from("ai_reply_knowledge")
+    .update({ hypothesis_status: "rejected", rejection_reason: "auto_never_applied_45d" })
+    .eq("hypothesis_status", "hypothesis")
+    .eq("apply_count", 0)
+    .lt("created_at", cullCutoff)
+    .select("id");
+  if (cullErr) {
+    console.error("[weekly-learning] Stage A never-applied cull失敗:", cullErr.message);
+  } else {
+    autoRejected += (culledRows ?? []).length;
+  }
+
   // Stage A: 自動却下（content短すぎ ≤ 20文字）
   const { data: shortContent } = await supabase
     .from("ai_reply_knowledge")
@@ -734,11 +834,14 @@ async function runChunk3(): Promise<Record<string, unknown>> {
   }
 
   // Stage B: 自動昇格（apply_count≥5 + correct_rate≥70%）
-  const { data: stageBPromote } = await supabase
-    .from("ai_reply_knowledge")
-    .select("id, apply_count, correct_count, wrong_count")
-    .eq("hypothesis_status", "hypothesis")
-    .gte("apply_count", 5);
+  // FIX(Fable5 #3): AUTO_PROMOTE_ENABLED=false の間は昇格を停止（60%正答率問題の診断待ち）
+  const { data: stageBPromote } = AUTO_PROMOTE_ENABLED
+    ? await supabase
+        .from("ai_reply_knowledge")
+        .select("id, apply_count, correct_count, wrong_count")
+        .eq("hypothesis_status", "hypothesis")
+        .gte("apply_count", 5)
+    : { data: null };
 
   if (stageBPromote) {
     const promoteIds = stageBPromote
@@ -836,7 +939,8 @@ async function runChunk3(): Promise<Record<string, unknown>> {
         (r.wrong_count ?? 0) / Math.max(r.apply_count ?? 1, 1) >= 0.7
       )
       .map((r: { id: string }) => r.id);
-    if (rescuePromoteIds.length > 0) {
+    // FIX(Fable5 #3): 昇格側も AUTO_PROMOTE_ENABLED で停止（却下側は従来通り動かす）
+    if (AUTO_PROMOTE_ENABLED && rescuePromoteIds.length > 0) {
       await supabase
         .from("ai_reply_knowledge")
         .update({ hypothesis_status: "confirmed", promoted_by: "weekly_rescue_eval" })
@@ -1107,7 +1211,9 @@ export async function POST(req: NextRequest) {
     let result: Record<string, unknown>;
 
     if (chunk === 1) {
-      result = await runChunk1(chunk);
+      // FIX(Fable5 #3): 週次スコアボードを先に記録（学習処理の成否に関わらず毎週必ず残す）
+      const rollup = await runWeeklyMetricsRollup();
+      result = { ...(await runChunk1(chunk)), rollup };
     } else if (chunk === 2) {
       result = await runChunk2();
     } else if (chunk === 3) {

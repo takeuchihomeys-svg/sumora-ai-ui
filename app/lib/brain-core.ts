@@ -1,14 +1,38 @@
-import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 
-export const maxDuration = 300;
+// ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
+// これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
+// 線引きルールのヒューリスティック等が乖離していた。本モジュールが唯一の実装。
+//
+// 呼び出し元:
+//   - line-webhook: 顧客メッセージ受信時（suggested_aix_meta を null に消すのと同じ場所で
+//     after() から analyzeAndSaveBrainMeta を fire-and-forget 起動 = イベント駆動再計算）
+//   - cron/brain-sweep: webhook の分析が失敗した会話を拾うバックストップ（5分毎）
+//   - brain/list は純粋な read のみ（Haiku は一切呼ばない）
 
 const HAIKU = "claude-haiku-4-5-20251001";
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000 });
 
-const SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost"];
+// Statuses that indicate a closed/inactive conversation — excluded from brain analysis
+export const BRAIN_SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost"];
 
+// Conversations updated within this window are flagged as urgent
+export const URGENT_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+export type SuggestedAixMeta = {
+  action: string;
+  note: string;
+  source: string;
+  enforcement_level: "required" | "recommended";
+  closing_strategy?: string;
+  template_hint?: string;
+  next_steps?: string[];  // ["今日: 内覧日調整", "内覧後: 見積書送付", "来週: 申込プッシュ"]
+  reply_mode?: "aix" | "auto_reply";  // 'aix'=スタッフがAIXで手動対応 / 'auto_reply'=AI自動返信OK
+} | null;
+
+// Canonical mapping from AIX action key → staff guidance note
+// Keys must match AIX_ACTION_META keys in page.tsx
 const AIX_BRAIN_NOTES: Record<string, string> = {
   viewing_invite:          "内覧日程の候補を提示してください → AIX【内覧日調整】で日時を選択して送信してください",
   property_send:           "物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
@@ -56,11 +80,22 @@ const AIX_CAPABILITY_MAP = `
 - greeting_viewing: 内覧前後の挨拶メッセージを生成
 `.trim();
 
-async function analyzeConversation(
+/**
+ * Calls Claude Haiku with enriched context (last 15 messages, customer conditions,
+ * conversation status) and returns a SuggestedAixMeta to cache in conversations.
+ *
+ * `source` はこの分析の呼び出し経路（"brain" = イベント駆動/sweep）。
+ * 品質ゲートは自分自身の経路の採択率（SOURCE_ACCEPT_RATE:{action}:{source}）を読む。
+ * （旧実装は analysis_step1 という他コンポーネントのキーを読んでいたバグがあった）
+ */
+export async function analyzeConversation(
   conversationId: string,
+  isUrgent: boolean,
   convStatus: string | null,
   propertyCustomerId: string | null,
-): Promise<{ action: string; note: string; source: string; enforcement_level: string; closing_strategy?: string; template_hint?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply" } | null> {
+  source: string = "brain",
+): Promise<SuggestedAixMeta> {
+  // Fetch last 15 messages and customer conditions in parallel
   const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult] = await Promise.all([
     supabase
       .from("messages")
@@ -75,16 +110,18 @@ async function analyzeConversation(
           .eq("id", propertyCustomerId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
+    // Recent starred reply examples for this conversation (context for Haiku)
     supabase
       .from("ai_reply_examples")
-      .select("sent_reply")
+      .select("sent_reply, is_starred")
       .eq("conversation_id", conversationId)
       .eq("is_starred", true)
       .order("created_at", { ascending: false })
       .limit(3),
+    // Latest 2 checkpoints for long-conversation context
     supabase
       .from("conversation_checkpoints")
-      .select("checkpoint_index, summary, key_facts")
+      .select("checkpoint_index, summary, key_facts, conversation_stage")
       .eq("conversation_id", conversationId)
       .order("checkpoint_index", { ascending: false })
       .limit(2),
@@ -122,34 +159,36 @@ async function analyzeConversation(
       .like("category", "AIX%")
       .order("win_rate", { ascending: false })
       .limit(5),
-    // BOUNDARY rules: which triggers must be escalated to AIX vs auto-reply
+    // 線引きルール: BOUNDARY-* rules that define when to use AIX vs auto-reply
     supabase
       .from("ai_prompt_rules")
-      .select("rule_text, rule_key, priority")
-      .eq("is_active", true)
+      .select("rule_key, action_type, rule_text")
       .like("rule_key", "BOUNDARY-%")
+      .eq("is_active", true)
       .order("priority", { ascending: false })
       .limit(15),
     supabase
       .from("trigger_action_rules")
-      .select("keyword, action_type, confidence")
+      .select("keyword, action_type, rule_text")
       .like("keyword", "BOUNDARY%")
-      .order("confidence", { ascending: false })
+      .gte("confidence", 0.5)
       .limit(10),
   ]);
 
-  const messages = msgResult.data;
-  if (!messages || messages.length === 0) return null;
+  const { data: messages, error } = msgResult;
+  if (error || !messages || messages.length === 0) return null;
 
-  const history = [...messages]
+  // Reverse so the history reads oldest → newest
+  const history = (messages as Array<{ sender: string; text: string | null; created_at: string }>)
     .reverse()
-    .map((m: { sender: string; text: string | null }) => {
-      const label = m.sender === "ai" ? "[AI自動返信]" : m.sender === "staff" ? "[スタッフ/AIX]" : "[顧客]";
-      return `${label} ${m.text ?? "（画像/添付）"}`;
+    .map((m) => {
+      const senderLabel = m.sender === 'ai' ? '[AI自動返信]' : m.sender === 'staff' ? '[スタッフ/AIX]' : '[顧客]';
+      return `${senderLabel} ${m.text ?? "（画像/添付）"}`;
     })
     .join("\n");
 
-  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null } | null;
+  // Build customer conditions context
+  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null } | null;
   const pc = (pcResult.data ?? null) as PC;
   const condParts: string[] = [];
   if (pc?.desired_area) condParts.push(`エリア: ${pc.desired_area}`);
@@ -158,18 +197,21 @@ async function analyzeConversation(
   if (pc?.move_in_time) condParts.push(`入居: ${pc.move_in_time}`);
   if (pc?.preferences) condParts.push(`希望: ${pc.preferences}`);
   const condText = condParts.length > 0 ? `\n顧客条件: ${condParts.join(" / ")}` : "";
+
   const statusMeaning = convStatus && STATUS_MEANING[convStatus] ? STATUS_MEANING[convStatus] : (convStatus ?? "");
   const statusText = convStatus ? `\n現在のステータス: ${statusMeaning}` : "";
 
-  const examples = (examplesResult.data ?? []) as Array<{ sent_reply: string | null }>;
+  // Recent starred examples (good replies) for this customer
+  const examples = (examplesResult.data ?? []) as Array<{ sent_reply: string | null; is_starred: boolean | null }>;
   const examplesText = examples.length > 0
     ? `\n過去のスタッフ優良返信例:\n${examples.map((e) => `- ${e.sent_reply ?? ""}`).join("\n")}`
     : "";
 
-  type Checkpoint = { checkpoint_index: number; summary: string | null; key_facts: string | null };
-  const checkpoints = ((checkpointsResult.data ?? []) as Checkpoint[]).reverse();
+  // Checkpoint summaries for long-conversation context (セーブポイント)
+  type Checkpoint = { checkpoint_index: number; summary: string | null; key_facts: string | null; conversation_stage: string | null };
+  const checkpoints = ((checkpointsResult.data ?? []) as Checkpoint[]).reverse(); // oldest first
   const checkpointText = checkpoints.length > 0
-    ? `\n【過去の会話まとめ】\n${checkpoints.map((cp) => `■ ブロック${cp.checkpoint_index}: ${cp.summary ?? ""}`).join("\n")}`
+    ? `\n【過去の会話まとめ（セーブポイント）】\n${checkpoints.map((cp) => `■ ブロック${cp.checkpoint_index}: ${cp.summary ?? ""}${cp.key_facts ? ` / ${cp.key_facts}` : ""}`).join("\n")}`
     : "";
 
   // Sent properties — what has already been proposed to this customer
@@ -198,19 +240,16 @@ async function analyzeConversation(
     ? `\n【高成約率テンプレート（参考）】\n${topTemplates.map((t) => `- ${t.category}: ${t.label} (成約率: ${((t.win_rate ?? 0) * 100).toFixed(0)}%, ${t.use_count ?? 0}回使用)`).join("\n")}`
     : "";
 
-  // BOUNDARY rules — determines when AIX escalation is required vs auto-reply allowed
-  type BoundaryRule = { rule_text: string; rule_key: string; priority: number };
-  type BoundaryTrigger = { keyword: string; action_type: string; confidence: number };
-  const boundaryPromptRules = (boundaryPromptRulesResult.data ?? []) as BoundaryRule[];
-  const boundaryTriggerRules = (boundaryTriggerRulesResult.data ?? []) as BoundaryTrigger[];
-  const boundaryLines: string[] = [
-    ...boundaryPromptRules.map((r) =>
-      r.rule_key.endsWith("-gr") ? `- ${r.rule_text} → 自動返信禁止` : `- ${r.rule_text} → AIX: ${r.rule_key}`
-    ),
-    ...boundaryTriggerRules.map((t) => `- ${t.keyword} → AIX: ${t.action_type}`),
-  ];
-  const boundaryText = boundaryLines.length > 0
-    ? `\n【境界ルール（AIXエスカレーション条件）】\n${boundaryLines.join("\n")}`
+  // Boundary rules — when AIX is required vs auto-reply is allowed
+  type BoundaryRule = { rule_key?: string; keyword?: string; action_type: string | null; rule_text: string };
+  const boundaryRulesFromPrompts = (boundaryPromptRulesResult.data ?? []) as BoundaryRule[];
+  const boundaryRulesFromTrigger = (boundaryTriggerRulesResult.data ?? []) as BoundaryRule[];
+  const allBoundaryRules = [...boundaryRulesFromPrompts, ...boundaryRulesFromTrigger];
+  const boundaryText = allBoundaryRules.length > 0
+    ? `\n【線引きルール（AIX必須 vs 自動返信OK）】\n${allBoundaryRules.map((r) => {
+        const aix = r.action_type && r.action_type !== 'generate_reply' ? `→ AIX: ${r.action_type}` : '→ 自動返信禁止';
+        return `- ${r.rule_text} ${aix}`;
+      }).join("\n")}`
     : "";
 
   const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${promptRulesText}${knowledgeText}${boundaryText}${examplesText}${checkpointText}${sentPropsText}${templatesText}
@@ -221,7 +260,7 @@ ${AIX_CAPABILITY_MAP}
 ${history}
 
 回答形式（JSONのみ・説明文不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/property_recommendation/meeting_place/greeting_viewing/null）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "このお客さんに合うテンプレートのトーン・スタイルのヒント（20字以内、例：丁寧語・プッシュ弱め）", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2（次回）: 具体的アクション", "Step3（その次）: 具体的アクション"], "reply_mode": "aix or auto_reply（境界ルールに該当する場合はaix、そうでなければauto_reply）"}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/property_recommendation/meeting_place/greeting_viewing/null）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で（例：8/16内覧後に割引見積を再提示し申込へ誘導する）", "template_hint": "このお客さんに合うテンプレートのトーン・スタイルのヒント（20字以内、例：丁寧語・プッシュ弱め）", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2（次回）: 具体的アクション", "Step3（その次）: 具体的アクション"], "reply_mode": "aix or auto_reply（線引きルールに該当する場合はaix・AIXが存在しない一般返信はauto_reply）"}`;
 
   try {
     const response = await client.messages.create({
@@ -236,6 +275,7 @@ ${history}
 
     const parsed = JSON.parse(jsonMatch[0]) as {
       action?: string;
+      reason?: string;
       aix?: string | null;
       closing_strategy?: string;
       template_hint?: string;
@@ -243,13 +283,17 @@ ${history}
       reply_mode?: "aix" | "auto_reply";
     };
 
+    // Use a canonical action key from AIX_BRAIN_NOTES if Haiku returned one we recognise.
+    // If the aix value is unknown or null, fall back to empty string so the row still gets saved.
     let finalAix = parsed.aix && AIX_BRAIN_NOTES[parsed.aix] ? parsed.aix : null;
-    // Quality gate: suppress AIX suggestions with < 30% acceptance rate over 10+ samples
+    // Quality gate: suppress AIX suggestions with < 30% acceptance rate over 10+ samples.
+    // FIX(Fable5 #3): 自経路の採択率キー（:brain 等）を読む。旧実装は :analysis_step1 固定で
+    // 他コンポーネントの統計をゲートに使っており、脳の自己修正が一度も機能していなかった。
     if (finalAix) {
       const { data: rateData } = await supabase
         .from("trigger_action_rules")
         .select("confidence, total_occurrence")
-        .eq("keyword", `SOURCE_ACCEPT_RATE:${finalAix}:analysis_step1`)
+        .eq("keyword", `SOURCE_ACCEPT_RATE:${finalAix}:${source}`)
         .eq("action_type", finalAix)
         .maybeSingle();
       if (rateData) {
@@ -261,77 +305,48 @@ ${history}
     return {
       action: finalAix ?? "",
       note: finalAix ? AIX_BRAIN_NOTES[finalAix] : (parsed.action ?? ""),
-      source: "brain_weekly",
-      enforcement_level: "recommended",
+      source,
+      enforcement_level: isUrgent ? "required" : "recommended",
       closing_strategy: parsed.closing_strategy || undefined,
       template_hint: parsed.template_hint || undefined,
       next_steps: Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
       reply_mode: (parsed.reply_mode === "aix" || parsed.reply_mode === "auto_reply") ? parsed.reply_mode : undefined,
     };
-  } catch {
+  } catch (e) {
+    console.warn(`[brain-core] Haiku analysis failed: conv=${conversationId}`, e instanceof Error ? e.message : e);
     return null;
   }
 }
 
-// Process an array of items concurrently with a max concurrency limit
-async function withConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = [];
-  let i = 0;
-  async function worker() {
-    while (i < items.length) {
-      const idx = i++;
-      results[idx] = await fn(items[idx]);
-    }
-  }
-  await Promise.all(Array.from({ length: limit }, worker));
-  return results;
-}
-
-export async function GET() {
-  // Fetch active non-要対応 conversations (last_sender = 'staff' or 'ai')
-  const { data: conversations, error } = await supabase
+/**
+ * 会話1件の脳分析を実行して conversations.suggested_aix_meta + brain_analyzed_at を書き込む。
+ * webhook（顧客メッセージ受信直後）と brain-sweep cron（バックストップ）から呼ばれる。
+ * 分析対象外（クローズ済み等）や分析失敗時は何も書かない（meta は null のまま → sweep が再試行）。
+ */
+export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<boolean> {
+  const { data: conv } = await supabase
     .from("conversations")
     .select("id, status, updated_at, property_customer_id")
-    .neq("last_sender", "customer")
-    .not("status", "in", `(${SKIP_STATUSES.join(",")})`)
-    .not("status", "is", null)
-    .order("updated_at", { ascending: false })
-    .limit(100);
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (!conv) return false;
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const status = (conv.status as string | null) ?? null;
+  if (status && BRAIN_SKIP_STATUSES.includes(status)) return false;
 
-  const rows = (conversations ?? []) as Array<{
-    id: string;
-    status: string | null;
-    updated_at: string;
-    property_customer_id: string | null;
-  }>;
+  const isUrgent = Date.now() - new Date(conv.updated_at as string).getTime() <= URGENT_WINDOW_MS;
+  const meta = await analyzeConversation(
+    conversationId,
+    isUrgent,
+    status,
+    (conv.property_customer_id as string | null) ?? null,
+    "brain",
+  );
+  if (!meta) return false;
 
-  if (rows.length === 0) {
-    return NextResponse.json({ processed: 0, skipped: 0 });
-  }
-
-  let processed = 0;
-  let failed = 0;
-
-  await withConcurrency(rows, 5, async (conv) => {
-    const meta = await analyzeConversation(conv.id, conv.status, conv.property_customer_id);
-    if (!meta) { failed++; return; }
-
-    const { error: upsertErr } = await supabase
-      .from("conversations")
-      .update({ suggested_aix_meta: meta })
-      .eq("id", conv.id);
-
-    if (!upsertErr) processed++;
-    else failed++;
-  });
-
-  return NextResponse.json({ processed, failed, total: rows.length });
+  const { error } = await supabase
+    .from("conversations")
+    .update({ suggested_aix_meta: meta, brain_analyzed_at: new Date().toISOString() })
+    .eq("id", conversationId);
+  return !error;
 }

@@ -1878,6 +1878,22 @@ CREATE INDEX IF NOT EXISTS idx_reply_engagement_conv ON reply_engagement_signals
 CREATE INDEX IF NOT EXISTS idx_reply_engagement_type ON reply_engagement_signals(signal_type);
 ALTER TABLE reply_engagement_signals DISABLE ROW LEVEL SECURITY;
 
+-- ── weekly_learning_metrics: 週次学習スコアボード（Fable5 Fix3: 2026-08-14追加）──
+-- weekly-learning chunk=1 が毎週 upsert する。「今週の学習は効いたのか？」に答えるボトムラインKPI。
+-- unmodified_rate = AI案がそのまま送信された率 / mean_edit_distance = AI案→送信文の平均文字編集距離
+CREATE TABLE IF NOT EXISTS weekly_learning_metrics (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  week_start DATE NOT NULL UNIQUE,
+  total_replies INTEGER NOT NULL DEFAULT 0,
+  ai_draft_replies INTEGER NOT NULL DEFAULT 0,
+  handwritten_count INTEGER NOT NULL DEFAULT 0,
+  unmodified_count INTEGER NOT NULL DEFAULT 0,
+  unmodified_rate NUMERIC,
+  mean_edit_distance NUMERIC,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE weekly_learning_metrics DISABLE ROW LEVEL SECURITY;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
