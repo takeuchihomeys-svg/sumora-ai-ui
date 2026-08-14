@@ -501,6 +501,12 @@ export const MAX_CHECK_ITERATIONS = 2; // check1 + (接地修正 + check2) = 計
 const REVISION_MS = 3500;  // 修正Haikuのタイムアウト
 const RECHECK_MS = 3000;   // 再チェック余裕分（3パス並列2.5s + マージン）
 
+// AIX_BOUNDARY_PROMISE 衝突対策（決定的・約0ms）:
+// 修正プロンプト絶対ルール5の定型句「確認して改めてご連絡いたします」等が修正で新規挿入されると、
+// AIX【確認します】との二重宣言（AIX_BOUNDARY_PROMISE = block）を warning 修正が生み出してしまう。
+// 「元ドラフトに無く修正後に出現した」場合のみ修正を破棄する（元から含まれる場合は check1 で検査済み）。
+const CONFIRM_PROMISE_RE = /確認[^\n。]{0,30}ご連絡/;
+
 export interface RevisionLoopResult {
   finalDraft: string;      // テキストボックスに入れるベスト草稿
   finalCheck: CheckResult; // finalDraft に対応するチェック結果（revision_count を必ず含む）
@@ -508,7 +514,11 @@ export interface RevisionLoopResult {
 
 // 動作:
 //   check1 → 指摘0件: そのまま返す
-//         → warningのみ: 接地修正1回・再チェックなし（旧runAutoRevision互換の接地版）
+//         → warningのみ: 予算ガード → 接地修正1回 → 決定的プリスキャン → フル再チェック。
+//           「全3パス完走・block 0件・warning非悪化」を全て満たした修正版のみ採用し、
+//           finalCheck も recheck に差し替える（checked_text_hash / evidence を finalDraft と整合させる）。
+//           棄却・失敗・予算不足時は元ドラフト + check1 にフォールバック（元ドラフトは block 0件で
+//           送信可能なため revision_exhausted は立てない）。未検証テキストは絶対に finalDraft にしない。
 //         → blockあり: 接地修正 → 再チェック。block 0件になった修正版のみ「クリーン」として採用。
 //           block減少なら修正版を revision_exhausted 付きで採用。改善なし/修正不能/再チェック
 //           未完走なら元ドラフト + check1 を revision_exhausted 付きで返す（強制置換はしない）。
@@ -529,14 +539,52 @@ export async function runFinalCheckWithRevision(
 
   const blocks1 = check1.issues.filter((i) => i.severity === "block");
 
-  // ── warningのみ: 接地修正1回・再チェックなし（blockが無いので送信は元々止まらない）──
+  // ── warningのみ: 接地修正1回 + フル再チェック（未検証テキストは絶対に finalDraft にしない）──
+  // blockが無いので送信は元々止まらない。よって迷ったら常に「検証済みベースラインの元ドラフト」側に倒す。
   if (blocks1.length === 0) {
-    const revised = await runGroundedRevision(draft, check1.issues, ctx);
-    if (revised) {
-      check1.revised_text = revised;
-      check1.revision_count = 1;
-      return { finalDraft: revised, finalCheck: check1 };
+    // (1) 予算ガード: 残り時間が 修正+再チェック に満たなければ修正自体をスキップ
+    //     （warningは送信を止めないので、未検証の修正版を出すより修正しない方が安全）
+    if (budgetMs - (Date.now() - started) < REVISION_MS + RECHECK_MS) {
+      return { finalDraft: draft, finalCheck: check1 };
     }
+
+    // (2) 接地修正（失敗/ガード違反は null = fail-open）
+    const revised = await runGroundedRevision(draft, check1.issues, ctx);
+    if (!revised) return { finalDraft: draft, finalCheck: check1 };
+
+    // (3) 決定的プリスキャン（約0ms）: 禁止語彙、および修正で新規挿入された
+    //     「確認して…ご連絡」系の句（AIX_BOUNDARY_PROMISE と正面衝突）を検出したら即破棄
+    if (BANNED_WORDS_DETERMINISTIC.some((w) => revised.includes(w))) {
+      return { finalDraft: draft, finalCheck: check1 };
+    }
+    if (CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(draft)) {
+      return { finalDraft: draft, finalCheck: check1 };
+    }
+
+    // (4) フル再チェック（check1 + recheck = 計2チェックで MAX_CHECK_ITERATIONS=2 と整合）
+    const recheck = await runFinalCheck(revised, ctx);
+    checkIterations++;
+
+    // (5) 採用条件は3つのAND:
+    //     a. 全3パスが完走（warningは全パス由来のため、blockを出したパス限定では不十分）
+    //     b. block 0件（warning修正がblock級違反を新規挿入していないこと）
+    //     c. warning件数が check1 以下（非悪化）
+    const allPasses: CheckPass[] = ["rule_check", "anomaly_scan", "context_check"];
+    const fullyVerified = allPasses.every((p) => recheck.passes_completed.includes(p));
+    const recheckHasBlock = recheck.issues.some((i) => i.severity === "block");
+    const warnings1 = check1.issues.filter((i) => i.severity === "warning").length;
+    const warningsR = recheck.issues.filter((i) => i.severity === "warning").length;
+
+    if (fullyVerified && !recheckHasBlock && warningsR <= warnings1) {
+      // 採用: finalCheck も recheck に差し替える（checked_text_hash・evidence・ok が
+      // finalDraft=修正版と整合し、送信時ハッシュ再利用の穴と監査不整合を同時に塞ぐ）
+      recheck.revised_text = revised;
+      recheck.revision_count = 1;
+      return { finalDraft: revised, finalCheck: recheck };
+    }
+
+    // 棄却: 元ドラフト + check1（revision_count=0）にフォールバック。
+    // recheckでblockが出ても元ドラフトは block 0件で送信可能なため revision_exhausted は立てない
     return { finalDraft: draft, finalCheck: check1 };
   }
 

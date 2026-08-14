@@ -15,7 +15,8 @@ export type AixActionType =
   | "property_check_result"
   | "meeting_place"
   | "acknowledge_check"
-  | "followup_revive";
+  | "followup_revive"
+  | "property_search";
 
 interface LinkedCustomer {
   id: string;
@@ -310,6 +311,10 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
     rules: ["反応が途絶えたお客様への追客メッセージ", "興味を再燃させる一言"],
     template: "[名前]その後いかがでしょうか！！\nお部屋お探しのお手伝いをさせて頂きます！！",
   },
+  property_search: {
+    rules: ["お客様の希望条件をもとに物件を探す旨を伝える", "探した結果は後ほど送付する旨を添える"],
+    template: "[名前]かしこまりました！！\nご希望条件に合うお部屋をお探しいたします！！\n少々お待ちくださいませ！！",
+  },
 };
 
 const CONFIG: Record<
@@ -407,6 +412,15 @@ const CONFIG: Record<
     description: "反応が途絶えたお客様への追客メッセージをAIが生成します。",
     inputLabel: "追記メモ（任意）",
     inputPlaceholder: "例：先日送った物件について、新着物件あり",
+  },
+  property_search: {
+    title: "物件を探す",
+    emoji: "🔍",
+    requiresImage: false,
+    imageLabel: "",
+    description: "お客様の希望条件をもとに物件を探し、結果をLINEでお伝えします。",
+    inputLabel: "補足メモ（任意）",
+    inputPlaceholder: "例：予算重視、駅近優先...",
   },
 };
 

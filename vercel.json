@@ -195,6 +195,10 @@
     {
       "path": "/api/cron/brain-sweep",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/analyze-applying",
+      "schedule": "30 12 * * 0"
     }
   ]
 }

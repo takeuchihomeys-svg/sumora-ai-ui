@@ -296,25 +296,6 @@
       });
   }
 
-  // ── 脳から検索条件パラメータを取得 ─────────────────────────
-  // /api/property-conditions から検索条件を直接取得する。
-  // ※ property-customers API は CORS ヘッダーが無く content script から呼べないため使わない
-  async function fetchPropertySearchParams(propertyCustomerId) {
-    if (!propertyCustomerId) return null;
-    try {
-      var res = await fetch(
-        "https://sumora-ai-ui.vercel.app/api/property-conditions" +
-          "?property_customer_id=" + encodeURIComponent(String(propertyCustomerId))
-      );
-      if (!res.ok) return null;
-      var data = await res.json();
-      return (data && data.conditions) || null;
-    } catch (e) {
-      console.warn("[score-overlay] fetchPropertySearchParams失敗:", e);
-      return null;
-    }
-  }
-
   // ── 検索フォームにお客さんの条件を自動入力（リアプロ・itandi・REINS対応） ─
   function autoFillSearchForm(conditions) {
     if (!conditions) return;
@@ -594,10 +575,7 @@
           sentFetching       = false;
           evalCache          = {};
           fetchSentProperties(storedConditions.property_customer_id);
-          // 検索条件を自動入力（フォームが存在する場合のみ）
-          fetchPropertySearchParams(storedConditions.property_customer_id).then(function (conds) {
-            if (conds) autoFillSearchForm(conds);
-          });
+          autoFillSearchForm(storedConditions);
         }
         showConditionBar();
         runScoring();
@@ -633,10 +611,7 @@
           sentFetching       = false;
           evalCache          = {};
           fetchSentProperties(storedConditions.property_customer_id);
-          // 検索条件を自動入力（フォームが存在する場合のみ）
-          fetchPropertySearchParams(storedConditions.property_customer_id).then(function (conds) {
-            if (conds) autoFillSearchForm(conds);
-          });
+          autoFillSearchForm(storedConditions);
         }
         showConditionBar();
         setTimeout(runScoring, 500);
