@@ -306,6 +306,8 @@ async function run() {
           // ※ generate-reply 側も成功時に ai_draft を保存するが、同一クリーンテキストの冪等な上書きなので二重化の実害なし。
           //    max_tokens 時は generate-reply は保存スキップ → 本cronが後から __TRUNCATED__ センチネルを書くため整合する。
           conversationId: convId,
+          // reply_modeゲート有効化（brain判定がaixなら自動ドラフトを生成しない）
+          enforceReplyModeGate: true,
           // 本文末尾に <<<STOP_REASON:xxx>>> トレーラーを付けてもらう（尻切れドラフトの品質ゲート用）
           includeStopReason: true,
         }),
@@ -325,7 +327,7 @@ async function run() {
 
       const reader = draftRes.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = "", metaDone = false, fullText = "", metaFailed = false;
+      let buffer = "", metaDone = false, fullText = "", metaFailed = false, aixGateSkipped = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -335,9 +337,18 @@ async function run() {
           const nl = buffer.indexOf("\n");
           if (nl >= 0) {
             const metaLine = buffer.slice(0, nl);
-            let metaOk = false;
-            try { metaOk = (JSON.parse(metaLine) as { ok: boolean }).ok === true; } catch { /* パース失敗 → metaOk=false */ }
+            let metaOk = false, metaReason = "";
+            try {
+              const m = JSON.parse(metaLine) as { ok: boolean; reason?: string };
+              metaOk = m.ok === true;
+              metaReason = m.reason ?? "";
+            } catch { /* パース失敗 → metaOk=false */ }
             if (!metaOk) {
+              if (metaReason === "aix_required") {
+                // ゲート側で ai_draft="[AIX誘導中]" + draft_pending_at=null 保存済み → 失敗カウントせずスキップ
+                aixGateSkipped = true;
+                break;
+              }
               console.error("[generate-pending-drafts] generate-reply メタ行NG（ok:false or JSONパース失敗）:", convId, "meta:", metaLine.slice(0, 200));
               metaFailed = true;
               break;
@@ -351,6 +362,13 @@ async function run() {
       }
       // マルチバイト文字がチャンク境界で分断された場合の残りをフラッシュ（日本語末尾文字の欠け防止）
       fullText += decoder.decode();
+
+      // reply_modeゲート発火: 失敗経路（draft_fail_countインクリメント）に入れず正常スキップ扱い
+      if (aixGateSkipped) {
+        console.log("[generate-pending-drafts] reply_mode=aix スキップ:", convId);
+        skipped++;
+        continue;
+      }
 
       if (metaFailed || !metaDone) {
         if (!metaFailed) console.error("[generate-pending-drafts] ストリームがメタ行なしで終了:", convId, "buffer:", buffer.slice(0, 200));

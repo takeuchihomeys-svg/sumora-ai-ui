@@ -1544,6 +1544,73 @@ ${rules.map((r, i) => `${i + 1}. ${r.rule_text}（${r.example_count}回確認済
   }
 }
 
+// ─── reply_mode ゲート（自動生成経路のみ・enforceReplyModeGate=true時に発火）───
+// brain-core が conversations.suggested_aix_meta.reply_mode="aix" を書いた会話は
+// AI自動返信禁止。ドラフト生成を中止し、スタッフにLINEグループ通知する。
+type AixGateMeta = { action?: string; note?: string; reply_mode?: string } | null;
+
+async function fetchReplyModeGate(
+  convId: string
+): Promise<{ meta: AixGateMeta; customerName: string } | null> {
+  const { data } = await supabase
+    .from("conversations")
+    .select("suggested_aix_meta, customer_name")
+    .eq("id", convId)
+    .single();
+  if (!data) return null;
+  return {
+    meta: (data.suggested_aix_meta ?? null) as AixGateMeta,
+    customerName: (data.customer_name as string) || "",
+  };
+}
+
+async function applyAixGateAndRespond(
+  convId: string,
+  meta: NonNullable<AixGateMeta>,
+  customerName: string
+): Promise<Response> {
+  // ai_draft IS NULL の場合のみ sentinel 保存（人間編集中は触らない）。
+  // .is("ai_draft", null) のアトミッククレームが通知の重複防止を兼ねる
+  // （bg-async と cron が同時に来ても通知は1回だけ）。
+  // draft_pending_at=null で cron の永久再試行も止まる。
+  const { data: claimed } = await supabase
+    .from("conversations")
+    .update({ ai_draft: "[AIX誘導中]", draft_pending_at: null, draft_attempted_at: null })
+    .eq("id", convId)
+    .is("ai_draft", null)
+    .select("id");
+
+  if (claimed?.length) {
+    const baseUrl =
+      process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
+      (process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+        : process.env.VERCEL_URL
+          ? `https://${process.env.VERCEL_URL}`
+          : "http://localhost:3000");
+    const lines = [`${customerName || "お客様"}さん AIXで対応して`];
+    if (meta.action) lines.push(`推奨アクション: ${meta.action}`);
+    if (meta.note) lines.push(`理由: ${meta.note}`);
+    // notify-group は line-webhook と同じスタッフグループ通知経路（LINE_STAFF_GROUP_ID / hanbancyo_settings）
+    await fetch(`${baseUrl}/api/notify-group`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: lines.join("\n") }),
+      signal: AbortSignal.timeout(5000),
+    }).catch((e) => console.warn("[generate-reply] aix-gate notify failed:", String(e)));
+  }
+
+  // ストリーミング呼び出し元のメタ行プロトコル互換（1行JSON+改行）
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      reason: "aix_required",
+      aix: { action: meta.action ?? null, note: meta.note ?? null },
+    }) + "\n",
+    { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } }
+  );
+}
+
 // ─── POST ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -1563,6 +1630,9 @@ export async function POST(req: NextRequest) {
   // includeStopReason=true（generate-pending-drafts の品質ゲート用）の場合のみ、
   // 本文の後に <<<STOP_REASON:xxx>>> トレーラーを付加する（UIからの通常呼び出しには影響しない）
   let includeStopReason = false;
+  // reply_modeゲート: 自動生成経路（bg-async/cron/generate-draft-bg）のみtrueが渡される。
+  // brain(suggested_aix_meta.reply_mode)が"aix"なら自動ドラフト生成を中止する
+  let enforceReplyModeGate = false;
   // アクティブタスク（body指定 or DB自動補完）。property_check中の返信ガード等に使用
   let activeTaskTypes: string[] = [];
   // ─── テンプレート最適化モード（templateText 指定で有効化）───
@@ -1594,6 +1664,9 @@ export async function POST(req: NextRequest) {
       screenshotMediaType?: string;
       activeTaskTypes?: string[];
       conversationId?: string;
+      // reply_modeゲート: 自動生成経路（bg-async/cron/generate-draft-bg）のみtrueを渡す。
+      // brain(suggested_aix_meta.reply_mode)が"aix"なら自動ドラフト生成を中止する
+      enforceReplyModeGate?: boolean;
       includeStopReason?: boolean;
       propertyStatus?: PropertyStatus;
       // ─── テンプレート最適化モード用フィールド ───
@@ -1613,6 +1686,7 @@ export async function POST(req: NextRequest) {
     state = body.state;
     conversationId = body.conversationId || "";
     includeStopReason = body.includeStopReason === true;
+    enforceReplyModeGate = body.enforceReplyModeGate === true;
     customerName = body.customerName || "";
     recentMessages = body.recentMessages || [];
     // LINE表示名より会話でスタッフが実際に使った呼び名を優先
@@ -1675,6 +1749,17 @@ export async function POST(req: NextRequest) {
   if (isTemplateOptimize) {
     preprocessedTemplate = applyVacatingDateToTemplate(_sanitizeSurrogates(templateText), vacatingDate);
     preprocessedTemplate = applyGreetingSwap(preprocessedTemplate, staffMessagedToday);
+  }
+
+  // ─── reply_modeゲート チェックポイントA ───
+  // meta が既に "aix" ならAnthropic呼び出し前にゼロコストで中止（cron再試行時など）。
+  // null（未分析/webhookワイプ直後）はここでは素通しし、チェックポイントBで再確認する。
+  if (enforceReplyModeGate && conversationId && !isTemplateOptimize) {
+    const gate = await fetchReplyModeGate(conversationId);
+    if (gate?.meta?.reply_mode === "aix") {
+      console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(A):", conversationId);
+      return applyAixGateAndRespond(conversationId, gate.meta, gate.customerName);
+    }
   }
 
   // activeTaskTypes の自動補完（Cron等で body.activeTaskTypes が渡されない場合のサーバー側フォールバック）
@@ -2088,6 +2173,19 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       } catch { return undefined; }
     })();
     const genTemperature = emotionTemperature(analysisEmotion ?? resolvedSummaryJson?.emotion);
+
+    // ─── reply_modeゲート チェックポイントB（本命）───
+    // webhookは受信毎にsuggested_aix_metaをワイプ→brain再分析(Haiku 3〜10秒)するため、
+    // チェックポイントA時点ではmetaがnullのことが多い。Step1分析(最大45秒)完了後の
+    // このタイミングなら再投入済み。メイン生成(Sonnet)呼び出し前に最終確認する。
+    if (enforceReplyModeGate && conversationId && !isTemplateOptimize) {
+      const gateB = await fetchReplyModeGate(conversationId);
+      if (gateB?.meta?.reply_mode === "aix") {
+        console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(B):", conversationId);
+        return applyAixGateAndRespond(conversationId, gateB.meta, gateB.customerName);
+      }
+    }
+
     // テンプレート最適化モードは Claude Sonnet 5（temperature非対応のため感情temperatureは適用しない）
     const genStream = (isTemplateOptimize
       ? createTemplateOptimizeModel()

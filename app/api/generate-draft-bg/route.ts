@@ -109,6 +109,8 @@ export async function POST(req: NextRequest) {
         // （knowledge_apply_log 記録 → text_retention / deal_outcome フィードバック対象化）
         // ※ generate-reply 側も ai_draft を保存するが同一内容の冪等上書きのため二重化の実害なし
         conversationId: convId,
+        // reply_modeゲート有効化（brain判定がaixなら自動ドラフトを生成しない）
+        enforceReplyModeGate: true,
       }),
       signal: AbortSignal.timeout(90_000), // generate-reply Step1だけで最大45秒かかるため90秒必要
     });

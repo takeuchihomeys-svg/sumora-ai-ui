@@ -220,6 +220,8 @@ export async function POST(req: NextRequest) {
             // （knowledge_apply_log 記録 → text_retention / deal_outcome フィードバック対象化）
             // ※ generate-reply 側も ai_draft を保存するが同一内容の冪等上書きのため二重化の実害なし
             conversationId: convId,
+            // reply_modeゲート有効化（brain判定がaixなら自動ドラフトを生成しない）
+            enforceReplyModeGate: true,
           }),
         });
         clearTimeout(timeoutId);
@@ -260,8 +262,16 @@ export async function POST(req: NextRequest) {
             const nl = buffer.indexOf("\n");
             if (nl >= 0) {
               try {
-                const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean };
-                if (!meta.ok) { console.error("[bg-async] generate-reply meta.ok=false, convId:", convId); return; }
+                const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean; reason?: string };
+                if (!meta.ok) {
+                  if (meta.reason === "aix_required") {
+                    // ゲート側で ai_draft="[AIX誘導中]" + draft_pending_at=null 保存・スタッフ通知済み
+                    console.log("[bg-async] reply_mode=aix のため自動ドラフトスキップ, convId:", convId);
+                  } else {
+                    console.error("[bg-async] generate-reply meta.ok=false, convId:", convId);
+                  }
+                  return;
+                }
               } catch (parseErr) {
                 console.error("[bg-async] meta parse error:", String(parseErr), "buffer:", buffer.slice(0, 100), "convId:", convId);
                 return;
