@@ -104,15 +104,22 @@ export async function fetchPromptRules(
     const sections: string[] = [];
 
     // ── 永久ルール（卒業済み・絶対に漏れない）──
+    // BOUNDARY-* ルールは【線引き】プレフィックスを付けて final-check が AIX_BOUNDARY_DB として識別できるようにする
     if (permanentApplicable.length > 0) {
-      const permanentLines = permanentApplicable.map(r => `・${r.rule_text}`).join("\n");
+      const permanentLines = permanentApplicable.map(r => {
+        const prefix = r.rule_key.startsWith("BOUNDARY-") ? "【線引き】" : "";
+        return `・${prefix}${r.rule_text}`;
+      }).join("\n");
       sections.push(`【永久ルール（最上位・絶対厳守）】\n${permanentLines}`);
     }
 
     // FEEDBACK-* / IMPLEMENT-* 等を priority 降順で注入
     // HUMAN-* は is_active=false（RAGへ完全移行済み）のためここには現れない
     if (deduped.length > 0) {
-      const otherLines = deduped.map(r => `・${r.rule_text}`).join("\n");
+      const otherLines = deduped.map(r => {
+        const prefix = r.rule_key.startsWith("BOUNDARY-") ? "【線引き】" : "";
+        return `・${prefix}${r.rule_text}`;
+      }).join("\n");
       sections.push(`【AI学習ルール（参考）】\n${otherLines}`);
     }
     return "\n\n" + sections.join("\n\n");

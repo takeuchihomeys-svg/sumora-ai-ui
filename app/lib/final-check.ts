@@ -46,6 +46,10 @@ export interface FinalCheckContext {
   staffSourceText?: string;       // スタッフ由来ソース（AIX原文・希望条件等）
   checkpointFacts?: string;      // conversation_checkpoints 最新summary — 確認済み事実（最高権威）
   customerConditionsDb?: string; // property_customers のDB保存顧客条件
+  // v3 追加（Fable5 brain-vs-finalcheck監査 2026-08-14）
+  isAutoSend?: boolean;          // HIGH-1/2: 自動送信経路のみ true → 未完走時fail-closed / MISSED_QUESTION昇格
+  conversationStage?: string;    // MEDIUM-2: 現在の会話段階（例: "条件ヒアリング中"）
+  sentPropertiesCount?: number;  // MEDIUM-2: 送付済み物件数（0=未送付）
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -109,11 +113,22 @@ async function callHaiku(prompt: string, timeoutMs: number): Promise<RawIssue[]>
 }
 
 // ─── コンテキスト整形ヘルパー ───────────────────────────────────────────────
+// isAix / createdAt を使って履歴の精度向上（DOUBLE_DECLARATION・AIX区別・時刻ベースの重複検出）
+function jstTime(iso: string | undefined): string {
+  if (!iso) return "";
+  try {
+    return ` (${new Date(new Date(iso).getTime() + 9 * 3600000).toISOString().slice(11, 16)} JST)`;
+  } catch { return ""; }
+}
+
 function formatHistory(msgs: FinalCheckContext["recentMessages"], limit: number): string {
   if (!msgs || msgs.length === 0) return "（履歴なし）";
   return msgs
     .slice(-limit)
-    .map((m) => `${m.sender === "customer" ? "お客様" : "スタッフ"}: ${(m.text || "").slice(0, 300)}`)
+    .map((m) => {
+      const label = m.sender === "customer" ? "お客様" : (m.isAix ? "スタッフ[AIX]" : "スタッフ");
+      return `${label}${jstTime(m.createdAt)}: ${(m.text || "").slice(0, 300)}`;
+    })
     .join("\n");
 }
 
@@ -121,7 +136,10 @@ function formatStaffMessages(msgs: FinalCheckContext["recentMessages"], limit: n
   if (!msgs || msgs.length === 0) return "（なし）";
   const staff = msgs.filter((m) => m.sender === "staff").slice(-limit);
   if (staff.length === 0) return "（なし）";
-  return staff.map((m) => `スタッフ: ${(m.text || "").slice(0, 300)}`).join("\n");
+  return staff.map((m) => {
+    const label = m.isAix ? "スタッフ[AIX]" : "スタッフ";
+    return `${label}${jstTime(m.createdAt)}: ${(m.text || "").slice(0, 300)}`;
+  }).join("\n");
 }
 
 function nowJstString(): string {
@@ -148,7 +166,9 @@ code は次から選ぶこと:
 AIX_BOUNDARY_VIEWING（内覧日時の提示）/ AIX_BOUNDARY_ESTIMATE（見積送付文・金額内訳）/
 AIX_BOUNDARY_MEETING（住所・集合場所案内）/ AIX_BOUNDARY_PROPERTY（物件名・家賃・間取りの初出提示）/
 AIX_BOUNDARY_APPLICATION（申込確定文・書類リスト）/ AIX_BOUNDARY_MOVEIN（入居可能日・退去日の回答）/
-AIX_BOUNDARY_PROMISE（「確認してご連絡します」の二重宣言）/ BANNED_WORD（禁止語彙）/ RULE_VIOLATION（その他ルール違反）
+AIX_BOUNDARY_PROMISE（「確認してご連絡します」の二重宣言）/
+AIX_BOUNDARY_DB（[RULES]内の【線引き】マーク付きDBルールへの違反。返信文が制限事実を自ら回答している場合のみ。「確認してご連絡します」等の宣言のみの文は対象外）/
+BANNED_WORD（禁止語彙）/ RULE_VIOLATION（その他ルール違反）
 
 [RULES]
 ${(ctx.dbRules || "（DBルールなし — 上記の境界線・禁止語彙のみで照合）").slice(0, 8000)}
@@ -209,6 +229,9 @@ ${draft}
 
 // ─── Pass 3: バグ探し思考（文脈・網羅性 / context_check）──────────────────────
 function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): string {
+  const stageBlock = ctx.conversationStage
+    ? `[STAGE]\n現在段階: ${ctx.conversationStage}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${ctx.sentPropertiesCount}件` : ""}\n[/STAGE]`
+    : "";
   return `${ADVERSARIAL_PREAMBLE}
 
 顧客の最新メッセージと返信文を突き合わせ、以下を検査してください。
@@ -220,11 +243,16 @@ function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): string 
    （「ピックアップしてお送りします」の再宣言、同日2回目の挨拶、お礼の二重等）
 4. 時刻の妥当性：現在 ${nowJstString()} 。18時以降・営業時間外に「本日中に管理会社へ確認」等の
    実行不可能な約束をしていないか
+5. 段階の前倒し：[STAGE] の現在段階より先の段階の行動（物件を1件も送っていないのに内覧打診 /
+   条件ヒアリング未完了なのに申込プッシュ等）をしていないか。
+   ただし顧客側が先にその段階を要求している場合（顧客が「申し込みたい」と言っている場合等）は指摘しない
 
 code は次から選ぶこと:
 MISSED_QUESTION（質問の取りこぼし）/ STAGE_MISMATCH（段階ミスマッチ）/
-DOUBLE_DECLARATION（二重宣言・繰り返し）/ TIME_INVALID（実行不可能な時刻の約束）
+DOUBLE_DECLARATION（二重宣言・繰り返し）/ TIME_INVALID（実行不可能な時刻の約束）/
+STAGE_SKIP（段階の前倒し）
 
+${stageBlock}
 [CUSTOMER_MESSAGE]
 ${(ctx.lastCustomerMessage || "（不明）").slice(0, 1500)}
 [/CUSTOMER_MESSAGE]
@@ -240,9 +268,11 @@ ${draft}
 }
 
 // ─── severity判定: LLMは見つける・コードが裁く（決定的マップ）────────────────
-function assignSeverity(pass: CheckPass, code: string): CheckSeverity {
+// HIGH-2(Fable5): 自動送信時のみ MISSED_QUESTION を block に昇格（質問無視の自動送信を防ぐ）
+function assignSeverity(pass: CheckPass, code: string, isAutoSend = false): CheckSeverity {
   if (pass === "rule_check" && code.startsWith("AIX_BOUNDARY")) return "block";
   if (pass === "anomaly_scan" && (code === "FABRICATED_AMOUNT" || code === "FABRICATED_AVAILABILITY")) return "block";
+  if (isAutoSend && pass === "context_check" && code === "MISSED_QUESTION") return "block";
   return "warning";
 }
 
@@ -251,10 +281,32 @@ function normalizeForMatch(s: string): string {
   return s.replace(/\s+/g, "");
 }
 
-// ─── メイン: 3パス並列チェック ─────────────────────────────────────────────
+// HIGH-3(Fable5): 決定的禁止語彙スキャン（LLM前に実行・Haiku見逃しを排除）
+// evidenceは本文実在が保証されるのでL283の降格ガード対象外（ループ外で別処理）
+const BANNED_WORDS_DETERMINISTIC = ["スモラ", "名称未設定", "少々お待ちください", "**"];
+
+// ─── メイン: 決定的プリチェック + 3パス並列チェック ──────────────────────────
 // 絶対にthrowしない（全pass失敗でも issues=[] / passes_completed=[] の fail-open 結果を返す）
 export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Promise<CheckResult> {
   const started = Date.now();
+  const issues: CheckIssue[] = [];
+  const draftNorm = normalizeForMatch(draft);
+
+  // ── HIGH-3: 決定的禁止語彙スキャン（Haiku前・確実に検出）──
+  for (const word of BANNED_WORDS_DETERMINISTIC) {
+    if (draft.includes(word)) {
+      issues.push({
+        pass: "rule_check",
+        severity: "block",
+        code: "BANNED_WORD",
+        message: `禁止語彙「${word}」が含まれています`,
+        evidence: word,
+        suggestion: `「${word}」を削除してください`,
+      });
+    }
+  }
+
+  // ── 3パス並列Haikuチェック ──
   const passes: Array<{ pass: CheckPass; prompt: string }> = [
     { pass: "rule_check", prompt: buildRuleCheckPrompt(draft, ctx) },
     { pass: "anomaly_scan", prompt: buildAnomalyScanPrompt(draft, ctx) },
@@ -262,9 +314,7 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Prom
   ];
   const settled = await Promise.allSettled(passes.map((p) => callHaiku(p.prompt, 2500)));
 
-  const issues: CheckIssue[] = [];
   const passesCompleted: CheckPass[] = [];
-  const draftNorm = normalizeForMatch(draft);
 
   settled.forEach((r, i) => {
     const pass = passes[i].pass;
@@ -278,7 +328,7 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Prom
       const evidence = (raw.evidence ?? "").trim();
       if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード）
       const code = (raw.code ?? "UNKNOWN").trim() || "UNKNOWN";
-      let severity = assignSeverity(pass, code);
+      let severity = assignSeverity(pass, code, ctx.isAutoSend);
       // block は evidence が本文に実在する場合のみ（実在しない引用での誤ブロックを防ぐ）
       if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";
       issues.push({
@@ -291,6 +341,19 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Prom
       });
     }
   });
+
+  // ── HIGH-1: 自動送信時のfail-closed（チェック未完走なら自動送信を絶対に通さない）──
+  // スタッフ確認経路（isAutoSend=false）は fail-open のまま（送信を止めない）
+  if (ctx.isAutoSend && passesCompleted.length < 3) {
+    issues.push({
+      pass: "rule_check",
+      severity: "block",
+      code: "UNCHECKED_AUTO_SEND",
+      message: `チェック未完走（${passesCompleted.length}/3パス完了）のため自動送信をブロック`,
+      evidence: "(検査未完走)",
+      suggestion: "スタッフが内容を確認してから送信してください",
+    });
+  }
 
   return {
     ok: !issues.some((i) => i.severity === "block"),

@@ -2369,6 +2369,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             let finalCheck: CheckResult | null = null;
             if (!isTemplateOptimize && draftBody.trim()) {
               try {
+                // 段階の日本語説明（MEDIUM-2: STAGE_SKIP検出用）
+                const STAGE_JP: Record<string, string> = {
+                  first_reply: "初回対応（挨拶・条件ヒアリング開始）",
+                  hearing: "条件ヒアリング中",
+                  proposing: "物件提案・案内中",
+                  applying: "申込準備中",
+                  closed_won: "成約済み",
+                };
                 const loop = await runFinalCheckWithRevision(draftBody, {
                   dbRules,
                   recentMessages,
@@ -2377,6 +2385,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   staffSourceText: [aixSourceMessage, customerConditions].filter(Boolean).join("\n") || undefined,
                   checkpointFacts: groundTruth.checkpointFacts,
                   customerConditionsDb: groundTruth.customerConditionsDb,
+                  isAutoSend: enforceReplyModeGate,   // HIGH-1/2: 自動送信経路のみ true
+                  conversationStage: STAGE_JP[currentState] ?? currentState, // MEDIUM-2
                 }, 9500);
                 finalCheck = loop.finalCheck;
                 draftBody = loop.finalDraft; // ベスト草稿（成功時=修正版 / 修正不能時=元ドラフト）
