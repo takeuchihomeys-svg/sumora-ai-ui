@@ -96,7 +96,7 @@ export async function analyzeConversation(
   source: string = "brain",
 ): Promise<SuggestedAixMeta> {
   // Fetch last 15 messages and customer conditions in parallel
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult] = await Promise.all([
     supabase
       .from("messages")
       .select("sender, text, created_at")
@@ -173,6 +173,28 @@ export async function analyzeConversation(
       .like("keyword", "BOUNDARY%")
       .gte("confidence", 0.5)
       .limit(10),
+    // 成約パターン（distilled）: notify-viewing / analyze-closed-conversation が書く高価値ナレッジ
+    // （既存の principle クエリは category='principle' のみで、これら pattern 行は拾えない）
+    supabase
+      .from("ai_reply_knowledge")
+      .select("title, content, importance")
+      .eq("category", "pattern")
+      .neq("hypothesis_status", "rejected")
+      .or("title.ilike.成約パターン%,title.ilike.[成約分析]%,title.ilike.[転換点]%")
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(4),
+    // 成約した会話の実際の優良返信（closed_won × starred × line_reply）
+    // FK: ai_reply_examples.conversation_id → conversations.id（migrate-schema L681）で inner join
+    supabase
+      .from("ai_reply_examples")
+      .select("sent_reply, conversation_state, conversations!inner(status)")
+      .eq("conversations.status", "closed_won")
+      .eq("is_starred", true)
+      .eq("entry_source", "line_reply")
+      .not("sent_reply", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(8),
   ]);
 
   const { data: messages, error } = msgResult;
@@ -252,7 +274,31 @@ export async function analyzeConversation(
       }).join("\n")}`
     : "";
 
-  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${promptRulesText}${knowledgeText}${boundaryText}${examplesText}${checkpointText}${sentPropsText}${templatesText}
+  // ── 成約パターン注入 ─────────────────────────────────────────────
+  // 過去に closed_won（成約）に至った会話から学習したパターンと実返信例。
+  // データが無ければ空文字（ブロックごとスキップ）。
+  type ContractKnowledge = { title: string | null; content: string | null; importance: number | null };
+  const contractKnowledge = (contractKnowledgeResult.data ?? []) as ContractKnowledge[];
+
+  type ContractExample = { sent_reply: string | null; conversation_state: string | null };
+  const rawContractExamples = (contractExamplesResult.data ?? []) as ContractExample[];
+  // 現在のステータスと同じ段階の返信例を優先し、最大3件・各100字に切り詰め
+  const stateMatched = rawContractExamples.filter((e) => e.conversation_state === convStatus);
+  const stateOthers = rawContractExamples.filter((e) => e.conversation_state !== convStatus);
+  const contractExamples = [...stateMatched, ...stateOthers].slice(0, 3);
+
+  const contractKnowledgeLines = contractKnowledge
+    .map((k) => `- ${(k.title ?? "").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 150)}`)
+    .join("\n");
+  const contractExampleLines = contractExamples
+    .map((e) => `- (${e.conversation_state ?? "不明"}段階) 「${(e.sent_reply ?? "").replace(/\n/g, " ").slice(0, 100)}」`)
+    .join("\n");
+
+  const contractPatternsText = (contractKnowledge.length > 0 || contractExamples.length > 0)
+    ? `\n【成約パターン（過去に契約に至った会話から学習・参考）】${contractKnowledgeLines ? `\n■ 成功法則・転換点:\n${contractKnowledgeLines}` : ""}${contractExampleLines ? `\n■ 成約した会話の実際の返信例:\n${contractExampleLines}` : ""}\n※現在の会話がこれらのパターンに近い場合、closing_strategy と next_steps は成約パターンの流れに沿って提案すること。`
+    : "";
+
+  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${promptRulesText}${knowledgeText}${boundaryText}${examplesText}${checkpointText}${sentPropsText}${templatesText}${contractPatternsText}
 
 ${AIX_CAPABILITY_MAP}
 
