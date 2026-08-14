@@ -1165,9 +1165,18 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         const critical = [...criticalGuaranteed, ...criticalVector.filter(c => !criticalGuaranteed.some(g => g.id === c.id))].slice(0, 8);
         const patterns = filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 5);
         const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
+        // pgvector経路での applying_pattern: ベクトル類似度ベースの結果を優先し、なければ静的クエリにフォールバック
+        // （RPC は category フィルタなし・importance>=7 のため applying_pattern 行は filteredResults に既に含まれる）
+        const applyingVector = filteredResults.filter(r => r.category === "applying_pattern").slice(0, 3);
+        const effectiveApplyingList = applyingVector.length > 0 ? applyingVector : applyingList;
+        const effectiveApplyingIds = applyingVector.length > 0 ? applyingVector.map(r => r.id).filter(Boolean) : applyingIds;
+        const effectiveApplyingBlock = effectiveApplyingList.length > 0
+          ? "【💡 類似ケース（申込に至った実例パターン — この展開を参考に次の一手を組み立てる・文面の丸写しは禁止）】\n" +
+            effectiveApplyingList.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
+          : "";
 
         const used = [...diffLearned, ...correctionPairs, ...critical, ...patterns, ...phrases];
-        const usedAndLossIds = [...used.map(r => r.id).filter(Boolean), ...lossIds, ...applyingIds];
+        const usedAndLossIds = [...used.map(r => r.id).filter(Boolean), ...lossIds, ...effectiveApplyingIds];
         incrementKnowledgeUsage(usedAndLossIds);
         if (conversationId) logKnowledgeApply(usedAndLossIds, conversationId);
 
@@ -1190,8 +1199,8 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         if (lossBlock) {
           sections.push(lossBlock);
         }
-        if (applyingBlock) {
-          sections.push(applyingBlock);
+        if (effectiveApplyingBlock) {
+          sections.push(effectiveApplyingBlock);
         }
         // HIGH-05: テンプレート修正学習ルール注入
         if ((adaptRules?.length ?? 0) > 0) {
