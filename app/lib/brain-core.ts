@@ -867,6 +867,11 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
         const phaseOrder = ["hearing", "proposing", "viewing", "applying"];
         const newIdx = phaseOrder.indexOf(newPhase);
         const metaRecord = meta as Record<string, unknown>;
+        const suggAixButton: string =
+          newPhase === "applying" ? "application_push" :
+          newPhase === "viewing" ? "viewing_invite" :
+          newPhase === "proposing" ? "property_send" :
+          "condition_hearing";
         const newDirection = {
           template_id: bestPattern?.id ?? null,
           pattern_title: bestPattern?.title ?? "デフォルト道筋",
@@ -889,6 +894,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
             if (/物件/.test(src)) return "希望条件に合う物件を絞り込みながら、具体的な物件情報を送る";
             return src;
           })(),
+          suggested_aix_button: suggAixButton,
           matched_at: (existingDir?.matched_at as string | undefined) ?? new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
