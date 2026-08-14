@@ -867,11 +867,72 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
         const phaseOrder = ["hearing", "proposing", "viewing", "applying"];
         const newIdx = phaseOrder.indexOf(newPhase);
         const metaRecord = meta as Record<string, unknown>;
-        const suggAixButton: string =
-          newPhase === "applying" ? "application_push" :
-          newPhase === "viewing" ? "viewing_invite" :
-          newPhase === "proposing" ? "property_send" :
-          "condition_hearing";
+
+        // 改善1/2/3: viewing フェーズは内覧予定テーブルを参照して細かいサブフェーズを決定
+        // suggested_aix_button / viewing_scheduled_at / viewing_phase_detail を動的に設定する
+        type ViewingRow = { viewing_date: string; viewing_time: string | null; status: string | null };
+        let viewingScheduledAt: string | null = null;
+        let viewingPhaseDetail: "before_viewing" | "after_viewing" | "scheduling" | "confirmed" | null = null;
+        let suggAixButton: string;
+
+        if (newPhase === "viewing") {
+          // viewings テーブルから最新3件を取得（新しい順）
+          const { data: viewingsRaw } = await supabase
+            .from("viewings")
+            .select("viewing_date, viewing_time, status")
+            .eq("conversation_id", conversationId)
+            .order("viewing_date", { ascending: false })
+            .limit(3);
+          const allViewings = (viewingsRaw ?? []) as ViewingRow[];
+
+          // JST 今日の日付を YYYY-MM-DD で取得（UTC+9 を手動計算）
+          const nowJst = new Date(Date.now() + 9 * 3600 * 1000);
+          const todayJst = `${nowJst.getUTCFullYear()}-${String(nowJst.getUTCMonth() + 1).padStart(2, "0")}-${String(nowJst.getUTCDate()).padStart(2, "0")}`;
+
+          // 最も近い未来・今日の scheduled 内覧（昇順ソートして最初の1件）
+          const upcomingViewing = allViewings
+            .filter(v => v.status === "scheduled" && v.viewing_date >= todayJst)
+            .sort((a, b) => a.viewing_date.localeCompare(b.viewing_date))[0] ?? null;
+
+          // 最も最近の過去内覧（done または scheduled で過去日付・cancelled は除外）
+          const pastViewing = allViewings
+            .filter(v => v.status === "done" || (v.status !== "cancelled" && v.viewing_date < todayJst))
+            .sort((a, b) => b.viewing_date.localeCompare(a.viewing_date))[0] ?? null;
+
+          if (upcomingViewing) {
+            // 内覧日確定あり（今日または未来）
+            const vDate = upcomingViewing.viewing_date;
+            const vTime = upcomingViewing.viewing_time ? String(upcomingViewing.viewing_time).slice(0, 5) : null;
+            viewingScheduledAt = vTime ? `${vDate}T${vTime}:00+09:00` : `${vDate}T00:00:00+09:00`;
+            if (vDate === todayJst) {
+              // 内覧当日 → greeting_viewing（当日挨拶）
+              viewingPhaseDetail = "before_viewing";
+              suggAixButton = "greeting_viewing";
+            } else {
+              // 内覧日確定・未来 → meeting_place（待ち合わせ案内）
+              viewingPhaseDetail = "confirmed";
+              suggAixButton = "meeting_place";
+            }
+          } else if (pastViewing) {
+            // 内覧済み → greeting_viewing（内覧後フォロー）
+            const vDate = pastViewing.viewing_date;
+            const vTime = pastViewing.viewing_time ? String(pastViewing.viewing_time).slice(0, 5) : null;
+            viewingScheduledAt = vTime ? `${vDate}T${vTime}:00+09:00` : `${vDate}T00:00:00+09:00`;
+            viewingPhaseDetail = "after_viewing";
+            suggAixButton = "greeting_viewing";
+          } else {
+            // 内覧日未確定 → viewing_invite（日程調整）
+            viewingPhaseDetail = "scheduling";
+            suggAixButton = "viewing_invite";
+          }
+        } else if (newPhase === "applying") {
+          suggAixButton = "application_push";
+        } else if (newPhase === "proposing") {
+          suggAixButton = "property_send";
+        } else {
+          suggAixButton = "condition_hearing";
+        }
+
         const newDirection = {
           template_id: bestPattern?.id ?? null,
           pattern_title: bestPattern?.title ?? "デフォルト道筋",
@@ -895,6 +956,8 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
             return src;
           })(),
           suggested_aix_button: suggAixButton,
+          viewing_scheduled_at: viewingScheduledAt,
+          viewing_phase_detail: viewingPhaseDetail,
           matched_at: (existingDir?.matched_at as string | undefined) ?? new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
