@@ -375,7 +375,7 @@ export async function POST(req: NextRequest) {
               ai_draft: generated_text.slice(0, 5000),
               was_ai_used: true,
               was_ai_modified: was_edited ?? false,
-              entry_source: "aix",
+              entry_source: "aix_action",
               aix_action: aix_type,
               is_starred: false,
               sent_at: sent_at ?? new Date().toISOString(),

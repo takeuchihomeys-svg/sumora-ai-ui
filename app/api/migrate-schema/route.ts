@@ -1615,6 +1615,8 @@ UPDATE ai_reply_examples
 SET entry_source = 'aix_action'
 WHERE conversation_state NOT IN ('first_reply', 'hearing', 'proposing', 'greeting_viewing')
   AND entry_source = 'line_reply';
+-- log-aix-usage が誤って 'aix' を書いていた期間のレコードを正規値に修復（2026-08-14）
+UPDATE ai_reply_examples SET entry_source = 'aix_action' WHERE entry_source = 'aix';
 
 -- ── ai_reply_examples: aix_action（AIXアクション種別の記録）（2026-07-31）──
 -- AIX由来レコード（entry_source='aix_action'）がどのAIXボタン（property_recommendation /

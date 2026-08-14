@@ -80,6 +80,11 @@ const AIX_CAPABILITY_MAP = `
 - greeting_viewing: 内覧前後の挨拶メッセージを生成
 `.trim();
 
+// ① 成約・申込到達ステータス（brainが成功事例として読む対象）
+// applying は line-webhook が申込フォーム検知で自動セットする機械検証済みシグナル。
+// application/screening/contract は旧データの後方互換エイリアス（auto-seiyaku と同一集合 + closed_won）
+const SUCCESS_EXAMPLE_STATUSES = ["closed_won", "applying", "application", "screening", "contract"];
+
 /**
  * Calls Claude Haiku with enriched context (last 15 messages, customer conditions,
  * conversation status) and returns a SuggestedAixMeta to cache in conversations.
@@ -96,10 +101,10 @@ export async function analyzeConversation(
   source: string = "brain",
 ): Promise<SuggestedAixMeta> {
   // Fetch last 15 messages and customer conditions in parallel
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult] = await Promise.all([
     supabase
       .from("messages")
-      .select("sender, text, created_at")
+      .select("sender, text, created_at, line_message_id, is_aix_generated")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(15),
@@ -184,27 +189,53 @@ export async function analyzeConversation(
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(4),
-    // 成約した会話の実際の優良返信（closed_won × starred × line_reply）
+    // 成約・申込到達の会話の実際の優良返信（success × starred × line_reply）
     // FK: ai_reply_examples.conversation_id → conversations.id（migrate-schema L681）で inner join
     supabase
       .from("ai_reply_examples")
       .select("sent_reply, conversation_state, conversations!inner(status)")
-      .eq("conversations.status", "closed_won")
+      .in("conversations.status", SUCCESS_EXAMPLE_STATUSES)
       .eq("is_starred", true)
       .eq("entry_source", "line_reply")
       .not("sent_reply", "is", null)
       .order("created_at", { ascending: false })
       .limit(8),
+    // ② この会話で使われたAIXアクション履歴（メッセージ単位の厳密ラベル用）
+    supabase
+      .from("aix_usage_logs")
+      .select("aix_type, line_message_id, sent_at, created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .limit(30),
   ]);
 
   const { data: messages, error } = msgResult;
   if (error || !messages || messages.length === 0) return null;
 
+  // AIXアクションのメッセージ単位ラベル解決
+  // 1) line_message_id 完全一致（P4以降のログ・直近30日で97%カバー）
+  // 2) 旧ログ fallback: is_aix_generated=true × sent_at ±3分
+  type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string };
+  const aixLogs = (aixLogsResult.data ?? []) as AixLog[];
+  const aixTypeByLmid = new Map<string, string>();
+  for (const l of aixLogs) {
+    if (l.line_message_id && l.aix_type) aixTypeByLmid.set(l.line_message_id, l.aix_type);
+  }
+  const aixLogsNoLmid = aixLogs.filter((l) => !l.line_message_id && l.aix_type);
+
   // Reverse so the history reads oldest → newest
-  const history = (messages as Array<{ sender: string; text: string | null; created_at: string }>)
+  const history = (messages as Array<{ sender: string; text: string | null; created_at: string; line_message_id: string | null; is_aix_generated: boolean | null }>)
     .reverse()
     .map((m) => {
-      const senderLabel = m.sender === 'ai' ? '[AI自動返信]' : m.sender === 'staff' ? '[スタッフ/AIX]' : '[顧客]';
+      let senderLabel = "[顧客]";
+      if (m.sender === "staff") {
+        const exact = m.line_message_id ? aixTypeByLmid.get(m.line_message_id) : undefined;
+        const fuzzy = (!exact && m.is_aix_generated)
+          ? aixLogsNoLmid.find((l) => Math.abs(new Date(l.sent_at ?? l.created_at).getTime() - new Date(m.created_at).getTime()) < 3 * 60 * 1000)?.aix_type
+          : undefined;
+        const aixType = exact ?? fuzzy;
+        senderLabel = aixType ? `[AIX:${aixType}]` : (m.is_aix_generated ? "[AIX]" : "[スタッフ]");
+      }
       return `${senderLabel} ${m.text ?? "（画像/添付）"}`;
     })
     .join("\n");
@@ -280,7 +311,16 @@ export async function analyzeConversation(
   type ContractKnowledge = { title: string | null; content: string | null; importance: number | null };
   const contractKnowledge = (contractKnowledgeResult.data ?? []) as ContractKnowledge[];
 
-  type ContractExample = { sent_reply: string | null; conversation_state: string | null };
+  type ContractExample = {
+    sent_reply: string | null;
+    conversation_state: string | null;
+    conversations: { status: string | null } | { status: string | null }[] | null;
+  };
+  // 成約/申込到達の別（[成約]=closed_won / [申込到達]=applying等）をラベル化
+  const outcomeOf = (e: ContractExample): string => {
+    const st = Array.isArray(e.conversations) ? e.conversations[0]?.status : e.conversations?.status;
+    return st === "closed_won" ? "成約" : "申込到達";
+  };
   const rawContractExamples = (contractExamplesResult.data ?? []) as ContractExample[];
   // 現在のステータスと同じ段階の返信例を優先し、最大3件・各100字に切り詰め
   const stateMatched = rawContractExamples.filter((e) => e.conversation_state === convStatus);
@@ -291,18 +331,24 @@ export async function analyzeConversation(
     .map((k) => `- ${(k.title ?? "").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 150)}`)
     .join("\n");
   const contractExampleLines = contractExamples
-    .map((e) => `- (${e.conversation_state ?? "不明"}段階) 「${(e.sent_reply ?? "").replace(/\n/g, " ").slice(0, 100)}」`)
+    .map((e) => `- [${outcomeOf(e)}] (${e.conversation_state ?? "不明"}段階) 「${(e.sent_reply ?? "").replace(/\n/g, " ").slice(0, 100)}」`)
     .join("\n");
 
   const contractPatternsText = (contractKnowledge.length > 0 || contractExamples.length > 0)
-    ? `\n【成約パターン（過去に契約に至った会話から学習・参考）】${contractKnowledgeLines ? `\n■ 成功法則・転換点:\n${contractKnowledgeLines}` : ""}${contractExampleLines ? `\n■ 成約した会話の実際の返信例:\n${contractExampleLines}` : ""}\n※現在の会話がこれらのパターンに近い場合、closing_strategy と next_steps は成約パターンの流れに沿って提案すること。`
+    ? `\n【成約・申込到達パターン（過去に契約/申込に至った会話から学習・参考）】${contractKnowledgeLines ? `\n■ 成功法則・転換点:\n${contractKnowledgeLines}` : ""}${contractExampleLines ? `\n■ 成約した会話の実際の返信例:\n${contractExampleLines}` : ""}\n※現在の会話がこれらのパターンに近い場合、closing_strategy と next_steps は成約パターンの流れに沿って提案すること。`
     : "";
 
-  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${condText}${promptRulesText}${knowledgeText}${boundaryText}${examplesText}${checkpointText}${sentPropsText}${templatesText}${contractPatternsText}
+  // この会話で使用済みのAIXアクション一覧（重複提案の抑止・次段階の推奨材料）
+  const usedAixTypes = [...new Set(aixLogs.map((l) => l.aix_type).filter((t): t is string => Boolean(t)))];
+  const aixHistoryText = usedAixTypes.length > 0
+    ? `\n【この会話で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。`
+    : "";
+
+  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${aixHistoryText}${condText}${promptRulesText}${knowledgeText}${boundaryText}${examplesText}${checkpointText}${sentPropsText}${templatesText}${contractPatternsText}
 
 ${AIX_CAPABILITY_MAP}
 
-会話履歴:
+会話履歴（[AIX:xxx]=AIXツールxxxで送信済み / [AIX]=AIX送信(種別不明) / [スタッフ]=手動送信）:
 ${history}
 
 回答形式（JSONのみ・説明文不要）:
