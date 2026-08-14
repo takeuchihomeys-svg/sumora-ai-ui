@@ -1930,6 +1930,9 @@ ALTER TABLE ai_reply_knowledge DROP CONSTRAINT IF EXISTS ai_reply_knowledge_cate
 ALTER TABLE ai_reply_knowledge ADD CONSTRAINT ai_reply_knowledge_category_check
   CHECK (category IN ('pattern', 'style', 'phrase', 'principle', 'applying_pattern'));
 
+-- conversation_direction: 会話の方向性・フェーズ情報（JSONB）（2026-08-14追加）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS conversation_direction jsonb DEFAULT NULL;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

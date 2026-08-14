@@ -504,7 +504,9 @@ function buildGenerationMessages(
   // 指定時は replyHint（指定生成モード）を無効化する（templateText が勝つ）
   templateNote = "",
   // H7(Fable5): brain(suggested_aix_meta) の closing_strategy/next_steps ガイダンスブロック
-  brainGuidanceNote = ""
+  brainGuidanceNote = "",
+  // conversation_direction からの返信方向性ノート
+  directionNote = ""
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -902,7 +904,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `${propertyStatusNote}
-${closingNote}${brainGuidanceNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${pickupPromiseAckNote}
+${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${pickupPromiseAckNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 ${quickPatterns}
@@ -1590,16 +1592,17 @@ type AixGateMeta = { action?: string; note?: string; reply_mode?: string; closin
 
 async function fetchReplyModeGate(
   convId: string
-): Promise<{ meta: AixGateMeta; customerName: string } | null> {
+): Promise<{ meta: AixGateMeta; customerName: string; conversationDirection: Record<string, unknown> | null } | null> {
   const { data } = await supabase
     .from("conversations")
-    .select("suggested_aix_meta, customer_name")
+    .select("suggested_aix_meta, customer_name, conversation_direction")
     .eq("id", convId)
     .single();
   if (!data) return null;
   return {
     meta: (data.suggested_aix_meta ?? null) as AixGateMeta,
     customerName: (data.customer_name as string) || "",
+    conversationDirection: (data.conversation_direction ?? null) as Record<string, unknown> | null,
   };
 }
 
@@ -2208,13 +2211,26 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       ? `【🧠 脳分析ガイダンス（スタッフ向け戦略 — この返信はこの戦略と整合させること）】${brainMeta.closing_strategy ? `\n- 成約戦略: ${brainMeta.closing_strategy}` : ""}${brainMeta.next_steps?.length ? `\n- 予定ステップ: ${brainMeta.next_steps.join(" / ")}` : ""}\n※これはスタッフへの行動方針であり物件の事実情報ではない。期日・空室情報は会話履歴で確認された事実のみ本文に書くこと。\n`
       : "";
 
+    const phaseLabels: Record<string, string> = {
+      hearing: "条件ヒアリング中",
+      proposing: "物件提案中",
+      viewing: "内覧調整中",
+      applying: "申込段階",
+    };
+    const convDir = (brainGate?.conversationDirection ?? null) as Record<string, unknown> | null;
+    const directionNote = convDir?.current_phase
+      ? "【今回の返信の方向性】現フェーズ: " + (phaseLabels[String(convDir.current_phase)] ?? String(convDir.current_phase)) +
+        " / 次の一手: " + String(convDir.next_staff_action ?? "状況に応じて判断") +
+        " / 方針: " + String(convDir.direction_summary ?? "申込まで丁寧にリード")
+      : "";
+
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
       message, customerName, aixSourceMessage ? historyForTemplate : history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
-      resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote
+      resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote, directionNote
     );
     // 中6: 顧客の温度感に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
     // ④ Step1で今まさに分析したフレッシュな emotion を最優先し、なければ ai_summary_json.emotion（過去の要約）を使う

@@ -105,6 +105,17 @@ const AIX_CAPABILITY_MAP = `
 // application/screening/contract は旧データの後方互換エイリアス（auto-seiyaku と同一集合 + closed_won）
 const SUCCESS_EXAMPLE_STATUSES = ["closed_won", "applying", "application", "screening", "contract"];
 
+// ── フェーズ検出ヘルパー ─────────────────────────────────────────────────────
+// brain分析結果（SuggestedAixMeta）の各フィールドから現在フェーズを推定する。
+// conversation_direction の current_phase 更新判定に使用する。
+function detectPhaseFromBrainMeta(meta: Record<string, unknown>): "hearing" | "proposing" | "viewing" | "applying" {
+  const txt = [meta.action, meta.closing_strategy, meta.next_steps].filter(Boolean).join(" ");
+  if (/申込|審査/.test(txt)) return "applying";
+  if (/内覧|内見/.test(txt)) return "viewing";
+  if (/提案|物件/.test(txt)) return "proposing";
+  return "hearing";
+}
+
 /**
  * Calls Claude Haiku with enriched context (last 15 messages, customer conditions,
  * conversation status) and returns a SuggestedAixMeta to cache in conversations.
@@ -767,7 +778,7 @@ export async function maybeCreateCheckpoint(conversationId: string): Promise<voi
 export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<boolean> {
   const { data: conv, error: selectError } = await supabase
     .from("conversations")
-    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged")
+    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction")
     .eq("id", conversationId)
     .maybeSingle();
   if (selectError) {
@@ -824,6 +835,59 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   }
   // 脳分析成功時のみチェックポイント作成を fire-and-forget 起動（レスポンスを遅らせない）
   if (!error) {
+    // ── conversation_direction フェーズ変化検知と更新 ─────────────────────────
+    // brain分析が成功した場合のみ実行。フェーズ変化が無い場合・スタッフ手動修正中はスキップ。
+    // 失敗しても fire-and-forget なのでメインフローへの影響なし。
+    try {
+      // STEP A: applying_pattern カテゴリの最重要ナレッジを取得
+      const { data: applyingPatterns } = await supabase
+        .from("ai_reply_knowledge")
+        .select("id, title, content")
+        .eq("category", "applying_pattern")
+        .gte("importance", 8)
+        .order("importance", { ascending: false })
+        .limit(1);
+      const bestPattern = applyingPatterns?.[0] ?? null;
+
+      // STEP B: brain分析結果からフェーズを推定
+      const newPhase = detectPhaseFromBrainMeta(meta as Record<string, unknown>);
+
+      // STEP C: 既存 conversation_direction を取得（conv には conversation_direction を select 済み）
+      const convAsRecord = conv as unknown as Record<string, unknown>;
+      const existingDir = (convAsRecord?.conversation_direction ?? null) as Record<string, unknown> | null;
+
+      // STEP D: スキップ判定
+      if (!existingDir?.manually_overridden && existingDir?.current_phase !== newPhase) {
+        // STEP E: 新しい direction を構築して UPDATE
+        const phaseOrder = ["hearing", "proposing", "viewing", "applying"];
+        const newIdx = phaseOrder.indexOf(newPhase);
+        const metaRecord = meta as Record<string, unknown>;
+        const newDirection = {
+          template_id: bestPattern?.id ?? null,
+          pattern_title: bestPattern?.title ?? "デフォルト道筋",
+          approach_mode: (newPhase === "applying" || newPhase === "viewing") ? "active" : "watchful",
+          direction_summary: String(metaRecord.closing_strategy ?? "申込まで丁寧にリード"),
+          current_phase: newPhase,
+          phases_plan: phaseOrder.map((ph, i) => ({
+            phase: ph,
+            label: ["条件ヒアリング", "物件提案", "内覧調整", "申込"][i],
+            staff_action: ["希望条件を確認", "条件に合う物件を提案", "内覧日程を調整", "申込書類を案内"][i],
+            status: i < newIdx ? "done" : i === newIdx ? "current" : "pending",
+          })),
+          next_staff_action: String(metaRecord.next_steps ?? "状況を確認して次の一手を判断"),
+          matched_at: (existingDir?.matched_at as string | undefined) ?? new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        await supabase
+          .from("conversations")
+          .update({ conversation_direction: newDirection })
+          .eq("id", conversationId);
+      }
+    } catch (dirErr) {
+      console.warn("[brain-core] conversation_direction update failed:", conversationId,
+        dirErr instanceof Error ? dirErr.message : dirErr);
+    }
+
     try {
       after(() => maybeCreateCheckpoint(conversationId));
     } catch {
