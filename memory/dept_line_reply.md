@@ -372,3 +372,14 @@ brain-core（Haiku）が `conversations.suggested_aix_meta.reply_mode="aix"` と
 - **フォールバック**: meta=null（未分析・brain分析がStep1より遅延/失敗）は従来どおり生成（fail-open）
 - **新カラムなし** → migrate-schema更新不要
 - 動作確認: `update conversations set suggested_aix_meta = jsonb_set(coalesce(suggested_aix_meta,'{}'), '{reply_mode}', '"aix"') where id = '<テスト会話>'` → bg-async起動 → `ai_draft='[AIX誘導中]'` とグループ通知を確認
+
+## 最終チェック（前頭前野モデル・3重チェック）実装（2026-08-14）
+AI返信の送信前チェックを人間の脳の誤り検出機構でモデル化。Haiku 3パス並列（各2.5s abort・structured outputs保証JSON）。
+- **共有lib**: `app/lib/final-check.ts` — `runFinalCheck()` / `runAutoRevision()` / `sha1()`
+  - Pass1 前頭前野=rule_check（ai_prompt_rules照合＋AIX境界線）/ Pass2 前帯状回=anomaly_scan（金額・空室結果・物件名等の出所検証）/ Pass3 バグ探し思考=context_check（質問取りこぼし・段階ミスマッチ・二重宣言・時刻妥当性）
+  - **メタ認知ガード**: severityはコード側の決定的マップが裁く（AIX_BOUNDARY_* と FABRICATED_AMOUNT/AVAILABILITY のみblock）。evidence（本文引用）なし指摘は破棄、evidenceが本文に実在しないblockはwarningに降格。全pass fail-open
+- **生成時**（`generate-reply/route.ts` 両ブランチ合流後・enqueue前に一括実行）: フルチェック＋warningのみなら自動修正1回（Haiku 4s）。`<<<FINAL_CHECK:{json}>>>` トレーラーで返し `conversations.ai_draft_check`(jsonb) にも保存（別UPDATE・fail-open）。レスポンスは元々全文バッファ型なので+1.5〜2.5sは構造無害
+- **送信時**（`page.tsx executeSend()`）: `sha1(textToSend)` と `checked_text_hash` を照合 — 一致（未編集・大多数）は**0msで通過**、不一致（スタッフ編集＝従来全ゲートを素通りしていた唯一の穴）のみ `POST /api/check-reply`（maxDuration=10・requireInternalAuth・ルール60sキャッシュ・自動修正なし）を2.8sタイムアウトで呼ぶ。block→送信確認モーダルに🔴指摘を出しスタッフ確認後のみ送信。warning/タイムアウトは絶対にブロックしない
+- **UI**: 品質バッジが3パス完了＋指摘ゼロで「✅ 3重チェック済み」に格上げ。指摘は🔴/🟡折りたたみリスト（blockあり時は自動展開）。事前生成ドラフト選択時はDBの ai_draft_check をハイドレート
+- **新カラム**: `conversations.ai_draft_check JSONB`（migrate-schema 追記済み・**デプロイ後に migrate-schema 実行が必要**。未実行でも全経路 fail-open で従来動作）
+- コスト ~$0.01/返信（Haiku 3呼び出し）。モデル: claude-haiku-4-5（thinkingなし・temperature 0）

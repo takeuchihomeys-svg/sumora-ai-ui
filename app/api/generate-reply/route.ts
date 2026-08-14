@@ -13,6 +13,7 @@ import {
   STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
 import { validateAndClean, verifyAmountsAgainstSource } from "@/app/lib/validate-reply";
+import { runFinalCheck, runAutoRevision, sha1, type CheckResult } from "@/app/lib/final-check";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { classifyReplyMode } from "@/app/lib/reply-mode-classifier";
@@ -2274,6 +2275,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
           }
           // 生成完了テキスト（conversationId 指定時の ai_draft 保存用）
           let finalDraftText = "";
+          // 最終チェック前のドラフト本文（センシティブ警告メタを含まない・チェック対象テキスト）
+          let draftBody = "";
           // 生成のstop_reason（includeStopReason=true時にトレーラーで呼び出し元へ返す）
           let genStopReason: unknown;
           try {
@@ -2318,10 +2321,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
               const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true });
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
-              // f-8: センシティブ検知時は警告メタを冒頭に付与（ai_draft にも保存されスタッフの手動確認を促す）
-              const gatedFirstReply = sensitiveGateNote + cleaned;
-              controller.enqueue(encoder.encode(gatedFirstReply));
-              finalDraftText = gatedFirstReply;
+              // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
+              draftBody = cleaned;
             } else {
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
               let fullText = "";
@@ -2357,10 +2358,47 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (noEmoji) outText = outText.replace(/[😊😌🌟✨]/gu, "");
                 outText = outText.trim();
               }
-              // f-8: センシティブ検知時は警告メタを冒頭に付与（空生成時は付与しない・テンプレ最適化は sensitiveGateNote="" ）
-              if (outText && sensitiveGateNote) outText = sensitiveGateNote + outText;
-              if (outText) controller.enqueue(encoder.encode(outText));
-              finalDraftText = outText;
+              // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
+              draftBody = outText;
+            }
+            // ─── 最終チェック（前頭前野モデル・3パス並列 / claude-haiku-4-5）────────
+            // Pass1 前頭前野=ルール照合 / Pass2 前帯状回=ハルシネーション検知 / Pass3 文脈・網羅性。
+            // レスポンスは元々全文バッファ後に出力する設計のため、ここでの +1.5〜2.5s は構造を壊さない。
+            // 指摘が warning のみの場合に限り自動修正を1回試みる。block は書き換えず指摘のまま渡す
+            // （既存の enforceAixGates / verifyAmountsAgainstSource が機械置換済みのため二重書き換えを避け、
+            //  スタッフに「なぜブロックか」を見せる）。チェック失敗は fail-open（生成は止めない）
+            let finalCheck: CheckResult | null = null;
+            if (!isTemplateOptimize && draftBody.trim()) {
+              try {
+                finalCheck = await runFinalCheck(draftBody, {
+                  dbRules,
+                  recentMessages,
+                  lastCustomerMessage: message,
+                  step1Json: analysis,
+                  staffSourceText: [aixSourceMessage, customerConditions].filter(Boolean).join("\n") || undefined,
+                });
+                if (finalCheck.issues.length > 0 && finalCheck.issues.every((i) => i.severity === "warning")) {
+                  const revised = await runAutoRevision(draftBody, finalCheck.issues);
+                  if (revised) {
+                    finalCheck.revised_text = revised;
+                    draftBody = revised;
+                  }
+                }
+              } catch (checkErr) {
+                console.error("[generate-reply] final-check失敗（fail-open・チェックなしで続行）:", checkErr);
+                finalCheck = null;
+              }
+            }
+            // f-8: センシティブ検知時は警告メタを冒頭に付与（空生成時は付与しない・テンプレ最適化は sensitiveGateNote="" ）
+            finalDraftText = draftBody && sensitiveGateNote ? sensitiveGateNote + draftBody : draftBody;
+            // 送信時の再利用判定キー: スタッフのテキストエリアに入る最終形（trim後）のハッシュに更新する
+            // （自動修正・センシティブ警告付与でチェック時テキストと変わるため必ず上書き）
+            if (finalCheck) finalCheck.checked_text_hash = await sha1(finalDraftText.trim());
+            if (finalDraftText) controller.enqueue(encoder.encode(finalDraftText));
+            // FINAL_CHECK トレーラー（メタ行1行目は出力済みのためトレーラーが唯一の伝達手段。
+            // クライアントは SUGGESTED_AIX と同様に内部タグとして除去・解析する。STOP_REASON は必ず最後）
+            if (!isTemplateOptimize && finalCheck) {
+              controller.enqueue(encoder.encode(`\n<<<FINAL_CHECK:${JSON.stringify(finalCheck)}>>>`));
             }
             // AIXボタン誘導: ドラフト完成後にどのAIXボタンを使うべきか提案（トレーラーとして付加）
             // suggest-next-action（DB学習ルール）を優先し、失敗時はregexにフォールバック
@@ -2443,6 +2481,17 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 )
                 .eq("id", conversationId);
               if (saveErr) console.error("[generate-reply] ai_draft save error:", conversationId, saveErr.message);
+              // ai_draft_check は別UPDATEで保存（fail-open: カラム未追加環境でも ai_draft 保存を巻き込まない。
+              // 監査ログ兼、事前生成ドラフト選択時のクライアント側ハッシュ照合用）
+              if (finalCheck && !isTruncated && finalDraftText.trim()) {
+                void supabase
+                  .from("conversations")
+                  .update({ ai_draft_check: finalCheck })
+                  .eq("id", conversationId)
+                  .then(({ error: chkErr }) => {
+                    if (chkErr) console.warn("[generate-reply] ai_draft_check save error:", conversationId, chkErr.message);
+                  });
+              }
             }
           } catch (streamErr) {
             console.error("generate-reply stream error:", streamErr);

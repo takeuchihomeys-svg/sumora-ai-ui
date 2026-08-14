@@ -8,6 +8,7 @@ import TemplateModal, { type Template as CachedTemplate } from "./components/Tem
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage } from "./lib/application-form-detect";
 import { detectPlaceholders } from "./lib/validate-reply";
+import type { CheckIssue, CheckResult } from "./lib/final-check";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
@@ -80,7 +81,14 @@ function stripInternalTags(text: string): string {
   return text
     .replace(/\n?<<<STOP_REASON:[^>]*>>>/g, "")
     .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
+    .replace(/\n?<<<FINAL_CHECK:[\s\S]*?>>>/g, "")
     .trim();
+}
+
+// 最終チェックのハッシュ照合用 SHA-1（Web Crypto。secure context 以外では throw → 呼び出し側で fail-open）
+async function sha1Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 // null許容版（DBから読んだ ai_draft の取り込み用）: 除去後に空文字なら null
 function stripInternalTagsOrNull(text: string | null | undefined): string | null {
@@ -571,6 +579,14 @@ export default function Home() {
   const [displaySource, setDisplaySource] = useState<"ai_draft" | "optimized" | null>(null);
   const draftIsAi = displaySource !== null; // AI生成の下書きがテキストエリアに入っているか（displaySourceから導出）
   const [replyQuality, setReplyQuality] = useState<{ auto_ok: boolean; is_applying_docs: boolean } | null>(null); // B-2: AI文案の品質判定バッジ
+  // 最終チェック（前頭前野モデル・3重チェック）: 生成時の結果を保持し、送信時にハッシュ照合で再利用する
+  const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
+  // 送信確認モーダルに表示するblock指摘（最終チェック起因でモーダルを開いた場合のみ非null）
+  const [checkModalIssues, setCheckModalIssues] = useState<CheckIssue[] | null>(null);
+  // モーダルの「送信する」からの再実行時は再チェックせず送信を続行するフラグ
+  const finalCheckSkipRef = useRef(false);
+  // 送信時チェック中の二重実行防止（チェックの2.8s待ちの間の連打ガード）
+  const finalCheckBusyRef = useRef(false);
   const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
   const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
@@ -2595,6 +2611,10 @@ export default function Home() {
     setDraftNoEmoji(false);
     setDraftOrigText("");
     setSuggestedAix(null);
+    // 会話切替時は最終チェック結果をリセット（別会話のチェック結果を引き継がない）
+    setCheckResult(null);
+    setCheckModalIssues(null);
+    finalCheckSkipRef.current = false;
 
     // 返信待ち + ai_draft あり → テキストエリアに自動セット（「使う」クリック不要）
     if (selectedConversation.aiDraft && selectedConversation.lastSender === "customer") {
@@ -2603,6 +2623,16 @@ export default function Home() {
       setReplyDraft(selectedConversation.aiDraft);
       aiDraftRef.current = selectedConversation.aiDraft;
       setDisplaySource("ai_draft");
+      // 事前生成ドラフトの最終チェック結果をDBから復元（ハッシュ一致なら送信時0msで通過）
+      // カラム未追加・取得失敗は fail-open（送信時に /api/check-reply へフォールバック）
+      {
+        const hydrateConvId = selectedConversation.id;
+        supabase.from("conversations").select("ai_draft_check").eq("id", hydrateConvId).single()
+          .then(({ data }) => {
+            const chk = (data as { ai_draft_check?: CheckResult | null } | null)?.ai_draft_check ?? null;
+            if (chk && selectedIdRef.current === hydrateConvId) setCheckResult(chk);
+          }, () => {});
+      }
       // 事前生成ドラフトに suggested_aix_meta が付随していれば黄色メモ（AIX誘導）を復元
       if (selectedConversation.suggestedAixMeta) setSuggestedAix(selectedConversation.suggestedAixMeta);
       setConversations((prev) =>
@@ -2691,6 +2721,15 @@ export default function Home() {
     if (selectedConversation.suggestedAixMeta) setSuggestedAix(selectedConversation.suggestedAixMeta);
     setDraftNoEmoji(false);
     setDraftOrigText("");
+    // Realtime到着ドラフトの最終チェック結果もDBから復元（fail-open）
+    {
+      const hydrateConvId = selectedConversation.id;
+      supabase.from("conversations").select("ai_draft_check").eq("id", hydrateConvId).single()
+        .then(({ data }) => {
+          const chk = (data as { ai_draft_check?: CheckResult | null } | null)?.ai_draft_check ?? null;
+          if (chk && selectedIdRef.current === hydrateConvId) setCheckResult(chk);
+        }, () => {});
+    }
     setConversations((prev) =>
       prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null, suggestedAixMeta: null } : c)
     );
@@ -3158,7 +3197,15 @@ export default function Home() {
         try { setSuggestedAix(JSON.parse(aixTrailerMatch[1])); } catch { /* ignore parse error */ }
       }
 
-      // 内部タグ（STOP_REASON / SUGGESTED_AIX）は順序・有無を問わず全て除去してからテキストボックスへ
+      // <<<FINAL_CHECK:...>>> トレーラー（最終チェック結果）を解析してバッジ・送信時ハッシュ照合に使う
+      const checkTrailerMatch = fullText.match(/<<<FINAL_CHECK:([\s\S]+?)>>>/);
+      if (checkTrailerMatch) {
+        try { setCheckResult(JSON.parse(checkTrailerMatch[1]) as CheckResult); } catch { setCheckResult(null); }
+      } else {
+        setCheckResult(null);
+      }
+
+      // 内部タグ（STOP_REASON / SUGGESTED_AIX / FINAL_CHECK）は順序・有無を問わず全て除去してからテキストボックスへ
       const finalDraft = stripInternalTags(fullText);
       aiDraftRef.current = finalDraft;
       replyTargetCustomerMsgRef.current = targetMessage;
@@ -3456,7 +3503,15 @@ export default function Home() {
         try { setSuggestedAix(JSON.parse(aixTrailerMatchSparkle[1])); } catch { /* ignore parse error */ }
       }
 
-      // 内部タグ（STOP_REASON / SUGGESTED_AIX）は順序・有無を問わず全て除去してからテキストボックスへ
+      // <<<FINAL_CHECK:...>>> トレーラー（最終チェック結果）を解析（スパークル経由でも同じ処理）
+      const checkTrailerMatchSparkle = fullText.match(/<<<FINAL_CHECK:([\s\S]+?)>>>/);
+      if (checkTrailerMatchSparkle) {
+        try { setCheckResult(JSON.parse(checkTrailerMatchSparkle[1]) as CheckResult); } catch { setCheckResult(null); }
+      } else {
+        setCheckResult(null);
+      }
+
+      // 内部タグ（STOP_REASON / SUGGESTED_AIX / FINAL_CHECK）は順序・有無を問わず全て除去してからテキストボックスへ
       const finalDraft = stripInternalTags(fullText);
       aiDraftRef.current = finalDraft;
       if (draftNoEmoji) {
@@ -3916,6 +3971,9 @@ export default function Home() {
       }).catch(() => {});
     }
     setShowSendConfirm(false);
+    // 最終チェック起因でモーダルを開いていた場合はスキップフラグ・指摘表示をリセット
+    setCheckModalIssues(null);
+    finalCheckSkipRef.current = false;
   };
 
   const executeSend = async () => {
@@ -3931,6 +3989,46 @@ export default function Home() {
         return;
       }
     }
+    // ── 最終チェック（前頭前野モデル・3重チェック）──
+    // 生成時チェック済みテキストならハッシュ一致で0ms通過（大多数のケース）。
+    // スタッフが編集した場合のみ /api/check-reply で3パス再チェック（2.8sタイムアウト・fail-open）。
+    // block指摘あり → 送信確認モーダルで指摘を提示し、スタッフの明示確認後のみ送信続行。
+    // warningは絶対にブロックしない / タイムアウト・エラーも絶対にブロックしない。
+    if (replyDraft.trim() && !finalCheckSkipRef.current) {
+      if (finalCheckBusyRef.current) return; // チェック待ちの間の連打ガード
+      finalCheckBusyRef.current = true;
+      let latestCheck: CheckResult | null = checkResult;
+      try {
+        const hash = await sha1Hex(replyDraft.trim());
+        if (!latestCheck || latestCheck.checked_text_hash !== hash) {
+          const res = await fetch("/api/check-reply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+            body: JSON.stringify({
+              text: replyDraft.trim(),
+              conversationId: selectedConversation.id,
+              recentMessages: selectedConversation.messages.slice(-10).map((m) => ({ sender: m.sender, text: m.text || "" })),
+            }),
+            signal: AbortSignal.timeout(2800),
+          });
+          latestCheck = res.ok ? (await res.json() as CheckResult) : null;
+          if (latestCheck) setCheckResult(latestCheck);
+        }
+      } catch {
+        latestCheck = null; // fail-open: チェック失敗は送信をブロックしない
+      } finally {
+        finalCheckBusyRef.current = false;
+      }
+      const blockIssues = latestCheck?.issues.filter((i) => i.severity === "block") ?? [];
+      if (blockIssues.length > 0) {
+        setCheckModalIssues(blockIssues);
+        finalCheckSkipRef.current = true; // モーダルの「送信する」では再チェックせず送信を続行する
+        setShowSendConfirm(true);
+        return;
+      }
+    }
+    finalCheckSkipRef.current = false;
+    setCheckModalIssues(null);
     // 会話切替の競合を防ぐため、関数開始時点の convId をキャプチャして非同期全体で使う
     const convId = selectedConversation.id;
     // 2通目設定をキャプチャ（非同期処理中に変わらないよう先に取得）
@@ -4041,6 +4139,8 @@ export default function Home() {
       if (textSent || !textToSend) {
         setReplyDraft("");
         setReplyQuality(null); // B-2: 送信後は品質判定をリセット
+        setCheckResult(null); // 最終チェック結果も送信済みテキストに紐づくためリセット
+        setCheckModalIssues(null);
         // setSuggestedAix(null) は意図的に省略: ドラフト送信後も📌指示を持続表示する
       }
       if (imageUrls.length > 0) {
@@ -7768,7 +7868,8 @@ export default function Home() {
               );
             })()}
 
-            {/* B-2: AI文案の品質判定バッジ（そのまま送信OK / 要確認） */}
+            {/* B-2: AI文案の品質判定バッジ（そのまま送信OK / 要確認）
+                最終チェック3パス全完了かつ指摘ゼロなら「3重チェック済み」へ格上げ表示 */}
             {replyQuality && replyDraft.trim() && (
               <div className="mb-1 flex">
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
@@ -7776,9 +7877,38 @@ export default function Home() {
                     ? "bg-green-100 text-green-700"
                     : "bg-yellow-100 text-yellow-700"
                 }`}>
-                  {replyQuality.auto_ok ? "✅ そのまま送信OK" : replyQuality.is_applying_docs ? "⚠️ 申込書類・要確認" : "⚠️ 要確認"}
+                  {replyQuality.auto_ok
+                    ? (checkResult && checkResult.ok && checkResult.issues.length === 0 && checkResult.passes_completed.length === 3
+                        ? "✅ 3重チェック済み"
+                        : "✅ そのまま送信OK")
+                    : replyQuality.is_applying_docs ? "⚠️ 申込書類・要確認" : "⚠️ 要確認"}
                 </span>
               </div>
+            )}
+
+            {/* 🧠 最終チェック指摘リスト（block=🔴 / warning=🟡・折りたたみ式） */}
+            {checkResult && checkResult.issues.length > 0 && replyDraft.trim() && (
+              <details className={`mb-1 rounded-lg border px-2 py-1 ${
+                checkResult.issues.some((i) => i.severity === "block")
+                  ? "border-red-200 bg-red-50"
+                  : "border-yellow-200 bg-yellow-50"
+              }`} open={checkResult.issues.some((i) => i.severity === "block")}>
+                <summary className={`cursor-pointer text-[10px] font-bold ${
+                  checkResult.issues.some((i) => i.severity === "block") ? "text-red-700" : "text-yellow-800"
+                }`}>
+                  🧠 最終チェック指摘 {checkResult.issues.length}件
+                  {checkResult.issues.some((i) => i.severity === "block") && `（🔴 ${checkResult.issues.filter((i) => i.severity === "block").length}件は要修正）`}
+                </summary>
+                <div className="mt-1 space-y-1.5">
+                  {checkResult.issues.map((it, i) => (
+                    <div key={i} className="text-[10px] leading-snug">
+                      <div className="font-medium text-[#333]">{it.severity === "block" ? "🔴" : "🟡"} {it.message}</div>
+                      {it.evidence && <div className="pl-4 text-[#999]">「{it.evidence}」</div>}
+                      {it.suggestion && <div className="pl-4 text-[#667781]">💡 {it.suggestion}</div>}
+                    </div>
+                  ))}
+                </div>
+              </details>
             )}
 
             {/* テキスト入力 */}
@@ -12206,6 +12336,20 @@ export default function Home() {
                   </p>
                 );
               })()}
+              {/* 🧠 最終チェックのblock指摘（このモーダルが最終チェック起因で開かれた場合のみ） */}
+              {checkModalIssues && checkModalIssues.length > 0 && (
+                <div className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 space-y-1.5">
+                  <p className="text-[11px] font-bold text-red-700">🧠 最終チェックで重大な指摘があります</p>
+                  {checkModalIssues.map((it, i) => (
+                    <div key={i} className="text-[10px] leading-snug text-[#333]">
+                      <div>🔴 {it.message}</div>
+                      {it.evidence && <div className="pl-3 text-[#999]">「{it.evidence}」</div>}
+                      {it.suggestion && <div className="pl-3 text-[#667781]">💡 {it.suggestion}</div>}
+                    </div>
+                  ))}
+                  <p className="text-[10px] text-red-600">内容を確認のうえ、問題なければ「送信する」を押してください</p>
+                </div>
+              )}
               {replyDraft.trim() && (
                 <p className="text-[13px] text-[#667781] bg-[#f0f2f5] rounded-xl px-3 py-2 max-h-24 overflow-y-auto whitespace-pre-wrap leading-snug">
                   {replyDraft.trim()}

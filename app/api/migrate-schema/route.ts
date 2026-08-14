@@ -1898,6 +1898,13 @@ CREATE TABLE IF NOT EXISTS weekly_learning_metrics (
 );
 ALTER TABLE weekly_learning_metrics DISABLE ROW LEVEL SECURITY;
 
+-- ── ai_draft_check: AI返信最終チェック結果（前頭前野モデル・2026-08-14追加）──
+-- generate-reply が ai_draft 保存時に併せて保存する CheckResult JSON
+-- { ok, issues[], revised_text?, passes_completed[], elapsed_ms, checked_text_hash }
+-- 送信時にクライアントが checked_text_hash と textToSend の sha1 を照合し、
+-- 一致（未編集）なら再チェックなしで即送信 / 不一致（スタッフ編集）なら /api/check-reply で再チェック
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft_check JSONB;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
