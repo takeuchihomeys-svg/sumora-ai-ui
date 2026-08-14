@@ -96,20 +96,24 @@ export async function GET(req: NextRequest) {
     sent_at: string;
   }>;
 
-  // Fuzzy match: room_no exact match AND property_name similarity > 70%
-  // Also catch: property_name similarity > 70% alone (same building, different room note)
+  // 重複判定ロジック:
+  // 1. 号室完全一致 → 重複確定
+  // 2. 号室が省略されていて、物件名が80%以上一致 → 重複とみなす（同建物の号室違い表記を検出）
   const normalizedRoomNo = queryRoomNo.trim().toLowerCase();
   const matches = rows.filter((row) => {
-    const rowRoom = row.room_no.trim().toLowerCase();
+    const rowRoom = (row.room_no ?? "").trim().toLowerCase();
+    const rowName = (row.property_name ?? "").trim();
     const roomMatch = normalizedRoomNo ? rowRoom === normalizedRoomNo : false;
     const nameSim = queryPropertyName
-      ? stringSimilarity(row.property_name, queryPropertyName)
+      ? stringSimilarity(rowName, queryPropertyName)
       : 0;
 
-    // Primary: exact room_no match
+    // 1. 号室完全一致 → 重複確定
     if (roomMatch) return true;
-    // Secondary: property_name similarity > 70% AND room_no matches
-    if (nameSim > 0.7 && roomMatch) return true;
+
+    // 2. 号室が省略されていて、物件名が80%以上一致 → 重複とみなす
+    if (!normalizedRoomNo && nameSim > 0.8) return true;
+
     return false;
   });
 

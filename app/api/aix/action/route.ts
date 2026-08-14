@@ -1026,15 +1026,24 @@ ${SMORA_COMMON_RULES}`;
       // Fire-and-forget: extract property info from property recommendation image
       if (conversationId && image_url) {
         const _extractBaseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://sumora-ai-ui.vercel.app";
-        fetch(`${_extractBaseUrl}/api/extract-property-info`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            image_url: String(image_url),
-            conversation_id: conversationId,
-            property_customer_id: null,
-          }),
-        }).catch(() => {}); // fire-and-forget
+        (async () => {
+          let resolvedPropertyCustomerId: string | null = null;
+          const { data: convRow } = await supabase
+            .from("conversations")
+            .select("property_customer_id")
+            .eq("id", conversationId)
+            .maybeSingle();
+          resolvedPropertyCustomerId = convRow?.property_customer_id ?? null;
+          await fetch(`${_extractBaseUrl}/api/extract-property-info`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              image_url: String(image_url),
+              conversation_id: conversationId,
+              property_customer_id: resolvedPropertyCustomerId,
+            }),
+          });
+        })().catch(() => {}); // fire-and-forget
       }
 
     // ── 💰 見積書送る ─────────────────────────────────────────────

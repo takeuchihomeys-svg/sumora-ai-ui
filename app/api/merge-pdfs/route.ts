@@ -211,9 +211,11 @@ export async function POST(req: NextRequest) {
       property_summaries?: string[] | null;
       customer_conditions?: string | null;
       site?: string | null;
+      property_customer_id?: string | null;
+      conversation_id?: string | null;
     };
 
-    const { pdf_data, pdf_urls, cookie_str, file_name, send_to_line, customer_name, property_summaries, customer_conditions, site } = body;
+    const { pdf_data, pdf_urls, cookie_str, file_name, send_to_line, customer_name, property_summaries, customer_conditions, site, property_customer_id, conversation_id } = body;
 
     // PDF データを収集
     let pdfBase64List: string[] = [];
@@ -302,6 +304,77 @@ export async function POST(req: NextRequest) {
             (pdf_urls && pdf_urls.some(u => !u.includes("realnetpro"))) ? "itandi" : "リアプロ",
         );
         await pushLineMessage(groupId, lineText);
+
+        // 送付物件を sent_properties に記録（source: "line_group" でVision OCR経由と区別）
+        // insert失敗してもLINE送信自体は成功として扱う（レスポンスは変えない）
+        try {
+          // property_customer_id はbody優先。無ければ conversation_id から lookup
+          let propertyCustomerId: string | null = property_customer_id ?? null;
+          if (!propertyCustomerId && conversation_id) {
+            const { data: conv } = await supabase
+              .from("conversations")
+              .select("property_customer_id")
+              .eq("id", conversation_id)
+              .single();
+            propertyCustomerId = conv?.property_customer_id ?? null;
+          }
+
+          const summariesToRecord =
+            rankedSummaries && rankedSummaries.length > 0
+              ? rankedSummaries
+              : property_summaries ?? [];
+
+          for (const summary of summariesToRecord) {
+            try {
+              // 先頭行「【N】物件名」「【N🌟】物件名」から物件名を抽出
+              const firstLine = (summary.split("\n")[0] ?? "")
+                .replace(/^【\d+🌟?】\s*/, "")
+                .trim();
+              if (!firstLine) continue;
+
+              // 物件名末尾の号室表記を分離（例: "○○マンション 203号室" / "○○ハイツ 101"）
+              const roomMatch = firstLine.match(/[\s　]+(\d{1,4})(?:号室?)?$/);
+              const roomNo = roomMatch ? roomMatch[1] : "";
+              const propertyName = roomMatch
+                ? firstLine.slice(0, roomMatch.index).trim()
+                : firstLine;
+              if (!propertyName) continue;
+
+              // ON CONFLICT DO NOTHING 相当: 同一顧客（または同一会話）への同一物件は挿入しない
+              let dupQuery = supabase
+                .from("sent_properties")
+                .select("id")
+                .eq("property_name", propertyName)
+                .eq("room_no", roomNo)
+                .limit(1);
+              if (propertyCustomerId) {
+                dupQuery = dupQuery.eq("property_customer_id", propertyCustomerId);
+              } else if (conversation_id) {
+                dupQuery = dupQuery.eq("conversation_id", conversation_id);
+              }
+              const { data: existing } = await dupQuery;
+              if (existing && existing.length > 0) continue;
+
+              const { error: insertError } = await supabase
+                .from("sent_properties")
+                .insert({
+                  property_customer_id: propertyCustomerId,
+                  conversation_id: conversation_id ?? null,
+                  property_name: propertyName,
+                  room_no: roomNo,
+                  source: "line_group",
+                });
+              if (insertError) {
+                console.error("[merge-pdfs] sent_properties insert失敗（続行）:", insertError.message);
+              }
+            } catch (recordErr) {
+              console.error("[merge-pdfs] sent_properties 記録失敗（続行）:", recordErr);
+            }
+          }
+        } catch (histErr) {
+          console.error("[merge-pdfs] sent_properties 記録処理失敗（LINE送信は成功扱い）:", histErr);
+        }
+
         return NextResponse.json({ ok: true, line_sent: true, url: blob.url });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

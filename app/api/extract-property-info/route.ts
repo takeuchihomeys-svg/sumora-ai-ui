@@ -150,7 +150,8 @@ JSONのみで返答してください：
     }
 
     // ── 4. Save to sent_properties ───────────────────────────────────────────
-    if (propertyName && roomNo) {
+    let insertErrorMessage: string | null = null;
+    if (propertyName && roomNo && !isDuplicate) {
       const { error: insertError } = await supabase
         .from("sent_properties")
         .insert({
@@ -163,6 +164,7 @@ JSONのみで返答してください：
         });
       if (insertError) {
         console.error("[extract-property-info] insert error:", insertError.message);
+        insertErrorMessage = insertError.message;
       }
     }
 
@@ -171,6 +173,7 @@ JSONのみで返答してください：
       property_name: propertyName,
       room_no: roomNo,
       is_duplicate: isDuplicate,
+      insert_error: insertErrorMessage,
       ...(duplicateInfo ? { duplicate_info: duplicateInfo } : {}),
     });
   } catch (err) {

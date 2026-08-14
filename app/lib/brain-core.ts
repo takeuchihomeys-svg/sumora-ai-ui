@@ -48,6 +48,10 @@ const AIX_BRAIN_NOTES: Record<string, string> = {
   property_recommendation: "お客様の条件に最も合う1件を特にオススメとしてAIX【物件オススメ】で提案してください",
   meeting_place:           "内覧の日時・物件が確定したら → AIX【待ち合わせ】で待ち合わせ場所の案内を送ってください",
   greeting_viewing:        "内覧前後の挨拶は → AIX【内覧挨拶】でシーンに合わせた挨拶メッセージを生成できます",
+  // ※ STATUS_MEANING にも会話ステータスとして property_search が存在するが、これは意図的な同名
+  //   （ステータス=条件ヒアリング段階 / アクション=拡張ツールでの物件検索実行）。混同注意。
+  //   このキーを提案として活かすには page.tsx の AIX_ACTION_META にも同キーの追加が必要（TODO）。
+  property_search:         "お客さんの条件に合う物件をChrome拡張ツール（リアプロ/itandi/レインズ）で検索してください。送付済み物件は候補から除外すること",
 };
 
 // Maps raw DB conversation status to a Japanese meaning string injected into the Haiku prompt
@@ -81,6 +85,7 @@ const AIX_CAPABILITY_MAP = `
 - property_recommendation: Vision読み取りで物件紹介文を生成（1件詳細）
 - meeting_place: 内覧の待ち合わせ場所案内を生成
 - greeting_viewing: 内覧前後の挨拶メッセージを生成
+- property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）
 `.trim();
 
 // ① 成約・申込到達ステータス（brainが成功事例として読む対象）
@@ -119,7 +124,7 @@ export async function analyzeConversation(
     propertyCustomerId
       ? supabase
           .from("property_customers")
-          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences")
+          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, walk_minutes, last_property_sent_at, property_send_count")
           .eq("id", propertyCustomerId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -299,12 +304,13 @@ export async function analyzeConversation(
   const timingText = `\n【時間情報】今日: ${todayStr} / 最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）`;
 
   // Build customer conditions context
-  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null } | null;
+  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null } | null;
   const pc = (pcResult.data ?? null) as PC;
   const condParts: string[] = [];
   if (pc?.desired_area) condParts.push(`エリア: ${pc.desired_area}`);
   if (pc?.floor_plan) condParts.push(`間取り: ${pc.floor_plan}`);
   if (pc?.rent_max) condParts.push(`家賃上限: ${Math.floor((pc.rent_max as number) / 10000)}万`);
+  if (pc?.walk_minutes) condParts.push(`駅徒歩: ${pc.walk_minutes}分以内`);
   if (pc?.move_in_time) condParts.push(`入居: ${pc.move_in_time}`);
   if (pc?.preferences) condParts.push(`希望: ${pc.preferences}`);
   const condText = condParts.length > 0 ? `\n顧客条件: ${condParts.join(" / ")}` : "";
@@ -331,6 +337,67 @@ export async function analyzeConversation(
   const sentPropsText = sentProps.length > 0
     ? `\n【すでに送付済みの物件（${sentProps.length}件）】\n${sentProps.map((p) => `- ${p.property_name} ${p.room_no}（${new Date(p.sent_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}送付）`).join("\n")}`
     : "";
+
+  // ── 物件検索統括コンテキスト ─────────────────────────────────────────
+  // sent_properties + property_customers から「物件検索の全体像」を動的に組み立てて注入する。
+  // 脳が property_search / property_send の使い分け（検索すべきか・送付を控えるべきか）を
+  // 判断できるようにするための統括ブロック。propertyCustomerId が無い会話ではスキップ。
+  //
+  // TODO(P2): Chrome拡張フィードバックループ
+  //   脳の suggested_aix_meta に property_search_params を追加し、
+  //   Chrome拡張が起動時にWebAppのbrain/list APIからこれを取得して
+  //   検索フォームに自動入力できるようにする
+  //   必要なフィールド: { area, floor_plan, rent_max, walk_minutes, ng_properties: sent_properties }
+  //
+  // TODO(P2): 物件評価API
+  //   /api/evaluate-property POST を新設。候補物件のスペックをbodyで受け取り、
+  //   お客さんの条件とsent_propertiesを照合してスコア（0-100）とNG理由を返す
+  //   Chrome拡張のscore-overlay.jsがこれを呼んでリアルタイムスコア表示に使う
+  //
+  // TODO(P3): 物件在庫連携
+  //   Chrome拡張がリアプロ/itandi/レインズの検索結果を /api/property-inventory POST で
+  //   サーバーに送信し、brain-core.tsがその在庫データを見て「今日オススメできる物件」を
+  //   特定してChrome拡張に返す。完全自律物件選定の実現
+  let propertySearchText = "";
+  if (pc) {
+    // sentCount: sent_properties の直近10件クエリ結果（10件で頭打ちのため「以上」表記）
+    const sentCount = sentProps.length;
+    // daysSinceLastSend: last_property_sent_at 優先、無ければ sent_properties の最新 sent_at
+    const lastSentIso = pc.last_property_sent_at ?? sentProps[0]?.sent_at ?? null;
+    const daysSinceLastSend = lastSentIso
+      ? Math.floor((Date.now() - new Date(lastSentIso).getTime()) / 86_400_000)
+      : null;
+    // property_send_count = 連続未返信送付数（顧客が反応するとUI側で0にリセットされる）
+    const unansweredSendCount = pc.property_send_count ?? 0;
+    // 物件検索推奨度（★の数）:
+    //   ─   : 連続未返信送付2件以上 → お客さんが反応していない。property_send は控える
+    //   ★★★: 7日以上送付なし or 送付0件 → 今すぐ property_search を提案
+    //   ★★ : 3-6日 → property_send または property_search を検討
+    //   ★  : 3日未満 → 様子見
+    let searchPriority: string;
+    if (unansweredSendCount >= 2) {
+      searchPriority = "─（送付済みがあり返信待ち → property_sendは控える）";
+    } else if (daysSinceLastSend === null || daysSinceLastSend >= 7) {
+      searchPriority = "★★★（7日以上送付なし → 今すぐproperty_searchを提案）";
+    } else if (daysSinceLastSend >= 3) {
+      searchPriority = "★★（3-6日 → property_sendまたはproperty_searchを検討）";
+    } else {
+      searchPriority = "★（3日未満 → 様子見）";
+    }
+    propertySearchText = `
+【物件検索統括】
+送付済み件数: ${sentCount}件${sentCount >= 10 ? "以上" : ""}
+最終送付: ${daysSinceLastSend !== null ? `${daysSinceLastSend}日前` : "まだ送付なし"}
+連続未返信送付: ${unansweredSendCount}件（2件以上 = お客さんが反応していない）
+検索条件:
+  エリア: ${pc.desired_area ?? "未設定"}
+  間取り: ${pc.floor_plan ?? "未設定"}
+  家賃上限: ${pc.rent_max ? `${pc.rent_max}円` : "未設定"}
+  入居時期: ${pc.move_in_time ?? "未設定"}
+  駅徒歩: ${pc.walk_minutes ? `${pc.walk_minutes}分以内` : "未設定"}
+  希望条件: ${pc.preferences ?? "未設定"}
+物件検索推奨度: ${searchPriority}`;
+  }
 
   type PromptRule = { rule_text: string; priority: number };
   const promptRules = (promptRulesResult.data ?? []) as PromptRule[];
@@ -441,7 +508,7 @@ ${AIX_CAPABILITY_MAP}${promptRulesText}${knowledgeText}${boundaryText}${template
 回答形式（JSONのみ・説明文・コードブロック不要）:
 {"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "このお客さんに合うテンプレートのトーン・スタイルのヒント（20字以内、例：丁寧語・プッシュ弱め）", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2（次回）: 具体的アクション", "Step3（その次）: 具体的アクション"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
 
-  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${contractPatternsText}
+  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
