@@ -499,6 +499,18 @@ ${history}`;
     if (opts?.autoSendEnabled === false) replyMode = "aix"; // auto_send無効の会話に auto_reply を提案しない
     if (opts?.isFlagged) replyMode = "aix";                // スタッフ要対応フラグ済み
 
+    // 初回例外: スタッフの非AIXテキスト返信がまだ無い会話（真の初回）は
+    // reply_mode と AIX提案を出さない。generate-reply の初回挨拶ドラフト生成が最優先。
+    // generate-reply/route.ts の deriveSuggestedAix first_reply 例外と同じ設計意図。
+    // auto_send_enabled=NULL → ?? false でフェイルクローズしてしまうバグの根本対処でもある。
+    const hasStaffNonAixText = typedMessages.some(
+      m => m.sender === "staff" && !m.is_aix_generated && m.text
+    );
+    if (!hasStaffNonAixText) {
+      finalAix = null;
+      replyMode = undefined;
+    }
+
     return {
       action: finalAix ?? "",
       note: finalAix ? AIX_BRAIN_NOTES[finalAix] : (parsed.action ?? ""),

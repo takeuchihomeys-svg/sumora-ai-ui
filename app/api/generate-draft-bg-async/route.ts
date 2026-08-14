@@ -52,7 +52,8 @@ export async function POST(req: NextRequest) {
       if (convErr) { console.error("[bg-async] conv fetch error:", convErr.message, "convId:", convId); return; }
       if (!conv) { console.error("[bg-async] conv not found:", convId); return; }
       if (conv.last_sender !== "customer") return;
-      if (conv.ai_draft) return;
+      // "[AIX誘導中]" センチネルは初回バグで貼られた可能性があるため通過させて再生成を試みる
+      if (conv.ai_draft && conv.ai_draft !== "[AIX誘導中]") return;
       if (SKIP_STATUSES.has(conv.status as string)) return;
 
       // Atomic claim: 並列bg-asyncが同じ会話を重複生成するのを防ぐ
@@ -61,7 +62,7 @@ export async function POST(req: NextRequest) {
       const { data: claimed } = await db.from("conversations")
         .update({ draft_attempted_at: new Date().toISOString() })
         .eq("id", convId)
-        .is("ai_draft", null)
+        .or('ai_draft.is.null,ai_draft.eq."[AIX誘導中]"')
         .or(`draft_attempted_at.is.null,draft_attempted_at.lt.${fiveMinAgo}`)
         .select("id");
       if (!claimed?.length) {

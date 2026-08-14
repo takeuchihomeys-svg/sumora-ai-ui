@@ -1757,10 +1757,19 @@ export async function POST(req: NextRequest) {
     preprocessedTemplate = applyGreetingSwap(preprocessedTemplate, staffMessagedToday);
   }
 
+  // 初回例外（first_reply exemption）: 真の初回（スタッフの非AIXテキスト返信ゼロ）は
+  // reply_mode ゲートをスキップして初回挨拶ドラフト生成を優先する。
+  // deriveSuggestedAix の first_reply 例外（line ~143）と同じ設計意図をゲートにも適用。
+  const isFirstReplyGateExempt =
+    normalizeState(state || "first_reply") === "first_reply" &&
+    !recentMessages.some(
+      m => m.sender === "staff" && !m.isAix && m.text && m.text !== "[画像]" && m.text !== "[動画]"
+    );
+
   // ─── reply_modeゲート チェックポイントA ───
   // meta が既に "aix" ならAnthropic呼び出し前にゼロコストで中止（cron再試行時など）。
   // null（未分析/webhookワイプ直後）はここでは素通しし、チェックポイントBで再確認する。
-  if (enforceReplyModeGate && conversationId && !isTemplateOptimize) {
+  if (enforceReplyModeGate && conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
     const gate = await fetchReplyModeGate(conversationId);
     if (gate?.meta?.reply_mode === "aix") {
       console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(A):", conversationId);
@@ -2185,7 +2194,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // チェックポイントA時点ではmetaがnullのことが多い。Step1分析(最大45秒)完了後の
     // このタイミングなら再投入済み。メイン生成(Sonnet)呼び出し前に最終確認する。
     // H7(Fable5): 上で取得済みの brainGate を再利用（DB再取得しない・タイミングは同等）
-    if (enforceReplyModeGate && conversationId && !isTemplateOptimize) {
+    if (enforceReplyModeGate && conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
       if (brainGate?.meta?.reply_mode === "aix") {
         console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(B):", conversationId);
         return applyAixGateAndRespond(conversationId, brainGate.meta, brainGate.customerName);
