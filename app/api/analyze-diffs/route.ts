@@ -1988,6 +1988,77 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── ポジティブ強化 D: 「未修正=正解」学習（2026-08-14追加）──
+  // スタッフがAI返信を修正せずそのまま送信 = その返信は正解だったという強いシグナル。
+  // ポジティブ強化A（ai_components あり限定・コンポーネントルールの importance +1）が拾わない
+  // ai_components NULL の例も含め、直近7日の was_ai_modified=false 例を最大20件処理する:
+  //   ① is_starred=true に更新（良い例としてプロンプト注入対象に昇格。既に☆なら維持）
+  //   ② conversation_state 直付きの上位ナレッジを increment_knowledge_used_count RPC でブースト
+  //      （used_count+1・last_used_at 更新 — stale decay の「90日 used_count=0 → rejected」からも守られる）
+  //   ③ positive_source='no_edit_positive' を記録（出所識別子 兼 cron重複処理防止フラグ）
+  // 既存の was_ai_modified=true 差分学習・ポジティブ強化A〜Cには一切影響しない（diff_analyzed_at は触らない）。
+  let noEditProcessed = 0;
+  let noEditBoosted = 0;
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: noEditExamples, error: noEditError } = await supabase
+      .from("ai_reply_examples")
+      .select("id, conversation_state, is_starred")
+      .eq("was_ai_modified", false)
+      .eq("was_ai_used", true)
+      .eq("entry_source", "line_reply")
+      .is("positive_source", null)   // 処理済みは positive_source が入るため二重処理されない
+      .gte("sent_at", sevenDaysAgo)  // 直近7日のみ（古いバックログを掘り返さない）
+      .order("sent_at", { ascending: false })
+      .limit(20);                    // 小バッチ（タイムアウト対策）
+    if (noEditError) {
+      // positive_source カラム未作成（migrate-schema 未実行）等 — メイン処理は落とさない
+      console.warn("[analyze-diffs] ポジティブ強化D フェッチ失敗（スキップ）:", noEditError.message);
+    }
+    for (const ne of noEditExamples ?? []) {
+      if (Date.now() - startTime > 52_000) {
+        console.warn("[analyze-diffs] 時間制限到達、ポジティブ強化Dブロックを打ち切り（残りは次回実行で処理）");
+        break;
+      }
+      // conversation_state 直付きの上位ナレッジをブースト（コンポーネントstateではなく素のstate）
+      const neState = ne.conversation_state as string | null;
+      if (neState) {
+        const { data: neRules } = await supabase
+          .from("ai_reply_knowledge")
+          .select("id, apply_count, correct_count, wrong_count")
+          .eq("conversation_state", neState)
+          .order("used_count", { ascending: false })
+          .limit(2);
+        const boostIds = (neRules ?? [])
+          .filter((r) => isBoostEligible(r as BoostStats)) // 外れ率の高いルールの盲目ブースト防止
+          .map((r) => r.id as string);
+        if (boostIds.length > 0) {
+          try {
+            await supabase.rpc("increment_knowledge_used_count", { p_ids: boostIds });
+            noEditBoosted += boostIds.length;
+          } catch (e) {
+            console.warn("[analyze-diffs] ポジティブ強化D increment_knowledge_used_count RPC失敗:", e);
+          }
+        }
+      }
+      // ☆付与 + 処理済み識別子の記録（既に☆の場合はフラグ維持のまま positive_source のみ）
+      const { error: neUpdateError } = await supabase
+        .from("ai_reply_examples")
+        .update({
+          ...(ne.is_starred ? {} : { is_starred: true }),
+          positive_source: "no_edit_positive",
+        })
+        .eq("id", ne.id);
+      if (neUpdateError) {
+        console.warn("[analyze-diffs] ポジティブ強化D 更新失敗:", neUpdateError.message);
+      } else {
+        noEditProcessed++;
+      }
+    }
+  } catch (e) {
+    console.warn("[analyze-diffs] ポジティブ強化D失敗（メイン処理は継続）:", e);
+  }
+
   // ── ⑤ 再生成シグナル: 同一会話で AIX を複数回生成 → 古いものを discarded に ──
   // 「気に入らなくて生成し直した」= 強い不満シグナル。生成→送信の窓（30分）を超えた 'generated' も破棄確定。
   {
@@ -2054,6 +2125,26 @@ export async function POST(req: NextRequest) {
     }).catch(() => {});
   }
 
+  // ── 申込到達会話の自動学習トリガー（fire-and-forget）──
+  // learned_at 未設定の申込段階会話があれば /api/analyze-applying を起動する。
+  // analyze-diffs は日次cronで複数回走るため、申込到達の翌cron実行時に自動学習される。
+  // 失敗してもメイン処理には影響させない（analyze-applying 側の learned_at 冪等ガードで多重起動も安全）。
+  try {
+    const { count: applyingPending, error: applyingErr } = await supabase
+      .from("conversations")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["applying", "approved", "application", "screening", "contract"])
+      .is("learned_at", null);
+    if (!applyingErr && (applyingPending ?? 0) > 0) {
+      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+        ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000");
+      void fetch(`${baseUrl}/api/analyze-applying`, {
+        method: "POST",
+        headers: cronSecret ? { Authorization: `Bearer ${cronSecret}` } : {},
+      }).catch(() => {});
+    }
+  } catch { /* ignore - 申込学習トリガー失敗はメイン処理を止めない */ }
+
   // ── cron失敗の可視化: 直近24時間に ok=null（未完了 = タイムアウト/クラッシュ）の実行記録があれば通知 ──
   let cronWarning = "";
   try {
@@ -2071,12 +2162,12 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - 可視化失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
+  await finishCronLog(runLogId, true, { processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, noEditProcessed, noEditBoosted, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
   return NextResponse.json({
-    ok: true, processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, timedOut,
+    ok: true, processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, noEditProcessed, noEditBoosted, timedOut,
     sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
     ...(cronWarning ? { cronWarning } : {}),
-    message: `${processed}件処理・${learned}件学習・AIX差分${aixProcessed}件処理（${aixLearned}件学習）・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・AIX昇格${promotedAix}件・昇格承認起票${promotionAsked}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
+    message: `${processed}件処理・${learned}件学習・AIX差分${aixProcessed}件処理（${aixLearned}件学習）・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・AIX昇格${promotedAix}件・昇格承認起票${promotionAsked}件・未修正正解${noEditProcessed}件☆付与（ナレッジ${noEditBoosted}件ブースト）・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
   } catch (e) {
     console.error("[analyze-diffs]", e);

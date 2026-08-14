@@ -1908,6 +1908,28 @@ ALTER TABLE weekly_learning_metrics DISABLE ROW LEVEL SECURITY;
 -- 一致（未編集）なら再チェックなしで即送信 / 不一致（スタッフ編集）なら /api/check-reply で再チェック
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft_check JSONB;
 
+-- ── positive_source: 「未修正=正解」ポジティブ強化の識別子（2026-08-14追加）──
+-- analyze-diffs ポジティブ強化D が was_ai_modified=false（AI案そのまま送信=正解シグナル）の例を
+-- 自動☆付与＋ナレッジ used_count ブーストした際に 'no_edit_positive' を記録する。
+-- 値が入っている = 処理済み（毎日のcronでの重複処理防止フラグを兼ねる）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS positive_source TEXT;
+
+-- ── 申込到達自動学習（analyze-applying: 2026-08-14追加）──
+-- conversations.learned_at: /api/analyze-applying が申込到達会話の学習処理を完了した時刻。
+-- NULL = 未学習（処理対象）。学習失敗時は更新されず次回実行で再試行される（フェイルオープン）。
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS learned_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_conversations_learned_at ON conversations(status) WHERE learned_at IS NULL;
+
+-- ai_reply_examples.application_success: 申込到達会話の☆つき例（特に重要な成功例）フラグ
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS application_success BOOLEAN DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_app_success ON ai_reply_examples(application_success) WHERE application_success = TRUE;
+
+-- ai_reply_knowledge.category に 'applying_pattern'（申込到達パターン専用カテゴリ）を追加
+-- ※ L174 の CREATE TABLE 時 CHECK は既存テーブルには効かないため、制約を張り替える
+ALTER TABLE ai_reply_knowledge DROP CONSTRAINT IF EXISTS ai_reply_knowledge_category_check;
+ALTER TABLE ai_reply_knowledge ADD CONSTRAINT ai_reply_knowledge_category_check
+  CHECK (category IN ('pattern', 'style', 'phrase', 'principle', 'applying_pattern'));
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
