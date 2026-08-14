@@ -879,7 +879,16 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
             staff_action: ["希望条件を確認", "条件に合う物件を提案", "内覧日程を調整", "申込書類を案内"][i],
             status: i < newIdx ? "done" : i === newIdx ? "current" : "pending",
           })),
-          next_staff_action: String(metaRecord.next_steps ?? "状況を確認して次の一手を判断"),
+          next_staff_action: (() => {
+            const raw = Array.isArray(metaRecord.next_steps)
+              ? String((metaRecord.next_steps as string[])[0] ?? "")
+              : String(metaRecord.next_steps ?? "");
+            const src = raw.trim() || "状況を確認して次の一手を判断";
+            if (/申込/.test(src)) return "お客さんの懸念点を確認しながら、申込書類の準備について自然に案内する";
+            if (/内覧/.test(src)) return "物件の空き状況や他の問い合わせ状況を伝えながら、内覧日程を提案する";
+            if (/物件/.test(src)) return "希望条件に合う物件を絞り込みながら、具体的な物件情報を送る";
+            return src;
+          })(),
           matched_at: (existingDir?.matched_at as string | undefined) ?? new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
