@@ -56,7 +56,6 @@ export async function GET(req: NextRequest) {
     const { data: conversations, error } = await supabase
       .from("conversations")
       .select("id")
-      .eq("last_sender", "customer")
       .is("suggested_aix_meta", null)
       // B7(Fable5): 旧 .not("status","in",...) は SQL の NOT IN で NULL 行を除外してしまう
       // （writer 側の analyzeAndSaveBrainMeta は null status を許容 → 永久に分析されない盲点だった）
