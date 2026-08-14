@@ -4,18 +4,17 @@
 
 ---
 
-## 現状サマリー（2026-06-09時点）
+## 現状サマリー（2026-08-14時点）
 
 | 項目 | 件数 | 状態 |
 |------|------|------|
-| ai_reply_examples（学習実例） | **641件** | ✅ 稼働中 |
-| うち☆つき | **～195件（推定）** | ✅ |
-| うちAI修正して送信 | **87件（15%）** | ✅ |
-| うちAIそのまま使用 | **2件（0.3%）** | 🔧 改善中 |
-| ai_reply_knowledge | **1000件以上** | ✅ |
-| うち差分学習ルール | **126件（importance9）** | ✅ |
-| うち修正対比ルール | **126件** | ✅ |
-| phrase_dictionary | **1000件以上** | ✅ |
+| ai_reply_knowledge | **6,200件以上** | ✅ 稼働中 |
+| うち applying_pattern（申込ケースフロー） | **24件** | ✅ 新設（2026-08-14） |
+| うち embedding NULL（pgvector不可） | **976件** | 🔧 バックフィル実行中 |
+| 成約/申込会話学習済み | **14/19件** | 🔧 残5件修正デプロイ済み |
+| 週次analyze-applying cron | ✅ 毎週日曜JST21:30 | ✅ 設定済み |
+| brain/list Section B（追客サイレント） | ✅ 実装済み | 新機能（2026-08-14） |
+| ポジティブ強化D（AI未修正=正解） | ✅ analyze-diffs内 | 新機能（2026-08-14） |
 
 ---
 
@@ -72,11 +71,11 @@ enhance-reply/route.ts（AI文案生成ボタン）も同様にpgvector対応済
 
 ## 次セッションで確認すること TOP5
 
-1. **ai_use_rate が上がっているか** → 2件→増えてたら精度改善の証拠
-2. **applyingフェーズの☆が増えているか** → 10件→20件以上を目標
-3. **差分学習ルール126件が反映されて文案の質が変わっているか**
-4. **phrase_dictionary が1000件超えているが使われているか** → priority確認
-5. **AI修正例フォールバックが動いているか** → applying/hearing で確認
+1. **成約パターン24件がRAGに届いているか** → generate-reply ログで fetchApplyingPatterns() 動作確認
+2. **embedding NULL 976件のバックフィル完了後に pgvector 精度が上がったか**
+3. **importance filter（97%がimportance≥7=フィルター死）の修正** → knowledge_apply_logから重要度再計算
+4. **analyze-applying 残5件の処理完了確認** → conversations.learned_at が19/19になるか
+5. **brain/list Section B（追客コホート）がスタッフに使われているか** → priority_score上位確認
 
 ---
 
