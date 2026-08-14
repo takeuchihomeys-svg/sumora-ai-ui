@@ -77,13 +77,22 @@ async function callSonnet(prompt: string): Promise<ApplyingAnalysis | null> {
   try {
     const res = await client.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 1500,
+      max_tokens: 3000,
       messages: [{ role: "user", content: prompt }],
     });
     const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
-    const match = text.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").match(/\{[\s\S]*\}/);
+    const cleaned = text.replace(/```json?\s*/gi, "").replace(/```\s*/g, "");
+    // { から最後の } まで貪欲にマッチ → truncation で末尾が切れる場合に備え不完全JSONも試みる
+    const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) return null;
-    return JSON.parse(match[0]) as ApplyingAnalysis;
+    try {
+      return JSON.parse(match[0]) as ApplyingAnalysis;
+    } catch {
+      // JSON が truncation で不完全な場合: 最後の完全な配列/オブジェクトで閉じ直して再試行
+      const partial = match[0].replace(/,\s*$/, "").replace(/[\[{][^[{}\]]*$/, "");
+      const fixed = partial + (partial.includes('"key_success_factors"') ? ']}' : '}');
+      try { return JSON.parse(fixed) as ApplyingAnalysis; } catch { return null; }
+    }
   } catch (e) {
     console.warn("[analyze-applying] Sonnet呼び出し失敗:", e instanceof Error ? e.message : String(e));
     return null;
