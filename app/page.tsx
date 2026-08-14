@@ -48,7 +48,7 @@ type Conversation = {
   isFlagged?: boolean;
   hasViewed?: boolean;
   aiDraft?: string | null;
-  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string } | null;
+  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; next_steps?: string[] } | null;
   suggestedNextAix?: string | null;
   messages: Message[];
 };
@@ -69,7 +69,7 @@ type SupabaseConversationRow = {
   is_flagged?: boolean | null;
   has_viewed?: boolean | null;
   ai_draft?: string | null;
-  suggested_aix_meta?: { action: string; note: string; closing_strategy?: string } | null;
+  suggested_aix_meta?: { action: string; note: string; closing_strategy?: string; next_steps?: string[] } | null;
   suggested_next_aix?: string | null;
 };
 
@@ -2902,6 +2902,14 @@ export default function Home() {
 
       if (updateError) throw updateError;
 
+      // H2: 手動ステータス変更を stage_history に記録（fire-and-forget）
+      void supabase.from("conversation_stage_history").insert({
+        conversation_id: selectedConversation.id,
+        from_status: selectedConversation.status ?? null,
+        to_status: nextStatus,
+        trigger: "manual",
+      });
+
       // 申込以降・成約になったとき: バックグラウンドで決まるパターンを自動学習
       if (nextStatus === "applying" || nextStatus === "closed_won") {
         void fetch("/api/learn-closing-pattern", {
@@ -4110,6 +4118,16 @@ export default function Home() {
         .from("conversations")
         .update(convUpdate)
         .eq("id", convId);
+
+      // H2: スタッフ返信起因の自動ステータス変更を stage_history に記録（fire-and-forget）
+      if (newStatus && newStatus !== currentStatus) {
+        void supabase.from("conversation_stage_history").insert({
+          conversation_id: convId,
+          from_status: selectedConversation.status ?? null,
+          to_status: newStatus,
+          trigger: "staff_reply",
+        });
+      }
 
       setConversations((prev) =>
         prev
@@ -5440,7 +5458,7 @@ export default function Home() {
                     const fetchBrain = (iter: number) => {
                       fetch("/api/brain/list")
                         .then((r) => (r.ok ? r.json() : null))
-                        .then((list: Array<{ id: string; suggested_aix_meta: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string } | null }> | null) => {
+                        .then((list: Array<{ id: string; suggested_aix_meta: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; next_steps?: string[] } | null }> | null) => {
                           if (!list) return;
                           setBrainConversations((prev) =>
                             prev.map((c) => {
@@ -6013,6 +6031,8 @@ export default function Home() {
                 {(() => {
                   // 「どうやったら決まるか」: suggested_aix_meta.closing_strategy から読む（Step1 Sonnet分析 or Haiku brain）
                   const closingStrategy = selectedConversation.suggestedAixMeta?.closing_strategy ?? null;
+                  // H5: 次の3ステップ（brain-core が生成・保存済みだが未表示だった）
+                  const nextSteps = selectedConversation.suggestedAixMeta?.next_steps ?? [];
                   // AI分析 詳細（プロフィール）: 引き続き ai_summary から読む（★決まるパターン行を除外）
                   const profileBullets = lc.ai_summary
                     ? (lc.ai_summary as string)
@@ -6021,13 +6041,21 @@ export default function Home() {
                         .replace(/\*+/g, "")
                         .trim()
                     : "";
-                  if (!closingStrategy && !profileBullets) return null;
+                  if (!closingStrategy && !profileBullets && nextSteps.length === 0) return null;
                   return (
                     <div className="mt-2 border-t border-[#f0f2f5] pt-1.5 space-y-1.5">
                       {closingStrategy && (
                         <div className="rounded-xl border border-red-400 bg-red-50 px-3 py-2">
                           <p className="text-[11px] font-bold text-red-500 mb-0.5">🔴 どうやったら決まるか</p>
                           <p className="text-[13px] font-bold leading-snug text-red-700">{closingStrategy}</p>
+                        </div>
+                      )}
+                      {nextSteps.length > 0 && (
+                        <div className="rounded-lg border border-blue-200 bg-blue-50 p-2">
+                          <div className="text-xs font-bold text-blue-700 mb-1">次の3ステップ</div>
+                          <ol className="text-xs text-blue-900 list-decimal list-inside space-y-0.5">
+                            {nextSteps.map((s, i) => (<li key={i}>{s}</li>))}
+                          </ol>
                         </div>
                       )}
                       {profileBullets && (

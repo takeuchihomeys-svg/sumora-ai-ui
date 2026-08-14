@@ -479,29 +479,32 @@ async function handleTextMessage(
         process.env.NEXT_PUBLIC_SITE_URL ??
         (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
-      const suggestRes = await fetch(`${baseUrl}/api/suggest-next-action`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: convId, customer_message: text }),
-        signal: AbortSignal.timeout(12_000),
-      });
-      if (!suggestRes.ok) return;
-
-      const suggestion = await suggestRes.json() as {
-        action?: string | null;
-        reason?: string | null;
-        note?: string | null;
-        scene_hint?: string | null;
-        action_label?: string | null;
-      } | null;
-      if (!suggestion?.action) return;
-
-      // P1: リッチ通知 — 脳の指示・戦略・推奨AIXをスタッフグループに通知
-      const brainInstruction = suggestion.note || suggestion.reason || null;
-      const closingStrategy = suggestion.scene_hint || null;
-      const aixLabel = suggestion.action
-        ? (AIX_LABEL_JP[suggestion.action] ?? suggestion.action_label ?? suggestion.action)
-        : null;
+      // H3: suggest-next-action の成否に関わらず基本通知（LINEきた）は必ず送る
+      let brainInstruction: string | null = null;
+      let closingStrategy: string | null = null;
+      let aixLabel: string | null = null;
+      try {
+        const suggestRes = await fetch(`${baseUrl}/api/suggest-next-action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation_id: convId, customer_message: text }),
+          signal: AbortSignal.timeout(12_000),
+        });
+        if (suggestRes.ok) {
+          const suggestion = await suggestRes.json() as {
+            action?: string | null;
+            reason?: string | null;
+            note?: string | null;
+            scene_hint?: string | null;
+            action_label?: string | null;
+          } | null;
+          if (suggestion?.action) {
+            brainInstruction = suggestion.note || suggestion.reason || null;
+            closingStrategy = suggestion.scene_hint || null;
+            aixLabel = AIX_LABEL_JP[suggestion.action] ?? suggestion.action_label ?? suggestion.action;
+          }
+        }
+      } catch { /* suggest失敗でも基本通知は送る */ }
 
       const notifyLines: string[] = [
         `${customerName}さんからLINEきた`,
@@ -977,6 +980,12 @@ async function extractConditionsFromCasualReply(
   const staffText = lastStaffMsg?.text as string | null;
   if (!staffText) return;
 
+  // H1: 顧客テキスト側に条件シグナル（数字・条件語）がなければスキップ（「ありがとうございます」対策）
+  // 物件カード送信後はスタッフ側正規表現がほぼ必ずマッチするため、顧客側のゲートが必須
+  const hasConditionSignal = /[0-9０-９]|万|LDK|DK|ワンルーム|駅|区|市|町|徒歩|築|家賃|エリア|間取り|入居|来月|再来月|即入居/.test(customerText);
+  if (!hasConditionSignal) return;
+  if (/^https?:\/\/\S+$/.test(customerText.trim())) return; // URLのみは対象外
+
   // スタッフの質問が条件ヒアリング文脈かを確認（対象外は即リターン）
   const isConditionContext = /ご希望|エリア|間取り|家賃|いつ|駅|どこ|条件|予算|入居|徒歩|築/.test(staffText);
   if (!isConditionContext) return;
@@ -1013,7 +1022,8 @@ ${staffText.slice(0, 200)}
 【お客さんの返信】
 ${customerText.slice(0, 300)}
 
-読み取れた条件のみ以下の形式で返してください（不明な項目は省略してください）:
+読み取れた条件のみ以下の形式で返してください（不明な項目は省略してください）。
+※お客さんの返信に明示された条件のみ。スタッフの質問文に含まれる数字・条件は絶対に抽出しないこと。
 {
   "desired_area": "希望エリア・駅名",
   "floor_plan": "間取り（例: 1LDK）",
@@ -1045,15 +1055,34 @@ ${customerText.slice(0, 300)}
     }
   }
 
-  // 非 null・非空 フィールドのみ UPDATE 対象にする（既存条件を上書きしすぎない）
+  // C1: 非 null・非空 フィールドのみ UPDATE 対象にする + merge-if-null（DB既存の確定値は絶対に上書きしない）
   const CONDITION_FIELDS = [
     "desired_area", "floor_plan", "rent_max", "rent_min",
     "walk_minutes", "move_in_time", "building_age", "initial_cost_limit", "other_requests",
   ];
+
+  // 型検証: 数値カラムに文字列が入るとUPDATE全体が失敗するため number 以外は破棄
+  const NUMERIC_FIELDS = new Set(["rent_max", "rent_min", "walk_minutes", "building_age", "initial_cost_limit"]);
+  for (const f of NUMERIC_FIELDS) {
+    if (extracted[f] !== undefined && typeof extracted[f] !== "number") delete extracted[f];
+  }
+
+  // after() C（resolve-area正規化）と競合するため、エリア指定メッセージでは desired_area を書かない
+  if (isAreaSpecificationMessage(customerText)) delete extracted.desired_area;
+
+  const { data: existingPc } = await db
+    .from("property_customers")
+    .select(CONDITION_FIELDS.join(","))
+    .eq("id", pcId)
+    .maybeSingle();
+
   const updates: Record<string, unknown> = {};
   for (const f of CONDITION_FIELDS) {
     const v = extracted[f];
-    if (v !== null && v !== undefined && v !== "") updates[f] = v;
+    if (v === null || v === undefined || v === "") continue;
+    const existingVal = (existingPc as Record<string, unknown> | null)?.[f];
+    if (existingVal !== null && existingVal !== undefined && existingVal !== "") continue; // 既存確定値を保護
+    updates[f] = v;
   }
 
   if (Object.keys(updates).length === 0) return; // 抽出条件なし → スキップ
@@ -1547,6 +1576,23 @@ async function handleImageMessageSave(
     .update({ last_message: "[画像]", last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
     .eq("id", convId);
 
+  // H4: 画像受信もスタッフに基本通知（テキスト経路のP1通知に対応する最小版）
+  after(async () => {
+    try {
+      const { data: convData } = await db.from("conversations")
+        .select("customer_name").eq("id", convId).maybeSingle();
+      const nm = (convData?.customer_name as string | null) || "名称未設定";
+      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+      await fetch(`${baseUrl}/api/notify-group`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `${nm}さんから画像きた\n\n次やること: 画像の内容を確認して返信` }),
+        signal: AbortSignal.timeout(5_000),
+      });
+    } catch (e) { console.warn("[line-webhook] image notify:", e); }
+  });
+
   // FIX(Fable5 #2): 画像受信でも meta を消すため、テキスト経路と同様にイベント駆動で再分析する
   after(async () => {
     await analyzeAndSaveBrainMeta(convId).catch((e) => console.warn("[line-webhook] brain analyze (image):", e));
@@ -1850,6 +1896,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       } else if (saved !== "duplicate") {
         imageJobs.push({ lineMessageId, msgId: saved.msgId, account: matchedAccount });
       }
+    } else if (msgType === "sticker") {
+      // H4: スタンプは保存も通知もされず消えていた → テキスト経路で "[スタンプ]" として保存・通知
+      const lineMessageId = event.message?.id;
+      const ok = await handleTextMessage(userId, "[スタンプ]", matchedAccount, lineMessageId);
+      if (!ok) anyFailed = true;
+      continue;
     }
     // video / audio / file は現状スキップ
   }

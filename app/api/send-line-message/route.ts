@@ -214,6 +214,16 @@ export async function POST(req: NextRequest) {
                     .eq("id", convRow.id as string),
             ]);
 
+            // H2: タスク起因のステータス昇格を stage_history に記録
+            if (earlyStatuses.includes(currentStatus)) {
+              await supabase.from("conversation_stage_history").insert({
+                conversation_id: convRow.id as string,
+                from_status: currentStatus || null,
+                to_status: "proposing",
+                trigger: "staff_reply",
+              });
+            }
+
             // 売上番長グループへアナウンス
             let groupId: string | null = null;
             const envId = process.env.LINE_STAFF_GROUP_ID;

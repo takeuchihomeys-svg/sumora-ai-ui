@@ -347,47 +347,9 @@ export async function POST(req: NextRequest) {
         } catch { /* ignore - AIX本体に影響させない */ }
       })(pcId).catch(() => {}));
 
-      // P3: AIX経由返信を学習ループに組み込む（fire-and-forget）
-      // generated_text がある場合のみ保存（画像のみ送信はスキップ）
-      if (generated_text) {
-        waitUntil((async () => {
-          try {
-            // 直近の顧客メッセージを取得（customer_message は必須カラム）
-            const { data: lastCustomerMsg } = await supabase
-              .from("messages")
-              .select("text")
-              .eq("conversation_id", conversation_id)
-              .eq("sender", "customer")
-              .not("text", "is", null)
-              .neq("text", "[画像]")
-              .order("created_at", { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            const customerMessage = lastCustomerMsg?.text as string | null;
-            if (!customerMessage) return; // 顧客メッセージなし → スキップ
-
-            const { error: exampleErr } = await supabase.from("ai_reply_examples").insert({
-              conversation_id,
-              conversation_state: aix_type,
-              customer_message: customerMessage,
-              sent_reply: generated_text.slice(0, 5000),
-              ai_draft: generated_text.slice(0, 5000),
-              was_ai_used: true,
-              was_ai_modified: was_edited ?? false,
-              entry_source: "aix_action",
-              aix_action: aix_type,
-              is_starred: false,
-              sent_at: sent_at ?? new Date().toISOString(),
-            });
-            if (exampleErr) {
-              console.warn("[log-aix-usage] ai_reply_examples insert failed:", exampleErr.message);
-            }
-          } catch (e) {
-            console.warn("[log-aix-usage] P3 ai_reply_examples error:", e);
-          }
-        })());
-      }
+      // P3(削除済み): ai_reply_examples への直接INSERTは AixModal / page.tsx の
+      // /api/save-reply-example 呼び出し（entry_source: "aix_action"）と二重保存になるため削除。
+      // save-reply-example 側が正（実際の下書き・サブキー state・embedding・dedup・auto-star を持つ）。
     }
 
     return NextResponse.json({ ok: true, previous_action_type: previousAction });

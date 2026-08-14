@@ -1844,7 +1844,7 @@ ALTER TABLE sent_properties DISABLE ROW LEVEL SECURITY;
 
 -- ── conversation_stage_history: 会話ステータス変遷履歴（P2: 2026-08-14追加）──
 -- conversations.status の変化を時系列で記録する。自動昇格・手動変更・AIXアクションの追跡に使用。
--- trigger: 'customer_message' | 'staff_reply' | 'manual' | 'aix_action'
+-- trigger: 'customer_message' | 'staff_reply' | 'manual' | 'aix_action' | 'cron'
 CREATE TABLE IF NOT EXISTS conversation_stage_history (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,

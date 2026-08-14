@@ -88,18 +88,29 @@ async function runAutoSeiyaku() {
 
         // 14日以上無連絡 → ご成約（closed_won）へ更新
         // .in("status", ...) で競合ガード（実行中に手動でステータス変更された場合は上書きしない）
-        const { error: updateErr } = await supabase
+        const { data: updatedRows, error: updateErr } = await supabase
           .from("conversations")
           .update({
             status: "closed_won",
             updated_at: new Date().toISOString(),
           })
           .eq("id", conv.id)
-          .in("status", APPLYING_STATUSES);
+          .in("status", APPLYING_STATUSES)
+          .select("id");
 
         if (updateErr) {
           errors.push(`${conv.id}: ${updateErr.message}`);
           continue;
+        }
+
+        // H2: cron起因のステータス変更を stage_history に記録（実際に遷移した場合のみ）
+        if ((updatedRows ?? []).length > 0) {
+          await supabase.from("conversation_stage_history").insert({
+            conversation_id: conv.id,
+            from_status: conv.status,
+            to_status: "closed_won",
+            trigger: "cron",
+          });
         }
 
         updated += 1;
