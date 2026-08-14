@@ -7878,9 +7878,11 @@ export default function Home() {
                     : "bg-yellow-100 text-yellow-700"
                 }`}>
                   {replyQuality.auto_ok
-                    ? (checkResult && checkResult.ok && checkResult.issues.length === 0 && checkResult.passes_completed.length === 3
-                        ? "✅ 3重チェック済み"
-                        : "✅ そのまま送信OK")
+                    ? (checkResult && checkResult.ok && (checkResult.revision_count ?? 0) > 0 && !checkResult.revision_exhausted
+                        ? `✅ ${checkResult.revision_count}回修正で問題解消`
+                        : checkResult && checkResult.ok && checkResult.issues.length === 0 && checkResult.passes_completed.length === 3
+                          ? "✅ 3重チェック済み"
+                          : "✅ そのまま送信OK")
                     : replyQuality.is_applying_docs ? "⚠️ 申込書類・要確認" : "⚠️ 要確認"}
                 </span>
               </div>
@@ -7907,6 +7909,9 @@ export default function Home() {
                       {it.suggestion && <div className="pl-4 text-[#667781]">💡 {it.suggestion}</div>}
                     </div>
                   ))}
+                  {checkResult.revision_exhausted && (
+                    <div className="text-[10px] font-bold text-red-600">🤖 AIが自動修正を試みましたが解消できませんでした。手動で修正してください。</div>
+                  )}
                 </div>
               </details>
             )}

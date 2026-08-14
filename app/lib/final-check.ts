@@ -11,8 +11,8 @@
 // - タイムアウト・API失敗は fail-open（passes_completed に記録して送信は止めない）
 //
 // 呼び出し元:
-// - generate-reply/route.ts …… 生成時フルチェック + 警告のみなら自動修正
-// - check-reply/route.ts    …… 送信時（スタッフ編集後）の再チェック。自動修正なし
+// - generate-reply/route.ts …… runFinalCheckWithRevision（チェック+接地修正ループ。最大2チェック）
+// - check-reply/route.ts    …… 送信時（スタッフ編集後）の再チェック。自動修正なし（runFinalCheckのみ）
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -33,6 +33,9 @@ export interface CheckResult {
   passes_completed: CheckPass[];  // fail-open監査: タイムアウトしたpassはここに無い
   elapsed_ms: number;
   checked_text_hash: string;      // sha1(text.trim()) — 送信時の再利用判定キー
+  // ── 修正ループ監査（v2追加。ai_draft_check は JSONB カラムなので migrate-schema 更新は不要）──
+  revision_count?: number;        // 実行した接地修正の回数（0 or 1）。トレーラーで必ず送出
+  revision_exhausted?: boolean;   // 修正を試みてもblockが残った/修正不能 → スタッフ手動確認必須
 }
 
 export interface FinalCheckContext {
@@ -298,41 +301,223 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Prom
   };
 }
 
-// ─── 自動修正（generate-reply時のみ・warningのみの場合に限る）─────────────────
-// 失敗・タイムアウト・破壊的書き換えは null を返す（呼び出し元は元ドラフトを維持）
-export async function runAutoRevision(draft: string, issues: CheckIssue[]): Promise<string | null> {
+// ─── 接地付き自動修正のプロンプト（block/warning共用）──────────────────────────
+// 設計: 「指摘のみ修正」+「置換に使える事実は根拠情報内のみ」+「引用必須」。
+// AIX境界違反は削除/宣言化、捏造は削除または根拠情報からの置換に限定する。
+function buildGroundedRevisionPrompt(draft: string, issues: CheckIssue[], ctx: FinalCheckContext): string {
+  return `あなたは不動産会社のLINE返信文の校閲・修正担当です。
+検査で見つかった [ISSUES] の問題「だけ」を修正した全文を作成してください。
+下記の根拠情報のみを基に修正してください。根拠のない情報は絶対に追加しないでください。
+根拠情報とは [CHECKPOINT]（確認済み事実・最高権威）、[CONDITIONS]（DB保存の顧客条件）、
+[RULES]（会社ルール）の3つだけです。
+
+【絶対ルール（1つでも破ると修正は自動的に破棄されます）】
+1. 指摘箇所以外は一字も変えない（削除で文がつながらなくなる場合の最小限の接続修正のみ可）
+2. 新しい事実（金額・日付・曜日・時刻・物件名・号室・駅名・空室状況・制度説明）を絶対に追加しない。
+   置き換えに使ってよい事実は [CHECKPOINT] と [CONDITIONS] に書かれているものだけ
+3. AIX_BOUNDARY_* の指摘 → 該当する具体情報（日時・金額・物件詳細・住所・書類リスト等）を削除し、
+   必要なら「担当者にて手配のうえ、改めてご連絡いたします」のような宣言のみの一文に置き換える
+4. FABRICATED_* の指摘 → その主張を削除する。[CHECKPOINT]/[CONDITIONS] に正しい事実が
+   あるときだけ、それに置き換えてよい（置き換えた場合は changes に根拠を必ず引用する）
+5. MISSED_QUESTION → 根拠情報に答えがある質問のみ答える。無ければ「確認して改めてご連絡いたします」とだけ書く
+6. [RULES] の禁止語彙・禁止表現を修正後の文に持ち込まない
+7. 修正後も自然な日本語のLINE返信として成立させる
+
+【changes の書き方】修正1件ごとに:
+- code: 対応する指摘コード
+- action: "removed"（削除した）または "replaced"（根拠情報の事実に置き換えた）
+- ground_truth_quote: action が "replaced" のときは [CHECKPOINT] または [CONDITIONS] または [RULES] から
+  根拠部分をそのまま引用する（一字一句）。"removed" のときは空文字。
+引用できない置換は行わず、削除（removed）を選ぶこと。
+
+[ISSUES]
+${issues.map((i) => `- [${i.code}] ${i.message}（該当箇所:「${i.evidence}」${i.suggestion ? ` / 修正案: ${i.suggestion}` : ""}）`).join("\n")}
+[/ISSUES]
+[CHECKPOINT]
+${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+[/CHECKPOINT]
+[CONDITIONS]
+${(ctx.customerConditionsDb || "なし").slice(0, 1000)}
+[/CONDITIONS]
+[RULES]
+${(ctx.dbRules || "なし").slice(0, 4000)}
+[/RULES]
+[ORIGINAL_DRAFT]
+${draft}
+[/ORIGINAL_DRAFT]`;
+}
+
+// ─── 接地修正の構造化出力（保証付きJSON・引用の機械検証用）────────────────────
+const REVISION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["revised_text", "changes"],
+  properties: {
+    revised_text: { type: "string" },
+    changes: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["code", "action", "ground_truth_quote"],
+        properties: {
+          code: { type: "string" },
+          action: { type: "string", enum: ["removed", "replaced"] },
+          ground_truth_quote: { type: "string" },
+        },
+      },
+    },
+  },
+} as const;
+
+type RawRevision = {
+  revised_text?: string;
+  changes?: Array<{ code?: string; action?: string; ground_truth_quote?: string }>;
+};
+
+// ─── 接地付き自動修正（runAutoRevision の後継。失敗・ガード違反は null = fail-open）──
+// null を返す条件: API失敗/タイムアウト(3.5s)/尻切れ/無変更/破壊的書き換え/根拠のない置換。
+// 呼び出し元は null のとき元ドラフトを維持する（修正失敗で送信フローは絶対に止めない）。
+export async function runGroundedRevision(
+  draft: string,
+  issues: CheckIssue[],
+  ctx: FinalCheckContext,
+  timeoutMs = 3500,
+): Promise<string | null> {
   try {
     const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
-    const prompt = `以下のLINE返信文について、指摘された問題点のみを修正してください。
-以下の指摘のみを修正し、それ以外は一字も変えないこと。
-修正後の全文のみを出力すること（説明・前置き・引用符は一切不要）。
-
-[指摘]
-${issues.map((i) => `- ${i.message}（該当箇所: 「${i.evidence}」${i.suggestion ? ` / 修正案: ${i.suggestion}` : ""}）`).join("\n")}
-[/指摘]
-[返信文]
-${draft}
-[/返信文]`;
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(timeoutMs),
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model: "claude-haiku-4-5",
-        max_tokens: 1500,
+        max_tokens: 2000,
         temperature: 0,
-        messages: [{ role: "user", content: prompt }],
+        output_config: { format: { type: "json_schema", schema: REVISION_SCHEMA } },
+        messages: [{ role: "user", content: buildGroundedRevisionPrompt(draft, issues, ctx) }],
       }),
     });
     if (!res.ok) return null;
     const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
-    if (data.stop_reason === "max_tokens") return null; // 尻切れ修正文は使わない
-    const revised = (data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "").trim();
-    if (!revised) return null;
-    // 破壊的書き換えガード: 元の50%未満・200%超は「指摘のみ修正」から逸脱しているとみなし破棄
-    if (revised.length < draft.length * 0.5 || revised.length > draft.length * 2) return null;
+    if (data.stop_reason === "max_tokens") return null; // 尻切れJSONは使わない
+    const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
+    const parsed = JSON.parse(text) as RawRevision;
+
+    const revised = (parsed.revised_text ?? "").trim();
+    if (!revised || revised === draft.trim()) return null;
+    // 破壊的書き換えガード（AIX段落の削除で縮むため下限は40%）
+    if (revised.length < draft.length * 0.4 || revised.length > draft.length * 2) return null;
+
+    // ハルシネーションガード（決定的）: "replaced" の引用が根拠情報に実在しなければ修正全体を破棄
+    const gtNorm = normalizeForMatch(
+      [ctx.checkpointFacts ?? "", ctx.customerConditionsDb ?? "", ctx.dbRules ?? ""].join("\n"),
+    );
+    for (const c of parsed.changes ?? []) {
+      if (c.action === "replaced") {
+        const q = normalizeForMatch((c.ground_truth_quote ?? "").trim());
+        if (!q || !gtNorm.includes(q)) return null;
+      }
+    }
     return revised;
   } catch {
     return null;
   }
+}
+
+// ─── チェック+接地修正ループ ──────────────────────────────────────────────────
+// 反復上限はループカウンタで強制（チェック実行は最大 MAX_CHECK_ITERATIONS 回）。
+// 上限を増やす場合は時間予算(10s)を必ず再計算すること。
+export const MAX_CHECK_ITERATIONS = 2; // check1 + (接地修正 + check2) = 計2チェック上限
+
+const REVISION_MS = 3500;  // 修正Haikuのタイムアウト
+const RECHECK_MS = 3000;   // 再チェック余裕分（3パス並列2.5s + マージン）
+
+export interface RevisionLoopResult {
+  finalDraft: string;      // テキストボックスに入れるベスト草稿
+  finalCheck: CheckResult; // finalDraft に対応するチェック結果（revision_count を必ず含む）
+}
+
+// 動作:
+//   check1 → 指摘0件: そのまま返す
+//         → warningのみ: 接地修正1回・再チェックなし（旧runAutoRevision互換の接地版）
+//         → blockあり: 接地修正 → 再チェック。block 0件になった修正版のみ「クリーン」として採用。
+//           block減少なら修正版を revision_exhausted 付きで採用。改善なし/修正不能/再チェック
+//           未完走なら元ドラフト + check1 を revision_exhausted 付きで返す（強制置換はしない）。
+// 絶対にthrowしない（runFinalCheck / runGroundedRevision がともに fail-open のため）。
+export async function runFinalCheckWithRevision(
+  draft: string,
+  ctx: FinalCheckContext,
+  budgetMs = 9500,
+): Promise<RevisionLoopResult> {
+  const started = Date.now();
+  let checkIterations = 0;
+
+  // ── チェック1回目: フルチェック ──
+  const check1 = await runFinalCheck(draft, ctx);
+  checkIterations++;
+  check1.revision_count = 0;
+  if (check1.issues.length === 0) return { finalDraft: draft, finalCheck: check1 };
+
+  const blocks1 = check1.issues.filter((i) => i.severity === "block");
+
+  // ── warningのみ: 接地修正1回・再チェックなし（blockが無いので送信は元々止まらない）──
+  if (blocks1.length === 0) {
+    const revised = await runGroundedRevision(draft, check1.issues, ctx);
+    if (revised) {
+      check1.revised_text = revised;
+      check1.revision_count = 1;
+      return { finalDraft: revised, finalCheck: check1 };
+    }
+    return { finalDraft: draft, finalCheck: check1 };
+  }
+
+  // ── blockあり: 修正 → 再チェック（ループカウンタで上限強制）──
+  let bestDraft = draft;
+  let bestCheck: CheckResult = check1;
+  let currentDraft = draft;
+  let currentCheck: CheckResult = check1;
+  let revisionCount = 0;
+
+  while (checkIterations < MAX_CHECK_ITERATIONS) {
+    const blocks = currentCheck.issues.filter((i) => i.severity === "block");
+    if (blocks.length === 0) break; // 成功: blockが消えた
+
+    // 時間予算: 残りが 修正+再チェック に満たなければ修正せず即スタッフ確認へ
+    if (budgetMs - (Date.now() - started) < REVISION_MS + RECHECK_MS) break;
+
+    const revised = await runGroundedRevision(currentDraft, currentCheck.issues, ctx);
+    if (!revised) break; // 修正失敗/ガード違反 → give up gracefully
+
+    // 決定的プリフィルタ: block evidence が1つも消えていない修正は無効（再チェック2.5sを節約）
+    const revisedNorm = normalizeForMatch(revised);
+    if (blocks.every((b) => revisedNorm.includes(normalizeForMatch(b.evidence)))) break;
+
+    // ── チェック2回目: 修正版を再チェック（未検証の文章は絶対に出さない）──
+    const recheck = await runFinalCheck(revised, ctx);
+    checkIterations++;
+    revisionCount++;
+    recheck.revised_text = revised;
+
+    // 採用条件: 元のblockを検出したpassが再チェックでも完走していること
+    const blockPasses = new Set(blocks.map((b) => b.pass));
+    const verified = Array.from(blockPasses).every((p) => recheck.passes_completed.includes(p));
+    if (!verified) break; // 再チェック未完走 → 修正版は未検証なので不採用
+
+    const newBlocks = recheck.issues.filter((i) => i.severity === "block");
+    if (newBlocks.length < blocks.length) {
+      // 改善（0件=クリーン / 減少=部分改善）→ 修正版がベスト草稿
+      bestDraft = revised;
+      bestCheck = recheck;
+    }
+    // 改善なし（同数以上）→ best は据え置き（元ドラフトをスタッフに見せる）
+    currentDraft = revised;
+    currentCheck = recheck;
+  }
+
+  bestCheck.revision_count = revisionCount;
+  if (bestCheck.issues.some((i) => i.severity === "block")) {
+    bestCheck.revision_exhausted = true; // blockが残った → スタッフ手動確認必須
+  }
+  return { finalDraft: bestDraft, finalCheck: bestCheck };
 }

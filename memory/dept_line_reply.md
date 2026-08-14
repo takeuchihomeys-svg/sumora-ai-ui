@@ -1,6 +1,20 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-07-11
+最終更新: 2026-08-14
+
+---
+
+## 最終チェック 接地付き自動修正ループ（前頭前野モデル v2 / 2026-08-14）
+
+生成時の最終チェックが「チェック→接地修正→再チェック」のループになった（チェックは計2回上限・ループカウンタで強制）。
+
+- **場所**: `app/lib/final-check.ts` の `runFinalCheckWithRevision()`。`generate-reply/route.ts` はこれを1回呼ぶだけ（旧 `runFinalCheck` + `runAutoRevision` の組み合わせを置換。`runAutoRevision` は削除済み）
+- **フロー**: check1(3パス並列 ≤2.5s) → 指摘0件はそのまま / warningのみは接地修正1回・再チェックなし / **blockありは接地修正(≤3.5s) → check2(≤2.5s)**。worst 8.5s（budget 9.5s・不足時は修正スキップ）
+- **接地（ハルシネーション防止）**: 修正Haiku（claude-haiku-4-5・構造化出力）は checkpoint事実 [CHECKPOINT]・顧客条件 [CONDITIONS]・DBルール [RULES] のみを根拠に修正。"replaced" は `ground_truth_quote` の引用必須で、コード側が正規化substring照合で実在検証。引用が根拠情報に無ければ**修正全体を破棄**（決定的ガード。プロンプト任せにしない）
+- **採用条件**: 修正版は再チェックで元blockを検出したpassが完走し、block数が減った場合のみ採用。block 0件=クリーン採用、減少=`revision_exhausted: true` 付き採用、改善なし/修正失敗=元ドラフト+check1のまま（強制置換しない→既存の送信確認モーダルでスタッフ確認）
+- **監査**: `CheckResult` に `revision_count`（0 or 1）と `revision_exhausted` を追加。FINAL_CHECKトレーラーと `ai_draft_check`（JSONB・カラム追加なし＝migrate-schema変更不要）に載る
+- **UI（page.tsx）**: 修正成功時はバッジが「✅ N回修正で問題解消」、修正不能時は指摘リスト末尾に「🤖 AIが自動修正を試みましたが解消できませんでした」
+- **不変条件**: check-reply/route.ts（スタッフ編集後の再チェック）は従来どおり `runFinalCheck` のみ・自動修正は絶対にしない（越権禁止）。チェック/修正の失敗は全て fail-open
 
 ---
 

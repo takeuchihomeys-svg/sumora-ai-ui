@@ -13,7 +13,7 @@ import {
   STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
 import { validateAndClean, verifyAmountsAgainstSource } from "@/app/lib/validate-reply";
-import { runFinalCheck, runAutoRevision, sha1, type CheckResult } from "@/app/lib/final-check";
+import { runFinalCheckWithRevision, sha1, type CheckResult } from "@/app/lib/final-check";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { safeSlice } from "@/app/lib/safe-slice";
@@ -2359,16 +2359,17 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
               draftBody = outText;
             }
-            // ─── 最終チェック（前頭前野モデル・3パス並列 / claude-haiku-4-5）────────
-            // Pass1 前頭前野=ルール照合 / Pass2 前帯状回=ハルシネーション検知 / Pass3 文脈・網羅性。
-            // レスポンスは元々全文バッファ後に出力する設計のため、ここでの +1.5〜2.5s は構造を壊さない。
-            // 指摘が warning のみの場合に限り自動修正を1回試みる。block は書き換えず指摘のまま渡す
-            // （既存の enforceAixGates / verifyAmountsAgainstSource が機械置換済みのため二重書き換えを避け、
-            //  スタッフに「なぜブロックか」を見せる）。チェック失敗は fail-open（生成は止めない）
+            // ─── 最終チェック+接地修正ループ（前頭前野モデル v2 / claude-haiku-4-5）────
+            // check1(≤2.5s) → blockあり時のみ 接地修正(≤3.5s) → check2(≤2.5s)。チェックは計2回上限。
+            // 修正は checkpoint事実・DBルール・顧客条件に接地し、引用検証を通らない置換は破棄。
+            // 修正版は再チェックでblock解消を確認できた場合のみ採用（未検証文は絶対に出さない）。
+            // block解消不能時は元ドラフト+block指摘+revision_exhausted のまま返し、
+            // スタッフ確認モーダルに委ねる（強制置換なし）。チェック失敗は従来どおり fail-open。
+            // トレーラーの finalCheck に revision_count が必ず載る（監査用）。
             let finalCheck: CheckResult | null = null;
             if (!isTemplateOptimize && draftBody.trim()) {
               try {
-                finalCheck = await runFinalCheck(draftBody, {
+                const loop = await runFinalCheckWithRevision(draftBody, {
                   dbRules,
                   recentMessages,
                   lastCustomerMessage: message,
@@ -2376,14 +2377,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   staffSourceText: [aixSourceMessage, customerConditions].filter(Boolean).join("\n") || undefined,
                   checkpointFacts: groundTruth.checkpointFacts,
                   customerConditionsDb: groundTruth.customerConditionsDb,
-                });
-                if (finalCheck.issues.length > 0 && finalCheck.issues.every((i) => i.severity === "warning")) {
-                  const revised = await runAutoRevision(draftBody, finalCheck.issues);
-                  if (revised) {
-                    finalCheck.revised_text = revised;
-                    draftBody = revised;
-                  }
-                }
+                }, 9500);
+                finalCheck = loop.finalCheck;
+                draftBody = loop.finalDraft; // ベスト草稿（成功時=修正版 / 修正不能時=元ドラフト）
               } catch (checkErr) {
                 console.error("[generate-reply] final-check失敗（fail-open・チェックなしで続行）:", checkErr);
                 finalCheck = null;
