@@ -87,13 +87,15 @@ ${summaries.join('\n\n')}
     const text = response.content[0]?.type === "text" ? response.content[0].text : "";
     const match = text.match(/"recommended"\s*:\s*\[([^\]]*)\]/);
     if (!match) return summaries;
-    const recommended = new Set(
-      match[1].split(",").map(n => parseInt(n.trim())).filter(n => !isNaN(n))
-    );
+    const recommendedArr = match[1].split(",").map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+    const topPickNum = recommendedArr[0]; // AIの真の1位（配列の先頭が最高スコア）
+    const recommended = new Set(recommendedArr);
     return summaries.map((summary, i) => {
       if (!recommended.has(i + 1)) return summary;
       const lines = summary.split("\n");
-      lines[0] = lines[0].replace(/^【(\d+)】/, "【$1🌟】");
+      // 真の1位は🌟★、それ以外の推薦は🌟のみ（buildLineMessageで区別するため）
+      const marker = (i + 1) === topPickNum ? "【$1🌟★】" : "【$1🌟】";
+      lines[0] = lines[0].replace(/^【(\d+)】/, marker);
       return lines.join("\n");
     });
   } catch (e) {
@@ -123,12 +125,14 @@ function buildLineMessage(
 
   // 🌟一番オススメ（🌟付き物件の先頭に単独表示）
   if (propertySummaries && propertySummaries.length > 0) {
-    const topPick = propertySummaries.find(s => s.split("\n")[0].includes("🌟"));
+    // 🌟★ = AIの真の1位を優先、なければ最初の🌟（後方互換フォールバック）
+    const topPick = propertySummaries.find(s => s.split("\n")[0].includes("🌟★"))
+      ?? propertySummaries.find(s => s.split("\n")[0].includes("🌟"));
     if (topPick) {
       lines.push("━━━━━━━━━━━━━━");
       lines.push("🌟 一番オススメ");
       const topLines = topPick.split("\n");
-      const topName = topLines[0].replace(/^【\d+🌟】\s*/, "").trim();
+      const topName = topLines[0].replace(/^【\d+🌟★?】\s*/, "").trim();
       if (topName) lines.push(topName);
       topLines.slice(1).forEach(l => { if (l.trim()) lines.push(l); });
     }
@@ -326,9 +330,9 @@ export async function POST(req: NextRequest) {
 
           for (const summary of summariesToRecord) {
             try {
-              // 先頭行「【N】物件名」「【N🌟】物件名」から物件名を抽出
+              // 先頭行「【N】物件名」「【N🌟】物件名」「【N🌟★】物件名」から物件名を抽出
               const firstLine = (summary.split("\n")[0] ?? "")
-                .replace(/^【\d+🌟?】\s*/, "")
+                .replace(/^【\d+🌟?★?】\s*/, "")
                 .trim();
               if (!firstLine) continue;
 
