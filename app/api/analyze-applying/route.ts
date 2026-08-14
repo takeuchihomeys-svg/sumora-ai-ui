@@ -29,8 +29,8 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
 
-// 申込段階とみなす status 値（新5段階の 'applying' + 旧名エイリアス + 'approved'）
-const APPLYING_STATUSES = ["applying", "approved", "application", "screening", "contract"];
+// 申込段階とみなす status 値（新5段階の 'applying' + 旧名エイリアス + 'approved' + 成約済み 'closed_won'）
+const APPLYING_STATUSES = ["applying", "approved", "application", "screening", "contract", "closed_won"];
 
 // Sonnet 呼び出しは1件20〜40秒かかるため maxDuration=300 に収まる件数に制限
 const MAX_PER_RUN = 5;
