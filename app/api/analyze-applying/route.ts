@@ -12,6 +12,11 @@ import Anthropic from "@anthropic-ai/sdk";
 // was_ai_modified に関わらず Sonnet で分析し、ai_reply_knowledge に
 // category='applying_pattern'（申込到達パターン専用カテゴリ）で保存する。
 //
+// 保存形式は「抽象ルール文」ではなく「この状況→この行動の流れ→申込成功」という
+// ケースフロー形式（JSON）。RAG検索時に具体的な成功事例の流れが届くようにする。
+// embedding は content 全文ではなく検索キー
+// 「customer_profile + situation_at_key_moment + key_success_factors」で生成する。
+//
 // 冪等管理: conversations.learned_at（migrate-schema で追加）。
 // フェイルオープン設計:
 //   - 学習処理が失敗した会話は learned_at を更新しない → 次回実行で再試行
@@ -41,11 +46,21 @@ function checkAuth(req: NextRequest): NextResponse | null {
   return requireInternalAuth(req);
 }
 
+// ケースフローの1ステップ（この状況でこの行動をとったらこの反応が得られた）
+type CaseFlowStep = {
+  phase?: string;             // フェーズ名（hearing/proposing/applying等）
+  staff_action?: string;      // スタッフが取った行動（具体的に）
+  customer_response?: string; // 顧客の反応
+};
+
 type ApplyingAnalysis = {
-  reply_patterns?: string;   // どんな返信パターンが申込まで導いたか
-  phase_actions?: string;    // どのフェーズでどんなアクションが効いたか
-  customer_profile?: string; // 顧客のタイプ・条件・会話スタイル
-  pattern_label?: string;    // このパターンを一言で表すラベル
+  customer_profile?: string;         // 顧客のタイプ（50字以内）
+  situation_at_key_moment?: string;  // 転換点となった状況の説明（100字以内）
+  action_flow?: CaseFlowStep[];      // 状況→行動→反応の具体的な流れ
+  turning_point?: string;            // 成約に向けて流れが変わった瞬間
+  result?: string;                   // "申込"
+  days_to_apply?: number;            // 申込までの日数
+  key_success_factors?: string[];    // 成功要因
 };
 
 // 会話全文を「[顧客] テキスト」形式にフォーマット（各200字・合計8000字上限）
@@ -62,7 +77,7 @@ async function callSonnet(prompt: string): Promise<ApplyingAnalysis | null> {
   try {
     const res = await client.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 800,
+      max_tokens: 1500,
       messages: [{ role: "user", content: prompt }],
     });
     const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
@@ -89,7 +104,7 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
     .not("text", "is", null)
     .order("created_at", { ascending: true });
   if (msgErr) return { learned: false, error: `messages取得失敗: ${msgErr.message}` };
-  const msgs = (msgRows ?? []) as Array<{ sender: string; text: string }>;
+  const msgs = (msgRows ?? []) as Array<{ sender: string; text: string; created_at: string | null }>;
 
   // 会話が短すぎる場合は学習価値なし → learned_at を付けて確定スキップ（無限再試行防止）
   if (msgs.length < 3) {
@@ -120,48 +135,83 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
     .join("\n---\n")
     .slice(0, 6000);
 
-  // 3. Sonnet で成功パターン分析
-  const prompt = `あなたは賃貸仲介LINE営業の成功パターン分析の専門家です。
+  // 会話期間（申込までの日数の推定材料。Sonnet が返さなかった場合のフォールバックにも使う）
+  const firstAt = msgs[0]?.created_at;
+  const lastAt = msgs[msgs.length - 1]?.created_at;
+  const computedDays =
+    firstAt && lastAt
+      ? Math.max(0, Math.round((new Date(lastAt).getTime() - new Date(firstAt).getTime()) / 86_400_000))
+      : null;
+
+  // 3. Sonnet で成功ケースをケースフロー形式に構造化
+  const prompt = `以下の申込到達会話から成功ケースを構造化してください。
+
+抽象的なルールではなく、「この状況でこの行動をとったらこの反応が得られた」
+という具体的な流れを残してください。
+
 以下は問い合わせから申込到達（status=${conv.status}）まで進んだ実際の会話です（お客様名: ${conv.customer_name ?? "不明"}）。
 この会話で送られた返信はすべて「申込まで導くことに成功した返信」です。
 
 【会話全文】
 ${formatMessages(msgs)}
 
+【会話期間】
+${firstAt && lastAt ? `${firstAt} 〜 ${lastAt}（約${computedDays}日間）` : "不明"}
+
 【スタッフが送った返信一覧（フェーズ付き）】
 ${sentSummary || "（返信記録なし）"}
 
 以下のJSONのみ返してください：
 {
-  "reply_patterns": "この会話でどんな返信パターンが申込まで導いたか（具体的に・150字以内）",
-  "phase_actions": "どのフェーズ（hearing/proposing/applying等）でどんなアクションが効いたか（150字以内）",
-  "customer_profile": "顧客のタイプ・希望条件・会話スタイル（100字以内）",
-  "pattern_label": "この申込到達パターンを一言で表すラベル（例: 即レス提案・背中押し型）"
+  "customer_profile": "顧客のタイプを50字以内で（例: 内覧後4日沈黙・予算9万・2LDK希望・単身30代）",
+  "situation_at_key_moment": "転換点となった状況の説明（何が起きていて、何が問題だったか）100字以内",
+  "action_flow": [
+    { "phase": "フェーズ名", "staff_action": "スタッフが取った行動（具体的に）", "customer_response": "顧客の反応" }
+  ],
+  "turning_point": "成約に向けて流れが変わった瞬間の説明",
+  "result": "申込",
+  "days_to_apply": 申込までの日数,
+  "key_success_factors": ["成功要因1", "成功要因2"]
 }`;
 
   const analysis = await callSonnet(prompt);
-  if (!analysis || !analysis.reply_patterns) {
+  if (
+    !analysis ||
+    !analysis.customer_profile?.trim() ||
+    !Array.isArray(analysis.action_flow) ||
+    analysis.action_flow.length === 0
+  ) {
     // 学習失敗 → learned_at は更新しない（次回再試行）
     return { learned: false, error: "Sonnet分析の応答なし/JSON解析失敗（次回再試行）" };
   }
 
-  const label = analysis.pattern_label || "パターン不明";
+  const profile = analysis.customer_profile.trim();
+  const successFactors = (analysis.key_success_factors ?? []).filter(
+    (f): f is string => typeof f === "string" && f.trim().length > 0
+  );
 
-  // 4. ai_reply_knowledge に category='applying_pattern' で保存
-  const content = `【申込到達パターン: ${conv.customer_name ?? "不明"}さん】
-返信パターン: ${analysis.reply_patterns}
-フェーズ別アクション: ${analysis.phase_actions ?? "不明"}
-顧客タイプ: ${analysis.customer_profile ?? "不明"}
-ラベル: ${label}`;
+  // 4. ケースフロー全体を JSON として ai_reply_knowledge に保存（content は人間も読める形）
+  const caseFlow = {
+    customer_profile: profile,
+    situation_at_key_moment: analysis.situation_at_key_moment?.trim() || "不明",
+    action_flow: analysis.action_flow,
+    turning_point: analysis.turning_point?.trim() || "不明",
+    result: analysis.result?.trim() || "申込",
+    days_to_apply: typeof analysis.days_to_apply === "number" ? analysis.days_to_apply : computedDays,
+    key_success_factors: successFactors,
+  };
+  const content = JSON.stringify(caseFlow, null, 2);
 
-  const embedding = await generateEmbedding(`applying_pattern: ${content}`).catch(() => null);
+  // embedding はケース検索キー（プロフィール + 転換点の状況 + 成功要因）で生成する
+  const searchKey = `${caseFlow.customer_profile} ${caseFlow.situation_at_key_moment} ${successFactors.join(" ")}`.trim();
+  const embedding = await generateEmbedding(searchKey).catch(() => null);
   const { error: kErr } = await supabase.from("ai_reply_knowledge").insert({
     category: "applying_pattern",
-    title: `[申込到達] ${label}`.slice(0, 100),
+    title: `申込ケース: ${profile.slice(0, 40)}`.slice(0, 100),
     content,
     importance: 9,
     conversation_state: "applying",
-    ...(analysis.customer_profile ? { personality_tags: analysis.customer_profile } : {}),
+    personality_tags: profile,
     ...(embedding ? { embedding: JSON.stringify(embedding) } : {}),
   });
   if (kErr) {

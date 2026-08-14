@@ -1064,7 +1064,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   // 失注パターン専用バケット（auto-analyze-losers が category=principle / importance=8 で保存するため、
   // pgvector経路の importance>=9 フィルタ・フォールバック経路の principle 除外の両方から漏れる → 専用クエリで必ず届ける）
-  const [{ data: lossPatterns }, { data: topPrinciples }, { data: adaptRules }] = await Promise.all([
+  const [{ data: lossPatterns }, { data: topPrinciples }, { data: adaptRules }, { data: applyingPatterns }] = await Promise.all([
     supabase
       .from("ai_reply_knowledge")
       .select("id, title, content, importance, category")
@@ -1091,11 +1091,29 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .gte("confidence", 0.7)
       .order("confidence", { ascending: false })
       .limit(5),
+    // 類似ケース専用バケット（category='applying_pattern' — 申込に至った実例パターン。
+    // pgvector経路のバケット・フォールバック経路のcategoryフィルタの両方から漏れるため専用クエリで必ず届ける）
+    supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, content, importance, category, conversation_state")
+      .eq("category", "applying_pattern")
+      .neq("hypothesis_status", "rejected")
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(3),
   ]);
   const lossList = (lossPatterns ?? []).filter(p => (p.content ?? "").trim().length > 0);
   const lossIds = lossList.map(p => p.id).filter(Boolean);
   const lossBlock = lossList.length > 0
     ? "【🚫 避けるべき対応（失注実例より）】\n" + lossList.map((p, i) => `${i + 1}. ${p.content}`).join("\n")
+    : "";
+
+  // 類似ケース（申込に至った実例パターン）— 展開の参考として別フォーマットで注入
+  const applyingList = (applyingPatterns ?? []).filter(p => (p.content ?? "").trim().length > 0);
+  const applyingIds = applyingList.map(p => p.id).filter(Boolean);
+  const applyingBlock = applyingList.length > 0
+    ? "【💡 類似ケース（申込に至った実例パターン — この展開を参考に次の一手を組み立てる・文面の丸写しは禁止）】\n" +
+      applyingList.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
     : "";
 
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
@@ -1149,7 +1167,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
 
         const used = [...diffLearned, ...correctionPairs, ...critical, ...patterns, ...phrases];
-        const usedAndLossIds = [...used.map(r => r.id).filter(Boolean), ...lossIds];
+        const usedAndLossIds = [...used.map(r => r.id).filter(Boolean), ...lossIds, ...applyingIds];
         incrementKnowledgeUsage(usedAndLossIds);
         if (conversationId) logKnowledgeApply(usedAndLossIds, conversationId);
 
@@ -1171,6 +1189,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         }
         if (lossBlock) {
           sections.push(lossBlock);
+        }
+        if (applyingBlock) {
+          sections.push(applyingBlock);
         }
         // HIGH-05: テンプレート修正学習ルール注入
         if ((adaptRules?.length ?? 0) > 0) {
@@ -1232,7 +1253,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const globalList = sortConfirmedFirst((global ?? []).filter(g => !stateSpecificList.some(s => s.content === g.content)));
   const all = [...stateSpecificList, ...globalList];
   const principlesList = topPrinciples ?? [];
-  if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock) return { text: "", phraseHits: 0 };
+  if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock && !applyingBlock) return { text: "", phraseHits: 0 };
 
   // principle は global/stateSpecific クエリで除外済みのため、専用クエリの結果をそのまま使う
   const critical = principlesList;
@@ -1247,7 +1268,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     ...patterns.slice(0, 5),
     ...phrases.slice(0, 6),
   ].map(k => (k as KnowledgeRow).id).filter(Boolean);
-  const allFallbackIds = [...usedIds, ...lossIds];
+  const allFallbackIds = [...usedIds, ...lossIds, ...applyingIds];
   incrementKnowledgeUsage(allFallbackIds);
   if (conversationId) logKnowledgeApply(allFallbackIds, conversationId);
 
@@ -1269,6 +1290,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   }
   if (lossBlock) {
     sections.push(lossBlock);
+  }
+  if (applyingBlock) {
+    sections.push(applyingBlock);
   }
   // HIGH-05: テンプレート修正学習ルール注入
   if ((adaptRules?.length ?? 0) > 0) {
