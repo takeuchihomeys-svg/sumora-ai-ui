@@ -91,3 +91,11 @@ enhance-reply/route.ts（AI文案生成ボタン）も同様にpgvector対応済
 | #L-QC | KPI測定（ai_use_rate・star_rate・edit_rate） |
 | #L-PR | プロンプト改善サイクル |
 | #L-WX | このブリーフを毎週自動更新（Cron設定済み） |
+
+
+---
+
+## reply_modeゲート実装済み（2026-08-14）
+- brain判定 `suggested_aix_meta.reply_mode="aix"` の会話は自動ドラフト生成ブロック → `ai_draft="[AIX誘導中]"` + スタッフグループ通知
+- ゲートは generate-reply 内2チェックポイント・オプトインフラグ `enforceReplyModeGate`（自動経路3つのみ送信、UI手動生成は素通し）
+- 詳細は dept_line_reply.md「reply_modeゲート実装（2026-08-14）」参照

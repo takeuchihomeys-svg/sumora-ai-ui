@@ -358,3 +358,17 @@ AIが「入居日が早いほど日割家賃は少ない」と**逆に**誤回�
 - **generate-reply** L720: 申込フォーム正規表現に法人キーワード（法人名|代表者|登記住所|法人契約|法人御契約|法人名義）追加 → 法人申込者にも身分証リクエスト注入が効くように
 - **suggest-status-update/route.ts**: 呼び出し元ゼロのデッドコードと判明 → 冒頭にDEAD CODEコメント追記（削除はせず温存）
 - 検証: tsc --noEmit パス。検知テスト8ケース（個人/法人/法人2フィールド/入居申込書即時/条件フォーマット非検知/雑談非検知/ヒントのみ/連帯保証人系）全て期待どおり
+
+
+---
+
+## reply_modeゲート実装（2026-08-14）
+brain-core（Haiku）が `conversations.suggested_aix_meta.reply_mode="aix"` と判定した会話は、AI自動ドラフト生成をブロックしスタッフにLINEグループ通知する。
+- **ゲート場所**: `generate-reply/route.ts` 内・2チェックポイント方式（webhookは受信毎にmetaをnullワイプ→brain再分析するため、webhook側ゲートは構造的に発火しない）
+  - チェックポイントA: リクエスト受理直後（meta既存ケースをAPIコストゼロで中止）
+  - チェックポイントB: メイン生成（Sonnet）呼び出し直前（Step1分析45秒の間にbrain再分析3〜10秒が完了しmeta再投入済み — 本命）
+- **オプトインフラグ** `enforceReplyModeGate: true`: 自動経路3つ（generate-draft-bg-async / cron generate-pending-drafts / generate-draft-bg）のみ送信。UI手動生成・テンプレ最適化は非送信で従来どおり
+- **発火時の挙動**: `ai_draft="[AIX誘導中]"`（既存sentinel再利用・UI対応済み）+ `draft_pending_at=null`（cron永久再試行停止）を `.is("ai_draft", null)` アトミッククレームで保存（通知重複防止兼用）→ `/api/notify-group` でスタッフ通知「{顧客名}さん AIXで対応して / 推奨アクション / 理由」→ メタ行 `{ok:false, reason:"aix_required", aix:{action,note}}` をHTTP 200で返す（呼び出し元は失敗カウントせずスキップ）
+- **フォールバック**: meta=null（未分析・brain分析がStep1より遅延/失敗）は従来どおり生成（fail-open）
+- **新カラムなし** → migrate-schema更新不要
+- 動作確認: `update conversations set suggested_aix_meta = jsonb_set(coalesce(suggested_aix_meta,'{}'), '{reply_mode}', '"aix"') where id = '<テスト会話>'` → bg-async起動 → `ai_draft='[AIX誘導中]'` とグループ通知を確認
