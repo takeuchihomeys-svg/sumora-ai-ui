@@ -297,25 +297,22 @@
   }
 
   // ── 脳から検索条件パラメータを取得 ─────────────────────────
-  // property-conditions API があればそれを使う。存在しない/エラーの場合は
-  // chrome.storage.session 経由で受け取った条件（storedConditions）にフォールバック。
+  // /api/property-conditions から検索条件を直接取得する。
   // ※ property-customers API は CORS ヘッダーが無く content script から呼べないため使わない
   async function fetchPropertySearchParams(propertyCustomerId) {
-    if (!propertyCustomerId) return storedConditions;
+    if (!propertyCustomerId) return null;
     try {
-      var condRes = await fetch(
+      var res = await fetch(
         "https://sumora-ai-ui.vercel.app/api/property-conditions" +
           "?property_customer_id=" + encodeURIComponent(String(propertyCustomerId))
       );
-      if (condRes.ok) {
-        var condData = await condRes.json();
-        var conds = (condData && (condData.conditions || condData)) || null;
-        if (conds && typeof conds === "object" && !Array.isArray(conds)) return conds;
-      }
+      if (!res.ok) return null;
+      var data = await res.json();
+      return (data && data.conditions) || null;
     } catch (e) {
       console.warn("[score-overlay] fetchPropertySearchParams失敗:", e);
+      return null;
     }
-    return storedConditions;
   }
 
   // ── 検索フォームにお客さんの条件を自動入力（リアプロ・itandi・REINS対応） ─
