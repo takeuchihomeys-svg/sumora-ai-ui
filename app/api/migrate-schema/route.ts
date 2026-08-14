@@ -1789,8 +1789,11 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS commute_minutes INTEGER;
 -- ── conversation_checkpoints: 会話チェックポイント（15件ごとのAI要約）（2026-08-13）──
 -- 15件ごとのメッセージブロックをHaikuが要約・重要事実を抽出して保存する。
 -- generate-reply が長期会話でも全履歴を読まずに文脈を把握するための圧縮メモリ。
--- checkpoint_index: 1=messages 1-15, 2=messages 16-30, ...
--- key_facts: [{"type":"property_sent","value":"2LDK 3件送付"}, ...]
+-- 2026-08-14〜 ローリング累積方式に変更: brain-core.ts maybeCreateCheckpoint が単一writer。
+--   checkpoint_index は単純連番・最新indexの summary が現在の確認済み事実の全量（ground truth）。
+--   final-check anomaly_scan の正解データとしても使用。旧ブロック方式writer
+--   （create-checkpoint / cron/create-checkpoints）は停止済み・併用禁止。
+-- key_facts: [{"type":"confirmed_fact"|"aix_sent"|"unresolved","value":"..."}, ...]
 -- conversation_stage: hearing/proposing/applying/contract（チェックポイント生成時点のステージ）
 CREATE TABLE IF NOT EXISTS conversation_checkpoints (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,

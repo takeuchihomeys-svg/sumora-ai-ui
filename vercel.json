@@ -193,10 +193,6 @@
       "schedule": "30 18 * * 0"
     },
     {
-      "path": "/api/cron/create-checkpoints",
-      "schedule": "0 */6 * * *"
-    },
-    {
       "path": "/api/cron/brain-sweep",
       "schedule": "*/5 * * * *"
     }

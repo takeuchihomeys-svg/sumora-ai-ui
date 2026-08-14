@@ -1,6 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
+// ⚠️ 廃止（2026-08-14）: vercel.json の cron 登録から削除済み。チェックポイントは
+// brain-core.ts の maybeCreateCheckpoint（ローリング累積方式・単一writer）が作成する。
+// 旧ブロック方式と index の意味が異なるため本cronは再登録しないこと（併用禁止）。
 export const maxDuration = 300;
 
 function getSupabase() {

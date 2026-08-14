@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
+import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { runFinalCheck } from "@/app/lib/final-check";
 
 // ─── 送信時の最終チェックAPI（スタッフ編集後テキストの再チェック専用）───────────
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
   }
 
   let text = "";
+  let conversationId: string | undefined;
   let recentMessages: Array<{ sender: string; text: string }> = [];
   try {
     const body = await req.json() as {
@@ -41,13 +43,18 @@ export async function POST(req: NextRequest) {
       recentMessages?: Array<{ sender: string; text: string }>;
     };
     text = (body.text ?? "").trim();
+    conversationId = body.conversationId;
     recentMessages = Array.isArray(body.recentMessages) ? body.recentMessages : [];
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
   if (!text) return NextResponse.json({ error: "text required" }, { status: 400 });
 
-  const dbRules = await getCachedRules();
+  // ルール + 正解データを並列取得（fetchGroundTruth は throw せず1.5sで諦める fail-open）
+  const [dbRules, groundTruth] = await Promise.all([
+    getCachedRules(),
+    fetchGroundTruth(conversationId),
+  ]);
   const lastCustomerMessage = [...recentMessages].reverse().find((m) => m.sender === "customer")?.text;
 
   const result = await runFinalCheck(text, {
@@ -55,6 +62,8 @@ export async function POST(req: NextRequest) {
     recentMessages,
     lastCustomerMessage,
     // step1Json なし: check-reply モードでは履歴から Haiku 自身に質問を抽出させる
+    checkpointFacts: groundTruth.checkpointFacts,
+    customerConditionsDb: groundTruth.customerConditionsDb,
   });
   delete result.revised_text; // このモードでは絶対に書き換え結果を返さない
 

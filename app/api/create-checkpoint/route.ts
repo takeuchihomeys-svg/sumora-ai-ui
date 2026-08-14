@@ -2,6 +2,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
+// ⚠️ 廃止（2026-08-14）: 旧ブロック方式writer。チェックポイントは brain-core.ts の
+// maybeCreateCheckpoint（ローリング累積方式・単一writer）が作成する。
+// index の意味が異なるため本ルートは絶対に起動しないこと（併用禁止）。
 export const maxDuration = 60;
 
 const MESSAGES_PER_CHECKPOINT = 15;

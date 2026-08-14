@@ -15,6 +15,7 @@ import {
 import { validateAndClean, verifyAmountsAgainstSource } from "@/app/lib/validate-reply";
 import { runFinalCheck, runAutoRevision, sha1, type CheckResult } from "@/app/lib/final-check";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
+import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { classifyReplyMode } from "@/app/lib/reply-mode-classifier";
 import {
@@ -1987,7 +1988,7 @@ export async function POST(req: NextRequest) {
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
-    const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, checkpointsData] = await Promise.all([
+    const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext, conversationId)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0 }; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
@@ -2016,26 +2017,14 @@ export async function POST(req: NextRequest) {
       isTemplateOptimize && templateCategory
         ? fetchCategoryAdaptationRules(templateCategory)
         : Promise.resolve(""),
-      // 過去の会話セーブポイント（チェックポイント）— 長期会話の文脈を補完
-      conversationId
-        ? (async () => {
-            try {
-              const { data } = await supabase
-                .from("conversation_checkpoints")
-                .select("checkpoint_index, summary, key_facts")
-                .eq("conversation_id", conversationId)
-                .order("checkpoint_index", { ascending: true })
-                .limit(3);
-              return data ?? [];
-            } catch { return []; }
-          })()
-        : Promise.resolve([]),
+      // 過去の会話セーブポイント + property_customers 条件 — final-check の正解データ兼プロンプト文脈
+      // （旧: conversation_checkpoints を ascending limit 3 でインライン取得 → ローリング方式では最古を
+      //  取ってしまうため fetchGroundTruth（最新1件 desc）に統一）
+      fetchGroundTruth(conversationId),
     ]);
-    // Build checkpoint note for prompt injection
-    type CheckpointRow = { checkpoint_index: number; summary: string | null; key_facts: string | null };
-    const checkpoints = checkpointsData as CheckpointRow[];
-    const checkpointNote = checkpoints.length > 0
-      ? `\n【会話履歴サマリー（過去のセーブポイント — 長期会話の文脈）】\n${checkpoints.map((cp) => `■ 第${cp.checkpoint_index}ブロック: ${cp.summary ?? ""}${cp.key_facts ? ` / ${cp.key_facts}` : ""}`).join("\n")}`
+    // Build checkpoint note for prompt injection（ローリング累積方式: 最新1行が確認済み事実の全量）
+    const checkpointNote = groundTruth.checkpointFacts
+      ? `\n【会話履歴サマリー（確認済み事実セーブポイント — 長期会話の文脈）】\n${groundTruth.checkpointFacts}`
       : "";
     const resolvedSummary = (customerSummary || autoSummary) + checkpointNote;
     const resolvedSummaryJson = bodySummaryJson ?? fetchedSummaryJson ?? undefined;
@@ -2376,6 +2365,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   lastCustomerMessage: message,
                   step1Json: analysis,
                   staffSourceText: [aixSourceMessage, customerConditions].filter(Boolean).join("\n") || undefined,
+                  checkpointFacts: groundTruth.checkpointFacts,
+                  customerConditionsDb: groundTruth.customerConditionsDb,
                 });
                 if (finalCheck.issues.length > 0 && finalCheck.issues.every((i) => i.severity === "warning")) {
                   const revised = await runAutoRevision(draftBody, finalCheck.issues);

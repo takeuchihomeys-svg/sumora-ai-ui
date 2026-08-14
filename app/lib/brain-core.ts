@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
@@ -514,6 +515,137 @@ ${history}`;
   }
 }
 
+// ── 会話チェックポイント（セーブデータ）作成 ──────────────────────────────────
+// 脳分析成功後に after() で fire-and-forget 起動。final-check anomaly_scan の
+// 正解データ（ground truth）になるため「会話に明記された事実のみ・日付付き」が絶対条件。
+// ローリング累積方式: 最新1行が常に現在の確認済み事実の全量（前回分を引き継いで更新）。
+const MESSAGES_PER_CHECKPOINT = 15;  // 前回作成時から15件以上増えたら新規作成
+const CHECKPOINT_MIN_MESSAGES = 11;  // 総メッセージ数 > 10 で初回作成
+
+function formatJstDateShort(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(new Date(iso).getTime() + 9 * 3600 * 1000);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+}
+
+function buildCheckpointPrompt(
+  prevSummary: string | null, historyText: string, total: number, shown: number,
+): string {
+  return `あなたは不動産賃貸仲介のLINE会話の記録係です。会話の「セーブデータ」（チェックポイント）を作成してください。
+このセーブデータは後で返信AIの事実確認（ハルシネーション検査）の正解データとして使われます。
+会話に書かれていない事実を1つでも書くと、誤った返信が「正しい」と判定される事故になります。
+
+絶対ルール:
+- 会話に明記された事実のみ書く。推測・補完・一般知識での穴埋めは禁止
+- 各事実に日付と出所を必ず付ける（例:「家賃12〜15万（8/3顧客提示）」）
+- 金額・物件名・部屋番号・駅名・路線名・日付は一字一句そのまま写す（丸め・単位変換・言い換え禁止）
+- 前回セーブデータの事実は、新しい会話で更新・撤回されていない限りそのまま引き継ぐ。
+  更新された場合は新しい値のみ残す（例: 家賃上限が変わったら新値だけ・旧値は書かない）
+- 解決した【未解決事項】は【確認済み事実】へ移す（例: 空室確認の回答が来たら結果を事実として記録）
+
+【前回のセーブデータ】
+${prevSummary ? prevSummary.slice(0, 1500) : "（なし・今回が最初のセーブ）"}
+
+【新しい会話（全${total}件中の直近${shown}件・日付付き。スタッフ(AIX)=AIツールで送信済み）】
+${historyText}
+
+JSON形式のみで返答（説明・コードブロック不要）:
+{
+  "summary": "【確認済み事実】家賃: 12〜15万（8/3顧客提示）/ エリア: 渋谷・恵比寿（8/3顧客）/ 入居希望: 9月上旬（8/3顧客）\\n【AIX使用済み】viewing_invite: 8/5送付 / property_send: 8/7 3件\\n【未解決事項】空室確認: ライオンズ渋谷401（問い合わせ中）/ 内覧日程: 調整中",
+  "key_facts": [
+    {"type": "confirmed_fact", "value": "家賃12〜15万（8/3顧客提示）"},
+    {"type": "aix_sent", "value": "viewing_invite 8/5送付"},
+    {"type": "unresolved", "value": "ライオンズ渋谷401 空室確認中"}
+  ],
+  "stage": "hearing"
+}
+stage は hearing/proposing/applying/contract のいずれか。
+該当事実の無いセクション行は省略可。key_facts の type は confirmed_fact/aix_sent/unresolved の3種のみ。`;
+}
+
+export async function maybeCreateCheckpoint(conversationId: string): Promise<void> {
+  try {
+    // 1) 総メッセージ数 + 最新チェックポイントを並列取得
+    const [countRes, cpRes] = await Promise.all([
+      supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", conversationId),
+      supabase
+        .from("conversation_checkpoints")
+        .select("checkpoint_index, message_count_at_creation, summary")
+        .eq("conversation_id", conversationId)
+        .order("checkpoint_index", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    if (countRes.error || cpRes.error) {
+      console.warn("[checkpoint] precheck failed:", conversationId,
+        countRes.error?.message ?? cpRes.error?.message);
+      return; // 最新CPが読めない状態で書くと index 衝突・事実退行の恐れ → 何もしない
+    }
+    const total = countRes.count ?? 0;
+    if (total < CHECKPOINT_MIN_MESSAGES) return;
+    const last = cpRes.data as
+      { checkpoint_index: number; message_count_at_creation: number; summary: string } | null;
+    if (last && total - last.message_count_at_creation < MESSAGES_PER_CHECKPOINT) return;
+
+    // 2) 前回以降の新規メッセージ（最大40件・昇順に直す）
+    const newSinceLast = last ? total - last.message_count_at_creation : total;
+    const { data: msgsDesc, error: msgErr } = await supabase
+      .from("messages")
+      .select("sender, text, created_at, is_aix_generated")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .limit(Math.min(newSinceLast, 40));
+    if (msgErr || !msgsDesc || msgsDesc.length === 0) return;
+    const msgs = [...msgsDesc].reverse();
+
+    const historyText = msgs
+      .map((m) => {
+        const role = m.sender === "customer" ? "顧客" : (m.is_aix_generated ? "スタッフ(AIX)" : "スタッフ");
+        return `${role} ${formatJstDateShort(m.created_at as string)}: ${(m.text ?? "").slice(0, 300)}`;
+      })
+      .join("\n");
+
+    // 3) Haiku（モジュール共有 client: timeout 15s / maxRetries 0 — fire-and-forget なので失敗放置でOK）
+    const prompt = buildCheckpointPrompt(last?.summary ?? null, historyText, total, msgs.length);
+    const response = await client.messages.create({
+      model: HAIKU,
+      max_tokens: 700,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const raw = response.content[0]?.type === "text" ? response.content[0].text : "";
+    const fb = raw.indexOf("{");
+    const lb = raw.lastIndexOf("}");
+    if (fb === -1 || lb <= fb) return;
+    const parsed = JSON.parse(raw.slice(fb, lb + 1)) as {
+      summary?: string;
+      key_facts?: Array<{ type: string; value: string }>;
+      stage?: string;
+    };
+    if (!parsed.summary || !parsed.summary.trim()) return;
+    const stage = ["hearing", "proposing", "applying", "contract"].includes(parsed.stage ?? "")
+      ? (parsed.stage as string) : null;
+
+    // 4) INSERT（並走時の UNIQUE 違反 23505 は「相手が先に書いた」= 正常）
+    const { error: insErr } = await supabase.from("conversation_checkpoints").insert({
+      conversation_id: conversationId,
+      checkpoint_index: (last?.checkpoint_index ?? 0) + 1,
+      message_count_at_creation: total,
+      summary: parsed.summary.slice(0, 2000),
+      key_facts: Array.isArray(parsed.key_facts) ? parsed.key_facts.slice(0, 20) : [],
+      conversation_stage: stage,
+    });
+    if (insErr && insErr.code !== "23505") {
+      console.error("[checkpoint] insert failed:", conversationId, insErr.message);
+    }
+  } catch (e) {
+    console.warn("[checkpoint] failed (fire-and-forget):", conversationId,
+      e instanceof Error ? e.message : e);
+  }
+}
+
 /**
  * 会話1件の脳分析を実行して conversations.suggested_aix_meta + brain_analyzed_at を書き込む。
  * webhook（顧客メッセージ受信直後）と brain-sweep cron（バックストップ）から呼ばれる。
@@ -576,6 +708,15 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   if (error) {
     // B10(Fable5): スキーマ変更後の型不一致等、恒常的なDB障害を診断可能にする
     console.error("[brain-core] suggested_aix_meta update failed:", conversationId, error.message);
+  }
+  // 脳分析成功時のみチェックポイント作成を fire-and-forget 起動（レスポンスを遅らせない）
+  if (!error) {
+    try {
+      after(() => maybeCreateCheckpoint(conversationId));
+    } catch {
+      // リクエストコンテキスト外（テスト/スクリプト実行）では after() が使えないためフォールバック
+      void maybeCreateCheckpoint(conversationId).catch(() => {});
+    }
   }
   return !error;
 }

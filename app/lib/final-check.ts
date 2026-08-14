@@ -41,6 +41,8 @@ export interface FinalCheckContext {
   lastCustomerMessage?: string;   // 顧客の最新メッセージ
   step1Json?: string;             // generate-reply Step1 分析JSON（check-reply では省略可）
   staffSourceText?: string;       // スタッフ由来ソース（AIX原文・希望条件等）
+  checkpointFacts?: string;      // conversation_checkpoints 最新summary — 確認済み事実（最高権威）
+  customerConditionsDb?: string; // property_customers のDB保存顧客条件
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -158,22 +160,39 @@ function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): string {
   return `${ADVERSARIAL_PREAMBLE}
 
 返信文の中の「事実の主張」をすべて抽出し、それぞれについて「この事実はどこから来たのか」を
-会話履歴と照合してください。会話履歴に根拠が無い事実は、AIの捏造（ハルシネーション）です。
+下の情報源と照合してください。どの情報源にも根拠が無い事実は、AIの捏造（ハルシネーション）です。
 最優先で疑うもの：
-1. 円・万円の金額（家賃・敷金・礼金・初期費用・保証料）— 履歴に同じ数字が無ければ捏造
+1. 円・万円の金額（家賃・敷金・礼金・初期費用・保証料）— 情報源に同じ数字が無ければ捏造
 2. 空室確認の結果（「空室でした」「埋まりました」「〇月〇日から入居可能」）— 管理会社に
-   確認した事実が履歴に無ければ捏造
-3. 物件名・号室・駅名・路線名 — 履歴と一字一句照合。顧客の条件数字の写し間違い
+   確認した事実が情報源に無ければ捏造
+3. 物件名・号室・駅名・路線名 — 情報源と一字一句照合。顧客の条件数字の写し間違い
    （「13〜17万」→「3〜17万」等）も捏造扱い
-4. 日付・曜日・時刻 / 顧客の名前（履歴上の名前と一致するか。「名称未設定」は名前ではない）
+4. 日付・曜日・時刻 / 顧客の名前（情報源上の名前と一致するか。「名称未設定」は名前ではない）
 5. 会社の制度の説明（仲介手数料は2,980円固定。「手数料割引」は誤り。日割家賃は入居日が
    遅いほど安い）
+
+情報源の優先順位（上ほど権威が高い。矛盾したら上を正とする）:
+1位 [CHECKPOINTS] — 過去の会話全体から抽出済みの確認済み事実（日付付き・最高権威）
+2位 [CUSTOMER_CONDITIONS] — DBに保存された顧客条件
+3位 [HISTORY] — 直近の会話履歴（直近10件のみ）
+4位 返信文自身の主張（根拠にならない）
+返信文が [CHECKPOINTS] または [CUSTOMER_CONDITIONS] と矛盾する場合は必ず捏造として指摘すること。
+逆に、返信文の事実が [CHECKPOINTS] に記載されていれば、[HISTORY] に無くても根拠ありとして扱うこと
+（[HISTORY] より古い会話の根拠は [CHECKPOINTS] に集約されている）。
+[CUSTOMER_CONDITIONS] の数値は単位表記なしの生値の場合がある（例: 170000 = 17万円）。
+単位換算して一致するなら捏造ではない。桁違い・別の数字のみ捏造扱い。
 
 code は次から選ぶこと:
 FABRICATED_AMOUNT（金額の捏造）/ FABRICATED_AVAILABILITY（空室確認結果の捏造）/
 FABRICATED_PROPERTY（物件名・号室・駅名の捏造/写し間違い）/ FABRICATED_DATE（日付・曜日・時刻の捏造）/
 FABRICATED_NAME（名前の誤り）/ FABRICATED_POLICY（会社制度の誤説明）
 
+[CHECKPOINTS]
+${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+[/CHECKPOINTS]
+[CUSTOMER_CONDITIONS]
+${(ctx.customerConditionsDb || "なし").slice(0, 1000)}
+[/CUSTOMER_CONDITIONS]
 [HISTORY]
 ${formatHistory(ctx.recentMessages, 10)}
 [/HISTORY]
