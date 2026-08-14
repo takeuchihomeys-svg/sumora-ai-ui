@@ -13,6 +13,8 @@
   let observing          = false;
   let sentPropertiesList = null;  // null=未取得, Array=取得済み
   let sentFetching       = false; // 重複フェッチ防止フラグ
+  let evalCache          = {};    // AI評価キャッシュ（キー: 顧客ID|物件名|号室|家賃 → 結果 or Promise）
+                                  // MutationObserver 再実行での重複APIコールを防ぐ。顧客切替時にリセット
 
   // ── HTML エスケープ ─────────────────────────────────────────────
   function esc(s) {
@@ -294,6 +296,203 @@
       });
   }
 
+  // ── 脳から検索条件パラメータを取得 ─────────────────────────
+  // property-conditions API があればそれを使う。存在しない/エラーの場合は
+  // chrome.storage.session 経由で受け取った条件（storedConditions）にフォールバック。
+  // ※ property-customers API は CORS ヘッダーが無く content script から呼べないため使わない
+  async function fetchPropertySearchParams(propertyCustomerId) {
+    if (!propertyCustomerId) return storedConditions;
+    try {
+      var condRes = await fetch(
+        "https://sumora-ai-ui.vercel.app/api/property-conditions" +
+          "?property_customer_id=" + encodeURIComponent(String(propertyCustomerId))
+      );
+      if (condRes.ok) {
+        var condData = await condRes.json();
+        var conds = (condData && (condData.conditions || condData)) || null;
+        if (conds && typeof conds === "object" && !Array.isArray(conds)) return conds;
+      }
+    } catch (e) {
+      console.warn("[score-overlay] fetchPropertySearchParams失敗:", e);
+    }
+    return storedConditions;
+  }
+
+  // ── 検索フォームにお客さんの条件を自動入力（リアプロ・itandi・REINS対応） ─
+  function autoFillSearchForm(conditions) {
+    if (!conditions) return;
+    var site = getSite();
+    if (!site) return;
+
+    var filled = false;
+
+    // 家賃上限
+    if (conditions.rent_max) {
+      var rentInput = document.querySelector(
+        'input[name*="rent_max"], input[name*="賃料上限"], input[placeholder*="賃料上限"], input[id*="rent_max"]'
+      );
+      if (rentInput) {
+        rentInput.value = Math.floor(conditions.rent_max / 1000).toString();
+        rentInput.dispatchEvent(new Event("change", { bubbles: true }));
+        filled = true;
+      }
+    }
+    // エリア（テキスト入力）
+    if (conditions.area) {
+      var areaInput = document.querySelector(
+        'input[name*="area"], input[name*="エリア"], input[placeholder*="エリア"]'
+      );
+      if (areaInput) {
+        areaInput.value = conditions.area;
+        areaInput.dispatchEvent(new Event("input", { bubbles: true }));
+        filled = true;
+      }
+    }
+    // 駅徒歩（条件以下で最大の選択肢を選ぶ）
+    if (conditions.walk_minutes) {
+      var walkSelect = document.querySelector('select[name*="walk"], select[name*="徒歩"]');
+      if (walkSelect) {
+        var opts = Array.from(walkSelect.options).filter(function (o) {
+          var v = parseInt(o.value, 10);
+          return !isNaN(v) && v <= conditions.walk_minutes;
+        });
+        var best = opts.length > 0 ? opts[opts.length - 1] : null;
+        if (best) {
+          walkSelect.value = best.value;
+          walkSelect.dispatchEvent(new Event("change", { bubbles: true }));
+          filled = true;
+        }
+      }
+    }
+
+    if (filled) {
+      console.log("[score-overlay] 検索条件を自動入力しました:", conditions);
+    }
+  }
+
+  // ── 物件をAIスコアで評価する（evaluate-property API呼び出し） ───────
+  async function evaluateProperty(propertyCustomerId, propertyInfo) {
+    try {
+      var res = await fetch("https://sumora-ai-ui.vercel.app/api/evaluate-property", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ property_customer_id: propertyCustomerId, property: propertyInfo }),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ── カードテキストから evaluate-property 用の物件情報を抽出 ──────────
+  function extractPropertyInfo(card) {
+    var text = (card.innerText || "").trim();
+    var t = text.replace(/\s+/g, " ");
+
+    // 物件名: カードテキストの先頭行（自前バッジの文言は除外）
+    var lines = text.split("\n").map(function (s) { return s.trim(); }).filter(function (s) {
+      return s &&
+        !/^[◎○△×]\s*[0-9]+点/.test(s) &&  // スコアバッジ
+        !/^送済み/.test(s) &&               // 送済みバッジ
+        !/^★/.test(s);                     // AI評価バッジ
+    });
+    var cardName = (lines[0] || "").slice(0, 60);
+
+    var cardRoomNo = extractRoomNo(text) || "";
+
+    var mRent = t.match(/([0-9]+(?:\.[0-9]+)?)\s*万/);
+    var cardRent = mRent ? Math.round(parseFloat(mRent[1]) * 10000) : null;
+
+    var mFp = t.match(/([0-9]+\s*(?:SLDK|SDK|LDK|DK|K|R))(?![A-Za-z])/i) || t.match(/(ワンルーム)/);
+    var cardFloorPlan = mFp ? mFp[1].replace(/\s/g, "") : null;
+
+    var mWalk = t.match(/徒歩\s*([0-9]+)\s*分/);
+    var cardWalkMins = mWalk ? parseInt(mWalk[1], 10) : null;
+
+    var mAreaSqm = t.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:㎡|m²|平米)/);
+    var cardAreaSqm = mAreaSqm ? parseFloat(mAreaSqm[1]) : null;
+
+    // AD（広告料）: "AD1ヶ月" / "AD100%" 等
+    var cardAdMonths = null;
+    var mAd = t.match(/AD\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:ヶ月|ヵ月|カ月|か月|ケ月)/i);
+    var mAdPct = t.match(/AD\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)\s*[%％]/i);
+    if (mAd) cardAdMonths = parseFloat(mAd[1]);
+    else if (mAdPct) cardAdMonths = parseFloat(mAdPct[1]) / 100;
+
+    return {
+      name: cardName,
+      room_no: cardRoomNo,
+      rent: cardRent,
+      floor_plan: cardFloorPlan,
+      walk_minutes: cardWalkMins,
+      area_sqm: cardAreaSqm,
+      ad_months: cardAdMonths,
+    };
+  }
+
+  // ── AI評価バッジを物件カードに注入 ──────────────────────────
+  var EVAL_BADGE_CLASS = "sumora-score-badge";
+
+  function injectEvalBadge(card, result) {
+    var existingBadge = card.querySelector("." + EVAL_BADGE_CLASS);
+    if (existingBadge) existingBadge.remove();
+
+    var badge = document.createElement("div");
+    badge.className = EVAL_BADGE_CLASS;
+    var scoreColor = result.score >= 70 ? "#22c55e" : result.score >= 40 ? "#f59e0b" : "#ef4444";
+    badge.style.cssText =
+      "position:absolute;top:4px;left:4px;background:" + scoreColor + ";color:#fff;" +
+      "font-size:11px;font-weight:bold;padding:2px 6px;border-radius:4px;z-index:9999;line-height:1.4;";
+    badge.textContent = "★" + result.score;
+    if (result.is_duplicate) badge.textContent += " 送済";
+    var ngFlags = result.ng_flags || [];
+    if (ngFlags.length > 0) {
+      badge.title = ngFlags.join(", ");
+      badge.style.textDecoration = "line-through";
+    }
+    card.style.position = "relative";
+    card.appendChild(badge);
+  }
+
+  // ── 全カードにAI評価スコアを適用（evaluate-property API） ────────
+  function runAiEvaluation() {
+    if (!storedConditions || !storedConditions.property_customer_id) return;
+    var pcid = storedConditions.property_customer_id;
+    var cards = findPropertyContainers();
+
+    cards.forEach(function (card) {
+      var text = (card.innerText || "").trim();
+      if (text.length < 20) return;
+
+      var info = extractPropertyInfo(card);
+      if (info.rent == null) return; // rent は API 必須項目（無いと400）
+
+      var key = pcid + "|" + info.name + "|" + info.room_no + "|" + info.rent;
+      var cached = evalCache[key];
+      if (cached && typeof cached.then === "function") return; // フェッチ中
+      if (cached && cached.failed) return;                     // 失敗済み → 再試行しない
+      if (cached) { injectEvalBadge(card, cached); return; }   // キャッシュ → バッジ再注入のみ
+
+      evalCache[key] = evaluateProperty(pcid, {
+        name: info.name,
+        room_no: info.room_no,
+        rent: info.rent,
+        floor_plan: info.floor_plan || undefined,
+        walk_minutes: info.walk_minutes || undefined,
+        area_sqm: info.area_sqm || undefined,
+        ad_months: info.ad_months || undefined,
+      }).then(function (result) {
+        if (!result || typeof result.score !== "number") {
+          evalCache[key] = { failed: true };
+          return;
+        }
+        evalCache[key] = result;
+        injectEvalBadge(card, result);
+      });
+    });
+  }
+
   // ── 全カードに送済みバッジを適用 ─────────────────────────
   function runDupCheck() {
     if (!sentPropertiesList || sentPropertiesList.length === 0) return;
@@ -335,6 +534,8 @@
     }
     // 送済みバッジも合わせて適用（フェッチ済みの場合のみ）
     runDupCheck();
+    // AI評価スコアも合わせて適用（キャッシュ付き・重複APIコールなし）
+    runAiEvaluation();
   }
 
   // ── 条件バー（ページ上部固定・お客さん名+条件一覧を表示） ───
@@ -390,11 +591,16 @@
       chrome.storage.session.get("axlx_score_data", function (data) {
         if (!data || !data.axlx_score_data) return;
         storedConditions = data.axlx_score_data;
-        // 顧客が変わった場合は送済みリストをリセットしてフェッチ
+        // 顧客が変わった場合は送済みリスト・AI評価キャッシュをリセットしてフェッチ
         if (storedConditions.property_customer_id) {
           sentPropertiesList = null;
           sentFetching       = false;
+          evalCache          = {};
           fetchSentProperties(storedConditions.property_customer_id);
+          // 検索条件を自動入力（フォームが存在する場合のみ）
+          fetchPropertySearchParams(storedConditions.property_customer_id).then(function (conds) {
+            if (conds) autoFillSearchForm(conds);
+          });
         }
         showConditionBar();
         runScoring();
@@ -424,11 +630,16 @@
         if (area !== "session" || !changes.axlx_score_data) return;
         storedConditions = changes.axlx_score_data.newValue;
         if (!storedConditions) return;
-        // 顧客切り替えを検出したら送済みリストをリセット・再フェッチ
+        // 顧客切り替えを検出したら送済みリスト・AI評価キャッシュをリセット・再フェッチ
         if (storedConditions.property_customer_id) {
           sentPropertiesList = null;
           sentFetching       = false;
+          evalCache          = {};
           fetchSentProperties(storedConditions.property_customer_id);
+          // 検索条件を自動入力（フォームが存在する場合のみ）
+          fetchPropertySearchParams(storedConditions.property_customer_id).then(function (conds) {
+            if (conds) autoFillSearchForm(conds);
+          });
         }
         showConditionBar();
         setTimeout(runScoring, 500);

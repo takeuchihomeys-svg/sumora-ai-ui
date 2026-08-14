@@ -32,6 +32,18 @@ export type SuggestedAixMeta = {
   template_hint?: string;
   next_steps?: string[];  // ["今日: 内覧日調整", "内覧後: 見積書送付", "来週: 申込プッシュ"]
   reply_mode?: "aix" | "auto_reply";  // 'aix'=スタッフがAIXで手動対応 / 'auto_reply'=AI自動返信OK
+  // Chrome拡張フィードバックループ用: 拡張が brain/list API 経由で取得し検索フォームに自動入力する
+  property_search_params?: {
+    area: string | null;
+    floor_plan: string | null;
+    rent_max: number | null;
+    walk_minutes: number | null;
+    move_in_time: string | null;
+    preferences: string | null;
+    ng_points: string | null;
+    ng_properties: Array<{ property_name: string; room_no: string }>;
+    search_urgency: string; // "★★★" | "★★" | "★" | "─"
+  } | null;
 } | null;
 
 // Canonical mapping from AIX action key → staff guidance note
@@ -124,7 +136,7 @@ export async function analyzeConversation(
     propertyCustomerId
       ? supabase
           .from("property_customers")
-          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, walk_minutes, last_property_sent_at, property_send_count")
+          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count")
           .eq("id", propertyCustomerId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -304,7 +316,7 @@ export async function analyzeConversation(
   const timingText = `\n【時間情報】今日: ${todayStr} / 最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）`;
 
   // Build customer conditions context
-  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null } | null;
+  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null } | null;
   const pc = (pcResult.data ?? null) as PC;
   const condParts: string[] = [];
   if (pc?.desired_area) condParts.push(`エリア: ${pc.desired_area}`);
@@ -587,6 +599,28 @@ ${history}`;
       template_hint: parsed.template_hint || undefined,
       next_steps: Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
       reply_mode: replyMode,
+      // Chrome拡張フィードバックループ: 検索フォーム自動入力用の構造化パラメータ（TODO(P2)対応）
+      property_search_params: pc ? {
+        area: pc.desired_area ?? null,
+        floor_plan: pc.floor_plan ?? null,
+        rent_max: pc.rent_max ?? null,
+        walk_minutes: pc.walk_minutes ?? null,
+        move_in_time: pc.move_in_time ?? null,
+        preferences: pc.preferences ?? null,
+        ng_points: pc.ng_points ?? null,
+        ng_properties: sentProps.map((s) => ({ property_name: s.property_name, room_no: s.room_no })),
+        search_urgency: (() => {
+          // propertySearchText（物件検索統括ブロック）の searchPriority と同一ロジックの★のみ版
+          if ((pc.property_send_count ?? 0) >= 2) return "─";
+          const lastSentIso = pc.last_property_sent_at ?? sentProps[0]?.sent_at ?? null;
+          const daysSince = lastSentIso
+            ? Math.floor((Date.now() - new Date(lastSentIso).getTime()) / 86_400_000)
+            : null;
+          if (daysSince === null || daysSince >= 7) return "★★★";
+          if (daysSince >= 3) return "★★";
+          return "★";
+        })(),
+      } : null,
     };
   } catch (e) {
     console.warn(`[brain-core] Haiku analysis failed: conv=${conversationId}`, e instanceof Error ? e.message : e);
