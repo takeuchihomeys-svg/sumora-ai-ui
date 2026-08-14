@@ -1997,7 +1997,7 @@ export async function POST(req: NextRequest) {
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
-    const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth] = await Promise.all([
+    const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext, conversationId)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0 }; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
@@ -2030,6 +2030,9 @@ export async function POST(req: NextRequest) {
       // （旧: conversation_checkpoints を ascending limit 3 でインライン取得 → ローリング方式では最古を
       //  取ってしまうため fetchGroundTruth（最新1件 desc）に統一）
       fetchGroundTruth(conversationId),
+      // final-check 専用ルール（action_type="final_check"）: 3パス全てに注入して日々改善を反映
+      fetchPromptRules("final_check", {})
+        .catch((err) => { console.error("[generate-reply] fetchPromptRules(final_check)失敗:", err); return ""; }),
     ]);
     // Build checkpoint note for prompt injection（ローリング累積方式: 最新1行が確認済み事実の全量）
     const checkpointNote = groundTruth.checkpointFacts
@@ -2379,6 +2382,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 };
                 const loop = await runFinalCheckWithRevision(draftBody, {
                   dbRules,
+                  finalCheckRules: finalCheckRules || undefined,
                   recentMessages,
                   lastCustomerMessage: message,
                   step1Json: analysis,

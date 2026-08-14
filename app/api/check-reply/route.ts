@@ -26,6 +26,19 @@ async function getCachedRules(): Promise<string> {
   }
 }
 
+// final_check 専用ルールの60秒キャッシュ
+let finalCheckRulesCache: { at: number; text: string } = { at: 0, text: "" };
+async function getCachedFinalCheckRules(): Promise<string> {
+  if (Date.now() - finalCheckRulesCache.at < 60_000 && finalCheckRulesCache.text) return finalCheckRulesCache.text;
+  try {
+    const text = await fetchPromptRules("final_check", {});
+    finalCheckRulesCache = { at: Date.now(), text };
+    return text;
+  } catch {
+    return finalCheckRulesCache.text;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
@@ -51,14 +64,16 @@ export async function POST(req: NextRequest) {
   if (!text) return NextResponse.json({ error: "text required" }, { status: 400 });
 
   // ルール + 正解データを並列取得（fetchGroundTruth は throw せず1.5sで諦める fail-open）
-  const [dbRules, groundTruth] = await Promise.all([
+  const [dbRules, groundTruth, finalCheckRules] = await Promise.all([
     getCachedRules(),
     fetchGroundTruth(conversationId),
+    getCachedFinalCheckRules(),
   ]);
   const lastCustomerMessage = [...recentMessages].reverse().find((m) => m.sender === "customer")?.text;
 
   const result = await runFinalCheck(text, {
     dbRules,
+    finalCheckRules: finalCheckRules || undefined,
     recentMessages,
     lastCustomerMessage,
     // step1Json なし: check-reply モードでは履歴から Haiku 自身に質問を抽出させる

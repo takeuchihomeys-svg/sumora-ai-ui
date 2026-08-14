@@ -40,6 +40,8 @@ export interface CheckResult {
 
 export interface FinalCheckContext {
   dbRules?: string;               // ai_prompt_rules の注入文字列（fetchPromptRules の戻り値）
+  finalCheckRules?: string;      // action_type="final_check" のルール（全3パスに注入）
+                                  // DBで日々改善されたチェック専用ルール。false positive防止・見逃し防止の両方に使う
   recentMessages?: Array<{ sender: string; text: string; isAix?: boolean; createdAt?: string }>;
   lastCustomerMessage?: string;   // 顧客の最新メッセージ
   step1Json?: string;             // generate-reply Step1 分析JSON（check-reply では省略可）
@@ -173,6 +175,7 @@ BANNED_WORD（禁止語彙）/ RULE_VIOLATION（その他ルール違反）
 [RULES]
 ${(ctx.dbRules || "（DBルールなし — 上記の境界線・禁止語彙のみで照合）").slice(0, 8000)}
 [/RULES]
+${ctx.finalCheckRules ? `[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 3000)}\n[/FINAL_CHECK_RULES]` : ""}
 [REPLY]
 ${draft}
 [/REPLY]`;
@@ -222,6 +225,7 @@ ${formatHistory(ctx.recentMessages, 10)}
 [SOURCE]
 ${(ctx.staffSourceText || "なし").slice(0, 3000)}
 [/SOURCE]
+${ctx.finalCheckRules ? `[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]` : ""}
 [REPLY]
 ${draft}
 [/REPLY]`;
@@ -262,6 +266,7 @@ ${(ctx.step1Json || "なし").slice(0, 2500)}
 [RECENT_STAFF_MESSAGES]
 ${formatStaffMessages(ctx.recentMessages, 5)}
 [/RECENT_STAFF_MESSAGES]
+${ctx.finalCheckRules ? `[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]` : ""}
 [REPLY]
 ${draft}
 [/REPLY]`;
