@@ -110,8 +110,13 @@ const SUCCESS_EXAMPLE_STATUSES = ["closed_won", "applying", "application", "scre
 // conversation_direction の current_phase 更新判定に使用する。
 function detectPhaseFromBrainMeta(meta: Record<string, unknown>): "hearing" | "proposing" | "viewing" | "applying" {
   const txt = [meta.action, meta.closing_strategy, meta.next_steps].filter(Boolean).join(" ");
-  if (/申込|審査/.test(txt)) return "applying";
+  // 優先1: 審査落ち・再スタート文脈 → hearing（「また探したい」「別の物件」等が共存）
+  if (/再探し|また探|別の物件|審査落/.test(txt)) return "hearing";
+  // 優先2: 純粋な申込・審査待ち（「再」「また」「別」が共存しない場合のみ）
+  if (/申込|審査/.test(txt) && !/再|また|別/.test(txt)) return "applying";
+  // 優先3: 内覧・内見
   if (/内覧|内見/.test(txt)) return "viewing";
+  // 優先4: 物件提案中
   if (/提案|物件/.test(txt)) return "proposing";
   return "hearing";
 }
