@@ -941,6 +941,8 @@ export default function Home() {
   const [showBrainView, setShowBrainView] = useState(false);
   const [brainConversations, setBrainConversations] = useState<Conversation[]>([]);
   const [brainLoading, setBrainLoading] = useState(false);
+  const [expandedBrainConvId, setExpandedBrainConvId] = useState<string | null>(null);
+  const [brainSentProperties, setBrainSentProperties] = useState<Record<string, Array<{property_name: string; room_no: string; sent_at: string}>>>({});
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
   const [replyExamplesCount, setReplyExamplesCount] = useState<number | null>(null);
@@ -5584,7 +5586,7 @@ export default function Home() {
                     fetchBrain(1);
                   }}
                   className="flex items-center justify-center p-1"
-                  title="今日やること"
+                  title="AIX-META"
                 >
                   <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
                     <circle cx="10" cy="10" r="7" stroke={aixSearchMode ? "#06C755" : "#aaaaaa"} strokeWidth="2.5"/>
@@ -13169,7 +13171,7 @@ export default function Home() {
             className="flex items-center justify-between px-4 py-3 shrink-0 border-b border-[#e9edef]"
             style={{ background: "linear-gradient(135deg,#0d1b3e 0%,#1565C0 100%)" }}
           >
-            <span className="text-[17px] font-black text-white tracking-tight">🧠 今日やること</span>
+            <span className="text-[17px] font-black text-white tracking-tight">🧠 AIX-META</span>
             <button
               onClick={() => setShowBrainView(false)}
               className="text-white/70 text-xl leading-none px-2 py-1 active:opacity-60"
@@ -13200,15 +13202,15 @@ export default function Home() {
                 const note = conv.suggestedAixMeta?.note ?? null;
                 const action = conv.suggestedAixMeta?.action ?? conv.suggestedNextAix ?? null;
                 const actionMeta = action ? AIX_ACTION_META[action as keyof typeof AIX_ACTION_META] : null;
-                // H1(Fable5): enforcement_level=required（緊急・2時間以内）は赤で区別（従来は一律紫）
                 const isRequired = conv.suggestedAixMeta?.enforcement_level === "required";
                 const actionColor = isRequired ? "#DC2626" : (actionMeta?.color ?? "#7C3AED");
-                // H1(Fable5): reply_mode="aix" = AIが自動ドラフトを意図的に止めた（スタッフ対応必須）シグナル
                 const isAixRequired = conv.suggestedAixMeta?.reply_mode === "aix";
-                // H2(Fable5): next_steps[0] と closing_strategy を行に表示 — 従来は取得して捨てており、
-                // スタッフは全チャットを開かないと「今日やること」の中身が見えなかった
                 const firstStep = conv.suggestedAixMeta?.next_steps?.[0] ?? null;
+                const allSteps = conv.suggestedAixMeta?.next_steps ?? [];
                 const closingStrategy = conv.suggestedAixMeta?.closing_strategy ?? null;
+                const enforcementLevel = conv.suggestedAixMeta?.enforcement_level ?? null;
+                const replyMode = conv.suggestedAixMeta?.reply_mode ?? null;
+                const brainAnalyzedAt = conv.updatedAt ?? null;
                 const ageMins = conv.updatedAt
                   ? Math.floor((Date.now() - new Date(conv.updatedAt).getTime()) / 60000)
                   : null;
@@ -13217,100 +13219,189 @@ export default function Home() {
                   : ageMins < 1440
                   ? `${Math.floor(ageMins / 60)}時間前`
                   : `${Math.floor(ageMins / 1440)}日前`;
+                const acct = getAccountMeta(conv.account);
+                const linked = linkedCustomerMap[conv.id];
+                const isExpanded = expandedBrainConvId === conv.id;
 
                 return (
-                  <button
-                    key={conv.id}
-                    className="flex w-full items-center gap-3 px-4 py-4 text-left border-b border-[#f0f2f5] active:bg-[#f5f6f6] bg-white"
-                    onClick={() => {
-                      setShowBrainView(false);
-                      openConversation(conv.id);
-                    }}
-                  >
-                    {/* アバター */}
-                    <div className="shrink-0">
-                      {conv.profileImageUrl ? (
-                        <img
-                          src={conv.profileImageUrl}
-                          alt={conv.customerName}
-                          className="h-12 w-12 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
-                          {getInitial(conv.customerName)}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* コンテンツ */}
-                    <div className="flex-1 min-w-0">
-                      {/* 名前行 */}
-                      <div className="flex items-center justify-between gap-1 mb-1">
-                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <span className="truncate text-[14px] font-semibold text-[#111b21]">
-                            {conv.customerName}
-                          </span>
-                          <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-bold text-orange-600">
-                            要対応
-                          </span>
-                          {(conv.suggestedNextAix || conv.suggestedAixMeta) && (
-                            <span
-                              className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold text-white"
-                              style={{ backgroundColor: actionColor }}
-                            >
-                              {actionMeta?.label ?? "AIX"}
-                            </span>
-                          )}
-                          {isAixRequired && (
-                            <span className="shrink-0 rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-white">
-                              AIX対応必須
-                            </span>
-                          )}
-                        </div>
-                        {ageLabel && (
-                          <span className="text-[10px] text-[#b0b8be] shrink-0">{ageLabel}</span>
+                  <div key={conv.id} className="border-b border-[#f0f2f5]">
+                    {/* メインカード行 */}
+                    <div className="flex items-center gap-3 px-4 py-3.5 bg-white">
+                      {/* アバター（タップで会話を開く） */}
+                      <button
+                        className="shrink-0 active:opacity-70"
+                        onClick={() => { setShowBrainView(false); openConversation(conv.id); }}
+                      >
+                        {conv.profileImageUrl ? (
+                          <img src={conv.profileImageUrl} alt={conv.customerName} className="h-12 w-12 rounded-full object-cover" />
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
+                            {getInitial(conv.customerName)}
+                          </div>
                         )}
-                      </div>
+                      </button>
 
-                      {/* AI提案メモ行 */}
-                      {note ? (
-                        <div
-                          className="truncate text-[11px] font-medium"
-                          style={{ color: actionColor }}
-                        >
-                          → {note}
+                      {/* コンテンツ（タップで会話を開く） */}
+                      <button
+                        className="flex-1 min-w-0 text-left active:opacity-70 pr-8 relative"
+                        onClick={() => { setShowBrainView(false); openConversation(conv.id); }}
+                      >
+                        {/* 右上: 時間・AIXバッジ */}
+                        <div className="absolute right-0 top-0 flex flex-col items-end gap-0.5">
+                          {ageLabel && <span className="text-[10px] text-[#667781]">{ageLabel}</span>}
+                          {(conv.suggestedNextAix || conv.suggestedAixMeta) && (
+                            <span className="rounded-full bg-[#7C3AED] px-1.5 py-0.5 text-[9px] font-bold text-white leading-none">AIX</span>
+                          )}
                         </div>
-                      ) : conv.suggestedNextAix ? (
-                        <div
-                          className="truncate text-[11px] font-medium"
-                          style={{ color: actionColor }}
-                        >
-                          → {actionMeta?.label ?? conv.suggestedNextAix}
-                        </div>
-                      ) : (
-                        <div className="truncate text-[11px] text-[#b0b8be]">
-                          AI分析中...
-                        </div>
-                      )}
 
-                      {/* H2(Fable5): 次の一手 + 成約戦略（開かなくても行動できるアクションリスト化） */}
-                      {firstStep && (
-                        <div className="truncate text-[11px] text-[#374151] mt-0.5">
-                          ▶ {firstStep}
+                        {/* 名前行（要対応リストと同じ構成） */}
+                        <div className="mb-0.5 flex h-5 items-center gap-1.5 overflow-hidden">
+                          <span className="truncate text-[14px] font-medium text-[#111b21]">{conv.customerName}</span>
+                          <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${acct.color}`}>{acct.label}</span>
+                          {linked?.propertyStatus && PROPERTY_STATUS_LABELS[linked.propertyStatus] && (
+                            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${PROPERTY_STATUS_COLORS[linked.propertyStatus] ?? "bg-gray-100 text-gray-400"}`}>
+                              {PROPERTY_STATUS_LABELS[linked.propertyStatus]}{propertyNeedsAction(linked.propertyStatus, linked.lastPropertySentAt) ? " !" : " ✓"}
+                            </span>
+                          )}
+                          <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">要対応</span>
+                          {hotConvIds.has(conv.id) && <span className="shrink-0 leading-none text-sm">🔥</span>}
+                          {isAixRequired && <span className="shrink-0 rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-white">AIX必須</span>}
+                          {(activeTasks[conv.id] ?? []).map((task) => {
+                            if (task.task_type === "property_check") {
+                              const days = Math.floor((Date.now() - new Date(task.created_at).getTime()) / 86400000);
+                              const color = days >= 7 ? "bg-red-100 text-red-700" : days >= 3 ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700";
+                              return <span key={task.id} className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${color}`}>🔍確認中{days > 0 ? ` ${days}日` : ""}</span>;
+                            }
+                            return <span key={task.id} className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold text-purple-700">🏠出し中</span>;
+                          })}
                         </div>
-                      )}
-                      {closingStrategy && (
-                        <div className="truncate text-[10px] text-[#8696a0] mt-0.5">
-                          🎯 {closingStrategy}
-                        </div>
-                      )}
 
-                      {/* 最終メッセージプレビュー */}
-                      <div className="truncate text-[11px] text-[#b0b8be] mt-0.5">
-                        {conv.lastMessage}
-                      </div>
+                        {/* 脳メモ行 */}
+                        {note ? (
+                          <div className="truncate text-[11px] font-medium" style={{ color: actionColor }}>→ {note}</div>
+                        ) : action && actionMeta ? (
+                          <div className="truncate text-[11px] font-medium" style={{ color: actionColor }}>→ {actionMeta.label}</div>
+                        ) : (
+                          <div className="truncate text-[11px] text-[#b0b8be]">AI分析中...</div>
+                        )}
+                        {firstStep && <div className="truncate text-[11px] text-[#374151] mt-0.5">▶ {firstStep}</div>}
+                        {closingStrategy && <div className="truncate text-[10px] text-[#8696a0] mt-0.5">🎯 {closingStrategy}</div>}
+                      </button>
+
+                      {/* 脳機能展開ボタン */}
+                      <button
+                        className="shrink-0 flex items-center justify-center w-8 h-8 rounded-full active:bg-gray-100"
+                        onClick={() => {
+                          const nextId = isExpanded ? null : conv.id;
+                          setExpandedBrainConvId(nextId);
+                          if (!isExpanded && linked?.id && !brainSentProperties[conv.id]) {
+                            fetch(`/api/check-property-duplicate?property_customer_id=${encodeURIComponent(linked.id)}`)
+                              .then((r) => r.json())
+                              .then((d) => {
+                                if (Array.isArray(d.list)) {
+                                  setBrainSentProperties((prev) => ({ ...prev, [conv.id]: d.list }));
+                                }
+                              })
+                              .catch(() => {});
+                          }
+                        }}
+                        title="脳機能を確認"
+                      >
+                        <span className="text-[14px]">{isExpanded ? "▲" : "🧠"}</span>
+                      </button>
                     </div>
-                  </button>
+
+                    {/* 脳機能詳細パネル（展開時のみ） */}
+                    {isExpanded && (
+                      <div className="bg-[#f8f9fa] px-4 py-3 text-[11px] border-t border-[#e9edef]">
+                        <div className="text-[10px] font-bold text-[#8696a0] mb-2">🧠 脳機能確認</div>
+                        <div className="space-y-1.5">
+                          {/* reply_mode */}
+                          <div className="flex items-start gap-2">
+                            <span className="shrink-0 text-[#8696a0] w-24">reply_mode</span>
+                            <span className={`font-bold ${replyMode === "aix" ? "text-red-600" : replyMode === "auto_reply" ? "text-green-600" : "text-gray-400"}`}>
+                              {replyMode ?? "—（未分析）"}
+                            </span>
+                          </div>
+                          {/* AIXアクション */}
+                          <div className="flex items-start gap-2">
+                            <span className="shrink-0 text-[#8696a0] w-24">AIXアクション</span>
+                            <span className="font-bold" style={{ color: action ? actionColor : "#9ca3af" }}>
+                              {action ? (actionMeta?.label ?? action) : "—"}
+                              {action && <span className="ml-1 text-[#9ca3af] font-normal">({action})</span>}
+                            </span>
+                          </div>
+                          {/* enforcement_level */}
+                          <div className="flex items-start gap-2">
+                            <span className="shrink-0 text-[#8696a0] w-24">優先度</span>
+                            <span className={`font-bold ${enforcementLevel === "required" ? "text-red-600" : enforcementLevel === "recommended" ? "text-amber-600" : "text-gray-500"}`}>
+                              {enforcementLevel === "required" ? "🔴 required（緊急）"
+                                : enforcementLevel === "recommended" ? "🟡 recommended"
+                                : enforcementLevel === "optional" ? "⚪ optional"
+                                : "—"}
+                            </span>
+                          </div>
+                          {/* note */}
+                          {note && (
+                            <div className="flex items-start gap-2">
+                              <span className="shrink-0 text-[#8696a0] w-24">ノート</span>
+                              <span className="text-[#374151]">{note}</span>
+                            </div>
+                          )}
+                          {/* next_steps */}
+                          <div className="flex items-start gap-2">
+                            <span className="shrink-0 text-[#8696a0] w-24">次の一手</span>
+                            <div className="flex-1">
+                              {allSteps.length > 0
+                                ? allSteps.map((s, i) => <div key={i} className="text-[#374151]">▶ {s}</div>)
+                                : <span className="text-gray-400">—</span>}
+                            </div>
+                          </div>
+                          {/* closing_strategy */}
+                          <div className="flex items-start gap-2">
+                            <span className="shrink-0 text-[#8696a0] w-24">成約戦略</span>
+                            <span className="text-[#374151]">{closingStrategy ?? "—"}</span>
+                          </div>
+                          {/* 分析時刻 */}
+                          <div className="flex items-start gap-2">
+                            <span className="shrink-0 text-[#8696a0] w-24">脳分析時刻</span>
+                            <span className="text-[#9ca3af]">
+                              {brainAnalyzedAt
+                                ? (() => {
+                                    const mins = Math.floor((Date.now() - new Date(brainAnalyzedAt).getTime()) / 60000);
+                                    return mins < 60 ? `${mins}分前` : mins < 1440 ? `${Math.floor(mins / 60)}時間前` : `${Math.floor(mins / 1440)}日前`;
+                                  })()
+                                : "未分析"}
+                            </span>
+                          </div>
+                          {/* 送付済み物件 */}
+                          <div className="flex items-start gap-2 pt-1 border-t border-[#e9edef] mt-1">
+                            <span className="shrink-0 text-[#8696a0] w-24">送付済み物件</span>
+                            <div className="flex-1">
+                              {!brainSentProperties[conv.id] ? (
+                                <span className="text-gray-400">読み込み中...</span>
+                              ) : brainSentProperties[conv.id].length === 0 ? (
+                                <span className="text-gray-400">—（送付履歴なし）</span>
+                              ) : (
+                                <div className="space-y-0.5">
+                                  {brainSentProperties[conv.id].map((p, i) => {
+                                    const d = new Date(p.sent_at);
+                                    const label = `${d.getMonth() + 1}/${d.getDate()}`;
+                                    return (
+                                      <div key={i} className="text-[#374151]">
+                                        🏠 {p.property_name}　<span className="font-medium">{p.room_no}</span>
+                                        <span className="ml-1 text-[#9ca3af]">({label})</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 );
               })
             )}
