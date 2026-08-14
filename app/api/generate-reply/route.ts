@@ -2031,7 +2031,8 @@ export async function POST(req: NextRequest) {
       //  取ってしまうため fetchGroundTruth（最新1件 desc）に統一）
       fetchGroundTruth(conversationId),
       // final-check 専用ルール（action_type="final_check"）: 3パス全てに注入して日々改善を反映
-      fetchPromptRules("final_check", {})
+      // includeGlobal=false で global共通ルールを除外（生成用ルールの二重注入・プロンプト汚染を防ぐ）
+      fetchPromptRules("final_check", {}, false)
         .catch((err) => { console.error("[generate-reply] fetchPromptRules(final_check)失敗:", err); return ""; }),
     ]);
     // Build checkpoint note for prompt injection（ローリング累積方式: 最新1行が確認済み事実の全量）

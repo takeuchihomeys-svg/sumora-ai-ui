@@ -18,7 +18,10 @@ interface PromptRuleRow {
  */
 export async function fetchPromptRules(
   actionType: string | null,
-  conditions: Record<string, string | boolean | null | undefined> = {}
+  conditions: Record<string, string | boolean | null | undefined> = {},
+  includeGlobal = true  // false のとき globalフォールバック（action_type IS NULL）を除外する。
+                        // final_check など「専用ルールのみ」を取りたい場合に使う。
+                        // DB に専用ルールが0件なら空文字を返す（汚染なし）。
 ): Promise<string> {
   try {
     // ── 枠取り方式 ──
@@ -31,7 +34,13 @@ export async function fetchPromptRules(
         .select("rule_key, rule_text, condition_key, condition_value, priority")
         .eq("is_active", true);
       if (actionType) {
-        q = q.or(`action_type.eq.${actionType},action_type.is.null`);
+        // includeGlobal=true（デフォルト）: 専用ルール + global共通ルール（action_type IS NULL）
+        // includeGlobal=false: 専用ルールのみ（global混入を防ぐ。final_check等で使用）
+        if (includeGlobal) {
+          q = q.or(`action_type.eq.${actionType},action_type.is.null`);
+        } else {
+          q = q.eq("action_type", actionType);
+        }
       } else {
         q = q.is("action_type", null);
       }

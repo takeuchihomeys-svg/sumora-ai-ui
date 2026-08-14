@@ -31,7 +31,8 @@ let finalCheckRulesCache: { at: number; text: string } = { at: 0, text: "" };
 async function getCachedFinalCheckRules(): Promise<string> {
   if (Date.now() - finalCheckRulesCache.at < 60_000 && finalCheckRulesCache.text) return finalCheckRulesCache.text;
   try {
-    const text = await fetchPromptRules("final_check", {});
+    // includeGlobal=false: global共通ルールを除外し final_check 専用ルールのみ取得
+    const text = await fetchPromptRules("final_check", {}, false);
     finalCheckRulesCache = { at: Date.now(), text };
     return text;
   } catch {
