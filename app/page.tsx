@@ -214,6 +214,7 @@ const AIX_ACTION_META: Record<string, { label: string; subtitle?: string; color:
   meeting_place:           { label: "\u5f85\u3061\u5408\u308f\u305b",            color: "#00838F", templateCategory: "\u5185\u89a7\u3010AIX\u3011" },
   acknowledge_check:       { label: "\u78ba\u8a8d\u3057\u307e\u3059",           color: "#607D8B", templateCategory: "\u78ba\u8a8d\u3057\u307e\u3059\u3010AIX\u3011" },
   followup_revive:         { label: "\u8ffd\u5ba2\u3059\u308b",                 color: "#8E24AA", templateCategory: "\u8ffd\u5ba2\u3059\u308b\u3010AIX\u3011" },
+  property_search:         { label: "\u7269\u4ef6\u3092\u63a2\u3059",           color: "#FF7043", templateCategory: "\u7269\u4ef6\u3092\u63a2\u3059\u3010AIX\u3011" },
 };
 // templateCategory \u2192 AixActionType \u306e\u9006\u5f15\u304d\uff08\u30c6\u30f3\u30d7\u30ec\u9078\u629e\u6642\u306e\u30a2\u30af\u30b7\u30e7\u30f3\u6c7a\u5b9a\u306b\u4f7f\u7528\uff09
 const TEMPLATE_CATEGORY_TO_ACTION: Record<string, AixActionType> = Object.fromEntries(
