@@ -16,7 +16,13 @@ export const maxDuration = 120;
 const MAX_SWEEP_PER_RUN = 10;
 
 // webhook の after() 分析が進行中の可能性がある直近の会話はスキップ（二重分析防止）
-const IN_FLIGHT_GRACE_MS = 2 * 60 * 1000; // 2 minutes
+// M4(Fable5): 2分→3分 — 旧値は webhook の maxDuration=120秒とちょうど同値で、境界上の after() 分析と
+// 二重分析になり得た。maxDuration を超える猶予にして境界レースを解消
+const IN_FLIGHT_GRACE_MS = 3 * 60 * 1000; // 3 minutes
+
+// H3(Fable5): 失敗バックオフ — analyzeAndSaveBrainMeta は失敗時も brain_analyzed_at を書くため、
+// 直近30分以内に試行済みの行は再試行しない（決定的に失敗する会話の永久リトライ・sweep飢餓を防ぐ）
+const RETRY_BACKOFF_MS = 30 * 60 * 1000; // 30 minutes
 
 async function withConcurrency<T, R>(
   items: T[],
@@ -46,12 +52,17 @@ export async function GET(req: NextRequest) {
 
   try {
     const cutoff = new Date(Date.now() - IN_FLIGHT_GRACE_MS).toISOString();
+    const backoffCutoff = new Date(Date.now() - RETRY_BACKOFF_MS).toISOString();
     const { data: conversations, error } = await supabase
       .from("conversations")
       .select("id")
       .eq("last_sender", "customer")
       .is("suggested_aix_meta", null)
-      .not("status", "in", `(${BRAIN_SKIP_STATUSES.join(",")})`)
+      // B7(Fable5): 旧 .not("status","in",...) は SQL の NOT IN で NULL 行を除外してしまう
+      // （writer 側の analyzeAndSaveBrainMeta は null status を許容 → 永久に分析されない盲点だった）
+      .or(`status.is.null,status.not.in.(${BRAIN_SKIP_STATUSES.join(",")})`)
+      // H3(Fable5): 30分バックオフ（未試行 or 前回試行から30分経過した行のみ）
+      .or(`brain_analyzed_at.is.null,brain_analyzed_at.lt.${backoffCutoff}`)
       .lt("updated_at", cutoff)
       .order("updated_at", { ascending: false })
       .limit(MAX_SWEEP_PER_RUN);
@@ -70,7 +81,11 @@ export async function GET(req: NextRequest) {
     let processed = 0;
     let failed = 0;
     await withConcurrency(rows, 3, async (conv) => {
-      const saved = await analyzeAndSaveBrainMeta(conv.id).catch(() => false);
+      const saved = await analyzeAndSaveBrainMeta(conv.id).catch((e) => {
+        // B10(Fable5): 旧実装は throw されたエラーメッセージも握り潰していた
+        console.error("[brain-sweep] analyze failed:", conv.id, e instanceof Error ? e.message : e);
+        return false;
+      });
       if (saved) processed++;
       else failed++;
     });

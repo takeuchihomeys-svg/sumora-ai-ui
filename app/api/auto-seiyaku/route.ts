@@ -93,6 +93,8 @@ async function runAutoSeiyaku() {
           .update({
             status: "closed_won",
             updated_at: new Date().toISOString(),
+            // B6(Fable5): 成約済み会話に古い「次アクション」メタが永久表示されるのを防ぐ
+            suggested_aix_meta: null,
           })
           .eq("id", conv.id)
           .in("status", APPLYING_STATUSES)

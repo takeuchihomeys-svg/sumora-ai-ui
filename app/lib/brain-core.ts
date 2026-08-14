@@ -12,7 +12,9 @@ import { supabase } from "@/app/lib/supabase";
 //   - brain/list は純粋な read のみ（Haiku は一切呼ばない）
 
 const HAIKU = "claude-haiku-4-5-20251001";
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000 });
+// B8(Fable5): maxRetries: 0 — sweep自体がリトライ機構のため、SDKの自動リトライ（デフォルト2回）は
+// 最悪 ~45秒/件 × 4件直列 = maxDuration 120秒超過 → cron_run_logs が "running" のまま残る事故の原因だった
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000, maxRetries: 0 });
 
 // Statuses that indicate a closed/inactive conversation — excluded from brain analysis
 export const BRAIN_SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost"];
@@ -99,15 +101,20 @@ export async function analyzeConversation(
   convStatus: string | null,
   propertyCustomerId: string | null,
   source: string = "brain",
+  // B2/H6(Fable5): 呼び出し元（analyzeAndSaveBrainMeta）が conversations から取得したフラグ。
+  // auto_send_enabled=false の会話に auto_reply を提案しない・is_flagged はスタッフ要対応なので aix 強制
+  opts?: { autoSendEnabled?: boolean; isHot?: boolean; isFlagged?: boolean },
 ): Promise<SuggestedAixMeta> {
-  // Fetch last 15 messages and customer conditions in parallel
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult] = await Promise.all([
+  // Fetch last 30 messages and customer conditions in parallel
+  // H5(Fable5): limit 15→30 — 会話あたりメッセージ数の中央値は25件。checkpoints が0行（書き込み側未実装）の間、
+  // limit 15 だと中央値会話の前半を完全に忘れるため引き上げ。count: "exact" は総メッセージ数のプロンプト注入用（B3）
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult] = await Promise.all([
     supabase
       .from("messages")
-      .select("sender, text, created_at, line_message_id, is_aix_generated")
+      .select("sender, text, created_at, line_message_id, is_aix_generated", { count: "exact" })
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(15),
+      .limit(30),
     propertyCustomerId
       ? supabase
           .from("property_customers")
@@ -140,6 +147,7 @@ export async function analyzeConversation(
           .limit(10)
       : Promise.resolve({ data: null }),
     // Global permanent operator rules (apply to all conversations, no pgvector needed)
+    // B4(Fable5): limit 10→20 — 本番で恒久ルールがちょうど10行に達しており、11個目から無言欠落する状態だった
     supabase
       .from("ai_prompt_rules")
       .select("rule_text, priority")
@@ -147,31 +155,40 @@ export async function analyzeConversation(
       .eq("is_permanent", true)
       .is("action_type", null)
       .order("priority", { ascending: false })
-      .limit(10),
+      .limit(20),
     // Confirmed top-importance principles (importance >= 9, no pgvector needed)
+    // B11(Fable5): .neq は NULL 行を除外する（SQL <> セマンティクス）→ .or で NULL 許容に。
+    // created_at 降順タイブレークで同 importance 内の選抜を決定的にする
     supabase
       .from("ai_reply_knowledge")
       .select("content, importance")
       .eq("category", "principle")
       .gte("importance", 9)
-      .neq("hypothesis_status", "rejected")
+      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
       .order("importance", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(3),
     // Top templates by win_rate for context (brain uses these to recommend best template)
+    // B1(Fable5): 旧 .like("category", "AIX%") は前方一致で、実カテゴリ「見積書送る【AIX】」等に
+    // 一度もマッチしていなかった（本番0件を実測確認 = このデータソースは死んでいた）。
+    // use_count>=3 で「1回使用でwin_rate 100%」の統計ノイズを排除、nullsFirst:false でNULL win_rateを後ろへ
     supabase
       .from("templates")
       .select("category, label, win_rate, use_count")
-      .like("category", "AIX%")
-      .order("win_rate", { ascending: false })
+      .like("category", "%【AIX】%")
+      .gte("use_count", 3)
+      .order("win_rate", { ascending: false, nullsFirst: false })
       .limit(5),
     // 線引きルール: BOUNDARY-* rules that define when to use AIX vs auto-reply
+    // B4(Fable5): limit 15→40 — 本番に31行あり、旧limitでは線引きルールの半分以上が無言欠落していた。
+    // 線引きルールは reply_mode（aix/auto_reply）判定の根幹のため全件注入する
     supabase
       .from("ai_prompt_rules")
       .select("rule_key, action_type, rule_text")
       .like("rule_key", "BOUNDARY-%")
       .eq("is_active", true)
       .order("priority", { ascending: false })
-      .limit(15),
+      .limit(40),
     supabase
       .from("trigger_action_rules")
       .select("keyword, action_type, rule_text")
@@ -184,7 +201,8 @@ export async function analyzeConversation(
       .from("ai_reply_knowledge")
       .select("title, content, importance")
       .eq("category", "pattern")
-      .neq("hypothesis_status", "rejected")
+      // B11(Fable5): NULL 許容（.neq は hypothesis_status IS NULL の行を除外してしまう）
+      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
       .or("title.ilike.成約パターン%,title.ilike.[成約分析]%,title.ilike.[転換点]%")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
@@ -207,10 +225,36 @@ export async function analyzeConversation(
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(30),
+    // H6(Fable5): 予約送信済みメッセージ（pending）— 追客提案が予約済み送信と重複するのを防ぐ
+    supabase
+      .from("scheduled_messages")
+      .select("text, scheduled_at")
+      .eq("conversation_id", conversationId)
+      .eq("status", "pending")
+      .order("scheduled_at", { ascending: true })
+      .limit(5),
+    // H6(Fable5): この会話の未完了タスク — next_steps を実際の保留作業に接地させる
+    supabase
+      .from("line_tasks")
+      .select("task_type, created_at")
+      .eq("conversation_id", conversationId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(5),
+    // H6(Fable5): 内覧予定/完了 — 次アクション判断の核となるシグナル
+    supabase
+      .from("viewings")
+      .select("viewing_date, viewing_time, status")
+      .eq("conversation_id", conversationId)
+      .order("viewing_date", { ascending: false })
+      .limit(3),
   ]);
 
-  const { data: messages, error } = msgResult;
+  const { data: messages, error, count: totalMessageCount } = msgResult;
   if (error || !messages || messages.length === 0) return null;
+  // H5(Fable5): 全メッセージが画像/添付のみ（テキスト0件）の場合は分析しない。
+  // 「（画像/添付）×N」だけを読んだHaikuの当てずっぽう提案がキャッシュされるのを防ぐ
+  if (messages.every((m) => !m.text)) return null;
 
   // AIXアクションのメッセージ単位ラベル解決
   // 1) line_message_id 完全一致（P4以降のログ・直近30日で97%カバー）
@@ -224,21 +268,34 @@ export async function analyzeConversation(
   const aixLogsNoLmid = aixLogs.filter((l) => !l.line_message_id && l.aix_type);
 
   // Reverse so the history reads oldest → newest
-  const history = (messages as Array<{ sender: string; text: string | null; created_at: string; line_message_id: string | null; is_aix_generated: boolean | null }>)
+  // B3(Fable5): 各行に日付（M/D）を付与 — 旧実装は created_at を取得しながらプロンプトから捨てており、
+  // Haiku が「5分前の返信」と「12日間沈黙」を区別できず followup_revive 判断が原理的に不可能だった
+  const typedMessages = messages as Array<{ sender: string; text: string | null; created_at: string; line_message_id: string | null; is_aix_generated: boolean | null }>;
+  const history = [...typedMessages]
     .reverse()
     .map((m) => {
-      let senderLabel = "[顧客]";
+      let senderLabel = "顧客";
       if (m.sender === "staff") {
         const exact = m.line_message_id ? aixTypeByLmid.get(m.line_message_id) : undefined;
         const fuzzy = (!exact && m.is_aix_generated)
           ? aixLogsNoLmid.find((l) => Math.abs(new Date(l.sent_at ?? l.created_at).getTime() - new Date(m.created_at).getTime()) < 3 * 60 * 1000)?.aix_type
           : undefined;
         const aixType = exact ?? fuzzy;
-        senderLabel = aixType ? `[AIX:${aixType}]` : (m.is_aix_generated ? "[AIX]" : "[スタッフ]");
+        senderLabel = aixType ? `AIX:${aixType}` : (m.is_aix_generated ? "AIX" : "スタッフ");
       }
-      return `${senderLabel} ${m.text ?? "（画像/添付）"}`;
+      const dateLabel = new Date(m.created_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" });
+      return `[${senderLabel} ${dateLabel}] ${m.text ?? "（画像/添付）"}`;
     })
     .join("\n");
+
+  // B3(Fable5): 今日の日付・最終顧客メッセージからの経過日数・総メッセージ数をプロンプト冒頭に注入。
+  // これが無いと Haiku は経過時間を知り得ず、closing_strategy に架空の日付を創作していた
+  const lastCustomerMsg = typedMessages.find((m) => m.sender === "customer"); // messagesは新しい順
+  const daysSinceLastCustomerMsg = lastCustomerMsg
+    ? Math.floor((Date.now() - new Date(lastCustomerMsg.created_at).getTime()) / 86_400_000)
+    : null;
+  const todayStr = new Date().toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" });
+  const timingText = `\n【時間情報】今日: ${todayStr} / 最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）`;
 
   // Build customer conditions context
   type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null } | null;
@@ -344,26 +401,64 @@ export async function analyzeConversation(
     ? `\n【この会話で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。`
     : "";
 
-  const prompt = `あなたはスモラAI。以下の会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。${statusText}${aixHistoryText}${condText}${promptRulesText}${knowledgeText}${boundaryText}${examplesText}${checkpointText}${sentPropsText}${templatesText}${contractPatternsText}
+  // H6(Fable5): 予約送信・未完了タスク・内覧予定を注入（重複提案防止・next_steps の接地）
+  type ScheduledMsg = { text: string | null; scheduled_at: string };
+  const scheduledMsgs = (scheduledMsgsResult.data ?? []) as ScheduledMsg[];
+  const scheduledText = scheduledMsgs.length > 0
+    ? `\n【予約送信済みメッセージ（送信待ち${scheduledMsgs.length}件）】\n${scheduledMsgs.map((s) => `- ${new Date(s.scheduled_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" })}送信予定: ${(s.text ?? "（画像）").replace(/\n/g, " ").slice(0, 60)}`).join("\n")}\n※これらと重複する追客・送信提案はしないこと。`
+    : "";
 
-${AIX_CAPABILITY_MAP}
+  type OpenTask = { task_type: string; created_at: string };
+  const openTasks = (openTasksResult.data ?? []) as OpenTask[];
+  const taskLabel: Record<string, string> = { property_check: "物件確認（空室確認）", property_send: "物件送付" };
+  const tasksText = openTasks.length > 0
+    ? `\n【この会話の未完了タスク】${openTasks.map((t) => taskLabel[t.task_type] ?? t.task_type).join(" / ")}\n※next_steps はこれらの未完了タスクを考慮すること。`
+    : "";
 
-会話履歴（[AIX:xxx]=AIXツールxxxで送信済み / [AIX]=AIX送信(種別不明) / [スタッフ]=手動送信）:
-${history}
+  type Viewing = { viewing_date: string; viewing_time: string | null; status: string | null };
+  const viewings = (viewingsResult.data ?? []) as Viewing[];
+  const viewingStatusLabel: Record<string, string> = { scheduled: "予定", done: "完了", cancelled: "キャンセル" };
+  const viewingsText = viewings.length > 0
+    ? `\n【内覧履歴・予定】${viewings.map((v) => `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`).join(" / ")}`
+    : "";
 
-回答形式（JSONのみ・説明文不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "最も適切なAIXタイプ（viewing_invite/property_send/estimate_sheet/application_push/condition_hearing/acknowledge_check/followup_revive/property_check_result/property_recommendation/meeting_place/greeting_viewing/null）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で（例：8/16内覧後に割引見積を再提示し申込へ誘導する）", "template_hint": "このお客さんに合うテンプレートのトーン・スタイルのヒント（20字以内、例：丁寧語・プッシュ弱め）", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2（次回）: 具体的アクション", "Step3（その次）: 具体的アクション"], "reply_mode": "aix or auto_reply（線引きルールに該当する場合はaix・AIXが存在しない一般返信はauto_reply）"}`;
+  // H6(Fable5): ホット顧客・スタッフ要対応フラグ
+  const flagParts: string[] = [];
+  if (opts?.isHot) flagParts.push("ホット顧客（成約意欲高・プッシュ強めOK）");
+  if (opts?.isFlagged) flagParts.push("スタッフ要対応フラグあり（自動返信不可・必ずスタッフ対応）");
+  const flagsText = flagParts.length > 0 ? `\n【フラグ】${flagParts.join(" / ")}` : "";
+
+  // H4(Fable5): 会話に依存しない静的ブロック（能力マップ・線引きルール・恒久ルール等）を system に分離し
+  // prompt caching（ephemeral）を適用。brain-sweep は5分毎バッチのため入力コストを約40-60%削減できる。
+  // ※ contractPatternsText は convStatus 依存の並べ替えがあるため user 側に残す
+  const systemText = `あなたはスモラAI。与えられた会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
+
+${AIX_CAPABILITY_MAP}${promptRulesText}${knowledgeText}${boundaryText}${templatesText}
+
+【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
+
+回答形式（JSONのみ・説明文・コードブロック不要）:
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "このお客さんに合うテンプレートのトーン・スタイルのヒント（20字以内、例：丁寧語・プッシュ弱め）", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2（次回）: 具体的アクション", "Step3（その次）: 具体的アクション"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
+
+  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${contractPatternsText}
+
+会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
+${history}`;
 
   try {
     const response = await client.messages.create({
       model: HAIKU,
       max_tokens: 512,
-      messages: [{ role: "user", content: prompt }],
+      system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: userPrompt }],
     });
 
     const raw = response.content[0].type === "text" ? response.content[0].text : "";
-    const jsonMatch = raw.match(/\{[\s\S]*?\}/);
-    if (!jsonMatch) return null;
+    // M2(Fable5): 最初の { 〜 最後の } を抽出（旧 non-greedy 正規表現は最初の } で切れる罠があった）
+    const firstBrace = raw.indexOf("{");
+    const lastBrace = raw.lastIndexOf("}");
+    if (firstBrace === -1 || lastBrace <= firstBrace) return null;
+    const jsonMatch = [raw.slice(firstBrace, lastBrace + 1)];
 
     const parsed = JSON.parse(jsonMatch[0]) as {
       action?: string;
@@ -394,6 +489,15 @@ ${history}
         if (occ >= 10 && conf < 0.3) finalAix = null;
       }
     }
+    // B2(Fable5): reply_mode のフェイルクローズ強制（コード側で決定的に上書き — プロンプト任せにしない）
+    // 旧実装は線引きルール0件時に Haiku が auto_reply へ倒れる「安全側でない」デフォルトだった
+    let replyMode: "aix" | "auto_reply" | undefined =
+      (parsed.reply_mode === "aix" || parsed.reply_mode === "auto_reply") ? parsed.reply_mode : undefined;
+    if (finalAix) replyMode = "aix";                       // AIX提案がある時点でスタッフ操作前提
+    if (!boundaryText) replyMode = "aix";                  // 線引きルール取得失敗/0件時はフェイルクローズ
+    if (opts?.autoSendEnabled === false) replyMode = "aix"; // auto_send無効の会話に auto_reply を提案しない
+    if (opts?.isFlagged) replyMode = "aix";                // スタッフ要対応フラグ済み
+
     return {
       action: finalAix ?? "",
       note: finalAix ? AIX_BRAIN_NOTES[finalAix] : (parsed.action ?? ""),
@@ -402,7 +506,7 @@ ${history}
       closing_strategy: parsed.closing_strategy || undefined,
       template_hint: parsed.template_hint || undefined,
       next_steps: Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
-      reply_mode: (parsed.reply_mode === "aix" || parsed.reply_mode === "auto_reply") ? parsed.reply_mode : undefined,
+      reply_mode: replyMode,
     };
   } catch (e) {
     console.warn(`[brain-core] Haiku analysis failed: conv=${conversationId}`, e instanceof Error ? e.message : e);
@@ -416,29 +520,62 @@ ${history}
  * 分析対象外（クローズ済み等）や分析失敗時は何も書かない（meta は null のまま → sweep が再試行）。
  */
 export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<boolean> {
-  const { data: conv } = await supabase
+  const { data: conv, error: selectError } = await supabase
     .from("conversations")
-    .select("id, status, updated_at, property_customer_id")
+    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged")
     .eq("id", conversationId)
     .maybeSingle();
+  if (selectError) {
+    // B10(Fable5): 旧実装はエラーを握り潰し「会話が存在しない」と区別不能だった
+    console.error("[brain-core] conversations select failed:", conversationId, selectError.message);
+    return false;
+  }
   if (!conv) return false;
 
   const status = (conv.status as string | null) ?? null;
   if (status && BRAIN_SKIP_STATUSES.includes(status)) return false;
 
-  const isUrgent = Date.now() - new Date(conv.updated_at as string).getTime() <= URGENT_WINDOW_MS;
+  // H6(Fable5): ブロック済み/フォロー解除の顧客は分析しない（Haiku浪費 + 無意味な提案の防止）
+  const lineStatus = (conv.line_status as string | null) ?? null;
+  if (lineStatus === "blocked" || lineStatus === "unfollowed") return false;
+
+  // B5(Fable5): stale-write 対策のウォーターマーク。連続メッセージで分析A→Bが並走した場合、
+  // 古い方（msg2を含まない解析）が後着で勝つのを防ぐ — 書き込み時に updated_at 一致を条件にする
+  const watermark = conv.updated_at as string;
+
+  const isUrgent = Date.now() - new Date(watermark).getTime() <= URGENT_WINDOW_MS;
   const meta = await analyzeConversation(
     conversationId,
     isUrgent,
     status,
     (conv.property_customer_id as string | null) ?? null,
     "brain",
+    {
+      autoSendEnabled: (conv.auto_send_enabled as boolean | null) ?? false,
+      isHot: (conv.is_hot as boolean | null) ?? false,
+      isFlagged: (conv.is_flagged as boolean | null) ?? false,
+    },
   );
-  if (!meta) return false;
+  if (!meta) {
+    // H3(Fable5): 失敗時も brain_analyzed_at を記録 → sweep の30分バックオフに使用。
+    // これが無いと決定的に失敗する会話が5分毎に永久リトライされ（最大288 Haiku呼び出し/日/行）、
+    // 新しい順ソートのため10件のスタック失敗で sweep 全体が飢餓状態になっていた
+    await supabase
+      .from("conversations")
+      .update({ brain_analyzed_at: new Date().toISOString() })
+      .eq("id", conversationId)
+      .eq("updated_at", watermark);
+    return false;
+  }
 
   const { error } = await supabase
     .from("conversations")
     .update({ suggested_aix_meta: meta, brain_analyzed_at: new Date().toISOString() })
-    .eq("id", conversationId);
+    .eq("id", conversationId)
+    .eq("updated_at", watermark); // B5: 会話が進んでいたら古い解析は静かに no-op（sweep が補填する）
+  if (error) {
+    // B10(Fable5): スキーマ変更後の型不一致等、恒常的なDB障害を診断可能にする
+    console.error("[brain-core] suggested_aix_meta update failed:", conversationId, error.message);
+  }
   return !error;
 }

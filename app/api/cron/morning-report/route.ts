@@ -559,6 +559,9 @@ export async function GET(req: NextRequest) {
       ` update-action-confidence: ${cronStatus("update-action-confidence", oneDayAgo)}`,
       ` corpus2skill: ${cronStatus("corpus2skill", sevenDaysAgoIso, true)}`,
       ` calc-template-scene-stats: ${cronStatus("calc-template-scene-stats", sevenDaysAgoIso, true)}`,
+      // H8(Fable5): brain-sweep（5分毎の脳分析バックストップ）を監視対象に追加。
+      // CRON_SECRET ローテーション後の全401等、無言で死ぬと脳のバックストップ全体が停止するため
+      ` brain-sweep: ${cronStatus("brain-sweep", oneDayAgo)}`,
     ];
     const pendingN = pendingFeedbackCount ?? 0;
     const feedbackLine = pendingN > 0

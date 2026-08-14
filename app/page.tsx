@@ -48,7 +48,7 @@ type Conversation = {
   isFlagged?: boolean;
   hasViewed?: boolean;
   aiDraft?: string | null;
-  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; next_steps?: string[] } | null;
+  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply" } | null;
   suggestedNextAix?: string | null;
   messages: Message[];
 };
@@ -69,7 +69,7 @@ type SupabaseConversationRow = {
   is_flagged?: boolean | null;
   has_viewed?: boolean | null;
   ai_draft?: string | null;
-  suggested_aix_meta?: { action: string; note: string; closing_strategy?: string; next_steps?: string[] } | null;
+  suggested_aix_meta?: { action: string; note: string; closing_strategy?: string; next_steps?: string[]; enforcement_level?: "required" | "recommended" | "optional"; reply_mode?: "aix" | "auto_reply" } | null;
   suggested_next_aix?: string | null;
 };
 
@@ -2892,11 +2892,15 @@ export default function Home() {
       setStatusSaving(true);
       setError("");
 
+      // B6(Fable5): クローズ系ステータスへの変更時は suggested_aix_meta もクリア
+      // （skip-status チェックは新規分析を防ぐだけで、古い「次アクション」メタは残り続けていた）
+      const isClosingStatus = ["contract", "closed_won", "closed_lost", "lost"].includes(nextStatus);
       const { error: updateError } = await supabase
         .from("conversations")
         .update({
           status: nextStatus,
           updated_at: new Date().toISOString(),
+          ...(isClosingStatus ? { suggested_aix_meta: null } : {}),
         })
         .eq("id", selectedConversation.id);
 
@@ -4108,7 +4112,9 @@ export default function Home() {
       const isFirstStaffReply = !selectedConversation.messages.some((m) => m.sender === "staff");
       const currentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
       const isSendingImages = anyImageSent;
-      const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null };
+      // B6(Fable5): suggested_aix_meta も同時にクリア — スタッフが送信した時点で返信前の「次アクション」提案は
+      // 陳腐化する。sweep は last_sender=customer のみ拾うため、消さないと顧客の次メッセージまで古い指示が表示され続ける
+      const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null, suggested_aix_meta: null };
       if (isFirstStaffReply && (!selectedConversation.status || currentStatus === "hearing")) convUpdate.status = "hearing";
       // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
       if (isSendingImages && currentStatus === "hearing") convUpdate.status = "proposing";
@@ -5458,7 +5464,7 @@ export default function Home() {
                     const fetchBrain = (iter: number) => {
                       fetch("/api/brain/list")
                         .then((r) => (r.ok ? r.json() : null))
-                        .then((list: Array<{ id: string; suggested_aix_meta: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; next_steps?: string[] } | null }> | null) => {
+                        .then((list: Array<{ id: string; suggested_aix_meta: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply" } | null }> | null) => {
                           if (!list) return;
                           setBrainConversations((prev) =>
                             prev.map((c) => {
@@ -13045,7 +13051,15 @@ export default function Home() {
                 const note = conv.suggestedAixMeta?.note ?? null;
                 const action = conv.suggestedAixMeta?.action ?? conv.suggestedNextAix ?? null;
                 const actionMeta = action ? AIX_ACTION_META[action as keyof typeof AIX_ACTION_META] : null;
-                const actionColor = actionMeta?.color ?? "#7C3AED";
+                // H1(Fable5): enforcement_level=required（緊急・2時間以内）は赤で区別（従来は一律紫）
+                const isRequired = conv.suggestedAixMeta?.enforcement_level === "required";
+                const actionColor = isRequired ? "#DC2626" : (actionMeta?.color ?? "#7C3AED");
+                // H1(Fable5): reply_mode="aix" = AIが自動ドラフトを意図的に止めた（スタッフ対応必須）シグナル
+                const isAixRequired = conv.suggestedAixMeta?.reply_mode === "aix";
+                // H2(Fable5): next_steps[0] と closing_strategy を行に表示 — 従来は取得して捨てており、
+                // スタッフは全チャットを開かないと「今日やること」の中身が見えなかった
+                const firstStep = conv.suggestedAixMeta?.next_steps?.[0] ?? null;
+                const closingStrategy = conv.suggestedAixMeta?.closing_strategy ?? null;
                 const ageMins = conv.updatedAt
                   ? Math.floor((Date.now() - new Date(conv.updatedAt).getTime()) / 60000)
                   : null;
@@ -13098,6 +13112,11 @@ export default function Home() {
                               {actionMeta?.label ?? "AIX"}
                             </span>
                           )}
+                          {isAixRequired && (
+                            <span className="shrink-0 rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                              AIX対応必須
+                            </span>
+                          )}
                         </div>
                         {ageLabel && (
                           <span className="text-[10px] text-[#b0b8be] shrink-0">{ageLabel}</span>
@@ -13122,6 +13141,18 @@ export default function Home() {
                       ) : (
                         <div className="truncate text-[11px] text-[#b0b8be]">
                           AI分析中...
+                        </div>
+                      )}
+
+                      {/* H2(Fable5): 次の一手 + 成約戦略（開かなくても行動できるアクションリスト化） */}
+                      {firstStep && (
+                        <div className="truncate text-[11px] text-[#374151] mt-0.5">
+                          ▶ {firstStep}
+                        </div>
+                      )}
+                      {closingStrategy && (
+                        <div className="truncate text-[10px] text-[#8696a0] mt-0.5">
+                          🎯 {closingStrategy}
                         </div>
                       )}
 

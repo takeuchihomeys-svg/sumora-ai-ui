@@ -146,7 +146,8 @@ export async function GET(req: NextRequest) {
       const lastText = text || (imageUrls.length > 0 ? "[画像]" : "");
       const { error: convUpdateErr } = await supabase
         .from("conversations")
-        .update({ last_message: lastText, last_sender: "staff", updated_at: sentAt.toISOString(), ai_draft: null })
+        // B6(Fable5): suggested_aix_meta も同時クリア（送信済み後の陳腐化した「次アクション」表示を防ぐ）
+        .update({ last_message: lastText, last_sender: "staff", updated_at: sentAt.toISOString(), ai_draft: null, suggested_aix_meta: null })
         .eq("id", msg.conversation_id as string);
       if (convUpdateErr) {
         console.error("[send-scheduled] conversations更新失敗:", convUpdateErr.message, "id:", msg.id);

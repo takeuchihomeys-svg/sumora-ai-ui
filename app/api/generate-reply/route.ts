@@ -500,7 +500,9 @@ function buildGenerationMessages(
   propertyStatus?: PropertyStatus,
   // テンプレート最適化モード: プロンプト最末尾（replyHintNoteと同じ上書きスロット）に注入するブロック。
   // 指定時は replyHint（指定生成モード）を無効化する（templateText が勝つ）
-  templateNote = ""
+  templateNote = "",
+  // H7(Fable5): brain(suggested_aix_meta) の closing_strategy/next_steps ガイダンスブロック
+  brainGuidanceNote = ""
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -898,7 +900,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `${propertyStatusNote}
-${closingNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${pickupPromiseAckNote}
+${closingNote}${brainGuidanceNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${pickupPromiseAckNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 ${quickPatterns}
@@ -1547,7 +1549,9 @@ ${rules.map((r, i) => `${i + 1}. ${r.rule_text}（${r.example_count}回確認済
 // ─── reply_mode ゲート（自動生成経路のみ・enforceReplyModeGate=true時に発火）───
 // brain-core が conversations.suggested_aix_meta.reply_mode="aix" を書いた会話は
 // AI自動返信禁止。ドラフト生成を中止し、スタッフにLINEグループ通知する。
-type AixGateMeta = { action?: string; note?: string; reply_mode?: string } | null;
+// H7(Fable5): closing_strategy / next_steps も読む — brain の戦略をドラフト生成プロンプトへ注入し、
+// スタッフ向け表示（赤枠）と顧客向けドラフトの戦略を一致させる
+type AixGateMeta = { action?: string; note?: string; reply_mode?: string; closing_strategy?: string; next_steps?: string[] } | null;
 
 async function fetchReplyModeGate(
   convId: string
@@ -2156,13 +2160,25 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
           : "\n\n【テンプレート最適化モード】今回はテンプレートをベースに、この顧客の状況に最適化した文章を作成してください。詳細ルールはプロンプト末尾の【🟠✨ テンプレート最適化モード】ブロックに従うこと。")
       : "";
 
+    // H7(Fable5): brain(suggested_aix_meta) を生成前に一度だけ取得し、
+    // ① reply_mode ゲート（チェックポイントB） ② closing_strategy/next_steps のプロンプト注入 の両方に使う。
+    // brain は顧客メッセージ毎に再分析されるため Step1 分析より新鮮なことが多く、
+    // スタッフが見る戦略（赤枠）と顧客に届くドラフトの戦略の不一致を解消する
+    const brainGate = (conversationId && !isTemplateOptimize)
+      ? await fetchReplyModeGate(conversationId)
+      : null;
+    const brainMeta = brainGate?.meta ?? null;
+    const brainGuidanceNote = (brainMeta && (brainMeta.closing_strategy || (brainMeta.next_steps?.length ?? 0) > 0))
+      ? `【🧠 脳分析ガイダンス（スタッフ向け戦略 — この返信はこの戦略と整合させること）】${brainMeta.closing_strategy ? `\n- 成約戦略: ${brainMeta.closing_strategy}` : ""}${brainMeta.next_steps?.length ? `\n- 予定ステップ: ${brainMeta.next_steps.join(" / ")}` : ""}\n※これはスタッフへの行動方針であり物件の事実情報ではない。期日・空室情報は会話履歴で確認された事実のみ本文に書くこと。\n`
+      : "";
+
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
       message, customerName, aixSourceMessage ? historyForTemplate : history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
-      resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote
+      resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote
     );
     // 中6: 顧客の温度感に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
     // ④ Step1で今まさに分析したフレッシュな emotion を最優先し、なければ ai_summary_json.emotion（過去の要約）を使う
@@ -2178,11 +2194,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // webhookは受信毎にsuggested_aix_metaをワイプ→brain再分析(Haiku 3〜10秒)するため、
     // チェックポイントA時点ではmetaがnullのことが多い。Step1分析(最大45秒)完了後の
     // このタイミングなら再投入済み。メイン生成(Sonnet)呼び出し前に最終確認する。
+    // H7(Fable5): 上で取得済みの brainGate を再利用（DB再取得しない・タイミングは同等）
     if (enforceReplyModeGate && conversationId && !isTemplateOptimize) {
-      const gateB = await fetchReplyModeGate(conversationId);
-      if (gateB?.meta?.reply_mode === "aix") {
+      if (brainGate?.meta?.reply_mode === "aix") {
         console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(B):", conversationId);
-        return applyAixGateAndRespond(conversationId, gateB.meta, gateB.customerName);
+        return applyAixGateAndRespond(conversationId, brainGate.meta, brainGate.customerName);
       }
     }
 

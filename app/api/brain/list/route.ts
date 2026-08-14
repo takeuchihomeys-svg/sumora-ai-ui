@@ -32,8 +32,12 @@ export async function GET(_req: NextRequest) {
       "id, customer_name, status, updated_at, last_message, suggested_aix_meta, ai_draft, property_customer_id, brain_analyzed_at"
     )
     .eq("last_sender", "customer")
-    .not("status", "in", `(${BRAIN_SKIP_STATUSES.join(",")})`)
-    .order("updated_at", { ascending: false });
+    // B7(Fable5): 旧 .not("status","in",...) は NULL status の行を除外していた（NOT IN の NULL セマンティクス）
+    .or(`status.is.null,status.not.in.(${BRAIN_SKIP_STATUSES.join(",")})`)
+    .order("updated_at", { ascending: false })
+    // B9(Fable5): 無制限クエリは PostgREST の max-rows（デフォルト1000行）で無言切り捨てされる。
+    // updated_at 降順のため limit 200 で切れるのは最も古い（=優先度最低の）会話のみ
+    .limit(200);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

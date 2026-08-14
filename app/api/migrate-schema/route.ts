@@ -1856,7 +1856,9 @@ CREATE TABLE IF NOT EXISTS conversation_stage_history (
 CREATE INDEX IF NOT EXISTS idx_stage_history_conv ON conversation_stage_history(conversation_id, changed_at DESC);
 ALTER TABLE conversation_stage_history DISABLE ROW LEVEL SECURITY;
 
--- ── brain_analyzed_at: 脳分析タイムスタンプ（24h TTLキャッシュ制御用）（2026-08-14追加）──
+-- ── brain_analyzed_at: 脳分析の最終試行時刻（2026-08-14追加）──
+-- 成功時・失敗時の両方で書き込まれ、brain-sweep の30分リトライバックオフに使用する
+-- （旧コメントの「24h TTLキャッシュ」は未実装のまま廃止 — 実設計はイベント駆動 + sweep バックオフ）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brain_analyzed_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_conversations_brain_analyzed ON conversations(brain_analyzed_at) WHERE brain_analyzed_at IS NOT NULL;
 
