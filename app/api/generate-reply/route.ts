@@ -380,6 +380,54 @@ function buildPropertyStatusNote(status: PropertyStatus): string {
   return "";
 }
 
+// ─── 募集状況確認文脈の決定論的検出 ───────────────────────────────────────────
+// お客様が物件（URL・物件名・物件画像）を送ってきて「この物件は？」「空きありますか？」等と
+// 募集状況を尋ねている場面。この段階では「空いているかどうか」がまだ管理会社に確認できていない。
+// 空きが未確認のまま内覧誘導（「お気に召されましたら」「ご都合よろしいお日にちに」「ご案内させて頂きます」）
+// をするのは順番が逆。確認して初めて次（内覧・申込）の話になる。
+// ※ viewingFactNote が常時注入している「内覧に触れる場合は〜のみ許可」を、この文脈では無効化する。
+const AVAILABILITY_URL_RE = /https?:\/\/|suumo|homes\.co\.jp|athome|itandi|rea-?pro|リアプロ|レインズ|ietty|chintai/i;
+const AVAILABILITY_PROPERTY_RE = /マンション|ハイツ|コーポ|レジデンス|ハイム|メゾン|アパート|グランド|シャトー|[0-9０-９]{2,4}\s*号室|(?:この|こちらの|その|さっきの|先ほどの)(?:物件|お?部屋)|物件資料|物件/;
+// 「空き・募集状況」を明示的に尋ねている（物件名の有無を問わず募集状況確認と確定できる表現）
+const AVAILABILITY_EXPLICIT_RE = /空(?:き|いて|いている|室)|募集(?:中|状況|して|出て|され)|まだ(?:あり|空|募集|残|大丈夫)|埋ま(?:って|り)|申込(?:み)?(?:入って|は入|ありま)/;
+const AVAILABILITY_QUESTION_RE = /ありますか|あります？|ますか|ですか|でしょうか|いかが|どう(?:です|でしょう)|教えて|知りたい|[?？]/;
+// 見積・初期費用・内覧希望が主目的のメッセージは別ゲート（estimateGateNote / viewingIntentShortReplyNote）に任せる
+const AVAILABILITY_EXCLUDE_RE = /見積|初期費用|スモ割|総額|内覧|内見|見学/;
+
+function detectAvailabilityCheckContext(customerMessage: string): boolean {
+  const msg = (customerMessage || "").trim();
+  if (!msg) return false;
+  if (AVAILABILITY_EXCLUDE_RE.test(msg)) return false;
+  // ① 「空いてますか」「まだ募集中ですか」等 — 募集状況の問い合わせで確定
+  if (AVAILABILITY_EXPLICIT_RE.test(msg)) return true;
+  // ② 物件URLを送ってきた（URLのみ・コメントなしでも「この物件どうですか」の意図で確定）
+  if (AVAILABILITY_URL_RE.test(msg)) return true;
+  // ③ 物件名・物件指示語 ＋ 疑問形 →「この物件は？」型の募集状況確認
+  return AVAILABILITY_PROPERTY_RE.test(msg) && AVAILABILITY_QUESTION_RE.test(msg);
+}
+
+// 募集状況確認文脈で注入する強制ブロック（内覧誘導フレーズの完全禁止＋返信の型を4ステップに固定）
+function buildAvailabilityCheckNote(): string {
+  return `\n\n【🚨 募集状況確認の文脈（確定・最優先 — フェーズ別パターン・内覧誘導ルールより上位）】
+お客様は物件（URL・物件名・物件資料）を示して、その物件の募集状況（空き）を尋ねています。
+まだ管理会社に確認しておらず「空いているかどうか」が未確認の段階です。空きが確認できていない段階で内覧の話をするのは順番が逆であり、お客様の信頼を損ないます。確認して初めて次（内覧・申込）の話になります。
+【✅ この文脈での返信の型（この4ステップのみ。他の要素を一切足さない）】
+① 冒頭挨拶 — 【⏰ 挨拶ルール・最優先】に従う
+② 物件の募集状況を確認する旨（例:「こちらのお部屋の募集状況確認させて頂きます！！」）
+③ 確認でき次第ご連絡する旨（例:「確認出来次第ご連絡させて頂きます！！」）
+④ 終わり（余分なフレーズを足さずここで完結させる）
+【🔴 この文脈での絶対NG（一切書かない・言い換えも禁止）】
+・「お気に召されましたら」
+・「ご都合よろしいお日にちに」
+・「ご案内させて頂きます」「お部屋ご案内させて頂きます」等の内覧誘導フレーズ全般
+・内覧日程の提案・2択日程提示・「ご内覧いかがでしょうか」
+・「お申込みでお部屋を先に抑えておくことも可能です」等の申込誘導
+・「空室でした」「現在も募集中です」「〇月〇日退去予定です」等、未確認の募集状況・退去日・入居可能日の断言
+・「何卒よろしくお願い致します！！」以外の中身のない締め・追加の勧誘文
+※ 本ブロックは【📅 内覧日時の具体的提案は絶対禁止】内の「内覧に触れる場合は『お気に召されましたら〜』のみ許可」より上位。この文脈ではその例外許可も無効とする。
+※ 本ブロックは【🏢 管理会社確認が必要な物件固有情報】内の「確認と連絡をセットで約束する文の禁止」より上位。募集状況確認では②＋③（確認する→確認でき次第連絡する）が正しい型。`;
+}
+
 // ─── ai_summary_json の構造化サマリー（customer-summary/route.ts の SummaryJson と互換）──
 type ReplySummaryJson = {
   winning_pattern?: string;
@@ -905,10 +953,18 @@ function buildGenerationMessages(
     : detectPropertyStatus(history, customerMessage, propertyStatus);
   const propertyStatusNote = buildPropertyStatusNote(resolvedPropertyStatus);
 
+  // 募集状況確認文脈（お客様が物件URL・物件名を送ってきた／「空きありますか？」等）の決定論的検出。
+  // この文脈では内覧誘導フレーズを完全禁止し、「確認する→確認でき次第連絡する」で完結させる。
+  const isAvailabilityCheckContext = detectAvailabilityCheckContext(customerMessage ?? "");
+  const availabilityCheckNote = isAvailabilityCheckContext ? buildAvailabilityCheckNote() : "";
+
   // 内覧日時の具体的提案はAIXの「内覧へ」ボタン専用。generate-replyでは絶対に具体的日時を出さない
   const viewingFactNote = (resolvedPropertyStatus === "move_out_scheduled" || resolvedPropertyStatus === "occupied")
     ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。「退去後すぐにご案内します」「お申込みでお部屋を先に抑えてからのご内覧も可能です」の方向で返すこと。`
-    : `\n\n【📅 内覧日時の具体的提案は絶対禁止（最優先）】「〇/〇（木）14:00〜」「直近ですと[日付][時間帯]」「〇〇でご都合いかがでしょうか」のような具体的な内覧候補日時・2択日程提示は絶対に出力しない。内覧の日程調整はAIXの「内覧へ」ボタンのテンプレートで別途行うため、AI返信案には含めない。内覧に触れる場合は「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！」のみ許可。[日付][時間帯]プレースホルダーも使用禁止。`;
+    : isAvailabilityCheckContext
+      // 募集状況が未確認の段階では「お気に召されましたら〜ご案内」の例外許可を出さない（内覧誘導は順番が逆）
+      ? `\n\n【📅 内覧日時の具体的提案は絶対禁止（最優先）】「〇/〇（木）14:00〜」「直近ですと[日付][時間帯]」「〇〇でご都合いかがでしょうか」のような具体的な内覧候補日時・2択日程提示は絶対に出力しない。[日付][時間帯]プレースホルダーも使用禁止。さらに今回は募集状況が未確認の段階のため、「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！」等の内覧誘導フレーズも一切書かない（【🚨 募集状況確認の文脈】が正）。`
+      : `\n\n【📅 内覧日時の具体的提案は絶対禁止（最優先）】「〇/〇（木）14:00〜」「直近ですと[日付][時間帯]」「〇〇でご都合いかがでしょうか」のような具体的な内覧候補日時・2択日程提示は絶対に出力しない。内覧の日程調整はAIXの「内覧へ」ボタンのテンプレートで別途行うため、AI返信案には含めない。内覧に触れる場合は「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！」のみ許可。[日付][時間帯]プレースホルダーも使用禁止。`;
 
   // お客様が「内覧したい」を明示した場合: 返信は短い承認文のみ。日程・申込み提案は含めない
   const hasViewingIntent =
@@ -1017,7 +1073,7 @@ ${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
 ${history || "なし"}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${viewingFactNote}${viewingIntentShortReplyNote}${estimateGateNote}${propertyFactGateNote}\n\n${meetingPlaceGateNote}${linkRequestNote}
+${customerMessage}${applicationFormNote}${viewingFactNote}${viewingIntentShortReplyNote}${estimateGateNote}${propertyFactGateNote}\n\n${meetingPlaceGateNote}${linkRequestNote}${availabilityCheckNote}
 
 ${examples}${examplesInstruction}
 
