@@ -319,7 +319,7 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Prom
     { pass: "anomaly_scan", prompt: buildAnomalyScanPrompt(draft, ctx) },
     { pass: "context_check", prompt: buildContextCheckPrompt(draft, ctx) },
   ];
-  const settled = await Promise.allSettled(passes.map((p) => callHaiku(p.prompt, 2500)));
+  const settled = await Promise.allSettled(passes.map((p) => callHaiku(p.prompt, 5000)));
 
   const passesCompleted: CheckPass[] = [];
 
@@ -501,7 +501,7 @@ export async function runGroundedRevision(
 export const MAX_CHECK_ITERATIONS = 2; // check1 + (接地修正 + check2) = 計2チェック上限
 
 const REVISION_MS = 3500;  // 修正Haikuのタイムアウト
-const RECHECK_MS = 3000;   // 再チェック余裕分（3パス並列2.5s + マージン）
+const RECHECK_MS = 5500;   // 再チェック余裕分（3パス並列5s + マージン）
 
 // AIX_BOUNDARY_PROMISE 衝突対策（決定的・約0ms）:
 // 修正プロンプト絶対ルール5の定型句「確認して改めてご連絡いたします」等が修正で新規挿入されると、
@@ -528,7 +528,7 @@ export interface RevisionLoopResult {
 export async function runFinalCheckWithRevision(
   draft: string,
   ctx: FinalCheckContext,
-  budgetMs = 9500,
+  budgetMs = 14000,
 ): Promise<RevisionLoopResult> {
   const started = Date.now();
   let checkIterations = 0;

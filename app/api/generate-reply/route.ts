@@ -116,6 +116,11 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 // 今回のメッセージと関係なく参照・言及することを防ぐ。
 const TEMPORARY_SITUATION_NOTE = `\n【🚫 一時的な状況への言及禁止（最優先）】顧客の一時的な状況（出張中・急用・体調不良・忙しい等）は、今回（直近）の顧客メッセージで顧客自身が明示的に言及している場合のみ返信文に含めること。conversation_checkpointや過去履歴に記録されている一時的状況を、現在のメッセージと無関係に参照・言及することは禁止。例：顧客が「ありがとうございます」とだけ送ってきた場合、過去に出張中と記録されていても「出張お忙しい中」等の文言を入れない。`;
 
+// ─── 別件予定の混入禁止（常時注入・優先度: TEMPORARY_SITUATION_NOTEと同列）──────────────
+// 会話履歴に複数のアポイント・内覧が記録されていても、直近メッセージと無関係な別件予定を
+// 現在の返信文に混入させないようにする。
+const SEPARATE_APPOINTMENT_NOTE = `\n【🚫 別件予定の混入禁止（最優先）】複数の内覧・アポイントが会話履歴に記録されていても、直近の顧客メッセージで明示的に言及されていない別件の予定（別日の内覧・別物件のビデオ通話・未確定の次回アポ等）を現在の返信文に含めないこと。例：J's Garden明日の内覧確認メッセージに、別日予定のモンサント旭町ビデオ通話を混入させない。各予定・内覧・アポイントは独立した会話の流れで個別に扱うこと。`;
+
 // ─── 共感フレーズ（「全然大丈夫です」/「全然わがままじゃないですよ」）の決定論的ゲート ─────
 // AIが最も間違えるのが「お客様が言っていない言葉（＝わがまま）を勝手に使う」パターン。
 // お客様メッセージを正規表現で判定し、使ってよい／絶対禁止をプロンプト側で確定させる。
@@ -1092,7 +1097,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `${propertyStatusNote}
-${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${TEMPORARY_SITUATION_NOTE}${empathyPhraseNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}
+${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${TEMPORARY_SITUATION_NOTE}${SEPARATE_APPOINTMENT_NOTE}${empathyPhraseNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 ${quickPatterns}
