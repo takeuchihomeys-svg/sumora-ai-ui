@@ -111,6 +111,11 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 　× 「ご安心ください」（根拠となる具体的行動を伴わない場合）「大丈夫ですよ」単独
 　→ 正: 何をするから安心なのかを行動で示す`;
 
+// ─── 一時的な状況への言及禁止（常時注入・優先度: NG_PHRASE_NOTEと同列）──────────────
+// 過去の会話チェックポイントに「出張中」等が記録されていても、
+// 今回のメッセージと関係なく参照・言及することを防ぐ。
+const TEMPORARY_SITUATION_NOTE = `\n【🚫 一時的な状況への言及禁止（最優先）】顧客の一時的な状況（出張中・急用・体調不良・忙しい等）は、今回（直近）の顧客メッセージで顧客自身が明示的に言及している場合のみ返信文に含めること。conversation_checkpointや過去履歴に記録されている一時的状況を、現在のメッセージと無関係に参照・言及することは禁止。例：顧客が「ありがとうございます」とだけ送ってきた場合、過去に出張中と記録されていても「出張お忙しい中」等の文言を入れない。`;
+
 // ─── 共感フレーズ（「全然大丈夫です」/「全然わがままじゃないですよ」）の決定論的ゲート ─────
 // AIが最も間違えるのが「お客様が言っていない言葉（＝わがまま）を勝手に使う」パターン。
 // お客様メッセージを正規表現で判定し、使ってよい／絶対禁止をプロンプト側で確定させる。
@@ -1087,7 +1092,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `${propertyStatusNote}
-${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${empathyPhraseNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}
+${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${TEMPORARY_SITUATION_NOTE}${empathyPhraseNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 ${quickPatterns}

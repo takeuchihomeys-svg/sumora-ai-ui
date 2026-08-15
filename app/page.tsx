@@ -4566,9 +4566,8 @@ export default function Home() {
         setConversations((prev) => prev.map((c) => c.id === convId ? { ...c, hasViewed: true } : c));
       }
 
-      // 内覧招待メッセージ検知 → 内覧テンプレート辞書を誘導
-      const isViewingMsg = activeAixFlow === "viewing_invite"
-        || (textSent && textToSend && /内覧|ご案内|ご都合.*いかが|ご都合.*如何|お日にち|お部屋ご案内/.test(textToSend));
+      // 内覧招待メッセージ検知 → 内覧テンプレート辞書を誘導（AIXフローのみ）
+      const isViewingMsg = activeAixFlow === "viewing_invite";
       if (isViewingMsg) {
         setSuggestViewingTemplateMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
         setDismissedViewingTemplateIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
@@ -7210,8 +7209,8 @@ export default function Home() {
                 {activeAixFlow ? `${AIX_ACTION_META[activeAixFlow]?.label} ×` : "AIX"}
               </button>
 
-              {/* ✅ 確認したショートカットボタン（AIXフロー中は非表示） */}
-              {!activeAixFlow && (
+              {/* ✅ 確認したショートカットボタン（AIXフロー中・確認誘導なし時は非表示） */}
+              {!activeAixFlow && guideToCheckResult && (
                 <button
                   onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); }}
                   className="shrink-0 rounded-full border border-[#4CAF50] bg-white px-3 py-1.5 text-xs font-bold text-[#2E7D32] shadow-sm active:scale-95 transition-all duration-75"
@@ -8109,7 +8108,7 @@ export default function Home() {
                 title="送信（長押しで予約送信）"
               >
                 {sending ? (
-                  <span className="text-[10px] font-bold">…</span>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="22" y1="2" x2="11" y2="13"/>
