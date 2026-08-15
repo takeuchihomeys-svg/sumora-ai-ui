@@ -95,6 +95,7 @@ function stripInternalTagsOrNull(text: string | null | undefined): string | null
   if (!text) return null;
   if (text === "[AIX誘導中]") return null; // sentinel: テキストボックスに絶対に表示しない
   if (text === "__SHOWN__") return null; // sentinel: 表示済みドラフト（orphaned-rescue cronによる再生成防止）
+  if (text === "[画像のみ]") return null; // sentinel: 顧客が画像のみ送信（generate-pending-draftsが書き込む）
   return stripInternalTags(text) || null;
 }
 
@@ -7446,15 +7447,20 @@ export default function Home() {
                 </div>
               );
 
-              // P3.4: スタッフが新着待ちを宣言 → 物件が見つかったらAIX物件オススメへ
+              // P3.4: property_send → AIX物件ピックアップを直接起動
               if (guideToNewListingRecommend && !dismissedNewListingIds.has(id)) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-500 bg-blue-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-blue-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>新着物件が見つかったら → AIX 物件オススメで即送る</span>
-                  <button onClick={() => { setDismissedNewListingIds((prev) => new Set([...prev, id])); openPropertyRecommendationPicker("withImage"); }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #1565C0, #1976D2)" }}>AIX 物件オススメ</button>
-                  <button onClick={() => { setDismissedNewListingIds((prev) => { const n = new Set([...prev, id]); sessionStorage.setItem("dismissedNewListingIds", JSON.stringify([...n])); return n; }) }}
-                    className="shrink-0 text-blue-400 text-[11px] font-bold">✕</button>
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-500 bg-blue-50 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => { setDismissedNewListingIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); }}
+                      className="flex-1 rounded-full px-3 py-1.5 text-[12px] font-bold text-white text-left"
+                      style={{ background: "linear-gradient(135deg, #1565C0, #1976D2)" }}>
+                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                      AIX 物件ピックアップ
+                    </button>
+                    <button onClick={() => { setDismissedNewListingIds((prev) => { const n = new Set([...prev, id]); sessionStorage.setItem("dismissedNewListingIds", JSON.stringify([...n])); return n; }) }}
+                      className="shrink-0 text-blue-400 text-[11px] font-bold">✕</button>
+                  </div>
+                  <p className="text-[11px] text-blue-600 mt-1 pl-1">Chrome拡張（リアプロ/itandi/レインズ）で検索 → AIX物件オススメで送付</p>
                 </div>
               );
 
