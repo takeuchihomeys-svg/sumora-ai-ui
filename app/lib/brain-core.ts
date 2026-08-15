@@ -87,14 +87,14 @@ const STATUS_MEANING: Record<string, string> = {
 const AIX_CAPABILITY_MAP = `
 【AIXボタン能力マップ】
 - viewing_invite: 内覧日程の候補をLINEで提案するメッセージを生成
-- property_send: 物件ピックアップのカバーメッセージを生成（物件URL送信時）→ 複数件ピックアップ後は必ず1〜2分以内に「1件特にオススメ」テンプレートをAI最適化して1件に絞った感情的推しを追加する（use_count:96・最多使用）
+- property_send: 物件ピックアップのカバーメッセージを生成（物件URL送信時）→ 複数件ピックアップ後は必ず1〜2分以内（実測38秒／58秒）に「物件ピックアップ紹介（後続）」を、駅指定・条件外れ告知ありなら「駅周辺物件ピックアップ（後続）」（実測1分33秒）をAI最適化して自発送信する
 - estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成 → 送付直後（同分〜1分以内）に「【申込誘導】」テンプレートで申込を促す（use_count:10・見積書→申込誘導→申込の3ステップが成約最短ルート）
-- application_push: 申込クロージングメッセージを生成
+- application_push: 申込クロージングメッセージ（①申込時フォーマット本体）を生成 → 送信直後（実測32秒〜4分48秒）に「②申込時フォーマット（続き）」を一字一句そのまま自発送信する（AI最適化禁止）
 - condition_hearing: 既知条件をスキップした条件ヒアリングを生成
 - acknowledge_check: 管理会社への空室確認+見積書依頼を生成
 - followup_revive: 追客・再接触メッセージを生成
-- property_check_result: 空室確認結果の報告文を生成
-- property_recommendation: Vision読み取りで物件紹介文を生成（1件詳細）→ 押下後は必ず「1件特にオススメ」テンプレートで感情的フォローを追加する（use_count:96）
+- property_check_result: 空室確認結果の報告文を生成 → 2番手での申込が可能と判明した場合は+1分30秒で「（2番手・申込）」を顧客名の置換のみで自発送信する
+- property_recommendation: Vision読み取りで物件紹介文を生成（1件詳細）→ 押下後は「1件特にオススメ」で感情的フォローを追加する（実測1分22秒。原文そのままの送信実績はゼロなので"1件に絞って推す"思想のみ流用し全面リライトする）
 - meeting_place: 内覧の待ち合わせ場所案内を生成
 - greeting_viewing: 内覧前後の挨拶メッセージを生成
 - property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）
@@ -126,29 +126,106 @@ const REPLY_STYLE_RULES = `
 - 物件探し文脈で申込・フォーマット関連のCTAを入れる
 `.trim();
 
-// 実態ベースのフェーズ別推奨テンプレートマップ（成約会話データから抽出・use_count実績順）
-// AIXボタン操作は「前半: 物件情報大量提示（AIX自動送信）」と
-// 「後半: 感情的推し・CTA（スタッフ自発送信テンプレート）」の2フェーズで1セット。後半が成約率に直結する。
+// 実態ベースのフェーズ別推奨テンプレートマップ
+// 母集団: closed_won 13会話 / うちAIX使用5会話 / 検出された自発送信14件（顧客返信ゼロでのstaff手動送信）の実測。
+// AIXボタン操作は「前半: 成果物配達（AIX自動送信）」と
+// 「後半: 締めの1通（スタッフ自発送信テンプレート）」の2フェーズで1セット。後半が成約率に直結する。
+// ★use_count を推奨順位に使わないこと: インクリメント経路は page.tsx:4384（TemplateModalから選択して送信）と
+//   page.tsx:9323（AIX動線でモーダル経由）の2つだけで、コピペ・手打ち送信は一切カウントされない。
+//   実際に成約会話で使われた3本は全て use_count=0。use_count は「モーダル利用率」であって成約寄与ではない。
 const PHASE_TEMPLATE_HINTS = `
 【AIXボタン後に送るべきテンプレート（template_hint の選び方）】
-※運用は2フェーズ1セット: AIXボタン＝成果物配達 → 1〜2分後にテンプレ追撃（顧客返信を待たない）。成約13ケース全てこの構造。
+※運用は2フェーズ1セット: AIXボタン＝成果物配達 → 中央値1分20秒後にテンプレ追撃（顧客返信を待たない・14件中10件が2分以内）。AIXを使用した5会話すべてこの構造（closed_won 13件中3件はAIX未使用で成約＝AIXは成約の必要条件ではない）。
+※これは「顧客の無反応を見て追撃した」のではなく、AIXボタン押下と同一オペレーションの一部として締めの1通を手で足す動作。
 ※追撃には2種類ある: 「AI最適化して送る」（物件事実を含むテンプレ）と「そのまま送る」（定型追撃・編集すると1分以内の追撃速度が落ちる）。必ず区別すること。
-- property_send / property_recommendation（物件3件以上ピックアップ後）→ 「1件特にオススメ」(use_count:96)。AIXクラスター完了の1〜2分後（中央値1分・最大9分）に顧客返信なしで自発送信。AI最適化必須: 帖数・敷礼・費用の具体的強み（「〇〇マンションが〇〇帖・敷礼なし」等）を差し込む
-- property_send（即入居可能物件ピックアップ後）→ 「【全件案内可能】」。審査通過次第入居可能の補足で顧客の安心感を確保する
-- estimate_sheet（見積書送付直後・同分〜1分以内が必須）→ 「【申込誘導】」(use_count:10)。物件名・金額のみ差込で骨格はそのまま即送。「最大限割引させていただいたお見積書。ご費用面お気に召されましたらお申込みさせていただきます」が定型。顧客の申込まで最短2分の実証あり
-- 顧客が「申し込みします」「申し込みよろしくお願いします」等の申込意思を表示 → 「②申込時フォーマット（続き）」(use_count:17・全テンプレ中唯一win_rate>0)。一字一句そのまま送る（AI最適化禁止・編集不要・1分以内）
-- 条件ヒアリングAIX後 → 「ヒアリング締め」。+1分で顧客返信を待たず自発送信（そのまま送る）
-- viewing_invite / meeting_place（内見確定文）→ 追撃テンプレなし（顧客返信を待つ）。AIX本文は日時・物件・住所の1対1置換のみ
-- 同棲・カップル向けの新着1件 → 「【同棲・カップル向け広め】新着オススメ」(use_count:5)
-- 条件に合う物件が現状ゼロ → 「【物件なし】条件変更のご提案」（use_count 0だが唯一の推奨例外）
-- 「【新着】」(use_count:14)は本文に顧客実名が焼き込まれているためDBクリーンアップ完了まで推奨禁止（他顧客への実名送信事故防止）
-- 上記例外を除き、use_count 0・実名入り・文体別人格（✅🙏系）のテンプレートはtemplate_hintに選ばない
+- property_send（複数件ピックアップ後）→ 「物件ピックアップ紹介（後続）」。実測38秒／58秒で顧客返信なしに自発送信。AI最適化必須: 顧客名＋条件スロットに主訴（初期費用を抑えたい・審査が不安 等）を意味置換して差し込む
+- property_send（駅指定・希望条件から外れる旨の告知あり）→ 「駅周辺物件ピックアップ（後続）」。実測1分33秒。AI最適化必須: 駅名置換＋「〜のみの募集となります」の断定化リライト
+- property_send（ピックアップ全件が即入居可能）→ 「【全件案内可能】」相当文。「審査通過次第ご入居可能」の一括保証でAIXが残した唯一の不安（いつ入れるか）を潰す。実測8分56秒→顧客が2分45秒で物件確定した最強事例あり（原文一致なしの手打ちのため骨格のみ流用）
+- property_recommendation（1件詳細）→ 「1件特にオススメ」。実測1分22秒。※原文そのままの送信実績はゼロ。1件に絞って感情的に推す"思想"だけを流用し全面リライトすること
+- estimate_sheet（見積書送付直後・同分〜1分以内が必須）→ 「【申込誘導】」。実測33秒／1分06秒。AI最適化必須: 物件名・号室を文中に溶かす（「〇〇901号室の最大限割引させていただいたお見積書をお送りさせて頂きました」）。顧客の申込まで最短2分の実証あり
+- application_push で①申込時フォーマット本体を送った直後 → 「②申込時フォーマット（続き）」。実測32秒〜4分48秒。★一字一句そのまま送る（AI最適化禁止）。トリガーは顧客の申込意思表示ではなく「①を送ったこと」そのもの（意思表示は数時間前にあることが多い）。2会話2/2で申込情報の全項目を回収した唯一の再現性100%テンプレ
+- property_check_result（2番手での申込が可能と判明）→ 「（2番手・申込）」。実測1分29秒・顧客名の置換のみ。AIXが別物件の見積を送っていても社内進捗（2番手確保済み）を差し込むと顧客の関心が戻り内覧アポに転換する
+- 条件ヒアリングAIX後 → 「ヒアリング締め」／「物件探しテンプレート【続き】」。実測1分17秒でそのまま送る（顧客名と関係性の文脈だけ補正）
+- viewing_invite / meeting_place（内見確定文）→ 追撃テンプレなし（顧客返信を待つ）。自発送信14件中0件。AIX本文は日時・物件・住所の1対1置換のみ
+- 条件に合う物件が現状ゼロ → 「【物件なし】条件変更のご提案」
+- 同棲・カップル向けの新着1件 → 「【同棲・カップル向け広め】新着オススメ」
+- 該当テンプレが存在しない3型（①申込完了の進捗報告 ②見積送付の報告 ③即入居可の一括保証）は全面手打ちでよい。自発送信14件中5件がこれ。無理に既存テンプレへ寄せないこと
+
+【AI最適化（TemplateModalの「AI最適化」ボタン）を通す / 絶対に通さない】
+- 通す（物件事実系）: 「物件ピックアップ紹介（後続）」「駅周辺物件ピックアップ（後続）」「1件特にオススメ」「【申込誘導】」「【全件案内可能】」
+  → 原文に「〇〇さん」「アカウント名さん」「〇〇駅」等のプレースホルダーが残っており、そのまま送ると顧客に生で飛ぶ事故になる
+- 通さない（定型追撃系）: 「②申込時フォーマット（続き）」「ヒアリング締め」「（2番手・申込）」
+  → 特に「②申込時フォーマット（続き）」はAI最適化を通すと本文が壊れる。generate-reply のテンプレート最適化プロンプトに
+    「『お申込フォーマット』『ご本人確認書類』を含む文は出力禁止」という強制置換ゲートがあり、
+    このテンプレの中核（本人確認書類の写真依頼）が削除される。文体の好みではなくコード上必須の回避策。
+
+【template_hint に選んではいけないテンプレート】
+- 本文に顧客実名・物件名が焼き込まれている10件（他顧客への誤送信事故になるためDBクリーンアップ完了まで禁止）:
+  「【新着】」（🐈‍⬛さん）/ YUMAさん / mai.tさん / Mさん / 𝚂𝚊𝚗𝚊.さん / ニアさん / 夏奈さん（レジュールアッシュ梅田AXIA）/ サムティ町合能越寺803号室 / コーポまえだ303号室 / アドバンス難波ラシュレ を含むもの
+- 文体が別人格のもの（✅🙏を多用する箇条書き調）
+※ use_count が 0 であることは除外理由にならない。成約会話で実際に使われた「物件ピックアップ紹介（後続）」「駅周辺物件ピックアップ（後続）」「（2番手・申込）」はいずれも use_count 0（モーダルを通さず手打ちで送られたため計上されていないだけ）。逆に use_count 96 の「1件特にオススメ」は成約会話の自発送信で一度も原文送信されていない。
 `.trim();
 
 // ① 成約・申込到達ステータス（brainが成功事例として読む対象）
 // applying は line-webhook が申込フォーム検知で自動セットする機械検証済みシグナル。
 // application/screening/contract は旧データの後方互換エイリアス（auto-seiyaku と同一集合 + closed_won）
 const SUCCESS_EXAMPLE_STATUSES = ["closed_won", "applying", "application", "screening", "contract"];
+
+// ── 自発送信の決定論的検出 ───────────────────────────────────────────────────
+// 「自発送信」= AIXボタン押下後、顧客の返信を待たずにスタッフが手で足した締めの1通。
+// 検出定義（成約会話14件の実測に使ったものと同一）:
+//   顧客メッセージで区切った staff 連続ブロック内で、
+//   is_aix_generated=true の最終メッセージより後にある is_aix_generated=false の staff メッセージ。
+// これまで analyze-applying は [AIX]/[スタッフ] ラベルをLLMに渡して推測させていたが、
+// is_aix_generated から機械的に確定できるためLLMに確定リストとして渡す（推測をやめさせる）。
+export type SelfInitiatedSend = {
+  text: string;
+  created_at: string | null;
+  /** 同一staffブロック内の直前AIXメッセージからの経過秒（実測の中央値は約80秒・14件中10件が120秒以内） */
+  seconds_after_aix: number | null;
+  /** その直前AIXメッセージの本文（先頭120字。どのAIXボタンへの追撃かを判定する材料） */
+  aix_source_text: string;
+};
+
+export function extractSelfInitiatedSends(
+  msgs: Array<{ sender: string; text: string | null; created_at: string | null; is_aix_generated?: boolean | null }>
+): SelfInitiatedSend[] {
+  const result: SelfInitiatedSend[] = [];
+
+  // [start, end) は顧客メッセージで挟まれた staff 連続ブロック
+  const scanBlock = (start: number, end: number) => {
+    let lastAixIdx = -1;
+    for (let i = start; i < end; i++) {
+      if (msgs[i].is_aix_generated === true) lastAixIdx = i;
+    }
+    if (lastAixIdx === -1) return; // AIXを含まないブロックは自発送信の定義対象外
+    const aix = msgs[lastAixIdx];
+    for (let i = lastAixIdx + 1; i < end; i++) {
+      const m = msgs[i];
+      if (m.is_aix_generated === true) continue;
+      if (!(m.text ?? "").trim()) continue;
+      const gapSec =
+        m.created_at && aix.created_at
+          ? Math.round((new Date(m.created_at).getTime() - new Date(aix.created_at).getTime()) / 1000)
+          : null;
+      result.push({
+        text: m.text ?? "",
+        created_at: m.created_at,
+        seconds_after_aix: gapSec,
+        aix_source_text: (aix.text ?? "").slice(0, 120),
+      });
+    }
+  };
+
+  let blockStart = 0;
+  for (let i = 0; i <= msgs.length; i++) {
+    if (i === msgs.length || msgs[i].sender === "customer") {
+      if (i > blockStart) scanBlock(blockStart, i);
+      blockStart = i + 1;
+    }
+  }
+  return result;
+}
 
 // ── フェーズ検出ヘルパー ─────────────────────────────────────────────────────
 // brain分析結果（SuggestedAixMeta）の各フィールドから現在フェーズを推定する。
@@ -495,7 +572,7 @@ export async function analyzeConversation(
   type TopTemplate = { category: string | null; label: string | null; win_rate: number | null; use_count: number | null };
   const topTemplates = (templatesResult.data ?? []) as TopTemplate[];
   const templatesText = topTemplates.length > 0
-    ? `\n【高成約率テンプレート（参考）】\n${topTemplates.map((t) => `- ${t.category}: ${t.label} (成約率: ${((t.win_rate ?? 0) * 100).toFixed(0)}%, ${t.use_count ?? 0}回使用)`).join("\n")}`
+    ? `\n【モーダル経由の使用実績が多いテンプレート（参考値・成約寄与ではない）】\n${topTemplates.map((t) => `- ${t.category}: ${t.label} (win_rate: ${((t.win_rate ?? 0) * 100).toFixed(0)}%, モーダル経由${t.use_count ?? 0}回)`).join("\n")}\n※use_count はTemplateModal経由の送信のみ計上され、コピペ・手打ち送信は数えない。この一覧に無い＝成約実績が無い ではないので、template_hint は必ず上記フェーズ別推奨マップを優先して選ぶこと。`
     : "";
 
   // Boundary rules — when AIX is required vs auto-reply is allowed
@@ -595,7 +672,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に送るべき【AIX】テンプレートのラベル名。上記フェーズ別推奨マップに従いAIXボタン使用後は必ず対応テンプレートを推奨（property_send/property_recommendation後→'1件特にオススメ' / estimate_sheet後→'【申込誘導】' / 顧客申込意思後→'②申込時フォーマット（続き）' / 条件ヒアリング後→'ヒアリング締め' / 物件なし→'【物件なし】条件変更のご提案'（use_count 0の唯一の例外））。'【新着】'は実名汚染のため選ばない。他のuse_count 0テンプレートも選ばない。該当なければnull", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（1件特にオススメ・【申込誘導】等）は『【AIX】○○をAI最適化して送る（クラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め）は『【AIX】○○をそのまま送る（1分以内・編集不要）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に送るべき【AIX】テンプレートのラベル名。上記フェーズ別推奨マップに従いAIXボタン使用後は必ず対応テンプレートを推奨（property_send（複数件）後→'物件ピックアップ紹介（後続）'・駅指定なら'駅周辺物件ピックアップ（後続）'・全件即入居可なら'【全件案内可能】' / property_recommendation（1件詳細）後→'1件特にオススメ' / estimate_sheet後→'【申込誘導】' / application_pushで①申込時フォーマットを送った直後→'②申込時フォーマット（続き）' / property_check_resultで2番手可と判明→'（2番手・申込）' / 条件ヒアリング後→'ヒアリング締め' / 物件なし→'【物件なし】条件変更のご提案' / viewing_invite・meeting_place後→null）。顧客実名・物件名が焼き込まれたテンプレート（'【新着】'等）は選ばない。use_countが0であることは除外理由にしない（手打ち送信が計上されないだけで成約実績はある）。該当なければnull", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
 
   const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}
 

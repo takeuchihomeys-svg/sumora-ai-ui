@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { extractSelfInitiatedSends } from "@/app/lib/brain-core";
 import Anthropic from "@anthropic-ai/sdk";
 
 // ── 申込到達会話からの自動学習（analyze-applying）─────────────────────────────
@@ -181,6 +182,22 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
       ? Math.max(0, Math.round((new Date(lastAt).getTime() - new Date(firstAt).getTime()) / 86_400_000))
       : null;
 
+  // 自発送信（AIX直後・顧客返信ゼロでスタッフが手で足した締めの1通）を is_aix_generated から機械抽出。
+  // LLMに推測させず確定リストとして渡すことで template_send の付け漏れ／誤付与を防ぐ。
+  const selfSends = extractSelfInitiatedSends(msgs);
+  const selfSendsText =
+    selfSends.length > 0
+      ? selfSends
+          .map(
+            (s, i) =>
+              `${i + 1}. [直前AIXの${s.seconds_after_aix !== null ? `${s.seconds_after_aix}秒後` : "直後"}]\n` +
+              `   直前のAIX本文: ${s.aix_source_text}\n` +
+              `   自発送信された本文: ${(s.text || "").slice(0, 200)}`
+          )
+          .join("\n")
+          .slice(0, 3000)
+      : "（この会話では自発送信は検出されませんでした）";
+
   // 3. Sonnet で成功ケースをケースフロー形式に構造化
   const prompt = `以下の申込到達会話から成功ケースを構造化してください。
 
@@ -217,7 +234,9 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
   ・申込に必要な書類を自然な流れで案内した
   ・顧客の希望条件に合致している点を強調した
   ・物件の人気・問い合わせ状況を伝えた（希少性の提示）
-  ・AIXボタンで複数物件ピックアップ送付後、顧客返信を待たずに「1件特にオススメ」テンプレートで1件に絞り申込・内覧を促した（[AIX]行の直後に[スタッフ]行が続くパターン・AIXクラスター完了の1〜2分後が典型（中央値1分・最大9分）・use_count 96の最多使用テンプレート）
+  ・AIXボタンで複数物件ピックアップ送付後、顧客返信を待たずに「物件ピックアップ紹介（後続）」「駅周辺物件ピックアップ（後続）」等で顧客名・条件を差し込んだ追撃を送った（[AIX]行の直後に[スタッフ]行が続くパターン・中央値1分20秒・14件中10件が2分以内）
+  ・AIXで1件詳細を紹介した直後、顧客返信を待たずに「1件特にオススメ」相当の文で1件に絞り申込・内覧を促した（実測1分22秒・原文コピペではなく全面リライトが実態）
+  ・AIXで送った物件が全件即入居可能な場合に「審査通過次第ご入居可能」の一括保証を自発送信した（AIXが残す唯一の不安＝いつ入れるか を潰す動作。実測8分56秒→顧客が2分45秒で物件確定）
   ・AIXで見積書を送付した直後（同分〜1分以内）、顧客返信を待たずに「申込誘導」テンプレートで「最大限割引させていただいたお見積書。ご費用面お気に召されましたらお申込みさせていただきます」と促した（見積書→申込誘導→申込の3ステップが成約最短ルート・顧客が2分で申込した実績あり）
   ・「確認します」等の受付宣言後、顧客の返信がないまま8〜136分後（＝管理会社確認等の実作業時間）にAIXクラスターを起動して成果物を配達した（逆方向パターン・成約リードタイムの実体。宣言→調査→配達の流れをstaff_actionとして必ず記録する）
 
@@ -234,14 +253,17 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
 - 申込を促した・申込フォームを案内した → application_push
 - 追客・再接触メッセージを送った → followup_revive
 - AIXボタン押下後、顧客返信を待たずに自発的に【AIX】テンプレートを送った → template_send
-  ※ template_send として記録すべき典型ケース（優先度順）:
-    A. 物件ピックアップ（3件以上）のAIXクラスター完了後15分以内（実績1〜9分・中央値1分）、顧客返信ゼロ → 「1件特にオススメ」テンプレート送付（use_count:96・物件名・帖数・敷礼をAI最適化で差し込む）
-    B. 見積書AIXメッセージの同分〜1分後、顧客返信ゼロ → 「【申込誘導】」テンプレート送付（use_count:10・物件名・金額のみ差込で骨格そのまま）
-    C. ①申込フォーマット送付 → +1〜5分で「②申込時フォーマット（続き）」をセット送信（use_count:17・全テンプレ中唯一win_rate>0・一字一句そのまま送る定型追撃）
-    D. 条件ヒアリングAIXの+1分後、顧客返信ゼロ → 「ヒアリング締め」系追撃（「上記お部屋探しフォーマットお送りいただけましたら…」）
+  ※ template_send として記録すべき典型ケース（上記【自発送信（機械抽出済みの確定リスト）】と突き合わせて分類する）:
+    A. 物件ピックアップ（複数件）のAIX送信後38秒〜1分33秒、顧客返信ゼロ → 「物件ピックアップ紹介（後続）」／駅指定なら「駅周辺物件ピックアップ（後続）」（顧客名＋条件スロットをAI最適化で意味置換）
+    B. 見積書AIXメッセージの33秒〜1分06秒後、顧客返信ゼロ → 「【申込誘導】」（物件名・号室を文中に溶かす）
+    C. application_push で①申込時フォーマット本体を送った直後 +32秒〜4分48秒 → 「②申込時フォーマット（続き）」をセット送信（一字一句そのまま送る定型追撃・AI最適化禁止）。★トリガーは顧客の申込意思表示ではなく「①を送ったこと」そのもの（意思表示は数時間前にあることが多く、それをトリガーと誤読しないこと）
+    D. 条件ヒアリングAIXの+1分17秒後、顧客返信ゼロ → 「ヒアリング締め」系追撃（「上記お部屋探しフォーマットお送りいただけましたら…」）
+    E. property_check_result で2番手申込が可能と判明 → +1分29秒で「（2番手・申込）」（顧客名の置換のみ）。AIXが別物件の話をしていても社内進捗を差し込んで関心を戻す動作
+    F. 該当テンプレが無い完全カスタム型（申込完了の進捗報告／見積送付の報告／即入居可の一括保証）も自発送信として記録する。14件中5件がこれで、テンプレ化候補として価値が高い
   ※ テンプレ骨格との一致（「オススメ出来るお部屋」「お申込し抑えさせて頂きます」「ご査収ください」等の定型句）が判定材料
   ※ is_aix_generated=trueのAIX本体メッセージ自体（物件画像・見積書等）はtemplate_sendではない
   ※ 顧客返信後のレスポンスもtemplate_sendではない（「顧客返信なし＝自発送信」が本質条件）
+  ※ viewing_invite / meeting_place（内見日程・待ち合わせ確定）の直後には追撃を送らないのが正解パターン（自発送信14件中0件）。ここにtemplate_sendを捏造しないこと
   ※ AIX「前半: 物件情報大量提示」→ スタッフ「後半: 感情的推し・CTA」の2フェーズをセットで1商談フローとして記録すること
 
 【重複送信バグの扱い（learning 除外指示）】
@@ -261,6 +283,16 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
 
 【会話全文】
 ${formatMessages(msgs)}
+
+【自発送信（機械抽出済みの確定リスト・推測禁止）】
+以下は is_aix_generated の切り替わりから決定論的に抽出した「AIXボタン押下後、顧客の返信を待たずに
+スタッフが手で送った締めの1通」です。判定ロジックは「顧客メッセージで区切ったスタッフ連続ブロック内で、
+最後の[AIX]メッセージより後にある[スタッフ]メッセージ」。
+・ここに挙がっている送信は必ず action_flow のステップとして記録し、aix_button="template_send" を付けること。
+・ここに無いステップに aix_button="template_send" を付けないこと（推測で増やさない）。
+・「直前のAIX本文」を読んでどのAIXボタンへの追撃かを判断し、staff_action に「AIXで〇〇を送った直後、
+  顧客返信を待たずに△△を送った」という形で必ず経過時間つきで記録すること。
+${selfSendsText}
 
 【会話期間】
 ${firstAt && lastAt ? `${firstAt} 〜 ${lastAt}（約${computedDays}日間）` : "不明"}
