@@ -471,7 +471,7 @@ export async function analyzeConversation(
     propertyCustomerId
       ? supabase
           .from("property_customers")
-          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count, ai_summary_json, personality_profile")
+          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count, ai_summary, ai_summary_json, personality_profile")
           .eq("id", propertyCustomerId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -483,13 +483,14 @@ export async function analyzeConversation(
       .eq("is_starred", true)
       .order("created_at", { ascending: false })
       .limit(3),
-    // Latest 2 checkpoints for long-conversation context
+    // Latest checkpoint for long-conversation context
+    // ローリング累積方式: 最新1行が常に確認済み事実の全量なので最新のみで足りる
     supabase
       .from("conversation_checkpoints")
       .select("checkpoint_index, summary, key_facts, conversation_stage")
       .eq("conversation_id", conversationId)
       .order("checkpoint_index", { ascending: false })
-      .limit(2),
+      .limit(1),
     // Sent properties for this customer (duplicate/history awareness)
     propertyCustomerId
       ? supabase
@@ -674,7 +675,7 @@ export async function analyzeConversation(
   const timingText = `\n【時間情報】今日: ${todayStr} / 最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）`;
 
   // Build customer conditions context
-  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null; ai_summary_json?: Record<string, unknown> | null; personality_profile?: string | null } | null;
+  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null; ai_summary?: string | null; ai_summary_json?: Record<string, unknown> | null; personality_profile?: string | null } | null;
   const pc = (pcResult.data ?? null) as PC;
   const condParts: string[] = [];
   if (pc?.desired_area) condParts.push(`エリア: ${pc.desired_area}`);
@@ -711,6 +712,14 @@ export async function analyzeConversation(
     }
   }
 
+  // 【顧客の会話ストーリー】ai_summary全文（テキスト版）。プロファイル(JSON由来)とは別に、
+  // 顧客の全文脈（経緯・今の状況・次の必須対応）を戦略決定の材料として注入する
+  const aiSummaryFullRaw = (pc?.ai_summary ?? "").trim();
+  const aiSummaryFullText = aiSummaryFullRaw.length > 800 ? aiSummaryFullRaw.slice(0, 800) : aiSummaryFullRaw;
+  const aiSummaryNote = aiSummaryFullText
+    ? `\n【顧客の会話ストーリー（ai_summary全文・必ず読むこと）】\n${aiSummaryFullText}\n→ この顧客の全文脈を踏まえてclosing_strategy・next_stepsを決定すること\n`
+    : "";
+
   const statusMeaning = convStatus && STATUS_MEANING[convStatus] ? STATUS_MEANING[convStatus] : (convStatus ?? "");
   const statusText = convStatus ? `\n現在のステータス: ${statusMeaning}` : "";
 
@@ -720,11 +729,16 @@ export async function analyzeConversation(
     ? `\n過去のスタッフ優良返信例:\n${examples.map((e) => `- ${e.sent_reply ?? ""}`).join("\n")}`
     : "";
 
-  // Checkpoint summaries for long-conversation context (セーブポイント)
-  type Checkpoint = { checkpoint_index: number; summary: string | null; key_facts: string | null; conversation_stage: string | null };
-  const checkpoints = ((checkpointsResult.data ?? []) as Checkpoint[]).reverse(); // oldest first
-  const checkpointText = checkpoints.length > 0
-    ? `\n【過去の会話まとめ（セーブポイント）】\n${checkpoints.map((cp) => `■ ブロック${cp.checkpoint_index}: ${cp.summary ?? ""}${cp.key_facts ? ` / ${cp.key_facts}` : ""}`).join("\n")}`
+  // Checkpoint summary for long-conversation context (会話セーブデータ)
+  // key_facts は jsonb 配列（{type, value}[]）で返る — 文字列連結すると [object Object] になるため value を整形する
+  type CheckpointFact = { type?: string; value?: string };
+  type Checkpoint = { checkpoint_index: number; summary: string | null; key_facts: CheckpointFact[] | null; conversation_stage: string | null };
+  const latestCheckpoint = ((checkpointsResult.data ?? []) as Checkpoint[])[0] ?? null;
+  const checkpointFactsLine = Array.isArray(latestCheckpoint?.key_facts)
+    ? (latestCheckpoint!.key_facts as CheckpointFact[]).map((f) => f?.value ?? "").filter(Boolean).join(" / ")
+    : "";
+  const checkpointText = latestCheckpoint?.summary
+    ? `\n【会話セーブデータ（これまでに会話で確認済みの事実の全量・最重要。ここに書かれた金額/物件/日付と矛盾する返信をしない）】\n${latestCheckpoint.summary}${checkpointFactsLine ? `\n主要事実: ${checkpointFactsLine}` : ""}`
     : "";
 
   // Sent properties — what has already been proposed to this customer
@@ -920,7 +934,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 回答形式（JSONのみ・説明文・コードブロック不要）:
 {"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
 
-  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}
+  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -1121,7 +1135,7 @@ function formatJstDateShort(iso: string | null): string {
 }
 
 function buildCheckpointPrompt(
-  prevSummary: string | null, historyText: string, total: number, shown: number,
+  prevSummary: string | null, historyText: string, total: number, shown: number, startOffset: number,
 ): string {
   return `あなたは不動産賃貸仲介のLINE会話の記録係です。会話の「セーブデータ」（チェックポイント）を作成してください。
 このセーブデータは後で返信AIの事実確認（ハルシネーション検査）の正解データとして使われます。
@@ -1136,9 +1150,9 @@ function buildCheckpointPrompt(
 - 解決した【未解決事項】は【確認済み事実】へ移す（例: 空室確認の回答が来たら結果を事実として記録）
 
 【前回のセーブデータ】
-${prevSummary ? prevSummary.slice(0, 1500) : "（なし・今回が最初のセーブ）"}
+${prevSummary ? prevSummary.slice(0, 2000) : "（なし・今回が最初のセーブ）"}
 
-【新しい会話（全${total}件中の直近${shown}件・日付付き。スタッフ(AIX)=AIツールで送信済み）】
+【新しい会話（全${total}件のうち${startOffset + 1}〜${startOffset + shown}件目・日付付き。スタッフ(AIX)=AIツールで送信済み）】
 ${historyText}
 
 JSON形式のみで返答（説明・コードブロック不要）:
@@ -1182,16 +1196,22 @@ export async function maybeCreateCheckpoint(conversationId: string): Promise<voi
       { checkpoint_index: number; message_count_at_creation: number; summary: string } | null;
     if (last && total - last.message_count_at_creation < MESSAGES_PER_CHECKPOINT) return;
 
-    // 2) 前回以降の新規メッセージ（最大40件・昇順に直す）
+    // 2) 前回以降の新規メッセージ（最大40件・昇順）
+    // 前回チェックポイント位置から昇順 range で取る。直近40件を desc で取る旧方式だと、
+    // 前回以降に40件超溜まった場合に「前回位置〜40件窓の間」のメッセージが前回サマリーにも
+    // 履歴にも載らず、事実が永久に落ちる（ローリング累積の約束違反）。
+    // 40件超残っている場合は今回は先頭40件のみ処理し、message_count_at_creation を
+    // 実際にカバーした位置までしか進めないことで、次回呼び出しで残りに追いつく。
     const newSinceLast = last ? total - last.message_count_at_creation : total;
-    const { data: msgsDesc, error: msgErr } = await supabase
+    const startOffset = last?.message_count_at_creation ?? 0;
+    const take = Math.min(newSinceLast, 40);
+    const { data: msgs, error: msgErr } = await supabase
       .from("messages")
       .select("sender, text, created_at, is_aix_generated")
       .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: false })
-      .limit(Math.min(newSinceLast, 40));
-    if (msgErr || !msgsDesc || msgsDesc.length === 0) return;
-    const msgs = [...msgsDesc].reverse();
+      .order("created_at", { ascending: true })
+      .range(startOffset, startOffset + take - 1);
+    if (msgErr || !msgs || msgs.length === 0) return;
 
     const historyText = msgs
       .map((m) => {
@@ -1201,7 +1221,7 @@ export async function maybeCreateCheckpoint(conversationId: string): Promise<voi
       .join("\n");
 
     // 3) Haiku（モジュール共有 client: timeout 15s / maxRetries 0 — fire-and-forget なので失敗放置でOK）
-    const prompt = buildCheckpointPrompt(last?.summary ?? null, historyText, total, msgs.length);
+    const prompt = buildCheckpointPrompt(last?.summary ?? null, historyText, total, msgs.length, startOffset);
     const response = await client.messages.create({
       model: HAIKU,
       max_tokens: 700,
@@ -1224,7 +1244,9 @@ export async function maybeCreateCheckpoint(conversationId: string): Promise<voi
     const { error: insErr } = await supabase.from("conversation_checkpoints").insert({
       conversation_id: conversationId,
       checkpoint_index: (last?.checkpoint_index ?? 0) + 1,
-      message_count_at_creation: total,
+      // total ではなく「実際にサマリーへ取り込んだ位置」まで進める。
+      // 40件超のバックログや count 後に届いたメッセージは次回の窓で確実にカバーされる
+      message_count_at_creation: startOffset + msgs.length,
       summary: parsed.summary.slice(0, 2000),
       key_facts: Array.isArray(parsed.key_facts) ? parsed.key_facts.slice(0, 20) : [],
       conversation_stage: stage,
