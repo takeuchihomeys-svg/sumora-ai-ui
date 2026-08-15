@@ -1128,7 +1128,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     if (embedding) {
       const { data: vectorResults, error: rpcError } = await supabase.rpc("match_reply_knowledge", {
         query_embedding: embedding,
-        match_count: 40,
+        match_count: 100,
         min_importance: 7,
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
       if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
