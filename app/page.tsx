@@ -6198,9 +6198,9 @@ export default function Home() {
                   return (
                     <div className="mt-2 border-t border-[#f0f2f5] pt-1.5 space-y-1.5">
                       {closingStrategy && (
-                        <div className="rounded-xl border border-red-400 bg-red-50 px-3 py-2">
-                          <p className="text-[11px] font-bold text-red-500 mb-0.5">🔴 どうやったら決まるか</p>
-                          <p className="text-[13px] font-bold leading-snug text-red-700">{closingStrategy}</p>
+                        <div className="rounded-lg border border-purple-200 bg-purple-50 p-2">
+                          <div className="text-xs font-bold text-purple-700 mb-1">▶ どうやったら決まるか</div>
+                          <p className="text-xs leading-snug text-purple-900">{closingStrategy}</p>
                         </div>
                       )}
                       {nextSteps.length > 0 && (
@@ -7209,14 +7209,16 @@ export default function Home() {
                 {activeAixFlow ? `${AIX_ACTION_META[activeAixFlow]?.label} ×` : "AIX"}
               </button>
 
-              {/* ✅ 確認したショートカットボタン */}
-              <button
-                onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); }}
-                className="shrink-0 rounded-full border border-[#4CAF50] bg-white px-3 py-1.5 text-xs font-bold text-[#2E7D32] shadow-sm active:scale-95 transition-all duration-75"
-                title="AIX「確認した」を直接開く"
-              >
-                ✓ 確認した
-              </button>
+              {/* ✅ 確認したショートカットボタン（AIXフロー中は非表示） */}
+              {!activeAixFlow && (
+                <button
+                  onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); }}
+                  className="shrink-0 rounded-full border border-[#4CAF50] bg-white px-3 py-1.5 text-xs font-bold text-[#2E7D32] shadow-sm active:scale-95 transition-all duration-75"
+                  title="AIX「確認した」を直接開く"
+                >
+                  ✓ 確認した
+                </button>
+              )}
 
               {/* ✨ sparkleボタン（本文あり→メニュー・本文なし→スパークルモーダル） */}
               <div ref={sparkleMenuRef} className="relative shrink-0">
