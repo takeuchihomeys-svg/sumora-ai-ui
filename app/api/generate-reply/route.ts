@@ -1,6 +1,6 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
 import {
   PHASE_GUIDE,
@@ -2555,53 +2555,53 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // f-8: センシティブ案件（クレーム/審査否決/キャンセル・リスケ）検知時はドラフト冒頭に警告メタを付与
             // ※テンプレート最適化モードは会話への返信生成ではないため付与しない
             const sensitiveGateNote = !isTemplateOptimize ? buildSensitiveGateNote(message) : "";
-            if (shouldPrependGreeting && !isTemplateOptimize) {
-              // 真の初回: 全バッファして冒頭挨拶を強制置換（AIが誤生成しても確実に正しい名前を出す）
-              // ※テンプレート最適化モードは常に下の通常バッファ経路（テンプレの構成を挨拶強制置換で壊さない）
+            // ─── 生成ストリーム消費＋後処理の共通関数 ───────────────────────
+            // 1回目生成と「最終チェック指摘フィードバック再生成」（下のリトライループ）の両方で使うため関数化。
+            // 挨拶強制置換・validateAndClean・テンプレ後処理のロジックは従来と同一。
+            const consumeGeneration = async (
+              streamPromise: typeof genStream
+            ): Promise<{ body: string; stopReason: unknown }> => {
               let fullText = "";
-              for await (const chunk of await genStream) {
+              let stopReason: unknown;
+              for await (const chunk of await streamPromise) {
                 const text = typeof chunk.content === "string" ? chunk.content : "";
                 fullText += text;
-                if (chunk.response_metadata?.stop_reason) genStopReason = chunk.response_metadata.stop_reason;
+                if (chunk.response_metadata?.stop_reason) stopReason = chunk.response_metadata.stop_reason;
               }
-              warnIfTruncated(genStopReason, genInputLength);
-              // AIの本文先頭が挨拶パターンなら「挨拶センテンスのみ」を正規表現で除去して固定挨拶に置き換え、
-              // 挨拶で始まっていなければ全文を本文として保持し先頭に固定挨拶を追加する。
-              // （旧実装は改行基準で先頭を捨てていたため、AIが挨拶＋本文を改行なし1行で返すと本文が全消滅していた）
-              const trimmedText = fullText.trimStart();
-              const aiGreetingPattern = /^(?:「?[^\n]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|お世話に|ご連絡|この度|こんにちは|こんばんは|おはよう|夜分遅く)/;
-              // 挨拶センテンス1文分（呼びかけ＋挨拶キーワード＋文末「！！」「。」または改行まで）にマッチする
-              const greetingSentencePattern = /^(?:「?[^\n！!。]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|お世話に|ご連絡|この度|こんにちは|こんばんは|おはよう|夜分遅く|お部屋探し[^！!。\n]{0,30}申します|[^！!。\n]{0,20}と申します)[^！!。\n]{0,40}?(?:[！!。]+|\n)\s*/;
-              let bodyPart: string;
-              if (aiGreetingPattern.test(trimmedText)) {
-                // 冒頭の挨拶センテンスを最大4文まで除去（「はじめまして😊！！」「この度ご連絡〜！！」「〜鈴木と申します！！」等）
-                let rest = trimmedText;
-                for (let i = 0; i < 4 && greetingSentencePattern.test(rest); i++) {
-                  rest = rest.replace(greetingSentencePattern, "");
+              warnIfTruncated(stopReason, genInputLength);
+              if (shouldPrependGreeting && !isTemplateOptimize) {
+                // 真の初回: 全バッファして冒頭挨拶を強制置換（AIが誤生成しても確実に正しい名前を出す）
+                // ※テンプレート最適化モードは常に下の通常バッファ経路（テンプレの構成を挨拶強制置換で壊さない）
+                // AIの本文先頭が挨拶パターンなら「挨拶センテンスのみ」を正規表現で除去して固定挨拶に置き換え、
+                // 挨拶で始まっていなければ全文を本文として保持し先頭に固定挨拶を追加する。
+                // （旧実装は改行基準で先頭を捨てていたため、AIが挨拶＋本文を改行なし1行で返すと本文が全消滅していた）
+                const trimmedText = fullText.trimStart();
+                const aiGreetingPattern = /^(?:「?[^\n]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|お世話に|ご連絡|この度|こんにちは|こんばんは|おはよう|夜分遅く)/;
+                // 挨拶センテンス1文分（呼びかけ＋挨拶キーワード＋文末「！！」「。」または改行まで）にマッチする
+                const greetingSentencePattern = /^(?:「?[^\n！!。]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|お世話に|ご連絡|この度|こんにちは|こんばんは|おはよう|夜分遅く|お部屋探し[^！!。\n]{0,30}申します|[^！!。\n]{0,20}と申します)[^！!。\n]{0,40}?(?:[！!。]+|\n)\s*/;
+                let bodyPart: string;
+                if (aiGreetingPattern.test(trimmedText)) {
+                  // 冒頭の挨拶センテンスを最大4文まで除去（「はじめまして😊！！」「この度ご連絡〜！！」「〜鈴木と申します！！」等）
+                  let rest = trimmedText;
+                  for (let i = 0; i < 4 && greetingSentencePattern.test(rest); i++) {
+                    rest = rest.replace(greetingSentencePattern, "");
+                  }
+                  bodyPart = rest.trim();
+                } else {
+                  bodyPart = trimmedText.trim();
                 }
-                bodyPart = rest.trim();
-              } else {
-                bodyPart = trimmedText.trim();
+                // customerName が空の場合は「さん、」部分を除去（「さん、はじめまして」の防止）
+                const fixedGreeting = `${buildFirstGreeting(customerName)}\n\n`;
+                // 除去後が空（挨拶のみ生成・除去しすぎ）の場合はAI出力をそのまま使う（本文ゼロ防止フォールバック）
+                const rawOutput = bodyPart ? fixedGreeting + bodyPart : (trimmedText || fixedGreeting.trim());
+                // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
+                // customerName/lineDisplayName: 本文に混入したLINE表示名を確定的に実名へ置換／除去
+                const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true, customerName, lineDisplayName });
+                if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
+                // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
+                return { body: cleaned, stopReason };
               }
-              // customerName が空の場合は「さん、」部分を除去（「さん、はじめまして」の防止）
-              const fixedGreeting = `${buildFirstGreeting(customerName)}\n\n`;
-              // 除去後が空（挨拶のみ生成・除去しすぎ）の場合はAI出力をそのまま使う（本文ゼロ防止フォールバック）
-              const rawOutput = bodyPart ? fixedGreeting + bodyPart : (trimmedText || fixedGreeting.trim());
-              // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
-              // customerName/lineDisplayName: 本文に混入したLINE表示名を確定的に実名へ置換／除去
-              const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true, customerName, lineDisplayName });
-              if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
-              // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
-              draftBody = cleaned;
-            } else {
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
-              let fullText = "";
-              for await (const chunk of await genStream) {
-                const text = typeof chunk.content === "string" ? chunk.content : "";
-                fullText += text;
-                if (chunk.response_metadata?.stop_reason) genStopReason = chunk.response_metadata.stop_reason;
-              }
-              warnIfTruncated(genStopReason, genInputLength);
               // aixGates: 通常返信ドラフトのみ機械検証。テンプレート最適化はAIX由来の日時・金額が正当なため対象外
               const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize, customerName, lineDisplayName });
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
@@ -2629,8 +2629,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 outText = outText.trim();
               }
               // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
-              draftBody = outText;
-            }
+              return { body: outText, stopReason };
+            };
+            // 1回目の生成
+            const gen1 = await consumeGeneration(genStream);
+            draftBody = gen1.body;
+            genStopReason = gen1.stopReason;
             // ─── 最終チェック+接地修正ループ（前頭前野モデル v2 / claude-haiku-4-5）────
             // check1(≤2.5s) → blockあり時のみ 接地修正(≤3.5s) → check2(≤2.5s)。チェックは計2回上限。
             // 修正は checkpoint事実・DBルール・顧客条件に接地し、引用検証を通らない置換は破棄。
@@ -2649,7 +2653,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   applying: "申込準備中",
                   closed_won: "成約済み",
                 };
-                const loop = await runFinalCheckWithRevision(draftBody, {
+                // 1回目チェックと再生成後の2回目チェックで同一コンテキストを使う
+                const finalCheckCtx = {
                   dbRules,
                   finalCheckRules: finalCheckRules || undefined,
                   recentMessages,
@@ -2665,9 +2670,68 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   customerConditionsDb: groundTruth.customerConditionsDb,
                   isAutoSend: enforceReplyModeGate,   // HIGH-1/2: 自動送信経路のみ true
                   conversationStage: STAGE_JP[currentState] ?? currentState, // MEDIUM-2
-                }, 9500);
+                };
+                const loop = await runFinalCheckWithRevision(draftBody, finalCheckCtx, 9500);
                 finalCheck = loop.finalCheck;
                 draftBody = loop.finalDraft; // ベスト草稿（成功時=修正版 / 修正不能時=元ドラフト）
+                finalCheck.regen_count = 0;
+                // ─── 最終チェック問題→フィードバック再生成ループ（最大1リトライ）────
+                // 接地修正ループ（runFinalCheckWithRevision内部）を通しても warning 以上の指摘が
+                // 残った場合、指摘内容（何が問題か＋どう修正すべきか）を修正指示としてまとめ、
+                // 元プロンプト＋1回目ドラフト＋フィードバックで Sonnet に丸ごと再生成させ、
+                // 再生成ドラフトに最終チェック（2回目）を再適用する。
+                // ・2回目のチェックで問題なければそれを返す
+                // ・2回目でも問題が残れば2回目の結果をそのまま返す（無限ループ防止・最大1リトライ）
+                // ・再生成の失敗・空生成時は1回目の結果で続行（fail-open）
+                // ・regen_count がトレーラー/ai_draft_check に載る（監査用）
+                const retryIssues = finalCheck.issues.filter(
+                  (it) => it.severity === "block" || it.severity === "warning"
+                );
+                if (retryIssues.length > 0) {
+                  try {
+                    const feedback = [
+                      "【最終チェック結果のフィードバック】",
+                      "あなたが直前に生成した返信ドラフトを最終チェックした結果、以下の問題が見つかりました。",
+                      "問題を全て解消した返信を、これまでと同じ指示・同じ条件で最初から書き直してください。",
+                      "",
+                      "検出された問題:",
+                      ...retryIssues.map((it, i) =>
+                        `${i + 1}. ${it.message}` +
+                        (it.evidence ? `（該当箇所:「${it.evidence}」）` : "") +
+                        (it.suggestion ? ` → 修正方法: ${it.suggestion}` : "")
+                      ),
+                      "",
+                      "注意:",
+                      "- 指摘箇所だけを直すのではなく、返信全体を自然な文章として書き直すこと",
+                      "- 問題のなかった部分の内容・トーンは維持すること",
+                      "- 返信本文のみを出力すること（説明・前置き・修正内容の解説は書かない）",
+                    ].join("\n");
+                    console.warn(
+                      "[generate-reply] 最終チェック指摘あり→フィードバック再生成:",
+                      retryIssues.map((it) => it.code).join(",")
+                    );
+                    const retryMessages = [...messages, new AIMessage(draftBody), new HumanMessage(feedback)];
+                    const gen2 = await consumeGeneration(
+                      createGenerationModel(genTemperature).stream(retryMessages)
+                    );
+                    if (gen2.body.trim()) {
+                      // 再生成ドラフトにも最終チェック＋接地修正ループを適用（未チェック文は絶対に出さない）
+                      const loop2 = await runFinalCheckWithRevision(gen2.body, finalCheckCtx, 9500);
+                      draftBody = loop2.finalDraft;
+                      finalCheck = loop2.finalCheck;
+                      finalCheck.regen_count = 1;
+                      genStopReason = gen2.stopReason ?? genStopReason;
+                      console.log(
+                        "[generate-reply] 再生成後チェック:",
+                        finalCheck.issues.length === 0 ? "指摘解消" : `指摘残り(${finalCheck.issues.length}件)`
+                      );
+                    } else {
+                      console.warn("[generate-reply] フィードバック再生成が空出力→1回目の結果で続行");
+                    }
+                  } catch (regenErr) {
+                    console.error("[generate-reply] フィードバック再生成失敗（1回目の結果で続行）:", regenErr);
+                  }
+                }
                 // 顧客名の最終防衛線: 接地修正（Haiku）は [CHECKPOINT]/[CONDITIONS]/[RULES] に無い
                 // 事実で置換できない仕様のため FABRICATED_NAME を自力で直せない（引用検証で修正ごと破棄される）。
                 // 名前だけはDB由来の確定値があるので、修正ループ通過後にコード側で確定的に上書きする。

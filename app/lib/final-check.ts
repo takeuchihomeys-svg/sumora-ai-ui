@@ -36,6 +36,8 @@ export interface CheckResult {
   // ── 修正ループ監査（v2追加。ai_draft_check は JSONB カラムなので migrate-schema 更新は不要）──
   revision_count?: number;        // 実行した接地修正の回数（0 or 1）。トレーラーで必ず送出
   revision_exhausted?: boolean;   // 修正を試みてもblockが残った/修正不能 → スタッフ手動確認必須
+  // ── フィードバック再生成ループ監査（v3追加・generate-reply側で設定。JSONBのため migrate-schema 更新は不要）──
+  regen_count?: number;           // 指摘フィードバック付き再生成の回数（0 or 1）
 }
 
 export interface FinalCheckContext {
