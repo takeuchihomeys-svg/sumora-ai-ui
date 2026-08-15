@@ -136,7 +136,7 @@ async function fetchWinningPatterns(
       };
       if (rpcError) console.warn("[customer-summary] match_reply_knowledge RPC error:", rpcError.message);
       const patterns = (vectorHits ?? [])
-        .filter(r => r.category === "pattern" && (r.similarity ?? 0) >= 0.5)
+        .filter(r => (r.category === "pattern" || r.category === "applying_pattern") && (r.similarity ?? 0) >= 0.5)
         // 成約系タイトル（成約パターン/決まった/closed_won）を優先、同格なら類似度順
         .sort((a, b) => {
           const aWon = isWonTitle(a.title ?? "") ? 1 : 0;

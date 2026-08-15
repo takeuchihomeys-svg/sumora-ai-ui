@@ -1067,14 +1067,21 @@ function buildGenerationMessages(
     ? `\n\n## 参照すべき重要ルール（DB学習ナレッジ・セクション順に優先度が高い）${knowledge}`
     : "";
 
-  // ①②統合: closing_strategy（Step1分析）・★決まるパターン・🎯次のアクション（ai_summary）を冒頭に最優先注入
+  // 戦略注入のAIX-META一元化（2026-08）:
+  // brainGuidanceNote（AIX-META = suggested_aix_meta 由来）が存在する場合、それが全情報を統合した
+  // 唯一の戦略指示となるため、closingNote の戦略要素（Step1 closing_strategy / ai_summary の
+  // winning_pattern / next_action）は注入しない（二重注入による戦略の矛盾を防ぐ）。
+  // AIX-METAが未生成（brainGuidanceNote が空）の場合のみ、従来の Step1 / ai_summary を
+  // フォールバック参考情報として注入する。
+  const hasAixMetaStrategy = brainGuidanceNote.trim().length > 0;
   const closingNote = (() => {
+    if (hasAixMetaStrategy) return "";
     const parts: string[] = [];
     if (closingStrategyFromAnalysis) parts.push(`AIが判断した成約への一手: ${closingStrategyFromAnalysis}`);
     if (closingPatternFromSummary) parts.push(`この会話の成約ポイント: ${closingPatternFromSummary}`);
     if (nextActionFromSummary) parts.push(`今すぐ打つべき次の一手（スタッフへの行動方針）: ${nextActionFromSummary}`);
     if (parts.length === 0) return "";
-    return `【🎯 最優先指示 — フェーズ別パターンより上位・この返信で必ず実行すること】\n${parts.join("\n")}\n⚠️ 上記はスタッフへの行動方針であり、物件の事実情報ではありません。「退去予定」「空き予定」「〜月末まで」等の具体的な期日・空室情報は、会話履歴やDBで確認された事実でない限りLINEメッセージ本文に断言・創作しないこと。\n`;
+    return `【🎯 戦略参考情報（AIX-METAが未生成のため参考として使用）】\n${parts.join("\n")}\n⚠️ 上記はスタッフへの行動方針であり、物件の事実情報ではありません。「退去予定」「空き予定」「〜月末まで」等の具体的な期日・空室情報は、会話履歴やDBで確認された事実でない限りLINEメッセージ本文に断言・創作しないこと。\n`;
   })();
 
   const prompt = `${propertyStatusNote}
@@ -1105,8 +1112,10 @@ ${examples}${examplesInstruction}
 長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}`;
 
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
+  // 戦略の優先規定（AIX-META一元化）: 指示が競合した場合の解決順を最上位で1行宣言する
+  const priorityOrderNote = "【指示の優先順位（競合時はこの順で解決すること）】ハードゲート（内覧日時・見積・物件事実制約）> AIX-META戦略 > フェーズ別パターン > ai_summary参考情報\n\n";
   const baseSystem = promptOverrides?.generationSystem ?? GENERATION_SYSTEM;
-  return [new SystemMessage(dbRules ? baseSystem + dbRules : baseSystem), new HumanMessage(prompt)];
+  return [new SystemMessage(priorityOrderNote + (dbRules ? baseSystem + dbRules : baseSystem)), new HumanMessage(prompt)];
 }
 
 const ALLOWED_STATES = new Set([
@@ -2434,16 +2443,19 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
           : "\n\n【テンプレート最適化モード】今回はテンプレートをベースに、この顧客の状況に最適化した文章を作成してください。詳細ルールはプロンプト末尾の【🟠✨ テンプレート最適化モード】ブロックに従うこと。")
       : "";
 
-    // H7(Fable5): brain(suggested_aix_meta) を生成前に一度だけ取得し、
-    // ① reply_mode ゲート（チェックポイントB） ② closing_strategy/next_steps のプロンプト注入 の両方に使う。
-    // brain は顧客メッセージ毎に再分析されるため Step1 分析より新鮮なことが多く、
-    // スタッフが見る戦略（赤枠）と顧客に届くドラフトの戦略の不一致を解消する
+    // H7(Fable5) + AIX-META一元化(2026-08): brain(suggested_aix_meta) を生成前に一度だけ取得し、
+    // ① reply_mode ゲート（チェックポイントB） ② 唯一の戦略指示としてのプロンプト注入 の両方に使う。
+    // brain は顧客メッセージ毎に再分析されるため Step1 分析より新鮮。AIX-META が存在する場合は
+    // これが唯一の戦略指示となり、buildGenerationMessages 側の closingNote（Step1/ai_summary由来の
+    // 戦略）は注入されない（brainGuidanceNote 非空をシグナルとして抑制される）。
+    // AIX-META が null / 空（closing_strategy も next_steps も無い）の場合は brainGuidanceNote が
+    // 空文字になり、closingNote が ai_summary / Step1 フォールバックとして働く。
     const brainGate = (conversationId && !isTemplateOptimize)
       ? await fetchReplyModeGate(conversationId)
       : null;
     const brainMeta = brainGate?.meta ?? null;
     const brainGuidanceNote = (brainMeta && (brainMeta.closing_strategy || (brainMeta.next_steps?.length ?? 0) > 0))
-      ? `【🧠 脳分析ガイダンス（スタッフ向け戦略 — この返信はこの戦略と整合させること）】${brainMeta.closing_strategy ? `\n- 成約戦略: ${brainMeta.closing_strategy}` : ""}${brainMeta.next_steps?.length ? `\n- 予定ステップ: ${brainMeta.next_steps.join(" / ")}` : ""}\n※これはスタッフへの行動方針であり物件の事実情報ではない。期日・空室情報は会話履歴で確認された事実のみ本文に書くこと。\n`
+      ? `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位）】${brainMeta.closing_strategy ? `\n- 成約戦略: ${brainMeta.closing_strategy}` : ""}${brainMeta.next_steps?.length ? `\n- 予定ステップ: ${brainMeta.next_steps.join(" / ")}` : ""}\n※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。\n`
       : "";
 
     const phaseLabels: Record<string, string> = {
@@ -2452,11 +2464,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       viewing: "内覧調整中",
       applying: "申込段階",
     };
+    // AIX-META一元化: conversation_direction は戦略指示ではなく「現在フェーズの参考（事実情報）」として注入する
     const convDir = (brainGate?.conversationDirection ?? null) as Record<string, unknown> | null;
     const directionNote = convDir?.current_phase
-      ? "【今回の返信の方向性】現フェーズ: " + (phaseLabels[String(convDir.current_phase)] ?? String(convDir.current_phase)) +
+      ? "【📍 現在フェーズの参考（事実情報 — 戦略指示ではない）】現フェーズ: " + (phaseLabels[String(convDir.current_phase)] ?? String(convDir.current_phase)) +
         " / 次の一手: " + String(convDir.next_staff_action ?? "状況に応じて判断") +
-        " / 方針: " + String(convDir.direction_summary ?? "申込まで丁寧にリード")
+        " / 方針: " + String(convDir.direction_summary ?? "申込まで丁寧にリード") +
+        "\n※戦略の判断はAIX-META戦略（存在する場合）を最優先とし、このブロックは現在地把握の参考としてのみ扱うこと。\n"
       : "";
 
     // Sonnetでストリーミング生成

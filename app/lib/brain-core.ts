@@ -471,7 +471,7 @@ export async function analyzeConversation(
     propertyCustomerId
       ? supabase
           .from("property_customers")
-          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count")
+          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count, ai_summary_json, personality_profile")
           .eq("id", propertyCustomerId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -674,7 +674,7 @@ export async function analyzeConversation(
   const timingText = `\n【時間情報】今日: ${todayStr} / 最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）`;
 
   // Build customer conditions context
-  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null } | null;
+  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null; ai_summary_json?: Record<string, unknown> | null; personality_profile?: string | null } | null;
   const pc = (pcResult.data ?? null) as PC;
   const condParts: string[] = [];
   if (pc?.desired_area) condParts.push(`エリア: ${pc.desired_area}`);
@@ -684,6 +684,32 @@ export async function analyzeConversation(
   if (pc?.move_in_time) condParts.push(`入居: ${pc.move_in_time}`);
   if (pc?.preferences) condParts.push(`希望: ${pc.preferences}`);
   const condText = condParts.length > 0 ? `\n顧客条件: ${condParts.join(" / ")}` : "";
+
+  // 【顧客プロファイル】ai_summary_json（emotion/urgency/style/personality_profile）由来。
+  // 顧客ごとに変わるため必ず userPrompt 側に注入する（systemText に入れると prompt caching が壊れる）
+  let profileText = "";
+  const aiSummary = pc?.ai_summary_json ?? null;
+  if (aiSummary && typeof aiSummary === "object") {
+    const summaryStr = (key: string): string | null => {
+      const v = (aiSummary as Record<string, unknown>)[key];
+      return typeof v === "string" && v.trim() ? v.trim().slice(0, 200) : null;
+    };
+    const emotion = summaryStr("emotion");
+    const urgency = summaryStr("urgency");
+    const style = summaryStr("style");
+    // 人間性: Opus確定版の長期プロファイル（personality_profileカラム）を優先、なければai_summary_json内のもの
+    const personality = (pc?.personality_profile && pc.personality_profile.trim())
+      ? pc.personality_profile.trim().slice(0, 300)
+      : summaryStr("personality_profile");
+    const profileLines: string[] = [];
+    if (emotion) profileLines.push(`- 温度感: ${emotion}（前向き/不安/冷めかけ/普通）`);
+    if (urgency) profileLines.push(`- 時期感: ${urgency}（今月中/3ヶ月以内/半年以上/未確認）`);
+    if (style) profileLines.push(`- 文体: ${style}（絵文字多用/短文/ビジネスライク/丁寧/普通）`);
+    if (personality) profileLines.push(`- 人間性: ${personality}`);
+    if (profileLines.length > 0) {
+      profileText = `\n【顧客プロファイル（ai_summary由来・参考）】\n${profileLines.join("\n")}\n→ closing_strategy・next_steps はこの顧客プロファイルを反映した内容にすること\n→ 不安タイプ→強引に押さない / urgency高い→スピード感を前面に出す 等`;
+    }
+  }
 
   const statusMeaning = convStatus && STATUS_MEANING[convStatus] ? STATUS_MEANING[convStatus] : (convStatus ?? "");
   const statusText = convStatus ? `\n現在のステータス: ${statusMeaning}` : "";
@@ -894,7 +920,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 回答形式（JSONのみ・説明文・コードブロック不要）:
 {"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
 
-  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}
+  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
