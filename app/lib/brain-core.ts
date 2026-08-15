@@ -87,17 +87,32 @@ const STATUS_MEANING: Record<string, string> = {
 const AIX_CAPABILITY_MAP = `
 【AIXボタン能力マップ】
 - viewing_invite: 内覧日程の候補をLINEで提案するメッセージを生成
-- property_send: 物件ピックアップのカバーメッセージを生成（物件URL送信時）
-- estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成
+- property_send: 物件ピックアップのカバーメッセージを生成（物件URL送信時）→ 複数件ピックアップ後は必ず「1件特にオススメ」テンプレートで1件に絞った感情的推しを追加する（use_count:96・最多使用）
+- estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成 → 送付直後（同分〜1分以内）に「【申込誘導】」テンプレートで申込を促す（use_count:10・見積書→申込誘導→申込の3ステップが成約最短ルート）
 - application_push: 申込クロージングメッセージを生成
 - condition_hearing: 既知条件をスキップした条件ヒアリングを生成
 - acknowledge_check: 管理会社への空室確認+見積書依頼を生成
 - followup_revive: 追客・再接触メッセージを生成
 - property_check_result: 空室確認結果の報告文を生成
-- property_recommendation: Vision読み取りで物件紹介文を生成（1件詳細）
+- property_recommendation: Vision読み取りで物件紹介文を生成（1件詳細）→ 押下後は必ず「1件特にオススメ」テンプレートで感情的フォローを追加する（use_count:96）
 - meeting_place: 内覧の待ち合わせ場所案内を生成
 - greeting_viewing: 内覧前後の挨拶メッセージを生成
 - property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）
+`.trim();
+
+// 実態ベースのフェーズ別推奨テンプレートマップ（成約会話データから抽出・use_count実績順）
+// AIXボタン操作は「前半: 物件情報大量提示（AIX自動送信）」と
+// 「後半: 感情的推し・CTA（スタッフ自発送信テンプレート）」の2フェーズで1セット。後半が成約率に直結する。
+const PHASE_TEMPLATE_HINTS = `
+【AIXボタン後に送るべきテンプレート（template_hint の選び方）】
+- property_send / property_recommendation（物件3件以上ピックアップ後）→ 「1件特にオススメ」(use_count:96)。AIXクラスター完了の4〜9分後に顧客返信なしで自発送信。帖数・敷礼・費用の具体的強みを差し込む。AI最適化で「〇〇マンションが〇〇帖・敷礼なし」等を適応する
+- property_send（即入居可能物件ピックアップ後）→ 「【全件案内可能】」。審査通過次第入居可能の補足で顧客の安心感を確保する
+- estimate_sheet（見積書送付直後・同分〜1分以内が必須）→ 「【申込誘導】」(use_count:10)。「最大限割引させていただいたお見積書。ご費用面お気に召されましたらお申込みさせていただきます」が定型。顧客の申込まで最短2分の実証あり
+- 顧客が「申し込みします」「申し込みよろしくお願いします」等の申込意思を表示 → 「②申込時フォーマット（続き）」(use_count:17)
+- 新着1件をオススメする時 → 「【新着】」(use_count:14)
+- 同棲・カップル向けの新着1件 → 「【同棲・カップル向け広め】新着オススメ」(use_count:5)
+- 条件に合う物件が現状ゼロ → 「【物件なし】条件変更のご提案」
+- use_count 0のテンプレートはtemplate_hintに選ばない
 `.trim();
 
 // ① 成約・申込到達ステータス（brainが成功事例として読む対象）
@@ -541,12 +556,14 @@ export async function analyzeConversation(
   // ※ contractPatternsText は convStatus 依存の並べ替えがあるため user 側に残す
   const systemText = `あなたはスモラAI。与えられた会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
 
-${AIX_CAPABILITY_MAP}${promptRulesText}${knowledgeText}${boundaryText}${templatesText}
+${AIX_CAPABILITY_MAP}
+
+${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templatesText}
 
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に送るべき【AIX】テンプレートのラベル名（DBのtemplatesテーブルから選ぶこと。例: '1件特にオススメ', '【新着】', '【申込誘導】', '②申込時フォーマット（続き）'。AIXボタンを使った直後なら必ず補完テンプレートを推奨。該当なければnull）", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 【AIX】○○テンプレートを送る"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に送るべき【AIX】テンプレートのラベル名。上記フェーズ別推奨マップに従いAIXボタン使用後は必ず対応テンプレートを推奨（property_send/property_recommendation後→'1件特にオススメ' / estimate_sheet後→'【申込誘導】' / 顧客申込意思後→'②申込時フォーマット（続き）' / 新着→'【新着】' / 物件なし→'【物件なし】条件変更のご提案'）。use_count 0のテンプレートは選ばない。該当なければnull", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 【AIX】○○テンプレートを送る（AIXボタン後は必ずテンプレートまでセットで提示）"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
 
   const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}
 

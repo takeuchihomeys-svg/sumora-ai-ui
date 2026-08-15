@@ -64,11 +64,15 @@ type ApplyingAnalysis = {
   key_success_factors?: string[];    // 成功要因
 };
 
-// 会話全文を「[顧客] テキスト」形式にフォーマット（各200字・合計8000字上限）
+// 会話全文を「[顧客] / [AIX] / [スタッフ] テキスト」形式にフォーマット（各200字・合計8000字上限）
+// is_aix_generated=true は [AIX]（物件画像・見積書等の自動送信）、false は [スタッフ]（自発送信テンプレート含む）
 // 上限超過時は先頭3000字（問い合わせの文脈）+ 末尾5000字（申込直前の転換点）を残す
-function formatMessages(msgs: Array<{ sender: string; text: string }>): string {
+function formatMessages(msgs: Array<{ sender: string; text: string; is_aix_generated?: boolean | null }>): string {
   const full = msgs
-    .map((m) => `[${m.sender === "customer" ? "顧客" : "スタッフ"}] ${(m.text || "").slice(0, 200)}`)
+    .map((m) => {
+      const label = m.sender === "customer" ? "顧客" : (m.is_aix_generated ? "AIX" : "スタッフ");
+      return `[${label}] ${(m.text || "").slice(0, 200)}`;
+    })
     .join("\n");
   if (full.length <= 8000) return full;
   return `${full.slice(0, 3000)}\n...(中略)...\n${full.slice(-5000)}`;
@@ -107,14 +111,14 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
   // 1. 会話の全メッセージ
   const { data: msgRows, error: msgErr } = await supabase
     .from("messages")
-    .select("sender, text, created_at")
+    .select("sender, text, created_at, is_aix_generated")
     .eq("conversation_id", conv.id)
     .neq("text", "[画像]")
     .neq("text", "[動画]")
     .not("text", "is", null)
     .order("created_at", { ascending: true });
   if (msgErr) return { learned: false, error: `messages取得失敗: ${msgErr.message}` };
-  const msgs = (msgRows ?? []) as Array<{ sender: string; text: string; created_at: string | null }>;
+  const msgs = (msgRows ?? []) as Array<{ sender: string; text: string; created_at: string | null; is_aix_generated: boolean | null }>;
 
   // 会話が短すぎる場合は学習価値なし → learned_at を付けて確定スキップ（無限再試行防止）
   if (msgs.length < 3) {
@@ -189,7 +193,8 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
   ・申込に必要な書類を自然な流れで案内した
   ・顧客の希望条件に合致している点を強調した
   ・物件の人気・問い合わせ状況を伝えた（希少性の提示）
-  ・AIXボタン押下後に「1件特にオススメ」等の【AIX】テンプレートを使って具体的な物件詳細を送付した
+  ・AIXボタンで複数物件ピックアップ送付後、顧客返信を待たずに「1件特にオススメ」テンプレートで1件に絞り申込・内覧を促した（[AIX]行の直後に[スタッフ]行が続くパターン・AIXクラスター完了の4〜9分後が典型・use_count 96の最多使用テンプレート）
+  ・AIXで見積書を送付した直後（同分〜1分以内）、顧客返信を待たずに「申込誘導」テンプレートで「最大限割引させていただいたお見積書。ご費用面お気に召されましたらお申込みさせていただきます」と促した（見積書→申込誘導→申込の3ステップが成約最短ルート・顧客が2分で申込した実績あり）
 
 【aix_button 記入ルール】
 各ステップにaix_buttonフィールドを追加してください。以下のAIXボタン名から最も近いものを記入（不明な場合は空文字）:
@@ -203,7 +208,19 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
 - 見積書を送った → estimate_sheet
 - 申込を促した・申込フォームを案内した → application_push
 - 追客・再接触メッセージを送った → followup_revive
-- AIXボタン押下後に【AIX】テンプレートを送った → template_send
+- AIXボタン押下後、顧客返信を待たずに自発的に【AIX】テンプレートを送った → template_send
+  ※ template_send として記録すべき典型ケース（優先度順）:
+    A. 物件ピックアップ（3件以上）のAIXクラスター完了後4〜9分以内、顧客返信ゼロ → 「1件特にオススメ」テンプレート送付（use_count:96）
+    B. 見積書AIXメッセージの同分〜1分後、顧客返信ゼロ → 「【申込誘導】」テンプレート送付（use_count:10）
+    C. 顧客が「申し込みします」「申し込みよろしく」等の申込意思を表示した直後 → 申込フォーマット送付（use_count:17）
+  ※ is_aix_generated=trueのAIX本体メッセージ自体（物件画像・見積書等）はtemplate_sendではない
+  ※ 顧客返信後のレスポンスもtemplate_sendではない（「顧客返信なし＝自発送信」が本質条件）
+  ※ AIX「前半: 物件情報大量提示」→ スタッフ「後半: 感情的推し・CTA」の2フェーズをセットで1商談フローとして記録すること
+
+【重複送信バグの扱い（learning 除外指示）】
+会話全文の中に、同一テキストが連続で2回以上送信されているケース（is_aix_generated=trueのAIXメッセージで同一内容が連続するパターン）は冪等性チェック未実装によるバグです。
+このような重複メッセージが含まれる場合、action_flow の staff_action からそのステップを除外するか、「重複送信バグのため参考外」と明記してください。
+重複送信ステップの顧客反応はnegative_example（信頼性なし）として扱い、key_success_factorsには含めないこと。
 
 【turning_point の抽出ルール】
 - ターニングポイントは「顧客が内覧/申込に前向きになった瞬間」を指す。
@@ -233,7 +250,7 @@ ${sentSummary || "（返信記録なし）"}
       "phase": "フェーズ名（hearing/proposing/negotiating/applying）",
       "staff_action": "スタッフが取った具体的な行動（「〇〇した」形式・顧客が自発的に見えるが実はスタッフが誘導している場面を優先して記録）",
       "customer_response": "顧客の反応（言葉・行動で具体的に）",
-      "aix_button": "対応するAIXボタン名（condition_hearing/property_send/property_recommendation/property_check_result/acknowledge_check/viewing_invite/meeting_place/estimate_sheet/application_push/followup_revive/template_send のいずれか、または空文字）"
+      "aix_button": "対応するAIXボタン名（condition_hearing/property_send/property_recommendation/property_check_result/acknowledge_check/viewing_invite/meeting_place/estimate_sheet/application_push/followup_revive/template_send のいずれか、または空文字）。template_sendは顧客返信なしでスタッフが自発的にテンプレートを送ったステップ専用（[AIX]行の直後に[スタッフ]行が続くパターン・[AIX]本体行にはtemplate_sendを付けない）"
     }
   ],
   "turning_point": "成約に向けて流れが変わった瞬間の説明",
