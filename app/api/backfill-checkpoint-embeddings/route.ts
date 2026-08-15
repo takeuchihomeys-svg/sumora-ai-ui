@@ -26,7 +26,15 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
-export async function GET() {
+function checkAuth(req: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const auth = req.headers.get("authorization");
+  return auth === `Bearer ${secret}`;
+}
+
+export async function GET(req: NextRequest) {
+  if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { count, error } = await supabase
     .from("conversation_checkpoints")
     .select("id", { count: "exact", head: true })
@@ -39,6 +47,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     // offset パラメータで続きから処理できる
     const body = await req.json().catch(() => ({})) as { offset?: number };
