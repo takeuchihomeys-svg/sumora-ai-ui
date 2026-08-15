@@ -51,7 +51,7 @@ type CaseFlowStep = {
   phase?: string;             // フェーズ名（hearing/proposing/applying等）
   staff_action?: string;      // スタッフが取った行動（具体的に）
   customer_response?: string; // 顧客の反応
-  aix_button?: string;        // 対応するAIXボタン名（または空文字）
+  aix_button?: string;        // 対応するAIXボタン名（または空文字）。AIXテンプレート送信時は template_send
 };
 
 type ApplyingAnalysis = {
@@ -189,6 +189,7 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
   ・申込に必要な書類を自然な流れで案内した
   ・顧客の希望条件に合致している点を強調した
   ・物件の人気・問い合わせ状況を伝えた（希少性の提示）
+  ・AIXボタン押下後に「1件特にオススメ」等の【AIX】テンプレートを使って具体的な物件詳細を送付した
 
 【aix_button 記入ルール】
 各ステップにaix_buttonフィールドを追加してください。以下のAIXボタン名から最も近いものを記入（不明な場合は空文字）:
@@ -202,6 +203,7 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
 - 見積書を送った → estimate_sheet
 - 申込を促した・申込フォームを案内した → application_push
 - 追客・再接触メッセージを送った → followup_revive
+- AIXボタン押下後に【AIX】テンプレートを送った → template_send
 
 【turning_point の抽出ルール】
 - ターニングポイントは「顧客が内覧/申込に前向きになった瞬間」を指す。
@@ -231,7 +233,7 @@ ${sentSummary || "（返信記録なし）"}
       "phase": "フェーズ名（hearing/proposing/negotiating/applying）",
       "staff_action": "スタッフが取った具体的な行動（「〇〇した」形式・顧客が自発的に見えるが実はスタッフが誘導している場面を優先して記録）",
       "customer_response": "顧客の反応（言葉・行動で具体的に）",
-      "aix_button": "対応するAIXボタン名（condition_hearing/property_send/property_recommendation/property_check_result/acknowledge_check/viewing_invite/meeting_place/estimate_sheet/application_push/followup_revive のいずれか、または空文字）"
+      "aix_button": "対応するAIXボタン名（condition_hearing/property_send/property_recommendation/property_check_result/acknowledge_check/viewing_invite/meeting_place/estimate_sheet/application_push/followup_revive/template_send のいずれか、または空文字）"
     }
   ],
   "turning_point": "成約に向けて流れが変わった瞬間の説明",
