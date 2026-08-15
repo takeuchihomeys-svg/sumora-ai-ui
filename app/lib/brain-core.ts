@@ -460,15 +460,16 @@ export async function analyzeConversation(
   opts?: { autoSendEnabled?: boolean; isHot?: boolean; isFlagged?: boolean },
 ): Promise<SuggestedAixMeta> {
   // Fetch last 30 messages and customer conditions in parallel
-  // H5(Fable5): limit 15→30 — 会話あたりメッセージ数の中央値は25件。checkpoints が0行（書き込み側未実装）の間、
-  // limit 15 だと中央値会話の前半を完全に忘れるため引き上げ。count: "exact" は総メッセージ数のプロンプト注入用（B3）
+  // limit 30→15: checkpoint（RAG検索含む）が古い会話をカバーするため、直近15件で十分。
+  // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
+  // count: "exact" は総メッセージ数のプロンプト注入用（B3）
   const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult] = await Promise.all([
     supabase
       .from("messages")
       .select("sender, text, created_at, line_message_id, is_aix_generated", { count: "exact" })
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(30),
+      .limit(15),
     propertyCustomerId
       ? supabase
           .from("property_customers")
