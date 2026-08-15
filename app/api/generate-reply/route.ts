@@ -1801,10 +1801,10 @@ type AixGateMeta = { action?: string; note?: string; reply_mode?: string; closin
 
 async function fetchReplyModeGate(
   convId: string
-): Promise<{ meta: AixGateMeta; customerName: string; conversationDirection: Record<string, unknown> | null } | null> {
+): Promise<{ meta: AixGateMeta; customerName: string; conversationDirection: Record<string, unknown> | null; brainAnalyzedAt: string | null } | null> {
   const { data } = await supabase
     .from("conversations")
-    .select("suggested_aix_meta, customer_name, conversation_direction")
+    .select("suggested_aix_meta, customer_name, conversation_direction, brain_analyzed_at")
     .eq("id", convId)
     .single();
   if (!data) return null;
@@ -1812,6 +1812,7 @@ async function fetchReplyModeGate(
     meta: (data.suggested_aix_meta ?? null) as AixGateMeta,
     customerName: (data.customer_name as string) || "",
     conversationDirection: (data.conversation_direction ?? null) as Record<string, unknown> | null,
+    brainAnalyzedAt: (data.brain_analyzed_at as string | null) ?? null,
   };
 }
 
@@ -2485,6 +2486,23 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       if (brainGate?.meta?.reply_mode === "aix") {
         console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(B):", conversationId);
         return applyAixGateAndRespond(conversationId, brainGate.meta, brainGate.customerName);
+      }
+      // P4(部分対応): reply_mode が null/undefined のままフェイルオープンするケースの可視化。
+      // brain分析が失敗/停滞している可能性が高い場合（meta自体がnull、または brain_analyzed_at が
+      // 10分以上前 or 未記録）は警告ログを出す。ブロックはしない（ログのみ・従来動作維持）。
+      if (brainGate?.meta?.reply_mode == null) {
+        const analyzedAt = brainGate?.brainAnalyzedAt ?? null;
+        const analyzedAgeMs = analyzedAt ? Date.now() - new Date(analyzedAt).getTime() : null;
+        const brainLikelyStale =
+          brainGate?.meta == null || analyzedAgeMs == null || analyzedAgeMs > 10 * 60 * 1000;
+        if (brainLikelyStale) {
+          console.warn(
+            "[generate-reply] P4警告: enforceReplyModeGate=true だが reply_mode 未設定のままフェイルオープン:",
+            conversationId,
+            `meta=${brainGate?.meta == null ? "null" : "present(no reply_mode)"}`,
+            `brain_analyzed_at=${analyzedAt ?? "null"}`
+          );
+        }
       }
     }
 

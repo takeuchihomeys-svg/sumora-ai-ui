@@ -268,17 +268,155 @@ export function extractSelfInitiatedSends(
 // ── フェーズ検出ヘルパー ─────────────────────────────────────────────────────
 // brain分析結果（SuggestedAixMeta）の各フィールドから現在フェーズを推定する。
 // conversation_direction の current_phase 更新判定に使用する。
-function detectPhaseFromBrainMeta(meta: Record<string, unknown>): "hearing" | "proposing" | "viewing" | "applying" {
+function detectPhaseFromBrainMeta(
+  meta: Record<string, unknown>,
+  // P7: conversations.status は webhook が機械検証（申込書受領等）で立てる最も信頼できるソース。
+  // テキストパターン推定より最優先で参照する
+  convStatus?: string | null,
+): "hearing" | "proposing" | "viewing" | "applying" {
+  if (convStatus === "applying") return "applying";
   const txt = [meta.action, meta.closing_strategy, meta.next_steps].filter(Boolean).join(" ");
   // 優先1: 審査落ち・再スタート文脈 → hearing（「また探したい」「別の物件」等が共存）
   if (/再探し|また探|別の物件|審査落/.test(txt)) return "hearing";
   // 優先2: 純粋な申込・審査待ち（「再」「また」「別」が共存しない場合のみ）
-  if (/申込|審査/.test(txt) && !/再|また|別/.test(txt)) return "applying";
+  // P7修正: 旧 /申込|審査/ は「審査不安」「審査が不安」「審査が心配」等の不安フレーズだけで
+  // applying 誤爆していた。/申込/ は単独で有効、/審査/ は不安・心配文脈が共存しない場合のみ有効。
+  const isShinsaAnxiety = /審査.{0,10}(不安|心配)/.test(txt);
+  const hasApplyingSignal = /申込/.test(txt) || (/審査/.test(txt) && !isShinsaAnxiety);
+  if (hasApplyingSignal && !/再|また|別/.test(txt)) return "applying";
   // 優先3: 内覧・内見
   if (/内覧|内見/.test(txt)) return "viewing";
   // 優先4: 物件提案中
   if (/提案|物件/.test(txt)) return "proposing";
   return "hearing";
+}
+
+// ── P5: 成約データ（applying_pattern 26件・全件importance=9）由来の信号ベースAIX決定 ────────
+// suggested_aix_button の 1-b 分岐（非viewingフェーズ）で brainAix（Haiku提案）が null だった場合の
+// フォールバック。旧実装はフェーズ決定論のみで、成約に最も効いた estimate_sheet /
+// acknowledge_check / followup_revive / property_search が 1-b 分岐から構造的に絶対出なかった。
+// AIX_CAPABILITY_MAP / PHASE_TEMPLATE_HINTS に「条件」としてプロンプト記載済みだが
+// コード未実装だった判定をここで決定論的に実装する。
+// 優先順は applying_pattern の成約実績順（estimate_sheet ライン最優先）。
+// 失敗時は null を返し、既存のフェーズ別デフォルトに落ちる（既存ロジックを壊さない）。
+async function detectSignalBasedAixFallback(
+  conversationId: string,
+  propertyCustomerId: string | null,
+  newPhase: "hearing" | "proposing" | "viewing" | "applying",
+): Promise<string | null> {
+  try {
+    const [msgsRes, aixRes, scheduledRes, tasksRes, pcRes] = await Promise.all([
+      supabase
+        .from("messages")
+        .select("sender, text, created_at, is_aix_generated")
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: false })
+        .limit(10),
+      supabase
+        .from("aix_usage_logs")
+        .select("aix_type, created_at")
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: false })
+        .limit(5),
+      supabase
+        .from("scheduled_messages")
+        .select("id")
+        .eq("conversation_id", conversationId)
+        .eq("status", "pending")
+        .limit(1),
+      supabase
+        .from("line_tasks")
+        .select("task_type")
+        .eq("conversation_id", conversationId)
+        .eq("status", "pending")
+        .limit(5),
+      propertyCustomerId
+        ? supabase
+            .from("property_customers")
+            .select("last_property_sent_at, property_send_count")
+            .eq("id", propertyCustomerId)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+
+    type MsgRow = { sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null };
+    const msgs = (msgsRes.data ?? []) as MsgRow[];
+    const lastCustomer = msgs.find((m) => m.sender === "customer") ?? null;
+    const lastStaff = msgs.find((m) => m.sender !== "customer") ?? null;
+    const custText = lastCustomer?.text ?? "";
+    const usedAixTypes = ((aixRes.data ?? []) as { aix_type: string | null }[])
+      .map((l) => l.aix_type)
+      .filter((t): t is string => Boolean(t));
+    const hasPendingScheduled = (scheduledRes.data?.length ?? 0) > 0;
+    const pendingTaskTypes = ((tasksRes.data ?? []) as { task_type: string }[]).map((t) => t.task_type);
+    const pc = pcRes.data as { last_property_sent_at: string | null; property_send_count: number | null } | null;
+
+    // 信号1（成約実績最多ライン）: 最終顧客メッセージに見積・初期費用の話題 → estimate_sheet
+    // applying_pattern の most_effective 最多。見積書→申込誘導→申込の3ステップが成約最短ルート。
+    if (/見積|初期費用/.test(custText)) return "estimate_sheet";
+
+    // 信号2: 最終顧客メッセージに申込・入居の意思表示 AND フェーズが proposing/applying → application_push
+    if (/申込|入居/.test(custText) && (newPhase === "proposing" || newPhase === "applying")) {
+      return "application_push";
+    }
+
+    // 信号3: 最終スタッフメッセージが見積書送付（estimate_sheet 完了直後・顧客未返信）→ acknowledge_check
+    // 直近AIXが estimate_sheet で、最終メッセージがスタッフ側（AIX生成）＝見積送付済みで顧客返信待ちの局面。
+    if (
+      lastStaff?.is_aix_generated &&
+      usedAixTypes[0] === "estimate_sheet" &&
+      (!lastCustomer || lastStaff.created_at > lastCustomer.created_at)
+    ) {
+      return "acknowledge_check";
+    }
+
+    // 信号4（AIX_CAPABILITY_MAP記載・コード未実装だった条件）:
+    // 顧客が物件URL・「空きありますか」等を送ってきて空室確認タスクが未起票 → acknowledge_check
+    // （確認前に内覧・申込の話へ進めないルール。property_check タスクが既にあれば回答待ちなので出さない）
+    if (
+      /https?:\/\/|空きあり|空いてます|まだ募集|募集中ですか|この物件/.test(custText) &&
+      !pendingTaskTypes.includes("property_check")
+    ) {
+      return "acknowledge_check";
+    }
+
+    // 信号5（PHASE_TEMPLATE_HINTS/AIX_CAPABILITY_MAP記載・コード未実装だった条件）:
+    // 未完了タスクに物件確認（空室確認）があり、その後に管理会社回答系のスタッフ動線に入る局面 → property_check_result
+    if (pendingTaskTypes.includes("property_check") && usedAixTypes[0] === "acknowledge_check") {
+      return "property_check_result";
+    }
+
+    // 信号6: 最終顧客メッセージから3日以上沈黙 AND 物件提案済み AND 予約送信なし → followup_revive
+    // （AIX_CAPABILITY_MAP「最終顧客メッセージが3日以上前で予約送信済みメッセージが無い時」の実装）
+    const propertyProposed =
+      usedAixTypes.some((t) => t === "property_send" || t === "property_recommendation") ||
+      newPhase === "proposing" ||
+      newPhase === "applying";
+    if (lastCustomer && !hasPendingScheduled && propertyProposed) {
+      const silentDays = Math.floor((Date.now() - new Date(lastCustomer.created_at).getTime()) / 86_400_000);
+      if (silentDays >= 3) return "followup_revive";
+    }
+
+    // 信号7（AIX_CAPABILITY_MAP「物件検索推奨度★★★」条件のコード実装）:
+    // 最終物件送付から7日以上経過 or 送付0件 → property_search（hearing/proposing のみ）
+    if ((newPhase === "hearing" || newPhase === "proposing") && pc !== null && propertyCustomerId) {
+      const lastSentIso = pc?.last_property_sent_at ?? null;
+      const daysSinceLastSend = lastSentIso
+        ? Math.floor((Date.now() - new Date(lastSentIso).getTime()) / 86_400_000)
+        : null;
+      const unansweredSendCount = pc?.property_send_count ?? 0;
+      // 連続未返信送付2件以上は「顧客が反応していない」局面なので検索提案しない（★─ 条件）
+      if (unansweredSendCount < 2 && (daysSinceLastSend === null || daysSinceLastSend >= 7)) {
+        return "property_search";
+      }
+    }
+
+    return null;
+  } catch (e) {
+    console.warn("[brain-core] detectSignalBasedAixFallback failed (fallback to phase default):",
+      conversationId, e instanceof Error ? e.message : e);
+    return null;
+  }
 }
 
 /**
@@ -1069,7 +1207,8 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
       const bestPattern = applyingPatterns?.[0] ?? null;
 
       // STEP B: brain分析結果からフェーズを推定
-      const newPhase = detectPhaseFromBrainMeta(meta as Record<string, unknown>);
+      // P7: conversations.status（webhookが機械検証で立てる）を最優先ソースとして渡す
+      const newPhase = detectPhaseFromBrainMeta(meta as Record<string, unknown>, status);
 
       // STEP C: 既存 conversation_direction を取得（conv には conversation_direction を select 済み）
       const convAsRecord = conv as unknown as Record<string, unknown>;
@@ -1170,12 +1309,25 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
             suggAixButton = "viewing_invite";
           }
 
-        } else if (newPhase === "applying") {
-          suggAixButton = brainAix ?? "application_push";
-        } else if (newPhase === "proposing") {
-          suggAixButton = brainAix ?? "property_send";
         } else {
-          suggAixButton = brainAix ?? "condition_hearing";
+          // P5(成約データ反映): brainAix（Haiku提案・品質ゲート通過済み）が無い場合、
+          // フェーズ決定論デフォルトに落ちる前に applying_pattern 由来の信号ベース判定を挟む。
+          // 優先順位: brainAix > 信号ベース（成約実績順） > フェーズ別デフォルト。
+          // 既存の決定論（viewing の内覧テーブル最優先・brainAix 優先）は一切変えない。
+          const signalAix = brainAix
+            ? null
+            : await detectSignalBasedAixFallback(
+                conversationId,
+                (conv.property_customer_id as string | null) ?? null,
+                newPhase,
+              );
+          if (newPhase === "applying") {
+            suggAixButton = brainAix ?? signalAix ?? "application_push";
+          } else if (newPhase === "proposing") {
+            suggAixButton = brainAix ?? signalAix ?? "property_send";
+          } else {
+            suggAixButton = brainAix ?? signalAix ?? "condition_hearing";
+          }
         }
 
         // calendar_events から今日この会話に紐づく内覧予定を確認 → is_hot 補完
