@@ -1956,6 +1956,13 @@ CREATE INDEX IF NOT EXISTS idx_viewing_history_scheduled_date ON viewing_history
 CREATE INDEX IF NOT EXISTS idx_viewing_history_is_primary ON viewing_history(conversation_id) WHERE is_primary = TRUE;
 ALTER TABLE viewing_history DISABLE ROW LEVEL SECURITY;
 
+-- ── templates.won_count: テンプレート成約実績（2026-08-15追加）──
+-- analyze-applying が closed_won 会話の自発送信（手打ち含む）と templates.text を
+-- 突き合わせて自動集計する「成約会話で実際に使われた回数」。
+-- brain-core のテンプレート選択で最優先指標として参照する（won_count DESC）。
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS won_count INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS templates_won_count_idx ON templates (won_count DESC);
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

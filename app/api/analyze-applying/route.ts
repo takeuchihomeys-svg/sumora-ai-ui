@@ -105,6 +105,70 @@ async function callSonnet(prompt: string): Promise<ApplyingAnalysis | null> {
   }
 }
 
+// ── テンプレート成約実績（won_count）の集計 ─────────────────────────────────
+// closed_won 会話の自発送信メッセージ（is_aix_generated=false のスタッフ送信）と
+// templates.text を突き合わせ、マッチしたテンプレートの won_count を +1 する。
+// マッチ条件（空白・改行を除去した正規化文字列で比較）:
+//   1) 完全マッチ: テンプレート本文の先頭30文字がスタッフ送信文に含まれる
+//   2) 部分一致: テンプレート本文の連続50文字（10文字刻みの窓）がスタッフ送信文に含まれる
+//      → 先頭に「〇〇さん」等のプレースホルダーがあり顧客名に置換されたケースを拾う
+// 冪等性: learnFromConversation の学習成功後（learned_at 更新の直前）にのみ呼ばれるため
+// 会話あたり最大1回。同一会話内で複数メッセージにマッチしても1テンプレート+1のみ（1成約=1カウント）。
+function normalizeForTemplateMatch(s: string): string {
+  return (s || "").replace(/\s+/g, "");
+}
+
+async function countTemplateWins(
+  convId: string,
+  msgs: Array<{ sender: string; text: string; is_aix_generated: boolean | null }>
+): Promise<void> {
+  // スタッフの自発送信候補: 顧客以外（=スタッフ）かつ AIX自動送信でないメッセージ
+  // （staff 判定は既存コードの慣例 sender !== "customer" に合わせる）
+  const staffSends = msgs
+    .filter((m) => m.sender !== "customer" && m.is_aix_generated !== true)
+    .map((m) => normalizeForTemplateMatch(m.text))
+    .filter((t) => t.length >= 30);
+  if (staffSends.length === 0) return;
+
+  const { data: tmplRows, error: tmplErr } = await supabase
+    .from("templates")
+    .select("id, label, text, won_count");
+  if (tmplErr) {
+    console.warn(`[analyze-applying] won_count集計: templates取得失敗 (${convId}):`, tmplErr.message);
+    return;
+  }
+  const templates = (tmplRows ?? []) as Array<{
+    id: string; label: string | null; text: string | null; won_count: number | null;
+  }>;
+
+  for (const tmpl of templates) {
+    const norm = normalizeForTemplateMatch(tmpl.text ?? "");
+    if (norm.length < 30) continue; // 短すぎるテンプレは誤マッチ源になるため対象外
+
+    // 1) 完全マッチ: テンプレ本文の先頭30文字がスタッフ送信文に含まれる
+    const head = norm.slice(0, 30);
+    let matched = staffSends.some((s) => s.includes(head));
+
+    // 2) 部分一致: テンプレ本文の連続50文字がスタッフ送信文に含まれる（10文字刻みでスライド）
+    if (!matched && norm.length >= 50) {
+      outer:
+      for (const s of staffSends) {
+        for (let i = 0; i + 50 <= norm.length; i += 10) {
+          if (s.includes(norm.slice(i, i + 50))) { matched = true; break outer; }
+        }
+      }
+    }
+    if (!matched) continue;
+
+    const { error: updErr } = await supabase
+      .from("templates")
+      .update({ won_count: (tmpl.won_count ?? 0) + 1 })
+      .eq("id", tmpl.id);
+    if (updErr) console.warn(`[analyze-applying] won_count更新失敗 (template=${tmpl.label}):`, updErr.message);
+    else console.log(`[analyze-applying] won_count +1: 「${tmpl.label}」(会話 ${convId})`);
+  }
+}
+
 type ConvResult = { learned: boolean; skipped?: string; error?: string };
 
 // 1会話分の学習処理。成功（または学習対象外としてスキップ確定）時のみ learned_at を更新する。
@@ -371,6 +435,18 @@ ${sentSummary || "（返信記録なし）"}
       .update({ application_success: true })
       .in("id", starredIds);
     if (flagErr) console.warn("[analyze-applying] application_success更新失敗:", flagErr.message);
+  }
+
+  // 5.5 closed_won（成約）会話のみ: 自発送信メッセージとテンプレート本文を突き合わせて
+  // won_count（成約実績）を集計。learned_at 更新の直前に置くことで会話あたり最大1回を保証
+  // （Sonnet失敗時の再試行では learned_at 未更新のままここに到達しないため二重カウントしない）。
+  // 集計失敗しても学習成功扱い（フェイルオープン）。
+  if (conv.status === "closed_won") {
+    try {
+      await countTemplateWins(conv.id, msgs);
+    } catch (e) {
+      console.warn("[analyze-applying] won_count集計失敗:", e instanceof Error ? e.message : String(e));
+    }
   }
 
   // 6. 学習完了 → learned_at を記録（冪等ガード）

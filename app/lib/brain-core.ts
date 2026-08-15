@@ -142,11 +142,14 @@ const REPLY_STYLE_RULES = `
 // ★use_count を推奨順位に使わないこと: インクリメント経路は page.tsx:4384（TemplateModalから選択して送信）と
 //   page.tsx:9323（AIX動線でモーダル経由）の2つだけで、コピペ・手打ち送信は一切カウントされない。
 //   実際に成約会話で使われた3本は全て use_count=0。use_count は「モーダル利用率」であって成約寄与ではない。
+// ★成約寄与の指標は won_count: analyze-applying が closed_won 会話の自発送信（手打ち含む）と
+//   テンプレ本文を突き合わせて自動集計する成約実績。テンプレート推奨で優先するのはこちら。
 const PHASE_TEMPLATE_HINTS = `
 【AIXボタン後に送るべきテンプレート（template_hint の選び方）】
 ※運用は2フェーズ1セット: AIXボタン＝成果物配達 → 中央値1分20秒後にテンプレ追撃（顧客返信を待たない・14件中10件が2分以内）。AIXを使用した5会話すべてこの構造（closed_won 13件中3件はAIX未使用で成約＝AIXは成約の必要条件ではない）。
 ※これは「顧客の無反応を見て追撃した」のではなく、AIXボタン押下と同一オペレーションの一部として締めの1通を手で足す動作。
 ※追撃には2種類ある: 「AI最適化して送る」（物件事実を含むテンプレ）と「そのまま送る」（定型追撃・編集すると1分以内の追撃速度が落ちる）。必ず区別すること。
+※同フェーズで候補が複数ある場合は won_count（成約会話で実際に使われた回数・analyze-applying が自動集計する成約実績）が高いテンプレートを最優先する。
 - property_send（複数件ピックアップ後）→ 「物件ピックアップ紹介（後続）」。実測38秒／58秒で顧客返信なしに自発送信。AI最適化必須: 顧客名＋条件スロットに主訴（初期費用を抑えたい・審査が不安 等）を意味置換して差し込む
 - property_send（駅指定・希望条件から外れる旨の告知あり）→ 「駅周辺物件ピックアップ（後続）」。実測1分33秒。AI最適化必須: 駅名置換＋「〜のみの募集となります」の断定化リライト
 - property_send（ピックアップ全件が即入居可能）→ 「【全件案内可能】」相当文。「審査通過次第ご入居可能」の一括保証でAIXが残した唯一の不安（いつ入れるか）を潰す。実測8分56秒→顧客が2分45秒で物件確定した最強事例あり（原文一致なしの手打ちのため骨格のみ流用）
@@ -160,10 +163,10 @@ const PHASE_TEMPLATE_HINTS = `
 - 同棲・カップル向けの新着1件 → 「【同棲・カップル向け広め】新着オススメ」
 - 該当テンプレが存在しない3型（①申込完了の進捗報告 ②見積送付の報告 ③即入居可の一括保証）は全面手打ちでよい。自発送信14件中5件がこれ。無理に既存テンプレへ寄せないこと
 
-【AI最適化（TemplateModalの「AI最適化」ボタン）を通す / 絶対に通さない】
-- 通す（物件事実系）: 「物件ピックアップ紹介（後続）」「駅周辺物件ピックアップ（後続）」「1件特にオススメ」「【申込誘導】」「【全件案内可能】」
+【AI最適化の2分類（物件事実系=「AI最適化して送る」／定型追撃系=「そのまま送る」）】
+- AI最適化して送る（物件事実系: 物件名・条件・駅名を差し込む系）: 「物件ピックアップ紹介（後続）」「駅周辺物件ピックアップ（後続）」「1件特にオススメ」「【申込誘導】」「【全件案内可能】」
   → 原文に「〇〇さん」「アカウント名さん」「〇〇駅」等のプレースホルダーが残っており、そのまま送ると顧客に生で飛ぶ事故になる
-- 通さない（定型追撃系）: 「②申込時フォーマット（続き）」「ヒアリング締め」「（2番手・申込）」
+- そのまま送る（定型追撃系: 申込フォーマット続き系・AI最適化禁止）: 「②申込時フォーマット（続き）」「ヒアリング締め」「（2番手・申込）」
   → 特に「②申込時フォーマット（続き）」はAI最適化を通すと本文が壊れる。generate-reply のテンプレート最適化プロンプトに
     「『お申込フォーマット』『ご本人確認書類』を含む文は出力禁止」という強制置換ゲートがあり、
     このテンプレの中核（本人確認書類の写真依頼）が削除される。文体の好みではなくコード上必須の回避策。
@@ -172,7 +175,8 @@ const PHASE_TEMPLATE_HINTS = `
 - 本文に顧客実名・物件名が焼き込まれている10件（他顧客への誤送信事故になるためDBクリーンアップ完了まで禁止）:
   「【新着】」（🐈‍⬛さん）/ YUMAさん / mai.tさん / Mさん / 𝚂𝚊𝚗𝚊.さん / ニアさん / 夏奈さん（レジュールアッシュ梅田AXIA）/ サムティ町合能越寺803号室 / コーポまえだ303号室 / アドバンス難波ラシュレ を含むもの
 - 文体が別人格のもの（✅🙏を多用する箇条書き調）
-※ use_count が 0 であることは除外理由にならない。成約会話で実際に使われた「物件ピックアップ紹介（後続）」「駅周辺物件ピックアップ（後続）」「（2番手・申込）」はいずれも use_count 0（モーダルを通さず手打ちで送られたため計上されていないだけ）。逆に use_count 96 の「1件特にオススメ」は成約会話の自発送信で一度も原文送信されていない。
+※ テンプレート選択の最優先指標は won_count（成約会話で実際に使われた回数。analyze-applying が closed_won 会話の自発送信とテンプレ本文を突き合わせて自動集計）。won_count が高いものを最優先する。
+※ use_count が 0 であることは除外理由にならない。use_count はモーダル利用率であって成約寄与ではない。成約会話で実際に使われた「物件ピックアップ紹介（後続）」「駅周辺物件ピックアップ（後続）」「（2番手・申込）」はいずれも use_count 0（モーダルを通さず手打ちで送られたため計上されていないだけ）。逆に use_count 96 の「1件特にオススメ」は成約会話の自発送信で一度も原文送信されていない。
 `.trim();
 
 // ① 成約・申込到達ステータス（brainが成功事例として読む対象）
@@ -333,16 +337,19 @@ export async function analyzeConversation(
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(3),
-    // Top templates by win_rate for context (brain uses these to recommend best template)
+    // Top templates by won_count for context (brain uses these to recommend best template)
     // B1(Fable5): 旧 .like("category", "AIX%") は前方一致で、実カテゴリ「見積書送る【AIX】」等に
     // 一度もマッチしていなかった（本番0件を実測確認 = このデータソースは死んでいた）。
-    // use_count>=3 で「1回使用でwin_rate 100%」の統計ノイズを排除、nullsFirst:false でNULL win_rateを後ろへ
+    // won_count（analyze-applying が closed_won 会話の自発送信と突き合わせて集計する成約実績）を最優先。
+    // 旧 .gte("use_count", 3) フィルタは撤廃: use_count はモーダル経由送信しか計上せず、
+    // 成約実績のあるテンプレ（手打ち送信のため use_count=0）を全て弾いていた。
+    // タイブレークは use_count（win_rate は「1回使用で100%」の統計ノイズがあるため順位に使わない）
     supabase
       .from("templates")
-      .select("category, label, win_rate, use_count")
+      .select("category, label, win_rate, use_count, won_count")
       .like("category", "%【AIX】%")
-      .gte("use_count", 3)
-      .order("win_rate", { ascending: false, nullsFirst: false })
+      .order("won_count", { ascending: false, nullsFirst: false })
+      .order("use_count", { ascending: false, nullsFirst: false })
       .limit(5),
     // 線引きルール: BOUNDARY-* rules that define when to use AIX vs auto-reply
     // B4(Fable5): limit 15→40 — 本番に31行あり、旧limitでは線引きルールの半分以上が無言欠落していた。
@@ -578,10 +585,10 @@ export async function analyzeConversation(
     : "";
 
   // Top-performing AIX templates (for template_hint context)
-  type TopTemplate = { category: string | null; label: string | null; win_rate: number | null; use_count: number | null };
+  type TopTemplate = { category: string | null; label: string | null; win_rate: number | null; use_count: number | null; won_count: number | null };
   const topTemplates = (templatesResult.data ?? []) as TopTemplate[];
   const templatesText = topTemplates.length > 0
-    ? `\n【モーダル経由の使用実績が多いテンプレート（参考値・成約寄与ではない）】\n${topTemplates.map((t) => `- ${t.category}: ${t.label} (win_rate: ${((t.win_rate ?? 0) * 100).toFixed(0)}%, モーダル経由${t.use_count ?? 0}回)`).join("\n")}\n※use_count はTemplateModal経由の送信のみ計上され、コピペ・手打ち送信は数えない。この一覧に無い＝成約実績が無い ではないので、template_hint は必ず上記フェーズ別推奨マップを優先して選ぶこと。`
+    ? `\n【テンプレート実績（won_count=成約会話で実際に使われた回数・最優先指標）】\n${topTemplates.map((t) => `- ${t.category}: ${t.label} (成約実績${t.won_count ?? 0}回, モーダル経由${t.use_count ?? 0}回)`).join("\n")}\n※won_count は closed_won 会話の自発送信（手打ち送信含む）とテンプレ本文の突き合わせで集計した成約実績。template_hint は上記フェーズ別推奨マップに従い、同フェーズで候補が複数あれば won_count が高いものを最優先すること。use_count はTemplateModal経由の送信のみ計上する参考値（コピペ・手打ち送信は数えない）。この一覧に無い＝成約実績が無い ではない。`
     : "";
 
   // Boundary rules — when AIX is required vs auto-reply is allowed
@@ -681,7 +688,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に送るべき【AIX】テンプレートのラベル名。上記フェーズ別推奨マップに従いAIXボタン使用後は必ず対応テンプレートを推奨（property_send（複数件）後→'物件ピックアップ紹介（後続）'・駅指定なら'駅周辺物件ピックアップ（後続）'・全件即入居可なら'【全件案内可能】' / property_recommendation（1件詳細）後→'1件特にオススメ' / estimate_sheet後→'【申込誘導】' / application_pushで①申込時フォーマットを送った直後→'②申込時フォーマット（続き）' / property_check_resultで2番手可と判明→'（2番手・申込）' / 条件ヒアリング後→'ヒアリング締め' / 物件なし→'【物件なし】条件変更のご提案' / viewing_invite・meeting_place後→null）。顧客実名・物件名が焼き込まれたテンプレート（'【新着】'等）は選ばない。use_countが0であることは除外理由にしない（手打ち送信が計上されないだけで成約実績はある）。該当なければnull", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に送るべき【AIX】テンプレートのラベル名。上記フェーズ別推奨マップに従いAIXボタン使用後は必ず対応テンプレートを推奨（property_send（複数件）後→'物件ピックアップ紹介（後続）'・駅指定なら'駅周辺物件ピックアップ（後続）'・全件即入居可なら'【全件案内可能】' / property_recommendation（1件詳細）後→'1件特にオススメ' / estimate_sheet後→'【申込誘導】' / application_pushで①申込時フォーマットを送った直後→'②申込時フォーマット（続き）' / property_check_resultで2番手可と判明→'（2番手・申込）' / 条件ヒアリング後→'ヒアリング締め' / 物件なし→'【物件なし】条件変更のご提案' / viewing_invite・meeting_place後→null）。顧客実名・物件名が焼き込まれたテンプレート（'【新着】'等）は選ばない。同フェーズで候補が複数ある場合は won_count（成約実績）が高いものを最優先。use_countが0であることは除外理由にしない（手打ち送信が計上されないだけで成約実績はある）。該当なければnull", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
 
   const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}
 
