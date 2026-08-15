@@ -50,7 +50,7 @@ export type SuggestedAixMeta = {
 // Keys must match AIX_ACTION_META keys in page.tsx
 const AIX_BRAIN_NOTES: Record<string, string> = {
   viewing_invite:          "内覧日程の候補を提示してください → AIX【内覧日調整】で日時を選択して送信してください",
-  property_send:           "物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
+  property_send:           "まず物件をお探しする旨をお客さんに伝えてから、Chrome拡張ツールで検索してください。物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
   estimate_sheet:          "見積書が届いたら → AIX【見積書送る】で読み取って自動計算＋カバーメッセージを生成できます",
   application_push:        "AIX【申込へ！】でクロージングメッセージを生成できます",
   condition_hearing:       "AIX【条件ヒアリング】ボタンで既知情報をスキップした形式で送れます",
@@ -65,6 +65,14 @@ const AIX_BRAIN_NOTES: Record<string, string> = {
   //   page.tsx の AIX_ACTION_META には同キー追加済み（「物件を探す」・2026-08確認）。
   property_search:         "お客さんの条件に合う物件をChrome拡張ツール（リアプロ/itandi/レインズ）で検索してください。送付済み物件は候補から除外すること",
 };
+
+// Case1対策: 顧客が物件条件を能動的に問い合わせた局面（「〜はありますか」「広め」「間取り」
+// 「ダブルベッド」「〇LDK」等）の検出用。この局面の正解は property_send
+// （まず探す旨を顧客に伝える → 検索 → ピックアップ送付）であり、
+// property_search（スタッフ内向きの検索指示のみ・顧客向けアクションなし）ではない。
+// detectSignalBasedAixFallback の信号6.5 と analyzeConversation の finalAix 矯正の両方で使用する。
+const PROPERTY_CONDITION_INQUIRY_RE =
+  /あります(か|でしょうか)|お?部屋.{0,6}(探し|紹介)|物件.{0,6}(探し|紹介)|探して(ほしい|もらえ|ください|いただ)|広め|広い(お?部屋|物件)|間取り|ベッ[ドト]|[0-9０-９][SLDKR]{1,3}|ワンルーム|バス.?トイレ別|ペット可|駅.{0,10}(徒歩|近く?|大丈夫)|家賃.{0,4}万|でも大丈夫/;
 
 // Maps raw DB conversation status to a Japanese meaning string injected into the Haiku prompt
 const STATUS_MEANING: Record<string, string> = {
@@ -97,7 +105,7 @@ const AIX_CAPABILITY_MAP = `
 - property_recommendation: Vision読み取りで物件紹介文を生成（1件詳細）→ 押下後は「1件特にオススメ」で感情的フォローを追加する（実測1分22秒。原文そのままの送信実績はゼロなので"1件に絞って推す"思想のみ流用し全面リライトする）
 - meeting_place: 内覧の待ち合わせ場所案内を生成
 - greeting_viewing: 内覧前後の挨拶メッセージを生成
-- property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）
+- property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）※顧客が今まさに条件を尋ねてきた場合（「〜はありますか」「広めがいい」等）は property_search ではなく property_send を選ぶこと
 
 【aixキー選択の使いどころ基準（迷ったらここを優先）】
 - estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が特定物件を気に入った／初期費用・総額の話題が出た時点で迷わず選ぶ
@@ -396,6 +404,18 @@ async function detectSignalBasedAixFallback(
     if (lastCustomer && !hasPendingScheduled && propertyProposed) {
       const silentDays = Math.floor((Date.now() - new Date(lastCustomer.created_at).getTime()) / 86_400_000);
       if (silentDays >= 3) return "followup_revive";
+    }
+
+    // 信号6.5（Case1対策・信号7より優先）:
+    // 最終顧客メッセージが物件条件の問い合わせ（「〜はありますか」「広め」「間取り」「ダブルベッド」「〇LDK」等）
+    // → property_send。「まず物件を探す旨をお客さんに伝える → 検索 → ピックアップ送付」が正しい動線であり、
+    // property_search（顧客への一次返信アクションを持たないスタッフ内向き指示）を出してはいけない局面。
+    if (
+      (newPhase === "hearing" || newPhase === "proposing") &&
+      lastCustomer &&
+      PROPERTY_CONDITION_INQUIRY_RE.test(custText)
+    ) {
+      return "property_send";
     }
 
     // 信号7（AIX_CAPABILITY_MAP「物件検索推奨度★★★」条件のコード実装）:
@@ -907,6 +927,21 @@ ${history}`;
     // Use a canonical action key from AIX_BRAIN_NOTES if Haiku returned one we recognise.
     // If the aix value is unknown or null, fall back to empty string so the row still gets saved.
     let finalAix = parsed.aix && AIX_BRAIN_NOTES[parsed.aix] ? parsed.aix : null;
+    // Case1対策（決定論的矯正・プロンプト任せにしない）:
+    // suggested_aix_button は brainAix（Haiku提案）＞ signalAix の優先構造のため、
+    // プロンプト側の「送付0件→property_search」誘導で Haiku が property_search を返すと
+    // detectSignalBasedAixFallback の信号6.5 に到達しない。顧客が直近3日以内に物件条件を
+    // 能動的に問い合わせている場合はコード側で property_send に矯正する。
+    // 3日制限は、7日沈黙後の正当な property_search 提案（信号7・★★★）を壊さないため。
+    if (
+      finalAix === "property_search" &&
+      lastCustomerMsg?.text &&
+      daysSinceLastCustomerMsg !== null &&
+      daysSinceLastCustomerMsg <= 3 &&
+      PROPERTY_CONDITION_INQUIRY_RE.test(lastCustomerMsg.text)
+    ) {
+      finalAix = "property_send";
+    }
     // Quality gate: suppress AIX suggestions with < 30% acceptance rate over 10+ samples.
     // FIX(Fable5 #3): 自経路の採択率キー（:brain 等）を読む。旧実装は :analysis_step1 固定で
     // 他コンポーネントの統計をゲートに使っており、脳の自己修正が一度も機能していなかった。
@@ -1323,9 +1358,35 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
             viewingPhaseDetail = "after_viewing";
             suggAixButton = "greeting_viewing";
           } else {
-            // 内覧日未確定 → viewing_invite（日程調整）
-            viewingPhaseDetail = "scheduling";
-            suggAixButton = "viewing_invite";
+            // 内覧日未確定 → 原則 viewing_invite（日程調整）。
+            // ただし顧客の直近メッセージに「待ち合わせ場所変更」シグナルがある場合は
+            // meeting_place を優先する（Case2対策: 内覧がチャット上でのみ確定し
+            // viewings/viewing_history に未登録だと空テーブル→scheduling に落ち、
+            // 場所変更依頼に viewing_invite を誤提案していた）。
+            // brainAix が meeting_place の場合も同様に尊重する（viewing 分岐は従来
+            // brainAix を一切参照せずHaikuの正解を潰していた）。
+            const { data: recentCustMsgs } = await supabase
+              .from("messages")
+              .select("text")
+              .eq("conversation_id", conversationId)
+              .eq("sender", "customer")
+              .order("created_at", { ascending: false })
+              .limit(3);
+            const recentText = (recentCustMsgs ?? []).map((m) => m.text ?? "").join("\n");
+            // シグナル: ①場所・待ち合わせの明示的変更 ②移動困難+代替場所提案の組み合わせ
+            // （単なる「間に合わない」だけでは発動しない＝内覧キャンセルと混同しないため②はAND条件）
+            const placeChangeSignal =
+              /(場所|待ち合わせ|集合).{0,10}(変更|変え)/.test(recentText) ||
+              /(駅|口).{0,6}(でもいい|の方が|に変更|でお願い)/.test(recentText) ||
+              (/(行けな|行くの間に合|間に合いそうにな|間に合わな|来られな|来れな|向かえな)/.test(recentText) &&
+                /(の方でもいい|でもいいですか|でも大丈夫|に変更|でお願い|はどうですか)/.test(recentText));
+            if (brainAix === "meeting_place" || placeChangeSignal) {
+              viewingPhaseDetail = "confirmed_future";
+              suggAixButton = "meeting_place";
+            } else {
+              viewingPhaseDetail = "scheduling";
+              suggAixButton = "viewing_invite";
+            }
           }
 
         } else {
