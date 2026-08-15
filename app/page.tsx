@@ -7470,13 +7470,16 @@ export default function Home() {
                 !suggestViewingTemplateMap[id] &&
                 !dismissedViewingInviteIds.has(id)
               ) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-sky-400 bg-sky-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-sky-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>お客様が興味あり → AIX 内覧へ！で日程調整</span>
-                  <button onClick={() => { setDismissedViewingInviteIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #0288d1, #0277bd)" }}>AIX 内覧へ！</button>
-                  <button onClick={() => setDismissedViewingInviteIds((prev) => new Set([...prev, id]))}
-                    className="shrink-0 text-sky-400 text-[11px] font-bold">✕</button>
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-sky-400 bg-sky-50 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-bold text-sky-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>お客様が興味あり → AIX 内覧へ！で日程調整</span>
+                    <button onClick={() => { setDismissedViewingInviteIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: "linear-gradient(135deg, #0288d1, #0277bd)" }}>AIX 内覧へ！</button>
+                    <button onClick={() => setDismissedViewingInviteIds((prev) => new Set([...prev, id]))}
+                      className="shrink-0 text-sky-400 text-[11px] font-bold">✕</button>
+                  </div>
+                  {suggestedAix?.note && <p className="text-[10px] text-sky-600 mt-1 pl-1 leading-relaxed">{suggestedAix.note}</p>}
                 </div>
               );
 
@@ -7485,16 +7488,19 @@ export default function Home() {
                 selectedConversation.suggestedAixMeta?.action === "meeting_place" &&
                 !dismissedMeetingPlaceIds.has(id)
               ) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-teal-700 flex-1">
-                    <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
-                    お客様が日程確定 → AIX 待ち合わせで場所を確認！
-                  </span>
-                  <button onClick={() => { setDismissedMeetingPlaceIds(prev => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #00838F, #006064)" }}>AIX 待ち合わせ</button>
-                  <button onClick={() => setDismissedMeetingPlaceIds(prev => new Set([...prev, id]))}
-                    className="shrink-0 text-teal-500 text-[11px] font-bold">✕</button>
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-bold text-teal-700 flex-1">
+                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                      お客様が日程確定 → AIX 待ち合わせで場所を確認！
+                    </span>
+                    <button onClick={() => { setDismissedMeetingPlaceIds(prev => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: "linear-gradient(135deg, #00838F, #006064)" }}>AIX 待ち合わせ</button>
+                    <button onClick={() => setDismissedMeetingPlaceIds(prev => new Set([...prev, id]))}
+                      className="shrink-0 text-teal-500 text-[11px] font-bold">✕</button>
+                  </div>
+                  {suggestedAix?.note && <p className="text-[10px] text-teal-600 mt-1 pl-1 leading-relaxed">{suggestedAix.note}</p>}
                 </div>
               );
 
@@ -7503,22 +7509,25 @@ export default function Home() {
                 selectedConversation.suggestedAixMeta?.action === "estimate_sheet" &&
                 !dismissedEstimateSheetIds.has(id)
               ) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-500 bg-orange-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-orange-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>他社と比較中 → 割引見積を提示して差別化！</span>
-                  <button onClick={() => {
-                    setDismissedEstimateSheetIds((prev) => new Set([...prev, id]));
-                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
-                    const convName = selectedConversation.customerName;
-                    if (!(activeTasks[id] ?? []).some((t) => t.task_type === "estimate_sheet")) {
-                      fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ conversation_id: id, task_type: "estimate_sheet", customer_name: convName, status: "pending" }) }).catch(() => {});
-                    }
-                    setShowTemplateModal(true);
-                  }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #E65100, #F57C00)" }}>AIX 割引見積</button>
-                  <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
-                    className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-500 bg-orange-50 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-bold text-orange-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>他社と比較中 → 割引見積を提示して差別化！</span>
+                    <button onClick={() => {
+                      setDismissedEstimateSheetIds((prev) => new Set([...prev, id]));
+                      setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
+                      const convName = selectedConversation.customerName;
+                      if (!(activeTasks[id] ?? []).some((t) => t.task_type === "estimate_sheet")) {
+                        fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ conversation_id: id, task_type: "estimate_sheet", customer_name: convName, status: "pending" }) }).catch(() => {});
+                      }
+                      setShowTemplateModal(true);
+                    }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: "linear-gradient(135deg, #E65100, #F57C00)" }}>AIX 割引見積</button>
+                    <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
+                      className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
+                  </div>
+                  {suggestedAix?.note && <p className="text-[10px] text-orange-600 mt-1 pl-1 leading-relaxed">{suggestedAix.note}</p>}
                 </div>
               );
 
@@ -7974,25 +7983,6 @@ export default function Home() {
                     paddingBottom: "48px", // 最終行をスクロールアップできるよう余白
                   }}
                 />
-                {/* スタッフへのAIガイドメモ（AIドラフト使用時のみ表示） */}
-                {draftIsAi && replyDraft && suggestedAix && (() => {
-                  const level = suggestedAix.enforcement_level ?? "recommended";
-                  const styles = {
-                    required: { bg: "#fff3e0", border: "#fb8c00", color: "#bf360c", icon: "⚠️", prefix: "AIX必須:" },
-                    recommended: { bg: "#fff8e1", border: "#ffe082", color: "#5d4037", icon: "📌", prefix: "スタッフへ:" },
-                    optional: { bg: "#f5f5f5", border: "#e0e0e0", color: "#9e9e9e", icon: "💡", prefix: "ヒント:" },
-                  }[level];
-                  return (
-                    <div style={{
-                      marginTop: 6, padding: "8px 12px",
-                      background: styles.bg, border: `1px solid ${styles.border}`,
-                      borderRadius: 6, fontSize: 12, color: styles.color, lineHeight: 1.6,
-                    }}>
-                      <span style={{ fontWeight: "bold", marginRight: 4 }}>{styles.icon} {styles.prefix}</span>
-                      {suggestedAix.note}
-                    </div>
-                  );
-                })()}
                 {/* 追加メッセージスロット（時間差送信） */}
                 {extraDraftMessages.map((extra, idx) => (
                   <div key={idx} className="mt-2 rounded-xl border border-blue-200 bg-white p-2">
