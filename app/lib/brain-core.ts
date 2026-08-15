@@ -12,10 +12,11 @@ import { supabase } from "@/app/lib/supabase";
 //   - cron/brain-sweep: webhook の分析が失敗した会話を拾うバックストップ（5分毎）
 //   - brain/list は純粋な read のみ（Haiku は一切呼ばない）
 
-const HAIKU = "claude-haiku-4-5-20251001";
+const HAIKU = "claude-sonnet-5";
 // B8(Fable5): maxRetries: 0 — sweep自体がリトライ機構のため、SDKの自動リトライ（デフォルト2回）は
 // 最悪 ~45秒/件 × 4件直列 = maxDuration 120秒超過 → cron_run_logs が "running" のまま残る事故の原因だった
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000, maxRetries: 0 });
+// Sonnet切替: Haikuより深い文脈理解でAIX-META品質向上（タイムアウト15s→30sに拡大）
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 30_000, maxRetries: 0 });
 
 // Statuses that indicate a closed/inactive conversation — excluded from brain analysis
 export const BRAIN_SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost"];
