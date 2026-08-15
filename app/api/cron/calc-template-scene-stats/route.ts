@@ -15,6 +15,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+// HINT-1: brain の template_hint ラベル許可リスト（一致率集計のラベル抽出に使用）と知識化ユーティリティ
+import { TEMPLATE_HINT_ALLOWED_LABELS } from "@/app/lib/brain-core";
+import { upsertKnowledge } from "@/app/lib/knowledge-utils";
 // ステータスキー新旧不整合の修正: ログには旧ステータス名（viewing, property_recommendation 等）が
 // 残っているため、集計前に normalizeStatus で新5段階（hearing/proposing/applying）へ正規化する。
 // suggest-next-action は正規化後のステータスで recommended を引くため、ここで揃えないとミスマッチする。
@@ -32,7 +35,7 @@ async function run() {
   // テンプレ選択ログ（select フェーズ全件。sent 判定は final_sent_text の有無で行う）
   const { data: logs, error } = await supabase
     .from("template_selection_logs")
-    .select("template_id, conversation_status, aix_action_type, picker_mode, was_adapted, final_sent_text, prev_template_id, aix_session_id, sequence_no")
+    .select("template_id, conversation_status, aix_action_type, picker_mode, was_adapted, final_sent_text, prev_template_id, aix_session_id, sequence_no, template_category, brain_template_hint")
     .not("template_id", "is", null)
     .gte("created_at", since90d)
     .limit(10000);
@@ -207,6 +210,113 @@ async function run() {
     { onConflict: "key" }
   );
 
+  // ---- HINT-1: brain template_hint vs 実選択の一致率学習（テンプレ却下学習） ----
+  // brain が提示した template_hint（ラベルカテゴリ）と、スタッフが実際に送信したテンプレの
+  // template_category の一致/不一致をラベル別に集計し、
+  //  ① trigger_action_rules に TEMPLATE_HINT_ACCEPT_RATE:<ラベル> として upsert
+  //     → brain-core の自己修正ゲートが 10件以上・一致率30%未満のラベルの提示を抑制する
+  //  ② ai_prompts key=template_hint_mismatch_stats にラベル別の実選択上位カテゴリを保存
+  //     → 将来 recommend-templates のプロンプト注入に使う（Phase 3）
+  //  ③ N>=10 かつ一致率<50% のラベルのみ ai_reply_knowledge に知識化（厳しめ閾値でノイズ抑制）
+  const normalizeHintText = (s: string) => s.replace(/[①②③④⑤\s]/g, "");
+  const hintLabelMatches = (label: string, category: string | null): boolean => {
+    if (!category) return false;
+    const nl = normalizeHintText(label);
+    const nc = normalizeHintText(category);
+    if (!nl || !nc) return false;
+    return nl.includes(nc) || nc.includes(nl);
+  };
+  type HintAgg = { total: number; matched: number; topPicked: Record<string, number>; byStatus: Record<string, number> };
+  const hintAgg: Record<string, HintAgg> = {};
+  for (const log of logs ?? []) {
+    const hint = (log.brain_template_hint as string | null)?.trim();
+    // 一致率の定義: 「hint 提示中に実際に送信されたテンプレ」のみ対象（select だけで送らなかった行は除外）
+    if (!hint || !log.final_sent_text) continue;
+    const label = TEMPLATE_HINT_ALLOWED_LABELS.find((l) => hint.includes(l));
+    if (!label) continue;
+    const category = (log.template_category as string | null) ?? null;
+    const e = hintAgg[label] ?? { total: 0, matched: 0, topPicked: {}, byStatus: {} };
+    e.total += 1;
+    if (hintLabelMatches(label, category)) e.matched += 1;
+    const catKey = category || "(カテゴリなし)";
+    e.topPicked[catKey] = (e.topPicked[catKey] ?? 0) + 1;
+    const status = normalizeStatus((log.conversation_status as string) || "unknown");
+    e.byStatus[status] = (e.byStatus[status] ?? 0) + 1;
+    hintAgg[label] = e;
+  }
+
+  // ① TEMPLATE_HINT_ACCEPT_RATE:<ラベル> を trigger_action_rules に upsert（SOURCE_ACCEPT_RATE と同型）
+  let hintRatesUpdated = 0;
+  for (const [label, agg] of Object.entries(hintAgg)) {
+    const confidence = agg.total > 0 ? Math.round((agg.matched / agg.total) * 1000) / 1000 : 0;
+    const { error: hintUpsertError } = await supabase.from("trigger_action_rules").upsert(
+      {
+        action_type: "template_hint",
+        keyword: `TEMPLATE_HINT_ACCEPT_RATE:${label}`,
+        occurrence_count: agg.matched,
+        total_occurrence: agg.total,
+        confidence,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "action_type,keyword" }
+    );
+    if (!hintUpsertError) hintRatesUpdated++;
+    else console.error("[calc-template-scene-stats] hint rate upsert error:", label, hintUpsertError.message);
+  }
+
+  // ② ラベル別の実選択上位3カテゴリを ai_prompts に保存（Phase 3 のプロンプト注入・俯瞰確認用）
+  const perLabel = Object.fromEntries(
+    Object.entries(hintAgg).map(([label, agg]) => [
+      label,
+      {
+        total: agg.total,
+        matched: agg.matched,
+        match_rate: agg.total > 0 ? Math.round((agg.matched / agg.total) * 1000) / 1000 : 0,
+        topPicked: Object.entries(agg.topPicked)
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .slice(0, 3)
+          .map(([category, count]) => ({ category, count })),
+      },
+    ])
+  );
+  if (Object.keys(hintAgg).length > 0) {
+    await supabase.from("ai_prompts").upsert(
+      {
+        key: "template_hint_mismatch_stats",
+        label: "テンプレヒント vs 実選択 一致統計",
+        content: JSON.stringify({ updated: new Date().toISOString(), perLabel }),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "key" }
+    );
+  }
+
+  // ③ N>=10 かつ一致率<50% のラベルのみ知識化（毎回リセットして最新集計で全置換）
+  let hintKnowledgeWritten = 0;
+  const mismatchLabels = Object.entries(hintAgg).filter(
+    ([, agg]) => agg.total >= 10 && agg.matched / agg.total < 0.5
+  );
+  if (mismatchLabels.length > 0) {
+    await supabase.from("ai_reply_knowledge").delete().ilike("title", "テンプレヒント傾向:%");
+    for (const [label, agg] of mismatchLabels) {
+      const topPicked = Object.entries(agg.topPicked)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 3)
+        .map(([category, count]) => `${category}(${count}回)`)
+        .join(" / ");
+      const matchRatePct = Math.round((agg.matched / agg.total) * 100);
+      const topStatus = Object.entries(agg.byStatus).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
+      const { result } = await upsertKnowledge(supabase, {
+        title: `テンプレヒント傾向: ${label}`,
+        content: `brainが「${label}」をtemplate_hintとして提示した際、スタッフが実際に送ったテンプレの同カテゴリ一致率は${matchRatePct}%（${agg.matched}/${agg.total}件）。実際に選ばれた上位カテゴリ: ${topPicked}。このヒント提示時は実選択傾向に合わせた提案を優先すること。`,
+        category: "pattern",
+        importance: 6,
+        ...(topStatus ? { conversation_state: topStatus } : {}),
+      });
+      if (result === "inserted") hintKnowledgeWritten++;
+    }
+  }
+
   // 集計サマリーを ai_prompts に保存（俯瞰確認用）
   await supabase.from("ai_prompts").upsert(
     {
@@ -233,6 +343,8 @@ async function run() {
       chain_combos: chains.length,
       chain_recommended_scopes: Object.keys(recommended).length,
       template_transitions: Object.keys(transitions).length,
+      hint_labels: hintRatesUpdated,
+      hint_knowledge_written: hintKnowledgeWritten,
     },
     updateErrors.length > 0 ? updateErrors.join(" / ") : undefined,
   );
@@ -244,6 +356,8 @@ async function run() {
     chain_combos: chains.length,
     chain_recommended_scopes: Object.keys(recommended).length,
     template_transitions: Object.keys(transitions).length,
+    hint_labels: hintRatesUpdated,
+    hint_knowledge_written: hintKnowledgeWritten,
     aix_logs_error: aixError?.message ?? null,
     errors: updateErrors,
   });

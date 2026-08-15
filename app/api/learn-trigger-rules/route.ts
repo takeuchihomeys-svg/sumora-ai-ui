@@ -245,7 +245,8 @@ export async function POST(req?: Request) {
       .not("keyword", "like", "AFTER:%")
       .not("keyword", "like", "SOURCE_ACCEPT_RATE:%")
       .not("keyword", "like", "MANUAL_RULE:%")
-      .not("keyword", "like", "SUBMODE_ACCEPT:%");
+      .not("keyword", "like", "SUBMODE_ACCEPT:%")
+      .not("keyword", "like", "TEMPLATE_HINT_ACCEPT_RATE:%");
     if (lowRules?.length) {
       const { error } = await supabase
         .from("trigger_action_rules")
@@ -257,7 +258,8 @@ export async function POST(req?: Request) {
         .not("keyword", "like", "AFTER:%")
         .not("keyword", "like", "SOURCE_ACCEPT_RATE:%")
         .not("keyword", "like", "MANUAL_RULE:%")
-        .not("keyword", "like", "SUBMODE_ACCEPT:%");
+        .not("keyword", "like", "SUBMODE_ACCEPT:%")
+        .not("keyword", "like", "TEMPLATE_HINT_ACCEPT_RATE:%");
       if (!error) cleaned += lowRules.length;
     }
   }

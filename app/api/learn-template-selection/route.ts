@@ -29,6 +29,8 @@ export async function POST(req: NextRequest) {
       sequence_no?: number;         // 同一AIXセッション内の何番目の送信か（1始まり）
       prev_template_id?: string;    // 直前に送ったテンプレートID（連続送信の場合のみ）
       aix_session_id?: string;      // 同一AIXセッションをグルーピングするID
+      // HINT-1: brain の template_hint スナップショット（送信時ワイプ前に select 時点の値を保存）
+      brain_template_hint?: string | null;
       // sent フェーズ
       final_sent_text?: string;
       was_modified_after_adapt?: boolean;
@@ -65,6 +67,8 @@ export async function POST(req: NextRequest) {
           sequence_no: typeof body.sequence_no === "number" && body.sequence_no >= 1 ? Math.floor(body.sequence_no) : 1,
           prev_template_id: body.prev_template_id ?? null,
           aix_session_id: body.aix_session_id ?? null,
+          // HINT-1: brain が提示していた template_hint（hint vs 実選択の一致学習用スナップショット）
+          brain_template_hint: (body.brain_template_hint ?? "").trim().slice(0, 100) || null,
         })
         .select("id")
         .single();

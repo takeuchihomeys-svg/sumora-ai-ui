@@ -193,7 +193,8 @@ const PHASE_TEMPLATE_HINTS = `
 // 実測サンプル30件中29件が「プッシュ強め・親身」等の抽象トーン説明で、テンプレピッカーの選択に使えなかったための対策。
 // 「①申込」は「①申込み時フォーマット（連帯保証人）」「①申込時フォーマット（緊急連絡先）」「①緊急連絡先・同居人なし」等の
 // ①申込系ラベルを含む判定でまとめて許可するための部分文字列（「①申込時」「①申込み時」の表記ゆれ両対応のため「①申込」で切る）。
-const TEMPLATE_HINT_ALLOWED_LABELS = [
+// export: calc-template-scene-stats cron が hint ラベル別一致率集計（HINT-1）で同じ許可リストを使う
+export const TEMPLATE_HINT_ALLOWED_LABELS = [
   "物件ピックアップした",
   "1件特にオススメする",
   "物件確認した（募集状況）",
@@ -953,10 +954,28 @@ ${history}`;
     // 実測でHaikuが「プッシュ強め・親身」等の抽象トーン説明を返しており（30件中29件）、
     // テンプレピッカーの選択に使えないため、許可リスト非一致は null に落とす（フェイルクローズ）。
     const rawTemplateHint = (parsed.template_hint ?? "").trim();
-    const templateHint =
+    let templateHint =
       rawTemplateHint && TEMPLATE_HINT_ALLOWED_LABELS.some((label) => rawTemplateHint.includes(label))
         ? rawTemplateHint
         : undefined;
+
+    // HINT-1 自己修正ゲート: hint ラベル別の実選択一致率（calc-template-scene-stats が週次で
+    // TEMPLATE_HINT_ACCEPT_RATE:<ラベル> として trigger_action_rules に書き込む）を読み、
+    // 10件以上の実績で一致率30%未満のラベルは提示を抑制する（SOURCE_ACCEPT_RATE ゲートと同型のフェイルオープン設計）。
+    if (templateHint) {
+      const hintLabel = TEMPLATE_HINT_ALLOWED_LABELS.find((l) => templateHint!.includes(l));
+      if (hintLabel) {
+        const { data: hintRate } = await supabase
+          .from("trigger_action_rules")
+          .select("confidence, total_occurrence")
+          .eq("action_type", "template_hint")
+          .eq("keyword", `TEMPLATE_HINT_ACCEPT_RATE:${hintLabel}`)
+          .maybeSingle();
+        const occ = (hintRate?.total_occurrence as number | null) ?? 0;
+        const conf = (hintRate?.confidence as number | null) ?? 1;
+        if (occ >= 10 && conf < 0.3) templateHint = undefined; // 実選択一致率30%未満のラベルは提示を抑制
+      }
+    }
 
     return {
       action: finalAix ?? "",

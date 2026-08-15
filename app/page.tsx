@@ -49,7 +49,7 @@ type Conversation = {
   isFlagged?: boolean;
   hasViewed?: boolean;
   aiDraft?: string | null;
-  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply" } | null;
+  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply" } | null;
   suggestedNextAix?: string | null;
   messages: Message[];
 };
@@ -70,7 +70,7 @@ type SupabaseConversationRow = {
   is_flagged?: boolean | null;
   has_viewed?: boolean | null;
   ai_draft?: string | null;
-  suggested_aix_meta?: { action: string; note: string; closing_strategy?: string; next_steps?: string[]; enforcement_level?: "required" | "recommended" | "optional"; reply_mode?: "aix" | "auto_reply" } | null;
+  suggested_aix_meta?: { action: string; note: string; closing_strategy?: string; template_hint?: string; next_steps?: string[]; enforcement_level?: "required" | "recommended" | "optional"; reply_mode?: "aix" | "auto_reply" } | null;
   suggested_next_aix?: string | null;
 };
 
@@ -605,7 +605,7 @@ export default function Home() {
   const finalCheckSkipRef = useRef(false);
   // 送信時チェック中の二重実行防止（チェックの2.8s待ちの間の連打ガード）
   const finalCheckBusyRef = useRef(false);
-  const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
+  const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
   const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
@@ -9069,6 +9069,9 @@ export default function Home() {
                   aix_session_id: chainSession.sessionId,
                   sequence_no: chainSession.sentCount + 1,
                   prev_template_id: chainSession.lastSentTemplateId,
+                  // HINT-1: brain の template_hint スナップショット。ドラフト復元後は DB 側 meta がワイプ済みのため
+                  // 必ず suggestedAix state（復元先）を第一候補に読む
+                  brain_template_hint: suggestedAix?.template_hint ?? selectedConversation.suggestedAixMeta?.template_hint ?? null,
                 }),
               }).then((r) => r.json()).then((d: { ok: boolean; log_id?: string }) => {
                 if (d.ok && d.log_id && templateSelectionMetaRef.current?.logId === "PENDING") {

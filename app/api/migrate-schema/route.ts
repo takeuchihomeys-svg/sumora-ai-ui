@@ -562,6 +562,9 @@ ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS prev_template_id UU
 ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS aix_session_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_tsl_aix_session ON template_selection_logs(aix_session_id) WHERE aix_session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tsl_prev_template ON template_selection_logs(prev_template_id) WHERE prev_template_id IS NOT NULL;
+-- テンプレ却下学習: brain の template_hint スナップショット（送信時に conversations.suggested_aix_meta がワイプされるため、select フェーズで記録して不一致学習に使う）
+ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS brain_template_hint TEXT;
+CREATE INDEX IF NOT EXISTS idx_tsl_brain_hint ON template_selection_logs(brain_template_hint) WHERE brain_template_hint IS NOT NULL;
 ALTER TABLE template_selection_logs DISABLE ROW LEVEL SECURITY;
 
 -- AI最適化後修正パターンの学習ルールテーブル（カテゴリ別・自動蓄積）

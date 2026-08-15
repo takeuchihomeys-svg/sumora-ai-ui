@@ -422,7 +422,12 @@ async function runWeeklyMetricsRollup(): Promise<Record<string, unknown>> {
     const meanEditDistance = withDraft.length > 0 ? Math.round((totalDistance / withDraft.length) * 10) / 10 : null;
     const unmodifiedRate = withDraft.length > 0 ? Math.round((unmodified / withDraft.length) * 1000) / 1000 : null;
 
-    const weekStart = sevenDaysAgo.toISOString().slice(0, 10);
+    // week_start は「集計対象週の月曜日（UTC）」に正規化する。
+    // toISOString().slice(0,10) だと実行曜日でキーがズレて別行が生まれるため、
+    // 月曜に丸めることで手動再実行・実行時刻ズレでも同一行に冪等upsertされる。
+    const monday = new Date(sevenDaysAgo);
+    monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+    const weekStart = monday.toISOString().slice(0, 10); // YYYY-MM-DD（PostgreSQL date型と一致）
     const { error: upsertErr } = await supabase.from("weekly_learning_metrics").upsert({
       week_start: weekStart,
       total_replies: all.length,
@@ -432,7 +437,11 @@ async function runWeeklyMetricsRollup(): Promise<Record<string, unknown>> {
       unmodified_rate: unmodifiedRate,
       mean_edit_distance: meanEditDistance,
     }, { onConflict: "week_start" });
-    if (upsertErr) throw new Error(upsertErr.message);
+    if (upsertErr) {
+      // upsert失敗は必ず明示ログ（握りつぶし禁止）
+      console.error(`[weekly-learning] weekly_learning_metrics upsert失敗 (week_start=${weekStart}):`, upsertErr.message, upsertErr.details ?? "", upsertErr.hint ?? "");
+      throw new Error(`weekly_learning_metrics upsert failed: ${upsertErr.message}`);
+    }
 
     console.log(`[weekly-learning] metrics rollup: week=${weekStart} total=${all.length} unmodified_rate=${unmodifiedRate} mean_edit=${meanEditDistance}`);
     return { weekStart, totalReplies: all.length, aiDraftReplies: withDraft.length, unmodifiedRate, meanEditDistance };
@@ -1210,9 +1219,15 @@ export async function POST(req: NextRequest) {
 
     let result: Record<string, unknown>;
 
+    let rollupWarning: string | undefined;
     if (chunk === 1) {
       // FIX(Fable5 #3): 週次スコアボードを先に記録（学習処理の成否に関わらず毎週必ず残す）
       const rollup = await runWeeklyMetricsRollup();
+      if (typeof rollup.rollupError === "string") {
+        // rollup失敗を ok:true の result_json に埋もれさせず、error_message にも昇格させる
+        rollupWarning = `rollup failed: ${rollup.rollupError}`;
+        console.error(`[weekly-learning] ${rollupWarning}`);
+      }
       result = { ...(await runChunk1(chunk)), rollup };
     } else if (chunk === 2) {
       result = await runChunk2();
@@ -1222,7 +1237,7 @@ export async function POST(req: NextRequest) {
       result = await runChunk4();
     }
 
-    await finishCronLog(runLogId, true, result);
+    await finishCronLog(runLogId, true, result, rollupWarning);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     console.error("[weekly-learning]", e);
