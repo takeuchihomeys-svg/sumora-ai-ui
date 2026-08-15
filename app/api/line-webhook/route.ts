@@ -1664,7 +1664,63 @@ async function autoPromoteApplyingOnFormImage(
   }
 }
 
+// ── Claude Vision で画像内容を日本語テキスト抽出 ────────────────────────────
+// buf: LINE Content API から取得済みの ArrayBuffer（二重ダウンロード不要）
+async function extractImageContent(buf: ArrayBuffer, mimeType: string): Promise<string> {
+  try {
+    const base64 = Buffer.from(buf).toString("base64");
+    // Claude Vision が受け付ける MIME タイプのみ渡す（非対応は image/jpeg にフォールバック）
+    const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"] as const;
+    type AllowedMime = (typeof allowedTypes)[number];
+    const safeType: AllowedMime = (allowedTypes as readonly string[]).includes(mimeType)
+      ? (mimeType as AllowedMime)
+      : "image/jpeg";
+
+    const visionRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      signal: AbortSignal.timeout(12_000),
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5",
+        max_tokens: 600,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: { type: "base64", media_type: safeType, data: base64 },
+              },
+              {
+                type: "text",
+                text: "この画像に写っているテキスト・会話・情報をすべて書き起こしてください。LINEスクリーンショットの場合は発言者と内容を整理して返してください。画像の説明は不要で、内容だけ返してください。",
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!visionRes.ok) {
+      console.warn("[line-webhook] Vision API失敗 status=", visionRes.status);
+      return "";
+    }
+    const visionData = await visionRes.json() as {
+      content?: Array<{ type: string; text?: string }>;
+    };
+    return visionData.content?.find((b) => b.type === "text")?.text?.trim() ?? "";
+  } catch (e) {
+    console.warn("[line-webhook] Vision抽出エラー:", e);
+    return "";
+  }
+}
+
 // ── LINE Content API から画像を取得してStorageに保存（after()で非同期実行）──
+// Vision抽出（claude-haiku-4-5）と Storage upload を並列実行し、
+// 完了後に messages.text（[画像] <内容>）と messages.image_url を同時更新する。
 async function fetchAndUploadLineImage(
   lineMessageId: string,
   msgId: string,
@@ -1686,29 +1742,39 @@ async function fetchAndUploadLineImage(
 
     const contentType = contentRes.headers.get("content-type") || "image/jpeg";
     const ext = contentType.includes("png") ? "png" : contentType.includes("gif") ? "gif" : "jpg";
-
-    const blob = new Blob([await contentRes.arrayBuffer()], { type: contentType });
+    const arrayBuf = await contentRes.arrayBuffer();
     const storagePath = `${lineMessageId}.${ext}`;
 
-    const { error: uploadErr } = await db.storage
-      .from("line-images")
-      .upload(storagePath, blob, { contentType, upsert: true });
+    // Vision抽出 と Storage upload を並列実行（arrayBuf は読み取り専用で両方に渡せる）
+    const [visionResult, uploadResult] = await Promise.allSettled([
+      extractImageContent(arrayBuf, contentType),
+      db.storage
+        .from("line-images")
+        .upload(storagePath, new Blob([arrayBuf], { type: contentType }), { contentType, upsert: true }),
+    ]);
 
-    if (uploadErr) {
-      console.error("[line-webhook] Storage upload失敗:", uploadErr.message, "msgId:", lineMessageId);
+    if (uploadResult.status === "rejected") {
+      console.error("[line-webhook] Storage upload失敗:", uploadResult.reason, "msgId:", lineMessageId);
+      return;
+    }
+    if (uploadResult.value.error) {
+      console.error("[line-webhook] Storage upload失敗:", uploadResult.value.error.message, "msgId:", lineMessageId);
       return;
     }
 
-    const { data: urlData } = db.storage
-      .from("line-images")
-      .getPublicUrl(storagePath);
+    const { data: urlData } = db.storage.from("line-images").getPublicUrl(storagePath);
 
-    const { error: updateErr } = await db.from("messages")
-      .update({ image_url: urlData.publicUrl })
+    // Vision 抽出結果を "[画像] <内容>" 形式でテキストとして保存
+    const extracted = visionResult.status === "fulfilled" ? visionResult.value : "";
+    const newText = extracted ? `[画像] ${extracted}` : "[画像]";
+
+    const { error: updateErr } = await db
+      .from("messages")
+      .update({ image_url: urlData.publicUrl, text: newText })
       .eq("id", msgId);
 
     if (updateErr) {
-      console.error("[line-webhook] image_url更新失敗:", updateErr.message);
+      console.error("[line-webhook] image_url/text更新失敗:", updateErr.message);
     }
   } catch (e) {
     console.error("[line-webhook] 画像処理エラー:", e);
@@ -1726,7 +1792,7 @@ async function expireOldImagesIfOverLimit(
     .select("id, image_expires_at")
     .eq("conversation_id", convId)
     .eq("sender", "customer")
-    .eq("text", "[画像]")
+    .like("text", "[画像]%")
     .not("image_expires_at", "is", null)
     .gt("image_expires_at", new Date().toISOString()) // まだ有効なもの
     .order("created_at", { ascending: true });
@@ -1836,7 +1902,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         if (unsentMsg) {
           const unsentText = (unsentMsg.text as string | null) ?? "";
           // sent_reply が取り消し文と一致する学習例の☆を外す（誤送信文の学習防止）
-          if (unsentText.trim() && unsentText !== "[画像]") {
+          // "[画像]" で始まるテキスト（Vision抽出付きも含む）は学習対象外
+          if (unsentText.trim() && !unsentText.startsWith("[画像]")) {
             await db
               .from("ai_reply_examples")
               .update({ is_starred: false })
