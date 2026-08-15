@@ -1129,7 +1129,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       const { data: vectorResults, error: rpcError } = await supabase.rpc("match_reply_knowledge", {
         query_embedding: embedding,
         match_count: 100,
-        min_importance: 7,
+        min_importance: 8,
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
       if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
 
@@ -1239,7 +1239,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(8),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
-      .in("conversation_state", stateAliases).gte("importance", 7)
+      .in("conversation_state", stateAliases).gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle").neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
