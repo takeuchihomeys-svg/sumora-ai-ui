@@ -19,7 +19,7 @@ const BRAIN_MODEL = "claude-sonnet-5";
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 30_000, maxRetries: 0 });
 
 // Statuses that indicate a closed/inactive conversation — excluded from brain analysis
-export const BRAIN_SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost"];
+export const BRAIN_SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost", "approved"];
 
 // Conversations updated within this window are flagged as urgent
 export const URGENT_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -90,6 +90,7 @@ const STATUS_MEANING: Record<string, string> = {
   application:             "申込・審査中（申込書類収集段階）",
   screening:               "申込・審査中（審査進行中）",
   contract:                "契約済み（成約完了）",
+  approved:                "審査通過済み（入居待ち・鍵渡し前）",
 };
 
 // Concise AIX capability summary injected into Haiku prompts for action/template reasoning
@@ -926,7 +927,26 @@ export async function analyzeConversation(
   type ApplyingPattern = { title: string | null; content: string | null; importance: number | null };
   const applyingPatternKnowledge = (applyingPatternsResult.data ?? []) as ApplyingPattern[];
   const applyingPatternsText = applyingPatternKnowledge.length > 0
-    ? `\n【申込到達パターン（applying_pattern・どの場面でどのAIXボタンが効いたかの実績）】\n${applyingPatternKnowledge.map((k) => `- ${(k.title ?? "").replace(/\n/g, " ").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 200)}`).join("\n")}\n※aix キーの選択は、現在の会話が上記パターンのどの「場面」に該当するかを最優先の判断材料にすること。同じ場面なら実績のあるAIXボタン（特に見積書→申込誘導の estimate_sheet ライン）を選ぶ。`
+    ? `\n【申込到達パターン（applying_pattern・どの場面でどのAIXボタンが効いたかの実績）】\n${applyingPatternKnowledge.map((k) => {
+        const title = (k.title ?? "").replace(/\n/g, " ").slice(0, 40);
+        // action_flow と key_success_factors を優先抽出して1500字上限で届ける（従来200字では action_flow が欠落）
+        let summary: string;
+        try {
+          const p = JSON.parse(k.content ?? "{}") as Record<string, unknown>;
+          const structured = {
+            customer_profile: p.customer_profile,
+            situation: p.situation_at_key_moment,
+            action_flow: p.action_flow,
+            turning_point: p.turning_point,
+            key_success_factors: p.key_success_factors,
+          };
+          summary = JSON.stringify(structured).replace(/\n/g, " ");
+          if (summary.length > 1500) summary = summary.slice(0, 1500);
+        } catch {
+          summary = (k.content ?? "").replace(/\n/g, " ").slice(0, 1000);
+        }
+        return `- ${title}: ${summary}`;
+      }).join("\n")}\n※aix キーの選択は、現在の会話が上記パターンのどの「場面」に該当するかを最優先の判断材料にすること。同じ場面なら実績のあるAIXボタン（特に見積書→申込誘導の estimate_sheet ライン）を選ぶ。`
     : "";
 
   // winning_patterns: 勝率順の成約実績パターン（グローバル・顧客横断）

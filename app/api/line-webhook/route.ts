@@ -442,7 +442,7 @@ async function handleTextMessage(
         ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
       // 申込以降ステータスはai_summary・ai_draft生成不要（bg-async/cronのSKIP_STATUSESと一致させること）
-      if (["applying", "application", "screening", "contract", "closed_won", "closed_lost"].includes(convStatus)) return;
+      if (["applying", "application", "screening", "contract", "closed_won", "closed_lost", "approved", "lost"].includes(convStatus)) return;
 
       // ai_summary 自動更新（fire-and-forget）- 申込以降は上でreturnしているため不要
       if (pcId) {

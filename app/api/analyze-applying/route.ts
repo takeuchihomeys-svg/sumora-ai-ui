@@ -65,13 +65,21 @@ type ApplyingAnalysis = {
   key_success_factors?: string[];    // 成功要因
 };
 
-// 会話全文を「[顧客] / [AIX] / [スタッフ] テキスト」形式にフォーマット（各200字・合計8000字上限）
-// is_aix_generated=true は [AIX]（物件画像・見積書等の自動送信）、false は [スタッフ]（自発送信テンプレート含む）
+// 会話全文を「[顧客] / [AIX:種別] / [スタッフ] テキスト」形式にフォーマット（各200字・合計8000字上限）
+// is_aix_generated=true かつ aix_type あり → [AIX:estimate_sheet] 等の確定ラベル
+// is_aix_generated=true かつ aix_type なし → [AIX]（種別不明）
 // 上限超過時は先頭3000字（問い合わせの文脈）+ 末尾5000字（申込直前の転換点）を残す
-function formatMessages(msgs: Array<{ sender: string; text: string; is_aix_generated?: boolean | null }>): string {
+function formatMessages(msgs: Array<{ sender: string; text: string; is_aix_generated?: boolean | null; aix_type?: string | null }>): string {
   const full = msgs
     .map((m) => {
-      const label = m.sender === "customer" ? "顧客" : (m.is_aix_generated ? "AIX" : "スタッフ");
+      let label: string;
+      if (m.sender === "customer") {
+        label = "顧客";
+      } else if (m.is_aix_generated) {
+        label = m.aix_type ? `AIX:${m.aix_type}` : "AIX";
+      } else {
+        label = "スタッフ";
+      }
       return `[${label}] ${(m.text || "").slice(0, 200)}`;
     })
     .join("\n");
@@ -173,17 +181,54 @@ type ConvResult = { learned: boolean; skipped?: string; error?: string };
 
 // 1会話分の学習処理。成功（または学習対象外としてスキップ確定）時のみ learned_at を更新する。
 async function learnFromConversation(conv: { id: string; customer_name: string | null; status: string }): Promise<ConvResult> {
-  // 1. 会話の全メッセージ
+  // 1. 会話の全メッセージ（[画像]は一旦残す。AIX画像送信はプレースホルダとして学習に使う）
   const { data: msgRows, error: msgErr } = await supabase
     .from("messages")
-    .select("sender, text, created_at, is_aix_generated")
+    .select("sender, text, created_at, is_aix_generated, line_message_id")
     .eq("conversation_id", conv.id)
-    .neq("text", "[画像]")
     .neq("text", "[動画]")
     .not("text", "is", null)
     .order("created_at", { ascending: true });
   if (msgErr) return { learned: false, error: `messages取得失敗: ${msgErr.message}` };
-  const msgs = (msgRows ?? []) as Array<{ sender: string; text: string; created_at: string | null; is_aix_generated: boolean | null }>;
+  const rawMsgs = (msgRows ?? []) as Array<{ sender: string; text: string; created_at: string | null; is_aix_generated: boolean | null; line_message_id: string | null }>;
+
+  // AIX画像送信（is_aix_generated=true の [画像]）は [AIX画像送信] に変換して残す
+  // 一般スタッフ・顧客の画像（is_aix_generated=false の [画像]）は除外
+  const msgs = rawMsgs
+    .filter((m) => !(m.text === "[画像]" && m.is_aix_generated !== true))
+    .map((m) => ({
+      ...m,
+      text: (m.is_aix_generated && m.text === "[画像]") ? "[AIX画像送信]" : m.text,
+    }));
+
+  // aix_usage_logs からAIXボタン種別を確定（LLM推測ではなく記録値を使う）
+  const { data: aixLogRows } = await supabase
+    .from("aix_usage_logs")
+    .select("aix_type, line_message_id, created_at")
+    .eq("conversation_id", conv.id)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const aixLogs = (aixLogRows ?? []) as Array<{ aix_type: string | null; line_message_id: string | null; created_at: string }>;
+
+  // line_message_id 完全一致でAIXタイプを確定。lmidなし時は ±3分 fuzzy マッチ
+  const aixTypeByLmid = new Map<string, string>();
+  for (const l of aixLogs) {
+    if (l.line_message_id && l.aix_type) aixTypeByLmid.set(l.line_message_id, l.aix_type);
+  }
+  const aixLogsNoLmid = aixLogs.filter((l) => !l.line_message_id && l.aix_type);
+
+  const msgsWithAixType = msgs.map((m) => {
+    if (!m.is_aix_generated) return { ...m, aix_type: null as string | null };
+    const exact = m.line_message_id ? aixTypeByLmid.get(m.line_message_id) : undefined;
+    const fuzzy = !exact
+      ? (aixLogsNoLmid.find((l) =>
+          m.created_at
+            ? Math.abs(new Date(l.created_at).getTime() - new Date(m.created_at!).getTime()) < 3 * 60 * 1000
+            : false
+        )?.aix_type ?? undefined)
+      : undefined;
+    return { ...m, aix_type: (exact ?? fuzzy ?? null) as string | null };
+  });
 
   // 会話が短すぎる場合は学習価値なし → learned_at を付けて確定スキップ（無限再試行防止）
   if (msgs.length < 3) {
@@ -346,7 +391,7 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
 この会話で送られた返信はすべて「申込まで導くことに成功した返信」です。
 
 【会話全文】
-${formatMessages(msgs)}
+${formatMessages(msgsWithAixType)}
 
 【自発送信（機械抽出済みの確定リスト・推測禁止）】
 以下は is_aix_generated の切り替わりから決定論的に抽出した「AIXボタン押下後、顧客の返信を待たずに
@@ -450,11 +495,15 @@ ${sentSummary || "（返信記録なし）"}
   }
 
   // 6. 学習完了 → learned_at を記録（冪等ガード）
+  // 更新失敗時は learned: false を返して次回再処理させる（learned: true を返すと重複学習になる）
   const { error: doneErr } = await supabase
     .from("conversations")
     .update({ learned_at: new Date().toISOString() })
     .eq("id", conv.id);
-  if (doneErr) console.warn("[analyze-applying] learned_at更新失敗:", doneErr.message);
+  if (doneErr) {
+    console.warn("[analyze-applying] learned_at更新失敗:", doneErr.message);
+    return { learned: false, error: `learned_at更新失敗: ${doneErr.message}` };
+  }
 
   return { learned: true };
 }
