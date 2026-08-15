@@ -484,14 +484,15 @@ export async function analyzeConversation(
       .eq("is_starred", true)
       .order("created_at", { ascending: false })
       .limit(3),
-    // Latest checkpoint for long-conversation context
-    // ローリング累積方式: 最新1行が常に確認済み事実の全量なので最新のみで足りる
+    // Latest 2 checkpoints for long-conversation context
+    // Option D: 最新2件を読む。LLMがローリング累積で事実を圧縮した場合の保険。
+    // 最新CPが直近の全事実を持ち、1つ前のCPは圧縮漏れのフォールバック。
     supabase
       .from("conversation_checkpoints")
       .select("checkpoint_index, summary, key_facts, conversation_stage")
       .eq("conversation_id", conversationId)
       .order("checkpoint_index", { ascending: false })
-      .limit(1),
+      .limit(2),
     // Sent properties for this customer (duplicate/history awareness)
     propertyCustomerId
       ? supabase
@@ -732,14 +733,21 @@ export async function analyzeConversation(
 
   // Checkpoint summary for long-conversation context (会話セーブデータ)
   // key_facts は jsonb 配列（{type, value}[]）で返る — 文字列連結すると [object Object] になるため value を整形する
+  // Option D: 最新2件を oldest-first で結合。最新CPが主で、前CPは圧縮漏れのフォールバック。
   type CheckpointFact = { type?: string; value?: string };
   type Checkpoint = { checkpoint_index: number; summary: string | null; key_facts: CheckpointFact[] | null; conversation_stage: string | null };
-  const latestCheckpoint = ((checkpointsResult.data ?? []) as Checkpoint[])[0] ?? null;
+  const checkpoints = ((checkpointsResult.data ?? []) as Checkpoint[]).reverse(); // oldest first
+  const latestCheckpoint = checkpoints[checkpoints.length - 1] ?? null;
+  const olderCheckpoints = checkpoints.slice(0, -1);
   const checkpointFactsLine = Array.isArray(latestCheckpoint?.key_facts)
     ? (latestCheckpoint!.key_facts as CheckpointFact[]).map((f) => f?.value ?? "").filter(Boolean).join(" / ")
     : "";
+  const olderText = olderCheckpoints.length > 0
+    ? "\n【過去のセーブデータ（古い事実・最新で引き継がれていない可能性あり）】\n" +
+      olderCheckpoints.map(cp => cp.summary ?? "").filter(Boolean).join("\n---\n").slice(0, 1500)
+    : "";
   const checkpointText = latestCheckpoint?.summary
-    ? `\n【会話セーブデータ（これまでに会話で確認済みの事実の全量・最重要。ここに書かれた金額/物件/日付と矛盾する返信をしない）】\n${latestCheckpoint.summary}${checkpointFactsLine ? `\n主要事実: ${checkpointFactsLine}` : ""}`
+    ? `\n【会話セーブデータ（これまでに会話で確認済みの事実の全量・最重要。ここに書かれた金額/物件/日付と矛盾する返信をしない）】\n${latestCheckpoint.summary}${checkpointFactsLine ? `\n主要事実: ${checkpointFactsLine}` : ""}${olderText}`
     : "";
 
   // Sent properties — what has already been proposed to this customer
@@ -1175,8 +1183,14 @@ function buildCheckpointPrompt(
   更新された場合は新しい値のみ残す（例: 家賃上限が変わったら新値だけ・旧値は書かない）
 - 解決した【未解決事項】は【確認済み事実】へ移す（例: 空室確認の回答が来たら結果を事実として記録）
 
+重要度による圧縮ルール（前回セーブデータが長い場合に適用）:
+- 永久保持（絶対に省略しない）: 家賃・初期費用・物件名・部屋番号・駅名・入居日・内覧日・申込状況・顧客の決断・キャンセル理由
+- 圧縮して保持（1行に要約可）: AIXアクション履歴・スタッフが送った物件の本数・空室確認の結果
+- 省略可（成約に無関係な細部）: 雑談・天気の話・「ありがとうございます」等の定型返答・すでに解決した細かい質問
+→ 前回セーブデータが長くなった場合は、上記優先度に従って圧縮しつつ全量を引き継ぐこと。重要事実は絶対に落とさない。
+
 【前回のセーブデータ】
-${prevSummary ? prevSummary.slice(0, 2000) : "（なし・今回が最初のセーブ）"}
+${prevSummary ? prevSummary.slice(0, 3500) : "（なし・今回が最初のセーブ）"}
 
 【新しい会話（全${total}件のうち${startOffset + 1}〜${startOffset + shown}件目・日付付き。スタッフ(AIX)=AIツールで送信済み）】
 ${historyText}
