@@ -484,15 +484,15 @@ export async function analyzeConversation(
       .eq("is_starred", true)
       .order("created_at", { ascending: false })
       .limit(3),
-    // Latest 2 checkpoints for long-conversation context
-    // Option D: 最新2件を読む。LLMがローリング累積で事実を圧縮した場合の保険。
-    // 最新CPが直近の全事実を持ち、1つ前のCPは圧縮漏れのフォールバック。
+    // 全セーブポイントを最大5件読む（oldest-firstで並べ直して全履歴を渡す）
+    // ai_summary = 全CPを使って顧客の全ストーリーを把握（成約パターン判断に使う）
+    // AIX-META = 最新3件で直近の事実を把握
     supabase
       .from("conversation_checkpoints")
       .select("checkpoint_index, summary, key_facts, conversation_stage")
       .eq("conversation_id", conversationId)
       .order("checkpoint_index", { ascending: false })
-      .limit(2),
+      .limit(5),
     // Sent properties for this customer (duplicate/history awareness)
     propertyCustomerId
       ? supabase
@@ -731,23 +731,26 @@ export async function analyzeConversation(
     ? `\n過去のスタッフ優良返信例:\n${examples.map((e) => `- ${e.sent_reply ?? ""}`).join("\n")}`
     : "";
 
-  // Checkpoint summary for long-conversation context (会話セーブデータ)
+  // 全セーブポイント（最大5件・oldest-first）を構造化して渡す
+  // - ai_summary生成: 全CPで顧客の全ストーリーを把握 → 成約パターン判断に使う
+  // - AIX-META生成: 最新CPで直近の確認済み事実を把握（矛盾防止）
   // key_facts は jsonb 配列（{type, value}[]）で返る — 文字列連結すると [object Object] になるため value を整形する
-  // Option D: 最新2件を oldest-first で結合。最新CPが主で、前CPは圧縮漏れのフォールバック。
   type CheckpointFact = { type?: string; value?: string };
   type Checkpoint = { checkpoint_index: number; summary: string | null; key_facts: CheckpointFact[] | null; conversation_stage: string | null };
-  const checkpoints = ((checkpointsResult.data ?? []) as Checkpoint[]).reverse(); // oldest first
+  const checkpoints = ((checkpointsResult.data ?? []) as Checkpoint[]).reverse(); // oldest-first
   const latestCheckpoint = checkpoints[checkpoints.length - 1] ?? null;
-  const olderCheckpoints = checkpoints.slice(0, -1);
   const checkpointFactsLine = Array.isArray(latestCheckpoint?.key_facts)
     ? (latestCheckpoint!.key_facts as CheckpointFact[]).map((f) => f?.value ?? "").filter(Boolean).join(" / ")
     : "";
-  const olderText = olderCheckpoints.length > 0
-    ? "\n【過去のセーブデータ（古い事実・最新で引き継がれていない可能性あり）】\n" +
-      olderCheckpoints.map(cp => cp.summary ?? "").filter(Boolean).join("\n---\n").slice(0, 1500)
-    : "";
-  const checkpointText = latestCheckpoint?.summary
-    ? `\n【会話セーブデータ（これまでに会話で確認済みの事実の全量・最重要。ここに書かれた金額/物件/日付と矛盾する返信をしない）】\n${latestCheckpoint.summary}${checkpointFactsLine ? `\n主要事実: ${checkpointFactsLine}` : ""}${olderText}`
+  // 全CPを時系列で表示（お客さんの全ストーリー）
+  const checkpointHistoryLines = checkpoints
+    .map((cp, i) => {
+      const label = i === checkpoints.length - 1 ? `■ セーブ #${cp.checkpoint_index}（最新）` : `■ セーブ #${cp.checkpoint_index}`;
+      return `${label}\n${(cp.summary ?? "").slice(0, 800)}`;
+    })
+    .join("\n");
+  const checkpointText = checkpoints.length > 0
+    ? `\n【会話セーブデータ全履歴（お客さんの全経緯・成約パターン判断に使うこと）】\n${checkpointHistoryLines}${checkpointFactsLine ? `\n\n最新セーブの主要事実（AIX-META判断に最優先で使う）: ${checkpointFactsLine}` : ""}\n※ここに書かれた金額/物件/日付と矛盾する提案をしない`
     : "";
 
   // Sent properties — what has already been proposed to this customer
