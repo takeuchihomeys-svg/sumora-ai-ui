@@ -252,11 +252,41 @@ async function handleTextMessage(
     .eq("id", convId);
 
   // FIX(Fable5 #2): 脳分析のイベント駆動再計算 — meta を消したその場で再分析を fire-and-forget 起動。
-  // これまで分析は brain/list の読み取りパス（最大30並列Haiku）と週次cronで走っており、
-  // このwipeが週次分の成果を毎回破棄していた。分析コストは「顧客メッセージ1件につき1回」が理論最小。
-  // 失敗時は meta が null のまま残り、cron/brain-sweep（5分毎バックストップ）が拾う。
+  // 分析完了後、enforcement_level === "required" の場合のみスタッフLINEグループへ要対応通知を送る。
+  // （全件通知は通知疲れを招くため廃止。AIX必須の時だけ通知する）
   after(async () => {
-    await analyzeAndSaveBrainMeta(convId).catch((e) => console.warn("[line-webhook] brain analyze:", e));
+    try {
+      const ok = await analyzeAndSaveBrainMeta(convId);
+      if (!ok) return;
+
+      const { data: convData } = await db
+        .from("conversations")
+        .select("customer_name, suggested_aix_meta")
+        .eq("id", convId)
+        .maybeSingle();
+      const meta = convData?.suggested_aix_meta as { action?: string; note?: string; enforcement_level?: string } | null;
+      if (!meta || meta.enforcement_level !== "required") return;
+
+      const customerName = (convData?.customer_name as string | null) || "お客様";
+      const actionLabel = AIX_LABEL_JP[meta.action ?? ""] ?? meta.action ?? "対応";
+      const lines = [
+        `🔴 ${customerName}さんへ要対応`,
+        `AIX必須：${actionLabel}`,
+      ];
+      if (meta.note) lines.push(`→ ${meta.note}`);
+
+      const baseUrl =
+        process.env.NEXT_PUBLIC_SITE_URL ??
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+      await fetch(`${baseUrl}/api/notify-group`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: lines.join("\n") }),
+        signal: AbortSignal.timeout(5_000),
+      });
+    } catch (e) {
+      console.warn("[line-webhook] brain-notify:", e);
+    }
   });
 
   updateProfileAsync(db, userId, convId, account, text, now);
@@ -466,65 +496,6 @@ async function handleTextMessage(
 
   // after() D: FIX #09 — suggest-next-action → notify-group（顧客別スタッフ指示を通知）
   // 返信受信後にAIが次アクションを提案し、スタッフグループLINEに送信する（fire-and-forget）
-  after(async () => {
-    try {
-      const { data: convData } = await db
-        .from("conversations")
-        .select("customer_name")
-        .eq("id", convId)
-        .maybeSingle();
-      const customerName = (convData?.customer_name as string | null) || "お客様";
-
-      const baseUrl =
-        process.env.NEXT_PUBLIC_SITE_URL ??
-        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-
-      // H3: suggest-next-action の成否に関わらず基本通知（LINEきた）は必ず送る
-      let brainInstruction: string | null = null;
-      let closingStrategy: string | null = null;
-      let aixLabel: string | null = null;
-      try {
-        const suggestRes = await fetch(`${baseUrl}/api/suggest-next-action`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversation_id: convId, customer_message: text }),
-          signal: AbortSignal.timeout(12_000),
-        });
-        if (suggestRes.ok) {
-          const suggestion = await suggestRes.json() as {
-            action?: string | null;
-            reason?: string | null;
-            note?: string | null;
-            scene_hint?: string | null;
-            action_label?: string | null;
-          } | null;
-          if (suggestion?.action) {
-            brainInstruction = suggestion.note || suggestion.reason || null;
-            closingStrategy = suggestion.scene_hint || null;
-            aixLabel = AIX_LABEL_JP[suggestion.action] ?? suggestion.action_label ?? suggestion.action;
-          }
-        }
-      } catch { /* suggest失敗でも基本通知は送る */ }
-
-      const notifyLines: string[] = [
-        `${customerName}さんからLINEきた`,
-        "",
-        `次やること: ${brainInstruction || "（分析中）"}`,
-      ];
-      if (closingStrategy) notifyLines.push(`戦略: ${closingStrategy}`);
-      if (aixLabel) notifyLines.push(`AIX: ${aixLabel}`);
-      const notifyText = notifyLines.join("\n");
-
-      await fetch(`${baseUrl}/api/notify-group`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: notifyText }),
-        signal: AbortSignal.timeout(5_000),
-      });
-    } catch (e) {
-      console.warn("[line-webhook] suggest-notify error:", e);
-    }
-  });
 
   return true;
 }
