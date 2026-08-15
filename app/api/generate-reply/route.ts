@@ -188,6 +188,22 @@ const AIX_ACTION_NOTES: Record<string, string> = {
   followup_revive: "AIX【追客する】で再接触メッセージを生成できます",
 };
 
+// ─── 優先度1(抜け穴対策): final-check AIX境界違反 → AIXボタン切替マップ ────────
+// final-check の AIX_BOUNDARY_* は「本来AIXで送るべき内容をドラフトが自分で書いてしまった」
+// 検出そのもの。各コードは推奨AIXボタンへほぼ1:1で写像できる。
+// 接地修正でも block が解消できなかった（revision_exhausted）場合、壊れたドラフトを
+// 保存する代わりに対応するAIXボタンへの切替を行う（ai_draft nullクリア + suggested_aix_button 強制セット）。
+// ※ AIX_BOUNDARY_DB は違反内容からボタンを特定できないため意図的にマップ外（従来どおりスタッフ確認モーダルへ）
+const AIX_BOUNDARY_TO_ACTION: Record<string, string> = {
+  AIX_BOUNDARY_VIEWING: "viewing_invite",
+  AIX_BOUNDARY_ESTIMATE: "estimate_sheet",
+  AIX_BOUNDARY_MEETING: "meeting_place",
+  AIX_BOUNDARY_PROPERTY: "property_send",
+  AIX_BOUNDARY_APPLICATION: "application_push",
+  AIX_BOUNDARY_MOVEIN: "property_check_result",
+  AIX_BOUNDARY_PROMISE: "acknowledge_check",
+};
+
 async function deriveSuggestedAix(
   draftText: string,
   conversationState: string,
@@ -2748,6 +2764,27 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 finalCheck = null;
               }
             }
+            // ─── 優先度1(抜け穴対策): AIX切替検出 ─────────────────────────────
+            // 「ドラフトがAIX境界を越えた」= 本来AIXで送るべき場面だったというシグナル。
+            // - required切替: revision_exhausted かつ AIX_BOUNDARY_* block 残存
+            //   → 壊れたドラフトを ai_draft に保存せず、suggested_aix_button を強制セットし
+            //     SUGGESTED_AIX トレーラー（enforcement_level=required）でAIX誘導する
+            // - hint: 軽度（warning級 / 修正で解消済み）の AIX_BOUNDARY 指摘
+            //   → deriveSuggestedAix が無提案だった場合のフォールバック候補（recommended）にする
+            //     （従来 final-check の検出結果は SUGGESTED_AIX に一切反映されていなかった）
+            let aixBoundaryRequired: { action: string; code: string } | null = null;
+            let aixBoundaryHint: { action: string; code: string } | null = null;
+            if (!isTemplateOptimize && finalCheck) {
+              const boundaryIssues = finalCheck.issues.filter(
+                (it) => it.code.startsWith("AIX_BOUNDARY") && AIX_BOUNDARY_TO_ACTION[it.code]
+              );
+              const blockIssue = boundaryIssues.find((it) => it.severity === "block");
+              if (finalCheck.revision_exhausted && blockIssue) {
+                aixBoundaryRequired = { action: AIX_BOUNDARY_TO_ACTION[blockIssue.code], code: blockIssue.code };
+              } else if (boundaryIssues.length > 0) {
+                aixBoundaryHint = { action: AIX_BOUNDARY_TO_ACTION[boundaryIssues[0].code], code: boundaryIssues[0].code };
+              }
+            }
             // f-8: センシティブ検知時は警告メタを冒頭に付与（空生成時は付与しない・テンプレ最適化は sensitiveGateNote="" ）
             finalDraftText = draftBody && sensitiveGateNote ? sensitiveGateNote + draftBody : draftBody;
             // 送信時の再利用判定キー: スタッフのテキストエリアに入る最終形（trim後）のハッシュに更新する
@@ -2800,7 +2837,26 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             }
             // テンプレート最適化モードはトレーラーを一切付けない（ボディ＝純粋な最適化テキスト）
             if (!isTemplateOptimize) {
-              const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction, analysisAixEnforcement, analysisClosingStrategy);
+              // 優先度1(抜け穴対策): AIX境界blockが修正不能だった場合は final-check 由来の
+              // required 提案が deriveSuggestedAix より優先。hint は derive 無提案時のフォールバック。
+              const suggestedAix = aixBoundaryRequired
+                ? {
+                    action: aixBoundaryRequired.action,
+                    note: `最終チェックでAIX境界違反（${aixBoundaryRequired.code}）が解消できませんでした。この内容はAIXから送ってください → ${AIX_ACTION_NOTES[aixBoundaryRequired.action] ?? "AIXボタンで対応してください"}`,
+                    source: "final_check_boundary",
+                    enforcement_level: "required" as const,
+                    closing_strategy: analysisClosingStrategy || undefined,
+                  }
+                : ((await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction, analysisAixEnforcement, analysisClosingStrategy))
+                    ?? (aixBoundaryHint
+                      ? {
+                          action: aixBoundaryHint.action,
+                          note: `最終チェックでAIX境界（${aixBoundaryHint.code}）の指摘がありました → ${AIX_ACTION_NOTES[aixBoundaryHint.action] ?? "AIXボタンでの対応を検討してください"}`,
+                          source: "final_check_boundary_hint",
+                          enforcement_level: "recommended" as const,
+                          closing_strategy: analysisClosingStrategy || undefined,
+                        }
+                      : null));
               if (suggestedAix) {
                 controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
                 // fire-and-forget — closing_strategyが生成されたらログに保存
@@ -2831,6 +2887,47 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // pending 解除のみ行う（attempted_at は残す＝10分間リトライしない）
               const isTruncated = String(genStopReason ?? "") === "max_tokens";
               if (isTruncated) console.warn("[generate-reply] max_tokens stop: ai_draft保存スキップ", conversationId);
+              // ─── 優先度1(抜け穴対策): AIX境界blockが修正不能 → ai_draft をnullクリアしてAIX切替 ───
+              // 壊れたドラフト（AIX境界を越えた内容）をスタッフの送信テキストボックスに置かない。
+              // 代わりに conversation_direction.suggested_aix_button を強制セットしてAIX側で対応させる。
+              // draft_attempted_at は残す＝10分間は同じ境界違反ドラフトを再生成しない。
+              if (aixBoundaryRequired) {
+                console.warn(
+                  "[generate-reply] AIX境界block解消不能 → ai_draftクリア+AIX切替:",
+                  conversationId, aixBoundaryRequired.code, "→", aixBoundaryRequired.action
+                );
+                const { error: gateErr } = await supabase
+                  .from("conversations")
+                  .update({ ai_draft: null, draft_pending_at: null })
+                  .eq("id", conversationId);
+                if (gateErr) console.error("[generate-reply] AIX切替 ai_draftクリア失敗:", conversationId, gateErr.message);
+                // suggested_aix_button の強制セット（既存 conversation_direction JSONへのマージ。
+                // スタッフ手動修正中（manually_overridden）は尊重して触らない）
+                try {
+                  const { data: dirRow } = await supabase
+                    .from("conversations")
+                    .select("conversation_direction")
+                    .eq("id", conversationId)
+                    .maybeSingle();
+                  const dir = (dirRow?.conversation_direction ?? {}) as Record<string, unknown>;
+                  if (dir.manually_overridden !== true) {
+                    await supabase
+                      .from("conversations")
+                      .update({
+                        conversation_direction: {
+                          ...dir,
+                          suggested_aix_button: aixBoundaryRequired.action,
+                          aix_forced_by: `final_check:${aixBoundaryRequired.code}`,
+                          updated_at: new Date().toISOString(),
+                        },
+                      })
+                      .eq("id", conversationId);
+                  }
+                } catch (dirErr) {
+                  console.warn("[generate-reply] AIX切替 suggested_aix_button更新失敗:", conversationId,
+                    dirErr instanceof Error ? dirErr.message : dirErr);
+                }
+              } else {
               const { error: saveErr } = await supabase
                 .from("conversations")
                 .update(
@@ -2840,9 +2937,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 )
                 .eq("id", conversationId);
               if (saveErr) console.error("[generate-reply] ai_draft save error:", conversationId, saveErr.message);
+              } // ← aixBoundaryRequired else 終端
               // ai_draft_check は別UPDATEで保存（fail-open: カラム未追加環境でも ai_draft 保存を巻き込まない。
-              // 監査ログ兼、事前生成ドラフト選択時のクライアント側ハッシュ照合用）
-              if (finalCheck && !isTruncated && finalDraftText.trim()) {
+              // 監査ログ兼、事前生成ドラフト選択時のクライアント側ハッシュ照合用。
+              // AIX切替時（aixBoundaryRequired）は ai_draft が無いためハッシュ照合対象も無く保存しない）
+              if (finalCheck && !isTruncated && !aixBoundaryRequired && finalDraftText.trim()) {
                 void supabase
                   .from("conversations")
                   .update({ ai_draft_check: finalCheck })

@@ -62,7 +62,7 @@ const AIX_BRAIN_NOTES: Record<string, string> = {
   greeting_viewing:        "内覧前後の挨拶は → AIX【内覧挨拶】でシーンに合わせた挨拶メッセージを生成できます",
   // ※ STATUS_MEANING にも会話ステータスとして property_search が存在するが、これは意図的な同名
   //   （ステータス=条件ヒアリング段階 / アクション=拡張ツールでの物件検索実行）。混同注意。
-  //   このキーを提案として活かすには page.tsx の AIX_ACTION_META にも同キーの追加が必要（TODO）。
+  //   page.tsx の AIX_ACTION_META には同キー追加済み（「物件を探す」・2026-08確認）。
   property_search:         "お客さんの条件に合う物件をChrome拡張ツール（リアプロ/itandi/レインズ）で検索してください。送付済み物件は候補から除外すること",
 };
 
@@ -98,6 +98,15 @@ const AIX_CAPABILITY_MAP = `
 - meeting_place: 内覧の待ち合わせ場所案内を生成
 - greeting_viewing: 内覧前後の挨拶メッセージを生成
 - property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）
+
+【aixキー選択の使いどころ基準（迷ったらここを優先）】
+- estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が特定物件を気に入った／初期費用・総額の話題が出た時点で迷わず選ぶ
+- acknowledge_check: 顧客が物件URL・物件名・物件画像を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない
+- property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時
+- followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
+- property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
+- application_push: 内覧完了後・見積送付後に顧客が前向きな時。審査不安の「解消」を先回りする場面でも有効（申込確定の言質は不要）
+- viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 確定済み未来→meeting_place / 当日・完了後→greeting_viewing
 `.trim();
 
 // 返信文体・共感フレーズ・条件変更文脈の恒久ルール（generate-reply の同名ルールと同一の単一基準）
@@ -293,7 +302,7 @@ export async function analyzeConversation(
   // Fetch last 30 messages and customer conditions in parallel
   // H5(Fable5): limit 15→30 — 会話あたりメッセージ数の中央値は25件。checkpoints が0行（書き込み側未実装）の間、
   // limit 15 だと中央値会話の前半を完全に忘れるため引き上げ。count: "exact" は総メッセージ数のプロンプト注入用（B3）
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult] = await Promise.all([
     supabase
       .from("messages")
       .select("sender, text, created_at, line_message_id, is_aix_generated", { count: "exact" })
@@ -442,6 +451,19 @@ export async function analyzeConversation(
       .select("scheduled_date, scheduled_time, status")
       .eq("conversation_id", conversationId)
       .order("scheduled_date", { ascending: false })
+      .limit(3),
+    // 優先度2(抜け穴対策): applying_pattern（申込到達会話の成約タイミング分析）を aix 選択の
+    // 明示的判断材料としてプロンプトに注入する。従来この category は analyzeAndSaveBrainMeta の
+    // STEP A（template_id 表示用の上位1件取得）にしか使われておらず、
+    // 「どの場面でどのAIXボタンが効いたか」がボタン判断に一切反映されていなかった。
+    supabase
+      .from("ai_reply_knowledge")
+      .select("title, content, importance")
+      .eq("category", "applying_pattern")
+      .gte("importance", 8)
+      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(3),
   ]);
 
@@ -652,6 +674,13 @@ export async function analyzeConversation(
     ? `\n【成約・申込到達パターン（過去に契約/申込に至った会話から学習・参考）】${contractKnowledgeLines ? `\n■ 成功法則・転換点:\n${contractKnowledgeLines}` : ""}${contractExampleLines ? `\n■ 成約した会話の実際の返信例:\n${contractExampleLines}` : ""}\n※現在の会話がこれらのパターンに近い場合、closing_strategy と next_steps は成約パターンの流れに沿って提案すること。`
     : "";
 
+  // 優先度2(抜け穴対策): applying_pattern（成約タイミング実績）— aix 選択の明示的判断材料
+  type ApplyingPattern = { title: string | null; content: string | null; importance: number | null };
+  const applyingPatternKnowledge = (applyingPatternsResult.data ?? []) as ApplyingPattern[];
+  const applyingPatternsText = applyingPatternKnowledge.length > 0
+    ? `\n【申込到達パターン（applying_pattern・どの場面でどのAIXボタンが効いたかの実績）】\n${applyingPatternKnowledge.map((k) => `- ${(k.title ?? "").replace(/\n/g, " ").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 200)}`).join("\n")}\n※aix キーの選択は、現在の会話が上記パターンのどの「場面」に該当するかを最優先の判断材料にすること。同じ場面なら実績のあるAIXボタン（特に見積書→申込誘導の estimate_sheet ライン）を選ぶ。`
+    : "";
+
   // この会話で使用済みのAIXアクション一覧（重複提案の抑止・次段階の推奨材料）
   const usedAixTypes = [...new Set(aixLogs.map((l) => l.aix_type).filter((t): t is string => Boolean(t)))];
   const aixHistoryText = usedAixTypes.length > 0
@@ -706,7 +735,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 回答形式（JSONのみ・説明文・コードブロック不要）:
 {"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
 
-  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}
+  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -764,14 +793,20 @@ ${history}`;
     if (opts?.autoSendEnabled === false) replyMode = "aix"; // auto_send無効の会話に auto_reply を提案しない
     if (opts?.isFlagged) replyMode = "aix";                // スタッフ要対応フラグ済み
 
-    // 初回例外: スタッフの非AIXテキスト返信がまだ無い会話（真の初回）は
+    // 初回例外: スタッフのテキスト送信がまだ1件も無い会話（真の初回）は
     // reply_mode と AIX提案を出さない。generate-reply の初回挨拶ドラフト生成が最優先。
     // generate-reply/route.ts の deriveSuggestedAix first_reply 例外と同じ設計意図。
     // auto_send_enabled=NULL → ?? false でフェイルクローズしてしまうバグの根本対処でもある。
-    const hasStaffNonAixText = typedMessages.some(
-      m => m.sender === "staff" && !m.is_aix_generated && m.text
+    //
+    // 抜け穴対策(P2): 旧判定は !is_aix_generated 限定だったため、スタッフがAIXボタン「だけ」で
+    // 対応してきた会話（見積送付・申込プッシュまでAIXで進んだ深いファネル）が永久に「真の初回」と
+    // 誤判定され、reply_mode が書かれず自動ドラフトゲートを素通りしていた。
+    // AIX送信も「スタッフが対応開始した証拠」として扱う。
+    // [画像]/[動画] を除外するのは generate-reply 側の初回判定（isFirstReplyGateExempt）との定義統一。
+    const hasStaffEngagement = typedMessages.some(
+      m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
     );
-    if (!hasStaffNonAixText) {
+    if (!hasStaffEngagement) {
       finalAix = null;
       replyMode = undefined;
     }
@@ -1041,7 +1076,13 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
       const existingDir = (convAsRecord?.conversation_direction ?? null) as Record<string, unknown> | null;
 
       // STEP D: スキップ判定
-      if (!existingDir?.manually_overridden && existingDir?.current_phase !== newPhase) {
+      // P1バグ修正(抜け穴対策): 旧条件は「フェーズが変わった時だけ」更新していたため、
+      // viewing フェーズ内のサブフェーズ遷移（confirmed_future → today → after_viewing）と
+      // is_hot が日付の経過だけでは絶対に更新されなかった（内覧当日のホット表示・
+      // greeting_viewing 提案・内覧後フォロー遷移が構造的に死んでいた）。
+      // viewing はフェーズ変化が無くても常時再計算する。
+      const phaseChanged = existingDir?.current_phase !== newPhase;
+      if (!existingDir?.manually_overridden && (phaseChanged || newPhase === "viewing")) {
         // STEP E: 新しい direction を構築して UPDATE
         const phaseOrder = ["hearing", "proposing", "viewing", "applying"];
         const newIdx = phaseOrder.indexOf(newPhase);
@@ -1054,6 +1095,20 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
         let viewingPhaseDetail: "today" | "after_viewing" | "scheduling" | "confirmed_future" | null = null;
         let suggAixButton: string;
         let isHot = false;
+
+        // JST 今日の日付を YYYY-MM-DD で取得（UTC+9 を手動計算）
+        // viewing 分岐と全フェーズ共通の calendar_events is_hot 補完の両方で使用
+        const nowJst = new Date(Date.now() + 9 * 3600 * 1000);
+        const todayJst = `${nowJst.getUTCFullYear()}-${String(nowJst.getUTCMonth() + 1).padStart(2, "0")}-${String(nowJst.getUTCDate()).padStart(2, "0")}`;
+
+        // P6(抜け穴対策): brain(Haiku)が提案し品質ゲートを通過したAIXアクション（meta.action）を
+        // 決定論デフォルトより優先する統一規則。viewing だけは内覧テーブル由来の決定論を最優先
+        // （確実なデータソースのため）。これにより成約実績最多の estimate_sheet や
+        // acknowledge_check / followup_revive / property_search 等も suggested_aix_button に
+        // 出現可能になる（旧実装はフェーズ決定論のみで、これらのボタンは構造的に絶対出なかった）。
+        const brainAix = typeof metaRecord.action === "string" && metaRecord.action && AIX_BRAIN_NOTES[metaRecord.action]
+          ? (metaRecord.action as string)
+          : null;
 
         if (newPhase === "viewing") {
           // viewing_history を優先取得・存在しなければviewingsにフォールバック（後方互換）
@@ -1073,13 +1128,13 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
                 .limit(10)
                 .then(r => (r.data ?? []) as ViewingRow[]);
 
-          // JST 今日の日付を YYYY-MM-DD で取得（UTC+9 を手動計算）
-          const nowJst = new Date(Date.now() + 9 * 3600 * 1000);
-          const todayJst = `${nowJst.getUTCFullYear()}-${String(nowJst.getUTCMonth() + 1).padStart(2, "0")}-${String(nowJst.getUTCDate()).padStart(2, "0")}`;
-
           // 最も近い未来・今日の scheduled 内覧（昇順ソートして最初の1件）
+          // P8修正(抜け穴対策): status=null の未来内覧も upcoming として扱う。
+          // 旧条件（status === "scheduled" 必須）では status 未設定の未来内覧が
+          // upcoming にも past（過去日付条件）にも入らず「scheduling」へ落ち、
+          // 日程確定済みなのに viewing_invite（日程調整）を再提案していた。
           const upcomingViewing = allViewings
-            .filter(v => v.status === "scheduled" && v.viewing_date >= todayJst)
+            .filter(v => (v.status === "scheduled" || v.status == null) && v.viewing_date >= todayJst)
             .sort((a, b) => a.viewing_date.localeCompare(b.viewing_date))[0] ?? null;
 
           // 最も最近の過去内覧（done または scheduled で過去日付・cancelled は除外）
@@ -1115,31 +1170,34 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
             suggAixButton = "viewing_invite";
           }
 
-          // calendar_events から今日この会話に紐づく内覧予定を確認 → is_hot 補完
-          // viewings テーブルで today が検出されなかった場合でも calendar 側に当日予定があれば is_hot = true
-          if (!isHot) {
-            try {
-              const todayStartUTC = new Date(`${todayJst}T00:00:00+09:00`).toISOString();
-              const todayEndUTC = new Date(`${todayJst}T23:59:59+09:00`).toISOString();
-              const { data: calToday } = await supabase
-                .from("calendar_events")
-                .select("id")
-                .eq("conversation_id", conversationId)
-                .eq("event_type", "viewing")
-                .gte("start_at", todayStartUTC)
-                .lte("start_at", todayEndUTC)
-                .limit(1);
-              if ((calToday?.length ?? 0) > 0) isHot = true;
-            } catch {
-              // calendar_events が取得できなくても処理を続行
-            }
-          }
         } else if (newPhase === "applying") {
-          suggAixButton = "application_push";
+          suggAixButton = brainAix ?? "application_push";
         } else if (newPhase === "proposing") {
-          suggAixButton = "property_send";
+          suggAixButton = brainAix ?? "property_send";
         } else {
-          suggAixButton = "condition_hearing";
+          suggAixButton = brainAix ?? "condition_hearing";
+        }
+
+        // calendar_events から今日この会話に紐づく内覧予定を確認 → is_hot 補完
+        // viewings テーブルで today が検出されなかった場合でも calendar 側に当日予定があれば is_hot = true。
+        // 優先度3(抜け穴対策): 旧実装は viewing フェーズ限定だったため、フェーズ誤判定で
+        // applying 等になった当日内覧顧客がホット化しなかった。全フェーズで補完する。
+        if (!isHot) {
+          try {
+            const todayStartUTC = new Date(`${todayJst}T00:00:00+09:00`).toISOString();
+            const todayEndUTC = new Date(`${todayJst}T23:59:59+09:00`).toISOString();
+            const { data: calToday } = await supabase
+              .from("calendar_events")
+              .select("id")
+              .eq("conversation_id", conversationId)
+              .eq("event_type", "viewing")
+              .gte("start_at", todayStartUTC)
+              .lte("start_at", todayEndUTC)
+              .limit(1);
+            if ((calToday?.length ?? 0) > 0) isHot = true;
+          } catch {
+            // calendar_events が取得できなくても処理を続行
+          }
         }
 
         const newDirection = {
