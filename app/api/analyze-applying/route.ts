@@ -126,6 +126,30 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
     return { learned: false, skipped: "too_few_messages" };
   }
 
+  // 旧世代自動返信会話の除外（カレン・はるか型）:
+  // staff返信が顧客送信の10秒以内（実例: 6〜8秒）に返るループで、全メッセージ is_aix_generated=false。
+  // 「確認して明日までにご報告します」等の汎用文の機械応答であり、成功パターンの学習母集団に混ぜると
+  // ノイズになるため会話ごと確定スキップする（learned_at を付けて再試行しない）。
+  const hasAixMessage = msgs.some((m) => m.is_aix_generated === true);
+  if (!hasAixMessage) {
+    let staffReplies = 0;
+    let rapidReplies = 0;
+    for (let i = 1; i < msgs.length; i++) {
+      const cur = msgs[i];
+      const prev = msgs[i - 1];
+      if (cur.sender !== "customer" && prev.sender === "customer" && cur.created_at && prev.created_at) {
+        staffReplies += 1;
+        const gapMs = new Date(cur.created_at).getTime() - new Date(prev.created_at).getTime();
+        if (gapMs >= 0 && gapMs <= 10_000) rapidReplies += 1;
+      }
+    }
+    // 顧客→staff の応答が3回以上あり、その半数以上が10秒以内 → 旧世代自動返信ループと判定
+    if (staffReplies >= 3 && rapidReplies / staffReplies >= 0.5) {
+      await supabase.from("conversations").update({ learned_at: new Date().toISOString() }).eq("id", conv.id);
+      return { learned: false, skipped: "legacy_auto_reply_loop" };
+    }
+  }
+
   // 2. この会話で送られた返信例（was_ai_modified に関わらず全 sent を成功返信として扱う）
   const { data: exRows, error: exErr } = await supabase
     .from("ai_reply_examples")
@@ -193,8 +217,9 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
   ・申込に必要な書類を自然な流れで案内した
   ・顧客の希望条件に合致している点を強調した
   ・物件の人気・問い合わせ状況を伝えた（希少性の提示）
-  ・AIXボタンで複数物件ピックアップ送付後、顧客返信を待たずに「1件特にオススメ」テンプレートで1件に絞り申込・内覧を促した（[AIX]行の直後に[スタッフ]行が続くパターン・AIXクラスター完了の4〜9分後が典型・use_count 96の最多使用テンプレート）
+  ・AIXボタンで複数物件ピックアップ送付後、顧客返信を待たずに「1件特にオススメ」テンプレートで1件に絞り申込・内覧を促した（[AIX]行の直後に[スタッフ]行が続くパターン・AIXクラスター完了の1〜2分後が典型（中央値1分・最大9分）・use_count 96の最多使用テンプレート）
   ・AIXで見積書を送付した直後（同分〜1分以内）、顧客返信を待たずに「申込誘導」テンプレートで「最大限割引させていただいたお見積書。ご費用面お気に召されましたらお申込みさせていただきます」と促した（見積書→申込誘導→申込の3ステップが成約最短ルート・顧客が2分で申込した実績あり）
+  ・「確認します」等の受付宣言後、顧客の返信がないまま8〜136分後（＝管理会社確認等の実作業時間）にAIXクラスターを起動して成果物を配達した（逆方向パターン・成約リードタイムの実体。宣言→調査→配達の流れをstaff_actionとして必ず記録する）
 
 【aix_button 記入ルール】
 各ステップにaix_buttonフィールドを追加してください。以下のAIXボタン名から最も近いものを記入（不明な場合は空文字）:
@@ -210,9 +235,11 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
 - 追客・再接触メッセージを送った → followup_revive
 - AIXボタン押下後、顧客返信を待たずに自発的に【AIX】テンプレートを送った → template_send
   ※ template_send として記録すべき典型ケース（優先度順）:
-    A. 物件ピックアップ（3件以上）のAIXクラスター完了後4〜9分以内、顧客返信ゼロ → 「1件特にオススメ」テンプレート送付（use_count:96）
-    B. 見積書AIXメッセージの同分〜1分後、顧客返信ゼロ → 「【申込誘導】」テンプレート送付（use_count:10）
-    C. 顧客が「申し込みします」「申し込みよろしく」等の申込意思を表示した直後 → 申込フォーマット送付（use_count:17）
+    A. 物件ピックアップ（3件以上）のAIXクラスター完了後15分以内（実績1〜9分・中央値1分）、顧客返信ゼロ → 「1件特にオススメ」テンプレート送付（use_count:96・物件名・帖数・敷礼をAI最適化で差し込む）
+    B. 見積書AIXメッセージの同分〜1分後、顧客返信ゼロ → 「【申込誘導】」テンプレート送付（use_count:10・物件名・金額のみ差込で骨格そのまま）
+    C. ①申込フォーマット送付 → +1〜5分で「②申込時フォーマット（続き）」をセット送信（use_count:17・全テンプレ中唯一win_rate>0・一字一句そのまま送る定型追撃）
+    D. 条件ヒアリングAIXの+1分後、顧客返信ゼロ → 「ヒアリング締め」系追撃（「上記お部屋探しフォーマットお送りいただけましたら…」）
+  ※ テンプレ骨格との一致（「オススメ出来るお部屋」「お申込し抑えさせて頂きます」「ご査収ください」等の定型句）が判定材料
   ※ is_aix_generated=trueのAIX本体メッセージ自体（物件画像・見積書等）はtemplate_sendではない
   ※ 顧客返信後のレスポンスもtemplate_sendではない（「顧客返信なし＝自発送信」が本質条件）
   ※ AIX「前半: 物件情報大量提示」→ スタッフ「後半: 感情的推し・CTA」の2フェーズをセットで1商談フローとして記録すること
