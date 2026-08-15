@@ -29,7 +29,7 @@ export type SuggestedAixMeta = {
   source: string;
   enforcement_level: "required" | "recommended";
   closing_strategy?: string;
-  template_hint?: string;  // 次に送るべき【AIX】テンプレートのラベル名（DBのtemplatesテーブルから選ぶ。例: "1件特にオススメ", "【申込誘導】", "②申込時フォーマット（続き）"）
+  template_hint?: string;  // 次に使うべきAIXタブのラベルカテゴリ名（TEMPLATE_HINT_ALLOWED_LABELS の含む判定を通過した値のみ。例: "物件ピックアップした", "1件特にオススメする", "①申込み時フォーマット（連帯保証人）"。トーン説明等の自由記述はゲートで null に落ちる）
   next_steps?: string[];  // ["Step1: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 【AIX】○○テンプレートを送る"]
   reply_mode?: "aix" | "auto_reply";  // 'aix'=スタッフがAIXで手動対応 / 'auto_reply'=AI自動返信OK
   // Chrome拡張フィードバックループ用: 拡張が brain/list API 経由で取得し検索フォームに自動入力する
@@ -145,7 +145,7 @@ const REPLY_STYLE_RULES = `
 // ★成約寄与の指標は won_count: analyze-applying が closed_won 会話の自発送信（手打ち含む）と
 //   テンプレ本文を突き合わせて自動集計する成約実績。テンプレート推奨で優先するのはこちら。
 const PHASE_TEMPLATE_HINTS = `
-【AIXボタン後に送るべきテンプレート（template_hint の選び方）】
+【AIXボタン後に送るべきテンプレート（next_steps での追撃テンプレの選び方。template_hint にはここの個別テンプレ名ではなく回答形式で指定するラベルカテゴリ名を入れること）】
 ※運用は2フェーズ1セット: AIXボタン＝成果物配達 → 中央値1分20秒後にテンプレ追撃（顧客返信を待たない・14件中10件が2分以内）。AIXを使用した5会話すべてこの構造（closed_won 13件中3件はAIX未使用で成約＝AIXは成約の必要条件ではない）。
 ※これは「顧客の無反応を見て追撃した」のではなく、AIXボタン押下と同一オペレーションの一部として締めの1通を手で足す動作。
 ※追撃には2種類ある: 「AI最適化して送る」（物件事実を含むテンプレ）と「そのまま送る」（定型追撃・編集すると1分以内の追撃速度が落ちる）。必ず区別すること。
@@ -178,6 +178,21 @@ const PHASE_TEMPLATE_HINTS = `
 ※ テンプレート選択の最優先指標は won_count（成約会話で実際に使われた回数。analyze-applying が closed_won 会話の自発送信とテンプレ本文を突き合わせて自動集計）。won_count が高いものを最優先する。
 ※ use_count が 0 であることは除外理由にならない。use_count はモーダル利用率であって成約寄与ではない。成約会話で実際に使われた「物件ピックアップ紹介（後続）」「駅周辺物件ピックアップ（後続）」「（2番手・申込）」はいずれも use_count 0（モーダルを通さず手打ちで送られたため計上されていないだけ）。逆に use_count 96 の「1件特にオススメ」は成約会話の自発送信で一度も原文送信されていない。
 `.trim();
+
+// template_hint 許可リスト（AIXタブのラベルカテゴリ名・ハードコード）
+// Haiku 出力のバリデーションゲートで使用: 出力がこのいずれかの文字列を「含む」場合のみ template_hint として採用する。
+// 実測サンプル30件中29件が「プッシュ強め・親身」等の抽象トーン説明で、テンプレピッカーの選択に使えなかったための対策。
+// 「①申込」は「①申込み時フォーマット（連帯保証人）」「①申込時フォーマット（緊急連絡先）」「①緊急連絡先・同居人なし」等の
+// ①申込系ラベルを含む判定でまとめて許可するための部分文字列（「①申込時」「①申込み時」の表記ゆれ両対応のため「①申込」で切る）。
+const TEMPLATE_HINT_ALLOWED_LABELS = [
+  "物件ピックアップした",
+  "1件特にオススメする",
+  "物件確認した（募集状況）",
+  "①申込",
+  "①緊急連絡先",
+  "内覧日アポ",
+  "直近の日にち",
+];
 
 // ① 成約・申込到達ステータス（brainが成功事例として読む対象）
 // applying は line-webhook が申込フォーム検知で自動セットする機械検証済みシグナル。
@@ -688,7 +703,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に送るべき【AIX】テンプレートのラベル名。上記フェーズ別推奨マップに従いAIXボタン使用後は必ず対応テンプレートを推奨（property_send（複数件）後→'物件ピックアップ紹介（後続）'・駅指定なら'駅周辺物件ピックアップ（後続）'・全件即入居可なら'【全件案内可能】' / property_recommendation（1件詳細）後→'1件特にオススメ' / estimate_sheet後→'【申込誘導】' / application_pushで①申込時フォーマットを送った直後→'②申込時フォーマット（続き）' / property_check_resultで2番手可と判明→'（2番手・申込）' / 条件ヒアリング後→'ヒアリング締め' / 物件なし→'【物件なし】条件変更のご提案' / viewing_invite・meeting_place後→null）。顧客実名・物件名が焼き込まれたテンプレート（'【新着】'等）は選ばない。同フェーズで候補が複数ある場合は won_count（成約実績）が高いものを最優先。use_countが0であることは除外理由にしない（手打ち送信が計上されないだけで成約実績はある）。該当なければnull", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply"}`;
 
   const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}
 
@@ -760,13 +775,22 @@ ${history}`;
       replyMode = undefined;
     }
 
+    // template_hint バリデーションゲート: AIXタブのラベルカテゴリ名（許可リストの含む判定）のみ通す。
+    // 実測でHaikuが「プッシュ強め・親身」等の抽象トーン説明を返しており（30件中29件）、
+    // テンプレピッカーの選択に使えないため、許可リスト非一致は null に落とす（フェイルクローズ）。
+    const rawTemplateHint = (parsed.template_hint ?? "").trim();
+    const templateHint =
+      rawTemplateHint && TEMPLATE_HINT_ALLOWED_LABELS.some((label) => rawTemplateHint.includes(label))
+        ? rawTemplateHint
+        : undefined;
+
     return {
       action: finalAix ?? "",
       note: finalAix ? AIX_BRAIN_NOTES[finalAix] : (parsed.action ?? ""),
       source,
       enforcement_level: isUrgent ? "required" : "recommended",
       closing_strategy: parsed.closing_strategy || undefined,
-      template_hint: parsed.template_hint || undefined,
+      template_hint: templateHint,
       next_steps: Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
       reply_mode: replyMode,
       // Chrome拡張フィードバックループ: 検索フォーム自動入力用の構造化パラメータ（TODO(P2)対応）
