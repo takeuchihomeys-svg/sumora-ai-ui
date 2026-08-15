@@ -12,7 +12,7 @@ import { supabase } from "@/app/lib/supabase";
 //   - cron/brain-sweep: webhook の分析が失敗した会話を拾うバックストップ（5分毎）
 //   - brain/list は純粋な read のみ（Haiku は一切呼ばない）
 
-const HAIKU = "claude-sonnet-5";
+const BRAIN_MODEL = "claude-sonnet-5";
 // B8(Fable5): maxRetries: 0 — sweep自体がリトライ機構のため、SDKの自動リトライ（デフォルト2回）は
 // 最悪 ~45秒/件 × 4件直列 = maxDuration 120秒超過 → cron_run_logs が "running" のまま残る事故の原因だった
 // Sonnet切替: Haikuより深い文脈理解でAIX-META品質向上（タイムアウト15s→30sに拡大）
@@ -463,7 +463,7 @@ export async function analyzeConversation(
   // limit 30→15: checkpoint（RAG検索含む）が古い会話をカバーするため、直近15件で十分。
   // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
   // count: "exact" は総メッセージ数のプロンプト注入用（B3）
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult] = await Promise.all([
     supabase
       .from("messages")
       .select("sender, text, created_at, line_message_id, is_aix_generated", { count: "exact" })
@@ -522,7 +522,7 @@ export async function analyzeConversation(
       .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
-      .limit(3),
+      .limit(5),
     // Top templates by won_count for context (brain uses these to recommend best template)
     // B1(Fable5): 旧 .like("category", "AIX%") は前方一致で、実カテゴリ「見積書送る【AIX】」等に
     // 一度もマッチしていなかった（本番0件を実測確認 = このデータソースは死んでいた）。
@@ -626,6 +626,11 @@ export async function analyzeConversation(
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(3),
+    // winning_patterns: 成約率の高いパターン上位5件
+    supabase.from("winning_patterns")
+      .select("pattern, situation, closing_action, notes, win_rate")
+      .order("win_rate", { ascending: false })
+      .limit(5),
   ]);
 
   const { data: messages, error, count: totalMessageCount } = msgResult;
@@ -690,7 +695,7 @@ export async function analyzeConversation(
               conversation_id_param: conversationId,
               query_embedding: qEmb,
               match_count: 3,
-              min_similarity: 0.3,
+              min_similarity: 0.5,
             });
             ragCheckpoints = (ragHits ?? []) as typeof ragCheckpoints;
           }
@@ -924,6 +929,16 @@ export async function analyzeConversation(
     ? `\n【申込到達パターン（applying_pattern・どの場面でどのAIXボタンが効いたかの実績）】\n${applyingPatternKnowledge.map((k) => `- ${(k.title ?? "").replace(/\n/g, " ").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 200)}`).join("\n")}\n※aix キーの選択は、現在の会話が上記パターンのどの「場面」に該当するかを最優先の判断材料にすること。同じ場面なら実績のあるAIXボタン（特に見積書→申込誘導の estimate_sheet ライン）を選ぶ。`
     : "";
 
+  // winning_patterns: 勝率順の成約実績パターン（グローバル・顧客横断）
+  const wpData = (winningPatternsResult.data ?? []) as Array<{pattern?: string; situation?: string; closing_action?: string; notes?: string; win_rate?: number}>;
+  const wpText = wpData
+    .filter((w) => w.pattern || w.closing_action)
+    .map((w) => `・${w.situation ?? ""}: ${w.closing_action ?? w.pattern ?? ""}（勝率${w.win_rate ?? "?"}%）`)
+    .join("\n");
+  const winningPatternsText = wpText
+    ? `\n【成約実績パターン（winning_patterns・勝率順）】\n${wpText}`
+    : "";
+
   // この会話で使用済みのAIXアクション一覧（重複提案の抑止・次段階の推奨材料）
   const usedAixTypes = [...new Set(aixLogs.map((l) => l.aix_type).filter((t): t is string => Boolean(t)))];
   const aixHistoryText = usedAixTypes.length > 0
@@ -978,15 +993,15 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 回答形式（JSONのみ・説明文・コードブロック不要）:
 {"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}}`;
 
-  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}
+  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}${winningPatternsText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
 
   try {
     const response = await client.messages.create({
-      model: HAIKU,
-      max_tokens: 900,
+      model: BRAIN_MODEL,
+      max_tokens: 1400,
       system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: userPrompt }],
     });
@@ -1316,7 +1331,7 @@ export async function maybeCreateCheckpoint(conversationId: string): Promise<voi
     // 3) Haiku（モジュール共有 client: timeout 15s / maxRetries 0 — fire-and-forget なので失敗放置でOK）
     const prompt = buildCheckpointPrompt(last?.summary ?? null, historyText, total, msgs.length, startOffset);
     const response = await client.messages.create({
-      model: HAIKU,
+      model: BRAIN_MODEL,
       max_tokens: 700,
       messages: [{ role: "user", content: prompt }],
     });
