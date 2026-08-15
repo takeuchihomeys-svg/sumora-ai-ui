@@ -2497,76 +2497,20 @@ export default function Home() {
     ));
   }, [selectedConversation, activeAixFlow]);
 
-  // 待ち合わせ誘導: お客様が日付を返してきた（内覧日確定）場合にハイライト
+  // 待ち合わせ誘導: AIX-METAが meeting_place を指示している場合のみ
   const guideToMeetingPlace = useMemo(() => {
-    if (activeAixFlow) return false;
-    const msgs: Message[] = selectedConversation.messages || [];
-    const reversed = [...msgs].reverse();
-    const lastCustomer = reversed.find((m: Message) => m.sender === "customer");
-    if (!lastCustomer?.text) return false;
+    return !activeAixFlow && selectedConversation.suggestedAixMeta?.action === "meeting_place";
+  }, [selectedConversation.suggestedAixMeta, activeAixFlow]);
 
-    // パターン1: お客様が「〇日〇時〜からお願いします」等で日時を確定した
-    // 「〜でお願いします」単独では発火させない（「2LDKでお願いします」等の誤発火防止）。日時トークンとの共起を必須にする
-    const customerConfirmedTime = /(\d+日.*\d+時|\d+時.*からお願い|(\d+日|\d+時|明日|あした|今日|本日).{0,20}(からお願いします|でお願いします)|時からお願い|時にします|時で大丈夫|でいきます|で行きます|でお伺い)/.test(lastCustomer.text);
-    if (customerConfirmedTime) return true;
-
-    // 質問形（日付のみ）の場合は待ち合わせではなく内覧日指定ありへ誘導するためここでreturn false
-    const isAskingForm = /(いけますか|いけます？|どうですか|大丈夫ですか|可能ですか|できますか|はどう|ですか[？?]|いけそう|いかがでしょ)/.test(lastCustomer.text);
-    if (isAskingForm) return false;
-
-    // パターン2: お客様のメッセージが日付を含む + 直近スタッフ5件のいずれかが内覧日程を送った
-    const customerHasDate = /\d+[\/月]\d+|(\d+日)|(日曜|月曜|火曜|水曜|木曜|金曜|土曜)|[（(][日月火水木金土][）)]/.test(lastCustomer.text);
-    if (!customerHasDate) return false;
-    const recentStaff = reversed.filter((m: Message) => m.sender === "staff").slice(0, 5);
-    return recentStaff.some(m =>
-      m.text?.includes("ご案内させて頂きます") ||
-      m.text?.includes("ご案内出来ます") ||
-      m.text?.includes("ご都合如何") ||
-      m.text?.includes("ご内覧") ||
-      /\d+\/\d+.*\d+\/\d+/.test(m.text || "") ||
-      /\d+日.*\d+日/.test(m.text || "")
-    );
-  }, [selectedConversation, activeAixFlow]);
-
-  // お客様が特定日を質問形で提案 → 内覧日指定ありで時間調整へ誘導
+  // お客様が特定日を質問形で提案 → AIX-METAが viewing_invite を指示している場合のみ
   const guideToViewingSpecific = useMemo(() => {
-    if (activeAixFlow) return false;
-    const msgs: Message[] = selectedConversation.messages || [];
-    const reversed = [...msgs].reverse();
-    const lastCustomer = reversed.find((m: Message) => m.sender === "customer");
-    if (!lastCustomer?.text) return false;
-    // 日付を含む質問形メッセージ
-    const customerHasDate = /\d+[\/月]\d+|(\d+日)|(日曜|月曜|火曜|水曜|木曜|金曜|土曜)|[（(][日月火水木金土][）)]/.test(lastCustomer.text);
-    const isAskingForm = /(いけますか|いけます？|どうですか|大丈夫ですか|可能ですか|できますか|はどう|ですか[？?]|いけそう|いかがでしょ)/.test(lastCustomer.text);
-    if (!customerHasDate || !isAskingForm) return false;
-    // スタッフが内覧日程を送った後の文脈
-    const recentStaff = reversed.filter((m: Message) => m.sender === "staff").slice(0, 5);
-    return recentStaff.some(m =>
-      m.text?.includes("ご案内") || m.text?.includes("ご内覧") || m.text?.includes("ご都合")
-    );
-  }, [selectedConversation, activeAixFlow]);
+    return !activeAixFlow && selectedConversation.suggestedAixMeta?.action === "viewing_invite";
+  }, [selectedConversation.suggestedAixMeta, activeAixFlow]);
 
-  // 新着物件待ちパターン: スタッフが「新着で次第お送り」等を言っている → 物件が来たらAIX物件オススメへ
+  // 新着物件待ちパターン: AIX-METAが property_send を指示している場合のみ
   const guideToNewListingRecommend = useMemo(() => {
-    if (activeAixFlow) return false;
-    const msgs: Message[] = selectedConversation.messages || [];
-    const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-    if (ns !== "proposing") return false;
-    // 直近スタッフ3件に「新着・新しい物件・募集が出次第」＋「お送り・連絡・ご案内」が含まれる
-    const reversed = [...msgs].reverse();
-    const recentStaff = reversed.filter((m: Message) => m.sender === "staff").slice(0, 3);
-    const hasNewListingPromise = recentStaff.some(m => {
-      const t = m.text || "";
-      return (t.includes("新着") || t.includes("新しいお部屋") || t.includes("新規募集") || t.includes("募集が出") || t.includes("新規物件")) &&
-        (t.includes("お送り") || t.includes("ご連絡") || t.includes("ご案内") || t.includes("次第"));
-    });
-    if (!hasNewListingPromise) return false;
-    // お客様の最新メッセージに内覧・申込・日程確定等の明示的意図があれば P3.4 を非表示（P3.5/P3.6 に引き継ぐ）
-    const lastMsg = reversed[0];
-    if (lastMsg?.sender === "customer" &&
-        /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|見積|決めます|明日|あした|今日|本日|[0-9０-９]+時|でお願い|でいかが/.test(lastMsg.text || "")) return false;
-    return true;
-  }, [selectedConversation, activeAixFlow]);
+    return !activeAixFlow && selectedConversation.suggestedAixMeta?.action === "property_send";
+  }, [selectedConversation.suggestedAixMeta, activeAixFlow]);
 
   // 見積書送る誘導: お客様が見積依頼 or スタッフが「作成次第送る」と約束した後、お客様の返信が来ている状態
   const guideToEstimate = useMemo(() => {
@@ -7514,10 +7458,9 @@ export default function Home() {
                 </div>
               );
 
-              // P3.5: お客様が物件に興味を示した → AIX 内覧へ！（スタッフ返信済みなら出さない）
+              // P3.5: AIX-METAが viewing_invite を指示 → AIX 内覧へ！
               if (
-                customerIsLastSender &&
-                /気になり|気になる|気になっ|興味あり|興味が|見てみたい|見たい|いいですね|よさそう|いいな|行ってみたい|行きたい|ぜひ見|見せて|内覧したい|気に入|行ってみ|見てみ|見に行き|みに行き|みにいき/.test(lastCustomerText) &&
+                selectedConversation.suggestedAixMeta?.action === "viewing_invite" &&
                 !suggestViewingTemplateMap[id] &&
                 !dismissedViewingInviteIds.has(id)
               ) return (
@@ -7531,11 +7474,9 @@ export default function Home() {
                 </div>
               );
 
-              // P3.6: お客様が内覧日程を確定した（「明日」「今日」+時刻形式）→ AIX 待ち合わせ！
+              // P3.6: AIX-METAが meeting_place を指示 → AIX 待ち合わせ！
               if (
-                /明日|あした|今日|本日/.test(lastCustomerText) &&
-                /[0-9０-９]+時|午前|午後|AM|PM/.test(lastCustomerText) &&
-                /お願い|でお願い|で大丈夫|伺います|行きます|行けます|確定/.test(lastCustomerText) &&
+                selectedConversation.suggestedAixMeta?.action === "meeting_place" &&
                 !dismissedMeetingPlaceIds.has(id)
               ) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
@@ -7551,10 +7492,9 @@ export default function Home() {
                 </div>
               );
 
-              // P4.5: お客様が他社と比較中 → 割引見積で差別化！（スタッフ返信済みなら出さない）
+              // P4.5: AIX-METAが estimate_sheet を指示 → 割引見積で差別化！
               if (
-                customerIsLastSender &&
-                /他にも.*物件|物件.*他にも|比較.*物件|物件.*比較|他でも.*見|他.*検討|検討させてください|一度検討|比較検討|他社|他の会社/.test(lastCustomerText) &&
+                selectedConversation.suggestedAixMeta?.action === "estimate_sheet" &&
                 !dismissedEstimateSheetIds.has(id)
               ) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-500 bg-orange-50 px-3 py-2 flex items-center gap-2">
@@ -7658,8 +7598,8 @@ export default function Home() {
                 </div>
               );
 
-              // P6: 物件ピックアップした（タスクあり or サジェスト or フォーマット受信）
-              const isCustomerFormatMsg = (lastCustomerText.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length >= 2;
+              // P6: 物件ピックアップした（タスクあり or サジェスト）
+              const isCustomerFormatMsg = false;
               if ((suggestPropertySendMap[id] || hasPropertySendTask || isCustomerFormatMsg) && !suggest2ndHandMap[id] && !dismissedPropertySendIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-teal-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件ピックアップした</span>
