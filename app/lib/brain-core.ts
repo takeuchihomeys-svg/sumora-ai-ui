@@ -971,6 +971,9 @@ ${history}`;
     // Quality gate: suppress AIX suggestions with < 30% acceptance rate over 10+ samples.
     // FIX(Fable5 #3): 自経路の採択率キー（:brain 等）を読む。旧実装は :analysis_step1 固定で
     // 他コンポーネントの統計をゲートに使っており、脳の自己修正が一度も機能していなかった。
+    // 採択率は後段の enforcement_level 降格ゲートでも再利用するため外側スコープに保持する
+    let acceptRateOcc = 0;
+    let acceptRateConf = 1;
     if (finalAix) {
       const { data: rateData } = await supabase
         .from("trigger_action_rules")
@@ -979,9 +982,9 @@ ${history}`;
         .eq("action_type", finalAix)
         .maybeSingle();
       if (rateData) {
-        const occ = (rateData.total_occurrence as number | null) ?? 0;
-        const conf = (rateData.confidence as number | null) ?? 1;
-        if (occ >= 10 && conf < 0.3) finalAix = null;
+        acceptRateOcc = (rateData.total_occurrence as number | null) ?? 0;
+        acceptRateConf = (rateData.confidence as number | null) ?? 1;
+        if (acceptRateOcc >= 10 && acceptRateConf < 0.3) finalAix = null;
       }
     }
     // B2(Fable5): reply_mode のフェイルクローズ強制（コード側で決定的に上書き — プロンプト任せにしない）
@@ -1038,11 +1041,39 @@ ${history}`;
       }
     }
 
+    // 低採択率アクション降格ゲート: 採択率35%未満（10件以上の実績）のアクションは
+    // required → recommended へ自動降格する（例: application_push 30% / mgmt_check_submode 0%）。
+    // SOURCE_ACCEPT_RATE:{action}:{source} の取得値（上のゲートで保持済み）を再利用し追加クエリなし。
+    // 30%未満は上の完全抑制ゲートで finalAix=null 済みのため、実効帯域は 30〜35%。
+    // 例外: meeting_place は内覧フェーズが scheduling / confirmed_future 相当の間は降格しない
+    // （日程調整中〜確定済み未来の待ち合わせ案内は文脈上必須のため）。
+    let enforcementLevel: "required" | "recommended" = isUrgent ? "required" : "recommended";
+    if (finalAix && enforcementLevel === "required" && acceptRateOcc >= 10 && acceptRateConf < 0.35) {
+      let protectedMeetingPlace = false;
+      if (finalAix === "meeting_place") {
+        // analyzeAndSaveBrainMeta の viewingPhaseDetail 分岐と同型の決定論でフェーズを導出
+        const nowJstGate = new Date(Date.now() + 9 * 3600 * 1000);
+        const todayJstGate = `${nowJstGate.getUTCFullYear()}-${String(nowJstGate.getUTCMonth() + 1).padStart(2, "0")}-${String(nowJstGate.getUTCDate()).padStart(2, "0")}`;
+        const upcomingViewing = viewings
+          .filter(v => (v.status === "scheduled" || v.status == null) && v.viewing_date >= todayJstGate)
+          .sort((a, b) => a.viewing_date.localeCompare(b.viewing_date))[0] ?? null;
+        const hasPastViewing = viewings.some(
+          v => v.status === "done" || (v.status !== "cancelled" && v.viewing_date < todayJstGate)
+        );
+        const viewingPhaseGate: "today" | "confirmed_future" | "after_viewing" | "scheduling" =
+          upcomingViewing
+            ? (upcomingViewing.viewing_date === todayJstGate ? "today" : "confirmed_future")
+            : (hasPastViewing ? "after_viewing" : "scheduling");
+        protectedMeetingPlace = viewingPhaseGate === "scheduling" || viewingPhaseGate === "confirmed_future";
+      }
+      if (!protectedMeetingPlace) enforcementLevel = "recommended";
+    }
+
     return {
       action: finalAix ?? "",
       note: finalAix ? AIX_BRAIN_NOTES[finalAix] : (parsed.action ?? ""),
       source,
-      enforcement_level: isUrgent ? "required" : "recommended",
+      enforcement_level: enforcementLevel,
       closing_strategy: parsed.closing_strategy || undefined,
       template_hint: templateHint,
       next_steps: Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,

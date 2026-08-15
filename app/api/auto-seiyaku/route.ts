@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { writeBackClosedOutcome } from "@/app/lib/analyze-closed-conversation";
 
 export const maxDuration = 300;
 
@@ -113,6 +114,11 @@ async function runAutoSeiyaku() {
             to_status: "closed_won",
             trigger: "cron",
           });
+
+          // 学習ループのクローズ: closing_strategy_logs.outcome / winning_pattern_logs.actual_outcome
+          // へ成約結果を書き戻す。cron/analyze-closed-conversations は closed_analysis_{id} が
+          // 既に存在する会話（applying時に分析済み等）を候補から除外するため、ここで直接実行する。
+          await writeBackClosedOutcome(conv.id, "closed_won");
         }
 
         updated += 1;

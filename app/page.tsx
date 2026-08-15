@@ -94,6 +94,7 @@ async function sha1Hex(text: string): Promise<string> {
 function stripInternalTagsOrNull(text: string | null | undefined): string | null {
   if (!text) return null;
   if (text === "[AIX誘導中]") return null; // sentinel: テキストボックスに絶対に表示しない
+  if (text === "__SHOWN__") return null; // sentinel: 表示済みドラフト（orphaned-rescue cronによる再生成防止）
   return stripInternalTags(text) || null;
 }
 
@@ -2603,7 +2604,7 @@ export default function Home() {
       const polledDraft = stripInternalTagsOrNull(convRow?.ai_draft ?? null);
       if (polledDraft) {
         // 生成済み（Realtime取りこぼし含む）→ セットしてDBをクリア
-        supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
+        supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
         setConversations((prev) =>
           prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: polledDraft, suggestedAixMeta: (convRow?.suggested_aix_meta as { action: string; note: string } | null) ?? null } : c)
         );
@@ -2656,7 +2657,7 @@ export default function Home() {
             .from("conversations").select("ai_draft, suggested_aix_meta").eq("id", convIdForGen).single();
           const existingDraft = stripInternalTagsOrNull(convRow?.ai_draft ?? null);
           if (existingDraft && selectedIdRef.current === convIdForGen) {
-            supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
+            supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
             setConversations((prev) =>
               prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: existingDraft, suggestedAixMeta: (convRow?.suggested_aix_meta as { action: string; note: string } | null) ?? null } : c)
             );
@@ -2723,7 +2724,7 @@ export default function Home() {
       setConversations((prev) =>
         prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null, suggestedAixMeta: null } : c)
       );
-      supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
+      supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
     } else {
       setReplyDraft("");
       aiDraftRef.current = "";
@@ -2780,7 +2781,7 @@ export default function Home() {
     setConversations((prev) =>
       prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null, suggestedAixMeta: null } : c)
     );
-    supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
+    supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversation.aiDraft]);
 
@@ -7875,7 +7876,7 @@ export default function Home() {
                       if (selectedConversation.suggestedAixMeta) setSuggestedAix(selectedConversation.suggestedAixMeta);
                       setAiDraftExpanded(false);
                       setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null, suggestedAixMeta: null } : c));
-                      supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
+                      supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
                       textareaRef.current?.focus();
                     }}
                     className="shrink-0 rounded-xl bg-blue-500 px-2.5 py-1 text-[11px] font-bold text-white active:bg-blue-600"

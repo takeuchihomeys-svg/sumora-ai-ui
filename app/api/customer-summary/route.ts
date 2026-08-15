@@ -197,10 +197,11 @@ async function fetchWinningPatterns(
   if (results.length > 0) return results;
 
   // フォールバック: 従来通り最新5件（[成約分析]/[転換点] タイトルも対象に含める）
+  // L139のベクトル検索側と同様に applying_pattern も対象に含める
   const { data } = await supabase
     .from("ai_reply_knowledge")
     .select("content")
-    .eq("category", "pattern")
+    .in("category", ["pattern", "applying_pattern"])
     .or("title.ilike.成約パターン_%,title.ilike.[成約分析]%,title.ilike.[転換点]%")
     .order("created_at", { ascending: false })
     .limit(5);

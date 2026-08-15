@@ -71,11 +71,52 @@ function formatMessages(msgs: Array<{ sender: string; text: string }>): string {
   return `${full.slice(0, 3000)}\n...(中略)...\n${full.slice(-5000)}`;
 }
 
+// ── 成果の書き戻し（学習ループのクローズ）──────────────────────────────
+// closed_won / closed_lost 確定時に、その会話で記録済みの未確定行（NULL）へ結果を書き戻す:
+//   - closing_strategy_logs.outcome: 'contract'（成約）/ 'lost'（失注）+ outcome_recorded_at
+//   - winning_pattern_logs.actual_outcome: 'closed_won' / 'closed_lost' + was_correct（答え合わせ）
+// NULL行のみ更新するため冪等（何度呼んでも安全）。
+// 呼び出し元: analyzeClosedConversation（手動ステータス変更 + 取りこぼしcron）/ auto-seiyaku cron。
+export async function writeBackClosedOutcome(
+  conversationId: string,
+  outcome: ClosedOutcome
+): Promise<void> {
+  if (outcome !== "closed_won" && outcome !== "closed_lost") return;
+  const isWon = outcome === "closed_won";
+
+  // closing_strategy_logs: outcome 未確定の戦略提案行に成約/失注結果を記録
+  const { error: csErr } = await supabase
+    .from("closing_strategy_logs")
+    .update({
+      outcome: isWon ? "contract" : "lost",
+      outcome_recorded_at: new Date().toISOString(),
+    })
+    .eq("conversation_id", conversationId)
+    .is("outcome", null);
+  if (csErr) console.warn("[closed-outcome] closing_strategy_logs 書き戻し失敗:", csErr.message);
+
+  // winning_pattern_logs: customer-summary の予測行（actual_outcome=NULL）に答え合わせを記録
+  // ※ 値は既存データ（analyze-closed の確定insert）と同じステータス文字列に揃える
+  const { error: wpErr } = await supabase
+    .from("winning_pattern_logs")
+    .update({
+      actual_outcome: outcome,
+      was_correct: isWon,
+    })
+    .eq("conversation_id", conversationId)
+    .is("actual_outcome", null);
+  if (wpErr) console.warn("[closed-outcome] winning_pattern_logs 書き戻し失敗:", wpErr.message);
+}
+
 export async function analyzeClosedConversation(
   conversationId: string,
   outcome: ClosedOutcome
 ): Promise<ClosedAnalysisResult> {
   const dedupeKey = `closed_analysis_${conversationId}`;
+
+  // 0. 成果の書き戻し（学習ループのクローズ）
+  // 分析がスキップ/失敗しても outcome の書き戻しは必ず実行する（冪等なので再実行も安全）
+  await writeBackClosedOutcome(conversationId, outcome);
 
   // 1. 重複防止チェック（同一会話の再分析防止）
   const { data: existing } = await supabase
