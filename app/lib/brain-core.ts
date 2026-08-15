@@ -142,7 +142,7 @@ export async function analyzeConversation(
   // Fetch last 30 messages and customer conditions in parallel
   // H5(Fable5): limit 15→30 — 会話あたりメッセージ数の中央値は25件。checkpoints が0行（書き込み側未実装）の間、
   // limit 15 だと中央値会話の前半を完全に忘れるため引き上げ。count: "exact" は総メッセージ数のプロンプト注入用（B3）
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult] = await Promise.all([
     supabase
       .from("messages")
       .select("sender, text, created_at, line_message_id, is_aix_generated", { count: "exact" })
@@ -281,6 +281,13 @@ export async function analyzeConversation(
       .select("viewing_date, viewing_time, status")
       .eq("conversation_id", conversationId)
       .order("viewing_date", { ascending: false })
+      .limit(3),
+    // viewing_history（is_primary=true）を優先参照 — viewingsの後継テーブル
+    supabase
+      .from("viewing_history")
+      .select("scheduled_date, scheduled_time, status")
+      .eq("conversation_id", conversationId)
+      .order("scheduled_date", { ascending: false })
       .limit(3),
   ]);
 
@@ -512,7 +519,12 @@ export async function analyzeConversation(
     : "";
 
   type Viewing = { viewing_date: string; viewing_time: string | null; status: string | null };
-  const viewings = (viewingsResult.data ?? []) as Viewing[];
+  // viewing_history（is_primaryを含む全件）を優先・存在しなければviewingsにフォールバック
+  type ViewingHistoryRow = { scheduled_date: string; scheduled_time: string | null; status: string | null };
+  const viewingHistoryRows = (viewingHistoryResult.data ?? []) as ViewingHistoryRow[];
+  const viewings: Viewing[] = viewingHistoryRows.length > 0
+    ? viewingHistoryRows.map(h => ({ viewing_date: h.scheduled_date, viewing_time: h.scheduled_time, status: h.status }))
+    : (viewingsResult.data ?? []) as Viewing[];
   const viewingStatusLabel: Record<string, string> = { scheduled: "予定", done: "完了", cancelled: "キャンセル" };
   const viewingsText = viewings.length > 0
     ? `\n【内覧履歴・予定】${viewings.map((v) => `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`).join(" / ")}`
@@ -877,14 +889,22 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
         let isHot = false;
 
         if (newPhase === "viewing") {
-          // viewings テーブルから最新10件を取得（同一会話に複数viewingsがある場合も対応）
-          const { data: viewingsRaw } = await supabase
-            .from("viewings")
-            .select("viewing_date, viewing_time, status")
+          // viewing_history を優先取得・存在しなければviewingsにフォールバック（後方互換）
+          const { data: historyRaw } = await supabase
+            .from("viewing_history")
+            .select("scheduled_date, scheduled_time, status")
             .eq("conversation_id", conversationId)
-            .order("viewing_date", { ascending: false })
+            .order("scheduled_date", { ascending: false })
             .limit(10);
-          const allViewings = (viewingsRaw ?? []) as ViewingRow[];
+          const allViewings: ViewingRow[] = historyRaw && historyRaw.length > 0
+            ? historyRaw.map(h => ({ viewing_date: h.scheduled_date, viewing_time: h.scheduled_time, status: h.status }))
+            : await supabase
+                .from("viewings")
+                .select("viewing_date, viewing_time, status")
+                .eq("conversation_id", conversationId)
+                .order("viewing_date", { ascending: false })
+                .limit(10)
+                .then(r => (r.data ?? []) as ViewingRow[]);
 
           // JST 今日の日付を YYYY-MM-DD で取得（UTC+9 を手動計算）
           const nowJst = new Date(Date.now() + 9 * 3600 * 1000);

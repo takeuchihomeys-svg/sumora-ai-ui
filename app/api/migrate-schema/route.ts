@@ -1933,6 +1933,29 @@ ALTER TABLE ai_reply_knowledge ADD CONSTRAINT ai_reply_knowledge_category_check
 -- conversation_direction: 会話の方向性・フェーズ情報（JSONB）（2026-08-14追加）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS conversation_direction jsonb DEFAULT NULL;
 
+-- viewing_history テーブル（内覧履歴・複数内覧対応・is_primaryで最新管理）（2026-08-15追加）
+-- viewingsテーブルの後継。scheduled_date（予定日）/ actual_date（実際の内覧日）/ is_primary（最新フラグ）を持つ
+CREATE TABLE IF NOT EXISTS viewing_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+  customer_name TEXT,
+  scheduled_date DATE NOT NULL,
+  scheduled_time TEXT,
+  actual_date DATE,
+  status TEXT DEFAULT 'scheduled',
+  is_primary BOOLEAN DEFAULT FALSE,
+  pre_announce_sent BOOLEAN DEFAULT FALSE,
+  post_announce_sent BOOLEAN DEFAULT FALSE,
+  cheer_sent BOOLEAN DEFAULT FALSE,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_viewing_history_conversation ON viewing_history(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_viewing_history_scheduled_date ON viewing_history(scheduled_date);
+CREATE INDEX IF NOT EXISTS idx_viewing_history_is_primary ON viewing_history(conversation_id) WHERE is_primary = TRUE;
+ALTER TABLE viewing_history DISABLE ROW LEVEL SECURITY;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
