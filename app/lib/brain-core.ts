@@ -872,17 +872,18 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
         // suggested_aix_button / viewing_scheduled_at / viewing_phase_detail を動的に設定する
         type ViewingRow = { viewing_date: string; viewing_time: string | null; status: string | null };
         let viewingScheduledAt: string | null = null;
-        let viewingPhaseDetail: "before_viewing" | "after_viewing" | "scheduling" | "confirmed" | null = null;
+        let viewingPhaseDetail: "today" | "after_viewing" | "scheduling" | "confirmed_future" | null = null;
         let suggAixButton: string;
+        let isHot = false;
 
         if (newPhase === "viewing") {
-          // viewings テーブルから最新3件を取得（新しい順）
+          // viewings テーブルから最新10件を取得（同一会話に複数viewingsがある場合も対応）
           const { data: viewingsRaw } = await supabase
             .from("viewings")
             .select("viewing_date, viewing_time, status")
             .eq("conversation_id", conversationId)
             .order("viewing_date", { ascending: false })
-            .limit(3);
+            .limit(10);
           const allViewings = (viewingsRaw ?? []) as ViewingRow[];
 
           // JST 今日の日付を YYYY-MM-DD で取得（UTC+9 を手動計算）
@@ -906,11 +907,12 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
             viewingScheduledAt = vTime ? `${vDate}T${vTime}:00+09:00` : `${vDate}T00:00:00+09:00`;
             if (vDate === todayJst) {
               // 内覧当日 → greeting_viewing（当日挨拶）
-              viewingPhaseDetail = "before_viewing";
+              viewingPhaseDetail = "today";
               suggAixButton = "greeting_viewing";
+              isHot = true;
             } else {
               // 内覧日確定・未来 → meeting_place（待ち合わせ案内）
-              viewingPhaseDetail = "confirmed";
+              viewingPhaseDetail = "confirmed_future";
               suggAixButton = "meeting_place";
             }
           } else if (pastViewing) {
@@ -924,6 +926,26 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
             // 内覧日未確定 → viewing_invite（日程調整）
             viewingPhaseDetail = "scheduling";
             suggAixButton = "viewing_invite";
+          }
+
+          // calendar_events から今日この会話に紐づく内覧予定を確認 → is_hot 補完
+          // viewings テーブルで today が検出されなかった場合でも calendar 側に当日予定があれば is_hot = true
+          if (!isHot) {
+            try {
+              const todayStartUTC = new Date(`${todayJst}T00:00:00+09:00`).toISOString();
+              const todayEndUTC = new Date(`${todayJst}T23:59:59+09:00`).toISOString();
+              const { data: calToday } = await supabase
+                .from("calendar_events")
+                .select("id")
+                .eq("conversation_id", conversationId)
+                .eq("event_type", "viewing")
+                .gte("start_at", todayStartUTC)
+                .lte("start_at", todayEndUTC)
+                .limit(1);
+              if ((calToday?.length ?? 0) > 0) isHot = true;
+            } catch {
+              // calendar_events が取得できなくても処理を続行
+            }
           }
         } else if (newPhase === "applying") {
           suggAixButton = "application_push";
@@ -958,6 +980,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
           suggested_aix_button: suggAixButton,
           viewing_scheduled_at: viewingScheduledAt,
           viewing_phase_detail: viewingPhaseDetail,
+          is_hot: isHot,
           matched_at: (existingDir?.matched_at as string | undefined) ?? new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
