@@ -6,7 +6,7 @@ import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000, maxRetries: 1 });
 
@@ -849,11 +849,13 @@ export async function POST(req: NextRequest) {
   const runLogId = await startCronLog("analyze-diffs");
   resetAiQuestionGuard(); // ウォームスタートで前回実行の起票カウントが残らないようリセット
   try {
-  // ?limit=N で件数を指定可能（デフォルト10・最大200）
-  // maxDuration=60秒 / 1件あたりLLM最大3回（2〜6秒）→ 10件＋40秒タイムガードで後半処理の時間を確保
+  // ?limit=N で件数を指定可能（デフォルト4・最大200）
+  // 1件あたりLLM最大3回（各最悪30秒×リトライ）＋前処理が無計測のため、デフォルトを小さくして
+  // タイムアウト起因の強制kill（diff_analyzed_at が処理済みのまま残る・cron_run_logs が ok=null）を防ぐ。
+  // ※ limit はメインループ（line_reply）と⑥AIX第2パス（aix_action）の両方に適用される点に注意
   const url = new URL(req.url);
   const limitParam = url.searchParams.get("limit");
-  const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 10, 200) : 10;
+  const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 4, 200) : 4;
   const mode = url.searchParams.get("mode"); // "maintain" = メンテナンスのみ・差分学習ループをスキップ
 
   // 未処理の差分を古い順（created_at ASC）で取得。
@@ -1253,7 +1255,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 回帰センチネル: メインの差分学習ループと並列実行 ──
-  // LLM不使用（DBクエリ+ローカルテキスト比較のみ）のため maxDuration=60 への影響は軽微
+  // LLM不使用（DBクエリ+ローカルテキスト比較のみ）のため maxDuration への影響は軽微
   const sentinelPromise = detectRepeatedDeletions().catch((e) => {
     console.error("[analyze-diffs] 回帰センチネル失敗:", e);
     return { detected: 0, demoted: 0 };
@@ -1281,6 +1283,10 @@ export async function POST(req: NextRequest) {
       console.warn(`[analyze-diffs] 40秒タイムガード発動 — ${processed}/${examples.length}件で打ち切り（残りは次回実行で処理）`);
       break;
     }
+    // 1件の予期しないエラー（embedding生成・upsert・DB例外等）でメインループ全体が
+    // 中断されないよう try-catch で囲む。エラー時はクレーム済みロック（diff_analyzed_at）を
+    // 解放して次回cron実行でリトライさせる。
+    try {
     const { id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle } = ex as {
       id: string;
       customer_message: string;
@@ -1811,6 +1817,17 @@ export async function POST(req: NextRequest) {
 
     await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
     processed++;
+    } catch (loopErr) {
+      // 個別exampleの予期しない例外はログしてスキップ（他のexampleの処理は継続する）
+      const failedId = (ex as { id?: string }).id;
+      console.error(`[analyze-diffs] メインループ例外 (example id=${failedId ?? "unknown"}) — スキップして続行:`, loopErr);
+      // クレーム済みの楽観的ロックを解放して次回リトライ対象に戻す
+      if (failedId) {
+        try {
+          await supabase.from("ai_reply_examples").update({ diff_analyzed_at: null }).eq("id", failedId);
+        } catch { /* ロック解放失敗時は診断クエリ（未学習検知）に委ねる */ }
+      }
+    }
   }
 
   // ── ⑥ AIX編集差分の第2パス: entry_source='aix_action' の修正差分を学習（2026-08追加）──
@@ -1828,6 +1845,8 @@ export async function POST(req: NextRequest) {
       console.warn(`[analyze-diffs] ⑥AIX差分: 45秒タイムガード発動 — ${aixProcessed}/${(aixExamples ?? []).length}件で打ち切り（残りは次回実行で処理）`);
       break;
     }
+    // メインループと同様、1件の予期しない例外で第2パス全体を中断しない
+    try {
     const { id, customer_message, ai_draft, sent_reply, conversation_state, aix_action, is_starred } = ex as {
       id: string;
       customer_message: string;
@@ -1940,6 +1959,17 @@ export async function POST(req: NextRequest) {
 
     await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
     aixProcessed++;
+    } catch (aixLoopErr) {
+      // 個別exampleの予期しない例外はログしてスキップ（他のexampleの処理は継続する）
+      const failedAixId = (ex as { id?: string }).id;
+      console.error(`[analyze-diffs] ⑥AIX差分ループ例外 (example id=${failedAixId ?? "unknown"}) — スキップして続行:`, aixLoopErr);
+      // クレーム済みの楽観的ロックを解放して次回リトライ対象に戻す
+      if (failedAixId) {
+        try {
+          await supabase.from("ai_reply_examples").update({ diff_analyzed_at: null }).eq("id", failedAixId);
+        } catch { /* ロック解放失敗時は診断クエリ（未学習検知）に委ねる */ }
+      }
+    }
   }
 
   // ── ポジティブ強化 A: was_ai_used=true（AIそのまま送信）→ コンポーネントルールをブースト ──

@@ -203,6 +203,10 @@
     {
       "path": "/api/cron/viewing-status-update",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/morning-report",
+      "schedule": "45 0 * * *"
     }
   ]
 }
