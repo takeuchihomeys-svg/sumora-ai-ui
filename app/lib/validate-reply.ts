@@ -1,3 +1,86 @@
+// ─── 顧客名の妥当性判定（LINE表示名を実名として使わないためのゲート）───────────
+// LINEの表示名は「H!tom!.M」「ゆき♡」「taro_123」のように記号・数字・絵文字を含むことが多く、
+// これをそのまま「〇〇さん」と呼びかけると実名（Hitomi 等）と食い違い、お客様の信頼を損なう。
+// 実名として許容する文字は ひらがな/カタカナ/漢字/英字/長音符/々/空白/中黒 のみ。
+// これ以外の文字（記号・数字・絵文字）を1文字でも含む名前は「LINE表示名」とみなして採用しない。
+const NAME_ALLOWED_CHARS_RE = /^[ぁ-んゝゞァ-ヴヽヾー々〆一-鿿A-Za-z\s・]+$/;
+// 名前ではないプレースホルダー（LINEプロフィール取得失敗時・UIのダミー値）
+const NAME_PLACEHOLDERS = new Set([
+  "名称未設定", "未設定", "お客様", "名無し", "名無しさん", "ゲスト",
+  "guest", "Guest", "unknown", "Unknown", "user", "User", "LINE", "line",
+]);
+
+// 実名として使える形か（true のときのみ「〇〇さん」の呼びかけに使ってよい）
+export function isPlausiblePersonName(raw?: string | null): boolean {
+  const n = (raw ?? "").trim();
+  if (!n) return false;
+  if (n.length > 20) return false;
+  if (NAME_PLACEHOLDERS.has(n)) return false;
+  // 1文字は頭文字（イニシャル）の可能性が高いので漢字1文字（「関」さん等）のみ許可
+  if (n.length === 1 && !/^[一-鿿々]$/.test(n)) return false;
+  if (!NAME_ALLOWED_CHARS_RE.test(n)) return false;
+  // 「姓 名」までは許可。区切りが3つ以上ある文字列は名前ではなく文断片とみなす
+  const segments = n.split(/[\s・]+/).filter(Boolean);
+  return segments.length >= 1 && segments.length <= 3;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const HONORIFIC_RE_SRC = "(?:さん|サン|様|さま)";
+
+// ─── 顧客名の誤り（LINE表示名の混入）を決定論的に修正 ────────────────────────
+// final-check（Haiku）は FABRICATED_NAME を検出できるが、接地修正は
+// [CHECKPOINT]/[CONDITIONS]/[RULES] に無い事実で置換できない仕様のため名前を直せない
+// （引用検証で修正全体が破棄される）。名前はDBの customer_name が唯一の正解なので、
+// LLMに任せず、ここでコード側が確定的に置換・除去する。
+//  ① 本文に出た LINE表示名（実名の形でないもの）→ 正しい名前に置換／名前不明なら呼びかけごと削除
+//  ② 行頭の呼びかけ「〇〇さん」の〇〇が実名の形でない → 同上
+// 実名の形をした別名（第三者の「オーナーさん」「管理会社さん」等を含む）は一切触らない。
+export function enforceCustomerName(
+  text: string,
+  opts: { customerName?: string | null; lineDisplayName?: string | null },
+): { cleaned: string; fixes: string[] } {
+  const canonicalRaw = (opts.customerName ?? "").trim();
+  const canonical = isPlausiblePersonName(canonicalRaw) ? canonicalRaw : "";
+  const display = (opts.lineDisplayName ?? "").trim();
+  const fixes: string[] = [];
+  let cleaned = text;
+
+  // ① LINE表示名がそのまま本文に出ている（「H!tom!.Mさん、お世話に…」等）
+  if (display && display !== canonical && !isPlausiblePersonName(display)) {
+    const esc = escapeRegExp(display);
+    const addressRe = new RegExp(`${esc}\\s*${HONORIFIC_RE_SRC}([、,]?\\s*)`, "g");
+    if (addressRe.test(cleaned)) {
+      cleaned = cleaned.replace(
+        new RegExp(`${esc}\\s*${HONORIFIC_RE_SRC}([、,]?\\s*)`, "g"),
+        (_m, tail: string) => (canonical ? `${canonical}さん${tail}` : ""),
+      );
+      fixes.push(`LINE表示名の呼びかけ「${display}さん」→「${canonical ? `${canonical}さん` : "(削除)"}」`);
+    }
+    if (cleaned.includes(display)) {
+      cleaned = cleaned.split(display).join(canonical);
+      fixes.push(`本文中のLINE表示名「${display}」を除去`);
+    }
+  }
+
+  // ② 行頭の呼びかけ「〇〇さん」が実名の形でない（表示名の変形・崩れをAIが書いた場合）
+  const lineHeadAddressRe = /(^|\n)([\s「]*)([^\s、。！!？?\n【】「」（）()・]{1,20})\s*(?:さん|サン|様|さま)([、,]?[ 　]*)/g;
+  cleaned = cleaned.replace(lineHeadAddressRe, (m, br: string, lead: string, base: string, tail: string) => {
+    if (base === canonical) return m;
+    // 実名の形をしているものは第三者名の可能性もあるため一切触らない（誤置換の防止）
+    if (isPlausiblePersonName(base)) return m;
+    // テンプレの未置換プレースホルダー（「〇〇さん」「アカウント名さん」「[名前]さん」等）は
+    // detectPlaceholders の検出対象なのでここでは潰さない（潰すと未置換の警告が消えてしまう）
+    if (/[〇○＿_{}[\]]/.test(base) || base === "アカウント名") return m;
+    fixes.push(`不正な呼びかけ「${base}さん」→「${canonical ? `${canonical}さん` : "(削除)"}」`);
+    return canonical ? `${br}${lead}${canonical}さん${tail}` : `${br}${lead}`;
+  });
+
+  return { cleaned, fixes };
+}
+
 // 送信前の未置換プレースホルダーを検出（送信ブロック用）
 const PLACEHOLDER_ALLOWLIST = new Set(["[画像]", "[動画]", "[スタンプ]"]);
 
@@ -136,13 +219,27 @@ export function verifyAmountsAgainstSource(text: string, sourceText: string): { 
   return { cleaned, unmatched };
 }
 
-export function validateAndClean(text: string, opts?: { aixGates?: boolean }): { cleaned: string; issues: string[] } {
+export function validateAndClean(
+  text: string,
+  opts?: { aixGates?: boolean; customerName?: string | null; lineDisplayName?: string | null },
+): { cleaned: string; issues: string[] } {
   const issues: string[] = []
   let cleaned = text
   // **太字** → 太字なしに除去
   if (/\*\*[^*]+\*\*/.test(cleaned)) {
     issues.push("マークダウン太字(**)")
     cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, "$1")
+  }
+  // 顧客名の誤り（LINE表示名の混入）を決定論的に修正（さんさん畳み込みより先に実行する）
+  if (opts?.customerName != null || opts?.lineDisplayName != null) {
+    const { cleaned: named, fixes } = enforceCustomerName(cleaned, {
+      customerName: opts.customerName,
+      lineDisplayName: opts.lineDisplayName,
+    })
+    if (fixes.length > 0) {
+      issues.push(...fixes.map((f) => "顧客名修正: " + f))
+      cleaned = named
+    }
   }
   // さんさん → さん
   if (/さんさん/.test(cleaned)) {

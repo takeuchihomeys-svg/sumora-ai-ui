@@ -12,7 +12,12 @@ import {
   CURATED_REPLY_RULES,
   STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
-import { validateAndClean, verifyAmountsAgainstSource } from "@/app/lib/validate-reply";
+import {
+  validateAndClean,
+  verifyAmountsAgainstSource,
+  enforceCustomerName,
+  isPlausiblePersonName,
+} from "@/app/lib/validate-reply";
 import { runFinalCheckWithRevision, sha1, type CheckResult } from "@/app/lib/final-check";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
@@ -75,9 +80,12 @@ function emotionTemperature(emotion?: string): number {
 
 // ─── 初回挨拶文（greetingNote と冒頭強制置換で共用・二重定義禁止）─────────────
 // 「名称未設定」はLINEプロフィール取得失敗時のプレースホルダー。名前として絶対に使わない。
+// さらに「H!tom!.M」「ゆき♡」等の記号・数字・絵文字混じりのLINE表示名も名前として使わない
+// （実名「Hitomi」と食い違い、final-check が FABRICATED_NAME を出す原因になる）。
+// 判定は app/lib/validate-reply.ts の isPlausiblePersonName に一元化する（二重定義禁止）。
 function sanitizeCustomerName(name: string): string {
-  if (!name || name === "名称未設定") return "";
-  return name;
+  if (!isPlausiblePersonName(name)) return "";
+  return name.trim();
 }
 function buildFirstGreeting(customerName: string): string {
   const n = sanitizeCustomerName(customerName);
@@ -1603,10 +1611,45 @@ function extractPreferredName(
     return name;
   }
   // フォールバック: クライアント渡し名にも「よろしければサ」等の汚染が乗り得るためサニタイズ＋末尾「さん」除去（二重さん防止）
-  return lineDisplayName
+  const fallback = lineDisplayName
     .replace(/^(もし)?(よろしければ|宜しければ|よければ|できれば|出来れば|ぜひ|是非)/, "")
     .replace(/さん$/, "")
     .trim();
+  // 🚨 LINE表示名（「H!tom!.M」等の記号・数字・絵文字混じり）はここで捨てる。
+  //    実名の形でないものを返すと「H!tom!.Mさん」と呼びかけてしまい実名と食い違う。
+  //    呼び出し側は "" を受けてDBの customer_name にフォールバックする。
+  return isPlausiblePersonName(fallback) ? fallback : "";
+}
+
+// ─── 顧客名をDBから解決（LINE表示名より customer_name を優先するための取得）────
+// conversations.customer_name は line-webhook が LINEプロフィールの displayName で
+// 上書きするため表示名そのもの。property_customers.customer_name はスタッフが
+// 顧客管理画面で実名に修正できるので、そちらを先に見る。
+async function fetchDbCustomerNames(
+  conversationId: string,
+): Promise<{ pcName: string; convName: string }> {
+  try {
+    const { data: conv } = await supabase
+      .from("conversations")
+      .select("customer_name, property_customer_id")
+      .eq("id", conversationId)
+      .maybeSingle();
+    const convRow = conv as { customer_name?: string | null; property_customer_id?: string | null } | null;
+    if (!convRow) return { pcName: "", convName: "" };
+    const convName = (convRow.customer_name ?? "").trim();
+    const pcId = convRow.property_customer_id;
+    if (!pcId) return { pcName: "", convName };
+    const { data: pc } = await supabase
+      .from("property_customers")
+      .select("customer_name")
+      .eq("id", pcId)
+      .maybeSingle();
+    const pcName = ((pc as { customer_name?: string | null } | null)?.customer_name ?? "").trim();
+    return { pcName, convName };
+  } catch (err) {
+    console.warn("[generate-reply] 顧客名のDB取得失敗 — 名前なしで続行:", err);
+    return { pcName: "", convName: "" };
+  }
 }
 
 // ─── パターンA: 引用リプライの引用先メッセージ取得（quoted_message_id → line_message_id JOIN）──
@@ -1811,6 +1854,9 @@ export async function POST(req: NextRequest) {
 
   type RecentMessage = { sender: string; text: string; imageUrl?: string; createdAt?: string; isAix?: boolean };
   let message: string, state: string, customerName: string, recentMessages: RecentMessage[], customerConditions: string, customerSummary: string, replyHint: string;
+  // 呼び出し元から渡された生の名前（多くの経路で LINE表示名そのもの）。
+  // 生成には使わず、生成後クリーニングで「本文に混入した表示名」を検出・除去するために保持する。
+  let lineDisplayName = "";
   let screenshotBase64: string | undefined, screenshotMediaType: string | undefined;
   let viewingNote = "";
   let customerStructured: CustomerStructured | undefined;
@@ -1879,10 +1925,11 @@ export async function POST(req: NextRequest) {
     conversationId = body.conversationId || "";
     includeStopReason = body.includeStopReason === true;
     enforceReplyModeGate = body.enforceReplyModeGate === true;
-    customerName = body.customerName || "";
+    lineDisplayName = (body.customerName || "").trim();
     recentMessages = body.recentMessages || [];
-    // LINE表示名より会話でスタッフが実際に使った呼び名を優先
-    customerName = extractPreferredName(recentMessages, customerName);
+    // LINE表示名より会話でスタッフが実際に使った呼び名を優先。
+    // 実名の形でない表示名（「H!tom!.M」等）は "" が返り、下のDB解決にフォールバックする。
+    customerName = extractPreferredName(recentMessages, lineDisplayName);
     customerConditions = body.customerConditions || "";
     customerSummary = body.customerSummary || "";
     bodySummaryJson = body.summaryJson;
@@ -1961,6 +2008,27 @@ export async function POST(req: NextRequest) {
       console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(A):", conversationId);
       return applyAixGateAndRespond(conversationId, gate.meta, gate.customerName);
     }
+  }
+
+  // ─── 顧客名の確定（LINE表示名を実名として使わない）────────────────────────
+  // 優先順:
+  //   ① 会話履歴でスタッフが実際に呼んでいた名前（extractPreferredName・呼び名として最も正確）
+  //   ② DB property_customers.customer_name（スタッフが顧客管理画面で実名に修正できる列）
+  //   ③ DB conversations.customer_name（line-webhook がLINE表示名で更新する列）
+  //   ④ 呼び出し元から渡された名前
+  // ①〜④はいずれも isPlausiblePersonName を通過したものだけ採用する。
+  // 全滅した場合は名前なし（""）で生成する — 誤った名前で呼びかけるより名前を出さない方が安全。
+  if (!customerName && conversationId) {
+    const { pcName, convName } = await fetchDbCustomerNames(conversationId);
+    customerName =
+      [pcName, convName, lineDisplayName].find((n) => isPlausiblePersonName(n)) ?? "";
+    if (!customerName) {
+      console.warn("[generate-reply] 実名として使える顧客名なし（LINE表示名は不採用・名前なしで生成）:", {
+        conversationId, lineDisplayName, pcName, convName,
+      });
+    }
+  } else if (!isPlausiblePersonName(customerName)) {
+    customerName = "";
   }
 
   // activeTaskTypes の自動補完（Cron等で body.activeTaskTypes が渡されない場合のサーバー側フォールバック）
@@ -2520,7 +2588,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // 除去後が空（挨拶のみ生成・除去しすぎ）の場合はAI出力をそのまま使う（本文ゼロ防止フォールバック）
               const rawOutput = bodyPart ? fixedGreeting + bodyPart : (trimmedText || fixedGreeting.trim());
               // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
-              const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true });
+              // customerName/lineDisplayName: 本文に混入したLINE表示名を確定的に実名へ置換／除去
+              const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true, customerName, lineDisplayName });
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
               draftBody = cleaned;
@@ -2534,7 +2603,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               }
               warnIfTruncated(genStopReason, genInputLength);
               // aixGates: 通常返信ドラフトのみ機械検証。テンプレート最適化はAIX由来の日時・金額が正当なため対象外
-              const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize });
+              const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize, customerName, lineDisplayName });
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               let outText = cleaned;
               // テンプレート最適化モードの後処理: 号室先頭ゼロ除去 + noEmoji時の絵文字除去（旧adaptルート互換）
@@ -2586,7 +2655,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   recentMessages,
                   lastCustomerMessage: message,
                   step1Json: analysis,
-                  staffSourceText: [aixSourceMessage, customerConditions].filter(Boolean).join("\n") || undefined,
+                  // お客様の確定名を情報源に含める（anomaly_scan の FABRICATED_NAME 誤検知を防ぐ）
+                  staffSourceText: [
+                    customerName ? `お客様のお名前: ${customerName}さん` : "",
+                    aixSourceMessage,
+                    customerConditions,
+                  ].filter(Boolean).join("\n") || undefined,
                   checkpointFacts: groundTruth.checkpointFacts,
                   customerConditionsDb: groundTruth.customerConditionsDb,
                   isAutoSend: enforceReplyModeGate,   // HIGH-1/2: 自動送信経路のみ true
@@ -2594,6 +2668,17 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 }, 9500);
                 finalCheck = loop.finalCheck;
                 draftBody = loop.finalDraft; // ベスト草稿（成功時=修正版 / 修正不能時=元ドラフト）
+                // 顧客名の最終防衛線: 接地修正（Haiku）は [CHECKPOINT]/[CONDITIONS]/[RULES] に無い
+                // 事実で置換できない仕様のため FABRICATED_NAME を自力で直せない（引用検証で修正ごと破棄される）。
+                // 名前だけはDB由来の確定値があるので、修正ループ通過後にコード側で確定的に上書きする。
+                const { cleaned: nameFixed, fixes: nameFixes } = enforceCustomerName(draftBody, {
+                  customerName,
+                  lineDisplayName,
+                });
+                if (nameFixes.length > 0) {
+                  console.warn("[generate-reply] 最終チェック後の顧客名修正:", nameFixes);
+                  draftBody = nameFixed;
+                }
               } catch (checkErr) {
                 console.error("[generate-reply] final-check失敗（fail-open・チェックなしで続行）:", checkErr);
                 finalCheck = null;
