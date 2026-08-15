@@ -484,15 +484,13 @@ export async function analyzeConversation(
       .eq("is_starred", true)
       .order("created_at", { ascending: false })
       .limit(3),
-    // 全セーブポイントを最大5件読む（oldest-firstで並べ直して全履歴を渡す）
-    // ai_summary = 全CPを使って顧客の全ストーリーを把握（成約パターン判断に使う）
-    // AIX-META = 最新3件で直近の事実を把握
+    // 最新CPのみ1件取得（RAG検索で古いCPを必要に応じて補完する）
     supabase
       .from("conversation_checkpoints")
       .select("checkpoint_index, summary, key_facts, conversation_stage")
       .eq("conversation_id", conversationId)
       .order("checkpoint_index", { ascending: false })
-      .limit(5),
+      .limit(1),
     // Sent properties for this customer (duplicate/history awareness)
     propertyCustomerId
       ? supabase
@@ -667,6 +665,41 @@ export async function analyzeConversation(
     })
     .join("\n");
 
+  // セーブポイントRAG検索: 現在の会話コンテキストに関連する古いCPを類似検索
+  let ragCheckpoints: Array<{ checkpoint_index: number; summary: string | null; key_facts: unknown; conversation_stage: string | null; similarity?: number }> = [];
+  if (propertyCustomerId && process.env.OPENAI_API_KEY) {
+    const recentCustomerMsgs = typedMessages
+      .filter(m => m.sender === "customer" && m.text)
+      .slice(-3)
+      .map(m => m.text)
+      .join(" ");
+    if (recentCustomerMsgs.trim()) {
+      try {
+        const qRes = await fetch("https://api.openai.com/v1/embeddings", {
+          method: "POST",
+          signal: AbortSignal.timeout(6_000),
+          headers: { "Authorization": "Bearer " + process.env.OPENAI_API_KEY.replace(/\s/g, ""), "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "text-embedding-3-small", input: recentCustomerMsgs.slice(0, 1000) }),
+        });
+        if (qRes.ok) {
+          const qData = await qRes.json() as { data?: Array<{ embedding?: number[] }> };
+          const qEmb = qData.data?.[0]?.embedding;
+          if (qEmb) {
+            const { data: ragHits } = await supabase.rpc("match_conversation_checkpoints", {
+              conversation_id_param: conversationId,
+              query_embedding: qEmb,
+              match_count: 3,
+              min_similarity: 0.3,
+            });
+            ragCheckpoints = (ragHits ?? []) as typeof ragCheckpoints;
+          }
+        }
+      } catch {
+        // RAG失敗は無視・最新CPのみで動作継続
+      }
+    }
+  }
+
   // B3(Fable5): 今日の日付・最終顧客メッセージからの経過日数・総メッセージ数をプロンプト冒頭に注入。
   // これが無いと Haiku は経過時間を知り得ず、closing_strategy に架空の日付を創作していた
   const lastCustomerMsg = typedMessages.find((m) => m.sender === "customer"); // messagesは新しい順
@@ -731,26 +764,24 @@ export async function analyzeConversation(
     ? `\n過去のスタッフ優良返信例:\n${examples.map((e) => `- ${e.sent_reply ?? ""}`).join("\n")}`
     : "";
 
-  // 全セーブポイント（最大5件・oldest-first）を構造化して渡す
-  // - ai_summary生成: 全CPで顧客の全ストーリーを把握 → 成約パターン判断に使う
-  // - AIX-META生成: 最新CPで直近の確認済み事実を把握（矛盾防止）
   // key_facts は jsonb 配列（{type, value}[]）で返る — 文字列連結すると [object Object] になるため value を整形する
   type CheckpointFact = { type?: string; value?: string };
   type Checkpoint = { checkpoint_index: number; summary: string | null; key_facts: CheckpointFact[] | null; conversation_stage: string | null };
-  const checkpoints = ((checkpointsResult.data ?? []) as Checkpoint[]).reverse(); // oldest-first
-  const latestCheckpoint = checkpoints[checkpoints.length - 1] ?? null;
+  const latestCheckpoint = ((checkpointsResult.data ?? []) as Checkpoint[])[0] ?? null;
   const checkpointFactsLine = Array.isArray(latestCheckpoint?.key_facts)
     ? (latestCheckpoint!.key_facts as CheckpointFact[]).map((f) => f?.value ?? "").filter(Boolean).join(" / ")
     : "";
-  // 全CPを時系列で表示（お客さんの全ストーリー）
-  const checkpointHistoryLines = checkpoints
-    .map((cp, i) => {
-      const label = i === checkpoints.length - 1 ? `■ セーブ #${cp.checkpoint_index}（最新）` : `■ セーブ #${cp.checkpoint_index}`;
-      return `${label}\n${(cp.summary ?? "").slice(0, 800)}`;
-    })
-    .join("\n");
-  const checkpointText = checkpoints.length > 0
-    ? `\n【会話セーブデータ全履歴（お客さんの全経緯・成約パターン判断に使うこと）】\n${checkpointHistoryLines}${checkpointFactsLine ? `\n\n最新セーブの主要事実（AIX-META判断に最優先で使う）: ${checkpointFactsLine}` : ""}\n※ここに書かれた金額/物件/日付と矛盾する提案をしない`
+  // RAG検索で引き出した関連CP（最新CP以外・類似度順 → checkpoint_index昇順で時系列表示）
+  const latestIdx = latestCheckpoint?.checkpoint_index ?? -1;
+  const uniqueRagCps = ragCheckpoints
+    .filter(cp => cp.checkpoint_index !== latestIdx && (cp.summary ?? "").trim())
+    .sort((a, b) => a.checkpoint_index - b.checkpoint_index);
+  const ragCpText = uniqueRagCps.length > 0
+    ? "\n\n【過去の関連セーブデータ（現在の会話に関係する古い事実）】\n" +
+      uniqueRagCps.map(cp => "■ セーブ #" + cp.checkpoint_index + ":\n" + (cp.summary ?? "").slice(0, 600)).join("\n---\n")
+    : "";
+  const checkpointText = latestCheckpoint?.summary
+    ? "\n【会話セーブデータ（最新・確認済み事実の全量・最重要。ここに書かれた金額/物件/日付と矛盾する提案をしない）】\n" + latestCheckpoint.summary + (checkpointFactsLine ? "\n主要事実: " + checkpointFactsLine : "") + ragCpText
     : "";
 
   // Sent properties — what has already been proposed to this customer
@@ -1212,6 +1243,24 @@ stage は hearing/proposing/applying/contract のいずれか。
 該当事実の無いセクション行は省略可。key_facts の type は confirmed_fact/aix_sent/unresolved の3種のみ。`;
 }
 
+async function getCheckpointEmbedding(text: string): Promise<number[] | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      signal: AbortSignal.timeout(8_000),
+      headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
+    return data.data?.[0]?.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function maybeCreateCheckpoint(conversationId: string): Promise<void> {
   try {
     // 1) 総メッセージ数 + 最新チェックポイントを並列取得
@@ -1296,6 +1345,16 @@ export async function maybeCreateCheckpoint(conversationId: string): Promise<voi
     });
     if (insErr && insErr.code !== "23505") {
       console.error("[checkpoint] insert failed:", conversationId, insErr.message);
+    }
+    // embedding生成（RAG検索用・失敗しても無視でOK）
+    if (!insErr) {
+      const embedding = await getCheckpointEmbedding(parsed.summary);
+      if (embedding) {
+        await supabase.from("conversation_checkpoints")
+          .update({ embedding })
+          .eq("conversation_id", conversationId)
+          .eq("checkpoint_index", (last?.checkpoint_index ?? 0) + 1);
+      }
     }
   } catch (e) {
     console.warn("[checkpoint] failed (fire-and-forget):", conversationId,
