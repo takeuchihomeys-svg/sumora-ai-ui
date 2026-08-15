@@ -216,6 +216,23 @@ const AIX_ACTION_META: Record<string, { label: string; subtitle?: string; color:
   followup_revive:         { label: "\u8ffd\u5ba2\u3059\u308b",                 color: "#8E24AA", templateCategory: "\u8ffd\u5ba2\u3059\u308b\u3010AIX\u3011" },
   property_search:         { label: "\u7269\u4ef6\u3092\u63a2\u3059",           color: "#FF7043", templateCategory: "\u7269\u4ef6\u3092\u63a2\u3059\u3010AIX\u3011" },
 };
+// \u8133\u99c6\u52d5\u30d2\u30f3\u30c8\uff08suggested_aix_meta.action\uff09\u2192 AIX\u30dc\u30bf\u30f3\u30e9\u30d9\u30eb\u3002
+// \u30e9\u30d9\u30eb\u304c\u5b58\u5728\u3059\u308b action \u306f\u300cAIX\u30a2\u30af\u30b7\u30e7\u30f3\u300d\u3068\u3057\u3066\u4e0b\u90e8AIX\u30ab\u30fc\u30c9\u306b\u7d71\u5408\u8868\u793a\u3059\u308b
+// \uff08\u4e0a\u90e8\u6307\u793a\u30d0\u30ca\u30fc\u306f\u51fa\u3055\u306a\u3044\uff09\u3002\u5b58\u5728\u3057\u306a\u3044\u5834\u5408\u306f\u5f93\u6765\u3069\u304a\u308a\u6307\u793a\u30c6\u30ad\u30b9\u30c8\u306e\u307f\u8868\u793a\u3002
+const BRAIN_AIX_LABELS: Record<string, string> = {
+  estimate_sheet:          "AIX \u898b\u7a4d\u66f8\u9001\u308b",
+  property_check_result:   "AIX \u7269\u4ef6\u78ba\u8a8d\u3057\u305f",
+  acknowledge_check:       "AIX \u78ba\u8a8d\u3057\u307e\u3059",
+  viewing_invite:          "AIX \u5185\u89a7\u65e5\u8abf\u6574",
+  meeting_place:           "AIX \u5f85\u3061\u5408\u308f\u305b",
+  application_push:        "AIX \u7533\u8fbc\u3078\uff01",
+  property_send:           "AIX \u7269\u4ef6\u30d4\u30c3\u30af\u30a2\u30c3\u30d7",
+  property_recommendation: "AIX \u7269\u4ef6\u30aa\u30b9\u30b9\u30e1",
+  condition_hearing:       "AIX \u6761\u4ef6\u30d2\u30a2\u30ea\u30f3\u30b0",
+  followup_revive:         "AIX \u8ffd\u5ba2\u3059\u308b",
+  greeting_viewing:        "AIX \u5185\u89a7\u6328\u62f6",
+};
+
 // templateCategory \u2192 AixActionType \u306e\u9006\u5f15\u304d\uff08\u30c6\u30f3\u30d7\u30ec\u9078\u629e\u6642\u306e\u30a2\u30af\u30b7\u30e7\u30f3\u6c7a\u5b9a\u306b\u4f7f\u7528\uff09
 const TEMPLATE_CATEGORY_TO_ACTION: Record<string, AixActionType> = Object.fromEntries(
   Object.entries(AIX_ACTION_META)
@@ -1395,7 +1412,7 @@ export default function Home() {
   memosRef.current = memos; // レンダリングごとに最新値を反映
   // プリ生成中の conversation_id セット（重複リクエスト防止）
   const preGenInProgress = useRef<Set<string>>(new Set());
-  // 下書き生成タイムアウト（60秒でdraftPreparingをリセット）
+  // 下書き生成ポーリングタイマー（15秒間隔でDB確認・最大150秒でdraftPreparingをリセット）
   const draftTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // generate-reply ストリーミング中断用（会話切替時にabort）
   const generateAbortRef = useRef<AbortController | null>(null);
@@ -1687,31 +1704,11 @@ export default function Home() {
           // （Effect1はid変更時のみ起動するためここで補完する）
           if (newMsg.sender === "customer" && String(newMsg.conversation_id) === selectedIdRef.current) {
             const conv = conversationsRef.current.find(c => c.id === selectedIdRef.current);
-            const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
+            // bg-async側のSKIP_STATUSESと必ず一致させる（closed_lost欠落で毎回待ちぼうけになるバグがあった）
+            const skipStatuses = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
             const ns = conv ? (STATUS_ALIAS[conv.status] ?? conv.status) : "";
             if (conv && !conv.aiDraft && !skipStatuses.has(ns) && !draftTimeoutRef.current) {
-              const convIdForGen = selectedIdRef.current;
-              setDraftPreparing(true);
-              draftTimeoutRef.current = setTimeout(async () => {
-                draftTimeoutRef.current = null;
-                if (selectedIdRef.current !== convIdForGen) return;
-                const { data: convRow } = await supabase.from("conversations").select("ai_draft").eq("id", convIdForGen).single();
-                if (convRow?.ai_draft) {
-                  supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
-                  setConversations(prev => prev.map(c => c.id === convIdForGen ? { ...c, aiDraft: stripInternalTagsOrNull(convRow.ai_draft) } : c));
-                } else {
-                  setDraftRetryConvId(convIdForGen);
-                }
-                setDraftPreparing(false);
-              }, 60000);
-              fetch("/api/generate-draft-bg-async", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ conversation_id: convIdForGen, memo: memosRef.current[convIdForGen] || "" }),
-              }).catch(() => {
-                if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
-                if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
-              });
+              triggerBgDraftGeneration(selectedIdRef.current);
             }
           }
         }
@@ -2284,7 +2281,8 @@ export default function Home() {
     // 未読かつai_draft未生成の会話を最大3件、バックグラウンドでプリ生成（毎回チェック・重複はpreGenInProgressで防止）
     // 同時発火を3件・2秒ずらしに制限してClaude API負荷を分散（旧10件同時は詰まりの原因）
     {
-      const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
+      // bg-async側のSKIP_STATUSESと必ず一致させる
+      const skipStatuses = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
       const readAtMap = manuallyReadAtRef.current;
       const targets = formatted
         .filter((c) => {
@@ -2589,6 +2587,90 @@ export default function Home() {
     );
   }, [selectedConversation, activeAixFlow]);
 
+  // ── AI下書きバックグラウンド生成: DBポーリング（15秒間隔・最大150秒 = bg-asyncのgenerate-replyタイムアウトと一致） ──
+  // 旧実装は60秒固定タイムアウトのみで、生成が60秒超かかると必ず「準備中...」→失敗扱いになるバグの原因だった。
+  // 生成完了 / AIX誘導センチネル / 生成失敗（draft_attempted_at=null）を検知して表示を切り替える。
+  const pollDraftFromDb = (convIdForGen: string, startedAt: number) => {
+    draftTimeoutRef.current = setTimeout(async () => {
+      draftTimeoutRef.current = null;
+      if (selectedIdRef.current !== convIdForGen) return;
+      const { data: convRow } = await supabase
+        .from("conversations")
+        .select("ai_draft, suggested_aix_meta, draft_attempted_at")
+        .eq("id", convIdForGen)
+        .single();
+      if (selectedIdRef.current !== convIdForGen) return;
+      const polledDraft = stripInternalTagsOrNull(convRow?.ai_draft ?? null);
+      if (polledDraft) {
+        // 生成済み（Realtime取りこぼし含む）→ セットしてDBをクリア
+        supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
+        setConversations((prev) =>
+          prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: polledDraft, suggestedAixMeta: (convRow?.suggested_aix_meta as { action: string; note: string } | null) ?? null } : c)
+        );
+        setDraftPreparing(false);
+        return;
+      }
+      if (convRow?.ai_draft === "[AIX誘導中]") {
+        // AIX誘導中 → 返信案は生成されない（AIXカード側で誘導表示）。エラー扱いにしない
+        setDraftPreparing(false);
+        return;
+      }
+      // draft_attempted_at=null は bg-async が生成失敗時にクリアした印 → 即再生成ボタンに切替
+      const generationFailed = !!convRow && !convRow.ai_draft && !convRow.draft_attempted_at;
+      if (generationFailed || Date.now() - startedAt >= 150000) {
+        setDraftRetryConvId(convIdForGen);
+        setDraftPreparing(false);
+        return;
+      }
+      pollDraftFromDb(convIdForGen, startedAt);
+    }, 15000);
+  };
+
+  // bg-async起動 + レスポンスの skipped 理由に応じて「準備中...」を即解除する
+  // （旧実装はbg-async側の全スキップがサイレントで、UIが60秒待ちぼうけになっていた）
+  const triggerBgDraftGeneration = (convIdForGen: string) => {
+    setDraftPreparing(true);
+    pollDraftFromDb(convIdForGen, Date.now());
+    const stopDraftPolling = () => {
+      if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
+    };
+    fetch("/api/generate-draft-bg-async", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_id: convIdForGen, memo: memosRef.current[convIdForGen] || "" }),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          stopDraftPolling();
+          if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
+          return;
+        }
+        const j = await res.json().catch(() => null) as { ok?: boolean; skipped?: string } | null;
+        // 生成開始（started）or 他プロセスが生成中（in_progress）→ ポーリング継続で結果を待つ
+        if (!j?.skipped || j.skipped === "in_progress") return;
+        if (selectedIdRef.current !== convIdForGen) return;
+        stopDraftPolling();
+        if (j.skipped === "already_has_draft") {
+          // 生成済みドラフトあり → DBから即取得してセット
+          const { data: convRow } = await supabase
+            .from("conversations").select("ai_draft, suggested_aix_meta").eq("id", convIdForGen).single();
+          const existingDraft = stripInternalTagsOrNull(convRow?.ai_draft ?? null);
+          if (existingDraft && selectedIdRef.current === convIdForGen) {
+            supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
+            setConversations((prev) =>
+              prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: existingDraft, suggestedAixMeta: (convRow?.suggested_aix_meta as { action: string; note: string } | null) ?? null } : c)
+            );
+          }
+        }
+        // status / no_text_message（画像・動画のみ）/ not_customer_turn 等 → 生成対象外。エラー表示なしで解除
+        setDraftPreparing(false);
+      })
+      .catch(() => {
+        stopDraftPolling();
+        if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
+      });
+  };
+
   useEffect(() => {
     setError("");
     setShowStatusMenu(false);
@@ -2646,55 +2728,17 @@ export default function Home() {
       setReplyDraft("");
       aiDraftRef.current = "";
       setDisplaySource(null);
-      // 未読 + ai_draft未生成 → 同期APIで生成してレスポンスから直接セット（Realtime不要）
+      // 未読 + ai_draft未生成 → bg-async起動 + DBポーリングで下書きを受け取る（Realtimeは早期到着の高速パス）
       if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
         const rAt = manuallyReadAtRef.current[selectedConversation.id];
         const latestCust = selectedConversation.messages.filter((m) => m.sender === "customer").at(-1);
         // rawCreatedAtが未ロード（messages空）の場合は未読扱いにする
         const isActuallyUnread = !rAt || !latestCust?.rawCreatedAt || latestCust.rawCreatedAt > rAt;
-        const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
+        // bg-async側のSKIP_STATUSESと必ず一致させる（closed_lost欠落で毎回60秒待ちぼうけになるバグがあった）
+        const skipStatuses = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
         const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
         if (isActuallyUnread && !skipStatuses.has(ns)) {
-          // async方式：即200返却 → Realtimeで下書きを受け取る（タイムアウト60秒）
-          setDraftPreparing(true);
-          const convIdForGen = selectedConversation.id;
-          draftTimeoutRef.current = setTimeout(async () => {
-            draftTimeoutRef.current = null;
-            if (selectedIdRef.current !== convIdForGen) return;
-            // Realtime が届かなかった場合のフォールバック：DB を直接確認
-            const { data: convRow } = await supabase
-              .from("conversations")
-              .select("ai_draft, suggested_aix_meta")
-              .eq("id", convIdForGen)
-              .single();
-            if (convRow?.ai_draft) {
-              // Realtime が漏れただけで実は生成済み → セットしてDBもクリア
-              supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
-              setConversations((prev) =>
-                prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: stripInternalTagsOrNull(convRow.ai_draft), suggestedAixMeta: (convRow.suggested_aix_meta as { action: string; note: string } | null) ?? null } : c)
-              );
-            } else {
-              // 本当に生成失敗 → 再生成ボタンを表示
-              setDraftRetryConvId(convIdForGen);
-            }
-            setDraftPreparing(false);
-          }, 60000);
-          fetch("/api/generate-draft-bg-async", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ conversation_id: convIdForGen, memo: memosRef.current[convIdForGen] || "" }),
-          })
-            .then(async (res) => {
-              if (!res.ok) {
-                if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
-                if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
-              }
-              // ok: true → draftPreparingを維持（Realtimeで届く）
-            })
-            .catch(() => {
-              if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
-              if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
-            });
+          triggerBgDraftGeneration(selectedConversation.id);
         } else {
           setDraftPreparing(false);
         }
@@ -6447,7 +6491,10 @@ export default function Home() {
 
           {!(inputFocused && keyboardHeight > 100) && (() => {
             const tasks = activeTasks[selectedConversation.id] ?? [];
-            const brainNote = selectedConversation.suggestedAixMeta?.note;
+            const bannerAixMeta = selectedConversation.suggestedAixMeta;
+            // AIXアクション（ボタンあり）の場合は下部AIXカードに指示ごと統合表示するため、上部バナーは出さない（二重表示防止）
+            const isAixAction = !!(bannerAixMeta?.action && BRAIN_AIX_LABELS[bannerAixMeta.action]);
+            const brainNote = isAixAction ? null : bannerAixMeta?.note;
             if (tasks.length > 0) return (
               <div className="flex items-center gap-2 border-b border-[#a5d6a7] px-4 py-2" style={{ background: "linear-gradient(90deg, #e8f5e9, #f1f8e9)" }}>
                 <svg className="h-3.5 w-3.5 shrink-0 text-[#2e7d32]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -7541,53 +7588,56 @@ export default function Home() {
 
               // P5: 脳駆動ヒントボックス（suggestedAixMeta から action+note を読んで提示）
               // 旧: 初期費用キーワードregex検知 → 廃止し、AI分析結果を使う
+              // AIXアクション（ボタンあり）の場合: 上部バナーは非表示にし、このカードに
+              // 「大きいAIXボタン（メイン）+ 小さい指示テキスト」を統合表示する
               const brainMeta = selectedConversation.suggestedAixMeta;
               if (brainMeta?.action && brainMeta.note && !dismissedBrainHintIds.has(id)) {
-                const BRAIN_AIX_LABELS: Record<string, string> = {
-                  estimate_sheet:          "AIX 見積書送る",
-                  property_check_result:   "AIX 物件確認した",
-                  acknowledge_check:       "AIX 確認します",
-                  viewing_invite:          "AIX 内覧日調整",
-                  meeting_place:           "AIX 待ち合わせ",
-                  application_push:        "AIX 申込へ！",
-                  property_send:           "AIX 物件ピックアップ",
-                  property_recommendation: "AIX 物件オススメ",
-                  condition_hearing:       "AIX 条件ヒアリング",
-                  followup_revive:         "AIX 追客する",
-                  greeting_viewing:        "AIX 内覧挨拶",
-                };
                 const brainBtnLabel = BRAIN_AIX_LABELS[brainMeta.action];
                 const brainBtnColor = AIX_ACTION_META[brainMeta.action]?.color ?? "#7C3AED";
                 const brainAction = brainMeta.action as AixActionType;
+                const runBrainAix = () => {
+                  setDismissedBrainHintIds((prev) => new Set([...prev, id]));
+                  setShowAixMenu(false);
+                  setAixInspectLabel(null);
+                  if (brainAction === "estimate_sheet") {
+                    setActiveAixFlow(brainAction);
+                    setShowTemplateModal(true);
+                  } else if (Object.keys(AIX_ACTION_META).includes(brainAction)) {
+                    setActiveAixFlow(brainAction);
+                    openAixDirect(brainAction);
+                  }
+                };
+                if (brainBtnLabel) return (
+                  <div className="mx-1 mb-1 rounded-2xl border-2 border-violet-400 bg-violet-50 px-3 py-2.5">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <button onClick={runBrainAix}
+                          className="block w-full rounded-xl px-4 py-2.5 text-[14px] font-bold text-white text-center active:opacity-80"
+                          style={{ background: `linear-gradient(135deg, ${brainBtnColor}, ${brainBtnColor}cc)` }}>
+                          {brainBtnLabel}
+                        </button>
+                        {brainAction !== "estimate_sheet" && (
+                          <p className="mt-0.5 text-center" style={{ fontSize: "9px", opacity: 0.5, color: "#7C3AED" }}>テンプレ自動選択</p>
+                        )}
+                      </div>
+                      <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
+                        className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
+                    </div>
+                    <div className="mt-1.5 border-t border-violet-200 pt-1.5">
+                      <p className="text-xs text-violet-700 leading-relaxed">
+                        <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                        {brainMeta.note}
+                      </p>
+                    </div>
+                  </div>
+                );
+                // ボタンなし（未知アクション）: 従来どおり指示テキストのみのコンパクト表示
                 return (
                   <div className="mx-1 mb-1 rounded-2xl border-2 border-violet-400 bg-violet-50 px-3 py-2 flex items-center gap-2">
                     <span className="text-[12px] font-bold text-violet-700 flex-1 min-w-0">
                       <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
                       {brainMeta.note}
                     </span>
-                    {brainBtnLabel && (
-                      <div className="shrink-0 flex flex-col items-center gap-0.5">
-                        <button onClick={() => {
-                          setDismissedBrainHintIds((prev) => new Set([...prev, id]));
-                          setShowAixMenu(false);
-                          setAixInspectLabel(null);
-                          if (brainAction === "estimate_sheet") {
-                            setActiveAixFlow(brainAction);
-                            setShowTemplateModal(true);
-                          } else if (Object.keys(AIX_ACTION_META).includes(brainAction)) {
-                            setActiveAixFlow(brainAction);
-                            openAixDirect(brainAction);
-                          }
-                        }}
-                          className="rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                          style={{ background: `linear-gradient(135deg, ${brainBtnColor}, ${brainBtnColor}cc)` }}>
-                          {brainBtnLabel}
-                        </button>
-                        {brainAction !== "estimate_sheet" && (
-                          <span style={{ fontSize: "9px", opacity: 0.5, color: "#7C3AED" }}>テンプレ自動選択</span>
-                        )}
-                      </div>
-                    )}
                     <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
                       className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
                   </div>

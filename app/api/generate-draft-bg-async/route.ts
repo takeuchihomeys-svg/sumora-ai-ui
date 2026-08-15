@@ -39,59 +39,83 @@ export async function POST(req: NextRequest) {
   const memo = body.memo || "";
   if (!convId) return NextResponse.json({ ok: false }, { status: 400 });
 
-  // 即200返却 → after()でバックグラウンド生成（Realtimeで通知）
+  const db = getDb();
+
+  // ── 同期プリチェック ──
+  // スキップ理由をレスポンスの skipped フィールドで返し、UI側が「準備中...」を即座に解除できるようにする
+  // （旧実装は全スキップがサイレント200で、UIが60秒待ちぼうけになるバグの原因だった）
+  const { data: conv, error: convErr } = await db
+    .from("conversations")
+    .select("status, property_customer_id, ai_draft, last_sender, customer_name, draft_fail_count")
+    .eq("id", convId)
+    .single();
+
+  if (convErr || !conv) {
+    console.error("[bg-async] conv fetch error:", convErr?.message ?? "not found", "convId:", convId);
+    return NextResponse.json({ ok: true, skipped: "not_found" });
+  }
+  if (conv.last_sender !== "customer") return NextResponse.json({ ok: true, skipped: "not_customer_turn" });
+  // "[AIX誘導中]" センチネルは初回バグで貼られた可能性があるため通過させて再生成を試みる
+  if (conv.ai_draft && conv.ai_draft !== "[AIX誘導中]") return NextResponse.json({ ok: true, skipped: "already_has_draft" });
+  if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: "status" });
+
+  const { data: msgs, error: msgsErr } = await db.from("messages")
+    .select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", convId)
+    .order("created_at", { ascending: false }).limit(20);
+
+  if (msgsErr) {
+    console.error("[bg-async] msgs fetch error:", msgsErr.message);
+    return NextResponse.json({ ok: true, skipped: "msgs_fetch_error" });
+  }
+
+  type MsgRow = { sender: string; text: string | null; image_url: string | null; created_at?: string; is_aix_generated: boolean | null };
+  const recentMsgs = ((msgs || []) as MsgRow[])
+    .reverse()
+    .map((m) => ({
+      sender: m.sender,
+      text: m.text || (m.image_url ? "[画像]" : ""),
+      imageUrl: m.image_url ?? undefined,
+      createdAt: m.created_at,
+      isAix: m.is_aix_generated ?? false,
+    }));
+
+  // targetMessage は元のrecentMsgs（注入なし）から計算
+  const lastStaffIdx = recentMsgs.map((m, i) => m.sender === "staff" ? i : -1).filter((i) => i >= 0).at(-1);
+  const msgsAfterStaff = lastStaffIdx !== undefined ? recentMsgs.slice(lastStaffIdx + 1) : recentMsgs;
+  const unreplied = msgsAfterStaff
+    .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+    .slice(-3);
+  const targetMessage = unreplied.map((m) => m.text).join("\n");
+
+  if (!targetMessage.trim()) {
+    // 画像・動画のみで返信対象テキストなし → 生成不能。
+    // draft_pending_at を残すとcronが永久リトライするためクリアして終了
+    await db.from("conversations").update({ draft_pending_at: null }).eq("id", convId);
+    return NextResponse.json({ ok: true, skipped: "no_text_message" });
+  }
+
+  // Atomic claim: 並列bg-asyncが同じ会話を重複生成するのを防ぐ
+  // draft_attempted_atが5分以内に設定済みの場合はスキップ（別プロセスが生成中の可能性が高い）
+  const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { data: claimed } = await db.from("conversations")
+    .update({ draft_attempted_at: new Date().toISOString() })
+    .eq("id", convId)
+    .or('ai_draft.is.null,ai_draft.eq."[AIX誘導中]"')
+    .or(`draft_attempted_at.is.null,draft_attempted_at.lt.${fiveMinAgo}`)
+    .select("id");
+  if (!claimed?.length) {
+    console.log("[bg-async] 同時生成をスキップ（atomic claim失敗）, convId:", convId);
+    return NextResponse.json({ ok: true, skipped: "in_progress" });
+  }
+
+  // ── ここから重い処理は after() でバックグラウンド実行（Realtimeで通知） ──
   after(async () => {
-    const db = getDb();
     try {
-      const { data: conv, error: convErr } = await db
-        .from("conversations")
-        .select("status, property_customer_id, ai_draft, last_sender, customer_name, draft_fail_count")
-        .eq("id", convId)
-        .single();
-
-      if (convErr) { console.error("[bg-async] conv fetch error:", convErr.message, "convId:", convId); return; }
-      if (!conv) { console.error("[bg-async] conv not found:", convId); return; }
-      if (conv.last_sender !== "customer") return;
-      // "[AIX誘導中]" センチネルは初回バグで貼られた可能性があるため通過させて再生成を試みる
-      if (conv.ai_draft && conv.ai_draft !== "[AIX誘導中]") return;
-      if (SKIP_STATUSES.has(conv.status as string)) return;
-
-      // Atomic claim: 並列bg-asyncが同じ会話を重複生成するのを防ぐ
-      // draft_attempted_atが5分以内に設定済みの場合はスキップ
-      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const { data: claimed } = await db.from("conversations")
-        .update({ draft_attempted_at: new Date().toISOString() })
-        .eq("id", convId)
-        .or('ai_draft.is.null,ai_draft.eq."[AIX誘導中]"')
-        .or(`draft_attempted_at.is.null,draft_attempted_at.lt.${fiveMinAgo}`)
-        .select("id");
-      if (!claimed?.length) {
-        console.log("[bg-async] 同時生成をスキップ（atomic claim失敗）, convId:", convId);
-        return;
-      }
-
-      const [{ data: msgs, error: msgsErr }, { data: pc }] = await Promise.all([
-        db.from("messages").select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", convId)
-          .order("created_at", { ascending: false }).limit(20),
-        conv.property_customer_id
-          ? db.from("property_customers")
-            .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions")
-            .eq("id", conv.property_customer_id).single()
-          : Promise.resolve({ data: null }),
-      ]);
-
-      if (msgsErr) { console.error("[bg-async] msgs fetch error:", msgsErr.message); return; }
-
-      type MsgRow = { sender: string; text: string | null; image_url: string | null; created_at?: string; is_aix_generated: boolean | null };
-      const recentMsgs = ((msgs || []) as MsgRow[])
-        .reverse()
-        .map((m) => ({
-          sender: m.sender,
-          text: m.text || (m.image_url ? "[画像]" : ""),
-          imageUrl: m.image_url ?? undefined,
-          createdAt: m.created_at,
-          isAix: m.is_aix_generated ?? false,
-        }));
+      const { data: pc } = conv.property_customer_id
+        ? await db.from("property_customers")
+          .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions")
+          .eq("id", conv.property_customer_id).single()
+        : { data: null };
 
       // 直近20件にスタッフ返信があるか確認
       const hasStaffInLast20 = recentMsgs.some((m) => m.sender === "staff");
@@ -120,16 +144,6 @@ export async function POST(req: NextRequest) {
 
       const normalizedStatus = STATUS_ALIAS[conv.status as string] ?? conv.status;
       const effectiveState = !hasAnyStaffMsg && normalizedStatus === "hearing" ? "first_reply" : (conv.status as string);
-
-      // targetMessage は元のrecentMsgs（注入なし）から計算
-      const lastStaffIdx = recentMsgs.map((m, i) => m.sender === "staff" ? i : -1).filter((i) => i >= 0).at(-1);
-      const msgsAfterStaff = lastStaffIdx !== undefined ? recentMsgs.slice(lastStaffIdx + 1) : recentMsgs;
-      const unreplied = msgsAfterStaff
-        .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
-        .slice(-3);
-      const targetMessage = unreplied.map((m) => m.text).join("\n");
-
-      if (!targetMessage.trim()) return;
 
       type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string } | null;
       const pcData = pc as PC;
@@ -231,10 +245,14 @@ export async function POST(req: NextRequest) {
         const isTimeout = fetchErr instanceof Error && fetchErr.name === "AbortError";
         const errMsg = isTimeout ? "timeout (150s)" : String(fetchErr);
         console.error("[bg-async] fetch error:", errMsg, "baseUrl:", baseUrl, "convId:", convId);
-        // draft_attempted_at は上書きしない（クレーム時のタイムスタンプを維持 → 10分バックオフ有効）
+        // 3回失敗までは draft_attempted_at をクリアして即リトライ可能にする
+        // （残すとUIの再トリガー・cronが5分バックオフでサイレントスキップされ「準備中...」のまま止まる。
+        //   UIのポーリングは draft_attempted_at=null を「生成失敗」として検知し再生成ボタンに切替える）
+        const failCount = (conv.draft_fail_count ?? 0) + 1;
         await db.from("conversations").update({
-          draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
+          draft_fail_count: failCount,
           draft_last_error: errMsg.slice(0, 500),
+          ...(failCount < 3 ? { draft_attempted_at: null } : {}),
         }).eq("id", convId);
         return;
       }
@@ -242,10 +260,12 @@ export async function POST(req: NextRequest) {
       if (!draftRes.ok || !draftRes.body) {
         const errMsg = `generate-reply non-ok: ${draftRes.status} ${draftRes.statusText}`;
         console.error("[bg-async]", errMsg, "convId:", convId);
-        // draft_attempted_at は上書きしない（10分バックオフ有効）
+        // 3回失敗までは draft_attempted_at をクリア（上のfetch errorと同じ理由）
+        const failCount = (conv.draft_fail_count ?? 0) + 1;
         await db.from("conversations").update({
-          draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
+          draft_fail_count: failCount,
           draft_last_error: errMsg,
+          ...(failCount < 3 ? { draft_attempted_at: null } : {}),
         }).eq("id", convId);
         return;
       }
@@ -334,5 +354,5 @@ export async function POST(req: NextRequest) {
     }
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, started: true });
 }
