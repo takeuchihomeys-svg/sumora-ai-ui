@@ -7984,11 +7984,6 @@ export default function Home() {
                     }}>
                       <span style={{ fontWeight: "bold", marginRight: 4 }}>{styles.icon} {styles.prefix}</span>
                       {suggestedAix.note}
-                      {level === "required" && (
-                        <div style={{ marginTop: 4, fontSize: 11, fontWeight: "bold", color: "#e64a19" }}>
-                          このまま送信する前にAIXを実行してください（通常返信だけでは内容が届きません）
-                        </div>
-                      )}
                     </div>
                   );
                 })()}

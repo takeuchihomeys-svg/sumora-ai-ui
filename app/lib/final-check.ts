@@ -319,7 +319,7 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Prom
     { pass: "anomaly_scan", prompt: buildAnomalyScanPrompt(draft, ctx) },
     { pass: "context_check", prompt: buildContextCheckPrompt(draft, ctx) },
   ];
-  const settled = await Promise.allSettled(passes.map((p) => callHaiku(p.prompt, 5000)));
+  const settled = await Promise.allSettled(passes.map((p) => callHaiku(p.prompt, 8000)));
 
   const passesCompleted: CheckPass[] = [];
 
@@ -356,8 +356,8 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Prom
       pass: "rule_check",
       severity: "block",
       code: "UNCHECKED_AUTO_SEND",
-      message: `チェック未完走（${passesCompleted.length}/3パス完了）のため自動送信をブロック`,
-      evidence: "(検査未完走)",
+      message: `チェックが完了しませんでした（${passesCompleted.length}/3パス）`,
+      evidence: "",
       suggestion: "スタッフが内容を確認してから送信してください",
     });
   }
@@ -501,7 +501,7 @@ export async function runGroundedRevision(
 export const MAX_CHECK_ITERATIONS = 2; // check1 + (接地修正 + check2) = 計2チェック上限
 
 const REVISION_MS = 3500;  // 修正Haikuのタイムアウト
-const RECHECK_MS = 5500;   // 再チェック余裕分（3パス並列5s + マージン）
+const RECHECK_MS = 8500;   // 再チェック余裕分（3パス並列8s + マージン）
 
 // AIX_BOUNDARY_PROMISE 衝突対策（決定的・約0ms）:
 // 修正プロンプト絶対ルール5の定型句「確認して改めてご連絡いたします」等が修正で新規挿入されると、
@@ -528,7 +528,7 @@ export interface RevisionLoopResult {
 export async function runFinalCheckWithRevision(
   draft: string,
   ctx: FinalCheckContext,
-  budgetMs = 14000,
+  budgetMs = 22000,
 ): Promise<RevisionLoopResult> {
   const started = Date.now();
   let checkIterations = 0;
@@ -540,6 +540,11 @@ export async function runFinalCheckWithRevision(
   if (check1.issues.length === 0) return { finalDraft: draft, finalCheck: check1 };
 
   const blocks1 = check1.issues.filter((i) => i.severity === "block");
+
+  // タイムアウト起因のみの場合はテキスト修正で解消できないのでスキップ（revision_exhaustedを立てない）
+  if (blocks1.length > 0 && blocks1.every((b) => b.code === "UNCHECKED_AUTO_SEND")) {
+    return { finalDraft: draft, finalCheck: check1 };
+  }
 
   // ── warningのみ: 接地修正1回 + フル再チェック（未検証テキストは絶対に finalDraft にしない）──
   // blockが無いので送信は元々止まらない。よって迷ったら常に「検証済みベースラインの元ドラフト」側に倒す。
