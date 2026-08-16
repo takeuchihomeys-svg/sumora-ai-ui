@@ -727,6 +727,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // ── WebApp からの即時ポーリング要求（30秒アラーム待ちをスキップ）────────────
   if (msg.type === "axlx-poll-now") {
     (async () => {
+      // スタッフモード中は即時ポーリングも行わない（別PCの30秒ポーリングに任せる）
+      if (await _isStaffModeActive()) {
+        sendResponse({ ok: false, reason: "staff-mode" });
+        return;
+      }
       var st = await chrome.storage.local.get("batchRunning");
       var lock = st.batchRunning;
       if (lock) {
@@ -1522,6 +1527,12 @@ async function _sbHandleCommand(payload) {
   var commandId    = payload.commandId  || null;
   if (!customerId) return;
 
+  // スタッフモード中は Realtime コマンドを無視（claimしないので別PC or DBポーリングが処理する）
+  if (await _isStaffModeActive()) {
+    console.log("[SB-RT] スタッフモード中 → scrape_command を無視 (customerId=" + customerId + ")");
+    return;
+  }
+
   // batchRunning ロックチェック（二重実行防止）
   var stLock = await chrome.storage.local.get("batchRunning");
   var lock = stLock.batchRunning;
@@ -1943,6 +1954,50 @@ chrome.runtime.onInstalled.addListener(_resetBatchLock);
 
 var BATCH_LOCK_TTL_MS = 15 * 60 * 1000; // 修正2: ロックTTL 15分
 
+// ── スタッフモード ─────────────────────────────────────────────────────────
+// スタッフが手動で拡張を使う間、自動化コマンドを無視するモード（PCごと・chrome.storage.local）。
+// _pollAndRunBatch の fetch 前（= claim 前）でチェックするため、コマンドは pending のまま残り、
+// 30秒以内に別PC（自動化PC）が自動的に拾う。自動化全体は止まらない。
+// 消し忘れ防止のため2時間で自動OFF（TTL方式・batchRunning と同型）。
+var STAFF_MODE_TTL_MS = 2 * 60 * 60 * 1000; // 2時間で自動解除
+
+async function _isStaffModeActive() {
+  try {
+    var st = await chrome.storage.local.get(["staffMode", "staffModeAt"]);
+    if (!st.staffMode) return false;
+    var at = st.staffModeAt || 0;
+    if (at && Date.now() - at > STAFF_MODE_TTL_MS) {
+      // TTL失効 → 自動OFF（storage.onChanged 経由でバッジ・popup UIも同期される）
+      await chrome.storage.local.set({ staffMode: false, staffModeAt: null });
+      return false;
+    }
+    return true;
+  } catch (e) {
+    return false; // 読み取り失敗時は通常モード扱い（自動化を止めない）
+  }
+}
+
+function _updateStaffModeBadge(on) {
+  try {
+    if (on) {
+      chrome.action.setBadgeText({ text: "手動" });
+      chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
+    } else {
+      chrome.action.setBadgeText({ text: "" });
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// popup のトグル操作・TTL自動解除をバッジに即時反映
+chrome.storage.onChanged.addListener(function(changes, area) {
+  if (area === "local" && changes.staffMode) {
+    _updateStaffModeBadge(!!changes.staffMode.newValue);
+  }
+});
+
+// SW起動時にバッジを復元（TTL失効チェック込み）
+_isStaffModeActive().then(_updateStaffModeBadge);
+
 chrome.alarms.onAlarm.addListener(async function(alarm) {
   if (alarm.name !== "sumora-batch-poll") return;
   var st = await chrome.storage.local.get("batchRunning");
@@ -1959,6 +2014,11 @@ chrome.alarms.onAlarm.addListener(async function(alarm) {
 
 async function _pollAndRunBatch() {
   try {
+    // スタッフモード中は pending をclaimしない（fetch前に離脱）。
+    // コマンドは pending のまま残り、次の30秒ポーリングで別PCが拾うため自動化は継続する。
+    if (await _isStaffModeActive()) {
+      return;
+    }
     // 修正9: pending ポーリングに10秒タイムアウト / 修正10: 共有シークレットヘッダー
     var res = await fetch(SUMORA_BATCH_API + "/api/automation/pending", {
       cache: "no-store",

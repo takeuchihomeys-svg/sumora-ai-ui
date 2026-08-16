@@ -3254,8 +3254,48 @@ function filterCustomers(q) {
   renderList(getFilteredCustomers(q));
 }
 
+// ── スタッフモード ──────────────────────────────────────────────────
+// ONの間このPCの拡張は自動化コマンド（DBポーリングclaim・Realtimeコマンド）を無視する。
+// 実際の抑止判定は background.js（_isStaffModeActive）が行う。ここはUI表示と切替のみ。
+// 状態は chrome.storage.local { staffMode, staffModeAt }。2時間TTLで自動OFF（background側で判定）。
+var _staffModeOn = false;
+
+function _renderStaffMode(on) {
+  _staffModeOn = !!on;
+  var btn = document.getElementById("staff-mode-btn");
+  var banner = document.getElementById("staff-mode-banner");
+  if (btn) {
+    btn.classList.toggle("on", _staffModeOn);
+    btn.textContent = _staffModeOn ? "🙋 スタッフモード中" : "🙋 スタッフモード";
+  }
+  if (banner) banner.style.display = _staffModeOn ? "block" : "none";
+}
+
+function _initStaffModeUI() {
+  try {
+    chrome.storage.local.get(["staffMode"], function(res) {
+      _renderStaffMode(!!(res && res.staffMode));
+    });
+    // 他のpopupインスタンス（サイドパネル/各タブのアンダーバー）での切替・TTL自動OFFを同期
+    chrome.storage.local.onChanged.addListener(function(changes) {
+      if (changes.staffMode) _renderStaffMode(!!changes.staffMode.newValue);
+    });
+  } catch (_) { /* ignore */ }
+  var btn = document.getElementById("staff-mode-btn");
+  if (btn) {
+    btn.addEventListener("click", function() {
+      var next = !_staffModeOn;
+      _renderStaffMode(next); // 即時反映（storage.onChanged でも同期される）
+      try {
+        chrome.storage.local.set({ staffMode: next, staffModeAt: next ? Date.now() : null });
+      } catch (_) { /* ignore */ }
+    });
+  }
+}
+
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+  _initStaffModeUI();
   // DBが空なら既存ハードコードデータをシード → 学習済みマップをロード
   seedMapsIfEmpty().then(() => fetchLearnedMaps());
   // DBの駅→路線キャッシュをロード（24hローカルキャッシュ・失敗時はhardcodedマップで動作継続）
@@ -3267,8 +3307,8 @@ document.addEventListener("DOMContentLoaded", () => {
       var cmd = res.pendingPopupCmd;
       if (!cmd) return;
       chrome.storage.session.remove("pendingPopupCmd");
-      // openPopup() 失敗時に background.js が立てた赤バッジを消す
-      try { chrome.action.setBadgeText({ text: '' }); } catch (_) {}
+      // openPopup() 失敗時に background.js が立てた赤バッジを消す（スタッフモード中はバッジ「手動」を維持）
+      try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : '' }); } catch (_) {}
       var c = allCustomers.find(function(x) {
         return String(x.id) === String(cmd.customerId);
       });
@@ -3317,7 +3357,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // allCustomers 未ロードなら DOMContentLoaded の then() 側で処理されるので無視
     if (!allCustomers || allCustomers.length === 0) return;
     chrome.storage.session.remove("pendingPopupCmd");
-    try { chrome.action.setBadgeText({ text: '' }); } catch (_) {}
+    try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : '' }); } catch (_) {}
     var c = allCustomers.find(function(x) {
       return String(x.id) === String(cmd.customerId);
     });

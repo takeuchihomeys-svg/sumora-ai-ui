@@ -517,6 +517,32 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 
 ---
 
+## 🙋 2026-08-16 スタッフモード実装（自動化コマンド無視トグル）
+
+**目的**: 自動物件出しが動いている間、スタッフのPCのChrome拡張が勝手に動かない（顧客切替・autofillクリック・タブナビゲート・openPopup割り込みが起きない）ようにする。
+
+**設計（案A: chrome.storage.local + claim前ガード）**:
+- 状態: `chrome.storage.local { staffMode: boolean, staffModeAt: timestamp }`（**PCごと**。DBやサーバー変更ゼロ）
+- 自動化はDBキューを各PCがポーリングして早い者勝ちでclaimする方式のため、**claim前（pending fetch前）にローカルで離脱**すればコマンドはpendingのまま残り、30秒以内に別PC（自動化PC）が拾う → 自動化全体は止まらない
+- 消し忘れ防止: **TTL 2時間で自動OFF**（`STAFF_MODE_TTL_MS`、batchRunningロックと同型）
+
+**background.js のガード3箇所**（`_isStaffModeActive()` / `_updateStaffModeBadge()` は BATCH_LOCK_TTL_MS 直後に定義）:
+1. `_pollAndRunBatch()` 冒頭 — pending fetch前に return（最重要。openPopup割り込みも根絶）
+2. `axlx-poll-now` ハンドラ — `{ok:false, reason:"staff-mode"}` を返す
+3. `_sbHandleCommand()` 冒頭 — Realtime `scrape_command` を無視（broadcastは全PCに届くので別PCが処理）
+- **意図的にガードしない**: `stop_command`（停止は常に安全）／ `axlx-webapp-search`・`axlx-scrape-and-compare`（このPCのスタッフ自身のWebAppボタンクリック由来＝手動操作なので通す）
+- バッジ: ON中は「手動」緑バッジ常時表示。`chrome.storage.onChanged` でトグル・TTL失効を即時反映。SW再起動時も復元
+
+**popup.html / popup.js / styles.css のUI**:
+- ヘッダーに `#staff-mode-btn`「🙋 スタッフモード」トグル（ON時緑 `.staff-btn.on`）＋ヘッダー直下に `#staff-mode-banner` 緑バナー「スタッフモード中 — 自動化は停止しています」
+- popup.js `_initStaffModeUI()`（Init直前に定義・DOMContentLoaded先頭で呼ぶ）: storage読取→描画、`chrome.storage.local.onChanged` で全popupインスタンス（サイドパネル+各タブのアンダーバー）同期
+- バッジクリア2箇所（pendingPopupCmd処理時の `setBadgeText('')`）を `_staffModeOn ? '手動' : ''` に変更（スタッフバッジを消さない）
+- mini-mode では `#staff-mode-btn` / `#staff-mode-banner` を非表示（styles.css の mini-mode 非表示リストに追加）
+
+**検証**: 両JS `node --check` パス。**実機での動作確認（トグルON→自動化コマンドが別PCに流れること）は未実施 → 次セッションで要確認**。
+
+---
+
 ## 🔁 引き継ぎ事項（次セッションへ）
 
 - 現在のバージョン: **v2.4.8**（manifest.json 記載）

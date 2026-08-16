@@ -41,6 +41,27 @@ body {
 }
 .icon-btn:hover { background: rgba(255,255,255,0.28); }
 
+/* ── スタッフモード ── */
+.staff-btn {
+  background: rgba(255,255,255,0.15);
+  border: none; border-radius: 14px;
+  margin-left: auto; margin-right: 8px;
+  padding: 5px 10px;
+  color: #fff; font-size: 11px; font-weight: bold;
+  cursor: pointer; white-space: nowrap;
+}
+.staff-btn:hover { background: rgba(255,255,255,0.28); }
+.staff-btn.on {
+  background: #16a34a;
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.45);
+}
+.staff-banner {
+  background: #16a34a; color: #fff;
+  font-size: 12px; font-weight: bold;
+  text-align: center; padding: 6px 10px;
+  flex-shrink: 0;
+}
+
 /* ── View system ── */
 .view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
 .view.active { display: flex; }
@@ -398,7 +419,9 @@ body.mini-mode .header {
 body.mini-mode .header-sep,
 body.mini-mode .header-sub,
 body.mini-mode #collapse-btn,
-body.mini-mode #refresh-btn {
+body.mini-mode #refresh-btn,
+body.mini-mode #staff-mode-btn,
+body.mini-mode #staff-mode-banner {
   display: none !important;
 }
 body.mini-mode .header-left {
