@@ -505,6 +505,12 @@
                 }
 
                 var found = tryClickStation(stName);
+                if (!found) {
+                  // 診断: ダイアログ内の全checkbox付きlabelを出力（本町等が見つからない原因調査用）
+                  var _diagDlg = document.querySelector('[role="dialog"]') || document;
+                  var _diagLbls = [].slice.call(_diagDlg.querySelectorAll("label")).filter(function(l) { return l.querySelector("input[type='checkbox']"); });
+                  console.log("[AX] 駅未発見: " + stName + " | dialog label数=" + _diagLbls.length + " | サンプル:", _diagLbls.slice(0, 8).map(function(l) { return '"' + l.textContent.replace(/\s+/g, '').slice(0, 20) + '"'; }).join(', '));
+                }
                 if (!found && stName.startsWith("JR")) {
                   console.log("[AX] 駅未発見(JR駅): " + stName + " → JR沿線フォールバック開始");
                   var jrLabels = [].slice.call(document.querySelectorAll("label")).filter(function (l) {

@@ -2692,8 +2692,9 @@ function openInstructions(siteKey) {
         if (searchMode === "wide") {
           matchedStations.forEach(st => {
             const stLines = STATION_LINE_MAP[st] || [];
-            // 同一事業者の複数路線（例: 十三=阪急3路線）→複数路線で検索範囲が広いため隣接駅は不要
-            const _isSameOpHub = stLines.length > 1 && deduplicateSameOperatorLines(stLines).length === 1;
+            // 4路線以上かつ同一事業者の場合のみ「広域ハブ」として隣接駅を省略
+            // 旧実装は >1 で抑制していたため、本町（3路線）等も隣接駅が追加されないバグがあった
+            const _isSameOpHub = stLines.length > 3 && deduplicateSameOperatorLines(stLines).length === 1;
             if (!_isSameOpHub) {
               const adj = getAdjacentStations(st, stLines);
               adj.forEach(a => { if (!stationNames.includes(a)) stationNames.push(a); });
