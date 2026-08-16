@@ -545,6 +545,33 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 
 ---
 
+## 🖱️ 2026-08-16 リアプロ自動入力の「機械的クリック」解消（人間らしいクリックキュー導入）
+
+**目的**: page-script.js は同種要素の複数クリック（駅×N・区×N・町字×N・路線×N・チェックボックス×N・基本条件フォーム一括セット）が全て同期 forEach/for ループの **0ms連打** で、ログ・イベント間隔が機械的だった。itandi-page-script.js（1クリックずつ setTimeout チェーン + ランダム間隔 + 低確率長ポーズ）の設計を踏襲して直列化した。
+
+**修正ファイル**: `chrome-extension/page-script.js` のみ（他ファイル無変更）
+
+**コア実装（L140-189 に新設）**:
+- `enqueueHumanClick(el, fn, minGap, maxGap)` / `enqueueHumanAction(fn, ...)`: FIFOクリックキュー。1件ずつランダム間隔（60〜200ms）で実行、8%の確率で 300〜700ms の「迷い」ポーズ追加
+- `el.__axPending` フラグでポーリング再実行時の二重エンキュー防止（実行後クリア）
+- `isClickQueueBusy()` / `whenClickQueueIdle(cb)` / `clearClickQueue()`（fillRealpro 開始時に前回残留キュー破棄）
+
+**順序保証の仕掛け（機能を壊さないための核心）**:
+1. `waitForClick.attempt()` 冒頭: キュー消化中は判定・クリックを開始しない（150ms後再試行・試行回数は消費しない）→ 前ステップの全クリック完了後に次ステップへ進む
+2. `clickSearch()` 冒頭: キュー消化中は検索送信しない（200ms後再試行）→ 条件反映前の検索を防止
+3. `_doReset`: モーダル内クリア→閉じるボタンを同一キューFIFOで順次実行し、フォームクリア（checked=false直接セット）は `whenClickQueueIdle` 後に実行（順序が逆だと解除クリックが後から走って再チェックされる）
+
+**キュー化した箇所**: `setCheckboxes`（間取り/構造/市区郡/沿線）・`clickLineButtons` PASS1/2・`selectStationsByName` STEP1〜5・`clickDetailArea` PASS0（町字複数）・`_doReset` モーダルクリア・T=0基本条件ブロック（`queueSelVal`/`queueTxtVal` 新設で select/text も1項目ずつ）・ペット/敷礼/共益費チェック・STEP2 stale市区郡解除・STEP B 路線残留クリア・STEP D 駅残留クリア。`simulateClick` は mousedown→(40〜90ms)→mouseup+click の押下時間を再現。
+
+**非同期化に伴うロジック修正（重要・削除禁止）**:
+- `selectStationsByName` STEP1/STEP5: **checked済み・クリック予約済みも found=true（処理済み扱い）** に変更。旧コードは checked済みで found が立たず STEP2 の直接テキストクリックにフォールスルーし、キュー化後だと駅がトグル解除される事故があり得た
+- STEP B（路線）/ STEP D（駅）の前顧客残留クリア: **今回選択予定の路線・駅はクリア対象から除外**（解除→再選択がキューで非同期になると順序が保てず選択が消えるため。checked済みは選択側が再クリックしないのでそのまま活きる）
+- 所在地フォールバックの `city_code[]` 反映確認（applied カウント）も `whenClickQueueIdle` 後に判定
+
+**検証**: `node --check` パス。**実機（リアプロ実ページ・連続バッチ検索）での動作確認は未実施 → 次セッションで要確認**（特に: 複数駅選択・複数町字選択・前顧客残留クリアの3ケース）。
+
+---
+
 ## 🔁 引き継ぎ事項（次セッションへ）
 
 - 現在のバージョン: **v2.4.8**（manifest.json 記載）
