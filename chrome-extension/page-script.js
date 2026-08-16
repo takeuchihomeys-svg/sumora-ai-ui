@@ -113,8 +113,16 @@
     var cbs = document.querySelectorAll('input[name="' + name + '"]');
     cbs.forEach(function(cb) {
       var shouldCheck = svals.indexOf(String(cb.value)) >= 0;
-      if (cb.checked !== shouldCheck) cb.click();
+      // 一気に連打せず、1件ずつ 60〜150ms のランダム間隔でクリック（人間らしさ）
+      if (cb.checked !== shouldCheck) enqueueHumanClick(cb, _clickEl, 60, 150);
     });
+  }
+  // 基本条件フォームの select/text 入力も1項目ずつ間隔を空けてセットする
+  function queueSelVal(name, val) {
+    enqueueHumanAction(function() { setSelVal(name, val); }, 80, 200);
+  }
+  function queueTxtVal(name, val) {
+    enqueueHumanAction(function() { setTxtVal(name, val); }, 80, 200);
   }
 
   function getDirectText(el) {
@@ -127,6 +135,57 @@
 
   function fireClick(el) {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  }
+
+  // ── 人間らしいクリックキュー ─────────────────────────────────────────
+  // 同一tick内の連続クリック（駅×N・区×N・町字×N・路線×N・チェックボックス×N）を
+  // 1件ずつランダム間隔で直列実行する。itandi-page-script.js のディレイ設計を踏襲。
+  // - 各クリック間: 呼び出し側指定のランダム間隔（60〜200ms程度）
+  // - 8%の確率で 300〜700ms の「迷い」ポーズを追加（人間の躊躇を再現）
+  // - el.__axPending フラグでポーリング再実行時の二重エンキューを防止
+  function humanRand(min, max) {
+    return min + Math.floor(Math.random() * (max - min + 1));
+  }
+  function _clickEl(el) { el.click(); }
+  var _clickQueue = [];
+  var _clickQueueTimer = null;
+  function enqueueHumanClick(el, clickFn, minGap, maxGap) {
+    if (!el || el.__axPending) return false;
+    el.__axPending = true;
+    _clickQueue.push({ el: el, fn: clickFn || _clickEl, gap: humanRand(minGap || 80, maxGap || 200) });
+    _scheduleClickDrain();
+    return true;
+  }
+  // 要素に紐づかない汎用アクション（select/text入力・モーダル閉じ等）もキューで直列化
+  function enqueueHumanAction(fn, minGap, maxGap) {
+    _clickQueue.push({ el: null, fn: fn, gap: humanRand(minGap || 80, maxGap || 200) });
+    _scheduleClickDrain();
+  }
+  function _scheduleClickDrain() {
+    if (_clickQueueTimer || !_clickQueue.length) return;
+    var item = _clickQueue.shift();
+    var hesitate = (Math.random() < 0.08) ? humanRand(300, 700) : 0; // 低確率の長め「迷い」ポーズ
+    _clickQueueTimer = setTimeout(function() {
+      _clickQueueTimer = null;
+      try {
+        if (item.el) item.fn(item.el);
+        else item.fn();
+      } catch (e) { console.error('[AX] humanClick 例外（続行）', e); }
+      if (item.el) item.el.__axPending = false;
+      _scheduleClickDrain();
+    }, item.gap + hesitate);
+  }
+  function isClickQueueBusy() {
+    return _clickQueueTimer !== null || _clickQueue.length > 0;
+  }
+  function whenClickQueueIdle(cb) {
+    if (!isClickQueueBusy()) { cb(); return; }
+    setTimeout(function() { whenClickQueueIdle(cb); }, 150);
+  }
+  // fillRealpro 開始時に前回残留のキューを破棄（pendingフラグも解除）
+  function clearClickQueue() {
+    _clickQueue.forEach(function(it) { if (it.el) it.el.__axPending = false; });
+    _clickQueue.length = 0;
   }
 
   // スペース除去＋全角英数→半角
@@ -193,6 +252,9 @@
     pauseMs  = pauseMs  !== undefined ? pauseMs  : 600;
     var tries = 0;
     function attempt() {
+      // 人間らしいクリックキュー消化中は判定・クリックを開始しない
+      // （前ステップのクリックが全て完了してから次ステップに進む＝順序保証。試行回数は消費しない）
+      if (isClickQueueBusy()) { setTimeout(attempt, 150); return; }
       var ok = false;
       try {
         ok = tryFn();
@@ -284,10 +346,14 @@
 
   // 完全マウスイベントシーケンスでクリック（mousedown→mouseup→click）
   // サイト独自のイベントデリゲーションがmousedownを待っている場合に対応
+  // 人間の押下時間を再現: mousedown の 40〜90ms 後に mouseup→click を発火
+  // （後続処理は waitForClick の pauseMs ≧ 240ms で待機するため間に合う）
   function simulateClick(el) {
     el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, view:window}));
-    el.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, cancelable:true, view:window}));
-    el.dispatchEvent(new MouseEvent('click',     {bubbles:true, cancelable:true, view:window}));
+    setTimeout(function() {
+      el.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, cancelable:true, view:window}));
+      el.dispatchEvent(new MouseEvent('click',     {bubbles:true, cancelable:true, view:window}));
+    }, humanRand(40, 90));
   }
 
   // 市区郡ラベルを安全にクリック（city_code[]を持つlabel限定・checked済みは再クリックしない）
@@ -323,6 +389,8 @@
   // 検索ボタンをクリック
   // リアプロは DIV.go_search が実際の検索ボタン（診断で確認済み）
   function clickSearch() {
+    // クリックキュー消化中は検索しない（条件クリックが全て反映される前の検索送信を防止）
+    if (isClickQueueBusy()) { setTimeout(clickSearch, 200); return; }
     // 優先: div.go_search（リアプロのメイン検索ボタン）
     var goDivs = Array.prototype.slice.call(
       document.querySelectorAll('div.go_search, div.go_search_submit')
@@ -356,14 +424,14 @@
       if (!lineName) return;
       var lineNorm = norm(lineName);
       var found = false;
-      // PASS1: label.one_line 完全一致
+      // PASS1: label.one_line 完全一致（クリックはキュー経由で 90〜200ms 間隔の順次実行）
       for (var i = 0; i < labels.length && !found; i++) {
         if (!isVisible(labels[i])) continue;
         var lNorm = norm(labels[i].textContent);
         if (lNorm === lineNorm) {
           var cb = labels[i].querySelector('input[type="checkbox"]');
-          if (cb) { if (!cb.checked) cb.click(); }
-          else { labels[i].click(); }
+          if (cb) { if (!cb.checked) enqueueHumanClick(cb, _clickEl, 90, 200); }
+          else { enqueueHumanClick(labels[i], _clickEl, 90, 200); }
           found = true;
         }
       }
@@ -373,8 +441,8 @@
         var lNorm = norm(labels[i].textContent);
         if (lNorm.length >= 4 && lineNorm.endsWith(lNorm)) {
           var cb = labels[i].querySelector('input[type="checkbox"]');
-          if (cb) { if (!cb.checked) cb.click(); }
-          else { labels[i].click(); }
+          if (cb) { if (!cb.checked) enqueueHumanClick(cb, _clickEl, 90, 200); }
+          else { enqueueHumanClick(labels[i], _clickEl, 90, 200); }
           found = true;
         }
       }
@@ -389,7 +457,9 @@
       if (!clean) return;
       var found = false;
 
-      // STEP1: label+checkbox（フォーム方式）- 全マッチをクリック（同名駅が複数路線に出現するため）
+      // STEP1: label+checkbox（フォーム方式）- 全マッチを順次クリック（同名駅が複数路線に出現するため）
+      // クリックはキュー経由（90〜200ms間隔）。checked済み・クリック予約済みも「処理済み」扱いにして
+      // STEP2以降の直接テキストクリックへ誤フォールスルーしない（トグル解除事故の防止）
       var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
       for (var i = 0; i < labels.length; i++) {
         if (!isVisible(labels[i])) continue;
@@ -397,7 +467,10 @@
         if (txt === clean) {
           var inp = labels[i].querySelector('input[type="checkbox"]');
           if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
-          if (inp && !inp.checked) { inp.click(); found = true; }
+          if (inp) {
+            if (!inp.checked) enqueueHumanClick(inp, _clickEl, 90, 200);
+            found = true;
+          }
         }
       }
       if (found) return;
@@ -406,18 +479,18 @@
         document.querySelectorAll('a,button,td,li,span,div,p')
       );
 
-      // STEP2: 直接テキスト 完全一致 - 全マッチをクリック（同名駅が複数路線に出現するため）
+      // STEP2: 直接テキスト 完全一致 - 全マッチを順次クリック（同名駅が複数路線に出現するため）
       for (var i = 0; i < els.length; i++) {
         if (!isVisible(els[i])) continue;
-        if (getDirectText(els[i]) === clean) { fireClick(els[i]); found = true; }
+        if (getDirectText(els[i]) === clean) { enqueueHumanClick(els[i], fireClick, 90, 200); found = true; }
       }
       if (found) return;
 
-      // STEP3: 全テキスト完全一致かつ葉ノード - 全マッチをクリック
+      // STEP3: 全テキスト完全一致かつ葉ノード - 全マッチを順次クリック
       for (var i = 0; i < els.length; i++) {
         if (!isVisible(els[i])) continue;
         var ft = els[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
-        if (ft === clean && els[i].children.length === 0) { fireClick(els[i]); found = true; }
+        if (ft === clean && els[i].children.length === 0) { enqueueHumanClick(els[i], fireClick, 90, 200); found = true; }
       }
       if (found) return;
 
@@ -427,19 +500,22 @@
         var dt = getDirectText(els[i]);
         if (dt.length >= 2 && clean.length >= 2 &&
             (dt.startsWith(clean) || clean.startsWith(dt))) {
-          fireClick(els[i]); found = true;
+          enqueueHumanClick(els[i], fireClick, 90, 200); found = true;
         }
       }
       if (found) return;
 
-      // STEP5: label 前方一致フォールバック
+      // STEP5: label 前方一致フォールバック（checked済みも処理済み扱い）
       for (var i = 0; i < labels.length && !found; i++) {
         if (!isVisible(labels[i])) continue;
         var txt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
         if ((txt.startsWith(clean) || clean.startsWith(txt)) && txt.length >= 2) {
           var inp = labels[i].querySelector('input[type="checkbox"]');
           if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
-          if (inp && !inp.checked) { inp.click(); found = true; }
+          if (inp) {
+            if (!inp.checked) enqueueHumanClick(inp, _clickEl, 90, 200);
+            found = true;
+          }
         }
       }
     });
@@ -464,9 +540,10 @@
                (ptxt.length >= 2 && clean.startsWith(ptxt));
       if (!ok) continue;
       var pinp = townLabels[pi].querySelector('input[type="checkbox"]');
-      if (pinp && !pinp.checked) { pinp.click(); pass0clicked = true; }
+      // 複数町字は 90〜200ms 間隔の順次クリック（キュー経由）
+      if (pinp && !pinp.checked) { enqueueHumanClick(pinp, _clickEl, 90, 200); pass0clicked = true; }
       else if (pinp && pinp.checked) { pass0clicked = true; } // checked済みも成功（再クリック禁止）
-      else if (!pinp) { townLabels[pi].click(); pass0clicked = true; }
+      else if (!pinp) { enqueueHumanClick(townLabels[pi], _clickEl, 90, 200); pass0clicked = true; }
     }
     if (pass0clicked) return true;
 
@@ -541,6 +618,7 @@
       return;
     }
     window._axFillRunning = true;
+    clearClickQueue(); // 前回実行の残留クリックキューを破棄（誤クリック防止）
     // fill-done 保証: 実行開始時にフラグをリセットし、85秒のフェイルセーフを仕掛ける
     // （background.js 側のタイムアウト90秒より必ず先に発火させる）
     _doneNotified = false;
@@ -590,19 +668,27 @@
           Array.prototype.slice.call(document.querySelectorAll('label.one_line')).forEach(function(lbl) {
             if (!isVisible(lbl)) return;
             var cb = lbl.querySelector('input[type="checkbox"]');
-            if (cb && cb.checked) cb.click();
+            if (cb && cb.checked) enqueueHumanClick(cb, _clickEl, 70, 160);
           });
           Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]:checked'))
             .filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); })
-            .forEach(function(inp) { inp.click(); });
-          console.log("[AX] _doReset: モーダル内の路線・駅選択をクリア");
+            .forEach(function(inp) { enqueueHumanClick(inp, _clickEl, 70, 160); });
+          console.log("[AX] _doReset: モーダル内の路線・駅選択をクリア（順次クリック）");
         } catch (_e) { /* ignore */ }
-        // click() の同期例外で callback 未到達（= fill-done 永久欠落）にならないよう try-catch
-        try { closeBtn.click(); closeDelay = 320 + Math.floor(Math.random() * 200); console.log("[AX] モーダルを閉じました"); }
-        catch (err) { console.error("[AX] _doReset: モーダル閉じで例外（続行）", err); }
+        // 閉じるボタンはクリア用クリックの完了後にキュー経由で実行（FIFOで順序保証）
+        // click() の例外で callback 未到達（= fill-done 永久欠落）にならないよう try-catch
+        enqueueHumanAction(function() {
+          try { closeBtn.click(); console.log("[AX] モーダルを閉じました"); }
+          catch (err) { console.error("[AX] _doReset: モーダル閉じで例外（続行）", err); }
+        }, 200, 400);
+        closeDelay = 320 + Math.floor(Math.random() * 200);
       }
 
       setTimeout(function() {
+        // モーダル内クリア＋閉じるのキューが全て消化されてからフォームクリアへ進む
+        // （queueされた解除クリックより先に checked=false を直接セットすると、
+        //  後から実行される click() で再チェックされてしまうため順序が重要）
+        whenClickQueueIdle(function() {
         try {
         // Step2: フォームを直接手動クリア（ページ遷移なし・確実にリセット）
         // チェックボックス系：市区郡・沿線・駅・間取り・構造・設備をすべてリセット
@@ -660,6 +746,7 @@
           console.error("[AX] _doReset クリア中の例外（続行）", err);
         }
         setTimeout(callback, 240 + Math.floor(Math.random() * 150)); // 短い安定待機のみ（ランダム）
+        }); // whenClickQueueIdle end
       }, closeDelay);
 
       }, showFormDelay); // Step0: 検索条件を表示 展開待機
@@ -769,18 +856,18 @@
       { area_mode: cond.area_mode, stations: cond.station_names, routes: cond.route_ids,
         cities: cond.city_codes, ward: cond.detail_ward });
 
-    // ── T=0ms: 基本条件 ──────────────────────────────────────────────
-    if (cond.rent_min) setSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min));
-    if (cond.rent_max) setSelVal("rental_cost2", nearestUp(RENT_OPTS, cond.rent_max));
-    if (cond.area_min) setSelVal("square_meter_l", nearestDown(AREA_OPTS, cond.area_min));
-    if (cond.area_max) setSelVal("square_meter_h", nearestUp(AREA_OPTS, cond.area_max));
+    // ── 基本条件（1項目ずつ 80〜200ms 間隔で順次入力 — 人間らしさ）──────────
+    if (cond.rent_min) queueSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min));
+    if (cond.rent_max) queueSelVal("rental_cost2", nearestUp(RENT_OPTS, cond.rent_max));
+    if (cond.area_min) queueSelVal("square_meter_l", nearestDown(AREA_OPTS, cond.area_min));
+    if (cond.area_max) queueSelVal("square_meter_h", nearestUp(AREA_OPTS, cond.area_max));
     var feeCb = document.querySelector('input[name="include_common_fee"]');
-    if (feeCb && !feeCb.checked) feeCb.click();
+    if (feeCb && !feeCb.checked) enqueueHumanClick(feeCb, _clickEl, 80, 180);
     if (cond.walk_minutes) {
-      setSelVal("transportation_id", "1");
-      setTxtVal("required_time", cond.walk_minutes);
+      queueSelVal("transportation_id", "1");
+      queueTxtVal("required_time", cond.walk_minutes);
     }
-    if (cond.building_age) setSelVal("structured_date", nearestUp(AGE_OPTS, cond.building_age));
+    if (cond.building_age) queueSelVal("structured_date", nearestUp(AGE_OPTS, cond.building_age));
     if (cond.floor_plan) {
       var FLOOR_RANK = [
         "1R","ワンルーム","スタジオタイプ","スタジオ",
@@ -855,7 +942,7 @@
     }
     if (cond.pet_ok) {
       var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
-      if (petCb && !petCb.checked) petCb.click();
+      if (petCb && !petCb.checked) enqueueHumanClick(petCb, _clickEl, 80, 180);
     }
     if (cond.shikirei_free) {
       // 敷金・礼金なしチェックボックス: ラベルテキストで検索してクリック
@@ -864,7 +951,7 @@
         var sTxt = (sLabels[si].textContent || '').replace(/[\s　]/g, '');
         if (sTxt === '敷金・礼金なし' || sTxt === '敷金礼金なし') {
           var sInp = sLabels[si].querySelector('input[type="checkbox"]');
-          if (sInp && !sInp.checked) { sInp.click(); console.log('[AX] 敷金・礼金なしをチェック'); }
+          if (sInp && !sInp.checked) { enqueueHumanClick(sInp, _clickEl, 80, 180); console.log('[AX] 敷金・礼金なしをチェック'); }
           break;
         }
       }
@@ -874,7 +961,7 @@
       // 検索フォームページにのみ存在するため、存在確認してからセット
       var updEl = document.querySelector('select[name="update_date"]');
       if (updEl) {
-        setSelVal("update_date", String(cond.rp_update_days));
+        queueSelVal("update_date", String(cond.rp_update_days));
         console.log("[AX] 更新日セット:", cond.rp_update_days + "日以内");
       } else {
         console.log("[AX] 更新日フィールド未検出（検索フォームページ以外）");
@@ -950,6 +1037,8 @@
             setTimeout(function() {
               try { setCheckboxes('city_code[]', codes); } catch (e) { console.error('[AX] fallback setCheckboxes例外', e); }
               setTimeout(function() {
+                // キュー化された順次クリックが全て反映されてから判定する
+                whenClickQueueIdle(function() {
                 // 1つ以上実際にチェックされた場合のみ検索（全件検索防止）
                 var applied = document.querySelectorAll('input[name="city_code[]"]:checked').length;
                 if (applied > 0) {
@@ -959,6 +1048,7 @@
                   showWarnToast(em);
                   notifyDone(em);
                 }
+                });
               }, 600 + Math.floor(Math.random() * 300));
             }, 240 + Math.floor(Math.random() * 160));
             return;
@@ -1134,7 +1224,7 @@
                   console.log('[AX] STEP2: 前顧客のcity_code残留を検出（' + staleInputs.length + '件）→ 解除して選び直し');
                   staleInputs.forEach(function(inp) {
                     var lbl = inp.closest ? inp.closest('label') : null;
-                    if (lbl) simulateClick(lbl); // トグルで解除
+                    if (lbl) enqueueHumanClick(lbl, function(el) { simulateClick(el); }, 120, 260); // トグルで解除（順次）
                   });
                   if (clickWardPrecise([wardFull, wardShort])) { prefClicked = false; return true; }
                   return false; // 市区郡ラベル未描画 → 次ポーリングで再試行
@@ -1242,9 +1332,20 @@
             }
             // ★ 修正: 前顧客の路線選択残留をクリア（モーダルのJS内部状態）
             // _doReset のフォームDOM操作では消えないため、モーダル表示中に直接クリック解除する
+            // ※ クリックがキュー化され非同期になったため、今回選択予定の路線は解除しない
+            //   （解除クリックが後から実行されて選択が消える事故の防止。checked済みは
+            //    clickLineButtons 側が再クリックしないのでそのまま活きる）
+            var wantedLineNorms = (hasRoutes ? cond.route_ids : []).map(function(id) {
+              return ROUTE_LINE_MAP[id] ? norm(ROUTE_LINE_MAP[id]) : null;
+            }).filter(Boolean);
             vis.forEach(function(lbl) {
               var cb = lbl.querySelector('input[type="checkbox"]');
-              if (cb && cb.checked) { try { cb.click(); } catch(e) {} }
+              if (!cb || !cb.checked) return;
+              var lNorm = norm(lbl.textContent);
+              var keep = wantedLineNorms.some(function(w) {
+                return w === lNorm || (lNorm.length >= 4 && w.endsWith(lNorm));
+              });
+              if (!keep) enqueueHumanClick(cb, _clickEl, 90, 200);
             });
             if (hasRoutes) clickLineButtons(cond.route_ids);
             return true;
@@ -1278,9 +1379,21 @@
                     // 前顧客のモーダル残留選択を一度だけクリア
                     // リアプロのモーダルは独自JS内部状態を持ち _doReset のフォームDOM操作では消せない
                     if (!_modalStationsCleared) {
+                      // ※ クリックがキュー化され非同期になったため、今回選択予定の駅は解除しない
+                      //   （解除クリックが後から実行されて選択が消える事故の防止。checked済みは
+                      //    selectStationsByName 側が「処理済み」扱いにするのでそのまま活きる）
+                      var _wantedStCleans = (cond.station_names || []).map(function(sn) {
+                        return sn.replace(/駅$/, '').trim();
+                      });
                       Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]:checked'))
                         .filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); })
-                        .forEach(function(inp) { inp.click(); });
+                        .filter(function(inp) {
+                          var ptxt = (inp.parentElement.textContent || '').replace(/\s+/g, '').replace(/駅$/, '');
+                          return !_wantedStCleans.some(function(c) {
+                            return ptxt === c || ptxt.includes(c) || c.includes(ptxt);
+                          });
+                        })
+                        .forEach(function(inp) { enqueueHumanClick(inp, _clickEl, 90, 200); });
                       _modalStationsCleared = true;
                     }
                     selectStationsByName(cond.station_names);
