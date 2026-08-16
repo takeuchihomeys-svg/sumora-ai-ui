@@ -549,6 +549,17 @@ function resolveStation(rawInput) {
   return null;
 }
 
+// 既知駅マップに存在するかチェック（APIレスポンス検証・地域名の混入防止）
+// STATION_LINE_MAP（ハードコード）/ _dbStationRouteMap（DB）/ LEARNED_STATION_MAP（学習済み）の順に照合
+function isKnownStation(name) {
+  const clean = (name || '').replace(/駅$/, '').trim();
+  if (!clean || clean.length < 2) return false;
+  if (STATION_LINE_MAP[clean]) return true;
+  if (_dbStationRouteMap && _dbStationRouteMap[clean]) return true;
+  if (typeof LEARNED_STATION_MAP !== 'undefined' && LEARNED_STATION_MAP[clean]) return true;
+  return false;
+}
+
 // 学習済み駅の路線情報を取得（buildAreaRouteCodes で使用）
 function getLearnedStationLines(token) {
   const info = LEARNED_STATION_MAP[token];
@@ -2684,9 +2695,17 @@ function openInstructions(siteKey) {
         }
       }
       // API補完: 路線→駅一覧を station_names に追加（路線指定の場合 matchedStations は空）
+      // isKnownStation で検証: 地域名・町字名がAIにより駅と誤分類されても混入しない
       if (!isWardArea_itandi && apiData?.itandi?.station_names?.length > 0) {
         if (!stationNames) stationNames = [];
-        apiData.itandi.station_names.forEach(s => { if (!stationNames.includes(s)) stationNames.push(s); });
+        apiData.itandi.station_names.forEach(s => {
+          if (stationNames.includes(s)) return;
+          if (isKnownStation(s)) {
+            stationNames.push(s);
+          } else {
+            console.log('[AX] itandi API補完: 非駅トークンを除外:', s);
+          }
+        });
       }
 
       // 広げて検索：賃料上限を自動拡張
@@ -2998,8 +3017,16 @@ function openInstructions(siteKey) {
       }
 
       // API補完: 路線名→駅一覧を station_names に追加（LEARNED_LINE_ORDER で未取得の路線に対応）
+      // isKnownStation で検証: 地域名・町字名がAIにより駅と誤分類されても混入しない（堀江等の防止）
       if (currentAreaMode === "station" && apiData?.realpro?.station_names) {
-        apiData.realpro.station_names.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+        apiData.realpro.station_names.forEach(s => {
+          if (realpro_station_names.includes(s)) return;
+          if (isKnownStation(s)) {
+            realpro_station_names.push(s);
+          } else {
+            console.log('[AX] リアプロ API補完: 非駅トークンを除外:', s);
+          }
+        });
       }
 
       // 地名マップから町字レベルのトークンを検索（駅モード時はスキップ：所在地フィールドに入らないようにする）
