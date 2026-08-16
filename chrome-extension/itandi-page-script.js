@@ -584,6 +584,24 @@
         "4K":"4K","4DK":"4DK","4LDK":"4LDK",
         "5K以上":"5K_OVER","5K":"5K_OVER","5K_OVER":"5K_OVER"
       };
+      // ID直接選択が失敗した場合（itandi BBがDOM更新でIDを変えた等）にラベルテキストで探すフォールバック
+      function tickFloor(id) {
+        var el = document.querySelector('input[name="room_layout:in"][id="' + id + '"]');
+        if (!el) {
+          var labelText = id === "5K_OVER" ? "5K以上" : id;
+          var lbl = [].slice.call(document.querySelectorAll("label")).find(function(l) {
+            var t = l.textContent.trim().replace(/\s+/g, "");
+            return (t === labelText || t === id) && isVis(l);
+          });
+          if (lbl) {
+            el = lbl.querySelector("input[type='checkbox']");
+            if (!el && lbl.htmlFor) el = document.getElementById(lbl.htmlFor);
+          }
+          if (!el) { console.warn("[AX] 間取りCB未発見: " + id); return; }
+          console.log("[AX] 間取りCB labelフォールバック成功: " + id);
+        }
+        tick(el);
+      }
       var fpStr = cond.floor_plan.trim();
       var ijouMatch  = fpStr.match(/^(.+?)以上$/);
       var rangeMatch = fpStr.match(/^(.+?)[～〜](.+?)$/);
@@ -592,7 +610,7 @@
         var baseIdx = FLOOR_RANK_IT.indexOf(baseKey);
         if (baseIdx >= 0) {
           for (var ri = baseIdx; ri < FLOOR_RANK_IT.length; ri++) {
-            tick(document.querySelector('input[name="room_layout:in"][id="' + FLOOR_RANK_IT[ri] + '"]'));
+            tickFloor(FLOOR_RANK_IT[ri]);
           }
         }
       } else if (rangeMatch) {
@@ -605,7 +623,7 @@
         if (toIdx < 0) toIdx = fromIdx;
         if (fromIdx > toIdx) { var tmp = fromIdx; fromIdx = toIdx; toIdx = tmp; }
         for (var ri = fromIdx; ri <= toIdx; ri++) {
-          tick(document.querySelector('input[name="room_layout:in"][id="' + FLOOR_RANK_IT[ri] + '"]'));
+          tickFloor(FLOOR_RANK_IT[ri]);
         }
       } else {
         // もしくは・または等の接続詞でも分割し、修飾語付き文字列からも間取りを抽出
@@ -621,7 +639,7 @@
           plan = plan.trim();
           var id = extractFloorIT(plan);
           if (id && VALID_LAYOUTS.indexOf(id) !== -1) {
-            tick(document.querySelector('input[name="room_layout:in"][id="' + id + '"]'));
+            tickFloor(id);
           }
         });
       }

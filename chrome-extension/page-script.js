@@ -540,6 +540,23 @@
           }
         }
       }
+      // STEP6: station_code[] を直接親テキストで検索
+      // ラベルに checkbox が紐づかない DOM 構造（for属性なし・checkbox がlabel外等）に対応
+      if (!found) {
+        var stAllInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]'));
+        for (var i = 0; i < stAllInputs.length && !found; i++) {
+          var sinp = stAllInputs[i];
+          var sp = sinp.parentElement;
+          if (!sp) continue;
+          var sptxt = sp.textContent.replace(/\s+/g, '').replace(/駅$/, '');
+          if (sptxt === clean || (sptxt.length >= 2 && clean.length >= 2 &&
+              (sptxt.startsWith(clean) || clean.startsWith(sptxt)))) {
+            if (!sinp.checked) enqueueHumanClick(sinp, _clickEl, 90, 200);
+            found = true;
+          }
+        }
+        if (!found) console.log('[AX] selectStations: 全STEP失敗（駅モーダルに存在しない可能性）: ' + clean);
+      }
     });
   }
 
@@ -1462,6 +1479,38 @@
                       if (matched && ok) _checkedCount++;
                       return !matched || ok;
                     });
+                    // フォールバック検証: ラベルに checkbox が紐づかない構造でも確認できる
+                    // （ラベルがあっても inp=null の場合 matched=false のまま _checkedCount が増えない問題を解消）
+                    // station_code[] を全件走査して親テキストと照合し、
+                    // モーダルに存在しない駅名（堀江等の地域名）はスキップ（=通過扱い）
+                    if (_checkedCount === 0) {
+                      var _allSt = Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]'));
+                      if (_allSt.length > 0) {
+                        var _fbCount = 0;
+                        var _fbOk = (cond.station_names || []).every(function(sn) {
+                          var clean = sn.replace(/駅$/, '').trim();
+                          var inModal = false, isChecked = false;
+                          _allSt.forEach(function(inp) {
+                            var p = inp.parentElement;
+                            var ptxt = p ? p.textContent.replace(/\s+/g, '').replace(/駅$/, '') : '';
+                            if (!ptxt) return;
+                            if (ptxt === clean || (ptxt.length >= 2 && clean.length >= 2 &&
+                                (ptxt.startsWith(clean) || clean.startsWith(ptxt)))) {
+                              inModal = true;
+                              if (inp.checked) isChecked = true;
+                            }
+                          });
+                          if (!inModal) return true; // 駅モーダルに存在しない名前（地域名等）はスキップ
+                          if (isChecked) _fbCount++;
+                          return isChecked;
+                        });
+                        if (_fbOk && _fbCount >= 1) {
+                          console.log('[AX] STEP D: input-based検証成功: ' + _fbCount + '駅確認');
+                          _checkedCount = _fbCount;
+                          _allMatchedChecked = true;
+                        }
+                      }
+                    }
                     return _allMatchedChecked && _checkedCount >= 1;
                   },
                   function() {
