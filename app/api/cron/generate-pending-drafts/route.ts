@@ -84,6 +84,7 @@ async function run() {
     .lte("draft_pending_at", threshold)
     .gte("draft_pending_at", tenMinutesAgo)
     .or("draft_attempted_at.is.null,draft_attempted_at.lt." + tenMinutesAgo)
+    .or("draft_fail_count.is.null,draft_fail_count.lt.5")
     .limit(5); // 3→5: 同時多数メッセージ時の処理件数を増やす
 
   // ② 取りこぼし救済: pending_atなし（または10分以上前の古いpending）・下書きなし・24時間以内・未返信

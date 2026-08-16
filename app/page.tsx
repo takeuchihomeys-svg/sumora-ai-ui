@@ -1636,8 +1636,8 @@ export default function Home() {
                 c.id === String(upd.id) ? { ...c, aiDraft: stripInternalTagsOrNull(upd.ai_draft), suggestedAixMeta: upd.suggested_aix_meta ?? null } : c
               )
             );
-            // async プリ生成完了 → preGenInProgress をクリア
-            if (upd.ai_draft) preGenInProgress.current.delete(String(upd.id));
+            // async プリ生成完了 → preGenInProgress をクリア（sentinelは実下書きではないため除外）
+            if (upd.ai_draft && upd.ai_draft !== '[AIX誘導中]' && upd.ai_draft !== '__SHOWN__') preGenInProgress.current.delete(String(upd.id));
             // 新しいAIドラフトが届いたら旧表示済みキャッシュは陳腐化 → 破棄（__SHOWN__/[AIX誘導中] sentinelは除外）
             if (upd.ai_draft && upd.ai_draft !== "__SHOWN__" && upd.ai_draft !== "[AIX誘導中]") {
               delete shownDraftCacheRef.current[String(upd.id)];
@@ -7399,27 +7399,35 @@ export default function Home() {
               const nextTmpl = suggestNextTemplateMap[id];
               if (nextTmpl && !dismissedNextTemplateIds.has(id)) {
                 const isFollowupCost = nextTmpl.num === "追客初期費用";
-                return (
-                  <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
-                    <span className="text-[12px] font-bold text-teal-800 flex-1">
-                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
-                      {isFollowupCost ? "【追客】初期費用テンプレートを送る" : `次のテンプレート ${nextTmpl.num} を送る`}
-                    </span>
-                    <button onClick={() => {
-                        if (isFollowupCost) {
-                          openAixWithImagePicker("estimate_sheet");
-                        } else {
-                          setPendingNextTemplateInfo(nextTmpl); setTemplateOpenContext("next_numbered"); setShowTemplateModal(true);
-                        }
-                      }}
-                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                      style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)" }}>
-                      {isFollowupCost ? "見積書を送る" : `${nextTmpl.num} を送る`}
-                    </button>
-                    <button onClick={() => setDismissedNextTemplateIds((prev) => new Set([...prev, id]))}
-                      className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
-                  </div>
-                );
+                // 追客初期費用バナーは「家賃が高い」系のメッセージがある場合はスキップ
+                // （家賃懸念 → 物件を探す流れが正しい。初期費用テンプレより物件オススメが適切）
+                const _latestCustMsg = [...msgs].reverse().find((m: Message) => m.sender === "customer")?.text ?? "";
+                const _customerWorriedAboutRent = /家賃.*(高い|高め|少し高|ちょっと高|高くな)|高い.*家賃|高め.*家賃/.test(_latestCustMsg);
+                if (!isFollowupCost || !_customerWorriedAboutRent) {
+                  return (
+                    <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
+                      <span className="text-[12px] font-bold text-teal-800 flex-1">
+                        <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                        {isFollowupCost ? "【追客】初期費用テンプレートを送る" : `次のテンプレート ${nextTmpl.num} を送る`}
+                      </span>
+                      <button onClick={() => {
+                          if (isFollowupCost) {
+                            openAixWithImagePicker("estimate_sheet");
+                          } else {
+                            setPendingNextTemplateInfo(nextTmpl); setTemplateOpenContext("next_numbered"); setShowTemplateModal(true);
+                          }
+                        }}
+                        className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                        style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)" }}>
+                        {isFollowupCost ? "見積書を送る" : `${nextTmpl.num} を送る`}
+                      </button>
+                      <button onClick={() => setDismissedNextTemplateIds((prev) => new Set([...prev, id]))}
+                        className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
+                    </div>
+                  );
+                }
+                // 家賃懸念 + 初期費用バナーの場合はフォールスルー
+                // （re-renderは即時。次のP1〜P8が物件オススメを表示する）
               }
 
               // P0.6: CHAIN-2 テンプレ連続送信チェーン（1枚目送信後 → 学習済みシーケンスの次テンプレを誘導）
@@ -7720,30 +7728,36 @@ export default function Home() {
               // ただし suggestPropertyRecommendMap[id] がある場合は P4（物件オススメ）を優先する
               const hasPropertyCheckTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_check");
               if (hasPropertyCheckTask && !suggestPropertyRecommendMap[id]) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-[#4CAF50] bg-[#e8f5e9] px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-[#2e7d32] flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件確認した</span>
-                  <button onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #388e3c, #4CAF50)" }}>AIX 物件確認した</button>
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-[#4CAF50] bg-[#e8f5e9] px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-bold text-[#2e7d32] flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件確認した</span>
+                    <button onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: "linear-gradient(135deg, #388e3c, #4CAF50)" }}>AIX 物件確認した</button>
+                  </div>
+                  <p className="text-[10px] text-[#388e3c] mt-1 pl-1">✅ お客様への返信は不要です。AIXをセットしてください。</p>
                 </div>
               );
 
               // P6: 物件ピックアップした（タスクあり or サジェスト）
               const isCustomerFormatMsg = false;
               if ((suggestPropertySendMap[id] || hasPropertySendTask || isCustomerFormatMsg) && !suggest2ndHandMap[id] && !dismissedPropertySendIds.has(id)) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-teal-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件ピックアップした</span>
-                  <button onClick={() => { setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #00897B, #26a69a)" }}>AIX 物件ピックアップした</button>
-                  {postAixTemplateMap[id]?.actionType === "condition_hearing" ? (
-                    // ヒアリングAIX直後: このバナーがP7.5を遮蔽するため、ヒアリング【AIX】続きテンプレ誘導を併設
-                    <button onClick={() => { setTemplateOpenContext("post_aix"); setShowTemplateModal(true); }}
-                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                      style={{ background: postAixTemplateMap[id].color }}>テンプレ</button>
-                  ) : null}
-                  <button onClick={() => setDismissedPropertySendIds((prev) => new Set([...prev, id]))}
-                    className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="text-[12px] font-bold text-teal-700 leading-snug"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件ピックアップした</span>
+                    <button onClick={() => setDismissedPropertySendIds((prev) => new Set([...prev, id]))}
+                      className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => { setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
+                      className="flex-1 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: "linear-gradient(135deg, #00897B, #26a69a)" }}>AIX 物件ピックアップした</button>
+                    {postAixTemplateMap[id]?.actionType === "condition_hearing" ? (
+                      <button onClick={() => { setTemplateOpenContext("post_aix"); setShowTemplateModal(true); }}
+                        className="flex-1 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                        style={{ background: postAixTemplateMap[id].color }}>テンプレ</button>
+                    ) : null}
+                  </div>
                 </div>
               );
 
