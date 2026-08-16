@@ -1456,6 +1456,27 @@
                 // STEP D: 駅ページが描画され、かつ指定駅が選択されるまでリトライ
                 waitForClick(
                   function() {
+                    // ★ 診断ログ（初回のみ）: DOM上の全checkbox/radio input名を記録
+                    // station_code[] ガードの前に実行し、0件のときも必ずログが出るようにする
+                    if (!window._axStDiagDone) {
+                      window._axStDiagDone = true;
+                      var _stCodeCount = document.querySelectorAll('input[name="station_code[]"]').length;
+                      var _allChk = Array.prototype.slice.call(document.querySelectorAll('input[type="checkbox"], input[type="radio"]'));
+                      var _nameMap = {};
+                      _allChk.forEach(function(inp) {
+                        var n = inp.getAttribute('name') || '(no-name)';
+                        if (!_nameMap[n]) { _nameMap[n] = { count: 0, sample: '' }; }
+                        _nameMap[n].count++;
+                        if (!_nameMap[n].sample) {
+                          var p = inp.parentElement;
+                          _nameMap[n].sample = p ? p.textContent.replace(/\s+/g, '').slice(0, 20) : '';
+                        }
+                      });
+                      console.log('[AX] DIAG station_code[] count:', _stCodeCount, '| all input names:', JSON.stringify(_nameMap));
+                      var _allLbls = Array.prototype.slice.call(document.querySelectorAll('label'));
+                      var _visLblSamples = _allLbls.filter(function(l) { return isVisible(l); }).slice(0, 12).map(function(l) { return '"' + l.textContent.replace(/\s+/g, '').slice(0, 20) + '"'; });
+                      console.log('[AX] DIAG visible labels:', _visLblSamples.join(', '));
+                    }
                     // ★ 修正: 駅リスト（station_code[]）が実際にDOMへ載るまで待つ
                     // 旧実装は「ページ全体のlabel」で描画判定していたため、検索フォームの
                     // labelで即通過→駅リスト未描画のまま残留クリアが空振りしていた
@@ -1463,19 +1484,6 @@
                     var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
                     var vis = labels.filter(function(l) { return isVisible(l); });
                     if (!vis.length) return false; // 駅リストがまだ描画されていない
-                    // ★ 診断ログ（初回のみ）: station_code[] の構造を確認
-                    if (!window._axStDiagDone) {
-                      window._axStDiagDone = true;
-                      var _diagSt = Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]')).slice(0, 8);
-                      console.log('[AX] DIAG station_code[] count:', document.querySelectorAll('input[name="station_code[]"]').length);
-                      _diagSt.forEach(function(inp, i) {
-                        var p = inp.parentElement;
-                        console.log('[AX] DIAG st[' + i + '] value=' + inp.value + ' parent.tag=' + (p && p.tagName) + ' parent.txt="' + (p && p.textContent.replace(/\s+/g, '').slice(0, 30)) + '"');
-                      });
-                      // 可視labelのテキストサンプル（先頭10件）
-                      var _visLbls = vis.slice(0, 10).map(function(l) { return '"' + l.textContent.replace(/\s+/g, '').slice(0, 20) + '"'; });
-                      console.log('[AX] DIAG visible labels:', _visLbls.join(', '));
-                    }
                     // ★ 修正: 前顧客のモーダル残留選択を「毎パス」クリアする
                     // リアプロのモーダルは独自JS内部状態を持ち _doReset のフォームDOM操作では消せない。
                     // さらに遅延描画・内部状態からの復元で後から checked が現れるため、
