@@ -187,6 +187,7 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-08-12 | **itandi BB 路線・駅が自動選択されないバグ3箇所修正（Fable5調査）** commit b3af969。[BUG-1] itandi-content.js L210-211: URLパラメータ経由（スマホ/LINEリンク）で`itandi_lines:[]` `station_names:[]`がハードコードされており、常に路線・駅が未入力になっていた → `c.itandi_lines||[]` `c.station_names||(c.station?[c.station]:[])` に修正。[BUG-2] itandi-page-script.js pollLineList(): `document.querySelectorAll("label")`が全ページ対象のため間取り等の常時表示チェックボックスに早期反応し、路線リスト未描画の段階でstartClickLines()が発火→全路線false→_abort()していた → `[role="dialog"]`内のラベルのみに限定。[BUG-3] clickLabel()にcontainerパラメータ追加、startClickLines(dlg)が受け取ってclickLabel(lineNames[lineIdx], dlg)で渡す。 |
 | 2026-08-12 | **v2.5.0: 顧客間条件混線バグ完全修正（Fable5調査→実装）** commit 876b95d。[CRITICAL-1] `_fillDoneWaiters`に`customerId`追加 → `_notifyFillDone(site, customerId, error)`が一致したウェイターのみ解決（顧客Aの遅延fill-doneが顧客Bのウェイターを誤解決するバグ根絶）。[CRITICAL-1] content.js/itandi-content.js に`axlx-set-fill-customer`受信処理追加 → fill-done relay時に`customerId`を付与。`_batchAutofill`の各サイト分岐でswitch-customer送信前に`axlx-set-fill-customer`を送信。[HIGH-1] `_batchCustomerDoneWaiters`に`customerId`追加 → `_notifyBatchCustomerDone(customerId, propertyCount)`でフィルタ。[HIGH-2] popup.js: `searchMode` reset 3箇所に`else`分岐追加（`is_wide=false`時も`pinpoint`ボタンをクリック・前顧客のwide状態引継ぎバグ防止）。 |
 | 2026-08-13 | **リアプロ「全ページ送る」タイムアウトバグ修正（Fable5調査→実装）**。[ROOT-CAUSE] `hasNextPageBtn()`がdisabled属性・CSSクラス.disabledの「次」ボタンを「次ページあり」と誤検出。→ `clickNextPageBtn()`がdisabledボタンをクリックして失敗 or 同じページに留まる → `axlx-batch-customer-done`シグナル未送信 → background.js 5分タイムアウト → LINEにタイムアウト警告。[FIX-1] `_isDisabledEl(el)`ヘルパー追加（el.disabled/aria-disabled/disabled属性/.disabled/.is-disabled/.btn-disabled/.pagination-disabled クラスを検出）。[FIX-2] `hasNextPageBtn()` / `clickNextPageBtn()` の両フェーズで`_isDisabledEl(el)`チェックを追加しdisabledボタンをスキップ。[FIX-3] `tryNext()` line 723-725: `clickNextPageBtn()`がfalseを返した場合（=クリック失敗）にも`axlx-batch-customer-done`シグナルを送信するフェイルセーフ追加。 |
+| 2026-08-16 | **popup UI 3点改善** commit 96e99b9。[1] 要対応タブ（`🔥 要対応` `data-acct="__needs_action__"`）を「すべて」の左に追加（popup.html）。フィルター処理はpopup.jsで `data-acct === "__needs_action__"` 時に未対応（approved/lost/contracted以外）顧客のみ表示。[2] `bulk-dl.js` フローティングバーを右下→上部中央に移動（`top:10px;left:50%;transform:translateX(-50%)`）＋ドラッグハンドル追加（`#axlx-drag-handle`、mousemove/mouseup/mouseleaveでtransformを上書き）。[3] `#staff-mode-btn` のテキストから「🙋」を削除。ON時「スタッフモード中」/OFF時「スタッフモード」のみ。 |
 
 ---
 
@@ -534,7 +535,7 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - バッジ: ON中は「手動」緑バッジ常時表示。`chrome.storage.onChanged` でトグル・TTL失効を即時反映。SW再起動時も復元
 
 **popup.html / popup.js / styles.css のUI**:
-- ヘッダーに `#staff-mode-btn`「🙋 スタッフモード」トグル（ON時緑 `.staff-btn.on`）＋ヘッダー直下に `#staff-mode-banner` 緑バナー「スタッフモード中 — 自動化は停止しています」
+- ヘッダーに `#staff-mode-btn`「スタッフモード」トグル（ON時「スタッフモード中」、絵文字なし・緑 `.staff-btn.on`）＋ヘッダー直下に `#staff-mode-banner` 緑バナー「スタッフモード中 — 自動化は停止しています」
 - popup.js `_initStaffModeUI()`（Init直前に定義・DOMContentLoaded先頭で呼ぶ）: storage読取→描画、`chrome.storage.local.onChanged` で全popupインスタンス（サイドパネル+各タブのアンダーバー）同期
 - バッジクリア2箇所（pendingPopupCmd処理時の `setBadgeText('')`）を `_staffModeOn ? '手動' : ''` に変更（スタッフバッジを消さない）
 - mini-mode では `#staff-mode-btn` / `#staff-mode-banner` を非表示（styles.css の mini-mode 非表示リストに追加）
