@@ -463,6 +463,12 @@ function parseAreaTokens(rawArea) {
         .map(w => (w.startsWith(city) ? w : city + w))
         .join(",")
   );
+  // 「路線名（駅A〜駅B）」→ 区間内の駅リストに展開（例: おおさか東線（野江〜放出）→ JR野江,鴫野,放出）
+  rawArea = rawArea.replace(/([ぁ-鿿\w]+線)[（(]([^)）〜～]+)[〜～]([^)）]+)[）)]/g, function(match, lineName, fromStr, toStr) {
+    const rangeStations = expandLineRange(lineName, fromStr.trim(), toStr.trim());
+    if (rangeStations && rangeStations.length > 0) return rangeStations.join(",");
+    return lineName; // 解決できない場合は路線名のみ（全線動作）
+  });
   // 括弧内の補足説明を除去（「西中島南方（〜じゃなくても可、大阪市内）」→「西中島南方」）
   rawArea = rawArea.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").trim();
   // 「野田阪神駅・住之江駅へ乗り換え1回で行けるところ」→ 1乗り換え到達路線に展開
@@ -574,6 +580,20 @@ function resolveWithLinePrefixes(token) {
 function findStationLines(areaText) {
   const normalized = areaText.replace(/駅|周辺|付近|近く/g, "").trim();
   return STATION_LINE_MAP[normalized] || STATION_LINE_MAP[areaText] || null;
+}
+
+// 「路線名（駅A〜駅B）」の区間内駅リストを LINE_STATION_ORDER から取得
+// 駅名のJR・阪急等のプレフィックスを正規化して曖昧一致（野江→JR野江）
+function expandLineRange(lineName, fromStation, toStation) {
+  const order = LINE_STATION_ORDER[lineName] || (typeof LEARNED_LINE_ORDER !== 'undefined' && LEARNED_LINE_ORDER[lineName]) || [];
+  if (!order.length) return null;
+  const stripPfx = s => s.replace(/^(?:JR|近鉄|阪急|阪神|南海|京阪|地下鉄)\s*/, '').trim();
+  const fromNorm = stripPfx(fromStation), toNorm = stripPfx(toStation);
+  const fromIdx = order.findIndex(s => s === fromStation || stripPfx(s) === fromNorm);
+  const toIdx   = order.findIndex(s => s === toStation   || stripPfx(s) === toNorm);
+  if (fromIdx < 0 || toIdx < 0) return null;
+  const lo = Math.min(fromIdx, toIdx), hi = Math.max(fromIdx, toIdx);
+  return order.slice(lo, hi + 1);
 }
 
 // 同一事業者の複数路線は最初の1路線に絞る
@@ -1200,9 +1220,7 @@ const SITE_CONFIG = {
           if (stToks.length > 0) {
             const stFirst = stToks[0];
             const lines = findStationLines(stFirst) || findStationLines(areaText);
-            // 同一事業者の複数路線（例: 十三=阪急3路線）は1路線のみ表示して選択ミスを防ぐ
-            const displayLines = deduplicateSameOperatorLines(lines);
-            const linesText = displayLines ? displayLines.join(" / ") : null;
+            const linesText = lines ? lines.join(" / ") : null;
             let wideStationNote = null;
             if (d.isWide && lines) {
               const adj = getAdjacentStations(stFirst, lines);
@@ -2619,9 +2637,6 @@ function openInstructions(siteKey) {
       if (apiData?.itandi?.line_names) {
         apiData.itandi.line_names.forEach(function(n) { if (!itandiLines.includes(n)) itandiLines.push(n); });
       }
-      // 同一事業者の複数路線は1路線に絞る（例: 十三=阪急3路線→阪急神戸本線のみ）
-      const _deduped = deduplicateSameOperatorLines(itandiLines);
-      if (_deduped.length < itandiLines.length) itandiLines.splice(0, itandiLines.length, ..._deduped);
       // 未知トークンを非同期でDB解決（次回以降のLEARNED_STATION_MAP更新）
       if (_itandiUnknown.length > 0) {
         fetch(API_BASE + "/api/itandi-resolve", {
@@ -2659,8 +2674,12 @@ function openInstructions(siteKey) {
         if (searchMode === "wide") {
           matchedStations.forEach(st => {
             const stLines = STATION_LINE_MAP[st] || [];
-            const adj = getAdjacentStations(st, stLines);
-            adj.forEach(a => { if (!stationNames.includes(a)) stationNames.push(a); });
+            // 同一事業者の複数路線（例: 十三=阪急3路線）→複数路線で検索範囲が広いため隣接駅は不要
+            const _isSameOpHub = stLines.length > 1 && deduplicateSameOperatorLines(stLines).length === 1;
+            if (!_isSameOpHub) {
+              const adj = getAdjacentStations(st, stLines);
+              adj.forEach(a => { if (!stationNames.includes(a)) stationNames.push(a); });
+            }
           });
         }
       }
@@ -2909,20 +2928,24 @@ function openInstructions(siteKey) {
             if (_stAlias && !realpro_station_names.includes(_stAlias)) realpro_station_names.push(_stAlias);
             if (searchMode === "wide") {
               const stLines = STATION_LINE_MAP[station] || [];
-              const adj = getAdjacentStations(station, stLines);
-              adj.forEach(s => {
-                // クロスライン汚染チェック: adj駅sが複数路線に存在し、
-                // いずれかの共通路線でsがtarget駅に隣接しない場合は除外
-                // 例: 十三→大阪梅田(京都線adj)は神戸線・宝塚線でも大阪梅田が選択されてしまうため除外
-                const sLines = STATION_LINE_MAP[s] || [];
-                const shared = sLines.filter(l => stLines.includes(l));
-                const safe = shared.every(function(l) {
-                  const ord = LINE_STATION_ORDER[l] || LEARNED_LINE_ORDER[l] || [];
-                  const idxS = ord.indexOf(s), idxT = ord.indexOf(station);
-                  return idxS >= 0 && idxT >= 0 && Math.abs(idxT - idxS) <= 1;
+              // 同一事業者の複数路線（例: 十三=阪急3路線）→複数路線で検索範囲が広いため隣接駅は不要
+              const _isSameOpHub = stLines.length > 1 && deduplicateSameOperatorLines(stLines).length === 1;
+              if (!_isSameOpHub) {
+                const adj = getAdjacentStations(station, stLines);
+                adj.forEach(s => {
+                  // クロスライン汚染チェック: adj駅sが複数路線に存在し、
+                  // いずれかの共通路線でsがtarget駅に隣接しない場合は除外
+                  // 例: 十三→大阪梅田(京都線adj)は神戸線・宝塚線でも大阪梅田が選択されてしまうため除外
+                  const sLines = STATION_LINE_MAP[s] || [];
+                  const shared = sLines.filter(l => stLines.includes(l));
+                  const safe = shared.every(function(l) {
+                    const ord = LINE_STATION_ORDER[l] || LEARNED_LINE_ORDER[l] || [];
+                    const idxS = ord.indexOf(s), idxT = ord.indexOf(station);
+                    return idxS >= 0 && idxT >= 0 && Math.abs(idxT - idxS) <= 1;
+                  });
+                  if (safe && !realpro_station_names.includes(s)) realpro_station_names.push(s);
                 });
-                if (safe && !realpro_station_names.includes(s)) realpro_station_names.push(s);
-              });
+              }
             }
           }
         }
