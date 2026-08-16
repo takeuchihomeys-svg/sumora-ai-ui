@@ -2567,8 +2567,14 @@ function openInstructions(siteKey) {
       const itandiLines = [];
       const _itandiUnknown = [];
       tokens.forEach(function(tok) {
+        // 「阪急十三」「JR高槻」等の路線プレフィックスを除去してから検索
+        var resolved = tok;
+        if (!STATION_HUB_MAP[tok] && !STATION_LINE_MAP[tok]) {
+          var pfxR = resolveWithLinePrefixes(tok);
+          if (pfxR && pfxR.type === "station") resolved = pfxR.resolved;
+        }
         // ハブ駅展開: 梅田→[梅田,東梅田,西梅田,大阪梅田,大阪]等、全ハブ駅の路線を集約
-        var hubList = (STATION_HUB_MAP && STATION_HUB_MAP[tok]) ? STATION_HUB_MAP[tok] : [tok];
+        var hubList = (STATION_HUB_MAP && STATION_HUB_MAP[resolved]) ? STATION_HUB_MAP[resolved] : [resolved];
         hubList.forEach(function(hubTok) {
           var dbEntry = LEARNED_STATION_MAP[hubTok];
           if (dbEntry && dbEntry.itandi_lines && dbEntry.itandi_lines.length > 0) {
