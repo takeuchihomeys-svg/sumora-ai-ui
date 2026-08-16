@@ -81,8 +81,8 @@ const STATUS_MEANING: Record<string, string> = {
   hearing:                 "条件ヒアリング段階（物件未提案・条件確認中）",
   condition_hearing:       "条件ヒアリング段階（物件未提案・条件確認中）",
   property_search:         "条件ヒアリング段階（物件未提案・条件確認中）",
-  proposing:               "物件提案中（物件を送った後・内覧調整段階）",
-  property_recommendation: "物件提案中（物件を送った後・内覧調整段階）",
+  proposing:               "物件提案中（物件を送った後・顧客の反応待ち。顧客が興味・内覧希望を示すまで内覧提案はしない）",
+  property_recommendation: "物件提案中（物件を送った後・顧客の反応待ち。顧客が興味・内覧希望を示すまで内覧提案はしない）",
   viewing:                 "物件提案中（内覧調整段階）",
   estimate_request:        "物件提案中（見積書依頼段階）",
   availability_check:      "物件提案中（空室確認段階）",
@@ -116,7 +116,7 @@ const AIX_CAPABILITY_MAP = `
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
 - property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
 - application_push: 内覧完了後・見積送付後に顧客が前向きな時。審査不安の「解消」を先回りする場面でも有効（申込確定の言質は不要）
-- viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 確定済み未来→meeting_place / 当日・完了後→greeting_viewing
+- viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 確定済み未来→meeting_place / 当日・完了後→greeting_viewing ※viewing_invite は顧客自身が内覧希望・日程を発言した場合のみ。スタッフが送った物件情報内の「〇月〇日以降内覧可能」等の文言をトリガーにしない。物件送付直後で顧客がまだ反応していない場合は aix:null（何も提案しない）が正解
 `.trim();
 
 // 返信文体・共感フレーズ・条件変更文脈の恒久ルール（generate-reply の同名ルールと同一の単一基準）
@@ -296,7 +296,9 @@ function detectPhaseFromBrainMeta(
   const hasApplyingSignal = /申込/.test(txt) || (/審査/.test(txt) && !isShinsaAnxiety);
   if (hasApplyingSignal && !/再|また|別/.test(txt)) return "applying";
   // 優先3: 内覧・内見
-  if (/内覧|内見/.test(txt)) return "viewing";
+  // 診断修正: 「内覧可能」「内覧可」はスタッフ送付の物件情報由来の文言（例:「9月1日以降ご内覧可能」）が
+  // LLM出力（closing_strategy等）に反映されたケースであり、顧客の内覧希望ではない → viewing に遷移させない
+  if (/内覧(?!可)|内見(?!可)/.test(txt)) return "viewing";
   // 優先4: 物件提案中
   if (/提案|物件/.test(txt)) return "proposing";
   return "hearing";
@@ -967,7 +969,7 @@ export async function analyzeConversation(
   // この会話で使用済みのAIXアクション一覧（重複提案の抑止・次段階の推奨材料）
   const usedAixTypes = [...new Set(aixLogs.map((l) => l.aix_type).filter((t): t is string => Boolean(t)))];
   const aixHistoryText = usedAixTypes.length > 0
-    ? `\n【この会話で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。`
+    ? `\n【この会話で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
     : "";
 
   // H6(Fable5): 予約送信・未完了タスク・内覧予定を注入（重複提案防止・next_steps の接地）
@@ -1016,7 +1018,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ、該当なしならnull", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}}`;
 
   const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}${winningPatternsText}
 
@@ -1105,6 +1107,26 @@ ${history}`;
       daysSinceLastCustomerMsg <= 3
     ) {
       finalAix = "estimate_sheet";
+    }
+    // 内覧誤提案ガード（決定論的矯正・プロンプト任せにしない）:
+    // viewing_invite は「顧客の反応」が前提のアクション。①最終メッセージがスタッフ送信
+    // （＝物件送付・返信直後で顧客の反応待ち）、または②最終物件送付以降に顧客メッセージが
+    // 無い場合は提案しない（finalAix=null）。顧客が返信すれば webhook 経由の再分析で
+    // このガードを通過し、正当な viewing_invite は従来どおり提案される。
+    // スタッフ送信の物件情報内「〇月〇日以降ご内覧可能」等の文言がLLM出力経由で
+    // viewing_invite に収束する誤爆もここで吸収する。
+    if (finalAix === "viewing_invite") {
+      const lastMsgIsCustomer = typedMessages[0]?.sender === "customer"; // messagesは新しい順
+      const lastPropSendLog = aixLogs.find(
+        (l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation",
+      ) ?? null; // aixLogsは created_at 降順 → find = 最新の物件送付ログ
+      const lastPropertySentAt = [pc?.last_property_sent_at, lastPropSendLog ? (lastPropSendLog.sent_at ?? lastPropSendLog.created_at) : null]
+        .filter((t): t is string => Boolean(t))
+        .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
+        .pop() ?? null;
+      const customerRespondedAfterSend = !lastPropertySentAt ||
+        Boolean(lastCustomerMsg && new Date(lastCustomerMsg.created_at).getTime() > new Date(lastPropertySentAt).getTime());
+      if (!lastMsgIsCustomer || !customerRespondedAfterSend) finalAix = null;
     }
     // Quality gate: suppress AIX suggestions with < 30% acceptance rate over 10+ samples.
     // FIX(Fable5 #3): 自経路の採択率キー（:brain 等）を読む。旧実装は :analysis_step1 固定で
@@ -1524,7 +1546,8 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
         type ViewingRow = { viewing_date: string; viewing_time: string | null; status: string | null };
         let viewingScheduledAt: string | null = null;
         let viewingPhaseDetail: "today" | "after_viewing" | "scheduling" | "confirmed_future" | null = null;
-        let suggAixButton: string;
+        // 診断修正(内覧バナー誤表示): 顧客の反応待ち中は viewing_invite を出さないため null を許容
+        let suggAixButton: string | null;
         let isHot = false;
 
         // JST 今日の日付を YYYY-MM-DD で取得（UTC+9 を手動計算）
@@ -1622,8 +1645,18 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
               viewingPhaseDetail = "confirmed_future";
               suggAixButton = "meeting_place";
             } else {
+              // 診断修正(内覧バナー誤表示): viewing_invite は「顧客の反応」が前提のアクション。
+              // 最終メッセージがスタッフ送信（物件送付直後・返信直後＝顧客の反応待ち）の場合は
+              // 何も提案しない（null）。顧客が返信すれば webhook 経由の再分析でガードを通過し、
+              // 正当な viewing_invite は従来どおり提案される
+              const { data: lastMsgRows } = await supabase
+                .from("messages")
+                .select("sender")
+                .eq("conversation_id", conversationId)
+                .order("created_at", { ascending: false })
+                .limit(1);
               viewingPhaseDetail = "scheduling";
-              suggAixButton = "viewing_invite";
+              suggAixButton = lastMsgRows?.[0]?.sender === "customer" ? "viewing_invite" : null;
             }
           }
 

@@ -2514,9 +2514,13 @@ export default function Home() {
   }, [selectedConversation.suggestedAixMeta, activeAixFlow]);
 
   // お客様が特定日を質問形で提案 → AIX-METAが viewing_invite を指示している場合のみ
+  // 診断修正(内覧バナー誤表示): 最終送信者が顧客の場合のみ表示（スタッフが物件送付・返信した直後の
+  // 古い/誤ったメタで内覧バナーを出さないUI側の保険ゲート）
   const guideToViewingSpecific = useMemo(() => {
-    return !activeAixFlow && selectedConversation.suggestedAixMeta?.action === "viewing_invite";
-  }, [selectedConversation.suggestedAixMeta, activeAixFlow]);
+    if (activeAixFlow || selectedConversation.suggestedAixMeta?.action !== "viewing_invite") return false;
+    const _msgs: Message[] = selectedConversation.messages || [];
+    return (selectedConversation.lastSender ?? _msgs[_msgs.length - 1]?.sender) === "customer";
+  }, [selectedConversation, activeAixFlow]);
 
   // 新着物件待ちパターン: AIX-METAが property_send を指示している場合のみ
   const guideToNewListingRecommend = useMemo(() => {
@@ -4251,7 +4255,9 @@ export default function Home() {
       const currentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
       const isSendingImages = anyImageSent;
       // B6(Fable5): suggested_aix_meta も同時にクリア — スタッフが送信した時点で返信前の「次アクション」提案は
-      // 陳腐化する。sweep は last_sender=customer のみ拾うため、消さないと顧客の次メッセージまで古い指示が表示され続ける
+      // 陳腐化する。消さないと顧客の次メッセージまで古い指示が表示され続ける
+      // （注: brain-sweep は last_sender 無条件で meta IS NULL の会話を再分析するが、
+      //   brain-core 側の viewing_invite ガードが「顧客の反応待ち」中は null を返すため安全）
       const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null, suggested_aix_meta: null };
       if (isFirstStaffReply && (!selectedConversation.status || currentStatus === "hearing")) convUpdate.status = "hearing";
       // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
@@ -4800,7 +4806,10 @@ export default function Home() {
     // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
     const sendTextCurrentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
     const sendTextUpgrade = !!imageUrl && sendTextCurrentStatus === "hearing";
-    const sendTextUpdate: Record<string, unknown> = { last_message: lastText, updated_at: now.toISOString() };
+    // 診断修正(内覧バナー誤表示): 手動送信経路（B6）と同じく last_sender/ai_draft/suggested_aix_meta を
+    // ここでもクリアする。旧実装は last_message/updated_at のみ更新していたため、AIX（物件オススメ等）
+    // 送信後も古い viewing_invite メタがDB・ローカル両方に残留しバナーが表示され続けていた
+    const sendTextUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null, suggested_aix_meta: null };
     if (sendTextUpgrade) sendTextUpdate.status = "proposing";
     await supabase
       .from("conversations")
@@ -4817,6 +4826,9 @@ export default function Home() {
           return {
             ...conversation,
             lastMessage: lastText,
+            lastSender: "staff",
+            aiDraft: null,
+            suggestedAixMeta: null,
             ...(sendTextUpgrade ? { status: "proposing" } : {}),
             updatedAt: now.toISOString(),
             messages: [...conversation.messages, ...dedupedNew],
@@ -5607,7 +5619,9 @@ export default function Home() {
                             prev.map((c) => {
                               const fresh = list.find((r) => r.id === c.id);
                               if (!fresh) return c;
-                              return { ...c, suggestedAixMeta: fresh.suggested_aix_meta ?? c.suggestedAixMeta };
+                              // 診断修正: サーバーが null（=分析中 or「今は何も提案しない」が正解）の場合に
+                              // 古いローカル値（viewing_invite等）へフォールバックしない。null はそのまま反映する
+                              return { ...c, suggestedAixMeta: fresh.suggested_aix_meta ?? null };
                             })
                           );
                           // まだ未処理エントリがあれば3秒後に次のバッチを取得（最大5回）
@@ -7472,16 +7486,21 @@ export default function Home() {
               );
 
               // P3.2.5: お客様が特定日を質問形で提案 → AIX 内覧へ！内覧日指定ありで時間調整
-              if (guideToViewingSpecific && !dismissedViewingSpecificIds.has(id)) return (
+              // 診断修正: 「日付が届いた」は直近顧客メッセージに日付・時間帯表現が実際にある時のみ表示。
+              // 旧実装はハードコード文言で、日付検知と無関係に表示され虚偽の説明になっていた
+              if (guideToViewingSpecific && !dismissedViewingSpecificIds.has(id)) {
+                const customerSentDate = /[0-9０-９]{1,2}\s*月\s*[0-9０-９]{1,2}\s*日|[0-9０-９]{1,2}\s*日(?!曜)|来週|今週末?|週末|土日|祝日|[月火水木金土日]曜|午前|午後|[0-9０-９]{1,2}\s*時/.test(lastCustomerText);
+                return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-500 bg-blue-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-blue-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>日付が届いた → 内覧日指定ありで時間を返す</span>
+                  <span className="text-[12px] font-bold text-blue-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>{customerSentDate ? "日付が届いた → 内覧日指定ありで時間を返す" : "内覧の希望あり → AIX 内覧へ！で日程調整"}</span>
                   <button onClick={() => { setDismissedViewingSpecificIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setAixInitViewingSpecific(true); openAixDirect("viewing_invite"); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #1565C0, #1976D2)" }}>AIX 内覧へ！</button>
                   <button onClick={() => setDismissedViewingSpecificIds((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-blue-400 text-[11px] font-bold">✕</button>
                 </div>
-              );
+                );
+              }
 
               // P3.3: お客様が内覧日時を確定 → AIX 待ち合わせへ！
               if (guideToMeetingPlace && !dismissedMeetingPlaceIds.has(id)) return (
@@ -7513,8 +7532,10 @@ export default function Home() {
               );
 
               // P3.5: AIX-METAが viewing_invite を指示 → AIX 内覧へ！
+              // 診断修正(内覧バナー誤表示): 最終送信者が顧客の場合のみ（物件送付・返信直後の残留メタで出さない）
               if (
                 selectedConversation.suggestedAixMeta?.action === "viewing_invite" &&
+                customerIsLastSender &&
                 !suggestViewingTemplateMap[id] &&
                 !dismissedViewingInviteIds.has(id)
               ) return (
@@ -7599,7 +7620,9 @@ export default function Home() {
               // 診断修正P2(a): action が空でも note があればフォールバック表示する。
               // [AIX誘導中] センチネルでドラフトが非表示のとき、旧条件（action && note 必須）だと
               // brain が action="" を返した場合に何も表示されない完全空白状態になる穴を塞ぐ
-              if (brainMeta?.note && !dismissedBrainHintIds.has(id)) {
+              // 診断修正(内覧バナー誤表示): viewing_invite は顧客の反応が前提のアクション →
+              // 最終送信者がスタッフ（物件送付直後等）の間は脳ヒントカードにも出さない
+              if (brainMeta?.note && !dismissedBrainHintIds.has(id) && !(brainMeta.action === "viewing_invite" && !customerIsLastSender)) {
                 const brainBtnLabel = BRAIN_AIX_LABELS[brainMeta.action];
                 const brainBtnColor = AIX_ACTION_META[brainMeta.action]?.color ?? "#7C3AED";
                 const brainAction = brainMeta.action as AixActionType;
@@ -9427,7 +9450,10 @@ export default function Home() {
                 // estimate_sheet 完了後 → 申込へ！AIXバナーを表示
                 setSuggestApplicationPushMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
                 setDismissedApplicationPushIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
-              } else {
+              } else if (aixModalType !== "property_recommendation" && aixModalType !== "property_send") {
+                // 診断修正(内覧バナー誤表示): 物件オススメ/ピックアップ送信直後は「顧客の反応待ち」。
+                // 次アクションを再フェッチすると viewing_invite 等の先走り提案が再表示されるため抑制する
+                // （顧客が返信すれば webhook 経由の再分析で正当な次アクションが提案される）
                 void fetchNextAction(selectedConversation.id);
               }
               // 診断修正(問題2): AIX 申込①フォーマット送信完了 → ②（続き）誘導バナーを発火。

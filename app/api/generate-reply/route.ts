@@ -293,6 +293,45 @@ async function deriveSuggestedAix(
     const viewingIntent =
       /(内覧|内見|見学).{0,8}(したい|希望|お願い|可能|行き?たい|行ってみ|させてください|でき(ます|そう)|いつ(頃)?)|一度.*見てみ|実際に見てみ|見てみたい/;
     if (viewingIntent.test(customerMessage)) {
+      // 診断修正(内覧バナー誤表示): フェーズゲート — 物件を1件も送っていない会話では
+      // 内覧日調整より先に物件ピックアップが正解（内覧する対象がまだ無い）。
+      // last_property_sent_at と aix_usage_logs（property_send/property_recommendation）の
+      // どちらにも送付実績が無い場合のみ差し替える。判定不能（クエリ失敗等）時は従来動作を維持する
+      let propertySentYet = true;
+      if (conversationId) {
+        try {
+          const { data: convRow } = await supabase
+            .from("conversations")
+            .select("property_customer_id")
+            .eq("id", conversationId)
+            .maybeSingle();
+          const pcId = (convRow?.property_customer_id as string | null) ?? null;
+          const [pcRes, aixSendRes] = await Promise.all([
+            pcId
+              ? supabase.from("property_customers").select("last_property_sent_at").eq("id", pcId).maybeSingle()
+              : Promise.resolve({ data: null }),
+            supabase
+              .from("aix_usage_logs")
+              .select("id")
+              .eq("conversation_id", conversationId)
+              .in("aix_type", ["property_send", "property_recommendation"])
+              .limit(1),
+          ]);
+          const lastSentAt = (pcRes.data as { last_property_sent_at: string | null } | null)?.last_property_sent_at ?? null;
+          propertySentYet = Boolean(lastSentAt) || ((aixSendRes.data?.length ?? 0) > 0);
+        } catch {
+          // 判定不能時は従来どおり viewing_invite（誤って内覧提案を握り潰さない）
+        }
+      }
+      if (!propertySentYet) {
+        return {
+          action: "property_recommendation",
+          note: "お部屋を見てみたいご意向ですが、まだ物件を1件もお送りしていません → まずAIX【物件ピックアップ】で条件に合う物件を送ってください（内覧日調整は物件へ反応があってから）",
+          source: "viewing_intent_no_property_gate",
+          enforcement_level: "required" as const,
+          closing_strategy: closingStrategy || undefined,
+        };
+      }
       const redirected = redirectMoveOut(
         "viewing_invite",
         "お客様が内覧希望です → AIX【内覧日調整】で日程候補を送ってください",
