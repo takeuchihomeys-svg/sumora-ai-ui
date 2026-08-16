@@ -16,6 +16,25 @@
   var _pendingAutoSendDispatched = false;
   var _autoSendInProgress = false;
 
+  // ── スタッフモードキャッシュ（bulk-dl.js と同じ TTL=2時間ロジック）──
+  var _staffModeOn = false;
+  try {
+    chrome.storage.local.get(["staffMode", "staffModeAt"], function(res) {
+      var on = !!(res && res.staffMode);
+      var at = (res && res.staffModeAt) || 0;
+      _staffModeOn = on && (!at || Date.now() - at <= 2 * 60 * 60 * 1000);
+    });
+    chrome.storage.local.onChanged.addListener(function(changes) {
+      if ("staffMode" in changes) {
+        _staffModeOn = !!changes.staffMode.newValue;
+        if (_staffModeOn) {
+          _autoSendArmed = false;
+          _pendingAutoSendDispatched = false;
+        }
+      }
+    });
+  } catch (_) { /* ignore */ }
+
   function ensurePdfHook() {
     if (pdfHookInjected) return;
     pdfHookInjected = true;
@@ -141,8 +160,12 @@
       if (_hasNewBtn) {
         _autoSendArmed = false;
         _pendingAutoSendDispatched = true;
-        console.log("[AXLX itandi] 新結果検出 → 全ページ自動送信開始");
-        setTimeout(autoSendAllPages, 500 + Math.floor(Math.random() * 700));
+        if (_staffModeOn) {
+          console.log("[AXLX itandi] スタッフモード中 → 自動送信スキップ（検索結果のみ表示）");
+        } else {
+          console.log("[AXLX itandi] 新結果検出 → 全ページ自動送信開始");
+          setTimeout(autoSendAllPages, 500 + Math.floor(Math.random() * 700));
+        }
       }
     }
   }
@@ -174,7 +197,7 @@
     document.body.appendChild(bar);
     document.getElementById("axlx-itandi-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-itandi-line-btn").addEventListener("click", onSendToLine);
-    document.getElementById("axlx-itandi-all-pages-btn").addEventListener("click", function() { autoSendAllPages(); });
+    document.getElementById("axlx-itandi-all-pages-btn").addEventListener("click", function() { autoSendAllPages(true); }); // 手動=スタッフモードでも許可
   }
 
   function updateBar() {
@@ -665,8 +688,13 @@
   }
 
   // ── 全ページ自動送信 ─────────────────────────────────────────────────────
-  function autoSendAllPages() {
+  // _manual=true で呼ぶとスタッフモードチェックをスキップ（手動ボタン押下用）
+  function autoSendAllPages(_manual) {
     if (_autoSendInProgress) return;
+    if (!_manual && _staffModeOn) {
+      console.log("[AXLX itandi] スタッフモード中 → autoSendAllPages をスキップ");
+      return;
+    }
     _autoSendInProgress = true;
     var _totalSentCount = 0; // 全ページ合計送信件数（axlx-batch-customer-done に渡す）
     getCustomerFromPopup(function(customerName, customerId, customerConditions) {
