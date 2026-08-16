@@ -110,8 +110,8 @@ const AIX_CAPABILITY_MAP = `
 - property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）※顧客が今まさに条件を尋ねてきた場合（「〜はありますか」「広めがいい」等）は property_search ではなく property_send を選ぶこと
 
 【aixキー選択の使いどころ基準（迷ったらここを優先）】
-- estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が特定物件を気に入った／初期費用・総額の話題が出た時点で迷わず選ぶ
-- acknowledge_check: 顧客が物件URL・物件名・物件画像を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない
+- estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が物件画像だけを送ってきた（テキストなし・スクショのみ）／顧客が特定物件を気に入った／初期費用・総額の話題が出た時点で迷わず選ぶ
+- acknowledge_check: 顧客が物件URL・物件名を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
 - property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
@@ -380,6 +380,11 @@ async function detectSignalBasedAixFallback(
     ) {
       return "acknowledge_check";
     }
+
+    // 信号3.5（画像のみ送信対策）: 顧客がテキストなしで画像だけを送ってきた → estimate_sheet
+    // messages 上は "[画像]" プレースホルダーで保存される。実運用では見積書スクショ送付が最多のため
+    // estimate_sheet を返す。※必ず信号4（URL判定→acknowledge_check）より先に評価すること。
+    if (/^\[画像\]/.test(custText)) return "estimate_sheet";
 
     // 信号4（AIX_CAPABILITY_MAP記載・コード未実装だった条件）:
     // 顧客が物件URL・「空きありますか」等を送ってきて空室確認タスクが未起票 → acknowledge_check
@@ -1085,6 +1090,21 @@ ${history}`;
       PROPERTY_CONDITION_INQUIRY_RE.test(lastCustomerMsg.text)
     ) {
       finalAix = "property_send";
+    }
+    // 画像のみ送信対策（決定論的矯正・プロンプト任せにしない）:
+    // 顧客がテキストなしで画像だけを送ってきた場合（messages上は "[画像]" プレースホルダー）、
+    // Haiku には画像の中身が見えないため acknowledge_check（物件画像想定）へ倒れがちだが、
+    // 実運用では見積書スクショ送付が最多。直近3日以内の画像のみ送信で、
+    // finalAix が acknowledge_check または null の場合は estimate_sheet に矯正する。
+    // ※クオリティゲート（採択率<30%抑制）の前に置くこと。後に置くと矯正がゲートを素通りする。
+    if (
+      (finalAix === "acknowledge_check" || finalAix === null) &&
+      lastCustomerMsg?.text &&
+      /^\[画像\]/.test(lastCustomerMsg.text) &&
+      daysSinceLastCustomerMsg !== null &&
+      daysSinceLastCustomerMsg <= 3
+    ) {
+      finalAix = "estimate_sheet";
     }
     // Quality gate: suppress AIX suggestions with < 30% acceptance rate over 10+ samples.
     // FIX(Fable5 #3): 自経路の採択率キー（:brain 等）を読む。旧実装は :analysis_step1 固定で

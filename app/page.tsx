@@ -1418,6 +1418,10 @@ export default function Home() {
   const draftTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // generate-reply ストリーミング中断用（会話切替時にabort）
   const generateAbortRef = useRef<AbortController | null>(null);
+  // 表示済み（__SHOWN__化後）ドラフトの会話別キャッシュ（会話切替で下書きが消える問題の対策・クライアント側のみ）
+  const shownDraftCacheRef = useRef<Record<string, { text: string; source?: "ai_draft" | "optimized"; aiDraft?: string }>>({});
+  // 会話切替Effectで「直前の会話ID」を知るためのref（キャッシュ退避キーに使用）
+  const prevConvIdRef = useRef("");
   const handleListScroll = () => {
     // スクロール時もBottomNavは常に表示（pull-to-refreshトリガー用）
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
@@ -1634,6 +1638,10 @@ export default function Home() {
             );
             // async プリ生成完了 → preGenInProgress をクリア
             if (upd.ai_draft) preGenInProgress.current.delete(String(upd.id));
+            // 新しいAIドラフトが届いたら旧表示済みキャッシュは陳腐化 → 破棄（__SHOWN__/[AIX誘導中] sentinelは除外）
+            if (upd.ai_draft && upd.ai_draft !== "__SHOWN__" && upd.ai_draft !== "[AIX誘導中]") {
+              delete shownDraftCacheRef.current[String(upd.id)];
+            }
             // [AIX誘導中] sentinel が届いたら即座に draftPreparing をリセット（60秒待ち防止）
             if (upd.ai_draft === "[AIX誘導中]" && selectedIdRef.current === String(upd.id)) {
               if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
@@ -1663,6 +1671,8 @@ export default function Home() {
             const msgText = (payload.new as { text?: string }).text || "新しいメッセージが届きました";
             showNotif("AIX LINX — 新着メッセージ", msgText, "/");
             const cid = String((payload.new as { conversation_id: number }).conversation_id);
+            // 新しい顧客メッセージで旧ドラフトは古くなる → 表示済みキャッシュを破棄
+            delete shownDraftCacheRef.current[cid];
             // 返信入力中でも選択中の会話に届いたなら強制スクロール
             if (cid === selectedIdRef.current) forceScrollForCustomerMsgRef.current = true;
           }
@@ -2618,6 +2628,23 @@ export default function Home() {
   };
 
   useEffect(() => {
+    // 会話切替の直前状態を退避: 前の会話の未送信ドラフトをキャッシュ（__SHOWN__化でDBから消えても切替復帰で復元できるように）
+    {
+      const prevConvId = prevConvIdRef.current;
+      if (prevConvId && prevConvId !== selectedConversation.id) {
+        if (replyDraft && replyDraft !== "__SHOWN__") {
+          shownDraftCacheRef.current[prevConvId] = {
+            text: replyDraft,
+            source: displaySource ?? undefined,
+            aiDraft: aiDraftRef.current || undefined,
+          };
+        } else {
+          // ✕クリア・手動削除で空のまま離脱 → 古いキャッシュを残さない
+          delete shownDraftCacheRef.current[prevConvId];
+        }
+      }
+      prevConvIdRef.current = selectedConversation.id;
+    }
     setError("");
     setShowStatusMenu(false);
     setShowAixMenu(false);
@@ -2671,6 +2698,22 @@ export default function Home() {
       );
       supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
     } else {
+      // 表示済みドラフトのキャッシュがあれば復元（__SHOWN__化済みでDBにないケース）→ bg再生成もスキップ
+      const cached = shownDraftCacheRef.current[selectedConversation.id];
+      if (cached?.text && selectedConversation.lastSender === "customer") {
+        setReplyDraft(cached.text);
+        aiDraftRef.current = cached.aiDraft ?? "";
+        setDisplaySource(cached.source ?? null);
+        setDraftPreparing(false);
+        // 最終チェック結果もDBから復元（ハッシュ一致なら送信時0msで通過・fail-open）
+        const hydrateConvId = selectedConversation.id;
+        supabase.from("conversations").select("ai_draft_check").eq("id", hydrateConvId).single()
+          .then(({ data }) => {
+            const chk = (data as { ai_draft_check?: CheckResult | null } | null)?.ai_draft_check ?? null;
+            if (chk && selectedIdRef.current === hydrateConvId) setCheckResult(chk);
+          }, () => {});
+        return;
+      }
       setReplyDraft("");
       aiDraftRef.current = "";
       setDisplaySource(null);
@@ -3932,6 +3975,7 @@ export default function Home() {
       const [datePart, timePart] = scheduleDateTime.split("T");
       const [, month, day] = datePart.split("-");
       setReplyDraft("");
+      delete shownDraftCacheRef.current[selectedConversation.id]; // 予約送信済みドラフトのキャッシュ破棄
       setSelectedImageFiles([]);
       setSelectedImagePreviews([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -4131,6 +4175,7 @@ export default function Home() {
       // → 会話切替・新ドラフトロード・再生成・✕クリアのいずれかで自動クリアされる
       if (textSent || !textToSend) {
         setReplyDraft("");
+        delete shownDraftCacheRef.current[selectedConversation.id]; // 送信済みドラフトのキャッシュ破棄
         setReplyQuality(null); // B-2: 送信後は品質判定をリセット
         setCheckResult(null); // 最終チェック結果も送信済みテキストに紐づくためリセット
         setCheckModalIssues(null);
