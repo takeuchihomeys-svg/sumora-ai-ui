@@ -3298,7 +3298,7 @@ function _initStaffModeUI() {
         var nat = document.getElementById("needs-action-tab");
         if (nat) nat.classList.add("active");
         currentAccount = "__needs_action__";
-        loadCustomers(true);
+        filterCustomers(document.getElementById("search-input").value);
       }
     });
   }
@@ -3582,12 +3582,7 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll(".acct-btn:not(#linked-filter-btn)").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       currentAccount = btn.dataset.acct;
-      // 要対応タブはキャッシュを使わず最新データを取得（is_flagged が変わっていても即反映）
-      if (currentAccount === "__needs_action__") {
-        loadCustomers(true);
-      } else {
-        filterCustomers(document.getElementById("search-input").value);
-      }
+      filterCustomers(document.getElementById("search-input").value);
     });
   });
 
