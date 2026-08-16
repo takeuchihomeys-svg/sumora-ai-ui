@@ -1132,7 +1132,8 @@ ${history}`;
     if (finalAix) replyMode = "aix";                       // AIX提案がある時点でスタッフ操作前提
     if (!boundaryText) replyMode = "aix";                  // 線引きルール取得失敗/0件時はフェイルクローズ
     if (opts?.autoSendEnabled === false) replyMode = "aix"; // auto_send無効の会話に auto_reply を提案しない
-    if (opts?.isFlagged) replyMode = "aix";                // スタッフ要対応フラグ済み
+    // 診断修正: isFlagged によるフェイルクローズは削除。line-webhook が受信毎に is_flagged=true を
+    // 立てるため実質全未返信会話で発動し、条件として形骸化していた（他3条件のフェイルクローズは維持）
 
     // 初回例外: スタッフのテキスト送信がまだ1件も無い会話（真の初回）は
     // reply_mode と AIX提案を出さない。generate-reply の初回挨拶ドラフト生成が最優先。

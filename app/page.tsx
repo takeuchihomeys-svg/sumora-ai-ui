@@ -7421,12 +7421,15 @@ export default function Home() {
               );
 
               // P2: 申込①（ステータス=applying のみ）
+              // 診断修正(問題2・案1): 表示条件はステータス駆動のまま維持し、クリック先のみ
+              // テンプレモーダル → AIX(application_push/format サブモード) に差し替え。
+              // ②続きチェーンは onAfterSend の appSubMode==="format" 検知で発火する
               if (selectedConversation.status === "applying" && !suggestApplyStep2Map[id] && !dismissedApplyStep1Ids.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-400 bg-pink-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-pink-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>申込フォーマット ① を送る</span>
-                  <button onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}
+                  <button onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setAixInitAppSubMode("format"); openAixDirect("application_push"); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #ec4899, #be185d)" }}>①フォーマット</button>
+                    style={{ background: "linear-gradient(135deg, #ec4899, #be185d)" }}>AIXで①フォーマット</button>
                   <button onClick={() => setDismissedApplyStep1Ids((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-pink-400 text-[11px] font-bold">✕</button>
                 </div>
@@ -7593,7 +7596,10 @@ export default function Home() {
               // AIXアクション（ボタンあり）の場合: 上部バナーは非表示にし、このカードに
               // 「大きいAIXボタン（メイン）+ 小さい指示テキスト」を統合表示する
               const brainMeta = selectedConversation.suggestedAixMeta;
-              if (brainMeta?.action && brainMeta.note && !dismissedBrainHintIds.has(id)) {
+              // 診断修正P2(a): action が空でも note があればフォールバック表示する。
+              // [AIX誘導中] センチネルでドラフトが非表示のとき、旧条件（action && note 必須）だと
+              // brain が action="" を返した場合に何も表示されない完全空白状態になる穴を塞ぐ
+              if (brainMeta?.note && !dismissedBrainHintIds.has(id)) {
                 const brainBtnLabel = BRAIN_AIX_LABELS[brainMeta.action];
                 const brainBtnColor = AIX_ACTION_META[brainMeta.action]?.color ?? "#7C3AED";
                 const brainAction = brainMeta.action as AixActionType;
@@ -7645,6 +7651,28 @@ export default function Home() {
                   </div>
                 );
               }
+
+              // P5.1: [AIX誘導中] フォールバック誘導（診断修正P2(a)）
+              // reply_mode="aix" ゲート発動時、ai_draft="[AIX誘導中]" はテキストボックスに絶対表示されない
+              // （stripInternalTagsOrNull で null 化）ため、脳ヒント（note）も無い場合は何も出ない。
+              // その完全空白状態を塞ぎ「AIXから返信してください」と明示的に案内する
+              if (
+                selectedConversation.aiDraft === "[AIX誘導中]" &&
+                selectedConversation.lastSender === "customer" &&
+                !dismissedBrainHintIds.has(id)
+              ) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-violet-400 bg-violet-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-violet-700 flex-1 min-w-0">
+                    <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                    スタッフ対応が必要です。AIXまたは手動で返信してください
+                  </span>
+                  <button onClick={() => { setDismissedBrainHintIds((prev) => new Set([...prev, id])); setAixInspectLabel(null); setShowAixMenu(true); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #7C3AED, #6D28D9)" }}>AIXを開く</button>
+                  <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
 
               // P5.5: 物件確認した（property_checkタスクがある場合は物件ピックアップしたより優先）
               // ただし suggestPropertyRecommendMap[id] がある場合は P4（物件オススメ）を優先する
@@ -9401,6 +9429,14 @@ export default function Home() {
                 setDismissedApplicationPushIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
               } else {
                 void fetchNextAction(selectedConversation.id);
+              }
+              // 診断修正(問題2): AIX 申込①フォーマット送信完了 → ②（続き）誘導バナーを発火。
+              // 従来はテンプレラベル「①申込」検知（テンプレモーダル経由）のみで、
+              // AixModal(format)経由では②誘導が発火しなかったため、②チェーンをここでも維持する。
+              // 予約送信時は①がまだ未送信のため発火しない（②が①より先に送られるのを防ぐ）
+              if (aixModalType === "application_push" && meta?.appSubMode === "format" && !meta?.scheduled) {
+                setSuggestApplyStep2Map((prev) => ({ ...prev, [selectedConversation.id]: true }));
+                setDismissedApplyStep2Ids((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
               }
               // B5: AIX送信完了 → 同カテゴリのテンプレートを続けて送るバナーをセット（予約送信も含む）
               // ※専用チェーンバナー（P0/P3/P4/P5.5/P7）がある場合はそちらが優先表示される（バナー優先度P7.5）

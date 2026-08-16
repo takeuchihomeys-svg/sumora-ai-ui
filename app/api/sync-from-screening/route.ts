@@ -240,18 +240,28 @@ export async function POST(req: NextRequest) {
       profile_image_url: record.profile_image_url ?? null,
     };
 
+    const { data: existingConv } = await supabase
+      .from("conversations")
+      .select("account, updated_at")
+      .eq("id", String(record.id))
+      .maybeSingle();
+
     // 手動設定済みのアカウントを上書きしない
     // スモラ・イエヤス両方に問い合わせているお客さんで、
     // 同期のたびに resolvedAccount が変わってアカウントが入れ替わるのを防ぐ
-    if (resolvedAccount) {
-      const { data: existingConv } = await supabase
-        .from("conversations")
-        .select("account")
-        .eq("id", String(record.id))
-        .maybeSingle();
-      if (!existingConv?.account) {
-        // 新規 or 未設定の場合のみアカウントをセット
-        upsertData.account = resolvedAccount;
+    if (resolvedAccount && !existingConv?.account) {
+      // 新規 or 未設定の場合のみアカウントをセット
+      upsertData.account = resolvedAccount;
+    }
+
+    // P3(診断修正): updated_at は「既存値より新しい場合のみ」上書きする。
+    // brain-core B5 の楽観ロック（.eq("updated_at", watermark)）が sync の巻き戻し/同値上書きで
+    // 不一致になり suggested_aix_meta の書き戻しが no-op になる競合を減らす。
+    if (existingConv) {
+      const incoming = upsertData.updated_at ? new Date(String(upsertData.updated_at)).getTime() : NaN;
+      const current = existingConv.updated_at ? new Date(String(existingConv.updated_at)).getTime() : NaN;
+      if (Number.isNaN(incoming) || (!Number.isNaN(current) && incoming <= current)) {
+        delete upsertData.updated_at;
       }
     }
 
@@ -288,7 +298,76 @@ export async function POST(req: NextRequest) {
 
   if (table === "messages") {
     if (record.sender === "staff") {
-      return NextResponse.json({ ok: true, action: "ignored_staff_message" });
+      // P1(診断修正): 旧実装はここで破棄（ignored_staff_message）していたため、
+      // conversations.last_sender="staff" に上書きされるのに messages にはスタッフ返信が残らず、
+      // 「トーク画面では未返信に見えるのに全AIゲートが沈黙する」不整合の根本原因になっていた。
+      // screening-admin 側スタッフ返信も messages に保存して可視化する（コードは触らずDB同期のみ）。
+      const staffText = String(record.text ?? "");
+      const staffLmid =
+        (record.line_message_id as string) ||
+        (record.lineMessageId as string) ||
+        (record.message_id as string) ||
+        null;
+
+      // 重複ガード1: line_message_id が既に保存済みならスキップ
+      if (staffLmid) {
+        const { data: dupByLmid } = await supabase
+          .from("messages")
+          .select("id")
+          .eq("line_message_id", staffLmid)
+          .limit(1)
+          .maybeSingle();
+        if (dupByLmid) {
+          return NextResponse.json({ ok: true, action: "staff_message_already_synced", via: "line_message_id" });
+        }
+      }
+
+      // 重複ガード2: 同一会話・同一本文・±2分以内の staff メッセージがあればスキップ
+      // （sumora-ai-ui から送信したメッセージが screening-admin 経由でエコーバックした場合の二重表示防止）
+      if (staffText && record.created_at) {
+        const baseTime = new Date(String(record.created_at)).getTime();
+        if (!Number.isNaN(baseTime)) {
+          const from = new Date(baseTime - 2 * 60 * 1000).toISOString();
+          const to = new Date(baseTime + 2 * 60 * 1000).toISOString();
+          const { data: dupByText } = await supabase
+            .from("messages")
+            .select("id")
+            .eq("conversation_id", String(record.conversation_id))
+            .eq("sender", "staff")
+            .eq("text", staffText)
+            .gte("created_at", from)
+            .lte("created_at", to)
+            .limit(1);
+          if (dupByText && dupByText.length > 0) {
+            return NextResponse.json({ ok: true, action: "staff_message_already_synced", via: "text_window" });
+          }
+        }
+      }
+
+      const { error: staffErr } = await supabase
+        .from("messages")
+        .upsert(
+          {
+            id: record.id,
+            conversation_id: record.conversation_id,
+            sender: "staff",
+            text: staffText,
+            image_url: (record.image_url as string) ?? null,
+            ...(staffLmid ? { line_message_id: staffLmid } : {}),
+            created_at: record.created_at,
+          },
+          { onConflict: "id" }
+        );
+      if (staffErr) {
+        if (staffErr.code === "23505") {
+          // UNIQUE制約違反 = 既に保存済み。正常扱い
+          console.log("[sync] staffメッセージ重複を検知・スキップ:", staffErr.message);
+        } else {
+          console.error("sync staff message error:", staffErr.code, staffErr.message);
+          return NextResponse.json({ error: staffErr.message }, { status: 500 });
+        }
+      }
+      return NextResponse.json({ ok: true, synced: "staff_message", id: record.id });
     }
 
     let imageUrl: string | null = (record.image_url as string) ?? null;
