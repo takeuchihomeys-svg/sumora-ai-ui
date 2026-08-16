@@ -3269,7 +3269,15 @@ function _renderStaffMode(on) {
 function _initStaffModeUI() {
   try {
     chrome.storage.local.get(["staffMode"], function(res) {
-      _renderStaffMode(!!(res && res.staffMode));
+      var on = !!(res && res.staffMode);
+      _renderStaffMode(on);
+      // ポップアップ起動時にスタッフモードONなら要対応タブをデフォルトに
+      if (on) {
+        document.querySelectorAll(".acct-btn:not(#linked-filter-btn)").forEach(function(b) { b.classList.remove("active"); });
+        var nat = document.getElementById("needs-action-tab");
+        if (nat) nat.classList.add("active");
+        currentAccount = "__needs_action__";
+      }
     });
     // 他のpopupインスタンス（サイドパネル/各タブのアンダーバー）での切替・TTL自動OFFを同期
     chrome.storage.local.onChanged.addListener(function(changes) {
