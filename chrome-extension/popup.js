@@ -3284,6 +3284,14 @@ function _initStaffModeUI() {
       try {
         chrome.storage.local.set({ staffMode: next, staffModeAt: next ? Date.now() : null });
       } catch (_) { /* ignore */ }
+      // スタッフモードON → 要対応タブへ自動切替
+      if (next) {
+        document.querySelectorAll(".acct-btn:not(#linked-filter-btn)").forEach(function(b) { b.classList.remove("active"); });
+        var nat = document.getElementById("needs-action-tab");
+        if (nat) nat.classList.add("active");
+        currentAccount = "__needs_action__";
+        loadCustomers(true);
+      }
     });
   }
 }
