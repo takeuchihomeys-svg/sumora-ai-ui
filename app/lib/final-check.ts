@@ -316,6 +316,24 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Prom
     }
   }
 
+  // ── 時刻ベース決定的チェック: 18時以降の「本日中に」は実行不可能な約束 ──
+  if (draft.includes("本日中に")) {
+    const jstHour = new Date(Date.now() + 9 * 3600 * 1000).getUTCHours();
+    if (jstHour >= 18) {
+      const idx = draft.indexOf("本日中に");
+      const start = Math.max(0, idx - 10);
+      const end = Math.min(draft.length, idx + "本日中に".length + 10);
+      issues.push({
+        pass: "context_check",
+        severity: "block",
+        code: "TIME_INVALID_HONIJITSU",
+        message: "18時以降のため「本日中に」は実行不可能な約束です",
+        evidence: draft.slice(start, end),
+        suggestion: "「明日一番にご確認しご連絡させて頂きます」等に変更してください",
+      });
+    }
+  }
+
   // ── 3パス並列Haikuチェック ──
   const passes: Array<{ pass: CheckPass; prompt: string }> = [
     { pass: "rule_check", prompt: buildRuleCheckPrompt(draft, ctx) },
@@ -503,8 +521,8 @@ export async function runGroundedRevision(
 // 上限を増やす場合は時間予算(10s)を必ず再計算すること。
 export const MAX_CHECK_ITERATIONS = 2; // check1 + (接地修正 + check2) = 計2チェック上限
 
-const REVISION_MS = 3500;  // 修正Haikuのタイムアウト
-const RECHECK_MS = 8500;   // 再チェック余裕分（3パス並列8s + マージン）
+const REVISION_MS = 3500;   // 修正Haikuのタイムアウト（据え置き）
+const RECHECK_MS = 5000;    // バジェットガード用推定値（3パス並列の実際の完了時間に合わせて短縮。callHaikuタイムアウト自体は8000msのまま）
 
 // AIX_BOUNDARY_PROMISE 衝突対策（決定的・約0ms）:
 // 修正プロンプト絶対ルール5の定型句「確認して改めてご連絡いたします」等が修正で新規挿入されると、
