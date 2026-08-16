@@ -560,7 +560,7 @@
       // STEP6: station_code[] を直接親テキストで検索
       // ラベルに checkbox が紐づかない DOM 構造（for属性なし・checkbox がlabel外等）に対応
       if (!found) {
-        var stAllInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]'));
+        var stAllInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]'));
         for (var i = 0; i < stAllInputs.length && !found; i++) {
           var sinp = stAllInputs[i];
           var sp = sinp.parentElement;
@@ -728,7 +728,7 @@
             var cb = lbl.querySelector('input[type="checkbox"]');
             if (cb && cb.checked) enqueueHumanClick(cb, _clickEl, 70, 160);
           });
-          Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]:checked'))
+          Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked'))
             .filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); })
             .forEach(function(inp) { enqueueHumanClick(inp, _clickEl, 70, 160); });
           console.log("[AX] _doReset: モーダル内の路線・駅選択をクリア（順次クリック）");
@@ -754,7 +754,7 @@
         // 前顧客の沿線・駅選択が残ったまま次顧客の検索が実行されるバグがあった
         var checkboxNames = [
           "city_code[]", "town_code[]",
-          "route_id[]", "station_code[]",
+          "route_id[]", "station_id[]",
           "room_layout_id[]", "structured_type[]", "eq_rm[]",
         ];
         checkboxNames.forEach(function(name) {
@@ -1383,8 +1383,8 @@
             var vis = labels.filter(function(l) { return isVisible(l); });
             if (!vis.length) {
               // 駅ページが直接表示されている場合（事前選択済みルートでモーダルが駅一覧を直接表示）
-              // input[name="station_code[]"] はhidden checkboxのためisVisibleで不可視→親ラベルで判定
-              var stationInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]'));
+              // input[name="station_id[]"] はhidden checkboxのためisVisibleで不可視→親ラベルで判定
+              var stationInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]'));
               var visStationParents = stationInputs.filter(function(i) {
                 return i.parentElement && isVisible(i.parentElement);
               });
@@ -1441,8 +1441,8 @@
                   waitForClick(
                     function() {
                       // 駅リストが描画されるまで短時間待ってから残留を全解除
-                      if (!document.querySelectorAll('input[name="station_code[]"]').length) return false;
-                      Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]:checked'))
+                      if (!document.querySelectorAll('input[name="station_id[]"]').length) return false;
+                      Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked'))
                         .forEach(function(inp) { enqueueHumanClick(inp, _unclickIfChecked, 90, 200); });
                       return true;
                     },
@@ -1457,10 +1457,10 @@
                 waitForClick(
                   function() {
                     // ★ 診断ログ（初回のみ）: DOM上の全checkbox/radio input名を記録
-                    // station_code[] ガードの前に実行し、0件のときも必ずログが出るようにする
+                    // station_id[] ガードの前に実行し、0件のときも必ずログが出るようにする
                     if (!window._axStDiagDone) {
                       window._axStDiagDone = true;
-                      var _stCodeCount = document.querySelectorAll('input[name="station_code[]"]').length;
+                      var _stCodeCount = document.querySelectorAll('input[name="station_id[]"]').length;
                       var _allChk = Array.prototype.slice.call(document.querySelectorAll('input[type="checkbox"], input[type="radio"]'));
                       var _nameMap = {};
                       _allChk.forEach(function(inp) {
@@ -1472,18 +1472,20 @@
                           _nameMap[n].sample = p ? p.textContent.replace(/\s+/g, '').slice(0, 20) : '';
                         }
                       });
-                      console.log('[AX] DIAG station_code[] count:', _stCodeCount, '| all input names:', JSON.stringify(_nameMap));
+                      console.log('[AX] DIAG station_id[] count:', _stCodeCount, '| all input names:', JSON.stringify(_nameMap));
                       var _allLbls = Array.prototype.slice.call(document.querySelectorAll('label'));
                       var _visLblSamples = _allLbls.filter(function(l) { return isVisible(l); }).slice(0, 12).map(function(l) { return '"' + l.textContent.replace(/\s+/g, '').slice(0, 20) + '"'; });
                       console.log('[AX] DIAG visible labels:', _visLblSamples.join(', '));
                     }
-                    // ★ 修正: 駅リスト（station_code[]）が実際にDOMへ載るまで待つ
-                    // 旧実装は「ページ全体のlabel」で描画判定していたため、検索フォームの
-                    // labelで即通過→駅リスト未描画のまま残留クリアが空振りしていた
-                    if (!document.querySelectorAll('input[name="station_code[]"]').length) return false;
+                    // ★ 修正: 駅リスト（station_id[]）が実際にDOMへ載るまで待つ
+                    // input[name="station_id[]"] の親要素が可視になるまでポーリング
+                    // （旧: station_code[] = 常に0件でSTEP D全失敗）
+                    var _stIdInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]'));
+                    if (!_stIdInputs.length) return false;
+                    var _visStParents = _stIdInputs.filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); });
+                    if (!_visStParents.length) return false; // 駅セクションがまだ描画されていない
                     var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
                     var vis = labels.filter(function(l) { return isVisible(l); });
-                    if (!vis.length) return false; // 駅リストがまだ描画されていない
                     // ★ 修正: 前顧客のモーダル残留選択を「毎パス」クリアする
                     // リアプロのモーダルは独自JS内部状態を持ち _doReset のフォームDOM操作では消せない。
                     // さらに遅延描画・内部状態からの復元で後から checked が現れるため、
@@ -1493,7 +1495,7 @@
                     var _wantedStCleans = (cond.station_names || []).map(function(sn) {
                       return sn.replace(/駅$/, '').trim();
                     });
-                    Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]:checked'))
+                    Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked'))
                       .filter(function(inp) {
                         var ptxt = ((inp.parentElement && inp.parentElement.textContent) || '').replace(/\s+/g, '').replace(/駅$/, '');
                         // 温存判定は selectStationsByName の選択条件（完全一致・双方向前方一致）と揃える
@@ -1536,7 +1538,7 @@
                     // station_code[] を全件走査して親テキストと照合し、
                     // モーダルに存在しない駅名（堀江等の地域名）はスキップ（=通過扱い）
                     if (_checkedCount === 0) {
-                      var _allSt = Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]'));
+                      var _allSt = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]'));
                       if (_allSt.length > 0) {
                         var _fbCount = 0;
                         var _fbOk = (cond.station_names || []).every(function(sn) {
