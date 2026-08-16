@@ -15,6 +15,28 @@
   // ── 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
 
+  // ── スタッフモードキャッシュ（chrome.storage.local の非同期値をコンテンツスクリプト内で同期参照）──
+  // background.js の _isStaffModeActive() と同じ TTL=2時間 ロジック。
+  // スタッフモードONの間、自動 autoSendAllPages の呼び出しをすべてスキップする。
+  // 手動ボタン押下（axlx-auto-btn）は autoSendAllPages(true) で呼ばれるのでスキップしない。
+  var _staffModeOn = false;
+  try {
+    chrome.storage.local.get(["staffMode", "staffModeAt"], function(res) {
+      var on = !!(res && res.staffMode);
+      var at = (res && res.staffModeAt) || 0;
+      _staffModeOn = on && (!at || Date.now() - at <= 2 * 60 * 60 * 1000);
+    });
+    chrome.storage.local.onChanged.addListener(function(changes) {
+      if ("staffMode" in changes) {
+        _staffModeOn = !!changes.staffMode.newValue;
+        // スタッフモードONになったら残留 sessionStorage をクリア（Case B/D の継続防止）
+        if (_staffModeOn) {
+          try { sessionStorage.removeItem(AUTO_SEND_KEY); } catch (_) {}
+        }
+      }
+    });
+  } catch (_e) {}
+
   function getAutoSendState() {
     try {
       var raw = sessionStorage.getItem(AUTO_SEND_KEY);
@@ -146,7 +168,7 @@
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
     document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName, customerConditions) { mergePdfs(true, customerName, customerConditions); }); });
-    document.getElementById("axlx-auto-btn").addEventListener("click", function () { autoSendAllPages(); });
+    document.getElementById("axlx-auto-btn").addEventListener("click", function () { autoSendAllPages(true); }); // 手動=スタッフモードでも許可
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
   }
@@ -849,8 +871,14 @@
   }
 
   // ── 全ページ自動送信: エントリポイント ────────────────────────────────────
-  function autoSendAllPages() {
+  // _manual=true で呼ぶとスタッフモードチェックをスキップ（手動ボタン押下用）
+  function autoSendAllPages(_manual) {
     if (getAutoSendState()) return; // 既に動作中
+    // 自動呼び出し時のみスタッフモードをチェック
+    if (!_manual && _staffModeOn) {
+      console.log("[AXLX bulk-dl] スタッフモード中 → autoSendAllPages をスキップ");
+      return;
+    }
     var _snap = _pendingCustomerForAutoSend;
     _pendingCustomerForAutoSend = null;
     if (_snap && _snap.name) {
