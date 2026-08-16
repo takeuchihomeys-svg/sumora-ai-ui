@@ -675,6 +675,7 @@
       return;
     }
     window._axFillRunning = true;
+    window._axStDiagDone = false; // 診断ログフラグをリセット（次回fill時に再診断できるようにする）
     clearClickQueue(); // 前回実行の残留クリックキューを破棄（誤クリック防止）
     // fill-done 保証: 実行開始時にフラグをリセットし、85秒のフェイルセーフを仕掛ける
     // （background.js 側のタイムアウト90秒より必ず先に発火させる）
@@ -1462,6 +1463,19 @@
                     var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
                     var vis = labels.filter(function(l) { return isVisible(l); });
                     if (!vis.length) return false; // 駅リストがまだ描画されていない
+                    // ★ 診断ログ（初回のみ）: station_code[] の構造を確認
+                    if (!window._axStDiagDone) {
+                      window._axStDiagDone = true;
+                      var _diagSt = Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]')).slice(0, 8);
+                      console.log('[AX] DIAG station_code[] count:', document.querySelectorAll('input[name="station_code[]"]').length);
+                      _diagSt.forEach(function(inp, i) {
+                        var p = inp.parentElement;
+                        console.log('[AX] DIAG st[' + i + '] value=' + inp.value + ' parent.tag=' + (p && p.tagName) + ' parent.txt="' + (p && p.textContent.replace(/\s+/g, '').slice(0, 30)) + '"');
+                      });
+                      // 可視labelのテキストサンプル（先頭10件）
+                      var _visLbls = vis.slice(0, 10).map(function(l) { return '"' + l.textContent.replace(/\s+/g, '').slice(0, 20) + '"'; });
+                      console.log('[AX] DIAG visible labels:', _visLbls.join(', '));
+                    }
                     // ★ 修正: 前顧客のモーダル残留選択を「毎パス」クリアする
                     // リアプロのモーダルは独自JS内部状態を持ち _doReset のフォームDOM操作では消せない。
                     // さらに遅延描画・内部状態からの復元で後から checked が現れるため、
