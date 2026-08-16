@@ -692,8 +692,8 @@ function getStationsWithinMinutes(startStation, maxMinutes) {
       const edgeLine  = edge[1] ?? edge.line;
       const edgeTime  = edge[2] ?? edge.time ?? 3;
 
-      // 路線切り替えペナルティ（transfer エッジ自体にはペナルティ不要）
-      const penalty = (line && line !== edgeLine && edgeLine !== "transfer") ? 3 : 0;
+      // 路線切り替えペナルティ（transfer エッジ自体にはペナルティ不要、transfer経由後の最初の路線もスキップ）
+      const penalty = (line && line !== 'transfer' && line !== edgeLine && edgeLine !== "transfer") ? 3 : 0;
       const total   = minutes + edgeTime + penalty;
 
       const neighborKey = neighbor + '|' + (edgeLine || '');
@@ -2979,7 +2979,13 @@ function openInstructions(siteKey) {
             hubSt.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
           } else {
             if (typeof getStationNamesWithinMinutes === 'function') {
-              const _reached = getStationNamesWithinMinutes(tgt, maxMin);
+              // 梅田・難波等のハブ駅は複数の物理駅(阪急・JR・地下鉄等)を含む→全hub駅からDijkstraしてマージ
+              const _hubStations = (STATION_HUB_MAP && STATION_HUB_MAP[tgt]) ? STATION_HUB_MAP[tgt] : [tgt];
+              const _reachedSet = new Set();
+              _hubStations.forEach(function(hubSt) {
+                getStationNamesWithinMinutes(hubSt, maxMin).forEach(function(s) { _reachedSet.add(s); });
+              });
+              const _reached = Array.from(_reachedSet);
               _reached.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
               // 駅が見つかった場合は ward モードでも station モードに強制昇格
               if (_reached.length > 0 && currentAreaMode !== 'station') {
