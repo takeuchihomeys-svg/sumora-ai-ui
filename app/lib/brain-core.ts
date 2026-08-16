@@ -138,6 +138,8 @@ const REPLY_STYLE_RULES = `
 ■ 条件変更・新条件文脈（顧客が「〇〇の条件の部屋はありますか？」「〇〇でも大丈夫です」等の新条件・要望を出した場合）
 - 返信の型: 挨拶 →（該当時のみ共感）→ 条件を理解した旨 → 物件ピックアップの行動宣言 → 満足いくお部屋が見つかるまでサポートする旨
 - 【絶対NG】この場面で申込フォーマット・見積書・ヒアリングフォーム等のフォーマット送付／申込誘導CTAを提案すること。aix・template_hint・next_steps にも申込/見積書系を選ばない（正しくは property_search / property_send 方向）
+- 【絶対NG】物件提案中（proposing）にお客様が「初期費用を抑えたい」「もっと安くしたい」等のコスト懸念を出した場面で estimate_sheet を選ぶこと（提案済み物件が刺さっていないサイン。正: property_recommendation / property_search で、より初期費用の安いお部屋を再提案する）
+- 【絶対NG】お客様が支払い方法を明示的に質問した／「初期費用を払えない」と言った場合を除き、分割払い・クレジット払い等の支払い方法を提案・言及すること（「初期費用を抑えたい」への回答として分割払いを提案するのは絶対禁止）
 
 ■ 募集状況確認の文脈（property_check_result / acknowledge_check フェーズ）
 - 該当する場面: 顧客が物件URL・物件名・物件資料を送ってきた／「この物件は？」「空きありますか？」「まだ募集中ですか？」等で募集状況を尋ねた段階
@@ -364,17 +366,25 @@ async function detectSignalBasedAixFallback(
     const pendingTaskTypes = ((tasksRes.data ?? []) as { task_type: string }[]).map((t) => t.task_type);
     const pc = pcRes.data as { last_property_sent_at: string | null; property_send_count: number | null } | null;
 
-    // 信号1（成約実績最多ライン）: 最終顧客メッセージに見積・初期費用の話題 → estimate_sheet
-    // applying_pattern の most_effective 最多。見積書→申込誘導→申込の3ステップが成約最短ルート。
-    if (/見積|初期費用/.test(custText)) return "estimate_sheet";
+    // 信号0.9（コスト懸念 — 信号1より先に評価）: 「初期費用を抑えたい」「もっと安くしたい」等は
+    // 金額の質問ではなく“提案済み物件が刺さっていない”サイン → estimate_sheet ではなく
+    // より初期費用の安い物件の再提案（property_recommendation）が正解。
+    // 信号1の /見積|初期費用/ 部分一致がコスト懸念表明まで estimate_sheet に吸い込む誤爆を防ぐ。
+    const costConcern =
+      (/(初期費用|費用|家賃)[^。！!？?\n]{0,8}(抑え|安く|下げ)|(抑え|安く)[^。！!？?\n]{0,6}(たい|入居)/.test(custText)) &&
+      !/(いくら|内訳|どの(くらい|位)|教え)/.test(custText);
+    if (costConcern) return "property_recommendation";
 
     // 信号2: 最終顧客メッセージに申込・入居の意思表示 AND フェーズが proposing/applying → application_push
+    // （元の信号1→2→3 の順から、信号3を信号1より先に評価する並びに変更。信号2の優先度は従来通り信号3より上位）
     if (/申込|入居/.test(custText) && (newPhase === "proposing" || newPhase === "applying")) {
       return "application_push";
     }
 
-    // 信号3: 最終スタッフメッセージが見積書送付（estimate_sheet 完了直後・顧客未返信）→ acknowledge_check
+    // 信号3（見積送付済み — 信号1より先に評価）: 最終スタッフメッセージが見積書送付
+    // （estimate_sheet 完了直後・顧客未返信）→ acknowledge_check
     // 直近AIXが estimate_sheet で、最終メッセージがスタッフ側（AIX生成）＝見積送付済みで顧客返信待ちの局面。
+    // ※信号1より後に置くと、送付済みでも custText の「見積」部分一致で estimate_sheet を二重提案してしまう。
     if (
       lastStaff?.is_aix_generated &&
       usedAixTypes[0] === "estimate_sheet" &&
@@ -382,6 +392,11 @@ async function detectSignalBasedAixFallback(
     ) {
       return "acknowledge_check";
     }
+
+    // 信号1（成約実績最多ライン）: 最終顧客メッセージに見積・初期費用の話題 → estimate_sheet
+    // applying_pattern の most_effective 最多。見積書→申込誘導→申込の3ステップが成約最短ルート。
+    // （コスト懸念＝信号0.9・見積送付済み＝信号3 は上で先に除外済み）
+    if (/見積|初期費用/.test(custText)) return "estimate_sheet";
 
     // 信号3.5（画像のみ送信対策）: 顧客がテキストなしで画像だけを送ってきた → estimate_sheet
     // messages 上は "[画像]" プレースホルダーで保存される。実運用では見積書スクショ送付が最多のため

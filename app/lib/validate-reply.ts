@@ -101,7 +101,10 @@ export function detectPlaceholders(text: string): string[] {
 // enforcement_level='required' 等のAIX判定時もプロンプト指示（viewingFactNote / estimateGateNote /
 // propertyFactGateNote / meetingPlaceGateNote）はLLMへの指示に過ぎず、無視された場合を止められない。
 // ここで生成後テキストを文単位で検査し、違反文を許可済みの宣言テンプレに置換する最終防衛線。
-const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement: string }[] = [
+// promisedReplacement: 見積書・割引が直前スタッフ返信で約束済み／AIXで送付済み（estimatePromised=true）の場合の
+// 代替置換文。通常の replacement（見積書作成宣言）をそのまま使うと約束済みの宣言を後段で再挿入して
+// 二重宣言になるため、短い受付文に切り替える。
+const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement: string; promisedReplacement?: string }[] = [
   {
     // 内覧候補日時の具体提示（「8/7（木）14:00〜」等）→ AIX「内覧へ」ボタン専用
     name: "内覧候補日時",
@@ -122,6 +125,7 @@ const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement:
       (/[0-9０-９]+(?:[.．][0-9０-９]+)?\s*[ヶケか]月分?/.test(s) &&
         /(?:敷金|礼金|保証料|前家賃)/.test(s)),
     replacement: "最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！",
+    promisedReplacement: "確認しご連絡させて頂きます😊！！",
   },
   {
     // 物件固有金額（¥表記・「数万円」「〜万円」等の曖昧額の断定提示）→ AIX「見積書送る」ボタン専用
@@ -149,6 +153,7 @@ const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement:
       /(?:となります|同封|添付|ご査収|お送りしました|お送り致しました)/.test(s) &&
       !/作成|お送りさせて頂きます|お送りいたします/.test(s),
     replacement: "最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！",
+    promisedReplacement: "確認しご連絡させて頂きます😊！！",
   },
   {
     // 住所・集合場所・集合時間の確定文 → AIX「待ち合わせ」ボタン専用
@@ -167,14 +172,41 @@ const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement:
   },
 ];
 
-export function enforceAixGates(text: string): { cleaned: string; violations: string[] } {
+export function enforceAixGates(
+  text: string,
+  opts?: { estimatePromised?: boolean; customerMessage?: string },
+): { cleaned: string; violations: string[] } {
   const violations: string[] = [];
   const usedReplacement = new Set<string>();
+  // 分割払い提案ゲート: お客様が支払い方法を質問していない／「払えない」と言っていないのに
+  // AIが「分割払いのご相談も可能です」等を生成した場合、該当文を削除する（置換文は挿入しない）。
+  // 分割払いの提案定義はコード・テンプレ・DBのどこにも存在しないため、出現＝LLMの自由生成＝削除が正。
+  const customerAskedInstallment = opts?.customerMessage
+    ? /分割|支払(い)?方法|カード払い|クレジット|一括|払え(ない|なそう|そうにない|ません)/.test(opts.customerMessage)
+    : false;
+  const installmentProposalRe = /分割[^。！!？?\n]{0,10}(払い|支払|も可能|でき(ます|る)|のご相談|ご案内|ご対応)/;
+  // 見積書作成宣言ゲート: 約束済み（estimatePromised=true）の場合、LLMが再生成した
+  // 「御見積書を作成しお送りします」宣言文そのものも二重宣言となるため短い受付文へ置換する
+  const estimateDeclarationRe = /(?:御?見積書|お見積書)[^。！!？?\n]{0,20}(?:作成|お送り)|最大限割引[^。！!？?\n]{0,25}(?:作成|お送り)/;
   const outLines = text.split("\n").map((line) => {
     // 文末（。！!？?）で分割。「！！」等の連続記号は1文として保持する
     const sentences = line.split(/(?<=[。！!？?])(?![。！!？?])/);
     const outSentences: string[] = [];
     for (const s of sentences) {
+      // 分割払い提案（顧客が聞いていない場合のみ削除・置換なし）
+      if (!customerAskedInstallment && installmentProposalRe.test(s)) {
+        violations.push(`分割払い提案(削除): ${s.trim().slice(0, 40)}`);
+        continue;
+      }
+      // 見積書作成宣言の繰り返し（約束済みの場合のみ短文へ置換。本文に既に受付文があれば削除のみ）
+      if (opts?.estimatePromised && estimateDeclarationRe.test(s)) {
+        violations.push(`見積作成宣言の繰り返し: ${s.trim().slice(0, 40)}`);
+        if (!usedReplacement.has("見積作成宣言の繰り返し") && !text.includes("かしこまりました")) {
+          usedReplacement.add("見積作成宣言の繰り返し");
+          outSentences.push("かしこまりました😊！！");
+        }
+        continue;
+      }
       const rule = AIX_GATE_RULES.find((r) => r.test(s));
       if (!rule) {
         outSentences.push(s);
@@ -184,7 +216,10 @@ export function enforceAixGates(text: string): { cleaned: string; violations: st
       // 同一ルールの違反が複数文ある場合、宣言テンプレは1回だけ挿入し残りは除去（内訳の複数行等）
       if (!usedReplacement.has(rule.name)) {
         usedReplacement.add(rule.name);
-        outSentences.push(rule.replacement);
+        // 約束済みの場合は宣言テンプレを再挿入せず短い受付文に切り替える（二重宣言の再挿入防止）
+        outSentences.push(
+          opts?.estimatePromised && rule.promisedReplacement ? rule.promisedReplacement : rule.replacement,
+        );
       }
     }
     return outSentences.join("");
@@ -221,7 +256,16 @@ export function verifyAmountsAgainstSource(text: string, sourceText: string): { 
 
 export function validateAndClean(
   text: string,
-  opts?: { aixGates?: boolean; customerName?: string | null; lineDisplayName?: string | null },
+  opts?: {
+    aixGates?: boolean;
+    customerName?: string | null;
+    lineDisplayName?: string | null;
+    // 見積書・割引の約束済みフラグ（直前スタッフ返信 or aix_usage_logs estimate_sheet 由来）。
+    // true の場合、AIXゲートの置換文を見積書作成宣言→短い受付文に切り替え、宣言の繰り返しも置換する
+    estimatePromised?: boolean;
+    // 分割払いゲート用: お客様の最新メッセージ（支払い方法を質問していない場合、返信中の分割提案文を削除）
+    customerMessage?: string;
+  },
 ): { cleaned: string; issues: string[] } {
   const issues: string[] = []
   let cleaned = text
@@ -254,7 +298,10 @@ export function validateAndClean(
   banned.forEach(w => { if (cleaned.includes(w)) issues.push("禁止ワード: " + w) })
   // AIXゲート機械検証（opt-in: generate-reply の通常返信ドラフトのみ。テンプレート最適化・パターン生成は対象外）
   if (opts?.aixGates) {
-    const { cleaned: gated, violations } = enforceAixGates(cleaned);
+    const { cleaned: gated, violations } = enforceAixGates(cleaned, {
+      estimatePromised: opts.estimatePromised,
+      customerMessage: opts.customerMessage,
+    });
     if (violations.length > 0) {
       issues.push(...violations.map(v => "AIXゲート違反(置換済): " + v));
       cleaned = gated;

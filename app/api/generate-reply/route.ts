@@ -258,6 +258,26 @@ async function deriveSuggestedAix(
       };
     }
   }
+  // ─── Step 0.55: 「初期費用を抑えたい」等のコスト懸念を検知（★見積ゲート Step 0.6 より優先）───
+  // 「初期費用はいくら？」（金額の質問）→ 見積書（Step 0.6）が正解。
+  // 「初期費用を抑えたい」（金額を下げたい要望）→ 提案済み物件が刺さっていないサイン。見積書ではなく
+  // より初期費用の安い物件の再提案が正解。Step 0.6 の誤爆ガード②は「物件/部屋」の語を含む文しか
+  // 除外しないため、「初期費用を抑えて入居したい」等がすり抜けて estimate_sheet に誤誘導されるのを防ぐ。
+  // ここで return することで後段のキャッシュ・trigger_action_rules（keyword=初期費用→estimate_sheet conf0.95）にも到達させない。
+  if (customerMessage) {
+    const costConcern =
+      /(初期費用|費用|家賃)[^。！!？?\n]{0,8}(抑え|安く|下げ|かけ(られ|たく)な)|(抑え|安く)[^。！!？?\n]{0,6}(たい|入居)/;
+    const amountQuestion = /(いくら|内訳|どの(くらい|位)|教え)/;
+    if (costConcern.test(customerMessage) && !amountQuestion.test(customerMessage)) {
+      return {
+        action: "property_recommendation",
+        note: "初期費用・費用を抑えたいご要望＝ご提案済みの物件が刺さっていないサインです → 見積書ではなく、AIX【物件ピックアップ】系でより初期費用の安いお部屋を改めて探してお送りください（見積書の作成宣言・分割払いの提案は絶対禁止。AI返信は「初期費用をさらに抑えられるお部屋を改めてお探し致します」の探索宣言のみ）",
+        source: "cost_concern_regex",
+        enforcement_level: "required" as const,
+        closing_strategy: closingStrategy || undefined,
+      };
+    }
+  }
   // ─── Step 0.6: 初期費用・見積書の質問を検知（★キャッシュ/DBルールより優先）───
   // 例:「初期費用はいくらですか？内訳も教えてください」→ 見積書本体はAIX【見積書送る】で作成・送付するため、
   // AI返信案が見積書カバー文（「御見積書となります…ご査収ください」）を代弁しないよう最優先でAIX誘導を確定させる。
@@ -680,7 +700,10 @@ function buildGenerationMessages(
   // H7(Fable5): brain(suggested_aix_meta) の closing_strategy/next_steps ガイダンスブロック
   brainGuidanceNote = "",
   // conversation_direction からの返信方向性ノート
-  directionNote = ""
+  directionNote = "",
+  // 見積書・割引の約束済みフラグ（直前スタッフ返信の割引/見積約束 or aix_usage_logs の estimate_sheet 履歴）。
+  // true の場合は「御見積書を作成しお送りします」宣言の再生成を禁止し短い受付文へ切り替える（見積二重宣言の防止）
+  estimatePromised = false
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -945,6 +968,17 @@ function buildGenerationMessages(
 → 実際の物件送付はこの後AIX「物件ピックアップした」で行うため、AI返信で物件・条件の話を展開しない`
     : "";
 
+  // ── 見積書・割引の約束済み検出（見積版の二重宣言防止・pickupPromiseAckNote と同型）──────
+  // スタッフが直前の返信で「最大限割引した御見積書をお送りします」等を約束済み、
+  // またはAIX【見積書送る】で見積書送付済みの場合、AIが同じ作成宣言を再生成する二重宣言を防ぐ。
+  // 実際の見積書はAIX【見積書送る】で作成・送付する（estimateGateNote より上位に注入）。
+  const estimatePromiseAckNote = estimatePromised
+    ? `\n【🚫 見積書作成宣言の繰り返し禁止（最優先・【💰 見積書カバー文】ゲートより上位）】
+スタッフは直前の返信で既に「割引・御見積書の作成/送付」を約束済み（またはAIX【見積書送る】で見積書送付済み）。
+→ 「最大限割引させていただいた御見積書を作成しお送りさせて頂きます」等の作成宣言・割引の約束を絶対にもう一度生成しない（二重宣言になる）
+→ 返信は短い受付文のみ（例:「かしこまりました😊！！」「確認しご連絡させて頂きます😊！！」）。見積・費用の話を新たに展開しない`
+    : "";
+
   const staffContextNote = isFollowUp && lastStaffMsg
     ? `\n【⚠️ 最重要：スモラは既にこのお客様メッセージに返信済み】\nスモラが直前に送った内容：「${lastStaffMsg}」\n→ お客様はまだ返信していない。これはその【続きのメッセージ】。前の返信で伝えた内容を絶対に繰り返さない。前の返信を踏まえて補足・追加・次のアクション提案など、自然につながる内容を生成すること。`
     : lastStaffMsg
@@ -1052,7 +1086,8 @@ function buildGenerationMessages(
 
   // 見積書カバー文はAIXの「見積書送る」ボタン専用。generate-replyでは見積書を添付できないため、
   // 添付済みを装う文面・金額内訳をAI返信案に出さない（内覧日時ゲート viewingFactNote と同型の常時注入ゲート）
-  const estimateGateNote = `\n\n【💰 見積書カバー文の生成は絶対禁止（最優先）】「〜の御見積書となります」「御見積書をお送りします＋ご査収ください」のような、見積書を既に添付した体のカバーメッセージ・初期費用の金額内訳は絶対に出力しない。見積書本体はAIXの「見積書送る」ボタンで別途作成・添付して送るため、AI返信案には含めない。初期費用・見積の質問への返信は「かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」の作成宣言のみ許可（物件名入りの見積書送付文・金額内訳・見積書に対する「ご査収ください」は書かない）。この物件の家賃・管理費（共益費）・敷金・礼金の実額もAIは物件資料画像を読めないため断言・推測禁止。会話履歴内でスタッフが既に伝えた金額をそのまま引用する場合のみ言及可。それ以外は『確認しご連絡させて頂きます😊！！』または見積書作成宣言で返すこと。敷金・礼金の一般論（通常0〜2ヶ月分等）は可。`;
+  const estimateGateNote = `\n\n【💰 見積書カバー文の生成は絶対禁止（最優先）】「〜の御見積書となります」「御見積書をお送りします＋ご査収ください」のような、見積書を既に添付した体のカバーメッセージ・初期費用の金額内訳は絶対に出力しない。見積書本体はAIXの「見積書送る」ボタンで別途作成・添付して送るため、AI返信案には含めない。初期費用・見積の質問への返信は「かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」の作成宣言のみ許可（物件名入りの見積書送付文・金額内訳・見積書に対する「ご査収ください」は書かない）。この物件の家賃・管理費（共益費）・敷金・礼金の実額もAIは物件資料画像を読めないため断言・推測禁止。会話履歴内でスタッフが既に伝えた金額をそのまま引用する場合のみ言及可。それ以外は『確認しご連絡させて頂きます😊！！』または見積書作成宣言で返すこと。敷金・礼金の一般論（通常0〜2ヶ月分等）は可。※直前のスタッフ返信で既に見積書の作成・送付や割引を約束済みの場合（【🚫 見積書作成宣言の繰り返し禁止】ブロックがある場合）は、この作成宣言も繰り返さず短い受付文のみとする。
+・【💳 分割払い提案の絶対禁止】分割払い・クレジットカード払い等の支払い方法の提案・言及は、お客様が「分割できますか」等と支払い方法を明示的に質問した場合、または「初期費用を払えない」と言った場合のみ許可。それ以外では絶対に書かない。特に「初期費用を抑えたい」への回答として分割払いを提案することは絶対禁止（正しい選択肢は ①より初期費用の安い物件の提案 ②スタッフによる割引 のみ）。`;
 
   // 空室確認結果・入居可能日・保証会社等の物件固有情報はAIXの「物件確認した」系ボタン専用。generate-replyでは管理会社確認前の結果捏造を防ぐ（estimateGateNote と同型の常時注入ゲート）
   const propertyFactGateNote = `\n\n【🏢 管理会社確認が必要な物件固有情報の断言は絶対禁止（最優先）】「空室でした」「現在も募集中と確認できました」「埋まってしまいました」「退去日は〇月〇日です」「〇月〇日からご入居可能です」のような、管理会社に確認した体の結果報告や具体的な退去日・入居可能日の断言は絶対に出力しない。空室状況・退去予定日・入居可能日に加え、この物件の「保証会社名・保証料の金額・審査基準・ペット飼育可否・駐車場の空きと料金・設備の有無・礼金/家賃交渉の結果」も管理会社への確認が必要な確定事実であり、確認前にAIが「この物件の保証会社は〇〇です」「保証料は総賃料の〇%です」等と断言・推測してはいけない。保証会社の役割・審査の一般的な流れ・連帯保証人との違いなどの一般論は即答してよい。物件固有の質問には「確認しご連絡させて頂きます😊！！」の宣言のみ。確認結果の報告はAIX【確認した（条件・交渉）】（物件確認した系ボタン）で別途生成・送信する。例外：会話履歴内でスタッフが既に伝えた確定情報（退去日・入居可能日・保証会社名等）をそのまま引用する場合のみ言及可。新たな日付・募集状況・保証条件をAIが推測して生成することは禁止。\n・【⚠️ 退去予定の断言禁止】「退去後すぐにご案内できます」「退去後すぐにご内覧いただけます」「〇月以降ご案内可能です」のような退去予定を前提とした案内文は、管理会社から退去予定が確認済みである事実が会話履歴にある場合のみ使用すること。確認していない場合は「空室状況を確認してご連絡させて頂きます😊！！」とし、退去予定を勝手に断定しない。\n・【⚠️ 「管理会社に確認してご連絡します」の文章での約束禁止】「管理会社に確認しご連絡させて頂きます」「確認してからご連絡いたします」のように、確認と連絡をセットで約束する文をLINE返信に書いてはいけない。確認が必要な内容はスタッフがAIX【確認します】ボタンで対応する。AI返信では「かしこまりました！！」「確認いたします！！」程度の短い受付のみ書き、「ご連絡させて頂きます」まで続けない。水道代・インターネット・設備の有無など管理会社への確認事項も同様。\n・【⚠️ スタッフが送った物件画像への「内容確認します」禁止】お客様が画像（物件資料・見積書）を送り返してきた場合、その画像はスタッフが先に送った物件の資料であることが多い。「お送り頂きました画像の内容を確認させて頂きます」「画像を確認しご連絡します」のように、まるで初めて見る資料かのように「内容確認します」と書いてはいけない。お客様の具体的な質問（「ここは誰か住んでいましたか？」等）にはその質問に直接答えるか、分からない場合は「確認いたします！！」とのみ伝える。`;
@@ -1136,7 +1171,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `${propertyStatusNote}
-${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${TEMPORARY_SITUATION_NOTE}${SEPARATE_APPOINTMENT_NOTE}${empathyPhraseNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}
+${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${TEMPORARY_SITUATION_NOTE}${SEPARATE_APPOINTMENT_NOTE}${empathyPhraseNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 ${quickPatterns}
@@ -2298,6 +2333,29 @@ export async function POST(req: NextRequest) {
       return seg ? seg.replace(/^スモラ:\s*/, "").trim() : undefined;
     })();
 
+    // ─── 見積書・割引の「約束済み」検出（見積二重宣言の防止）─────────────────
+    // ① aix_usage_logs に estimate_sheet の使用履歴がある（AIXで見積書送付済み）
+    // ② 直前スタッフ返信が既に割引・見積書の作成/送付を約束している（イエヤス割提示等）
+    // のいずれかなら estimatePromised=true とし、estimatePromiseAckNote 注入＋enforceAixGates の
+    // 置換文切替で「御見積書を作成しお送りします」宣言の再生成を止める。判定不能時は従来動作を維持。
+    let estimateAlreadySent = false;
+    if (conversationId && !isTemplateOptimize) {
+      try {
+        const { data: estLogs } = await supabase
+          .from("aix_usage_logs")
+          .select("id")
+          .eq("conversation_id", conversationId)
+          .eq("aix_type", "estimate_sheet")
+          .limit(1);
+        estimateAlreadySent = (estLogs?.length ?? 0) > 0;
+      } catch { /* 判定不能時は従来動作（宣言許可）を維持する */ }
+    }
+    const staffPromisedEstimate =
+      !!lastStaffMsgForSearch &&
+      /(最大限割引|スモ割|イエヤス割|御?見積書?)/.test(lastStaffMsgForSearch) &&
+      /(作成|お送り|送らせて|送付|割引|お値引)/.test(lastStaffMsgForSearch);
+    const estimatePromised = !isTemplateOptimize && (estimateAlreadySent || staffPromisedEstimate);
+
     // ── Step1: 分析を先行実行（検出パターンを実例検索クエリに使うため）
     if (!process.env.OPENAI_API_KEY) {
       console.warn("[generate-reply] OPENAI_API_KEY not set — pgvector検索無効・フォールバック使用");
@@ -2530,7 +2588,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
-      resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote, directionNote
+      resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote, directionNote,
+      estimatePromised
     );
     // 中6: 顧客の温度感に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
     // ④ Step1で今まさに分析したフレッシュな emotion を最優先し、なければ ai_summary_json.emotion（過去の要約）を使う
@@ -2695,14 +2754,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const rawOutput = bodyPart ? fixedGreeting + bodyPart : (trimmedText || fixedGreeting.trim());
                 // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
                 // customerName/lineDisplayName: 本文に混入したLINE表示名を確定的に実名へ置換／除去
-                const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true, customerName, lineDisplayName });
+                const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true, customerName, lineDisplayName, estimatePromised, customerMessage: message });
                 if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
                 // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
                 return { body: cleaned, stopReason };
               }
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
               // aixGates: 通常返信ドラフトのみ機械検証。テンプレート最適化はAIX由来の日時・金額が正当なため対象外
-              const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize, customerName, lineDisplayName });
+              const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize, customerName, lineDisplayName, estimatePromised, customerMessage: message });
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               let outText = cleaned;
               // テンプレート最適化モードの後処理: 号室先頭ゼロ除去 + noEmoji時の絵文字除去（旧adaptルート互換）
