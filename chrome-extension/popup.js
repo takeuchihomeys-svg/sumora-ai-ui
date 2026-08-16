@@ -576,6 +576,20 @@ function findStationLines(areaText) {
   return STATION_LINE_MAP[normalized] || STATION_LINE_MAP[areaText] || null;
 }
 
+// 同一事業者の複数路線は最初の1路線に絞る
+// 例: 十三 = ["阪急電鉄神戸線","阪急電鉄宝塚線","阪急電鉄京都線"] → ["阪急電鉄神戸線"]
+// 異事業者混在（大阪市高速軌道 + 阪急電鉄等）はそのまま全路線返す
+function deduplicateSameOperatorLines(lines) {
+  if (!lines || lines.length <= 1) return lines;
+  let prefix = lines[0];
+  for (let i = 1; i < lines.length; i++) {
+    let j = 0;
+    while (j < prefix.length && j < lines[i].length && prefix[j] === lines[i][j]) j++;
+    prefix = prefix.slice(0, j);
+  }
+  return prefix.length >= 2 ? [lines[0]] : lines;
+}
+
 
 // 当駅が属する路線上の前後各1駅を返す（重複なし）
 // LINE_STATION_ORDER（ハードコード）→ LEARNED_LINE_ORDER（DB）の順で参照
@@ -1186,7 +1200,9 @@ const SITE_CONFIG = {
           if (stToks.length > 0) {
             const stFirst = stToks[0];
             const lines = findStationLines(stFirst) || findStationLines(areaText);
-            const linesText = lines ? lines.join(" / ") : null;
+            // 同一事業者の複数路線（例: 十三=阪急3路線）は1路線のみ表示して選択ミスを防ぐ
+            const displayLines = deduplicateSameOperatorLines(lines);
+            const linesText = displayLines ? displayLines.join(" / ") : null;
             let wideStationNote = null;
             if (d.isWide && lines) {
               const adj = getAdjacentStations(stFirst, lines);
@@ -2603,6 +2619,9 @@ function openInstructions(siteKey) {
       if (apiData?.itandi?.line_names) {
         apiData.itandi.line_names.forEach(function(n) { if (!itandiLines.includes(n)) itandiLines.push(n); });
       }
+      // 同一事業者の複数路線は1路線に絞る（例: 十三=阪急3路線→阪急神戸本線のみ）
+      const _deduped = deduplicateSameOperatorLines(itandiLines);
+      if (_deduped.length < itandiLines.length) itandiLines.splice(0, itandiLines.length, ..._deduped);
       // 未知トークンを非同期でDB解決（次回以降のLEARNED_STATION_MAP更新）
       if (_itandiUnknown.length > 0) {
         fetch(API_BASE + "/api/itandi-resolve", {
