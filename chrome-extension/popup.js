@@ -13,7 +13,9 @@ let _dbStationRouteMap = null;
 
 // 起動時: DBの駅→路線キャッシュをロード（chrome.storage.local に24時間キャッシュ）
 async function fetchStationRouteCache() {
-  const CACHE_KEY = "stationRouteCache";
+  // ★ 修正(Bug2): v2に版数UP。旧キャッシュには重複キーバグ（新大阪の御堂筋線消失）で
+  // 汚染されたデータが24時間TTLで固定化されていたため、キー変更で強制再取得させる
+  const CACHE_KEY = "stationRouteCache_v2";
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24時間
   try {
     // 1) ローカルキャッシュ確認（24時間以内ならAPIを叩かず使用）
@@ -1025,9 +1027,14 @@ function getHubLines(stationKey) {
       if (Array.isArray(v)) dbLines = v;
       else if (v && Array.isArray(v.realpro_lines)) dbLines = v.realpro_lines;
     }
+    // ★ 修正(Bug2): DBキャッシュ単独優先 → ローカルマップとの和集合に変更。
+    // seedMapsIfEmpty は既存DB行を修復しないため、重複キーバグ時代に汚染された
+    // DB行（新大阪=東海道本線・おおさか東線のみ等）が残っていても、
+    // ローカルマップの正しい路線（御堂筋線）が欠落しないようにする
+    const localLines = STATION_LINE_MAP[st] || LEARNED_STATION_MAP[st]?.realpro_lines || [];
     const stLines = (dbLines && dbLines.length > 0)
-      ? dbLines
-      : (STATION_LINE_MAP[st] || LEARNED_STATION_MAP[st]?.realpro_lines || []);
+      ? dbLines.concat(localLines.filter(l => !dbLines.includes(l)))
+      : localLines;
     for (const l of stLines) {
       if (!lines.includes(l)) lines.push(l);
     }
@@ -3016,9 +3023,11 @@ function openInstructions(siteKey) {
         }
       }
 
-      // API補完: 路線名→駅一覧を station_names に追加（LEARNED_LINE_ORDER で未取得の路線に対応）
+      // API補完: 路線名→駅一覧を station_names に追加（currentAreaMode に関わらず実行）
       // isKnownStation で検証: 地域名・町字名がAIにより駅と誤分類されても混入しない（堀江等の防止）
-      if (currentAreaMode === "station" && apiData?.realpro?.station_names) {
+      // ※ currentAreaMode === "station" 条件を削除: route_idsのみ返りstation_namesが空の場合に
+      //   APIが駅名を補完していても除外されてしまうBug2-root-2を修正
+      if (apiData?.realpro?.station_names?.length > 0) {
         apiData.realpro.station_names.forEach(s => {
           if (realpro_station_names.includes(s)) return;
           if (isKnownStation(s)) {
@@ -3027,6 +3036,12 @@ function openInstructions(siteKey) {
             console.log('[AX] リアプロ API補完: 非駅トークンを除外:', s);
           }
         });
+        // 駅が追加された場合: currentAreaMode が station でなければ昇格
+        if (realpro_station_names.length > 0 && currentAreaMode !== 'station') {
+          currentAreaMode = 'station';
+          updateAreaModeUI && updateAreaModeUI();
+          console.log('[AX] リアプロ API補完: 駅発見 → station モードに昇格');
+        }
       }
 
       // 地名マップから町字レベルのトークンを検索（駅モード時はスキップ：所在地フィールドに入らないようにする）
@@ -3094,6 +3109,13 @@ function openInstructions(siteKey) {
         }
       }
 
+      console.log('[AX] autofill送信:', {
+        area_mode: _lockedMode || currentAreaMode,
+        station_names: realpro_station_names.slice(),
+        route_ids: route_ids.slice(),
+        city_codes: city_codes.slice(),
+        area: adjAreaClean.slice(0, 40),
+      });
       window.parent.postMessage({
         from: "aixlinx-underbar",
         action: "autofill",

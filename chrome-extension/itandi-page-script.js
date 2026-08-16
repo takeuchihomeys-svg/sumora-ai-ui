@@ -149,24 +149,20 @@
       return m ? m[1] : null;
     }
     var batchCity = (function() {
-      if (wardNames.length < 2) {
-        // 「大阪市内」「大阪市」のような市全域指定（1件）→ batchモードで全区選択
-        if (wardNames.length === 1) {
-          var single = wardNames[0];
-          // 「〇〇市内」パターン（popup.jsが展開できなかった市全域指定）
-          var mInner = single.match(/^([^\s　]+?[市])(内)$/);
-          if (mInner) return mInner[1];
-          // 「〇〇市」（区・町・村を含まない純粋な市名）
-          if (/^[^\s　]+[市]$/.test(single) && !/[区町村]/.test(single)) return single;
-        }
-        return null;
+      // ★ 修正(Bug1): batchモードは「明示的な市全域指定（1件）」のみで発火させる。
+      // 旧実装は「同一市の区が2件以上・町域なし」でも市全域バッチを発火させており、
+      // 例: ["大阪市西区","大阪市西淀川区","大阪市淀川区"] → batchCity="大阪市" となり
+      // openBatchCityModal が「大阪市」で始まる全24区を無差別クリックして
+      // 指定外の区まで選択されるバグがあった。複数区は1区ずつモード（openNextWardModal）で処理する。
+      if (wardNames.length === 1) {
+        var single = wardNames[0];
+        // 「〇〇市内」パターン（popup.jsが展開できなかった市全域指定）
+        var mInner = single.match(/^([^\s　]+?[市])(内)$/);
+        if (mInner) return mInner[1];
+        // 「〇〇市」（区・町・村を含まない純粋な市名）
+        if (/^[^\s　]+[市]$/.test(single) && !/[区町村]/.test(single)) return single;
       }
-      var hasTowns = wardNames.some(function(w) { return wardTownMap && wardTownMap[w] && wardTownMap[w].length; });
-      if (hasTowns) return null;
-      var prefix = getCityPrefix(wardNames[0]);
-      if (!prefix) return null;
-      var allSame = wardNames.every(function(w) { return w.startsWith(prefix); });
-      return allSame ? prefix : null;
+      return null;
     })();
 
     // 市全域バッチ選択: 1回のモーダルで全区チェックボックスをまとめて選択
@@ -246,9 +242,21 @@
       for (var i = 0; i < labels.length; i++) {
         if (norm(labels[i].textContent) === n && isVis(labels[i])) { found = labels[i]; break; }
       }
+      // ★ 修正(Bug1): 括弧書き（件数等の付加テキスト）を除去して完全一致を再試行
       if (!found) {
         for (var i = 0; i < labels.length; i++) {
-          if (norm(labels[i].textContent).includes(n) && isVis(labels[i])) { found = labels[i]; break; }
+          var lt = norm(labels[i].textContent).replace(/[（(].*$/, "");
+          if (lt === n && isVis(labels[i])) { found = labels[i]; break; }
+        }
+      }
+      if (!found) {
+        // ★ 修正(Bug1): includes判定だと「淀川区」が「西淀川区」「東淀川区」に誤マッチするため、
+        // 区町村名で終わる検索語は前方一致（startsWith）のみ許可する
+        var isWardTerm = /[区町村]$/.test(n);
+        for (var i = 0; i < labels.length; i++) {
+          var lt2 = norm(labels[i].textContent);
+          var hit = isWardTerm ? lt2.startsWith(n) : lt2.includes(n);
+          if (hit && isVis(labels[i])) { found = labels[i]; break; }
         }
       }
       if (!found) return false;
@@ -743,6 +751,25 @@
     });
     var _resetDelay = 0;
     if (_resetBtn) { _resetBtn.click(); _resetDelay = 600; console.log("[AX] 条件リセット実行"); }
+    else {
+      // ★ 修正(Bug1): 所在地選択はチップ積み上げ方式で解除処理がないため、
+      // リセットボタン未発見時は前回検索の区チップが残留したまま追加される。
+      // 発見できない場合を必ず可視化し、残留チップ（削除×ボタン付きタグ）の個別削除を試みる
+      console.warn("[AX] ⚠️ 条件リセットボタン未発見: 前回の所在地チップが残留している可能性があります");
+      var _chipCloseBtns = [].slice.call(document.querySelectorAll("button, [role='button']")).filter(function(b) {
+        var t = (b.textContent || "").trim();
+        var aria = b.getAttribute && (b.getAttribute("aria-label") || "");
+        var r = b.getBoundingClientRect();
+        if (!(r.width > 0 || r.height > 0)) return false;
+        // チップの削除ボタン: テキストが「×」「✕」のみ、または aria-label が削除系
+        return t === "×" || t === "✕" || /削除|remove|delete/i.test(aria);
+      });
+      if (_chipCloseBtns.length) {
+        console.log("[AX] 残留チップ削除ボタンを " + _chipCloseBtns.length + " 件クリック");
+        _chipCloseBtns.forEach(function(b, i) { setTimeout(function() { try { b.click(); } catch (e) {} }, i * 250); });
+        _resetDelay = _chipCloseBtns.length * 250 + 400;
+      }
+    }
 
     setTimeout(function() { try {
 

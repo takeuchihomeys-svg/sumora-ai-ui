@@ -147,6 +147,13 @@
     return min + Math.floor(Math.random() * (max - min + 1));
   }
   function _clickEl(el) { el.click(); }
+  // ★ 修正(Bug2): 選択側クリックの実行時ガード。
+  // 同一駅が複数路線に出現するモーダルでは同名inputが2つ描画され、内部状態で同期している場合
+  // 1個目のクリックで両方checkedになる → キューに残った2個目のクリックがトグル解除として作用し
+  // 選択が消える（解除側 _unclickIfChecked と対称のガードが選択側に無かった欠陥）。
+  // 実行時点で未checkedのときだけクリックすることで、同期input（2回目スキップ）と
+  // 非同期の同名別駅（両方クリック）の双方で正しく動作する
+  function _clickIfUnchecked(el) { if (!el.checked) _clickEl(el); }
   var _clickQueue = [];
   var _clickQueueTimer = null;
   function enqueueHumanClick(el, clickFn, minGap, maxGap) {
@@ -461,6 +468,8 @@
       // クリックはキュー経由（90〜200ms間隔）。checked済み・クリック予約済みも「処理済み」扱いにして
       // STEP2以降の直接テキストクリックへ誤フォールスルーしない（トグル解除事故の防止）
       var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
+      // ★ 修正(Bug2): 同一 station_code のinputは1つだけエンキュー（重複描画分の二重クリック防止）
+      var _seenStValues = {};
       for (var i = 0; i < labels.length; i++) {
         if (!isVisible(labels[i])) continue;
         var txt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
@@ -468,7 +477,11 @@
           var inp = labels[i].querySelector('input[type="checkbox"]');
           if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
           if (inp) {
-            if (!inp.checked) enqueueHumanClick(inp, _clickEl, 90, 200);
+            var _stKey = inp.value || '';
+            if (_stKey && _seenStValues[_stKey]) { found = true; continue; }
+            if (_stKey) _seenStValues[_stKey] = true;
+            // ★ 修正(Bug2): _clickEl → _clickIfUnchecked（実行時checkedガード）
+            if (!inp.checked) enqueueHumanClick(inp, _clickIfUnchecked, 90, 200);
             found = true;
           }
         }
@@ -493,12 +506,15 @@
         }
         return !!(inp && inp.checked);
       };
+      // ★ 修正(Bug2): エンキュー時だけでなくクリック実行直前にも checked を再評価する実行時ガード
+      // （キュー待機中に同期inputが先にcheckedへ変わった場合のトグル解除事故を防止）
+      var _fireClickIfUnchecked = function(el) { if (!isElChecked(el)) fireClick(el); };
 
       // STEP2: 直接テキスト 完全一致 - 全マッチを順次クリック（同名駅が複数路線に出現するため）
       for (var i = 0; i < els.length; i++) {
         if (!isVisible(els[i])) continue;
         if (getDirectText(els[i]) === clean) {
-          if (!isElChecked(els[i])) enqueueHumanClick(els[i], fireClick, 90, 200);
+          if (!isElChecked(els[i])) enqueueHumanClick(els[i], _fireClickIfUnchecked, 90, 200);
           found = true;
         }
       }
@@ -509,7 +525,7 @@
         if (!isVisible(els[i])) continue;
         var ft = els[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
         if (ft === clean && els[i].children.length === 0) {
-          if (!isElChecked(els[i])) enqueueHumanClick(els[i], fireClick, 90, 200);
+          if (!isElChecked(els[i])) enqueueHumanClick(els[i], _fireClickIfUnchecked, 90, 200);
           found = true;
         }
       }
@@ -521,7 +537,7 @@
         var dt = getDirectText(els[i]);
         if (dt.length >= 2 && clean.length >= 2 &&
             (dt.startsWith(clean) || clean.startsWith(dt))) {
-          if (!isElChecked(els[i])) enqueueHumanClick(els[i], fireClick, 90, 200);
+          if (!isElChecked(els[i])) enqueueHumanClick(els[i], _fireClickIfUnchecked, 90, 200);
           found = true;
         }
       }
@@ -535,7 +551,8 @@
           var inp = labels[i].querySelector('input[type="checkbox"]');
           if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
           if (inp) {
-            if (!inp.checked) enqueueHumanClick(inp, _clickEl, 90, 200);
+            // ★ 修正(Bug2): _clickEl → _clickIfUnchecked（実行時checkedガード）
+            if (!inp.checked) enqueueHumanClick(inp, _clickIfUnchecked, 90, 200);
             found = true;
           }
         }
@@ -551,7 +568,8 @@
           var sptxt = sp.textContent.replace(/\s+/g, '').replace(/駅$/, '');
           if (sptxt === clean || (sptxt.length >= 2 && clean.length >= 2 &&
               (sptxt.startsWith(clean) || clean.startsWith(sptxt)))) {
-            if (!sinp.checked) enqueueHumanClick(sinp, _clickEl, 90, 200);
+            // ★ 修正(Bug2): _clickEl → _clickIfUnchecked（実行時checkedガード）
+            if (!sinp.checked) enqueueHumanClick(sinp, _clickIfUnchecked, 90, 200);
             found = true;
           }
         }
@@ -892,7 +910,8 @@
     }
     var locationMode = decideLocationMode(cond);
     console.log("[AX] 場所モード判定: " + locationMode,
-      { area_mode: cond.area_mode, stations: cond.station_names, routes: cond.route_ids,
+      { area_mode: cond.area_mode, station_names: cond.station_names, route_ids: cond.route_ids,
+        hasStation: hasStation, hasRoutes: hasRoutes,
         cities: cond.city_codes, ward: cond.detail_ward });
 
     // ── 基本条件（1項目ずつ 80〜200ms 間隔で順次入力 — 人間らしさ）──────────
@@ -1312,6 +1331,12 @@
 
     // 沿線 form state を事前セット（駅指定なしの場合のみ。駅指定ありはモーダル内で完結させる）
     if (hasRoutes && !hasStation) {
+      // ★ 修正(Bug2): 上流（popup.js等）が駅名を station_names に入れ損ねると
+      // ここで「沿線は選択・駅は未選択」のまま黙って検索される（Bug2の症状そのもの）。
+      // サイレントに進めず必ず可視化する
+      console.warn('[AX] ⚠️ 沿線のみ検索（駅指定なし）: route_ids=' + (cond.route_ids || []).join(',') +
+        ' / station_names が空です。上流の駅名解決を確認してください');
+      showWarnToast('沿線のみで検索します（駅指定なし）');
       setCheckboxes("route_id[]", cond.route_ids);
     }
 
@@ -1469,7 +1494,12 @@
                       var matched = false, ok = false;
                       vis.forEach(function(l) {
                         var txt = l.textContent.replace(/\s+/g, '').replace(/駅$/, '');
-                        if (txt !== clean && !txt.includes(clean) && !clean.includes(txt)) return;
+                        // ★ 修正(Bug2): 双方向includesだと「新大阪」の検証に「大阪」ラベルが混入し、
+                        // 別駅のchecked（前顧客残留等）で誤って検証通過するため、
+                        // 残留クリア側・selectStationsByNameと同じ「完全一致 or 双方向前方一致」に統一
+                        if (txt !== clean &&
+                            !(txt.length >= 2 && clean.length >= 2 &&
+                              (txt.startsWith(clean) || clean.startsWith(txt)))) return;
                         var inp = l.querySelector('input[type="checkbox"]');
                         if (!inp && l.htmlFor) inp = document.getElementById(l.htmlFor);
                         if (!inp) return;
