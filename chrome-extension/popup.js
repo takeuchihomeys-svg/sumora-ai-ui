@@ -1719,22 +1719,12 @@ let currentAccount = ""; // "" = すべて / "sumora" / "ieyasu" / "giga" / "has
 let linkedOnly = true;   // 紐付け済みのみ表示（デフォルトON・初期表示を軽くする）
 let todayOnly  = false;  // 今日対応のみ表示
 
+// アプリの「要対応」と同じ基準: linked_conversation.is_flagged === true かつ申込後ステータス除外
+var _POST_APPLY_STATUSES = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
 function needsActionToday(c) {
-  if (c.status === "pending") return false;
-  if (c.status === "new_inquiry") return true;
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (c.status === "hot") {
-    const sentToday      = c.last_property_sent_at && new Date(c.last_property_sent_at) >= todayStart;
-    const confirmedToday = c.hot_confirmed_at      && new Date(c.hot_confirmed_at)      >= todayStart;
-    const viewedToday    = c.property_viewed_at    && new Date(c.property_viewed_at)    >= todayStart;
-    return !sentToday && !confirmedToday && !viewedToday;
-  }
-  if (c.status === "property_search") {
-    if (!c.last_property_sent_at) return true;
-    return (now.getTime() - new Date(c.last_property_sent_at).getTime()) / 86400000 >= 3;
-  }
-  return false;
+  var conv = c.linked_conversation;
+  if (!conv || !conv.is_flagged) return false;
+  return !_POST_APPLY_STATUSES.has(conv.status);
 }
 
 function isCompletedToday(c) {
@@ -3237,7 +3227,7 @@ function buildCopyAll(siteName, steps, c) {
 function getFilteredCustomers(q) {
   let result = allCustomers;
   if (currentAccount === "__needs_action__") {
-    // 要対応タブ：needsActionToday で絞り込み。未紐付けの新規問合せも見逃さないよう紐付けフィルタはスキップ
+    // 要対応タブ：アプリの「要対応」と同基準（linked_conversation.is_flagged===true かつ申込後ステータス以外）
     result = result.filter(needsActionToday);
   } else {
     if (currentAccount) result = result.filter((c) => (c.account || "") === currentAccount);
@@ -3576,7 +3566,12 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll(".acct-btn:not(#linked-filter-btn)").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       currentAccount = btn.dataset.acct;
-      filterCustomers(document.getElementById("search-input").value);
+      // 要対応タブはキャッシュを使わず最新データを取得（is_flagged が変わっていても即反映）
+      if (currentAccount === "__needs_action__") {
+        loadCustomers(true);
+      } else {
+        filterCustomers(document.getElementById("search-input").value);
+      }
     });
   });
 
