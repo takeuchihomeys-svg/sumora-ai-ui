@@ -530,7 +530,7 @@ areas: 駅名・路線名に還元できない純粋な行政地名・概念エ�
   例: "北摂","大阪市内","梅北エリア"
   ※ 「〇〇から△分以内」などの通勤時間パターンを含む場合は必ず commute_constraints を使い、areas には入れないこと
   ※ "梅田" は御堂筋線の駅名のため station_names に含める（areas には入れない）
-  ※ "難波" "天王寺" "心斎橋" も駅名として station_names に含める
+  ※ "難波" "天王寺" "心斎橋" "本町" "福島" "新大阪" も駅名として station_names に含める
 
 commute_constraints: 通勤・通学・乗り換え制約
   形式: {"base_station":"駅名（駅なし）","max_minutes":数値または省略,"max_transfers":回数または省略,"transport_mode":"bicycle"/"walk"または省略}
