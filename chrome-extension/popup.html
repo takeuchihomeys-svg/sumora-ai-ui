@@ -17,7 +17,7 @@
         <span class="header-sub">物件検索サポート</span>
       </div>
       <!-- スタッフモード切替（ONの間このPCは自動化コマンドを無視・手動操作専用になる） -->
-      <button class="staff-btn" id="staff-mode-btn" title="スタッフモード：ONの間、このPCは自動化コマンドを無視します（2時間で自動OFF）">🙋 スタッフモード</button>
+      <button class="staff-btn" id="staff-mode-btn" title="スタッフモード：ONの間、このPCは自動化コマンドを無視します（2時間で自動OFF）">スタッフモード</button>
       <!-- アンダーバーモード時のみ表示：展開/折りたたみトグル -->
       <button class="icon-btn" id="collapse-btn" title="折りたたむ">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -33,7 +33,7 @@
     </div>
 
     <!-- スタッフモード中バナー（消し忘れ防止のため常時目立たせる） -->
-    <div id="staff-mode-banner" class="staff-banner" style="display:none">🙋 スタッフモード中 — 自動化は停止しています（手動操作のみ・2時間で自動OFF）</div>
+    <div id="staff-mode-banner" class="staff-banner" style="display:none">スタッフモード中 — 自動化は停止しています（手動操作のみ・2時間で自動OFF）</div>
 
     <!-- ▼ VIEW 1: お客さん一覧 -->
     <div id="view-list" class="view active">
@@ -41,6 +41,7 @@
         <input type="text" id="search-input" placeholder="お客さんを検索..." autocomplete="off" />
       </div>
       <div class="account-filter">
+        <button class="acct-btn" data-acct="__needs_action__" id="needs-action-tab">🔥 要対応</button>
         <button class="acct-btn active" data-acct="">すべて</button>
         <button class="acct-btn" data-acct="sumora">スモラ</button>
         <button class="acct-btn" data-acct="ieyasu">イエヤス</button>

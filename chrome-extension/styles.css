@@ -97,6 +97,8 @@ body {
 }
 .linked-btn { border-color: #10b981; color: #047857; background: #f0fdf4; }
 .linked-btn.active { background: #059669; color: white; border-color: #059669; }
+#needs-action-tab { border-color: #ff9800; color: #e65100; background: #fff3e0; font-weight: 600; }
+#needs-action-tab.active { background: #f57c00; color: white; border-color: #f57c00; }
 
 #customer-list { overflow-y: auto; flex: 1; }
 

@@ -3236,8 +3236,13 @@ function buildCopyAll(siteName, steps, c) {
 // ── Search + Account + Linked filter ──────────────────────────────
 function getFilteredCustomers(q) {
   let result = allCustomers;
-  if (currentAccount) result = result.filter((c) => (c.account || "") === currentAccount);
-  if (linkedOnly) result = result.filter((c) => c.is_linked);
+  if (currentAccount === "__needs_action__") {
+    // 要対応タブ：needsActionToday で絞り込み。未紐付けの新規問合せも見逃さないよう紐付けフィルタはスキップ
+    result = result.filter(needsActionToday);
+  } else {
+    if (currentAccount) result = result.filter((c) => (c.account || "") === currentAccount);
+    if (linkedOnly) result = result.filter((c) => c.is_linked);
+  }
   if (todayOnly)  result = result.filter(needsActionToday);
   if (q && q.trim()) {
     const kw = q.trim().toLowerCase();
@@ -3266,7 +3271,7 @@ function _renderStaffMode(on) {
   var banner = document.getElementById("staff-mode-banner");
   if (btn) {
     btn.classList.toggle("on", _staffModeOn);
-    btn.textContent = _staffModeOn ? "🙋 スタッフモード中" : "🙋 スタッフモード";
+    btn.textContent = _staffModeOn ? "スタッフモード中" : "スタッフモード";
   }
   if (banner) banner.style.display = _staffModeOn ? "block" : "none";
 }

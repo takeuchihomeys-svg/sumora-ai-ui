@@ -132,7 +132,7 @@
     var bar = document.createElement("div");
     bar.id = "axlx-bar";
     bar.style.cssText = [
-      "position:fixed;bottom:24px;right:24px;z-index:2147483646;",
+      "position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483646;",
       "background:linear-gradient(135deg,#0d1b3e,#1565C0);",
       "color:white;border-radius:14px;padding:12px 16px;",
       "font-size:13px;font-weight:700;",
@@ -141,6 +141,9 @@
       "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
     ].join("");
     bar.innerHTML = [
+      '<div id="axlx-drag-handle" style="display:flex;align-items:center;justify-content:center;cursor:grab;padding:2px 0;margin:-6px 0 -4px;user-select:none;" title="ドラッグで移動">',
+      '  <span style="font-size:10px;opacity:0.6;letter-spacing:2px;">⠿ ⠿ ⠿</span>',
+      "</div>",
       '<div style="display:flex;align-items:center;gap:6px;">',
       '  <span style="font-size:16px;">📥</span>',
       '  <span id="axlx-count">0件</span>を選択中',
@@ -164,6 +167,33 @@
       "</div>",
     ].join("");
     document.body.appendChild(bar);
+    // ── ドラッグ移動（ハンドル or パネル余白をつかんで移動。ボタン/入力上は除外）──
+    (function () {
+      var dragging = false, offX = 0, offY = 0;
+      var handle = document.getElementById("axlx-drag-handle");
+      bar.addEventListener("mousedown", function (e) {
+        var onHandle = handle && (e.target === handle || handle.contains(e.target));
+        if (!onHandle && (e.target.tagName === "BUTTON" || e.target.tagName === "INPUT")) return;
+        dragging = true;
+        if (handle) handle.style.cursor = "grabbing";
+        var r = bar.getBoundingClientRect();
+        offX = e.clientX - r.left; offY = e.clientY - r.top;
+        // translateX(-50%) を解除して left/top 直指定に切替
+        bar.style.transform = "none";
+        bar.style.left = r.left + "px"; bar.style.top = r.top + "px";
+        bar.style.right = "auto"; bar.style.bottom = "auto";
+        e.preventDefault();
+      });
+      document.addEventListener("mousemove", function (e) {
+        if (!dragging) return;
+        bar.style.left = (e.clientX - offX) + "px";
+        bar.style.top = (e.clientY - offY) + "px";
+      });
+      document.addEventListener("mouseup", function () {
+        dragging = false;
+        if (handle) handle.style.cursor = "grab";
+      });
+    })();
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
