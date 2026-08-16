@@ -4935,6 +4935,25 @@ export default function Home() {
     setConversations((prev) =>
       prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
     );
+    // AIX送信完了 → テキストボックスに残っているAI下書きをクリア（通常送信 handleSend の 送信後クリーンアップと対称化）
+    // ・isAix ガード: 2通目自動送信タイマー等 isAix=undefined の呼び出しを巻き込まない
+    // ・selectedIdRef ガード: 遅延送信（ヒアリングフォーム等）発火時に別会話へ切替済みなら表示中会話の下書きを誤消去しない
+    if (isAix && selectedIdRef.current === selectedConversation.id) {
+      setReplyDraft((cur) => {
+        // 未編集のAI下書き由来のみクリア（スタッフ手入力中の別文は消さない）
+        if (cur && cur === aiDraftRef.current) {
+          aiDraftRef.current = "";
+          setDisplaySource(null);
+          setReplyQuality(null);
+          setCheckResult(null);
+          setCheckModalIssues(null);
+          return "";
+        }
+        return cur;
+      });
+      // 会話切替時の退避キャッシュも破棄（残すと切替→復帰で残留下書きが復元されてしまう）
+      delete shownDraftCacheRef.current[selectedConversation.id];
+    }
     // 送信後に次アクション提案を再フェッチ（チェーンルール発火のため）
     const _convIdForNext = selectedConversation.id;
     nextActionFetchingRef.current.delete(_convIdForNext);
