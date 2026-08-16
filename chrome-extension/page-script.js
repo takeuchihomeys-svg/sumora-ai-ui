@@ -479,10 +479,28 @@
         document.querySelectorAll('a,button,td,li,span,div,p')
       );
 
+      // STEP2〜4はfireClickの前にchecked状態を確認できないままだとポーリング再実行時に
+      // トグル解除される危険があるため、紐づくcheckboxが特定でき既にcheckedなら
+      // 「処理済み」としてクリックをスキップする（STEP1/5と同等のガード）
+      var isElChecked = function(el) {
+        var inp = el.querySelector && el.querySelector('input[type="checkbox"]');
+        if (!inp && el.closest) {
+          var lb = el.closest('label');
+          if (lb) {
+            inp = lb.querySelector('input[type="checkbox"]');
+            if (!inp && lb.htmlFor) inp = document.getElementById(lb.htmlFor);
+          }
+        }
+        return !!(inp && inp.checked);
+      };
+
       // STEP2: 直接テキスト 完全一致 - 全マッチを順次クリック（同名駅が複数路線に出現するため）
       for (var i = 0; i < els.length; i++) {
         if (!isVisible(els[i])) continue;
-        if (getDirectText(els[i]) === clean) { enqueueHumanClick(els[i], fireClick, 90, 200); found = true; }
+        if (getDirectText(els[i]) === clean) {
+          if (!isElChecked(els[i])) enqueueHumanClick(els[i], fireClick, 90, 200);
+          found = true;
+        }
       }
       if (found) return;
 
@@ -490,7 +508,10 @@
       for (var i = 0; i < els.length; i++) {
         if (!isVisible(els[i])) continue;
         var ft = els[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
-        if (ft === clean && els[i].children.length === 0) { enqueueHumanClick(els[i], fireClick, 90, 200); found = true; }
+        if (ft === clean && els[i].children.length === 0) {
+          if (!isElChecked(els[i])) enqueueHumanClick(els[i], fireClick, 90, 200);
+          found = true;
+        }
       }
       if (found) return;
 
@@ -500,7 +521,8 @@
         var dt = getDirectText(els[i]);
         if (dt.length >= 2 && clean.length >= 2 &&
             (dt.startsWith(clean) || clean.startsWith(dt))) {
-          enqueueHumanClick(els[i], fireClick, 90, 200); found = true;
+          if (!isElChecked(els[i])) enqueueHumanClick(els[i], fireClick, 90, 200);
+          found = true;
         }
       }
       if (found) return;
@@ -1358,56 +1380,89 @@
                 return clickByText(['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>']);
               },
               function() {
+                // 残留解除クリック用: 実行時点で checked のときだけクリックする
+                // （モーダル内inputとフォーム側inputが同期している場合の二重トグル事故防止）
+                var _unclickIfChecked = function(el) { if (el.checked) _clickEl(el); };
                 if (!hasStation) {
-                  // 駅指定なし → そのまま閉じて検索
-                  waitForClick(closeStationModal, function() { setTimeout(clickSearch, 700 + Math.floor(Math.random() * 400)); },
-                    20, 500, (500 + Math.floor(Math.random() * 500)),
+                  // ★ 修正: 駅指定なし → 前顧客の駅残留を全解除してから閉じて検索
+                  // 旧実装はクリアせず閉じていたため、同一沿線の前顧客の駅が
+                  // 「沿線のみ検索」に混入するバグがあった
+                  var _closeAndSearch = function() {
+                    waitForClick(closeStationModal, function() { setTimeout(clickSearch, 700 + Math.floor(Math.random() * 400)); },
+                      20, 500, (500 + Math.floor(Math.random() * 500)),
+                      function() {
+                        console.warn('[AX] 沿線モーダルを閉じられず → そのまま検索');
+                        setTimeout(clickSearch, 700 + Math.floor(Math.random() * 400));
+                      });
+                  };
+                  waitForClick(
                     function() {
-                      console.warn('[AX] 沿線モーダルを閉じられず → そのまま検索');
-                      setTimeout(clickSearch, 700 + Math.floor(Math.random() * 400));
-                    });
+                      // 駅リストが描画されるまで短時間待ってから残留を全解除
+                      if (!document.querySelectorAll('input[name="station_code[]"]').length) return false;
+                      Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]:checked'))
+                        .forEach(function(inp) { enqueueHumanClick(inp, _unclickIfChecked, 90, 200); });
+                      return true;
+                    },
+                    _closeAndSearch,
+                    6, 500, 300,
+                    _closeAndSearch // 駅リストが描画されない場合は従来どおりそのまま閉じて検索
+                  );
                   return;
                 }
                 var stNamesStr = (cond.station_names || []).join('・');
-                var _modalStationsCleared = false; // 前顧客残留クリア済みフラグ（_doResetはフォームDOMしか消せないため）
                 // STEP D: 駅ページが描画され、かつ指定駅が選択されるまでリトライ
                 waitForClick(
                   function() {
+                    // ★ 修正: 駅リスト（station_code[]）が実際にDOMへ載るまで待つ
+                    // 旧実装は「ページ全体のlabel」で描画判定していたため、検索フォームの
+                    // labelで即通過→駅リスト未描画のまま残留クリアが空振りしていた
+                    if (!document.querySelectorAll('input[name="station_code[]"]').length) return false;
                     var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
                     var vis = labels.filter(function(l) { return isVisible(l); });
                     if (!vis.length) return false; // 駅リストがまだ描画されていない
-                    // 前顧客のモーダル残留選択を一度だけクリア
-                    // リアプロのモーダルは独自JS内部状態を持ち _doReset のフォームDOM操作では消せない
-                    if (!_modalStationsCleared) {
-                      // ※ クリックがキュー化され非同期になったため、今回選択予定の駅は解除しない
-                      //   （解除クリックが後から実行されて選択が消える事故の防止。checked済みは
-                      //    selectStationsByName 側が「処理済み」扱いにするのでそのまま活きる）
-                      var _wantedStCleans = (cond.station_names || []).map(function(sn) {
-                        return sn.replace(/駅$/, '').trim();
-                      });
-                      Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]:checked'))
-                        .filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); })
-                        .filter(function(inp) {
-                          var ptxt = (inp.parentElement.textContent || '').replace(/\s+/g, '').replace(/駅$/, '');
-                          return !_wantedStCleans.some(function(c) {
-                            return ptxt === c || ptxt.includes(c) || c.includes(ptxt);
-                          });
-                        })
-                        .forEach(function(inp) { enqueueHumanClick(inp, _clickEl, 90, 200); });
-                      _modalStationsCleared = true;
-                    }
+                    // ★ 修正: 前顧客のモーダル残留選択を「毎パス」クリアする
+                    // リアプロのモーダルは独自JS内部状態を持ち _doReset のフォームDOM操作では消せない。
+                    // さらに遅延描画・内部状態からの復元で後から checked が現れるため、
+                    // 一回限りフラグ（旧 _modalStationsCleared）は空振り→永久ロックの原因だった。
+                    // 冪等性: :checked のみ対象 ＋ __axPending ＋ _unclickIfChecked（実行時checkedガード）
+                    // ※ 今回選択予定の駅は解除しない（解除クリックが後から実行されて選択が消える事故の防止）
+                    var _wantedStCleans = (cond.station_names || []).map(function(sn) {
+                      return sn.replace(/駅$/, '').trim();
+                    });
+                    Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]:checked'))
+                      .filter(function(inp) {
+                        var ptxt = ((inp.parentElement && inp.parentElement.textContent) || '').replace(/\s+/g, '').replace(/駅$/, '');
+                        // 温存判定は selectStationsByName の選択条件（完全一致・双方向前方一致）と揃える
+                        // 旧実装の双方向includesは「今回駅名と部分一致する前回駅」を温存する穴があった
+                        return !_wantedStCleans.some(function(c) {
+                          return ptxt === c ||
+                            (ptxt.length >= 2 && c.length >= 2 && (ptxt.startsWith(c) || c.startsWith(ptxt)));
+                        });
+                      })
+                      .forEach(function(inp) { enqueueHumanClick(inp, _unclickIfChecked, 90, 200); });
                     selectStationsByName(cond.station_names);
-                    // 指定駅のいずれかがチェックされたか確認
-                    return (cond.station_names || []).some(function(sn) {
+                    // ★ 修正: 指定駅が「すべて」チェックされたか確認
+                    // 旧実装の .some() は1駅（前顧客の残留チェックでも可）で通過してしまい、
+                    // 複数駅指定時に残りが未選択のまま検索されるバグがあった。
+                    // DOM上にマッチするlabelが1つも無い駅（表記ゆれ等）は判定から除外し、
+                    // 全滅時は false → maxTries超過で fallbackSearchWithoutStation が中止する
+                    var _checkedCount = 0;
+                    var _allMatchedChecked = (cond.station_names || []).every(function(sn) {
                       var clean = sn.replace(/駅$/, '').trim();
-                      return vis.some(function(l) {
+                      var matched = false, ok = false;
+                      vis.forEach(function(l) {
                         var txt = l.textContent.replace(/\s+/g, '').replace(/駅$/, '');
-                        if (txt !== clean && !txt.includes(clean) && !clean.includes(txt)) return false;
+                        if (txt !== clean && !txt.includes(clean) && !clean.includes(txt)) return;
                         var inp = l.querySelector('input[type="checkbox"]');
                         if (!inp && l.htmlFor) inp = document.getElementById(l.htmlFor);
-                        return inp && inp.checked;
+                        if (!inp) return;
+                        matched = true;
+                        if (inp.checked) ok = true;
                       });
+                      if (matched && ok) _checkedCount++;
+                      return !matched || ok;
                     });
+                    return _allMatchedChecked && _checkedCount >= 1;
                   },
                   function() {
                     // STEP E: 駅が選択された → モーダルを閉じる
