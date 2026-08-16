@@ -132,7 +132,7 @@
     var bar = document.createElement("div");
     bar.id = "axlx-bar";
     bar.style.cssText = [
-      "position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483646;",
+      "position:fixed;top:50%;right:12px;transform:translateY(-50%);z-index:2147483646;",
       "background:linear-gradient(135deg,#0d1b3e,#1565C0);",
       "color:white;border-radius:14px;padding:12px 16px;",
       "font-size:13px;font-weight:700;",
