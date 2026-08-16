@@ -356,7 +356,7 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   setCell(ws, "E29", d.commissionTax || 0);
   setCell(ws, "F29", Math.round((d.rent || 0) * 0.1));
 
-  // スモ割
+  // 割引（スモラ割 / ギガ割 等）
   const discountVal = d.discountAmount ? -(d.discountAmount) : 0;
   setCell(ws, "E30", discountVal);
 
