@@ -965,6 +965,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true, started: true });
     (async () => {
       try {
+        // 前回バッチのストップ残留をクリア（即解決を防ぐ）
+        _batchShouldStop = false;
+        try { await chrome.storage.local.set({ batchStopRequested: false }); } catch(_) {}
         var _bulkRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
         if (!_bulkRes.ok) throw new Error("顧客データ取得失敗");
         var _bulkAll = await _bulkRes.json();
@@ -976,12 +979,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           var _bc = _bulkTargets[_bi];
           console.log("[manual-bulk-search] (" + (_bi+1) + "/" + _bulkTargets.length + ") " + _bc.customer_name);
           try {
-            await _batchAutofill(_bc, _bulkSite, false);
+            // fill-done ウェイターを autofill 発火「前」に生成（先着シグナルを取りこぼさないため）
+            var _bulkFillDone = (_bulkSite === "realnetpro" || _bulkSite === "itandi")
+              ? _createFillDoneWaiter(_bulkSite, String(_bc.id), 90000)
+              : null;
+            var _bulkConds = await _batchAutofill(_bc, _bulkSite, false);
+            // fill-done → axlx-batch-customer-done を待ってから次顧客へ（混線防止）
+            // reins は bulk-dl.js 自動送信なし → ウェイターなしでスキップ
+            if (_bulkFillDone) {
+              await _scrapeAndSendRealpro(
+                _bulkFillDone,
+                String(_bc.id),
+                _bc.customer_name || null,
+                _bulkConds || {},
+                _bulkSite === "itandi" ? "itandi" : "リアプロ"
+              );
+            }
           } catch (_be) {
+            if (_be && _be.message === "__BATCH_STOPPED__") {
+              console.log("[manual-bulk-search] ストップ要求 → 中断");
+              break;
+            }
             console.error("[manual-bulk-search] 顧客エラー:", _bc.customer_name, _be.message || _be);
           }
           if (_bi < _bulkTargets.length - 1) {
-            await new Promise(function(r) { setTimeout(r, 1500 + Math.floor(Math.random() * 1000)); });
+            // 完了確認後のインターバル（自動バッチと同じ 3〜8 秒）
+            await new Promise(function(r) { setTimeout(r, 3000 + Math.floor(Math.random() * 5000)); });
           }
         }
         console.log("[manual-bulk-search] ✔ 完了");
