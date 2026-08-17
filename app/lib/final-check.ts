@@ -14,7 +14,7 @@
 // - generate-reply/route.ts …… runFinalCheckWithRevision（チェック+接地修正ループ。最大2チェック）
 // - check-reply/route.ts    …… 送信時（スタッフ編集後）の再チェック。自動修正なし（runFinalCheckのみ）
 
-export type CheckPass = "rule_check" | "anomaly_scan" | "context_check";
+export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
 
 export interface CheckIssue {
@@ -63,11 +63,11 @@ export async function sha1(text: string): Promise<string> {
 }
 
 // ─── 確証バイアス対策の共通前文（「良いか確認して」は絶対に使わない）──────────
-const ADVERSARIAL_PREAMBLE = `この返信文は外部のAIが書いたものです。あなたの仕事は「この文章には必ず誤りが含まれている」
+const ADVERSARIAL_PREAMBLE = `この返信文は外部のAIが書いたものです。あなたの仕事は「この文章には誤りが含まれている可能性があります」
 という前提で誤りを探し出すことです。書いた本人は自分の間違いに気づけません。あなたは
 赤の他人として、粗探しをする校閲者の目で読んでください。
 指摘には必ず本文からの引用（evidence）を付けること。引用できない指摘は出力しないこと。
-本当に1件も見つからない場合のみ issues を空配列にしてください。`;
+問題が全くない場合は issues を空配列にしてください。`;
 
 // ─── 構造化出力スキーマ（全pass共通・保証付きJSON）────────────────────────────
 const ISSUE_SCHEMA = {
@@ -103,16 +103,23 @@ async function callHaiku(prompt: string, timeoutMs: number): Promise<RawIssue[]>
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: "claude-haiku-4-5",
-      max_tokens: 1200,
+      max_tokens: 2400,
       temperature: 0,
       output_config: { format: { type: "json_schema", schema: ISSUE_SCHEMA } },
       messages: [{ role: "user", content: prompt }],
     }),
   });
   if (!res.ok) throw new Error(`final-check haiku HTTP ${res.status}`);
-  const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+  const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
+  if (data.stop_reason === "max_tokens") throw new Error("final-check haiku max_tokens reached");
   const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
-  const parsed = JSON.parse(text) as { issues?: RawIssue[] };
+  let parsed: { issues?: RawIssue[] };
+  try {
+    parsed = JSON.parse(text) as { issues?: RawIssue[] };
+  } catch (e) {
+    console.error("[final-check] callHaiku JSON.parse failed:", e, "raw text:", text.slice(0, 200));
+    throw new Error("final-check haiku JSON parse failed");
+  }
   return Array.isArray(parsed.issues) ? parsed.issues : [];
 }
 
@@ -282,6 +289,7 @@ ${draft}
 function assignSeverity(pass: CheckPass, code: string, isAutoSend = false): CheckSeverity {
   if (pass === "rule_check" && code.startsWith("AIX_BOUNDARY")) return "block";
   if (pass === "anomaly_scan" && (code === "FABRICATED_AMOUNT" || code === "FABRICATED_AVAILABILITY")) return "block";
+  if (code === "FABRICATED_PROPERTY" || code === "FABRICATED_DATE") return "block";
   if (isAutoSend && pass === "context_check" && code === "MISSED_QUESTION") return "block";
   return "warning";
 }
@@ -372,6 +380,18 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haiku
       });
     }
   });
+
+  // ── 部分未完走警告（2パス未満の場合は常に通知・自動送信時はblock）──
+  if (passesCompleted.length < 2) {
+    issues.push({
+      pass: "meta",
+      severity: ctx.isAutoSend ? "block" : "warning",
+      code: "PARTIALLY_UNCHECKED",
+      message: "チェックが一部完走しませんでした。送信前に内容を目視確認してください。",
+      evidence: `完走パス: ${passesCompleted.join(", ") || "なし"}`,
+      suggestion: "送信前に内容を目視確認してください",
+    });
+  }
 
   // ── HIGH-1: 自動送信時のfail-closed（チェック未完走なら自動送信を絶対に通さない）──
   // スタッフ確認経路（isAutoSend=false）は fail-open のまま（送信を止めない）

@@ -2858,7 +2858,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 // ・再生成の失敗・空生成時は1回目の結果で続行（fail-open）
                 // ・regen_count がトレーラー/ai_draft_check に載る（監査用）
                 const retryIssues = finalCheck.issues.filter(
-                  (it) => it.severity === "block"
+                  (it) => it.severity === "block" && it.code !== "UNCHECKED_AUTO_SEND"
                 );
                 if (retryIssues.length > 0) {
                   try {
