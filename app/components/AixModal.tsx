@@ -429,7 +429,7 @@ const CONFIG: Record<
   },
   zenryoku_support: {
     title: "全力サポート",
-    emoji: "💪",
+    emoji: "",
     requiresImage: false,
     imageLabel: "",
     description: "物件がない時に送る全力継続フォロー文をAIが生成します。",
