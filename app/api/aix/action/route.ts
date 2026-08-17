@@ -4100,6 +4100,59 @@ ${SMORA_COMMON_RULES}
       );
       }
 
+    // ── 💪 全力サポート ──────────────────────────────────────────────────────
+    } else if (action === "zenryoku_support") {
+      const area = typeof body.area === "string" ? body.area.trim() : "";
+      const memo = typeof body.memo === "string" ? body.memo.trim() : "";
+      const imageDataUrl = typeof body.image_data_url === "string" ? body.image_data_url.trim() : "";
+
+      const zenryokuSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+お客様が希望する物件が現在見つからない時に送る「全力サポートメッセージ」を1つ生成してください。
+
+【スモラLINE営業ルール（必ず守る）】
+${SMORA_COMMON_RULES}
+
+【構成ルール（この順番で・必ず守ること）】
+① 書き出し: 「${name}${greetingPhrase}」（greetingTimeNoteの挨拶ルールに従う）
+② 査収のお礼: ご確認いただいたことへの感謝を自然に入れる
+③ 全域ピックアップ説明: 指定エリアを含む広域から条件に合う物件を探したが、現在の募集状況では完全に条件を満たす物件がない旨を丁寧に伝える
+   ※補足（memo）がある場合はその理由・状況を自然に織り込む（例: 「家賃が上限を超えてしまいますのでオススメできません」等）
+④ 引き続きのサポート約束: 新着が出次第すぐにお送りする旨を前向きに伝える
+
+【禁止事項】
+・存在しない物件・具体的な金額・数字のハルシネーション絶対禁止
+・物件の詳細（間取り・家賃・号室等）を勝手に作り上げない
+・「様」を使わない（「さん」で統一）
+・🙏絵文字は絶対禁止
+・「承りました」「少々お待ちください」禁止
+・LINEメッセージ本文のみ出力（JSONや説明文・前置き・後置き一切不要）
+
+【文体】
+・スモラらしい丁寧・熱心・前向きなトーン（😊や！！を自然に使う）
+・2〜5行程度`;
+
+      const zenryokuUser = `${name}への全力サポートメッセージを生成してください。
+探しているエリア: ${area || "（未指定）"}${memo ? `\n補足・特記事項: ${memo}` : ""}${recentHistory}`;
+
+      if (imageDataUrl) {
+        // data URL 解析: "data:<mediatype>;base64,<data>"
+        const dataUrlMatch = imageDataUrl.match(/^data:([^;]+);base64,([\s\S]+)$/);
+        if (!dataUrlMatch) throw new Error("zenryoku_support: 画像データURLの形式が不正です");
+        const mediaType = dataUrlMatch[1] as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+        const base64Data = dataUrlMatch[2];
+        const visionContent: Array<{ type: string; text?: string; source?: { type: string; media_type: string; data: string } }> = [
+          { type: "text", text: zenryokuUser },
+          { type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } },
+        ];
+        message_text = await callClaudeVision(zenryokuSystem + greetingTimeNote, visionContent, currentAction);
+      } else {
+        message_text = await callClaude(
+          zenryokuSystem + greetingTimeNote,
+          zenryokuUser,
+          currentAction
+        );
+      }
+
     } else {
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });
     }

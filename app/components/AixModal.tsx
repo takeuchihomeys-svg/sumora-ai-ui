@@ -16,7 +16,8 @@ export type AixActionType =
   | "meeting_place"
   | "acknowledge_check"
   | "followup_revive"
-  | "property_search";
+  | "property_search"
+  | "zenryoku_support";
 
 interface LinkedCustomer {
   id: string;
@@ -315,6 +316,10 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
     rules: ["お客様の希望条件をもとに物件を探す旨を伝える", "探した結果は後ほど送付する旨を添える"],
     template: "[名前]かしこまりました！！\nご希望条件に合うお部屋をお探しいたします！！\n少々お待ちくださいませ！！",
   },
+  zenryoku_support: {
+    rules: ["査収お礼 → 全域ピックアップしたが条件を完全には満たせない旨 → 引き続き新着をお送りする約束", "丁寧・熱心・前向きなトーンで生成", "顧客名は〇〇さんと呼ぶ"],
+    template: "ご査収頂きありがとうございます😊！！\n[エリア]全域を含めて[お客様名]さんのご条件に合った物件ピックアップさせて頂きましたところ…\n引き続き新着でオススメ出来るお部屋募集に出次第お送りさせて頂きます！！",
+  },
 };
 
 const CONFIG: Record<
@@ -421,6 +426,13 @@ const CONFIG: Record<
     description: "お客様の希望条件をもとに物件を探し、結果をLINEでお伝えします。",
     inputLabel: "補足メモ（任意）",
     inputPlaceholder: "例：予算重視、駅近優先...",
+  },
+  zenryoku_support: {
+    title: "全力サポート",
+    emoji: "💪",
+    requiresImage: false,
+    imageLabel: "",
+    description: "物件がない時に送る全力継続フォロー文をAIが生成します。",
   },
 };
 
@@ -893,6 +905,9 @@ export default function AixModal({
   // ⑥ 固定長3スロットで管理（filter(Boolean)で詰めるとpreviewsとindexがずれるため、詰めるのは送信直前のみ）
   const [estimateMultiFiles, setEstimateMultiFiles] = useState<(File | null)[]>([null, null, null]);
   const [estimateMultiPreviews, setEstimateMultiPreviews] = useState<(string | null)[]>([null, null, null]);
+  // 全力サポート専用
+  const [zenryokuArea, setZenryokuArea] = useState<string>("");
+  const [zenryokuMemo, setZenryokuMemo] = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -922,6 +937,7 @@ export default function AixModal({
   const confirmImageInputRef = useRef<HTMLInputElement | null>(null);
   const mgmtDocInputRef = useRef<HTMLInputElement | null>(null);
   const otherRoomInputRef = useRef<HTMLInputElement | null>(null);
+  const zenryokuImageInputRef = useRef<HTMLInputElement | null>(null);
 
   // 全画面編集オーバーレイ表示中のみ visualViewport を監視（iOSキーボード対応）
   useEffect(() => {
@@ -1909,6 +1925,12 @@ export default function AixModal({
         const urls = await Promise.all(multiFiles.map((f, i) => uploadImageCached(f, i)));
         body.image_urls = urls;
         body.multi_estimate = true;
+      } else if (actionType === "zenryoku_support") {
+        if (!zenryokuArea.trim()) throw new Error("探しているエリアを入力してください");
+        body.zenryoku_area = zenryokuArea.trim();
+        if (zenryokuMemo.trim()) body.zenryoku_memo = zenryokuMemo.trim();
+        if (imageFile) body.image_url = await uploadImageCached(imageFile);
+        if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImageCached(imageFile);
         // estimate_sheet: 物件資料が選択されていればOCRコンテンツに追加（物件名・家賃・共益費を補完）
@@ -5365,6 +5387,68 @@ export default function AixModal({
             </div>
           )}
 
+          {/* 全力サポート: エリア・補足・任意画像 */}
+          {actionType === "zenryoku_support" && (
+            <div className="mb-3 space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                  探しているエリア <span className="ml-1 font-normal text-[#E53935]">（必須）</span>
+                </label>
+                <input
+                  value={zenryokuArea}
+                  onChange={(e) => { setZenryokuArea(e.target.value); setPreview(""); }}
+                  placeholder="例：天満・難波周辺"
+                  className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                  補足メモ <span className="ml-1 font-normal text-[#90a4ae]">（任意）</span>
+                </label>
+                <textarea
+                  value={zenryokuMemo}
+                  onChange={(e) => { setZenryokuMemo(e.target.value); setPreview(""); }}
+                  placeholder="例：家賃が上限超えのため非推奨"
+                  rows={2}
+                  className="w-full resize-none rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                  画像添付 <span className="ml-1 font-normal text-[#90a4ae]">（任意・参考資料）</span>
+                </label>
+                {imagePreview ? (
+                  <div className="relative mb-2 overflow-hidden rounded-2xl border border-[#d1d7db]">
+                    <img src={imagePreview} alt="添付画像" className="max-h-40 w-full object-contain" />
+                    <button
+                      onClick={() => { setImageFile(null); setImagePreview(""); if (zenryokuImageInputRef.current) zenryokuImageInputRef.current.value = ""; }}
+                      className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
+                    >削除</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => zenryokuImageInputRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#90a4ae] py-2 text-xs font-semibold text-[#546e7a] hover:bg-gray-50"
+                  >📎 画像を追加する（スキップ可）</button>
+                )}
+                <input
+                  ref={zenryokuImageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setImageFile(f);
+                    const r = new FileReader();
+                    r.onload = () => setImagePreview(String(r.result ?? ""));
+                    r.readAsDataURL(f);
+                  }}
+                  className="hidden"
+                />
+              </div>
+            </div>
+          )}
+
           {/* 内覧へ！: 退去予定物件 / 内覧日指定ありトグル */}
           {actionType === "viewing_invite" && (
             <div className="mb-3">
@@ -5826,7 +5910,7 @@ export default function AixModal({
           )}
 
           {/* テキスト入力欄（各アクション専用） */}
-          {config.inputLabel && actionType !== "property_send" && actionType !== "viewing_invite" && actionType !== "meeting_place" && (
+          {config.inputLabel && actionType !== "property_send" && actionType !== "viewing_invite" && actionType !== "meeting_place" && actionType !== "zenryoku_support" && (
             <div className="mb-4">
               <div className="mb-1.5 flex items-center gap-1.5 flex-wrap">
                 <label className="text-xs font-semibold text-[#54656f] shrink-0">{config.inputLabel}</label>

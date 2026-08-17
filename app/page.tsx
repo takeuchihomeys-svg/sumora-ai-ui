@@ -217,6 +217,7 @@ const AIX_ACTION_META: Record<string, { label: string; subtitle?: string; color:
   acknowledge_check:       { label: "\u78ba\u8a8d\u3057\u307e\u3059",           color: "#607D8B", templateCategory: "\u78ba\u8a8d\u3057\u307e\u3059\u3010AIX\u3011" },
   followup_revive:         { label: "\u8ffd\u5ba2\u3059\u308b",                 color: "#8E24AA", templateCategory: "\u8ffd\u5ba2\u3059\u308b\u3010AIX\u3011" },
   property_search:         { label: "\u7269\u4ef6\u3092\u63a2\u3059",           color: "#FF7043", templateCategory: "\u7269\u4ef6\u3092\u63a2\u3059\u3010AIX\u3011" },
+  zenryoku_support:        { label: "\u5168\u529b\u30b5\u30dd\u30fc\u30c8",        color: "#F57C00", templateCategory: "\u5168\u529b\u30b5\u30dd\u30fc\u30c8\u3010AIX\u3011" },
 };
 // \u8133\u99c6\u52d5\u30d2\u30f3\u30c8\uff08suggested_aix_meta.action\uff09\u2192 AIX\u30dc\u30bf\u30f3\u30e9\u30d9\u30eb\u3002
 // \u30e9\u30d9\u30eb\u304c\u5b58\u5728\u3059\u308b action \u306f\u300cAIX\u30a2\u30af\u30b7\u30e7\u30f3\u300d\u3068\u3057\u3066\u4e0b\u90e8AIX\u30ab\u30fc\u30c9\u306b\u7d71\u5408\u8868\u793a\u3059\u308b
@@ -12897,6 +12898,11 @@ export default function Home() {
                     process: "近況確認から入る追客LINEをAI生成。押しつけがましくならないトーンで2〜4行",
                     data: "フレーズ辞書（urgency_push）/ 差分学習ナレッジ / 直近会話履歴",
                   },
+                  "全力サポート": {
+                    inputs: "探しているエリア（必須）/ 補足メモ（任意）/ 画像（任意）",
+                    process: "査収お礼 → 全域でピックアップしたが条件を完全に満たす物件がない旨 → 新着次第即連絡の約束。Claude AIがスモラトーンで生成",
+                    data: "直近会話履歴 / お客様希望条件",
+                  },
                 };
                 return [
                   { color: "#00897B", label: "物件ピックアップした", actionType: "property_send", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); } },
@@ -12927,6 +12933,7 @@ export default function Home() {
                   { color: "#546E7A", label: "確認した（条件・交渉）", actionType: "acknowledge_result", sub: "管理会社・代表・オーナー・近隣月極の確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setShowKoshoParentPicker(true); } },
                   { color: "#607D8B", label: "確認します", actionType: "acknowledge_check", sub: "ワンタップで確認する旨をAI生成して送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("acknowledge_check"); openAixDirect("acknowledge_check"); } },
                   { color: "#8E24AA", label: "追客する", actionType: "followup_revive", sub: "反応が途絶えたお客様への追客LINEをAI生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("followup_revive"); setShowFollowupPicker(true); } },
+                  { color: "#F57C00", label: "全力サポート", actionType: "zenryoku_support", sub: "物件が見つからない時の全力継続フォロー文をAIが生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("zenryoku_support"); openAixDirect("zenryoku_support"); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
