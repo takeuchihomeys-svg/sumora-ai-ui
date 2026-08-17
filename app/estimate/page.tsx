@@ -97,7 +97,7 @@ const ITEM_CONFIG: Array<{
   { key: "managementFee",   label: "共益費・管理費",    group: "賃料" },
   { key: "waterFee",        label: "水道代（月額）",    group: "賃料" },
   { key: "shikikin",        label: "敷金",              group: "初期費用" },
-  { key: "reikin",          label: "礼金" },
+  { key: "reikin",          label: "礼金",              group: "初期費用" },
   { key: "hoshokikin",      label: "保証金" },
   { key: "commission",      label: "仲介手数料（税抜）" },
   { key: "commissionTax",   label: "仲介手数料 消費税" },
