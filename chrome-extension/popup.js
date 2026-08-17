@@ -1286,11 +1286,15 @@ const SITE_CONFIG = {
           // 駅名ステップ
           if (stToks.length > 0) {
             const stFirst = stToks[0];
-            const lines = findStationLines(stFirst) || findStationLines(areaText);
+            // STATION_LINE_MAP → LEARNED_STATION_MAP の順でフォールバック（学習済み駅でも隣接駅を表示）
+            const lines = findStationLines(stFirst)
+              || (LEARNED_STATION_MAP[stFirst]?.realpro_lines?.length ? LEARNED_STATION_MAP[stFirst].realpro_lines : null)
+              || findStationLines(areaText);
             const linesText = lines ? lines.join(" / ") : null;
             let wideStationNote = null;
-            if (d.isWide && lines) {
-              const adj = getAdjacentStations(stFirst, lines);
+            if (d.isWide) {
+              // linesがnullでも「隣の駅も選択する」ガイドは常に表示
+              const adj = lines ? getAdjacentStations(stFirst, lines) : [];
               wideStationNote = adj.length > 0
                 ? "広げて：" + stFirst + " ＋ 前後の駅「" + adj.join("・") + "」も追加で選択する"
                 : "広げて：この駅 ＋ 隣の駅も追加で選択する（「駅名から絞り込み」で隣駅を検索）";
@@ -3043,24 +3047,18 @@ function openInstructions(siteKey) {
             const _stAlias = _STATION_DOM_ALIASES[station];
             if (_stAlias && !realpro_station_names.includes(_stAlias)) realpro_station_names.push(_stAlias);
             if (searchMode === "wide") {
-              const stLines = STATION_LINE_MAP[station] || [];
+              // STATION_LINE_MAP → LEARNED_STATION_MAP の順でその駅の路線を取得
+              const stLines = STATION_LINE_MAP[station] || getLearnedStationLines(station) || [];
               // 4路線以上かつ同一事業者の場合のみ「広域ハブ」として隣接駅を省略
               // >1では本町(3路線)・堺筋本町(2路線)等も隣接駅が追加されないバグがあった（指示生成側と同じ>3に統一）
               const _isSameOpHub = stLines.length > 3 && deduplicateSameOperatorLines(stLines).length === 1;
               if (!_isSameOpHub) {
                 const adj = getAdjacentStations(station, stLines);
+                // itandi側と同じシンプルな実装: getAdjacentStationsは常に1駅隣のみ返すため
+                // 旧クロスライン汚染チェック（every）は 十三→大阪梅田（京都線で1駅隣だが
+                // 神戸・宝塚では2駅）等の正当な隣接駅を誤除外するバグがあった → 削除
                 adj.forEach(s => {
-                  // クロスライン汚染チェック: adj駅sが複数路線に存在し、
-                  // いずれかの共通路線でsがtarget駅に隣接しない場合は除外
-                  // 例: 十三→大阪梅田(京都線adj)は神戸線・宝塚線でも大阪梅田が選択されてしまうため除外
-                  const sLines = STATION_LINE_MAP[s] || [];
-                  const shared = sLines.filter(l => stLines.includes(l));
-                  const safe = shared.every(function(l) {
-                    const ord = LINE_STATION_ORDER[l] || LEARNED_LINE_ORDER[l] || [];
-                    const idxS = ord.indexOf(s), idxT = ord.indexOf(station);
-                    return idxS >= 0 && idxT >= 0 && Math.abs(idxT - idxS) <= 1;
-                  });
-                  if (safe && !realpro_station_names.includes(s)) realpro_station_names.push(s);
+                  if (!realpro_station_names.includes(s)) realpro_station_names.push(s);
                 });
               }
             }
