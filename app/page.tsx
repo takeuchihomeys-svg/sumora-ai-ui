@@ -733,6 +733,8 @@ export default function Home() {
   const [dismissedPropertyRecommendIds, setDismissedPropertyRecommendIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedPropertyRecommendIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  // property_recommendation 送信直後に「AIX 物件オススメ続ける」バナーを出す（P4.5）
+  const [suggestPropertyRecommendFollowupMap, setSuggestPropertyRecommendFollowupMap] = useState<Record<string, boolean>>({});
   const [suggestViewingTemplateMap, setSuggestViewingTemplateMap] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(sessionStorage.getItem("suggestViewingTemplateMap") || "{}") as Record<string, boolean>; } catch { return {}; }
   });
@@ -7680,6 +7682,21 @@ export default function Home() {
                 </div>
               );
 
+              // P4.5: 物件オススメ送信直後 → 「AIX 物件オススメ」を続けて使うよう促す
+              if (suggestPropertyRecommendFollowupMap[id]) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-400 bg-blue-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-blue-800 flex-1">
+                    <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                    次のアクション → AIX 物件オススメ
+                  </span>
+                  <button onClick={() => { setSuggestPropertyRecommendFollowupMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); openPropertyRecommendationPicker("withImage"); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>AIX 物件オススメ</button>
+                  <button onClick={() => setSuggestPropertyRecommendFollowupMap((prev) => { const n = { ...prev }; delete n[id]; return n; })}
+                    className="shrink-0 text-blue-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
               // P5: 脳駆動ヒントボックス（suggestedAixMeta から action+note を読んで提示）
               // 旧: 初期費用キーワードregex検知 → 廃止し、AI分析結果を使う
               // AIXアクション（ボタンあり）の場合: 上部バナーは非表示にし、このカードに
@@ -7768,7 +7785,7 @@ export default function Home() {
               // P5.5: 物件確認した（property_checkタスクがある場合は物件ピックアップしたより優先）
               // ただし suggestPropertyRecommendMap[id] がある場合は P4（物件オススメ）を優先する
               const hasPropertyCheckTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_check");
-              if (hasPropertyCheckTask && !suggestPropertyRecommendMap[id]) return (
+              if (hasPropertyCheckTask && !suggestPropertyRecommendMap[id] && !suggestPropertyRecommendFollowupMap[id]) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-[#4CAF50] bg-[#e8f5e9] px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] font-bold text-[#2e7d32] flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件確認した</span>
@@ -9659,6 +9676,8 @@ export default function Home() {
                   // 物件オススメを送信完了 → P4「物件オススメ」誘導バナーも消去
                   // （property_send完了時にセットされたまま残り、送信済みなのに再誘導される問題の修正）
                   setSuggestPropertyRecommendMap((prev) => { if (!prev[convId]) return prev; const n = { ...prev }; delete n[convId]; return n; });
+                  // P4.5: 物件オススメ送信後 → 「AIX 物件オススメ」を続けて使うよう促すバナーをセット
+                  setSuggestPropertyRecommendFollowupMap((prev) => ({ ...prev, [convId]: true }));
                   // 紐付き顧客を「物件送った」状態に更新（即時・予約送信ともに実行）
                   // customers/page.tsx の「物件送った」(markSent) と同一経路。
                   // property_recommendation は従来 property_customers を一切更新せず、
