@@ -121,7 +121,7 @@
         _pendingAutoSendDispatched = true;
         console.log("[AXLX bulk-dl] Case B: AJAXページネーション継続 P" + _resumeState.currentPage);
         setTimeout(function () {
-          autoSendOnePage(_resumeState, function (ok) { tryNext(_resumeState); });
+          autoSendOnePage(_resumeState, function (ok, cnt) { _resumeState.sentCount = (_resumeState.sentCount || 0) + (cnt || 0); tryNext(_resumeState); });
         }, 700 + Math.floor(Math.random() * 700));
       }
     }
@@ -794,7 +794,7 @@
         if (countEl2) countEl2.textContent = "次ページ遷移エラー";
       } else {
         // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
-        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null });
+        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0 });
         // AJAX: 次のinject()でCase Bが拾えるようにリセット
         // ページリロード: _pendingAutoSendDispatched は再初期化されるので問題なし
         _pendingAutoSendDispatched = false;
@@ -802,10 +802,11 @@
       }
     } else {
       clearAutoSendState();
-      try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+      // sentCount を必ず付ける: 0件なら background が「🔍【物件0件】」アナウンスを送る
+      try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: state.sentCount || 0 }, function() { void chrome.runtime.lastError; }); } catch (_) {}
       var countEl = document.getElementById("axlx-count");
       if (countEl) countEl.textContent = "全ページ送信完了！";
-      console.log("[AXLX bulk-dl] 全ページ自動送信が完了しました。（" + state.currentPage + "ページ処理済み）");
+      console.log("[AXLX bulk-dl] 全ページ自動送信が完了しました。（" + state.currentPage + "ページ / " + (state.sentCount || 0) + "件送信）");
     }
   }
 
@@ -835,7 +836,7 @@
           clearInterval(_pollTimer);
           if (!urls2.length) {
             console.warn("[AXLX bulk-dl] autoSendOnePage: " + _pollWait + "ms待機後も物件なし → スキップ");
-            onDone(true);
+            onDone(true, 0);
             return;
           }
           // ポーリング中に物件が出た → 処理継続
@@ -864,7 +865,7 @@
       var batchIndex = 0;
       function sendNextBatch() {
         if (batchIndex >= batches.length) {
-          onDone(true);
+          onDone(true, sendUrls.length);
           return;
         }
         var batch = batches[batchIndex];
@@ -915,15 +916,15 @@
     _pendingCustomerForAutoSend = null;
     if (_snap && _snap.name) {
       // autofill開始時点でスナップショット済みのお客さん名を使う（名前ずれ防止）
-      var state = { active: true, currentPage: 1, customerName: _snap.name, customerConditions: _snap.conditions || null, customerId: _snap.customerId || null };
+      var state = { active: true, currentPage: 1, customerName: _snap.name, customerConditions: _snap.conditions || null, customerId: _snap.customerId || null, sentCount: 0 };
       setAutoSendState(state);
-      autoSendOnePage(state, function (ok) { tryNext(state); });
+      autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); tryNext(state); });
     } else {
       // スナップショットなし（手動操作など）→ 従来通りpopupから取得
       getCustomerFromPopup(function (name, conditions, customerId) {
-        var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions, customerId: customerId || null };
+        var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions, customerId: customerId || null, sentCount: 0 };
         setAutoSendState(state);
-        autoSendOnePage(state, function (ok) { tryNext(state); });
+        autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); tryNext(state); });
       });
     }
   }
@@ -1057,7 +1058,7 @@
         if (_pendingAutoSendDispatched) return; // inject() Case B が先に処理済み
         _pendingAutoSendDispatched = true;
         console.log("[AXLX bulk-dl] Case D: ページリロード後の継続 P" + autoState.currentPage);
-        autoSendOnePage(autoState, function (ok) { tryNext(autoState); });
+        autoSendOnePage(autoState, function (ok, cnt) { autoState.sentCount = (autoState.sentCount || 0) + (cnt || 0); tryNext(autoState); });
       }, 2500);
       return; // Case C は不要（ページ1ではないため）
     }
