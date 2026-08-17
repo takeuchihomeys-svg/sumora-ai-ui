@@ -3162,10 +3162,16 @@ function openInstructions(siteKey) {
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
         },
       }, "*");
-      // 手動クリック時のみ: ページリロード後も自動送信が再開できるようフラグを立てる
-      if (!isAutomated) {
-        try { chrome.storage.session.set({ axlx_pending_auto_send: true }); } catch (_) {}
-      }
+      // ページリロード後も自動送信が再開できるようフラグを立てる（手動・自動バッチ共通）
+      // ★ 2026-08-17 修正: 以前は `if (!isAutomated)` で手動クリック限定にしていたが、
+      //   リアプロは検索実行（div.go_search クリック）でページが再読み込みされるため
+      //   bulk-dl.js のモジュール変数（_autoSendArmed 等）は毎回破棄される。
+      //   結果ページで自動送信を起動できる経路は Case C（chrome.storage.session）だけ。
+      //   手動限定にすると自動バッチ（axlx-switch-customer 経由 = isAutomated=1）は
+      //   フラグが立たず、残留フラグを消費した1人目だけ動いて2人目以降が無音で死ぬ。
+      //   Case A（AJAX経路）が先に発火した場合は bulk-dl.js 側でフラグを remove するため
+      //   二重送信にはならない。
+      try { chrome.storage.session.set({ axlx_pending_auto_send: true }); } catch (_) {}
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
         chrome.storage.session.set({ axlx_score_data: {

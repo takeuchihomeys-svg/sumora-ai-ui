@@ -912,6 +912,9 @@
       console.log("[AXLX bulk-dl] スタッフモード中 → autoSendAllPages をスキップ");
       return;
     }
+    // Case A / Case C / 手動ボタン いずれの経路で起動しても再開フラグは必ずここで消費する。
+    // （消し忘れると次顧客・次ページロードで Case C が誤発火して二重送信になる）
+    try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
     var _snap = _pendingCustomerForAutoSend;
     _pendingCustomerForAutoSend = null;
     if (_snap && _snap.name) {
@@ -1008,6 +1011,8 @@
       _autoSendArmed = false;
       // Case B/C が遅れて発火してリスト二重送信されるのを封印する
       _pendingAutoSendDispatched = true;
+      // この顧客は0件確定 → 再開フラグを残すと次のページロードで誤発火するので消す
+      try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
       console.log("[AXLX bulk-dl] 15秒経過・新ボタンなし確定（tracked=" + tracked.length + "） → 0件としてbatch-customer-done送信");
       try {
         chrome.runtime.sendMessage(

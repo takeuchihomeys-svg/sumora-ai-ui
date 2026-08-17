@@ -861,3 +861,30 @@ var NON_RESULT_PAGES = ["GBK001310"];
 - `getOneTransferLines` と resolution-core.js 側の `STATION_LINE_MAP` 参照は今回スコープ外（未変更）
 - API失敗時は期限切れキャッシュも使わず null 返却（stale-while-error が必要なら catch 内で cached.data を返す1行で対応可）
 - **拡張の再読み込み必須**: popup.js 変更のため chrome://extensions で再読み込みすること
+
+---
+
+## 🛠️ 一括検索「2人目以降の全ページ送りが発火しない」根本修正（2026-08-17）
+
+**症状**: リアプロ一括検索（3人）で1人目（恋さん）は `fill-done → 全ページ送信完了` まで通るのに、2人目（友哉さん）は `fill-done` 受信後 bulk-dl.js のログが一切出ず（`Case C: ページリロード初回起動` も出ない）、background.js が `axlx-batch-customer-done` を5分待ってタイムアウトする。
+
+### 根本原因（確定）
+1. リアプロは検索実行（`page-script.js` の `div.go_search` クリック）で**ページが再読み込みされる**。よって結果ページでは bulk-dl.js のモジュール変数（`_autoSendArmed` / `_preAutofillBtns` / `_pendingAutoSendDispatched`）は全て初期化済み → **Case A（AJAX前提）は構造上発火できず、Case C（`chrome.storage.session.axlx_pending_auto_send`）だけが唯一の起動経路**。
+2. その Case C 用フラグを立てているのは `popup.js` の autofill onclick の1箇所のみで、条件が **`if (!isAutomated)`（手動クリック限定）** だった（commit `fa6b217` で無条件→手動限定に変更されたもの）。
+3. 一括検索は `background.js _batchAutofill` → `axlx-switch-customer` → `underbar.js` → `popup.js` L3657 の経路で、そこで **`aBtn.dataset.automated = "1"` をセットしてから click している**。つまり一括検索の autofill は常に `isAutomated=true` → **フラグが1度も立たない**。
+4. それでも1人目だけ動くのは、`chrome.storage.session` に残っていた**古いフラグ1個を1人目が消費**するため。Case C は消費時に `remove` するので、2人目以降は永久に無音で死ぬ。
+   → `fa6b217` 当時は自動バッチが bulk-dl の自動送信を使わない設計だったが、現在は `_scrapeAndSendRealpro` が `axlx-batch-customer-done`（= bulk-dl の全ページ送信完了）を待つ設計に変わっており、**このガードが実態と矛盾した残骸になっていた**。
+
+### 修正内容（2ファイル・3ハンク）
+| # | 内容 | ファイル |
+|---|---|---|
+| 1 | `if (!isAutomated)` ガードを削除し、**手動・自動バッチ共通で `chrome.storage.session.set({axlx_pending_auto_send:true})`** を実行（`isAutomated` は従来どおり `source` 判定に使用） | `popup.js` L3165付近 |
+| 2 | `autoSendAllPages()` の冒頭（スタッフモード判定の直後）で `chrome.storage.session.remove("axlx_pending_auto_send")` を実行。Case A / Case C / 手動ボタンのどの経路で起動してもフラグを1回で消費する単一地点にした（Case A 内の個別 remove は残置＝冗長だが無害） | `bulk-dl.js` |
+| 3 | 15秒0件確定ブランチでも同フラグを `remove`。0件顧客のフラグが残って次のページロードで Case C が誤発火するのを防ぐ | `bulk-dl.js` |
+
+### 設計メモ（デグレ防止）
+- **二重送信は起きない**: AJAX でたまたま Case A が先に走った場合、`autoSendAllPages()` 冒頭でフラグが消えるため後続の Case C は空振りする。逆に Case C が先なら `_pendingAutoSendDispatched=true` で Case A/B がブロックされる。
+- **フラグは「起動権1回」のトークン**として扱うこと。新しい起動経路を足すときは必ず `autoSendAllPages()` を通す（そこで消費される）。
+- itandi 側（`itandi-bulk-dl.js`）はSPAでページリロードが起きないためこのフラグを使っておらず、今回の変更対象外。
+- **拡張の再読み込み必須**: popup.js / bulk-dl.js 変更のため chrome://extensions で再読み込みすること。
+- **実機未確認**: 3人以上の一括検索で「全員分の全ページ送りが走るか」を次セッションで要確認。
