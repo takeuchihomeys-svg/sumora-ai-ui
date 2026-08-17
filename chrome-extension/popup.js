@@ -3044,8 +3044,9 @@ function openInstructions(siteKey) {
             if (_stAlias && !realpro_station_names.includes(_stAlias)) realpro_station_names.push(_stAlias);
             if (searchMode === "wide") {
               const stLines = STATION_LINE_MAP[station] || [];
-              // 同一事業者の複数路線（例: 十三=阪急3路線）→複数路線で検索範囲が広いため隣接駅は不要
-              const _isSameOpHub = stLines.length > 1 && deduplicateSameOperatorLines(stLines).length === 1;
+              // 4路線以上かつ同一事業者の場合のみ「広域ハブ」として隣接駅を省略
+              // >1では本町(3路線)・堺筋本町(2路線)等も隣接駅が追加されないバグがあった（指示生成側と同じ>3に統一）
+              const _isSameOpHub = stLines.length > 3 && deduplicateSameOperatorLines(stLines).length === 1;
               if (!_isSameOpHub) {
                 const adj = getAdjacentStations(station, stLines);
                 adj.forEach(s => {
