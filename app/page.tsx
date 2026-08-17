@@ -2296,13 +2296,20 @@ export default function Home() {
       // bg-async側のSKIP_STATUSESと必ず一致させる
       const skipStatuses = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
       const readAtMap = manuallyReadAtRef.current;
+      // AIXタスク進行中（ai_draftが非null/非空）の会話はpreGenをスキップ
+      // stripInternalTagsOrNullで[AIX誘導中]等のsentinelが除去されてaiDraft=nullになる場合も防ぐため、rawDBデータを参照
+      const rawDraftNotNullIds = new Set(
+        conversationsData
+          .filter((c) => c.ai_draft != null && c.ai_draft !== "")
+          .map((c) => String(c.id))
+      );
       const targets = formatted
         .filter((c) => {
           if (c.id === selectedIdRef.current) return false; // 選択中は effect で別途処理
           if (c.lastSender !== "customer") return false;
           const ns = STATUS_ALIAS[c.status] ?? c.status;
           if (skipStatuses.has(ns)) return false;
-          if (c.aiDraft) return false;
+          if (c.aiDraft || rawDraftNotNullIds.has(c.id)) return false;
           if (preGenInProgress.current.has(c.id)) return false;
           // 既読マーク済みチェック
           const rAt = readAtMap[c.id];
