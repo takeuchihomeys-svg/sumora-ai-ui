@@ -3393,6 +3393,9 @@ async function executeBulkSearch(site) {
   const activeBtn = document.querySelector(`[data-bulk-site="${site}"]`);
   const originalLabel = activeBtn ? activeBtn.textContent : "";
 
+  // "realnetpro" → popup.js内部のsiteKey "realpro" に正規化
+  const siteKey = site === "realnetpro" ? "realpro" : site;
+
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
     const customer = allCustomers.find((c) => String(c.id) === id);
@@ -3400,24 +3403,35 @@ async function executeBulkSearch(site) {
 
     if (activeBtn) activeBtn.textContent = `(${i + 1}/${ids.length}) 検索中...`;
 
-    await new Promise((resolve) => {
-      chrome.runtime.sendMessage({
-        type: "axlx-webapp-search",
-        site,
-        conditions: {
-          customerId:   String(id),
-          customerName: customer.customer_name || null,
-          area_mode:    customer.area_mode || null,
-          is_wide:      false,
-        },
-      }, () => {
-        void chrome.runtime.lastError;
-        resolve();
-      });
-    });
+    // background.js経由（メッセージパス）ではなくpopup.js内関数を直接呼ぶ
+    // → axlx-webapp-search → axlx-switch-customer の往復ラグなし・autofill完了前に次顧客へ進むバグなし
+    openSiteView(customer);
+    const pBtn = document.querySelector('.mode-btn[data-mode="pinpoint"]');
+    if (pBtn) pBtn.click();
+    openInstructions(siteKey);
 
+    // DOM描画待ち（autofillBtnがセットされるまで）
+    await new Promise((r) => setTimeout(r, 900 + Math.floor(Math.random() * 300)));
+
+    const aBtn = document.getElementById("autofill-btn");
+    if (aBtn && !aBtn.disabled) {
+      aBtn.click();
+
+      // autofill完了待ち: disabled が false に戻るまでポーリング（最大35秒）
+      await new Promise((r) => {
+        const deadline = Date.now() + 35000;
+        const tick = () => {
+          const btn = document.getElementById("autofill-btn");
+          if (!btn || !btn.disabled || Date.now() > deadline) { r(); return; }
+          setTimeout(tick, 600);
+        };
+        setTimeout(tick, 2500); // autofillが disabled=true になるまでの起動猶予
+      });
+    }
+
+    // 次の顧客前にランダム待機（人間的間隔）
     if (i < ids.length - 1) {
-      const delay = 1000 + Math.floor(Math.random() * 1500); // 1000〜2500ms ランダム
+      const delay = 1200 + Math.floor(Math.random() * 1300); // 1.2〜2.5秒
       await new Promise((r) => setTimeout(r, delay));
     }
   }
