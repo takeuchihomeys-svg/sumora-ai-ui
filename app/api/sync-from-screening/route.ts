@@ -309,6 +309,11 @@ export async function POST(req: NextRequest) {
         (record.message_id as string) ||
         null;
 
+      // line_message_id なし = LINEに送信されていないscreening-adminのAI自動生成文 → 表示しない
+      if (!staffLmid) {
+        return NextResponse.json({ ok: true, action: "staff_message_skipped_no_line_message_id" });
+      }
+
       // 重複ガード1: line_message_id が既に保存済みならスキップ
       if (staffLmid) {
         const { data: dupByLmid } = await supabase
