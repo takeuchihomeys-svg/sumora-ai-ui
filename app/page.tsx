@@ -464,8 +464,8 @@ function formatConditions(customer: PropertyCustomerRow): string {
   if (customer.desired_area) lines.push(`\u30a8\u30ea\u30a2: ${customer.desired_area}`);
   if (customer.floor_plan) lines.push(`\u9593\u53d6\u308a: ${customer.floor_plan}`);
   const rentParts: string[] = [];
-  if (customer.rent_min) rentParts.push(`${Math.floor(customer.rent_min / 10000)}\u4e07\u5186\u301c`);
-  if (customer.rent_max) rentParts.push(`${Math.floor(customer.rent_max / 10000)}\u4e07\u5186\u4ee5\u5185`);
+  if (customer.rent_min) rentParts.push(`${customer.rent_min / 10000}\u4e07\u5186\u301c`);
+  if (customer.rent_max) rentParts.push(`${customer.rent_max / 10000}\u4e07\u5186\u4ee5\u5185`);
   if (rentParts.length > 0) lines.push(`\u5bb6\u8cc3: ${rentParts.join("")}`);
   if (customer.walk_minutes) lines.push(`\u99c5\u5f92\u6b69: ${customer.walk_minutes}\u5206\u4ee5\u5185`);
   if (customer.move_in_time) lines.push(`\u5165\u5c45: ${customer.move_in_time}`);
@@ -4057,6 +4057,7 @@ export default function Home() {
               text: replyDraft.trim(),
               conversationId: selectedConversation.id,
               recentMessages: selectedConversation.messages.slice(-10).map((m) => ({ sender: m.sender, text: m.text || "" })),
+              customerName: selectedConversation?.customerName ?? "",
             }),
             signal: AbortSignal.timeout(2800),
           });
@@ -6286,8 +6287,8 @@ export default function Home() {
                       setChatCondEditFields({
                         desired_area: lc.rawData.desired_area || "",
                         floor_plan: lc.rawData.floor_plan || "",
-                        rent_min: lc.rawData.rent_min ? String(Math.floor(lc.rawData.rent_min / 10000)) : "",
-                        rent_max: lc.rawData.rent_max ? String(Math.floor(lc.rawData.rent_max / 10000)) : "",
+                        rent_min: lc.rawData.rent_min ? String(lc.rawData.rent_min / 10000) : "",
+                        rent_max: lc.rawData.rent_max ? String(lc.rawData.rent_max / 10000) : "",
                         walk_minutes: lc.rawData.walk_minutes ? String(lc.rawData.walk_minutes) : "",
                         building_age: lc.rawData.building_age ? String(lc.rawData.building_age) : "",
                         move_in_time: lc.rawData.move_in_time || "",
@@ -8645,7 +8646,7 @@ export default function Home() {
                       <div className="min-w-0 flex-1">
                         <div className="text-[13px] font-bold text-[#111b21]">{pc.customer_name}</div>
                         <div className="truncate text-[11px] text-[#8696a0]">
-                          {[pc.desired_area, pc.floor_plan, pc.rent_max ? `〜${Math.floor(pc.rent_max / 10000)}万円` : null].filter(Boolean).join(" / ")}
+                          {[pc.desired_area, pc.floor_plan, pc.rent_max ? `〜${pc.rent_max / 10000}万円` : null].filter(Boolean).join(" / ")}
                         </div>
                       </div>
                       {linkedCustomerMap[linkModalConvId]?.id === pc.id && (
@@ -13279,10 +13280,10 @@ export default function Home() {
               <button onClick={() => { setChatCondEditOpen(false); setChatCondEditId(null); setChatCondEditFields(null); }} className="text-[#aaa] text-xl leading-none">✕</button>
             </div>
             <div className="px-5 py-4 space-y-3">
-              {([ ["エリア", "desired_area", "例: 大阪市内", "text"], ["間取り", "floor_plan", "例: 1LDK・2DK", "text"], ["家賃 下限（万）", "rent_min", "5", "number"], ["家賃 上限（万）", "rent_max", "7", "number"], ["駅徒歩（分）", "walk_minutes", "15", "number"], ["築年数以内", "building_age", "20", "number"], ["入居時期", "move_in_time", "例: 7月・なるべく早く", "text"] ] as [string, keyof typeof chatCondEditFields, string, string][]).map(([label, key, ph, type]) => (
+              {([ ["エリア", "desired_area", "例: 大阪市内", "text"], ["間取り", "floor_plan", "例: 1LDK・2DK", "text"], ["家賃 下限（万）", "rent_min", "5", "number"], ["家賃 上限（万）", "rent_max", "7.5", "number"], ["駅徒歩（分）", "walk_minutes", "15", "number"], ["築年数以内", "building_age", "20", "number"], ["入居時期", "move_in_time", "例: 7月・なるべく早く", "text"] ] as [string, keyof typeof chatCondEditFields, string, string][]).map(([label, key, ph, type]) => (
                 <div key={key}>
                   <label className="text-[11px] font-semibold text-[#8696a0] mb-1 block">{label}</label>
-                  <input type={type} placeholder={ph} value={chatCondEditFields[key]} onChange={(e) => setChatCondEditFields((f) => f ? { ...f, [key]: e.target.value } : f)}
+                  <input type={type} placeholder={ph} step={type === "number" && (key === "rent_min" || key === "rent_max") ? "0.5" : undefined} value={chatCondEditFields[key]} onChange={(e) => setChatCondEditFields((f) => f ? { ...f, [key]: e.target.value } : f)}
                     className="w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3]" />
                 </div>
               ))}

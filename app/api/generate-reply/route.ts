@@ -2843,7 +2843,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 // ・再生成の失敗・空生成時は1回目の結果で続行（fail-open）
                 // ・regen_count がトレーラー/ai_draft_check に載る（監査用）
                 const retryIssues = finalCheck.issues.filter(
-                  (it) => it.severity === "block" || it.severity === "warning"
+                  (it) => it.severity === "block"
                 );
                 if (retryIssues.length > 0) {
                   try {
@@ -2900,6 +2900,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (nameFixes.length > 0) {
                   console.warn("[generate-reply] 最終チェック後の顧客名修正:", nameFixes);
                   draftBody = nameFixed;
+                  finalCheck.issues = finalCheck.issues.filter((i) => i.code !== "FABRICATED_NAME");
+                  finalCheck.ok = !finalCheck.issues.some((i) => i.severity === "block");
                 }
               } catch (checkErr) {
                 console.error("[generate-reply] final-check失敗（fail-open・チェックなしで続行）:", checkErr);

@@ -50,15 +50,18 @@ export async function POST(req: NextRequest) {
   let text = "";
   let conversationId: string | undefined;
   let recentMessages: Array<{ sender: string; text: string }> = [];
+  let customerName: string | undefined;
   try {
     const body = await req.json() as {
       text?: string;
       conversationId?: string;
       recentMessages?: Array<{ sender: string; text: string }>;
+      customerName?: string;
     };
     text = (body.text ?? "").trim();
     conversationId = body.conversationId;
     recentMessages = Array.isArray(body.recentMessages) ? body.recentMessages : [];
+    customerName = body.customerName;
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
@@ -82,6 +85,7 @@ export async function POST(req: NextRequest) {
     // step1Json なし: check-reply モードでは履歴から Haiku 自身に質問を抽出させる
     checkpointFacts: groundTruth.checkpointFacts,
     customerConditionsDb: groundTruth.customerConditionsDb,
+    staffSourceText: customerName ? `お客様のお名前: ${customerName}さん` : undefined,
   }, 2500);
   delete result.revised_text; // このモードでは絶対に書き換え結果を返さない
 

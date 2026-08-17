@@ -103,7 +103,7 @@ async function callHaiku(prompt: string, timeoutMs: number): Promise<RawIssue[]>
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: "claude-haiku-4-5",
-      max_tokens: 600,
+      max_tokens: 1200,
       temperature: 0,
       output_config: { format: { type: "json_schema", schema: ISSUE_SCHEMA } },
       messages: [{ role: "user", content: prompt }],
@@ -317,20 +317,23 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haiku
   }
 
   // ── 時刻ベース決定的チェック: 18時以降の「本日中に」は実行不可能な約束 ──
-  if (draft.includes("本日中に")) {
-    const jstHour = new Date(Date.now() + 9 * 3600 * 1000).getUTCHours();
-    if (jstHour >= 18) {
-      const idx = draft.indexOf("本日中に");
-      const start = Math.max(0, idx - 10);
-      const end = Math.min(draft.length, idx + "本日中に".length + 10);
-      issues.push({
-        pass: "context_check",
-        severity: "block",
-        code: "TIME_INVALID_HONIJITSU",
-        message: "18時以降のため「本日中に」は実行不可能な約束です",
-        evidence: draft.slice(start, end),
-        suggestion: "「明日一番にご確認しご連絡させて頂きます」等に変更してください",
-      });
+  for (const sameDayPhrase of ["本日中に", "今日中に", "今日のうちに", "本日のうちに"]) {
+    if (draft.includes(sameDayPhrase)) {
+      const jstHour = new Date(Date.now() + 9 * 3600 * 1000).getUTCHours();
+      if (jstHour >= 18) {
+        const idx = draft.indexOf(sameDayPhrase);
+        const start = Math.max(0, idx - 10);
+        const end = Math.min(draft.length, idx + sameDayPhrase.length + 10);
+        issues.push({
+          pass: "context_check",
+          severity: "block",
+          code: "TIME_INVALID_HONIJITSU",
+          message: `18時以降のため「${sameDayPhrase}」は実行不可能な約束です`,
+          evidence: draft.slice(start, end),
+          suggestion: "「明日一番にご確認しご連絡させて頂きます」等に変更してください",
+        });
+      }
+      break;
     }
   }
 
@@ -450,7 +453,7 @@ export async function runGroundedRevision(
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 2000,
+        max_tokens: Math.max(2000, Math.ceil(draft.length * 2.5)),
         temperature: 0,
         messages: [{ role: "user", content: buildSonnetRevisionPrompt(draft, issues, ctx) }],
       }),
@@ -458,10 +461,12 @@ export async function runGroundedRevision(
     if (!res.ok) return null;
     const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
     if (data.stop_reason === "max_tokens") return null;
-    const revised = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
+    let revised = (data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "").trim();
+    // 「修正後：」「【修正版】」等の前置き文を除去
+    revised = revised.replace(/^(?:修正後[：:]\s*|【修正版[^】]*】\s*|以下(?:が|は)修正\S*\s*|修正した(?:返信)?文[：:]\s*)[\n]*/u, "").trim();
     if (!revised || revised === draft.trim()) return null;
-    // 破壊的書き換えガード（AIX段落の削除で縮むため下限は40%）
-    if (revised.length < draft.length * 0.4 || revised.length > draft.length * 2) return null;
+    // AIX違反の大量削除で正当に短くなるケースを救済（下限を20%に緩和）
+    if (revised.length < draft.length * 0.2 || revised.length > draft.length * 2) return null;
     return revised;
   } catch {
     return null;
@@ -480,7 +485,8 @@ const RECHECK_MS = 8000;    // バジェットガード用推定値（Haiku 3パ
 // 修正プロンプト絶対ルール5の定型句「確認して改めてご連絡いたします」等が修正で新規挿入されると、
 // AIX【確認します】との二重宣言（AIX_BOUNDARY_PROMISE = block）を warning 修正が生み出してしまう。
 // 「元ドラフトに無く修正後に出現した」場合のみ修正を破棄する（元から含まれる場合は check1 で検査済み）。
-const CONFIRM_PROMISE_RE = /確認[^\n。]{0,30}ご連絡/;
+// スタッフの約束文のみ捕捉。顧客への依頼句「ご確認後にご連絡ください」等は対象外
+const CONFIRM_PROMISE_RE = /確認[^\n。]{0,20}ご連絡(?:いた|させて頂)(?!ください)/;
 
 export interface RevisionLoopResult {
   finalDraft: string;      // テキストボックスに入れるベスト草稿
@@ -501,7 +507,7 @@ export interface RevisionLoopResult {
 export async function runFinalCheckWithRevision(
   draft: string,
   ctx: FinalCheckContext,
-  budgetMs = 30000,
+  budgetMs = 32000,  // check1(≤8s) + Sonnet revision(≤15s) + recheck(≤8s) = 31s + 1sバッファ
 ): Promise<RevisionLoopResult> {
   const started = Date.now();
   let checkIterations = 0;
@@ -529,7 +535,13 @@ export async function runFinalCheckWithRevision(
     }
 
     // (2) 接地修正（失敗/ガード違反は null = fail-open）
-    const revised = await runGroundedRevision(draft, check1.issues, ctx, REVISION_MS);
+    const draftNormW = normalizeForMatch(draft);
+    const passableWarnIssues = check1.issues.filter(
+      (i) => i.code !== "UNCHECKED_AUTO_SEND" &&
+        (!i.evidence || draftNormW.includes(normalizeForMatch(i.evidence)))
+    );
+    if (passableWarnIssues.length === 0) return { finalDraft: draft, finalCheck: check1 };
+    const revised = await runGroundedRevision(draft, passableWarnIssues, ctx, REVISION_MS);
     if (!revised) return { finalDraft: draft, finalCheck: check1 };
 
     // (3) 決定的プリスキャン（約0ms）: 禁止語彙、および修正で新規挿入された
@@ -554,8 +566,10 @@ export async function runFinalCheckWithRevision(
     const recheckHasBlock = recheck.issues.some((i) => i.severity === "block");
     const warnings1 = check1.issues.filter((i) => i.severity === "warning").length;
     const warningsR = recheck.issues.filter((i) => i.severity === "warning").length;
+    const warn1Codes = new Set(check1.issues.filter((i) => i.severity === "warning").map((i) => i.code));
+    const hasNewWarnType = recheck.issues.filter((i) => i.severity === "warning").some((i) => !warn1Codes.has(i.code));
 
-    if (fullyVerified && !recheckHasBlock && warningsR <= warnings1) {
+    if (fullyVerified && !recheckHasBlock && warningsR <= warnings1 && !hasNewWarnType) {
       // 採用: finalCheck も recheck に差し替える（checked_text_hash・evidence・ok が
       // finalDraft=修正版と整合し、送信時ハッシュ再利用の穴と監査不整合を同時に塞ぐ）
       recheck.revised_text = revised;
@@ -582,23 +596,31 @@ export async function runFinalCheckWithRevision(
     // 時間予算: 残りが 修正+再チェック に満たなければ修正せず即スタッフ確認へ
     if (budgetMs - (Date.now() - started) < REVISION_MS + RECHECK_MS) break;
 
-    const revised = await runGroundedRevision(currentDraft, currentCheck.issues, ctx, REVISION_MS);
+    const draftNormB = normalizeForMatch(currentDraft);
+    const passableBlockIssues = currentCheck.issues.filter(
+      (i) => i.code !== "UNCHECKED_AUTO_SEND" &&
+        (!i.evidence || draftNormB.includes(normalizeForMatch(i.evidence)))
+    );
+    if (passableBlockIssues.length === 0) break;
+    const revised = await runGroundedRevision(currentDraft, passableBlockIssues, ctx, REVISION_MS);
     if (!revised) break; // 修正失敗/ガード違反 → give up gracefully
+    // CONFIRM_PROMISE_RE ガード（blockパス・warningパスと対称）
+    if (CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(currentDraft)) break;
 
     // 決定的プリフィルタ: block evidence が1つも消えていない修正は無効（再チェック2.5sを節約）
     const revisedNorm = normalizeForMatch(revised);
-    if (blocks.every((b) => revisedNorm.includes(normalizeForMatch(b.evidence)))) break;
+    if (blocks.filter((b) => b.evidence).every((b) => revisedNorm.includes(normalizeForMatch(b.evidence)))) break;
 
     // ── チェック2回目: 修正版を再チェック（未検証の文章は絶対に出さない）──
     const recheck = await runFinalCheck(revised, ctx);
     checkIterations++;
-    revisionCount++;
     recheck.revised_text = revised;
 
     // 採用条件: 元のblockを検出したpassが再チェックでも完走していること
     const blockPasses = new Set(blocks.map((b) => b.pass));
     const verified = Array.from(blockPasses).every((p) => recheck.passes_completed.includes(p));
     if (!verified) break; // 再チェック未完走 → 修正版は未検証なので不採用
+    revisionCount++;
 
     const newBlocks = recheck.issues.filter((i) => i.severity === "block");
     if (newBlocks.length < blocks.length) {
