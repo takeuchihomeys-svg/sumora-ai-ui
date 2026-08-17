@@ -313,6 +313,39 @@ async function resolveTransferLinesWithDeepSeek(baseStation: string, maxTransfer
   }
 }
 
+// ひらがな・略称・口語表現 → 正式駅名/市区名に正規化（スペース/「・」区切りで返す）
+// 例: "なんば" → "難波", "天六" → "天神橋筋六丁目", "北摂あたり" → "豊中市・吹田市・茨木市"
+async function normalizeAreaWithDeepSeek(desired_area: string): Promise<string | null> {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(8_000),
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        max_tokens: 100,
+        messages: [{ role: "user", content:
+          `大阪府の不動産検索用エリア入力を正規化してください。\n` +
+          `ひらがな・略称・口語表現を正式な駅名または行政地名に変換し、スペースまたは「・」区切りで出力してください。\n` +
+          `変換できない部分（通勤時間等）はそのまま保持してください。\n` +
+          `変換例: "なんば"→"難波", "天六"→"天神橋筋六丁目", "うめだ"→"梅田", "てんのうじ"→"天王寺"\n` +
+          `テキストのみ出力（説明不要）。\n\nエリア: "${desired_area}"`,
+        }],
+        temperature: 0,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+    const text = (data.choices[0]?.message?.content ?? "").trim();
+    return text || null;
+  } catch (e) {
+    console.warn("[resolve-area] DeepSeek normalize error:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 // 駅名リスト → station_map / line_stations 一括照合（最大2往復固定）
 // → result に route_ids / itandi.line_names+station_names / reins.station_pairs を全反映
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -406,6 +439,7 @@ interface ResolveAreaResponse {
   new_stations: Array<{ token: string; ward: string; realpro_lines: string[]; itandi_lines: string[]; reins_line: string | null }>;
   new_regions:  Array<{ token: string; ward: string }>;
   suggested_walk_minutes?: number | null;  // walk/bicycle制約から抽出した徒歩分数
+  normalized_area?: string | null;         // DeepSeekが正規化した表記（ひらがな・略称→正式名）
 }
 
 export async function POST(req: NextRequest) {
@@ -496,6 +530,11 @@ export async function POST(req: NextRequest) {
       // 残りトークンは Claude NL抽出（全文渡し）で処理される
       if (/^[0-9０-９]/.test(tok) || /[都道府県市区郡]/.test(tok)) continue;
     }
+
+    // エリア正規化（ひらがな・略称→正式名）: Haiku NL抽出と並行して実行
+    const _normalizePromise = desired_area.trim()
+      ? normalizeAreaWithDeepSeek(desired_area)
+      : Promise.resolve(null);
 
     // ── Claude Haiku: 生テキストからNL entity extraction ────────────────────────
     // 旧: unknownForAI トークンを route/ward/station に分類
@@ -748,7 +787,8 @@ commute_constraints: 通勤・通学・乗り換え制約
       }
     }
 
-    return NextResponse.json(result);
+    const normalized_area = await _normalizePromise.catch(() => null);
+    return NextResponse.json({ ...result, normalized_area });
   } catch (e) {
     console.error("[resolve-area] error:", e);
     return NextResponse.json({ error: "internal error" }, { status: 500 });

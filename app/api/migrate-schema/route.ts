@@ -1936,6 +1936,12 @@ ALTER TABLE ai_reply_knowledge ADD CONSTRAINT ai_reply_knowledge_category_check
 -- conversation_direction: 会話の方向性・フェーズ情報（JSONB）（2026-08-14追加）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS conversation_direction jsonb DEFAULT NULL;
 
+-- area_normalized: DeepSeekが正規化したエリア希望文字列（2026-08-17追加）
+-- desired_area がひらがな・略称・口語表現の場合に正式駅名/市区名に変換した結果を保存する。
+-- 例: "なんば" → "難波", "天六" → "天神橋筋六丁目", "北摂あたり" → "豊中市・吹田市・茨木市"
+-- Chrome拡張の resolve-area API が判定・書き込む。UI側は desired_area を直接変更しない。
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS area_normalized TEXT;
+
 -- viewing_history テーブル（内覧履歴・複数内覧対応・is_primaryで最新管理）（2026-08-15追加）
 -- viewingsテーブルの後継。scheduled_date（予定日）/ actual_date（実際の内覧日）/ is_primary（最新フラグ）を持つ
 CREATE TABLE IF NOT EXISTS viewing_history (

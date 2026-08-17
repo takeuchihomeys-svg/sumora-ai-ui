@@ -1014,6 +1014,20 @@ var REINS_LINE_MAP = {
 // 解決ロジック（popup.js から環境非依存に移植）
 // ════════════════════════════════════════════════════════════════════
 
+// ── 駅名エイリアス（ひらがな・略称 → 正式駅名）── popup.js の STATION_ALIASES と同期維持
+var STATION_ALIASES = {
+  "なんば": "難波", "うめだ": "梅田", "てんのうじ": "天王寺",
+  "しんさいばし": "心斎橋", "ほんまち": "本町", "しんおおさか": "新大阪",
+  "なかもず": "中百舌鳥", "なんばえき": "難波", "てんま": "天満",
+  "ふくしま": "福島", "にしくじょう": "西九条", "もりのみや": "森ノ宮",
+  "きたはまえき": "北浜", "きたはま": "北浜", "たにまち": "谷町四丁目",
+  "ながほりばし": "長堀橋", "はなてん": "放出", "にしむこう": "西向日",
+  "天六": "天神橋筋六丁目", "てんろく": "天神橋筋六丁目",
+  "天四": "天神橋筋四丁目", "天三": "天神橋筋三丁目", "天二": "天神橋筋二丁目",
+  "谷四": "谷町四丁目", "谷六": "谷町六丁目", "谷九": "谷町九丁目",
+  "今里筋": "今里",
+};
+
 // 学習済みデータ（resolveConditionsLocal 呼び出し時に learned パラメータで差し替わる）
 //   wards:     { 地名: 市区フル名 }                                    ← popup.js の LEARNED_WARD_MAP
 //   stations:  { 駅名: { ward, realpro_lines[], itandi_lines[], reins_line } } ← LEARNED_STATION_MAP
@@ -1161,6 +1175,9 @@ function findStationWard(areaText) {
 function resolveStation(rawInput) {
   const clean = rawInput.replace(/駅|周辺|付近|近く|沿線/g, "").trim();
   if (!clean) return null;
+  // ひらがな・略称エイリアス解決（例: "なんば" → "難波", "天六" → "天神橋筋六丁目"）
+  const _aliased = STATION_ALIASES[clean];
+  if (_aliased && (STATION_LINE_MAP[_aliased] || _LEARNED.stations[_aliased])) return _aliased;
   if (STATION_LINE_MAP[clean]) return clean;                                 // 完全一致（ハードコード）
   if (_LEARNED.stations[clean]) return clean;                               // 完全一致（学習済み）
   // 地域名ガード: 市・区・郡・市内などで終わるトークンは駅名のあいまい一致に回さない

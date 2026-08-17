@@ -7,6 +7,41 @@ const LEARNED_WARD_MAP    = {};  // 地名 → 市区
 const LEARNED_STATION_MAP = {};  // 駅名 → { ward, realpro_lines[], itandi_lines[], reins_line }
 const LEARNED_LINE_ORDER  = {};  // 路線名 → 駅配列（順序付き）- DBのline_stationsから起動時にロード
 
+// ── 駅名エイリアス（ひらがな・略称 → 正式駅名）──────────────────────────────
+// お客様が口語・ひらがな・略称で入力する場合に正式名に変換する。
+// resolveStation の先頭で参照される。
+const STATION_ALIASES = {
+  // ひらがな
+  "なんば":         "難波",
+  "うめだ":         "梅田",
+  "てんのうじ":     "天王寺",
+  "しんさいばし":   "心斎橋",
+  "ほんまち":       "本町",
+  "しんおおさか":   "新大阪",
+  "なかもず":       "中百舌鳥",
+  "なんばえき":     "難波",
+  "てんま":         "天満",
+  "ふくしま":       "福島",
+  "にしくじょう":   "西九条",
+  "もりのみや":     "森ノ宮",
+  "きたはまえき":   "北浜",
+  "きたはま":       "北浜",
+  "たにまち":       "谷町四丁目",
+  "ながほりばし":   "長堀橋",
+  "はなてん":       "放出",
+  "にしむこう":     "西向日",
+  // 略称
+  "天六":           "天神橋筋六丁目",
+  "てんろく":       "天神橋筋六丁目",
+  "天四":           "天神橋筋四丁目",
+  "天三":           "天神橋筋三丁目",
+  "天二":           "天神橋筋二丁目",
+  "谷四":           "谷町四丁目",
+  "谷六":           "谷町六丁目",
+  "谷九":           "谷町九丁目",
+  "今里筋":         "今里",
+};
+
 // DB由来の駅→路線マップ（/api/station-route-cache から取得・24時間ローカルキャッシュ）
 // null のあいだは getHubLines が既存の STATION_LINE_MAP / LEARNED_STATION_MAP にフォールバックする
 let _dbStationRouteMap = null;
@@ -270,7 +305,7 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
 const _resolveAreaCache = new Map(); // key: `${area}|${mode}`, value: { data, ts }
 const _RESOLVE_AREA_CACHE_MAX = 50;
 const _RESOLVE_AREA_CACHE_TTL = 10 * 60 * 1000; // 10分
-async function resolveAreaWithAPI(rawArea, areaMode) {
+async function resolveAreaWithAPI(rawArea, areaMode, customerId) {
   if (!rawArea) return null;
 
   // キャッシュ判定はガードより先。API結果で LEARNED_*_MAP が埋まると
@@ -345,6 +380,15 @@ async function resolveAreaWithAPI(rawArea, areaMode) {
       _resolveAreaCache.delete(_oldestKey);
     }
     _resolveAreaCache.set(_cacheKey, { data, ts: Date.now() });
+    // area_normalized をDBに書き戻し（fire-and-forget: ネットワーク失敗は無視）
+    if (customerId && data?.normalized_area) {
+      fetch(`${API_BASE}/api/property-customers`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: customerId, area_normalized: data.normalized_area }),
+      }).catch(() => {});
+      console.log("[AX] area_normalized 書き戻し:", data.normalized_area, "→ customer", customerId);
+    }
     return data;
   } catch (e) {
     console.warn("[AX] resolve-area 失敗:", e.message);
@@ -531,6 +575,9 @@ function findStationWard(areaText) {
 function resolveStation(rawInput) {
   const clean = rawInput.replace(/駅|周辺|付近|近く|沿線/g, "").trim();
   if (!clean) return null;
+  // ひらがな・略称エイリアス解決（例: "なんば" → "難波", "天六" → "天神橋筋六丁目"）
+  const _aliased = STATION_ALIASES[clean];
+  if (_aliased && (STATION_LINE_MAP[_aliased] || LEARNED_STATION_MAP[_aliased])) return _aliased;
   if (STATION_LINE_MAP[clean]) return clean;                                 // 完全一致（ハードコード）
   if (LEARNED_STATION_MAP[clean]) return clean;                             // 完全一致（学習済み）
   // 地域名ガード: 市・区・郡・市内などで終わるトークンは駅名のあいまい一致に回さない
@@ -2523,7 +2570,7 @@ function openInstructions(siteKey) {
       const rawArea = (adjArea || c.desired_area || c.area || "").trim();
 
       // 路線名・未登録地名をAPIで解決（itandi用途: 路線名→itandi路線名変換が必須）
-      const apiData = await resolveAreaWithAPI(rawArea, "auto");
+      const apiData = await resolveAreaWithAPI(rawArea, "auto", c.id);
       // resolve-area APIのレスポンスからstation_names/route_idsに加え、
       // suggested_walk_minutes が返ってきた場合はcustomerのwalk_minutesが未設定の場合のみフォールバックとして使用
       if (apiData?.suggested_walk_minutes && !c.walk_minutes) {
@@ -2904,7 +2951,7 @@ function openInstructions(siteKey) {
 
       // ① API呼び出しを先に実施（モード判定 + 補完データ取得を兼ねる）
       // キャッシュがあれば即返る。未知トークンがなければ null。
-      const apiData = await resolveAreaWithAPI(adjAreaClean, "auto");
+      const apiData = await resolveAreaWithAPI(adjAreaClean, "auto", adjC.id);
 
       // ② 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
       if (_areaModeSource === "auto" && apiData?.realpro) {
@@ -3226,7 +3273,7 @@ function openInstructions(siteKey) {
       // ボタン押下が絶対ルール: currentAreaMode で駅 or 地域を決定
       const rawArea = (adjC.desired_area || adjC.area || "").trim();
       // 路線名・未登録地名をAPIで解決（reins用途: 路線名→REINS路線名変換が必須）
-      const apiData = await resolveAreaWithAPI(rawArea, "auto");
+      const apiData = await resolveAreaWithAPI(rawArea, "auto", adjC.id);
 
       // 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
       if (_areaModeSource === "auto" && apiData?.realpro) {
