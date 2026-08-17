@@ -3417,7 +3417,8 @@ async function executeBulkSearch(site) {
     });
 
     if (i < ids.length - 1) {
-      await new Promise((r) => setTimeout(r, 1500));
+      const delay = 1000 + Math.floor(Math.random() * 1500); // 1000〜2500ms ランダム
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
 
