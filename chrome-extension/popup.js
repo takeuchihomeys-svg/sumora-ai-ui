@@ -1140,7 +1140,9 @@ function buildAreaRouteCodes(c, mode = "auto") {
       continue;
     }
     const neighWard = resolveWard(part);
-    if (neighWard && !STATION_LINE_MAP[part]) {
+    // LEARNED_STATION_MAPに収録済みの駅は地域ガードを通過させない（学習済み駅が地域扱いされるバグ修正）
+    const _isLearnedSt = LEARNED_STATION_MAP[part]?.realpro_lines?.length > 0;
+    if (neighWard && !STATION_LINE_MAP[part] && !_isLearnedSt) {
       if (WARD_CODE_MAP[neighWard] && !city_codes.includes(WARD_CODE_MAP[neighWard]))
         city_codes.push(WARD_CODE_MAP[neighWard]);
       continue;
@@ -2195,7 +2197,8 @@ function setupAreaModeSelector(c, siteKey) {
   const hasStationToken = toks.some(t => {
     if (WARD_CODE_MAP[t]) return false;
     const vs = [t, t.replace(/[町村]$/, ""), t.replace(_cpRe, ""), t.replace(_cpRe, "").replace(/[町村]$/, "")];
-    return vs.some(v => STATION_LINE_MAP[v]) ||
+    // STATION_LINE_MAP（ハードコード）+ LEARNED_STATION_MAP（学習済み・realpro_lines必須）を両方チェック
+    return vs.some(v => STATION_LINE_MAP[v] || (LEARNED_STATION_MAP[v]?.realpro_lines?.length > 0)) ||
       Object.values(REINS_LINE_MAP).some(v => v === t || v.endsWith(t));
   });
   const hasResolvableRoute = toks.some(t => t.endsWith("線") && lineNameToRouteId(t));
@@ -2918,6 +2921,25 @@ function openInstructions(siteKey) {
           currentAreaMode = "ward";
           document.getElementById("btn-mode-ward")?.classList.add("active");
           document.getElementById("btn-mode-station")?.classList.remove("active");
+          renderInstrSteps("realpro", adjC);
+        }
+      }
+
+      // ③-pre ローカル補正: APIが不要（学習済み駅はneedApi=false→API null返却）でも
+      //   LEARNED_STATION_MAPにrealpro_linesがある駅は駅モードへ自動切替
+      //   ※ 同ロジックがitandiハンドラ(2546)にも存在。リアプロ側は2926以前に置くこと
+      if (_areaModeSource === "auto" && currentAreaMode !== "station") {
+        const _localToks = parseAreaTokens(adjAreaClean);
+        const _hasKnownStation = _localToks.some(t => {
+          const s = t.replace(/[町村]$/, "");
+          return !!(STATION_LINE_MAP[t] || STATION_LINE_MAP[s] ||
+                    LEARNED_STATION_MAP[t]?.realpro_lines?.length > 0);
+        });
+        if (_hasKnownStation) {
+          console.log("[AX] autofill(realpro): ローカル補正 ward→station(LEARNED)");
+          currentAreaMode = "station";
+          document.getElementById("btn-mode-station")?.classList.add("active");
+          document.getElementById("btn-mode-ward")?.classList.remove("active");
           renderInstrSteps("realpro", adjC);
         }
       }

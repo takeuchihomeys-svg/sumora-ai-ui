@@ -1357,7 +1357,9 @@ function buildAreaRouteCodes(c, mode, collect) {
       continue;
     }
     const neighWard = resolveWard(part);
-    if (neighWard && !STATION_LINE_MAP[part]) {
+    // LEARNED_STATION_MAPに収録済みの駅は地域ガードを通過させない（学習済み駅が地域扱いされるバグ修正）
+    const _isLearnedStation = _LEARNED.stations[part]?.realpro_lines?.length > 0;
+    if (neighWard && !STATION_LINE_MAP[part] && !_isLearnedStation) {
       if (WARD_CODE_MAP[neighWard] && !city_codes.includes(WARD_CODE_MAP[neighWard]))
         city_codes.push(WARD_CODE_MAP[neighWard]);
       if (WARD_CODE_MAP[neighWard]) { addWardName(neighWard); noteDetailArea(part); }
