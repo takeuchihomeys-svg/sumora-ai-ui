@@ -189,15 +189,34 @@
       score += 10;
     }
 
-    return Math.min(100, score);
+    // ── AD（広告料）ボーナス (+最大10点) ────────────────────────
+    // AD2（200%以上）: エージェント報酬大 → +10点
+    // AD1（100%）: 報酬あり → +5点
+    var adM = t.match(/\bAD\s*([0-9]+)\s*%/i);
+    if (adM) {
+      var adPct = parseInt(adM[1]);
+      if (adPct >= 200) score += 10;
+      else if (adPct >= 100) score += 5;
+    }
+
+    // ── 敷金礼金ボーナス (+最大5点) ──────────────────────────────
+    // 両方0/なし: 入居者の初期費用大幅削減 → +5点
+    // 礼金のみ0/なし: 礼金なしで好条件 → +2点
+    var shikiZero = /敷[金]?\s*(?:なし|0\s*万?|0\.0\s*万?)/.test(t);
+    var reiZero   = /礼[金]?\s*(?:なし|0\s*万?|0\.0\s*万?)/.test(t);
+    if (shikiZero && reiZero) score += 5;
+    else if (reiZero) score += 2;
+
+    return score; // 100点超えあり（AD+礼金ボーナスで最大115点）
   }
 
   // ── スコアに対応する色とラベル ───────────────────────────────
   function scoreStyle(s) {
-    if (s >= 85) return { bg: "#2e7d32", label: "◎" }; // 緑: 85点以上
-    if (s >= 70) return { bg: "#1565c0", label: "○" }; // 青: 70点以上
-    if (s >= 55) return { bg: "#e65100", label: "△" }; // 橙: 55点以上
-    return       { bg: "#b71c1c", label: "×" };         // 赤: 55点未満
+    if (s >= 105) return { bg: "#6a1b9a", label: "★" }; // 紫: 105点超（AD+敷礼0 超おすすめ）
+    if (s >= 85)  return { bg: "#2e7d32", label: "◎" }; // 緑: 85点以上
+    if (s >= 70)  return { bg: "#1565c0", label: "○" }; // 青: 70点以上
+    if (s >= 55)  return { bg: "#e65100", label: "△" }; // 橙: 55点以上
+    return        { bg: "#b71c1c", label: "×" };         // 赤: 55点未満
   }
 
   // ── バッジを物件カードに注入 ─────────────────────────────────
@@ -219,7 +238,7 @@
       "position:relative;z-index:10;flex-shrink:0;",
     ].join("");
     badge.textContent = st.label + " " + score + "点";
-    badge.title = "条件マッチ度: " + score + "/100点\n(家賃30 + 徒歩25 + 間取20 + 築年15 + 広さ10)";
+    badge.title = "おすすめ度: " + score + "点\n(家賃30 + 徒歩25 + 間取20 + 築年15 + 広さ10)\n(AD2=+10, AD1=+5, 敷礼金0=+5, 礼金0=+2)";
 
     if (el.firstChild) {
       el.insertBefore(badge, el.firstChild);
