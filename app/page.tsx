@@ -7627,6 +7627,32 @@ export default function Home() {
                 </div>
               );
 
+              // P3.7: 顧客が「初期費用を知りたい」等と発言 → AIX 見積書を送って答える
+              if (guideToEstimate && !dismissedEstimateSheetIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-500 bg-orange-50 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-bold text-orange-800 flex-1">
+                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                      初期費用を聞かれています → AIX 見積書で答えよう！
+                    </span>
+                    <button onClick={() => {
+                      setDismissedEstimateSheetIds((prev) => new Set([...prev, id]));
+                      setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
+                      const convName = selectedConversation.customerName;
+                      if (!(activeTasks[id] ?? []).some((t: {task_type: string}) => t.task_type === "estimate_sheet")) {
+                        fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ conversation_id: id, task_type: "estimate_sheet", customer_name: convName, status: "pending" }) }).catch(() => {});
+                      }
+                      setShowTemplateModal(true);
+                    }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: "linear-gradient(135deg, #E65100, #F57C00)" }}>AIX 見積書</button>
+                    <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
+                      className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
+                  </div>
+                </div>
+              );
+
               // P4.5: AIX-METAが estimate_sheet を指示 → 割引見積で差別化！
               if (
                 selectedConversation.suggestedAixMeta?.action === "estimate_sheet" &&
