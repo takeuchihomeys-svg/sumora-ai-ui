@@ -2708,6 +2708,15 @@ export default function AixModal({
           setLoading(false);
           onClose();
           return;
+        } else if (actionType === "zenryoku_support" && zenryokuImages.length > 0) {
+          // 全力サポート: 画像を先に1枚ずつ送信 → 生成テキストを後送り
+          for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < zenryokuImages.length; imgIdx++) {
+            const url = await uploadImageCached(zenryokuImages[imgIdx], imgIdx);
+            await sendAsAix("", url);
+            sentImageIndexRef.current = imgIdx;
+          }
+          await sendAsAix(preview);
+          sentImageIndexRef.current = -1;
         } else {
           await sendAsAix(preview, uploadedImageUrl);
           // 申込催促系：2通目を1分後に送信
