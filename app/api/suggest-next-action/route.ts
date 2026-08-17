@@ -504,6 +504,29 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // ---- 家賃が高い懸念の検知（物件オススメ誘導）----
+  // お客様が「家賃が高い」「少し高い」等、予算超過を示すメッセージを送ってきた場合、
+  // 予算内の別物件を探してオススメするよう誘導する。
+  // ※ MGMT_CONFIRM_RE の「家賃交渉/下げ」とは別パターン（あちらは管理会社への交渉打診）
+  const _yachinHighPattern = /家賃.*(高い|高め|少し高|ちょっと高|高くな)|高い.*家賃/.test(lastCustomerMsg);
+  if (
+    _yachinHighPattern &&
+    conv.last_sender === "customer" &&
+    ["proposing", "property_sent"].includes(currentStatus) &&
+    !shouldSuppressAction("property_recommendation") &&
+    !isLowSourceRate("property_recommendation", "pattern_yachin_high")
+  ) {
+    return NextResponse.json({
+      action: "property_recommendation",
+      reason: "お客様が家賃の高さを懸念しています。予算内の別物件を探してオススメしましょう。",
+      source: "pattern_yachin_high",
+      params: buildParams("property_recommendation"),
+      acceptanceRate: acceptanceRateMap["property_recommendation"] ?? null,
+      sub_mode_stats: subModeStats,
+      ...templateRec("property_recommendation"),
+    });
+  }
+
   // ---- AIXチェーンルール: 直前のAIXアクションから次を提案 ----
   // ※ staff early return より前に置くことで送信直後にも発火する（Fable5 S-1修正）
   if (last_aix_action && !hasExplicitCustomerIntent) {

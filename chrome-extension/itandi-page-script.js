@@ -439,114 +439,95 @@
       }
       _poll();
     }
+    // 駅ラベル検索（路線名への誤ヒット防止のため完全一致優先）
+    // エイリアス全候補を試す（難波↔なんば 等の表記ゆれ対応）
+    function tryClickStation(name) {
+      var aliases = getStationAliases(name);
+      for (var ai = 0; ai < aliases.length; ai++) {
+        var n = norm(aliases[ai]);
+        var lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
+          return norm(l.textContent.trim()) === n;
+        });
+        if (!lbl) {
+          lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
+            var inp = l.querySelector("input[type='checkbox']");
+            var txt = l.textContent.trim();
+            var nt = norm(txt), nn = norm(n);
+            return inp && nt.length <= 8 && nt.includes(nn) && (nt.length - nn.length) <= 1;
+          });
+        }
+        if (lbl) {
+          try { lbl.scrollIntoView({ behavior: "instant", block: "nearest" }); } catch (e) {}
+          var inp = lbl.querySelector("input[type='checkbox']");
+          if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
+          if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
+          console.log("[AX] 駅クリック: " + name + (aliases[ai] !== name ? " (alias→" + aliases[ai] + ")" : ""));
+          return true;
+        }
+      }
+      return false;
+    }
+
     function startClickLines(dlg) {
       var lineIdx = 0;
       var anyLineClicked = false;
+      // ★ 修正: itandi BBは路線ごとに駅リストを切り替えるため、
+      // 全路線クリック後まとめて選択しても最後の路線の駅しか選択できないバグを修正。
+      // 路線ごとにクリック→1500ms待機→その路線の駅を選択 の順に処理する。
+      var _selectedSt = new Set(); // 選択完了した駅の正規化名（重複クリック防止）
       function clickNextLine() {
         if (lineIdx >= lineNames.length) {
           if (!anyLineClicked) {
             console.warn("[AX] selectItandiLines: 路線が1本も選択できなかった → 中断");
             _abort(); return;
           }
-          // 全路線完了 → 駅リスト描画待ち（JR複数路線対応で2500msに延長）
+          // 全路線・駅の選択完了 → 確定
+          var _missing = stNames.filter(function(s) { return !_selectedSt.has(norm(s)); });
+          if (_missing.length) console.log("[AX] 選択できなかった駅: " + _missing.join(", "));
           setTimeout(function () {
-            // 連続検索での残留チェック解除（今回の対象外駅をデセレクト）
-            // エイリアス考慮: 難波↔なんば など表記違いでも同一駅なら残す
-            var _dialog = document.querySelector('[role="dialog"]');
-            if (_dialog) {
-              [].slice.call(_dialog.querySelectorAll('input[type="checkbox"]:checked')).forEach(function(inp) {
-                var _lbl = inp.closest ? inp.closest('label') : null;
-                var _lblText = (_lbl ? _lbl.textContent.trim() : "");
-                if (!isTargetStation(_lblText, stNames)) {
-                  inp.click();
-                }
-              });
-            }
-            if (stNames.length) {
-              var stIdx = 0;
-              function clickNextStation() {
-                if (stIdx >= stNames.length) {
-                  setTimeout(function () {
-                    clickBtn("確定");
-                    setTimeout(onDone, 1500);
-                  }, 600 + Math.floor(Math.random() * 300));
-                  return;
-                }
-                var stName = stNames[stIdx];
-                stIdx++;
-
-                // 駅ラベル検索（路線名への誤ヒット防止のため完全一致優先）
-                // エイリアス全候補を試す（難波↔なんば 等の表記ゆれ対応）
-                function tryClickStation(name) {
-                  var aliases = getStationAliases(name);
-                  for (var ai = 0; ai < aliases.length; ai++) {
-                    var n = norm(aliases[ai]);
-                    var lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
-                      return norm(l.textContent.trim()) === n;
-                    });
-                    if (!lbl) {
-                      lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
-                        var inp = l.querySelector("input[type='checkbox']");
-                        var txt = l.textContent.trim();
-                        var nt = norm(txt), nn = norm(n);
-                        return inp && nt.length <= 8 && nt.includes(nn) && (nt.length - nn.length) <= 1;
-                      });
-                    }
-                    if (lbl) {
-                      try { lbl.scrollIntoView({ behavior: "instant", block: "nearest" }); } catch (e) {}
-                      var inp = lbl.querySelector("input[type='checkbox']");
-                      if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
-                      if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
-                      console.log("[AX] 駅クリック: " + name + (aliases[ai] !== name ? " (alias→" + aliases[ai] + ")" : ""));
-                      return true;
-                    }
-                  }
-                  return false;
-                }
-
-                var found = tryClickStation(stName);
-                if (!found) {
-                  // 診断: ダイアログ内の全checkbox付きlabelを出力（本町等が見つからない原因調査用）
-                  var _diagDlg = document.querySelector('[role="dialog"]') || document;
-                  var _diagLbls = [].slice.call(_diagDlg.querySelectorAll("label")).filter(function(l) { return l.querySelector("input[type='checkbox']"); });
-                  console.log("[AX] 駅未発見: " + stName + " | dialog label数=" + _diagLbls.length + " | サンプル:", _diagLbls.slice(0, 8).map(function(l) { return '"' + l.textContent.replace(/\s+/g, '').slice(0, 20) + '"'; }).join(', '));
-                }
-                if (!found && stName.startsWith("JR")) {
-                  console.log("[AX] 駅未発見(JR駅): " + stName + " → JR沿線フォールバック開始");
-                  var jrLabels = [].slice.call(document.querySelectorAll("label")).filter(function (l) {
-                    var inp = l.querySelector("input[type='checkbox']");
-                    return inp && !inp.checked && norm(l.textContent).includes("JR") && isVis(l);
-                  });
-                  var addedLines = [];
-                  jrLabels.forEach(function (l) {
-                    l.click();
-                    addedLines.push(l.textContent.trim().slice(0, 40));
-                  });
-                  if (addedLines.length) {
-                    console.log("[AX] JR路線を追加: " + addedLines.join(" / "));
-                    setTimeout(function () {
-                      if (!tryClickStation(stName)) console.log("[AX] JRフォールバック後も駅未発見: " + stName);
-                      setTimeout(clickNextStation, 500 + Math.floor(Math.random() * 400));
-                    }, 1500);
-                  } else {
-                    console.log("[AX] 追加できるJR路線なし。駅をスキップ: " + stName);
-                    setTimeout(clickNextStation, 500 + Math.floor(Math.random() * 400));
-                  }
-                } else {
-                  setTimeout(clickNextStation, 500 + Math.floor(Math.random() * 400));
-                }
-              }
-              clickNextStation();
-            } else {
-              clickBtn("確定");
-              setTimeout(onDone, 1500);
-            }
-          }, 2500);
+            clickBtn("確定");
+            setTimeout(onDone, 1500);
+          }, 600 + Math.floor(Math.random() * 300));
           return;
         }
-        if (clickLabel(lineNames[lineIdx], dlg)) anyLineClicked = true;
+        var clicked = clickLabel(lineNames[lineIdx], dlg);
+        if (clicked) anyLineClicked = true;
         lineIdx++;
-        setTimeout(clickNextLine, 600 + Math.floor(Math.random() * 400));
+
+        if (!stNames.length) {
+          // 駅指定なし → 路線だけ選択して次へ
+          setTimeout(clickNextLine, 600 + Math.floor(Math.random() * 400));
+          return;
+        }
+
+        // 路線クリック後、人間らしいランダム待機（900〜2200ms）してから駅を選択
+        setTimeout(function() {
+          // この路線で表示されているターゲット駅をクリック
+          stNames.forEach(function(sn) {
+            if (!_selectedSt.has(norm(sn))) {
+              if (tryClickStation(sn)) {
+                _selectedSt.add(norm(sn));
+              } else {
+                var _diagDlg = document.querySelector('[role="dialog"]') || document;
+                var _diagLbls = [].slice.call(_diagDlg.querySelectorAll("label")).filter(function(l) { return l.querySelector("input[type='checkbox']"); });
+                console.log("[AX] 駅未発見: " + sn + " | route=" + lineNames[lineIdx-1] + " | label数=" + _diagLbls.length + " | サンプル:", _diagLbls.slice(0,6).map(function(l){return '"'+l.textContent.replace(/\s+/g,'').slice(0,20)+'"';}).join(', '));
+              }
+            }
+          });
+          // JR駅のフォールバック（JR路線の追加選択）
+          stNames.forEach(function(sn) {
+            if (!_selectedSt.has(norm(sn)) && sn.startsWith("JR")) {
+              console.log("[AX] 駅未発見(JR駅): " + sn + " → JR沿線フォールバック試行");
+              var jrLabels = [].slice.call(document.querySelectorAll("label")).filter(function (l) {
+                var inp = l.querySelector("input[type='checkbox']");
+                return inp && !inp.checked && norm(l.textContent).includes("JR") && isVis(l);
+              });
+              jrLabels.forEach(function (l) { l.click(); });
+              if (jrLabels.length && tryClickStation(sn)) { _selectedSt.add(norm(sn)); }
+            }
+          });
+          setTimeout(clickNextLine, 500 + Math.floor(Math.random() * 700));
+        }, 900 + Math.floor(Math.random() * 1300));
       }
       clickNextLine();
     }

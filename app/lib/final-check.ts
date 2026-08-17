@@ -521,8 +521,8 @@ export async function runGroundedRevision(
 // 上限を増やす場合は時間予算(10s)を必ず再計算すること。
 export const MAX_CHECK_ITERATIONS = 2; // check1 + (接地修正 + check2) = 計2チェック上限
 
-const REVISION_MS = 3500;   // 修正Haikuのタイムアウト（据え置き）
-const RECHECK_MS = 5000;    // バジェットガード用推定値（3パス並列の実際の完了時間に合わせて短縮。callHaikuタイムアウト自体は8000msのまま）
+const REVISION_MS = 6000;   // 修正Haikuのタイムアウト（延長: 3500→6000ms）
+const RECHECK_MS = 8000;    // バジェットガード用推定値（延長: 5000→8000ms）
 
 // AIX_BOUNDARY_PROMISE 衝突対策（決定的・約0ms）:
 // 修正プロンプト絶対ルール5の定型句「確認して改めてご連絡いたします」等が修正で新規挿入されると、
@@ -549,7 +549,7 @@ export interface RevisionLoopResult {
 export async function runFinalCheckWithRevision(
   draft: string,
   ctx: FinalCheckContext,
-  budgetMs = 22000,
+  budgetMs = 30000,
 ): Promise<RevisionLoopResult> {
   const started = Date.now();
   let checkIterations = 0;
