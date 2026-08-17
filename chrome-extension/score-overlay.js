@@ -114,12 +114,14 @@
     var score = 0;
     var t = text.replace(/\s+/g, " ");
 
+    // 家賃を先にパース（初期費用計算でも再利用）
+    var rentMatch = t.match(/([0-9]+(?:\.[0-9]+)?)\s*万/);
+    var rent = rentMatch ? parseFloat(rentMatch[1]) * 10000 : 0;
+
     // ── 家賃チェック (30点・割合採点) ─────────────────────────
     // 上限に対する割合でグラデーション → ADの価値が2000円差より大きくなるよう設計
     if (c.rent_max) {
-      var m = t.match(/([0-9]+(?:\.[0-9]+)?)\s*万/);
-      if (m) {
-        var rent = parseFloat(m[1]) * 10000;
+      if (rent) {
         var ratio = rent / c.rent_max;
         if      (ratio <= 0.85) score += 30; // 15%以上余裕 → 満点
         else if (ratio <= 0.90) score += 28; // 10〜15%余裕
@@ -141,7 +143,7 @@
       if (m2) {
         var walk = parseInt(m2[1]);
         if (walk <= c.walk_minutes) score += 25;
-        else if (walk <= c.walk_minutes + 3) score += 12; // 3分以内オーバーは半点
+        else if (walk <= c.walk_minutes + 3) score += 12;
       } else {
         score += 12; // 徒歩情報なし → 中間点
       }
@@ -154,7 +156,6 @@
       if (t.includes(c.floor_plan)) {
         score += 20;
       } else {
-        // 部屋数だけ合えば半点（「2LDK+S」vs「2LDK」など）
         var fpNum = (c.floor_plan.match(/^([0-9]+)/) || [])[1];
         var tFpMatch = t.match(/([0-9]+)[LDKS]+/i);
         if (fpNum && tFpMatch && fpNum === tFpMatch[1]) score += 10;
@@ -164,7 +165,8 @@
       score += 20;
     }
 
-    // ── 築年数チェック (15点) ─────────────────────────────────
+    // ── 築年数チェック (15点・割合採点) ─────────────────────────
+    // 希望内なら新しい方が少し高い。スプレッド3点のみ → ADが築年数差を上回る
     if (c.building_age) {
       if (t.includes("新築")) {
         score += 15;
@@ -172,8 +174,12 @@
         var m3 = t.match(/築([0-9]+)年/);
         if (m3) {
           var age = parseInt(m3[1]);
-          if (age <= c.building_age) score += 15;
-          else if (age <= c.building_age + 5) score += 7;
+          if      (age <= 3)                     score += 15; // 3年以内 → 満点
+          else if (age <= c.building_age * 0.50) score += 14; // 上限の半分以下
+          else if (age <= c.building_age * 0.75) score += 13; // 上限の3/4以下
+          else if (age <= c.building_age)        score += 12; // 上限ぴったり
+          else if (age <= c.building_age + 3)    score +=  6; // 3年オーバー
+          // 3年超オーバー → 0点（加点なし）
         } else {
           score += 8; // 築年数情報なし → 中間点
         }
@@ -197,27 +203,51 @@
     }
 
     // ── AD（広告料）ボーナス (+最大15点) ────────────────────────
-    // AD高い = 報酬増 + 初期費用割引原資 → 家賃2000円差より優先
-    // リアプロ: "1.5ヶ月" / REINS: "AD100%" 両形式に対応
+    // AD高い = 報酬増 + 初期費用割引原資 → 家賃差・築年数差より優先
     var adPct = -1;
     var adMo = t.match(/\bAD\s*([0-9]+(?:\.[0-9]+)?)\s*(?:ヶ月|ヵ月|カ月|か月|ケ月)/i);
     var adPctM = t.match(/\bAD\s*([0-9]+(?:\.[0-9]+)?)\s*%/i);
-    if (adMo)   adPct = parseFloat(adMo[1]) * 100;   // 1ヶ月=100%, 2ヶ月=200%
+    if (adMo)   adPct = parseFloat(adMo[1]) * 100;
     else if (adPctM) adPct = parseFloat(adPctM[1]);
-    if      (adPct >= 200) score += 15;  // AD2ヶ月以上: +15点
-    else if (adPct >= 150) score += 12;  // AD1.5ヶ月:   +12点
-    else if (adPct >= 100) score += 10;  // AD1ヶ月:     +10点
-    else if (adPct >=  50) score +=  5;  // AD0.5ヶ月:   +5点
+    if      (adPct >= 200) score += 15;
+    else if (adPct >= 150) score += 12;
+    else if (adPct >= 100) score += 10;
+    else if (adPct >=  50) score +=  5;
 
-    // ── 敷金礼金ボーナス (+最大5点) ──────────────────────────────
-    // 両方0/なし: 入居者の初期費用大幅削減 → +5点
-    // 礼金のみ0/なし: 礼金なしで好条件 → +2点
-    var shikiZero = /敷[金]?\s*(?:なし|0\s*万?|0\.0\s*万?)/.test(t);
-    var reiZero   = /礼[金]?\s*(?:なし|0\s*万?|0\.0\s*万?)/.test(t);
-    if (shikiZero && reiZero) score += 5;
-    else if (reiZero) score += 2;
+    // ── 敷金礼金・初期費用チェック ───────────────────────────────
+    // 礼金月数をパース
+    var mReiMo   = t.match(/礼[金]?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:ヶ月|ヵ月|カ月|か月|ケ月)/);
+    var reiZeroT = /礼[金]?\s*(?:なし|0\s*万?|0\.0\s*万?)/.test(t);
+    var reiMonths = mReiMo ? parseFloat(mReiMo[1]) : (reiZeroT ? 0 : null);
+    // 敷金月数をパース
+    var mShikiMo   = t.match(/敷[金]?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:ヶ月|ヵ月|カ月|か月|ケ月)/);
+    var shikiZeroT = /敷[金]?\s*(?:なし|0\s*万?|0\.0\s*万?)/.test(t);
+    var shikiMonths = mShikiMo ? parseFloat(mShikiMo[1]) : (shikiZeroT ? 0 : null);
 
-    return score; // 100点超えあり（AD+礼金ボーナスで最大115点）
+    var shikiZero = shikiMonths === 0;
+    var reiZero   = reiMonths === 0;
+
+    // 敷礼ゼロボーナス（prefer_no_shikirei = 初期費用抑えたいお客さんはより高点）
+    if (c.prefer_no_shikirei) {
+      if (shikiZero && reiZero) score += 10; // 敷礼両方0 → +10点
+      else if (reiZero)         score +=  4; // 礼金のみ0 → +4点
+    } else {
+      if (shikiZero && reiZero) score +=  5; // 敷礼両方0 → +5点
+      else if (reiZero)         score +=  2; // 礼金のみ0 → +2点
+    }
+
+    // 初期費用オーバーペナルティ（initial_cost_limit がある場合）
+    // 概算: 家賃×(敷金+礼金+仲介手数料1)+固定費3万 が上限超えたらマイナス
+    if (c.initial_cost_limit && rent) {
+      var ri = reiMonths !== null ? reiMonths : 1;     // 不明→1ヶ月と仮定
+      var si = shikiMonths !== null ? shikiMonths : 1;  // 不明→1ヶ月と仮定
+      var estimatedInitial = rent * (si + ri + 1.0) + 30000;
+      if (estimatedInitial > c.initial_cost_limit) {
+        score -= 15; // 初期費用オーバー → 大幅ペナルティ
+      }
+    }
+
+    return score;
   }
 
   // ── スコアに対応する色とラベル ───────────────────────────────
@@ -248,7 +278,7 @@
       "position:relative;z-index:10;flex-shrink:0;",
     ].join("");
     badge.textContent = st.label + " " + score + "点";
-    badge.title = "おすすめ度: " + score + "点\n(家賃30 + 徒歩25 + 間取20 + 築年15 + 広さ10)\n(AD2ヶ月+=15, AD1.5+=12, AD1ヶ月+=10, AD0.5+=5)\n(敷礼金0=+5, 礼金0=+2)";
+    badge.title = "おすすめ度: " + score + "点\n(家賃30 + 徒歩25 + 間取20 + 築年15 + 広さ10)\n(AD2ヶ月+=15, AD1.5+=12, AD1ヶ月+=10, AD0.5+=5)\n(敷礼0=+10/+5, 礼金0=+4/+2)\n(初期費用オーバー=-15)";
 
     if (el.firstChild) {
       el.insertBefore(badge, el.firstChild);
