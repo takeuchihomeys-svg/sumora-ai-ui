@@ -611,6 +611,9 @@ export default function AixModal({
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
+  // 全力サポート専用: 複数画像
+  const [zenryokuImages, setZenryokuImages] = useState<File[]>([]);
+  const [zenryokuImagePreviews, setZenryokuImagePreviews] = useState<string[]>([]);
   // 物件オススメ専用: 新着フラグ（ピッカーから新着1件が選ばれた場合は初期ON）
   const [isNewArrival, setIsNewArrival] = useState(initialIsNewArrival ?? false);
   // 物件オススメ専用: お客さんの条件スクショ
@@ -995,6 +998,8 @@ export default function AixModal({
     setMgmtParkingVacancy(null);
     setMgmtPetPolicy(null);
     setMgmtPetCondition("");
+    setZenryokuImages([]);
+    setZenryokuImagePreviews([]);
   }, [actionType, conversationId]);
 
   // condition_hearing: フォーム本体をマウント時にクライアント側で即組み立て
@@ -1929,7 +1934,11 @@ export default function AixModal({
         if (!zenryokuArea.trim()) throw new Error("探しているエリアを入力してください");
         body.zenryoku_area = zenryokuArea.trim();
         if (zenryokuMemo.trim()) body.zenryoku_memo = zenryokuMemo.trim();
-        if (imageFile) body.image_url = await uploadImageCached(imageFile);
+        if (zenryokuImages.length === 1) {
+          body.image_url = await uploadImageCached(zenryokuImages[0]);
+        } else if (zenryokuImages.length > 1) {
+          body.image_urls = await Promise.all(zenryokuImages.map((f, i) => uploadImageCached(f, i)));
+        }
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImageCached(imageFile);
@@ -5415,33 +5424,45 @@ export default function AixModal({
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-[#54656f]">
-                  画像添付 <span className="ml-1 font-normal text-[#90a4ae]">（任意・参考資料）</span>
+                  画像添付 <span className="ml-1 font-normal text-[#90a4ae]">（任意・複数可）</span>
                 </label>
-                {imagePreview ? (
-                  <div className="relative mb-2 overflow-hidden rounded-2xl border border-[#d1d7db]">
-                    <img src={imagePreview} alt="添付画像" className="max-h-40 w-full object-contain" />
-                    <button
-                      onClick={() => { setImageFile(null); setImagePreview(""); if (zenryokuImageInputRef.current) zenryokuImageInputRef.current.value = ""; }}
-                      className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
-                    >削除</button>
+                {zenryokuImagePreviews.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    {zenryokuImagePreviews.map((prev, idx) => (
+                      <div key={idx} className="relative h-20 w-20 overflow-hidden rounded-xl border border-[#d1d7db] shrink-0">
+                        <img src={prev} alt={`添付${idx + 1}`} className="h-full w-full object-cover" />
+                        <button
+                          onClick={() => {
+                            setZenryokuImages(imgs => imgs.filter((_, i) => i !== idx));
+                            setZenryokuImagePreviews(prevs => prevs.filter((_, i) => i !== idx));
+                          }}
+                          className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] text-white leading-none"
+                        >✕</button>
+                      </div>
+                    ))}
                   </div>
-                ) : (
-                  <button
-                    onClick={() => zenryokuImageInputRef.current?.click()}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#90a4ae] py-2 text-xs font-semibold text-[#546e7a] hover:bg-gray-50"
-                  >📎 画像を追加する（スキップ可）</button>
                 )}
+                <button
+                  onClick={() => zenryokuImageInputRef.current?.click()}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#90a4ae] py-2 text-xs font-semibold text-[#546e7a] hover:bg-gray-50"
+                >
+                  📎 {zenryokuImagePreviews.length > 0 ? `画像を追加（現在${zenryokuImagePreviews.length}枚）` : "画像を追加する（スキップ可）"}
+                </button>
                 <input
                   ref={zenryokuImageInputRef}
                   type="file"
                   accept="image/*"
+                  multiple
                   onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    setImageFile(f);
-                    const r = new FileReader();
-                    r.onload = () => setImagePreview(String(r.result ?? ""));
-                    r.readAsDataURL(f);
+                    const files = Array.from(e.target.files ?? []);
+                    if (!files.length) return;
+                    files.forEach(f => {
+                      setZenryokuImages(prev => [...prev, f]);
+                      const reader = new FileReader();
+                      reader.onload = () => setZenryokuImagePreviews(prev => [...prev, String(reader.result ?? "")]);
+                      reader.readAsDataURL(f);
+                    });
+                    if (zenryokuImageInputRef.current) zenryokuImageInputRef.current.value = "";
                   }}
                   className="hidden"
                 />
@@ -6181,7 +6202,8 @@ export default function AixModal({
               actionType === "meeting_place" ||
               actionType === "condition_hearing" ||
               actionType === "acknowledge_check" ||
-              actionType === "followup_revive"
+              actionType === "followup_revive" ||
+              actionType === "zenryoku_support"
             ) ? (
               <div className="flex flex-col gap-2 w-full">
                 {actionType === "condition_hearing" && (
