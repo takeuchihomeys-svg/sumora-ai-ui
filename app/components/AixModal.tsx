@@ -622,7 +622,7 @@ export default function AixModal({
   // 物件オススメ専用: 特に強調するポイント（複数選択可）。テンプレートモーダルから引き継ぐ場合は initialFocusPoints で渡す
   const [recommendFocusPoints, setRecommendFocusPoints] = useState<string[]>(initialFocusPoints ?? []);
   const [recSimpleMode, setRecSimpleMode] = useState(false);
-  const [ackCheckPreset, setAckCheckPreset] = useState<"daihyo_initial_cost" | null>(null);
+  const [ackCheckPreset, setAckCheckPreset] = useState<"daihyo_initial_cost" | "kanri_boshu" | null>(null);
   const [loading, setLoading] = useState(false);
   type GenPhase = "idle" | "uploading" | "prepare" | "generating" | "finalizing";
   const [genPhase, setGenPhase] = useState<GenPhase>("idle");
@@ -5905,6 +5905,27 @@ export default function AixModal({
                 }`}
               >
                 {ackCheckPreset === "daihyo_initial_cost" ? "✓ " : ""}代表確認（初期費用）
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const isSelected = ackCheckPreset === "kanri_boshu";
+                  if (isSelected) {
+                    setAckCheckPreset(null);
+                    setInputText("");
+                  } else {
+                    setAckCheckPreset("kanri_boshu");
+                    setInputText("ただいま管理会社に募集状況を確認しておりますので、確認でき次第ご連絡させて頂きます！！");
+                  }
+                  setPreview("");
+                }}
+                className={`ml-2 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors ${
+                  ackCheckPreset === "kanri_boshu"
+                    ? "border-[#607D8B] bg-[#607D8B] text-white"
+                    : "border-[#d1d7db] bg-white text-[#667781]"
+                }`}
+              >
+                {ackCheckPreset === "kanri_boshu" ? "✓ " : ""}管理会社（募集状況）
               </button>
             </div>
           )}
