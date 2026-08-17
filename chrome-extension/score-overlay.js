@@ -114,13 +114,20 @@
     var score = 0;
     var t = text.replace(/\s+/g, " ");
 
-    // ── 家賃チェック (30点) ──────────────────────────────────
+    // ── 家賃チェック (30点・割合採点) ─────────────────────────
+    // 上限に対する割合でグラデーション → ADの価値が2000円差より大きくなるよう設計
     if (c.rent_max) {
       var m = t.match(/([0-9]+(?:\.[0-9]+)?)\s*万/);
       if (m) {
         var rent = parseFloat(m[1]) * 10000;
-        if (rent <= c.rent_max) score += 30;
-        else if (rent <= c.rent_max * 1.08) score += 15; // 8%以内オーバーは半点
+        var ratio = rent / c.rent_max;
+        if      (ratio <= 0.85) score += 30; // 15%以上余裕 → 満点
+        else if (ratio <= 0.90) score += 28; // 10〜15%余裕
+        else if (ratio <= 0.95) score += 26; // 5〜10%余裕
+        else if (ratio <= 1.00) score += 24; // 上限ぴったり〜5%余裕
+        else if (ratio <= 1.05) score += 15; // 5%以内オーバー → 半点
+        else if (ratio <= 1.10) score += 7;  // 10%以内オーバー → 低点
+        // 10%超オーバー → 0点（加点なし）
       } else {
         score += 15; // 家賃情報なし → 中間点
       }
