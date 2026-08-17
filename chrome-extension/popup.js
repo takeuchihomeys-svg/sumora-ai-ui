@@ -1770,6 +1770,7 @@ let _areaModeSource = "auto"; // "auto"=静的/API自動判定, "user"=手動ク
 let currentAccount = ""; // "" = すべて / "sumora" / "ieyasu" / "giga" / "hasu"
 let linkedOnly = true;   // 紐付け済みのみ表示（デフォルトON・初期表示を軽くする）
 let todayOnly  = false;  // 今日対応のみ表示
+const selectedCustomerIds = new Set(); // 一括検索: チェック中の顧客IDセット（文字列）
 
 // アプリの「要対応」と同じ基準: linked_conversation.is_flagged === true かつ申込後ステータス除外
 var _POST_APPLY_STATUSES = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
@@ -1938,6 +1939,20 @@ function renderList(customers) {
       if (c) openSiteView(c);
     });
   });
+
+  // 一括検索チェックボックス — stopPropagation で行クリックと分離
+  list.querySelectorAll(".bulk-check-wrap").forEach((wrap) => {
+    wrap.addEventListener("click", (e) => e.stopPropagation());
+  });
+  list.querySelectorAll(".bulk-check").forEach((cb) => {
+    const id = cb.dataset.id;
+    if (selectedCustomerIds.has(id)) cb.checked = true; // フィルタ再描画後も選択状態を復元
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedCustomerIds.add(id);
+      else selectedCustomerIds.delete(id);
+      updateBulkToolbar();
+    });
+  });
 }
 
 function renderCustomerRow(c, dimmed) {
@@ -1954,6 +1969,7 @@ function renderCustomerRow(c, dimmed) {
   const doneClass = isCompletedToday(c) ? " done-today" : "";
   return `
     <div class="customer-item${dimmed ? " dimmed" : ""}${doneClass}" data-id="${esc(String(c.id))}">
+      <label class="bulk-check-wrap"><input type="checkbox" class="bulk-check" data-id="${esc(String(c.id))}"></label>
       <div class="c-dot dot-${esc(c.status)}"></div>
       <div class="c-body">
         <div class="c-name">${c.is_linked ? '<span class="link-chip">🔗</span>' : ""}${esc(c.customer_name)}</div>
@@ -3353,6 +3369,62 @@ function filterCustomers(q) {
   renderList(getFilteredCustomers(q));
 }
 
+// ── 一括検索ツールバー ──────────────────────────────────────────────
+function updateBulkToolbar() {
+  const toolbar = document.getElementById("bulk-toolbar");
+  const label   = document.getElementById("bulk-count-label");
+  if (!toolbar) return;
+  const n = selectedCustomerIds.size;
+  if (n === 0) {
+    toolbar.style.display = "none";
+  } else {
+    toolbar.style.display = "flex";
+    if (label) label.textContent = n + "人選択中";
+  }
+}
+
+async function executeBulkSearch(site) {
+  const ids = Array.from(selectedCustomerIds);
+  if (!ids.length) return;
+
+  const siteBtns = document.querySelectorAll(".bulk-site-btn");
+  siteBtns.forEach((b) => { b.disabled = true; });
+
+  const activeBtn = document.querySelector(`[data-bulk-site="${site}"]`);
+  const originalLabel = activeBtn ? activeBtn.textContent : "";
+
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    const customer = allCustomers.find((c) => String(c.id) === id);
+    if (!customer) continue;
+
+    if (activeBtn) activeBtn.textContent = `(${i + 1}/${ids.length}) 検索中...`;
+
+    await new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        type: "axlx-webapp-search",
+        site,
+        conditions: {
+          customerId:   String(id),
+          customerName: customer.customer_name || null,
+          area_mode:    customer.area_mode || null,
+          is_wide:      false,
+        },
+      }, () => {
+        void chrome.runtime.lastError;
+        resolve();
+      });
+    });
+
+    if (i < ids.length - 1) {
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+
+  if (activeBtn) activeBtn.textContent = originalLabel;
+  siteBtns.forEach((b) => { b.disabled = false; });
+}
+
 // ── スタッフモード ──────────────────────────────────────────────────
 // ONの間このPCの拡張は自動化コマンド（DBポーリングclaim・Realtimeコマンド）を無視する。
 // 実際の抑止判定は background.js（_isStaffModeActive）が行う。ここはUI表示と切替のみ。
@@ -3918,3 +3990,20 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     return true; // 非同期 sendResponse のためチャンネルを開いたままにする
   }
 });
+
+// ── 一括検索ツールバーボタン ──────────────────────────────────────
+(function() {
+  document.querySelectorAll(".bulk-site-btn").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      executeBulkSearch(btn.dataset.bulkSite);
+    });
+  });
+  var cancelBtn = document.getElementById("bulk-cancel-btn");
+  if (cancelBtn) {
+    cancelBtn.addEventListener("click", function() {
+      selectedCustomerIds.clear();
+      updateBulkToolbar();
+      document.querySelectorAll(".bulk-check").forEach(function(cb) { cb.checked = false; });
+    });
+  }
+})();

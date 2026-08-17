@@ -451,3 +451,44 @@ body.mini-mode .view {
   opacity: 0.7;
 }
 #feedback-btn:hover { opacity: 1; }
+
+/* ── 一括検索 (View 1) ── */
+.bulk-check-wrap {
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; width: 22px; height: 22px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.bulk-check {
+  width: 16px; height: 16px; margin: 0;
+  cursor: pointer; accent-color: #1565C0;
+}
+
+#bulk-toolbar {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  background: #0d1b3e; border-top: 2px solid #1565C0;
+  gap: 6px;
+  align-items: center;
+}
+.bulk-toolbar-count {
+  font-size: 12px; font-weight: 700; color: #90caf9;
+  white-space: nowrap; flex-shrink: 0;
+}
+.bulk-site-btn {
+  flex: 1; padding: 7px 2px;
+  border: none; border-radius: 8px;
+  background: #1565C0; color: white;
+  font-size: 11px; font-weight: 700; cursor: pointer;
+  white-space: nowrap; transition: background 0.15s;
+}
+.bulk-site-btn:hover { background: #1976D2; }
+.bulk-site-btn:active { transform: scale(0.97); }
+.bulk-site-btn:disabled { background: #546e7a; cursor: not-allowed; }
+.bulk-cancel-btn {
+  flex-shrink: 0; padding: 7px 10px;
+  border: 1px solid #546e7a; border-radius: 8px;
+  background: transparent; color: #90a4ae;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.bulk-cancel-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
