@@ -51,17 +51,20 @@ export async function POST(req: NextRequest) {
   let conversationId: string | undefined;
   let recentMessages: Array<{ sender: string; text: string }> = [];
   let customerName: string | undefined;
+  let isAix = false;
   try {
     const body = await req.json() as {
       text?: string;
       conversationId?: string;
       recentMessages?: Array<{ sender: string; text: string }>;
       customerName?: string;
+      isAix?: boolean;
     };
     text = (body.text ?? "").trim();
     conversationId = body.conversationId;
     recentMessages = Array.isArray(body.recentMessages) ? body.recentMessages : [];
     customerName = body.customerName;
+    isAix = body.isAix ?? false;
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
@@ -86,6 +89,7 @@ export async function POST(req: NextRequest) {
     checkpointFacts: groundTruth.checkpointFacts,
     customerConditionsDb: groundTruth.customerConditionsDb,
     staffSourceText: customerName ? `お客様のお名前: ${customerName}さん` : undefined,
+    isAix,
   }, 2500);
   delete result.revised_text; // このモードでは絶対に書き換え結果を返さない
 

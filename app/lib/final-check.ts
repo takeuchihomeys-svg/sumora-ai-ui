@@ -54,6 +54,8 @@ export interface FinalCheckContext {
   isAutoSend?: boolean;          // HIGH-1/2: 自動送信経路のみ true → 未完走時fail-closed / MISSED_QUESTION昇格
   conversationStage?: string;    // MEDIUM-2: 現在の会話段階（例: "条件ヒアリング中"）
   sentPropertiesCount?: number;  // MEDIUM-2: 送付済み物件数（0=未送付）
+  isAix?: boolean;               // FP-02: AIX機能使用フラグ。false の場合 AIX_BOUNDARY_* コードを除外
+  isEarlyConversation?: boolean; // FP-04: 会話初期（情報源が薄い）フラグ。FABRICATED系を warning に格下げ
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -161,7 +163,21 @@ function nowJstString(): string {
 
 // ─── Pass 1: 前頭前野（ルール照合 / rule_check）────────────────────────────────
 function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): string {
-  return `${ADVERSARIAL_PREAMBLE}
+  // FP-02: AIX非使用時は AIX_BOUNDARY_* コードを除外する旨を注記
+  const aixNote = ctx.isAix === false
+    ? "\n【重要】この会話ではAIX機能は使用されていません。AIX_BOUNDARY_* コード（AIX_BOUNDARY_VIEWING, AIX_BOUNDARY_PROMISE 等）は一切発行しないでください。\n"
+    : "";
+  // FN-005: dbRules 8000字切り捨て警告
+  if (ctx.dbRules && ctx.dbRules.length > 8000) {
+    console.warn(`[final-check] dbRules truncated: ${ctx.dbRules.length} chars → 8000. Rules beyond 8000 chars are NOT checked.`);
+  }
+  const dbRulesSliced = (ctx.dbRules || "（DBルールなし — 上記の境界線・禁止語彙のみで照合）").slice(0, 8000);
+  // FN-005: finalCheckRules 3000字切り捨て警告
+  if (ctx.finalCheckRules && ctx.finalCheckRules.length > 3000) {
+    console.warn(`[final-check] finalCheckRules truncated: ${ctx.finalCheckRules.length} chars → 3000. Rules beyond 3000 chars are NOT checked.`);
+  }
+  const finalCheckRulesSliced = ctx.finalCheckRules ? ctx.finalCheckRules.slice(0, 3000) : null;
+  return `${ADVERSARIAL_PREAMBLE}${aixNote}
 
 以下はこの会社の絶対ルール一覧です。返信文が各ルールに違反していないか、1つずつ照合してください。
 特に「通常返信AIは宣言のみ、実行はAIX」の境界線：
@@ -178,16 +194,29 @@ AIX_BOUNDARY_VIEWING（内覧日時の提示）/ AIX_BOUNDARY_ESTIMATE（見積�
 AIX_BOUNDARY_MEETING（住所・集合場所案内）/ AIX_BOUNDARY_PROPERTY（物件名・家賃・間取りの初出提示）/
 AIX_BOUNDARY_APPLICATION（申込確定文・書類リスト）/ AIX_BOUNDARY_MOVEIN（入居可能日・退去日の回答）/
 AIX_BOUNDARY_PROMISE（「確認してご連絡します」の二重宣言）/
+【例外】管理会社への確認が必要な質問（空室状況・審査結果・入居可能日・設備詳細・ペット可否の管理会社判断等）に対する「確認してご連絡します」「管理会社に確認いたします」などは AIX_BOUNDARY_PROMISE に該当しません。
 AIX_BOUNDARY_DB（[RULES]内の【線引き】マーク付きDBルールへの違反。返信文が制限事実を自ら回答している場合のみ。「確認してご連絡します」等の宣言のみの文は対象外）/
 BANNED_WORD（禁止語彙）/ RULE_VIOLATION（その他ルール違反）
 
 [RULES]
-${(ctx.dbRules || "（DBルールなし — 上記の境界線・禁止語彙のみで照合）").slice(0, 8000)}
+${dbRulesSliced}
 [/RULES]
-${ctx.finalCheckRules ? `[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 3000)}\n[/FINAL_CHECK_RULES]` : ""}
+${finalCheckRulesSliced ? `[FINAL_CHECK_RULES]\n${finalCheckRulesSliced}\n[/FINAL_CHECK_RULES]` : ""}
 [REPLY]
 ${draft}
-[/REPLY]`;
+[/REPLY]
+
+【出力例1 - 問題なし】
+ご連絡ありがとうございます。新着物件が出ましたらすぐにお送りいたします。引き続きよろしくお願いいたします。
+→ issues: []
+
+【出力例2 - AIX_BOUNDARY_VIEWING 違反】
+明日の14時に内見はいかがでしょうか。ご都合いかがですか？
+→ issues: [{"code":"AIX_BOUNDARY_VIEWING","summary":"内見日時をAIXを使わずに直接提案している","evidence":"明日の14時に内見はいかがでしょうか","pass":"rule_check"}]
+
+【出力例3 - 問題なし（管理会社確認の正当な返答）】
+空室状況について管理会社に確認してご連絡いたします。
+→ issues: []`;
 }
 
 // ─── Pass 2: 前帯状回（異常検知 / anomaly_scan）────────────────────────────────
@@ -240,7 +269,19 @@ ${(ctx.staffSourceText || "なし").slice(0, 3000)}
 ${ctx.finalCheckRules ? `[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]` : ""}
 [REPLY]
 ${draft}
-[/REPLY]`;
+[/REPLY]
+
+【出力例1 - 問題なし】
+ご希望の1LDKで家賃7万円以内の物件をお探ししております。
+→ issues: []
+
+【出力例2 - FABRICATED_AMOUNT 違反】
+（CHECKPOINTSに「家賃6万円」と記録されているが、返信文に「家賃8万円台の物件もご紹介できます」と書かれている場合）
+→ issues: [{"code":"FABRICATED_AMOUNT","summary":"CHECKPOINTSに記録された金額と異なる金額を返信に記載している","evidence":"家賃8万円台の物件もご紹介できます","pass":"anomaly_scan"}]
+
+【出力例3 - 問題なし（CHECKPOINTSと一致）】
+（CHECKPOINTSに「初期費用20万円以内」と記録されており、返信文に「初期費用は20万円以内でお探しできます」と書かれている場合）
+→ issues: []`;
 }
 
 // ─── Pass 3: バグ探し思考（文脈・網羅性 / context_check）──────────────────────
@@ -253,6 +294,7 @@ function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): string 
 顧客の最新メッセージと返信文を突き合わせ、以下を検査してください。
 1. 質問の取りこぼし：顧客の質問を全て列挙し、返信が各質問に具体的に答えているか。
    1つでも未回答なら missing として指摘（「確認します」だけで理由が無いものも未回答扱い）
+   【例外】管理会社への確認が必要な質問（空室状況・審査結果・入居可能日・設備詳細・ペット可否の管理会社判断等）に対する「確認してご連絡します」「確認いたします」「確認して参ります」などの返答は正当な回答とみなし、MISSED_QUESTION を発行しないでください。
 2. 段階ミスマッチ：退去予定・入居中物件への内覧提案 / 内覧前なのに感想を聞く /
    キャンセル意思への物件提案 / 既にDBにある条件の聞き返し / 既出物件の再提案
 3. 二重宣言：直近のスタッフ送信と同じ約束・お礼・挨拶・説明の繰り返し
@@ -281,16 +323,38 @@ ${formatStaffMessages(ctx.recentMessages, 5)}
 ${ctx.finalCheckRules ? `[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]` : ""}
 [REPLY]
 ${draft}
-[/REPLY]`;
+[/REPLY]
+
+【出力例1 - 問題なし（質問に適切に回答）】
+（顧客メッセージ:「ペット可の物件はありますか？」→ 返信:「ペット可の物件もございます。条件に合う物件をお探しします。」）
+→ issues: []
+
+【出力例2 - MISSED_QUESTION 違反】
+（顧客メッセージ:「駐車場付きの物件はありますか？」→ 返信:「新着物件が出ましたらご連絡いたします。」）
+→ issues: [{"code":"MISSED_QUESTION","summary":"顧客の駐車場についての質問に回答していない","evidence":"駐車場付きの物件はありますか","pass":"context_check"}]
+
+【出力例3 - 問題なし（管理会社確認が必要な質問）】
+（顧客メッセージ:「審査は厳しいですか？」→ 返信:「管理会社に確認してご連絡いたします。」）
+→ issues: []`;
 }
 
 // ─── severity判定: LLMは見つける・コードが裁く（決定的マップ）────────────────
 // HIGH-2(Fable5): 自動送信時のみ MISSED_QUESTION を block に昇格（質問無視の自動送信を防ぐ）
-function assignSeverity(pass: CheckPass, code: string, isAutoSend = false): CheckSeverity {
+// FP-04: 会話初期は FABRICATED_AMOUNT / FABRICATED_AVAILABILITY を warning に格下げ（偽陽性防止）
+// FN-006: context_check の TIME_INVALID を自動送信時のみ block に昇格
+function assignSeverity(pass: CheckPass, code: string, isAutoSend = false, isEarlyConversation = false): CheckSeverity {
+  // FP-04: 会話初期（情報源が薄い）は誤block防止のため FABRICATED 系を warning に格下げ
+  if (isEarlyConversation && (code === "FABRICATED_AMOUNT" || code === "FABRICATED_AVAILABILITY")) {
+    return "warning";
+  }
   if (pass === "rule_check" && code.startsWith("AIX_BOUNDARY")) return "block";
   if (pass === "anomaly_scan" && (code === "FABRICATED_AMOUNT" || code === "FABRICATED_AVAILABILITY")) return "block";
   if (code === "FABRICATED_PROPERTY" || code === "FABRICATED_DATE") return "block";
   if (isAutoSend && pass === "context_check" && code === "MISSED_QUESTION") return "block";
+  // FN-006: context_check の TIME_INVALID は自動送信のみ block、スタッフ確認経路は warning
+  if (pass === "context_check" && code === "TIME_INVALID") {
+    return isAutoSend ? "block" : "warning";
+  }
   return "warning";
 }
 
@@ -367,7 +431,7 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haiku
       const evidence = (raw.evidence ?? "").trim();
       if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード）
       const code = (raw.code ?? "UNKNOWN").trim() || "UNKNOWN";
-      let severity = assignSeverity(pass, code, ctx.isAutoSend);
+      let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
       // block は evidence が本文に実在する場合のみ（実在しない引用での誤ブロックを防ぐ）
       if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";
       issues.push({
@@ -636,9 +700,9 @@ export async function runFinalCheckWithRevision(
     checkIterations++;
     recheck.revised_text = revised;
 
-    // 採用条件: 元のblockを検出したpassが再チェックでも完走していること
-    const blockPasses = new Set(blocks.map((b) => b.pass));
-    const verified = Array.from(blockPasses).every((p) => recheck.passes_completed.includes(p));
+    // FN-003: 採用条件を全3パス完走確認に統一（元blockパス限定では不十分）
+    const allPasses: CheckPass[] = ["rule_check", "anomaly_scan", "context_check"];
+    const verified = allPasses.every((p) => recheck.passes_completed.includes(p));
     if (!verified) break; // 再チェック未完走 → 修正版は未検証なので不採用
     revisionCount++;
 

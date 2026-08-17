@@ -2842,6 +2842,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   checkpointFacts: groundTruth.checkpointFacts,
                   customerConditionsDb: groundTruth.customerConditionsDb,
                   isAutoSend: enforceReplyModeGate,   // HIGH-1/2: 自動送信経路のみ true
+                  isAix: true,                        // generate-reply はAIX機能そのもの
                   conversationStage: STAGE_JP[currentState] ?? currentState, // MEDIUM-2
                 };
                 const loop = await runFinalCheckWithRevision(draftBody, finalCheckCtx, 40000);
