@@ -7420,7 +7420,7 @@ export default function Home() {
 
               // P0: 番号付きテンプレート連動 / 追客初期費用テンプレート誘導
               const nextTmpl = suggestNextTemplateMap[id];
-              if (nextTmpl && !dismissedNextTemplateIds.has(id)) {
+              if (nextTmpl && !dismissedNextTemplateIds.has(id) && !customerIsLastSender) {
                 const isFollowupCost = nextTmpl.num === "追客初期費用";
                 // 追客初期費用バナーは「家賃が高い」系のメッセージがある場合はスキップ
                 // （家賃懸念 → 物件を探す流れが正しい。初期費用テンプレより物件オススメが適切）
@@ -7455,7 +7455,7 @@ export default function Home() {
 
               // P0.6: CHAIN-2 テンプレ連続送信チェーン（1枚目送信後 → 学習済みシーケンスの次テンプレを誘導）
               const chainNextId = chainNextTemplateMap[id];
-              if (chainNextId && !dismissedChainNextIds.has(id)) {
+              if (chainNextId && !dismissedChainNextIds.has(id) && !customerIsLastSender) {
                 const chainNextTmpl = templateCache.find((t) => t.id === chainNextId);
                 return (
                   <div className="mx-1 mb-1 rounded-2xl border-2 border-violet-500 bg-violet-50 px-3 py-2 flex items-center gap-2">
@@ -7524,7 +7524,7 @@ export default function Home() {
               );
 
               // P3: 内覧テンプレ（内覧LINE送信直後）
-              if (suggestViewingTemplateMap[id] && !dismissedViewingTemplateIds.has(id)) return (
+              if (suggestViewingTemplateMap[id] && !dismissedViewingTemplateIds.has(id) && !customerIsLastSender) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-purple-400 bg-purple-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-purple-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>追加で訴求LINEを送る → 内覧テンプレート辞書</span>
                   <button onClick={() => { setDismissedViewingTemplateIds((prev) => new Set([...prev, id])); setTemplateOpenContext("viewing_follow"); setShowTemplateModal(true); }}
