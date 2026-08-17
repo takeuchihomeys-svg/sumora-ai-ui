@@ -551,16 +551,56 @@
     });
   }
 
+  // ── リアプロのDOM構造からAD列の値を取得 ────────────────────
+  // 問題: card.innerText では「AD」ヘッダー(th)と「3ヶ月」セル(td)が離れており
+  //        /\bAD\s*3ヶ月/ 正規表現がマッチしない。DOM構造から直接取得する。
+  function extractAdMonthsFromRealproDom(cardEl) {
+    // AD列ヘッダー(th)を探してその列インデックスを特定
+    var adTh = null;
+    var ths = cardEl.querySelectorAll("th");
+    for (var i = 0; i < ths.length; i++) {
+      if (ths[i].textContent.replace(/\s+/g, "").toUpperCase() === "AD") {
+        adTh = ths[i]; break;
+      }
+    }
+    if (!adTh) return null;
+
+    var adThRow = adTh.parentElement;
+    var adThIdx = Array.from(adThRow.children).indexOf(adTh);
+    var table = adThRow.closest("table");
+    if (!table) return null;
+
+    // データ行からAD値を取得（複数部屋があれば最高値を返す）
+    var best = null;
+    var rows = table.querySelectorAll("tr");
+    for (var ri = 0; ri < rows.length; ri++) {
+      var tds = rows[ri].querySelectorAll("td");
+      if (tds.length <= adThIdx) continue;
+      var txt = tds[adThIdx].textContent.trim();
+      var mMo = txt.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:ヶ月|ヵ月|カ月|か月|ケ月)/);
+      if (mMo) { var v = parseFloat(mMo[1]); if (best === null || v > best) best = v; }
+      var mPct = txt.match(/([0-9]+(?:\.[0-9]+)?)\s*[%％]/);
+      if (mPct) { var v = parseFloat(mPct[1]) / 100; if (best === null || v > best) best = v; }
+    }
+    return best;
+  }
+
   // ── 全物件カードにスコアを一括適用 ──────────────────────────
   function runScoring() {
     if (!storedConditions) return;
     var cards = findPropertyContainers();
     if (cards.length === 0) return;
 
+    var site = getSite();
     var scored = 0;
     cards.forEach(function (card) {
       var text = (card.innerText || "").trim();
       if (text.length < 20) return;
+      // リアプロ: DOM構造からAD値を取得してテキストに付加（innerTextではADヘッダーと値が離れるため正規表現不一致）
+      if (site === "realpro") {
+        var domAd = extractAdMonthsFromRealproDom(card);
+        if (domAd !== null) text += " AD" + domAd + "ヶ月";
+      }
       var score = scoreFromText(text, storedConditions);
       injectBadge(card, score);
       scored++;
