@@ -957,6 +957,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── 手動一括検索: popup.jsのチェックボックスで選択した顧客を連続処理 ──────
+  // popup.jsはリアプロページリロードで消えるため、ループをbackground.jsに委ねる
+  if (msg.type === "axlx-manual-bulk-search") {
+    var _bulkSite = msg.site;
+    var _bulkIds  = Array.isArray(msg.customerIds) ? msg.customerIds : [];
+    sendResponse({ ok: true, started: true });
+    (async () => {
+      try {
+        var _bulkRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
+        if (!_bulkRes.ok) throw new Error("顧客データ取得失敗");
+        var _bulkAll = await _bulkRes.json();
+        var _bulkTargets = _bulkIds
+          .map(function(id) { return _bulkAll.find(function(c) { return String(c.id) === String(id); }); })
+          .filter(Boolean);
+        console.log("[manual-bulk-search] ▶ site=" + _bulkSite + " 対象=" + _bulkTargets.length + "人");
+        for (var _bi = 0; _bi < _bulkTargets.length; _bi++) {
+          var _bc = _bulkTargets[_bi];
+          console.log("[manual-bulk-search] (" + (_bi+1) + "/" + _bulkTargets.length + ") " + _bc.customer_name);
+          try {
+            await _batchAutofill(_bc, _bulkSite, false);
+          } catch (_be) {
+            console.error("[manual-bulk-search] 顧客エラー:", _bc.customer_name, _be.message || _be);
+          }
+          if (_bi < _bulkTargets.length - 1) {
+            await new Promise(function(r) { setTimeout(r, 1500 + Math.floor(Math.random() * 1000)); });
+          }
+        }
+        console.log("[manual-bulk-search] ✔ 完了");
+      } catch (_be2) {
+        console.error("[manual-bulk-search] エラー:", _be2.message || _be2);
+      }
+    })();
+    return true;
+  }
+
   // ── 見積書自動モード: 開いている物件詳細タブをスクレイプ ─────────────────
   if (msg.type === "axlx-estimate-auto") {
     var _site = msg.site || "unknown";

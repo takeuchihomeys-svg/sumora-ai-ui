@@ -3383,72 +3383,21 @@ function updateBulkToolbar() {
   }
 }
 
-async function executeBulkSearch(site) {
+function executeBulkSearch(site) {
   const ids = Array.from(selectedCustomerIds);
   if (!ids.length) return;
 
-  const siteBtns = document.querySelectorAll(".bulk-site-btn");
-  siteBtns.forEach((b) => { b.disabled = true; });
+  // ループをbackground.jsに委ねる（popup.jsはリアプロページリロードで消えるため）
+  chrome.runtime.sendMessage({
+    type: "axlx-manual-bulk-search",
+    customerIds: ids,
+    site, // "realnetpro" / "itandi" / "reins" そのまま渡す
+  }, () => { void chrome.runtime.lastError; });
 
-  const activeBtn = document.querySelector(`[data-bulk-site="${site}"]`);
-  const originalLabel = activeBtn ? activeBtn.textContent : "";
-  const siteKey = site === "realnetpro" ? "realpro" : site;
-
-  for (let i = 0; i < ids.length; i++) {
-    const id = ids[i];
-    const customer = allCustomers.find((c) => String(c.id) === id);
-    if (!customer) continue;
-
-    if (activeBtn) activeBtn.textContent = `(${i + 1}/${ids.length}) 送信中...`;
-
-    // 1. popup.js内関数を直接呼んで顧客切り替え（background.js往復なし）
-    openSiteView(customer);
-    const pBtn = document.querySelector('.mode-btn[data-mode="pinpoint"]');
-    if (pBtn) pBtn.click();
-    openInstructions(siteKey);
-
-    // 2. DOM描画待ち
-    await new Promise((r) => setTimeout(r, 900 + Math.floor(Math.random() * 300)));
-
-    const aBtn = document.getElementById("autofill-btn");
-    if (aBtn && !aBtn.disabled) {
-      // 3. 全ページ送信完了（axlx-batch-customer-done）を待機
-      //    bulk-dl.js が全ページ送り終えたら chrome.runtime.sendMessage で飛んでくる
-      const batchDone = new Promise((resolve) => {
-        let done = false;
-        function finish() {
-          if (done) return;
-          done = true;
-          chrome.runtime.onMessage.removeListener(onMsg);
-          resolve();
-        }
-        const timer = setTimeout(finish, 120000); // 2分タイムアウト
-        function onMsg(msg) {
-          if (msg && msg.type === "axlx-batch-customer-done") {
-            clearTimeout(timer);
-            finish();
-          }
-        }
-        chrome.runtime.onMessage.addListener(onMsg);
-      });
-
-      // 4. auto_send_all=1 でautofill起動 → bulk-dl.js が全ページ自動送信
-      aBtn.dataset.auto_send_all = "1";
-      aBtn.click();
-      delete aBtn.dataset.auto_send_all;
-
-      await batchDone;
-    }
-
-    // 5. 次の顧客前にランダム待機（人間的間隔）
-    if (i < ids.length - 1) {
-      const delay = 1200 + Math.floor(Math.random() * 1300);
-      await new Promise((r) => setTimeout(r, delay));
-    }
-  }
-
-  if (activeBtn) activeBtn.textContent = originalLabel;
-  siteBtns.forEach((b) => { b.disabled = false; });
+  // 即座にチェックをクリア（backgroundが連続処理する）
+  selectedCustomerIds.clear();
+  updateBulkToolbar();
+  document.querySelectorAll(".bulk-check").forEach((cb) => { cb.checked = false; });
 }
 
 // ── スタッフモード ──────────────────────────────────────────────────
