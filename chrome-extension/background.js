@@ -2320,7 +2320,7 @@ async function _runBatchSearch(command) {
               resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide)
             );
           } else {
-            await new Promise(function(r) { setTimeout(r, 3000); });
+            await new Promise(function(r) { setTimeout(r, 2000 + Math.floor(Math.random() * 2000)); });
           }
         } catch (e) {
           // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して全ループを抜ける
@@ -2390,7 +2390,7 @@ async function _batchAutofill(customer, site, isWide) {
   if (!tab) {
     tab = await chrome.tabs.create({ url: siteUrls[site], active: false });
     await _batchWaitForTabComplete(tab.id);
-    await new Promise(function(r) { setTimeout(r, 2000); });
+    await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
   }
 
   var conds = _buildBatchConditions(customer, isWide);
@@ -2646,7 +2646,7 @@ async function _webappAutofill(site, conditions) {
       console.log("[webapp-autofill] → main.php にナビゲート（フォームクリーン化）", targetRealTab.id);
       await chrome.tabs.update(targetRealTab.id, { url: siteUrls.realnetpro, active: true });
       await _batchWaitForTabComplete(targetRealTab.id);
-      await new Promise(function(r) { setTimeout(r, 2000); });
+      await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
       existing = targetRealTab;
     }
   }
@@ -2655,7 +2655,7 @@ async function _webappAutofill(site, conditions) {
     // タブが存在しない: 新規作成してフォアグラウンドで開く
     tab = await chrome.tabs.create({ url: siteUrls[site], active: true });
     await _batchWaitForTabComplete(tab.id);
-    await new Promise(function(r) { setTimeout(r, 2000); });
+    await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
   } else if (site !== "realnetpro") {
     // タブが存在する: フォアグラウンドに切り替え（realnetpro は上でナビゲート・待機済み）
     // ping が通れば content script は生きているので待機を 1500ms → 300ms に短縮
@@ -2690,7 +2690,7 @@ async function _webappAutofill(site, conditions) {
   var sent = false;
   for (var sendAttempt = 0; sendAttempt < 3 && !sent; sendAttempt++) {
     if (sendAttempt > 0) {
-      await new Promise(function(r) { setTimeout(r, 1500); });
+      await new Promise(function(r) { setTimeout(r, 1200 + Math.floor(Math.random() * 800)); });
       console.warn("[webapp-autofill] sendMessage retry " + sendAttempt + " for " + site);
     }
     sent = await new Promise(function(resolve) {
