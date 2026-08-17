@@ -189,15 +189,18 @@
       score += 10;
     }
 
-    // ── AD（広告料）ボーナス (+最大10点) ────────────────────────
-    // AD2（200%以上）: エージェント報酬大 → +10点
-    // AD1（100%）: 報酬あり → +5点
-    var adM = t.match(/\bAD\s*([0-9]+)\s*%/i);
-    if (adM) {
-      var adPct = parseInt(adM[1]);
-      if (adPct >= 200) score += 10;
-      else if (adPct >= 100) score += 5;
-    }
+    // ── AD（広告料）ボーナス (+最大15点) ────────────────────────
+    // AD高い = 報酬増 + 初期費用割引原資 → 家賃2000円差より優先
+    // リアプロ: "1.5ヶ月" / REINS: "AD100%" 両形式に対応
+    var adPct = -1;
+    var adMo = t.match(/\bAD\s*([0-9]+(?:\.[0-9]+)?)\s*(?:ヶ月|ヵ月|カ月|か月|ケ月)/i);
+    var adPctM = t.match(/\bAD\s*([0-9]+(?:\.[0-9]+)?)\s*%/i);
+    if (adMo)   adPct = parseFloat(adMo[1]) * 100;   // 1ヶ月=100%, 2ヶ月=200%
+    else if (adPctM) adPct = parseFloat(adPctM[1]);
+    if      (adPct >= 200) score += 15;  // AD2ヶ月以上: +15点
+    else if (adPct >= 150) score += 12;  // AD1.5ヶ月:   +12点
+    else if (adPct >= 100) score += 10;  // AD1ヶ月:     +10点
+    else if (adPct >=  50) score +=  5;  // AD0.5ヶ月:   +5点
 
     // ── 敷金礼金ボーナス (+最大5点) ──────────────────────────────
     // 両方0/なし: 入居者の初期費用大幅削減 → +5点
@@ -238,7 +241,7 @@
       "position:relative;z-index:10;flex-shrink:0;",
     ].join("");
     badge.textContent = st.label + " " + score + "点";
-    badge.title = "おすすめ度: " + score + "点\n(家賃30 + 徒歩25 + 間取20 + 築年15 + 広さ10)\n(AD2=+10, AD1=+5, 敷礼金0=+5, 礼金0=+2)";
+    badge.title = "おすすめ度: " + score + "点\n(家賃30 + 徒歩25 + 間取20 + 築年15 + 広さ10)\n(AD2ヶ月+=15, AD1.5+=12, AD1ヶ月+=10, AD0.5+=5)\n(敷礼金0=+5, 礼金0=+2)";
 
     if (el.firstChild) {
       el.insertBefore(badge, el.firstChild);
@@ -544,7 +547,7 @@
     if (existing) existing.remove();
 
     var conds = [];
-    if (c.rent_max)     conds.push("家賃〜" + Math.floor(c.rent_max / 10000) + "万");
+    if (c.rent_max)     conds.push("家賃〜" + (c.rent_max / 10000) + "万");
     if (c.walk_minutes) conds.push("徒歩" + c.walk_minutes + "分");
     if (c.floor_plan)   conds.push(c.floor_plan);
     if (c.building_age) conds.push("築" + c.building_age + "年");
