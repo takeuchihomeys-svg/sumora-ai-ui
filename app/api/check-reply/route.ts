@@ -11,7 +11,7 @@ import { runFinalCheck } from "@/app/lib/final-check";
 //
 // ⚠️ このルートでは自動修正（revised_text）は絶対に行わない。
 //    スタッフが手で編集した文章をAIが書き換えるのは越権（判断はスタッフに返す）。
-export const maxDuration = 10;
+export const maxDuration = 15;
 
 // ai_prompt_rules の60秒モジュールスコープキャッシュ（送信のたびのDB往復を防ぐ）
 let rulesCache: { at: number; text: string } = { at: 0, text: "" };
@@ -72,6 +72,8 @@ export async function POST(req: NextRequest) {
   ]);
   const lastCustomerMessage = [...recentMessages].reverse().find((m) => m.sender === "customer")?.text;
 
+  // haikuTimeoutMs=2500: 送信時専用の短いタイムアウト（クライアント 2800ms 以内に収まる）
+  // generate-reply は runFinalCheckWithRevision 経由でデフォルト 8000ms を使用
   const result = await runFinalCheck(text, {
     dbRules,
     finalCheckRules: finalCheckRules || undefined,
@@ -80,7 +82,7 @@ export async function POST(req: NextRequest) {
     // step1Json なし: check-reply モードでは履歴から Haiku 自身に質問を抽出させる
     checkpointFacts: groundTruth.checkpointFacts,
     customerConditionsDb: groundTruth.customerConditionsDb,
-  });
+  }, 2500);
   delete result.revised_text; // このモードでは絶対に書き換え結果を返さない
 
   return NextResponse.json(result);

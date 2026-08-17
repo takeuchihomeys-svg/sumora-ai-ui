@@ -297,7 +297,7 @@ const BANNED_WORDS_DETERMINISTIC = ["スモラ", "名称未設定", "少々お�
 
 // ─── メイン: 決定的プリチェック + 3パス並列チェック ──────────────────────────
 // 絶対にthrowしない（全pass失敗でも issues=[] / passes_completed=[] の fail-open 結果を返す）
-export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Promise<CheckResult> {
+export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haikuTimeoutMs = 8000): Promise<CheckResult> {
   const started = Date.now();
   const issues: CheckIssue[] = [];
   const draftNorm = normalizeForMatch(draft);
@@ -340,7 +340,7 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext): Prom
     { pass: "anomaly_scan", prompt: buildAnomalyScanPrompt(draft, ctx) },
     { pass: "context_check", prompt: buildContextCheckPrompt(draft, ctx) },
   ];
-  const settled = await Promise.allSettled(passes.map((p) => callHaiku(p.prompt, 8000)));
+  const settled = await Promise.allSettled(passes.map((p) => callHaiku(p.prompt, haikuTimeoutMs)));
 
   const passesCompleted: CheckPass[] = [];
 
@@ -577,7 +577,7 @@ export async function runFinalCheckWithRevision(
     }
 
     // (2) 接地修正（失敗/ガード違反は null = fail-open）
-    const revised = await runGroundedRevision(draft, check1.issues, ctx);
+    const revised = await runGroundedRevision(draft, check1.issues, ctx, REVISION_MS);
     if (!revised) return { finalDraft: draft, finalCheck: check1 };
 
     // (3) 決定的プリスキャン（約0ms）: 禁止語彙、および修正で新規挿入された
@@ -630,7 +630,7 @@ export async function runFinalCheckWithRevision(
     // 時間予算: 残りが 修正+再チェック に満たなければ修正せず即スタッフ確認へ
     if (budgetMs - (Date.now() - started) < REVISION_MS + RECHECK_MS) break;
 
-    const revised = await runGroundedRevision(currentDraft, currentCheck.issues, ctx);
+    const revised = await runGroundedRevision(currentDraft, currentCheck.issues, ctx, REVISION_MS);
     if (!revised) break; // 修正失敗/ガード違反 → give up gracefully
 
     // 決定的プリフィルタ: block evidence が1つも消えていない修正は無効（再チェック2.5sを節約）

@@ -7649,15 +7649,33 @@ export default function Home() {
                 </div>
               );
 
-              // P4: 物件オススメ（物件ピックアップした完了後）
+              // P4: 物件あり→物件オススメ / 物件なし→全力サポート の2択
               if (suggestPropertyRecommendMap[id] && !dismissedPropertyRecommendIds.has(id)) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-indigo-500 bg-indigo-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-indigo-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件オススメ で文案を送る</span>
-                  <button onClick={() => { setSuggestPropertyRecommendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); openPropertyRecommendationPicker("withImage"); }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)" }}>AIX 物件オススメ</button>
-                  <button onClick={() => setDismissedPropertyRecommendIds((prev) => new Set([...prev, id]))}
-                    className="shrink-0 text-indigo-400 text-[11px] font-bold">✕</button>
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-indigo-500 bg-indigo-50 px-3 py-2">
+                  <div className="flex items-center gap-1 mb-2">
+                    <span className="text-[11px] font-bold text-indigo-700 flex-1">
+                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                      次のアクションを選んでください
+                    </span>
+                    <button onClick={() => setDismissedPropertyRecommendIds((prev) => new Set([...prev, id]))}
+                      className="shrink-0 text-indigo-400 text-[11px] font-bold">✕</button>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setSuggestPropertyRecommendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); openPropertyRecommendationPicker("withImage"); }}
+                      className="flex-1 rounded-xl px-2 py-2 text-[11px] font-bold text-white text-center leading-tight active:opacity-80"
+                      style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)" }}>
+                      <div>① 物件オススメ</div>
+                      <div className="text-[9px] font-normal mt-0.5 opacity-90">物件がある場合</div>
+                    </button>
+                    <button
+                      onClick={() => { setSuggestPropertyRecommendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); setActiveAixFlow("zenryoku_support"); openAixDirect("zenryoku_support"); }}
+                      className="flex-1 rounded-xl px-2 py-2 text-[11px] font-bold text-white text-center leading-tight active:opacity-80"
+                      style={{ background: "linear-gradient(135deg, #F57C00, #EF6C00)" }}>
+                      <div>② 全力サポート</div>
+                      <div className="text-[9px] font-normal mt-0.5 opacity-90">物件がない場合</div>
+                    </button>
+                  </div>
                 </div>
               );
 
