@@ -4729,13 +4729,63 @@ export default function Home() {
     setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
     setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
     const now = new Date();
-    const newMessages: Message[] = [];
-    // 引用リプライ検出用: 送信前insertのDB行ID（LINE送信後に line_message_id を書き戻す）
-    let insertedImageMsgId: string | null = null;
-    let insertedTextMsgId: string | null = null;
 
-    // 画像が先、テキストが後の順で保存・送信
-    if (imageUrl) {
+    // === LINE先送信: handleSend と同じく成功した分だけDBに記録する ===
+    // （旧実装はDB先書きのため、LINE送信失敗時も送信済み緑バブルとして残っていた）
+    let imageSent = false;
+    let textSent = false;
+    let imageLineMsgId: string | null = null;
+    let textLineMsgId: string | null = null;
+    let lineErrorMsg = "";
+
+    try {
+      if (imageUrl) {
+        const imgRes = await fetch("/api/send-line-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl, account: selectedConversation.account }),
+        });
+        if (!imgRes.ok) {
+          const imgErr = await imgRes.json().catch(() => ({ error: `HTTP ${imgRes.status}` })) as { error?: string };
+          lineErrorMsg = `⚠️ LINE画像送信失敗: ${imgErr.error || imgRes.statusText}`;
+        } else {
+          imageSent = true;
+          const imgJson = await imgRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
+          imageLineMsgId = imgJson?.sentMessageIds?.[0] ?? null;
+          lastLineSendRef.current = { messageId: imageLineMsgId, sentAt: now.toISOString() };
+        }
+      }
+      if (text.trim()) {
+        const txtRes = await fetch("/api/send-line-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim(), account: selectedConversation.account }),
+        });
+        if (!txtRes.ok) {
+          const txtErr = await txtRes.json().catch(() => ({ error: `HTTP ${txtRes.status}` })) as { error?: string };
+          lineErrorMsg = `⚠️ LINE送信失敗: ${txtErr.error || txtRes.statusText}`;
+        } else {
+          textSent = true;
+          const txtJson = await txtRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
+          textLineMsgId = txtJson?.sentMessageIds?.[0] ?? null;
+          lastLineSendRef.current = { messageId: textLineMsgId, sentAt: now.toISOString() };
+        }
+      }
+    } catch (lineEx) {
+      lineErrorMsg = `⚠️ LINE送信エラー: ${lineEx instanceof Error ? lineEx.message : "通信エラー"}`;
+    }
+
+    // 全て送信失敗 → DBに記録せず終了
+    if (!imageSent && !textSent) {
+      setError(`${lineErrorMsg}。未送信の内容は入力欄に残っています。`);
+      return;
+    }
+    if (lineErrorMsg) setError(lineErrorMsg);
+
+    const newMessages: Message[] = [];
+
+    // 画像が先、テキストが後の順で保存（LINE送信成功分のみ）
+    if (imageSent && imageUrl) {
       const imgNow = new Date();
       const { data: imgRow, error: imgError } = await supabase
         .from("messages")
@@ -4746,10 +4796,10 @@ export default function Home() {
           image_url: imageUrl,
           created_at: imgNow.toISOString(),
           is_aix_generated: isAix ?? false,
+          ...(imageLineMsgId ? { line_message_id: imageLineMsgId } : {}),
         })
         .select();
       if (imgError) throw imgError;
-      insertedImageMsgId = imgRow?.[0]?.id ? String(imgRow[0].id) : null;
       // Fire-and-forget: extract property info from staff-sent images
       fetch("/api/extract-property-info", {
         method: "POST",
@@ -4759,7 +4809,7 @@ export default function Home() {
           conversation_id: selectedConversation.id,
           property_customer_id: selectedConversation.propertyCustomerId ?? null,
         }),
-      }).catch(() => {}); // fire-and-forget
+      }).catch(() => {});
       newMessages.push({
         id: String(imgRow?.[0]?.id || crypto.randomUUID()),
         sender: "staff",
@@ -4771,7 +4821,7 @@ export default function Home() {
       });
     }
 
-    if (text.trim()) {
+    if (textSent && text.trim()) {
       const { data: insertedRows, error: insertError } = await supabase
         .from("messages")
         .insert({
@@ -4780,10 +4830,10 @@ export default function Home() {
           text: text.trim(),
           created_at: now.toISOString(),
           is_aix_generated: isAix ?? false,
+          ...(textLineMsgId ? { line_message_id: textLineMsgId } : {}),
         })
         .select();
       if (insertError) throw insertError;
-      insertedTextMsgId = insertedRows?.[0]?.id ? String(insertedRows[0].id) : null;
       newMessages.push({
         id: String(insertedRows?.[0]?.id || crypto.randomUUID()),
         sender: "staff",
@@ -4812,7 +4862,7 @@ export default function Home() {
     const lastText = text.trim() || "[画像]";
     // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
     const sendTextCurrentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-    const sendTextUpgrade = !!imageUrl && sendTextCurrentStatus === "hearing";
+    const sendTextUpgrade = imageSent && sendTextCurrentStatus === "hearing";
     // 診断修正(内覧バナー誤表示): 手動送信経路（B6）と同じく last_sender/ai_draft/suggested_aix_meta を
     // ここでもクリアする。旧実装は last_message/updated_at のみ更新していたため、AIX（物件オススメ等）
     // 送信後も古い viewing_invite メタがDB・ローカル両方に残留しバナーが表示され続けていた
@@ -4847,42 +4897,6 @@ export default function Home() {
           return bTime - aTime;
         })
     );
-
-    // LINEに送信（画像→テキストの順）
-    try {
-      if (imageUrl) {
-        const imgRes = await fetch("/api/send-line-message", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl, account: selectedConversation.account }),
-        });
-        // P4: LINE message idを記録（テキストも送る場合はテキスト側で上書きされる）
-        const imgJson = await imgRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
-        lastLineSendRef.current = { messageId: imgJson?.sentMessageIds?.[0] ?? null, sentAt: now.toISOString() };
-        // 引用リプライ検出用: LINE message id をDB行に書き戻す（fire-and-forget）
-        if (imgJson?.sentMessageIds?.[0] && insertedImageMsgId) {
-          supabase.from("messages").update({ line_message_id: imgJson.sentMessageIds[0] }).eq("id", insertedImageMsgId)
-            .then(() => {}, () => {});
-        }
-      }
-      if (text.trim()) {
-        const txtRes = await fetch("/api/send-line-message", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim(), account: selectedConversation.account }),
-        });
-        // P4: LINE message idを記録（AIX本文＝最後のテキスト送信が最終的にrefに残る）
-        const txtJson = await txtRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
-        lastLineSendRef.current = { messageId: txtJson?.sentMessageIds?.[0] ?? null, sentAt: now.toISOString() };
-        // 引用リプライ検出用: LINE message id をDB行に書き戻す（fire-and-forget）
-        if (txtJson?.sentMessageIds?.[0] && insertedTextMsgId) {
-          supabase.from("messages").update({ line_message_id: txtJson.sentMessageIds[0] }).eq("id", insertedTextMsgId)
-            .then(() => {}, () => {});
-        }
-      }
-    } catch {
-      // LINE送信失敗しても管理画面の動作は続ける
-    }
 
     // 内覧キャンセル承諾 → 翌日リスケ提案タスクを自動生成
     if (text.trim() && /内覧.*キャンセル.*承り|キャンセル.*承り.*内覧|内見.*キャンセル.*承り|キャンセル.*承り.*内見/.test(text)) {
