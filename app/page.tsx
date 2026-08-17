@@ -7766,14 +7766,17 @@ export default function Home() {
               if ((suggestPropertySendMap[id] || hasPropertySendTask || isCustomerFormatMsg) && !suggest2ndHandMap[id] && !dismissedPropertySendIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2">
                   <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="text-[12px] font-bold text-teal-700 leading-snug"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件ピックアップした</span>
+                    <span className="text-[12px] font-bold text-teal-700 leading-snug"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → 物件を送る or 募集状況を確認する</span>
                     <button onClick={() => setDismissedPropertySendIds((prev) => new Set([...prev, id]))}
                       className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button onClick={() => { setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
                       className="flex-1 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                       style={{ background: "linear-gradient(135deg, #00897B, #26a69a)" }}>AIX 物件ピックアップした</button>
+                    <button onClick={() => { setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
+                      className="flex-1 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: "linear-gradient(135deg, #4CAF50, #66BB6A)" }}>AIX 物件確認した</button>
                     {postAixTemplateMap[id]?.actionType === "condition_hearing" ? (
                       <button onClick={() => { setTemplateOpenContext("post_aix"); setShowTemplateModal(true); }}
                         className="flex-1 rounded-full px-3 py-1 text-[11px] font-bold text-white"
