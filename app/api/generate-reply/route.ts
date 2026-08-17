@@ -1119,6 +1119,21 @@ function buildGenerationMessages(
   // 共感フレーズ（全然大丈夫です／全然わがままじゃないですよ）の確定ゲート — 常時注入
   const empathyPhraseNote = buildEmpathyPhraseNote(customerMessage);
 
+  // ─── 2回目締め検出（直前スタッフが締めの文 + 今回お客様がシンプル承認）─────────────
+  // 前回の大きな締めフレーズを繰り返すのを防ぐ。短い承認返し+次アクション1行に収める。
+  const lastStaffMsgRaw = lastStaffLines.length > 0 ? lastStaffLines[lastStaffLines.length - 1] : "";
+  const PRIOR_CLOSING_RE = /全力でサポートさせて頂きます|ご満足頂けるお部屋が見つかるまで|全力でお探しさせて頂きます|何卒よろしくお願い致します|新着が出次第(?:すぐに)?お送り|新着物件が出次第|出次第すぐにお送り/;
+  const CUSTOMER_SIMPLE_ACK_RE = /^[\s　]*(ありがとうございます|ありがとうございました|ありがとう|よろしくお願いいたします|よろしくお願い致します|よろしくお願いします|お願いします|楽しみにしています|頑張ります|待っています|お待ちしています|期待してます|了解|わかりました|嬉しいです|御手数ですが)/;
+  const isSecondClosing = PRIOR_CLOSING_RE.test(lastStaffMsgRaw) && CUSTOMER_SIMPLE_ACK_RE.test(customerMessage.trim());
+  const secondClosingNote = isSecondClosing
+    ? `\n【🔁 2回目締め検出（最優先・全生成ルールを上書き）】直前スタッフ返信で「全力でサポートさせて頂きます」等の大きな締め文を既に送っている。お客様は「ありがとうございます」「よろしくお願いします」等でシンプルに承認している。
+【返信の型（絶対に守る・これ以外は入れない）】
+① 冒頭挨拶 — 【⏰ 挨拶ルール・最優先】に従う（1フレーズのみ）
+② 短い受け返し 1行 — 「こちらこそよろしくお願い致します！！」「ありがとうございます！！」等
+③ 次アクション宣言 1行 — 「新着物件が出次第すぐにお送りさせて頂きます！！」等（条件・費用の言及は禁止）
+【🚫 絶対禁止（最優先）】「全力でサポートさせて頂きます」「ご満足頂けるお部屋が見つかるまで」等の締めフレーズを再度使うこと。3行を超える返信。条件まとめ・費用・長い説明の追加。`
+    : "";
+
   // 新条件・追加要望の決定論的検出（Step1分析が condition_change_type を返さなかった場合の保険）
   // 「〇〇の条件の部屋はありますか？」「〇〇でも大丈夫です」等 → 物件探し文脈。申込・見積書CTAは絶対禁止。
   const isNewConditionMsg =
@@ -1171,7 +1186,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `${propertyStatusNote}
-${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${TEMPORARY_SITUATION_NOTE}${SEPARATE_APPOINTMENT_NOTE}${empathyPhraseNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
+${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${TEMPORARY_SITUATION_NOTE}${SEPARATE_APPOINTMENT_NOTE}${empathyPhraseNote}${secondClosingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 ${quickPatterns}
