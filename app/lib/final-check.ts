@@ -392,88 +392,55 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haiku
   };
 }
 
-// ─── 接地付き自動修正のプロンプト（block/warning共用）──────────────────────────
-// 設計: 「指摘のみ修正」+「置換に使える事実は根拠情報内のみ」+「引用必須」。
-// AIX境界違反は削除/宣言化、捏造は削除または根拠情報からの置換に限定する。
-function buildGroundedRevisionPrompt(draft: string, issues: CheckIssue[], ctx: FinalCheckContext): string {
+// ─── Sonnetによる修正プロンプト（外科的修正 or 全体書き直しをSonnetが判断）──────
+function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: FinalCheckContext): string {
   return `あなたは不動産会社のLINE返信文の校閲・修正担当です。
-検査で見つかった [ISSUES] の問題「だけ」を修正した全文を作成してください。
-下記の根拠情報のみを基に修正してください。根拠のない情報は絶対に追加しないでください。
-根拠情報とは [CHECKPOINT]（確認済み事実・最高権威）、[CONDITIONS]（DB保存の顧客条件）、
-[RULES]（会社ルール）の3つだけです。
 
-【絶対ルール（1つでも破ると修正は自動的に破棄されます）】
-1. 指摘箇所以外は一字も変えない（削除で文がつながらなくなる場合の最小限の接続修正のみ可）
-2. 新しい事実（金額・日付・曜日・時刻・物件名・号室・駅名・空室状況・制度説明）を絶対に追加しない。
-   置き換えに使ってよい事実は [CHECKPOINT] と [CONDITIONS] に書かれているものだけ
-3. AIX_BOUNDARY_* の指摘 → 該当する具体情報（日時・金額・物件詳細・住所・書類リスト等）を削除し、
-   必要なら「担当者にて手配のうえ、改めてご連絡いたします」のような宣言のみの一文に置き換える
-4. FABRICATED_* の指摘 → その主張を削除する。[CHECKPOINT]/[CONDITIONS] に正しい事実が
-   あるときだけ、それに置き換えてよい（置き換えた場合は changes に根拠を必ず引用する）
-5. MISSED_QUESTION → 根拠情報に答えがある質問のみ答える。無ければ「確認して改めてご連絡いたします」とだけ書く
-6. [RULES] の禁止語彙・禁止表現を修正後の文に持ち込まない
-7. 修正後も自然な日本語のLINE返信として成立させる
+以下の問題が検出されました。修正した返信文を作成してください。
 
-【changes の書き方】修正1件ごとに:
-- code: 対応する指摘コード
-- action: "removed"（削除した）または "replaced"（根拠情報の事実に置き換えた）
-- ground_truth_quote: action が "replaced" のときは [CHECKPOINT] または [CONDITIONS] または [RULES] から
-  根拠部分をそのまま引用する（一字一句）。"removed" のときは空文字。
-引用できない置換は行わず、削除（removed）を選ぶこと。
+【修正方針の判断】
+- 問題が特定の1〜2箇所の表現・語句にある場合 → その箇所だけを修正し、他は一字も変えない
+- 問題が文章全体の方向性・構成・トーンに及ぶ場合 → 全体を書き直す
+- どちらが適切か問題の内容を見て判断してください
+
+【絶対ルール】
+1. [CHECKPOINT][CONDITIONS][RULES]にない新しい事実（金額・日付・物件名・号室・空室状況等）を追加しない
+2. 修正後も自然な日本語のLINEメッセージとして成立させる
+3. AIX_BOUNDARY_* の指摘 → 具体的な情報を削除し「改めてご連絡いたします」等に置き換える
+4. FABRICATED_* の指摘 → 該当の主張を削除（[CHECKPOINT]に正しい事実があれば置き換え可）
+5. [RULES]の禁止語彙・禁止表現を使わない
 
 [ISSUES]
 ${issues.map((i) => `- [${i.code}] ${i.message}（該当箇所:「${i.evidence}」${i.suggestion ? ` / 修正案: ${i.suggestion}` : ""}）`).join("\n")}
 [/ISSUES]
-[CHECKPOINT]
+
+[CHECKPOINT]（確認済み事実・最高権威）
 ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [/CHECKPOINT]
-[CONDITIONS]
+
+[CONDITIONS]（DB保存の顧客条件）
 ${(ctx.customerConditionsDb || "なし").slice(0, 1000)}
 [/CONDITIONS]
-[RULES]
+
+[RULES]（会社ルール）
 ${(ctx.dbRules || "なし").slice(0, 4000)}
 [/RULES]
+
 [ORIGINAL_DRAFT]
 ${draft}
-[/ORIGINAL_DRAFT]`;
+[/ORIGINAL_DRAFT]
+
+修正後の文章のみを出力してください（説明・前置き不要）。`;
 }
 
-// ─── 接地修正の構造化出力（保証付きJSON・引用の機械検証用）────────────────────
-const REVISION_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["revised_text", "changes"],
-  properties: {
-    revised_text: { type: "string" },
-    changes: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["code", "action", "ground_truth_quote"],
-        properties: {
-          code: { type: "string" },
-          action: { type: "string", enum: ["removed", "replaced"] },
-          ground_truth_quote: { type: "string" },
-        },
-      },
-    },
-  },
-} as const;
-
-type RawRevision = {
-  revised_text?: string;
-  changes?: Array<{ code?: string; action?: string; ground_truth_quote?: string }>;
-};
-
-// ─── 接地付き自動修正（runAutoRevision の後継。失敗・ガード違反は null = fail-open）──
-// null を返す条件: API失敗/タイムアウト(3.5s)/尻切れ/無変更/破壊的書き換え/根拠のない置換。
+// ─── Sonnet自動修正（外科的修正 or 全体書き直しをSonnetが判断。失敗は null = fail-open）──
+// null を返す条件: API失敗/タイムアウト/尻切れ/無変更/破壊的書き換え。
 // 呼び出し元は null のとき元ドラフトを維持する（修正失敗で送信フローは絶対に止めない）。
 export async function runGroundedRevision(
   draft: string,
   issues: CheckIssue[],
   ctx: FinalCheckContext,
-  timeoutMs = 3500,
+  timeoutMs = 15000,
 ): Promise<string | null> {
   try {
     const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
@@ -482,34 +449,19 @@ export async function runGroundedRevision(
       signal: AbortSignal.timeout(timeoutMs),
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: "claude-haiku-4-5",
+        model: "claude-sonnet-5",
         max_tokens: 2000,
         temperature: 0,
-        output_config: { format: { type: "json_schema", schema: REVISION_SCHEMA } },
-        messages: [{ role: "user", content: buildGroundedRevisionPrompt(draft, issues, ctx) }],
+        messages: [{ role: "user", content: buildSonnetRevisionPrompt(draft, issues, ctx) }],
       }),
     });
     if (!res.ok) return null;
     const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
-    if (data.stop_reason === "max_tokens") return null; // 尻切れJSONは使わない
-    const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
-    const parsed = JSON.parse(text) as RawRevision;
-
-    const revised = (parsed.revised_text ?? "").trim();
+    if (data.stop_reason === "max_tokens") return null;
+    const revised = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     if (!revised || revised === draft.trim()) return null;
     // 破壊的書き換えガード（AIX段落の削除で縮むため下限は40%）
     if (revised.length < draft.length * 0.4 || revised.length > draft.length * 2) return null;
-
-    // ハルシネーションガード（決定的）: "replaced" の引用が根拠情報に実在しなければ修正全体を破棄
-    const gtNorm = normalizeForMatch(
-      [ctx.checkpointFacts ?? "", ctx.customerConditionsDb ?? "", ctx.dbRules ?? ""].join("\n"),
-    );
-    for (const c of parsed.changes ?? []) {
-      if (c.action === "replaced") {
-        const q = normalizeForMatch((c.ground_truth_quote ?? "").trim());
-        if (!q || !gtNorm.includes(q)) return null;
-      }
-    }
     return revised;
   } catch {
     return null;
@@ -521,8 +473,8 @@ export async function runGroundedRevision(
 // 上限を増やす場合は時間予算(10s)を必ず再計算すること。
 export const MAX_CHECK_ITERATIONS = 2; // check1 + (接地修正 + check2) = 計2チェック上限
 
-const REVISION_MS = 6000;   // 修正Haikuのタイムアウト（延長: 3500→6000ms）
-const RECHECK_MS = 8000;    // バジェットガード用推定値（延長: 5000→8000ms）
+const REVISION_MS = 15000;  // 修正SonnetのタイムアウトMs（Haiku 6000ms → Sonnet 15000ms）
+const RECHECK_MS = 8000;    // バジェットガード用推定値（Haiku 3パス並列）
 
 // AIX_BOUNDARY_PROMISE 衝突対策（決定的・約0ms）:
 // 修正プロンプト絶対ルール5の定型句「確認して改めてご連絡いたします」等が修正で新規挿入されると、
