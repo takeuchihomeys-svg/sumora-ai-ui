@@ -11,6 +11,7 @@
   var _autofillInitiated = false;        // 手動autofillボタン押下フラグ（fill-done到着前）
   var _preAutofillBtns = new Set();      // autofill前の 印刷用PDF ボタンスナップショット
   var _pendingCustomerForAutoSend = null; // autofill開始時点の顧客スナップショット（名前ずれ防止）
+  var _zeroDetectTimer = null;            // 0件確定ポーリングタイマー（顧客切替時にクリア）
 
   // ── 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
@@ -786,7 +787,8 @@
       var clicked = clickNextPageBtn();
       if (!clicked) {
         clearAutoSendState();
-        try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: 0 }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+        // propertyCount を付けない（すでに送信済みの物件があるため0件アナウンスを出さない）
+        try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function() { void chrome.runtime.lastError; }); } catch (_) {}
         console.error("[AXLX bulk-dl] 次ページへの遷移に失敗しました（次ページボタンが見つからない）");
         var countEl2 = document.getElementById("axlx-count");
         if (countEl2) countEl2.textContent = "次ページ遷移エラー";
@@ -933,6 +935,8 @@
     _autofillInitiated = true;
     // 前バッチ中断で残留したsessionStorage状態をクリア（Case Aの!getAutoSendState()チェックがブロックされるバグ対策）
     try { sessionStorage.removeItem(AUTO_SEND_KEY); } catch (_) {}
+    // 前顧客の0件ポーリングが残っていれば即座に停止（次顧客の窓で誤発火を防ぐ）
+    if (_zeroDetectTimer) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; }
     // href URL をキーにしたスナップショット（DOM参照ではなくURL比較でAJAX再利用を正しく検出）
     _preAutofillBtns = new Set(findPrintBtns().map(function(b) { return b.href || b.getAttribute('href') || ''; }));
     _pendingAutoSendDispatched = false;
@@ -981,32 +985,36 @@
         setTimeout(autoSendAllPages, 200);
       }
     }, 2000);
-    // 0件デッドロック対策: 4秒後（inject debounce 400ms + AJAX反映待ち 3.6秒）に
-    // まだ armed のまま tracked=0 なら物件なし確定 → batch-customer-done を即送信
-    // ※ 1.2秒だと遅いAJAX（1〜3秒かかる検索）を0件と誤判定するケースがあったため4秒に延長
-    // BUG-C修正: タイマー設定時点でIDをキャプチャ（4秒後に_pendingCustomerForAutoSendがnullになりうるため）
+    // 0件確定ポーリング: 1秒毎にチェック、最大15秒待機して物件なし確定→batch-customer-done送信
+    // ※ 4秒固定だとリアプロのサーバー応答が遅い場合（5〜10秒）に物件あっても0件と誤判定していた
+    // BUG-C修正: タイマー設定時点でIDをキャプチャ（後で_pendingCustomerForAutoSendがnullになりうるため）
     var _armed0ItemCid = (_pendingCustomerForAutoSend && _pendingCustomerForAutoSend.customerId) || null;
-    setTimeout(function () {
-      if (_autoSendArmed) {
-        // BUG-E修正: tracked.length === 0 ではなく「新ボタンが1件もない」で判定する。
-        // AJAXがDOMを再利用すると前顧客のボタンが残り tracked.length > 0 のまま0件を誤検出しなかった。
-        // !_hasAnyNewBtnNow = 前スナップショット外のボタンが皆無 → 0件確定（前DOM残留でも正しく発火）。
-        var _hasAnyNewBtnNow = tracked.some(function(item) {
-          var k = item.btn.href || item.btn.getAttribute('href') || '';
-          return k && !_preAutofillBtns.has(k);
-        });
-        if (!_hasAnyNewBtnNow) {
-          _autoSendArmed = false;
-          console.log("[AXLX bulk-dl] fill-done 後 新ボタンなし確定（tracked=" + tracked.length + ", 前DOMと一致） → batch-customer-done を即送信");
-          try {
-            chrome.runtime.sendMessage(
-              { type: "axlx-batch-customer-done", customerId: _armed0ItemCid, propertyCount: 0 },
-              function () { void chrome.runtime.lastError; }
-            );
-          } catch (_) {}
-        }
+    if (_zeroDetectTimer) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; }
+    var _zeroDeadline = Date.now() + 15000;
+    _zeroDetectTimer = setInterval(function () {
+      if (!_autoSendArmed) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; return; }
+      var _hasAnyNewBtnNow = tracked.some(function(item) {
+        var k = item.btn.href || item.btn.getAttribute('href') || '';
+        return k && !_preAutofillBtns.has(k);
+      });
+      if (_hasAnyNewBtnNow) {
+        // 新ボタン出現 → Case A / 2秒フォールバックに任せてポーリング終了
+        clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; return;
       }
-    }, 4000);
+      if (Date.now() < _zeroDeadline) return;  // まだ待つ
+      // 15秒経過しても新ボタンなし → 0件確定
+      clearInterval(_zeroDetectTimer); _zeroDetectTimer = null;
+      _autoSendArmed = false;
+      // Case B/C が遅れて発火してリスト二重送信されるのを封印する
+      _pendingAutoSendDispatched = true;
+      console.log("[AXLX bulk-dl] 15秒経過・新ボタンなし確定（tracked=" + tracked.length + "） → 0件としてbatch-customer-done送信");
+      try {
+        chrome.runtime.sendMessage(
+          { type: "axlx-batch-customer-done", customerId: _armed0ItemCid, propertyCount: 0 },
+          function () { void chrome.runtime.lastError; }
+        );
+      } catch (_) {}
+    }, 1000);
   });
 
   // ── メッセージリスナー（background.js からのスクレイプ指示）──────────────

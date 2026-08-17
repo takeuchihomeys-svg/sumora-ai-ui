@@ -1001,10 +1001,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               break;
             }
             console.error("[manual-bulk-search] 顧客エラー:", _bc.customer_name, _be.message || _be);
+            // 例外スキップ時も必ず1件アナウンス（4人検索→4人分アナウンス要件）
+            if (_bc.customer_name) {
+              var _bulkSiteLabel = _bulkSite === "itandi" ? "itandi" : _bulkSite === "reins" ? "レインズ" : "リアプロ";
+              fetch(SUMORA_BATCH_API + "/api/notify-group", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: "🔍【物件0件】" + _bc.customer_name + "さんの" + _bulkSiteLabel + "検索が0件でした" })
+              }).catch(function() {});
+            }
           }
           if (_bi < _bulkTargets.length - 1) {
-            // 完了確認後のインターバル（自動バッチと同じ 3〜8 秒）
-            await new Promise(function(r) { setTimeout(r, 3000 + Math.floor(Math.random() * 5000)); });
+            // 完了確認後のインターバル（6〜12秒）
+            await new Promise(function(r) { setTimeout(r, 6000 + Math.floor(Math.random() * 6000)); });
           }
         }
         console.log("[manual-bulk-search] ✔ 完了");
@@ -1895,21 +1904,34 @@ function _createFillDoneWaiter(site, customerId, timeoutMs) {
 var _batchCustomerDoneWaiters = [];
 
 function _notifyBatchCustomerDone(customerId, propertyCount) {
-  var remaining = [];
-  _batchCustomerDoneWaiters.forEach(function(w) {
-    // 両方 null でない場合は厳密一致。両方 null の場合のみ全解決（null信号が全waitersを誤解決するバグ防止）
-    var match = (w.customerId && customerId)
-      ? String(w.customerId) === String(customerId)
-      : (!w.customerId && !customerId);
-    if (match) {
-      clearInterval(w.stopInterval);
-      clearTimeout(w.timer);
-      w.resolve({ ok: true, propertyCount: propertyCount != null ? propertyCount : null });
-    } else {
-      remaining.push(w);
+  var target = null;
+  // 厳密一致優先
+  if (customerId) {
+    for (var _bdi = 0; _bdi < _batchCustomerDoneWaiters.length; _bdi++) {
+      var _bdw = _batchCustomerDoneWaiters[_bdi];
+      if (_bdw.customerId && String(_bdw.customerId) === String(customerId)) { target = _bdw; break; }
     }
-  });
-  _batchCustomerDoneWaiters = remaining;
+  } else {
+    for (var _bdi2 = 0; _bdi2 < _batchCustomerDoneWaiters.length; _bdi2++) {
+      var _bdw2 = _batchCustomerDoneWaiters[_bdi2];
+      if (!_bdw2.customerId) { target = _bdw2; break; }
+    }
+  }
+  // customerId null や不一致でも最古のウェイターにフォールバック
+  // （顧客は常に1件ずつ直列処理→同時waitは原則1件のため安全）
+  if (!target && _batchCustomerDoneWaiters.length) {
+    target = _batchCustomerDoneWaiters[0];
+    console.warn("[batch-done] customerId不一致→最古waiterにフォールバック signal=" + customerId + " waiter=" + (target.customerId || "null"));
+  }
+  if (!target) {
+    console.warn("[batch-done] 待機中のwaiterなし customerId=" + customerId);
+    return;
+  }
+  clearInterval(target.stopInterval);
+  clearTimeout(target.timer);
+  var _bdIdx = _batchCustomerDoneWaiters.indexOf(target);
+  if (_bdIdx >= 0) _batchCustomerDoneWaiters.splice(_bdIdx, 1);
+  target.resolve({ ok: true, propertyCount: propertyCount != null ? propertyCount : null });
 }
 
 function _createBatchCustomerDoneWaiter(customerId, timeoutMs) {
@@ -2912,12 +2934,12 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   }
   if (batchDone && batchDone.timedOut) {
     console.warn("[scrapeAndCompare] 全ページ送信完了シグナルが5分以内に届きませんでした（次顧客へ続行） customer=" + customerId);
-    // タイムアウト時も運用者へ通知（シグナル未着の安全網）
+    // タイムアウト = 検索結果0件の可能性が高い → 0件アナウンスとして送信（4人検索→4人分アナウンス要件）
     if (customerName) {
       fetch(SUMORA_BATCH_API + "/api/notify-group", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: "⚠️【送信タイムアウト】" + customerName + "さんの" + _site + "送信完了シグナルが届きませんでした（手動確認してください）" })
+        body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした" })
       }).catch(function() {});
     }
   } else {
