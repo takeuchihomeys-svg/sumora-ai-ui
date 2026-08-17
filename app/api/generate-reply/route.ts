@@ -1134,6 +1134,18 @@ function buildGenerationMessages(
 【🚫 絶対禁止（最優先）】「全力でサポートさせて頂きます」「ご満足頂けるお部屋が見つかるまで」等の締めフレーズを再度使うこと。3行を超える返信。条件まとめ・費用・長い説明の追加。`
     : "";
 
+  // 入居可能時期（最長いつまで）質問の検出 — 管理会社確認を挟まず直接回答させる
+  // 「確認します」と返すと一手間増えて会話が止まる。申込みから1ヶ月が目安として直接伝えてよい標準情報。
+  const MOVE_IN_TIMING_RE = /最長.{0,12}(?:いつ|何月|どこまで|伸ばせ|延長|延ばせ)|入居.{0,10}(?:最長|いつまで|延長|伸ばせ|どこまで)|いつ.{0,8}(?:まで|入居)/i;
+  const isMoveInTimingQuestion = MOVE_IN_TIMING_RE.test(customerMessage);
+  const moveInTimingNote = isMoveInTimingQuestion
+    ? `\n【🏠 入居可能時期の質問（確定・最優先）】お客様は「最長いつまで入居を伸ばせますか」「入居はいつまで可能ですか」等の入居タイミングについて質問しています。
+【✅ 正しい回答方針（必ず守る）】
+・「申込みから1ヶ月間がご入居可能時期の目安」として会話履歴の情報を踏まえて直接伝える（管理会社確認なしで伝えてよい標準情報）
+・1ヶ月以降のご入居希望については「管理会社に交渉できる可能性がある」と伝えた上で全力でサポートする旨を添える
+【🚫 絶対禁止】「確認させていただきます」「管理会社に確認します」と返すこと → 一手間増えて会話が止まる誤り。この質問は直接回答できる。`
+    : "";
+
   // 新条件・追加要望の決定論的検出（Step1分析が condition_change_type を返さなかった場合の保険）
   // 「〇〇の条件の部屋はありますか？」「〇〇でも大丈夫です」等 → 物件探し文脈。申込・見積書CTAは絶対禁止。
   const isNewConditionMsg =
@@ -1186,7 +1198,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `${propertyStatusNote}
-${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${TEMPORARY_SITUATION_NOTE}${SEPARATE_APPOINTMENT_NOTE}${empathyPhraseNote}${secondClosingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
+${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${TEMPORARY_SITUATION_NOTE}${SEPARATE_APPOINTMENT_NOTE}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 ${quickPatterns}
