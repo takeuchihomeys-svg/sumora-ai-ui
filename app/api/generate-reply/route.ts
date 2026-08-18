@@ -1986,7 +1986,7 @@ export async function POST(req: NextRequest) {
   // meta が既に "aix" ならAnthropic呼び出し前にゼロコストで中止（cron再試行時など）。
   // null（未分析/webhookワイプ直後）はここでは素通しし、チェックポイントBで再確認する。
   // brainMetaDirect 指定時（bg-asyncのbrain直列実行後）は DB フェッチせずその値を使う
-  if (enforceReplyModeGate && conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
+  if (conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
     const gate = externalBrainGate ?? await fetchReplyModeGate(conversationId);
     if (gate?.meta?.reply_mode === "aix") {
       console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(A):", conversationId);
@@ -2480,11 +2480,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // チェックポイントA時点ではmetaがnullのことが多い。Step1分析(最大45秒)完了後の
     // このタイミングなら再投入済み。メイン生成(Sonnet)呼び出し前に最終確認する。
     // H7(Fable5): 上で取得済みの brainGate を再利用（DB再取得しない・タイミングは同等）
-    if (enforceReplyModeGate && conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
+    if (conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
       if (brainGate?.meta?.reply_mode === "aix") {
         console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(B):", conversationId);
         return applyAixGateAndRespond(conversationId, brainGate.meta, brainGate.customerName);
       }
+    }
+    if (enforceReplyModeGate && conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
       // P4(部分対応): reply_mode が null/undefined のままフェイルオープンするケースの可視化。
       // brain分析が失敗/停滞している可能性が高い場合（meta自体がnull、または brain_analyzed_at が
       // 10分以上前 or 未記録）は警告ログを出す。ブロックはしない（ログのみ・従来動作維持）。

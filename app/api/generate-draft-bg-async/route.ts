@@ -234,6 +234,16 @@ export async function POST(req: NextRequest) {
         return;
       }
 
+      // brain が AIX を指示している場合は下書き生成をスキップ（line_tasks有無に関わらず）
+      if (brainGateDirect?.meta?.reply_mode === "aix") {
+        console.log("[bg-async] brain reply_mode=aix → draft skip, convId:", convId);
+        await db.from("conversations")
+          .update({ ai_draft: "[AIX誘導中]", draft_pending_at: null })
+          .eq("id", convId)
+          .is("ai_draft", null);
+        return;
+      }
+
       // 180秒タイムアウト: generate-replyはStep1(最大45s)+Step2(最大45s)+余裕=最大90s超。
       // 40秒では重い会話で構造的に常にタイムアウトするため150秒に引き上げ、
       // さらに brain直列実行（最大30s）が先行するようになった分を考慮して180秒へ拡大

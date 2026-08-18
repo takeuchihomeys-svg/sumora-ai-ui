@@ -8038,7 +8038,7 @@ export default function Home() {
             )}
 
             {/* AIドラフト提案バナー */}
-            {selectedConversation.aiDraft && !replyDraft && selectedConversation.lastSender === "customer" && selectedConversation.aiDraft !== "[AIX誘導中]" && !activeTasks[selectedConversation.id]?.some(t => ["property_send","estimate_sheet"].includes(t.task_type)) && (
+            {selectedConversation.aiDraft && !replyDraft && selectedConversation.lastSender === "customer" && selectedConversation.aiDraft !== "[AIX誘導中]" && !activeTasks[selectedConversation.id]?.some(t => ["property_send","estimate_sheet"].includes(t.task_type)) && !selectedConversation.suggestedAixMeta?.action && (
               <div className="mx-1 mb-1 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] font-bold text-blue-500 shrink-0">✨ AI返信案</span>
@@ -8121,7 +8121,7 @@ export default function Home() {
             )}
 
             {/* 🧠 最終チェック指摘リスト（block=🔴 / warning=🟡・折りたたみ式） */}
-            {checkResult && checkResult.issues.length > 0 && replyDraft.trim() && (
+            {checkResult && checkResult.issues.length > 0 && replyDraft.trim() && !selectedConversation.suggestedAixMeta?.action && (
               <details className={`mb-1 rounded-lg border px-2 py-1 ${
                 checkResult.issues.some((i) => i.severity === "block")
                   ? "border-red-200 bg-red-50"
