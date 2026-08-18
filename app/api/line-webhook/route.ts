@@ -1544,9 +1544,9 @@ async function handleImageMessageSave(
     } catch (e) { console.warn("[line-webhook] image notify:", e); }
   });
 
-  // FIX(Fable5 #2): 画像受信でも meta を消すため、テキスト経路と同様にイベント駆動で再分析する
+  // FIX(Fable5 #2+ズレ5): 画像受信でも brain分析 + required通知（🔴）を実行
   after(async () => {
-    await analyzeAndSaveBrainMeta(convId).catch((e) => console.warn("[line-webhook] brain analyze (image):", e));
+    await runBrainAndNotify(convId).catch((e) => console.warn("[line-webhook] brain notify (image):", e));
   });
 
   // スタッフが申込書の記入を依頼した直後の顧客画像 → 記入済み申込書の可能性大 → applying自動昇格
