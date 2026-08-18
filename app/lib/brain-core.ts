@@ -96,7 +96,7 @@ const STATUS_MEANING: Record<string, string> = {
 // Concise AIX capability summary injected into Haiku prompts for action/template reasoning
 const AIX_CAPABILITY_MAP = `
 【AIXボタン能力マップ】
-- viewing_invite: 内覧日程の候補をLINEで提案するメッセージを生成
+- viewing_invite: 内覧日程の候補をLINEで提案するメッセージを生成（顧客メッセージに内覧・内見・見学・見に行く等の希望表現があれば選ぶ）
 - property_send: 物件ピックアップのカバーメッセージを生成（物件URL送信時）→ 複数件ピックアップ後は必ず1〜2分以内（実測38秒／58秒）に「物件ピックアップ紹介（後続）」を、駅指定・条件外れ告知ありなら「駅周辺物件ピックアップ（後続）」（実測1分33秒）をAI最適化して自発送信する
 - estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成 → 送付直後（同分〜1分以内）に「【申込誘導】」テンプレートで申込を促す（use_count:10・見積書→申込誘導→申込の3ステップが成約最短ルート）
 - application_push: 申込クロージングメッセージ（①申込時フォーマット本体）を生成 → 送信直後（実測32秒〜4分48秒）に「②申込時フォーマット（続き）」を一字一句そのまま自発送信する（AI最適化禁止）
@@ -116,7 +116,7 @@ const AIX_CAPABILITY_MAP = `
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
 - property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
 - application_push: 内覧完了後・見積送付後に顧客が前向きな時。審査不安の「解消」を先回りする場面でも有効（申込確定の言質は不要）
-- viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 確定済み未来→meeting_place / 当日・完了後→greeting_viewing ※viewing_invite は顧客自身が内覧希望・日程を発言した場合のみ。スタッフが送った物件情報内の「〇月〇日以降内覧可能」等の文言をトリガーにしない。物件送付直後で顧客がまだ反応していない場合は aix:null（何も提案しない）が正解
+- viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 確定済み未来→meeting_place / 当日・完了後→greeting_viewing ※viewing_invite は顧客メッセージに内覧希望が示された場合に選ぶ。「内覧行きたいらしいですが」「内覧可能ですか」「見に行きたい」等の間接・伝聞・打診表現も内覧希望として viewing_invite を選ぶこと。スタッフが物件を送った後に顧客が内覧・内見・見学・見に行く等のキーワードで反応した場合も viewing_invite。ただしスタッフが送った物件情報内の「〇月〇日以降内覧可能」「内覧可」等の文言をトリガーにしない（顧客メッセージ内のキーワードのみ対象）。物件送付直後で顧客がまだ反応していない場合は aix:null（何も提案しない）が正解
 `.trim();
 
 // 返信文体・共感フレーズ・条件変更文脈の恒久ルール（generate-reply の同名ルールと同一の単一基準）
@@ -391,6 +391,31 @@ async function detectSignalBasedAixFallback(
       (!lastCustomer || lastStaff.created_at > lastCustomer.created_at)
     ) {
       return "acknowledge_check";
+    }
+
+    // 信号0.95（内覧希望 — 信号1より先に評価。内覧希望は見積話題より局面が進んでいるため優先）:
+    // 最終スタッフ返信以降の顧客メッセージ（未返信バースト）に内覧・内見・見学の希望表現 → viewing_invite
+    // 「内覧行きたいらしいですが可能ですか？」等の間接・伝聞表現も対象。
+    // ※「内覧可」「内覧済」「9月1日以降ご内覧可能です」等の物件情報文言は、
+    //   希望表現サフィックス（したい/行きたい/希望/〜ですか等）を必須にすることでマッチしない。
+    // ※スタッフメッセージは対象外（customer 送信のみを結合して判定）。
+    // ※URL併記かつ空室確認未起票の場合は「確認前に内覧の話へ進めない」ルールに従い
+    //   ここでは返さず信号4（acknowledge_check）へ流す。
+    const recentCustText =
+      msgs
+        .filter((m) => m.sender === "customer" && (!lastStaff || m.created_at > lastStaff.created_at))
+        .map((m) => m.text ?? "")
+        .join("\n") || custText;
+    // ※否定形（「したくない」「行きたくない」「希望はありません」等）は negative lookahead で除外。
+    const viewingWish =
+      /(内覧|内見|見学)[^。！!？?\n]{0,12}(したい|したく(?!ない|ありません)|行きたい|いきたい|行きたく(?!ない|ありません)|希望(?!(は|も)?(ない|ありません|しない|しません))|お願いし)/.test(recentCustText) ||
+      /(内覧|内見|見学)[^。！!？?\n]{0,12}(可能|でき|出来)[^。！!？?\n]{0,6}(ですか|ますか|でしょうか)/.test(recentCustText) ||
+      /見に(行|い)きたい/.test(recentCustText);
+    if (
+      viewingWish &&
+      !(/https?:\/\//.test(recentCustText) && !pendingTaskTypes.includes("property_check"))
+    ) {
+      return "viewing_invite";
     }
 
     // 信号1（成約実績最多ライン）: 最終顧客メッセージに見積・初期費用の話題 → estimate_sheet
