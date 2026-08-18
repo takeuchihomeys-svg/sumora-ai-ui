@@ -1837,6 +1837,22 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   }
   // 脳分析成功時のみチェックポイント作成を fire-and-forget 起動（レスポンスを遅らせない）
   if (actuallyWritten) {
+    // brain_decision_logs: Brain判断を記録（fail-open: エラーがあってもメイン処理を止めない）
+    try {
+      const metaObj = meta as Record<string, unknown>;
+      await supabase.from("brain_decision_logs").insert({
+        conversation_id: conversationId,
+        suggested_action: typeof metaObj.action === "string" ? metaObj.action : null,
+        suggested_reply_mode: typeof metaObj.reply_mode === "string" ? metaObj.reply_mode : null,
+        suggested_next_steps: Array.isArray(metaObj.next_steps) ? metaObj.next_steps : null,
+        enforcement_level: typeof metaObj.enforcement_level === "string" ? metaObj.enforcement_level : null,
+        conversation_status: status,
+        source: "brain_core",
+      });
+    } catch (e) {
+      console.warn("[brain-core] brain_decision_logs insert failed:", conversationId,
+        e instanceof Error ? e.message : String(e));
+    }
     // ── conversation_direction フェーズ変化検知と更新 ─────────────────────────
     // brain分析が成功した場合のみ実行。フェーズ変化が無い場合・スタッフ手動修正中はスキップ。
     // 失敗しても fire-and-forget なのでメインフローへの影響なし。

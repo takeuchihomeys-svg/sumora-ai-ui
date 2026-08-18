@@ -1972,6 +1972,26 @@ ALTER TABLE viewing_history DISABLE ROW LEVEL SECURITY;
 ALTER TABLE templates ADD COLUMN IF NOT EXISTS won_count INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS templates_won_count_idx ON templates (won_count DESC);
 
+-- ── brain_decision_logs: Brain判断ログ・スタッフ行動成否記録（2026-08-18追加）──
+-- Brain（analyzeAndSaveBrainMeta）が会話を分析して出した提案を記録し、
+-- スタッフが実際に取った行動（AIX従った・下書き使った・無視した）との突合に使う。
+CREATE TABLE IF NOT EXISTS brain_decision_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  suggested_action TEXT,
+  suggested_reply_mode TEXT,
+  suggested_next_steps JSONB,
+  enforcement_level TEXT,
+  conversation_status TEXT,
+  source TEXT DEFAULT 'brain_core',
+  outcome TEXT,
+  outcome_recorded_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_brain_decision_logs_conversation_id ON brain_decision_logs(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_brain_decision_logs_created_at ON brain_decision_logs(created_at DESC);
+ALTER TABLE brain_decision_logs DISABLE ROW LEVEL SECURITY;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

@@ -4263,6 +4263,42 @@ export default function Home() {
         });
       }
 
+      // brain_decision_logs: 手動・AI下書き送信後の Brain判断 outcome を記録（fire-and-forget）
+      if (textSent && textToSend) {
+        const _brainCid = convId;
+        const _brainDraftIsAi = draftIsAi;
+        const _brainOrigDraft = aiDraftRef.current ?? "";
+        const _brainSentText = textToSend;
+        void (async () => {
+          try {
+            const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const { data: brainLog } = await supabase
+              .from("brain_decision_logs")
+              .select("id")
+              .eq("conversation_id", _brainCid)
+              .is("outcome", null)
+              .gt("created_at", cutoff)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (!brainLog) return;
+            let outcome: string;
+            if (_brainDraftIsAi) {
+              const wasModified = _brainOrigDraft.trim() !== "" && _brainOrigDraft.trim() !== _brainSentText.trim();
+              outcome = wasModified ? "draft_modified" : "draft_followed";
+            } else {
+              outcome = "ignored";
+            }
+            await supabase
+              .from("brain_decision_logs")
+              .update({ outcome, outcome_recorded_at: new Date().toISOString() })
+              .eq("id", brainLog.id);
+          } catch (e) {
+            console.warn("[executeSend] brain_decision_logs outcome update failed:", e);
+          }
+        })();
+      }
+
       const lastText = (textSent && textToSend) ? textToSend : "[画像]";
 
       // ステータス自動制御
@@ -4865,6 +4901,34 @@ export default function Home() {
           }),
         }).catch(() => {});
       }
+    }
+
+    // brain_decision_logs: AIX/スタッフ送信後の Brain判断 outcome を記録（fire-and-forget）
+    if (textSent || imageSent) {
+      const _brainCid = selectedConversation.id;
+      const _brainIsAix = isAix ?? false;
+      void (async () => {
+        try {
+          const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+          const { data: brainLog } = await supabase
+            .from("brain_decision_logs")
+            .select("id")
+            .eq("conversation_id", _brainCid)
+            .is("outcome", null)
+            .gt("created_at", cutoff)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (!brainLog) return;
+          const outcome = _brainIsAix ? "aix_followed" : "ignored";
+          await supabase
+            .from("brain_decision_logs")
+            .update({ outcome, outcome_recorded_at: new Date().toISOString() })
+            .eq("id", brainLog.id);
+        } catch (e) {
+          console.warn("[sendMessageText] brain_decision_logs outcome update failed:", e);
+        }
+      })();
     }
 
     const lastText = text.trim() || "[画像]";
