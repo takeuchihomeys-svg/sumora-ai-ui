@@ -15,6 +15,7 @@
   var _preAutofillBtns = new Set();
   var _pendingAutoSendDispatched = false;
   var _autoSendInProgress = false;
+  var _zeroDetectTimer = null; // 0件確定ポーリング（15秒）タイマー
 
   // ── スタッフモードキャッシュ（bulk-dl.js と同じ TTL=2時間ロジック）──
   var _staffModeOn = false;
@@ -759,6 +760,8 @@
     _autofillInitiated = true;
     _preAutofillBtns = new Set(findMaterialBtns());
     _pendingAutoSendDispatched = false;
+    // 前顧客の0件検出タイマーが残っていたら停止（次顧客のコンテキストで誤発火しないよう）
+    if (_zeroDetectTimer) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; }
     console.log("[AXLX itandi] autofill initiated, snapshot=" + _preAutofillBtns.size + "btn");
   });
 
@@ -771,6 +774,28 @@
     console.log("[AXLX itandi] fill-done 受信 → 全ページ自動送信 armed");
     // DOMがまだ更新中の場合がある → 1.5秒後に明示的にinject()を呼んで新ボタンを検出
     setTimeout(function() { inject(); }, 900 + Math.floor(Math.random() * 1300));
+    // 0件確定ポーリング: 15秒以内に物件資料ボタンが出現しなければ0件確定
+    // → axlx-batch-customer-done を送信して background.js のタイムアウト待機（5分）を解除する
+    if (_zeroDetectTimer) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; }
+    var _zeroDeadline = Date.now() + 15000;
+    _zeroDetectTimer = setInterval(function() {
+      if (!_autoSendArmed) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; return; }
+      if (tracked.length > 0) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; return; }
+      if (Date.now() < _zeroDeadline) return;
+      // 15秒経過しても物件なし → 0件確定
+      clearInterval(_zeroDetectTimer); _zeroDetectTimer = null;
+      _autoSendArmed = false;
+      _pendingAutoSendDispatched = true;
+      console.log("[AXLX itandi] 15秒経過・物件なし確定 → 0件としてaxlx-batch-customer-done送信");
+      getCustomerFromPopup(function(_n, customerId) {
+        try {
+          chrome.runtime.sendMessage(
+            { type: "axlx-batch-customer-done", customerId: customerId || null, propertyCount: 0 },
+            function() { void chrome.runtime.lastError; }
+          );
+        } catch (_) {}
+      });
+    }, 1000);
   });
 
   // ── MutationObserver（チェックボックスの再注入） ──────────────────────

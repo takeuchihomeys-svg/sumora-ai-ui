@@ -196,6 +196,7 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-08-16 | **リアプロ駅選択：前顧客の駅残留混入バグ修正（Fable5調査→実装）** commit TBD。page-script.js のみ変更。[ROOT-CAUSE] 沿線・駅モーダルはJS内部状態で前回選択を記憶し再描画時にcheckedを復元するが、STEP Dの残留クリアが「一回限りフラグ＋ページ全体labelでの描画判定」だったため、駅リスト未描画の初回パスでクリアが空振り→永久ロックし、同一沿線の前顧客駅が混入していた（例: もえさん京橋・桜ノ宮検索）。[FIX-1] STEP D描画判定を `input[name="station_code[]"]` の存在に変更＋`_modalStationsCleared`フラグ撤廃で毎パスクリア（`:checked`のみ対象＋`__axPending`＋実行時checkedガード`_unclickIfChecked`で冪等・二重トグル防止）。isVisibleフィルタ除去で非表示セクションの残留も解除。温存判定を双方向includes→完全一致＋双方向前方一致（selectStationsByNameと同一基準）に厳格化。[FIX-2] 沿線のみ（hasStation=false）パスにも駅全クリア追加（最大3秒待機、未描画なら従来どおり閉じて検索）。[FIX-3] STEP D成功判定を`.some()`→「DOMにマッチする指定駅は全てchecked かつ1駅以上checked」に変更（複数駅指定で一部未選択のまま検索されるバグ修正。全滅時はfallbackSearchWithoutStationで中止＝全件検索防止は維持）。[FIX-4] selectStationsByName STEP2〜4に`isElChecked()`トグルガード追加（checked済みならfireClickスキップ、STEP1/5と同等）。 |
 | 2026-08-16 | **itandi BB 間取りCB silent fail 修正 + リアプロ駅選択タイムアウト修正** commit 5ccd825。[itandi] `tickFloor(id)` 追加: ID失敗時にラベルテキストでフォールバック検索（5K_OVER→"5K以上"マッピング含む）。[リアプロ] `selectStationsByName` STEP6追加: `input[name="station_code[]"]` を親テキストで直接照合。`_allMatchedChecked` 検証に input-based fallback追加: ラベル↔checkbox 紐付きなし構造で `_checkedCount=0` になる場合を救済（駅モーダルに不存在の名前はスキップ=通過）。 |
 | 2026-08-16 | **APIレスポンスの非駅トークンをstation_namesから除外** commit 5020a51。`isKnownStation(name)` 追加（STATION_LINE_MAP / _dbStationRouteMap / LEARNED_STATION_MAP の順で照合）。リアプロ・itandi両側のAPI補完パス（`apiData.realpro.station_names` / `apiData.itandi.station_names`）に適用。resolve-area AIが "堀江" 等の地域名を駅と誤分類しても station_names に混入しない。非駅トークンは `[AX] API補完: 非駅トークンを除外: xxx` でログ出力。 |
+| 2026-08-18 | **AIXLINX顧客リストに地域/駅バッジ表示追加** commit ceb0b5f。`computeAreaModeBadgeHtml(areaText)` 追加（popup.js:2011）。駅判定: /駅\|線/ or STATION_LINE_MAP/LEARNED_STATION_MAP。地域判定: /市区府県都郡/ or WARD_CODE_MAP/NEIGHBORHOOD_WARD_MAP。renderCustomerRowのc-nameにバッジ埋め込み。駅バッジ（青 #1565c0）・地域バッジ（緑 #2e7d32）CSSをstyles.cssに追加。両方ある場合は両バッジ表示。 |
 | 2026-08-16 | **popup UI 3点改善** commit 96e99b9。[1] 要対応タブ（`🔥 要対応` `data-acct="__needs_action__"`）を「すべて」の左に追加（popup.html）。フィルター処理はpopup.jsで `data-acct === "__needs_action__"` 時に未対応（approved/lost/contracted以外）顧客のみ表示。[2] `bulk-dl.js` フローティングバーを右下→上部中央に移動（`top:10px;left:50%;transform:translateX(-50%)`）＋ドラッグハンドル追加（`#axlx-drag-handle`、mousemove/mouseup/mouseleaveでtransformを上書き）。[3] `#staff-mode-btn` のテキストから「🙋」を削除。ON時「スタッフモード中」/OFF時「スタッフモード」のみ。 |
 
 ---
@@ -890,3 +891,27 @@ var NON_RESULT_PAGES = ["GBK001310"];
 - itandi 側（`itandi-bulk-dl.js`）はSPAでページリロードが起きないためこのフラグを使っておらず、今回の変更対象外。
 - **拡張の再読み込み必須**: popup.js / bulk-dl.js 変更のため chrome://extensions で再読み込みすること。
 - **実機未確認**: 3人以上の一括検索で「全員分の全ページ送りが走るか」を次セッションで要確認。
+
+---
+
+## 🛠️ itandi 一括検索 0件時フリーズ修正（2026-08-18）
+
+**症状**: itandi で検索結果が0件の顧客がバッチに含まれると `axlx-batch-customer-done` が送信されず、background.js が5分間タイムアウト待機してバッチが大幅遅延する。
+
+### 根本原因
+- `itandi-bulk-dl.js` のアームメカニズム（Step2 fill-done → inject() → `_hasNewBtn` チェック → `autoSendAllPages`）は `tracked.length > 0`（物件資料ボタンあり）を前提にしている。
+- 0件検索では `tracked` が空のまま → inject() の条件が通らず `autoSendAllPages` も `axlx-batch-customer-done` も送信されない。
+- `bulk-dl.js` には15秒0件確定タイマーがあるが、`itandi-bulk-dl.js` にはなかった。
+
+### 修正内容（itandi-bulk-dl.js 1ファイル）
+| # | 内容 |
+|---|---|
+| 1 | `var _zeroDetectTimer = null;` を変数宣言に追加（L18） |
+| 2 | Step1（`axlx-itandi-autofill-initiated`）で前顧客の残留タイマーをクリア |
+| 3 | Step2（`aixlinx-fill-done`）でアーム後、15秒0件確定ポーリングを開始。`tracked.length > 0` になるか `_autoSendArmed` がクリアされれば即停止、15秒経過しても物件なしなら `getCustomerFromPopup` でIDを取得して `axlx-batch-customer-done {propertyCount:0}` を送信 |
+
+### 設計メモ
+- `_autoSendArmed = false` チェックで autoSendAllPages 発火時に自動停止（二重送信なし）
+- `tracked.length > 0` チェックで物件ありの場合は即停止（Case A に任せる）
+- Staff mode 有効時は `_autoSendArmed = false` にされるためタイマーも自動停止（5分タイムアウトは許容範囲）
+- commit: TBD
