@@ -13,7 +13,8 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 export const maxDuration = 120;
 
 // 1回の sweep で分析する最大会話数（コスト・レイテンシガード）
-const MAX_SWEEP_PER_RUN = 10;
+// claude-sonnet-5 extended thinking: 1件最大60s × 並列3 = 1ラウンド最大60s → maxDuration=120s 内に収まるよう3件に制限
+const MAX_SWEEP_PER_RUN = 3;
 
 // webhook の after() 分析が進行中の可能性がある直近の会話はスキップ（二重分析防止）
 // M4(Fable5): 2分→3分 — 旧値は webhook の maxDuration=120秒とちょうど同値で、境界上の after() 分析と

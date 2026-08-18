@@ -15,8 +15,9 @@ import { supabase } from "@/app/lib/supabase";
 const BRAIN_MODEL = "claude-sonnet-5";
 // B8(Fable5): maxRetries: 0 — sweep自体がリトライ機構のため、SDKの自動リトライ（デフォルト2回）は
 // 最悪 ~45秒/件 × 4件直列 = maxDuration 120秒超過 → cron_run_logs が "running" のまま残る事故の原因だった
-// Sonnet切替: Haikuより深い文脈理解でAIX-META品質向上（タイムアウト15s→30sに拡大）
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 30_000, maxRetries: 0 });
+// claude-sonnet-5のextended thinking対応: タイムアウト30s→60s（長い会話で思考に時間がかかるため）
+// sweep側は MAX_SWEEP_PER_RUN=3 + 並列3 で1ラウンドのみ → 最大60s → maxDuration=120s 内に収まる
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60_000, maxRetries: 0 });
 
 // Statuses that indicate a closed/inactive conversation — excluded from brain analysis
 export const BRAIN_SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost", "approved"];
