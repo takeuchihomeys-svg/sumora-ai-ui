@@ -1813,7 +1813,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
 
   const { data: writtenRows, error } = await supabase
     .from("conversations")
-    .update({ suggested_aix_meta: meta, brain_analyzed_at: new Date().toISOString() })
+    .update({ suggested_aix_meta: meta, brain_analyzed_at: new Date().toISOString(), is_hot: true })
     .eq("id", conversationId)
     .eq("updated_at", watermark) // B5: 会話が進んでいたら古い解析は静かに no-op（sweep が補填する）
     .select("id"); // no-op（0行マッチ）を偽陽性なく検知するために追加
@@ -2131,7 +2131,7 @@ export type BrainGateSnapshot = {
  *     従来の generate-reply 側 DBフェッチにフォールバックすること
  *     （チェックポイントBの「Step1後の再確認」で brain-sweep の補填を拾える余地を残す）
  */
-export async function runBrainAndNotify(conversationId: string): Promise<BrainGateSnapshot | null> {
+export async function runBrainAndNotify(conversationId: string, msgText?: string): Promise<BrainGateSnapshot | null> {
   let analyzed = false;
   try {
     analyzed = await analyzeAndSaveBrainMeta(conversationId);
@@ -2163,6 +2163,16 @@ export async function runBrainAndNotify(conversationId: string): Promise<BrainGa
   // generate-reply のチェックポイントB再フェッチ（sweep補填を拾う余地）まで潰れるため null を返す
   // （契約どおり「有効な分析結果がある時のみスナップショット」に統一。notify も meta が無ければ不要）。
   if (!snapshot.meta) return null;
+
+  // is_hot格上げ通知（brain完了後に鈴木メンション送信）
+  if (msgText) {
+    try {
+      const { notifySuzukiReply } = await import("@/app/lib/notify-suzuki");
+      await notifySuzukiReply(supabase as any, conversationId, msgText);
+    } catch (e) {
+      console.warn("[brain-core] notifySuzukiReply failed:", e instanceof Error ? e.message : e);
+    }
+  }
 
   // required 通知（旧line-webhook brain after() から移設。全件通知は通知疲れのため required のみ）
   try {
