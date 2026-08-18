@@ -2422,16 +2422,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // brain は顧客メッセージ毎に再分析されるため Step1 分析より新鮮。AIX-META が存在する場合は
     // これが唯一の戦略指示となり、buildGenerationMessages 側の closingNote（Step1/ai_summary由来の
     // 戦略）は注入されない（brainGuidanceNote 非空をシグナルとして抑制される）。
-    // AIX-META が null / 空（closing_strategy も next_steps も無い）の場合は brainGuidanceNote が
-    // 空文字になり、closingNote が ai_summary / Step1 フォールバックとして働く。
+    // brainMeta が存在する限り brainGuidanceNote を生成する（closing_strategy/next_steps が空でも）。
+    // action 情報だけでも届けることで古い ai_summary フォールバックへの退行を防ぐ。
     // brain直列アーキテクチャ: brainMetaDirect 指定時（bg-async経由）は DB 再フェッチをスキップ。
     // bg-async が直前に brain を直列実行して書いた値なので DB と同値（むしろ順序保証つき）。
     const brainGate = externalBrainGate ?? ((conversationId && !isTemplateOptimize)
       ? await fetchReplyModeGate(conversationId)
       : null);
     const brainMeta = brainGate?.meta ?? null;
-    const brainGuidanceNote = (brainMeta && (brainMeta.closing_strategy || (brainMeta.next_steps?.length ?? 0) > 0))
-      ? `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位）】${brainMeta.closing_strategy ? `\n- 成約戦略: ${brainMeta.closing_strategy}` : ""}${brainMeta.next_steps?.length ? `\n- 予定ステップ: ${brainMeta.next_steps.join(" / ")}` : ""}\n※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。\n`
+    const brainGuidanceNote = (brainMeta && brainMeta.action)
+      ? `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位）】\n- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}${brainMeta.closing_strategy ? `\n- 成約戦略: ${brainMeta.closing_strategy}` : ""}${brainMeta.next_steps?.length ? `\n- 予定ステップ: ${brainMeta.next_steps.join(" / ")}` : ""}\n※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。\n`
       : "";
 
     const phaseLabels: Record<string, string> = {
