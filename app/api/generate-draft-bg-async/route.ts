@@ -126,7 +126,10 @@ export async function POST(req: NextRequest) {
       //   = bg-async で実行済みの会話では再実行せず required 通知の重複を防ぐ）。
       let brainGateDirect: BrainGateSnapshot | null = null;
       try {
-        brainGateDirect = await runBrainAndNotify(convId);
+        brainGateDirect = await Promise.race([
+          runBrainAndNotify(convId),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 60_000)),
+        ]);
         console.log("[bg-async] brain serial done, convId:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
       } catch (brainErr) {
         console.warn("[bg-async] brain serial failed（従来フォールバックで続行）:", String(brainErr), "convId:", convId);
@@ -338,7 +341,7 @@ export async function POST(req: NextRequest) {
           .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
           .trim();
         if (partialDraft.length > 20) {
-          await db.from("conversations").update({ ai_draft: partialDraft, draft_pending_at: null }).eq("id", convId);
+          await db.from("conversations").update({ ai_draft: partialDraft, draft_pending_at: null }).eq("id", convId).is("ai_draft", null);
           console.log("[bg-async] saved partial draft:", partialDraft.length, "chars, convId:", convId);
         }
         return;

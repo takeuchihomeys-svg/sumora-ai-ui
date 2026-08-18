@@ -35,10 +35,13 @@ export const maxDuration = 300;
 
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
 // Step1（分析）: Sonnet — 感情・本音・成約戦略の精度重視
+// - Sonnet 5 は thinking がデフォルト有効（adaptive）のため明示的に無効化する
+//   （有効だと res.content がブロック配列になり JSON 抽出・トークン消費に影響するため）
 function createAnalysisModel() {
   return new ChatAnthropic({
     model: "claude-sonnet-5",
     maxTokens: 2048,
+    thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     clientOptions: { timeout: 45_000 },
   });
@@ -46,10 +49,14 @@ function createAnalysisModel() {
 
 // Step2（生成）: Sonnet — 品質重視
 // 中6: temperature は ai_summary_json.emotion に応じて可変（0.3〜0.5）のためリクエスト毎に生成する
+// - Sonnet 5 は thinking がデフォルト有効（adaptive）のため明示的に無効化する
+//   （有効だとストリーミングchunkのcontentがブロック配列になりテキスト取りこぼし・
+//    maxTokens=1500 を thinking が食い潰して本文が途切れるリスクがあるため）
 function createGenerationModel(_temperature: number) {
   return new ChatAnthropic({
     model: "claude-sonnet-5",
     maxTokens: 1500,
+    thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     clientOptions: { timeout: 45_000 },
   });
@@ -2571,7 +2578,23 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               let fullText = "";
               let stopReason: unknown;
               for await (const chunk of await streamPromise) {
-                const text = typeof chunk.content === "string" ? chunk.content : "";
+                // thinking有効時等、content が string ではなくブロック配列で届くケースに対応。
+                // text ブロックのみ抽出し、thinking ブロックは本文に混ぜない。
+                const text = typeof chunk.content === "string"
+                  ? chunk.content
+                  : Array.isArray(chunk.content)
+                    ? chunk.content
+                        .map((b) =>
+                          typeof b === "string"
+                            ? b
+                            : b != null && typeof b === "object" &&
+                              (b as { type?: string }).type !== "thinking" &&
+                              typeof (b as { text?: unknown }).text === "string"
+                              ? (b as { text: string }).text
+                              : ""
+                        )
+                        .join("")
+                    : "";
                 fullText += text;
                 if (chunk.response_metadata?.stop_reason) stopReason = chunk.response_metadata.stop_reason;
               }

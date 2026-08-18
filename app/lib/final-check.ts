@@ -167,11 +167,11 @@ function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): string {
   const aixNote = ctx.isAix === false
     ? "\n【重要】この会話ではAIX機能は使用されていません。AIX_BOUNDARY_* コード（AIX_BOUNDARY_VIEWING, AIX_BOUNDARY_PROMISE 等）は一切発行しないでください。\n"
     : "";
-  // FN-005: dbRules 8000字切り捨て警告
-  if (ctx.dbRules && ctx.dbRules.length > 8000) {
-    console.warn(`[final-check] dbRules truncated: ${ctx.dbRules.length} chars → 8000. Rules beyond 8000 chars are NOT checked.`);
+  // FN-005: dbRules 20000字切り捨て警告（旧8000字上限を拡大。Sonnetのコンテキストウィンドウは十分大きい）
+  if (ctx.dbRules && ctx.dbRules.length > 20000) {
+    console.warn(`[final-check] dbRules truncated: ${ctx.dbRules.length} chars → 20000. Rules beyond 20000 chars are NOT checked.`);
   }
-  const dbRulesSliced = (ctx.dbRules || "（DBルールなし — 上記の境界線・禁止語彙のみで照合）").slice(0, 8000);
+  const dbRulesSliced = (ctx.dbRules || "（DBルールなし — 上記の境界線・禁止語彙のみで照合）").slice(0, 20000);
   // FN-005: finalCheckRules 3000字切り捨て警告
   if (ctx.finalCheckRules && ctx.finalCheckRules.length > 3000) {
     console.warn(`[final-check] finalCheckRules truncated: ${ctx.finalCheckRules.length} chars → 3000. Rules beyond 3000 chars are NOT checked.`);
@@ -510,7 +510,7 @@ ${(ctx.customerConditionsDb || "なし").slice(0, 1000)}
 [/CONDITIONS]
 
 [RULES]（会社ルール）
-${(ctx.dbRules || "なし").slice(0, 4000)}
+${(ctx.dbRules || "なし").slice(0, 20000)}
 [/RULES]
 
 [ORIGINAL_DRAFT]

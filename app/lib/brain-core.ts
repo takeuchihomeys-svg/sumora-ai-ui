@@ -1315,6 +1315,7 @@ ${history}`;
     const response = await client.messages.create({
       model: BRAIN_MODEL,
       max_tokens: 6000,
+      thinking: { type: "disabled" },
       system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: userPrompt }],
     });
@@ -1694,17 +1695,24 @@ export async function maybeCreateCheckpoint(conversationId: string): Promise<voi
       })
       .join("\n");
 
-    // 3) Haiku（モジュール共有 client: timeout 15s / maxRetries 0 — fire-and-forget なので失敗放置でOK）
+    // 3) Haiku（モジュール共有 client: timeout 60s（共有client） / maxRetries 0 — fire-and-forget なので失敗放置でOK）
     const prompt = buildCheckpointPrompt(last?.summary ?? null, historyText, total, msgs.length, startOffset);
     const response = await client.messages.create({
       model: BRAIN_MODEL,
-      max_tokens: 700,
+      max_tokens: 1500,
+      thinking: { type: "disabled" },
       messages: [{ role: "user", content: prompt }],
     });
-    const raw = response.content[0]?.type === "text" ? response.content[0].text : "";
+    // analyzeConversation と同じ content.find() で thinking ブロック対策
+    const raw = response.content.find((c) => c.type === "text")?.text ?? "";
     const fb = raw.indexOf("{");
     const lb = raw.lastIndexOf("}");
-    if (fb === -1 || lb <= fb) return;
+    if (fb === -1 || lb <= fb) {
+      if (raw === "") {
+        console.warn("[brain-core] maybeCreateCheckpoint: Claude returned empty text", conversationId);
+      }
+      return;
+    }
     const parsed = JSON.parse(raw.slice(fb, lb + 1)) as {
       summary?: string;
       key_facts?: Array<{ type: string; value: string }>;
