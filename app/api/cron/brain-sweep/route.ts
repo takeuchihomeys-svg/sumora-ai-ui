@@ -74,6 +74,7 @@ export async function GET(req: NextRequest) {
 
     const rows = (conversations ?? []) as Array<{ id: string }>;
     if (rows.length === 0) {
+      console.log("[brain-sweep] 対象なし（0件）— suggested_aix_meta=null の会話はありません");
       await finishCronLog(runLogId, true, { processed: 0 });
       return NextResponse.json({ ok: true, processed: 0 });
     }
@@ -83,12 +84,16 @@ export async function GET(req: NextRequest) {
     await withConcurrency(rows, 3, async (conv) => {
       const saved = await runBrainAndNotify(conv.id).catch((e) => {
         // B10(Fable5): 旧実装は throw されたエラーメッセージも握り潰していた
-        console.error("[brain-sweep] analyze failed:", conv.id, e instanceof Error ? e.message : e);
+        const msg = e instanceof Error ? e.message : String(e);
+        const kind = msg.includes("timed out") || msg.includes("timeout") ? "timeout" : "error";
+        console.error(`[brain-sweep] analyze failed [${kind}]:`, conv.id, msg);
         return false;
       });
       if (saved) processed++;
       else failed++;
     });
+
+    console.log(`[brain-sweep] 完了: 対象${rows.length}件 / 成功${processed}件 / 失敗${failed}件`);
 
     const result = { processed, failed, total: rows.length };
     await finishCronLog(runLogId, true, result);

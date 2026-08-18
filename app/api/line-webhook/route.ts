@@ -5,7 +5,7 @@ import { isApplicationFormMessage, hasApplyHintKeyword, PRE_APPLY_STATUSES } fro
 import { classifyByKeywords, classifyByAI, type ConditionIntent } from "@/app/lib/condition-intent";
 import { mergeConditions, type ConditionFields } from "@/app/lib/condition-merge";
 import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
-import { analyzeAndSaveBrainMeta, runBrainAndNotify } from "@/app/lib/brain-core";
+import { runBrainAndNotify } from "@/app/lib/brain-core";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 export const maxDuration = 120;
@@ -390,11 +390,11 @@ async function handleTextMessage(
   }
 
   // タスク自動検知（物件確認・物件出し）
-  void autoDetectTask(db, convId, text);
+  void autoDetectTask(db, convId, text).catch((e) => console.warn("[line-webhook] autoDetectTask:", e));
 
   // 「確認しました」→ 物件確認済み自動マーク
   if (isPropertyViewedMessage(text)) {
-    void autoMarkPropertyViewed(db, userId);
+    void autoMarkPropertyViewed(db, userId).catch((e) => console.warn("[line-webhook] autoMarkPropertyViewed:", e));
   }
 
   // after() A: フォーマット解析（独立実行 — draft_pending_at更新と並列・30s Anthropicコールを含む）
@@ -426,10 +426,11 @@ async function handleTextMessage(
 
       // ai_summary 自動更新（fire-and-forget）- 申込以降は上でreturnしているため不要
       if (pcId) {
-        fetch(`${baseUrl}/api/customer-summary`, {
+        await fetch(`${baseUrl}/api/customer-summary`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ customer_id: pcId, conversation_id: convId, fetch_from_db: true }),
+          signal: AbortSignal.timeout(3000),
         }).catch(() => {});
       }
 
@@ -1554,7 +1555,7 @@ async function handleImageMessageSave(
   await autoPromoteApplyingOnFormImage(db, convId, now);
 
   // 会話内の画像が100枚を超えたら古い画像の保存期限を即時終了
-  void expireOldImagesIfOverLimit(db, convId);
+  void expireOldImagesIfOverLimit(db, convId).catch((e) => console.warn("[line-webhook] expireOldImagesIfOverLimit:", e));
 
   updateProfileAsync(db, userId, convId, account, "[画像]", now);
   return { convId, msgId: String(msgData.id) };
@@ -1928,9 +1929,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // after()はNext.js 14.1+の機能。レスポンス送信後もVercel functionを維持する
   if (imageJobs.length > 0) {
     after(async () => {
-      for (const { lineMessageId, msgId, account } of imageJobs) {
-        await fetchAndUploadLineImage(lineMessageId, msgId, account);
-      }
+      await Promise.allSettled(
+        imageJobs.map(({ lineMessageId, msgId, account }) => fetchAndUploadLineImage(lineMessageId, msgId, account))
+      );
     });
   }
 

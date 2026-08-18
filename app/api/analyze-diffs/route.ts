@@ -10,6 +10,20 @@ export const maxDuration = 300;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000, maxRetries: 1 });
 
+// ── 失敗example バックオフ（2026-08-18追加）──
+// 従来は分析失敗時に diff_analyzed_at を null にリセットしていたため、常に失敗する
+// 「毒薬example」が毎日 失敗→リセット→翌日再失敗 のループに陥り、タイムガードの時間予算を
+// 食い潰して他の未分析差分の処理を妨げていた（97de4baf / fcac5093 / 4cca435d が11日間ループ）。
+// 失敗時は diff_analyzed_at を現在時刻+72時間にセットし、.is("diff_analyzed_at", null) の
+// 取得クエリの対象から外して隔離する（新カラム追加なしの既存カラム流用）。
+// ※ 再挑戦させたい場合は該当レコードの diff_analyzed_at を手動で null に戻す。
+const FAILURE_BACKOFF_MS = 3 * 24 * 60 * 60 * 1000; // 72時間
+async function backoffFailedExample(id: string, context: string): Promise<void> {
+  const backoffDate = new Date(Date.now() + FAILURE_BACKOFF_MS).toISOString();
+  console.warn(`[analyze-diffs] example ${id} 失敗（${context}）→ 3日後にバックオフ: ${backoffDate}`);
+  await supabase.from("ai_reply_examples").update({ diff_analyzed_at: backoffDate }).eq("id", id);
+}
+
 // ── AI質問（ai_feedback_items）起票ガード ──
 // 1日に大量起票されて竹内さんが処理しきれなくなるのを防ぐ:
 // - pending 総数が MAX_PENDING_AI_QUESTIONS 件以上なら新規起票をスキップ
@@ -880,6 +894,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: examplesError.message }, { status: 500 });
   }
 
+  // 【タイムガード1/N件問題対策】処理順をシャッフル（Fisher-Yates・2026-08-18追加）。
+  // created_at ASC の先頭に重い/失敗しやすいexampleが居座ると、毎回タイムガード発動までに
+  // 先頭の同じ1件しか処理できず、残りが飢餓状態になる。取得セット（古い順の上位limit件）は
+  // 維持しつつ処理順だけランダム化し、全exampleに処理機会を与える。
+  for (let i = examples.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [examples[i], examples[j]] = [examples[j], examples[i]];
+  }
+
   // ── ⑥ AIX編集差分の第2パス用フェッチ（2026-08追加）──
   // メインループは entry_source='line_reply' のみ対象のため、スタッフがAIX生成文を修正した差分
   // （entry_source='aix_action'・was_ai_modified=true）が一切学習されていなかった
@@ -900,6 +923,13 @@ export async function POST(req: NextRequest) {
   if (aixExamplesError) {
     // ⑥は補助学習パスのため、フェッチ失敗でも run 全体は落とさない（メインループは実行する）
     console.warn("[analyze-diffs] ⑥AIX差分フェッチ失敗（第2パスをスキップ）:", aixExamplesError.message);
+  }
+  // ⑥AIX第2パスもメインループと同様に処理順をシャッフル（先頭固着による飢餓防止）
+  if (aixExamples) {
+    for (let i = aixExamples.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [aixExamples[i], aixExamples[j]] = [aixExamples[j], aixExamples[i]];
+    }
   }
 
   let processed = 0;
@@ -1569,12 +1599,11 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 成功時のみ diff_analyzed_at をマークする。コンポーネント分析でLLM失敗があった場合は
-      // null に戻して楽観的ロックを解放し、次回cron実行でリトライさせる
-      // （now でマークすると .is("diff_analyzed_at", null) のクエリに二度とヒットせず永久に学習されない）
+      // 成功時のみ diff_analyzed_at を now でマークする。コンポーネント分析でLLM失敗があった場合は
+      // 3日後にバックオフして隔離する（従来の null リセットは毒薬exampleの毎日失敗ループを生むため廃止）
       if (compLlmFailed) {
-        console.error(`[analyze-diffs] component diff analysis failed for example id=${id} — resetting diff_analyzed_at for retry on next run`);
-        await supabase.from("ai_reply_examples").update({ diff_analyzed_at: null }).eq("id", id);
+        console.error(`[analyze-diffs] component diff analysis failed for example id=${id} — backing off for 3 days`);
+        await backoffFailedExample(id, "コンポーネント差分分析LLM失敗");
         continue;
       }
       await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
@@ -1584,13 +1613,11 @@ export async function POST(req: NextRequest) {
 
     const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state);
 
-    // AI呼び出し失敗時（Anthropic一時障害・タイムアウト等）は diff_analyzed_at を null に戻して
-    // 楽観的ロック（ループ冒頭のクレーム）を解放し、次回cron実行でリトライできるようにする。
-    // （now でマークすると .is("diff_analyzed_at", null) のクエリに二度とヒットせず永久に学習されない）
+    // AI呼び出し失敗時（Anthropic一時障害・タイムアウト等）は diff_analyzed_at を3日後にセットして
+    // バックオフ隔離する（従来の null リセットは毒薬exampleの毎日失敗ループを生むため廃止）。
     if (result === null) {
-      console.error(`[analyze-diffs] analyzeDiff failed for example id=${id} — resetting diff_analyzed_at for retry on next run`);
-      // ロック解放SQL相当: UPDATE ai_reply_examples SET diff_analyzed_at = NULL WHERE id = '<id>'
-      await supabase.from("ai_reply_examples").update({ diff_analyzed_at: null }).eq("id", id);
+      console.error(`[analyze-diffs] analyzeDiff failed for example id=${id} — backing off for 3 days`);
+      await backoffFailedExample(id, "analyzeDiff失敗");
       continue;
     }
 
@@ -1821,11 +1848,11 @@ export async function POST(req: NextRequest) {
       // 個別exampleの予期しない例外はログしてスキップ（他のexampleの処理は継続する）
       const failedId = (ex as { id?: string }).id;
       console.error(`[analyze-diffs] メインループ例外 (example id=${failedId ?? "unknown"}) — スキップして続行:`, loopErr);
-      // クレーム済みの楽観的ロックを解放して次回リトライ対象に戻す
+      // 失敗exampleは3日後にバックオフして隔離（null リセットによる毎日失敗ループを防ぐ）
       if (failedId) {
         try {
-          await supabase.from("ai_reply_examples").update({ diff_analyzed_at: null }).eq("id", failedId);
-        } catch { /* ロック解放失敗時は診断クエリ（未学習検知）に委ねる */ }
+          await backoffFailedExample(failedId, "メインループ例外");
+        } catch { /* バックオフ設定失敗時は診断クエリ（未学習検知）に委ねる */ }
       }
     }
   }
@@ -1834,7 +1861,7 @@ export async function POST(req: NextRequest) {
   // メインループ（line_reply）と同じ analyzeDiff で差分をナレッジ化する。
   // conversation_state には aix_action の値（property_check_result_available 等サブキー付き含む）を
   // そのまま入れ、AIX側のナレッジ取得クエリと ⑦AIX自動昇格バッチ（conversation_state 前方一致判定）の
-  // 対象になるようにする。楽観的ロック・LLM失敗時の diff_analyzed_at リセット（次回リトライ）も
+  // 対象になるようにする。楽観的ロック・LLM失敗時の3日バックオフ隔離（backoffFailedExample）も
   // メインループと同じ規約。コンポーネント2層学習・AUTO-JUDGE は行わない（時間予算と過剰起票の抑制）。
   let aixProcessed = 0;
   let aixLearned = 0;
@@ -1899,10 +1926,10 @@ export async function POST(req: NextRequest) {
       aixState,
       `\n※ これはAIXボタン「${aixActionLabel(aixState)}」（${aixState}）の生成文をスタッフが修正した差分です。このAIXアクションの生成文に特有の改善パターンを抽出してください。`,
     );
-    // LLM失敗時は diff_analyzed_at を null に戻してロック解放 → 次回cron実行でリトライ（メインループと同じ規約）
+    // LLM失敗時は3日後にバックオフして隔離（メインループと同じ規約・null リセットによる毎日失敗ループを防ぐ）
     if (aixResult === null) {
-      console.error(`[analyze-diffs] ⑥AIX差分: analyzeDiff failed for example id=${id} — resetting diff_analyzed_at for retry on next run`);
-      await supabase.from("ai_reply_examples").update({ diff_analyzed_at: null }).eq("id", id);
+      console.error(`[analyze-diffs] ⑥AIX差分: analyzeDiff failed for example id=${id} — backing off for 3 days`);
+      await backoffFailedExample(id, "⑥AIX差分 analyzeDiff失敗");
       continue;
     }
 
@@ -1963,11 +1990,11 @@ export async function POST(req: NextRequest) {
       // 個別exampleの予期しない例外はログしてスキップ（他のexampleの処理は継続する）
       const failedAixId = (ex as { id?: string }).id;
       console.error(`[analyze-diffs] ⑥AIX差分ループ例外 (example id=${failedAixId ?? "unknown"}) — スキップして続行:`, aixLoopErr);
-      // クレーム済みの楽観的ロックを解放して次回リトライ対象に戻す
+      // 失敗exampleは3日後にバックオフして隔離（null リセットによる毎日失敗ループを防ぐ）
       if (failedAixId) {
         try {
-          await supabase.from("ai_reply_examples").update({ diff_analyzed_at: null }).eq("id", failedAixId);
-        } catch { /* ロック解放失敗時は診断クエリ（未学習検知）に委ねる */ }
+          await backoffFailedExample(failedAixId, "⑥AIX差分ループ例外");
+        } catch { /* バックオフ設定失敗時は診断クエリ（未学習検知）に委ねる */ }
       }
     }
   }

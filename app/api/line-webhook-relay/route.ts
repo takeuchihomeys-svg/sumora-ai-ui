@@ -6,6 +6,24 @@ export const maxDuration = 30;
 const SCREENING_URL = "https://sumora-screening-admin.vercel.app/api/line-webhook";
 const AI_UI_URL     = "https://sumora-ai-ui.vercel.app/api/line-webhook";
 
+// タイムアウト付き fetch + 失敗時に1回だけリトライ（500ms 待機後）
+async function fetchWithRetry(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+  const attempt = async () => {
+    const res = await fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return res;
+  };
+  try {
+    return await attempt();
+  } catch (e) {
+    // 1回リトライ
+    await new Promise((r) => setTimeout(r, 500));
+    return attempt();
+  }
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const rawBody = await req.text();
   const signature = req.headers.get("x-line-signature") ?? "";
@@ -17,8 +35,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // 両方に並行転送
   const [screeningResult, aiUiResult] = await Promise.allSettled([
-    fetch(SCREENING_URL, { method: "POST", headers, body: rawBody, signal: AbortSignal.timeout(8_000) }),
-    fetch(AI_UI_URL,     { method: "POST", headers, body: rawBody, signal: AbortSignal.timeout(8_000) }),
+    fetchWithRetry(SCREENING_URL, { method: "POST", headers, body: rawBody }, 15_000),
+    fetch(AI_UI_URL, { method: "POST", headers, body: rawBody, signal: AbortSignal.timeout(8_000) }),
   ]);
 
   // screening-admin のエラーはログだけ（sumora-ai-ui が主管轄）
