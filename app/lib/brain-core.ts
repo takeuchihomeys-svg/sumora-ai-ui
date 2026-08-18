@@ -107,7 +107,7 @@ const AIX_CAPABILITY_MAP = `
 - property_recommendation: Vision読み取りで物件紹介文を生成（1件詳細）→ 押下後は「1件特にオススメ」で感情的フォローを追加する（実測1分22秒。原文そのままの送信実績はゼロなので"1件に絞って推す"思想のみ流用し全面リライトする）
 - meeting_place: 内覧の待ち合わせ場所案内を生成
 - greeting_viewing: 内覧前後の挨拶メッセージを生成
-- property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）※顧客が今まさに条件を尋ねてきた場合（「〜はありますか」「広めがいい」等）は property_search ではなく property_send を選ぶこと
+- property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）※顧客が今まさに条件を尋ねてきた場合（「〜はありますか」「広めがいい」等）は property_search ではなく property_send を選ぶこと。※弊社TikTok/Instagram等のSNS動画で見た物件に問い合わせてきた場合、内覧希望があればviewing_invite、物件を探している段階ならproperty_searchを選ぶ（弊社TikTok掲載物件は40㎡以上・家賃15万円以上が中心のため、顧客の予算・条件に合わない場合は別エリア・条件での代替提案をnext_stepsに含める）
 
 【aixキー選択の使いどころ基準（迷ったらここを優先）】
 - estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が物件画像だけを送ってきた（テキストなし・スクショのみ）／顧客が特定物件を気に入った／初期費用・総額の話題が出た時点で迷わず選ぶ
@@ -422,6 +422,18 @@ async function detectSignalBasedAixFallback(
     // applying_pattern の most_effective 最多。見積書→申込誘導→申込の3ステップが成約最短ルート。
     // （コスト懸念＝信号0.9・見積送付済み＝信号3 は上で先に除外済み）
     if (/見積|初期費用/.test(custText)) return "estimate_sheet";
+
+    // 信号TikTok（弊社SNS動画流入 → property_search）:
+    // 弊社TikTok/Instagramの動画で物件に興味を持って問い合わせてきた顧客。
+    // 内覧希望がある場合は信号0.95で viewing_invite に拾われているため、ここは物件検索フェーズを想定。
+    // ※見積・初期費用の話は信号1（estimate_sheet）が先に拾う。
+    // ※viewing/applyingフェーズでは物件検索は不要なため除外。
+    if (
+      /TikTok|tiktok|ティックトック|ティクトック/.test(custText) &&
+      newPhase !== "viewing" && newPhase !== "applying"
+    ) {
+      return "property_search";
+    }
 
     // 信号3.5（画像のみ送信対策）: 顧客がテキストなしで画像だけを送ってきた → estimate_sheet
     // messages 上は "[画像]" プレースホルダーで保存される。実運用では見積書スクショ送付が最多のため
