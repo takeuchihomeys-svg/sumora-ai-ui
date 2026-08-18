@@ -92,6 +92,7 @@ async function analyzeStructureDiff(
   sentReply: string,
   componentState: string,
   componentName: string,
+  brainContext?: { action?: string | null; reply_mode?: string | null; emotion?: string | null; urgency?: string | null } | null,
 ): Promise<{ skip: boolean; title?: string; rule?: string } | null> {
   try {
     const res = await client.messages.create({
@@ -109,6 +110,7 @@ ${sentReply}
 
 【お客様のメッセージ・状況】
 ${customerMessage || "不明"}
+${brainContext ? "\n【Brain・顧客コンテキスト】\n" + [brainContext.action ? "action: " + brainContext.action : "", brainContext.reply_mode ? "reply_mode: " + brainContext.reply_mode : "", brainContext.emotion ? "emotion: " + brainContext.emotion : "", brainContext.urgency ? "urgency: " + brainContext.urgency : ""].filter(Boolean).join(", ") + "\nこのコンテキストを踏まえて省略判断を解釈してください。" : ""}
 
 スキップ条件（以下なら {"skip":true} のみ返す）：
 - 文が短すぎて判断できない
@@ -140,6 +142,7 @@ async function analyzeComponentDiff(
   sentReply: string,
   componentState: string, // "property_send_pickup" 等
   componentName: string,  // "ピックアップ行（条件説明）" 等
+  brainContext?: { action?: string | null; reply_mode?: string | null; emotion?: string | null; urgency?: string | null } | null,
 ): Promise<{ skip: boolean; title?: string; rule?: string } | null> {
   try {
     const res = await client.messages.create({
@@ -154,6 +157,7 @@ ${aiComponentText}
 
 【スタッフが実際に送った全文（この中から「${componentName}」に対応する部分を見つけて比較する）】
 ${sentReply}
+${brainContext ? "\n【Brain・顧客コンテキスト】\n" + [brainContext.action ? "action: " + brainContext.action : "", brainContext.reply_mode ? "reply_mode: " + brainContext.reply_mode : "", brainContext.emotion ? "emotion: " + brainContext.emotion : "", brainContext.urgency ? "urgency: " + brainContext.urgency : ""].filter(Boolean).join(", ") + "\nこのコンテキストを踏まえてスタッフの改善意図を解釈してください。" : ""}
 
 分析手順：
 ① スタッフの全文の中からAIの「${componentName}」に対応する部分を特定する
@@ -187,6 +191,7 @@ async function analyzeDiff(
   sentReply: string,
   conversationState: string,
   componentHint = "",
+  brainContext?: { action?: string | null; reply_mode?: string | null; emotion?: string | null; urgency?: string | null } | null,
 ): Promise<{ skip: boolean; title?: string; rule?: string; category?: string; trigger_example?: string } | null> {
   try {
     const res = await client.messages.create({
@@ -206,6 +211,7 @@ ${aiDraft}
 ${sentReply}
 
 【フェーズ】${conversationState}
+${brainContext ? "\n【Brain・顧客コンテキスト】\n" + [brainContext.action ? "action: " + brainContext.action : "", brainContext.reply_mode ? "reply_mode: " + brainContext.reply_mode : "", brainContext.emotion ? "emotion: " + brainContext.emotion : "", brainContext.urgency ? "urgency: " + brainContext.urgency : ""].filter(Boolean).join(", ") + "\nこのコンテキストを踏まえてルールの汎用性を判断してください（顧客固有の特殊ケースは除外する）。" : ""}
 
 ▼ この順番で分析する
 ① スタッフの返信を1文ずつ分解し、各文の「役割」をラベル付け
@@ -1380,6 +1386,31 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
+      // Brain コンテキスト取得（fail-open: 失敗時は null で analyzeDiff 系に渡す）
+      let exBrainContext: { action?: string | null; reply_mode?: string | null; emotion?: string | null; urgency?: string | null } | null = null;
+      if (exConversationId) {
+        try {
+          const { data: brainConvData } = await supabase
+            .from("conversations")
+            .select("suggested_aix_meta, property_customers(ai_summary_json)")
+            .eq("id", exConversationId)
+            .maybeSingle();
+          if (brainConvData) {
+            const brainMeta = brainConvData.suggested_aix_meta as Record<string, unknown> | null;
+            const brainCustomer = Array.isArray(brainConvData.property_customers)
+              ? (brainConvData.property_customers[0] as Record<string, unknown> | null)
+              : (brainConvData.property_customers as Record<string, unknown> | null);
+            const brainSummary = brainCustomer?.ai_summary_json as Record<string, unknown> | null;
+            exBrainContext = {
+              action: (brainMeta?.action as string | null) ?? null,
+              reply_mode: (brainMeta?.reply_mode as string | null) ?? null,
+              emotion: (brainSummary?.emotion as string | null) ?? null,
+              urgency: (brainSummary?.urgency as string | null) ?? null,
+            };
+          }
+        } catch { /* fail-open: Brain取得失敗時はコンテキストなしで続行 */ }
+      }
+
     // 完全一致はスキップ（構成が同じなので学習不要）
     if ((ai_draft ?? "").trim() === (sent_reply ?? "").trim()) {
       await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
@@ -1467,8 +1498,8 @@ export async function POST(req: NextRequest) {
 
         // phrase=文字変化（言い回し）/ structure=パターン変化（省略・構成変更）
         const compResult = changeType === "structure"
-          ? await analyzeStructureDiff(customer_message, aiCompText, sent_reply, compState, compName)
-          : await analyzeComponentDiff(customer_message, aiCompText, sent_reply, compState, compName);
+          ? await analyzeStructureDiff(customer_message, aiCompText, sent_reply, compState, compName, exBrainContext)
+          : await analyzeComponentDiff(customer_message, aiCompText, sent_reply, compState, compName, exBrainContext);
 
         if (compResult === null) {
           // LLM失敗 → このexampleは成功扱いにしない（diff_analyzed_at をマークせずリトライ対象に残す）
@@ -1649,7 +1680,7 @@ export async function POST(req: NextRequest) {
       continue; // 通常の full-message analyzeDiff はスキップ
     }
 
-    const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state);
+    const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state, "", exBrainContext);
 
     // AI呼び出し失敗時（Anthropic一時障害・タイムアウト等）は diff_analyzed_at を3日後にセットして
     // バックオフ隔離する（従来の null リセットは毒薬exampleの毎日失敗ループを生むため廃止）。
