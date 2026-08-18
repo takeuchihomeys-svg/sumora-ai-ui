@@ -6,22 +6,30 @@
   <title>イエヤス | LINEでお部屋探し・大阪の賃貸仲介 | ホームズ</title>
   <style>
     :root {
-      --forest:    #1b6e2e;
-      --forest-dk: #145226;
-      --tangerine: #ff6b35;
-      --sun:       #f5c842;
-      --line:      #06C755;
-      --line-dk:   #05aa47;
-      --bg:        #fdfff8;
-      --bg-alt:    #f0f7f2;
-      --card:      #ffffff;
-      --ink:       #1a2018;
-      --muted:     #5a7060;
-      --border:    #cde8d4;
-      --lbl:       #1b6e2e;
-      --r-pill:    9999px;
-      --r-md:      18px;
-      --r-sm:      10px;
+      --forest:           #1b6e2e;
+      --forest-dk:        #145226;
+      --tangerine:        #ff6b35;
+      --sun:              #f5c842;
+      --line:             #06C755;
+      --line-dk:          #05aa47;
+      --line-green:       #06C755;
+      --line-green-dark:  #05aa47;
+      --line-green-deeper:#048a39;
+      --bg:               #fdfff8;
+      --bg-alt:           #f0f7f2;
+      --card:             #ffffff;
+      --ink:              #1a2018;
+      --muted:            #5a7060;
+      --border:           #cde8d4;
+      --lbl:              #1b6e2e;
+      --r-pill:           9999px;
+      --r-md:             18px;
+      --r-sm:             10px;
+      --white-alpha-80:   rgba(255,255,255,0.80);
+      --white-alpha-60:   rgba(255,255,255,0.60);
+      --white-alpha-07:   rgba(255,255,255,0.07);
+      --card-shadow:      0 8px 24px rgba(0,0,0,0.18);
+      --font-base:        -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
@@ -115,59 +123,154 @@
     .h-btn:hover { background: var(--line-dk); transform: scale(1.04); }
     .h-btn:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
 
-    /* Hero */
-    .hero {
-      background: linear-gradient(168deg, #145226 0%, #1b6e2e 45%, #267a3a 80%, #2e8d45 100%);
-      padding: 32px 22px 44px;
-      text-align: center;
+    /* ─── Hero (redesigned: LINE ad style) ─── */
+    #hero {
+      font-family: var(--font-base);
+      background: linear-gradient(160deg, var(--line-green) 0%, var(--line-green-deeper) 100%);
       position: relative;
+      padding: 32px 20px 44px;
       overflow: hidden;
+      box-sizing: border-box;
+      max-width: 480px;
+      margin: 0 auto;
     }
-    .hero::before {
+    #hero::before {
       content: '';
       position: absolute;
       inset: 0;
-      background-image: radial-gradient(circle, rgba(255,255,255,.07) 1px, transparent 1px);
+      background-image: radial-gradient(circle, var(--white-alpha-07) 1px, transparent 1px);
       background-size: 18px 18px;
       pointer-events: none;
+      z-index: 0;
     }
-    .hero-eye {
-      position: relative;
+    #hero > * { position: relative; z-index: 1; }
+
+    .hero-top { margin-bottom: 24px; }
+    .hero-label {
       display: inline-block;
       background: var(--tangerine);
       color: #fff;
       font-size: 12px;
-      font-weight: 800;
-      padding: 4px 14px;
-      border-radius: var(--r-pill);
-      letter-spacing: .06em;
-      margin-bottom: 14px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 12px;
     }
-    .hero-hl {
-      position: relative;
-      font-size: 32px;
-      font-weight: 900;
+    .hero-catch {
       color: #fff;
+      font-size: 36px;
+      font-weight: 900;
       line-height: 1.25;
-      text-wrap: balance;
-      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+      margin: 0 0 12px;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
-    .hero-hl em { font-style: normal; color: var(--sun); }
     .hero-sub {
-      position: relative;
-      font-size: 15px;
-      color: rgba(255,255,255,.87);
-      margin-bottom: 26px;
+      color: var(--white-alpha-80);
+      font-size: 16px;
+      font-weight: 500;
+      line-height: 1.6;
+      margin: 0;
     }
-    .char-wrap {
-      width: 190px;
-      height: 195px;
-      margin: 0 auto 28px;
-      position: relative;
-    }
-    .char-wrap svg { width: 100%; height: 100%; }
 
-    /* LINE buttons */
+    /* Hero visual: phone + card */
+    .hero-visual {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      margin-bottom: 28px;
+    }
+    .hero-phone-col { flex: 0 0 auto; width: 148px; }
+    .hero-phone-col svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      filter: drop-shadow(0 8px 20px rgba(0,0,0,0.30));
+    }
+
+    .hero-card {
+      flex: 1 1 0;
+      background: #fff;
+      border-radius: 16px;
+      padding: 18px 16px;
+      box-shadow: var(--card-shadow);
+      box-sizing: border-box;
+      align-self: center;
+    }
+    .hero-card-title {
+      color: var(--line-green-dark);
+      font-size: 22px;
+      font-weight: 900;
+      line-height: 1.3;
+      margin: 0 0 14px;
+      letter-spacing: -0.01em;
+    }
+    .hero-card-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .hero-card-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #1a1a1a;
+      line-height: 1.45;
+    }
+    .check-icon {
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      background: var(--line-green);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .check-icon svg { width: 11px; height: 11px; }
+
+    /* Hero CTA */
+    .hero-cta { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    .hero-line-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      background: var(--line-green-dark);
+      color: #fff;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      padding: 16px 24px;
+      border-radius: 50px;
+      text-decoration: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.22);
+      box-sizing: border-box;
+      transition: background 0.2s, transform 0.15s;
+    }
+    .hero-line-btn:hover, .hero-line-btn:focus {
+      background: var(--line-green-deeper);
+      transform: translateY(-2px);
+      outline: none;
+    }
+    .hero-line-btn:active { transform: translateY(0); }
+    .hero-line-icon { flex-shrink: 0; width: 32px; height: 32px; }
+    .hero-note-text {
+      color: var(--white-alpha-60);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      margin: 0;
+      text-align: center;
+    }
+
+    /* Final CTA (used below hero too) */
     .btn-line {
       display: flex;
       align-items: center;
@@ -194,11 +297,6 @@
     }
     .btn-line:focus-visible { outline: 3px solid var(--sun); outline-offset: 3px; }
     .btn-line.lg { font-size: 19px; padding: 20px; }
-    .hero-note {
-      position: relative;
-      font-size: 12px;
-      color: rgba(255,255,255,.65);
-    }
 
     /* Sections */
     .sec { padding: 48px 24px; }
@@ -363,107 +461,121 @@
 </header>
 
 <!-- HERO -->
-<section class="hero">
-  <p class="hero-eye">大阪エリアの賃貸仲介</p>
-  <h1 class="hero-hl">お部屋探しは<br><em>イエヤス</em>におまかせ！</h1>
-  <p class="hero-sub">LINEで気軽に相談するだけ♪<br>敷金・礼金0円物件もいっぱい！</p>
+<section id="hero" aria-label="イエヤス ヒーローセクション">
 
-  <div class="char-wrap">
-    <svg viewBox="0 0 200 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="緑甲冑の武将キャラクター・イエヤス">
-      <ellipse cx="100" cy="216" rx="44" ry="7" fill="rgba(0,0,0,0.14)"/>
-      <!-- armor skirt -->
-      <rect x="62"  y="170" width="24" height="36" rx="9" fill="#145226"/>
-      <rect x="89"  y="170" width="22" height="36" rx="9" fill="#1b6e2e"/>
-      <rect x="114" y="170" width="24" height="36" rx="9" fill="#145226"/>
-      <rect x="62"  y="170" width="76" height="4"  rx="2" fill="#d4a820"/>
-      <!-- feet -->
-      <rect x="56"  y="198" width="32" height="14" rx="7" fill="#0d3b1a"/>
-      <rect x="112" y="198" width="32" height="14" rx="7" fill="#0d3b1a"/>
-      <!-- body armor -->
-      <rect x="56" y="108" width="88" height="68" rx="16" fill="#1b6e2e"/>
-      <rect x="56" y="121" width="88" height="5" rx="2" fill="#145226" opacity=".65"/>
-      <rect x="56" y="132" width="88" height="5" rx="2" fill="#145226" opacity=".65"/>
-      <rect x="56" y="143" width="88" height="5" rx="2" fill="#145226" opacity=".65"/>
-      <rect x="56" y="154" width="88" height="5" rx="2" fill="#145226" opacity=".65"/>
-      <rect x="56"  y="108" width="4"  height="68" rx="2" fill="#d4a820" opacity=".8"/>
-      <rect x="140" y="108" width="4"  height="68" rx="2" fill="#d4a820" opacity=".8"/>
-      <!-- house chest emblem -->
-      <g transform="translate(81,114)">
-        <polygon points="19,0 3,13 35,13" fill="#f5c842"/>
-        <rect x="5"  y="13" width="28" height="20" rx="2.5" fill="#fff9e0"/>
-        <rect x="13" y="18" width="12" height="15" rx="2"   fill="#1b6e2e"/>
-        <line x1="3" y1="13" x2="35" y2="13" stroke="#c8a000" stroke-width="1.5"/>
-      </g>
-      <!-- left arm -->
-      <rect x="28" y="112" width="28" height="50" rx="14" fill="#1b6e2e"/>
-      <rect x="28" y="124" width="28" height="4"  rx="2"  fill="#145226" opacity=".6"/>
-      <rect x="28" y="134" width="28" height="4"  rx="2"  fill="#145226" opacity=".6"/>
-      <ellipse cx="42" cy="165" rx="14" ry="11" fill="#f9c090"/>
-      <!-- mini house held in left hand -->
-      <g transform="translate(14,168)">
-        <polygon points="28,0 14,12 42,12" fill="#f5c842" stroke="#c8a000" stroke-width=".8"/>
-        <rect x="16" y="12" width="24" height="15" rx="2" fill="white" stroke="#c8a000" stroke-width=".8"/>
-        <rect x="21" y="15" width="9"  height="12" rx="1.5" fill="#f5c842"/>
-        <line x1="14" y1="12" x2="42" y2="12" stroke="#c8a000" stroke-width="1"/>
-      </g>
-      <!-- right arm -->
-      <rect x="144" y="112" width="28" height="50" rx="14" fill="#1b6e2e"/>
-      <rect x="144" y="124" width="28" height="4"  rx="2"  fill="#145226" opacity=".6"/>
-      <rect x="144" y="134" width="28" height="4"  rx="2"  fill="#145226" opacity=".6"/>
-      <ellipse cx="158" cy="165" rx="14" ry="11" fill="#f9c090"/>
-      <!-- neck -->
-      <rect x="88" y="96" width="24" height="17" rx="9" fill="#f9c090"/>
-      <!-- head -->
-      <ellipse cx="100" cy="76" rx="37" ry="34" fill="#f9c090"/>
-      <!-- helmet shikoro (side guards) -->
-      <path d="M64 72 Q46 80 44 98 Q55 82 66 84Z" fill="#145226"/>
-      <path d="M136 72 Q154 80 156 98 Q145 82 134 84Z" fill="#145226"/>
-      <!-- helmet dome -->
-      <path d="M63 70 Q65 37 100 33 Q135 37 137 70Z" fill="#1b6e2e"/>
-      <!-- brim -->
-      <rect x="59" y="66" width="82" height="12" rx="5.5" fill="#145226"/>
-      <rect x="59" y="74" width="82" height="4"  rx="2"   fill="#d4a820"/>
-      <path d="M63 70 Q100 64 137 70" stroke="#d4a820" stroke-width="2" fill="none"/>
-      <!-- house mae-date (front ornament) -->
-      <g transform="translate(82,17)">
-        <polygon points="18,0 2,16 34,16" fill="#f5c842" stroke="#c8a000" stroke-width="1"/>
-        <rect x="5"  y="16" width="26" height="20" rx="3" fill="#fff9e0" stroke="#c8a000" stroke-width="1"/>
-        <rect x="11" y="21" width="12" height="15" rx="2" fill="#1b6e2e"/>
-        <rect x="15" y="36" width="6"  height="8"  rx="1.5" fill="#c8a000"/>
-      </g>
-      <!-- gold horns -->
-      <path d="M65 66 Q46 52 50 36 Q60 50 68 62" fill="#d4a820"/>
-      <path d="M135 66 Q154 52 150 36 Q140 50 132 62" fill="#d4a820"/>
-      <!-- eyebrows -->
-      <path d="M82 65 Q90 61 97 65"  stroke="#7a4520" stroke-width="2.2" stroke-linecap="round" fill="none"/>
-      <path d="M103 65 Q110 61 118 65" stroke="#7a4520" stroke-width="2.2" stroke-linecap="round" fill="none"/>
-      <!-- eyes -->
-      <ellipse cx="90"  cy="73" rx="7.5" ry="8" fill="white"/>
-      <ellipse cx="110" cy="73" rx="7.5" ry="8" fill="white"/>
-      <circle cx="90"  cy="74" r="5"   fill="#3a2000"/>
-      <circle cx="110" cy="74" r="5"   fill="#3a2000"/>
-      <circle cx="90"  cy="74" r="2.5" fill="#190f00"/>
-      <circle cx="110" cy="74" r="2.5" fill="#190f00"/>
-      <circle cx="91.5"  cy="72" r="1.4" fill="white"/>
-      <circle cx="111.5" cy="72" r="1.4" fill="white"/>
-      <!-- smile -->
-      <path d="M87 87 Q100 97 113 87" stroke="#c07050" stroke-width="2.8" stroke-linecap="round" fill="none"/>
-      <!-- rosy cheeks -->
-      <ellipse cx="79"  cy="83" rx="9" ry="7" fill="#ff9494" opacity=".28"/>
-      <ellipse cx="121" cy="83" rx="9" ry="7" fill="#ff9494" opacity=".28"/>
-      <!-- ears -->
-      <ellipse cx="63"  cy="76" rx="7" ry="9" fill="#f0b580"/>
-      <ellipse cx="137" cy="76" rx="7" ry="9" fill="#f0b580"/>
-    </svg>
+  <!-- 上部テキスト -->
+  <div class="hero-top">
+    <span class="hero-label" aria-label="エリア情報">大阪エリアの賃貸仲介</span>
+    <h1 class="hero-catch">イエヤスでお得に<br>お部屋探し</h1>
+    <p class="hero-sub">気になっているお部屋の<br>初期費用が簡単割引！</p>
   </div>
 
-  <a href="https://lin.ee/xofFiWP" class="btn-line" target="_blank" rel="noopener noreferrer">
-    <svg class="ico-l" viewBox="0 0 20 20" fill="white" aria-hidden="true">
-      <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
-    </svg>
-    今すぐイエヤスでお部屋探し！
-  </a>
-  <p class="hero-note">登録無料 · 来店不要 · 相談0円</p>
+  <!-- 中段ビジュアル：スマホモックアップ + 右カード -->
+  <div class="hero-visual" role="img" aria-label="LINEチャットのデモと割引情報">
+
+    <!-- スマートフォンモックアップ -->
+    <div class="hero-phone-col" aria-hidden="true">
+      <svg viewBox="0 0 148 280" xmlns="http://www.w3.org/2000/svg" role="presentation">
+        <!-- スマホフレーム -->
+        <rect x="2" y="2" width="144" height="276" rx="22" ry="22" fill="#1a1a1a"/>
+        <rect x="6" y="6" width="136" height="268" rx="19" ry="19" fill="#111111"/>
+        <!-- ノッチ -->
+        <rect x="48" y="9" width="52" height="6" rx="3" fill="#333333"/>
+        <!-- 画面 -->
+        <rect x="7" y="19" width="134" height="254" rx="14" ry="14" fill="#f0f0f0"/>
+        <!-- LINEヘッダー -->
+        <rect x="7" y="19" width="134" height="38" rx="0" fill="#06C755"/>
+        <rect x="7" y="19" width="134" height="14" rx="14" fill="#06C755"/>
+        <!-- ヘッダーテキスト -->
+        <text x="74" y="41" font-family="-apple-system, sans-serif" font-size="9" font-weight="700" fill="white" text-anchor="middle">IEYAS（賃貸）</text>
+        <!-- 戻るアイコン -->
+        <text x="18" y="41" font-family="-apple-system, sans-serif" font-size="10" fill="white" text-anchor="middle">‹</text>
+        <!-- 三本線 -->
+        <rect x="126" y="35" width="9" height="1.5" rx="1" fill="white"/>
+        <rect x="126" y="38" width="9" height="1.5" rx="1" fill="white"/>
+        <rect x="126" y="41" width="9" height="1.5" rx="1" fill="white"/>
+        <!-- チャット背景 -->
+        <rect x="7" y="57" width="134" height="216" fill="#f0f0f0"/>
+        <!-- ユーザー発言1（右・緑） -->
+        <rect x="62" y="64" width="73" height="26" rx="10" fill="#06C755"/>
+        <text x="99" y="73" font-family="-apple-system, sans-serif" font-size="6" fill="white" text-anchor="middle">費用どれだけ</text>
+        <text x="99" y="82" font-family="-apple-system, sans-serif" font-size="6" fill="white" text-anchor="middle">抑えられますか！</text>
+        <!-- IEYASアバター -->
+        <circle cx="16" cy="108" r="8" fill="#06C755"/>
+        <text x="16" y="111" font-family="-apple-system, sans-serif" font-size="6" fill="white" text-anchor="middle" font-weight="700">IE</text>
+        <!-- IEYAS発言1（左・白 - PDF） -->
+        <rect x="28" y="98" width="80" height="22" rx="8" fill="white"/>
+        <text x="38" y="108" font-family="-apple-system, sans-serif" font-size="5.5" fill="#333">【特別割引】</text>
+        <text x="38" y="116" font-family="-apple-system, sans-serif" font-size="5.5" fill="#06C755">御見積書.pdf</text>
+        <!-- IEYAS発言2（左・白） -->
+        <rect x="28" y="124" width="100" height="28" rx="8" fill="white"/>
+        <text x="36" y="134" font-family="-apple-system, sans-serif" font-size="5" fill="#333">【IEYAS特別割引費用】</text>
+        <text x="36" y="143" font-family="-apple-system, sans-serif" font-size="5" fill="#333">となります</text>
+        <!-- ユーザー発言2（右・緑） -->
+        <rect x="46" y="158" width="89" height="28" rx="10" fill="#06C755"/>
+        <text x="91" y="168" font-family="-apple-system, sans-serif" font-size="5.2" fill="white" text-anchor="middle">かなり費用抑えられて</text>
+        <text x="91" y="178" font-family="-apple-system, sans-serif" font-size="5.2" fill="white" text-anchor="middle">驚きました！</text>
+        <!-- 入力バー -->
+        <rect x="7" y="249" width="134" height="24" rx="0" fill="#f8f8f8"/>
+        <rect x="7" y="249" width="134" height="2" fill="#e0e0e0"/>
+        <rect x="12" y="255" width="90" height="12" rx="6" fill="white" stroke="#ddd" stroke-width="0.5"/>
+        <text x="110" y="264" font-family="-apple-system, sans-serif" font-size="8" fill="#06C755" text-anchor="middle">送信</text>
+        <!-- 側面ボタン -->
+        <rect x="0" y="80" width="3" height="18" rx="1.5" fill="#333"/>
+        <rect x="0" y="104" width="3" height="18" rx="1.5" fill="#333"/>
+        <rect x="145" y="95" width="3" height="28" rx="1.5" fill="#333"/>
+      </svg>
+    </div>
+
+    <!-- 右カード -->
+    <div class="hero-card" role="region" aria-label="割引特典一覧">
+      <p class="hero-card-title">初期費用を<br>大幅割引！</p>
+      <ul class="hero-card-list">
+        <li>
+          <span class="check-icon" aria-hidden="true">
+            <svg viewBox="0 0 11 11" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <polyline points="2,5.5 4.5,8 9,3" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span>仲介手数料 割引</span>
+        </li>
+        <li>
+          <span class="check-icon" aria-hidden="true">
+            <svg viewBox="0 0 11 11" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <polyline points="2,5.5 4.5,8 9,3" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span>敷金・礼金<br>0円物件多数</span>
+        </li>
+        <li>
+          <span class="check-icon" aria-hidden="true">
+            <svg viewBox="0 0 11 11" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <polyline points="2,5.5 4.5,8 9,3" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span>LINEで即見積もり</span>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- CTA -->
+  <div class="hero-cta">
+    <a href="https://lin.ee/xofFiWP" class="hero-line-btn"
+       aria-label="LINEで友だち追加して無料相談を始める"
+       target="_blank" rel="noopener noreferrer">
+      <svg class="hero-line-icon" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+        <rect width="32" height="32" rx="8" fill="white"/>
+        <g transform="translate(5,5)">
+          <path d="M11 1C5.477 1 1 5.037 1 10.016c0 4.49 3.655 8.245 8.6 8.93.336.072.793.22.909.506.104.26.068.667.033.93l-.147.881c-.045.26-.207 1.018.892.555s5.934-3.494 8.097-5.984C20.878 14.039 21 12.09 21 10.016 21 5.037 16.523 1 11 1z" fill="#06C755"/>
+          <path d="M8.5 12.5H6.3a.3.3 0 0 1-.3-.3V7.8a.3.3 0 0 1 .6 0v4.1h1.9a.3.3 0 0 1 0 .6zm1.8 0a.3.3 0 0 1-.3-.3V7.8a.3.3 0 0 1 .6 0v4.4a.3.3 0 0 1-.3.3zm4.4 0a.3.3 0 0 1-.25-.135l-2-2.9v2.735a.3.3 0 0 1-.6 0V7.8a.3.3 0 0 1 .55-.165l2 2.9V7.8a.3.3 0 0 1 .6 0v4.4a.3.3 0 0 1-.3.3zm2.8-3.1h-1.9V10h1.9a.3.3 0 0 1 0 .6H15.3V11h1.9a.3.3 0 0 1 0 .6H15a.3.3 0 0 1-.3-.3V7.8a.3.3 0 0 1 .3-.3h2.2a.3.3 0 0 1 0 .6H15.3v.7h1.9a.3.3 0 0 1 0 .6z" fill="white"/>
+        </g>
+      </svg>
+      LINE友だち追加
+    </a>
+    <p class="hero-note-text">登録無料 · 来店不要 · 24時間受付</p>
+  </div>
+
 </section>
 
 <!-- ABOUT -->
