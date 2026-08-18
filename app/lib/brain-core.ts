@@ -1811,17 +1811,32 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
     return false;
   }
 
-  const { error } = await supabase
+  const { data: writtenRows, error } = await supabase
     .from("conversations")
     .update({ suggested_aix_meta: meta, brain_analyzed_at: new Date().toISOString() })
     .eq("id", conversationId)
-    .eq("updated_at", watermark); // B5: 会話が進んでいたら古い解析は静かに no-op（sweep が補填する）
+    .eq("updated_at", watermark) // B5: 会話が進んでいたら古い解析は静かに no-op（sweep が補填する）
+    .select("id"); // no-op（0行マッチ）を偽陽性なく検知するために追加
   if (error) {
     // B10(Fable5): スキーマ変更後の型不一致等、恒常的なDB障害を診断可能にする
     console.error("[brain-core] suggested_aix_meta update failed:", conversationId, error.message);
   }
+  // actuallyWritten: 実際に1行以上書き込めた場合のみ true（no-op は false）
+  // Supabase は 0行マッチでも error=null を返すため writtenRows?.length で判定する
+  const actuallyWritten = !error && (writtenRows?.length ?? 0) > 0;
+  if (!actuallyWritten && !error) {
+    // B5ウォーターマーク競合: autoUpgradeToHot 等が分析中に updated_at を更新したため no-op になった。
+    // suggested_aix_meta は書けなかったが sweep の30分バックオフ用に brain_analyzed_at のみ打刻。
+    // watermark 条件なし（会話が進んでいても打刻してよい）・25分以内の打刻は上書きしない。
+    console.warn("[brain-core] analyzeAndSaveBrainMeta: watermark mismatch (no-op), stamping brain_analyzed_at only:", conversationId);
+    await supabase
+      .from("conversations")
+      .update({ brain_analyzed_at: new Date().toISOString() })
+      .eq("id", conversationId)
+      .or(`brain_analyzed_at.is.null,brain_analyzed_at.lt.${new Date(Date.now() - 25 * 60 * 1000).toISOString()}`);
+  }
   // 脳分析成功時のみチェックポイント作成を fire-and-forget 起動（レスポンスを遅らせない）
-  if (!error) {
+  if (actuallyWritten) {
     // ── conversation_direction フェーズ変化検知と更新 ─────────────────────────
     // brain分析が成功した場合のみ実行。フェーズ変化が無い場合・スタッフ手動修正中はスキップ。
     // 失敗しても fire-and-forget なのでメインフローへの影響なし。
@@ -2073,7 +2088,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
       void maybeCreateCheckpoint(conversationId).catch(() => {});
     }
   }
-  return !error;
+  return actuallyWritten; // 実際に書き込んだ時だけ true（偽陽性の根本修正）
 }
 
 // ── brain直列アーキテクチャ（2026-08）────────────────────────────────────────
