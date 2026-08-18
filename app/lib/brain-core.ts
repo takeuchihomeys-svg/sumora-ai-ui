@@ -306,6 +306,17 @@ function detectPhaseFromBrainMeta(
   return "hearing";
 }
 
+// ── 退去予定/入居中物件の検出（旧 deriveSuggestedAix redirectMoveOut 相当） ────────────
+// 退去予定・入居中の物件は現地内覧が不可能なため、viewing_invite（内覧誘導）を提案せず
+// application_push（申込で部屋を先押さえ）へ差し替える。
+// DBに物件募集状況カラムが無いため、会話メッセージ（スタッフ送付の物件情報を含む）からの
+// テキスト検出で判定する。正規表現は app/api/generate-reply/route.ts の MOVE_OUT_PATTERN と
+// 完全同一に保つこと（変更時は両方を同時更新）。
+// ⚠️ 「退去後」は除外: AIが「退去後すぐにご案内します」と返信すると履歴に残り
+//    次回の検出が誤発火するフィードバックループの原因となるため、単独パターンから除外。
+// ⚠️ 「入居者」「居住中」は省略: 顧客が現居住状況を話す文脈でも一致してしまうため。
+const MOVE_OUT_PATTERN = /退去予定|入居中|[0-9０-９]{1,2}\s*月末?\s*退去|退去[はが]?[0-9０-９]{1,2}\s*月/;
+
 // ── P5: 成約データ（applying_pattern 26件・全件importance=9）由来の信号ベースAIX決定 ────────
 // suggested_aix_button の 1-b 分岐（非viewingフェーズ）で brainAix（Haiku提案）が null だった場合の
 // フォールバック。旧実装はフェーズ決定論のみで、成約に最も効いた estimate_sheet /
@@ -483,7 +494,11 @@ async function detectSignalBasedAixFallback(
       viewingWish &&
       !(/https?:\/\//.test(recentCustText) && !pendingTaskTypes.includes("property_check"))
     ) {
-      return "viewing_invite";
+      // 退去予定/入居中物件では現地内覧不可 → 申込誘導へ差し替え（旧 redirectMoveOut 相当）。
+      // 「退去予定」情報は通常スタッフが物件情報として送るため、顧客だけでなく
+      // スタッフ送信を含む直近10件（msgs）全体で検出する。
+      const moveOutDetected = MOVE_OUT_PATTERN.test(msgs.map((m) => m.text ?? "").join("\n"));
+      return moveOutDetected ? "application_push" : "viewing_invite";
     }
 
     // 信号1（成約実績最多ライン）: 最終顧客メッセージに見積・初期費用の話題 → estimate_sheet
@@ -1277,7 +1292,15 @@ ${history}`;
         .pop() ?? null;
       const customerRespondedAfterSend = !lastPropertySentAt ||
         Boolean(lastCustomerMsg && new Date(lastCustomerMsg.created_at).getTime() > new Date(lastPropertySentAt).getTime());
-      if (!lastMsgIsCustomer || !customerRespondedAfterSend) finalAix = null;
+      if (!lastMsgIsCustomer || !customerRespondedAfterSend) {
+        finalAix = null;
+      } else if (MOVE_OUT_PATTERN.test(typedMessages.map((m) => m.text ?? "").join("\n"))) {
+        // 退去予定/入居中物件では現地内覧不可（旧 redirectMoveOut 相当）:
+        // Haiku 提案がガードを通過して viewing_invite に確定する場合でも、
+        // 会話履歴（スタッフ送付の物件情報を含む直近15件）に退去予定/入居中の記述があれば
+        // 申込で部屋を先押さえする application_push へ差し替える。
+        finalAix = "application_push";
+      }
     }
     // Quality gate: suppress AIX suggestions with < 30% acceptance rate over 10+ samples.
     // FIX(Fable5 #3): 自経路の採択率キー（:brain 等）を読む。旧実装は :analysis_step1 固定で
@@ -1800,14 +1823,22 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
               // 最終メッセージがスタッフ送信（物件送付直後・返信直後＝顧客の反応待ち）の場合は
               // 何も提案しない（null）。顧客が返信すれば webhook 経由の再分析でガードを通過し、
               // 正当な viewing_invite は従来どおり提案される
+              // 退去予定/入居中検出（旧 redirectMoveOut 相当）のため text も取得し、
+              // スタッフ送信を含む直近10件で判定する（limit 1 → 10 に拡張）
               const { data: lastMsgRows } = await supabase
                 .from("messages")
-                .select("sender")
+                .select("sender, text")
                 .eq("conversation_id", conversationId)
                 .order("created_at", { ascending: false })
-                .limit(1);
+                .limit(10);
+              // 退去予定/入居中物件では現地内覧不可 → 申込誘導へ差し替え
+              const schedMoveOut = MOVE_OUT_PATTERN.test(
+                (lastMsgRows ?? []).map((m) => m.text ?? "").join("\n"),
+              );
               viewingPhaseDetail = "scheduling";
-              suggAixButton = lastMsgRows?.[0]?.sender === "customer" ? "viewing_invite" : null;
+              suggAixButton = lastMsgRows?.[0]?.sender === "customer"
+                ? (schedMoveOut ? "application_push" : "viewing_invite")
+                : null;
             }
           }
 
