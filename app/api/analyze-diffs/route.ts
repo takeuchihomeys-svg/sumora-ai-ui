@@ -322,6 +322,7 @@ async function autoJudgeKnowledge(
   conversationState: string | null,
   importance: number,
   triggerExample?: string,
+  conversationId?: string | null,
 ): Promise<{ verdict: "confirm" | "question" | "contradiction" | "skip"; reason: string; existingRulesText?: string }> {
   if (importance < 7) return { verdict: "skip", reason: "" };
 
@@ -340,6 +341,42 @@ async function autoJudgeKnowledge(
   const existingRulesText = (existing ?? []).map((r, i) =>
     `【ルール${i + 1}】「${(r.title as string)}」\n${String(r.content).slice(0, 250)}`
   ).join("\n\n") || "（なし）";
+
+  // 顧客コンテキスト取得: fail-open（取得失敗時は contextNote="" で通常通り動作）
+  let contextNote = "";
+  if (conversationId) {
+    try {
+      const { data: convData } = await supabase
+        .from("conversations")
+        .select("suggested_aix_meta, property_customers(ai_summary_json)")
+        .eq("id", conversationId)
+        .maybeSingle();
+      if (convData) {
+        const meta = convData.suggested_aix_meta as Record<string, unknown> | null;
+        const customer = Array.isArray(convData.property_customers)
+          ? (convData.property_customers[0] as Record<string, unknown> | null)
+          : (convData.property_customers as Record<string, unknown> | null);
+        const summary = customer?.ai_summary_json as Record<string, unknown> | null;
+        const brainLines: string[] = [];
+        if (meta?.reply_mode) brainLines.push(`reply_mode: ${meta.reply_mode as string}`);
+        if (meta?.enforcement_level) brainLines.push(`enforcement_level: ${meta.enforcement_level as string}`);
+        if (meta?.closing_strategy) brainLines.push(`closing_strategy: ${meta.closing_strategy as string}`);
+        const analysisLines: string[] = [];
+        if (summary?.emotion) analysisLines.push(`emotion: ${summary.emotion as string}`);
+        if (summary?.urgency) analysisLines.push(`urgency: ${summary.urgency as string}`);
+        if (summary?.style) analysisLines.push(`style: ${summary.style as string}`);
+        if (summary?.winning_pattern) analysisLines.push(`winning_pattern: ${summary.winning_pattern as string}`);
+        if (brainLines.length > 0 || analysisLines.length > 0) {
+          const parts: string[] = [];
+          if (brainLines.length > 0) parts.push(`Brain判定: ${brainLines.join(", ")}`);
+          if (analysisLines.length > 0) parts.push(`顧客分析: ${analysisLines.join(", ")}`);
+          contextNote = `\n顧客コンテキスト（このコンテキストを考慮してルールの有効性を判定してください）:\n${parts.join("\n")}`;
+        }
+      }
+    } catch {
+      // 取得失敗は無視してcontextNote=""のまま継続
+    }
+  }
 
   const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
   if (!apiKey) return { verdict: "skip", reason: "" };
@@ -365,7 +402,7 @@ async function autoJudgeKnowledge(
 AIXボタン由来の文と通常返信の領域を混同した判定・質問理由を書いてはいけません。
 
 ${SUMORA_QUESTION_SYSTEM_CONTEXT}
-
+${contextNote}
 タイトル: ${title}
 内容: ${content.slice(0, 200)}
 フェーズ: ${conversationState ?? "不明"}
@@ -878,7 +915,7 @@ export async function POST(req: NextRequest) {
   // バックログを毎回先頭から確実に消化し、取りこぼしを防ぐ（1回あたりの上限 limit は維持）。
   const { data: examples, error: examplesError } = await supabase
     .from("ai_reply_examples")
-    .select("id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle")
+    .select("id, conversation_id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle")
     .eq("was_ai_modified", true)
     .is("diff_analyzed_at", null)
     .not("ai_draft", "is", null)
@@ -1317,8 +1354,9 @@ export async function POST(req: NextRequest) {
     // 中断されないよう try-catch で囲む。エラー時はクレーム済みロック（diff_analyzed_at）を
     // 解放して次回cron実行でリトライさせる。
     try {
-    const { id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle } = ex as {
+    const { id, conversation_id: exConversationId, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle } = ex as {
       id: string;
+      conversation_id: string | null;
       customer_message: string;
       ai_draft: string;
       sent_reply: string;
@@ -1512,7 +1550,7 @@ export async function POST(req: NextRequest) {
             } else if (judgeCount < MAX_JUDGE_PER_RUN) {
               // AUTO-JUDGE: Sonnetで品質判定（Tier1未適用・importance>=7 のみ対象）
               judgeCount++;
-              const { verdict, reason: judgeReason, existingRulesText: compExistingRules } = await autoJudgeKnowledge(upsertResult.id, compResult.title, compResult.rule, compState, imp, customer_message);
+              const { verdict, reason: judgeReason, existingRulesText: compExistingRules } = await autoJudgeKnowledge(upsertResult.id, compResult.title, compResult.rule, compState, imp, customer_message, exConversationId);
               if (verdict === "confirm") {
                 // H-2: promoted_by='auto_judge' を記録して昇格
                 await promoteToConfirmed(upsertResult.id, "auto_judge", {
@@ -1707,7 +1745,7 @@ export async function POST(req: NextRequest) {
           } else if (judgeCount < MAX_JUDGE_PER_RUN) {
             // AUTO-JUDGE: Sonnetで品質判定（Tier1未適用・importance>=7 のみ対象）
             judgeCount++;
-            const { verdict, reason: judgeReason, existingRulesText: fullExistingRules } = await autoJudgeKnowledge(upsertResult.id, result.title, result.rule, conversation_state ?? null, imp, result.trigger_example);
+            const { verdict, reason: judgeReason, existingRulesText: fullExistingRules } = await autoJudgeKnowledge(upsertResult.id, result.title, result.rule, conversation_state ?? null, imp, result.trigger_example, exConversationId);
             if (verdict === "confirm") {
               // H-2: promoted_by='auto_judge' を記録して昇格
               await promoteToConfirmed(upsertResult.id, "auto_judge", {
@@ -1783,7 +1821,7 @@ export async function POST(req: NextRequest) {
             if (mergedImp >= 8 && mergedWrong >= 1) {
               mergeJudgeCount++;
               const { verdict: mergeVerdict, reason: mergeReason } = await autoJudgeKnowledge(
-                upsertResult.id, result.title, result.rule, conversation_state ?? null, mergedImp, result.trigger_example,
+                upsertResult.id, result.title, result.rule, conversation_state ?? null, mergedImp, result.trigger_example, exConversationId,
               );
               if (mergeVerdict === "question" || mergeVerdict === "contradiction") {
                 // dedup: 同一 knowledge_id への質問が既にあれば再起票しない（実行またぎの重複起票を防止。クエリ失敗時は data=null → 起票にフォールバック）
