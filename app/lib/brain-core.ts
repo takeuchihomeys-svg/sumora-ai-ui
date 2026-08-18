@@ -320,7 +320,7 @@ async function detectSignalBasedAixFallback(
   newPhase: "hearing" | "proposing" | "viewing" | "applying",
 ): Promise<string | null> {
   try {
-    const [msgsRes, aixRes, scheduledRes, tasksRes, pcRes] = await Promise.all([
+    const [msgsRes, aixRes, scheduledRes, tasksRes, pcRes, rulesRes] = await Promise.all([
       supabase
         .from("messages")
         .select("sender, text, created_at, is_aix_generated")
@@ -352,6 +352,26 @@ async function detectSignalBasedAixFallback(
             .eq("id", propertyCustomerId)
             .maybeSingle()
         : Promise.resolve({ data: null }),
+      // 信号5.5/8用（brain一本化）: trigger_action_rules のDB学習ルールを並列取得。
+      // suggest-next-action API への HTTP fetch ではなく supabase 直読み
+      // （このファイルは webhook after() / brain-sweep cron から呼ばれるため往復ホップを増やさない）。
+      // メタ行（AFTER:% / %_ACCEPT_RATE% 等）は集計値でありキーワードルールではないため除外する。
+      supabase
+        .from("trigger_action_rules")
+        .select("action_type, keyword, confidence, occurrence_count")
+        .gte("confidence", 0.65)
+        .gte("occurrence_count", 1)
+        .not("keyword", "like", "AFTER:%")
+        .not("keyword", "like", "SUGGESTION_ACCEPT_RATE%")
+        .not("keyword", "like", "PREDICTION_ACCURACY%")
+        .not("keyword", "like", "SUBMODE_ACCEPT:%")
+        .not("keyword", "like", "SOURCE_ACCEPT_RATE%")
+        .not("keyword", "like", "MANUAL_RULE:%")
+        .or(`conversation_status.is.null,conversation_status.eq.${newPhase}`)
+        .order("confidence", { ascending: false })
+        .order("occurrence_count", { ascending: false })
+        .order("keyword", { ascending: true })
+        .limit(200),
     ]);
 
     type MsgRow = { sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null };
@@ -365,13 +385,37 @@ async function detectSignalBasedAixFallback(
     const hasPendingScheduled = (scheduledRes.data?.length ?? 0) > 0;
     const pendingTaskTypes = ((tasksRes.data ?? []) as { task_type: string }[]).map((t) => t.task_type);
     const pc = pcRes.data as { last_property_sent_at: string | null; property_send_count: number | null } | null;
+    // DB学習ルール（信号5.5/8で使用）: 旧名 alternative_send は property_send に正規化し、
+    // AIX_BRAIN_NOTES に存在するアクション（=suggested_aix_button として描画可能なボタン）のみ採用する
+    type RuleRow = { action_type: string; keyword: string; confidence: number | null; occurrence_count: number | null };
+    const dbRules = ((rulesRes.data ?? []) as RuleRow[])
+      .map((r) => ({ ...r, action_type: r.action_type === "alternative_send" ? "property_send" : r.action_type }))
+      .filter((r) =>
+        typeof r.keyword === "string" && r.keyword.length >= 2 &&
+        typeof r.action_type === "string" && Boolean(AIX_BRAIN_NOTES[r.action_type]));
+
+    // 信号0.97（同棟別号室依頼 — brain一本化: deriveSuggestedAix Step 0.5 を移植）:
+    // proposing フェーズで「こちらの6万台のお部屋はないですか？」「もっと安い部屋ありませんか」等、
+    // 送付済み物件の同一マンション内・別号室/別価格帯の依頼 → property_recommendation。
+    // 【確認します】（acknowledge_check・信号4）ではなく物件ピックアップ系が正解の局面のため、
+    // 信号4より前（最優先）で評価する。
+    if (newPhase === "proposing") {
+      const conditionChangeReq =
+        /([0-9０-９]+\s*万(円)?台|万円?台|(もっと|もう少し)安|安め|安い(お?部屋|物件)|家賃.{0,8}(抑え|低め|下げ)|(別|他|違う)の?(お?部屋|物件)|同じ(マンション|建物|物件))/;
+      const requestForm =
+        /(ない(です|でしょう)?か|あります|ありませんか|あれば|欲しい|希望|探して|お願い)/;
+      if (conditionChangeReq.test(custText) && requestForm.test(custText)) {
+        return "property_recommendation";
+      }
+    }
 
     // 信号0.9（コスト懸念 — 信号1より先に評価）: 「初期費用を抑えたい」「もっと安くしたい」等は
     // 金額の質問ではなく“提案済み物件が刺さっていない”サイン → estimate_sheet ではなく
     // より初期費用の安い物件の再提案（property_recommendation）が正解。
     // 信号1の /見積|初期費用/ 部分一致がコスト懸念表明まで estimate_sheet に吸い込む誤爆を防ぐ。
+    // ※ brain一本化: deriveSuggestedAix Step 0.55 と同一regexに統一（「費用をかけられない/かけたくない」も検知）
     const costConcern =
-      (/(初期費用|費用|家賃)[^。！!？?\n]{0,8}(抑え|安く|下げ)|(抑え|安く)[^。！!？?\n]{0,6}(たい|入居)/.test(custText)) &&
+      (/(初期費用|費用|家賃)[^。！!？?\n]{0,8}(抑え|安く|下げ|かけ(られ|たく)な)|(抑え|安く)[^。！!？?\n]{0,6}(たい|入居)/.test(custText)) &&
       !/(いくら|内訳|どの(くらい|位)|教え)/.test(custText);
     if (costConcern) return "property_recommendation";
 
@@ -391,6 +435,30 @@ async function detectSignalBasedAixFallback(
       (!lastCustomer || lastStaff.created_at > lastCustomer.created_at)
     ) {
       return "acknowledge_check";
+    }
+
+    // 信号0.96（見積・初期費用の明示質問 — brain一本化: deriveSuggestedAix Step 0.6 を移植）:
+    // 「初期費用いくらですか」「お見積りいただけますか」等の明示的な依頼 → estimate_sheet。
+    // 信号1（/見積|初期費用/ の部分一致）より精密な判定を先に効かせる。
+    // 誤爆ガード①: 内覧希望が主目的のメッセージは信号0.95（viewing_invite）に任せる。
+    // 誤爆ガード②: 「もっと安い物件ないですか」等の別物件依頼はピックアップ系（信号0.97/0.9）に任せる。
+    // ※ コスト懸念（信号0.9）・見積送付済み（信号3）を先に除外する並び順を変えないこと。
+    {
+      const estimateKeyword =
+        /(初期費用|見積|スモ割|総額|予算|全部で.{0,6}いくら|費用.{0,6}(内訳|詳細)|いくら.{0,8}(かかる|かかり|です|でしょう))/;
+      const estimateRequestForm =
+        /(いくら|どの(くらい|位)|内訳|教え|知りたい|いただけ|頂け|ください|下さい|ですか|でしょうか|お願い|？|\?)/;
+      const viewingReq = /(内覧|内見|見学).{0,4}(したい|希望|でき|いつ|日程|調整)/;
+      const otherPropertyReq =
+        /(安|抑え)[^。！!？?\n]{0,10}(物件|お?部屋)|(物件|お?部屋)[^。！!？?\n]{0,8}(ない(です|でしょう)?か|あります|ありません)/;
+      if (
+        estimateKeyword.test(custText) &&
+        estimateRequestForm.test(custText) &&
+        !viewingReq.test(custText) &&
+        !otherPropertyReq.test(custText)
+      ) {
+        return "estimate_sheet";
+      }
     }
 
     // 信号0.95（内覧希望 — 信号1より先に評価。内覧希望は見積話題より局面が進んでいるため優先）:
@@ -456,6 +524,20 @@ async function detectSignalBasedAixFallback(
       return "property_check_result";
     }
 
+    // 信号5.5（竹内さん回答由来ルール — brain一本化: suggest-next-action の human_rule 相当を直読み移植）:
+    // ai-feedback/route.ts が「この場合はこのAIXを使う」という竹内さんの回答を
+    // confidence 0.95 / occurrence_count 10 の trigger_action_rules として保存する。
+    // 人間が明示的に教えたルールは時間ヒューリスティック（信号6/7）より優先して発火させる。
+    if (custText) {
+      const humanHit = dbRules.find(
+        (r) =>
+          (r.confidence ?? 0) >= 0.95 && (r.confidence ?? 0) <= 1 &&
+          (r.occurrence_count ?? 0) >= 10 &&
+          custText.includes(r.keyword),
+      );
+      if (humanHit) return humanHit.action_type;
+    }
+
     // 信号6: 最終顧客メッセージから3日以上沈黙 AND 物件提案済み AND 予約送信なし → followup_revive
     // （AIX_CAPABILITY_MAP「最終顧客メッセージが3日以上前で予約送信済みメッセージが無い時」の実装）
     const propertyProposed =
@@ -491,6 +573,23 @@ async function detectSignalBasedAixFallback(
       if (unansweredSendCount < 2 && (daysSinceLastSend === null || daysSinceLastSend >= 7)) {
         return "property_search";
       }
+    }
+
+    // 信号8（学習キーワードルール — brain一本化: suggest-next-action の trigger_rule 相当を直読み移植）:
+    // 上のハードコード信号がどれもマッチしなかった場合の最終フォールバック。
+    // 最終顧客メッセージに含まれるキーワードごとに confidence（0-1クランプ・汚染値防御）を
+    // アクション別に合算し、合計 0.85 以上の最上位アクションを採用する（suggest-next-action と同閾値）。
+    // マッチなしなら従来通り null → フェーズ別デフォルトに落ちる（既存ロジックを壊さない）。
+    if (custText) {
+      const scores: Record<string, number> = {};
+      for (const r of dbRules) {
+        if (!custText.includes(r.keyword)) continue;
+        scores[r.action_type] = (scores[r.action_type] ?? 0) + Math.min(r.confidence ?? 0, 1);
+      }
+      const top = Object.entries(scores)
+        .filter(([, score]) => score >= 0.85)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+      if (top) return top[0];
     }
 
     return null;

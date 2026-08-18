@@ -332,31 +332,21 @@ export async function POST(req: NextRequest) {
         }
       } catch (streamErr) {
         console.error("[bg-async] stream read error:", String(streamErr), "convId:", convId, "partial text length:", fullText.length);
-        // 部分テキストがあれば保存を試みる（内部タグは除去・SUGGESTED_AIXが完全に届いていればパースして保存）
-        let partialAixMeta: { action: string; note: string } | null = null;
-        const partialAixMatch = fullText.match(/<<<SUGGESTED_AIX:([\s\S]+?)>>>/);
-        if (partialAixMatch) {
-          try { partialAixMeta = JSON.parse(partialAixMatch[1]) as { action: string; note: string }; } catch { /* パース失敗は無視 */ }
-        }
+        // 部分テキストがあれば保存を試みる（内部タグは除去のみ。suggested_aix_meta は brain（runBrainAndNotify）が書き込み済みのため触らない）
         const partialDraft = fullText
           .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
           .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
           .trim();
         if (partialDraft.length > 20) {
-          await db.from("conversations").update({ ai_draft: partialDraft, draft_pending_at: null, suggested_aix_meta: partialAixMeta }).eq("id", convId);
+          await db.from("conversations").update({ ai_draft: partialDraft, draft_pending_at: null }).eq("id", convId);
           console.log("[bg-async] saved partial draft:", partialDraft.length, "chars, convId:", convId);
         }
         return;
       }
 
       // 内部タグ（<<<SUGGESTED_AIX:{...}>>> / <<<STOP_REASON:xxx>>>）を本文から除去してから保存
-      // （generate-reply はストリーム末尾にトレーラーを付加するため、未除去のまま保存すると内部指示が顧客に届く事故になる）
-      // SUGGESTED_AIX は除去するだけでなくパースして suggested_aix_meta としてDBに保存する（UIでAIX誘導表示に使う）
-      let suggestedAixMeta: { action: string; note: string } | null = null;
-      const aixTrailerMatch = fullText.match(/<<<SUGGESTED_AIX:([\s\S]+?)>>>/);
-      if (aixTrailerMatch) {
-        try { suggestedAixMeta = JSON.parse(aixTrailerMatch[1]) as { action: string; note: string }; } catch { /* パース失敗は無視（除去のみ行う） */ }
-      }
+      // （未除去のまま保存すると内部指示が顧客に届く事故になるため防御的に除去。
+      //   suggested_aix_meta は brain（runBrainAndNotify）が draft 生成前に書き込み済みのため、ここでは書かない）
       const finalDraft = fullText
         .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
         .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
@@ -364,7 +354,7 @@ export async function POST(req: NextRequest) {
       if (finalDraft) {
         // ai_draft IS NULL ガード: 人間が編集中の場合は上書きしない
         const { error: saveErr } = await db.from("conversations")
-          .update({ ai_draft: finalDraft, draft_pending_at: null, draft_fail_count: 0, suggested_aix_meta: suggestedAixMeta })
+          .update({ ai_draft: finalDraft, draft_pending_at: null, draft_fail_count: 0 })
           .eq("id", convId)
           .is("ai_draft", null);
         if (saveErr) {

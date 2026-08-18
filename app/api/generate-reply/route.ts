@@ -181,9 +181,11 @@ function buildSensitiveGateNote(customerMessage: string): string {
     : "";
 }
 
-// ─── AIXボタン誘導ロジック: ドラフトテキスト＋会話状態からスタッフへのメモを生成 ────
+// ─── AIXボタン誘導ロジック: brain(suggested_aix_meta) の action からスタッフへのメモを生成 ────
+// AIX推薦の判定本体は brain-core（detectSignalBasedAixFallback + Haiku分析）に一元化済み。
+// このルートは brain が確定した action をトレーラーに変換するだけ（旧 deriveSuggestedAix は廃止）。
 
-// action_type → スタッフ向け誘導メモ（suggest-next-action の結果をこの note に変換する）
+// action_type → スタッフ向け誘導メモ（brain の action / final-check 境界コードをこの note に変換する）
 const AIX_ACTION_NOTES: Record<string, string> = {
   acknowledge_check: "送信後 → AIX【確認します】で管理会社への空室確認＋見積書依頼を送ってください（宛先は管理会社です）",
   property_send: "物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
@@ -213,218 +215,6 @@ const AIX_BOUNDARY_TO_ACTION: Record<string, string> = {
   AIX_BOUNDARY_MOVEIN: "property_check_result",
   AIX_BOUNDARY_PROMISE: "acknowledge_check",
 };
-
-async function deriveSuggestedAix(
-  draftText: string,
-  conversationState: string,
-  conversationId?: string,
-  internalBaseUrl?: string,
-  propertyStatus?: PropertyStatus,
-  customerMessage?: string,
-  analysisAixAction?: string | null,
-  analysisAixEnforcement?: "required" | "recommended" | "optional" | null,
-  closingStrategy?: string,
-): Promise<{ action: string; note: string; source: string; enforcement_level: "required" | "recommended" | "optional"; closing_strategy?: string } | null> {
-  // 退去予定/入居中の物件では現地内覧が不可のため viewing_invite（内覧日調整）は提案しない。
-  // 代わりに空室確認（acknowledge_check）または申込で先に確保（application_push）を優先する。
-  // 初回対応フェーズはAIX誘導不要（初回挨拶が主目的）
-  if (conversationState === "first_reply") return null;
-
-  const isMoveOut = propertyStatus === "move_out_scheduled" || propertyStatus === "occupied";
-  const redirectMoveOut = (action: string, note: string): { action: string; note: string } => {
-    if (isMoveOut && action === "viewing_invite") {
-      return {
-        action: "application_push",
-        note: "退去予定/入居中の物件のため現地内覧は不可 → AIX【申込へ！】でお部屋を先に抑えるクロージング、または AIX【確認します】で退去日・入居可能時期の確認を送ってください",
-      };
-    }
-    return { action, note };
-  };
-  // ─── Step 0.5: 顧客メッセージから「同一マンション内・別号室/別価格帯の依頼」を検知（★キャッシュ/DBルールより優先）───
-  // 例:「こちらの6万台のお部屋はないですか？」= 送った物件の同棟別号室依頼 →【確認します】ではなく物件ピックアップ系AIXを提案する。
-  // ※ webhookキャッシュが acknowledge_check を返して本判定を潰さないよう、Step 0 より前に置くこと（移動禁止）
-  if (customerMessage && conversationState === "proposing") {
-    const conditionChangeReq =
-      /([0-9０-９]+\s*万(円)?台|万円?台|(もっと|もう少し)安|安め|安い(お?部屋|物件)|家賃.{0,8}(抑え|低め|下げ)|(別|他|違う)の?(お?部屋|物件)|同じ(マンション|建物|物件))/;
-    const requestForm =
-      /(ない(です|でしょう)?か|あります|ありませんか|あれば|欲しい|希望|探して|お願い)/;
-    if (conditionChangeReq.test(customerMessage) && requestForm.test(customerMessage)) {
-      return {
-        action: "property_recommendation",
-        note: "同じマンション内の別の号室／別価格帯のお部屋をご希望です → AIX【1件特にオススメする】または【物件ピックアップした】で同棟の条件に合う部屋を検索してお送りください（「確認します」は不要です）",
-        source: "same_building_regex",
-        enforcement_level: "required" as const,
-        closing_strategy: closingStrategy || undefined,
-      };
-    }
-  }
-  // ─── Step 0.55: 「初期費用を抑えたい」等のコスト懸念を検知（★見積ゲート Step 0.6 より優先）───
-  // 「初期費用はいくら？」（金額の質問）→ 見積書（Step 0.6）が正解。
-  // 「初期費用を抑えたい」（金額を下げたい要望）→ 提案済み物件が刺さっていないサイン。見積書ではなく
-  // より初期費用の安い物件の再提案が正解。Step 0.6 の誤爆ガード②は「物件/部屋」の語を含む文しか
-  // 除外しないため、「初期費用を抑えて入居したい」等がすり抜けて estimate_sheet に誤誘導されるのを防ぐ。
-  // ここで return することで後段のキャッシュ・trigger_action_rules（keyword=初期費用→estimate_sheet conf0.95）にも到達させない。
-  if (customerMessage) {
-    const costConcern =
-      /(初期費用|費用|家賃)[^。！!？?\n]{0,8}(抑え|安く|下げ|かけ(られ|たく)な)|(抑え|安く)[^。！!？?\n]{0,6}(たい|入居)/;
-    const amountQuestion = /(いくら|内訳|どの(くらい|位)|教え)/;
-    if (costConcern.test(customerMessage) && !amountQuestion.test(customerMessage)) {
-      return {
-        action: "property_recommendation",
-        note: "初期費用・費用を抑えたいご要望＝ご提案済みの物件が刺さっていないサインです → 見積書ではなく、AIX【物件ピックアップ】系でより初期費用の安いお部屋を改めて探してお送りください（見積書の作成宣言・分割払いの提案は絶対禁止。AI返信は「初期費用をさらに抑えられるお部屋を改めてお探し致します」の探索宣言のみ）",
-        source: "cost_concern_regex",
-        enforcement_level: "required" as const,
-        closing_strategy: closingStrategy || undefined,
-      };
-    }
-  }
-  // ─── Step 0.6: 初期費用・見積書の質問を検知（★キャッシュ/DBルールより優先）───
-  // 例:「初期費用はいくらですか？内訳も教えてください」→ 見積書本体はAIX【見積書送る】で作成・送付するため、
-  // AI返信案が見積書カバー文（「御見積書となります…ご査収ください」）を代弁しないよう最優先でAIX誘導を確定させる。
-  // ※ Step 0 のキャッシュが別アクションを返して本判定を潰さないよう、Step 0 より前に置くこと（移動禁止）
-  if (customerMessage) {
-    const estimateKeyword =
-      /(初期費用|見積|スモ割|総額|予算|全部で.{0,6}いくら|費用.{0,6}(内訳|詳細)|いくら.{0,8}(かかる|かかり|です|でしょう))/;
-    const estimateRequestForm =
-      /(いくら|どの(くらい|位)|内訳|教え|知りたい|いただけ|頂け|ください|下さい|ですか|でしょうか|お願い|？|\?)/;
-    // 誤爆ガード①: 内覧希望が主目的のメッセージは見積誘導にしない（viewing_invite系に任せる）
-    const viewingReq = /(内覧|内見|見学).{0,4}(したい|希望|でき|いつ|日程|調整)/;
-    // 誤爆ガード②: 「もっと初期費用安くなる物件ないですか？」等の別物件依頼はピックアップ系（Step 0.5/Step 1）に任せる
-    const otherPropertyReq =
-      /(安|抑え)[^。！!？?\n]{0,10}(物件|お?部屋)|(物件|お?部屋)[^。！!？?\n]{0,8}(ない(です|でしょう)?か|あります|ありません)/;
-    if (
-      estimateKeyword.test(customerMessage) &&
-      estimateRequestForm.test(customerMessage) &&
-      !viewingReq.test(customerMessage) &&
-      !otherPropertyReq.test(customerMessage)
-    ) {
-      return {
-        action: "estimate_sheet",
-        note: "初期費用・見積書のご質問です → AIX【見積書送る】で最大限割引した御見積書を作成してお送りください（AI返信案は作成宣言のみ・見積書本体と金額内訳は必ずAIXから送ってください）",
-        source: "estimate_regex",
-        enforcement_level: "required" as const,
-        closing_strategy: closingStrategy || undefined,
-      };
-    }
-  }
-  // ─── Step 0.7: 内覧希望を検知 → viewing_invite を最優先で誘導 ───
-  // お客様が「内覧したい」等を明示したらAIX【内覧日調整】を確定誘導する
-  if (customerMessage) {
-    const viewingIntent =
-      /(内覧|内見|見学).{0,8}(したい|希望|お願い|可能|行き?たい|行ってみ|させてください|でき(ます|そう)|いつ(頃)?)|一度.*見てみ|実際に見てみ|見てみたい/;
-    if (viewingIntent.test(customerMessage)) {
-      // 診断修正(内覧バナー誤表示): フェーズゲート — 物件を1件も送っていない会話では
-      // 内覧日調整より先に物件ピックアップが正解（内覧する対象がまだ無い）。
-      // last_property_sent_at と aix_usage_logs（property_send/property_recommendation）の
-      // どちらにも送付実績が無い場合のみ差し替える。判定不能（クエリ失敗等）時は従来動作を維持する
-      let propertySentYet = true;
-      if (conversationId) {
-        try {
-          const { data: convRow } = await supabase
-            .from("conversations")
-            .select("property_customer_id")
-            .eq("id", conversationId)
-            .maybeSingle();
-          const pcId = (convRow?.property_customer_id as string | null) ?? null;
-          const [pcRes, aixSendRes] = await Promise.all([
-            pcId
-              ? supabase.from("property_customers").select("last_property_sent_at").eq("id", pcId).maybeSingle()
-              : Promise.resolve({ data: null }),
-            supabase
-              .from("aix_usage_logs")
-              .select("id")
-              .eq("conversation_id", conversationId)
-              .in("aix_type", ["property_send", "property_recommendation"])
-              .limit(1),
-          ]);
-          const lastSentAt = (pcRes.data as { last_property_sent_at: string | null } | null)?.last_property_sent_at ?? null;
-          propertySentYet = Boolean(lastSentAt) || ((aixSendRes.data?.length ?? 0) > 0);
-        } catch {
-          // 判定不能時は従来どおり viewing_invite（誤って内覧提案を握り潰さない）
-        }
-      }
-      if (!propertySentYet) {
-        return {
-          action: "property_recommendation",
-          note: "お部屋を見てみたいご意向ですが、まだ物件を1件もお送りしていません → まずAIX【物件ピックアップ】で条件に合う物件を送ってください（内覧日調整は物件へ反応があってから）",
-          source: "viewing_intent_no_property_gate",
-          enforcement_level: "required" as const,
-          closing_strategy: closingStrategy || undefined,
-        };
-      }
-      const redirected = redirectMoveOut(
-        "viewing_invite",
-        "お客様が内覧希望です → AIX【内覧日調整】で日程候補を送ってください",
-      );
-      return { ...redirected, source: "viewing_intent_regex", enforcement_level: "required" as const, closing_strategy: closingStrategy || undefined };
-    }
-  }
-  // ─── Step 1: suggest-next-action（DB学習ルール）に問い合わせ（3秒タイムアウト） ───
-  if (conversationId && internalBaseUrl) {
-    try {
-      const res = await fetch(`${internalBaseUrl}/api/suggest-next-action`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // customer_message を渡すことで、竹内さんがAI質問に回答して学習した
-        // trigger_action_rules（human_rule）・キーワード判定が「今まさに来たメッセージ」に対して確実に効く
-        // （未指定だとDB保存済みの最新顧客メッセージへのフォールバックとなり、保存遅延時に判定が1通ズレる）
-        body: JSON.stringify({ conversation_id: conversationId, customer_message: customerMessage ?? null }),
-        signal: AbortSignal.timeout(3000),
-      });
-      if (res.ok) {
-        const data = await res.json() as { action?: string | null; reason?: string; source?: string };
-        if (data.action && AIX_ACTION_NOTES[data.action]) {
-          const redirected = redirectMoveOut(data.action, AIX_ACTION_NOTES[data.action]);
-          const baseLevelTrigger: "required" | "recommended" =
-            (data.action === "estimate_sheet" || data.action === "property_send" || data.action === "same_building_regex")
-              ? "required" : "recommended";
-          // trap②: redirectMoveOutがviewing_invite→application_pushに変換した場合はrecommendedに降格
-          const enforcementLevelTrigger: "required" | "recommended" =
-            (redirected.action !== data.action) ? "recommended" : baseLevelTrigger;
-          return {
-            ...redirected,
-            source: data.source ?? "trigger_rule",
-            enforcement_level: enforcementLevelTrigger,
-            closing_strategy: closingStrategy || undefined,
-          };
-        }
-      }
-    } catch {
-      // タイムアウト・ネットワークエラー等は無視してregexフォールバックへ
-    }
-  }
-
-  // ─── Step 1.5: Step1分析由来のAIX推薦（会話全文・感情・文脈を見たSonnet判断）───
-  // 旧Step 2（ドラフト文regexフォールバック）は最弱シグナルだったため削除し、本判定に置き換え
-  if (analysisAixAction && AIX_ACTION_NOTES[analysisAixAction]) {
-    // analysis_step1 の品質ゲート（採択率30%未満・サンプル10件以上ならスキップ）
-    // SOURCE_ACCEPT_RATE:{action}:{source} 行は update-action-confidence cron が毎日更新
-    const { data: srcRateRow } = await supabase
-      .from("trigger_action_rules")
-      .select("confidence, total_occurrence")
-      .eq("keyword", `SOURCE_ACCEPT_RATE:${analysisAixAction}:analysis_step1`)
-      .eq("action_type", analysisAixAction)
-      .maybeSingle();
-    const isAnalysisSuppressed = srcRateRow
-      && typeof srcRateRow.confidence === "number"
-      && typeof srcRateRow.total_occurrence === "number"
-      && srcRateRow.total_occurrence >= 10
-      && srcRateRow.confidence < 0.3;
-    if (!isAnalysisSuppressed) {
-      const redirectedAnalysis = redirectMoveOut(analysisAixAction, AIX_ACTION_NOTES[analysisAixAction]);
-      const analysisEnfLevel = (redirectedAnalysis.action !== analysisAixAction)
-        ? "recommended"  // trap②: redirect発生時はrecommendedに降格
-        : (analysisAixEnforcement ?? "optional");
-      return {
-        ...redirectedAnalysis,
-        source: "analysis_step1",
-        enforcement_level: analysisEnfLevel,
-        closing_strategy: closingStrategy || undefined,
-      };
-    }
-  }
-  return null;
-}
 
 // ─── パターンB: 物件引用への返信判定（プロンプト常時注入・条件付きルール）─────────
 const QUOTE_REPLY_JUDGE_NOTE = `
@@ -1939,7 +1729,7 @@ ${rules.map((r, i) => `${i + 1}. ${r.rule_text}（${r.example_count}回確認済
 // AI自動返信禁止。ドラフト生成を中止し、スタッフにLINEグループ通知する。
 // H7(Fable5): closing_strategy / next_steps も読む — brain の戦略をドラフト生成プロンプトへ注入し、
 // スタッフ向け表示（赤枠）と顧客向けドラフトの戦略を一致させる
-type AixGateMeta = { action?: string; note?: string; reply_mode?: string; closing_strategy?: string; next_steps?: string[] } | null;
+type AixGateMeta = { action?: string; note?: string; source?: string; enforcement_level?: "required" | "recommended"; reply_mode?: string; closing_strategy?: string; next_steps?: string[] } | null;
 
 async function fetchReplyModeGate(
   convId: string
@@ -2178,7 +1968,7 @@ export async function POST(req: NextRequest) {
 
   // 初回例外（first_reply exemption）: 真の初回（スタッフの非AIXテキスト返信ゼロ）は
   // reply_mode ゲートをスキップして初回挨拶ドラフト生成を優先する。
-  // deriveSuggestedAix の first_reply 例外（line ~143）と同じ設計意図をゲートにも適用。
+  // SUGGESTED_AIX トレーラーの first_reply 例外（初回対応フェーズはAIX誘導不要）と同じ設計意図をゲートにも適用。
   const isFirstReplyGateExempt =
     normalizeState(state || "first_reply") === "first_reply" &&
     !recentMessages.some(
@@ -2737,28 +2527,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       } catch { return null; }
     })();
 
-    // Step1分析由来のAIX推薦（deriveSuggestedAix の Step 1.5 で使用）
-    // 会話全文・感情・文脈を見たSonnetの判断。aix_reason はログ用途のみで誘導メモには使わない
-    const analysisAixAction = (() => {
-      try {
-        const p = JSON.parse(analysis) as Record<string, unknown>;
-        return typeof p.suggested_aix_action === "string" && p.suggested_aix_action
-          ? p.suggested_aix_action
-          : null;
-      } catch { return null; }
-    })();
-
-    const analysisAixEnforcement = (() => {
-      try {
-        const p = JSON.parse(analysis) as Record<string, unknown>;
-        const level = p.aix_enforcement_level;
-        return (level === "required" || level === "recommended" || level === "optional")
-          ? level as "required" | "recommended" | "optional"
-          : null;
-      } catch { return null; }
-    })();
-
-    // Step1分析の closing_strategy（「どうやったら決まるか」の内容）を deriveSuggestedAix に渡す
+    // Step1分析の closing_strategy（「どうやったら決まるか」の内容）。
+    // SUGGESTED_AIX トレーラーの closing_strategy フォールバックとして使用。
+    // ※ AIX推薦本体（旧 suggested_aix_action / aix_enforcement_level 抽出）は
+    //   brain(suggested_aix_meta) が Step1 分析を統合済みのためここでは抽出しない
     const analysisClosingStrategy = (() => {
       try {
         const p = JSON.parse(analysis) as Record<string, unknown>;
@@ -2992,7 +2764,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   → 壊れたドラフトを ai_draft に保存せず、suggested_aix_button を強制セットし
             //     SUGGESTED_AIX トレーラー（enforcement_level=required）でAIX誘導する
             // - hint: 軽度（warning級 / 修正で解消済み）の AIX_BOUNDARY 指摘
-            //   → deriveSuggestedAix が無提案だった場合のフォールバック候補（recommended）にする
+            //   → brain(suggested_aix_meta) が無提案だった場合のフォールバック候補（recommended）にする
             //     （従来 final-check の検出結果は SUGGESTED_AIX に一切反映されていなかった）
             let aixBoundaryRequired: { action: string; code: string } | null = null;
             let aixBoundaryHint: { action: string; code: string } | null = null;
@@ -3018,11 +2790,6 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             if (!isTemplateOptimize && finalCheck) {
               controller.enqueue(encoder.encode(`\n<<<FINAL_CHECK:${JSON.stringify(finalCheck)}>>>`));
             }
-            // AIXボタン誘導: ドラフト完成後にどのAIXボタンを使うべきか提案（トレーラーとして付加）
-            // suggest-next-action（DB学習ルール）を優先し、失敗時はregexにフォールバック
-            const internalBaseUrl = process.env.NEXT_PUBLIC_SITE_URL
-              ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-            const resolvedStatusForAix = detectPropertyStatus(history, message, propertyStatus);
             // ─── Shadow: 分類器ログ（シャドーモード・画面変更なし）───
             // 純ルールベース分類器の結果を reply_mode_shadow_logs に追記するだけ（上書きなし・1行1メッセージ）。
             // 返信内容・SUGGESTED_AIX・レスポンスには一切影響しない（fire-and-forget）。
@@ -3059,8 +2826,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             }
             // テンプレート最適化モードはトレーラーを一切付けない（ボディ＝純粋な最適化テキスト）
             if (!isTemplateOptimize) {
-              // 優先度1(抜け穴対策): AIX境界blockが修正不能だった場合は final-check 由来の
-              // required 提案が deriveSuggestedAix より優先。hint は derive 無提案時のフォールバック。
+              // AIX-META一元化: brain(suggested_aix_meta) が既に action を確定している。
+              // 優先度1(抜け穴対策): AIX境界blockが修正不能だった場合のみ final-check 由来の
+              // required 提案で override。hint は brain 無提案時のフォールバック。
+              // ※ first_reply（初回対応）はAIX誘導不要（初回挨拶が主目的・旧 deriveSuggestedAix の例外を踏襲）
+              // ※ AIX_ACTION_NOTES に無い action は語彙外（brain の新語彙等）→ hint フォールバックへ落とす
               const suggestedAix = aixBoundaryRequired
                 ? {
                     action: aixBoundaryRequired.action,
@@ -3069,8 +2839,15 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     enforcement_level: "required" as const,
                     closing_strategy: analysisClosingStrategy || undefined,
                   }
-                : ((await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction, analysisAixEnforcement, analysisClosingStrategy))
-                    ?? (aixBoundaryHint
+                : (brainMeta?.action && AIX_ACTION_NOTES[brainMeta.action] && currentState !== "first_reply")
+                  ? {
+                      action: brainMeta.action,
+                      note: brainMeta.note || AIX_ACTION_NOTES[brainMeta.action],
+                      source: brainMeta.source || "brain",
+                      enforcement_level: (brainMeta.enforcement_level || "recommended") as "required" | "recommended",
+                      closing_strategy: brainMeta.closing_strategy || analysisClosingStrategy || undefined,
+                    }
+                  : (aixBoundaryHint
                       ? {
                           action: aixBoundaryHint.action,
                           note: `最終チェックでAIX境界（${aixBoundaryHint.code}）の指摘がありました → ${AIX_ACTION_NOTES[aixBoundaryHint.action] ?? "AIXボタンでの対応を検討してください"}`,
@@ -3078,7 +2855,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                           enforcement_level: "recommended" as const,
                           closing_strategy: analysisClosingStrategy || undefined,
                         }
-                      : null));
+                      : null);
               if (suggestedAix) {
                 controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
                 // fire-and-forget — closing_strategyが生成されたらログに保存
