@@ -687,7 +687,7 @@ function getAdjacentStations(stationName, lines) {
 // BFS: startStation から maxTransfers 回乗換以内で到達できる全駅を返す
 // TRANSIT_GRAPH (transit_graph.js) を参照。未ロード時は startStation のみ返す
 function getStationsWithinTransfers(startStation, maxTransfers) {
-  if (!window.TRANSIT_GRAPH || !TRANSIT_GRAPH[startStation]) return [startStation];
+  if (typeof TRANSIT_GRAPH === 'undefined' || !TRANSIT_GRAPH[startStation]) return [startStation];
 
   const results = new Set([startStation]);
   // BFS: state = { station, line, transfers }
@@ -731,7 +731,7 @@ function getStationsWithinTransfers(startStation, maxTransfers) {
 // Dijkstra: startStation から maxMinutes 分以内で到達できる全駅を返す
 // 戻り値: [{ station, minutes }, ...] （到達時間昇順、出発駅を除く）
 function getStationsWithinMinutes(startStation, maxMinutes) {
-  if (!window.TRANSIT_GRAPH || !TRANSIT_GRAPH[startStation]) return [];
+  if (typeof TRANSIT_GRAPH === 'undefined' || !TRANSIT_GRAPH[startStation]) return [];
 
   const minTime = {};
   minTime[startStation + '|'] = 0;
@@ -872,7 +872,7 @@ function applyParsedCondition(parsed) {
   // 不明な駅名はバナーを出さずサイレントスキップ（misleading UX防止）
   const stationExists = parsed.station && (
     (typeof STATION_LINE_MAP !== 'undefined' && STATION_LINE_MAP[parsed.station]) ||
-    (typeof window.TRANSIT_GRAPH !== 'undefined' && window.TRANSIT_GRAPH[parsed.station])
+    (typeof TRANSIT_GRAPH !== 'undefined' && TRANSIT_GRAPH[parsed.station])
   );
   if (!stationExists) {
     console.warn('[applyParsedCondition] 未知の駅名のためスキップ:', parsed.station);

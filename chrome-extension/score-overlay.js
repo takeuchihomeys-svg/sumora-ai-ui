@@ -153,13 +153,18 @@
 
     // ── 間取りチェック (20点) ─────────────────────────────────
     if (c.floor_plan) {
+      var isAtLeast = c.floor_plan.includes('以上');
+      var fpBaseNum = parseInt((c.floor_plan.match(/^([0-9]+)/) || [])[1] || '0', 10);
+      var tFpMatch = t.match(/([0-9]+)\s*(?:SLDK|SDK|LDK|DK|K|R)/i);
+      var tFpNum = tFpMatch ? parseInt(tFpMatch[1], 10) : 0;
       if (t.includes(c.floor_plan)) {
-        score += 20;
+        score += 20; // 完全一致
+      } else if (isAtLeast && fpBaseNum > 0 && tFpNum >= fpBaseNum) {
+        score += 18; // 「以上」条件を満たす（例: 「1LDK以上」に2DKが該当）
+      } else if (!isAtLeast && fpBaseNum > 0 && tFpNum === fpBaseNum) {
+        score += 10; // 部屋数一致（タイプ違い）
       } else {
-        var fpNum = (c.floor_plan.match(/^([0-9]+)/) || [])[1];
-        var tFpMatch = t.match(/([0-9]+)[LDKS]+/i);
-        if (fpNum && tFpMatch && fpNum === tFpMatch[1]) score += 10;
-        else score += 5;
+        score += 5;
       }
     } else {
       score += 20;
