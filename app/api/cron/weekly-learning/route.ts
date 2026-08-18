@@ -86,12 +86,17 @@ type RecentAnswer = {
 
 type DiffExample = {
   id: string;
+  conversation_id?: string | null;
   conversation_state: string;
   customer_message: string | null;
   sent_reply: string | null;
   ai_draft: string | null;
   is_starred: boolean;
   created_at: string;
+  brain_action?: string;
+  brain_urgency?: string;
+  brain_emotion?: string;
+  brain_reply_mode?: string;
 };
 
 type ExistingRule = {
@@ -129,8 +134,14 @@ async function analyzeStateGroup(
 
   const examplesText = examples.map((e, i) => {
     const label = (!e.ai_draft || !e.ai_draft.trim()) ? "✍️ スタッフ手書き" : "🔴 AIを修正";
+    const brainParts = [
+      e.brain_emotion ? "emotion:" + e.brain_emotion : "",
+      e.brain_urgency ? "urgency:" + e.brain_urgency : "",
+      e.brain_reply_mode ? "mode:" + e.brain_reply_mode : "",
+    ].filter(Boolean);
+    const brainTag = brainParts.length > 0 ? " [" + brainParts.join(" ") + "]" : "";
     return `
---- 差分${i + 1} [${label}] ${e.is_starred ? "⭐" : ""} ---
+--- 差分${i + 1} [${label}] ${e.is_starred ? "⭐" : ""}${brainTag} ---
 顧客: ${(e.customer_message ?? "").slice(0, 200)}
 AI案: ${(e.ai_draft ?? "(なし)").slice(0, 300)}
 実際に送った返信: ${(e.sent_reply ?? "").slice(0, 300)}`.trim();
@@ -163,6 +174,7 @@ ${recentAnswersText}
 
 ## 分析指示
 今週の差分群を横断的に分析し、以下のJSONを返してください。
+各差分の [emotion/urgency/mode] ラベルを参照し、特定の顧客状況に依存するパターンがあれば条件付きルールとして記述すること（例: urgency=高の場合は〜、emotion=不安の場合は〜）。
 
 **重要ルール:**
 - 週内で「2件以上同じパターン」が繰り返された場合のみ newRules に含める（1件限りのケースは除外）
@@ -242,7 +254,7 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
 
   const { data: rawExamples, error: fetchErr } = await supabase
     .from("ai_reply_examples")
-    .select("id, conversation_state, customer_message, sent_reply, ai_draft, is_starred, created_at")
+    .select("id, conversation_id, conversation_state, customer_message, sent_reply, ai_draft, is_starred, created_at")
     .eq("was_ai_modified", true)
     .gte("created_at", sevenDaysAgo)
     .not("sent_reply", "is", null)
@@ -282,6 +294,37 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
         .limit(8);
 
       const existingRules = (existingRulesRaw ?? []) as ExistingRule[];
+
+      // Brain コンテキスト一括取得（fail-open）
+      const groupConvIds = stateExamples
+        .map((e: DiffExample) => e.conversation_id)
+        .filter((id: unknown): id is string => typeof id === "string" && id.length > 0);
+      const groupBrainMap = new Map<string, Record<string, unknown>>();
+      if (groupConvIds.length > 0) {
+        try {
+          const { data: brainRows } = await supabase
+            .from("conversations")
+            .select("id, suggested_aix_meta, property_customers(ai_summary_json)")
+            .in("id", groupConvIds);
+          for (const row of (brainRows ?? []) as Array<{ id: string; suggested_aix_meta: unknown; property_customers: unknown }>) {
+            const meta = (row.suggested_aix_meta as Record<string, unknown> | null) ?? {};
+            const customer = Array.isArray(row.property_customers)
+              ? (row.property_customers[0] as Record<string, unknown> | null)
+              : (row.property_customers as Record<string, unknown> | null);
+            const summary = (customer?.ai_summary_json as Record<string, unknown> | null) ?? {};
+            groupBrainMap.set(row.id as string, { ...meta, ...summary });
+          }
+        } catch { /* fail-open */ }
+      }
+      // Brain フィールドを各 example に注入
+      for (const ex of stateExamples) {
+        const b = groupBrainMap.get(ex.conversation_id ?? "") ?? {};
+        if (b.action) (ex as Record<string, unknown>).brain_action = String(b.action);
+        if (b.urgency) (ex as Record<string, unknown>).brain_urgency = String(b.urgency);
+        if (b.emotion) (ex as Record<string, unknown>).brain_emotion = String(b.emotion);
+        if (b.reply_mode) (ex as Record<string, unknown>).brain_reply_mode = String(b.reply_mode);
+      }
+
       const analysis = await analyzeStateGroup(state, stateExamples, existingRules, recentAnswers);
 
       for (const rule of analysis.newRules) {
