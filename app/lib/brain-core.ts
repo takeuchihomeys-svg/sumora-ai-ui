@@ -1313,12 +1313,14 @@ ${history}`;
   try {
     const response = await client.messages.create({
       model: BRAIN_MODEL,
-      max_tokens: 1400,
+      max_tokens: 6000,
       system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    const raw = response.content[0]?.type === "text" ? response.content[0].text : "";
+    // claude-sonnet-5 はextended thinkingを使うためcontent[0]がthinking型になることがある
+    // content.find()でtextブロックを確実に取得する
+    const raw = response.content.find((c) => c.type === "text")?.text ?? "";
     // M2(Fable5): 最初の { 〜 最後の } を抽出（旧 non-greedy 正規表現は最初の } で切れる罠があった）
     const firstBrace = raw.indexOf("{");
     const lastBrace = raw.lastIndexOf("}");
