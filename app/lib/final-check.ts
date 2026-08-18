@@ -369,7 +369,7 @@ const BANNED_WORDS_DETERMINISTIC = ["スモラ", "名称未設定", "少々お�
 
 // ─── メイン: 決定的プリチェック + 3パス並列チェック ──────────────────────────
 // 絶対にthrowしない（全pass失敗でも issues=[] / passes_completed=[] の fail-open 結果を返す）
-export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haikuTimeoutMs = 8000): Promise<CheckResult> {
+export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haikuTimeoutMs = 20000): Promise<CheckResult> {
   const started = Date.now();
   const issues: CheckIssue[] = [];
   const draftNorm = normalizeForMatch(draft);
