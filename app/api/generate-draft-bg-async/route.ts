@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
 
 export const maxDuration = 300;
 
@@ -111,6 +112,26 @@ export async function POST(req: NextRequest) {
   // ── ここから重い処理は after() でバックグラウンド実行（Realtimeで通知） ──
   after(async () => {
     try {
+      // ── brain直列実行（入り口・2026-08直列アーキテクチャ）─────────────────
+      // 旧構成: webhookが brain を fire-and-forget 起動 + bg-async が draft 生成
+      //   → 完了順序が保証されず suggested_aix_meta の書き込み競合が構造的に存在した。
+      // 新構成: ここで brain を await してから draft 生成へ進む（brain完了→draft生成の直列保証）。
+      //   成功時はスナップショットを generate-reply の brainMetaDirect へ直接渡し、
+      //   generate-reply 側の DB フェッチ（チェックポイントA/B）をスキップさせる。
+      //   required 通知も runBrainAndNotify 内で送信される（旧webhook brain after()から移設）。
+      // 失敗（null）時は brainMetaDirect を渡さず従来どおり generate-reply 側 DB フェッチに
+      // フォールバックする（生成自体は止めない）。
+      // ※ cron fallback（generate-pending-drafts）は本ルートを経由せず generate-reply を直接叩く。
+      //   そのため cron 側にも同じ brain 直列実行を実装済み（brain_analyzed_at の staleチェック付き
+      //   = bg-async で実行済みの会話では再実行せず required 通知の重複を防ぐ）。
+      let brainGateDirect: BrainGateSnapshot | null = null;
+      try {
+        brainGateDirect = await runBrainAndNotify(convId);
+        console.log("[bg-async] brain serial done, convId:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
+      } catch (brainErr) {
+        console.warn("[bg-async] brain serial failed（従来フォールバックで続行）:", String(brainErr), "convId:", convId);
+      }
+
       const { data: pc } = conv.property_customer_id
         ? await db.from("property_customers")
           .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions")
@@ -210,10 +231,12 @@ export async function POST(req: NextRequest) {
         return;
       }
 
-      // 150秒タイムアウト: generate-replyはStep1(最大45s)+Step2(最大45s)+余裕=最大90s超。
-      // 40秒では重い会話で構造的に常にタイムアウトするため150秒に引き上げ（after()maxDuration=300s内）
+      // 180秒タイムアウト: generate-replyはStep1(最大45s)+Step2(最大45s)+余裕=最大90s超。
+      // 40秒では重い会話で構造的に常にタイムアウトするため150秒に引き上げ、
+      // さらに brain直列実行（最大30s）が先行するようになった分を考慮して180秒へ拡大
+      // （brain 30s + fetch 180s + 前後DB操作でも after() maxDuration=300s 内に収まる）
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 150000);
+      const timeoutId = setTimeout(() => controller.abort(), 180000);
 
       let draftRes: Response;
       try {
@@ -237,13 +260,16 @@ export async function POST(req: NextRequest) {
             conversationId: convId,
             // reply_modeゲート有効化（brain判定がaixなら自動ドラフトを生成しない）
             enforceReplyModeGate: true,
+            // brain直列実行の結果を直接渡す（generate-reply側のDBフェッチをスキップ）。
+            // 直前に自分で書いた値なので鮮度保証あり。null時は渡さず従来のDBフェッチに任せる
+            ...(brainGateDirect ? { brainMetaDirect: brainGateDirect } : {}),
           }),
         });
         clearTimeout(timeoutId);
       } catch (fetchErr) {
         clearTimeout(timeoutId);
         const isTimeout = fetchErr instanceof Error && fetchErr.name === "AbortError";
-        const errMsg = isTimeout ? "timeout (150s)" : String(fetchErr);
+        const errMsg = isTimeout ? "timeout (180s)" : String(fetchErr);
         console.error("[bg-async] fetch error:", errMsg, "baseUrl:", baseUrl, "convId:", convId);
         // 3回失敗までは draft_attempted_at をクリアして即リトライ可能にする
         // （残すとUIの再トリガー・cronが5分バックオフでサイレントスキップされ「準備中...」のまま止まる。

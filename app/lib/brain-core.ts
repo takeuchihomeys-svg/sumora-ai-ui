@@ -1803,3 +1803,106 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   }
   return !error;
 }
+
+// ── brain直列アーキテクチャ（2026-08）────────────────────────────────────────
+// 呼び出し元:
+//   - generate-draft-bg-async: after() の入り口で await → 返却スナップショットを
+//     generate-reply の brainMetaDirect に直接渡す（DB再フェッチ・書き込み競合の解消）
+//   - line-webhook: bg-async がステータス起因でdraft生成ごとスキップする会話
+//     （申込以降）のみ、従来どおり webhook 側で実行（required通知の消滅防止）
+
+// AIXアクション日本語ラベル（required通知のリッチ化用・旧line-webhook L43から移設）
+export const AIX_LABEL_JP: Record<string, string> = {
+  property_recommendation: "物件オススメ送信",
+  property_send: "物件を送る",
+  viewing_invite: "内覧誘導",
+  application_push: "申込促進",
+  property_check_result: "物件確認",
+  estimate_sheet: "見積書送付",
+  meeting_place: "待ち合わせ確定",
+  acknowledge_check: "反応確認",
+  followup_revive: "追客フォロー",
+  condition_hearing: "条件ヒアリング",
+};
+
+/** generate-reply の fetchReplyModeGate 返却値と同形のスナップショット */
+export type BrainGateSnapshot = {
+  meta: SuggestedAixMeta;
+  customerName: string;
+  conversationDirection: Record<string, unknown> | null;
+  brainAnalyzedAt: string | null;
+};
+
+/**
+ * 脳分析 → meta保存 → enforcement_level==="required" ならスタッフグループ通知 →
+ * 保存直後の gate スナップショットを返す。
+ *
+ * 返り値の契約:
+ *   - 分析が成功した場合のみスナップショットを返す（呼び出し元は generate-reply の
+ *     brainMetaDirect にそのまま渡してよい = 自分で今書いた値なので鮮度保証あり）
+ *   - 分析失敗・対象外・DB読み取り失敗は null → 呼び出し元は brainMetaDirect を渡さず
+ *     従来の generate-reply 側 DBフェッチにフォールバックすること
+ *     （チェックポイントBの「Step1後の再確認」で brain-sweep の補填を拾える余地を残す）
+ */
+export async function runBrainAndNotify(conversationId: string): Promise<BrainGateSnapshot | null> {
+  let analyzed = false;
+  try {
+    analyzed = await analyzeAndSaveBrainMeta(conversationId);
+  } catch (e) {
+    console.warn("[brain-core] runBrainAndNotify analyze failed:", conversationId, e instanceof Error ? e.message : e);
+  }
+  if (!analyzed) return null;
+
+  const { data: row, error } = await supabase
+    .from("conversations")
+    .select("suggested_aix_meta, customer_name, conversation_direction, brain_analyzed_at")
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (error || !row) {
+    if (error) console.warn("[brain-core] runBrainAndNotify snapshot read failed:", conversationId, error.message);
+    return null;
+  }
+
+  const snapshot: BrainGateSnapshot = {
+    meta: (row.suggested_aix_meta ?? null) as SuggestedAixMeta,
+    customerName: (row.customer_name as string | null) ?? "",
+    conversationDirection: (row.conversation_direction ?? null) as Record<string, unknown> | null,
+    brainAnalyzedAt: (row.brain_analyzed_at as string | null) ?? null,
+  };
+
+  // B5ウォーターマーク競合ケース: analyzeAndSaveBrainMeta が true を返しても、分析中に会話が
+  // 進んでいた場合は書き込みが no-op になり meta は null（webhookワイプ後）のまま。
+  // その meta-null スナップショットを返すと呼び出し元が brainMetaDirect として渡してしまい、
+  // generate-reply のチェックポイントB再フェッチ（sweep補填を拾う余地）まで潰れるため null を返す
+  // （契約どおり「有効な分析結果がある時のみスナップショット」に統一。notify も meta が無ければ不要）。
+  if (!snapshot.meta) return null;
+
+  // required 通知（旧line-webhook brain after() から移設。全件通知は通知疲れのため required のみ）
+  try {
+    const meta = snapshot.meta;
+    if (meta && meta.enforcement_level === "required") {
+      const customerName = snapshot.customerName || "お客様";
+      const actionLabel = AIX_LABEL_JP[meta.action ?? ""] ?? meta.action ?? "対応";
+      const lines = [
+        `🔴 ${customerName}さんへ要対応`,
+        `AIX必須：${actionLabel}`,
+      ];
+      if (meta.note) lines.push(`→ ${meta.note}`);
+
+      const baseUrl =
+        process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+      await fetch(`${baseUrl}/api/notify-group`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: lines.join("\n") }),
+        signal: AbortSignal.timeout(5_000),
+      });
+    }
+  } catch (e) {
+    // 通知失敗は分析成功を無効化しない（スナップショットはそのまま返す）
+    console.warn("[brain-core] runBrainAndNotify notify failed:", conversationId, e instanceof Error ? e.message : e);
+  }
+
+  return snapshot;
+}

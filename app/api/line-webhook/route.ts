@@ -5,7 +5,7 @@ import { isApplicationFormMessage, hasApplyHintKeyword, PRE_APPLY_STATUSES } fro
 import { classifyByKeywords, classifyByAI, type ConditionIntent } from "@/app/lib/condition-intent";
 import { mergeConditions, type ConditionFields } from "@/app/lib/condition-merge";
 import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
-import { analyzeAndSaveBrainMeta } from "@/app/lib/brain-core";
+import { analyzeAndSaveBrainMeta, runBrainAndNotify } from "@/app/lib/brain-core";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 export const maxDuration = 120;
@@ -39,19 +39,14 @@ const ACCOUNTS: AccountConfig[] = [
   },
 ];
 
-// ── P1: AIXアクション日本語ラベル（LINE通知リッチ化用）─────────────────────
-const AIX_LABEL_JP: Record<string, string> = {
-  property_recommendation: "物件オススメ送信",
-  property_send: "物件を送る",
-  viewing_invite: "内覧誘導",
-  application_push: "申込促進",
-  property_check_result: "物件確認",
-  estimate_sheet: "見積書送付",
-  meeting_place: "待ち合わせ確定",
-  acknowledge_check: "反応確認",
-  followup_revive: "追客フォロー",
-  condition_hearing: "条件ヒアリング",
-};
+// ── P1: AIXアクション日本語ラベルは brain-core.ts の AIX_LABEL_JP へ移設（2026-08 brain直列化）──
+// required通知本体も runBrainAndNotify（brain-core）に移設済み
+
+// ── bg-async / after() B と同期させる draft 生成スキップステータス集合 ─────────
+// bg-async が draft 生成ごと早期スキップするステータス（= bg-async 内の brain 直列実行も
+// 走らないステータス）。このリストを変える場合は after() B の早期return・
+// generate-draft-bg-async の SKIP_STATUSES・cron 側も必ず同時に更新すること。
+const BG_ASYNC_SKIP_STATUSES = ["applying", "application", "screening", "contract", "closed_won", "closed_lost", "approved", "lost"];
 
 // ── 同一ユーザーのレート制限（3秒以内の連続AI解析をスキップ）─────────────
 // 注意: このMapはインスタンス内のみ有効（Vercelサーバーレスでは複数インスタンスが
@@ -251,39 +246,24 @@ async function handleTextMessage(
     .update({ last_message: text, last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
     .eq("id", convId);
 
-  // FIX(Fable5 #2): 脳分析のイベント駆動再計算 — meta を消したその場で再分析を fire-and-forget 起動。
-  // 分析完了後、enforcement_level === "required" の場合のみスタッフLINEグループへ要対応通知を送る。
-  // （全件通知は通知疲れを招くため廃止。AIX必須の時だけ通知する）
+  // FIX(Fable5 #2 → brain直列化 2026-08): テキスト経路の脳分析は generate-draft-bg-async の
+  // after() 入り口で直列実行される（brain完了 → 結果を brainMetaDirect で generate-reply に直接渡す）
+  // ため、通常ステータスではここで起動しない（起動すると brain が二重実行され、書き込み競合が復活する）。
+  // ただし bg-async は申込以降ステータスで draft 生成ごと早期スキップするため、その経路では
+  // brain 再分析＋required通知が消滅してしまう。BG_ASYNC_SKIP_STATUSES に該当する会話のみ
+  // 従来どおり webhook 側で brain を実行する（required通知も runBrainAndNotify 内で送信される）。
+  // ※ brain-core 側の BRAIN_SKIP_STATUSES（contract/closed_won/closed_lost/lost/approved）は
+  //   analyzeAndSaveBrainMeta 内で従来どおり適用されるため、実質 applying/application/screening のみ走る
   after(async () => {
     try {
-      const ok = await analyzeAndSaveBrainMeta(convId);
-      if (!ok) return;
-
-      const { data: convData } = await db
+      const { data: convRow } = await db
         .from("conversations")
-        .select("customer_name, suggested_aix_meta")
+        .select("status")
         .eq("id", convId)
         .maybeSingle();
-      const meta = convData?.suggested_aix_meta as { action?: string; note?: string; enforcement_level?: string } | null;
-      if (!meta || meta.enforcement_level !== "required") return;
-
-      const customerName = (convData?.customer_name as string | null) || "お客様";
-      const actionLabel = AIX_LABEL_JP[meta.action ?? ""] ?? meta.action ?? "対応";
-      const lines = [
-        `🔴 ${customerName}さんへ要対応`,
-        `AIX必須：${actionLabel}`,
-      ];
-      if (meta.note) lines.push(`→ ${meta.note}`);
-
-      const baseUrl =
-        process.env.NEXT_PUBLIC_SITE_URL ??
-        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-      await fetch(`${baseUrl}/api/notify-group`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: lines.join("\n") }),
-        signal: AbortSignal.timeout(5_000),
-      });
+      const convStatus = (convRow?.status as string) || "hearing";
+      if (!BG_ASYNC_SKIP_STATUSES.includes(convStatus)) return; // bg-async側のbrain直列実行に任せる
+      await runBrainAndNotify(convId);
     } catch (e) {
       console.warn("[line-webhook] brain-notify:", e);
     }
@@ -442,7 +422,7 @@ async function handleTextMessage(
         ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
       // 申込以降ステータスはai_summary・ai_draft生成不要（bg-async/cronのSKIP_STATUSESと一致させること）
-      if (["applying", "application", "screening", "contract", "closed_won", "closed_lost", "approved", "lost"].includes(convStatus)) return;
+      if (BG_ASYNC_SKIP_STATUSES.includes(convStatus)) return;
 
       // ai_summary 自動更新（fire-and-forget）- 申込以降は上でreturnしているため不要
       if (pcId) {

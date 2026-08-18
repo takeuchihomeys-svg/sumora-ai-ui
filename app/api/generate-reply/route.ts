@@ -2030,6 +2030,17 @@ export async function POST(req: NextRequest) {
   // reply_modeゲート: 自動生成経路（bg-async/cron/generate-draft-bg）のみtrueが渡される。
   // brain(suggested_aix_meta.reply_mode)が"aix"なら自動ドラフト生成を中止する
   let enforceReplyModeGate = false;
+  // brain直列アーキテクチャ(2026-08): bg-asyncが直前に brain を直列実行した結果を直接渡してくる。
+  // 指定時は fetchReplyModeGate の DB フェッチ（チェックポイントA/B・戦略注入）をスキップして
+  // この値をそのまま使う。未指定（null）時は従来どおり DB フェッチ（後方互換）。
+  // 注意: 呼び出し時点のスナップショットなので、鮮度は呼び出し元が保証すること
+  // （bg-asyncは自分で書いた直後の値を渡すため問題なし）
+  let externalBrainGate: {
+    meta: AixGateMeta;
+    customerName: string;
+    conversationDirection: Record<string, unknown> | null;
+    brainAnalyzedAt: string | null;
+  } | null = null;
   // アクティブタスク（body指定 or DB自動補完）。property_check中の返信ガード等に使用
   let activeTaskTypes: string[] = [];
   // ─── テンプレート最適化モード（templateText 指定で有効化）───
@@ -2064,6 +2075,14 @@ export async function POST(req: NextRequest) {
       // reply_modeゲート: 自動生成経路（bg-async/cron/generate-draft-bg）のみtrueを渡す。
       // brain(suggested_aix_meta.reply_mode)が"aix"なら自動ドラフト生成を中止する
       enforceReplyModeGate?: boolean;
+      // brain直列実行の結果（conversations.suggested_aix_meta と同形）。bg-asyncのみ渡す。
+      // 指定時は fetchReplyModeGate の DB フェッチをスキップしてこの値を使う
+      brainMetaDirect?: {
+        meta: AixGateMeta;
+        customerName?: string;
+        conversationDirection?: Record<string, unknown> | null;
+        brainAnalyzedAt?: string | null;
+      } | null;
       includeStopReason?: boolean;
       propertyStatus?: PropertyStatus;
       // ─── テンプレート最適化モード用フィールド ───
@@ -2114,6 +2133,14 @@ export async function POST(req: NextRequest) {
     vacatingDate = body.vacatingDate ?? null;
     staffMessagedToday = body.staffMessagedToday === true;
     aixSourceMessage = body.aixSourceMessage || "";
+    externalBrainGate = body.brainMetaDirect
+      ? {
+          meta: body.brainMetaDirect.meta ?? null,
+          customerName: body.brainMetaDirect.customerName ?? "",
+          conversationDirection: body.brainMetaDirect.conversationDirection ?? null,
+          brainAnalyzedAt: body.brainMetaDirect.brainAnalyzedAt ?? null,
+        }
+      : null;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
   }
@@ -2161,8 +2188,9 @@ export async function POST(req: NextRequest) {
   // ─── reply_modeゲート チェックポイントA ───
   // meta が既に "aix" ならAnthropic呼び出し前にゼロコストで中止（cron再試行時など）。
   // null（未分析/webhookワイプ直後）はここでは素通しし、チェックポイントBで再確認する。
+  // brainMetaDirect 指定時（bg-asyncのbrain直列実行後）は DB フェッチせずその値を使う
   if (enforceReplyModeGate && conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
-    const gate = await fetchReplyModeGate(conversationId);
+    const gate = externalBrainGate ?? await fetchReplyModeGate(conversationId);
     if (gate?.meta?.reply_mode === "aix") {
       console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(A):", conversationId);
       return applyAixGateAndRespond(conversationId, gate.meta, gate.customerName);
@@ -2606,9 +2634,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // 戦略）は注入されない（brainGuidanceNote 非空をシグナルとして抑制される）。
     // AIX-META が null / 空（closing_strategy も next_steps も無い）の場合は brainGuidanceNote が
     // 空文字になり、closingNote が ai_summary / Step1 フォールバックとして働く。
-    const brainGate = (conversationId && !isTemplateOptimize)
+    // brain直列アーキテクチャ: brainMetaDirect 指定時（bg-async経由）は DB 再フェッチをスキップ。
+    // bg-async が直前に brain を直列実行して書いた値なので DB と同値（むしろ順序保証つき）。
+    const brainGate = externalBrainGate ?? ((conversationId && !isTemplateOptimize)
       ? await fetchReplyModeGate(conversationId)
-      : null;
+      : null);
     const brainMeta = brainGate?.meta ?? null;
     const brainGuidanceNote = (brainMeta && (brainMeta.closing_strategy || (brainMeta.next_steps?.length ?? 0) > 0))
       ? `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位）】${brainMeta.closing_strategy ? `\n- 成約戦略: ${brainMeta.closing_strategy}` : ""}${brainMeta.next_steps?.length ? `\n- 予定ステップ: ${brainMeta.next_steps.join(" / ")}` : ""}\n※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。\n`

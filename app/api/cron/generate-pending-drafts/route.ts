@@ -2,6 +2,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { detectPlaceholders } from "@/app/lib/validate-reply";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
 
 function getDb() {
   return createClient(
@@ -79,7 +80,7 @@ async function run() {
   // bg-async が10分以内にクレーム済み（draft_attempted_at）の会話はフェッチ段階でスキップ（二重Sonnet防止）
   const { data: pendingConvs, error } = await db
     .from("conversations")
-    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at, draft_fail_count")
+    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at, draft_fail_count, brain_analyzed_at")
     .not("draft_pending_at", "is", null)
     .lte("draft_pending_at", threshold)
     .gte("draft_pending_at", tenMinutesAgo)
@@ -90,7 +91,7 @@ async function run() {
   // ② 取りこぼし救済: pending_atなし（または10分以上前の古いpending）・下書きなし・24時間以内・未返信
   const { data: orphanedConvs, error: orphanedError } = await db
     .from("conversations")
-    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at, draft_fail_count")
+    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at, draft_fail_count, brain_analyzed_at")
     .eq("last_sender", "customer")
     // __TRUNCATED__センチネル（尻切れで保存見送りになった会話）も救済対象に含める
     .or("ai_draft.is.null,ai_draft.eq.__TRUNCATED__")
@@ -291,6 +292,27 @@ async function run() {
         continue;
       }
 
+      // ── brain直列実行（bg-async と同じ入口の cron 版・2026-08直列アーキテクチャ）─────
+      // 本cronは webhook の直接 bg-async トリガーが失敗した会話の fallback。bg-async を経由しない
+      // ため、そのままでは brain（分析＋required通知）が走らずに draft が生成されてしまう。
+      // brain_analyzed_at が最新メッセージ（updated_at）より古い場合のみ実行する
+      // （bg-async が既に brain 実行済みの会話＝draft再試行では再実行しない → required通知の重複防止。
+      //   分析失敗時も brain_analyzed_at が更新される（H3）ため失敗ループでの通知連発も起きない）。
+      // 実行時間: brain 最大~50s + generate-reply 最大120s ≈ 170s/件 — ループ先頭の
+      // TIME_BUDGET_MS チェックで残りは次回cronに繰り越されるため maxDuration 300s 内で安全。
+      let brainGateDirect: BrainGateSnapshot | null = null;
+      const brainAnalyzedAtMs = conv.brain_analyzed_at ? Date.parse(conv.brain_analyzed_at as string) : NaN;
+      const convUpdatedAtMs = conv.updated_at ? Date.parse(conv.updated_at as string) : NaN;
+      const brainStale = Number.isNaN(brainAnalyzedAtMs) || (!Number.isNaN(convUpdatedAtMs) && brainAnalyzedAtMs < convUpdatedAtMs);
+      if (brainStale) {
+        try {
+          brainGateDirect = await runBrainAndNotify(convId);
+          console.log("[generate-pending-drafts] brain serial done:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
+        } catch (brainErr) {
+          console.warn("[generate-pending-drafts] brain serial failed（DBフェッチにフォールバック）:", convId, String(brainErr));
+        }
+      }
+
       const draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -309,6 +331,9 @@ async function run() {
           conversationId: convId,
           // reply_modeゲート有効化（brain判定がaixなら自動ドラフトを生成しない）
           enforceReplyModeGate: true,
+          // brain直列実行の結果を直接渡す（generate-reply側のDBフェッチをスキップ）。
+          // null（stale判定で未実行 / 分析失敗）時は渡さず従来のDBフェッチに任せる
+          ...(brainGateDirect ? { brainMetaDirect: brainGateDirect } : {}),
           // 本文末尾に <<<STOP_REASON:xxx>>> トレーラーを付けてもらう（尻切れドラフトの品質ゲート用）
           includeStopReason: true,
         }),
