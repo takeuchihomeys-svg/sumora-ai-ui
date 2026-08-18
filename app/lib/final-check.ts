@@ -182,7 +182,10 @@ function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): string {
     console.warn(`[final-check] finalCheckRules truncated: ${ctx.finalCheckRules.length} chars → 3000. Rules beyond 3000 chars are NOT checked.`);
   }
   const finalCheckRulesSliced = ctx.finalCheckRules ? ctx.finalCheckRules.slice(0, 3000) : null;
-  return `${ADVERSARIAL_PREAMBLE}${aixNote}
+  const brainBaselineNote = ctx.brainMeta?.action
+    ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。\n\n`
+    : "";
+  return `${brainBaselineNote}${ADVERSARIAL_PREAMBLE}${aixNote}
 
 以下はこの会社の絶対ルール一覧です。返信文が各ルールに違反していないか、1つずつ照合してください。
 特に「通常返信AIは宣言のみ、実行はAIX」の境界線：
@@ -226,7 +229,10 @@ ${draft}
 
 // ─── Pass 2: 前帯状回（異常検知 / anomaly_scan）────────────────────────────────
 function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): string {
-  return `${ADVERSARIAL_PREAMBLE}
+  const brainBaselineNote = ctx.brainMeta?.action
+    ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。\n\n`
+    : "";
+  return `${brainBaselineNote}${ADVERSARIAL_PREAMBLE}
 
 返信文の中の「事実の主張」をすべて抽出し、それぞれについて「この事実はどこから来たのか」を
 下の情報源と照合してください。どの情報源にも根拠が無い事実は、AIの捏造（ハルシネーション）です。
@@ -294,10 +300,10 @@ function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): string 
   const stageBlock = ctx.conversationStage
     ? `[STAGE]\n現在段階: ${ctx.conversationStage}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${ctx.sentPropertiesCount}件` : ""}\n[/STAGE]`
     : "";
-  const brainActionNote = ctx.brainMeta?.action
-    ? `【脳分析済みアクション】Brain判定: action="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）。このアクションと矛盾しない返信内容であればSTAGE_SKIPは発行しないこと。\n\n`
+  const brainBaselineNote = ctx.brainMeta?.action
+    ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。このアクションと矛盾しない返信内容であればSTAGE_SKIPは発行しないこと。\n\n`
     : "";
-  return `${brainActionNote}${ADVERSARIAL_PREAMBLE}
+  return `${brainBaselineNote}${ADVERSARIAL_PREAMBLE}
 
 顧客の最新メッセージと返信文を突き合わせ、以下を検査してください。
 1. 質問の取りこぼし：顧客の質問を全て列挙し、返信が各質問に具体的に答えているか。
