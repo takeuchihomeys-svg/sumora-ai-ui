@@ -127,7 +127,7 @@ export async function POST(req: NextRequest) {
       let brainGateDirect: BrainGateSnapshot | null = null;
       try {
         brainGateDirect = await Promise.race([
-          runBrainAndNotify(convId),
+          runBrainAndNotify(convId, targetMessage),
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 60_000)),
         ]);
         console.log("[bg-async] brain serial done, convId:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
