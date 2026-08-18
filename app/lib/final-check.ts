@@ -102,7 +102,7 @@ const ISSUE_SCHEMA = {
 
 type RawIssue = { code?: string; message?: string; evidence?: string; suggestion?: string };
 
-// ─── Haiku呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
+// ─── Sonnet呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
 async function callHaiku(prompt: string, timeoutMs: number): Promise<RawIssue[]> {
   const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -110,23 +110,23 @@ async function callHaiku(prompt: string, timeoutMs: number): Promise<RawIssue[]>
     signal: AbortSignal.timeout(timeoutMs),
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
-      model: "claude-haiku-4-5",
+      model: "claude-sonnet-4-5",
       max_tokens: 2400,
       temperature: 0,
       output_config: { format: { type: "json_schema", schema: ISSUE_SCHEMA } },
       messages: [{ role: "user", content: prompt }],
     }),
   });
-  if (!res.ok) throw new Error(`final-check haiku HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`final-check sonnet HTTP ${res.status}`);
   const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
-  if (data.stop_reason === "max_tokens") throw new Error("final-check haiku max_tokens reached");
+  if (data.stop_reason === "max_tokens") throw new Error("final-check sonnet max_tokens reached");
   const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
   let parsed: { issues?: RawIssue[] };
   try {
     parsed = JSON.parse(text) as { issues?: RawIssue[] };
   } catch (e) {
-    console.error("[final-check] callHaiku JSON.parse failed:", e, "raw text:", text.slice(0, 200));
-    throw new Error("final-check haiku JSON parse failed");
+    console.error("[final-check] callSonnet JSON.parse failed:", e, "raw text:", text.slice(0, 200));
+    throw new Error("final-check sonnet JSON parse failed");
   }
   return Array.isArray(parsed.issues) ? parsed.issues : [];
 }
@@ -381,7 +381,7 @@ const BANNED_WORDS_DETERMINISTIC = ["スモラ", "名称未設定", "少々お�
 
 // ─── メイン: 決定的プリチェック + 3パス並列チェック ──────────────────────────
 // 絶対にthrowしない（全pass失敗でも issues=[] / passes_completed=[] の fail-open 結果を返す）
-export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haikuTimeoutMs = 20000): Promise<CheckResult> {
+export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haikuTimeoutMs = 30000): Promise<CheckResult> {
   const started = Date.now();
   const issues: CheckIssue[] = [];
   const draftNorm = normalizeForMatch(draft);
