@@ -2008,6 +2008,25 @@ function renderList(customers) {
   });
 }
 
+function computeAreaModeBadgeHtml(areaText) {
+  if (!areaText) return '';
+  const clean = areaText.replace(/駅|周辺|付近|近く|エリア/g, '').trim();
+  // 駅判定: 駅・線を含む or STATION_LINE_MAP に一致する駅名を含む
+  const hasStation = /駅|線/.test(areaText) ||
+    parseAreaTokens(clean).some(t => {
+      const n = t.replace(/駅$/, '').trim();
+      return (STATION_LINE_MAP[n] || LEARNED_STATION_MAP[n]);
+    });
+  // 地域判定: 市/区/府/県/都/郡 or WARD_CODE_MAP or NEIGHBORHOOD_WARD_MAP
+  const hasWard = /[市区府県都郡]/.test(areaText) ||
+    parseAreaTokens(clean).some(t => WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t]);
+
+  let html = '';
+  if (hasStation) html += '<span class="area-mode-badge badge-area-station">駅</span>';
+  if (hasWard)    html += '<span class="area-mode-badge badge-area-ward">地域</span>';
+  return html;
+}
+
 function renderCustomerRow(c, dimmed) {
   const d = buildCondData(c);
   const metaParts = [];
@@ -2025,7 +2044,7 @@ function renderCustomerRow(c, dimmed) {
       <label class="bulk-check-wrap"><input type="checkbox" class="bulk-check" data-id="${esc(String(c.id))}"></label>
       <div class="c-dot dot-${esc(c.status)}"></div>
       <div class="c-body">
-        <div class="c-name">${c.is_linked ? '<span class="link-chip">🔗</span>' : ""}${esc(c.customer_name)}</div>
+        <div class="c-name">${c.is_linked ? '<span class="link-chip">🔗</span>' : ""}${esc(c.customer_name)}${computeAreaModeBadgeHtml(d.area)}</div>
         ${meta ? `<div class="c-meta">${esc(meta)}</div>` : ""}
       </div>
       <span class="s-badge badge-${esc(c.status)}">${esc(label)}</span>
