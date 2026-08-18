@@ -1318,12 +1318,16 @@ ${history}`;
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    const raw = response.content[0].type === "text" ? response.content[0].text : "";
+    const raw = response.content[0]?.type === "text" ? response.content[0].text : "";
     // M2(Fable5): 最初の { 〜 最後の } を抽出（旧 non-greedy 正規表現は最初の } で切れる罠があった）
     const firstBrace = raw.indexOf("{");
     const lastBrace = raw.lastIndexOf("}");
     if (firstBrace === -1 || lastBrace <= firstBrace) {
-      console.warn("[brain-core] analyzeConversation abort: Claude returned no JSON", conversationId, "raw:", raw.slice(0, 300));
+      console.warn("[brain-core] analyzeConversation abort: Claude returned no JSON", conversationId,
+        "stop_reason:", response.stop_reason,
+        "content_len:", response.content.length,
+        "content[0]_type:", response.content[0]?.type ?? "undefined",
+        "raw:", raw.slice(0, 300));
       return null;
     }
     const jsonMatch = [raw.slice(firstBrace, lastBrace + 1)];
