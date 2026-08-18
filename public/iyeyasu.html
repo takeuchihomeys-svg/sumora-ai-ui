@@ -1,796 +1,613 @@
 <!DOCTYPE html>
 <html lang="ja" data-theme="light">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>イエヤス | 賃貸初期費用を大幅節約 | LINEで完結</title>
-<meta name="description" content="賃貸の初期費用を最大半額以下に。敷金・礼金・仲介手数料をプロが代わりに交渉。LINEで相談するだけ、完全無料。">
-<style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>イエヤス | LINEでお部屋探し・大阪の賃貸仲介 | ホームズ</title>
+  <style>
+    :root {
+      --forest:    #1b6e2e;
+      --forest-dk: #145226;
+      --tangerine: #ff6b35;
+      --sun:       #f5c842;
+      --line:      #06C755;
+      --line-dk:   #05aa47;
+      --bg:        #fdfff8;
+      --bg-alt:    #f0f7f2;
+      --card:      #ffffff;
+      --ink:       #1a2018;
+      --muted:     #5a7060;
+      --border:    #cde8d4;
+      --lbl:       #1b6e2e;
+      --r-pill:    9999px;
+      --r-md:      18px;
+      --r-sm:      10px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg:     #0f1a10;
+        --bg-alt: #172119;
+        --card:   #1c2d1e;
+        --ink:    #e2f0e4;
+        --muted:  #88b090;
+        --border: #2a3f2c;
+        --lbl:    #4cd07a;
+      }
+    }
+    :root[data-theme="dark"] {
+      --bg:     #0f1a10;
+      --bg-alt: #172119;
+      --card:   #1c2d1e;
+      --ink:    #e2f0e4;
+      --muted:  #88b090;
+      --border: #2a3f2c;
+      --lbl:    #4cd07a;
+    }
+    :root[data-theme="light"] {
+      --bg:     #fdfff8;
+      --bg-alt: #f0f7f2;
+      --card:   #ffffff;
+      --ink:    #1a2018;
+      --muted:  #5a7060;
+      --border: #cde8d4;
+      --lbl:    #1b6e2e;
+    }
 
-:root{
-  --forest:#1b6e2e;
-  --jade:#2e9e4f;
-  --jade-light:#e8f5ec;
-  --jade-mid:#c5e8ce;
-  --tangerine:#ff6b35;
-  --line-green:#06C755;
-  --line-dark:#05a847;
-  --gold:#ffd54f;
-  --bg:#ffffff;
-  --bg-alt:#f5f9f6;
-  --text:#1a1a1a;
-  --text-muted:#5a6b62;
-  --border:#d4e8da;
-  --sh-card:0 2px 16px rgba(27,110,46,.10);
-  --sh-card-hover:0 6px 28px rgba(27,110,46,.18);
-  --r-card:16px;
-  --r-btn:100px;
-}
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Hiragino Maru Gothic ProN', 'Hiragino Maru Gothic Pro',
+                   'BIZ UDPGothic', 'Hiragino Kaku Gothic ProN',
+                   'Hiragino Sans', Meiryo, sans-serif;
+      font-size: 16px;
+      line-height: 1.8;
+      color: var(--ink);
+      background: var(--bg);
+      max-width: 480px;
+      margin: 0 auto;
+      overflow-x: hidden;
+      padding-bottom: 74px;
+    }
 
-[data-theme="dark"]{
-  --bg:#0e1a11;
-  --bg-alt:#152019;
-  --text:#e8f0ea;
-  --text-muted:#8aad92;
-  --border:#2a4a32;
-  --jade-light:#1a3522;
-  --jade-mid:#234c2e;
-  --sh-card:0 2px 16px rgba(0,0,0,.4);
-  --sh-card-hover:0 6px 28px rgba(46,158,79,.25);
-}
+    /* Scroll reveal */
+    .r {
+      opacity: 0;
+      transform: translateY(22px);
+      transition: opacity 0.55s ease, transform 0.55s ease;
+    }
+    .r.on { opacity: 1; transform: none; }
+    .r.d1 { transition-delay: 0.08s; }
+    .r.d2 { transition-delay: 0.16s; }
+    .r.d3 { transition-delay: 0.24s; }
+    @media (prefers-reduced-motion: reduce) {
+      .r { opacity: 1; transform: none; transition: none; }
+    }
 
-@media(prefers-color-scheme:dark){
-  :root:not([data-theme="light"]){
-    --bg:#0e1a11;
-    --bg-alt:#152019;
-    --text:#e8f0ea;
-    --text-muted:#8aad92;
-    --border:#2a4a32;
-    --jade-light:#1a3522;
-    --jade-mid:#234c2e;
-    --sh-card:0 2px 16px rgba(0,0,0,.4);
-    --sh-card-hover:0 6px 28px rgba(46,158,79,.25);
-  }
-}
+    /* Header */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 90;
+      background: var(--forest);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.18);
+    }
+    .logo { text-decoration: none; line-height: 1.15; }
+    .logo-name { display: block; font-size: 22px; font-weight: 900; color: #fff; letter-spacing: .04em; }
+    .logo-by   { display: block; font-size: 10px; color: rgba(255,255,255,.72); letter-spacing: .06em; }
+    .h-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--line);
+      color: #fff;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 800;
+      padding: 8px 14px;
+      border-radius: var(--r-pill);
+      flex-shrink: 0;
+      transition: background .18s, transform .12s;
+    }
+    .h-btn:hover { background: var(--line-dk); transform: scale(1.04); }
+    .h-btn:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
 
-html{scroll-behavior:smooth;}
-body{
-  font-family:'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic','Meiryo',sans-serif;
-  background:var(--bg);
-  color:var(--text);
-  line-height:1.65;
-  overflow-x:hidden;
-  -webkit-font-smoothing:antialiased;
-}
-img{max-width:100%;display:block;}
-a{color:inherit;text-decoration:none;}
+    /* Hero */
+    .hero {
+      background: linear-gradient(168deg, #145226 0%, #1b6e2e 45%, #267a3a 80%, #2e8d45 100%);
+      padding: 32px 22px 44px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(circle, rgba(255,255,255,.07) 1px, transparent 1px);
+      background-size: 18px 18px;
+      pointer-events: none;
+    }
+    .hero-eye {
+      position: relative;
+      display: inline-block;
+      background: var(--tangerine);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      padding: 4px 14px;
+      border-radius: var(--r-pill);
+      letter-spacing: .06em;
+      margin-bottom: 14px;
+    }
+    .hero-hl {
+      position: relative;
+      font-size: 32px;
+      font-weight: 900;
+      color: #fff;
+      line-height: 1.25;
+      text-wrap: balance;
+      margin-bottom: 8px;
+    }
+    .hero-hl em { font-style: normal; color: var(--sun); }
+    .hero-sub {
+      position: relative;
+      font-size: 15px;
+      color: rgba(255,255,255,.87);
+      margin-bottom: 26px;
+    }
+    .char-wrap {
+      width: 190px;
+      height: 195px;
+      margin: 0 auto 28px;
+      position: relative;
+    }
+    .char-wrap svg { width: 100%; height: 100%; }
 
-.container{width:100%;max-width:720px;margin:0 auto;padding:0 20px;}
+    /* LINE buttons */
+    .btn-line {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: var(--line);
+      color: #fff;
+      text-decoration: none;
+      font-size: 18px;
+      font-weight: 900;
+      padding: 18px 20px;
+      border-radius: var(--r-pill);
+      width: 100%;
+      max-width: 390px;
+      margin: 0 auto 12px;
+      box-shadow: 0 6px 24px rgba(6,199,85,.44);
+      position: relative;
+      transition: background .18s, transform .14s, box-shadow .18s;
+    }
+    .btn-line:hover {
+      background: var(--line-dk);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(6,199,85,.54);
+    }
+    .btn-line:focus-visible { outline: 3px solid var(--sun); outline-offset: 3px; }
+    .btn-line.lg { font-size: 19px; padding: 20px; }
+    .hero-note {
+      position: relative;
+      font-size: 12px;
+      color: rgba(255,255,255,.65);
+    }
 
-/* ===== HEADER ===== */
-.header{
-  position:sticky;top:0;z-index:100;
-  background:var(--forest);
-  box-shadow:0 2px 12px rgba(0,0,0,.25);
-}
-.header-inner{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:12px 20px;max-width:880px;margin:0 auto;
-}
-.header-brand{display:flex;align-items:center;gap:10px;}
-.header-logo{width:30px;height:30px;flex-shrink:0;}
-.header-name{font-size:1.2rem;font-weight:900;color:#fff;letter-spacing:.04em;}
-.header-sub{font-size:.65rem;color:rgba(255,255,255,.7);display:none;}
-@media(min-width:440px){.header-sub{display:block;}}
+    /* Sections */
+    .sec { padding: 48px 24px; }
+    .sec.alt   { background: var(--bg-alt); }
+    .sec.white { background: var(--card); }
+    .sec-eye {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--lbl);
+      background: var(--bg-alt);
+      padding: 4px 12px;
+      border-radius: var(--r-pill);
+      margin-bottom: 10px;
+    }
+    .sec.alt .sec-eye { background: var(--card); }
+    .sec-title {
+      font-size: 24px;
+      font-weight: 900;
+      color: var(--ink);
+      line-height: 1.35;
+      text-wrap: balance;
+      margin-bottom: 20px;
+    }
 
-/* ===== BUTTONS ===== */
-.btn-line{
-  display:inline-flex;align-items:center;gap:8px;
-  background:var(--line-green);color:#fff;
-  font-weight:700;font-size:.88rem;
-  padding:10px 18px;border-radius:var(--r-btn);
-  border:none;cursor:pointer;
-  transition:background .18s, transform .15s, box-shadow .15s;
-}
-.btn-line:hover{
-  background:var(--line-dark);
-  transform:translateY(-2px);
-  box-shadow:0 6px 22px rgba(6,199,85,.42);
-}
-.btn-line--lg{font-size:1.08rem;padding:16px 30px;gap:10px;}
-.btn-line--full{width:100%;justify-content:center;font-size:1.05rem;padding:16px 28px;}
-.line-ico{width:20px;height:20px;flex-shrink:0;}
+    /* About */
+    .about-body { font-size: 15px; color: var(--muted); line-height: 1.9; }
+    .about-body strong { color: var(--lbl); font-weight: 800; }
+    .about-body p + p { margin-top: 12px; }
 
-/* ===== HERO ===== */
-.hero{
-  background:var(--forest);
-  padding:56px 20px 0;
-  text-align:center;
-  position:relative;overflow:hidden;
-}
-.hero-inner{max-width:660px;margin:0 auto;}
-.hero-eyebrow{
-  display:inline-block;
-  background:rgba(255,255,255,.14);
-  color:rgba(255,255,255,.88);
-  font-size:.78rem;font-weight:700;
-  padding:5px 14px;border-radius:100px;
-  margin-bottom:20px;letter-spacing:.08em;
-}
-.hero-h1{
-  font-size:clamp(1.85rem,6.5vw,2.9rem);
-  font-weight:900;color:#fff;
-  line-height:1.28;margin-bottom:14px;
-  letter-spacing:-.01em;
-}
-.hero-h1 .accent{color:var(--gold);}
-.hero-sub{
-  font-size:clamp(.92rem,2.4vw,1.05rem);
-  color:rgba(255,255,255,.78);
-  margin-bottom:26px;line-height:1.75;
-}
-.hero-tags{
-  display:flex;flex-wrap:wrap;gap:8px;
-  justify-content:center;margin-bottom:30px;
-}
-.hero-tag{
-  background:rgba(255,255,255,.12);
-  border:1px solid rgba(255,255,255,.24);
-  color:rgba(255,255,255,.88);
-  font-size:.75rem;font-weight:700;
-  padding:5px 12px;border-radius:100px;
-}
-.hero-cta-note{font-size:.73rem;color:rgba(255,255,255,.58);margin-top:10px;}
-.hero-char-wrap{
-  margin-top:20px;display:flex;
-  justify-content:center;align-items:flex-end;
-}
-#iyeyasu-img,#char-svg{width:200px;height:220px;object-fit:contain;}
-#char-svg{display:none;}
+    /* Features */
+    .features { display: flex; flex-direction: column; gap: 14px; }
+    .feat-card {
+      background: var(--card);
+      border-radius: var(--r-md);
+      padding: 20px 18px;
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      border: 1.5px solid var(--border);
+      transition: transform .18s, box-shadow .18s;
+    }
+    .feat-card:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(27,110,46,.1); }
+    .feat-icon {
+      width: 48px; height: 48px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--r-sm);
+    }
+    .feat-icon svg { width: 30px; height: 30px; }
+    .feat-icon.g-ic { background: rgba(27,110,46,.12); }
+    .feat-icon.o-ic { background: rgba(255,107,53,.12); }
+    .feat-icon.l-ic { background: rgba(6,199,85,.11); }
+    .feat-tag { display: block; font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 3px; }
+    .feat-tag.g { color: var(--lbl); }
+    .feat-tag.o { color: var(--tangerine); }
+    .feat-tag.l { color: var(--line); }
+    .feat-title { font-size: 16px; font-weight: 800; color: var(--ink); line-height: 1.4; margin-bottom: 5px; }
+    .feat-desc  { font-size: 13px; color: var(--muted); line-height: 1.7; }
 
-/* Wave */
-.wave{display:block;width:100%;overflow:hidden;line-height:0;}
-.wave svg{display:block;width:100%;}
+    /* Steps */
+    .steps { display: flex; flex-direction: column; }
+    .step { display: flex; gap: 16px; position: relative; }
+    .step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      left: 21px;
+      top: 44px;
+      bottom: -8px;
+      width: 2px;
+      background: var(--border);
+    }
+    .step-num {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 900; color: #fff;
+      flex-shrink: 0;
+    }
+    .step-num.s1 { background: var(--forest); }
+    .step-num.s2 { background: var(--tangerine); }
+    .step-num.s3 { background: var(--line); }
+    .step-body { padding-bottom: 32px; }
+    .step:last-child .step-body { padding-bottom: 0; }
+    .step-title { font-size: 16px; font-weight: 800; color: var(--ink); line-height: 1.4; margin-bottom: 4px; }
+    .step-desc  { font-size: 13px; color: var(--muted); line-height: 1.7; }
 
-/* ===== SECTIONS ===== */
-.section-pad{padding:72px 20px;}
-@media(max-width:480px){.section-pad{padding:52px 16px;}}
-.section-title{
-  font-size:clamp(1.35rem,4.5vw,1.95rem);
-  font-weight:900;text-align:center;
-  margin-bottom:10px;line-height:1.35;
-  letter-spacing:-.01em;
-}
-.section-lead{
-  text-align:center;color:var(--text-muted);
-  font-size:.93rem;margin-bottom:44px;line-height:1.75;
-}
-.badge{
-  display:inline-flex;align-items:center;gap:6px;
-  background:var(--jade-light);color:var(--forest);
-  font-size:.76rem;font-weight:700;
-  padding:5px 12px;border-radius:100px;
-  border:1px solid rgba(27,110,46,.2);
-  margin-bottom:14px;
-}
-.badge svg{width:13px;height:13px;stroke:var(--forest);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+    /* Final CTA */
+    .final {
+      background: linear-gradient(160deg, #0f3d1c 0%, #1b6e2e 100%);
+      padding: 52px 24px;
+      text-align: center;
+    }
+    .final-hl { font-size: 26px; font-weight: 900; color: #fff; line-height: 1.35; text-wrap: balance; margin-bottom: 8px; }
+    .final-hl em { font-style: normal; color: var(--sun); }
+    .final-sub  { font-size: 14px; color: rgba(255,255,255,.82); margin-bottom: 28px; line-height: 1.75; }
+    .final-note { margin-top: 14px; font-size: 12px; color: rgba(255,255,255,.6); }
 
-/* ===== PROBLEM ===== */
-.problem-bg{background:var(--bg);}
-.cost-table{
-  background:var(--bg-alt);
-  border-radius:var(--r-card);
-  border:1px solid var(--border);
-  overflow:hidden;margin-bottom:28px;
-}
-.cost-thead{
-  background:var(--forest);color:#fff;
-  font-weight:700;font-size:.86rem;
-  padding:13px 20px;
-  display:grid;grid-template-columns:1fr auto;gap:12px;
-}
-.cost-row{
-  display:grid;grid-template-columns:1fr auto;gap:12px;
-  padding:15px 20px;border-bottom:1px solid var(--border);
-  align-items:center;
-}
-.cost-row:last-child{border-bottom:none;}
-.cost-label{font-size:.9rem;color:var(--text);display:flex;align-items:center;gap:10px;}
-.cost-ico{
-  width:36px;height:36px;background:var(--jade-light);
-  border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
-}
-.cost-ico svg{width:17px;height:17px;stroke:var(--forest);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
-.cost-amt{font-size:1rem;font-weight:700;color:var(--text);text-align:right;white-space:nowrap;}
-.cost-total{
-  display:grid;grid-template-columns:1fr auto;gap:12px;
-  padding:17px 20px;align-items:center;
-  background:#fff3f0;border-top:2px solid var(--tangerine);
-}
-.cost-total-lbl{font-weight:900;font-size:.97rem;color:var(--tangerine);}
-.cost-total-amt{font-size:1.35rem;font-weight:900;color:var(--tangerine);text-align:right;}
-.prob-note{
-  background:var(--jade-light);
-  border-left:4px solid var(--jade);
-  border-radius:0 8px 8px 0;
-  padding:16px 20px;font-size:.87rem;
-  color:var(--text);line-height:1.72;
-}
+    /* Footer */
+    .footer {
+      background: #091510;
+      color: rgba(255,255,255,.52);
+      padding: 24px 20px;
+      text-align: center;
+      font-size: 12px;
+      line-height: 1.9;
+    }
+    .footer strong { color: rgba(255,255,255,.8); display: block; font-size: 13px; margin-bottom: 2px; }
 
-/* ===== SOLUTION ===== */
-.solution-bg{background:var(--bg-alt);}
-.savings-card{
-  background:var(--forest);
-  border-radius:var(--r-card);
-  padding:36px 28px;text-align:center;
-  color:#fff;margin-bottom:30px;
-}
-.sv-label{font-size:.78rem;font-weight:700;color:rgba(255,255,255,.68);letter-spacing:.1em;margin-bottom:14px;}
-.sv-compare{
-  display:flex;align-items:center;justify-content:center;
-  gap:16px;margin-bottom:18px;flex-wrap:wrap;
-}
-.sv-before{text-align:center;}
-.sv-before-lbl{font-size:.7rem;color:rgba(255,255,255,.6);margin-bottom:4px;}
-.sv-before-amt{
-  font-size:clamp(1.5rem,5vw,2.1rem);font-weight:900;
-  color:rgba(255,255,255,.5);text-decoration:line-through;
-}
-.sv-arrow{font-size:1.6rem;color:var(--gold);font-weight:900;}
-.sv-after{text-align:center;}
-.sv-after-lbl{font-size:.7rem;color:rgba(255,255,255,.72);margin-bottom:4px;}
-.sv-after-amt{
-  font-size:clamp(2.1rem,7.5vw,3.4rem);font-weight:900;
-  color:var(--gold);line-height:1;
-}
-.sv-diff{
-  display:inline-block;
-  background:rgba(255,255,255,.14);border-radius:100px;
-  padding:8px 20px;
-  font-size:clamp(.95rem,3vw,1.15rem);font-weight:900;color:#fff;
-}
-.sv-diff strong{color:var(--gold);}
-.check-list{list-style:none;display:flex;flex-direction:column;gap:14px;}
-.check-item{display:flex;align-items:flex-start;gap:12px;font-size:.93rem;color:var(--text);}
-.check-dot{
-  width:22px;height:22px;background:var(--jade);border-radius:50%;
-  display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;
-}
-.check-dot svg{width:11px;height:11px;stroke:#fff;fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;}
-
-/* ===== FEATURES ===== */
-.features-bg{background:var(--bg);}
-.feat-grid{display:grid;grid-template-columns:1fr;gap:18px;}
-@media(min-width:540px){.feat-grid{grid-template-columns:repeat(3,1fr);}}
-.feat-card{
-  background:var(--bg-alt);border:1px solid var(--border);
-  border-radius:var(--r-card);padding:28px 22px;text-align:center;
-  transition:box-shadow .18s, transform .15s;
-}
-.feat-card:hover{box-shadow:var(--sh-card-hover);transform:translateY(-3px);}
-.feat-ico{
-  width:54px;height:54px;background:var(--forest);border-radius:13px;
-  display:flex;align-items:center;justify-content:center;margin:0 auto 18px;
-}
-.feat-ico svg{width:26px;height:26px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
-.feat-title{font-size:.97rem;font-weight:900;margin-bottom:9px;color:var(--text);line-height:1.42;}
-.feat-desc{font-size:.83rem;color:var(--text-muted);line-height:1.72;}
-
-/* ===== STEPS ===== */
-.steps-bg{background:var(--bg-alt);}
-.steps-list{display:flex;flex-direction:column;position:relative;}
-.steps-list::before{
-  content:'';position:absolute;
-  left:27px;top:44px;bottom:44px;
-  width:2px;background:var(--border);
-}
-.step-item{display:flex;gap:20px;align-items:flex-start;padding:0 0 30px;position:relative;}
-.step-item:last-child{padding-bottom:0;}
-.step-num{
-  width:54px;height:54px;border-radius:50%;
-  background:var(--forest);color:#fff;font-weight:900;font-size:1.15rem;
-  display:flex;align-items:center;justify-content:center;flex-shrink:0;
-  position:relative;z-index:1;box-shadow:0 2px 12px rgba(27,110,46,.3);
-}
-.step-body{padding-top:9px;}
-.step-tag{
-  display:inline-block;background:var(--jade-light);color:var(--forest);
-  font-size:.7rem;font-weight:700;padding:3px 10px;border-radius:100px;margin-bottom:7px;
-}
-.step-title{font-weight:900;font-size:1.02rem;margin-bottom:6px;color:var(--text);}
-.step-desc{font-size:.86rem;color:var(--text-muted);line-height:1.72;}
-.steps-cta-wrap{margin-top:44px;}
-
-/* ===== CTA SECTION ===== */
-.cta-bg{background:var(--forest);padding:72px 20px;text-align:center;}
-.cta-title{
-  font-size:clamp(1.45rem,5vw,2.1rem);font-weight:900;
-  color:#fff;line-height:1.32;margin-bottom:14px;
-}
-.cta-sub{font-size:.93rem;color:rgba(255,255,255,.72);margin-bottom:34px;line-height:1.75;}
-.cta-notes{
-  list-style:none;display:flex;flex-wrap:wrap;gap:10px;
-  justify-content:center;margin-top:22px;
-}
-.cta-note{font-size:.76rem;color:rgba(255,255,255,.65);display:flex;align-items:center;gap:5px;}
-.cta-note::before{content:'';width:4px;height:4px;border-radius:50%;background:rgba(255,255,255,.45);flex-shrink:0;}
-
-/* ===== FOOTER ===== */
-.footer{background:#07100a;padding:40px 20px;color:rgba(255,255,255,.52);}
-.footer-inner{max-width:720px;margin:0 auto;}
-.footer-brand{font-size:1.05rem;font-weight:900;color:rgba(255,255,255,.88);margin-bottom:6px;}
-.footer-company{font-size:.8rem;margin-bottom:20px;line-height:1.75;}
-.footer-links{display:flex;gap:16px;flex-wrap:wrap;font-size:.78rem;margin-bottom:18px;}
-.footer-links a{color:rgba(255,255,255,.52);transition:color .15s;}
-.footer-links a:hover{color:rgba(255,255,255,.88);}
-.footer-copy{font-size:.72rem;border-top:1px solid rgba(255,255,255,.1);padding-top:16px;}
-
-/* ===== REVEAL ===== */
-.reveal{opacity:0;transform:translateY(22px);transition:opacity .55s ease,transform .55s ease;}
-.reveal.is-visible{opacity:1;transform:none;}
-.rd1{transition-delay:.05s;}.rd2{transition-delay:.12s;}.rd3{transition-delay:.19s;}
-@media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none;}}
-
-/* dark mode cost-total fix */
-[data-theme="dark"] .cost-total{background:#2a1408;}
-@media(prefers-color-scheme:dark){
-  :root:not([data-theme="light"]) .cost-total{background:#2a1408;}
-}
-</style>
+    /* Fixed bottom bar */
+    .bottom-bar {
+      position: fixed;
+      bottom: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 100%; max-width: 480px;
+      background: rgba(9,21,16,.95);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      padding: 9px 14px;
+      z-index: 99;
+      box-shadow: 0 -2px 16px rgba(0,0,0,.24);
+    }
+    .bottom-bar a {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: var(--line);
+      color: #fff;
+      text-decoration: none;
+      font-size: 16px;
+      font-weight: 900;
+      padding: 13px;
+      border-radius: var(--r-pill);
+      width: 100%;
+      transition: background .18s;
+    }
+    .bottom-bar a:hover { background: var(--line-dk); }
+    .bottom-bar a:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
+    .ico   { width: 20px; height: 20px; flex-shrink: 0; }
+    .ico-l { width: 26px; height: 26px; flex-shrink: 0; }
+  </style>
 </head>
 <body>
 
 <!-- HEADER -->
 <header class="header">
-  <div class="header-inner">
-    <div class="header-brand">
-      <svg class="header-logo" viewBox="0 0 30 30" fill="none">
-        <rect width="30" height="30" rx="7" fill="rgba(255,255,255,.14)"/>
-        <path d="M6 16L15 7L24 16" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M9 13.5V23H13.5V19H16.5V23H21V13.5" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <div>
-        <div class="header-name">イエヤス</div>
-        <div class="header-sub">賃貸初期費用を大幅節約</div>
-      </div>
-    </div>
-    <a href="https://lin.ee/xofFiWP" class="btn-line" target="_blank" rel="noopener">
-      <svg class="line-ico" viewBox="0 0 20 20" fill="none">
-        <rect width="20" height="20" rx="5" fill="rgba(255,255,255,.22)"/>
-        <path d="M10 3C6.13 3 3 5.58 3 8.77c0 1.82 1.02 3.44 2.6 4.52-.1.38-.37 1.38-.42 1.6-.06.27.1.27.21.2.09-.06 1.33-.88 1.87-1.25.54.08 1.1.12 1.74.12 3.87 0 7-2.58 7-5.77C17 5.58 13.87 3 10 3z" fill="white"/>
-      </svg>
-      LINEで相談
-    </a>
-  </div>
+  <a href="#" class="logo" aria-label="イエヤス トップへ">
+    <span class="logo-name">イエヤス</span>
+    <span class="logo-by">by ホームズ・大阪</span>
+  </a>
+  <a href="https://lin.ee/xofFiWP" class="h-btn" target="_blank" rel="noopener noreferrer">
+    <svg class="ico" viewBox="0 0 20 20" fill="white" aria-hidden="true">
+      <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+    </svg>
+    LINE追加
+  </a>
 </header>
 
 <!-- HERO -->
 <section class="hero">
-  <div class="hero-inner">
-    <div class="hero-eyebrow reveal">賃貸の初期費用、もっと安くできます</div>
-    <h1 class="hero-h1 reveal">
-      初期費用<span class="accent">10万円以上</span><br>
-      安くなるかも！？
-    </h1>
-    <p class="hero-sub reveal">
-      LINEで相談するだけ。交渉はすべてイエヤスがやります。<br>
-      敷金・礼金・仲介手数料を徹底的に削減。
-    </p>
-    <div class="hero-tags reveal">
-      <span class="hero-tag">敷金0円</span>
-      <span class="hero-tag">礼金0円</span>
-      <span class="hero-tag">仲介手数料割引</span>
-      <span class="hero-tag">LINEで完結</span>
-      <span class="hero-tag">完全無料</span>
+  <p class="hero-eye">大阪エリアの賃貸仲介</p>
+  <h1 class="hero-hl">お部屋探しは<br><em>イエヤス</em>におまかせ！</h1>
+  <p class="hero-sub">LINEで気軽に相談するだけ♪<br>敷金・礼金0円物件もいっぱい！</p>
+
+  <div class="char-wrap">
+    <svg viewBox="0 0 200 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="緑甲冑の武将キャラクター・イエヤス">
+      <ellipse cx="100" cy="216" rx="44" ry="7" fill="rgba(0,0,0,0.14)"/>
+      <!-- armor skirt -->
+      <rect x="62"  y="170" width="24" height="36" rx="9" fill="#145226"/>
+      <rect x="89"  y="170" width="22" height="36" rx="9" fill="#1b6e2e"/>
+      <rect x="114" y="170" width="24" height="36" rx="9" fill="#145226"/>
+      <rect x="62"  y="170" width="76" height="4"  rx="2" fill="#d4a820"/>
+      <!-- feet -->
+      <rect x="56"  y="198" width="32" height="14" rx="7" fill="#0d3b1a"/>
+      <rect x="112" y="198" width="32" height="14" rx="7" fill="#0d3b1a"/>
+      <!-- body armor -->
+      <rect x="56" y="108" width="88" height="68" rx="16" fill="#1b6e2e"/>
+      <rect x="56" y="121" width="88" height="5" rx="2" fill="#145226" opacity=".65"/>
+      <rect x="56" y="132" width="88" height="5" rx="2" fill="#145226" opacity=".65"/>
+      <rect x="56" y="143" width="88" height="5" rx="2" fill="#145226" opacity=".65"/>
+      <rect x="56" y="154" width="88" height="5" rx="2" fill="#145226" opacity=".65"/>
+      <rect x="56"  y="108" width="4"  height="68" rx="2" fill="#d4a820" opacity=".8"/>
+      <rect x="140" y="108" width="4"  height="68" rx="2" fill="#d4a820" opacity=".8"/>
+      <!-- house chest emblem -->
+      <g transform="translate(81,114)">
+        <polygon points="19,0 3,13 35,13" fill="#f5c842"/>
+        <rect x="5"  y="13" width="28" height="20" rx="2.5" fill="#fff9e0"/>
+        <rect x="13" y="18" width="12" height="15" rx="2"   fill="#1b6e2e"/>
+        <line x1="3" y1="13" x2="35" y2="13" stroke="#c8a000" stroke-width="1.5"/>
+      </g>
+      <!-- left arm -->
+      <rect x="28" y="112" width="28" height="50" rx="14" fill="#1b6e2e"/>
+      <rect x="28" y="124" width="28" height="4"  rx="2"  fill="#145226" opacity=".6"/>
+      <rect x="28" y="134" width="28" height="4"  rx="2"  fill="#145226" opacity=".6"/>
+      <ellipse cx="42" cy="165" rx="14" ry="11" fill="#f9c090"/>
+      <!-- mini house held in left hand -->
+      <g transform="translate(14,168)">
+        <polygon points="28,0 14,12 42,12" fill="#f5c842" stroke="#c8a000" stroke-width=".8"/>
+        <rect x="16" y="12" width="24" height="15" rx="2" fill="white" stroke="#c8a000" stroke-width=".8"/>
+        <rect x="21" y="15" width="9"  height="12" rx="1.5" fill="#f5c842"/>
+        <line x1="14" y1="12" x2="42" y2="12" stroke="#c8a000" stroke-width="1"/>
+      </g>
+      <!-- right arm -->
+      <rect x="144" y="112" width="28" height="50" rx="14" fill="#1b6e2e"/>
+      <rect x="144" y="124" width="28" height="4"  rx="2"  fill="#145226" opacity=".6"/>
+      <rect x="144" y="134" width="28" height="4"  rx="2"  fill="#145226" opacity=".6"/>
+      <ellipse cx="158" cy="165" rx="14" ry="11" fill="#f9c090"/>
+      <!-- neck -->
+      <rect x="88" y="96" width="24" height="17" rx="9" fill="#f9c090"/>
+      <!-- head -->
+      <ellipse cx="100" cy="76" rx="37" ry="34" fill="#f9c090"/>
+      <!-- helmet shikoro (side guards) -->
+      <path d="M64 72 Q46 80 44 98 Q55 82 66 84Z" fill="#145226"/>
+      <path d="M136 72 Q154 80 156 98 Q145 82 134 84Z" fill="#145226"/>
+      <!-- helmet dome -->
+      <path d="M63 70 Q65 37 100 33 Q135 37 137 70Z" fill="#1b6e2e"/>
+      <!-- brim -->
+      <rect x="59" y="66" width="82" height="12" rx="5.5" fill="#145226"/>
+      <rect x="59" y="74" width="82" height="4"  rx="2"   fill="#d4a820"/>
+      <path d="M63 70 Q100 64 137 70" stroke="#d4a820" stroke-width="2" fill="none"/>
+      <!-- house mae-date (front ornament) -->
+      <g transform="translate(82,17)">
+        <polygon points="18,0 2,16 34,16" fill="#f5c842" stroke="#c8a000" stroke-width="1"/>
+        <rect x="5"  y="16" width="26" height="20" rx="3" fill="#fff9e0" stroke="#c8a000" stroke-width="1"/>
+        <rect x="11" y="21" width="12" height="15" rx="2" fill="#1b6e2e"/>
+        <rect x="15" y="36" width="6"  height="8"  rx="1.5" fill="#c8a000"/>
+      </g>
+      <!-- gold horns -->
+      <path d="M65 66 Q46 52 50 36 Q60 50 68 62" fill="#d4a820"/>
+      <path d="M135 66 Q154 52 150 36 Q140 50 132 62" fill="#d4a820"/>
+      <!-- eyebrows -->
+      <path d="M82 65 Q90 61 97 65"  stroke="#7a4520" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+      <path d="M103 65 Q110 61 118 65" stroke="#7a4520" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+      <!-- eyes -->
+      <ellipse cx="90"  cy="73" rx="7.5" ry="8" fill="white"/>
+      <ellipse cx="110" cy="73" rx="7.5" ry="8" fill="white"/>
+      <circle cx="90"  cy="74" r="5"   fill="#3a2000"/>
+      <circle cx="110" cy="74" r="5"   fill="#3a2000"/>
+      <circle cx="90"  cy="74" r="2.5" fill="#190f00"/>
+      <circle cx="110" cy="74" r="2.5" fill="#190f00"/>
+      <circle cx="91.5"  cy="72" r="1.4" fill="white"/>
+      <circle cx="111.5" cy="72" r="1.4" fill="white"/>
+      <!-- smile -->
+      <path d="M87 87 Q100 97 113 87" stroke="#c07050" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+      <!-- rosy cheeks -->
+      <ellipse cx="79"  cy="83" rx="9" ry="7" fill="#ff9494" opacity=".28"/>
+      <ellipse cx="121" cy="83" rx="9" ry="7" fill="#ff9494" opacity=".28"/>
+      <!-- ears -->
+      <ellipse cx="63"  cy="76" rx="7" ry="9" fill="#f0b580"/>
+      <ellipse cx="137" cy="76" rx="7" ry="9" fill="#f0b580"/>
+    </svg>
+  </div>
+
+  <a href="https://lin.ee/xofFiWP" class="btn-line" target="_blank" rel="noopener noreferrer">
+    <svg class="ico-l" viewBox="0 0 20 20" fill="white" aria-hidden="true">
+      <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+    </svg>
+    今すぐイエヤスでお部屋探し！
+  </a>
+  <p class="hero-note">登録無料 · 来店不要 · 相談0円</p>
+</section>
+
+<!-- ABOUT -->
+<section class="sec white">
+  <div class="r">
+    <span class="sec-eye">About</span>
+    <h2 class="sec-title">イエヤスって何？</h2>
+    <div class="about-body">
+      <p>イエヤスは<strong>大阪エリア専門</strong>の賃貸仲介サービス。面倒なお部屋探しを、LINEでぜーんぶおまかせできちゃいます♪</p>
+      <p><strong>敷金・礼金0円</strong>のお得な物件も多数！仲介手数料もお安くご案内できるかもしれません。まずは気軽にLINEしてみて！</p>
     </div>
-    <div class="reveal">
-      <a href="https://lin.ee/xofFiWP" class="btn-line btn-line--lg" target="_blank" rel="noopener">
-        <svg class="line-ico" viewBox="0 0 20 20" fill="none">
-          <rect width="20" height="20" rx="5" fill="rgba(255,255,255,.22)"/>
-          <path d="M10 3C6.13 3 3 5.58 3 8.77c0 1.82 1.02 3.44 2.6 4.52-.1.38-.37 1.38-.42 1.6-.06.27.1.27.21.2.09-.06 1.33-.88 1.87-1.25.54.08 1.1.12 1.74.12 3.87 0 7-2.58 7-5.77C17 5.58 13.87 3 10 3z" fill="white"/>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="sec alt">
+  <div class="r">
+    <span class="sec-eye">Features</span>
+    <h2 class="sec-title">イエヤスの強み</h2>
+  </div>
+  <div class="features">
+    <article class="feat-card r d1">
+      <div class="feat-icon g-ic">
+        <svg viewBox="0 0 30 30" fill="none" aria-hidden="true">
+          <path d="M15 4L3 14h3v12h7v-7h4v7h7V14h3L15 4z" fill="rgba(27,110,46,.18)" stroke="#1b6e2e" stroke-width="1.8" stroke-linejoin="round"/>
+          <circle cx="15" cy="20" r="3.5" fill="#1b6e2e"/>
+          <path d="M13.5 20h3" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
-        LINE友だちを追加して相談する
-      </a>
-      <p class="hero-cta-note">登録・相談・サポートすべて無料</p>
-    </div>
-    <!-- Character -->
-    <div class="hero-char-wrap">
-      <img id="iyeyasu-img" class="hero-char-img" src="" alt="イエヤス武将キャラクター">
-      <!-- Fallback SVG: green armor samurai (家康公) -->
-      <svg id="char-svg" viewBox="0 0 200 220" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <!-- Armor body -->
-        <ellipse cx="100" cy="168" rx="50" ry="48" fill="#1b6e2e"/>
-        <!-- Chest armor detail -->
-        <path d="M63 162 Q80 150 100 148 Q120 150 137 162 L137 205 Q120 216 100 218 Q80 216 63 205 Z" fill="#155a25"/>
-        <!-- Armor horizontal bands -->
-        <line x1="63" y1="170" x2="137" y2="170" stroke="#0f4a1e" stroke-width="1.5" opacity=".5"/>
-        <line x1="63" y1="182" x2="137" y2="182" stroke="#0f4a1e" stroke-width="1.5" opacity=".5"/>
-        <line x1="63" y1="194" x2="137" y2="194" stroke="#0f4a1e" stroke-width="1.5" opacity=".5"/>
-        <!-- Vertical armor seam -->
-        <line x1="100" y1="148" x2="100" y2="218" stroke="#0f4a1e" stroke-width="1.5" opacity=".45"/>
-        <!-- Shoulder pads left -->
-        <ellipse cx="57" cy="154" rx="20" ry="11" fill="#1b6e2e" transform="rotate(-12 57 154)"/>
-        <line x1="40" y1="150" x2="74" y2="158" stroke="#0f4a1e" stroke-width="1" opacity=".4"/>
-        <!-- Shoulder pads right -->
-        <ellipse cx="143" cy="154" rx="20" ry="11" fill="#1b6e2e" transform="rotate(12 143 154)"/>
-        <line x1="126" y1="150" x2="160" y2="158" stroke="#0f4a1e" stroke-width="1" opacity=".4"/>
-        <!-- Collar / neck base -->
-        <ellipse cx="100" cy="135" rx="22" ry="12" fill="#f5c9a0"/>
-        <!-- Head -->
-        <ellipse cx="100" cy="102" rx="33" ry="35" fill="#f5c9a0"/>
-        <!-- Rosy cheeks -->
-        <ellipse cx="77" cy="110" rx="9" ry="6" fill="#f09090" opacity=".55"/>
-        <ellipse cx="123" cy="110" rx="9" ry="6" fill="#f09090" opacity=".55"/>
-        <!-- Eyes -->
-        <ellipse cx="88" cy="100" rx="4.5" ry="5" fill="#2a1a0a"/>
-        <ellipse cx="112" cy="100" rx="4.5" ry="5" fill="#2a1a0a"/>
-        <!-- Eye shine -->
-        <circle cx="90" cy="98" r="1.4" fill="white"/>
-        <circle cx="114" cy="98" r="1.4" fill="white"/>
-        <!-- Smile -->
-        <path d="M88 117 Q100 127 112 117" stroke="#2a1a0a" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-        <!-- Mustache -->
-        <path d="M91 112 Q96 115 100 113 Q104 115 109 112" stroke="#6b4226" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-        <!-- Eyebrows -->
-        <path d="M83 94 Q88 91 93 93" stroke="#5a3010" stroke-width="1.8" fill="none" stroke-linecap="round"/>
-        <path d="M107 93 Q112 91 117 94" stroke="#5a3010" stroke-width="1.8" fill="none" stroke-linecap="round"/>
-        <!-- Helmet base -->
-        <path d="M67 96 Q68 63 100 59 Q132 63 133 96" fill="#1b6e2e"/>
-        <!-- Helmet mid layer -->
-        <path d="M74 96 Q75 68 100 64 Q125 68 126 96" fill="#155a25"/>
-        <!-- Helmet top dome -->
-        <path d="M82 88 Q83 68 100 65 Q117 68 118 88" fill="#0f4a1e"/>
-        <!-- Helmet side flaps left -->
-        <path d="M67 96 Q56 102 53 118 Q58 115 67 112" fill="#1b6e2e"/>
-        <!-- Helmet side flaps right -->
-        <path d="M133 96 Q144 102 147 118 Q142 115 133 112" fill="#1b6e2e"/>
-        <!-- Helmet seam line -->
-        <line x1="67" y1="96" x2="133" y2="96" stroke="#0f4a1e" stroke-width="1.5" opacity=".6"/>
-        <!-- Crest pillar -->
-        <rect x="96" y="48" width="8" height="16" rx="2" fill="#c9a227"/>
-        <!-- House-shaped crest -->
-        <g transform="translate(84,20)">
-          <path d="M16 24 L0 14 L16 3 L32 14 Z" fill="#ffd54f" stroke="#c9a227" stroke-width="1.2"/>
-          <rect x="7" y="14" width="18" height="14" rx="1" fill="#ffd54f" stroke="#c9a227" stroke-width="1.2"/>
-          <rect x="12" y="20" width="8" height="8" rx="1" fill="#c9a227"/>
-        </g>
-        <!-- Right arm -->
-        <path d="M143 155 Q157 162 159 176 Q156 181 147 177 Q143 168 138 158" fill="#1b6e2e"/>
-        <!-- Left arm holding mini house -->
-        <path d="M57 155 Q43 162 41 176 Q44 181 53 177 Q57 168 62 158" fill="#1b6e2e"/>
-        <!-- Mini house in left hand -->
-        <g transform="translate(26,168)">
-          <path d="M13 18 L1 11 L13 3 L25 11 Z" fill="#ffd54f" stroke="#c9a227" stroke-width="1.3"/>
-          <rect x="6" y="11" width="14" height="10" rx="1" fill="#f8e8c0" stroke="#c9a227" stroke-width="1.3"/>
-          <rect x="9.5" y="14" width="7" height="7" rx=".5" fill="#9cd4b0" stroke="#2e9e4f" stroke-width="1"/>
-        </g>
-      </svg>
-    </div>
-  </div>
-</section>
-
-<!-- Wave: hero forest → white -->
-<div class="wave" style="background:var(--forest)">
-  <svg viewBox="0 0 1440 60" preserveAspectRatio="none" height="60">
-    <path d="M0,30 C400,60 1040,0 1440,30 L1440,60 L0,60 Z" fill="var(--bg)"/>
-  </svg>
-</div>
-
-<!-- PROBLEM SECTION -->
-<section class="problem-bg section-pad">
-  <div class="container">
-    <div class="reveal" style="text-align:center;">
-      <div class="badge">
-        <svg viewBox="0 0 13 13"><circle cx="6.5" cy="6.5" r="5.5"/><path d="M6.5 3.5v3.5l2 1.5"/></svg>
-        こんなに払っていませんか？
       </div>
-      <h2 class="section-title">賃貸の初期費用、<br>平均<span style="color:var(--tangerine)">50万円超え</span>の現実</h2>
-      <p class="section-lead">家賃13万円の物件の場合、初期費用の内訳はこうなります。</p>
-    </div>
-
-    <div class="cost-table reveal">
-      <div class="cost-thead">
-        <span>費用の種類</span>
-        <span>金額の目安</span>
+      <div>
+        <span class="feat-tag g">POINT 01</span>
+        <h3 class="feat-title">敷金・礼金0円物件<br>いっぱいあるやん！</h3>
+        <p class="feat-desc">初期費用をぐっと抑えられる0円物件を多数ご紹介。お財布に優しいお部屋がきっと見つかります。</p>
       </div>
-      <div class="cost-row">
-        <div class="cost-label">
-          <div class="cost-ico">
-            <svg viewBox="0 0 17 17"><circle cx="6.5" cy="8.5" r="4"/><path d="M10 8.5h6M14 6.5v4"/></svg>
-          </div>
-          敷金（家賃2ヶ月分）
-        </div>
-        <div class="cost-amt">260,000円</div>
-      </div>
-      <div class="cost-row">
-        <div class="cost-label">
-          <div class="cost-ico">
-            <svg viewBox="0 0 17 17"><rect x="2" y="7.5" width="13" height="7.5" rx="1"/><path d="M1.5 7.5h14M8.5 7.5V5M8.5 5C8.5 5 8.5 2 6.5 2S4.5 5 8.5 5M8.5 5C8.5 5 8.5 2 10.5 2S12.5 5 8.5 5"/></svg>
-          </div>
-          礼金（家賃1ヶ月分）
-        </div>
-        <div class="cost-amt">130,000円</div>
-      </div>
-      <div class="cost-row">
-        <div class="cost-label">
-          <div class="cost-ico">
-            <svg viewBox="0 0 17 17"><rect x="3" y="1.5" width="11" height="14" rx="1.5"/><path d="M6 6h5M6 9h5M6 12h3"/></svg>
-          </div>
-          仲介手数料（1.1ヶ月分）
-        </div>
-        <div class="cost-amt">143,000円</div>
-      </div>
-      <div class="cost-row">
-        <div class="cost-label">
-          <div class="cost-ico">
-            <svg viewBox="0 0 17 17"><path d="M8.5 1.5L2 4.5v5c0 3.5 2.8 6.5 6.5 7 3.7-.5 6.5-3.5 6.5-7v-5L8.5 1.5z"/></svg>
-          </div>
-          火災保険・保証料等
-        </div>
-        <div class="cost-amt">60,000円</div>
-      </div>
-      <div class="cost-row">
-        <div class="cost-label">
-          <div class="cost-ico">
-            <svg viewBox="0 0 17 17"><rect x="1.5" y="3.5" width="14" height="12" rx="1.5"/><path d="M1.5 7.5h14M5.5 1.5v4M11.5 1.5v4"/></svg>
-          </div>
-          前払い家賃（2ヶ月分）
-        </div>
-        <div class="cost-amt">260,000円</div>
-      </div>
-      <div class="cost-total">
-        <div class="cost-total-lbl">合計</div>
-        <div class="cost-total-amt">853,000円！</div>
-      </div>
-    </div>
-
-    <div class="prob-note reveal">
-      <strong>これ、全部交渉できます。</strong><br>
-      敷金・礼金・仲介手数料は「交渉次第」で大幅に減らせる費用。でも、ほとんどの方が知らずにそのまま払っています。イエヤスはその交渉をすべて代行します。
-    </div>
-  </div>
-</section>
-
-<!-- Wave: white → bg-alt -->
-<div class="wave" style="background:var(--bg)">
-  <svg viewBox="0 0 1440 60" preserveAspectRatio="none" height="60">
-    <path d="M0,20 C500,60 940,0 1440,40 L1440,60 L0,60 Z" fill="var(--bg-alt)"/>
-  </svg>
-</div>
-
-<!-- SOLUTION SECTION -->
-<section class="solution-bg section-pad">
-  <div class="container">
-    <div class="reveal" style="text-align:center;">
-      <div class="badge">
-        <svg viewBox="0 0 13 13"><path d="M6.5 1L8 4.8L12.5 5.2L9.3 8.2L10.3 12.8L6.5 10.5L2.7 12.8L3.7 8.2L.5 5.2L5 4.8Z"/></svg>
-        イエヤスなら
-      </div>
-      <h2 class="section-title">初期費用を<span style="color:var(--jade)">最大半額以下</span>に</h2>
-      <p class="section-lead">交渉のプロが代わりに大家さん・管理会社へ動きます</p>
-    </div>
-
-    <div class="savings-card reveal">
-      <div class="sv-label">節約シミュレーション（家賃13万円の場合）</div>
-      <div class="sv-compare">
-        <div class="sv-before">
-          <div class="sv-before-lbl">通常の初期費用</div>
-          <div class="sv-before-amt">853,000円</div>
-        </div>
-        <div class="sv-arrow">→</div>
-        <div class="sv-after">
-          <div class="sv-after-lbl">イエヤス利用後</div>
-          <div class="sv-after-amt">約390,000円</div>
-        </div>
-      </div>
-      <div class="sv-diff">最大 <strong>463,000円</strong> お得になる計算！</div>
-    </div>
-
-    <ul class="check-list reveal">
-      <li class="check-item">
-        <span class="check-dot"><svg viewBox="0 0 11 11"><polyline points="1.5,5.5 4.5,8.5 9.5,2.5"/></svg></span>
-        <span><strong>敷金ゼロ交渉</strong> — 大家さんへの直接交渉で敷金0円も実現できます</span>
-      </li>
-      <li class="check-item">
-        <span class="check-dot"><svg viewBox="0 0 11 11"><polyline points="1.5,5.5 4.5,8.5 9.5,2.5"/></svg></span>
-        <span><strong>礼金ゼロ交渉</strong> — 慣例的な礼金も交渉次第でなくせます</span>
-      </li>
-      <li class="check-item">
-        <span class="check-dot"><svg viewBox="0 0 11 11"><polyline points="1.5,5.5 4.5,8.5 9.5,2.5"/></svg></span>
-        <span><strong>仲介手数料割引</strong> — 法律上は家賃0.5ヶ月が基本。イエヤスなら最大0円も</span>
-      </li>
-      <li class="check-item">
-        <span class="check-dot"><svg viewBox="0 0 11 11"><polyline points="1.5,5.5 4.5,8.5 9.5,2.5"/></svg></span>
-        <span><strong>フリーレント交渉</strong> — 最初の数ヶ月を無料にする交渉にも対応</span>
-      </li>
-    </ul>
-  </div>
-</section>
-
-<!-- Wave: bg-alt → white -->
-<div class="wave" style="background:var(--bg-alt)">
-  <svg viewBox="0 0 1440 60" preserveAspectRatio="none" height="60">
-    <path d="M0,40 C400,10 1040,55 1440,20 L1440,60 L0,60 Z" fill="var(--bg)"/>
-  </svg>
-</div>
-
-<!-- FEATURES SECTION -->
-<section class="features-bg section-pad">
-  <div class="container">
-    <div class="reveal" style="text-align:center;">
-      <h2 class="section-title">イエヤスが選ばれる<br>3つの理由</h2>
-      <p class="section-lead">初めての賃貸でも、引っ越し経験者でも安心のサポート</p>
-    </div>
-    <div class="feat-grid">
-
-      <div class="feat-card reveal rd1">
-        <div class="feat-ico">
-          <svg viewBox="0 0 26 26">
-            <path d="M21 13C21 17.5 17.4 21 13 21C11.5 21 10.2 20.7 9.1 20.1L5 21.5L6.3 17.4C5.5 16 5 14.6 5 13C5 8.6 8.6 5 13 5C17.4 5 21 8.6 21 13Z"/>
-            <path d="M9.5 13h7M9.5 10h5"/>
-          </svg>
-        </div>
-        <h3 class="feat-title">LINEで<br>完結する手軽さ</h3>
-        <p class="feat-desc">アプリ不要。LINEを追加して希望条件を送るだけ。面倒な来店や書類準備は一切不要です。</p>
-      </div>
-
-      <div class="feat-card reveal rd2">
-        <div class="feat-ico">
-          <svg viewBox="0 0 26 26">
-            <circle cx="13" cy="13" r="9"/>
-            <path d="M13 7.5V10M13 16v2.5M10.2 11.5C10.2 10.1 11.4 9 13 9s2.8 1.1 2.8 2.5S14.6 14 13 14s-2.8 1.1-2.8 2.5S11.4 19 13 19"/>
-          </svg>
-        </div>
-        <h3 class="feat-title">完全無料で<br>プロが交渉</h3>
-        <p class="feat-desc">利用料は0円。交渉のプロが代わりに動くので、あなたはただ待つだけ。費用は一切かかりません。</p>
-      </div>
-
-      <div class="feat-card reveal rd3">
-        <div class="feat-ico">
-          <svg viewBox="0 0 26 26">
-            <circle cx="13" cy="13" r="9"/>
-            <path d="M13 7v6l4 2.5"/>
-          </svg>
-        </div>
-        <h3 class="feat-title">最短即日<br>物件を提案</h3>
-        <p class="feat-desc">LINE登録後、最短当日中にスタッフからご連絡。急ぎの引っ越しにも対応しています。</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Wave: white → bg-alt -->
-<div class="wave" style="background:var(--bg)">
-  <svg viewBox="0 0 1440 60" preserveAspectRatio="none" height="60">
-    <path d="M0,18 C500,58 940,5 1440,38 L1440,60 L0,60 Z" fill="var(--bg-alt)"/>
-  </svg>
-</div>
-
-<!-- STEPS SECTION -->
-<section class="steps-bg section-pad">
-  <div class="container">
-    <div class="reveal" style="text-align:center;">
-      <h2 class="section-title">たった3ステップ<br>で完了</h2>
-      <p class="section-lead">難しい手続きは一切なし。スマホひとつで今日から始められます。</p>
-    </div>
-
-    <div class="steps-list">
-      <div class="step-item reveal">
-        <div class="step-num">1</div>
-        <div class="step-body">
-          <span class="step-tag">所要1分</span>
-          <h3 class="step-title">LINEを追加する</h3>
-          <p class="step-desc">「LINE友だちを追加」ボタンからイエヤスを友だち登録。登録は完全無料、いつでも退会できます。</p>
-        </div>
-      </div>
-      <div class="step-item reveal">
-        <div class="step-num">2</div>
-        <div class="step-body">
-          <span class="step-tag">LINEで送るだけ</span>
-          <h3 class="step-title">希望条件を伝える</h3>
-          <p class="step-desc">エリア・家賃・間取りなどをLINEで送るだけ。スタッフが条件に合う物件を探し、初期費用を代わりに交渉します。</p>
-        </div>
-      </div>
-      <div class="step-item reveal">
-        <div class="step-num">3</div>
-        <div class="step-body">
-          <span class="step-tag">待つだけでOK</span>
-          <h3 class="step-title">節約済みの状態で契約</h3>
-          <p class="step-desc">交渉済みの物件リストをご提案。気に入ったものを選ぶだけ。初期費用を大幅に節約した状態でお部屋が決まります。</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="steps-cta-wrap reveal">
-      <a href="https://lin.ee/xofFiWP" class="btn-line btn-line--full" target="_blank" rel="noopener">
-        <svg class="line-ico" viewBox="0 0 20 20" fill="none">
-          <rect width="20" height="20" rx="5" fill="rgba(255,255,255,.22)"/>
-          <path d="M10 3C6.13 3 3 5.58 3 8.77c0 1.82 1.02 3.44 2.6 4.52-.1.38-.37 1.38-.42 1.6-.06.27.1.27.21.2.09-.06 1.33-.88 1.87-1.25.54.08 1.1.12 1.74.12 3.87 0 7-2.58 7-5.77C17 5.58 13.87 3 10 3z" fill="white"/>
+    </article>
+    <article class="feat-card r d2">
+      <div class="feat-icon o-ic">
+        <svg viewBox="0 0 30 30" fill="none" aria-hidden="true">
+          <circle cx="15" cy="15" r="12" fill="rgba(255,107,53,.16)" stroke="#ff6b35" stroke-width="1.8"/>
+          <path d="M15 7v8.5l5 3" stroke="#ff6b35" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M7 21l3-3" stroke="#ff6b35" stroke-width="2" stroke-linecap="round"/>
         </svg>
-        今すぐLINEで相談する（無料）
-      </a>
-    </div>
+      </div>
+      <div>
+        <span class="feat-tag o">POINT 02</span>
+        <h3 class="feat-title">仲介手数料も<br>お安くなるかも！？</h3>
+        <p class="feat-desc">他社より安い手数料でご案内できる物件も。まずはLINEで気軽に聞いてみてください♪</p>
+      </div>
+    </article>
+    <article class="feat-card r d3">
+      <div class="feat-icon l-ic">
+        <svg viewBox="0 0 30 30" fill="none" aria-hidden="true">
+          <rect x="3" y="5" width="24" height="20" rx="4.5" fill="rgba(6,199,85,.14)" stroke="#06C755" stroke-width="1.8"/>
+          <path d="M8 13h14M8 18h9" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="21" cy="9"  r="5.5" fill="#06C755"/>
+          <path d="M18.5 9l2 2L24 7" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div>
+        <span class="feat-tag l">POINT 03</span>
+        <h3 class="feat-title">全部LINEで完結<br>来店不要！</h3>
+        <p class="feat-desc">相談から物件紹介・申込みまでぜーんぶLINEでOK。外出なしでお部屋が決まっちゃう♪</p>
+      </div>
+    </article>
   </div>
 </section>
 
-<!-- Wave: bg-alt → forest -->
-<div class="wave" style="background:var(--bg-alt)">
-  <svg viewBox="0 0 1440 60" preserveAspectRatio="none" height="60">
-    <path d="M0,38 C380,10 1060,55 1440,22 L1440,60 L0,60 Z" fill="var(--forest)"/>
-  </svg>
-</div>
+<!-- STEPS -->
+<section class="sec white">
+  <div class="r">
+    <span class="sec-eye">How to Use</span>
+    <h2 class="sec-title">使い方はカンタン3ステップ</h2>
+  </div>
+  <div class="steps">
+    <div class="step r d1">
+      <div class="step-num s1" aria-hidden="true">1</div>
+      <div class="step-body">
+        <h3 class="step-title">LINEを友だち追加する</h3>
+        <p class="step-desc">下のボタンからイエヤス公式LINEを友だち追加！登録無料・3秒でできます。</p>
+      </div>
+    </div>
+    <div class="step r d2">
+      <div class="step-num s2" aria-hidden="true">2</div>
+      <div class="step-body">
+        <h3 class="step-title">条件をLINEで送るだけ♪</h3>
+        <p class="step-desc">エリア・家賃・間取りなど、希望をLINEで送ってください。プロのスタッフが即対応します！</p>
+      </div>
+    </div>
+    <div class="step r d3">
+      <div class="step-num s3" aria-hidden="true">3</div>
+      <div class="step-body">
+        <h3 class="step-title">お気に入りのお部屋を見つける</h3>
+        <p class="step-desc">条件ぴったりの物件をご提案！気に入ったらそのままLINEで申込みもできます。</p>
+      </div>
+    </div>
+  </div>
+</section>
 
 <!-- FINAL CTA -->
-<section class="cta-bg">
-  <div class="container">
-    <div class="reveal">
-      <h2 class="cta-title">まずはLINEで<br>無料相談してみませんか？</h2>
-      <p class="cta-sub">
-        「どのくらい節約できるか知りたいだけ」でも大丈夫。<br>
-        プロが親身に対応します。
-      </p>
-      <a href="https://lin.ee/xofFiWP" class="btn-line btn-line--lg" target="_blank" rel="noopener" style="display:inline-flex;">
-        <svg class="line-ico" viewBox="0 0 20 20" fill="none">
-          <rect width="20" height="20" rx="5" fill="rgba(255,255,255,.22)"/>
-          <path d="M10 3C6.13 3 3 5.58 3 8.77c0 1.82 1.02 3.44 2.6 4.52-.1.38-.37 1.38-.42 1.6-.06.27.1.27.21.2.09-.06 1.33-.88 1.87-1.25.54.08 1.1.12 1.74.12 3.87 0 7-2.58 7-5.77C17 5.58 13.87 3 10 3z" fill="white"/>
-        </svg>
-        LINE友だちを追加する
-      </a>
-      <ul class="cta-notes">
-        <li class="cta-note">登録無料</li>
-        <li class="cta-note">相談無料</li>
-        <li class="cta-note">サポート無料</li>
-        <li class="cta-note">いつでも退会可能</li>
-      </ul>
-    </div>
-  </div>
+<section class="final r">
+  <h2 class="final-hl">さあ、<em>イエヤス</em>で<br>理想のお部屋を見つけよう！</h2>
+  <p class="final-sub">今すぐLINEで気軽に相談してみて♪<br>登録無料・来店不要・24時間受付</p>
+  <a href="https://lin.ee/xofFiWP" class="btn-line lg" target="_blank" rel="noopener noreferrer">
+    <svg class="ico-l" viewBox="0 0 20 20" fill="white" aria-hidden="true">
+      <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+    </svg>
+    友だち追加して無料相談する
+  </a>
+  <p class="final-note">登録無料 · 24時間相談受付中 · 来店不要</p>
 </section>
 
 <!-- FOOTER -->
 <footer class="footer">
-  <div class="footer-inner">
-    <div class="footer-brand">イエヤス</div>
-    <div class="footer-company">
-      運営：株式会社ホームズ<br>
-      受付時間：10:00〜19:00（年中無休）
-    </div>
-    <div class="footer-links">
-      <a href="#">プライバシーポリシー</a>
-      <a href="#">利用規約</a>
-      <a href="#">会社概要</a>
-      <a href="https://lin.ee/xofFiWP" target="_blank" rel="noopener">LINE相談</a>
-    </div>
-    <div class="footer-copy">&copy; 2024 イエヤス / ホームズ All rights reserved.</div>
-  </div>
+  <strong>株式会社ホームズ</strong>
+  大阪府大阪市 | 宅地建物取引業<br>
+  <span style="display:inline-block;margin-top:6px">&copy; 2024 株式会社ホームズ All rights reserved.</span>
 </footer>
 
-<script>
-(function(){
-  // Character fallback
-  var img = document.getElementById('iyeyasu-img');
-  var svg = document.getElementById('char-svg');
-  function showSvg(){img.style.display='none';svg.style.display='block';}
-  var src = img.getAttribute('src');
-  if(!src || src===''){showSvg();}
-  img.addEventListener('error', showSvg);
+<!-- FIXED BOTTOM BAR -->
+<div class="bottom-bar">
+  <a href="https://lin.ee/xofFiWP" target="_blank" rel="noopener noreferrer">
+    <svg class="ico" viewBox="0 0 20 20" fill="white" aria-hidden="true">
+      <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+    </svg>
+    今すぐLINEで相談する（無料）
+  </a>
+</div>
 
-  // Scroll reveal via IntersectionObserver
-  var els = document.querySelectorAll('.reveal');
-  if('IntersectionObserver' in window){
-    var obs = new IntersectionObserver(function(entries){
-      entries.forEach(function(e){
-        if(e.isIntersecting){
-          e.target.classList.add('is-visible');
-          obs.unobserve(e.target);
-        }
-      });
-    },{threshold:0.1});
-    els.forEach(function(el){obs.observe(el);});
-  } else {
-    els.forEach(function(el){el.classList.add('is-visible');});
+<script>
+(function () {
+  var els = document.querySelectorAll('.r');
+  if (!('IntersectionObserver' in window)) {
+    els.forEach(function (el) { el.classList.add('on'); });
+    return;
   }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) {
+        e.target.classList.add('on');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12 });
+  els.forEach(function (el) { io.observe(el); });
 })();
 </script>
 </body>
