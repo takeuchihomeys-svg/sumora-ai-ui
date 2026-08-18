@@ -674,6 +674,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const name = `${baseName}_${i + 1}.pdf`;
           const url = await uploadPdfToBlob(msg.pdf_data[i], name);
           blobUrls.push(url);
+          // 進捗ハートビート: itandi多物件のBlobアップは数分かかるため無進捗タイムアウトを延長
+          try { _notifyBatchProgress(null); } catch (_) {}
           // タブにアップロード進捗を通知（ボタンテキスト更新のため）
           if (sender.tab?.id) {
             chrome.tabs.sendMessage(sender.tab.id, {
@@ -1936,7 +1938,23 @@ function _notifyBatchCustomerDone(customerId, propertyCount) {
 
 function _createBatchCustomerDoneWaiter(customerId, timeoutMs) {
   return new Promise(function(resolve) {
-    var entry = { customerId: customerId || null, resolve: resolve, timer: null, stopInterval: null };
+    var entry = { customerId: customerId || null, resolve: resolve, timer: null, stopInterval: null, timeoutMs: timeoutMs || 300000 };
+    var _expire = function() {
+      clearInterval(entry.stopInterval);
+      var idx = _batchCustomerDoneWaiters.indexOf(entry);
+      if (idx >= 0) _batchCustomerDoneWaiters.splice(idx, 1);
+      console.warn("[batch-done-waiter] " + entry.timeoutMs / 1000 + "秒（無進捗）タイムアウト customer=" + entry.customerId);
+      resolve({ timedOut: true });
+    };
+    // 「固定5分」→「無進捗5分」に変更:
+    // 多ページの全ページ送信は5分を超えることがあり、固定タイムアウトのままだと
+    // 送信中に次顧客の autofill が始まり検索リロードで送信が破壊されていた
+    // （1顧客だけなら誰もページを触らないため完走する＝複数顧客のみ失敗する根本原因）。
+    // bulk-dl.js / itandi-bulk-dl.js が送る axlx-batch-progress を受けるたびに延長する。
+    entry.resetTimer = function() {
+      clearTimeout(entry.timer);
+      entry.timer = setTimeout(_expire, entry.timeoutMs);
+    };
     entry.stopInterval = setInterval(function() {
       if (!_batchShouldStop) return;
       clearInterval(entry.stopInterval);
@@ -1946,15 +1964,23 @@ function _createBatchCustomerDoneWaiter(customerId, timeoutMs) {
       console.log("[batch-done-waiter] _batchShouldStop 検知 → stopped:true で解決");
       resolve({ stopped: true });
     }, 500);
-    entry.timer = setTimeout(function() {
-      clearInterval(entry.stopInterval);
-      var idx = _batchCustomerDoneWaiters.indexOf(entry);
-      if (idx >= 0) _batchCustomerDoneWaiters.splice(idx, 1);
-      console.warn("[batch-done-waiter] " + timeoutMs / 1000 + "秒タイムアウト customer=" + customerId);
-      resolve({ timedOut: true });
-    }, timeoutMs || 300000);
+    entry.resetTimer();
     _batchCustomerDoneWaiters.push(entry);
   });
+}
+
+// ── 全ページ送信の進捗ハートビート受信 → 該当waiterのタイムアウトを延長 ──
+function _notifyBatchProgress(customerId) {
+  var target = null;
+  if (customerId) {
+    for (var _bpi = 0; _bpi < _batchCustomerDoneWaiters.length; _bpi++) {
+      var _bpw = _batchCustomerDoneWaiters[_bpi];
+      if (_bpw.customerId && String(_bpw.customerId) === String(customerId)) { target = _bpw; break; }
+    }
+  }
+  // customerId null / 不一致でも最古のwaiterにフォールバック（顧客は直列処理のため安全）
+  if (!target && _batchCustomerDoneWaiters.length) target = _batchCustomerDoneWaiters[0];
+  if (target && target.resetTimer) target.resetTimer();
 }
 
 // content script からの fill-done 中継を受信
@@ -1989,6 +2015,10 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     // _scrapeAndSendRealpro の待機を解除して次顧客へ進む（propertyCount: 0 なら0件確定）
     _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null);
     // Webアプリへの進捗通知は _runBatchSearch の顧客ループ完了後に一元化（リアプロ/itandi/レインズ全サイト対応）
+  }
+  if (msg && msg.type === "axlx-batch-progress") {
+    // 全ページ送信の進捗ハートビート → 無進捗タイムアウトをリセット（次顧客への早すぎる移行を防ぐ）
+    _notifyBatchProgress(msg.customerId || null);
   }
   return false;
 });

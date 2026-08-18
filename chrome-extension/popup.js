@@ -2065,14 +2065,42 @@ function renderCustomerRow(c, dimmed) {
     </div>`;
 }
 
+// ── AIランキング用：顧客の希望条件を1行文字列に変換 ─────────────────────
+// LINE送信時の「🌟 一番オススメ」判定（/api/merge-pdfs の rankAndAnnotateSummaries）に渡す。
+// 単発検索（popup応答）と一括検索（storageフォールバック）の両方で同じ文字列を使う。
+function buildCustomerConditionsString(c) {
+  if (!c) return null;
+  var parts = [];
+  var rentMax = c.rent_max || c.max_rent;
+  if (rentMax) {
+    var rentDisplay = rentMax >= 10000 ? (Math.round(rentMax / 10000)) + "万円" : rentMax + "円";
+    parts.push("予算" + rentDisplay + "以内");
+  }
+  var layout = c.floor_plan || c.layout;
+  if (layout) parts.push(layout + "希望");
+  if (c.walk_minutes) parts.push("徒歩" + c.walk_minutes + "分以内");
+  if (c.building_age) parts.push("築" + c.building_age + "年以内");
+  var areaMin = c.floor_area_min || c.area_min || c.min_area;
+  if (areaMin) parts.push(areaMin + "㎡以上");
+  if (c.pet === true) parts.push("ペット可");
+  else if (c.pet === false) parts.push("ペット不可");
+  var area = c.desired_area || c.area;
+  if (area) parts.push("エリア:" + area);
+  return parts.length > 0 ? parts.join("・") : null;
+}
+
 // ── View 2: Site selection ─────────────────────────────────────────
 function openSiteView(customer) {
   selectedCustomer = customer;
-  // ★ 顧客選択時に名前・IDをstorageに保存（全ページ送る時のLINEヘッダー名フォールバック用）
+  // ★ 顧客選択時に名前・ID・条件文字列をstorageに保存
+  //   （全ページ送る時のLINEヘッダー名 ＋ 一番オススメAIランキングのフォールバック用。
+  //    リアプロは検索実行でページがリロードされ popup iframe ごと消えるため、
+  //    一括検索の Case C 起動時は必ずこの storage フォールバックが使われる）
   if (customer.customer_name) {
     chrome.storage.local.set({
       current_customer_name: customer.customer_name,
-      current_customer_id: customer.id || null
+      current_customer_id: customer.id || null,
+      current_customer_conditions: buildCustomerConditionsString(customer)
     });
   }
   document.getElementById("site-customer-name").textContent = customer.customer_name;
@@ -3682,28 +3710,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setMiniMode(true);
     notifyParent("collapse");
 
-    // AIランキング用：顧客の希望条件を1行文字列に変換
-    function _buildConditionsString(c) {
-      if (!c) return null;
-      var parts = [];
-      var rentMax = c.rent_max || c.max_rent;
-      if (rentMax) {
-        var rentDisplay = rentMax >= 10000 ? (Math.round(rentMax / 10000)) + "万円" : rentMax + "円";
-        parts.push("予算" + rentDisplay + "以内");
-      }
-      var layout = c.floor_plan || c.layout;
-      if (layout) parts.push(layout + "希望");
-      if (c.walk_minutes) parts.push("徒歩" + c.walk_minutes + "分以内");
-      if (c.building_age) parts.push("築" + c.building_age + "年以内");
-      var areaMin = c.floor_area_min || c.area_min || c.min_area;
-      if (areaMin) parts.push(areaMin + "㎡以上");
-      if (c.pet === true) parts.push("ペット可");
-      else if (c.pet === false) parts.push("ペット不可");
-      var area = c.desired_area || c.area;
-      if (area) parts.push("エリア:" + area);
-      return parts.length > 0 ? parts.join("・") : null;
-    }
-
     // 親ページのドラッグオーバーレイがクリックを検出して展開指示を送ってくる
     window.addEventListener("message", (e) => {
       if (e.data?.from === "underbar-parent" && e.data?.action === "expand-from-parent") {
@@ -3726,7 +3732,7 @@ document.addEventListener("DOMContentLoaded", () => {
           from: "axlx-customer-response",
           name: selectedCustomer?.customer_name ?? "",
           id: selectedCustomer?.id ?? null,
-          conditions: _buildConditionsString(selectedCustomer),
+          conditions: buildCustomerConditionsString(selectedCustomer),
         }, "*");
       }
       // ── underbar.js経由の顧客切替指示（Approach D: tabs.sendMessage → postMessage 2段中継）──

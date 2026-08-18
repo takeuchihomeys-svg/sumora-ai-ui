@@ -520,19 +520,36 @@
   }
 
   // ── popup.js からお客さん名＋IDを取得 ────────────────────────────────
+  // popup未応答・未選択時は chrome.storage.local の最終選択顧客（名前・ID・条件）に
+  // フォールバックする（bulk-dl.js と同一挙動。条件が無いと LINE の
+  // 「🌟 一番オススメ」AIランキングが顧客条件なしで実行されてしまう）
   function getCustomerFromPopup(callback) {
     var timer;
+    var storageFallback = function (liveId, liveConditions) {
+      try {
+        chrome.storage.local.get(["current_customer_name", "current_customer_id", "current_customer_conditions"], function (data) {
+          data = data || {};
+          callback(data.current_customer_name || null, liveId || data.current_customer_id || null, liveConditions || data.current_customer_conditions || null);
+        });
+      } catch (_) {
+        callback(null, liveId || null, liveConditions || null);
+      }
+    };
     var handler = function (e) {
       if (!e.data || e.data.from !== "axlx-customer-response") return;
       clearTimeout(timer);
       window.removeEventListener("message", handler);
-      callback(e.data.name || null, e.data.id || null, e.data.conditions || null);
+      if (e.data.name) {
+        callback(e.data.name, e.data.id || null, e.data.conditions || null);
+      } else {
+        storageFallback(e.data.id || null, e.data.conditions || null);
+      }
     };
     window.addEventListener("message", handler);
     window.postMessage({ from: "axlx-get-customer" }, "*");
     timer = setTimeout(function () {
       window.removeEventListener("message", handler);
-      callback(null, null, null);
+      storageFallback(null, null);
     }, 800);
   }
 
@@ -643,6 +660,10 @@
       }
 
       lineBtn.textContent = "PDF取得中... (" + (i + 1) + "/" + targets.length + ")";
+      // 進捗ハートビート: background の全ページ送信完了待機（無進捗5分）をリセット。
+      // itandi の PDF キャプチャは1件数秒×多物件で5分を超えることがあり、
+      // 固定タイムアウトのままだと送信中に次顧客の autofill が走って混線していた。
+      try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
       // DOM更新後もボタンを正しく取得（stale reference 防止）
       var freshBtn = findFreshBtn(targets[i].rowKey);
       if (!freshBtn) {

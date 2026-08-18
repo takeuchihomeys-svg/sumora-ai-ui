@@ -13,6 +13,16 @@
   var _pendingCustomerForAutoSend = null; // autofill開始時点の顧客スナップショット（名前ずれ防止）
   var _zeroDetectTimer = null;            // 0件確定ポーリングタイマー（顧客切替時にクリア）
 
+  // ── ページ離脱（検索リロード開始）時は0件確定ポーリングを必ず破棄する ──
+  // 検索クリック→fill-done→リロード完了の間にサーバー応答が遅いと、旧ページ上の
+  // 0件確定タイマーが誤発火して「0件」を background に送信し、さらに Case C の
+  // 起動フラグ（axlx_pending_auto_send）まで消してしまう。
+  // → リロード後の結果ページで全ページ送るが永久に起動しない
+  //   （複数顧客バッチで2人目以降が無音で死ぬ根本原因の一つ）。
+  window.addEventListener("pagehide", function () {
+    if (_zeroDetectTimer) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; }
+  });
+
   // ── 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
 
@@ -422,19 +432,22 @@
       if (e.data.name) {
         callback(e.data.name, e.data.conditions || null, e.data.id || null);
       } else {
-        // popup未選択 → storage から最後の顧客名・IDをフォールバック
-        chrome.storage.local.get(["current_customer_name", "current_customer_id"], function(data) {
-          callback(data.current_customer_name || null, e.data.conditions || null, data.current_customer_id || e.data.id || null);
+        // popup未選択 → storage から最後の顧客名・ID・条件をフォールバック
+        // （検索リロード後は popup iframe が再生成され selectedCustomer が消えるため、
+        //   一括検索では常にこのフォールバックを通る。条件が無いと LINE の
+        //   「🌟 一番オススメ」AIランキングが顧客条件なしで実行されてしまう）
+        chrome.storage.local.get(["current_customer_name", "current_customer_id", "current_customer_conditions"], function(data) {
+          callback(data.current_customer_name || null, e.data.conditions || data.current_customer_conditions || null, data.current_customer_id || e.data.id || null);
         });
       }
     };
     window.addEventListener("message", handler);
     window.postMessage({ from: "axlx-get-customer" }, "*");
-    // 800ms 以内に応答がなければ storage から最後の顧客名・IDをフォールバック
+    // 800ms 以内に応答がなければ storage から最後の顧客名・ID・条件をフォールバック
     timer = setTimeout(function () {
       window.removeEventListener("message", handler);
-      chrome.storage.local.get(["current_customer_name", "current_customer_id"], function(data) {
-        callback(data.current_customer_name || null, null, data.current_customer_id || null);
+      chrome.storage.local.get(["current_customer_name", "current_customer_id", "current_customer_conditions"], function(data) {
+        callback(data.current_customer_name || null, data.current_customer_conditions || null, data.current_customer_id || null);
       });
     }, 800);
   }
@@ -795,6 +808,8 @@
       } else {
         // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
         setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0 });
+        // 進捗ハートビート: ページ遷移も「進行中」として background のタイムアウトをリセット
+        try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
         // AJAX: 次のinject()でCase Bが拾えるようにリセット
         // ページリロード: _pendingAutoSendDispatched は再初期化されるので問題なし
         _pendingAutoSendDispatched = false;
@@ -895,6 +910,10 @@
             return;
           }
           batchIndex++;
+          // 進捗ハートビート: background の全ページ送信完了待機タイムアウトをリセット。
+          // 多ページ・多物件の送信は5分を超えることがあり、固定5分タイムアウトのままだと
+          // background が次顧客の autofill を開始 → 検索リロードで送信中のページが破壊される。
+          try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
           sendNextBatch();
         });
       }
@@ -989,12 +1008,13 @@
         setTimeout(autoSendAllPages, 200);
       }
     }, 2000);
-    // 0件確定ポーリング: 1秒毎にチェック、最大15秒待機して物件なし確定→batch-customer-done送信
+    // 0件確定ポーリング: 1秒毎にチェック、最大25秒待機して物件なし確定→batch-customer-done送信
     // ※ 4秒固定だとリアプロのサーバー応答が遅い場合（5〜10秒）に物件あっても0件と誤判定していた
+    // ※ 15秒でも検索リロードのサーバー応答がそれを超えると誤0件になるため25秒に延長
     // BUG-C修正: タイマー設定時点でIDをキャプチャ（後で_pendingCustomerForAutoSendがnullになりうるため）
     var _armed0ItemCid = (_pendingCustomerForAutoSend && _pendingCustomerForAutoSend.customerId) || null;
     if (_zeroDetectTimer) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; }
-    var _zeroDeadline = Date.now() + 15000;
+    var _zeroDeadline = Date.now() + 25000;
     _zeroDetectTimer = setInterval(function () {
       if (!_autoSendArmed) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; return; }
       var _hasAnyNewBtnNow = tracked.some(function(item) {
@@ -1006,14 +1026,23 @@
         clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; return;
       }
       if (Date.now() < _zeroDeadline) return;  // まだ待つ
-      // 15秒経過しても新ボタンなし → 0件確定
       clearInterval(_zeroDetectTimer); _zeroDetectTimer = null;
+      // 前顧客の結果ボタンが画面に残っている場合はここで0件確定しない。
+      // リアプロの検索はページリロードで結果が戻るため、このタイマーが動いている時点で
+      // 「まだ旧ページにいる＝リロード待ち」の可能性が高い。ここで0件送信＋フラグ削除すると
+      // リロード後の Case C が起動できず全ページ送るが永久に死ぬ（複数顧客バッチの主要な失敗経路）。
+      // リロード後は Case C が送信し、真の0件は新ページ側 autoSendOnePage が propertyCount:0 で報告する。
+      if (tracked.length > 0) {
+        console.log("[AXLX bulk-dl] 25秒経過・新ボタンなし（既存tracked=" + tracked.length + "）→ 0件確定せず リロード後のCase C / Case A に委譲");
+        return;
+      }
+      // 物件ボタンが1つもないまま25秒経過 → 0件確定
       _autoSendArmed = false;
       // Case B/C が遅れて発火してリスト二重送信されるのを封印する
       _pendingAutoSendDispatched = true;
       // この顧客は0件確定 → 再開フラグを残すと次のページロードで誤発火するので消す
       try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
-      console.log("[AXLX bulk-dl] 15秒経過・新ボタンなし確定（tracked=" + tracked.length + "） → 0件としてbatch-customer-done送信");
+      console.log("[AXLX bulk-dl] 25秒経過・新ボタンなし確定（tracked=0） → 0件としてbatch-customer-done送信");
       try {
         chrome.runtime.sendMessage(
           { type: "axlx-batch-customer-done", customerId: _armed0ItemCid, propertyCount: 0 },

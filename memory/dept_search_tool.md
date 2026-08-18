@@ -196,6 +196,7 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-08-16 | **リアプロ駅選択：前顧客の駅残留混入バグ修正（Fable5調査→実装）** commit TBD。page-script.js のみ変更。[ROOT-CAUSE] 沿線・駅モーダルはJS内部状態で前回選択を記憶し再描画時にcheckedを復元するが、STEP Dの残留クリアが「一回限りフラグ＋ページ全体labelでの描画判定」だったため、駅リスト未描画の初回パスでクリアが空振り→永久ロックし、同一沿線の前顧客駅が混入していた（例: もえさん京橋・桜ノ宮検索）。[FIX-1] STEP D描画判定を `input[name="station_code[]"]` の存在に変更＋`_modalStationsCleared`フラグ撤廃で毎パスクリア（`:checked`のみ対象＋`__axPending`＋実行時checkedガード`_unclickIfChecked`で冪等・二重トグル防止）。isVisibleフィルタ除去で非表示セクションの残留も解除。温存判定を双方向includes→完全一致＋双方向前方一致（selectStationsByNameと同一基準）に厳格化。[FIX-2] 沿線のみ（hasStation=false）パスにも駅全クリア追加（最大3秒待機、未描画なら従来どおり閉じて検索）。[FIX-3] STEP D成功判定を`.some()`→「DOMにマッチする指定駅は全てchecked かつ1駅以上checked」に変更（複数駅指定で一部未選択のまま検索されるバグ修正。全滅時はfallbackSearchWithoutStationで中止＝全件検索防止は維持）。[FIX-4] selectStationsByName STEP2〜4に`isElChecked()`トグルガード追加（checked済みならfireClickスキップ、STEP1/5と同等）。 |
 | 2026-08-16 | **itandi BB 間取りCB silent fail 修正 + リアプロ駅選択タイムアウト修正** commit 5ccd825。[itandi] `tickFloor(id)` 追加: ID失敗時にラベルテキストでフォールバック検索（5K_OVER→"5K以上"マッピング含む）。[リアプロ] `selectStationsByName` STEP6追加: `input[name="station_code[]"]` を親テキストで直接照合。`_allMatchedChecked` 検証に input-based fallback追加: ラベル↔checkbox 紐付きなし構造で `_checkedCount=0` になる場合を救済（駅モーダルに不存在の名前はスキップ=通過）。 |
 | 2026-08-16 | **APIレスポンスの非駅トークンをstation_namesから除外** commit 5020a51。`isKnownStation(name)` 追加（STATION_LINE_MAP / _dbStationRouteMap / LEARNED_STATION_MAP の順で照合）。リアプロ・itandi両側のAPI補完パス（`apiData.realpro.station_names` / `apiData.itandi.station_names`）に適用。resolve-area AIが "堀江" 等の地域名を駅と誤分類しても station_names に混入しない。非駅トークンは `[AX] API補完: 非駅トークンを除外: xxx` でログ出力。 |
+| 2026-08-18 | **一括検索2バグ修正（Fable5）**: ①複数顧客で全ページ送る失敗（偽0件レース＋固定5分タイムアウトの送信中破壊）→ pagehideタイマー破棄・0件確定を tracked=0 限定＋25秒化・`axlx-batch-progress` ハートビートで無進捗5分タイムアウト化。②一括検索でもLINEに🌟一番オススメ → `current_customer_conditions` をstorage保存しフォールバックで条件をAIランキングに復元。詳細は下記「一括検索『複数顧客で全ページ送る失敗』」セクション。bulk-dl.js / itandi-bulk-dl.js / popup.js / background.js |
 | 2026-08-18 | **AIXLINX顧客リストに地域/駅バッジ表示追加** commit ceb0b5f。`computeAreaModeBadgeHtml(areaText)` 追加（popup.js:2011）。駅判定: /駅\|線/ or STATION_LINE_MAP/LEARNED_STATION_MAP。地域判定: /市区府県都郡/ or WARD_CODE_MAP/NEIGHBORHOOD_WARD_MAP。renderCustomerRowのc-nameにバッジ埋め込み。駅バッジ（青 #1565c0）・地域バッジ（緑 #2e7d32）CSSをstyles.cssに追加。両方ある場合は両バッジ表示。 |
 | 2026-08-16 | **popup UI 3点改善** commit 96e99b9。[1] 要対応タブ（`🔥 要対応` `data-acct="__needs_action__"`）を「すべて」の左に追加（popup.html）。フィルター処理はpopup.jsで `data-acct === "__needs_action__"` 時に未対応（approved/lost/contracted以外）顧客のみ表示。[2] `bulk-dl.js` フローティングバーを右下→上部中央に移動（`top:10px;left:50%;transform:translateX(-50%)`）＋ドラッグハンドル追加（`#axlx-drag-handle`、mousemove/mouseup/mouseleaveでtransformを上書き）。[3] `#staff-mode-btn` のテキストから「🙋」を削除。ON時「スタッフモード中」/OFF時「スタッフモード」のみ。 |
 
@@ -891,6 +892,36 @@ var NON_RESULT_PAGES = ["GBK001310"];
 - itandi 側（`itandi-bulk-dl.js`）はSPAでページリロードが起きないためこのフラグを使っておらず、今回の変更対象外。
 - **拡張の再読み込み必須**: popup.js / bulk-dl.js 変更のため chrome://extensions で再読み込みすること。
 - **実機未確認**: 3人以上の一括検索で「全員分の全ページ送りが走るか」を次セッションで要確認。
+
+---
+
+## 🛠️ 一括検索「複数顧客で全ページ送る失敗」＋「一括でも一番オススメ表示」修正（2026-08-18 Fable5）
+
+**症状**: ①1顧客なら自動の全ページ送るが成功するのに、2顧客以上の一括検索だと失敗することが多い。②一括検索のLINEメッセージに単発検索と同じ「🌟 一番オススメ」判定が効かない。
+
+### Bug A 根本原因（2つの複合）
+1. **偽0件レース（bulk-dl.js）**: fill-done 後の15秒0件確定ポーリングは「旧ページ」（前顧客の結果画面）上で動く。リアプロ検索リロードのサーバー応答が15秒を超えると、旧ページ上のタイマーが誤って0件確定 → `axlx-batch-customer-done {propertyCount:0}` 送信 ＋ **Case C 起動フラグ（axlx_pending_auto_send）を削除** → リロード後の結果ページで全ページ送るが永久に起動しない。確率レースのため顧客数が増えるほど「よく失敗する」。
+2. **固定5分タイムアウトによる送信中破壊（background.js）**: `_createBatchCustomerDoneWaiter` が固定300秒。多ページ送信（20件/バッチ×複数ページ、merge-pdfs 1回最大60秒）は5分を超えることがあり、タイムアウト → background が次顧客の autofill を開始 → **検索リロードが送信中のページを破壊**して残ページ消失。1顧客だけなら誰もタブを触らないため完走する＝「1件なら成功・複数で失敗」の非対称性の正体。
+
+### Bug A 修正内容
+| # | 内容 | ファイル |
+|---|---|---|
+| 1 | `pagehide` リスナー追加: ページ離脱（検索リロード開始）時に `_zeroDetectTimer` を必ず破棄 | `bulk-dl.js` |
+| 2 | 0件確定ポーリングを15秒→25秒に延長。さらに期限切れ時 `tracked.length > 0`（前顧客の結果が残っている＝リロード待ちの可能性大）なら**0件確定せずフラグも消さない**（リロード後の Case C / AJAX の Case A に委譲）。0件確定は tracked=0 の場合のみ | `bulk-dl.js` |
+| 3 | 進捗ハートビート `axlx-batch-progress {customerId}` を新設: LINEバッチ送信1回ごと＋ページ遷移ごとに送信 | `bulk-dl.js` |
+| 4 | itandi 側も PDF キャプチャ1件ごとにハートビート送信 | `itandi-bulk-dl.js` |
+| 5 | `_createBatchCustomerDoneWaiter` を「固定5分」→「**無進捗5分**」に変更: `entry.resetTimer()` を追加し、`axlx-batch-progress` 受信（`_notifyBatchProgress`）のたびにタイムアウトを延長。送信が続く限り次顧客へ移らない | `background.js` |
+| 6 | itandi Blob アップロードループ（`axlx-send-pdf-data-to-line`）内でも1件ごとに `_notifyBatchProgress(null)` | `background.js` |
+
+### Feature B 根本原因と修正
+- 「🌟 一番オススメ」はサーバー側 `/api/merge-pdfs` の `rankAndAnnotateSummaries`（Haiku AIランキング・顧客条件文字列で判定）＋ `buildLineMessage`（メッセージ先頭に🌟ブロック挿入）で生成される。単発・一括とも同じAPIを通るが、**一括検索はリアプロのページリロードで popup iframe が消えるため `getCustomerFromPopup` が storage フォールバックになり、`customer_conditions` が常に null** → AIランキングが顧客条件なしで実行され単発検索と同じ判定にならなかった。
+- 修正: popup.js の `_buildConditionsString` をトップレベル `buildCustomerConditionsString()` に昇格し、顧客選択時（`openSiteView`）に `current_customer_conditions` として `chrome.storage.local` に保存。`bulk-dl.js` / `itandi-bulk-dl.js` の `getCustomerFromPopup` フォールバックが名前・IDに加えて条件文字列も返すようにした。これで一括検索でも単発検索と同一基準（顧客条件つきAIランキング）で「🌟 一番オススメ」がメッセージ先頭に入る。
+
+### デグレ防止メモ
+- ハートビートは waiter を **customerId 厳密一致 → 最古 waiter** の順で解決（`_notifyBatchCustomerDone` と同一ロジック）。顧客直列処理のため安全。
+- 0件顧客の高速スキップは維持: tracked=0 のときは従来どおり25秒で0件確定送信。真の0件でリロードが来た場合は新ページ側 `autoSendOnePage` の4秒ポーリング → `propertyCount:0` で報告される（こちらが本線）。
+- **拡張の再読み込み必須**: bulk-dl.js / itandi-bulk-dl.js / popup.js / background.js 変更のため chrome://extensions で再読み込みすること。
+- **実機未確認**: 3人以上のリアプロ一括検索（多ページ顧客含む）で全員分の全ページ送る＋🌟一番オススメ表示を次セッションで要確認。
 
 ---
 
