@@ -2705,7 +2705,6 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   conversationStage: STAGE_JP[currentState] ?? currentState, // MEDIUM-2
                   brainMeta: brainMeta
                     ? {
-                        reply_mode: (brainMeta.reply_mode ?? null) as "aix" | "auto_reply" | null,
                         action: (brainMeta.action ?? null) as string | null,
                         enforcement_level: (brainMeta.enforcement_level ?? "recommended") as "required" | "recommended",
                       }

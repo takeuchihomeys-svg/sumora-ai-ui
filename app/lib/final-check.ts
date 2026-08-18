@@ -56,9 +56,8 @@ export interface FinalCheckContext {
   sentPropertiesCount?: number;  // MEDIUM-2: 送付済み物件数（0=未送付）
   isAix?: boolean;               // FP-02: AIX機能使用フラグ。false の場合 AIX_BOUNDARY_* コードを除外
   isEarlyConversation?: boolean; // FP-04: 会話初期（情報源が薄い）フラグ。FABRICATED系を warning に格下げ
-  /** Brain（suggested_aix_meta）の判定結果。渡された場合はHaikuの境界再評価を抑制可能 */
+  /** Brain（suggested_aix_meta）の判定結果。context_check のSTAGE_SKIP抑制に使用 */
   brainMeta?: {
-    reply_mode: "aix" | "auto_reply" | null;
     action: string | null;
     enforcement_level: "required" | "recommended";
   } | null;
@@ -173,9 +172,6 @@ function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): string {
   const aixNote = ctx.isAix === false
     ? "\n【重要】この会話ではAIX機能は使用されていません。AIX_BOUNDARY_* コード（AIX_BOUNDARY_VIEWING, AIX_BOUNDARY_PROMISE 等）は一切発行しないでください。\n"
     : "";
-  const brainClearedNote = ctx.brainMeta?.reply_mode === "auto_reply"
-    ? "【脳分析済み】Brain（Sonnet）がAIX不要（auto_reply）と判定済みです。AIX_BOUNDARY_PROMISE以外のAIX_BOUNDARY_*コードは発行しないこと。\n\n"
-    : "";
   // FN-005: dbRules 20000字切り捨て警告（旧8000字上限を拡大。Sonnetのコンテキストウィンドウは十分大きい）
   if (ctx.dbRules && ctx.dbRules.length > 20000) {
     console.warn(`[final-check] dbRules truncated: ${ctx.dbRules.length} chars → 20000. Rules beyond 20000 chars are NOT checked.`);
@@ -186,7 +182,7 @@ function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): string {
     console.warn(`[final-check] finalCheckRules truncated: ${ctx.finalCheckRules.length} chars → 3000. Rules beyond 3000 chars are NOT checked.`);
   }
   const finalCheckRulesSliced = ctx.finalCheckRules ? ctx.finalCheckRules.slice(0, 3000) : null;
-  return `${brainClearedNote}${ADVERSARIAL_PREAMBLE}${aixNote}
+  return `${ADVERSARIAL_PREAMBLE}${aixNote}
 
 以下はこの会社の絶対ルール一覧です。返信文が各ルールに違反していないか、1つずつ照合してください。
 特に「通常返信AIは宣言のみ、実行はAIX」の境界線：

@@ -103,7 +103,6 @@ export async function POST(req: NextRequest) {
     isAix,
     brainMeta: suggestedAixMeta
       ? {
-          reply_mode: (suggestedAixMeta.reply_mode ?? null) as "aix" | "auto_reply" | null,
           action: (suggestedAixMeta.action ?? null) as string | null,
           enforcement_level: (suggestedAixMeta.enforcement_level ?? "recommended") as "required" | "recommended",
         }
