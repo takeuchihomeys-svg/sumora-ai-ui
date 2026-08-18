@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { analyzeAndSaveBrainMeta, BRAIN_SKIP_STATUSES } from "@/app/lib/brain-core";
+import { runBrainAndNotify, BRAIN_SKIP_STATUSES } from "@/app/lib/brain-core";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 // ── brain-sweep: 脳分析バックストップ（5分毎）─────────────────────────────
@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
     let processed = 0;
     let failed = 0;
     await withConcurrency(rows, 3, async (conv) => {
-      const saved = await analyzeAndSaveBrainMeta(conv.id).catch((e) => {
+      const saved = await runBrainAndNotify(conv.id).catch((e) => {
         // B10(Fable5): 旧実装は throw されたエラーメッセージも握り潰していた
         console.error("[brain-sweep] analyze failed:", conv.id, e instanceof Error ? e.message : e);
         return false;
