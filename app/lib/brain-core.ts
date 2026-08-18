@@ -93,6 +93,36 @@ const STATUS_MEANING: Record<string, string> = {
   approved:                "審査通過済み（入居待ち・鍵渡し前）",
 };
 
+// RAG化 Phase1: フェーズ→AIXアクション候補マップ（値は AIX_BRAIN_NOTES のキーのみ使用）。
+// 前回brain分析のフェーズ（conversation_direction.current_phase）から「今回の局面で関係しそうな
+// アクション」を事前に絞り、ai_prompt_rules のアクション連動ルール取得（.in("action_type", ...)）に使う。
+// フェーズ遷移直後の1回は旧フェーズ基準で動くため、隣接フェーズのアクションを重複して持たせて実害を最小化
+// （例: proposing に viewing_invite を含める）。
+const PHASE_ACTION_CANDIDATES: Record<string, string[]> = {
+  hearing:   ["condition_hearing", "property_search", "property_send", "followup_revive"],
+  proposing: ["property_send", "property_recommendation", "property_search", "acknowledge_check", "property_check_result", "estimate_sheet", "viewing_invite", "followup_revive"],
+  viewing:   ["viewing_invite", "meeting_place", "greeting_viewing", "estimate_sheet"],
+  applying:  ["application_push", "estimate_sheet", "acknowledge_check"],
+};
+
+// convStatus → フェーズの粗い写像（前回フェーズが無い場合のフォールバック）。
+// キーは STATUS_MEANING と同一集合（contract / approved は BRAIN_SKIP_STATUSES のため到達しない）。
+// 未知ステータス・NULL は phaseEstimate=null → 全AIXアクションにフォールバック（取りこぼしゼロ側に倒す）
+const STATUS_TO_PHASE: Record<string, string> = {
+  first_reply:             "hearing",
+  hearing:                 "hearing",
+  condition_hearing:       "hearing",
+  property_search:         "hearing",
+  proposing:               "proposing",
+  property_recommendation: "proposing",
+  estimate_request:        "proposing",
+  availability_check:      "proposing",
+  viewing:                 "viewing",
+  applying:                "applying",
+  application:             "applying",
+  screening:               "applying",
+};
+
 // Concise AIX capability summary injected into Haiku prompts for action/template reasoning
 const AIX_CAPABILITY_MAP = `
 【AIXボタン能力マップ】
@@ -631,13 +661,22 @@ export async function analyzeConversation(
   source: string = "brain",
   // B2/H6(Fable5): 呼び出し元（analyzeAndSaveBrainMeta）が conversations から取得したフラグ。
   // auto_send_enabled=false の会話に auto_reply を提案しない・is_flagged はスタッフ要対応なので aix 強制
-  opts?: { autoSendEnabled?: boolean; isHot?: boolean; isFlagged?: boolean },
+  // RAG化 Phase1: prevPhase / prevAix は前回brain分析のキャッシュ値（conversation_direction）。
+  // フェーズ・AIX候補は Sonnet 実行後にしか確定しないため、ルール事前フィルタには前回値を事前シグナルとして使う
+  opts?: { autoSendEnabled?: boolean; isHot?: boolean; isFlagged?: boolean; prevPhase?: string | null; prevAix?: string | null },
 ): Promise<SuggestedAixMeta> {
+  // RAG化 Phase1: 前回フェーズ（無ければ convStatus からの粗い推定）でアクション候補を絞る。
+  // フェーズ不明・未知フェーズ時は全AIXアクションにフォールバック（フィルタ無効化 = 取りこぼしゼロ側）
+  const phaseEstimate = opts?.prevPhase ?? (convStatus ? STATUS_TO_PHASE[convStatus] ?? null : null);
+  const actionCandidates = [...new Set([
+    ...(phaseEstimate ? PHASE_ACTION_CANDIDATES[phaseEstimate] ?? Object.keys(AIX_BRAIN_NOTES) : Object.keys(AIX_BRAIN_NOTES)),
+    ...(opts?.prevAix && AIX_BRAIN_NOTES[opts.prevAix] ? [opts.prevAix] : []),
+  ])];
   // Fetch last 30 messages and customer conditions in parallel
   // limit 30→15: checkpoint（RAG検索含む）が古い会話をカバーするため、直近15件で十分。
   // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
   // count: "exact" は総メッセージ数のプロンプト注入用（B3）
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult] = await Promise.all([
     supabase
       .from("messages")
       .select("sender, text, created_at, line_message_id, is_aix_generated", { count: "exact" })
@@ -805,6 +844,22 @@ export async function analyzeConversation(
       .select("pattern, situation, closing_action, notes, win_rate")
       .order("win_rate", { ascending: false })
       .limit(5),
+    // RAG化 Phase1: アクション連動ルール（is_permanent 不問・BOUNDARY-* は上の別枠で全件取得済み）。
+    // 従来の恒久ルール枠は action_type IS NULL 必須のため、action_type 付きルール
+    // （HUMAN-*/FEEDBACK-*/IMPLEMENT-*/LEARN-AIX-* 等）は brain に構造的に一切届いていなかった。
+    // priority >= 4 は decay（ai-feedback の90日 demote → priority 2 を除外）との整合（prompt-rules.ts と同基準）。
+    // action_type='generate_reply'（返信文面ポリシー）は brain の管轄外のため候補に含めない
+    // （actionCandidates は AIX_BRAIN_NOTES キー由来の固定文字列のみ → .in() インジェクション懸念なし）
+    supabase
+      .from("ai_prompt_rules")
+      .select("rule_key, action_type, rule_text, priority, condition_key, condition_value")
+      .eq("is_active", true)
+      .in("action_type", actionCandidates)
+      .not("rule_key", "like", "BOUNDARY-%")
+      .gte("priority", 4)
+      .order("priority", { ascending: false })
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(15),
   ]);
 
   const { data: messages, error, count: totalMessageCount } = msgResult;
@@ -846,8 +901,14 @@ export async function analyzeConversation(
     .join("\n");
 
   // セーブポイントRAG検索: 現在の会話コンテキストに関連する古いCPを類似検索
+  // RAG化 Phase2: 同じ embedding を再利用して ai_reply_knowledge の類似ナレッジも検索する
+  // （match_reply_knowledge・OpenAI追加コストゼロ・追加レイテンシはRPC1本分のみ）。
+  // embedding 失敗・OPENAI_API_KEY 未設定・RPC エラー時は RAG 部分が空になるだけで、
+  // 既存の静的保証バケット（principle/成約パターン/applying_pattern）のみで従来同様に動作する。
   let ragCheckpoints: Array<{ checkpoint_index: number; summary: string | null; key_facts: unknown; conversation_stage: string | null; similarity?: number }> = [];
-  if (propertyCustomerId && process.env.OPENAI_API_KEY) {
+  type RagKnowledgeRow = { title: string | null; content: string | null; category: string | null; conversation_state: string | null; importance: number | null; similarity: number };
+  let ragKnowledgeRaw: RagKnowledgeRow[] = [];
+  if (process.env.OPENAI_API_KEY) {
     const recentCustomerMsgs = typedMessages
       .filter(m => m.sender === "customer" && m.text)
       .slice(-3)
@@ -865,17 +926,31 @@ export async function analyzeConversation(
           const qData = await qRes.json() as { data?: Array<{ embedding?: number[] }> };
           const qEmb = qData.data?.[0]?.embedding;
           if (qEmb) {
-            const { data: ragHits } = await supabase.rpc("match_conversation_checkpoints", {
-              conversation_id_param: conversationId,
-              query_embedding: qEmb,
-              match_count: 3,
-              min_similarity: 0.5,
-            });
-            ragCheckpoints = (ragHits ?? []) as typeof ragCheckpoints;
+            const [cpRes, knRes] = await Promise.all([
+              // 既存動作を厳密維持: checkpoint RAG は propertyCustomerId がある場合のみ
+              propertyCustomerId
+                ? supabase.rpc("match_conversation_checkpoints", {
+                    conversation_id_param: conversationId,
+                    query_embedding: qEmb,
+                    match_count: 6,
+                    min_similarity: 0.5,
+                  })
+                : Promise.resolve({ data: null }),
+              // RAG化 Phase2: 会話コンテキストに類似するナレッジ
+              // （min_importance 7 = analyze-diffs の confirmed 昇格ラインと一致）
+              supabase.rpc("match_reply_knowledge", {
+                query_embedding: qEmb,
+                match_count: 30,
+                min_importance: 7,
+              }),
+            ]);
+            ragCheckpoints = ((cpRes as { data: unknown }).data ?? []) as typeof ragCheckpoints;
+            // 生のRPC結果のみ保持。フィルタ/重複除去/ソートは⑦⑪⑱の結果変数定義後（applyingPatternsText 構築後）に行う
+            ragKnowledgeRaw = ((knRes as { data: unknown }).data ?? []) as RagKnowledgeRow[];
           }
         }
       } catch {
-        // RAG失敗は無視・最新CPのみで動作継続
+        // RAG失敗は無視・最新CP＋静的バケットのみで動作継続（既存方針）
       }
     }
   }
@@ -1038,6 +1113,19 @@ export async function analyzeConversation(
     ? `\n【絶対ルール（オペレーター設定）】\n${promptRules.map((r) => `- ${r.rule_text}`).join("\n")}`
     : "";
 
+  // RAG化 Phase1: アクション連動ルール（現局面候補のAIXアクションに紐づく ai_prompt_rules）。
+  // 会話依存（前回フェーズでフィルタ済み）のため必ず userPrompt 側に注入する
+  // （systemText に入れると prompt caching が会話ごとにミスして Sonnet コストが跳ね上がる）
+  type ActionRule = { rule_key: string; action_type: string | null; rule_text: string; priority: number | null; condition_key: string | null; condition_value: string | null };
+  const actionRules = ((actionRulesResult.data ?? []) as ActionRule[])
+    // condition_key 付きルールは conversation_state 一致のみ許可（brain は他の条件コンテキストを持たない）
+    .filter((r) => !r.condition_key || (r.condition_key === "conversation_state" && r.condition_value === convStatus))
+    // 恒久グローバル枠（promptRules）と本文重複するものは除外
+    .filter((r) => !promptRules.some((p) => p.rule_text === r.rule_text));
+  const actionRulesText = actionRules.length > 0
+    ? `\n【アクション別ルール（現局面候補: ${actionCandidates.join("/")}）】\n${actionRules.map((r) => `- [${r.action_type}] ${r.rule_text}`).join("\n")}`
+    : "";
+
   type KnowledgePrinciple = { content: string; importance: number };
   const knowledgePrinciples = (knowledgePrinciplesResult.data ?? []) as KnowledgePrinciple[];
   const knowledgeText = knowledgePrinciples.length > 0
@@ -1122,6 +1210,29 @@ export async function analyzeConversation(
       }).join("\n")}\n※aix キーの選択は、現在の会話が上記パターンのどの「場面」に該当するかを最優先の判断材料にすること。同じ場面なら実績のあるAIXボタン（特に見積書→申込誘導の estimate_sheet ライン）を選ぶ。`
     : "";
 
+  // RAG化 Phase2: 類似ナレッジの選抜。⑦principle・⑪成約パターン・⑱applying_pattern の
+  // 静的保証バケットと本文重複するものを除去 → AIX局面一致（conversation_state がアクション候補に
+  // 一致・前方一致）を最優先ブースト → similarity 降順で上位6件。
+  // ※この処理は knowledgePrinciples / contractKnowledge / applyingPatternKnowledge の定義後に置くこと（未定義参照防止）
+  const ragAlreadyInjected = new Set<string>([
+    ...knowledgePrinciples.map((k) => k.content),
+    ...contractKnowledge.map((k) => k.content ?? ""),
+    ...applyingPatternKnowledge.map((k) => k.content ?? ""),
+  ]);
+  const isAixStateMatch = (state: string | null): boolean =>
+    !!state && actionCandidates.some((c) => state === c || state.startsWith(c + "_"));
+  const ragKnowledge = ragKnowledgeRaw
+    .filter((k) => k.similarity >= 0.55 && !!k.content && !ragAlreadyInjected.has(k.content as string))
+    .sort((a, b) => {
+      const aAix = isAixStateMatch(a.conversation_state) ? 1 : 0;
+      const bAix = isAixStateMatch(b.conversation_state) ? 1 : 0;
+      return (bAix - aAix) || (b.similarity - a.similarity);
+    })
+    .slice(0, 6);
+  const ragKnowledgeText = ragKnowledge.length > 0
+    ? `\n【関連ナレッジ（この会話に類似する過去の学習・RAG検索）】\n${ragKnowledge.map((k) => `- [${k.category ?? "knowledge"}${k.conversation_state ? `/${k.conversation_state}` : ""}] ${(k.title ?? "").replace(/\n/g, " ").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 200)}`).join("\n")}\n※現在の会話状況に該当するものがあれば aix / closing_strategy / next_steps の判断に反映すること。`
+    : "";
+
   // winning_patterns: 勝率順の成約実績パターン（グローバル・顧客横断）
   const wpData = (winningPatternsResult.data ?? []) as Array<{pattern?: string; situation?: string; closing_action?: string; notes?: string; win_rate?: number}>;
   const wpText = wpData
@@ -1186,7 +1297,9 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 回答形式（JSONのみ・説明文・コードブロック不要）:
 {"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}}`;
 
-  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}${winningPatternsText}
+  // RAG化: actionRulesText / ragKnowledgeText は会話依存のため userPrompt 側に注入
+  // （systemText は cache_control: ephemeral のため、会話依存テキストを入れるとキャッシュが壊れる）
+  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}${actionRulesText}${winningPatternsText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -1645,6 +1758,9 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   const watermark = conv.updated_at as string;
 
   const isUrgent = Date.now() - new Date(watermark).getTime() <= URGENT_WINDOW_MS;
+  // RAG化 Phase1: 前回brain分析のフェーズ・AIX候補（conversation_direction に前回書き込んだ値）を
+  // ルール事前フィルタ用の事前シグナルとして渡す（Sonnet 実行前にフェーズは確定できないため）
+  const prevDir = ((conv as unknown as Record<string, unknown>).conversation_direction ?? null) as Record<string, unknown> | null;
   const meta = await analyzeConversation(
     conversationId,
     isUrgent,
@@ -1655,6 +1771,8 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
       autoSendEnabled: (conv.auto_send_enabled as boolean | null) ?? false,
       isHot: (conv.is_hot as boolean | null) ?? false,
       isFlagged: (conv.is_flagged as boolean | null) ?? false,
+      prevPhase: typeof prevDir?.current_phase === "string" ? (prevDir.current_phase as string) : null,
+      prevAix: typeof prevDir?.suggested_aix_button === "string" ? (prevDir.suggested_aix_button as string) : null,
     },
   );
   if (!meta) {
