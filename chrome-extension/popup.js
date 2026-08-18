@@ -2010,16 +2010,29 @@ function renderList(customers) {
 
 function computeAreaModeBadgeHtml(areaText) {
   if (!areaText) return '';
-  const clean = areaText.replace(/駅|周辺|付近|近く|エリア/g, '').trim();
-  // 駅判定: 駅・線を含む or STATION_LINE_MAP に一致する駅名を含む
-  const hasStation = /駅|線/.test(areaText) ||
-    parseAreaTokens(clean).some(t => {
-      const n = t.replace(/駅$/, '').trim();
-      return (STATION_LINE_MAP[n] || LEARNED_STATION_MAP[n]);
-    });
-  // 地域判定: 市/区/府/県/都/郡 or WARD_CODE_MAP or NEIGHBORHOOD_WARD_MAP
-  const hasWard = /[市区府県都郡]/.test(areaText) ||
-    parseAreaTokens(clean).some(t => WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t]);
+  const toks = parseAreaTokens(areaText);
+  // 駅判定: setupAreaModeSelector の hasStationToken と同一基準
+  // ・WARD_CODE_MAP収録トークン（守口市・摂津市など市名と衝突する駅名）は駅扱いしない
+  // ・LEARNED_STATION_MAP は realpro_lines 必須（路線名誤学習レコードの混入防止・2026-06-24事故対策）
+  const _cpRe = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
+  const isStationToken = (t) => {
+    if (WARD_CODE_MAP[t]) return false;
+    const vs = [t, t.replace(/[町村]$/, ""), t.replace(_cpRe, ""), t.replace(_cpRe, "").replace(/[町村]$/, "")];
+    return vs.some(v => STATION_LINE_MAP[v] || (LEARNED_STATION_MAP[v]?.realpro_lines?.length > 0)) ||
+      Object.values(REINS_LINE_MAP).some(v => v === t || v.endsWith(t));
+  };
+  const hasStation = /駅|線/.test(areaText) || toks.some(isStationToken);
+  // 地域判定: 市区郡府県サフィックス or WARD_CODE_MAP or resolveWardLoose
+  // ・resolveWardLoose = NEIGHBORHOOD_WARD_MAP → LEARNED_WARD_MAP → 市サフィックス補完 → 区+地名複合分解
+  // ・NEIGHBORHOOD_WARD_MAP 等には駅名（天神橋筋六丁目・天王寺等）も収録されているため駅トークンは除外
+  // ・「堺市」のように駅名と市名が同一のトークンはサフィックス判定で両バッジ表示
+  const hasWard = toks.some(t =>
+    !t.endsWith("線") && (
+      WARD_CODE_MAP[t] ||
+      /[市区郡府県]$|(?:市|府|県|都)内$/.test(t) ||
+      (!isStationToken(t) && !!resolveWardLoose(t))
+    )
+  );
 
   let html = '';
   if (hasStation) html += '<span class="area-mode-badge badge-area-station">駅</span>';
