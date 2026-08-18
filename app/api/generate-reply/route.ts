@@ -1067,6 +1067,26 @@ function buildGenerationMessages(
   const isAvailabilityCheckContext = detectAvailabilityCheckContext(customerMessage ?? "");
   const availabilityCheckNote = isAvailabilityCheckContext ? buildAvailabilityCheckNote() : "";
 
+  // 予算・条件指定の在庫質問（「〇〇円の物件ってありますか」等）の検出。
+  // 特定物件の空室確認ではなく「その予算・条件で案内できる物件があるか」の質問。
+  // 「確認します」で終わるのは絶対NG — 正直な現状説明＋代替案＋次のアクションが正しい型。
+  const BUDGET_INVENTORY_RE = /(?:賃料|家賃|月々?|円以内|万(?:以内|円台|円くら|以下))[^\n]{0,20}(?:物件|お?部屋|もの|ところ)[^\n]{0,30}(?:ありますか|あります？|ありませんか|ございますか|ないですか)/;
+  const BUDGET_INVENTORY_SOURCE_RE = /TikTok|tiktok|ティックトック|Instagram|インスタ|SNS|広告|掲載|サイト|スモラ|弊社/;
+  const isBudgetInventoryQuestion = !isAvailabilityCheckContext &&
+    (BUDGET_INVENTORY_RE.test(customerMessage ?? "") ||
+     (BUDGET_INVENTORY_SOURCE_RE.test(customerMessage ?? "") && /ありますか|ございますか/.test(customerMessage ?? "")));
+  const budgetInventoryNote = isBudgetInventoryQuestion
+    ? `\n\n【🚨 予算・条件指定の在庫質問（確定・最優先）】
+お客様は特定物件の空室確認ではなく「その予算・条件で案内できる物件があるか」を聞いています。
+【✅ この質問への正しい返信の型】
+① その予算・条件で案内できる物件が実際にあるかを正直に伝える（ある/少ない/難しい＋理由）
+② 難しい場合は「なぜ難しいか」の理由を具体的に説明する（例:「TikTok掲載物件は広さが大きく家賃15万円以上がほとんどとなります！！」）
+③ 代替案（別エリア・別条件・別媒体の物件等）を必ずセットで提示する
+④ 代替案から具体的に前進できる次のアクション（全件送る・ピックアップする等）を示す
+【🔴 絶対NG】「確認してご連絡します」のみで終わる → 何も答えていない。信頼を損なう絶対禁止。
+【🔴 絶対NG】「確認します→確認でき次第連絡します」の空室確認パターンを使う → これは特定物件の募集状況確認の型であり、この質問には不適切。`
+    : "";
+
   // 内覧日時の具体的提案はAIXの「内覧へ」ボタン専用。generate-replyでは絶対に具体的日時を出さない
   const viewingFactNote = (resolvedPropertyStatus === "move_out_scheduled" || resolvedPropertyStatus === "occupied")
     ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。「退去後すぐにご案内します」「お申込みでお部屋を先に抑えてからのご内覧も可能です」の方向で返すこと。`
@@ -1217,7 +1237,7 @@ ${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
 ${history || "なし"}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${viewingFactNote}${viewingIntentShortReplyNote}${estimateGateNote}${propertyFactGateNote}\n\n${meetingPlaceGateNote}${linkRequestNote}${availabilityCheckNote}
+${customerMessage}${applicationFormNote}${viewingFactNote}${viewingIntentShortReplyNote}${estimateGateNote}${propertyFactGateNote}\n\n${meetingPlaceGateNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}
 
 ${examples}${examplesInstruction}
 
