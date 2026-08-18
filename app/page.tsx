@@ -4063,6 +4063,7 @@ export default function Home() {
               conversationId: selectedConversation.id,
               recentMessages: selectedConversation.messages.slice(-10).map((m) => ({ sender: m.sender, text: m.text || "" })),
               customerName: selectedConversation?.customerName ?? "",
+              suggestedAixMeta: selectedConversation.suggestedAixMeta ?? null,
             }),
             signal: AbortSignal.timeout(2800),
           });

@@ -52,6 +52,11 @@ export async function POST(req: NextRequest) {
   let recentMessages: Array<{ sender: string; text: string }> = [];
   let customerName: string | undefined;
   let isAix = false;
+  let suggestedAixMeta: {
+    action: string | null;
+    reply_mode?: "aix" | "auto_reply" | null;
+    enforcement_level?: "required" | "recommended" | "optional";
+  } | null = null;
   try {
     const body = await req.json() as {
       text?: string;
@@ -59,12 +64,18 @@ export async function POST(req: NextRequest) {
       recentMessages?: Array<{ sender: string; text: string }>;
       customerName?: string;
       isAix?: boolean;
+      suggestedAixMeta?: {
+        action: string | null;
+        reply_mode?: "aix" | "auto_reply" | null;
+        enforcement_level?: "required" | "recommended" | "optional";
+      } | null;
     };
     text = (body.text ?? "").trim();
     conversationId = body.conversationId;
     recentMessages = Array.isArray(body.recentMessages) ? body.recentMessages : [];
     customerName = body.customerName;
     isAix = body.isAix ?? false;
+    suggestedAixMeta = body.suggestedAixMeta ?? null;
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
@@ -90,6 +101,13 @@ export async function POST(req: NextRequest) {
     customerConditionsDb: groundTruth.customerConditionsDb,
     staffSourceText: customerName ? `お客様のお名前: ${customerName}さん` : undefined,
     isAix,
+    brainMeta: suggestedAixMeta
+      ? {
+          reply_mode: (suggestedAixMeta.reply_mode ?? null) as "aix" | "auto_reply" | null,
+          action: (suggestedAixMeta.action ?? null) as string | null,
+          enforcement_level: (suggestedAixMeta.enforcement_level ?? "recommended") as "required" | "recommended",
+        }
+      : null,
   }, 2500);
   delete result.revised_text; // このモードでは絶対に書き換え結果を返さない
 
