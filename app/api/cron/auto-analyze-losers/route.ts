@@ -17,7 +17,7 @@ async function run() {
 
   const { data: lostConvs, error: convErr } = await supabase
     .from("conversations")
-    .select("id, customer_name")
+    .select("id, customer_name, suggested_aix_meta")
     .eq("status", "closed_lost")
     .is("loss_analyzed_at", null)
     .gte("updated_at", since)
@@ -79,11 +79,24 @@ async function run() {
         continue;
       }
 
+      // Brain コンテキスト構築（fail-open）
+      const brainMeta = conv.suggested_aix_meta as Record<string, unknown> | null;
+      const brainLines: string[] = [];
+      if (brainMeta?.emotion) brainLines.push("emotion: " + String(brainMeta.emotion));
+      if (brainMeta?.urgency) brainLines.push("urgency: " + String(brainMeta.urgency));
+      if (brainMeta?.budget_fit) brainLines.push("budget_fit: " + String(brainMeta.budget_fit));
+      if (brainMeta?.area_match !== undefined && brainMeta.area_match !== null) brainLines.push("area_match: " + String(brainMeta.area_match));
+      if (brainMeta?.reply_mode) brainLines.push("reply_mode: " + String(brainMeta.reply_mode));
+      if (brainMeta?.enforcement_level) brainLines.push("enforcement_level: " + String(brainMeta.enforcement_level));
+      const brainContextNote = brainLines.length > 0
+        ? "\n\n## 顧客コンテキスト（AIブレイン分析）\n" + brainLines.join("\n") + "\n※ no_fault判定の参考に: budget_fitが低い・area_matchがfalseの場合は顧客都合の失注の可能性が高い。emotionやurgencyも考慮すること。"
+        : "";
+
       const prompt = `あなたは不動産営業AIのアドバイザーです。
 以下は失注（closed_lost）した顧客とのLINE会話ログです。
 
 ## 会話ログ（古い順）
-顧客名: ${(conv.customer_name as string) ?? "不明"}
+顧客名: ${(conv.customer_name as string) ?? "不明"}${brainContextNote}
 ${transcript}
 
 ## 指示

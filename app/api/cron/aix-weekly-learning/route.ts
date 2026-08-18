@@ -223,10 +223,39 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Format examples for Opus
-      const examplesText = examples.map((ex, i) =>
-        `【編集例${i + 1}】\nAI生成:\n${ex.ai_draft?.slice(0, 300) ?? ""}\n\nスタッフ送信:\n${ex.sent_reply?.slice(0, 300) ?? ""}`
-      ).join("\n\n---\n\n");
+      // Brain コンテキスト一括取得（fail-open: conversation_id はすでに SELECT 済み）
+      const exConvIds = (examples as Array<{ conversation_id?: string | null }>)
+        .map(e => e.conversation_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
+      const brainByConvId = new Map<string, Record<string, unknown>>();
+      if (exConvIds.length > 0) {
+        try {
+          const { data: brainRows } = await supabase
+            .from("conversations")
+            .select("id, suggested_aix_meta, property_customers(ai_summary_json)")
+            .in("id", exConvIds);
+          for (const row of (brainRows ?? []) as Array<{ id: string; suggested_aix_meta: unknown; property_customers: unknown }>) {
+            const meta = (row.suggested_aix_meta as Record<string, unknown> | null) ?? {};
+            const customer = Array.isArray(row.property_customers)
+              ? (row.property_customers[0] as Record<string, unknown> | null)
+              : (row.property_customers as Record<string, unknown> | null);
+            const summary = (customer?.ai_summary_json as Record<string, unknown> | null) ?? {};
+            brainByConvId.set(row.id, { ...meta, ...summary });
+          }
+        } catch { /* fail-open */ }
+      }
+
+      // Format examples for Opus（Brainラベル付き）
+      const examplesText = (examples as Array<{ ai_draft?: string; sent_reply?: string; conversation_id?: string | null }>).map((ex, i) => {
+        const exBrain = brainByConvId.get(ex.conversation_id ?? "") ?? {};
+        const brainParts = [
+          exBrain.emotion ? "emotion:" + String(exBrain.emotion) : "",
+          exBrain.urgency ? "urgency:" + String(exBrain.urgency) : "",
+          exBrain.reply_mode ? "mode:" + String(exBrain.reply_mode) : "",
+        ].filter(Boolean);
+        const brainTag = brainParts.length > 0 ? ` [${brainParts.join(" ")}]` : "";
+        return `【編集例${i + 1}】${brainTag}\nAI生成:\n${ex.ai_draft?.slice(0, 300) ?? ""}\n\nスタッフ送信:\n${ex.sent_reply?.slice(0, 300) ?? ""}`;
+      }).join("\n\n---\n\n");
 
       const systemPrompt = `あなたはLINE賃貸営業AIシステムの品質改善エンジニアです。
 AIXボタン「${actionType}」で生成されたテキストをスタッフが修正した事例を分析し、
@@ -241,7 +270,8 @@ AIXボタン「${actionType}」で生成されたテキストをスタッフが�
 - 複数の編集例に共通する修正パターンのみ抽出（1例だけの特殊ケースは除外）
 - 「〜を避ける」「〜の場合は〜にする」など具体的な行動指示として書く
 - 最大3個まで
-- 共通パターンが見つからない場合は空配列 [] を返す`;
+- 共通パターンが見つからない場合は空配列 [] を返す
+- 各編集例の [emotion/urgency/mode] ラベルを参照し、特定の顧客状況に依存するパターンがあれば条件付きルールとして記述すること（例: urgency=高の場合は〜、emotion=不安の場合は〜）`;
 
       const response = await anthropic.messages.create({
         model: "claude-opus-5",
