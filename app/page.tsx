@@ -2523,13 +2523,16 @@ export default function Home() {
     return !activeAixFlow && selectedConversation.suggestedAixMeta?.action === "meeting_place";
   }, [selectedConversation.suggestedAixMeta, activeAixFlow]);
 
-  // お客様が特定日を質問形で提案 → AIX-METAが viewing_invite を指示している場合のみ
-  // 診断修正(内覧バナー誤表示): 最終送信者が顧客の場合のみ表示（スタッフが物件送付・返信した直後の
-  // 古い/誤ったメタで内覧バナーを出さないUI側の保険ゲート）
+  // お客様が内覧希望を示した場合 → AIX 内覧日調整バナーを表示
+  // brain-driven（suggestedAixMeta.action === "viewing_invite"）またはクライアント側キーワード検知のどちらかで発火
   const guideToViewingSpecific = useMemo(() => {
-    if (activeAixFlow || selectedConversation.suggestedAixMeta?.action !== "viewing_invite") return false;
+    if (activeAixFlow) return false;
     const _msgs: Message[] = selectedConversation.messages || [];
-    return (selectedConversation.lastSender ?? _msgs[_msgs.length - 1]?.sender) === "customer";
+    const lastSender = selectedConversation.lastSender ?? _msgs[_msgs.length - 1]?.sender;
+    if (lastSender !== "customer") return false;
+    if (selectedConversation.suggestedAixMeta?.action === "viewing_invite") return true;
+    const recentTexts = [..._msgs].reverse().slice(0, 6).map((m: Message) => m.text || "").join(" ");
+    return /内覧(?:行き|し|希望|したい|可能|いき)|内見(?:行き|し|希望|したい|可能)|見学(?:したい|希望|行き)|見に行き/.test(recentTexts);
   }, [selectedConversation, activeAixFlow]);
 
   // 新着物件待ちパターン: AIX-METAが property_send を指示している場合のみ
