@@ -12,6 +12,11 @@ export const maxDuration = 60;
 // 直近7日の ai_reply_examples から両シグナルを取得し、
 // 対応する knowledge_apply_log の pending ログを correct / wrong に更新する。
 // 成約/失注による判定は廃止（closed_won/closed_lost は今のフェーズでは判断基準にしない）。
+//
+// enforcement_level 重み付け（2026-08-18追加）:
+//   conversations.suggested_aix_meta.enforcement_level === "required" の会話は
+//   correct/wrong のフィードバックを2回カウント（weight=2）。
+//   suggested_aix_meta が null/取得失敗の場合は weight=1 で現状通り動作（fail-open）。
 const BATCH_LIMIT = 200;
 
 type ReplyExample = {
@@ -73,6 +78,24 @@ export async function POST(req: NextRequest) {
       ...wrongList.map(e => e.conversation_id),
     ])];
 
+    // conversations.suggested_aix_meta.enforcement_level を取得して重み付けマップを構築
+    // fail-open: 取得失敗や null の場合は weight=1（通常動作）
+    const enforcementMap = new Map<string, string>();
+    try {
+      const { data: convRows } = await supabase
+        .from("conversations")
+        .select("id, suggested_aix_meta")
+        .in("id", convIds);
+      for (const row of convRows ?? []) {
+        const level = (row.suggested_aix_meta as Record<string, unknown> | null)?.enforcement_level;
+        if (typeof level === "string" && level) {
+          enforcementMap.set(row.id as string, level);
+        }
+      }
+    } catch (e) {
+      console.warn("[eval-winning-pattern] enforcement_level 取得失敗（fail-open）:", e);
+    }
+
     // 対応する knowledge_apply_log（source='generate_reply', result='pending'）を取得
     const { data: applyLogs } = await supabase
       .from("knowledge_apply_log")
@@ -86,6 +109,8 @@ export async function POST(req: NextRequest) {
     // 異なる会話での適用は別々にカウントする → apply_count が正確に加算される）
     type FeedbackPair = { knowledge_id: string; conversation_id: string };
     const kCorrect: FeedbackPair[] = [];
+    // enforcement_level='required' のペアは追加で1回 RPC を呼ぶための別配列
+    const kCorrectRequired: FeedbackPair[] = [];
     const correctPairsSeen = new Set<string>();
 
     for (const ex of exampleList) {
@@ -99,6 +124,10 @@ export async function POST(req: NextRequest) {
         if (!correctPairsSeen.has(pairKey)) {
           correctPairsSeen.add(pairKey);
           kCorrect.push({ knowledge_id: kid, conversation_id: ex.conversation_id });
+          // enforcement_level='required' → weight=2（2回目カウント用に収集）
+          if (enforcementMap.get(ex.conversation_id) === "required") {
+            kCorrectRequired.push({ knowledge_id: kid, conversation_id: ex.conversation_id });
+          }
         }
       }
     }
@@ -107,6 +136,8 @@ export async function POST(req: NextRequest) {
     // 同一会話が correct と wrong の両方に現れた場合は correct を優先し wrong から除外する
     // （同一会話に複数 example があるケースの矛盾防止）
     const kWrong: FeedbackPair[] = [];
+    // enforcement_level='required' の wrong ペア（weight=2 用）
+    const kWrongRequired: FeedbackPair[] = [];
     const wrongPairsSeen = new Set<string>();
     for (const ex of wrongList) {
       const kids = [...new Set(
@@ -120,6 +151,10 @@ export async function POST(req: NextRequest) {
         if (correctPairsSeen.has(pairKey) || wrongPairsSeen.has(pairKey)) continue;
         wrongPairsSeen.add(pairKey);
         kWrong.push({ knowledge_id: kid, conversation_id: ex.conversation_id });
+        // enforcement_level='required' → weight=2（2回目カウント用に収集）
+        if (enforcementMap.get(ex.conversation_id) === "required") {
+          kWrongRequired.push({ knowledge_id: kid, conversation_id: ex.conversation_id });
+        }
       }
     }
 
@@ -133,6 +168,19 @@ export async function POST(req: NextRequest) {
         p_feedback_source: "text_retention",
       });
       knowledgeFed = kCorrect.length + kWrong.length;
+    }
+
+    // enforcement_level='required' ペアは weight=2 のため2回目の RPC を実行
+    // Brain が required と判断したのに修正された（wrong）または無修正採用（correct）は
+    // 通常の2倍の重みでナレッジカウントに反映する
+    if (kCorrectRequired.length > 0 || kWrongRequired.length > 0) {
+      await supabase.rpc("update_knowledge_feedback_by_pairs", {
+        p_correct_pairs: kCorrectRequired.length > 0 ? kCorrectRequired : null,
+        p_wrong_pairs: kWrongRequired.length > 0 ? kWrongRequired : null,
+        p_feedback_source: "text_retention_required_weight2",
+      });
+      knowledgeFed += kCorrectRequired.length + kWrongRequired.length;
+      console.log(`[eval-winning-pattern] required weight=2 適用: correct=${kCorrectRequired.length}, wrong=${kWrongRequired.length}`);
     }
 
     // ── hypothesis → confirmed 自動昇格 ──
@@ -171,6 +219,7 @@ export async function POST(req: NextRequest) {
       evaluated: exampleList.length + wrongList.length,
       correct: kCorrect.length,
       wrong: kWrong.length,
+      required_weighted: kCorrectRequired.length + kWrongRequired.length,
       knowledge_fed: knowledgeFed,
       evaluated_at: new Date().toISOString(),
     };
