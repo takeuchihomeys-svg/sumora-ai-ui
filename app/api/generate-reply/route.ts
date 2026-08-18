@@ -2703,6 +2703,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   isAutoSend: enforceReplyModeGate,   // HIGH-1/2: 自動送信経路のみ true
                   isAix: true,                        // generate-reply はAIX機能そのもの
                   conversationStage: STAGE_JP[currentState] ?? currentState, // MEDIUM-2
+                  brainMeta: brainMeta
+                    ? {
+                        reply_mode: (brainMeta.reply_mode ?? null) as "aix" | "auto_reply" | null,
+                        action: (brainMeta.action ?? null) as string | null,
+                        enforcement_level: (brainMeta.enforcement_level ?? "recommended") as "required" | "recommended",
+                      }
+                    : null,
                 };
                 const loop = await runFinalCheckWithRevision(draftBody, finalCheckCtx, 40000);
                 finalCheck = loop.finalCheck;
