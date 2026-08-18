@@ -230,10 +230,10 @@ function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): string {
   const brainBaselineNote = ctx.brainMeta?.action
     ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。\n\n`
     : "";
-  return `${brainBaselineNote}${ADVERSARIAL_PREAMBLE}
-
-返信文の中の「事実の主張」をすべて抽出し、それぞれについて「この事実はどこから来たのか」を
-下の情報源と照合してください。どの情報源にも根拠が無い事実は、AIの捏造（ハルシネーション）です。
+  return `${brainBaselineNote}返信文の中の「事実の主張」をすべて抽出し、それぞれについて「この事実はどこから来たのか」を
+下の情報源と照合してください。情報源に根拠がない事実は捏造（ハルシネーション）として必ず指摘してください。
+指摘には必ず本文からの引用（evidence）を付けること。引用できない指摘は出力しないこと。
+情報源と照合して問題がなければ issues を空配列にしてください。
 最優先で疑うもの：
 1. 円・万円の金額（家賃・敷金・礼金・初期費用・保証料）— 情報源に同じ数字が無ければ捏造
 2. 空室確認の結果（「空室でした」「埋まりました」「〇月〇日から入居可能」）— 管理会社に
