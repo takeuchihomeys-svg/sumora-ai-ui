@@ -61,6 +61,8 @@ export interface FinalCheckContext {
     action: string | null;
     enforcement_level: "required" | "recommended";
   } | null;
+  /** 1回目チェック後の照合で「根拠あり」と確認済みの evidence 文字列リスト。2回目チェックで再指摘しない */
+  clearedFacts?: string[];
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -230,7 +232,10 @@ function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): string {
   const brainBaselineNote = ctx.brainMeta?.action
     ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。\n\n`
     : "";
-  return `${brainBaselineNote}返信文の中の「事実の主張」をすべて抽出し、それぞれについて「この事実はどこから来たのか」を
+  const clearedFactsNote = ctx.clearedFacts?.length
+    ? `【照合済み確認済み】以下の記述はすでに情報源との照合で根拠ありと確認されています。ハルシネーションとして指摘しないこと：\n${ctx.clearedFacts.map(f => `・「${f}」`).join("\n")}\n\n`
+    : "";
+  return `${brainBaselineNote}${clearedFactsNote}返信文の中の「事実の主張」をすべて抽出し、それぞれについて「この事実はどこから来たのか」を
 下の情報源と照合してください。情報源に根拠がない事実は捏造（ハルシネーション）として必ず指摘してください。
 指摘には必ず本文からの引用（evidence）を付けること。引用できない指摘は出力しないこと。
 情報源と照合して問題がなければ issues を空配列にしてください。
@@ -600,10 +605,102 @@ export interface RevisionLoopResult {
 //           block減少なら修正版を revision_exhausted 付きで採用。改善なし/修正不能/再チェック
 //           未完走なら元ドラフト + check1 を revision_exhausted 付きで返す（強制置換はしない）。
 // 絶対にthrowしない（runFinalCheck / runGroundedRevision がともに fail-open のため）。
+
+// ─── FABRICATED_* 誤検知照合（Check1後・修正前）─────────────────────────────────
+// Check1でFABRICATED_*が出たとき、情報源と照合して「本当にハルシネーションか」を確認する。
+// 根拠ありと確認されたものをclearedFactsに入れ、Check2でその記述を再指摘しないようにする。
+// fail-open: 照合失敗時は元のissuesをそのまま返す（false positiveを許容する側）。
+const VERIFY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["results"],
+  properties: {
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["evidence", "has_basis"],
+        properties: {
+          evidence: { type: "string" },
+          has_basis: { type: "boolean" },
+        },
+      },
+    },
+  },
+};
+
+async function verifyFabricatedIssues(
+  issues: CheckIssue[],
+  ctx: FinalCheckContext,
+  timeoutMs: number
+): Promise<{ confirmed: CheckIssue[]; clearedFacts: string[] }> {
+  const targets = issues.filter(
+    (i) => i.pass === "anomaly_scan" && i.code.startsWith("FABRICATED_") && i.evidence
+  );
+  if (targets.length === 0) return { confirmed: issues, clearedFacts: [] };
+
+  const prompt = `以下の各記述について、情報源に根拠があるかどうかを確認してください。
+
+情報源:
+[CHECKPOINTS]
+${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+[/CHECKPOINTS]
+[CUSTOMER_CONDITIONS]
+${(ctx.customerConditionsDb || "なし").slice(0, 1000)}
+[/CUSTOMER_CONDITIONS]
+[HISTORY]
+${formatHistory(ctx.recentMessages, 10)}
+[/HISTORY]
+[SOURCE]
+${(ctx.staffSourceText || "なし").slice(0, 3000)}
+[/SOURCE]
+
+確認する記述（返信文中の表現）:
+${targets.map((i, idx) => `${idx + 1}. 「${i.evidence}」`).join("\n")}
+
+各記述について has_basis=true（情報源に根拠あり）/ false（根拠なし・捏造）を判定してください。`;
+
+  try {
+    const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-5",
+        max_tokens: 800,
+        temperature: 0,
+        output_config: { format: { type: "json_schema", schema: VERIFY_SCHEMA } },
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    if (!res.ok) throw new Error(`verify HTTP ${res.status}`);
+    const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+    const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
+    const parsed = JSON.parse(text) as { results?: Array<{ evidence: string; has_basis: boolean }> };
+    const results = parsed.results ?? [];
+
+    const clearedEvidences = new Set(
+      results.filter((r) => r.has_basis).map((r) => r.evidence)
+    );
+    const clearedFacts = targets
+      .filter((i) => clearedEvidences.has(i.evidence))
+      .map((i) => i.evidence);
+    const confirmed = issues.filter(
+      (i) => !(i.pass === "anomaly_scan" && i.code.startsWith("FABRICATED_") && clearedEvidences.has(i.evidence))
+    );
+    return { confirmed, clearedFacts };
+  } catch (e) {
+    console.warn("[final-check] verifyFabricatedIssues failed (fail-open):", e);
+    return { confirmed: issues, clearedFacts: [] };
+  }
+}
+
 export async function runFinalCheckWithRevision(
   draft: string,
   ctx: FinalCheckContext,
-  budgetMs = 32000,  // check1(≤8s) + Sonnet revision(≤15s) + recheck(≤8s) = 31s + 1sバッファ
+  budgetMs = 42000,  // check1(≤8s) + verify(≤8s) + revision(≤15s) + recheck(≤8s) = 39s + 3sバッファ
 ): Promise<RevisionLoopResult> {
   const started = Date.now();
   let checkIterations = 0;
@@ -613,6 +710,22 @@ export async function runFinalCheckWithRevision(
   checkIterations++;
   check1.revision_count = 0;
   if (check1.issues.length === 0) return { finalDraft: draft, finalCheck: check1 };
+
+  // ── FABRICATED_* 照合検証: 本当にハルシネーションかを確認し clearedFacts を構築 ──
+  const fabricatedIssues = check1.issues.filter(
+    (i) => i.pass === "anomaly_scan" && i.code.startsWith("FABRICATED_") && i.evidence
+  );
+  let ctxForRecheck = ctx;
+  if (fabricatedIssues.length > 0 && budgetMs - (Date.now() - started) > 8000) {
+    const { confirmed, clearedFacts } = await verifyFabricatedIssues(fabricatedIssues, ctx, 7000);
+    // issuesを「確認済みハルシネーション」のみに絞り込む
+    check1.issues = confirmed;
+    if (clearedFacts.length > 0) {
+      ctxForRecheck = { ...ctx, clearedFacts };
+      console.log("[final-check] clearedFacts:", clearedFacts);
+    }
+    if (check1.issues.length === 0) return { finalDraft: draft, finalCheck: check1 };
+  }
 
   const blocks1 = check1.issues.filter((i) => i.severity === "block");
 
@@ -650,7 +763,7 @@ export async function runFinalCheckWithRevision(
     }
 
     // (4) フル再チェック（check1 + recheck = 計2チェックで MAX_CHECK_ITERATIONS=2 と整合）
-    const recheck = await runFinalCheck(revised, ctx);
+    const recheck = await runFinalCheck(revised, ctxForRecheck);
     checkIterations++;
 
     // (5) 採用条件は3つのAND:
@@ -708,7 +821,7 @@ export async function runFinalCheckWithRevision(
     if (blocks.filter((b) => b.evidence).every((b) => revisedNorm.includes(normalizeForMatch(b.evidence)))) break;
 
     // ── チェック2回目: 修正版を再チェック（未検証の文章は絶対に出さない）──
-    const recheck = await runFinalCheck(revised, ctx);
+    const recheck = await runFinalCheck(revised, ctxForRecheck);
     checkIterations++;
     recheck.revised_text = revised;
 
