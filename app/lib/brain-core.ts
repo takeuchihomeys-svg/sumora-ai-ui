@@ -863,10 +863,16 @@ export async function analyzeConversation(
   ]);
 
   const { data: messages, error, count: totalMessageCount } = msgResult;
-  if (error || !messages || messages.length === 0) return null;
+  if (error || !messages || messages.length === 0) {
+    console.warn("[brain-core] analyzeConversation abort: msgs fetch failed or empty", conversationId, "error:", error?.message ?? "none");
+    return null;
+  }
   // H5(Fable5): 全メッセージが画像/添付のみ（テキスト0件）の場合は分析しない。
   // 「（画像/添付）×N」だけを読んだHaikuの当てずっぽう提案がキャッシュされるのを防ぐ
-  if (messages.every((m) => !m.text)) return null;
+  if (messages.every((m) => !m.text)) {
+    console.warn("[brain-core] analyzeConversation abort: all messages have no text", conversationId);
+    return null;
+  }
 
   // AIXアクションのメッセージ単位ラベル解決
   // 1) line_message_id 完全一致（P4以降のログ・直近30日で97%カバー）
@@ -1316,7 +1322,10 @@ ${history}`;
     // M2(Fable5): 最初の { 〜 最後の } を抽出（旧 non-greedy 正規表現は最初の } で切れる罠があった）
     const firstBrace = raw.indexOf("{");
     const lastBrace = raw.lastIndexOf("}");
-    if (firstBrace === -1 || lastBrace <= firstBrace) return null;
+    if (firstBrace === -1 || lastBrace <= firstBrace) {
+      console.warn("[brain-core] analyzeConversation abort: Claude returned no JSON", conversationId, "raw:", raw.slice(0, 300));
+      return null;
+    }
     const jsonMatch = [raw.slice(firstBrace, lastBrace + 1)];
 
     const parsed = JSON.parse(jsonMatch[0]) as {
