@@ -730,6 +730,30 @@
 
   var LINE_URL = 'https://lin.ee/v5CFQfL';
   var BANNER_ID = 'tiktok-line-banner';
+  var DEBUG_ID  = 'tiktok-debug-panel';
+
+  /* ── デバッグパネル ── */
+  var _debugEl = null;
+  function dlog(msg) {
+    try {
+      if (!_debugEl) {
+        _debugEl = document.createElement('div');
+        _debugEl.id = DEBUG_ID;
+        _debugEl.style.cssText = 'position:fixed;bottom:80px;left:0;right:0;max-height:220px;overflow-y:auto;background:rgba(0,0,0,0.88);color:#0f0;font-size:11px;font-family:monospace;padding:8px 10px;z-index:2147483646;line-height:1.6;word-break:break-all';
+        var title = document.createElement('div');
+        title.style.cssText = 'color:#ff0;font-weight:bold;margin-bottom:4px;border-bottom:1px solid #333;padding-bottom:4px';
+        title.textContent = '▼ DEBUG LOG（問題確認後に削除予定）';
+        _debugEl.appendChild(title);
+        (document.body || document.documentElement).appendChild(_debugEl);
+      }
+      var line = document.createElement('div');
+      var t = new Date();
+      var ts = ('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+':'+('0'+t.getSeconds()).slice(-2);
+      line.textContent = '['+ts+'] '+msg;
+      _debugEl.appendChild(line);
+      _debugEl.scrollTop = _debugEl.scrollHeight;
+    } catch(e) {}
+  }
 
   function isTikTokWebView() {
     try { return /BytedanceWebview|musical_ly|trill_/i.test(navigator.userAgent); } catch (e) { return false; }
@@ -830,24 +854,39 @@
         (function (link) {
           link.addEventListener('click', function (e) {
             try {
-              if (!isTikTokWebView()) return;
+              dlog('LINEボタンクリック href=' + link.href);
+              if (!isTikTokWebView()) {
+                dlog('→ TikTok非検知・通常遷移');
+                return;
+              }
               e.preventDefault();
               e.stopImmediatePropagation();
               if (isAndroid()) {
-                window.location.href = buildIntentUrl(LINE_URL);
+                var intentUrl = buildIntentUrl(LINE_URL);
+                dlog('→ Android intent試行: ' + intentUrl.slice(0, 80));
+                try {
+                  window.location.href = intentUrl;
+                  dlog('→ intent設定完了（LINEが起動するか確認）');
+                } catch (ie) {
+                  dlog('→ intent ERROR: ' + ie);
+                }
                 setTimeout(function () {
                   try {
                     var b = document.getElementById(BANNER_ID);
-                    if (b && b.style.display !== 'none') b.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    if (b && b.style.display !== 'none') {
+                      dlog('→ LINEが開かなかった→バナー表示');
+                      b.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
                   } catch (e2) {}
                 }, 1500);
               } else {
+                dlog('→ iOS/その他: バナーで外部ブラウザ案内');
                 try {
                   var b = document.getElementById(BANNER_ID);
                   if (b) { b.style.display = 'block'; window.scrollTo({ top: 0, behavior: 'smooth' }); }
                 } catch (e3) {}
               }
-            } catch (err) {}
+            } catch (err) { dlog('クリックERROR: ' + err); }
           }, true);
         })(links[i]);
       }
@@ -864,11 +903,19 @@
 
   function init() {
     try {
-      if (!isTikTokWebView()) return;
+      var ua = navigator.userAgent;
+      dlog('UA: ' + ua.slice(0, 120));
+      dlog('TikTok検知: ' + isTikTokWebView());
+      dlog('iOS: ' + isIOS() + ' / Android: ' + isAndroid());
+      dlog('LINE URL: ' + LINE_URL);
+      if (!isTikTokWebView()) {
+        dlog('→ TikTok非検知のためバナー非表示');
+        return;
+      }
       injectBanner();
       patchLineLinks();
       watchDynamicLinks();
-    } catch (e) {}
+    } catch (e) { dlog('init ERROR: ' + e); }
   }
 
   if (document.readyState === 'loading') {
