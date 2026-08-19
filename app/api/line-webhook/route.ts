@@ -407,10 +407,9 @@ async function handleTextMessage(
     try {
       const { data: conv } = await db
         .from("conversations")
-        .select("property_customer_id, status")
+        .select("status")
         .eq("id", convId)
         .maybeSingle();
-      const pcId = conv?.property_customer_id as string | null;
       const convStatus = (conv?.status as string) || "hearing";
 
       const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
@@ -418,16 +417,6 @@ async function handleTextMessage(
 
       // 申込以降ステータスはai_summary・ai_draft生成不要（bg-async/cronのSKIP_STATUSESと一致させること）
       if (BG_ASYNC_SKIP_STATUSES.includes(convStatus)) return;
-
-      // ai_summary 自動更新（fire-and-forget）- 申込以降は上でreturnしているため不要
-      if (pcId) {
-        await fetch(`${baseUrl}/api/customer-summary`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ customer_id: pcId, conversation_id: convId, fetch_from_db: true }),
-          signal: AbortSignal.timeout(3000),
-        }).catch(() => {});
-      }
 
       // 60秒デバウンス維持（cron fallback / バースト時の統合生成として機能し続ける）
       await db.from("conversations")
