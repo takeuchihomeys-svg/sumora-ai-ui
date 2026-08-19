@@ -890,21 +890,22 @@
                 // iOS: まずnavigator.share()を試みる → 失敗時はコピー誘導
                 dlog('→ iOS: navigator.share()試行');
                 if (typeof navigator.share === 'function') {
-                  try {
-                    navigator.share({
-                      title: 'IEYASをLINE友だち追加',
-                      text: 'IEYASをLINEで友だち追加してください！',
-                      url: LINE_URL,
-                    }).then(function () {
-                      dlog('→ share成功（シェアシート表示）');
-                    }).catch(function (err) {
-                      dlog('→ share失敗: ' + err.name + ' ' + err.message);
-                      if (err.name !== 'AbortError') showIOSFallback();
+                  // まずline://ディープリンクで試みる（直接友だち追加画面に飛ぶ可能性）
+                  var tryShare = function(url, title, text) {
+                    return navigator.share({ title: title, text: text, url: url });
+                  };
+                  dlog('→ iOS: line://ディープリンクでshare試行');
+                  tryShare('line://ti/p/@049jaapa', 'IEYASを友だち追加', '')
+                    .then(function() { dlog('→ line://share成功'); })
+                    .catch(function(e1) {
+                      dlog('→ line://share失敗: ' + e1.name + ' → https://line.meで再試行');
+                      tryShare('https://line.me/R/ti/p/@049jaapa', 'IEYASをLINE友だち追加', 'タップして友だち追加！')
+                        .then(function() { dlog('→ line.me share成功'); })
+                        .catch(function(e2) {
+                          dlog('→ line.me share失敗: ' + e2.name);
+                          if (e2.name !== 'AbortError') showIOSFallback();
+                        });
                     });
-                  } catch (e3) {
-                    dlog('→ share例外: ' + e3);
-                    showIOSFallback();
-                  }
                 } else {
                   dlog('→ navigator.share未定義 → フォールバック');
                   showIOSFallback();
