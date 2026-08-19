@@ -2005,6 +2005,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ─── post_apply / skip_status ガード（手動呼び出しのみ）───
+  // is_post_apply=true または BRAIN_SKIP_STATUSES のステータスの会話に対してスタッフが手動で
+  // AI生成を実行した場合、draft生成をスキップする。
+  // brainMetaDirect 経由（bg-async の brain直列実行後）はすでに bg-async 側でチェック済みのため
+  // externalBrainGate !== null の場合はスキップ不要。
+  const BRAIN_SKIP_STATUSES = ["applying","application","screening","contract","closed_won","closed_lost","lost","approved"];
+  if (conversationId && externalBrainGate === null && !isTemplateOptimize) {
+    const { data: convMeta } = await supabase
+      .from("conversations")
+      .select("is_post_apply, status")
+      .eq("id", conversationId)
+      .single();
+    if (convMeta && (convMeta.is_post_apply || BRAIN_SKIP_STATUSES.includes((convMeta.status as string) ?? ""))) {
+      console.log("[generate-reply] post_apply or skip_status → ドラフト生成スキップ:", {
+        conversationId,
+        is_post_apply: convMeta.is_post_apply,
+        status: convMeta.status,
+      });
+      return NextResponse.json({ skipped: true, reason: "post_apply_or_skip_status" });
+    }
+  }
+
   // ─── 顧客名の確定（LINE表示名を実名として使わない）────────────────────────
   // 優先順:
   //   ① 会話履歴でスタッフが実際に呼んでいた名前（extractPreferredName・呼び名として最も正確）

@@ -64,6 +64,7 @@ export async function GET(req: NextRequest) {
       // H3(Fable5): 30分バックオフ（未試行 or 前回試行から30分経過した行のみ）
       .or(`brain_analyzed_at.is.null,brain_analyzed_at.lt.${backoffCutoff}`)
       .lt("updated_at", cutoff)
+      .neq("ai_draft", "__SHOWN__")
       .order("updated_at", { ascending: false })
       .limit(MAX_SWEEP_PER_RUN);
 

@@ -1797,6 +1797,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const ok = await handleTextMessage(userId, "[スタンプ]", matchedAccount, lineMessageId);
       if (!ok) anyFailed = true;
       continue;
+    } else {
+      // 未対応msgType（video/audio/file等）: ブレイン誘導のみクリア（draft生成は不要）
+      const db = getDb();
+      const { data: conv } = await db
+        .from("conversations")
+        .select("id")
+        .eq("line_user_id", userId)
+        .eq("account", matchedAccount.key)
+        .maybeSingle();
+      if (conv?.id) {
+        await db.from("conversations")
+          .update({ suggested_aix_meta: null })
+          .eq("id", conv.id as string);
+      }
     }
     // video / audio / file は現状スキップ
   }

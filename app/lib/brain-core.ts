@@ -1902,7 +1902,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
     (conv.property_customer_id as string | null) ?? null,
     "brain",
     {
-      autoSendEnabled: (conv.auto_send_enabled as boolean | null) ?? false,
+      autoSendEnabled: conv.auto_send_enabled === false ? false : undefined,
       isHot: (conv.is_hot as boolean | null) ?? false,
       isFlagged: (conv.is_flagged as boolean | null) ?? false,
       prevPhase: typeof prevDir?.current_phase === "string" ? (prevDir.current_phase as string) : null,
