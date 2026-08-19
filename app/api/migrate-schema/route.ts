@@ -2059,6 +2059,14 @@ ON CONFLICT DO NOTHING;
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
+-- イエヤスLP ページビュートラッキング（2026-08-19追加）
+CREATE TABLE IF NOT EXISTS iyeyasu_page_views (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_iyeyasu_pv_created_at ON iyeyasu_page_views(created_at DESC);
+ALTER TABLE iyeyasu_page_views DISABLE ROW LEVEL SECURITY;
+
 `.trim();
 
 export const maxDuration = 300;
