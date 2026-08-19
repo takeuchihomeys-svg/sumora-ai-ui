@@ -1228,6 +1228,186 @@
     .bottom-bar a:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
     .ico   { width: 20px; height: 20px; flex-shrink: 0; }
     .ico-l { width: 26px; height: 26px; flex-shrink: 0; }
+
+    /* ===== fc-: TIKTOK STYLE HERO ===== */
+
+    /* 動画サムネ風QRカード（カード全体がリンク。長押しメニューを殺さない） */
+    .fc-video-card {
+      position: relative;
+      display: inline-block;
+      text-decoration: none;
+      color: inherit;
+      -webkit-touch-callout: default;
+      -webkit-user-select: auto;
+      user-select: auto;
+      cursor: pointer;
+    }
+    .fc-video-card:active { transform: scale(0.97); }
+
+    .fc-strong { color: var(--line); font-weight: 800; }
+
+    /* TikTok風LIVEバッジ */
+    .fc-live-badge {
+      position: absolute;
+      top: -10px;
+      right: -8px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: #fe2c55;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 3px 9px;
+      border-radius: var(--r-pill);
+      box-shadow: 0 3px 8px rgba(254,44,85,0.4);
+      z-index: 3;
+      pointer-events: none;
+    }
+    .fc-live-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #fff;
+      animation: fc-blink 1s steps(2, start) infinite;
+    }
+    @keyframes fc-blink { to { visibility: hidden; } }
+
+    /* 長押し指アイコン＋波紋リング */
+    .fc-press-icon {
+      position: absolute;
+      right: -14px;
+      bottom: 52px;
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 3;
+      pointer-events: none;
+    }
+    .fc-press-finger {
+      font-size: 28px;
+      line-height: 1;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.25));
+      animation: fc-press 1.4s ease-in-out infinite;
+    }
+    .fc-press-ring {
+      position: absolute;
+      inset: 2px;
+      border: 3px solid var(--line);
+      border-radius: 50%;
+      animation: fc-ring 1.4s ease-out infinite;
+    }
+    @keyframes fc-press {
+      0%, 100% { transform: translateY(0) scale(1); }
+      40%      { transform: translateY(3px) scale(0.92); }
+      60%      { transform: translateY(3px) scale(0.92); }
+    }
+    @keyframes fc-ring {
+      0%   { transform: scale(0.55); opacity: 1; }
+      70%  { transform: scale(1.35); opacity: 0; }
+      100% { transform: scale(1.35); opacity: 0; }
+    }
+
+    /* CTA: TikTokコメント風・黒バンド */
+    .fc-cta-dark {
+      background: #161823;
+      border-radius: var(--r-md);
+      padding: 16px 14px 16px;
+      max-width: 480px;
+      margin: 0 auto;
+      box-shadow: var(--card-shadow);
+    }
+    .fc-tt-comment {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      text-align: left;
+      margin-bottom: 14px;
+    }
+    .fc-tt-avatar {
+      width: 38px;
+      height: 38px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #25f4ee, #fe2c55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+    .fc-tt-body { flex: 1; min-width: 0; }
+    .fc-tt-name {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.55);
+      margin-bottom: 2px;
+    }
+    .fc-tt-text {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.5;
+      color: #fff;
+    }
+    .fc-tt-heart {
+      flex-shrink: 0;
+      font-size: 18px;
+      animation: fc-heart 1.2s ease-in-out infinite;
+    }
+    @keyframes fc-heart {
+      0%, 100% { transform: scale(1); }
+      30%      { transform: scale(1.25); }
+    }
+    .fc-cta-note {
+      margin: 10px 0 0;
+      font-size: 12px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.85);
+      text-align: center;
+    }
+
+    /* 脈動LINEボタン（CTA・フッター共用） */
+    .fc-pulse-btn {
+      animation: fc-pulse 1.6s ease-in-out infinite;
+      -webkit-touch-callout: default;
+      -webkit-user-select: auto;
+      user-select: auto;
+    }
+    @keyframes fc-pulse {
+      0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(6,199,85,0.45); }
+      50%      { transform: scale(1.04); box-shadow: 0 0 0 12px rgba(6,199,85,0); }
+    }
+
+    /* フッター用LINEボタン（footer-line-btn は本追加で新設） */
+    .footer-line-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: var(--line);
+      color: #fff;
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 900;
+      padding: 14px 20px;
+      border-radius: var(--r-pill);
+      max-width: 320px;
+      margin: 16px auto 6px;
+      text-align: center;
+      letter-spacing: .04em;
+    }
+
+    /* アクセシビリティ: 動きを減らす設定を尊重 */
+    @media (prefers-reduced-motion: reduce) {
+      .fc-pulse-btn,
+      .fc-press-finger,
+      .fc-press-ring,
+      .fc-live-dot,
+      .fc-tt-heart { animation: none; }
+    }
   </style>
 </head>
 <body>
@@ -1271,73 +1451,46 @@
     </div>
 
     <h1 class="h-title">
-      QRでかんたん友だち追加！<br>
+      長押し3秒で友だち追加！<br>
       <span class="accent">イエヤス</span>でお得に！
     </h1>
 
-    <!-- Screenshot flash banner -->
-    <div class="h-screenshot-banner" role="alert">
-      <span class="scr-emoji" aria-hidden="true">📸</span>
-      <span class="scr-main">スクショして！</span>
-      <span class="scr-sub">長押し（Android）/ サイドボタン（iPhone）で保存 → LINEで読む！</span>
-    </div>
-
-    <!-- Arrow hint pointing to QR below -->
-    <div class="screenshot-arrow-hint" aria-hidden="true">
-      <span class="arr-label">↓ このQRをスクショ！</span>
-      <span class="arr-icon">▼</span>
-    </div>
-
-    <!-- QR stage -->
+    <!-- QR stage : 動画サムネ風カード（カード全体がリンク＝長押しでiOSメニュー） -->
     <div class="qr-stage">
-      <div class="bubble b-left" role="note" aria-label="スクショして保存">
-        <span class="hi">📸</span>スクショして保存！
+      <div class="bubble b-left" role="note" aria-label="3秒でかんたん追加">
+        3秒で<br>かんたん♪
       </div>
 
-      <div class="qr-card screenshot-target">
+      <a href="https://lin.ee/v5CFQfL" class="qr-card fc-video-card" target="_blank" rel="noopener noreferrer"
+         aria-label="このカードを長押しして「リンクを開く」でLINE友だち追加">
         <div class="line-corner-badge">LINE</div>
+        <div class="fc-live-badge" aria-hidden="true"><span class="fc-live-dot"></span>今すぐ追加</div>
         <img
-          src="/iyeyasu-qr.png"
-          onerror="this.src='https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1'"
+          src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
+          onerror="this.src='/iyeyasu-qr.png'"
           alt="イエヤスLINE友だち追加QRコード"
           width="160" height="160"
           style="border-radius:6px;display:block;"
           loading="eager"
         >
-        <div class="qr-label">
-          <strong>スクショ</strong>してLINEで読む！
+        <div class="fc-press-icon" aria-hidden="true">
+          <span class="fc-press-ring"></span>
+          <span class="fc-press-finger">👆</span>
         </div>
-      </div>
+        <div class="qr-label">
+          スキャン or <strong class="fc-strong">QRをグーッと長押し</strong><br>
+          →「リンクを開く」で追加！
+        </div>
+      </a>
 
-      <div class="bubble b-right" role="note" aria-label="仲介手数料0円">
-        仲介手数料<br><span class="hi">0円！🎉</span>
-      </div>
-    </div>
-
-    <!-- 3-step screenshot guide -->
-    <div class="screenshot-steps" role="list" aria-label="スクショからLINE追加の手順">
-      <div class="ss-step" role="listitem">
-        <div class="ss-badge b1" aria-hidden="true">1</div>
-        <span class="ss-emoji" aria-hidden="true">📸</span>
-        <span class="ss-label">スクショ<br>保存</span>
-      </div>
-      <div class="ss-chevron" aria-hidden="true">›</div>
-      <div class="ss-step" role="listitem">
-        <div class="ss-badge b2" aria-hidden="true">2</div>
-        <span class="ss-emoji" aria-hidden="true">📱</span>
-        <span class="ss-label">LINE開く<br>QRリーダー</span>
-      </div>
-      <div class="ss-chevron" aria-hidden="true">›</div>
-      <div class="ss-step" role="listitem">
-        <div class="ss-badge b3" aria-hidden="true">3</div>
-        <span class="ss-emoji" aria-hidden="true">✅</span>
-        <span class="ss-label">アルバム選択<br>追加完了！</span>
+      <div class="bubble b-right" role="note" aria-label="0円で追加">
+        0円で<br><span class="hi">追加🎉</span>
       </div>
     </div>
 
     <div class="scan-hint" aria-hidden="true">
       <span class="scan-arrow">▼</span>
-      お得情報をLINEでゲット
+      スキャン or 長押し
       <span class="scan-arrow">▼</span>
     </div>
 
@@ -1350,16 +1503,28 @@
 
   <!-- CTA band -->
   <div class="h-cta-band">
-    <p>LINEで友だち追加して<br>初期費用を割引してもらう！</p>
-    <a href="https://lin.ee/v5CFQfL" class="h-line-btn" target="_blank" rel="noopener noreferrer"
-       aria-label="LINEで友だち追加して無料相談を始める">
-      <svg width="22" height="22" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <rect width="36" height="36" rx="8" fill="#06C755"/>
-        <path d="M30 16.7c0-5.4-5.4-9.7-12-9.7S6 11.3 6 16.7c0 4.8 4.3 8.9 10 9.6.4.1.9.3 1 .6.1.3.1.7 0 1l-.2 1c-.1.3-.3 1.3 1.1.7 1.4-.6 7.7-4.5 10.5-7.7 1.9-2.1 2.6-4.3 2.6-5.9z" fill="white"/>
-        <path d="M14.5 19.5h-2.3a.4.4 0 01-.4-.4v-4.2a.4.4 0 11.8 0v3.8h1.9a.4.4 0 010 .8zm1.7-.4a.4.4 0 11-.8 0v-4.2a.4.4 0 11.8 0v4.2zm5.8 0a.4.4 0 01-.4.4h-.4a.4.4 0 01-.3-.2l-2-2.7v2.5a.4.4 0 11-.8 0v-4.2a.4.4 0 01.4-.4h.4c.1 0 .3.1.3.2l2 2.7v-2.5a.4.4 0 11.8 0v4.2zm2.7-2.8h-1.9v1.1h1.9a.4.4 0 010 .8h-1.9v1.1h1.9a.4.4 0 010 .8h-2.3a.4.4 0 01-.4-.4v-4.2a.4.4 0 01.4-.4h2.3a.4.4 0 010 .8z" fill="#06C755"/>
-      </svg>
-      友だち追加する（無料）
-    </a>
+    <div class="fc-cta-dark">
+      <div class="fc-tt-comment" role="note">
+        <div class="fc-tt-avatar" aria-hidden="true">🏠</div>
+        <div class="fc-tt-body">
+          <span class="fc-tt-name">イエヤス公式</span>
+          <p class="fc-tt-text">長押し3秒でLINE追加🔥<br>初期費用そのまま割引します！</p>
+        </div>
+        <span class="fc-tt-heart" aria-hidden="true">❤️</span>
+      </div>
+
+      <a href="https://lin.ee/v5CFQfL" class="h-line-btn fc-pulse-btn" target="_blank" rel="noopener noreferrer"
+         aria-label="このボタンを長押しして「リンクを開く」でLINE友だち追加する">
+        <svg width="22" height="22" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="36" height="36" rx="8" fill="#06C755"/>
+          <path d="M30 16.7c0-5.4-5.4-9.7-12-9.7S6 11.3 6 16.7c0 4.8 4.3 8.9 10 9.6.4.1.9.3 1 .6.1.3.1.7 0 1l-.2 1c-.1.3-.3 1.3 1.1.7 1.4-.6 7.7-4.5 10.5-7.7 1.9-2.1 2.6-4.3 2.6-5.9z" fill="white"/>
+          <path d="M14.5 19.5h-2.3a.4.4 0 01-.4-.4v-4.2a.4.4 0 11.8 0v3.8h1.9a.4.4 0 010 .8zm1.7-.4a.4.4 0 11-.8 0v-4.2a.4.4 0 11.8 0v4.2zm5.8 0a.4.4 0 01-.4.4h-.4a.4.4 0 01-.3-.2l-2-2.7v2.5a.4.4 0 11-.8 0v-4.2a.4.4 0 01.4-.4h.4c.1 0 .3.1.3.2l2 2.7v-2.5a.4.4 0 11.8 0v4.2zm2.7-2.8h-1.9v1.1h1.9a.4.4 0 010 .8h-1.9v1.1h1.9a.4.4 0 010 .8h-2.3a.4.4 0 01-.4-.4v-4.2a.4.4 0 01.4-.4h2.3a.4.4 0 010 .8z" fill="#06C755"/>
+        </svg>
+        グッと押し続ける！
+      </a>
+
+      <p class="fc-cta-note">👆 押し続けると「リンクを開く」が出るよ！</p>
+    </div>
   </div>
 </section>
 
@@ -1680,6 +1845,8 @@
 <footer class="footer">
   <strong>株式会社ホームズ</strong>
   大阪府大阪市 | 宅地建物取引業<br>
+  <a href="https://lin.ee/v5CFQfL" class="footer-line-btn fc-pulse-btn" target="_blank" rel="noopener noreferrer"
+     aria-label="このボタンを長押しして「リンクを開く」でLINE友だち追加する">🔥 長押し3秒で追加！</a>
   <span style="display:inline-block;margin-top:6px">&copy; 2024 株式会社ホームズ All rights reserved.</span>
 </footer>
 
