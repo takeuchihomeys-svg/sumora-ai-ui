@@ -464,93 +464,596 @@
       box-shadow: 0 1px 0 var(--line-dk);
     }
 
-    /* Instagram section */
-    #instagram-section {
-      max-width: 480px;
-      margin: 0 auto;
-      background: #0b0b0b;
-      font-family: 'Hiragino Maru Gothic ProN','HGMaruGothicMPRO','Meiryo',sans-serif;
+    /* ─── Screenshot Guidance Styles ─── */
+
+    @keyframes flash-in {
+      0%   { transform: scale(0.88) translateY(-6px); opacity: 0; }
+      65%  { transform: scale(1.05) translateY(0);   opacity: 1; }
+      100% { transform: scale(1)    translateY(0);   opacity: 1; }
     }
-    .ig-stripe {
-      height: 4px;
-      background: linear-gradient(90deg, #833ab4 0%, #fd1d1d 52%, #fcb045 100%);
+    @keyframes blink-bg {
+      0%, 100% { background: var(--sun); }
+      50%       { background: #ffe566; }
     }
-    .ig-body { padding: 28px 24px 36px; text-align: center; }
-    .ig-logo-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 22px; }
-    .ig-wordmark {
-      font-size: 26px;
+    @keyframes bounce-cam {
+      0%, 100% { transform: scale(1)    rotate(-6deg); }
+      45%       { transform: scale(1.25) rotate(6deg); }
+    }
+    @keyframes arrow-down {
+      0%, 100% { transform: translateY(0); }
+      50%       { transform: translateY(6px); }
+    }
+
+    /* Flash banner */
+    .h-screenshot-banner {
+      position: relative;
+      z-index: 10;
+      background: var(--sun);
+      border: 3px solid #111;
+      border-radius: 16px;
+      margin: 0 0 10px;
+      padding: 12px 16px 10px;
+      text-align: center;
+      box-shadow: 4px 4px 0 #111;
+      animation: flash-in 0.5s cubic-bezier(.34,1.56,.64,1) both,
+                 blink-bg 2.6s ease-in-out 0.6s infinite;
+    }
+    .h-screenshot-banner .scr-emoji {
+      font-size: 42px;
+      display: block;
+      line-height: 1;
+      margin-bottom: 3px;
+      animation: bounce-cam 1.7s ease-in-out infinite;
+    }
+    .h-screenshot-banner .scr-main {
+      font-size: 30px;
       font-weight: 900;
-      font-style: italic;
-      letter-spacing: -.02em;
-      background: linear-gradient(45deg, #833ab4, #fd1d1d 52%, #fcb045);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: #111;
+      display: block;
+      letter-spacing: 0.07em;
+      line-height: 1.05;
+      margin-bottom: 4px;
+      -webkit-text-stroke: 0.5px #111;
     }
-    .ig-ring {
-      width: 76px;
-      height: 76px;
-      border-radius: 50%;
-      background: linear-gradient(45deg, #833ab4, #fd1d1d, #fcb045);
-      padding: 2.5px;
-      margin: 0 auto 14px;
+    .h-screenshot-banner .scr-sub {
+      font-size: 11px;
+      font-weight: 800;
+      color: #333;
+      letter-spacing: 0.02em;
+      line-height: 1.45;
     }
-    .ig-avatar {
-      width: 100%;
-      height: 100%;
-      border-radius: 50%;
-      background: #1c1c1c;
-      border: 2px solid #0b0b0b;
+
+    /* Arrow pointing down to QR */
+    .screenshot-arrow-hint {
+      position: relative;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1px;
+      margin-bottom: 4px;
+    }
+    .screenshot-arrow-hint .arr-label {
+      display: inline-block;
+      background: #111;
+      color: var(--sun);
+      font-size: 12px;
+      font-weight: 900;
+      padding: 4px 16px;
+      border-radius: 20px;
+      letter-spacing: 0.07em;
+      white-space: nowrap;
+      box-shadow: 2px 2px 0 rgba(0,0,0,0.25);
+    }
+    .screenshot-arrow-hint .arr-icon {
+      font-size: 22px;
+      color: #111;
+      line-height: 1;
+      margin-top: 1px;
+      animation: arrow-down 1.1s ease-in-out infinite;
+    }
+
+    /* QR card screenshot target highlight */
+    .qr-card.screenshot-target {
+      outline: 3px dashed var(--sun);
+      outline-offset: 5px;
+    }
+
+    /* 3-step screenshot guide bar */
+    .screenshot-steps {
+      position: relative;
+      z-index: 5;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 28px;
-    }
-    .ig-handle { color: #fff; font-size: 18px; font-weight: 900; letter-spacing: .03em; margin-bottom: 6px; }
-    .ig-caption { color: rgba(255,255,255,.58); font-size: 12px; font-weight: 700; line-height: 1.65; margin-bottom: 22px; }
-    .ig-grid {
-      display: grid;
-      grid-template-columns: repeat(3,1fr);
+      background: #111;
+      border-radius: 14px;
+      padding: 10px 8px 10px;
+      margin: 14px 0 0;
       gap: 2px;
-      border-radius: 8px;
+      border: 2px solid #222;
+    }
+    .ss-step {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 4px;
+    }
+    .ss-chevron {
+      color: rgba(255,255,255,0.3);
+      font-size: 20px;
+      font-weight: 900;
+      flex-shrink: 0;
+      line-height: 1;
+      padding: 0 2px;
+      margin-bottom: 4px;
+    }
+    .ss-badge {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 900;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .ss-badge.b1 { background: var(--sun);  color: #111; }
+    .ss-badge.b2 { background: #4ade80;     color: #111; }
+    .ss-badge.b3 { background: var(--line); color: #fff; }
+    .ss-emoji {
+      font-size: 26px;
+      display: block;
+      line-height: 1;
+    }
+    .ss-label {
+      font-size: 9.5px;
+      font-weight: 900;
+      color: #fff;
+      line-height: 1.35;
+      text-align: center;
+      letter-spacing: 0.01em;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .h-screenshot-banner { animation: none !important; background: var(--sun); }
+      .h-screenshot-banner .scr-emoji { animation: none !important; }
+      .screenshot-arrow-hint .arr-icon { animation: none !important; }
+    }
+
+    /* Instagram section */
+
+    @keyframes ig-swipe-nudge {
+      0%, 100% { transform: translateX(0); opacity: 0.9; }
+      40%, 60%  { transform: translateX(-11px); opacity: 0.3; }
+    }
+
+    @keyframes ig-shimmer {
+      from { transform: translateX(-100%) skewX(-18deg); }
+      to   { transform: translateX(380%) skewX(-18deg); }
+    }
+
+    @keyframes ig-heartbeat {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.28); }
+    }
+
+    @keyframes ig-ring {
+      to { transform: rotate(360deg); }
+    }
+
+    #instagram-section {
+      background: #0b0b0b;
+      padding: 36px 0 44px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      width: 100%;
+      max-width: 480px;
+      margin: 0 auto;
       overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      color-scheme: dark;
+    }
+
+    /* --- Header --- */
+    #instagram-section .ig-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 20px 18px;
+    }
+
+    #instagram-section .ig-avatar-ring {
+      width: 62px;
+      height: 62px;
+      border-radius: 50%;
+      padding: 3px;
+      background: conic-gradient(from 0deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888, #f09433);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: ig-ring 10s linear infinite;
+    }
+
+    #instagram-section .ig-avatar-inner {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: #1b6e2e;
+      border: 2.5px solid #0b0b0b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+    }
+
+    #instagram-section .ig-account-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    #instagram-section .ig-username {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.4px;
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+
+    #instagram-section .ig-fullname {
+      font-size: 11px;
+      color: #666;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #instagram-section .ig-follow-btn {
+      flex-shrink: 0;
+      background: linear-gradient(130deg, #1b6e2e, #06C755);
+      color: #fff;
+      border: none;
+      padding: 9px 20px;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: -0.2px;
+      box-shadow: 0 2px 14px rgba(6,199,85,0.28);
+    }
+
+    /* --- Stats --- */
+    #instagram-section .ig-stats {
+      display: flex;
+      justify-content: space-around;
+      padding: 14px 20px;
+      border-top: 1px solid #1c1c1c;
+      border-bottom: 1px solid #1c1c1c;
       margin-bottom: 24px;
     }
-    .ig-thumb { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 22px; }
-    .ig-thumb:nth-child(1){background:#16082a;}
-    .ig-thumb:nth-child(2){background:#1e1005;}
-    .ig-thumb:nth-child(3){background:#081a0b;}
-    .ig-thumb:nth-child(4){background:#1a1600;}
-    .ig-thumb:nth-child(5){background:#1c0808;}
-    .ig-thumb:nth-child(6){background:#06141a;}
-    .ig-cta {
-      display: inline-flex;
+
+    #instagram-section .ig-stat {
+      text-align: center;
+    }
+
+    #instagram-section .ig-stat-num {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.5px;
+      line-height: 1.1;
+    }
+
+    #instagram-section .ig-stat-label {
+      font-size: 10px;
+      color: #555;
+      margin-top: 3px;
+      letter-spacing: 0.3px;
+    }
+
+    /* --- Grid label --- */
+    #instagram-section .ig-grid-label {
+      padding: 0 20px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      color: #3a3a3a;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    #instagram-section .ig-grid-label::before,
+    #instagram-section .ig-grid-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #1c1c1c;
+    }
+
+    /* --- Slider --- */
+    #instagram-section .ig-slider-wrap {
+      position: relative;
+    }
+
+    #instagram-section .ig-slider {
+      display: flex;
+      gap: 11px;
+      padding: 4px 20px 22px;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    #instagram-section .ig-slider::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* Swipe hint */
+    #instagram-section .ig-swipe-hint {
+      position: absolute;
+      bottom: 28px;
+      right: 22px;
+      font-size: 20px;
+      pointer-events: none;
+      animation: ig-swipe-nudge 2.6s ease-in-out infinite;
+    }
+
+    /* --- Cards --- */
+    #instagram-section .ig-card {
+      flex-shrink: 0;
+      width: 158px;
+      border-radius: 13px;
+      overflow: hidden;
+      scroll-snap-align: start;
+      cursor: pointer;
+      background: #111;
+      transition: transform 0.16s ease;
+    }
+
+    #instagram-section .ig-card:active {
+      transform: scale(0.94);
+    }
+
+    /* 9:16 card image area */
+    #instagram-section .ig-card-img {
+      width: 158px;
+      height: 281px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Bottom vignette for legibility */
+    #instagram-section .ig-card-img::before {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 55%;
+      background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.44));
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Per-card gradients */
+    #instagram-section .ig-card:nth-child(1) .ig-card-img {
+      background: linear-gradient(150deg, #081e0e 0%, #1b6e2e 48%, #3aab4f 72%, #f5c842 100%);
+    }
+    #instagram-section .ig-card:nth-child(2) .ig-card-img {
+      background: linear-gradient(150deg, #180540 0%, #6b21a8 42%, #c026d3 68%, #ff6b35 100%);
+    }
+    #instagram-section .ig-card:nth-child(3) .ig-card-img {
+      background: linear-gradient(150deg, #4c0d00 0%, #ff6b35 52%, #f5c842 100%);
+    }
+    #instagram-section .ig-card:nth-child(4) .ig-card-img {
+      background: linear-gradient(150deg, #011a10 0%, #065f46 42%, #06C755 74%, #a3e635 100%);
+    }
+    #instagram-section .ig-card:nth-child(5) .ig-card-img {
+      background: linear-gradient(150deg, #15014a 0%, #4c1d95 38%, #9333ea 62%, #ec4899 85%, #ff6b35 100%);
+    }
+    #instagram-section .ig-card:nth-child(6) .ig-card-img {
+      background: linear-gradient(150deg, #0a1422 0%, #1e3a5f 42%, #1b6e2e 70%, #f5c842 100%);
+    }
+
+    /* Badge */
+    #instagram-section .ig-badge {
+      position: absolute;
+      top: 11px;
+      left: 11px;
+      background: rgba(0,0,0,0.52);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 3px 9px;
+      font-size: 8.5px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.9);
+      letter-spacing: 0.3px;
+      z-index: 3;
+    }
+
+    /* Card body */
+    #instagram-section .ig-card-body {
+      display: flex;
+      flex-direction: column;
       align-items: center;
       gap: 9px;
-      background: linear-gradient(100deg, #833ab4 0%, #fd1d1d 58%, #fcb045 100%);
-      color: #fff;
-      font-size: 14px;
-      font-weight: 900;
-      padding: 13px 30px;
-      border-radius: 50px;
-      text-decoration: none;
-      box-shadow: 3px 3px 0 rgba(0,0,0,.5);
-      letter-spacing: .05em;
-      margin-bottom: 20px;
+      z-index: 2;
+      padding: 0 11px;
     }
-    .ig-tags { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; }
-    .ig-tag {
-      background: rgba(255,255,255,.07);
-      color: rgba(255,255,255,.48);
-      font-size: 10px;
-      font-weight: 700;
-      padding: 4px 10px;
-      border-radius: 20px;
-      border: 1px solid rgba(255,255,255,.1);
+
+    #instagram-section .ig-card-emoji {
+      font-size: 40px;
+      filter: drop-shadow(0 3px 10px rgba(0,0,0,0.5));
+      line-height: 1;
+    }
+
+    #instagram-section .ig-card-copy {
+      font-size: 12.5px;
+      font-weight: 800;
+      color: #fff;
+      text-align: center;
+      line-height: 1.45;
+      text-shadow: 0 2px 12px rgba(0,0,0,0.55);
+      letter-spacing: -0.3px;
+    }
+
+    #instagram-section .ig-card-copy em {
+      font-style: normal;
+      color: #f5c842;
+    }
+
+    #instagram-section .ig-card-sub {
+      font-size: 9.5px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.68);
+      text-align: center;
+      text-shadow: 0 1px 6px rgba(0,0,0,0.5);
+      line-height: 1.3;
+    }
+
+    /* Location tag */
+    #instagram-section .ig-card-loc {
+      position: absolute;
+      bottom: 44px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: center;
+      z-index: 3;
+    }
+
+    #instagram-section .ig-card-loc span {
+      background: rgba(0,0,0,0.48);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      border-radius: 4px;
+      padding: 3px 8px;
+      font-size: 8.5px;
+      color: rgba(255,255,255,0.76);
+    }
+
+    /* Card bar */
+    #instagram-section .ig-card-bar {
+      padding: 9px 12px;
+      background: #111;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #instagram-section .ig-eng {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10.5px;
+      color: #888;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #instagram-section .ig-eng-heart {
+      font-size: 12px;
+      display: inline-block;
+      animation: ig-heartbeat 1.9s ease-in-out infinite;
+    }
+
+    #instagram-section .ig-eng-comment {
+      font-size: 12px;
+    }
+
+    /* --- Dots --- */
+    #instagram-section .ig-dots {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 0 0;
+    }
+
+    #instagram-section .ig-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #252525;
+      transition: width 0.28s ease, background 0.28s ease;
+      flex-shrink: 0;
+    }
+
+    #instagram-section .ig-dot.active {
+      width: 20px;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #833ab4, #fd1d1d, #fcb045);
+    }
+
+    /* --- CTA --- */
+    #instagram-section .ig-cta {
+      padding: 28px 20px 0;
+    }
+
+    #instagram-section .ig-cta-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      box-sizing: border-box;
+      background: linear-gradient(90deg, #833ab4 0%, #fd1d1d 46%, #fcb045 100%);
+      color: #fff;
+      text-decoration: none;
+      padding: 17px 20px;
+      border-radius: 14px;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: -0.4px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 6px 28px rgba(131,58,180,0.38);
+      transition: transform 0.14s ease, box-shadow 0.14s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #instagram-section .ig-cta-btn:active {
+      transform: scale(0.97);
+      box-shadow: 0 2px 12px rgba(131,58,180,0.28);
+    }
+
+    #instagram-section .ig-cta-btn::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 35%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.27), transparent);
+      animation: ig-shimmer 3s ease-in-out infinite;
+    }
+
+    #instagram-section .ig-cta-sub {
+      text-align: center;
+      font-size: 10.5px;
+      color: #3a3a3a;
+      margin-top: 11px;
+      letter-spacing: 0.15px;
     }
 
     @media (prefers-reduced-motion: reduce) {
       .h-sunburst, .h-star, .b-left, .b-right, .scan-arrow, .qr-card { animation: none !important; }
+      #instagram-section .ig-avatar-ring,
+      #instagram-section .ig-eng-heart,
+      #instagram-section .ig-cta-btn::after,
+      #instagram-section .ig-swipe-hint { animation: none !important; }
     }
 
     /* Final CTA (used below hero too) */
@@ -768,43 +1271,78 @@
     </div>
 
     <h1 class="h-title">
-      QRコードで友だち追加！<br>
+      QRでかんたん友だち追加！<br>
       <span class="accent">イエヤス</span>でお得に！
     </h1>
 
+    <!-- Screenshot flash banner -->
+    <div class="h-screenshot-banner" role="alert">
+      <span class="scr-emoji" aria-hidden="true">📸</span>
+      <span class="scr-main">スクショして！</span>
+      <span class="scr-sub">長押し（Android）/ サイドボタン（iPhone）で保存 → LINEで読む！</span>
+    </div>
+
+    <!-- Arrow hint pointing to QR below -->
+    <div class="screenshot-arrow-hint" aria-hidden="true">
+      <span class="arr-label">↓ このQRをスクショ！</span>
+      <span class="arr-icon">▼</span>
+    </div>
+
     <!-- QR stage -->
     <div class="qr-stage">
-      <div class="bubble b-left" role="note" aria-label="3秒でかんたん追加">
-        <span class="hi">3秒で</span>かんたん追加♪
+      <div class="bubble b-left" role="note" aria-label="スクショして保存">
+        <span class="hi">📸</span>スクショして保存！
       </div>
 
-      <div class="qr-card">
+      <div class="qr-card screenshot-target">
         <div class="line-corner-badge">LINE</div>
         <img
-          src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
+          src="/iyeyasu-qr.png"
+          onerror="this.src='https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1'"
           alt="イエヤスLINE友だち追加QRコード"
           width="160" height="160"
           style="border-radius:6px;display:block;"
           loading="eager"
         >
         <div class="qr-label">
-          <strong>LINEアプリ</strong>で読み取り<br>→ 友だち追加！
+          <strong>スクショ</strong>してLINEで読む！
         </div>
       </div>
 
-      <div class="bubble b-right" role="note" aria-label="仲介手数料割引">
-        仲介手数料<br><span class="hi">割引！🎉</span>
+      <div class="bubble b-right" role="note" aria-label="仲介手数料0円">
+        仲介手数料<br><span class="hi">0円！🎉</span>
+      </div>
+    </div>
+
+    <!-- 3-step screenshot guide -->
+    <div class="screenshot-steps" role="list" aria-label="スクショからLINE追加の手順">
+      <div class="ss-step" role="listitem">
+        <div class="ss-badge b1" aria-hidden="true">1</div>
+        <span class="ss-emoji" aria-hidden="true">📸</span>
+        <span class="ss-label">スクショ<br>保存</span>
+      </div>
+      <div class="ss-chevron" aria-hidden="true">›</div>
+      <div class="ss-step" role="listitem">
+        <div class="ss-badge b2" aria-hidden="true">2</div>
+        <span class="ss-emoji" aria-hidden="true">📱</span>
+        <span class="ss-label">LINE開く<br>QRリーダー</span>
+      </div>
+      <div class="ss-chevron" aria-hidden="true">›</div>
+      <div class="ss-step" role="listitem">
+        <div class="ss-badge b3" aria-hidden="true">3</div>
+        <span class="ss-emoji" aria-hidden="true">✅</span>
+        <span class="ss-label">アルバム選択<br>追加完了！</span>
       </div>
     </div>
 
     <div class="scan-hint" aria-hidden="true">
       <span class="scan-arrow">▼</span>
-      スキャンして友だち追加
+      お得情報をLINEでゲット
       <span class="scan-arrow">▼</span>
     </div>
 
     <div class="benefit-row" role="list" aria-label="イエヤスの特典">
-      <div class="chip" role="listitem">仲介手数料割引</div>
+      <div class="chip" role="listitem">仲介手数料0円</div>
       <div class="chip" role="listitem">敷金礼金0円多数</div>
       <div class="chip" role="listitem">LINEで全部完結</div>
     </div>
@@ -827,56 +1365,206 @@
 
 <!-- Instagram Section -->
 <section id="instagram-section">
-  <div class="ig-stripe"></div>
-  <div class="ig-body">
-    <div class="ig-logo-row">
-      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <defs>
-          <linearGradient id="ig-gr" x1="0" y1="1" x2="1" y2="0">
-            <stop offset="0%" stop-color="#fcb045"/>
-            <stop offset="50%" stop-color="#fd1d1d"/>
-            <stop offset="100%" stop-color="#833ab4"/>
-          </linearGradient>
-        </defs>
-        <rect x="2" y="2" width="20" height="20" rx="5.5" stroke="url(#ig-gr)" stroke-width="2" fill="none"/>
-        <circle cx="12" cy="12" r="5" stroke="url(#ig-gr)" stroke-width="2" fill="none"/>
-        <circle cx="17.5" cy="6.5" r="1.5" fill="url(#ig-gr)"/>
-      </svg>
-      <div class="ig-wordmark">Instagram</div>
+
+  <div class="ig-header">
+    <div class="ig-avatar-ring">
+      <div class="ig-avatar-inner">🏠</div>
     </div>
-
-    <div class="ig-ring">
-      <div class="ig-avatar">🏠</div>
+    <div class="ig-account-info">
+      <div class="ig-username">@ieyas_chintai</div>
+      <div class="ig-fullname">いえやす賃貸｜大阪の物件情報発信</div>
     </div>
+    <button class="ig-follow-btn">フォロー</button>
+  </div>
 
-    <p class="ig-handle">@iyeyasu_osaka</p>
-    <p class="ig-caption">最新物件情報・お役立ち情報を<br>毎日発信中！</p>
-
-    <div class="ig-grid" role="presentation" aria-hidden="true">
-      <div class="ig-thumb">🏠</div>
-      <div class="ig-thumb">🌃</div>
-      <div class="ig-thumb">🏢</div>
-      <div class="ig-thumb">✨</div>
-      <div class="ig-thumb">🔑</div>
-      <div class="ig-thumb">📱</div>
+  <div class="ig-stats">
+    <div class="ig-stat">
+      <div class="ig-stat-num">247</div>
+      <div class="ig-stat-label">投稿</div>
     </div>
-
-    <a href="https://www.instagram.com/iyeyasu_osaka/" class="ig-cta" target="_blank" rel="noopener noreferrer">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="2" y="2" width="20" height="20" rx="5.5" stroke="white" stroke-width="2.2" fill="none"/>
-        <circle cx="12" cy="12" r="5" stroke="white" stroke-width="2.2" fill="none"/>
-        <circle cx="17.5" cy="6.5" r="1.5" fill="white"/>
-      </svg>
-      フォローする
-    </a>
-
-    <div class="ig-tags" role="list" aria-label="ハッシュタグ">
-      <span class="ig-tag" role="listitem">#大阪賃貸</span>
-      <span class="ig-tag" role="listitem">#お部屋探し</span>
-      <span class="ig-tag" role="listitem">#仲介手数料割引</span>
-      <span class="ig-tag" role="listitem">#LINE相談</span>
+    <div class="ig-stat">
+      <div class="ig-stat-num">3,841</div>
+      <div class="ig-stat-label">フォロワー</div>
+    </div>
+    <div class="ig-stat">
+      <div class="ig-stat-num">512</div>
+      <div class="ig-stat-label">フォロー中</div>
     </div>
   </div>
+
+  <div class="ig-grid-label">投稿を表示</div>
+
+  <div class="ig-slider-wrap">
+    <div class="ig-slider" id="igSlider">
+
+      <div class="ig-card">
+        <div class="ig-card-img">
+          <div class="ig-badge">🆕 NEW</div>
+          <div class="ig-card-body">
+            <span class="ig-card-emoji">🏠</span>
+            <div class="ig-card-copy">築5年・<em>駅5分</em><br>1LDK｜即入居可</div>
+            <div class="ig-card-sub">管理費込み・大阪市内</div>
+          </div>
+          <div class="ig-card-loc"><span>📍 大阪市西区</span></div>
+        </div>
+        <div class="ig-card-bar">
+          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 1,247</div>
+          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 83</div>
+        </div>
+      </div>
+
+      <div class="ig-card">
+        <div class="ig-card-img">
+          <div class="ig-badge">💜 人気No.1</div>
+          <div class="ig-card-body">
+            <span class="ig-card-emoji">🔑</span>
+            <div class="ig-card-copy"><em>礼金0円</em>物件<br>初期費用を<br>グッと抑える</div>
+            <div class="ig-card-sub">仲介手数料0円あり</div>
+          </div>
+          <div class="ig-card-loc"><span>📍 大阪市浪速区</span></div>
+        </div>
+        <div class="ig-card-bar">
+          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 2,108</div>
+          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 134</div>
+        </div>
+      </div>
+
+      <div class="ig-card">
+        <div class="ig-card-img">
+          <div class="ig-badge">☀️ 南向き</div>
+          <div class="ig-card-body">
+            <span class="ig-card-emoji">✨</span>
+            <div class="ig-card-copy">南向き<em>角部屋</em><br>日当たり最高</div>
+            <div class="ig-card-sub">2LDK・収納充実</div>
+          </div>
+          <div class="ig-card-loc"><span>📍 大阪市天王寺区</span></div>
+        </div>
+        <div class="ig-card-bar">
+          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 987</div>
+          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 56</div>
+        </div>
+      </div>
+
+      <div class="ig-card">
+        <div class="ig-card-img">
+          <div class="ig-badge">🐾 残り1室</div>
+          <div class="ig-card-body">
+            <span class="ig-card-emoji">🐕</span>
+            <div class="ig-card-copy"><em>ペット可</em><br>大型犬もOK<br>2LDK梅田</div>
+            <div class="ig-card-sub">オートロック・駐車場付</div>
+          </div>
+          <div class="ig-card-loc"><span>📍 大阪市北区</span></div>
+        </div>
+        <div class="ig-card-bar">
+          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 3,421</div>
+          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 217</div>
+        </div>
+      </div>
+
+      <div class="ig-card">
+        <div class="ig-card-img">
+          <div class="ig-badge">🔥 限定情報</div>
+          <div class="ig-card-body">
+            <span class="ig-card-emoji">💰</span>
+            <div class="ig-card-copy"><em>家賃補助</em><br>対象物件あり<br>お得に住める</div>
+            <div class="ig-card-sub">最大3万円/月補助</div>
+          </div>
+          <div class="ig-card-loc"><span>📍 大阪市中央区</span></div>
+        </div>
+        <div class="ig-card-bar">
+          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 1,673</div>
+          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 98</div>
+        </div>
+      </div>
+
+      <div class="ig-card">
+        <div class="ig-card-img">
+          <div class="ig-badge">⭐ 新築</div>
+          <div class="ig-card-body">
+            <span class="ig-card-emoji">🏢</span>
+            <div class="ig-card-copy"><em>新築</em>1K<br>オートロック<br>セキュリティ◎</div>
+            <div class="ig-card-sub">築0年・駅徒歩3分</div>
+          </div>
+          <div class="ig-card-loc"><span>📍 大阪市住之江区</span></div>
+        </div>
+        <div class="ig-card-bar">
+          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 892</div>
+          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 45</div>
+        </div>
+      </div>
+
+    </div>
+    <div class="ig-swipe-hint">👈</div>
+  </div>
+
+  <div class="ig-dots" id="igDots">
+    <div class="ig-dot active"></div>
+    <div class="ig-dot"></div>
+    <div class="ig-dot"></div>
+    <div class="ig-dot"></div>
+    <div class="ig-dot"></div>
+    <div class="ig-dot"></div>
+  </div>
+
+  <div class="ig-cta">
+    <a href="https://www.instagram.com/ieyas_chintai/" target="_blank" rel="noopener" class="ig-cta-btn">
+      <span>📸 Instagramでもっと見る</span>
+      <span>→</span>
+    </a>
+    <div class="ig-cta-sub">@ieyas_chintai をフォローして最新物件をチェック</div>
+  </div>
+
+  <script>
+    (function () {
+      var slider = document.getElementById('igSlider');
+      var dots = document.querySelectorAll('#igDots .ig-dot');
+      if (!slider || !dots.length) return;
+
+      // IntersectionObserver でカード境界を精度よく検知
+      var cards = slider.querySelectorAll('.ig-card');
+      var activeIdx = 0;
+      function setDot(idx) {
+        if (idx === activeIdx) return;
+        activeIdx = idx;
+        for (var i = 0; i < dots.length; i++) {
+          dots[i].classList.toggle('active', i === activeIdx);
+        }
+      }
+      if ('IntersectionObserver' in window) {
+        var io = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+              var idx = Array.prototype.indexOf.call(cards, entry.target);
+              if (idx !== -1) setDot(idx);
+            }
+          });
+        }, { root: slider, threshold: 0.6 });
+        cards.forEach(function (card) { io.observe(card); });
+      } else {
+        // fallback: scroll イベント
+        var STEP = 158 + 11;
+        slider.addEventListener('scroll', function () {
+          var idx = Math.min(Math.round(slider.scrollLeft / STEP), dots.length - 1);
+          setDot(idx);
+        }, { passive: true });
+      }
+
+      // スワイプヒント: 初回ロードから2秒後に1回だけ発火、以降は非表示
+      var hint = slider.parentNode.querySelector('.ig-swipe-hint');
+      if (hint) {
+        var nudgeKey = 'ig_nudge_seen';
+        if (localStorage.getItem(nudgeKey)) {
+          hint.style.display = 'none';
+        } else {
+          setTimeout(function () {
+            hint.style.display = 'none';
+            try { localStorage.setItem(nudgeKey, '1'); } catch (e) {}
+          }, 4600); // nudge animation (2.6s) × 1.77 ≒ initial 2s wait + one full loop
+        }
+      }
+    }());
+  </script>
+
 </section>
 
 <!-- ABOUT -->
@@ -1044,26 +1732,7 @@
 
   /* ── デバッグパネル ── */
   var _debugEl = null;
-  function dlog(msg) {
-    try {
-      if (!_debugEl) {
-        _debugEl = document.createElement('div');
-        _debugEl.id = DEBUG_ID;
-        _debugEl.style.cssText = 'position:fixed;bottom:80px;left:0;right:0;max-height:220px;overflow-y:auto;background:rgba(0,0,0,0.88);color:#0f0;font-size:11px;font-family:monospace;padding:8px 10px;z-index:2147483646;line-height:1.6;word-break:break-all';
-        var title = document.createElement('div');
-        title.style.cssText = 'color:#ff0;font-weight:bold;margin-bottom:4px;border-bottom:1px solid #333;padding-bottom:4px';
-        title.textContent = '▼ DEBUG LOG（問題確認後に削除予定）';
-        _debugEl.appendChild(title);
-        (document.body || document.documentElement).appendChild(_debugEl);
-      }
-      var line = document.createElement('div');
-      var t = new Date();
-      var ts = ('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+':'+('0'+t.getSeconds()).slice(-2);
-      line.textContent = '['+ts+'] '+msg;
-      _debugEl.appendChild(line);
-      _debugEl.scrollTop = _debugEl.scrollHeight;
-    } catch(e) {}
-  }
+  function dlog(msg) { /* removed in production */ }
 
   function isTikTokWebView() {
     try { return /BytedanceWebview|musical_ly|trill_/i.test(navigator.userAgent); } catch (e) { return false; }
