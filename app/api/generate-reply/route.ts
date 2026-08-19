@@ -1014,27 +1014,41 @@ function buildGenerationMessages(
     return `【🎯 戦略参考情報（AIX-METAが未生成のため参考として使用）】\n${parts.join("\n")}\n⚠️ 上記はスタッフへの行動方針であり、物件の事実情報ではありません。「退去予定」「空き予定」「〜月末まで」等の具体的な期日・空室情報は、会話履歴やDBで確認された事実でない限りLINEメッセージ本文に断言・創作しないこと。\n`;
   })();
 
-  const prompt = `${propertyStatusNote}
-${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${NG_PHRASE_NOTE}${TEMPORARY_SITUATION_NOTE}${SEPARATE_APPOINTMENT_NOTE}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
+  // ── HumanMessage 2-block プロンプトキャッシュ（2026-08）──
+  // Block 1（静的ルール群・cache_control: ephemeral）: 顧客共通のルール・ゲート・パターン。
+  //   quickPatterns は挨拶状態で 3 バリアントあるが、1 通話中は同じバリアントを再送するためキャッシュが効く。
+  //   smoraRulesNote / realEstateNote は promptOverrides で上書き可能だが通常は定数。
+  // Block 2（動的・per-customer）: 顧客コンテキスト・会話履歴・お客様メッセージ・実例。
+  //   Block 1 のキャッシュを活かすため後ろに置く。
+  const staticBlock = [
+    quickPatterns,
+    smoraRulesNote,
+    realEstateNote,
+    curatedReplyRulesNote,
+    NG_PHRASE_NOTE,
+    TEMPORARY_SITUATION_NOTE,
+    SEPARATE_APPOINTMENT_NOTE,
+    estimateGateNote,
+    propertyFactGateNote,
+    QUOTE_REPLY_JUDGE_NOTE,
+    meetingPlaceGateNote,
+    aixOperationNote,
+  ].filter(Boolean).join("\n");
+
+  const dynamicBlock = `${propertyStatusNote}
+${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
-${quickPatterns}
-${smoraRulesNote}
-${realEstateNote}
-${replyContentNote}
-${curatedReplyRulesNote}
-${aixPropertyRecommendationNote}
-${aixPropertySendNote}
-${aixOperationNote}
+${replyContentNote}${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
 ${phrases}
 
-${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
+${quotedContextNote}
 【直近の会話履歴（スモラ自身の返信も含む）】この履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない。
 ${history || "なし"}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${viewingFactNote}${viewingIntentShortReplyNote}${estimateGateNote}${propertyFactGateNote}\n\n${meetingPlaceGateNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}
+${customerMessage}${applicationFormNote}${viewingFactNote}${viewingIntentShortReplyNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}
 
 ${examples}${examplesInstruction}
 
@@ -1056,7 +1070,11 @@ ${examples}${examplesInstruction}
     { type: "text" as const, text: priorityOrderNote + baseSystem, cache_control: { type: "ephemeral" as const } },
   ];
   if (dbRules) systemBlocks.push({ type: "text" as const, text: dbRules });
-  return [new SystemMessage({ content: systemBlocks }), new HumanMessage(prompt)];
+  const humanBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> = [
+    { type: "text" as const, text: staticBlock, cache_control: { type: "ephemeral" as const } },
+    { type: "text" as const, text: dynamicBlock },
+  ];
+  return [new SystemMessage({ content: systemBlocks }), new HumanMessage({ content: humanBlocks })];
 }
 
 const ALLOWED_STATES = new Set([

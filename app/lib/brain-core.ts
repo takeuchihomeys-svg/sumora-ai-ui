@@ -1192,8 +1192,13 @@ export async function analyzeConversation(
     .map((e) => `- [${outcomeOf(e)}] (${e.conversation_state ?? "不明"}段階) 「${(e.sent_reply ?? "").replace(/\n/g, " ").slice(0, 100)}」`)
     .join("\n");
 
-  const contractPatternsText = (contractKnowledge.length > 0 || contractExamples.length > 0)
-    ? `\n【成約・申込到達パターン（過去に契約/申込に至った会話から学習・参考）】${contractKnowledgeLines ? `\n■ 成功法則・転換点:\n${contractKnowledgeLines}` : ""}${contractExampleLines ? `\n■ 成約した会話の実際の返信例:\n${contractExampleLines}` : ""}\n※現在の会話がこれらのパターンに近い場合、closing_strategy と next_steps は成約パターンの流れに沿って提案すること。`
+  // 安定部分（成功法則のみ）→ キャッシュブロックに含める
+  const contractPatternsText = contractKnowledge.length > 0
+    ? `\n【成約・申込到達パターン（過去に契約/申込に至った会話から学習・参考）】${contractKnowledgeLines ? `\n■ 成功法則・転換点:\n${contractKnowledgeLines}` : ""}\n※現在の会話がこれらのパターンに近い場合、closing_strategy と next_steps は成約パターンの流れに沿って提案すること。`
+    : "";
+  // 会話フェーズ依存（convStatus でソート済み返信例）→ customerSpecificText に追加
+  const contractExamplesPhaseText = contractExamples.length > 0
+    ? `\n【成約した会話の実際の返信例（現フェーズ:${convStatus}優先）】\n${contractExampleLines}`
     : "";
 
   // 優先度2(抜け穴対策): applying_pattern（成約タイミング実績）— aix 選択の明示的判断材料
@@ -1295,7 +1300,7 @@ export async function analyzeConversation(
 
   // H4(Fable5): 会話に依存しない静的ブロック（能力マップ・線引きルール・恒久ルール等）を system に分離し
   // prompt caching（ephemeral）を適用。brain-sweep は5分毎バッチのため入力コストを約40-60%削減できる。
-  // ※ contractPatternsText は convStatus 依存の並べ替えがあるため user 側に残す
+  // ※ contractExamplesPhaseText / actionRulesText は convStatus 依存のため user 側（cache無し）に残す
   const systemText = `あなたはスモラAI。与えられた会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
 
 ${AIX_CAPABILITY_MAP}
@@ -1324,11 +1329,13 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
     return parts.join("\n") + "\n\n";
   })() : "";
 
-  // プロンプトキャッシュ2分割: 安定知識ブロック（成約/申込パターン・アクションルール・勝率パターン）を
+  // プロンプトキャッシュ2分割: 安定知識ブロック（成約法則・申込パターン・勝率パターン）を
   // user先頭に置き cache_control: ephemeral を付与 → incremental含む連続呼び出しでキャッシュリード。
-  // ragKnowledgeText / prevMetaText / 会話履歴等の顧客固有テキストは2ブロック目（cache無し）に置く
-  const stableKnowledgeText = `${contractPatternsText}${applyingPatternsText}${actionRulesText}${winningPatternsText}`;
-  const customerSpecificText = `${prevMetaText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+  // actionRulesText（convStatus でフィルタ済み）/ contractExamplesPhaseText（convStatus でソート済み）は
+  // フェーズ依存のため customerSpecificText（cache無し）側に移動。
+  // ragKnowledgeText / prevMetaText / 会話履歴等の顧客固有テキストも2ブロック目（cache無し）に置く
+  const stableKnowledgeText = `${contractPatternsText}${applyingPatternsText}${winningPatternsText}`;
+  const customerSpecificText = `${prevMetaText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
