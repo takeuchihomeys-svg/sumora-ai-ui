@@ -887,10 +887,28 @@
                   } catch (e2) {}
                 }, 1500);
               } else {
-                dlog('→ iOS: LINE Login へリダイレクト');
-                try {
-                  window.location.href = LINE_LOGIN_URL;
-                } catch (e3) { dlog('LINE Login ERROR: ' + e3); }
+                // iOS: まずnavigator.share()を試みる → 失敗時はコピー誘導
+                dlog('→ iOS: navigator.share()試行');
+                if (typeof navigator.share === 'function') {
+                  try {
+                    navigator.share({
+                      title: 'IEYASをLINE友だち追加',
+                      text: 'IEYASをLINEで友だち追加してください！',
+                      url: LINE_URL,
+                    }).then(function () {
+                      dlog('→ share成功（シェアシート表示）');
+                    }).catch(function (err) {
+                      dlog('→ share失敗: ' + err.name + ' ' + err.message);
+                      if (err.name !== 'AbortError') showIOSFallback();
+                    });
+                  } catch (e3) {
+                    dlog('→ share例外: ' + e3);
+                    showIOSFallback();
+                  }
+                } else {
+                  dlog('→ navigator.share未定義 → フォールバック');
+                  showIOSFallback();
+                }
               }
             } catch (err) { dlog('クリックERROR: ' + err); }
           }, true);
@@ -905,6 +923,49 @@
       var observer = new MutationObserver(function () { try { patchLineLinks(); } catch (e) {} });
       observer.observe(document.body, { childList: true, subtree: true });
     } catch (e) {}
+  }
+
+  function showIOSFallback() {
+    try {
+      var existing = document.getElementById('ios-fallback-modal');
+      if (existing) { existing.style.display = 'flex'; return; }
+      var modal = document.createElement('div');
+      modal.id = 'ios-fallback-modal';
+      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:2147483647;display:flex;align-items:flex-end;justify-content:center;font-family:-apple-system,sans-serif';
+      modal.innerHTML = [
+        '<div style="background:#fff;border-radius:20px 20px 0 0;padding:24px 20px 32px;width:100%;max-width:480px;box-sizing:border-box">',
+          '<div style="text-align:center;margin-bottom:16px">',
+            '<div style="width:40px;height:4px;background:#ddd;border-radius:2px;margin:0 auto 16px"></div>',
+            '<p style="font-weight:bold;font-size:16px;margin:0 0 4px">LINEを友だち追加する</p>',
+            '<p style="font-size:13px;color:#666;margin:0">以下の手順で追加できます</p>',
+          '</div>',
+          '<div style="background:#f5f5f5;border-radius:12px;padding:16px;margin-bottom:16px">',
+            '<p style="margin:0 0 10px;font-size:14px;font-weight:bold">① 右上の「 <span style="font-size:18px;font-weight:900">···</span> 」をタップ</p>',
+            '<p style="margin:0 0 10px;font-size:14px;font-weight:bold">② 「外部ブラウザで開く」をタップ</p>',
+            '<p style="margin:0;font-size:14px;font-weight:bold">③ 開いたページでLINEボタンを押す</p>',
+          '</div>',
+          '<p style="text-align:center;font-size:13px;color:#555;margin:0 0 12px">または、LINEリンクをコピーしてLINEアプリで検索</p>',
+          '<button id="ios-copy-btn" style="width:100%;background:#06C755;color:#fff;border:none;border-radius:12px;padding:16px;font-size:16px;font-weight:bold;cursor:pointer;margin-bottom:10px">LINEリンクをコピー</button>',
+          '<button id="ios-close-btn" style="width:100%;background:#eee;color:#333;border:none;border-radius:12px;padding:14px;font-size:15px;cursor:pointer">閉じる</button>',
+        '</div>'
+      ].join('');
+      document.body.appendChild(modal);
+      var copyBtn = document.getElementById('ios-copy-btn');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', function () {
+          copyToClipboard(LINE_URL, copyBtn);
+        });
+      }
+      var closeBtn = document.getElementById('ios-close-btn');
+      if (closeBtn) {
+        closeBtn.addEventListener('click', function () {
+          modal.style.display = 'none';
+        });
+      }
+      modal.addEventListener('click', function (e) {
+        if (e.target === modal) modal.style.display = 'none';
+      });
+    } catch (e) { dlog('showIOSFallback ERROR: ' + e); }
   }
 
   function showLoginSuccess() {
