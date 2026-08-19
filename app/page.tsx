@@ -1635,9 +1635,14 @@ export default function Home() {
           // ai_draft が payload に含まれていればローカルStateを即時更新（バナー遅延ゼロに）
           if (upd?.id && upd.ai_draft !== undefined) {
             setConversations((prev) =>
-              prev.map((c) =>
-                c.id === String(upd.id) ? { ...c, aiDraft: stripInternalTagsOrNull(upd.ai_draft), suggestedAixMeta: upd.suggested_aix_meta ?? null } : c
-              )
+              prev.map((c) => {
+                if (c.id !== String(upd.id)) return c;
+                const newAiDraft = stripInternalTagsOrNull(upd.ai_draft);
+                // "__SHOWN__" = スタッフが既に返信案を読み込み済み。
+                // brain-sweepがその後にsuggestedAixMetaを書き込んでもUIに反映しない（返信+AIX誘導同時表示バグ防止）
+                if (upd.ai_draft === "__SHOWN__") return { ...c, aiDraft: newAiDraft };
+                return { ...c, aiDraft: newAiDraft, suggestedAixMeta: upd.suggested_aix_meta ?? null };
+              })
             );
             // async プリ生成完了 → preGenInProgress をクリア（sentinelは実下書きではないため除外）
             if (upd.ai_draft && upd.ai_draft !== '[AIX誘導中]' && upd.ai_draft !== '__SHOWN__') preGenInProgress.current.delete(String(upd.id));
