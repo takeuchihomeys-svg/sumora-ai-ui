@@ -194,7 +194,7 @@
       align-items: center;
       justify-content: center;
       gap: 6px;
-      padding: 56px 12px 104px;
+      padding: 76px 12px 132px;
       clip-path: polygon(0 0, 100% 0, 100% 66%, 0 100%);
     }
     .tt-icon { flex-shrink: 0; display: flex; align-items: center; }
@@ -318,7 +318,7 @@
       font-size: 20px;
       font-weight: 900;
       color: #fff;
-      margin: 0 0 12px;
+      margin: 0;
       letter-spacing: .02em;
       text-shadow: 0 2px 4px rgba(0,0,0,.2);
     }
@@ -363,6 +363,139 @@
     }
     @media (prefers-reduced-motion: reduce) {
       .cta-line-arrow { animation: none !important; }
+    }
+
+    /* ===== MERIT : 3つの強み（hero内・イエヤスでもっとお得に） ===== */
+    .merit-zone {
+      position: relative;
+      z-index: 5;
+      padding: 34px 20px 44px;
+    }
+    .merit-head { text-align: center; margin-bottom: 22px; }
+    .merit-eyebrow {
+      display: block;
+      font-size: 13px;
+      font-weight: 900;
+      color: #B24700;
+      letter-spacing: .14em;
+      margin-bottom: 6px;
+    }
+    .merit-title {
+      font-size: 26px;
+      font-weight: 900;
+      color: #111;
+      line-height: 1.3;
+      -webkit-text-stroke: .3px #111;
+      text-shadow: 2px 2px 0 rgba(255,255,255,.85);
+    }
+    .merit-title em { font-style: normal; color: #E8380D; }
+    .merit-social {
+      display: inline-block;
+      margin-top: 10px;
+      background: #fff;
+      border: 2px solid #111;
+      border-radius: 999px;
+      padding: 5px 14px;
+      font-size: 11.5px;
+      font-weight: 900;
+      color: #111;
+      box-shadow: 3px 3px 0 #111;
+      transform: rotate(-0.6deg);
+    }
+    .merit-social em { font-style: normal; color: #E8380D; }
+
+    .merit-cards { display: flex; flex-direction: column; gap: 18px; }
+    .merit-card {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: #fff;
+      border: 3px solid #111;
+      border-radius: 18px;
+      padding: 20px 16px 16px;
+      box-shadow: 5px 5px 0 #111;
+    }
+    .merit-num {
+      position: absolute;
+      top: -12px;
+      left: -6px;
+      background: #111;
+      color: var(--sun);
+      font-size: 11px;
+      font-weight: 900;
+      padding: 4px 10px;
+      border-radius: 6px;
+      letter-spacing: .08em;
+      transform: rotate(-3deg);
+      box-shadow: 2px 2px 0 var(--sun);
+      white-space: nowrap;
+    }
+    .merit-icon {
+      flex-shrink: 0;
+      width: 58px;
+      height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 30px;
+      border-radius: 16px;
+      border: 2.5px solid #111;
+    }
+    .merit-icon.m1 { background: #FFE3CC; }
+    .merit-icon.m2 { background: #FFF3B8; }
+    .merit-icon.m3 { background: #D6F7E3; }
+    .merit-zero {
+      font-size: 19px;
+      font-weight: 900;
+      color: #B24700;
+      letter-spacing: -.02em;
+      -webkit-text-stroke: .4px #B24700;
+    }
+    .merit-body { flex: 1; min-width: 0; }
+    .merit-claim {
+      display: inline-block;
+      font-size: 10.5px;
+      font-weight: 900;
+      color: #fff;
+      padding: 2px 9px;
+      border-radius: 4px;
+      letter-spacing: .06em;
+      margin-bottom: 5px;
+      transform: rotate(-1deg);
+    }
+    .merit-claim.c1 { background: var(--tangerine); }
+    .merit-claim.c2 { background: #111; color: var(--sun); }
+    .merit-claim.c3 { background: var(--line); }
+    .merit-h {
+      font-size: 18px;
+      font-weight: 900;
+      color: #111;
+      line-height: 1.35;
+    }
+    .merit-h em { font-style: normal; color: #E8380D; }
+    .merit-sub {
+      margin-top: 5px;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #555;
+      line-height: 1.6;
+    }
+    .merit-more {
+      margin-top: 22px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 900;
+      color: #7A5200;
+      letter-spacing: .1em;
+      animation: merit-bounce 1.6s ease-in-out infinite;
+    }
+    @keyframes merit-bounce {
+      0%, 100% { transform: translateY(0); }
+      50%      { transform: translateY(4px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .merit-more { animation: none !important; }
     }
 
     /* QR stage */
@@ -1688,6 +1821,49 @@
   <!-- CTA band : LINE今すぐお部屋探す -->
   <div class="h-cta-band">
     <p class="cta-line-heading">LINEから今すぐお部屋探す！！</p>
+  </div>
+
+  <!-- MERIT : イエヤスでもっとお得に（3つの強み） -->
+  <div class="merit-zone" aria-label="イエヤスの3つの強み">
+    <div class="merit-head r">
+      <span class="merit-eyebrow">＼ まだあるで！ ／</span>
+      <h2 class="merit-title">イエヤスで<em>もっとお得</em>に！</h2>
+      <p class="merit-social">⭐⭐⭐⭐⭐ <em>TikTokで話題</em>の部屋探し</p>
+    </div>
+
+    <div class="merit-cards">
+      <article class="merit-card r d1">
+        <span class="merit-num">メリット 01</span>
+        <div class="merit-icon m1" aria-hidden="true">💸</div>
+        <div class="merit-body">
+          <span class="merit-claim c1">損してない？</span>
+          <h3 class="merit-h">初期費用<em>最大限割引</em>！</h3>
+          <p class="merit-sub">SUUMO等で見つけた気になる部屋、送るだけでカンタン割引！</p>
+        </div>
+      </article>
+
+      <article class="merit-card r d2">
+        <span class="merit-num">メリット 02</span>
+        <div class="merit-icon m2" aria-hidden="true"><span class="merit-zero">0円</span></div>
+        <div class="merit-body">
+          <span class="merit-claim c2">24時間対応</span>
+          <h3 class="merit-h">仲介手数料<em>0円</em>！</h3>
+          <p class="merit-sub">深夜でもOK！思い立った瞬間にいつでも相談できるで</p>
+        </div>
+      </article>
+
+      <article class="merit-card r d3">
+        <span class="merit-num">メリット 03</span>
+        <div class="merit-icon m3" aria-hidden="true">💬</div>
+        <div class="merit-body">
+          <span class="merit-claim c3">来店不要</span>
+          <h3 class="merit-h">LINEで<em>ぜんぶ完結</em>！</h3>
+          <p class="merit-sub">ご満足いただくまで全力サポート！安心してまかせてな</p>
+        </div>
+      </article>
+    </div>
+
+    <div class="merit-more r d3" aria-hidden="true">▼ もっと見る ▼</div>
   </div>
 </section>
 
