@@ -487,12 +487,13 @@ async function callClaude(system: string, user: string, action: string): Promise
         "Content-Type": "application/json",
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": "prompt-caching-2024-07-31",
       },
       body: JSON.stringify({
         model: MODEL,
         max_tokens: maxTokensForAction(action),
         thinking: { type: "disabled" },
-        system,
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: user }],
       }),
       signal: budgetSignal(timeoutMs),
@@ -544,6 +545,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
       "Content-Type": "application/json",
       "x-api-key": ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
+      "anthropic-beta": "prompt-caching-2024-07-31",
     },
     body: JSON.stringify({
       model: MODEL,
@@ -552,7 +554,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
       // max_tokens:2000でthinkingトークンが全消費されると text ブロックが空になりサイレント失敗する。
       // property_recommendationはthinking不要かつmax_tokensが低いため明示的に無効化する。
       thinking: { type: "disabled" },
-      system,
+      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content }],
     }),
     // Sonnet5は画像+長文システムプロンプトで45秒を超えることがある → 60秒に延長
