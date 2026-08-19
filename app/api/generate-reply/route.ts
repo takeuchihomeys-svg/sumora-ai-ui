@@ -1045,7 +1045,18 @@ ${examples}${examplesInstruction}
   // 戦略の優先規定（AIX-META一元化）: 指示が競合した場合の解決順を最上位で1行宣言する
   const priorityOrderNote = "【指示の優先順位（競合時はこの順で解決すること）】ハードゲート（内覧日時・見積・物件事実制約）> AIX-META戦略 > フェーズ別パターン > ai_summary参考情報\n\n";
   const baseSystem = promptOverrides?.generationSystem ?? GENERATION_SYSTEM;
-  return [new SystemMessage(priorityOrderNote + (dbRules ? baseSystem + dbRules : baseSystem)), new HumanMessage(prompt)];
+  // ── プロンプトキャッシュ（2026-08）──
+  // 全顧客共通の priorityOrderNote + GENERATION_SYSTEM（約8,900字 ≒ 5,000+トークン）を
+  // cache_control 付きの先頭ブロックにする（claude-sonnet-5 の最小キャッシュ 1024 トークンを大幅超過）。
+  // dbRules は conversation_state × is_first_reply 単位で変化するため後続ブロック（cache_control なし）に分離。
+  // 最終チェック指摘後のリトライ再生成（retryMessages = [...messages, ...]）は同一プレフィックスを
+  // 再送するため、この cache_control がそのまま伝搬してキャッシュリード（約0.1x価格）になる。
+  // 検証は response usage の cache_read_input_tokens で行う。
+  const systemBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> = [
+    { type: "text" as const, text: priorityOrderNote + baseSystem, cache_control: { type: "ephemeral" as const } },
+  ];
+  if (dbRules) systemBlocks.push({ type: "text" as const, text: dbRules });
+  return [new SystemMessage({ content: systemBlocks }), new HumanMessage(prompt)];
 }
 
 const ALLOWED_STATES = new Set([

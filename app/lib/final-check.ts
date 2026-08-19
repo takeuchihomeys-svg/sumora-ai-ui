@@ -101,8 +101,16 @@ const ISSUE_SCHEMA = {
 
 type RawIssue = { code?: string; message?: string; evidence?: string; suggestion?: string };
 
+// ─── プロンプトキャッシュ用コンテンツブロック（2026-08）─────────────────────────
+// Anthropicのプレフィックスキャッシュは「安定部が先頭・動的部が後ろ」の順序が必須。
+// 各パスの安定ブロック（チェック基準・code一覧・出力例・DBルール = 全顧客共通）の末尾に
+// cache_control を1個置き、動的ブロック（brain判定・draft・会話コンテキスト）を後続に配置する。
+// 検証は response usage の cache_read_input_tokens で行う。
+type PromptBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
+type PromptContent = string | PromptBlock[];
+
 // ─── Sonnet呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
-async function callHaiku(prompt: string, timeoutMs: number, maxTokens = 2400): Promise<RawIssue[]> {
+async function callHaiku(prompt: PromptContent, timeoutMs: number, maxTokens = 2400): Promise<RawIssue[]> {
   const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -167,7 +175,10 @@ function nowJstString(): string {
 }
 
 // ─── Pass 1: 前頭前野（ルール照合 / rule_check）────────────────────────────────
-function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): string {
+// プロンプトキャッシュ: 安定部（チェック基準・code一覧・[RULES]・出力例 = 全顧客共通、
+// dbRules/finalCheckRules は DB 編集時のみ変化）を先頭ブロック + cache_control、
+// 動的部（brain判定・aixNote・draft）を後続ブロックに分離。
+function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
   // FP-02: AIX非使用時は AIX_BOUNDARY_* コードを除外する旨を注記
   const aixNote = ctx.isAix === false
     ? "\n【重要】この会話ではAIX機能は使用されていません。AIX_BOUNDARY_* コード（AIX_BOUNDARY_VIEWING, AIX_BOUNDARY_PROMISE 等）は一切発行しないでください。\n"
@@ -185,7 +196,7 @@ function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): string {
   const brainBaselineNote = ctx.brainMeta?.action
     ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。\n\n`
     : "";
-  return `${brainBaselineNote}${ADVERSARIAL_PREAMBLE}${aixNote}
+  const stable = `${ADVERSARIAL_PREAMBLE}
 
 以下はこの会社の絶対ルール一覧です。返信文が各ルールに違反していないか、1つずつ照合してください。
 特に「通常返信AIは宣言のみ、実行はAIX」の境界線：
@@ -210,10 +221,6 @@ BANNED_WORD（禁止語彙）/ RULE_VIOLATION（その他ルール違反）
 ${dbRulesSliced}
 [/RULES]
 ${finalCheckRulesSliced ? `[FINAL_CHECK_RULES]\n${finalCheckRulesSliced}\n[/FINAL_CHECK_RULES]` : ""}
-[REPLY]
-${draft}
-[/REPLY]
-
 【出力例1 - 問題なし】
 ご連絡ありがとうございます。新着物件が出ましたらすぐにお送りいたします。引き続きよろしくお願いいたします。
 → issues: []
@@ -225,17 +232,27 @@ ${draft}
 【出力例3 - 問題なし（管理会社確認の正当な返答）】
 空室状況について管理会社に確認してご連絡いたします。
 → issues: []`;
+  const dynamic = `${brainBaselineNote}${aixNote}
+[REPLY]
+${draft}
+[/REPLY]`;
+  return [
+    { type: "text" as const, text: stable, cache_control: { type: "ephemeral" as const } },
+    { type: "text" as const, text: dynamic },
+  ];
 }
 
 // ─── Pass 2: 前帯状回（異常検知 / anomaly_scan）────────────────────────────────
-function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): string {
+// プロンプトキャッシュ: 安定部（検査指示・情報源優先順位・code一覧・finalCheckRules・出力例）を
+// 先頭ブロック + cache_control、動的部（brain判定・clearedFacts・情報源・draft）を後続に分離。
+function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
   const brainBaselineNote = ctx.brainMeta?.action
     ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。\n\n`
     : "";
   const clearedFactsNote = ctx.clearedFacts?.length
     ? `【照合済み確認済み】以下の記述はすでに情報源との照合で根拠ありと確認されています。ハルシネーションとして指摘しないこと：\n${ctx.clearedFacts.map(f => `・「${f}」`).join("\n")}\n\n`
     : "";
-  return `${brainBaselineNote}${clearedFactsNote}返信文の中の「事実の主張」をすべて抽出し、それぞれについて「この事実はどこから来たのか」を
+  const stable = `返信文の中の「事実の主張」をすべて抽出し、それぞれについて「この事実はどこから来たのか」を
 下の情報源と照合してください。情報源に根拠がない事実は捏造（ハルシネーション）として必ず指摘してください。
 指摘には必ず本文からの引用（evidence）を付けること。引用できない指摘は出力しないこと。
 情報源と照合して問題がなければ issues を空配列にしてください。
@@ -267,24 +284,7 @@ code は次から選ぶこと:
 FABRICATED_AMOUNT（金額の捏造）/ FABRICATED_AVAILABILITY（空室確認結果の捏造）/
 FABRICATED_PROPERTY（物件名・号室・駅名の捏造/写し間違い）/ FABRICATED_DATE（日付・曜日・時刻の捏造）/
 FABRICATED_NAME（名前の誤り）/ FABRICATED_POLICY（会社制度の誤説明）
-
-[CHECKPOINTS]
-${(ctx.checkpointFacts || "なし").slice(0, 2000)}
-[/CHECKPOINTS]
-[CUSTOMER_CONDITIONS]
-${(ctx.customerConditionsDb || "なし").slice(0, 1000)}
-[/CUSTOMER_CONDITIONS]
-[HISTORY]
-${formatHistory(ctx.recentMessages, 10)}
-[/HISTORY]
-[SOURCE]
-${(ctx.staffSourceText || "なし").slice(0, 3000)}
-[/SOURCE]
-${ctx.finalCheckRules ? `[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]` : ""}
-[REPLY]
-${draft}
-[/REPLY]
-
+${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]\n` : ""}
 【出力例1 - 問題なし】
 ご希望の1LDKで家賃7万円以内の物件をお探ししております。
 → issues: []
@@ -296,17 +296,40 @@ ${draft}
 【出力例3 - 問題なし（CHECKPOINTSと一致）】
 （CHECKPOINTSに「初期費用20万円以内」と記録されており、返信文に「初期費用は20万円以内でお探しできます」と書かれている場合）
 → issues: []`;
+  const dynamic = `${brainBaselineNote}${clearedFactsNote}[CHECKPOINTS]
+${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+[/CHECKPOINTS]
+[CUSTOMER_CONDITIONS]
+${(ctx.customerConditionsDb || "なし").slice(0, 1000)}
+[/CUSTOMER_CONDITIONS]
+[HISTORY]
+${formatHistory(ctx.recentMessages, 10)}
+[/HISTORY]
+[SOURCE]
+${(ctx.staffSourceText || "なし").slice(0, 3000)}
+[/SOURCE]
+[REPLY]
+${draft}
+[/REPLY]`;
+  return [
+    { type: "text" as const, text: stable, cache_control: { type: "ephemeral" as const } },
+    { type: "text" as const, text: dynamic },
+  ];
 }
 
 // ─── Pass 3: バグ探し思考（文脈・網羅性 / context_check）──────────────────────
-function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): string {
+// プロンプトキャッシュ: 安定部（検査項目・code一覧・finalCheckRules・出力例）を先頭ブロック +
+// cache_control、動的部（brain判定・現在時刻・STAGE・顧客メッセージ・draft）を後続に分離。
+// 旧実装は nowJstString()（毎分変化）が検査項目4の中に埋め込まれておりプレフィックスを
+// 毎分無効化していたため、【現在時刻】ブロックとして動的部へ移動した（検査内容は同一）。
+function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
   const stageBlock = ctx.conversationStage
-    ? `[STAGE]\n現在段階: ${ctx.conversationStage}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${ctx.sentPropertiesCount}件` : ""}\n[/STAGE]`
+    ? `[STAGE]\n現在段階: ${ctx.conversationStage}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${ctx.sentPropertiesCount}件` : ""}\n[/STAGE]\n`
     : "";
   const brainBaselineNote = ctx.brainMeta?.action
     ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。このアクションと矛盾しない返信内容であればSTAGE_SKIPは発行しないこと。\n\n`
     : "";
-  return `${brainBaselineNote}${ADVERSARIAL_PREAMBLE}
+  const stable = `${ADVERSARIAL_PREAMBLE}
 
 顧客の最新メッセージと返信文を突き合わせ、以下を検査してください。
 1. 質問の取りこぼし：顧客の質問を全て列挙し、返信が各質問に具体的に答えているか。
@@ -316,7 +339,7 @@ function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): string 
    キャンセル意思への物件提案 / 既にDBにある条件の聞き返し / 既出物件の再提案
 3. 二重宣言：直近のスタッフ送信と同じ約束・お礼・挨拶・説明の繰り返し
    （「ピックアップしてお送りします」の再宣言、同日2回目の挨拶、お礼の二重等）
-4. 時刻の妥当性：現在 ${nowJstString()} 。18時以降・営業時間外に「本日中に管理会社へ確認」等の
+4. 時刻の妥当性：下の【現在時刻】を基準に、18時以降・営業時間外に「本日中に管理会社へ確認」等の
    実行不可能な約束をしていないか
 5. 段階の前倒し：[STAGE] の現在段階より先の段階の行動（物件を1件も送っていないのに内覧打診 /
    条件ヒアリング未完了なのに申込プッシュ等）をしていないか。
@@ -326,22 +349,7 @@ code は次から選ぶこと:
 MISSED_QUESTION（質問の取りこぼし）/ STAGE_MISMATCH（段階ミスマッチ）/
 DOUBLE_DECLARATION（二重宣言・繰り返し）/ TIME_INVALID（実行不可能な時刻の約束）/
 STAGE_SKIP（段階の前倒し）
-
-${stageBlock}
-[CUSTOMER_MESSAGE]
-${(ctx.lastCustomerMessage || "（不明）").slice(0, 1500)}
-[/CUSTOMER_MESSAGE]
-[ANALYSIS]
-${(ctx.step1Json || "なし").slice(0, 2500)}
-[/ANALYSIS]
-[RECENT_STAFF_MESSAGES]
-${formatStaffMessages(ctx.recentMessages, 5)}
-[/RECENT_STAFF_MESSAGES]
-${ctx.finalCheckRules ? `[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]` : ""}
-[REPLY]
-${draft}
-[/REPLY]
-
+${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]\n` : ""}
 【出力例1 - 問題なし（質問に適切に回答）】
 （顧客メッセージ:「ペット可の物件はありますか？」→ 返信:「ペット可の物件もございます。条件に合う物件をお探しします。」）
 → issues: []
@@ -353,6 +361,23 @@ ${draft}
 【出力例3 - 問題なし（管理会社確認が必要な質問）】
 （顧客メッセージ:「審査は厳しいですか？」→ 返信:「管理会社に確認してご連絡いたします。」）
 → issues: []`;
+  const dynamic = `${brainBaselineNote}【現在時刻】${nowJstString()}
+${stageBlock}[CUSTOMER_MESSAGE]
+${(ctx.lastCustomerMessage || "（不明）").slice(0, 1500)}
+[/CUSTOMER_MESSAGE]
+[ANALYSIS]
+${(ctx.step1Json || "なし").slice(0, 2500)}
+[/ANALYSIS]
+[RECENT_STAFF_MESSAGES]
+${formatStaffMessages(ctx.recentMessages, 5)}
+[/RECENT_STAFF_MESSAGES]
+[REPLY]
+${draft}
+[/REPLY]`;
+  return [
+    { type: "text" as const, text: stable, cache_control: { type: "ephemeral" as const } },
+    { type: "text" as const, text: dynamic },
+  ];
 }
 
 // ─── severity判定: LLMは見つける・コードが裁く（決定的マップ）────────────────
@@ -426,8 +451,8 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haiku
     }
   }
 
-  // ── 3パス並列Haikuチェック ──
-  const passes: Array<{ pass: CheckPass; prompt: string }> = [
+  // ── 3パス並列Haikuチェック（各パスとも安定ブロックに cache_control 付き）──
+  const passes: Array<{ pass: CheckPass; prompt: PromptContent }> = [
     { pass: "rule_check", prompt: buildRuleCheckPrompt(draft, ctx) },
     { pass: "anomaly_scan", prompt: buildAnomalyScanPrompt(draft, ctx) },
     { pass: "context_check", prompt: buildContextCheckPrompt(draft, ctx) },
