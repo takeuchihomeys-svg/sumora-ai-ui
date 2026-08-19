@@ -102,7 +102,7 @@ const ISSUE_SCHEMA = {
 type RawIssue = { code?: string; message?: string; evidence?: string; suggestion?: string };
 
 // ─── Sonnet呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
-async function callHaiku(prompt: string, timeoutMs: number): Promise<RawIssue[]> {
+async function callHaiku(prompt: string, timeoutMs: number, maxTokens = 2400): Promise<RawIssue[]> {
   const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -110,7 +110,7 @@ async function callHaiku(prompt: string, timeoutMs: number): Promise<RawIssue[]>
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: "claude-sonnet-4-5",
-      max_tokens: 2400,
+      max_tokens: maxTokens,
       temperature: 0,
       output_config: { format: { type: "json_schema", schema: ISSUE_SCHEMA } },
       messages: [{ role: "user", content: prompt }],
@@ -580,7 +580,7 @@ export async function runGroundedRevision(
 export const MAX_CHECK_ITERATIONS = 2; // check1 + (接地修正 + check2) = 計2チェック上限
 
 const REVISION_MS = 15000;  // 修正SonnetのタイムアウトMs（Haiku 6000ms → Sonnet 15000ms）
-const RECHECK_MS = 8000;    // バジェットガード用推定値（Haiku 3パス並列）
+const RECHECK_MS = 8000;    // バジェットガード用推定値（差分再チェック1パス）
 
 // AIX_BOUNDARY_PROMISE 衝突対策（決定的・約0ms）:
 // 修正プロンプト絶対ルール5の定型句「確認して改めてご連絡いたします」等が修正で新規挿入されると、
@@ -596,8 +596,9 @@ export interface RevisionLoopResult {
 
 // 動作:
 //   check1 → 指摘0件: そのまま返す
-//         → warningのみ: 予算ガード → 接地修正1回 → 決定的プリスキャン → フル再チェック。
-//           「全3パス完走・block 0件・warning非悪化」を全て満たした修正版のみ採用し、
+//         → warningのみ: 予算ガード → 接地修正1回 → 決定的プリスキャン → 差分再チェック
+//           （Check1のissueを引き継ぎ、修正版で解決済みか+新規問題の有無を1パスで検証）。
+//           「差分検証完走・block 0件・warning非悪化」を全て満たした修正版のみ採用し、
 //           finalCheck も recheck に差し替える（checked_text_hash / evidence を finalDraft と整合させる）。
 //           棄却・失敗・予算不足時は元ドラフト + check1 にフォールバック（元ドラフトは block 0件で
 //           送信可能なため revision_exhausted は立てない）。未検証テキストは絶対に finalDraft にしない。
@@ -697,6 +698,156 @@ ${targets.map((i, idx) => `${idx + 1}. 「${i.evidence}」`).join("\n")}
   }
 }
 
+// ─── 差分再チェック（recheck v2: Check1結果を引き継ぐ差分検証・1パス）────────────
+// 修正版に対するrecheckは、フル3パス再スキャンではなく「Check1のissue一覧 + 修正後ドラフト +
+// clearedFacts」だけを渡す差分検証プロンプト1回に置き換える。
+// - LLMは「未解決/部分的/revisionで新発生」のissueのみ返す（解決済みは返さない）
+// - severity は従来どおりコード側 assignSeverity が決定的に付与（LLM生出力に severity は無い）
+// - 成功時は passes_completed に全3パスを記録する（Check1のissueは全3パス由来であり、
+//   差分検証はそれら全てを再検証するため。採用条件 fullyVerified / UNCHECKED_AUTO_SEND との互換用）
+// - 失敗時は passes_completed=[] を返す → 呼び出し元の採用条件が落ち、元ドラフト+check1に
+//   フォールバックする（fail-open。従来の挙動と同じ）
+
+const DIFF_RECHECK_CODES = `AIX_BOUNDARY_VIEWING / AIX_BOUNDARY_ESTIMATE / AIX_BOUNDARY_MEETING / AIX_BOUNDARY_PROPERTY /
+AIX_BOUNDARY_APPLICATION / AIX_BOUNDARY_MOVEIN / AIX_BOUNDARY_PROMISE / AIX_BOUNDARY_DB /
+BANNED_WORD / RULE_VIOLATION / FABRICATED_AMOUNT / FABRICATED_AVAILABILITY / FABRICATED_PROPERTY /
+FABRICATED_DATE / FABRICATED_NAME / FABRICATED_POLICY / MISSED_QUESTION / STAGE_MISMATCH /
+DOUBLE_DECLARATION / TIME_INVALID / STAGE_SKIP`;
+
+function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx: FinalCheckContext): string {
+  const issuesJson = JSON.stringify(
+    check1Issues.map((i) => ({ code: i.code, message: i.message, evidence: i.evidence, suggestion: i.suggestion })),
+    null,
+    1,
+  );
+  const clearedFactsNote = ctx.clearedFacts?.length
+    ? `\n【照合済み確認済み】以下の記述はすでに情報源との照合で根拠ありと確認されています。問題として指摘しないこと：\n${ctx.clearedFacts.map((f) => `・「${f}」`).join("\n")}\n`
+    : "";
+  return `あなたは修正後の文章の検証担当者です。
+元の返信文に対して以下の問題（Check1）が検出され、自動修正が行われました。
+修正後のドラフトを検証してください。
+${clearedFactsNote}
+【Check1で検出された問題一覧】
+${issuesJson}
+
+【修正後のドラフト】
+[REPLY]
+${revised}
+[/REPLY]
+
+以下を判定してください：
+1. 各issueについて「解決済み / 未解決 / 部分的に解決」を判定する
+2. revisionによって新たに発生した問題があれば指摘する（既存issueのコード体系を使う。code は次から選ぶこと:
+${DIFF_RECHECK_CODES}）
+
+返却ルール:
+- 「未解決」「部分的に解決」および「revisionで新たに発生」した問題のみを issues として返却する
+  （未解決/部分的の場合は元の code を維持すること）
+- 解決済みのものは返却不要
+- evidence は必ず修正後ドラフト本文からの引用にすること。引用できない指摘は出力しない
+- すべて解決済みで新規問題も無ければ issues を空配列にする`;
+}
+
+// 新規発生issueの pass 推定: 元issueに同一codeがあればそのpassを引き継ぎ、なければcode体系から決定
+function inferDiffIssuePass(code: string, check1Issues: CheckIssue[]): CheckPass {
+  const orig = check1Issues.find((i) => i.code === code);
+  if (orig && orig.pass !== "meta") return orig.pass;
+  if (code.startsWith("FABRICATED_")) return "anomaly_scan";
+  if (code === "MISSED_QUESTION" || code === "STAGE_MISMATCH" || code === "DOUBLE_DECLARATION" ||
+      code === "STAGE_SKIP" || code.startsWith("TIME_INVALID")) return "context_check";
+  return "rule_check"; // AIX_BOUNDARY_* / BANNED_WORD / RULE_VIOLATION / 不明code
+}
+
+const DIFF_RECHECK_MAX_TOKENS = 1000; // フル再スキャン（2400）の半分以下
+
+async function runDiffRecheck(
+  revised: string,
+  check1Issues: CheckIssue[],
+  ctx: FinalCheckContext,
+  timeoutMs = 8000,
+): Promise<CheckResult> {
+  const started = Date.now();
+  const issues: CheckIssue[] = [];
+  const draftNorm = normalizeForMatch(revised);
+
+  // ── 決定的チェックは修正版にも常時適用（runFinalCheckと同一。LLM不要・約0ms）──
+  for (const word of BANNED_WORDS_DETERMINISTIC) {
+    if (revised.includes(word)) {
+      issues.push({
+        pass: "rule_check",
+        severity: "block",
+        code: "BANNED_WORD",
+        message: `禁止語彙「${word}」が含まれています`,
+        evidence: word,
+        suggestion: `「${word}」を削除してください`,
+      });
+    }
+  }
+  for (const sameDayPhrase of ["本日中に", "今日中に", "今日のうちに", "本日のうちに"]) {
+    if (revised.includes(sameDayPhrase)) {
+      const jstHour = new Date(Date.now() + 9 * 3600 * 1000).getUTCHours();
+      if (jstHour >= 18) {
+        const idx = revised.indexOf(sameDayPhrase);
+        const start = Math.max(0, idx - 10);
+        const end = Math.min(revised.length, idx + sameDayPhrase.length + 10);
+        issues.push({
+          pass: "context_check",
+          severity: "block",
+          code: "TIME_INVALID_HONIJITSU",
+          message: `18時以降のため「${sameDayPhrase}」は実行不可能な約束です`,
+          evidence: revised.slice(start, end),
+          suggestion: "「明日一番にご確認しご連絡させて頂きます」等に変更してください",
+        });
+      }
+      break;
+    }
+  }
+
+  // 差分検証の対象: meta（PARTIALLY_UNCHECKED）/ UNCHECKED_AUTO_SEND はテキスト修正で
+  // 解消できないissueなので除外（従来もrevision対象から除外していたものと同じ）
+  const targets = check1Issues.filter((i) => i.pass !== "meta" && i.code !== "UNCHECKED_AUTO_SEND");
+
+  try {
+    const raw = await callHaiku(buildDiffRecheckPrompt(revised, targets, ctx), timeoutMs, DIFF_RECHECK_MAX_TOKENS);
+    for (const r of raw) {
+      const evidence = (r.evidence ?? "").trim();
+      if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード・runFinalCheckと同一）
+      const code = (r.code ?? "UNKNOWN").trim() || "UNKNOWN";
+      const pass = inferDiffIssuePass(code, targets);
+      let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
+      // block は evidence が修正後本文に実在する場合のみ（誤ブロック防止・runFinalCheckと同一）
+      if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";
+      issues.push({
+        pass,
+        severity,
+        code,
+        message: (r.message ?? "").trim() || code,
+        evidence,
+        suggestion: (r.suggestion ?? "").trim(),
+      });
+    }
+    // 成功: Check1（全3パス由来）のissueを全て再検証済み → 互換のため全3パス完走として記録
+    return {
+      ok: !issues.some((i) => i.severity === "block"),
+      issues,
+      passes_completed: ["rule_check", "anomaly_scan", "context_check"],
+      elapsed_ms: Date.now() - started,
+      checked_text_hash: await sha1(revised.trim()),
+    };
+  } catch (e) {
+    // fail-open: passes_completed=[] を返す → 呼び出し元の採用条件（全パス完走）が落ち、
+    // 元ドラフト + check1 にフォールバックする（未検証テキストは絶対に採用されない）
+    console.warn("[final-check] runDiffRecheck failed (fail-open):", e instanceof Error ? e.message : String(e));
+    return {
+      ok: false,
+      issues,
+      passes_completed: [],
+      elapsed_ms: Date.now() - started,
+      checked_text_hash: await sha1(revised.trim()),
+    };
+  }
+}
+
 export async function runFinalCheckWithRevision(
   draft: string,
   ctx: FinalCheckContext,
@@ -762,12 +913,13 @@ export async function runFinalCheckWithRevision(
       return { finalDraft: draft, finalCheck: check1 };
     }
 
-    // (4) フル再チェック（check1 + recheck = 計2チェックで MAX_CHECK_ITERATIONS=2 と整合）
-    const recheck = await runFinalCheck(revised, ctxForRecheck);
+    // (4) 差分再チェック（check1 + recheck = 計2チェックで MAX_CHECK_ITERATIONS=2 と整合）
+    //     Check1のissue一覧を引き継ぎ、修正版で「解決済みか・新規問題が無いか」だけを1パスで検証
+    const recheck = await runDiffRecheck(revised, check1.issues, ctxForRecheck);
     checkIterations++;
 
     // (5) 採用条件は3つのAND:
-    //     a. 全3パスが完走（warningは全パス由来のため、blockを出したパス限定では不十分）
+    //     a. 差分検証が完走（成功時 passes_completed に全3パスが記録される。失敗時は空=不採用）
     //     b. block 0件（warning修正がblock級違反を新規挿入していないこと）
     //     c. warning件数が check1 以下（非悪化）
     const allPasses: CheckPass[] = ["rule_check", "anomaly_scan", "context_check"];
@@ -820,15 +972,15 @@ export async function runFinalCheckWithRevision(
     const revisedNorm = normalizeForMatch(revised);
     if (blocks.filter((b) => b.evidence).every((b) => revisedNorm.includes(normalizeForMatch(b.evidence)))) break;
 
-    // ── チェック2回目: 修正版を再チェック（未検証の文章は絶対に出さない）──
-    const recheck = await runFinalCheck(revised, ctxForRecheck);
+    // ── チェック2回目: 差分再チェック（Check1のissueを引き継ぎ修正版を検証。未検証の文章は絶対に出さない）──
+    const recheck = await runDiffRecheck(revised, currentCheck.issues, ctxForRecheck);
     checkIterations++;
     recheck.revised_text = revised;
 
-    // FN-003: 採用条件を全3パス完走確認に統一（元blockパス限定では不十分）
+    // FN-003: 採用条件は差分検証の完走確認（成功時 passes_completed に全3パス記録・失敗時は空）
     const allPasses: CheckPass[] = ["rule_check", "anomaly_scan", "context_check"];
     const verified = allPasses.every((p) => recheck.passes_completed.includes(p));
-    if (!verified) break; // 再チェック未完走 → 修正版は未検証なので不採用
+    if (!verified) break; // 差分再チェック失敗 → 修正版は未検証なので不採用（fail-open）
     revisionCount++;
 
     const newBlocks = recheck.issues.filter((i) => i.severity === "block");
