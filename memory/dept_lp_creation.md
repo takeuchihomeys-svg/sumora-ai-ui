@@ -95,11 +95,16 @@ box-shadow: 0 4px 16px rgba(0,0,0,0.22);
 - 中央: LINEボタン
 - テキスト: 上部キャッチコピー
 
-### パターンC: スモラ風クリーン（参考）
-- 白ベース
-- SVGラインアイコン
-- 節約シミュレーションカード
-- 参考: sumora.net
+### パターンC: スモラ風クリーン（自社LP・最重要参考）
+- **URL**: https://sumora.net/（弊社の本番LP）
+- 白ベース・高コントラスト黒テキスト
+- 数字で訴求（2,980円・166,020円削減）
+- 比較表（従来 vs スモラ）
+- 「スモ割」造語でブランド浸透
+- CTA: 「3秒で出来る!!」即時性強調
+- トーン: 親しみやすさ×信頼性のバランス
+- LINE友だち追加を上中下に複数配置
+- **新LP制作時は必ずFable5のResearchフェーズでこのURLを調査すること**
 
 ---
 
@@ -177,8 +182,21 @@ Vercelへの紐付け: `vercel domains add [domain] sumora-ai-ui`
 
 ---
 
+## 自社ブランド参考LP
+
+| LP | URL | 用途 |
+|----|-----|------|
+| スモラ（本家・最重要） | https://sumora.net/ | デザイントーン・コピー・構成の基準 |
+| イエヤス | https://sumora-ai-ui.vercel.app/iyeyasu.html | 賃貸仲介LINE追加LP |
+
+**新LP制作時の必須ルール**: Fable5 Researchフェーズで必ず `sumora.net` を WebFetch して、トーン・コピーパターンを継承すること。
+
+---
+
 ## 次回セッション引き継ぎ
 
 - [ ] `ieyas-chintai.com` のNS変更確認（バリュードメイン側）
+- [ ] イエヤスLP Fable5リデザイン結果を反映・Artifactプレビュー確認
+- [ ] design_knowledge テーブルへの migrate-schema 実行（POST /api/migrate-schema）
 - [ ] LP効果測定の仕組みを検討（LINE登録数トラッキング等）
 - [ ] 次のLP案件があれば本倉庫に追記
