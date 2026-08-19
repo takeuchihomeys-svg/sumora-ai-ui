@@ -889,41 +889,24 @@
                   } catch (e2) {}
                 }, 1500);
               } else {
-                // iOS: (1) line://ディープリンクを直接試行（TikTokが許可していれば1タップで開く）
-                //      (2) 開かなければ navigator.share() でAPIリダイレクトURLをLINEトークに送信
-                //          → LINE内でタップ → LINE内蔵ブラウザ → サーバー302 → 友だち追加画面
-                //      (3) shareも不可なら手順モーダル表示
-                dlog('→ iOS: line://直接遷移試行');
-                var lineOpened = false;
-                var markOpened = function () {
-                  if (!lineOpened) { lineOpened = true; dlog('→ ページ非表示化＝LINE起動成功と判定'); }
-                };
-                document.addEventListener('visibilitychange', function () {
-                  if (document.visibilityState === 'hidden') markOpened();
-                });
-                window.addEventListener('pagehide', markOpened);
-                try {
-                  window.location.href = 'line://ti/p/%40049jaapa';
-                } catch (se) { dlog('→ line:// ERROR: ' + se); }
-                setTimeout(function () {
-                  if (lineOpened) return;
-                  dlog('→ line://で開かず → navigator.share(APIリダイレクトURL)試行');
-                  if (typeof navigator.share === 'function') {
-                    navigator.share({
-                      title: 'イエヤスLINE友だち追加',
-                      text: 'タップしてLINE友だち追加！',
-                      url: API_REDIRECT_URL
-                    }).then(function () {
-                      dlog('→ share成功（LINEトーク内のURLタップで友だち追加画面が開きます）');
-                    }).catch(function (e2) {
-                      dlog('→ share失敗: ' + e2.name);
-                      if (e2.name !== 'AbortError') showIOSFallback();
-                    });
-                  } else {
-                    dlog('→ navigator.share未定義 → フォールバック');
-                    showIOSFallback();
-                  }
-                }, 1200);
+                // iOS + TikTok: line://はTikTokがブロックしてエラートーストが出るためスキップ
+                // 直接 navigator.share() でAPIリダイレクトURLを送信
+                dlog('→ iOS+TikTok: navigator.share直接試行');
+                if (typeof navigator.share === 'function') {
+                  navigator.share({
+                    title: 'イエヤスLINE友だち追加',
+                    text: 'タップしてLINE友だち追加！',
+                    url: API_REDIRECT_URL
+                  }).then(function () {
+                    dlog('→ share成功');
+                  }).catch(function (e2) {
+                    dlog('→ share失敗: ' + e2.name);
+                    if (e2.name !== 'AbortError') showIOSFallback();
+                  });
+                } else {
+                  dlog('→ navigator.share未定義 → フォールバック');
+                  showIOSFallback();
+                }
               }
             } catch (err) { dlog('クリックERROR: ' + err); }
           }, true);
