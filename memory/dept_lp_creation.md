@@ -203,6 +203,8 @@ Vercelへの紐付け: `vercel domains add [domain] sumora-ai-ui`
 | 2026-08-19 | QRコード緑・スクショCTA削除・長押し導線確立 | `8121534` |
 | 2026-08-19 | h1テキスト3箇所変更・黄マーカー・赤最大限割引・CTAバンド | `405aab8` |
 | 2026-08-19 | ヘッダー削除・TikTokバナー大幅拡大・h1横一列インパクト改善 | `1fb269b` |
+| 2026-08-19 | デザイン崩れ7項目修正 | `66b67a5` |
+| 2026-08-19 | TikTok超え明度爆上げ・ヒーロー100svh化・ネオングロー全面導入 | `920adfc` |
 
 ---
 
@@ -229,6 +231,15 @@ Vercelへの紐付け: `vercel domains add [domain] sumora-ai-ui`
 - `clip-path: polygon(0 0, 100% 0, 100% 66%, 0 100%)` で右下に斜め斜線
 - clip-pathで見た目が切れるため、実際のpadding-bottomは視覚より大きく必要（2×以上）
 - テキストが長い場合はfont-size縮小かwhite-space:nowrap必要
+
+### TikTok超え明度設計（2026-08-19確定）
+- **戦略**: 輝度コントラスト＋彩度コントラストの2チャネル同時最大化
+- **ヒーロー背景**: `radial-gradient(white中心 → #FFF9AE → #FFEE33 → #FFD600)` ＋ `saturate(1.18) brightness(1.04)` フィルター
+- **Sunburst**: 640→760px拡大。rays: 92%-alpha #FFD500（旧45%）。中央に `radial-gradient(white bloom)` で白熱コア
+- **TikTokバナー暗帯は意図的に保持**: 暗帯がコントラスト増幅器になる。ただし `#000` 単色はglow効果を殺すため navy/purple/darkgreen グラデに変更
+- **シアン×ピンク**: TikTok固有2色（#25F4EE / #FE2C55）で最大彩度コントラスト対
+- **min-height: 100svh**: スマホファーストビューで全面埋め必須
+- **section filter**: `saturate(1.18) brightness(1.04)` でTikTok動画グレーディング相当
 
 ### h1インパクト設計
 - `white-space: nowrap` + `clamp(15px, 5vw, 22px)` で横一列対応
