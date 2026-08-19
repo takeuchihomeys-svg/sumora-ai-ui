@@ -1602,8 +1602,14 @@ const FULL_ANALYSIS_EVERY_N_MESSAGES = 10;
 const FULL_REFRESH_EVERY_N_MESSAGES = 30;  // フル分析から30件で強制フルリフレッシュ（アンカリング防止）
 const INCREMENTAL_MIN_RECENT = 5;           // incremental差分窓の最低件数
 const INCREMENTAL_MAX_MESSAGES = 40;        // incremental差分窓の最大件数
-// 緊急バイパス: これらのキーワードを含む最新顧客メッセージは必ずフル分析する
-const URGENT_BYPASS_RE = /申込|申し込|入居(したい|します|希望)|契約|内見|内覧|見学|見に行|決め(ます|ました|たい)|お願いします|進めて(ください|ほしい)|見積|審査|初期費用|キャンセル|やめ(ます|ました)|他(社|の不動産|で決)|別の(物件|部屋)|急ぎ|至急|今日|明日|保証人|必要書類/;
+// フル分析昇格語: 商談の重大な転換点（申込/契約/審査/キャンセル/他社流出）のみ
+// これらはlast_brain_metaが古くなるリスクが高いためfull分析が必要
+const FULL_BYPASS_RE = /申込|申し込|入居(したい|します|希望)|契約|審査|キャンセル|やめ(ます|ました)|他(社|の不動産|で決)|必要書類|保証人/;
+
+// インクリメンタル昇格語: 急ぎではあるがincremental（前回結論+新着）で十分対応できる語
+// 「今日/明日/お願いします/内覧/見積」等の日常的な商談語はcachedをスキップするが
+// fullではなくincrementalで対応（コスト削減の核心）
+const INCREMENTAL_BYPASS_RE = /内見|内覧|見学|見に行|決め(ます|ました|たい)|お願いします|進めて(ください|ほしい)|見積|初期費用|急ぎ|至急|今日|明日|別の(物件|部屋)/;
 
 function formatJstDateShort(iso: string | null): string {
   if (!iso) return "";
@@ -1841,20 +1847,22 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
     ? (Date.now() - lastFullAt.getTime()) / (1000 * 60 * 60)
     : Infinity;
 
-  const isUrgentBypass = URGENT_BYPASS_RE.test(latestText) || PROPERTY_CONDITION_INQUIRY_RE.test(latestText);
+  const isFullBypass = FULL_BYPASS_RE.test(latestText);
+  const isIncrementalBypass = !isFullBypass && (INCREMENTAL_BYPASS_RE.test(latestText) || PROPERTY_CONDITION_INQUIRY_RE.test(latestText));
 
   // 3段階モード判定: full / incremental / cached
   const msgsSinceDeep = (totalMsgCount ?? 0) - ((convData?.brain_deep_msg_count as number | null) ?? 0);
   const needsFull =
     !cachedMeta ||
     (totalMsgCount ?? 0) < 11 ||
+    isFullBypass ||                                              // 申込/契約/審査/キャンセルは必ずfull
     hoursSinceLastFull >= 24 ||
     hoursSinceLastMsg >= 24 ||
     msgsSinceDeep >= FULL_REFRESH_EVERY_N_MESSAGES;
 
   const analysisMode: "full" | "incremental" | "cached" =
     needsFull ? "full" :
-    (isUrgentBypass || msgsSinceLastFull >= FULL_ANALYSIS_EVERY_N_MESSAGES) ? "incremental" :
+    (isIncrementalBypass || msgsSinceLastFull >= FULL_ANALYSIS_EVERY_N_MESSAGES) ? "incremental" :
     "cached";
 
   if (analysisMode === "cached") {
