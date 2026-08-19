@@ -2006,6 +2006,26 @@ CREATE INDEX IF NOT EXISTS idx_brain_decision_logs_conversation_id ON brain_deci
 CREATE INDEX IF NOT EXISTS idx_brain_decision_logs_created_at ON brain_decision_logs(created_at DESC);
 ALTER TABLE brain_decision_logs DISABLE ROW LEVEL SECURITY;
 
+-- ── brain_meta_insights: 竹内の改善思考パターン蓄積（2026-08-20追加）──
+-- Brainがいずれ自律的に改善提案できるようにするための知識ベース。
+-- 竹内が新しい改善パターン・哲学を発見したら都度INSERT。
+-- 将来: brain-coreのフル分析プロンプトがこのテーブルを参照し「過去の改善パターンに基づいた提案」を生成。
+CREATE TABLE IF NOT EXISTS brain_meta_insights (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category TEXT NOT NULL CHECK (category IN ('cost_reduction', 'quality_improvement', 'architecture', 'user_philosophy')),
+  title TEXT NOT NULL,
+  principle TEXT NOT NULL,
+  pattern TEXT,
+  example TEXT,
+  result TEXT,
+  impact TEXT CHECK (impact IN ('high', 'medium', 'low')),
+  source TEXT DEFAULT 'takeuchi',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_brain_meta_insights_category ON brain_meta_insights(category);
+ALTER TABLE brain_meta_insights DISABLE ROW LEVEL SECURITY;
+
 -- design_knowledge テーブル（LP/HP制作ノウハウ蓄積・Claudeが次回から活用）
 -- brain_kt.md のデザイン版。案件ごとに学んだ判断軸・失敗パターン・UX軸を蓄積する
 CREATE TABLE IF NOT EXISTS design_knowledge (
