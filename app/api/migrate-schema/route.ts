@@ -1992,6 +1992,70 @@ CREATE INDEX IF NOT EXISTS idx_brain_decision_logs_conversation_id ON brain_deci
 CREATE INDEX IF NOT EXISTS idx_brain_decision_logs_created_at ON brain_decision_logs(created_at DESC);
 ALTER TABLE brain_decision_logs DISABLE ROW LEVEL SECURITY;
 
+-- design_knowledge テーブル（LP/HP制作ノウハウ蓄積・Claudeが次回から活用）
+-- brain_kt.md のデザイン版。案件ごとに学んだ判断軸・失敗パターン・UX軸を蓄積する
+CREATE TABLE IF NOT EXISTS design_knowledge (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category TEXT NOT NULL CHECK (category IN ('最初にやること', '避けるべきパターン', 'UX軸', 'デザイン軸', 'コピー軸')),
+  domain TEXT NOT NULL DEFAULT 'LP' CHECK (domain IN ('LP', 'ツール', 'Chrome拡張', 'その他')),
+  rule_title TEXT NOT NULL,
+  rule_content TEXT NOT NULL,
+  reason TEXT,
+  source_project TEXT,
+  importance INTEGER DEFAULT 5 CHECK (importance BETWEEN 1 AND 10),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_design_knowledge_category ON design_knowledge(category);
+CREATE INDEX IF NOT EXISTS idx_design_knowledge_domain ON design_knowledge(domain);
+CREATE INDEX IF NOT EXISTS idx_design_knowledge_importance ON design_knowledge(importance DESC);
+ALTER TABLE design_knowledge DISABLE ROW LEVEL SECURITY;
+
+-- 初期データ（brain_kt.md のデザイン版として転記）
+INSERT INTO design_knowledge (category, domain, rule_title, rule_content, reason, source_project, importance) VALUES
+
+('最初にやること', 'LP', 'ゴールを決めてからデザインする',
+ 'LPの唯一のゴール（=LINE友だち追加・問い合わせ等）を最初に定義し、そこから逆算してレイアウトを決める。',
+ 'ゴール未定義のままデザインするとCTA配置が弱くなる。イエヤスLPでQRコードをメインにした判断はゴール先行で正しかった。',
+ 'イエヤスLP', 9),
+
+('最初にやること', 'LP', '実アセットを先に集める',
+ '参考URL・キャラ画像・ロゴ・コピー文言を先にもらってからFable5に投げる。ないまま作るとAI感が強くなる。',
+ 'QR画像・武将キャラを渡すことでデザイン精度が格段に上がった。アセット先集めが初回品質を決める。',
+ 'イエヤスLP', 8),
+
+('避けるべきパターン', 'LP', 'AIっぽいグラデーションヒーロー',
+ '単色→単色のグラデーションヒーロー、Inter/Space Grotesk、rounded-lgカード、01/02/03番号カードは全てNG。',
+ '汎用パターンはAI感が出て大手感がなくなる。日本の大手LINEキャンペーン広告を参考にする。',
+ 'イエヤスLP', 9),
+
+('避けるべきパターン', 'LP', '外部CDN依存',
+ '外部フォント・外部CSSライブラリは全てインライン化する。ArtifactのCSP制限もあるが、Vercel本番でも依存を減らすのが安全。',
+ 'CDN障害でLPが壊れるリスクを避ける。全インライン = 完全自己完結。',
+ 'イエヤスLP', 7),
+
+('UX軸', 'LP', 'LINEボタンは最低3箇所',
+ 'ヒーロー・中盤・固定フッターバーの3箇所にLINEボタンを設置する。スクロールどこでも追加できる状態にする。',
+ 'モバイルではスクロール位置によってCTA表示タイミングが変わる。固定フッターは最後の砦として必須。',
+ 'イエヤスLP', 8),
+
+('UX軸', 'LP', 'TikTok WebView制限への対応',
+ 'TikTok WebViewではline://・Universal Link・window.openが全てブロックされる。navigator.share()のみOS経由で動作する。QRコード訴求が最も確実な突破口。',
+ 'Fable5×3回の調査で確定。TikTok bioリンク→LP→LINE追加フローでQRコードが唯一のTikTok制限を回避できる手段。',
+ 'イエヤスLP', 10),
+
+('デザイン軸', 'LP', 'ポップ大手感の出し方',
+ '黄色地・放射状サンバースト・ピンク帯バナー・漫画吹き出し・太字黒テキストの組み合わせで日本の大手アプリ広告感が出る。',
+ '参考: スモラQR訴求画像。キャラクター+QR+吹き出しの構成が「3秒でカンタン」という行動誘導に効果的。',
+ 'イエヤスLP', 8),
+
+('コピー軸', 'LP', 'CTAは動詞+ベネフィット形式',
+ '「LINE友だち追加」より「初期費用を割引してもらう」「LINEで無料相談する」の方がクリック率が高い。行動+得られる結果を明示する。',
+ 'LINE公式広告のベストプラクティス。ユーザーは「なぜやるか」が見えるとタップしやすくなる。',
+ 'イエヤスLP', 7)
+
+ON CONFLICT DO NOTHING;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
