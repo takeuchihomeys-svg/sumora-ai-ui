@@ -21,7 +21,7 @@ const BRAIN_MODEL = "claude-sonnet-5";
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60_000, maxRetries: 0 });
 
 // Statuses that indicate a closed/inactive conversation — excluded from brain analysis
-export const BRAIN_SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost", "approved"];
+export const BRAIN_SKIP_STATUSES = ["applying", "application", "screening", "contract", "closed_won", "closed_lost", "lost", "approved"];
 
 // Conversations updated within this window are flagged as urgent
 export const URGENT_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -1813,7 +1813,7 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
 export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<boolean> {
   const { data: conv, error: selectError } = await supabase
     .from("conversations")
-    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction, brain_full_analyzed_at, brain_full_msg_count, brain_deep_analyzed_at, brain_deep_msg_count, last_brain_meta, customer_name")
+    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction, brain_full_analyzed_at, brain_full_msg_count, brain_deep_analyzed_at, brain_deep_msg_count, last_brain_meta, customer_name, is_post_apply")
     .eq("id", conversationId)
     .maybeSingle();
   if (selectError) {
@@ -1825,6 +1825,8 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
 
   const status = (conv.status as string | null) ?? null;
   if (status && BRAIN_SKIP_STATUSES.includes(status)) return false;
+  // 申込以降バッジあり（スタッフが手動マーク）→ 別ツールで管理中のため分析不要
+  if ((conv as unknown as Record<string, unknown>).is_post_apply === true) return false;
 
   // H6(Fable5): ブロック済み/フォロー解除の顧客は分析しない（Haiku浪費 + 無意味な提案の防止）
   const lineStatus = (conv.line_status as string | null) ?? null;
