@@ -676,6 +676,7 @@ export async function analyzeConversation(
     ...(phaseEstimate ? PHASE_ACTION_CANDIDATES[phaseEstimate] ?? Object.keys(AIX_BRAIN_NOTES) : Object.keys(AIX_BRAIN_NOTES)),
     ...(opts?.prevAix && AIX_BRAIN_NOTES[opts.prevAix] ? [opts.prevAix] : []),
   ])];
+  const isIncremental = opts?.mode === "incremental" && !!opts?.prevMeta;
   // Fetch last 30 messages and customer conditions in parallel
   // limit 30→15: checkpoint（RAG検索含む）が古い会話をカバーするため、直近15件で十分。
   // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
@@ -686,7 +687,7 @@ export async function analyzeConversation(
       .select("sender, text, created_at, line_message_id, is_aix_generated", { count: "exact" })
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(15),
+      .limit(isIncremental ? INCREMENTAL_MIN_RECENT : 15),
     propertyCustomerId
       ? supabase
           .from("property_customers")
@@ -695,20 +696,24 @@ export async function analyzeConversation(
           .maybeSingle()
       : Promise.resolve({ data: null }),
     // Recent starred reply examples for this conversation (context for Haiku)
-    supabase
-      .from("ai_reply_examples")
-      .select("sent_reply, is_starred")
-      .eq("conversation_id", conversationId)
-      .eq("is_starred", true)
-      .order("created_at", { ascending: false })
-      .limit(3),
+    isIncremental
+      ? Promise.resolve({ data: null })
+      : supabase
+          .from("ai_reply_examples")
+          .select("sent_reply, is_starred")
+          .eq("conversation_id", conversationId)
+          .eq("is_starred", true)
+          .order("created_at", { ascending: false })
+          .limit(3),
     // 最新CPのみ1件取得（RAG検索で古いCPを必要に応じて補完する）
-    supabase
-      .from("conversation_checkpoints")
-      .select("checkpoint_index, summary, key_facts, conversation_stage, message_count_at_creation")
-      .eq("conversation_id", conversationId)
-      .order("checkpoint_index", { ascending: false })
-      .limit(1),
+    isIncremental
+      ? Promise.resolve({ data: null })
+      : supabase
+          .from("conversation_checkpoints")
+          .select("checkpoint_index, summary, key_facts, conversation_stage, message_count_at_creation")
+          .eq("conversation_id", conversationId)
+          .order("checkpoint_index", { ascending: false })
+          .limit(1),
     // Sent properties for this customer (duplicate/history awareness)
     propertyCustomerId
       ? supabase
@@ -720,26 +725,30 @@ export async function analyzeConversation(
       : Promise.resolve({ data: null }),
     // Global permanent operator rules (apply to all conversations, no pgvector needed)
     // B4(Fable5): limit 10→20 — 本番で恒久ルールがちょうど10行に達しており、11個目から無言欠落する状態だった
-    supabase
-      .from("ai_prompt_rules")
-      .select("rule_text, priority")
-      .eq("is_active", true)
-      .eq("is_permanent", true)
-      .is("action_type", null)
-      .order("priority", { ascending: false })
-      .limit(20),
+    isIncremental
+      ? Promise.resolve({ data: null })
+      : supabase
+          .from("ai_prompt_rules")
+          .select("rule_text, priority")
+          .eq("is_active", true)
+          .eq("is_permanent", true)
+          .is("action_type", null)
+          .order("priority", { ascending: false })
+          .limit(20),
     // Confirmed top-importance principles (importance >= 9, no pgvector needed)
     // B11(Fable5): .neq は NULL 行を除外する（SQL <> セマンティクス）→ .or で NULL 許容に。
     // created_at 降順タイブレークで同 importance 内の選抜を決定的にする
-    supabase
-      .from("ai_reply_knowledge")
-      .select("content, importance")
-      .eq("category", "principle")
-      .gte("importance", 9)
-      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
-      .order("importance", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(5),
+    isIncremental
+      ? Promise.resolve({ data: null })
+      : supabase
+          .from("ai_reply_knowledge")
+          .select("content, importance")
+          .eq("category", "principle")
+          .gte("importance", 9)
+          .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+          .order("importance", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(5),
     // Top templates by won_count for context (brain uses these to recommend best template)
     // B1(Fable5): 旧 .like("category", "AIX%") は前方一致で、実カテゴリ「見積書送る【AIX】」等に
     // 一度もマッチしていなかった（本番0件を実測確認 = このデータソースは死んでいた）。
@@ -747,13 +756,15 @@ export async function analyzeConversation(
     // 旧 .gte("use_count", 3) フィルタは撤廃: use_count はモーダル経由送信しか計上せず、
     // 成約実績のあるテンプレ（手打ち送信のため use_count=0）を全て弾いていた。
     // タイブレークは use_count（win_rate は「1回使用で100%」の統計ノイズがあるため順位に使わない）
-    supabase
-      .from("templates")
-      .select("category, label, win_rate, use_count, won_count")
-      .like("category", "%【AIX】%")
-      .order("won_count", { ascending: false, nullsFirst: false })
-      .order("use_count", { ascending: false, nullsFirst: false })
-      .limit(5),
+    isIncremental
+      ? Promise.resolve({ data: null })
+      : supabase
+          .from("templates")
+          .select("category, label, win_rate, use_count, won_count")
+          .like("category", "%【AIX】%")
+          .order("won_count", { ascending: false, nullsFirst: false })
+          .order("use_count", { ascending: false, nullsFirst: false })
+          .limit(5),
     // 線引きルール: BOUNDARY-* rules that define when to use AIX vs auto-reply
     // B4(Fable5): limit 15→40 — 本番に31行あり、旧limitでは線引きルールの半分以上が無言欠落していた。
     // 線引きルールは reply_mode（aix/auto_reply）判定の根幹のため全件注入する
@@ -772,27 +783,31 @@ export async function analyzeConversation(
       .limit(10),
     // 成約パターン（distilled）: notify-viewing / analyze-closed-conversation が書く高価値ナレッジ
     // （既存の principle クエリは category='principle' のみで、これら pattern 行は拾えない）
-    supabase
-      .from("ai_reply_knowledge")
-      .select("title, content, importance")
-      .eq("category", "pattern")
-      // B11(Fable5): NULL 許容（.neq は hypothesis_status IS NULL の行を除外してしまう）
-      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
-      .or("title.ilike.成約パターン%,title.ilike.[成約分析]%,title.ilike.[転換点]%")
-      .order("importance", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(4),
+    isIncremental
+      ? Promise.resolve({ data: null })
+      : supabase
+          .from("ai_reply_knowledge")
+          .select("title, content, importance")
+          .eq("category", "pattern")
+          // B11(Fable5): NULL 許容（.neq は hypothesis_status IS NULL の行を除外してしまう）
+          .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+          .or("title.ilike.成約パターン%,title.ilike.[成約分析]%,title.ilike.[転換点]%")
+          .order("importance", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(4),
     // 成約・申込到達の会話の実際の優良返信（success × starred × line_reply）
     // FK: ai_reply_examples.conversation_id → conversations.id（migrate-schema L681）で inner join
-    supabase
-      .from("ai_reply_examples")
-      .select("sent_reply, conversation_state, conversations!inner(status)")
-      .in("conversations.status", SUCCESS_EXAMPLE_STATUSES)
-      .eq("is_starred", true)
-      .eq("entry_source", "line_reply")
-      .not("sent_reply", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(8),
+    isIncremental
+      ? Promise.resolve({ data: null })
+      : supabase
+          .from("ai_reply_examples")
+          .select("sent_reply, conversation_state, conversations!inner(status)")
+          .in("conversations.status", SUCCESS_EXAMPLE_STATUSES)
+          .eq("is_starred", true)
+          .eq("entry_source", "line_reply")
+          .not("sent_reply", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(8),
     // ② この会話で使われたAIXアクション履歴（メッセージ単位の厳密ラベル用）
     supabase
       .from("aix_usage_logs")
@@ -834,36 +849,42 @@ export async function analyzeConversation(
     // 明示的判断材料としてプロンプトに注入する。従来この category は analyzeAndSaveBrainMeta の
     // STEP A（template_id 表示用の上位1件取得）にしか使われておらず、
     // 「どの場面でどのAIXボタンが効いたか」がボタン判断に一切反映されていなかった。
-    supabase
-      .from("ai_reply_knowledge")
-      .select("title, content, importance")
-      .eq("category", "applying_pattern")
-      .gte("importance", 8)
-      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
-      .order("importance", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(3),
+    isIncremental
+      ? Promise.resolve({ data: null })
+      : supabase
+          .from("ai_reply_knowledge")
+          .select("title, content, importance")
+          .eq("category", "applying_pattern")
+          .gte("importance", 8)
+          .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+          .order("importance", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(3),
     // winning_patterns: 成約率の高いパターン上位5件
-    supabase.from("winning_patterns")
-      .select("pattern, situation, closing_action, notes, win_rate")
-      .order("win_rate", { ascending: false })
-      .limit(5),
+    isIncremental
+      ? Promise.resolve({ data: null })
+      : supabase.from("winning_patterns")
+          .select("pattern, situation, closing_action, notes, win_rate")
+          .order("win_rate", { ascending: false })
+          .limit(5),
     // RAG化 Phase1: アクション連動ルール（is_permanent 不問・BOUNDARY-* は上の別枠で全件取得済み）。
     // 従来の恒久ルール枠は action_type IS NULL 必須のため、action_type 付きルール
     // （HUMAN-*/FEEDBACK-*/IMPLEMENT-*/LEARN-AIX-* 等）は brain に構造的に一切届いていなかった。
     // priority >= 4 は decay（ai-feedback の90日 demote → priority 2 を除外）との整合（prompt-rules.ts と同基準）。
     // action_type='generate_reply'（返信文面ポリシー）は brain の管轄外のため候補に含めない
     // （actionCandidates は AIX_BRAIN_NOTES キー由来の固定文字列のみ → .in() インジェクション懸念なし）
-    supabase
-      .from("ai_prompt_rules")
-      .select("rule_key, action_type, rule_text, priority, condition_key, condition_value")
-      .eq("is_active", true)
-      .in("action_type", actionCandidates)
-      .not("rule_key", "like", "BOUNDARY-%")
-      .gte("priority", 4)
-      .order("priority", { ascending: false })
-      .order("updated_at", { ascending: false, nullsFirst: false })
-      .limit(15),
+    isIncremental
+      ? Promise.resolve({ data: null })
+      : supabase
+          .from("ai_prompt_rules")
+          .select("rule_key, action_type, rule_text, priority, condition_key, condition_value")
+          .eq("is_active", true)
+          .in("action_type", actionCandidates)
+          .not("rule_key", "like", "BOUNDARY-%")
+          .gte("priority", 4)
+          .order("priority", { ascending: false })
+          .order("updated_at", { ascending: false, nullsFirst: false })
+          .limit(15),
   ]);
 
   const { data: messages, error, count: totalMessageCount } = msgResult;
@@ -918,7 +939,7 @@ export async function analyzeConversation(
   let ragCheckpoints: Array<{ checkpoint_index: number; summary: string | null; key_facts: unknown; conversation_stage: string | null; similarity?: number }> = [];
   type RagKnowledgeRow = { title: string | null; content: string | null; category: string | null; conversation_state: string | null; importance: number | null; similarity: number };
   let ragKnowledgeRaw: RagKnowledgeRow[] = [];
-  if (process.env.OPENAI_API_KEY) {
+  if (!isIncremental && process.env.OPENAI_API_KEY) {
     const recentCustomerMsgs = typedMessages
       .filter(m => m.sender === "customer" && m.text)
       .slice(-3)
@@ -1492,7 +1513,7 @@ ${history}`;
     const hasStaffEngagement = typedMessages.some(
       m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
     );
-    if (!hasStaffEngagement) {
+    if (!hasStaffEngagement && !isIncremental) {
       finalAix = null;
       replyMode = undefined;
     }
@@ -1609,7 +1630,7 @@ const FULL_BYPASS_RE = /申込|申し込|入居(したい|します|希望)|契�
 // インクリメンタル昇格語: 急ぎではあるがincremental（前回結論+新着）で十分対応できる語
 // 「今日/明日/お願いします/内覧/見積」等の日常的な商談語はcachedをスキップするが
 // fullではなくincrementalで対応（コスト削減の核心）
-const INCREMENTAL_BYPASS_RE = /内見|内覧|見学|見に行|決め(ます|ました|たい)|お願いします|進めて(ください|ほしい)|見積|初期費用|急ぎ|至急|今日|明日|別の(物件|部屋)/;
+const INCREMENTAL_BYPASS_RE = /内見|内覧|見学|見に行|決め(ます|ました|たい)|急ぎ|至急|別の(物件|部屋)/;
 
 function formatJstDateShort(iso: string | null): string {
   if (!iso) return "";
