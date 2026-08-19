@@ -227,6 +227,31 @@ export async function POST(req: NextRequest) {
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
+    // ステージ変化AIX送信 → brain invalidation（fire-and-forget）
+    // last_brain_meta / brain_full_analyzed_at をクリアすると、
+    // brain-core.ts の needsFull 判定（!cachedMeta）により次の顧客メッセージで強制フル分析が走る
+    const STAGE_TRANSITION_AIX_TYPES = [
+      "application",
+      "application_push",
+      "contract",
+      "document_request",
+      "estimate_sheet",
+      "viewing_invite",
+      "greeting_viewing",
+    ];
+    if (STAGE_TRANSITION_AIX_TYPES.some((t) => aix_type === t)) {
+      waitUntil(
+        (async () => {
+          try {
+            await supabase
+              .from("conversations")
+              .update({ last_brain_meta: null, brain_full_analyzed_at: null })
+              .eq("id", conversation_id);
+          } catch { /* fire-and-forget */ }
+        })().catch(() => {})
+      );
+    }
+
     // ③ AIX送信後: property_customer_id を取得（要約再生成 + ギャップ分析に使う）
     const { data: convRow } = await supabase
       .from("conversations")
