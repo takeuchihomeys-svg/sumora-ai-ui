@@ -199,6 +199,10 @@ Vercelへの紐付け: `vercel domains add [domain] sumora-ai-ui`
 | 2026-08-16 | イエヤスLP初版（スモラ風クリーン） | `358da1d` |
 | 2026-08-19 | 第3版: ポップ・スマホ縦型・武将キャラ | `9bbab38` |
 | 2026-08-19 | 第4版: LINE広告風ヒーロー（スマホモックアップ） | `2ffbbd2` |
+| 2026-08-19 | 第5版: TikTok特化ヒーロー・QR長押しCTA・いえやすくんキャラ | `f925ac3` |
+| 2026-08-19 | QRコード緑・スクショCTA削除・長押し導線確立 | `8121534` |
+| 2026-08-19 | h1テキスト3箇所変更・黄マーカー・赤最大限割引・CTAバンド | `405aab8` |
+| 2026-08-19 | ヘッダー削除・TikTokバナー大幅拡大・h1横一列インパクト改善 | `1fb269b` |
 
 ---
 
@@ -213,10 +217,35 @@ Vercelへの紐付け: `vercel domains add [domain] sumora-ai-ui`
 
 ---
 
+## 設計上の学び・ノウハウ（積み重ね）
+
+### TikTok WebView × LINE追加の確定導線（2026-08-19）
+- **長押し方式**: `<a href="https://lin.ee/v5CFQfL">` を長押し → iOSコンテキストメニュー「リンクを開く」→ LINEアプリで友だち追加
+- タップ・line://・window.open はすべてTikTok WebViewにブロックされる
+- QRコード長押しも同様に機能する（TikTok内カメラ不要）
+- **実証済み**: 竹内さんが実機で確認（2026-08-19）
+
+### TikTokバナー（黒帯）デザイン知見
+- `clip-path: polygon(0 0, 100% 0, 100% 66%, 0 100%)` で右下に斜め斜線
+- clip-pathで見た目が切れるため、実際のpadding-bottomは視覚より大きく必要（2×以上）
+- テキストが長い場合はfont-size縮小かwhite-space:nowrap必要
+
+### h1インパクト設計
+- `white-space: nowrap` + `clamp(15px, 5vw, 22px)` で横一列対応
+- `font-size: 1.18em` 以上の子要素はoverflow原因になる（1.05em以下推奨）
+- 黄マーカー（#FFE800）+ 赤テキスト（#e82020）の組み合わせは視認性◎
+- `filter: drop-shadow` + `animation: scale pulse` でTikTokウイルス感
+
+### キャラクター（いえやすくん）
+- SVG viewBox: 0 0 140 170、家型頭・2頭身
+- position: absolute; right: -8px; bottom: -10px; max-width: 90px; z-index: 5
+- fcb-sway アニメーションで左右ゆらゆら
+
+---
+
 ## 次回セッション引き継ぎ
 
 - [ ] `ieyas-chintai.com` のNS変更確認（バリュードメイン側）
-- [ ] イエヤスLP Fable5リデザイン結果を反映・Artifactプレビュー確認
-- [ ] design_knowledge テーブルへの migrate-schema 実行（POST /api/migrate-schema）
+- [ ] デザイン崩れ修正後の確認（TikTokバナーテキスト折り返し・h1オーバーフロー）
 - [ ] LP効果測定の仕組みを検討（LINE登録数トラッキング等）
 - [ ] 次のLP案件があれば本倉庫に追記
