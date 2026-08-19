@@ -92,20 +92,7 @@
     }
 
     /* Header */
-    .header {
-      position: sticky;
-      top: 0;
-      z-index: 90;
-      background: var(--forest);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 6px 16px;
-      box-shadow: 0 2px 12px rgba(0,0,0,.18);
-    }
-    .logo { text-decoration: none; line-height: 1.15; }
-    .logo-name { display: block; font-size: 22px; font-weight: 900; color: #fff; letter-spacing: .04em; }
-    .logo-by   { display: block; font-size: 10px; color: rgba(255,255,255,.72); letter-spacing: .06em; }
+    /* header removed — TikTok banner is the hero top */
     .h-btn {
       display: inline-flex;
       align-items: center;
@@ -201,12 +188,12 @@
       align-items: center;
       justify-content: center;
       gap: 8px;
-      padding: 28px 14px 60px;
+      padding: 56px 16px 104px;
       clip-path: polygon(0 0, 100% 0, 100% 66%, 0 100%);
     }
     .tt-icon { flex-shrink: 0; display: flex; align-items: center; }
     .tt-text {
-      font-size: 13px;
+      font-size: 17px;
       font-weight: 900;
       color: #fff;
       letter-spacing: .04em;
@@ -218,9 +205,9 @@
       flex-shrink: 0;
       background: var(--sun);
       color: #111;
-      font-size: 10px;
+      font-size: 12px;
       font-weight: 900;
-      padding: 3px 8px;
+      padding: 5px 10px;
       border-radius: 4px;
       letter-spacing: .06em;
       transform: rotate(-2deg);
@@ -269,22 +256,40 @@
     .h-title .accent { color: var(--line-dk); }
     .h-title-sub { font-size: 0.62em; font-weight: 800; color: #333; }
 
-    /* ===== hero h1 impact upgrade ===== */
-    .h-title { font-size: 20px; line-height: 1.38; }
+    /* ===== hero h1 viral title card ===== */
+    .h-title {
+      font-size: clamp(17px, 5.5vw, 26px);
+      line-height: 1.3;
+      animation: h1-pulse 1.6s ease-in-out infinite;
+      will-change: transform;
+    }
+    .h-title-main {
+      display: block;
+      white-space: nowrap;
+      filter: drop-shadow(0 5px 12px rgba(0,0,0,.28));
+    }
     .h-title .hl-marker {
       display: inline-block;
       background: #FFE800;
-      padding: 1px 8px 2px;
+      padding: 2px 8px 3px;
       border-radius: 4px;
       transform: rotate(-1.5deg);
-      box-shadow: 2px 2px 0 rgba(0,0,0,.08);
+      box-shadow: 3px 3px 0 rgba(0,0,0,.12);
     }
     .h-title .accent-red {
       display: inline-block;
       color: #e82020;
-      font-size: 1.15em;
-      -webkit-text-stroke: .6px #e82020;
+      font-size: 1.18em;
+      -webkit-text-stroke: 1px #e82020;
+      transform: scale(1.08) rotate(.5deg);
+      transform-origin: left center;
+      text-shadow: 0 3px 0 rgba(232,32,32,.2);
     }
+    @keyframes h1-pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.035); }
+    }
+    @media (prefers-reduced-motion: reduce) { .h-title { animation: none !important; } }
     .h-title-line {
       display: inline-block;
       margin-top: 5px;
@@ -1544,11 +1549,7 @@
 <body>
 
 <!-- HEADER -->
-<header class="header">
-  <a href="#" class="logo" aria-label="イエヤス トップへ">
-    <span class="logo-name">IEYAS</span>
-  </a>
-</header>
+<!-- IEYAS header removed: TikTok banner is now the top element -->
 
 <!-- HERO -->
 <section id="hero" aria-label="イエヤス ヒーローセクション">
@@ -1557,7 +1558,7 @@
   <!-- TikTok banner -->
   <div class="tt-banner" role="banner">
     <div class="tt-icon" aria-hidden="true">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .55.04.79.1V9.01a6.27 6.27 0 00-.79-.05A6.34 6.34 0 003.15 15.3a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V9.01a8.16 8.16 0 004.77 1.52V7.08a4.85 4.85 0 01-1-.39z" fill="white"/>
       </svg>
     </div>
@@ -1575,7 +1576,7 @@
     </div>
 
     <h1 class="h-title">
-      <span class="hl-marker">賃貸の初期費用</span><span class="accent-red">最大限割引！！</span><br>
+      <span class="h-title-main"><span class="hl-marker">賃貸の初期費用</span><span class="accent-red">最大限割引！！</span></span>
       <span class="h-title-sub">QR長押しで友達追加！</span>
     </h1>
 
