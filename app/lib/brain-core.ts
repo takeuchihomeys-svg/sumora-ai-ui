@@ -681,7 +681,7 @@ export async function analyzeConversation(
   // limit 30→15: checkpoint（RAG検索含む）が古い会話をカバーするため、直近15件で十分。
   // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
   // count: "exact" は総メッセージ数のプロンプト注入用（B3）
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult, brainMetaInsightsResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult] = await Promise.all([
     supabase
       .from("messages")
       .select("sender, text, created_at, line_message_id, is_aix_generated", { count: "exact" })
@@ -866,12 +866,6 @@ export async function analyzeConversation(
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(15),
-    // 竹内の改善哲学・判断パターン（analyze-diffs 由来のメタ知見）
-    supabase
-      .from("brain_meta_insights")
-      .select("category, title, principle, impact")
-      .order("created_at", { ascending: false })
-      .limit(10),
   ]);
 
   const { data: messages, error, count: totalMessageCount } = msgResult;
@@ -1261,14 +1255,6 @@ export async function analyzeConversation(
     ? `\n【成約実績パターン（winning_patterns・勝率順）】\n${wpText}`
     : "";
 
-  type BrainMetaInsight = { category: string | null; title: string | null; principle: string | null; impact: string | null };
-  const brainMetaInsights = (brainMetaInsightsResult.data ?? []) as BrainMetaInsight[];
-  const brainMetaInsightsText = brainMetaInsights.length > 0
-    ? `\n【竹内の改善哲学・判断パターン（brain_meta_insights）】\n${brainMetaInsights
-        .map((i) => `[${i.category ?? ""}] ${i.title ?? ""}: ${(i.principle ?? "").slice(0, 150)}`)
-        .join("\n")}`
-    : "";
-
   // この会話で使用済みのAIXアクション一覧（重複提案の抑止・次段階の推奨材料）
   const usedAixTypes = [...new Set(aixLogs.map((l) => l.aix_type).filter((t): t is string => Boolean(t)))];
   const aixHistoryText = usedAixTypes.length > 0
@@ -1341,7 +1327,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
   // プロンプトキャッシュ2分割: 安定知識ブロック（成約/申込パターン・アクションルール・勝率パターン）を
   // user先頭に置き cache_control: ephemeral を付与 → incremental含む連続呼び出しでキャッシュリード。
   // ragKnowledgeText / prevMetaText / 会話履歴等の顧客固有テキストは2ブロック目（cache無し）に置く
-  const stableKnowledgeText = `${contractPatternsText}${applyingPatternsText}${actionRulesText}${winningPatternsText}${brainMetaInsightsText}`;
+  const stableKnowledgeText = `${contractPatternsText}${applyingPatternsText}${actionRulesText}${winningPatternsText}`;
   const customerSpecificText = `${prevMetaText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
