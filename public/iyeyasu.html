@@ -2268,7 +2268,7 @@
         dlog('→ TikTok非検知のためバナー非表示');
         return;
       }
-      injectBanner();
+      // injectBanner(); // 削除
       patchLineLinks();
       watchDynamicLinks();
     } catch (e) { dlog('init ERROR: ' + e); }
