@@ -751,6 +751,33 @@ function splitSentences(text: string): string[] {
     .filter((s) => s.length >= 20);
 }
 
+// ── 成約済み・終了済み会話のexampleを除外するpost-filter（2026-08-20追加）──
+// ai_reply_examples には conversation_status カラムがないため、conversation_id で
+// conversations テーブルをフェッチしてステータスを確認する。
+// 除外対象: BRAIN_SKIP_STATUSES と同じステータス、または is_post_apply=true の会話
+const ANALYZE_SKIP_STATUSES = [
+  "applying", "application", "screening", "contract",
+  "closed_won", "closed_lost", "lost", "approved",
+];
+async function excludeClosedConversationIds(
+  items: Array<{ conversation_id?: string | null }>
+): Promise<Set<string>> {
+  const convIds = [...new Set(
+    items.map((i) => i.conversation_id as string | null).filter((id): id is string => !!id)
+  )];
+  if (convIds.length === 0) return new Set();
+  const { data: convRows } = await supabase
+    .from("conversations")
+    .select("id, status, is_post_apply")
+    .in("id", convIds);
+  if (!convRows || convRows.length === 0) return new Set();
+  return new Set(
+    convRows
+      .filter((c) => ANALYZE_SKIP_STATUSES.includes(c.status as string) || !!(c.is_post_apply as boolean))
+      .map((c) => c.id as string)
+  );
+}
+
 async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: number }> {
   const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
   const { data: recentExamples, error } = await supabase
@@ -764,12 +791,24 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
     .limit(200);
   if (error || !recentExamples || recentExamples.length === 0) return { detected: 0, demoted: 0 };
 
+  // 成約済み・終了済み会話（ANALYZE_SKIP_STATUSES・is_post_apply=true）を除外
+  const _closedIdsRepeat = await excludeClosedConversationIds(
+    recentExamples as Array<{ conversation_id?: string | null }>
+  );
+  const filteredRecent = _closedIdsRepeat.size > 0
+    ? recentExamples.filter((ex) => {
+        const cid = (ex as { conversation_id?: string | null }).conversation_id ?? null;
+        return !cid || !_closedIdsRepeat.has(cid);
+      })
+    : recentExamples;
+  if (filteredRecent.length === 0) return { detected: 0, demoted: 0 };
+
   // ① 各例で「ai_draftにあってsent_replyから消えた文」を抽出し、類似フレーズをクラスタ化
   // aixActions: このフレーズを含んでいたAIX由来例のアクション種別（AI質問のラベル付けに使う）
   // hasLineReply: LINE返信AI由来の例からも削除されたか（AIX/通常が混在するクラスタの注記用）
   type Cluster = { phrase: string; convIds: Set<string>; sampleAiDraft?: string; sampleSentReply?: string; aixActions: Set<string>; hasLineReply: boolean };
   const clusters: Cluster[] = [];
-  for (const ex of recentExamples) {
+  for (const ex of filteredRecent) {
     const draftSentences = splitSentences((ex.ai_draft as string) ?? "");
     const sentSentences = splitSentences((ex.sent_reply as string) ?? "");
     const sentNorm = ((ex.sent_reply as string) ?? "").replace(/\s+/g, "");
@@ -944,6 +983,20 @@ export async function POST(req: NextRequest) {
   for (let i = examples.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [examples[i], examples[j]] = [examples[j], examples[i]];
+  }
+
+  // 成約済み・終了済み会話（ANALYZE_SKIP_STATUSES・is_post_apply=true）をpost-filterで除外
+  // conversation_id でconversationsを参照してステータスを確認する
+  if (examples.length > 0) {
+    const _closedIds = await excludeClosedConversationIds(
+      examples as Array<{ conversation_id?: string | null }>
+    );
+    if (_closedIds.size > 0) {
+      examples.splice(0, examples.length, ...examples.filter((e) => {
+        const cid = (e as { conversation_id?: string | null }).conversation_id ?? null;
+        return !cid || !_closedIds.has(cid);
+      }));
+    }
   }
 
   // ── ⑥ AIX編集差分の第2パス用フェッチ（2026-08追加）──

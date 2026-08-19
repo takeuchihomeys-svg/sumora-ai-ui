@@ -161,8 +161,6 @@ AI案: ${(e.ai_draft ?? "(なし)").slice(0, 300)}
 以下は【${state}】フェーズで今週スタッフがAIを修正・手書きした返信の差分集（${examples.length}件）です。
 既存の確認済みルールと、直近7日の竹内さんの回答も参考にしてください。
 
-${SUMORA_QUESTION_SYSTEM_CONTEXT}
-
 ## 今週の差分集
 ${examplesText}
 
@@ -211,7 +209,9 @@ ${recentAnswersText}
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 2000,
-      system: "あなたは賃貸仲介の営業コーチです。スタッフの返信データを分析してAI改善ルールを抽出します。必ず指定されたJSON形式のみ返してください。",
+      system: [
+        { type: "text" as const, text: "あなたは賃貸仲介の営業コーチです。スタッフの返信データを分析してAI改善ルールを抽出します。必ず指定されたJSON形式のみ返してください。\n\n" + SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } }
+      ],
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -582,8 +582,6 @@ async function findConfirmedContradictionPair(
 検出結果は竹内さんへのAI質問（矛盾確認）の起票に使われるため、以下のシステム絶対ルールを必ず参照してください。
 スモラ確定ルールどおりの内容同士を「矛盾」と誤判定しない・AIXボタンと通常返信の専用領域の違いを矛盾と混同しないこと。
 
-${SUMORA_QUESTION_SYSTEM_CONTEXT}
-
 以下は【${state}】フェーズの確定済み（confirmed）ルール一覧です。
 互いに「逆のことを言っている」明確な矛盾ペアが1組でもあれば、その2つのIDと理由を返してください。
 表現の違い・補完関係は矛盾に含めません。矛盾がなければ pair は null にしてください。
@@ -599,7 +597,9 @@ JSON形式のみ返答：
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 500,
-      system: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。",
+      system: [
+        { type: "text" as const, text: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。\n\n" + SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } }
+      ],
       messages: [{ role: "user", content: prompt }],
     });
     const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
@@ -789,8 +789,6 @@ keep判定の理由（reason）は竹内さんへのAI質問の起票に使わ�
 スモラ確定ルールと矛盾する仮説ルールは keep（質問）にせず reject にしてください。
 AIXボタン専用領域の内容を通常返信のルールとして評価しない（混同しない）こと。
 
-${SUMORA_QUESTION_SYSTEM_CONTEXT}
-
 ${batchText}
 
 判定基準：
@@ -806,7 +804,9 @@ JSON形式のみ返答（keepは最大3件まで）：
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 1000,
-      system: "不動産LINE返信AIのルール品質評価者です。指定されたJSON形式のみ返してください。",
+      system: [
+        { type: "text" as const, text: "不動産LINE返信AIのルール品質評価者です。指定されたJSON形式のみ返してください。\n\n" + SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } }
+      ],
       messages: [{ role: "user", content: prompt }],
     });
 
