@@ -696,24 +696,21 @@ export async function analyzeConversation(
           .maybeSingle()
       : Promise.resolve({ data: null }),
     // Recent starred reply examples for this conversation (context for Haiku)
-    isIncremental
-      ? Promise.resolve({ data: null })
-      : supabase
-          .from("ai_reply_examples")
-          .select("sent_reply, is_starred")
-          .eq("conversation_id", conversationId)
-          .eq("is_starred", true)
-          .order("created_at", { ascending: false })
-          .limit(3),
+    // インクリメンタル時もフェッチ（安定知識としてプロンプトキャッシュで再利用）
+    supabase
+      .from("ai_reply_examples")
+      .select("sent_reply, is_starred")
+      .eq("conversation_id", conversationId)
+      .eq("is_starred", true)
+      .order("created_at", { ascending: false })
+      .limit(3),
     // 最新CPのみ1件取得（RAG検索で古いCPを必要に応じて補完する）
-    isIncremental
-      ? Promise.resolve({ data: null })
-      : supabase
-          .from("conversation_checkpoints")
-          .select("checkpoint_index, summary, key_facts, conversation_stage, message_count_at_creation")
-          .eq("conversation_id", conversationId)
-          .order("checkpoint_index", { ascending: false })
-          .limit(1),
+    supabase
+      .from("conversation_checkpoints")
+      .select("checkpoint_index, summary, key_facts, conversation_stage, message_count_at_creation")
+      .eq("conversation_id", conversationId)
+      .order("checkpoint_index", { ascending: false })
+      .limit(1),
     // Sent properties for this customer (duplicate/history awareness)
     propertyCustomerId
       ? supabase
@@ -725,30 +722,26 @@ export async function analyzeConversation(
       : Promise.resolve({ data: null }),
     // Global permanent operator rules (apply to all conversations, no pgvector needed)
     // B4(Fable5): limit 10→20 — 本番で恒久ルールがちょうど10行に達しており、11個目から無言欠落する状態だった
-    isIncremental
-      ? Promise.resolve({ data: null })
-      : supabase
-          .from("ai_prompt_rules")
-          .select("rule_text, priority")
-          .eq("is_active", true)
-          .eq("is_permanent", true)
-          .is("action_type", null)
-          .order("priority", { ascending: false })
-          .limit(20),
+    supabase
+      .from("ai_prompt_rules")
+      .select("rule_text, priority")
+      .eq("is_active", true)
+      .eq("is_permanent", true)
+      .is("action_type", null)
+      .order("priority", { ascending: false })
+      .limit(20),
     // Confirmed top-importance principles (importance >= 9, no pgvector needed)
     // B11(Fable5): .neq は NULL 行を除外する（SQL <> セマンティクス）→ .or で NULL 許容に。
     // created_at 降順タイブレークで同 importance 内の選抜を決定的にする
-    isIncremental
-      ? Promise.resolve({ data: null })
-      : supabase
-          .from("ai_reply_knowledge")
-          .select("content, importance")
-          .eq("category", "principle")
-          .gte("importance", 9)
-          .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
-          .order("importance", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(5),
+    supabase
+      .from("ai_reply_knowledge")
+      .select("content, importance")
+      .eq("category", "principle")
+      .gte("importance", 9)
+      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(5),
     // Top templates by won_count for context (brain uses these to recommend best template)
     // B1(Fable5): 旧 .like("category", "AIX%") は前方一致で、実カテゴリ「見積書送る【AIX】」等に
     // 一度もマッチしていなかった（本番0件を実測確認 = このデータソースは死んでいた）。
@@ -756,15 +749,13 @@ export async function analyzeConversation(
     // 旧 .gte("use_count", 3) フィルタは撤廃: use_count はモーダル経由送信しか計上せず、
     // 成約実績のあるテンプレ（手打ち送信のため use_count=0）を全て弾いていた。
     // タイブレークは use_count（win_rate は「1回使用で100%」の統計ノイズがあるため順位に使わない）
-    isIncremental
-      ? Promise.resolve({ data: null })
-      : supabase
-          .from("templates")
-          .select("category, label, win_rate, use_count, won_count")
-          .like("category", "%【AIX】%")
-          .order("won_count", { ascending: false, nullsFirst: false })
-          .order("use_count", { ascending: false, nullsFirst: false })
-          .limit(5),
+    supabase
+      .from("templates")
+      .select("category, label, win_rate, use_count, won_count")
+      .like("category", "%【AIX】%")
+      .order("won_count", { ascending: false, nullsFirst: false })
+      .order("use_count", { ascending: false, nullsFirst: false })
+      .limit(5),
     // 線引きルール: BOUNDARY-* rules that define when to use AIX vs auto-reply
     // B4(Fable5): limit 15→40 — 本番に31行あり、旧limitでは線引きルールの半分以上が無言欠落していた。
     // 線引きルールは reply_mode（aix/auto_reply）判定の根幹のため全件注入する
@@ -783,31 +774,27 @@ export async function analyzeConversation(
       .limit(10),
     // 成約パターン（distilled）: notify-viewing / analyze-closed-conversation が書く高価値ナレッジ
     // （既存の principle クエリは category='principle' のみで、これら pattern 行は拾えない）
-    isIncremental
-      ? Promise.resolve({ data: null })
-      : supabase
-          .from("ai_reply_knowledge")
-          .select("title, content, importance")
-          .eq("category", "pattern")
-          // B11(Fable5): NULL 許容（.neq は hypothesis_status IS NULL の行を除外してしまう）
-          .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
-          .or("title.ilike.成約パターン%,title.ilike.[成約分析]%,title.ilike.[転換点]%")
-          .order("importance", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(4),
+    supabase
+      .from("ai_reply_knowledge")
+      .select("title, content, importance")
+      .eq("category", "pattern")
+      // B11(Fable5): NULL 許容（.neq は hypothesis_status IS NULL の行を除外してしまう）
+      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+      .or("title.ilike.成約パターン%,title.ilike.[成約分析]%,title.ilike.[転換点]%")
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(4),
     // 成約・申込到達の会話の実際の優良返信（success × starred × line_reply）
     // FK: ai_reply_examples.conversation_id → conversations.id（migrate-schema L681）で inner join
-    isIncremental
-      ? Promise.resolve({ data: null })
-      : supabase
-          .from("ai_reply_examples")
-          .select("sent_reply, conversation_state, conversations!inner(status)")
-          .in("conversations.status", SUCCESS_EXAMPLE_STATUSES)
-          .eq("is_starred", true)
-          .eq("entry_source", "line_reply")
-          .not("sent_reply", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(8),
+    supabase
+      .from("ai_reply_examples")
+      .select("sent_reply, conversation_state, conversations!inner(status)")
+      .in("conversations.status", SUCCESS_EXAMPLE_STATUSES)
+      .eq("is_starred", true)
+      .eq("entry_source", "line_reply")
+      .not("sent_reply", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(8),
     // ② この会話で使われたAIXアクション履歴（メッセージ単位の厳密ラベル用）
     supabase
       .from("aix_usage_logs")
@@ -849,42 +836,36 @@ export async function analyzeConversation(
     // 明示的判断材料としてプロンプトに注入する。従来この category は analyzeAndSaveBrainMeta の
     // STEP A（template_id 表示用の上位1件取得）にしか使われておらず、
     // 「どの場面でどのAIXボタンが効いたか」がボタン判断に一切反映されていなかった。
-    isIncremental
-      ? Promise.resolve({ data: null })
-      : supabase
-          .from("ai_reply_knowledge")
-          .select("title, content, importance")
-          .eq("category", "applying_pattern")
-          .gte("importance", 8)
-          .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
-          .order("importance", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(3),
+    supabase
+      .from("ai_reply_knowledge")
+      .select("title, content, importance")
+      .eq("category", "applying_pattern")
+      .gte("importance", 8)
+      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(3),
     // winning_patterns: 成約率の高いパターン上位5件
-    isIncremental
-      ? Promise.resolve({ data: null })
-      : supabase.from("winning_patterns")
-          .select("pattern, situation, closing_action, notes, win_rate")
-          .order("win_rate", { ascending: false })
-          .limit(5),
+    supabase.from("winning_patterns")
+      .select("pattern, situation, closing_action, notes, win_rate")
+      .order("win_rate", { ascending: false })
+      .limit(5),
     // RAG化 Phase1: アクション連動ルール（is_permanent 不問・BOUNDARY-* は上の別枠で全件取得済み）。
     // 従来の恒久ルール枠は action_type IS NULL 必須のため、action_type 付きルール
     // （HUMAN-*/FEEDBACK-*/IMPLEMENT-*/LEARN-AIX-* 等）は brain に構造的に一切届いていなかった。
     // priority >= 4 は decay（ai-feedback の90日 demote → priority 2 を除外）との整合（prompt-rules.ts と同基準）。
     // action_type='generate_reply'（返信文面ポリシー）は brain の管轄外のため候補に含めない
     // （actionCandidates は AIX_BRAIN_NOTES キー由来の固定文字列のみ → .in() インジェクション懸念なし）
-    isIncremental
-      ? Promise.resolve({ data: null })
-      : supabase
-          .from("ai_prompt_rules")
-          .select("rule_key, action_type, rule_text, priority, condition_key, condition_value")
-          .eq("is_active", true)
-          .in("action_type", actionCandidates)
-          .not("rule_key", "like", "BOUNDARY-%")
-          .gte("priority", 4)
-          .order("priority", { ascending: false })
-          .order("updated_at", { ascending: false, nullsFirst: false })
-          .limit(15),
+    supabase
+      .from("ai_prompt_rules")
+      .select("rule_key, action_type, rule_text, priority, condition_key, condition_value")
+      .eq("is_active", true)
+      .in("action_type", actionCandidates)
+      .not("rule_key", "like", "BOUNDARY-%")
+      .gte("priority", 4)
+      .order("priority", { ascending: false })
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(15),
   ]);
 
   const { data: messages, error, count: totalMessageCount } = msgResult;
@@ -1343,12 +1324,23 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
     return parts.join("\n") + "\n\n";
   })() : "";
 
-  // RAG化: actionRulesText / ragKnowledgeText は会話依存のため userPrompt 側に注入
-  // （systemText は cache_control: ephemeral のため、会話依存テキストを入れるとキャッシュが壊れる）
-  const userPrompt = `${prevMetaText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}${actionRulesText}${winningPatternsText}
+  // プロンプトキャッシュ2分割: 安定知識ブロック（成約/申込パターン・アクションルール・勝率パターン）を
+  // user先頭に置き cache_control: ephemeral を付与 → incremental含む連続呼び出しでキャッシュリード。
+  // ragKnowledgeText / prevMetaText / 会話履歴等の顧客固有テキストは2ブロック目（cache無し）に置く
+  const stableKnowledgeText = `${contractPatternsText}${applyingPatternsText}${actionRulesText}${winningPatternsText}`;
+  const customerSpecificText = `${prevMetaText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
+
+  const maskedStableText = maskPII(stableKnowledgeText, [opts?.customerName]);
+  const userContent = [
+    // 空のtextブロックはAPIエラーになるため、安定知識が空の場合はブロックごと省略
+    ...(maskedStableText.trim()
+      ? [{ type: "text" as const, text: maskedStableText, cache_control: { type: "ephemeral" as const } }]
+      : []),
+    { type: "text" as const, text: maskPII(customerSpecificText, [opts?.customerName]) },
+  ];
 
   try {
     const response = await client.messages.create({
@@ -1356,7 +1348,7 @@ ${history}`;
       max_tokens: 6000,
       thinking: { type: "disabled" },
       system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: maskPII(userPrompt, [opts?.customerName]) }],
+      messages: [{ role: "user", content: userContent }],
     });
 
     // claude-sonnet-5 はextended thinkingを使うためcontent[0]がthinking型になることがある
