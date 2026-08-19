@@ -722,5 +722,161 @@
   els.forEach(function (el) { io.observe(el); });
 })();
 </script>
+
+<!-- TikTok WebView LINE対策スクリプト -->
+<script>
+(function () {
+  'use strict';
+
+  var LINE_URL = 'https://lin.ee/xofFiWP';
+  var BANNER_ID = 'tiktok-line-banner';
+
+  function isTikTokWebView() {
+    try { return /BytedanceWebview|musical_ly|trill_/i.test(navigator.userAgent); } catch (e) { return false; }
+  }
+  function isIOS() {
+    try { return /iPhone|iPad|iPod/i.test(navigator.userAgent); } catch (e) { return false; }
+  }
+  function isAndroid() {
+    try { return /android/i.test(navigator.userAgent); } catch (e) { return false; }
+  }
+
+  function showCopyResult(btn, success) {
+    try {
+      btn.textContent = success ? 'コピーしました！LINEアプリで開いてください' : 'コピー失敗。長押しでURLを選択してください';
+      btn.style.background = success ? '#04a544' : '#c0392b';
+      setTimeout(function () {
+        try { btn.textContent = 'LINEリンクをコピー'; btn.style.background = '#06C755'; } catch (e) {}
+      }, 3500);
+    } catch (e) {}
+  }
+
+  function fallbackCopy(text, btn) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      var ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      showCopyResult(btn, ok);
+    } catch (e) { showCopyResult(btn, false); }
+  }
+
+  function copyToClipboard(text, btn) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(function () { showCopyResult(btn, true); })
+          .catch(function () { fallbackCopy(text, btn); });
+      } else { fallbackCopy(text, btn); }
+    } catch (e) { fallbackCopy(text, btn); }
+  }
+
+  function buildIntentUrl(lineUrl) {
+    var stripped = lineUrl.replace(/^https?:\/\//, '');
+    var fallback = encodeURIComponent(lineUrl);
+    return 'intent://' + stripped + '#Intent;scheme=https;package=jp.naver.line.android;S.browser_fallback_url=' + fallback + ';end';
+  }
+
+  function injectBanner() {
+    try {
+      if (document.getElementById(BANNER_ID)) return;
+      var banner = document.createElement('div');
+      banner.id = BANNER_ID;
+      banner.setAttribute('role', 'alert');
+      banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff6b35;color:#fff;padding:10px 40px 14px 16px;font-size:13px;line-height:1.55;z-index:2147483647;text-align:center;box-shadow:0 3px 10px rgba(0,0,0,0.35);font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;box-sizing:border-box';
+
+      var closeBtn = document.createElement('button');
+      closeBtn.setAttribute('aria-label', '閉じる');
+      closeBtn.style.cssText = 'position:absolute;top:50%;right:10px;transform:translateY(-50%);background:rgba(255,255,255,0.25);border:none;border-radius:50%;color:#fff;font-size:16px;font-weight:bold;width:28px;height:28px;line-height:28px;text-align:center;cursor:pointer;padding:0';
+      closeBtn.textContent = '×';
+      closeBtn.addEventListener('click', function () {
+        try { banner.style.display = 'none'; document.body.style.paddingTop = '0'; } catch (e) {}
+      });
+
+      var msg = document.createElement('p');
+      msg.style.cssText = 'margin:0 0 8px;font-weight:bold;font-size:13px';
+      msg.innerHTML = '⚠️ TikTokブラウザではLINEが直接開けません<br>右上の <strong>「...」</strong> → 「<strong>外部ブラウザで開く</strong>」を<br>押してからLINEを友だち追加してください！';
+
+      var copyBtn = document.createElement('button');
+      copyBtn.style.cssText = 'display:inline-block;background:#06C755;color:#fff;border:none;border-radius:6px;padding:7px 18px;font-size:13px;font-weight:bold;cursor:pointer;letter-spacing:0.02em';
+      copyBtn.textContent = 'LINEリンクをコピー';
+      copyBtn.addEventListener('click', function () { copyToClipboard(LINE_URL, copyBtn); });
+
+      banner.appendChild(closeBtn);
+      banner.appendChild(msg);
+      banner.appendChild(copyBtn);
+
+      if (document.body.firstChild) {
+        document.body.insertBefore(banner, document.body.firstChild);
+      } else {
+        document.body.appendChild(banner);
+      }
+
+      function adjustPadding() {
+        try { var h = banner.offsetHeight; if (h > 0) document.body.style.paddingTop = h + 'px'; } catch (e) {}
+      }
+      adjustPadding();
+      setTimeout(adjustPadding, 200);
+    } catch (e) {}
+  }
+
+  function patchLineLinks() {
+    try {
+      var links = document.querySelectorAll('a[href*="lin.ee"],a[href*="line.me"],a[href*="line://"]');
+      for (var i = 0; i < links.length; i++) {
+        (function (link) {
+          link.addEventListener('click', function (e) {
+            try {
+              if (!isTikTokWebView()) return;
+              e.preventDefault();
+              e.stopImmediatePropagation();
+              if (isAndroid()) {
+                window.location.href = buildIntentUrl(LINE_URL);
+                setTimeout(function () {
+                  try {
+                    var b = document.getElementById(BANNER_ID);
+                    if (b && b.style.display !== 'none') b.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  } catch (e2) {}
+                }, 1500);
+              } else {
+                try {
+                  var b = document.getElementById(BANNER_ID);
+                  if (b) { b.style.display = 'block'; window.scrollTo({ top: 0, behavior: 'smooth' }); }
+                } catch (e3) {}
+              }
+            } catch (err) {}
+          }, true);
+        })(links[i]);
+      }
+    } catch (e) {}
+  }
+
+  function watchDynamicLinks() {
+    try {
+      if (typeof MutationObserver === 'undefined') return;
+      var observer = new MutationObserver(function () { try { patchLineLinks(); } catch (e) {} });
+      observer.observe(document.body, { childList: true, subtree: true });
+    } catch (e) {}
+  }
+
+  function init() {
+    try {
+      if (!isTikTokWebView()) return;
+      injectBanner();
+      patchLineLinks();
+      watchDynamicLinks();
+    } catch (e) {}
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
 </body>
 </html>
