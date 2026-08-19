@@ -29,8 +29,12 @@ export async function GET(req: NextRequest) {
   const token =
     process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ??
     process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
-  const groupId =
-    process.env.LINE_IYEYASU_REPORT_GROUP_ID ?? process.env.LINE_STAFF_GROUP_ID;
+
+  let groupId: string | null = process.env.LINE_IYEYASU_REPORT_GROUP_ID ?? process.env.LINE_STAFF_GROUP_ID ?? null;
+  if (!groupId) {
+    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
+    groupId = (data?.value as string) ?? null;
+  }
 
   if (!token || !groupId) {
     return NextResponse.json({ ok: false, error: "LINE config missing" }, { status: 500 });
