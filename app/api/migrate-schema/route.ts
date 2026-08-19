@@ -1868,6 +1868,20 @@ ALTER TABLE conversation_stage_history DISABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brain_analyzed_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_conversations_brain_analyzed ON conversations(brain_analyzed_at) WHERE brain_analyzed_at IS NOT NULL;
 
+-- ── インクリメンタル分析用フル分析水位（2026-08-19追加）──
+-- brain_deep_analyzed_at: 最後にフル分析（full mode）を実行した時刻
+-- brain_deep_msg_count: フル分析実行時点の総メッセージ数（30件強制リフレッシュ用）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brain_deep_analyzed_at TIMESTAMPTZ;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brain_deep_msg_count INTEGER DEFAULT 0;
+
+-- ── フル脳分析キャッシュ（2026-08-19追加）──
+-- brain_full_analyzed_at: 最後にフル脳分析を実行した時刻
+-- brain_full_msg_count: フル分析実行時点の総メッセージ数（増分判定用）
+-- last_brain_meta: 最後のフル脳分析結果のキャッシュ（JSONB）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brain_full_analyzed_at TIMESTAMPTZ;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brain_full_msg_count INTEGER;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_brain_meta JSONB;
+
 -- ── reply_engagement_signals: 返信後の顧客反応シグナル（2026-08-14追加）──
 -- スタッフ送信時に pending を作成し、顧客の次の返信で resolve する。
 -- 時間閾値なし（LINEは返信が遅いのが普通）。返信あり=neutral、成約パターン語（内覧・申込等）検出=positive。

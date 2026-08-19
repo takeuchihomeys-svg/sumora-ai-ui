@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { maskPII } from "@/app/lib/pii-mask";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -664,7 +665,9 @@ export async function analyzeConversation(
   // auto_send_enabled=false の会話に auto_reply を提案しない・is_flagged はスタッフ要対応なので aix 強制
   // RAG化 Phase1: prevPhase / prevAix は前回brain分析のキャッシュ値（conversation_direction）。
   // フェーズ・AIX候補は Sonnet 実行後にしか確定しないため、ルール事前フィルタには前回値を事前シグナルとして使う
-  opts?: { autoSendEnabled?: boolean; isHot?: boolean; isFlagged?: boolean; prevPhase?: string | null; prevAix?: string | null },
+  // インクリメンタル分析 Phase1: mode=full/incremental の切替・prevMeta=前回フル分析結果（差分更新の起点）・
+  // totalMsgCount=呼び出し元で取得済みの総メッセージ数（30件強制リフレッシュ判定用）
+  opts?: { autoSendEnabled?: boolean; isHot?: boolean; isFlagged?: boolean; prevPhase?: string | null; prevAix?: string | null; customerName?: string; mode?: "full" | "incremental"; prevMeta?: SuggestedAixMeta; totalMsgCount?: number },
 ): Promise<SuggestedAixMeta> {
   // RAG化 Phase1: 前回フェーズ（無ければ convStatus からの粗い推定）でアクション候補を絞る。
   // フェーズ不明・未知フェーズ時は全AIXアクションにフォールバック（フィルタ無効化 = 取りこぼしゼロ側）
@@ -702,7 +705,7 @@ export async function analyzeConversation(
     // 最新CPのみ1件取得（RAG検索で古いCPを必要に応じて補完する）
     supabase
       .from("conversation_checkpoints")
-      .select("checkpoint_index, summary, key_facts, conversation_stage")
+      .select("checkpoint_index, summary, key_facts, conversation_stage, message_count_at_creation")
       .eq("conversation_id", conversationId)
       .order("checkpoint_index", { ascending: false })
       .limit(1),
@@ -1302,11 +1305,26 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}}`;
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}}
+
+【差分分析モード】userプロンプトに【前回の分析結論】がある場合、それを仮説として参照してよい。新着メッセージが前回結論を変えない場合は前回結論をほぼ維持してJSON出力してよい。ただし申込・内見確定・キャンセル・条件変更・フェーズ遷移のシグナルがあれば前回結論を破棄して再判断すること。JSONは常に全フィールド完全出力（ai_summary/ai_summary_json含む）。`;
+
+  // インクリメンタル分析: 前回の分析結論をコンテキストとして注入
+  const prevMetaText = opts?.prevMeta ? (() => {
+    const pm = opts.prevMeta!;
+    const parts: string[] = ["【前回の分析結論（差分更新の起点として参照）】"];
+    if (pm.action) parts.push(`推奨アクション: ${pm.action}`);
+    if (pm.note) parts.push(`ノート: ${pm.note}`);
+    if (pm.closing_strategy) parts.push(`クロージング戦略: ${pm.closing_strategy}`);
+    if (pm.template_hint) parts.push(`テンプレートヒント: ${pm.template_hint}`);
+    if (pm.next_steps?.length) parts.push(`次のステップ: ${pm.next_steps.join(" / ")}`);
+    if (pm.reply_mode) parts.push(`返信モード: ${pm.reply_mode}`);
+    return parts.join("\n") + "\n\n";
+  })() : "";
 
   // RAG化: actionRulesText / ragKnowledgeText は会話依存のため userPrompt 側に注入
   // （systemText は cache_control: ephemeral のため、会話依存テキストを入れるとキャッシュが壊れる）
-  const userPrompt = `${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}${actionRulesText}${winningPatternsText}
+  const userPrompt = `${prevMetaText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}${contractPatternsText}${applyingPatternsText}${actionRulesText}${winningPatternsText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -1317,7 +1335,7 @@ ${history}`;
       max_tokens: 6000,
       thinking: { type: "disabled" },
       system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: userPrompt }],
+      messages: [{ role: "user", content: maskPII(userPrompt, [opts?.customerName]) }],
     });
 
     // claude-sonnet-5 はextended thinkingを使うためcontent[0]がthinking型になることがある
@@ -1579,6 +1597,14 @@ ${history}`;
 const MESSAGES_PER_CHECKPOINT = 15;  // 前回作成時から15件以上増えたら新規作成
 const CHECKPOINT_MIN_MESSAGES = 11;  // 総メッセージ数 > 10 で初回作成
 
+// フル分析スキップ判定: 10メッセージに1回のフル分析（それ以外はキャッシュ返却）
+const FULL_ANALYSIS_EVERY_N_MESSAGES = 10;
+const FULL_REFRESH_EVERY_N_MESSAGES = 30;  // フル分析から30件で強制フルリフレッシュ（アンカリング防止）
+const INCREMENTAL_MIN_RECENT = 5;           // incremental差分窓の最低件数
+const INCREMENTAL_MAX_MESSAGES = 40;        // incremental差分窓の最大件数
+// 緊急バイパス: これらのキーワードを含む最新顧客メッセージは必ずフル分析する
+const URGENT_BYPASS_RE = /申込|申し込|入居(したい|します|希望)|契約|内見|内覧|見学|見に行|決め(ます|ました|たい)|お願いします|進めて(ください|ほしい)|見積|審査|初期費用|キャンセル|やめ(ます|ました)|他(社|の不動産|で決)|別の(物件|部屋)|急ぎ|至急|今日|明日|保証人|必要書類/;
+
 function formatJstDateShort(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(new Date(iso).getTime() + 9 * 3600 * 1000);
@@ -1644,7 +1670,7 @@ async function getCheckpointEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
-export async function maybeCreateCheckpoint(conversationId: string): Promise<void> {
+export async function maybeCreateCheckpoint(conversationId: string, customerName?: string): Promise<void> {
   try {
     // 1) 総メッセージ数 + 最新チェックポイントを並列取得
     const [countRes, cpRes] = await Promise.all([
@@ -1701,7 +1727,7 @@ export async function maybeCreateCheckpoint(conversationId: string): Promise<voi
       model: BRAIN_MODEL,
       max_tokens: 1500,
       thinking: { type: "disabled" },
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content: maskPII(prompt, [customerName]) }],
     });
     // analyzeConversation と同じ content.find() で thinking ブロック対策
     const raw = response.content.find((c) => c.type === "text")?.text ?? "";
@@ -1760,7 +1786,7 @@ export async function maybeCreateCheckpoint(conversationId: string): Promise<voi
 export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<boolean> {
   const { data: conv, error: selectError } = await supabase
     .from("conversations")
-    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction")
+    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction, brain_full_analyzed_at, brain_full_msg_count, brain_deep_analyzed_at, brain_deep_msg_count, last_brain_meta, customer_name")
     .eq("id", conversationId)
     .maybeSingle();
   if (selectError) {
@@ -1781,6 +1807,67 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   // 古い方（msg2を含まない解析）が後着で勝つのを防ぐ — 書き込み時に updated_at 一致を条件にする
   const watermark = conv.updated_at as string;
 
+  // Skip判定: 10メッセージに1回のフル分析（それ以外はキャッシュ返却でSonnetコスト削減）
+  const convData = conv as unknown as Record<string, unknown>;
+  const lastFullAt = convData?.brain_full_analyzed_at ? new Date(convData.brain_full_analyzed_at as string) : null;
+  const lastFullCount = (convData?.brain_full_msg_count as number | null) ?? 0;
+  const cachedMeta = (convData?.last_brain_meta ?? null) as Record<string, unknown> | null;
+  const customerName = (convData?.customer_name as string | null) ?? undefined;
+
+  // メッセージ総数を取得
+  const { count: totalMsgCount } = await supabase
+    .from("messages")
+    .select("*", { count: "exact", head: true })
+    .eq("conversation_id", conversationId);
+
+  // 最新顧客メッセージ（緊急キーワード判定用）
+  const { data: latestMsg } = await supabase
+    .from("messages")
+    .select("text, created_at")
+    .eq("conversation_id", conversationId)
+    .eq("sender", "customer")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const latestText = latestMsg?.text ?? "";
+  const latestMsgAt = latestMsg?.created_at ? new Date(latestMsg.created_at) : null;
+  const hoursSinceLastMsg = latestMsgAt && lastFullAt
+    ? (latestMsgAt.getTime() - lastFullAt.getTime()) / (1000 * 60 * 60)
+    : Infinity;
+
+  const msgsSinceLastFull = (totalMsgCount ?? 0) - lastFullCount;
+  const hoursSinceLastFull = lastFullAt
+    ? (Date.now() - lastFullAt.getTime()) / (1000 * 60 * 60)
+    : Infinity;
+
+  const isUrgentBypass = URGENT_BYPASS_RE.test(latestText) || PROPERTY_CONDITION_INQUIRY_RE.test(latestText);
+
+  // 3段階モード判定: full / incremental / cached
+  const msgsSinceDeep = (totalMsgCount ?? 0) - ((convData?.brain_deep_msg_count as number | null) ?? 0);
+  const needsFull =
+    !cachedMeta ||
+    (totalMsgCount ?? 0) < 11 ||
+    hoursSinceLastFull >= 24 ||
+    hoursSinceLastMsg >= 24 ||
+    msgsSinceDeep >= FULL_REFRESH_EVERY_N_MESSAGES;
+
+  const analysisMode: "full" | "incremental" | "cached" =
+    needsFull ? "full" :
+    (isUrgentBypass || msgsSinceLastFull >= FULL_ANALYSIS_EVERY_N_MESSAGES) ? "incremental" :
+    "cached";
+
+  if (analysisMode === "cached") {
+    // キャッシュ返却パス（Sonnet呼び出しなし・required通知は runBrainAndNotify 側で抑制）
+    const cachedResult = { ...cachedMeta, source: "cached" };
+    await supabase
+      .from("conversations")
+      .update({ suggested_aix_meta: cachedResult, brain_analyzed_at: new Date().toISOString() })
+      .eq("id", conversationId)
+      .eq("updated_at", watermark);
+    return true;
+  }
+
   const isUrgent = Date.now() - new Date(watermark).getTime() <= URGENT_WINDOW_MS;
   // RAG化 Phase1: 前回brain分析のフェーズ・AIX候補（conversation_direction に前回書き込んだ値）を
   // ルール事前フィルタ用の事前シグナルとして渡す（Sonnet 実行前にフェーズは確定できないため）
@@ -1797,6 +1884,10 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
       isFlagged: (conv.is_flagged as boolean | null) ?? false,
       prevPhase: typeof prevDir?.current_phase === "string" ? (prevDir.current_phase as string) : null,
       prevAix: typeof prevDir?.suggested_aix_button === "string" ? (prevDir.suggested_aix_button as string) : null,
+      customerName,
+      prevMeta: cachedMeta as SuggestedAixMeta ?? null,
+      mode: analysisMode,
+      totalMsgCount: totalMsgCount ?? 0,
     },
   );
   if (!meta) {
@@ -1811,9 +1902,23 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
     return false;
   }
 
+  // incremental分析の結果は source を brain_incremental にする（full は analyzeConversation の source をそのまま使用）
+  const metaToWrite = { ...meta, ...(analysisMode === "incremental" ? { source: "brain_incremental" } : {}) };
   const { data: writtenRows, error } = await supabase
     .from("conversations")
-    .update({ suggested_aix_meta: meta, brain_analyzed_at: new Date().toISOString(), is_hot: true })
+    .update({
+      suggested_aix_meta: metaToWrite,
+      brain_analyzed_at: new Date().toISOString(),
+      is_hot: true,
+      ...(analysisMode === "full" ? {
+        brain_deep_analyzed_at: new Date().toISOString(),
+        brain_deep_msg_count: totalMsgCount ?? 0,
+      } : {}),
+      // incrementalとfull両方でbrain_full_*を更新（次回のSkip/incremental判定に使う）
+      brain_full_analyzed_at: new Date().toISOString(),
+      brain_full_msg_count: totalMsgCount ?? 0,
+      last_brain_meta: metaToWrite,
+    })
     .eq("id", conversationId)
     .eq("updated_at", watermark) // B5: 会話が進んでいたら古い解析は静かに no-op（sweep が補填する）
     .select("id"); // no-op（0行マッチ）を偽陽性なく検知するために追加
@@ -2098,10 +2203,10 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
     }
 
     try {
-      after(() => maybeCreateCheckpoint(conversationId));
+      after(() => maybeCreateCheckpoint(conversationId, customerName));
     } catch {
       // リクエストコンテキスト外（テスト/スクリプト実行）では after() が使えないためフォールバック
-      void maybeCreateCheckpoint(conversationId).catch(() => {});
+      void maybeCreateCheckpoint(conversationId, customerName).catch(() => {});
     }
   }
   return actuallyWritten; // 実際に書き込んだ時だけ true（偽陽性の根本修正）
@@ -2193,7 +2298,8 @@ export async function runBrainAndNotify(conversationId: string, msgText?: string
   // required 通知（旧line-webhook brain after() から移設。全件通知は通知疲れのため required のみ）
   try {
     const meta = snapshot.meta;
-    if (meta && meta.enforcement_level === "required") {
+    // source === "cached" の場合は required通知をスキップ（キャッシュ返却のたびに同じ通知が再送される二重通知防止）
+    if (meta && meta.enforcement_level === "required" && meta.source !== "cached") {
       const customerName = snapshot.customerName || "お客様";
       const actionLabel = AIX_LABEL_JP[meta.action ?? ""] ?? meta.action ?? "対応";
       const lines = [
