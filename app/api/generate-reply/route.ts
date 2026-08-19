@@ -2509,14 +2509,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     const genTemperature = emotionTemperature(analysisEmotion ?? resolvedSummaryJson?.emotion);
 
     // ─── reply_modeゲート チェックポイントB（本命）───
-    // webhookは受信毎にsuggested_aix_metaをワイプ→brain再分析(Haiku 3〜10秒)するため、
-    // チェックポイントA時点ではmetaがnullのことが多い。Step1分析(最大45秒)完了後の
-    // このタイミングなら再投入済み。メイン生成(Sonnet)呼び出し前に最終確認する。
-    // H7(Fable5): 上で取得済みの brainGate を再利用（DB再取得しない・タイミングは同等）
+    // チェックポイントB: Step1(最大45秒)完了後にDB再フェッチ。A→B間にbrainがaix書き込んでも検出可能。
     if (conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
-      if (brainGate?.meta?.reply_mode === "aix") {
+      const freshGateB = externalBrainGate ?? await fetchReplyModeGate(conversationId);
+      if (freshGateB?.meta?.reply_mode === "aix") {
         console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(B):", conversationId);
-        return applyAixGateAndRespond(conversationId, brainGate.meta, brainGate.customerName);
+        return applyAixGateAndRespond(conversationId, freshGateB.meta, freshGateB.customerName);
       }
     }
     if (enforceReplyModeGate && conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
