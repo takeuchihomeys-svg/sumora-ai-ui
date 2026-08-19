@@ -123,151 +123,434 @@
     .h-btn:hover { background: var(--line-dk); transform: scale(1.04); }
     .h-btn:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
 
-    /* ─── Hero (redesigned: LINE ad style) ─── */
+    /* ─── Hero (Fable5 redesign: pop QR-first design) ─── */
+
+    @keyframes twinkle {
+      0%,100% { opacity:1; transform:scale(1) rotate(0deg); }
+      50%      { opacity:.65; transform:scale(1.45) rotate(22deg); }
+    }
+    @keyframes float-arrow {
+      0%,100% { transform:translateY(0); }
+      50%      { transform:translateY(-5px); }
+    }
+    @keyframes sway {
+      0%,100% { transform:rotate(-3deg) translateY(0); }
+      50%      { transform:rotate(2.5deg) translateY(-7px); }
+    }
+    @keyframes sway-r {
+      0%,100% { transform:rotate(3deg) translateY(-6px); }
+      50%      { transform:rotate(-2deg) translateY(0); }
+    }
+    @keyframes spin-slow {
+      from { transform:translateX(-50%) rotate(0deg); }
+      to   { transform:translateX(-50%) rotate(360deg); }
+    }
+    @keyframes pulse-ring {
+      0%   { box-shadow:0 0 0 0 rgba(6,199,85,.5), 4px 4px 0 #111; }
+      65%  { box-shadow:0 0 0 15px rgba(6,199,85,0), 4px 4px 0 #111; }
+      100% { box-shadow:0 0 0 0 rgba(6,199,85,0), 4px 4px 0 #111; }
+    }
+
     #hero {
-      font-family: var(--font-base);
-      background: linear-gradient(160deg, var(--line-green) 0%, var(--line-green-deeper) 100%);
-      position: relative;
-      padding: 32px 20px 44px;
-      overflow: hidden;
-      box-sizing: border-box;
+      font-family: 'Hiragino Maru Gothic ProN','HGMaruGothicMPRO','Meiryo','MS PGothic',sans-serif;
       max-width: 480px;
       margin: 0 auto;
+      background: #fffde7;
+      position: relative;
+      overflow: hidden;
     }
+    #hero * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* dot halftone texture */
     #hero::before {
       content: '';
       position: absolute;
       inset: 0;
-      background-image: radial-gradient(circle, var(--white-alpha-07) 1px, transparent 1px);
+      background-image: radial-gradient(circle, #c8a000 1.6px, transparent 1.6px);
       background-size: 18px 18px;
+      opacity: .2;
       pointer-events: none;
       z-index: 0;
     }
-    #hero > * { position: relative; z-index: 1; }
 
-    .hero-top { margin-bottom: 24px; }
-    .hero-label {
-      display: inline-block;
-      background: var(--tangerine);
-      color: #fff;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      padding: 4px 12px;
-      border-radius: 20px;
-      margin-bottom: 12px;
-    }
-    .hero-catch {
-      color: #fff;
-      font-size: 36px;
-      font-weight: 900;
-      line-height: 1.25;
-      letter-spacing: -0.01em;
-      margin: 0 0 12px;
-      text-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    }
-    .hero-sub {
-      color: var(--white-alpha-80);
-      font-size: 16px;
-      font-weight: 500;
-      line-height: 1.6;
-      margin: 0;
+    /* conic sunburst */
+    .h-sunburst {
+      position: absolute;
+      top: -80px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 640px;
+      height: 640px;
+      background: repeating-conic-gradient(
+        from 0deg,
+        rgba(245,200,66,.45) 0deg 7deg,
+        rgba(255,253,231,0) 7deg 14deg
+      );
+      border-radius: 50%;
+      animation: spin-slow 55s linear infinite;
+      z-index: 0;
+      pointer-events: none;
     }
 
-    /* Hero visual: phone + card */
-    .hero-visual {
+    /* TikTok banner */
+    .tt-banner {
+      position: relative;
+      z-index: 10;
+      background: #000;
       display: flex;
-      gap: 14px;
-      align-items: flex-start;
-      margin-bottom: 28px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 14px 22px;
+      clip-path: polygon(0 0, 100% 0, 100% 66%, 0 100%);
     }
-    .hero-phone-col { flex: 0 0 auto; width: 148px; }
-    .hero-phone-col svg {
-      width: 100%;
-      height: auto;
-      display: block;
-      filter: drop-shadow(0 8px 20px rgba(0,0,0,0.30));
+    .tt-icon { flex-shrink: 0; display: flex; align-items: center; }
+    .tt-text {
+      font-size: 13px;
+      font-weight: 900;
+      color: #fff;
+      letter-spacing: .04em;
+      line-height: 1.1;
+      text-align: center;
+    }
+    .tt-text em { color: var(--sun); font-style: normal; }
+    .tt-badge {
+      flex-shrink: 0;
+      background: var(--sun);
+      color: #111;
+      font-size: 10px;
+      font-weight: 900;
+      padding: 3px 8px;
+      border-radius: 4px;
+      letter-spacing: .06em;
+      transform: rotate(-2deg);
+      white-space: nowrap;
     }
 
-    .hero-card {
-      flex: 1 1 0;
-      background: #fff;
-      border-radius: 16px;
-      padding: 18px 16px;
-      box-shadow: var(--card-shadow);
-      box-sizing: border-box;
-      align-self: center;
+    /* Hero body */
+    .h-body {
+      position: relative;
+      z-index: 5;
+      padding: 18px 20px 0;
     }
-    .hero-card-title {
-      color: var(--line-green-dark);
-      font-size: 22px;
+    .h-star {
+      position: absolute;
+      z-index: 6;
+      animation: twinkle 2.3s ease-in-out infinite;
+      -webkit-text-stroke: 1px #111;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .h-star.s1 { top: 10px; left: 12px; font-size: 21px; color: var(--sun); animation-delay: 0s; }
+    .h-star.s2 { top: 14px; right: 14px; font-size: 27px; color: var(--tangerine); animation-delay: .9s; }
+    .h-eyebrow { display: flex; justify-content: center; margin-bottom: 8px; }
+    .eyebrow-badge {
+      display: inline-block;
+      background: #111;
+      color: var(--sun);
+      font-size: 11px;
       font-weight: 900;
-      line-height: 1.3;
-      margin: 0 0 14px;
-      letter-spacing: -0.01em;
+      padding: 4px 14px;
+      border-radius: 4px;
+      letter-spacing: .1em;
+      transform: rotate(-1.5deg);
+      box-shadow: 2px 2px 0 var(--sun);
     }
-    .hero-card-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
+    .h-title {
+      font-size: 27px;
+      font-weight: 900;
+      color: #111;
+      line-height: 1.28;
+      text-align: center;
+      text-wrap: balance;
+      margin-bottom: 16px;
+      -webkit-text-stroke: .3px #111;
+    }
+    .h-title .accent { color: var(--line-dk); }
+
+    /* QR stage */
+    .qr-stage {
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 0 98px;
+      min-height: 230px;
+    }
+    .bubble {
+      position: absolute;
+      border: 3px solid #111;
+      padding: 10px 11px;
+      font-size: 12px;
+      font-weight: 900;
+      color: #111;
+      width: 86px;
+      text-align: center;
+      line-height: 1.45;
+      z-index: 8;
+    }
+    .b-left {
+      background: #fff;
+      left: 0;
+      top: 50%;
+      border-radius: 14px 14px 14px 4px;
+      box-shadow: 3px 3px 0 #111;
+      animation: sway 3.3s ease-in-out infinite;
+    }
+    .b-left::after {
+      content: '';
+      position: absolute;
+      right: -14px;
+      top: 50%;
+      transform: translateY(-50%);
+      border-left: 14px solid #111;
+      border-top: 9px solid transparent;
+      border-bottom: 9px solid transparent;
+    }
+    .b-left::before {
+      content: '';
+      position: absolute;
+      right: -10px;
+      top: 50%;
+      transform: translateY(-50%);
+      border-left: 11px solid #fff;
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      z-index: 1;
+    }
+    .b-left .hi { color: var(--line-dk); font-size: 15px; display: block; }
+    .b-right {
+      background: var(--sun);
+      right: 0;
+      top: 50%;
+      border-radius: 14px 14px 4px 14px;
+      box-shadow: 3px 3px 0 #111;
+      animation: sway-r 2.8s ease-in-out infinite;
+    }
+    .b-right::after {
+      content: '';
+      position: absolute;
+      left: -14px;
+      top: 50%;
+      transform: translateY(-50%);
+      border-right: 14px solid #111;
+      border-top: 9px solid transparent;
+      border-bottom: 9px solid transparent;
+    }
+    .b-right::before {
+      content: '';
+      position: absolute;
+      left: -10px;
+      top: 50%;
+      transform: translateY(-50%);
+      border-right: 11px solid var(--sun);
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      z-index: 1;
+    }
+    .b-right .hi { color: var(--forest); font-size: 14px; display: block; }
+    .qr-card {
+      background: #fff;
+      border: 3px solid var(--line);
+      border-radius: 18px;
+      padding: 14px 14px 12px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
-    }
-    .hero-card-list li {
-      display: flex;
-      align-items: flex-start;
+      align-items: center;
       gap: 8px;
-      font-size: 13px;
-      font-weight: 600;
-      color: #1a1a1a;
-      line-height: 1.45;
+      position: relative;
+      z-index: 7;
+      animation: pulse-ring 2.8s ease-in-out infinite;
     }
-    .check-icon {
-      flex-shrink: 0;
-      width: 20px;
-      height: 20px;
-      background: var(--line-green);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .check-icon svg { width: 11px; height: 11px; }
-
-    /* Hero CTA */
-    .hero-cta { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-    .hero-line-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      width: 100%;
-      background: var(--line-green-dark);
-      color: #fff;
-      font-size: 20px;
+    .qr-card img { display: block; border-radius: 6px; }
+    .qr-label {
+      font-size: 10px;
       font-weight: 700;
-      letter-spacing: 0.02em;
-      padding: 16px 24px;
+      color: #555;
+      text-align: center;
+      line-height: 1.55;
+    }
+    .qr-label strong { color: var(--line-dk); }
+    .line-corner-badge {
+      position: absolute;
+      top: -10px;
+      right: -10px;
+      background: var(--line);
+      color: #fff;
+      font-size: 9px;
+      font-weight: 900;
+      padding: 3px 7px;
+      border-radius: 6px;
+      border: 2px solid #fff;
+      box-shadow: 1px 1px 0 #111;
+      letter-spacing: .06em;
+    }
+    .scan-hint {
+      position: relative;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #555;
+      margin: 13px 0 15px;
+    }
+    .scan-arrow {
+      color: var(--line);
+      font-size: 13px;
+      display: inline-block;
+      animation: float-arrow 1.4s ease-in-out infinite;
+    }
+    .scan-arrow:last-child { animation-delay: .28s; }
+    .benefit-row {
+      position: relative;
+      z-index: 5;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 18px;
+    }
+    .chip {
+      background: #111;
+      color: var(--sun);
+      font-size: 11px;
+      font-weight: 900;
+      padding: 7px 13px;
+      border-radius: 6px;
+      box-shadow: 3px 3px 0 var(--sun);
+      letter-spacing: .04em;
+      white-space: nowrap;
+    }
+    .chip:nth-child(1) { transform: rotate(-0.7deg); }
+    .chip:nth-child(2) { transform: rotate(0.5deg); }
+    .chip:nth-child(3) { transform: rotate(-0.4deg); }
+    .h-cta-band {
+      background: var(--line);
+      padding: 18px 20px 22px;
+      text-align: center;
+      position: relative;
+      z-index: 5;
+    }
+    .h-cta-band p {
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.55;
+      margin-bottom: 12px;
+      text-shadow: 0 1px 2px rgba(0,0,0,.2);
+    }
+    .h-line-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      background: #fff;
+      color: var(--line-dk);
+      font-size: 15px;
+      font-weight: 900;
+      padding: 14px 20px;
+      border-radius: 10px;
+      text-decoration: none;
+      box-shadow: 0 5px 0 var(--line-dk);
+      letter-spacing: .04em;
+      border: 2px solid var(--line-dk);
+      transition: transform .1s, box-shadow .1s;
+    }
+    .h-line-btn:active {
+      transform: translateY(4px);
+      box-shadow: 0 1px 0 var(--line-dk);
+    }
+
+    /* Instagram section */
+    #instagram-section {
+      max-width: 480px;
+      margin: 0 auto;
+      background: #0b0b0b;
+      font-family: 'Hiragino Maru Gothic ProN','HGMaruGothicMPRO','Meiryo',sans-serif;
+    }
+    .ig-stripe {
+      height: 4px;
+      background: linear-gradient(90deg, #833ab4 0%, #fd1d1d 52%, #fcb045 100%);
+    }
+    .ig-body { padding: 28px 24px 36px; text-align: center; }
+    .ig-logo-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 22px; }
+    .ig-wordmark {
+      font-size: 26px;
+      font-weight: 900;
+      font-style: italic;
+      letter-spacing: -.02em;
+      background: linear-gradient(45deg, #833ab4, #fd1d1d 52%, #fcb045);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .ig-ring {
+      width: 76px;
+      height: 76px;
+      border-radius: 50%;
+      background: linear-gradient(45deg, #833ab4, #fd1d1d, #fcb045);
+      padding: 2.5px;
+      margin: 0 auto 14px;
+    }
+    .ig-avatar {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: #1c1c1c;
+      border: 2px solid #0b0b0b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+    }
+    .ig-handle { color: #fff; font-size: 18px; font-weight: 900; letter-spacing: .03em; margin-bottom: 6px; }
+    .ig-caption { color: rgba(255,255,255,.58); font-size: 12px; font-weight: 700; line-height: 1.65; margin-bottom: 22px; }
+    .ig-grid {
+      display: grid;
+      grid-template-columns: repeat(3,1fr);
+      gap: 2px;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .ig-thumb { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+    .ig-thumb:nth-child(1){background:#16082a;}
+    .ig-thumb:nth-child(2){background:#1e1005;}
+    .ig-thumb:nth-child(3){background:#081a0b;}
+    .ig-thumb:nth-child(4){background:#1a1600;}
+    .ig-thumb:nth-child(5){background:#1c0808;}
+    .ig-thumb:nth-child(6){background:#06141a;}
+    .ig-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      background: linear-gradient(100deg, #833ab4 0%, #fd1d1d 58%, #fcb045 100%);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 900;
+      padding: 13px 30px;
       border-radius: 50px;
       text-decoration: none;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.22);
-      box-sizing: border-box;
-      transition: background 0.2s, transform 0.15s;
+      box-shadow: 3px 3px 0 rgba(0,0,0,.5);
+      letter-spacing: .05em;
+      margin-bottom: 20px;
     }
-    .hero-line-btn:hover, .hero-line-btn:focus {
-      background: var(--line-green-deeper);
-      transform: translateY(-2px);
-      outline: none;
+    .ig-tags { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; }
+    .ig-tag {
+      background: rgba(255,255,255,.07);
+      color: rgba(255,255,255,.48);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,.1);
     }
-    .hero-line-btn:active { transform: translateY(0); }
-    .hero-line-icon { flex-shrink: 0; width: 32px; height: 32px; }
-    .hero-note-text {
-      color: var(--white-alpha-60);
-      font-size: 12px;
-      letter-spacing: 0.04em;
-      margin: 0;
-      text-align: center;
+
+    @media (prefers-reduced-motion: reduce) {
+      .h-sunburst, .h-star, .b-left, .b-right, .scan-arrow, .qr-card { animation: none !important; }
     }
 
     /* Final CTA (used below hero too) */
@@ -462,136 +745,137 @@
 
 <!-- HERO -->
 <section id="hero" aria-label="イエヤス ヒーローセクション">
+  <div class="h-sunburst" aria-hidden="true"></div>
 
-  <!-- 上部テキスト -->
-  <div class="hero-top">
-    <span class="hero-label" aria-label="エリア情報">大阪エリアの賃貸仲介</span>
-    <h1 class="hero-catch">イエヤスでお得に<br>お部屋探し</h1>
-    <p class="hero-sub">気になっているお部屋の<br>初期費用が簡単割引！</p>
-  </div>
-
-  <!-- 中段ビジュアル：スマホモックアップ + 右カード -->
-  <div class="hero-visual" role="img" aria-label="LINEチャットのデモと割引情報">
-
-    <!-- スマートフォンモックアップ -->
-    <div class="hero-phone-col" aria-hidden="true">
-      <svg viewBox="0 0 148 280" xmlns="http://www.w3.org/2000/svg" role="presentation">
-        <!-- スマホフレーム -->
-        <rect x="2" y="2" width="144" height="276" rx="22" ry="22" fill="#1a1a1a"/>
-        <rect x="6" y="6" width="136" height="268" rx="19" ry="19" fill="#111111"/>
-        <!-- ノッチ -->
-        <rect x="48" y="9" width="52" height="6" rx="3" fill="#333333"/>
-        <!-- 画面 -->
-        <rect x="7" y="19" width="134" height="254" rx="14" ry="14" fill="#f0f0f0"/>
-        <!-- LINEヘッダー -->
-        <rect x="7" y="19" width="134" height="38" rx="0" fill="#06C755"/>
-        <rect x="7" y="19" width="134" height="14" rx="14" fill="#06C755"/>
-        <!-- ヘッダーテキスト -->
-        <text x="74" y="41" font-family="-apple-system, sans-serif" font-size="9" font-weight="700" fill="white" text-anchor="middle">IEYAS（賃貸）</text>
-        <!-- 戻るアイコン -->
-        <text x="18" y="41" font-family="-apple-system, sans-serif" font-size="10" fill="white" text-anchor="middle">‹</text>
-        <!-- 三本線 -->
-        <rect x="126" y="35" width="9" height="1.5" rx="1" fill="white"/>
-        <rect x="126" y="38" width="9" height="1.5" rx="1" fill="white"/>
-        <rect x="126" y="41" width="9" height="1.5" rx="1" fill="white"/>
-        <!-- チャット背景 -->
-        <rect x="7" y="57" width="134" height="216" fill="#f0f0f0"/>
-        <!-- ユーザー発言1（右・緑） -->
-        <rect x="62" y="64" width="73" height="26" rx="10" fill="#06C755"/>
-        <text x="99" y="73" font-family="-apple-system, sans-serif" font-size="6" fill="white" text-anchor="middle">費用どれだけ</text>
-        <text x="99" y="82" font-family="-apple-system, sans-serif" font-size="6" fill="white" text-anchor="middle">抑えられますか！</text>
-        <!-- IEYASアバター -->
-        <circle cx="16" cy="108" r="8" fill="#06C755"/>
-        <text x="16" y="111" font-family="-apple-system, sans-serif" font-size="6" fill="white" text-anchor="middle" font-weight="700">IE</text>
-        <!-- IEYAS発言1（左・白 - PDF） -->
-        <rect x="28" y="98" width="80" height="22" rx="8" fill="white"/>
-        <text x="38" y="108" font-family="-apple-system, sans-serif" font-size="5.5" fill="#333">【特別割引】</text>
-        <text x="38" y="116" font-family="-apple-system, sans-serif" font-size="5.5" fill="#06C755">御見積書.pdf</text>
-        <!-- IEYAS発言2（左・白） -->
-        <rect x="28" y="124" width="100" height="28" rx="8" fill="white"/>
-        <text x="36" y="134" font-family="-apple-system, sans-serif" font-size="5" fill="#333">【IEYAS特別割引費用】</text>
-        <text x="36" y="143" font-family="-apple-system, sans-serif" font-size="5" fill="#333">となります</text>
-        <!-- ユーザー発言2（右・緑） -->
-        <rect x="46" y="158" width="89" height="28" rx="10" fill="#06C755"/>
-        <text x="91" y="168" font-family="-apple-system, sans-serif" font-size="5.2" fill="white" text-anchor="middle">かなり費用抑えられて</text>
-        <text x="91" y="178" font-family="-apple-system, sans-serif" font-size="5.2" fill="white" text-anchor="middle">驚きました！</text>
-        <!-- 入力バー -->
-        <rect x="7" y="249" width="134" height="24" rx="0" fill="#f8f8f8"/>
-        <rect x="7" y="249" width="134" height="2" fill="#e0e0e0"/>
-        <rect x="12" y="255" width="90" height="12" rx="6" fill="white" stroke="#ddd" stroke-width="0.5"/>
-        <text x="110" y="264" font-family="-apple-system, sans-serif" font-size="8" fill="#06C755" text-anchor="middle">送信</text>
-        <!-- 側面ボタン -->
-        <rect x="0" y="80" width="3" height="18" rx="1.5" fill="#333"/>
-        <rect x="0" y="104" width="3" height="18" rx="1.5" fill="#333"/>
-        <rect x="145" y="95" width="3" height="28" rx="1.5" fill="#333"/>
+  <!-- TikTok banner -->
+  <div class="tt-banner" role="banner">
+    <div class="tt-icon" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .55.04.79.1V9.01a6.27 6.27 0 00-.79-.05A6.34 6.34 0 003.15 15.3a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V9.01a8.16 8.16 0 004.77 1.52V7.08a4.85 4.85 0 01-1-.39z" fill="white"/>
       </svg>
     </div>
+    <div class="tt-text">TikTokから見てくれた方へ <em>ありがとう！</em></div>
+    <div class="tt-badge">限定特典</div>
+  </div>
 
-    <!-- 右カード -->
-    <div class="hero-card" role="region" aria-label="割引特典一覧">
-      <p class="hero-card-title">初期費用を<br>大幅割引！</p>
-      <ul class="hero-card-list">
-        <li>
-          <span class="check-icon" aria-hidden="true">
-            <svg viewBox="0 0 11 11" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <polyline points="2,5.5 4.5,8 9,3" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </span>
-          <span>仲介手数料 割引</span>
-        </li>
-        <li>
-          <span class="check-icon" aria-hidden="true">
-            <svg viewBox="0 0 11 11" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <polyline points="2,5.5 4.5,8 9,3" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </span>
-          <span>敷金・礼金<br>0円物件多数</span>
-        </li>
-        <li>
-          <span class="check-icon" aria-hidden="true">
-            <svg viewBox="0 0 11 11" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <polyline points="2,5.5 4.5,8 9,3" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </span>
-          <span>LINEで即見積もり</span>
-        </li>
-      </ul>
+  <!-- Body -->
+  <div class="h-body">
+    <span class="h-star s1" aria-hidden="true">★</span>
+    <span class="h-star s2" aria-hidden="true">✦</span>
+
+    <div class="h-eyebrow">
+      <span class="eyebrow-badge">大阪の賃貸探しは</span>
+    </div>
+
+    <h1 class="h-title">
+      QRコードで友だち追加！<br>
+      <span class="accent">イエヤス</span>でお得に！
+    </h1>
+
+    <!-- QR stage -->
+    <div class="qr-stage">
+      <div class="bubble b-left" role="note" aria-label="3秒でかんたん追加">
+        <span class="hi">3秒で</span>かんたん追加♪
+      </div>
+
+      <div class="qr-card">
+        <div class="line-corner-badge">LINE</div>
+        <img
+          src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
+          alt="イエヤスLINE友だち追加QRコード"
+          width="160" height="160"
+          style="border-radius:6px;display:block;"
+          loading="eager"
+        >
+        <div class="qr-label">
+          <strong>LINEアプリ</strong>で読み取り<br>→ 友だち追加！
+        </div>
+      </div>
+
+      <div class="bubble b-right" role="note" aria-label="仲介手数料割引">
+        仲介手数料<br><span class="hi">割引！🎉</span>
+      </div>
+    </div>
+
+    <div class="scan-hint" aria-hidden="true">
+      <span class="scan-arrow">▼</span>
+      スキャンして友だち追加
+      <span class="scan-arrow">▼</span>
+    </div>
+
+    <div class="benefit-row" role="list" aria-label="イエヤスの特典">
+      <div class="chip" role="listitem">仲介手数料割引</div>
+      <div class="chip" role="listitem">敷金礼金0円多数</div>
+      <div class="chip" role="listitem">LINEで全部完結</div>
     </div>
   </div>
 
-  <!-- CTA -->
-  <div class="hero-cta">
-    <a href="https://lin.ee/v5CFQfL" class="hero-line-btn"
-       aria-label="LINEで友だち追加して無料相談を始める"
-       target="_blank" rel="noopener noreferrer">
-      <svg class="hero-line-icon" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
-        <rect width="32" height="32" rx="8" fill="white"/>
-        <g transform="translate(5,5)">
-          <path d="M11 1C5.477 1 1 5.037 1 10.016c0 4.49 3.655 8.245 8.6 8.93.336.072.793.22.909.506.104.26.068.667.033.93l-.147.881c-.045.26-.207 1.018.892.555s5.934-3.494 8.097-5.984C20.878 14.039 21 12.09 21 10.016 21 5.037 16.523 1 11 1z" fill="#06C755"/>
-          <path d="M8.5 12.5H6.3a.3.3 0 0 1-.3-.3V7.8a.3.3 0 0 1 .6 0v4.1h1.9a.3.3 0 0 1 0 .6zm1.8 0a.3.3 0 0 1-.3-.3V7.8a.3.3 0 0 1 .6 0v4.4a.3.3 0 0 1-.3.3zm4.4 0a.3.3 0 0 1-.25-.135l-2-2.9v2.735a.3.3 0 0 1-.6 0V7.8a.3.3 0 0 1 .55-.165l2 2.9V7.8a.3.3 0 0 1 .6 0v4.4a.3.3 0 0 1-.3.3zm2.8-3.1h-1.9V10h1.9a.3.3 0 0 1 0 .6H15.3V11h1.9a.3.3 0 0 1 0 .6H15a.3.3 0 0 1-.3-.3V7.8a.3.3 0 0 1 .3-.3h2.2a.3.3 0 0 1 0 .6H15.3v.7h1.9a.3.3 0 0 1 0 .6z" fill="white"/>
-        </g>
+  <!-- CTA band -->
+  <div class="h-cta-band">
+    <p>LINEで友だち追加して<br>初期費用を割引してもらう！</p>
+    <a href="https://lin.ee/v5CFQfL" class="h-line-btn" target="_blank" rel="noopener noreferrer"
+       aria-label="LINEで友だち追加して無料相談を始める">
+      <svg width="22" height="22" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect width="36" height="36" rx="8" fill="#06C755"/>
+        <path d="M30 16.7c0-5.4-5.4-9.7-12-9.7S6 11.3 6 16.7c0 4.8 4.3 8.9 10 9.6.4.1.9.3 1 .6.1.3.1.7 0 1l-.2 1c-.1.3-.3 1.3 1.1.7 1.4-.6 7.7-4.5 10.5-7.7 1.9-2.1 2.6-4.3 2.6-5.9z" fill="white"/>
+        <path d="M14.5 19.5h-2.3a.4.4 0 01-.4-.4v-4.2a.4.4 0 11.8 0v3.8h1.9a.4.4 0 010 .8zm1.7-.4a.4.4 0 11-.8 0v-4.2a.4.4 0 11.8 0v4.2zm5.8 0a.4.4 0 01-.4.4h-.4a.4.4 0 01-.3-.2l-2-2.7v2.5a.4.4 0 11-.8 0v-4.2a.4.4 0 01.4-.4h.4c.1 0 .3.1.3.2l2 2.7v-2.5a.4.4 0 11.8 0v4.2zm2.7-2.8h-1.9v1.1h1.9a.4.4 0 010 .8h-1.9v1.1h1.9a.4.4 0 010 .8h-2.3a.4.4 0 01-.4-.4v-4.2a.4.4 0 01.4-.4h2.3a.4.4 0 010 .8z" fill="#06C755"/>
       </svg>
-      LINE友だち追加
+      友だち追加する（無料）
     </a>
-    <p class="hero-note-text">登録無料 · 来店不要 · 24時間受付</p>
   </div>
-
 </section>
 
-<!-- TikTok検出時のみ表示するQRコードセクション -->
-<section id="tiktok-qr-section" style="display:none;background:#f0f9f2;padding:32px 20px;text-align:center;border-bottom:2px solid #c5e8ce">
-  <div style="max-width:360px;margin:0 auto">
-    <p style="font-size:13px;font-weight:700;color:#1b6e2e;margin:0 0 6px;letter-spacing:0.04em">LINEアプリのカメラで読み取り</p>
-    <h2 style="font-size:20px;font-weight:900;color:#1b6e2e;margin:0 0 20px;line-height:1.3">QRコードで<br>かんたん友だち追加！</h2>
-    <div style="background:#fff;border-radius:20px;padding:20px;display:inline-block;box-shadow:0 4px 18px rgba(0,0,0,0.12)">
-      <img id="tiktok-qr-img"
-        src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
-        alt="イエヤスLINE友だち追加QRコード"
-        width="220" height="220"
-        style="display:block;border-radius:6px"
-      >
+<!-- Instagram Section -->
+<section id="instagram-section">
+  <div class="ig-stripe"></div>
+  <div class="ig-body">
+    <div class="ig-logo-row">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="ig-gr" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0%" stop-color="#fcb045"/>
+            <stop offset="50%" stop-color="#fd1d1d"/>
+            <stop offset="100%" stop-color="#833ab4"/>
+          </linearGradient>
+        </defs>
+        <rect x="2" y="2" width="20" height="20" rx="5.5" stroke="url(#ig-gr)" stroke-width="2" fill="none"/>
+        <circle cx="12" cy="12" r="5" stroke="url(#ig-gr)" stroke-width="2" fill="none"/>
+        <circle cx="17.5" cy="6.5" r="1.5" fill="url(#ig-gr)"/>
+      </svg>
+      <div class="ig-wordmark">Instagram</div>
     </div>
-    <p style="font-size:12px;color:#5a7060;margin:14px 0 0;line-height:1.6">LINEを開く → カメラ → QRコードをスキャン<br>または右上「···」→ 外部ブラウザで開く → LINEボタンをタップ</p>
+
+    <div class="ig-ring">
+      <div class="ig-avatar">🏠</div>
+    </div>
+
+    <p class="ig-handle">@iyeyasu_osaka</p>
+    <p class="ig-caption">最新物件情報・お役立ち情報を<br>毎日発信中！</p>
+
+    <div class="ig-grid" role="presentation" aria-hidden="true">
+      <div class="ig-thumb">🏠</div>
+      <div class="ig-thumb">🌃</div>
+      <div class="ig-thumb">🏢</div>
+      <div class="ig-thumb">✨</div>
+      <div class="ig-thumb">🔑</div>
+      <div class="ig-thumb">📱</div>
+    </div>
+
+    <a href="https://www.instagram.com/iyeyasu_osaka/" class="ig-cta" target="_blank" rel="noopener noreferrer">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="2" y="2" width="20" height="20" rx="5.5" stroke="white" stroke-width="2.2" fill="none"/>
+        <circle cx="12" cy="12" r="5" stroke="white" stroke-width="2.2" fill="none"/>
+        <circle cx="17.5" cy="6.5" r="1.5" fill="white"/>
+      </svg>
+      フォローする
+    </a>
+
+    <div class="ig-tags" role="list" aria-label="ハッシュタグ">
+      <span class="ig-tag" role="listitem">#大阪賃貸</span>
+      <span class="ig-tag" role="listitem">#お部屋探し</span>
+      <span class="ig-tag" role="listitem">#仲介手数料割引</span>
+      <span class="ig-tag" role="listitem">#LINE相談</span>
+    </div>
   </div>
 </section>
 
@@ -1074,11 +1358,6 @@
       injectBanner();
       patchLineLinks();
       watchDynamicLinks();
-      // QRコードセクションを表示
-      try {
-        var qrSection = document.getElementById('tiktok-qr-section');
-        if (qrSection) qrSection.style.display = 'block';
-      } catch (e) {}
     } catch (e) { dlog('init ERROR: ' + e); }
   }
 
