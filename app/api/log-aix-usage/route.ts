@@ -227,9 +227,10 @@ export async function POST(req: NextRequest) {
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
-    // ステージ変化AIX送信 → brain invalidation（fire-and-forget）
-    // last_brain_meta / brain_full_analyzed_at をクリアすると、
-    // brain-core.ts の needsFull 判定（!cachedMeta）により次の顧客メッセージで強制フル分析が走る
+    // ステージ変化AIX送信 → 軽量メタパッチ更新（fire-and-forget）
+    // 旧実装は last_brain_meta / brain_full_analyzed_at をクリアして次回強制フル分析を誘発していたが、
+    // 前回の分析結論にAIXイベントを Haiku で差分反映し、次の顧客メッセージを cached で処理できるようにする。
+    // brain_full_analyzed_at はそのまま維持（10メッセージサイクルを崩さない）。
     const STAGE_TRANSITION_AIX_TYPES = [
       "application",
       "application_push",
@@ -239,15 +240,82 @@ export async function POST(req: NextRequest) {
       "viewing_invite",
       "greeting_viewing",
     ];
-    if (STAGE_TRANSITION_AIX_TYPES.some((t) => aix_type === t)) {
+    if (STAGE_TRANSITION_AIX_TYPES.includes(aix_type)) {
       waitUntil(
         (async () => {
           try {
+            // 1. 現在の last_brain_meta を取得
+            const { data: convForPatch } = await supabase
+              .from("conversations")
+              .select("last_brain_meta")
+              .eq("id", conversation_id)
+              .single();
+
+            const prevMeta = convForPatch?.last_brain_meta as Record<string, unknown> | null;
+            if (!prevMeta) return; // meta がなければスキップ（通常サイクルに委譲）
+
+            // 2. AIXタイプの意味マップ
+            const AIX_STAGE_LABEL: Record<string, string> = {
+              application: "申込案内AIXを送信した。次は申込書類のサポートと進捗確認が主タスク",
+              application_push: "申込プッシュAIXを送信した。申込を後押しする段階",
+              contract: "契約AIXを送信した。契約手続きのサポートが主タスク",
+              document_request: "書類依頼AIXを送信した。書類の受取確認と案内が主タスク",
+              estimate_sheet: "見積書AIXを送信した。費用について顧客が検討している段階",
+              viewing_invite: "内見招待AIXを送信した。内見日程の確認・当日案内が主タスク",
+              greeting_viewing: "内見挨拶AIXを送信した。内見後のフォローが主タスク",
+            };
+            const stageNote = AIX_STAGE_LABEL[aix_type] ?? `${aix_type}AIXを送信した`;
+
+            // 3. Haiku でメタを差分パッチ（既存のトップレベル import を再利用）
+            const patchClient = new Anthropic({
+              apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+            });
+
+            const patchRes = await patchClient.messages.create({
+              model: "claude-haiku-4-5-20251001",
+              max_tokens: 600,
+              messages: [{
+                role: "user",
+                content: `あなたはLINE返信AIの分析更新担当です。
+前回の分析結論にAIX送信の事実を差分反映し、更新後のJSONを返してください。
+
+【前回の分析結論】
+${JSON.stringify(prevMeta, null, 2)}
+
+【新たな事実】
+${stageNote}
+
+以下のフィールドを新事実に合わせて更新してください。変更不要なフィールドは前回の値をそのまま返してください。
+- action: 次に取るべき推奨アクション（日本語・簡潔に）
+- next_steps: 次のステップの配列（string[]）
+- closing_strategy: クロージング戦略
+- template_hint: 次回使うテンプレートのヒント
+- reply_mode: 返信モード
+
+JSONのみ返してください。説明文不要。`,
+              }],
+            }).catch(() => null);
+
+            if (!patchRes) return;
+
+            // 4. レスポンスをパース
+            const raw = patchRes.content[0]?.type === "text" ? patchRes.content[0].text : null;
+            if (!raw) return;
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) return;
+            const patch = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+
+            // 5. 前回 meta にパッチをマージして保存
+            const patchedMeta = { ...prevMeta, ...patch, source: "aix_patch" };
             await supabase
               .from("conversations")
-              .update({ last_brain_meta: null, brain_full_analyzed_at: null })
+              .update({
+                last_brain_meta: patchedMeta,
+                brain_analyzed_at: new Date().toISOString(),
+                // brain_full_analyzed_at はそのまま（10サイクル管理を崩さない）
+              })
               .eq("id", conversation_id);
-          } catch { /* fire-and-forget */ }
+          } catch { /* fail-open: エラー時は何もせず通常サイクルに委譲 */ }
         })().catch(() => {})
       );
     }
