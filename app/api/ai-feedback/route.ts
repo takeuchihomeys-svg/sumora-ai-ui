@@ -118,7 +118,7 @@ async function extractRules(
     ? `JSONオブジェクトのみ返してください（説明・コードフェンス不要）:\n{"answer_intent": "new"|"old"|"conditional"|"unknown", "rules": [{"rule_text": "...", "save_target": "trigger_action_rules"|"ai_prompts"|"ai_reply_knowledge", "action_type": "..."|null, "trigger_keywords": ["..."], "trigger_example": "..."}]}`
     : `JSON配列のみ返してください（説明・コードフェンス不要）:\n[{"rule_text": "...", "save_target": "trigger_action_rules"|"ai_prompts"|"ai_reply_knowledge", "action_type": "..."|null, "trigger_keywords": ["..."], "trigger_example": "..."}]`;
   const res = await client.messages.create({
-    model: "claude-opus-5",
+    model: "claude-sonnet-5",
     max_tokens: 1500,
     system: `あなたはLINE不動産接客AIの知識管理エージェントです。担当者からの回答を、AIが今後使える業務ルールに変換します。`,
     messages: [{
@@ -184,7 +184,7 @@ ${outputInstruction}`,
 async function extractAndUpsertTriggerKeywords(question: string, answer: string, actionType: string): Promise<void> {
   try {
     const res = await client.messages.create({
-      model: "claude-opus-5",
+      model: "claude-sonnet-5",
       max_tokens: 200,
       messages: [{
         role: "user",
