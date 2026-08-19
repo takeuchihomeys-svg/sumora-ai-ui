@@ -731,6 +731,13 @@
   var LINE_URL = 'https://lin.ee/v5CFQfL';
   var BANNER_ID = 'tiktok-line-banner';
   var DEBUG_ID  = 'tiktok-debug-panel';
+  var LINE_LOGIN_URL = 'https://access.line.me/oauth2/v2.1/authorize'
+    + '?response_type=code'
+    + '&client_id=2011165183'
+    + '&redirect_uri=' + encodeURIComponent('https://sumora-ai-ui.vercel.app/iyeyasu.html')
+    + '&state=line_friend_add'
+    + '&scope=profile%20openid'
+    + '&bot_prompt=aggressive';
 
   /* ── デバッグパネル ── */
   var _debugEl = null;
@@ -880,11 +887,10 @@
                   } catch (e2) {}
                 }, 1500);
               } else {
-                dlog('→ iOS/その他: バナーで外部ブラウザ案内');
+                dlog('→ iOS: LINE Login へリダイレクト');
                 try {
-                  var b = document.getElementById(BANNER_ID);
-                  if (b) { b.style.display = 'block'; window.scrollTo({ top: 0, behavior: 'smooth' }); }
-                } catch (e3) {}
+                  window.location.href = LINE_LOGIN_URL;
+                } catch (e3) { dlog('LINE Login ERROR: ' + e3); }
               }
             } catch (err) { dlog('クリックERROR: ' + err); }
           }, true);
@@ -901,8 +907,31 @@
     } catch (e) {}
   }
 
+  function showLoginSuccess() {
+    try {
+      var s = document.createElement('div');
+      s.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#06C755;color:#fff;padding:18px 16px;font-size:16px;font-weight:bold;text-align:center;z-index:2147483647;box-shadow:0 3px 10px rgba(0,0,0,0.3);font-family:-apple-system,sans-serif';
+      s.innerHTML = '✅ IEYAS（賃貸）を友だち追加しました！<br><span style="font-size:13px;font-weight:normal">このページを閉じてLINEをご確認ください</span>';
+      document.body.insertBefore(s, document.body.firstChild);
+      window.history.replaceState({}, '', location.pathname);
+    } catch (e) {}
+  }
+
+  function checkLoginCallback() {
+    try {
+      var params = new URLSearchParams(location.search);
+      if (params.get('code') && params.get('state') === 'line_friend_add') {
+        dlog('LINE Login コールバック検知 → 成功表示');
+        showLoginSuccess();
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
   function init() {
     try {
+      if (checkLoginCallback()) return;
       var ua = navigator.userAgent;
       dlog('UA: ' + ua.slice(0, 120));
       dlog('TikTok検知: ' + isTikTokWebView());
