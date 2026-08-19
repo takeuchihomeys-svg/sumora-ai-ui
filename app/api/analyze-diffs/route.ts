@@ -2271,6 +2271,103 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - 申込学習トリガー失敗はメイン処理を止めない */ }
 
+  // ── ⑧ AIX日次パターン集約 → ai_prompt_rules + ai_feedback_items ──
+  // 旧 aix-analyze-diffs cron（廃止 2026-08-20）が担っていた「actionType横断・24時間集約パターン検出」を統合。
+  // ⑥が個別差分を ai_reply_knowledge に学習するのに対し、⑧は集約パターンを ai_prompt_rules に書く（補完関係）。
+  // analyze-diffs は1日4回起動するため dateKey ガードで1日1回のみ実行する。
+  let aixDailyPatterns = 0;
+  let aixDailyFeedback = 0;
+  try {
+    const aixDateKey = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const { count: existingDailyCount } = await supabase
+      .from("ai_prompt_rules")
+      .select("id", { count: "exact", head: true })
+      .like("rule_key", `LEARN-AIX-daily-%-${aixDateKey}-%`);
+    if ((existingDailyCount ?? 0) === 0) {
+      const aix24hAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const AIX_DAILY_ACTIONS = [
+        "property_recommendation","property_send","viewing_invite","meeting_place",
+        "application_push","condition_hearing","estimate_sheet","property_check_result",
+        "greeting_viewing","followup_revive","acknowledge_check",
+      ];
+      for (const actionType of AIX_DAILY_ACTIONS) {
+        const { data: dailyExamples } = await supabase
+          .from("ai_reply_examples")
+          .select("customer_message, ai_draft, sent_reply")
+          .eq("entry_source", "aix_action")
+          .eq("aix_action", actionType)
+          .eq("was_ai_modified", true)
+          .gte("created_at", aix24hAgo)
+          .not("ai_draft", "is", null)
+          .not("sent_reply", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(10);
+        if (!dailyExamples || dailyExamples.length < 2) continue;
+        const exText = dailyExamples.map((ex, i) =>
+          `【編集例${i + 1}】\n顧客: ${(ex.customer_message as string | null)?.slice(0, 100) ?? "不明"}\nAI生成:\n${(ex.ai_draft as string | null)?.slice(0, 250) ?? ""}\n\nスタッフ送信:\n${(ex.sent_reply as string | null)?.slice(0, 250) ?? ""}`
+        ).join("\n\n---\n\n");
+        const aixRes = await client.messages.create({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 400,
+          system: `LINE賃貸営業AIの品質監視エージェント。AIXボタン「${actionType}」の編集パターンを分析し、明確に繰り返している問題だけをルール化。1回のみの修正や文体の好みはルール化しない。`,
+          messages: [{ role: "user", content: `「${actionType}」の本日の編集例:\n\n${exText}\n\n繰り返しパターンがあれば最大2個のルールをJSONで返してください。パターンがなければ空配列。\n形式: [{"rule":"ルール文（日本語・具体的）","severity":"high|medium"}]` }],
+        });
+        const aixRawText = aixRes.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
+        const aixMatch = aixRawText.match(/\[\s*[\s\S]*?\]/);
+        if (!aixMatch) continue;
+        let aixRules: { rule: string; severity: string }[] = [];
+        try { aixRules = JSON.parse(aixMatch[0]); } catch { continue; }
+        if (!Array.isArray(aixRules) || aixRules.length === 0) continue;
+        const highRules = aixRules.filter(r => r.severity === "high");
+        for (let i = 0; i < highRules.length; i++) {
+          const ruleKey = `LEARN-AIX-daily-${actionType}-${aixDateKey}-${i + 1}`;
+          await supabase.from("ai_prompt_rules").upsert({
+            rule_key: ruleKey,
+            rule_text: highRules[i].rule,
+            action_type: actionType,
+            priority: 6,
+            is_active: true,
+            is_permanent: false,
+            reason: `日次AIX集約分析（${aixDateKey}）: high severity pattern`,
+          }, { onConflict: "rule_key", ignoreDuplicates: true });
+          aixDailyPatterns++;
+        }
+        if (dailyExamples.length >= 3 && aixDailyFeedback < 3) {
+          const { count: discardCount } = await supabase
+            .from("aix_generate_log")
+            .select("id", { count: "exact", head: true })
+            .eq("action_type", actionType)
+            .eq("status", "discarded")
+            .gte("created_at", aix24hAgo);
+          const { data: existingQ } = await supabase
+            .from("ai_feedback_items")
+            .select("id")
+            .eq("entry_source", "aix_action")
+            .eq("aix_action", actionType)
+            .gte("created_at", aix24hAgo)
+            .limit(1);
+          if (!existingQ || existingQ.length === 0) {
+            const isBoundary = (discardCount ?? 0) >= 2;
+            await supabase.from("ai_feedback_items").insert({
+              question: isBoundary
+                ? `【線引き質問】AIX「${actionType}」の生成文がスタッフに送信されませんでした（${discardCount}件破棄）。このアクションをいつ使うべきか教えてください。\n[aix_boundary_action:${actionType}]`
+                : `【AIX日次集約分析】「${actionType}」で本日${dailyExamples.length}件の編集が発生しました。スタッフが繰り返し修正しているポイントを教えてください。`,
+              speculation: "AI生成テキストにパターン的な問題がある可能性",
+              category: isBoundary ? "aix_boundary" : "aix_pattern",
+              confidence: 0.7,
+              entry_source: "aix_action",
+              aix_action: actionType,
+              status: "pending",
+            });
+            aixDailyFeedback++;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error("[analyze-diffs] ⑧AIX日次集約エラー:", e);
+  }
+
   // ── cron失敗の可視化: 直近24時間に ok=null（未完了 = タイムアウト/クラッシュ）の実行記録があれば通知 ──
   let cronWarning = "";
   try {
@@ -2288,12 +2385,12 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - 可視化失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, noEditProcessed, noEditBoosted, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
+  await finishCronLog(runLogId, true, { processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, noEditProcessed, noEditBoosted, timedOut, aixDailyPatterns, aixDailyFeedback, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
   return NextResponse.json({
-    ok: true, processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, noEditProcessed, noEditBoosted, timedOut,
+    ok: true, processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, noEditProcessed, noEditBoosted, timedOut, aixDailyPatterns, aixDailyFeedback,
     sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
     ...(cronWarning ? { cronWarning } : {}),
-    message: `${processed}件処理・${learned}件学習・AIX差分${aixProcessed}件処理（${aixLearned}件学習）・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・AIX昇格${promotedAix}件・昇格承認起票${promotionAsked}件・未修正正解${noEditProcessed}件☆付与（ナレッジ${noEditBoosted}件ブースト）・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
+    message: `${processed}件処理・${learned}件学習・AIX差分${aixProcessed}件処理（${aixLearned}件学習）・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・AIX昇格${promotedAix}件・昇格承認起票${promotionAsked}件・未修正正解${noEditProcessed}件☆付与（ナレッジ${noEditBoosted}件ブースト）・AIX日次集約${aixDailyPatterns}件ルール化（フィードバック${aixDailyFeedback}件起票）・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
   } catch (e) {
     console.error("[analyze-diffs]", e);
