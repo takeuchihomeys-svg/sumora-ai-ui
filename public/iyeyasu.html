@@ -892,6 +892,7 @@
                 // iOS + TikTok: line://はTikTokがブロックしてエラートーストが出るためスキップ
                 // 直接 navigator.share() でAPIリダイレクトURLを送信
                 dlog('→ iOS+TikTok: navigator.share直接試行');
+                showShareGuide();
                 if (typeof navigator.share === 'function') {
                   navigator.share({
                     title: 'イエヤスLINE友だち追加',
@@ -920,6 +921,39 @@
       if (typeof MutationObserver === 'undefined') return;
       var observer = new MutationObserver(function () { try { patchLineLinks(); } catch (e) {} });
       observer.observe(document.body, { childList: true, subtree: true });
+    } catch (e) {}
+  }
+
+  function showShareGuide() {
+    try {
+      var existing = document.getElementById('share-guide-toast');
+      if (existing) { existing.remove(); }
+      var toast = document.createElement('div');
+      toast.id = 'share-guide-toast';
+      toast.style.cssText = [
+        'position:fixed',
+        'top:0',
+        'left:0',
+        'right:0',
+        'z-index:2147483647',
+        'background:#06C755',
+        'color:#fff',
+        'text-align:center',
+        'padding:14px 16px 12px',
+        'font-size:17px',
+        'font-weight:900',
+        'letter-spacing:0.02em',
+        'animation:slide-down 0.25s ease',
+        'pointer-events:none',
+      ].join(';');
+      toast.textContent = '下の「LINE」を選択してください';
+      document.body.appendChild(toast);
+      setTimeout(function () {
+        if (toast.parentNode) {
+          toast.style.animation = 'fade-out 0.4s ease forwards';
+          setTimeout(function () { if (toast.parentNode) toast.remove(); }, 400);
+        }
+      }, 3500);
     } catch (e) {}
   }
 
@@ -966,7 +1000,8 @@
           '<button id="ios-copy-btn" style="width:100%;background:#06C755;color:#fff;border:none;border-radius:14px;padding:17px;font-size:16px;font-weight:900;cursor:pointer;margin-bottom:10px;box-shadow:0 4px 12px rgba(6,199,85,0.35)">📋 LINEリンクをコピー（自動コピー済み）</button>',
           '<button id="ios-close-btn" style="width:100%;background:#f0f0f0;color:#555;border:none;border-radius:14px;padding:14px;font-size:15px;cursor:pointer">閉じる</button>',
         '</div>',
-        '<style>@keyframes bounce-right{0%,100%{transform:translateY(0) rotate(-30deg)}50%{transform:translateY(6px) rotate(-30deg)}}</style>'
+        '<style>@keyframes bounce-right{0%,100%{transform:translateY(0) rotate(-30deg)}50%{transform:translateY(6px) rotate(-30deg)}}</style>',
+        '<style>@keyframes slide-down{0%{transform:translateY(-100%);opacity:0}100%{transform:translateY(0);opacity:1}}@keyframes fade-out{0%{opacity:1}100%{opacity:0}}</style>'
       ].join('');
 
       document.body.appendChild(modal);
