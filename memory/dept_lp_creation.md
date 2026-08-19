@@ -165,10 +165,19 @@ Vercelへの紐付け: `vercel domains add [domain] sumora-ai-ui`
 ## 黄金ルール
 
 1. **LINEボタンは最低3箇所**（ヒーロー・中盤・固定フッター）
-2. **スマホ縦型** `max-width:480px` 必須
+2. **スマホ縦型** `max-width:480px` 必須（PCは想定しない）
 3. **外部CDN禁止**（Artifact CSP対応・インラインのみ）
 4. **`git push`後に必ずArtifactも更新**（同URL再デプロイ）
 5. **変更後はこのファイル（dept_lp_creation.md）を即更新**
+
+## イエヤスLPの前提条件（必ず認識すること）
+
+- **流入元**: TikTok bioリンク経由が主（TikTok WebView内で開かれる）
+- **デバイス**: スマートフォン専用（PCレイアウト不要・`max-width:480px`固定）
+- **TikTok WebView制限**: LINEアプリへの直接遷移は現在ブロックされている（時期不明）
+- **最有効手段**: QRコードスキャン（TikTok制限を完全に回避できる唯一の方法）
+- **TikTokポリシー変更時期**: 不明（「今月から」という情報あるが確認できていない）
+- **設計思想**: TikTok制限を前提とし、QRコードをメイン訴求にする
 
 ---
 
@@ -187,7 +196,7 @@ Vercelへの紐付け: `vercel domains add [domain] sumora-ai-ui`
 | LP | URL | 用途 |
 |----|-----|------|
 | スモラ（本家・最重要） | https://sumora.net/ | デザイントーン・コピー・構成の基準 |
-| イエヤス | https://sumora-ai-ui.vercel.app/iyeyasu.html | 賃貸仲介LINE追加LP |
+| イエヤス | https://sumora-ai-ui.vercel.app/iyeyasu.html | 賃貸仲介LINE追加LP（TikTok特化・スマホ専用） |
 
 **新LP制作時の必須ルール**: Fable5 Researchフェーズで必ず `sumora.net` を WebFetch して、トーン・コピーパターンを継承すること。
 
