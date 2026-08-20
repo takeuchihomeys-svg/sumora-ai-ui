@@ -134,8 +134,12 @@ export async function POST(req: NextRequest) {
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 90_000)),
         ]);
         console.log("[bg-async] brain serial done, convId:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
+        if (!brainGateDirect) {
+          console.log(JSON.stringify({tag:"degradation:T3",stage:"brain-gate-timeout",conversationId:convId,reason:"brain_race_timeout_90s",staleAgeMs:null}));
+        }
       } catch (brainErr) {
         console.warn("[bg-async] brain serial failed（従来フォールバックで続行）:", String(brainErr), "convId:", convId);
+        console.log(JSON.stringify({tag:"degradation:T3",stage:"brain-gate-error",conversationId:convId,reason:"brain_exception",staleAgeMs:null,error:String(brainErr).slice(0,200)}));
       }
 
       const { data: pc } = conv.property_customer_id

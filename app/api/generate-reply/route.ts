@@ -2377,6 +2377,7 @@ export async function POST(req: NextRequest) {
     // brain-sweep が5分以内に補填するため次回生成はT1に復帰する。
     if (tierResult.tier === "T3" && conversationId && !isTemplateOptimize) {
       console.warn("[generate-reply] T3警告: brainMeta null — closingNote(ai_summary)＋決定論regexフォールバックで生成続行:", conversationId);
+      console.log(JSON.stringify({tag:"degradation:T3",stage:"detect",conversationId,reason:tierResult.reason,staleAgeMs:tierResult.staleAgeMs??null}));
     }
 
     // H7(Fable5) + AIX-META一元化(2026-08) + Step1廃止(2026-08):
@@ -2921,6 +2922,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // スタッフ確認モーダルに委ねる（強制置換なし）。チェック失敗は従来どおり fail-open。
             // トレーラーの finalCheck に revision_count が必ず載る（監査用）。
             let finalCheck: CheckResult | null = null;
+            if (isTemplateOptimize && draftBody.trim()) {
+              console.log(JSON.stringify({tag:"degradation:fail-open",path:"template-bypass",conversationId}));
+            }
             if (!isTemplateOptimize && draftBody.trim()) {
               try {
                 // 段階の日本語説明（MEDIUM-2: STAGE_SKIP検出用）
@@ -3042,9 +3046,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       );
                     } else {
                       console.warn("[generate-reply] フィードバック再生成が空出力→1回目の結果で続行");
+                      console.log(JSON.stringify({tag:"degradation:fail-open",path:"regen-empty",conversationId,blockCount:finalCheck?finalCheck.issues.filter((i)=>i.severity==="block").length:null}));
                     }
                   } catch (regenErr) {
                     console.error("[generate-reply] フィードバック再生成失敗（1回目の結果で続行）:", regenErr);
+                    console.log(JSON.stringify({tag:"degradation:fail-open",path:"regen-error",conversationId,blockCount:finalCheck?finalCheck.issues.filter((i)=>i.severity==="block").length:null,error:String(regenErr).slice(0,200)}));
                   }
                 }
                 // 顧客名の最終防衛線: 接地修正（Haiku）は [CHECKPOINT]/[CONDITIONS]/[RULES] に無い
@@ -3062,6 +3068,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 }
               } catch (checkErr) {
                 console.error("[generate-reply] final-check失敗（fail-open・チェックなしで続行）:", checkErr);
+                console.log(JSON.stringify({tag:"degradation:fail-open",path:"exception",conversationId,error:String(checkErr).slice(0,300)}));
                 finalCheck = null;
               }
             }

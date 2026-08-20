@@ -163,12 +163,16 @@ export async function getCachedPromptRules(
   });
   try {
     const { text } = await cache.get();
+    if (!text) {
+      console.log(JSON.stringify({tag:"degradation:cache-miss",cache:"rules",key,cause:"empty-data",returnedEmpty:true}));
+    }
     return text;
   } catch (error) {
     console.error(
       "[prompt-cache] プロンプトルール取得失敗（キャッシュも空）— ルールなしで続行:",
       error,
     );
+    console.log(JSON.stringify({tag:"degradation:cache-miss",cache:"rules",key,cause:"fetch-error",returnedEmpty:true,error:String(error).slice(0,200)}));
     return "";
   }
 }
@@ -207,12 +211,17 @@ export async function getCachedPhrases(categories: string[]): Promise<string[]> 
       .filter(Boolean);
   });
   try {
-    return await cache.get();
+    const phrases = await cache.get();
+    if (phrases.length === 0) {
+      console.log(JSON.stringify({tag:"degradation:cache-miss",cache:"phrases",key,cause:"empty-data",returnedEmpty:true}));
+    }
+    return phrases;
   } catch (error) {
     console.error(
       "[prompt-cache] phrase_dictionary取得失敗（キャッシュも空）— フレーズなしで続行:",
       error,
     );
+    console.log(JSON.stringify({tag:"degradation:cache-miss",cache:"phrases",key,cause:"fetch-error",returnedEmpty:true,error:String(error).slice(0,200)}));
     return [];
   }
 }
