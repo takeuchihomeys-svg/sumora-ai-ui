@@ -162,6 +162,12 @@ export function buildBrainFetchSpec(
   // フェイルオープン契約: フィールド単位。不正値・未知値はそのフィールドだけ baseline に落とす。
   if (tierResult.tier !== "T1" || !meta) return spec;
 
+  // current_property → analysisContext への追記（物件名をpgvector検索クエリに含める）
+  // 話題の中心物件が分かっているのにクエリに含めないと、その物件に関する実例・ナレッジが引けない。
+  if (meta.current_property) {
+    spec.analysisContext = [spec.analysisContext, meta.current_property].filter(Boolean).join(" ");
+  }
+
   // ① action によるバケット選択（actionが文字列で存在する場合のみ発動。欠損時は baseline）
   // 監査FIX(2026-08-20): brain(meta.action) が実際に出す値は AIX_BRAIN_NOTES のキー
   // （application_push / viewing_invite / followup_revive 等）。旧実装は "apply"/"viewing" 等の
@@ -220,6 +226,22 @@ export function buildBrainFetchSpec(
     spec.lossPatterns.enabled = false;
   }
   // cs === "proposing": 提案フェーズはデフォルトフロー・変更不要
+
+  // ①-c next_steps → バケット補完（action/checkpoint_stageで届かなかったケースのフォールバック）
+  // next_steps は次アクションの文字列配列。申込・内見ワードを検出してバケットを補完する。
+  // guard: 既にそのパターンが有効なら重複適用しない（同一方向のboostStates追加は冪等・Set処理）。
+  const ns = meta.next_steps ?? null;
+  if (ns && ns.length > 0) {
+    const nsText = ns.join(" ");
+    if (!spec.applyingPatterns.enabled && /申込|書類|contract/i.test(nsText)) {
+      spec.applyingPatterns.enabled = true;
+      spec.lossPatterns.enabled = false;
+      spec.examples.boostStates = [...new Set([...spec.examples.boostStates, "applying", "application_push"])];
+    } else if (!spec.viewingPatterns.enabled && /内見|案内|viewing/i.test(nsText)) {
+      spec.viewingPatterns.enabled = true;
+      spec.examples.boostStates = [...new Set([...spec.examples.boostStates, "viewing", "viewing_invite"])];
+    }
+  }
 
   // ② hesitancy_pattern（保留局面）: 失注パターンは必ず届ける（actionのSKIPより優先）
   if (meta.hesitancy_pattern) {
