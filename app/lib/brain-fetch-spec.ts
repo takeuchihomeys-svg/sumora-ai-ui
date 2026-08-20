@@ -112,6 +112,10 @@ export function buildBrainFetchSpec(
       else if (hp === "timeline") parts.push("入居時期 スケジュール");
       else if (hp === "undecided") parts.push("比較 決断");
       if (meta.future_timeline) parts.push(String(meta.future_timeline));
+      // M2(AIX-METAフル活用 2026-08): 繰り返し懸念テーマを検索クエリ化。
+      // 「初期費用を3回聞いている」等が分かっているのに関連ナレッジ・実例をピンポイントで
+      // 引かないと、Step3の「別の角度で説明せよ」指示に材料が供給されず創作リスクになる。
+      if (meta.repeated_concern) parts.push(sliceSafe(String(meta.repeated_concern), 20));
       // 複数質問（先頭3件）
       if (meta.customer_questions?.length) {
         parts.push(meta.customer_questions.slice(0, 3).join(" "));
@@ -174,10 +178,15 @@ export function buildBrainFetchSpec(
       // 申込・契約局面: 申込到達パターンを届け、失注パターンは雑音として省く
       spec.applyingPatterns.enabled = true;
       spec.lossPatterns.enabled = false;
+      // M3(AIX-METAフル活用 2026-08): 実例ランキングで申込系フェーズの実例を+0.1ブースト
+      // （消費側 route.ts fetchExamples の boostStates 配管は実装済み・値はSTATE_SEARCH_ALIASESのapplying系）
+      spec.examples.boostStates = ["applying", "application", "application_push", "screening", "contract"];
     } else if (VIEWING_ACTIONS.includes(action)) {
       // 内見局面: 内見系パターン優先・失注パターン省略
       spec.viewingPatterns.enabled = true;
       spec.lossPatterns.enabled = false;
+      // M3: 内見系フェーズの実例を+0.1ブースト（proposingエイリアス内のviewing系ステート）
+      spec.examples.boostStates = ["viewing", "viewing_invite", "meeting_place"];
     } else if (CLOSE_ACTIONS.includes(action)) {
       // クロージング・交渉・追客局面: 失注前夜 → 失注パターン増量
       spec.lossPatterns.enabled = true;
@@ -214,6 +223,33 @@ export function buildBrainFetchSpec(
     typeof meta.reply_direction === "string" && meta.reply_direction.length > 0
       ? meta.reply_direction
       : null;
+
+  // ⑥ M1(AIX-METAフル活用 2026-08): avoid_topics → 実例ポストフィルタ（excludeReplyRe）。
+  // brainが「見積書に言及禁止」と知っているのに見積書カバー文の実例が⭐実例として注入されると
+  // プロンプト内で禁止指示と実例が矛盾する（avoid_topics違反の主要因）。
+  // 消費側（route.ts fetchExamples: minKeepAfterExclude=3 のfloor付きフェイルオープン）は実装済み。
+  // トピックは正規表現メタ文字をエスケープして OR 連結する。
+  const avoid = (meta.avoid_topics ?? [])
+    .filter((t): t is string => typeof t === "string")
+    .map(t => t.trim())
+    .filter(t => t.length >= 2 && t.length <= 20);
+  if (avoid.length > 0) {
+    try {
+      spec.examples.excludeReplyRe = new RegExp(
+        avoid.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")
+      );
+    } catch {
+      spec.examples.excludeReplyRe = null; // 不正パターンはフィルタなし（フェイルオープン）
+    }
+  }
+
+  // ⑦ ②-b/②-c(AIX-METAフル活用 2026-08): brainが required + 具体的closing_strategy を持つ＝
+  // 「例外なく従え」と確信しているケース。genericナレッジ100件の洪水はbrainの具体指示（1行）を
+  // 薄める雑音のため、pgvectorナレッジ取得を60件に削減する（0にはしない＝絶対ルール・差分学習は残す）。
+  if (meta.enforcement_level === "required" && typeof meta.closing_strategy === "string" && meta.closing_strategy.length > 0) {
+    spec.knowledge.limit = 60;
+    spec.pgvectorMatchCount = 60;
+  }
 
   return spec;
 }

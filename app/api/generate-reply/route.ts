@@ -1217,7 +1217,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     if (embedding) {
       const { data: vectorResults, error: rpcError } = await supabase.rpc("match_reply_knowledge", {
         query_embedding: embedding,
-        match_count: spec?.pgvectorMatchCount ?? 100,
+        // M3(AIX-METAフル活用 2026-08): knowledge.limit（デッドフィールドだった）を正として接続。
+        // brainが required+closing_strategy 確信時は spec 側で 60 に削減される（genericナレッジ洪水の抑制）
+        match_count: spec?.knowledge?.limit ?? spec?.pgvectorMatchCount ?? 100,
         min_importance: 8,
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
       if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
@@ -2343,7 +2345,15 @@ export async function POST(req: NextRequest) {
       const hasTactical = brainFreshForMessage && !!(
         qs.length || brainMeta.repeated_concern || brainMeta.current_property || brainMeta.hesitancy_pattern
       );
-      if (!hasAction && !hasStrategy && !hasExtendedFields && !hasTactical) return "";
+      // H2(AIX-METAフル活用 2026-08): property_search_params は brain が property_customers +
+      // sent_properties から構築した「この顧客だけの確定事実」。パターン検索（pgvector/DB）では
+      // 原理的に供給不能な情報のため、ここがプロンプトへの唯一の供給路。
+      // ng_properties（NG確定物件）はDB由来の安定事実だが、stale時は直近NG判定が欠落しうるため
+      // message-localフィールドと同じ鮮度ゲートを適用する（古いリストでの「安全」誤認を防ぐ）。
+      const psp = brainFreshForMessage ? (brainMeta.property_search_params ?? null) : null;
+      const ngProps = (psp?.ng_properties ?? []).filter(p => p?.property_name);
+      const hasCustomerFacts = !!(ngProps.length || psp?.preferences || psp?.ng_points);
+      if (!hasAction && !hasStrategy && !hasExtendedFields && !hasTactical && !hasCustomerFacts) return "";
       // enforcement_level を強制度文言に反映（型定義済みだが未使用だったフィールドの活用）
       const isRequired = brainMeta.enforcement_level === "required";
       const lines: string[] = [
@@ -2351,7 +2361,10 @@ export async function POST(req: NextRequest) {
       ];
       if (hasAction) lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}`);
       if (brainMeta.closing_strategy) lines.push(`- 成約戦略: ${brainMeta.closing_strategy}`);
-      if (brainMeta.next_steps?.length) lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
+      if (brainMeta.next_steps?.length) {
+        lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
+        lines.push(`  → 今回の返信で実行するのは Step1（${brainMeta.next_steps[0]}）のみ。Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を今回の本文に先取りして書かないこと（フェーズ先走り禁止）`);
+      }
       if (brainMeta.reply_direction) lines.push(`- 🎯 返信の方向性: ${brainMeta.reply_direction}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
       if (brainMeta.key_topics?.length) {
         lines.push(`- ✅ 必ず含める内容（${brainMeta.key_topics.length}件すべて必須）: ${brainMeta.key_topics.join(" / ")}`);
@@ -2392,6 +2405,16 @@ export async function POST(req: NextRequest) {
           ? `- 🏠 現在話している物件: ${brainMeta.current_property}（※お客様が新しい条件を追加したため、この既出物件を再提案・再アピールしない。新条件に合うお部屋を新たに探してお送りする旨のみ伝えること）`
           : `- 🏠 現在話している物件: ${brainMeta.current_property} — この物件の文脈で返信すること`);
       }
+      // H2: 顧客固有事実（property_search_params）— DBパターン検索では絶対に出てこない情報
+      if (ngProps.length) {
+        lines.push(`- 🚫 提案禁止物件（この顧客がNG確定済み）: ${ngProps.map(p => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`).join(" / ")} — これらの物件名を返信に一切出さない。条件に合っていても再提案・再アピールしない`);
+      }
+      if (psp?.preferences) {
+        lines.push(`- 👍 この顧客に刺さるポイント: ${psp.preferences} — 提案・訴求の切り口はここに寄せる`);
+      }
+      if (psp?.ng_points) {
+        lines.push(`- ⚠️ この顧客の地雷・NGポイント: ${psp.ng_points} — これに該当する提案・話題を出さない`);
+      }
       if (brainFreshForMessage && brainMeta.hesitancy_pattern) {
         const hp = brainMeta.hesitancy_pattern;
         const timeline = brainMeta.future_timeline ?? null;
@@ -2405,6 +2428,13 @@ export async function POST(req: NextRequest) {
           lines.push("- 🔀 物件迷いパターン検出: 複数物件で迷っている。判断軸を提供する: 各物件の具体的な違い（費用・立地・設備）を数字で比較し「初期費用を軸にお選びになられるのはいかがでしょうか」等で決断を後押しする。※比較に使う数字は会話履歴にテキストとして登場した実際の値のみ。履歴にない家賃・費用の数字を推測して比較することは絶対禁止。数字が履歴になければ判断軸提示のみ行う");
         }
       }
+      // H1(AIX-METAフル活用 2026-08): future_timeline を hesitancy_pattern と独立に注入。
+      // 旧実装は hp==="timeline" の分岐内でのみ使用しており、hp が thinking/null 等のとき
+      // brainが抽出済みのタイムラインがプロンプトに一切届かなかった（入居時期に合わない提案の原因）。
+      // hp==="timeline" 時は上の分岐で既に消化済みのため除外（二重注入防止）。
+      if (brainFreshForMessage && brainMeta.future_timeline && brainMeta.hesitancy_pattern !== "timeline") {
+        lines.push(`- 📅 顧客の決断タイムライン: ${brainMeta.future_timeline} — 返信の提案・約束はこのタイムラインに整合させる（このタイムラインは会話に実際に出た表現。これに合わない前倒し・急かし提案をしない。日付・時期の創作は絶対禁止）`);
+      }
       lines.push("※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。");
       return lines.join("\n") + "\n";
     })();
@@ -2415,7 +2445,15 @@ export async function POST(req: NextRequest) {
 
     // ── T1動的選択の監視ログ（Promise.all 前に spec の発火内容を記録） ──
     if (!isTemplateOptimize) {
-      console.log(JSON.stringify({ tag: "step2-spec", tier: tierResult.tier, spec: { lossPatterns: fetchSpec.lossPatterns, adaptRules: fetchSpec.adaptRules, applyingPatterns: fetchSpec.applyingPatterns } }));
+      console.log(JSON.stringify({ tag: "step2-spec", tier: tierResult.tier, spec: {
+        lossPatterns: fetchSpec.lossPatterns, adaptRules: fetchSpec.adaptRules, applyingPatterns: fetchSpec.applyingPatterns,
+        // M系T1動的選択の実発火率計測用（AIX-METAフル活用 2026-08）
+        filterTopics: fetchSpec.knowledge.filterTopics,
+        excludeReplyRe: fetchSpec.examples.excludeReplyRe?.source ?? null,
+        boostStates: fetchSpec.examples.boostStates,
+        knowledgeLimit: fetchSpec.knowledge.limit,
+        analysisContextLen: analysisContext?.length ?? 0,
+      } }));
     }
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
