@@ -25,1638 +25,567 @@
       --r-pill:           9999px;
       --r-md:             18px;
       --r-sm:             10px;
-      --white-alpha-80:   rgba(255,255,255,0.80);
-      --white-alpha-60:   rgba(255,255,255,0.60);
-      --white-alpha-07:   rgba(255,255,255,0.07);
       --card-shadow:      0 8px 24px rgba(0,0,0,0.18);
-      --font-base:        'Hiragino Maru Gothic ProN', 'Hiragino Maru Gothic Pro', sans-serif;
+      --font-base:        'Hiragino Maru Gothic ProN','Hiragino Maru Gothic Pro',sans-serif;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
-        --bg:     #0f1a10;
-        --bg-alt: #172119;
-        --card:   #1c2d1e;
-        --ink:    #e2f0e4;
-        --muted:  #88b090;
-        --border: #2a3f2c;
-        --lbl:    #4cd07a;
+        --bg:     #0f1a10; --bg-alt: #172119; --card:  #1c2d1e;
+        --ink:    #e2f0e4; --muted:  #88b090; --border:#2a3f2c; --lbl: #4cd07a;
       }
     }
-    :root[data-theme="dark"] {
-      --bg:     #0f1a10;
-      --bg-alt: #172119;
-      --card:   #1c2d1e;
-      --ink:    #e2f0e4;
-      --muted:  #88b090;
-      --border: #2a3f2c;
-      --lbl:    #4cd07a;
-    }
-    :root[data-theme="light"] {
-      --bg:     #ffffff;
-      --bg-alt: #f4faf6;
-      --card:   #ffffff;
-      --ink:    #1a2018;
-      --muted:  #5a7060;
-      --border: #cde8d4;
-      --lbl:    #1b6e2e;
-    }
+    :root[data-theme="dark"]  { --bg:#0f1a10;--bg-alt:#172119;--card:#1c2d1e;--ink:#e2f0e4;--muted:#88b090;--border:#2a3f2c;--lbl:#4cd07a; }
+    :root[data-theme="light"] { --bg:#ffffff;--bg-alt:#f4faf6;--card:#ffffff;--ink:#1a2018;--muted:#5a7060;--border:#cde8d4;--lbl:#1b6e2e; }
 
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
-    body {
-      font-family: 'Hiragino Maru Gothic ProN', 'Hiragino Maru Gothic Pro', sans-serif;
-      font-size: 16px;
-      line-height: 1.8;
-      color: var(--ink);
-      background: var(--bg);
-      max-width: 480px;
-      margin: 0 auto;
-      overflow-x: hidden;
-      padding-bottom: 74px;
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html{scroll-behavior:smooth;}
+    body{
+      font-family:'Hiragino Maru Gothic ProN','Hiragino Maru Gothic Pro',sans-serif;
+      font-size:16px;line-height:1.8;color:var(--ink);background:var(--bg);
+      max-width:480px;margin:0 auto;overflow-x:hidden;padding-bottom:74px;
     }
 
     /* Scroll reveal */
-    .r {
-      opacity: 0;
-      transform: translateY(22px);
-      transition: opacity 0.55s ease, transform 0.55s ease;
+    .r{opacity:0;transform:translateY(22px);transition:opacity .55s ease,transform .55s ease;}
+    .r.on{opacity:1;transform:none;}
+    .r.d1{transition-delay:.08s;} .r.d2{transition-delay:.16s;} .r.d3{transition-delay:.24s;}
+    @media(prefers-reduced-motion:reduce){.r{opacity:1;transform:none;transition:none;}}
+
+    /* Animations */
+    @keyframes float-arrow{0%,100%{transform:translateY(0);}50%{transform:translateY(-5px);}}
+    @keyframes fcb-sway{0%,100%{transform:rotate(-2.5deg);}50%{transform:rotate(2.5deg);}}
+    @keyframes fcb-tap-jump{
+      0%  {transform:scale(1) rotate(-2.5deg) translateY(0);}
+      25% {transform:scale(1.25) rotate(8deg) translateY(-18px);}
+      50% {transform:scale(0.92) rotate(-5deg) translateY(4px);}
+      75% {transform:scale(1.1) rotate(4deg) translateY(-8px);}
+      100%{transform:scale(1) rotate(-2.5deg) translateY(0);}
     }
-    .r.on { opacity: 1; transform: none; }
-    .r.d1 { transition-delay: 0.08s; }
-    .r.d2 { transition-delay: 0.16s; }
-    .r.d3 { transition-delay: 0.24s; }
-    @media (prefers-reduced-motion: reduce) {
-      .r { opacity: 1; transform: none; transition: none; }
+    @keyframes fc-pulse{
+      0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(6,199,85,.45);}
+      50%    {transform:scale(1.04);box-shadow:0 0 0 12px rgba(6,199,85,0);}
+    }
+    @keyframes cta-arrow-slide{0%,100%{transform:translateX(0);}50%{transform:translateX(5px);}}
+    @keyframes ck-pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.06);}}
+
+    /* ===== #hero ===== */
+    #hero{
+      font-family:'Hiragino Maru Gothic ProN','Hiragino Maru Gothic Pro',sans-serif;
+      max-width:480px;margin:0 auto;background:#fff;position:relative;overflow:visible;
+    }
+    #hero *{box-sizing:border-box;margin:0;padding:0;}
+
+    /* ── TikTok Banner ── */
+    .tt-banner{
+      background:#000;display:flex;align-items:center;
+      justify-content:space-between;padding:10px 14px;gap:8px;
+    }
+    .tt-left{display:flex;align-items:center;gap:8px;flex:1;min-width:0;}
+    .tt-icon{flex-shrink:0;}
+    .tt-text{
+      font-size:clamp(10px,3vw,13px);font-weight:900;color:#fff;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .tt-badge{
+      flex-shrink:0;background:#FE2C55;color:#fff;
+      font-size:clamp(8.5px,2.5vw,11px);font-weight:900;
+      padding:4px 9px;border-radius:6px;letter-spacing:.04em;white-space:nowrap;
     }
 
-    /* Header button (utility) */
-    .h-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: var(--line);
-      color: #fff;
-      text-decoration: none;
-      font-size: 13px;
-      font-weight: 800;
-      padding: 8px 14px;
-      border-radius: var(--r-pill);
-      flex-shrink: 0;
-      transition: background .18s, transform .12s;
+    /* ── Hero White Body ── */
+    .h-body{background:#fff;padding:0 0 14px;}
+
+    /* Speech bubble */
+    .h-bubble-wrap{padding:20px 16px 0;}
+    .h-bubble{
+      background:#FFD600;border:2.5px solid #111;border-radius:12px;
+      padding:10px 14px;font-size:15px;font-weight:900;color:#111;
+      text-align:center;position:relative;box-shadow:3px 3px 0 #111;
+      display:block;line-height:1.4;
     }
-    .h-btn:hover { background: var(--line-dk); transform: scale(1.04); }
-    .h-btn:focus-visible { outline: 3px solid var(--line); outline-offset: 2px; }
-
-    /* ─── Hero ─── */
-
-    @keyframes float-arrow {
-      0%,100% { transform:translateY(0); }
-      50%      { transform:translateY(-5px); }
+    .h-bubble::before{
+      content:'';position:absolute;bottom:-12px;left:50%;transform:translateX(-50%);
+      width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;
+      border-top:12px solid #111;z-index:0;
     }
-
-    #hero {
-      font-family: 'Hiragino Maru Gothic ProN', 'Hiragino Maru Gothic Pro', sans-serif;
-      max-width: 480px;
-      margin: 0 auto;
-      min-height: 100vh;
-      min-height: 100svh;
-      background: #ffffff;
-      position: relative;
-      overflow: hidden;
+    .h-bubble::after{
+      content:'';position:absolute;bottom:-7px;left:50%;transform:translateX(-50%);
+      width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;
+      border-top:8px solid #FFD600;z-index:1;
     }
-    #hero * { box-sizing: border-box; margin: 0; padding: 0; }
+    .h-bubble-em{color:#06C755;font-style:normal;-webkit-text-stroke:.4px #06C755;}
 
-    /* Subtle green radial tint — replaces heavy yellow sunburst */
-    .h-sunburst {
-      position: absolute;
-      top: -80px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 760px;
-      height: 760px;
-      background: radial-gradient(circle, rgba(6,199,85,0.07) 0%, rgba(6,199,85,0.03) 40%, transparent 70%);
-      border-radius: 50%;
-      z-index: 0;
-      pointer-events: none;
+    /* Sub text */
+    .h-sub{
+      text-align:center;font-size:11px;font-weight:700;color:#777;
+      margin:18px 0 4px;letter-spacing:.02em;
     }
 
-    /* TikTok banner */
-    .tt-banner {
-      position: relative;
-      z-index: 10;
-      background: linear-gradient(160deg, #050510 0%, #12041c 55%, #001a12 100%);
-      box-shadow: 0 0 32px rgba(37,244,238,.25), 0 0 64px rgba(254,44,85,.18);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      padding: 76px 12px 132px;
-      clip-path: polygon(0 0, 100% 0, 100% 66%, 0 100%);
+    /* H1 with lightning */
+    .h-title-wrap{position:relative;padding:0 16px 0 50px;margin-top:2px;}
+    .h-lightning{
+      position:absolute;left:12px;top:-2px;font-size:32px;line-height:1;
+      filter:drop-shadow(1px 1px 3px rgba(0,0,0,.15));
     }
-    .tt-icon { flex-shrink: 0; display: flex; align-items: center; }
-    .tt-text {
-      font-size: clamp(10px, 3.2vw, 13px);
-      font-weight: 900;
-      color: #fff;
-      letter-spacing: .02em;
-      line-height: 1.1;
-      text-align: center;
-      white-space: nowrap;
-    }
-    .tt-text em { color: #25F4EE; font-style: normal; text-shadow: 0 0 7px rgba(37,244,238,.95), 0 0 20px rgba(37,244,238,.55), -1.5px 0 rgba(254,44,85,.65); }
-    .tt-badge {
-      flex-shrink: 0;
-      background: #FE2C55;
-      color: #fff;
-      box-shadow: 0 0 10px rgba(254,44,85,.85), 0 0 26px rgba(254,44,85,.45);
-      font-size: clamp(9px, 2.8vw, 11px);
-      font-weight: 900;
-      padding: 4px 8px;
-      border-radius: 4px;
-      letter-spacing: .06em;
-      white-space: nowrap;
+    .h-title{
+      font-size:clamp(22px,6.8vw,32px);font-weight:900;color:#111;
+      line-height:1.25;-webkit-text-stroke:.3px #111;letter-spacing:-.01em;
     }
 
-    /* Hero body */
-    .h-body {
-      position: relative;
-      z-index: 5;
-      padding: 28px 20px 12px;
+    /* Green band below H1 */
+    .h-green-band{
+      background:var(--line);color:#fff;font-size:15px;font-weight:900;
+      text-align:center;padding:10px 16px;margin:14px 0 0;letter-spacing:.02em;
     }
-    .h-eyebrow { display: flex; justify-content: center; margin-bottom: 8px; }
-    .eyebrow-badge {
-      display: inline-block;
-      background: var(--line);
-      color: #fff;
-      font-size: 11px;
-      font-weight: 900;
-      padding: 4px 14px;
-      border-radius: 4px;
-      letter-spacing: .02em;
+    .h-gb-em{color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
+
+    /* ── QR Stage 3-column grid ── */
+    .qr-stage{
+      display:grid;grid-template-columns:96px 1fr 96px;
+      align-items:end;overflow:visible;padding:20px 10px 0;gap:6px;
     }
 
-    /* H1 title — no pulse animation */
-    .h-title {
-      font-size: clamp(22px, 7vw, 34px);
-      font-weight: 900;
-      color: #111;
-      line-height: 1.28;
-      text-align: center;
-      text-wrap: balance;
-      margin-bottom: 16px;
-      -webkit-text-stroke: .3px #111;
+    /* Left column: clock badge */
+    .qs-left{display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px;}
+    .clock-badge{
+      position:relative;width:84px;height:84px;border-radius:50%;
+      background:#FFD600;border:2.5px solid #111;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      text-align:center;padding:6px 4px;box-shadow:2px 2px 0 #111;
+      animation:ck-pulse 2.2s ease-in-out infinite;
     }
-    .h-title .accent { color: var(--line-dk); }
-    .h-title-sub { font-size: 0.62em; font-weight: 800; color: #333; }
-    .h-title-main {
-      display: block;
-      filter: drop-shadow(0 3px 8px rgba(0,0,0,.12));
+    .ck-icon{font-size:16px;line-height:1;margin-bottom:1px;}
+    .ck-t1{font-size:8px;font-weight:800;color:#444;line-height:1.2;margin-bottom:1px;}
+    .ck-t2{font-size:9.5px;font-weight:900;color:#c0392b;line-height:1.2;margin-bottom:1px;}
+    .ck-t3{font-size:8px;font-weight:800;color:#444;line-height:1.2;}
+    .ck-sparkle{position:absolute;font-size:9px;color:#111;}
+    .ck-sp-tl{top:5px;right:5px;} .ck-sp-br{bottom:5px;left:5px;}
+
+    /* Center column: QR card */
+    .qs-center{display:flex;justify-content:center;align-items:flex-end;}
+    .qr-card-new{
+      background:#fff;border:3px solid var(--line);border-radius:16px;
+      padding:18px 12px 12px;display:flex;flex-direction:column;
+      align-items:center;gap:8px;position:relative;
+      box-shadow:0 4px 20px rgba(6,199,85,.28);
     }
-    .h-title .hl-marker {
-      display: inline-block;
-      background: #e8fdf1;
-      font-size: 1.08em;
-      padding: 3px 10px 4px;
-      border-radius: 5px;
-      transform: rotate(-1.5deg);
-      -webkit-text-stroke: .6px #111;
+    .qr-now-badge{
+      position:absolute;top:-13px;left:50%;transform:translateX(-50%);
+      background:#FE2C55;color:#fff;font-size:11px;font-weight:900;
+      padding:4px 14px;border-radius:20px;white-space:nowrap;
+      border:2px solid #fff;box-shadow:1px 1px 0 rgba(0,0,0,.2);
     }
-    .h-title .accent-red {
-      display: inline-block;
-      color: var(--line);
-      font-size: 1.2em;
-      -webkit-text-stroke: 1px var(--line);
-      transform: rotate(.5deg);
-      transform-origin: left center;
+    .qr-img{display:block;border-radius:6px;border:1.5px solid var(--line);}
+    .qr-label-new{font-size:11px;font-weight:900;color:#333;text-align:center;line-height:1.5;}
+    .qr-label-new strong{color:var(--line-dk);}
+
+    /* Right column: mascot + bubble */
+    .qs-right{display:flex;flex-direction:column;align-items:flex-end;position:relative;}
+    .mascot-bubble{
+      width:152px;background:#fff;border:2px solid #111;border-radius:10px;
+      padding:8px 10px;font-size:10px;font-weight:700;line-height:1.5;
+      box-shadow:2px 2px 0 #111;color:#111;position:relative;z-index:10;
+      margin-bottom:14px;text-align:left;
     }
-    .h-title-line {
-      display: inline-block;
-      margin-top: 5px;
-      font-size: 0.78em;
-      font-weight: 900;
-      color: var(--line);
-      -webkit-text-stroke: .4px var(--line);
-      letter-spacing: .02em;
-      transform: rotate(-0.5deg);
+    .mascot-bubble::before{
+      content:'';position:absolute;bottom:-12px;left:50%;transform:translateX(-50%);
+      width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;
+      border-top:12px solid #111;
+    }
+    .mascot-bubble::after{
+      content:'';position:absolute;bottom:-7px;left:50%;transform:translateX(-50%);
+      width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;
+      border-top:8px solid #fff;z-index:1;
     }
 
-    /* ===== LINE CTA band ===== */
-    .h-cta-band {
-      background: var(--line);
-      padding: 28px 20px 32px;
-      text-align: center;
-      position: relative;
-      z-index: 5;
+    .mascot-wrap{position:relative;width:88px;cursor:pointer;}
+    .fcb-mascot{
+      display:block;width:88px;height:auto;transform-origin:50% 92%;
+      animation:fcb-sway 3s ease-in-out infinite;will-change:transform;
     }
-    .cta-line-heading {
-      text-align: center;
-      font-size: 20px;
-      font-weight: 900;
-      color: #fff;
-      margin: 0 0 14px;
-      letter-spacing: .02em;
-    }
-    .h-cta-band p {
-      color: #fff;
-      font-size: 13px;
-      font-weight: 900;
-      line-height: 1.55;
-      margin-bottom: 12px;
-    }
-    .cta-line-card {
-      display: block;
-      width: 100%;
-      background: #FFFFFF;
-      border-radius: 16px;
-      padding: 16px 18px;
-      text-align: center;
-      text-decoration: none;
-      box-shadow: 0 6px 0 rgba(0,0,0,.18), 0 12px 24px rgba(0,0,0,.16);
-      transition: transform .12s ease, box-shadow .12s ease;
-    }
-    .cta-line-card:active {
-      transform: translateY(4px);
-      box-shadow: 0 2px 0 rgba(0,0,0,.18), 0 6px 12px rgba(0,0,0,.14);
-    }
-    .cta-line-main {
-      display: block;
-      font-size: 19px;
-      font-weight: 900;
-      color: var(--line);
-      line-height: 1.3;
-      letter-spacing: .02em;
-    }
-    .cta-line-arrow {
-      display: inline-block;
-      animation: cta-arrow-slide 1.2s ease-in-out infinite;
-    }
-    @keyframes cta-arrow-slide {
-      0%, 100% { transform: translateX(0); }
-      50% { transform: translateX(5px); }
-    }
-    .cta-line-sub {
-      display: block;
-      margin-top: 6px;
-      font-size: 11.5px;
-      font-weight: 700;
-      color: #444;
-      letter-spacing: .02em;
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .cta-line-arrow { animation: none !important; }
-    }
-    .h-line-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 9px;
-      background: #fff;
-      color: var(--line-dk);
-      font-size: 15px;
-      font-weight: 900;
-      padding: 14px 20px;
-      border-radius: 10px;
-      text-decoration: none;
-      box-shadow: 0 5px 0 var(--line-dk);
-      letter-spacing: .02em;
-      border: 2px solid var(--line-dk);
-      transition: transform .1s, box-shadow .1s;
-    }
-    .h-line-btn:active {
-      transform: translateY(4px);
-      box-shadow: 0 1px 0 var(--line-dk);
+    .fcb-mascot.tapped{animation:fcb-tap-jump .55s cubic-bezier(.36,.07,.19,.97) forwards;}
+    @media(prefers-reduced-motion:reduce){.fcb-mascot{animation:none;} .clock-badge{animation:none;}}
+
+    .badge-24h{
+      position:absolute;top:22px;right:-10px;background:var(--line);color:#fff;
+      font-size:9px;font-weight:900;padding:3px 7px;border-radius:12px;
+      white-space:nowrap;z-index:5;border:1.5px solid #fff;
+      box-shadow:1px 1px 0 rgba(0,0,0,.2);
     }
 
-    /* ===== MERIT : 3つの強み ===== */
-    .merit-zone {
-      position: relative;
-      z-index: 5;
-      padding: 34px 20px 44px;
-      background: var(--bg-alt);
+    /* Scan hint */
+    .scan-hint{
+      display:flex;align-items:center;justify-content:center;gap:7px;
+      font-size:12px;font-weight:700;color:#555;margin:14px 0 10px;
     }
-    .merit-head { text-align: center; margin-bottom: 22px; }
-    .merit-eyebrow {
-      display: block;
-      font-size: 13px;
-      font-weight: 900;
-      color: var(--line);
-      letter-spacing: .02em;
-      margin-bottom: 6px;
-    }
-    .merit-title {
-      font-size: 26px;
-      font-weight: 900;
-      color: #111;
-      line-height: 1.3;
-      -webkit-text-stroke: .3px #111;
-    }
-    .merit-title em { font-style: normal; color: var(--line); }
-    .merit-social {
-      display: inline-block;
-      margin-top: 10px;
-      background: #fff;
-      border: 1.5px solid var(--border);
-      border-radius: 999px;
-      padding: 5px 14px;
-      font-size: 11.5px;
-      font-weight: 900;
-      color: #111;
-    }
-    .merit-social em { font-style: normal; color: var(--line); }
+    .scan-arrow{color:var(--line);font-size:13px;display:inline-block;animation:float-arrow 1.4s ease-in-out infinite;}
+    .scan-arrow:last-child{animation-delay:.28s;}
 
-    .merit-cards { display: flex; flex-direction: column; gap: 18px; }
-    .merit-card {
-      position: relative;
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      background: #fff;
-      border: 1.5px solid var(--border);
-      border-radius: 18px;
-      padding: 20px 16px 16px;
-      box-shadow: 0 4px 16px rgba(0,0,0,.07);
-    }
-    .merit-num {
-      position: absolute;
-      top: -12px;
-      left: -6px;
-      background: var(--line);
-      color: #fff;
-      font-size: 11px;
-      font-weight: 900;
-      padding: 4px 10px;
-      border-radius: 6px;
-      letter-spacing: .02em;
-      white-space: nowrap;
-    }
-    .merit-icon {
-      flex-shrink: 0;
-      width: 58px;
-      height: 58px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 28px;
-      border-radius: 16px;
-      background: #e8fdf1;
-    }
-    .merit-body { flex: 1; min-width: 0; }
-    .merit-claim {
-      display: inline-block;
-      font-size: 10.5px;
-      font-weight: 900;
-      color: #fff;
-      padding: 2px 9px;
-      border-radius: 4px;
-      letter-spacing: .02em;
-      margin-bottom: 5px;
-    }
-    .merit-claim.c1 { background: var(--line); }
-    .merit-claim.c2 { background: #1a1a1a; color: #fff; }
-    .merit-claim.c3 { background: var(--line); }
-    .merit-h {
-      font-size: 18px;
-      font-weight: 900;
-      color: #111;
-      line-height: 1.35;
-    }
-    .merit-h em { font-style: normal; color: var(--line); }
-    .merit-sub {
-      margin-top: 5px;
-      font-size: 12.5px;
-      font-weight: 700;
-      color: #555;
-      line-height: 1.6;
+    /* Benefit chips */
+    .benefit-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:0 16px 4px;}
+    .chip{
+      background:transparent;color:var(--line);border:1.5px solid var(--line);
+      border-radius:9999px;padding:6px 14px;font-size:12px;font-weight:700;
+      letter-spacing:.02em;white-space:nowrap;
     }
 
-    /* QR stage — simplified after bubble removal */
-    .qr-stage {
-      position: relative;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 0 20px;
-      min-height: auto;
+    /* ── 節約実績バッジ ── */
+    .saving-badge{
+      margin:10px 16px 0;background:#fff;border:2.5px solid #111;
+      border-radius:16px;padding:12px 14px;box-shadow:4px 4px 0 #111;
+      display:flex;align-items:center;gap:12px;
     }
-    .qr-card {
-      background: #fff;
-      border: 2px solid var(--line);
-      border-radius: 18px;
-      padding: 14px 14px 12px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      position: relative;
-      z-index: 7;
-      box-shadow: 0 4px 20px rgba(6,199,85,0.28);
+    .saving-badge-icon{
+      flex-shrink:0;width:44px;height:44px;background:#FFD600;
+      border-radius:50%;border:2px solid #111;display:flex;
+      align-items:center;justify-content:center;font-size:22px;
     }
-    .qr-card img { display: block; border-radius: 6px; }
-    .qr-label {
-      font-size: 10px;
-      font-weight: 700;
-      color: #555;
-      text-align: center;
-      line-height: 1.55;
+    .saving-badge-body{flex:1;min-width:0;}
+    .saving-badge-label{
+      display:inline-block;background:var(--line);color:#fff;
+      font-size:9.5px;font-weight:900;padding:2px 8px;border-radius:4px;
+      letter-spacing:.06em;margin-bottom:3px;
     }
-    .qr-label strong { color: var(--line-dk); }
-    .line-corner-badge {
-      position: absolute;
-      top: -10px;
-      right: -10px;
-      background: var(--line);
-      color: #fff;
-      font-size: 9px;
-      font-weight: 900;
-      padding: 3px 7px;
-      border-radius: 6px;
-      border: 2px solid #fff;
-      box-shadow: 1px 1px 0 #111;
-      letter-spacing: .06em;
+    .saving-badge-main{
+      font-size:18px;font-weight:900;color:#111;line-height:1.2;
+      -webkit-text-stroke:.3px #111;
     }
-    .scan-hint {
-      position: relative;
-      z-index: 5;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 7px;
-      font-size: 12px;
-      font-weight: 700;
-      color: #555;
-      margin: 13px 0 15px;
-    }
-    .scan-arrow {
-      color: var(--line);
-      font-size: 13px;
-      display: inline-block;
-      animation: float-arrow 1.4s ease-in-out infinite;
-    }
-    .scan-arrow:last-child { animation-delay: .28s; }
-    .benefit-row {
-      position: relative;
-      z-index: 5;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: center;
-      margin-bottom: 24px;
-    }
-    .chip {
-      background: transparent;
-      color: var(--line);
-      border: 1.5px solid var(--line);
-      border-radius: 9999px;
-      padding: 6px 14px;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: .02em;
-      box-shadow: none;
-      white-space: nowrap;
+    .saving-badge-main em{font-style:normal;color:#e82020;font-size:1.15em;}
+    .saving-badge-note{font-size:9.5px;color:#888;margin-top:2px;font-weight:600;}
+    .saving-badge-cta{
+      margin-top:8px;background:var(--line);color:#fff;border:none;
+      border-radius:999px;padding:7px 14px;font-size:11.5px;font-weight:900;
+      letter-spacing:.03em;display:block;width:100%;text-align:center;cursor:pointer;
+      box-shadow:0 3px 0 var(--line-dk);
     }
 
-    /* ─── Screenshot Guidance Styles ─── */
+    /* ── CTA green strip (④) ── */
+    .h-cta-strip{
+      background:var(--line);color:#fff;font-size:14px;font-weight:900;
+      text-align:center;padding:13px 16px;display:flex;align-items:center;
+      justify-content:center;gap:8px;flex-wrap:wrap;letter-spacing:.02em;
+      margin-top:14px;
+    }
+    .cta-strip-arr{color:rgba(255,255,255,.55);font-size:13px;}
+    .cta-strip-em{color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
 
-    @keyframes flash-in {
-      0%   { transform: scale(0.88) translateY(-6px); opacity: 0; }
-      65%  { transform: scale(1.05) translateY(0);   opacity: 1; }
-      100% { transform: scale(1)    translateY(0);   opacity: 1; }
+    /* ── LINE button CTA band ── */
+    .h-cta-band{background:var(--line);padding:14px 20px 28px;text-align:center;}
+    .cta-line-heading{font-size:18px;font-weight:900;color:#fff;margin:0 0 12px;letter-spacing:.02em;}
+    .h-line-btn{
+      display:flex;align-items:center;justify-content:center;gap:9px;
+      background:#fff;color:var(--line-dk);font-size:15px;font-weight:900;
+      padding:14px 20px;border-radius:10px;text-decoration:none;
+      box-shadow:0 5px 0 var(--line-dk);letter-spacing:.02em;
+      border:2px solid var(--line-dk);transition:transform .1s,box-shadow .1s;
     }
-    @keyframes blink-bg {
-      0%, 100% { background: var(--sun); }
-      50%       { background: #ffe566; }
-    }
-    @keyframes bounce-cam {
-      0%, 100% { transform: scale(1)    rotate(-6deg); }
-      45%       { transform: scale(1.25) rotate(6deg); }
-    }
-    @keyframes arrow-down {
-      0%, 100% { transform: translateY(0); }
-      50%       { transform: translateY(6px); }
-    }
+    .h-line-btn:active{transform:translateY(4px);box-shadow:0 1px 0 var(--line-dk);}
 
-    .h-screenshot-banner {
-      position: relative;
-      z-index: 10;
-      background: var(--sun);
-      border: 3px solid #111;
-      border-radius: 16px;
-      margin: 0 0 10px;
-      padding: 12px 16px 10px;
-      text-align: center;
-      box-shadow: 4px 4px 0 #111;
-      animation: flash-in 0.5s cubic-bezier(.34,1.56,.64,1) both,
-                 blink-bg 2.6s ease-in-out 0.6s infinite;
+    /* ===== MERIT ZONE ===== */
+    .merit-zone{position:relative;z-index:5;padding:34px 20px 44px;background:var(--bg-alt);}
+    .merit-head{text-align:center;margin-bottom:22px;}
+    .merit-eyebrow{display:block;font-size:13px;font-weight:900;color:var(--line);letter-spacing:.02em;margin-bottom:6px;}
+    .merit-title{font-size:26px;font-weight:900;color:#111;line-height:1.3;-webkit-text-stroke:.3px #111;}
+    .merit-title em{font-style:normal;color:var(--line);}
+    .merit-social{
+      display:inline-block;margin-top:10px;background:#fff;border:1.5px solid var(--border);
+      border-radius:999px;padding:5px 14px;font-size:11.5px;font-weight:900;color:#111;
     }
-    .h-screenshot-banner .scr-emoji {
-      font-size: 42px;
-      display: block;
-      line-height: 1;
-      margin-bottom: 3px;
-      animation: bounce-cam 1.7s ease-in-out infinite;
+    .merit-social em{font-style:normal;color:var(--line);}
+    .merit-cards{display:flex;flex-direction:column;gap:18px;}
+    .merit-card{
+      position:relative;display:flex;align-items:center;gap:14px;background:#fff;
+      border:1.5px solid var(--border);border-radius:18px;padding:20px 16px 16px;
+      box-shadow:0 4px 16px rgba(0,0,0,.07);
     }
-    .h-screenshot-banner .scr-main {
-      font-size: 30px;
-      font-weight: 900;
-      color: #111;
-      display: block;
-      letter-spacing: 0.07em;
-      line-height: 1.05;
-      margin-bottom: 4px;
-      -webkit-text-stroke: 0.5px #111;
+    .merit-num{
+      position:absolute;top:-12px;left:-6px;background:var(--line);color:#fff;
+      font-size:11px;font-weight:900;padding:4px 10px;border-radius:6px;
+      letter-spacing:.02em;white-space:nowrap;
     }
-    .h-screenshot-banner .scr-sub {
-      font-size: 11px;
-      font-weight: 800;
-      color: #333;
-      letter-spacing: 0.02em;
-      line-height: 1.45;
+    .merit-icon{
+      flex-shrink:0;width:58px;height:58px;display:flex;align-items:center;
+      justify-content:center;font-size:28px;border-radius:16px;background:#e8fdf1;
     }
+    .merit-body{flex:1;min-width:0;}
+    .merit-claim{
+      display:inline-block;font-size:10.5px;font-weight:900;color:#fff;
+      padding:2px 9px;border-radius:4px;letter-spacing:.02em;margin-bottom:5px;
+    }
+    .merit-claim.c1{background:var(--line);}
+    .merit-claim.c2{background:#1a1a1a;}
+    .merit-claim.c3{background:var(--line);}
+    .merit-h{font-size:18px;font-weight:900;color:#111;line-height:1.35;}
+    .merit-h em{font-style:normal;color:var(--line);}
+    .merit-sub{margin-top:5px;font-size:12.5px;font-weight:700;color:#555;line-height:1.6;}
 
-    .screenshot-arrow-hint {
-      position: relative;
-      z-index: 5;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 1px;
-      margin-bottom: 4px;
-    }
-    .screenshot-arrow-hint .arr-label {
-      display: inline-block;
-      background: #111;
-      color: var(--sun);
-      font-size: 12px;
-      font-weight: 900;
-      padding: 4px 16px;
-      border-radius: 20px;
-      letter-spacing: 0.07em;
-      white-space: nowrap;
-      box-shadow: 2px 2px 0 rgba(0,0,0,0.25);
-    }
-    .screenshot-arrow-hint .arr-icon {
-      font-size: 22px;
-      color: #111;
-      line-height: 1;
-      margin-top: 1px;
-      animation: arrow-down 1.1s ease-in-out infinite;
-    }
-
-    .qr-card.screenshot-target {
-      outline: 3px dashed var(--sun);
-      outline-offset: 5px;
-    }
-
-    .screenshot-steps {
-      position: relative;
-      z-index: 5;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #111;
-      border-radius: 14px;
-      padding: 10px 8px 10px;
-      margin: 14px 0 0;
-      gap: 2px;
-      border: 2px solid #222;
-    }
-    .ss-step {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 4px;
-      padding: 2px 4px;
-    }
-    .ss-chevron {
-      color: rgba(255,255,255,0.3);
-      font-size: 20px;
-      font-weight: 900;
-      flex-shrink: 0;
-      line-height: 1;
-      padding: 0 2px;
-      margin-bottom: 4px;
-    }
-    .ss-badge {
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      font-weight: 900;
-      flex-shrink: 0;
-      line-height: 1;
-    }
-    .ss-badge.b1 { background: var(--sun);  color: #111; }
-    .ss-badge.b2 { background: #4ade80;     color: #111; }
-    .ss-badge.b3 { background: var(--line); color: #fff; }
-    .ss-emoji {
-      font-size: 26px;
-      display: block;
-      line-height: 1;
-    }
-    .ss-label {
-      font-size: 9.5px;
-      font-weight: 900;
-      color: #fff;
-      line-height: 1.35;
-      text-align: center;
-      letter-spacing: 0.01em;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .h-screenshot-banner { animation: none !important; background: var(--sun); }
-      .h-screenshot-banner .scr-emoji { animation: none !important; }
-      .screenshot-arrow-hint .arr-icon { animation: none !important; }
-    }
-
-    /* ─── Instagram section ─── */
-
-    @keyframes ig-swipe-nudge {
-      0%, 100% { transform: translateX(0); opacity: 0.9; }
-      40%, 60%  { transform: translateX(-11px); opacity: 0.3; }
-    }
-    @keyframes ig-shimmer {
-      from { transform: translateX(-100%) skewX(-18deg); }
-      to   { transform: translateX(380%) skewX(-18deg); }
-    }
-    @keyframes ig-heartbeat {
-      0%, 100% { transform: scale(1); }
-      50%       { transform: scale(1.28); }
-    }
-    @keyframes ig-ring {
-      to { transform: rotate(360deg); }
-    }
-
-    #instagram-section {
-      background: #0b0b0b;
-      padding: 36px 0 44px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-      width: 100%;
-      max-width: 480px;
-      margin: 0 auto;
-      overflow: hidden;
-      -webkit-font-smoothing: antialiased;
-      color-scheme: dark;
-    }
-    #instagram-section .ig-header {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      padding: 0 20px 18px;
-    }
-    #instagram-section .ig-avatar-ring {
-      width: 62px;
-      height: 62px;
-      border-radius: 50%;
-      padding: 3px;
-      background: conic-gradient(from 0deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888, #f09433);
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      animation: ig-ring 10s linear infinite;
-    }
-    #instagram-section .ig-avatar-inner {
-      width: 100%;
-      height: 100%;
-      border-radius: 50%;
-      background: #1b6e2e;
-      border: 2.5px solid #0b0b0b;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 24px;
-    }
-    #instagram-section .ig-account-info {
-      flex: 1;
-      min-width: 0;
-    }
-    #instagram-section .ig-username {
-      font-size: 16px;
-      font-weight: 700;
-      color: #fff;
-      letter-spacing: -0.4px;
-      line-height: 1.1;
-      margin-bottom: 4px;
-    }
-    #instagram-section .ig-fullname {
-      font-size: 11px;
-      color: #666;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    #instagram-section .ig-follow-btn {
-      flex-shrink: 0;
-      background: linear-gradient(130deg, #1b6e2e, #06C755);
-      color: #fff;
-      border: none;
-      padding: 9px 20px;
-      border-radius: 9px;
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      letter-spacing: -0.2px;
-      box-shadow: 0 2px 14px rgba(6,199,85,0.28);
-    }
-    #instagram-section .ig-stats {
-      display: flex;
-      justify-content: space-around;
-      padding: 14px 20px;
-      border-top: 1px solid #1c1c1c;
-      border-bottom: 1px solid #1c1c1c;
-      margin-bottom: 24px;
-    }
-    #instagram-section .ig-stat { text-align: center; }
-    #instagram-section .ig-stat-num {
-      font-size: 16px;
-      font-weight: 700;
-      color: #fff;
-      font-variant-numeric: tabular-nums;
-      letter-spacing: -0.5px;
-      line-height: 1.1;
-    }
-    #instagram-section .ig-stat-label {
-      font-size: 10px;
-      color: #555;
-      margin-top: 3px;
-      letter-spacing: 0.3px;
-    }
-    #instagram-section .ig-grid-label {
-      padding: 0 20px 14px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 10px;
-      color: #3a3a3a;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-    }
-    #instagram-section .ig-grid-label::before,
-    #instagram-section .ig-grid-label::after {
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: #1c1c1c;
-    }
-    #instagram-section .ig-slider-wrap { position: relative; }
-    #instagram-section .ig-slider {
-      display: flex;
-      gap: 11px;
-      padding: 4px 20px 22px;
-      overflow-x: auto;
-      scroll-snap-type: x mandatory;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
-    }
-    #instagram-section .ig-slider::-webkit-scrollbar { display: none; }
-    #instagram-section .ig-swipe-hint {
-      position: absolute;
-      bottom: 28px;
-      right: 22px;
-      font-size: 20px;
-      pointer-events: none;
-      animation: ig-swipe-nudge 2.6s ease-in-out infinite;
-    }
-    #instagram-section .ig-card {
-      flex-shrink: 0;
-      width: 158px;
-      border-radius: 13px;
-      overflow: hidden;
-      scroll-snap-align: start;
-      cursor: pointer;
-      background: #111;
-      transition: transform 0.16s ease;
-    }
-    #instagram-section .ig-card:active { transform: scale(0.94); }
-    #instagram-section .ig-card-img {
-      width: 158px;
-      height: 281px;
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-    }
-    #instagram-section .ig-card-img::before {
-      content: '';
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      height: 55%;
-      background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.44));
-      pointer-events: none;
-      z-index: 1;
-    }
-    #instagram-section .ig-card:nth-child(1) .ig-card-img {
-      background: linear-gradient(150deg, #081e0e 0%, #1b6e2e 48%, #3aab4f 72%, #f5c842 100%);
-    }
-    #instagram-section .ig-card:nth-child(2) .ig-card-img {
-      background: linear-gradient(150deg, #180540 0%, #6b21a8 42%, #c026d3 68%, #ff6b35 100%);
-    }
-    #instagram-section .ig-card:nth-child(3) .ig-card-img {
-      background: linear-gradient(150deg, #4c0d00 0%, #ff6b35 52%, #f5c842 100%);
-    }
-    #instagram-section .ig-card:nth-child(4) .ig-card-img {
-      background: linear-gradient(150deg, #011a10 0%, #065f46 42%, #06C755 74%, #a3e635 100%);
-    }
-    #instagram-section .ig-card:nth-child(5) .ig-card-img {
-      background: linear-gradient(150deg, #15014a 0%, #4c1d95 38%, #9333ea 62%, #ec4899 85%, #ff6b35 100%);
-    }
-    #instagram-section .ig-card:nth-child(6) .ig-card-img {
-      background: linear-gradient(150deg, #0a1422 0%, #1e3a5f 42%, #1b6e2e 70%, #f5c842 100%);
-    }
-    #instagram-section .ig-badge {
-      position: absolute;
-      top: 11px;
-      left: 11px;
-      background: rgba(0,0,0,0.52);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 20px;
-      padding: 3px 9px;
-      font-size: 8.5px;
-      font-weight: 700;
-      color: rgba(255,255,255,0.9);
-      letter-spacing: 0.3px;
-      z-index: 3;
-    }
-    #instagram-section .ig-card-body {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 9px;
-      z-index: 2;
-      padding: 0 11px;
-    }
-    #instagram-section .ig-card-emoji {
-      font-size: 40px;
-      filter: drop-shadow(0 3px 10px rgba(0,0,0,0.5));
-      line-height: 1;
-    }
-    #instagram-section .ig-card-copy {
-      font-size: 12.5px;
-      font-weight: 800;
-      color: #fff;
-      text-align: center;
-      line-height: 1.45;
-      text-shadow: 0 2px 12px rgba(0,0,0,0.55);
-      letter-spacing: -0.3px;
-    }
-    #instagram-section .ig-card-copy em { font-style: normal; color: #f5c842; }
-    #instagram-section .ig-card-sub {
-      font-size: 9.5px;
-      font-weight: 500;
-      color: rgba(255,255,255,0.68);
-      text-align: center;
-      text-shadow: 0 1px 6px rgba(0,0,0,0.5);
-      line-height: 1.3;
-    }
-    #instagram-section .ig-card-loc {
-      position: absolute;
-      bottom: 44px;
-      left: 0;
-      right: 0;
-      display: flex;
-      justify-content: center;
-      z-index: 3;
-    }
-    #instagram-section .ig-card-loc span {
-      background: rgba(0,0,0,0.48);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
-      border-radius: 4px;
-      padding: 3px 8px;
-      font-size: 8.5px;
-      color: rgba(255,255,255,0.76);
-    }
-    #instagram-section .ig-card-bar {
-      padding: 9px 12px;
-      background: #111;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    #instagram-section .ig-eng {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      font-size: 10.5px;
-      color: #888;
-      font-variant-numeric: tabular-nums;
-    }
-    #instagram-section .ig-eng-heart {
-      font-size: 12px;
-      display: inline-block;
-      animation: ig-heartbeat 1.9s ease-in-out infinite;
-    }
-    #instagram-section .ig-eng-comment { font-size: 12px; }
-    #instagram-section .ig-dots {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      gap: 5px;
-      padding: 2px 0 0;
-    }
-    #instagram-section .ig-dot {
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: #252525;
-      transition: width 0.28s ease, background 0.28s ease;
-      flex-shrink: 0;
-    }
-    #instagram-section .ig-dot.active {
-      width: 20px;
-      border-radius: 3px;
-      background: linear-gradient(90deg, #833ab4, #fd1d1d, #fcb045);
-    }
-    #instagram-section .ig-cta { padding: 28px 20px 0; }
-    #instagram-section .ig-cta-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      width: 100%;
-      box-sizing: border-box;
-      background: linear-gradient(90deg, #833ab4 0%, #fd1d1d 46%, #fcb045 100%);
-      color: #fff;
-      text-decoration: none;
-      padding: 17px 20px;
-      border-radius: 14px;
-      font-size: 15px;
-      font-weight: 800;
-      letter-spacing: -0.4px;
-      position: relative;
-      overflow: hidden;
-      box-shadow: 0 6px 28px rgba(131,58,180,0.38);
-      transition: transform 0.14s ease, box-shadow 0.14s ease;
-      -webkit-tap-highlight-color: transparent;
-    }
-    #instagram-section .ig-cta-btn:active {
-      transform: scale(0.97);
-      box-shadow: 0 2px 12px rgba(131,58,180,0.28);
-    }
-    #instagram-section .ig-cta-btn::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 35%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.27), transparent);
-      animation: ig-shimmer 3s ease-in-out infinite;
-    }
-    #instagram-section .ig-cta-sub {
-      text-align: center;
-      font-size: 10.5px;
-      color: #3a3a3a;
-      margin-top: 11px;
-      letter-spacing: 0.15px;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .scan-arrow { animation: none !important; }
-      #instagram-section .ig-avatar-ring,
-      #instagram-section .ig-eng-heart,
-      #instagram-section .ig-cta-btn::after,
-      #instagram-section .ig-swipe-hint { animation: none !important; }
-    }
-
-    /* Final CTA */
-    .btn-line {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      background: var(--line);
-      color: #fff;
-      text-decoration: none;
-      font-size: 18px;
-      font-weight: 900;
-      padding: 18px 20px;
-      border-radius: var(--r-pill);
-      width: 100%;
-      max-width: 390px;
-      margin: 0 auto 12px;
-      box-shadow: 0 6px 24px rgba(6,199,85,.44);
-      position: relative;
-      transition: background .18s, transform .14s, box-shadow .18s;
-    }
-    .btn-line:hover {
-      background: var(--line-dk);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 28px rgba(6,199,85,.54);
-    }
-    .btn-line:focus-visible { outline: 3px solid var(--line); outline-offset: 3px; }
-    .btn-line.lg { font-size: 19px; padding: 20px; }
-
-    /* Sections */
-    .sec { padding: 48px 24px; }
-    .sec.alt   { background: var(--bg-alt); }
-    .sec.white { background: var(--card); }
-    .sec-eye {
-      display: inline-block;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: .1em;
-      text-transform: uppercase;
-      color: var(--lbl);
-      background: var(--bg-alt);
-      padding: 4px 12px;
-      border-radius: var(--r-pill);
-      margin-bottom: 10px;
-    }
-    .sec.alt .sec-eye { background: var(--card); }
-    .sec-title {
-      font-size: 24px;
-      font-weight: 900;
-      color: var(--ink);
-      line-height: 1.35;
-      text-wrap: balance;
-      margin-bottom: 20px;
-    }
-
-    /* About */
-    .about-body { font-size: 15px; color: var(--muted); line-height: 1.9; }
-    .about-body strong { color: var(--lbl); font-weight: 800; }
-    .about-body p + p { margin-top: 12px; }
-
-    /* Features */
-    .features { display: flex; flex-direction: column; gap: 14px; }
-    .feat-card {
-      background: var(--card);
-      border-radius: var(--r-md);
-      padding: 20px 18px;
-      display: flex;
-      align-items: flex-start;
-      gap: 14px;
-      border: 1.5px solid var(--border);
-      transition: transform .18s, box-shadow .18s;
-    }
-    .feat-card:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(27,110,46,.1); }
-    .feat-icon {
-      width: 48px; height: 48px;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: var(--r-sm);
-    }
-    .feat-icon svg { width: 30px; height: 30px; }
-    .feat-icon.g-ic { background: rgba(27,110,46,.12); }
-    .feat-icon.o-ic { background: rgba(255,107,53,.12); }
-    .feat-icon.l-ic { background: rgba(6,199,85,.11); }
-    .feat-tag { display: block; font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 3px; }
-    .feat-tag.g { color: var(--lbl); }
-    .feat-tag.o { color: var(--tangerine); }
-    .feat-tag.l { color: var(--line); }
-    .feat-title { font-size: 16px; font-weight: 800; color: var(--ink); line-height: 1.4; margin-bottom: 5px; }
-    .feat-desc  { font-size: 13px; color: var(--muted); line-height: 1.7; }
-
-    /* Steps */
-    .steps { display: flex; flex-direction: column; }
-    .step { display: flex; gap: 16px; position: relative; }
-    .step:not(:last-child)::after {
-      content: '';
-      position: absolute;
-      left: 21px;
-      top: 44px;
-      bottom: -8px;
-      width: 2px;
-      background: var(--border);
-    }
-    .step-num {
-      width: 44px; height: 44px;
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 18px; font-weight: 900; color: #fff;
-      flex-shrink: 0;
-    }
-    .step-num.s1 { background: var(--forest); }
-    .step-num.s2 { background: var(--line); }
-    .step-num.s3 { background: var(--line); }
-    .step-body { padding-bottom: 32px; }
-    .step:last-child .step-body { padding-bottom: 0; }
-    .step-title { font-size: 16px; font-weight: 800; color: var(--ink); line-height: 1.4; margin-bottom: 4px; }
-    .step-desc  { font-size: 13px; color: var(--muted); line-height: 1.7; }
-
-    /* Final CTA section */
-    .final {
-      background: linear-gradient(160deg, #0f3d1c 0%, #1b6e2e 100%);
-      padding: 52px 24px;
-      text-align: center;
-    }
-    .final-hl { font-size: 26px; font-weight: 900; color: #fff; line-height: 1.35; text-wrap: balance; margin-bottom: 8px; }
-    .final-hl em { font-style: normal; color: rgba(255,255,255,.9); }
-    .final-sub  { font-size: 14px; color: rgba(255,255,255,.82); margin-bottom: 28px; line-height: 1.75; }
-    .final-note { margin-top: 14px; font-size: 12px; color: rgba(255,255,255,.6); }
-
-    /* Footer */
-    .footer {
-      background: #091510;
-      color: rgba(255,255,255,.52);
-      padding: 24px 20px;
-      text-align: center;
-      font-size: 12px;
-      line-height: 1.9;
-    }
-    .footer strong { color: rgba(255,255,255,.8); display: block; font-size: 13px; margin-bottom: 2px; }
-
-    /* Fixed bottom bar */
-    .bottom-bar {
-      position: fixed;
-      bottom: 0; left: 50%;
-      transform: translateX(-50%);
-      width: 100%; max-width: 480px;
-      background: rgba(9,21,16,.95);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      padding: 9px 14px;
-      z-index: 99;
-      box-shadow: 0 -2px 16px rgba(0,0,0,.24);
-    }
-    .bottom-bar a {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      background: var(--line);
-      color: #fff;
-      text-decoration: none;
-      font-size: 16px;
-      font-weight: 900;
-      padding: 13px;
-      border-radius: var(--r-pill);
-      width: 100%;
-      transition: background .18s;
-    }
-    .bottom-bar a:hover { background: var(--line-dk); }
-    .bottom-bar a:focus-visible { outline: 3px solid var(--line); outline-offset: 2px; }
-    .ico   { width: 20px; height: 20px; flex-shrink: 0; }
-    .ico-l { width: 26px; height: 26px; flex-shrink: 0; }
-
-    /* ===== fc-: TIKTOK STYLE HERO ===== */
-
-    .fc-video-card {
-      position: relative;
-      display: inline-block;
-      text-decoration: none;
-      color: inherit;
-      -webkit-touch-callout: default;
-      -webkit-user-select: auto;
-      user-select: auto;
-      cursor: pointer;
-      transition: transform .08s cubic-bezier(.36,.07,.19,.97), filter .08s ease;
-    }
-    .fc-video-card:active {
-      transform: scale(0.9) rotate(-2deg);
-      filter: brightness(1.35) saturate(1.3);
-    }
-    .fc-video-card::after {
-      content: '';
-      position: absolute;
-      inset: -8px;
-      border-radius: 24px;
-      background: radial-gradient(circle, rgba(255,255,255,.75) 0%, rgba(0,230,118,.45) 45%, rgba(0,230,118,0) 75%);
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity .06s ease;
-    }
-    .fc-video-card:active::after { opacity: 1; }
-
-    .fc-strong { color: var(--line); font-weight: 800; }
-
-    .fc-live-badge {
-      position: absolute;
-      top: -10px;
-      right: -8px;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      background: #fe2c55;
-      color: #fff;
-      font-size: 11px;
-      font-weight: 800;
-      padding: 3px 9px;
-      border-radius: var(--r-pill);
-      box-shadow: 0 3px 8px rgba(254,44,85,0.4);
-      z-index: 3;
-      pointer-events: none;
-      animation: fc-badge-bounce .9s ease-in-out infinite;
-    }
-    @keyframes fc-badge-bounce {
-      0%, 100% { transform: translateY(0) rotate(0deg); }
-      50%      { transform: translateY(-4px) rotate(2deg); }
-    }
-    .fc-live-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: #fff;
-      animation: fc-blink 1s steps(2, start) infinite;
-    }
-    @keyframes fc-blink { to { visibility: hidden; } }
-
-    .fc-press-icon {
-      position: absolute;
-      right: -14px;
-      bottom: 52px;
-      width: 44px;
-      height: 44px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 3;
-      pointer-events: none;
-    }
-    .fc-press-finger {
-      font-size: 28px;
-      line-height: 1;
-      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.25));
-      animation: fc-press 1.4s ease-in-out infinite;
-    }
-    .fc-press-ring {
-      position: absolute;
-      inset: 2px;
-      border: 3px solid var(--line);
-      border-radius: 50%;
-      animation: fc-ring 1.4s ease-out infinite;
-    }
-    @keyframes fc-press {
-      0%, 100% { transform: translateY(0) scale(1); }
-      40%      { transform: translateY(3px) scale(0.92); }
-      60%      { transform: translateY(3px) scale(0.92); }
-    }
-    @keyframes fc-ring {
-      0%   { transform: scale(0.55); opacity: 1; }
-      70%  { transform: scale(1.35); opacity: 0; }
-      100% { transform: scale(1.35); opacity: 0; }
-    }
-
-    .fc-cta-dark {
-      background: #161823;
-      border-radius: var(--r-md);
-      padding: 16px 14px 16px;
-      max-width: 480px;
-      margin: 0 auto;
-      box-shadow: var(--card-shadow);
-    }
-    .fc-tt-comment {
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      text-align: left;
-      margin-bottom: 14px;
-    }
-    .fc-tt-avatar {
-      width: 38px;
-      height: 38px;
-      flex-shrink: 0;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #25f4ee, #fe2c55);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-    }
-    .fc-tt-body { flex: 1; min-width: 0; }
-    .fc-tt-name {
-      display: block;
-      font-size: 11px;
-      font-weight: 700;
-      color: rgba(255,255,255,0.55);
-      margin-bottom: 2px;
-    }
-    .fc-tt-text {
-      margin: 0;
-      font-size: 15px;
-      font-weight: 800;
-      line-height: 1.5;
-      color: #fff;
-    }
-    .fc-tt-heart {
-      flex-shrink: 0;
-      font-size: 18px;
-      animation: fc-heart 1.2s ease-in-out infinite;
-    }
-    @keyframes fc-heart {
-      0%, 100% { transform: scale(1); }
-      30%      { transform: scale(1.25); }
-    }
-    .fc-cta-note {
-      margin: 10px 0 0;
-      font-size: 12px;
-      font-weight: 700;
-      color: rgba(255,255,255,0.85);
-      text-align: center;
-    }
-
-    .fc-pulse-btn {
-      animation: fc-pulse 1.6s ease-in-out infinite;
-      -webkit-touch-callout: default;
-      -webkit-user-select: auto;
-      user-select: auto;
-    }
-    @keyframes fc-pulse {
-      0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(6,199,85,0.45); }
-      50%      { transform: scale(1.04); box-shadow: 0 0 0 12px rgba(6,199,85,0); }
-    }
-
-    .footer-line-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      background: var(--line);
-      color: #fff;
-      text-decoration: none;
-      font-size: 15px;
-      font-weight: 900;
-      padding: 14px 20px;
-      border-radius: var(--r-pill);
-      max-width: 320px;
-      margin: 16px auto 6px;
-      text-align: center;
-      letter-spacing: .02em;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .fc-pulse-btn,
-      .fc-press-finger,
-      .fc-press-ring,
-      .fc-live-dot,
-      .fc-tt-heart { animation: none; }
-    }
-
-    /* ===== fcb-: IEYASU武将マスコット ===== */
-
-    .fcb-mascot-wrap {
-      position: absolute;
-      right: 4px;
-      bottom: -4px;
-      width: 100px;
-      max-width: 100px;
-      z-index: 5;
-      pointer-events: none;
-    }
-
-    .fcb-mascot {
-      display: block;
-      width: 100%;
-      max-width: 140px;
-      height: auto;
-      transform-origin: 50% 92%;
-      animation: fcb-sway 3s ease-in-out infinite;
-      will-change: transform;
-    }
-
-    @keyframes fcb-sway {
-      0%, 100% { transform: rotate(-2.5deg); }
-      50%      { transform: rotate(2.5deg); }
-    }
-    @keyframes fcb-tap-jump {
-      0%   { transform: scale(1) rotate(-2.5deg) translateY(0); }
-      25%  { transform: scale(1.25) rotate(8deg) translateY(-18px); }
-      50%  { transform: scale(0.92) rotate(-5deg) translateY(4px); }
-      75%  { transform: scale(1.1) rotate(4deg) translateY(-8px); }
-      100% { transform: scale(1) rotate(-2.5deg) translateY(0); }
-    }
-    .fcb-mascot.tapped {
-      animation: fcb-tap-jump 0.55s cubic-bezier(.36,.07,.19,.97) forwards;
-    }
-
-    .fcb-arms {
-      transform-origin: 70px 104px;
-      transform-box: view-box;
-      animation: fcb-arms-bob 3s ease-in-out infinite;
-    }
-    @keyframes fcb-arms-bob {
-      0%, 100% { transform: translateY(0); }
-      50%      { transform: translateY(-2.5px); }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .fcb-mascot, .fcb-arms { animation: none; }
+    /* ===== SECTIONS ===== */
+    .btn-line{
+      display:flex;align-items:center;justify-content:center;gap:10px;
+      background:var(--line);color:#fff;text-decoration:none;font-size:18px;font-weight:900;
+      padding:18px 20px;border-radius:var(--r-pill);width:100%;max-width:390px;
+      margin:0 auto 12px;box-shadow:0 6px 24px rgba(6,199,85,.44);
+      transition:background .18s,transform .14s,box-shadow .18s;
+    }
+    .btn-line:hover{background:var(--line-dk);transform:translateY(-2px);box-shadow:0 8px 28px rgba(6,199,85,.54);}
+    .btn-line.lg{font-size:19px;padding:20px;}
+    .sec{padding:48px 24px;}
+    .sec.alt{background:var(--bg-alt);}
+    .sec.white{background:var(--card);}
+    .sec-eye{
+      display:inline-block;font-size:11px;font-weight:800;letter-spacing:.1em;
+      text-transform:uppercase;color:var(--lbl);background:var(--bg-alt);
+      padding:4px 12px;border-radius:var(--r-pill);margin-bottom:10px;
+    }
+    .sec.alt .sec-eye{background:var(--card);}
+    .sec-title{font-size:24px;font-weight:900;color:var(--ink);line-height:1.35;text-wrap:balance;margin-bottom:20px;}
+    .about-body{font-size:15px;color:var(--muted);line-height:1.9;}
+    .about-body strong{color:var(--lbl);font-weight:800;}
+    .about-body p+p{margin-top:12px;}
+    .features{display:flex;flex-direction:column;gap:14px;}
+    .feat-card{
+      background:var(--card);border-radius:var(--r-md);padding:20px 18px;
+      display:flex;align-items:flex-start;gap:14px;border:1.5px solid var(--border);
+      transition:transform .18s,box-shadow .18s;
+    }
+    .feat-card:hover{transform:translateY(-3px);box-shadow:0 6px 20px rgba(27,110,46,.1);}
+    .feat-icon{width:48px;height:48px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:var(--r-sm);}
+    .feat-icon svg{width:30px;height:30px;}
+    .feat-icon.g-ic{background:rgba(27,110,46,.12);}
+    .feat-icon.o-ic{background:rgba(255,107,53,.12);}
+    .feat-icon.l-ic{background:rgba(6,199,85,.11);}
+    .feat-tag{display:block;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px;}
+    .feat-tag.g{color:var(--lbl);} .feat-tag.o{color:var(--tangerine);} .feat-tag.l{color:var(--line);}
+    .feat-title{font-size:16px;font-weight:800;color:var(--ink);line-height:1.4;margin-bottom:5px;}
+    .feat-desc{font-size:13px;color:var(--muted);line-height:1.7;}
+    .steps{display:flex;flex-direction:column;}
+    .step{display:flex;gap:16px;position:relative;}
+    .step:not(:last-child)::after{
+      content:'';position:absolute;left:21px;top:44px;bottom:-8px;
+      width:2px;background:var(--border);
+    }
+    .step-num{
+      width:44px;height:44px;border-radius:50%;display:flex;align-items:center;
+      justify-content:center;font-size:18px;font-weight:900;color:#fff;flex-shrink:0;
+    }
+    .step-num.s1{background:var(--forest);}
+    .step-num.s2{background:var(--line);}
+    .step-num.s3{background:var(--line);}
+    .step-body{padding-bottom:32px;}
+    .step:last-child .step-body{padding-bottom:0;}
+    .step-title{font-size:16px;font-weight:800;color:var(--ink);line-height:1.4;margin-bottom:4px;}
+    .step-desc{font-size:13px;color:var(--muted);line-height:1.7;}
+    .final{background:linear-gradient(160deg,#0f3d1c 0%,#1b6e2e 100%);padding:52px 24px;text-align:center;}
+    .final-hl{font-size:26px;font-weight:900;color:#fff;line-height:1.35;text-wrap:balance;margin-bottom:8px;}
+    .final-hl em{font-style:normal;color:rgba(255,255,255,.9);}
+    .final-sub{font-size:14px;color:rgba(255,255,255,.82);margin-bottom:28px;line-height:1.75;}
+    .final-note{margin-top:14px;font-size:12px;color:rgba(255,255,255,.6);}
+    .footer{background:#091510;color:rgba(255,255,255,.52);padding:24px 20px;text-align:center;font-size:12px;line-height:1.9;}
+    .footer strong{color:rgba(255,255,255,.8);display:block;font-size:13px;margin-bottom:2px;}
+    .footer-line-btn{
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      background:var(--line);color:#fff;text-decoration:none;font-size:15px;font-weight:900;
+      padding:14px 20px;border-radius:var(--r-pill);max-width:320px;
+      margin:16px auto 6px;text-align:center;letter-spacing:.02em;
+    }
+    .fc-pulse-btn{animation:fc-pulse 1.6s ease-in-out infinite;}
+    .bottom-bar{
+      position:fixed;bottom:0;left:50%;transform:translateX(-50%);
+      width:100%;max-width:480px;background:rgba(9,21,16,.95);
+      backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+      padding:9px 14px;z-index:99;box-shadow:0 -2px 16px rgba(0,0,0,.24);
+    }
+    .bottom-bar a{
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      background:var(--line);color:#fff;text-decoration:none;font-size:16px;font-weight:900;
+      padding:13px;border-radius:var(--r-pill);width:100%;transition:background .18s;
+    }
+    .bottom-bar a:hover{background:var(--line-dk);}
+    .ico{width:20px;height:20px;flex-shrink:0;}
+    .ico-l{width:26px;height:26px;flex-shrink:0;}
+    @media(prefers-reduced-motion:reduce){
+      .fc-pulse-btn,.scan-arrow{animation:none!important;}
     }
   </style>
 </head>
 <body>
 
-<!-- HERO -->
+<!-- ========== HERO ========== -->
 <section id="hero" aria-label="イエヤス ヒーローセクション">
-  <div class="h-sunburst" aria-hidden="true"></div>
 
-  <!-- TikTok banner -->
+  <!-- ① TikTok Banner -->
   <div class="tt-banner" role="banner">
-    <div class="tt-icon" aria-hidden="true">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .55.04.79.1V9.01a6.27 6.27 0 00-.79-.05A6.34 6.34 0 003.15 15.3a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V9.01a8.16 8.16 0 004.77 1.52V7.08a4.85 4.85 0 01-1-.39z" fill="white"/>
-      </svg>
+    <div class="tt-left">
+      <div class="tt-icon" aria-hidden="true">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+          <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .55.04.79.1V9.01a6.27 6.27 0 00-.79-.05A6.34 6.34 0 003.15 15.3a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V9.01a8.16 8.16 0 004.77 1.52V7.08a4.85 4.85 0 01-1-.39z" fill="white"/>
+        </svg>
+      </div>
+      <span class="tt-text">TikTokを見てくれてありがとう！</span>
     </div>
-    <div class="tt-text"><em>TikTokからきてくれてありがとう！！</em></div>
-    <div class="tt-badge">初期費用最大ゼロ</div>
+    <div class="tt-badge">初期費用を安くしたい人必見！</div>
   </div>
 
-  <!-- Body -->
+  <!-- ② Hero White Body -->
   <div class="h-body">
-    <h1 class="h-title">
-      <span class="h-title-main"><span class="hl-marker">賃貸の初期費用</span><span class="accent-red">最大限割引</span></span>
-      <span class="h-title-sub">QR長押しで友達追加！</span>
-    </h1>
 
-    <!-- QR stage -->
-    <div class="qr-stage">
-      <a href="https://lin.ee/v5CFQfL" class="qr-card fc-video-card" target="_blank" rel="noopener noreferrer"
-         aria-label="このカードを長押しして「リンクを開く」でLINE友だち追加">
-        <div class="line-corner-badge">LINE</div>
-        <div class="fc-live-badge" aria-hidden="true"><span class="fc-live-dot"></span>今すぐ追加</div>
-        <img
-          src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
-          onerror="this.src='/iyeyasu-qr.png'"
-          alt="イエヤスLINE友だち追加QRコード"
-          width="160" height="160"
-          style="border-radius:6px;display:block;"
-          loading="eager"
-        >
-        <div class="fc-press-icon" aria-hidden="true">
-          <span class="fc-press-ring"></span>
-          <span class="fc-press-finger">👆</span>
-        </div>
-        <div class="qr-label">
-          <strong class="fc-strong">QRコード長押しで</strong><br>
-          LINE追加できます！
-        </div>
-      </a>
+    <!-- Speech bubble -->
+    <div class="h-bubble-wrap">
+      <div class="h-bubble" role="text">
+        そのお部屋、<em class="h-bubble-em">もっと安く</em>契約できるかも。
+      </div>
     </div>
 
-    <!-- IEYASU武将マスコット（h-body 右下に absolute 配置） -->
-    <div class="fcb-mascot-wrap" onclick="(function(el){el.classList.remove('tapped');void el.offsetWidth;el.classList.add('tapped');setTimeout(()=>el.classList.remove('tapped'),600)})(this.querySelector('.fcb-mascot'))" style="cursor:pointer">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" class="fcb-mascot" role="img" aria-label="イエヤス武将キャラクター">
+    <!-- Sub text -->
+    <p class="h-sub">SUUMOなどで見つけた</p>
 
-        <!-- Ground shadow -->
-        <ellipse cx="100" cy="233" rx="54" ry="7" fill="#888888" opacity="0.28"/>
-
-        <!-- Body/armor torso (drawn first so arms layer over shoulders) -->
-        <path d="M62,168 Q56,200 53,228 L147,228 Q144,200 138,168 Z"
-              fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
-        <!-- Chest armor plate -->
-        <path d="M74,170 L126,170 L122,205 L78,205 Z"
-              fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
-        <line x1="76" y1="182" x2="124" y2="182" stroke="#22863a" stroke-width="1.2"/>
-        <line x1="77" y1="194" x2="123" y2="194" stroke="#22863a" stroke-width="1.2"/>
-
-        <!-- LEFT ARM (hanging down) -->
-        <line x1="64" y1="172" x2="38" y2="215"
-              stroke="#111111" stroke-width="23" stroke-linecap="round"/>
-        <line x1="64" y1="172" x2="38" y2="215"
-              stroke="#22863a" stroke-width="19" stroke-linecap="round"/>
-        <!-- Left hand (fist) -->
-        <circle cx="37" cy="216" r="9" fill="#FFF5E4" stroke="#111111" stroke-width="2.2"/>
-        <!-- Knuckle lines -->
-        <line x1="30" y1="212" x2="31" y2="219" stroke="#D4B896" stroke-width="1"/>
-        <line x1="37" y1="210" x2="37" y2="218" stroke="#D4B896" stroke-width="1"/>
-        <line x1="43" y1="212" x2="43" y2="219" stroke="#D4B896" stroke-width="1"/>
-
-        <!-- RIGHT ARM (raised, holding house) -->
-        <line x1="136" y1="172" x2="164" y2="120"
-              stroke="#111111" stroke-width="21" stroke-linecap="round"/>
-        <line x1="136" y1="172" x2="164" y2="120"
-              stroke="#22863a" stroke-width="17" stroke-linecap="round"/>
-        <!-- Right hand -->
-        <circle cx="165" cy="116" r="9" fill="#FFF5E4" stroke="#111111" stroke-width="2.2"/>
-
-        <!-- House icon held in right hand -->
-        <g transform="translate(165,92)">
-          <!-- Chimney -->
-          <rect x="5" y="-26" width="5" height="8" rx="1" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
-          <!-- Roof -->
-          <polygon points="0,-21 19,-7 -19,-7"
-                   fill="#1b6e2e" stroke="#111111" stroke-width="2" stroke-linejoin="round"/>
-          <!-- House body -->
-          <rect x="-15" y="-7" width="30" height="22" rx="2"
-                fill="#22863a" stroke="#111111" stroke-width="2"/>
-          <!-- Door -->
-          <rect x="-6" y="5" width="12" height="10" rx="1"
-                fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
-          <!-- Window left -->
-          <rect x="-13" y="-1" width="5" height="5" rx="0.5" fill="#FFF5E4" stroke="#111111" stroke-width="1"/>
-        </g>
-
-        <!-- Kimono V-collar (neck area) -->
-        <path d="M79,168 L100,154 L121,168 L100,180 Z"
-              fill="#FFF5E4" stroke="#111111" stroke-width="1.5" stroke-linejoin="round"/>
-        <!-- Collar inner line -->
-        <line x1="100" y1="155" x2="100" y2="179" stroke="#DDCCAA" stroke-width="1"/>
-
-        <!-- FACE -->
-        <circle cx="100" cy="148" r="33" fill="#FFF5E4" stroke="#111111" stroke-width="2.5"/>
-
-        <!-- Cheeks (pink blush) -->
-        <ellipse cx="74" cy="156" rx="9" ry="6" fill="#FFB3C1" opacity="0.72"/>
-        <ellipse cx="126" cy="156" rx="9" ry="6" fill="#FFB3C1" opacity="0.72"/>
-
-        <!-- Eyebrows -->
-        <path d="M80,133 Q89,127 97,131" fill="none" stroke="#111111" stroke-width="4.5" stroke-linecap="round"/>
-        <path d="M103,131 Q111,127 120,133" fill="none" stroke="#111111" stroke-width="4.5" stroke-linecap="round"/>
-
-        <!-- Eyes -->
-        <circle cx="90" cy="142" r="5.5" fill="#111111"/>
-        <circle cx="110" cy="142" r="5.5" fill="#111111"/>
-        <!-- Eye highlights -->
-        <circle cx="92" cy="140" r="2.2" fill="white"/>
-        <circle cx="112" cy="140" r="2.2" fill="white"/>
-        <!-- Small secondary highlight -->
-        <circle cx="88" cy="144" r="1" fill="white" opacity="0.6"/>
-        <circle cx="108" cy="144" r="1" fill="white" opacity="0.6"/>
-
-        <!-- Nose -->
-        <ellipse cx="100" cy="152" rx="3.2" ry="2.5" fill="#D4B896"/>
-
-        <!-- Mustache -->
-        <path d="M88,157 Q94,152 100,154 Q106,152 112,157"
-              fill="none" stroke="#555555" stroke-width="2.8" stroke-linecap="round"/>
-
-        <!-- Smile -->
-        <path d="M90,163 Q100,174 110,163"
-              fill="none" stroke="#111111" stroke-width="2.2" stroke-linecap="round"/>
-
-        <!-- Chin beard -->
-        <path d="M92,170 Q96,178 100,180 Q104,178 108,170"
-              fill="none" stroke="#aaaaaa" stroke-width="2" stroke-linecap="round"/>
-
-        <!-- LEFT WING (kabuto style, sweeping upward) -->
-        <path d="M46,107 Q12,83 16,22 Q30,7 53,48 Q57,73 53,105 Z"
-              fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
-        <!-- Wing inner shading -->
-        <path d="M48,104 Q17,81 21,27 Q33,14 52,52 Q55,75 52,102 Z"
-              fill="#1b6e2e"/>
-        <!-- Wing edge highlight -->
-        <path d="M22,24 Q13,50 20,80" fill="none" stroke="#2fa043" stroke-width="2" opacity="0.5" stroke-linecap="round"/>
-
-        <!-- RIGHT WING (mirrored) -->
-        <path d="M154,107 Q188,83 184,22 Q170,7 147,48 Q143,73 147,105 Z"
-              fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
-        <!-- Wing inner shading -->
-        <path d="M152,104 Q183,81 179,27 Q167,14 148,52 Q145,75 148,102 Z"
-              fill="#1b6e2e"/>
-        <!-- Wing edge highlight -->
-        <path d="M178,24 Q187,50 180,80" fill="none" stroke="#2fa043" stroke-width="2" opacity="0.5" stroke-linecap="round"/>
-
-        <!-- HELMET DOME (main bowl) -->
-        <path d="M30,116 Q30,6 100,4 Q170,6 170,116 Z"
-              fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
-        <!-- Dome inner shading -->
-        <path d="M44,115 Q44,18 100,15 Q156,18 156,115 Z"
-              fill="#1b6e2e"/>
-        <!-- Dome surface highlight -->
-        <path d="M82,8 Q70,30 68,80" fill="none" stroke="#2fa043" stroke-width="3" opacity="0.35" stroke-linecap="round"/>
-
-        <!-- Helmet rim band -->
-        <rect x="28" y="112" width="144" height="19" rx="9.5"
-              fill="#22863a" stroke="#111111" stroke-width="2.5"/>
-        <!-- Rim top highlight -->
-        <rect x="36" y="114" width="128" height="5" rx="2.5" fill="#2db852" opacity="0.35"/>
-        <!-- Rim decorative rivet dots -->
-        <circle cx="60" cy="121" r="2.5" fill="#1b6e2e" stroke="#111111" stroke-width="1"/>
-        <circle cx="140" cy="121" r="2.5" fill="#1b6e2e" stroke="#111111" stroke-width="1"/>
-
-        <!-- HOUSE ICON ON HELMET FRONT (家紋 style) -->
-        <g transform="translate(100,68)">
-          <!-- House roof -->
-          <polygon points="0,-16 13,-6 -13,-6"
-                   fill="#FFF5E4" stroke="#111111" stroke-width="1.5" stroke-linejoin="round"/>
-          <!-- House body -->
-          <rect x="-10" y="-6" width="20" height="17" rx="1"
-                fill="#FFF5E4" stroke="#111111" stroke-width="1.5"/>
-          <!-- Door -->
-          <rect x="-4" y="3" width="8" height="8" rx="1" fill="#22863a"/>
-          <!-- Roof ridge line -->
-          <line x1="-13" y1="-6" x2="13" y2="-6" stroke="#111111" stroke-width="0.5"/>
-        </g>
-
-      </svg>
+    <!-- H1 with lightning decoration -->
+    <div class="h-title-wrap">
+      <span class="h-lightning" aria-hidden="true">⚡</span>
+      <h1 class="h-title">気になるお部屋、<br>まず送ってください！</h1>
     </div>
 
+    <!-- Green band -->
+    <div class="h-green-band">
+      送るだけで 初期費用を <span class="h-gb-em">最大限割引！</span>
+    </div>
+
+    <!-- 節約実績バッジ -->
+    <div class="saving-badge r">
+      <div class="saving-badge-icon">🏆</div>
+      <div class="saving-badge-body">
+        <span class="saving-badge-label">8月実績</span>
+        <div class="saving-badge-main">他社より平均<br><em>118,220円</em>節約！</div>
+        <div class="saving-badge-note">※一般的な不動産業者と比べて</div>
+        <div class="saving-badge-cta">今すぐ気になる部屋を送るだけ！→</div>
+      </div>
+    </div>
+
+    <!-- ③ QR Stage (3 columns) -->
+    <div class="qr-stage" aria-label="QRコード友達追加エリア">
+
+      <!-- Left: Clock badge -->
+      <div class="qs-left">
+        <div class="clock-badge" aria-hidden="true">
+          <span class="ck-sparkle ck-sp-tl">✦</span>
+          <span class="ck-icon">🕐</span>
+          <p class="ck-t1">気になるお部屋は</p>
+          <p class="ck-t2">埋まる前に<br>チェック！</p>
+          <p class="ck-t3">今がチャンス！</p>
+          <span class="ck-sparkle ck-sp-br">✦</span>
+        </div>
+      </div>
+
+      <!-- Center: QR card -->
+      <div class="qs-center">
+        <div class="qr-card-new">
+          <div class="qr-now-badge">今すぐ追加！</div>
+          <a href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer"
+             aria-label="QRコードを長押しして「リンクを開く」でLINE友だち追加">
+            <img class="qr-img"
+                 src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
+                 onerror="this.src='/iyeyasu-qr.png'"
+                 alt="イエヤスLINE友達追加QRコード"
+                 width="155" height="155"
+                 loading="eager">
+          </a>
+          <p class="qr-label-new"><strong>QRコード長押しで</strong><br>LINE追加！</p>
+        </div>
+      </div>
+
+      <!-- Right: Mascot + speech bubble -->
+      <div class="qs-right">
+        <div class="mascot-bubble">
+          「この物件いくらになる？」だけでもOK！相談・見積もりすべて無料です！
+        </div>
+        <div class="mascot-wrap"
+             onclick="(function(el){el.classList.remove('tapped');void el.offsetWidth;el.classList.add('tapped');setTimeout(function(){el.classList.remove('tapped')},600)})(this.querySelector('.fcb-mascot'))"
+             title="タップで反応します">
+          <div class="badge-24h">24時間対応</div>
+          <!-- IEYASU武将マスコットSVG -->
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" class="fcb-mascot" role="img" aria-label="イエヤス武将キャラクター">
+            <ellipse cx="100" cy="233" rx="54" ry="7" fill="#888888" opacity="0.28"/>
+            <path d="M62,168 Q56,200 53,228 L147,228 Q144,200 138,168 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+            <path d="M74,170 L126,170 L122,205 L78,205 Z" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
+            <line x1="76" y1="182" x2="124" y2="182" stroke="#22863a" stroke-width="1.2"/>
+            <line x1="77" y1="194" x2="123" y2="194" stroke="#22863a" stroke-width="1.2"/>
+            <line x1="64" y1="172" x2="38" y2="215" stroke="#111111" stroke-width="23" stroke-linecap="round"/>
+            <line x1="64" y1="172" x2="38" y2="215" stroke="#22863a" stroke-width="19" stroke-linecap="round"/>
+            <circle cx="37" cy="216" r="9" fill="#FFF5E4" stroke="#111111" stroke-width="2.2"/>
+            <line x1="136" y1="172" x2="164" y2="120" stroke="#111111" stroke-width="21" stroke-linecap="round"/>
+            <line x1="136" y1="172" x2="164" y2="120" stroke="#22863a" stroke-width="17" stroke-linecap="round"/>
+            <circle cx="165" cy="116" r="9" fill="#FFF5E4" stroke="#111111" stroke-width="2.2"/>
+            <g transform="translate(165,92)">
+              <rect x="5" y="-26" width="5" height="8" rx="1" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
+              <polygon points="0,-21 19,-7 -19,-7" fill="#1b6e2e" stroke="#111111" stroke-width="2" stroke-linejoin="round"/>
+              <rect x="-15" y="-7" width="30" height="22" rx="2" fill="#22863a" stroke="#111111" stroke-width="2"/>
+              <rect x="-6" y="5" width="12" height="10" rx="1" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
+              <rect x="-13" y="-1" width="5" height="5" rx="0.5" fill="#FFF5E4" stroke="#111111" stroke-width="1"/>
+            </g>
+            <path d="M79,168 L100,154 L121,168 L100,180 Z" fill="#FFF5E4" stroke="#111111" stroke-width="1.5" stroke-linejoin="round"/>
+            <line x1="100" y1="155" x2="100" y2="179" stroke="#DDCCAA" stroke-width="1"/>
+            <circle cx="100" cy="148" r="33" fill="#FFF5E4" stroke="#111111" stroke-width="2.5"/>
+            <ellipse cx="74" cy="156" rx="9" ry="6" fill="#FFB3C1" opacity="0.72"/>
+            <ellipse cx="126" cy="156" rx="9" ry="6" fill="#FFB3C1" opacity="0.72"/>
+            <path d="M80,133 Q89,127 97,131" fill="none" stroke="#111111" stroke-width="4.5" stroke-linecap="round"/>
+            <path d="M103,131 Q111,127 120,133" fill="none" stroke="#111111" stroke-width="4.5" stroke-linecap="round"/>
+            <circle cx="90" cy="142" r="5.5" fill="#111111"/>
+            <circle cx="110" cy="142" r="5.5" fill="#111111"/>
+            <circle cx="92" cy="140" r="2.2" fill="white"/>
+            <circle cx="112" cy="140" r="2.2" fill="white"/>
+            <ellipse cx="100" cy="152" rx="3.2" ry="2.5" fill="#D4B896"/>
+            <path d="M88,157 Q94,152 100,154 Q106,152 112,157" fill="none" stroke="#555555" stroke-width="2.8" stroke-linecap="round"/>
+            <path d="M90,163 Q100,174 110,163" fill="none" stroke="#111111" stroke-width="2.2" stroke-linecap="round"/>
+            <path d="M92,170 Q96,178 100,180 Q104,178 108,170" fill="none" stroke="#aaaaaa" stroke-width="2" stroke-linecap="round"/>
+            <path d="M46,107 Q12,83 16,22 Q30,7 53,48 Q57,73 53,105 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+            <path d="M48,104 Q17,81 21,27 Q33,14 52,52 Q55,75 52,102 Z" fill="#1b6e2e"/>
+            <path d="M154,107 Q188,83 184,22 Q170,7 147,48 Q143,73 147,105 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+            <path d="M152,104 Q183,81 179,27 Q167,14 148,52 Q145,75 148,102 Z" fill="#1b6e2e"/>
+            <path d="M30,116 Q30,6 100,4 Q170,6 170,116 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+            <path d="M44,115 Q44,18 100,15 Q156,18 156,115 Z" fill="#1b6e2e"/>
+            <path d="M82,8 Q70,30 68,80" fill="none" stroke="#2fa043" stroke-width="3" opacity="0.35" stroke-linecap="round"/>
+            <rect x="28" y="112" width="144" height="19" rx="9.5" fill="#22863a" stroke="#111111" stroke-width="2.5"/>
+            <rect x="36" y="114" width="128" height="5" rx="2.5" fill="#2db852" opacity="0.35"/>
+            <circle cx="60" cy="121" r="2.5" fill="#1b6e2e" stroke="#111111" stroke-width="1"/>
+            <circle cx="140" cy="121" r="2.5" fill="#1b6e2e" stroke="#111111" stroke-width="1"/>
+            <g transform="translate(100,68)">
+              <polygon points="0,-16 13,-6 -13,-6" fill="#FFF5E4" stroke="#111111" stroke-width="1.5" stroke-linejoin="round"/>
+              <rect x="-10" y="-6" width="20" height="17" rx="1" fill="#FFF5E4" stroke="#111111" stroke-width="1.5"/>
+              <rect x="-4" y="3" width="8" height="8" rx="1" fill="#22863a"/>
+              <line x1="-13" y1="-6" x2="13" y2="-6" stroke="#111111" stroke-width="0.5"/>
+            </g>
+          </svg>
+        </div>
+      </div>
+
+    </div>
+    <!-- /qr-stage -->
+
+    <!-- Scan hint -->
     <div class="scan-hint" aria-hidden="true">
       <span class="scan-arrow">▼</span>
       スキャン or 長押し
       <span class="scan-arrow">▼</span>
     </div>
 
+    <!-- Benefit chips -->
     <div class="benefit-row" role="list" aria-label="イエヤスの特典">
       <div class="chip" role="listitem">仲介手数料0</div>
       <div class="chip" role="listitem">敷金礼金0円多数</div>
       <div class="chip" role="listitem">LINEで全部完結</div>
     </div>
+
+  </div>
+  <!-- /h-body -->
+
+  <!-- ④ CTA Green Strip -->
+  <div class="h-cta-strip">
+    <span class="cta-strip-arr" aria-hidden="true">◀◀</span>
+    LINE追加したら 気になる物件を <span class="cta-strip-em">送るだけ！</span>
+    <span class="cta-strip-arr" aria-hidden="true">▶▶</span>
   </div>
 
-  <!-- CTA band -->
+  <!-- LINE Button CTA -->
   <div class="h-cta-band">
     <p class="cta-line-heading">LINEで今すぐ友達追加</p>
     <a href="https://lin.ee/v5CFQfL" class="h-line-btn" target="_blank" rel="noopener noreferrer">
@@ -1667,23 +596,21 @@
     </a>
   </div>
 
-  <!-- MERIT : イエヤスでもっとお得に（3つの強み） -->
+  <!-- Merit Zone: イエヤスの3つの強み -->
   <div class="merit-zone" aria-label="イエヤスの3つの強み">
     <div class="merit-head r">
       <span class="merit-eyebrow">イエヤスが選ばれる理由</span>
       <h2 class="merit-title">イエヤスで<em>もっとお得</em>に！</h2>
       <p class="merit-social">⭐⭐⭐⭐⭐ <em>TikTokで話題</em>の部屋探し</p>
     </div>
-
     <div class="merit-cards">
       <article class="merit-card r d1">
         <span class="merit-num">メリット 01</span>
         <div class="merit-icon" aria-hidden="true">
-          <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
             <circle cx="17" cy="17" r="15" fill="#e8fdf1"/>
             <path d="M17 8v2M17 24v2M8 17h2M24 17h2" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
             <circle cx="17" cy="17" r="6" fill="none" stroke="#06C755" stroke-width="2"/>
-            <path d="M14 17h6M17 14v6" stroke="#06C755" stroke-width="1.5" stroke-linecap="round"/>
             <text x="17" y="19.5" text-anchor="middle" font-size="8" font-weight="900" fill="#06C755" font-family="sans-serif">¥</text>
           </svg>
         </div>
@@ -1693,11 +620,10 @@
           <p class="merit-sub">SUUMO等で見つけた気になる部屋、送るだけでカンタン割引！</p>
         </div>
       </article>
-
       <article class="merit-card r d2">
         <span class="merit-num">メリット 02</span>
         <div class="merit-icon" aria-hidden="true">
-          <svg width="44" height="34" viewBox="0 0 44 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <svg width="44" height="34" viewBox="0 0 44 34" fill="none">
             <text x="22" y="25" text-anchor="middle" font-size="20" font-weight="900" fill="#06C755" font-family="'Hiragino Maru Gothic ProN',sans-serif">0円</text>
           </svg>
         </div>
@@ -1707,14 +633,12 @@
           <p class="merit-sub">深夜でもOK！思い立った瞬間にいつでも相談できます</p>
         </div>
       </article>
-
       <article class="merit-card r d3">
         <span class="merit-num">メリット 03</span>
         <div class="merit-icon" aria-hidden="true">
-          <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
             <rect x="3" y="4" width="28" height="22" rx="6" fill="#e8fdf1" stroke="#06C755" stroke-width="1.8"/>
             <path d="M8 13h18M8 18h11" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
-            <path d="M10 26l4-4h10a6 6 0 006-6V8" stroke="#06C755" stroke-width="0" fill="none"/>
             <path d="M7 26l3-4" stroke="#06C755" stroke-width="1.8" stroke-linecap="round"/>
           </svg>
         </div>
@@ -1726,209 +650,6 @@
       </article>
     </div>
   </div>
-</section>
-
-<!-- Instagram Section removed -->
-<section id="instagram-section" style="display:none">
-
-  <div class="ig-header">
-    <div class="ig-avatar-ring">
-      <div class="ig-avatar-inner">🏠</div>
-    </div>
-    <div class="ig-account-info">
-      <div class="ig-username">@ieyas_chintai</div>
-      <div class="ig-fullname">いえやす賃貸｜大阪の物件情報発信</div>
-    </div>
-    <button class="ig-follow-btn">フォロー</button>
-  </div>
-
-  <div class="ig-stats">
-    <div class="ig-stat">
-      <div class="ig-stat-num">247</div>
-      <div class="ig-stat-label">投稿</div>
-    </div>
-    <div class="ig-stat">
-      <div class="ig-stat-num">3,841</div>
-      <div class="ig-stat-label">フォロワー</div>
-    </div>
-    <div class="ig-stat">
-      <div class="ig-stat-num">512</div>
-      <div class="ig-stat-label">フォロー中</div>
-    </div>
-  </div>
-
-  <div class="ig-grid-label">投稿を表示</div>
-
-  <div class="ig-slider-wrap">
-    <div class="ig-slider" id="igSlider">
-
-      <div class="ig-card">
-        <div class="ig-card-img">
-          <div class="ig-badge">🆕 NEW</div>
-          <div class="ig-card-body">
-            <span class="ig-card-emoji">🏠</span>
-            <div class="ig-card-copy">築5年・<em>駅5分</em><br>1LDK｜即入居可</div>
-            <div class="ig-card-sub">管理費込み・大阪市内</div>
-          </div>
-          <div class="ig-card-loc"><span>📍 大阪市西区</span></div>
-        </div>
-        <div class="ig-card-bar">
-          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 1,247</div>
-          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 83</div>
-        </div>
-      </div>
-
-      <div class="ig-card">
-        <div class="ig-card-img">
-          <div class="ig-badge">💜 人気No.1</div>
-          <div class="ig-card-body">
-            <span class="ig-card-emoji">🔑</span>
-            <div class="ig-card-copy"><em>礼金0円</em>物件<br>初期費用を<br>グッと抑える</div>
-            <div class="ig-card-sub">仲介手数料0円あり</div>
-          </div>
-          <div class="ig-card-loc"><span>📍 大阪市浪速区</span></div>
-        </div>
-        <div class="ig-card-bar">
-          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 2,108</div>
-          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 134</div>
-        </div>
-      </div>
-
-      <div class="ig-card">
-        <div class="ig-card-img">
-          <div class="ig-badge">☀️ 南向き</div>
-          <div class="ig-card-body">
-            <span class="ig-card-emoji">✨</span>
-            <div class="ig-card-copy">南向き<em>角部屋</em><br>日当たり最高</div>
-            <div class="ig-card-sub">2LDK・収納充実</div>
-          </div>
-          <div class="ig-card-loc"><span>📍 大阪市天王寺区</span></div>
-        </div>
-        <div class="ig-card-bar">
-          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 987</div>
-          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 56</div>
-        </div>
-      </div>
-
-      <div class="ig-card">
-        <div class="ig-card-img">
-          <div class="ig-badge">🐾 残り1室</div>
-          <div class="ig-card-body">
-            <span class="ig-card-emoji">🐕</span>
-            <div class="ig-card-copy"><em>ペット可</em><br>大型犬もOK<br>2LDK梅田</div>
-            <div class="ig-card-sub">オートロック・駐車場付</div>
-          </div>
-          <div class="ig-card-loc"><span>📍 大阪市北区</span></div>
-        </div>
-        <div class="ig-card-bar">
-          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 3,421</div>
-          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 217</div>
-        </div>
-      </div>
-
-      <div class="ig-card">
-        <div class="ig-card-img">
-          <div class="ig-badge">🔥 限定情報</div>
-          <div class="ig-card-body">
-            <span class="ig-card-emoji">💰</span>
-            <div class="ig-card-copy"><em>家賃補助</em><br>対象物件あり<br>お得に住める</div>
-            <div class="ig-card-sub">最大3万円/月補助</div>
-          </div>
-          <div class="ig-card-loc"><span>📍 大阪市中央区</span></div>
-        </div>
-        <div class="ig-card-bar">
-          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 1,673</div>
-          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 98</div>
-        </div>
-      </div>
-
-      <div class="ig-card">
-        <div class="ig-card-img">
-          <div class="ig-badge">⭐ 新築</div>
-          <div class="ig-card-body">
-            <span class="ig-card-emoji">🏢</span>
-            <div class="ig-card-copy"><em>新築</em>1K<br>オートロック<br>セキュリティ◎</div>
-            <div class="ig-card-sub">築0年・駅徒歩3分</div>
-          </div>
-          <div class="ig-card-loc"><span>📍 大阪市住之江区</span></div>
-        </div>
-        <div class="ig-card-bar">
-          <div class="ig-eng"><span class="ig-eng-heart">❤️</span> 892</div>
-          <div class="ig-eng"><span class="ig-eng-comment">💬</span> 45</div>
-        </div>
-      </div>
-
-    </div>
-    <div class="ig-swipe-hint">👈</div>
-  </div>
-
-  <div class="ig-dots" id="igDots">
-    <div class="ig-dot active"></div>
-    <div class="ig-dot"></div>
-    <div class="ig-dot"></div>
-    <div class="ig-dot"></div>
-    <div class="ig-dot"></div>
-    <div class="ig-dot"></div>
-  </div>
-
-  <div class="ig-cta">
-    <a href="https://www.instagram.com/ieyas_chintai/" target="_blank" rel="noopener" class="ig-cta-btn">
-      <span>📸 Instagramでもっと見る</span>
-      <span>→</span>
-    </a>
-    <div class="ig-cta-sub">@ieyas_chintai をフォローして最新物件をチェック</div>
-  </div>
-
-  <script>
-    (function () {
-      var slider = document.getElementById('igSlider');
-      var dots = document.querySelectorAll('#igDots .ig-dot');
-      if (!slider || !dots.length) return;
-
-      // IntersectionObserver でカード境界を精度よく検知
-      var cards = slider.querySelectorAll('.ig-card');
-      var activeIdx = 0;
-      function setDot(idx) {
-        if (idx === activeIdx) return;
-        activeIdx = idx;
-        for (var i = 0; i < dots.length; i++) {
-          dots[i].classList.toggle('active', i === activeIdx);
-        }
-      }
-      if ('IntersectionObserver' in window) {
-        var io = new IntersectionObserver(function (entries) {
-          entries.forEach(function (entry) {
-            if (entry.isIntersecting) {
-              var idx = Array.prototype.indexOf.call(cards, entry.target);
-              if (idx !== -1) setDot(idx);
-            }
-          });
-        }, { root: slider, threshold: 0.6 });
-        cards.forEach(function (card) { io.observe(card); });
-      } else {
-        // fallback: scroll イベント
-        var STEP = 158 + 11;
-        slider.addEventListener('scroll', function () {
-          var idx = Math.min(Math.round(slider.scrollLeft / STEP), dots.length - 1);
-          setDot(idx);
-        }, { passive: true });
-      }
-
-      // スワイプヒント: 初回ロードから2秒後に1回だけ発火、以降は非表示
-      var hint = slider.parentNode.querySelector('.ig-swipe-hint');
-      if (hint) {
-        var nudgeKey = 'ig_nudge_seen';
-        if (localStorage.getItem(nudgeKey)) {
-          hint.style.display = 'none';
-        } else {
-          setTimeout(function () {
-            hint.style.display = 'none';
-            try { localStorage.setItem(nudgeKey, '1'); } catch (e) {}
-          }, 4600); // nudge animation (2.6s) × 1.77 ≒ initial 2s wait + one full loop
-        }
-      }
-    }());
-  </script>
 
 </section>
 
@@ -1984,7 +705,7 @@
         <svg viewBox="0 0 30 30" fill="none" aria-hidden="true">
           <rect x="3" y="5" width="24" height="20" rx="4.5" fill="rgba(6,199,85,.14)" stroke="#06C755" stroke-width="1.8"/>
           <path d="M8 13h14M8 18h9" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
-          <circle cx="21" cy="9"  r="5.5" fill="#06C755"/>
+          <circle cx="21" cy="9" r="5.5" fill="#06C755"/>
           <path d="M18.5 9l2 2L24 7" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </div>
@@ -2085,10 +806,8 @@
   'use strict';
 
   var LINE_URL = 'https://lin.ee/v5CFQfL';
-  // サーバーリダイレクトAPI（LINEアプリ内ブラウザで開かれると line.me へ302 → 友だち追加画面）
   var API_REDIRECT_URL = 'https://sumora-ai-ui.vercel.app/api/line-open';
   var BANNER_ID = 'tiktok-line-banner';
-  var DEBUG_ID  = 'tiktok-debug-panel';
   var LINE_LOGIN_URL = 'https://access.line.me/oauth2/v2.1/authorize'
     + '?response_type=code'
     + '&client_id=2011165183'
@@ -2097,8 +816,6 @@
     + '&scope=profile%20openid'
     + '&bot_prompt=aggressive';
 
-  /* ── デバッグパネル ── */
-  var _debugEl = null;
   function dlog(msg) { /* removed in production */ }
 
   function isTikTokWebView() {
@@ -2157,16 +874,13 @@
       banner.id = BANNER_ID;
       banner.setAttribute('role', 'alert');
       banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff6b35;color:#fff;padding:8px 10px;font-size:13px;line-height:1.3;z-index:2147483647;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 3px 10px rgba(0,0,0,0.35);font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;box-sizing:border-box';
-
       var msg = document.createElement('span');
       msg.style.cssText = 'margin:0;font-weight:bold;font-size:13px;min-width:0';
       msg.textContent = '⚠️ 外部ブラウザで開くとLINE追加できます！';
-
       var copyBtn = document.createElement('button');
       copyBtn.style.cssText = 'flex-shrink:0;display:inline-block;background:#06C755;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:13px;font-weight:bold;cursor:pointer;letter-spacing:0.02em';
       copyBtn.textContent = 'コピー';
       copyBtn.addEventListener('click', function () { copyToClipboard(LINE_URL, copyBtn); });
-
       var closeBtn = document.createElement('button');
       closeBtn.setAttribute('aria-label', '閉じる');
       closeBtn.style.cssText = 'flex-shrink:0;background:rgba(255,255,255,0.25);border:none;border-radius:50%;color:#fff;font-size:14px;font-weight:bold;width:22px;height:22px;line-height:22px;text-align:center;cursor:pointer;padding:0';
@@ -2174,17 +888,14 @@
       closeBtn.addEventListener('click', function () {
         try { banner.style.display = 'none'; document.body.style.paddingTop = '0'; } catch (e) {}
       });
-
       banner.appendChild(msg);
       banner.appendChild(copyBtn);
       banner.appendChild(closeBtn);
-
       if (document.body.firstChild) {
         document.body.insertBefore(banner, document.body.firstChild);
       } else {
         document.body.appendChild(banner);
       }
-
       function adjustPadding() {
         try { var h = banner.offsetHeight; if (h > 0) document.body.style.paddingTop = h + 'px'; } catch (e) {}
       }
@@ -2200,35 +911,23 @@
         (function (link) {
           link.addEventListener('click', function (e) {
             try {
-              dlog('LINEボタンクリック href=' + link.href);
-              if (!isTikTokWebView()) {
-                dlog('→ TikTok非検知・通常遷移');
-                return;
-              }
+              if (!isTikTokWebView()) { return; }
               e.preventDefault();
               e.stopImmediatePropagation();
               if (isAndroid()) {
                 var intentUrl = buildIntentUrl(LINE_URL);
-                dlog('→ Android intent試行: ' + intentUrl.slice(0, 80));
                 try {
                   window.location.href = intentUrl;
-                  dlog('→ intent設定完了（LINEが起動するか確認）');
-                } catch (ie) {
-                  dlog('→ intent ERROR: ' + ie);
-                }
+                } catch (ie) {}
                 setTimeout(function () {
                   try {
                     var b = document.getElementById(BANNER_ID);
                     if (b && b.style.display !== 'none') {
-                      dlog('→ LINEが開かなかった→バナー表示');
                       b.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     }
                   } catch (e2) {}
                 }, 1500);
               } else {
-                // iOS + TikTok: line://はTikTokがブロックしてエラートーストが出るためスキップ
-                // 直接 navigator.share() でAPIリダイレクトURLを送信
-                dlog('→ iOS+TikTok: navigator.share直接試行');
                 showShareGuide();
                 if (typeof navigator.share === 'function') {
                   navigator.share({
@@ -2236,17 +935,14 @@
                     text: 'タップしてLINE友だち追加！',
                     url: API_REDIRECT_URL
                   }).then(function () {
-                    dlog('→ share成功');
                   }).catch(function (e2) {
-                    dlog('→ share失敗: ' + e2.name);
                     if (e2.name !== 'AbortError') showIOSFallback();
                   });
                 } else {
-                  dlog('→ navigator.share未定義 → フォールバック');
                   showIOSFallback();
                 }
               }
-            } catch (err) { dlog('クリックERROR: ' + err); }
+            } catch (err) {}
           }, true);
         })(links[i]);
       }
@@ -2268,20 +964,10 @@
       var toast = document.createElement('div');
       toast.id = 'share-guide-toast';
       toast.style.cssText = [
-        'position:fixed',
-        'top:0',
-        'left:0',
-        'right:0',
-        'z-index:2147483647',
-        'background:#06C755',
-        'color:#fff',
-        'text-align:center',
-        'padding:14px 16px 12px',
-        'font-size:17px',
-        'font-weight:900',
-        'letter-spacing:0.02em',
-        'animation:slide-down 0.25s ease',
-        'pointer-events:none',
+        'position:fixed','top:0','left:0','right:0','z-index:2147483647',
+        'background:#06C755','color:#fff','text-align:center',
+        'padding:14px 16px 12px','font-size:17px','font-weight:900',
+        'letter-spacing:0.02em','animation:slide-down 0.25s ease','pointer-events:none'
       ].join(';');
       toast.textContent = '下の「LINE」を選択してください';
       document.body.appendChild(toast);
@@ -2296,35 +982,25 @@
 
   function showIOSFallback() {
     try {
-      // クリップボードに自動コピー
       try { navigator.clipboard && navigator.clipboard.writeText(LINE_URL); } catch(e) {}
-
       var existing = document.getElementById('ios-fallback-modal');
       if (existing) { existing.style.display = 'flex'; return; }
       var modal = document.createElement('div');
       modal.id = 'ios-fallback-modal';
       modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:2147483647;display:flex;align-items:flex-end;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif';
-
       modal.innerHTML = [
         '<div style="background:#fff;border-radius:24px 24px 0 0;padding:20px 20px 36px;width:100%;max-width:480px;box-sizing:border-box">',
           '<div style="width:36px;height:4px;background:#ddd;border-radius:2px;margin:0 auto 20px"></div>',
-
-          // タイトル
           '<p style="font-size:18px;font-weight:900;text-align:center;margin:0 0 6px;color:#111">LINEで友だち追加する方法</p>',
           '<p style="font-size:13px;color:#888;text-align:center;margin:0 0 20px">あと2ステップで完了！</p>',
-
-          // ステップ1
           '<div style="display:flex;align-items:center;gap:14px;background:#fff8f0;border:2px solid #ff6b35;border-radius:16px;padding:16px;margin-bottom:12px;position:relative">',
             '<div style="flex-shrink:0;width:40px;height:40px;background:#ff6b35;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;font-weight:900">1</div>',
             '<div>',
               '<p style="font-size:15px;font-weight:900;margin:0 0 2px;color:#111">右上の <span style="font-size:22px;letter-spacing:2px">···</span> をタップ</p>',
               '<p style="font-size:12px;color:#666;margin:0">画面右上のメニューボタンです</p>',
             '</div>',
-            // 矢印アニメーション
             '<div id="corner-arrow" style="position:fixed;top:12px;right:50px;font-size:28px;animation:bounce-right 0.9s infinite;pointer-events:none;z-index:2147483648">👆</div>',
           '</div>',
-
-          // ステップ2
           '<div style="display:flex;align-items:center;gap:14px;background:#f0fff4;border:2px solid #06C755;border-radius:16px;padding:16px;margin-bottom:20px">',
             '<div style="flex-shrink:0;width:40px;height:40px;background:#06C755;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;font-weight:900">2</div>',
             '<div>',
@@ -2332,29 +1008,21 @@
               '<p style="font-size:12px;color:#666;margin:0">開いたページでLINEボタンを押せば完了！</p>',
             '</div>',
           '</div>',
-
-          // コピーボタン
           '<button id="ios-copy-btn" style="width:100%;background:#06C755;color:#fff;border:none;border-radius:14px;padding:17px;font-size:16px;font-weight:900;cursor:pointer;margin-bottom:10px;box-shadow:0 4px 12px rgba(6,199,85,0.35)">📋 LINEリンクをコピー（自動コピー済み）</button>',
           '<button id="ios-close-btn" style="width:100%;background:#f0f0f0;color:#555;border:none;border-radius:14px;padding:14px;font-size:15px;cursor:pointer">閉じる</button>',
         '</div>',
         '<style>@keyframes bounce-right{0%,100%{transform:translateY(0) rotate(-30deg)}50%{transform:translateY(6px) rotate(-30deg)}}</style>',
         '<style>@keyframes slide-down{0%{transform:translateY(-100%);opacity:0}100%{transform:translateY(0);opacity:1}}@keyframes fade-out{0%{opacity:1}100%{opacity:0}}</style>'
       ].join('');
-
       document.body.appendChild(modal);
-
       var copyBtn = document.getElementById('ios-copy-btn');
-      if (copyBtn) {
-        copyBtn.addEventListener('click', function () { copyToClipboard(LINE_URL, copyBtn); });
-      }
+      if (copyBtn) { copyBtn.addEventListener('click', function () { copyToClipboard(LINE_URL, copyBtn); }); }
       var closeBtn = document.getElementById('ios-close-btn');
-      if (closeBtn) {
-        closeBtn.addEventListener('click', function () { modal.style.display = 'none'; });
-      }
+      if (closeBtn) { closeBtn.addEventListener('click', function () { modal.style.display = 'none'; }); }
       modal.addEventListener('click', function (e) {
         if (e.target === modal) modal.style.display = 'none';
       });
-    } catch (e) { dlog('showIOSFallback ERROR: ' + e); }
+    } catch (e) {}
   }
 
   function showLoginSuccess() {
@@ -2371,7 +1039,6 @@
     try {
       var params = new URLSearchParams(location.search);
       if (params.get('code') && params.get('state') === 'line_friend_add') {
-        dlog('LINE Login コールバック検知 → 成功表示');
         showLoginSuccess();
         return true;
       }
@@ -2382,19 +1049,10 @@
   function init() {
     try {
       if (checkLoginCallback()) return;
-      var ua = navigator.userAgent;
-      dlog('UA: ' + ua.slice(0, 120));
-      dlog('TikTok検知: ' + isTikTokWebView());
-      dlog('iOS: ' + isIOS() + ' / Android: ' + isAndroid());
-      dlog('LINE URL: ' + LINE_URL);
-      if (!isTikTokWebView()) {
-        dlog('→ TikTok非検知のためバナー非表示');
-        return;
-      }
-      // injectBanner(); // 削除
+      if (!isTikTokWebView()) { return; }
       patchLineLinks();
       watchDynamicLinks();
-    } catch (e) { dlog('init ERROR: ' + e); }
+    } catch (e) {}
   }
 
   if (document.readyState === 'loading') {
