@@ -2219,6 +2219,49 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
       console.warn("[brain-core] brain_decision_logs insert failed:", conversationId,
         e instanceof Error ? e.message : String(e));
     }
+    // ── brain_learning_queue: 学習キュレーター登録（fire-and-forget・awaitしない）──
+    // enforcement_level → quality_score: required=8 / recommended=6、incremental分析は-2。
+    // score >= 5 のみ登録（低品質対話からの学習を防止）。conversation_id UNIQUE upsert で重複防止。
+    // supabase-js は reject しないため .then() のみで安全（メインフローを一切ブロックしない）。
+    {
+      const m = meta as Record<string, unknown>;
+      const baseScore = m.enforcement_level === "required" ? 8 : m.enforcement_level === "recommended" ? 6 : 4;
+      const qualityScore = baseScore - (analysisMode === "incremental" ? 2 : 0);
+      if (qualityScore >= 5) {
+        const patternTags = [
+          typeof m.hesitancy_pattern === "string" ? `hesitancy:${m.hesitancy_pattern}` : null,
+          typeof m.checkpoint_stage === "string" ? `stage:${m.checkpoint_stage}` : null,
+          typeof m.recommended_tone === "string" ? `tone:${m.recommended_tone}` : null,
+          typeof m.action === "string" && m.action ? `action:${m.action}` : null,
+        ].filter((t): t is string => t !== null);
+        void supabase
+          .from("brain_learning_queue")
+          .upsert({
+            conversation_id: conversationId,
+            quality_score: qualityScore,
+            pattern_tags: patternTags,
+            brain_context: {
+              action: m.action ?? null,
+              enforcement_level: m.enforcement_level ?? null,
+              checkpoint_stage: m.checkpoint_stage ?? null,
+              hesitancy_pattern: m.hesitancy_pattern ?? null,
+              reply_mode: m.reply_mode ?? null,
+              template_hint: m.template_hint ?? null,
+              repeated_concern: m.repeated_concern ?? null,
+              recommended_tone: m.recommended_tone ?? null,
+              urgency_appropriate: m.urgency_appropriate ?? null,
+              analysis_mode: analysisMode,
+              conversation_status: status,
+            },
+            novelty_signal: typeof m.repeated_concern === "string" ? m.repeated_concern : null,
+            processed_by_corpus2skill: false,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "conversation_id" })
+          .then(({ error: qErr }) => {
+            if (qErr) console.warn("[brain-core] brain_learning_queue upsert failed:", conversationId, qErr.message);
+          });
+      }
+    }
     // ── conversation_direction フェーズ変化検知と更新 ─────────────────────────
     // brain分析が成功した場合のみ実行。フェーズ変化が無い場合・スタッフ手動修正中はスキップ。
     // 失敗しても fire-and-forget なのでメインフローへの影響なし。

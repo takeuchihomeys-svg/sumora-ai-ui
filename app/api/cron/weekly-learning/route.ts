@@ -538,7 +538,9 @@ JSON形式のみ返答：
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 1000,
-      system: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。",
+      system: [
+        { type: "text" as const, text: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。\n\n" + SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } }
+      ],
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -1084,7 +1086,9 @@ JSON形式のみ返答：
       const res = await client.messages.create({
         model: "claude-sonnet-5",
         max_tokens: 1000,
-        system: "ルール重複排除の判定者です。指定されたJSON形式のみ返してください。",
+        system: [
+          { type: "text" as const, text: "ルール重複排除の判定者です。指定されたJSON形式のみ返してください。\n\n" + SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } }
+        ],
         messages: [{ role: "user", content: prompt }],
       });
 

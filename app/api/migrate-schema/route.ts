@@ -2147,6 +2147,25 @@ ALTER TABLE line_tasks ADD COLUMN IF NOT EXISTS result TEXT;
 ALTER TABLE line_tasks ADD COLUMN IF NOT EXISTS result_note TEXT;
 ALTER TABLE line_tasks ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
 
+-- ⑥ brain学習キュー（brain-as-learning-curator）: brainがAIX-META分析成功時に高品質な
+-- 学習候補を積み、corpus2skill が生 ai_reply_examples より優先して消費する。
+-- conversation_id UNIQUE により brain 再実行時は upsert で最新状態に上書きされる。
+CREATE TABLE IF NOT EXISTS brain_learning_queue (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL UNIQUE,      -- conversations.id（upsert キー）
+  example_id UUID,                           -- ai_reply_examples.id（brain時点では不明・将来リンク用に nullable）
+  quality_score INTEGER NOT NULL CHECK (quality_score >= 0 AND quality_score <= 10),
+  pattern_tags TEXT[] DEFAULT '{}',          -- 'hesitancy:thinking' | 'stage:proposing' | 'tone:共感的' | 'action:estimate_sheet'
+  brain_context JSONB DEFAULT '{}',          -- AIX-META主要フィールドのスナップショット
+  novelty_signal TEXT,                       -- repeated_concern（繰り返し確認テーマ）
+  processed_by_corpus2skill BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_blq_unprocessed ON brain_learning_queue(processed_by_corpus2skill, quality_score DESC);
+CREATE INDEX IF NOT EXISTS idx_blq_created_at ON brain_learning_queue(created_at DESC);
+ALTER TABLE brain_learning_queue DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

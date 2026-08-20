@@ -956,15 +956,55 @@ export async function POST(req: NextRequest) {
       console.error("[corpus2skill] 盲点発見タスク失敗:", e);
       return { questionsSaved: 0 };
     }),
-    supabase
-      .from("ai_reply_examples")
-      .select("id, conversation_id, created_at, sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
-      .gte("created_at", since)
-      .not("sent_reply", "is", null)
-      // AIX生成文を除外しLINE返信AI由来のみ対象にする（entry_source で明示的に区分）
-      .eq("entry_source", "line_reply")
-      .order("created_at", { ascending: false })
-      .limit(200),
+    (async () => {
+      // ── brain-as-learning-curator: 未処理キュー10件以上ならbrainが選別した高品質例を優先使用 ──
+      try {
+        const { count: queueCount } = await supabase
+          .from("brain_learning_queue")
+          .select("id", { count: "exact", head: true })
+          .eq("processed_by_corpus2skill", false)
+          .gte("quality_score", 6);
+        if ((queueCount ?? 0) >= 10) {
+          const { data: queueRows } = await supabase
+            .from("brain_learning_queue")
+            .select("id, conversation_id")
+            .eq("processed_by_corpus2skill", false)
+            .gte("quality_score", 6)
+            .order("quality_score", { ascending: false })
+            .order("created_at", { ascending: false })
+            .limit(30);
+          const convIds = (queueRows ?? []).map((q) => q.conversation_id as string).filter(Boolean);
+          if (convIds.length > 0) {
+            const { data, error } = await supabase
+              .from("ai_reply_examples")
+              .select("id, conversation_id, created_at, sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
+              .in("conversation_id", convIds)
+              .not("sent_reply", "is", null)
+              .eq("entry_source", "line_reply")
+              .order("created_at", { ascending: false })
+              .limit(200);
+            // JOIN結果が3件未満（synthesizeSkillsの最小単位未満）ならフォールバックへ
+            if (!error && data && data.length >= 3) {
+              console.log(`[corpus2skill] brain_learning_queue モード: queue=${convIds.length}件 → examples=${data.length}件`);
+              return { data, error: null, queueIds: (queueRows ?? []).map((q) => q.id as string) };
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[corpus2skill] brain_learning_queue 取得失敗（rawフォールバック）:", e instanceof Error ? e.message : String(e));
+      }
+      // フォールバック: 従来の生 ai_reply_examples クエリ（後方互換）
+      const raw = await supabase
+        .from("ai_reply_examples")
+        .select("id, conversation_id, created_at, sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
+        .gte("created_at", since)
+        .not("sent_reply", "is", null)
+        // AIX生成文を除外しLINE返信AI由来のみ対象にする（entry_source で明示的に区分）
+        .eq("entry_source", "line_reply")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      return { data: raw.data, error: raw.error, queueIds: [] as string[] };
+    })(),
     analyzeAixMismatch().catch((e) => {
       console.error("[corpus2skill] AIXズレ分析失敗:", e);
       return { pairsFound: 0, suggestionsInserted: 0 };
@@ -974,7 +1014,7 @@ export async function POST(req: NextRequest) {
   console.log(`[corpus2skill] 盲点発見: questions=${blindSpots.questionsSaved}`);
   console.log(`[corpus2skill] AIXズレ分析: pairsFound=${mismatchResult.pairsFound}, suggestionsInserted=${mismatchResult.suggestionsInserted}`);
 
-  const { data: examples } = examplesResult as { data: Example[] | null };
+  const { data: examples, queueIds } = examplesResult as { data: Example[] | null; queueIds: string[] };
 
   if (!examples || examples.length === 0) {
     await finishCronLog(runLogId, true, {
@@ -1093,6 +1133,15 @@ ${limitedSequences.map((g) =>
     return NextResponse.json({ ok: false, error: "internal error" }, { status: 500 });
   }
 
+  // brain_learning_queue 消費マーク（キューモードで実行した場合のみ・失敗しても処理は成功扱い）
+  if (queueIds.length > 0) {
+    const { error: markErr } = await supabase
+      .from("brain_learning_queue")
+      .update({ processed_by_corpus2skill: true, updated_at: new Date().toISOString() })
+      .in("id", queueIds);
+    if (markErr) console.warn("[corpus2skill] brain_learning_queue 消費マーク失敗:", markErr.message);
+    else console.log(`[corpus2skill] brain_learning_queue 消費: ${queueIds.length}件`);
+  }
   console.log(`[corpus2skill] 完了: inserted=${totalInserted}, merged=${totalMerged}, degraded=${degraded}, parse_errors=${parseErrors}`);
   if (totalInserted === 0 && totalMerged === 0) {
     console.warn(`[corpus2skill] 0件生成 — examplesProcessed=${examples.length}, parse_errors=${parseErrors}${parseErrors > 0 ? "（parse失敗の可能性）" : ""}`);
