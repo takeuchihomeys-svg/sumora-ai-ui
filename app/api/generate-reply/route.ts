@@ -1306,7 +1306,16 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // フォールバック: importance順検索（OPENAI_API_KEY未設定時 or embedding取得失敗時）
   // principle は global/stateSpecific クエリから除外しているため、
   // 【⚠️絶対ルール】には冒頭で取得済みの topPrinciples（category=principle・importance>=9）を使う
-  const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
+  // T1: spec.knowledge.filterTopics（brainのkey_topics由来・1〜3件）がある場合、
+  // トピック一致の追加クエリを baseクエリと並走させる（置換ではなく追加＝フェイルオープン）。
+  // PostgREST の .or() 構文を壊す文字（, ( ) % \）はトピックから除去する
+  const filterTopics = (spec?.knowledge?.filterTopics ?? [])
+    .map(t => t.replace(/[,()%\\]/g, "").trim())
+    .filter(t => t.length > 0);
+  const topicOrClause = filterTopics.length > 0
+    ? filterTopics.map(t => `content.ilike.%${t}%`).join(",")
+    : null;
+  const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }, { data: topicMatched }] = await Promise.all([
     // HIGH-07: hypothesis_status を取得してconfirmed優先ソートに使う
     // MED-07: limit を削減（取得後にsliceするため余分フェッチを最小化）
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
@@ -1333,6 +1342,16 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .not("category", "eq", "principle").neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(20),
+    // T1: key_topics 一致ナレッジ（importance>=7 に緩和して topic 関連の中重要度ナレッジも拾う）
+    topicOrClause
+      ? supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
+          .gte("importance", 7)
+          .or(topicOrClause)
+          .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+          .not("category", "eq", "principle").neq("hypothesis_status", "rejected")
+          .order("importance", { ascending: false })
+          .order("created_at", { ascending: false }).limit(10)
+      : Promise.resolve({ data: null }),
   ]);
 
   // HIGH-07: confirmed を hypothesis より優先してソート
@@ -1351,7 +1370,12 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const correctionList = sortConfirmedFirst(correctionPairs ?? []);
   const stateSpecificList = sortConfirmedFirst(stateSpecific ?? []);
   const globalList = sortConfirmedFirst((global ?? []).filter(g => !stateSpecificList.some(s => s.content === g.content)));
-  const all = [...stateSpecificList, ...globalList];
+  // T1: トピック一致ナレッジを先頭にマージ（idで重複排除・topic-matched first・非一致は捨てない）
+  const topicList = sortConfirmedFirst(topicMatched ?? []);
+  const baseAll = [...stateSpecificList, ...globalList];
+  const all = topicList.length > 0
+    ? [...topicList, ...baseAll.filter(k => !topicList.some(t => t.id === k.id))]
+    : baseAll;
   const principlesList = topPrinciples ?? [];
   if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock && !applyingBlock) return { text: "", phraseHits: 0 };
 
@@ -1454,11 +1478,22 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         const aboveThreshold = similar.filter(ex => ex.similarity >= 0.5);
         if (aboveThreshold.length > 0) {
         // ★+0.15 に加え、4案から選ばれた実例（reply_angle あり）は+0.1 追加ブースト
-        const sorted = [...aboveThreshold].sort((a, b) => {
-          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0);
-          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0);
+        // T1: spec.examples.boostStates（brainが重視するフェーズ）に一致する実例はさらに+0.1
+        const boostStates = spec?.examples?.boostStates ?? [];
+        const ranked = [...aboveThreshold].sort((a, b) => {
+          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0);
+          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0);
           return scoreB - scoreA;
-        }).slice(0, 8);
+        });
+        // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）
+        const excludeRe = spec?.examples?.excludeReplyRe ?? null;
+        const minKeep = spec?.examples?.minKeepAfterExclude ?? 3;
+        let kept = ranked;
+        if (excludeRe) {
+          const filtered = ranked.filter(ex => !excludeRe.test(ex.sent_reply ?? ""));
+          kept = filtered.length >= minKeep ? filtered : ranked;
+        }
+        const sorted = kept.slice(0, 8);
 
         return "\n\n【⭐ スモラの実際の返信例（状況が最も類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。文体の参考（会話内容・文脈は当該顧客の履歴を最優先）。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
           sorted.map((ex, i) => {
@@ -1495,14 +1530,38 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
     (ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
   );
 
-  const all = [
+  // T1: boostStates（brainが重視するフェーズ）一致を同priority・同☆内の優先基準に追加
+  const boostStatesFb = spec?.examples?.boostStates ?? [];
+  let fallbackRanked = [
     ...sameStateList.slice(0, 6).map((ex) => ({ ...ex, priority: 1 })),
     ...allStateList.slice(0, 4).map((ex) => ({ ...ex, priority: 2 })),
   ].sort((a, b) => {
     if (a.priority !== b.priority) return a.priority - b.priority;
     if (a.is_starred !== b.is_starred) return a.is_starred ? -1 : 1;
-    return 0;
-  }).slice(0, 8);
+    const aBoost = boostStatesFb.includes(a.conversation_state) ? 1 : 0;
+    const bBoost = boostStatesFb.includes(b.conversation_state) ? 1 : 0;
+    return bBoost - aBoost;
+  });
+
+  // T1: customerMsgKeywords 安定ソートブースト（キーワード一致例を先頭へ・非一致例は捨てない）
+  const kwds = spec?.examples?.customerMsgKeywords ?? [];
+  if (kwds.length > 0) {
+    fallbackRanked = [...fallbackRanked].sort((a, b) => {
+      const aHit = kwds.some(k => (a.customer_message ?? "").includes(k)) ? 1 : 0;
+      const bHit = kwds.some(k => (b.customer_message ?? "").includes(k)) ? 1 : 0;
+      return bHit - aHit; // Array.prototype.sort は安定ソート＝非一致同士の既存順序は保持される
+    });
+  }
+
+  // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）
+  const excludeReFb = spec?.examples?.excludeReplyRe ?? null;
+  const minKeepFb = spec?.examples?.minKeepAfterExclude ?? 3;
+  if (excludeReFb) {
+    const filtered = fallbackRanked.filter(ex => !excludeReFb.test(ex.sent_reply ?? ""));
+    if (filtered.length >= minKeepFb) fallbackRanked = filtered;
+  }
+
+  const all = fallbackRanked.slice(0, 8);
 
   if (all.length === 0) return "";
 

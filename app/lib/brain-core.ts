@@ -393,7 +393,7 @@ async function detectSignalBasedAixFallback(
     const [msgsRes, aixRes, scheduledRes, tasksRes, pcRes, rulesRes] = await Promise.all([
       supabase
         .from("messages")
-        .select("sender, text, created_at, is_aix_generated")
+        .select("sender, text, created_at, is_aix_generated, image_type")
         .eq("conversation_id", conversationId)
         .order("created_at", { ascending: false })
         .limit(10),
@@ -444,7 +444,7 @@ async function detectSignalBasedAixFallback(
         .limit(200),
     ]);
 
-    type MsgRow = { sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null };
+    type MsgRow = { sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; image_type: string | null };
     const msgs = (msgsRes.data ?? []) as MsgRow[];
     const lastCustomer = msgs.find((m) => m.sender === "customer") ?? null;
     const lastStaff = msgs.find((m) => m.sender !== "customer") ?? null;
@@ -580,7 +580,15 @@ async function detectSignalBasedAixFallback(
     // 信号3.5（画像のみ送信対策）: 顧客がテキストなしで画像だけを送ってきた → estimate_sheet
     // messages 上は "[画像]" プレースホルダーで保存される。実運用では見積書スクショ送付が最多のため
     // estimate_sheet を返す。※必ず信号4（URL判定→acknowledge_check）より先に評価すること。
-    if (/^\[画像\]/.test(custText)) return "estimate_sheet";
+    // 監査FIX(2026-08-20): messages.image_type（Vision分類・未分類はnull）がある場合は事実ベースで分岐。
+    // 物件系画像（物件写真/間取り図）→ 空室確認が正解。null/estimate/other は従来通り estimate_sheet。
+    if (/^\[画像\]/.test(custText)) {
+      const it = lastCustomer?.image_type;
+      if ((it === "property_photo" || it === "floor_plan") && !pendingTaskTypes.includes("property_check")) {
+        return "acknowledge_check";
+      }
+      return "estimate_sheet";
+    }
 
     // 信号4（AIX_CAPABILITY_MAP記載・コード未実装だった条件）:
     // 顧客が物件URL・「空きありますか」等を送ってきて空室確認タスクが未起票 → acknowledge_check
@@ -711,7 +719,9 @@ export async function analyzeConversation(
   const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult] = await Promise.all([
     supabase
       .from("messages")
-      .select("sender, text, created_at, line_message_id, is_aix_generated", { count: "exact" })
+      // 監査FIX(2026-08-20): quoted_message_id（物件カード引用リプライの判別）と
+      // image_type（Vision分類・「全画像=見積書」盲目仮定の解消）を追加取得
+      .select("sender, text, created_at, line_message_id, is_aix_generated, quoted_message_id, image_type", { count: "exact" })
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(isIncremental ? INCREMENTAL_MIN_RECENT : 15),
@@ -742,7 +752,9 @@ export async function analyzeConversation(
     propertyCustomerId
       ? supabase
           .from("sent_properties")
-          .select("property_name, room_no, sent_at")
+          // 監査FIX(2026-08-20): 募集状況・番手・家賃・顧客反応を追加取得
+          // （current_property / urgency_appropriate をテキスト推測ではなくDB事実で接地させる）
+          .select("property_name, room_no, sent_at, rent, recruitment_status, applicant_rank, customer_reaction")
           .eq("property_customer_id", propertyCustomerId)
           .order("sent_at", { ascending: false })
           .limit(10)
@@ -838,13 +850,15 @@ export async function analyzeConversation(
       .order("scheduled_at", { ascending: true })
       .limit(5),
     // H6(Fable5): この会話の未完了タスク — next_steps を実際の保留作業に接地させる
+    // 監査FIX(2026-08-20): status=pending 限定をやめ直近タスク全体を取得（limit 8）。
+    // 完了済みタスクの result（空室確認の回答: available/taken/second_position/move_out_planned）を
+    // urgency_appropriate / property_check_result の事実根拠として注入するため
     supabase
       .from("line_tasks")
-      .select("task_type, created_at")
+      .select("task_type, status, created_at, result, result_note, resolved_at")
       .eq("conversation_id", conversationId)
-      .eq("status", "pending")
       .order("created_at", { ascending: false })
-      .limit(5),
+      .limit(8),
     // H6(Fable5): 内覧予定/完了 — 次アクション判断の核となるシグナル
     supabase
       .from("viewings")
@@ -921,7 +935,14 @@ export async function analyzeConversation(
   // Reverse so the history reads oldest → newest
   // B3(Fable5): 各行に日付（M/D）を付与 — 旧実装は created_at を取得しながらプロンプトから捨てており、
   // Haiku が「5分前の返信」と「12日間沈黙」を区別できず followup_revive 判断が原理的に不可能だった
-  const typedMessages = messages as Array<{ sender: string; text: string | null; created_at: string; line_message_id: string | null; is_aix_generated: boolean | null }>;
+  const typedMessages = messages as Array<{ sender: string; text: string | null; created_at: string; line_message_id: string | null; is_aix_generated: boolean | null; quoted_message_id: string | null; image_type: string | null }>;
+  // 監査FIX(2026-08-20): 画像種別ラベル（Vision分類済みの場合のみ）と引用リプライ注釈を履歴に付与。
+  // 引用先が取得ウィンドウ内にあれば先頭30字を添える → 「物件カードへの引用=その物件が話題の中心」を事実化
+  const IMAGE_TYPE_LABEL: Record<string, string> = { estimate: "見積書", floor_plan: "間取り図", property_photo: "物件写真", id_document: "本人確認書類", other: "その他画像" };
+  const msgByLmid = new Map<string, { text: string | null }>();
+  for (const m of typedMessages) {
+    if (m.line_message_id) msgByLmid.set(m.line_message_id, { text: m.text });
+  }
   const history = [...typedMessages]
     .reverse()
     .map((m) => {
@@ -935,7 +956,12 @@ export async function analyzeConversation(
         senderLabel = aixType ? `AIX:${aixType}` : (m.is_aix_generated ? "AIX" : "スタッフ");
       }
       const dateLabel = new Date(m.created_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" });
-      return `[${senderLabel} ${dateLabel}] ${m.text ?? "（画像/添付）"}`;
+      const imageTag = m.image_type && IMAGE_TYPE_LABEL[m.image_type] && /^\[画像\]/.test(m.text ?? "")
+        ? `（画像種別: ${IMAGE_TYPE_LABEL[m.image_type]}）` : "";
+      const quoted = m.quoted_message_id ? msgByLmid.get(m.quoted_message_id) : undefined;
+      const quoteTag = m.quoted_message_id
+        ? `（引用返信${quoted?.text ? `→「${quoted.text.replace(/\n/g, " ").slice(0, 30)}」` : ""}）` : "";
+      return `[${senderLabel} ${dateLabel}] ${quoteTag}${m.text ?? "（画像/添付）"}${imageTag}`;
     })
     .join("\n");
 
@@ -1079,10 +1105,22 @@ export async function analyzeConversation(
     : "";
 
   // Sent properties — what has already been proposed to this customer
-  type SentProp = { property_name: string; room_no: string; sent_at: string };
+  // 監査FIX(2026-08-20): 募集状況・番手・家賃・顧客反応（構造化済みの行のみ）を注釈として付与。
+  // urgency_appropriate（「残り1室」等の緊急表現の事実根拠）と current_property の接地に使う
+  type SentProp = { property_name: string; room_no: string; sent_at: string; rent: number | null; recruitment_status: string | null; applicant_rank: number | null; customer_reaction: string | null };
+  const RECRUIT_LABEL: Record<string, string> = { open: "募集中", move_out_planned: "退去予定", occupied: "入居中", closed: "募集終了" };
+  const REACTION_LABEL: Record<string, string> = { interested: "興味あり", rejected: "見送り", no_response: "反応なし" };
   const sentProps = ((sentPropsResult.data ?? []) as SentProp[]);
   const sentPropsText = sentProps.length > 0
-    ? `\n【すでに送付済みの物件（${sentProps.length}件）】\n${sentProps.map((p) => `- ${p.property_name} ${p.room_no}（${new Date(p.sent_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}送付）`).join("\n")}`
+    ? `\n【すでに送付済みの物件（${sentProps.length}件）】\n${sentProps.map((p) => {
+        const facts = [
+          p.rent != null ? `家賃${p.rent.toLocaleString()}円` : "",
+          p.recruitment_status ? `募集状況:${RECRUIT_LABEL[p.recruitment_status] ?? p.recruitment_status}` : "",
+          p.applicant_rank != null ? `${p.applicant_rank}番手` : "",
+          p.customer_reaction ? `顧客反応:${REACTION_LABEL[p.customer_reaction] ?? p.customer_reaction}` : "",
+        ].filter(Boolean).join("・");
+        return `- ${p.property_name} ${p.room_no}（${new Date(p.sent_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}送付${facts ? `・${facts}` : ""}）`;
+      }).join("\n")}`
     : "";
 
   // ── 物件検索統括コンテキスト ─────────────────────────────────────────
@@ -1300,12 +1338,19 @@ export async function analyzeConversation(
     ? `\n【予約送信済みメッセージ（送信待ち${scheduledMsgs.length}件）】\n${scheduledMsgs.map((s) => `- ${new Date(s.scheduled_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" })}送信予定: ${(s.text ?? "（画像）").replace(/\n/g, " ").slice(0, 60)}`).join("\n")}\n※これらと重複する追客・送信提案はしないこと。`
     : "";
 
-  type OpenTask = { task_type: string; created_at: string };
-  const openTasks = (openTasksResult.data ?? []) as OpenTask[];
+  // 監査FIX(2026-08-20): 直近タスク全体から pending（未完了）と result付き完了タスク（空室確認の回答事実）を分離
+  type OpenTask = { task_type: string; status: string; created_at: string; result: string | null; result_note: string | null; resolved_at: string | null };
+  const allTasks = (openTasksResult.data ?? []) as OpenTask[];
+  const openTasks = allTasks.filter((t) => t.status === "pending").slice(0, 5);
   const taskLabel: Record<string, string> = { property_check: "物件確認（空室確認）", property_send: "物件送付" };
-  const tasksText = openTasks.length > 0
-    ? `\n【この会話の未完了タスク】${openTasks.map((t) => taskLabel[t.task_type] ?? t.task_type).join(" / ")}\n※next_steps はこれらの未完了タスクを考慮すること。`
+  const TASK_RESULT_LABEL: Record<string, string> = { available: "空室あり（申込可）", taken: "申込済み・埋まった", second_position: "2番手（先行申込あり）", move_out_planned: "退去予定（募集前）" };
+  const resolvedWithResult = allTasks.filter((t) => t.status !== "pending" && t.result).slice(0, 3);
+  const checkResultsText = resolvedWithResult.length > 0
+    ? `\n【空室確認の回答結果（事実・urgency判断の根拠にすること）】\n${resolvedWithResult.map((t) => `- ${taskLabel[t.task_type] ?? t.task_type}: ${TASK_RESULT_LABEL[t.result ?? ""] ?? t.result}${t.result_note ? `（${t.result_note.slice(0, 60)}）` : ""}`).join("\n")}`
     : "";
+  const tasksText = (openTasks.length > 0
+    ? `\n【この会話の未完了タスク】${openTasks.map((t) => taskLabel[t.task_type] ?? t.task_type).join(" / ")}\n※next_steps はこれらの未完了タスクを考慮すること。`
+    : "") + checkResultsText;
 
   type Viewing = { viewing_date: string; viewing_time: string | null; status: string | null };
   // viewing_history（is_primaryを含む全件）を優先・存在しなければviewingsにフォールバック
@@ -1499,12 +1544,16 @@ ${history}`;
     // 実運用では見積書スクショ送付が最多。直近3日以内の画像のみ送信で、
     // finalAix が acknowledge_check または null の場合は estimate_sheet に矯正する。
     // ※クオリティゲート（採択率<30%抑制）の前に置くこと。後に置くと矯正がゲートを素通りする。
+    // 監査FIX(2026-08-20): messages.image_type（Vision分類）が物件系画像（物件写真/間取り図）を
+    // 示す場合は矯正しない（acknowledge_check=空室確認が正解の局面。盲目仮定は未分類時のみ適用）
     if (
       (finalAix === "acknowledge_check" || finalAix === null) &&
       lastCustomerMsg?.text &&
       /^\[画像\]/.test(lastCustomerMsg.text) &&
       daysSinceLastCustomerMsg !== null &&
-      daysSinceLastCustomerMsg <= 3
+      daysSinceLastCustomerMsg <= 3 &&
+      lastCustomerMsg.image_type !== "property_photo" &&
+      lastCustomerMsg.image_type !== "floor_plan"
     ) {
       finalAix = "estimate_sheet";
     }

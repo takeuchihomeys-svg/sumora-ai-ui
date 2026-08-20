@@ -2101,6 +2101,55 @@ CREATE TABLE IF NOT EXISTS iyeyasu_page_views (
 CREATE INDEX IF NOT EXISTS idx_iyeyasu_pv_created_at ON iyeyasu_page_views(created_at DESC);
 ALTER TABLE iyeyasu_page_views DISABLE ROW LEVEL SECURITY;
 
+-- ══ Brain監査（2026-08-20）: LLM推測→DB事実化のためのカラム・テーブル追加 ══════
+-- brain(suggested_aix_meta) の action / urgency_appropriate / condition_change_type /
+-- current_property / key_topics をテキスト推測ではなく構造化データで接地させる。
+
+-- ① 流入元（信号TikTokの決定論化）: webhook初回受信時にセットする
+-- 'tiktok' | 'instagram' | 'organic' | 'referral' 等
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS acquisition_source TEXT;
+
+-- ② sent_properties 拡張（募集状況・current_property の事実化）
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS property_url TEXT;
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS rent INTEGER;
+-- 'open' | 'move_out_planned' | 'occupied' | 'closed'（MOVE_OUT_PATTERN regex推測の代替）
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS recruitment_status TEXT;
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS recruitment_checked_at TIMESTAMPTZ;
+-- 1=一番手, 2=二番手（「（2番手・申込）」テンプレ判定・urgency_appropriate の事実根拠）
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS applicant_rank INTEGER;
+-- 'interested' | 'rejected' | 'no_response'（quoted_message_id 引用リプライから自動更新予定）
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS customer_reaction TEXT;
+
+-- ③ messages 拡張（画像分類・物件紐付け）
+-- 'estimate' | 'floor_plan' | 'property_photo' | 'id_document' | 'other'
+-- webhook受信時にVisionで1回分類 → brain信号3.5の「全画像=見積書」盲目仮定を解消
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_type TEXT;
+-- sent_properties.id への参照（URL一致・quoted_message_id 経由で自動リンク）
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS referenced_property_id UUID;
+CREATE INDEX IF NOT EXISTS idx_messages_referenced_property ON messages(referenced_property_id);
+
+-- ④ 条件変更履歴（condition_change_type の事実化・property_customers は最新値しか持たない）
+CREATE TABLE IF NOT EXISTS property_condition_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  property_customer_id UUID NOT NULL,
+  changed_field TEXT NOT NULL,     -- 'desired_area' | 'rent_max' | 'floor_plan' 等
+  old_value TEXT,
+  new_value TEXT,
+  source_message_id TEXT,          -- 変更の根拠となった messages.id
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pch_customer ON property_condition_history(property_customer_id, created_at DESC);
+ALTER TABLE property_condition_history DISABLE ROW LEVEL SECURITY;
+
+-- ⑤ line_tasks に確認結果（空室確認の回答を構造化 → urgency_appropriate / property_check_result の事実化）
+-- 'available' | 'taken' | 'second_position' | 'move_out_planned'
+ALTER TABLE line_tasks ADD COLUMN IF NOT EXISTS result TEXT;
+ALTER TABLE line_tasks ADD COLUMN IF NOT EXISTS result_note TEXT;
+ALTER TABLE line_tasks ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+
+-- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
+SELECT pg_notify('pgrst', 'reload schema');
+
 `.trim();
 
 export const maxDuration = 300;

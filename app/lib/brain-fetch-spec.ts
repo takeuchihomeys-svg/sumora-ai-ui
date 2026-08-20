@@ -39,6 +39,7 @@ export type BrainFetchSpec = {
     states: string[];
     customerMsgKeywords: string[];
     excludeReplyRe: RegExp | null;
+    minKeepAfterExclude: number;              // excludeReplyRe適用後の最低残件数。下回ったらフィルタ放棄（フェイルオープン）
     boostStates: string[];
     pgvectorMatchCount: number;               // match_reply_examples の match_count（baseline 20）
     filterByDirection: string | null;         // T1: reply_direction 由来。null=方向性フィルタなし
@@ -141,6 +142,7 @@ export function buildBrainFetchSpec(
       states: primaryStates,
       customerMsgKeywords: [],
       excludeReplyRe: null,
+      minKeepAfterExclude: 3,
       boostStates: [],
       pgvectorMatchCount: 20,
       filterByDirection: null,
@@ -157,18 +159,27 @@ export function buildBrainFetchSpec(
   if (tierResult.tier !== "T1" || !meta) return spec;
 
   // ① action によるバケット選択（actionが文字列で存在する場合のみ発動。欠損時は baseline）
+  // 監査FIX(2026-08-20): brain(meta.action) が実際に出す値は AIX_BRAIN_NOTES のキー
+  // （application_push / viewing_invite / followup_revive 等）。旧実装は "apply"/"viewing" 等の
+  // 抽象値のみで分岐しており、実運用では全actionがelse節に落ちて lossPatterns/applyingPatterns が
+  // 常時disabledになっていた（申込局面で applying_pattern が届かないregression）。
+  // AIXキーを正規の分岐値としてマッピングし、旧抽象値も後方互換で受ける。
   const action = typeof meta.action === "string" ? meta.action : "";
+  const APPLY_ACTIONS = ["application_push", "apply", "signing"];
+  const VIEWING_ACTIONS = ["viewing_invite", "meeting_place", "greeting_viewing", "viewing", "viewing_appointment"];
+  // followup_revive = 沈黙顧客の再接触 → 失注前夜の局面として失注パターンを増量する側に含める
+  const CLOSE_ACTIONS = ["followup_revive", "close", "negotiation"];
   if (action) {
-    if (action === "apply" || action === "signing") {
+    if (APPLY_ACTIONS.includes(action)) {
       // 申込・契約局面: 申込到達パターンを届け、失注パターンは雑音として省く
       spec.applyingPatterns.enabled = true;
       spec.lossPatterns.enabled = false;
-    } else if (action === "viewing" || action === "viewing_appointment") {
+    } else if (VIEWING_ACTIONS.includes(action)) {
       // 内見局面: 内見系パターン優先・失注パターン省略
       spec.viewingPatterns.enabled = true;
       spec.lossPatterns.enabled = false;
-    } else if (action === "close" || action === "negotiation") {
-      // クロージング・交渉局面: 失注前夜 → 失注パターン増量
+    } else if (CLOSE_ACTIONS.includes(action)) {
+      // クロージング・交渉・追客局面: 失注前夜 → 失注パターン増量
       spec.lossPatterns.enabled = true;
       spec.lossPatterns.limit = 5;
     } else {
@@ -187,9 +198,10 @@ export function buildBrainFetchSpec(
   }
 
   // ③ condition_change_type → adaptRules（条件変更ターンのみ適応ルールが効く）
+  // 監査FIX: 条件系actionの正規キーは condition_hearing（AIX_BRAIN_NOTES）。旧抽象値も後方互換で受ける
   if (meta.condition_change_type) {
     spec.adaptRules.enabled = true;
-  } else if (action !== "condition_change") {
+  } else if (action !== "condition_hearing" && action !== "condition_change") {
     spec.adaptRules.enabled = false;
   }
 
