@@ -139,96 +139,6 @@
     }
     .h-gb-em{color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
 
-    /* ── QR Stage 3-column grid ── */
-    .qr-stage{
-      display:grid;grid-template-columns:96px 1fr 96px;
-      align-items:end;overflow:visible;padding:20px 10px 0;gap:6px;
-    }
-
-    /* Left column: clock badge */
-    .qs-left{display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px;}
-    .clock-badge{
-      position:relative;width:84px;height:84px;border-radius:50%;
-      background:#FFD600;border:2.5px solid #111;
-      display:flex;flex-direction:column;align-items:center;justify-content:center;
-      text-align:center;padding:6px 4px;box-shadow:2px 2px 0 #111;
-      animation:ck-pulse 2.2s ease-in-out infinite;
-    }
-    .ck-icon{font-size:16px;line-height:1;margin-bottom:1px;}
-    .ck-t1{font-size:8px;font-weight:800;color:#444;line-height:1.2;margin-bottom:1px;}
-    .ck-t2{font-size:9.5px;font-weight:900;color:#c0392b;line-height:1.2;margin-bottom:1px;}
-    .ck-t3{font-size:8px;font-weight:800;color:#444;line-height:1.2;}
-    .ck-sparkle{position:absolute;font-size:9px;color:#111;}
-    .ck-sp-tl{top:5px;right:5px;} .ck-sp-br{bottom:5px;left:5px;}
-
-    /* Center column: QR card */
-    .qs-center{display:flex;justify-content:center;align-items:flex-end;}
-    .qr-card-new{
-      background:#fff;border:3px solid var(--line);border-radius:16px;
-      padding:18px 12px 12px;display:flex;flex-direction:column;
-      align-items:center;gap:8px;position:relative;
-      box-shadow:0 4px 20px rgba(6,199,85,.28);
-    }
-    .qr-now-badge{
-      position:absolute;top:-13px;left:50%;transform:translateX(-50%);
-      background:#FE2C55;color:#fff;font-size:11px;font-weight:900;
-      padding:4px 14px;border-radius:20px;white-space:nowrap;
-      border:2px solid #fff;box-shadow:1px 1px 0 rgba(0,0,0,.2);
-    }
-    .qr-img{display:block;border-radius:6px;border:1.5px solid var(--line);}
-    .qr-label-new{font-size:11px;font-weight:900;color:#333;text-align:center;line-height:1.5;}
-    .qr-label-new strong{color:var(--line-dk);}
-
-    /* Right column: mascot + bubble */
-    .qs-right{display:flex;flex-direction:column;align-items:flex-end;position:relative;}
-    .mascot-bubble{
-      width:152px;background:#fff;border:2px solid #111;border-radius:10px;
-      padding:8px 10px;font-size:10px;font-weight:700;line-height:1.5;
-      box-shadow:2px 2px 0 #111;color:#111;position:relative;z-index:10;
-      margin-bottom:14px;text-align:left;
-    }
-    .mascot-bubble::before{
-      content:'';position:absolute;bottom:-12px;left:50%;transform:translateX(-50%);
-      width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;
-      border-top:12px solid #111;
-    }
-    .mascot-bubble::after{
-      content:'';position:absolute;bottom:-7px;left:50%;transform:translateX(-50%);
-      width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;
-      border-top:8px solid #fff;z-index:1;
-    }
-
-    .mascot-wrap{position:relative;width:88px;cursor:pointer;}
-    .fcb-mascot{
-      display:block;width:88px;height:auto;transform-origin:50% 92%;
-      animation:fcb-sway 3s ease-in-out infinite;will-change:transform;
-    }
-    .fcb-mascot.tapped{animation:fcb-tap-jump .55s cubic-bezier(.36,.07,.19,.97) forwards;}
-    @media(prefers-reduced-motion:reduce){.fcb-mascot{animation:none;} .clock-badge{animation:none;}}
-
-    .badge-24h{
-      position:absolute;top:22px;right:-10px;background:var(--line);color:#fff;
-      font-size:9px;font-weight:900;padding:3px 7px;border-radius:12px;
-      white-space:nowrap;z-index:5;border:1.5px solid #fff;
-      box-shadow:1px 1px 0 rgba(0,0,0,.2);
-    }
-
-    /* Scan hint */
-    .scan-hint{
-      display:flex;align-items:center;justify-content:center;gap:7px;
-      font-size:12px;font-weight:700;color:#555;margin:14px 0 10px;
-    }
-    .scan-arrow{color:var(--line);font-size:13px;display:inline-block;animation:float-arrow 1.4s ease-in-out infinite;}
-    .scan-arrow:last-child{animation-delay:.28s;}
-
-    /* Benefit chips */
-    .benefit-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:0 16px 4px;}
-    .chip{
-      background:transparent;color:var(--line);border:1.5px solid var(--line);
-      border-radius:9999px;padding:6px 14px;font-size:12px;font-weight:700;
-      letter-spacing:.02em;white-space:nowrap;
-    }
-
     /* ── 節約実績バッジ ── */
     .saving-badge{
       margin:10px 16px 0;background:#fff;border:2.5px solid #111;
@@ -259,7 +169,193 @@
       box-shadow:0 3px 0 var(--line-dk);
     }
 
-    /* ── CTA green strip (④) ── */
+    /* ══════════════════════════════════════════
+       QR Stage — 2-row layout (grid廃止)
+       Row 1: 吹き出し（右寄せ）
+       Row 2: 時計バッジ | QRカード | マスコット
+       ══════════════════════════════════════════ */
+
+    .qr-stage {
+      overflow: visible;
+      padding: 20px 8px 0;
+    }
+
+    /* ── Row 1: 吹き出し ── */
+    .qr-bubble-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 16px;
+    }
+
+    .mascot-bubble {
+      background: #fff;
+      border: 2.5px solid #111;
+      border-radius: 12px 12px 0 12px;
+      padding: 7px 10px;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.55;
+      box-shadow: 2px 2px 0 #111;
+      color: #111;
+      text-align: left;
+      width: 142px;
+    }
+
+    /* ── Row 2: 3カラム flex ── */
+    .qr-main-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      overflow: visible;
+      padding-top: 13px;
+    }
+
+    /* 左列: 時計バッジ */
+    .qs-left {
+      flex: 0 0 80px;
+      display: flex;
+      justify-content: center;
+      align-self: center;
+      overflow: visible;
+    }
+
+    .clock-badge {
+      position: relative;
+      width: 78px;
+      height: 78px;
+      border-radius: 50%;
+      background: #FFD600;
+      border: 2.5px solid #111;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 5px 3px;
+      box-shadow: 2px 2px 0 #111;
+      animation: ck-pulse 2.2s ease-in-out infinite;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .ck-sparkle { position: absolute; font-size: 8px; color: #111; }
+    .ck-sp-tl   { top: 4px; right: 4px; }
+    .ck-sp-br   { bottom: 4px; left: 4px; }
+    .ck-icon    { font-size: 15px; line-height: 1; margin-bottom: 1px; }
+    .ck-t1      { font-size: 7px; font-weight: 800; color: #444; line-height: 1.2; margin-bottom: 1px; }
+    .ck-t2      { font-size: 8px; font-weight: 900; color: #c0392b; line-height: 1.25; margin-bottom: 1px; }
+    .ck-t3      { font-size: 7px; font-weight: 800; color: #444; line-height: 1.2; }
+
+    /* 中央列: QRカード */
+    .qs-center {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+    }
+
+    .qr-card-new {
+      background: #fff;
+      border: 3px solid var(--line);
+      border-radius: 16px;
+      padding: 18px 10px 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(6,199,85,.28);
+      width: 100%;
+      max-width: 174px;
+    }
+
+    .qr-now-badge {
+      position: absolute;
+      top: -13px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #FE2C55;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 900;
+      padding: 4px 14px;
+      border-radius: 20px;
+      white-space: nowrap;
+      border: 2px solid #fff;
+      box-shadow: 1px 1px 0 rgba(0,0,0,.2);
+      z-index: 5;
+    }
+
+    .qr-img {
+      display: block;
+      border-radius: 6px;
+      border: 1.5px solid var(--line);
+      width: 100%;
+      max-width: 148px;
+      height: auto;
+    }
+
+    .qr-label-new {
+      font-size: 11px;
+      font-weight: 900;
+      color: #333;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    /* 右列: マスコット */
+    .qs-right {
+      flex: 0 0 70px;
+      display: flex;
+      justify-content: center;
+      align-self: flex-end;
+      overflow: visible;
+    }
+
+    .mascot-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      width: 70px;
+      cursor: pointer;
+      overflow: visible;
+    }
+
+    .badge-24h {
+      background: var(--line);
+      color: #fff;
+      font-size: 8px;
+      font-weight: 900;
+      padding: 2px 5px;
+      border-radius: 8px;
+      white-space: nowrap;
+      border: 1.5px solid rgba(255,255,255,0.8);
+      box-shadow: 1px 1px 0 rgba(0,0,0,.15);
+      letter-spacing: 0.01em;
+      align-self: center;
+    }
+
+    .fcb-mascot {
+      display: block;
+      width: 70px;
+      height: auto;
+      transform-origin: 50% 92%;
+      animation: fcb-sway 3s ease-in-out infinite;
+      will-change: transform;
+    }
+
+    .fcb-mascot.tapped {
+      animation: fcb-tap-jump .55s cubic-bezier(.36,.07,.19,.97) forwards;
+    }
+
+    @media(prefers-reduced-motion:reduce) {
+      .fcb-mascot  { animation: none; }
+      .clock-badge { animation: none; }
+    }
+
+    /* ── CTA green strip ── */
     .h-cta-strip{
       background:var(--line);color:#fff;font-size:14px;font-weight:900;
       text-align:center;padding:13px 16px;display:flex;align-items:center;
@@ -280,6 +376,22 @@
       border:2px solid var(--line-dk);transition:transform .1s,box-shadow .1s;
     }
     .h-line-btn:active{transform:translateY(4px);box-shadow:0 1px 0 var(--line-dk);}
+
+    /* Scan hint */
+    .scan-hint{
+      display:flex;align-items:center;justify-content:center;gap:7px;
+      font-size:12px;font-weight:700;color:#555;margin:14px 0 10px;
+    }
+    .scan-arrow{color:var(--line);font-size:13px;display:inline-block;animation:float-arrow 1.4s ease-in-out infinite;}
+    .scan-arrow:last-child{animation-delay:.28s;}
+
+    /* Benefit chips */
+    .benefit-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:0 16px 4px;}
+    .chip{
+      background:transparent;color:var(--line);border:1.5px solid var(--line);
+      border-radius:9999px;padding:6px 14px;font-size:12px;font-weight:700;
+      letter-spacing:.02em;white-space:nowrap;
+    }
 
     /* ===== MERIT ZONE ===== */
     .merit-zone{position:relative;z-index:5;padding:34px 20px 44px;background:var(--bg-alt);}
@@ -405,14 +517,13 @@
     .ico-l{width:26px;height:26px;flex-shrink:0;}
     @media(prefers-reduced-motion:reduce){
       .fc-pulse-btn,.scan-arrow{animation:none!important;}
+      .fcb-mascot{animation:none;}
+      .clock-badge{animation:none;}
     }
   </style>
 </head>
 <body>
-
-<!-- ========== HERO ========== -->
 <section id="hero" aria-label="イエヤス ヒーローセクション">
-
   <!-- ① TikTok Banner -->
   <div class="tt-banner" role="banner">
     <div class="tt-left">
@@ -428,29 +539,19 @@
 
   <!-- ② Hero White Body -->
   <div class="h-body">
-
-    <!-- Speech bubble -->
     <div class="h-bubble-wrap">
       <div class="h-bubble" role="text">
         そのお部屋、<em class="h-bubble-em">もっと安く</em>契約できるかも。
       </div>
     </div>
-
-    <!-- Sub text -->
     <p class="h-sub">SUUMOなどで見つけた</p>
-
-    <!-- H1 with lightning decoration -->
     <div class="h-title-wrap">
       <span class="h-lightning" aria-hidden="true">⚡</span>
       <h1 class="h-title">気になるお部屋、<br>まず送ってください！</h1>
     </div>
-
-    <!-- Green band -->
     <div class="h-green-band">
       送るだけで 初期費用を <span class="h-gb-em">最大限割引！</span>
     </div>
-
-    <!-- 節約実績バッジ -->
     <div class="saving-badge r">
       <div class="saving-badge-icon">🏆</div>
       <div class="saving-badge-body">
@@ -461,122 +562,141 @@
       </div>
     </div>
 
-    <!-- ③ QR Stage (3 columns) -->
+    <!-- ③ QRステージ（設計案A: 2行flexレイアウト） -->
     <div class="qr-stage" aria-label="QRコード友達追加エリア">
 
-      <!-- Left: Clock badge -->
-      <div class="qs-left">
-        <div class="clock-badge" aria-hidden="true">
-          <span class="ck-sparkle ck-sp-tl">✦</span>
-          <span class="ck-icon">🕐</span>
-          <p class="ck-t1">気になるお部屋は</p>
-          <p class="ck-t2">埋まる前に<br>チェック！</p>
-          <p class="ck-t3">今がチャンス！</p>
-          <span class="ck-sparkle ck-sp-br">✦</span>
-        </div>
-      </div>
-
-      <!-- Center: QR card -->
-      <div class="qs-center">
-        <div class="qr-card-new">
-          <div class="qr-now-badge">今すぐ追加！</div>
-          <a href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer"
-             aria-label="QRコードを長押しして「リンクを開く」でLINE友だち追加">
-            <img class="qr-img"
-                 src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
-                 onerror="this.src='/iyeyasu-qr.png'"
-                 alt="イエヤスLINE友達追加QRコード"
-                 width="155" height="155"
-                 loading="eager">
-          </a>
-          <p class="qr-label-new"><strong>QRコード長押しで</strong><br>LINE追加！</p>
-        </div>
-      </div>
-
-      <!-- Right: Mascot + speech bubble -->
-      <div class="qs-right">
+      <!-- Row 1: マスコット吹き出し（右寄せ・QRカード上部） -->
+      <div class="qr-bubble-row">
         <div class="mascot-bubble">
           「この物件いくらになる？」だけでもOK！相談・見積もりすべて無料です！
         </div>
-        <div class="mascot-wrap"
-             onclick="(function(el){el.classList.remove('tapped');void el.offsetWidth;el.classList.add('tapped');setTimeout(function(){el.classList.remove('tapped')},600)})(this.querySelector('.fcb-mascot'))"
-             title="タップで反応します">
-          <div class="badge-24h">24時間対応</div>
-          <!-- IEYASU武将マスコットSVG -->
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" class="fcb-mascot" role="img" aria-label="イエヤス武将キャラクター">
-            <ellipse cx="100" cy="233" rx="54" ry="7" fill="#888888" opacity="0.28"/>
-            <path d="M62,168 Q56,200 53,228 L147,228 Q144,200 138,168 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
-            <path d="M74,170 L126,170 L122,205 L78,205 Z" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
-            <line x1="76" y1="182" x2="124" y2="182" stroke="#22863a" stroke-width="1.2"/>
-            <line x1="77" y1="194" x2="123" y2="194" stroke="#22863a" stroke-width="1.2"/>
-            <line x1="64" y1="172" x2="38" y2="215" stroke="#111111" stroke-width="23" stroke-linecap="round"/>
-            <line x1="64" y1="172" x2="38" y2="215" stroke="#22863a" stroke-width="19" stroke-linecap="round"/>
-            <circle cx="37" cy="216" r="9" fill="#FFF5E4" stroke="#111111" stroke-width="2.2"/>
-            <line x1="136" y1="172" x2="164" y2="120" stroke="#111111" stroke-width="21" stroke-linecap="round"/>
-            <line x1="136" y1="172" x2="164" y2="120" stroke="#22863a" stroke-width="17" stroke-linecap="round"/>
-            <circle cx="165" cy="116" r="9" fill="#FFF5E4" stroke="#111111" stroke-width="2.2"/>
-            <g transform="translate(165,92)">
-              <rect x="5" y="-26" width="5" height="8" rx="1" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
-              <polygon points="0,-21 19,-7 -19,-7" fill="#1b6e2e" stroke="#111111" stroke-width="2" stroke-linejoin="round"/>
-              <rect x="-15" y="-7" width="30" height="22" rx="2" fill="#22863a" stroke="#111111" stroke-width="2"/>
-              <rect x="-6" y="5" width="12" height="10" rx="1" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
-              <rect x="-13" y="-1" width="5" height="5" rx="0.5" fill="#FFF5E4" stroke="#111111" stroke-width="1"/>
-            </g>
-            <path d="M79,168 L100,154 L121,168 L100,180 Z" fill="#FFF5E4" stroke="#111111" stroke-width="1.5" stroke-linejoin="round"/>
-            <line x1="100" y1="155" x2="100" y2="179" stroke="#DDCCAA" stroke-width="1"/>
-            <circle cx="100" cy="148" r="33" fill="#FFF5E4" stroke="#111111" stroke-width="2.5"/>
-            <ellipse cx="74" cy="156" rx="9" ry="6" fill="#FFB3C1" opacity="0.72"/>
-            <ellipse cx="126" cy="156" rx="9" ry="6" fill="#FFB3C1" opacity="0.72"/>
-            <path d="M80,133 Q89,127 97,131" fill="none" stroke="#111111" stroke-width="4.5" stroke-linecap="round"/>
-            <path d="M103,131 Q111,127 120,133" fill="none" stroke="#111111" stroke-width="4.5" stroke-linecap="round"/>
-            <circle cx="90" cy="142" r="5.5" fill="#111111"/>
-            <circle cx="110" cy="142" r="5.5" fill="#111111"/>
-            <circle cx="92" cy="140" r="2.2" fill="white"/>
-            <circle cx="112" cy="140" r="2.2" fill="white"/>
-            <ellipse cx="100" cy="152" rx="3.2" ry="2.5" fill="#D4B896"/>
-            <path d="M88,157 Q94,152 100,154 Q106,152 112,157" fill="none" stroke="#555555" stroke-width="2.8" stroke-linecap="round"/>
-            <path d="M90,163 Q100,174 110,163" fill="none" stroke="#111111" stroke-width="2.2" stroke-linecap="round"/>
-            <path d="M92,170 Q96,178 100,180 Q104,178 108,170" fill="none" stroke="#aaaaaa" stroke-width="2" stroke-linecap="round"/>
-            <path d="M46,107 Q12,83 16,22 Q30,7 53,48 Q57,73 53,105 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
-            <path d="M48,104 Q17,81 21,27 Q33,14 52,52 Q55,75 52,102 Z" fill="#1b6e2e"/>
-            <path d="M154,107 Q188,83 184,22 Q170,7 147,48 Q143,73 147,105 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
-            <path d="M152,104 Q183,81 179,27 Q167,14 148,52 Q145,75 148,102 Z" fill="#1b6e2e"/>
-            <path d="M30,116 Q30,6 100,4 Q170,6 170,116 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
-            <path d="M44,115 Q44,18 100,15 Q156,18 156,115 Z" fill="#1b6e2e"/>
-            <path d="M82,8 Q70,30 68,80" fill="none" stroke="#2fa043" stroke-width="3" opacity="0.35" stroke-linecap="round"/>
-            <rect x="28" y="112" width="144" height="19" rx="9.5" fill="#22863a" stroke="#111111" stroke-width="2.5"/>
-            <rect x="36" y="114" width="128" height="5" rx="2.5" fill="#2db852" opacity="0.35"/>
-            <circle cx="60" cy="121" r="2.5" fill="#1b6e2e" stroke="#111111" stroke-width="1"/>
-            <circle cx="140" cy="121" r="2.5" fill="#1b6e2e" stroke="#111111" stroke-width="1"/>
-            <g transform="translate(100,68)">
-              <polygon points="0,-16 13,-6 -13,-6" fill="#FFF5E4" stroke="#111111" stroke-width="1.5" stroke-linejoin="round"/>
-              <rect x="-10" y="-6" width="20" height="17" rx="1" fill="#FFF5E4" stroke="#111111" stroke-width="1.5"/>
-              <rect x="-4" y="3" width="8" height="8" rx="1" fill="#22863a"/>
-              <line x1="-13" y1="-6" x2="13" y2="-6" stroke="#111111" stroke-width="0.5"/>
-            </g>
-          </svg>
-        </div>
       </div>
 
-    </div>
-    <!-- /qr-stage -->
+      <!-- Row 2: 時計バッジ ｜ QRカード ｜ 武将マスコット -->
+      <div class="qr-main-row">
 
-    <!-- Scan hint -->
+        <!-- 左: 時計バッジ -->
+        <div class="qs-left">
+          <div class="clock-badge" aria-hidden="true">
+            <span class="ck-sparkle ck-sp-tl">✦</span>
+            <span class="ck-icon">🕐</span>
+            <p class="ck-t1">気になるお部屋は</p>
+            <p class="ck-t2">埋まる前に<br>チェック！</p>
+            <p class="ck-t3">今がチャンス！</p>
+            <span class="ck-sparkle ck-sp-br">✦</span>
+          </div>
+        </div>
+
+        <!-- 中央: QRカード -->
+        <div class="qs-center">
+          <div class="qr-card-new">
+            <div class="qr-now-badge">今すぐ追加！</div>
+            <a href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer"
+               aria-label="QRコードを長押しして「リンクを開く」でLINE友だち追加">
+              <img class="qr-img"
+                   src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
+                   onerror="this.src='/iyeyasu-qr.png'"
+                   alt="イエヤスLINE友達追加QRコード"
+                   width="148" height="148"
+                   loading="eager">
+            </a>
+            <p class="qr-label-new"><strong>QRコード長押しで</strong><br>LINE追加！</p>
+          </div>
+        </div>
+
+        <!-- 右: 武将マスコット（badge-24h はフローに乗せて絶対に切れない） -->
+        <div class="qs-right">
+          <div class="mascot-wrap"
+               onclick="(function(el){el.classList.remove('tapped');void el.offsetWidth;el.classList.add('tapped');setTimeout(function(){el.classList.remove('tapped')},600)})(this.querySelector('.fcb-mascot'))"
+               title="タップで反応します">
+            <div class="badge-24h">24時間対応</div>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" class="fcb-mascot" role="img" aria-label="イエヤス武将キャラクター">
+              <!-- 影 -->
+              <ellipse cx="100" cy="233" rx="54" ry="7" fill="#888888" opacity="0.28"/>
+              <!-- 胴体（鎧） -->
+              <path d="M62,168 Q56,200 53,228 L147,228 Q144,200 138,168 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+              <path d="M74,170 L126,170 L122,205 L78,205 Z" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
+              <line x1="76" y1="182" x2="124" y2="182" stroke="#22863a" stroke-width="1.2"/>
+              <line x1="77" y1="194" x2="123" y2="194" stroke="#22863a" stroke-width="1.2"/>
+              <!-- 左腕 -->
+              <line x1="64" y1="172" x2="38" y2="215" stroke="#111111" stroke-width="23" stroke-linecap="round"/>
+              <line x1="64" y1="172" x2="38" y2="215" stroke="#22863a" stroke-width="19" stroke-linecap="round"/>
+              <circle cx="37" cy="216" r="9" fill="#FFF5E4" stroke="#111111" stroke-width="2.2"/>
+              <!-- 右腕（上げている） -->
+              <line x1="136" y1="172" x2="164" y2="120" stroke="#111111" stroke-width="21" stroke-linecap="round"/>
+              <line x1="136" y1="172" x2="164" y2="120" stroke="#22863a" stroke-width="17" stroke-linecap="round"/>
+              <circle cx="165" cy="116" r="9" fill="#FFF5E4" stroke="#111111" stroke-width="2.2"/>
+              <!-- 右手に持った旗 -->
+              <g transform="translate(165,92)">
+                <rect x="5" y="-26" width="5" height="8" rx="1" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
+                <polygon points="0,-21 19,-7 -19,-7" fill="#1b6e2e" stroke="#111111" stroke-width="2" stroke-linejoin="round"/>
+                <rect x="-15" y="-7" width="30" height="22" rx="2" fill="#22863a" stroke="#111111" stroke-width="2"/>
+                <rect x="-6" y="5" width="12" height="10" rx="1" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
+                <rect x="-13" y="-1" width="5" height="5" rx="0.5" fill="#FFF5E4" stroke="#111111" stroke-width="1"/>
+              </g>
+              <!-- 首飾り（えり） -->
+              <path d="M79,168 L100,154 L121,168 L100,180 Z" fill="#FFF5E4" stroke="#111111" stroke-width="1.5" stroke-linejoin="round"/>
+              <line x1="100" y1="155" x2="100" y2="179" stroke="#DDCCAA" stroke-width="1"/>
+              <!-- 顔 -->
+              <circle cx="100" cy="148" r="33" fill="#FFF5E4" stroke="#111111" stroke-width="2.5"/>
+              <!-- 頬紅 -->
+              <ellipse cx="74" cy="156" rx="9" ry="6" fill="#FFB3C1" opacity="0.72"/>
+              <ellipse cx="126" cy="156" rx="9" ry="6" fill="#FFB3C1" opacity="0.72"/>
+              <!-- 眉毛 -->
+              <path d="M80,133 Q89,127 97,131" fill="none" stroke="#111111" stroke-width="4.5" stroke-linecap="round"/>
+              <path d="M103,131 Q111,127 120,133" fill="none" stroke="#111111" stroke-width="4.5" stroke-linecap="round"/>
+              <!-- 目 -->
+              <circle cx="90" cy="142" r="5.5" fill="#111111"/>
+              <circle cx="110" cy="142" r="5.5" fill="#111111"/>
+              <circle cx="92" cy="140" r="2.2" fill="white"/>
+              <circle cx="112" cy="140" r="2.2" fill="white"/>
+              <!-- 鼻 -->
+              <ellipse cx="100" cy="152" rx="3.2" ry="2.5" fill="#D4B896"/>
+              <!-- 口 -->
+              <path d="M88,157 Q94,152 100,154 Q106,152 112,157" fill="none" stroke="#555555" stroke-width="2.8" stroke-linecap="round"/>
+              <path d="M90,163 Q100,174 110,163" fill="none" stroke="#111111" stroke-width="2.2" stroke-linecap="round"/>
+              <path d="M92,170 Q96,178 100,180 Q104,178 108,170" fill="none" stroke="#aaaaaa" stroke-width="2" stroke-linecap="round"/>
+              <!-- 兜（左翼） -->
+              <path d="M46,107 Q12,83 16,22 Q30,7 53,48 Q57,73 53,105 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+              <path d="M48,104 Q17,81 21,27 Q33,14 52,52 Q55,75 52,102 Z" fill="#1b6e2e"/>
+              <!-- 兜（右翼） -->
+              <path d="M154,107 Q188,83 184,22 Q170,7 147,48 Q143,73 147,105 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+              <path d="M152,104 Q183,81 179,27 Q167,14 148,52 Q145,75 148,102 Z" fill="#1b6e2e"/>
+              <!-- 兜本体 -->
+              <path d="M30,116 Q30,6 100,4 Q170,6 170,116 Z" fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+              <path d="M44,115 Q44,18 100,15 Q156,18 156,115 Z" fill="#1b6e2e"/>
+              <path d="M82,8 Q70,30 68,80" fill="none" stroke="#2fa043" stroke-width="3" opacity="0.35" stroke-linecap="round"/>
+              <!-- 兜の鍔（つば） -->
+              <rect x="28" y="112" width="144" height="19" rx="9.5" fill="#22863a" stroke="#111111" stroke-width="2.5"/>
+              <rect x="36" y="114" width="128" height="5" rx="2.5" fill="#2db852" opacity="0.35"/>
+              <circle cx="60" cy="121" r="2.5" fill="#1b6e2e" stroke="#111111" stroke-width="1"/>
+              <circle cx="140" cy="121" r="2.5" fill="#1b6e2e" stroke="#111111" stroke-width="1"/>
+              <!-- 兜の家マーク -->
+              <g transform="translate(100,68)">
+                <polygon points="0,-16 13,-6 -13,-6" fill="#FFF5E4" stroke="#111111" stroke-width="1.5" stroke-linejoin="round"/>
+                <rect x="-10" y="-6" width="20" height="17" rx="1" fill="#FFF5E4" stroke="#111111" stroke-width="1.5"/>
+                <rect x="-4" y="3" width="8" height="8" rx="1" fill="#22863a"/>
+                <line x1="-13" y1="-6" x2="13" y2="-6" stroke="#111111" stroke-width="0.5"/>
+              </g>
+            </svg>
+          </div>
+        </div>
+
+      </div><!-- /qr-main-row -->
+
+    </div><!-- /qr-stage -->
+
     <div class="scan-hint" aria-hidden="true">
       <span class="scan-arrow">▼</span>
       スキャン or 長押し
       <span class="scan-arrow">▼</span>
     </div>
-
-    <!-- Benefit chips -->
     <div class="benefit-row" role="list" aria-label="イエヤスの特典">
       <div class="chip" role="listitem">仲介手数料0</div>
       <div class="chip" role="listitem">敷金礼金0円多数</div>
       <div class="chip" role="listitem">LINEで全部完結</div>
     </div>
-
   </div>
-  <!-- /h-body -->
 
   <!-- ④ CTA Green Strip -->
   <div class="h-cta-strip">
@@ -596,7 +716,7 @@
     </a>
   </div>
 
-  <!-- Merit Zone: イエヤスの3つの強み -->
+  <!-- Merit Zone -->
   <div class="merit-zone" aria-label="イエヤスの3つの強み">
     <div class="merit-head r">
       <span class="merit-eyebrow">イエヤスが選ばれる理由</span>
@@ -650,7 +770,6 @@
       </article>
     </div>
   </div>
-
 </section>
 
 <!-- ABOUT -->
@@ -800,274 +919,39 @@
 })();
 </script>
 
-<!-- TikTok WebView LINE対策スクリプト -->
-<script>
-(function () {
-  'use strict';
-
-  var LINE_URL = 'https://lin.ee/v5CFQfL';
-  var API_REDIRECT_URL = 'https://sumora-ai-ui.vercel.app/api/line-open';
-  var BANNER_ID = 'tiktok-line-banner';
-  var LINE_LOGIN_URL = 'https://access.line.me/oauth2/v2.1/authorize'
-    + '?response_type=code'
-    + '&client_id=2011165183'
-    + '&redirect_uri=' + encodeURIComponent('https://sumora-ai-ui.vercel.app/iyeyasu.html')
-    + '&state=line_friend_add'
-    + '&scope=profile%20openid'
-    + '&bot_prompt=aggressive';
-
-  function dlog(msg) { /* removed in production */ }
-
-  function isTikTokWebView() {
-    try { return /BytedanceWebview|musical_ly|trill_/i.test(navigator.userAgent); } catch (e) { return false; }
-  }
-  function isIOS() {
-    try { return /iPhone|iPad|iPod/i.test(navigator.userAgent); } catch (e) { return false; }
-  }
-  function isAndroid() {
-    try { return /android/i.test(navigator.userAgent); } catch (e) { return false; }
-  }
-
-  function showCopyResult(btn, success) {
-    try {
-      btn.textContent = success ? 'コピーしました！' : 'コピー失敗';
-      btn.style.background = success ? '#04a544' : '#c0392b';
-      setTimeout(function () {
-        try { btn.textContent = 'コピー'; btn.style.background = '#06C755'; } catch (e) {}
-      }, 3500);
-    } catch (e) {}
-  }
-
-  function fallbackCopy(text, btn) {
-    try {
-      var ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none';
-      document.body.appendChild(ta);
-      ta.focus(); ta.select();
-      var ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      showCopyResult(btn, ok);
-    } catch (e) { showCopyResult(btn, false); }
-  }
-
-  function copyToClipboard(text, btn) {
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text)
-          .then(function () { showCopyResult(btn, true); })
-          .catch(function () { fallbackCopy(text, btn); });
-      } else { fallbackCopy(text, btn); }
-    } catch (e) { fallbackCopy(text, btn); }
-  }
-
-  function buildIntentUrl(lineUrl) {
-    var stripped = lineUrl.replace(/^https?:\/\//, '');
-    var fallback = encodeURIComponent(lineUrl);
-    return 'intent://' + stripped + '#Intent;scheme=https;package=jp.naver.line.android;S.browser_fallback_url=' + fallback + ';end';
-  }
-
-  function injectBanner() {
-    try {
-      if (document.getElementById(BANNER_ID)) return;
-      var banner = document.createElement('div');
-      banner.id = BANNER_ID;
-      banner.setAttribute('role', 'alert');
-      banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff6b35;color:#fff;padding:8px 10px;font-size:13px;line-height:1.3;z-index:2147483647;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 3px 10px rgba(0,0,0,0.35);font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;box-sizing:border-box';
-      var msg = document.createElement('span');
-      msg.style.cssText = 'margin:0;font-weight:bold;font-size:13px;min-width:0';
-      msg.textContent = '⚠️ 外部ブラウザで開くとLINE追加できます！';
-      var copyBtn = document.createElement('button');
-      copyBtn.style.cssText = 'flex-shrink:0;display:inline-block;background:#06C755;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:13px;font-weight:bold;cursor:pointer;letter-spacing:0.02em';
-      copyBtn.textContent = 'コピー';
-      copyBtn.addEventListener('click', function () { copyToClipboard(LINE_URL, copyBtn); });
-      var closeBtn = document.createElement('button');
-      closeBtn.setAttribute('aria-label', '閉じる');
-      closeBtn.style.cssText = 'flex-shrink:0;background:rgba(255,255,255,0.25);border:none;border-radius:50%;color:#fff;font-size:14px;font-weight:bold;width:22px;height:22px;line-height:22px;text-align:center;cursor:pointer;padding:0';
-      closeBtn.textContent = '×';
-      closeBtn.addEventListener('click', function () {
-        try { banner.style.display = 'none'; document.body.style.paddingTop = '0'; } catch (e) {}
-      });
-      banner.appendChild(msg);
-      banner.appendChild(copyBtn);
-      banner.appendChild(closeBtn);
-      if (document.body.firstChild) {
-        document.body.insertBefore(banner, document.body.firstChild);
-      } else {
-        document.body.appendChild(banner);
-      }
-      function adjustPadding() {
-        try { var h = banner.offsetHeight; if (h > 0) document.body.style.paddingTop = h + 'px'; } catch (e) {}
-      }
-      adjustPadding();
-      setTimeout(adjustPadding, 200);
-    } catch (e) {}
-  }
-
-  function patchLineLinks() {
-    try {
-      var links = document.querySelectorAll('a[href*="lin.ee"],a[href*="line.me"],a[href*="line://"]');
-      for (var i = 0; i < links.length; i++) {
-        (function (link) {
-          link.addEventListener('click', function (e) {
-            try {
-              if (!isTikTokWebView()) { return; }
-              e.preventDefault();
-              e.stopImmediatePropagation();
-              if (isAndroid()) {
-                var intentUrl = buildIntentUrl(LINE_URL);
-                try {
-                  window.location.href = intentUrl;
-                } catch (ie) {}
-                setTimeout(function () {
-                  try {
-                    var b = document.getElementById(BANNER_ID);
-                    if (b && b.style.display !== 'none') {
-                      b.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }
-                  } catch (e2) {}
-                }, 1500);
-              } else {
-                showShareGuide();
-                if (typeof navigator.share === 'function') {
-                  navigator.share({
-                    title: 'イエヤスLINE友だち追加',
-                    text: 'タップしてLINE友だち追加！',
-                    url: API_REDIRECT_URL
-                  }).then(function () {
-                  }).catch(function (e2) {
-                    if (e2.name !== 'AbortError') showIOSFallback();
-                  });
-                } else {
-                  showIOSFallback();
-                }
-              }
-            } catch (err) {}
-          }, true);
-        })(links[i]);
-      }
-    } catch (e) {}
-  }
-
-  function watchDynamicLinks() {
-    try {
-      if (typeof MutationObserver === 'undefined') return;
-      var observer = new MutationObserver(function () { try { patchLineLinks(); } catch (e) {} });
-      observer.observe(document.body, { childList: true, subtree: true });
-    } catch (e) {}
-  }
-
-  function showShareGuide() {
-    try {
-      var existing = document.getElementById('share-guide-toast');
-      if (existing) { existing.remove(); }
-      var toast = document.createElement('div');
-      toast.id = 'share-guide-toast';
-      toast.style.cssText = [
-        'position:fixed','top:0','left:0','right:0','z-index:2147483647',
-        'background:#06C755','color:#fff','text-align:center',
-        'padding:14px 16px 12px','font-size:17px','font-weight:900',
-        'letter-spacing:0.02em','animation:slide-down 0.25s ease','pointer-events:none'
-      ].join(';');
-      toast.textContent = '下の「LINE」を選択してください';
-      document.body.appendChild(toast);
-      setTimeout(function () {
-        if (toast.parentNode) {
-          toast.style.animation = 'fade-out 0.4s ease forwards';
-          setTimeout(function () { if (toast.parentNode) toast.remove(); }, 400);
-        }
-      }, 3500);
-    } catch (e) {}
-  }
-
-  function showIOSFallback() {
-    try {
-      try { navigator.clipboard && navigator.clipboard.writeText(LINE_URL); } catch(e) {}
-      var existing = document.getElementById('ios-fallback-modal');
-      if (existing) { existing.style.display = 'flex'; return; }
-      var modal = document.createElement('div');
-      modal.id = 'ios-fallback-modal';
-      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:2147483647;display:flex;align-items:flex-end;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif';
-      modal.innerHTML = [
-        '<div style="background:#fff;border-radius:24px 24px 0 0;padding:20px 20px 36px;width:100%;max-width:480px;box-sizing:border-box">',
-          '<div style="width:36px;height:4px;background:#ddd;border-radius:2px;margin:0 auto 20px"></div>',
-          '<p style="font-size:18px;font-weight:900;text-align:center;margin:0 0 6px;color:#111">LINEで友だち追加する方法</p>',
-          '<p style="font-size:13px;color:#888;text-align:center;margin:0 0 20px">あと2ステップで完了！</p>',
-          '<div style="display:flex;align-items:center;gap:14px;background:#fff8f0;border:2px solid #ff6b35;border-radius:16px;padding:16px;margin-bottom:12px;position:relative">',
-            '<div style="flex-shrink:0;width:40px;height:40px;background:#ff6b35;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;font-weight:900">1</div>',
-            '<div>',
-              '<p style="font-size:15px;font-weight:900;margin:0 0 2px;color:#111">右上の <span style="font-size:22px;letter-spacing:2px">···</span> をタップ</p>',
-              '<p style="font-size:12px;color:#666;margin:0">画面右上のメニューボタンです</p>',
-            '</div>',
-            '<div id="corner-arrow" style="position:fixed;top:12px;right:50px;font-size:28px;animation:bounce-right 0.9s infinite;pointer-events:none;z-index:2147483648">👆</div>',
-          '</div>',
-          '<div style="display:flex;align-items:center;gap:14px;background:#f0fff4;border:2px solid #06C755;border-radius:16px;padding:16px;margin-bottom:20px">',
-            '<div style="flex-shrink:0;width:40px;height:40px;background:#06C755;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;font-weight:900">2</div>',
-            '<div>',
-              '<p style="font-size:15px;font-weight:900;margin:0 0 2px;color:#111">「外部ブラウザで開く」を選ぶ</p>',
-              '<p style="font-size:12px;color:#666;margin:0">開いたページでLINEボタンを押せば完了！</p>',
-            '</div>',
-          '</div>',
-          '<button id="ios-copy-btn" style="width:100%;background:#06C755;color:#fff;border:none;border-radius:14px;padding:17px;font-size:16px;font-weight:900;cursor:pointer;margin-bottom:10px;box-shadow:0 4px 12px rgba(6,199,85,0.35)">📋 LINEリンクをコピー（自動コピー済み）</button>',
-          '<button id="ios-close-btn" style="width:100%;background:#f0f0f0;color:#555;border:none;border-radius:14px;padding:14px;font-size:15px;cursor:pointer">閉じる</button>',
-        '</div>',
-        '<style>@keyframes bounce-right{0%,100%{transform:translateY(0) rotate(-30deg)}50%{transform:translateY(6px) rotate(-30deg)}}</style>',
-        '<style>@keyframes slide-down{0%{transform:translateY(-100%);opacity:0}100%{transform:translateY(0);opacity:1}}@keyframes fade-out{0%{opacity:1}100%{opacity:0}}</style>'
-      ].join('');
-      document.body.appendChild(modal);
-      var copyBtn = document.getElementById('ios-copy-btn');
-      if (copyBtn) { copyBtn.addEventListener('click', function () { copyToClipboard(LINE_URL, copyBtn); }); }
-      var closeBtn = document.getElementById('ios-close-btn');
-      if (closeBtn) { closeBtn.addEventListener('click', function () { modal.style.display = 'none'; }); }
-      modal.addEventListener('click', function (e) {
-        if (e.target === modal) modal.style.display = 'none';
-      });
-    } catch (e) {}
-  }
-
-  function showLoginSuccess() {
-    try {
-      var s = document.createElement('div');
-      s.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#06C755;color:#fff;padding:18px 16px;font-size:16px;font-weight:bold;text-align:center;z-index:2147483647;box-shadow:0 3px 10px rgba(0,0,0,0.3);font-family:-apple-system,sans-serif';
-      s.innerHTML = '✅ IEYAS（賃貸）を友だち追加しました！<br><span style="font-size:13px;font-weight:normal">このページを閉じてLINEをご確認ください</span>';
-      document.body.insertBefore(s, document.body.firstChild);
-      window.history.replaceState({}, '', location.pathname);
-    } catch (e) {}
-  }
-
-  function checkLoginCallback() {
-    try {
-      var params = new URLSearchParams(location.search);
-      if (params.get('code') && params.get('state') === 'line_friend_add') {
-        showLoginSuccess();
-        return true;
-      }
-    } catch (e) {}
-    return false;
-  }
-
-  function init() {
-    try {
-      if (checkLoginCallback()) return;
-      if (!isTikTokWebView()) { return; }
-      patchLineLinks();
-      watchDynamicLinks();
-    } catch (e) {}
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-})();
-</script>
 <script>
 (function(){
-  try {
-    fetch('/api/track-view', { method: 'POST', keepalive: true });
-  } catch(e) {}
+  var TW=window.innerWidth;
+  if(TW<=480&&typeof window.TikTok!=='undefined'){ /* TikTok WebView skip */ return; }
+  try{
+    var ua=navigator.userAgent||'';
+    var isTTWebView=/BytedanceWebview|ByteLocale|musical_ly/i.test(ua);
+    if(isTTWebView){
+      document.querySelectorAll('a').forEach(function(a){
+        a.addEventListener('click',function(e){
+          var href=a.getAttribute('href');
+          if(href&&href.startsWith('http')&&!href.includes(location.hostname)){
+            e.preventDefault();
+            var inp=document.createElement('input');
+            inp.value=href;
+            document.body.appendChild(inp);
+            inp.select();
+            document.execCommand('copy');
+            document.body.removeChild(inp);
+            alert('URLをコピーしました。ブラウザを開いて貼り付けてください。');
+          }
+        });
+      });
+    }
+  }catch(err){}
+  try{
+    document.querySelectorAll('a[href*="lin.ee"]').forEach(function(a){
+      a.setAttribute('target','_blank');
+      a.setAttribute('rel','noopener noreferrer');
+    });
+  }catch(err2){}
 })();
 </script>
+
 </body>
 </html>
