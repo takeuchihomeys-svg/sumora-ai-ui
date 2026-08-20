@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
     finalCheckRules: finalCheckRules || undefined,
     recentMessages,
     lastCustomerMessage,
-    // step1Json なし: check-reply モードでは履歴から Haiku 自身に質問を抽出させる
+    // brainContextJson（旧step1Json）なし: check-reply モードでは履歴から Haiku 自身に質問を抽出させる
     checkpointFacts: groundTruth.checkpointFacts,
     customerConditionsDb: groundTruth.customerConditionsDb,
     staffSourceText: customerName ? `お客様のお名前: ${customerName}さん` : undefined,
