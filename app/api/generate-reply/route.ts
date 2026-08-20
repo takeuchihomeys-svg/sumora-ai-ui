@@ -2495,6 +2495,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     const brainGuidanceNote = (() => {
       if (!brainMeta) return "";
       const hasAction = !!brainMeta.action;
+      // 修正: closing_strategy / next_steps を発火条件に追加（2487行コメントの意図どおりの動作にする。
+      // 旧実装は action と拡張5フィールドが全て空だと closing_strategy のみのmetaが完全脱落していた）
+      const hasStrategy = !!(brainMeta.closing_strategy || brainMeta.next_steps?.length);
       const hasExtendedFields = !!(
         brainMeta.reply_direction ||
         brainMeta.key_topics?.length ||
@@ -2502,18 +2505,39 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         brainMeta.urgency_appropriate === false ||
         brainMeta.recommended_tone
       );
-      if (!hasAction && !hasExtendedFields) return "";
+      if (!hasAction && !hasStrategy && !hasExtendedFields) return "";
+      // enforcement_level を強制度文言に反映（型定義済みだが未使用だったフィールドの活用）
+      const isRequired = brainMeta.enforcement_level === "required";
       const lines: string[] = [
-        "【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位）】",
+        `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位。強制度: ${isRequired ? "必須（以下の指示に例外なく従う）" : "推奨（原則従うが、顧客の最新メッセージへの応答として不自然になる場合のみ自然さを優先してよい）"}）】`,
       ];
       if (hasAction) lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action!] ?? brainMeta.action}`);
       if (brainMeta.closing_strategy) lines.push(`- 成約戦略: ${brainMeta.closing_strategy}`);
       if (brainMeta.next_steps?.length) lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
-      if (brainMeta.reply_direction) lines.push(`- 返信の方向性: ${brainMeta.reply_direction}（この1点に絞って返信を組み立てること）`);
-      if (brainMeta.key_topics?.length) lines.push(`- 必ず含める内容: ${brainMeta.key_topics.join(" / ")}（返信本文に必ず明示的に含めること）`);
-      if (brainMeta.avoid_topics?.length) lines.push(`- 絶対に言及しない: ${brainMeta.avoid_topics.join(" / ")}（これらの話題は返信に一切含めない）`);
-      if (brainMeta.urgency_appropriate === false) lines.push("- 緊急表現禁止: 直近で既に使用済みのため「今なら」「残り◯室」「急いで」等の危機感・緊急表現は使わないこと");
-      if (brainMeta.recommended_tone) lines.push(`- 推奨トーン: ${brainMeta.recommended_tone}`);
+      if (brainMeta.reply_direction) lines.push(`- 🎯 返信の方向性: ${brainMeta.reply_direction}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
+      if (brainMeta.key_topics?.length) {
+        lines.push(`- ✅ 必ず含める内容（${brainMeta.key_topics.length}件すべて必須）: ${brainMeta.key_topics.join(" / ")}`);
+        lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
+      }
+      if (brainMeta.avoid_topics?.length) {
+        lines.push(`- 🚫 絶対に言及しない語・話題: ${brainMeta.avoid_topics.join(" / ")}`);
+        lines.push("  → 言い換え・同義語も禁止（「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと");
+      }
+      if (brainMeta.urgency_appropriate === false) {
+        lines.push("- ⛔ 緊急表現禁止: 直近のスタッフ送信で既に使用済みのため「今なら」「今しか」「残り◯室」「あと◯件」「急いで」「お早めに」「先着」等の危機感・緊急表現を一切使わない（連発は信頼を失う逆効果）");
+      }
+      if (brainMeta.recommended_tone) {
+        // トーン語ラベルだけでは生成LLMに伝わりにくいため、具体的な文体指示に展開して注入する
+        const toneGuide: Record<string, string> = {
+          "共感的": "冒頭1文で顧客の気持ちを受け止めてから本題に入る（「〜ですよね」等）。急かさない",
+          "テキパキ": "前置きを省き結論から書く。1文を短く、要点を先に",
+          "慎重": "断定・楽観表現を避け、会話・DBで確認済みの事実のみ正確に伝える",
+          "明るく前向き": "ポジティブな言葉で次の一歩を気持ちよく示す（絵文字の扱いは既存ルールに従う）",
+          "普通": "通常のスモラトーン",
+        };
+        const guide = toneGuide[brainMeta.recommended_tone];
+        lines.push(`- 推奨トーン: ${brainMeta.recommended_tone}${guide ? `（${guide}）` : ""}`);
+      }
       lines.push("※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。");
       return lines.join("\n") + "\n";
     })();
@@ -2553,9 +2577,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     const genTemperature = emotionTemperature(analysisEmotion ?? resolvedSummaryJson?.emotion);
 
     // ─── reply_modeゲート チェックポイントB（本命）───
-    // チェックポイントB: Step1(最大45秒)完了後にDB再フェッチ。A→B間にbrainがaix書き込んでも検出可能。
+    // チェックポイントB: brainGate（Step1完了後にフェッチ済み）を再利用する。
+    // 旧実装はここで DB を再フェッチしていたが、brainGate 取得（2491行）とは文字列構築のみを挟んだ
+    // バックツーバック実行（1秒未満）のため鮮度差は実質ゼロ。統合により
+    // (a) DBフェッチ1回削減 (b) brainGuidanceNote と reply_mode ゲートの参照スナップショット一致
+    // (c) P4警告（下記）の参照ズレ解消 が同時に達成される。
     if (conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
-      const freshGateB = externalBrainGate ?? await fetchReplyModeGate(conversationId);
+      const freshGateB = brainGate;
       if (freshGateB?.meta?.reply_mode === "aix") {
         console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(B):", conversationId);
         return applyAixGateAndRespond(conversationId, freshGateB.meta, freshGateB.customerName);

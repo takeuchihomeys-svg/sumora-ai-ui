@@ -83,6 +83,15 @@ const AIX_BRAIN_NOTES: Record<string, string> = {
 const PROPERTY_CONDITION_INQUIRY_RE =
   /あります(か|でしょうか)|お?部屋.{0,6}(探し|紹介)|物件.{0,6}(探し|紹介)|探して(ほしい|もらえ|ください|いただ)|広め|広い(お?部屋|物件)|間取り|ベッ[ドト]|[0-9０-９][SLDKR]{1,3}|ワンルーム|バス.?トイレ別|ペット可|駅.{0,10}(徒歩|近く?|大丈夫)|家賃.{0,4}万|でも大丈夫/;
 
+// 5品質ルール決定論ゲート用定数（analyzeConversation の return 直前で使用）
+// recommended_tone の許可値ホワイトリスト（template_hint の TEMPLATE_HINT_ALLOWED_LABELS と同型のフェイルクローズ）
+const TONE_ALLOWED = ["共感的", "テキパキ", "慎重", "明るく前向き", "普通"] as const;
+// ルール②: 顧客の最終メッセージに費用質問が含まれるかの判定
+const COST_QUESTION_RE = /見積|初期費用|総額|いくら|幾ら|費用|金額/;
+// ルール③: 顧客を急かす危機感・緊急表現の判定。
+// 「すぐ」は「すぐお調べします」等スタッフ自身の行動表現で誤検知するため含めない
+const URGENCY_EXPRESSION_RE = /今なら|今しか|お早め|早い者勝ち|先着|残り\s*[0-9０-９一二三四五]+\s*[件室部戸]|あと\s*[0-9０-９一二三四五]+\s*[件室戸]|埋まって(?:しま|る|い)|なくなる前/;
+
 // Maps raw DB conversation status to a Japanese meaning string injected into the Haiku prompt
 const STATUS_MEANING: Record<string, string> = {
   first_reply:             "完全初回（はじめてのお客様・挨拶必須）",
@@ -1318,22 +1327,24 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}, "reply_direction": "返信の方向性を20字以内で（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識から導く。必須フィールド・nullは避ける", "key_topics": ["返信に必ず含める内容（最大3件・各30字以内）。brainにしかわからないDB知識から導かれるもののみ（例: '本人確認書類の送付依頼' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列"], "avoid_topics": ["返信で絶対に言及しない内容（最大5件）。'来阪'は常に含める。顧客が質問していない費用・直前に使用済みの緊急表現・文脈に合わないCTA等（例: '来阪' '見積書' '初期費用'）"], "urgency_appropriate": false, "recommended_tone": "'共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれでもない場合）"}
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}, "reply_direction": "返信の方向性を20字以内で。必ず『〜する』の行動方針形で書く（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識（内覧履歴・送付済み物件・成約パターン・未完了タスク）から導く。必須フィールド・nullは避ける", "key_topics": ["返信本文に必ず含める実質的内容（最大3件・各30字以内）。挨拶・定型文・トーン指示・抽象的方針は書かない（それらは reply_direction / recommended_tone の役割）。具体的な情報・アクションのみ（例: '本人確認書類送付の催促' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列 []"], "avoid_topics": ["返信で絶対に言及しない語・話題（最大5件・各20字以内）。'来阪' は常に含める。顧客が質問していない費用の話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わないCTA等（例: ['来阪', '見積書', '初期費用']）。理由説明・トーン説明は書かず、禁止する語そのものを書く"], "urgency_appropriate": "true または false（boolean値で出力）。直近のスタッフ送信メッセージ1〜2件（[スタッフ] / [AIX:xxx]）に顧客を急かす危機感・緊急表現（ルール③の表現リスト参照）が含まれていれば false、含まれていなければ true", "recommended_tone": "次の5つの文字列のうち1つだけを正確に出力（組み合わせ・修飾・他の表現は禁止）: '共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項を扱う時）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれにも当てはまらない場合）"}
 
 【差分分析モード】userプロンプトに【前回の分析結論】がある場合、それを仮説として参照してよい。新着メッセージが前回結論を変えない場合は前回結論をほぼ維持してJSON出力してよい。ただし申込・内見確定・キャンセル・条件変更・フェーズ遷移のシグナルがあれば前回結論を破棄して再判断すること。JSONは常に全フィールド完全出力（ai_summary/ai_summary_json含む）。
 
 【reply_direction / key_topics / avoid_topics / urgency_appropriate / recommended_tone 判断ルール（5品質ルール）】
-以下の5ルールを厳守し、新フィールドに反映すること:
+以下の5ルールを厳守して新フィールドに反映すること。判定に迷ったら各ルールの「迷った時」の指示に従う:
 
-ルール①（稀少物件）: 会話履歴・チェックポイントに「残り1部屋」「残り僅か」「あと1件」「1件のみ」等の稀少性を示す記述がある場合 → key_topics に「申込みで物件を抑える提案」を追加し、reply_direction を「申込みを前に進める」にする（成約最短ルートを優先する）
+ルール①（稀少物件）: スタッフ送信の物件情報・チェックポイント・DB事実に「残り1部屋」「残り僅か」「あと1件」「1件のみ」「他にも検討中の方がいる」等の稀少性を示す記述がある場合 → key_topics に「申込みで物件を抑える提案」を追加し、reply_direction を「申込みを前に進める」にする（成約最短ルートを優先）。注意: 顧客側の発言（「1件だけ見たい」等）や既に申込済みの物件は稀少性の根拠にしない。迷った時: 稀少性が事実として確認できなければ適用しない。
 
-ルール②（費用質問なし）: 顧客の最終メッセージに「見積書」「初期費用」「総額」「いくら」「費用」等の費用質問が含まれない場合 → avoid_topics に「見積書」「初期費用」を追加する（顧客が聞いていない費用情報を自発的に話題にしない。ただし顧客が明示的に費用を聞いた場合は絶対に含めない）
+ルール②（費用質問なし）: 顧客の最終メッセージに費用への質問（「見積書」「見積り」「初期費用」「総額」「いくら」「幾ら」「費用」「金額」のいずれか）が含まれない場合 → avoid_topics に「見積書」「初期費用」を追加する（顧客が聞いていない費用情報を自発的に話題にしない）。逆に顧客が費用を明示的に質問している場合・過去の費用質問にまだ回答していない場合は、絶対に avoid_topics に費用系の語を入れない（質問に答えないのは致命的な失礼）。また見積送付そのものが今回の推奨アクションの場合も入れない。迷った時: 追加しない側に倒す（コード側でも強制されるため過剰適用しない）。
 
-ルール③（緊急表現使用済み）: 直近スタッフ送信メッセージ（[スタッフ] または [AIX:xxx] で送られた最新の1〜2件）に危機感・緊急表現（「今なら」「今しか」「すぐ」「急いで」「残り◯室」「あと◯件」「先着」等）が含まれる場合 → urgency_appropriate=false を設定する（同じ表現の繰り返しは逆効果）
+ルール③（緊急表現使用済み）: 直近のスタッフ送信メッセージ（[スタッフ] または [AIX:xxx] の最新1〜2件・概ね3日以内のもの）に、顧客を急かす表現 —「今なら」「今しか」「お早めに」「早い者勝ち」「先着」「残り◯室」「あと◯件」「埋まってしまう」「なくなる前に」— のいずれかが含まれる場合 → urgency_appropriate=false にする（同じ危機感表現の連発は逆効果で信頼を失う）。注意: スタッフ自身の行動を表す「すぐお調べします」「すぐ確認します」等は緊急表現ではない（顧客を急かしていない）。迷った時: その表現が顧客を急かす目的かどうかで判定する。
 
-ルール④（未完了依頼の催促）: 直近スタッフメッセージに顧客への未完了の依頼事項（「〜を送ってください」「〜をご確認ください」「〜をお願いします」「〜をご共有ください」等）がある場合 → key_topics に「[依頼内容]の確認・催促」を追加する（催促しないと会話が止まる）
+ルール④（未完了依頼の催促）: 直近のスタッフ送信メッセージに顧客への依頼（「〜を送ってください」「〜をご確認ください」「〜をお願いします」「〜をご共有ください」「〜を教えてください」等）があり、かつその依頼より後の顧客メッセージ・画像送信に該当する提出・回答がまだ無い場合 → key_topics に「[依頼内容の名詞]の確認・催促」を具体的に追加する（例: 「本人確認書類送付の催促」「内覧希望日の回答確認」。催促しないと会話が止まる）。注意: 顧客が既に対応済みの依頼を催促するのは二重催促で失礼 — 依頼以降の顧客メッセージを必ず確認してから判定する。迷った時: 対応済みか不明なら「◯◯のご状況の確認」のような柔らかい表現にする。
 
-ルール⑤（来阪表現禁止・常時）: avoid_topics には必ず「来阪」「ご来阪」を含める。顧客が大阪在住か否かを問わず常時適用する（大阪以外在住の顧客に「来阪ください」は失礼であり、スモラのブランドルール上絶対禁止）`;
+ルール⑤（来阪表現禁止・常時）: avoid_topics には必ず「来阪」を含める。顧客が大阪在住か否かを問わず常時適用する（大阪以外在住の顧客への「来阪ください」は失礼であり、スモラのブランドルール上絶対禁止。コード側でも強制されるがLLM出力でも必ず含めること）。
+
+（共通品質基準）reply_direction は返信全体をその1点に収束させる軸であり key_topics と矛盾させない。avoid_topics と key_topics に同じ話題を入れない（矛盾した場合は key_topics を優先し avoid_topics から外す）。`;
 
   // インクリメンタル分析: 前回の分析結論をコンテキストとして注入
   const prevMetaText = opts?.prevMeta ? (() => {
@@ -1345,6 +1356,13 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
     if (pm.template_hint) parts.push(`テンプレートヒント: ${pm.template_hint}`);
     if (pm.next_steps?.length) parts.push(`次のステップ: ${pm.next_steps.join(" / ")}`);
     if (pm.reply_mode) parts.push(`返信モード: ${pm.reply_mode}`);
+    // 5新フィールド: incremental分析で前回の返信方向・禁止トピックのコンテキストを維持
+    // （注入しないと差分モードのたびにゼロから再推論され方向性が揺れる）
+    if (pm.reply_direction) parts.push(`返信の方向性: ${pm.reply_direction}`);
+    if (pm.key_topics?.length) parts.push(`必ず含める内容: ${pm.key_topics.join(" / ")}`);
+    if (pm.avoid_topics?.length) parts.push(`言及禁止: ${pm.avoid_topics.join(" / ")}`);
+    if (pm.urgency_appropriate === false) parts.push("緊急表現: 前回判定で使用不可（直近スタッフ送信で使用済み）");
+    if (pm.recommended_tone) parts.push(`推奨トーン: ${pm.recommended_tone}`);
     return parts.join("\n") + "\n\n";
   })() : "";
 
@@ -1596,6 +1614,59 @@ ${history}`;
       if (!protectedMeetingPlace) enforcementLevel = "recommended";
     }
 
+    // ── 5新フィールド決定論ゲート（finalAix矯正群・reply_modeフェイルクローズと同型 — プロンプト任せにしない）──
+
+    // reply_direction: 20字上限をコード強制（超過はLLM逸脱）
+    const replyDirection = typeof parsed.reply_direction === "string" && parsed.reply_direction.trim()
+      ? parsed.reply_direction.trim().slice(0, 20)
+      : null;
+
+    // key_topics: 文字列のみ・空要素/重複除去・最大3件・各40字
+    const keyTopics = Array.from(new Set(
+      (Array.isArray(parsed.key_topics) ? parsed.key_topics : [])
+        .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+        .map((t) => t.trim().slice(0, 40))
+    )).slice(0, 3);
+
+    // avoid_topics: ルール⑤（来阪・常時）+ ルール②（費用質問なし）をコード側で決定論的に強制
+    const avoidSet = new Set(
+      (Array.isArray(parsed.avoid_topics) ? parsed.avoid_topics : [])
+        .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+        .map((t) => t.trim().slice(0, 20))
+    );
+    avoidSet.add("来阪"); // ルール⑤: ブランド絶対ルール（LLM出力に依存しない）
+    avoidSet.delete("ご来阪"); // 来阪に正規化（generate-reply側で言い換え禁止を指示するため1語で足りる）
+    const customerAskedCost = !!(lastCustomerMsg?.text && COST_QUESTION_RE.test(lastCustomerMsg.text));
+    if (customerAskedCost) {
+      // 顧客が費用を明示的に質問 → LLMが誤って入れた費用系avoidを除去（質問に答えない方が致命的）
+      ["見積書", "見積り", "初期費用", "総額", "費用"].forEach((t) => avoidSet.delete(t));
+    } else if (finalAix !== "estimate_sheet" && !keyTopics.some((t) => /見積|費用/.test(t))) {
+      // ルール②: 費用質問なし・見積送付アクションでもない → 自発的な費用話題を禁止
+      avoidSet.add("見積書");
+      avoidSet.add("初期費用");
+    }
+    // 来阪を必ず先頭固定で残して最大5件（末尾sliceで来阪が落ちるのを防ぐ）
+    const avoidTopics = ["来阪", ...Array.from(avoidSet).filter((t) => t !== "来阪")].slice(0, 5);
+
+    // ルール③: 直近スタッフ送信1〜2件（72時間以内・画像/動画プレースホルダ除外）に
+    // 緊急表現があれば urgency_appropriate=false を決定論的に強制（LLM出力より優先）。
+    // regex不検出時のみLLM判断を採用し、欠落時は true（緊急表現の証拠が無い状態）へフォールバック。
+    // フェイルオープン懸念はこの決定論ゲートで解消される（デフォルト反転は不要）。
+    const recentStaffTexts = typedMessages // 新しい順
+      .filter((m) => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
+        && Date.now() - new Date(m.created_at).getTime() <= 72 * 3600 * 1000)
+      .slice(0, 2)
+      .map((m) => m.text as string);
+    const staffUsedUrgency = recentStaffTexts.some((t) => URGENCY_EXPRESSION_RE.test(t));
+    const urgencyAppropriate = staffUsedUrgency
+      ? false
+      : (typeof parsed.urgency_appropriate === "boolean" ? parsed.urgency_appropriate : true);
+
+    // recommended_tone: 許可値ホワイトリスト（含む判定で正規化・不一致は null＝トーン行を注入しない。
+    // template_hint の TEMPLATE_HINT_ALLOWED_LABELS ゲートと同型のフェイルクローズ）
+    const rawTone = typeof parsed.recommended_tone === "string" ? parsed.recommended_tone.trim() : "";
+    const recommendedTone = TONE_ALLOWED.find((t) => rawTone.includes(t)) ?? null;
+
     return {
       action: finalAix ?? "",
       note: finalAix ? AIX_BRAIN_NOTES[finalAix] : (parsed.action ?? ""),
@@ -1627,11 +1698,11 @@ ${history}`;
           return "★";
         })(),
       } : null,
-      reply_direction: (parsed.reply_direction as string | undefined) ?? null,
-      key_topics: Array.isArray(parsed.key_topics) ? (parsed.key_topics as string[]) : [],
-      avoid_topics: Array.isArray(parsed.avoid_topics) ? (parsed.avoid_topics as string[]) : [],
-      urgency_appropriate: typeof parsed.urgency_appropriate === "boolean" ? parsed.urgency_appropriate : true,
-      recommended_tone: (parsed.recommended_tone as string | undefined) ?? null,
+      reply_direction: replyDirection,
+      key_topics: keyTopics,
+      avoid_topics: avoidTopics,
+      urgency_appropriate: urgencyAppropriate,
+      recommended_tone: recommendedTone,
     };
   } catch (e) {
     console.warn(`[brain-core] Haiku analysis failed: conv=${conversationId}`, e instanceof Error ? e.message : e);

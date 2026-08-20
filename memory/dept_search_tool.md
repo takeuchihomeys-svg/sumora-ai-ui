@@ -106,6 +106,7 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 
 | 日付 | 内容 |
 |---|---|
+| 2026-08-20 | **itandi 地域モード ward_names API補完修正（commit 5408c1b）**: 地域（所在地）モードでリアプロは正しく選択されるのにitandiでは選択されないバグを修正。根本原因: リアプロは`apiData.realpro.city_codes`でAPI補完するのに対し、itandiは`ward_names`のAPI補完ロジックが存在しなかった。→ popup.js L2790-2795に補完ブロック追加（`apiData.itandi.ward_names`を`allNeighborhoodWards`にpush）。background.jsの一括検索パスでは既に補完済みだったが通常popupパスに欠けていた。 |
 | 2026-08-17 | **エリア正規化 + area_normalizedDB書き戻し実装（commit d84eec5）**: ①`STATION_ALIASES`マップ追加（popup.js・resolution-core.js）: ひらがな・略称入力を正式駅名に変換（なんば→難波, 天六→天神橋筋六丁目 等25エントリ）。`resolveStation()`先頭で参照されモード判定・路線解決すべてに波及。②`normalizeAreaWithDeepSeek()`追加（resolve-area/route.ts）: DeepSeekでエリア文字列を正規化しHaikuNL抽出と並行実行。`normalized_area`フィールドをレスポンスに追加。③popup.jsの`resolveAreaWithAPI`に`customerId`引数追加。API応答の`normalized_area`を`property-customers`テーブルにPATCH書き戻し（fire-and-forget）。④`migrate-schema/route.ts`に`area_normalized TEXT`カラム追加。 |
 | 2026-08-17 | **LEARNED_STATION_MAP収録駅が地域モード誤判定されるバグ修正**: `setupAreaModeSelector`の`hasStationToken`がLEARNED_STATION_MAPを参照していなかった。また`buildAreaRouteCodes` autoモードで学習済み駅が`resolveWard`に先取りされ地域コードに落ちるバグを修正。リアプロautofillハンドラにitandi側と同等のLEARNED補正ブロック追加。修正: popup.js(3箇所) + resolution-core.js(1箇所)。commit `cc7cb2d` |
 | 2026-08-17 | **リアプロ駅選択 根本修正（station_code[]→station_id[]）**: 診断ログでリアプロのDOM変更が判明（`station_code[]`=0件、`station_id[]`=56件）。page-script.jsの全箇所（STEP Dガード・vis guard・残留クリア・STEP6・checkboxNames・_doReset）を`station_id[]`に全置換。STEP DのvisガードもラベルベースからSTEP D`station_id[]`親要素ベースに変更（駅セクション描画待ちの確実化）。コミット`f6f29fe` |
