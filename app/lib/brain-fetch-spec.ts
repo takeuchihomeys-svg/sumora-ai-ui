@@ -32,14 +32,23 @@ export type BrainFetchSpec = {
     lossLimit: number;
     excludeContentRe: RegExp | null;
     excludeKeywords: string[];
+    filterTopics: string[] | null;   // T1: key_topics（1-3件）由来の絞り込み候補。null=絞り込みなし
+    limit: number;                    // match_reply_knowledge の match_count（baseline 100）
   };
   examples: {
     states: string[];
     customerMsgKeywords: string[];
     excludeReplyRe: RegExp | null;
     boostStates: string[];
+    pgvectorMatchCount: number;               // match_reply_examples の match_count（baseline 20）
+    filterByDirection: string | null;         // T1: reply_direction 由来。null=方向性フィルタなし
   };
   phrases: { categories: string[] };
+  // ── T1動的選択（クエリ単位のENABLE/SKIP・フェイルオープン: T2/T3は全enabled=baseline） ──
+  lossPatterns: { enabled: boolean; limit: number };  // 失注パターン保証バケット（baseline: enabled / limit 4）
+  applyingPatterns: { enabled: boolean };             // applying_pattern 保証バケット（baseline: enabled）
+  viewingPatterns: { enabled: boolean };              // 内見系パターン（baseline: enabled・現状消費側なし＝将来用）
+  adaptRules: { enabled: boolean };                   // adaptation_improvement_rules（baseline: enabled）
 };
 
 // 鮮度許容誤差: generate-reply の brainFreshForMessage 判定と同値（同一秒書き込みの丸め誤差吸収）
@@ -112,8 +121,8 @@ export function buildBrainFetchSpec(
   })();
 
   // BASELINE: フル取得・除外なし・ブーストなし（従来動作と完全同一）。
-  // 将来の Step6 で T1 のときのみ Q1-Q4 バケットによる選択的仕様に切り替える。
-  return {
+  // T2/T3 は必ずこの baseline のまま返す（stale メタでのクエリ削減は最凶の regression）。
+  const spec: BrainFetchSpec = {
     tier: tierResult.tier,
     analysisContext,
     pgvectorMatchCount: 100,
@@ -125,13 +134,74 @@ export function buildBrainFetchSpec(
       lossLimit: 0,
       excludeContentRe: null,
       excludeKeywords: [],
+      filterTopics: null,
+      limit: 100,
     },
     examples: {
       states: primaryStates,
       customerMsgKeywords: [],
       excludeReplyRe: null,
       boostStates: [],
+      pgvectorMatchCount: 20,
+      filterByDirection: null,
     },
     phrases: { categories: STATE_TO_PHRASE_CATEGORIES[currentState] ?? [] },
+    lossPatterns: { enabled: true, limit: 4 },
+    applyingPatterns: { enabled: true },
+    viewingPatterns: { enabled: true },
+    adaptRules: { enabled: true },
   };
+
+  // ── T1 動的選択 ────────────────────────────────────────────────────────────
+  // フェイルオープン契約: フィールド単位。不正値・未知値はそのフィールドだけ baseline に落とす。
+  if (tierResult.tier !== "T1" || !meta) return spec;
+
+  // ① action によるバケット選択（actionが文字列で存在する場合のみ発動。欠損時は baseline）
+  const action = typeof meta.action === "string" ? meta.action : "";
+  if (action) {
+    if (action === "apply" || action === "signing") {
+      // 申込・契約局面: 申込到達パターンを届け、失注パターンは雑音として省く
+      spec.applyingPatterns.enabled = true;
+      spec.lossPatterns.enabled = false;
+    } else if (action === "viewing" || action === "viewing_appointment") {
+      // 内見局面: 内見系パターン優先・失注パターン省略
+      spec.viewingPatterns.enabled = true;
+      spec.lossPatterns.enabled = false;
+    } else if (action === "close" || action === "negotiation") {
+      // クロージング・交渉局面: 失注前夜 → 失注パターン増量
+      spec.lossPatterns.enabled = true;
+      spec.lossPatterns.limit = 5;
+    } else {
+      // その他の action: 失注/申込パターンはこの局面の雑音
+      spec.lossPatterns.enabled = false;
+      spec.applyingPatterns.enabled = false;
+    }
+  }
+
+  // ② hesitancy_pattern（保留局面）: 失注パターンは必ず届ける（actionのSKIPより優先）
+  if (meta.hesitancy_pattern) {
+    if (!spec.lossPatterns.enabled) {
+      spec.lossPatterns.enabled = true;
+      spec.lossPatterns.limit = 3;
+    }
+  }
+
+  // ③ condition_change_type → adaptRules（条件変更ターンのみ適応ルールが効く）
+  if (meta.condition_change_type) {
+    spec.adaptRules.enabled = true;
+  } else if (action !== "condition_change") {
+    spec.adaptRules.enabled = false;
+  }
+
+  // ④ key_topics → knowledge 絞り込み候補（1〜3件のときのみ・それ以外は null=絞り込みなし）
+  const topics = (meta.key_topics ?? []).filter(t => typeof t === "string" && t.length > 0);
+  spec.knowledge.filterTopics = topics.length >= 1 && topics.length <= 3 ? topics : null;
+
+  // ⑤ reply_direction → 実例の方向性フィルタ候補
+  spec.examples.filterByDirection =
+    typeof meta.reply_direction === "string" && meta.reply_direction.length > 0
+      ? meta.reply_direction
+      : null;
+
+  return spec;
 }

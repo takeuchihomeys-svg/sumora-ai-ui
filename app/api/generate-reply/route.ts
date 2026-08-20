@@ -32,7 +32,7 @@ import {
 // SuggestedAixMeta 型と条件問い合わせ検出 regex は brain-core と共有する（二重定義禁止）
 import { PROPERTY_CONDITION_INQUIRY_RE, type SuggestedAixMeta } from "@/app/lib/brain-core";
 import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
-import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult } from "@/app/lib/brain-fetch-spec";
+import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 300;
@@ -1138,22 +1138,30 @@ function logKnowledgeApply(ids: string[], conversationId: string): void {
 }
 
 // 戻り値: text=プロンプト注入用ナレッジ文字列 / phraseHits=category=phrase のヒット件数（fetchPhrases の二重注入削減判定に使用）
-async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string): Promise<{ text: string; phraseHits: number }> {
+async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec): Promise<{ text: string; phraseHits: number }> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
+
+  // T1動的選択: spec未指定（後方互換）は全クエリ実行＝従来動作（T2/T3のspecも全enabled）
+  const lossEnabled = spec?.lossPatterns.enabled ?? true;
+  const lossLimit = spec?.lossPatterns.limit ?? 4;
+  const applyingEnabled = spec?.applyingPatterns.enabled ?? true;
+  const adaptEnabled = spec?.adaptRules.enabled ?? true;
 
   // 失注パターン専用バケット（auto-analyze-losers が category=principle / importance=8 で保存するため、
   // pgvector経路の importance>=9 フィルタ・フォールバック経路の principle 除外の両方から漏れる → 専用クエリで必ず届ける）
   const [{ data: lossPatterns }, { data: topPrinciples }, { data: adaptRules }, { data: applyingPatterns }] = await Promise.all([
-    supabase
-      .from("ai_reply_knowledge")
-      .select("id, title, content, importance, category")
-      .ilike("title", "失注パターン%")
-      .neq("hypothesis_status", "rejected")
-      .order("importance", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(4),
+    lossEnabled
+      ? supabase
+          .from("ai_reply_knowledge")
+          .select("id, title, content, importance, category")
+          .ilike("title", "失注パターン%")
+          .neq("hypothesis_status", "rejected")
+          .order("importance", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(lossLimit)
+      : Promise.resolve({ data: null }),
     // importance>=9 の principle は embedding 検索の取りこぼし（similarity<0.5）に関わらず必ず注入する保証バケット。
-    // pgvector経路・フォールバック経路の両方で使う
+    // pgvector経路・フォールバック経路の両方で使う（brainと無関係の正しさデータ＝T1でもSKIPしない）
     supabase
       .from("ai_reply_knowledge")
       .select("id, category, title, content, importance")
@@ -1163,23 +1171,27 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .order("importance", { ascending: false })
       .limit(5),
     // HIGH-05: テンプレート修正学習ルール（テンプレ適用→スタッフ編集→送信から学習したパターン）
-    supabase
-      .from("adaptation_improvement_rules")
-      .select("rule_text, confidence, category")
-      .eq("is_active", true)
-      .gte("confidence", 0.7)
-      .order("confidence", { ascending: false })
-      .limit(5),
+    adaptEnabled
+      ? supabase
+          .from("adaptation_improvement_rules")
+          .select("rule_text, confidence, category")
+          .eq("is_active", true)
+          .gte("confidence", 0.7)
+          .order("confidence", { ascending: false })
+          .limit(5)
+      : Promise.resolve({ data: null }),
     // 類似ケース専用バケット（category='applying_pattern' — 申込に至った実例パターン。
     // pgvector経路のバケット・フォールバック経路のcategoryフィルタの両方から漏れるため専用クエリで必ず届ける）
-    supabase
-      .from("ai_reply_knowledge")
-      .select("id, title, content, importance, category, conversation_state")
-      .eq("category", "applying_pattern")
-      .neq("hypothesis_status", "rejected")
-      .order("importance", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(3),
+    applyingEnabled
+      ? supabase
+          .from("ai_reply_knowledge")
+          .select("id, title, content, importance, category, conversation_state")
+          .eq("category", "applying_pattern")
+          .neq("hypothesis_status", "rejected")
+          .order("importance", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(3)
+      : Promise.resolve({ data: null }),
   ]);
   const lossList = (lossPatterns ?? []).filter(p => (p.content ?? "").trim().length > 0);
   const lossIds = lossList.map(p => p.id).filter(Boolean);
@@ -1205,7 +1217,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     if (embedding) {
       const { data: vectorResults, error: rpcError } = await supabase.rpc("match_reply_knowledge", {
         query_embedding: embedding,
-        match_count: 100,
+        match_count: spec?.pgvectorMatchCount ?? 100,
         min_importance: 8,
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
       if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
@@ -1415,7 +1427,7 @@ async function getEmbedding(text: string): Promise<number[] | null> {
 
 const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C: "C案", short_direct: "短く直接" };
 
-async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string): Promise<string> {
+async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
@@ -1433,7 +1445,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
     if (embedding) {
       const { data: similar, error: rpcError } = await supabase.rpc("match_reply_examples", {
         query_embedding: embedding,
-        match_count: 20,
+        match_count: spec?.examples.pgvectorMatchCount ?? 20,
         filter_states: stateAliases,
       }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; similarity: number }> | null; error: unknown };
 
@@ -2342,12 +2354,17 @@ export async function POST(req: NextRequest) {
     const fetchSpec = buildBrainFetchSpec(brainMeta, currentState, tierResult);
     const analysisContext = fetchSpec.analysisContext;
 
+    // ── T1動的選択の監視ログ（Promise.all 前に spec の発火内容を記録） ──
+    if (!isTemplateOptimize) {
+      console.log(JSON.stringify({ tag: "step2-spec", tier: tierResult.tier, spec: { lossPatterns: fetchSpec.lossPatterns, adaptRules: fetchSpec.adaptRules, applyingPatterns: fetchSpec.applyingPatterns } }));
+    }
+
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
-      fetchKnowledge(currentState, message, analysisContext, conversationId)
+      fetchKnowledge(currentState, message, analysisContext, conversationId, fetchSpec)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0 }; }),
-      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
+      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
       getCachedPhrases(fetchSpec.phrases.categories)
         .catch((err) => { console.error("[generate-reply] getCachedPhrases失敗 — フレーズなしで生成続行:", err); return [] as string[]; }),
