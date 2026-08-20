@@ -2183,6 +2183,12 @@ CREATE TABLE IF NOT EXISTS aix_brain_templates (
 CREATE INDEX IF NOT EXISTS idx_abt_action_type ON aix_brain_templates (action_type);
 ALTER TABLE aix_brain_templates DISABLE ROW LEVEL SECURITY;
 
+-- 申込ステータス誤昇格バグ修正（2026-08-20）: テキストと画像の両方が揃って初めて applying に昇格
+-- applying_text_received: 顧客が申込フォームをテキストで送ってきた
+-- applying_image_received: スタッフの申込書案内後72h以内に顧客が画像を送ってきた
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS applying_text_received BOOLEAN DEFAULT false;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS applying_image_received BOOLEAN DEFAULT false;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

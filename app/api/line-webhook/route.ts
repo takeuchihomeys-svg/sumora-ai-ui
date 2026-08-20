@@ -403,30 +403,20 @@ async function handleTextMessage(
     }
 
     if (applyFormDetected) {
-      // .in(PRE_APPLY_STATUSES)ガードで冪等（既にapplying以降なら何もしない）＋成約/失注からのダウングレード防止
-      // P2: 更新前に現ステータスを取得（conversation_stage_history 記録用）
-      const { data: convPreApply } = await db.from("conversations").select("status").eq("id", convId).maybeSingle();
-      const applyFromStatus = convPreApply?.status as string | null;
+      // applying_text_received=true をセット → 画像も揃ったら tryPromoteToApplying で applying に昇格
+      // （テキスト単体では applying にしない。本人確認画像との両方が必要）
+      // .in(PRE_APPLY_STATUSES)ガードで冪等（既にapplying以降なら何もしない）
       const { data: updated, error: applyErr } = await db
         .from("conversations")
-        .update({ status: "applying", updated_at: now })
+        .update({ applying_text_received: true, updated_at: now })
         .eq("id", convId)
         .in("status", PRE_APPLY_STATUSES)
         .select("id");
       if (applyErr) {
-        console.error(`[line-webhook] applying自動昇格失敗: conv=${convId}`, applyErr.message);
+        console.error(`[line-webhook] applying_text_received更新失敗: conv=${convId}`, applyErr.message);
       } else if ((updated ?? []).length > 0) {
-        console.log(`[line-webhook] 申込フォーム検知 → applying自動昇格: conv=${convId} type=${detectSource}`);
-        // P2: ステータス変遷を記録
-        void (async () => {
-          const { error: stageErr } = await db.from("conversation_stage_history").insert({
-            conversation_id: convId,
-            from_status: applyFromStatus,
-            to_status: "applying",
-            trigger: "customer_message",
-          });
-          if (stageErr) console.warn("[stage_history] apply-form:", stageErr.message);
-        })();
+        console.log(`[line-webhook] 申込フォーム検知 → applying_text_received=true: conv=${convId} type=${detectSource}`);
+        await tryPromoteToApplying(db, convId, now, `text:${detectSource}`);
       } else {
         console.log(`[line-webhook] 申込フォーム検知（ステータス変更なし・既にapplying以降）: conv=${convId}`);
       }
@@ -1518,9 +1508,52 @@ async function handleImageMessageSave(
   return { convId, msgId: String(msgData.id) };
 }
 
-// ── 申込書依頼直後の顧客画像 → applying自動昇格ヒューリスティック ────────────
+// ── テキスト・画像の両方が揃ったら applying に昇格する共通ヘルパー ──────────
+// applying_text_received（申込フォームテキスト受信済み）と
+// applying_image_received（申込書依頼後の顧客画像受信済み）が両方 true のときのみ昇格する。
+// どちらか片方だけでは applying にならない（誤昇格バグ修正 2026-08-20）。
+async function tryPromoteToApplying(
+  db: ReturnType<typeof getDb>,
+  convId: string,
+  now: string,
+  trigger: string,
+): Promise<void> {
+  const { data: conv } = await db
+    .from("conversations")
+    .select("status, applying_text_received, applying_image_received")
+    .eq("id", convId)
+    .maybeSingle();
+  if (!conv) return;
+  const status = (conv.status as string) ?? "";
+  if (!PRE_APPLY_STATUSES.includes(status)) return; // 既にapplying以降
+  if (!conv.applying_text_received || !conv.applying_image_received) return; // 片方未受信
+
+  const { data: updated, error } = await db
+    .from("conversations")
+    .update({ status: "applying", updated_at: now })
+    .eq("id", convId)
+    .in("status", PRE_APPLY_STATUSES)
+    .select("id");
+  if (error) {
+    console.error(`[line-webhook] applying昇格失敗: conv=${convId}`, error.message);
+  } else if ((updated ?? []).length > 0) {
+    console.log(`[line-webhook] テキスト+画像両方揃い → applying自動昇格: conv=${convId} trigger=${trigger}`);
+    void (async () => {
+      const { error: stageErr } = await db.from("conversation_stage_history").insert({
+        conversation_id: convId,
+        from_status: status,
+        to_status: "applying",
+        trigger: "customer_message",
+      });
+      if (stageErr) console.warn("[stage_history] applying:", stageErr.message);
+    })();
+  }
+}
+
+// ── 申込書依頼直後の顧客画像 → applying_image_received=true に更新 ──────────
 // 条件: (1) 現ステータスが申込前 (2) 直近のスタッフメッセージに申込書依頼の文言がある
 // テキストで検知できない画像フォーム（写真で送られた記入済み申込書）の遷移漏れを塞ぐ。
+// applying_text_received も true なら tryPromoteToApplying で applying に昇格する。
 async function autoPromoteApplyingOnFormImage(
   db: ReturnType<typeof getDb>,
   convId: string,
@@ -1549,24 +1582,15 @@ async function autoPromoteApplyingOnFormImage(
 
     const { data: updated, error } = await db
       .from("conversations")
-      .update({ status: "applying", updated_at: now })
+      .update({ applying_image_received: true, updated_at: now })
       .eq("id", convId)
       .in("status", PRE_APPLY_STATUSES)
       .select("id");
     if (error) {
-      console.error(`[line-webhook] 画像申込書→applying昇格失敗: conv=${convId}`, error.message);
+      console.error(`[line-webhook] applying_image_received更新失敗: conv=${convId}`, error.message);
     } else if ((updated ?? []).length > 0) {
-      console.log(`[line-webhook] 申込書依頼後の画像受信 → applying自動昇格: conv=${convId}`);
-      // P2: ステータス変遷を記録（status は上部の SELECT で取得済み）
-      void (async () => {
-        const { error: stageErr } = await db.from("conversation_stage_history").insert({
-          conversation_id: convId,
-          from_status: status,
-          to_status: "applying",
-          trigger: "customer_message",
-        });
-        if (stageErr) console.warn("[stage_history] image-applying:", stageErr.message);
-      })();
+      console.log(`[line-webhook] 申込書依頼後の画像受信 → applying_image_received=true: conv=${convId}`);
+      await tryPromoteToApplying(db, convId, now, "image_form");
     }
   } catch (e) {
     console.warn("[line-webhook] autoPromoteApplyingOnFormImage:", e);
