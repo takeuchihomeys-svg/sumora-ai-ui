@@ -9,7 +9,26 @@ import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx 
 export const maxDuration = 300;
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
-const MODEL = "claude-sonnet-5";
+const MODEL = "claude-sonnet-4-6";
+
+// ── OCR result cache (session-level, FIFO, max 50 entries) ──────────────────
+// Key: image URL or composite "primaryUrl|secondaryUrl"  Value: Claude OCR text
+// Scope: module-level → survives multiple requests on the same Vercel instance.
+// FIFO eviction: when size reaches 50, delete the oldest key (Map insertion order).
+const _ocrCache = new Map<string, string>();
+const OCR_CACHE_MAX = 50;
+
+function ocrCacheGet(key: string): string | undefined {
+  return _ocrCache.get(key);
+}
+
+function ocrCacheSet(key: string, result: string): void {
+  if (_ocrCache.size >= OCR_CACHE_MAX) {
+    const firstKey = _ocrCache.keys().next().value;
+    if (firstKey !== undefined) _ocrCache.delete(firstKey);
+  }
+  _ocrCache.set(key, result);
+}
 
 // 全AIXアクション共通で末尾に注入するルールセット:
 // ① CURATED_REPLY_RULES … 確認済み返信ルール（「ご案内可能です」禁止・18時以降の管理会社確認・30日前ルール等）
@@ -1069,11 +1088,18 @@ ${SMORA_COMMON_RULES}`;
           (image_urls as string[]).map(async (url, pi) => {
             if (!url) return null;
             try {
-              const estContent = [
-                { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
-                { type: "image", source: { type: "url", url } },
-              ];
-              const estRaw = await callClaudeVision(multiEstSystem, estContent, currentAction);
+              const _estCached = ocrCacheGet(url);
+              let estRaw: string;
+              if (_estCached !== undefined) {
+                estRaw = _estCached;
+              } else {
+                const estContent = [
+                  { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
+                  { type: "image", source: { type: "url", url } },
+                ];
+                estRaw = await callClaudeVision(multiEstSystem, estContent, currentAction);
+                ocrCacheSet(url, estRaw);
+              }
               // コードブロック（```json...```）を優先して解析し、なければ裸の{}を使用
               const codeBlockM = estRaw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
               const estJsonStr = codeBlockM ? codeBlockM[1] : estRaw.match(/\{[\s\S]*\}/)?.[0];
@@ -1124,15 +1150,23 @@ ${SMORA_COMMON_RULES}`;
 - commission: 仲介手数料税抜（整数）。なければ0
 - commission_tax: 仲介手数料消費税（整数）。なければ0`;
 
-        const ocrContent: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
-          { type: "text", text: "画像から指定の項目を抽出し、JSONのみ返答してください。" },
-          { type: "image", source: { type: "url", url: image_url } },
-        ];
-        if (propImgUrl) {
-          ocrContent.push({ type: "text", text: "物件資料画像（見積書に物件名・家賃・共益費の記載がない場合はこちらから補完）：" });
-          ocrContent.push({ type: "image", source: { type: "url", url: propImgUrl } });
+        const _ocrKey = `${image_url}|${propImgUrl ?? ""}`;
+        const _ocrCached = ocrCacheGet(_ocrKey);
+        let raw: string;
+        if (_ocrCached !== undefined) {
+          raw = _ocrCached;
+        } else {
+          const ocrContent: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
+            { type: "text", text: "画像から指定の項目を抽出し、JSONのみ返答してください。" },
+            { type: "image", source: { type: "url", url: image_url } },
+          ];
+          if (propImgUrl) {
+            ocrContent.push({ type: "text", text: "物件資料画像（見積書に物件名・家賃・共益費の記載がない場合はこちらから補完）：" });
+            ocrContent.push({ type: "image", source: { type: "url", url: propImgUrl } });
+          }
+          raw = await callClaudeVision(ocrSystem, ocrContent, currentAction);
+          ocrCacheSet(_ocrKey, raw);
         }
-        const raw = await callClaudeVision(ocrSystem, ocrContent, currentAction);
 
         // コードブロック（```json...```）を優先して解析し、なければ裸の{}を使用
         const codeBlockMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);

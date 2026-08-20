@@ -1017,9 +1017,8 @@ ${recentText}
 
   try {
     const message = await client.messages.create({
-      model: "claude-sonnet-5",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 100,
-      temperature: 0,
       // 営業フロー基礎知識をハードコード（DBの学習ガイドに全依存しないフォールバック知識）
       system: "不動産賃貸営業の基本フロー: ヒアリング → 物件提案 → 内覧 → 見積 → 申込 の順で顧客を次のステップへ進める。",
       messages: [{ role: "user", content: prompt }],
@@ -1037,7 +1036,7 @@ ${recentText}
     if (shouldSuppressAction(action)) return NextResponse.json({ action: null, reason: "" });
     return NextResponse.json({ action, reason: result.reason ?? "", source: "ai_fallback", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null, sub_mode_stats: subModeStats, ...templateRec(action) });
   } catch (e) {
-    console.error("[suggest-next-action] Sonnet 呼び出しに失敗:", e);
+    console.error("[suggest-next-action] AI 呼び出しに失敗:", e);
     return NextResponse.json({ action: null, reason: "" });
   }
 }
