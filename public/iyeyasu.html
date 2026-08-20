@@ -139,35 +139,29 @@
     }
     .h-gb-em{color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
 
-    /* ── 節約実績バッジ ── */
-    .saving-badge{
-      margin:12px 12px 0;background:#fff;border:2.5px solid #111;
-      border-radius:16px;padding:12px 14px;box-shadow:4px 4px 0 #111;
-      display:flex;align-items:center;gap:12px;
+    /* ── 節約実績バッジ（コンパクト・中央揃え） ── */
+    #hero .saving-badge{
+      margin:12px auto 0;width:calc(100% - 32px);max-width:390px;
+      background:#fff;border:1.5px solid #e8e8e8;border-radius:14px;
+      padding:14px 16px 16px;box-shadow:0 2px 10px rgba(0,0,0,.07);
+      display:flex;flex-direction:column;align-items:center;text-align:center;
     }
-    .saving-badge-icon{
-      flex-shrink:0;width:44px;height:44px;background:#FFD600;
-      border-radius:50%;border:2px solid #111;display:flex;
-      align-items:center;justify-content:center;font-size:22px;
-    }
-    .saving-badge-body{flex:1;min-width:0;}
-    .saving-badge-label{
+    .sv-label{
       display:inline-block;background:var(--line);color:#fff;
-      font-size:9.5px;font-weight:900;padding:2px 8px;border-radius:4px;
-      letter-spacing:.06em;margin-bottom:3px;
+      font-size:9.5px;font-weight:900;padding:2px 10px;border-radius:4px;letter-spacing:.06em;
     }
-    .saving-badge-main{
-      font-size:18px;font-weight:900;color:#111;line-height:1.2;
-      -webkit-text-stroke:.3px #111;
+    #hero .sv-sub{font-size:13px;font-weight:700;color:#555;margin-top:5px;}
+    .sv-num{
+      font-size:clamp(38px,9.5vw,52px);font-weight:900;color:#e82020;
+      line-height:1;letter-spacing:-.02em;-webkit-text-stroke:.4px #e82020;
     }
-    .saving-badge-main em{font-style:normal;color:#e82020;font-size:1.15em;}
-    .saving-badge-note{font-size:9.5px;color:#888;margin-top:2px;font-weight:600;}
-    .saving-badge-cta{
-      margin-top:8px;background:var(--line);color:#fff;border:none;
-      border-radius:999px;padding:7px 14px;font-size:11.5px;font-weight:900;
-      letter-spacing:.03em;display:block;width:100%;text-align:center;cursor:pointer;
-      box-shadow:0 3px 0 var(--line-dk);
-    }
+    #hero .sv-num{margin-top:2px;}
+    .sv-num em{font-style:normal;}
+    .sv-unit{font-size:clamp(16px,4vw,22px);font-weight:800;vertical-align:baseline;margin-left:3px;}
+    #hero .sv-note{font-size:10px;color:#aaa;font-weight:600;margin-top:2px;}
+    .sv-reason{font-size:clamp(13px,3.5vw,15px);font-weight:900;color:#111;letter-spacing:.01em;}
+    #hero .sv-reason{margin-top:10px;}
+    #hero .sv-action{font-size:11px;font-weight:700;color:#888;margin-top:3px;}
 
     /* ══════════════════════════════════════════
        QR Stage — 2-row layout (grid廃止)
@@ -177,14 +171,14 @@
 
     .qr-stage {
       overflow: visible;
-      padding: 16px 8px 0;
+      padding: 12px 8px 0;
     }
 
     /* ── Row 1: 吹き出し ── */
     .qr-bubble-row {
       display: flex;
       justify-content: flex-end;
-      margin-bottom: 16px;
+      margin-bottom: 8px;
     }
 
     .mascot-bubble {
@@ -200,6 +194,7 @@
       text-align: left;
       width: 142px;
     }
+    .mb-free{display:block;font-size:9px;font-weight:700;color:#888;margin-top:3px;}
 
     /* ── Row 2: 3カラム flex ── */
     .qr-main-row {
@@ -555,13 +550,12 @@
       送るだけで 初期費用を <span class="h-gb-em">最大限割引！</span>
     </div>
     <div class="saving-badge r">
-      <div class="saving-badge-icon">🏆</div>
-      <div class="saving-badge-body">
-        <span class="saving-badge-label">8月実績</span>
-        <div class="saving-badge-main">他社より平均<br><em>118,220円</em>節約！</div>
-        <div class="saving-badge-note">※一般的な不動産業者と比べて</div>
-        <div class="saving-badge-cta">今すぐ気になる部屋を送るだけ！→</div>
-      </div>
+      <span class="sv-label">8月実績</span>
+      <p class="sv-sub">他社より平均</p>
+      <p class="sv-num"><em>118,220円</em><span class="sv-unit">節約</span></p>
+      <p class="sv-note">※一般的な不動産業者と比べて</p>
+      <p class="sv-reason">だから、契約する前に一度チェック！</p>
+      <p class="sv-action">気になる物件を送るだけ</p>
     </div>
 
     <!-- ③ QRステージ（設計案A: 2行flexレイアウト） -->
@@ -570,7 +564,8 @@
       <!-- Row 1: マスコット吹き出し（右寄せ・QRカード上部） -->
       <div class="qr-bubble-row">
         <div class="mascot-bubble">
-          「この物件いくらになる？」だけでもOK！相談・見積もりすべて無料です！
+          「この物件いくらになる？」<br>だけでもOK！
+          <span class="mb-free">相談・見積もり無料</span>
         </div>
       </div>
 
