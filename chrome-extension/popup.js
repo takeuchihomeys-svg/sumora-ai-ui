@@ -2787,6 +2787,12 @@ function openInstructions(siteKey) {
       if (apiData?.itandi?.line_names) {
         apiData.itandi.line_names.forEach(function(n) { if (!itandiLines.includes(n)) itandiLines.push(n); });
       }
+      // itandi ward_names API補完（リアプロのcity_codes補完と同等）
+      if (apiData && Array.isArray(apiData.itandi?.ward_names)) {
+        apiData.itandi.ward_names.forEach(function(wn) {
+          if (!allNeighborhoodWards.includes(wn)) allNeighborhoodWards.push(wn);
+        });
+      }
       // 未知トークンを非同期でDB解決（次回以降のLEARNED_STATION_MAP更新）
       if (_itandiUnknown.length > 0) {
         fetch(API_BASE + "/api/itandi-resolve", {
