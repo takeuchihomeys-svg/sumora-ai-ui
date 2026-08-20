@@ -54,6 +54,7 @@ export interface FinalCheckContext {
   // v3 追加（Fable5 brain-vs-finalcheck監査 2026-08-14）
   isAutoSend?: boolean;          // HIGH-1/2: 自動送信経路のみ true → 未完走時fail-closed / MISSED_QUESTION昇格
   conversationStage?: string;    // MEDIUM-2: 現在の会話段階（例: "条件ヒアリング中"）
+  checkpointStage?: string | null; // brain実態フェーズ（conversationStageと乖離時に優先）
   sentPropertiesCount?: number;  // MEDIUM-2: 送付済み物件数（0=未送付）
   isAix?: boolean;               // FP-02: AIX機能使用フラグ。false の場合 AIX_BOUNDARY_* コードを除外
   isEarlyConversation?: boolean; // FP-04: 会話初期（情報源が薄い）フラグ。FABRICATED系を warning に格下げ
@@ -64,6 +65,8 @@ export interface FinalCheckContext {
   } | null;
   /** 1回目チェック後の照合で「根拠あり」と確認済みの evidence 文字列リスト。2回目チェックで再指摘しない */
   clearedFacts?: string[];
+  /** brainMeta.property_search_params.ng_properties から派生したNG確定物件名リスト（"物件名 [号室]" 形式）。本文にこれらが含まれていたらblock */
+  ngProperties?: string[];
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -216,7 +219,8 @@ AIX_BOUNDARY_APPLICATION（申込確定文・書類リスト）/ AIX_BOUNDARY_MO
 AIX_BOUNDARY_PROMISE（「確認してご連絡します」の二重宣言）/
 【例外】管理会社への確認が必要な質問（空室状況・審査結果・入居可能日・設備詳細・ペット可否の管理会社判断等）に対する「確認してご連絡します」「管理会社に確認いたします」などは AIX_BOUNDARY_PROMISE に該当しません。
 AIX_BOUNDARY_DB（[RULES]内の【線引き】マーク付きDBルールへの違反。返信文が制限事実を自ら回答している場合のみ。「確認してご連絡します」等の宣言のみの文は対象外）/
-BANNED_WORD（禁止語彙）/ RULE_VIOLATION（その他ルール違反）
+BANNED_WORD（禁止語彙）/ RULE_VIOLATION（その他ルール違反）/
+NG_PROPERTY_MENTION（この顧客がNG確定済みの物件名を返信本文に含めている）
 
 [RULES]
 ${dbRulesSliced}
@@ -307,7 +311,10 @@ OK: 「入居可能日について管理会社に確認してご連絡いたし�
 AIX_BOUNDARY_* にもBANNED_WORDにも分類できないが、[RULES]のルールに明確に違反している場合に使用する。
 使用例: DBルールに「外国籍のお客様には申告していただく必要があります」とあり、返信が外国籍を一切考慮していない場合など。
 明確な根拠（[RULES]内の文章から引用できる内容）がなければ RULE_VIOLATION を発行しないこと。`;
-  const dynamic = `${brainBaselineNote}${aixNote}
+  const ngPropertyNote = ctx.ngProperties?.length
+    ? `【🚫 提案禁止物件チェック】以下の物件名がこの返信本文に1文字でも含まれていたら NG_PROPERTY_MENTION（severity: block）として報告してください。物件名を削除・言及を避けるよう suggestion に明記すること。\n禁止物件: ${ctx.ngProperties.join(" / ")}\n\n`
+    : "";
+  const dynamic = `${ngPropertyNote}${brainBaselineNote}${aixNote}
 [REPLY]
 ${draft}
 [/REPLY]`;
@@ -464,7 +471,7 @@ ${draft}
 // 毎分無効化していたため、【現在時刻】ブロックとして動的部へ移動した（検査内容は同一）。
 function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
   const stageBlock = ctx.conversationStage
-    ? `[STAGE]\n現在段階: ${ctx.conversationStage}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${ctx.sentPropertiesCount}件` : ""}\n[/STAGE]\n`
+    ? `[STAGE]\n現在段階: ${ctx.conversationStage}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${ctx.sentPropertiesCount}件` : ""}${ctx.checkpointStage && ctx.checkpointStage !== ctx.conversationStage ? `\nフェーズ乖離: brain実態=${ctx.checkpointStage} DB=${ctx.conversationStage}。実態フェーズで判定すること` : ""}\n[/STAGE]\n`
     : "";
   const brainBaselineNote = ctx.brainMeta?.action
     ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。このアクションと矛盾しない返信内容であればSTAGE_SKIPは発行しないこと。\n\n`

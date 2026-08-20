@@ -2415,6 +2415,12 @@ export async function POST(req: NextRequest) {
       if (psp?.ng_points) {
         lines.push(`- ⚠️ この顧客の地雷・NGポイント: ${psp.ng_points} — これに該当する提案・話題を出さない`);
       }
+      if (psp?.move_in_time && !brainMeta?.future_timeline) {
+        lines.push(`- 📅 入居希望時期（brain抽出）: ${psp.move_in_time} — 提案・約束をこの時期に整合させること`);
+      }
+      if (psp?.search_urgency) {
+        lines.push(`- ⚡ 物件探しの緊急度: ${psp.search_urgency}`);
+      }
       if (brainFreshForMessage && brainMeta.hesitancy_pattern) {
         const hp = brainMeta.hesitancy_pattern;
         const timeline = brainMeta.future_timeline ?? null;
@@ -2434,6 +2440,13 @@ export async function POST(req: NextRequest) {
       // hp==="timeline" 時は上の分岐で既に消化済みのため除外（二重注入防止）。
       if (brainFreshForMessage && brainMeta.future_timeline && brainMeta.hesitancy_pattern !== "timeline") {
         lines.push(`- 📅 顧客の決断タイムライン: ${brainMeta.future_timeline} — 返信の提案・約束はこのタイムラインに整合させる（このタイムラインは会話に実際に出た表現。これに合わない前倒し・急かし提案をしない。日付・時期の創作は絶対禁止）`);
+      }
+      if (tierResult?.tier === "T2") {
+        lines.push(`※ brain分析の鮮度が不足（最新メッセージ送信後に分析が追いついていない）。直近メッセージ固有の戦術（hesitancy・customer_questions等）は省略済み。最新メッセージの意図は会話履歴から直接読むこと`);
+      }
+      // Fix③: checkpoint_stage（brain実態フェーズ）がDB上のstate（currentState）と乖離している場合に明示する
+      if (brainMeta.checkpoint_stage && brainMeta.checkpoint_stage !== currentState) {
+        lines.push(`- ⚠️ 会話実態フェーズ（brain判定）: ${brainMeta.checkpoint_stage} ※DB上の状態(${currentState})と乖離あり — 実態フェーズを優先すること`);
       }
       lines.push("※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。");
       return lines.join("\n") + "\n";
@@ -2864,6 +2877,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   applying: "申込準備中",
                   closed_won: "成約済み",
                 };
+                // ng_properties: brainGuidanceNote IIFE内の ngProps と同一ロジック（IIFE外から再導出）
+                // brainFreshForMessage ゲートは IIFE側と揃える（stale時は古いリストで「安全」誤認を防ぐ）
+                const ngPropertiesForCheck: string[] = brainFreshForMessage
+                  ? (brainMeta?.property_search_params?.ng_properties ?? [])
+                      .filter((p) => p?.property_name)
+                      .map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)
+                  : [];
                 // 1回目チェックと再生成後の2回目チェックで同一コンテキストを使う
                 const finalCheckCtx = {
                   dbRules,
@@ -2909,6 +2929,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                         enforcement_level: (brainMeta.enforcement_level ?? "recommended") as "required" | "recommended",
                       }
                     : null,
+                  checkpointStage: brainMeta?.checkpoint_stage ?? null, // Fix③: brain実態フェーズ（DB stateと乖離検出用）
+                  ngProperties: ngPropertiesForCheck.length ? ngPropertiesForCheck : undefined,
                 };
                 const loop = await runFinalCheckWithRevision(draftBody, finalCheckCtx, 40000);
                 finalCheck = loop.finalCheck;
