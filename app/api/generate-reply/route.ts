@@ -258,10 +258,23 @@ type PropertyStatus = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
 // ⚠️ 「入居者」「居住中」は省略: 会話内でお客様が現居住状況を話す文脈でも一致してしまうため。
 const MOVE_OUT_PATTERN = /退去予定|入居中|[0-9０-９]{1,2}\s*月末?\s*退去|退去[はが]?[0-9０-９]{1,2}\s*月/;
 
+// スタッフが内覧可能日を明示した場合は「退去前」判定を取り消す（誤ブロック防止）
+// 直近スタッフ発言で「8/24からご案内」「内覧可能」等が確認できれば退去前制限は解除済みとみなす
+const VIEWING_CONFIRMED_PATTERN =
+  /内覧(?:開始|可能|でき|いただけ)|からご案内|よりご案内|[0-9０-９]{1,2}[\/月][0-9０-９]{1,2}(?:日)?(?:から|より|以降|には?)?(?:ご案内|内覧|案内)|退去(?:済み?|後).*(?:ご?案内|内覧)/;
+
 function detectPropertyStatus(history: string, customerMessage: string, explicit?: PropertyStatus): PropertyStatus {
   if (explicit && explicit !== "unknown") return explicit;
   const haystack = `${history}\n${customerMessage}`;
-  if (MOVE_OUT_PATTERN.test(haystack)) return "move_out_scheduled";
+  if (MOVE_OUT_PATTERN.test(haystack)) {
+    // 直近5件のスタッフ発言で内覧可能が確認済みなら退去前判定を取り消す
+    const recentStaffText = history.split("\n")
+      .filter(l => l.startsWith("スモラ:"))
+      .slice(-5)
+      .join("\n");
+    if (VIEWING_CONFIRMED_PATTERN.test(recentStaffText)) return "unknown";
+    return "move_out_scheduled";
+  }
   return explicit ?? "unknown";
 }
 
