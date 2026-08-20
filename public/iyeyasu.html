@@ -42,7 +42,7 @@
     body{
       font-family:'Hiragino Maru Gothic ProN','Hiragino Maru Gothic Pro',sans-serif;
       font-size:16px;line-height:1.8;color:var(--ink);background:var(--bg);
-      max-width:480px;margin:0 auto;overflow-x:hidden;padding-bottom:74px;
+      max-width:430px;margin:0 auto;overflow-x:hidden;padding-bottom:90px;
     }
 
     /* Scroll reveal */
@@ -71,7 +71,7 @@
     /* ===== #hero ===== */
     #hero{
       font-family:'Hiragino Maru Gothic ProN','Hiragino Maru Gothic Pro',sans-serif;
-      max-width:480px;margin:0 auto;background:#fff;position:relative;overflow:visible;
+      max-width:430px;margin:0 auto;background:#fff;position:relative;overflow:visible;
     }
     #hero *{box-sizing:border-box;margin:0;padding:0;}
 
@@ -96,7 +96,7 @@
     .h-body{background:#fff;padding:0 0 14px;}
 
     /* Speech bubble */
-    .h-bubble-wrap{padding:20px 16px 0;}
+    .h-bubble-wrap{padding:20px 12px 0;}
     .h-bubble{
       background:#FFD600;border:2.5px solid #111;border-radius:12px;
       padding:10px 14px;font-size:15px;font-weight:900;color:#111;
@@ -122,26 +122,27 @@
     }
 
     /* H1 with lightning */
-    .h-title-wrap{position:relative;padding:0 16px 0 50px;margin-top:2px;}
+    .h-title-wrap{padding:0 12px;margin-top:6px;text-align:center;}
     .h-lightning{
-      position:absolute;left:12px;top:-2px;font-size:32px;line-height:1;
-      filter:drop-shadow(1px 1px 3px rgba(0,0,0,.15));
+      display:inline;font-size:28px;line-height:1;vertical-align:top;
+      filter:drop-shadow(1px 1px 3px rgba(0,0,0,.15));margin-right:2px;
     }
     .h-title{
       font-size:clamp(22px,6.8vw,32px);font-weight:900;color:#111;
       line-height:1.25;-webkit-text-stroke:.3px #111;letter-spacing:-.01em;
+      text-align:center;
     }
 
     /* Green band below H1 */
     .h-green-band{
       background:var(--line);color:#fff;font-size:15px;font-weight:900;
-      text-align:center;padding:10px 16px;margin:14px 0 0;letter-spacing:.02em;
+      text-align:center;padding:11px 16px;margin:14px 12px 0;border-radius:12px;letter-spacing:.02em;
     }
     .h-gb-em{color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
 
     /* ── 節約実績バッジ ── */
     .saving-badge{
-      margin:10px 16px 0;background:#fff;border:2.5px solid #111;
+      margin:12px 12px 0;background:#fff;border:2.5px solid #111;
       border-radius:16px;padding:12px 14px;box-shadow:4px 4px 0 #111;
       display:flex;align-items:center;gap:12px;
     }
@@ -177,7 +178,7 @@
 
     .qr-stage {
       overflow: visible;
-      padding: 20px 8px 0;
+      padding: 16px 8px 0;
     }
 
     /* ── Row 1: 吹き出し ── */
@@ -267,7 +268,6 @@
       position: relative;
       box-shadow: 0 4px 20px rgba(6,199,85,.28);
       width: 100%;
-      max-width: 174px;
     }
 
     .qr-now-badge {
@@ -292,8 +292,8 @@
       border-radius: 6px;
       border: 1.5px solid var(--line);
       width: 100%;
-      max-width: 148px;
       height: auto;
+      aspect-ratio: 1/1;
     }
 
     .qr-label-new {
@@ -355,10 +355,10 @@
       .clock-badge { animation: none; }
     }
 
-    /* ── CTA green strip ── */
+    /* ── CTA セクション（strip + band 統合） ── */
     .h-cta-strip{
       background:var(--line);color:#fff;font-size:14px;font-weight:900;
-      text-align:center;padding:13px 16px;display:flex;align-items:center;
+      text-align:center;padding:16px 16px 0;display:flex;align-items:center;
       justify-content:center;gap:8px;flex-wrap:wrap;letter-spacing:.02em;
       margin-top:14px;
     }
@@ -366,7 +366,7 @@
     .cta-strip-em{color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
 
     /* ── LINE button CTA band ── */
-    .h-cta-band{background:var(--line);padding:14px 20px 28px;text-align:center;}
+    .h-cta-band{background:var(--line);padding:12px 20px 28px;text-align:center;}
     .cta-line-heading{font-size:18px;font-weight:900;color:#fff;margin:0 0 12px;letter-spacing:.02em;}
     .h-line-btn{
       display:flex;align-items:center;justify-content:center;gap:9px;
@@ -386,11 +386,11 @@
     .scan-arrow:last-child{animation-delay:.28s;}
 
     /* Benefit chips */
-    .benefit-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:0 16px 4px;}
+    .benefit-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:0 12px 4px;}
     .chip{
       background:transparent;color:var(--line);border:1.5px solid var(--line);
-      border-radius:9999px;padding:6px 14px;font-size:12px;font-weight:700;
-      letter-spacing:.02em;white-space:nowrap;
+      border-radius:9999px;padding:6px 4px;font-size:clamp(10px,3vw,12px);font-weight:700;
+      letter-spacing:.02em;text-align:center;
     }
 
     /* ===== MERIT ZONE ===== */
@@ -502,11 +502,12 @@
     }
     .fc-pulse-btn{animation:fc-pulse 1.6s ease-in-out infinite;}
     .bottom-bar{
-      position:fixed;bottom:0;left:50%;transform:translateX(-50%);
-      width:100%;max-width:480px;background:rgba(9,21,16,.95);
+      position:fixed;bottom:0;left:0;right:0;
+      background:rgba(9,21,16,.95);
       backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
       padding:9px 14px;z-index:99;box-shadow:0 -2px 16px rgba(0,0,0,.24);
     }
+    .bottom-bar-inner{max-width:430px;margin:0 auto;}
     .bottom-bar a{
       display:flex;align-items:center;justify-content:center;gap:8px;
       background:var(--line);color:#fff;text-decoration:none;font-size:16px;font-weight:900;
@@ -546,8 +547,7 @@
     </div>
     <p class="h-sub">SUUMOなどで見つけた</p>
     <div class="h-title-wrap">
-      <span class="h-lightning" aria-hidden="true">⚡</span>
-      <h1 class="h-title">気になるお部屋、<br>まず送ってください！</h1>
+      <h1 class="h-title"><span class="h-lightning" aria-hidden="true">⚡</span>気になるお部屋、<br>まず送ってください！</h1>
     </div>
     <div class="h-green-band">
       送るだけで 初期費用を <span class="h-gb-em">最大限割引！</span>
@@ -892,12 +892,14 @@
 
 <!-- FIXED BOTTOM BAR -->
 <div class="bottom-bar">
+  <div class="bottom-bar-inner">
   <a href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer">
     <svg class="ico" viewBox="0 0 20 20" fill="white" aria-hidden="true">
       <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
     </svg>
     QRコード長押しで友だちになる！
   </a>
+  </div>
 </div>
 
 <script>
