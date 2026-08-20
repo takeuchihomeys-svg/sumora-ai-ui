@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { recordConditionHistory } from "@/app/lib/condition-history";
+
+// 条件変更履歴の追跡対象フィールド（condition-history.ts の TRACKED と同一）
+const CONDITION_TRACKED_FIELDS = [
+  "desired_area", "floor_plan", "rent_max", "rent_min",
+  "walk_minutes", "move_in_time", "building_age", "initial_cost_limit", "other_requests",
+];
 
 // 今日まだ未対応かどうか判定
 function needsActionToday(c: { status: string; last_property_sent_at: string | null; hot_confirmed_at?: string | null; property_viewed_at?: string | null }): boolean {
@@ -137,6 +144,18 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
+  // 条件フィールドが含まれる場合、UPDATE前に旧値を取得（変更履歴の diff 用）
+  const trackedInPatch = CONDITION_TRACKED_FIELDS.filter((f) => f in fields);
+  let oldConditionRow: Record<string, unknown> | null = null;
+  if (trackedInPatch.length > 0) {
+    const { data: oldRow } = await supabase
+      .from("property_customers")
+      .select(trackedInPatch.join(","))
+      .eq("id", id)
+      .maybeSingle();
+    oldConditionRow = (oldRow as Record<string, unknown> | null) ?? null;
+  }
+
   const { error, data } = await supabase
     .from("property_customers")
     .update(fields)
@@ -146,6 +165,12 @@ export async function PATCH(req: NextRequest) {
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // 条件変更を履歴化（fire-and-forget・UPDATE成功後のみ）
+  if (trackedInPatch.length > 0) {
+    void recordConditionHistory(supabase, String(id), oldConditionRow, fields)
+      .catch((e) => console.warn("[condition-history] PATCH:", e));
   }
 
   // 物件送った or 確認済みのとき: 全員完了チェック（fire-and-forget）

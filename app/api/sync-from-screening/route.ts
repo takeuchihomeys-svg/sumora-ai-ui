@@ -229,6 +229,8 @@ export async function POST(req: NextRequest) {
       resolvedAccount = await resolveAccountByLineUserId(record.line_user_id as string);
     }
 
+    // 注意: acquisition_source は絶対に upsertData に含めない。
+    // line-webhook が初回顧客メッセージから一度だけセットする（sync で上書きすると事実が消える）
     const upsertData: Record<string, unknown> = {
       id: String(record.id),
       customer_name: record.customer_name ?? null,

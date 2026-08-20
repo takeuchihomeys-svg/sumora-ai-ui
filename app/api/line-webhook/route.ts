@@ -6,6 +6,7 @@ import { classifyByKeywords, classifyByAI, type ConditionIntent } from "@/app/li
 import { mergeConditions, type ConditionFields } from "@/app/lib/condition-merge";
 import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
+import { recordConditionHistory } from "@/app/lib/condition-history";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 export const maxDuration = 120;
@@ -197,6 +198,66 @@ function updateProfileAsync(
   })();
 }
 
+// ── 引用リプライ → 送付物件の解決（Writer 3）─────────────────────────────────
+// 顧客がスタッフの物件カード/物件メッセージを引用して返信したとき、
+// messages.referenced_property_id と sent_properties.customer_reaction を事実化する。
+// 非ブロッキング: after() から呼ばれ、失敗しても warn のみ。
+async function resolvePropertyReference(
+  db: ReturnType<typeof getDb>,
+  convId: string,
+  msgId: string,
+  quotedMessageId: string,
+  replyText: string,
+): Promise<void> {
+  // 1. 引用先スタッフメッセージを解決（line_message_id で JOIN）
+  const { data: quoted } = await db
+    .from("messages")
+    .select("id, sender, text, image_url")
+    .eq("line_message_id", quotedMessageId)
+    .maybeSingle();
+  if (!quoted || quoted.sender === "customer") return;
+
+  // 2. 引用先メッセージ → sent_properties マッチ（この会話の直近20件）
+  const { data: props } = await db
+    .from("sent_properties")
+    .select("id, property_name, room_no, image_url, property_url")
+    .eq("conversation_id", convId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  const qText = (quoted.text as string | null) ?? "";
+  const hit = (props ?? []).find((p) =>
+    (p.image_url && p.image_url === quoted.image_url) ||                                        // 物件カード画像一致
+    (p.property_url && qText.includes(p.property_url as string)) ||                             // URL一致
+    (p.property_name && (p.property_name as string).length >= 3 && qText.includes(p.property_name as string)) // 物件名一致
+  );
+  if (!hit) return;
+
+  // 3. messages.referenced_property_id
+  const { error: refErr } = await db
+    .from("messages")
+    .update({ referenced_property_id: hit.id })
+    .eq("id", msgId);
+  if (refErr) console.warn("[resolvePropertyReference] referenced_property_id:", refErr.message);
+
+  // 4. sent_properties.customer_reaction（キーワード分類。'no_response' は別途cron担当）
+  const rejected = /見送|やめ|他で決|別の(物件|部屋)|なし|違う|微妙|イメージと/.test(replyText);
+  const { error: reactErr } = await db
+    .from("sent_properties")
+    .update({ customer_reaction: rejected ? "rejected" : "interested" })
+    .eq("id", hit.id);
+  if (reactErr) console.warn("[resolvePropertyReference] customer_reaction:", reactErr.message);
+}
+
+// ── 流入元判定（conversations.acquisition_source）────────────────────────────
+// 初回顧客メッセージのテキストから決定論的に判定する（brain信号TikTokの事実化）
+function detectAcquisitionSource(t: string, accountKey: string): string {
+  if (/tiktok|ティックトック|ティクトク|動画\s*(見|みて)|広告(を)?(見|みて)/i.test(t)) return "tiktok";
+  if (/インスタ|instagram|ストーリー/i.test(t)) return "instagram";
+  if (/紹介|知人|友人から|友達から/.test(t)) return "referral";
+  if (accountKey === "ieyasu") return "tiktok"; // イエヤスLPはTikTok専用導線
+  return "organic";
+}
+
 // ── テキストメッセージ保存 ────────────────────────────────────────────────
 async function handleTextMessage(
   userId: string,
@@ -223,7 +284,7 @@ async function handleTextMessage(
     }
   }
 
-  const { error: msgErr } = await db.from("messages").insert({
+  const { data: insertedMsg, error: msgErr } = await db.from("messages").insert({
     conversation_id: convId,
     sender: "customer",
     text,
@@ -231,14 +292,23 @@ async function handleTextMessage(
     // LINEリプライ（引用）: 引用元メッセージID（物件カードへの引用→物件興味判定に使う）
     quoted_message_id: quotedMessageId ?? null,
     created_at: now,
-  });
+  }).select("id").maybeSingle();
+  const insertedMsgId = insertedMsg?.id ? String(insertedMsg.id) : null;
   if (msgErr) {
     if (msgErr.code === "23505") {
-      // UNIQUE制約違反 = sync-from-screeningが同時に保存済み。正常扱い
+      // UNIQUE制約違反 = sync-from-screeningが同時に保存済み。正常扱い（Writer 3はスキップ）
     } else {
       console.error("[line-webhook] message保存失敗:", msgErr.message);
       return false;
     }
+  }
+
+  // 引用リプライ → 物件カード解決（messages.referenced_property_id + sent_properties.customer_reaction）
+  if (quotedMessageId && insertedMsgId) {
+    after(async () => {
+      await resolvePropertyReference(db, convId, insertedMsgId, quotedMessageId, text)
+        .catch((e) => console.warn("[resolvePropertyReference]", e));
+    });
   }
 
   await db
@@ -290,6 +360,14 @@ async function handleTextMessage(
       .eq("conversation_id", convId)
       .eq("sender", "customer");
     if ((msgCount ?? 0) === 1) {
+      // 流入元を初回メッセージから判定して記録（冪等: NULLの時のみセット、二重webhook配信でも上書きしない）
+      await db
+        .from("conversations")
+        .update({ acquisition_source: detectAcquisitionSource(text, account.key) })
+        .eq("id", convId)
+        .is("acquisition_source", null)
+        .then(({ error }) => { if (error) console.warn("[acquisition_source]", error.message); });
+
       const { data: convInfo } = await db
         .from("conversations")
         .select("customer_name")
@@ -1019,6 +1097,9 @@ ${customerText.slice(0, 300)}
     console.warn("[line-webhook] P4 property_customers update failed:", updateErr.message);
   } else {
     console.log(`[line-webhook] P4 条件抽出: conv=${convId} fields=${Object.keys(updates).join(",")}`);
+    // 条件取得の履歴化（P4は merge-if-null のため old は常に空 = 条件"取得"の記録）
+    void recordConditionHistory(db, pcId, existingPc as Record<string, unknown> | null, updates)
+      .catch((e) => console.warn("[condition-history] P4:", e));
   }
 }
 
@@ -1492,9 +1573,14 @@ async function autoPromoteApplyingOnFormImage(
   }
 }
 
-// ── Claude Vision で画像内容を日本語テキスト抽出 ────────────────────────────
+// ── Claude Vision で画像内容を日本語テキスト抽出 + 画像種別分類 ─────────────
 // buf: LINE Content API から取得済みの ArrayBuffer（二重ダウンロード不要）
-async function extractImageContent(buf: ArrayBuffer, mimeType: string): Promise<string> {
+// 既存のVision 1回呼び出しに分類を相乗りさせる（追加APIコストゼロ）
+// imageType: 'estimate' | 'floor_plan' | 'property_photo' | 'id_document' | 'other'
+async function extractImageContent(
+  buf: ArrayBuffer,
+  mimeType: string,
+): Promise<{ imageType: string; content: string }> {
   try {
     const base64 = Buffer.from(buf).toString("base64");
     // Claude Vision が受け付ける MIME タイプのみ渡す（非対応は image/jpeg にフォールバック）
@@ -1525,7 +1611,7 @@ async function extractImageContent(buf: ArrayBuffer, mimeType: string): Promise<
               },
               {
                 type: "text",
-                text: "この画像に写っているテキスト・会話・情報をすべて書き起こしてください。LINEスクリーンショットの場合は発言者と内容を整理して返してください。画像の説明は不要で、内容だけ返してください。",
+                text: "1行目に必ず「TYPE: estimate|floor_plan|property_photo|id_document|other」の形式で画像の種類を1つだけ出力してください。\n- estimate=見積書/初期費用明細, floor_plan=間取り図/物件資料, property_photo=室内外の物件写真,\n  id_document=本人確認書類（免許証・保険証・マイナンバー等）, other=それ以外（LINEスクショ含む）\n2行目以降に、この画像に写っているテキスト・会話・情報をすべて書き起こしてください。LINEスクリーンショットの場合は発言者と内容を整理して返してください。画像の説明は不要で、内容だけ返してください。",
               },
             ],
           },
@@ -1534,15 +1620,19 @@ async function extractImageContent(buf: ArrayBuffer, mimeType: string): Promise<
     });
     if (!visionRes.ok) {
       console.warn("[line-webhook] Vision API失敗 status=", visionRes.status);
-      return "";
+      return { imageType: "", content: "" };
     }
     const visionData = await visionRes.json() as {
       content?: Array<{ type: string; text?: string }>;
     };
-    return visionData.content?.find((b) => b.type === "text")?.text?.trim() ?? "";
+    const raw = visionData.content?.find((b) => b.type === "text")?.text?.trim() ?? "";
+    const typeMatch = raw.match(/^TYPE:\s*(estimate|floor_plan|property_photo|id_document|other)/i);
+    const imageType = typeMatch ? typeMatch[1].toLowerCase() : (raw ? "other" : "");
+    const content = raw.replace(/^TYPE:[^\n]*\n?/, "").trim();
+    return { imageType, content };
   } catch (e) {
     console.warn("[line-webhook] Vision抽出エラー:", e);
-    return "";
+    return { imageType: "", content: "" };
   }
 }
 
@@ -1593,12 +1683,18 @@ async function fetchAndUploadLineImage(
     const { data: urlData } = db.storage.from("line-images").getPublicUrl(storagePath);
 
     // Vision 抽出結果を "[画像] <内容>" 形式でテキストとして保存
-    const extracted = visionResult.status === "fulfilled" ? visionResult.value : "";
+    const extracted = visionResult.status === "fulfilled" ? visionResult.value.content : "";
+    const extractedType = visionResult.status === "fulfilled" ? visionResult.value.imageType : "";
     const newText = extracted ? `[画像] ${extracted}` : "[画像]";
 
+    // image_type: Vision失敗時はNULLのまま（"other"を書かない — 後日バックフィル可能に）
     const { error: updateErr } = await db
       .from("messages")
-      .update({ image_url: urlData.publicUrl, text: newText })
+      .update({
+        image_url: urlData.publicUrl,
+        text: newText,
+        ...(extractedType ? { image_type: extractedType } : {}),
+      })
       .eq("id", msgId);
 
     if (updateErr) {

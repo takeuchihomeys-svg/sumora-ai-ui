@@ -30,12 +30,27 @@ export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
 
-  const { id, source } = await req.json() as { id: string; source?: string };
+  const { id, source, result, result_note } = await req.json() as {
+    id: string;
+    source?: string;
+    // 空室確認の構造化結果（物件あった=available / 2番手=second_position / 埋まってた=taken / 退去予定=move_out_planned）
+    result?: "available" | "taken" | "second_position" | "move_out_planned";
+    result_note?: string;
+  };
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
+
+  const VALID_RESULTS = ["available", "taken", "second_position", "move_out_planned"];
+  const completedAt = new Date().toISOString();
+  const patch: Record<string, unknown> = { status: "completed", completed_at: completedAt };
+  if (result && VALID_RESULTS.includes(result)) {
+    patch.result = result;
+    patch.result_note = result_note?.slice(0, 500) ?? null;
+    patch.resolved_at = completedAt;
+  }
 
   const { data: task, error } = await supabase
     .from("line_tasks")
-    .update({ status: "completed", completed_at: new Date().toISOString() })
+    .update(patch)
     .eq("id", id)
     .eq("status", "pending")
     .select("task_type, customer_name, conversation_id")
@@ -96,6 +111,38 @@ export async function POST(req: NextRequest) {
           })
           .eq("id", conv.property_customer_id as string);
       } catch {}
+    });
+  }
+
+  // 空室確認タスクの結果 → 直近送付物件の募集状況を事実化（Writer 5）
+  // 対象物件 = この会話の最新 sent_property（確認対象は直近送付物件というヒューリスティック）
+  if (task.task_type === "property_check" && patch.result) {
+    after(async () => {
+      try {
+        const STATUS_MAP: Record<string, string> = {
+          available: "open",
+          taken: "occupied",
+          second_position: "open",
+          move_out_planned: "move_out_planned",
+        };
+        const { data: sp } = await supabase
+          .from("sent_properties")
+          .select("id")
+          .eq("conversation_id", task.conversation_id as string)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!sp) return;
+        const upd: Record<string, unknown> = {
+          recruitment_status: STATUS_MAP[patch.result as string],
+          recruitment_checked_at: new Date().toISOString(),
+        };
+        if (patch.result === "second_position") upd.applicant_rank = 2;
+        if (patch.result === "available") upd.applicant_rank = 1;
+        await supabase.from("sent_properties").update(upd).eq("id", sp.id as string);
+      } catch (e) {
+        console.warn("[line-tasks/complete] sent_properties status:", e);
+      }
     });
   }
 
