@@ -114,7 +114,7 @@ type PromptBlock = { type: "text"; text: string; cache_control?: { type: "epheme
 type PromptContent = string | PromptBlock[];
 
 // ─── Sonnet呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
-async function callHaiku(prompt: PromptContent, timeoutMs: number, maxTokens = 2400): Promise<RawIssue[]> {
+async function callSonnet45(prompt: PromptContent, timeoutMs: number, maxTokens = 2400): Promise<RawIssue[]> {
   const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -677,7 +677,7 @@ const BANNED_WORDS_DETERMINISTIC = ["スモラ", "名称未設定", "少々お�
 
 // ─── メイン: 決定的プリチェック + 3パス並列チェック ──────────────────────────
 // 絶対にthrowしない（全pass失敗でも issues=[] / passes_completed=[] の fail-open 結果を返す）
-export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haikuTimeoutMs = 30000): Promise<CheckResult> {
+export async function runFinalCheck(draft: string, ctx: FinalCheckContext, sonnetTimeoutMs = 30000): Promise<CheckResult> {
   const started = Date.now();
   const issues: CheckIssue[] = [];
   const draftNorm = normalizeForMatch(draft);
@@ -723,7 +723,7 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, haiku
     { pass: "anomaly_scan", prompt: buildAnomalyScanPrompt(draft, ctx) },
     { pass: "context_check", prompt: buildContextCheckPrompt(draft, ctx) },
   ];
-  const settled = await Promise.allSettled(passes.map((p) => callHaiku(p.prompt, haikuTimeoutMs)));
+  const settled = await Promise.allSettled(passes.map((p) => callSonnet45(p.prompt, sonnetTimeoutMs)));
 
   const passesCompleted: CheckPass[] = [];
 
@@ -1099,7 +1099,7 @@ async function runDiffRecheck(
   const targets = check1Issues.filter((i) => i.pass !== "meta" && i.code !== "UNCHECKED_AUTO_SEND");
 
   try {
-    const raw = await callHaiku(buildDiffRecheckPrompt(revised, targets, ctx), timeoutMs, DIFF_RECHECK_MAX_TOKENS);
+    const raw = await callSonnet45(buildDiffRecheckPrompt(revised, targets, ctx), timeoutMs, DIFF_RECHECK_MAX_TOKENS);
     for (const r of raw) {
       const evidence = (r.evidence ?? "").trim();
       if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード・runFinalCheckと同一）
