@@ -47,6 +47,22 @@ CronCreate ツールを使って以下を設定：
 
 ---
 
+## 🎨 LP・デザイン作業開始時：design_knowledge を必ず引く
+
+LP新規作成・リデザイン・Fable5実行の前に**必ず**以下を実行する：
+
+```sql
+SELECT title, principle, pattern FROM design_knowledge
+WHERE impact = 'high'
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+取得した知見を「**守るべき原則・禁止パターン**」としてFable5プロンプトの冒頭に含める。
+knowledge がない場合はスキップしてよい。
+
+---
+
 ## ノウハウ参照
 
 - `memory/dept_knowhow.md` — 実装パターン・技術ノウハウ（sumora-screening-adminで学んだこと）
