@@ -139,29 +139,28 @@
     }
     .h-gb-em{color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
 
-    /* ── 節約実績バッジ（コンパクト・中央揃え） ── */
+    /* ── 節約実績バッジ（コンパクト3段） ── */
     #hero .saving-badge{
-      margin:12px auto 0;width:calc(100% - 32px);max-width:390px;
-      background:#fff;border:1.5px solid #e8e8e8;border-radius:14px;
-      padding:14px 16px 16px;box-shadow:0 2px 10px rgba(0,0,0,.07);
-      display:flex;flex-direction:column;align-items:center;text-align:center;
+      margin:14px auto 0;width:calc(100% - 40px);max-width:360px;
+      background:#fff;border:1.5px solid #e8e8e8;border-radius:16px;
+      padding:14px 16px;box-shadow:0 2px 10px rgba(0,0,0,.07);
+      display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;
     }
-    .sv-label{
+    .sv-top{font-size:14px;font-weight:700;color:#555;letter-spacing:.01em;line-height:1.4;}
+    .sv-tag{
       display:inline-block;background:var(--line);color:#fff;
-      font-size:9.5px;font-weight:900;padding:2px 10px;border-radius:4px;letter-spacing:.06em;
+      font-size:9px;font-weight:900;padding:1px 7px;border-radius:3px;
+      letter-spacing:.05em;vertical-align:middle;margin-right:4px;
     }
-    #hero .sv-sub{font-size:13px;font-weight:700;color:#555;margin-top:5px;}
     .sv-num{
-      font-size:clamp(38px,9.5vw,52px);font-weight:900;color:#e82020;
+      font-size:clamp(38px,11vw,50px);font-weight:800;color:#e82020;
       line-height:1;letter-spacing:-.02em;-webkit-text-stroke:.4px #e82020;
     }
-    #hero .sv-num{margin-top:2px;}
     .sv-num em{font-style:normal;}
-    .sv-unit{font-size:clamp(16px,4vw,22px);font-weight:800;vertical-align:baseline;margin-left:3px;}
-    #hero .sv-note{font-size:10px;color:#aaa;font-weight:600;margin-top:2px;}
-    .sv-reason{font-size:clamp(13px,3.5vw,15px);font-weight:900;color:#111;letter-spacing:.01em;}
-    #hero .sv-reason{margin-top:10px;}
-    #hero .sv-action{font-size:11px;font-weight:700;color:#888;margin-top:3px;}
+    .sv-unit{font-size:20px;font-weight:800;vertical-align:baseline;margin-left:4px;-webkit-text-stroke:0;}
+    .sv-reason{font-size:18px;font-weight:700;color:#111;letter-spacing:.01em;}
+    .sv-action{font-size:13px;font-weight:700;color:#777;}
+    .sv-note{font-size:11px;color:#c0c0c0;font-weight:600;}
 
     /* ══════════════════════════════════════════
        QR Stage — 2-row layout (grid廃止)
@@ -171,7 +170,7 @@
 
     .qr-stage {
       overflow: visible;
-      padding: 12px 8px 0;
+      padding: 16px 8px 0;
     }
 
     /* ── Row 1: 吹き出し ── */
@@ -550,12 +549,11 @@
       送るだけで 初期費用を <span class="h-gb-em">最大限割引！</span>
     </div>
     <div class="saving-badge r">
-      <span class="sv-label">8月実績</span>
-      <p class="sv-sub">他社より平均</p>
+      <p class="sv-top"><span class="sv-tag">8月実績</span>｜他社より平均</p>
       <p class="sv-num"><em>118,220円</em><span class="sv-unit">節約</span></p>
-      <p class="sv-note">※一般的な不動産業者と比べて</p>
-      <p class="sv-reason">だから、契約する前に一度チェック！</p>
+      <p class="sv-reason">契約する前に、一度チェック！</p>
       <p class="sv-action">気になる物件を送るだけ</p>
+      <p class="sv-note">※一般的な不動産業者との比較</p>
     </div>
 
     <!-- ③ QRステージ（設計案A: 2行flexレイアウト） -->
