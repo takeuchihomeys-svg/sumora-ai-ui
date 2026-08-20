@@ -1859,7 +1859,7 @@ const FULL_BYPASS_RE = /申込|申し込|入居(したい|します|希望)|契�
 // インクリメンタル昇格語: 急ぎではあるがincremental（前回結論+新着）で十分対応できる語
 // 「今日/明日/お願いします/内覧/見積」等の日常的な商談語はcachedをスキップするが
 // fullではなくincrementalで対応（コスト削減の核心）
-const INCREMENTAL_BYPASS_RE = /内見|内覧|見学|見に行|決め(ます|ました|たい)|急ぎ|至急|別の(物件|部屋)|検討します|また連絡|連絡します|少し待って|迷って|悩んで|保留|保留中|考えさせて|考え中|後で|後ほど|検討中/;
+const INCREMENTAL_BYPASS_RE = /内見|内覧|見学|見に行|決め(ます|ました|たい)|急ぎ|至急|別の(物件|部屋)|検討します|また連絡|連絡します|少し待って|迷って|悩んで|保留|保留中|考えさせて|考え中|後で|後ほど|検討中|初期費用|見積|費用感|諸費用|仲介手数料|敷金|礼金|保証料/;
 
 function formatJstDateShort(iso: string | null): string {
   if (!iso) return "";
@@ -2119,7 +2119,8 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
 
   if (analysisMode === "cached") {
     // キャッシュ返却パス（Sonnet呼び出しなし・required通知は runBrainAndNotify 側で抑制）
-    const cachedResult = { ...cachedMeta, source: "cached" };
+    // stale meta: enforcement_level を "optional" に落として強制アクションを抑制
+    const cachedResult = { ...cachedMeta, source: "cached", enforcement_level: "optional" as const };
     await supabase
       .from("conversations")
       .update({ suggested_aix_meta: cachedResult, brain_analyzed_at: new Date().toISOString() })

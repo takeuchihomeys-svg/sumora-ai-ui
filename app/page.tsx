@@ -7493,6 +7493,14 @@ export default function Home() {
               const hasPropertySendTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_send");
               const isApplyStatus = ["applying", "screening", "contract"].includes(selectedConversation.status ?? "");
 
+              // AIX鮮度チェック: analyzed_msg_tsが最新顧客メッセージより古い場合はバナーを出さない
+              const BANNER_FRESHNESS_MS = 8000;
+              const latestCustomerMsgTs = msgs.filter((m: Message) => m.sender === "customer").at(-1)?.rawCreatedAt ?? null;
+              const _aixMetaAny = selectedConversation.suggestedAixMeta as any;
+              const aixMetaIsFresh: boolean = !latestCustomerMsgTs || !_aixMetaAny?.analyzed_msg_ts
+                ? false
+                : new Date(_aixMetaAny.analyzed_msg_ts).getTime() >= new Date(latestCustomerMsgTs).getTime() - BANNER_FRESHNESS_MS;
+
               // P0: 番号付きテンプレート連動 / 追客初期費用テンプレート誘導
               const nextTmpl = suggestNextTemplateMap[id];
               if (nextTmpl && !dismissedNextTemplateIds.has(id) && !customerIsLastSender) {
@@ -7630,7 +7638,7 @@ export default function Home() {
               }
 
               // P3.3: お客様が内覧日時を確定 → AIX 待ち合わせへ！
-              if (guideToMeetingPlace && !dismissedMeetingPlaceIds.has(id)) return (
+              if (aixMetaIsFresh && guideToMeetingPlace && !dismissedMeetingPlaceIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-600 bg-teal-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-teal-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>内覧日時が確定 → AIX 待ち合わせで確定文を送る</span>
                   <button onClick={() => { setDismissedMeetingPlaceIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); }}
@@ -7642,7 +7650,7 @@ export default function Home() {
               );
 
               // P3.4: property_send → AIX物件ピックアップを直接起動
-              if (guideToNewListingRecommend && !dismissedNewListingIds.has(id)) return (
+              if (aixMetaIsFresh && guideToNewListingRecommend && !dismissedNewListingIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-500 bg-blue-50 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <button onClick={() => { setDismissedNewListingIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); }}
@@ -7661,6 +7669,7 @@ export default function Home() {
               // P3.5: AIX-METAが viewing_invite を指示 → AIX 内覧へ！
               // 診断修正(内覧バナー誤表示): 最終送信者が顧客の場合のみ（物件送付・返信直後の残留メタで出さない）
               if (
+                aixMetaIsFresh &&
                 selectedConversation.suggestedAixMeta?.action === "viewing_invite" &&
                 customerIsLastSender &&
                 !suggestViewingTemplateMap[id] &&
@@ -7681,6 +7690,7 @@ export default function Home() {
 
               // P3.6: AIX-METAが meeting_place を指示 → AIX 待ち合わせ！
               if (
+                aixMetaIsFresh &&
                 selectedConversation.suggestedAixMeta?.action === "meeting_place" &&
                 !dismissedMeetingPlaceIds.has(id)
               ) return (
@@ -7701,7 +7711,7 @@ export default function Home() {
               );
 
               // P3.7: 顧客が「初期費用を知りたい」等と発言 → AIX 見積書を送って答える
-              if (guideToEstimate && !dismissedEstimateSheetIds.has(id)) return (
+              if (aixMetaIsFresh && guideToEstimate && !dismissedEstimateSheetIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-500 bg-orange-50 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] font-bold text-orange-800 flex-1">
@@ -7728,6 +7738,7 @@ export default function Home() {
 
               // P4.5: AIX-METAが estimate_sheet を指示 → 割引見積で差別化！
               if (
+                aixMetaIsFresh &&
                 selectedConversation.suggestedAixMeta?.action === "estimate_sheet" &&
                 !dismissedEstimateSheetIds.has(id)
               ) return (
@@ -7809,7 +7820,7 @@ export default function Home() {
               // brain が action="" を返した場合に何も表示されない完全空白状態になる穴を塞ぐ
               // 診断修正(内覧バナー誤表示): viewing_invite は顧客の反応が前提のアクション →
               // 最終送信者がスタッフ（物件送付直後等）の間は脳ヒントカードにも出さない
-              if (brainMeta?.note && !dismissedBrainHintIds.has(id) && !(brainMeta.action === "viewing_invite" && !customerIsLastSender)) {
+              if (aixMetaIsFresh && brainMeta?.note && !dismissedBrainHintIds.has(id) && !(brainMeta.action === "viewing_invite" && !customerIsLastSender)) {
                 const brainBtnLabel = BRAIN_AIX_LABELS[brainMeta.action];
                 const brainBtnColor = AIX_ACTION_META[brainMeta.action]?.color ?? "#7C3AED";
                 const brainAction = brainMeta.action as AixActionType;
