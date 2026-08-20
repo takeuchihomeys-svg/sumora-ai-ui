@@ -2152,7 +2152,7 @@ ALTER TABLE line_tasks ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
 -- conversation_id UNIQUE により brain 再実行時は upsert で最新状態に上書きされる。
 CREATE TABLE IF NOT EXISTS brain_learning_queue (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  conversation_id UUID NOT NULL UNIQUE,      -- conversations.id（upsert キー）
+  conversation_id TEXT NOT NULL UNIQUE,      -- conversations.id（TEXT型・upsert キー）
   example_id UUID,                           -- ai_reply_examples.id（brain時点では不明・将来リンク用に nullable）
   quality_score INTEGER NOT NULL CHECK (quality_score >= 0 AND quality_score <= 10),
   pattern_tags TEXT[] DEFAULT '{}',          -- 'hesitancy:thinking' | 'stage:proposing' | 'tone:共感的' | 'action:estimate_sheet'
