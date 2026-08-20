@@ -1007,7 +1007,7 @@ function buildGenerationMessages(
   // winning_pattern / next_action）は注入しない（二重注入による戦略の矛盾を防ぐ）。
   // AIX-METAが未生成（brainGuidanceNote が空）の場合のみ、従来の Step1 / ai_summary を
   // フォールバック参考情報として注入する。
-  const hasAixMetaStrategy = brainGuidanceNote.trim().length > 0;
+  const hasAixMetaStrategy = brainGuidanceNote.trim().length > 0; // brainGuidanceNote が非空なら必ず true（action・拡張フィールドどちらでも発火）
   const closingNote = (() => {
     if (hasAixMetaStrategy) return "";
     const parts: string[] = [];
@@ -1769,7 +1769,7 @@ ${rules.map((r, i) => `${i + 1}. ${r.rule_text}（${r.example_count}回確認済
 // AI自動返信禁止。ドラフト生成を中止し、スタッフにLINEグループ通知する。
 // H7(Fable5): closing_strategy / next_steps も読む — brain の戦略をドラフト生成プロンプトへ注入し、
 // スタッフ向け表示（赤枠）と顧客向けドラフトの戦略を一致させる
-type AixGateMeta = { action?: string; note?: string; source?: string; enforcement_level?: "required" | "recommended"; reply_mode?: string; closing_strategy?: string; next_steps?: string[] } | null;
+type AixGateMeta = { action?: string; note?: string; source?: string; enforcement_level?: "required" | "recommended"; reply_mode?: string; closing_strategy?: string; next_steps?: string[]; reply_direction?: string | null; key_topics?: string[]; avoid_topics?: string[]; urgency_appropriate?: boolean; recommended_tone?: string | null } | null;
 
 async function fetchReplyModeGate(
   convId: string
@@ -2492,9 +2492,31 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       ? await fetchReplyModeGate(conversationId)
       : null);
     const brainMeta = brainGate?.meta ?? null;
-    const brainGuidanceNote = (brainMeta && brainMeta.action)
-      ? `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位）】\n- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}${brainMeta.closing_strategy ? `\n- 成約戦略: ${brainMeta.closing_strategy}` : ""}${brainMeta.next_steps?.length ? `\n- 予定ステップ: ${brainMeta.next_steps.join(" / ")}` : ""}\n※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。\n`
-      : "";
+    const brainGuidanceNote = (() => {
+      if (!brainMeta) return "";
+      const hasAction = !!brainMeta.action;
+      const hasExtendedFields = !!(
+        brainMeta.reply_direction ||
+        brainMeta.key_topics?.length ||
+        brainMeta.avoid_topics?.length ||
+        brainMeta.urgency_appropriate === false ||
+        brainMeta.recommended_tone
+      );
+      if (!hasAction && !hasExtendedFields) return "";
+      const lines: string[] = [
+        "【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位）】",
+      ];
+      if (hasAction) lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action!] ?? brainMeta.action}`);
+      if (brainMeta.closing_strategy) lines.push(`- 成約戦略: ${brainMeta.closing_strategy}`);
+      if (brainMeta.next_steps?.length) lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
+      if (brainMeta.reply_direction) lines.push(`- 返信の方向性: ${brainMeta.reply_direction}（この1点に絞って返信を組み立てること）`);
+      if (brainMeta.key_topics?.length) lines.push(`- 必ず含める内容: ${brainMeta.key_topics.join(" / ")}（返信本文に必ず明示的に含めること）`);
+      if (brainMeta.avoid_topics?.length) lines.push(`- 絶対に言及しない: ${brainMeta.avoid_topics.join(" / ")}（これらの話題は返信に一切含めない）`);
+      if (brainMeta.urgency_appropriate === false) lines.push("- 緊急表現禁止: 直近で既に使用済みのため「今なら」「残り◯室」「急いで」等の危機感・緊急表現は使わないこと");
+      if (brainMeta.recommended_tone) lines.push(`- 推奨トーン: ${brainMeta.recommended_tone}`);
+      lines.push("※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。");
+      return lines.join("\n") + "\n";
+    })();
 
     const phaseLabels: Record<string, string> = {
       hearing: "条件ヒアリング中",

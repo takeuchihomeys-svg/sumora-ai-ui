@@ -47,6 +47,12 @@ export type SuggestedAixMeta = {
     ng_properties: Array<{ property_name: string; room_no: string }>;
     search_urgency: string; // "★★★" | "★★" | "★" | "─"
   } | null;
+  // generate-reply への指示フィールド（brainにしかわからないDB知識から導く）
+  reply_direction?: string | null;   // 返信の方向性を20字以内で
+  key_topics?: string[];             // 返信に必ず含める内容（最大3件）
+  avoid_topics?: string[];           // 返信で絶対に言及しない内容（最大5件）
+  urgency_appropriate?: boolean;     // 危機感・緊急表現が今回適切か
+  recommended_tone?: string | null;  // 推奨トーン: "共感的"|"テキパキ"|"慎重"|"明るく前向き"|"普通"
 } | null;
 
 // Canonical mapping from AIX action key → staff guidance note
@@ -1312,9 +1318,22 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}}
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}, "reply_direction": "返信の方向性を20字以内で（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識から導く。必須フィールド・nullは避ける", "key_topics": ["返信に必ず含める内容（最大3件・各30字以内）。brainにしかわからないDB知識から導かれるもののみ（例: '本人確認書類の送付依頼' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列"], "avoid_topics": ["返信で絶対に言及しない内容（最大5件）。'来阪'は常に含める。顧客が質問していない費用・直前に使用済みの緊急表現・文脈に合わないCTA等（例: '来阪' '見積書' '初期費用'）"], "urgency_appropriate": false, "recommended_tone": "'共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれでもない場合）"}
 
-【差分分析モード】userプロンプトに【前回の分析結論】がある場合、それを仮説として参照してよい。新着メッセージが前回結論を変えない場合は前回結論をほぼ維持してJSON出力してよい。ただし申込・内見確定・キャンセル・条件変更・フェーズ遷移のシグナルがあれば前回結論を破棄して再判断すること。JSONは常に全フィールド完全出力（ai_summary/ai_summary_json含む）。`;
+【差分分析モード】userプロンプトに【前回の分析結論】がある場合、それを仮説として参照してよい。新着メッセージが前回結論を変えない場合は前回結論をほぼ維持してJSON出力してよい。ただし申込・内見確定・キャンセル・条件変更・フェーズ遷移のシグナルがあれば前回結論を破棄して再判断すること。JSONは常に全フィールド完全出力（ai_summary/ai_summary_json含む）。
+
+【reply_direction / key_topics / avoid_topics / urgency_appropriate / recommended_tone 判断ルール（5品質ルール）】
+以下の5ルールを厳守し、新フィールドに反映すること:
+
+ルール①（稀少物件）: 会話履歴・チェックポイントに「残り1部屋」「残り僅か」「あと1件」「1件のみ」等の稀少性を示す記述がある場合 → key_topics に「申込みで物件を抑える提案」を追加し、reply_direction を「申込みを前に進める」にする（成約最短ルートを優先する）
+
+ルール②（費用質問なし）: 顧客の最終メッセージに「見積書」「初期費用」「総額」「いくら」「費用」等の費用質問が含まれない場合 → avoid_topics に「見積書」「初期費用」を追加する（顧客が聞いていない費用情報を自発的に話題にしない。ただし顧客が明示的に費用を聞いた場合は絶対に含めない）
+
+ルール③（緊急表現使用済み）: 直近スタッフ送信メッセージ（[スタッフ] または [AIX:xxx] で送られた最新の1〜2件）に危機感・緊急表現（「今なら」「今しか」「すぐ」「急いで」「残り◯室」「あと◯件」「先着」等）が含まれる場合 → urgency_appropriate=false を設定する（同じ表現の繰り返しは逆効果）
+
+ルール④（未完了依頼の催促）: 直近スタッフメッセージに顧客への未完了の依頼事項（「〜を送ってください」「〜をご確認ください」「〜をお願いします」「〜をご共有ください」等）がある場合 → key_topics に「[依頼内容]の確認・催促」を追加する（催促しないと会話が止まる）
+
+ルール⑤（来阪表現禁止・常時）: avoid_topics には必ず「来阪」「ご来阪」を含める。顧客が大阪在住か否かを問わず常時適用する（大阪以外在住の顧客に「来阪ください」は失礼であり、スモラのブランドルール上絶対禁止）`;
 
   // インクリメンタル分析: 前回の分析結論をコンテキストとして注入
   const prevMetaText = opts?.prevMeta ? (() => {
@@ -1382,6 +1401,11 @@ ${history}`;
       template_hint?: string;
       next_steps?: string[];
       reply_mode?: "aix" | "auto_reply";
+      reply_direction?: string | null;
+      key_topics?: string[];
+      avoid_topics?: string[];
+      urgency_appropriate?: boolean;
+      recommended_tone?: string | null;
     };
 
     // brain-core統合: ai_summary + ai_summary_json をproperty_customersに保存（fire-and-forget）
@@ -1603,6 +1627,11 @@ ${history}`;
           return "★";
         })(),
       } : null,
+      reply_direction: (parsed.reply_direction as string | undefined) ?? null,
+      key_topics: Array.isArray(parsed.key_topics) ? (parsed.key_topics as string[]) : [],
+      avoid_topics: Array.isArray(parsed.avoid_topics) ? (parsed.avoid_topics as string[]) : [],
+      urgency_appropriate: typeof parsed.urgency_appropriate === "boolean" ? parsed.urgency_appropriate : true,
+      recommended_tone: (parsed.recommended_tone as string | undefined) ?? null,
     };
   } catch (e) {
     console.warn(`[brain-core] Haiku analysis failed: conv=${conversationId}`, e instanceof Error ? e.message : e);
