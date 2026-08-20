@@ -15,8 +15,8 @@
       --line-green:       #06C755;
       --line-green-dark:  #05aa47;
       --line-green-deeper:#048a39;
-      --bg:               #fdfff8;
-      --bg-alt:           #f0f7f2;
+      --bg:               #ffffff;
+      --bg-alt:           #f4faf6;
       --card:             #ffffff;
       --ink:              #1a2018;
       --muted:            #5a7060;
@@ -29,7 +29,7 @@
       --white-alpha-60:   rgba(255,255,255,0.60);
       --white-alpha-07:   rgba(255,255,255,0.07);
       --card-shadow:      0 8px 24px rgba(0,0,0,0.18);
-      --font-base:        -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
+      --font-base:        'Hiragino Maru Gothic ProN', 'Hiragino Maru Gothic Pro', sans-serif;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
@@ -52,8 +52,8 @@
       --lbl:    #4cd07a;
     }
     :root[data-theme="light"] {
-      --bg:     #fdfff8;
-      --bg-alt: #f0f7f2;
+      --bg:     #ffffff;
+      --bg-alt: #f4faf6;
       --card:   #ffffff;
       --ink:    #1a2018;
       --muted:  #5a7060;
@@ -64,9 +64,7 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
     body {
-      font-family: 'Hiragino Maru Gothic ProN', 'Hiragino Maru Gothic Pro',
-                   'BIZ UDPGothic', 'Hiragino Kaku Gothic ProN',
-                   'Hiragino Sans', Meiryo, sans-serif;
+      font-family: 'Hiragino Maru Gothic ProN', 'Hiragino Maru Gothic Pro', sans-serif;
       font-size: 16px;
       line-height: 1.8;
       color: var(--ink);
@@ -91,8 +89,7 @@
       .r { opacity: 1; transform: none; transition: none; }
     }
 
-    /* Header */
-    /* header removed — TikTok banner is the hero top */
+    /* Header button (utility) */
     .h-btn {
       display: inline-flex;
       align-items: center;
@@ -108,62 +105,28 @@
       transition: background .18s, transform .12s;
     }
     .h-btn:hover { background: var(--line-dk); transform: scale(1.04); }
-    .h-btn:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
+    .h-btn:focus-visible { outline: 3px solid var(--line); outline-offset: 2px; }
 
-    /* ─── Hero (Fable5 redesign: pop QR-first design) ─── */
+    /* ─── Hero ─── */
 
-    @keyframes twinkle {
-      0%,100% { opacity:1; transform:scale(1) rotate(0deg); }
-      50%      { opacity:.65; transform:scale(1.45) rotate(22deg); }
-    }
     @keyframes float-arrow {
       0%,100% { transform:translateY(0); }
       50%      { transform:translateY(-5px); }
     }
-    @keyframes sway {
-      0%,100% { transform:rotate(-3deg) translateY(0); }
-      50%      { transform:rotate(2.5deg) translateY(-7px); }
-    }
-    @keyframes sway-r {
-      0%,100% { transform:rotate(3deg) translateY(-6px); }
-      50%      { transform:rotate(-2deg) translateY(0); }
-    }
-    @keyframes spin-slow {
-      from { transform:translateX(-50%) rotate(0deg); }
-      to   { transform:translateX(-50%) rotate(360deg); }
-    }
-    @keyframes pulse-ring {
-      0%   { box-shadow:0 0 0 0 rgba(0,230,118,.95), 0 0 26px rgba(0,230,118,.85), 4px 4px 0 #111; }
-      65%  { box-shadow:0 0 0 26px rgba(0,230,118,0), 0 0 26px rgba(0,230,118,.85), 4px 4px 0 #111; }
-      100% { box-shadow:0 0 0 0 rgba(0,230,118,0), 0 0 26px rgba(0,230,118,.85), 4px 4px 0 #111; }
-    }
 
     #hero {
-      font-family: 'Hiragino Maru Gothic ProN','HGMaruGothicMPRO','Meiryo','MS PGothic',sans-serif;
+      font-family: 'Hiragino Maru Gothic ProN', 'Hiragino Maru Gothic Pro', sans-serif;
       max-width: 480px;
       margin: 0 auto;
       min-height: 100vh;
       min-height: 100svh;
-      background: radial-gradient(circle at 50% 26%, #FFFFFF 0%, #FFF9AE 34%, #FFEE33 72%, #FFD600 100%);
+      background: #ffffff;
       position: relative;
       overflow: hidden;
-      filter: saturate(1.18) brightness(1.04);
     }
     #hero * { box-sizing: border-box; margin: 0; padding: 0; }
 
-    /* dot halftone texture */
-    #hero::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background-image: radial-gradient(circle, #FF9100 1.6px, transparent 1.6px);
-      background-size: 18px 18px;
-      opacity: .22;
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    /* conic sunburst */
+    /* Subtle green radial tint — replaces heavy yellow sunburst */
     .h-sunburst {
       position: absolute;
       top: -80px;
@@ -171,15 +134,8 @@
       transform: translateX(-50%);
       width: 760px;
       height: 760px;
-      background:
-        radial-gradient(circle, rgba(255,255,255,.98) 0%, rgba(255,255,255,.6) 18%, rgba(255,255,255,0) 46%),
-        repeating-conic-gradient(
-          from 0deg,
-          rgba(255,213,0,.92) 0deg 7deg,
-          rgba(255,245,120,.28) 7deg 14deg
-        );
+      background: radial-gradient(circle, rgba(6,199,85,0.07) 0%, rgba(6,199,85,0.03) 40%, transparent 70%);
       border-radius: 50%;
-      animation: spin-slow 55s linear infinite;
       z-index: 0;
       pointer-events: none;
     }
@@ -218,7 +174,6 @@
       padding: 4px 8px;
       border-radius: 4px;
       letter-spacing: .06em;
-      transform: rotate(-2deg);
       white-space: nowrap;
     }
 
@@ -228,31 +183,21 @@
       z-index: 5;
       padding: 28px 20px 12px;
     }
-    .h-star {
-      position: absolute;
-      z-index: 6;
-      animation: twinkle 2.3s ease-in-out infinite;
-      -webkit-text-stroke: 1px #111;
-      line-height: 1;
-      pointer-events: none;
-    }
-    .h-star.s1 { top: 10px; left: 12px; font-size: 21px; color: var(--sun); animation-delay: 0s; }
-    .h-star.s2 { top: 14px; right: 14px; font-size: 27px; color: var(--tangerine); animation-delay: .9s; }
     .h-eyebrow { display: flex; justify-content: center; margin-bottom: 8px; }
     .eyebrow-badge {
       display: inline-block;
-      background: #111;
-      color: var(--sun);
+      background: var(--line);
+      color: #fff;
       font-size: 11px;
       font-weight: 900;
       padding: 4px 14px;
       border-radius: 4px;
-      letter-spacing: .1em;
-      transform: rotate(-1.5deg);
-      box-shadow: 2px 2px 0 var(--sun);
+      letter-spacing: .02em;
     }
+
+    /* H1 title — no pulse animation */
     .h-title {
-      font-size: 22px;
+      font-size: clamp(22px, 7vw, 34px);
       font-weight: 900;
       color: #111;
       line-height: 1.28;
@@ -263,73 +208,61 @@
     }
     .h-title .accent { color: var(--line-dk); }
     .h-title-sub { font-size: 0.62em; font-weight: 800; color: #333; }
-
-    /* ===== hero h1 viral title card ===== */
-    .h-title {
-      font-size: clamp(22px, 7vw, 34px);
-      line-height: 1.25;
-      animation: h1-pulse 1.6s ease-in-out infinite;
-      will-change: transform;
-    }
     .h-title-main {
       display: block;
-      filter: drop-shadow(0 5px 12px rgba(0,0,0,.28));
+      filter: drop-shadow(0 3px 8px rgba(0,0,0,.12));
     }
     .h-title .hl-marker {
       display: inline-block;
-      background: #FFE800;
+      background: #e8fdf1;
       font-size: 1.08em;
       padding: 3px 10px 4px;
       border-radius: 5px;
       transform: rotate(-1.5deg);
       -webkit-text-stroke: .6px #111;
-      box-shadow: 4px 4px 0 rgba(0,0,0,.18), 0 0 28px rgba(255,232,0,.95);
     }
     .h-title .accent-red {
       display: inline-block;
-      color: #e82020;
+      color: var(--line);
       font-size: 1.2em;
-      -webkit-text-stroke: 1.5px #e82020;
+      -webkit-text-stroke: 1px var(--line);
       transform: rotate(.5deg);
       transform-origin: left center;
-      text-shadow: 0 4px 0 rgba(232,32,32,.25);
     }
-    @keyframes h1-pulse {
-      0%, 100% { transform: scale(1); }
-      50% { transform: scale(1.035); }
-    }
-    @media (prefers-reduced-motion: reduce) { .h-title { animation: none !important; } }
     .h-title-line {
       display: inline-block;
       margin-top: 5px;
       font-size: 0.78em;
       font-weight: 900;
-      color: #06C755;
-      -webkit-text-stroke: .4px #06C755;
+      color: var(--line);
+      -webkit-text-stroke: .4px var(--line);
       letter-spacing: .02em;
       transform: rotate(-0.5deg);
     }
 
-    /* ===== green LINE CTA band ===== */
+    /* ===== LINE CTA band ===== */
     .h-cta-band {
-      background: linear-gradient(135deg, #00E676 0%, #06C755 55%, #00C853 100%);
-      box-shadow: 0 0 28px rgba(0,230,118,.6), inset 0 0 48px rgba(255,255,255,.14);
+      background: var(--line);
+      padding: 28px 20px 32px;
+      text-align: center;
+      position: relative;
+      z-index: 5;
     }
     .cta-line-heading {
       text-align: center;
-      font-size: 24px;
+      font-size: 20px;
       font-weight: 900;
       color: #fff;
-      margin: 0;
+      margin: 0 0 14px;
       letter-spacing: .02em;
-      text-shadow: 0 2px 4px rgba(0,0,0,.2), 0 0 14px rgba(255,255,255,.45);
-      animation: cta-text-pulse 1.6s ease-in-out infinite;
     }
-    @keyframes cta-text-pulse {
-      0%, 100% { transform: scale(1); text-shadow: 0 2px 4px rgba(0,0,0,.2), 0 0 10px rgba(255,255,255,.35); }
-      50%      { transform: scale(1.05); text-shadow: 0 2px 4px rgba(0,0,0,.2), 0 0 26px rgba(255,255,255,.85); }
+    .h-cta-band p {
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.55;
+      margin-bottom: 12px;
     }
-    @media (prefers-reduced-motion: reduce) { .cta-line-heading { animation: none !important; } }
     .cta-line-card {
       display: block;
       width: 100%;
@@ -349,7 +282,7 @@
       display: block;
       font-size: 19px;
       font-weight: 900;
-      color: #06C755;
+      color: var(--line);
       line-height: 1.3;
       letter-spacing: .02em;
     }
@@ -367,25 +300,47 @@
       font-size: 11.5px;
       font-weight: 700;
       color: #444;
-      letter-spacing: .03em;
+      letter-spacing: .02em;
     }
     @media (prefers-reduced-motion: reduce) {
       .cta-line-arrow { animation: none !important; }
     }
+    .h-line-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      background: #fff;
+      color: var(--line-dk);
+      font-size: 15px;
+      font-weight: 900;
+      padding: 14px 20px;
+      border-radius: 10px;
+      text-decoration: none;
+      box-shadow: 0 5px 0 var(--line-dk);
+      letter-spacing: .02em;
+      border: 2px solid var(--line-dk);
+      transition: transform .1s, box-shadow .1s;
+    }
+    .h-line-btn:active {
+      transform: translateY(4px);
+      box-shadow: 0 1px 0 var(--line-dk);
+    }
 
-    /* ===== MERIT : 3つの強み（hero内・イエヤスでもっとお得に） ===== */
+    /* ===== MERIT : 3つの強み ===== */
     .merit-zone {
       position: relative;
       z-index: 5;
       padding: 34px 20px 44px;
+      background: var(--bg-alt);
     }
     .merit-head { text-align: center; margin-bottom: 22px; }
     .merit-eyebrow {
       display: block;
       font-size: 13px;
       font-weight: 900;
-      color: #B24700;
-      letter-spacing: .14em;
+      color: var(--line);
+      letter-spacing: .02em;
       margin-bottom: 6px;
     }
     .merit-title {
@@ -394,23 +349,20 @@
       color: #111;
       line-height: 1.3;
       -webkit-text-stroke: .3px #111;
-      text-shadow: 2px 2px 0 rgba(255,255,255,.85);
     }
-    .merit-title em { font-style: normal; color: #E8380D; }
+    .merit-title em { font-style: normal; color: var(--line); }
     .merit-social {
       display: inline-block;
       margin-top: 10px;
       background: #fff;
-      border: 2px solid #111;
+      border: 1.5px solid var(--border);
       border-radius: 999px;
       padding: 5px 14px;
       font-size: 11.5px;
       font-weight: 900;
       color: #111;
-      box-shadow: 3px 3px 0 #111;
-      transform: rotate(-0.6deg);
     }
-    .merit-social em { font-style: normal; color: #E8380D; }
+    .merit-social em { font-style: normal; color: var(--line); }
 
     .merit-cards { display: flex; flex-direction: column; gap: 18px; }
     .merit-card {
@@ -419,24 +371,22 @@
       align-items: center;
       gap: 14px;
       background: #fff;
-      border: 3px solid #111;
+      border: 1.5px solid var(--border);
       border-radius: 18px;
       padding: 20px 16px 16px;
-      box-shadow: 5px 5px 0 #111;
+      box-shadow: 0 4px 16px rgba(0,0,0,.07);
     }
     .merit-num {
       position: absolute;
       top: -12px;
       left: -6px;
-      background: #111;
-      color: var(--sun);
+      background: var(--line);
+      color: #fff;
       font-size: 11px;
       font-weight: 900;
       padding: 4px 10px;
       border-radius: 6px;
-      letter-spacing: .08em;
-      transform: rotate(-3deg);
-      box-shadow: 2px 2px 0 var(--sun);
+      letter-spacing: .02em;
       white-space: nowrap;
     }
     .merit-icon {
@@ -446,19 +396,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 30px;
+      font-size: 28px;
       border-radius: 16px;
-      border: 2.5px solid #111;
-    }
-    .merit-icon.m1 { background: #FFE3CC; }
-    .merit-icon.m2 { background: #FFF3B8; }
-    .merit-icon.m3 { background: #D6F7E3; }
-    .merit-zero {
-      font-size: 19px;
-      font-weight: 900;
-      color: #B24700;
-      letter-spacing: -.02em;
-      -webkit-text-stroke: .4px #B24700;
+      background: #e8fdf1;
     }
     .merit-body { flex: 1; min-width: 0; }
     .merit-claim {
@@ -468,12 +408,11 @@
       color: #fff;
       padding: 2px 9px;
       border-radius: 4px;
-      letter-spacing: .06em;
+      letter-spacing: .02em;
       margin-bottom: 5px;
-      transform: rotate(-1deg);
     }
-    .merit-claim.c1 { background: var(--tangerine); }
-    .merit-claim.c2 { background: #111; color: var(--sun); }
+    .merit-claim.c1 { background: var(--line); }
+    .merit-claim.c2 { background: #1a1a1a; color: #fff; }
     .merit-claim.c3 { background: var(--line); }
     .merit-h {
       font-size: 18px;
@@ -481,7 +420,7 @@
       color: #111;
       line-height: 1.35;
     }
-    .merit-h em { font-style: normal; color: #E8380D; }
+    .merit-h em { font-style: normal; color: var(--line); }
     .merit-sub {
       margin-top: 5px;
       font-size: 12.5px;
@@ -489,115 +428,19 @@
       color: #555;
       line-height: 1.6;
     }
-    .merit-more {
-      margin-top: 22px;
-      text-align: center;
-      font-size: 12px;
-      font-weight: 900;
-      color: #7A5200;
-      letter-spacing: .1em;
-      animation: merit-bounce 1.6s ease-in-out infinite;
-    }
-    @keyframes merit-bounce {
-      0%, 100% { transform: translateY(0); }
-      50%      { transform: translateY(4px); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .merit-more { animation: none !important; }
-    }
 
-    /* QR stage */
+    /* QR stage — simplified after bubble removal */
     .qr-stage {
       position: relative;
       display: flex;
       justify-content: center;
       align-items: center;
-      padding: 0 98px;
-      min-height: 230px;
+      padding: 0 20px;
+      min-height: auto;
     }
-    .bubble {
-      position: absolute;
-      border: 3px solid #111;
-      padding: 10px 11px;
-      font-size: 12px;
-      font-weight: 900;
-      color: #111;
-      width: 86px;
-      text-align: center;
-      line-height: 1.45;
-      z-index: 8;
-    }
-    .b-left {
-      background: #fff;
-      left: 0;
-      top: 50%;
-      border-radius: 14px 14px 14px 4px;
-      box-shadow: 3px 3px 0 #111;
-      animation: sway 3.3s ease-in-out infinite;
-    }
-    .b-left::after {
-      content: '';
-      position: absolute;
-      right: -14px;
-      top: 50%;
-      transform: translateY(-50%);
-      border-left: 14px solid #111;
-      border-top: 9px solid transparent;
-      border-bottom: 9px solid transparent;
-    }
-    .b-left::before {
-      content: '';
-      position: absolute;
-      right: -10px;
-      top: 50%;
-      transform: translateY(-50%);
-      border-left: 11px solid #fff;
-      border-top: 7px solid transparent;
-      border-bottom: 7px solid transparent;
-      z-index: 1;
-    }
-    .b-left .hi { color: var(--line-dk); font-size: 15px; display: block; }
-    .b-left-main {
-      display: inline-block;
-      font-size: 13px;
-      font-weight: 900;
-      color: #111;
-      border-bottom: 3px solid var(--line);
-      padding-bottom: 3px;
-    }
-    .b-right {
-      background: var(--sun);
-      right: 0;
-      top: 50%;
-      border-radius: 14px 14px 4px 14px;
-      box-shadow: 3px 3px 0 #111;
-      animation: sway-r 2.8s ease-in-out infinite;
-    }
-    .b-right::after {
-      content: '';
-      position: absolute;
-      left: -14px;
-      top: 50%;
-      transform: translateY(-50%);
-      border-right: 14px solid #111;
-      border-top: 9px solid transparent;
-      border-bottom: 9px solid transparent;
-    }
-    .b-right::before {
-      content: '';
-      position: absolute;
-      left: -10px;
-      top: 50%;
-      transform: translateY(-50%);
-      border-right: 11px solid var(--sun);
-      border-top: 7px solid transparent;
-      border-bottom: 7px solid transparent;
-      z-index: 1;
-    }
-    .b-right .hi { color: var(--forest); font-size: 14px; display: block; }
     .qr-card {
       background: #fff;
-      border: 3px solid var(--line);
+      border: 2px solid var(--line);
       border-radius: 18px;
       padding: 14px 14px 12px;
       display: flex;
@@ -606,7 +449,7 @@
       gap: 8px;
       position: relative;
       z-index: 7;
-      animation: pulse-ring 1.8s ease-in-out infinite;
+      box-shadow: 0 4px 20px rgba(6,199,85,0.28);
     }
     .qr-card img { display: block; border-radius: 6px; }
     .qr-label {
@@ -657,57 +500,19 @@
       flex-wrap: wrap;
       gap: 8px;
       justify-content: center;
-      margin-bottom: 18px;
+      margin-bottom: 24px;
     }
     .chip {
-      background: #111;
-      color: var(--sun);
-      font-size: 11px;
-      font-weight: 900;
-      padding: 7px 13px;
-      border-radius: 6px;
-      box-shadow: 3px 3px 0 var(--sun);
-      letter-spacing: .04em;
+      background: transparent;
+      color: var(--line);
+      border: 1.5px solid var(--line);
+      border-radius: 9999px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      box-shadow: none;
       white-space: nowrap;
-    }
-    .chip:nth-child(1) { transform: rotate(-0.7deg); }
-    .chip:nth-child(2) { transform: rotate(0.5deg); }
-    .chip:nth-child(3) { transform: rotate(-0.4deg); }
-    .h-cta-band {
-      background: var(--line);
-      padding: 38px 20px 46px;
-      text-align: center;
-      position: relative;
-      z-index: 5;
-    }
-    .h-cta-band p {
-      color: #fff;
-      font-size: 13px;
-      font-weight: 900;
-      line-height: 1.55;
-      margin-bottom: 12px;
-      text-shadow: 0 1px 2px rgba(0,0,0,.2);
-    }
-    .h-line-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 9px;
-      background: #fff;
-      color: var(--line-dk);
-      font-size: 15px;
-      font-weight: 900;
-      padding: 14px 20px;
-      border-radius: 10px;
-      text-decoration: none;
-      box-shadow: 0 5px 0 var(--line-dk);
-      letter-spacing: .04em;
-      border: 2px solid var(--line-dk);
-      transition: transform .1s, box-shadow .1s;
-    }
-    .h-line-btn:active {
-      transform: translateY(4px);
-      box-shadow: 0 1px 0 var(--line-dk);
     }
 
     /* ─── Screenshot Guidance Styles ─── */
@@ -730,7 +535,6 @@
       50%       { transform: translateY(6px); }
     }
 
-    /* Flash banner */
     .h-screenshot-banner {
       position: relative;
       z-index: 10;
@@ -769,7 +573,6 @@
       line-height: 1.45;
     }
 
-    /* Arrow pointing down to QR */
     .screenshot-arrow-hint {
       position: relative;
       z-index: 5;
@@ -799,13 +602,11 @@
       animation: arrow-down 1.1s ease-in-out infinite;
     }
 
-    /* QR card screenshot target highlight */
     .qr-card.screenshot-target {
       outline: 3px dashed var(--sun);
       outline-offset: 5px;
     }
 
-    /* 3-step screenshot guide bar */
     .screenshot-steps {
       position: relative;
       z-index: 5;
@@ -871,23 +672,20 @@
       .screenshot-arrow-hint .arr-icon { animation: none !important; }
     }
 
-    /* Instagram section */
+    /* ─── Instagram section ─── */
 
     @keyframes ig-swipe-nudge {
       0%, 100% { transform: translateX(0); opacity: 0.9; }
       40%, 60%  { transform: translateX(-11px); opacity: 0.3; }
     }
-
     @keyframes ig-shimmer {
       from { transform: translateX(-100%) skewX(-18deg); }
       to   { transform: translateX(380%) skewX(-18deg); }
     }
-
     @keyframes ig-heartbeat {
       0%, 100% { transform: scale(1); }
       50%       { transform: scale(1.28); }
     }
-
     @keyframes ig-ring {
       to { transform: rotate(360deg); }
     }
@@ -903,15 +701,12 @@
       -webkit-font-smoothing: antialiased;
       color-scheme: dark;
     }
-
-    /* --- Header --- */
     #instagram-section .ig-header {
       display: flex;
       align-items: center;
       gap: 14px;
       padding: 0 20px 18px;
     }
-
     #instagram-section .ig-avatar-ring {
       width: 62px;
       height: 62px;
@@ -924,7 +719,6 @@
       justify-content: center;
       animation: ig-ring 10s linear infinite;
     }
-
     #instagram-section .ig-avatar-inner {
       width: 100%;
       height: 100%;
@@ -936,12 +730,10 @@
       justify-content: center;
       font-size: 24px;
     }
-
     #instagram-section .ig-account-info {
       flex: 1;
       min-width: 0;
     }
-
     #instagram-section .ig-username {
       font-size: 16px;
       font-weight: 700;
@@ -950,7 +742,6 @@
       line-height: 1.1;
       margin-bottom: 4px;
     }
-
     #instagram-section .ig-fullname {
       font-size: 11px;
       color: #666;
@@ -958,7 +749,6 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-
     #instagram-section .ig-follow-btn {
       flex-shrink: 0;
       background: linear-gradient(130deg, #1b6e2e, #06C755);
@@ -972,8 +762,6 @@
       letter-spacing: -0.2px;
       box-shadow: 0 2px 14px rgba(6,199,85,0.28);
     }
-
-    /* --- Stats --- */
     #instagram-section .ig-stats {
       display: flex;
       justify-content: space-around;
@@ -982,11 +770,7 @@
       border-bottom: 1px solid #1c1c1c;
       margin-bottom: 24px;
     }
-
-    #instagram-section .ig-stat {
-      text-align: center;
-    }
-
+    #instagram-section .ig-stat { text-align: center; }
     #instagram-section .ig-stat-num {
       font-size: 16px;
       font-weight: 700;
@@ -995,15 +779,12 @@
       letter-spacing: -0.5px;
       line-height: 1.1;
     }
-
     #instagram-section .ig-stat-label {
       font-size: 10px;
       color: #555;
       margin-top: 3px;
       letter-spacing: 0.3px;
     }
-
-    /* --- Grid label --- */
     #instagram-section .ig-grid-label {
       padding: 0 20px 14px;
       display: flex;
@@ -1014,7 +795,6 @@
       letter-spacing: 1px;
       text-transform: uppercase;
     }
-
     #instagram-section .ig-grid-label::before,
     #instagram-section .ig-grid-label::after {
       content: '';
@@ -1022,12 +802,7 @@
       height: 1px;
       background: #1c1c1c;
     }
-
-    /* --- Slider --- */
-    #instagram-section .ig-slider-wrap {
-      position: relative;
-    }
-
+    #instagram-section .ig-slider-wrap { position: relative; }
     #instagram-section .ig-slider {
       display: flex;
       gap: 11px;
@@ -1037,12 +812,7 @@
       -webkit-overflow-scrolling: touch;
       scrollbar-width: none;
     }
-
-    #instagram-section .ig-slider::-webkit-scrollbar {
-      display: none;
-    }
-
-    /* Swipe hint */
+    #instagram-section .ig-slider::-webkit-scrollbar { display: none; }
     #instagram-section .ig-swipe-hint {
       position: absolute;
       bottom: 28px;
@@ -1051,8 +821,6 @@
       pointer-events: none;
       animation: ig-swipe-nudge 2.6s ease-in-out infinite;
     }
-
-    /* --- Cards --- */
     #instagram-section .ig-card {
       flex-shrink: 0;
       width: 158px;
@@ -1063,12 +831,7 @@
       background: #111;
       transition: transform 0.16s ease;
     }
-
-    #instagram-section .ig-card:active {
-      transform: scale(0.94);
-    }
-
-    /* 9:16 card image area */
+    #instagram-section .ig-card:active { transform: scale(0.94); }
     #instagram-section .ig-card-img {
       width: 158px;
       height: 281px;
@@ -1078,8 +841,6 @@
       align-items: center;
       justify-content: center;
     }
-
-    /* Bottom vignette for legibility */
     #instagram-section .ig-card-img::before {
       content: '';
       position: absolute;
@@ -1091,8 +852,6 @@
       pointer-events: none;
       z-index: 1;
     }
-
-    /* Per-card gradients */
     #instagram-section .ig-card:nth-child(1) .ig-card-img {
       background: linear-gradient(150deg, #081e0e 0%, #1b6e2e 48%, #3aab4f 72%, #f5c842 100%);
     }
@@ -1111,8 +870,6 @@
     #instagram-section .ig-card:nth-child(6) .ig-card-img {
       background: linear-gradient(150deg, #0a1422 0%, #1e3a5f 42%, #1b6e2e 70%, #f5c842 100%);
     }
-
-    /* Badge */
     #instagram-section .ig-badge {
       position: absolute;
       top: 11px;
@@ -1129,8 +886,6 @@
       letter-spacing: 0.3px;
       z-index: 3;
     }
-
-    /* Card body */
     #instagram-section .ig-card-body {
       display: flex;
       flex-direction: column;
@@ -1139,13 +894,11 @@
       z-index: 2;
       padding: 0 11px;
     }
-
     #instagram-section .ig-card-emoji {
       font-size: 40px;
       filter: drop-shadow(0 3px 10px rgba(0,0,0,0.5));
       line-height: 1;
     }
-
     #instagram-section .ig-card-copy {
       font-size: 12.5px;
       font-weight: 800;
@@ -1155,12 +908,7 @@
       text-shadow: 0 2px 12px rgba(0,0,0,0.55);
       letter-spacing: -0.3px;
     }
-
-    #instagram-section .ig-card-copy em {
-      font-style: normal;
-      color: #f5c842;
-    }
-
+    #instagram-section .ig-card-copy em { font-style: normal; color: #f5c842; }
     #instagram-section .ig-card-sub {
       font-size: 9.5px;
       font-weight: 500;
@@ -1169,8 +917,6 @@
       text-shadow: 0 1px 6px rgba(0,0,0,0.5);
       line-height: 1.3;
     }
-
-    /* Location tag */
     #instagram-section .ig-card-loc {
       position: absolute;
       bottom: 44px;
@@ -1180,7 +926,6 @@
       justify-content: center;
       z-index: 3;
     }
-
     #instagram-section .ig-card-loc span {
       background: rgba(0,0,0,0.48);
       backdrop-filter: blur(4px);
@@ -1190,8 +935,6 @@
       font-size: 8.5px;
       color: rgba(255,255,255,0.76);
     }
-
-    /* Card bar */
     #instagram-section .ig-card-bar {
       padding: 9px 12px;
       background: #111;
@@ -1199,7 +942,6 @@
       align-items: center;
       gap: 12px;
     }
-
     #instagram-section .ig-eng {
       display: flex;
       align-items: center;
@@ -1208,18 +950,12 @@
       color: #888;
       font-variant-numeric: tabular-nums;
     }
-
     #instagram-section .ig-eng-heart {
       font-size: 12px;
       display: inline-block;
       animation: ig-heartbeat 1.9s ease-in-out infinite;
     }
-
-    #instagram-section .ig-eng-comment {
-      font-size: 12px;
-    }
-
-    /* --- Dots --- */
+    #instagram-section .ig-eng-comment { font-size: 12px; }
     #instagram-section .ig-dots {
       display: flex;
       justify-content: center;
@@ -1227,7 +963,6 @@
       gap: 5px;
       padding: 2px 0 0;
     }
-
     #instagram-section .ig-dot {
       width: 5px;
       height: 5px;
@@ -1236,18 +971,12 @@
       transition: width 0.28s ease, background 0.28s ease;
       flex-shrink: 0;
     }
-
     #instagram-section .ig-dot.active {
       width: 20px;
       border-radius: 3px;
       background: linear-gradient(90deg, #833ab4, #fd1d1d, #fcb045);
     }
-
-    /* --- CTA --- */
-    #instagram-section .ig-cta {
-      padding: 28px 20px 0;
-    }
-
+    #instagram-section .ig-cta { padding: 28px 20px 0; }
     #instagram-section .ig-cta-btn {
       display: flex;
       align-items: center;
@@ -1269,12 +998,10 @@
       transition: transform 0.14s ease, box-shadow 0.14s ease;
       -webkit-tap-highlight-color: transparent;
     }
-
     #instagram-section .ig-cta-btn:active {
       transform: scale(0.97);
       box-shadow: 0 2px 12px rgba(131,58,180,0.28);
     }
-
     #instagram-section .ig-cta-btn::after {
       content: '';
       position: absolute;
@@ -1285,7 +1012,6 @@
       background: linear-gradient(90deg, transparent, rgba(255,255,255,0.27), transparent);
       animation: ig-shimmer 3s ease-in-out infinite;
     }
-
     #instagram-section .ig-cta-sub {
       text-align: center;
       font-size: 10.5px;
@@ -1295,14 +1021,14 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .h-sunburst, .h-star, .b-left, .b-right, .scan-arrow, .qr-card { animation: none !important; }
+      .scan-arrow { animation: none !important; }
       #instagram-section .ig-avatar-ring,
       #instagram-section .ig-eng-heart,
       #instagram-section .ig-cta-btn::after,
       #instagram-section .ig-swipe-hint { animation: none !important; }
     }
 
-    /* Final CTA (used below hero too) */
+    /* Final CTA */
     .btn-line {
       display: flex;
       align-items: center;
@@ -1327,7 +1053,7 @@
       transform: translateY(-2px);
       box-shadow: 0 8px 28px rgba(6,199,85,.54);
     }
-    .btn-line:focus-visible { outline: 3px solid var(--sun); outline-offset: 3px; }
+    .btn-line:focus-visible { outline: 3px solid var(--line); outline-offset: 3px; }
     .btn-line.lg { font-size: 19px; padding: 20px; }
 
     /* Sections */
@@ -1413,21 +1139,21 @@
       flex-shrink: 0;
     }
     .step-num.s1 { background: var(--forest); }
-    .step-num.s2 { background: var(--tangerine); }
+    .step-num.s2 { background: var(--line); }
     .step-num.s3 { background: var(--line); }
     .step-body { padding-bottom: 32px; }
     .step:last-child .step-body { padding-bottom: 0; }
     .step-title { font-size: 16px; font-weight: 800; color: var(--ink); line-height: 1.4; margin-bottom: 4px; }
     .step-desc  { font-size: 13px; color: var(--muted); line-height: 1.7; }
 
-    /* Final CTA */
+    /* Final CTA section */
     .final {
       background: linear-gradient(160deg, #0f3d1c 0%, #1b6e2e 100%);
       padding: 52px 24px;
       text-align: center;
     }
     .final-hl { font-size: 26px; font-weight: 900; color: #fff; line-height: 1.35; text-wrap: balance; margin-bottom: 8px; }
-    .final-hl em { font-style: normal; color: var(--sun); }
+    .final-hl em { font-style: normal; color: rgba(255,255,255,.9); }
     .final-sub  { font-size: 14px; color: rgba(255,255,255,.82); margin-bottom: 28px; line-height: 1.75; }
     .final-note { margin-top: 14px; font-size: 12px; color: rgba(255,255,255,.6); }
 
@@ -1471,13 +1197,12 @@
       transition: background .18s;
     }
     .bottom-bar a:hover { background: var(--line-dk); }
-    .bottom-bar a:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
+    .bottom-bar a:focus-visible { outline: 3px solid var(--line); outline-offset: 2px; }
     .ico   { width: 20px; height: 20px; flex-shrink: 0; }
     .ico-l { width: 26px; height: 26px; flex-shrink: 0; }
 
     /* ===== fc-: TIKTOK STYLE HERO ===== */
 
-    /* 動画サムネ風QRカード（カード全体がリンク。長押しメニューを殺さない） */
     .fc-video-card {
       position: relative;
       display: inline-block;
@@ -1507,7 +1232,6 @@
 
     .fc-strong { color: var(--line); font-weight: 800; }
 
-    /* TikTok風LIVEバッジ */
     .fc-live-badge {
       position: absolute;
       top: -10px;
@@ -1539,7 +1263,6 @@
     }
     @keyframes fc-blink { to { visibility: hidden; } }
 
-    /* 長押し指アイコン＋波紋リング */
     .fc-press-icon {
       position: absolute;
       right: -14px;
@@ -1576,7 +1299,6 @@
       100% { transform: scale(1.35); opacity: 0; }
     }
 
-    /* CTA: TikTokコメント風・黒バンド */
     .fc-cta-dark {
       background: #161823;
       border-radius: var(--r-md);
@@ -1635,7 +1357,6 @@
       text-align: center;
     }
 
-    /* 脈動LINEボタン（CTA・フッター共用） */
     .fc-pulse-btn {
       animation: fc-pulse 1.6s ease-in-out infinite;
       -webkit-touch-callout: default;
@@ -1647,7 +1368,6 @@
       50%      { transform: scale(1.04); box-shadow: 0 0 0 12px rgba(6,199,85,0); }
     }
 
-    /* フッター用LINEボタン（footer-line-btn は本追加で新設） */
     .footer-line-btn {
       display: flex;
       align-items: center;
@@ -1663,10 +1383,9 @@
       max-width: 320px;
       margin: 16px auto 6px;
       text-align: center;
-      letter-spacing: .04em;
+      letter-spacing: .02em;
     }
 
-    /* アクセシビリティ: 動きを減らす設定を尊重 */
     @media (prefers-reduced-motion: reduce) {
       .fc-pulse-btn,
       .fc-press-finger,
@@ -1675,20 +1394,18 @@
       .fc-tt-heart { animation: none; }
     }
 
-    /* ===== fcb-: いえやすくん（家型マスコット） ===== */
+    /* ===== fcb-: IEYASU武将マスコット ===== */
 
-    /* 配置ラッパー: h-body 右下に固定（バブル z-index:8 より背面） */
     .fcb-mascot-wrap {
       position: absolute;
-      right: -8px;
-      bottom: -10px;
-      width: 90px;
-      max-width: 90px;
+      right: 4px;
+      bottom: -4px;
+      width: 100px;
+      max-width: 100px;
       z-index: 5;
       pointer-events: none;
     }
 
-    /* 本体：左右にゆらゆら（足元を軸に振り子） */
     .fcb-mascot {
       display: block;
       width: 100%;
@@ -1714,31 +1431,22 @@
       animation: fcb-tap-jump 0.55s cubic-bezier(.36,.07,.19,.97) forwards;
     }
 
-    /* バンザイの腕：ゆれと逆位相で小さく上下（喜び感を強調） */
     .fcb-arms {
       transform-origin: 70px 104px;
       transform-box: view-box;
       animation: fcb-arms-bob 3s ease-in-out infinite;
     }
-
     @keyframes fcb-arms-bob {
       0%, 100% { transform: translateY(0); }
       50%      { transform: translateY(-2.5px); }
     }
 
-    /* TikTok WebView 対策：モーション低減設定を尊重 */
     @media (prefers-reduced-motion: reduce) {
-      .fcb-mascot,
-      .fcb-arms {
-        animation: none;
-      }
+      .fcb-mascot, .fcb-arms { animation: none; }
     }
   </style>
 </head>
 <body>
-
-<!-- HEADER -->
-<!-- IEYAS header removed: TikTok banner is now the top element -->
 
 <!-- HERO -->
 <section id="hero" aria-label="イエヤス ヒーローセクション">
@@ -1757,20 +1465,13 @@
 
   <!-- Body -->
   <div class="h-body">
-    <span class="h-star s1" aria-hidden="true">★</span>
-    <span class="h-star s2" aria-hidden="true">✦</span>
-
     <h1 class="h-title">
       <span class="h-title-main"><span class="hl-marker">賃貸の初期費用</span><span class="accent-red">最大限割引</span></span>
       <span class="h-title-sub">QR長押しで友達追加！</span>
     </h1>
 
-    <!-- QR stage : 動画サムネ風カード（カード全体がリンク＝長押しでiOSメニュー） -->
+    <!-- QR stage -->
     <div class="qr-stage">
-      <div class="bubble b-left" role="note" aria-label="グッと長押し">
-        <span class="b-left-main">グッと長押し！</span>
-      </div>
-
       <a href="https://lin.ee/v5CFQfL" class="qr-card fc-video-card" target="_blank" rel="noopener noreferrer"
          aria-label="このカードを長押しして「リンクを開く」でLINE友だち追加">
         <div class="line-corner-badge">LINE</div>
@@ -1792,58 +1493,153 @@
           LINE追加できます！
         </div>
       </a>
-
-      <div class="bubble b-right" role="note" aria-label="長押しで追加">
-        長押しで<br><span class="hi">追加！👆</span>
-      </div>
     </div>
 
-    <!-- いえやすくん（家型マスコット・h-body 右下に absolute 配置） -->
+    <!-- IEYASU武将マスコット（h-body 右下に absolute 配置） -->
     <div class="fcb-mascot-wrap" onclick="(function(el){el.classList.remove('tapped');void el.offsetWidth;el.classList.add('tapped');setTimeout(()=>el.classList.remove('tapped'),600)})(this.querySelector('.fcb-mascot'))" style="cursor:pointer">
-      <svg class="fcb-mascot" viewBox="0 0 140 170" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="いえやすくん（家型キャラクター）">
-        <!-- 影 -->
-        <ellipse cx="70" cy="158" rx="34" ry="6" fill="#000000" opacity="0.12"/>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" class="fcb-mascot" role="img" aria-label="イエヤス武将キャラクター">
 
-        <!-- 足（緑のくつ） -->
-        <ellipse cx="57" cy="147" rx="12" ry="8" fill="#06C755" stroke="#1A1A1A" stroke-width="2.5"/>
-        <ellipse cx="83" cy="147" rx="12" ry="8" fill="#06C755" stroke="#1A1A1A" stroke-width="2.5"/>
+        <!-- Ground shadow -->
+        <ellipse cx="100" cy="233" rx="54" ry="7" fill="#888888" opacity="0.28"/>
 
-        <!-- 腕（バンザイ・体の後ろ側） -->
-        <g class="fcb-arms">
-          <ellipse cx="38" cy="102" rx="8" ry="17" fill="#FFFFFF" stroke="#1A1A1A" stroke-width="2.5" transform="rotate(-35 38 102)"/>
-          <ellipse cx="102" cy="102" rx="8" ry="17" fill="#FFFFFF" stroke="#1A1A1A" stroke-width="2.5" transform="rotate(35 102 102)"/>
-          <!-- 手のひら -->
-          <circle cx="27" cy="86" r="7" fill="#FFFFFF" stroke="#1A1A1A" stroke-width="2.5"/>
-          <circle cx="113" cy="86" r="7" fill="#FFFFFF" stroke="#1A1A1A" stroke-width="2.5"/>
+        <!-- Body/armor torso (drawn first so arms layer over shoulders) -->
+        <path d="M62,168 Q56,200 53,228 L147,228 Q144,200 138,168 Z"
+              fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+        <!-- Chest armor plate -->
+        <path d="M74,170 L126,170 L122,205 L78,205 Z"
+              fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
+        <line x1="76" y1="182" x2="124" y2="182" stroke="#22863a" stroke-width="1.2"/>
+        <line x1="77" y1="194" x2="123" y2="194" stroke="#22863a" stroke-width="1.2"/>
+
+        <!-- LEFT ARM (hanging down) -->
+        <line x1="64" y1="172" x2="38" y2="215"
+              stroke="#111111" stroke-width="23" stroke-linecap="round"/>
+        <line x1="64" y1="172" x2="38" y2="215"
+              stroke="#22863a" stroke-width="19" stroke-linecap="round"/>
+        <!-- Left hand (fist) -->
+        <circle cx="37" cy="216" r="9" fill="#FFF5E4" stroke="#111111" stroke-width="2.2"/>
+        <!-- Knuckle lines -->
+        <line x1="30" y1="212" x2="31" y2="219" stroke="#D4B896" stroke-width="1"/>
+        <line x1="37" y1="210" x2="37" y2="218" stroke="#D4B896" stroke-width="1"/>
+        <line x1="43" y1="212" x2="43" y2="219" stroke="#D4B896" stroke-width="1"/>
+
+        <!-- RIGHT ARM (raised, holding house) -->
+        <line x1="136" y1="172" x2="164" y2="120"
+              stroke="#111111" stroke-width="21" stroke-linecap="round"/>
+        <line x1="136" y1="172" x2="164" y2="120"
+              stroke="#22863a" stroke-width="17" stroke-linecap="round"/>
+        <!-- Right hand -->
+        <circle cx="165" cy="116" r="9" fill="#FFF5E4" stroke="#111111" stroke-width="2.2"/>
+
+        <!-- House icon held in right hand -->
+        <g transform="translate(165,92)">
+          <!-- Chimney -->
+          <rect x="5" y="-26" width="5" height="8" rx="1" fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
+          <!-- Roof -->
+          <polygon points="0,-21 19,-7 -19,-7"
+                   fill="#1b6e2e" stroke="#111111" stroke-width="2" stroke-linejoin="round"/>
+          <!-- House body -->
+          <rect x="-15" y="-7" width="30" height="22" rx="2"
+                fill="#22863a" stroke="#111111" stroke-width="2"/>
+          <!-- Door -->
+          <rect x="-6" y="5" width="12" height="10" rx="1"
+                fill="#1b6e2e" stroke="#111111" stroke-width="1.5"/>
+          <!-- Window left -->
+          <rect x="-13" y="-1" width="5" height="5" rx="0.5" fill="#FFF5E4" stroke="#111111" stroke-width="1"/>
         </g>
 
-        <!-- 体（白・丸角） -->
-        <rect x="48" y="104" width="44" height="40" rx="16" ry="16" fill="#FFFFFF" stroke="#1A1A1A" stroke-width="3"/>
-        <!-- お腹の黄色いドア（アーチ型） -->
-        <rect x="61" y="114" width="18" height="24" rx="9" ry="9" fill="#FFC53D" stroke="#1A1A1A" stroke-width="2"/>
-        <circle cx="75" cy="127" r="1.8" fill="#1A1A1A"/>
+        <!-- Kimono V-collar (neck area) -->
+        <path d="M79,168 L100,154 L121,168 L100,180 Z"
+              fill="#FFF5E4" stroke="#111111" stroke-width="1.5" stroke-linejoin="round"/>
+        <!-- Collar inner line -->
+        <line x1="100" y1="155" x2="100" y2="179" stroke="#DDCCAA" stroke-width="1"/>
 
-        <!-- えんとつ（屋根の後ろ） -->
-        <rect x="92" y="14" width="14" height="26" rx="3" fill="#06C755" stroke="#1A1A1A" stroke-width="2.5"/>
+        <!-- FACE -->
+        <circle cx="100" cy="148" r="33" fill="#FFF5E4" stroke="#111111" stroke-width="2.5"/>
 
-        <!-- 頭＝家の壁（白） -->
-        <rect x="28" y="48" width="84" height="58" rx="6" ry="6" fill="#FFFFFF" stroke="#1A1A1A" stroke-width="3"/>
+        <!-- Cheeks (pink blush) -->
+        <ellipse cx="74" cy="156" rx="9" ry="6" fill="#FFB3C1" opacity="0.72"/>
+        <ellipse cx="126" cy="156" rx="9" ry="6" fill="#FFB3C1" opacity="0.72"/>
 
-        <!-- 顔（壁の正面） -->
-        <ellipse cx="54" cy="72" rx="6.5" ry="5" fill="#1A1A1A"/>
-        <ellipse cx="86" cy="72" rx="6.5" ry="5" fill="#1A1A1A"/>
-        <circle cx="56" cy="70" r="2" fill="#FFFFFF"/>
-        <circle cx="88" cy="70" r="2" fill="#FFFFFF"/>
-        <!-- ほっぺ -->
-        <ellipse cx="41" cy="82" rx="7" ry="4.5" fill="#FFB3C1" opacity="0.5"/>
-        <ellipse cx="99" cy="82" rx="7" ry="4.5" fill="#FFB3C1" opacity="0.5"/>
-        <!-- 口（にっこり） -->
-        <path d="M62,84 Q70,92 78,84" stroke="#1A1A1A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+        <!-- Eyebrows -->
+        <path d="M80,133 Q89,127 97,131" fill="none" stroke="#111111" stroke-width="4.5" stroke-linecap="round"/>
+        <path d="M103,131 Q111,127 120,133" fill="none" stroke="#111111" stroke-width="4.5" stroke-linecap="round"/>
 
-        <!-- 屋根（LINEグリーンの三角・軒の張り出し付き） -->
-        <polygon points="70,10 124,52 16,52" fill="#06C755" stroke="#1A1A1A" stroke-width="3" stroke-linejoin="round"/>
-        <!-- 屋根の丸窓（黄色アクセント） -->
-        <circle cx="70" cy="38" r="6" fill="#FFC53D" stroke="#1A1A1A" stroke-width="2"/>
+        <!-- Eyes -->
+        <circle cx="90" cy="142" r="5.5" fill="#111111"/>
+        <circle cx="110" cy="142" r="5.5" fill="#111111"/>
+        <!-- Eye highlights -->
+        <circle cx="92" cy="140" r="2.2" fill="white"/>
+        <circle cx="112" cy="140" r="2.2" fill="white"/>
+        <!-- Small secondary highlight -->
+        <circle cx="88" cy="144" r="1" fill="white" opacity="0.6"/>
+        <circle cx="108" cy="144" r="1" fill="white" opacity="0.6"/>
+
+        <!-- Nose -->
+        <ellipse cx="100" cy="152" rx="3.2" ry="2.5" fill="#D4B896"/>
+
+        <!-- Mustache -->
+        <path d="M88,157 Q94,152 100,154 Q106,152 112,157"
+              fill="none" stroke="#555555" stroke-width="2.8" stroke-linecap="round"/>
+
+        <!-- Smile -->
+        <path d="M90,163 Q100,174 110,163"
+              fill="none" stroke="#111111" stroke-width="2.2" stroke-linecap="round"/>
+
+        <!-- Chin beard -->
+        <path d="M92,170 Q96,178 100,180 Q104,178 108,170"
+              fill="none" stroke="#aaaaaa" stroke-width="2" stroke-linecap="round"/>
+
+        <!-- LEFT WING (kabuto style, sweeping upward) -->
+        <path d="M46,107 Q12,83 16,22 Q30,7 53,48 Q57,73 53,105 Z"
+              fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+        <!-- Wing inner shading -->
+        <path d="M48,104 Q17,81 21,27 Q33,14 52,52 Q55,75 52,102 Z"
+              fill="#1b6e2e"/>
+        <!-- Wing edge highlight -->
+        <path d="M22,24 Q13,50 20,80" fill="none" stroke="#2fa043" stroke-width="2" opacity="0.5" stroke-linecap="round"/>
+
+        <!-- RIGHT WING (mirrored) -->
+        <path d="M154,107 Q188,83 184,22 Q170,7 147,48 Q143,73 147,105 Z"
+              fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+        <!-- Wing inner shading -->
+        <path d="M152,104 Q183,81 179,27 Q167,14 148,52 Q145,75 148,102 Z"
+              fill="#1b6e2e"/>
+        <!-- Wing edge highlight -->
+        <path d="M178,24 Q187,50 180,80" fill="none" stroke="#2fa043" stroke-width="2" opacity="0.5" stroke-linecap="round"/>
+
+        <!-- HELMET DOME (main bowl) -->
+        <path d="M30,116 Q30,6 100,4 Q170,6 170,116 Z"
+              fill="#22863a" stroke="#111111" stroke-width="2.5" stroke-linejoin="round"/>
+        <!-- Dome inner shading -->
+        <path d="M44,115 Q44,18 100,15 Q156,18 156,115 Z"
+              fill="#1b6e2e"/>
+        <!-- Dome surface highlight -->
+        <path d="M82,8 Q70,30 68,80" fill="none" stroke="#2fa043" stroke-width="3" opacity="0.35" stroke-linecap="round"/>
+
+        <!-- Helmet rim band -->
+        <rect x="28" y="112" width="144" height="19" rx="9.5"
+              fill="#22863a" stroke="#111111" stroke-width="2.5"/>
+        <!-- Rim top highlight -->
+        <rect x="36" y="114" width="128" height="5" rx="2.5" fill="#2db852" opacity="0.35"/>
+        <!-- Rim decorative rivet dots -->
+        <circle cx="60" cy="121" r="2.5" fill="#1b6e2e" stroke="#111111" stroke-width="1"/>
+        <circle cx="140" cy="121" r="2.5" fill="#1b6e2e" stroke="#111111" stroke-width="1"/>
+
+        <!-- HOUSE ICON ON HELMET FRONT (家紋 style) -->
+        <g transform="translate(100,68)">
+          <!-- House roof -->
+          <polygon points="0,-16 13,-6 -13,-6"
+                   fill="#FFF5E4" stroke="#111111" stroke-width="1.5" stroke-linejoin="round"/>
+          <!-- House body -->
+          <rect x="-10" y="-6" width="20" height="17" rx="1"
+                fill="#FFF5E4" stroke="#111111" stroke-width="1.5"/>
+          <!-- Door -->
+          <rect x="-4" y="3" width="8" height="8" rx="1" fill="#22863a"/>
+          <!-- Roof ridge line -->
+          <line x1="-13" y1="-6" x2="13" y2="-6" stroke="#111111" stroke-width="0.5"/>
+        </g>
+
       </svg>
     </div>
 
@@ -1860,15 +1656,21 @@
     </div>
   </div>
 
-  <!-- CTA band : LINE今すぐお部屋探す -->
+  <!-- CTA band -->
   <div class="h-cta-band">
-    <p class="cta-line-heading">LINEから今すぐお部屋探す！！</p>
+    <p class="cta-line-heading">LINEで今すぐ友達追加</p>
+    <a href="https://lin.ee/v5CFQfL" class="h-line-btn" target="_blank" rel="noopener noreferrer">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+      </svg>
+      友達追加する（無料）
+    </a>
   </div>
 
   <!-- MERIT : イエヤスでもっとお得に（3つの強み） -->
   <div class="merit-zone" aria-label="イエヤスの3つの強み">
     <div class="merit-head r">
-      <span class="merit-eyebrow">＼ まだあるで！ ／</span>
+      <span class="merit-eyebrow">イエヤスが選ばれる理由</span>
       <h2 class="merit-title">イエヤスで<em>もっとお得</em>に！</h2>
       <p class="merit-social">⭐⭐⭐⭐⭐ <em>TikTokで話題</em>の部屋探し</p>
     </div>
@@ -1876,36 +1678,53 @@
     <div class="merit-cards">
       <article class="merit-card r d1">
         <span class="merit-num">メリット 01</span>
-        <div class="merit-icon m1" aria-hidden="true">💸</div>
+        <div class="merit-icon" aria-hidden="true">
+          <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="17" cy="17" r="15" fill="#e8fdf1"/>
+            <path d="M17 8v2M17 24v2M8 17h2M24 17h2" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="17" cy="17" r="6" fill="none" stroke="#06C755" stroke-width="2"/>
+            <path d="M14 17h6M17 14v6" stroke="#06C755" stroke-width="1.5" stroke-linecap="round"/>
+            <text x="17" y="19.5" text-anchor="middle" font-size="8" font-weight="900" fill="#06C755" font-family="sans-serif">¥</text>
+          </svg>
+        </div>
         <div class="merit-body">
-          <span class="merit-claim c1">あなたが気になるお部屋おくるだけ！</span>
-          <h3 class="merit-h">初期費用<em>最大限割引</em>！</h3>
+          <span class="merit-claim c1">気になる部屋を送るだけ！</span>
+          <h3 class="merit-h">初期費用<em>最大限割引</em></h3>
           <p class="merit-sub">SUUMO等で見つけた気になる部屋、送るだけでカンタン割引！</p>
         </div>
       </article>
 
       <article class="merit-card r d2">
         <span class="merit-num">メリット 02</span>
-        <div class="merit-icon m2" aria-hidden="true"><span class="merit-zero">0円</span></div>
+        <div class="merit-icon" aria-hidden="true">
+          <svg width="44" height="34" viewBox="0 0 44 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <text x="22" y="25" text-anchor="middle" font-size="20" font-weight="900" fill="#06C755" font-family="'Hiragino Maru Gothic ProN',sans-serif">0円</text>
+          </svg>
+        </div>
         <div class="merit-body">
           <span class="merit-claim c2">24時間対応</span>
-          <h3 class="merit-h">仲介手数料<em>0円</em>！</h3>
-          <p class="merit-sub">深夜でもOK！思い立った瞬間にいつでも相談できるで</p>
+          <h3 class="merit-h">仲介手数料<em>0円</em></h3>
+          <p class="merit-sub">深夜でもOK！思い立った瞬間にいつでも相談できます</p>
         </div>
       </article>
 
       <article class="merit-card r d3">
         <span class="merit-num">メリット 03</span>
-        <div class="merit-icon m3" aria-hidden="true">💬</div>
+        <div class="merit-icon" aria-hidden="true">
+          <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="4" width="28" height="22" rx="6" fill="#e8fdf1" stroke="#06C755" stroke-width="1.8"/>
+            <path d="M8 13h18M8 18h11" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
+            <path d="M10 26l4-4h10a6 6 0 006-6V8" stroke="#06C755" stroke-width="0" fill="none"/>
+            <path d="M7 26l3-4" stroke="#06C755" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </div>
         <div class="merit-body">
           <span class="merit-claim c3">来店不要</span>
-          <h3 class="merit-h">LINEで<em>ぜんぶ完結</em>！</h3>
-          <p class="merit-sub">ご満足いただくまで全力サポート！安心してまかせてな</p>
+          <h3 class="merit-h">LINEで<em>ぜんぶ完結</em></h3>
+          <p class="merit-sub">ご満足いただくまで全力サポート！安心してまかせてください</p>
         </div>
       </article>
     </div>
-
-    <div class="merit-more r d3" aria-hidden="true">▼ もっと見る ▼</div>
   </div>
 </section>
 
