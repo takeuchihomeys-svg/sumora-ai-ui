@@ -198,6 +198,29 @@ export function buildBrainFetchSpec(
     }
   }
 
+  // ①-b checkpoint_stage フォールバック/オーバーライド
+  // conversations.status・チェックポイント・メッセージ文脈を総合したbrainのground-truth フェーズ判定。
+  // action が欠損・未知の場合のフォールバック。または action と異なるフェーズシグナルでの補完。
+  const cs = typeof meta.checkpoint_stage === "string" ? meta.checkpoint_stage : null;
+  if (cs === "applying" && !spec.applyingPatterns.enabled) {
+    // 申込フェーズ（actionで届かなかったケース）: 申込実例を届け、失注パターンは省く
+    spec.applyingPatterns.enabled = true;
+    spec.lossPatterns.enabled = false;
+    if (spec.examples.boostStates.length === 0) {
+      spec.examples.boostStates = ["applying", "application", "application_push", "screening", "contract"];
+    }
+  } else if (cs === "contract" && !spec.applyingPatterns.enabled) {
+    // 契約フェーズ: 署名・契約系の実例を届ける
+    spec.applyingPatterns.enabled = true;
+    if (spec.examples.boostStates.length === 0) {
+      spec.examples.boostStates = ["signing", "contract"];
+    }
+  } else if (cs === "hearing") {
+    // ヒアリングフェーズ: 失注パターンは雑音（このフェーズで失注パターンは早計）
+    spec.lossPatterns.enabled = false;
+  }
+  // cs === "proposing": 提案フェーズはデフォルトフロー・変更不要
+
   // ② hesitancy_pattern（保留局面）: 失注パターンは必ず届ける（actionのSKIPより優先）
   if (meta.hesitancy_pattern) {
     if (!spec.lossPatterns.enabled) {
