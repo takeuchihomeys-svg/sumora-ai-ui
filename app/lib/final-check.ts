@@ -46,7 +46,8 @@ export interface FinalCheckContext {
                                   // DBで日々改善されたチェック専用ルール。false positive防止・見逃し防止の両方に使う
   recentMessages?: Array<{ sender: string; text: string; isAix?: boolean; createdAt?: string }>;
   lastCustomerMessage?: string;   // 顧客の最新メッセージ
-  step1Json?: string;             // generate-reply Step1 分析JSON（check-reply では省略可）
+  brainContextJson?: string;      // generate-reply の brain(AIX-META=suggested_aix_meta) コンパクトサブセットJSON
+                                  // （旧 step1Json — Step1廃止(2026-08)で brain 由来に差し替え。check-reply では省略可）
   staffSourceText?: string;       // スタッフ由来ソース（AIX原文・希望条件等）
   checkpointFacts?: string;      // conversation_checkpoints 最新summary — 確認済み事実（最高権威）
   customerConditionsDb?: string; // property_customers のDB保存顧客条件
@@ -624,7 +625,7 @@ ${stageBlock}[CUSTOMER_MESSAGE]
 ${(ctx.lastCustomerMessage || "（不明）").slice(0, 1500)}
 [/CUSTOMER_MESSAGE]
 [ANALYSIS]
-${(ctx.step1Json || "なし").slice(0, 2500)}
+${(ctx.brainContextJson || "なし").slice(0, 2500)}
 [/ANALYSIS]
 [RECENT_STAFF_MESSAGES]
 ${formatStaffMessages(ctx.recentMessages, 5)}

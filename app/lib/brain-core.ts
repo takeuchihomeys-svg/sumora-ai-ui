@@ -53,6 +53,17 @@ export type SuggestedAixMeta = {
   avoid_topics?: string[];           // 返信で絶対に言及しない内容（最大5件）
   urgency_appropriate?: boolean;     // 危機感・緊急表現が今回適切か
   recommended_tone?: string | null;  // 推奨トーン: "共感的"|"テキパキ"|"慎重"|"明るく前向き"|"普通"
+  // ── Step1（analyzeCustomerSituation）廃止に伴う message-local 分析フィールド ──
+  // 最新の顧客メッセージ基準で毎回ゼロから再判定される（差分分析モードでも前回値を引き継がない）
+  customer_questions?: string[];         // 最新メッセージ内の質問・確認事項（最大5件・各40字）
+  repeated_concern?: string | null;      // 会話全体で2回以上登場した繰り返し確認テーマ（20字）
+  current_property?: string | null;      // 話題の中心の物件名・号室（実在ゲート通過値のみ・創作はnull）
+  condition_change_type?: "area_change" | "rent_change" | "layout_change" | "equip_add" | "condition_relax" | "pickup_request" | "multi" | null;  // 最新メッセージでの条件変更種別
+  hesitancy_pattern?: "thinking" | "callback" | "waiting" | "undecided" | "timeline" | null;  // 決断保留パターン
+  future_timeline?: string | null;       // 顧客が示した決断・申込タイムライン（会話に実際に出た表現のみ・30字）
+  // 鮮度ゲート基準: この分析が見た最新顧客メッセージの created_at。
+  // generate-reply 側で「analyzed_msg_ts >= 最新顧客メッセージ」なら T1（fresh）、古ければ T2（stale）判定に使う
+  analyzed_msg_ts?: string | null;
 } | null;
 
 // Canonical mapping from AIX action key → staff guidance note
@@ -80,7 +91,8 @@ const AIX_BRAIN_NOTES: Record<string, string> = {
 // （まず探す旨を顧客に伝える → 検索 → ピックアップ送付）であり、
 // property_search（スタッフ内向きの検索指示のみ・顧客向けアクションなし）ではない。
 // detectSignalBasedAixFallback の信号6.5 と analyzeConversation の finalAix 矯正の両方で使用する。
-const PROPERTY_CONDITION_INQUIRY_RE =
+// ※ generate-reply の newConditionRequestNote（T2/T3決定論フォールバック）とも共有するため export（二重定義禁止）
+export const PROPERTY_CONDITION_INQUIRY_RE =
   /あります(か|でしょうか)|お?部屋.{0,6}(探し|紹介)|物件.{0,6}(探し|紹介)|探して(ほしい|もらえ|ください|いただ)|広め|広い(お?部屋|物件)|間取り|ベッ[ドト]|[0-9０-９][SLDKR]{1,3}|ワンルーム|バス.?トイレ別|ペット可|駅.{0,10}(徒歩|近く?|大丈夫)|家賃.{0,4}万|でも大丈夫/;
 
 // 5品質ルール決定論ゲート用定数（analyzeConversation の return 直前で使用）
@@ -1327,9 +1339,9 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}, "reply_direction": "返信の方向性を20字以内で。必ず『〜する』の行動方針形で書く（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識（内覧履歴・送付済み物件・成約パターン・未完了タスク）から導く。必須フィールド・nullは避ける", "key_topics": ["返信本文に必ず含める実質的内容（最大3件・各30字以内）。挨拶・定型文・トーン指示・抽象的方針は書かない（それらは reply_direction / recommended_tone の役割）。具体的な情報・アクションのみ（例: '本人確認書類送付の催促' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列 []"], "avoid_topics": ["返信で絶対に言及しない語・話題（最大5件・各20字以内）。'来阪' は常に含める。顧客が質問していない費用の話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わないCTA等（例: ['来阪', '見積書', '初期費用']）。理由説明・トーン説明は書かず、禁止する語そのものを書く"], "urgency_appropriate": "true または false（boolean値で出力）。直近のスタッフ送信メッセージ1〜2件（[スタッフ] / [AIX:xxx]）に顧客を急かす危機感・緊急表現（ルール③の表現リスト参照）が含まれていれば false、含まれていなければ true", "recommended_tone": "次の5つの文字列のうち1つだけを正確に出力（組み合わせ・修飾・他の表現は禁止）: '共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項を扱う時）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれにも当てはまらない場合）"}
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で"}, "reply_direction": "返信の方向性を20字以内で。必ず『〜する』の行動方針形で書く（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識（内覧履歴・送付済み物件・成約パターン・未完了タスク）から導く。必須フィールド・nullは避ける", "key_topics": ["返信本文に必ず含める実質的内容（最大3件・各30字以内）。挨拶・定型文・トーン指示・抽象的方針は書かない（それらは reply_direction / recommended_tone の役割）。具体的な情報・アクションのみ（例: '本人確認書類送付の催促' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列 []"], "avoid_topics": ["返信で絶対に言及しない語・話題（最大5件・各20字以内）。'来阪' は常に含める。顧客が質問していない費用の話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わないCTA等（例: ['来阪', '見積書', '初期費用']）。理由説明・トーン説明は書かず、禁止する語そのものを書く"], "urgency_appropriate": "true または false（boolean値で出力）。直近のスタッフ送信メッセージ1〜2件（[スタッフ] / [AIX:xxx]）に顧客を急かす危機感・緊急表現（ルール③の表現リスト参照）が含まれていれば false、含まれていなければ true", "recommended_tone": "次の5つの文字列のうち1つだけを正確に出力（組み合わせ・修飾・他の表現は禁止）: '共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項を扱う時）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれにも当てはまらない場合）", "customer_questions": ["顧客の最新メッセージに含まれる質問・確認事項を全て列挙（最大5件・各40字以内・質問の意図が分かる形で）。過去メッセージの質問は含めない。質問がなければ空配列 []"], "repeated_concern": "顧客が会話全体で繰り返し確認しているテーマを短句で（例: '費用' '審査' 'キャンセル'）。会話履歴・前回セーブデータで2回以上登場した話題のみ。なければnull", "current_property": "現在話題の中心になっている物件名・号室（例: 'ライオンズ渋谷401'）。会話履歴または【送付済み物件】に実際に登場した表記を一字一句そのまま使う（創作・言い換え・要約禁止）。特定できなければnull", "condition_change_type": "顧客の最新メッセージで検索条件の変更・追加・緩和、または物件ピックアップ依頼があったか。次のいずれか1つの文字列のみ: 'area_change'（エリア変更）/ 'rent_change'（家賃変更）/ 'layout_change'（間取り変更）/ 'equip_add'（設備・収納・こだわり条件の追加。WIC広め・SIC・南向き・オートロック等）/ 'condition_relax'（条件緩和・拡大）/ 'pickup_request'（物件を送って・ピックアップ依頼・おすすめ依頼）/ 'multi'（複数変更）。なければnull。※すでに検討中の物件があっても新しい条件を追加したら必ず種別を返す。※【お客様の希望条件】（DB登録済み条件）と同じ内容の再言及は変更ではない", "hesitancy_pattern": "顧客が決断を保留するパターンを最新メッセージで示しているか。'thinking'（検討します）/ 'callback'（また連絡します）/ 'waiting'（少し待ってほしい）/ 'undecided'（複数物件で迷い）/ 'timeline'（○月に決めたい）のいずれか1つ。なければnull", "future_timeline": "顧客が示した具体的な決断・申込タイムライン（例: '9月上旬'）。会話に実際に出た表現のみ（推測日付の創作禁止）。urgencyフィールドと矛盾させない。なければnull"}
 
-【差分分析モード】userプロンプトに【前回の分析結論】がある場合、それを仮説として参照してよい。新着メッセージが前回結論を変えない場合は前回結論をほぼ維持してJSON出力してよい。ただし申込・内見確定・キャンセル・条件変更・フェーズ遷移のシグナルがあれば前回結論を破棄して再判断すること。JSONは常に全フィールド完全出力（ai_summary/ai_summary_json含む）。
+【差分分析モード】userプロンプトに【前回の分析結論】がある場合、それを仮説として参照してよい。新着メッセージが前回結論を変えない場合は前回結論をほぼ維持してJSON出力してよい。ただし申込・内見確定・キャンセル・条件変更・フェーズ遷移のシグナルがあれば前回結論を破棄して再判断すること。JSONは常に全フィールド完全出力（ai_summary/ai_summary_json含む）。ただし customer_questions・repeated_concern・current_property・condition_change_type・hesitancy_pattern・future_timeline の6フィールド（message-local分析）は前回結論を引き継がず、必ず今回の新着メッセージから毎回ゼロから再判定すること（前回の質問リスト・保留パターンの再掲は禁止）。
 
 【reply_direction / key_topics / avoid_topics / urgency_appropriate / recommended_tone 判断ルール（5品質ルール）】
 以下の5ルールを厳守して新フィールドに反映すること。判定に迷ったら各ルールの「迷った時」の指示に従う:
@@ -1344,7 +1356,13 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
 
 ルール⑤（来阪表現禁止・常時）: avoid_topics には必ず「来阪」を含める。顧客が大阪在住か否かを問わず常時適用する（大阪以外在住の顧客への「来阪ください」は失礼であり、スモラのブランドルール上絶対禁止。コード側でも強制されるがLLM出力でも必ず含めること）。
 
-（共通品質基準）reply_direction は返信全体をその1点に収束させる軸であり key_topics と矛盾させない。avoid_topics と key_topics に同じ話題を入れない（矛盾した場合は key_topics を優先し avoid_topics から外す）。`;
+（共通品質基準）reply_direction は返信全体をその1点に収束させる軸であり key_topics と矛盾させない。avoid_topics と key_topics に同じ話題を入れない（矛盾した場合は key_topics を優先し avoid_topics から外す）。
+
+【message-local分析ルール（customer_questions〜future_timelineの6フィールド）】
+- この6フィールドは必ず「最新の顧客メッセージ」を基準に判定する。数日前のメッセージの質問・保留表現を今回の結果に含めない
+- condition_change_type と hesitancy_pattern は確信が持てない場合 null に倒す（誤検出は誤った返信テンプレートを強制発火させるため、フェイルクローズが正しい）
+- current_property は号室まで分かる場合は号室まで書く。複数物件が話題の場合は最新メッセージで言及された1件のみ
+- customer_questions が2件以上ある場合、返信で全問に漏れなく答える必要があるため省略・要約せず全て列挙する`;
 
   // インクリメンタル分析: 前回の分析結論をコンテキストとして注入
   const prevMetaText = opts?.prevMeta ? (() => {
@@ -1424,6 +1442,12 @@ ${history}`;
       avoid_topics?: string[];
       urgency_appropriate?: boolean;
       recommended_tone?: string | null;
+      customer_questions?: string[];
+      repeated_concern?: string | null;
+      current_property?: string | null;
+      condition_change_type?: string | null;
+      hesitancy_pattern?: string | null;
+      future_timeline?: string | null;
     };
 
     // brain-core統合: ai_summary + ai_summary_json をproperty_customersに保存（fire-and-forget）
@@ -1667,6 +1691,45 @@ ${history}`;
     const rawTone = typeof parsed.recommended_tone === "string" ? parsed.recommended_tone.trim() : "";
     const recommendedTone = TONE_ALLOWED.find((t) => rawTone.includes(t)) ?? null;
 
+    // ── Step1移植フィールドの決定論ゲート（5新フィールドゲートと同型 — プロンプト任せにしない）──
+    const CONDITION_CHANGE_TYPES = new Set(["area_change", "rent_change", "layout_change", "equip_add", "condition_relax", "pickup_request", "multi"]);
+    const HESITANCY_PATTERNS = new Set(["thinking", "callback", "waiting", "undecided", "timeline"]);
+
+    // customer_questions: 文字列のみ・空要素/重複除去・最大5件・各40字（key_topicsゲートと同型）
+    const customerQuestions = Array.from(new Set(
+      (Array.isArray(parsed.customer_questions) ? parsed.customer_questions : [])
+        .filter((q): q is string => typeof q === "string" && q.trim().length > 0)
+        .map((q) => q.trim().slice(0, 40))
+    )).slice(0, 5);
+
+    // repeated_concern: 20字上限
+    const repeatedConcern = typeof parsed.repeated_concern === "string" && parsed.repeated_concern.trim()
+      ? parsed.repeated_concern.trim().slice(0, 20)
+      : null;
+
+    // current_property 実在ゲート: 会話履歴 or 送付済み物件リストに登場した名前のみ通す
+    // （創作物件名はnullに落とすフェイルクローズ。誤った物件文脈での返信強制は事故になるため）
+    const rawCurrentProperty = typeof parsed.current_property === "string" ? parsed.current_property.trim().slice(0, 40) : "";
+    const propertyNameCore = rawCurrentProperty.replace(/\s*[0-9０-９]{1,4}(号室?)?$/, "").trim(); // 号室部を除いた棟名
+    const currentProperty = rawCurrentProperty && propertyNameCore &&
+      (history.includes(propertyNameCore) ||
+       sentProps.some((s) => s.property_name.includes(propertyNameCore) || rawCurrentProperty.includes(s.property_name)))
+      ? rawCurrentProperty
+      : null;
+
+    // enum ゲート（許可リスト不一致は null フェイルクローズ — template_hintゲートと同型）
+    const conditionChangeType = (typeof parsed.condition_change_type === "string" && CONDITION_CHANGE_TYPES.has(parsed.condition_change_type))
+      ? parsed.condition_change_type as NonNullable<SuggestedAixMeta>["condition_change_type"]
+      : null;
+    const hesitancyPattern = (typeof parsed.hesitancy_pattern === "string" && HESITANCY_PATTERNS.has(parsed.hesitancy_pattern))
+      ? parsed.hesitancy_pattern as NonNullable<SuggestedAixMeta>["hesitancy_pattern"]
+      : null;
+
+    // future_timeline: 30字上限（timeline分岐以外でも検索クエリに使うため単独保持）
+    const futureTimeline = typeof parsed.future_timeline === "string" && parsed.future_timeline.trim()
+      ? parsed.future_timeline.trim().slice(0, 30)
+      : null;
+
     return {
       action: finalAix ?? "",
       note: finalAix ? AIX_BRAIN_NOTES[finalAix] : (parsed.action ?? ""),
@@ -1703,6 +1766,15 @@ ${history}`;
       avoid_topics: avoidTopics,
       urgency_appropriate: urgencyAppropriate,
       recommended_tone: recommendedTone,
+      customer_questions: customerQuestions,
+      repeated_concern: repeatedConcern,
+      current_property: currentProperty,
+      condition_change_type: conditionChangeType,
+      hesitancy_pattern: hesitancyPattern,
+      future_timeline: futureTimeline,
+      // 鮮度ゲートの基準: 今回の分析が見た最新顧客メッセージのcreated_at。
+      // cachedモード返却時はこの値が古いまま残るため、generate-reply側で自動的にstale判定される
+      analyzed_msg_ts: lastCustomerMsg?.created_at ?? null,
     };
   } catch (e) {
     console.warn(`[brain-core] Haiku analysis failed: conv=${conversationId}`, e instanceof Error ? e.message : e);

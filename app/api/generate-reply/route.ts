@@ -29,12 +29,16 @@ import {
   stripRoomLeadingZeros,
   type VacatingDate,
 } from "@/app/lib/template-preprocess";
+// Step1完全廃止（2026-08）: brain(suggested_aix_meta) が唯一の分析ソース。
+// SuggestedAixMeta 型と条件問い合わせ検出 regex は brain-core と共有する（二重定義禁止）
+import { PROPERTY_CONDITION_INQUIRY_RE, type SuggestedAixMeta } from "@/app/lib/brain-core";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 300;
 
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
-// Step1（分析）: Sonnet — 感情・本音・成約戦略の精度重視
+// 分析系（synthesizeCustomerContext 専用）: Sonnet — ai_summary なし顧客の即席コンテキスト合成
+// ※ 旧Step1（analyzeCustomerSituation）は完全廃止済み（2026-08・brain/suggested_aix_meta に一元化）
 // - Sonnet 5 は thinking がデフォルト有効（adaptive）のため明示的に無効化する
 //   （有効だと res.content がブロック配列になり JSON 抽出・トークン消費に影響するため）
 function createAnalysisModel() {
@@ -47,12 +51,13 @@ function createAnalysisModel() {
   });
 }
 
-// Step2（生成）: Sonnet — 品質重視
-// 中6: temperature は ai_summary_json.emotion に応じて可変（0.3〜0.5）のためリクエスト毎に生成する
+// 生成: Sonnet — 品質重視
+// - Sonnet 5 は temperature 等の非デフォルトサンプリングパラメータを受け付けないため渡さない
+//   （旧 emotionTemperature 可変化は Sonnet 5 移行後デッドパスだったため Step1 廃止と同時に削除済み）
 // - Sonnet 5 は thinking がデフォルト有効（adaptive）のため明示的に無効化する
 //   （有効だとストリーミングchunkのcontentがブロック配列になりテキスト取りこぼし・
 //    maxTokens=1500 を thinking が食い潰して本文が途切れるリスクがあるため）
-function createGenerationModel(_temperature: number) {
+function createGenerationModel() {
   return new ChatAnthropic({
     model: "claude-sonnet-5",
     maxTokens: 1500,
@@ -75,14 +80,6 @@ function createTemplateOptimizeModel() {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     clientOptions: { timeout: 60_000 },
   });
-}
-
-// 中6: 顧客の温度感 → 生成temperature マッピング
-// 前向き/普通/冷めかけ → 0.3 / 不安 → 0.4（少し温かみ・ブレすぎない）/ 未定義 → 0.3
-// 完全一致だと「不安と期待が混在」等がマッチしないため includes 判定にする
-function emotionTemperature(emotion?: string): number {
-  if (emotion?.includes("不安")) return 0.4;
-  return 0.3;
 }
 
 // ─── 初回挨拶文（greetingNote と冒頭強制置換で共用・二重定義禁止）─────────────
@@ -171,7 +168,7 @@ function buildEmpathyPhraseNote(customerMessage: string): string {
 // 警告メタを付与してスタッフの手動確認を必須にする（生成自体は参考用に行う）。
 const SENSITIVE_CLAIM_RE = /クレーム|苦情|納得(いか|でき)|話が違う|不誠実|誠意を|騙され|詐欺|訴え(る|ます|させ)|弁護士|消費者センター/;
 const SENSITIVE_REJECT_RE = /審査[^。！!？?\n]{0,8}(否決|落ち(た(?!ら)|まし|てしまい)|通りませんでした|通らなかった|不承認|NG(でし|になり|だっ)|ダメ(でし|だっ))|否決/;
-// ※「キャンセル料」「キャンセルできますか」等の不安系質問は通常AI回答の範囲（hesitancyNote等で対応済み）のため除外し、
+// ※「キャンセル料」「キャンセルできますか」等の不安系質問は通常AI回答の範囲（brainGuidanceNoteの保留パターン対応等で対応済み）のため除外し、
 //   キャンセル・解約の「意向」とリスケ（日程変更）依頼のみ検知する
 const SENSITIVE_CANCEL_RE = /(?:キャンセル|解約|取消|取り消し?|白紙|辞退)(?!料|金|でき|出来|可能)(?:を|は|に|で)?(?:したい|します|させて|お願い|希望|することに|する事に)|なかったことに|見送(?:り(?:たい|ます)|らせて)|やめ(?:たい|ます|ておき|とき)|リスケ|(?:日程|日にち|日時|予定)[^。！!？?\n]{0,6}(?:変更|ずら|延期)/;
 
@@ -339,83 +336,21 @@ function warnIfTruncated(stopReason: unknown, inputLength: number): void {
   }
 }
 
-// ─── Step1: お客様状況の深層分析（Haiku）───────────────────────────────────
-const ANALYSIS_SYSTEM = `あなたは賃貸仲介の営業コーチです。
-LINEのやりとりから、お客様の状況・感情・本当のニーズを深く分析してください。
-JSONのみで返答（説明不要）。`;
-
-async function analyzeCustomerSituation(
-  customerMessage: string,
-  history: string,
-  state: string,
-  customerName: string,
-  isFollowUp = false
-): Promise<string> {
-  const prompt = isFollowUp ? `
-【営業フェーズ】${state}
-【お客様名】${customerName || "不明"}
-【直近の会話履歴（スモラが既に返信済み）】
-${history || "なし"}
-【スモラが返信済みのお客様メッセージ】
-${customerMessage}
-
-スモラはこのお客様メッセージに対して既に返信しました。
-これから「続きのメッセージ」を生成します。以下をJSONで分析してください：
-{
-  "closing_strategy": "この続きのメッセージで何をすれば次の成約ステップへ繋がるか、具体的な一手を1行で（例: 内覧日程を2択で提示する / 申込書類を今すぐ催促する / 割引見積を提示してクロージング）",
-  "already_covered": "スモラが直前の返信で既に伝えた内容の要約",
-  "next_action": "続きとして自然な次のアクション・補足（例：申込を促す、内覧日程を提案、安心感を与えるなど）",
-  "approach": "続きメッセージの方針（前の返信の内容を踏まえて何を追加するか・繰り返しNG）",
-  "tone": "適切なトーン（例：背中を押す・安心させる・次ステップへ誘導）",
-  "questions": ["お客様メッセージ内の質問・確認事項を全て列挙。なければ空配列"],
-  "repeated_concern": "履歴を見てお客様が繰り返し聞いているテーマ（例: 費用・審査・キャンセル）。なければnull",
-  "current_property": "現在話題にしている物件名・号室（履歴から特定できる場合のみ）。なければnull",
-  "hesitancy_pattern": "お客様が「検討します」「また連絡します」「少し待ってほしい」「迷っています」など決断を保留しているか。パターン種別（'thinking'=検討中・'callback'=また連絡・'waiting'=もう少し待って・'undecided'=どちらか迷い・'timeline'=○月に決めたい）、なければnull",
-  "future_timeline": "お客様が「○月に」「○日には」など具体的な申込タイムラインを示している場合その内容。なければnull",
-  "suggested_aix_action": "次に使うべきAIXアクション。以下から1つ選ぶかnullを返す: viewing_invite（内見案内）/ estimate_sheet（見積書送付）/ property_send（物件送付）/ application_push（申込促進）/ property_check_result（物件確認・条件確認の結果報告 — 空室状況/退去日/入居可能日/保証会社/初期費用交渉/駐車場/ペット可否など管理会社・オーナーへ確認した結果をお客様に報告する場面）/ acknowledge_check（空室確認承知）/ condition_hearing（条件ヒアリング）/ meeting_place（待ち合わせ）/ property_recommendation（物件おすすめ）/ followup_revive（追客）/ greeting_viewing（内見挨拶） — LINEの返信文を送るべき場面はnullとする",
-  "aix_reason": "AIXアクションを選んだ理由を1行で（nullの場合は空文字）",
-  "aix_enforcement_level": "suggested_aix_actionがnullでない場合のみ回答。required（物件詳細・見積書本体・内覧日時等AIX専用コンテンツが必要）/ recommended（AIXが最善だが通常返信でも可）/ optional（使えるが必須ではない）。null不可"
-}` : `
-【営業フェーズ】${state}
-【お客様名】${customerName || "不明"}
-【直近の会話履歴】
-${history || "なし"}
-【最新メッセージ】
-${customerMessage}
-
-以下をJSONで分析してください：
-{
-  "closing_strategy": "今この会話でどうすれば成約につながるか、具体的な一手を1行で（例: 比較中の物件を引き出して割引見積を提示する / 今すぐ内覧日程を提案する / 申込みを即促す / 書類を催促して審査を進める）",
-  "emotion": "お客様の感情状態（例：期待と不安が混在、前向き、迷っているなど）",
-  "real_need": "表面の質問の奥にある本当のニーズ・懸念（例：費用が心配で踏み出せない、家族に相談したいなど）",
-  "key_insight": "優秀な営業スタッフが気づくべき重要なポイント（例：価格比較をしている、決断を急かされたくないなど）",
-  "approach": "このメッセージへの最適な返し方の方針（例：まず共感→動画を送ると約束→内覧への自然な誘導など）",
-  "tone": "適切なトーン（例：温かく・余裕を持って・軽く背中を押す）",
-  "questions": ["お客様メッセージ内の質問・確認事項を全て列挙（例: [\"審査期間は？\",\"キャンセルできる？\",\"フリーレントある？\"]）。なければ空配列"],
-  "repeated_concern": "履歴を見てお客様が繰り返し聞いているテーマ（例: 費用・審査・キャンセル）。なければnull",
-  "current_property": "現在話題にしている物件名・号室（履歴から特定できる場合のみ）。なければnull",
-  "condition_change_type": "お客様が検索条件を変更・追加・緩和したか、または物件ピックアップ・送付を依頼しているか。該当する場合その種別（'area_change'=エリア変更、'rent_change'=家賃変更、'layout_change'=間取り変更、'equip_add'=設備・収納・こだわり条件の追加（WIC広め・SIC・収納多め・南向き・オートロック等の新しいこだわりを追加）、'condition_relax'=条件緩和、'pickup_request'=物件を送って・ピックアップ依頼・おすすめ、'multi'=複数変更）。なければnull。※すでに検討中の物件があっても、新しい条件を追加したら必ずその種別を返すこと",
-  "hesitancy_pattern": "お客様が「検討します」「また連絡します」「少し待ってほしい」「迷っています」など、決断を保留するパターンを示しているか。示している場合はその種別（'thinking'=検討中・'callback'=また連絡・'waiting'=もう少し待って・'undecided'=どちらか迷い・'timeline'=○月に決めたい ）、なければnull",
-  "future_timeline": "お客様が「○月に」「○日には」など具体的な決断・申込タイムラインを示している場合その内容。なければnull",
-  "suggested_aix_action": "次に使うべきAIXアクション。以下から1つ選ぶかnullを返す: viewing_invite（内見案内）/ estimate_sheet（見積書送付）/ property_send（物件送付）/ application_push（申込促進）/ property_check_result（物件確認・条件確認の結果報告 — 空室状況/退去日/入居可能日/保証会社/初期費用交渉/駐車場/ペット可否など管理会社・オーナーへ確認した結果をお客様に報告する場面）/ acknowledge_check（空室確認承知）/ condition_hearing（条件ヒアリング）/ meeting_place（待ち合わせ）/ property_recommendation（物件おすすめ）/ followup_revive（追客）/ greeting_viewing（内見挨拶） — LINEの返信文を送るべき場面はnullとする",
-  "aix_reason": "AIXアクションを選んだ理由を1行で（nullの場合は空文字）",
-  "aix_enforcement_level": "suggested_aix_actionがnullでない場合のみ回答。required（物件詳細・見積書本体・内覧日時等AIX専用コンテンツが必要）/ recommended（AIXが最善だが通常返信でも可）/ optional（使えるが必須ではない）。null不可"
-}`;
-
-  try {
-    const res = await createAnalysisModel().invoke([
-      new SystemMessage(ANALYSIS_SYSTEM),
-      new HumanMessage(prompt),
-    ]);
-    warnIfTruncated(res.response_metadata?.stop_reason, prompt.length);
-    const text = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
-    const match = text.match(/\{[\s\S]*\}/);
-    return match ? match[0] : "";
-  } catch (err) {
-    console.error("[generate-reply] Step1分析（Haiku）失敗 — 分析なしで生成を続行:", err);
-    return "";
-  }
-}
+// ─── Step1（analyzeCustomerSituation）完全廃止（2026-08）───────────────────────
+// 旧Step1のLLM深層分析（Sonnet直列・3〜8秒・Step2並列フェッチをブロック）は
+// brain(suggested_aix_meta = SuggestedAixMeta) に一元化した。
+// 戦略フィールド（closing_strategy / reply_direction / key_topics / avoid_topics /
+// urgency_appropriate / recommended_tone / next_steps / action）と
+// message-local戦術フィールド（customer_questions / repeated_concern / current_property /
+// condition_change_type / hesitancy_pattern / future_timeline）は
+// brainGuidanceNote（POSTハンドラ内）と conditionChangeNote（buildGenerationMessages内）が
+// brainMeta から読む。フォールバックは3層（LLMフォールバックは設けない）:
+//   T1（brainMeta fresh）: 全機能。bg-async直列経路（brainMetaDirect）は常にT1が保証される
+//   T2（brainMeta stale）: 戦略フィールドのみ採用。message-localは決定論regexで補完
+//   T3（brainMeta null）: closingNote（ai_summary_json）＋決定論regex＋console.warn。
+//     brain-sweepが5分以内に補填するため次回生成はT1に復帰する
+// 不安系キーワード判定は決定論（コード側）に残す — LLM出力に依存させない（旧Step1のリストと同一）
+const ANXIETY_KEYWORDS = ["名義", "審査", "保証", "リスク", "キャンセル", "退去", "違約", "トラブル", "詐称", "離婚", "死亡", "ルール", "大丈夫", "問題ない", "失敗", "断られ", "通らな"];
 
 
 
@@ -477,7 +412,10 @@ function buildGenerationMessages(
   customerName: string,
   history: string,
   state: string,
-  analysis: string,
+  // Step1廃止（2026-08）: 旧 analysis: string（Step1生JSON）を brain(suggested_aix_meta) 直参照に差し替え。
+  // brainFreshForMessage は message-local フィールド（condition_change_type 等）の採用ゲート
+  brainMeta: AixGateMeta,
+  brainFreshForMessage: boolean,
   knowledge: string,
   examples: string,
   phrases: string,
@@ -605,72 +543,39 @@ function buildGenerationMessages(
   const phaseGuide = PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
 
 
-  // 分析結果から各フィールドを抽出
-  let approachNote = "";
+  // ── Step1廃止（2026-08）: 旧「分析結果から各フィールドを抽出」ブロックの置換 ──────────
+  // approachNote（reply_direction+recommended_toneが代替）/ repeatedConcernNote / currentPropertyNote /
+  // hesitancyNote / questionsNote(fresh時) / closingStrategyFromAnalysis は
+  // brainGuidanceNote（AIX-META戦略・POSTハンドラ内で構築）の message-local 戦術ブロックへ統合済み。
+  // ここには ①T2/T3（brain stale / null）用の決定論質問検出フォールバック
+  // ②conditionChangeNote（newConditionRequestNote との相互作用があるため残留・発火源を brainMeta に差し替え）のみ残す。
+
+  // T2/T3 決定論フォールバック: brainの分析が最新顧客メッセージ未反映（stale）または brainMeta null の場合、
+  // 質問検出を「？/?」文末分割で決定論的に補完する（複数質問注意書き＋不安系キーワード判定のみ）。
+  // fresh時（T1）は brainGuidanceNote 側の customer_questions が正のため、ここでは二重注入しない。
   let questionsNote = "";
-  let repeatedConcernNote = "";
-  let currentPropertyNote = "";
-  let hesitancyNote = "";
+  if (!(brainFreshForMessage && brainMeta)) {
+    const detectedQuestions = ((customerMessage || "").match(/[^？?\n]{2,}?[？?]/g) ?? [])
+      .map((q) => q.trim())
+      .filter(Boolean);
+    if (detectedQuestions.length > 1) {
+      questionsNote = `\n【⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）】\n${
+        detectedQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n")
+      }`;
+    }
+    if (detectedQuestions.some((q) => ANXIETY_KEYWORDS.some((k) => q.includes(k)))) {
+      questionsNote += `\n【🚨 不安系質問検出】お客様はリスク・ルール・契約上の不安を持っている。曖昧・ぼかした回答（「可能性があります」「かもしれません」）は信頼を損なう。不動産ルール・事実・リスクを具体的に説明し、リスクがある場合は正直に伝えた上で必ず代替案をセットで提示すること。`;
+    }
+  }
+
+  // ③ 条件変更/ピックアップ依頼検出
+  // 発火源を Step1 の p.condition_change_type から brainMeta.condition_change_type（鮮度ゲート通過時のみ）に差し替え。
+  // stale/null 時は newConditionRequestNote（決定論保険）が主防衛線になる。
+  // typeLabel辞書・4ステップ返信の型・禁止CTA・noReproposeNote の文面は実運用で調整済みのため一切変更しない。
   let conditionChangeNote = "";
-  let closingStrategyFromAnalysis = "";
-  if (analysis) {
-    try {
-      const p = JSON.parse(analysis) as Record<string, unknown>;
-      // ② Step1分析の closing_strategy を抽出
-      // ※ここでparseに失敗する場合はStep1の出力形式を確認すること
-      if (p.closing_strategy && typeof p.closing_strategy === "string") {
-        closingStrategyFromAnalysis = p.closing_strategy;
-      }
-      if (p.approach) approachNote = `\n【今回の返し方】${p.approach}（トーン: ${p.tone || "自然に"}）`;
-
-      // ① 複数質問: 全問答えることを明示 + 不安系質問検出
-      if (Array.isArray(p.questions) && (p.questions as string[]).length > 0) {
-        const questions = p.questions as string[];
-        if (questions.length > 1) {
-          questionsNote = `\n【⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）】\n${
-            questions.map((q, i) => `${i + 1}. ${q}`).join("\n")
-          }`;
-        }
-        const anxietyKeywords = ["名義", "審査", "保証", "リスク", "キャンセル", "退去", "違約", "トラブル", "詐称", "離婚", "死亡", "ルール", "大丈夫", "問題ない", "失敗", "断られ", "通らな"];
-        const isAnxiety = questions.some(q => anxietyKeywords.some(k => q.includes(k)));
-        if (isAnxiety) {
-          questionsNote += `\n【🚨 不安系質問検出】お客様はリスク・ルール・契約上の不安を持っている。曖昧・ぼかした回答（「可能性があります」「かもしれません」）は信頼を損なう。不動産ルール・事実・リスクを具体的に説明し、リスクがある場合は正直に伝えた上で必ず代替案をセットで提示すること。`;
-        }
-      }
-
-      // ② 迷いパターン: 根本不安を正面から解消
-      if (p.repeated_concern && typeof p.repeated_concern === "string") {
-        repeatedConcernNote = `\n【💭 迷いパターン検出】このお客様は「${p.repeated_concern}」について繰り返し確認している。表面的な質問の裏に根本的な不安がある。今回の返信でその不安を正面から・具体的な数字・事実で解消すること。同じ説明の繰り返しはNG — 別の角度・具体例で伝える。`;
-      }
-
-      // ④ 物件名追跡
-      // ★お客様が新しい条件を追加した場合は、既出物件を再提案しないよう文脈注記を切り替える
-      //   （condition_change_type が付いている＝新条件が来た → 既出物件の「文脈で返信」指示は再提案を誘発するため出さない）
-      const hasConditionChangeForProperty = typeof p.condition_change_type === "string" && p.condition_change_type.trim().length > 0;
-      if (p.current_property && typeof p.current_property === "string") {
-        currentPropertyNote = hasConditionChangeForProperty
-          ? `\n【🏠 現在話している物件】${p.current_property}（※お客様が新しい条件を追加したため、この既出物件を再提案・再アピールしない。新条件に合うお部屋を新たに探してお送りする旨のみ伝えること）`
-          : `\n【🏠 現在話している物件】${p.current_property} — この物件の文脈で返信すること。`;
-      }
-
-      // ② 検討/保留パターン: 実データから抽出した対応策を注入
-      if (p.hesitancy_pattern && typeof p.hesitancy_pattern === "string") {
-        const hp = p.hesitancy_pattern;
-        const timeline = p.future_timeline && typeof p.future_timeline === "string" ? p.future_timeline : null;
-        if (hp === "thinking" || hp === "callback") {
-          hesitancyNote = `\n【🤔 保留パターン検出（${hp === "thinking" ? "検討中" : "また連絡"}）★実データ反映】お客様は一旦保留している。「お気軽にご連絡ください」だけで終わらないこと。必ず以下を1つ添える：①物件の好条件・希少性を一言（「かなり好条件のお部屋ですので」「繁忙期に入ると同様の物件は減ります」等） ②申込促し（「お気に召されましたらお申込みしてお部屋抑えさせて頂きます！！」） ③待機中の具体アクション約束（「新着出次第随時お送りします」）。`;
-        } else if (hp === "waiting") {
-          hesitancyNote = `\n【⏳ 「少し待って」パターン検出★実データ反映】お客様は決断に踏み出せていない。バリアを取り除くこと：「保証会社の審査が通過するまでの間はキャンセル料は一切かかりませんのでご安心ください😊！！審査期間中にお部屋のご案内もさせて頂けますので、実際に見てからご判断いただけます！！」のように安心感を先に伝える。`;
-        } else if (hp === "timeline" && timeline) {
-          hesitancyNote = `\n【📅 タイムライン確定（${timeline}）★実データ反映】お客様がタイムラインを示している。そのタイミングで動く具体アクションを約束する：「${timeline}に新着物件も含めてピックアップしお送りさせて頂きます😊！！」のように日付・アクションを明示してコミットする。`;
-        } else if (hp === "undecided") {
-          hesitancyNote = `\n【🔀 物件迷いパターン検出★実データ反映】複数物件で迷っている。判断軸を提供する：各物件の具体的な違い（費用・立地・設備）を数字で比較し、「初期費用を軸にお選びになられるのはいかがでしょうか」等で決断を後押しする。※比較に使う数字は会話履歴にテキストとして登場した実際の値のみ。履歴にない家賃・費用の数字を推測して比較することは絶対禁止。数字が履歴になければ『初期費用を軸にお選びになられるのはいかがでしょうか』の判断軸提示のみ行う。`;
-        }
-      }
-
-      // ③ 条件変更/ピックアップ依頼検出
-      if (p.condition_change_type && typeof p.condition_change_type === "string") {
-        const changeType = p.condition_change_type; // typeof ガードで string に絞り込み済み（as 不要）
+  const brainConditionChangeType = brainFreshForMessage ? (brainMeta?.condition_change_type ?? null) : null;
+  if (brainConditionChangeType) {
+        const changeType: string = brainConditionChangeType;
         const typeLabel: Record<string, string> = {
           area_change: "エリア変更",
           rent_change: "家賃変更",
@@ -709,8 +614,6 @@ function buildGenerationMessages(
 ・正しい型: 「かしこまりました！！[エリア]のお部屋で[名前]さんのご条件に合ったお部屋の新着状況随時確認させて頂きオススメ出来るお部屋募集に出次第お送りさせて頂きます！！何卒よろしくお願い致します😊！！」
 ・ポイント: 「新着状況随時確認」「募集に出次第お送り」のフレーズを使って継続的に追い続けている姿勢を伝える${conditionChangeShapeNote}`;
         }
-      }
-    } catch (e) { console.warn("[generate-reply] Step1 JSON parse failed:", e); }
   }
 
   // スモラの全過去返信を抽出（連続する複数送信は1つにまとめる・スプリット送信対応）
@@ -967,13 +870,18 @@ function buildGenerationMessages(
 【🚫 絶対禁止】「確認させていただきます」「管理会社に確認します」と返すこと → 一手間増えて会話が止まる誤り。この質問は直接回答できる。`
     : "";
 
-  // 新条件・追加要望の決定論的検出（Step1分析が condition_change_type を返さなかった場合の保険）
+  // 新条件・追加要望の決定論的検出（brainが condition_change_type を返さなかった／stale／null の場合の保険）
+  // Step1廃止（2026-08）に伴い T2/T3 フォールバック時の主防衛線になるため無条件で維持する。
   // 「〇〇の条件の部屋はありますか？」「〇〇でも大丈夫です」等 → 物件探し文脈。申込・見積書CTAは絶対禁止。
+  // PROPERTY_CONDITION_INQUIRY_RE は brain-core と共有の条件問い合わせ検出（shared定数・二重定義禁止）
   const isNewConditionMsg =
     /(?:条件|エリア|家賃|間取り|築年数|駅|徒歩|広さ|収納|ペット|駐車場|オートロック|バストイレ別?|WIC|SIC|日当た|南向き)[^。！!？?\n]{0,24}(?:の(?:お?部屋|物件)|で(?:探|お願|大丈夫)|は(?:あります|ないです|ありません|可能))/i.test(customerMessage)
     || /(?:でも|も)(?:大丈夫|良いです|いいです|平気|構いま|OK|オッケー)/i.test(customerMessage)
     || /(?:もう少し|もっと|さらに)[^。！!？?\n]{0,12}(?:広|安|新し|駅近|抑え|きれい|綺麗)/.test(customerMessage)
-    || /(?:ような|みたいな|といった)[^。！!？?\n]{0,8}(?:お?部屋|物件)[^。！!？?\n]{0,12}(?:あります|ないです|ありません)/.test(customerMessage);
+    || /(?:ような|みたいな|といった)[^。！!？?\n]{0,8}(?:お?部屋|物件)[^。！!？?\n]{0,12}(?:あります|ないです|ありません)/.test(customerMessage)
+    // T2/T3補完: brainのmessage-local分析が使えない時のみ、brain-core共有の条件問い合わせ検出を追加適用する
+    // （fresh時はbrainの condition_change_type 判定が正。募集状況確認文脈は availabilityCheckNote が正のため除外）
+    || (!brainFreshForMessage && !isAvailabilityCheckContext && PROPERTY_CONDITION_INQUIRY_RE.test(customerMessage));
   const newConditionRequestNote = (isNewConditionMsg && !conditionChangeNote)
     ? `\n【🆕 新条件・追加要望の検出（確定・最優先）】お客様は新しい条件・要望（「〇〇の条件のお部屋はありますか」「〇〇でも大丈夫です」等）を出しています。今のフェーズは「その条件でお部屋を探し直す」段階。
 【返信の型（この要素以外を入れない）】
@@ -1003,15 +911,14 @@ function buildGenerationMessages(
 
   // 戦略注入のAIX-META一元化（2026-08）:
   // brainGuidanceNote（AIX-META = suggested_aix_meta 由来）が存在する場合、それが全情報を統合した
-  // 唯一の戦略指示となるため、closingNote の戦略要素（Step1 closing_strategy / ai_summary の
-  // winning_pattern / next_action）は注入しない（二重注入による戦略の矛盾を防ぐ）。
-  // AIX-METAが未生成（brainGuidanceNote が空）の場合のみ、従来の Step1 / ai_summary を
-  // フォールバック参考情報として注入する。
+  // 唯一の戦略指示となるため、closingNote は注入しない（二重注入による戦略の矛盾を防ぐ）。
+  // Step1完全廃止（2026-08）: closingNote は brainMeta 完全欠落時（T3）専用フォールバックに縮退。
+  // 構成要素は ai_summary_json.winning_pattern / next_action の2つのみ — どちらも過去のbrain実行が
+  // property_customers に保存した値のため、Step1なしでも供給が途切れない。
   const hasAixMetaStrategy = brainGuidanceNote.trim().length > 0; // brainGuidanceNote が非空なら必ず true（action・拡張フィールドどちらでも発火）
   const closingNote = (() => {
     if (hasAixMetaStrategy) return "";
     const parts: string[] = [];
-    if (closingStrategyFromAnalysis) parts.push(`AIが判断した成約への一手: ${closingStrategyFromAnalysis}`);
     if (closingPatternFromSummary) parts.push(`この会話の成約ポイント: ${closingPatternFromSummary}`);
     if (nextActionFromSummary) parts.push(`今すぐ打つべき次の一手（スタッフへの行動方針）: ${nextActionFromSummary}`);
     if (parts.length === 0) return "";
@@ -1039,10 +946,14 @@ function buildGenerationMessages(
     aixOperationNote,
   ].filter(Boolean).join("\n");
 
+  // Step1廃止（2026-08）: 旧 currentPropertyNote/repeatedConcernNote/hesitancyNote スロットは
+  // brainGuidanceNote の message-local 戦術ブロックへ統合されて消滅。approachNote も
+  // reply_direction + recommended_tone（brainGuidanceNote）が代替するため消滅。
+  // questionsNote は T2/T3 決定論フォールバック時のみ非空（fresh時は brainGuidanceNote 側が正）。
   const dynamicBlock = `${propertyStatusNote}
-${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
+${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
 【現在の営業フェーズ】${state}
-${phaseGuide}${approachNote}${staffContextNote}
+${phaseGuide}${staffContextNote}
 ${replyContentNote}${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
 ${phrases}
@@ -1769,7 +1680,10 @@ ${rules.map((r, i) => `${i + 1}. ${r.rule_text}（${r.example_count}回確認済
 // AI自動返信禁止。ドラフト生成を中止し、スタッフにLINEグループ通知する。
 // H7(Fable5): closing_strategy / next_steps も読む — brain の戦略をドラフト生成プロンプトへ注入し、
 // スタッフ向け表示（赤枠）と顧客向けドラフトの戦略を一致させる
-type AixGateMeta = { action?: string; note?: string; source?: string; enforcement_level?: "required" | "recommended"; reply_mode?: string; closing_strategy?: string; next_steps?: string[]; reply_direction?: string | null; key_topics?: string[]; avoid_topics?: string[]; urgency_appropriate?: boolean; recommended_tone?: string | null } | null;
+// Step1廃止（2026-08）: 型は brain-core の SuggestedAixMeta を共有（二重定義禁止）。
+// message-local 戦術フィールド（customer_questions〜future_timeline）と鮮度ゲート基準
+// analyzed_msg_ts もこの型経由で generate-reply に届く。
+type AixGateMeta = SuggestedAixMeta;
 
 async function fetchReplyModeGate(
   convId: string
@@ -1874,7 +1788,7 @@ export async function POST(req: NextRequest) {
   // アクティブタスク（body指定 or DB自動補完）。property_check中の返信ガード等に使用
   let activeTaskTypes: string[] = [];
   // ─── テンプレート最適化モード（templateText 指定で有効化）───
-  // 「AIで最適化」ボタン: generate-reply の品質パイプライン（Step1分析 + 全プロンプトスタック +
+  // 「AIで最適化」ボタン: generate-reply の品質パイプライン（brain戦略注入 + 全プロンプトスタック +
   // ハードゲート + validateAndClean）をそのまま使い、テンプレを骨格として書き直す
   let templateText = "";
   let templateCategory = "";
@@ -2283,32 +2197,151 @@ export async function POST(req: NextRequest) {
       /(作成|お送り|送らせて|送付|割引|お値引)/.test(lastStaffMsgForSearch);
     const estimatePromised = !isTemplateOptimize && (estimateAlreadySent || staffPromisedEstimate);
 
-    // ── Step1: 分析を先行実行（検出パターンを実例検索クエリに使うため）
     if (!process.env.OPENAI_API_KEY) {
       console.warn("[generate-reply] OPENAI_API_KEY not set — pgvector検索無効・フォールバック使用");
     }
-    const analysis = await analyzeCustomerSituation(message, history, currentState, customerName, isFollowUp);
 
-    // ── 分析結果からパターンキーワードを抽出（実例検索クエリ強化用）
+    // ── Step1（analyzeCustomerSituation）完全廃止（2026-08）────────────────────
+    // 旧: ここで Sonnet による直列分析（3〜8秒・Step2並列フェッチをブロック）を実行していた。
+    // brain(suggested_aix_meta) が Step1 の全消費フィールドの上位互換を持つため、
+    // DBフェッチ1回（数十ms・fetchReplyModeGate）に置き換える。これにより
+    // reply_modeゲートB・brainGuidanceNote・analysisContext・final-check が
+    // 全て同一スナップショットを参照する（旧「Step1とbrainの鮮度差」問題が構造的に消える）。
+    // brain直列アーキテクチャ: brainMetaDirect 指定時（bg-async経由）は DB 再フェッチをスキップ。
+    // bg-async が直前に brain を直列実行して書いた値なので DB と同値（むしろ順序保証つき）＝常にT1（fresh）。
+    const brainGate = externalBrainGate ?? ((conversationId && !isTemplateOptimize)
+      ? await fetchReplyModeGate(conversationId)
+      : null);
+    const brainMeta = brainGate?.meta ?? null;
+    // T3（brainMeta完全null: brain失敗・分析未完了）の可視化（P4警告と同型のログ）。
+    // 生成自体は closingNote（ai_summary_json）＋決定論regexフォールバックで続行する。
+    // brain-sweep が5分以内に補填するため次回生成はT1に復帰する。
+    if (!brainMeta && conversationId && !isTemplateOptimize) {
+      console.warn("[generate-reply] T3警告: brainMeta null — closingNote(ai_summary)＋決定論regexフォールバックで生成続行:", conversationId);
+    }
+
+    // ── AIX-META 鮮度判定（message-localフィールド採用ゲート）─────────────────────
+    // 戦略フィールド（closing_strategy / reply_direction / key_topics / avoid_topics /
+    // urgency_appropriate / recommended_tone / next_steps）は差分分析モードでも維持される設計のため
+    // staleでも採用する。message-localフィールド（customer_questions / repeated_concern /
+    // current_property / condition_change_type / hesitancy_pattern / future_timeline）は
+    // 「最新の顧客メッセージ」に従属するため、brainがそのメッセージを見た後の分析でのみ採用する。
+    // cachedモード返却は analyzed_msg_ts が古いまま保存されるためここで自然に弾かれる（追加ロジック不要）。
+    const lastCustomerMsgAt = [...recentMessages].reverse().find((m) => m.sender === "customer")?.createdAt ?? null;
+    const brainFreshForMessage = !!(
+      brainMeta?.analyzed_msg_ts && (
+        !lastCustomerMsgAt ||
+        new Date(brainMeta.analyzed_msg_ts).getTime() >= new Date(lastCustomerMsgAt).getTime() - 5_000 // 同一秒書き込みの丸め誤差吸収
+      )
+    );
+
+    // H7(Fable5) + AIX-META一元化(2026-08) + Step1廃止(2026-08):
+    // brainMeta が唯一の戦略指示（＋message-local戦術）としてプロンプトに注入される。
+    // AIX-META が存在する場合、buildGenerationMessages 側の closingNote（ai_summary由来の
+    // フォールバック戦略）は注入されない（brainGuidanceNote 非空をシグナルとして抑制される）。
+    const brainGuidanceNote = (() => {
+      if (!brainMeta) return "";
+      const hasAction = !!brainMeta.action;
+      const hasStrategy = !!(brainMeta.closing_strategy || brainMeta.next_steps?.length);
+      const hasExtendedFields = !!(
+        brainMeta.reply_direction ||
+        brainMeta.key_topics?.length ||
+        brainMeta.avoid_topics?.length ||
+        brainMeta.urgency_appropriate === false ||
+        brainMeta.recommended_tone
+      );
+      // Step1移植: message-local戦術フィールド（鮮度ゲート通過時のみ発火）
+      const qs = brainFreshForMessage ? (brainMeta.customer_questions ?? []) : [];
+      const hasTactical = brainFreshForMessage && !!(
+        qs.length || brainMeta.repeated_concern || brainMeta.current_property || brainMeta.hesitancy_pattern
+      );
+      if (!hasAction && !hasStrategy && !hasExtendedFields && !hasTactical) return "";
+      // enforcement_level を強制度文言に反映（型定義済みだが未使用だったフィールドの活用）
+      const isRequired = brainMeta.enforcement_level === "required";
+      const lines: string[] = [
+        `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位。強制度: ${isRequired ? "必須（以下の指示に例外なく従う）" : "推奨（原則従うが、顧客の最新メッセージへの応答として不自然になる場合のみ自然さを優先してよい）"}）】`,
+      ];
+      if (hasAction) lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}`);
+      if (brainMeta.closing_strategy) lines.push(`- 成約戦略: ${brainMeta.closing_strategy}`);
+      if (brainMeta.next_steps?.length) lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
+      if (brainMeta.reply_direction) lines.push(`- 🎯 返信の方向性: ${brainMeta.reply_direction}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
+      if (brainMeta.key_topics?.length) {
+        lines.push(`- ✅ 必ず含める内容（${brainMeta.key_topics.length}件すべて必須）: ${brainMeta.key_topics.join(" / ")}`);
+        lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
+      }
+      if (brainMeta.avoid_topics?.length) {
+        lines.push(`- 🚫 絶対に言及しない語・話題: ${brainMeta.avoid_topics.join(" / ")}`);
+        lines.push("  → 言い換え・同義語も禁止（「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと");
+      }
+      if (brainMeta.urgency_appropriate === false) {
+        lines.push("- ⛔ 緊急表現禁止: 直近のスタッフ送信で既に使用済みのため「今なら」「今しか」「残り◯室」「あと◯件」「急いで」「お早めに」「先着」等の危機感・緊急表現を一切使わない（連発は信頼を失う逆効果）");
+      }
+      if (brainMeta.recommended_tone) {
+        // トーン語ラベルだけでは生成LLMに伝わりにくいため、具体的な文体指示に展開して注入する
+        const toneGuide: Record<string, string> = {
+          "共感的": "冒頭1文で顧客の気持ちを受け止めてから本題に入る（「〜ですよね」等）。急かさない",
+          "テキパキ": "前置きを省き結論から書く。1文を短く、要点を先に",
+          "慎重": "断定・楽観表現を避け、会話・DBで確認済みの事実のみ正確に伝える",
+          "明るく前向き": "ポジティブな言葉で次の一歩を気持ちよく示す（絵文字の扱いは既存ルールに従う）",
+          "普通": "通常のスモラトーン",
+        };
+        const guide = toneGuide[brainMeta.recommended_tone];
+        lines.push(`- 推奨トーン: ${brainMeta.recommended_tone}${guide ? `（${guide}）` : ""}`);
+      }
+      // ── message-local戦術ブロック（Step1廃止に伴いbrainへ移植した分析・brainFreshForMessage時のみ）──
+      if (qs.length > 1) {
+        lines.push(`- ⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）:\n${qs.map((q, i) => `  ${i + 1}. ${q}`).join("\n")}`);
+      }
+      // 不安系キーワード判定は決定論（コード側）に残す — LLM出力に依存させない（旧Step1と同一リスト・ANXIETY_KEYWORDS）
+      if (qs.some((q) => ANXIETY_KEYWORDS.some((k) => q.includes(k)))) {
+        lines.push("- 🚨 不安系質問検出: お客様はリスク・ルール・契約上の不安を持っている。曖昧・ぼかした回答（「可能性があります」「かもしれません」）は信頼を損なう。不動産ルール・事実・リスクを具体的に説明し、リスクがある場合は正直に伝えた上で必ず代替案をセットで提示すること");
+      }
+      if (brainFreshForMessage && brainMeta.repeated_concern) {
+        lines.push(`- 💭 迷いパターン検出: このお客様は「${brainMeta.repeated_concern}」について繰り返し確認している。表面的な質問の裏に根本的な不安がある。今回の返信でその不安を正面から・具体的な数字・事実で解消すること。同じ説明の繰り返しはNG — 別の角度・具体例で伝える`);
+      }
+      if (brainFreshForMessage && brainMeta.current_property) {
+        lines.push(brainMeta.condition_change_type
+          ? `- 🏠 現在話している物件: ${brainMeta.current_property}（※お客様が新しい条件を追加したため、この既出物件を再提案・再アピールしない。新条件に合うお部屋を新たに探してお送りする旨のみ伝えること）`
+          : `- 🏠 現在話している物件: ${brainMeta.current_property} — この物件の文脈で返信すること`);
+      }
+      if (brainFreshForMessage && brainMeta.hesitancy_pattern) {
+        const hp = brainMeta.hesitancy_pattern;
+        const timeline = brainMeta.future_timeline ?? null;
+        if (hp === "thinking" || hp === "callback") {
+          lines.push(`- 🤔 保留パターン検出（${hp === "thinking" ? "検討中" : "また連絡"}）: お客様は一旦保留している。「お気軽にご連絡ください」だけで終わらないこと。必ず以下を1つ添える: ①物件の好条件・希少性を一言（「かなり好条件のお部屋ですので」等） ②申込促し（「お気に召されましたらお申込みしてお部屋抑えさせて頂きます！！」） ③待機中の具体アクション約束（「新着出次第随時お送りします」）`);
+        } else if (hp === "waiting") {
+          lines.push("- ⏳ 「少し待って」パターン検出: お客様は決断に踏み出せていない。バリアを取り除くこと: 「保証会社の審査が通過するまでの間はキャンセル料は一切かかりませんのでご安心ください😊！！審査期間中にお部屋のご案内もさせて頂けますので、実際に見てからご判断いただけます！！」のように安心感を先に伝える");
+        } else if (hp === "timeline" && timeline) {
+          lines.push(`- 📅 タイムライン確定（${timeline}）: お客様がタイムラインを示している。そのタイミングで動く具体アクションを約束する: 「${timeline}に新着物件も含めてピックアップしお送りさせて頂きます😊！！」のように日付・アクションを明示してコミットする`);
+        } else if (hp === "undecided") {
+          lines.push("- 🔀 物件迷いパターン検出: 複数物件で迷っている。判断軸を提供する: 各物件の具体的な違い（費用・立地・設備）を数字で比較し「初期費用を軸にお選びになられるのはいかがでしょうか」等で決断を後押しする。※比較に使う数字は会話履歴にテキストとして登場した実際の値のみ。履歴にない家賃・費用の数字を推測して比較することは絶対禁止。数字が履歴になければ判断軸提示のみ行う");
+        }
+      }
+      lines.push("※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。");
+      return lines.join("\n") + "\n";
+    })();
+
+    // ── brainMeta からパターンキーワードを抽出（旧Step1 analysisContext の置換・実例/ナレッジ検索クエリ強化用）
+    // 鮮度ゲート適用: stale時は戦略フィールド（reply_direction / key_topics）のみ使用する
     const analysisContext = (() => {
-      try {
-        const p = JSON.parse(analysis) as Record<string, unknown>;
-        const parts: string[] = [];
-        // 返し方の方針
-        if (p.approach && typeof p.approach === "string") parts.push(safeSlice(p.approach, 60));
-        // 迷い・保留パターン → 検索に使うキーワード化
-        const hp = p.hesitancy_pattern;
+      if (!brainMeta) return undefined;
+      const parts: string[] = [];
+      if (brainMeta.reply_direction) parts.push(safeSlice(brainMeta.reply_direction, 60));
+      if (brainFreshForMessage) {
+        // 迷い・保留パターン → 検索に使うキーワード化（旧Step1の既存マッピングを流用）
+        const hp = brainMeta.hesitancy_pattern;
         if (hp === "thinking")  parts.push("検討します また連絡します ごゆっくり");
         else if (hp === "callback") parts.push("また連絡します 後でご連絡");
         else if (hp === "waiting")  parts.push("少し待ってほしい まだ決めていない キャンセル");
         else if (hp === "undecided") parts.push("どちらにするか迷っています 比較 判断軸");
-        else if (hp === "timeline" && p.future_timeline) parts.push(String(p.future_timeline));
-        // 複数質問
-        if (Array.isArray(p.questions) && (p.questions as string[]).length > 0) {
-          parts.push((p.questions as string[]).slice(0, 3).join(" "));
+        if (brainMeta.future_timeline) parts.push(String(brainMeta.future_timeline));
+        // 複数質問（先頭3件）
+        if (brainMeta.customer_questions?.length) {
+          parts.push(brainMeta.customer_questions.slice(0, 3).join(" "));
         }
-        return parts.length > 0 ? parts.join(" ") : undefined;
-      } catch { return undefined; }
+      }
+      if (brainMeta.key_topics?.length) parts.push(brainMeta.key_topics.join(" "));
+      return parts.length > 0 ? parts.join(" ") : undefined;
     })();
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
@@ -2479,69 +2512,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
           : "\n\n【テンプレート最適化モード】今回はテンプレートをベースに、この顧客の状況に最適化した文章を作成してください。詳細ルールはプロンプト末尾の【🟠✨ テンプレート最適化モード】ブロックに従うこと。")
       : "";
 
-    // H7(Fable5) + AIX-META一元化(2026-08): brain(suggested_aix_meta) を生成前に一度だけ取得し、
-    // ① reply_mode ゲート（チェックポイントB） ② 唯一の戦略指示としてのプロンプト注入 の両方に使う。
-    // brain は顧客メッセージ毎に再分析されるため Step1 分析より新鮮。AIX-META が存在する場合は
-    // これが唯一の戦略指示となり、buildGenerationMessages 側の closingNote（Step1/ai_summary由来の
-    // 戦略）は注入されない（brainGuidanceNote 非空をシグナルとして抑制される）。
-    // brainMeta が存在する限り brainGuidanceNote を生成する（closing_strategy/next_steps が空でも）。
-    // action 情報だけでも届けることで古い ai_summary フォールバックへの退行を防ぐ。
-    // brain直列アーキテクチャ: brainMetaDirect 指定時（bg-async経由）は DB 再フェッチをスキップ。
-    // bg-async が直前に brain を直列実行して書いた値なので DB と同値（むしろ順序保証つき）。
-    const brainGate = externalBrainGate ?? ((conversationId && !isTemplateOptimize)
-      ? await fetchReplyModeGate(conversationId)
-      : null);
-    const brainMeta = brainGate?.meta ?? null;
-    const brainGuidanceNote = (() => {
-      if (!brainMeta) return "";
-      const hasAction = !!brainMeta.action;
-      // 修正: closing_strategy / next_steps を発火条件に追加（2487行コメントの意図どおりの動作にする。
-      // 旧実装は action と拡張5フィールドが全て空だと closing_strategy のみのmetaが完全脱落していた）
-      const hasStrategy = !!(brainMeta.closing_strategy || brainMeta.next_steps?.length);
-      const hasExtendedFields = !!(
-        brainMeta.reply_direction ||
-        brainMeta.key_topics?.length ||
-        brainMeta.avoid_topics?.length ||
-        brainMeta.urgency_appropriate === false ||
-        brainMeta.recommended_tone
-      );
-      if (!hasAction && !hasStrategy && !hasExtendedFields) return "";
-      // enforcement_level を強制度文言に反映（型定義済みだが未使用だったフィールドの活用）
-      const isRequired = brainMeta.enforcement_level === "required";
-      const lines: string[] = [
-        `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位。強制度: ${isRequired ? "必須（以下の指示に例外なく従う）" : "推奨（原則従うが、顧客の最新メッセージへの応答として不自然になる場合のみ自然さを優先してよい）"}）】`,
-      ];
-      if (hasAction) lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action!] ?? brainMeta.action}`);
-      if (brainMeta.closing_strategy) lines.push(`- 成約戦略: ${brainMeta.closing_strategy}`);
-      if (brainMeta.next_steps?.length) lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
-      if (brainMeta.reply_direction) lines.push(`- 🎯 返信の方向性: ${brainMeta.reply_direction}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
-      if (brainMeta.key_topics?.length) {
-        lines.push(`- ✅ 必ず含める内容（${brainMeta.key_topics.length}件すべて必須）: ${brainMeta.key_topics.join(" / ")}`);
-        lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
-      }
-      if (brainMeta.avoid_topics?.length) {
-        lines.push(`- 🚫 絶対に言及しない語・話題: ${brainMeta.avoid_topics.join(" / ")}`);
-        lines.push("  → 言い換え・同義語も禁止（「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと");
-      }
-      if (brainMeta.urgency_appropriate === false) {
-        lines.push("- ⛔ 緊急表現禁止: 直近のスタッフ送信で既に使用済みのため「今なら」「今しか」「残り◯室」「あと◯件」「急いで」「お早めに」「先着」等の危機感・緊急表現を一切使わない（連発は信頼を失う逆効果）");
-      }
-      if (brainMeta.recommended_tone) {
-        // トーン語ラベルだけでは生成LLMに伝わりにくいため、具体的な文体指示に展開して注入する
-        const toneGuide: Record<string, string> = {
-          "共感的": "冒頭1文で顧客の気持ちを受け止めてから本題に入る（「〜ですよね」等）。急かさない",
-          "テキパキ": "前置きを省き結論から書く。1文を短く、要点を先に",
-          "慎重": "断定・楽観表現を避け、会話・DBで確認済みの事実のみ正確に伝える",
-          "明るく前向き": "ポジティブな言葉で次の一歩を気持ちよく示す（絵文字の扱いは既存ルールに従う）",
-          "普通": "通常のスモラトーン",
-        };
-        const guide = toneGuide[brainMeta.recommended_tone];
-        lines.push(`- 推奨トーン: ${brainMeta.recommended_tone}${guide ? `（${guide}）` : ""}`);
-      }
-      lines.push("※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。");
-      return lines.join("\n") + "\n";
-    })();
-
+    // Step1廃止（2026-08）: brainGate / brainMeta / brainGuidanceNote は Step2 並列フェッチの前
+    // （旧Step1の位置）で構築済み。ここでは directionNote（現在フェーズの参考情報）のみ組み立てる。
     const phaseLabels: Record<string, string> = {
       hearing: "条件ヒアリング中",
       proposing: "物件提案中",
@@ -2558,28 +2530,20 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       : "";
 
     // Sonnetでストリーミング生成
+    // Step1廃止（2026-08）: 旧 analysis（Step1生JSON）の代わりに brainMeta + brainFreshForMessage を渡す
     const messages = buildGenerationMessages(
       message, customerName, aixSourceMessage ? historyForTemplate : history, currentState,
-      analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
+      brainMeta, brainFreshForMessage, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote, directionNote,
       estimatePromised
     );
-    // 中6: 顧客の温度感に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
-    // ④ Step1で今まさに分析したフレッシュな emotion を最優先し、なければ ai_summary_json.emotion（過去の要約）を使う
-    const analysisEmotion = (() => {
-      try {
-        const p = JSON.parse(analysis) as Record<string, unknown>;
-        return typeof p.emotion === "string" && p.emotion ? p.emotion : undefined;
-      } catch { return undefined; }
-    })();
-    const genTemperature = emotionTemperature(analysisEmotion ?? resolvedSummaryJson?.emotion);
 
     // ─── reply_modeゲート チェックポイントB（本命）───
-    // チェックポイントB: brainGate（Step1完了後にフェッチ済み）を再利用する。
-    // 旧実装はここで DB を再フェッチしていたが、brainGate 取得（2491行）とは文字列構築のみを挟んだ
-    // バックツーバック実行（1秒未満）のため鮮度差は実質ゼロ。統合により
+    // チェックポイントB: brainGate（Step2並列フェッチ前に取得済み）を再利用する。
+    // 旧実装はここで DB を再フェッチしていたが、並列フェッチ＋プロンプト構築（数秒以内）を挟むだけで
+    // 鮮度差は実質ゼロ。統合により
     // (a) DBフェッチ1回削減 (b) brainGuidanceNote と reply_mode ゲートの参照スナップショット一致
     // (c) P4警告（下記）の参照ズレ解消 が同時に達成される。
     if (conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
@@ -2609,10 +2573,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       }
     }
 
-    // テンプレート最適化モードは Claude Sonnet 5（temperature非対応のため感情temperatureは適用しない）
+    // テンプレート最適化モードは maxTokens 広めの専用モデル（通常生成は createGenerationModel）
     const genStream = (isTemplateOptimize
       ? createTemplateOptimizeModel()
-      : createGenerationModel(genTemperature)
+      : createGenerationModel()
     ).stream(messages);
 
     // B-2: 品質判定フラグ（自動返信ハードゲート用）
@@ -2626,28 +2590,15 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       auto_ok: false,          // 全チェックfalseなら送信OK候補（クライアントで確定）
     };
 
-    // スタッフ向けガイドメモ: Step1分析の closing_strategy をメタラインで返す
+    // スタッフ向けガイドメモ: brain(AIX-META) の closing_strategy / reply_direction をメタラインで返す。
+    // Step1廃止（2026-08）: 両方 null なら過去のbrain実行がDBに残した ai_summary_json.winning_pattern に
+    // フォールバック。action は "closing" のまま（スタッフUI互換維持）
     const suggestedAixForMeta = (() => {
-      try {
-        const p = JSON.parse(analysis) as Record<string, unknown>;
-        const note = typeof p.closing_strategy === "string" && p.closing_strategy
-          ? p.closing_strategy
-          : typeof p.approach === "string" && p.approach
-            ? p.approach
-            : null;
-        return note ? { action: "closing", note } : null;
-      } catch { return null; }
-    })();
-
-    // Step1分析の closing_strategy（「どうやったら決まるか」の内容）。
-    // SUGGESTED_AIX トレーラーの closing_strategy フォールバックとして使用。
-    // ※ AIX推薦本体（旧 suggested_aix_action / aix_enforcement_level 抽出）は
-    //   brain(suggested_aix_meta) が Step1 分析を統合済みのためここでは抽出しない
-    const analysisClosingStrategy = (() => {
-      try {
-        const p = JSON.parse(analysis) as Record<string, unknown>;
-        return typeof p.closing_strategy === "string" && p.closing_strategy ? p.closing_strategy : undefined;
-      } catch { return undefined; }
+      const note = brainMeta?.closing_strategy
+        || brainMeta?.reply_direction
+        || resolvedSummaryJson?.winning_pattern
+        || null;
+      return note ? { action: "closing", note } : null;
     })();
 
     const encoder = new TextEncoder();
@@ -2794,7 +2745,28 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   finalCheckRules: finalCheckRules || undefined,
                   recentMessages,
                   lastCustomerMessage: message,
-                  step1Json: analysis,
+                  // Step1廃止（2026-08）: 旧 step1Json（Step1生JSON）→ brainMeta のコンパクトサブセット。
+                  // message-local フィールドは鮮度ゲート（brainFreshForMessage）通過時のみ含める
+                  brainContextJson: brainMeta
+                    ? JSON.stringify({
+                        closing_strategy: brainMeta.closing_strategy ?? null,
+                        reply_direction: brainMeta.reply_direction ?? null,
+                        key_topics: brainMeta.key_topics ?? [],
+                        avoid_topics: brainMeta.avoid_topics ?? [],
+                        recommended_tone: brainMeta.recommended_tone ?? null,
+                        next_steps: brainMeta.next_steps ?? [],
+                        ...(brainFreshForMessage
+                          ? {
+                              customer_questions: brainMeta.customer_questions ?? [],
+                              repeated_concern: brainMeta.repeated_concern ?? null,
+                              current_property: brainMeta.current_property ?? null,
+                              condition_change_type: brainMeta.condition_change_type ?? null,
+                              hesitancy_pattern: brainMeta.hesitancy_pattern ?? null,
+                              future_timeline: brainMeta.future_timeline ?? null,
+                            }
+                          : {}),
+                      })
+                    : undefined,
                   // お客様の確定名を情報源に含める（anomaly_scan の FABRICATED_NAME 誤検知を防ぐ）
                   staffSourceText: [
                     customerName ? `お客様のお名前: ${customerName}さん` : "",
@@ -2854,7 +2826,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     );
                     const retryMessages = [...messages, new AIMessage(draftBody), new HumanMessage(feedback)];
                     const gen2 = await consumeGeneration(
-                      createGenerationModel(genTemperature).stream(retryMessages)
+                      createGenerationModel().stream(retryMessages)
                     );
                     if (gen2.body.trim()) {
                       // 再生成ドラフトにも最終チェック＋接地修正ループを適用（未チェック文は絶対に出さない）
@@ -2971,7 +2943,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     note: `最終チェックでAIX境界違反（${aixBoundaryRequired.code}）が解消できませんでした。この内容はAIXから送ってください → ${AIX_ACTION_NOTES[aixBoundaryRequired.action] ?? "AIXボタンで対応してください"}`,
                     source: "final_check_boundary",
                     enforcement_level: "required" as const,
-                    closing_strategy: analysisClosingStrategy || undefined,
+                    closing_strategy: brainMeta?.closing_strategy || undefined,
                   }
                 : (brainMeta?.action && AIX_ACTION_NOTES[brainMeta.action] && currentState !== "first_reply")
                   ? {
@@ -2979,7 +2951,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       note: brainMeta.note || AIX_ACTION_NOTES[brainMeta.action],
                       source: brainMeta.source || "brain",
                       enforcement_level: (brainMeta.enforcement_level || "recommended") as "required" | "recommended",
-                      closing_strategy: brainMeta.closing_strategy || analysisClosingStrategy || undefined,
+                      closing_strategy: brainMeta.closing_strategy || undefined,
                     }
                   : (aixBoundaryHint
                       ? {
@@ -2987,7 +2959,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                           note: `最終チェックでAIX境界（${aixBoundaryHint.code}）の指摘がありました → ${AIX_ACTION_NOTES[aixBoundaryHint.action] ?? "AIXボタンでの対応を検討してください"}`,
                           source: "final_check_boundary_hint",
                           enforcement_level: "recommended" as const,
-                          closing_strategy: analysisClosingStrategy || undefined,
+                          closing_strategy: brainMeta?.closing_strategy || undefined,
                         }
                       : null);
               if (suggestedAix) {
