@@ -19,7 +19,6 @@ import {
   isPlausiblePersonName,
 } from "@/app/lib/validate-reply";
 import { runFinalCheckWithRevision, sha1, type CheckResult } from "@/app/lib/final-check";
-import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { classifyReplyMode } from "@/app/lib/reply-mode-classifier";
@@ -32,9 +31,16 @@ import {
 // Step1完全廃止（2026-08）: brain(suggested_aix_meta) が唯一の分析ソース。
 // SuggestedAixMeta 型と条件問い合わせ検出 regex は brain-core と共有する（二重定義禁止）
 import { PROPERTY_CONDITION_INQUIRY_RE, type SuggestedAixMeta } from "@/app/lib/brain-core";
+import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
+import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult } from "@/app/lib/brain-fetch-spec";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 300;
+
+// checkpointNote（確認済み事実セーブポイント）のヘッダー。
+// POSTハンドラでの組み立てと buildGenerationMessages 内の抽出（P1: brain戦略存在時も
+// チェックポイント部分だけは注入する）の両方で使うため単一定義にする（文字列ドリフト禁止）。
+const CHECKPOINT_HEADER = "【会話履歴サマリー（確認済み事実セーブポイント — 長期会話の文脈）】";
 
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
 // 分析系（synthesizeCustomerContext 専用）: Sonnet — ai_summary なし顧客の即席コンテキスト合成
@@ -499,10 +505,19 @@ function buildGenerationMessages(
     ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。条件の重複記載はしない。`
     : "";
   // AIX-META戦略（brainGuidanceNote）が存在する場合、ai_summary全文はbrain側で既に消化済みのため
-  // summaryNoteは注入しない（戦略の二重注入・矛盾指示を防ぐ）。AIX-META未生成時のみ従来通り注入する
-  const summaryNote = (brainGuidanceNote.trim().length === 0 && customerSummary)
-    ? `\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}`
-    : "";
+  // summaryNoteは注入しない（戦略の二重注入・矛盾指示を防ぐ）。AIX-META未生成時のみ従来通り注入する。
+  // P1修正: ただし checkpointNote 由来の「確認済み事実セーブポイント」は brain が消化していない
+  // 独立情報（長期会話の確定事実）のため、brainGuidanceNote 存在時もチェックポイント部分のみ
+  // CHECKPOINT_HEADER を目印に抽出して必ず注入する（T1通常ケースでの事実喪失を防ぐ）。
+  const summaryNote = (() => {
+    if (!customerSummary) return "";
+    if (brainGuidanceNote.trim().length === 0) {
+      return `\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}`;
+    }
+    const idx = customerSummary.indexOf(CHECKPOINT_HEADER);
+    if (idx === -1) return "";
+    return `\n${customerSummary.slice(idx)}`;
+  })();
 
   // 構造化条件から未取得項目を計算（hearing系フェーズのみプロンプト注入）
   const missingItems = customerStructured
@@ -558,12 +573,17 @@ function buildGenerationMessages(
     const detectedQuestions = ((customerMessage || "").match(/[^？?\n]{2,}?[？?]/g) ?? [])
       .map((q) => q.trim())
       .filter(Boolean);
-    if (detectedQuestions.length > 1) {
+    // P3強化: 疑問符なしの質問（「〜か教えてください」「〜でしょうか」等）も決定論で検出する
+    const detectedQuestionsNoMark = ((customerMessage || "").match(/[^\n]{4,}(?:か教えて|か知りたい|か気になり|でしょうか|ますでしょうか|か確認|ていただけ|いかがでしょう)[^\n]*/g) ?? [])
+      .map((q) => q.trim())
+      .filter((q) => q.length > 4 && !detectedQuestions.some((d) => d.includes(q) || q.includes(d)));
+    const allDetectedQuestions = [...detectedQuestions, ...detectedQuestionsNoMark];
+    if (allDetectedQuestions.length > 1) {
       questionsNote = `\n【⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）】\n${
-        detectedQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n")
+        allDetectedQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n")
       }`;
     }
-    if (detectedQuestions.some((q) => ANXIETY_KEYWORDS.some((k) => q.includes(k)))) {
+    if (allDetectedQuestions.some((q) => ANXIETY_KEYWORDS.some((k) => q.includes(k)))) {
       questionsNote += `\n【🚨 不安系質問検出】お客様はリスク・ルール・契約上の不安を持っている。曖昧・ぼかした回答（「可能性があります」「かもしれません」）は信頼を損なう。不動産ルール・事実・リスクを具体的に説明し、リスクがある場合は正直に伝えた上で必ず代替案をセットで提示すること。`;
     }
   }
@@ -2213,27 +2233,24 @@ export async function POST(req: NextRequest) {
       ? await fetchReplyModeGate(conversationId)
       : null);
     const brainMeta = brainGate?.meta ?? null;
-    // T3（brainMeta完全null: brain失敗・分析未完了）の可視化（P4警告と同型のログ）。
-    // 生成自体は closingNote（ai_summary_json）＋決定論regexフォールバックで続行する。
-    // brain-sweep が5分以内に補填するため次回生成はT1に復帰する。
-    if (!brainMeta && conversationId && !isTemplateOptimize) {
-      console.warn("[generate-reply] T3警告: brainMeta null — closingNote(ai_summary)＋決定論regexフォールバックで生成続行:", conversationId);
-    }
 
-    // ── AIX-META 鮮度判定（message-localフィールド採用ゲート）─────────────────────
+    // ── AIX-META 鮮度判定 → brain鮮度ティア判定（T1=fresh / T2=stale / T3=null）─────
     // 戦略フィールド（closing_strategy / reply_direction / key_topics / avoid_topics /
     // urgency_appropriate / recommended_tone / next_steps）は差分分析モードでも維持される設計のため
     // staleでも採用する。message-localフィールド（customer_questions / repeated_concern /
     // current_property / condition_change_type / hesitancy_pattern / future_timeline）は
     // 「最新の顧客メッセージ」に従属するため、brainがそのメッセージを見た後の分析でのみ採用する。
     // cachedモード返却は analyzed_msg_ts が古いまま保存されるためここで自然に弾かれる（追加ロジック不要）。
+    // 判定本体は detectBrainTier（brain-fetch-spec.ts）に一元化（旧inline brainFreshForMessage と同値）。
     const lastCustomerMsgAt = [...recentMessages].reverse().find((m) => m.sender === "customer")?.createdAt ?? null;
-    const brainFreshForMessage = !!(
-      brainMeta?.analyzed_msg_ts && (
-        !lastCustomerMsgAt ||
-        new Date(brainMeta.analyzed_msg_ts).getTime() >= new Date(lastCustomerMsgAt).getTime() - 5_000 // 同一秒書き込みの丸め誤差吸収
-      )
-    );
+    const tierResult = detectBrainTier(brainMeta, lastCustomerMsgAt);
+    const { brainFreshForMessage } = tierResult;
+    // T3（brainMeta完全null: brain失敗・分析未完了）の可視化（P4警告と同型のログ）。
+    // 生成自体は closingNote（ai_summary_json）＋決定論regexフォールバックで続行する。
+    // brain-sweep が5分以内に補填するため次回生成はT1に復帰する。
+    if (tierResult.tier === "T3" && conversationId && !isTemplateOptimize) {
+      console.warn("[generate-reply] T3警告: brainMeta null — closingNote(ai_summary)＋決定論regexフォールバックで生成続行:", conversationId);
+    }
 
     // H7(Fable5) + AIX-META一元化(2026-08) + Step1廃止(2026-08):
     // brainMeta が唯一の戦略指示（＋message-local戦術）としてプロンプトに注入される。
@@ -2321,28 +2338,9 @@ export async function POST(req: NextRequest) {
       return lines.join("\n") + "\n";
     })();
 
-    // ── brainMeta からパターンキーワードを抽出（旧Step1 analysisContext の置換・実例/ナレッジ検索クエリ強化用）
-    // 鮮度ゲート適用: stale時は戦略フィールド（reply_direction / key_topics）のみ使用する
-    const analysisContext = (() => {
-      if (!brainMeta) return undefined;
-      const parts: string[] = [];
-      if (brainMeta.reply_direction) parts.push(safeSlice(brainMeta.reply_direction, 60));
-      if (brainFreshForMessage) {
-        // 迷い・保留パターン → 検索に使うキーワード化（旧Step1の既存マッピングを流用）
-        const hp = brainMeta.hesitancy_pattern;
-        if (hp === "thinking")  parts.push("検討します また連絡します ごゆっくり");
-        else if (hp === "callback") parts.push("また連絡します 後でご連絡");
-        else if (hp === "waiting")  parts.push("少し待ってほしい まだ決めていない キャンセル");
-        else if (hp === "undecided") parts.push("どちらにするか迷っています 比較 判断軸");
-        if (brainMeta.future_timeline) parts.push(String(brainMeta.future_timeline));
-        // 複数質問（先頭3件）
-        if (brainMeta.customer_questions?.length) {
-          parts.push(brainMeta.customer_questions.slice(0, 3).join(" "));
-        }
-      }
-      if (brainMeta.key_topics?.length) parts.push(brainMeta.key_topics.join(" "));
-      return parts.length > 0 ? parts.join(" ") : undefined;
-    })();
+    // brain誘導型フェッチ仕様（v1: baseline = 従来動作と同一。T1動的選択は次フェーズ）
+    const fetchSpec = buildBrainFetchSpec(brainMeta, currentState, tierResult);
+    const analysisContext = fetchSpec.analysisContext;
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
@@ -2351,17 +2349,17 @@ export async function POST(req: NextRequest) {
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0 }; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
-      fetchPhrases(currentState)
-        .catch((err) => { console.error("[generate-reply] fetchPhrases失敗 — フレーズなしで生成続行:", err); return [] as string[]; }),
+      getCachedPhrases(fetchSpec.phrases.categories)
+        .catch((err) => { console.error("[generate-reply] getCachedPhrases失敗 — フレーズなしで生成続行:", err); return [] as string[]; }),
       // ai_summaryがない場合のみ条件テキスト+履歴から即席合成（Haiku・並列なので遅延ゼロ）
       !customerSummary && customerConditions
         ? synthesizeCustomerContext(customerConditions, customerName, history)
         : Promise.resolve(""),
-      fetchPromptRules("generate_reply", {
+      getCachedPromptRules("generate_reply", {
         conversation_state: currentState,
         is_first_reply: String(isFirstEverReplyFromMsgs ?? false),
       })
-        .catch((err) => { console.error("[generate-reply] fetchPromptRules失敗 — ルールなしで生成続行:", err); return ""; }),
+        .catch((err) => { console.error("[generate-reply] getCachedPromptRules失敗 — ルールなしで生成続行:", err); return ""; }),
       // 構造化サマリー: body未指定かつconversationIdありならDBから直接取得（regex往復の廃止）
       !bodySummaryJson && conversationId
         ? fetchSummaryJsonByConversation(conversationId)
@@ -2381,12 +2379,25 @@ export async function POST(req: NextRequest) {
       fetchGroundTruth(conversationId),
       // final-check 専用ルール（action_type="final_check"）: 3パス全てに注入して日々改善を反映
       // includeGlobal=false で global共通ルールを除外（生成用ルールの二重注入・プロンプト汚染を防ぐ）
-      fetchPromptRules("final_check", {}, false)
-        .catch((err) => { console.error("[generate-reply] fetchPromptRules(final_check)失敗:", err); return ""; }),
+      getCachedPromptRules("final_check", {}, false)
+        .catch((err) => { console.error("[generate-reply] getCachedPromptRules(final_check)失敗:", err); return ""; }),
     ]);
+    // ── ティア監視ログ ──
+    if (!isTemplateOptimize) {
+      console.log(JSON.stringify({
+        tag: "step2-tier",
+        tier: tierResult.tier,
+        reason: tierResult.reason,
+        staleAgeMs: tierResult.staleAgeMs,
+        viaDirect: !!externalBrainGate,
+        brainSource: (brainMeta as Record<string, unknown> | null)?.["source"] as string | null ?? null,
+        action: brainMeta?.action ?? null,
+        conversationId,
+      }));
+    }
     // Build checkpoint note for prompt injection（ローリング累積方式: 最新1行が確認済み事実の全量）
     const checkpointNote = groundTruth.checkpointFacts
-      ? `\n【会話履歴サマリー（確認済み事実セーブポイント — 長期会話の文脈）】\n${groundTruth.checkpointFacts}`
+      ? `\n${CHECKPOINT_HEADER}\n${groundTruth.checkpointFacts}`
       : "";
     const resolvedSummary = (customerSummary || autoSummary) + checkpointNote;
     const resolvedSummaryJson = bodySummaryJson ?? fetchedSummaryJson ?? undefined;

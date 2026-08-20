@@ -102,7 +102,7 @@ const TONE_ALLOWED = ["共感的", "テキパキ", "慎重", "明るく前向き
 const COST_QUESTION_RE = /見積|初期費用|総額|いくら|幾ら|費用|金額/;
 // ルール③: 顧客を急かす危機感・緊急表現の判定。
 // 「すぐ」は「すぐお調べします」等スタッフ自身の行動表現で誤検知するため含めない
-const URGENCY_EXPRESSION_RE = /今なら|今しか|お早め|早い者勝ち|先着|残り\s*[0-9０-９一二三四五]+\s*[件室部戸]|あと\s*[0-9０-９一二三四五]+\s*[件室戸]|埋まって(?:しま|る|い)|なくなる前/;
+export const URGENCY_EXPRESSION_RE = /今なら|今しか|お早め|早い者勝ち|先着|残り\s*[0-9０-９一二三四五]+\s*[件室部戸]|あと\s*[0-9０-９一二三四五]+\s*[件室戸]|埋まって(?:しま|る|い)|なくなる前/;
 
 // Maps raw DB conversation status to a Japanese meaning string injected into the Haiku prompt
 const STATUS_MEANING: Record<string, string> = {
@@ -1801,7 +1801,7 @@ const FULL_BYPASS_RE = /申込|申し込|入居(したい|します|希望)|契�
 // インクリメンタル昇格語: 急ぎではあるがincremental（前回結論+新着）で十分対応できる語
 // 「今日/明日/お願いします/内覧/見積」等の日常的な商談語はcachedをスキップするが
 // fullではなくincrementalで対応（コスト削減の核心）
-const INCREMENTAL_BYPASS_RE = /内見|内覧|見学|見に行|決め(ます|ました|たい)|急ぎ|至急|別の(物件|部屋)/;
+const INCREMENTAL_BYPASS_RE = /内見|内覧|見学|見に行|決め(ます|ました|たい)|急ぎ|至急|別の(物件|部屋)|検討します|また連絡|連絡します|少し待って|迷って|悩んで|保留|保留中|考えさせて|考え中|後で|後ほど|検討中/;
 
 function formatJstDateShort(iso: string | null): string {
   if (!iso) return "";

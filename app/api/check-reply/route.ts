@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
-import { fetchPromptRules } from "@/app/lib/prompt-rules";
+import { getCachedPromptRules } from "@/app/lib/prompt-cache";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { runFinalCheck } from "@/app/lib/final-check";
 
@@ -12,33 +12,6 @@ import { runFinalCheck } from "@/app/lib/final-check";
 // ⚠️ このルートでは自動修正（revised_text）は絶対に行わない。
 //    スタッフが手で編集した文章をAIが書き換えるのは越権（判断はスタッフに返す）。
 export const maxDuration = 15;
-
-// ai_prompt_rules の60秒モジュールスコープキャッシュ（送信のたびのDB往復を防ぐ）
-let rulesCache: { at: number; text: string } = { at: 0, text: "" };
-async function getCachedRules(): Promise<string> {
-  if (Date.now() - rulesCache.at < 60_000 && rulesCache.text) return rulesCache.text;
-  try {
-    const text = await fetchPromptRules("generate_reply", {});
-    rulesCache = { at: Date.now(), text };
-    return text;
-  } catch {
-    return rulesCache.text; // 取得失敗時は古いキャッシュで続行（fail-open）
-  }
-}
-
-// final_check 専用ルールの60秒キャッシュ
-let finalCheckRulesCache: { at: number; text: string } = { at: 0, text: "" };
-async function getCachedFinalCheckRules(): Promise<string> {
-  if (Date.now() - finalCheckRulesCache.at < 60_000 && finalCheckRulesCache.text) return finalCheckRulesCache.text;
-  try {
-    // includeGlobal=false: global共通ルールを除外し final_check 専用ルールのみ取得
-    const text = await fetchPromptRules("final_check", {}, false);
-    finalCheckRulesCache = { at: Date.now(), text };
-    return text;
-  } catch {
-    return finalCheckRulesCache.text;
-  }
-}
 
 export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
@@ -82,10 +55,12 @@ export async function POST(req: NextRequest) {
   if (!text) return NextResponse.json({ error: "text required" }, { status: 400 });
 
   // ルール + 正解データを並列取得（fetchGroundTruth は throw せず1.5sで諦める fail-open）
+  // ルールは共有キャッシュ（prompt-cache.ts: TTL60秒 + SWR + fail-open）経由で取得
   const [dbRules, groundTruth, finalCheckRules] = await Promise.all([
-    getCachedRules(),
+    getCachedPromptRules("generate_reply", {}),
     fetchGroundTruth(conversationId),
-    getCachedFinalCheckRules(),
+    // includeGlobal=false: global共通ルールを除外し final_check 専用ルールのみ取得
+    getCachedPromptRules("final_check", {}, false),
   ]);
   const lastCustomerMessage = [...recentMessages].reverse().find((m) => m.sender === "customer")?.text;
 
