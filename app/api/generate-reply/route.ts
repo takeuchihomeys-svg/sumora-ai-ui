@@ -1487,6 +1487,13 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
+// filterByDirection: 返信の方向性フレーズ（最大20字）から助詞を除いた名詞トークンを抽出する
+// 例 "内見日程の確認" → ["内見日程", "確認"] / "申込意思の確認" → ["申込意思", "確認"]
+function extractDirectionKeywords(direction: string | null): string[] {
+  if (!direction) return [];
+  return direction.split(/[のをにがはでもとへ]/).map(t => t.trim()).filter(t => t.length >= 2);
+}
+
 const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C: "C案", short_direct: "短く直接" };
 
 async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec): Promise<string> {
@@ -1518,9 +1525,10 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         // ★+0.15 に加え、4案から選ばれた実例（reply_angle あり）は+0.1 追加ブースト
         // T1: spec.examples.boostStates（brainが重視するフェーズ）に一致する実例はさらに+0.1
         const boostStates = spec?.examples?.boostStates ?? [];
+        const dirKwds = extractDirectionKeywords(spec?.examples?.filterByDirection ?? null);
         const ranked = [...aboveThreshold].sort((a, b) => {
-          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0);
-          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0);
+          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0);
+          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0);
           return scoreB - scoreA;
         });
         // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）
@@ -1588,6 +1596,16 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
       const aHit = kwds.some(k => (a.customer_message ?? "").includes(k)) ? 1 : 0;
       const bHit = kwds.some(k => (b.customer_message ?? "").includes(k)) ? 1 : 0;
       return bHit - aHit; // Array.prototype.sort は安定ソート＝非一致同士の既存順序は保持される
+    });
+  }
+
+  // filterByDirection: 方向性キーワードが sent_reply に含まれる例を安定ブースト（fail-open: 一致ゼロでもリスト捨てない）
+  const dirKwdsFb = extractDirectionKeywords(spec?.examples?.filterByDirection ?? null);
+  if (dirKwdsFb.length > 0) {
+    fallbackRanked = [...fallbackRanked].sort((a, b) => {
+      const aHit = dirKwdsFb.some(k => (a.sent_reply ?? "").includes(k)) ? 1 : 0;
+      const bHit = dirKwdsFb.some(k => (b.sent_reply ?? "").includes(k)) ? 1 : 0;
+      return bHit - aHit;
     });
   }
 
