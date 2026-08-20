@@ -3210,6 +3210,14 @@ export default function Home() {
         throw new Error(errData.error || "返信案取得失敗");
       }
 
+      // JSON応答（skipped / non-streaming）を先に処理する
+      const ct = res.headers.get("content-type") ?? "";
+      if (ct.includes("application/json")) {
+        const json = await res.json().catch(() => null) as { skipped?: boolean; reason?: string; error?: string } | null;
+        if (json?.skipped) return; // 申込済み等でスキップされた場合はエラーではない
+        throw new Error(json?.error || "返信案取得失敗");
+      }
+
       // ストリーミング読み取り
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -3246,6 +3254,11 @@ export default function Home() {
 
       // metaDone=false はJSONメタ行が見つからなかったことを意味する（ストリーム内部エラー等）
       if (!metaDone) {
+        // skipped応答がストリームとして届いた場合も無音でスキップ
+        try {
+          const parsed = JSON.parse(buffer.trim()) as { skipped?: boolean };
+          if (parsed.skipped) return;
+        } catch { /* ignore */ }
         throw new Error(buffer.trim() || "返信案の取得に失敗しました（ストリーム形式エラー）");
       }
 

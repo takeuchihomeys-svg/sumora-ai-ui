@@ -263,12 +263,12 @@ const MOVE_OUT_PATTERN = /退去予定|入居中|[0-9０-９]{1,2}\s*月末?\s*�
 const VIEWING_CONFIRMED_PATTERN =
   /内覧(?:開始|可能|でき|いただけ)|からご案内|よりご案内|[0-9０-９]{1,2}[\/月][0-9０-９]{1,2}(?:日)?(?:から|より|以降|には?)?(?:ご案内|内覧|案内)|退去(?:済み?|後).*(?:ご?案内|内覧)/;
 
-function detectPropertyStatus(history: string, customerMessage: string, explicit?: PropertyStatus): PropertyStatus {
+function detectPropertyStatus(history: string | null | undefined, customerMessage: string, explicit?: PropertyStatus): PropertyStatus {
   if (explicit && explicit !== "unknown") return explicit;
-  const haystack = `${history}\n${customerMessage}`;
+  const haystack = `${history ?? ""}\n${customerMessage}`;
   if (MOVE_OUT_PATTERN.test(haystack)) {
     // 直近5件のスタッフ発言で内覧可能が確認済みなら退去前判定を取り消す
-    const recentStaffText = history.split("\n")
+    const recentStaffText = (history ?? "").split("\n")
       .filter(l => l.startsWith("スモラ:"))
       .slice(-5)
       .join("\n");
