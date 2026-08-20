@@ -128,7 +128,10 @@ export async function POST(req: NextRequest) {
       try {
         brainGateDirect = await Promise.race([
           runBrainAndNotify(convId, targetMessage),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 60_000)),
+          // FIX(post-Fable5): 旧値 60_000ms は extended thinking の最悪ケース（最大60s）と同値の境界で、
+          // brain 完了と同時にタイムアウトが勝つと T3 フォールバックに落ちていた。
+          // 90s に延ばすことで境界衝突を解消（90+180+α < maxDuration=300s で収支は安全）。
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 90_000)),
         ]);
         console.log("[bg-async] brain serial done, convId:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
       } catch (brainErr) {

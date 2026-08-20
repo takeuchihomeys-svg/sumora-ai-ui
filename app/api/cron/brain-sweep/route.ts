@@ -58,6 +58,12 @@ export async function GET(req: NextRequest) {
       .from("conversations")
       .select("id")
       .is("suggested_aix_meta", null)
+      // FIX(post-Fable5): sweep の存在意義は「webhook brain が失敗した会話の補填」。
+      // webhook は顧客メッセージ受信時のみ brain を起動するため、失敗行は必ず last_sender="customer"。
+      // staff が返信済みの行（last_sender="staff"）は次の顧客メッセージで webhook brain が必ず走るため sweep 不要。
+      // このフィルタにより: (a) staff 返信30分後の sweep によるバナー復活を根絶、
+      // (b) staff 返信ごとの無駄 Sonnet 呼び出しを削減。副作用なし（本来対象は全て条件を満たす）。
+      .eq("last_sender", "customer")
       // B7(Fable5): 旧 .not("status","in",...) は SQL の NOT IN で NULL 行を除外してしまう
       // （writer 側の analyzeAndSaveBrainMeta は null status を許容 → 永久に分析されない盲点だった）
       .or(`status.is.null,status.not.in.(${BRAIN_SKIP_STATUSES.join(",")})`)
