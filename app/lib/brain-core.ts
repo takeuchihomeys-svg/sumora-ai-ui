@@ -61,7 +61,7 @@ export type SuggestedAixMeta = {
   condition_change_type?: "area_change" | "rent_change" | "layout_change" | "equip_add" | "condition_relax" | "pickup_request" | "multi" | null;  // 最新メッセージでの条件変更種別
   hesitancy_pattern?: "thinking" | "callback" | "waiting" | "undecided" | "timeline" | null;  // 決断保留パターン
   future_timeline?: string | null;       // 顧客が示した決断・申込タイムライン（会話に実際に出た表現のみ・30字）
-  checkpoint_stage?: "hearing" | "proposing" | "applying" | "contract" | null;  // 会話の実態フェーズ
+  checkpoint_stage?: "hearing" | "proposing" | "viewing" | "applying" | "contract" | null;  // 会話の実態フェーズ
   // 鮮度ゲート基準: この分析が見た最新顧客メッセージの created_at。
   // generate-reply 側で「analyzed_msg_ts >= 最新顧客メッセージ」なら T1（fresh）、古ければ T2（stale）判定に使う
   analyzed_msg_ts?: string | null;
@@ -1494,7 +1494,7 @@ ${history}`;
       condition_change_type?: string | null;
       hesitancy_pattern?: string | null;
       future_timeline?: string | null;
-      checkpoint_stage?: "hearing" | "proposing" | "applying" | "contract" | null;
+      checkpoint_stage?: "hearing" | "proposing" | "viewing" | "applying" | "contract" | null;
     };
 
     // brain-core統合: ai_summary + ai_summary_json をproperty_customersに保存（fire-and-forget）
@@ -1782,7 +1782,7 @@ ${history}`;
       : null;
 
     // checkpoint_stage: enum ゲート（許可リスト不一致は null フェイルクローズ）
-    const CHECKPOINT_STAGES = new Set(["hearing", "proposing", "applying", "contract"]);
+    const CHECKPOINT_STAGES = new Set(["hearing", "proposing", "viewing", "applying", "contract"]);
     const checkpointStage = (typeof parsed.checkpoint_stage === "string" && CHECKPOINT_STAGES.has(parsed.checkpoint_stage))
       ? parsed.checkpoint_stage as NonNullable<SuggestedAixMeta>["checkpoint_stage"]
       : null;

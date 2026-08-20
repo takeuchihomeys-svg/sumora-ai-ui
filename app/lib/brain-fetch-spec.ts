@@ -224,6 +224,9 @@ export function buildBrainFetchSpec(
   } else if (cs === "hearing") {
     // ヒアリングフェーズ: 失注パターンは雑音（このフェーズで失注パターンは早計）
     spec.lossPatterns.enabled = false;
+  } else if (cs === "viewing") {
+    // 内見フェーズ: 失注パターンは雑音（内見調整中に失注煽りは逆効果）
+    spec.lossPatterns.enabled = false;
   }
   // cs === "proposing": 提案フェーズはデフォルトフロー・変更不要
 
