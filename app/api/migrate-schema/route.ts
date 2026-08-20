@@ -2166,6 +2166,23 @@ CREATE INDEX IF NOT EXISTS idx_blq_unprocessed ON brain_learning_queue(processed
 CREATE INDEX IF NOT EXISTS idx_blq_created_at ON brain_learning_queue(created_at DESC);
 ALTER TABLE brain_learning_queue DISABLE ROW LEVEL SECURITY;
 
+-- ── aix_brain_templates（2026-08-20追加）──
+-- AIXボタン別のブレイン管轄テンプレート。
+-- addendum_text: weekly-learningがbrainの学習結果から生成する追加ルール文。
+-- action/route.tsは5分TTLのメモリキャッシュ経由でこれを読み込みsystemに追記する。
+CREATE TABLE IF NOT EXISTS aix_brain_templates (
+  action_type TEXT NOT NULL,
+  sub_mode    TEXT NOT NULL DEFAULT 'default',
+  addendum_text TEXT,
+  quality_score INTEGER DEFAULT 5 CHECK (quality_score BETWEEN 0 AND 10),
+  updated_by_brain_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (action_type, sub_mode)
+);
+CREATE INDEX IF NOT EXISTS idx_abt_action_type ON aix_brain_templates (action_type);
+ALTER TABLE aix_brain_templates DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
