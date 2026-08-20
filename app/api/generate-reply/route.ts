@@ -1145,11 +1145,12 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const lossEnabled = spec?.lossPatterns.enabled ?? true;
   const lossLimit = spec?.lossPatterns.limit ?? 4;
   const applyingEnabled = spec?.applyingPatterns.enabled ?? true;
+  const viewingEnabled = spec?.viewingPatterns.enabled ?? true;
   const adaptEnabled = spec?.adaptRules.enabled ?? true;
 
   // 失注パターン専用バケット（auto-analyze-losers が category=principle / importance=8 で保存するため、
   // pgvector経路の importance>=9 フィルタ・フォールバック経路の principle 除外の両方から漏れる → 専用クエリで必ず届ける）
-  const [{ data: lossPatterns }, { data: topPrinciples }, { data: adaptRules }, { data: applyingPatterns }] = await Promise.all([
+  const [{ data: lossPatterns }, { data: topPrinciples }, { data: adaptRules }, { data: applyingPatterns }, { data: viewingPatterns }] = await Promise.all([
     lossEnabled
       ? supabase
           .from("ai_reply_knowledge")
@@ -1192,6 +1193,18 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           .order("created_at", { ascending: false })
           .limit(3)
       : Promise.resolve({ data: null }),
+    // 内見系パターン専用バケット（category='viewing_pattern' — 内見成功実例パターン。
+    // pgvector経路のバケット・フォールバック経路のcategoryフィルタの両方から漏れるため専用クエリで必ず届ける）
+    viewingEnabled
+      ? supabase
+          .from("ai_reply_knowledge")
+          .select("id, title, content, importance, category, conversation_state")
+          .eq("category", "viewing_pattern")
+          .neq("hypothesis_status", "rejected")
+          .order("importance", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(3)
+      : Promise.resolve({ data: null }),
   ]);
   const lossList = (lossPatterns ?? []).filter(p => (p.content ?? "").trim().length > 0);
   const lossIds = lossList.map(p => p.id).filter(Boolean);
@@ -1205,6 +1218,14 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const applyingBlock = applyingList.length > 0
     ? "【💡 類似ケース（申込に至った実例パターン — この展開を参考に次の一手を組み立てる・文面の丸写しは禁止）】\n" +
       applyingList.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
+    : "";
+
+  // 内見成功パターン（内見に至った・案内成功の実例パターン）— 内見局面の展開の参考として注入
+  const viewingList = (viewingPatterns ?? []).filter(p => (p.content ?? "").trim().length > 0);
+  const viewingIds = viewingList.map(p => p.id).filter(Boolean);
+  const viewingBlock = viewingList.length > 0
+    ? "【🏠 内見成功パターン（内見に至った・案内成功の実例 — この展開を参考に次の一手を組み立てる・文面の丸写しは禁止）】\n" +
+      viewingList.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
     : "";
 
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
@@ -1268,8 +1289,17 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
             effectiveApplyingList.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
           : "";
 
+        // pgvector経路での viewing_pattern: ベクトル類似度ベースの結果を優先し、なければ静的クエリにフォールバック
+        const viewingVector = filteredResults.filter(r => r.category === "viewing_pattern").slice(0, 3);
+        const effectiveViewingList = viewingVector.length > 0 ? viewingVector : viewingList;
+        const effectiveViewingIds = viewingVector.length > 0 ? viewingVector.map(r => r.id).filter(Boolean) : viewingIds;
+        const effectiveViewingBlock = effectiveViewingList.length > 0
+          ? "【🏠 内見成功パターン（内見に至った・案内成功の実例 — この展開を参考に次の一手を組み立てる・文面の丸写しは禁止）】\n" +
+            effectiveViewingList.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
+          : "";
+
         const used = [...diffLearned, ...correctionPairs, ...critical, ...patterns, ...phrases];
-        const usedAndLossIds = [...used.map(r => r.id).filter(Boolean), ...lossIds, ...effectiveApplyingIds];
+        const usedAndLossIds = [...used.map(r => r.id).filter(Boolean), ...lossIds, ...effectiveApplyingIds, ...effectiveViewingIds];
         incrementKnowledgeUsage(usedAndLossIds);
         if (conversationId) logKnowledgeApply(usedAndLossIds, conversationId);
 
@@ -1294,6 +1324,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         }
         if (effectiveApplyingBlock) {
           sections.push(effectiveApplyingBlock);
+        }
+        if (effectiveViewingBlock) {
+          sections.push(effectiveViewingBlock);
         }
         // HIGH-05: テンプレート修正学習ルール注入
         if ((adaptRules?.length ?? 0) > 0) {
@@ -1379,7 +1412,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     ? [...topicList, ...baseAll.filter(k => !topicList.some(t => t.id === k.id))]
     : baseAll;
   const principlesList = topPrinciples ?? [];
-  if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock && !applyingBlock) return { text: "", phraseHits: 0 };
+  if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock && !applyingBlock && !viewingBlock) return { text: "", phraseHits: 0 };
 
   // principle は global/stateSpecific クエリで除外済みのため、専用クエリの結果をそのまま使う
   const critical = principlesList;
@@ -1394,7 +1427,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     ...patterns.slice(0, 5),
     ...phrases.slice(0, 6),
   ].map(k => (k as KnowledgeRow).id).filter(Boolean);
-  const allFallbackIds = [...usedIds, ...lossIds, ...applyingIds];
+  const allFallbackIds = [...usedIds, ...lossIds, ...applyingIds, ...viewingIds];
   incrementKnowledgeUsage(allFallbackIds);
   if (conversationId) logKnowledgeApply(allFallbackIds, conversationId);
 
@@ -1419,6 +1452,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   }
   if (applyingBlock) {
     sections.push(applyingBlock);
+  }
+  if (viewingBlock) {
+    sections.push(viewingBlock);
   }
   // HIGH-05: テンプレート修正学習ルール注入
   if ((adaptRules?.length ?? 0) > 0) {
@@ -2459,7 +2495,7 @@ export async function POST(req: NextRequest) {
     // ── T1動的選択の監視ログ（Promise.all 前に spec の発火内容を記録） ──
     if (!isTemplateOptimize) {
       console.log(JSON.stringify({ tag: "step2-spec", tier: tierResult.tier, spec: {
-        lossPatterns: fetchSpec.lossPatterns, adaptRules: fetchSpec.adaptRules, applyingPatterns: fetchSpec.applyingPatterns,
+        lossPatterns: fetchSpec.lossPatterns, adaptRules: fetchSpec.adaptRules, applyingPatterns: fetchSpec.applyingPatterns, viewingPatterns: fetchSpec.viewingPatterns,
         // M系T1動的選択の実発火率計測用（AIX-METAフル活用 2026-08）
         filterTopics: fetchSpec.knowledge.filterTopics,
         excludeReplyRe: fetchSpec.examples.excludeReplyRe?.source ?? null,

@@ -48,7 +48,7 @@ export type BrainFetchSpec = {
   // ── T1動的選択（クエリ単位のENABLE/SKIP・フェイルオープン: T2/T3は全enabled=baseline） ──
   lossPatterns: { enabled: boolean; limit: number };  // 失注パターン保証バケット（baseline: enabled / limit 4）
   applyingPatterns: { enabled: boolean };             // applying_pattern 保証バケット（baseline: enabled）
-  viewingPatterns: { enabled: boolean };              // 内見系パターン（baseline: enabled・現状消費側なし＝将来用）
+  viewingPatterns: { enabled: boolean };              // 内見系パターン（baseline: enabled・category='viewing_pattern'専用バケット）
   adaptRules: { enabled: boolean };                   // adaptation_improvement_rules（baseline: enabled）
 };
 
