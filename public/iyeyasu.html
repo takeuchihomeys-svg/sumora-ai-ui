@@ -115,23 +115,22 @@
     }
     .h-bubble-em{color:#06C755;font-style:normal;-webkit-text-stroke:.4px #06C755;}
 
-    /* Sub text */
-    .h-sub{
-      text-align:center;font-size:11px;font-weight:700;color:#777;
-      margin:18px 0 4px;letter-spacing:.02em;
+    /* ── 3段見出し構成（Sub + H1） ── */
+    #hero .h-title-wrap{
+      width:100%;padding:0 12px;margin:14px auto 0;text-align:center;
     }
-
-    /* H1 with lightning */
-    .h-title-wrap{padding:0 12px;margin-top:6px;text-align:center;}
-    .h-lightning{
-      display:inline;font-size:28px;line-height:1;vertical-align:top;
-      filter:drop-shadow(1px 1px 3px rgba(0,0,0,.15));margin-right:2px;
+    #hero .h-sub{
+      display:block;font-size:clamp(16px,4.5vw,20px);font-weight:700;
+      color:#777;letter-spacing:.02em;margin-bottom:10px;
     }
     .h-title{
-      font-size:clamp(22px,6.8vw,32px);font-weight:900;color:#111;
-      line-height:1.25;-webkit-text-stroke:.3px #111;letter-spacing:-.01em;
+      font-size:clamp(36px,10vw,52px);font-weight:900;color:#111;
+      line-height:1.08;-webkit-text-stroke:.3px #111;letter-spacing:-.02em;
       text-align:center;
     }
+    .h-title-line1{display:block;}
+    #hero .h-title-line2{display:block;margin-top:6px;}
+    .h-title-em{font-style:normal;color:var(--line);-webkit-text-stroke:.3px var(--line);}
 
     /* Green band below H1 */
     .h-green-band{
@@ -545,9 +544,12 @@
         そのお部屋、<em class="h-bubble-em">もっと安く</em>契約できるかも。
       </div>
     </div>
-    <p class="h-sub">SUUMOなどで見つけた</p>
     <div class="h-title-wrap">
-      <h1 class="h-title"><span class="h-lightning" aria-hidden="true">⚡</span>気になるお部屋、<br>まず送ってください！</h1>
+      <p class="h-sub">SUUMOなどで見つけた</p>
+      <h1 class="h-title">
+        <span class="h-title-line1">気になるお部屋、</span>
+        <span class="h-title-line2">まず<em class="h-title-em">送ってください！</em></span>
+      </h1>
     </div>
     <div class="h-green-band">
       送るだけで 初期費用を <span class="h-gb-em">最大限割引！</span>
