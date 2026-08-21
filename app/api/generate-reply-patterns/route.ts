@@ -19,7 +19,9 @@ function getGenerationModel() {
   return new ChatAnthropic({
     model: "claude-sonnet-5",
     maxTokens: 2000,
-    temperature: 0.65,
+    // Sonnet 5 は temperature 等の非デフォルトサンプリングパラメータ非対応（400エラー）のため渡さない。
+    // thinking 省略時は adaptive がデフォルトON → maxTokens 2000 を食い潰すリスクがあるため明示的に無効化。
+    thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
   });
 }

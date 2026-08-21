@@ -222,6 +222,8 @@ async function analyzeDiff(
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 900,
+      // Sonnet 5 は thinking 省略時に adaptive がデフォルトON → max_tokens 900 を食い潰すため明示的に無効化
+      thinking: { type: "disabled" },
       // prompt cache: 静的な分析指示（ANALYZE_DIFF_SYSTEM）をキャッシュし、動的データは user に分離
       system: [
         { type: "text", text: ANALYZE_DIFF_SYSTEM, cache_control: { type: "ephemeral" } },

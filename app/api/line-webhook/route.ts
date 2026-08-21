@@ -757,6 +757,8 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
     const res = await anthropic.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 1024,
+      // Sonnet 5 は thinking 省略時に adaptive がデフォルトON → max_tokens 1024 を食い潰すため明示的に無効化
+      thinking: { type: "disabled" },
       // prompt cache: 静的な解析指示は system でキャッシュし、動的テキストのみ user に渡す
       system: [
         { type: "text", text: PARSE_FORMAT_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },

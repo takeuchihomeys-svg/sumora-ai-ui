@@ -33,7 +33,6 @@ async function extractCorrectionRule(
         model: "claude-sonnet-5",
         max_tokens: 300,
         thinking: { type: "disabled" },
-        temperature: 0,
         system: `賃貸仲介LINEのAI文案とスタッフが実際に送った文を比較し、次回以降のAIが学べる改善ルールを抽出してください。
 
 出力形式（JSONのみ）:

@@ -210,6 +210,8 @@ ${recentAnswersText}
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 2000,
+      // Sonnet 5 は thinking 省略時に adaptive がデフォルトON → max_tokens を食い潰すため明示的に無効化
+      thinking: { type: "disabled" },
       system: [
         // prompt cache: 全呼び出し共通の SUMORA_QUESTION_SYSTEM_CONTEXT を先頭ブロックに置き cache_control を付与。
         // 可変の役割文は後続ブロック（キャッシュ境界の後ろ）に置くことで、役割文4種による別キャッシュエントリ分裂を防ぐ
@@ -542,6 +544,7 @@ JSON形式のみ返答：
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 1000,
+      thinking: { type: "disabled" },
       system: [
         { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } },
         { type: "text" as const, text: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。" }
@@ -604,6 +607,7 @@ JSON形式のみ返答：
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 500,
+      thinking: { type: "disabled" },
       system: [
         { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } },
         { type: "text" as const, text: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。" }
@@ -812,6 +816,7 @@ JSON形式のみ返答（keepは最大3件まで）：
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 1000,
+      thinking: { type: "disabled" },
       system: [
         { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } },
         { type: "text" as const, text: "不動産LINE返信AIのルール品質評価者です。指定されたJSON形式のみ返してください。" }
@@ -1093,6 +1098,7 @@ JSON形式のみ返答：
       const res = await client.messages.create({
         model: "claude-sonnet-5",
         max_tokens: 1000,
+        thinking: { type: "disabled" },
         system: [
           { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } },
           { type: "text" as const, text: "ルール重複排除の判定者です。指定されたJSON形式のみ返してください。" }

@@ -7,6 +7,9 @@ function getModel() {
   return new ChatAnthropic({
     model: "claude-sonnet-5",
     maxTokens: 600,
+    // Sonnet 5 は thinking 省略時に adaptive がデフォルトON → maxTokens 600 が thinking に全消費され
+    // JSON本文が空になるリスクがあるため明示的に無効化する（generate-reply と同パターン）
+    thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
   });
 }
