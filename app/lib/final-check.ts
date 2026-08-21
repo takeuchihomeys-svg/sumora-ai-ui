@@ -121,7 +121,7 @@ async function callSonnet45(prompt: PromptContent, timeoutMs: number, maxTokens 
     signal: AbortSignal.timeout(timeoutMs),
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
-      model: "claude-sonnet-4-5",
+      model: "claude-sonnet-4-6",
       max_tokens: maxTokens,
       temperature: 0,
       output_config: { format: { type: "json_schema", schema: ISSUE_SCHEMA } },
@@ -960,7 +960,7 @@ ${targets.map((i, idx) => `${idx + 1}. 「${i.evidence}」`).join("\n")}
       signal: AbortSignal.timeout(timeoutMs),
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-5",
+        model: "claude-sonnet-4-6",
         max_tokens: 800,
         temperature: 0,
         output_config: { format: { type: "json_schema", schema: VERIFY_SCHEMA } },
