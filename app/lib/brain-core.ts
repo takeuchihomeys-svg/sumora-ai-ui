@@ -725,7 +725,7 @@ export async function analyzeConversation(
       .select("sender, text, created_at, line_message_id, is_aix_generated, quoted_message_id, image_type", { count: "exact" })
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(isIncremental ? INCREMENTAL_MIN_RECENT : 15),
+      .limit(isIncremental ? 15 : 15),
     propertyCustomerId
       ? supabase
           .from("property_customers")
@@ -758,7 +758,7 @@ export async function analyzeConversation(
           .select("property_name, room_no, sent_at, rent, recruitment_status, applicant_rank, customer_reaction")
           .eq("property_customer_id", propertyCustomerId)
           .order("sent_at", { ascending: false })
-          .limit(10)
+          .limit(20)
       : Promise.resolve({ data: null }),
     // Global permanent operator rules (apply to all conversations, no pgvector needed)
     // B4(Fable5): limit 10→20 — 本番で恒久ルールがちょうど10行に達しており、11個目から無言欠落する状態だった
@@ -781,7 +781,7 @@ export async function analyzeConversation(
       .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
-      .limit(5),
+      .limit(10),
     // Top templates by won_count for context (brain uses these to recommend best template)
     // B1(Fable5): 旧 .like("category", "AIX%") は前方一致で、実カテゴリ「見積書送る【AIX】」等に
     // 一度もマッチしていなかった（本番0件を実測確認 = このデータソースは死んでいた）。
@@ -1043,10 +1043,12 @@ export async function analyzeConversation(
   const condParts: string[] = [];
   if (pc?.desired_area) condParts.push(`エリア: ${pc.desired_area}`);
   if (pc?.floor_plan) condParts.push(`間取り: ${pc.floor_plan}`);
+  if (pc?.rent_min) condParts.push(`家賃下限: ${Math.floor((pc.rent_min as number) / 10000)}万`);
   if (pc?.rent_max) condParts.push(`家賃上限: ${Math.floor((pc.rent_max as number) / 10000)}万`);
   if (pc?.walk_minutes) condParts.push(`駅徒歩: ${pc.walk_minutes}分以内`);
   if (pc?.move_in_time) condParts.push(`入居: ${pc.move_in_time}`);
   if (pc?.preferences) condParts.push(`希望: ${pc.preferences}`);
+  if (pc?.ng_points) condParts.push(`NG条件: ${pc.ng_points}`);
   const condText = condParts.length > 0 ? `\n顧客条件: ${condParts.join(" / ")}` : "";
 
   // 【顧客プロファイル】ai_summary_json（emotion/urgency/style/personality_profile）由来。
@@ -1078,7 +1080,7 @@ export async function analyzeConversation(
   // 【顧客の会話ストーリー】ai_summary全文（テキスト版）。プロファイル(JSON由来)とは別に、
   // 顧客の全文脈（経緯・今の状況・次の必須対応）を戦略決定の材料として注入する
   const aiSummaryFullRaw = (pc?.ai_summary ?? "").trim();
-  const aiSummaryFullText = aiSummaryFullRaw.length > 800 ? aiSummaryFullRaw.slice(0, 800) : aiSummaryFullRaw;
+  const aiSummaryFullText = aiSummaryFullRaw.length > 1500 ? aiSummaryFullRaw.slice(0, 1500) : aiSummaryFullRaw;
   const aiSummaryNote = aiSummaryFullText
     ? `\n【顧客の会話ストーリー（ai_summary全文・必ず読むこと）】\n${aiSummaryFullText}\n→ この顧客の全文脈を踏まえてclosing_strategy・next_stepsを決定すること\n`
     : "";
@@ -1259,10 +1261,10 @@ export async function analyzeConversation(
   const contractExamples = [...stateMatched, ...stateOthers].slice(0, 3);
 
   const contractKnowledgeLines = contractKnowledge
-    .map((k) => `- ${(k.title ?? "").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 150)}`)
+    .map((k) => `- ${(k.title ?? "").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 400)}`)
     .join("\n");
   const contractExampleLines = contractExamples
-    .map((e) => `- [${outcomeOf(e)}] (${e.conversation_state ?? "不明"}段階) 「${(e.sent_reply ?? "").replace(/\n/g, " ").slice(0, 100)}」`)
+    .map((e) => `- [${outcomeOf(e)}] (${e.conversation_state ?? "不明"}段階) 「${(e.sent_reply ?? "").replace(/\n/g, " ").slice(0, 250)}」`)
     .join("\n");
 
   // 安定部分（成功法則のみ）→ キャッシュブロックに含める
@@ -1318,7 +1320,7 @@ export async function analyzeConversation(
       const bAix = isAixStateMatch(b.conversation_state) ? 1 : 0;
       return (bAix - aAix) || (b.similarity - a.similarity);
     })
-    .slice(0, 6);
+    .slice(0, 8);
   const ragKnowledgeText = ragKnowledge.length > 0
     ? `\n【関連ナレッジ（この会話に類似する過去の学習・RAG検索）】\n${ragKnowledge.map((k) => `- [${k.category ?? "knowledge"}${k.conversation_state ? `/${k.conversation_state}` : ""}] ${(k.title ?? "").replace(/\n/g, " ").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 800)}`).join("\n")}\n※現在の会話状況に該当するものがあれば aix / closing_strategy / next_steps の判断に反映すること。`
     : "";
@@ -1343,7 +1345,7 @@ export async function analyzeConversation(
   type ScheduledMsg = { text: string | null; scheduled_at: string };
   const scheduledMsgs = (scheduledMsgsResult.data ?? []) as ScheduledMsg[];
   const scheduledText = scheduledMsgs.length > 0
-    ? `\n【予約送信済みメッセージ（送信待ち${scheduledMsgs.length}件）】\n${scheduledMsgs.map((s) => `- ${new Date(s.scheduled_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" })}送信予定: ${(s.text ?? "（画像）").replace(/\n/g, " ").slice(0, 60)}`).join("\n")}\n※これらと重複する追客・送信提案はしないこと。`
+    ? `\n【予約送信済みメッセージ（送信待ち${scheduledMsgs.length}件）】\n${scheduledMsgs.map((s) => `- ${new Date(s.scheduled_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" })}送信予定: ${(s.text ?? "（画像）").replace(/\n/g, " ").slice(0, 120)}`).join("\n")}\n※これらと重複する追客・送信提案はしないこと。`
     : "";
 
   // 監査FIX(2026-08-20): 直近タスク全体から pending（未完了）と result付き完了タスク（空室確認の回答事実）を分離
