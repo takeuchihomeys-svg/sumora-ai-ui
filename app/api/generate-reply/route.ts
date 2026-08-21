@@ -744,29 +744,12 @@ function buildGenerationMessages(
     console.warn("[generate-reply] QUICK_PATTERNS冒頭ルールの置換に失敗（DBオーバーライド文字列にパターン不一致）。上書きルールを末尾に追記します。");
     return `${base}\n${replacement}`;
   };
-  // 冒頭ルールの本文は greetingNote（【⏰ 挨拶ルール／初回対応ルール・最優先】）に一本化。
-  // ここでは QUICK_PATTERNS 内の競合する冒頭ルールを greetingNote への参照に置き換えるだけにする（二重定義禁止）。
-  const effectiveQuickPatterns = (() => {
-    if (alreadyGreeted) {
-      // 同日挨拶済み → 「長い返信はお世話になっております」ルールを無効化
-      return overrideOpeningRule(
-        baseQuickPatterns,
-        "・冒頭ルール（★重要・本日挨拶済みのため上書き）: 【⏰ 挨拶ルール・最優先】に従い、返信の長短にかかわらず冒頭挨拶は一切使わない（「お世話になっております」「ありがとうございます」「夜分遅くに」も禁止）"
-      );
-    }
-    if (state === "first_reply" && isFirstEverReply) {
-      // 真の初回 → 初回挨拶文は greetingNote の【⏰ 初回対応ルール・最優先】に統一
-      return overrideOpeningRule(
-        baseQuickPatterns,
-        "・冒頭ルール（★重要・初回返信のため上書き）: 冒頭挨拶は【⏰ 初回対応ルール・最優先】に記載の初回挨拶文（「はじめまして😊！！…鈴木と申します！！」）に必ず従う。「お世話になっております」は絶対禁止"
-      );
-    }
-    // 本日初回メッセージ → 短い承認でも必ず「お世話になっております」で始める
-    return overrideOpeningRule(
-      baseQuickPatterns,
-      "・冒頭ルール（★重要・本日初回メッセージのため上書き）: 【⏰ 挨拶ルール・最優先】に従い、返信の長短・内容を問わず必ず「〇〇さんお世話になっております！！」で始める。「かしこまりました！！」「はい！！」単独での書き出しは絶対禁止"
-    );
-  })();
+  // 冒頭ルールの詳細指示は greetingNote（dynamicBlock・【⏰ 挨拶ルール／初回対応ルール・最優先】）に一本化。
+  // quickPatterns は静的参照のみ（3バリアント廃止）→ staticBlock が常に同一内容になりキャッシュが毎回効く。
+  const effectiveQuickPatterns = overrideOpeningRule(
+    baseQuickPatterns,
+    "・冒頭ルール（★重要）: 必ず【⏰ 挨拶ルール・最優先】または【⏰ 初回対応ルール・最優先】の指示に従う（挨拶済み/初回/通常の判断は同ブロック参照）"
+  );
   // 実例がある場合も冒頭ルール（挨拶・禁止ワード）を維持するためQUICK_PATTERNSは常に注入する
   const quickPatterns = `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
