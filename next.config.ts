@@ -8,6 +8,23 @@ const nextConfig: NextConfig = {
 
   // public/ 以下の静的HTMLファイルをCDNキャッシュさせない
   // （デプロイ後すぐに最新版が反映されるようにするため）
+  async redirects() {
+    return [
+      {
+        source: "/",
+        destination: "/iyeyasu.html",
+        permanent: false,
+        has: [{ type: "host" as const, value: "ieyas-chintai.com" }],
+      },
+      {
+        source: "/",
+        destination: "/iyeyasu.html",
+        permanent: false,
+        has: [{ type: "host" as const, value: "www.ieyas-chintai.com" }],
+      },
+    ];
+  },
+
   async headers() {
     return [
       {
