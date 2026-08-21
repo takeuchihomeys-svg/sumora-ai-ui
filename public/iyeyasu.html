@@ -109,7 +109,8 @@
       background:#000;display:flex;align-items:center;
       justify-content:space-between;padding:8px 14px;gap:10px;
     }
-    .tt-left{display:flex;align-items:center;flex:1;min-width:0;}
+    .tt-left{display:flex;align-items:center;gap:7px;flex:1;min-width:0;}
+    .tt-icon{flex-shrink:0;}
     .tt-text{
       font-size:clamp(11px,3vw,13px);font-weight:900;color:#fff;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -740,6 +741,11 @@
   <!-- ① TikTok Banner -->
   <div class="tt-banner" role="banner">
     <div class="tt-left">
+      <div class="tt-icon" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .55.04.79.1V9.01a6.27 6.27 0 00-.79-.05A6.34 6.34 0 003.15 15.3a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V9.01a8.16 8.16 0 004.77 1.52V7.08a4.85 4.85 0 01-1-.39z" fill="white"/>
+        </svg>
+      </div>
       <span class="tt-text">初期費用で<em class="tt-em">損したくない</em>あなたへ</span>
     </div>
     <div class="tt-badge">24時間 相談・見積り無料</div>
