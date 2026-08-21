@@ -107,18 +107,18 @@
     /* ── TikTok Banner ── */
     .tt-banner{
       background:#000;display:flex;align-items:center;
-      justify-content:space-between;padding:10px 14px;gap:8px;
+      justify-content:space-between;padding:8px 14px;gap:10px;
     }
-    .tt-left{display:flex;align-items:center;gap:8px;flex:1;min-width:0;}
-    .tt-icon{flex-shrink:0;}
+    .tt-left{display:flex;align-items:center;flex:1;min-width:0;}
     .tt-text{
-      font-size:clamp(10px,3vw,13px);font-weight:900;color:#fff;
+      font-size:clamp(11px,3vw,13px);font-weight:900;color:#fff;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
+    .tt-em{color:#FFD600;}
     .tt-badge{
       flex-shrink:0;background:#FE2C55;color:#fff;
-      font-size:clamp(8.5px,2.5vw,11px);font-weight:900;
-      padding:4px 9px;border-radius:6px;letter-spacing:.04em;white-space:nowrap;
+      font-size:clamp(9px,2.4vw,11px);font-weight:900;
+      padding:4px 9px;border-radius:6px;letter-spacing:.03em;white-space:nowrap;
     }
 
     /* ── Hero White Body ── */
@@ -740,14 +740,9 @@
   <!-- ① TikTok Banner -->
   <div class="tt-banner" role="banner">
     <div class="tt-left">
-      <div class="tt-icon" aria-hidden="true">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-          <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .55.04.79.1V9.01a6.27 6.27 0 00-.79-.05A6.34 6.34 0 003.15 15.3a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V9.01a8.16 8.16 0 004.77 1.52V7.08a4.85 4.85 0 01-1-.39z" fill="white"/>
-        </svg>
-      </div>
-      <span class="tt-text">TikTokを見てくれてありがとう！</span>
+      <span class="tt-text">初期費用で<em class="tt-em">損したくない</em>方へ</span>
     </div>
-    <div class="tt-badge">今すぐ割引！！</div>
+    <div class="tt-badge">24時間 相談・見積り無料</div>
   </div>
 
   <!-- ② Hero White Body -->
