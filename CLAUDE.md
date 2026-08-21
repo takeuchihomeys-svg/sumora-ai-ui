@@ -54,12 +54,18 @@ LP新規作成・リデザイン・Fable5実行の前に**必ず**以下を実�
 ```sql
 SELECT title, principle, pattern FROM design_knowledge
 WHERE impact = 'high'
+  AND is_current = true
 ORDER BY created_at DESC
 LIMIT 20;
 ```
 
 取得した知見を「**守るべき原則・禁止パターン**」としてFable5プロンプトの冒頭に含める。
 knowledge がない場合はスキップしてよい。
+
+### 知識の更新ルール
+- **新しいパターンで古いものが上書きされたら** → 古い行を `UPDATE design_knowledge SET is_current = false WHERE id = '...'` で非現行に設定する
+- **セッション終了時の INSERT** → `is_current` を省略（DEFAULT true が自動適用される）
+- `is_current = false` の行は参照しない（履歴として残すだけ）
 
 ---
 
