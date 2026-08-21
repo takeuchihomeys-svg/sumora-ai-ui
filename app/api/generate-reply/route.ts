@@ -867,10 +867,11 @@ function buildGenerationMessages(
   const isLinkRequestMsg = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送)/i.test(customerMessage)
     || /(この|こちらの|その|これの|さっきの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(customerMessage);
   const linkRequestNote = isLinkRequestMsg
-    ? `\n\n【🔗 リンク（URL）要求検出（最優先・内覧誘導より上位）】お客様は物件のURL・詳細情報そのものを求めています。内覧日程調整・空室確認へは飛ばさず、対象物件のURL/詳細を案内すること。
-・直近の会話で送付済み・話題になっている物件が特定できる場合のみリンク/情報を案内する。履歴にURLがあれば再提示する。
-・特定できない場合は「こちらのお部屋ですね！！詳細（募集状況）を確認しご案内させて頂きます😊！！」と物件を確認してから案内する。「気になる物件のURLをお送りください」の聞き返しは禁止。
-・対象が退去予定/入居中の物件であれば、その旨を伝えた上で情報を案内し、現地内覧日程は提案しない。`
+    ? `\n\n【🔗 リンク（URL）要求検出（最優先）】お客様はURLを求めていますが、URLの送付はAIXツール（物件ピックアップした）がスタッフ操作で行います。
+【絶対禁止】返信文に「〜のURLとなります」「URLをお送りします」「リンクをご案内します」「こちらのURLです」等、URLを送る・案内するような文言を一切書かない。
+・URLや物件リンクが「今から届く」かのような表現も禁止。
+・返信文は受付・確認の一言のみ：「確認してすぐご案内しますね😊！！」「少々お待ちください！！」程度にとどめる。
+・対象物件が特定できる場合は物件名を添えた受付文でよい（URLは書かない）。`
     : "";
 
   // 共感フレーズ（全然大丈夫です／全然わがままじゃないですよ）の確定ゲート — 常時注入
@@ -1748,11 +1749,11 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
       || /(この|こちらの|その|これの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(custText);
     const linkRequestNote = (isLinkRequest && q.sender === "staff")
       ? `
-【🔗 リンク（URL）要求検出（最優先・内覧誘導より上位）】
-お客様は引用先の物件のURL・詳細情報そのものを求めています。内覧日程調整・空室確認には飛ばさないこと。
-→ 履歴に当該物件のURLがあれば再提示する。無ければ「こちらのお部屋ですね！！詳細（募集状況）を確認しご案内させて頂きます😊！！」と物件を特定した上で募集状況確認へ進む。
-→ 「気になる物件のURLをお送りください」という聞き返しは絶対禁止（お客様は既に物件を特定している）。
-→ 当該物件が退去予定・入居中の場合は、その旨を伝えた上で情報を案内し、現地内覧日程は提案しない。`
+【🔗 リンク（URL）要求検出（最優先）】お客様はURLを求めていますが、URLの送付はAIXツール（物件ピックアップした）がスタッフ操作で行います。
+【絶対禁止】返信文に「〜のURLとなります」「URLをお送りします」「リンクをご案内します」等、URLを送る・案内するような文言を一切書かない。
+→ 返信文は受付・確認の一言のみ：「確認してすぐご案内しますね😊！！」「少々お待ちください！！」程度にとどめる。
+→ 対象物件が特定できる場合は物件名を添えた受付文でよい（URLは書かない）。
+→ 「気になる物件のURLをお送りください」の聞き返しは絶対禁止。`
       : "";
     const imageNameSuppressNote = isImage
       ? `
@@ -3003,7 +3004,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   checkpointStage: brainMeta?.checkpoint_stage ?? null, // Fix③: brain実態フェーズ（DB stateと乖離検出用）
                   ngProperties: ngPropertiesForCheck.length ? ngPropertiesForCheck : undefined,
                 };
-                const loop = await runFinalCheckWithRevision(draftBody, finalCheckCtx, 40000);
+                const loop = await runFinalCheckWithRevision(draftBody, finalCheckCtx, 60000);
                 finalCheck = loop.finalCheck;
                 draftBody = loop.finalDraft; // ベスト草稿（成功時=修正版 / 修正不能時=元ドラフト）
                 finalCheck.regen_count = 0;

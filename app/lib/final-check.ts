@@ -871,7 +871,7 @@ export async function runGroundedRevision(
 export const MAX_CHECK_ITERATIONS = 2; // check1 + (接地修正 + check2) = 計2チェック上限
 
 const REVISION_MS = 15000;  // 修正SonnetのタイムアウトMs（Haiku 6000ms → Sonnet 15000ms）
-const RECHECK_MS = 8000;    // バジェットガード用推定値（差分再チェック1パス）
+const RECHECK_MS = 15000;   // Sonnet差分再チェック用（旧8000ms → Sonnet向け15000msに拡大）
 
 // AIX_BOUNDARY_PROMISE 衝突対策（決定的・約0ms）:
 // 修正プロンプト絶対ルール5の定型句「確認して改めてご連絡いたします」等が修正で新規挿入されると、
@@ -1055,7 +1055,7 @@ async function runDiffRecheck(
   revised: string,
   check1Issues: CheckIssue[],
   ctx: FinalCheckContext,
-  timeoutMs = 8000,
+  timeoutMs = 15000,
 ): Promise<CheckResult> {
   const started = Date.now();
   const issues: CheckIssue[] = [];
@@ -1142,7 +1142,7 @@ async function runDiffRecheck(
 export async function runFinalCheckWithRevision(
   draft: string,
   ctx: FinalCheckContext,
-  budgetMs = 42000,  // check1(≤8s) + verify(≤8s) + revision(≤15s) + recheck(≤8s) = 39s + 3sバッファ
+  budgetMs = 60000,  // check1(≤20s) + verify(≤8s) + revision(≤15s) + recheck(≤15s) = 58s + 2sバッファ（Sonnet対応）
 ): Promise<RevisionLoopResult> {
   const started = Date.now();
   let checkIterations = 0;
