@@ -54,6 +54,7 @@ function createAnalysisModel() {
     thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     clientOptions: { timeout: 45_000 },
+    betas: ["prompt-caching-2024-07-31"],
   });
 }
 
@@ -70,6 +71,7 @@ function createGenerationModel() {
     thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     clientOptions: { timeout: 45_000 },
+    betas: ["prompt-caching-2024-07-31"],
   });
 }
 
@@ -85,6 +87,7 @@ function createTemplateOptimizeModel() {
     thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     clientOptions: { timeout: 60_000 },
+    betas: ["prompt-caching-2024-07-31"],
   });
 }
 
