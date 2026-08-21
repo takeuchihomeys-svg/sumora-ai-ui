@@ -108,7 +108,7 @@
     /* ── TikTok Banner ── */
     .tt-banner{
       background:#000;display:flex;align-items:center;
-      justify-content:space-between;padding:8px 14px;gap:10px;
+      justify-content:space-between;padding:8px 18px 8px 14px;gap:10px;
     }
     .tt-left{display:flex;align-items:center;gap:7px;flex:1;min-width:0;}
     .tt-icon{flex-shrink:0;display:flex;align-items:center;}
@@ -441,7 +441,7 @@
       text-align:center;font-size:11px;font-weight:700;color:#666;
       padding:0 16px;margin-top:8px;letter-spacing:.01em;
     }
-    #hero .qr-after-sub{margin-top:8px;padding:0 16px;}
+    #hero .qr-after-sub{margin-top:8px;padding:0 16px;font-size:10px;font-weight:500;color:#888;}
 
     /* ── ヒーロー見出し（サブ + 中間 + H1緑） ── */
     #hero .h-hero-wrap{text-align:center;padding:4px 16px 0;}
@@ -476,7 +476,7 @@
     }
     #hero .h-ev-tag{
       display:inline-block;background:var(--line);color:#fff;font-size:10px;
-      font-weight:900;padding:1px 7px;border-radius:4px;letter-spacing:.05em;
+      font-weight:900;padding:2px 8px;border-radius:4px;letter-spacing:.05em;
       vertical-align:middle;margin-right:3px;
     }
     .h-ev-num{font-style:normal;color:#FE2C55;font-size:19px;font-weight:900;-webkit-text-stroke:.3px #FE2C55;}
@@ -486,7 +486,7 @@
     /* ── QRヒーローカード（大型・中央・ラベルなし） ── */
     #hero .qr-hero-card{
       position:relative;background:#fff;border:3px solid var(--line);border-radius:20px;
-      padding:16px 10px 6px;width:fit-content;margin:14px auto 0;
+      padding:16px 10px 0;width:fit-content;margin:14px auto 0;
       display:flex;flex-direction:column;align-items:center;
       animation:qrGlow 2s ease-in-out infinite;
       overflow:visible;
@@ -541,12 +541,13 @@
     #hero .benefit-row{margin-top:14px;padding:0 12px;}
     .merit-chip{
       background:#fff;border:1.5px solid rgba(6,199,85,.55);border-radius:12px;
-      padding:12px 6px 12px;font-size:clamp(9px,2.4vw,11px);font-weight:700;
+      padding:10px 6px 10px;font-size:clamp(9px,2.4vw,11px);font-weight:700;
       color:#111;letter-spacing:.01em;text-align:center;
-      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
       box-shadow:0 2px 10px rgba(0,0,0,.08);
     }
     .merit-chip-text{line-height:1.3;}
+    #hero .benefit-row .merit-chip:first-child{font-size:clamp(7.5px,2vw,9px);}
 
     /* ===== MERIT ZONE ===== */
     .merit-zone{position:relative;z-index:5;padding:20px 20px 44px;background:var(--bg-alt);}
@@ -688,7 +689,7 @@
     .qr-arrow{display:inline-block;animation:arrowBounce 1.2s ease-in-out infinite;}
     /* ── マスコットバッジ ── */
     .qr-mascot-wrap{
-      position:absolute;bottom:-18px;right:-35px;
+      position:absolute;bottom:-21px;right:-40px;
       width:71px;pointer-events:none;z-index:10;
       filter:drop-shadow(0 2px 6px rgba(0,0,0,0.15));
     }
@@ -801,15 +802,15 @@
     <p class="qr-after-sub r">気になる物件がある方は、そのまま送ってOK！</p>
     <div class="benefit-row" role="list" aria-label="イエヤスの特典">
       <div class="merit-chip" role="listitem">
-        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="9" stroke="#06C755" stroke-width="1.5"/><text x="11" y="15.5" text-anchor="middle" font-size="11" font-weight="900" fill="#06C755" font-family="sans-serif">¥</text></svg>
+        <svg width="20" height="20" viewBox="0 0 22 22" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="9" stroke="#06C755" stroke-width="1.5"/><text x="11" y="15.5" text-anchor="middle" font-size="11" font-weight="900" fill="#06C755" font-family="sans-serif">¥</text></svg>
         <span class="merit-chip-text">初期費用最大限割引！</span>
       </div>
       <div class="merit-chip" role="listitem">
-        <svg width="28" height="22" viewBox="0 0 28 22" fill="none" aria-hidden="true"><text x="14" y="16" text-anchor="middle" font-size="14" font-weight="900" fill="#06C755" font-family="sans-serif">¥0</text></svg>
+        <svg width="25" height="20" viewBox="0 0 28 22" fill="none" aria-hidden="true"><text x="14" y="16" text-anchor="middle" font-size="14" font-weight="900" fill="#06C755" font-family="sans-serif">¥0</text></svg>
         <span class="merit-chip-text">仲介手数料0</span>
       </div>
       <div class="merit-chip" role="listitem">
-        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true"><rect x="2" y="2" width="18" height="13" rx="4" stroke="#06C755" stroke-width="1.5"/><path d="M6 20l3-5" stroke="#06C755" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <svg width="20" height="20" viewBox="0 0 22 22" fill="none" aria-hidden="true"><rect x="2" y="2" width="18" height="13" rx="4" stroke="#06C755" stroke-width="1.5"/><path d="M6 20l3-5" stroke="#06C755" stroke-width="1.5" stroke-linecap="round"/></svg>
         <span class="merit-chip-text">LINEで完結</span>
       </div>
     </div>
