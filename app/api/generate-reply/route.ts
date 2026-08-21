@@ -1239,7 +1239,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
   if (customerMessage && process.env.OPENAI_API_KEY) {
-    const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction].filter(Boolean).join(" ") : "";
+    const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
     const searchQuery = safeSlice(`${state}: ${customerMessage} ${analysisContext ?? ""} ${brainContext}`.trim(), 2000);
 
     const embedding = await getEmbedding(searchQuery);
@@ -1510,7 +1510,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
 
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
-  const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction].filter(Boolean).join(" ") : "";
+  const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
   const baseQuery = lastStaffMessage
     ? `${state}: [前返信]${safeSlice(lastStaffMessage, 250)} [顧客]${customerMessage}`
     : customerMessage ? `${state}: ${customerMessage}` : null;
