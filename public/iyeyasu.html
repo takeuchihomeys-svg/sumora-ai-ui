@@ -125,7 +125,7 @@
 
     /* ── Hero White Body ── */
     .h-body{background:#fff;padding:0;}
-    #hero .h-body{padding-bottom:16px;}
+    #hero .h-body{padding-bottom:0;}
 
     /* Speech bubble */
     .h-bubble-wrap{padding:20px 12px 0;}
@@ -435,12 +435,13 @@
     /* QR後2段テキスト */
     #hero .qr-after-main{
       text-align:center;font-size:clamp(14px,4vw,16px);font-weight:900;color:#111;
-      letter-spacing:.02em;padding:0 16px;margin-top:24px;
+      letter-spacing:.02em;padding:0 16px;margin-top:16px;
     }
     .qr-after-sub{
       text-align:center;font-size:11px;font-weight:700;color:#666;
       padding:0 16px;margin-top:8px;letter-spacing:.01em;
     }
+    #hero .qr-after-sub{margin-top:6px;padding:0 16px;}
 
     /* ── ヒーロー見出し（サブ + 中間 + H1緑） ── */
     #hero .h-hero-wrap{text-align:center;padding:4px 16px 0;}
@@ -485,7 +486,7 @@
     /* ── QRヒーローカード（大型・中央・ラベルなし） ── */
     #hero .qr-hero-card{
       position:relative;background:#fff;border:3px solid var(--line);border-radius:20px;
-      padding:16px 10px 12px;width:fit-content;margin:32px auto 0;
+      padding:16px 10px 6px;width:fit-content;margin:32px auto 0;
       display:flex;flex-direction:column;align-items:center;
       animation:qrGlow 2s ease-in-out infinite;
       overflow:visible;
@@ -531,6 +532,7 @@
 
     /* Benefit chips */
     .benefit-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 12px 0;margin-top:12px;}
+    #hero .benefit-row{margin-top:10px;padding:0 12px;}
     .chip{
       background:transparent;color:var(--line);border:1.5px solid var(--line);
       border-radius:9999px;padding:6px 4px;font-size:clamp(9px,2.6vw,11px);font-weight:700;
