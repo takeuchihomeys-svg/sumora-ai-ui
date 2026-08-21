@@ -519,8 +519,15 @@ export async function POST(req: NextRequest) {
       c.last_message         && `最後のメッセージ（${c.last_message_sender === "customer" ? "お客さん" : "スタッフ"}）:「${c.last_message}」`,
     ].filter(Boolean).join("\n") + learnedPatternsNote + nextActionRulesNote + inspectionFactNote + conversationHistory;
 
+    // prompt cache: 静的なシステムプロンプト（SYSTEM 定数 or ai_prompts の上書き）を
+    // コンテンツブロック配列 + cache_control でキャッシュする。動的な顧客情報（info）は
+    // HumanMessage 側のみに置き、絶対に cache_control を付けない。
     const res = await getModel().invoke([
-      new SystemMessage(systemPrompt),
+      new SystemMessage({
+        content: [
+          { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+        ],
+      }),
       new HumanMessage(info),
     ]);
 

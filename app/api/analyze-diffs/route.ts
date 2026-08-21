@@ -184,34 +184,9 @@ JSONのみを返す。説明不要。`,
   }
 }
 
-// AIドラフトと実送信の差分を比較して学習ルールを抽出
-async function analyzeDiff(
-  customerMessage: string,
-  aiDraft: string,
-  sentReply: string,
-  conversationState: string,
-  componentHint = "",
-  brainContext?: { action?: string | null; reply_mode?: string | null; emotion?: string | null; urgency?: string | null } | null,
-): Promise<{ skip: boolean; title?: string; rule?: string; category?: string; trigger_example?: string } | null> {
-  try {
-    const res = await client.messages.create({
-      model: "claude-sonnet-5",
-      max_tokens: 900,
-      messages: [{
-        role: "user",
-        content: `スタッフが実際に送った返信とAIの下書きを「構成・文の役割」レベルで比較分析し、改善パターンを抽出してください。${componentHint}
-
-【お客様のメッセージ】
-${customerMessage || "不明"}
-
-【AIの下書き】
-${aiDraft}
-
-【スタッフが実際に送った返信（正解）】
-${sentReply}
-
-【フェーズ】${conversationState}
-${brainContext ? "\n【Brain・顧客コンテキスト】\n" + [brainContext.action ? "action: " + brainContext.action : "", brainContext.reply_mode ? "reply_mode: " + brainContext.reply_mode : "", brainContext.emotion ? "emotion: " + brainContext.emotion : "", brainContext.urgency ? "urgency: " + brainContext.urgency : ""].filter(Boolean).join(", ") + "\nこのコンテキストを踏まえてルールの汎用性を判断してください（顧客固有の特殊ケースは除外する）。" : ""}
+// ── analyzeDiff 用の静的システムプロンプト（prompt cache 対象）──
+// 動的データ（顧客メッセージ・下書き・送信文・フェーズ・brainContext）は user メッセージに分離する
+const ANALYZE_DIFF_SYSTEM = `スタッフが実際に送った返信とAIの下書きを「構成・文の役割」レベルで比較分析し、改善パターンを抽出してください。
 
 ▼ この順番で分析する
 ① スタッフの返信を1文ずつ分解し、各文の「役割」をラベル付け
@@ -232,7 +207,38 @@ ${brainContext ? "\n【Brain・顧客コンテキスト】\n" + [brainContext.ac
 全シナリオに共通して適用すべきポリシー・禁止ルールの場合は必ず「必ず〜すること」「〜してはいけない」「〜は禁止」の表現を使ってください。
 特定の場面・状況に依存するパターンの場合はそれ以外の表現（「〜が効果的」「〜を優先する」など）を使ってください。
 
-JSONのみを返す。分析の途中経過は不要。`,
+JSONのみを返す。分析の途中経過は不要。`;
+
+// AIドラフトと実送信の差分を比較して学習ルールを抽出
+async function analyzeDiff(
+  customerMessage: string,
+  aiDraft: string,
+  sentReply: string,
+  conversationState: string,
+  componentHint = "",
+  brainContext?: { action?: string | null; reply_mode?: string | null; emotion?: string | null; urgency?: string | null } | null,
+): Promise<{ skip: boolean; title?: string; rule?: string; category?: string; trigger_example?: string } | null> {
+  try {
+    const res = await client.messages.create({
+      model: "claude-sonnet-5",
+      max_tokens: 900,
+      // prompt cache: 静的な分析指示（ANALYZE_DIFF_SYSTEM）をキャッシュし、動的データは user に分離
+      system: [
+        { type: "text", text: ANALYZE_DIFF_SYSTEM, cache_control: { type: "ephemeral" } },
+      ],
+      messages: [{
+        role: "user",
+        content: `${componentHint ? componentHint + "\n\n" : ""}【お客様のメッセージ】
+${customerMessage || "不明"}
+
+【AIの下書き】
+${aiDraft}
+
+【スタッフが実際に送った返信（正解）】
+${sentReply}
+
+【フェーズ】${conversationState}
+${brainContext ? "\n【Brain・顧客コンテキスト】\n" + [brainContext.action ? "action: " + brainContext.action : "", brainContext.reply_mode ? "reply_mode: " + brainContext.reply_mode : "", brainContext.emotion ? "emotion: " + brainContext.emotion : "", brainContext.urgency ? "urgency: " + brainContext.urgency : ""].filter(Boolean).join(", ") + "\nこのコンテキストを踏まえてルールの汎用性を判断してください（顧客固有の特殊ケースは除外する）。" : ""}`,
       }],
     });
 
@@ -400,15 +406,23 @@ async function autoJudgeKnowledge(
         model: "claude-sonnet-5",
         max_tokens: 300,
         thinking: { type: "disabled" },
-        messages: [{
-          role: "user",
-          content: `あなたは賃貸仲介営業AIの品質審査員です。以下のナレッジを判定してください。
+        // prompt cache: 静的な審査指示 + SUMORA_QUESTION_SYSTEM_CONTEXT をキャッシュ。
+        // 動的データ（contextNote・ナレッジ内容・既存ルール）は user メッセージに分離。
+        system: [
+          {
+            type: "text",
+            text: `あなたは賃貸仲介営業AIの品質審査員です。ユーザーメッセージのナレッジを判定してください。
 この判定結果（question/contradiction）は竹内さんへのAI質問の起票に使われるため、以下のシステム絶対ルールを必ず参照してください。
 スモラ確定ルールと同じ内容・矛盾する内容の確認質問は不要です（その場合は confirm または skip 相当の判定にする）。
 AIXボタン由来の文と通常返信の領域を混同した判定・質問理由を書いてはいけません。
 
-${SUMORA_QUESTION_SYSTEM_CONTEXT}
-${contextNote}
+${SUMORA_QUESTION_SYSTEM_CONTEXT}`,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+        messages: [{
+          role: "user",
+          content: `${contextNote}
 タイトル: ${title}
 内容: ${content.slice(0, 200)}
 フェーズ: ${conversationState ?? "不明"}

@@ -692,38 +692,10 @@ function buildConditionNote(parsed: Record<string, unknown>): string {
   return parts.join(" / ");
 }
 
-async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, text: string, account: AccountConfig) {
-  // ── 重複実行防止: 同じテキストを既に処理済みなら即リターン ──────────
-  const { data: alreadyDone } = await db
-    .from("property_customers")
-    .select("id")
-    .eq("line_user_id", userId)
-    .eq("raw_format_text", text)
-    .maybeSingle();
-  if (alreadyDone?.id) return;
-
-  // ── レート制限: 同一ユーザーの3秒以内の連続送信はAI解析をスキップ ──
-  if (isRateLimited(userId)) {
-    return;
-  }
-
-  // ── AI でフォーマット解析 ──────────────────────────────────────────
-  const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-    timeout: 30_000,
-    maxRetries: 1,
-  });
-  // URLを除去してからClaudeに渡す（物件サイトURLパラメータの誤解釈防止）
-  const cleanText = text.replace(/https?:\/\/[^\s]+/g, "[URL省略]").trim();
-  let parsed: Record<string, unknown>;
-  try {
-    const res = await anthropic.messages.create({
-      model: "claude-sonnet-5",
-      max_tokens: 1024,
-      messages: [{
-        role: "user",
-        content: `あなたは日本の不動産業者のアシスタントです。
-以下のテキストから物件検索条件を読み取ってJSONで返してください。
+// ── autoParseFormat 用の静的システムプロンプト（prompt cache 対象）──
+// 動的テキスト（cleanText）は user メッセージ側に分離し、この静的部分のみキャッシュする
+const PARSE_FORMAT_SYSTEM_PROMPT = `あなたは日本の不動産業者のアシスタントです。
+ユーザーメッセージのテキストから物件検索条件を読み取ってJSONで返してください。
 
 【家賃の変換ルール（最重要）】
 - 日本では 1万円 = 10,000円 です
@@ -755,10 +727,43 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
   "other_requests": "その他要望・備考（文字列またはnull）"
 }
 
-テキスト:
-${cleanText}
+JSONのみ返してください。説明文・コードブロック・マークダウンは一切不要です。`;
 
-JSONのみ返してください。説明文・コードブロック・マークダウンは一切不要です。`,
+async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, text: string, account: AccountConfig) {
+  // ── 重複実行防止: 同じテキストを既に処理済みなら即リターン ──────────
+  const { data: alreadyDone } = await db
+    .from("property_customers")
+    .select("id")
+    .eq("line_user_id", userId)
+    .eq("raw_format_text", text)
+    .maybeSingle();
+  if (alreadyDone?.id) return;
+
+  // ── レート制限: 同一ユーザーの3秒以内の連続送信はAI解析をスキップ ──
+  if (isRateLimited(userId)) {
+    return;
+  }
+
+  // ── AI でフォーマット解析 ──────────────────────────────────────────
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    timeout: 30_000,
+    maxRetries: 1,
+  });
+  // URLを除去してからClaudeに渡す（物件サイトURLパラメータの誤解釈防止）
+  const cleanText = text.replace(/https?:\/\/[^\s]+/g, "[URL省略]").trim();
+  let parsed: Record<string, unknown>;
+  try {
+    const res = await anthropic.messages.create({
+      model: "claude-sonnet-5",
+      max_tokens: 1024,
+      // prompt cache: 静的な解析指示は system でキャッシュし、動的テキストのみ user に渡す
+      system: [
+        { type: "text", text: PARSE_FORMAT_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+      ],
+      messages: [{
+        role: "user",
+        content: `テキスト:\n${cleanText}`,
       }],
     });
     const raw = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";

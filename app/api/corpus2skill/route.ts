@@ -99,31 +99,11 @@ function parseJsonArray<T>(text: string, label: string): T[] | null {
   }
 }
 
-async function synthesizeSkills(state: string, examples: Example[], chainSection = ""): Promise<Skill[]> {
-  const examplesText = examples.slice(0, 15).map((e, i) => {
-    // 改善⑦: 2値→3値ラベル。ai_draftなしの手書き返信を「AIそのまま使用」と誤ラベルしない
-    const label = (!e.ai_draft || !e.ai_draft.trim())
-      ? "✍️ スタッフ手書き（最良の教師データ）"
-      : e.was_ai_modified
-        ? "🔴 AIを修正（修正内容から学習）"
-        : "✅ AIをそのまま使用（スタッフが承認した良い例）";
-    return `
---- 例${i + 1} [${label}] ---
-顧客: ${(e.customer_message || "").slice(0, 150)}
-${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返信: ${e.sent_reply.slice(0, 300)}`;
-  }).join("\n");
+// ── synthesizeSkills 用の静的システムプロンプト（prompt cache 対象）──
+// 動的データ（フェーズ名・返信例・チェーンシーケンス）は user メッセージに分離する
+const SYNTHESIZE_SKILLS_SYSTEM = `あなたは賃貸仲介の営業コーチです。スタッフの実際の返信例を分析し、優秀な担当者が使う普遍的なスキルを抽出します。
 
-  const res = await client.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 2000,
-    system: `あなたは賃貸仲介の営業コーチです。スタッフの実際の返信例を分析し、優秀な担当者が使う普遍的なスキルを抽出します。`,
-    messages: [{
-      role: "user",
-      content: `以下は【${state}】フェーズでの過去7日間の返信例です。
-
-${examplesText}
-${chainSection}
-各例には3種類のラベルが付いています：
+ユーザーメッセージには特定フェーズでの過去7日間の返信例が渡されます。各例には3種類のラベルが付いています：
 - ✍️ スタッフ手書き → AIを介さずスタッフが自力で書いた返信（最良の教師データ・最も重視する）
 - ✅ AIをそのまま使用 → AIが既に習得済みの良いパターン（強化すべき）
 - 🔴 AIを修正 → AIがまだ弱いパターン（特に学ぶべき）
@@ -145,7 +125,35 @@ JSON配列のみ返す（説明不要）：
     "content": "このスキルの詳細説明と具体的な使い方（200文字以内）",
     "trigger": "このスキルが特に活きる顧客状況の例文（50文字以内）"
   }
-]`,
+]`;
+
+async function synthesizeSkills(state: string, examples: Example[], chainSection = ""): Promise<Skill[]> {
+  const examplesText = examples.slice(0, 15).map((e, i) => {
+    // 改善⑦: 2値→3値ラベル。ai_draftなしの手書き返信を「AIそのまま使用」と誤ラベルしない
+    const label = (!e.ai_draft || !e.ai_draft.trim())
+      ? "✍️ スタッフ手書き（最良の教師データ）"
+      : e.was_ai_modified
+        ? "🔴 AIを修正（修正内容から学習）"
+        : "✅ AIをそのまま使用（スタッフが承認した良い例）";
+    return `
+--- 例${i + 1} [${label}] ---
+顧客: ${(e.customer_message || "").slice(0, 150)}
+${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返信: ${e.sent_reply.slice(0, 300)}`;
+  }).join("\n");
+
+  const res = await client.messages.create({
+    model: "claude-opus-5",
+    max_tokens: 2000,
+    // prompt cache: 静的な抽出指示（SYNTHESIZE_SKILLS_SYSTEM）をキャッシュし、動的データは user に分離
+    system: [
+      { type: "text", text: SYNTHESIZE_SKILLS_SYSTEM, cache_control: { type: "ephemeral" } },
+    ],
+    messages: [{
+      role: "user",
+      content: `以下は【${state}】フェーズでの過去7日間の返信例です。
+
+${examplesText}
+${chainSection}`,
     }],
   });
 
@@ -287,7 +295,24 @@ ${e.original_text ? `AI原文: ${(e.original_text as string).replace(/\n/g, " ")
   const res = await client.messages.create({
     model: "claude-opus-5",
     max_tokens: 4000,
-    system: `あなたは賃貸仲介LINE接客のテンプレート・AI機能の品質改善コンサルタントです。実データの編集パターンから改善提案を作ります。`,
+    // prompt cache: 静的な提案指示を system 側でキャッシュし、動的な材料データは user に分離
+    system: [
+      {
+        type: "text",
+        text: `あなたは賃貸仲介LINE接客のテンプレート・AI機能の品質改善コンサルタントです。実データの編集パターンから改善提案を作ります。
+
+ユーザーメッセージに渡されるデータの分析から、以下の3種類の提案をしてください:
+1. **既存テンプレの改訂案**（頻繁に同じ方向に修正されているもの）: reason（なぜ改訂が必要か・何回修正されたか）付きで
+2. **新テンプレ案**（繰り返し手入力されているが既存テンプレにない場面）: reason付きで
+3. **新AIX/ピッカー案**（毎回同じ固有情報を手入力しているパターン）: template_text には「①何を観察したか（何を毎回手入力しているか）②なぜ改善が必要か（スタッフの手間・AIの精度低下）③期待される効果」を必ず含めた説明文を書き、どんなフォーム/選択肢が必要かも記述する
+
+各提案はJSON配列で（説明文・コードフェンス不要）:
+[{"type": "template_revision"|"new_template"|"new_aix_picker", "action_type": "...", "suggested_title": "...", "template_text": "...", "reason": "...", "evidence_count": N}]
+
+根拠の薄い提案は出さないこと。提案がない場合は [] を返す。`,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
     messages: [{
       role: "user",
       content: `---
@@ -309,17 +334,7 @@ ${dismissedSection || "（なし）"}
 ${dismissedSuggestionsSection || "（なし）"}
 
 ### 確定済みのAIX改善仕様（improvement-meeting で合意済み・参考として）
-${approvedSuggestionsSection || "（なし）"}
-
-上記の分析から、以下の3種類の提案をしてください:
-1. **既存テンプレの改訂案**（頻繁に同じ方向に修正されているもの）: reason（なぜ改訂が必要か・何回修正されたか）付きで
-2. **新テンプレ案**（繰り返し手入力されているが既存テンプレにない場面）: reason付きで
-3. **新AIX/ピッカー案**（毎回同じ固有情報を手入力しているパターン）: template_text には「①何を観察したか（何を毎回手入力しているか）②なぜ改善が必要か（スタッフの手間・AIの精度低下）③期待される効果」を必ず含めた説明文を書き、どんなフォーム/選択肢が必要かも記述する
-
-各提案はJSON配列で（説明文・コードフェンス不要）:
-[{"type": "template_revision"|"new_template"|"new_aix_picker", "action_type": "...", "suggested_title": "...", "template_text": "...", "reason": "...", "evidence_count": N}]
-
-根拠の薄い提案は出さないこと。提案がない場合は [] を返す。`,
+${approvedSuggestionsSection || "（なし）"}`,
     }],
   });
 
@@ -493,23 +508,26 @@ async function analyzeAixMismatch(): Promise<{ pairsFound: number; suggestionsIn
   }
 
   // Opusにズレ原因分析を依頼
-  const analysisPrompt = `以下はAIが生成したLINEメッセージと、スタッフが実際に送ったメッセージのペアです。
+  // prompt cache: 静的な分析指示を system 側でキャッシュし、動的なペア一覧は user に分離
+  const resp = await client.messages.create({
+    model: "claude-opus-5",
+    max_tokens: 2000,
+    system: [
+      {
+        type: "text",
+        text: `ユーザーメッセージにはAIが生成したLINEメッセージと、スタッフが実際に送ったメッセージのペアが渡されます。
 ズレの原因を分析して、改善提案を生成してください。
-
-ペア一覧:
-${JSON.stringify(mismatchPairs.slice(0, 5), null, 2)}
 
 各ペアについて：
 1. ズレの原因カテゴリ（picker_missing_info / prompt_issue / button_design / style_preference）
 2. 具体的な改善提案（aix_feature_suggestions に登録する改善案文。description には「①何を観察したか ②なぜ改善が必要か ③期待される効果」を必ず含めた3〜4文にする）
 3. proposal_category（mismatch_fix または text_improvement または new_button）
 
-JSON配列で返す: [{aix_type, description, implementation_notes, proposal_category}]`;
-
-  const resp = await client.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 2000,
-    messages: [{ role: "user", content: analysisPrompt }],
+JSON配列で返す: [{aix_type, description, implementation_notes, proposal_category}]`,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: [{ role: "user", content: `ペア一覧:\n${JSON.stringify(mismatchPairs.slice(0, 5), null, 2)}` }],
   });
   // content[0] 直接参照はadaptive thinking時にthinkingブロックを掴むためextractTextBlockに統一
   const proposals = parseJsonArray<{ aix_type?: string; description?: string; implementation_notes?: string; proposal_category?: string }>(
@@ -709,38 +727,17 @@ AI案: ${((m.ai_draft as string) ?? "").replace(/\n/g, " ").slice(0, 400)}
   const res = await client.messages.create({
     model: "claude-opus-5",
     max_tokens: 3000,
-    system: `あなたはLINE不動産接客AIの「盲点発見エージェント」です。AIが正確に理解できていない業務パターンを発見し、担当者への的確な質問を作ります。`,
-    messages: [{
-      role: "user",
-      content: `以下のデータを分析して、AIが正確に理解できていない業務パターンを発見し、
+    // prompt cache: 静的な質問生成指示を system 側でキャッシュし、動的な材料データは user に分離
+    system: [
+      {
+        type: "text",
+        text: `あなたはLINE不動産接客AIの「盲点発見エージェント」です。AIが正確に理解できていない業務パターンを発見し、担当者への的確な質問を作ります。
+
+ユーザーメッセージに渡されるデータを分析して、AIが正確に理解できていない業務パターンを発見し、
 担当者（竹内悠馬さん）への質問を生成してください。
 
-【AIの予測が外れた場面（gap_analysis）】
-${gapSection || "（なし）"}
-
-【スタッフがAIの提案を無視して別行動した場面】
-${bypassedSection || "（なし）"}
-
-【Sonnetフォールバック依存度が高い場面（ルール未整備領域）】
-${fallbackSection || "（なし）"}
-
-【スタッフがAIの返信案を修正して送った場面（AI案 vs 実際の送信文）】
-${modifiedSection || "（なし）"}
-
-【使用数が多いのに成約率が低いテンプレート・アクション（成果データ）】
-${lowConvSection || "（なし）"}
-
-【テンプレート候補の却下理由（このパターンは不要とスタッフが判断）】
-${dismissedCandidatesSection || "（なし）"}
-
-【既に学習済みのスキル（既知 — これらと重複する質問は出さない）】
-${knownSkillsSection || "（なし）"}
-
-【過去に回答済みの質問（既知 — 同じ・類似の質問を出さない）】
-${answeredSection || "（なし）"}
-
 ■ 既知は出すな（重要）
-上記の「学習済みスキル」「回答済み質問」でカバー済みの内容は既知として扱い、質問を生成しないこと。
+データ内の「学習済みスキル」「回答済み質問」でカバー済みの内容は既知として扱い、質問を生成しないこと。
 本当に未知の盲点だけを質問化する。
 
 ■ 根本原因の診断（最重要タスク）
@@ -807,6 +804,34 @@ ${answeredSection || "（なし）"}
 
 必須チェック: 全質問を400字以内に収めること。必ず【AI案】と3択行（→ ①この案で採用  ②現状維持  ③条件つき採用（自由記述））を含めること。
 全文対比引用・自由記述のみの質問は出さないこと。根拠の薄い質問は出さないこと。質問がない場合は [] を返す。`,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: [{
+      role: "user",
+      content: `【AIの予測が外れた場面（gap_analysis）】
+${gapSection || "（なし）"}
+
+【スタッフがAIの提案を無視して別行動した場面】
+${bypassedSection || "（なし）"}
+
+【Sonnetフォールバック依存度が高い場面（ルール未整備領域）】
+${fallbackSection || "（なし）"}
+
+【スタッフがAIの返信案を修正して送った場面（AI案 vs 実際の送信文）】
+${modifiedSection || "（なし）"}
+
+【使用数が多いのに成約率が低いテンプレート・アクション（成果データ）】
+${lowConvSection || "（なし）"}
+
+【テンプレート候補の却下理由（このパターンは不要とスタッフが判断）】
+${dismissedCandidatesSection || "（なし）"}
+
+【既に学習済みのスキル（既知 — これらと重複する質問は出さない）】
+${knownSkillsSection || "（なし）"}
+
+【過去に回答済みの質問（既知 — 同じ・類似の質問を出さない）】
+${answeredSection || "（なし）"}`,
     }],
   });
 

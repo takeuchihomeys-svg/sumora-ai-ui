@@ -633,7 +633,11 @@ commute_constraints: 通勤・通学・乗り換え制約
           model: "claude-haiku-4-5-20251001",
           max_tokens: 512,
           temperature: 0,
-          system: systemPrompt,
+          // prompt cache: systemPrompt は完全に静的（駅名・路線リスト等）のためキャッシュする。
+          // 動的なユーザー入力（desired_area）は messages 側のみに置く。
+          system: [
+            { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+          ],
           messages: [{ role: "user", content: `エリア: "${desired_area}"` }],
         });
 
