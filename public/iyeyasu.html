@@ -123,7 +123,7 @@
     }
 
     /* ── Hero White Body ── */
-    .h-body{background:#fff;padding:0 0 14px;}
+    .h-body{background:#fff;padding:0 0 0;}
 
     /* Speech bubble */
     .h-bubble-wrap{padding:20px 12px 0;}
@@ -456,7 +456,7 @@
     /* ── CTAブロック（2段 + 実績） ── */
     #hero .h-cta-block{
       background:rgba(6,199,85,.07);border:1.5px solid rgba(6,199,85,.28);
-      border-radius:12px;margin:9px 16px 0;padding:8px 16px 9px;
+      border-radius:12px;margin:12px 16px 0;padding:8px 16px 9px;
       text-align:center;display:flex;flex-direction:column;align-items:center;gap:3px;
     }
     #hero .h-cta-simple{
@@ -497,7 +497,7 @@
       background:var(--line);color:#fff;font-size:14px;font-weight:900;
       text-align:center;padding:16px 16px 0;display:flex;align-items:center;
       justify-content:center;gap:8px;flex-wrap:wrap;letter-spacing:.02em;
-      margin-top:14px;
+      margin-top:8px;
     }
     .cta-strip-arr{color:rgba(255,255,255,.55);font-size:13px;}
     .cta-strip-em{color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
@@ -523,11 +523,11 @@
     .scan-arrow:last-child{animation-delay:.28s;}
 
     /* Benefit chips */
-    .benefit-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:0 12px 4px;}
+    .benefit-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:0 12px 4px;margin-top:14px;}
     .chip{
       background:transparent;color:var(--line);border:1.5px solid var(--line);
-      border-radius:9999px;padding:6px 4px;font-size:clamp(10px,3vw,12px);font-weight:700;
-      letter-spacing:.02em;text-align:center;
+      border-radius:9999px;padding:6px 4px;font-size:clamp(9px,2.6vw,11px);font-weight:700;
+      letter-spacing:.01em;text-align:center;white-space:nowrap;
     }
 
     /* ===== MERIT ZONE ===== */
@@ -670,8 +670,8 @@
     .qr-arrow{display:inline-block;animation:arrowBounce 1.2s ease-in-out infinite;}
     /* ── マスコットバッジ ── */
     .qr-mascot-wrap{
-      position:absolute;bottom:-36px;right:-20px;
-      width:80px;pointer-events:none;z-index:10;
+      position:absolute;bottom:-36px;right:-26px;
+      width:86px;pointer-events:none;z-index:10;
       filter:drop-shadow(0 2px 6px rgba(0,0,0,0.15));
     }
     .qr-mascot-img{
@@ -783,8 +783,8 @@
     <p class="qr-after-sub r">気になる物件がある方は、そのまま送ってOK！</p>
     <div class="benefit-row" role="list" aria-label="イエヤスの特典">
       <div class="chip" role="listitem">仲介手数料0</div>
-      <div class="chip" role="listitem">敷金礼金0円多数</div>
-      <div class="chip" role="listitem">LINEで全部完結</div>
+      <div class="chip" role="listitem">初期費用最大限割引！</div>
+      <div class="chip" role="listitem">LINEで完結</div>
     </div>
   </div>
 
