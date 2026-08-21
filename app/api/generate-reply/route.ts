@@ -463,7 +463,9 @@ function buildGenerationMessages(
   directionNote = "",
   // 見積書・割引の約束済みフラグ（直前スタッフ返信の割引/見積約束 or aix_usage_logs の estimate_sheet 履歴）。
   // true の場合は「御見積書を作成しお送りします」宣言の再生成を禁止し短い受付文へ切り替える（見積二重宣言の防止）
-  estimatePromised = false
+  estimatePromised = false,
+  // importance=10 の principle（staticBlock に注入してプロンプトキャッシュ対象にする）
+  topPrinciples: KnowledgeRow[] = []
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -970,6 +972,11 @@ function buildGenerationMessages(
   //   smoraRulesNote / realEstateNote は promptOverrides で上書き可能だが通常は定数。
   // Block 2（動的・per-customer）: 顧客コンテキスト・会話履歴・お客様メッセージ・実例。
   //   Block 1 のキャッシュを活かすため後ろに置く。
+  // importance=10 の principle（絶対原則）をキャッシュ対象の staticBlock に含める
+  const topPrinciplesNote = topPrinciples.length > 0
+    ? "【📌 絶対原則（importance=10・全顧客共通・常時遵守）】\n" +
+      topPrinciples.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
+    : "";
   const staticBlock = [
     quickPatterns,
     smoraRulesNote,
@@ -983,6 +990,7 @@ function buildGenerationMessages(
     QUOTE_REPLY_JUDGE_NOTE,
     meetingPlaceGateNote,
     aixOperationNote,
+    topPrinciplesNote,
   ].filter(Boolean).join("\n");
 
   // Step1廃止（2026-08）: 旧 currentPropertyNote/repeatedConcernNote/hesitancyNote スロットは
@@ -1157,7 +1165,7 @@ function logKnowledgeApply(ids: string[], conversationId: string): void {
 }
 
 // 戻り値: text=プロンプト注入用ナレッジ文字列 / phraseHits=category=phrase のヒット件数（fetchPhrases の二重注入削減判定に使用）
-async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec): Promise<{ text: string; phraseHits: number }> {
+async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // T1動的選択: spec未指定（後方互換）は全クエリ実行＝従来動作（T2/T3のspecも全enabled）
@@ -1180,19 +1188,15 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           .order("created_at", { ascending: false })
           .limit(lossLimit)
       : Promise.resolve({ data: null }),
-    // importance>=9 の principle は embedding 検索の取りこぼし（similarity<0.5）に関わらず必ず注入する保証バケット。
-    // pgvector経路・フォールバック経路の両方で使う（brainと無関係の正しさデータ＝T1でもSKIPしない）
+    // importance=10 の principle を staticBlock（プロンプトキャッシュ対象）に注入するため全件取得。
+    // importance=9 以下は pgvector criticalVector（RAG最大16件）で供給。
     supabase
       .from("ai_reply_knowledge")
       .select("id, category, title, content, importance")
       .eq("category", "principle")
-      .gte("importance", 8)
-      // NULL除外地雷を回避: .neq だと hypothesis_status IS NULL の行も除外されてしまう
+      .eq("importance", 10)
       .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
-      .order("importance", { ascending: false })
-      // B11同等: importance同点時の5枠目が非決定的にならないよう created_at タイブレーク
-      .order("created_at", { ascending: false })
-      .limit(5),
+      .order("created_at", { ascending: false }),
     // HIGH-05: テンプレート修正学習ルール（テンプレ適用→スタッフ編集→送信から学習したパターン）
     adaptEnabled
       ? supabase
@@ -1295,10 +1299,11 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         // ナレッジ洪水対策: 差分学習5件・修正対比5件・絶対ルール8件・パターン5件に上限を削減
         const diffLearned = filteredResults.filter(r => r.title.includes("差分学習")).slice(0, 5);
         const correctionPairs = filteredResults.filter(r => r.title.includes("修正対比")).slice(0, 5);
-        // importance>=9 の principle は embedding 検索に漏れても必ず注入する（topPrinciples で保証）
-        const criticalVector = filteredResults.filter(r => r.importance >= 8 && r.category === "principle").slice(0, 8);
-        const criticalGuaranteed = (topPrinciples ?? []).filter(p => !criticalVector.some(c => c.id === p.id));
-        const critical = [...criticalGuaranteed, ...criticalVector.filter(c => !criticalGuaranteed.some(g => g.id === c.id))].slice(0, 8);
+        // importance=10 は staticBlock に注入済みのため除外。importance=9 の principle を RAG で最大16件供給
+        const criticalVector = filteredResults.filter(r => r.importance >= 8 && r.importance < 10 && r.category === "principle").slice(0, 16);
+        // importance=10 は staticBlock 注入済みのため dynamicBlock への再注入は不要
+        const criticalGuaranteed: typeof criticalVector = [];
+        const critical = criticalVector.slice(0, 20);
         const patterns = filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 5);
         const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
         // pgvector経路での applying_pattern: ベクトル類似度ベースの結果を優先し、なければ静的クエリにフォールバック
@@ -1355,7 +1360,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           sections.push("【📘 テンプレート修正学習ルール（テンプレ活用時の改善パターン — テンプレを使う場合は必ず参照）】\n" +
             (adaptRules as { rule_text: string; category: string }[]).map(r => `・[${r.category}] ${r.rule_text}`).join("\n"));
         }
-        return { text: sections.length > 0 ? "\n\n" + sections.join("\n\n") : "", phraseHits: phrases.length };
+        return { text: sections.length > 0 ? "\n\n" + sections.join("\n\n") : "", phraseHits: phrases.length, topPrinciples: (topPrinciples ?? []) as KnowledgeRow[] };
       }
     }
   }
@@ -1434,7 +1439,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     ? [...topicList, ...baseAll.filter(k => !topicList.some(t => t.id === k.id))]
     : baseAll;
   const principlesList = topPrinciples ?? [];
-  if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock && !applyingBlock && !viewingBlock) return { text: "", phraseHits: 0 };
+  if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock && !applyingBlock && !viewingBlock) return { text: "", phraseHits: 0, topPrinciples: (topPrinciples ?? []) as KnowledgeRow[] };
 
   // principle は global/stateSpecific クエリで除外済みのため、専用クエリの結果をそのまま使う
   const critical = principlesList;
@@ -1483,7 +1488,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     sections.push("【📘 テンプレート修正学習ルール（テンプレ活用時の改善パターン — テンプレを使う場合は必ず参照）】\n" +
       (adaptRules as { rule_text: string; category: string }[]).map(r => `・[${r.category}] ${r.rule_text}`).join("\n"));
   }
-  return { text: sections.length > 0 ? "\n\n" + sections.join("\n\n") : "", phraseHits: Math.min(phrases.length, 6) };
+  return { text: sections.length > 0 ? "\n\n" + sections.join("\n\n") : "", phraseHits: Math.min(phrases.length, 6), topPrinciples: (topPrinciples ?? []) as KnowledgeRow[] };
 }
 
 // ─── OpenAI 埋め込み生成（generate-reply 側）────────────────────────────────
@@ -2552,7 +2557,7 @@ export async function POST(req: NextRequest) {
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext, conversationId, fetchSpec)
-        .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0 }; }),
+        .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
       getCachedPhrases(fetchSpec.phrases.categories)
@@ -2754,7 +2759,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote, directionNote,
-      estimatePromised
+      estimatePromised, knowledgeResult.topPrinciples
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
