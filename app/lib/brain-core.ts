@@ -1261,7 +1261,7 @@ export async function analyzeConversation(
   const contractExamples = [...stateMatched, ...stateOthers].slice(0, 3);
 
   const contractKnowledgeLines = contractKnowledge
-    .map((k) => `- ${(k.title ?? "").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 400)}`)
+    .map((k) => `- ${(k.title ?? "").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 600)}`)
     .join("\n");
   const contractExampleLines = contractExamples
     .map((e) => `- [${outcomeOf(e)}] (${e.conversation_state ?? "不明"}段階) 「${(e.sent_reply ?? "").replace(/\n/g, " ").slice(0, 250)}」`)
@@ -1302,13 +1302,14 @@ export async function analyzeConversation(
       }).join("\n")}\n※aix キーの選択は、現在の会話が上記パターンのどの「場面」に該当するかを最優先の判断材料にすること。同じ場面なら実績のあるAIXボタン（特に見積書→申込誘導の estimate_sheet ライン）を選ぶ。`
     : "";
 
-  // RAG化 Phase2: 類似ナレッジの選抜。⑦principle・⑪成約パターン・⑱applying_pattern の
-  // 静的保証バケットと本文重複するものを除去 → AIX局面一致（conversation_state がアクション候補に
-  // 一致・前方一致）を最優先ブースト → similarity 降順で上位6件。
-  // ※この処理は knowledgePrinciples / contractKnowledge / applyingPatternKnowledge の定義後に置くこと（未定義参照防止）
+  // RAG化 Phase2: 類似ナレッジの選抜。
+  // 設計方針: 2レイヤー構造
+  //   静的キャッシュ層: principle（importance>=9）・applying_pattern → 全会話共通・キャッシュで低コスト
+  //   動的RAG層: 今の会話に類似した成約パターン（contractKnowledge）を含む全カテゴリ → 顧客別に最適化
+  // ※ contractKnowledge は静的上位4件をキャッシュで届けつつ、RAGでも除外しない（顧客固有の関連パターンを追加注入）
+  // ※この処理は knowledgePrinciples / applyingPatternKnowledge の定義後に置くこと（未定義参照防止）
   const ragAlreadyInjected = new Set<string>([
     ...knowledgePrinciples.map((k) => k.content),
-    ...contractKnowledge.map((k) => k.content ?? ""),
     ...applyingPatternKnowledge.map((k) => k.content ?? ""),
   ]);
   const isAixStateMatch = (state: string | null): boolean =>
