@@ -2189,6 +2189,14 @@ ALTER TABLE aix_brain_templates DISABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS applying_text_received BOOLEAN DEFAULT false;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS applying_image_received BOOLEAN DEFAULT false;
 
+-- イエヤスLP ページビュー計測テーブル
+CREATE TABLE IF NOT EXISTS iyeyasu_page_views (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE iyeyasu_page_views DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_iyeyasu_page_views_created_at ON iyeyasu_page_views(created_at DESC);
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
