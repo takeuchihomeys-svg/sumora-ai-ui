@@ -388,8 +388,52 @@
 
     /* QR直下テキスト */
     #hero .qr-after-note{
-      text-align:center;font-size:15px;font-weight:900;color:#333;
-      letter-spacing:.02em;padding:0 16px;margin-top:12px;
+      text-align:center;font-size:16px;font-weight:900;color:#111;
+      letter-spacing:.02em;padding:0 16px;margin-top:16px;
+    }
+
+    /* ── 新ヒーロー見出し（2段：黒サブ + 緑メイン） ── */
+    #hero .h-hero-wrap{text-align:center;padding:14px 16px 0;}
+    .h-hero-sub{
+      font-size:clamp(24px,7vw,32px);font-weight:700;color:#111;
+      line-height:1.3;white-space:nowrap;-webkit-text-stroke:.2px #111;
+    }
+    #hero h1.h-hero-main{
+      font-size:clamp(50px,14vw,66px);font-weight:900;color:var(--line);
+      line-height:1;-webkit-text-stroke:.4px var(--line);letter-spacing:-.02em;
+      margin-top:2px;
+    }
+
+    /* ── CTAブロック（物件URLを送るだけ＋実績） ── */
+    #hero .h-cta-block{
+      background:rgba(6,199,85,.07);border:1.5px solid rgba(6,199,85,.28);
+      border-radius:12px;margin:10px 16px 0;padding:11px 16px 12px;
+      text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;
+    }
+    #hero .h-cta-simple{
+      font-size:clamp(18px,5vw,21px);font-weight:700;color:#333;line-height:1.4;
+    }
+    .h-evidence-line{
+      font-size:13px;font-weight:700;color:#555;letter-spacing:.01em;line-height:1.5;
+    }
+    #hero .h-ev-tag{
+      display:inline-block;background:var(--line);color:#fff;font-size:10px;
+      font-weight:900;padding:1px 7px;border-radius:4px;letter-spacing:.05em;
+      vertical-align:middle;margin-right:3px;
+    }
+    .h-ev-num{font-style:normal;color:#e82020;font-size:16px;font-weight:900;-webkit-text-stroke:.3px #e82020;}
+    .h-ev-note{font-size:9px;font-weight:600;vertical-align:super;}
+
+    /* ── QRヒーローカード（大型・中央・ラベルなし） ── */
+    #hero .qr-hero-card{
+      position:relative;background:#fff;border:3px solid var(--line);border-radius:20px;
+      padding:22px 12px 16px;width:fit-content;margin:0 auto;
+      box-shadow:0 6px 28px rgba(6,199,85,.28);
+      display:flex;flex-direction:column;align-items:center;
+    }
+    .qr-hero-img{
+      display:block;width:min(76vw,320px);aspect-ratio:1/1;
+      border-radius:8px;border:2px solid var(--line);
     }
 
     /* ── CTA セクション（strip + band 統合） ── */
@@ -577,33 +621,27 @@
 
   <!-- ② Hero White Body -->
   <div class="h-body">
-    <div class="h-title-wrap">
-      <h1 class="h-title">
-        <span class="h-title-line1">気になるお部屋、</span>
-        <span class="h-title-line2 h-title-action">まず<em class="h-title-em">送ってください！</em></span>
-      </h1>
+    <div class="h-hero-wrap">
+      <p class="h-hero-sub">あなたが気になるお部屋</p>
+      <h1 class="h-hero-main">最大限割引！</h1>
     </div>
-    <div class="h-evidence-block r">
-      <p class="h-eb-main">送るだけで 初期費用を<em class="h-eb-em">最大限割引！</em></p>
-      <p class="h-eb-sub"><span class="h-eb-tag">8月実績</span>｜平均 <em class="h-eb-num">118,220円</em>節約<sup class="h-eb-note">※</sup></p>
+    <div class="h-cta-block">
+      <p class="h-cta-simple">物件URLを送るだけ。</p>
+      <p class="h-evidence-line"><span class="h-ev-tag">8月実績</span>｜平均 <em class="h-ev-num">118,220円</em> 節約<sup class="h-ev-note">※</sup></p>
     </div>
 
     <!-- QRコードセクション -->
     <p class="qr-cta-arrow">↓ 今すぐQRを長押し ↓</p>
-    <div class="qr-solo" aria-label="QRコード友達追加エリア">
-      <div class="qr-solo-card">
-        <div class="qr-now-badge">今すぐ追加！</div>
-        <a href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer"
-           aria-label="QRコードを長押しして「リンクを開く」でLINE友だち追加">
-          <img class="qr-img"
-               src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
-               onerror="this.src='/iyeyasu-qr.png'"
-               alt="イエヤスLINE友達追加QRコード"
-               width="200" height="200"
-               loading="eager">
-        </a>
-        <p class="qr-label-new"><strong>QRコード長押しで</strong><br>LINE追加！</p>
-      </div>
+    <div class="qr-hero-card" aria-label="QRコード友達追加エリア">
+      <div class="qr-now-badge">今すぐ追加！</div>
+      <a href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer"
+         aria-label="QRコードを長押しして「リンクを開く」でLINE友だち追加">
+        <img class="qr-hero-img"
+             src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2Fv5CFQfL&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
+             onerror="this.src='/iyeyasu-qr.png'"
+             alt="イエヤスLINE友達追加QRコード"
+             loading="eager">
+      </a>
     </div>
     <p class="qr-after-note r">追加したら物件URLを送るだけ！</p>
     <div class="benefit-row" role="list" aria-label="イエヤスの特典">
