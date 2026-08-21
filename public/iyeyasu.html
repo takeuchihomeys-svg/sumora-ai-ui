@@ -433,7 +433,7 @@
     /* QR後2段テキスト */
     #hero .qr-after-main{
       text-align:center;font-size:clamp(14px,4vw,16px);font-weight:900;color:#111;
-      letter-spacing:.02em;padding:0 16px;margin-top:14px;
+      letter-spacing:.02em;padding:0 16px;margin-top:10px;
     }
     .qr-after-sub{
       text-align:center;font-size:11px;font-weight:700;color:#666;
@@ -456,8 +456,8 @@
     /* ── CTAブロック（2段 + 実績） ── */
     #hero .h-cta-block{
       background:rgba(6,199,85,.07);border:1.5px solid rgba(6,199,85,.28);
-      border-radius:12px;margin:8px 16px 0;padding:8px 16px 9px;
-      text-align:center;display:flex;flex-direction:column;align-items:center;gap:3px;
+      border-radius:12px;margin:5px 16px 0;padding:6px 16px 7px;
+      text-align:center;display:flex;flex-direction:column;align-items:center;gap:2px;
     }
     #hero .h-cta-simple{
       font-size:clamp(18px,5vw,23px);font-weight:900;color:#111;line-height:1.2;
@@ -478,17 +478,18 @@
     }
     .h-ev-num{font-style:normal;color:#e82020;font-size:16px;font-weight:900;-webkit-text-stroke:.3px #e82020;}
     .h-ev-note{font-size:9px;font-weight:600;vertical-align:super;}
+    .h-ev-weak{font-size:10px;color:#999;font-weight:600;}
 
     /* ── QRヒーローカード（大型・中央・ラベルなし） ── */
     #hero .qr-hero-card{
       position:relative;background:#fff;border:3px solid var(--line);border-radius:20px;
-      padding:18px 12px 14px;width:fit-content;margin:18px auto 0;
+      padding:16px 10px 12px;width:fit-content;margin:14px auto 0;
       display:flex;flex-direction:column;align-items:center;
       animation:qrGlow 2s ease-in-out infinite;
       overflow:visible;
     }
     .qr-hero-img{
-      display:block;width:min(70vw,300px);aspect-ratio:1/1;
+      display:block;width:min(64vw,278px);aspect-ratio:1/1;
       border-radius:8px;border:2px solid var(--line);
     }
 
@@ -670,8 +671,8 @@
     .qr-arrow{display:inline-block;animation:arrowBounce 1.2s ease-in-out infinite;}
     /* ── マスコットバッジ ── */
     .qr-mascot-wrap{
-      position:absolute;bottom:-36px;right:-26px;
-      width:86px;pointer-events:none;z-index:10;
+      position:absolute;bottom:-30px;right:-20px;
+      width:75px;pointer-events:none;z-index:10;
       filter:drop-shadow(0 2px 6px rgba(0,0,0,0.15));
     }
     .qr-mascot-img{
@@ -760,7 +761,7 @@
     <div class="h-cta-block">
       <p class="h-cta-simple">LINEで<em class="h-cta-em">かんたん</em>お部屋探し！</p>
       <p class="h-cta-sub-note">気になる物件がある方は、そのまま送るだけ！</p>
-      <p class="h-evidence-line"><span class="h-ev-tag">8月実績</span>｜平均 <em class="h-ev-num">118,220円</em> 節約<sup class="h-ev-note">※</sup></p>
+      <p class="h-evidence-line"><span class="h-ev-tag">8月実績</span><span class="h-ev-weak">｜平均</span> <em class="h-ev-num">118,220円</em><span class="h-ev-weak"> 節約</span><sup class="h-ev-note">※</sup></p>
     </div>
 
     <!-- QRコードセクション -->
