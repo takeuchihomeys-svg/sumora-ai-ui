@@ -869,12 +869,14 @@ function buildGenerationMessages(
   // お客様メッセージ自体がリンク（URL）を求めている場合の専用ノート（引用コンテキスト非依存の保険）
   const isLinkRequestMsg = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送)/i.test(customerMessage)
     || /(この|こちらの|その|これの|さっきの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(customerMessage);
-  const linkRequestNote = isLinkRequestMsg
-    ? `\n\n【🔗 リンク（URL）要求検出（最優先）】お客様はURLを求めていますが、URLの送付はAIXツール（物件ピックアップした）がスタッフ操作で行います。
-【絶対禁止】返信文に「〜のURLとなります」「URLをお送りします」「リンクをご案内します」「こちらのURLです」等、URLを送る・案内するような文言を一切書かない。
-・URLや物件リンクが「今から届く」かのような表現も禁止。
+  // 写真・画像・動画要求（「URL」という語を含まない要求）も同じゲートで検出する
+  const isPhotoRequestMsg = /((室内|内装|間取り|物件)?(写真|画像|動画|フォト))\s*(を|が|は)?\s*(送って|見たい|ありますか|ください|欲しい|URL|url|リンク|見せて|もらえ|拝見)/.test(customerMessage ?? "");
+  const linkRequestNote = (isLinkRequestMsg || isPhotoRequestMsg)
+    ? `\n\n【🔗 写真/URL要求検出（最優先）】お客様は物件の写真・画像・URLを求めていますが、これらの送付はAIXツール（物件ピックアップした）またはスタッフ操作で行います。
+【絶対禁止】返信文に「写真をお送りします」「URLをご案内します」「リンクをお送りします」「〜のURLとなります」等、写真・URLを今すぐ送る・案内するような文言を一切書かない。
+・写真・URL・物件リンクが「今から届く」かのような表現も禁止。
 ・返信文は受付・確認の一言のみ：「確認してすぐご案内しますね😊！！」「少々お待ちください！！」程度にとどめる。
-・対象物件が特定できる場合は物件名を添えた受付文でよい（URLは書かない）。`
+・対象物件が特定できる場合は物件名を添えた受付文でよい（写真・URLは書かない）。`
     : "";
 
   // 共感フレーズ（全然大丈夫です／全然わがままじゃないですよ）の確定ゲート — 常時注入
@@ -1185,8 +1187,11 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .select("id, category, title, content, importance")
       .eq("category", "principle")
       .gte("importance", 8)
-      .neq("hypothesis_status", "rejected")
+      // NULL除外地雷を回避: .neq だと hypothesis_status IS NULL の行も除外されてしまう
+      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
       .order("importance", { ascending: false })
+      // B11同等: importance同点時の5枠目が非決定的にならないよう created_at タイブレーク
+      .order("created_at", { ascending: false })
       .limit(5),
     // HIGH-05: テンプレート修正学習ルール（テンプレ適用→スタッフ編集→送信から学習したパターン）
     adaptEnabled
@@ -1258,7 +1263,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         // M3(AIX-METAフル活用 2026-08): knowledge.limit（デッドフィールドだった）を正として接続。
         // brainが required+closing_strategy 確信時は spec 側で 60 に削減される（genericナレッジ洪水の抑制）
         match_count: spec?.knowledge?.limit ?? spec?.pgvectorMatchCount ?? 100,
-        min_importance: 8,
+        // importance=7 の生存知識（約39%）が構造的に不可視だったため 8→7 に緩和。
+        // match_count は同じなのでスコア再ランクで7は自然に下位になり洪水リスクは小さい
+        min_importance: 7,
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
       if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
 
@@ -1750,7 +1757,9 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
     const custText = String((lastCustomerMsg as { text?: string | null } | null)?.text ?? "");
     const isLinkRequest = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送|ちょーだい)?/i.test(custText)
       || /(この|こちらの|その|これの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(custText);
-    const linkRequestNote = (isLinkRequest && q.sender === "staff")
+    // 写真・画像・動画要求（「URL」という語を含まない要求）も同じゲートで検出する
+    const isPhotoRequest = /((室内|内装|間取り|物件)?(写真|画像|動画|フォト))\s*(を|が|は)?\s*(送って|見たい|ありますか|ください|欲しい|URL|url|リンク|見せて|もらえ|拝見)/.test(custText);
+    const linkRequestNote = ((isLinkRequest || isPhotoRequest) && q.sender === "staff")
       ? `
 【🔗 リンク（URL）要求検出（最優先）】お客様はURLを求めていますが、URLの送付はAIXツール（物件ピックアップした）がスタッフ操作で行います。
 【絶対禁止】返信文に「〜のURLとなります」「URLをお送りします」「リンクをご案内します」等、URLを送る・案内するような文言を一切書かない。
