@@ -67,6 +67,35 @@
     }
     @keyframes cta-arrow-slide{0%,100%{transform:translateX(0);}50%{transform:translateX(5px);}}
     @keyframes ck-pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.06);}}
+    /* Hero staggered reveal */
+    @keyframes heroReveal{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+    @keyframes heroMainEntrance{
+      0%  {opacity:0;transform:translateY(10px) scale(.92);}
+      60% {opacity:1;transform:translateY(0)     scale(1.03);}
+      100%{opacity:1;transform:translateY(0)     scale(1);}
+    }
+    /* ↓矢印だけバウンス */
+    @keyframes arrowBounce{0%,100%{transform:translateY(0);}50%{transform:translateY(6px);}}
+    /* 今すぐ追加！バッジ Pulse */
+    @keyframes ctaPulse{
+      0%,100%{transform:translateX(-50%) scale(1);    box-shadow:0 0 0 0 rgba(255,40,80,.35);}
+      50%    {transform:translateX(-50%) scale(1.06); box-shadow:0 0 0 8px rgba(255,40,80,0);}
+    }
+    /* QRカード枠 Glow */
+    @keyframes qrGlow{
+      0%,100%{box-shadow:0 6px 28px rgba(6,199,85,.28),0 0 0 3px rgba(0,200,83,.15);}
+      50%    {box-shadow:0 6px 28px rgba(6,199,85,.28),0 0 0 6px rgba(0,200,83,.24),0 10px 32px rgba(0,200,83,.18);}
+    }
+    /* 固定CTA 4.5秒に1回 attention */
+    @keyframes ctaAttention{
+      0%,100%{transform:scale(1) translateX(0);}
+      4%     {transform:scale(1.02);}
+      8%     {transform:scale(1);}
+      12%    {transform:translateX(2px);}
+      16%    {transform:translateX(0);}
+    }
+    /* 指アイコン */
+    @keyframes fingerBounce{0%,100%{transform:translateY(0);}50%{transform:translateY(3px);}}
 
     /* ===== #hero ===== */
     #hero{
@@ -285,6 +314,7 @@
       border: 2px solid #fff;
       box-shadow: 1px 1px 0 rgba(0,0,0,.2);
       z-index: 5;
+      animation: ctaPulse 1.8s ease-in-out infinite;
     }
 
     .qr-img {
@@ -411,8 +441,9 @@
       text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;
     }
     #hero .h-cta-simple{
-      font-size:clamp(18px,5vw,21px);font-weight:700;color:#333;line-height:1.4;
+      font-size:clamp(25px,7vw,34px);font-weight:900;color:#333;line-height:1.3;
     }
+    .h-cta-em{font-style:normal;color:var(--line);-webkit-text-stroke:.3px var(--line);}
     .h-evidence-line{
       font-size:13px;font-weight:700;color:#555;letter-spacing:.01em;line-height:1.5;
     }
@@ -428,8 +459,9 @@
     #hero .qr-hero-card{
       position:relative;background:#fff;border:3px solid var(--line);border-radius:20px;
       padding:22px 12px 16px;width:fit-content;margin:0 auto;
-      box-shadow:0 6px 28px rgba(6,199,85,.28);
       display:flex;flex-direction:column;align-items:center;
+      animation:qrGlow 2s ease-in-out infinite;
+      overflow:visible;
     }
     .qr-hero-img{
       display:block;width:min(76vw,320px);aspect-ratio:1/1;
@@ -593,14 +625,36 @@
       display:flex;align-items:center;justify-content:center;gap:8px;
       background:var(--line);color:#fff;text-decoration:none;font-size:16px;font-weight:900;
       padding:13px;border-radius:var(--r-pill);width:100%;transition:background .18s;
+      animation:ctaAttention 4.5s ease-in-out infinite;
     }
     .bottom-bar a:hover{background:var(--line-dk);}
     .ico{width:20px;height:20px;flex-shrink:0;}
     .ico-l{width:26px;height:26px;flex-shrink:0;}
+    /* ── Hero reveal classes ── */
+    .hr-1,.hr-2,.hr-3,.hr-4,.hr-5,.hr-6{opacity:0;}
+    .hr-1{animation:heroReveal .28s ease forwards;            animation-delay:0ms;}
+    .hr-2{animation:heroMainEntrance .38s ease forwards;      animation-delay:100ms;}
+    .hr-3{animation:heroReveal .28s ease forwards;            animation-delay:200ms;}
+    .hr-4{animation:heroReveal .28s ease forwards;            animation-delay:300ms;}
+    .hr-5{animation:heroReveal .28s ease forwards;            animation-delay:450ms;}
+    .hr-6{animation:heroReveal .30s ease forwards;            animation-delay:550ms;}
+    /* ── ↓矢印 ── */
+    .qr-arrow{display:inline-block;animation:arrowBounce 1.2s ease-in-out infinite;}
+    /* ── 指アイコン ── */
+    .qr-finger{
+      position:absolute;bottom:18px;right:-24px;
+      font-size:22px;line-height:1;
+      animation:fingerBounce 1.3s ease-in-out infinite;
+      z-index:10;pointer-events:none;
+    }
     @media(prefers-reduced-motion:reduce){
       .fc-pulse-btn,.scan-arrow{animation:none!important;}
       .fcb-mascot{animation:none;}
       .clock-badge{animation:none;}
+      .hr-1,.hr-2,.hr-3,.hr-4,.hr-5,.hr-6{animation:none;opacity:1;transform:none;}
+      .qr-arrow,.qr-finger,.qr-now-badge{animation:none;}
+      #hero .qr-hero-card{animation:none;box-shadow:0 6px 28px rgba(6,199,85,.28);}
+      .bottom-bar a{animation:none;}
     }
   </style>
 </head>
@@ -622,17 +676,17 @@
   <!-- ② Hero White Body -->
   <div class="h-body">
     <div class="h-hero-wrap">
-      <p class="h-hero-sub">あなたが気になるお部屋</p>
-      <h1 class="h-hero-main">最大限割引！</h1>
+      <p class="h-hero-sub hr-1">あなたが気になるお部屋</p>
+      <h1 class="h-hero-main hr-2">最大限割引！</h1>
     </div>
-    <div class="h-cta-block">
-      <p class="h-cta-simple">物件URLを送るだけ。</p>
-      <p class="h-evidence-line"><span class="h-ev-tag">8月実績</span>｜平均 <em class="h-ev-num">118,220円</em> 節約<sup class="h-ev-note">※</sup></p>
+    <div class="h-cta-block hr-3">
+      <p class="h-cta-simple">物件<em class="h-cta-em">送る</em>だけ!!</p>
+      <p class="h-evidence-line hr-4"><span class="h-ev-tag">8月実績</span>｜平均 <em class="h-ev-num">118,220円</em> 節約<sup class="h-ev-note">※</sup></p>
     </div>
 
     <!-- QRコードセクション -->
-    <p class="qr-cta-arrow">↓ 今すぐQRを長押し ↓</p>
-    <div class="qr-hero-card" aria-label="QRコード友達追加エリア">
+    <p class="qr-cta-arrow hr-5"><span class="qr-arrow" aria-hidden="true">↓</span> 今すぐQRを長押し <span class="qr-arrow" aria-hidden="true">↓</span></p>
+    <div class="qr-hero-card hr-6" aria-label="QRコード友達追加エリア">
       <div class="qr-now-badge">今すぐ追加！</div>
       <a href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer"
          aria-label="QRコードを長押しして「リンクを開く」でLINE友だち追加">
@@ -642,8 +696,9 @@
              alt="イエヤスLINE友達追加QRコード"
              loading="eager">
       </a>
+      <span class="qr-finger" aria-hidden="true">👆</span>
     </div>
-    <p class="qr-after-note r">追加したら物件URLを送るだけ！</p>
+    <p class="qr-after-note r">追加したら物件送るだけ!!</p>
     <div class="benefit-row" role="list" aria-label="イエヤスの特典">
       <div class="chip" role="listitem">仲介手数料0</div>
       <div class="chip" role="listitem">敷金礼金0円多数</div>
