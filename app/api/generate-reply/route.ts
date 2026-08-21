@@ -1263,9 +1263,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         // M3(AIX-METAフル活用 2026-08): knowledge.limit（デッドフィールドだった）を正として接続。
         // brainが required+closing_strategy 確信時は spec 側で 60 に削減される（genericナレッジ洪水の抑制）
         match_count: spec?.knowledge?.limit ?? spec?.pgvectorMatchCount ?? 100,
-        // importance=7 の生存知識（約39%）が構造的に不可視だったため 8→7 に緩和。
-        // match_count は同じなのでスコア再ランクで7は自然に下位になり洪水リスクは小さい
-        min_importance: 7,
+        min_importance: 8,
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
       if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
 
