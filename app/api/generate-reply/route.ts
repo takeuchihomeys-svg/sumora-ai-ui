@@ -679,7 +679,7 @@ function buildGenerationMessages(
   const repetitionNote = allPastStaffMsgs.length > 1
     ? `\n【🚫 繰り返し厳禁（スモラが過去に送った内容）— 同じ情報・同じ言い回し・同じ説明を絶対に使わない】\n${
         allPastStaffMsgs.slice(0, -1).slice(-5).map((m, i) =>
-          `・${safeSlice(m, 120)}${m.length > 120 ? "…" : ""}`
+          `・${safeSlice(m, 200)}${m.length > 200 ? "…" : ""}`
         ).join("\n")
       }\n→ 特に費用・ルール・フロー説明は「一度伝えた」事実を必ず踏まえ、同じ内容を別の言い方でも繰り返さない。次のアクションに進むこと。`
     : "";
@@ -1299,11 +1299,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         // ナレッジ洪水対策: 差分学習5件・修正対比5件・絶対ルール8件・パターン5件に上限を削減
         const diffLearned = filteredResults.filter(r => r.title.includes("差分学習")).slice(0, 5);
         const correctionPairs = filteredResults.filter(r => r.title.includes("修正対比")).slice(0, 5);
-        // importance=10 は staticBlock に注入済みのため除外。importance=9 の principle を RAG で最大16件供給
+        // importance=10 は staticBlock（topPrinciplesNote）に注入済みのため除外。importance=8-9 を RAG で最大16件供給
         const criticalVector = filteredResults.filter(r => r.importance >= 8 && r.importance < 10 && r.category === "principle").slice(0, 16);
-        // importance=10 は staticBlock 注入済みのため dynamicBlock への再注入は不要
-        const criticalGuaranteed: typeof criticalVector = [];
-        const critical = criticalVector.slice(0, 20);
+        const critical = criticalVector;
         const patterns = filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 5);
         const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
         // pgvector経路での applying_pattern: ベクトル類似度ベースの結果を優先し、なければ静的クエリにフォールバック
@@ -1465,8 +1463,10 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   if (correctionList.length > 0) {
     sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionList.slice(0, 5).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
-  if (critical.length > 0) {
-    sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+  // importance=10 は staticBlock（topPrinciplesNote）に注入済みのため dynamicBlock への再注入はスキップ
+  const criticalFallback = (critical as KnowledgeRow[]).filter(p => (p.importance ?? 10) < 10);
+  if (criticalFallback.length > 0) {
+    sections.push("【⚠️ 絶対ルール】\n" + criticalFallback.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
     sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 5).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
@@ -1529,7 +1529,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
   const baseQuery = lastStaffMessage
-    ? `${state}: [前返信]${safeSlice(lastStaffMessage, 100)} [顧客]${customerMessage}`
+    ? `${state}: [前返信]${safeSlice(lastStaffMessage, 250)} [顧客]${customerMessage}`
     : customerMessage ? `${state}: ${customerMessage}` : null;
   // 分析で検出したパターン（検討中・URL確認・複数質問等）をクエリに追加して関連例を引く
   const searchQuery = baseQuery && analysisContext
@@ -1755,7 +1755,7 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
     const isImage = !q.text || q.text === "[画像]" || q.text === "[動画]";
     const contentDesc = isImage
       ? "【画像（スタッフ送付なら物件カード・物件資料の可能性が高い）】"
-      : `「${safeSlice(String(q.text), 300)}」`;
+      : `「${safeSlice(String(q.text), 600)}」`;
     // お客様がリンク（URL）そのものを求めているか判定
     const custText = String((lastCustomerMsg as { text?: string | null } | null)?.text ?? "");
     const isLinkRequest = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送|ちょーだい)?/i.test(custText)
@@ -2705,7 +2705,7 @@ ${noEmoji ? "◆ 絵文字は一切使用しない（テンプレートに絵文
 ${preprocessedTemplate}
 
 【AIX物件情報（事実情報の参照元 — 物件名・家賃・間取り・特徴の事実のみ使う。構成は参照しない）】
-${safeSlice(aixSourceMessage, 1000)}
+${safeSlice(aixSourceMessage, 1500)}
 ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ】\n${pendingSection}\n` : ""}${learnedRulesSection ? `\n${learnedRulesSection}\n` : ""}
 出力は書き直したテンプレート本文のみ。説明・前置き・補足コメントは一切書かない。`;
           }
