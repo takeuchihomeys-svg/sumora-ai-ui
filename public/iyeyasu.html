@@ -638,6 +638,10 @@
     .hr-4{animation:heroReveal .28s ease forwards;            animation-delay:300ms;}
     .hr-5{animation:heroReveal .28s ease forwards;            animation-delay:450ms;}
     .hr-6{animation:heroReveal .30s ease forwards;            animation-delay:550ms;}
+    /* qr-hero-card は自身に qrGlow(specificity:110) があるため hr-6 を上書き合成 */
+    #hero .qr-hero-card.hr-6{
+      animation:heroReveal .30s ease 550ms forwards,qrGlow 2s ease-in-out infinite;
+    }
     /* ── ↓矢印 ── */
     .qr-arrow{display:inline-block;animation:arrowBounce 1.2s ease-in-out infinite;}
     /* ── 指アイコン ── */
@@ -653,7 +657,7 @@
       .clock-badge{animation:none;}
       .hr-1,.hr-2,.hr-3,.hr-4,.hr-5,.hr-6{animation:none;opacity:1;transform:none;}
       .qr-arrow,.qr-finger,.qr-now-badge{animation:none;}
-      #hero .qr-hero-card{animation:none;box-shadow:0 6px 28px rgba(6,199,85,.28);}
+      #hero .qr-hero-card,#hero .qr-hero-card.hr-6{animation:none;box-shadow:0 6px 28px rgba(6,199,85,.28);}
       .bottom-bar a{animation:none;}
     }
   </style>
