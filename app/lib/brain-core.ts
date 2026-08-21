@@ -922,6 +922,13 @@ export async function analyzeConversation(
     return null;
   }
 
+  // フロントエンド（page.tsx）と同じ first_reply 判定を brain 側にも適用して一本化。
+  // hearing + スタッフの非AIX返信ゼロ → first_reply として分析（既にフェッチ済みメッセージを使うため追加DBクエリなし）
+  const hasAnyRealStaffMsg = messages.some(m => m.sender === "staff" && !m.is_aix_generated);
+  if (convStatus === "hearing" && !hasAnyRealStaffMsg) {
+    convStatus = "first_reply";
+  }
+
   // AIXアクションのメッセージ単位ラベル解決
   // 1) line_message_id 完全一致（P4以降のログ・直近30日で97%カバー）
   // 2) 旧ログ fallback: is_aix_generated=true × sent_at ±3分
