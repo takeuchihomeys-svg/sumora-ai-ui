@@ -2650,9 +2650,10 @@ export async function POST(req: NextRequest) {
       ) - 9 * 3600 * 1000;
       const jstDayStart = new Date(dayStartUtc);
       const jstDayEnd = new Date(dayStartUtc + 24 * 3600 * 1000 - 1);
-      // AIX生成メッセージは「挨拶済み」としてカウントしない（初回挨拶を正しく生成するため）
+      // AIX自動返信も「挨拶済み」としてカウントする（当日AIXが送っていたら「お世話になっております」を省略）
+      // ※ first_reply 判定（hasAnyStaffMsg）とは別の目的: あちらは「人間が返信したか」、こちらは「今日挨拶を送ったか」
       return recentMessages.some(m => {
-        if (m.sender !== "staff" || m.isAix || !m.createdAt) return false;
+        if (m.sender !== "staff" || !m.createdAt) return false;
         if (!m.text || m.text === "[画像]" || m.text === "[動画]") return false;
         const ts = new Date(m.createdAt);
         return ts >= jstDayStart && ts <= jstDayEnd;
