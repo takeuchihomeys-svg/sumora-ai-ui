@@ -434,7 +434,8 @@ async function run() {
             draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
             draft_last_error: "stop_reason=max_tokens: draft truncated",
           })
-          .eq("id", convId);
+          .eq("id", convId)
+          .is("ai_draft", null);
         failed++;
         continue;
       }

@@ -149,7 +149,8 @@ export async function POST(req: NextRequest) {
     if (!finalDraft) return NextResponse.json({ ok: false });
 
     // DBに保存（Realtimeで他デバイスにも反映）
-    await db.from("conversations").update({ ai_draft: finalDraft }).eq("id", convId);
+    // bg-async が先に保存した有効ドラフトを上書きしない
+    await db.from("conversations").update({ ai_draft: finalDraft }).eq("id", convId).is("ai_draft", null);
 
     return NextResponse.json({ ok: true, draft: finalDraft });
   } catch (e) {
