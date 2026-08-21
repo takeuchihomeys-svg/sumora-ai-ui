@@ -114,14 +114,14 @@ type PromptBlock = { type: "text"; text: string; cache_control?: { type: "epheme
 type PromptContent = string | PromptBlock[];
 
 // ─── Sonnet呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
-async function callSonnet45(prompt: PromptContent, timeoutMs: number, maxTokens = 2400): Promise<RawIssue[]> {
+async function callSonnet(prompt: PromptContent, timeoutMs: number, maxTokens = 2400): Promise<RawIssue[]> {
   const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     signal: AbortSignal.timeout(timeoutMs),
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: maxTokens,
       temperature: 0,
       output_config: { format: { type: "json_schema", schema: ISSUE_SCHEMA } },
@@ -723,7 +723,7 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, sonne
     { pass: "anomaly_scan", prompt: buildAnomalyScanPrompt(draft, ctx) },
     { pass: "context_check", prompt: buildContextCheckPrompt(draft, ctx) },
   ];
-  const settled = await Promise.allSettled(passes.map((p) => callSonnet45(p.prompt, sonnetTimeoutMs)));
+  const settled = await Promise.allSettled(passes.map((p) => callSonnet(p.prompt, sonnetTimeoutMs)));
 
   const passesCompleted: CheckPass[] = [];
 
@@ -960,7 +960,7 @@ ${targets.map((i, idx) => `${idx + 1}. 「${i.evidence}」`).join("\n")}
       signal: AbortSignal.timeout(timeoutMs),
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         max_tokens: 800,
         temperature: 0,
         output_config: { format: { type: "json_schema", schema: VERIFY_SCHEMA } },
@@ -1099,7 +1099,7 @@ async function runDiffRecheck(
   const targets = check1Issues.filter((i) => i.pass !== "meta" && i.code !== "UNCHECKED_AUTO_SEND");
 
   try {
-    const raw = await callSonnet45(buildDiffRecheckPrompt(revised, targets, ctx), timeoutMs, DIFF_RECHECK_MAX_TOKENS);
+    const raw = await callSonnet(buildDiffRecheckPrompt(revised, targets, ctx), timeoutMs, DIFF_RECHECK_MAX_TOKENS);
     for (const r of raw) {
       const evidence = (r.evidence ?? "").trim();
       if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード・runFinalCheckと同一）

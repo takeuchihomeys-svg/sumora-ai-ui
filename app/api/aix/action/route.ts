@@ -9,7 +9,7 @@ import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx 
 export const maxDuration = 300;
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-sonnet-5";
 
 // ── OCR result cache (session-level, FIFO, max 50 entries) ──────────────────
 // Key: image URL or composite "primaryUrl|secondaryUrl"  Value: Claude OCR text
@@ -526,7 +526,6 @@ async function callClaude(system: string, user: string, action: string): Promise
         "Content-Type": "application/json",
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
-        "anthropic-beta": "prompt-caching-2024-07-31",
       },
       body: JSON.stringify({
         model: MODEL,
@@ -584,7 +583,6 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
       "Content-Type": "application/json",
       "x-api-key": ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
-      "anthropic-beta": "prompt-caching-2024-07-31",
     },
     body: JSON.stringify({
       model: MODEL,
