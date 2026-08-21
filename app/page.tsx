@@ -2301,8 +2301,8 @@ export default function Home() {
     // 未読かつai_draft未生成の会話を最大3件、バックグラウンドでプリ生成（毎回チェック・重複はpreGenInProgressで防止）
     // 同時発火を3件・2秒ずらしに制限してClaude API負荷を分散（旧10件同時は詰まりの原因）
     {
-      // bg-async側のSKIP_STATUSESと必ず一致させる
-      const skipStatuses = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
+      // bg-async/SKIP_STATUSES・brain-core/BRAIN_SKIP_STATUSESと必ず一致させる
+      const skipStatuses = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost", "lost", "approved"]);
       const readAtMap = manuallyReadAtRef.current;
       // AIXタスク進行中（ai_draftが非null/非空）の会話はpreGenをスキップ
       // stripInternalTagsOrNullで[AIX誘導中]等のsentinelが除去されてaiDraft=nullになる場合も防ぐため、rawDBデータを参照
@@ -2745,8 +2745,8 @@ export default function Home() {
         const latestCust = selectedConversation.messages.filter((m) => m.sender === "customer").at(-1);
         // rawCreatedAtが未ロード（messages空）の場合は未読扱いにする
         const isActuallyUnread = !rAt || !latestCust?.rawCreatedAt || latestCust.rawCreatedAt > rAt;
-        // bg-async側のSKIP_STATUSESと必ず一致させる（closed_lost欠落で毎回60秒待ちぼうけになるバグがあった）
-        const skipStatuses = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
+        // bg-async/SKIP_STATUSES・brain-core/BRAIN_SKIP_STATUSESと必ず一致させる
+        const skipStatuses = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost", "lost", "approved"]);
         const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
         if (isActuallyUnread && !skipStatuses.has(ns)) {
           triggerBgDraftGeneration(selectedConversation.id);
@@ -3129,7 +3129,8 @@ export default function Home() {
       generateAbortRef.current = genAbortController;
 
       // スタッフ返信ゼロ & 初回対応中 → first_reply としてAPIに渡す（初回挨拶文を生成するため）
-      const hasAnyStaffMsg = selectedConversation.messages.some((m) => m.sender === "staff");
+      // AIX自動返信はスタッフ返信としてカウントしない（brain-coreと同じ判定）
+      const hasAnyStaffMsg = selectedConversation.messages.some((m) => m.sender === "staff" && !m.isAix);
       const normalizedStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
       const effectiveState = !hasAnyStaffMsg && normalizedStatus === "hearing" ? "first_reply" : selectedConversation.status;
 
@@ -3501,7 +3502,8 @@ export default function Home() {
     try {
       setSparkleGenerating(true);
       const linkedCustomer = linkedCustomerMap[selectedConversation.id];
-      const hasAnyStaff = msgs.some((m) => m.sender === "staff");
+      // AIX自動返信はスタッフ返信としてカウントしない（brain-coreと同じ判定）
+      const hasAnyStaff = msgs.some((m) => m.sender === "staff" && !m.isAix);
       const normalizedStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
       const effectiveState = !hasAnyStaff && normalizedStatus === "hearing" ? "first_reply" : selectedConversation.status;
 

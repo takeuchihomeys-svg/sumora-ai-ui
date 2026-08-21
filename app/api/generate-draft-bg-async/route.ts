@@ -11,7 +11,8 @@ function getDb() {
   );
 }
 
-const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost"]);
+// brain-core/BRAIN_SKIP_STATUSES・line-webhook/BG_ASYNC_SKIP_STATUSESと同一集合を維持すること
+const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost", "lost", "approved"]);
 
 const STATUS_ALIAS: Record<string, string> = {
   first_reply:             "hearing",
@@ -144,14 +145,14 @@ export async function POST(req: NextRequest) {
 
       const { data: pc } = conv.property_customer_id
         ? await db.from("property_customers")
-          .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions")
+          .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions, initial_cost_limit")
           .eq("id", conv.property_customer_id).single()
         : { data: null };
 
-      // 直近20件にスタッフ返信があるか確認
-      const hasStaffInLast20 = recentMsgs.some((m) => m.sender === "staff");
+      // 直近20件に非AIXスタッフ返信があるか確認（brain-coreと同じ判定: AIX自動返信は除外）
+      const hasStaffInLast20 = recentMsgs.some((m) => m.sender === "staff" && !m.isAix);
 
-      // 直近20件にスタッフ返信がない場合: 全履歴から最新スタッフ返信を取得してコンテキストに注入
+      // 直近20件にスタッフ返信がない場合: 全履歴から最新非AIXスタッフ返信を取得してコンテキストに注入
       // - hasAnyStaffMsg: 過去に返信済みか（effectiveState=first_reply 判定精度向上）
       // - 見つかれば先頭追加（generateReplyの inject last staff ロジックと統一）
       let hasAnyStaffMsg = hasStaffInLast20;
@@ -161,6 +162,7 @@ export async function POST(req: NextRequest) {
           .select("sender, text, created_at")
           .eq("conversation_id", convId)
           .eq("sender", "staff")
+          .eq("is_aix_generated", false)
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -176,8 +178,19 @@ export async function POST(req: NextRequest) {
       const normalizedStatus = STATUS_ALIAS[conv.status as string] ?? conv.status;
       const effectiveState = !hasAnyStaffMsg && normalizedStatus === "hearing" ? "first_reply" : (conv.status as string);
 
-      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string } | null;
+      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string; initial_cost_limit?: number } | null;
       const pcData = pc as PC;
+      // page.tsxのCustomerStructuredForGenと同じ構造（missingConditionsNote注入に必要）
+      const customerStructured = pcData ? {
+        move_in_time: pcData.move_in_time ?? null,
+        rent_max: pcData.rent_max ?? null,
+        desired_area: pcData.desired_area ?? null,
+        walk_minutes: pcData.walk_minutes ?? null,
+        floor_plan: pcData.floor_plan ?? null,
+        initial_cost_limit: pcData.initial_cost_limit ?? null,
+        building_age: pcData.building_age ?? null,
+        other_requests: pcData.other_requests ?? null,
+      } : null;
       // formatConditions と同じロジックで全フィールドを統一フォーマット
       const dbConditions = [
         pcData?.desired_area && `エリア: ${pcData.desired_area}`,
@@ -272,6 +285,8 @@ export async function POST(req: NextRequest) {
             recentMessages: recentMsgsForGen,
             customerConditions,
             customerSummary: pcData?.ai_summary || "",
+            // 条件ヒアリング状況（missingConditionsNote注入のために必要）
+            ...(customerStructured ? { customerStructured } : {}),
             replyHint,
             activeTaskTypes,
             // RLHF断絶修正: conversationId を渡して generate-reply 側の logKnowledgeApply を発火させる
