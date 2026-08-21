@@ -1565,8 +1565,6 @@ export default function Home() {
     setBrainConversations((prev) => {
       const existingMap = new Map(prev.map((c) => [c.id, c]));
       return customerConvs.map((c) => {
-        const existing = existingMap.get(c.id);
-        if (existing?.suggestedAixMeta) return { ...c, suggestedAixMeta: existing.suggestedAixMeta };
         return c;
       });
     });
@@ -3539,6 +3537,12 @@ export default function Home() {
       });
 
       if (!res.ok || !res.body) throw new Error("生成失敗");
+      // JSON応答（skipped / non-streaming）を先に処理する（closed_lost等でスキップされた場合）
+      const contentType = res.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        const json = await res.json().catch(() => null) as { skipped?: boolean } | null;
+        if (json?.skipped) return;
+      }
 
       setReplyDraft("");
       setReplyQuality(null);
