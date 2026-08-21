@@ -978,7 +978,7 @@ ${examples || "  (なし)"}
     ? `## 予測精度が低いアクション（直近30日実績・提案は慎重に。他に妥当な候補があればそちらを優先）\n${lowAccuracyLines.join("\n")}\n\n`
     : "";
 
-  // フロー運用ガイドは「## 指示」やJSON出力指示より前に注入する（後置するとフォーマット遵守が弱まる）
+  // フロー運用ガイドは「## 指示」やJSON出力指示より前（system側）に注入する（後置するとフォーマット遵守が弱まる）
   // 改善15: analyze-aix-flow の出力上限（800字指示・max_tokens 1000）と整合させて末尾切れを防ぐ
   // 中6: ガイド未学習（空）の場合はセクション自体を省略（過去パターン + 基礎フロー知識で判断）
   const flowGuideSection = aixFlowGuide
@@ -988,19 +988,28 @@ ${aixFlowGuide.slice(0, 1000)}
 `
     : "";
 
-  const prompt = `あなたは不動産営業AIのアドバイザーです。
-現在日時（JST）: ${jstNowStr}
-${customerContext ? customerContext + "\n" : ""}${aixLogicGuide}${flowGuideSection}${attributionSection}${accuracySection}${patternSection}## 現在の会話
+  // prompt cache 対策: 静的な大型テキスト（aixLogicGuide / flowGuideSection はDB更新時のみ変化・10K字超）を
+  // system の先頭ブロックに集約して cache_control を付与する。毎分変わる現在時刻（jstNowStr）や
+  // 会話固有の情報（顧客名・会話履歴等）はキャッシュ境界より後ろの user メッセージ側に置く。
+  // ※ 以前は jstNowStr がプロンプト2行目にあり、後続の大型ガイドが毎分キャッシュ無効化されていた
+  const staticSystem = `あなたは不動産営業AIのアドバイザーです。
+不動産賃貸営業の基本フロー: ヒアリング → 物件提案 → 内覧 → 見積 → 申込 の順で顧客を次のステップへ進める。
+
+${aixLogicGuide}${flowGuideSection}`.trim();
+
+  const prompt = `${attributionSection}${accuracySection}${patternSection}## 現在の会話
 顧客名: ${conv.customer_name as string}
 ステータス: ${statusLabel}
 直前のAIXアクション: ${last_aix_action || "なし"}
 顧客の最新メッセージ: ${lastCustomerMsg ? `「${lastCustomerMsg.slice(0, 200)}」` : "(なし)"}
-
+${customerContext ? customerContext + "\n" : ""}
 直近の会話（古い順）:
 ${recentText}
 
+現在日時（JST）: ${jstNowStr}
+
 ## 指示
-上記の「各AIXボタンの発動条件」「AIXフロー運用ガイド」と過去実績データを参照して、スタッフが次に取るべき最適なアクションを1つ選んでください。
+システム指示の「各AIXボタンの発動条件」「AIXフロー運用ガイド」と過去実績データを参照して、スタッフが次に取るべき最適なアクションを1つ選んでください。
 
 選択肢:
 - property_check_result: ${PROPERTY_CHECK_RESULT_LABEL}: ${PROPERTY_CHECK_RESULT_DESCRIPTION}
@@ -1019,8 +1028,10 @@ ${recentText}
     const message = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 100,
-      // 営業フロー基礎知識をハードコード（DBの学習ガイドに全依存しないフォールバック知識）
-      system: "不動産賃貸営業の基本フロー: ヒアリング → 物件提案 → 内覧 → 見積 → 申込 の順で顧客を次のステップへ進める。",
+      // 営業フロー基礎知識（ハードコード）＋大型ガイドを静的 system として先頭に置き prompt cache を効かせる
+      system: [
+        { type: "text" as const, text: staticSystem, cache_control: { type: "ephemeral" as const } },
+      ],
       messages: [{ role: "user", content: prompt }],
     });
 
