@@ -443,16 +443,12 @@
       font-size:clamp(11px,3vw,13px);font-weight:500;color:#444;
       line-height:1.4;white-space:nowrap;letter-spacing:.02em;text-align:center;
     }
-    .h-hero-mid{
-      font-size:clamp(20px,5.8vw,26px);font-weight:900;color:#111;
-      line-height:1.2;margin-top:6px;letter-spacing:-.01em;
-      -webkit-text-stroke:.2px #111;
-    }
     #hero h1.h-hero-main{
-      font-size:clamp(50px,14vw,66px);font-weight:900;color:var(--line);
-      line-height:1;-webkit-text-stroke:.4px var(--line);letter-spacing:-.02em;
-      margin-top:2px;
+      font-size:clamp(24px,7.8vw,34px);font-weight:900;
+      line-height:1.15;white-space:nowrap;letter-spacing:-.01em;margin-top:4px;
     }
+    .h1-black{color:#111;-webkit-text-stroke:.2px #111;}
+    .h1-green{color:var(--line);-webkit-text-stroke:.3px var(--line);}
 
     /* ── CTAブロック（2段 + 実績） ── */
     #hero .h-cta-block{
@@ -755,8 +751,7 @@
   <div class="h-body">
     <div class="h-hero-wrap">
       <p class="h-hero-sub">イエヤスで今すぐお部屋探し！</p>
-      <p class="h-hero-mid">賃貸の初期費用</p>
-      <h1 class="h-hero-main hr-2">最大限割引！</h1>
+      <h1 class="h-hero-main hr-2"><span class="h1-black">初期費用を</span><span class="h1-green">最大限割引！</span></h1>
     </div>
     <div class="h-cta-block">
       <p class="h-cta-simple">お部屋探しも相談もLINEだけ！</p>
