@@ -1148,7 +1148,7 @@ function logKnowledgeApply(ids: string[], conversationId: string): void {
 }
 
 // 戻り値: text=プロンプト注入用ナレッジ文字列 / phraseHits=category=phrase のヒット件数（fetchPhrases の二重注入削減判定に使用）
-async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
+async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // T1動的選択: spec未指定（後方互換）は全クエリ実行＝従来動作（T2/T3のspecも全enabled）
@@ -1239,9 +1239,8 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
   if (customerMessage && process.env.OPENAI_API_KEY) {
-    const searchQuery = analysisContext
-      ? safeSlice(`${state}: ${customerMessage} ${analysisContext}`, 2000)
-      : safeSlice(`${state}: ${customerMessage}`, 2000);
+    const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction].filter(Boolean).join(" ") : "";
+    const searchQuery = safeSlice(`${state}: ${customerMessage} ${analysisContext ?? ""} ${brainContext}`.trim(), 2000);
 
     const embedding = await getEmbedding(searchQuery);
     if (embedding) {
@@ -1506,18 +1505,18 @@ function extractDirectionKeywords(direction: string | null): string[] {
 
 const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C: "C案", short_direct: "短く直接" };
 
-async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec): Promise<string> {
+async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
+  const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction].filter(Boolean).join(" ") : "";
   const baseQuery = lastStaffMessage
     ? `${state}: [前返信]${safeSlice(lastStaffMessage, 250)} [顧客]${customerMessage}`
     : customerMessage ? `${state}: ${customerMessage}` : null;
-  // 分析で検出したパターン（検討中・URL確認・複数質問等）をクエリに追加して関連例を引く
-  const searchQuery = baseQuery && analysisContext
-    ? `${baseQuery} パターン: ${analysisContext}`
-    : baseQuery;
+  const searchQuery = baseQuery
+    ? [baseQuery, analysisContext ? `パターン: ${analysisContext}` : null, brainContext || null].filter(Boolean).join(" ")
+    : null;
 
   if (searchQuery && process.env.OPENAI_API_KEY) {
     const embedding = await getEmbedding(searchQuery);
@@ -2539,9 +2538,9 @@ export async function POST(req: NextRequest) {
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
-      fetchKnowledge(currentState, message, analysisContext, conversationId, fetchSpec)
+      fetchKnowledge(currentState, message, analysisContext, conversationId, fetchSpec, brainMeta)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
-      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec)
+      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
       getCachedPhrases(fetchSpec.phrases.categories)
         .catch((err) => { console.error("[generate-reply] getCachedPhrases失敗 — フレーズなしで生成続行:", err); return [] as string[]; }),
