@@ -421,12 +421,31 @@
       text-align:center;font-size:16px;font-weight:900;color:#111;
       letter-spacing:.02em;padding:0 16px;margin-top:16px;
     }
+    /* QR内「長押しで友だち追加！」 */
+    .qr-long-press{
+      font-size:13px;font-weight:900;color:var(--line);
+      text-align:center;letter-spacing:.03em;margin-top:8px;
+    }
+    /* QR後2段テキスト */
+    #hero .qr-after-main{
+      text-align:center;font-size:clamp(14px,4vw,16px);font-weight:900;color:#111;
+      letter-spacing:.02em;padding:0 16px;margin-top:14px;
+    }
+    .qr-after-sub{
+      text-align:center;font-size:11px;font-weight:700;color:#666;
+      padding:0 16px;margin-top:5px;letter-spacing:.01em;
+    }
 
-    /* ── 新ヒーロー見出し（2段：黒サブ + 緑メイン） ── */
+    /* ── ヒーロー見出し（サブ + 中間 + H1緑） ── */
     #hero .h-hero-wrap{text-align:center;padding:14px 16px 0;}
     .h-hero-sub{
-      font-size:clamp(24px,7vw,32px);font-weight:700;color:#111;
-      line-height:1.3;white-space:nowrap;-webkit-text-stroke:.2px #111;
+      font-size:clamp(14px,4vw,18px);font-weight:700;color:#555;
+      line-height:1.4;white-space:nowrap;letter-spacing:.02em;
+    }
+    .h-hero-mid{
+      font-size:clamp(20px,5.8vw,26px);font-weight:900;color:#111;
+      line-height:1.2;margin-top:6px;letter-spacing:-.01em;
+      -webkit-text-stroke:.2px #111;
     }
     #hero h1.h-hero-main{
       font-size:clamp(50px,14vw,66px);font-weight:900;color:var(--line);
@@ -434,14 +453,18 @@
       margin-top:2px;
     }
 
-    /* ── CTAブロック（物件URLを送るだけ＋実績） ── */
+    /* ── CTAブロック（2段 + 実績） ── */
     #hero .h-cta-block{
       background:rgba(6,199,85,.07);border:1.5px solid rgba(6,199,85,.28);
       border-radius:12px;margin:10px 16px 0;padding:11px 16px 12px;
-      text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;
+      text-align:center;display:flex;flex-direction:column;align-items:center;gap:5px;
     }
     #hero .h-cta-simple{
-      font-size:clamp(25px,7vw,34px);font-weight:900;color:#333;line-height:1.3;
+      font-size:clamp(20px,5.5vw,25px);font-weight:900;color:#111;line-height:1.3;
+    }
+    .h-cta-sub-note{
+      font-size:clamp(11px,3vw,13px);font-weight:700;color:#666;
+      line-height:1.5;letter-spacing:.01em;
     }
     .h-cta-em{font-style:normal;color:var(--line);-webkit-text-stroke:.3px var(--line);}
     .h-evidence-line{
@@ -728,18 +751,18 @@
   <!-- ② Hero White Body -->
   <div class="h-body">
     <div class="h-hero-wrap">
-      <p class="h-hero-sub">あなたが気になるお部屋</p>
+      <p class="h-hero-sub">イエヤスで今すぐお部屋探し！</p>
+      <p class="h-hero-mid">賃貸の初期費用</p>
       <h1 class="h-hero-main hr-2">最大限割引！</h1>
     </div>
-    <p class="h-social-proof"><span class="h-sp-stars" aria-hidden="true">★★★★★</span><span class="h-sp-text">TikTokで話題　イエヤスでお部屋探す</span></p>
     <div class="h-cta-block">
-      <p class="h-cta-simple">物件<em class="h-cta-em">送る</em>だけ!!</p>
+      <p class="h-cta-simple">お部屋探しも相談もLINEだけ！</p>
+      <p class="h-cta-sub-note">気になる物件がある方は、そのまま送るだけ！</p>
       <p class="h-evidence-line"><span class="h-ev-tag">8月実績</span>｜平均 <em class="h-ev-num">118,220円</em> 節約<sup class="h-ev-note">※</sup></p>
     </div>
 
     <!-- QRコードセクション -->
-    <p class="qr-incentive"><span class="qr-inc-slash" aria-hidden="true">＼</span><span class="qr-inc-badge">LINEから<em class="qr-inc-em">簡単割引</em></span><span class="qr-inc-slash" aria-hidden="true">／</span></p>
-    <p class="qr-cta-arrow"><span class="qr-arrow" aria-hidden="true">↓</span> 今すぐQRを長押し <span class="qr-arrow" aria-hidden="true">↓</span></p>
+    <p class="qr-cta-arrow"><span class="qr-arrow" aria-hidden="true">↓</span> まずはLINEを追加 <span class="qr-arrow" aria-hidden="true">↓</span></p>
     <div class="qr-hero-card" aria-label="QRコード友達追加エリア">
       <div class="qr-now-badge">今すぐ追加！</div>
       <a href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer"
@@ -751,10 +774,12 @@
              loading="eager">
       </a>
       <span class="qr-finger" aria-hidden="true">👆</span>
+      <p class="qr-long-press">長押しで友だち追加！</p>
     </div>
     <a class="qr-line-btn" href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer" aria-label="タップしてLINE友だち追加"><svg width="20" height="20" viewBox="0 0 20 20" fill="white" aria-hidden="true"><path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/></svg>タップでLINE友だち追加</a>
     <p class="qr-micro-note">登録無料・24時間対応・解除いつでもOK</p>
-    <p class="qr-after-note r">追加したら物件送るだけ!!</p>
+    <p class="qr-after-main r">LINE追加したら、すぐお部屋探しスタート！</p>
+    <p class="qr-after-sub r">気になる物件がある方は、そのまま送ってOK！</p>
     <div class="benefit-row" role="list" aria-label="イエヤスの特典">
       <div class="chip" role="listitem">仲介手数料0</div>
       <div class="chip" role="listitem">敷金礼金0円多数</div>
