@@ -422,11 +422,14 @@
       text-align:center;font-size:16px;font-weight:900;color:#111;
       letter-spacing:.02em;padding:0 16px;margin-top:16px;
     }
-    /* QR内「長押しで友だち追加！」 */
+    /* QR内操作補足 */
     .qr-long-press{
-      font-size:13px;font-weight:900;color:var(--line);
-      text-align:center;letter-spacing:.03em;margin-top:8px;
+      font-size:11px;font-weight:700;color:#999;
+      text-align:center;letter-spacing:.02em;margin-top:7px;line-height:1.4;
     }
+    /* バッジ内👇バウンス */
+    @keyframes badgeArrow{0%,100%{transform:translateY(0);}50%{transform:translateY(4px);}}
+    .badge-arrow{display:inline-block;animation:badgeArrow 1s ease-in-out infinite;}
     /* QR後2段テキスト */
     #hero .qr-after-main{
       text-align:center;font-size:clamp(14px,4vw,16px);font-weight:900;color:#111;
@@ -726,7 +729,7 @@
       .fcb-mascot{animation:none;}
       .clock-badge{animation:none;}
       .hr-1,.hr-2,.hr-3,.hr-4,.hr-5,.hr-6{animation:none;opacity:1;transform:none;}
-      .qr-arrow,.qr-now-badge{animation:none;}
+      .qr-arrow,.qr-now-badge,.badge-arrow{animation:none;}
       #hero .qr-hero-card,#hero .qr-hero-card.hr-6{animation:none;box-shadow:0 6px 28px rgba(6,199,85,.28);}
       .bottom-bar a{animation:none;}
     }
@@ -761,7 +764,7 @@
 
     <!-- QRコードセクション -->
     <div class="qr-hero-card" aria-label="QRコード友達追加エリア">
-      <div class="qr-now-badge">👇 長押ししてLINEを開く 👇</div>
+      <div class="qr-now-badge"><span class="badge-arrow">👇</span> 長押ししてLINEを開く <span class="badge-arrow">👇</span></div>
       <a href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer"
          aria-label="QRコードを長押しして「リンクを開く」でLINE友だち追加">
         <img class="qr-hero-img"
@@ -773,10 +776,8 @@
       <div class="qr-mascot-wrap" aria-hidden="true">
         <img class="qr-mascot-img" src="/iyeyasu-821.png" alt="">
       </div>
-      <p class="qr-long-press">長押しで友だち追加！</p>
+      <p class="qr-long-press">長押し →「LINEで開く」を選択</p>
     </div>
-    <a class="qr-line-btn" href="https://lin.ee/v5CFQfL" target="_blank" rel="noopener noreferrer" aria-label="タップしてLINE友だち追加"><svg width="20" height="20" viewBox="0 0 20 20" fill="white" aria-hidden="true"><path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/></svg>タップでLINE友だち追加</a>
-    <p class="qr-micro-note">登録無料・24時間対応・解除いつでもOK</p>
     <p class="qr-after-main r">LINE追加したら、すぐお部屋探しスタート！</p>
     <p class="qr-after-sub r">気になる物件がある方は、そのまま送ってOK！</p>
     <div class="benefit-row" role="list" aria-label="イエヤスの特典">
@@ -985,7 +986,7 @@
     <svg class="ico" viewBox="0 0 20 20" fill="white" aria-hidden="true">
       <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
     </svg>
-    QRコード長押しで友だちになる！
+    長押ししてLINEを開く
   </a>
   </div>
 </div>
