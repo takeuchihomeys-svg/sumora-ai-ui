@@ -1133,11 +1133,11 @@ ${SMORA_COMMON_RULES}`;
         loadBrainTemplate("property_recommendation"),
       ]);
 
-      // {{examples}} {{knowledge}} {{phrases}} を実データに置換
+      // {{examples}} {{knowledge}} {{phrases}} プレースホルダーを除去（実データはuserメッセージ側へ移動してキャッシュHIT率を向上）
       const system = DEFAULT_PROP_SYSTEM
-        .replace("{{examples}}", examples ? `【スモラの実際の物件オススメ文（実例）】\n${examples}` : "")
-        .replace("{{knowledge}}", knowledge ? `【物件オススメ時のノウハウ】\n${knowledge}` : "")
-        .replace("{{phrases}}", phraseText ? `【よく使うフレーズ】\n${phraseText}` : "");
+        .replace("{{examples}}", "")
+        .replace("{{knowledge}}", "")
+        .replace("{{phrases}}", "");
       // greetingTimeNote は固定フォーマット（物件オススメ文）に注入しない
       // recStarNote は user 側に移動（system に入れると固定フォーマットと干渉するため）
       // キャッシュ分離: system+propDbRules+共通ルール（全顧客共通・キャッシュHIT率HIGH）を静的ブロックに、
@@ -1171,7 +1171,10 @@ ${SMORA_COMMON_RULES}`;
         : "";
       const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
 
-      const recUserTextFinal = userText + (recStarNote
+      const knowledgeSection = knowledge ? `\n\n【物件オススメ時のノウハウ】\n${knowledge}` : "";
+      const examplesSection = examples ? `\n\n【スモラの実際の物件オススメ文（実例）】\n${examples}` : "";
+      const phrasesSection = phraseText ? `\n\n【よく使うフレーズ】\n${phraseText}` : "";
+      const recUserTextFinal = userText + knowledgeSection + examplesSection + phrasesSection + (recStarNote
         ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + recStarNote
         : "");
 
@@ -1417,8 +1420,8 @@ ${SMORA_COMMON_RULES}
 【重複禁止ルール（絶対厳守）】
 ・節約金額・費用比較の文言（「〇〇円節約出来ます」「一般的な不動産業者より〜」等）はすでに見積書本文に別途表示済みのため、カバーレターには絶対に含めないこと。`;
 
-        const coverSystemFinal = coverSystem + coverDiffNote + coverDbRules + (coverBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + coverBrainAddendum : "");
-        const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}` + (coverStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + coverStarNote : "");
+        const coverSystemFinal = coverSystem + coverDbRules + (coverBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + coverBrainAddendum : "");
+        const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}` + (coverDiffNote ? `\n\n${coverDiffNote}` : "") + (coverStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + coverStarNote : "");
         const coverResult = await callClaude(
           coverSystemFinal,
           coverUserFinal,
@@ -1804,10 +1807,11 @@ ${greetingLine}
       if (summaryNote) userParts.push(summaryNote);
       if (pspGuidanceNote) userParts.push(pspGuidanceNote);
 
-      const sendSystemFinal = sendSystem + skipViewingInviteNote + sendDbRules + sendDiffNote + componentKnowledgeNote + (sendBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + sendBrainAddendum : "");
-      const sendUserFinal = userParts.join("") + (sendStarNote
-        ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + sendStarNote
-        : "");
+      const sendSystemFinal = sendSystem + skipViewingInviteNote + sendDbRules + (sendBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + sendBrainAddendum : "");
+      const sendUserFinal = userParts.join("")
+        + (sendDiffNote ? `\n\n${sendDiffNote}` : "")
+        + (componentKnowledgeNote ? `\n\n${componentKnowledgeNote}` : "")
+        + (sendStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + sendStarNote : "");
       const rawSendText = await callClaude(sendSystemFinal, sendUserFinal, currentAction, brainGuidanceNote || undefined);
       // normal / widen モードはJSON構成パーツで返す（コンポーネント学習ループ用）
       if (sendMode === "normal" || sendMode === "widen" || sendMode === "viewing") {
@@ -1852,11 +1856,11 @@ ${SMORA_COMMON_RULES}
 ・[お客様名]と呼びかけてから日程変更の旨を伝える
 ・新しい候補日時があれば含める（calendar_info参照）
 ・お詫びの言葉を自然に入れる（「ご迷惑をおかけし大変申し訳ございません」等）
-・2〜4行程度・完成したLINEメッセージのみ出力${rescheduleDiffNote}`;
+・2〜4行程度・完成したLINEメッセージのみ出力`;
         const brainAddendumViReschedule = await loadBrainTemplate("viewing_invite");
         const calendarPart = calendarNote ? `\n\n【変更後の内覧候補日時】\n${calendarNote}` : "";
         const rescheduleSystemFinal = rescheduleSystem + (brainAddendumViReschedule ? "\n\n【ブレイン改善ルール】\n" + brainAddendumViReschedule : "");
-        const rescheduleUserFinal = greetingTimeNote + `${name}への内覧日程変更メッセージを生成してください。${calendarPart}${recentHistory}`;
+        const rescheduleUserFinal = greetingTimeNote + `${name}への内覧日程変更メッセージを生成してください。${calendarPart}${recentHistory}` + (rescheduleDiffNote ? `\n\n${rescheduleDiffNote}` : "");
         message_text = await callClaude(
           rescheduleSystemFinal + AIX_CURATED_AND_CRITICAL_RULES,
           rescheduleUserFinal,
@@ -1928,8 +1932,8 @@ ${calendarBlock}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
-        const convMatchVISystemFinal = convMatchVISystem + viewingConvMatchDiffNote + (brainAddendumViConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumViConv : "");
-        const convMatchVIUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。` + (viewingConvMatchStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingConvMatchStarNote : "");
+        const convMatchVISystemFinal = convMatchVISystem + (brainAddendumViConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumViConv : "");
+        const convMatchVIUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。` + (viewingConvMatchDiffNote ? `\n\n${viewingConvMatchDiffNote}` : "") + (viewingConvMatchStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingConvMatchStarNote : "");
         const rawVI = await callClaude(
           convMatchVISystemFinal + AIX_CURATED_AND_CRITICAL_RULES,
           convMatchVIUserFinal,
@@ -2095,9 +2099,9 @@ ${phraseText || "なし"}
         ? `\n【物件状況】空室（今すぐ内覧可能）`
         : "";
       const propNamePart = property_name ? `\n【物件名】${property_name}` : "";
-      const viewingSystemFinal = system + viewingDbRules + viewingDiffNote + viewingComponentNote + (viewingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + viewingBrainAddendum : "");
+      const viewingSystemFinal = system + viewingDbRules + (viewingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + viewingBrainAddendum : "");
       const viewingUserBase = `${name}への内覧お誘いメッセージ。${propNamePart}${vacancyPart}${calendarPart}${templateStructureNote}${recentHistory}`;
-      const viewingUserFinal = greetingTimeNote + viewingUserBase + (viewingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingStarNote : "");
+      const viewingUserFinal = greetingTimeNote + viewingUserBase + (viewingDiffNote ? `\n\n${viewingDiffNote}` : "") + (viewingComponentNote ? `\n\n${viewingComponentNote}` : "") + (viewingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingStarNote : "");
       const rawViewingText = await callClaude(viewingSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, viewingUserFinal, currentAction, brainGuidanceNote || undefined);
       // JSON構成パーツを解析してコンポーネント学習ループに渡す
       {
@@ -2196,8 +2200,8 @@ ${property_name ? `物件名は「${property_name}」を使う（指定済み）
 ${SMORA_COMMON_RULES}`;
 
         const brainAddendumAppConfirm = await loadBrainTemplate("application_push");
-        const confirmSystemFinal = confirmSystem + appDbRules + appDiffNote + (brainAddendumAppConfirm ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppConfirm : "");
-        const confirmUserFinal = `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}` + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
+        const confirmSystemFinal = confirmSystem + appDbRules + (brainAddendumAppConfirm ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppConfirm : "");
+        const confirmUserFinal = `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}` + (appDiffNote ? `\n\n${appDiffNote}` : "") + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
         message_text = await callClaude(confirmSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, confirmUserFinal, currentAction, brainGuidanceNote || undefined);
 
       } else if (appSubMode === "docs_request") {
@@ -2280,8 +2284,8 @@ ${SMORA_COMMON_RULES}`;
 
         // docs_request には不動産ルール（連帯保証人=実印+印鑑証明書・支払い義務あり vs 緊急連絡先=電話のみ・支払い義務なし 等）も注入
         const brainAddendumAppDocs = await loadBrainTemplate("application_push");
-        const docsSystemFinal = docsRequestSystem + appDbRules + appDiffNote + (brainAddendumAppDocs ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppDocs : "") + "\n\n" + REAL_ESTATE_RULES;
-        const docsUserFinal = `${name}への書類依頼メッセージ。${recentHistory}` + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
+        const docsSystemFinal = docsRequestSystem + appDbRules + (brainAddendumAppDocs ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppDocs : "") + "\n\n" + REAL_ESTATE_RULES;
+        const docsUserFinal = `${name}への書類依頼メッセージ。${recentHistory}` + (appDiffNote ? `\n\n${appDiffNote}` : "") + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
         const rawDocsText = await callClaude(docsSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, docsUserFinal, "docs_request", brainGuidanceNote || undefined);
         // JSONパース → コンポーネント結合
         // ※ docs_request は aiComponents を返さない（conversation_state が application_push と同じため
@@ -2372,8 +2376,8 @@ ${calendarBlock}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const brainAddendumAppConv = await loadBrainTemplate("application_push");
-        const convMatchAppSystemFinal = convMatchSystem + appDbRules + appDiffNote + (brainAddendumAppConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppConv : "");
-        const convMatchAppUserFinal = `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。` + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
+        const convMatchAppSystemFinal = convMatchSystem + appDbRules + (brainAddendumAppConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppConv : "");
+        const convMatchAppUserFinal = `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。` + (appDiffNote ? `\n\n${appDiffNote}` : "") + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
         const raw = await callClaude(
           convMatchAppSystemFinal,
           convMatchAppUserFinal,
@@ -2502,8 +2506,11 @@ ${examplesText}`;
 
       const brainAddendumApp = await loadBrainTemplate("application_push");
       const appSystemFinal = system + (brainAddendumApp ? "\n\n【ブレイン改善ルール】\n" + brainAddendumApp : "");
-      const appUserFinal = appGreetingForUser + userMsg + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-      const rawAppText = await callClaude(appSystemFinal + appDbRules + appDiffNote + compAppealNote + AIX_CURATED_AND_CRITICAL_RULES, appUserFinal, currentAction, brainGuidanceNote || undefined);
+      const appUserFinal = appGreetingForUser + userMsg
+        + (appDiffNote ? `\n\n${appDiffNote}` : "")
+        + (compAppealNote ? `\n\n${compAppealNote}` : "")
+        + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
+      const rawAppText = await callClaude(appSystemFinal + appDbRules + AIX_CURATED_AND_CRITICAL_RULES, appUserFinal, currentAction, brainGuidanceNote || undefined);
       if (!isScheduled) {
         // simple/hold_view: JSONパーツを解析してコンポーネント学習ループに渡す
         let appComps: Record<string, string> | null = null;
@@ -2565,11 +2572,10 @@ ${SMORA_COMMON_RULES}`;
       ]);
 
       const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
-        { type: "text", text: `${name}へ送る入居日確認メッセージを作成してください。` },
+        { type: "text", text: `${name}へ送る入居日確認メッセージを作成してください。` + (moveInDiffNote ? `\n\n${moveInDiffNote}` : "") },
         { type: "image", source: { type: "url", url: String(image_url) } },
       ];
-      const moveInDynamic = [moveInDbRules, moveInDiffNote].filter(Boolean).join("\n\n");
-      message_text = await callClaudeVision(moveInSystem, content, currentAction, moveInDynamic || undefined);
+      message_text = await callClaudeVision(moveInSystem, content, currentAction, moveInDbRules || undefined);
 
     // ── 🔒 保証会社審査確認 ──────────────────────────────────────────────────
     } else if (action === "property_check_result" && check_pattern === "mgmt_guarantor") {
@@ -2675,8 +2681,8 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
 JSONのみ: {"greeting":"①","report":"②（[物件名]解決済み・改行は\\nで）","type_desc":"③","cta":"④またはnull"}`;
 
       const rawGuarantorText = await callClaude(
-        guarantorSystem + guarantorDbRules + guarantorDiffNote + AIX_CURATED_AND_CRITICAL_RULES,
-        `${name}への保証会社確認報告メッセージ。${recentHistory}`,
+        guarantorSystem + guarantorDbRules + AIX_CURATED_AND_CRITICAL_RULES,
+        `${name}への保証会社確認報告メッセージ。${recentHistory}` + (guarantorDiffNote ? `\n\n${guarantorDiffNote}` : ""),
         currentAction,
         brainGuidanceNote || undefined
       );
@@ -2986,16 +2992,16 @@ ${mgmtDef.rules}
       ]);
 
       message_text = await callClaude(
-        mgmtSystem + mgmtDbRules + mgmtDiffNote,
+        mgmtSystem + mgmtDbRules,
         isNegotiation
           ? `${name}への初期費用交渉結果報告メッセージを作成してください。
 
 【スタッフが管理会社と交渉した内容・結果（この情報を必ず使うこと）】
-${mgmtInfo}${recentHistory}`
+${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : "")
           : `${name}への${mgmtDef.label}確認報告メッセージを作成してください。
 
 【スタッフが${check_pattern === "nearby_parking" ? "近隣の月極駐車場を調べた" : "管理会社に確認した"}内容（この情報を必ず使うこと）】
-${mgmtInfo}${recentHistory}`,
+${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         currentAction
       );
       // 号室の先頭ゼロ除去はメインパス末尾の finalize() で一括処理（⑦で共通化）
@@ -3148,8 +3154,8 @@ ${pcrCalendarBlock}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
-        const pcrConvSystemFinal = pcrSystem + pcrDbRules + pcrDiffNote + (brainAddendumPcrConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumPcrConv : "");
-        const pcrConvUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
+        const pcrConvSystemFinal = pcrSystem + pcrDbRules + (brainAddendumPcrConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumPcrConv : "");
+        const pcrConvUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrDiffNote ? `\n\n${pcrDiffNote}` : "") + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
         const rawPCR = await callClaude(
           pcrConvSystemFinal,
           pcrConvUserFinal,
@@ -3606,8 +3612,8 @@ ${templateText}`;
           : "";
         const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${templateSampleNote}${templateStructureNote}${calendarPart}${summaryNote}${recentHistory}`;
 
-        const checkSystemFinal = checkSystem + checkDbRules + checkDiffNote + (checkBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + checkBrainAddendum : "");
-        const checkUserFinal = greetingTimeNote + userText + (checkStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + checkStarNote : "");
+        const checkSystemFinal = checkSystem + checkDbRules + (checkBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + checkBrainAddendum : "");
+        const checkUserFinal = greetingTimeNote + userText + (checkDiffNote ? `\n\n${checkDiffNote}` : "") + (checkStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + checkStarNote : "");
 
         if (image_url || estimate_image_url) {
           const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
@@ -3738,8 +3744,8 @@ ${SMORA_COMMON_RULES}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
-        const hearingCMSystemFinal = hearingCMSystem + hearingCMDiffNote + (hearingCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + hearingCMBrainAddendum : "");
-        const hearingCMUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を読み取り、${name}への挨拶＋ヒアリング導入メッセージを生成してください。` + (hearingCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + hearingCMStarNote : "");
+        const hearingCMSystemFinal = hearingCMSystem + (hearingCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + hearingCMBrainAddendum : "");
+        const hearingCMUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を読み取り、${name}への挨拶＋ヒアリング導入メッセージを生成してください。` + (hearingCMDiffNote ? `\n\n${hearingCMDiffNote}` : "") + (hearingCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + hearingCMStarNote : "");
         const rawHCM = await callClaude(
           hearingCMSystemFinal,
           hearingCMUserFinal,
@@ -3786,8 +3792,8 @@ ${SMORA_COMMON_RULES}
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
 ・条件項目の箇条書き自体はこのメッセージに含めない（フォームは別送するため）`;
 
-        const hearingSystemFinal = hearingSystem + hearingDiffNote + hearingDbRules + (hearingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + hearingBrainAddendum : "");
-        const hearingUserFinal = greetingTimeNote + `${name}へのヒアリング導入メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}` + (hearingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + hearingStarNote : "");
+        const hearingSystemFinal = hearingSystem + hearingDbRules + (hearingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + hearingBrainAddendum : "");
+        const hearingUserFinal = greetingTimeNote + `${name}へのヒアリング導入メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}` + (hearingDiffNote ? `\n\n${hearingDiffNote}` : "") + (hearingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + hearingStarNote : "");
         const hearingResult = await callClaude(
           hearingSystemFinal,
           hearingUserFinal,
@@ -3888,10 +3894,10 @@ ${jstTodayStr}
           loadBrainTemplate("greeting_viewing"),
         ]);
 
-        const greetingBeforeSystemFinal = system + greetingViewingDbRules + beforeDiffNote + (greetingBeforeBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + greetingBeforeBrainAddendum : "");
+        const greetingBeforeSystemFinal = system + greetingViewingDbRules + (greetingBeforeBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + greetingBeforeBrainAddendum : "");
         message_text = await callClaude(
           greetingBeforeSystemFinal,
-          greetingTimeNote + `${name}への内覧前挨拶を生成してください。${dateInfo}${recentHistory}`,
+          greetingTimeNote + `${name}への内覧前挨拶を生成してください。${dateInfo}${recentHistory}` + (beforeDiffNote ? `\n\n${beforeDiffNote}` : ""),
           currentAction
         );
 
@@ -3942,7 +3948,7 @@ ${jstTodayStr}
 
 【スモラLINE営業ルール（必ず守る）】
 ${SMORA_COMMON_RULES}`;
-          message_text = await callClaude(sys + afterDiffNote + greetingAfterBrain, `確認事項: ${freeword}${recentHistory}`, currentAction);
+          message_text = await callClaude(sys + greetingAfterBrain, `確認事項: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction);
 
         } else if (after_type === "search_new") {
           // 引き続き物件探す / 新着探す
@@ -3958,7 +3964,7 @@ ${SMORA_COMMON_RULES}`;
 
 【スモラLINE営業ルール（必ず守る）】
 ${SMORA_COMMON_RULES}`;
-          message_text = await callClaude(sys + afterDiffNote + greetingAfterBrain, `条件: ${freeword}${recentHistory}`, currentAction);
+          message_text = await callClaude(sys + greetingAfterBrain, `条件: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction);
 
         } else if (after_type === "search_change") {
           // 引き続き物件探す / 条件変更 → AI生成
@@ -3970,7 +3976,7 @@ ${SMORA_COMMON_RULES}`;
 
 【スモラLINE営業ルール（必ず守る）】
 ${SMORA_COMMON_RULES}`;
-          message_text = await callClaude(sys + afterDiffNote + greetingAfterBrain, `変更条件: ${freeword}${recentHistory}`, currentAction);
+          message_text = await callClaude(sys + greetingAfterBrain, `変更条件: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction);
 
         } else {
           // フォールバック（after_type未指定 = 旧フロー）
@@ -3980,7 +3986,7 @@ ${SMORA_COMMON_RULES}`;
 ②「いかがでしたでしょうか？！」
 ③「気になる点ございましたらお気軽にお申し付けください！！」
 ・「！！」を文末に使う・3行のみ出力`;
-          message_text = await callClaude(system + afterDiffNote + greetingAfterBrain, `${name}への内覧後挨拶を生成してください。${recentHistory}`, currentAction);
+          message_text = await callClaude(system + greetingAfterBrain, `${name}への内覧後挨拶を生成してください。${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction);
         }
       }
 
@@ -4024,8 +4030,8 @@ ${mpDate ? `【内覧日】${mpDate}` : ""}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const mpBaseHint = baseMessage ? `\n\n【参考：前回生成した待ち合わせ情報（日時・物件・住所の参考のみ。冒頭文言は使わない）】\n${baseMessage}` : "";
-        const mpCMSystemFinal = mpSystem + mpDbRules + mpDiffNote + (mpCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + mpCMBrainAddendum : "");
-        const mpCMUserFinal = greetingTimeNote + `${recentHistory}${mpBaseHint}\n\n上記の会話を読み取り、${name}への待ち合わせ確定メッセージを生成してください。` + (mpStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + mpStarNote : "");
+        const mpCMSystemFinal = mpSystem + mpDbRules + (mpCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + mpCMBrainAddendum : "");
+        const mpCMUserFinal = greetingTimeNote + `${recentHistory}${mpBaseHint}\n\n上記の会話を読み取り、${name}への待ち合わせ確定メッセージを生成してください。` + (mpDiffNote ? `\n\n${mpDiffNote}` : "") + (mpStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + mpStarNote : "");
         const rawMP = await callClaude(
           mpCMSystemFinal,
           mpCMUserFinal,
@@ -4073,8 +4079,8 @@ ${mDate}[時間]に${mName}
 【スモラLINE営業ルール（必ず守る・ただし上記の出力形式が最優先）】
 ${SMORA_COMMON_RULES}`;
 
-      const meetingSystemFinal = system + meetingDbRules + meetingDiffNote + (meetingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + meetingBrainAddendum : "");
-      const meetingUserFinal = greetingTimeNote + `会話履歴から待ち合わせ時間を読み取り、メッセージを生成してください。${recentHistory}` + (meetingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + meetingStarNote : "");
+      const meetingSystemFinal = system + meetingDbRules + (meetingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + meetingBrainAddendum : "");
+      const meetingUserFinal = greetingTimeNote + `会話履歴から待ち合わせ時間を読み取り、メッセージを生成してください。${recentHistory}` + (meetingDiffNote ? `\n\n${meetingDiffNote}` : "") + (meetingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + meetingStarNote : "");
       message_text = await callClaude(meetingSystemFinal, meetingUserFinal, currentAction);
 
     // ── ✅ 確認します ──────────────────────────────────────────────
@@ -4137,12 +4143,12 @@ ${SMORA_COMMON_RULES}
 〇〇レジデンス502号室について、ペット（小型犬1匹）の飼育が可能かお伺いできますでしょうか？
 ご確認頂けますと幸いです。よろしくお願い致します！！
 
-【文字数】3〜6行のコンパクトなメッセージ${ackCMDiffNote}`;
+【文字数】3〜6行のコンパクトなメッセージ`;
         // ⑤修正: 管理会社向けメッセージは「お世話になっております禁止」のため、
         //   「必ず挨拶を使え」と指示する greetingTimeNote は連結しない（矛盾指示の排除）
 
         const ackCMSystemFinal = ackCMSystem + ackCMDbRules + (ackCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + ackCMBrainAddendum : "");
-        const ackCMUserFinal = `${ackCMLabel}のご案内について、物件の管理会社へ送る確認メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (ackCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + ackCMStarNote : "");
+        const ackCMUserFinal = `${ackCMLabel}のご案内について、物件の管理会社へ送る確認メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (ackCMDiffNote ? `\n\n${ackCMDiffNote}` : "") + (ackCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + ackCMStarNote : "");
         const rawACM = await callClaude(
           ackCMSystemFinal,
           ackCMUserFinal,
@@ -4185,14 +4191,14 @@ ${SMORA_COMMON_RULES}
 ・「承りました」「少々お待ちください」「確認中です」禁止
 ・絵文字は😊のみ1個まで（なくても可）
 
-【文字数】4〜6行のコンパクトなメッセージ${ackDiffNote}`;
+【文字数】4〜6行のコンパクトなメッセージ`;
       // ⑤修正: 管理会社向けメッセージは「お世話になっております禁止」のため、
       //   「必ず挨拶を使え」と指示する greetingTimeNote は連結しない（矛盾指示の排除）
 
       const ackSystemFinal = ackSystem + ackDbRules + (ackBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + ackBrainAddendum : "");
       message_text = await callClaude(
         ackSystemFinal,
-        `${ackCustomerLabel}のご案内について、物件の管理会社へ送る「募集状況確認 ＋ 最大限割引した初期費用の御見積もり依頼」メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}`,
+        `${ackCustomerLabel}のご案内について、物件の管理会社へ送る「募集状況確認 ＋ 最大限割引した初期費用の御見積もり依頼」メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (ackDiffNote ? `\n\n${ackDiffNote}` : ""),
         currentAction
       );
 
@@ -4240,8 +4246,8 @@ ${SMORA_COMMON_RULES}
 【文字数】箇条書きを含めて2〜5行程度・完成したLINEメッセージのみを出力（JSONや説明文は不要）`;
 
         const supUser = `${name}への「お申込みに必要な書類・情報のご提出をお願いする」催促メッセージを生成してください。${extra_input ? `\n【まだ頂けていない書類・補足情報（最優先で使うこと）】${extra_input}` : ""}${recentHistory}`;
-        const supSystemFinal = supSystem + supDiffNote + supDbRules + (supBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + supBrainAddendum : "");
-        const supUserFinal = greetingTimeNote + supUser + (supStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + supStarNote : "");
+        const supSystemFinal = supSystem + supDbRules + (supBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + supBrainAddendum : "");
+        const supUserFinal = greetingTimeNote + supUser + (supDiffNote ? `\n\n${supDiffNote}` : "") + (supStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + supStarNote : "");
         message_text = await callClaude(supSystemFinal, supUserFinal, currentAction);
 
       // ── 物件探し継続確認 ──────────────────────────────────────────────────
@@ -4281,8 +4287,8 @@ ${SMORA_COMMON_RULES}
 【文字数】①②③の3パート・完成したLINEメッセージのみを出力（JSONや説明文は不要）`;
 
         const scUser = `${name}への物件探し継続確認メッセージを生成してください。${followPropertyName ? `\n物件名: ${followPropertyName}` : ""}${extra_input ? `\n補足（物件の特徴など）: ${extra_input}` : ""}${recentHistory}`;
-        const scSystemFinal = scSystem + scDiffNote + scDbRules + (scBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + scBrainAddendum : "");
-        const scUserFinal = greetingTimeNote + scUser + (scStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + scStarNote : "");
+        const scSystemFinal = scSystem + scDbRules + (scBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + scBrainAddendum : "");
+        const scUserFinal = greetingTimeNote + scUser + (scDiffNote ? `\n\n${scDiffNote}` : "") + (scStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + scStarNote : "");
         message_text = await callClaude(scSystemFinal, scUserFinal, currentAction);
 
       // conversation_match: 過去の会話文脈を最大活用した自然な追客メッセージを生成
@@ -4319,8 +4325,8 @@ ${SMORA_COMMON_RULES}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
-        const followupCMSystemFinal = followupCMSystem + followupCMDbRules + followupCMDiffNote + (followupCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + followupCMBrainAddendum : "");
-        const followupCMUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への追客メッセージを生成してください。${extra_input ? `\n補足情報: ${extra_input}` : ""}` + (followupCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + followupCMStarNote : "");
+        const followupCMSystemFinal = followupCMSystem + followupCMDbRules + (followupCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + followupCMBrainAddendum : "");
+        const followupCMUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への追客メッセージを生成してください。${extra_input ? `\n補足情報: ${extra_input}` : ""}` + (followupCMDiffNote ? `\n\n${followupCMDiffNote}` : "") + (followupCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + followupCMStarNote : "");
         const rawFCM = await callClaude(
           followupCMSystemFinal,
           followupCMUserFinal,
@@ -4356,8 +4362,8 @@ ${SMORA_COMMON_RULES}
 ・押しつけがましくならず、お客様のペースを尊重した文体
 ・2〜4行程度・完成したLINEメッセージのみ出力`;
 
-      const followupSystemFinal = followupSystem + followupDiffNote + followupDbRules + (followupBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + followupBrainAddendum : "");
-      const followupUserFinal = greetingTimeNote + `${name}への追客メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (followupStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + followupStarNote : "");
+      const followupSystemFinal = followupSystem + followupDbRules + (followupBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + followupBrainAddendum : "");
+      const followupUserFinal = greetingTimeNote + `${name}への追客メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (followupDiffNote ? `\n\n${followupDiffNote}` : "") + (followupStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + followupStarNote : "");
       message_text = await callClaude(
         followupSystemFinal,
         followupUserFinal,
