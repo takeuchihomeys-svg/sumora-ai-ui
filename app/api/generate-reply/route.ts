@@ -2404,7 +2404,8 @@ export async function POST(req: NextRequest) {
         brainMeta.key_topics?.length ||
         brainMeta.avoid_topics?.length ||
         brainMeta.urgency_appropriate === false ||
-        brainMeta.recommended_tone
+        brainMeta.recommended_tone ||
+        brainMeta.template_hint
       );
       // Step1移植: message-local戦術フィールド（鮮度ゲート通過時のみ発火）
       const qs = brainFreshForMessage ? (brainMeta.customer_questions ?? []) : [];
@@ -2454,6 +2455,9 @@ export async function POST(req: NextRequest) {
         };
         const guide = toneGuide[brainMeta.recommended_tone];
         lines.push(`- 推奨トーン: ${brainMeta.recommended_tone}${guide ? `（${guide}）` : ""}`);
+      }
+      if (brainMeta.template_hint) {
+        lines.push(`- 📋 テンプレートヒント: 「${brainMeta.template_hint}」スタイルの返信が最も効果的。このラベルに対応する文体・構成パターンを参考にしつつ、顧客の状況に合わせて自然に書くこと`);
       }
       // ── message-local戦術ブロック（Step1廃止に伴いbrainへ移植した分析・brainFreshForMessage時のみ）──
       if (qs.length > 1) {

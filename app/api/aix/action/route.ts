@@ -817,20 +817,85 @@ async function handleAction(request: NextRequest): Promise<Response> {
           .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")?.text ?? "")
       : "";
 
-    // brainMeta（suggested_aix_meta）を1回フェッチしてRAGクエリ精度向上に使う
-    const brainContext = await (async () => {
-      if (!conversationId) return "";
+    // brainMeta（suggested_aix_meta）を1回フェッチしてRAGクエリ精度向上・プロンプト注入に使う
+    type AixLocalBrainMeta = {
+      closing_strategy?: string | null;
+      reply_direction?: string | null;
+      key_topics?: string[] | null;
+      avoid_topics?: string[] | null;
+      urgency_appropriate?: boolean | null;
+      property_search_params?: {
+        ng_properties?: string[] | null;
+        preferences?: string | null;
+        ng_points?: string | null;
+        search_urgency?: string | null;
+      } | null;
+      hesitancy_pattern?: string | null;
+      future_timeline?: string | null;
+      customer_questions?: string[] | null;
+    };
+    const { brainContext, brainMeta: aixBrainMeta } = await (async (): Promise<{ brainContext: string; brainMeta: AixLocalBrainMeta | null }> => {
+      if (!conversationId) return { brainContext: "", brainMeta: null };
       try {
         const { data } = await supabase
           .from("conversations")
           .select("suggested_aix_meta")
           .eq("id", conversationId)
           .single();
-        const meta = (data as { suggested_aix_meta?: { closing_strategy?: string; reply_direction?: string; key_topics?: string[] } | null } | null)?.suggested_aix_meta;
-        if (!meta) return "";
-        return [meta.closing_strategy, meta.reply_direction, ...(meta.key_topics ?? [])].filter(Boolean).join(" ");
-      } catch { return ""; }
+        const meta = (data as { suggested_aix_meta?: AixLocalBrainMeta | null } | null)?.suggested_aix_meta ?? null;
+        if (!meta) return { brainContext: "", brainMeta: null };
+        const context = [meta.closing_strategy, meta.reply_direction, ...(meta.key_topics ?? [])].filter(Boolean).join(" ");
+        return { brainContext: context, brainMeta: meta };
+      } catch { return { brainContext: "", brainMeta: null }; }
     })();
+
+    // ブレイン制約をプロンプトに注入するノート（全アクション共通: avoid_topics / urgency / 保留パターン 等）
+    const brainGuidanceNote = (() => {
+      if (!aixBrainMeta) return "";
+      const lines: string[] = [];
+      if (aixBrainMeta.avoid_topics?.length) {
+        lines.push(`【🚫 絶対に言及しない語・話題（言い換え・同義語も禁止）】${aixBrainMeta.avoid_topics.join("・")}`);
+      }
+      if (aixBrainMeta.urgency_appropriate === false) {
+        lines.push("【⛔ 緊急表現禁止】直近で緊急表現を多用済みのため「今なら」「残り〇室」「お早めに」「先着」等の緊急を煽る表現は使わないこと");
+      }
+      if (aixBrainMeta.hesitancy_pattern) {
+        const hesitancyGuide: Record<string, string> = {
+          thinking: "「少し考えたい」パターン→ 押し過ぎず背中を押す1点に絞って伝える",
+          callback: "「後で連絡する」パターン→ 次アクションを1つだけ提案し待つ姿勢を示す",
+          waiting: "「少し待って」パターン→ 急かさず安心感を与える内容にする",
+          undecided: "物件迷いパターン→ 迷いの原因に寄り添い比較軸を整理する",
+          timeline: aixBrainMeta.future_timeline
+            ? `タイムライン確定（${aixBrainMeta.future_timeline}）→ そのタイムラインを尊重し前倒しを急かさない`
+            : "タイムライン調整中→ 顧客ペースを尊重する",
+        };
+        const guide = hesitancyGuide[aixBrainMeta.hesitancy_pattern];
+        if (guide) lines.push(`【💭 決断保留パターン】${guide}`);
+      } else if (aixBrainMeta.future_timeline) {
+        lines.push(`【📅 顧客の決断タイムライン】${aixBrainMeta.future_timeline}（前倒し・急かし禁止）`);
+      }
+      if (aixBrainMeta.customer_questions?.length) {
+        lines.push(`【⚠️ 顧客の質問（全て回答すること）】${aixBrainMeta.customer_questions.join("・")}`);
+      }
+      return lines.length > 0 ? "\n\n" + lines.join("\n") : "";
+    })();
+
+    // 物件提案系（property_send / property_recommendation）専用: PSP注入ノート
+    const pspGuidanceNote = (() => {
+      const psp = aixBrainMeta?.property_search_params;
+      if (!psp) return "";
+      const lines: string[] = [];
+      if (psp.ng_properties?.length) {
+        lines.push(`【🚫 提案禁止物件（既送付・拒否済み・絶対に含めない）】${psp.ng_properties.join("、")}`);
+      }
+      if (psp.preferences) lines.push(`【👍 お客様が刺さるポイント（積極的に訴求すること）】${psp.preferences}`);
+      if (psp.ng_points) lines.push(`【⚠️ 地雷・NGポイント（言及禁止）】${psp.ng_points}`);
+      if (psp.search_urgency) lines.push(`【⚡ 物件提案緊急度】${psp.search_urgency}`);
+      return lines.length > 0 ? "\n\n" + lines.join("\n") : "";
+    })();
+
+    // 全AIXアクション共通ルール（静的ルール + 動的ブレイン制約）
+    const aixBrainRules = AIX_CURATED_AND_CRITICAL_RULES + brainGuidanceNote;
 
     const rawName = customer_name ? String(customer_name).trim() : "";
     // スタッフが会話内で実際に使っていた呼び名を優先（LINE表示名より正確）
@@ -1034,7 +1099,7 @@ ${SMORA_COMMON_RULES}`;
         .replace("{{phrases}}", phraseText ? `【よく使うフレーズ】\n${phraseText}` : "");
       // greetingTimeNote は固定フォーマット（物件オススメ文）に注入しない
       // recStarNote は user 側に移動（system に入れると固定フォーマットと干渉するため）
-      const recSystemFinal = system + propDbRules + AIX_CURATED_AND_CRITICAL_RULES + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "");
+      const recSystemFinal = system + propDbRules + aixBrainRules + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "");
 
       const conditionsText = customer_conditions as string | undefined;
       const recCustomerSummary = body.customer_summary as string | undefined;
@@ -1060,7 +1125,7 @@ ${SMORA_COMMON_RULES}`;
       const newArrivalNote = body.is_new_arrival
         ? `\n\n【🆕 新着物件 — 必ず守ること】この物件は新着物件です。物件名の直後の冒頭一文（「〜さんにかなりオススメ出来るお部屋となります！！」の前）に「新着でかなり条件のいいお部屋となります！！」を自然に盛り込むこと。`
         : "";
-      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
+      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
 
       const recUserTextFinal = userText + (recStarNote
         ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + recStarNote
@@ -1693,8 +1758,9 @@ ${name}お気に召されましたらお部屋ご都合よろしいお日にち�
       if (templateStructureNote) userParts.push(templateStructureNote);
       if (recentHistory) userParts.push(recentHistory);
       if (summaryNote) userParts.push(summaryNote);
+      if (pspGuidanceNote) userParts.push(pspGuidanceNote);
 
-      const sendSystemFinal = sendSystem + skipViewingInviteNote + sendDbRules + sendDiffNote + componentKnowledgeNote + (sendBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + sendBrainAddendum : "");
+      const sendSystemFinal = sendSystem + skipViewingInviteNote + sendDbRules + sendDiffNote + componentKnowledgeNote + (sendBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + sendBrainAddendum : "") + brainGuidanceNote;
       const sendUserFinal = userParts.join("") + (sendStarNote
         ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + sendStarNote
         : "");
@@ -1748,7 +1814,7 @@ ${SMORA_COMMON_RULES}
         const rescheduleSystemFinal = rescheduleSystem + (brainAddendumViReschedule ? "\n\n【ブレイン改善ルール】\n" + brainAddendumViReschedule : "");
         const rescheduleUserFinal = greetingTimeNote + `${name}への内覧日程変更メッセージを生成してください。${calendarPart}${recentHistory}`;
         message_text = await callClaude(
-          rescheduleSystemFinal + AIX_CURATED_AND_CRITICAL_RULES,
+          rescheduleSystemFinal + aixBrainRules,
           rescheduleUserFinal,
           currentAction
         );
@@ -1820,7 +1886,7 @@ ${calendarBlock}
         const convMatchVISystemFinal = convMatchVISystem + viewingConvMatchDiffNote + (brainAddendumViConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumViConv : "");
         const convMatchVIUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。` + (viewingConvMatchStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingConvMatchStarNote : "");
         const rawVI = await callClaude(
-          convMatchVISystemFinal + AIX_CURATED_AND_CRITICAL_RULES,
+          convMatchVISystemFinal + aixBrainRules,
           convMatchVIUserFinal,
           currentAction
         );
@@ -1986,7 +2052,7 @@ ${phraseText || "なし"}
       const viewingSystemFinal = system + viewingDbRules + viewingDiffNote + viewingComponentNote + (viewingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + viewingBrainAddendum : "");
       const viewingUserBase = `${name}への内覧お誘いメッセージ。${propNamePart}${vacancyPart}${calendarPart}${templateStructureNote}${recentHistory}`;
       const viewingUserFinal = greetingTimeNote + viewingUserBase + (viewingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingStarNote : "");
-      const rawViewingText = await callClaude(viewingSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, viewingUserFinal, currentAction);
+      const rawViewingText = await callClaude(viewingSystemFinal + aixBrainRules, viewingUserFinal, currentAction);
       // JSON構成パーツを解析してコンポーネント学習ループに渡す
       {
         let vComps: Record<string, string> | null = null;
@@ -2086,7 +2152,7 @@ ${SMORA_COMMON_RULES}`;
         const brainAddendumAppConfirm = await loadBrainTemplate("application_push");
         const confirmSystemFinal = confirmSystem + appDbRules + appDiffNote + (brainAddendumAppConfirm ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppConfirm : "");
         const confirmUserFinal = `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}` + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-        message_text = await callClaude(confirmSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, confirmUserFinal, currentAction);
+        message_text = await callClaude(confirmSystemFinal + aixBrainRules, confirmUserFinal, currentAction);
 
       } else if (appSubMode === "docs_request") {
         // ── 書類依頼: 申込フォーム返送後の会話から不足書類を特定して追加依頼メッセージを生成
@@ -2170,7 +2236,7 @@ ${SMORA_COMMON_RULES}`;
         const brainAddendumAppDocs = await loadBrainTemplate("application_push");
         const docsSystemFinal = docsRequestSystem + appDbRules + appDiffNote + (brainAddendumAppDocs ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppDocs : "") + "\n\n" + REAL_ESTATE_RULES;
         const docsUserFinal = `${name}への書類依頼メッセージ。${recentHistory}` + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-        const rawDocsText = await callClaude(docsSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, docsUserFinal, "docs_request");
+        const rawDocsText = await callClaude(docsSystemFinal + aixBrainRules, docsUserFinal, "docs_request");
         // JSONパース → コンポーネント結合
         // ※ docs_request は aiComponents を返さない（conversation_state が application_push と同じため
         //   STATE_LEARNABLEが一致せず component_diff 学習がゼロになるのを防ぐ）。
@@ -2391,7 +2457,7 @@ ${examplesText}`;
       const brainAddendumApp = await loadBrainTemplate("application_push");
       const appSystemFinal = system + (brainAddendumApp ? "\n\n【ブレイン改善ルール】\n" + brainAddendumApp : "");
       const appUserFinal = appGreetingForUser + userMsg + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-      const rawAppText = await callClaude(appSystemFinal + appDbRules + appDiffNote + compAppealNote + AIX_CURATED_AND_CRITICAL_RULES, appUserFinal, currentAction);
+      const rawAppText = await callClaude(appSystemFinal + appDbRules + appDiffNote + compAppealNote + aixBrainRules, appUserFinal, currentAction);
       if (!isScheduled) {
         // simple/hold_view: JSONパーツを解析してコンポーネント学習ループに渡す
         let appComps: Record<string, string> | null = null;
@@ -2562,7 +2628,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
 JSONのみ: {"greeting":"①","report":"②（[物件名]解決済み・改行は\\nで）","type_desc":"③","cta":"④またはnull"}`;
 
       const rawGuarantorText = await callClaude(
-        guarantorSystem + guarantorDbRules + guarantorDiffNote + AIX_CURATED_AND_CRITICAL_RULES,
+        guarantorSystem + guarantorDbRules + guarantorDiffNote + aixBrainRules,
         `${name}への保証会社確認報告メッセージ。${recentHistory}`,
         currentAction
       );
