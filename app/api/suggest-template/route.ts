@@ -1,29 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/app/lib/supabase";
+
+export const maxDuration = 60;
 
 // ─── POST /api/suggest-template ──────────────────────────────────────────────
 // 会話履歴 + AIXテンプレート一覧から、次に送るべきテンプレートTOP3をAIが選定する。
+// [H-08] 改善: templateList を Block2(ephemeral)キャッシュ・AIX-META注入・RAG検索追加。
 // generate-reply と同じ raw-fetch パターン（SDK不使用・環境変数キー・空白除去）。
 // claude-sonnet-5 の制約: temperature/top_p/top_k は送らない（400になる）。
-// thinking は省略 = adaptive（このランキングタスクにはそのままでOK）。
-// output_config.format (json_schema) で構造化JSON出力を保証（regex抽出不要）。
 
 // ─── リクエスト/レスポンス型 ─────────────────────────────────────────────────
 interface SuggestTemplateRequest {
-  conversationId?: string;          // ログ用途のみ
-  conversationState?: string;       // 生ステータス（サーバー側で5段階に正規化）
-  customerName?: string;            // プレースホルダ認識用
-  lastCustomerMsg?: string;         // お客様の最新メッセージ（省略時は messages から抽出）
-  currentAixAction?: string;        // 現在サジェスト中のAIXアクション（任意）
-  lastAixSentMessage?: string;      // AIXで直前に送ったスタッフの文（最優先コンテキスト）
+  conversationId?: string;          // AIX-META取得・ログ用途
+  conversationState?: string;
+  customerName?: string;
+  lastCustomerMsg?: string;
+  currentAixAction?: string;
+  lastAixSentMessage?: string;
   messages: Array<{
-    sender: string;                 // "staff" | "customer"
+    sender: string;
     text: string;
     imageUrl?: string;
     isAix?: boolean;
   }>;
-  templates: Array<{
+  templates?: Array<{              // DBから取得するためoptional（フォールバック用）
     id: string;
-    category: string;               // 例: "物件確認した【AIX】"
+    category: string;
     label: string;
     text: string;
   }>;
@@ -31,10 +33,10 @@ interface SuggestTemplateRequest {
 
 interface SuggestCandidate {
   templateId: string;
-  title: string;   // = template label（表示用にサーバーが付与）
-  body: string;    // サーバーが見たtruncate済み本文（クライアントはSSoTから再解決推奨）
-  reason: string;  // 1行日本語: なぜこの状況に合うか
-  rank: number;    // 1 | 2 | 3
+  title: string;
+  body: string;
+  reason: string;
+  rank: number;
 }
 
 interface SuggestTemplateResponse {
@@ -45,7 +47,7 @@ interface SuggestTemplateResponse {
   error?: string;
 }
 
-// ─── 状態正規化（generate-reply の STATE_ALIAS と同一ロジック）──────────────
+// ─── 状態正規化 ──────────────────────────────────────────────────────────────
 const ALLOWED_STATES = new Set([
   "first_reply", "hearing", "proposing", "applying", "closed_won",
 ]);
@@ -65,8 +67,8 @@ function normalizeState(k: string): string {
   return ALLOWED_STATES.has(resolved) ? resolved : "first_reply";
 }
 
-// ─── 会話履歴の整形（generate-reply lines 1537-1588 の簡易版）────────────────
-type Msg = SuggestTemplateRequest["messages"][number];
+// ─── 会話履歴の整形 ──────────────────────────────────────────────────────────
+type Msg = NonNullable<SuggestTemplateRequest["messages"]>[number];
 const isImageOnlyMsg = (m: Msg) =>
   m.text === "[画像]" || m.text === "[動画]" || (!m.text && !!m.imageUrl);
 
@@ -81,7 +83,6 @@ function formatHistory(messages: Msg[]): string {
       }
       if (isImageOnlyMsg(m)) {
         if (m.sender === "customer") return `${who}: 【画像を送ってきた】`;
-        // スタッフ画像: 前後の文脈テキストからラベルを推定
         const nearby = arr.slice(Math.max(0, i - 5), i + 4).map((x) => x?.text || "").join(" ");
         if (/見積|初期費用|礼金/.test(nearby)) return `${who}: 【見積書を送付した】`;
         if (/確認|空室|空き|募集/.test(nearby)) return `${who}: 【空室確認済み・物件資料を送付した】`;
@@ -94,11 +95,32 @@ function formatHistory(messages: Msg[]): string {
     .join("\n");
 }
 
-// 孤立サロゲート（LINE絵文字等）をU+FFFDに置換してAnthropicへのHTTP 400を防止
+// 孤立サロゲート（LINE絵文字等）をU+FFFDに置換
 const sanitizeSurrogates = (s: string) =>
-  s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�");
+  s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
 
-// ─── システムプロンプト（byte-stable — 会話固有情報は含めない）──────────────
+// ─── RAG用embedding生成 ──────────────────────────────────────────────────────
+async function generateEmbedding(text: string): Promise<number[] | null> {
+  if (!process.env.OPENAI_API_KEY) return null;
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      signal: AbortSignal.timeout(8_000),
+      headers: {
+        Authorization: "Bearer " + (process.env.OPENAI_API_KEY ?? "").replace(/\s/g, ""),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
+    return data.data?.[0]?.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── システムプロンプト Block1（byte-stable → prompt caching が効く）──────────
 const SELECTION_SYSTEM = `あなたは不動産賃貸仲介『スモラ』のLINE営業テンプレート選定AIです。会話履歴とAIXテンプレート一覧から、次にスタッフが送るべきテンプレートを最大3件、適合度順に選びます。
 
 【選定ルール（優先度順）】
@@ -159,7 +181,6 @@ const OUTPUT_SCHEMA = {
 
 // ─── POST ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  // generate-reply line 1364 と同じガード
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
       { ok: false, candidates: [], error: "ANTHROPIC_API_KEY not set" } satisfies SuggestTemplateResponse,
@@ -178,55 +199,144 @@ export async function POST(req: NextRequest) {
   }
 
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const templates = Array.isArray(body.templates) ? body.templates : [];
   if (messages.length === 0) {
     return NextResponse.json(
       { ok: false, candidates: [], error: "messages required" } satisfies SuggestTemplateResponse,
       { status: 400 },
     );
   }
-  if (templates.length === 0) {
-    return NextResponse.json(
-      { ok: false, candidates: [], error: "templates required" } satisfies SuggestTemplateResponse,
-      { status: 400 },
-    );
-  }
 
   // 直近15件に制限 + サロゲート除去
   const recent = messages.slice(-15).map((m) => ({ ...m, text: sanitizeSurrogates(m.text || "") }));
-
-  // テンプレ本文を400字にtruncate（ペイロード上限）+ ID→テンプレのマップ（捏造ID検証用）
-  const truncated = templates.map((t) => ({
-    id: String(t.id),
-    category: t.category || "",
-    label: t.label || "",
-    text: sanitizeSurrogates((t.text || "").slice(0, 400)),
-  }));
-  const templateMap = new Map(truncated.map((t) => [t.id, t]));
-
   const history = formatHistory(recent);
   const lastCustomerMsg =
     sanitizeSurrogates(body.lastCustomerMsg || "") ||
     [...recent].reverse().find((m) => m.sender === "customer" && m.text && m.text !== "[画像]")?.text ||
     "";
   const currentState = normalizeState(body.conversationState || "first_reply");
-
-  const templateList = truncated
-    .map((t) => `[${t.id}] ${t.category} | ${t.label} | ${t.text}`)
-    .join("\n");
-
   const lastAixSentMessage = sanitizeSurrogates(body.lastAixSentMessage || "");
 
+  // ── AIX-META: conversationIdでDBからfetch ────────────────────────────────
+  type BrainMeta = {
+    action?: string;
+    closing_strategy?: string;
+    reply_direction?: string;
+    urgency_appropriate?: string;
+    checkpoint_stage?: string;
+  };
+  let brainMeta: BrainMeta | null = null;
+  if (body.conversationId) {
+    const { data: convData } = await supabase
+      .from("conversations")
+      .select("suggested_aix_meta")
+      .eq("id", body.conversationId)
+      .single();
+    if (convData?.suggested_aix_meta) {
+      brainMeta = convData.suggested_aix_meta as BrainMeta;
+    }
+  }
+
+  // ── テンプレート: DBから全件取得（win_rate付き・全ユーザー共通 → Block2キャッシュ可）
+  type DbTemplate = {
+    id: string;
+    category: string | null;
+    label: string | null;
+    text: string | null;
+    win_rate: number | null;
+    use_count: number | null;
+  };
+  const { data: dbTemplates } = await supabase
+    .from("templates")
+    .select("id, category, label, text, win_rate, use_count")
+    .order("category", { ascending: true })
+    .order("sort_order", { ascending: true });
+
+  // DBから取れない場合はbody.templatesをフォールバックとして使う
+  const templateSource: Array<{ id: string; category: string; label: string; text: string; win_rate: number | null; use_count: number | null }> =
+    (dbTemplates && dbTemplates.length > 0)
+      ? (dbTemplates as DbTemplate[]).map((t) => ({
+          id: String(t.id),
+          category: t.category || "",
+          label: t.label || "",
+          text: sanitizeSurrogates((t.text || "").slice(0, 400)),
+          win_rate: t.win_rate,
+          use_count: t.use_count,
+        }))
+      : (body.templates ?? []).map((t) => ({
+          id: String(t.id),
+          category: t.category || "",
+          label: t.label || "",
+          text: sanitizeSurrogates((t.text || "").slice(0, 400)),
+          win_rate: null,
+          use_count: null,
+        }));
+
+  if (templateSource.length === 0) {
+    return NextResponse.json(
+      { ok: false, candidates: [], error: "templates not found" } satisfies SuggestTemplateResponse,
+      { status: 400 },
+    );
+  }
+
+  const templateMap = new Map(templateSource.map((t) => [t.id, t]));
+
+  // Block2用: 全テンプレ一覧テキスト（win_rate付き・同一内容 → キャッシュヒット）
+  const templateListText = templateSource
+    .map((t) => {
+      const stats = t.win_rate != null
+        ? ` [勝率${(t.win_rate * 100).toFixed(0)}%/${t.use_count ?? 0}回]`
+        : "";
+      return `[${t.id}] ${t.category} | ${t.label}${stats} | ${t.text}`;
+    })
+    .join("\n");
+
+  // ── RAG: AIX-METAを含む文脈でナレッジ検索 ──────────────────────────────
+  let ragKnowledgeSection = "";
+  if (lastCustomerMsg && process.env.OPENAI_API_KEY) {
+    const ragQuery = [
+      lastCustomerMsg,
+      brainMeta?.action          ? `推奨アクション: ${brainMeta.action}` : "",
+      brainMeta?.closing_strategy ? `成約戦略: ${brainMeta.closing_strategy}` : "",
+      brainMeta?.reply_direction  ? `返信方向: ${brainMeta.reply_direction}` : "",
+    ].filter(Boolean).join(" | ");
+
+    const emb = await generateEmbedding(ragQuery);
+    if (emb) {
+      const { data: ragRows } = await supabase.rpc("match_reply_knowledge", {
+        query_embedding: emb,
+        match_threshold: 0.72,
+        match_count: 5,
+      });
+      if (Array.isArray(ragRows) && ragRows.length > 0) {
+        ragKnowledgeSection =
+          "【参考ナレッジ（RAG）】\n" +
+          (ragRows as Array<{ content: string }>).map((r) => `- ${r.content}`).join("\n") +
+          "\n\n";
+      }
+    }
+  }
+
+  // ── AIX-META 動的セクション ──────────────────────────────────────────────
+  const brainMetaSection = brainMeta
+    ? `【AIX戦略（Brain分析）】\n` +
+      `推奨アクション: ${brainMeta.action || "-"}\n` +
+      `成約戦略: ${brainMeta.closing_strategy || "-"}\n` +
+      `返信方向: ${brainMeta.reply_direction || "-"}\n` +
+      `緊急度: ${brainMeta.urgency_appropriate || "-"}\n` +
+      `チェックポイント: ${brainMeta.checkpoint_stage || "-"}\n\n`
+    : "";
+
+  // ── 動的userPrompt（templateListはBlock2キャッシュ済みのため含めない）──
   const userPrompt = [
+    brainMetaSection,
+    ragKnowledgeSection,
     `【会話履歴】\n${history || "（履歴なし）"}`,
     lastCustomerMsg ? `【お客様の最新メッセージ】\n${lastCustomerMsg}` : "",
-    // AIX文が存在する場合は最も後に起きたスタッフ行動として最上位に提示
     lastAixSentMessage
-      ? `【スタッフが直前に送ったAIX文】（お客様メッセージより後のアクション・最優先コンテキスト）\n${lastAixSentMessage}`
+      ? `【スタッフが直前に送ったAIX文】（お客様メッセージより後・最優先コンテキスト）\n${lastAixSentMessage}`
       : "",
     `【会話ステータス】${currentState}`,
     body.currentAixAction ? `【現在のAIXアクション】${body.currentAixAction}` : "",
-    `【テンプレート一覧】\n${templateList}`,
   ].filter(Boolean).join("\n\n");
 
   try {
@@ -242,12 +352,16 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        // claude-sonnet-5: temperature等のサンプリングパラメータ禁止・thinking省略=adaptive。
-        // adaptive thinking は max_tokens に含まれるため 2000 では途中打ち切りリスクあり → 4000 に余裕を持たせる
         max_tokens: 4000,
-        // システムプロンプトはbyte-stableな定数 → prompt caching が効く
         system: [
+          // Block1: 選定ルール（byte-stable → prompt cache）
           { type: "text", text: SELECTION_SYSTEM, cache_control: { type: "ephemeral" } },
+          // Block2: 全テンプレ一覧（全ユーザー共通・win_rate付き → prompt cache）
+          {
+            type: "text",
+            text: "【テンプレート一覧（全カテゴリ・勝率付き）】\n" + templateListText,
+            cache_control: { type: "ephemeral" },
+          },
         ],
         messages: [{ role: "user", content: userPrompt }],
         output_config: {
@@ -294,8 +408,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 捏造ID検証: 送信したテンプレ一覧に存在するIDのみ採用（重複も除去）
-    // AIが宣言したrankの昇順にソートしてから処理（rank順を保証）
+    // 捏造ID検証: DBから取得した一覧に存在するIDのみ採用（重複も除去）
     const sortedParsedCandidates = (parsed.candidates ?? []).slice().sort(
       (a, b) => (a.rank ?? 99) - (b.rank ?? 99),
     );
@@ -312,9 +425,9 @@ export async function POST(req: NextRequest) {
       candidates.push({
         templateId: id,
         title: tmpl.label,
-        body: tmpl.text, // truncate済み本文（クライアントはローカルSSoTから再解決推奨）
+        body: tmpl.text,
         reason: String(c.reason ?? ""),
-        rank: candidates.length + 1, // 除外後に1..3で振り直し
+        rank: candidates.length + 1,
       });
       if (candidates.length >= 3) break;
     }
@@ -322,7 +435,9 @@ export async function POST(req: NextRequest) {
     const noMatch = candidates.length === 0;
 
     console.log(
-      `[suggest-template] conversationId=${body.conversationId || "-"} state=${currentState} templates=${truncated.length} → candidates=${candidates.length} noMatch=${noMatch}`,
+      `[suggest-template] conversationId=${body.conversationId || "-"} state=${currentState}` +
+      ` templates=${templateSource.length} rag=${ragKnowledgeSection ? "hit" : "miss"}` +
+      ` brainMeta=${brainMeta ? "ok" : "none"} → candidates=${candidates.length} noMatch=${noMatch}`,
     );
 
     const response: SuggestTemplateResponse = {
