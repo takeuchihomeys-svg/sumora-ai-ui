@@ -98,6 +98,10 @@ type DiffExample = {
   brain_urgency?: string;
   brain_emotion?: string;
   brain_reply_mode?: string;
+  brain_closing_strategy?: string;
+  brain_reply_direction?: string;
+  brain_checkpoint_stage?: string;
+  brain_last_aix_history?: string;
 };
 
 type ExistingRule = {
@@ -141,11 +145,18 @@ async function analyzeStateGroup(
       e.brain_reply_mode ? "mode:" + e.brain_reply_mode : "",
     ].filter(Boolean);
     const brainTag = brainParts.length > 0 ? " [" + brainParts.join(" ") + "]" : "";
+    const brainExtra = [
+      e.brain_action ? "Brain推奨action: " + e.brain_action : "",
+      e.brain_closing_strategy ? "closing_strategy: " + e.brain_closing_strategy : "",
+      e.brain_reply_direction ? "reply_direction: " + e.brain_reply_direction : "",
+      e.brain_checkpoint_stage ? "checkpoint_stage: " + e.brain_checkpoint_stage : "",
+      e.brain_last_aix_history ? "直近AIX: " + e.brain_last_aix_history : "",
+    ].filter(Boolean).join(" / ");
     return `
 --- 差分${i + 1} [${label}] ${e.is_starred ? "⭐" : ""}${brainTag} ---
 顧客: ${(e.customer_message ?? "").slice(0, 200)}
 AI案: ${(e.ai_draft ?? "(なし)").slice(0, 300)}
-実際に送った返信: ${(e.sent_reply ?? "").slice(0, 300)}`.trim();
+実際に送った返信: ${(e.sent_reply ?? "").slice(0, 300)}${brainExtra ? "\n[Brain戦略: " + brainExtra + "]" : ""}`.trim();
   }).join("\n\n");
 
   const existingRulesText = existingRules.length > 0
@@ -187,6 +198,7 @@ ${recentAnswersText}
   3. 確認: 「〇〇の場合は〜する / △△の場合は〜しない、という形でルールの適用条件を定義してください」という形式で終わる
 - weeklyQuestion は選択肢（①②③）形式を使わない。正しいルールの定義を求める形で終わる
 - weeklyQuestion の参考：直近7日の竹内さんの回答（recentAnswers）に400字以上の詳細回答がある場合、その質問文のスタイル（実例引用・両面定義・if/then形式）を参考にして新しい質問を設計する
+- 各差分の [Brain戦略: ...] ブロックに Brain推奨action / closing_strategy / reply_direction / 直近AIX が記録されている場合、これをweeklyQuestionに活かすこと。例：「Brain が closing_strategy=urgent_invite を推奨していたが、スタッフが○○に修正した。Brain戦略とスタッフ判断のどちらが正しいか？」など Brain-vs-スタッフのギャップを問う質問を優先する
 - weeklyQuestion は上記「スモラAIシステム絶対ルール」の「質問文の設計原則」を守る：確定ルールと矛盾する質問・AIXボタンと通常返信の領域を混同した質問は作らない。顧客実名・物件固有情報は抽象化し、途中切れ・タイトルのみは不可（必ず完全な文で書く）
 - weeklyQuestion 良問の例（このスタイルを模倣する）: 「今週5件の会話でAIが内覧後のフォロー文に『いかがでしたか？』を含めていたが、スタッフがすべて削除していた。先手の誘導禁止ルールの適用範囲が不明確。内覧後フォローの場合は〜する / 申込前フォローの場合は〜しない、という形でルールの適用条件を定義してください」
 - weeklyQuestion 悪問の例（このスタイルを避ける）: 「内覧後フォローはどんな場面で使いますか？」「このルールはどう判断すればよいですか？①②③から選んでください」
@@ -329,6 +341,10 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
         if (b.urgency) (ex as Record<string, unknown>).brain_urgency = String(b.urgency);
         if (b.emotion) (ex as Record<string, unknown>).brain_emotion = String(b.emotion);
         if (b.reply_mode) (ex as Record<string, unknown>).brain_reply_mode = String(b.reply_mode);
+        if (b.closing_strategy) (ex as Record<string, unknown>).brain_closing_strategy = String(b.closing_strategy);
+        if (b.reply_direction) (ex as Record<string, unknown>).brain_reply_direction = String(b.reply_direction);
+        if (b.checkpoint_stage) (ex as Record<string, unknown>).brain_checkpoint_stage = String(b.checkpoint_stage);
+        if (b.last_aix_history) (ex as Record<string, unknown>).brain_last_aix_history = String(b.last_aix_history);
       }
 
       const analysis = await analyzeStateGroup(state, stateExamples, existingRules, recentAnswers);

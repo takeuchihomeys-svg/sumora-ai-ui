@@ -8,7 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000, maxRetries: 1 });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
 
 // ── 失敗example バックオフ（2026-08-18追加）──
 // 従来は分析失敗時に diff_analyzed_at を null にリセットしていたため、常に失敗する
@@ -86,13 +86,39 @@ async function insertAiQuestion(row: AiFeedbackItemInsert): Promise<boolean> {
 
 // コンポーネントが省略・大幅再構成された場合（structure変化）の学習ルール抽出
 //「なぜこのパーツを省いたか」を学ぶ → カテゴリ=pattern
+type BrainContext = {
+  action?: string | null;
+  reply_mode?: string | null;
+  emotion?: string | null;
+  urgency?: string | null;
+  closing_strategy?: string | null;
+  reply_direction?: string | null;
+  checkpoint_stage?: string | null;
+  last_aix_history?: string | null;
+  next_steps?: string | null;
+};
+
+function buildBrainContextText(brainContext: BrainContext): string {
+  return [
+    brainContext.action ? "action: " + brainContext.action : "",
+    brainContext.reply_mode ? "reply_mode: " + brainContext.reply_mode : "",
+    brainContext.emotion ? "emotion: " + brainContext.emotion : "",
+    brainContext.urgency ? "urgency: " + brainContext.urgency : "",
+    brainContext.closing_strategy ? "closing_strategy: " + brainContext.closing_strategy : "",
+    brainContext.reply_direction ? "reply_direction: " + brainContext.reply_direction : "",
+    brainContext.checkpoint_stage ? "checkpoint_stage: " + brainContext.checkpoint_stage : "",
+    brainContext.last_aix_history ? "last_aix_history: " + brainContext.last_aix_history : "",
+    brainContext.next_steps ? "next_steps: " + brainContext.next_steps : "",
+  ].filter(Boolean).join(", ");
+}
+
 async function analyzeStructureDiff(
   customerMessage: string,
   aiComponentText: string,
   sentReply: string,
   componentState: string,
   componentName: string,
-  brainContext?: { action?: string | null; reply_mode?: string | null; emotion?: string | null; urgency?: string | null } | null,
+  brainContext?: BrainContext | null,
 ): Promise<{ skip: boolean; title?: string; rule?: string } | null> {
   try {
     const res = await client.messages.create({
@@ -110,7 +136,7 @@ ${sentReply}
 
 【お客様のメッセージ・状況】
 ${customerMessage || "不明"}
-${brainContext ? "\n【Brain・顧客コンテキスト】\n" + [brainContext.action ? "action: " + brainContext.action : "", brainContext.reply_mode ? "reply_mode: " + brainContext.reply_mode : "", brainContext.emotion ? "emotion: " + brainContext.emotion : "", brainContext.urgency ? "urgency: " + brainContext.urgency : ""].filter(Boolean).join(", ") + "\nこのコンテキストを踏まえて省略判断を解釈してください。" : ""}
+${brainContext ? "\n【Brain・顧客コンテキスト】\n" + buildBrainContextText(brainContext) + "\nこのコンテキストを踏まえて省略判断を解釈してください。" : ""}
 
 スキップ条件（以下なら {"skip":true} のみ返す）：
 - 文が短すぎて判断できない
@@ -142,7 +168,7 @@ async function analyzeComponentDiff(
   sentReply: string,
   componentState: string, // "property_send_pickup" 等
   componentName: string,  // "ピックアップ行（条件説明）" 等
-  brainContext?: { action?: string | null; reply_mode?: string | null; emotion?: string | null; urgency?: string | null } | null,
+  brainContext?: BrainContext | null,
 ): Promise<{ skip: boolean; title?: string; rule?: string } | null> {
   try {
     const res = await client.messages.create({
@@ -157,7 +183,7 @@ ${aiComponentText}
 
 【スタッフが実際に送った全文（この中から「${componentName}」に対応する部分を見つけて比較する）】
 ${sentReply}
-${brainContext ? "\n【Brain・顧客コンテキスト】\n" + [brainContext.action ? "action: " + brainContext.action : "", brainContext.reply_mode ? "reply_mode: " + brainContext.reply_mode : "", brainContext.emotion ? "emotion: " + brainContext.emotion : "", brainContext.urgency ? "urgency: " + brainContext.urgency : ""].filter(Boolean).join(", ") + "\nこのコンテキストを踏まえてスタッフの改善意図を解釈してください。" : ""}
+${brainContext ? "\n【Brain・顧客コンテキスト】\n" + buildBrainContextText(brainContext) + "\nこのコンテキストを踏まえてスタッフの改善意図を解釈してください。" : ""}
 
 分析手順：
 ① スタッフの全文の中からAIの「${componentName}」に対応する部分を特定する
@@ -216,7 +242,7 @@ async function analyzeDiff(
   sentReply: string,
   conversationState: string,
   componentHint = "",
-  brainContext?: { action?: string | null; reply_mode?: string | null; emotion?: string | null; urgency?: string | null } | null,
+  brainContext?: BrainContext | null,
 ): Promise<{ skip: boolean; title?: string; rule?: string; category?: string; trigger_example?: string } | null> {
   try {
     const res = await client.messages.create({
@@ -240,7 +266,7 @@ ${aiDraft}
 ${sentReply}
 
 【フェーズ】${conversationState}
-${brainContext ? "\n【Brain・顧客コンテキスト】\n" + [brainContext.action ? "action: " + brainContext.action : "", brainContext.reply_mode ? "reply_mode: " + brainContext.reply_mode : "", brainContext.emotion ? "emotion: " + brainContext.emotion : "", brainContext.urgency ? "urgency: " + brainContext.urgency : ""].filter(Boolean).join(", ") + "\nこのコンテキストを踏まえてルールの汎用性を判断してください（顧客固有の特殊ケースは除外する）。" : ""}`,
+${brainContext ? "\n【Brain・顧客コンテキスト】\n" + buildBrainContextText(brainContext) + "\nこのコンテキストを踏まえてルールの汎用性を判断してください（顧客固有の特殊ケースは除外する）。" : ""}`,
       }],
     });
 
@@ -1456,7 +1482,7 @@ export async function POST(req: NextRequest) {
     }
 
       // Brain コンテキスト取得（fail-open: 失敗時は null で analyzeDiff 系に渡す）
-      let exBrainContext: { action?: string | null; reply_mode?: string | null; emotion?: string | null; urgency?: string | null } | null = null;
+      let exBrainContext: BrainContext | null = null;
       if (exConversationId) {
         try {
           const { data: brainConvData } = await supabase
@@ -1475,6 +1501,11 @@ export async function POST(req: NextRequest) {
               reply_mode: (brainMeta?.reply_mode as string | null) ?? null,
               emotion: (brainSummary?.emotion as string | null) ?? null,
               urgency: (brainSummary?.urgency as string | null) ?? null,
+              closing_strategy: (brainMeta?.closing_strategy as string | null) ?? null,
+              reply_direction: (brainMeta?.reply_direction as string | null) ?? null,
+              checkpoint_stage: (brainMeta?.checkpoint_stage as string | null) ?? null,
+              last_aix_history: (brainMeta?.last_aix_history as string | null) ?? null,
+              next_steps: (brainMeta?.next_steps as string | null) ?? null,
             };
           }
         } catch { /* fail-open: Brain取得失敗時はコンテキストなしで続行 */ }
