@@ -4,60 +4,36 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 30;
 
-// ── 埋め込みマップ（popup-maps.js と同期維持）──────────────────────────────
-const LINE_ROUTE_MAP: Record<string, string> = {
-  "大阪市高速軌道御堂筋線":"6701","大阪市高速軌道谷町線":"6702",
-  "大阪市高速軌道四つ橋線":"6703","大阪市高速軌道中央線":"6704",
-  "大阪市高速軌道千日前線":"6705","大阪市高速軌道堺筋線":"6706",
-  "大阪市高速軌道南港ポートタウン線":"6707","大阪市高速軌道今里筋線":"6699",
-  "大阪市高速軌道長堀鶴見緑地線":"6768","北大阪急行南北線":"6711",
-  "大阪環状線":"6603","JR東西線":"6767","ＪＲ東西線":"6767",
-  "片町線":"6645","桜島線":"6604","おおさか東線":"6650",
-  "関西本線":"6426","阪和線":"6647","福知山線":"6605","東海道本線":"6171",
-  "近鉄大阪線":"6541","近鉄難波・奈良線":"6551","近鉄奈良線":"6551",
-  "近鉄南大阪線":"6555","近鉄長野線":"6557","近鉄道明寺線":"6558","近鉄けいはんな線":"6563",
-  "京阪電気鉄道京阪線":"6651","京阪電気鉄道中之島線":"6658","京阪電気鉄道交野線":"6652",
-  "阪急電鉄京都線":"6661","阪急電鉄千里線":"6662","阪急電鉄神戸線":"6664",
-  "阪急電鉄宝塚線":"6668","阪急電鉄箕面線":"6669",
-  "阪神電鉄本線":"6671","阪神電鉄阪神なんば線":"6673",
-  "南海電鉄南海本線":"6681","南海電鉄南本線":"6681",
-  "南海電鉄高野線":"6686","南海電鉄泉北線":"6694",
-  "南海電鉄空港線":"6691","南海電鉄汐見橋線":"6766",
-  "南海電鉄多奈川線":"6684","南海電鉄高師浜線":"6683",
-  "阪堺電気軌道阪堺線":"6689","阪堺電気軌道上町線":"6690",
-  "大阪モノレール本線":"6709","大阪モノレール彩都線":"6772",
-  "能勢電鉄":"6676","能勢電鉄妙見線":"6676","能勢電鉄日生線":"6676","水間鉄道水間線":"6713","関西空港線":"6648",
-};
+// ── 路線マスタ（line_meta テーブルからDB取得・1時間キャッシュ）────────────
+interface LineMaps {
+  routeMap: Record<string, string>;     // internal_name → realpro_route_id
+  aliasMap: Record<string, string>;     // alias → internal_name
+  itandiMap: Record<string, string[]>;  // internal_name → itandi_names[]
+  reinsMap: Record<string, string>;     // internal_name → reins_name
+}
+let _lineMapsCache: { maps: LineMaps; expiresAt: number } | null = null;
 
-const LINE_ALIAS_MAP: Record<string, string> = {
-  "御堂筋線":"大阪市高速軌道御堂筋線",
-  "谷町線":"大阪市高速軌道谷町線",
-  "四つ橋線":"大阪市高速軌道四つ橋線",
-  "中央線":"大阪市高速軌道中央線",
-  "千日前線":"大阪市高速軌道千日前線",
-  "堺筋線":"大阪市高速軌道堺筋線",
-  "長堀鶴見緑地線":"大阪市高速軌道長堀鶴見緑地線",
-  "今里筋線":"大阪市高速軌道今里筋線",
-  "南港ポートタウン線":"大阪市高速軌道南港ポートタウン線",
-  "阪急千里線":"阪急電鉄千里線",
-  "阪急京都線":"阪急電鉄京都線",
-  "阪急神戸線":"阪急電鉄神戸線",
-  "阪急宝塚線":"阪急電鉄宝塚線",
-  "阪急箕面線":"阪急電鉄箕面線",
-  "阪神本線":"阪神電鉄本線",
-  "阪神なんば線":"阪神電鉄阪神なんば線",
-  "南海本線":"南海電鉄南海本線",
-  "南海高野線":"南海電鉄高野線",
-  "南海空港線":"南海電鉄空港線",
-  "南海多奈川線":"南海電鉄多奈川線",
-  "南海汐見橋線":"南海電鉄汐見橋線",
-  "南海高師浜線":"南海電鉄高師浜線",
-  "南海泉北線":"南海電鉄泉北線",
-  "ニュートラム":"大阪市高速軌道南港ポートタウン線",
-  "京阪本線":"京阪電気鉄道京阪線",
-  "京阪中之島線":"京阪電気鉄道中之島線",
-  "京阪交野線":"京阪電気鉄道交野線",
-};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getLineMaps(db: any): Promise<LineMaps> {
+  if (_lineMapsCache && Date.now() < _lineMapsCache.expiresAt) return _lineMapsCache.maps;
+  const { data: rows } = await db
+    .from("line_meta")
+    .select("internal_name, realpro_route_id, itandi_names, reins_name, aliases");
+  const maps: LineMaps = { routeMap: {}, aliasMap: {}, itandiMap: {}, reinsMap: {} };
+  for (const row of (rows ?? []) as Array<{
+    internal_name: string; realpro_route_id: string | null;
+    itandi_names: string[]; reins_name: string | null; aliases: string[];
+  }>) {
+    const name = row.internal_name;
+    if (row.realpro_route_id) maps.routeMap[name] = row.realpro_route_id;
+    if (row.itandi_names?.length) maps.itandiMap[name] = row.itandi_names;
+    if (row.reins_name) maps.reinsMap[name] = row.reins_name;
+    for (const alias of (row.aliases ?? [])) maps.aliasMap[alias] = name;
+  }
+  _lineMapsCache = { maps, expiresAt: Date.now() + 60 * 60 * 1000 };
+  return maps;
+}
+
 
 const WARD_CODE_MAP: Record<string, string> = {
   "大阪市都島区":"27102","大阪市福島区":"27103","大阪市此花区":"27104",
@@ -80,114 +56,7 @@ const WARD_CODE_MAP: Record<string, string> = {
   "四條畷市":"27229","交野市":"27230","阪南市":"27232",
 };
 
-const ITANDI_LINE_MAP_FILL: Record<string, string | string[]> = {
-  "大阪市高速軌道御堂筋線":"高速電気軌道第1号線(大阪メトロ御堂筋線)",
-  "大阪市高速軌道谷町線":"高速電気軌道第2号線(大阪メトロ谷町線)",
-  "大阪市高速軌道四つ橋線":"高速電気軌道第3号線(大阪メトロ四つ橋線)",
-  "大阪市高速軌道中央線":"高速電気軌道第4号線(大阪メトロ中央線)",
-  "大阪市高速軌道千日前線":"高速電気軌道第5号線(大阪メトロ千日前線)",
-  "大阪市高速軌道堺筋線":"高速電気軌道第6号線(大阪メトロ堺筋線)",
-  "大阪市高速軌道長堀鶴見緑地線":"高速電気軌道第7号線(大阪メトロ長堀鶴見緑地線)",
-  "大阪市高速軌道今里筋線":"高速電気軌道第8号線(大阪メトロ今里筋線)",
-  "大阪市高速軌道南港ポートタウン線":"大阪市高速電気軌道南港ポートタウン線(大阪メトロ南港ポートタウン線)",
-  "北大阪急行南北線":"北大阪急行電鉄",
-  "阪急電鉄神戸線":"阪急神戸本線",
-  "阪急電鉄宝塚線":"阪急宝塚本線",
-  "阪急電鉄京都線":"阪急京都本線",
-  "阪急電鉄千里線":"阪急千里線",
-  "阪急電鉄箕面線":"阪急箕面線",
-  "阪神電鉄本線":"阪神本線",
-  "阪神電鉄阪神なんば線":"阪神なんば線",
-  "南海電鉄南海本線":"南海本線",
-  "南海電鉄南本線":"南海本線",
-  "南海電鉄高野線":"南海高野線",
-  "南海電鉄泉北線":"南海泉北線(泉北線)",
-  "南海電鉄空港線":"南海空港線",
-  "南海電鉄汐見橋線":"南海汐見橋線",
-  "南海電鉄多奈川線":"南海多奈川線",
-  "南海電鉄高師浜線":"南海高師浜線",
-  "京阪電気鉄道京阪線":"京阪本線",
-  "京阪電気鉄道中之島線":"京阪中之島線",
-  "京阪電気鉄道交野線":"京阪交野線",
-  "大阪環状線":"大阪環状線",
-  "JR東西線":"JR東西線",
-  "片町線":"JR片町線(学研都市線)",
-  "桜島線":"JR桜島線(JRゆめ咲線)",
-  "阪和線":"阪和線(天王寺～和歌山)",
-  "福知山線":"JR福知山線(新大阪～篠山口)(JR宝塚線)",
-  "東海道本線":["JR東海道本線(京都～大阪)(JR京都線)","JR東海道本線(大阪～神戸)(JR神戸線(大阪～神戸))"],
-  "おおさか東線":"おおさか東線",
-  "関西本線":"JR関西本線(加茂～ＪＲ難波)(大和路線)",
-  "近鉄難波・奈良線":["近鉄難波線","近鉄奈良線"],
-  "近鉄南大阪線":"近鉄南大阪線",
-  "近鉄大阪線":"近鉄大阪線",
-  "近鉄長野線":"近鉄長野線",
-  "近鉄道明寺線":"近鉄道明寺線",
-  "近鉄けいはんな線":"近鉄けいはんな線",
-  "大阪モノレール本線":"大阪モノレール線",
-  "大阪モノレール彩都線":"国際文化公園都市線(大阪モノレール彩都線)",
-  "能勢電鉄":"能勢電鉄妙見線",
-  "能勢電鉄妙見線":"能勢電鉄妙見線",
-  "能勢電鉄日生線":"能勢電鉄日生線",
-  "阪堺電気軌道阪堺線":"阪堺電軌阪堺線",
-  "阪堺電気軌道上町線":"阪堺電軌上町線",
-  "水間鉄道水間線":"水間鉄道水間線",
-  "関西空港線":"JR関西空港線",
-};
 
-const REINS_LINE_MAP: Record<string, string> = {
-  "大阪市高速軌道御堂筋線":"大阪メトロ御堂筋線",
-  "大阪市高速軌道谷町線":"大阪メトロ谷町線",
-  "大阪市高速軌道中央線":"大阪メトロ中央線",
-  "大阪市高速軌道堺筋線":"大阪メトロ堺筋線",
-  "大阪市高速軌道四つ橋線":"大阪メトロ四つ橋線",
-  "大阪市高速軌道千日前線":"大阪メトロ千日前線",
-  "大阪市高速軌道長堀鶴見緑地線":"大阪メトロ長堀鶴見線",
-  "大阪市高速軌道今里筋線":"大阪メトロ今里筋線",
-  "大阪市高速軌道南港ポートタウン線":"南港ポートタウン線",
-  "阪急電鉄神戸線":"阪急神戸線",
-  "阪急電鉄宝塚線":"阪急宝塚線",
-  "阪急電鉄京都線":"阪急京都線",
-  "阪急電鉄千里線":"阪急千里線",
-  "阪急電鉄箕面線":"阪急箕面線",
-  "阪神電鉄本線":"阪神本線",
-  "阪神電鉄阪神なんば線":"阪神なんば線",
-  "南海電鉄南海本線":"南海本線",
-  "南海電鉄南本線":"南海本線",
-  "南海電鉄高野線":"南海高野線",
-  "南海電鉄空港線":"南海空港線",
-  "南海電鉄多奈川線":"南海多奈川線",
-  "南海電鉄汐見橋線":"南海汐見橋線",
-  "南海電鉄高師浜線":"南海高師浜線",
-  "京阪電気鉄道京阪線":"京阪本線",
-  "京阪電気鉄道中之島線":"京阪中之島線",
-  "京阪電気鉄道交野線":"京阪交野線",
-  "北大阪急行南北線":"北大阪急行",
-  "JR東西線":"東西線",
-  "大阪環状線":"大阪環状線",
-  "おおさか東線":"おおさか東線",
-  "片町線":"片町線",
-  "阪和線":"阪和線",
-  "福知山線":"福知山線",
-  "関西本線":"関西線",
-  "関西空港線":"関西空港線",
-  "桜島線":"桜島線",
-  "大阪モノレール本線":"大阪モノレール本線",
-  "大阪モノレール彩都線":"大阪モノレール彩都線",
-  "近鉄難波・奈良線":"近鉄奈良線",
-  "近鉄南大阪線":"近鉄南大阪線",
-  "近鉄大阪線":"近鉄大阪線",
-  "近鉄けいはんな線":"近鉄けいはんな線",
-  "近鉄信貴線":"近鉄信貴線",
-  "近鉄道明寺線":"近鉄道明寺線",
-  "近鉄長野線":"近鉄長野線",
-  "能勢電鉄":"能勢電鉄",
-  "能勢電鉄妙見線":"能勢電鉄",
-  "能勢電鉄日生線":"能勢電鉄",
-  "水間鉄道水間線":"水間鉄道",
-  "阪堺電気軌道上町線":"阪堺電気軌道上町線",
-  "阪堺電気軌道阪堺線":"阪堺電気軌道阪堺線",
-};
 
 // ── 概念的広域地名 → 大阪府の市区名（resolve-search-conditions/route.ts と同期維持）──
 const CONCEPT_AREA_MAP: Record<string, string[]> = {
@@ -213,16 +82,16 @@ const CONCEPT_AREA_MAP: Record<string, string[]> = {
   ],
 };
 
-// 路線名を内部正式名に解決（LINE_ROUTE_MAP のキー形式に変換）
-function resolveLineInternal(name: string): string | null {
-  if (LINE_ROUTE_MAP[name]) return name;
-  if (LINE_ALIAS_MAP[name]) return LINE_ALIAS_MAP[name];
+// 路線名を内部正式名に解決（line_meta.internal_name 形式に変換）
+function resolveLineInternal(name: string, maps: LineMaps): string | null {
+  if (maps.routeMap[name]) return name;
+  if (maps.aliasMap[name]) return maps.aliasMap[name];
   const normalized = name
     .replace(/^大阪メトロ/, "大阪市高速軌道")
     .replace(/^地下鉄/, "大阪市高速軌道")
     .replace("大阪市高速電気軌道", "大阪市高速軌道");
-  if (LINE_ROUTE_MAP[normalized]) return normalized;
-  const hit = Object.keys(LINE_ROUTE_MAP).find(
+  if (maps.routeMap[normalized]) return normalized;
+  const hit = Object.keys(maps.routeMap).find(
     k => k.endsWith(name) || name.endsWith(k) || (name.length >= 4 && k.includes(name.slice(-3)))
   );
   return hit || null;
@@ -245,10 +114,8 @@ function parseTokens(area: string): string[] {
 }
 
 // 路線→itandi路線名リストに変換
-function toItandiNames(internal: string): string[] {
-  const v = ITANDI_LINE_MAP_FILL[internal];
-  if (!v) return [];
-  return Array.isArray(v) ? v : [v];
+function toItandiNames(internal: string, maps: LineMaps): string[] {
+  return maps.itandiMap[internal] ?? [];
 }
 
 // DeepSeek に「〜まで〜分で行ける駅」を問い合わせ、駅名リストを返す
@@ -286,7 +153,7 @@ async function resolveNearbyWithDeepSeek(station: string, minutes: number): Prom
 // 乗り換え制約 → DeepSeek で路線名リストを取得し resolveLineInternal フィルタ適用
 // ハルシネーション耐性: 返ってきた路線名を resolveLineInternal で既知マップと照合し、
 // 解決できない名称（架空路線）は除外する。
-async function resolveTransferLinesWithDeepSeek(baseStation: string, maxTransfers: number): Promise<string[]> {
+async function resolveTransferLinesWithDeepSeek(baseStation: string, maxTransfers: number, maps: LineMaps): Promise<string[]> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return [];
   try {
@@ -312,7 +179,7 @@ async function resolveTransferLinesWithDeepSeek(baseStation: string, maxTransfer
     const parsed = JSON.parse(match[0]) as unknown[];
     const lineNames = parsed.filter((s): s is string => typeof s === "string" && s.length > 0);
     // resolveLineInternal でフィルタリング（ハルシネーション耐性）
-    return lineNames.map(n => resolveLineInternal(n)).filter((n): n is string => n !== null);
+    return lineNames.map(n => resolveLineInternal(n, maps)).filter((n): n is string => n !== null);
   } catch (e) {
     if (process.env.NODE_ENV !== "production") console.warn("[resolve-area] DeepSeek transfer error:", e instanceof Error ? e.message : e);
     return [];
@@ -358,7 +225,8 @@ async function normalizeAreaWithDeepSeek(desired_area: string): Promise<string |
 async function resolveStationsFromList(
   stations: string[],
   result: ResolveAreaResponse,
-  db: any
+  db: any,
+  maps: LineMaps
 ): Promise<void> {
   const unresolved = stations.filter(s => !result.realpro.station_names.includes(s));
   if (unresolved.length === 0) return;
@@ -376,7 +244,7 @@ async function resolveStationsFromList(
     result.realpro.station_names.push(row.token);
     resolved.add(row.token);
     for (const line of (row.realpro_lines ?? [])) {
-      const rid = LINE_ROUTE_MAP[line];
+      const rid = maps.routeMap[line];
       if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
     }
     for (const line of (row.itandi_lines ?? [])) {
@@ -420,12 +288,12 @@ async function resolveStationsFromList(
     result.realpro.station_names.push(stName);
     if (!result.itandi.station_names.includes(stName)) result.itandi.station_names.push(stName);
     for (const line of uniqueLines) {
-      const rid = LINE_ROUTE_MAP[line];
+      const rid = maps.routeMap[line];
       if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
     }
-    const iLines = uniqueLines.flatMap(l => toItandiNames(l));
+    const iLines = uniqueLines.flatMap(l => toItandiNames(l, maps));
     iLines.forEach(n => { if (!result.itandi.line_names.includes(n)) result.itandi.line_names.push(n); });
-    const rLine = REINS_LINE_MAP[uniqueLines[0]] ?? null;
+    const rLine = maps.reinsMap[uniqueLines[0]] ?? null;
     if (rLine && !result.reins.station_pairs.some(p => p.station === stName)) {
       result.reins.station_pairs.push({ line: rLine, station: stName });
     }
@@ -480,6 +348,7 @@ export async function POST(req: NextRequest) {
       lineStations[row.line_name].push(row.station_name);
     }
 
+    const maps = await getLineMaps(db);
     const tokens = parseTokens(desired_area);
     const result: ResolveAreaResponse = {
       realpro:      { route_ids: [], city_codes: [], station_names: [] },
@@ -494,9 +363,9 @@ export async function POST(req: NextRequest) {
 
       // ── 路線名（「〜線」で終わるトークン）──────────────────────────────
       if (tok.endsWith("線")) {
-        const internal = resolveLineInternal(tok);
+        const internal = resolveLineInternal(tok, maps);
         if (internal) {
-          const routeId = LINE_ROUTE_MAP[internal];
+          const routeId = maps.routeMap[internal];
           if (routeId && !result.realpro.route_ids.includes(routeId))
             result.realpro.route_ids.push(routeId);
 
@@ -506,11 +375,11 @@ export async function POST(req: NextRequest) {
             if (!result.itandi.station_names.includes(s))  result.itandi.station_names.push(s);
           });
 
-          toItandiNames(internal).forEach(n => {
+          toItandiNames(internal, maps).forEach(n => {
             if (!result.itandi.line_names.includes(n)) result.itandi.line_names.push(n);
           });
 
-          const rName = REINS_LINE_MAP[internal];
+          const rName = maps.reinsMap[internal];
           if (rName && !result.reins.station_pairs.some(p => p.line === rName))
             result.reins.station_pairs.push({ line: rName, station: null });
         }
@@ -664,9 +533,9 @@ commute_constraints: 通勤・通学・乗り換え制約
 
           // ── Step 1: lines → route_ids ──────────────────────────────────────
           for (const lineName of ai.lines ?? []) {
-            const internal = resolveLineInternal(lineName);
+            const internal = resolveLineInternal(lineName, maps);
             if (!internal) continue;
-            const routeId = LINE_ROUTE_MAP[internal];
+            const routeId = maps.routeMap[internal];
             if (routeId && !result.realpro.route_ids.includes(routeId))
               result.realpro.route_ids.push(routeId);
             const stationsOnLine = lineStations[internal] ?? [];
@@ -674,10 +543,10 @@ commute_constraints: 通勤・通学・乗り換え制約
               if (!result.realpro.station_names.includes(s)) result.realpro.station_names.push(s);
               if (!result.itandi.station_names.includes(s))  result.itandi.station_names.push(s);
             });
-            toItandiNames(internal).forEach(n => {
+            toItandiNames(internal, maps).forEach(n => {
               if (!result.itandi.line_names.includes(n)) result.itandi.line_names.push(n);
             });
-            const rName = REINS_LINE_MAP[internal];
+            const rName = maps.reinsMap[internal];
             if (rName && !result.reins.station_pairs.some(p => p.line === rName))
               result.reins.station_pairs.push({ line: rName, station: null });
           }
@@ -721,7 +590,7 @@ commute_constraints: 通勤・通学・乗り換え制約
           }
 
           // 未解決駅: resolveStationsFromList で一括解決（station_map + line_stations 2往復）
-          await resolveStationsFromList(unresolvedStations, result, db);
+          await resolveStationsFromList(unresolvedStations, result, db, maps);
 
           // ── Step 3: areas → CONCEPT_AREA_MAP / WARD_CODE_MAP ────────────────
           for (const area of ai.areas ?? []) {
@@ -762,19 +631,19 @@ commute_constraints: 通勤・通学・乗り換え制約
 
                 if (max_transfers !== undefined && max_transfers !== null) {
                   // 乗り換え制約: 路線名ベースで展開（resolveLineInternalフィルタ済み）
-                  const lineNames = await resolveTransferLinesWithDeepSeek(base_station, max_transfers);
+                  const lineNames = await resolveTransferLinesWithDeepSeek(base_station, max_transfers, maps);
                   for (const internal of lineNames) {
-                    const routeId = LINE_ROUTE_MAP[internal];
+                    const routeId = maps.routeMap[internal];
                     if (routeId && !result.realpro.route_ids.includes(routeId)) result.realpro.route_ids.push(routeId);
                     const stationsOnLine = lineStations[internal] ?? [];
                     stationsOnLine.forEach(s => {
                       if (!result.realpro.station_names.includes(s)) result.realpro.station_names.push(s);
                       if (!result.itandi.station_names.includes(s)) result.itandi.station_names.push(s);
                     });
-                    toItandiNames(internal).forEach(n => {
+                    toItandiNames(internal, maps).forEach(n => {
                       if (!result.itandi.line_names.includes(n)) result.itandi.line_names.push(n);
                     });
-                    const rName = REINS_LINE_MAP[internal];
+                    const rName = maps.reinsMap[internal];
                     if (rName && !result.reins.station_pairs.some(p => p.line === rName)) {
                       result.reins.station_pairs.push({ line: rName, station: null });
                     }
@@ -782,7 +651,7 @@ commute_constraints: 通勤・通学・乗り換え制約
                 } else if (max_minutes !== undefined && max_minutes !== null) {
                   // 時間制約: 近隣駅展開 + resolveStationsFromList で route_ids/itandi/reins全反映
                   const nearbyStations = await resolveNearbyWithDeepSeek(base_station, max_minutes);
-                  await resolveStationsFromList(nearbyStations, result, db);
+                  await resolveStationsFromList(nearbyStations, result, db, maps);
                   if (process.env.NODE_ENV !== "production") {
                     console.log("[resolve-area] commute expanded stations:", nearbyStations);
                   }

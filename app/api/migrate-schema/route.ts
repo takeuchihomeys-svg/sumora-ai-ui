@@ -2292,6 +2292,48 @@ BEGIN
 END;
 $$;
 
+-- ── line_meta: 路線マスタ（ハードコードマップのDB化・2026-08-22追加）──
+-- resolve-area/route.ts の LINE_ROUTE_MAP / LINE_ALIAS_MAP / ITANDI_LINE_MAP_FILL / REINS_LINE_MAP を置き換え。
+-- internal_name: 内部キー（line_stations.line_name と一致させる）
+-- realpro_route_id: リアプロのルートID
+-- itandi_names: ITANDIの路線名配列（複数表記対応）
+-- reins_name: レインズの路線名
+-- aliases: 別名・略称の配列（GINインデックスで高速検索）
+CREATE TABLE IF NOT EXISTS line_meta (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  internal_name TEXT NOT NULL UNIQUE,
+  realpro_route_id TEXT,
+  itandi_names TEXT[] DEFAULT '{}',
+  reins_name TEXT,
+  aliases TEXT[] DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_line_meta_internal_name ON line_meta(internal_name);
+CREATE INDEX IF NOT EXISTS idx_line_meta_aliases ON line_meta USING GIN(aliases);
+ALTER TABLE line_meta DISABLE ROW LEVEL SECURITY;
+
+-- ── property_search_knowledge: 物件検索担当ブレイン（2026-08-22追加）──
+-- エリア・駅の解決失敗パターン・変換ルール・顧客条件の読み取りパターンを蓄積する。
+-- ai_reply_knowledge と同構造・物件検索専用のナレッジテーブル。
+CREATE TABLE IF NOT EXISTS property_search_knowledge (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'general',
+  importance INTEGER DEFAULT 5 CHECK (importance BETWEEN 1 AND 10),
+  apply_count INTEGER DEFAULT 0,
+  correct_count INTEGER DEFAULT 0,
+  wrong_count INTEGER DEFAULT 0,
+  hypothesis_status TEXT DEFAULT 'hypothesis' CHECK (hypothesis_status IN ('hypothesis', 'confirmed', 'rejected')),
+  embedding vector(1536),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_property_search_knowledge_category ON property_search_knowledge(category);
+CREATE INDEX IF NOT EXISTS idx_property_search_knowledge_importance ON property_search_knowledge(importance DESC);
+ALTER TABLE property_search_knowledge DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
