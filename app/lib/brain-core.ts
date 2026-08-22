@@ -1346,8 +1346,14 @@ export async function analyzeConversation(
 
   // この会話で使用済みのAIXアクション一覧（重複提案の抑止・次段階の推奨材料）
   const usedAixTypes = [...new Set(aixLogs.map((l) => l.aix_type).filter((t): t is string => Boolean(t)))];
+  // 直近3件の押下順序（新→旧）＋テンプレート名をBrainプロンプトに注入する
+  // → usedAixTypesは「この会話で使ったことがある種類」だが、順序・直近性が欠落しているため方向性判断に不十分。
+  //   「直前に property_check_result → 次は viewing_invite が定石」等の流れを Brain が正確に判断できるようにする。
+  const recentAixSeqText = aixLogs.slice(0, 3).length > 0
+    ? `\n【直近AIXアクション（新→旧順）】${aixLogs.slice(0, 3).map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}`).join(" → ")}`
+    : "";
   const aixHistoryText = usedAixTypes.length > 0
-    ? `\n【この会話で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
+    ? `${recentAixSeqText}\n【会話全体で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
     : "";
 
   // H6(Fable5): 予約送信・未完了タスク・内覧予定を注入（重複提案防止・next_steps の接地）
