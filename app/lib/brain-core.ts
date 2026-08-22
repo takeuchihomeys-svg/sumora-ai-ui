@@ -989,11 +989,20 @@ export async function analyzeConversation(
       .join(" ");
     if (recentCustomerMsgs.trim()) {
       try {
+        // RAGクエリ強化: 直近メッセージ + 最新チェックポイント要約 + 前回AIX-META を組み合わせる。
+        // 短い返答（「ありがとう」等）だけでは文脈が失われるためセーブデータと前回文脈で補完する。
+        type EarlyCheckpointRow = { summary: string | null };
+        const earlyCpSummary = ((checkpointsResult.data ?? []) as EarlyCheckpointRow[])[0]?.summary ?? "";
+        const prevMetaCtx = opts?.prevMeta
+          ? [opts.prevMeta.closing_strategy, opts.prevMeta.reply_direction, (opts.prevMeta as Record<string, unknown>).checkpoint_stage].filter(Boolean).join(" ")
+          : "";
+        const ragQueryInput = [recentCustomerMsgs, earlyCpSummary.slice(0, 400), prevMetaCtx]
+          .filter(Boolean).join(" ").slice(0, 1000);
         const qRes = await fetch("https://api.openai.com/v1/embeddings", {
           method: "POST",
           signal: AbortSignal.timeout(6_000),
           headers: { "Authorization": "Bearer " + process.env.OPENAI_API_KEY.replace(/\s/g, ""), "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "text-embedding-3-small", input: recentCustomerMsgs.slice(0, 1000) }),
+          body: JSON.stringify({ model: "text-embedding-3-small", input: ragQueryInput }),
         });
         if (qRes.ok) {
           const qData = await qRes.json() as { data?: Array<{ embedding?: number[] }> };
