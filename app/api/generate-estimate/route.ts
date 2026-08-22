@@ -4,7 +4,30 @@ import { supabase } from "@/app/lib/supabase";
 
 export const maxDuration = 60;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
+
+const STATIC_SYSTEM = `あなたは不動産仲介の見積書作成AIです。
+提供された費用情報をもとに、割引の適用方法を決定し、LINE送付用の見積書テキストを生成してください。
+
+【指示】
+1. 割引額をどの項目から引くか決定してください（通常は仲介手数料が自然）
+2. LINE送付用の見積書テキストを作成してください
+
+【見積書テキストのフォーマット】
+- 見やすく整形された日本語
+- 各費用を箇条書きで列挙
+- 割引は明確に「▲¥XX,XXX（割引）」と表記
+- 合計金額を強調
+- 末尾に「※この金額は概算です」を記載
+- 送る会社名（ユーザーメッセージに記載）を末尾に記載
+
+以下のJSON形式のみで返してください：
+{
+  "discountAppliedTo": "割引を適用した項目名",
+  "discountBreakdown": "割引の説明文（例: 仲介手数料より¥30,000割引）",
+  "total": 合計金額（数値）,
+  "lineText": "LINE送付用テキスト"
+}`;
 
 type Account = "sumora" | "ieyasu" | "giga";
 
@@ -197,14 +220,10 @@ export async function POST(req: NextRequest) {
       .map((i) => `・${i.item}：¥${i.amount.toLocaleString()}${i.notes ? `（${i.notes}）` : ""}`)
       .join("\n");
 
-    const aiPrompt = `あなたは不動産仲介「${accountLabel}」の見積書作成AIです。
-以下の情報をもとに、割引の適用方法を決定し、LINE送付用の見積書テキストを生成してください。
-
-【基本情報】
-アカウント: ${accountLabel}
-お客様: ${customerName || "お客様"}様
-物件: ${propertyName || "（物件名未入力）"}
-入居予定: ${moveInStr}
+    const userPrompt = `【アカウント】${accountLabel}
+【お客様】${customerName || "お客様"}様
+【物件】${propertyName || "（物件名未入力）"}
+【入居予定】${moveInStr}
 
 【費用項目】
 ${itemLines}
@@ -214,30 +233,13 @@ ${itemLines}
 合計（目安）: ¥${(subtotal - discountAmount).toLocaleString()}
 ${supplementaryNotes ? `\n【補足情報】\n${supplementaryNotes}` : ""}
 
-【指示】
-1. 割引¥${discountAmount.toLocaleString()}をどの項目から引くか決定してください（通常は仲介手数料が自然）
-2. LINE送付用の見積書テキストを作成してください
-
-見積書テキストのフォーマット：
-- 見やすく整形された日本語
-- 各費用を箇条書きで列挙
-- 割引は明確に「▲¥XX,XXX（割引）」と表記
-- 合計金額を強調
-- 末尾に「※この金額は概算です」を記載
-- 送る会社名「${accountLabel}」を末尾に記載
-
-以下のJSON形式のみで返してください：
-{
-  "discountAppliedTo": "割引を適用した項目名",
-  "discountBreakdown": "割引の説明文（例: 仲介手数料より¥30,000割引）",
-  "total": 合計金額（数値）,
-  "lineText": "LINE送付用テキスト"
-}`;
+上記の割引¥${discountAmount.toLocaleString()}をどの項目から引くか決定し、LINE送付用テキストの末尾には「${accountLabel}」を記載してください。`;
 
     const aiRes = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1500,
-      messages: [{ role: "user", content: aiPrompt }],
+      system: [{ type: "text", text: STATIC_SYSTEM, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: userPrompt }],
     });
 
     const raw = aiRes.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "{}";
