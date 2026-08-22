@@ -4,12 +4,35 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 60;
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), timeout: 45_000 });
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+  timeout: 45_000,
+  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+});
 
 // JST日付文字列を返す
 function jstDateStr(): string {
   return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
 }
+
+// ── 静的システム（byte-stable → prompt cache）────────────────────────────
+const STATIC_AIX_FLOW_SYSTEM = `あなたはスモラ不動産AIXボタン誘導ガイドの分析AIです。
+実際の使用データを分析し、賃貸仲介スタッフ向けガイドを更新します。
+
+【AIXボタン一覧（参考）】
+- property_recommendation（物件オススメ）: 条件揃った後
+- property_send（物件ピックアップした）: 物件画像を送付した後
+- property_check_result（物件確認した／確認した（条件・交渉））: 空室・退去日・入居可能日・保証会社・初期費用交渉・駐車場・ペット可否など、管理会社・代表・オーナー・近隣月極への確認結果を報告する（check_patternで切替）
+- estimate_sheet（見積書送る）: 初期費用見積もり送付
+- viewing_invite（内覧へ！）: 内覧日程の提案
+- meeting_place（待ち合わせ）: 内覧確定後の待ち合わせ案内
+- application_push（申込へ！）: 申込を促す
+
+【重要: セット運用パターン】
+- property_check_result（空室あり）→ estimate_sheet は「セット運用」が定石：
+  空室確認後に最大限割引した初期費用の御見積書を同時または直後に送付する。
+  この2アクションは1つの接客フローとして扱うこと。
+- 顧客が「スモ割」「割引」を求めている場合も同じフロー。`;
 
 // POST /api/analyze-aix-flow
 // 成功会話を分析してAIXフロー誘導ガイドを自動更新
@@ -221,14 +244,15 @@ export async function POST(req: NextRequest) {
       .map((r) => `- ${r.keyword.replace(/^AFTER:/, "")} の後 → ${r.action_type}（確度${Math.round((r.confidence ?? 0) * 100)}%・${r.occurrence_count ?? 0}回）`)
       .join("\n") || "学習済みチェーンデータなし";
 
-    // 4. Claude Opus 4.8で分析・ガイド更新
+    // 4. Claude Opus 5で分析・ガイド更新
     const resp = await anthropic.messages.create({
       model: "claude-opus-5",
       // 改善15: 消費側 suggest-next-action の flowGuide.slice(0, 1000) と整合させる（800字指示+見出しでも切れない余裕）
       max_tokens: 1000,
+      system: [{ type: "text", text: STATIC_AIX_FLOW_SYSTEM, cache_control: { type: "ephemeral" } }],
       messages: [{
         role: "user",
-        content: `以下の実際の使用データを分析して、スモラの賃貸仲介スタッフ向け「AIXボタン誘導ガイド」を更新してください。
+        content: `以下の実際の使用データを分析して、スモラの賃貸仲介スタッフ向け「AIXフロー誘導ガイド」を更新してください。
 
 【AIXボタン使用回数（過去30日の実績）】
 ${aixCountText}
@@ -253,21 +277,6 @@ ${patternsText}
 
 【学習済みノウハウ（原則・修正ルール・適用実績降順）】
 ${principlesText}
-
-【AIXボタン一覧（参考）】
-- property_recommendation（物件オススメ）: 条件揃った後
-- property_send（物件ピックアップした）: 物件画像を送付した後
-- property_check_result（物件確認した／確認した（条件・交渉））: 空室・退去日・入居可能日・保証会社・初期費用交渉・駐車場・ペット可否など、管理会社・代表・オーナー・近隣月極への確認結果を報告する（check_patternで切替）
-- estimate_sheet（見積書送る）: 初期費用見積もり送付
-- viewing_invite（内覧へ！）: 内覧日程の提案
-- meeting_place（待ち合わせ）: 内覧確定後の待ち合わせ案内
-- application_push（申込へ！）: 申込を促す
-
-【重要: セット運用パターン】
-- property_check_result（空室あり）→ estimate_sheet は「セット運用」が定石：
-  空室確認後に最大限割引した初期費用の御見積書を同時または直後に送付する。
-  この2アクションは1つの接客フローとして扱うこと。
-- 顧客が「スモ割」「割引」を求めている場合も同じフロー。
 
 【学習済みアクションチェーン（実績ベース・「直前アクション → 次アクション」）】
 ${chainRulesText}

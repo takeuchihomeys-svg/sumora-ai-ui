@@ -34,17 +34,9 @@ type DiscussBody = {
   userMessage?: string;
 };
 
-function buildSystemPrompt(params: {
-  title: string;
-  content: string;
-  category?: string | null;
-  conversationState?: string | null;
-  knowledgeSection?: string;
-}): string {
-  const { title, content, category, conversationState, knowledgeSection } = params;
-  return `あなたは不動産AIアシスタント「スモラAI」のルール調整担当です。
-以下のナレッジについて竹内悠馬さんと打ち合わせをしています。
-竹内さんの意見を聞いてナレッジを改善してください。
+// ── Block1: 静的システム（byte-stable → prompt cache）────────────────────
+const STATIC_KNOWLEDGE_DISCUSS_SYSTEM = `あなたは不動産AIアシスタント「スモラAI」のルール調整担当です。
+竹内悠馬さんと打ち合わせをして、ナレッジを改善してください。
 確定されたナレッジの content はそのままLINE返信AIのプロンプトに注入されます。
 
 ---
@@ -56,18 +48,8 @@ ${KNOWLEDGE_FORMAT}
 ---
 
 ${BUSINESS_RULES}
-${knowledgeSection ? `
----
 
-${knowledgeSection}
-` : ""}
 ---
-
-【打ち合わせ対象のナレッジ】
-【タイトル】${title}
-【内容】${content}
-【カテゴリ】${category ?? "なし"}${conversationState ? `
-【フェーズ】${phaseLabel(conversationState)}` : ""}
 
 打ち合わせのルール:
 - 不動産仲介業務の専門家として、ナレッジの妥当性・改善点を具体的に議論する
@@ -76,6 +58,20 @@ ${knowledgeSection}
 - 改善案の content はプロンプト注入用の業務ルールとして簡潔に書く（500文字以内が目安）
 - 回答は簡潔に（長くても400文字程度）
 - 竹内さんが「反映して」「これでOK」「確定」など確定の意思を示したら「了解しました。確定ボタンを押してください。」とだけ返す`;
+
+// ── Block2: 動的セクション（対象ナレッジ・承認済みナレッジ）──────────────
+function buildDynamicKnowledgeSection(params: {
+  title: string;
+  content: string;
+  category?: string | null;
+  conversationState?: string | null;
+  knowledgeSection?: string;
+}): string {
+  const { title, content, category, conversationState, knowledgeSection } = params;
+  return `${knowledgeSection ? `${knowledgeSection}\n\n---\n\n` : ""}【打ち合わせ対象のナレッジ】
+【タイトル】${title}
+【内容】${content}
+【カテゴリ】${category ?? "なし"}${conversationState ? `\n【フェーズ】${phaseLabel(conversationState)}` : ""}`;
 }
 
 // 会話履歴を Anthropic の messages 形式に整形（先頭は必ず user である必要がある）
@@ -114,7 +110,10 @@ async function handleChat(body: DiscussBody, client: Anthropic): Promise<NextRes
   const res = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 600,
-    system: buildSystemPrompt({ title, content, category, conversationState: conversation_state, knowledgeSection }),
+    system: [
+      { type: "text", text: STATIC_KNOWLEDGE_DISCUSS_SYSTEM, cache_control: { type: "ephemeral" } },
+      { type: "text", text: buildDynamicKnowledgeSection({ title, content, category, conversationState: conversation_state, knowledgeSection }) },
+    ],
     messages: toAnthropicMessages(messages ?? [], userMessage),
   });
 
@@ -156,7 +155,10 @@ async function handleFinalize(body: DiscussBody, client: Anthropic): Promise<Nex
   const res = await client.messages.create({
     model: "claude-sonnet-5",
     max_tokens: 1000,
-    system: buildSystemPrompt({ title, content, category, conversationState: conversation_state, knowledgeSection }),
+    system: [
+      { type: "text", text: STATIC_KNOWLEDGE_DISCUSS_SYSTEM, cache_control: { type: "ephemeral" } },
+      { type: "text", text: buildDynamicKnowledgeSection({ title, content, category, conversationState: conversation_state, knowledgeSection }) },
+    ],
     messages: toAnthropicMessages(messages ?? [], finalizeInstruction),
   });
 
@@ -187,10 +189,11 @@ export async function POST(req: NextRequest) {
   if (!apiKey) {
     return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY が設定されていません" }, { status: 500 });
   }
+  const betaHeaders = { "anthropic-beta": "prompt-caching-2024-07-31" };
   // chat: haiku は 2-4s で返答。9s×3=27s < 60s
-  const chatClient = new Anthropic({ apiKey, timeout: 9_000, maxRetries: 2 });
+  const chatClient = new Anthropic({ apiKey, timeout: 9_000, maxRetries: 2, defaultHeaders: betaHeaders });
   // finalize: sonnet-5 で正確な知識抽出。18s×3=54s < 60s
-  const finalizeClient = new Anthropic({ apiKey, timeout: 18_000, maxRetries: 2 });
+  const finalizeClient = new Anthropic({ apiKey, timeout: 18_000, maxRetries: 2, defaultHeaders: betaHeaders });
 
   try {
     const action = req.nextUrl.searchParams.get("action");

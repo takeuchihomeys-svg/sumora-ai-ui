@@ -11,11 +11,40 @@ import {
 
 export const maxDuration = 90;
 
-// 質問コンテキストを system prompt に毎ターン埋め込む
-// （以前は初回ターンのみ user メッセージとして注入していたが、クライアント側 state に保存されず
-//   2ターン目以降で質問コンテキストが消失するバグがあったため system 側に移設）
-// システム全体像・業務ルール・ナレッジDBフォーマットは app/lib/discuss-context.ts に集約。
-function buildSystemPrompt(params: {
+// ── Block1: 静的システム（byte-stable → prompt cache）────────────────────
+const STATIC_DISCUSS_SYSTEM = `あなたは不動産AIアシスタント「スモラAI」のルール調整担当です。
+竹内さん（スタッフ）と対話しながら、AIの返信ルールを正確に定義することが仕事です。
+
+---
+
+${DISCUSSION_QUALITY_GUIDE}
+
+---
+
+${SYSTEM_OVERVIEW}
+
+■ 「ルール」とは何か
+- ai_reply_knowledge テーブルに保存された返信知識（ルール）
+- 形式：「○○という状況のとき、△△のように返信する」というナレッジ
+- 週次学習ループでAIが新しいルールを自動生成し、矛盾チェックした上で竹内さんに承認を求める
+
+${KNOWLEDGE_FORMAT}
+
+---
+
+${BUSINESS_RULES}
+
+---
+
+■ この打ち合わせ機能について
+- 最終的には①新ルール採用・②既存ルール維持・③場面で使い分け のどれかを決める
+- 業務ルール・承認済みルールと矛盾する提案があれば必ず指摘する
+- 実際のナレッジ更新は竹内さんが画面上の回答ボタンで行うため、あなた自身が更新するとは言わない
+
+LINEのような短い返信で、分かりやすく会話してください。`;
+
+// ── Block2: 動的セクション（議題・証拠・承認済みナレッジ）─────────────────
+function buildDynamicSystemSection(params: {
   question: string;
   speculation?: string | null;
   evidence?: string | null;
@@ -26,7 +55,6 @@ function buildSystemPrompt(params: {
 }): string {
   const phaseStr = params.phase ? phaseLabel(params.phase) : null;
 
-  // evidence と speculation を名前付きブロックで提示（メタデータ重複を避ける）
   const contextLines: string[] = [];
   if (phaseStr || params.importance != null) {
     contextLines.push(`フェーズ: ${phaseStr ?? "未指定"}　重要度: ${params.importance ?? "?"}点`);
@@ -39,7 +67,6 @@ function buildSystemPrompt(params: {
   }
   const contextBlock = contextLines.join("\n\n");
 
-  // 第1ターン強制フォーマット（isFirstTurn のときのみ注入）
   const firstTurnInstruction = params.isFirstTurn ? `
 ---
 
@@ -66,42 +93,13 @@ function buildSystemPrompt(params: {
 ✅ 必須: 「私の理解：」→「確認：」の2段で始め、竹内さんが即答できる形にする
 ` : "";
 
-  return `あなたは不動産AIアシスタント「スモラAI」のルール調整担当です。
-竹内さん（スタッフ）と対話しながら、AIの返信ルールを正確に定義することが仕事です。
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  return `━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 【今回の議題 ── まずここを把握してから動く】
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${params.question}
 ${contextBlock ? `\n${contextBlock}` : ""}
-
----
-
-${DISCUSSION_QUALITY_GUIDE}
 ${firstTurnInstruction}
----
-
-${SYSTEM_OVERVIEW}
-
-■ 「ルール」とは何か
-- ai_reply_knowledge テーブルに保存された返信知識（ルール）
-- 形式：「○○という状況のとき、△△のように返信する」というナレッジ
-- 週次学習ループでAIが新しいルールを自動生成し、矛盾チェックした上で竹内さんに承認を求める
-
-${KNOWLEDGE_FORMAT}
-
----
-
-${BUSINESS_RULES}
-${params.knowledgeSection ? `\n---\n\n${params.knowledgeSection}\n` : ""}
----
-
-■ この打ち合わせ機能について
-- 最終的には①新ルール採用・②既存ルール維持・③場面で使い分け のどれかを決める
-- 業務ルール・承認済みルールと矛盾する提案があれば必ず指摘する
-- 実際のナレッジ更新は竹内さんが画面上の回答ボタンで行うため、あなた自身が更新するとは言わない
-
-LINEのような短い返信で、分かりやすく会話してください。`;
+${params.knowledgeSection ? `---\n\n${params.knowledgeSection}\n` : ""}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -147,13 +145,21 @@ export async function POST(req: NextRequest) {
   ];
 
   // Sonnet は 10-20s で返答するため timeout:25s × maxRetries:2 (最大3試行) を考慮し maxDuration:90s
-  const client = new Anthropic({ apiKey, timeout: 25_000, maxRetries: 2 });
+  const client = new Anthropic({
+    apiKey,
+    timeout: 25_000,
+    maxRetries: 2,
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+  });
 
   try {
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1200,
-      system: buildSystemPrompt({ question, speculation, evidence, phase, importance, knowledgeSection, isFirstTurn }),
+      system: [
+        { type: "text", text: STATIC_DISCUSS_SYSTEM, cache_control: { type: "ephemeral" } },
+        { type: "text", text: buildDynamicSystemSection({ question, speculation, evidence, phase, importance, knowledgeSection, isFirstTurn }) },
+      ],
       messages: conversationMessages,
     });
 
