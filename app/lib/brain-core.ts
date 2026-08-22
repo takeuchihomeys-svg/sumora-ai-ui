@@ -426,18 +426,15 @@ async function detectSignalBasedAixFallback(
       // 信号5.5/8用（brain一本化）: trigger_action_rules のDB学習ルールを並列取得。
       // suggest-next-action API への HTTP fetch ではなく supabase 直読み
       // （このファイルは webhook after() / brain-sweep cron から呼ばれるため往復ホップを増やさない）。
-      // メタ行（AFTER:% / %_ACCEPT_RATE% 等）は集計値でありキーワードルールではないため除外する。
+      // 用途分離: 通常キーワードルールのみ（category は DBトリガーが keyword から自動分類）。
+      // 旧 NOT LIKE 6連チェーンは BOUNDARY% / TEMPLATE_HINT_ACCEPT_RATE:% の除外漏れがあり、
+      // category 1条件に置換して構造的に解消（suggest-next-action と同パターン）。
       supabase
         .from("trigger_action_rules")
         .select("action_type, keyword, confidence, occurrence_count")
+        .eq("category", "keyword_rule")
         .gte("confidence", 0.65)
         .gte("occurrence_count", 1)
-        .not("keyword", "like", "AFTER:%")
-        .not("keyword", "like", "SUGGESTION_ACCEPT_RATE%")
-        .not("keyword", "like", "PREDICTION_ACCURACY%")
-        .not("keyword", "like", "SUBMODE_ACCEPT:%")
-        .not("keyword", "like", "SOURCE_ACCEPT_RATE%")
-        .not("keyword", "like", "MANUAL_RULE:%")
         .or(`conversation_status.is.null,conversation_status.eq.${newPhase}`)
         .order("confidence", { ascending: false })
         .order("occurrence_count", { ascending: false })

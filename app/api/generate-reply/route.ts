@@ -3007,7 +3007,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   checkpointStage: brainMeta?.checkpoint_stage ?? null, // Fix③: brain実態フェーズ（DB stateと乖離検出用）
                   ngProperties: ngPropertiesForCheck.length ? ngPropertiesForCheck : undefined,
                 };
-                const loop = await runFinalCheckWithRevision(draftBody, finalCheckCtx, 60000);
+                const loop = await runFinalCheckWithRevision(draftBody, finalCheckCtx, 90000);
                 finalCheck = loop.finalCheck;
                 draftBody = loop.finalDraft; // ベスト草稿（成功時=修正版 / 修正不能時=元ドラフト）
                 finalCheck.regen_count = 0;
@@ -3052,7 +3052,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     );
                     if (gen2.body.trim()) {
                       // 再生成ドラフトにも最終チェック＋接地修正ループを適用（未チェック文は絶対に出さない）
-                      const loop2 = await runFinalCheckWithRevision(gen2.body, finalCheckCtx, 40000);
+                      const loop2 = await runFinalCheckWithRevision(gen2.body, finalCheckCtx, 60000);
                       draftBody = loop2.finalDraft;
                       finalCheck = loop2.finalCheck;
                       finalCheck.regen_count = 1;

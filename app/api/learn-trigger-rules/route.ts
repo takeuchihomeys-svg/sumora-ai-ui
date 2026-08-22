@@ -228,55 +228,42 @@ export async function POST(req?: Request) {
   let cleaned = 0;
 
   // 1) confidence閾値割れ（confidence < 0.4 かつ occurrence_count < 5）の既存ルールを削除
-  // 高5: SUGGESTION_ACCEPT_RATE（update-action-confidence cron が管理する採択率行）と
-  //      AFTER:%（チェーンルール）は n-gram ルールではないため cleanup 対象から保護する
-  // 中1: PREDICTION_ACCURACY（予測精度行）も同様に保護（低精度の行こそ isLowAccuracy の判定材料になるため）
-  // 中5: SOURCE_ACCEPT_RATE:%（提案経路別採択率行）も保護（低採択率の行こそ isLowSourceRate の判定材料になるため）
-  // 案1: MANUAL_RULE:%（竹内さん確認済み手動ルール・旧形式の残存行）と
-  //      SUBMODE_ACCEPT:%（サブモード採択率行。低採択率の行こそデフォルト判定材料になるため）も保護
+  // 用途分離: category='keyword_rule' の通常n-gramルールのみ削除対象にする。
+  // 統計行（stats）・チェーンルール（chain_rule）・線引きルール（boundary_rule）・
+  // 旧手動ルール（manual_rule_legacy）は category 1条件で構造的に保護される。
+  // （旧 NOT LIKE 7連チェーンは BOUNDARY% の除外漏れがあり線引きルールを誤削除しうるバグがあった）
   {
     const { data: lowRules } = await supabase
       .from("trigger_action_rules")
       .select("keyword")
+      .eq("category", "keyword_rule")
       .lt("confidence", 0.4)
-      .lt("occurrence_count", 5)
-      .not("keyword", "eq", "SUGGESTION_ACCEPT_RATE")
-      .not("keyword", "eq", "PREDICTION_ACCURACY")
-      .not("keyword", "like", "AFTER:%")
-      .not("keyword", "like", "SOURCE_ACCEPT_RATE:%")
-      .not("keyword", "like", "MANUAL_RULE:%")
-      .not("keyword", "like", "SUBMODE_ACCEPT:%")
-      .not("keyword", "like", "TEMPLATE_HINT_ACCEPT_RATE:%");
+      .lt("occurrence_count", 5);
     if (lowRules?.length) {
       const { error } = await supabase
         .from("trigger_action_rules")
         .delete()
+        .eq("category", "keyword_rule")
         .lt("confidence", 0.4)
-        .lt("occurrence_count", 5)
-        .not("keyword", "eq", "SUGGESTION_ACCEPT_RATE")
-        .not("keyword", "eq", "PREDICTION_ACCURACY")
-        .not("keyword", "like", "AFTER:%")
-        .not("keyword", "like", "SOURCE_ACCEPT_RATE:%")
-        .not("keyword", "like", "MANUAL_RULE:%")
-        .not("keyword", "like", "SUBMODE_ACCEPT:%")
-        .not("keyword", "like", "TEMPLATE_HINT_ACCEPT_RATE:%");
+        .lt("occurrence_count", 5);
       if (!error) cleaned += lowRules.length;
     }
   }
 
   // 2) 過去に蓄積した 2文字以下・ストップリスト該当キーワードのルールを削除
   {
+    // 用途分離: 通常キーワードルール（category='keyword_rule'）のみノイズ削除の対象にする。
+    // 統計行・チェーンルール・線引きルール・旧手動ルールは category で構造的に保護される。
     const { data: allRules } = await supabase
       .from("trigger_action_rules")
       .select("keyword")
-      .not("keyword", "like", "AFTER:%")
+      .eq("category", "keyword_rule")
       .limit(5000);
     const noiseKeywords = [
       ...new Set(
         (allRules ?? [])
           .map((r) => r.keyword as string)
-          // 案1: MANUAL_RULE:%（手動ルール）と SUBMODE_ACCEPT:%（サブモード採択率）はノイズ削除から保護
-          .filter((k) => !k.startsWith("MANUAL_RULE:") && !k.startsWith("SUBMODE_ACCEPT:") && (k.length < MIN_NGRAM_LENGTH || isStopNgram(k)))
+          .filter((k) => k.length < MIN_NGRAM_LENGTH || isStopNgram(k))
       ),
     ];
     for (let i = 0; i < noiseKeywords.length; i += 200) {
@@ -284,6 +271,7 @@ export async function POST(req?: Request) {
       const { error } = await supabase
         .from("trigger_action_rules")
         .delete()
+        .eq("category", "keyword_rule")   // 同名keywordの他カテゴリ行を巻き込まない
         .in("keyword", chunk);
       if (!error) cleaned += chunk.length;
     }

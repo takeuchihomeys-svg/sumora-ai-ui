@@ -515,6 +515,57 @@ CREATE INDEX IF NOT EXISTS idx_trigger_action_rules_action ON trigger_action_rul
 CREATE INDEX IF NOT EXISTS idx_trigger_action_rules_confidence ON trigger_action_rules(confidence DESC);
 ALTER TABLE trigger_action_rules DISABLE ROW LEVEL SECURITY;
 
+-- ── trigger_action_rules.category: 行タイプのDB側一元分類（2026-08-22）──
+-- keyword 接頭辞による NOT LIKE 6連チェーン（brain-core / suggest-next-action /
+-- aix-shadow-eval / learn-trigger-rules に分散・除外漏れバグあり）を廃止し、
+-- BEFORE INSERT/UPDATE トリガーで category を自動分類する。書き込み側コードは無変更でよい。
+-- 分類:
+--   'chain_rule'         : AFTER:%（チェーンルール。learn-trigger-rules が upsert）
+--   'stats'              : 統計5種（SUGGESTION_ACCEPT_RATE% / PREDICTION_ACCURACY% /
+--                          SUBMODE_ACCEPT:% / SOURCE_ACCEPT_RATE% / TEMPLATE_HINT_ACCEPT_RATE:%）
+--   'boundary_rule'      : BOUNDARY%（線引きルール行。brain-core L812 が読む）
+--   'manual_rule_legacy' : MANUAL_RULE:%（旧形式の手動ルール残存行）
+--   'keyword_rule'       : 上記以外（通常の n-gram キーワードルール・デフォルト）
+ALTER TABLE trigger_action_rules ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'keyword_rule';
+
+-- keyword 接頭辞 → category の単一真実源（トリガーとバックフィルの両方から呼ぶ）
+CREATE OR REPLACE FUNCTION trigger_rule_category(p_keyword TEXT)
+RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+    WHEN p_keyword LIKE 'AFTER:%' THEN 'chain_rule'
+    WHEN p_keyword LIKE 'SUGGESTION_ACCEPT_RATE%'
+      OR p_keyword LIKE 'PREDICTION_ACCURACY%'
+      OR p_keyword LIKE 'SUBMODE_ACCEPT:%'
+      OR p_keyword LIKE 'SOURCE_ACCEPT_RATE%'
+      OR p_keyword LIKE 'TEMPLATE_HINT_ACCEPT_RATE:%' THEN 'stats'
+    WHEN p_keyword LIKE 'BOUNDARY%' THEN 'boundary_rule'
+    WHEN p_keyword LIKE 'MANUAL_RULE:%' THEN 'manual_rule_legacy'
+    ELSE 'keyword_rule'
+  END;
+$$;
+
+-- BEFORE INSERT/UPDATE で category を keyword から自動導出（手動セット値も常に上書き＝分類の一元管理）
+CREATE OR REPLACE FUNCTION set_trigger_action_rule_category()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.category := trigger_rule_category(NEW.keyword);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_trigger_action_rules_set_category ON trigger_action_rules;
+CREATE TRIGGER trg_trigger_action_rules_set_category
+BEFORE INSERT OR UPDATE ON trigger_action_rules
+FOR EACH ROW EXECUTE FUNCTION set_trigger_action_rule_category();
+
+-- バックフィル（冪等: 分類がズレている行のみ更新）
+UPDATE trigger_action_rules
+SET category = trigger_rule_category(keyword)
+WHERE category IS DISTINCT FROM trigger_rule_category(keyword);
+
+CREATE INDEX IF NOT EXISTS idx_trigger_action_rules_category ON trigger_action_rules(category);
+CREATE INDEX IF NOT EXISTS idx_trigger_action_rules_category_conf ON trigger_action_rules(category, confidence DESC);
+
 -- テンプレートフレーズ学習テーブル（送信済みフレーズの蓄積・テンプレ画面でアナウンス用）
 CREATE TABLE IF NOT EXISTS template_phrase_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

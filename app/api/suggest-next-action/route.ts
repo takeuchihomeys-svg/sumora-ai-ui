@@ -18,6 +18,24 @@ const STATUS_LABEL: Record<string, string> = {
 
 const SKIP_STATUSES = new Set(["contract", "lost", "closed_won", "closed_lost"]);
 
+// ============================================================================
+// trigger_action_rules の用途分離（category カラム・2026-08-22 導入）
+// 単一テーブルに5用途の行が同居する。keyword 接頭辞から DB トリガー
+// （trg_trigger_action_rules_set_category / migrate-schema 参照）が
+// category を自動分類するため、書き込み側は category を意識しなくてよい。
+// 読み取り側は必ず .eq("category", ...) で該当用途だけを取得すること。
+//
+// | category             | keyword パターン                                  | 用途                     | 更新元                        |
+// |----------------------|--------------------------------------------------|--------------------------|-------------------------------|
+// | 'stats'              | SUGGESTION_ACCEPT_RATE / PREDICTION_ACCURACY /   | 採択率・予測精度等の統計 | update-action-confidence 毎日 |
+// |                      | SUBMODE_ACCEPT:% / SOURCE_ACCEPT_RATE:% /        |                          | calc-template-scene-stats 週1 |
+// |                      | TEMPLATE_HINT_ACCEPT_RATE:%                      |                          |                               |
+// | 'chain_rule'         | AFTER:{action} / AFTER:{action}|{phase}          | AIXチェーンルール        | learn-trigger-rules           |
+// | 'boundary_rule'      | BOUNDARY%                                        | 線引きルール（brain-core が読む） | ai-feedback          |
+// | 'manual_rule_legacy' | MANUAL_RULE:%                                    | 旧形式の残存行（参照しない）     | —（廃止済み）        |
+// | 'keyword_rule'       | 上記以外（日本語n-gram等）                       | 通常キーワードルール     | learn-trigger-rules / ai-feedback |
+// ============================================================================
+
 // 高3: 既知 aix_type の正規リスト（ホワイトリスト）。
 // サブモードログ（%_submode 等）から生成された汚染ルールを提案に使わないため、
 // trigger_action_rules 参照時はこのリストに含まれる action_type のみ採用する
@@ -94,12 +112,22 @@ export async function POST(req: NextRequest) {
 
   // 会話を先に取得（property_customers への紐付けは conversations.property_customer_id 経由で辿る）
   const { data: conv } = await supabase.from("conversations")
-    .select("status, customer_name, last_sender, property_customer_id")
+    .select("status, customer_name, last_sender, property_customer_id, suggested_aix_meta")
     .eq("id", conversation_id)
     .maybeSingle();
 
   if (!conv) return NextResponse.json({ action: null, reason: "" });
   if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ action: null, reason: "" });
+
+  // AIX-META（brain の suggested_aix_meta）を早期にパース。
+  // RAGクエリ構築とHaikuプロンプト注入の両方で使うためここで一度だけ処理する。
+  type AixMetaSubset = { action?: string; closing_strategy?: string; reply_direction?: string; urgency_appropriate?: boolean; checkpoint_stage?: string };
+  let brainMeta: AixMetaSubset | null = null;
+  try {
+    const raw = conv?.suggested_aix_meta;
+    if (raw && typeof raw === "object") brainMeta = raw as AixMetaSubset;
+    else if (typeof raw === "string") brainMeta = JSON.parse(raw) as AixMetaSubset;
+  } catch { /* パース失敗は無視 */ }
 
   // メッセージ・顧客（property_customer_id で引く）・採択率（毎日 update-action-confidence cron が更新）
   // ・成約貢献率（calc-aix-attribution cron が毎週計算・直近1ヶ月分）を並列取得
@@ -118,6 +146,7 @@ export async function POST(req: NextRequest) {
       : Promise.resolve({ data: null }),
     supabase.from("trigger_action_rules")
       .select("action_type, confidence")
+      .eq("category", "stats")   // 用途分離: 統計行のみ（同名の通常キーワードルール混入を構造的に排除）
       .eq("keyword", "SUGGESTION_ACCEPT_RATE"),
     supabase.from("aix_action_attribution")
       .select("action_type, win_rate, usage_count")
@@ -127,11 +156,13 @@ export async function POST(req: NextRequest) {
     // 中1: 予測精度（next_action_logs.was_accurate 率 / update-action-confidence cron が毎日更新）
     supabase.from("trigger_action_rules")
       .select("action_type, confidence, total_occurrence")
+      .eq("category", "stats")   // 用途分離: 統計行のみ
       .eq("keyword", "PREDICTION_ACCURACY"),
     // H2: サブモード予測の採択率（update-action-confidence cron が毎日更新）
     // フロントに sub_mode_stats として渡し、ピッカーのサブモードデフォルト選択に使う
     supabase.from("trigger_action_rules")
       .select("keyword, confidence, total_occurrence")
+      .eq("category", "stats")   // 用途分離: 統計行のみ（(category, confidence) 複合インデックスが効く）
       .like("keyword", "SUBMODE_ACCEPT:%")
       .gte("total_occurrence", 3)
       .limit(50),
@@ -157,6 +188,7 @@ export async function POST(req: NextRequest) {
     // keyword_hardcode 経由の採択率が低い（30%未満・10件以上）アクションのキーワード判定をスキップする
     supabase.from("trigger_action_rules")
       .select("keyword, confidence, total_occurrence")
+      .eq("category", "stats")   // 用途分離: 統計行のみ
       .like("keyword", "SOURCE_ACCEPT_RATE:%")
       .limit(200),
   ]);
@@ -537,6 +569,7 @@ export async function POST(req: NextRequest) {
     const { data: allChainRules } = await supabase
       .from("trigger_action_rules")
       .select("action_type, confidence, occurrence_count, keyword")
+      .eq("category", "chain_rule")   // 用途分離: AFTER:% チェーンルール行のみ
       .in("keyword", [phaseSpecificKeyword, genericKeyword])
       .gte("confidence", 0.35)
       .gte("occurrence_count", 2)
@@ -616,15 +649,12 @@ export async function POST(req: NextRequest) {
     const { data: humanRules } = await supabase
       .from("trigger_action_rules")
       .select("action_type, keyword, confidence, occurrence_count, conversation_status")
+      // 用途分離: 通常キーワードルールのみ。旧 NOT LIKE 6連チェーンを category 1条件に置換
+      // （BOUNDARY% / TEMPLATE_HINT_ACCEPT_RATE:% の除外漏れも構造的に解消）
+      .eq("category", "keyword_rule")
       .gte("confidence", 0.95)
       .lte("confidence", 1)          // 汚染値（旧0-100スケール書き込み）を除外
       .gte("occurrence_count", 10)   // ai-feedback 書き込み値（0.95/10）に整合
-      .not("keyword", "like", "AFTER:%")
-      .not("keyword", "like", "SUGGESTION_ACCEPT_RATE%")
-      .not("keyword", "like", "PREDICTION_ACCURACY%")
-      .not("keyword", "like", "SUBMODE_ACCEPT:%")
-      .not("keyword", "like", "SOURCE_ACCEPT_RATE%")
-      .not("keyword", "like", "MANUAL_RULE:%")
       .or(`conversation_status.is.null,conversation_status.eq.${currentStatus}`)
       .order("confidence", { ascending: false })
       .order("occurrence_count", { ascending: false })
@@ -741,6 +771,9 @@ export async function POST(req: NextRequest) {
     const { data: triggerRules } = await supabase
       .from("trigger_action_rules")
       .select("action_type, keyword, confidence, occurrence_count, conversation_status")
+      // 用途分離: 通常キーワードルールのみ（統計行・チェーンルール行が limit(500) の枠を
+      // 消費して実ルールを押し出すのを防ぐ。従来はプレフィックス除外なしで混入していた）
+      .eq("category", "keyword_rule")
       .gte("confidence", 0.65)
       .gte("occurrence_count", 1)
       .or(`conversation_status.is.null,conversation_status.eq.${currentStatus}`)
@@ -855,6 +888,41 @@ export async function POST(req: NextRequest) {
 
   const aixFlowGuide = ((flowGuideRow?.content as string | undefined) ?? "").trim();
 
+  // RAG検索: 顧客メッセージ + AIX-META を組み合わせたクエリで ai_reply_knowledge を検索。
+  // brain-core の analyzeConversation と同じパターン（直近メッセージ + prevMeta文脈を合成）。
+  // アクション判断に関連するナレッジをHaikuに渡すことで提案精度を向上させる。
+  type RagKnowledgeRow = { title: string | null; content: string | null; category: string | null };
+  let ragKnowledgeRows: RagKnowledgeRow[] = [];
+  if (lastCustomerMsg && process.env.OPENAI_API_KEY) {
+    try {
+      const metaCtx = brainMeta
+        ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction].filter(Boolean).join(" ")
+        : "";
+      const ragQuery = [lastCustomerMsg.slice(0, 400), metaCtx].filter(Boolean).join(" ").slice(0, 600);
+      const embRes = await fetch("https://api.openai.com/v1/embeddings", {
+        method: "POST",
+        signal: AbortSignal.timeout(5_000),
+        headers: { "Authorization": "Bearer " + process.env.OPENAI_API_KEY.replace(/\s/g, ""), "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "text-embedding-3-small", input: ragQuery }),
+      });
+      if (embRes.ok) {
+        const embData = await embRes.json() as { data?: Array<{ embedding?: number[] }> };
+        const emb = embData.data?.[0]?.embedding;
+        if (emb) {
+          const { data: knRows } = await supabase.rpc("match_reply_knowledge", {
+            query_embedding: emb,
+            match_count: 10,
+            min_importance: 7,
+          });
+          ragKnowledgeRows = (knRows ?? []) as RagKnowledgeRow[];
+        }
+      }
+    } catch { /* RAG失敗は無視・既存データのみで継続 */ }
+  }
+  const ragKnowledgeSection = ragKnowledgeRows.length
+    ? `## 関連ナレッジ（この状況に近い場面で学習済み）\n${ragKnowledgeRows.slice(0, 5).map((r) => `- ${(r.title ?? "").slice(0, 30)}: ${(r.content ?? "").slice(0, 100)}`).join("\n")}\n\n`
+    : "";
+
   const aixLogicSection = (aixLogicRows ?? [])
     .map((r) => (r.content as string))
     .join("\n\n---\n\n");
@@ -959,6 +1027,21 @@ ${examples || "  (なし)"}
     customer?.ai_summary ? `サマリー: ${customer.ai_summary as string}` : "",
   ].filter(Boolean).join("\n");
 
+  // AIX-META（brain の suggested_aix_meta）をHaikuプロンプトに注入する。
+  // brain が判定したアクション・戦略・フェーズをHaikuが参照することで
+  // 「brain → 提案アクション」の一貫性が高まる。
+  const brainMetaSection = brainMeta
+    ? `## Brain分析（最新・最優先参考情報）
+推奨アクション: ${brainMeta.action ?? "不明"}
+戦略: ${brainMeta.closing_strategy ?? "なし"}
+返信の方向性: ${brainMeta.reply_direction ?? "なし"}
+フェーズ: ${brainMeta.checkpoint_stage ?? "なし"}
+急かしNG: ${brainMeta.urgency_appropriate === false ? "はい（急かさないこと）" : "なし"}
+（※ Brainが判定済みのアクションを参考にしつつ、会話状況から最適なものを選ぶこと）
+
+`
+    : "";
+
   // aix_action_attribution: 冒頭で集計済みの avgWinRateMap（action_type別・直近1ヶ月の win_rate 平均）を使用
   const attributionLines = Object.entries(avgWinRateMap)
     .map(([a, avgWinRate]) => ({ action: a, avgWinRate }))
@@ -997,7 +1080,7 @@ ${aixFlowGuide.slice(0, 1000)}
 
 ${aixLogicGuide}${flowGuideSection}`.trim();
 
-  const prompt = `${attributionSection}${accuracySection}${patternSection}## 現在の会話
+  const prompt = `${brainMetaSection}${ragKnowledgeSection}${attributionSection}${accuracySection}${patternSection}## 現在の会話
 顧客名: ${conv.customer_name as string}
 ステータス: ${statusLabel}
 直前のAIXアクション: ${last_aix_action || "なし"}

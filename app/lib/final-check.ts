@@ -157,7 +157,7 @@ function formatHistory(msgs: FinalCheckContext["recentMessages"], limit: number)
     .slice(-limit)
     .map((m) => {
       const label = m.sender === "customer" ? "お客様" : (m.isAix ? "スタッフ[AIX]" : "スタッフ");
-      return `${label}${jstTime(m.createdAt)}: ${(m.text || "").slice(0, 300)}`;
+      return `${label}${jstTime(m.createdAt)}: ${(m.text || "").slice(0, 600)}`;
     })
     .join("\n");
 }
@@ -168,7 +168,7 @@ function formatStaffMessages(msgs: FinalCheckContext["recentMessages"], limit: n
   if (staff.length === 0) return "（なし）";
   return staff.map((m) => {
     const label = m.isAix ? "スタッフ[AIX]" : "スタッフ";
-    return `${label}${jstTime(m.createdAt)}: ${(m.text || "").slice(0, 300)}`;
+    return `${label}${jstTime(m.createdAt)}: ${(m.text || "").slice(0, 600)}`;
   }).join("\n");
 }
 
@@ -447,13 +447,13 @@ FABRICATED_POLICY: 仲介手数料・日割家賃・AD還元など会社固有�
 ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [/CHECKPOINTS]
 [CUSTOMER_CONDITIONS]
-${(ctx.customerConditionsDb || "なし").slice(0, 1000)}
+${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
 [/CUSTOMER_CONDITIONS]
 [HISTORY]
 ${formatHistory(ctx.recentMessages, 10)}
 [/HISTORY]
 [SOURCE]
-${(ctx.staffSourceText || "なし").slice(0, 3000)}
+${(ctx.staffSourceText || "なし").slice(0, 5000)}
 [/SOURCE]
 [REPLY]
 ${draft}
@@ -821,7 +821,7 @@ ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [/CHECKPOINT]
 
 [CONDITIONS]（DB保存の顧客条件）
-${(ctx.customerConditionsDb || "なし").slice(0, 1000)}
+${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
 [/CONDITIONS]
 
 [RULES]（会社ルール）
@@ -948,13 +948,13 @@ async function verifyFabricatedIssues(
 ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [/CHECKPOINTS]
 [CUSTOMER_CONDITIONS]
-${(ctx.customerConditionsDb || "なし").slice(0, 1000)}
+${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
 [/CUSTOMER_CONDITIONS]
 [HISTORY]
 ${formatHistory(ctx.recentMessages, 10)}
 [/HISTORY]
 [SOURCE]
-${(ctx.staffSourceText || "なし").slice(0, 3000)}
+${(ctx.staffSourceText || "なし").slice(0, 5000)}
 [/SOURCE]
 
 確認する記述（返信文中の表現）:
@@ -1151,7 +1151,7 @@ async function runDiffRecheck(
 export async function runFinalCheckWithRevision(
   draft: string,
   ctx: FinalCheckContext,
-  budgetMs = 60000,  // check1(≤20s) + verify(≤8s) + revision(≤15s) + recheck(≤15s) = 58s + 2sバッファ（Sonnet対応）
+  budgetMs = 90000,  // check1(≤30s) + verify(≤8s) + revision(≤15s) + recheck(≤15s) = 68s + 22sバッファ（呼び出し元は90s/60sを渡す）
 ): Promise<RevisionLoopResult> {
   const started = Date.now();
   let checkIterations = 0;
