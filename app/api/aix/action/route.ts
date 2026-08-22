@@ -566,11 +566,12 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
       "Content-Type": "application/json",
       "x-api-key": ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
+      "anthropic-beta": "prompt-caching-2024-07-31",
     },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 256,
-      system,
+      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: user }],
     }),
     signal: AbortSignal.timeout(30_000),
@@ -589,6 +590,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
       "Content-Type": "application/json",
       "x-api-key": ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
+      "anthropic-beta": "prompt-caching-2024-07-31",
     },
     body: JSON.stringify({
       model: MODEL,

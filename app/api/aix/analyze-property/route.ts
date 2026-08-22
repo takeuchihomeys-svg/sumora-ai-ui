@@ -45,11 +45,12 @@ export async function POST(request: NextRequest) {
         "Content-Type": "application/json",
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": "prompt-caching-2024-07-31",
       },
       body: JSON.stringify({
         model: HAIKU_MODEL,
         max_tokens: 512,
-        system,
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
         messages: [
           {
             role: "user",
