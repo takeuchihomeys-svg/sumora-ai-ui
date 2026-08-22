@@ -788,8 +788,9 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, sonne
 }
 
 // ─── Sonnetによる修正プロンプト（外科的修正 or 全体書き直しをSonnetが判断）──────
-function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: FinalCheckContext): string {
-  return `あなたは不動産会社のLINE返信文の校閲・修正担当です。
+// H5(Fable5): 静的指示（役割・修正方針・絶対ルール）をBlock1(ephemeral)に分離し
+// 動的部分（issues・checkpoint・draft）をBlock2に配置してキャッシュHIT率を上げる。
+const SONNET_REVISION_STATIC = `あなたは不動産会社のLINE返信文の校閲・修正担当です。
 
 以下の問題が検出されました。修正した返信文を作成してください。
 
@@ -805,7 +806,10 @@ function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: Fin
 4. FABRICATED_* の指摘 → 該当の主張を削除（[CHECKPOINT]に正しい事実があれば置き換え可）
 5. [RULES]の禁止語彙・禁止表現を使わない
 
-[ISSUES]
+修正後の文章のみを出力してください（説明・前置き不要）。`;
+
+function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: FinalCheckContext): PromptBlock[] {
+  const dynamic = `[ISSUES]
 ${issues.map((i) => `- [${i.code}] ${i.message}（該当箇所:「${i.evidence}」${i.suggestion ? ` / 修正案: ${i.suggestion}` : ""}）`).join("\n")}
 [/ISSUES]
 
@@ -823,9 +827,11 @@ ${(ctx.dbRules || "なし").slice(0, 20000)}
 
 [ORIGINAL_DRAFT]
 ${draft}
-[/ORIGINAL_DRAFT]
-
-修正後の文章のみを出力してください（説明・前置き不要）。`;
+[/ORIGINAL_DRAFT]`;
+  return [
+    { type: "text" as const, text: SONNET_REVISION_STATIC, cache_control: { type: "ephemeral" as const } },
+    { type: "text" as const, text: dynamic },
+  ];
 }
 
 // ─── Sonnet自動修正（外科的修正 or 全体書き直しをSonnetが判断。失敗は null = fail-open）──
