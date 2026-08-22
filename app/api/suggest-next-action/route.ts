@@ -634,223 +634,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ action: null, reason: "" });
   }
 
-  // ---- 竹内さん回答由来ルールの最優先判定（AI質問への回答 → trigger_action_rules）----
-  // ai-feedback/route.ts は「この場合はこのAIXを使う」という竹内さんの回答を
-  // confidence 0.95 / occurrence_count 10 の trigger_action_rules として保存する。
-  // 人間が明示的に教えたルールはハードコードキーワード判定（S-5等）より優先して発火させる。
-  // ※ ハルシネーション防止系の判定（画像引用・曖昧参照・退去予定）はこれより上位のまま維持。
-  // ※ UI_AIX_TYPES = AixModal に実在するボタンのみ（旧名 hearing / application 等はバナーから開けないため除外）
-  const UI_AIX_TYPES = new Set([
-    "property_send", "viewing_invite", "property_recommendation",
-    "property_check_result", "estimate_sheet", "meeting_place",
-    "acknowledge_check", "followup_revive", "application_push", "condition_hearing",
-  ]);
-  if (lastCustomerMsg && conv.last_sender === "customer") {
-    const { data: humanRules } = await supabase
-      .from("trigger_action_rules")
-      .select("action_type, keyword, confidence, occurrence_count, conversation_status")
-      // 用途分離: 通常キーワードルールのみ。旧 NOT LIKE 6連チェーンを category 1条件に置換
-      // （BOUNDARY% / TEMPLATE_HINT_ACCEPT_RATE:% の除外漏れも構造的に解消）
-      .eq("category", "keyword_rule")
-      .gte("confidence", 0.95)
-      .lte("confidence", 1)          // 汚染値（旧0-100スケール書き込み）を除外
-      .gte("occurrence_count", 10)   // ai-feedback 書き込み値（0.95/10）に整合
-      .or(`conversation_status.is.null,conversation_status.eq.${currentStatus}`)
-      .order("confidence", { ascending: false })
-      .order("occurrence_count", { ascending: false })
-      .order("keyword", { ascending: true })
-      .limit(200);
-
-    const humanHit = ((humanRules ?? []) as Array<{ action_type: string; keyword: string }>).find((r) => {
-      const action = r.action_type === "alternative_send" ? "property_send" : r.action_type;
-      return UI_AIX_TYPES.has(action) &&
-        typeof r.keyword === "string" && r.keyword.length >= 2 &&
-        lastCustomerMsg.includes(r.keyword) &&
-        !shouldSuppressAction(action) &&
-        !isLowSourceRate(action, "human_rule");
-    });
-    if (humanHit) {
-      const isAlt = humanHit.action_type === "alternative_send";
-      const action = isAlt ? "property_send" : humanHit.action_type;
-      return NextResponse.json({
-        action,
-        reason: `教えたルール「${humanHit.keyword}」`,
-        source: "human_rule",
-        params: isAlt ? { ...buildParams("property_send"), send_mode: "alternative" } : buildParams(action),
-        acceptanceRate: acceptanceRateMap[action] ?? null,
-        sub_mode_stats: subModeStats,
-        ...templateRec(action),
-      });
-    }
-  }
-
-  // ---- トリガールールで即判定（Haiku不要の場合）----
-  // lastCustomerMsg はチェーンルールブロック前に抽出済み
-
-  // 入居日を指定して見積書再送を要求 → 見積書送る（「待ち合わせ」と誤判定しないよう最優先でチェック）
-  // 中5: keyword_hardcode 経由の採択率が低い場合はこのトリガーをスキップして次の判定へ
-  if (lastCustomerMsg.includes("入居") &&
-      (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積")) &&
-      !isLowSourceRate("estimate_sheet", "keyword_hardcode")) {
-    // 状態は確定しているので、抑制時はフォールスルーせず提案なしで確定（P8誤提案防止）
-    if (shouldSuppressAction("estimate_sheet")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "keyword_hardcode", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null, sub_mode_stats: subModeStats, ...templateRec("estimate_sheet") });
-  }
-
-  // 物件画像・動画・物件URL・空室確認の質問 → 「物件確認した」を提案
-  // ※ PROPERTY_CHECK_STATUSES はモジュールスコープ（退去予定検知と共用）
-  const PROPERTY_URL_RE = /athome\.co\.jp|suumo\.jp|homes\.co\.jp|lifull\.com|chintai\.net|reins\.|realestate\.|rakumachi\.jp/i;
-  const AVAILABILITY_KEYWORDS = ["まだありますか", "空いていますか", "空いてますか", "空室ですか", "空室確認", "空き確認", "まだ空い", "まだ残って", "空室はありますか", "こちらの物件"];
-  // リテラル "[画像]"/"[動画]" だけでなく、image_url 実在・[引用]・返信マーカーからも物件共有を検知する
-  const hasPropertyMedia = hasQuoteMarker || hasCustomerImage;
-  // 直近3件（messages は降順なので先頭3件）の顧客メッセージにURLがあるか確認
-  const recentCustomerMsgs = messages.filter((m) => m.sender === "customer").slice(0, 3).map((m) => (m.text as string) ?? "");
-  const hasPropertyUrl = recentCustomerMsgs.some((t) => PROPERTY_URL_RE.test(t));
-  // 内覧/内見/見学キーワードが同居する場合（例:「内覧いつ空いていますか」）は空室確認ではなく
-  // 下の S-5 viewing_invite 判定を優先するため、空室確認質問としては扱わない
-  const VIEWING_CONTEXT_RE = /内覧|内見|見学/;
-  const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw)) && !VIEWING_CONTEXT_RE.test(lastCustomerMsg);
-  // スモ割/割引キーワード（スモラの初期費用最大限割引サービス）
-  // 物件URL/画像と同時 → property_check_result（先に空室確認が必要・確認後に見積のセット運用）
-  // 単独（物件は前回送付済み等）→ 下の estimate_sheet キーワード判定に合流して見積書を提案
-  const SMOWARI_RE = /スモ割|割引後|割引使え|割引でき|スモ割使|スモ割適用|スモ割確認/;
-  const hasSmowariKeyword = SMOWARI_RE.test(lastCustomerMsg);
-  // 中5: keyword_hardcode 経由の採択率が低い場合はこのトリガーをスキップして次の判定へ
-  if ((hasPropertyMedia || hasPropertyUrl || hasAvailabilityQuestion) && PROPERTY_CHECK_STATUSES.has(currentStatus) &&
-      !isLowSourceRate("property_check_result", "keyword_hardcode")) {
-    if (shouldSuppressAction("property_check_result")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "property_check_result", reason: hasSmowariKeyword ? "スモ割は空室確認から" : hasQuoteMarker ? "画像/引用で物件共有" : hasCustomerImage ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_check_result") });
-  }
-
-  // S-5: 費用・内覧・申込キーワード即判定（DBルール不要・Haiku流入削減）
-  // 各判定は「申込 > 内覧 > 日程確定 > 費用」の優先順で early-exit（複数マッチ時の揺れを防止）。
-  // マッチしたのに採択率で抑制された場合もフォールスルーせず null で確定させる（P8誤提案防止）。
-  // 中5: keyword_hardcode 経由の採択率が低い（30%未満・10件以上）アクションは null を返し、
-  //      呼び出し側でこのトリガーをスキップして次の判定へフォールスルーさせる
-  const keywordHit = (actionType: string, reason: string): NextResponse | null => {
-    if (isLowSourceRate(actionType, "keyword_hardcode")) return null;
-    if (shouldSuppressAction(actionType)) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: actionType, reason, source: "keyword_hardcode", params: buildParams(actionType), acceptanceRate: acceptanceRateMap[actionType] ?? null, sub_mode_stats: subModeStats, ...templateRec(actionType) });
-  };
-  // 申込: 「申込みたい」（送り仮名違い）「決めます」「決めたい」「こちらで申」もカバー（最も後工程＝最優先）
-  if (/申し込み.*たい|申込.*したい|申込.*希望|申込みたい|入居申込|決めます|決めたい|こちらで申/.test(lastCustomerMsg)) {
-    const hit = keywordHit("application_push", "申込意向を検出");
-    if (hit) return hit;
-  }
-  // 内覧: 「内見」（内覧より多い表記）「見学」「現地確認」もカバー
-  // ※ 退去予定（EXIT_SCHEDULED_RE）が同居する場合は内覧を出さない（上の exit_scheduled_rule で
-  //   property_check_result を返すのが本来。ここは保険ガード）
-  if (!EXIT_SCHEDULED_RE.test(lastCustomerMsg) &&
-      /内覧|内見|見学.*したい|見学.*希望|見学.*できますか|現地.*確認|現地.*見た|見に行|みに行|みにいき/.test(lastCustomerMsg)) {
-    const hit = keywordHit("viewing_invite", "内覧希望を検出");
-    if (hit) return hit;
-  }
-  // 日程確定 → meeting_place（「◯曜◯時」「◯月◯日」「AM/PM/午前/午後」「明日/今日+時刻」+ 確定系の言い回し）
-  if ((/[月火水木金土日]曜.*[0-9０-９時]|[0-9０-９]+月[0-9０-９]+日|AM|PM|午前|午後|明日|あした|今日|本日/.test(lastCustomerMsg)) &&
-      /いかがでしょう|で大丈夫|でお願い|伺います|行きます|行けます|確定|来られ|来れ/.test(lastCustomerMsg)) {
-    const hit = keywordHit("meeting_place", "日程確定の意向を検出");
-    if (hit) return hit;
-  }
-  // 管理会社確認が必要な物件固有条件の質問（保証会社・保証料・審査・ペット・駐車場・礼金交渉・設備）
-  // → property_check_result（AVAILABILITY_KEYWORDS は空室確認のみで拾えないためここでカバー）
-  // ※ 費用/estimate_sheet 判定より前に置く（「保証料はいくら」の「いくら」誤マッチ防止）
-  // ※ applying（申込手続き中）も対象に含める（申込中の保証料質問が estimate_sheet に誤ルーティングされるのを防ぐ）
-  const MGMT_CONFIRM_RE = /保証会社|保証料|審査.{0,6}(通り|基準|厳し)|ペット.{0,6}(可|飼|大丈夫)|駐車場.{0,6}(あり|空き|使え)|礼金.{0,8}(交渉|下げ)|設備.{0,6}(あり|付い)|家賃.{0,8}(交渉|下げ|安く)|(?:猫|犬).{0,8}(飼|大丈夫|可)/;
-  if ((PROPERTY_CHECK_STATUSES.has(currentStatus) || currentStatus === "applying") && MGMT_CONFIRM_RE.test(lastCustomerMsg)) {
-    const hit = keywordHit("property_check_result", "物件固有条件の確認が必要");
-    if (hit) return hit;
-  }
-  // スモ割/割引 単独言及（物件URL/画像なし＝上の property_check_result 判定を通過してきた場合）も見積書へ
-  if (/費用|初期費用|いくら/.test(lastCustomerMsg) || hasSmowariKeyword) {
-    const hit = keywordHit("estimate_sheet", hasSmowariKeyword ? "スモ割・割引見積の依頼" : "費用に関する質問を検出");
-    if (hit) return hit;
-  }
-
-  if (lastCustomerMsg) {
-    // conversation_status が NULL（全フェーズ共通）またはこのフェーズ限定のルールのみ取得
-    const { data: triggerRules } = await supabase
-      .from("trigger_action_rules")
-      .select("action_type, keyword, confidence, occurrence_count, conversation_status")
-      // 用途分離: 通常キーワードルールのみ（統計行・チェーンルール行が limit(500) の枠を
-      // 消費して実ルールを押し出すのを防ぐ。従来はプレフィックス除外なしで混入していた）
-      .eq("category", "keyword_rule")
-      .gte("confidence", 0.65)
-      .gte("occurrence_count", 1)
-      .or(`conversation_status.is.null,conversation_status.eq.${currentStatus}`)
-      // confidence 同値タイで limit(500) の取得セットが揺れないよう決定的に並べる
-      .order("confidence", { ascending: false })
-      .order("occurrence_count", { ascending: false })
-      .order("keyword", { ascending: true })
-      .limit(500);
-
-    if (triggerRules?.length) {
-      // 高3: 既知 aix_type ホワイトリスト外（%_submode 等の汚染ルール）を除外
-      const knownTriggerRules = triggerRules.filter((r) => KNOWN_AIX_TYPES.has(r.action_type as string));
-      // キーワードが含まれるルールをスコアリング
-      const scores: Record<string, { score: number; topKeyword: string; topConf: number }> = {};
-      for (const rule of knownTriggerRules) {
-        const kw = rule.keyword as string;
-        if (lastCustomerMsg.includes(kw)) {
-          const a = rule.action_type as string;
-          // 0-1 スケールにクランプ（aix-shadow-eval 旧バグの 10+ 汚染値が入っても
-          // 単一アクションがスコアリングを支配しないよう防御）
-          const conf = Math.min(rule.confidence as number, 1);
-          if (!scores[a] || conf > scores[a].topConf) {
-            scores[a] = {
-              score: (scores[a]?.score ?? 0) + conf,
-              topKeyword: kw,
-              topConf: conf,
-            };
-          } else {
-            scores[a].score += conf;
-          }
-        }
-      }
-
-      const ACTION_REASON: Record<string, string> = {
-        property_send: "物件希望が来た",
-        viewing_invite: "内覧希望が出た",
-        application_push: "申込意欲あり",
-        estimate_sheet: "費用の質問あり",
-        meeting_place: "日程が決まりそう",
-        property_check: "物件確認依頼",
-        property_check_result: "物件画像が送られた",
-        property_recommendation: "物件提案タイミング",
-      };
-      // スコア降順で並べて、抑制対象をスキップして最初の非抑制アクションを返却
-      // （同スコア時は topConf 降順 → action_type 昇順で決定的にタイブレーク）
-      // 中1: 予測精度40%未満（isLowAccuracy）のアクションはスコアを0.8倍に減衰して順位付け
-      //      （完全スキップではなく減衰。閾値0.85判定は減衰前の生スコアで行う）
-      const decayedScore = (actionType: string, score: number) => (isLowAccuracy(actionType) ? score * 0.8 : score);
-      const sortedScores = Object.entries(scores).sort(
-        (a, b) => decayedScore(b[0], b[1].score) - decayedScore(a[0], a[1].score) || b[1].topConf - a[1].topConf || a[0].localeCompare(b[0])
-      );
-      // 改善6: 成約貢献率が全体平均の半分未満（lowWinRate）の候補はランク下げ。他に候補がなければ従来通り採用
-      // 中1: 予測精度40%未満（lowAccuracy）の候補も同様にランク下げ
-      const eligibleScores = sortedScores.filter(([actionType, s]) => s.score >= 0.85 && !shouldSuppressAction(actionType));
-      const topValid = eligibleScores.find(([actionType]) => !isLowWinRate(actionType) && !isLowAccuracy(actionType)) ?? eligibleScores[0];
-      if (topValid) {
-        return NextResponse.json({
-          action: topValid[0],
-          // どのDBルール（キーワード）が発火したかをスタッフに見せる（P8バナーにそのまま表示される）
-          reason: `${ACTION_REASON[topValid[0]] ?? "学習ルール"}（「${topValid[1].topKeyword}」に反応）`,
-          source: "trigger_rule",
-          params: buildParams(topValid[0]),
-          acceptanceRate: acceptanceRateMap[topValid[0]] ?? null,
-          sub_mode_stats: subModeStats,
-          ...templateRec(topValid[0]),
-        });
-      }
-    }
-  }
-
-  // ---- ステータス既定アクション（P8 Haiku流入削減）----
-  // applying（申込手続き中）はキーワード・DBルール不一致でも次アクションが自明なため決定的に返す。
-  // 採択率が30%を下回れば shouldSuppressAction が自動的に抑制する（自己修正）。
-  if (currentStatus === "applying") {
-    if (shouldSuppressAction("application_push")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "application_push", reason: "申込手続きを進める", source: "status_rule", params: buildParams("application_push"), acceptanceRate: acceptanceRateMap["application_push"] ?? null, sub_mode_stats: subModeStats, ...templateRec("application_push") });
-  }
+  // Layer1-4（竹内さんルール・ハードコードキーワード・triggerRulesスコアリング・applying既定）は削除済み。以下Haikuフォールバックへ
 
   // ---- P8フォールバック（Sonnet 4.6 AI判断）----
   // ガード①: 会話履歴が5件未満の場合はデータ不足のためAI判断をスキップ
@@ -888,6 +672,21 @@ export async function POST(req: NextRequest) {
 
   const aixFlowGuide = ((flowGuideRow?.content as string | undefined) ?? "").trim();
 
+  // Layer1-3統合: trigger_action_rules 上位20件(confidence順)をHaikuに渡す候補リストとして取得
+  let topRuleRows: Array<{ action_type: string | null; keyword: string | null; confidence: number | null }> = [];
+  if (lastCustomerMsg) {
+    const { data: topRulesData } = await supabase
+      .from("trigger_action_rules")
+      .select("action_type, keyword, confidence")
+      .eq("category", "keyword_rule")
+      .gte("confidence", 0.65)
+      .order("confidence", { ascending: false })
+      .order("keyword", { ascending: true })
+      .limit(20);
+    topRuleRows = ((topRulesData ?? []) as Array<{ action_type: string | null; keyword: string | null; confidence: number | null }>)
+      .filter((r) => KNOWN_AIX_TYPES.has(r.action_type as string));
+  }
+
   // RAG検索: 顧客メッセージ + AIX-META を組み合わせたクエリで ai_reply_knowledge を検索。
   // brain-core の analyzeConversation と同じパターン（直近メッセージ + prevMeta文脈を合成）。
   // アクション判断に関連するナレッジをHaikuに渡すことで提案精度を向上させる。
@@ -921,6 +720,14 @@ export async function POST(req: NextRequest) {
   }
   const ragKnowledgeSection = ragKnowledgeRows.length
     ? `## 関連ナレッジ（この状況に近い場面で学習済み）\n${ragKnowledgeRows.slice(0, 5).map((r) => `- ${(r.title ?? "").slice(0, 30)}: ${(r.content ?? "").slice(0, 100)}`).join("\n")}\n\n`
+    : "";
+
+  // Layer1-3統合: 学習済み高信頼ルールの上位候補をHaikuプロンプトに参考情報として渡す
+  const candidatesSection = topRuleRows.length
+    ? "## 学習済み高信頼アクション候補（採択率順・参考情報）\n" +
+      topRuleRows.slice(0, 5).map((r) =>
+        "- " + (r.action_type ?? "") + "（信頼度: " + ((r.confidence ?? 0)).toFixed(2) + "、KW例: 「" + (r.keyword ?? "").slice(0, 15) + "」）"
+      ).join("\n") + "\n（絶対ルールが優先。不該当時の参考）\n\n"
     : "";
 
   const aixLogicSection = (aixLogicRows ?? [])
@@ -1076,11 +883,24 @@ ${aixFlowGuide.slice(0, 1000)}
   // 会話固有の情報（顧客名・会話履歴等）はキャッシュ境界より後ろの user メッセージ側に置く。
   // ※ 以前は jstNowStr がプロンプト2行目にあり、後続の大型ガイドが毎分キャッシュ無効化されていた
   const staticSystem = `あなたは不動産営業AIのアドバイザーです。
+
+## 絶対ルール（必ず最初に確認すること）
+以下のパターンに該当する場合は、他の情報より優先してそのアクションを返すこと。
+
+- application_push確定条件：顧客メッセージに「申し込み」「申込」「決めます」「決めたい」「こちらで申」「入居申込」のいずれかを含む
+- viewing_invite確定条件：「内覧」「内見」「見学したい」「見学希望」「現地確認」「見に行」「みに行」のいずれかを含む。ただし「退去予定」「退去後」「空き予定」が同居する場合はproperty_check_resultを優先
+- property_check_result確定条件：物件URL（suumo/athome/homes/chintai等）が含まれる、または「まだありますか」「空いていますか」「空室ですか」「まだ残って」等の空室確認、または「保証会社」「保証料」「審査」「ペット可」「駐車場」「礼金交渉」等の物件固有条件の質問
+- estimate_sheet確定条件：「費用」「初期費用」「いくら」「スモ割」「割引」のいずれかを含む。ただし物件固有条件（保証会社・ペット等）と同居する場合はproperty_check_resultを優先
+- meeting_place確定条件：日付時刻（月曜/3月5日/午後/AM/PM等）と確定表現（伺います/で大丈夫/でお願い/確定/行けます）が同時に含まれる
+- applyingステータス時：会話ステータスが"applying" → application_push確定
+
+---
+
 不動産賃貸営業の基本フロー: ヒアリング → 物件提案 → 内覧 → 見積 → 申込 の順で顧客を次のステップへ進める。
 
 ${aixLogicGuide}${flowGuideSection}`.trim();
 
-  const prompt = `${brainMetaSection}${ragKnowledgeSection}${attributionSection}${accuracySection}${patternSection}## 現在の会話
+  const prompt = `${brainMetaSection}${ragKnowledgeSection}${candidatesSection}${attributionSection}${accuracySection}${patternSection}## 現在の会話
 顧客名: ${conv.customer_name as string}
 ステータス: ${statusLabel}
 直前のAIXアクション: ${last_aix_action || "なし"}
