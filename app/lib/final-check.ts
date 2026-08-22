@@ -809,10 +809,13 @@ const SONNET_REVISION_STATIC = `あなたは不動産会社のLINE返信文の�
 修正後の文章のみを出力してください（説明・前置き不要）。`;
 
 function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: FinalCheckContext): PromptBlock[] {
+  const brainNote = ctx.brainContextJson
+    ? `\n[BRAIN_META]（返信の目指すべき方向性・修正後もこの方向性を維持すること）\n${ctx.brainContextJson}\n[/BRAIN_META]\n`
+    : "";
   const dynamic = `[ISSUES]
 ${issues.map((i) => `- [${i.code}] ${i.message}（該当箇所:「${i.evidence}」${i.suggestion ? ` / 修正案: ${i.suggestion}` : ""}）`).join("\n")}
 [/ISSUES]
-
+${brainNote}
 [CHECKPOINT]（確認済み事実・最高権威）
 ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [/CHECKPOINT]
