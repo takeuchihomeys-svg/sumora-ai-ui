@@ -516,10 +516,15 @@ const MOVE_IN_TIMING_RULE = `【入居時期の記載ルール — 必ず守る�
 ・空室記載があっても お客様が急いでいない場合 → 「即入居可能」等の入居時期の記載はしない
 ・【🔴 絶対禁止】「〇ヶ月後のご入居にもしっかり対応頂けるお部屋となります」という表現は絶対に使わない`;
 
-async function callClaude(system: string, user: string, action: string): Promise<string> {
+// dynamicSystemSuffix: brainGuidanceNote など顧客別の動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
+async function callClaude(system: string, user: string, action: string, dynamicSystemSuffix?: string): Promise<string> {
   // 1回あたり25秒タイムアウト＋タイムアウト時のみ1回リトライ（最大約50秒 < クライアント60秒abort）
   // 旧45秒×リトライ無しだと、一過性のAPI遅延・ネットワークハングで即エラーになっていた
   const attempt = async (timeoutMs: number): Promise<string> => {
+    const systemBlocks: { type: string; text: string; cache_control?: { type: string } }[] = [
+      { type: "text", text: system, cache_control: { type: "ephemeral" } },
+    ];
+    if (dynamicSystemSuffix) systemBlocks.push({ type: "text", text: dynamicSystemSuffix });
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -532,7 +537,7 @@ async function callClaude(system: string, user: string, action: string): Promise
         model: MODEL,
         max_tokens: maxTokensForAction(action),
         thinking: { type: "disabled" },
-        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        system: systemBlocks,
         messages: [{ role: "user", content: user }],
       }),
       signal: budgetSignal(timeoutMs),
@@ -1789,11 +1794,11 @@ ${name}お気に召されましたらお部屋ご都合よろしいお日にち�
       if (summaryNote) userParts.push(summaryNote);
       if (pspGuidanceNote) userParts.push(pspGuidanceNote);
 
-      const sendSystemFinal = sendSystem + skipViewingInviteNote + sendDbRules + sendDiffNote + componentKnowledgeNote + (sendBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + sendBrainAddendum : "") + brainGuidanceNote;
+      const sendSystemFinal = sendSystem + skipViewingInviteNote + sendDbRules + sendDiffNote + componentKnowledgeNote + (sendBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + sendBrainAddendum : "");
       const sendUserFinal = userParts.join("") + (sendStarNote
         ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + sendStarNote
         : "");
-      const rawSendText = await callClaude(sendSystemFinal, sendUserFinal, currentAction);
+      const rawSendText = await callClaude(sendSystemFinal, sendUserFinal, currentAction, brainGuidanceNote || undefined);
       // normal / widen モードはJSON構成パーツで返す（コンポーネント学習ループ用）
       if (sendMode === "normal" || sendMode === "widen" || sendMode === "viewing") {
         let propertySendComponents: Record<string, string> | null = null;
@@ -1843,9 +1848,10 @@ ${SMORA_COMMON_RULES}
         const rescheduleSystemFinal = rescheduleSystem + (brainAddendumViReschedule ? "\n\n【ブレイン改善ルール】\n" + brainAddendumViReschedule : "");
         const rescheduleUserFinal = greetingTimeNote + `${name}への内覧日程変更メッセージを生成してください。${calendarPart}${recentHistory}`;
         message_text = await callClaude(
-          rescheduleSystemFinal + aixBrainRules,
+          rescheduleSystemFinal + AIX_CURATED_AND_CRITICAL_RULES,
           rescheduleUserFinal,
-          currentAction
+          currentAction,
+          brainGuidanceNote || undefined
         );
         // 早期リターン（以降の通常viewing_invite生成をスキップ）: 共通後処理は finalize() に統一（⑦）
         return finalizeResponse(message_text);
@@ -1915,9 +1921,10 @@ ${calendarBlock}
         const convMatchVISystemFinal = convMatchVISystem + viewingConvMatchDiffNote + (brainAddendumViConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumViConv : "");
         const convMatchVIUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。` + (viewingConvMatchStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingConvMatchStarNote : "");
         const rawVI = await callClaude(
-          convMatchVISystemFinal + aixBrainRules,
+          convMatchVISystemFinal + AIX_CURATED_AND_CRITICAL_RULES,
           convMatchVIUserFinal,
-          currentAction
+          currentAction,
+          brainGuidanceNote || undefined
         );
 
         try {
@@ -2081,7 +2088,7 @@ ${phraseText || "なし"}
       const viewingSystemFinal = system + viewingDbRules + viewingDiffNote + viewingComponentNote + (viewingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + viewingBrainAddendum : "");
       const viewingUserBase = `${name}への内覧お誘いメッセージ。${propNamePart}${vacancyPart}${calendarPart}${templateStructureNote}${recentHistory}`;
       const viewingUserFinal = greetingTimeNote + viewingUserBase + (viewingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingStarNote : "");
-      const rawViewingText = await callClaude(viewingSystemFinal + aixBrainRules, viewingUserFinal, currentAction);
+      const rawViewingText = await callClaude(viewingSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, viewingUserFinal, currentAction, brainGuidanceNote || undefined);
       // JSON構成パーツを解析してコンポーネント学習ループに渡す
       {
         let vComps: Record<string, string> | null = null;
@@ -2181,7 +2188,7 @@ ${SMORA_COMMON_RULES}`;
         const brainAddendumAppConfirm = await loadBrainTemplate("application_push");
         const confirmSystemFinal = confirmSystem + appDbRules + appDiffNote + (brainAddendumAppConfirm ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppConfirm : "");
         const confirmUserFinal = `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}` + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-        message_text = await callClaude(confirmSystemFinal + aixBrainRules, confirmUserFinal, currentAction);
+        message_text = await callClaude(confirmSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, confirmUserFinal, currentAction, brainGuidanceNote || undefined);
 
       } else if (appSubMode === "docs_request") {
         // ── 書類依頼: 申込フォーム返送後の会話から不足書類を特定して追加依頼メッセージを生成
@@ -2265,7 +2272,7 @@ ${SMORA_COMMON_RULES}`;
         const brainAddendumAppDocs = await loadBrainTemplate("application_push");
         const docsSystemFinal = docsRequestSystem + appDbRules + appDiffNote + (brainAddendumAppDocs ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppDocs : "") + "\n\n" + REAL_ESTATE_RULES;
         const docsUserFinal = `${name}への書類依頼メッセージ。${recentHistory}` + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-        const rawDocsText = await callClaude(docsSystemFinal + aixBrainRules, docsUserFinal, "docs_request");
+        const rawDocsText = await callClaude(docsSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, docsUserFinal, "docs_request", brainGuidanceNote || undefined);
         // JSONパース → コンポーネント結合
         // ※ docs_request は aiComponents を返さない（conversation_state が application_push と同じため
         //   STATE_LEARNABLEが一致せず component_diff 学習がゼロになるのを防ぐ）。
@@ -2486,7 +2493,7 @@ ${examplesText}`;
       const brainAddendumApp = await loadBrainTemplate("application_push");
       const appSystemFinal = system + (brainAddendumApp ? "\n\n【ブレイン改善ルール】\n" + brainAddendumApp : "");
       const appUserFinal = appGreetingForUser + userMsg + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-      const rawAppText = await callClaude(appSystemFinal + appDbRules + appDiffNote + compAppealNote + aixBrainRules, appUserFinal, currentAction);
+      const rawAppText = await callClaude(appSystemFinal + appDbRules + appDiffNote + compAppealNote + AIX_CURATED_AND_CRITICAL_RULES, appUserFinal, currentAction, brainGuidanceNote || undefined);
       if (!isScheduled) {
         // simple/hold_view: JSONパーツを解析してコンポーネント学習ループに渡す
         let appComps: Record<string, string> | null = null;
@@ -2657,9 +2664,10 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
 JSONのみ: {"greeting":"①","report":"②（[物件名]解決済み・改行は\\nで）","type_desc":"③","cta":"④またはnull"}`;
 
       const rawGuarantorText = await callClaude(
-        guarantorSystem + guarantorDbRules + guarantorDiffNote + aixBrainRules,
+        guarantorSystem + guarantorDbRules + guarantorDiffNote + AIX_CURATED_AND_CRITICAL_RULES,
         `${name}への保証会社確認報告メッセージ。${recentHistory}`,
-        currentAction
+        currentAction,
+        brainGuidanceNote || undefined
       );
 
       try {
