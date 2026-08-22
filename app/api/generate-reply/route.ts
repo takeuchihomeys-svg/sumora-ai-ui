@@ -2336,10 +2336,20 @@ export async function POST(req: NextRequest) {
     const isFollowUp = allSpeakersInHistory.length > 0 && allSpeakersInHistory[allSpeakersInHistory.length - 1][1] === "スモラ";
 
     // 最後のスモラメッセージを全文抽出（② の検索クエリ・① の表示用）
+    // スプリット送信（連続複数行）を結合した全文を使用。buildGenerationMessages 内の lastStaffMsg と同一ロジック。
     const lastStaffMsgForSearch = (() => {
       const segments = history.split(/\n(?=スモラ:|お客様:)/);
-      const seg = [...segments].reverse().find(s => s.startsWith("スモラ:"));
-      return seg ? seg.replace(/^スモラ:\s*/, "").trim() : undefined;
+      const groups: string[] = [];
+      let cur: string[] = [];
+      for (const seg of segments) {
+        if (seg.startsWith("スモラ:")) {
+          cur.push(seg.replace(/^スモラ:\s*/, "").trim());
+        } else if (seg.startsWith("お客様:")) {
+          if (cur.length > 0) { groups.push(cur.join("\n")); cur = []; }
+        }
+      }
+      if (cur.length > 0) groups.push(cur.join("\n"));
+      return groups.length > 0 ? groups[groups.length - 1] : undefined;
     })();
 
     // ─── 見積書・割引の「約束済み」検出（見積二重宣言の防止）─────────────────
