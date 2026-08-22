@@ -531,7 +531,7 @@ async function callClaude(system: string, user: string, action: string, dynamicS
         "Content-Type": "application/json",
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
-        "anthropic-beta": "prompt-caching-2024-07-31",
+        "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19",
       },
       body: JSON.stringify({
         model: MODEL,
@@ -566,7 +566,7 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
       "Content-Type": "application/json",
       "x-api-key": ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
-      "anthropic-beta": "prompt-caching-2024-07-31",
+      "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19",
     },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
@@ -595,7 +595,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
       "Content-Type": "application/json",
       "x-api-key": ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
-      "anthropic-beta": "prompt-caching-2024-07-31",
+      "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19",
     },
     body: JSON.stringify({
       model: MODEL,

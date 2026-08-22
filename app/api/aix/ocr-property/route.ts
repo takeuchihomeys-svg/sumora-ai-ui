@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 30;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), timeout: 25_000, maxRetries: 1 });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), timeout: 25_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" } });
 
 // 専任物件ピッカー用: 物件スクショから物件名・号室をOCR（Sonnet 5）
 const OCR_SYSTEM = `この画像から物件名と号室を読み取ってください。
