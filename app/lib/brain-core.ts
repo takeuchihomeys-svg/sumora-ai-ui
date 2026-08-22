@@ -1117,7 +1117,7 @@ export async function analyzeConversation(
     .sort((a, b) => a.checkpoint_index - b.checkpoint_index);
   const ragCpText = uniqueRagCps.length > 0
     ? "\n\n【過去の関連セーブデータ（現在の会話に関係する古い事実）】\n" +
-      uniqueRagCps.map(cp => "■ セーブ #" + cp.checkpoint_index + ":\n" + (cp.summary ?? "").slice(0, 600)).join("\n---\n")
+      uniqueRagCps.map(cp => "■ セーブ #" + cp.checkpoint_index + ":\n" + (cp.summary ?? "").slice(0, 1000)).join("\n---\n")
     : "";
   const checkpointText = latestCheckpoint?.summary
     ? "\n【会話セーブデータ（最新・確認済み事実の全量・最重要。ここに書かれた金額/物件/日付と矛盾する提案をしない）】\n" + latestCheckpoint.summary + (checkpointFactsLine ? "\n主要事実: " + checkpointFactsLine : "") + ragCpText
@@ -1332,7 +1332,7 @@ export async function analyzeConversation(
     })
     .slice(0, 8);
   const ragKnowledgeText = ragKnowledge.length > 0
-    ? `\n【関連ナレッジ（この会話に類似する過去の学習・RAG検索）】\n${ragKnowledge.map((k) => `- [${k.category ?? "knowledge"}${k.conversation_state ? `/${k.conversation_state}` : ""}] ${(k.title ?? "").replace(/\n/g, " ").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 800)}`).join("\n")}\n※現在の会話状況に該当するものがあれば aix / closing_strategy / next_steps の判断に反映すること。`
+    ? `\n【関連ナレッジ（この会話に類似する過去の学習・RAG検索）】\n${ragKnowledge.map((k) => `- [${k.category ?? "knowledge"}${k.conversation_state ? `/${k.conversation_state}` : ""}] ${(k.title ?? "").replace(/\n/g, " ").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 1200)}`).join("\n")}\n※現在の会話状況に該当するものがあれば aix / closing_strategy / next_steps の判断に反映すること。`
     : "";
 
   // winning_patterns: 勝率順の成約実績パターン（グローバル・顧客横断）
@@ -1994,7 +1994,7 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
     const historyText = msgs
       .map((m) => {
         const role = m.sender === "customer" ? "顧客" : (m.is_aix_generated ? "スタッフ(AIX)" : "スタッフ");
-        return `${role} ${formatJstDateShort(m.created_at as string)}: ${(m.text ?? "").slice(0, 300)}`;
+        return `${role} ${formatJstDateShort(m.created_at as string)}: ${(m.text ?? "").slice(0, 600)}`;
       })
       .join("\n");
 
