@@ -222,8 +222,15 @@ export async function POST(req: NextRequest) {
     ? `\n【現在対応中のタスク — このタスクの内容に沿ったメッセージに仕上げること】\n${activeTasks.map((t) => `・${TASK_LABEL[t] ?? t}`).join("\n")}`
     : "";
 
-  const system = `${BASE_SYSTEM}${knowledge}${examples}`;
+  // キャッシュ分離: BASE_SYSTEM（全顧客共通）を静的ブロックに、knowledge/examples（動的）を別ブロックに
+  type TextBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
+  const systemBlocks: TextBlock[] = [
+    { type: "text", text: BASE_SYSTEM, cache_control: { type: "ephemeral" } },
+  ];
+  const dynamicContext = [knowledge, examples].filter(Boolean).join("\n");
+  if (dynamicContext) systemBlocks.push({ type: "text", text: dynamicContext });
 
+  // knowledge/examples は user メッセージ側に移動（BASE_SYSTEM だけをキャッシュ）
   const userPrompt = `
 ${nameNote}${conditionsNote}${summaryNote}${taskNote}
 ${stateNote}
@@ -243,12 +250,13 @@ ${currentDraft.trim()}
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": "prompt-caching-2024-07-31",
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 2048,
         thinking: { type: "disabled" },
-        system,
+        system: systemBlocks,
         messages: [{ role: "user", content: userPrompt }],
       }),
       signal: AbortSignal.timeout(25_000),
