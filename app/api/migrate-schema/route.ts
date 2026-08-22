@@ -2378,6 +2378,14 @@ CREATE TABLE IF NOT EXISTS metro_graph (
 );
 ALTER TABLE metro_graph DISABLE ROW LEVEL SECURITY;
 
+-- ── itandi_line_map: リアプロ路線名→itandi路線名変換マップ (2026-08-22追加) ──
+-- realpro_line: STATION_LINE_MAPで使う内部路線名 / itandi_lines: itandiの路線名（複数の場合あり）
+CREATE TABLE IF NOT EXISTS itandi_line_map (
+  realpro_line TEXT PRIMARY KEY,
+  itandi_lines TEXT[] NOT NULL DEFAULT '{}'
+);
+ALTER TABLE itandi_line_map DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
