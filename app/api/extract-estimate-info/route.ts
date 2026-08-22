@@ -71,7 +71,11 @@ const EMPTY: ExtractedEstimate = {
 
 export async function POST(req: NextRequest) {
   // ビルド時の環境変数未定義を避けるため、クライアントはここで初期化する
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60_000 });
+  const client = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    timeout: 60_000,
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+  });
 
   try {
     const body = await req.json() as {
@@ -166,7 +170,7 @@ export async function POST(req: NextRequest) {
       model: "claude-sonnet-5",
       max_tokens: 6000,
       thinking: { type: "disabled" },
-      system: systemPrompt,
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: contentParts }],
     });
 
