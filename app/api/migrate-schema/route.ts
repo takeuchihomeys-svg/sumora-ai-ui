@@ -2386,6 +2386,53 @@ CREATE TABLE IF NOT EXISTS itandi_line_map (
 );
 ALTER TABLE itandi_line_map DISABLE ROW LEVEL SECURITY;
 
+-- ── station_map / region_map: pgvector embedding カラム（2026-08-22追加） ──
+-- ハードコードで解決できない駅名・地名トークンのベクトル類似検索に使用（text-embedding-3-small 1536次元）
+ALTER TABLE station_map ADD COLUMN IF NOT EXISTS embedding vector(1536);
+ALTER TABLE region_map  ADD COLUMN IF NOT EXISTS embedding vector(1536);
+
+-- HNSW インデックス（コサイン距離・既存データへの事後追加も想定して IF NOT EXISTS）
+CREATE INDEX IF NOT EXISTS idx_station_map_embedding ON station_map
+  USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+CREATE INDEX IF NOT EXISTS idx_region_map_embedding ON region_map
+  USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+
+-- match_station_map RPC（/api/embed-maps バッチ後・/api/resolve-area Step2.5で呼ぶ）
+CREATE OR REPLACE FUNCTION match_station_map(
+  query_embedding vector(1536),
+  match_threshold float,
+  match_count int
+)
+RETURNS TABLE (
+  token text, ward text, realpro_lines jsonb, itandi_lines text[], reins_line text, similarity float
+)
+LANGUAGE sql STABLE AS $$
+  SELECT token, ward, realpro_lines, itandi_lines, reins_line,
+         1 - (embedding <=> query_embedding) AS similarity
+  FROM station_map
+  WHERE embedding IS NOT NULL
+    AND 1 - (embedding <=> query_embedding) >= match_threshold
+  ORDER BY embedding <=> query_embedding
+  LIMIT match_count;
+$$;
+
+-- match_region_map RPC
+CREATE OR REPLACE FUNCTION match_region_map(
+  query_embedding vector(1536),
+  match_threshold float,
+  match_count int
+)
+RETURNS TABLE (token text, ward text, similarity float)
+LANGUAGE sql STABLE AS $$
+  SELECT token, ward,
+         1 - (embedding <=> query_embedding) AS similarity
+  FROM region_map
+  WHERE embedding IS NOT NULL
+    AND 1 - (embedding <=> query_embedding) >= match_threshold
+  ORDER BY embedding <=> query_embedding
+  LIMIT match_count;
+$$;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

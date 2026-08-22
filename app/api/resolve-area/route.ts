@@ -259,22 +259,34 @@ async function resolveStationsFromList(
     if ((row.realpro_lines?.length ?? 0) === 0) continue;
     result.realpro.station_names.push(row.token);
     resolved.add(row.token);
+
+    // realpro: route_ids
     for (const line of (row.realpro_lines ?? [])) {
       const rid = maps.routeMap[line];
       if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
     }
-    for (const line of (row.itandi_lines ?? [])) {
+
+    // itandi: itandi_linesカラムが空の場合は realpro_lines → maps.itandiMap でリアルタイム変換
+    if (!result.itandi.station_names.includes(row.token)) result.itandi.station_names.push(row.token);
+    const itandiLines: string[] = (row.itandi_lines?.length ?? 0) > 0
+      ? row.itandi_lines
+      : (row.realpro_lines ?? []).flatMap((l: string) => maps.itandiMap[l] ?? []);
+    for (const line of itandiLines) {
       if (!result.itandi.line_names.includes(line)) result.itandi.line_names.push(line);
     }
-    if (!result.itandi.station_names.includes(row.token)) result.itandi.station_names.push(row.token);
-    if (row.reins_line && !result.reins.station_pairs.some(p => p.station === row.token)) {
+
+    // reins: reins_lineカラムが空の場合は realpro_lines → maps.reinsMap でリアルタイム変換
+    const reinsLine: string | null = row.reins_line
+      ?? (row.realpro_lines ?? []).map((l: string) => maps.reinsMap[l]).find(Boolean)
+      ?? null;
+    if (reinsLine && !result.reins.station_pairs.some((p: { station: string | null }) => p.station === row.token)) {
       const nullIdx = result.reins.station_pairs.findIndex(
-        p => p.line === row.reins_line && p.station === null
+        (p: { line: string; station: string | null }) => p.line === reinsLine && p.station === null
       );
       if (nullIdx >= 0) {
-        result.reins.station_pairs[nullIdx] = { line: row.reins_line, station: row.token };
+        result.reins.station_pairs[nullIdx] = { line: reinsLine, station: row.token };
       } else {
-        result.reins.station_pairs.push({ line: row.reins_line, station: row.token });
+        result.reins.station_pairs.push({ line: reinsLine, station: row.token });
       }
     }
   }
@@ -351,11 +363,19 @@ async function vectorSearchStation(query: string, db: any, maps: LineMaps, resul
       const rid = maps.routeMap[line];
       if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
     }
-    for (const line of (row.itandi_lines ?? [])) {
+    // itandi: itandi_linesカラムが空の場合は realpro_lines → maps.itandiMap でリアルタイム変換
+    const vsItandiLines: string[] = (row.itandi_lines?.length ?? 0) > 0
+      ? row.itandi_lines
+      : (row.realpro_lines ?? []).flatMap((l: string) => maps.itandiMap[l] ?? []);
+    for (const line of vsItandiLines) {
       if (!result.itandi.line_names.includes(line)) result.itandi.line_names.push(line);
     }
-    if (row.reins_line && !result.reins.station_pairs.some(p => p.station === row.token)) {
-      result.reins.station_pairs.push({ line: row.reins_line, station: row.token });
+    // reins: reins_lineカラムが空の場合は realpro_lines → maps.reinsMap でリアルタイム変換
+    const vsReinsLine: string | null = row.reins_line
+      ?? (row.realpro_lines ?? []).map((l: string) => maps.reinsMap[l]).find(Boolean)
+      ?? null;
+    if (vsReinsLine && !result.reins.station_pairs.some((p: { station: string | null }) => p.station === row.token)) {
+      result.reins.station_pairs.push({ line: vsReinsLine, station: row.token });
     }
   }
 
