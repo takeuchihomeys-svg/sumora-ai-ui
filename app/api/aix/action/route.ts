@@ -583,7 +583,12 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
 }
 
 // ※ Sonnet5はtemperature等のサンプリングパラメータ非対応（400エラー）のため渡さない
-async function callClaudeVision(system: string, content: unknown[], action: string): Promise<string> {
+// dynamicSystemSuffix: 顧客固有/呼び出し固有の動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
+async function callClaudeVision(system: string, content: unknown[], action: string, dynamicSystemSuffix?: string): Promise<string> {
+  const systemBlocks: { type: string; text: string; cache_control?: { type: string } }[] = [
+    { type: "text", text: system, cache_control: { type: "ephemeral" } },
+  ];
+  if (dynamicSystemSuffix) systemBlocks.push({ type: "text", text: dynamicSystemSuffix });
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -599,7 +604,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
       // max_tokens:2000でthinkingトークンが全消費されると text ブロックが空になりサイレント失敗する。
       // property_recommendationはthinking不要かつmax_tokensが低いため明示的に無効化する。
       thinking: { type: "disabled" },
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+      system: systemBlocks,
       messages: [{ role: "user", content }],
     }),
     // Sonnet5は画像+長文システムプロンプトで45秒を超えることがある → 60秒に延長
@@ -1135,7 +1140,10 @@ ${SMORA_COMMON_RULES}`;
         .replace("{{phrases}}", phraseText ? `【よく使うフレーズ】\n${phraseText}` : "");
       // greetingTimeNote は固定フォーマット（物件オススメ文）に注入しない
       // recStarNote は user 側に移動（system に入れると固定フォーマットと干渉するため）
-      const recSystemFinal = system + propDbRules + aixBrainRules + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "");
+      // キャッシュ分離: system+propDbRules+共通ルール（全顧客共通・キャッシュHIT率HIGH）を静的ブロックに、
+      // 顧客固有の brainGuidanceNote + recBrainAddendum を動的ブロックに分ける
+      const recSystemStatic = system + propDbRules + AIX_CURATED_AND_CRITICAL_RULES;
+      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "");
 
       const conditionsText = customer_conditions as string | undefined;
       const recCustomerSummary = body.customer_summary as string | undefined;
@@ -1173,7 +1181,7 @@ ${SMORA_COMMON_RULES}`;
         { type: "image", source: { type: "url", url: image_url } },
       ];
 
-      message_text = await callClaudeVision(recSystemFinal, content, currentAction);
+      message_text = await callClaudeVision(recSystemStatic, content, currentAction, recSystemDynamic || undefined);
       // 🌟より前に出力されたシステム注記・確認メモを除去（物件オススメは必ず🌟始まり）
       {
         const _starIdx = message_text.indexOf("🌟");
@@ -2560,7 +2568,8 @@ ${SMORA_COMMON_RULES}`;
         { type: "text", text: `${name}へ送る入居日確認メッセージを作成してください。` },
         { type: "image", source: { type: "url", url: String(image_url) } },
       ];
-      message_text = await callClaudeVision(moveInSystem + moveInDbRules + moveInDiffNote, content, currentAction);
+      const moveInDynamic = [moveInDbRules, moveInDiffNote].filter(Boolean).join("\n\n");
+      message_text = await callClaudeVision(moveInSystem, content, currentAction, moveInDynamic || undefined);
 
     // ── 🔒 保証会社審査確認 ──────────────────────────────────────────────────
     } else if (action === "property_check_result" && check_pattern === "mgmt_guarantor") {
