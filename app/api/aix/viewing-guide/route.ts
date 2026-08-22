@@ -57,11 +57,12 @@ export async function POST(request: NextRequest) {
             "Content-Type": "application/json",
             "x-api-key": ANTHROPIC_API_KEY,
             "anthropic-version": "2023-06-01",
+            "anthropic-beta": "prompt-caching-2024-07-31",
           },
           body: JSON.stringify({
             model: HAIKU_MODEL,
             max_tokens: 256,
-            system: statusPrompt,
+            system: [{ type: "text", text: statusPrompt, cache_control: { type: "ephemeral" } }],
             messages: [{
               role: "user",
               content: [
@@ -130,11 +131,12 @@ export async function POST(request: NextRequest) {
           "Content-Type": "application/json",
           "x-api-key": ANTHROPIC_API_KEY,
           "anthropic-version": "2023-06-01",
+          "anthropic-beta": "prompt-caching-2024-07-31",
         },
         body: JSON.stringify({
           model: HAIKU_MODEL,
           max_tokens: 256,
-          system: ocrPrompt,
+          system: [{ type: "text", text: ocrPrompt, cache_control: { type: "ephemeral" } }],
           messages: [{
             role: "user",
             content: [
@@ -202,7 +204,9 @@ export async function POST(request: NextRequest) {
         // ルール取得失敗時は注入なしで続行（adapt自体は成立させる）
       }
 
-      const systemPrompt = `あなたはスモラ賃貸仲介の営業担当です。
+      // キャッシュ分離: 固定ベース（emojiRule は2パターンのみ）をキャッシュブロックに、
+      // DB取得の adaptRuleNote（動的）を別ブロックに分ける
+      const systemPromptBase = `あなたはスモラ賃貸仲介の営業担当です。
 会話の流れに合わせて、内覧誘導メッセージを自然につなげて書き直してください。
 
 【スモラの文体ルール】
@@ -210,7 +214,12 @@ export async function POST(request: NextRequest) {
 ${emojiRule}
 - 敬語だが親しみやすい
 - お客様の気持ち・温度感に合わせる
-- 本文のみ出力（説明文は一切不要）${adaptRuleNote}`;
+- 本文のみ出力（説明文は一切不要）`;
+
+      const adaptSystemBlocks: { type: string; text: string; cache_control?: { type: string } }[] = [
+        { type: "text", text: systemPromptBase, cache_control: { type: "ephemeral" } },
+      ];
+      if (adaptRuleNote) adaptSystemBlocks.push({ type: "text", text: adaptRuleNote });
 
       const userPrompt = `【直近の会話】\n${conversationText || "（なし）"}\n\n【内覧誘導ベースメッセージ】\n${baseText}\n\n会話の流れに合わせて内覧誘導メッセージを書き直してください。`;
 
@@ -220,12 +229,13 @@ ${emojiRule}
           "Content-Type": "application/json",
           "x-api-key": ANTHROPIC_API_KEY,
           "anthropic-version": "2023-06-01",
+          "anthropic-beta": "prompt-caching-2024-07-31",
         },
         body: JSON.stringify({
           model: SONNET_MODEL,
           max_tokens: 512,
           thinking: { type: "disabled" },
-          system: systemPrompt,
+          system: adaptSystemBlocks,
           messages: [{ role: "user", content: userPrompt }],
         }),
       });

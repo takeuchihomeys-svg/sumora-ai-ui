@@ -5,35 +5,7 @@ export const maxDuration = 30;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
 
-export async function POST(req: NextRequest) {
-  try {
-    const { image_base64, media_type } = await req.json() as {
-      image_base64: string;
-      media_type: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
-    };
-
-    if (!image_base64) {
-      return NextResponse.json({ ok: false, error: "image_base64が空です" }, { status: 400 });
-    }
-
-    const response = await client.messages.create({
-      model: "claude-sonnet-5",
-      max_tokens: 300,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: media_type || "image/jpeg",
-                data: image_base64,
-              },
-            },
-            {
-              type: "text",
-              text: `この画像から賃貸物件の建物名と住所を読み取ってください。
+const MEETING_PLACE_SYSTEM = `この画像から賃貸物件の建物名と住所を読み取ってください。
 物件図面・物件資料・物件サイト・LINE会話・REINS資料など様々な形式が入力されます。
 
 【探し方の優先順位】
@@ -52,8 +24,36 @@ export async function POST(req: NextRequest) {
 
 出力形式（この2行のみ返答・他の説明は不要）:
 物件名: ○○マンション 302号室
-住所: 大阪府○○市○○区○○町1-2-3`,
+住所: 大阪府○○市○○区○○町1-2-3`;
+
+export async function POST(req: NextRequest) {
+  try {
+    const { image_base64, media_type } = await req.json() as {
+      image_base64: string;
+      media_type: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+    };
+
+    if (!image_base64) {
+      return NextResponse.json({ ok: false, error: "image_base64が空です" }, { status: 400 });
+    }
+
+    const response = await client.messages.create({
+      model: "claude-sonnet-5",
+      max_tokens: 300,
+      system: [{ type: "text", text: MEETING_PLACE_SYSTEM, cache_control: { type: "ephemeral" } }],
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: media_type || "image/jpeg",
+                data: image_base64,
+              },
             },
+            { type: "text", text: "物件名と住所を読み取ってください。" },
           ],
         },
       ],
