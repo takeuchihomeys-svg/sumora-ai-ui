@@ -8,7 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" } });
 
 // ── 失敗example バックオフ（2026-08-18追加）──
 // 従来は分析失敗時に diff_analyzed_at を null にリセットしていたため、常に失敗する

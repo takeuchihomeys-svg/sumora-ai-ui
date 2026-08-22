@@ -7,7 +7,7 @@ export const maxDuration = 60;
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
   timeout: 45_000,
-  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" },
 });
 
 // JST日付文字列を返す

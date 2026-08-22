@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
     apiKey,
     timeout: 25_000,
     maxRetries: 2,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" },
   });
 
   try {

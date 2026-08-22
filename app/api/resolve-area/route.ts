@@ -506,7 +506,7 @@ export async function POST(req: NextRequest) {
     // 理由: parseTokens が自然言語構造を破壊するため「阪急茨木市まで30分で通える沿線」の
     //       commute制約が失われていた。全文渡しで自然言語の意味を正確に取得する。
     if (desired_area.trim()) {
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" } });
 
       const systemPrompt = `あなたは大阪府の不動産検索システムの自然言語解析エンジンです。
 エリア希望文字列から不動産検索に必要な情報を構造化して抽出してください。
