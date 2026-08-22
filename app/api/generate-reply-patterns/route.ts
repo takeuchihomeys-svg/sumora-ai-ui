@@ -1,30 +1,12 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { ChatAnthropic } from "@langchain/anthropic";
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE, STATE_SEARCH_ALIASES, CRITICAL_RULES_COMPACT } from "@/app/lib/line-reply-prompts";
 import { validateAndClean } from "@/app/lib/validate-reply";
 
 export const maxDuration = 30;
 
-function getAnalysisModel() {
-  return new ChatAnthropic({
-    model: "claude-haiku-4-5-20251001",
-    maxTokens: 1024,
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
-  });
-}
-
-function getGenerationModel() {
-  return new ChatAnthropic({
-    model: "claude-sonnet-5",
-    maxTokens: 2000,
-    // Sonnet 5 は temperature 等の非デフォルトサンプリングパラメータ非対応（400エラー）のため渡さない。
-    // thinking 省略時は adaptive がデフォルトON → maxTokens 2000 を食い潰すリスクがあるため明示的に無効化。
-    thinking: { type: "disabled" },
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
-  });
-}
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
 
 const PATTERN_LABELS = ["A", "B", "C"] as const;
 
@@ -66,11 +48,13 @@ function getJSTDayEnd(): Date {
 async function analyzeCustomer(message: string, history: string, state: string, name: string): Promise<string> {
   const prompt = `【営業フェーズ】${state}\n【お客様名】${name || "不明"}\n【直近の会話履歴】\n${history || "なし"}\n【最新メッセージ】\n${message}\n\n以下をJSONで分析してください：\n{"emotion":"","real_need":"","approach":"","tone":"","questions":[],"hesitancy_pattern":null,"future_timeline":null,"repeated_concern":null,"current_property":null}`;
   try {
-    const res = await getAnalysisModel().invoke([
-      new SystemMessage("あなたは賃貸仲介の営業コーチです。JSONのみで返答。"),
-      new HumanMessage(prompt),
-    ]);
-    const text = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
+    const res = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      system: "あなたは賃貸仲介の営業コーチです。JSONのみで返答。",
+      messages: [{ role: "user", content: prompt }],
+    });
+    const text = res.content.find((b): b is typeof b & { type: "text"; text: string } => b.type === "text")?.text ?? "";
     const match = text.match(/\{[\s\S]*\}/);
     return match ? match[0] : "";
   } catch { return ""; }
@@ -406,12 +390,13 @@ async function generateAllPatterns(
 ・AともBとも異なる方向性・アプローチ・構成の案
 ・「同じ状況でスタッフが次に考える全く別のアプローチ」
 ・例：A/Bが即アクション宣言なら、Cは状況確認・共感・別の選択肢提示など
-・文体・絵文字・感嘆符はスモラスタイルを守る
+・文体・絵文字・感嘆符はスモラスタイルを守る`;
 
-【現在の営業フェーズ: ${state}】
-${phaseGuide}`;
+  // state/phaseGuide は動的（5パターン）なので userPrompt に移動してキャッシュを保護する
+  const userPrompt = `【現在の営業フェーズ: ${state}】
+${phaseGuide}
 
-  const userPrompt = `お客様名: ${customerName || "不明"}${conditionsNote}${summaryNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${analysisNote}
+お客様名: ${customerName || "不明"}${conditionsNote}${summaryNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${analysisNote}
 
 【直近の会話履歴（スモラ:=自分の返信 / お客様:=顧客）】
 ${history || "なし"}
@@ -424,11 +409,13 @@ ${customerMessage}
 上記⭐実例の文体・言い回し・感嘆符・絵文字を完全に再現しながら、[A]王道案・[B]安心案・[C]別切り口案の3案を生成してください。[B]はAに補足を加えて不安を解消する案、[C]はA・Bと全く異なる切り口で書くこと。`;
 
   try {
-    const res = await getGenerationModel().invoke([
-      new SystemMessage(systemPrompt),
-      new HumanMessage(userPrompt),
-    ]);
-    const text = typeof res.content === "string" ? res.content : "";
+    const res = await anthropic.messages.create({
+      model: "claude-sonnet-5",
+      max_tokens: 2000,
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: userPrompt }],
+    });
+    const text = res.content.find((b): b is typeof b & { type: "text"; text: string } => b.type === "text")?.text ?? "";
 
     // ── パース: 1次試行 ── \[A\] 等で区切るパターン（ラベル直後の改行は任意）
     let variants: string[] = [];

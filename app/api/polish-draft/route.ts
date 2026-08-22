@@ -92,13 +92,13 @@ export async function POST(req: NextRequest) {
     .map((m) => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`)
     .join("\n");
 
-  const system = [
+  // キャッシュ分離: styleGuide+DB静的ルール+タスク指示（全顧客共通）→ 静的ブロック
+  // knowledge/examples（動的DB取得）と name（顧客固有）→ 動的ブロック or user メッセージ
+  const staticSystem = [
     styleGuide,
-    replyRules  ? `\n\n${replyRules}`      : "",
+    replyRules      ? `\n\n${replyRules}`      : "",
     realEstateRules ? `\n\n${realEstateRules}` : "",
-    quickPatterns ? `\n\n${quickPatterns}` : "",
-    knowledgeText ? `\n\n${knowledgeText}` : "",
-    examplesText  ? `\n\n${examplesText}`  : "",
+    quickPatterns   ? `\n\n${quickPatterns}`   : "",
     `
 
 【今回のタスク — 文章の整形・改善】
@@ -112,18 +112,29 @@ export async function POST(req: NextRequest) {
 ・文の順序を変えない（元の文章の並びのまま整える）
 ・絵文字は元の文章にあるものを維持する（新しい絵文字を追加しない・元の絵文字を勝手に削除しない）
 ・LINE向けのため長くしない（整形後の文字数は元の文章の±20%以内に収める）
-・お客様名は「${name}」を使う
 ・整形後の文章のみ出力（説明・コメント・前置きは一切不要）`,
   ].join("");
 
-  const userMsg = `元の文章（この情報をそのまま使って整えてください）:\n${draft}${recentHistory ? `\n\n【直近の会話履歴（流れを踏まえて整形すること）】\n${recentHistory}` : ""}`;
+  const dynamicSystemParts = [
+    knowledgeText ? `\n\n${knowledgeText}` : "",
+    examplesText  ? `\n\n${examplesText}`  : "",
+  ].join("");
+
+  type TextBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
+  const systemBlocks: TextBlock[] = [
+    { type: "text", text: staticSystem, cache_control: { type: "ephemeral" } },
+  ];
+  if (dynamicSystemParts) systemBlocks.push({ type: "text", text: dynamicSystemParts });
+
+  // name はキャッシュされる static ブロックから外して user メッセージに移動
+  const userMsg = `お客様名は「${name}」を使ってください。\n\n元の文章（この情報をそのまま使って整えてください）:\n${draft}${recentHistory ? `\n\n【直近の会話履歴（流れを踏まえて整形すること）】\n${recentHistory}` : ""}`;
 
   try {
     const message = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 1024,
+      system: systemBlocks,
       messages: [{ role: "user", content: userMsg }],
-      system,
     });
 
     // テキストブロックを探して抽出（先頭ブロックがtext以外でも取りこぼさない）
