@@ -466,9 +466,8 @@ function buildGenerationMessages(
   estimatePromised = false,
   // importance=10 の principle（staticBlock に注入してプロンプトキャッシュ対象にする）
   topPrinciples: KnowledgeRow[] = [],
-  // 直前に押されたAIXボタン・テンプレート情報（プロンプト文脈強化）
-  lastAixType: string | null = null,
-  lastTemplateName: string | null = null
+  // 直近AIXボタン履歴テキスト（最新→旧順・RAG文脈強化）
+  lastAixHistoryText: string | null = null
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -723,8 +722,8 @@ function buildGenerationMessages(
 → 返信は短い受付文のみ（例:「かしこまりました😊！！」「確認しご連絡させて頂きます😊！！」）。見積・費用の話を新たに展開しない`
     : "";
 
-  const lastAixLine = lastAixType
-    ? `\n直前AIXボタン: ${lastAixType}${lastTemplateName ? `（テンプレ: ${lastTemplateName}）` : ""} — このアクションの直後に届いたお客様メッセージとして返信を生成すること。`
+  const lastAixLine = lastAixHistoryText
+    ? `\n直近AIXアクション履歴（新→旧）: ${lastAixHistoryText} — 最新のアクション直後のお客様メッセージとして、この流れを踏まえて返信を生成すること。`
     : "";
   const staffContextNote = isFollowUp && lastStaffMsg
     ? `\n【⚠️ 最重要：スモラは既にこのお客様メッセージに返信済み】\nスモラが直前に送った内容：「${lastStaffMsg}」${lastAixLine}\n→ お客様はまだ返信していない。これはその【続きのメッセージ】。前の返信で伝えた内容を絶対に繰り返さない。前の返信を踏まえて補足・追加・次のアクション提案など、自然につながる内容を生成すること。`
@@ -1157,7 +1156,7 @@ function logKnowledgeApply(ids: string[], conversationId: string): void {
 }
 
 // 戻り値: text=プロンプト注入用ナレッジ文字列 / phraseHits=category=phrase のヒット件数（fetchPhrases の二重注入削減判定に使用）
-async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, lastStaffMessage?: string | null, lastAixType?: string | null, lastTemplateName?: string | null): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
+async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, lastStaffMessage?: string | null, lastAixHistoryText?: string | null): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // T1動的選択: spec未指定（後方互換）は全クエリ実行＝従来動作（T2/T3のspecも全enabled）
@@ -1249,7 +1248,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
   if (customerMessage && process.env.OPENAI_API_KEY) {
     const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
-    const lastAixPart = lastAixType ? `[前AIX]${lastAixType}${lastTemplateName ? `(${lastTemplateName})` : ""} ` : "";
+    const lastAixPart = lastAixHistoryText ? `[AIX履歴] ${lastAixHistoryText} ` : "";
     const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
     const searchQuery = safeSlice(`${state}: ${lastAixPart}${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""} ${brainContext}`.trim(), 2000);
 
@@ -2349,19 +2348,17 @@ export async function POST(req: NextRequest) {
     // のいずれかなら estimatePromised=true とし、estimatePromiseAckNote 注入＋enforceAixGates の
     // 置換文切替で「御見積書を作成しお送りします」宣言の再生成を止める。判定不能時は従来動作を維持。
     let estimateAlreadySent = false;
-    let lastAixType: string | null = null;
-    let lastTemplateName: string | null = null;
+    let lastAixHistoryText: string | null = null;
     if (conversationId && !isTemplateOptimize) {
       try {
-        // 最新AIXログ1件（RAG文脈強化）と estimate_sheet 履歴確認を並列取得
-        const [lastAixRes, estLogsRes] = await Promise.all([
+        // 直近3件のAIXログ（RAG文脈強化）と estimate_sheet 履歴確認を並列取得
+        const [lastAixLogsRes, estLogsRes] = await Promise.all([
           supabase
             .from("aix_usage_logs")
-            .select("aix_type, template_name, template_category")
+            .select("aix_type, template_name")
             .eq("conversation_id", conversationId)
             .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle(),
+            .limit(3),
           supabase
             .from("aix_usage_logs")
             .select("id")
@@ -2369,8 +2366,13 @@ export async function POST(req: NextRequest) {
             .eq("aix_type", "estimate_sheet")
             .limit(1),
         ]);
-        lastAixType = lastAixRes.data?.aix_type ?? null;
-        lastTemplateName = lastAixRes.data?.template_name ?? null;
+        const lastAixLogs = (lastAixLogsRes.data ?? []) as Array<{ aix_type: string | null; template_name: string | null }>;
+        if (lastAixLogs.length > 0) {
+          // 「最新 → 2回前 → 3回前」の順で整形（直近の文脈が先頭）
+          lastAixHistoryText = lastAixLogs
+            .map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}`)
+            .join(" → ");
+        }
         estimateAlreadySent = (estLogsRes.data?.length ?? 0) > 0;
       } catch { /* 判定不能時は従来動作（宣言許可）を維持する */ }
     }
@@ -2567,7 +2569,7 @@ export async function POST(req: NextRequest) {
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
-      fetchKnowledge(currentState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixType, lastTemplateName)
+      fetchKnowledge(currentState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixHistoryText)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
@@ -2771,7 +2773,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote, directionNote,
-      estimatePromised, knowledgeResult.topPrinciples, lastAixType, lastTemplateName
+      estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
