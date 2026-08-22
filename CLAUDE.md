@@ -69,6 +69,36 @@ knowledge がない場合はスキップしてよい。
 
 ---
 
+## 🧠 設計思考・アーキテクチャ知識の蓄積（セッション終了時）
+
+アーキテクチャの改善・設計判断・新しいパターンが生まれたセッション終了時に**必ず**以下をINSERTする：
+
+```sql
+INSERT INTO system_design_thinking (title, category, insight, rationale, context, applied_to, tags)
+VALUES (
+  '短いタイトル',
+  'architecture',  -- architecture | prompt_engineering | data_model | ux | performance | ai_design
+  '知見の内容（何をどうしたか）',
+  'なぜそうするか（根拠）',
+  'どういう状況で生まれたか（日付含む）',
+  '適用したファイル・機能',
+  ARRAY['タグ1', 'タグ2']
+);
+```
+
+### 更新ルール
+- 古い知見が上書きされたら → `UPDATE system_design_thinking SET is_current = false WHERE id = '...'`
+- `is_current = false` の行は参照しない（履歴として残すだけ）
+
+### 参照方法（次セッション冒頭・設計作業前）
+```sql
+SELECT title, insight, rationale FROM system_design_thinking
+WHERE is_current = true
+ORDER BY created_at DESC LIMIT 10;
+```
+
+---
+
 ## ノウハウ参照
 
 - `memory/dept_knowhow.md` — 実装パターン・技術ノウハウ（sumora-screening-adminで学んだこと）

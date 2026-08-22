@@ -2248,6 +2248,50 @@ CREATE TABLE IF NOT EXISTS iyeyasu_page_views (
 ALTER TABLE iyeyasu_page_views DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_iyeyasu_page_views_created_at ON iyeyasu_page_views(created_at DESC);
 
+-- ── system_design_thinking（2026-08-22追加）──
+-- 設計思考・アーキテクチャ知識を蓄積するテーブル。
+-- 竹内さんとClaudeが会話で生み出した設計判断・アーキテクチャ知見を蓄積し、
+-- 将来のセッションでBrainやClaudeがRAG検索で過去の設計決定を参照できるようにする。
+-- セッション終了時にINSERT（embedding生成は別途cronで実施）。
+CREATE TABLE IF NOT EXISTS system_design_thinking (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('architecture', 'prompt_engineering', 'data_model', 'ux', 'performance', 'ai_design')),
+  insight TEXT NOT NULL,
+  rationale TEXT,
+  context TEXT,
+  applied_to TEXT,
+  tags TEXT[],
+  embedding vector(1536),
+  is_current BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_system_design_thinking_category ON system_design_thinking(category);
+CREATE INDEX IF NOT EXISTS idx_system_design_thinking_current ON system_design_thinking(is_current) WHERE is_current = true;
+CREATE INDEX IF NOT EXISTS idx_system_design_thinking_embedding ON system_design_thinking USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+ALTER TABLE system_design_thinking DISABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION match_design_thinking(
+  query_embedding vector(1536),
+  match_count INT DEFAULT 5,
+  category_filter TEXT DEFAULT NULL
+)
+RETURNS TABLE(id UUID, title TEXT, category TEXT, insight TEXT, rationale TEXT, similarity FLOAT)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  SELECT dt.id, dt.title, dt.category, dt.insight, dt.rationale,
+    1 - (dt.embedding <=> query_embedding) AS similarity
+  FROM system_design_thinking dt
+  WHERE dt.is_current = true
+    AND (category_filter IS NULL OR dt.category = category_filter)
+    AND dt.embedding IS NOT NULL
+  ORDER BY dt.embedding <=> query_embedding
+  LIMIT match_count;
+END;
+$$;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
