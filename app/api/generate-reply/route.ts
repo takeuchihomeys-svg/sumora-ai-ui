@@ -974,6 +974,7 @@ function buildGenerationMessages(
     meetingPlaceGateNote,
     aixOperationNote,
     topPrinciplesNote,
+    replyContentNote,
   ].filter(Boolean).join("\n");
 
   // Step1廃止（2026-08）: 旧 currentPropertyNote/repeatedConcernNote/hesitancyNote スロットは
@@ -984,7 +985,7 @@ function buildGenerationMessages(
 ${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${staffContextNote}
-${replyContentNote}${aixPropertyRecommendationNote}${aixPropertySendNote}
+${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
 ${phrases}
 
@@ -1014,7 +1015,7 @@ ${examples}${examplesInstruction}
   const systemBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> = [
     { type: "text" as const, text: priorityOrderNote + baseSystem, cache_control: { type: "ephemeral" as const } },
   ];
-  if (dbRules) systemBlocks.push({ type: "text" as const, text: dbRules });
+  if (dbRules) systemBlocks.push({ type: "text" as const, text: dbRules, cache_control: { type: "ephemeral" as const } });
   const humanBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> = [
     { type: "text" as const, text: staticBlock, cache_control: { type: "ephemeral" as const } },
     { type: "text" as const, text: dynamicBlock },
