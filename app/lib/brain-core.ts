@@ -1877,10 +1877,9 @@ function formatJstDateShort(iso: string | null): string {
   return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
 }
 
-function buildCheckpointPrompt(
-  prevSummary: string | null, historyText: string, total: number, shown: number, startOffset: number,
-): string {
-  return `あなたは不動産賃貸仲介のLINE会話の記録係です。会話の「セーブデータ」（チェックポイント）を作成してください。
+// H3(Fable5): checkpoint 生成の静的命令を system に分離し prompt caching を適用。
+// 動的部分（prevSummary・historyText・カウント）のみ user メッセージに残す。
+const CHECKPOINT_STATIC_SYSTEM = `あなたは不動産賃貸仲介のLINE会話の記録係です。会話の「セーブデータ」（チェックポイント）を作成してください。
 このセーブデータは後で返信AIの事実確認（ハルシネーション検査）の正解データとして使われます。
 会話に書かれていない事実を1つでも書くと、誤った返信が「正しい」と判定される事故になります。
 
@@ -1898,12 +1897,6 @@ function buildCheckpointPrompt(
 - 省略可（成約に無関係な細部）: 雑談・天気の話・「ありがとうございます」等の定型返答・すでに解決した細かい質問
 → 前回セーブデータが長くなった場合は、上記優先度に従って圧縮しつつ全量を引き継ぐこと。重要事実は絶対に落とさない。
 
-【前回のセーブデータ】
-${prevSummary ? prevSummary.slice(0, 3500) : "（なし・今回が最初のセーブ）"}
-
-【新しい会話（全${total}件のうち${startOffset + 1}〜${startOffset + shown}件目・日付付き。スタッフ(AIX)=AIツールで送信済み）】
-${historyText}
-
 JSON形式のみで返答（説明・コードブロック不要）:
 {
   "summary": "【確認済み事実】家賃: 12〜15万（8/3顧客提示）/ エリア: 渋谷・恵比寿（8/3顧客）/ 入居希望: 9月上旬（8/3顧客）\\n【AIX使用済み】viewing_invite: 8/5送付 / property_send: 8/7 3件\\n【未解決事項】空室確認: ライオンズ渋谷401（問い合わせ中）/ 内覧日程: 調整中",
@@ -1916,6 +1909,15 @@ JSON形式のみで返答（説明・コードブロック不要）:
 }
 stage は hearing/proposing/applying/contract のいずれか。
 該当事実の無いセクション行は省略可。key_facts の type は confirmed_fact/aix_sent/unresolved の3種のみ。`;
+
+function buildCheckpointUserContent(
+  prevSummary: string | null, historyText: string, total: number, shown: number, startOffset: number,
+): string {
+  return `【前回のセーブデータ】
+${prevSummary ? prevSummary.slice(0, 3500) : "（なし・今回が最初のセーブ）"}
+
+【新しい会話（全${total}件のうち${startOffset + 1}〜${startOffset + shown}件目・日付付き。スタッフ(AIX)=AIツールで送信済み）】
+${historyText}`;
 }
 
 async function getCheckpointEmbedding(text: string): Promise<number[] | null> {
@@ -1988,12 +1990,13 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
       .join("\n");
 
     // 3) Haiku（モジュール共有 client: timeout 60s（共有client） / maxRetries 0 — fire-and-forget なので失敗放置でOK）
-    const prompt = buildCheckpointPrompt(last?.summary ?? null, historyText, total, msgs.length, startOffset);
+    const userContent = buildCheckpointUserContent(last?.summary ?? null, historyText, total, msgs.length, startOffset);
     const response = await client.messages.create({
       model: BRAIN_MODEL,
       max_tokens: 1500,
       thinking: { type: "disabled" },
-      messages: [{ role: "user", content: maskPII(prompt, [customerName]) }],
+      system: [{ type: "text", text: CHECKPOINT_STATIC_SYSTEM, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: maskPII(userContent, [customerName]) }],
     });
     // analyzeConversation と同じ content.find() で thinking ブロック対策
     const raw = response.content.find((c) => c.type === "text")?.text ?? "";
