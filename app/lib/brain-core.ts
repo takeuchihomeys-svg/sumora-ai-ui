@@ -18,7 +18,7 @@ const BRAIN_MODEL = "claude-sonnet-5";
 // 最悪 ~45秒/件 × 4件直列 = maxDuration 120秒超過 → cron_run_logs が "running" のまま残る事故の原因だった
 // claude-sonnet-5のextended thinking対応: タイムアウト30s→60s（長い会話で思考に時間がかかるため）
 // sweep側は MAX_SWEEP_PER_RUN=3 + 並列3 で1ラウンドのみ → 最大60s → maxDuration=120s 内に収まる
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60_000, maxRetries: 0, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60_000, maxRetries: 0, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" } });
 
 // Statuses that indicate a closed/inactive conversation — excluded from brain analysis
 export const BRAIN_SKIP_STATUSES = ["applying", "application", "screening", "contract", "closed_won", "closed_lost", "lost", "approved"];

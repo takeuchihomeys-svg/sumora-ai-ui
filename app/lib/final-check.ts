@@ -119,7 +119,7 @@ async function callSonnet(prompt: PromptContent, timeoutMs: number, maxTokens = 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     signal: AbortSignal.timeout(timeoutMs),
-    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" },
     body: JSON.stringify({
       model: "claude-sonnet-5",
       max_tokens: maxTokens,
@@ -851,7 +851,7 @@ export async function runGroundedRevision(
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" },
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: Math.max(2000, Math.ceil(draft.length * 2.5)),
@@ -967,7 +967,7 @@ ${targets.map((i, idx) => `${idx + 1}. 「${i.evidence}」`).join("\n")}
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" },
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 800,

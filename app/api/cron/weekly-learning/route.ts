@@ -40,7 +40,7 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY ?? "",
   timeout: 120_000,
   maxRetries: 1,
-  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" },
 });
 
 // ── AI質問起票ガード ───────────────────────────────────────────────────────────

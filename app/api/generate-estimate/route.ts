@@ -4,7 +4,7 @@ import { supabase } from "@/app/lib/supabase";
 
 export const maxDuration = 60;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" } });
 
 const STATIC_SYSTEM = `あなたは不動産仲介の見積書作成AIです。
 提供された費用情報をもとに、割引の適用方法を決定し、LINE送付用の見積書テキストを生成してください。
