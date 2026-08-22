@@ -236,7 +236,7 @@ type KnowledgeRow = {
 function formatKnowledgeRow(row: KnowledgeRow): string {
   const phase = row.conversation_state ? (PHASE_LABELS[row.conversation_state] ?? row.conversation_state) : "共通";
   const content = (row.content ?? "").replace(/\s+/g, " ").trim();
-  const truncated = content.length > 200 ? `${content.slice(0, 200)}…` : content;
+  const truncated = content.length > 400 ? `${content.slice(0, 400)}…` : content;
   return `・[${phase}][重要度${row.importance ?? "?"}][${row.category ?? "?"}] ${row.title ?? ""}: ${truncated}`;
 }
 
@@ -249,7 +249,7 @@ export async function fetchActiveKnowledgeSection(conversationState?: string | n
       .eq("hypothesis_status", "confirmed")
       .order("importance", { ascending: false })
       .order("used_count", { ascending: false })
-      .limit(20);
+      .limit(40);
 
     if (error || !topRows || topRows.length === 0) return "";
 
@@ -263,7 +263,7 @@ export async function fetchActiveKnowledgeSection(conversationState?: string | n
         .eq("hypothesis_status", "confirmed")
         .eq("conversation_state", conversationState)
         .order("importance", { ascending: false })
-        .limit(10);
+        .limit(20);
       if (phaseRows && phaseRows.length > 0) {
         const seen = new Set(rows.map((r) => r.title));
         rows = [...rows, ...phaseRows.filter((r) => r.title && !seen.has(r.title))];

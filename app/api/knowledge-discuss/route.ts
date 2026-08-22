@@ -5,6 +5,7 @@ import {
   SYSTEM_OVERVIEW,
   BUSINESS_RULES,
   KNOWLEDGE_FORMAT,
+  DISCUSSION_QUALITY_GUIDE,
   fetchActiveKnowledgeSection,
   phaseLabel,
 } from "@/app/lib/discuss-context";
@@ -57,7 +58,11 @@ ${BUSINESS_RULES}
 - 竹内さんの意見を反映したナレッジの改善案を提案する
 - 改善案の content はプロンプト注入用の業務ルールとして簡潔に書く（500文字以内が目安）
 - 回答は簡潔に（長くても400文字程度）
-- 竹内さんが「反映して」「これでOK」「確定」など確定の意思を示したら「了解しました。確定ボタンを押してください。」とだけ返す`;
+- 竹内さんが「反映して」「これでOK」「確定」など確定の意思を示したら「了解しました。確定ボタンを押してください。」とだけ返す
+
+---
+
+${DISCUSSION_QUALITY_GUIDE}`;
 
 // ── Block2: 動的セクション（対象ナレッジ・承認済みナレッジ）──────────────
 function buildDynamicKnowledgeSection(params: {

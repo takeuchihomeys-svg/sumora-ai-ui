@@ -1240,7 +1240,7 @@ export async function POST(req: NextRequest) {
       // [knowledge_id:] プレフィックスは ai-feedback 回答時の closed-loop に使用。
       // 竹内さんが OK と回答（choice='new' または省略）すると ai-feedback/route.ts が
       // hypothesis → confirmed に昇格させる。ここでは昇格しない。
-      const question = `[knowledge_id:${rule.id as string}]\n❓【教えてください】ナレッジの confirmed 昇格を承認してください\n\n■ 使われそうな場面\n会話フェーズ「${(rule.conversation_state as string) ?? '不明'}」でAIが返信を生成する際に使われるルール候補です。十分なフィードバック実績が積まれたため、確定ルールへの昇格承認が必要です。\n\n━━ 対象ナレッジ ━━\n「${(rule.title as string).slice(0, 50)}」\n\n━━ ルール内容 ━━\n${String((rule.content as string) ?? '').slice(0, 300) || '（内容なし）'}\n\n━━ なぜ確認が必要か ━━\nこのルールは昇格基準を満たしました（correct:${correct}件 / apply:${applyCount}件 / 外れ率:${Math.round(wrongRate * 100)}%）。AI生成物のため、confirmed（確認済み）に昇格させる前に人間の承認が必要です。承認されるまで hypothesis のまま保留します。\n\n❓ 竹内さんへの質問\n① このルールの内容は正しいですか？問題があれば修正内容を教えてください。\n② confirmed に昇格させてよいですか？（OKなら回答するだけで昇格が反映されます）`;
+      const question = `[knowledge_id:${rule.id as string}]\n✅「${(rule.title as string).slice(0, 60)}」\n[${(rule.conversation_state as string) ?? '不明'}フェーズ] correct:${correct}回 / apply:${applyCount}回 / 外れ率${Math.round(wrongRate * 100)}%。confirmedに昇格してOKですか？\n※ルール: ${String((rule.content as string) ?? '').slice(0, 120) || '（内容なし）'}`;
       const dedupKey = question.slice(0, 50).replace(/[%_\\]/g, "\\$&");
       const { data: existsFb } = await supabase
         .from("ai_feedback_items")
@@ -1711,7 +1711,7 @@ export async function POST(req: NextRequest) {
                       existingRulesText: compExistingRules ?? "",
                       conflictReason: reason,
                     })
-                  : `[knowledge_id:${upsertResult.id}]\n❓【ルール適用条件の確認】\n\n━━ 今回の差分（実例）━━\n■ AIが出した文\n${draftPreview || '（記録なし）'}\n\n■ スタッフが修正した文\n${sentPreview || '（修正なし）'}\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 対象ナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n現在のルール内容：\n${contentPreview}\n\n━━ 不明確な点 ━━\n${judgeReason}\n\n❓ このルールの適用条件を教えてください\n■ 使う場面：「顧客が〇〇と言っているとき」「〇〇の提案をした直後」など具体的に\n■ 使わない場面：「〇〇の場合は除外」「AIXボタン〇〇で代わりに対応する場面」など\n■ AIが出した文の何が不適切でしたか？（問題なければ「なし」と明記）`;
+                  : `[knowledge_id:${upsertResult.id}]\n❓「${compResult.title.slice(0, 60)}」\n\nAI: 「${draftPreview.slice(0, 80).replace(/\n/g, ' ')}」→ スタッフ: 「${sentPreview.slice(0, 80).replace(/\n/g, ' ')}」\n\n[${compState}フェーズ] このルール、使う場面と使わない場面を「○○のとき〜する / △△のときは除外」の形で定義してください。\n※確認点: ${judgeReason.slice(0, 120)}`;
                 const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
                 // dedup: 同一 knowledge_id への質問が既にあれば再起票しない（クエリ失敗時は data=null → 起票にフォールバック）
                 const { data: existingCompQ } = await supabase
@@ -1907,7 +1907,7 @@ export async function POST(req: NextRequest) {
                     existingRulesText: fullExistingRules ?? "",
                     conflictReason: reason,
                   })
-                : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n【AIが送った文】\n${draftPreview2 || '（記録なし）'}\n\n【スタッフが修正した文】\n${sentPreview2 || '（修正なし）'}\n\n▶ 変化した部分\n${angleLabel2}\n\n━━ 確認したいナレッジ ━━\n「${result.title}」（フェーズ: ${phase}）\n内容：\n${contentPreview}\n\n━━ 不明確なポイント ━━\n${reason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
+                : `[knowledge_id:${upsertResult.id}]\n❓「${result.title.slice(0, 60)}」\n\nAI: 「${draftPreview2.slice(0, 80).replace(/\n/g, ' ')}」→ スタッフ: 「${sentPreview2.slice(0, 80).replace(/\n/g, ' ')}」\n\n[${phase}フェーズ] このルール、使う場面と使わない場面を「○○のとき〜する / △△のときは除外」の形で定義してください。\n※確認点: ${reason.slice(0, 120)}`;
               const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
               // dedup: 同一 knowledge_id への質問が既にあれば再起票しない（クエリ失敗時は data=null → 起票にフォールバック）
               const { data: existingFullQ } = await supabase
