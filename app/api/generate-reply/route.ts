@@ -2348,31 +2348,14 @@ export async function POST(req: NextRequest) {
     // のいずれかなら estimatePromised=true とし、estimatePromiseAckNote 注入＋enforceAixGates の
     // 置換文切替で「御見積書を作成しお送りします」宣言の再生成を止める。判定不能時は従来動作を維持。
     let estimateAlreadySent = false;
-    let lastAixHistoryText: string | null = null;
     if (conversationId && !isTemplateOptimize) {
       try {
-        // 直近3件のAIXログ（RAG文脈強化）と estimate_sheet 履歴確認を並列取得
-        const [lastAixLogsRes, estLogsRes] = await Promise.all([
-          supabase
-            .from("aix_usage_logs")
-            .select("aix_type, template_name")
-            .eq("conversation_id", conversationId)
-            .order("created_at", { ascending: false })
-            .limit(3),
-          supabase
-            .from("aix_usage_logs")
-            .select("id")
-            .eq("conversation_id", conversationId)
-            .eq("aix_type", "estimate_sheet")
-            .limit(1),
-        ]);
-        const lastAixLogs = (lastAixLogsRes.data ?? []) as Array<{ aix_type: string | null; template_name: string | null }>;
-        if (lastAixLogs.length > 0) {
-          // 「最新 → 2回前 → 3回前」の順で整形（直近の文脈が先頭）
-          lastAixHistoryText = lastAixLogs
-            .map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}`)
-            .join(" → ");
-        }
+        const estLogsRes = await supabase
+          .from("aix_usage_logs")
+          .select("id")
+          .eq("conversation_id", conversationId)
+          .eq("aix_type", "estimate_sheet")
+          .limit(1);
         estimateAlreadySent = (estLogsRes.data?.length ?? 0) > 0;
       } catch { /* 判定不能時は従来動作（宣言許可）を維持する */ }
     }
@@ -2398,6 +2381,8 @@ export async function POST(req: NextRequest) {
       ? await fetchReplyModeGate(conversationId)
       : null);
     const brainMeta = brainGate?.meta ?? null;
+    // AIX履歴: Brain(suggested_aix_meta.last_aix_history)から取得（Brain がaix_usage_logs を読んで組み立て済み）
+    const lastAixHistoryText: string | null = brainMeta?.last_aix_history ?? null;
 
     // ── AIX-META 鮮度判定 → brain鮮度ティア判定（T1=fresh / T2=stale / T3=null）─────
     // 戦略フィールド（closing_strategy / reply_direction / key_topics / avoid_topics /

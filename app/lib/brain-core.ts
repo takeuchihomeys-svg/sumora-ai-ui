@@ -65,6 +65,8 @@ export type SuggestedAixMeta = {
   // 鮮度ゲート基準: この分析が見た最新顧客メッセージの created_at。
   // generate-reply 側で「analyzed_msg_ts >= 最新顧客メッセージ」なら T1（fresh）、古ければ T2（stale）判定に使う
   analyzed_msg_ts?: string | null;
+  // 直近AIXボタン履歴（最新→旧順・generate-reply RAG文脈強化用）
+  last_aix_history?: string | null;
 } | null;
 
 // Canonical mapping from AIX action key → staff guidance note
@@ -835,7 +837,7 @@ export async function analyzeConversation(
     // ② この会話で使われたAIXアクション履歴（メッセージ単位の厳密ラベル用）
     supabase
       .from("aix_usage_logs")
-      .select("aix_type, line_message_id, sent_at, created_at")
+      .select("aix_type, line_message_id, sent_at, created_at, template_name")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(30),
@@ -929,7 +931,7 @@ export async function analyzeConversation(
   // AIXアクションのメッセージ単位ラベル解決
   // 1) line_message_id 完全一致（P4以降のログ・直近30日で97%カバー）
   // 2) 旧ログ fallback: is_aix_generated=true × sent_at ±3分
-  type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string };
+  type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null };
   const aixLogs = (aixLogsResult.data ?? []) as AixLog[];
   const aixTypeByLmid = new Map<string, string>();
   for (const l of aixLogs) {
@@ -2152,6 +2154,18 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   // RAG化 Phase1: 前回brain分析のフェーズ・AIX候補（conversation_direction に前回書き込んだ値）を
   // ルール事前フィルタ用の事前シグナルとして渡す（Sonnet 実行前にフェーズは確定できないため）
   const prevDir = ((conv as unknown as Record<string, unknown>).conversation_direction ?? null) as Record<string, unknown> | null;
+  // 直近AIXボタン履歴（最新3件・新→旧順）をAIX-METAに格納してgenerate-replyへ渡す
+  const { data: recentAixLogsData } = await supabase
+    .from("aix_usage_logs")
+    .select("aix_type, template_name")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(3);
+  const recentAixLogs = (recentAixLogsData ?? []) as Array<{ aix_type: string | null; template_name: string | null }>;
+  const recentAixHistoryText = recentAixLogs.length > 0
+    ? recentAixLogs.map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}`).join(" → ")
+    : null;
+
   const meta = await analyzeConversation(
     conversationId,
     isUrgent,
@@ -2183,7 +2197,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   }
 
   // incremental分析の結果は source を brain_incremental にする（full は analyzeConversation の source をそのまま使用）
-  const metaToWrite = { ...meta, ...(analysisMode === "incremental" ? { source: "brain_incremental" } : {}) };
+  const metaToWrite = { ...meta, last_aix_history: recentAixHistoryText ?? null, ...(analysisMode === "incremental" ? { source: "brain_incremental" } : {}) };
   const { data: writtenRows, error } = await supabase
     .from("conversations")
     .update({
