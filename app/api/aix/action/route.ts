@@ -833,6 +833,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
       hesitancy_pattern?: string | null;
       future_timeline?: string | null;
       customer_questions?: string[] | null;
+      recommended_tone?: string | null;
+      checkpoint_stage?: string | null;
+      current_property?: string | null;
+      template_hint?: string | null;
     };
     const { brainContext, brainMeta: aixBrainMeta } = await (async (): Promise<{ brainContext: string; brainMeta: AixLocalBrainMeta | null }> => {
       if (!conversationId) return { brainContext: "", brainMeta: null };
@@ -849,10 +853,35 @@ async function handleAction(request: NextRequest): Promise<Response> {
       } catch { return { brainContext: "", brainMeta: null }; }
     })();
 
-    // ブレイン制約をプロンプトに注入するノート（全アクション共通: avoid_topics / urgency / 保留パターン 等）
+    // ブレインノートをプロンプトに注入（戦略系→制約系の順）
     const brainGuidanceNote = (() => {
       if (!aixBrainMeta) return "";
       const lines: string[] = [];
+      // ── 戦略系（どう攻めるか）──────────────────────────
+      if (aixBrainMeta.closing_strategy) {
+        lines.push(`【🎯 成約戦略】${aixBrainMeta.closing_strategy}`);
+      }
+      if (aixBrainMeta.checkpoint_stage) {
+        lines.push(`【📍 会話フェーズ】${aixBrainMeta.checkpoint_stage}`);
+      }
+      if (aixBrainMeta.current_property) {
+        lines.push(`【🏠 現在話している物件】${aixBrainMeta.current_property}`);
+      }
+      if (aixBrainMeta.recommended_tone) {
+        const toneGuide: Record<string, string> = {
+          "共感的": "冒頭1文で顧客の気持ちを受け止めてから本題に入る。急かさない",
+          "テキパキ": "前置きを省き結論から書く。1文を短く、要点を先に",
+          "慎重": "断定・楽観表現を避け確認済みの事実のみ伝える",
+          "明るく前向き": "ポジティブな言葉で次の一歩を気持ちよく示す",
+          "普通": "通常のスモラトーン",
+        };
+        const guide = toneGuide[aixBrainMeta.recommended_tone];
+        lines.push(`【文体】${aixBrainMeta.recommended_tone}${guide ? `（${guide}）` : ""}`);
+      }
+      if (aixBrainMeta.template_hint) {
+        lines.push(`【📋 テンプレートヒント】「${aixBrainMeta.template_hint}」スタイルが最も効果的`);
+      }
+      // ── 制約系（外してはいけないガードレール）────────────
       if (aixBrainMeta.avoid_topics?.length) {
         lines.push(`【🚫 絶対に言及しない語・話題（言い換え・同義語も禁止）】${aixBrainMeta.avoid_topics.join("・")}`);
       }
