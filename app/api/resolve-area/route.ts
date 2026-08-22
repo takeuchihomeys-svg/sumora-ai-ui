@@ -1,6 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+
+const _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+async function getEmbedding(text: string): Promise<number[] | null> {
+  try {
+    const res = await _openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: text,
+    });
+    return res.data[0].embedding;
+  } catch (e) {
+    console.warn("[resolve-area] embedding error:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
 
 export const maxDuration = 30;
 
@@ -306,6 +322,59 @@ async function resolveStationsFromList(
   }
 }
 
+// ベクトル類似度検索: station_map / region_map から最近傍を返す
+// embedding が null の行はスキップされる（バッチ済み行のみヒット）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function vectorSearchStation(query: string, db: any, maps: LineMaps, result: ResolveAreaResponse): Promise<void> {
+  const vec = await getEmbedding(query);
+  if (!vec) return;
+
+  const vecStr = JSON.stringify(vec);
+
+  // station_map ベクトル検索（コサイン類似度 >= 0.82）
+  const { data: smHits } = await db.rpc("match_station_map", {
+    query_embedding: vecStr,
+    match_threshold: 0.82,
+    match_count: 5,
+  });
+
+  for (const row of (smHits ?? []) as Array<{
+    token: string; ward: string | null;
+    realpro_lines: string[]; itandi_lines: string[]; reins_line: string | null;
+    similarity: number;
+  }>) {
+    if (result.realpro.station_names.includes(row.token)) continue;
+    if ((row.realpro_lines?.length ?? 0) === 0) continue;
+    result.realpro.station_names.push(row.token);
+    if (!result.itandi.station_names.includes(row.token)) result.itandi.station_names.push(row.token);
+    for (const line of (row.realpro_lines ?? [])) {
+      const rid = maps.routeMap[line];
+      if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
+    }
+    for (const line of (row.itandi_lines ?? [])) {
+      if (!result.itandi.line_names.includes(line)) result.itandi.line_names.push(line);
+    }
+    if (row.reins_line && !result.reins.station_pairs.some(p => p.station === row.token)) {
+      result.reins.station_pairs.push({ line: row.reins_line, station: row.token });
+    }
+  }
+
+  // region_map ベクトル検索（コサイン類似度 >= 0.82）
+  const { data: rmHits } = await db.rpc("match_region_map", {
+    query_embedding: vecStr,
+    match_threshold: 0.82,
+    match_count: 3,
+  });
+
+  for (const row of (rmHits ?? []) as Array<{ token: string; ward: string; similarity: number }>) {
+    if (!row.ward) continue;
+    const code = WARD_CODE_MAP[row.ward];
+    if (code && !result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
+    if (!result.itandi.ward_names.includes(row.ward)) result.itandi.ward_names.push(row.ward);
+    if (!result.reins.ward_names.includes(row.ward))  result.reins.ward_names.push(row.ward);
+  }
+}
+
 interface ResolveAreaResponse {
   realpro: { route_ids: string[]; city_codes: string[]; station_names: string[] };
   itandi:  { line_names: string[]; station_names: string[]; ward_names: string[] };
@@ -592,7 +661,17 @@ commute_constraints: 通勤・通学・乗り換え制約
           // 未解決駅: resolveStationsFromList で一括解決（station_map + line_stations 2往復）
           await resolveStationsFromList(unresolvedStations, result, db, maps);
 
-          // ── Step 3: areas → CONCEPT_AREA_MAP / WARD_CODE_MAP ────────────────
+          // ── Step 2.5: ベクトル検索フォールバック ────────────────────────────
+          // station_map / line_stations でも解決できなかった駅・エリア名をベクトル検索で補完
+          // 表記ゆれ・未登録・口語表現に対応（embedding が null の行はスキップされる）
+          const stillUnresolvedVec = unresolvedStations.filter(
+            s => !result.realpro.station_names.includes(s)
+          );
+          await Promise.all(
+            stillUnresolvedVec.map(s => vectorSearchStation(s, db, maps, result))
+          );
+
+          // ── Step 3: areas → CONCEPT_AREA_MAP / WARD_CODE_MAP / ベクトル検索 ─
           for (const area of ai.areas ?? []) {
             const stripped = area.replace(/エリア$/, "").trim();
             const wards = CONCEPT_AREA_MAP[area] ?? CONCEPT_AREA_MAP[stripped] ?? null;
@@ -604,7 +683,12 @@ commute_constraints: 通勤・通学・乗り換え制約
             } else {
               // 直接 WARD_CODE_MAP に存在する市区名
               const code = WARD_CODE_MAP[area] ?? WARD_CODE_MAP[area + "市"] ?? null;
-              if (code && !result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
+              if (code) {
+                if (!result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
+              } else {
+                // ハードコードで解決できない → ベクトル検索で region_map / station_map を検索
+                await vectorSearchStation(area, db, maps, result);
+              }
             }
           }
 
