@@ -6,7 +6,7 @@ import {
   BUSINESS_RULES,
   KNOWLEDGE_FORMAT,
   DISCUSSION_QUALITY_GUIDE,
-  fetchActiveKnowledgeSection,
+  fetchRelevantKnowledgeSection,
   phaseLabel,
 } from "@/app/lib/discuss-context";
 
@@ -33,6 +33,8 @@ type DiscussBody = {
   conversation_state?: string | null;
   messages?: ChatMessage[];
   userMessage?: string;
+  // AIX-META文字列（closing_strategy / reply_direction 等）。渡せる場合はRAG精度が向上する
+  aix_meta?: string | null;
 };
 
 // ── Block1: 静的システム（byte-stable → prompt cache）────────────────────
@@ -103,14 +105,14 @@ function extractText(res: Anthropic.Message): string {
 // チャット1往復
 // ─────────────────────────────────────────────
 async function handleChat(body: DiscussBody, client: Anthropic): Promise<NextResponse> {
-  const { title, content, category, conversation_state, messages, userMessage } = body;
+  const { title, content, category, conversation_state, messages, userMessage, aix_meta } = body;
 
   if (!title || !content || !userMessage) {
     return NextResponse.json({ ok: false, error: "title / content / userMessage は必須です" }, { status: 400 });
   }
 
-  // 承認済みナレッジTOPを取得（失敗しても打ち合わせは続行）
-  const knowledgeSection = await fetchActiveKnowledgeSection(conversation_state);
+  // RAG: 議論対象ルールに意味的に近い承認済みルールを取得（失敗時はfallback）
+  const knowledgeSection = await fetchRelevantKnowledgeSection(`${title} ${content}`, conversation_state, aix_meta ?? null);
 
   const res = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
@@ -134,14 +136,14 @@ async function handleChat(body: DiscussBody, client: Anthropic): Promise<NextRes
 // 確定・反映（?action=finalize）
 // ─────────────────────────────────────────────
 async function handleFinalize(body: DiscussBody, client: Anthropic): Promise<NextResponse> {
-  const { id, title, content, category, conversation_state, messages } = body;
+  const { id, title, content, category, conversation_state, messages, aix_meta } = body;
 
   if (!id || !title || !content) {
     return NextResponse.json({ ok: false, error: "id / title / content は必須です" }, { status: 400 });
   }
 
-  // 承認済みナレッジTOPを取得（失敗しても finalize は続行）
-  const knowledgeSection = await fetchActiveKnowledgeSection(conversation_state);
+  // RAG: 議論対象ルールに意味的に近い承認済みルールを取得（失敗時はfallback）
+  const knowledgeSection = await fetchRelevantKnowledgeSection(`${title} ${content}`, conversation_state, aix_meta ?? null);
 
   // 1. 会話履歴を元に Sonnet が最終ナレッジ content を抽出/改善
   const finalizeInstruction = `以上の打ち合わせ内容を踏まえて、このナレッジの最終版の【内容】を出力してください。

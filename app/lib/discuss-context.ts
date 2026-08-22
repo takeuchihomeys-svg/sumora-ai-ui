@@ -11,6 +11,7 @@
 // ⚠️ 業務ルールの正は app/lib/line-reply-prompts.ts。変更したらここも更新すること。
 
 import { supabase } from "@/app/lib/supabase";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 // ─────────────────────────────────────────────
 // フェーズ（conversation_state）英語キー → 日本語ラベル
@@ -276,5 +277,53 @@ ${rows.map(formatKnowledgeRow).join("\n")}`;
   } catch (e) {
     console.error("[discuss-context] fetchActiveKnowledgeSection failed:", e);
     return "";
+  }
+}
+
+// ─────────────────────────────────────────────
+// RAG版: 議論対象ルールに意味的に近いナレッジをembedding検索で返す
+// ruleQuery  = タイトル + 内容テキスト（検索の軸）
+// aixMetaContext = closing_strategy / reply_direction 等AIX-METAを文字列化したもの（任意）
+// 失敗時は fetchActiveKnowledgeSection にフォールバック
+// ─────────────────────────────────────────────
+export async function fetchRelevantKnowledgeSection(
+  ruleQuery: string,
+  conversationState?: string | null,
+  aixMetaContext?: string | null
+): Promise<string> {
+  try {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY未設定");
+
+    // AIX-META（closing_strategy / reply_direction 等）をクエリに混ぜてRAG精度を向上
+    const query = [ruleQuery, aixMetaContext].filter(Boolean).join(" ").slice(0, 2000);
+    const embedding = await generateEmbedding(query);
+    if (!embedding) throw new Error("embedding生成失敗");
+
+    const { data: ragHits, error } = await supabase.rpc("match_reply_knowledge", {
+      query_embedding: embedding,
+      match_count: 25,
+      min_importance: 7,
+    }) as {
+      data: Array<{
+        title: string | null;
+        content: string | null;
+        category: string | null;
+        conversation_state: string | null;
+        importance: number | null;
+        similarity: number;
+      }> | null;
+      error: { message: string } | null;
+    };
+
+    if (error) throw new Error(error.message);
+    const rows = (ragHits ?? []).filter(r => (r.similarity ?? 0) >= 0.40);
+    if (rows.length === 0) throw new Error("similarity閾値以上のナレッジなし");
+
+    return `【現在スモラAIが持っているルール（この議題に意味的に近い上位${rows.length}件 / RAG検索）】
+※ これが本番で実際に使われているルールセット。新ルール・改善案がこれらと矛盾しないか必ずチェックすること
+${rows.map(r => formatKnowledgeRow(r as KnowledgeRow)).join("\n")}`;
+  } catch (e) {
+    console.error("[discuss-context] RAG検索失敗→フォールバック:", e instanceof Error ? e.message : e);
+    return fetchActiveKnowledgeSection(conversationState);
   }
 }
