@@ -2334,6 +2334,50 @@ CREATE INDEX IF NOT EXISTS idx_property_search_knowledge_category ON property_se
 CREATE INDEX IF NOT EXISTS idx_property_search_knowledge_importance ON property_search_knowledge(importance DESC);
 ALTER TABLE property_search_knowledge DISABLE ROW LEVEL SECURITY;
 
+-- ── ward_codes: 市区町村コード（JIS X 0402 6桁コード）(2026-08-22追加) ──
+CREATE TABLE IF NOT EXISTS ward_codes (
+  ward TEXT PRIMARY KEY,
+  code TEXT NOT NULL
+);
+ALTER TABLE ward_codes DISABLE ROW LEVEL SECURITY;
+
+-- ── town_codes: 町名コード（市区町村→町名→JIS 8桁コード）(2026-08-22追加) ──
+CREATE TABLE IF NOT EXISTS town_codes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ward TEXT NOT NULL,
+  town TEXT NOT NULL,
+  town_code TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (ward, town)
+);
+CREATE INDEX IF NOT EXISTS idx_town_codes_ward ON town_codes(ward);
+CREATE INDEX IF NOT EXISTS idx_town_codes_town_code ON town_codes(town_code);
+ALTER TABLE town_codes DISABLE ROW LEVEL SECURITY;
+
+-- ── adjacent_area_map: 隣接市区マップ（「周辺も探す」拡張用）(2026-08-22追加) ──
+CREATE TABLE IF NOT EXISTS adjacent_area_map (
+  ward TEXT PRIMARY KEY,
+  adjacent_wards TEXT[] NOT NULL DEFAULT '{}'
+);
+ALTER TABLE adjacent_area_map DISABLE ROW LEVEL SECURITY;
+
+-- ── station_hub_map: 乗換駅ハブ（同一駅の表記ゆれグルーピング）(2026-08-22追加) ──
+CREATE TABLE IF NOT EXISTS station_hub_map (
+  hub_station TEXT PRIMARY KEY,
+  member_stations TEXT[] NOT NULL DEFAULT '{}'
+);
+ALTER TABLE station_hub_map DISABLE ROW LEVEL SECURITY;
+
+-- ── metro_graph: 地下鉄路線グラフ（Dijkstra 最短経路計算用・JSONB edges）(2026-08-22追加) ──
+-- edges: [{from, to, minutes, line}, ...] の配列 JSONB で1行に全路線を保持
+CREATE TABLE IF NOT EXISTS metro_graph (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  version TEXT NOT NULL,
+  edges JSONB NOT NULL DEFAULT '[]',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE metro_graph DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
