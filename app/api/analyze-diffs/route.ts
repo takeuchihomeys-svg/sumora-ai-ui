@@ -2485,12 +2485,44 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - 可視化失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, noEditProcessed, noEditBoosted, timedOut, aixDailyPatterns, aixDailyFeedback, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
+  // ── embedding sweep: importance>=7 で embedding=NULL のルールを自動補完（最大30件/run）──
+  // analyze-diffs でルール生成時に embedding 生成が失敗すると NULL が残り、
+  // match_reply_knowledge の WHERE embedding IS NOT NULL で除外されてRAGで使われない。
+  // このsweepで毎run補完し、新規追加ルールが自動的にRAG検索対象になるようにする。
+  let embeddingSwept = 0;
+  try {
+    if (process.env.OPENAI_API_KEY) {
+      const { data: nullEmbRows } = await supabase
+        .from("ai_reply_knowledge")
+        .select("id, content, conversation_state")
+        .is("embedding", null)
+        .gte("importance", 7)
+        .neq("hypothesis_status", "rejected")
+        .limit(30);
+      for (const row of nullEmbRows ?? []) {
+        const input = buildKnowledgeEmbeddingInput({
+          content: (row as { content?: string }).content ?? undefined,
+          conversation_state: (row as { conversation_state?: string }).conversation_state ?? undefined,
+        });
+        if (!input) continue;
+        const emb = await generateEmbedding(input);
+        if (!emb) continue;
+        await supabase.from("ai_reply_knowledge").update({ embedding: emb }).eq("id", (row as { id: string }).id);
+        embeddingSwept++;
+      }
+      if (embeddingSwept > 0) console.log(`[analyze-diffs] embedding sweep: ${embeddingSwept}件補完`);
+    }
+  } catch (e) {
+    console.warn("[analyze-diffs] embedding sweep 失敗（メイン処理には影響なし）:", e instanceof Error ? e.message : e);
+  }
+
+  await finishCronLog(runLogId, true, { processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, noEditProcessed, noEditBoosted, timedOut, aixDailyPatterns, aixDailyFeedback, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, embeddingSwept, ...(cronWarning ? { cronWarning } : {}) });
   return NextResponse.json({
     ok: true, processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, noEditProcessed, noEditBoosted, timedOut, aixDailyPatterns, aixDailyFeedback,
     sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
+    embeddingSwept,
     ...(cronWarning ? { cronWarning } : {}),
-    message: `${processed}件処理・${learned}件学習・AIX差分${aixProcessed}件処理（${aixLearned}件学習）・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・AIX昇格${promotedAix}件・昇格承認起票${promotionAsked}件・未修正正解${noEditProcessed}件☆付与（ナレッジ${noEditBoosted}件ブースト）・AIX日次集約${aixDailyPatterns}件ルール化（フィードバック${aixDailyFeedback}件起票）・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
+    message: `${processed}件処理・${learned}件学習・AIX差分${aixProcessed}件処理（${aixLearned}件学習）・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・AIX昇格${promotedAix}件・昇格承認起票${promotionAsked}件・未修正正解${noEditProcessed}件☆付与（ナレッジ${noEditBoosted}件ブースト）・AIX日次集約${aixDailyPatterns}件ルール化（フィードバック${aixDailyFeedback}件起票）・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）・embedding補完${embeddingSwept}件${timedOut ? "・⏱タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
   } catch (e) {
     console.error("[analyze-diffs]", e);
