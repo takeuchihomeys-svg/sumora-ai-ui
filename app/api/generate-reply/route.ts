@@ -1149,7 +1149,7 @@ function logKnowledgeApply(ids: string[], conversationId: string): void {
 }
 
 // 戻り値: text=プロンプト注入用ナレッジ文字列 / phraseHits=category=phrase のヒット件数（fetchPhrases の二重注入削減判定に使用）
-async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
+async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, lastStaffMessage?: string | null): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // T1動的選択: spec未指定（後方互換）は全クエリ実行＝従来動作（T2/T3のspecも全enabled）
@@ -1241,7 +1241,8 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
   if (customerMessage && process.env.OPENAI_API_KEY) {
     const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
-    const searchQuery = safeSlice(`${state}: ${customerMessage} ${analysisContext ?? ""} ${brainContext}`.trim(), 2000);
+    const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
+    const searchQuery = safeSlice(`${state}: ${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""} ${brainContext}`.trim(), 2000);
 
     const embedding = await getEmbedding(searchQuery);
     if (embedding) {
@@ -2543,7 +2544,7 @@ export async function POST(req: NextRequest) {
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
-      fetchKnowledge(currentState, message, analysisContext, conversationId, fetchSpec, brainMeta)
+      fetchKnowledge(currentState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
