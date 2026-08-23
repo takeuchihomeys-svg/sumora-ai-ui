@@ -515,14 +515,18 @@ export async function POST(req: NextRequest) {
   }
   let dailyCount = savedCount;
 
-  for (const token of trulyUnknown) {
+  // ── ① DeepSeek を全トークン並列実行（独立・安価・Claude枠を消費しない） ──────────
+  const deepseekResults = await Promise.all(
+    trulyUnknown.map(token => callDeepSeek(token, lineStations))
+  );
+
+  for (let _ti = 0; _ti < trulyUnknown.length; _ti++) {
+    const token = trulyUnknown[_ti];
     let resolved: ResolvedToken = { type: "unknown", ward: null, realpro_lines: [], itandi_lines: [], reins_line: null, source: "web_search" };
     let webSearchAttempted = false; // レート制限でClaude未実行の場合はネガティブキャッシュしない
 
-    // ── ① DeepSeek で判定（line_stationsから検索・成功したらClaudeスキップ・dailyCountも消費しない）──
-    const deepseekResult = await callDeepSeek(token, lineStations);
-    if (deepseekResult) {
-      resolved = deepseekResult;
+    if (deepseekResults[_ti]) {
+      resolved = deepseekResults[_ti]!;
     } else try {
       // ── ② Claude + web_search で調査（楽観的ロックで競合を防ぐ）──
       webSearchAttempted = true; // レート制限・競合でもネガティブキャッシュを書くため、チェックの前に設定

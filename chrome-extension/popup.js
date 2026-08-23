@@ -1173,6 +1173,14 @@ function buildAreaRouteCodes(c, mode = "auto") {
   const parts = parseAreaTokens(rawArea);
   const _stationRoutePairs = []; // 駅モード用: greedy covering set 計算に使用
   for (const part of parts) {
+    // 広域地名マップ（北摂・河内等: 1トークン→複数市区）を最優先でチェック
+    if (MULTI_WARD_MAP[part]) {
+      MULTI_WARD_MAP[part].forEach(ward => {
+        if (WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward]))
+          city_codes.push(WARD_CODE_MAP[ward]);
+      });
+      continue;
+    }
     if (mode === "ward") {
       // 地域モード: WARD_CODE_MAP → NEIGHBORHOOD_WARD_MAP のみ。路線IDは追加しない
       // resolveWardLoose を使い「鶴見区横堤」→「鶴見区」のような区名+駅名連結トークンも正しく解決する
@@ -2588,6 +2596,7 @@ function computeUnknownTokens(areaStr) {
       !STATION_LINE_MAP[t] &&
       !STATION_LINE_MAP[t.replace(/[町村]$/, "")] &&
       !NEIGHBORHOOD_WARD_MAP[t] &&
+      !MULTI_WARD_MAP[t] &&          // 広域地名（北摂等）はAI解決不要
       !LEARNED_WARD_MAP[t] &&        // AI学習済みマップも参照
       !WARD_CODE_MAP[t] &&
       !WARD_CODE_MAP[t + "市"] &&    // 市サフィックス補完（「富田林」→富田林市）はAI解決不要
@@ -2812,6 +2821,11 @@ function openInstructions(siteKey) {
           Object.keys(WARD_CODE_MAP)
             .filter(k => k.startsWith("大阪市"))
             .forEach(k => { if (!wardExpandedTokens.includes(k)) wardExpandedTokens.push(k); });
+        } else if (MULTI_WARD_MAP[t]) {
+          // 広域地名（北摂等）→ 構成市をすべて展開してitandi選択に渡す
+          MULTI_WARD_MAP[t].forEach(ward => {
+            if (!wardExpandedTokens.includes(ward)) wardExpandedTokens.push(ward);
+          });
         } else {
           wardExpandedTokens.push(t);
         }
@@ -2835,6 +2849,7 @@ function openInstructions(siteKey) {
         !STATION_LINE_MAP[t] &&
         !STATION_LINE_MAP[t.replace(/[町村]$/,"")] &&
         !NEIGHBORHOOD_WARD_MAP[t] &&
+        !MULTI_WARD_MAP[t] &&                        // 広域地名（北摂等）は既知
         !WARD_CODE_MAP[t] &&                         // WARD_CODE_MAP収録済みも除外
         !/[都道府県市区郡]/.test(t)
       );
