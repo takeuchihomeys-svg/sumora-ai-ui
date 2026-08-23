@@ -933,8 +933,18 @@ export default function ConditionsPage() {
                     if (rent) condItems.push({ label: "家賃", value: rent });
                     if (c.walk_minutes) condItems.push({ label: "徒歩", value: `${c.walk_minutes}分以内` });
                     if (c.floor_plan || c.layout) condItems.push({ label: "間取り", value: (c.floor_plan || c.layout)! });
+                    if (c.floor_area_min || c.floor_area_max) {
+                      const fMin = c.floor_area_min ? `${c.floor_area_min}㎡以上` : "";
+                      const fMax = c.floor_area_max ? `〜${c.floor_area_max}㎡` : "";
+                      condItems.push({ label: "広さ", value: `${fMin}${fMax}` });
+                    }
                     if (c.building_age) condItems.push({ label: "築年数", value: `${c.building_age}年以内` });
                     if (c.initial_cost_limit) condItems.push({ label: "初期費用", value: `${Math.floor(c.initial_cost_limit / 10000)}万以内` });
+                    if (c.pet != null) condItems.push({ label: "ペット", value: c.pet ? "飼育あり" : "不可" });
+                    if (c.commute_station) condItems.push({ label: "通勤先", value: `${c.commute_station}${c.commute_minutes ? `(${c.commute_minutes}分)` : ""}` });
+                    if (/敷礼なし|敷金礼金なし|敷金礼金0|敷金0礼金0/.test(`${c.preferences ?? ""} ${c.ng_points ?? ""} ${c.other_requests ?? ""}`)) {
+                      condItems.push({ label: "敷礼", value: "敷礼なし" });
+                    }
 
                     return (
                       <div key={c.id}>
@@ -1424,7 +1434,27 @@ export default function ConditionsPage() {
                 </Field>
 
                 <Field label="NGポイント">
-                  <textarea className={INPUT + " h-16 resize-none"} value={form.ng_points ?? ""} onChange={(e) => setForm({ ...form, ng_points: e.target.value })} placeholder="例：1階・南向き以外" />
+                  <div className="flex flex-col gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const SHIKIREI = "敷礼なし";
+                        const has = (form.ng_points ?? "").includes(SHIKIREI);
+                        const next = has
+                          ? (form.ng_points ?? "").replace(new RegExp(`[・、]?${SHIKIREI}[・、]?`), "").replace(/^[・、]|[・、]$/g, "").trim()
+                          : (form.ng_points ?? "").trim() ? `${(form.ng_points ?? "").trim()}・${SHIKIREI}` : SHIKIREI;
+                        setForm({ ...form, ng_points: next });
+                      }}
+                      className={`self-start text-[11px] font-bold px-3 py-1 rounded-full border transition-colors ${
+                        (form.ng_points ?? "").includes("敷礼なし")
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-slate-50 text-slate-600 border-slate-300"
+                      }`}
+                    >
+                      {(form.ng_points ?? "").includes("敷礼なし") ? "敷礼なし ✓" : "敷礼なし"}
+                    </button>
+                    <textarea className={INPUT + " h-16 resize-none"} value={form.ng_points ?? ""} onChange={(e) => setForm({ ...form, ng_points: e.target.value })} placeholder="例：1階・南向き以外" />
+                  </div>
                 </Field>
 
                 <Field label="その他要望">

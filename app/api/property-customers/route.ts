@@ -6,6 +6,8 @@ import { recordConditionHistory } from "@/app/lib/condition-history";
 const CONDITION_TRACKED_FIELDS = [
   "desired_area", "floor_plan", "rent_max", "rent_min",
   "walk_minutes", "move_in_time", "building_age", "initial_cost_limit", "other_requests",
+  "floor_area_min", "floor_area_max", "pet", "commute_station", "commute_minutes",
+  "area_mode", "preferences", "ng_points",
 ];
 
 // 今日まだ未対応かどうか判定
