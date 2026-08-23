@@ -655,6 +655,8 @@ function isFormatMessage(text: string): boolean {
 // 保守的条件: 市区町村サフィックス付きトークンが2個以上、またはトリガーワードと1個以上の組み合わせ
 function isAreaSpecificationMessage(text: string): boolean {
   if (isFormatMessage(text)) return false; // autoParseFormat handles this
+  // 自転車 + 分数 → エリア指定として扱う（自転車圏内→駅リスト展開）
+  if (/自転車|チャリ/.test(text) && /\d+分/.test(text)) return true;
   const matches = text.match(/[^\s]{1,6}[都道府県市区町村]/g) ?? [];
   const hasTrigger = /辺り|あたり|周辺|エリア|で探|希望/.test(text);
   return matches.length >= 2 || (matches.length >= 1 && hasTrigger);
@@ -1560,10 +1562,17 @@ async function detectAndAnnounceAreaChange(
       return;
     }
     const areaJson = await areaRes.json() as {
-      realpro?: { areas?: string[] };
-      itandi?: { areas?: string[] };
+      realpro?: { station_names?: string[]; city_codes?: string[] };
+      itandi?: { station_names?: string[]; ward_names?: string[] };
+      normalized_area?: string | null;
     };
-    const extractedAreas: string[] = areaJson.realpro?.areas ?? areaJson.itandi?.areas ?? [];
+    // 駅名（realpro/itandi） + 区名（ward_names）を dedup して統合
+    const stationNames = [
+      ...(areaJson.realpro?.station_names ?? []),
+      ...(areaJson.itandi?.station_names ?? []),
+    ];
+    const wardNames = areaJson.itandi?.ward_names ?? [];
+    const extractedAreas: string[] = [...new Set([...stationNames, ...wardNames])];
     if (extractedAreas.length === 0) return; // 抽出失敗 → サイレントスキップ
 
     // property_customers の既存エリアを取得

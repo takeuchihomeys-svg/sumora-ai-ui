@@ -166,6 +166,41 @@ async function resolveNearbyWithDeepSeek(station: string, minutes: number): Prom
   }
 }
 
+// 自転車N分圏内の駅・区名をDeepSeekで取得（電車路線に依存しない距離ベース展開）
+async function resolveNearbyByBicycle(
+  baseStation: string,
+  minutes: number,
+): Promise<{ stations: string[]; wards: string[] }> {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return { stations: [], wards: [] };
+  try {
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(15_000),
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        max_tokens: 300,
+        messages: [{ role: "user", content:
+          `大阪府で「${baseStation}駅」から自転車で${minutes}分以内に行ける大阪府内の駅・エリアを列挙してください。\n自転車移動のため路線ではなく距離・時間で判断してください。\nJSONのみ: {"stations":["駅名（駅なし）"],"wards":["大阪市〇〇区"]}\n駅名5〜15件・区名3〜8件程度。架空の駅・区は含めないこと。` }],
+      }),
+    });
+    if (!res.ok) return { stations: [], wards: [] };
+    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const text = (data.choices?.[0]?.message?.content ?? "").trim();
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return { stations: [], wards: [] };
+    const parsed = JSON.parse(match[0]) as { stations?: unknown[]; wards?: unknown[] };
+    return {
+      stations: (parsed.stations ?? []).filter((s): s is string => typeof s === "string" && s.length > 0),
+      wards:    (parsed.wards    ?? []).filter((w): w is string => typeof w === "string" && w.length > 0),
+    };
+  } catch (e) {
+    console.warn("[resolve-area] DeepSeek bicycle error:", e instanceof Error ? e.message : e);
+    return { stations: [], wards: [] };
+  }
+}
+
 // 乗り換え制約 → DeepSeek で路線名リストを取得し resolveLineInternal フィルタ適用
 // ハルシネーション耐性: 返ってきた路線名を resolveLineInternal で既知マップと照合し、
 // 解決できない名称（架空路線）は除外する。
@@ -542,7 +577,7 @@ commute_constraints: 通勤・通学・乗り換え制約
     「乗り換えなし」「直通」「乗り換え0回」→ max_transfers:0（max_minutesは省略）
     「乗り換え1回以内」→ max_transfers:1
     「自転車〜分」「徒歩〜分」→ transport_mode:"bicycle"/"walk"（max_minutesと併用可）
-  ルール: base_stationは勤務地・通勤先の最寄り駅。transport_mode=bicycle/walkはDeepSeek展開不要。
+  ルール: base_stationは勤務地・通勤先の最寄り駅。transport_mode=walkはDeepSeek展開不要。transport_mode=bicycleかつbase_stationがある場合はDeepSeek展開で圏内エリアを取得。
 
 【重要ルール】
 ・「路線名 + 駅名」の形式（例: "阪急電鉄京都線 摂津市"）は、駅名のみ stations に含める。路線名は lines に含めない。
@@ -720,15 +755,33 @@ commute_constraints: 通勤・通学・乗り換え制約
             await Promise.all(
               (ai.commute_constraints ?? []).map(async (constraint) => {
                 const { base_station, max_minutes, max_transfers, transport_mode } = constraint;
-                // 自転車・徒歩はDeepSeek展開不要
-                if (transport_mode === "bicycle" || transport_mode === "walk") {
-                  // 徒歩・自転車モードはDeepSeek展開をスキップするが、max_minutesをsuggested_walk_minutesとして記録
+                // 徒歩はDeepSeek展開不要（walk_minutesとして記録するのみ）
+                if (transport_mode === "walk") {
                   if (max_minutes && !result.suggested_walk_minutes) {
                     result.suggested_walk_minutes = max_minutes;
                   }
-                  // base_stationは駅として直接 station_names に追加（展開はしない）
                   if (base_station && !result.realpro.station_names.includes(base_station)) {
                     result.realpro.station_names.push(base_station);
+                  }
+                  return;
+                }
+                // 自転車: base_station + max_minutes がある場合はDeepSeekで圏内駅・区名を展開
+                if (transport_mode === "bicycle") {
+                  if (base_station && max_minutes) {
+                    const nearby = await resolveNearbyByBicycle(base_station, max_minutes);
+                    await resolveStationsFromList(nearby.stations, result, db, maps);
+                    for (const ward of nearby.wards) {
+                      if (!result.itandi.ward_names.includes(ward)) result.itandi.ward_names.push(ward);
+                    }
+                    // base_station自体も追加
+                    if (!result.realpro.station_names.includes(base_station)) {
+                      result.realpro.station_names.push(base_station);
+                    }
+                  } else {
+                    // base_station なし（「駅から自転車10分」のみ）→ suggested_walk_minutesに記録
+                    if (max_minutes && !result.suggested_walk_minutes) {
+                      result.suggested_walk_minutes = max_minutes;
+                    }
                   }
                   return;
                 }
