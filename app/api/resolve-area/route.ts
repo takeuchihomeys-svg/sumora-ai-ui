@@ -294,13 +294,19 @@ async function resolveNearbyWithDeepSeek(
 }
 
 // 自転車N分圏内の駅・区名をDeepSeekで取得（電車路線に依存しない距離ベース展開）
+// lsc を受け取り、既知駅名ホワイトリストを渡すことでハルシネーションを抑制
 async function resolveNearbyByBicycle(
   baseStation: string,
   minutes: number,
+  lsc: LineStationsCache,
 ): Promise<{ stations: string[]; wards: string[] }> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return { stations: [], wards: [] };
   try {
+    const knownStations = Object.keys(lsc.byStation);
+    const stationWhitelist = knownStations.length > 0
+      ? `\n駅名は必ず以下のリスト内のみ使用してください:\n[${knownStations.slice(0, 300).join(", ")}]`
+      : "";
     const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
       signal: AbortSignal.timeout(15_000),
@@ -309,7 +315,7 @@ async function resolveNearbyByBicycle(
         model: "deepseek-chat",
         max_tokens: 300,
         messages: [{ role: "user", content:
-          `大阪府で「${baseStation}駅」から自転車で${minutes}分以内に行ける大阪府内の駅・エリアを列挙してください。\n自転車移動のため路線ではなく距離・時間で判断してください。\nJSONのみ: {"stations":["駅名（駅なし）"],"wards":["大阪市〇〇区"]}\n駅名5〜15件・区名3〜8件程度。架空の駅・区は含めないこと。` }],
+          `大阪府で「${baseStation}駅」から自転車で${minutes}分以内に行ける大阪府内の駅・エリアを列挙してください。\n自転車移動のため路線ではなく距離・時間で判断してください。${stationWhitelist}\nJSONのみ: {"stations":["駅名（駅なし）"],"wards":["大阪市〇〇区"]}\n駅名5〜15件・区名3〜8件程度。架空の駅・区は含めないこと。` }],
       }),
     });
     if (!res.ok) return { stations: [], wards: [] };
@@ -329,9 +335,43 @@ async function resolveNearbyByBicycle(
   }
 }
 
+// 乗り換え制約 → DB（byStation + byLine）で到達可能路線をBFSで展開（ハルシネーション完全排除）
+// maxTransfers=0: base_station の直通路線のみ
+// maxTransfers=1: 1回乗り換えで到達できる全路線
+// maxTransfers=2: 2回乗り換えで到達できる全路線（大阪全域カバー）
+// TRANSFER_CONNECTIONS の異名駅（梅田↔大阪梅田 等）も展開対象に含める
+function resolveTransferLinesFromDB(
+  baseStation: string,
+  maxTransfers: number,
+  lsc: LineStationsCache,
+): string[] {
+  const reachableLines = new Set<string>();
+
+  // 出発駅 + 異名接続駅の直通路線を起点として収集
+  const seedStations = [baseStation, ...(TRANSFER_CONNECTIONS[baseStation] ?? [])];
+  for (const s of seedStations) {
+    for (const { line } of (lsc.byStation[s] ?? [])) reachableLines.add(line);
+  }
+
+  if (maxTransfers === 0) return [...reachableLines];
+
+  // N回乗り換え分だけ展開（各ラウンドで既存路線の全駅→接続路線を追加）
+  for (let t = 0; t < maxTransfers; t++) {
+    for (const line of [...reachableLines]) {
+      for (const station of (lsc.byLine[line] ?? [])) {
+        for (const { line: l2 } of (lsc.byStation[station] ?? [])) reachableLines.add(l2);
+        for (const alias of TRANSFER_CONNECTIONS[station] ?? []) {
+          for (const { line: l2 } of (lsc.byStation[alias] ?? [])) reachableLines.add(l2);
+        }
+      }
+    }
+  }
+
+  return [...reachableLines];
+}
+
 // 乗り換え制約 → DeepSeek で路線名リストを取得し resolveLineInternal フィルタ適用
-// ハルシネーション耐性: 返ってきた路線名を resolveLineInternal で既知マップと照合し、
-// 解決できない名称（架空路線）は除外する。
+// ※ DB（resolveTransferLinesFromDB）で結果が得られた場合は呼ばれない
 async function resolveTransferLinesWithDeepSeek(baseStation: string, maxTransfers: number, maps: LineMaps): Promise<string[]> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return [];
@@ -885,7 +925,7 @@ commute_constraints: 通勤・通学・乗り換え制約
                 // 自転車: base_station + max_minutes がある場合はDeepSeekで圏内駅・区名を展開
                 if (transport_mode === "bicycle") {
                   if (base_station && max_minutes) {
-                    const nearby = await resolveNearbyByBicycle(base_station, max_minutes);
+                    const nearby = await resolveNearbyByBicycle(base_station, max_minutes, lsc);
                     await resolveStationsFromList(nearby.stations, result, db, maps);
                     for (const ward of nearby.wards) {
                       if (!result.itandi.ward_names.includes(ward)) result.itandi.ward_names.push(ward);
@@ -904,8 +944,12 @@ commute_constraints: 通勤・通学・乗り換え制約
                 }
 
                 if (max_transfers !== undefined && max_transfers !== null) {
-                  // 乗り換え制約: 路線名ベースで展開（resolveLineInternalフィルタ済み）
-                  const lineNames = await resolveTransferLinesWithDeepSeek(base_station, max_transfers, maps);
+                  // 乗り換え制約: DBファースト展開（ハルシネーションなし）→ DB不足時のみDeepSeekフォールバック
+                  const dbLineNames = resolveTransferLinesFromDB(base_station, max_transfers, lsc);
+                  const lineNames = dbLineNames.length >= 1
+                    ? dbLineNames.map(n => resolveLineInternal(n, maps)).filter((n): n is string => n !== null)
+                    : await resolveTransferLinesWithDeepSeek(base_station, max_transfers, maps);
+                  console.log(`[resolve-area] 乗り換え展開: ${base_station} ${max_transfers}回 → ${lineNames.length}路線 (${dbLineNames.length >= 1 ? "DB" : "DeepSeek"})`);
                   for (const internal of lineNames) {
                     const routeId = maps.routeMap[internal];
                     if (routeId && !result.realpro.route_ids.includes(routeId)) result.realpro.route_ids.push(routeId);
