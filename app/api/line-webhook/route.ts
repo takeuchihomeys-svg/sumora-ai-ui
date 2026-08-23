@@ -813,9 +813,10 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
   for (const f of ["move_in_time", "rent_min", "rent_max", "desired_area", "walk_minutes", "floor_plan", "initial_cost_limit", "building_age", "floor_area_min", "preferences", "ng_points", "other_requests"]) {
     if (parsed[f] !== null && parsed[f] !== undefined) parsedFields[f] = parsed[f];
   }
-  // 正式フォーマット受信時のみ additional_conditions をリセット（カジュアルは追記で保持）
+  // 正式フォーマット受信時は新着要望バナーに通知エントリを追加（スタッフへの物件検索通知）
+  // ※ null クリアではなく "format" パターンエントリを書き込み → フロントがバナー表示
   if (isFormalFormat) {
-    parsedFields.additional_conditions = null;
+    parsedFields.additional_conditions = `[${getJSTTimestamp()}|format] 正式条件フォーマット受信 → 物件を検索してください`;
   }
 
   // ── LINEプロフィールから名前を先に取得（名称未設定を防ぐ）────────

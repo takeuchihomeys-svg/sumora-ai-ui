@@ -380,7 +380,7 @@ function parseCondLogLine(text: string): { isLog: boolean; content: string } {
 }
 
 // パターン付き行解析（[MM/DD HH:MM|pattern] 形式・後方互換あり）
-type CondPatternType = "add" | "change" | "exclude" | "url" | null;
+type CondPatternType = "add" | "change" | "exclude" | "url" | "format" | null;
 function parseCondLine(line: string): { isLog: boolean; timestamp: string; pattern: CondPatternType; content: string } {
   // 反映済みログ行: 【YYYY/MM/DD反映済み】...
   if (/^【[^】]*】/.test(line)) {
@@ -399,10 +399,11 @@ function parseCondLine(line: string): { isLog: boolean; timestamp: string; patte
 }
 
 const PATTERN_CFG: Record<NonNullable<CondPatternType>, { label: string; badge: string; defaultMode: "add" | "replace" }> = {
-  add:     { label: "AI: 追加",  badge: "bg-blue-100 text-blue-700 border-blue-300",    defaultMode: "add" },
-  change:  { label: "AI: 変更",  badge: "bg-amber-200 text-amber-800 border-amber-400", defaultMode: "replace" },
-  exclude: { label: "AI: 除外",  badge: "bg-red-100 text-red-700 border-red-300",        defaultMode: "replace" },
-  url:     { label: "URL条件",   badge: "bg-sky-100 text-sky-700 border-sky-300",        defaultMode: "add" },
+  add:     { label: "AI: 追加",  badge: "bg-blue-100 text-blue-700 border-blue-300",     defaultMode: "add" },
+  change:  { label: "AI: 変更",  badge: "bg-amber-200 text-amber-800 border-amber-400",  defaultMode: "replace" },
+  exclude: { label: "AI: 除外",  badge: "bg-red-100 text-red-700 border-red-300",         defaultMode: "replace" },
+  url:     { label: "URL条件",   badge: "bg-sky-100 text-sky-700 border-sky-300",         defaultMode: "add" },
+  format:  { label: "条件受信",  badge: "bg-green-100 text-green-700 border-green-300",   defaultMode: "replace" },
 };
 
 // 確定履歴タイムライン（条件パネル下部に折りたたみ表示）
@@ -6606,29 +6607,31 @@ export default function Home() {
                     ほか{pendingLines.length - 1}件の未反映条件があります
                   </p>
                 )}
-                {/* アクションボタン */}
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => void handleReplaceInChat(selectedConversation.id)}
-                    disabled={reflectLoadingChat}
-                    className={`flex-1 rounded-xl border py-1.5 text-[12px] font-bold active:opacity-70 disabled:opacity-50 ${
-                      recommendedMode === "replace"
-                        ? "border-amber-600 bg-amber-500 text-white shadow-sm"
-                        : "border-amber-400 bg-white text-amber-700"
-                    }`}
-                  >
-                    {reflectLoadingChat ? "解析中…" : "入れ替える"}
-                  </button>
-                  <button
-                    onClick={() => void handleReflectInChat(selectedConversation.id)}
-                    disabled={reflectLoadingChat}
-                    className={`flex-1 rounded-xl py-1.5 text-[12px] font-bold text-white active:opacity-70 disabled:opacity-50 shadow-sm ${
-                      recommendedMode === "add" ? "bg-amber-600" : "bg-amber-500"
-                    }`}
-                  >
-                    追加する
-                  </button>
-                </div>
+                {/* アクションボタン: format パターン（正式フォーマット受信）はクリアのみ */}
+                {latest.pattern !== "format" && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => void handleReplaceInChat(selectedConversation.id)}
+                      disabled={reflectLoadingChat}
+                      className={`flex-1 rounded-xl border py-1.5 text-[12px] font-bold active:opacity-70 disabled:opacity-50 ${
+                        recommendedMode === "replace"
+                          ? "border-amber-600 bg-amber-500 text-white shadow-sm"
+                          : "border-amber-400 bg-white text-amber-700"
+                      }`}
+                    >
+                      {reflectLoadingChat ? "解析中…" : "入れ替える"}
+                    </button>
+                    <button
+                      onClick={() => void handleReflectInChat(selectedConversation.id)}
+                      disabled={reflectLoadingChat}
+                      className={`flex-1 rounded-xl py-1.5 text-[12px] font-bold text-white active:opacity-70 disabled:opacity-50 shadow-sm ${
+                        recommendedMode === "add" ? "bg-amber-600" : "bg-amber-500"
+                      }`}
+                    >
+                      追加する
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })()}
