@@ -205,7 +205,9 @@ function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBloc
 以下はこの会社の絶対ルール一覧です。返信文が各ルールに違反していないか、1つずつ照合してください。
 特に「通常返信AIは宣言のみ、実行はAIX」の境界線：
 - 内覧の具体的な候補日時（「8/7（木）14:00〜」等）を提示 → 違反
-- 見積書の送付文・金額内訳 → 違反 / 住所・集合場所・集合時間の案内 → 違反
+- 初期費用の金額・内訳を直接提示（「敷金○万円・礼金○万円・合計○万円」等）→ 違反 / AIX_BOUNDARY_ESTIMATE
+  【例外】「御見積書を作成しお送りします」「最大限割引した御見積書をお送りします」等の作成宣言のみ（金額なし）はOK
+- 住所・集合場所・集合時間の案内 → 違反
 - 物件名・家賃・間取りの初出提示 → 違反 / 申込確定文・必要書類リスト → 違反
 - 入居可能日・退去日の回答（希望時期を「聞く」のはOK、「答える」のはNG）→ 違反
 - 「確認してご連絡します」の約束（AIX【確認します】と二重になる）→ 違反
@@ -238,9 +240,14 @@ ${finalCheckRulesSliced ? `[FINAL_CHECK_RULES]\n${finalCheckRulesSliced}\n[/FINA
 空室状況について管理会社に確認してご連絡いたします。
 → issues: []
 
-【出力例4 - AIX_BOUNDARY_ESTIMATE 違反】
+【出力例4 - AIX_BOUNDARY_ESTIMATE 違反（金額内訳の直接提示）】
 敷金2ヶ月分・礼金1ヶ月分・保証料家賃の50%で、初期費用の合計は約35万円になります。
-→ issues: [{"code":"AIX_BOUNDARY_ESTIMATE","summary":"見積書の金額内訳をAIXを使わずに直接提示している","evidence":"初期費用の合計は約35万円になります","pass":"rule_check"}]
+→ issues: [{"code":"AIX_BOUNDARY_ESTIMATE","summary":"初期費用の金額内訳をAIXを使わずに直接提示している","evidence":"初期費用の合計は約35万円になります","pass":"rule_check"}]
+
+【出力例4b - 問題なし（作成宣言のみ・金額内訳なし）】
+かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！
+→ issues: []
+（理由: 金額・内訳の直接提示ではなく、AIXシートで実際の数字を送る前提の「作成宣言のみ」。AIX_BOUNDARY_ESTIMATEに該当しない）
 
 【出力例5 - AIX_BOUNDARY_PROPERTY 違反】
 エクセレント目黒502号室、家賃9万5千円・2LDKのお部屋をご案内できます。
@@ -272,6 +279,12 @@ ${finalCheckRulesSliced ? `[FINAL_CHECK_RULES]\n${finalCheckRulesSliced}\n[/FINA
 
 【AIX境界線チェックの判断基準】
 「通常返信AIは宣言のみ・実行はAIX」の原則に基づく境界線の正確な判断:
+
+【初期費用・見積（AIX_BOUNDARY_ESTIMATE）】
+OK: 「御見積書を作成してお送りします」「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」（金額なし・AIXシートが実際の数字を送る前提の宣言）
+OK: 「初期費用については御見積書にてご案内させていただきます」（案内の予告のみ）
+違反: 「敷金○ヶ月分・礼金○ヶ月分・保証料○%で初期費用合計は約○万円です」（金額・内訳の直接提示）
+違反: 「初期費用は○万円になります」（具体的な金額の直接提示）
 
 【内覧関連（AIX_BOUNDARY_VIEWING / AIX_BOUNDARY_MEETING）】
 OK: 「内覧しませんか？」「内覧をご希望ですか？」「内覧のご要望があればご連絡ください」（意向確認のみ）
@@ -805,6 +818,9 @@ const SONNET_REVISION_STATIC = `あなたは不動産会社のLINE返信文の�
 3. AIX_BOUNDARY_* の指摘 → 具体的な情報を削除し「改めてご連絡いたします」等に置き換える
 4. FABRICATED_* の指摘 → 該当の主張を削除（[CHECKPOINT]に正しい事実があれば置き換え可）
 5. [RULES]の禁止語彙・禁止表現を使わない
+6. MISSED_QUESTION / STAGE_MISMATCH 指摘がある場合は [CUSTOMER_MESSAGE] の内容を正確に読み取り、
+   顧客が実際に聞いていること・伝えていることに沿った返信に全体を書き直す。
+   「見積書を作成します」等の宣言を顧客が求めていないのに入れないこと。
 
 修正後の文章のみを出力してください（説明・前置き不要）。`;
 
@@ -812,10 +828,16 @@ function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: Fin
   const brainNote = ctx.brainContextJson
     ? `\n[BRAIN_META]（返信の目指すべき方向性・修正後もこの方向性を維持すること）\n${ctx.brainContextJson}\n[/BRAIN_META]\n`
     : "";
+  const customerMsgNote = ctx.lastCustomerMessage
+    ? `\n[CUSTOMER_MESSAGE]（この返信の宛先：顧客の最新メッセージ。MISSED_QUESTION/STAGE_MISMATCH指摘の修正はこの内容に沿って行うこと）\n${ctx.lastCustomerMessage.slice(0, 1500)}\n[/CUSTOMER_MESSAGE]\n`
+    : "";
+  const historyNote = ctx.recentMessages?.length
+    ? `\n[HISTORY]（直近会話履歴・最新5件）\n${formatHistory(ctx.recentMessages, 5)}\n[/HISTORY]\n`
+    : "";
   const dynamic = `[ISSUES]
 ${issues.map((i) => `- [${i.code}] ${i.message}（該当箇所:「${i.evidence}」${i.suggestion ? ` / 修正案: ${i.suggestion}` : ""}）`).join("\n")}
 [/ISSUES]
-${brainNote}
+${customerMsgNote}${historyNote}${brainNote}
 [CHECKPOINT]（確認済み事実・最高権威）
 ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [/CHECKPOINT]

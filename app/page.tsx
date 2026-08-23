@@ -6805,12 +6805,21 @@ export default function Home() {
                           onContextMenu={(e) => { e.preventDefault(); setContextMenu({ messageId: message.id, x: e.clientX, y: e.clientY, text: message.text, sender: message.sender }); }}
                         >
                           {/* 引用（リプライ）元メッセージの表示 */}
-                          {isCustomer && message.quotedMessageId && quotedMessageMap.get(message.quotedMessageId) && (() => {
-                            const quoted = quotedMessageMap.get(message.quotedMessageId)!;
+                          {isCustomer && message.quotedMessageId && (() => {
+                            const quoted = quotedMessageMap.get(message.quotedMessageId!);
+                            const targetMsgId = quoted ? lineMessageIdToMsgId.get(message.quotedMessageId!) : undefined;
+                            if (!quoted) {
+                              // 引用元が未解決でもバナーは表示（元メッセージへのジャンプは不可）
+                              return (
+                                <div className="mb-1 flex items-start gap-1 rounded border-l-2 border-gray-300 bg-gray-100 px-2 py-1 text-[11px] text-gray-400">
+                                  <span className="shrink-0">↩ [引用]</span>
+                                  <span className="truncate text-gray-400">（メッセージを参照）</span>
+                                </div>
+                              );
+                            }
                             const label = quoted.imageUrl || quoted.text === "[画像]"
                               ? "[画像]"
                               : quoted.text.slice(0, 30) + (quoted.text.length > 30 ? "…" : "");
-                            const targetMsgId = lineMessageIdToMsgId.get(message.quotedMessageId);
                             const handleQuoteClick = () => {
                               if (!targetMsgId) return;
                               const el = document.getElementById(`msg-${targetMsgId}`);
