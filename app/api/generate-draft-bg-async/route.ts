@@ -14,6 +14,102 @@ function getDb() {
 // brain-core/BRAIN_SKIP_STATUSES・line-webhook/BG_ASYNC_SKIP_STATUSESと同一集合を維持すること
 const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost", "lost", "approved"]);
 
+// ── 脳-DBブリッジ: condition_change_type 検出後にHaikuで条件を抽出しDB更新 ──────────────
+// brain が suggested_aix_meta に condition_change_type を書き込んだ後、
+// generate-reply のプロンプト注入だけでなく property_customers の実際のフィールドも更新する。
+// P4 / autoParseFormat が既にバナーエントリを追加済みの場合は重複追加しない。
+const BRAIN_CONDITION_FOCUS: Record<string, { fields: string[]; prompt: string; pattern: "add" | "change" }> = {
+  area_change:     { fields: ["desired_area"], prompt: "エリア・地域・最寄り駅の変更", pattern: "change" },
+  rent_change:     { fields: ["rent_min", "rent_max"], prompt: "家賃・予算の変更（万円単位に注意）", pattern: "change" },
+  layout_change:   { fields: ["floor_plan"], prompt: "間取りの変更", pattern: "change" },
+  equip_add:       { fields: ["preferences"], prompt: "設備・こだわり条件の追加", pattern: "add" },
+  condition_relax: { fields: ["desired_area", "rent_max", "walk_minutes", "building_age"], prompt: "条件の緩和・選択肢の拡大", pattern: "change" },
+  pickup_request:  { fields: ["desired_area", "floor_plan", "rent_max"], prompt: "物件ピックアップ依頼の条件確認", pattern: "change" },
+  multi:           { fields: ["desired_area", "floor_plan", "rent_max", "rent_min", "walk_minutes", "move_in_time", "building_age", "preferences", "other_requests"], prompt: "複数条件の変更・追加", pattern: "change" },
+};
+const BRAIN_COND_LABELS: Record<string, string> = {
+  desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限",
+  walk_minutes: "徒歩分数", move_in_time: "入居時期", building_age: "築年数",
+  initial_cost_limit: "初期費用上限", preferences: "こだわり", other_requests: "その他",
+};
+const BRAIN_NUMERIC = new Set(["rent_min", "rent_max", "initial_cost_limit", "walk_minutes", "building_age"]);
+
+async function applyBrainConditionChange(
+  db: ReturnType<typeof getDb>,
+  pcId: string,
+  targetMessage: string,
+  conditionChangeType: string,
+): Promise<void> {
+  const focus = BRAIN_CONDITION_FOCUS[conditionChangeType];
+  if (!focus) return;
+
+  const { data: pc } = await db.from("property_customers")
+    .select("additional_conditions, desired_area, floor_plan, rent_max, rent_min, walk_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests")
+    .eq("id", pcId).maybeSingle();
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 300,
+      messages: [{ role: "user", content: `お客さんのメッセージから「${focus.prompt}」に関する条件を抽出してください。\n\n【お客さんのメッセージ】\n${targetMessage.slice(0, 400)}\n\n明示された条件のみ（推測禁止）。JSONのみで返してください（不明な項目は省略）:\n{"desired_area":"エリア・駅名","floor_plan":"間取り（例:1LDK）","rent_max":家賃上限円整数,"rent_min":家賃下限円整数,"walk_minutes":徒歩分数整数,"move_in_time":"入居時期","building_age":築年数上限整数,"initial_cost_limit":初期費用上限円整数,"preferences":"こだわり条件","other_requests":"その他要望"}` }],
+    }),
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!res.ok) return;
+
+  const d = await res.json() as { content?: Array<{ type: string; text?: string }> };
+  const raw = (d.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "")
+    .replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim();
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) return;
+  let extracted: Record<string, unknown>;
+  try { extracted = JSON.parse(m[0]) as Record<string, unknown>; } catch { return; }
+
+  // 家賃バリデーション（万円単位誤り自動修正）
+  for (const f of ["rent_min", "rent_max", "initial_cost_limit"]) {
+    const v = extracted[f];
+    if (typeof v === "number" && v > 0) {
+      if (v <= 300) extracted[f] = v * 10000;
+      else if (v > 500000 && f !== "initial_cost_limit") extracted[f] = v / 10;
+    }
+  }
+
+  const updates: Record<string, unknown> = {};
+  const changedFields: Record<string, unknown> = {};
+  for (const f of focus.fields) {
+    const v = extracted[f];
+    if (v === null || v === undefined || v === "") continue;
+    if (BRAIN_NUMERIC.has(f) && typeof v !== "number") continue;
+    updates[f] = v;
+    const existing = (pc as Record<string, unknown> | null)?.[f];
+    if (existing !== v) changedFields[f] = v;
+  }
+  if (Object.keys(updates).length === 0) return;
+
+  await db.from("property_customers")
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq("id", pcId);
+  console.log(`[bg-async] brain-condition-bridge: pcId=${pcId} type=${conditionChangeType} fields=${Object.keys(updates).join(",")}`);
+
+  // 既存pendingバナーエントリがない場合のみ追加（P4/autoParseFormat との重複防止）
+  const hasPending = ((pc?.additional_conditions as string | null) ?? "")
+    .split("\n").some(l => l.trim() && !l.startsWith("【"));
+  if (!hasPending && Object.keys(changedFields).length > 0) {
+    const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const ts = `${String(jst.getMonth() + 1).padStart(2, "0")}/${String(jst.getDate()).padStart(2, "0")} ${String(jst.getHours()).padStart(2, "0")}:${String(jst.getMinutes()).padStart(2, "0")}`;
+    const note = Object.entries(changedFields).map(([k, v]) => `${BRAIN_COND_LABELS[k] ?? k}: ${v}`).join("、");
+    const pendingEntry = `[${ts}|${focus.pattern}] ${note}`;
+    const { data: latest } = await db.from("property_customers")
+      .select("additional_conditions").eq("id", pcId).maybeSingle();
+    const prev = (latest?.additional_conditions as string | null) ?? "";
+    await db.from("property_customers")
+      .update({ additional_conditions: prev ? `${prev}\n${pendingEntry}` : pendingEntry })
+      .eq("id", pcId);
+  }
+}
+
 const STATUS_ALIAS: Record<string, string> = {
   first_reply:             "hearing",
   condition_hearing:       "hearing",
@@ -141,6 +237,16 @@ export async function POST(req: NextRequest) {
       } catch (brainErr) {
         console.warn("[bg-async] brain serial failed（従来フォールバックで続行）:", String(brainErr), "convId:", convId);
         console.log(JSON.stringify({tag:"degradation:T3",stage:"brain-gate-error",conversationId:convId,reason:"brain_exception",staleAgeMs:null,error:String(brainErr).slice(0,200)}));
+      }
+
+      // 脳-DBブリッジ: 条件変更検出 → DB自動更新（返信プロンプト注入だけでなくDB側にも反映）
+      if (brainGateDirect?.meta?.condition_change_type && conv.property_customer_id) {
+        void applyBrainConditionChange(
+          db,
+          conv.property_customer_id as string,
+          targetMessage,
+          brainGateDirect.meta.condition_change_type as string,
+        ).catch((e) => console.warn("[bg-async] brain-condition-bridge error:", e));
       }
 
       const { data: pc } = conv.property_customer_id

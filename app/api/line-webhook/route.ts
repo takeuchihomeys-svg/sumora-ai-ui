@@ -625,7 +625,7 @@ function isFormatMessage(text: string): boolean {
   const changeKeywords = [
     "変えたい", "変更", "に変えて", "に変更", "にしたい", "にしてほしい",
     "やっぱり", "修正", "更新", "に変わ", "に移", "広げ", "せばめ",
-    "上げ", "下げ", "にしようかな", "検討",
+    "上げ", "下げ", "にしようかな",
     // EXCLUDE系: 除外・NG化の意図
     "は無し", "はなし", "除外", "やめ", "外して", "抜い",
     // ADD系: 条件追加の意図
@@ -993,8 +993,12 @@ async function extractConditionsFromCasualReply(
   if (/^https?:\/\/\S+$/.test(customerText.trim())) return; // URLのみは対象外
   if (isPropertySiteUrl(customerText)) return; // 物件サイトURL含む → 物件シェアであり条件更新ではない
 
-  // スタッフの質問が条件ヒアリング文脈かを確認（対象外は即リターン）
-  const isConditionContext = /ご希望|エリア|間取り|家賃|いつ|駅|どこ|条件|予算|入居|徒歩|築/.test(staffText);
+  // スタッフの質問が条件ヒアリング文脈かを確認
+  // ※ "いつ"/"どこ"/"駅" 単体は内覧・案内文脈でも出るため除外。内覧・集合・案内が含まれる場合もスキップ
+  const hasStrongCondSignal = /ご希望|希望エリア|希望間取り|希望家賃|ご予算|入居時期|初期費用|こだわり|徒歩.*何分|何分.*徒歩|築年数/.test(staffText);
+  const hasMedCondSignal = /エリア|間取り|家賃|予算|入居/.test(staffText);
+  const isViewingContext = /内覧|集合場所|ご案内.*場所|案内.*場所/.test(staffText);
+  const isConditionContext = (hasStrongCondSignal || hasMedCondSignal) && !isViewingContext;
   if (!isConditionContext) return;
 
   // conversations から property_customer_id を取得
