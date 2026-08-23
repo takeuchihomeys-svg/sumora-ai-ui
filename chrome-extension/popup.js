@@ -592,6 +592,12 @@ function resolveStation(rawInput) {
   if (_aliased && (STATION_LINE_MAP[_aliased] || LEARNED_STATION_MAP[_aliased])) return _aliased;
   if (STATION_LINE_MAP[clean]) return clean;                                 // 完全一致（ハードコード）
   if (LEARNED_STATION_MAP[clean]) return clean;                             // 完全一致（学習済み）
+  // の/ノ・ヶ/ケ 表記ゆれ正規化（「八戸の里」→「八戸ノ里」）
+  const normKana = clean.replace(/の/g, "ノ").replace(/ヶ/g, "ケ");
+  if (normKana !== clean) {
+    if (STATION_LINE_MAP[normKana]) return normKana;
+    if (LEARNED_STATION_MAP[normKana]) return normKana;
+  }
   // 地域名ガード: 市・区・郡・市内・通り・丁目・地区などで終わるトークンは駅名のあいまい一致に回さない
   // （例: "大阪市内" → "大阪" 駅、"京橋通り" → "京橋" 駅 への誤変換を防止。
   //   摂津市駅・堺市駅など実在の「〜市」駅は上の完全一致で既に解決済みなのでここには来ない）
