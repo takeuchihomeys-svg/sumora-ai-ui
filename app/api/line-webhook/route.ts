@@ -658,7 +658,7 @@ function isAreaSpecificationMessage(text: string): boolean {
   // 自転車 + 分数 → エリア指定として扱う（自転車圏内→駅リスト展開）
   if (/自転車|チャリ/.test(text) && /\d+分/.test(text)) return true;
   const matches = text.match(/[^\s]{1,6}[都道府県市区町村]/g) ?? [];
-  const hasTrigger = /辺り|あたり|周辺|エリア|で探|希望/.test(text);
+  const hasTrigger = /辺り|あたり|周辺|エリア|で探|でも探|も探|希望/.test(text);
   return matches.length >= 2 || (matches.length >= 1 && hasTrigger);
 }
 
