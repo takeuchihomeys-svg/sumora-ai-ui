@@ -656,6 +656,30 @@ export async function POST(req: NextRequest) {
             if (applied) {
               conceptResolved.add(token);
               console.log("[resolve-conditions] token resolved (unknown_tokens cache):", token, "->", row.resolved_as);
+              // station_map / region_map にも書き戻す（Chrome拡張の起動時ロードに反映させる）
+              const res = row.resolved_as;
+              if (res.type === "ward" && res.names[0]) {
+                void db.from("region_map").upsert(
+                  { token, ward: res.names[0], confidence: 70, source: "deepseek" },
+                  { onConflict: "token" }
+                ).then(() => {}, (e: unknown) => console.warn("[resolve-conditions] region_map write-back (cache) failed:", e));
+              } else if (res.type === "station" && !token.endsWith("線")) {
+                const { data: stRows } = await db.from("station_map")
+                  .select("realpro_lines, itandi_lines, reins_line")
+                  .in("token", res.names).neq("source", "unknown");
+                if (stRows && stRows.length > 0) {
+                  type StRow = { realpro_lines: string[]; itandi_lines: string[] | null; reins_line: string | null };
+                  const cRealpro = [...new Set((stRows as StRow[]).flatMap(r => r.realpro_lines ?? []))];
+                  const cItandi  = [...new Set((stRows as StRow[]).flatMap(r => r.itandi_lines ?? []))];
+                  const cReins   = (stRows as StRow[]).find(r => r.reins_line)?.reins_line ?? null;
+                  if (cRealpro.length > 0) {
+                    void db.from("station_map").upsert(
+                      { token, realpro_lines: cRealpro, itandi_lines: cItandi, reins_line: cReins, confidence: 70, source: "deepseek" },
+                      { onConflict: "token" }
+                    ).then(() => {}, (e: unknown) => console.warn("[resolve-conditions] station_map write-back (cache) failed:", e));
+                  }
+                }
+              }
               continue;
             }
             // キャッシュ内容が現在のマップで適用不能 → 再解決へ
@@ -712,6 +736,29 @@ export async function POST(req: NextRequest) {
                 last_attempt_at: new Date().toISOString(),
               }, { onConflict: "token" });
               if (upErr) console.error("[resolve-conditions] unknown_tokens upsert failed:", token, upErr.message);
+              // station_map / region_map にも書き戻す（Chrome拡張の起動時ロードに反映させる）
+              if (validatedResolution.type === "ward" && validatedResolution.names[0]) {
+                void db.from("region_map").upsert(
+                  { token, ward: validatedResolution.names[0], confidence: 70, source: "deepseek" },
+                  { onConflict: "token" }
+                ).then(() => {}, (e: unknown) => console.warn("[resolve-conditions] region_map write-back failed:", e));
+              } else if (validatedResolution.type === "station" && !token.endsWith("線")) {
+                const { data: stRows } = await db.from("station_map")
+                  .select("realpro_lines, itandi_lines, reins_line")
+                  .in("token", validatedResolution.names).neq("source", "unknown");
+                if (stRows && stRows.length > 0) {
+                  type StRow = { realpro_lines: string[]; itandi_lines: string[] | null; reins_line: string | null };
+                  const cRealpro = [...new Set((stRows as StRow[]).flatMap(r => r.realpro_lines ?? []))];
+                  const cItandi  = [...new Set((stRows as StRow[]).flatMap(r => r.itandi_lines ?? []))];
+                  const cReins   = (stRows as StRow[]).find(r => r.reins_line)?.reins_line ?? null;
+                  if (cRealpro.length > 0) {
+                    void db.from("station_map").upsert(
+                      { token, realpro_lines: cRealpro, itandi_lines: cItandi, reins_line: cReins, confidence: 70, source: "deepseek" },
+                      { onConflict: "token" }
+                    ).then(() => {}, (e: unknown) => console.warn("[resolve-conditions] station_map write-back failed:", e));
+                  }
+                }
+              }
               // 旧ネガティブキャッシュ（station_map source='unknown'）を掃除
               const { error: delErr } = await db.from("station_map")
                 .delete().eq("token", token).eq("source", "unknown");
