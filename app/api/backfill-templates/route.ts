@@ -46,7 +46,8 @@ export async function POST(req: NextRequest) {
   let processed = 0;
   let failed = 0;
 
-  const apiKey = process.env.OPENAI_API_KEY;
+  const rawApiKey = process.env.OPENAI_API_KEY ?? "";
+  const apiKey = rawApiKey.charCodeAt(0) === 0xFEFF ? rawApiKey.slice(1) : rawApiKey;
   if (!apiKey) {
     return NextResponse.json({ ok: false, error: "OPENAI_API_KEY not set", processed: 0, failed: 0 }, { status: 500 });
   }

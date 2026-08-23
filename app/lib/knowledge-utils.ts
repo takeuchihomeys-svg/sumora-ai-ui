@@ -33,7 +33,9 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
   // メモリキャッシュ確認（最速）
   if (embeddingCache.has(cacheKey)) return embeddingCache.get(cacheKey)!;
 
-  const apiKey = process.env.OPENAI_API_KEY;
+  // BOM（U+FEFF）が混入している場合に除去（Vercel env var コピペ時に混入するケースがある）
+  const rawKey = process.env.OPENAI_API_KEY ?? "";
+  const apiKey = rawKey.charCodeAt(0) === 0xFEFF ? rawKey.slice(1) : rawKey;
   if (!apiKey) return null;
 
   // ⑥ DBキャッシュ確認（再起動後も有効）
