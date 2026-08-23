@@ -689,6 +689,11 @@ function buildConditionNote(parsed: Record<string, unknown>): string {
     parts.push(`家賃: ${mn}${mx}`);
   }
   if (parsed.walk_minutes)       parts.push(`徒歩: ${parsed.walk_minutes}分以内`);
+  if (parsed.commute_station || parsed.commute_minutes) {
+    const cs = parsed.commute_station ? `${parsed.commute_station}まで` : "";
+    const cm = parsed.commute_minutes ? `電車${parsed.commute_minutes}分` : "";
+    parts.push(`通勤: ${cs}${cm}`);
+  }
   if (parsed.move_in_time)       parts.push(`入居: ${parsed.move_in_time}`);
   if (parsed.building_age)       parts.push(`築年: ${parsed.building_age}年以内`);
   if (parsed.initial_cost_limit) parts.push(`初期: ${Math.floor((parsed.initial_cost_limit as number) / 10000)}万以内`);
@@ -703,16 +708,17 @@ function buildConditionNote(parsed: Record<string, unknown>): string {
 const CONDITION_FORMAT_TEMPLATE = `
 【スモラの希望条件フォーマット（スタッフがお客さんに送るテンプレート）】
 お客さんがこの形式で送ってきたものが「正式フォーマット」です:
-①希望エリア：（例: 梅田・北摂エリア）
+①希望エリア：（例: 梅田・北摂エリア、塚本駅・梅田駅沿線）
 ②希望間取り：（例: 1LDK、2K以上）
 ③希望家賃（上限）：（例: 8万円以内）
 ④入居時期：（例: 来月、9月）
 ⑤初期費用（上限）：（例: 30万以内）
-⑥徒歩（駅から）：（例: 10分以内）
+⑥徒歩（駅から）：（例: 10分以内） ← 最寄り駅まで歩いて何分か
 ⑦築年数（上限）：（例: 築20年）
 ⑧こだわり条件：（例: オートロック、独立洗面台）
 ⑨NG条件：（例: 1階NG、木造NG）
 ⑩その他ご要望：（例: 駐車場あれば尚良し）
+⑪通勤先（任意）：（例: 難波駅まで電車で30分以内） ← 電車で通勤先まで何分か
 番号は多少前後・欠番があってもOK。項目名が多少違っても内容で判断。
 `;
 
@@ -790,6 +796,16 @@ const PARSE_FORMAT_SYSTEM_PROMPT = `あなたは日本の不動産業者のア�
   ・〜19万円 → 家賃（rent_max）の可能性が高い
   ・20万円以上 → 初期費用（initial_cost_limit）の可能性が高い
 
+【徒歩 vs 通勤の区別（重要）】
+「最寄り駅まで徒歩○分」「駅から徒歩○分」など最寄り駅への歩行時間 → walk_minutes（整数）
+「○○駅まで電車で○分」「○○駅まで○分以内」など通勤先駅への電車時間 → commute_station + commute_minutes
+例: 「難波まで30分以内」→ commute_station: "難波駅", commute_minutes: 30
+例: 「駅徒歩10分以内」→ walk_minutes: 10
+
+【エリアと駅名の扱い】
+「希望エリア」に地名（梅田周辺）と駅名（塚本駅・梅田駅）が混在する場合、両方まとめて desired_area に入れる。
+例: 「梅田周辺、塚本駅・梅田駅沿線」→ desired_area: "梅田周辺・塚本駅・梅田駅"
+
 【その他ルール】
 - フォーマットが崩れていても最大限読み取る
 - 「2ヶ月後くらい」のような曖昧な表現もそのまま文字列で入れる
@@ -802,7 +818,9 @@ const PARSE_FORMAT_SYSTEM_PROMPT = `あなたは日本の不動産業者のア�
   "rent_min": 最低賃料の数値か null,
   "rent_max": 最高賃料の数値か null,
   "desired_area": "希望地域・駅名（文字列またはnull）",
-  "walk_minutes": 徒歩分数の数値か null,
+  "walk_minutes": 最寄り駅まで徒歩分数の数値か null,
+  "commute_station": "通勤先駅名（文字列またはnull。例: 難波駅）",
+  "commute_minutes": 通勤先まで電車での所要分数の数値か null,
   "floor_plan": "希望間取り（文字列またはnull）",
   "initial_cost_limit": 初期費用上限の数値か null,
   "building_age": 築年数上限の数値か null,
@@ -908,7 +926,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   // 正式フォーマット用フィールド（全条件フィールド + additional_conditions リセット）
   // 新規顧客INSERT・売上番長通知にも使用する
   const parsedFields: Record<string, unknown> = { ...baseFields };
-  for (const f of ["move_in_time", "rent_min", "rent_max", "desired_area", "walk_minutes", "floor_plan", "initial_cost_limit", "building_age", "floor_area_min", "preferences", "ng_points", "other_requests"]) {
+  for (const f of ["move_in_time", "rent_min", "rent_max", "desired_area", "walk_minutes", "commute_station", "commute_minutes", "floor_plan", "initial_cost_limit", "building_age", "floor_area_min", "preferences", "ng_points", "other_requests"]) {
     if (parsed[f] !== null && parsed[f] !== undefined) parsedFields[f] = parsed[f];
   }
   // 正式フォーマット受信時は新着要望バナーに通知エントリを追加（スタッフへの物件検索通知）
@@ -950,7 +968,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   // ── property_customers を line_user_id で検索（カジュアル更新マージ用に条件フィールドも取得）──
   const { data: existing } = await db
     .from("property_customers")
-    .select("id, customer_name, desired_area, floor_plan, rent_min, rent_max, walk_minutes, move_in_time, building_age, floor_area_min, initial_cost_limit, preferences, ng_points, other_requests")
+    .select("id, customer_name, desired_area, floor_plan, rent_min, rent_max, walk_minutes, commute_station, commute_minutes, move_in_time, building_age, floor_area_min, initial_cost_limit, preferences, ng_points, other_requests")
     .eq("line_user_id", userId)
     .limit(1)
     .maybeSingle();
@@ -1015,7 +1033,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
     } else {
       // カジュアル更新 → 既存条件フィールドを取得してマージ
       const { data: linkedConds } = await db.from("property_customers")
-        .select("desired_area, floor_plan, rent_min, rent_max, walk_minutes, move_in_time, building_age, floor_area_min, initial_cost_limit, preferences, ng_points, other_requests")
+        .select("desired_area, floor_plan, rent_min, rent_max, walk_minutes, commute_station, commute_minutes, move_in_time, building_age, floor_area_min, initial_cost_limit, preferences, ng_points, other_requests")
         .eq("id", linkedId)
         .maybeSingle();
       const { mergedConds, intent } = await computeCasualUpdate(linkedConds as Record<string, unknown> | null);
@@ -1091,7 +1109,7 @@ async function extractConditionsFromCasualReply(
   const combinedStaffText = staffTexts.join(" ");
 
   // スタッフメッセージ群が条件ヒアリング文脈かを確認
-  const hasStrongCondSignal = /ご希望|希望エリア|希望間取り|希望家賃|ご予算|入居時期|初期費用|こだわり|徒歩.*何分|何分.*徒歩|築年数/.test(combinedStaffText);
+  const hasStrongCondSignal = /ご希望|希望エリア|希望間取り|希望家賃|ご予算|入居時期|初期費用|こだわり|徒歩.*何分|何分.*徒歩|築年数|通勤|電車.*駅|.*駅まで.*分/.test(combinedStaffText);
   const hasMedCondSignal = /エリア|間取り|家賃|予算|入居/.test(combinedStaffText);
   const isViewingContext = /内覧|集合場所|ご案内.*場所|案内.*場所/.test(combinedStaffText);
   const isConditionContext = (hasStrongCondSignal || hasMedCondSignal) && !isViewingContext;
@@ -1145,6 +1163,14 @@ ${customerText.slice(0, 300)}
   - 〜19万円 → 家賃（rent_max）の可能性が高い
   - 20万円以上 → 初期費用（initial_cost_limit）の可能性が高い
 
+【徒歩 vs 通勤の区別（重要）】
+「最寄り駅まで徒歩○分」「駅から歩いて○分」など歩行時間 → walk_minutes（整数）
+「○○駅まで電車で○分」「○○まで○分以内で行きたい」など通勤先への電車時間 → commute_station + commute_minutes
+例: 「なんばまで電車30分以内で行けるところ」→ commute_station: "難波駅", commute_minutes: 30
+
+【エリアと駅名の扱い】
+エリア名（梅田周辺等）と駅名（梅田駅・塚本駅等）が両方ある場合、両方まとめて desired_area に入れる。
+
 読み取れた条件のみ以下の形式で返してください（不明な項目は省略してください）。
 ※お客さんの返信に明示された条件のみ。スタッフのメッセージに含まれる数字・条件は絶対に抽出しないこと。
 金額はすべて円単位の整数（「8万」→80000、「8万円」→80000）。
@@ -1153,7 +1179,9 @@ ${customerText.slice(0, 300)}
   "floor_plan": "間取り（例: 1LDK）",
   "rent_max": 最高家賃（円・整数）,
   "rent_min": 最低家賃（円・整数）,
-  "walk_minutes": 徒歩分数（整数）,
+  "walk_minutes": 最寄り駅まで徒歩分数（整数）,
+  "commute_station": "通勤先駅名（例: 難波駅）",
+  "commute_minutes": 通勤先まで電車での所要分数（整数）,
   "move_in_time": "入居時期（例: 9月、来月）",
   "building_age": 築年数上限（整数）,
   "initial_cost_limit": 初期費用上限（円・整数）,
@@ -1184,12 +1212,13 @@ ${customerText.slice(0, 300)}
   // C1: 非 null・非空 フィールドのみ UPDATE 対象にする
   const CONDITION_FIELDS = [
     "desired_area", "floor_plan", "rent_max", "rent_min",
-    "walk_minutes", "move_in_time", "building_age", "initial_cost_limit",
+    "walk_minutes", "commute_station", "commute_minutes",
+    "move_in_time", "building_age", "initial_cost_limit",
     "preferences", "ng_points", "other_requests",
   ];
 
   // 型検証: 数値カラムに文字列が入るとUPDATE全体が失敗するため number 以外は破棄
-  const NUMERIC_FIELDS = new Set(["rent_max", "rent_min", "walk_minutes", "building_age", "initial_cost_limit"]);
+  const NUMERIC_FIELDS = new Set(["rent_max", "rent_min", "walk_minutes", "commute_minutes", "building_age", "initial_cost_limit"]);
   for (const f of NUMERIC_FIELDS) {
     if (extracted[f] !== undefined && typeof extracted[f] !== "number") delete extracted[f];
   }
@@ -1199,13 +1228,14 @@ ${customerText.slice(0, 300)}
 
   const { data: existingPc } = await db
     .from("property_customers")
-    .select(CONDITION_FIELDS.join(","))
+    .select(["desired_area", "floor_plan", "rent_max", "rent_min", "walk_minutes", "commute_station", "commute_minutes", "move_in_time", "building_age", "initial_cost_limit", "preferences", "ng_points", "other_requests"].join(","))
     .eq("id", pcId)
     .maybeSingle();
 
   const FIELD_LABELS: Record<string, string> = {
     desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限",
-    walk_minutes: "徒歩分数", move_in_time: "入居時期", building_age: "築年数",
+    walk_minutes: "徒歩分数", commute_station: "通勤先駅", commute_minutes: "通勤時間",
+    move_in_time: "入居時期", building_age: "築年数",
     initial_cost_limit: "初期費用上限", preferences: "こだわり", ng_points: "NG条件", other_requests: "その他",
   };
 

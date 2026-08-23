@@ -26,16 +26,18 @@ const BRAIN_CONDITION_FOCUS: Record<string, { fields: string[]; prompt: string; 
   ng_add:           { fields: ["ng_points"], prompt: "NG条件・除外条件の追加", pattern: "add" },
   move_in_change:   { fields: ["move_in_time"], prompt: "入居時期・入居希望時期の変更", pattern: "change" },
   cost_change:      { fields: ["initial_cost_limit"], prompt: "初期費用上限の変更（万円単位に注意）", pattern: "change" },
-  condition_relax:  { fields: ["desired_area", "rent_max", "walk_minutes", "building_age"], prompt: "条件の緩和・選択肢の拡大", pattern: "change" },
+  commute_change:   { fields: ["commute_station", "commute_minutes"], prompt: "通勤先駅・電車での通勤時間の変更（例: 難波まで30分以内）", pattern: "change" },
+  condition_relax:  { fields: ["desired_area", "rent_max", "walk_minutes", "commute_minutes", "building_age"], prompt: "条件の緩和・選択肢の拡大", pattern: "change" },
   pickup_request:   { fields: ["desired_area", "floor_plan", "rent_max"], prompt: "物件ピックアップ依頼の条件確認", pattern: "change" },
-  multi:            { fields: ["desired_area", "floor_plan", "rent_max", "rent_min", "walk_minutes", "move_in_time", "building_age", "preferences", "ng_points", "other_requests"], prompt: "複数条件の変更・追加", pattern: "change" },
+  multi:            { fields: ["desired_area", "floor_plan", "rent_max", "rent_min", "walk_minutes", "commute_station", "commute_minutes", "move_in_time", "building_age", "preferences", "ng_points", "other_requests"], prompt: "複数条件の変更・追加", pattern: "change" },
 };
 const BRAIN_COND_LABELS: Record<string, string> = {
   desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限",
-  walk_minutes: "徒歩分数", move_in_time: "入居時期", building_age: "築年数",
-  initial_cost_limit: "初期費用上限", preferences: "こだわり", other_requests: "その他",
+  walk_minutes: "徒歩分数", commute_station: "通勤先駅", commute_minutes: "通勤時間",
+  move_in_time: "入居時期", building_age: "築年数",
+  initial_cost_limit: "初期費用上限", preferences: "こだわり", ng_points: "NG条件", other_requests: "その他",
 };
-const BRAIN_NUMERIC = new Set(["rent_min", "rent_max", "initial_cost_limit", "walk_minutes", "building_age"]);
+const BRAIN_NUMERIC = new Set(["rent_min", "rent_max", "initial_cost_limit", "walk_minutes", "commute_minutes", "building_age"]);
 
 async function applyBrainConditionChange(
   db: ReturnType<typeof getDb>,
@@ -48,7 +50,7 @@ async function applyBrainConditionChange(
   if (!focus) return;
 
   const { data: pc } = await db.from("property_customers")
-    .select("additional_conditions, desired_area, floor_plan, rent_max, rent_min, walk_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests")
+    .select("additional_conditions, desired_area, floor_plan, rent_max, rent_min, walk_minutes, commute_station, commute_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests")
     .eq("id", pcId).maybeSingle();
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -57,7 +59,7 @@ async function applyBrainConditionChange(
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 300,
-      messages: [{ role: "user", content: `お客さんのメッセージから「${focus.prompt}」に関する条件を抽出してください。\n\n【お客さんのメッセージ】\n${targetMessage.slice(0, 400)}\n\n【金額の文脈判断ルール】\n金額のみ（「〇万円以内」等）で何の費用か不明な場合:\n・「家賃/賃料/月々」に関する文脈 → rent_max\n・「初期費用/敷金/礼金」に関する文脈 → initial_cost_limit\n・文脈不明: 〜19万円→rent_max、20万円以上→initial_cost_limit\n金額はすべて円単位整数（「8万」→80000）。\n\n明示された条件のみ（推測禁止）。JSONのみで返してください（不明な項目は省略）:\n{"desired_area":"エリア・駅名","floor_plan":"間取り（例:1LDK）","rent_max":家賃上限円整数,"rent_min":家賃下限円整数,"walk_minutes":徒歩分数整数,"move_in_time":"入居時期","building_age":築年数上限整数,"initial_cost_limit":初期費用上限円整数,"preferences":"こだわり条件","ng_points":"NG条件","other_requests":"その他要望"}` }],
+      messages: [{ role: "user", content: `お客さんのメッセージから「${focus.prompt}」に関する条件を抽出してください。\n\n【お客さんのメッセージ】\n${targetMessage.slice(0, 400)}\n\n【金額の文脈判断ルール】\n金額のみ（「〇万円以内」等）で何の費用か不明な場合:\n・「家賃/賃料/月々」に関する文脈 → rent_max\n・「初期費用/敷金/礼金」に関する文脈 → initial_cost_limit\n・文脈不明: 〜19万円→rent_max、20万円以上→initial_cost_limit\n金額はすべて円単位整数（「8万」→80000）。\n\n【徒歩 vs 通勤の区別】\n「最寄り駅まで徒歩○分」→ walk_minutes\n「○○駅まで電車で○分」「○○まで○分で行きたい」→ commute_station + commute_minutes\n\n明示された条件のみ（推測禁止）。JSONのみで返してください（不明な項目は省略）:\n{"desired_area":"エリア・駅名","floor_plan":"間取り（例:1LDK）","rent_max":家賃上限円整数,"rent_min":家賃下限円整数,"walk_minutes":最寄り駅まで徒歩分数整数,"commute_station":"通勤先駅名（例:難波駅）","commute_minutes":通勤先まで電車所要分数整数,"move_in_time":"入居時期","building_age":築年数上限整数,"initial_cost_limit":初期費用上限円整数,"preferences":"こだわり条件","ng_points":"NG条件","other_requests":"その他要望"}` }],
     }),
     signal: AbortSignal.timeout(12_000),
   });
