@@ -2448,7 +2448,21 @@ export async function POST(req: NextRequest) {
       const lines: string[] = [
         `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位。強制度: ${isRequired ? "必須（以下の指示に例外なく従う）" : "推奨（原則従うが、顧客の最新メッセージへの応答として不自然になる場合のみ自然さを優先してよい）"}）】`,
       ];
-      if (hasAction) lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}`);
+      if (hasAction) {
+        // 安全ガード: brain キャッシュが estimate_sheet のままでも、顧客が同一メッセージで
+        // 新しい検索条件（路線・家賃・徒歩・広さ等）を指定していたら property_send 方向に上書き。
+        // brain-core.ts 側の例外ルールと二重に守る（stale キャッシュ対策）。
+        const latestCustText = brainMeta.action === "estimate_sheet"
+          ? ([...recentMessages].reverse().find(m => m.sender === "customer" && m.text)?.text ?? "")
+          : "";
+        const isConditionOverride = brainMeta.action === "estimate_sheet" &&
+          /調べてほし[いく]|探してほし[いく]|探して欲[しく]|徒歩[0-9０-９]+分|家賃.{0,6}万|[0-9０-９]+万以下|広め|路線のみ|沿線|環状線|条件.{0,3}絞|条件.{0,3}変[えわ]/.test(latestCustText);
+        if (isConditionOverride) {
+          lines.push(`- 推奨アクション: 物件ピックアップ対応（property_send方向）— お客様が新しい検索条件（路線・家賃・徒歩・間取り・広さ等）を今回のメッセージで指定しているため、見積書の作成宣言をせず条件を受け止めて物件を探す方向で返信すること。AIXで物件送付後に見積対応。`);
+        } else {
+          lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}`);
+        }
+      }
       if (brainMeta.closing_strategy) lines.push(`- 成約戦略: ${brainMeta.closing_strategy}`);
       if (brainMeta.next_steps?.length) {
         lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
