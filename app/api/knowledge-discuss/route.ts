@@ -196,7 +196,7 @@ export async function POST(req: NextRequest) {
   if (!apiKey) {
     return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY が設定されていません" }, { status: 500 });
   }
-  const betaHeaders = { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" };
+  const betaHeaders = { "anthropic-beta": "prompt-caching-2024-07-31" };
   // chat: haiku は 2-4s で返答。9s×3=27s < 60s
   const chatClient = new Anthropic({ apiKey, timeout: 9_000, maxRetries: 2, defaultHeaders: betaHeaders });
   // finalize: sonnet-5 で正確な知識抽出。18s×3=54s < 60s

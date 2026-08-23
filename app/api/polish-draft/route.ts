@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" } });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
 
 export const maxDuration = 30;
 

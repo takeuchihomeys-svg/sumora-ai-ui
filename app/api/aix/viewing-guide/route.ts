@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
             "Content-Type": "application/json",
             "x-api-key": ANTHROPIC_API_KEY,
             "anthropic-version": "2023-06-01",
-            "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19",
+            "anthropic-beta": "prompt-caching-2024-07-31",
           },
           body: JSON.stringify({
             model: HAIKU_MODEL,
@@ -131,7 +131,7 @@ export async function POST(request: NextRequest) {
           "Content-Type": "application/json",
           "x-api-key": ANTHROPIC_API_KEY,
           "anthropic-version": "2023-06-01",
-          "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19",
+          "anthropic-beta": "prompt-caching-2024-07-31",
         },
         body: JSON.stringify({
           model: HAIKU_MODEL,
@@ -229,7 +229,7 @@ ${emojiRule}
           "Content-Type": "application/json",
           "x-api-key": ANTHROPIC_API_KEY,
           "anthropic-version": "2023-06-01",
-          "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19",
+          "anthropic-beta": "prompt-caching-2024-07-31",
         },
         body: JSON.stringify({
           model: SONNET_MODEL,

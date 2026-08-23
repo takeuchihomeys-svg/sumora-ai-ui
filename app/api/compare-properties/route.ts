@@ -13,7 +13,7 @@ const TOKEN =
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
   timeout: 90_000,
-  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" },
+  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
 });
 
 // 静的採点基準（prompt cache対象）

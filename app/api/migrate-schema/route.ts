@@ -194,6 +194,7 @@ CREATE TABLE IF NOT EXISTS phrase_dictionary (
   phrase TEXT NOT NULL,
   priority INTEGER DEFAULT 10,
   role TEXT,
+  is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

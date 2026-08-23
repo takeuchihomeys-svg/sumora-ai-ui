@@ -755,7 +755,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
     apiKey: process.env.ANTHROPIC_API_KEY,
     timeout: 30_000,
     maxRetries: 1,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" },
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
   });
   // URLを除去してからClaudeに渡す（物件サイトURLパラメータの誤解釈防止）
   const cleanText = text.replace(/https?:\/\/[^\s]+/g, "[URL省略]").trim();
@@ -1011,7 +1011,7 @@ async function extractConditionsFromCasualReply(
     apiKey: process.env.ANTHROPIC_API_KEY,
     timeout: 20_000,
     maxRetries: 1,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" },
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
   });
 
   let extracted: Record<string, unknown>;

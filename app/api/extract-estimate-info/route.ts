@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
   const client = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
     timeout: 60_000,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" },
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
   });
 
   try {

@@ -6,7 +6,7 @@ import { PROPERTY_CHECK_RESULT_LABEL, PROPERTY_CHECK_RESULT_DESCRIPTION } from "
 
 export const maxDuration = 30;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-02-19" } });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
 
 // ラベル参照は normalizeStatus() 適用後のみ行うため、正規化後に到達しうるキーだけ持つ
 // （contract/lost/closed_* は SKIP_STATUSES で先に除外され、旧名は normalizeStatus で吸収される）
