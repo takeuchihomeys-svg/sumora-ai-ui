@@ -1483,6 +1483,17 @@ ${history}`;
       messages: [{ role: "user", content: userContent }],
     });
 
+    // キャッシュHIT/MISS ログ（Vercelログで確認可能・コスト診断用）
+    const usageAny = response.usage as unknown as Record<string, number>;
+    const cacheRead = usageAny.cache_read_input_tokens ?? 0;
+    const cacheCreation = usageAny.cache_creation_input_tokens ?? 0;
+    const inputTokens = response.usage.input_tokens ?? 0;
+    if (cacheRead > 0) {
+      console.log(`[brain-core] cache HIT  conv=${conversationId} read=${cacheRead} input=${inputTokens}`);
+    } else {
+      console.log(`[brain-core] cache MISS conv=${conversationId} created=${cacheCreation} input=${inputTokens}`);
+    }
+
     // claude-sonnet-5 はextended thinkingを使うためcontent[0]がthinking型になることがある
     // content.find()でtextブロックを確実に取得する
     const raw = response.content.find((c) => c.type === "text")?.text ?? "";
