@@ -46,8 +46,8 @@ export async function POST(req: NextRequest) {
   let processed = 0;
   let failed = 0;
 
-  const hasOpenAiKey = !!process.env.OPENAI_API_KEY;
-  if (!hasOpenAiKey) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
     return NextResponse.json({ ok: false, error: "OPENAI_API_KEY not set", processed: 0, failed: 0 }, { status: 500 });
   }
 
@@ -58,16 +58,31 @@ export async function POST(req: NextRequest) {
     const embedText = `${row.category} ${row.label}`.trim();
     let embedding: number[] | null = null;
     try {
-      embedding = await generateEmbedding(embedText);
+      // generateEmbedding を使わず直接呼び出し（エラー詳細を取得するため）
+      const res = await fetch("https://api.openai.com/v1/embeddings", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "text-embedding-3-small", input: embedText }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        lastError = `OpenAI ${res.status}: ${errText.slice(0, 200)}`;
+        console.error("[backfill-templates] OpenAI error:", res.status, errText.slice(0, 200));
+        failed++;
+        continue;
+      }
+      const data = await res.json() as { data: Array<{ embedding: number[] }> };
+      embedding = data.data[0]?.embedding ?? null;
     } catch (e) {
-      lastError = `generateEmbedding error: ${e instanceof Error ? e.message : String(e)}`;
-      console.error("[backfill-templates] generateEmbedding threw:", lastError);
+      lastError = `fetch error: ${e instanceof Error ? e.message : String(e)}`;
+      console.error("[backfill-templates] fetch threw:", lastError);
       failed++;
       continue;
     }
     if (!embedding) {
-      lastError = lastError ?? `generateEmbedding returned null for: ${embedText.slice(0, 50)}`;
-      console.error("[backfill-templates] null embedding for:", embedText.slice(0, 50));
+      lastError = `no embedding in response for: ${embedText.slice(0, 50)}`;
+      console.error("[backfill-templates] no embedding in response for:", embedText.slice(0, 50));
       failed++;
       continue;
     }
