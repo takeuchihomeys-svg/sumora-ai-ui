@@ -303,6 +303,7 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
 //        あるが WARD_CODE_MAP に無い区、路線も所在区も引けない駅）。
 //        ①②では検出できず、無条件検索が黙って走っていた。
 const _resolveAreaCache = new Map(); // key: `${area}|${mode}`, value: { data, ts }
+let _fillDoneWatchdog = null; // fill-done 25秒タイムアウト監視タイマー
 const _RESOLVE_AREA_CACHE_MAX = 50;
 const _RESOLVE_AREA_CACHE_TTL = 10 * 60 * 1000; // 10分
 async function resolveAreaWithAPI(rawArea, areaMode, customerId) {
@@ -357,8 +358,9 @@ async function resolveAreaWithAPI(rawArea, areaMode, customerId) {
   console.log("[AX] resolve-area 呼び出し:", _triggerReason, rawArea);
   try {
     const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 20000);
-    // 理由: Claude NL抽出(~3s) + DeepSeek fallback(~9s) + バッファ(3s) = 最大15s必要 → 20sで余裕を持つ
+    const tid = setTimeout(() => ctrl.abort(), 10000);
+    // タイムアウト短縮: 10s でタイムアウトして既知情報のみで検索（固まり防止）
+    // 通常: Claude NL抽出(~3s) + DeepSeek fallback(~9s) → 初回未知トークンは null 返却で ok
     const res = await fetch(`${API_BASE}/api/resolve-area`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3160,6 +3162,9 @@ function openInstructions(siteKey) {
 
       // ① API呼び出しを先に実施（モード判定 + 補完データ取得を兼ねる）
       // キャッシュがあれば即返る。未知トークンがなければ null。
+      // ── ボタンを即座にローディング表示（APIを待たせても固まって見えないように）──
+      autofillBtn.textContent = "⏳ エリア解決中...";
+      autofillBtn.disabled = true;
       const apiData = await resolveAreaWithAPI(adjAreaClean, "auto", adjC.id);
 
       // ② 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
@@ -3484,6 +3489,17 @@ function openInstructions(siteKey) {
       autofillBtn.classList.remove("done");
       autofillBtn.classList.add("searching");
       autofillBtn.disabled = true;
+      // fill-done が 25秒以内に来なければ自動リセット（固まり防衛）
+      clearTimeout(_fillDoneWatchdog);
+      _fillDoneWatchdog = setTimeout(() => {
+        const _b = document.getElementById("autofill-btn");
+        if (_b && _b.classList.contains("searching")) {
+          _b.textContent = "🔍 リアプロで自動検索";
+          _b.classList.remove("searching", "done");
+          _b.disabled = false;
+          console.warn("[AX] fill-done タイムアウト: 25秒以内に完了通知が来なかったためリセット");
+        }
+      }, 25000);
     };
   } else if (siteKey === "reins") {
     adjForm.style.display = "block";
@@ -3900,6 +3916,7 @@ document.addEventListener("DOMContentLoaded", () => {
         setMiniMode(false);
       }
       if (e.data?.from === "aixlinx-fill-done") {
+        clearTimeout(_fillDoneWatchdog); // 正常完了 → タイムアウト監視をキャンセル
         const btn = document.getElementById("autofill-btn");
         if (btn) {
           const _resetLabel = selectedSite === "itandi" ? "🔍 itandiで自動検索"
