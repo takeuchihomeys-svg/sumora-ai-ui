@@ -46,11 +46,23 @@ export async function POST(req: NextRequest) {
   let processed = 0;
   let failed = 0;
 
+  let lastError: string | null = null;
+
   for (const row of typedRows) {
     // category + label をベクトル化: 「物件確認した【AIX】 空きの確認ができました！」形式
     const embedText = `${row.category} ${row.label}`.trim();
-    const embedding = await generateEmbedding(embedText).catch(() => null);
+    let embedding: number[] | null = null;
+    try {
+      embedding = await generateEmbedding(embedText);
+    } catch (e) {
+      lastError = `generateEmbedding error: ${e instanceof Error ? e.message : String(e)}`;
+      console.error("[backfill-templates] generateEmbedding threw:", lastError);
+      failed++;
+      continue;
+    }
     if (!embedding) {
+      lastError = lastError ?? `generateEmbedding returned null for: ${embedText.slice(0, 50)}`;
+      console.error("[backfill-templates] null embedding for:", embedText.slice(0, 50));
       failed++;
       continue;
     }
@@ -61,6 +73,8 @@ export async function POST(req: NextRequest) {
       .eq("id", row.id);
 
     if (updateErr) {
+      lastError = `update error: ${updateErr.message}`;
+      console.error("[backfill-templates] update error:", updateErr.message);
       failed++;
     } else {
       processed++;
@@ -68,5 +82,5 @@ export async function POST(req: NextRequest) {
   }
 
   const done = rows.length < limit;
-  return NextResponse.json({ ok: true, processed, failed, offset, limit, done });
+  return NextResponse.json({ ok: true, processed, failed, offset, limit, done, lastError });
 }
