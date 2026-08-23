@@ -728,7 +728,7 @@ export async function analyzeConversation(
     propertyCustomerId
       ? supabase
           .from("property_customers")
-          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count, ai_summary, ai_summary_json, personality_profile")
+          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count, ai_summary, ai_summary_json, personality_profile, pet, floor_area_min, floor_area_max, commute_station, commute_minutes, area_mode, initial_cost_limit, building_age, other_requests")
           .eq("id", propertyCustomerId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -1056,17 +1056,28 @@ export async function analyzeConversation(
   const timingText = `\n【時間情報】今日: ${todayStr} / 最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）`;
 
   // Build customer conditions context
-  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null; ai_summary?: string | null; ai_summary_json?: Record<string, unknown> | null; personality_profile?: string | null } | null;
+  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null; ai_summary?: string | null; ai_summary_json?: Record<string, unknown> | null; personality_profile?: string | null; pet?: boolean | null; floor_area_min?: number | null; floor_area_max?: number | null; commute_station?: string | null; commute_minutes?: number | null; area_mode?: string | null; initial_cost_limit?: number | null; building_age?: number | null; other_requests?: string | null } | null;
   const pc = (pcResult.data ?? null) as PC;
   const condParts: string[] = [];
   if (pc?.desired_area) condParts.push(`エリア: ${pc.desired_area}`);
+  if (pc?.area_mode && pc.area_mode !== "auto") condParts.push(`エリアモード: ${pc.area_mode === "ward" ? "市区町村優先" : pc.area_mode === "station" ? "駅・路線優先" : pc.area_mode === "both" ? "市区町村+駅両方" : pc.area_mode}`);
   if (pc?.floor_plan) condParts.push(`間取り: ${pc.floor_plan}`);
   if (pc?.rent_min) condParts.push(`家賃下限: ${Math.floor((pc.rent_min as number) / 10000)}万`);
   if (pc?.rent_max) condParts.push(`家賃上限: ${Math.floor((pc.rent_max as number) / 10000)}万`);
+  if (pc?.floor_area_min || pc?.floor_area_max) {
+    const areaMin = pc.floor_area_min ? `${pc.floor_area_min}㎡以上` : "";
+    const areaMax = pc.floor_area_max ? `${pc.floor_area_max}㎡以下` : "";
+    condParts.push(`広さ: ${[areaMin, areaMax].filter(Boolean).join("〜")}`);
+  }
   if (pc?.walk_minutes) condParts.push(`駅徒歩: ${pc.walk_minutes}分以内`);
+  if (pc?.commute_station) condParts.push(`通勤先: ${pc.commute_station}${pc.commute_minutes ? `（${pc.commute_minutes}分以内）` : ""}`);
   if (pc?.move_in_time) condParts.push(`入居: ${pc.move_in_time}`);
+  if (pc?.pet != null) condParts.push(`ペット: ${pc.pet ? "可" : "不可"}`);
+  if (pc?.initial_cost_limit) condParts.push(`初期費用上限: ${Math.floor((pc.initial_cost_limit as number) / 10000)}万`);
+  if (pc?.building_age) condParts.push(`築年数: ${pc.building_age}年以内`);
   if (pc?.preferences) condParts.push(`希望: ${pc.preferences}`);
   if (pc?.ng_points) condParts.push(`NG条件: ${pc.ng_points}`);
+  if (pc?.other_requests) condParts.push(`その他要望: ${pc.other_requests}`);
   const condText = condParts.length > 0 ? `\n顧客条件: ${condParts.join(" / ")}` : "";
 
   // 【顧客プロファイル】ai_summary_json（emotion/urgency/style/personality_profile）由来。
@@ -1203,12 +1214,18 @@ export async function analyzeConversation(
 最終送付: ${daysSinceLastSend !== null ? `${daysSinceLastSend}日前` : "まだ送付なし"}
 連続未返信送付: ${unansweredSendCount}件（2件以上 = お客さんが反応していない）
 検索条件:
-  エリア: ${pc.desired_area ?? "未設定"}
+  エリア: ${pc.desired_area ?? "未設定"}${pc.area_mode && pc.area_mode !== "auto" ? `（モード: ${pc.area_mode}）` : ""}
   間取り: ${pc.floor_plan ?? "未設定"}
-  家賃上限: ${pc.rent_max ? `${pc.rent_max}円` : "未設定"}
-  入居時期: ${pc.move_in_time ?? "未設定"}
+  家賃上限: ${pc.rent_max ? `${Math.floor((pc.rent_max as number) / 10000)}万円` : "未設定"}${pc.rent_min ? `（下限: ${Math.floor((pc.rent_min as number) / 10000)}万円）` : ""}
+  広さ: ${pc.floor_area_min || pc.floor_area_max ? `${pc.floor_area_min ? `${pc.floor_area_min}㎡以上` : ""}${pc.floor_area_max ? `〜${pc.floor_area_max}㎡` : ""}` : "未設定"}
   駅徒歩: ${pc.walk_minutes ? `${pc.walk_minutes}分以内` : "未設定"}
+  通勤先: ${pc.commute_station ? `${pc.commute_station}${pc.commute_minutes ? `（${pc.commute_minutes}分以内）` : ""}` : "未設定"}
+  入居時期: ${pc.move_in_time ?? "未設定"}
+  ペット: ${pc.pet != null ? (pc.pet ? "可" : "不可") : "未設定"}
+  初期費用上限: ${pc.initial_cost_limit ? `${Math.floor((pc.initial_cost_limit as number) / 10000)}万円` : "未設定"}
+  築年数: ${pc.building_age ? `${pc.building_age}年以内` : "未設定"}
   希望条件: ${pc.preferences ?? "未設定"}
+  その他要望: ${pc.other_requests ?? "未設定"}
 物件検索推奨度: ${searchPriority}`;
   }
 
