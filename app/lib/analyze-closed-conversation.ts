@@ -5,12 +5,13 @@ import { generateEmbedding } from "@/app/lib/knowledge-utils";
 // conversations.status が applying / closed_won / closed_lost に変わった瞬間に呼ばれ、
 // 問い合わせ〜申込/成約（または失注）までの全メッセージを分析してパターンを高品質に蓄積する。
 // closed_lost の場合は「なぜ失注したか」の失注パターンを学習する。
-// 保存先（5箇所）:
+// 保存先（6箇所）:
 //   A. winning_pattern_logs（確定成約事例・was_correct=true）
 //   B. ai_reply_knowledge（成約パターン・importance 9）
 //   C. ai_reply_knowledge（転換点・importance 8）
 //   D. property_customers.personality_profile（確定プロファイル）
 //   E. ai_prompts key=closed_analysis_{conversationId}（重複防止 + 参照用）
+//   F. winning_patterns（構造化パターン・RAG検索用・embedding付き）
 
 export type ClosedOutcome = "applying" | "closed_won" | "closed_lost";
 
@@ -298,6 +299,25 @@ ${customerInfo || "（登録情報なし）"}
       .eq("id", pcId);
     if (pcErr) console.warn("[analyze-closed] property_customers update失敗:", pcErr.message);
   }
+
+  // 4-F. winning_patterns: 構造化パターン（RAG検索用）
+  // embedding は personality_profile + winning_pattern を結合してベクトル化
+  const wpEmbedText = [result.personality_profile, result.winning_pattern].filter(Boolean).join(" / ");
+  const wpEmbedding = await generateEmbedding(wpEmbedText).catch(() => null);
+  const { error: wpInsertErr } = await supabase.from("winning_patterns").insert({
+    situation: result.personality_profile?.slice(0, 200) ?? null,
+    pattern: isLost
+      ? `【失注パターン】${result.winning_pattern}`
+      : result.winning_pattern,
+    closing_action: result.what_worked ?? null,
+    human_type_label: label,
+    outcome_type: outcome,
+    notes: result.turning_point ?? null,
+    source_conversation_id: conversationId,
+    embedding: wpEmbedding ? JSON.stringify(wpEmbedding) : null,
+    importance: isLost ? 7 : 9,
+  });
+  if (wpInsertErr) console.warn("[analyze-closed] winning_patterns insert失敗:", wpInsertErr.message);
 
   return { ok: true };
 }

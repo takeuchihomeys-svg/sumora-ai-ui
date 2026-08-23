@@ -811,18 +811,11 @@ export async function analyzeConversation(
       .like("keyword", "BOUNDARY%")
       .gte("confidence", 0.5)
       .limit(10),
-    // 成約パターン（distilled）: notify-viewing / analyze-closed-conversation が書く高価値ナレッジ
-    // （既存の principle クエリは category='principle' のみで、これら pattern 行は拾えない）
-    supabase
-      .from("ai_reply_knowledge")
-      .select("title, content, importance")
-      .eq("category", "pattern")
-      // B11(Fable5): NULL 許容（.neq は hypothesis_status IS NULL の行を除外してしまう）
-      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
-      .or("title.ilike.成約パターン%,title.ilike.[成約分析]%,title.ilike.[転換点]%")
-      .order("importance", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(4),
+    // 成約パターン（distilled）: RAG化により match_winning_patterns に移行済み。
+    // 以前は ai_reply_knowledge category='pattern' を4件バルクフェッチしていたが、
+    // winning_patterns テーブルへの移行 + RAGベクトル検索で会話コンテキスト最適なパターンを取得する。
+    // このクエリは削除しプレースホルダーで置き換え（Promise.all のインデックスを崩さないため）
+    Promise.resolve({ data: [] }),
     // 成約・申込到達の会話の実際の優良返信（success × starred × line_reply）
     // FK: ai_reply_examples.conversation_id → conversations.id（migrate-schema L681）で inner join
     supabase
@@ -873,24 +866,12 @@ export async function analyzeConversation(
       .eq("conversation_id", conversationId)
       .order("scheduled_date", { ascending: false })
       .limit(3),
-    // 優先度2(抜け穴対策): applying_pattern（申込到達会話の成約タイミング分析）を aix 選択の
-    // 明示的判断材料としてプロンプトに注入する。従来この category は analyzeAndSaveBrainMeta の
-    // STEP A（template_id 表示用の上位1件取得）にしか使われておらず、
-    // 「どの場面でどのAIXボタンが効いたか」がボタン判断に一切反映されていなかった。
-    supabase
-      .from("ai_reply_knowledge")
-      .select("title, content, importance")
-      .eq("category", "applying_pattern")
-      .gte("importance", 8)
-      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
-      .order("importance", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(3),
-    // winning_patterns: 成約率の高いパターン上位5件
-    supabase.from("winning_patterns")
-      .select("pattern, situation, closing_action, notes, win_rate")
-      .order("win_rate", { ascending: false })
-      .limit(5),
+    // applying_pattern: RAG化により match_reply_knowledge に統合済み。
+    // ai_reply_knowledge category='applying_pattern' は match_reply_knowledge RPC が
+    // 全カテゴリ対象でベクトル検索するため、バルクフェッチは不要。プレースホルダーで置き換え。
+    Promise.resolve({ data: [] }),
+    // winning_patterns: RAG化（match_winning_patterns）に移行済み。プレースホルダー。
+    Promise.resolve({ data: [] }),
     // RAG化 Phase1: アクション連動ルール（is_permanent 不問・BOUNDARY-* は上の別枠で全件取得済み）。
     // 従来の恒久ルール枠は action_type IS NULL 必須のため、action_type 付きルール
     // （HUMAN-*/FEEDBACK-*/IMPLEMENT-*/LEARN-AIX-* 等）は brain に構造的に一切届いていなかった。
@@ -980,6 +961,7 @@ export async function analyzeConversation(
   let ragCheckpoints: Array<{ checkpoint_index: number; summary: string | null; key_facts: unknown; conversation_stage: string | null; similarity?: number }> = [];
   type RagKnowledgeRow = { title: string | null; content: string | null; category: string | null; conversation_state: string | null; importance: number | null; similarity: number };
   let ragKnowledgeRaw: RagKnowledgeRow[] = [];
+  let ragWinningPatterns: Array<{ situation: string | null; pattern: string; closing_action: string | null; human_type_label: string | null; outcome_type: string; notes: string | null; win_rate: number | null; importance: number; similarity: number }> = [];
   if (!isIncremental && process.env.OPENAI_API_KEY) {
     const recentCustomerMsgs = typedMessages
       .filter(m => m.sender === "customer" && m.text)
@@ -1028,6 +1010,24 @@ export async function analyzeConversation(
             ragCheckpoints = ((cpRes as { data: unknown }).data ?? []) as typeof ragCheckpoints;
             // 生のRPC結果のみ保持。フィルタ/重複除去/ソートは⑦⑪⑱の結果変数定義後（applyingPatternsText 構築後）に行う
             ragKnowledgeRaw = ((knRes as { data: unknown }).data ?? []) as RagKnowledgeRow[];
+
+            // winning_patterns RAG: 会話コンテキストに類似する成約・失注パターンを検索
+            const { data: wpRag } = await supabase.rpc("match_winning_patterns", {
+              query_embedding: qEmb,
+              match_count: 5,
+              min_importance: 7,
+            });
+            ragWinningPatterns = ((wpRag ?? []) as Array<{
+              situation: string | null;
+              pattern: string;
+              closing_action: string | null;
+              human_type_label: string | null;
+              outcome_type: string;
+              notes: string | null;
+              win_rate: number | null;
+              importance: number;
+              similarity: number;
+            }>).filter((w) => w.similarity >= 0.5);
           }
         }
       } catch {
@@ -1334,14 +1334,16 @@ export async function analyzeConversation(
     ? `\n【関連ナレッジ（この会話に類似する過去の学習・RAG検索）】\n${ragKnowledge.map((k) => `- [${k.category ?? "knowledge"}${k.conversation_state ? `/${k.conversation_state}` : ""}] ${(k.title ?? "").replace(/\n/g, " ").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 1200)}`).join("\n")}\n※現在の会話状況に該当するものがあれば aix / closing_strategy / next_steps の判断に反映すること。`
     : "";
 
-  // winning_patterns: 勝率順の成約実績パターン（グローバル・顧客横断）
-  const wpData = (winningPatternsResult.data ?? []) as Array<{pattern?: string; situation?: string; closing_action?: string; notes?: string; win_rate?: number}>;
-  const wpText = wpData
-    .filter((w) => w.pattern || w.closing_action)
-    .map((w) => `・${w.situation ?? ""}: ${w.closing_action ?? w.pattern ?? ""}（勝率${w.win_rate ?? "?"}%）`)
-    .join("\n");
-  const winningPatternsText = wpText
-    ? `\n【成約実績パターン（winning_patterns・勝率順）】\n${wpText}`
+  // winning_patterns: RAG検索結果から類似パターンを注入（バルクフェッチ廃止・会話コンテキスト最適化）
+  const winningPatternsText = ragWinningPatterns.length > 0
+    ? `\n【類似成約・失注パターン（RAG検索・この会話に類似した過去事例）】\n${ragWinningPatterns.map((w) => {
+        const outcomeLabel = w.outcome_type === "closed_lost" ? "【失注】" : "【成約】";
+        const parts = [`${outcomeLabel} ${w.pattern}`];
+        if (w.closing_action) parts.push(`→ 有効アクション: ${w.closing_action}`);
+        if (w.notes) parts.push(`転換点: ${w.notes}`);
+        if (w.human_type_label) parts.push(`顧客タイプ: ${w.human_type_label}`);
+        return `- ${parts.join(" / ")}`;
+      }).join("\n")}\n※この顧客に類似した過去事例。closing_strategy・next_steps の判断に反映すること。`
     : "";
 
   // この会話で使用済みのAIXアクション一覧（重複提案の抑止・次段階の推奨材料）
@@ -1457,12 +1459,12 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
   // プロンプトキャッシュ設計:
   //   system（ephemeral）= ハードコード定数 + 管理者手動の恒久ルール（promptRules / knowledgePrinciples / boundaryRules）
   //   user[0] stableKnowledge = 現在空。DB動的データは全て user[1] へ移動済み。
-  //     ・contractPatternsText / applyingPatternsText は成約/申込のたびに cron 更新 → cache無し側へ
-  //     ・winningPatternsText は win_rate が変わる → cache無し側へ
+  //     ・contractPatterns / applyingPatterns → バルクフェッチ廃止・match_reply_knowledge RAGが全カテゴリ検索
+  //     ・winningPatterns → match_winning_patterns RAGに移行（会話コンテキスト最適化）
   //     ・templatesText は use_count が毎送信更新 → cache無し側へ
   //   user[1] customerSpecific（cache無し）= 上記DB動的データ + 顧客固有データ + 会話履歴
   const stableKnowledgeText = ``;
-  const customerSpecificText = `${prevMetaText}${contractPatternsText}${applyingPatternsText}${winningPatternsText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+  const customerSpecificText = `${prevMetaText}${winningPatternsText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;

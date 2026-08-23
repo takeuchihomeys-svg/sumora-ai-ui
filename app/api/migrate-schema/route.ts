@@ -1210,6 +1210,25 @@ ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS personality_tags TEXT;
 -- （customer-summary が INSERT 時に付与。was_correct=true になった行を「人間性が似た顧客で当たった一手」として検索する）
 ALTER TABLE winning_pattern_logs ADD COLUMN IF NOT EXISTS personality_profile TEXT;
 
+-- winning_patterns: 成約・失注会話から抽出した構造化パターンテーブル（RAG検索対応）
+CREATE TABLE IF NOT EXISTS winning_patterns (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  situation             text,
+  pattern               text NOT NULL,
+  closing_action        text,
+  human_type_label      text,
+  outcome_type          text NOT NULL DEFAULT 'closed_won',
+  notes                 text,
+  win_rate              numeric,
+  source_conversation_id text,
+  embedding             vector(1536),
+  importance            integer DEFAULT 8,
+  created_at            timestamptz DEFAULT now(),
+  updated_at            timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS winning_patterns_embedding_idx
+  ON winning_patterns USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+
 -- 成約分析（analyze-closed-conversation）: 申込/成約確定時に Opus 4.8 が
 -- 会話全体から抽出した「確定人間性プロファイル」を顧客に保存する
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS personality_profile TEXT;
