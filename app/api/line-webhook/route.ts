@@ -868,10 +868,8 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
     const { data: cur } = await db.from("property_customers")
       .select("additional_conditions").eq("id", pcId).maybeSingle();
     const prev = (cur?.additional_conditions as string | null) ?? "";
-    const pattern = intent === "ADD" ? "add" : intent === "EXCLUDE" ? "exclude" : "change";
-    // PENDING エントリ（【自動反映】prefix なし）→ parseCondLine が isLog: false と判定し「新着要望」バナーに表示
-    // 条件変更後に物件を再検索する必要があるためスタッフへの通知として使う
-    const newEntry = `[${getJSTTimestamp()}|${pattern}] ${note}`;
+    // auto エントリ（ブレイン自動反映済み）→ バナーに表示するが確認のみ・アクションボタンなし
+    const newEntry = `[${getJSTTimestamp()}|auto] ${note}`;
     await db.from("property_customers")
       .update({ additional_conditions: prev ? `${prev}\n${newEntry}` : newEntry, updated_at: new Date().toISOString() })
       .eq("id", pcId);
@@ -1127,7 +1125,7 @@ ${customerText.slice(0, 300)}
       const noteText = Object.entries(changedFields)
         .map(([k, v]) => `${FIELD_LABELS[k] ?? k}: ${v}`)
         .join("、");
-      const pendingEntry = `[${getJSTTimestamp()}|change] ${noteText}`;
+      const pendingEntry = `[${getJSTTimestamp()}|auto] ${noteText}`;
       const { data: cur } = await db.from("property_customers")
         .select("additional_conditions").eq("id", pcId).maybeSingle();
       const prev = (cur?.additional_conditions as string | null) ?? "";

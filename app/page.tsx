@@ -380,7 +380,7 @@ function parseCondLogLine(text: string): { isLog: boolean; content: string } {
 }
 
 // パターン付き行解析（[MM/DD HH:MM|pattern] 形式・後方互換あり）
-type CondPatternType = "add" | "change" | "exclude" | "url" | "format" | null;
+type CondPatternType = "add" | "change" | "exclude" | "url" | "format" | "auto" | null;
 function parseCondLine(line: string): { isLog: boolean; timestamp: string; pattern: CondPatternType; content: string } {
   // 反映済みログ行: 【YYYY/MM/DD反映済み】...
   if (/^【[^】]*】/.test(line)) {
@@ -404,6 +404,7 @@ const PATTERN_CFG: Record<NonNullable<CondPatternType>, { label: string; badge: 
   exclude: { label: "AI: 除外",  badge: "bg-red-100 text-red-700 border-red-300",         defaultMode: "replace" },
   url:     { label: "URL条件",   badge: "bg-sky-100 text-sky-700 border-sky-300",         defaultMode: "add" },
   format:  { label: "条件受信",  badge: "bg-green-100 text-green-700 border-green-300",   defaultMode: "replace" },
+  auto:    { label: "自動反映",  badge: "bg-indigo-100 text-indigo-700 border-indigo-300", defaultMode: "replace" },
 };
 
 // 確定履歴タイムライン（条件パネル下部に折りたたみ表示）
@@ -6576,14 +6577,17 @@ export default function Home() {
             const latest = pendingLines[pendingLines.length - 1];
             const patCfg = latest.pattern ? PATTERN_CFG[latest.pattern] ?? null : null;
             const recommendedMode = patCfg?.defaultMode ?? null;
+            const isAutoReflected = latest.pattern === "auto" || latest.pattern === "format";
             return (
-              <div className="border-b border-amber-200 bg-amber-50 px-3 pt-2 pb-2.5">
+              <div className={`border-b px-3 pt-2 pb-2.5 ${isAutoReflected ? "border-indigo-200 bg-indigo-50" : "border-amber-200 bg-amber-50"}`}>
                 {/* ヘッダー行: バッジ + クリア */}
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-bold text-amber-700">新着要望</span>
+                    <span className={`text-[11px] font-bold ${isAutoReflected ? "text-indigo-700" : "text-amber-700"}`}>
+                      {isAutoReflected ? "ブレイン自動更新" : "新着要望"}
+                    </span>
                     {pendingLines.length > 1 && (
-                      <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                      <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold text-white ${isAutoReflected ? "bg-indigo-500" : "bg-amber-500"}`}>
                         {pendingLines.length}件
                       </span>
                     )}
@@ -6595,20 +6599,23 @@ export default function Home() {
                   </div>
                   <button
                     onClick={() => void clearAdditionalInChat(selectedConversation.id)}
-                    className="text-[10px] text-amber-400 active:opacity-60 px-1"
+                    className={`text-[10px] active:opacity-60 px-1 ${isAutoReflected ? "text-indigo-400" : "text-amber-400"}`}
                   >
-                    クリア
+                    確認済み
                   </button>
                 </div>
                 {/* 条件テキスト */}
-                <p className="text-[12px] text-amber-800 leading-relaxed mb-2">{stripMarkdown(latest.content)}</p>
+                <p className={`text-[12px] leading-relaxed mb-1.5 ${isAutoReflected ? "text-indigo-800" : "text-amber-800"}`}>{stripMarkdown(latest.content)}</p>
+                {isAutoReflected && (
+                  <p className="text-[10px] text-indigo-400 mb-1">条件はブレインが自動でDBに反映済みです</p>
+                )}
                 {pendingLines.length > 1 && (
-                  <p className="text-[10px] text-amber-500 mb-2">
-                    ほか{pendingLines.length - 1}件の未反映条件があります
+                  <p className={`text-[10px] mb-2 ${isAutoReflected ? "text-indigo-400" : "text-amber-500"}`}>
+                    ほか{pendingLines.length - 1}件の{isAutoReflected ? "自動更新履歴" : "未反映条件"}があります
                   </p>
                 )}
-                {/* アクションボタン: format パターン（正式フォーマット受信）はクリアのみ */}
-                {latest.pattern !== "format" && (
+                {/* アクションボタン: auto（自動反映済み）・format（正式フォーマット受信）はボタン不要 */}
+                {!isAutoReflected && (
                   <div className="flex gap-2">
                     <button
                       onClick={() => void handleReplaceInChat(selectedConversation.id)}

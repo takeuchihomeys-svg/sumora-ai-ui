@@ -107,7 +107,7 @@ async function applyBrainConditionChange(
     const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
     const ts = `${String(jst.getMonth() + 1).padStart(2, "0")}/${String(jst.getDate()).padStart(2, "0")} ${String(jst.getHours()).padStart(2, "0")}:${String(jst.getMinutes()).padStart(2, "0")}`;
     const note = Object.entries(changedFields).map(([k, v]) => `${BRAIN_COND_LABELS[k] ?? k}: ${v}`).join("、");
-    const pendingEntry = `[${ts}|${focus.pattern}] ${note}`;
+    const pendingEntry = `[${ts}|auto] ${note}`;
     const { data: latest } = await db.from("property_customers")
       .select("additional_conditions").eq("id", pcId).maybeSingle();
     const prev = (latest?.additional_conditions as string | null) ?? "";
