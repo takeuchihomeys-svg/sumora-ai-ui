@@ -256,10 +256,12 @@ function resolveNearbyFromDB(
 
 // DeepSeek に「〜まで〜分で行ける駅」を問い合わせ（DB展開の補完フォールバック用）
 // knownStations を渡すと「このリスト内のみ返すこと」としてハルシネーションを抑制する
+// lineContext を渡すと路線順序の構造知識も与えられる（DB に駅があれば部分的に構築可能）
 async function resolveNearbyWithDeepSeek(
   station: string,
   minutes: number,
   knownStations: string[] = [],
+  lineContext: string = "",
 ): Promise<string[]> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return [];
@@ -267,6 +269,7 @@ async function resolveNearbyWithDeepSeek(
     const whitelist = knownStations.length > 0
       ? `\n必ず以下のリスト内の駅名のみ返してください（このリストにない駅名は返さないこと）:\n[${knownStations.slice(0, 200).join(", ")}]`
       : "\n大阪府内の駅のみ対象。架空の駅名は絶対に含めないこと。";
+    const contextNote = lineContext ? `\n\n参考（路線・駅の順序情報）:\n${lineContext}` : "";
     const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
       signal: AbortSignal.timeout(15_000),
@@ -275,7 +278,7 @@ async function resolveNearbyWithDeepSeek(
         model: "deepseek-chat",
         max_tokens: 300,
         messages: [{ role: "user", content:
-          `大阪府で「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を列挙してください。${whitelist}\nJSONの配列形式のみで返してください: ["駅名1", "駅名2", ...]\n駅名には「駅」を付けないでください。10〜20駅程度。`,
+          `大阪府で「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を列挙してください。${whitelist}${contextNote}\nJSONの配列形式のみで返してください: ["駅名1", "駅名2", ...]\n駅名には「駅」を付けないでください。10〜20駅程度。`,
         }],
         temperature: 0,
       }),
@@ -372,11 +375,16 @@ function resolveTransferLinesFromDB(
 
 // 乗り換え制約 → DeepSeek で路線名リストを取得し resolveLineInternal フィルタ適用
 // ※ DB（resolveTransferLinesFromDB）で結果が得られた場合は呼ばれない
+// ※ 既知路線名リストを渡すことで架空路線名のハルシネーションを抑制
 async function resolveTransferLinesWithDeepSeek(baseStation: string, maxTransfers: number, maps: LineMaps): Promise<string[]> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return [];
   try {
     const condition = maxTransfers === 0 ? "乗り換えなし（直通のみ）" : `乗り換え${maxTransfers}回以内`;
+    const knownLines = Object.keys(maps.routeMap);
+    const lineWhitelist = knownLines.length > 0
+      ? `\n必ず以下のリスト内の路線名のみ返してください:\n[${knownLines.join(", ")}]`
+      : "\n大阪府内の路線のみ対象。";
     const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
       signal: AbortSignal.timeout(12_000),
@@ -385,7 +393,7 @@ async function resolveTransferLinesWithDeepSeek(baseStation: string, maxTransfer
         model: "deepseek-chat",
         max_tokens: 200,
         messages: [{ role: "user", content:
-          `大阪府で「${baseStation}駅」から${condition}で行ける路線名を列挙してください。\n大阪府内の路線のみ対象。JSONの配列形式のみで返してください: ["路線名1", "路線名2", ...]\n10路線程度。`,
+          `大阪府で「${baseStation}駅」から${condition}で行ける路線名を列挙してください。${lineWhitelist}\nJSONの配列形式のみで返してください: ["路線名1", "路線名2", ...]\n10路線程度。`,
         }],
         temperature: 0,
       }),
@@ -975,9 +983,16 @@ commute_constraints: 通勤・通学・乗り換え制約
                     nearbyStations = dbNearby;
                     console.log(`[resolve-area] DB展開: ${base_station} ${max_minutes}分 → ${nearbyStations.length}駅`);
                   } else {
-                    // DB にデータ不足 → DeepSeek（既知駅名ホワイトリスト付き）
+                    // DB にデータ不足 → DeepSeek（既知駅名ホワイトリスト + 部分的な路線構造コンテキスト付き）
                     const allKnown = Object.keys(lsc.byStation);
-                    nearbyStations = await resolveNearbyWithDeepSeek(base_station, max_minutes, allKnown);
+                    // base_stationが属する路線の駅順序をコンテキストとして構築（DBに一部でもあれば活用）
+                    const stationLines = lsc.byStation[base_station] ?? [];
+                    const lineContextLines = stationLines.slice(0, 3).map(({ line }) => {
+                      const stations = lsc.byLine[line] ?? [];
+                      return `${line}: [${stations.join("→")}]`;
+                    });
+                    const lineContext = lineContextLines.join("\n");
+                    nearbyStations = await resolveNearbyWithDeepSeek(base_station, max_minutes, allKnown, lineContext);
                     console.log(`[resolve-area] DeepSeek展開: ${base_station} ${max_minutes}分 → ${nearbyStations.length}駅`);
                   }
                   await resolveStationsFromList([base_station, ...nearbyStations], result, db, maps);
