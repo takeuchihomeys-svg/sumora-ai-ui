@@ -1404,7 +1404,7 @@ ${AIX_CAPABILITY_MAP}
 
 ${REPLY_STYLE_RULES}
 
-${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templatesText}
+${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
 
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
@@ -1458,9 +1458,10 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}${templa
   // user先頭に置き cache_control: ephemeral を付与 → incremental含む連続呼び出しでキャッシュリード。
   // actionRulesText（convStatus でフィルタ済み）/ contractExamplesPhaseText（convStatus でソート済み）は
   // フェーズ依存のため customerSpecificText（cache無し）側に移動。
+  // templatesText（won_count/use_count が更新されるたびに変わる）も cache無し側に移動（system に置くとuse_count更新のたびにキャッシュ破棄）。
   // ragKnowledgeText / prevMetaText / 会話履歴等の顧客固有テキストも2ブロック目（cache無し）に置く
   const stableKnowledgeText = `${contractPatternsText}${applyingPatternsText}${winningPatternsText}`;
-  const customerSpecificText = `${prevMetaText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+  const customerSpecificText = `${prevMetaText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
