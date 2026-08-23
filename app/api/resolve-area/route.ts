@@ -648,6 +648,10 @@ async function vectorSearchStation(query: string, db: any, maps: LineMaps, resul
     if (code && !result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
     if (!result.itandi.ward_names.includes(row.ward)) result.itandi.ward_names.push(row.ward);
     if (!result.reins.ward_names.includes(row.ward))  result.reins.ward_names.push(row.ward);
+    // 拡張ツール側の LEARNED_WARD_MAP に学習させる（次回以降 API 呼び出し不要）
+    if (!result.new_regions.some(r => r.token === query)) {
+      result.new_regions.push({ token: query, ward: row.ward });
+    }
   }
 }
 

@@ -3327,7 +3327,7 @@ function openInstructions(siteKey) {
           area_mode:     _lockedMode || currentAreaMode,
           rent_min:      adjC.rent_min,
           rent_max:      rpEffectiveRentMax,
-          walk_minutes:  adjC.walk_minutes,
+          walk_minutes:  adjC.walk_minutes || apiData?.suggested_walk_minutes || null,
           floor_plan:    adjC.floor_plan,
           is_wide:       searchMode === "wide",
           building_age:  adjC.building_age
@@ -3362,7 +3362,7 @@ function openInstructions(siteKey) {
       try {
         chrome.storage.session.set({ axlx_score_data: {
           rent_max:             rpEffectiveRentMax,
-          walk_minutes:         adjC.walk_minutes || null,
+          walk_minutes:         adjC.walk_minutes || apiData?.suggested_walk_minutes || null,
           floor_plan:           adjC.floor_plan || null,
           building_age:         adjC.building_age || null,
           area_min:             adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || null),
@@ -3475,7 +3475,7 @@ function openInstructions(siteKey) {
       const adjRegDate = document.getElementById("adj-reg-date")?.value || "";
       const conditions = {
         rent_max:       adjC.rent_max || null,
-        walk_minutes:   adjC.walk_minutes || null,
+        walk_minutes:   adjC.walk_minutes || apiData?.suggested_walk_minutes || null,
         floor_plan:     adjC.floor_plan || null,
         building_age:   adjC.building_age || null,
         is_wide:        searchMode === "wide",
@@ -3493,6 +3493,10 @@ function openInstructions(siteKey) {
             if (WARD_CODE_MAP[tok]) return tok;
             return null;
           }).filter(Boolean);
+          // API補完: 概念エリア名・ベクトル検索で解決した区名を追加（未読だったフィールドを反映）
+          if (apiData?.reins?.ward_names) {
+            apiData.reins.ward_names.forEach(w => { if (!wards.includes(w)) wards.push(w); });
+          }
           // 地域モード+広げて検索: 難波/心斎橋エリアは中央区・浪速区・西区を全域追加
           if (searchMode === "wide") wards = expandNambaWards(wards);
           return wards.slice(0, 3);
