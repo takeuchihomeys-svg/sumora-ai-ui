@@ -350,8 +350,8 @@ async function resolveAreaWithAPI(rawArea, areaMode, customerId) {
   console.log("[AX] resolve-area 呼び出し:", _triggerReason, rawArea);
   try {
     const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 15000);
-    // 理由: Claude NL抽出(~2s) + DeepSeek commute展開(~8s) = 最大10s必要
+    const tid = setTimeout(() => ctrl.abort(), 20000);
+    // 理由: Claude NL抽出(~3s) + DeepSeek fallback(~9s) + バッファ(3s) = 最大15s必要 → 20sで余裕を持つ
     const res = await fetch(`${API_BASE}/api/resolve-area`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

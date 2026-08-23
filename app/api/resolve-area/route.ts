@@ -183,6 +183,36 @@ function toItandiNames(internal: string, maps: LineMaps): string[] {
   return maps.itandiMap[internal] ?? [];
 }
 
+// ── DeepSeek返却駅名の表記ゆれ正規化（ヶ/ケ混在・スペース等） ──────────────
+// 日本の駅名で頻出する表記ゆれをDBの表記に統一する
+function normalizeStationName(name: string): string {
+  return name
+    .replace(/ヶ/g, "ケ")       // 三国ヶ丘 → 三国ケ丘
+    .replace(/ガ(?=丘|原|台)/g, "ケ") // ヶ由来のガ表記
+    .replace(/\s+/g, "")        // スペース除去
+    .replace(/　/g, "")         // 全角スペース除去
+    .trim();
+}
+
+// DeepSeekが返した駅名をDB既知駅名リストとファジーマッチ
+// 完全一致 → そのまま / 表記ゆれ一致 → DB表記に補正 / 不一致 → null（除外）
+function fuzzyResolveStation(name: string, knownStations: Set<string>, normalizedMap: Map<string, string>): string | null {
+  if (knownStations.has(name)) return name;
+  const normalized = normalizeStationName(name);
+  return normalizedMap.get(normalized) ?? null;
+}
+
+// knownStations配列から正規化マップを構築（一度だけ生成してキャッシュ用途にも使える）
+function buildNormalizedMap(knownStations: string[]): { set: Set<string>; map: Map<string, string> } {
+  const set = new Set(knownStations);
+  const map = new Map<string, string>();
+  for (const s of knownStations) {
+    const n = normalizeStationName(s);
+    if (!map.has(n)) map.set(n, s); // 正規化後の表記 → DB正式表記
+  }
+  return { set, map };
+}
+
 // DB の line_stations + order_idx を使って基準駅からN分圏内の駅をBFSで展開
 // 乗り換え対応: 複数路線の接続駅・TRANSFER_CONNECTIONS の異名駅を経由してさらに展開
 // 乗り換え時間ペナルティ: 5分（梅田 complex 等の構内移動時間を考慮）
@@ -270,9 +300,11 @@ async function resolveNearbyWithDeepSeek(
       ? `\n必ず以下のリスト内の駅名のみ返してください（このリストにない駅名は返さないこと）:\n[${knownStations.slice(0, 200).join(", ")}]`
       : "\n大阪府内の駅のみ対象。架空の駅名は絶対に含めないこと。";
     const contextNote = lineContext ? `\n\n参考（路線・駅の順序情報）:\n${lineContext}` : "";
+    // タイムアウト: Chrome拡張の15秒枠内に収めるため9秒に制限
+    // (Claude NL抽出~3秒 + DeepSeek~9秒 + バッファ3秒 = 15秒以内)
     const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(9_000),
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
       body: JSON.stringify({
         model: "deepseek-chat",
@@ -289,7 +321,17 @@ async function resolveNearbyWithDeepSeek(
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\[[\s\S]*\]/);
     if (!match) return [];
     const parsed = JSON.parse(match[0]) as unknown[];
-    return parsed.filter((s): s is string => typeof s === "string" && s.length > 0);
+    const rawNames = parsed.filter((s): s is string => typeof s === "string" && s.length > 0);
+    // ファジーマッチ: 表記ゆれ(ヶ→ケ等)をDB表記に補正し、不一致駅を除外
+    if (knownStations.length > 0) {
+      const { set, map } = buildNormalizedMap(knownStations);
+      const resolved = rawNames.map(n => fuzzyResolveStation(n, set, map)).filter((s): s is string => s !== null);
+      if (resolved.length < rawNames.length) {
+        console.log(`[resolve-area] DeepSeek駅名補正: ${rawNames.length}件→${resolved.length}件 (${rawNames.filter(n => !resolved.includes(n)).join(",")} を除外)`);
+      }
+      return resolved;
+    }
+    return rawNames;
   } catch (e) {
     console.warn("[resolve-area] DeepSeek nearby error:", e instanceof Error ? e.message : e);
     return [];
@@ -312,7 +354,7 @@ async function resolveNearbyByBicycle(
       : "";
     const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(9_000), // Chrome拡張15秒枠内に収めるため9秒
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
       body: JSON.stringify({
         model: "deepseek-chat",
@@ -327,9 +369,12 @@ async function resolveNearbyByBicycle(
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return { stations: [], wards: [] };
     const parsed = JSON.parse(match[0]) as { stations?: unknown[]; wards?: unknown[] };
+    const rawStations = (parsed.stations ?? []).filter((s): s is string => typeof s === "string" && s.length > 0);
+    // ファジーマッチ: 表記ゆれ補正 + DB存在確認
+    const { set, map } = buildNormalizedMap(knownStations);
+    const resolvedStations = rawStations.map(n => fuzzyResolveStation(n, set, map)).filter((s): s is string => s !== null);
     return {
-      stations: (parsed.stations ?? []).filter((s): s is string => typeof s === "string" && s.length > 0),
-      // WARD_CODE_MAP で存在確認 → 架空区名を除外
+      stations: resolvedStations,
       wards:    (parsed.wards ?? []).filter((w): w is string => typeof w === "string" && w in WARD_CODE_MAP),
     };
   } catch (e) {
@@ -387,7 +432,7 @@ async function resolveTransferLinesWithDeepSeek(baseStation: string, maxTransfer
       : "\n大阪府内の路線のみ対象。";
     const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(8_000), // Chrome拡張15秒枠内に収めるため8秒
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
       body: JSON.stringify({
         model: "deepseek-chat",
