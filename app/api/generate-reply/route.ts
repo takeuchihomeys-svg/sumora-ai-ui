@@ -500,7 +500,7 @@ function buildGenerationMessages(
   // お客様が深夜に連絡してきた場合も「お世話になっております」で返す。
   const greetingNote = alreadyGreeted
     ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み。今回は絶対に使わない。「はい！！」「かしこまりました！！」など短い言葉で直接本文から始める。「ありがとうございます」を挨拶代わりの書き出しに使うことも禁止（お礼は本文中で文脈が伴う場合のみ）。`
-    : (state === "first_reply" && isFirstEverReply)
+    : isFirstEverReply
       ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「${buildFirstGreeting(customerName)}」で始める（一字一句変更・省略禁止）。「お世話になっております」「夜分遅くに失礼致します」は絶対禁止。`
       : `\n【⏰ 挨拶ルール・最優先】現在${jstHour}時台（JST）。今回の冒頭は「${sanitizeCustomerName(customerName) ? `${sanitizeCustomerName(customerName)}さんお世話になっております！！` : "お世話になっております！！"}」を使う。
 【許可される冒頭フレーズはこの3つのみ】
