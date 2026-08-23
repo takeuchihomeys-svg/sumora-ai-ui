@@ -2160,6 +2160,45 @@ INSERT INTO design_knowledge (category, domain, rule_title, rule_content, reason
 
 ON CONFLICT DO NOTHING;
 
+-- ── templates RAG: embedding カラム + HNSW インデックス + RPC（2026-08-23追加）──
+-- category+label のテキストをベクトル化して会話コンテキストとのコサイン類似度でテンプレを選ぶ。
+-- バックフィル: /api/backfill-templates を POST して全151件に embedding を生成する。
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS embedding vector(1536);
+CREATE INDEX IF NOT EXISTS templates_embedding_idx
+  ON templates USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+
+CREATE OR REPLACE FUNCTION match_templates(
+  query_embedding vector,
+  match_count integer DEFAULT 8,
+  category_filter text DEFAULT NULL
+)
+RETURNS TABLE (
+  id uuid,
+  category text,
+  label text,
+  win_rate numeric,
+  use_count integer,
+  won_count integer,
+  similarity double precision
+)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT
+    t.id,
+    t.category,
+    t.label,
+    t.win_rate,
+    t.use_count,
+    t.won_count,
+    (1 - (t.embedding <=> query_embedding))::float AS similarity
+  FROM templates t
+  WHERE t.embedding IS NOT NULL
+    AND (category_filter IS NULL OR t.category LIKE category_filter)
+  ORDER BY t.embedding <=> query_embedding
+  LIMIT match_count;
+$$;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

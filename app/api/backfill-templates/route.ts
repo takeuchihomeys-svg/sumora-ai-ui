@@ -1,0 +1,69 @@
+import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/app/lib/supabase";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
+
+export const maxDuration = 300;
+
+// POST /api/backfill-templates
+// templates テーブルの全レコードに embedding を生成して保存する。
+// embedding テキスト: category + " " + label（どのシーンのテンプレかをベクトル化）
+// 151件程度のため1回で全件処理可能。offset/limit で分割も可。
+export async function POST(req: NextRequest) {
+  const secret = process.env.CRON_SECRET;
+  const auth = req.headers.get("authorization");
+  if (!secret || auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(req.url);
+  const limit = Math.min(parseInt(searchParams.get("limit") ?? "200"), 200);
+  const offset = parseInt(searchParams.get("offset") ?? "0");
+  const overwrite = searchParams.get("overwrite") === "true";
+
+  // embedding が未設定のレコードのみ対象（overwrite=true の場合は全件）
+  let query = supabase
+    .from("templates")
+    .select("id, category, label")
+    .order("created_at", { ascending: true })
+    .range(offset, offset + limit - 1);
+
+  if (!overwrite) {
+    query = query.is("embedding", null);
+  }
+
+  const { data: rows, error } = await query;
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  if (!rows || rows.length === 0) {
+    return NextResponse.json({ ok: true, processed: 0, done: true });
+  }
+
+  type TemplateRow = { id: string; category: string; label: string };
+  const typedRows = rows as TemplateRow[];
+
+  let processed = 0;
+  let failed = 0;
+
+  for (const row of typedRows) {
+    // category + label をベクトル化: 「物件確認した【AIX】 空きの確認ができました！」形式
+    const embedText = `${row.category} ${row.label}`.trim();
+    const embedding = await generateEmbedding(embedText).catch(() => null);
+    if (!embedding) {
+      failed++;
+      continue;
+    }
+
+    const { error: updateErr } = await supabase
+      .from("templates")
+      .update({ embedding: JSON.stringify(embedding) })
+      .eq("id", row.id);
+
+    if (updateErr) {
+      failed++;
+    } else {
+      processed++;
+    }
+  }
+
+  const done = rows.length < limit;
+  return NextResponse.json({ ok: true, processed, failed, offset, limit, done });
+}

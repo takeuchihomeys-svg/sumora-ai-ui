@@ -781,20 +781,11 @@ export async function analyzeConversation(
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(10),
-    // Top templates by won_count for context (brain uses these to recommend best template)
-    // B1(Fable5): 旧 .like("category", "AIX%") は前方一致で、実カテゴリ「見積書送る【AIX】」等に
-    // 一度もマッチしていなかった（本番0件を実測確認 = このデータソースは死んでいた）。
-    // won_count（analyze-applying が closed_won 会話の自発送信と突き合わせて集計する成約実績）を最優先。
-    // 旧 .gte("use_count", 3) フィルタは撤廃: use_count はモーダル経由送信しか計上せず、
-    // 成約実績のあるテンプレ（手打ち送信のため use_count=0）を全て弾いていた。
-    // タイブレークは use_count（win_rate は「1回使用で100%」の統計ノイズがあるため順位に使わない）
-    supabase
-      .from("templates")
-      .select("category, label, win_rate, use_count, won_count")
-      .like("category", "%【AIX】%")
-      .order("won_count", { ascending: false, nullsFirst: false })
-      .order("use_count", { ascending: false, nullsFirst: false })
-      .limit(5),
+    // templates: match_templates RAGに移行済み。バルクフェッチ廃止。
+    // 旧: won_count 上位5件を全会話共通で注入 → キャッシュ破棄の原因かつ文脈無関係。
+    // 新: 会話コンテキスト（フェーズ・戦略・人間性）に近いテンプレを match_templates RAGで取得。
+    // このプレースホルダーは Promise.all のインデックスを崩さないために残す。
+    Promise.resolve({ data: [] }),
     // 線引きルール: BOUNDARY-* rules that define when to use AIX vs auto-reply
     // B4(Fable5): limit 15→40 — 本番に31行あり、旧limitでは線引きルールの半分以上が無言欠落していた。
     // 線引きルールは reply_mode（aix/auto_reply）判定の根幹のため全件注入する
@@ -962,7 +953,8 @@ export async function analyzeConversation(
   type RagKnowledgeRow = { title: string | null; content: string | null; category: string | null; conversation_state: string | null; importance: number | null; similarity: number };
   let ragKnowledgeRaw: RagKnowledgeRow[] = [];
   let ragWinningPatterns: Array<{ situation: string | null; pattern: string; closing_action: string | null; human_type_label: string | null; outcome_type: string; notes: string | null; win_rate: number | null; importance: number; similarity: number }> = [];
-  // RAG: incremental mode でも実行する（winning_patterns は毎回必要）。
+  let ragTemplates: Array<{ id: string; category: string | null; label: string | null; win_rate: number | null; use_count: number | null; won_count: number | null; similarity: number }> = [];
+  // RAG: incremental mode でも実行する（winning_patterns / templates は毎回必要）。
   // checkpoint RAG のみ非incremental 限定（古い会話セーブポイントの検索は差分分析では不要）。
   if (process.env.OPENAI_API_KEY) {
     // RAGクエリ: 顧客人間性プロファイル + 前回戦略 + フェーズ を中心に構築。
@@ -1019,12 +1011,19 @@ export async function analyzeConversation(
             ragKnowledgeRaw = ((knRes as { data: unknown }).data ?? []) as RagKnowledgeRow[];
 
             // winning_patterns RAG: incremental でも実行（人間性ベースのクロージング戦略は毎回必要）
-            const { data: wpRag } = await supabase.rpc("match_winning_patterns", {
-              query_embedding: qEmb,
-              match_count: 5,
-              min_importance: 7,
-            });
-            ragWinningPatterns = ((wpRag ?? []) as Array<{
+            const [wpRagResult, tplRagResult] = await Promise.all([
+              supabase.rpc("match_winning_patterns", {
+                query_embedding: qEmb,
+                match_count: 5,
+                min_importance: 7,
+              }),
+              // templates RAG: 会話フェーズ・戦略に最も近いテンプレを取得（バルクフェッチ廃止）
+              supabase.rpc("match_templates", {
+                query_embedding: qEmb,
+                match_count: 8,
+              }),
+            ]);
+            ragWinningPatterns = ((wpRagResult.data ?? []) as Array<{
               situation: string | null;
               pattern: string;
               closing_action: string | null;
@@ -1035,6 +1034,10 @@ export async function analyzeConversation(
               importance: number;
               similarity: number;
             }>).filter((w) => w.similarity >= 0.5);
+            // templates RAG: 類似度 0.4 以上、won_count 降順でソート（成約実績を最優先）
+            ragTemplates = ((tplRagResult.data ?? []) as typeof ragTemplates)
+              .filter((t) => t.similarity >= 0.4)
+              .sort((a, b) => (b.won_count ?? 0) - (a.won_count ?? 0));
           }
         }
       } catch {
@@ -1234,11 +1237,10 @@ export async function analyzeConversation(
     ? `\n【重要原則】\n${knowledgePrinciples.map((k) => `- ${k.content}`).join("\n")}`
     : "";
 
-  // Top-performing AIX templates (for template_hint context)
-  type TopTemplate = { category: string | null; label: string | null; win_rate: number | null; use_count: number | null; won_count: number | null };
-  const topTemplates = (templatesResult.data ?? []) as TopTemplate[];
-  const templatesText = topTemplates.length > 0
-    ? `\n【テンプレート実績（won_count=成約会話で実際に使われた回数・最優先指標）】\n${topTemplates.map((t) => `- ${t.category}: ${t.label} (成約実績${t.won_count ?? 0}回, モーダル経由${t.use_count ?? 0}回)`).join("\n")}\n※won_count は closed_won 会話の自発送信（手打ち送信含む）とテンプレ本文の突き合わせで集計した成約実績。template_hint は上記フェーズ別推奨マップに従い、同フェーズで候補が複数あれば won_count が高いものを最優先すること。use_count はTemplateModal経由の送信のみ計上する参考値（コピペ・手打ち送信は数えない）。この一覧に無い＝成約実績が無い ではない。`
+  // Templates RAG: 会話コンテキストに最も近いテンプレを match_templates RAGで取得（バルクフェッチ廃止）
+  // バルクフェッチ（won_count 全体上位5件）は文脈無関係。RAGにより「内覧中の会話→内覧系テンプレ」が自然に浮上する。
+  const templatesText = ragTemplates.length > 0
+    ? `\n【テンプレート候補（RAG検索・この会話のフェーズ・戦略に類似したもの・won_count降順）】\n${ragTemplates.slice(0, 5).map((t) => `- ${t.category}: ${t.label} (成約実績${t.won_count ?? 0}回, モーダル経由${t.use_count ?? 0}回)`).join("\n")}\n※won_count は closed_won 会話の自発送信とテンプレ本文の突き合わせで集計した成約実績。template_hint は上記フェーズ別推奨マップに従い、この会話に合ったテンプレを won_count が高い順に選ぶこと。`
     : "";
 
   // Boundary rules — when AIX is required vs auto-reply is allowed
@@ -1468,7 +1470,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
   //   user[0] stableKnowledge = 現在空。DB動的データは全て user[1] へ移動済み。
   //     ・contractPatterns / applyingPatterns → バルクフェッチ廃止・match_reply_knowledge RAGが全カテゴリ検索
   //     ・winningPatterns → match_winning_patterns RAGに移行（会話コンテキスト最適化）
-  //     ・templatesText は use_count が毎送信更新 → cache無し側へ
+  //     ・templates → match_templates RAGに移行（会話フェーズ最適化・use_count/won_count更新でのキャッシュ破棄解消）
   //   user[1] customerSpecific（cache無し）= 上記DB動的データ + 顧客固有データ + 会話履歴
   const stableKnowledgeText = ``;
   const customerSpecificText = `${prevMetaText}${winningPatternsText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
