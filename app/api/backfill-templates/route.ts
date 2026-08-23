@@ -46,6 +46,11 @@ export async function POST(req: NextRequest) {
   let processed = 0;
   let failed = 0;
 
+  const hasOpenAiKey = !!process.env.OPENAI_API_KEY;
+  if (!hasOpenAiKey) {
+    return NextResponse.json({ ok: false, error: "OPENAI_API_KEY not set", processed: 0, failed: 0 }, { status: 500 });
+  }
+
   let lastError: string | null = null;
 
   for (const row of typedRows) {
