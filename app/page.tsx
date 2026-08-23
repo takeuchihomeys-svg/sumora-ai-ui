@@ -8304,6 +8304,10 @@ export default function Home() {
                     const newH = e.target.scrollHeight; // CSSのmaxHeightで制御するのでJS上限なし
                     e.target.style.height = `${newH}px`;
                     setTextareaHeightPx(newH);
+                    // 入力中もtextareaがキーボード直上に見え続けるようパネルを最下部に追従
+                    if (keyboardHeight > 100 && bottomPanelRef.current) {
+                      bottomPanelRef.current.scrollTop = bottomPanelRef.current.scrollHeight;
+                    }
                   }}
                   onFocus={() => {
                     setInputFocused(true);
