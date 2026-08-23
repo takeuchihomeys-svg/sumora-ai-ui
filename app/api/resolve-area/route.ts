@@ -29,6 +29,37 @@ interface LineMaps {
 }
 let _lineMapsCache: { maps: LineMaps; expiresAt: number } | null = null;
 
+// ── line_stations キャッシュ（1時間）────────────────────────────────────────
+// byLine: line_name → 順序付き駅名配列（order_idx 昇順）
+// byStation: station_name → [{line, idx}] （逆引き用・隣接駅展開に使用）
+interface LineStationsCache {
+  byLine: Record<string, string[]>;
+  byStation: Record<string, Array<{ line: string; idx: number }>>;
+}
+let _lineStationsCache: { data: LineStationsCache; expiresAt: number } | null = null;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getLineStations(db: any): Promise<LineStationsCache> {
+  if (_lineStationsCache && Date.now() < _lineStationsCache.expiresAt) return _lineStationsCache.data;
+  const { data: rows } = await db
+    .from("line_stations")
+    .select("line_name, station_name, order_idx")
+    .order("line_name")
+    .order("order_idx");
+  const byLine: Record<string, string[]> = {};
+  const byStation: Record<string, Array<{ line: string; idx: number }>> = {};
+  for (const row of (rows ?? [])) {
+    if (!byLine[row.line_name]) byLine[row.line_name] = [];
+    const idx = byLine[row.line_name].length;
+    byLine[row.line_name].push(row.station_name);
+    if (!byStation[row.station_name]) byStation[row.station_name] = [];
+    byStation[row.station_name].push({ line: row.line_name, idx });
+  }
+  const data: LineStationsCache = { byLine, byStation };
+  _lineStationsCache = { data, expiresAt: Date.now() + 60 * 60 * 1000 };
+  return data;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getLineMaps(db: any): Promise<LineMaps> {
   if (_lineMapsCache && Date.now() < _lineMapsCache.expiresAt) return _lineMapsCache.maps;
@@ -134,12 +165,40 @@ function toItandiNames(internal: string, maps: LineMaps): string[] {
   return maps.itandiMap[internal] ?? [];
 }
 
-// DeepSeek に「〜まで〜分で行ける駅」を問い合わせ、駅名リストを返す
-// タイムアウト 15_000ms（Claude NL抽出と合わせた最大処理時間に対応）
-async function resolveNearbyWithDeepSeek(station: string, minutes: number): Promise<string[]> {
+// DB の line_stations + order_idx を使って基準駅からN分圏内の駅を展開（ハルシネーションなし）
+// 大阪の電車は概ね 2〜3 分/駅 → minutes / 2.5 駅分を各路線で前後展開
+function resolveNearbyFromDB(
+  baseStation: string,
+  minutes: number,
+  lsc: LineStationsCache,
+): string[] {
+  const lines = lsc.byStation[baseStation];
+  if (!lines || lines.length === 0) return []; // DB にない → DeepSeek フォールバック
+  const hopCount = Math.ceil(minutes / 2.5);
+  const nearby = new Set<string>();
+  for (const { line, idx } of lines) {
+    const stationsOnLine = lsc.byLine[line] ?? [];
+    const from = Math.max(0, idx - hopCount);
+    const to   = Math.min(stationsOnLine.length - 1, idx + hopCount);
+    for (let i = from; i <= to; i++) nearby.add(stationsOnLine[i]);
+  }
+  nearby.delete(baseStation); // base_station は呼び出し元が別途追加
+  return [...nearby];
+}
+
+// DeepSeek に「〜まで〜分で行ける駅」を問い合わせ（DB展開の補完フォールバック用）
+// knownStations を渡すと「このリスト内のみ返すこと」としてハルシネーションを抑制する
+async function resolveNearbyWithDeepSeek(
+  station: string,
+  minutes: number,
+  knownStations: string[] = [],
+): Promise<string[]> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return [];
   try {
+    const whitelist = knownStations.length > 0
+      ? `\n必ず以下のリスト内の駅名のみ返してください（このリストにない駅名は返さないこと）:\n[${knownStations.slice(0, 200).join(", ")}]`
+      : "\n大阪府内の駅のみ対象。架空の駅名は絶対に含めないこと。";
     const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
       signal: AbortSignal.timeout(15_000),
@@ -148,7 +207,7 @@ async function resolveNearbyWithDeepSeek(station: string, minutes: number): Prom
         model: "deepseek-chat",
         max_tokens: 300,
         messages: [{ role: "user", content:
-          `大阪府で「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を列挙してください。\n大阪府内の駅のみ対象。JSONの配列形式のみで返してください: ["駅名1", "駅名2", ...]\n駅名には「駅」を付けないでください。10〜20駅程度。`,
+          `大阪府で「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を列挙してください。${whitelist}\nJSONの配列形式のみで返してください: ["駅名1", "駅名2", ...]\n駅名には「駅」を付けないでください。10〜20駅程度。`,
         }],
         temperature: 0,
       }),
@@ -193,7 +252,8 @@ async function resolveNearbyByBicycle(
     const parsed = JSON.parse(match[0]) as { stations?: unknown[]; wards?: unknown[] };
     return {
       stations: (parsed.stations ?? []).filter((s): s is string => typeof s === "string" && s.length > 0),
-      wards:    (parsed.wards    ?? []).filter((w): w is string => typeof w === "string" && w.length > 0),
+      // WARD_CODE_MAP で存在確認 → 架空区名を除外
+      wards:    (parsed.wards ?? []).filter((w): w is string => typeof w === "string" && w in WARD_CODE_MAP),
     };
   } catch (e) {
     console.warn("[resolve-area] DeepSeek bicycle error:", e instanceof Error ? e.message : e);
@@ -459,20 +519,9 @@ export async function POST(req: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // line_stations を取得して route→stations マップを構築
-    const { data: lsRows } = await db
-      .from("line_stations")
-      .select("line_name, station_name, order_idx")
-      .order("line_name")
-      .order("order_idx");
-
-    const lineStations: Record<string, string[]> = {};
-    for (const row of lsRows || []) {
-      if (!lineStations[row.line_name]) lineStations[row.line_name] = [];
-      lineStations[row.line_name].push(row.station_name);
-    }
-
-    const maps = await getLineMaps(db);
+    // line_stations をキャッシュ取得（1時間キャッシュ・DB負荷削減）
+    const [lsc, maps] = await Promise.all([getLineStations(db), getLineMaps(db)]);
+    const lineStations = lsc.byLine; // 既存コードとの互換エイリアス
     const tokens = parseTokens(desired_area);
     const result: ResolveAreaResponse = {
       realpro:      { route_ids: [], city_codes: [], station_names: [] },
@@ -806,12 +855,20 @@ commute_constraints: 通勤・通学・乗り換え制約
                     }
                   }
                 } else if (max_minutes !== undefined && max_minutes !== null) {
-                  // 時間制約: 近隣駅展開 + resolveStationsFromList で route_ids/itandi/reins全反映
-                  const nearbyStations = await resolveNearbyWithDeepSeek(base_station, max_minutes);
-                  await resolveStationsFromList(nearbyStations, result, db, maps);
-                  if (process.env.NODE_ENV !== "production") {
-                    console.log("[resolve-area] commute expanded stations:", nearbyStations);
+                  // 時間制約: DB（order_idx）ファースト展開 → 不足時のみ DeepSeek フォールバック
+                  const dbNearby = resolveNearbyFromDB(base_station, max_minutes, lsc);
+                  let nearbyStations: string[];
+                  if (dbNearby.length >= 5) {
+                    // DB に十分なデータあり → DeepSeek 不要（ハルシネーションなし）
+                    nearbyStations = dbNearby;
+                    console.log(`[resolve-area] DB展開: ${base_station} ${max_minutes}分 → ${nearbyStations.length}駅`);
+                  } else {
+                    // DB にデータ不足 → DeepSeek（既知駅名ホワイトリスト付き）
+                    const allKnown = Object.keys(lsc.byStation);
+                    nearbyStations = await resolveNearbyWithDeepSeek(base_station, max_minutes, allKnown);
+                    console.log(`[resolve-area] DeepSeek展開: ${base_station} ${max_minutes}分 → ${nearbyStations.length}駅`);
                   }
+                  await resolveStationsFromList([base_station, ...nearbyStations], result, db, maps);
                 }
               })
             );
