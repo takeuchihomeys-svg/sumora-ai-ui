@@ -2772,15 +2772,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
-    // チェックポイントB: brainGate（Step2並列フェッチ前に取得済み）を再利用する。
-    // 旧実装はここで DB を再フェッチしていたが、並列フェッチ＋プロンプト構築（数秒以内）を挟むだけで
-    // 鮮度差は実質ゼロ。統合により
-    // (a) DBフェッチ1回削減 (b) brainGuidanceNote と reply_mode ゲートの参照スナップショット一致
-    // (c) P4警告（下記）の参照ズレ解消 が同時に達成される。
+    // チェックポイントB: 必ずDBを新鮮フェッチする（キャッシュ再利用禁止）。
+    // 理由: bg-asyncでブレインが30sタイムアウト→brainGateDirect=null の場合、
+    // AとBの間（Anthropicコール中=5〜15s）にブレインが完了して reply_mode="aix" を書くことがある。
+    // Aのスナップショット再利用だとこのケースを取りこぼし、テキストとAIXが両方表示されるバグが起きる。
     if (conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
-      const freshGateB = brainGate;
+      const freshGateB = await fetchReplyModeGate(conversationId);
       if (freshGateB?.meta?.reply_mode === "aix") {
-        console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(B):", conversationId);
+        console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(B・新鮮フェッチ):", conversationId);
         return applyAixGateAndRespond(conversationId, freshGateB.meta, freshGateB.customerName);
       }
     }

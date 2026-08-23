@@ -1641,7 +1641,11 @@ export default function Home() {
                 // "__SHOWN__" = スタッフが既に返信案を読み込み済み。
                 // brain-sweepがその後にsuggestedAixMetaを書き込んでもUIに反映しない（返信+AIX誘導同時表示バグ防止）
                 if (upd.ai_draft === "__SHOWN__") return { ...c, aiDraft: newAiDraft };
-                return { ...c, aiDraft: newAiDraft, suggestedAixMeta: upd.suggested_aix_meta ?? null };
+                // reply_mode="aix" のとき: テキストドラフトがあっても aiDraft を null 扱いにしてAIXのみ表示
+                // （バックエンドのチェックポイントBをすり抜けた場合の最終防衛ライン）
+                const newAixMeta = upd.suggested_aix_meta ?? null;
+                if (newAixMeta?.reply_mode === "aix") return { ...c, aiDraft: null, suggestedAixMeta: newAixMeta };
+                return { ...c, aiDraft: newAiDraft, suggestedAixMeta: newAixMeta };
               })
             );
             // async プリ生成完了 → preGenInProgress をクリア（sentinelは実下書きではないため除外）
