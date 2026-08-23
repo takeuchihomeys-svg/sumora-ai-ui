@@ -89,7 +89,7 @@ async function applyBrainConditionChange(
   if (Object.keys(updates).length === 0) return;
 
   await db.from("property_customers")
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update({ ...updates, updated_at: new Date().toISOString(), ...(Object.keys(changedFields).length > 0 ? { last_property_sent_at: null, rp_update_days: null } : {}) })
     .eq("id", pcId);
   console.log(`[bg-async] brain-condition-bridge: pcId=${pcId} type=${conditionChangeType} fields=${Object.keys(updates).join(",")}`);
 

@@ -817,6 +817,9 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
   // ※ null クリアではなく "format" パターンエントリを書き込み → フロントがバナー表示
   if (isFormalFormat) {
     parsedFields.additional_conditions = `[${getJSTTimestamp()}|format] 正式条件フォーマット受信 → 物件を検索してください`;
+    // 条件が新しくなるため拡張ツールの更新日制約をリセット（新条件で全件検索できるよう）
+    parsedFields.last_property_sent_at = null;
+    parsedFields.rp_update_days = null;
   }
 
   // ── LINEプロフィールから名前を先に取得（名称未設定を防ぐ）────────
@@ -901,7 +904,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
       // カジュアル更新 → インテント分類 → スマートマージ（「追加」「除外」「変更」を正しく処理）
       const { mergedConds, intent } = await computeCasualUpdate(existing as Record<string, unknown>);
       await db.from("property_customers")
-        .update({ ...baseFields, ...mergedConds, customer_name: resolvedName })
+        .update({ ...baseFields, ...mergedConds, customer_name: resolvedName, last_property_sent_at: null, rp_update_days: null })
         .eq("id", customerId);
       await appendAdditionalConditions(customerId, intent);
     }
@@ -921,7 +924,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
         .maybeSingle();
       const { mergedConds, intent } = await computeCasualUpdate(linkedConds as Record<string, unknown> | null);
       await db.from("property_customers")
-        .update({ ...baseFields, ...mergedConds, line_user_id: userId, customer_name: resolvedName })
+        .update({ ...baseFields, ...mergedConds, line_user_id: userId, customer_name: resolvedName, last_property_sent_at: null, rp_update_days: null })
         .eq("id", customerId);
       await appendAdditionalConditions(customerId, intent);
     }
@@ -1109,7 +1112,7 @@ ${customerText.slice(0, 300)}
 
   const { error: updateErr } = await db
     .from("property_customers")
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update({ ...updates, updated_at: new Date().toISOString(), last_property_sent_at: null, rp_update_days: null })
     .eq("id", pcId);
 
   if (updateErr) {
