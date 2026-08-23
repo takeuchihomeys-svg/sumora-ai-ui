@@ -2821,7 +2821,8 @@ export default function Home() {
             }
             const ae = document.activeElement;
             if (ae instanceof HTMLTextAreaElement && bottomPanelRef.current?.contains(ae)) {
-              ae.scrollIntoView({ block: "nearest" });
+              // bottomPanel自体を最下部にスクロール → textareaが常にキーボード直上に来る（LINE同等の動作）
+              bottomPanelRef.current.scrollTop = bottomPanelRef.current.scrollHeight;
             }
           });
         });
@@ -8306,14 +8307,14 @@ export default function Home() {
                   }}
                   onFocus={() => {
                     setInputFocused(true);
-                    // 300msは早すぎる: キーボードがまだ開き途中でkeyboardHeight>100未満のため
-                    // bottomPanelのoverflowY="visible"のままで、scrollIntoViewが
-                    // iOSのdocument windowスクロールに fallback → viewportTopが増加し
-                    // <main>がキーボードの下にずれてさらに悪化する。
-                    // 700msで確実にキーボード展開完了・React再描画後に実行する。
+                    // 700ms: キーボード完全展開 + React再描画完了を待つ
+                    // bottomPanel全体を最下部にスクロールすることでtextareaをキーボード直上に固定（LINE同等動作）
                     setTimeout(() => {
                       const ta = textareaRef.current;
-                      if (ta && document.activeElement === ta) ta.scrollIntoView({ block: "end" });
+                      if (ta && document.activeElement === ta) {
+                        const panel = bottomPanelRef.current;
+                        if (panel) panel.scrollTop = panel.scrollHeight;
+                      }
                     }, 700);
                   }}
                   onBlur={() => setInputFocused(false)}
@@ -8356,7 +8357,10 @@ export default function Home() {
                         setInputFocused(true);
                         const el = e.currentTarget;
                         setTimeout(() => {
-                          if (document.activeElement === el) el.scrollIntoView({ block: "end" });
+                          if (document.activeElement === el) {
+                            const panel = bottomPanelRef.current;
+                            if (panel) panel.scrollTop = panel.scrollHeight;
+                          }
                         }, 700);
                       }}
                       onBlur={() => setInputFocused(false)}
