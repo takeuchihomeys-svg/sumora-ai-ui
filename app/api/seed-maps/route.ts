@@ -1483,10 +1483,6 @@ const LINE_STATION_ORDER: Record<string, string[]> = {
   "南海電鉄泉北線": [
     "中百舌鳥","深井","泉ケ丘","栂・美木多","光明池","和泉中央",
   ],
-  "南海電鉄南本線": [
-    "難波","今宮戎","新今宮","萩ノ茶屋","天下茶屋","岸里玉出","粉浜",
-    "住吉大社","住ノ江","七道","堺",
-  ],
   "京阪電気鉄道京阪線": [
     "淀屋橋","北浜","天満橋","京橋","野江","関目","森小路","千林","滝井","土居",
     "守口市","西三荘","門真市","古川橋","大和田","萱島","寝屋川市",
@@ -1494,6 +1490,9 @@ const LINE_STATION_ORDER: Record<string, string[]> = {
   ],
   "京阪電気鉄道中之島線": [
     "天満橋","なにわ橋","大江橋","渡辺橋","中之島",
+  ],
+  "京阪電気鉄道交野線": [
+    "枚方市","宮之阪","星ヶ丘","村野","郡津","交野市","河内磐船","津田","藤阪","長尾","私市",
   ],
   "大阪環状線": [
     "大阪","福島","野田","西九条","弁天町","大正","芦原橋","今宮","新今宮",
@@ -1506,7 +1505,7 @@ const LINE_STATION_ORDER: Record<string, string[]> = {
     "加島","御幣島","海老江","新福島","北新地","大阪天満宮","大阪城北詰","京橋","放出",
   ],
   "片町線": [
-    "放出","鴫野","徳庵","鴻池新田","住道",
+    "放出","鴫野","徳庵","鴻池新田","住道","野崎","四条畷","忍ケ丘","星田","河内磐船",
   ],
   "阪和線": [
     "天王寺","美章園","南田辺","鶴ケ丘","長居","我孫子町","杉本町","浅香",
@@ -1637,6 +1636,10 @@ export async function POST(req: NextRequest) {
         lineStationRows.push({ line_name: lineName, station_name: stationName, order_idx });
       });
     }
+
+    // LINE_STATION_ORDER から削除された路線の古いDBレコードを削除
+    const definedLines = Object.keys(LINE_STATION_ORDER);
+    await supabase.from("line_stations").delete().not("line_name", "in", `(${definedLines.map(n => `'${n}'`).join(",")})`);
 
     const { error: lineError } = await supabase
       .from("line_stations")

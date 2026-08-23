@@ -103,7 +103,25 @@ const WARD_CODE_MAP: Record<string, string> = {
   "四條畷市":"27229","交野市":"27230","阪南市":"27232",
 };
 
-
+// 物理的に同一の乗り換えエリアだが異なる駅名を持つ接続マップ
+// BFS展開時に異名駅を自動接続するために使用（梅田/大阪 complex、なんば complex 等）
+const TRANSFER_CONNECTIONS: Record<string, string[]> = {
+  // 梅田エリア（御堂筋線/四つ橋線/谷町線/阪急・阪神/JR）
+  "梅田":          ["大阪梅田", "大阪", "西梅田", "東梅田"],
+  "大阪梅田":      ["梅田", "大阪", "西梅田", "東梅田"],
+  "大阪":          ["梅田", "大阪梅田", "西梅田", "東梅田", "北新地"],
+  "西梅田":        ["梅田", "大阪梅田", "大阪", "東梅田", "北新地"],
+  "東梅田":        ["梅田", "大阪梅田", "大阪", "西梅田"],
+  "北新地":        ["大阪", "西梅田"],
+  // なんばエリア（御堂筋線/四つ橋線/千日前線/南海/近鉄/阪神なんば線/JR）
+  "なんば":        ["難波", "大阪難波", "JR難波"],
+  "難波":          ["なんば", "大阪難波", "JR難波"],
+  "大阪難波":      ["なんば", "難波", "JR難波"],
+  "JR難波":        ["なんば", "難波", "大阪難波"],
+  // 天王寺エリア（JR/Metro ↔ 近鉄）
+  "天王寺":        ["大阪阿部野橋"],
+  "大阪阿部野橋":  ["天王寺"],
+};
 
 // ── 概念的広域地名 → 大阪府の市区名（resolve-search-conditions/route.ts と同期維持）──
 const CONCEPT_AREA_MAP: Record<string, string[]> = {
@@ -165,24 +183,74 @@ function toItandiNames(internal: string, maps: LineMaps): string[] {
   return maps.itandiMap[internal] ?? [];
 }
 
-// DB の line_stations + order_idx を使って基準駅からN分圏内の駅を展開（ハルシネーションなし）
-// 大阪の電車は概ね 2〜3 分/駅 → minutes / 2.5 駅分を各路線で前後展開
+// DB の line_stations + order_idx を使って基準駅からN分圏内の駅をBFSで展開
+// 乗り換え対応: 複数路線の接続駅・TRANSFER_CONNECTIONS の異名駅を経由してさらに展開
+// 乗り換え時間ペナルティ: 5分（梅田 complex 等の構内移動時間を考慮）
+// DB にない かつ TRANSFER_CONNECTIONS にもない駅 → [] を返し呼び出し元で DeepSeek フォールバック
 function resolveNearbyFromDB(
   baseStation: string,
   minutes: number,
   lsc: LineStationsCache,
 ): string[] {
-  const lines = lsc.byStation[baseStation];
-  if (!lines || lines.length === 0) return []; // DB にない → DeepSeek フォールバック
-  const hopCount = Math.ceil(minutes / 2.5);
+  const TRANSFER_PENALTY = 5;
+  const MIN_PER_STATION = 2.5; // 大阪の電車: 1駅あたり平均 2〜3分
+
+  if (!(baseStation in lsc.byStation) && !(baseStation in TRANSFER_CONNECTIONS)) return [];
+
   const nearby = new Set<string>();
-  for (const { line, idx } of lines) {
-    const stationsOnLine = lsc.byLine[line] ?? [];
-    const from = Math.max(0, idx - hopCount);
-    const to   = Math.min(stationsOnLine.length - 1, idx + hopCount);
-    for (let i = from; i <= to; i++) nearby.add(stationsOnLine[i]);
+  const queued = new Set<string>([baseStation]);
+  const queue: Array<[string, number]> = [[baseStation, minutes]];
+
+  // 出発駅自体の異名接続先（梅田→大阪梅田・大阪 等）も初期キューに追加
+  for (const alias of TRANSFER_CONNECTIONS[baseStation] ?? []) {
+    nearby.add(alias);
+    if (!queued.has(alias)) {
+      queued.add(alias);
+      queue.push([alias, minutes - TRANSFER_PENALTY]);
+    }
   }
-  nearby.delete(baseStation); // base_station は呼び出し元が別途追加
+
+  while (queue.length > 0) {
+    const [station, budget] = queue.shift()!;
+    if (budget <= 0) continue;
+
+    const stationLines = lsc.byStation[station] ?? [];
+    const hopCount = Math.floor(budget / MIN_PER_STATION);
+
+    for (const { line, idx } of stationLines) {
+      const stationsOnLine = lsc.byLine[line] ?? [];
+      const from = Math.max(0, idx - hopCount);
+      const to   = Math.min(stationsOnLine.length - 1, idx + hopCount);
+
+      for (let i = from; i <= to; i++) {
+        const s = stationsOnLine[i];
+        if (s !== baseStation) nearby.add(s);
+
+        const distMinutes = Math.abs(i - idx) * MIN_PER_STATION;
+        const afterTransfer = budget - distMinutes - TRANSFER_PENALTY;
+
+        // 乗り換え可能駅（複数路線 or 異名接続あり）をBFSキューへ
+        if (afterTransfer > 0 && !queued.has(s)) {
+          const sLineCount = (lsc.byStation[s] ?? []).length;
+          const hasAliases = (TRANSFER_CONNECTIONS[s] ?? []).length > 0;
+          if (sLineCount > 1 || hasAliases) {
+            queued.add(s);
+            queue.push([s, afterTransfer]);
+          }
+        }
+
+        // 異名乗り換え先もnearbyに追加 + 残り予算でキューへ
+        for (const alias of TRANSFER_CONNECTIONS[s] ?? []) {
+          nearby.add(alias);
+          if (afterTransfer > 0 && !queued.has(alias)) {
+            queued.add(alias);
+            queue.push([alias, afterTransfer]);
+          }
+        }
+      }
+    }
+  }
+
   return [...nearby];
 }
 
