@@ -252,7 +252,7 @@ async function analyzeDiff(
       thinking: { type: "disabled" },
       // prompt cache: 静的な分析指示（ANALYZE_DIFF_SYSTEM）をキャッシュし、動的データは user に分離
       system: [
-        { type: "text", text: ANALYZE_DIFF_SYSTEM, cache_control: { type: "ephemeral" } },
+        { type: "text", text: ANALYZE_DIFF_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
       ],
       messages: [{
         role: "user",
@@ -445,7 +445,7 @@ async function autoJudgeKnowledge(
 AIXボタン由来の文と通常返信の領域を混同した判定・質問理由を書いてはいけません。
 
 ${SUMORA_QUESTION_SYSTEM_CONTEXT}`,
-            cache_control: { type: "ephemeral" },
+            cache_control: { type: "ephemeral", ttl: "1h" },
           },
         ],
         messages: [{

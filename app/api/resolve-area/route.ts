@@ -600,7 +600,7 @@ commute_constraints: 通勤・通学・乗り換え制約
           // prompt cache: systemPrompt は完全に静的（駅名・路線リスト等）のためキャッシュする。
           // 動的なユーザー入力（desired_area）は messages 側のみに置く。
           system: [
-            { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+            { type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } },
           ],
           messages: [{ role: "user", content: `エリア: "${desired_area}"` }],
         });

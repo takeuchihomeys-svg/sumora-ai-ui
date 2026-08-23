@@ -110,7 +110,7 @@ type RawIssue = { code?: string; message?: string; evidence?: string; suggestion
 // 各パスの安定ブロック（チェック基準・code一覧・出力例・DBルール = 全顧客共通）の末尾に
 // cache_control を1個置き、動的ブロック（brain判定・draft・会話コンテキスト）を後続に配置する。
 // 検証は response usage の cache_read_input_tokens で行う。
-type PromptBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
+type PromptBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } };
 type PromptContent = string | PromptBlock[];
 
 // ─── Sonnet呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
@@ -319,7 +319,7 @@ AIX_BOUNDARY_* にもBANNED_WORDにも分類できないが、[RULES]のルー�
 ${draft}
 [/REPLY]`;
   return [
-    { type: "text" as const, text: stable, cache_control: { type: "ephemeral" as const } },
+    { type: "text" as const, text: stable, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamic },
   ];
 }
@@ -459,7 +459,7 @@ ${(ctx.staffSourceText || "なし").slice(0, 5000)}
 ${draft}
 [/REPLY]`;
   return [
-    { type: "text" as const, text: stable, cache_control: { type: "ephemeral" as const } },
+    { type: "text" as const, text: stable, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamic },
   ];
 }
@@ -641,7 +641,7 @@ ${formatStaffMessages(ctx.recentMessages, 5)}
 ${draft}
 [/REPLY]`;
   return [
-    { type: "text" as const, text: stable, cache_control: { type: "ephemeral" as const } },
+    { type: "text" as const, text: stable, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamic },
   ];
 }
@@ -832,7 +832,7 @@ ${(ctx.dbRules || "なし").slice(0, 20000)}
 ${draft}
 [/ORIGINAL_DRAFT]`;
   return [
-    { type: "text" as const, text: SONNET_REVISION_STATIC, cache_control: { type: "ephemeral" as const } },
+    { type: "text" as const, text: SONNET_REVISION_STATIC, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamic },
   ];
 }

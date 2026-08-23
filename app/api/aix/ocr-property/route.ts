@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     const response = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 300,
-      system: [{ type: "text", text: OCR_SYSTEM, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: OCR_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [
         {
           role: "user",

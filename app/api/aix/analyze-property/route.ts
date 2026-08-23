@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         model: HAIKU_MODEL,
         max_tokens: 512,
-        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } }],
         messages: [
           {
             role: "user",

@@ -249,7 +249,7 @@ export async function POST(req: NextRequest) {
       model: "claude-opus-5",
       // 改善15: 消費側 suggest-next-action の flowGuide.slice(0, 1000) と整合させる（800字指示+見出しでも切れない余裕）
       max_tokens: 1000,
-      system: [{ type: "text", text: STATIC_AIX_FLOW_SYSTEM, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: STATIC_AIX_FLOW_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [{
         role: "user",
         content: `以下の実際の使用データを分析して、スモラの賃貸仲介スタッフ向け「AIXフロー誘導ガイド」を更新してください。

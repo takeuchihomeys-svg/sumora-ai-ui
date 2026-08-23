@@ -1482,7 +1482,7 @@ ${history}`;
   const userContent = [
     // 空のtextブロックはAPIエラーになるため、安定知識が空の場合はブロックごと省略
     ...(maskedStableText.trim()
-      ? [{ type: "text" as const, text: maskedStableText, cache_control: { type: "ephemeral" as const } }]
+      ? [{ type: "text" as const, text: maskedStableText, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }]
       : []),
     { type: "text" as const, text: maskPII(customerSpecificText, [opts?.customerName]) },
   ];
@@ -1492,7 +1492,7 @@ ${history}`;
       model: BRAIN_MODEL,
       max_tokens: 6000,
       thinking: { type: "disabled" },
-      system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }],
       messages: [{ role: "user", content: userContent }],
     });
 
@@ -2033,7 +2033,7 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
       model: BRAIN_MODEL,
       max_tokens: 1500,
       thinking: { type: "disabled" },
-      system: [{ type: "text", text: CHECKPOINT_STATIC_SYSTEM, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: CHECKPOINT_STATIC_SYSTEM, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }],
       messages: [{ role: "user", content: maskPII(userContent, [customerName]) }],
     });
     // analyzeConversation と同じ content.find() で thinking ブロック対策

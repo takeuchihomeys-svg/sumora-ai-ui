@@ -227,7 +227,7 @@ ${recentAnswersText}
       system: [
         // prompt cache: 全呼び出し共通の SUMORA_QUESTION_SYSTEM_CONTEXT を先頭ブロックに置き cache_control を付与。
         // 可変の役割文は後続ブロック（キャッシュ境界の後ろ）に置くことで、役割文4種による別キャッシュエントリ分裂を防ぐ
-        { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } },
+        { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral", ttl: "1h" } },
         { type: "text" as const, text: "あなたは賃貸仲介の営業コーチです。スタッフの返信データを分析してAI改善ルールを抽出します。必ず指定されたJSON形式のみ返してください。" }
       ],
       messages: [{ role: "user", content: prompt }],
@@ -562,7 +562,7 @@ JSON形式のみ返答：
       max_tokens: 1000,
       thinking: { type: "disabled" },
       system: [
-        { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } },
+        { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral", ttl: "1h" } },
         { type: "text" as const, text: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。" }
       ],
       messages: [{ role: "user", content: prompt }],
@@ -625,7 +625,7 @@ JSON形式のみ返答：
       max_tokens: 500,
       thinking: { type: "disabled" },
       system: [
-        { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } },
+        { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral", ttl: "1h" } },
         { type: "text" as const, text: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。" }
       ],
       messages: [{ role: "user", content: prompt }],
@@ -834,7 +834,7 @@ JSON形式のみ返答（keepは最大3件まで）：
       max_tokens: 1000,
       thinking: { type: "disabled" },
       system: [
-        { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } },
+        { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral", ttl: "1h" } },
         { type: "text" as const, text: "不動産LINE返信AIのルール品質評価者です。指定されたJSON形式のみ返してください。" }
       ],
       messages: [{ role: "user", content: prompt }],
@@ -1116,7 +1116,7 @@ JSON形式のみ返答：
         max_tokens: 1000,
         thinking: { type: "disabled" },
         system: [
-          { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral" as const } },
+          { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral", ttl: "1h" } },
           { type: "text" as const, text: "ルール重複排除の判定者です。指定されたJSON形式のみ返してください。" }
         ],
         messages: [{ role: "user", content: prompt }],

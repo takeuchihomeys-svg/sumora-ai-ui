@@ -118,7 +118,7 @@ async function handleChat(body: DiscussBody, client: Anthropic): Promise<NextRes
     model: "claude-haiku-4-5-20251001",
     max_tokens: 600,
     system: [
-      { type: "text", text: STATIC_KNOWLEDGE_DISCUSS_SYSTEM, cache_control: { type: "ephemeral" } },
+      { type: "text", text: STATIC_KNOWLEDGE_DISCUSS_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
       { type: "text", text: buildDynamicKnowledgeSection({ title, content, category, conversationState: conversation_state, knowledgeSection }) },
     ],
     messages: toAnthropicMessages(messages ?? [], userMessage),
@@ -163,7 +163,7 @@ async function handleFinalize(body: DiscussBody, client: Anthropic): Promise<Nex
     model: "claude-sonnet-5",
     max_tokens: 1000,
     system: [
-      { type: "text", text: STATIC_KNOWLEDGE_DISCUSS_SYSTEM, cache_control: { type: "ephemeral" } },
+      { type: "text", text: STATIC_KNOWLEDGE_DISCUSS_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
       { type: "text", text: buildDynamicKnowledgeSection({ title, content, category, conversationState: conversation_state, knowledgeSection }) },
     ],
     messages: toAnthropicMessages(messages ?? [], finalizeInstruction),

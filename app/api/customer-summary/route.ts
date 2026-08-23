@@ -528,7 +528,7 @@ export async function POST(req: NextRequest) {
     const res = await getModel().invoke([
       new SystemMessage({
         content: [
-          { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+          { type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } },
         ],
       }),
       new HumanMessage(info),

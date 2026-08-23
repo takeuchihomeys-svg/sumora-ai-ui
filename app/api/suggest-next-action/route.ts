@@ -933,7 +933,7 @@ ${recentText}
       max_tokens: 100,
       // 営業フロー基礎知識（ハードコード）＋大型ガイドを静的 system として先頭に置き prompt cache を効かせる
       system: [
-        { type: "text" as const, text: staticSystem, cache_control: { type: "ephemeral" as const } },
+        { type: "text" as const, text: staticSystem, cache_control: { type: "ephemeral", ttl: "1h" } },
       ],
       messages: [{ role: "user", content: prompt }],
     });

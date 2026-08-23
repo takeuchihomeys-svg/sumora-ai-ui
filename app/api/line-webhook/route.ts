@@ -768,7 +768,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
       thinking: { type: "disabled" },
       // prompt cache: 静的な解析指示は system でキャッシュし、動的テキストのみ user に渡す
       system: [
-        { type: "text", text: PARSE_FORMAT_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+        { type: "text", text: PARSE_FORMAT_SYSTEM_PROMPT, cache_control: { type: "ephemeral", ttl: "1h" } },
       ],
       messages: [{
         role: "user",

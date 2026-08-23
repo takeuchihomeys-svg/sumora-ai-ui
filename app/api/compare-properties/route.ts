@@ -298,7 +298,7 @@ ${propListText}`;
     const aiRes = await anthropic.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 8000,
-      system: [{ type: "text", text: COMPARE_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: COMPARE_SYSTEM_PROMPT, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [{ role: "user", content: prompt }],
     });
 

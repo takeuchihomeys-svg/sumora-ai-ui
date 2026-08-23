@@ -146,7 +146,7 @@ ${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返
     max_tokens: 2000,
     // prompt cache: 静的な抽出指示（SYNTHESIZE_SKILLS_SYSTEM）をキャッシュし、動的データは user に分離
     system: [
-      { type: "text", text: SYNTHESIZE_SKILLS_SYSTEM, cache_control: { type: "ephemeral" } },
+      { type: "text", text: SYNTHESIZE_SKILLS_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
     ],
     messages: [{
       role: "user",
@@ -310,7 +310,7 @@ ${e.original_text ? `AI原文: ${(e.original_text as string).replace(/\n/g, " ")
 [{"type": "template_revision"|"new_template"|"new_aix_picker", "action_type": "...", "suggested_title": "...", "template_text": "...", "reason": "...", "evidence_count": N}]
 
 根拠の薄い提案は出さないこと。提案がない場合は [] を返す。`,
-        cache_control: { type: "ephemeral" },
+        cache_control: { type: "ephemeral", ttl: "1h" },
       },
     ],
     messages: [{
@@ -524,7 +524,7 @@ async function analyzeAixMismatch(): Promise<{ pairsFound: number; suggestionsIn
 3. proposal_category（mismatch_fix または text_improvement または new_button）
 
 JSON配列で返す: [{aix_type, description, implementation_notes, proposal_category}]`,
-        cache_control: { type: "ephemeral" },
+        cache_control: { type: "ephemeral", ttl: "1h" },
       },
     ],
     messages: [{ role: "user", content: `ペア一覧:\n${JSON.stringify(mismatchPairs.slice(0, 5), null, 2)}` }],
@@ -804,7 +804,7 @@ AI案: ${((m.ai_draft as string) ?? "").replace(/\n/g, " ").slice(0, 400)}
 
 必須チェック: 全質問を400字以内に収めること。必ず【AI案】と3択行（→ ①この案で採用  ②現状維持  ③条件つき採用（自由記述））を含めること。
 全文対比引用・自由記述のみの質問は出さないこと。根拠の薄い質問は出さないこと。質問がない場合は [] を返す。`,
-        cache_control: { type: "ephemeral" },
+        cache_control: { type: "ephemeral", ttl: "1h" },
       },
     ],
     messages: [{

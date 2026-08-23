@@ -1019,12 +1019,12 @@ ${examples}${examplesInstruction}
   // 最終チェック指摘後のリトライ再生成（retryMessages = [...messages, ...]）は同一プレフィックスを
   // 再送するため、この cache_control がそのまま伝搬してキャッシュリード（約0.1x価格）になる。
   // 検証は response usage の cache_read_input_tokens で行う。
-  const systemBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> = [
-    { type: "text" as const, text: priorityOrderNote + baseSystem, cache_control: { type: "ephemeral" as const } },
+  const systemBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } }> = [
+    { type: "text" as const, text: priorityOrderNote + baseSystem, cache_control: { type: "ephemeral", ttl: "1h" } },
   ];
-  if (dbRules) systemBlocks.push({ type: "text" as const, text: dbRules, cache_control: { type: "ephemeral" as const } });
-  const humanBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> = [
-    { type: "text" as const, text: staticBlock, cache_control: { type: "ephemeral" as const } },
+  if (dbRules) systemBlocks.push({ type: "text" as const, text: dbRules, cache_control: { type: "ephemeral", ttl: "1h" } });
+  const humanBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } }> = [
+    { type: "text" as const, text: staticBlock, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamicBlock },
   ];
   return [new SystemMessage({ content: systemBlocks }), new HumanMessage({ content: humanBlocks })];

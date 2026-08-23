@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
           body: JSON.stringify({
             model: HAIKU_MODEL,
             max_tokens: 256,
-            system: [{ type: "text", text: statusPrompt, cache_control: { type: "ephemeral" } }],
+            system: [{ type: "text", text: statusPrompt, cache_control: { type: "ephemeral", ttl: "1h" } }],
             messages: [{
               role: "user",
               content: [
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
         body: JSON.stringify({
           model: HAIKU_MODEL,
           max_tokens: 256,
-          system: [{ type: "text", text: ocrPrompt, cache_control: { type: "ephemeral" } }],
+          system: [{ type: "text", text: ocrPrompt, cache_control: { type: "ephemeral", ttl: "1h" } }],
           messages: [{
             role: "user",
             content: [
@@ -216,8 +216,8 @@ ${emojiRule}
 - お客様の気持ち・温度感に合わせる
 - 本文のみ出力（説明文は一切不要）`;
 
-      const adaptSystemBlocks: { type: string; text: string; cache_control?: { type: string } }[] = [
-        { type: "text", text: systemPromptBase, cache_control: { type: "ephemeral" } },
+      const adaptSystemBlocks: { type: string; text: string; cache_control?: { type: string; ttl?: string } }[] = [
+        { type: "text", text: systemPromptBase, cache_control: { type: "ephemeral", ttl: "1h" } },
       ];
       if (adaptRuleNote) adaptSystemBlocks.push({ type: "text", text: adaptRuleNote });
 

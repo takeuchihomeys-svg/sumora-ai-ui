@@ -412,7 +412,7 @@ ${customerMessage}
     const res = await anthropic.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 2000,
-      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [{ role: "user", content: userPrompt }],
     });
     const text = res.content.find((b): b is typeof b & { type: "text"; text: string } => b.type === "text")?.text ?? "";

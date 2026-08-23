@@ -223,9 +223,9 @@ export async function POST(req: NextRequest) {
     : "";
 
   // キャッシュ分離: BASE_SYSTEM（全顧客共通）を静的ブロックに、knowledge/examples（動的）を別ブロックに
-  type TextBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
+  type TextBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } };
   const systemBlocks: TextBlock[] = [
-    { type: "text", text: BASE_SYSTEM, cache_control: { type: "ephemeral" } },
+    { type: "text", text: BASE_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
   ];
   const dynamicContext = [knowledge, examples].filter(Boolean).join("\n");
   if (dynamicContext) systemBlocks.push({ type: "text", text: dynamicContext });

@@ -389,7 +389,7 @@ export async function POST(req: NextRequest) {
           {
             type: "text",
             text: staticSystem,
-            cache_control: { type: "ephemeral" },
+            cache_control: { type: "ephemeral", ttl: "1h" },
           },
         ],
         messages: [{ role: "user", content: userPrompt }],

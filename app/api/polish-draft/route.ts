@@ -120,9 +120,9 @@ export async function POST(req: NextRequest) {
     examplesText  ? `\n\n${examplesText}`  : "",
   ].join("");
 
-  type TextBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
+  type TextBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } };
   const systemBlocks: TextBlock[] = [
-    { type: "text", text: staticSystem, cache_control: { type: "ephemeral" } },
+    { type: "text", text: staticSystem, cache_control: { type: "ephemeral", ttl: "1h" } },
   ];
   if (dynamicSystemParts) systemBlocks.push({ type: "text", text: dynamicSystemParts });
 

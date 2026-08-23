@@ -355,12 +355,12 @@ export async function POST(req: NextRequest) {
         max_tokens: 4000,
         system: [
           // Block1: 選定ルール（byte-stable → prompt cache）
-          { type: "text", text: SELECTION_SYSTEM, cache_control: { type: "ephemeral" } },
+          { type: "text", text: SELECTION_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
           // Block2: 全テンプレ一覧（全ユーザー共通・win_rate付き → prompt cache）
           {
             type: "text",
             text: "【テンプレート一覧（全カテゴリ・勝率付き）】\n" + templateListText,
-            cache_control: { type: "ephemeral" },
+            cache_control: { type: "ephemeral", ttl: "1h" },
           },
         ],
         messages: [{ role: "user", content: userPrompt }],

@@ -157,7 +157,7 @@ export async function POST(req: NextRequest) {
       model: "claude-sonnet-4-6",
       max_tokens: 1200,
       system: [
-        { type: "text", text: STATIC_DISCUSS_SYSTEM, cache_control: { type: "ephemeral" } },
+        { type: "text", text: STATIC_DISCUSS_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
         { type: "text", text: buildDynamicSystemSection({ question, speculation, evidence, phase, importance, knowledgeSection, isFirstTurn }) },
       ],
       messages: conversationMessages,

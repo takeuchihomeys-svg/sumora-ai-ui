@@ -170,7 +170,7 @@ export async function POST(req: NextRequest) {
       model: "claude-sonnet-5",
       max_tokens: 6000,
       thinking: { type: "disabled" },
-      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [{ role: "user", content: contentParts }],
     });
 

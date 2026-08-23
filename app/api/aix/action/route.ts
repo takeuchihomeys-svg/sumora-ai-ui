@@ -521,8 +521,8 @@ async function callClaude(system: string, user: string, action: string, dynamicS
   // 1回あたり25秒タイムアウト＋タイムアウト時のみ1回リトライ（最大約50秒 < クライアント60秒abort）
   // 旧45秒×リトライ無しだと、一過性のAPI遅延・ネットワークハングで即エラーになっていた
   const attempt = async (timeoutMs: number): Promise<string> => {
-    const systemBlocks: { type: string; text: string; cache_control?: { type: string } }[] = [
-      { type: "text", text: system, cache_control: { type: "ephemeral" } },
+    const systemBlocks: { type: string; text: string; cache_control?: { type: string; ttl?: string } }[] = [
+      { type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } },
     ];
     if (dynamicSystemSuffix) systemBlocks.push({ type: "text", text: dynamicSystemSuffix });
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -571,7 +571,7 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 256,
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [{ role: "user", content: user }],
     }),
     signal: AbortSignal.timeout(30_000),
@@ -585,8 +585,8 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
 // ※ Sonnet5はtemperature等のサンプリングパラメータ非対応（400エラー）のため渡さない
 // dynamicSystemSuffix: 顧客固有/呼び出し固有の動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
 async function callClaudeVision(system: string, content: unknown[], action: string, dynamicSystemSuffix?: string): Promise<string> {
-  const systemBlocks: { type: string; text: string; cache_control?: { type: string } }[] = [
-    { type: "text", text: system, cache_control: { type: "ephemeral" } },
+  const systemBlocks: { type: string; text: string; cache_control?: { type: string; ttl?: string } }[] = [
+    { type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } },
   ];
   if (dynamicSystemSuffix) systemBlocks.push({ type: "text", text: dynamicSystemSuffix });
   const res = await fetch("https://api.anthropic.com/v1/messages", {
