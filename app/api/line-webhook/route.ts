@@ -866,10 +866,9 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
       .select("additional_conditions").eq("id", pcId).maybeSingle();
     const prev = (cur?.additional_conditions as string | null) ?? "";
     const pattern = intent === "ADD" ? "add" : intent === "EXCLUDE" ? "exclude" : "change";
-    // 【YYYY/MM/DD 自動反映】を先頭に付けて log エントリ形式で書く
-    // → parseCondLine が isLog: true と判定し「新着要望」確認バナーを出さず履歴表示のみ
-    // （DBへの条件書き込みは computeCasualUpdate → property_customers.update で既に完了している）
-    const newEntry = `【${getJSTDate()} 自動反映】[${getJSTTimestamp()}|${pattern}] ${note}`;
+    // PENDING エントリ（【自動反映】prefix なし）→ parseCondLine が isLog: false と判定し「新着要望」バナーに表示
+    // 条件変更後に物件を再検索する必要があるためスタッフへの通知として使う
+    const newEntry = `[${getJSTTimestamp()}|${pattern}] ${note}`;
     await db.from("property_customers")
       .update({ additional_conditions: prev ? `${prev}\n${newEntry}` : newEntry, updated_at: new Date().toISOString() })
       .eq("id", pcId);
@@ -1085,13 +1084,21 @@ ${customerText.slice(0, 300)}
     .eq("id", pcId)
     .maybeSingle();
 
+  const FIELD_LABELS: Record<string, string> = {
+    desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限",
+    walk_minutes: "徒歩分数", move_in_time: "入居時期", building_age: "築年数",
+    initial_cost_limit: "初期費用上限", other_requests: "その他",
+  };
+
   const updates: Record<string, unknown> = {};
+  const changedFields: Record<string, unknown> = {}; // 実際に値が変わるフィールド（バナー表示用）
   for (const f of CONDITION_FIELDS) {
     const v = extracted[f];
     if (v === null || v === undefined || v === "") continue;
-    const existingVal = (existingPc as Record<string, unknown> | null)?.[f];
-    if (existingVal !== null && existingVal !== undefined && existingVal !== "") continue; // 既存確定値を保護
     updates[f] = v;
+    const existingVal = (existingPc as Record<string, unknown> | null)?.[f];
+    // 値が変わる場合のみ changedFields に追加（同じ値の上書きはバナー不要）
+    if (existingVal !== v) changedFields[f] = v;
   }
 
   if (Object.keys(updates).length === 0) return; // 抽出条件なし → スキップ
@@ -1105,9 +1112,22 @@ ${customerText.slice(0, 300)}
     console.warn("[line-webhook] P4 property_customers update failed:", updateErr.message);
   } else {
     console.log(`[line-webhook] P4 条件抽出: conv=${convId} fields=${Object.keys(updates).join(",")}`);
-    // 条件取得の履歴化（P4は merge-if-null のため old は常に空 = 条件"取得"の記録）
     void recordConditionHistory(db, pcId, existingPc as Record<string, unknown> | null, updates)
       .catch((e) => console.warn("[condition-history] P4:", e));
+
+    // 変更があった場合のみ新着要望バナーにPENDINGエントリを追加（スタッフへの物件再検索通知）
+    if (Object.keys(changedFields).length > 0) {
+      const noteText = Object.entries(changedFields)
+        .map(([k, v]) => `${FIELD_LABELS[k] ?? k}: ${v}`)
+        .join("、");
+      const pendingEntry = `[${getJSTTimestamp()}|change] ${noteText}`;
+      const { data: cur } = await db.from("property_customers")
+        .select("additional_conditions").eq("id", pcId).maybeSingle();
+      const prev = (cur?.additional_conditions as string | null) ?? "";
+      await db.from("property_customers")
+        .update({ additional_conditions: prev ? `${prev}\n${pendingEntry}` : pendingEntry })
+        .eq("id", pcId);
+    }
   }
 }
 
