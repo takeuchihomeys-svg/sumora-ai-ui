@@ -158,6 +158,19 @@ body {
 
 .c-arrow { color: #c5d8e8; flex-shrink: 0; }
 
+.viewed-btn {
+  font-size: 10px; font-weight: 700;
+  padding: 2px 6px; border-radius: 8px; flex-shrink: 0;
+  border: 1.5px solid #1565C0; color: #1565C0; background: transparent;
+  cursor: pointer; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.viewed-btn:active { background: #e3f2fd; }
+.viewed-btn.viewed-done {
+  border-color: #1976d2; background: #e3f2fd; color: #1565C0;
+  cursor: default;
+}
+
 .state-msg {
   padding: 40px 20px; text-align: center;
   color: #8696a0; font-size: 13px; line-height: 1.8;

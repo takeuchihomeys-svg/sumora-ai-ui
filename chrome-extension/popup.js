@@ -1899,6 +1899,11 @@ function isCompletedToday(c) {
   );
 }
 
+function isViewedToday(c) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return !!(c.property_viewed_at && new Date(c.property_viewed_at) >= today);
+}
+
 function updateTodayBanner() {
   const count = allCustomers.filter(needsActionToday).length;
   const banner = document.getElementById("today-banner");
@@ -2064,6 +2069,14 @@ function renderList(customers) {
       updateBulkToolbar();
     });
   });
+
+  list.querySelectorAll(".viewed-btn").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (btn.classList.contains("viewed-done")) return;
+      await markPropertyViewed(btn.dataset.id);
+    });
+  });
 }
 
 function computeAreaModeBadgeHtml(areaText) {
@@ -2098,6 +2111,26 @@ function computeAreaModeBadgeHtml(areaText) {
   return html;
 }
 
+async function markPropertyViewed(id) {
+  try {
+    const now = new Date().toISOString();
+    const res = await fetch(`${API_BASE}/api/property-customers`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, property_viewed_at: now, property_send_count: 0 }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const idx = allCustomers.findIndex((c) => String(c.id) === String(id));
+    if (idx >= 0) {
+      allCustomers[idx] = { ...allCustomers[idx], property_viewed_at: now, property_send_count: 0 };
+      setCachedCustomers(allCustomers);
+      filterCustomers(document.getElementById("search-input")?.value || "");
+    }
+  } catch (e) {
+    console.error("[AX] markPropertyViewed failed:", e);
+  }
+}
+
 function renderCustomerRow(c, dimmed) {
   const d = buildCondData(c);
   const metaParts = [];
@@ -2119,6 +2152,7 @@ function renderCustomerRow(c, dimmed) {
         ${meta ? `<div class="c-meta">${esc(meta)}</div>` : ""}
       </div>
       <span class="s-badge badge-${esc(c.status)}">${esc(label)}</span>
+      <button class="viewed-btn${isViewedToday(c) ? " viewed-done" : ""}" data-id="${esc(String(c.id))}">${isViewedToday(c) ? "☑" : "確認"}</button>
       <svg class="c-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
     </div>`;
 }
