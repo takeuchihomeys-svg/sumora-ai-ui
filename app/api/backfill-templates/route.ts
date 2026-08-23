@@ -9,9 +9,12 @@ export const maxDuration = 300;
 // embedding テキスト: category + " " + label（どのシーンのテンプレかをベクトル化）
 // 151件程度のため1回で全件処理可能。offset/limit で分割も可。
 export async function POST(req: NextRequest) {
-  const secret = process.env.CRON_SECRET;
+  const cronSecret = process.env.CRON_SECRET;
+  const internalSecret = process.env.INTERNAL_API_SECRET;
   const auth = req.headers.get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
+  const validCron = cronSecret && auth === `Bearer ${cronSecret}`;
+  const validInternal = internalSecret && auth === `Bearer ${internalSecret}`;
+  if (!validCron && !validInternal) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
