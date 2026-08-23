@@ -2417,15 +2417,20 @@ function setupAreaModeSelector(c, siteKey) {
   }
 
   // デフォルト: WARD_CODE_MAP収録済み → 地域 / 駅名のみ → 駅 / それ以外 → 地域
-  const hasWardToken    = toks.some(t => !t.endsWith("線") && (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || /[市区郡]$/.test(t)));
   const _cpRe = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
-  const hasStationToken = toks.some(t => {
-    if (WARD_CODE_MAP[t]) return false;
+  function _isKnownStation(t) {
+    if (WARD_CODE_MAP[t]) return false; // 純粋な市区は駅扱いしない
     const vs = [t, t.replace(/[町村]$/, ""), t.replace(_cpRe, ""), t.replace(_cpRe, "").replace(/[町村]$/, "")];
-    // STATION_LINE_MAP（ハードコード）+ LEARNED_STATION_MAP（学習済み・realpro_lines必須）を両方チェック
     return vs.some(v => STATION_LINE_MAP[v] || (LEARNED_STATION_MAP[v]?.realpro_lines?.length > 0)) ||
       Object.values(REINS_LINE_MAP).some(v => v === t || v.endsWith(t));
+  }
+  // hasWardToken: 駅名として既知のトークンは地名扱いしない
+  // （十三など NEIGHBORHOOD_WARD_MAP に登録されていても駅名を優先）
+  const hasWardToken    = toks.some(t => {
+    if (_isKnownStation(t)) return false; // 駅名は地域ガードをスキップ
+    return !t.endsWith("線") && (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || /[市区郡]$/.test(t));
   });
+  const hasStationToken = toks.some(t => _isKnownStation(t));
   const hasResolvableRoute = toks.some(t => t.endsWith("線") && lineNameToRouteId(t));
   // 「鶴見区槇塚」のような 区+地名 複合トークン: resolveWardLoose で区として解決できるが
   // WARD_CODE_MAP/NEIGHBORHOOD_WARD_MAP に直接登録されていないトークン
@@ -2433,10 +2438,14 @@ function setupAreaModeSelector(c, siteKey) {
     if (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t]) return false;
     return !!resolveWardLoose(t);
   });
+  // DBのarea_modeが明示設定されている場合は静的マップ判定より優先（毎日分類cronが書き込む）
+  // 'auto' は静的マップ・API自動判定に委ねる
+  const _dbMode = (c.area_mode === 'station' || c.area_mode === 'ward') ? c.area_mode : null;
   // 区+駅 混在（hasStationToken && (hasWardToken || hasWardCompoundToken)）→ 区指定を優先
-  const defaultMode = (hasStationToken || hasResolvableRoute)
-                    ? ((hasWardToken || hasWardCompoundToken) ? "ward" : "station")
-                    : "ward";
+  const defaultMode = _dbMode ||
+    ((hasStationToken || hasResolvableRoute)
+      ? ((hasWardToken || hasWardCompoundToken) ? "ward" : "station")
+      : "ward");
 
   _areaModeSource = "auto";
   setMode(defaultMode);
