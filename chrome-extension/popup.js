@@ -338,15 +338,22 @@ async function resolveAreaWithAPI(rawArea, areaMode, customerId) {
     const entry = LEARNED_STATION_MAP[t];
     return entry && entry.realpro_lines && entry.realpro_lines.length === 0;
   });
+  // LEARNED_STATION_MAP に路線名はあるが lineNameToRouteId で全て解決できない
+  // （例: "Osaka Metro御堂筋線" 等の非標準表記が混入 → buildAreaRouteCodes が route_id を取れない）
+  const hasUnresolvableLearnedStation = toks.some(t => {
+    const entry = LEARNED_STATION_MAP[t];
+    if (!entry?.realpro_lines?.length) return false;
+    return entry.realpro_lines.every(l => !lineNameToRouteId(l));
+  });
   // 「鶴見区槇塚」のような 区+地名 複合トークン: resolveWardLoose では区として解決できるが
   // WARD_CODE_MAP/NEIGHBORHOOD_WARD_MAP に直接登録されておらず buildAreaRouteCodes が区コードを落とす
   const hasWardCompoundToken = toks.some(t => {
     if (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t]) return false;
     return !!resolveWardLoose(t);
   });
-  const needApi = hasRoute || hasUnknown || hasCommutePattern || hasTransferNone || hasCommuteExpression || hasIncompleteLearnedStation || hasWardCompoundToken || (localEmpty && hasMeaningfulToken);
+  const needApi = hasRoute || hasUnknown || hasCommutePattern || hasTransferNone || hasCommuteExpression || hasIncompleteLearnedStation || hasUnresolvableLearnedStation || hasWardCompoundToken || (localEmpty && hasMeaningfulToken);
   if (!needApi) return null;
-  const _triggerReason = hasRoute ? "路線名未解決" : hasUnknown ? "未知トークン" : hasCommutePattern ? "通勤時間制約" : hasTransferNone ? "乗り換えなし/直通" : hasCommuteExpression ? "通勤便利系表現" : hasIncompleteLearnedStation ? "LEARNED駅データ不完全" : hasWardCompoundToken ? "区+地名複合トークン" : "ローカル解決が空";
+  const _triggerReason = hasRoute ? "路線名未解決" : hasUnknown ? "未知トークン" : hasCommutePattern ? "通勤時間制約" : hasTransferNone ? "乗り換えなし/直通" : hasCommuteExpression ? "通勤便利系表現" : hasIncompleteLearnedStation ? "LEARNED駅データ不完全" : hasUnresolvableLearnedStation ? "LEARNED路線名解決不能" : hasWardCompoundToken ? "区+地名複合トークン" : "ローカル解決が空";
   console.log("[AX] resolve-area 呼び出し:", _triggerReason, rawArea);
   try {
     const ctrl = new AbortController();
@@ -580,10 +587,10 @@ function resolveStation(rawInput) {
   if (_aliased && (STATION_LINE_MAP[_aliased] || LEARNED_STATION_MAP[_aliased])) return _aliased;
   if (STATION_LINE_MAP[clean]) return clean;                                 // 完全一致（ハードコード）
   if (LEARNED_STATION_MAP[clean]) return clean;                             // 完全一致（学習済み）
-  // 地域名ガード: 市・区・郡・市内などで終わるトークンは駅名のあいまい一致に回さない
-  // （例: "大阪市内" が includes で駅 "大阪" に誤変換されるのを防止。
+  // 地域名ガード: 市・区・郡・市内・通り・丁目・地区などで終わるトークンは駅名のあいまい一致に回さない
+  // （例: "大阪市内" → "大阪" 駅、"京橋通り" → "京橋" 駅 への誤変換を防止。
   //   摂津市駅・堺市駅など実在の「〜市」駅は上の完全一致で既に解決済みなのでここには来ない）
-  if (/(?:市内|府内|県内|都内|[市区郡都府県])$/.test(clean)) return null;
+  if (/(?:市内|府内|県内|都内|[市区郡都府県]|通り|丁目|地区)$/.test(clean)) return null;
   const keys = Object.keys(STATION_LINE_MAP);
   const sw = keys.find(k => k.startsWith(clean) && clean.length >= 2);
   if (sw) return sw;
@@ -1204,7 +1211,9 @@ function buildAreaRouteCodes(c, mode = "auto") {
     const ward = STATION_WARD_MAP[stationKey] || findStationWard(part);
     if (ward && WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward])) city_codes.push(WARD_CODE_MAP[ward]);
     const lines = getHubLines(stationKey); // ハブ駅展開
-    lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
+    // LINE_ROUTE_MAP[l] 直参照ではなく lineNameToRouteId() 経由で表記ゆれ吸収
+    // 学習データの「Osaka Metro〇〇線」等も正しく route_id に変換できる
+    lines.forEach(l => { const id = lineNameToRouteId(l); if (id && !route_ids.includes(id)) route_ids.push(id); });
   }
   // 駅モード: 各駅の全沿線IDをそのまま追加（駅に紐づく全路線を対象にする）
   if (mode === "station" && _stationRoutePairs.length > 0) {
