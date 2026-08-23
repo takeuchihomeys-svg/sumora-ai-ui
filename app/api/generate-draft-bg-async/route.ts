@@ -37,6 +37,7 @@ const BRAIN_NUMERIC = new Set(["rent_min", "rent_max", "initial_cost_limit", "wa
 async function applyBrainConditionChange(
   db: ReturnType<typeof getDb>,
   pcId: string,
+  convId: string,
   targetMessage: string,
   conditionChangeType: string,
 ): Promise<void> {
@@ -88,10 +89,16 @@ async function applyBrainConditionChange(
   }
   if (Object.keys(updates).length === 0) return;
 
+  const conditionActuallyChanged = Object.keys(changedFields).length > 0;
   await db.from("property_customers")
-    .update({ ...updates, updated_at: new Date().toISOString(), ...(Object.keys(changedFields).length > 0 ? { last_property_sent_at: null, rp_update_days: null } : {}) })
+    .update({ ...updates, updated_at: new Date().toISOString(), ...(conditionActuallyChanged ? { last_property_sent_at: null, rp_update_days: null } : {}) })
     .eq("id", pcId);
-  console.log(`[bg-async] brain-condition-bridge: pcId=${pcId} type=${conditionChangeType} fields=${Object.keys(updates).join(",")}`);
+
+  // 条件が実際に変わった場合は会話を要対応にセット（スタッフが未読のまま解除していても再フラグ）
+  if (conditionActuallyChanged) {
+    await db.from("conversations").update({ is_flagged: true }).eq("id", convId);
+  }
+  console.log(`[bg-async] brain-condition-bridge: pcId=${pcId} convId=${convId} type=${conditionChangeType} fields=${Object.keys(updates).join(",")}`);
 
   // 既存pendingバナーエントリがない場合のみ追加（P4/autoParseFormat との重複防止）
   const hasPending = ((pc?.additional_conditions as string | null) ?? "")
@@ -244,6 +251,7 @@ export async function POST(req: NextRequest) {
         void applyBrainConditionChange(
           db,
           conv.property_customer_id as string,
+          convId,
           targetMessage,
           brainGateDirect.meta.condition_change_type as string,
         ).catch((e) => console.warn("[bg-async] brain-condition-bridge error:", e));
