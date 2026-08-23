@@ -262,14 +262,36 @@ type TempAdj = {
 
 function parseAreaStation(desired_area: string | null | undefined): { area_input: string; station_input: string } {
   if (!desired_area) return { area_input: "", station_input: "" };
-  const tokens = desired_area.split(/[・、,\n]+/).map((t) => t.trim()).filter(Boolean);
   const stationTokens: string[] = [];
   const areaTokens: string[] = [];
+  // 「A〜B」「A～B」範囲表記 → 両端を駅として抽出し、テキストから除去
+  const workStr = desired_area.replace(
+    /([^\s,、・\/～〜]+?)[〜～]([^\s,、・\/]+)/g,
+    (_: string, from: string, to: string) => {
+      const f = from.replace(/あたり$|周辺$|付近$/, "").trim();
+      const t2 = to.replace(/あたり$|周辺$|付近$/, "").trim();
+      if (f) stationTokens.push(f);
+      if (t2) stationTokens.push(t2);
+      return "";
+    }
+  );
+  // 残りのトークンを地域/駅に分類
+  const tokens = workStr.split(/[・、,\n]+/).map((t) =>
+    t.trim().replace(/あたり$|周辺$|付近$/, "").trim()
+  ).filter(Boolean);
   for (const t of tokens) {
-    if (/駅|線/.test(t)) stationTokens.push(t);
-    else areaTokens.push(t);
+    if (/駅|線|方面/.test(t)) {
+      stationTokens.push(t);
+    } else if (/[市区郡都府県]$|市内$|区内$|エリア$|地区$|地域$/.test(t)) {
+      areaTokens.push(t);
+    } else {
+      areaTokens.push(t);
+    }
   }
-  return { area_input: areaTokens.join("・"), station_input: stationTokens.join("・") };
+  return {
+    area_input:    [...new Set(areaTokens)].join("・"),
+    station_input: [...new Set(stationTokens)].join("・"),
+  };
 }
 
 function detectShikireiFlag(c: Customer): boolean {
@@ -926,7 +948,28 @@ function CustomersPageInner() {
     setViewedUpdating(null);
   };
 
-  const openEdit = (c: Customer) => { convertRawOnSave.current = null; setEditId(c.id); setEditFields(toEditFields(c)); };
+  const openEdit = (c: Customer) => {
+    convertRawOnSave.current = null;
+    setEditId(c.id);
+    const fields = toEditFields(c);
+    setEditFields(fields);
+    setOrganizeResult(null);
+    // 地域・駅フィールドが入力済みの場合は自動整理をバックグラウンド実行
+    if (fields.area_input || fields.station_input) {
+      setOrganizeLoading(true);
+      fetch("/api/organize-area-station", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ area_input: fields.area_input, station_input: fields.station_input }),
+      })
+        .then((r) => r.json())
+        .then((data: { area_input: string; station_input: string; changes: string[] }) => {
+          if (data.changes && data.changes.length > 0) setOrganizeResult(data);
+        })
+        .catch(() => {})
+        .finally(() => setOrganizeLoading(false));
+    }
+  };
 
   const handleOrganizeAreaStation = async () => {
     if (!editFields || organizeLoading) return;

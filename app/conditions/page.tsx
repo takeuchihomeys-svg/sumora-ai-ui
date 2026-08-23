@@ -76,6 +76,12 @@ interface Customer {
   floor_plan?: string;
   initial_cost_limit?: number;
   building_age?: number;
+  floor_area_min?: number;
+  floor_area_max?: number;
+  pet?: boolean | null;
+  commute_station?: string;
+  commute_minutes?: number;
+  area_mode?: string;
   other_requests?: string;
   additional_conditions?: string;
   raw_format_text?: string;
@@ -120,6 +126,12 @@ const EMPTY_FORM: Omit<Customer, "id" | "created_at" | "updated_at"> = {
   floor_plan: "",
   initial_cost_limit: undefined,
   building_age: undefined,
+  floor_area_min: undefined,
+  floor_area_max: undefined,
+  pet: null,
+  commute_station: "",
+  commute_minutes: undefined,
+  area_mode: "auto",
   other_requests: "",
   additional_conditions: "",
   raw_format_text: "",
@@ -363,6 +375,12 @@ export default function ConditionsPage() {
       floor_plan: c.floor_plan ?? "",
       initial_cost_limit: c.initial_cost_limit,
       building_age: c.building_age,
+      floor_area_min: c.floor_area_min,
+      floor_area_max: c.floor_area_max,
+      pet: c.pet ?? null,
+      commute_station: c.commute_station ?? "",
+      commute_minutes: c.commute_minutes,
+      area_mode: c.area_mode ?? "auto",
       other_requests: c.other_requests ?? "",
       additional_conditions: c.additional_conditions ?? "",
       raw_format_text: c.raw_format_text ?? "",
@@ -387,6 +405,12 @@ export default function ConditionsPage() {
       walk_minutes: form.walk_minutes || null,
       initial_cost_limit: form.initial_cost_limit || null,
       building_age: form.building_age || null,
+      floor_area_min: form.floor_area_min || null,
+      floor_area_max: form.floor_area_max || null,
+      commute_minutes: form.commute_minutes || null,
+      commute_station: form.commute_station || null,
+      area_mode: form.area_mode || "auto",
+      pet: form.pet ?? null,
     };
 
     try {
@@ -1334,6 +1358,62 @@ export default function ConditionsPage() {
                     <input className={INPUT} type="number" value={form.building_age ?? ""} onChange={(e) => setForm({ ...form, building_age: e.target.value ? Number(e.target.value) : undefined })} placeholder="10" />
                   </Field>
                 </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="広さ下限（㎡）">
+                    <input className={INPUT} type="number" value={form.floor_area_min ?? ""} onChange={(e) => setForm({ ...form, floor_area_min: e.target.value ? Number(e.target.value) : undefined })} placeholder="例：30" />
+                  </Field>
+                  <Field label="広さ上限（㎡）">
+                    <input className={INPUT} type="number" value={form.floor_area_max ?? ""} onChange={(e) => setForm({ ...form, floor_area_max: e.target.value ? Number(e.target.value) : undefined })} placeholder="例：60" />
+                  </Field>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="通勤先駅">
+                    <input className={INPUT} value={form.commute_station ?? ""} onChange={(e) => setForm({ ...form, commute_station: e.target.value })} placeholder="例：梅田" />
+                  </Field>
+                  <Field label="通勤時間（分以内）">
+                    <input className={INPUT} type="number" value={form.commute_minutes ?? ""} onChange={(e) => setForm({ ...form, commute_minutes: e.target.value ? Number(e.target.value) : undefined })} placeholder="例：30" />
+                  </Field>
+                </div>
+
+                <Field label="ペット">
+                  <div className="flex gap-2">
+                    {([["true", "可"], ["false", "不可"], ["", "未指定"]] as [string, string][]).map(([val, label]) => (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => setForm({ ...form, pet: val === "true" ? true : val === "false" ? false : null })}
+                        className={`flex-1 rounded-xl py-2 text-sm font-bold border transition-colors ${
+                          (form.pet === true && val === "true") || (form.pet === false && val === "false") || (form.pet === null && val === "")
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-gray-500 border-gray-200"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+
+                <Field label="エリアモード">
+                  <div className="flex gap-2">
+                    {([["auto", "自動"], ["ward", "地域"], ["station", "駅"], ["both", "両方"]] as [string, string][]).map(([val, label]) => (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => setForm({ ...form, area_mode: val })}
+                        className={`flex-1 rounded-xl py-2 text-xs font-bold border transition-colors ${
+                          (form.area_mode ?? "auto") === val
+                            ? "bg-teal-600 text-white border-teal-600"
+                            : "bg-white text-gray-500 border-gray-200"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
 
                 <Field label="初期費用上限（円）">
                   <input className={INPUT} type="number" value={form.initial_cost_limit ?? ""} onChange={(e) => setForm({ ...form, initial_cost_limit: e.target.value ? Number(e.target.value) : undefined })} placeholder="例：300000" />
