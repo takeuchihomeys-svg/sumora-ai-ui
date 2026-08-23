@@ -962,23 +962,31 @@ export async function analyzeConversation(
   type RagKnowledgeRow = { title: string | null; content: string | null; category: string | null; conversation_state: string | null; importance: number | null; similarity: number };
   let ragKnowledgeRaw: RagKnowledgeRow[] = [];
   let ragWinningPatterns: Array<{ situation: string | null; pattern: string; closing_action: string | null; human_type_label: string | null; outcome_type: string; notes: string | null; win_rate: number | null; importance: number; similarity: number }> = [];
-  if (!isIncremental && process.env.OPENAI_API_KEY) {
+  // RAG: incremental mode でも実行する（winning_patterns は毎回必要）。
+  // checkpoint RAG のみ非incremental 限定（古い会話セーブポイントの検索は差分分析では不要）。
+  if (process.env.OPENAI_API_KEY) {
+    // RAGクエリ: 顧客人間性プロファイル + 前回戦略 + フェーズ を中心に構築。
+    // 「よろしくお願いします」等の短いメッセージよりも personality_profile の方が
+    // winning_patterns.situation（人間性ベース）との embedding 類似度が高い。
+    type PcForRag = { personality_profile?: string | null; preferences?: string | null; ai_summary?: string | null };
+    const pcForRag = (pcResult.data as PcForRag | null);
+    const prevMetaCtx = opts?.prevMeta
+      ? [opts.prevMeta.closing_strategy, opts.prevMeta.reply_direction, (opts.prevMeta as Record<string, unknown>).checkpoint_stage].filter(Boolean).join(" ")
+      : "";
     const recentCustomerMsgs = typedMessages
       .filter(m => m.sender === "customer" && m.text)
       .slice(-3)
       .map(m => m.text)
       .join(" ");
-    if (recentCustomerMsgs.trim()) {
+    const ragQueryInput = [
+      pcForRag?.personality_profile,       // 顧客の人間性（最重要: winning_patterns.situation と意味的に近い）
+      pcForRag?.preferences,               // 希望・こだわり条件
+      prevMetaCtx,                         // 前回の戦略・返信方向・フェーズ
+      convStatus,                          // 現在の会話フェーズ
+      recentCustomerMsgs.slice(0, 200),    // メッセージは補足程度
+    ].filter(Boolean).join(" ").slice(0, 1000);
+    if (ragQueryInput.trim()) {
       try {
-        // RAGクエリ強化: 直近メッセージ + 最新チェックポイント要約 + 前回AIX-META を組み合わせる。
-        // 短い返答（「ありがとう」等）だけでは文脈が失われるためセーブデータと前回文脈で補完する。
-        type EarlyCheckpointRow = { summary: string | null };
-        const earlyCpSummary = ((checkpointsResult.data ?? []) as EarlyCheckpointRow[])[0]?.summary ?? "";
-        const prevMetaCtx = opts?.prevMeta
-          ? [opts.prevMeta.closing_strategy, opts.prevMeta.reply_direction, (opts.prevMeta as Record<string, unknown>).checkpoint_stage].filter(Boolean).join(" ")
-          : "";
-        const ragQueryInput = [recentCustomerMsgs, earlyCpSummary.slice(0, 400), prevMetaCtx]
-          .filter(Boolean).join(" ").slice(0, 1000);
         const qRes = await fetch("https://api.openai.com/v1/embeddings", {
           method: "POST",
           signal: AbortSignal.timeout(6_000),
@@ -990,8 +998,9 @@ export async function analyzeConversation(
           const qEmb = qData.data?.[0]?.embedding;
           if (qEmb) {
             const [cpRes, knRes] = await Promise.all([
-              // 既存動作を厳密維持: checkpoint RAG は propertyCustomerId がある場合のみ
-              propertyCustomerId
+              // checkpoint RAG: 非incremental + propertyCustomerId がある場合のみ
+              // （差分分析では古い会話構造の検索は不要）
+              (!isIncremental && propertyCustomerId)
                 ? supabase.rpc("match_conversation_checkpoints", {
                     conversation_id_param: conversationId,
                     query_embedding: qEmb,
@@ -999,8 +1008,7 @@ export async function analyzeConversation(
                     min_similarity: 0.5,
                   })
                 : Promise.resolve({ data: null }),
-              // RAG化 Phase2: 会話コンテキストに類似するナレッジ
-              // （min_importance 7 = analyze-diffs の confirmed 昇格ラインと一致）
+              // match_reply_knowledge: incremental でも実行（原則・知識は毎回必要）
               supabase.rpc("match_reply_knowledge", {
                 query_embedding: qEmb,
                 match_count: 30,
@@ -1008,10 +1016,9 @@ export async function analyzeConversation(
               }),
             ]);
             ragCheckpoints = ((cpRes as { data: unknown }).data ?? []) as typeof ragCheckpoints;
-            // 生のRPC結果のみ保持。フィルタ/重複除去/ソートは⑦⑪⑱の結果変数定義後（applyingPatternsText 構築後）に行う
             ragKnowledgeRaw = ((knRes as { data: unknown }).data ?? []) as RagKnowledgeRow[];
 
-            // winning_patterns RAG: 会話コンテキストに類似する成約・失注パターンを検索
+            // winning_patterns RAG: incremental でも実行（人間性ベースのクロージング戦略は毎回必要）
             const { data: wpRag } = await supabase.rpc("match_winning_patterns", {
               query_embedding: qEmb,
               match_count: 5,
@@ -1031,7 +1038,7 @@ export async function analyzeConversation(
           }
         }
       } catch {
-        // RAG失敗は無視・最新CP＋静的バケットのみで動作継続（既存方針）
+        // RAG失敗は無視・静的バケットのみで動作継続（既存方針）
       }
     }
   }
