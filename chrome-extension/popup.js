@@ -499,6 +499,16 @@ function decomposeToken(token) {
       }
     }
   }
+  // 第4フォールバック: 路線名+駅名の連結分解（例: "谷町線駒川中野" → ["谷町線", "駒川中野"]）
+  // お客様が「谷町線駒川中野」のように路線名と駅名をそのまま連結して入力する場合に対応する
+  for (const stk of stKeys) {
+    if (token.endsWith(stk) && stk.length < token.length) {
+      const linePart = token.slice(0, token.length - stk.length);
+      if (linePart.endsWith("線") && linePart.length >= 2) {
+        return [linePart, stk];
+      }
+    }
+  }
   return null;
 }
 
