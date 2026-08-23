@@ -2741,8 +2741,8 @@ function openInstructions(siteKey) {
         : null;
       const allNeighborhoodWards = [...new Set(neighborhoodTokens.map(t => resolveWardLoose(t) || t))];
 
-      // ボタン押下が絶対ルール
-      const isWardArea_itandi = currentAreaMode === "ward";
+      // ボタン押下が絶対ルール（let: 臨機応変フォールバックで更新する可能性あり）
+      let isWardArea_itandi = currentAreaMode === "ward";
 
       // 未登録トークン検出: 駅でも地名マップにもない → page-scriptで警告ログ
       const unknownTokens = tokens.filter(t =>
@@ -2817,6 +2817,24 @@ function openInstructions(siteKey) {
             }
           });
         }).catch(function() {});
+      }
+
+      // 臨機応変フォールバック(itandi): station モードで itandiLines 空かつ ward データある → ward に降格
+      if (_areaModeSource === "auto" && !isWardArea_itandi && itandiLines.length === 0 && (neighborhoodWard || (apiData?.itandi?.ward_names?.length > 0))) {
+        console.log("[AX] 臨機応変(itandi): station→ward 降格（itandiLines 空, ward データあり）");
+        currentAreaMode = "ward";
+        isWardArea_itandi = true;
+        document.getElementById("btn-mode-ward")?.classList.add("active");
+        document.getElementById("btn-mode-station")?.classList.remove("active");
+        renderInstrSteps("itandi", adjC);
+      } else if (_areaModeSource === "auto" && isWardArea_itandi && itandiLines.length > 0 && !neighborhoodWard && !(apiData?.itandi?.ward_names?.length > 0)) {
+        // ward モードで ward データ取れず station データある → station に昇格
+        console.log("[AX] 臨機応変(itandi): ward→station 昇格（ward データ空, itandiLines あり）");
+        currentAreaMode = "station";
+        isWardArea_itandi = false;
+        document.getElementById("btn-mode-station")?.classList.add("active");
+        document.getElementById("btn-mode-ward")?.classList.remove("active");
+        renderInstrSteps("itandi", adjC);
       }
 
       // 所在地名: NEIGHBORHOOD_WARD_MAP → 市区郡テキスト → STATION_WARD_MAP の優先順
@@ -3087,6 +3105,27 @@ function openInstructions(siteKey) {
         // ※ パラメータ名は cc: 外側の const c = selectedCustomer をシャドウしないため
         (apiData.realpro.city_codes || []).forEach(cc => { if (!city_codes.includes(cc)) city_codes.push(cc); });
       }
+
+      // ⑤ 臨機応変フォールバック: 解決結果とモードが食い違う場合に自動補正
+      // （手動クリック "user" は尊重。"auto"/"bulk" は結果優先）
+      if (_areaModeSource === "auto") {
+        if (currentAreaMode === "station" && route_ids.length === 0 && city_codes.length > 0) {
+          // 駅モードなのに route_ids が取れず city_codes だけある → 地域で検索に降格
+          console.log("[AX] 臨機応変(realpro): station→ward 降格（route_ids 空, city_codes あり）");
+          currentAreaMode = "ward";
+          document.getElementById("btn-mode-ward")?.classList.add("active");
+          document.getElementById("btn-mode-station")?.classList.remove("active");
+          renderInstrSteps("realpro", adjC);
+        } else if (currentAreaMode === "ward" && city_codes.length === 0 && route_ids.length > 0) {
+          // 地域モードなのに city_codes が取れず route_ids だけある → 駅で検索に昇格
+          console.log("[AX] 臨機応変(realpro): ward→station 昇格（city_codes 空, route_ids あり）");
+          currentAreaMode = "station";
+          document.getElementById("btn-mode-station")?.classList.add("active");
+          document.getElementById("btn-mode-ward")?.classList.remove("active");
+          renderInstrSteps("realpro", adjC);
+        }
+      }
+
       const areaParts = parseAreaTokens(adjAreaClean);
       const realpro_station_names = [];
       if (currentAreaMode === "station") {
@@ -3367,6 +3406,24 @@ function openInstructions(siteKey) {
           currentAreaMode = "ward";
           document.getElementById("btn-mode-ward")?.classList.add("active");
           document.getElementById("btn-mode-station")?.classList.remove("active");
+        }
+      }
+
+      // 臨機応変フォールバック(reins): API補正後に現在モードでローカル解決できるかを確認
+      // （API未呼出ケース / needApi=false でAPIモード補正がスキップされた場合をカバー）
+      if (_areaModeSource === "auto") {
+        const _rLocal = buildAreaRouteCodes({ desired_area: rawArea }, currentAreaMode);
+        const _rEmpty = currentAreaMode === "station" ? _rLocal.route_ids.length === 0 : _rLocal.city_codes.length === 0;
+        if (_rEmpty) {
+          const _altMode = currentAreaMode === "station" ? "ward" : "station";
+          const _rAlt = buildAreaRouteCodes({ desired_area: rawArea }, _altMode);
+          const _rAltHas = _altMode === "station" ? _rAlt.route_ids.length > 0 : _rAlt.city_codes.length > 0;
+          if (_rAltHas) {
+            console.log(`[AX] 臨機応変(reins): ${currentAreaMode}→${_altMode} 補正`);
+            currentAreaMode = _altMode;
+            document.getElementById("btn-mode-station")?.classList.toggle("active", _altMode === "station");
+            document.getElementById("btn-mode-ward")?.classList.toggle("active", _altMode === "ward");
+          }
         }
       }
 
@@ -4068,12 +4125,17 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           }
           // サイト別手順ビューを開く（selectedSite を更新）
           openInstructions(msg.site);
-          // areaMode が指定されていればボタンをクリックして上書き
+          // areaMode が指定されていればモードをセット
+          // ※ modeBtn.click() は _areaModeSource="user" にしてしまいAPIによる自動補正を封じるため
+          //   一括検索（DB設定）では "auto" に留め、臨機応変フォールバックが働くようにする
           if (msg.areaMode === 'station' || msg.areaMode === 'ward') {
             var modeBtn = document.getElementById(
               msg.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward'
             );
-            if (modeBtn) modeBtn.click();
+            if (modeBtn) {
+              modeBtn.click(); // UI更新（active class 切り替え）
+              _areaModeSource = "auto"; // "user" → "auto" に戻して臨機応変補正を許可
+            }
           }
           // DOM レンダリング完了を待って autofill-btn をクリック
           await new Promise(function(resolve) {
