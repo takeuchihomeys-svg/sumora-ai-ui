@@ -596,10 +596,16 @@ async function resolveEngagementSignal(
 }
 
 function isFormatMessage(text: string): boolean {
-  // 物件サイトURLのみのメッセージは条件フォーマットとして扱わない（SUUMOバグ防止）
+  // 物件サイトURLが含まれる場合、残りテキストに変更意図キーワードがなければ条件フォーマットとみなさない
+  // （SUUMO等のURLカードに付くタイトル「十三 1LDK 9階」を条件更新と誤解析するバグ防止）
   if (isPropertySiteUrl(text)) {
     const textOnly = text.replace(/https?:\/\/[^\s]+/g, "").trim();
     if (textOnly.length < 15) return false;
+    const hasChangeIntent = [
+      "変えたい", "変更", "に変えて", "修正", "更新",
+      "追加", "も見たい", "広げ", "せばめ",
+    ].some((k) => textOnly.includes(k));
+    if (!hasChangeIntent) return false;
     return isFormatMessage(textOnly);
   }
 
@@ -859,9 +865,10 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
       .select("additional_conditions").eq("id", pcId).maybeSingle();
     const prev = (cur?.additional_conditions as string | null) ?? "";
     const pattern = intent === "ADD" ? "add" : intent === "EXCLUDE" ? "exclude" : "change";
-    // 構造化フィールドは常に自動反映済みのため「【YYYY/MM/DD 自動反映】」をマーク
-    // UIの parseConditionLog() でこのマークを認識して「自動反映」バッジを表示する
-    const newEntry = `[${getJSTTimestamp()}|${pattern}] ${note} 【${getJSTDate()} 自動反映】`;
+    // 【YYYY/MM/DD 自動反映】を先頭に付けて log エントリ形式で書く
+    // → parseCondLine が isLog: true と判定し「新着要望」確認バナーを出さず履歴表示のみ
+    // （DBへの条件書き込みは computeCasualUpdate → property_customers.update で既に完了している）
+    const newEntry = `【${getJSTDate()} 自動反映】[${getJSTTimestamp()}|${pattern}] ${note}`;
     await db.from("property_customers")
       .update({ additional_conditions: prev ? `${prev}\n${newEntry}` : newEntry, updated_at: new Date().toISOString() })
       .eq("id", pcId);
@@ -984,6 +991,7 @@ async function extractConditionsFromCasualReply(
   const hasConditionSignal = /[0-9０-９]|万|LDK|DK|ワンルーム|駅|区|市|町|徒歩|築|家賃|エリア|間取り|入居|来月|再来月|即入居/.test(customerText);
   if (!hasConditionSignal) return;
   if (/^https?:\/\/\S+$/.test(customerText.trim())) return; // URLのみは対象外
+  if (isPropertySiteUrl(customerText)) return; // 物件サイトURL含む → 物件シェアであり条件更新ではない
 
   // スタッフの質問が条件ヒアリング文脈かを確認（対象外は即リターン）
   const isConditionContext = /ご希望|エリア|間取り|家賃|いつ|駅|どこ|条件|予算|入居|徒歩|築/.test(staffText);
