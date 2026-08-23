@@ -1460,8 +1460,8 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
   // フェーズ依存のため customerSpecificText（cache無し）側に移動。
   // templatesText（won_count/use_count が更新されるたびに変わる）も cache無し側に移動（system に置くとuse_count更新のたびにキャッシュ破棄）。
   // ragKnowledgeText / prevMetaText / 会話履歴等の顧客固有テキストも2ブロック目（cache無し）に置く
-  const stableKnowledgeText = `${contractPatternsText}${applyingPatternsText}${winningPatternsText}`;
-  const customerSpecificText = `${prevMetaText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+  const stableKnowledgeText = `${contractPatternsText}${applyingPatternsText}`;
+  const customerSpecificText = `${prevMetaText}${winningPatternsText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
