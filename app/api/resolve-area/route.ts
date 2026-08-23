@@ -168,7 +168,7 @@ function parseTokens(area: string): string[] {
     .replace(/（[^）]*）/g, "")
     .replace(/\([^)]*\)/g, "")
     .replace(/第[一二三]希望[：:]/g, " ")
-    .split(/[、・,\/\s　]+|又は|もしくは/)
+    .split(/[、・,\/\s　〜～]+|又は|もしくは/)
     .map(t =>
       t.replace(/^[^:]+:/, "")
         .replace(/駅|周辺|付近|近く|近辺|沿線|エリア|あたり/g, "")

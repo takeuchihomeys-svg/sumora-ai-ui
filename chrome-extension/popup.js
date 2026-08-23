@@ -546,7 +546,12 @@ function parseAreaTokens(rawArea) {
   const expanded = rawArea
     .replace(/([^\s,、・\/～〜]+?)あたりから([^\s,、・\/～〜]+?)あたりまで/g, "$1,$2")
     .replace(/([^\s,、・\/～〜]+?)から([^\s,、・\/～〜]+?)まで/g, "$1,$2")
-    .replace(/([^\s,、・\/]+?)[〜～]([^\s,、・\/]+)/g, "$1,$2")
+    .replace(/([^\s,、・\/]+?)[〜～]([^\s,、・\/]+)/g, function(match, from, to) {
+      const range = expandStationRange(from, to);
+      if (range && range.length > 1) return range.join(",");
+      // 中間駅が見つからない場合は両端のみ（あたりサフィックスを除去）
+      return from.replace(/駅$|あたり$/g, "").trim() + "," + to.replace(/駅$|あたり$/g, "").trim();
+    })
     // 「Aか B」「AやB」「AまたはB」→ カンマ区切りに変換（例:「豊崎か北区」→「豊崎,北区」）
     .replace(/([^\s,、・\/～〜]{1,10})\s*[かや]\s*([^\s,、・\/～〜]{1,10})/g, "$1,$2");
   const raw = expanded
@@ -647,6 +652,28 @@ function resolveWithLinePrefixes(token) {
 function findStationLines(areaText) {
   const normalized = areaText.replace(/駅|周辺|付近|近く/g, "").trim();
   return STATION_LINE_MAP[normalized] || STATION_LINE_MAP[areaText] || null;
+}
+
+// 「駅A〜駅B」表記を LINE_STATION_ORDER から区間内の全駅に展開（路線名不要版）
+// の/ノ・ヶ/ケ の表記ゆれと事業者プレフィックスを正規化してマッチング
+function expandStationRange(fromStation, toStation) {
+  const norm = s => s
+    .replace(/駅$|あたり$/g, "")
+    .replace(/の/g, "ノ").replace(/ヶ/g, "ケ")
+    .replace(/^(?:JR|近鉄|阪急|阪神|南海|京阪)\s*/, "")
+    .trim();
+  const fromNorm = norm(fromStation), toNorm = norm(toStation);
+  if (!fromNorm || !toNorm || fromNorm === toNorm) return null;
+  if (typeof LINE_STATION_ORDER === "undefined") return null;
+  for (const stations of Object.values(LINE_STATION_ORDER)) {
+    const fromIdx = stations.findIndex(s => norm(s) === fromNorm);
+    const toIdx   = stations.findIndex(s => norm(s) === toNorm);
+    if (fromIdx !== -1 && toIdx !== -1) {
+      const lo = Math.min(fromIdx, toIdx), hi = Math.max(fromIdx, toIdx);
+      return stations.slice(lo, hi + 1);
+    }
+  }
+  return null;
 }
 
 // 「路線名（駅A〜駅B）」の区間内駅リストを LINE_STATION_ORDER から取得
