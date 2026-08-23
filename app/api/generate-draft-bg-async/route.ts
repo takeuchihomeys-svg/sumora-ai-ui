@@ -57,7 +57,7 @@ async function applyBrainConditionChange(
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 300,
-      messages: [{ role: "user", content: `お客さんのメッセージから「${focus.prompt}」に関する条件を抽出してください。\n\n【お客さんのメッセージ】\n${targetMessage.slice(0, 400)}\n\n明示された条件のみ（推測禁止）。JSONのみで返してください（不明な項目は省略）:\n{"desired_area":"エリア・駅名","floor_plan":"間取り（例:1LDK）","rent_max":家賃上限円整数,"rent_min":家賃下限円整数,"walk_minutes":徒歩分数整数,"move_in_time":"入居時期","building_age":築年数上限整数,"initial_cost_limit":初期費用上限円整数,"preferences":"こだわり条件","other_requests":"その他要望"}` }],
+      messages: [{ role: "user", content: `お客さんのメッセージから「${focus.prompt}」に関する条件を抽出してください。\n\n【お客さんのメッセージ】\n${targetMessage.slice(0, 400)}\n\n【金額の文脈判断ルール】\n金額のみ（「〇万円以内」等）で何の費用か不明な場合:\n・「家賃/賃料/月々」に関する文脈 → rent_max\n・「初期費用/敷金/礼金」に関する文脈 → initial_cost_limit\n・文脈不明: 〜19万円→rent_max、20万円以上→initial_cost_limit\n金額はすべて円単位整数（「8万」→80000）。\n\n明示された条件のみ（推測禁止）。JSONのみで返してください（不明な項目は省略）:\n{"desired_area":"エリア・駅名","floor_plan":"間取り（例:1LDK）","rent_max":家賃上限円整数,"rent_min":家賃下限円整数,"walk_minutes":徒歩分数整数,"move_in_time":"入居時期","building_age":築年数上限整数,"initial_cost_limit":初期費用上限円整数,"preferences":"こだわり条件","ng_points":"NG条件","other_requests":"その他要望"}` }],
     }),
     signal: AbortSignal.timeout(12_000),
   });
