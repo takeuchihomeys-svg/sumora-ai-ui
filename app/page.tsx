@@ -6576,8 +6576,9 @@ export default function Home() {
             const patCfg = latest.pattern ? PATTERN_CFG[latest.pattern] ?? null : null;
             const recommendedMode = patCfg?.defaultMode ?? null;
             return (
-              <div className="border-b border-amber-200 bg-amber-50 px-3 py-2">
-                <div className="flex items-center justify-between mb-1">
+              <div className="border-b border-amber-200 bg-amber-50 px-3 pt-2 pb-2.5">
+                {/* ヘッダー行: バッジ + クリア */}
+                <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-1.5">
                     <span className="text-[11px] font-bold text-amber-700">新着要望</span>
                     {pendingLines.length > 1 && (
@@ -6591,41 +6592,43 @@ export default function Home() {
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => void handleReplaceInChat(selectedConversation.id)}
-                      disabled={reflectLoadingChat}
-                      className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold active:opacity-70 disabled:opacity-50 ${
-                        recommendedMode === "replace"
-                          ? "border-amber-600 bg-amber-500 text-white ring-2 ring-amber-300"
-                          : "border-amber-500 bg-amber-50 text-amber-700"
-                      }`}
-                    >
-                      {reflectLoadingChat ? "解析中…" : "入れ替える"}
-                    </button>
-                    <button
-                      onClick={() => void handleReflectInChat(selectedConversation.id)}
-                      disabled={reflectLoadingChat}
-                      className={`rounded-lg px-2.5 py-1 text-[11px] font-bold text-white active:opacity-70 disabled:opacity-50 ${
-                        recommendedMode === "add" ? "bg-amber-600 ring-2 ring-amber-300" : "bg-amber-400"
-                      }`}
-                    >
-                      追加する
-                    </button>
-                    <button
-                      onClick={() => void clearAdditionalInChat(selectedConversation.id)}
-                      className="text-[10px] text-amber-400 active:opacity-60"
-                    >
-                      クリア
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => void clearAdditionalInChat(selectedConversation.id)}
+                    className="text-[10px] text-amber-400 active:opacity-60 px-1"
+                  >
+                    クリア
+                  </button>
                 </div>
-                <p className="text-[12px] text-amber-800 leading-relaxed">{stripMarkdown(latest.content)}</p>
+                {/* 条件テキスト */}
+                <p className="text-[12px] text-amber-800 leading-relaxed mb-2">{stripMarkdown(latest.content)}</p>
                 {pendingLines.length > 1 && (
-                  <p className="mt-0.5 text-[10px] text-amber-500">
+                  <p className="text-[10px] text-amber-500 mb-2">
                     ほか{pendingLines.length - 1}件の未反映条件があります
                   </p>
                 )}
+                {/* アクションボタン */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => void handleReplaceInChat(selectedConversation.id)}
+                    disabled={reflectLoadingChat}
+                    className={`flex-1 rounded-xl border py-1.5 text-[12px] font-bold active:opacity-70 disabled:opacity-50 ${
+                      recommendedMode === "replace"
+                        ? "border-amber-600 bg-amber-500 text-white shadow-sm"
+                        : "border-amber-400 bg-white text-amber-700"
+                    }`}
+                  >
+                    {reflectLoadingChat ? "解析中…" : "入れ替える"}
+                  </button>
+                  <button
+                    onClick={() => void handleReflectInChat(selectedConversation.id)}
+                    disabled={reflectLoadingChat}
+                    className={`flex-1 rounded-xl py-1.5 text-[12px] font-bold text-white active:opacity-70 disabled:opacity-50 shadow-sm ${
+                      recommendedMode === "add" ? "bg-amber-600" : "bg-amber-500"
+                    }`}
+                  >
+                    追加する
+                  </button>
+                </div>
               </div>
             );
           })()}
