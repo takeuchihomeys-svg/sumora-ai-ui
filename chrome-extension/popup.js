@@ -555,7 +555,7 @@ function parseAreaTokens(rawArea) {
     // 「Aか B」「AやB」「AまたはB」→ カンマ区切りに変換（例:「豊崎か北区」→「豊崎,北区」）
     .replace(/([^\s,、・\/～〜]{1,10})\s*[かや]\s*([^\s,、・\/～〜]{1,10})/g, "$1,$2");
   const raw = expanded
-    .split(/[,、・\/\s]+|又は|もしくは/)
+    .split(/[,、・\/\s]+|又は|もしくは|など/)
     .map(t => t.replace(/^[^:]+:/, "")             // 「第一希望:」「第二希望:」「大阪府以外:」などを除去
                 .replace(/以南$|以北$|以西$|以東$/, "") // 方向サフィックスを除去
                 .replace(/の[南北東西](の方)?$|の方$/, "") // 「八尾の南の方」→「八尾」「東淀川の方」→「東淀川」
@@ -602,10 +602,13 @@ function resolveStation(rawInput) {
   // （例: "大阪市内" → "大阪" 駅、"京橋通り" → "京橋" 駅 への誤変換を防止。
   //   摂津市駅・堺市駅など実在の「〜市」駅は上の完全一致で既に解決済みなのでここには来ない）
   if (/(?:市内|府内|県内|都内|[市区郡都府県]|通り|丁目|地区)$/.test(clean)) return null;
+  // 「茨木市など北摂」のように市区郡を含むが STATION_LINE_MAP に完全一致しない複合トークンは地域名と判断
+  if (/[市区郡]/.test(clean) && !STATION_LINE_MAP[clean]) return null;
   const keys = Object.keys(STATION_LINE_MAP);
   const sw = keys.find(k => k.startsWith(clean) && clean.length >= 2);
   if (sw) return sw;
-  const ci = keys.find(k => clean.includes(k) && k.length >= 2);
+  // WARD_CODE_MAP に登録済みの市名（茨木市・摂津市等）が複合トークン内で駅と誤判定されるのを防ぐ
+  const ci = keys.find(k => clean.includes(k) && k.length >= 2 && !WARD_CODE_MAP[k]);
   if (ci) return ci;
   const ki = keys.find(k => k.includes(clean) && clean.length >= 2);
   if (ki) return ki;
