@@ -1454,14 +1454,15 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
     return parts.join("\n") + "\n\n";
   })() : "";
 
-  // プロンプトキャッシュ2分割: 安定知識ブロック（成約法則・申込パターン・勝率パターン）を
-  // user先頭に置き cache_control: ephemeral を付与 → incremental含む連続呼び出しでキャッシュリード。
-  // actionRulesText（convStatus でフィルタ済み）/ contractExamplesPhaseText（convStatus でソート済み）は
-  // フェーズ依存のため customerSpecificText（cache無し）側に移動。
-  // templatesText（won_count/use_count が更新されるたびに変わる）も cache無し側に移動（system に置くとuse_count更新のたびにキャッシュ破棄）。
-  // ragKnowledgeText / prevMetaText / 会話履歴等の顧客固有テキストも2ブロック目（cache無し）に置く
-  const stableKnowledgeText = `${contractPatternsText}${applyingPatternsText}`;
-  const customerSpecificText = `${prevMetaText}${winningPatternsText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+  // プロンプトキャッシュ設計:
+  //   system（ephemeral）= ハードコード定数 + 管理者手動の恒久ルール（promptRules / knowledgePrinciples / boundaryRules）
+  //   user[0] stableKnowledge = 現在空。DB動的データは全て user[1] へ移動済み。
+  //     ・contractPatternsText / applyingPatternsText は成約/申込のたびに cron 更新 → cache無し側へ
+  //     ・winningPatternsText は win_rate が変わる → cache無し側へ
+  //     ・templatesText は use_count が毎送信更新 → cache無し側へ
+  //   user[1] customerSpecific（cache無し）= 上記DB動的データ + 顧客固有データ + 会話履歴
+  const stableKnowledgeText = ``;
+  const customerSpecificText = `${prevMetaText}${contractPatternsText}${applyingPatternsText}${winningPatternsText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
