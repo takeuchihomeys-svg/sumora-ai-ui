@@ -19,13 +19,16 @@ const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract
 // generate-reply のプロンプト注入だけでなく property_customers の実際のフィールドも更新する。
 // P4 / autoParseFormat が既にバナーエントリを追加済みの場合は重複追加しない。
 const BRAIN_CONDITION_FOCUS: Record<string, { fields: string[]; prompt: string; pattern: "add" | "change" }> = {
-  area_change:     { fields: ["desired_area"], prompt: "エリア・地域・最寄り駅の変更", pattern: "change" },
-  rent_change:     { fields: ["rent_min", "rent_max"], prompt: "家賃・予算の変更（万円単位に注意）", pattern: "change" },
-  layout_change:   { fields: ["floor_plan"], prompt: "間取りの変更", pattern: "change" },
-  equip_add:       { fields: ["preferences"], prompt: "設備・こだわり条件の追加", pattern: "add" },
-  condition_relax: { fields: ["desired_area", "rent_max", "walk_minutes", "building_age"], prompt: "条件の緩和・選択肢の拡大", pattern: "change" },
-  pickup_request:  { fields: ["desired_area", "floor_plan", "rent_max"], prompt: "物件ピックアップ依頼の条件確認", pattern: "change" },
-  multi:           { fields: ["desired_area", "floor_plan", "rent_max", "rent_min", "walk_minutes", "move_in_time", "building_age", "preferences", "other_requests"], prompt: "複数条件の変更・追加", pattern: "change" },
+  area_change:      { fields: ["desired_area"], prompt: "エリア・地域・最寄り駅の変更", pattern: "change" },
+  rent_change:      { fields: ["rent_min", "rent_max"], prompt: "家賃・予算の変更（万円単位に注意）", pattern: "change" },
+  layout_change:    { fields: ["floor_plan"], prompt: "間取りの変更", pattern: "change" },
+  equip_add:        { fields: ["preferences"], prompt: "設備・こだわり条件の追加", pattern: "add" },
+  ng_add:           { fields: ["ng_points"], prompt: "NG条件・除外条件の追加", pattern: "add" },
+  move_in_change:   { fields: ["move_in_time"], prompt: "入居時期・入居希望時期の変更", pattern: "change" },
+  cost_change:      { fields: ["initial_cost_limit"], prompt: "初期費用上限の変更（万円単位に注意）", pattern: "change" },
+  condition_relax:  { fields: ["desired_area", "rent_max", "walk_minutes", "building_age"], prompt: "条件の緩和・選択肢の拡大", pattern: "change" },
+  pickup_request:   { fields: ["desired_area", "floor_plan", "rent_max"], prompt: "物件ピックアップ依頼の条件確認", pattern: "change" },
+  multi:            { fields: ["desired_area", "floor_plan", "rent_max", "rent_min", "walk_minutes", "move_in_time", "building_age", "preferences", "ng_points", "other_requests"], prompt: "複数条件の変更・追加", pattern: "change" },
 };
 const BRAIN_COND_LABELS: Record<string, string> = {
   desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限",

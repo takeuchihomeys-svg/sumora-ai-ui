@@ -465,7 +465,7 @@ async function handleTextMessage(
   if (!applyFormDetected && isFormatMessage(text)) {
     after(async () => {
       try {
-        await autoParseFormat(db, userId, text, account);
+        await autoParseFormat(db, userId, convId, text, account);
       } catch (e) { console.error("[autoParseFormat]", e); }
     });
   }
@@ -698,6 +698,77 @@ function buildConditionNote(parsed: Record<string, unknown>): string {
   return parts.join(" / ");
 }
 
+// ── スモラが使う希望条件フォーマット定義（AI分類・抽出プロンプトに埋め込む）──
+// スタッフがお客さんに送るテンプレートの形式。これを知ることで誤判定を防ぐ。
+const CONDITION_FORMAT_TEMPLATE = `
+【スモラの希望条件フォーマット（スタッフがお客さんに送るテンプレート）】
+お客さんがこの形式で送ってきたものが「正式フォーマット」です:
+①希望エリア：（例: 梅田・北摂エリア）
+②希望間取り：（例: 1LDK、2K以上）
+③希望家賃（上限）：（例: 8万円以内）
+④入居時期：（例: 来月、9月）
+⑤初期費用（上限）：（例: 30万以内）
+⑥徒歩（駅から）：（例: 10分以内）
+⑦築年数（上限）：（例: 築20年）
+⑧こだわり条件：（例: オートロック、独立洗面台）
+⑨NG条件：（例: 1階NG、木造NG）
+⑩その他ご要望：（例: 駐車場あれば尚良し）
+番号は多少前後・欠番があってもOK。項目名が多少違っても内容で判断。
+`;
+
+// ── Haiku 分類プロンプト（条件メッセージかどうかを文脈付きで判定）──
+const CLASSIFY_CONDITION_SYSTEM_PROMPT = `あなたは日本の不動産業者のアシスタントです。
+お客さんのLINEメッセージを以下の4種類に分類し、JSONのみ返してください。
+
+${CONDITION_FORMAT_TEMPLATE}
+
+【分類ルール】
+- "formal_format": 上記フォーマットに沿った条件一覧。①〜番号付き条件項目が3つ以上含まれる。
+- "condition_change": 特定条件を変更したい表現（「エリアを〜に変えたい」「やっぱり〜で」「〜にしてほしい」等）
+- "condition_add": 条件を追加したい表現（「〜も追加で」「〜もOKです」「〜も良いです」等）
+- "not_condition": 上記以外（挨拶・感謝・質問・申込書類・内覧日程・物件感想・プロフィール送付等）
+
+【必ず "not_condition" にするもの】
+- 「①申込書 ②本人確認書類」のような申込手続きに関する番号付きリスト
+- 「この物件、良いですね！」のような物件への感想・反応
+- 「内覧できますか？」「〇日に見たいです」のような内覧・日程調整
+- 「ありがとうございます」「よろしくお願いします」などの挨拶・礼儀
+- 会話の流れと無関係な番号付きリスト
+
+返すJSON:
+{"type":"formal_format"|"condition_change"|"condition_add"|"not_condition","confidence":0.0〜1.0}
+
+JSONのみ。説明不要。`;
+
+// ── Haiku で条件メッセージを分類（フォーマット知識 + 会話文脈を利用）──
+async function classifyConditionMessage(
+  anthropic: Anthropic,
+  customerText: string,
+  recentContext: Array<{ sender: string; text: string }>,
+): Promise<{ type: "formal_format" | "condition_change" | "condition_add" | "not_condition"; confidence: number }> {
+  const contextLines = recentContext
+    .map((m) => `[${m.sender === "staff" ? "スタッフ" : "お客さん"}] ${m.text.slice(0, 150)}`)
+    .join("\n");
+  const userContent = `【直近の会話履歴】\n${contextLines || "（なし）"}\n\n【今回のお客さんのメッセージ】\n${customerText.slice(0, 500)}`;
+  try {
+    const res = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 64,
+      system: [{ type: "text", text: CLASSIFY_CONDITION_SYSTEM_PROMPT, cache_control: { type: "ephemeral", ttl: "1h" } }],
+      messages: [{ role: "user", content: userContent }],
+    });
+    const raw = (res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "").trim();
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) return { type: "not_condition", confidence: 0 };
+    const parsed = JSON.parse(m[0]) as { type?: string; confidence?: number };
+    const validTypes = ["formal_format", "condition_change", "condition_add", "not_condition"] as const;
+    const t = validTypes.find((v) => v === parsed.type) ?? "not_condition";
+    return { type: t, confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5 };
+  } catch {
+    return { type: "not_condition", confidence: 0 };
+  }
+}
+
 // ── autoParseFormat 用の静的システムプロンプト（prompt cache 対象）──
 // 動的テキスト（cleanText）は user メッセージ側に分離し、この静的部分のみキャッシュする
 const PARSE_FORMAT_SYSTEM_PROMPT = `あなたは日本の不動産業者のアシスタントです。
@@ -735,7 +806,7 @@ const PARSE_FORMAT_SYSTEM_PROMPT = `あなたは日本の不動産業者のア�
 
 JSONのみ返してください。説明文・コードブロック・マークダウンは一切不要です。`;
 
-async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, text: string, account: AccountConfig) {
+async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, convId: string, text: string, account: AccountConfig) {
   // ── 重複実行防止: 同じテキストを既に処理済みなら即リターン ──────────
   const { data: alreadyDone } = await db
     .from("property_customers")
@@ -750,13 +821,33 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
     return;
   }
 
-  // ── AI でフォーマット解析 ──────────────────────────────────────────
   const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
     timeout: 30_000,
     maxRetries: 1,
     defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
   });
+
+  // ── Step 1: Haiku で分類（フォーマット知識＋会話文脈を使用） ────────
+  // Sonnet 5 を呼ぶ前に「本当に条件メッセージか」を確認し、無関係なら早期リターン（コスト削減）
+  const { data: recentMsgs } = await db
+    .from("messages")
+    .select("sender, text")
+    .eq("conversation_id", convId)
+    .not("text", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(6);
+  const recentContext = (recentMsgs ?? [])
+    .reverse()
+    .filter((m): m is { sender: string; text: string } => typeof m.text === "string");
+  const classification = await classifyConditionMessage(anthropic, text, recentContext);
+  if (classification.type === "not_condition" || classification.confidence < 0.6) {
+    console.log(`[autoParseFormat] skip: type=${classification.type} confidence=${classification.confidence}`);
+    return;
+  }
+  const isFormalFormat = classification.type === "formal_format";
+
+  // ── Step 2: Sonnet 5 でフィールド抽出 ──────────────────────────────
   // URLを除去してからClaudeに渡す（物件サイトURLパラメータの誤解釈防止）
   const cleanText = text.replace(/https?:\/\/[^\s]+/g, "[URL省略]").trim();
   let parsed: Record<string, unknown>;
@@ -797,8 +888,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
     }
   }
 
-  // 正式フォーマット（丸数字2個以上）か、カジュアル更新（変更フレーズ+キーワード）かを判定
-  const isFormalFormat = (text.match(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮]/g) ?? []).length >= 2;
+  // isFormalFormat は Step 1 の AI 分類結果を使用（丸数字カウントは廃止）
 
   // ── 保存フィールドを準備 ──────────────────────────────────────────
   // ベースフィールド（メタデータのみ。カジュアル更新でのマージ基準として使う）
@@ -973,34 +1063,45 @@ async function extractConditionsFromCasualReply(
   convId: string,
   customerText: string,
 ): Promise<void> {
-  // 直近のスタッフメッセージを取得
-  const { data: lastStaffMsg } = await db
+  // 顧客テキスト側の最低限フィルタ（完全に無関係なメッセージを除外してAPI節約）
+  if (/^https?:\/\/\S+$/.test(customerText.trim())) return; // URLのみは対象外
+  if (isPropertySiteUrl(customerText)) return; // 物件サイトURL含む → 物件シェアであり条件更新ではない
+  if (customerText.length < 3) return;
+
+  // スタッフの直近3件を取得（1件だけだと「ご希望は？」の後に別メッセージが来たとき文脈を失う）
+  const { data: recentStaffMsgs } = await db
     .from("messages")
     .select("text")
     .eq("conversation_id", convId)
     .eq("sender", "staff")
     .not("text", "is", null)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(3);
 
-  const staffText = lastStaffMsg?.text as string | null;
-  if (!staffText) return;
+  const staffTexts = (recentStaffMsgs ?? []).map((m) => (m.text as string).slice(0, 200));
+  if (staffTexts.length === 0) return;
+  const combinedStaffText = staffTexts.join(" ");
 
-  // H1: 顧客テキスト側に条件シグナル（数字・条件語）がなければスキップ（「ありがとうございます」対策）
-  // 物件カード送信後はスタッフ側正規表現がほぼ必ずマッチするため、顧客側のゲートが必須
-  const hasConditionSignal = /[0-9０-９]|万|LDK|DK|ワンルーム|駅|区|市|町|徒歩|築|家賃|エリア|間取り|入居|来月|再来月|即入居/.test(customerText);
-  if (!hasConditionSignal) return;
-  if (/^https?:\/\/\S+$/.test(customerText.trim())) return; // URLのみは対象外
-  if (isPropertySiteUrl(customerText)) return; // 物件サイトURL含む → 物件シェアであり条件更新ではない
-
-  // スタッフの質問が条件ヒアリング文脈かを確認
-  // ※ "いつ"/"どこ"/"駅" 単体は内覧・案内文脈でも出るため除外。内覧・集合・案内が含まれる場合もスキップ
-  const hasStrongCondSignal = /ご希望|希望エリア|希望間取り|希望家賃|ご予算|入居時期|初期費用|こだわり|徒歩.*何分|何分.*徒歩|築年数/.test(staffText);
-  const hasMedCondSignal = /エリア|間取り|家賃|予算|入居/.test(staffText);
-  const isViewingContext = /内覧|集合場所|ご案内.*場所|案内.*場所/.test(staffText);
+  // スタッフメッセージ群が条件ヒアリング文脈かを確認
+  const hasStrongCondSignal = /ご希望|希望エリア|希望間取り|希望家賃|ご予算|入居時期|初期費用|こだわり|徒歩.*何分|何分.*徒歩|築年数/.test(combinedStaffText);
+  const hasMedCondSignal = /エリア|間取り|家賃|予算|入居/.test(combinedStaffText);
+  const isViewingContext = /内覧|集合場所|ご案内.*場所|案内.*場所/.test(combinedStaffText);
   const isConditionContext = (hasStrongCondSignal || hasMedCondSignal) && !isViewingContext;
   if (!isConditionContext) return;
+
+  // Haiku で「本当に条件メッセージか」を分類（フォーマット知識＋文脈利用）
+  const anthropicP4 = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    timeout: 15_000,
+    maxRetries: 1,
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+  });
+  const recentContext = staffTexts.reverse().map((t) => ({ sender: "staff" as const, text: t }));
+  const p4Class = await classifyConditionMessage(anthropicP4, customerText, recentContext);
+  if (p4Class.type === "not_condition" || p4Class.confidence < 0.6) {
+    console.log(`[P4] skip: type=${p4Class.type} confidence=${p4Class.confidence}`);
+    return;
+  }
 
   // conversations から property_customer_id を取得
   const { data: conv } = await db
@@ -1011,32 +1112,25 @@ async function extractConditionsFromCasualReply(
   const pcId = conv?.property_customer_id as string | null;
   if (!pcId) return; // 紐付けなし → スキップ
 
-  // Haiku で条件を抽出（JSON のみ返す）
-  const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-    timeout: 20_000,
-    maxRetries: 1,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
-  });
-
   let extracted: Record<string, unknown>;
   try {
-    const res = await anthropic.messages.create({
+    const staffContext = staffTexts.slice().reverse().map((t, i) => `[スタッフ発言${i + 1}] ${t}`).join("\n");
+    const res = await anthropicP4.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 300,
+      max_tokens: 400,
       system: "あなたは不動産営業アシスタントです。JSONのみで回答してください。",
       messages: [{
         role: "user",
         content: `お客さんの返信から物件希望条件を抽出してください。
 
-【スタッフの質問】
-${staffText.slice(0, 200)}
+【スタッフの直近メッセージ（文脈）】
+${staffContext}
 
-【お客さんの返信】
+【今回のお客さんの返信】
 ${customerText.slice(0, 300)}
 
 読み取れた条件のみ以下の形式で返してください（不明な項目は省略してください）。
-※お客さんの返信に明示された条件のみ。スタッフの質問文に含まれる数字・条件は絶対に抽出しないこと。
+※お客さんの返信に明示された条件のみ。スタッフのメッセージに含まれる数字・条件は絶対に抽出しないこと。
 {
   "desired_area": "希望エリア・駅名",
   "floor_plan": "間取り（例: 1LDK）",
@@ -1046,6 +1140,8 @@ ${customerText.slice(0, 300)}
   "move_in_time": "入居時期（例: 9月、来月）",
   "building_age": 築年数上限（整数）,
   "initial_cost_limit": 初期費用上限（円・整数）,
+  "preferences": "こだわり条件（オートロック・独立洗面・ペット可等）",
+  "ng_points": "NG条件（1階NG・木造NG等）",
   "other_requests": "その他要望"
 }`,
       }],
@@ -1068,10 +1164,11 @@ ${customerText.slice(0, 300)}
     }
   }
 
-  // C1: 非 null・非空 フィールドのみ UPDATE 対象にする + merge-if-null（DB既存の確定値は絶対に上書きしない）
+  // C1: 非 null・非空 フィールドのみ UPDATE 対象にする
   const CONDITION_FIELDS = [
     "desired_area", "floor_plan", "rent_max", "rent_min",
-    "walk_minutes", "move_in_time", "building_age", "initial_cost_limit", "other_requests",
+    "walk_minutes", "move_in_time", "building_age", "initial_cost_limit",
+    "preferences", "ng_points", "other_requests",
   ];
 
   // 型検証: 数値カラムに文字列が入るとUPDATE全体が失敗するため number 以外は破棄
@@ -1092,7 +1189,7 @@ ${customerText.slice(0, 300)}
   const FIELD_LABELS: Record<string, string> = {
     desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限",
     walk_minutes: "徒歩分数", move_in_time: "入居時期", building_age: "築年数",
-    initial_cost_limit: "初期費用上限", other_requests: "その他",
+    initial_cost_limit: "初期費用上限", preferences: "こだわり", ng_points: "NG条件", other_requests: "その他",
   };
 
   const updates: Record<string, unknown> = {};
