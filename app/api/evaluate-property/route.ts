@@ -235,7 +235,7 @@ export async function POST(req: NextRequest) {
     areaPerRentScore = 5; // 面積・家賃不明は中間値
   }
 
-  const score =
+  const baseScore =
     budgetScore + floorPlanScore + walkScore + adScore + areaPerRentScore;
 
   // ── クロス顧客 + 個人顧客パターン参照（並列取得）────────────────────────
@@ -328,9 +328,72 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore */ }
 
+  // ── DeepSeek 総合採点 ──────────────────────────────────────────────────────
+  // 算術スコアを基準値として渡し、学習データ・RAGノウハウを踏まえた総合判断を得る。
+  let score = baseScore;
+  let scoreReason: string | null = null;
+  const deepseekKey = process.env.DEEPSEEK_API_KEY ?? "";
+  if (deepseekKey) {
+    try {
+      const contextParts: string[] = [];
+      if (ragKnowledge.length > 0)     contextParts.push(`【物件スコアリングノウハウ】\n${ragKnowledge.join("\n")}`);
+      if (patternHints.length > 0)     contextParts.push(`【類似顧客に刺さったポイント】${patternHints.join("・")}`);
+      if (personalPatterns.length > 0) contextParts.push(`【このお客さん自身が反応したポイント】${personalPatterns.join("・")}`);
+      if (crossProfileTags.length > 0) contextParts.push(`【類似顧客の傾向】${crossProfileTags.join("・")}`);
+
+      const prompt = `以下の情報を踏まえて、この物件をこのお客さんに推薦する総合スコア（0〜100点）と理由を返してください。
+
+【お客さんの条件】
+家賃上限: ${customerRentMax ? `${Math.round(customerRentMax / 10000)}万円` : "未設定"}
+間取り希望: ${customerFloorPlan ?? "未設定"}
+駅徒歩希望: ${customerWalk ? `${customerWalk}分以内` : "未設定"}
+
+【物件情報】
+家賃: ${Math.round(property.rent / 10000)}万円
+間取り: ${property.floor_plan ?? "不明"}
+駅徒歩: ${property.walk_minutes != null ? `${property.walk_minutes}分` : "不明"}
+広告料: ${property.ad_months ? `${property.ad_months}ヶ月` : "なし"}
+敷金: ${property.deposit != null ? `${property.deposit}ヶ月` : "不明"}
+礼金: ${property.key_money != null ? `${property.key_money}ヶ月` : "不明"}
+築年数: ${property.building_age != null ? `${property.building_age}年` : "不明"}
+
+【算術ベーススコア（参考）】${baseScore}点
+
+${contextParts.join("\n\n")}
+
+JSONで返してください: {"score": 数値, "reason": "30字以内の理由", "ng_flags": ["問題点（あれば）"]}`;
+
+      const dsRes = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${deepseekKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "deepseek-chat",
+          max_tokens: 200,
+          response_format: { type: "json_object" },
+          messages: [{ role: "user", content: prompt }],
+        }),
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (dsRes.ok) {
+        const dsData = await dsRes.json() as { choices?: Array<{ message?: { content?: string } }> };
+        const dsText = dsData.choices?.[0]?.message?.content;
+        if (dsText) {
+          const parsed = JSON.parse(dsText) as { score?: number; reason?: string; ng_flags?: string[] };
+          if (typeof parsed.score === "number" && parsed.score >= 0 && parsed.score <= 100) {
+            score = Math.round(parsed.score);
+            scoreReason = parsed.reason ?? null;
+            if (parsed.ng_flags) ngFlags.push(...parsed.ng_flags.filter(f => !ngFlags.includes(f)));
+          }
+        }
+      }
+    } catch { /* DeepSeekエラーは無視・算術スコアにフォールバック */ }
+  }
+
   return NextResponse.json(
     {
       score,
+      base_score: baseScore,
+      score_reason: scoreReason,
       is_duplicate: isDuplicate,
       recommended: score >= 70 && !isDuplicate,
       ng_flags: ngFlags,
@@ -347,13 +410,9 @@ export async function POST(req: NextRequest) {
         walk_minutes: customerWalk,
         area_min: customerAreaMin,
       },
-      // 類似条件のお客さんで反応の良かったセリングポイント（上位5件）
       pattern_hints: patternHints,
-      // このお客さん自身の過去反応パターン（上位5件）
       personal_patterns: personalPatterns,
-      // 類似顧客に多いプロファイルタグ（費用重視等）
       cross_profile_tags: crossProfileTags,
-      // RAG検索で取得した関連ノウハウ（DeepSeek採点用）
       rag_knowledge: ragKnowledge,
     },
     { headers: CORS_HEADERS }
