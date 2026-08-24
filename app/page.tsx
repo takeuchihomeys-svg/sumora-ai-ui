@@ -6571,7 +6571,7 @@ export default function Home() {
             );
           })()}
 
-          {!(inputFocused && keyboardHeight > 100) && (() => {
+          {!inputFocused && (() => {
             const lc = linkedCustomerMap[selectedConversation.id];
             if (!lc?.additional_conditions) return null;
             const pendingLines = lc.additional_conditions.split("\n")
@@ -6648,7 +6648,7 @@ export default function Home() {
             );
           })()}
 
-          {!(inputFocused && keyboardHeight > 100) && (() => {
+          {!inputFocused && (() => {
             const tasks = activeTasks[selectedConversation.id] ?? [];
             const bannerAixMeta = selectedConversation.suggestedAixMeta;
             // AIXアクション（ボタンあり）の場合は下部AIXカードに指示ごと統合表示するため、上部バナーは出さない（二重表示防止）
@@ -7531,7 +7531,7 @@ export default function Home() {
             </div>
 
             {/* ===== アクション誘導バナー（優先度制御：1つだけ表示） — 入力中キーボード表示時は非表示 ===== */}
-            {!(inputFocused && keyboardHeight > 100) && (() => {
+            {!inputFocused && (() => {
               const id = selectedConversation.id;
               const msgs = selectedConversation.messages || [];
               const lastCustomerText = [...msgs].reverse().find((m: Message) => m.sender === "customer")?.text || "";
@@ -8311,15 +8311,15 @@ export default function Home() {
                   }}
                   onFocus={() => {
                     setInputFocused(true);
-                    // 700ms: キーボード完全展開 + React再描画完了を待つ
-                    // bottomPanel全体を最下部にスクロールすることでtextareaをキーボード直上に固定（LINE同等動作）
-                    setTimeout(() => {
+                    const scrollToTA = () => {
                       const ta = textareaRef.current;
-                      if (ta && document.activeElement === ta) {
-                        const panel = bottomPanelRef.current;
-                        if (panel) panel.scrollTop = panel.scrollHeight;
-                      }
-                    }, 700);
+                      if (!ta || document.activeElement !== ta) return;
+                      const panel = bottomPanelRef.current;
+                      if (panel) panel.scrollTop = panel.scrollHeight;
+                      ta.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                    };
+                    setTimeout(scrollToTA, 200);
+                    setTimeout(scrollToTA, 450);
                   }}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
