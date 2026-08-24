@@ -237,39 +237,68 @@ export async function POST(req: NextRequest) {
   const score =
     budgetScore + floorPlanScore + walkScore + adScore + areaPerRentScore;
 
-  // ── 類似顧客の勝ちパターン参照（物件選定ヒント）──────────────────────────
-  // 家賃帯が近い（±15%）かつ同じ間取り希望の顧客で、interested になったオススメポイントを集計。
-  // スコアリングには使わず、スタッフへの「選定ヒント」として返す。
+  // ── クロス顧客 + 個人顧客パターン参照（並列取得）────────────────────────
   let patternHints: string[] = [];
+  let personalPatterns: string[] = [];   // このお客さん自身の反応パターン
+  let crossProfileTags: string[] = [];   // 類似顧客に多いプロファイルタグ
   try {
-    if (customerRentMax && customerRentMax > 0) {
-      let q = supabase
-        .from("property_selection_patterns")
-        .select("selling_points, property_customer_id")
-        .eq("customer_reaction", "interested")
-        .gte("customer_rent_max", Math.round(customerRentMax * 0.85))
-        .lte("customer_rent_max", Math.round(customerRentMax * 1.15))
-        .limit(200);
-      if (customerFloorPlan) q = q.eq("customer_floor_plan", customerFloorPlan);
-      const { data: pspRows } = await q;
-      if (pspRows && pspRows.length > 0) {
-        const counts: Record<string, number> = {};
-        const seenPerCustomer: Record<string, number> = {};
-        for (const row of pspRows) {
-          const cid = (row.property_customer_id as string) ?? "__unknown__";
-          if ((seenPerCustomer[cid] ?? 0) >= 5) continue;
-          seenPerCustomer[cid] = (seenPerCustomer[cid] ?? 0) + 1;
-          for (const pt of ((row.selling_points as string[]) ?? [])) {
-            counts[pt] = (counts[pt] ?? 0) + 1;
-          }
-        }
-        patternHints = Object.entries(counts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 5)
-          .map(([pt]) => pt);
+    // クロス顧客パターン（家賃帯±15% + 同間取り）
+    let crossQ = supabase
+      .from("property_selection_patterns")
+      .select("selling_points, property_customer_id, customer_profile_tags")
+      .eq("customer_reaction", "interested")
+      .gte("customer_rent_max", Math.round((customerRentMax ?? 0) * 0.85))
+      .lte("customer_rent_max", Math.round((customerRentMax ?? 0) * 1.15))
+      .limit(200);
+    if (customerFloorPlan) crossQ = crossQ.eq("customer_floor_plan", customerFloorPlan);
+
+    // 個人顧客パターン（このお客さん自身の履歴）
+    const personalQ = propertyCustomerId
+      ? supabase
+          .from("property_selection_patterns")
+          .select("selling_points, customer_reaction, recommendation_reason")
+          .eq("property_customer_id", propertyCustomerId)
+          .in("customer_reaction", ["interested", "no_response"])
+          .order("created_at", { ascending: false })
+          .limit(30)
+      : null;
+
+    const [crossResult, personalResult] = await Promise.all([
+      crossQ,
+      personalQ ?? Promise.resolve({ data: null }),
+    ]) as [
+      { data: Array<{ selling_points: string[]; property_customer_id: string; customer_profile_tags: string[] | null }> | null },
+      { data: Array<{ selling_points: string[]; customer_reaction: string; recommendation_reason: string | null }> | null },
+    ];
+
+    // クロス顧客: 1顧客あたり5件キャップで頻度集計
+    if (crossResult.data && crossResult.data.length > 0) {
+      const counts: Record<string, number> = {};
+      const seenPerCustomer: Record<string, number> = {};
+      const tagCounts: Record<string, number> = {};
+      for (const row of crossResult.data) {
+        const cid = row.property_customer_id ?? "__unknown__";
+        if ((seenPerCustomer[cid] ?? 0) >= 5) continue;
+        seenPerCustomer[cid] = (seenPerCustomer[cid] ?? 0) + 1;
+        for (const pt of (row.selling_points ?? [])) counts[pt] = (counts[pt] ?? 0) + 1;
+        for (const tag of (row.customer_profile_tags ?? [])) tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
       }
+      patternHints = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([pt]) => pt);
+      crossProfileTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([t]) => t);
     }
-  } catch { /* ignore — ヒントは補助情報のためエラーでも返す */ }
+
+    // 個人顧客: このお客さんが反応したセリングポイントを集計
+    if (personalResult.data && personalResult.data.length > 0) {
+      const personalCounts: Record<string, number> = {};
+      for (const row of personalResult.data) {
+        if (row.customer_reaction !== "interested") continue;
+        for (const pt of (row.selling_points ?? [])) {
+          personalCounts[pt] = (personalCounts[pt] ?? 0) + 1;
+        }
+      }
+      personalPatterns = Object.entries(personalCounts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([pt]) => pt);
+    }
+  } catch { /* ignore */ }
 
   return NextResponse.json(
     {
@@ -292,6 +321,10 @@ export async function POST(req: NextRequest) {
       },
       // 類似条件のお客さんで反応の良かったセリングポイント（上位5件）
       pattern_hints: patternHints,
+      // このお客さん自身の過去反応パターン（上位5件）
+      personal_patterns: personalPatterns,
+      // 類似顧客に多いプロファイルタグ（費用重視等）
+      cross_profile_tags: crossProfileTags,
     },
     { headers: CORS_HEADERS }
   );
