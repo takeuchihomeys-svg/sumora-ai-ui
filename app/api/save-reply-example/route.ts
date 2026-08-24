@@ -831,6 +831,7 @@ export async function POST(req: NextRequest) {
     template_id?: string | null; // 使ったテンプレートのID（テンプレート成果学習ループ用）
     entry_source?: string; // 'line_reply'（LINE返信AI由来）| 'aix_action'（AIX生成文由来）
     aix_action?: string; // AIXボタン種別（property_recommendation / viewing_invite 等・サブキー付き含む）。entry_source='aix_action' のとき AixModal が渡す
+    customer_intent?: string; // 顧客意図（brain出力優先・なければサーバー側でキーワード分類）
   };
   let body: PostBody;
   try {
@@ -855,6 +856,22 @@ export async function POST(req: NextRequest) {
   } = body;
   const templateId = typeof body.template_id === "string" ? body.template_id : null;
   let replyAngle = typeof body.replyAngle === "string" ? body.replyAngle : null;
+
+  // customer_intent: brainからの値を優先・なければキーワード自動分類
+  const CUSTOMER_INTENTS = new Set(["question", "consultation", "desire", "decision", "positive", "negative", "chat"]);
+  const rawIntent = typeof body.customer_intent === "string" ? body.customer_intent : null;
+  const customerIntent: string | null = (() => {
+    if (rawIntent && CUSTOMER_INTENTS.has(rawIntent)) return rawIntent;
+    const msg = (customerMessage ?? "").trim();
+    if (!msg || msg === "（初回連絡）") return null;
+    if (/[？?]|ですか|でしょうか|ますか/.test(msg)) return "question";
+    if (/悩ん|迷っ|どうしよう|どうすれば|相談|アドバイス/.test(msg)) return "consultation";
+    if (/したい|欲しい|見たい|行きたい|住みたい|探して|お願い/.test(msg)) return "desire";
+    if (/決め|申込|契約|する！|します！|内見/.test(msg)) return "decision";
+    if (/ありがとう|嬉しい|良かった|最高|よかった|助かった|😊|💕|❤|🎉/.test(msg)) return "positive";
+    if (/難しい|厳しい|やめ|諦め|無理|キャンセル|やっぱり/.test(msg)) return "negative";
+    return "chat";
+  })();
 
   if (!customerMessage || !sentReply) {
     return NextResponse.json(
@@ -1129,6 +1146,7 @@ export async function POST(req: NextRequest) {
         // 任意文字列を通すと typo 由来の第3の値が .eq('entry_source','line_reply') フィルタから漏れるため入口で正規化する
         entry_source: entry_source === "aix_action" ? "aix_action" : "line_reply",
         aix_action: typeof aix_action === "string" && aix_action ? aix_action : null,
+        customer_intent: customerIntent,
       })
       .select("id")
       .single(),

@@ -2492,6 +2492,30 @@ LANGUAGE sql STABLE AS $$
   LIMIT match_count;
 $$;
 
+-- ── customer_intent × staff_reply_intent ペア学習（2026-08-24）─────────────────────
+-- ai_reply_examples: 顧客意図（保存時キーワード自動分類。brain出力を優先で受け付ける）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS customer_intent TEXT;
+CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_intent ON ai_reply_examples(customer_intent) WHERE customer_intent IS NOT NULL;
+
+-- winning_patterns: 転換点の意図ペア（analyze-closed Opusが分類・将来RAGブーストで使用）
+ALTER TABLE winning_patterns ADD COLUMN IF NOT EXISTS customer_intent TEXT;
+ALTER TABLE winning_patterns ADD COLUMN IF NOT EXISTS staff_reply_intent TEXT;
+
+-- match_reply_examples: customer_intent を返り値に追加（意図一致+0.2ブーストのため）
+-- ※ 返り値型変更のため DROP→CREATE が必要
+DROP FUNCTION IF EXISTS match_reply_examples(vector, int, text[]);
+CREATE OR REPLACE FUNCTION match_reply_examples(query_embedding vector(1536), match_count int, filter_states text[])
+RETURNS TABLE (id uuid, customer_message text, sent_reply text, conversation_state text, is_starred boolean, reply_angle text, customer_intent text, similarity float)
+LANGUAGE sql STABLE AS $func$
+  SELECT ae.id, ae.customer_message, ae.sent_reply, ae.conversation_state, ae.is_starred, ae.reply_angle, ae.customer_intent, (1 - (ae.embedding <=> query_embedding))::float AS similarity
+  FROM ai_reply_examples ae
+  WHERE ae.conversation_state = ANY(filter_states)
+    AND ae.embedding IS NOT NULL
+    AND ae.entry_source = 'line_reply'
+  ORDER BY ae.embedding <=> query_embedding
+  LIMIT match_count
+$func$;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

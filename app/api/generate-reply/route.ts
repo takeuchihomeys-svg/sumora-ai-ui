@@ -1535,7 +1535,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         query_embedding: embedding,
         match_count: spec?.examples.pgvectorMatchCount ?? 20,
         filter_states: stateAliases,
-      }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; similarity: number }> | null; error: unknown };
+      }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; customer_intent: string | null; similarity: number }> | null; error: unknown };
 
       if (!rpcError && similar && similar.length > 0) {
         // 類似度0.5未満は低品質として除外
@@ -1545,9 +1545,10 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         // T1: spec.examples.boostStates（brainが重視するフェーズ）に一致する実例はさらに+0.1
         const boostStates = spec?.examples?.boostStates ?? [];
         const dirKwds = extractDirectionKeywords(spec?.examples?.filterByDirection ?? null);
+        const brainIntent = brainMeta?.customer_intent ?? null;
         const ranked = [...aboveThreshold].sort((a, b) => {
-          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0);
-          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0);
+          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? 0.2 : 0);
+          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? 0.2 : 0);
           return scoreB - scoreA;
         });
         // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）

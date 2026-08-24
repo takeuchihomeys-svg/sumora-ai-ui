@@ -28,6 +28,8 @@ type AnalysisJson = {
   turning_point?: string;
   what_worked?: string;
   human_type_label?: string;
+  customer_intent?: string;
+  staff_reply_intent?: string;
 };
 
 // Opus 4.8 直接呼び出し（eval-winning-pattern の callSonnet と同パターン）
@@ -46,7 +48,7 @@ async function callOpus(prompt: string): Promise<string> {
       },
       body: JSON.stringify({
         model: "claude-opus-5",
-        max_tokens: 1200,
+        max_tokens: 1400,
         messages: [{ role: "user", content: prompt }],
       }),
     });
@@ -211,7 +213,9 @@ ${customerInfo || "（登録情報なし）"}
   "winning_pattern": "この顧客タイプで${outcomeLabel}に至った${isLost ? "主要因・避けるべき対応パターン" : "決め手・勝ち筋"}を50字以内で",
   "turning_point": "会話の中で顧客の態度が${isLost ? "後ろ向き" : "前向き"}に変わった瞬間・きっかけを1〜2文で",
   "what_worked": "${isLost ? "スタッフが本来取るべきだった対応（改善案・具体的に）" : "スタッフが取った行動のうち最も効果があったもの（具体的に）"}",
-  "human_type_label": "このタイプの顧客を一言で表すラベル（例：安心重視・慎重派、費用最優先・即決型、比較検討・背中押し型 等）"
+  "human_type_label": "このタイプの顧客を一言で表すラベル（例：安心重視・慎重派、費用最優先・即決型、比較検討・背中押し型 等）",
+  "customer_intent": "転換点（態度が変わった瞬間）での顧客メッセージの意図（question/consultation/desire/decision/positive/negative/chat のいずれか）",
+  "staff_reply_intent": "その転換点でスタッフが実際に取ったアプローチ（empathy/inform/propose/guide/reassure/push/confirm のいずれか）"
 }`;
 
   const rawText = await callOpus(prompt);
@@ -316,6 +320,8 @@ ${customerInfo || "（登録情報なし）"}
     source_conversation_id: conversationId,
     embedding: wpEmbedding ? JSON.stringify(wpEmbedding) : null,
     importance: isLost ? 7 : 9,
+    customer_intent: result.customer_intent ?? null,
+    staff_reply_intent: result.staff_reply_intent ?? null,
   });
   if (wpInsertErr) console.warn("[analyze-closed] winning_patterns insert失敗:", wpInsertErr.message);
 
