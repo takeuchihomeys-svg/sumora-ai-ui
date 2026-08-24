@@ -2456,7 +2456,8 @@ export async function POST(req: NextRequest) {
           ? ([...recentMessages].reverse().find(m => m.sender === "customer" && m.text)?.text ?? "")
           : "";
         const isConditionOverride = brainMeta.action === "estimate_sheet" &&
-          /調べてほし[いく]|探してほし[いく]|探して欲[しく]|徒歩[0-9０-９]+分|家賃.{0,6}万|[0-9０-９]+万以下|広め|路線のみ|沿線|環状線|条件.{0,3}絞|条件.{0,3}変[えわ]/.test(latestCustText);
+          (/調べてほし[いく]|探してほし[いく]|探して欲[しく]|徒歩[0-9０-９]+分|家賃.{0,6}万|[0-9０-９]+万以下|広め|路線のみ|沿線|環状線|条件.{0,3}絞|条件.{0,3}変[えわ]/.test(latestCustText) ||
+          /【[^】]{2,15}】[^。！\n]{0,5}[⇒→＝:：]/.test(latestCustText));
         if (isConditionOverride) {
           lines.push(`- 推奨アクション: 物件ピックアップ対応（property_send方向）— お客様が新しい検索条件（路線・家賃・徒歩・間取り・広さ等）を今回のメッセージで指定しているため、見積書の作成宣言をせず条件を受け止めて物件を探す方向で返信すること。AIXで物件送付後に見積対応。`);
         } else {

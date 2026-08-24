@@ -1608,6 +1608,22 @@ ${history}`;
     ) {
       finalAix = "property_send";
     }
+    // 構造化条件フォーム送信対策（決定論的矯正）:
+    // 顧客が【ご希望の家賃】⇒〇万 / 【初期費用の限度額】⇒〇万 等の整理済みヒアリングシートを送付した場合、
+    // Haiku が「初期費用」を見積書依頼と誤認して estimate_sheet を返すことがある。
+    // 【〇〇】⇒ 形式の構造化フォームは物件条件の伝達であり property_send が正解。
+    // また hearing フェーズの初回条件問い合わせも同様に矯正する（PROPERTY_CONDITION_INQUIRY_RE）。
+    if (
+      finalAix === "estimate_sheet" &&
+      lastCustomerMsg?.text &&
+      daysSinceLastCustomerMsg !== null &&
+      daysSinceLastCustomerMsg <= 3 &&
+      (/【[^】]{2,15}】[^。！\n]{0,5}[⇒→＝:：]/.test(lastCustomerMsg.text) ||
+        (PROPERTY_CONDITION_INQUIRY_RE.test(lastCustomerMsg.text) &&
+          !/(見積|総額|いくら|内訳|費用.{0,6}(教|知|詳|いくら)|？|\?)/.test(lastCustomerMsg.text)))
+    ) {
+      finalAix = "property_send";
+    }
     // 画像のみ送信対策（決定論的矯正・プロンプト任せにしない）:
     // 顧客がテキストなしで画像だけを送ってきた場合（messages上は "[画像]" プレースホルダー）、
     // Haiku には画像の中身が見えないため acknowledge_check（物件画像想定）へ倒れがちだが、
@@ -1779,7 +1795,13 @@ ${history}`;
     );
     avoidSet.add("来阪"); // ルール⑤: ブランド絶対ルール（LLM出力に依存しない）
     avoidSet.delete("ご来阪"); // 来阪に正規化（generate-reply側で言い換え禁止を指示するため1語で足りる）
-    const customerAskedCost = !!(lastCustomerMsg?.text && COST_QUESTION_RE.test(lastCustomerMsg.text));
+    // 【〇〇】⇒形式の構造化フォーム（条件ヒアリングシート）は費用の質問ではない。
+    // 「初期費用の限度額⇒20万」等がCOST_QUESTION_REにマッチしても費用質問扱いにしない。
+    const isStructuredIntakeForm = !!(lastCustomerMsg?.text &&
+      /【[^】]{2,15}】[^。！\n]{0,5}[⇒→＝:：]/.test(lastCustomerMsg.text));
+    const customerAskedCost = !!(lastCustomerMsg?.text &&
+      COST_QUESTION_RE.test(lastCustomerMsg.text) &&
+      !isStructuredIntakeForm);
     if (customerAskedCost) {
       // 顧客が費用を明示的に質問 → LLMが誤って入れた費用系avoidを除去（質問に答えない方が致命的）
       ["見積書", "見積り", "初期費用", "総額", "費用"].forEach((t) => avoidSet.delete(t));
