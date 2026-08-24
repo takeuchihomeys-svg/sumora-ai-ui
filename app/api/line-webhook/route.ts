@@ -834,6 +834,34 @@ const PARSE_FORMAT_SYSTEM_PROMPT = `あなたは日本の不動産業者のア�
 
 JSONのみ返してください。説明文・コードブロック・マークダウンは一切不要です。`;
 
+// エリアテキストから area_mode を推定（駅が1つでも含まれれば 'station'）
+// classify-area-modes cron と同じ分類ロジック。条件更新時に即時反映するために使用。
+async function inferAreaMode(db: ReturnType<typeof getDb>, rawArea: string): Promise<'station' | 'ward' | 'auto'> {
+  const PFX_RE = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
+  const tokens = rawArea
+    .split(/[,、・\/\s　]+|又は|もしくは|など/)
+    .map(t => t.replace(/駅$|周辺$|付近$|近く$|近辺$|沿線$|エリア$|あたり$/, "").trim())
+    .filter(t => t.length >= 2 && !/^[0-9０-９]/.test(t) && !t.endsWith("線"));
+  if (tokens.length === 0) return 'auto';
+
+  const { data: lsRows } = await db.from("line_stations").select("station_name");
+  const stationNames = new Set<string>((lsRows ?? []).map((r: { station_name: string }) => r.station_name));
+
+  function isStation(token: string): boolean {
+    const variants = [token, token.replace(/[町村]$/, ""), token.replace(PFX_RE, ""), token.replace(PFX_RE, "").replace(/[町村]$/, "")];
+    return variants.some(v => stationNames.has(v));
+  }
+  function isRegion(token: string): boolean {
+    return /[市区郡]/.test(token) || /(?:市内|府内|県内|都内)$/.test(token);
+  }
+
+  const stCount = tokens.filter(t => isStation(t)).length;
+  const rgCount = tokens.filter(t => isRegion(t)).length;
+  if (stCount > 0) return 'station';
+  if (rgCount > 0) return 'ward';
+  return 'auto';
+}
+
 async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, convId: string, text: string, account: AccountConfig) {
   // ── 重複実行防止: 同じテキストを既に処理済みなら即リターン ──────────
   const { data: alreadyDone } = await db
@@ -1016,6 +1044,18 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
       await db.from("property_customers")
         .update({ ...parsedFields, customer_name: resolvedName })
         .eq("id", customerId);
+      // エリア条件が含まれている場合は area_mode を即時推定・更新
+      if (parsedFields.desired_area) {
+        const _area = parsedFields.desired_area as string;
+        const _cid = customerId;
+        after(async () => {
+          const mode = await inferAreaMode(db, _area);
+          if (mode !== 'auto') {
+            await db.from("property_customers").update({ area_mode: mode }).eq("id", _cid);
+            console.log(`[inferAreaMode] Path-A: ${_area} → ${mode}`);
+          }
+        });
+      }
     } else {
       // カジュアル更新 → インテント分類 → スマートマージ（「追加」「除外」「変更」を正しく処理）
       const { mergedConds, intent } = await computeCasualUpdate(existing as Record<string, unknown>);
@@ -1262,6 +1302,14 @@ ${customerText.slice(0, 300)}
   if (updateErr) {
     console.warn("[line-webhook] P4 property_customers update failed:", updateErr.message);
   } else {
+    // desired_area が更新された場合は area_mode を即時推定・上書き
+    if (updates.desired_area) {
+      const mode = await inferAreaMode(db, updates.desired_area as string);
+      if (mode !== 'auto') {
+        await db.from("property_customers").update({ area_mode: mode }).eq("id", pcId);
+        console.log(`[inferAreaMode] Path-B: ${updates.desired_area} → ${mode}`);
+      }
+    }
     console.log(`[line-webhook] P4 条件抽出: conv=${convId} fields=${Object.keys(updates).join(",")}`);
     void recordConditionHistory(db, pcId, existingPc as Record<string, unknown> | null, updates)
       .catch((e) => console.warn("[condition-history] P4:", e));
@@ -1592,6 +1640,14 @@ async function detectAndAnnounceAreaChange(
     await db.from("property_customers")
       .update({ desired_area: merged, updated_at: new Date().toISOString() })
       .eq("id", pc.id as string);
+    // エリアが更新されたので area_mode を即時推定・上書き
+    {
+      const mode = await inferAreaMode(db, merged);
+      if (mode !== 'auto') {
+        await db.from("property_customers").update({ area_mode: mode }).eq("id", pc.id as string);
+        console.log(`[inferAreaMode] Path-C: ${merged} → ${mode}`);
+      }
+    }
 
     // LINE スタッフグループに通知
     let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;

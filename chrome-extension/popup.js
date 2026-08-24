@@ -2446,10 +2446,16 @@ function setupAreaModeSelector(c, siteKey) {
   // DBのarea_modeが明示設定されている場合は静的マップ判定より優先（毎日分類cronが書き込む）
   // 'auto' は静的マップ・API自動判定に委ねる
   const _dbMode = (c.area_mode === 'station' || c.area_mode === 'ward') ? c.area_mode : null;
-  // 区+駅 混在（hasStationToken && (hasWardToken || hasWardCompoundToken)）→ 区指定を優先
+  // 区レベルトークン（「北区」「天王寺区」等）: 市レベル（「大阪市」「尼崎市」）は含まない
+  // 市レベル + 駅 → 駅優先（市は文脈のみ・駅のほうが検索精度が高い）
+  // 区レベル + 駅 → 区優先（具体的な区指定は従来通り優先）
+  const hasSpecificWardToken = toks.some(t => {
+    if (_isKnownStation(t)) return false;
+    return !t.endsWith("線") && (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || /[区郡]$/.test(t));
+  });
   const defaultMode = _dbMode ||
     ((hasStationToken || hasResolvableRoute)
-      ? ((hasWardToken || hasWardCompoundToken) ? "ward" : "station")
+      ? ((hasSpecificWardToken || hasWardCompoundToken) ? "ward" : "station")
       : "ward");
 
   _areaModeSource = "auto";

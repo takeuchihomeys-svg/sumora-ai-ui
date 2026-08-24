@@ -117,13 +117,14 @@ export async function GET(req: NextRequest) {
     const stCount = meaningful.filter(t => isStation(t, knowledge)).length;
     const rgCount = meaningful.filter(t => isRegion(t, knowledge)).length;
 
-    // 駅のみ → station / 地域のみ → ward / 混在・不明 → auto のまま
-    if (stCount > 0 && rgCount === 0 && stCount === meaningful.length) {
+    // 駅が1つでも → station / 地域のみ → ward / 全不明 → auto のまま
+    // 混在（駅+市レベル地名）でも駅優先: 市レベルは文脈、駅のほうが検索精度が高い
+    if (stCount > 0) {
       updates.push({ id: c.id, area_mode: "station" });
-    } else if (rgCount > 0 && stCount === 0) {
+    } else if (rgCount > 0) {
       updates.push({ id: c.id, area_mode: "ward" });
     }
-    // 混在・全不明は area_mode を変更しない（auto のまま = resolve-area の動的判定に委ねる）
+    // 全不明 (stCount=0 && rgCount=0) は auto のまま
   }
 
   // ④ バッチ更新
