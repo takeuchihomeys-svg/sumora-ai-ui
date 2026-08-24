@@ -998,8 +998,11 @@ function applyParsedCondition(parsed) {
     return;
   }
 
+  // View 3 がアクティブでない場合はバナーもUI変更も行わない
+  // （#transfer-search-row はDOM上で常に存在するため element の有無ではなく active クラスで判定）
+  if (!document.getElementById('view-instructions')?.classList.contains('active')) return;
   const row = document.getElementById('transfer-search-row');
-  if (!row) return; // View 3 以外では何もしない
+  if (!row) return;
 
   // バナー表示（クリックで即消し・4秒で自動消滅）
   let banner = document.getElementById('auto-parse-banner');
@@ -2040,6 +2043,8 @@ function setMiniMode(mini) {
 }
 
 function showView(id) {
+  // ビュー切替時に残留バナーを即時削除（View 2 でサイトボタンの上に被らないように）
+  document.getElementById('auto-parse-banner')?.remove();
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   document.getElementById(id).classList.add("active");
   if (isUnderbar) {

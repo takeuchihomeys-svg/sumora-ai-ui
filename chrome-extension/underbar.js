@@ -302,6 +302,17 @@
 
   document.addEventListener("mousemove", (e) => {
     if (!dragAction) return;
+    // ウィンドウ外でmouseupした場合にボタン未押下でdragActionが残り
+    // iframe.pointerEvents="none" が永続する問題を防ぐ
+    if (e.buttons === 0) {
+      dragAction = null;
+      if (iframe) iframe.style.pointerEvents = "";
+      dragBar.style.cursor = "grab";
+      miniOverlay.style.cursor = "grab";
+      wrap.style.transition = "width 0.22s ease, height 0.22s ease";
+      persist();
+      return;
+    }
     const dx = e.clientX - startCX;
     const dy = e.clientY - startCY;
     if (dragAction === "move") {
