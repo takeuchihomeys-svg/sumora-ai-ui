@@ -1695,7 +1695,7 @@ const SITE_CONFIG = {
       const linesNote = itandiLines.length ? itandiLines.join(" / ") : null;
 
       // ペット条件の検出
-      const petNote = /ペット|pet/i.test(c.preferences || c.notes || "") ? "ページ最下部「入居条件（その他）」→「ペット相談」にチェック" : null;
+      const petNote = /ペット|pet/i.test([c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ")) ? "ページ最下部「入居条件（その他）」→「ペット相談」にチェック" : null;
 
       return [
         {
@@ -2409,15 +2409,16 @@ function openSiteView(customer) {
   const _areaMaxStr = d.areaMax ? d.areaMax + "㎡以下" : null;
   const _areaSizeStr = [_areaMinStr, _areaMaxStr].filter(Boolean).join("〜") || null;
   const _structure = customer.building_structure || customer.structure || null;
-  // エリアラベル（駅/地域モードで切替）
+  // エリアラベル（DB area_mode 優先 → computeAreaModeBadgeHtml と同一ロジック）
   const _areaLabel = (() => {
+    const _dbMode = customer.area_mode;
+    if (_dbMode === "station") return "駅";
+    if (_dbMode === "ward")    return "地域";
     if (!d.area) return "エリア";
-    const _toks = parseAreaTokens(d.area);
-    const _hasSt = _toks.some(t =>
-      STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/,"")] ||
-      (LEARNED_STATION_MAP[t] && LEARNED_STATION_MAP[t].realpro_lines && LEARNED_STATION_MAP[t].realpro_lines.length > 0)
-    );
-    return _hasSt ? "駅" : "地域";
+    const _badge = computeAreaModeBadgeHtml(d.area);
+    if (_badge.includes("badge-area-station")) return "駅";
+    if (_badge.includes("badge-area-ward"))   return "地域";
+    return "エリア";
   })();
 
   // 条件グリッド（拡張ツールステップと同じ全項目）
@@ -2720,7 +2721,7 @@ function setupAreaModeSelector(c, siteKey) {
   // 自動判定が曖昧（静的マップで判定できなかった）場合 → APIで補完
   // resolveAreaWithAPI はキャッシュがあれば即返る。未知トークンがなければ null を返してスキップ。
   // hasWardCompoundToken: 区+地名複合でローカル解決が不完全な場合も API を呼んで補完
-  if ((!hasWardToken && !hasStationToken) || hasWardCompoundToken) {
+  if ((!_cl.hasArea && !_cl.hasStation) || hasWardCompoundToken) {
     resolveAreaWithAPI(rawA, "auto").then(function(apiData) {
       if (!apiData || _areaModeSource !== "auto") return; // ユーザーが手動クリック済みなら無視
       var hasApiSt = (apiData.realpro?.station_names?.length > 0) || (apiData.realpro?.route_ids?.length > 0);
@@ -2740,16 +2741,11 @@ function preloadAdjForm(c) {
   } else if (_areaMode === "station") {
     _stStr = _rawArea;
   } else {
-    // auto: STATION_LINE_MAP / LEARNED_STATION_MAP で token 分類
+    // auto: classifyAreaTokens で統一（setupAreaModeSelector と同一ロジック）
     const _toks = _rawArea ? parseAreaTokens(_rawArea) : [];
-    const _stToks = _toks.filter(t =>
-      STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, "")] ||
-      (LEARNED_STATION_MAP[t]?.realpro_lines?.length > 0) ||
-      (t.endsWith("線") && lineNameToRouteId && lineNameToRouteId(t))
-    );
-    const _wdToks = _toks.filter(t => !_stToks.includes(t));
-    _stStr   = _stToks.join("・");
-    _wardStr = _wdToks.join("・") || (_stToks.length === 0 ? _rawArea : "");
+    const _cl = classifyAreaTokens(_toks);
+    _stStr   = _cl.stationTokens.join("・");
+    _wardStr = _cl.areaTokens.join("・") || (_cl.stationTokens.length === 0 ? _rawArea : "");
   }
   document.getElementById("adj-area-station").value = _stStr;
   document.getElementById("adj-area-ward").value    = _wardStr;
@@ -2760,7 +2756,9 @@ function preloadAdjForm(c) {
   document.getElementById("adj-walk").value      = c.walk_minutes || "";
   document.getElementById("adj-age").value       = c.building_age || "";
   document.getElementById("adj-floor").value     = c.floor_plan || c.layout || "";
-  document.getElementById("adj-structure").value = c.building_structure || c.structure || "";
+  document.getElementById("adj-structure").value   = c.building_structure || c.structure || "";
+  document.getElementById("adj-move-in").value     = c.move_in_time || c.move_in || "";
+  document.getElementById("adj-initial-cost").value = c.initial_cost_limit || "";
 
   // ペット飼育: DBのpetフィールドを優先、未設定ならテキスト検出フォールバック
   if (c.pet === true) {
@@ -2848,10 +2846,12 @@ function buildAdjCustomer(c) {
     : (adjStation && !adjWard) ? "station"
     : (adjWard && adjStation)  ? "both"
     : (c.area_mode || "auto");
-  const adjRentMax = document.getElementById("adj-rent-max").value;
-  const adjWalk    = document.getElementById("adj-walk").value;
-  const adjAge     = document.getElementById("adj-age").value;
-  const adjFloor   = document.getElementById("adj-floor").value.trim();
+  const adjRentMax     = document.getElementById("adj-rent-max").value;
+  const adjWalk        = document.getElementById("adj-walk").value;
+  const adjAge         = document.getElementById("adj-age").value;
+  const adjFloor       = document.getElementById("adj-floor").value.trim();
+  const adjMoveIn      = document.getElementById("adj-move-in")?.value.trim() || "";
+  const adjInitialCost = document.getElementById("adj-initial-cost")?.value || "";
 
   // 乗り換え検索が有効なら隣接駅をエリア文字列に追加
   const transferEnabled = document.getElementById("enableTransfer")?.checked;
@@ -2891,8 +2891,10 @@ function buildAdjCustomer(c) {
     max_rent:     adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null),
     walk_minutes: adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
     building_age: adjAge     ? Number(adjAge)     : (c.building_age || null),
-    floor_plan:   adjFloor   || c.floor_plan || c.layout || null,
-    layout:       adjFloor   || c.floor_plan || c.layout || null,
+    floor_plan:         adjFloor       || c.floor_plan || c.layout || null,
+    layout:             adjFloor       || c.floor_plan || c.layout || null,
+    move_in_time:       adjMoveIn      || c.move_in_time || c.move_in || null,
+    initial_cost_limit: adjInitialCost ? Number(adjInitialCost) : (c.initial_cost_limit || null),
   };
 }
 
@@ -4023,12 +4025,13 @@ function customerMatchesAreaTypeFilter(c, filterMode) {
     if (areaMode === "ward")    return true;
     if (areaMode === "station") return false;
   }
-  // auto / 不明 → テキストで判定（混在お客さんは両方ヒット）
+  // auto / 不明 → computeAreaModeBadgeHtml で判定（バッジ表示と完全一致）
   const rawArea = (c.desired_area || c.area || "").trim();
   if (!rawArea) return false;
-  const toks = parseAreaTokens(rawArea);
-  const cl = classifyAreaTokens(toks);
-  return filterMode === "station" ? cl.hasStation : cl.hasArea;
+  const _badge = computeAreaModeBadgeHtml(rawArea);
+  return filterMode === "station"
+    ? _badge.includes("badge-area-station")
+    : _badge.includes("badge-area-ward");
 }
 
 // ── Search + Account + AreaType + Linked filter ────────────────────
