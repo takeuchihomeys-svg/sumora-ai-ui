@@ -850,19 +850,21 @@ async function handleAction(request: NextRequest): Promise<Response> {
       current_property?: string | null;
       template_hint?: string | null;
     };
-    const { brainContext, brainMeta: aixBrainMeta } = await (async (): Promise<{ brainContext: string; brainMeta: AixLocalBrainMeta | null }> => {
-      if (!conversationId) return { brainContext: "", brainMeta: null };
+    const { brainContext, brainMeta: aixBrainMeta, propertyCustomerId: resolvedPCID } = await (async (): Promise<{ brainContext: string; brainMeta: AixLocalBrainMeta | null; propertyCustomerId: string | null }> => {
+      if (!conversationId) return { brainContext: "", brainMeta: null, propertyCustomerId: null };
       try {
         const { data } = await supabase
           .from("conversations")
-          .select("suggested_aix_meta")
+          .select("suggested_aix_meta, property_customer_id")
           .eq("id", conversationId)
           .single();
-        const meta = (data as { suggested_aix_meta?: AixLocalBrainMeta | null } | null)?.suggested_aix_meta ?? null;
-        if (!meta) return { brainContext: "", brainMeta: null };
+        const row = data as { suggested_aix_meta?: AixLocalBrainMeta | null; property_customer_id?: string | null } | null;
+        const meta = row?.suggested_aix_meta ?? null;
+        const pcid = row?.property_customer_id ?? null;
+        if (!meta) return { brainContext: "", brainMeta: null, propertyCustomerId: pcid };
         const context = [meta.closing_strategy, meta.reply_direction, ...(meta.key_topics ?? [])].filter(Boolean).join(" ");
-        return { brainContext: context, brainMeta: meta };
-      } catch { return { brainContext: "", brainMeta: null }; }
+        return { brainContext: context, brainMeta: meta, propertyCustomerId: pcid };
+      } catch { return { brainContext: "", brainMeta: null, propertyCustomerId: null }; }
     })();
 
     // ブレインノートをプロンプトに注入（戦略系→制約系の順）
@@ -1125,12 +1127,46 @@ ${aixPropertyRecommendationRules}
 ${SMORA_COMMON_RULES}`;
 
       // フォーマット固定: DEFAULT_PROP_SYSTEM を直接使用（DBで上書きしない）
-      const [examples, knowledge, recStarNote, propDbRules, recBrainAddendum] = await Promise.all([
+      const [examples, knowledge, recStarNote, propDbRules, recBrainAddendum, recPatternHints] = await Promise.all([
         getPropertyExamples(),
         getPropertyKnowledge(conversationId),
         getStarredExamplesForAction(["property_recommendation", "proposing"], latestCustomerMsg),
         fetchPromptRules("property_recommendation", {}).catch(() => ""),
         loadBrainTemplate("property_recommendation"),
+        // 類似条件顧客の勝ちパターン（property_selection_patterns）を並列取得
+        (async (): Promise<string[]> => {
+          if (!resolvedPCID) return [];
+          try {
+            const { data: pcRow } = await supabase
+              .from("property_customers")
+              .select("rent_max, max_rent, floor_plan, layout")
+              .eq("id", resolvedPCID)
+              .maybeSingle();
+            const rentMax = ((pcRow as { rent_max?: number; max_rent?: number } | null)?.rent_max ?? (pcRow as { rent_max?: number; max_rent?: number } | null)?.max_rent) ?? null;
+            const floorPlan = ((pcRow as { floor_plan?: string; layout?: string } | null)?.floor_plan ?? (pcRow as { floor_plan?: string; layout?: string } | null)?.layout) ?? null;
+            if (!rentMax || rentMax <= 0) return [];
+            let q = supabase
+              .from("property_selection_patterns")
+              .select("selling_points")
+              .eq("customer_reaction", "interested")
+              .gte("customer_rent_max", Math.round(rentMax * 0.85))
+              .lte("customer_rent_max", Math.round(rentMax * 1.15))
+              .limit(40);
+            if (floorPlan) q = q.eq("customer_floor_plan", floorPlan);
+            const { data: pspRows } = await q;
+            if (!pspRows || pspRows.length === 0) return [];
+            const counts: Record<string, number> = {};
+            for (const row of pspRows) {
+              for (const pt of ((row.selling_points as string[]) ?? [])) {
+                counts[pt] = (counts[pt] ?? 0) + 1;
+              }
+            }
+            return Object.entries(counts)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 5)
+              .map(([pt]) => pt);
+          } catch { return []; }
+        })(),
       ]);
 
       // {{examples}} {{knowledge}} {{phrases}} プレースホルダーを除去（実データはuserメッセージ側へ移動してキャッシュHIT率を向上）
@@ -1169,7 +1205,12 @@ ${SMORA_COMMON_RULES}`;
       const newArrivalNote = body.is_new_arrival
         ? `\n\n【🆕 新着物件 — 必ず守ること】この物件は新着物件です。物件名の直後の冒頭一文（「〜さんにかなりオススメ出来るお部屋となります！！」の前）に「新着でかなり条件のいいお部屋となります！！」を自然に盛り込むこと。`
         : "";
-      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
+      // 類似条件顧客の実績から「刺さりやすいポイント」をプロンプトに注入
+      // データが溜まるほど精度UP。データなし（初期）は空文字でスキップ。
+      const patternHintsNote = recPatternHints.length > 0
+        ? `\n\n【📊 類似条件のお客様に刺さりやすいポイント（実績データ由来）】\n以下のポイントを持つ物件が、同じ家賃帯・間取り希望のお客様から「興味あり」の反応を多く得ています。（オススメポイント）の選択時に優先的に訴求してください。\n${recPatternHints.join("・")}`
+        : "";
+      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
 
       const knowledgeSection = knowledge ? `\n\n【物件オススメ時のノウハウ】\n${knowledge}` : "";
       const examplesSection = examples ? `\n\n【スモラの実際の物件オススメ文（実例）】\n${examples}` : "";
