@@ -2516,6 +2516,51 @@ LANGUAGE sql STABLE AS $func$
   LIMIT match_count
 $func$;
 
+-- match_winning_patterns: customer_intent / staff_reply_intent を返り値に追加（2026-08-24）
+-- ※ 返り値型変更のため DROP→CREATE が必要
+DROP FUNCTION IF EXISTS match_winning_patterns(vector, int, text, int);
+CREATE OR REPLACE FUNCTION match_winning_patterns(
+  query_embedding vector,
+  match_count int DEFAULT 5,
+  outcome_filter text DEFAULT NULL,
+  min_importance int DEFAULT 7
+)
+RETURNS TABLE (
+  id uuid,
+  situation text,
+  pattern text,
+  closing_action text,
+  human_type_label text,
+  outcome_type text,
+  notes text,
+  win_rate numeric,
+  importance int,
+  customer_intent text,
+  staff_reply_intent text,
+  similarity double precision
+)
+LANGUAGE sql STABLE AS $func$
+  SELECT
+    wp.id,
+    wp.situation,
+    wp.pattern,
+    wp.closing_action,
+    wp.human_type_label,
+    wp.outcome_type,
+    wp.notes,
+    wp.win_rate,
+    wp.importance,
+    wp.customer_intent,
+    wp.staff_reply_intent,
+    (1 - (wp.embedding <=> query_embedding))::float AS similarity
+  FROM winning_patterns wp
+  WHERE wp.embedding IS NOT NULL
+    AND wp.importance >= min_importance
+    AND (outcome_filter IS NULL OR wp.outcome_type = outcome_filter)
+  ORDER BY wp.embedding <=> query_embedding
+  LIMIT match_count;
+$func$;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

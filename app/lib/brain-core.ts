@@ -956,7 +956,7 @@ export async function analyzeConversation(
   let ragCheckpoints: Array<{ checkpoint_index: number; summary: string | null; key_facts: unknown; conversation_stage: string | null; similarity?: number }> = [];
   type RagKnowledgeRow = { title: string | null; content: string | null; category: string | null; conversation_state: string | null; importance: number | null; similarity: number };
   let ragKnowledgeRaw: RagKnowledgeRow[] = [];
-  let ragWinningPatterns: Array<{ situation: string | null; pattern: string; closing_action: string | null; human_type_label: string | null; outcome_type: string; notes: string | null; win_rate: number | null; importance: number; similarity: number }> = [];
+  let ragWinningPatterns: Array<{ situation: string | null; pattern: string; closing_action: string | null; human_type_label: string | null; outcome_type: string; notes: string | null; win_rate: number | null; importance: number; customer_intent: string | null; staff_reply_intent: string | null; similarity: number }> = [];
   let ragTemplates: Array<{ id: string; category: string | null; label: string | null; win_rate: number | null; use_count: number | null; won_count: number | null; similarity: number }> = [];
   // RAG: incremental mode でも実行する（winning_patterns / templates は毎回必要）。
   // checkpoint RAG のみ非incremental 限定（古い会話セーブポイントの検索は差分分析では不要）。
@@ -1036,6 +1036,8 @@ export async function analyzeConversation(
               notes: string | null;
               win_rate: number | null;
               importance: number;
+              customer_intent: string | null;
+              staff_reply_intent: string | null;
               similarity: number;
             }>).filter((w) => w.similarity >= 0.5);
             // templates RAG: 類似度 0.4 以上、won_count 降順でソート（成約実績を最優先）
@@ -1372,6 +1374,7 @@ export async function analyzeConversation(
         if (w.closing_action) parts.push(`→ 有効アクション: ${w.closing_action}`);
         if (w.notes) parts.push(`転換点: ${w.notes}`);
         if (w.human_type_label) parts.push(`顧客タイプ: ${w.human_type_label}`);
+        if (w.customer_intent && w.staff_reply_intent) parts.push(`意図ペア: ${w.customer_intent}→${w.staff_reply_intent}`);
         return `- ${parts.join(" / ")}`;
       }).join("\n")}\n※この顧客に類似した過去事例。closing_strategy・next_steps の判断に反映すること。`
     : "";
