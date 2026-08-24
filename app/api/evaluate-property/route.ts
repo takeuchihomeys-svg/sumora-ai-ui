@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 15;
 
@@ -241,6 +242,7 @@ export async function POST(req: NextRequest) {
   let patternHints: string[] = [];
   let personalPatterns: string[] = [];   // このお客さん自身の反応パターン
   let crossProfileTags: string[] = [];   // 類似顧客に多いプロファイルタグ
+  let ragKnowledge: string[] = [];       // RAG検索で取得した関連ノウハウ
   try {
     // クロス顧客パターン（家賃帯±15% + 同間取り）
     let crossQ = supabase
@@ -263,13 +265,39 @@ export async function POST(req: NextRequest) {
           .limit(30)
       : null;
 
-    const [crossResult, personalResult] = await Promise.all([
+    // RAG検索: お客さん条件 + 物件特徴をembeddingして関連ノウハウを取得
+    const ragQuery = [
+      customerFloorPlan,
+      customerRentMax ? `家賃${Math.round(customerRentMax / 10000)}万円` : null,
+      customerWalk ? `駅徒歩${customerWalk}分` : null,
+      property.floor_plan,
+      property.ad_months ? `広告料${property.ad_months}ヶ月` : null,
+    ].filter(Boolean).join(" ");
+
+    const [crossResult, personalResult, ragResult] = await Promise.all([
       crossQ,
       personalQ ?? Promise.resolve({ data: null }),
+      ragQuery ? (async () => {
+        try {
+          const embedding = await generateEmbedding(`property_scoring: ${ragQuery}`);
+          if (!embedding) return null;
+          const { data } = await supabase.rpc("match_reply_knowledge", {
+            query_embedding: embedding,
+            match_count: 10,
+            min_importance: 6,
+          }) as { data: Array<{ id: string; content: string; similarity: number; conversation_state: string }> | null };
+          return (data ?? [])
+            .filter(r => r.similarity >= 0.45)
+            .slice(0, 5)
+            .map(r => r.content);
+        } catch { return null; }
+      })() : Promise.resolve(null),
     ]) as [
       { data: Array<{ selling_points: string[]; property_customer_id: string; customer_profile_tags: string[] | null }> | null },
       { data: Array<{ selling_points: string[]; customer_reaction: string; recommendation_reason: string | null }> | null },
+      string[] | null,
     ];
+    ragKnowledge = ragResult ?? [];
 
     // クロス顧客: 1顧客あたり5件キャップで頻度集計
     if (crossResult.data && crossResult.data.length > 0) {
@@ -325,6 +353,8 @@ export async function POST(req: NextRequest) {
       personal_patterns: personalPatterns,
       // 類似顧客に多いプロファイルタグ（費用重視等）
       cross_profile_tags: crossProfileTags,
+      // RAG検索で取得した関連ノウハウ（DeepSeek採点用）
+      rag_knowledge: ragKnowledge,
     },
     { headers: CORS_HEADERS }
   );
