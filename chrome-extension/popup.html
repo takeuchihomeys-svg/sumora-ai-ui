@@ -41,14 +41,18 @@
         <input type="text" id="search-input" placeholder="お客さんを検索..." autocomplete="off" />
       </div>
       <div class="account-filter">
-        <button class="acct-btn" data-acct="__needs_action__" id="needs-action-tab">🔥 要対応</button>
-        <button class="acct-btn active" data-acct="">すべて</button>
-        <button class="acct-btn" data-acct="sumora">スモラ</button>
-        <button class="acct-btn" data-acct="ieyasu">イエヤス</button>
-        <button class="acct-btn" data-acct="giga">ギガ賃貸</button>
-        <button class="acct-btn" data-acct="hasu">蓮産業</button>
+        <select id="acct-select" class="acct-select">
+          <option value="">すべて</option>
+          <option value="sumora">スモラ</option>
+          <option value="ieyasu">イエヤス</option>
+          <option value="giga">ギガ賃貸</option>
+          <option value="hasu">蓮産業</option>
+          <option value="__needs_action__">🔥 要対応</option>
+        </select>
+        <button id="filter-ward-btn" class="area-type-btn">地域</button>
+        <button id="filter-station-btn" class="area-type-btn">駅</button>
         <button id="linked-filter-btn" class="acct-btn linked-btn">🔗 紐付け済み</button>
-        <button id="estimate-quick-btn" class="acct-btn" style="margin-left:auto;background:#1565C0;color:#fff;border-color:#1565C0;" title="見積書を自動作成">📋 見積書自動</button>
+        <button id="estimate-quick-btn" class="acct-btn est-btn" title="見積書を自動作成">📋 見積書自動</button>
       </div>
       <div id="today-banner" style="display:none;background:#fff3e0;border-bottom:1px solid #ffcc02;padding:6px 12px;font-size:12px;font-weight:bold;color:#e65100;cursor:pointer;text-align:center"></div>
       <div id="customer-list"></div>

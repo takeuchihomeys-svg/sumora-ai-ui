@@ -1512,6 +1512,27 @@ const SITE_CONFIG = {
         });
       }
 
+      // ── STEP 2b: 電車での通勤距離（Dijkstra展開済み）──
+      // 「○○駅まで電車で△分」「○○まで乗り換えX回で△分」形式。徒歩・bare パターンは対象外
+      if (d.commuteByTrain) {
+        steps.push({
+          num: n++,
+          field: "電車での通勤距離",
+          value: d.commuteByTrain.station + "まで電車で" + d.commuteByTrain.minutes + "分以内",
+          hint: "Dijkstra展開で到達可能な駅を自動選択済み。絞り込み欄への追加入力は不要",
+        });
+      }
+
+      // ── STEP 2c: 乗り換え回数（お客さんが明示した場合のみ）──
+      if (d.transferCount) {
+        steps.push({
+          num: n++,
+          field: "乗り換え回数",
+          value: d.transferCount.text,
+          hint: "通勤ルートの乗り換え回数制限（自動展開時の Dijkstra 探索条件）",
+        });
+      }
+
       // ── STEP 3: 賃料 ──
       if (d.rentMax) {
         steps.push({
@@ -1697,36 +1718,54 @@ const SITE_CONFIG = {
           value: d.walkMin,
           hint: "「駅徒歩」欄に分数を入力",
         },
-        {
-          num: 4,
-          field: "間取り",
-          value: d.floorPlan,
-          hint: "「間取り」セクションのチェックボックスから選択（1R〜5K以上）",
-        },
-        {
-          num: 5,
-          field: "築年数",
-          value: d.buildingAge,
-          hint: "「築年数」欄に数字を入力（例：15 → 15年以内）",
-        },
-        {
-          num: 6,
-          field: "特記設備",
-          value: d.preferences,
-          hint: "バス・トイレ別はサイドバー「バス・トイレ」→「バス・トイレ別」をチェック",
-        },
-        {
-          num: 7,
-          field: "NG条件（確認用）",
-          value: d.ngPoints,
-          hint: "この条件に当てはまる物件は候補から除外",
-        },
-        petNote ? {
-          num: 8,
-          field: "ペット相談",
-          value: "チェックあり",
-          hint: petNote,
-        } : null,
+        // _o: 電車通勤・乗り換え回数で追加されるステップ数（num の基底に加算）
+        ...(function() {
+          const _o = (d.commuteByTrain ? 1 : 0) + (d.transferCount ? 1 : 0);
+          return [
+            d.commuteByTrain ? {
+              num: 4,
+              field: "電車での通勤距離",
+              value: d.commuteByTrain.station + "まで電車で" + d.commuteByTrain.minutes + "分以内",
+              hint: "Dijkstra展開で到達可能な駅を自動選択済み。絞り込み欄への追加入力は不要",
+            } : null,
+            d.transferCount ? {
+              num: 4 + (d.commuteByTrain ? 1 : 0),
+              field: "乗り換え回数",
+              value: d.transferCount.text,
+              hint: "通勤ルートの乗り換え回数制限（自動展開時の探索条件）",
+            } : null,
+            {
+              num: 4 + _o,
+              field: "間取り",
+              value: d.floorPlan,
+              hint: "「間取り」セクションのチェックボックスから選択（1R〜5K以上）",
+            },
+            {
+              num: 5 + _o,
+              field: "築年数",
+              value: d.buildingAge,
+              hint: "「築年数」欄に数字を入力（例：15 → 15年以内）",
+            },
+            {
+              num: 6 + _o,
+              field: "特記設備",
+              value: d.preferences,
+              hint: "バス・トイレ別はサイドバー「バス・トイレ」→「バス・トイレ別」をチェック",
+            },
+            {
+              num: 7 + _o,
+              field: "NG条件（確認用）",
+              value: d.ngPoints,
+              hint: "この条件に当てはまる物件は候補から除外",
+            },
+            petNote ? {
+              num: 8 + _o,
+              field: "ペット相談",
+              value: "チェックあり",
+              hint: petNote,
+            } : null,
+          ];
+        })(),
       ].filter(Boolean).filter((s) => s.value);
     },
   },
@@ -1791,6 +1830,26 @@ const SITE_CONFIG = {
           value: d.walkMin,
           hint: "「駅から徒歩」欄に数字のみ入力（例：10）",
           copyRaw: c.walk_minutes ? String(c.walk_minutes) : null,
+        });
+      }
+
+      // 電車での通勤距離（Dijkstra展開済み）
+      if (d.commuteByTrain) {
+        steps.push({
+          num: n++,
+          field: "電車での通勤距離",
+          value: d.commuteByTrain.station + "まで電車で" + d.commuteByTrain.minutes + "分以内",
+          hint: "Dijkstra展開で到達可能な駅を自動選択済み。絞り込み欄への追加入力は不要",
+        });
+      }
+
+      // 乗り換え回数（お客さんが明示した場合のみ）
+      if (d.transferCount) {
+        steps.push({
+          num: n++,
+          field: "乗り換え回数",
+          value: d.transferCount.text,
+          hint: "通勤ルートの乗り換え回数制限（自動展開時の探索条件）",
         });
       }
 
@@ -1924,6 +1983,27 @@ function buildCondData(c, mode = "pinpoint") {
     areaMax:      c.floor_area_max || null,
     petOk:        c.pet === true,
     walkMin:      c.walk_minutes ? c.walk_minutes + "分以内" : null,
+    commuteByTrain: (function() {
+      const rawText = c.desired_area || c.area || "";
+      // ① 電車/バス 明示パターン「○○まで電車で45分」
+      let m = rawText.match(/([^\s、。,　]{1,10}?)駅?(?:まで|から)(?:電車|バス)で?(\d+)分/);
+      // ② 乗り換えX回+分数パターン「○○まで乗り換え1回で30分」（電車省略でも乗り換え指定なら電車確定）
+      if (!m) m = rawText.match(/([^\s、。,　]{1,10}?)駅?(?:まで|から)乗り換え\d+回[^\d]*(\d+)分/);
+      if (!m) return null;
+      const station = m[1].replace(/^(?:JR|阪急|阪神|南海|近鉄|京阪|大阪メトロ|地下鉄)\s*/, "").trim();
+      const mins = parseInt(m[2], 10);
+      return (station && mins > 0) ? { station: station, minutes: mins } : null;
+    })(),
+    transferCount: (function() {
+      const allText = [c.desired_area, c.area, c.preferences, c.other_requests].filter(Boolean).join(" ");
+      // 直通・乗り換えなし
+      if (/乗り換えなし|乗換なし|直通/.test(allText)) return { transfers: 0, text: "なし（直通）" };
+      // 乗り換えX回 / X回乗り換え（各種表記）
+      const m = allText.match(/(?:乗り換え|乗換え?)(\d+)回|(\d+)回(?:乗り換え|乗換え?)/);
+      if (!m) return null;
+      const n = parseInt(m[1] || m[2], 10);
+      return { transfers: n, text: n + "回以内" };
+    })(),
     buildingAge:  c.building_age ? c.building_age + "年以内" : null,
     initialCost:  c.initial_cost_limit ? formatYen(c.initial_cost_limit) : null,
     moveInTime:   c.move_in_time || null,
@@ -1986,6 +2066,7 @@ let searchMode = "pinpoint"; // "pinpoint" | "wide"
 let currentAreaMode = "ward"; // "station" | "ward" — ボタン押下が絶対ルール（自動判定より優先）
 let _areaModeSource = "auto"; // "auto"=静的/API自動判定, "user"=手動クリック — "user"のときAPIによる上書きを禁止
 let currentAccount = ""; // "" = すべて / "sumora" / "ieyasu" / "giga" / "hasu"
+let currentAreaTypeFilter = ""; // "" = all / "station" = 駅 / "ward" = 地域
 let linkedOnly = true;   // 紐付け済みのみ表示（デフォルトON・初期表示を軽くする）
 let todayOnly  = false;  // 今日対応のみ表示
 const selectedCustomerIds = new Set(); // 一括検索: チェック中の顧客IDセット（文字列）
@@ -2322,12 +2403,49 @@ function openSiteView(customer) {
   } catch (_) { /* ignore（非extension環境での実行対策）*/ }
 
   const d = buildCondData(customer);
-  const chips = [d.area, d.rentRange, d.floorPlan, d.walkMin && "徒歩" + d.walkMin, d.buildingAge && "築" + d.buildingAge]
-    .filter(Boolean);
+
+  // 面積・構造
+  const _areaMinStr = d.areaMin ? d.areaMin + "㎡以上" : null;
+  const _areaMaxStr = d.areaMax ? d.areaMax + "㎡以下" : null;
+  const _areaSizeStr = [_areaMinStr, _areaMaxStr].filter(Boolean).join("〜") || null;
+  const _structure = customer.building_structure || customer.structure || null;
+  // エリアラベル（駅/地域モードで切替）
+  const _areaLabel = (() => {
+    if (!d.area) return "エリア";
+    const _toks = parseAreaTokens(d.area);
+    const _hasSt = _toks.some(t =>
+      STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/,"")] ||
+      (LEARNED_STATION_MAP[t] && LEARNED_STATION_MAP[t].realpro_lines && LEARNED_STATION_MAP[t].realpro_lines.length > 0)
+    );
+    return _hasSt ? "駅" : "地域";
+  })();
+
+  // 条件グリッド（拡張ツールステップと同じ全項目）
+  // full:true → 横幅100%  / 省略 → 2カラム
+  const _condRows = [
+    d.area           && { label: _areaLabel,   value: d.area,          full: true },
+    d.commuteByTrain && { label: "電車通勤",   value: d.commuteByTrain.station + "まで電車" + d.commuteByTrain.minutes + "分以内", full: true },
+    d.transferCount  && { label: "乗り換え",   value: d.transferCount.text },
+    d.rentRange      && { label: "家賃",        value: d.rentRange },
+    d.floorPlan      && { label: "間取り",      value: d.floorPlan },
+    d.walkMin        && { label: "駅徒歩",      value: d.walkMin },
+    d.buildingAge    && { label: "築年数",      value: d.buildingAge },
+    d.moveInTime     && { label: "入居",        value: d.moveInTime },
+    _areaSizeStr     && { label: "面積",        value: _areaSizeStr },
+    d.initialCost    && { label: "初期費用",    value: d.initialCost },
+    _structure       && { label: "構造",        value: _structure },
+    d.petOk          && { label: "ペット",      value: "相談可" },
+    d.preferences    && { label: "希望",        value: d.preferences.length > 80 ? d.preferences.slice(0, 80) + "…" : d.preferences, full: true },
+    d.ngPoints       && { label: "NG",          value: d.ngPoints.length > 60 ? d.ngPoints.slice(0, 60) + "…" : d.ngPoints, full: true },
+    d.otherReqs      && { label: "その他",      value: d.otherReqs.length > 60 ? d.otherReqs.slice(0, 60) + "…" : d.otherReqs, full: true },
+  ].filter(Boolean);
 
   const summaryEl = document.getElementById("conditions-summary");
-  summaryEl.innerHTML = chips.length
-    ? `<div class="cond-chips">${chips.map((ch) => `<span class="cond-chip">${esc(ch)}</span>`).join("")}</div>`
+  const _modeBadge = d.area ? computeAreaModeBadgeHtml(d.area) : "";
+  summaryEl.innerHTML = _condRows.length
+    ? `${_modeBadge ? `<div class="cond-mode-bar">${_modeBadge}</div>` : ""}<div class="cond-grid">${_condRows.map(r =>
+        `<div class="cond-row${r.full ? " full" : ""}"><span class="cond-label">${esc(r.label)}</span><span class="cond-val">${esc(r.value)}</span></div>`
+      ).join("")}</div>`
     : `<div class="cond-empty">物件条件が未登録です。先に物件条件ページで登録してください。</div>`;
 
   // 追加条件の表示・最新条件ボタン
@@ -3893,17 +4011,40 @@ function buildCopyAll(siteName, steps, c) {
   return lines.join("\n");
 }
 
-// ── Search + Account + Linked filter ──────────────────────────────
+// ── エリアタイプ判定（駅/地域フィルター用）─────────────────────────────
+// DB の area_mode を優先。auto / 未設定時はテキストを classifyAreaTokens で判定。
+// 混在（地域も駅も含む）お客さんは station も ward も true になる。
+function customerMatchesAreaTypeFilter(c, filterMode) {
+  const areaMode = c.area_mode || "auto";
+  if (filterMode === "station") {
+    if (areaMode === "station") return true;
+    if (areaMode === "ward")    return false;
+  } else if (filterMode === "ward") {
+    if (areaMode === "ward")    return true;
+    if (areaMode === "station") return false;
+  }
+  // auto / 不明 → テキストで判定（混在お客さんは両方ヒット）
+  const rawArea = (c.desired_area || c.area || "").trim();
+  if (!rawArea) return false;
+  const toks = parseAreaTokens(rawArea);
+  const cl = classifyAreaTokens(toks);
+  return filterMode === "station" ? cl.hasStation : cl.hasArea;
+}
+
+// ── Search + Account + AreaType + Linked filter ────────────────────
 function getFilteredCustomers(q) {
   let result = allCustomers;
   if (currentAccount === "__needs_action__") {
-    // 要対応タブ：アプリの「要対応」と同基準（linked_conversation.is_flagged===true かつ申込後ステータス以外）
     result = result.filter(needsActionToday);
   } else {
     if (currentAccount) result = result.filter((c) => (c.account || "") === currentAccount);
     if (linkedOnly) result = result.filter((c) => c.is_linked);
   }
-  if (todayOnly)  result = result.filter(needsActionToday);
+  if (todayOnly) result = result.filter(needsActionToday);
+  // 駅/地域フィルター（混在お客さんは両方に表示）
+  if (currentAreaTypeFilter) {
+    result = result.filter((c) => customerMatchesAreaTypeFilter(c, currentAreaTypeFilter));
+  }
   if (q && q.trim()) {
     const kw = q.trim().toLowerCase();
     result = result.filter((c) =>
@@ -3972,12 +4113,11 @@ function _initStaffModeUI() {
     chrome.storage.local.get(["staffMode"], function(res) {
       var on = !!(res && res.staffMode);
       _renderStaffMode(on);
-      // ポップアップ起動時にスタッフモードONなら要対応タブをデフォルトに
+      // ポップアップ起動時にスタッフモードONなら要対応をデフォルトに
       if (on) {
-        document.querySelectorAll(".acct-btn:not(#linked-filter-btn)").forEach(function(b) { b.classList.remove("active"); });
-        var nat = document.getElementById("needs-action-tab");
-        if (nat) nat.classList.add("active");
         currentAccount = "__needs_action__";
+        var _acctSel0 = document.getElementById("acct-select");
+        if (_acctSel0) _acctSel0.value = "__needs_action__";
       }
     });
     // 他のpopupインスタンス（サイドパネル/各タブのアンダーバー）での切替・TTL自動OFFを同期
@@ -3993,12 +4133,11 @@ function _initStaffModeUI() {
       try {
         chrome.storage.local.set({ staffMode: next, staffModeAt: next ? Date.now() : null });
       } catch (_) { /* ignore */ }
-      // スタッフモードON → 要対応タブへ自動切替
+      // スタッフモードON → 要対応へ自動切替
       if (next) {
-        document.querySelectorAll(".acct-btn:not(#linked-filter-btn)").forEach(function(b) { b.classList.remove("active"); });
-        var nat = document.getElementById("needs-action-tab");
-        if (nat) nat.classList.add("active");
         currentAccount = "__needs_action__";
+        var _acctSel1 = document.getElementById("acct-select");
+        if (_acctSel1) _acctSel1.value = "__needs_action__";
         filterCustomers(document.getElementById("search-input").value);
       }
     });
@@ -4257,11 +4396,24 @@ document.addEventListener("DOMContentLoaded", () => {
     filterCustomers(e.target.value);
   });
 
-  document.querySelectorAll(".acct-btn:not(#linked-filter-btn)").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".acct-btn:not(#linked-filter-btn)").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentAccount = btn.dataset.acct;
+  document.getElementById("acct-select")?.addEventListener("change", (e) => {
+    currentAccount = e.target.value;
+    filterCustomers(document.getElementById("search-input").value);
+  });
+
+  // ── 駅/地域フィルターボタン（トグル式・排他選択）──────────────────────────
+  ["filter-station-btn", "filter-ward-btn"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("click", () => {
+      const mode = id === "filter-station-btn" ? "station" : "ward";
+      if (currentAreaTypeFilter === mode) {
+        // 同じボタンを再クリック → 解除（すべて表示）
+        currentAreaTypeFilter = "";
+        document.getElementById(id).classList.remove("active");
+      } else {
+        currentAreaTypeFilter = mode;
+        document.getElementById("filter-station-btn").classList.toggle("active", mode === "station");
+        document.getElementById("filter-ward-btn").classList.toggle("active", mode === "ward");
+      }
       filterCustomers(document.getElementById("search-input").value);
     });
   });

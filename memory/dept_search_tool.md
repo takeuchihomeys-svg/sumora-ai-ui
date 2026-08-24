@@ -123,6 +123,7 @@ classifyAreaTokens の結果を受けてグローバルモード（駅 or 地域
 
 | 日付 | 内容 |
 |---|---|
+| 2026-08-24 | **電車での通勤距離ステップ追加**: `buildCondData()`に`commuteByTrain`フィールド追加（`desired_area`から「○○駅まで電車で△分」正規表現でパース）。realpro/itandi/reinsの手順ステップに「電車での通勤距離: 北加賀屋まで電車で45分以内」を表示。徒歩パターン・bareパターンは対象外（電車/バスキーワード必須）。Dijkstra展開済みなので絞り込み欄への追加入力不要と案内。 |
 | 2026-08-24 | **物件検索ブレイン: classifyAreaTokens で仕分け担当を強化（commit 741dd11b）**: 駅/地域の分類を6段階シグナルで独立判定。JR/阪急プレフィックスを最強シグナルに。STATION_LINE_MAP にある駅名は NEIGHBORHOOD_WARD_MAP に登録されていても駅優先（十三・平野 等）。コンテキスト多数決で曖昧トークン解決。 |
 | 2026-08-24 | **物件検索ブレイン: 能勢電鉄/谷町線全駅誤選択バグ修正**: ①popup-maps.js: 「平野」を谷町線のみに修正（能勢電鉄平野は川西市の別駅）②popup.js decomposeToken第4フォールバック: 「谷町線駒川中野」→`["谷町線","駒川中野"]`が全線展開するバグを修正、`[stk]`のみ返す（路線名を除去） |
 | 2026-08-24 | **setupAreaModeSelector null クラッシュ修正**: underbarモードのバルク検索中に`area-mixed-notice`のnullアクセスでボタンが押せなくなるバグを修正。currentAreaMode の設定をDOM要素ルックアップより前に移動し、null時はUIスキップして続行。 |

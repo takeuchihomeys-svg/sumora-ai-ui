@@ -81,15 +81,23 @@ body {
 .search-wrap input::placeholder { color: #adb5bd; }
 
 .account-filter {
-  display: flex; gap: 5px; padding: 6px 10px;
-  background: white; border-bottom: 1px solid #e9edef;
-  flex-shrink: 0; overflow-x: auto;
+  display: flex; gap: 5px; padding: 6px 10px; align-items: center;
+  background: white; border-bottom: 1px solid #e9edef; flex-shrink: 0;
 }
-.account-filter::-webkit-scrollbar { display: none; }
-.acct-btn {
-  flex-shrink: 0; padding: 4px 11px; border-radius: 12px;
+/* アカウント選択ドロップダウン */
+.acct-select {
+  flex: 1; min-width: 0;
+  padding: 5px 8px; border-radius: 10px;
   border: 1px solid #d0d7de; background: #f6f8fa;
-  font-size: 12px; color: #555; cursor: pointer; white-space: nowrap;
+  font-size: 12px; color: #1565C0; font-weight: 600; cursor: pointer;
+  appearance: auto;
+}
+.acct-select:focus { outline: none; border-color: #1565C0; background: #e3f2fd; }
+/* 紐付け・見積書ボタン */
+.acct-btn {
+  flex-shrink: 0; padding: 4px 9px; border-radius: 12px;
+  border: 1px solid #d0d7de; background: #f6f8fa;
+  font-size: 11px; color: #555; cursor: pointer; white-space: nowrap;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .acct-btn.active {
@@ -97,8 +105,18 @@ body {
 }
 .linked-btn { border-color: #10b981; color: #047857; background: #f0fdf4; }
 .linked-btn.active { background: #059669; color: white; border-color: #059669; }
-#needs-action-tab { border-color: #ff9800; color: #e65100; background: #fff3e0; font-weight: 600; }
-#needs-action-tab.active { background: #f57c00; color: white; border-color: #f57c00; }
+.est-btn { background: #1565C0; color: white; border-color: #1565C0; }
+/* 駅/地域フィルターボタン */
+.area-type-btn {
+  flex-shrink: 0; padding: 4px 10px; border-radius: 12px;
+  border: 1px solid #d0d7de; background: #f6f8fa;
+  font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+#filter-ward-btn         { color: #2e7d32; border-color: #a5d6a7; background: #f1f8e9; }
+#filter-ward-btn.active  { background: #2e7d32; color: white; border-color: #2e7d32; }
+#filter-station-btn         { color: #1565c0; border-color: #90caf9; background: #e3f2fd; }
+#filter-station-btn.active  { background: #1565c0; color: white; border-color: #1565c0; }
 
 #customer-list { overflow-y: auto; flex: 1; }
 
@@ -254,6 +272,29 @@ body {
   padding: 10px 12px;
   background: #e3f2fd; border-radius: 10px; border: 1px solid #bbdefb;
 }
+
+/* エリアモードバッジバー */
+.cond-mode-bar { display: flex; gap: 5px; margin-bottom: 7px; }
+.cond-mode-bar .area-mode-badge { margin-left: 0; font-size: 10px; padding: 2px 8px; }
+
+/* 条件グリッド（2カラム wrapping） */
+.cond-grid { display: flex; flex-wrap: wrap; gap: 5px 10px; }
+.cond-row {
+  display: flex; align-items: baseline; gap: 5px;
+  flex: 0 0 calc(50% - 5px);
+  min-width: 0;
+}
+.cond-row.full { flex: 0 0 100%; }
+.cond-label {
+  font-size: 10px; color: #78909c; font-weight: 700;
+  min-width: 38px; flex-shrink: 0; white-space: nowrap;
+}
+.cond-val {
+  font-size: 11px; color: #1565c0; font-weight: 600;
+  word-break: break-word; overflow-wrap: anywhere;
+}
+
+/* 旧チップ（削除予定・互換維持） */
 .cond-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .cond-chip {
   background: white; border: 1px solid #90caf9;
