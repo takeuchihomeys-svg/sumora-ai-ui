@@ -1178,16 +1178,20 @@ ${SMORA_COMMON_RULES}`;
             if (!rentMax || rentMax <= 0) return [];
             let q = supabase
               .from("property_selection_patterns")
-              .select("selling_points")
+              .select("selling_points, property_customer_id")
               .eq("customer_reaction", "interested")
               .gte("customer_rent_max", Math.round(rentMax * 0.85))
               .lte("customer_rent_max", Math.round(rentMax * 1.15))
-              .limit(40);
+              .limit(200);
             if (floorPlan) q = q.eq("customer_floor_plan", floorPlan);
             const { data: pspRows } = await q;
             if (!pspRows || pspRows.length === 0) return [];
             const counts: Record<string, number> = {};
+            const seenPerCustomer: Record<string, number> = {};
             for (const row of pspRows) {
+              const cid = (row.property_customer_id as string) ?? "__unknown__";
+              if ((seenPerCustomer[cid] ?? 0) >= 5) continue;
+              seenPerCustomer[cid] = (seenPerCustomer[cid] ?? 0) + 1;
               for (const pt of ((row.selling_points as string[]) ?? [])) {
                 counts[pt] = (counts[pt] ?? 0) + 1;
               }

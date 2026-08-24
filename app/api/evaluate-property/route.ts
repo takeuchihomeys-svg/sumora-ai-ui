@@ -245,16 +245,20 @@ export async function POST(req: NextRequest) {
     if (customerRentMax && customerRentMax > 0) {
       let q = supabase
         .from("property_selection_patterns")
-        .select("selling_points")
+        .select("selling_points, property_customer_id")
         .eq("customer_reaction", "interested")
         .gte("customer_rent_max", Math.round(customerRentMax * 0.85))
         .lte("customer_rent_max", Math.round(customerRentMax * 1.15))
-        .limit(40);
+        .limit(200);
       if (customerFloorPlan) q = q.eq("customer_floor_plan", customerFloorPlan);
       const { data: pspRows } = await q;
       if (pspRows && pspRows.length > 0) {
         const counts: Record<string, number> = {};
+        const seenPerCustomer: Record<string, number> = {};
         for (const row of pspRows) {
+          const cid = (row.property_customer_id as string) ?? "__unknown__";
+          if ((seenPerCustomer[cid] ?? 0) >= 5) continue;
+          seenPerCustomer[cid] = (seenPerCustomer[cid] ?? 0) + 1;
           for (const pt of ((row.selling_points as string[]) ?? [])) {
             counts[pt] = (counts[pt] ?? 0) + 1;
           }
