@@ -1015,15 +1015,20 @@
         }
       }
     }
-    if (cond.rp_update_days) {
+    {
       // 更新日フィルター（update_date select: 1/3/7/14日以内）
-      // 検索フォームページにのみ存在するため、存在確認してからセット
+      // 検索フォームページにのみ存在するため、存在確認してからセット。
+      // rp_update_days が null（新規顧客・初回物件出し前）の場合は
+      // 前の顧客の選択値が残らないよう "" にリセットする。
       var updEl = document.querySelector('select[name="update_date"]');
       if (updEl) {
-        queueSelVal("update_date", String(cond.rp_update_days));
-        console.log("[AX] 更新日セット:", cond.rp_update_days + "日以内");
-      } else {
-        console.log("[AX] 更新日フィールド未検出（検索フォームページ以外）");
+        if (cond.rp_update_days) {
+          queueSelVal("update_date", String(cond.rp_update_days));
+          console.log("[AX] 更新日セット:", cond.rp_update_days + "日以内");
+        } else {
+          queueSelVal("update_date", "");
+          console.log("[AX] 更新日リセット（新規顧客 or 未設定）");
+        }
       }
     }
 
