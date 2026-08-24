@@ -624,10 +624,14 @@ function parseAreaTokens(rawArea) {
     .replace(/([^\s,、・\/～〜]+?)あたりから([^\s,、・\/～〜]+?)あたりまで/g, "$1,$2")
     .replace(/([^\s,、・\/～〜]+?)から([^\s,、・\/～〜]+?)まで/g, "$1,$2")
     .replace(/([^\s,、・\/]+?)[〜～]([^\s,、・\/]+)/g, function(match, from, to) {
-      const range = expandStationRange(from, to);
-      if (range && range.length > 1) return range.join(",");
-      // 中間駅が見つからない場合は両端のみ（あたりサフィックスを除去）
-      return from.replace(/駅$|あたり$/g, "").trim() + "," + to.replace(/駅$|あたり$/g, "").trim();
+      const fromClean = from.replace(/駅$|あたり$/g, "").trim();
+      const toClean   = to.replace(/駅$|あたり$/g, "").trim();
+      const intermediate = expandStationRange(fromClean, toClean);
+      // 中間駅があれば「布施,河内永和,河内小阪,八戸ノ里」のように両端+中間を展開
+      if (intermediate && intermediate.length > 0) {
+        return [fromClean, ...intermediate, toClean].join(",");
+      }
+      return fromClean + "," + toClean;
     })
     // 「Aか B」「AやB」「AまたはB」→ カンマ区切りに変換（例:「豊崎か北区」→「豊崎,北区」）
     .replace(/([^\s,、・\/～〜]{1,10})\s*[かや]\s*([^\s,、・\/～〜]{1,10})/g, "$1,$2");
@@ -740,27 +744,6 @@ function findStationLines(areaText) {
   return STATION_LINE_MAP[normalized] || STATION_LINE_MAP[areaText] || null;
 }
 
-// 「駅A〜駅B」表記を LINE_STATION_ORDER から区間内の全駅に展開（路線名不要版）
-// の/ノ・ヶ/ケ の表記ゆれと事業者プレフィックスを正規化してマッチング
-function expandStationRange(fromStation, toStation) {
-  const norm = s => s
-    .replace(/駅$|あたり$/g, "")
-    .replace(/の/g, "ノ").replace(/ヶ/g, "ケ")
-    .replace(/^(?:JR|近鉄|阪急|阪神|南海|京阪)\s*/, "")
-    .trim();
-  const fromNorm = norm(fromStation), toNorm = norm(toStation);
-  if (!fromNorm || !toNorm || fromNorm === toNorm) return null;
-  if (typeof LINE_STATION_ORDER === "undefined") return null;
-  for (const stations of Object.values(LINE_STATION_ORDER)) {
-    const fromIdx = stations.findIndex(s => norm(s) === fromNorm);
-    const toIdx   = stations.findIndex(s => norm(s) === toNorm);
-    if (fromIdx !== -1 && toIdx !== -1) {
-      const lo = Math.min(fromIdx, toIdx), hi = Math.max(fromIdx, toIdx);
-      return stations.slice(lo, hi + 1);
-    }
-  }
-  return null;
-}
 
 // 「路線名（駅A〜駅B）」の区間内駅リストを LINE_STATION_ORDER から取得
 // 駅名のJR・阪急等のプレフィックスを正規化して曖昧一致（野江→JR野江）
@@ -1069,21 +1052,36 @@ function getExpandedStations(startStation) {
   }
 }
 
-// 「AからBまで」範囲指定の中間駅を展開する
+// 「AからBまで」範囲指定の中間駅を展開する（両端は含まない）
+// - 駅名を正規化（あたり/駅 除去・の→ノ・ヶ→ケ・鉄道会社プレフィックス除去）してマッチング
 // ① 同一路線上に両駅がある → その間の全駅を返す
 // ② ない場合 → 1ホップ探索（A路線の駅 X が B路線にも属する → X〜Bの中間駅を返す）
 function expandStationRange(stationA, stationB) {
-  const result = [];
-  const linesA = STATION_LINE_MAP[stationA] || LEARNED_STATION_MAP[stationA]?.realpro_lines || [];
-  const linesB = STATION_LINE_MAP[stationB] || LEARNED_STATION_MAP[stationB]?.realpro_lines || [];
-
+  const norm = s => s
+    .replace(/駅$|あたり$/g, "")
+    .replace(/の/g, "ノ").replace(/ヶ/g, "ケ")
+    .replace(/^(?:JR|近鉄|阪急|阪神|南海|京阪|大阪メトロ|地下鉄)\s*/, "")
+    .trim();
+  const normA = norm(stationA), normB = norm(stationB);
+  if (!normA || !normB || normA === normB) return [];
+  // 正規化後の名前で STATION_LINE_MAP のキーを逆引き
+  const findKey = (n) => STATION_LINE_MAP[n]
+    ? n
+    : (Object.keys(STATION_LINE_MAP).find(k => norm(k) === n) || null);
+  const keyA = findKey(normA) || stationA;
+  const keyB = findKey(normB) || stationB;
+  const linesA = STATION_LINE_MAP[keyA] || LEARNED_STATION_MAP[stationA]?.realpro_lines || [];
+  const linesB = STATION_LINE_MAP[keyB] || LEARNED_STATION_MAP[stationB]?.realpro_lines || [];
   const getOrder = (line) => LINE_STATION_ORDER[line] || LEARNED_LINE_ORDER[line] || [];
+  // 路線配列上のインデックスを正規化マッチで検索
+  const findIdx = (order, n) => order.findIndex(s => norm(s) === n);
+  const result = [];
 
   // ① 直接共通路線
   for (const line of linesA) {
     if (!linesB.includes(line)) continue;
     const order = getOrder(line);
-    const idxA = order.indexOf(stationA), idxB = order.indexOf(stationB);
+    const idxA = findIdx(order, normA), idxB = findIdx(order, normB);
     if (idxA === -1 || idxB === -1) continue;
     const from = Math.min(idxA, idxB), to = Math.max(idxA, idxB);
     for (let i = from + 1; i < to; i++) {
@@ -1095,15 +1093,15 @@ function expandStationRange(stationA, stationB) {
   // ② 1ホップ探索: A側の各路線を走査して B側の路線につながる中間駅を探す
   for (const lineA of linesA) {
     const orderA = getOrder(lineA);
-    const idxA = orderA.indexOf(stationA);
+    const idxA = findIdx(orderA, normA);
     if (idxA === -1) continue;
     for (const mid of orderA) {
-      if (mid === stationA) continue;
+      if (norm(mid) === normA) continue;
       const linesMid = STATION_LINE_MAP[mid] || LEARNED_STATION_MAP[mid]?.realpro_lines || [];
       for (const lineMid of linesMid) {
         if (!linesB.includes(lineMid)) continue;
         const orderMid = getOrder(lineMid);
-        const idxMid = orderMid.indexOf(mid), idxB = orderMid.indexOf(stationB);
+        const idxMid = findIdx(orderMid, norm(mid)), idxB = findIdx(orderMid, normB);
         if (idxMid === -1 || idxB === -1) continue;
         if (!result.includes(mid)) result.push(mid);
         const from = Math.min(idxMid, idxB), to = Math.max(idxMid, idxB);
