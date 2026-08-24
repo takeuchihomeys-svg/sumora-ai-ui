@@ -1008,7 +1008,7 @@ export async function analyzeConversation(
               supabase.rpc("match_reply_knowledge", {
                 query_embedding: qEmb,
                 match_count: 30,
-                min_importance: 7,
+                min_importance: 8,
               }),
             ]);
             ragCheckpoints = ((cpRes as { data: unknown }).data ?? []) as typeof ragCheckpoints;
