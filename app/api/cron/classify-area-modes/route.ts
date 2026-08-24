@@ -51,26 +51,45 @@ function tokenizeArea(raw: string): string[] {
     .filter(t => t.length >= 2 && !/^[0-9０-９]/.test(t));
 }
 
-// ── 1トークンが駅かどうか判定（resolve-area と同一知識源）─────────────────
-function isStation(
+// ── 1トークンの分類シグナルを判定（Chrome拡張 classifyAreaTokens と同じ優先順）
+// シグナル:
+//   "station" … 鉄道会社プレフィックス / 〜線 / DB(line_stations・station_map)で確認できる駅名
+//   "area"    … 市区郡サフィックス / DB(region_map)で確認できる地域名
+//   "unknown" … どちらにも当たらない
+type TokenType = "station" | "area" | "unknown";
+
+function classifyToken(
   token: string,
-  { stationNames, learnedStations }: { stationNames: Set<string>; learnedStations: Set<string> }
-): boolean {
+  knowledge: { stationNames: Set<string>; learnedStations: Set<string>; learnedRegions: Set<string> }
+): TokenType {
+  // ① 鉄道会社プレフィックス → 駅（明確）
+  if (PFX_RE.test(token)) return "station";
+  // ② 〜線で終わる → 路線（駅系）
+  if (token.endsWith("線")) return "station";
+  // ③ 市区郡サフィックス → 地域（明確）
+  if (/[市区郡]$/.test(token)) return "area";
+
+  // の→ノ・ヶ→ケ の表記ゆれを正規化してDBと突合
+  const normKana = token.replace(/の/g, "ノ").replace(/ヶ/g, "ケ");
   const variants = [
     token,
+    normKana,
     token.replace(/[町村]$/, ""),
+    normKana.replace(/[町村]$/, ""),
     token.replace(PFX_RE, ""),
     token.replace(PFX_RE, "").replace(/[町村]$/, ""),
   ];
-  return variants.some(v => stationNames.has(v) || learnedStations.has(v));
-}
 
-// ── 1トークンが地域かどうか判定 ────────────────────────────────────────────
-function isRegion(
-  token: string,
-  { learnedRegions }: { learnedRegions: Set<string> }
-): boolean {
-  return learnedRegions.has(token) || learnedRegions.has(token + "市");
+  // ④ line_stations / station_map に存在 → 駅
+  const inStation = variants.some(v => knowledge.stationNames.has(v) || knowledge.learnedStations.has(v));
+  // ⑤ region_map に存在（市サフィックス補完含む）→ 地域
+  const inRegion = knowledge.learnedRegions.has(token) || knowledge.learnedRegions.has(token + "市")
+    || knowledge.learnedRegions.has(normKana);
+
+  if (inStation && !inRegion) return "station";
+  if (!inStation && inRegion) return "area";
+  if (inStation && inRegion)  return "station"; // 両方ヒット → 駅優先（Chrome拡張と同じルール）
+  return "unknown";
 }
 
 export async function GET(req: NextRequest) {
@@ -110,21 +129,32 @@ export async function GET(req: NextRequest) {
     if (!rawArea) continue;
 
     const tokens = tokenizeArea(rawArea);
-    // 路線名トークン（〜線）は駅でも地域でもないためカウントから除外
-    const meaningful = tokens.filter(t => !t.endsWith("線"));
-    if (meaningful.length === 0) continue;
+    if (tokens.length === 0) continue;
 
-    const stCount = meaningful.filter(t => isStation(t, knowledge)).length;
-    const rgCount = meaningful.filter(t => isRegion(t, knowledge)).length;
+    // 各トークンを独立分類
+    const classified = tokens.map(t => classifyToken(t, knowledge));
+    const stCount = classified.filter(t => t === "station").length;
+    const rgCount = classified.filter(t => t === "area").length;
+    const unkCount = classified.filter(t => t === "unknown").length;
+
+    // 曖昧トークンのコンテキスト解決（Chrome拡張の多数決と同じルール）
+    // unknown が station・area どちらかに引き寄せられる（同数は駅優先）
+    const resolvedStCount = stCount + (stCount >= rgCount ? unkCount : 0);
+    const resolvedRgCount = rgCount + (rgCount > stCount ? unkCount : 0);
 
     // 駅が1つでも → station / 地域のみ → ward / 全不明 → auto のまま
-    // 混在（駅+市レベル地名）でも駅優先: 市レベルは文脈、駅のほうが検索精度が高い
-    if (stCount > 0) {
+    // 混在（駅+区レベル地名）でも区優先: Chrome拡張の setupAreaModeSelector と同じルール
+    const hasSpecificWard = tokens.some((t, i) =>
+      classified[i] === "area" && /[区郡]$/.test(t)
+    );
+    if (resolvedStCount > 0 && !hasSpecificWard) {
       updates.push({ id: c.id, area_mode: "station" });
-    } else if (rgCount > 0) {
+    } else if (resolvedStCount > 0 && hasSpecificWard) {
+      updates.push({ id: c.id, area_mode: "ward" }); // 駅+区レベル地域の混在 → ward優先
+    } else if (resolvedRgCount > 0) {
       updates.push({ id: c.id, area_mode: "ward" });
     }
-    // 全不明 (stCount=0 && rgCount=0) は auto のまま
+    // 全不明 は auto のまま
   }
 
   // ④ バッチ更新
@@ -137,7 +167,7 @@ export async function GET(req: NextRequest) {
     if (!ue) updated++;
   }
 
-  const log = `[classify-area-modes] ${customers.length}件チェック → station:${updates.filter(u => u.area_mode === "station").length}件 ward:${updates.filter(u => u.area_mode === "ward").length}件 更新`;
+  const log = `[classify-area-modes] ${customers.length}件チェック → station:${updates.filter(u => u.area_mode === "station").length}件 ward:${updates.filter(u => u.area_mode === "ward").length}件 更新（の→ノ正規化・市区郡判定・コンテキスト多数決 適用済み）`;
   console.log(log);
   return NextResponse.json({
     checked: customers.length,
