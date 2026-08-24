@@ -1018,7 +1018,7 @@ export async function analyzeConversation(
             const [wpRagResult, tplRagResult] = await Promise.all([
               supabase.rpc("match_winning_patterns", {
                 query_embedding: qEmb,
-                match_count: 5,
+                match_count: 9,
                 min_importance: 8,
               }),
               // templates RAG: 会話フェーズ・戦略に最も近いテンプレを取得（バルクフェッチ廃止）
