@@ -342,11 +342,22 @@ export async function POST(req: NextRequest) {
       const hasConditionChange = msgLines.some((l) => COND_RE.test(l) && ACT_RE.test(l));
       const hasPickupRequest = msgLines.some((l) => PICKUP_RE.test(l));
 
+      // ③ スタッフが申込フォーム説明を送った直後のお客様の短い確認質問
+      // 例：「住居年数・勤務先名・携帯番号…」→「今の就職先ですか？？」
+      // → フォームはまだ記入していない段階。送付催促は絶対NG。質問に端的に答えるだけ。
+      const APPLY_FORM_RE = /住居年数|携帯番号|続柄|勤務先名|勤務先所在地|現住所|本人確認書類|運転免許証|マイナンバー|お申込|申込フォーム|入居審査|緊急連絡先|保証人/;
+      const lastStaffMsgText = recentMsgs.filter((m) => m.sender === "staff" && !m.isAix).at(-1)?.text ?? "";
+      const staffJustSentFormInfo = APPLY_FORM_RE.test(lastStaffMsgText);
+      const isShortClarifyingQ = targetMessage.trim().length < 40 && /[？?]|ですか|でしょうか|でいい|でもいい/.test(targetMessage);
+
       let replyHint = "";
       // first_reply は phase_guide の パターンA が最適対応（挨拶+条件復唱+ピックアップ宣言）
       // replyHint を渡すと指定生成モード「2〜3行制限」が発動してパターンAが潰されるため除外
       if (effectiveState !== "first_reply") {
-        if (isBulletConditions) {
+        if (staffJustSentFormInfo && isShortClarifyingQ) {
+          // ③ 申込説明直後の確認質問：送付催促・フォーム記入促進は絶対に書かない
+          replyHint = `【⚠️ 申込フォーム説明への確認質問】スタッフが直前に申込必要書類を案内済み。お客様はフォームをまだ記入していない段階での確認質問。「記入完了したら送ってください」「お送りください」等の送付催促は絶対に書かない。質問に端的に答えるだけでよい。`;
+        } else if (isBulletConditions) {
           replyHint = `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${shortLines.slice(0, 8).join("・")}`;
         } else if (hasConditionChange || hasPickupRequest) {
           replyHint = `【条件変更/ピックアップ依頼（追加質問禁止・変更内容を具体的に言葉にして即行動宣言）】${msgLines.join("・")}`;
