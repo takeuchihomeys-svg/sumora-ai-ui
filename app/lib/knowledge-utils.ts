@@ -148,6 +148,58 @@ export async function extractPropertyDetailsFromImage(imageUrl: string): Promise
   }
 }
 
+// ─── GPT-5.4-nano で推薦理由を抽出 ──────────────────────────────────────────
+// eval-customer-reaction cron から呼び出し。AIXオススメ文の「なぜ推薦したか」を要約。
+export async function extractRecommendationReason(generatedText: string): Promise<string | null> {
+  const rawKey = process.env.OPENAI_API_KEY ?? "";
+  const apiKey = rawKey.charCodeAt(0) === 0xFEFF ? rawKey.slice(1) : rawKey;
+  if (!apiKey || !generatedText.trim()) return null;
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-5.4-nano",
+        max_tokens: 80,
+        messages: [{
+          role: "user",
+          content: `以下の物件オススメ文から「なぜこの物件をこのお客さんに推薦したか」を40字以内で要約してください。理由のみ返してください。\n\n${generatedText.slice(0, 600)}`,
+        }],
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    return data.choices?.[0]?.message?.content?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── suggested_aix_meta からお客さんプロファイルタグを導出（API不要）────────
+// 「費用重視」「通勤重視」等のタグを正規表現で抽出し、動的スコアリングに使う。
+export function deriveCustomerProfileTags(
+  meta: { closing_strategy?: string | null; key_topics?: string[] | null; preferences?: string | null } | null,
+  customerPreferences?: string | null
+): string[] {
+  const text = [
+    meta?.closing_strategy,
+    ...(meta?.key_topics ?? []),
+    meta?.preferences,
+    customerPreferences,
+  ].filter(Boolean).join(" ");
+  if (!text) return [];
+  const tags: string[] = [];
+  if (/費用|初期費用|敷礼|安く|節約|お得/.test(text))       tags.push("費用重視");
+  if (/通勤|駅|アクセス|電車/.test(text))                   tags.push("通勤重視");
+  if (/広|収納|部屋数|広さ|スペース/.test(text))             tags.push("広さ重視");
+  if (/築|新しい|きれい|リノベ|新築/.test(text))             tags.push("築浅重視");
+  if (/ペット|猫|犬/.test(text))                            tags.push("ペット重視");
+  if (/静か|住宅街|閑静|落ち着/.test(text))                  tags.push("静かな立地");
+  if (/在宅|テレワーク|リモート|仕事部屋/.test(text))         tags.push("在宅勤務");
+  return tags;
+}
+
 export type UpsertKnowledgeParams = {
   title: string;
   content: string;

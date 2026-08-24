@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { extractRecommendationReason, deriveCustomerProfileTags } from "@/app/lib/knowledge-utils";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 // ── セリングポイント抽出（オススメ文 → タグ配列）─────────────────────────────
@@ -442,15 +443,17 @@ export async function POST(req: NextRequest) {
           .select("id, conversation_id, generated_text, created_at")
           .in("id", propRecLogIds);
 
-        // conversation_id → property_customer_id を解決
+        // conversation_id → property_customer_id + suggested_aix_meta を解決
         const prConvIds = [...new Set((propRecRows ?? []).map(r => r.conversation_id as string))];
         const { data: prConvRows } = await supabase
           .from("conversations")
-          .select("id, property_customer_id")
+          .select("id, property_customer_id, suggested_aix_meta")
           .in("id", prConvIds);
         const convToPcId = new Map<string, string>();
+        const convToMeta = new Map<string, Record<string, unknown> | null>();
         for (const c of (prConvRows ?? [])) {
           if (c.property_customer_id) convToPcId.set(c.id as string, c.property_customer_id as string);
+          convToMeta.set(c.id as string, (c.suggested_aix_meta as Record<string, unknown> | null) ?? null);
         }
 
         // 顧客条件を一括取得
@@ -472,6 +475,17 @@ export async function POST(req: NextRequest) {
         const reactedSet  = new Set(reactedIds);
         const notReactedSet = new Set(notReactedIds);
 
+        // 推薦理由をバッチ抽出（GPT-5.4-nano・並列・既存レコードはスキップ）
+        const reasonMap = new Map<string, string | null>();
+        await Promise.all(
+          (propRecRows ?? [])
+            .filter(row => !existingIds.has(row.id as string) && (row.generated_text as string))
+            .map(async row => {
+              const reason = await extractRecommendationReason((row.generated_text as string) ?? "").catch(() => null);
+              reasonMap.set(row.id as string, reason);
+            })
+        );
+
         for (const row of (propRecRows ?? [])) {
           const logId = row.id as string;
           if (existingIds.has(logId)) continue;
@@ -486,17 +500,27 @@ export async function POST(req: NextRequest) {
 
           const sellingPoints = extractSellingPoints((row.generated_text as string) ?? "");
 
+          // プロファイルタグをブレインmetaから導出
+          const meta = convToMeta.get(row.conversation_id as string) as {
+            closing_strategy?: string | null;
+            key_topics?: string[] | null;
+            preferences?: string | null;
+          } | null;
+          const profileTags = deriveCustomerProfileTags(meta, (pc.preferences as string | null) ?? null);
+
           const { error: pspErr } = await supabase.from("property_selection_patterns").insert({
-            property_customer_id:  pcId,
-            conversation_id:       row.conversation_id as string,
-            aix_usage_log_id:      logId,
-            customer_rent_max:     (pc.rent_max as number | null) ?? (pc.max_rent as number | null) ?? null,
-            customer_floor_plan:   (pc.floor_plan as string | null) ?? (pc.layout as string | null) ?? null,
-            customer_walk_minutes: (pc.walk_minutes as number | null) ?? null,
-            customer_area:         (pc.desired_area as string | null) ?? (pc.area as string | null) ?? null,
-            customer_preferences:  (pc.preferences as string | null) ?? null,
-            selling_points:        sellingPoints,
-            customer_reaction:     reaction,
+            property_customer_id:    pcId,
+            conversation_id:         row.conversation_id as string,
+            aix_usage_log_id:        logId,
+            customer_rent_max:       (pc.rent_max as number | null) ?? (pc.max_rent as number | null) ?? null,
+            customer_floor_plan:     (pc.floor_plan as string | null) ?? (pc.layout as string | null) ?? null,
+            customer_walk_minutes:   (pc.walk_minutes as number | null) ?? null,
+            customer_area:           (pc.desired_area as string | null) ?? (pc.area as string | null) ?? null,
+            customer_preferences:    (pc.preferences as string | null) ?? null,
+            selling_points:          sellingPoints,
+            customer_reaction:       reaction,
+            recommendation_reason:   reasonMap.get(logId) ?? null,
+            customer_profile_tags:   profileTags.length > 0 ? profileTags : null,
           });
           if (!pspErr) pspInserted++;
           else console.warn("[eval-customer-reaction] psp insert失敗:", pspErr.message, "logId:", logId);

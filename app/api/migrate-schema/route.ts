@@ -2328,6 +2328,9 @@ CREATE TABLE IF NOT EXISTS property_selection_patterns (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE property_selection_patterns DISABLE ROW LEVEL SECURITY;
+-- 推薦理由（GPT-5.4-nanoがAIXオススメ文から抽出）・プロファイルタグ（費用重視等）
+ALTER TABLE property_selection_patterns ADD COLUMN IF NOT EXISTS recommendation_reason TEXT;
+ALTER TABLE property_selection_patterns ADD COLUMN IF NOT EXISTS customer_profile_tags TEXT[] DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS idx_psp_customer_id ON property_selection_patterns(property_customer_id);
 CREATE INDEX IF NOT EXISTS idx_psp_reaction    ON property_selection_patterns(customer_reaction);
 CREATE INDEX IF NOT EXISTS idx_psp_rent_max    ON property_selection_patterns(customer_rent_max);
