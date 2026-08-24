@@ -405,6 +405,61 @@ async function resolveAreaWithAPI(rawArea, areaMode, customerId) {
   }
 }
 
+// ── 物件検索ブレイン: RAG統合エンドポイント ──────────────────────────────────
+// resolve-area + 顧客条件 + 送付履歴 を1本にまとめて返す。
+// レスポンスは resolve-area と同一キー構造のため apiData として既存コードがそのまま動く。
+// 追加フィールド: exclude_property_keys / sent_summary / recommendation / nearby_stations
+const _brainParamsCache = new Map(); // customerId_area → {data, ts}
+const _BRAIN_PARAMS_CACHE_TTL = 5 * 60 * 1000; // 5分
+
+async function fetchBrainSearchParams(customerId, rawArea) {
+  if (!customerId) return null;
+  const _key = `${customerId}|${rawArea || ""}`;
+  const _cached = _brainParamsCache.get(_key);
+  if (_cached && Date.now() - _cached.ts < _BRAIN_PARAMS_CACHE_TTL) return _cached.data;
+
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 15000);
+    const params = new URLSearchParams({ customerId });
+    if (rawArea) params.set("area", rawArea);
+    const res = await fetch(`${API_BASE}/api/property-brain/search-params?${params}`, {
+      signal: ctrl.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    // resolve-area と同じ学習キャッシュ更新（コード再利用）
+    (data.new_stations || []).forEach(({ token, ward, realpro_lines, itandi_lines, reins_line }) => {
+      if (!LEARNED_STATION_MAP[token]) {
+        LEARNED_STATION_MAP[token] = { ward, realpro_lines: realpro_lines || [], itandi_lines: itandi_lines || [], reins_line: reins_line || null };
+        console.log("[BRAIN] 駅学習:", token, "→", ward);
+      }
+    });
+    (data.new_regions || []).forEach(({ token, ward }) => {
+      if (!LEARNED_WARD_MAP[token]) {
+        LEARNED_WARD_MAP[token] = ward;
+        console.log("[BRAIN] 地名学習:", token, "→", ward);
+      }
+    });
+
+    // hold 警告（連続未返信2件以上で催促リスク）
+    if (data.recommendation === "hold") {
+      console.warn(`[BRAIN] ⚠️ ${data.property_send_count}件連続未返信。物件検索を保留推奨。`);
+    }
+    if (data.exclude_property_keys?.length > 0) {
+      console.log(`[BRAIN] 除外リスト ${data.exclude_property_keys.length}件:`, data.exclude_property_keys.slice(0, 5));
+    }
+
+    _brainParamsCache.set(_key, { data, ts: Date.now() });
+    return data;
+  } catch (e) {
+    console.warn("[BRAIN] fetchBrainSearchParams 失敗:", e.message);
+    return null;
+  }
+}
+
 // 地名 → 市区の解決（NEIGHBORHOOD_WARD_MAP → LEARNED_WARD_MAP → 市サフィックス補完 の順に参照）
 function resolveWard(token) {
   if (NEIGHBORHOOD_WARD_MAP[token]) return NEIGHBORHOOD_WARD_MAP[token];
@@ -2768,10 +2823,10 @@ function openInstructions(siteKey) {
       const adjPet       = document.getElementById("adj-pet").checked;
       const rawArea = (adjArea || c.desired_area || c.area || "").trim();
 
-      // 路線名・未登録地名をAPIで解決（itandi用途: 路線名→itandi路線名変換が必須）
-      const apiData = await resolveAreaWithAPI(rawArea, "auto", c.id);
-      // resolve-area APIのレスポンスからstation_names/route_idsに加え、
-      // suggested_walk_minutes が返ってきた場合はcustomerのwalk_minutesが未設定の場合のみフォールバックとして使用
+      // ブレイン経由: resolve-area + 送付履歴 + 除外リストを1本で取得
+      const apiData = c.id
+        ? await fetchBrainSearchParams(c.id, rawArea)
+        : await resolveAreaWithAPI(rawArea, "auto", c.id);
       if (apiData?.suggested_walk_minutes && !c.walk_minutes) {
         c = { ...c, walk_minutes: apiData.suggested_walk_minutes };
       }
@@ -3185,7 +3240,11 @@ function openInstructions(siteKey) {
       // ── ボタンを即座にローディング表示（APIを待たせても固まって見えないように）──
       autofillBtn.textContent = "⏳ エリア解決中...";
       autofillBtn.disabled = true;
-      const apiData = await resolveAreaWithAPI(adjAreaClean, "auto", adjC.id);
+      // ブレイン経由: resolve-area + 送付履歴 + 除外リストを1本で取得
+      // フォールバック: c.id がない場合（旧顧客）は既存 resolveAreaWithAPI を使う
+      const apiData = c.id
+        ? await fetchBrainSearchParams(c.id, adjAreaClean)
+        : await resolveAreaWithAPI(adjAreaClean, "auto", adjC.id);
 
       // ② 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
       if (_areaModeSource === "auto" && apiData?.realpro) {
@@ -3535,8 +3594,10 @@ function openInstructions(siteKey) {
 
       // ボタン押下が絶対ルール: currentAreaMode で駅 or 地域を決定
       const rawArea = (adjC.desired_area || adjC.area || "").trim();
-      // 路線名・未登録地名をAPIで解決（reins用途: 路線名→REINS路線名変換が必須）
-      const apiData = await resolveAreaWithAPI(rawArea, "auto", adjC.id);
+      // ブレイン経由: resolve-area + 送付履歴 + 除外リストを1本で取得
+      const apiData = adjC.id
+        ? await fetchBrainSearchParams(adjC.id, rawArea)
+        : await resolveAreaWithAPI(rawArea, "auto", adjC.id);
 
       // 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
       if (_areaModeSource === "auto" && apiData?.realpro) {
