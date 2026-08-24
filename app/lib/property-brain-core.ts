@@ -211,6 +211,214 @@ function buildFallbackParams(ctx: PropertyBrainContext): SearchParameters {
   };
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// 条件更新ブレイン: お客さんのメッセージから条件変更を検出してDBに反映する
+// Haiku（extractConditionsFromCasualReply）が明示条件を担当。
+// このブレインは「暗黙・相対・文脈依存」の条件変更を Sonnet-5 で補完する。
+// ════════════════════════════════════════════════════════════════════════════
+
+export interface ConditionUpdates {
+  // undefined = 変更なし（フィールド省略）/ null = クリア / 値 = 更新
+  desired_area?: string;
+  area_mode?: "station" | "ward" | "both" | "auto";
+  rent_min?: number | null;
+  rent_max?: number | null;
+  floor_plan?: string | null;
+  floor_area_min?: number | null;
+  floor_area_max?: number | null;
+  walk_minutes?: number | null;
+  building_age?: number | null;
+  pet?: boolean | null;
+  move_in_time?: string | null;
+  commute_station?: string | null;
+  commute_minutes?: number | null;
+  other_requests?: string | null;
+  ng_points?: string | null;
+}
+
+// 静的プロンプト（prompt cache 対象: ルールは変わらないため毎回キャッシュから取得）
+const CONDITION_BRAIN_SYSTEM_PROMPT = `あなたは賃貸物件検索の条件管理AIです。
+お客さんのメッセージ・現在の登録条件・過去の送付履歴を受け取り、
+条件の更新提案をJSONで返します。
+
+【出力フォーマット】JSONのみ（説明文不要）:
+{
+  "updates": {
+    "rent_max": 数値またはnull,
+    "floor_area_min": 数値またはnull,
+    ...更新するフィールドのみ記載
+  },
+  "contradiction": "矛盾の説明（なければnull）",
+  "no_update": true/false,
+  "reasoning": "判断理由（1文）"
+}
+
+【更新対象フィールド】
+rent_min / rent_max: 家賃下限・上限（円）
+floor_plan: 間取り（例: "1LDK" "1K・1DK" "2LDK以上"）
+floor_area_min / floor_area_max: 広さ下限・上限（㎡）
+walk_minutes: 駅徒歩分数（分）
+building_age: 築年数上限（年）
+pet: ペット可否（true/false）
+move_in_time: 入居時期（テキスト）
+commute_station: 通勤先駅名
+commute_minutes: 通勤所要分数（分）
+desired_area: 希望エリア（テキスト）
+other_requests: その他要望
+ng_points: NG条件
+
+【判断ルール】
+1. 明示的変更: 「家賃6万以下に変えたい」→ rent_max: 60000 を更新
+2. 相対的変更: 「もう少し予算上げられます」→ 現在の rent_max から+1〜2万で更新
+3. 暗黙的変更: 「前に見た物件より広めで」→ 送付履歴の最大面積を参考に floor_area_min を更新
+4. 追加要望: 「やっぱりペット可がいい」→ pet: true を更新
+5. 矛盾検出: 「家賃3万で2LDK」→ updates は空、contradiction に矛盾内容を記載
+6. 変更なし: 挨拶・質問・感謝のみ → no_update: true、updates は空オブジェクト
+
+【絶対ルール】
+・確信が持てないフィールドは省略する（推測での更新禁止）
+・お客さんが言っていないことを追加しない
+・「駅近がいい」だけでは walk_minutes の数値を設定しない（明示がない）
+・現在すでに設定されている条件と同じ値は省略してよい`;
+
+// 矛盾検出時のスタッフLINE通知
+async function notifyContradiction(
+  customerName: string,
+  contradiction: string,
+  messageText: string
+): Promise<void> {
+  const { supabase } = await import("@/app/lib/supabase");
+  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
+  let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
+  if (!groupId) {
+    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
+    groupId = (data?.value as string) ?? null;
+  }
+  if (!groupId || !token) return;
+
+  const body = JSON.stringify({
+    to: groupId,
+    messages: [{
+      type: "text",
+      text: `⚠️ 条件矛盾を検出\nお客様: ${customerName}\nメッセージ: 「${messageText.slice(0, 50)}」\n矛盾: ${contradiction}`,
+    }],
+  });
+  await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body,
+  }).catch(() => {});
+}
+
+// メイン: 条件更新ブレイン
+export async function runConditionBrain(
+  convId: string,
+  messageText: string
+): Promise<ConditionUpdates | null> {
+  const { supabase } = await import("@/app/lib/supabase");
+
+  // ── 顧客ID取得 ────────────────────────────────────────────────────────────
+  const { data: conv } = await supabase
+    .from("conversations")
+    .select("property_customer_id")
+    .eq("id", convId)
+    .maybeSingle();
+  const customerId = conv?.property_customer_id as string | null;
+  if (!customerId) return null;
+
+  // ── RAGコンテキスト組み立て ───────────────────────────────────────────────
+  const ctx = await buildPropertyBrainContext(customerId);
+  if (!ctx) return null;
+
+  // 明らかに条件変更と無関係なメッセージは即スキップ（コスト節約）
+  const hasConditionSignal =
+    /家賃|エリア|駅|間取り|広さ|㎡|築|ペット|入居|通勤|徒歩|予算|もう少し|上げ|下げ|変え|やっぱり|希望|条件/.test(messageText);
+  if (!hasConditionSignal) return null;
+
+  // ── Claude Sonnet-5 呼び出し ─────────────────────────────────────────────
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+  });
+
+  const contextText = formatContextForPrompt(ctx);
+  const dynamicPrompt =
+    contextText +
+    `\n\n【今回のお客さんのメッセージ】\n「${messageText}」\n\n` +
+    "上記メッセージに基づき、更新すべき条件をJSONで返してください。";
+
+  let raw = "";
+  try {
+    const msg = await anthropic.messages.create({
+      model: "claude-sonnet-5",
+      max_tokens: 512,
+      temperature: 0,
+      system: [
+        {
+          type: "text",
+          text: CONDITION_BRAIN_SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral", ttl: "1h" },
+        },
+      ],
+      messages: [{ role: "user", content: dynamicPrompt }],
+    });
+    raw = msg.content[0]?.type === "text" ? msg.content[0].text.trim() : "";
+  } catch (e) {
+    console.error("[conditionBrain] Sonnet-5 call failed:", e);
+    return null;
+  }
+
+  // ── JSONパース ────────────────────────────────────────────────────────────
+  const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/) ?? raw.match(/(\{[\s\S]*\})/);
+  if (!jsonMatch) {
+    console.warn("[conditionBrain] JSON parse failed. raw:", raw.slice(0, 100));
+    return null;
+  }
+  let parsed: { updates?: Record<string, unknown>; contradiction?: string; no_update?: boolean; reasoning?: string };
+  try {
+    parsed = JSON.parse(jsonMatch[1]);
+  } catch {
+    console.warn("[conditionBrain] JSON.parse failed");
+    return null;
+  }
+
+  if (parsed.no_update) {
+    console.log(`[conditionBrain] no_update: ${parsed.reasoning ?? ""}`);
+    return null;
+  }
+
+  const updates = parsed.updates ?? {};
+  const hasUpdates = Object.keys(updates).length > 0;
+
+  // ── 矛盾通知（updates に関係なく実行）───────────────────────────────────
+  if (parsed.contradiction) {
+    console.warn(`[conditionBrain] 矛盾検出: ${parsed.contradiction}`);
+    await notifyContradiction(
+      ctx.customer.customerName,
+      parsed.contradiction,
+      messageText
+    );
+  }
+
+  if (!hasUpdates) return null;
+
+  // ── DBに反映（更新フィールドのみ）────────────────────────────────────────
+  const dbUpdate: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
+
+  const { error } = await supabase
+    .from("property_customers")
+    .update(dbUpdate)
+    .eq("id", customerId);
+
+  if (error) {
+    console.error("[conditionBrain] DB更新失敗:", error.message);
+    return null;
+  }
+
+  console.log(`[conditionBrain] 条件更新完了 (${customerId}):`, updates, `| 理由: ${parsed.reasoning ?? ""}`);
+  return updates as ConditionUpdates;
+}
+
 // ── エクスポート: RAGコンテキスト単体取得（デバッグ・テスト用） ───────────────
 export { buildPropertyBrainContext, formatContextForPrompt };
 export type { PropertyBrainContext, CustomerConditions, SentPropertyRecord };

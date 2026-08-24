@@ -514,7 +514,7 @@ async function handleTextMessage(
     });
   }
 
-  // after() E: P4 — カジュアル返信から条件を自動抽出
+  // after() E: P4 — カジュアル返信から条件を自動抽出（Haiku: 明示条件を高速・安価に取得）
   // isFormatMessage が false（autoParseFormat 非対象）かつ申込フォームでもない返信が対象
   // スタッフの直近メッセージに条件ヒアリングの文脈がある場合のみ Haiku で抽出・保存
   if (!applyFormDetected && !isFormatMessage(text) && text.length >= 5) {
@@ -523,6 +523,20 @@ async function handleTextMessage(
         await extractConditionsFromCasualReply(db, convId, text);
       } catch (e) {
         console.warn("[line-webhook] extractConditionsFromCasualReply:", e);
+      }
+    });
+  }
+
+  // after() F: 物件検索ブレイン — 暗黙・相対・文脈依存の条件変更を Sonnet-5 で補完
+  // Haiku（after() E）が明示条件を処理した後、ブレインが文脈を読んで残りを補完する。
+  // 矛盾検出時はスタッフLINEグループに自動通知。
+  if (!applyFormDetected && !isFormatMessage(text) && text.length >= 5) {
+    after(async () => {
+      try {
+        const { runConditionBrain } = await import("@/app/lib/property-brain-core");
+        await runConditionBrain(convId, text);
+      } catch (e) {
+        console.warn("[line-webhook] runConditionBrain:", e);
       }
     });
   }
