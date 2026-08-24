@@ -216,32 +216,55 @@ async function getPropertyExamples(): Promise<string> {
 // ※ aix_settings からシステムプロンプトを取得する getAixSystemPrompt は削除済み（呼び出し箇所ゼロのデッドコード）。
 //   物件オススメのフォーマットはコード内固定（DEFAULT_PROP_SYSTEM）を使用しており、DBでは上書きしない。
 
-// 物件オススメ関連のknowledgeを取得（差分学習ルール優先）
-async function getPropertyKnowledge(conversationId?: string): Promise<string> {
+// 物件オススメ関連のknowledgeを取得（差分学習ルール優先 + 顧客文脈embeddingRAG）
+// customerContext: 顧客条件テキスト + AIX-META（brainContext）を結合したもの。渡すとRAGが有効になる
+async function getPropertyKnowledge(conversationId?: string, customerContext?: string): Promise<string> {
+  type KRow = { id: string; title: string; content: string; hypothesis_status?: string };
   const [{ data: diffLearned }, { data: stateKnowledge }] = await Promise.all([
     // ① 差分学習ルール（最優先）
-    // 改善⑪: rejected（実運用で外れ続けたルール）を注入しない
     supabase.from("ai_reply_knowledge")
-      .select("id, title, content")
+      .select("id, title, content, hypothesis_status")
       .ilike("title", "%差分学習%")
       .gte("importance", 7)
       .in("conversation_state", ["property_recommendation", "proposing"])
-      .eq("hypothesis_status", "confirmed") // AIX生成変化ゲート: confirmed のみ注入
+      .eq("hypothesis_status", "confirmed")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
-      .limit(15),
+      .limit(12),
     // ② フェーズ別ナレッジ
     supabase.from("ai_reply_knowledge")
-      .select("id, category, title, content")
+      .select("id, title, content, hypothesis_status")
       .in("conversation_state", ["property_recommendation", "proposing"])
       .gte("importance", 7)
       .not("title", "ilike", "%差分学習%")
-      .eq("hypothesis_status", "confirmed") // AIX生成変化ゲート: confirmed のみ注入
+      .eq("hypothesis_status", "confirmed")
       .order("importance", { ascending: false })
-      .limit(12),
+      .limit(10),
   ]);
-  // 使用追跡（after()でレスポンス返却後も実行保証）+ knowledge_apply_log への記録（eval-winning でのフィードバックループ接続）
-  const usedIds = [...(diffLearned ?? []), ...(stateKnowledge ?? [])].map(r => (r as { id: string }).id).filter(Boolean);
+
+  // RAG: 顧客条件 + AIX-META の embedding で「この顧客に刺さるknowledge」を追加取得
+  // フォーマットは固定でも、オススメポイントの選び方・訴求軸は顧客ごとに異なるため文脈絞り込みが効く
+  let vectorExtras: KRow[] = [];
+  if (customerContext && process.env.OPENAI_API_KEY) {
+    try {
+      const searchQuery = safeSlice(`property_recommendation: ${customerContext}`.trim(), 2000);
+      const embedding = await generateEmbedding(searchQuery);
+      if (embedding) {
+        const { data: vectorResults } = await supabase.rpc("match_reply_knowledge", {
+          query_embedding: embedding, match_count: 40, min_importance: 7,
+        }) as { data: Array<{ id: string; title: string; content: string; hypothesis_status?: string; importance: number; similarity: number }> | null };
+        const existingIds = new Set([...(diffLearned ?? []), ...(stateKnowledge ?? [])].map(r => (r as KRow).id));
+        vectorExtras = (vectorResults ?? [])
+          .filter(r => r.similarity >= 0.5 && r.hypothesis_status === "confirmed" && !existingIds.has(r.id))
+          .sort((a, b) => (b.similarity * (b.importance / 10)) - (a.similarity * (a.importance / 10)))
+          .slice(0, 5);
+      }
+    } catch { /* RAGエラーは無視してSQL結果のみ返す */ }
+  }
+
+  // 使用追跡（after()でレスポンス返却後も実行保証）
+  const usedIds = [...(diffLearned ?? []), ...(stateKnowledge ?? []), ...vectorExtras]
+    .map(r => (r as KRow).id).filter(Boolean);
   if (usedIds.length) {
     after(async () => {
       try {
@@ -250,7 +273,6 @@ async function getPropertyKnowledge(conversationId?: string): Promise<string> {
         console.error("[aix/action] increment_knowledge_used_count RPC失敗:", e);
       }
       if (conversationId) {
-        // C05: source='aix_action' を付与して generate-reply 由来のログと区別する
         try {
           await supabase.from("knowledge_apply_log").insert(
             usedIds.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "aix_action" }))
@@ -263,9 +285,11 @@ async function getPropertyKnowledge(conversationId?: string): Promise<string> {
   }
   const parts: string[] = [];
   if ((diffLearned?.length ?? 0) > 0)
-    parts.push("【🔴 過去の修正パターン（必ず守る）】\n" + diffLearned!.map(r => `・${r.title}: ${r.content}`).join("\n"));
+    parts.push("【🔴 過去の修正パターン（必ず守る）】\n" + (diffLearned as KRow[]).map(r => `・${r.title}: ${r.content}`).join("\n"));
   if ((stateKnowledge?.length ?? 0) > 0)
-    parts.push("【物件オススメのノウハウ】\n" + (stateKnowledge as { id: string; category: string; title: string; content: string }[]).map(r => `・${r.content}`).join("\n"));
+    parts.push("【物件オススメのノウハウ】\n" + (stateKnowledge as KRow[]).map(r => `・${r.content}`).join("\n"));
+  if (vectorExtras.length > 0)
+    parts.push("【📍 このお客様の状況に関連するノウハウ（RAG）】\n" + vectorExtras.map(r => `・${r.content}`).join("\n"));
   return parts.join("\n\n");
 }
 
@@ -1127,9 +1151,16 @@ ${aixPropertyRecommendationRules}
 ${SMORA_COMMON_RULES}`;
 
       // フォーマット固定: DEFAULT_PROP_SYSTEM を直接使用（DBで上書きしない）
+      // RAG用顧客文脈: 顧客条件 + AIX-META（brainContext）を結合
+      // → 「この顧客に刺さるknowledge」をembedding検索するための検索クエリになる
+      const recRagContext = [
+        customer_conditions ? String(customer_conditions) : "",
+        brainContext,
+      ].filter(Boolean).join(" ").trim() || undefined;
+
       const [examples, knowledge, recStarNote, propDbRules, recBrainAddendum, recPatternHints] = await Promise.all([
         getPropertyExamples(),
-        getPropertyKnowledge(conversationId),
+        getPropertyKnowledge(conversationId, recRagContext),
         getStarredExamplesForAction(["property_recommendation", "proposing"], latestCustomerMsg),
         fetchPromptRules("property_recommendation", {}).catch(() => ""),
         loadBrainTemplate("property_recommendation"),
