@@ -2,6 +2,39 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
+// ── セリングポイント抽出（オススメ文 → タグ配列）─────────────────────────────
+// 追加LLM呼び出し不要。正規表現でオススメポイント箇条書きから学習価値のある特徴を抽出する。
+const SELLING_POINT_TAGS: Array<{ re: RegExp; tag: string }> = [
+  { re: /敷金礼金なし|敷礼0|敷礼ゼロ|敷金・礼金なし|敷礼無し|初期費用.*抑え/, tag: "敷礼0円" },
+  { re: /新築/,                                                                   tag: "新築" },
+  { re: /築浅|年築|築\d{4}年/,                                                    tag: "築浅" },
+  { re: /ペット可|ペット相談/,                                                     tag: "ペット可" },
+  { re: /インターネット無料|WiFi無料|Wi-Fi無料|ネット無料|光回線/,                 tag: "ネット無料" },
+  { re: /駐車場/,                                                                  tag: "駐車場" },
+  { re: /オートロック/,                                                            tag: "オートロック" },
+  { re: /宅配ボックス/,                                                            tag: "宅配ボックス" },
+  { re: /バス.*トイレ.*別|バストイレ別|風呂.*トイレ.*別/,                          tag: "バストイレ別" },
+  { re: /エアコン/,                                                                tag: "エアコン付" },
+  { re: /管理費.*込|管理費なし/,                                                   tag: "管理費込" },
+  { re: /角部屋/,                                                                  tag: "角部屋" },
+  { re: /南向き|陽当り|日当た/,                                                    tag: "日当たり良好" },
+  { re: /モニター.*インターホン|テレビ.*インターホン|カメラ付/,                    tag: "モニター付インターホン" },
+  { re: /退去.*予定|解約.*予定/,                                                   tag: "退去予定あり" },
+  { re: /広々|ゆとり|広め/,                                                        tag: "広い間取り" },
+];
+
+function extractSellingPoints(text: string): string[] {
+  if (!text) return [];
+  // （オススメポイント）セクションを抽出
+  const sectionMatch = text.match(/（オススメポイント）([\s\S]*?)(?:\n\n[^・]|$)/);
+  const section = sectionMatch ? sectionMatch[1] : text;
+  const tagSet = new Set<string>();
+  for (const { re, tag } of SELLING_POINT_TAGS) {
+    if (re.test(section)) tagSet.add(tag);
+  }
+  return [...tagSet];
+}
+
 export const maxDuration = 60;
 
 // POST /api/cron/eval-customer-reaction（毎日 JST 20:30）
@@ -393,6 +426,85 @@ export async function POST(req: NextRequest) {
       console.warn("[eval-customer-reaction] confirmed brushup失敗:", e);
     }
 
+    // ── property_recommendation → property_selection_patterns 蓄積 ──────────────
+    // 物件オススメのセリングポイントと顧客反応を紐付けて保存（物件選定力の学習ループ）
+    let pspInserted = 0;
+    try {
+      const propRecLogIds = logs
+        .filter(l => l.aix_type === "property_recommendation")
+        .map(l => l.id);
+
+      if (propRecLogIds.length > 0) {
+        // generated_text を取得
+        const { data: propRecRows } = await supabase
+          .from("aix_usage_logs")
+          .select("id, conversation_id, generated_text")
+          .in("id", propRecLogIds);
+
+        // conversation_id → property_customer_id を解決
+        const prConvIds = [...new Set((propRecRows ?? []).map(r => r.conversation_id as string))];
+        const { data: prConvRows } = await supabase
+          .from("conversations")
+          .select("id, property_customer_id")
+          .in("id", prConvIds);
+        const convToPcId = new Map<string, string>();
+        for (const c of (prConvRows ?? [])) {
+          if (c.property_customer_id) convToPcId.set(c.id as string, c.property_customer_id as string);
+        }
+
+        // 顧客条件を一括取得
+        const pcIds = [...new Set([...convToPcId.values()])];
+        const { data: pcRows } = await supabase
+          .from("property_customers")
+          .select("id, rent_max, max_rent, floor_plan, layout, walk_minutes, desired_area, area, preferences")
+          .in("id", pcIds);
+        const pcMap = new Map<string, Record<string, unknown>>();
+        for (const pc of (pcRows ?? [])) pcMap.set(pc.id as string, pc as Record<string, unknown>);
+
+        // 既存 psp レコードを除外（UNIQUE aix_usage_log_id）
+        const { data: existingPsp } = await supabase
+          .from("property_selection_patterns")
+          .select("aix_usage_log_id")
+          .in("aix_usage_log_id", propRecLogIds);
+        const existingIds = new Set((existingPsp ?? []).map(r => r.aix_usage_log_id as string));
+
+        const reactedSet  = new Set(reactedIds);
+        const notReactedSet = new Set(notReactedIds);
+
+        for (const row of (propRecRows ?? [])) {
+          const logId = row.id as string;
+          if (existingIds.has(logId)) continue;
+          const pcId = convToPcId.get(row.conversation_id as string);
+          if (!pcId) continue;
+          const pc = pcMap.get(pcId);
+          if (!pc) continue;
+
+          const reaction = reactedSet.has(logId) ? "interested"
+            : notReactedSet.has(logId)           ? "no_response"
+            : "pending";
+
+          const sellingPoints = extractSellingPoints((row.generated_text as string) ?? "");
+
+          const { error: pspErr } = await supabase.from("property_selection_patterns").insert({
+            property_customer_id:  pcId,
+            conversation_id:       row.conversation_id as string,
+            aix_usage_log_id:      logId,
+            customer_rent_max:     (pc.rent_max as number | null) ?? (pc.max_rent as number | null) ?? null,
+            customer_floor_plan:   (pc.floor_plan as string | null) ?? (pc.layout as string | null) ?? null,
+            customer_walk_minutes: (pc.walk_minutes as number | null) ?? null,
+            customer_area:         (pc.desired_area as string | null) ?? (pc.area as string | null) ?? null,
+            customer_preferences:  (pc.preferences as string | null) ?? null,
+            selling_points:        sellingPoints,
+            customer_reaction:     reaction,
+          });
+          if (!pspErr) pspInserted++;
+          else console.warn("[eval-customer-reaction] psp insert失敗:", pspErr.message, "logId:", logId);
+        }
+      }
+    } catch (e) {
+      console.warn("[eval-customer-reaction] property_selection_patterns 蓄積失敗:", e);
+    }
+
     await finishCronLog(runLogId, true, {
       evaluated,
       reacted: reactedIds.length,
@@ -406,6 +518,7 @@ export async function POST(req: NextRequest) {
       decay_failed: decayFailed,
       brushup_succeeded: brushupSucceeded,
       brushup_failed: brushupFailed,
+      psp_inserted: pspInserted,
     });
     return NextResponse.json({
       ok: true,
@@ -421,6 +534,7 @@ export async function POST(req: NextRequest) {
       decay_failed: decayFailed,
       brushup_succeeded: brushupSucceeded,
       brushup_failed: brushupFailed,
+      psp_inserted: pspInserted,
     });
   } catch (e) {
     console.error("[eval-customer-reaction]", e);

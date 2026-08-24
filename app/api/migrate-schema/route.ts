@@ -2307,6 +2307,30 @@ CREATE TABLE IF NOT EXISTS iyeyasu_page_views (
 ALTER TABLE iyeyasu_page_views DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_iyeyasu_page_views_created_at ON iyeyasu_page_views(created_at DESC);
 
+-- 物件選定パターン学習テーブル（2026-08-24追加）
+-- AIXの物件オススメ文からセリングポイントを抽出し、顧客反応と紐付けて蓄積する。
+-- evaluate-property API がこれを参照して類似顧客の勝ちパターンをヒントとして返す。
+CREATE TABLE IF NOT EXISTS property_selection_patterns (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  property_customer_id UUID REFERENCES property_customers(id) ON DELETE SET NULL,
+  conversation_id TEXT,
+  aix_usage_log_id UUID UNIQUE,
+  customer_rent_max    INTEGER,
+  customer_floor_plan  TEXT,
+  customer_walk_minutes INTEGER,
+  customer_area        TEXT,
+  customer_preferences TEXT,
+  selling_points TEXT[] DEFAULT '{}',
+  customer_reaction TEXT DEFAULT 'pending'
+    CHECK (customer_reaction IN ('pending','interested','no_response')),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE property_selection_patterns DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_psp_customer_id ON property_selection_patterns(property_customer_id);
+CREATE INDEX IF NOT EXISTS idx_psp_reaction    ON property_selection_patterns(customer_reaction);
+CREATE INDEX IF NOT EXISTS idx_psp_rent_max    ON property_selection_patterns(customer_rent_max);
+CREATE INDEX IF NOT EXISTS idx_psp_log_id      ON property_selection_patterns(aix_usage_log_id);
+
 -- ── system_design_thinking（2026-08-22追加）──
 -- 設計思考・アーキテクチャ知識を蓄積するテーブル。
 -- 竹内さんとClaudeが会話で生み出した設計判断・アーキテクチャ知見を蓄積し、

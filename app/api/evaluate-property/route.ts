@@ -237,6 +237,36 @@ export async function POST(req: NextRequest) {
   const score =
     budgetScore + floorPlanScore + walkScore + adScore + areaPerRentScore;
 
+  // ── 類似顧客の勝ちパターン参照（物件選定ヒント）──────────────────────────
+  // 家賃帯が近い（±15%）かつ同じ間取り希望の顧客で、interested になったオススメポイントを集計。
+  // スコアリングには使わず、スタッフへの「選定ヒント」として返す。
+  let patternHints: string[] = [];
+  try {
+    if (customerRentMax && customerRentMax > 0) {
+      let q = supabase
+        .from("property_selection_patterns")
+        .select("selling_points")
+        .eq("customer_reaction", "interested")
+        .gte("customer_rent_max", Math.round(customerRentMax * 0.85))
+        .lte("customer_rent_max", Math.round(customerRentMax * 1.15))
+        .limit(40);
+      if (customerFloorPlan) q = q.eq("customer_floor_plan", customerFloorPlan);
+      const { data: pspRows } = await q;
+      if (pspRows && pspRows.length > 0) {
+        const counts: Record<string, number> = {};
+        for (const row of pspRows) {
+          for (const pt of ((row.selling_points as string[]) ?? [])) {
+            counts[pt] = (counts[pt] ?? 0) + 1;
+          }
+        }
+        patternHints = Object.entries(counts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([pt]) => pt);
+      }
+    }
+  } catch { /* ignore — ヒントは補助情報のためエラーでも返す */ }
+
   return NextResponse.json(
     {
       score,
@@ -256,6 +286,8 @@ export async function POST(req: NextRequest) {
         walk_minutes: customerWalk,
         area_min: customerAreaMin,
       },
+      // 類似条件のお客さんで反応の良かったセリングポイント（上位5件）
+      pattern_hints: patternHints,
     },
     { headers: CORS_HEADERS }
   );
