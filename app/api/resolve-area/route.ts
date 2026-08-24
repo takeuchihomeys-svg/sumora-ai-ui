@@ -781,8 +781,10 @@ lines: 以下のリストから選択のみ（自由記述禁止）:
 areas: 駅名・路線名に還元できない純粋な行政地名・概念エリア名
   例: "北摂","大阪市内","梅北エリア"
   ※ 「〇〇から△分以内」などの通勤時間パターンを含む場合は必ず commute_constraints を使い、areas には入れないこと
-  ※ "梅田" は御堂筋線の駅名のため station_names に含める（areas には入れない）
-  ※ "難波" "天王寺" "心斎橋" "本町" "福島" "新大阪" も駅名として station_names に含める
+  ※ サフィックスで判断する（同じ地名でも文脈で分類が変わる）:
+    - 「〇〇エリア」「〇〇周辺」「〇〇あたり」「〇〇付近」「〇〇近辺」→ areas に "〇〇" を入れる（サフィックスは削除）
+    - 「〇〇駅」「〇〇駅前」「〇〇駅近く」→ stations に "〇〇" を入れる（「駅」以降を削除）
+    - サフィックスなし（"梅田" "難波" "天王寺" "心斎橋" "本町" "福島" "新大阪" 等）→ stations に入れる
 
 commute_constraints: 通勤・通学・乗り換え制約
   形式: {"base_station":"駅名（駅なし）","max_minutes":数値または省略,"max_transfers":回数または省略,"transport_mode":"bicycle"/"walk"または省略}
@@ -816,6 +818,21 @@ commute_constraints: 通勤・通学・乗り換え制約
 
 入力: "梅田か御堂筋線沿い"
 出力: {"stations":[],"lines":["御堂筋線"],"areas":["梅田"],"commute_constraints":[]}
+
+入力: "梅田エリア"
+出力: {"stations":[],"lines":[],"areas":["梅田"],"commute_constraints":[]}
+
+入力: "梅田周辺"
+出力: {"stations":[],"lines":[],"areas":["梅田"],"commute_constraints":[]}
+
+入力: "天王寺周辺"
+出力: {"stations":[],"lines":[],"areas":["天王寺"],"commute_constraints":[]}
+
+入力: "難波エリア"
+出力: {"stations":[],"lines":[],"areas":["難波"],"commute_constraints":[]}
+
+入力: "梅田・難波"
+出力: {"stations":["梅田","難波"],"lines":[],"areas":[],"commute_constraints":[]}
 
 入力: "難波・心斎橋"
 出力: {"stations":["難波","心斎橋"],"lines":[],"areas":[],"commute_constraints":[]}
@@ -948,12 +965,17 @@ commute_constraints: 通勤・通学・乗り換え制約
               for (const w of wards) {
                 const code = WARD_CODE_MAP[w];
                 if (code && !result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
+                // itandi/reins にも ward_names を反映（detectAndAnnounceAreaChange が参照するため必須）
+                if (!result.itandi.ward_names.includes(w)) result.itandi.ward_names.push(w);
+                if (!result.reins.ward_names.includes(w))  result.reins.ward_names.push(w);
               }
             } else {
               // 直接 WARD_CODE_MAP に存在する市区名
               const code = WARD_CODE_MAP[area] ?? WARD_CODE_MAP[area + "市"] ?? null;
               if (code) {
                 if (!result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
+                if (!result.itandi.ward_names.includes(area)) result.itandi.ward_names.push(area);
+                if (!result.reins.ward_names.includes(area))  result.reins.ward_names.push(area);
               } else {
                 // ハードコードで解決できない → ベクトル検索で region_map / station_map を検索
                 await vectorSearchStation(area, db, maps, result);

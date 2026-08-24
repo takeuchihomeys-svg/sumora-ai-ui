@@ -657,9 +657,28 @@ function isAreaSpecificationMessage(text: string): boolean {
   if (isFormatMessage(text)) return false; // autoParseFormat handles this
   // 自転車 + 分数 → エリア指定として扱う（自転車圏内→駅リスト展開）
   if (/自転車|チャリ/.test(text) && /\d+分/.test(text)) return true;
-  const matches = text.match(/[^\s]{1,6}[都道府県市区町村]/g) ?? [];
-  const hasTrigger = /辺り|あたり|周辺|エリア|で探|でも探|も探|希望/.test(text);
-  return matches.length >= 2 || (matches.length >= 1 && hasTrigger);
+
+  // 行政区画トークン（従来の検知）
+  const adminMatches = text.match(/[^\s]{1,6}[都道府県市区町村]/g) ?? [];
+  const hasTrigger = /辺り|あたり|周辺|エリア|で探|でも探|も探|希望|沿線/.test(text);
+
+  // 駅・路線の明示パターン（新規追加）
+  // ① 「〇〇駅」: 漢字/カタカナ/英数字 + 駅 → 明示的な駅指定
+  const hasStationWord = /[一-鿿a-zA-Zａ-ｚＡ-Ｚァ-ヶ]{1,10}駅/.test(text);
+  // ② 「〇〇線」: 漢字/カタカナ 2文字以上 + 線 → 路線名指定
+  const hasLineName = /[一-鿿ァ-ヶ]{2,10}線/.test(text);
+  // ③ 路線事業者プレフィックス + 続く語 → 「阪急梅田」「JR高槻」等
+  const hasLinePrefix = /(?:阪急|阪神|JR|近鉄|京阪|南海|大阪メトロ|地下鉄|東急|小田急|京王|西武|東武|東京メトロ|都営)[\S]{1,8}/.test(text);
+  // ④ 漢字・カタカナ語 + 場所サフィックス → 「梅田周辺」「難波あたり」「心斎橋エリア」
+  //    ひらがなのみのトークン（「そのあたり」「ご希望」等）は除外
+  const hasPlaceWithSuffix = /[一-鿿ァ-ヶ]{1,8}(?:あたり|周辺|エリア|沿線|辺り)/.test(text);
+
+  return adminMatches.length >= 2
+    || (adminMatches.length >= 1 && hasTrigger)
+    || hasStationWord
+    || hasLineName
+    || hasLinePrefix
+    || hasPlaceWithSuffix;
 }
 
 // JST タイムスタンプ（新着要望のログに使用）
