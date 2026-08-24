@@ -3358,6 +3358,16 @@ function openInstructions(siteKey) {
           prefer_no_shikirei:   detectShikireiFlag(selectedCustomer),
         }});
       } catch (_) { /* ignore */ }
+      console.log('[AX] itandi autofill送信:', {
+        area_mode:       conditions.area_mode,
+        station_names:   conditions.station_names,
+        ward_name:       conditions.ward_name,
+        area_min:        conditions.area_min,
+        area_max:        conditions.area_max,
+        structure_types: conditions.structure_types,
+        building_age:    conditions.building_age,
+        floor_plan:      conditions.floor_plan,
+      });
       // underbar（iframe）モード: postMessage経由 / サイドパネルモード: chrome.tabs.sendMessage経由
       if (isUnderbar) {
         window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions, source: isAutoSendAll_itandi ? "flagged_batch" : (isAutomated_itandi ? "automated" : "manual") }, "*");
@@ -3752,11 +3762,16 @@ function openInstructions(siteKey) {
       }
 
       console.log('[AX] autofill送信:', {
-        area_mode: _lockedMode || currentAreaMode,
-        station_names: realpro_station_names.slice(),
-        route_ids: route_ids.slice(),
-        city_codes: city_codes.slice(),
-        area: adjAreaClean.slice(0, 40),
+        area_mode:       _lockedMode || currentAreaMode,
+        station_names:   realpro_station_names.slice(),
+        route_ids:       route_ids.slice(),
+        city_codes:      city_codes.slice(),
+        area:            adjAreaClean.slice(0, 40),
+        area_min:        adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || null),
+        area_max:        adjAreaMax ? Number(adjAreaMax) : (c.floor_area_max || null),
+        structure_types: adjC.structure_types || null,
+        building_age:    adjC.building_age || null,
+        floor_plan:      adjC.floor_plan || null,
       });
       window.parent.postMessage({
         from: "aixlinx-underbar",
@@ -3971,6 +3986,14 @@ function openInstructions(siteKey) {
           prefer_no_shikirei:   detectShikireiFlag(c0),
         }});
       } catch (_) { /* ignore */ }
+      console.log('[AX] reins autofill送信:', {
+        station_pairs: conditions.reins_station_pairs,
+        ward_names:    conditions.ward_names,
+        area_min:      conditions.area_min,
+        area_max:      conditions.area_max,
+        building_age:  conditions.building_age,
+        floor_plan:    conditions.floor_plan,
+      });
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs[0]) return;
         chrome.tabs.sendMessage(tabs[0].id, {
