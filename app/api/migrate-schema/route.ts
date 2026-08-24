@@ -1398,6 +1398,8 @@ CREATE TABLE IF NOT EXISTS aix_generate_log (
 CREATE INDEX IF NOT EXISTS idx_aix_generate_log_conversation ON aix_generate_log(conversation_id, status, generated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_aix_generate_log_status ON aix_generate_log(status, generated_at DESC);
 ALTER TABLE aix_generate_log DISABLE ROW LEVEL SECURITY;
+-- property_recommendation の物件画像から GPT-5.4-nano で抽出した構造データ
+ALTER TABLE aix_generate_log ADD COLUMN IF NOT EXISTS property_details JSONB;
 
 -- ── isFullRewrite tracking + confirmed 再検証 + decay統合（2026-07-12追加）──
 

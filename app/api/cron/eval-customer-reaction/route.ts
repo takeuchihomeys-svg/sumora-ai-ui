@@ -503,8 +503,9 @@ export async function POST(req: NextRequest) {
         }
 
         // ── 対比学習：候補プールで選ばれなかった物件をネガティブシグナルとして蓄積 ──
-        // 「売上番長に送る」時の全候補から、AIXオススメ文に登場しなかった物件を
+        // 「売上番長に送る」時の全候補から、AIX推薦物件に含まれなかった物件を
         // customer_reaction="no_response" として記録し、物件選定ブレインを強化する。
+        // 照合優先度: aix_generate_log.property_details.name（GPT抽出）> generated_text テキストマッチ
         if (pcIds.length > 0) {
           // pcId → { conv_id, generated_text, created_at }
           const pcToLogInfo = new Map<string, { conv_id: string; generated_text: string; created_at: string }>();
@@ -520,6 +521,21 @@ export async function POST(req: NextRequest) {
           }
 
           const targetConvIds2 = [...pcToLogInfo.values()].map(v => v.conv_id);
+
+          // aix_generate_log から property_details（GPT-5.4-nano 抽出データ）を取得
+          const { data: genLogRows } = await supabase
+            .from("aix_generate_log")
+            .select("conversation_id, property_details")
+            .in("conversation_id", targetConvIds2)
+            .eq("action_type", "property_recommendation")
+            .not("property_details", "is", null);
+          const convToPropertyDetails = new Map<string, { name?: string | null }>();
+          for (const g of (genLogRows ?? [])) {
+            if (!convToPropertyDetails.has(g.conversation_id as string)) {
+              convToPropertyDetails.set(g.conversation_id as string, g.property_details as { name?: string | null });
+            }
+          }
+
           const [{ data: poolRows }, { data: existingContrastRows }] = await Promise.all([
             supabase
               .from("property_candidate_pools")
@@ -554,14 +570,20 @@ export async function POST(req: NextRequest) {
             }>) ?? [];
             if (candidates.length === 0) continue;
 
+            // 選定物件の判定: GPT抽出データが優先、なければ generated_text テキストマッチ
+            const extractedName = convToPropertyDetails.get(logInfo.conv_id)?.name?.toLowerCase() ?? null;
             const generatedTextLower = logInfo.generated_text.toLowerCase();
             const pc2 = pcMap.get(pcId2);
 
             for (const candidate of candidates) {
               const candName = (candidate.name ?? "").trim();
               if (!candName) continue;
-              // 推薦文に物件名が含まれている = 選定済み → スキップ
-              if (generatedTextLower.includes(candName.toLowerCase())) continue;
+              const candNameLower = candName.toLowerCase();
+              // 選定済み判定: GPT抽出名で一致 or generated_text テキストマッチ
+              const wasSelected = extractedName
+                ? extractedName.includes(candNameLower) || candNameLower.includes(extractedName)
+                : generatedTextLower.includes(candNameLower);
+              if (wasSelected) continue;
 
               // 構造データからセリングポイントを合成（ネガティブシグナル用）
               const features: string[] = [];

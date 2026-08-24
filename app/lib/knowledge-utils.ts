@@ -78,6 +78,76 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
   }
 }
 
+// ─── GPT-5.4-nano で物件画像から構造データを抽出 ────────────────────────────
+// property_recommendation AIX の after() で呼び出し、aix_generate_log に保存する。
+// eval-customer-reaction cron がこのデータを使って候補プールとの照合精度を上げる。
+export interface PropertyImageDetails {
+  name?: string | null;
+  room_no?: string | null;
+  rent?: number | null;
+  admin_fee?: number | null;
+  deposit?: number | null;
+  key_money?: number | null;
+  floor_plan?: string | null;
+  area_sqm?: number | null;
+  walk_minutes?: number | null;
+  building_age?: number | null;
+  ad_months?: number | null;
+  features?: string[] | null;
+}
+
+export async function extractPropertyDetailsFromImage(imageUrl: string): Promise<PropertyImageDetails | null> {
+  const rawKey = process.env.OPENAI_API_KEY ?? "";
+  const apiKey = rawKey.charCodeAt(0) === 0xFEFF ? rawKey.slice(1) : rawKey;
+  if (!apiKey || !imageUrl) return null;
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-5.4-nano",
+        max_tokens: 500,
+        response_format: { type: "json_object" },
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `この物件資料の画像から情報を抽出してJSONで返してください。不明な項目はnullにしてください。
+{
+  "name": "物件名（マンション名・アパート名）",
+  "room_no": "号室",
+  "rent": 家賃（円・数値。万円表記なら×10000して整数に変換）,
+  "admin_fee": 管理費・共益費（円・数値）,
+  "deposit": 敷金（ヶ月数・数値）,
+  "key_money": 礼金（ヶ月数・数値）,
+  "floor_plan": "間取り（例：1K・1LDK・ワンルーム）",
+  "area_sqm": 専有面積（㎡・数値）,
+  "walk_minutes": 最寄り駅徒歩（分・数値）,
+  "building_age": 築年数（年・数値）,
+  "ad_months": 広告料（ヶ月数・数値）,
+  "features": ["設備・特徴リスト（例：オートロック・宅配ボックス・ペット可）"]
+}`,
+            },
+            {
+              type: "image_url",
+              image_url: { url: imageUrl, detail: "low" },
+            },
+          ],
+        }],
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const text = data.choices?.[0]?.message?.content;
+    if (!text) return null;
+    return JSON.parse(text) as PropertyImageDetails;
+  } catch {
+    return null;
+  }
+}
+
 export type UpsertKnowledgeParams = {
   title: string;
   content: string;

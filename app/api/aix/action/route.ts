@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { safeSlice } from "@/app/lib/safe-slice";
-import { generateEmbedding } from "@/app/lib/knowledge-utils";
+import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
@@ -4516,11 +4516,17 @@ ${SMORA_COMMON_RULES}
     if (conversationId) {
       after(async () => {
         try {
+          // property_recommendation のみ: GPT-5.4-nano で物件画像から構造データを抽出
+          let propertyDetails = null;
+          if (currentAction === "property_recommendation" && image_url) {
+            propertyDetails = await extractPropertyDetailsFromImage(String(image_url)).catch(() => null);
+          }
           await supabase.from("aix_generate_log").insert({
             action_type: currentAction,
             conversation_id: conversationId,
             check_pattern: generateLogCheckPattern,
             generated_text: safeSlice(cleanedMessage, 2000),
+            ...(propertyDetails ? { property_details: propertyDetails } : {}),
           });
         } catch (e) {
           console.error("[aix/action] aix_generate_log insert failed (main):", e);
