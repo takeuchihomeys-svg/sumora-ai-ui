@@ -2823,6 +2823,8 @@ export default function Home() {
             if (ae instanceof HTMLTextAreaElement && bottomPanelRef.current?.contains(ae)) {
               // bottomPanel自体を最下部にスクロール → textareaが常にキーボード直上に来る（LINE同等の動作）
               bottomPanelRef.current.scrollTop = bottomPanelRef.current.scrollHeight;
+              // dvhだけでは不十分な場合のフォールバック: textareaをキーボード上に強制表示
+              ae.scrollIntoView({ behavior: "instant", block: "nearest" });
             }
           });
         });
@@ -5685,7 +5687,7 @@ export default function Home() {
         top: `${viewportTop}px`,
         left: 0,
         right: 0,
-        height: viewportHeight ? `${viewportHeight}px` : "100svh",
+        height: viewportHeight ? `${viewportHeight}px` : "100dvh",
         WebkitTextSizeAdjust: "100%",
         touchAction: "manipulation",
       }}
@@ -8316,10 +8318,13 @@ export default function Home() {
                       if (!ta || document.activeElement !== ta) return;
                       const panel = bottomPanelRef.current;
                       if (panel) panel.scrollTop = panel.scrollHeight;
-                      ta.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                      // smoothだとiOSでタイミングがずれるためinstantを使用
+                      ta.scrollIntoView({ behavior: "instant", block: "nearest" });
                     };
                     setTimeout(scrollToTA, 200);
                     setTimeout(scrollToTA, 450);
+                    // iOSキーボードアニメーションが遅い端末向けの追加フォールバック
+                    setTimeout(scrollToTA, 650);
                   }}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
