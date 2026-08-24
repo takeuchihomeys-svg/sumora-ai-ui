@@ -15,6 +15,7 @@
   let sentFetching       = false; // 重複フェッチ防止フラグ
   let evalCache          = {};    // AI評価キャッシュ（キー: 顧客ID|物件名|号室|家賃 → 結果 or Promise）
                                   // MutationObserver 再実行での重複APIコールを防ぐ。顧客切替時にリセット
+  let patternHints       = [];    // 類似顧客の勝ちパターン（property_selection_patterns由来）。顧客切替でリセット
 
   // ── HTML エスケープ ─────────────────────────────────────────────
   function esc(s) {
@@ -489,10 +490,14 @@
     badge.textContent = "★" + result.score;
     if (result.is_duplicate) badge.textContent += " 送済";
     var ngFlags = result.ng_flags || [];
+    var hints   = result.pattern_hints || [];
+    var titleParts = [];
     if (ngFlags.length > 0) {
-      badge.title = ngFlags.join(", ");
       badge.style.textDecoration = "line-through";
+      titleParts.push("NG: " + ngFlags.join(", "));
     }
+    if (hints.length > 0) titleParts.push("刺さるポイント: " + hints.join(" · "));
+    if (titleParts.length > 0) badge.title = titleParts.join("\n");
     card.style.position = "relative";
     card.appendChild(badge);
   }
@@ -531,6 +536,11 @@
         }
         evalCache[key] = result;
         injectEvalBadge(card, result);
+        // 初回のみ: 類似顧客の勝ちパターンをキャプチャして条件バーを更新
+        if (patternHints.length === 0 && result.pattern_hints && result.pattern_hints.length > 0) {
+          patternHints = result.pattern_hints;
+          showConditionBar();
+        }
       });
     });
   }
@@ -648,9 +658,15 @@
       "max-width:800px;",
     ].join("");
 
+    var hintsHtml = patternHints.length > 0
+      ? "<span style='font-size:10px;color:#ffd54f;background:rgba(255,213,79,0.15);padding:1px 8px;border-radius:10px;flex-shrink:0;white-space:nowrap;'>&#128161;&nbsp;" +
+        patternHints.slice(0, 3).map(esc).join("&nbsp;&#183;&nbsp;") + "</span>"
+      : "";
+
     bar.innerHTML =
       "<span style='font-weight:700;color:#64b5f6;flex-shrink:0;'>&#128100; " + esc(c.customer_name || "") + ":</span>" +
       "<span style='color:#e0e0e0;'>" + conds.map(esc).join("&nbsp;/&nbsp;") + "</span>" +
+      hintsHtml +
       "<span style='margin-left:6px;display:flex;gap:3px;flex-shrink:0;'>" +
         "<span style='background:#2e7d32;color:#fff;font-size:10px;padding:1px 5px;border-radius:4px;'>&#9675;85+</span>" +
         "<span style='background:#1565c0;color:#fff;font-size:10px;padding:1px 5px;border-radius:4px;'>&#9675;70+</span>" +
@@ -678,6 +694,7 @@
           sentPropertiesList = null;
           sentFetching       = false;
           evalCache          = {};
+          patternHints       = [];
           fetchSentProperties(storedConditions.property_customer_id);
           autoFillSearchForm(storedConditions);
         }
@@ -714,6 +731,7 @@
           sentPropertiesList = null;
           sentFetching       = false;
           evalCache          = {};
+          patternHints       = [];
           fetchSentProperties(storedConditions.property_customer_id);
           autoFillSearchForm(storedConditions);
         }
