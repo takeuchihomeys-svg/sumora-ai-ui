@@ -113,6 +113,76 @@
     return { name: name || "物件", ad: ad };
   }
 
+  // ── 住所から市区を抽出（bulk-dl.js と同じロジック） ──────────────────
+  function trimToCity(addr) {
+    var m = addr.match(/([^都道府県\s　、]{1,6}市)/);
+    if (m) return m[1];
+    var m2 = addr.match(/([^都道府県\s　、]{1,6}[区郡])/);
+    return m2 ? m2[1] : "";
+  }
+
+  // ── itandi 物件カードから住所（市区）を抽出 ─────────────────────────
+  function extractCityFromCard(btn) {
+    var el = btn;
+    for (var i = 0; i < 12 && el && el !== document.body; i++) {
+      el = el.parentElement;
+      var fullText = (el.textContent || "").replace(/\s+/g, " ");
+      // 「所在地：○○市△△」形式を優先
+      var m = fullText.match(/所在地[：:]\s*([^\n\r]{2,40})/);
+      if (m) return trimToCity(m[1]);
+      // 住所ラベルも試す
+      var m2 = fullText.match(/住所[：:]\s*([^\n\r]{2,40})/);
+      if (m2) return trimToCity(m2[1]);
+    }
+    return "";
+  }
+
+  // ── SUUMO 検索ボタン注入 ──────────────────────────────────────────────
+  function injectSuumoButtons() {
+    document.querySelectorAll(".axlx-itandi-suumo-btn").forEach(function (el) { el.remove(); });
+    findMaterialBtns().forEach(function (btn) {
+      // 既に注入済みなら skip
+      var container = btn;
+      for (var i = 0; i < 5 && container.parentElement && container.parentElement !== document.body; i++) {
+        if (container.parentElement.classList &&
+            container.parentElement.classList.contains("CommonButton")) {
+          container = container.parentElement;
+          break;
+        }
+        container = container.parentElement;
+      }
+      if (container.parentNode.querySelector(".axlx-itandi-suumo-btn")) return;
+
+      var info = extractPropertyInfo(btn);
+      var city = extractCityFromCard(btn);
+      var _n = info.name;
+      var _a = city;
+
+      var suumoBtn = document.createElement("button");
+      suumoBtn.className = "axlx-itandi-suumo-btn";
+      suumoBtn.textContent = "🔍 SUUMO";
+      suumoBtn.title = (_n || "物件名") + (_a ? " " + _a : "") + " SUUMO でGoogle検索";
+      suumoBtn.style.cssText = [
+        "display:inline-flex;align-items:center;gap:3px;",
+        "padding:4px 10px;margin:2px 4px;",
+        "background:#00a55b;color:#fff;",
+        "border:none;border-radius:6px;",
+        "font-size:12px;font-weight:700;cursor:pointer;",
+        "box-shadow:0 1px 4px rgba(0,0,0,0.18);",
+        "white-space:nowrap;vertical-align:middle;",
+      ].join("");
+      suumoBtn.addEventListener("mouseover", function () { this.style.background = "#007a44"; });
+      suumoBtn.addEventListener("mouseout",  function () { this.style.background = "#00a55b"; });
+      suumoBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var q = [_n, _a, "SUUMO"].filter(Boolean).join(" ");
+        window.open("https://www.google.com/search?q=" + encodeURIComponent(q), "_blank");
+      });
+
+      container.parentNode.insertBefore(suumoBtn, container.nextSibling);
+    });
+  }
+
   // ── チェックボックス注入（re-inject時にchecked状態を保持） ───────────
   function inject() {
     // Step1: 現在の checked 状態を rowKey で保存
@@ -121,7 +191,7 @@
       else              checkedKeys.delete(t.rowKey);
     });
 
-    // Step2: 既存チェックボックスを削除
+    // Step2: 既存チェックボックス・SUUMOボタンを削除
     document.querySelectorAll(".axlx-itandi-cb").forEach(function (el) { el.remove(); });
     tracked = [];
 
@@ -154,6 +224,7 @@
       tracked.push({ cb: cb, btn: btn, rowKey: rowKey });
     });
     updateBar();
+    injectSuumoButtons();
 
     // 全ページ自動送信: autofill後に新しいボタンが出現したら自動発火
     if (_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched && !_autoSendInProgress) {
