@@ -121,6 +121,8 @@ export function buildBrainFetchSpec(
         parts.push(meta.customer_questions.slice(0, 3).join(" "));
       }
       if (meta.key_topics?.length) parts.push(meta.key_topics.join(" "));
+      // customer_intent をRAGクエリに追加（意図別の返信例・知識をピンポイントで引く）
+      if (meta.customer_intent) parts.push(meta.customer_intent);
     }
     return parts.length > 0 ? parts.join(" ") : undefined;
   })();

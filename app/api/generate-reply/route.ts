@@ -2432,7 +2432,7 @@ export async function POST(req: NextRequest) {
       // Step1移植: message-local戦術フィールド（鮮度ゲート通過時のみ発火）
       const qs = brainFreshForMessage ? (brainMeta.customer_questions ?? []) : [];
       const hasTactical = brainFreshForMessage && !!(
-        qs.length || brainMeta.repeated_concern || brainMeta.current_property || brainMeta.hesitancy_pattern
+        qs.length || brainMeta.repeated_concern || brainMeta.current_property || brainMeta.hesitancy_pattern || brainMeta.customer_intent
       );
       // H2(AIX-METAフル活用 2026-08): property_search_params は brain が property_customers +
       // sent_properties から構築した「この顧客だけの確定事実」。パターン検索（pgvector/DB）では
@@ -2539,6 +2539,22 @@ export async function POST(req: NextRequest) {
           lines.push(`- 📅 タイムライン確定（${timeline}）: お客様がタイムラインを示している。そのタイミングで動く具体アクションを約束する: 「${timeline}に新着物件も含めてピックアップしお送りさせて頂きます😊！！」のように日付・アクションを明示してコミットする`);
         } else if (hp === "undecided") {
           lines.push("- 🔀 物件迷いパターン検出: 複数物件で迷っている。判断軸を提供する: 各物件の具体的な違い（費用・立地・設備）を数字で比較し「初期費用を軸にお選びになられるのはいかがでしょうか」等で決断を後押しする。※比較に使う数字は会話履歴にテキストとして登場した実際の値のみ。履歴にない家賃・費用の数字を推測して比較することは絶対禁止。数字が履歴になければ判断軸提示のみ行う");
+        }
+      }
+      // 顧客意図 (customer_intent): 問い合わせの根本意図に応じた返信モードを指示
+      if (brainFreshForMessage && brainMeta.customer_intent) {
+        const INTENT_GUIDE: Record<string, string> = {
+          question:     "質問回答モード ― お客様の疑問に端的に答えるだけ。次アクション催促・送付案内・フォーム提出促しは一切書かない",
+          consultation: "相談応対モード ― 選択肢・アドバイスを提示する。即決プッシュは控える",
+          desire:       "願望応対モード ― お客様の希望を受け止め、物件提案・具体化へつなげる",
+          decision:     "決定応対モード ― 申込フロー・次ステップをスムーズに案内する",
+          positive:     "前向き応対モード ― 気に入り感に乗り、申込提案へ背中を押す",
+          negative:     "懸念解消モード ― 不安・懸念を正面から解消してから次へ進む",
+          chat:         "雑談応対モード ― 軽い返しで親近感を保つ。長文・次アクション催促は不要",
+        };
+        const guide = INTENT_GUIDE[brainMeta.customer_intent];
+        if (guide) {
+          lines.push(`- 🎯 顧客意図【${brainMeta.customer_intent}】→ ${guide}`);
         }
       }
       // H1(AIX-METAフル活用 2026-08): future_timeline を hesitancy_pattern と独立に注入。
