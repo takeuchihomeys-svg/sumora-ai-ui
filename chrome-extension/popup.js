@@ -2509,10 +2509,14 @@ function classifyAreaTokens(tokens) {
     var tBase = t.replace(/[町村]$/, "");
     var inStation = !!(STATION_LINE_MAP[t] || STATION_LINE_MAP[tBase] ||
       (LEARNED_STATION_MAP[t] && LEARNED_STATION_MAP[t].realpro_lines && LEARNED_STATION_MAP[t].realpro_lines.length > 0));
+    // WARD_CODE_MAP = 実際の区コード（大阪市淀川区 等）→ 強い地名シグナル
+    // NEIGHBORHOOD_WARD_MAP = 地名→区の対応（十三→淀川区 等）→ 弱い地名シグナル（駅名に負ける）
+    var inStrictWard = !!WARD_CODE_MAP[t];
     var inWard = !!(WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || LEARNED_WARD_MAP[t]);
-    if (inStation && !inWard)  return { t: t, type: "station",   reason: "station_map" };
-    if (!inStation && inWard)  return { t: t, type: "area",      reason: "ward_map" };
-    if (inStation && inWard)   return { t: t, type: "ambiguous", reason: "both_maps" };
+    // STATION_LINE_MAP にある → 駅。ただし WARD_CODE_MAP に完全一致する純粋な市区名は地域優先
+    if (inStation && !inStrictWard) return { t: t, type: "station",   reason: "station_map" };
+    if (inStation && inStrictWard)  return { t: t, type: "ambiguous", reason: "both_maps" };
+    if (!inStation && inWard)       return { t: t, type: "area",      reason: "ward_map" };
     return { t: t, type: "unknown", reason: "not_found" };
   });
   var stationCount = classified.filter(function(c) { return c.type === "station"; }).length;
