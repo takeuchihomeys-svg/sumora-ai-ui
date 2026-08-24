@@ -95,6 +95,94 @@
     return results;
   }
 
+  // 建物名から「○○市」部分だけを抽出するヘルパー
+  function trimToCity(addr) {
+    // 都道府県文字を除く6文字以内 + 市 → "大阪市", "横浜市" etc.
+    var m = addr.match(/([^都道府県\s　、]{1,6}市)/);
+    if (m) return m[1];
+    // 市がなければ区・郡
+    var m2 = addr.match(/([^都道府県\s　、]{1,6}[区郡])/);
+    return m2 ? m2[1] : "";
+  }
+
+  // リアプロ建物モード: 印刷用PDFボタンを起点に建物ヘッダー要素を特定し
+  // 建物ごとに「SUUMO」ボタンを1つ注入する
+  function injectSuumoButtons() {
+    document.querySelectorAll(".axlx-suumo-btn").forEach(function (el) { el.remove(); });
+    var btns = findPrintBtns();
+    var injectedHeaders = new Set();
+
+    btns.forEach(function (btn) {
+      var row = btn;
+      while (row && row.tagName !== "TR") row = row.parentElement;
+      var cur = row ? row.parentElement : null;
+      var headerEl = null;
+      var bldgName = "";
+      var bldgAddr = "";
+
+      // TR の親要素を遡りながら「住所|沿線|TEL」を含む previousElementSibling を探す
+      while (cur && !headerEl) {
+        var prev = cur.previousElementSibling;
+        if (prev && /住所|沿線|Tel[\s:：]|TEL[\s:：]/.test(prev.textContent)) {
+          headerEl = prev;
+          // 建物名を抽出（h系タグ優先 → テキスト行分割）
+          var hEl = prev.querySelector("h2,h3,h4,.building-name,td b,td strong");
+          if (hEl) {
+            bldgName = hEl.textContent.trim();
+          } else {
+            var lines = (prev.innerText || prev.textContent).split(/[\n\r]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+            for (var li = 0; li < lines.length; li++) {
+              var l = lines[li];
+              if (l.length < 2 || l.length > 40) continue;
+              if (/^住所|^〒|^沿線|^TEL|^Tel|^お問合せ|^株式会社|^有限会社|^合同会社/.test(l)) continue;
+              bldgName = l; break;
+            }
+          }
+          // 住所を抽出（○○市まで）
+          var allTxts = Array.from(prev.querySelectorAll("td,div,p,span")).map(function (e) {
+            return e.textContent.replace(/\s+/g, " ").trim();
+          }).concat([(prev.textContent || "").replace(/\s+/g, " ")]);
+          var addrTxt = allTxts.find(function (t) {
+            return /[区市町村]/.test(t) && t.length < 80 && !/万円|徒歩|m[²2]|㎡|[0-9]+分/.test(t);
+          }) || "";
+          bldgAddr = trimToCity(addrTxt);
+        }
+        cur = cur.parentElement;
+      }
+
+      if (!headerEl || injectedHeaders.has(headerEl)) return;
+      injectedHeaders.add(headerEl);
+
+      var _n = bldgName;
+      var _a = bldgAddr;
+      var suumoBtn = document.createElement("button");
+      suumoBtn.className = "axlx-suumo-btn";
+      suumoBtn.textContent = "🔍 SUUMO";
+      suumoBtn.title = (_n || "物件名") + " " + (_a || "") + " SUUMO でGoogle検索";
+      suumoBtn.style.cssText = [
+        "display:inline-flex;align-items:center;gap:3px;",
+        "padding:4px 10px;margin:2px 4px;",
+        "background:#00a55b;color:#fff;",
+        "border:none;border-radius:6px;",
+        "font-size:12px;font-weight:700;cursor:pointer;",
+        "box-shadow:0 1px 4px rgba(0,0,0,0.18);",
+        "white-space:nowrap;vertical-align:middle;",
+      ].join("");
+      suumoBtn.addEventListener("mouseover", function () { this.style.background = "#007a44"; });
+      suumoBtn.addEventListener("mouseout",  function () { this.style.background = "#00a55b"; });
+      suumoBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var q = [_n, _a, "SUUMO"].filter(Boolean).join(" ");
+        window.open("https://www.google.com/search?q=" + encodeURIComponent(q), "_blank");
+      });
+
+      // 建物ヘッダー内の最後の <td> にボタンを追加（なければ直接追加）
+      var tds = headerEl.querySelectorAll("td");
+      var target = tds.length > 0 ? tds[tds.length - 1] : headerEl;
+      target.appendChild(suumoBtn);
+    });
+  }
+
   function inject() {
     document.querySelectorAll(".axlx-cb").forEach(function (el) { el.remove(); });
     tracked = [];
@@ -109,6 +197,7 @@
       tracked.push({ cb: cb, btn: btn });
     });
     updateBar();
+    injectSuumoButtons();
 
     // Case A: fill-done 受信済み かつ スナップショット前にない新しい結果が出た
     if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
