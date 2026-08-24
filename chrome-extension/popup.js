@@ -186,7 +186,9 @@ async function deleteLearnedToken(token, type) {
     console.log("[AX] 削除完了:", token, "→ 次回またWeb検索で再解決");
     // 削除後に再描画して再解決を促す
     if (selectedCustomer && selectedSite) {
-      const areaVal = document.getElementById("adj-area")?.value || (selectedCustomer.desired_area || selectedCustomer.area || "");
+      const _stV = document.getElementById("adj-area-station")?.value || "";
+      const _wdV = document.getElementById("adj-area-ward")?.value || "";
+      const areaVal = [_stV, _wdV].filter(Boolean).join("・") || (selectedCustomer.desired_area || selectedCustomer.area || "");
       showUnknownWarn(computeUnknownTokens(areaVal));
       renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
     }
@@ -209,7 +211,9 @@ async function correctLearnedToken(token, ward) {
     LEARNED_WARD_MAP[token] = ward;
     console.log("[AX] 正解学習:", token, "→", ward, "（次回からDB完全一致で解決）");
     if (selectedCustomer && selectedSite) {
-      const areaVal = document.getElementById("adj-area")?.value || (selectedCustomer.desired_area || selectedCustomer.area || "");
+      const _stV2 = document.getElementById("adj-area-station")?.value || "";
+      const _wdV2 = document.getElementById("adj-area-ward")?.value || "";
+      const areaVal = [_stV2, _wdV2].filter(Boolean).join("・") || (selectedCustomer.desired_area || selectedCustomer.area || "");
       showUnknownWarn(computeUnknownTokens(areaVal));
       renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
     }
@@ -1353,12 +1357,20 @@ const SITE_CONFIG = {
     icon: "🏠",
     steps: (c, mode = "pinpoint", areaMode = null) => {
       const d = buildCondData(c, mode);
-      const areaText = d.area || "";
+
+      // 明示的な地域/駅フィールドがある場合はそちらを優先（UI 2フィールド化対応）
+      const _explWard = (c.area_ward    || "").trim();
+      const _explSt   = (c.area_station || "").trim();
+      if (_explWard && !_explSt)  areaMode = "ward";
+      if (_explSt)                areaMode = "station"; // 駅があれば駅優先
+
+      // areaText は「駅フィールド > 地域フィールド > d.area」の順で使う
+      const areaText = _explSt || _explWard || d.area || "";
       const areaClean = normalizeNumerals(areaText.replace(/周辺|付近|近く|エリア/g, "").trim());
       const _resolvedWard = resolveWard(areaClean);
       const neighborhoodWard = (_resolvedWard && !STATION_LINE_MAP[areaClean]) ? _resolvedWard : null;
 
-      // ボタン押下が絶対ルール。未選択時のみ自動判定
+      // ボタン押下 or 明示フィールドが絶対ルール。未選択時のみ自動判定
       let isLocation, isStation;
       if (areaMode === "ward") {
         isLocation = true; isStation = false;
@@ -1371,7 +1383,20 @@ const SITE_CONFIG = {
       const steps = [];
       let n = 1;
 
-      // ── STEP 1: エリア絞り込み ──
+      // 地域・駅の両フィールドが埋まっている場合: 地域ステップを先に追加
+      if (_explWard && _explSt) {
+        const _wToks = parseAreaTokens(_explWard);
+        const _multiWard = _wToks.length >= 2 && _wToks.every(t => !!WARD_CODE_MAP[t]) ? _wToks.join("　") : null;
+        steps.push({
+          num: n++,
+          field: "【所在地】絞り込み",
+          value: _multiWard || _explWard,
+          hint: "左メニュー「所在地絞り込み ＋」をクリック → 都道府県を選択 → 市区郡を選択 → 右側「詳細な地域の設定へ進む ›」→ 地域を選択 → 「確定してリストへ」",
+        });
+        // 駅ステップは既存ロジックで続けて追加（areaMode = "station" 設定済み）
+      }
+
+      // ── STEP: エリア絞り込み ──
       if (areaText) {
         if (isLocation && !isStation) {
           // 市・区・府・県など → 所在地
@@ -2344,7 +2369,8 @@ function openSiteView(customer) {
 function updateTransferUI() {
   const row = document.getElementById('transfer-search-row');
   if (!row) return;
-  const area = document.getElementById('adj-area')?.value.trim()
+  const area = document.getElementById('adj-area-station')?.value.trim()
+    || document.getElementById('adj-area')?.value.trim()
     || (selectedCustomer && (selectedCustomer.desired_area || selectedCustomer.area || ''));
   const toks = area ? parseAreaTokens(area) : [];
   const hasStation = toks.some(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, '')] || LEARNED_STATION_MAP[t]);
@@ -2362,7 +2388,8 @@ function updateTransferCountLabel() {
   if (!label) return;
   const enabled = document.getElementById('enableTransfer')?.checked;
   if (!enabled) { label.textContent = ''; return; }
-  const area = document.getElementById('adj-area')?.value.trim()
+  const area = document.getElementById('adj-area-station')?.value.trim()
+    || document.getElementById('adj-area')?.value.trim()
     || (selectedCustomer && (selectedCustomer.desired_area || selectedCustomer.area || ''));
   const toks = area ? parseAreaTokens(area) : [];
   const stations = toks.filter(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, '')] || LEARNED_STATION_MAP[t]);
@@ -2518,7 +2545,7 @@ function setupAreaModeSelector(c, siteKey) {
   btnStation.onclick = () => { _areaModeSource = "user"; setMode("station"); };
   btnWard.onclick    = () => {
     // 通勤時間パターン（「梅田から20分以内」等）は駅モードでのみ有効。地域モードへの切替をブロック
-    const _rawCurrent = (document.getElementById("adj-area")?.value || "").trim();
+    const _rawCurrent = (document.getElementById("adj-area-ward")?.value || "").trim();
     if (/(?:まで|から|へ)(?:電車|バス|徒歩|歩いて)?\d+分/.test(_rawCurrent)) {
       showToast && showToast("「〇〇から△分以内」は駅タブで処理されます", "info");
       return;
@@ -2541,7 +2568,28 @@ function setupAreaModeSelector(c, siteKey) {
 }
 
 function preloadAdjForm(c) {
-  document.getElementById("adj-area").value      = c.desired_area || c.area || "";
+  const _rawArea  = c.desired_area || c.area || "";
+  const _areaMode = c.area_mode || "auto";
+  let _wardStr = "", _stStr = "";
+  if (_areaMode === "ward") {
+    _wardStr = _rawArea;
+  } else if (_areaMode === "station") {
+    _stStr = _rawArea;
+  } else {
+    // auto: STATION_LINE_MAP / LEARNED_STATION_MAP で token 分類
+    const _toks = _rawArea ? parseAreaTokens(_rawArea) : [];
+    const _stToks = _toks.filter(t =>
+      STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, "")] ||
+      (LEARNED_STATION_MAP[t]?.realpro_lines?.length > 0) ||
+      (t.endsWith("線") && lineNameToRouteId && lineNameToRouteId(t))
+    );
+    const _wdToks = _toks.filter(t => !_stToks.includes(t));
+    _stStr   = _stToks.join("・");
+    _wardStr = _wdToks.join("・") || (_stToks.length === 0 ? _rawArea : "");
+  }
+  document.getElementById("adj-area-station").value = _stStr;
+  document.getElementById("adj-area-ward").value    = _wardStr;
+  document.getElementById("adj-area").value          = _rawArea; // hidden: 内部互換用
   document.getElementById("adj-rent-max").value  = c.rent_max || c.max_rent || "";
   document.getElementById("adj-area-min").value  = c.floor_area_min || c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || "";
   document.getElementById("adj-area-max").value  = c.floor_area_max || c.area_max || c.max_area || "";
@@ -2626,7 +2674,16 @@ function calcUpdateDays(dateStr, status) {
 }
 
 function buildAdjCustomer(c) {
-  let adjArea      = document.getElementById("adj-area").value.trim();
+  const adjWard    = document.getElementById("adj-area-ward")?.value.trim()    || "";
+  const adjStation = document.getElementById("adj-area-station")?.value.trim() || "";
+  // 地域・駅フィールドを合わせて area を構築（hidden adj-area はフォールバック）
+  let adjArea = [adjStation, adjWard].filter(Boolean).join("・")
+             || document.getElementById("adj-area")?.value.trim() || "";
+  // area_mode の自動導出（明示フィールドで確定）
+  const _derivedMode = (adjWard && !adjStation) ? "ward"
+    : (adjStation && !adjWard) ? "station"
+    : (adjWard && adjStation)  ? "both"
+    : (c.area_mode || "auto");
   const adjRentMax = document.getElementById("adj-rent-max").value;
   const adjWalk    = document.getElementById("adj-walk").value;
   const adjAge     = document.getElementById("adj-age").value;
@@ -2661,8 +2718,11 @@ function buildAdjCustomer(c) {
 
   return {
     ...c,
-    desired_area: adjArea    || c.desired_area || c.area || null,
-    area:         adjArea    || c.desired_area || c.area || null,
+    desired_area:  adjArea    || c.desired_area || c.area || null,
+    area:          adjArea    || c.desired_area || c.area || null,
+    area_ward:     adjWard    || null,
+    area_station:  adjStation || null,
+    area_mode:     _derivedMode,
     rent_max:     adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null),
     max_rent:     adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null),
     walk_minutes: adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
@@ -2721,7 +2781,7 @@ function showUnknownWarn(tokens) {
     resolveUnknownTokensWithAI(unresolvedTokens, () => {
       // 解決後: 結果をチェックして「間違い？」ボタンを表示
       if (selectedCustomer && selectedSite) {
-        const adjAreaEl = document.getElementById("adj-area");
+        const adjAreaEl = document.getElementById("adj-area-station") || document.getElementById("adj-area");
         const areaVal = adjAreaEl ? adjAreaEl.value : (selectedCustomer.desired_area || selectedCustomer.area || "");
         const stillUnknown = computeUnknownTokens(areaVal);
         if (stillUnknown.length === 0) {
@@ -2750,7 +2810,7 @@ function showUnknownWarn(tokens) {
     const btn = document.getElementById("unknown-resolve-btn");
     if (btn) {
       btn.onclick = () => {
-        const adjAreaEl = document.getElementById("adj-area");
+        const adjAreaEl = document.getElementById("adj-area-station") || document.getElementById("adj-area");
         let areaVal = adjAreaEl.value;
         analyzed.forEach(r => {
           if (r.suggestion) {
@@ -2812,7 +2872,10 @@ function openInstructions(siteKey) {
       const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
       const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得
       let c = selectedCustomer;
-      const adjArea      = document.getElementById("adj-area").value.trim();
+      const _adjWard_it    = document.getElementById("adj-area-ward")?.value.trim()    || "";
+      const _adjStation_it = document.getElementById("adj-area-station")?.value.trim() || "";
+      const adjArea      = [_adjStation_it, _adjWard_it].filter(Boolean).join("・")
+                        || document.getElementById("adj-area")?.value.trim() || "";
       const adjRentMax   = document.getElementById("adj-rent-max").value;
       const adjAreaMin   = document.getElementById("adj-area-min").value;
       const adjAreaMax   = document.getElementById("adj-area-max").value;
@@ -3211,7 +3274,10 @@ function openInstructions(siteKey) {
       const _lockedMode = autofillBtn.dataset.area_mode_locked || null; // await前に取得（非同期後は dataset が削除済み）
       const c = c0;
       // 調整フォームの値を優先して使う
-      const adjArea     = document.getElementById("adj-area").value.trim();
+      const _adjWard_rp    = document.getElementById("adj-area-ward")?.value.trim()    || "";
+      const _adjStation_rp = document.getElementById("adj-area-station")?.value.trim() || "";
+      const adjArea     = [_adjStation_rp, _adjWard_rp].filter(Boolean).join("・")
+                       || document.getElementById("adj-area")?.value.trim() || "";
       const adjRentMax  = document.getElementById("adj-rent-max").value;
       const adjAreaMin    = document.getElementById("adj-area-min").value;
       const adjAreaMax    = document.getElementById("adj-area-max").value;
@@ -3224,6 +3290,8 @@ function openInstructions(siteKey) {
       const adjC = {
         desired_area: adjArea     || c.desired_area || c.area  || null,
         area:         adjArea     || c.desired_area || c.area  || null,
+        area_ward:    _adjWard_rp    || null,
+        area_station: _adjStation_rp || null,
         rent_max:     adjRentMax  ? Number(adjRentMax)  : (c.rent_max || c.max_rent || null),
         rent_min:     c.rent_min  || null,
         walk_minutes: adjWalk     ? Number(adjWalk)     : (c.walk_minutes || null),
@@ -3246,7 +3314,20 @@ function openInstructions(siteKey) {
         ? await fetchBrainSearchParams(c.id, adjAreaClean)
         : await resolveAreaWithAPI(adjAreaClean, "auto", adjC.id);
 
-      // ② 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
+      // ② ブレインAPI結果を地域・駅フィールドに反映（明示分離）
+      if (apiData) {
+        const _apiStNames = apiData.realpro?.station_names || [];
+        const _apiWdNames = apiData.itandi?.ward_names || apiData.reins?.ward_names || [];
+        if (_apiStNames.length > 0) {
+          document.getElementById("adj-area-station").value = _apiStNames.join("・");
+          document.getElementById("adj-area").value = _apiStNames.join("・"); // hidden sync
+        }
+        if (_apiWdNames.length > 0) {
+          document.getElementById("adj-area-ward").value = _apiWdNames.join("・");
+        }
+      }
+
+      // ③ 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
       if (_areaModeSource === "auto" && apiData?.realpro) {
         const _hasApiSt = (apiData.realpro.station_names?.length > 0) || (apiData.realpro.route_ids?.length > 0);
         const _hasApiWd = (apiData.realpro.city_codes?.length > 0);

@@ -175,14 +175,11 @@
         <div id="adj-form" class="adj-form" style="display:none">
           <div class="adj-title">⚙️ 一時調整 <span class="adj-note">DBは変更しません</span></div>
 
-          <!-- 駅/地域 切替セクション（混在条件のとき表示） -->
+          <!-- 駅/地域 切替ボタンは2フィールド化により不要（hidden で内部互換維持） -->
           <div id="area-mode-selector" style="display:none">
             <div class="area-mode-btns">
               <button id="btn-mode-station" class="area-mode-btn">🚉 駅で選択</button>
               <button id="btn-mode-ward" class="area-mode-btn">📍 地域で選択</button>
-            </div>
-            <div id="area-mixed-notice" class="area-mixed-notice" style="display:none">
-              ⚠️ 駅と地域が混在しています。駅と地域は別々に検索する必要があります。
             </div>
           </div>
 
@@ -193,9 +190,15 @@
               <input class="adj-input" id="adj-last-sent-date" type="date" style="flex:1" />
               <button id="adj-mark-sent-btn" style="margin-left:6px;padding:4px 8px;border-radius:8px;border:none;background:#43a047;color:white;font-size:11px;font-weight:bold;cursor:pointer;white-space:nowrap">✅ 送った</button>
             </div>
+            <!-- 地域・駅を明示的に分離（内部互換用 adj-area は hidden で維持） -->
+            <input type="hidden" id="adj-area" />
             <div class="adj-row">
-              <span class="adj-label">エリア</span>
-              <input class="adj-input" id="adj-area" type="text" />
+              <span class="adj-label">地域</span>
+              <input class="adj-input" id="adj-area-ward" type="text" placeholder="例: 北区 天王寺区" />
+            </div>
+            <div class="adj-row">
+              <span class="adj-label">駅</span>
+              <input class="adj-input" id="adj-area-station" type="text" placeholder="例: 梅田 難波" />
             </div>
             <div class="adj-row">
               <span class="adj-label">賃料上限</span>
