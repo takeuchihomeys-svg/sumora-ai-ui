@@ -586,6 +586,10 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 ## 🔁 引き継ぎ事項（次セッションへ）
 
 - 現在のバージョン: **v2.4.8**（manifest.json 記載）
+- **2026-08-24 setupAreaModeSelector クラッシュ修正**:
+  - **症状**: 一括検索中に `axlx-switch-customer` を受信すると popup.js:2501 で `TypeError: Cannot read properties of null (reading 'style')` が発生し、その後のリアプロ/itandi ボタンが押せなくなる
+  - **根本原因**: `setupAreaModeSelector` が DOM要素（`area-mixed-notice` 等）の存在を前提にしていたが、underbar モードの一括検索フロー（`openSiteView → openInstructions`）では instructions パネルの DOM 要素が存在しない状態で呼ばれる
+  - **修正（popup.js `setupAreaModeSelector`）**: `defaultMode` 計算・`currentAreaMode` のセットを先に行い、その後で DOM 要素の null チェック。DOM がなければ UI 更新のみスキップ（`currentAreaMode` はセット済みなので自動入力は正常動作する）
 - **2026-08-11 itandi station_map DB統合**:
   - `/api/itandi-resolve` 新設: station_map テーブルの itandi_lines カラムを直接返す itandi 専用軽量API。入力: `{ tokens: string[] }`、出力: `{ resolved: {[token]: {itandi_lines, ward}}, unknown_tokens }`
   - `popup.js` L2545〜: itandiLines 構築を `LEARNED_STATION_MAP[token].itandi_lines`（DB全件キャッシュ）優先に変更。DB未登録駅のみ `ITANDI_LINE_MAP_FILL` 静的変換にフォールバック

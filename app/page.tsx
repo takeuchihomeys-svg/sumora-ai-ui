@@ -2814,6 +2814,8 @@ export default function Home() {
         // 2枚目のRAFでReactの再描画後に確実に正しいサイズでスクロールする。
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
+            // iOSがキーボード出現時にページ本体をスクロールするのを防ぐ
+            window.scrollTo(0, 0);
             if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
             const ta = textareaRef.current;
             if (ta && document.activeElement === ta) {
@@ -2823,8 +2825,8 @@ export default function Home() {
             if (ae instanceof HTMLTextAreaElement && bottomPanelRef.current?.contains(ae)) {
               // bottomPanel自体を最下部にスクロール → textareaが常にキーボード直上に来る（LINE同等の動作）
               bottomPanelRef.current.scrollTop = bottomPanelRef.current.scrollHeight;
-              // dvhだけでは不十分な場合のフォールバック: textareaをキーボード上に強制表示
-              ae.scrollIntoView({ behavior: "instant", block: "nearest" });
+              // block: "end" でtextareaの下端をスクロールコンテナの下端に合わせる（"nearest"は既に見えている場合スキップするため不十分）
+              ae.scrollIntoView({ behavior: "instant", block: "end" });
             }
           });
         });
@@ -8316,15 +8318,17 @@ export default function Home() {
                     const scrollToTA = () => {
                       const ta = textareaRef.current;
                       if (!ta || document.activeElement !== ta) return;
+                      window.scrollTo(0, 0);
                       const panel = bottomPanelRef.current;
                       if (panel) panel.scrollTop = panel.scrollHeight;
-                      // smoothだとiOSでタイミングがずれるためinstantを使用
-                      ta.scrollIntoView({ behavior: "instant", block: "nearest" });
+                      // block: "end" でtextarea下端をキーボード直上に合わせる
+                      ta.scrollIntoView({ behavior: "instant", block: "end" });
                     };
                     setTimeout(scrollToTA, 200);
                     setTimeout(scrollToTA, 450);
-                    // iOSキーボードアニメーションが遅い端末向けの追加フォールバック
                     setTimeout(scrollToTA, 650);
+                    // 遅い端末向け追加フォールバック
+                    setTimeout(scrollToTA, 900);
                   }}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
@@ -8339,7 +8343,7 @@ export default function Home() {
                     overflowY: "auto",
                     WebkitOverflowScrolling: "touch" as React.CSSProperties["WebkitOverflowScrolling"],
                     overscrollBehavior: "contain",
-                    paddingBottom: "48px", // 最終行をスクロールアップできるよう余白
+                    paddingBottom: keyboardHeight > 100 ? "8px" : "48px",
                   }}
                 />
                 {/* 追加メッセージスロット（時間差送信） */}

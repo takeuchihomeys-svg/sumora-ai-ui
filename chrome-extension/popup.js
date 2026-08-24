@@ -2491,23 +2491,6 @@ function setupAreaModeSelector(c, siteKey) {
   const rawA = (c.desired_area || c.area || "").trim();
   const toks = parseAreaTokens(rawA);
 
-  const selectorEl = document.getElementById("area-mode-selector");
-  const noticeEl   = document.getElementById("area-mixed-notice");
-  const btnStation = document.getElementById("btn-mode-station");
-  const btnWard    = document.getElementById("btn-mode-ward");
-
-  if (!rawA) { selectorEl.style.display = "none"; return; }
-  selectorEl.style.display = "block";
-  noticeEl.style.display   = "none"; // 混在警告は不要（ユーザーが選択するため）
-
-  // ボタン押下が絶対ルール: currentAreaMode を更新 → ステップ表示も即更新
-  function setMode(mode) {
-    currentAreaMode = mode;
-    btnStation.classList.toggle("active", mode === "station");
-    btnWard.classList.toggle("active", mode === "ward");
-    renderInstrSteps(siteKey, buildAdjCustomer(c));
-  }
-
   // デフォルト: WARD_CODE_MAP収録済み → 地域 / 駅名のみ → 駅 / それ以外 → 地域
   const _cpRe = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
   function _isKnownStation(t) {
@@ -2545,7 +2528,29 @@ function setupAreaModeSelector(c, siteKey) {
       ? ((hasSpecificWardToken || hasWardCompoundToken) ? "ward" : "station")
       : "ward");
 
+  // DOM がない状態（underbarモード等）でも currentAreaMode だけはセットしておく
   _areaModeSource = "auto";
+  currentAreaMode = defaultMode;
+
+  const selectorEl = document.getElementById("area-mode-selector");
+  const noticeEl   = document.getElementById("area-mixed-notice");
+  const btnStation = document.getElementById("btn-mode-station");
+  const btnWard    = document.getElementById("btn-mode-ward");
+
+  // DOM 要素が存在しない場合は UI 更新のみスキップ（currentAreaMode は上でセット済み）
+  if (!selectorEl || !noticeEl || !btnStation || !btnWard) return;
+  if (!rawA) { selectorEl.style.display = "none"; return; }
+  selectorEl.style.display = "block";
+  noticeEl.style.display   = "none";
+
+  // ボタン押下が絶対ルール: currentAreaMode を更新 → ステップ表示も即更新
+  function setMode(mode) {
+    currentAreaMode = mode;
+    btnStation.classList.toggle("active", mode === "station");
+    btnWard.classList.toggle("active", mode === "ward");
+    renderInstrSteps(siteKey, buildAdjCustomer(c));
+  }
+
   setMode(defaultMode);
   btnStation.onclick = () => { _areaModeSource = "user"; setMode("station"); };
   btnWard.onclick    = () => {
