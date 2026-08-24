@@ -1019,7 +1019,7 @@ export async function analyzeConversation(
               supabase.rpc("match_winning_patterns", {
                 query_embedding: qEmb,
                 match_count: 5,
-                min_importance: 7,
+                min_importance: 8,
               }),
               // templates RAG: 会話フェーズ・戦略に最も近いテンプレを取得（バルクフェッチ廃止）
               supabase.rpc("match_templates", {
