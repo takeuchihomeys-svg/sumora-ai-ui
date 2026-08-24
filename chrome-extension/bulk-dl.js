@@ -139,12 +139,19 @@
             }
           }
           // 住所を抽出（○○市まで）
-          var allTxts = Array.from(prev.querySelectorAll("td,div,p,span")).map(function (e) {
-            return e.textContent.replace(/\s+/g, " ").trim();
-          }).concat([(prev.textContent || "").replace(/\s+/g, " ")]);
-          var addrTxt = allTxts.find(function (t) {
-            return /[区市町村]/.test(t) && t.length < 80 && !/万円|徒歩|m[²2]|㎡|[0-9]+分/.test(t);
-          }) || "";
+          // 「住所：○○市△△1丁目」形式を直接抽出（沿線・徒歩情報が混入してもフィルター誤爆しない）
+          var fullText = (prev.textContent || "").replace(/\s+/g, " ");
+          var addrMatch = fullText.match(/住所[：:]\s*([^\n\r]{2,60})/);
+          var addrTxt = addrMatch ? addrMatch[1] : "";
+          if (!addrTxt) {
+            // フォールバック: 市/区を含む要素テキストから探す
+            var allTxts = Array.from(prev.querySelectorAll("td,div,p,span")).map(function (e) {
+              return e.textContent.replace(/\s+/g, " ").trim();
+            }).concat([fullText]);
+            addrTxt = allTxts.find(function (t) {
+              return /[区市町村]/.test(t) && t.length < 80 && !/万円|徒歩|m[²2]|㎡|[0-9]+分/.test(t);
+            }) || "";
+          }
           bldgAddr = trimToCity(addrTxt);
         }
         cur = cur.parentElement;
