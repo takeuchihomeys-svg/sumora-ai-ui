@@ -69,14 +69,31 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | エリア（所在地） | 同じ区内も対象 / 隣接エリアも視野に |
 | 広さ | 30㎡未満 → −5㎡まで OK / 30㎡以上 → −10㎡まで OK |
 
-### エリア判定ロジック（#43-KN / #43-EK / #43-GK 三博士体制）
+### 物件検索ブレイン（エリア仕分けロジック）
+
+> **呼称**: このローカル分類ロジック全体を「物件検索ブレイン」と呼ぶ。LINE返信AI用のClaudeブレインとは別物。
+
+#### classifyAreaTokens（2026-08-24 新設・仕分け担当の中核）
+各トークンを6段階シグナルで独立分類し、曖昧なものは周囲の多数決で解決する：
+
 ```
-① STATION_LINE_MAP に収録済み → 必ず「駅」として扱う（文字に騙されない）
-② STATION_LINE_MAP に未収録 + NEIGHBORHOOD_WARD_MAP に収録済み → 「地域」として扱う
-③ STATION_LINE_MAP に未収録 + 市/区/府/県/都/郡を含む → 「所在地」として扱う
-④ 町・村だけでは所在地判定しない（駅名に頻出するため）
+① 〜線で終わる          → 路線（駅系）
+② JR/阪急/阪神等プレフィックス → 駅（明確・最強シグナル）
+③ 市区郡サフィックス     → 地域（明確）
+④ STATION_LINE_MAP のみ → 駅
+⑤ WARD_CODE_MAP のみ   → 地域
+⑥ 両方 or 不明         → 周囲トークンの多数決で解決（同数は駅優先）
 ```
-- ※ 「堺筋本町」「野田阪神」「天神橋筋六丁目」など駅名に地名文字が含まれるケースは STATION_LINE_MAP に収録しておくことでバグを防ぐ（2026-05-18 #43-KN強化で対応）
+
+**重要**: STATION_LINE_MAP にある = 駅が最優先。
+NEIGHBORHOOD_WARD_MAP（地名→区 の弱いシグナル）は STATION_LINE_MAP に負ける。
+十三・平野など「駅名と同じ地名」はSTATION_LINE_MAPがあれば常に駅として扱う。
+WARD_CODE_MAP（実際の区コード: 大阪市淀川区 等）だけが駅分類を上書きできる。
+
+コンソールに `[AX] 仕分け: 駒川中野→station(station_map), 平野→station(station_map)...` が出力される。
+
+#### setupAreaModeSelector
+classifyAreaTokens の結果を受けてグローバルモード（駅 or 地域）を決定する。
 
 ### 不明トークン発生時の三博士相談フロー
 ```
@@ -106,6 +123,9 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 
 | 日付 | 内容 |
 |---|---|
+| 2026-08-24 | **物件検索ブレイン: classifyAreaTokens で仕分け担当を強化（commit 741dd11b）**: 駅/地域の分類を6段階シグナルで独立判定。JR/阪急プレフィックスを最強シグナルに。STATION_LINE_MAP にある駅名は NEIGHBORHOOD_WARD_MAP に登録されていても駅優先（十三・平野 等）。コンテキスト多数決で曖昧トークン解決。 |
+| 2026-08-24 | **物件検索ブレイン: 能勢電鉄/谷町線全駅誤選択バグ修正**: ①popup-maps.js: 「平野」を谷町線のみに修正（能勢電鉄平野は川西市の別駅）②popup.js decomposeToken第4フォールバック: 「谷町線駒川中野」→`["谷町線","駒川中野"]`が全線展開するバグを修正、`[stk]`のみ返す（路線名を除去） |
+| 2026-08-24 | **setupAreaModeSelector null クラッシュ修正**: underbarモードのバルク検索中に`area-mixed-notice`のnullアクセスでボタンが押せなくなるバグを修正。currentAreaMode の設定をDOM要素ルックアップより前に移動し、null時はUIスキップして続行。 |
 | 2026-08-20 | **itandi 地域モード ward_names API補完修正（commit 5408c1b）**: 地域（所在地）モードでリアプロは正しく選択されるのにitandiでは選択されないバグを修正。根本原因: リアプロは`apiData.realpro.city_codes`でAPI補完するのに対し、itandiは`ward_names`のAPI補完ロジックが存在しなかった。→ popup.js L2790-2795に補完ブロック追加（`apiData.itandi.ward_names`を`allNeighborhoodWards`にpush）。background.jsの一括検索パスでは既に補完済みだったが通常popupパスに欠けていた。 |
 | 2026-08-17 | **エリア正規化 + area_normalizedDB書き戻し実装（commit d84eec5）**: ①`STATION_ALIASES`マップ追加（popup.js・resolution-core.js）: ひらがな・略称入力を正式駅名に変換（なんば→難波, 天六→天神橋筋六丁目 等25エントリ）。`resolveStation()`先頭で参照されモード判定・路線解決すべてに波及。②`normalizeAreaWithDeepSeek()`追加（resolve-area/route.ts）: DeepSeekでエリア文字列を正規化しHaikuNL抽出と並行実行。`normalized_area`フィールドをレスポンスに追加。③popup.jsの`resolveAreaWithAPI`に`customerId`引数追加。API応答の`normalized_area`を`property-customers`テーブルにPATCH書き戻し（fire-and-forget）。④`migrate-schema/route.ts`に`area_normalized TEXT`カラム追加。 |
 | 2026-08-17 | **LEARNED_STATION_MAP収録駅が地域モード誤判定されるバグ修正**: `setupAreaModeSelector`の`hasStationToken`がLEARNED_STATION_MAPを参照していなかった。また`buildAreaRouteCodes` autoモードで学習済み駅が`resolveWard`に先取りされ地域コードに落ちるバグを修正。リアプロautofillハンドラにitandi側と同等のLEARNED補正ブロック追加。修正: popup.js(3箇所) + resolution-core.js(1箇所)。commit `cc7cb2d` |
