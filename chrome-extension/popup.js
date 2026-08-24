@@ -2488,44 +2488,77 @@ function renderInstrSteps(siteKey, cOverride) {
   };
 }
 
+/**
+ * トークンリストを「駅」「地域」に分類して返す（コンテキスト補正付き）。
+ * 各トークンを複数シグナルで独立分類し、曖昧なものは周囲の明確トークンの多数決で解決する。
+ *
+ * 分類シグナル（優先順）:
+ *   ① 〜線で終わる → 路線（駅系）
+ *   ② JR/阪急 等プレフィックス → 駅（明確）
+ *   ③ 市区郡サフィックス → 地域（明確）
+ *   ④ STATION_LINE_MAP にあり WARD_CODE_MAP にない → 駅
+ *   ⑤ WARD_CODE_MAP にあり STATION_LINE_MAP にない → 地域
+ *   ⑥ 両方 or どちらにもない → ambiguous → 周囲の多数決で解決（同数は駅優先）
+ */
+function classifyAreaTokens(tokens) {
+  const _lineRe = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
+  const classified = tokens.map(function(t) {
+    if (t.endsWith("線")) return { t: t, type: "station", reason: "route_suffix" };
+    if (_lineRe.test(t))  return { t: t, type: "station", reason: "line_prefix" };
+    if (/[市区郡]$/.test(t)) return { t: t, type: "area", reason: "area_suffix" };
+    var tBase = t.replace(/[町村]$/, "");
+    var inStation = !!(STATION_LINE_MAP[t] || STATION_LINE_MAP[tBase] ||
+      (LEARNED_STATION_MAP[t] && LEARNED_STATION_MAP[t].realpro_lines && LEARNED_STATION_MAP[t].realpro_lines.length > 0));
+    var inWard = !!(WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || LEARNED_WARD_MAP[t]);
+    if (inStation && !inWard)  return { t: t, type: "station",   reason: "station_map" };
+    if (!inStation && inWard)  return { t: t, type: "area",      reason: "ward_map" };
+    if (inStation && inWard)   return { t: t, type: "ambiguous", reason: "both_maps" };
+    return { t: t, type: "unknown", reason: "not_found" };
+  });
+  var stationCount = classified.filter(function(c) { return c.type === "station"; }).length;
+  var areaCount    = classified.filter(function(c) { return c.type === "area"; }).length;
+  var stationTokens = [], areaTokens = [];
+  for (var _i = 0; _i < classified.length; _i++) {
+    var _c = classified[_i];
+    if (_c.type === "station") {
+      stationTokens.push(_c.t);
+    } else if (_c.type === "area") {
+      areaTokens.push(_c.t);
+    } else {
+      // ambiguous / unknown → 多数決（同数は駅優先: 駅はより具体的な条件）
+      if (stationCount >= areaCount) stationTokens.push(_c.t);
+      else areaTokens.push(_c.t);
+    }
+  }
+  console.log("[AX] 仕分け:", classified.map(function(c) { return c.t + "→" + c.type + "(" + c.reason + ")"; }).join(", "));
+  return {
+    stationTokens: stationTokens,
+    areaTokens:    areaTokens,
+    hasStation:    stationTokens.length > 0,
+    hasArea:       areaTokens.length > 0,
+    details:       classified,
+  };
+}
+
 function setupAreaModeSelector(c, siteKey) {
   const rawA = (c.desired_area || c.area || "").trim();
   const toks = parseAreaTokens(rawA);
 
-  // デフォルト: WARD_CODE_MAP収録済み → 地域 / 駅名のみ → 駅 / それ以外 → 地域
-  const _cpRe = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
-  function _isKnownStation(t) {
-    if (WARD_CODE_MAP[t]) return false; // 純粋な市区は駅扱いしない
-    const vs = [t, t.replace(/[町村]$/, ""), t.replace(_cpRe, ""), t.replace(_cpRe, "").replace(/[町村]$/, "")];
-    return vs.some(v => STATION_LINE_MAP[v] || (LEARNED_STATION_MAP[v]?.realpro_lines?.length > 0)) ||
-      Object.values(REINS_LINE_MAP).some(v => v === t || v.endsWith(t));
-  }
-  // hasWardToken: 駅名として既知のトークンは地名扱いしない
-  // （十三など NEIGHBORHOOD_WARD_MAP に登録されていても駅名を優先）
-  const hasWardToken    = toks.some(t => {
-    if (_isKnownStation(t)) return false; // 駅名は地域ガードをスキップ
-    return !t.endsWith("線") && (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || /[市区郡]$/.test(t));
-  });
-  const hasStationToken = toks.some(t => _isKnownStation(t));
-  const hasResolvableRoute = toks.some(t => t.endsWith("線") && lineNameToRouteId(t));
-  // 「鶴見区槇塚」のような 区+地名 複合トークン: resolveWardLoose で区として解決できるが
-  // WARD_CODE_MAP/NEIGHBORHOOD_WARD_MAP に直接登録されていないトークン
-  const hasWardCompoundToken = toks.some(t => {
-    if (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t]) return false;
-    return !!resolveWardLoose(t);
-  });
-  // DBのarea_modeが明示設定されている場合は静的マップ判定より優先（毎日分類cronが書き込む）
-  // 'auto' は静的マップ・API自動判定に委ねる
+  // classifyAreaTokens で駅・地域トークンを分類（コンテキスト補正付き）
+  const _cl = classifyAreaTokens(toks);
+  // 路線名として解決可能なトークンがあるか（route_ids 設定用）
+  const hasResolvableRoute = _cl.stationTokens.some(t => t.endsWith("線") && lineNameToRouteId(t));
+  // 区レベルの明確な地域トークン（市レベルは含まない）
+  // 市レベル + 駅 → 駅優先 / 区レベル + 駅 → 区優先（具体的な区指定を従来通り優先）
+  const hasSpecificWardToken = _cl.areaTokens.some(t =>
+    /[区郡]$/.test(t) || WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t]);
+  // resolveWardLoose で解決できる区+地名複合トークン（「鶴見区槇塚」等）
+  const hasWardCompoundToken = _cl.areaTokens.some(t =>
+    !WARD_CODE_MAP[t] && !NEIGHBORHOOD_WARD_MAP[t] && resolveWardLoose(t));
+  // DBのarea_modeが明示設定されている場合は分類結果より優先
   const _dbMode = (c.area_mode === 'station' || c.area_mode === 'ward') ? c.area_mode : null;
-  // 区レベルトークン（「北区」「天王寺区」等）: 市レベル（「大阪市」「尼崎市」）は含まない
-  // 市レベル + 駅 → 駅優先（市は文脈のみ・駅のほうが検索精度が高い）
-  // 区レベル + 駅 → 区優先（具体的な区指定は従来通り優先）
-  const hasSpecificWardToken = toks.some(t => {
-    if (_isKnownStation(t)) return false;
-    return !t.endsWith("線") && (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || /[区郡]$/.test(t));
-  });
   const defaultMode = _dbMode ||
-    ((hasStationToken || hasResolvableRoute)
+    ((_cl.hasStation || hasResolvableRoute)
       ? ((hasSpecificWardToken || hasWardCompoundToken) ? "ward" : "station")
       : "ward");
 
