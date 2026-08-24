@@ -260,13 +260,21 @@
       if (!e.data || e.data.from !== "axlx-customer-response") return;
       clearTimeout(timer);
       window.removeEventListener("message", handler);
-      callback(e.data.name || null);
+      if (e.data.id) {
+        callback(e.data.name || null, e.data.id);
+      } else {
+        chrome.storage.local.get(["current_customer_name", "current_customer_id"], function(data) {
+          callback(e.data.name || data.current_customer_name || null, data.current_customer_id || null);
+        });
+      }
     };
     window.addEventListener("message", handler);
     window.postMessage({ from: "axlx-get-customer" }, "*");
     timer = setTimeout(function () {
       window.removeEventListener("message", handler);
-      callback(null);
+      chrome.storage.local.get(["current_customer_name", "current_customer_id"], function(data) {
+        callback(data.current_customer_name || null, data.current_customer_id || null);
+      });
     }, 800);
   }
 
@@ -280,8 +288,8 @@
     var lineOrig = lineBtn.textContent;
     lineBtn.disabled    = true;
     lineBtn.textContent = "準備中...";
-    getCustomerFromPopup(function (customerName) {
-      startSend(targets, customerName, lineBtn, lineOrig);
+    getCustomerFromPopup(function (customerName, customerId) {
+      startSend(targets, customerName, customerId, lineBtn, lineOrig);
     });
   }
 
@@ -311,7 +319,7 @@
   }
 
   // ── LINE送信共通ロジック ─────────────────────────────────────────────
-  function sendAllToLine(pdfBase64List, targets, customerName, propertySummaries, lineBtn, lineOrig) {
+  function sendAllToLine(pdfBase64List, targets, customerName, customerId, propertySummaries, propertyPool, lineBtn, lineOrig) {
     if (!pdfBase64List.length) {
       alert("PDFが1件も取得できませんでした");
       lineBtn.disabled    = false;
@@ -326,7 +334,10 @@
       pdf_data:           pdfBase64List,
       file_name:          "物件まとめ_" + today + ".pdf",
       customer_name:      customerName || null,
+      customer_id:        customerId || null,
       property_summaries: propertySummaries,
+      property_pool:      propertyPool || null,
+      site:               "reins",
     }, function (resp) {
       lineBtn.disabled = false;
       isSending        = false;
@@ -345,7 +356,7 @@
   // ── 一括取得モード（図面一括取得ボタン → 確認ダイアログ自動クリック → 1枚のマージ済みPDF）──
   // レインズは「4件選択 → 1つのPDFにまとめてダウンロード」の設計。
   // 個別タブは開かず、JSフック(createObjectURL / fetch / XHR / <a download>)でPDFを横取りする。
-  function startBatchSend(targets, customerName, lineBtn, lineOrig, propertySummaries, batchBtnEl) {
+  function startBatchSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool, batchBtnEl) {
     var expectedCount  = targets.length;
     var pdfReceived    = false;
     var batchHandler   = null;
@@ -360,11 +371,11 @@
         // PDF取得失敗 → 逐次モードへ
         console.warn("[AX-REINS] 一括PDF取得失敗 → 逐次モードへ");
         lineBtn.textContent = "図面取得中... (0/" + expectedCount + ")";
-        startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
+        startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool);
         return;
       }
       // レインズが結合した1枚のPDFをそのままLINE送信（merge-pdfs APIはスキップ）
-      sendAllToLine([mergedPdf], targets, customerName, propertySummaries, lineBtn, lineOrig);
+      sendAllToLine([mergedPdf], targets, customerName, customerId, propertySummaries, propertyPool, lineBtn, lineOrig);
     }
 
     // PDFフックからのメッセージを受け取る（1件のマージ済みPDF）
@@ -391,7 +402,7 @@
         window.removeEventListener("message", batchHandler);
         console.warn("[AX-REINS] 一括0件（15s）→ 逐次モードへ切替");
         lineBtn.textContent = "図面取得中... (0/" + expectedCount + ")";
-        startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
+        startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool);
       }
     }, 15000);
 
@@ -409,7 +420,7 @@
             clearTimeout(batchTimer);
             if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
             window.removeEventListener("message", batchHandler);
-            startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
+            startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool);
             return;
           }
           lineBtn.textContent = "PDF取得中...";
@@ -437,14 +448,14 @@
   }
 
   // ── 逐次取得モード（フォールバック：図面ボタンを1件ずつクリック）────────
-  function startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries) {
+  function startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool) {
     chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function () {
       lineBtn.textContent = "図面取得中... (0/" + targets.length + ")";
       var pdfBase64List   = [];
 
       function processNext(i) {
         if (i >= targets.length) {
-          sendAllToLine(pdfBase64List, targets, customerName, propertySummaries, lineBtn, lineOrig);
+          sendAllToLine(pdfBase64List, targets, customerName, customerId, propertySummaries, propertyPool, lineBtn, lineOrig);
           return;
         }
         lineBtn.textContent = "図面取得中... (" + (i + 1) + "/" + targets.length + ")";
@@ -465,7 +476,7 @@
   }
 
   // ── 送信メイン（一括 or 逐次を自動選択）────────────────────────────────
-  function startSend(targets, customerName, lineBtn, lineOrig) {
+  function startSend(targets, customerName, customerId, lineBtn, lineOrig) {
     isSending = true;
 
     var propertySummaries = targets.map(function (t, i) {
@@ -475,14 +486,24 @@
       if (info.madori) lines.push("間取: " + info.madori);
       return lines.join("\n");
     });
+    var propertyPool = targets.map(function (t, i) {
+      var info = extractInfo(t.row);
+      var data = { rank: i + 1, name: info.building || ("物件" + (i + 1)) };
+      if (info.rent) {
+        var rm = info.rent.replace(/[,，]/g, "").match(/(\d+\.?\d*)万/);
+        data.rent = rm ? Math.round(parseFloat(rm[1]) * 10000) : null;
+      }
+      if (info.madori) data.floor_plan = info.madori;
+      return data;
+    });
 
     // 図面一括取得ボタンがあれば一括モード（高速・並列）
     var batchBtnEl = findBatchBtn();
     console.log("[AX-REINS] 図面一括取得ボタン:", batchBtnEl ? "発見 → 一括モード" : "なし → 逐次モード");
     if (batchBtnEl) {
-      startBatchSend(targets, customerName, lineBtn, lineOrig, propertySummaries, batchBtnEl);
+      startBatchSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool, batchBtnEl);
     } else {
-      startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
+      startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool);
     }
   }
 

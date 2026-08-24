@@ -304,7 +304,7 @@
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
-    document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName, customerConditions) { mergePdfs(true, customerName, customerConditions); }); });
+    document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName, customerConditions, customerId) { mergePdfs(true, customerName, customerConditions, customerId); }); });
     document.getElementById("axlx-auto-btn").addEventListener("click", function () { autoSendAllPages(true); }); // 手動=スタッフモードでも許可
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
@@ -517,6 +517,34 @@
     return lines.join("\n");
   }
 
+  // ── 物件候補データ構造化（学習ループAPI送信用）──────
+  function buildPropertyData(card, index) {
+    var data = { rank: index + 1, name: card.name };
+    var rentText = card.texts.find(function(t) { return /[0-9,，]+[\s]*[万円]/.test(t) || /¥/.test(t); });
+    if (rentText) {
+      var rm = rentText.replace(/[,，]/g, "").match(/(\d+)万/);
+      data.rent = rm ? parseInt(rm[1]) * 10000 : null;
+    }
+    var madoriText = card.texts.find(function(t) { return /[1-9](R\b|K\b|DK\b|LDK|SLDK|SDK)/.test(t); });
+    if (madoriText) {
+      var mm = madoriText.trim().match(/[1-9][A-Z]+/i);
+      data.floor_plan = mm ? mm[0] : null;
+    }
+    var madoriIdx = madoriText ? card.texts.indexOf(madoriText) : -1;
+    var accessText = card.texts.find(function(t) { return /徒歩/.test(t); });
+    if (accessText) {
+      var wm = accessText.match(/徒歩\s*(\d+)\s*分/);
+      if (wm) data.walk_minutes = parseInt(wm[1]);
+    }
+    if (madoriIdx >= 0) {
+      for (var _ai2 = madoriIdx + 1; _ai2 < card.texts.length; _ai2++) {
+        var _am2 = card.texts[_ai2].trim().match(/^(\d+)[ヶか]月$/);
+        if (_am2) { data.ad_months = parseInt(_am2[1]); break; }
+      }
+    }
+    return data;
+  }
+
   // ── popup.jsから選択中のお客さん名を自動取得 ──────────
   // postMessage → underbar.js中継 → popup.js → 応答を受け取る
   function getCustomerFromPopup(callback) {
@@ -550,7 +578,7 @@
 
   // ── LINE送信: 1件ずつ順番に送信（background経由・CSP/CORS完全回避）──────
   // ── PDF結合ダウンロード: background経由 ───────────────────────────────────
-  function mergePdfs(sendToLine, customerName, customerConditions) {
+  function mergePdfs(sendToLine, customerName, customerConditions, customerId) {
     var urls = getSelectedUrls();
     if (!urls.length) {
       alert("物件を選択してください（印刷用PDFリンクが検出できる物件をチェックしてください）");
@@ -570,12 +598,17 @@
       var propertySummaries = selectedTargets.map(function (t, i) {
         return buildPropertySummary(extractCard(t.btn), i);
       });
+      var propertyPool = selectedTargets.map(function (t, i) {
+        return buildPropertyData(extractCard(t.btn), i);
+      });
 
       chrome.runtime.sendMessage({
         type: "axlx-send-to-line",
         urls: urls,
         customer_name: customerName || null,
         property_summaries: propertySummaries,
+        property_pool: propertyPool,
+        customer_id: customerId || null,
         customer_conditions: customerConditions || null,
         site: "realpro",
       }, function (resp) {

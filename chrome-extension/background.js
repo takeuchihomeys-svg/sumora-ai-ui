@@ -637,8 +637,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const cookie_str = await getRealproCookies();
-        const { urls, customer_name, property_summaries, customer_conditions, site } = msg;
+        const { urls, customer_name, property_summaries, customer_conditions, site, property_pool, customer_id } = msg;
         const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
+
+        // fire-and-forget: 物件候補プールを学習ループ用APIに記録
+        if (property_pool && property_pool.length > 0) {
+          fetch("https://sumora-ai-ui.vercel.app/api/log-property-candidates", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              property_customer_id: customer_id || null,
+              customer_name: customer_name || null,
+              site: site || "realpro",
+              candidates: property_pool,
+            }),
+          }).catch(function() {});
+        }
 
         const data = await callMergeApi({
           pdf_urls: urls,
@@ -667,6 +681,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
         const baseName = (msg.file_name || `物件まとめ_${today}`).replace(/\.pdf$/, "");
+
+        // fire-and-forget: 物件候補プールを学習ループ用APIに記録
+        if (msg.property_pool && msg.property_pool.length > 0) {
+          fetch("https://sumora-ai-ui.vercel.app/api/log-property-candidates", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              property_customer_id: msg.customer_id || null,
+              customer_name: msg.customer_name || null,
+              site: msg.site || "itandi",
+              candidates: msg.property_pool,
+            }),
+          }).catch(function() {});
+        }
 
         // Step1: 1件ずつVercel BlobにアップロードしてURLを収集
         const blobUrls = [];

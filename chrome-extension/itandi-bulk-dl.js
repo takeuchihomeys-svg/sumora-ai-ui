@@ -691,12 +691,19 @@
 
         lineBtn.textContent = "Blobアップ中... (1/" + pdfBase64List.length + ")";
         var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
+        // itandi: propertyInfos から構造化候補データを生成（学習ループ用）
+        var propertyPool = pdfBase64List.map(function(_, j) {
+          var fi = propertyInfos[j] || {};
+          return { rank: j + 1, name: capturedNames[j] || fi.name || ("物件" + (j + 1)), ad_months: fi.ad ? parseInt((fi.ad.match(/\d+/) || [])[0]) || null : null };
+        });
         chrome.runtime.sendMessage({
           type:                "axlx-send-pdf-data-to-line",
           pdf_data:            pdfBase64List,
           file_name:           "物件まとめ_" + today + ".pdf",
           customer_name:       customerName || null,
+          customer_id:         customerId || null,
           property_summaries:  propertySummaries,
+          property_pool:       propertyPool,
           customer_conditions: customerConditions || null,
           site:                "itandi",
         }, function (resp) {

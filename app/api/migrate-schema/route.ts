@@ -2588,6 +2588,23 @@ $func$;
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
+-- ── property_candidate_pools: 物件候補プール学習ログ（2026-08-24追加）──
+-- 「売上番長に送る」ボタン押下時に選択された物件候補一覧を記録する学習ループ用テーブル。
+-- Chrome拡張の全3サイト（realpro / reins / itandi）から fire-and-forget で蓄積する。
+CREATE TABLE IF NOT EXISTS property_candidate_pools (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  property_customer_id UUID REFERENCES property_customers(id) ON DELETE SET NULL,
+  customer_name TEXT,
+  site TEXT,
+  candidates JSONB DEFAULT '[]',
+  sent_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pcp_customer_id ON property_candidate_pools(property_customer_id);
+CREATE INDEX IF NOT EXISTS idx_pcp_sent_at ON property_candidate_pools(sent_at DESC);
+
+-- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
+SELECT pg_notify('pgrst', 'reload schema');
+
 `.trim();
 
 export const maxDuration = 300;
