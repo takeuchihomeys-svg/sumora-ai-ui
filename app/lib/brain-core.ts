@@ -2704,6 +2704,23 @@ export async function runBrainAndNotify(conversationId: string, msgText?: string
     }
   }
 
+  // 物件条件ブレイン信号: brain が条件変化 or ヒアリング/提案フェーズを検出したら runConditionBrain を起動
+  // line-webhook after() F を廃止し、brain 分析結果を起点とした信号制御に統一
+  if (
+    msgText &&
+    msgText.length >= 5 &&
+    (snapshot.meta.condition_change_type !== null ||
+      snapshot.meta.checkpoint_stage === "hearing" ||
+      snapshot.meta.checkpoint_stage === "proposing")
+  ) {
+    try {
+      const { runConditionBrain } = await import("@/app/lib/property-brain-core");
+      await runConditionBrain(conversationId, msgText);
+    } catch (e) {
+      console.warn("[brain-core] condition brain signal:", e instanceof Error ? e.message : e);
+    }
+  }
+
   // required 通知（旧line-webhook brain after() から移設。全件通知は通知疲れのため required のみ）
   try {
     const meta = snapshot.meta;

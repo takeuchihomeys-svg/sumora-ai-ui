@@ -515,11 +515,13 @@ async function handleTextMessage(
   }
 
   // after() E: P4 — カジュアル返信から条件を自動抽出（Haiku: 明示条件を高速・安価に取得）
-  // isFormatMessage が false（autoParseFormat 非対象）かつ申込フォームでもない返信が対象
-  // スタッフの直近メッセージに条件ヒアリングの文脈がある場合のみ Haiku で抽出・保存
+  // 物件検索フェーズ（hearing / property_search / hot / proposing）のみ実行し無駄なAPI消費を防止
   if (!applyFormDetected && !isFormatMessage(text) && text.length >= 5) {
     after(async () => {
       try {
+        const { data: cs } = await db.from("conversations").select("status").eq("id", convId).maybeSingle();
+        const status = (cs?.status as string | null) ?? "";
+        if (!["hearing", "property_search", "hot", "proposing"].includes(status)) return;
         await extractConditionsFromCasualReply(db, convId, text);
       } catch (e) {
         console.warn("[line-webhook] extractConditionsFromCasualReply:", e);
@@ -527,19 +529,8 @@ async function handleTextMessage(
     });
   }
 
-  // after() F: 物件検索ブレイン — 暗黙・相対・文脈依存の条件変更を Sonnet-5 で補完
-  // Haiku（after() E）が明示条件を処理した後、ブレインが文脈を読んで残りを補完する。
-  // 矛盾検出時はスタッフLINEグループに自動通知。
-  if (!applyFormDetected && !isFormatMessage(text) && text.length >= 5) {
-    after(async () => {
-      try {
-        const { runConditionBrain } = await import("@/app/lib/property-brain-core");
-        await runConditionBrain(convId, text);
-      } catch (e) {
-        console.warn("[line-webhook] runConditionBrain:", e);
-      }
-    });
-  }
+  // after() F: runConditionBrain は brain-core.ts の runBrainAndNotify が
+  // checkpoint_stage / condition_change_type を検出した場合に直接起動（brain信号制御に移設済み）
 
   // after() D: FIX #09 — suggest-next-action → notify-group（顧客別スタッフ指示を通知）
   // 返信受信後にAIが次アクションを提案し、スタッフグループLINEに送信する（fire-and-forget）
