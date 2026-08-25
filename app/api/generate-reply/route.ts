@@ -1516,14 +1516,12 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
     ? [psp.area, psp.floor_plan, psp.rent_max ? `家賃${psp.rent_max}円以内` : null, psp.preferences].filter(Boolean).join(" ")
     : null;
   const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
-  const baseQuery = lastStaffMessage
-    ? `${state}: [前返信]${safeSlice(lastStaffMessage, 250)} [顧客]${customerMessage}`
-    : customerMessage ? `${state}: ${customerMessage}` : null;
-  const lastAixPart = brainMeta?.last_aix_history
-    ? `[AIX履歴] ${brainMeta.last_aix_history}`
-    : null;
-  const searchQuery = baseQuery
-    ? [baseQuery, lastAixPart, analysisContext ? `パターン: ${analysisContext}` : null, brainContext || null].filter(Boolean).join(" ")
+  const lastAixPart = brainMeta?.last_aix_history ? `[AIX履歴] ${brainMeta.last_aix_history} ` : "";
+  const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
+  // brainContextをstate直後に固定（末尾配置だとsafeSlice 2000字制限で切り落とされるリスクがあるため前詰め）
+  // fetchKnowledge（L1264）と同一パターンを適用
+  const searchQuery = (customerMessage || lastStaffMessage)
+    ? safeSlice(`${state}: ${brainContext ? `[WE_DO文脈]${brainContext} ` : ""}${lastAixPart}${lastStaffPart}[顧客]${customerMessage ?? ""} ${analysisContext ?? ""}`.trim(), 2000)
     : null;
 
   if (searchQuery && process.env.OPENAI_API_KEY) {
@@ -2455,7 +2453,12 @@ export async function POST(req: NextRequest) {
       if (brainMeta.note && brainMeta.reply_mode !== 'aix') {
         lines.push(`- 📌 スモラスタイル②WE DO宣言（必須・返信末尾に1文として明示する）: ${brainMeta.note} → このスタッフアクションをお客様向けに「私が〇〇させて頂きます！！」の形に言い換えて返信の最後の1文に含めること（例: 「明日管理会社に交渉させて頂きます！！」「ご希望のお部屋をピックアップしてお送りさせて頂きます！！」「お申込みでお部屋抑えさせて頂きます！！」）。ただしZ/F3/Yパターン等の短い締め返信では追加しない`);
       }
-      if (brainMeta.winning_pattern) lines.push("- 🏆 過去の勝ちパターン: " + brainMeta.winning_pattern + " → このパターンに沿った具体アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信に1文含めること");
+      // winning_pattern + closing_strategy の両方がある場合は1文のWE DO宣言に統合（二重宣言防止）
+      if (brainMeta.winning_pattern && brainMeta.closing_strategy) {
+        lines.push(`- 🏆 勝ちパターン×成約戦略: 【勝ちパターン】${brainMeta.winning_pattern} ／ 【成約戦略】${brainMeta.closing_strategy} → 両者を統合した1アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信末尾に1文のみ含めること（WE DO宣言は返信全体で1文・重複禁止）`);
+      } else if (brainMeta.winning_pattern) {
+        lines.push("- 🏆 過去の勝ちパターン: " + brainMeta.winning_pattern + " → このパターンに沿った具体アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信に1文含めること");
+      }
       if (brainMeta.customer_emotion) lines.push("- 💡 顧客の感情状態: " + brainMeta.customer_emotion + " → この感情を踏まえ冒頭1文で受け止めること（例: 不安→「ご心配なお気持ち、よくわかります」/ 前向き→「嬉しいです！」）。感情無視の事務的な書き出しは禁止");
       if (hasAction) {
         // 安全ガード: brain キャッシュが estimate_sheet のままでも、顧客が同一メッセージで
@@ -2473,7 +2476,8 @@ export async function POST(req: NextRequest) {
           lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}`);
         }
       }
-      if (brainMeta.closing_strategy) lines.push(`- 成約戦略: ${brainMeta.closing_strategy} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること`);
+      // closing_strategy は winning_pattern との両方がある場合は統合済み（上記）・単独の場合のみ出力
+      if (brainMeta.closing_strategy && !brainMeta.winning_pattern) lines.push(`- 成約戦略: ${brainMeta.closing_strategy} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること`);
       if (brainMeta.next_steps?.length) {
         lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
         lines.push(`  → 今回の返信で実行するのは Step1（${brainMeta.next_steps[0]}）のみ。Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を今回の本文に先取りして書かないこと（フェーズ先走り禁止）`);

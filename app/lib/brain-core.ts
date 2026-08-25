@@ -1962,10 +1962,17 @@ ${history}`;
       ? parsed.customer_intent as NonNullable<SuggestedAixMeta>["customer_intent"]
       : null;
 
+    // 条件変更検出時はcustomer_intentを決定論的にdesireに強制（LLM見落とし対策）
+    const customerIntentFinal: NonNullable<SuggestedAixMeta>["customer_intent"] | null = conditionChangeType !== null ? "desire" : customerIntent;
+
     // latent_intent: 送信動機・潜在意識の自由記述（60字上限・空文字/enum誤混入はnullフェイルクローズ）
     const latentIntent = (typeof parsed.latent_intent === "string" && parsed.latent_intent.trim() && !CUSTOMER_INTENTS.has(parsed.latent_intent.trim()))
       ? parsed.latent_intent.trim().slice(0, 60)
       : null;
+
+    // winning_pattern: ai_summary_json から抽出。取得できなかった場合は warn で可視化
+    const winningPattern = ((brainSummaryJson as Record<string, unknown> | null)?.winning_pattern as string) ?? null;
+    if (!winningPattern && brainSummaryJson !== null) console.warn("[brain-core] winning_pattern not found in ai_summary_json:", conversationId);
 
     return {
       action: finalAix ?? "",
@@ -2010,10 +2017,10 @@ ${history}`;
       hesitancy_pattern: hesitancyPattern,
       future_timeline: futureTimeline,
       checkpoint_stage: checkpointStage,
-      customer_intent: customerIntent,
+      customer_intent: customerIntentFinal,
       latent_intent: latentIntent,
       reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 30) : null,
-      winning_pattern: ((brainSummaryJson as Record<string, unknown> | null)?.winning_pattern as string) ?? null,
+      winning_pattern: winningPattern,
       customer_emotion: ((brainSummaryJson as Record<string, unknown> | null)?.emotion as string) ?? null,
       // 鮮度ゲートの基準: 今回の分析が見た最新顧客メッセージのcreated_at。
       // cachedモード返却時はこの値が古いまま残るため、generate-reply側で自動的にstale判定される
