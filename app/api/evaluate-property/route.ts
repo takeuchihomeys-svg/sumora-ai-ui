@@ -453,7 +453,7 @@ NG条件（絶対NG）: ${customerNgPoints ?? "なし"}
 
 ${contextParts.join("\n\n")}
 
-JSONで返してください: {"score": 数値, "reason": "30字以内の理由", "ng_flags": ["問題点（あれば）"]}`;
+`;
 
       const dsRes = await fetch("https://api.deepseek.com/v1/chat/completions", {
         method: "POST",
@@ -462,7 +462,11 @@ JSONで返してください: {"score": 数値, "reason": "30字以内の理由"
           model: "deepseek-chat",
           max_tokens: 200,
           response_format: { type: "json_object" },
-          messages: [{ role: "user", content: prompt }],
+          // systemに静的指示を分離 → DeepSeekの自動プレフィックスキャッシュが効く（キャッシュヒット時74%割引）
+          messages: [
+            { role: "system", content: "あなたは不動産仲介スタッフのAIアシスタントです。与えられたお客さんの条件・物件情報・スコアリングノウハウをもとに、この物件をこのお客さんに推薦する総合スコア（0〜100点）と理由をJSONで返してください。出力形式: {\"score\": 数値, \"reason\": \"30字以内の理由\", \"ng_flags\": [\"問題点（あれば）\"]}" },
+            { role: "user", content: prompt },
+          ],
         }),
         signal: AbortSignal.timeout(8_000),
       });
