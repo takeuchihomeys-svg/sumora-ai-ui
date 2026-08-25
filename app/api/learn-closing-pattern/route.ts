@@ -59,7 +59,9 @@ ${history}
   "key_action": "${keyActionHint}",
   "lesson": "次の似たお客さんへの教訓・使えるパターン（1〜2文）",
   "pattern_label": "★決まるパターン: 〜〜（customer-summaryで使う1行表現）",
-  "latent_intent_pattern": "この成約会話を通じてお客さんがもっていた潜在的な動機・不安・期待（例: 初期費用を何度も確認していた→予算ギリギリで不安だったが見積で安心して決断 / 審査について遠回しに聞いていた→審査に通るか不安で申し込みをためらっていた / 物件の写真を何度も見返していた→即決したいが失敗したくない慎重さがあった）。会話の文脈・沈黙・繰り返し質問のパターンから推測すること。根拠がなければnull"
+  "latent_intent_pattern": "この成約会話を通じてお客さんがもっていた潜在的な動機・不安・期待（例: 初期費用を何度も確認していた→予算ギリギリで不安だったが見積で安心して決断 / 審査について遠回しに聞いていた→審査に通るか不安で申し込みをためらっていた / 物件の写真を何度も見返していた→即決したいが失敗したくない慎重さがあった）。会話の文脈・沈黙・繰り返し質問のパターンから推測すること。根拠がなければnull",
+  "decision_trigger": "お客さんが申込/成約を決断した直前のメッセージ・スタッフの一言（1〜2文。例: 内覧後に「今日中に決めましょう」と言ったら即決した / 初期費用が予算内と確認できたメッセージの直後に申込フォームを送ってきた）。会話から特定できなければnull",
+  "anxiety_resolved": "お客さんが持っていた不安・ためらいと、それを解消した方法（1〜2文。例: 審査に通るか不安だったが、審査の流れを説明したら安心して前進した / 初期費用を何度も確認していたが見積書を送ったら不安が消えた）。不安が読み取れなければnull"
 }`;
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -71,7 +73,7 @@ ${history}
       },
       body: JSON.stringify({
         model: "claude-opus-5",
-        max_tokens: 700,
+        max_tokens: 900,
         thinking: { type: "disabled" },
         messages: [{ role: "user", content: prompt }],
       }),
@@ -92,6 +94,8 @@ ${history}
       lesson: string;
       pattern_label: string;
       latent_intent_pattern: string | null;
+      decision_trigger: string | null;
+      anxiety_resolved: string | null;
     };
 
     // ai_reply_knowledge に保存（importance=9・proposingフェーズ・RAG用embeddingも即付与）
@@ -100,7 +104,7 @@ ${history}
 お客さんタイプ: ${learned.customer_type}
 決め手のアクション: ${learned.key_action}
 教訓: ${learned.lesson}
-${learned.pattern_label}${learned.latent_intent_pattern ? `\n潜在意識・動機パターン: ${learned.latent_intent_pattern}` : ""}`;
+${learned.pattern_label}${learned.latent_intent_pattern ? `\n潜在意識・動機パターン: ${learned.latent_intent_pattern}` : ""}${learned.decision_trigger ? `\n決断トリガー: ${learned.decision_trigger}` : ""}${learned.anxiety_resolved ? `\n不安解消: ${learned.anxiety_resolved}` : ""}`;
 
     // 重複INSERT防止: 同一タイトルが既に存在する場合はスキップ
     const titleKey = `${eventLabel}パターン_${customer_name ?? "不明"}_${new Date().toISOString().slice(0, 10)}`;
