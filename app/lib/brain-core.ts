@@ -1052,6 +1052,42 @@ export async function analyzeConversation(
     }
   }
 
+  // aix_action_attribution: 各アクションの成約勝率（action_type別・usage_count加重平均）
+  // brain が「どのアクションが成約につながるか」を実測データで知った上で推奨できるようにする
+  let actionWinRates: Array<{ action_type: string; avg_win_rate: number; total_usage: number }> = [];
+  try {
+    const { data: awrData } = await supabase
+      .from("aix_action_attribution")
+      .select("action_type, win_rate, usage_count")
+      .not("win_rate", "is", null)
+      .order("win_rate", { ascending: false });
+    if (awrData && awrData.length > 0) {
+      // action_typeごとに usage_count 加重平均を計算（期間・テンプレ別の行を集約）
+      const grouped = new Map<string, { totalWinRate: number; totalUsage: number }>();
+      for (const row of awrData as Array<{ action_type: string | null; win_rate: number | null; usage_count: number | null }>) {
+        if (!row.action_type) continue;
+        const key = row.action_type;
+        const wr = Number(row.win_rate ?? 0);
+        const uc = Number(row.usage_count ?? 1) || 1;
+        if (!grouped.has(key)) grouped.set(key, { totalWinRate: 0, totalUsage: 0 });
+        const g = grouped.get(key)!;
+        g.totalWinRate += wr * uc;
+        g.totalUsage += uc;
+      }
+      actionWinRates = Array.from(grouped.entries())
+        .map(([action_type, { totalWinRate, totalUsage }]) => ({
+          action_type,
+          avg_win_rate: totalUsage > 0 ? totalWinRate / totalUsage : 0,
+          total_usage: totalUsage,
+        }))
+        .filter((r) => r.avg_win_rate > 0)
+        .sort((a, b) => b.avg_win_rate - a.avg_win_rate)
+        .slice(0, 8);
+    }
+  } catch {
+    // 取得失敗時は空のまま（フェイルセーフ・プロンプト注入をスキップするだけ）
+  }
+
   // B3(Fable5): 今日の日付・最終顧客メッセージからの経過日数・総メッセージ数をプロンプト冒頭に注入。
   // これが無いと Haiku は経過時間を知り得ず、closing_strategy に架空の日付を創作していた
   const lastCustomerMsg = typedMessages.find((m) => m.sender === "customer"); // messagesは新しい順
@@ -1379,6 +1415,13 @@ export async function analyzeConversation(
       }).join("\n")}\n※この顧客に類似した過去事例。closing_strategy・next_steps の判断に反映すること。`
     : "";
 
+  // aix_action_attribution: アクション別成約勝率の注入（実測データによるアクション推薦の重み付け）
+  const actionWinRateText = actionWinRates.length > 0
+    ? `\n\n【成約につながりやすいアクション（実測勝率）】\n` +
+      actionWinRates.map((r) => `- ${r.action_type}: 成約率${(r.avg_win_rate * 100).toFixed(1)}% (n=${r.total_usage})`).join("\n") +
+      `\n※ action推薦時はこの勝率を重視すること。特に上位アクションへの誘導を意識した closing_strategy・reply_direction を書くこと。`
+    : "";
+
   // この会話で使用済みのAIXアクション一覧（重複提案の抑止・次段階の推奨材料）
   const usedAixTypes = [...new Set(aixLogs.map((l) => l.aix_type).filter((t): t is string => Boolean(t)))];
   // 直近3件の押下順序（新→旧）＋テンプレート名をBrainプロンプトに注入する
@@ -1503,7 +1546,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
   //     ・templates → match_templates RAGに移行（会話フェーズ最適化・use_count/won_count更新でのキャッシュ破棄解消）
   //   user[1] customerSpecific（cache無し）= 上記DB動的データ + 顧客固有データ + 会話履歴
   const stableKnowledgeText = ``;
-  const customerSpecificText = `${prevMetaText}${winningPatternsText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+  const customerSpecificText = `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
