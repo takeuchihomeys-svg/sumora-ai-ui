@@ -141,7 +141,8 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
         b64,
         ts: Date.now(),
       }).catch((e) => console.error("[AXLX BG] sendMessage error:", e.message));
-      reinsTabWatchers.clear(); // 一括完了 → 監視終了
+      // M8修正: 即時 clear() を廃止。複数PDF一括DLでは2件目以降がここに来るため
+      // 既存の35秒タイマーで自然消化させる（全件完了後に watcher が自動削除される）
     } else {
       console.warn("[AXLX BG] 一括PDF fetch null（URLが期限切れ or 非PDF）");
     }
@@ -335,6 +336,19 @@ async function uploadPdfToBlob(b64, fileName) {
   const data = await resp.json();
   if (!data.ok) throw new Error(data.error || "Blobアップロードエラー");
   return data.url;
+}
+
+// ── ヘルパー: uploadPdfToBlob の個別リトライラッパー（M9修正）──────────────
+// 途中失敗で孤立 Blob が出ても LINE 送信を止めないよう最大3回リトライ
+async function uploadWithRetry(b64, fileName) {
+  for (let i = 0; i < 3; i++) {
+    try { return await uploadPdfToBlob(b64, fileName); }
+    catch (e) {
+      if (i === 2) throw e;
+      console.warn(`[uploadWithRetry] 試行 ${i + 1} 失敗、1秒後に再試行:`, e.message);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
 }
 
 // ── ヘルパー: /api/merge-pdfs を background から呼ぶ（CSP/CORS 完全回避）──
@@ -700,10 +714,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const blobUrls = [];
         for (let i = 0; i < msg.pdf_data.length; i++) {
           const name = `${baseName}_${i + 1}.pdf`;
-          const url = await uploadPdfToBlob(msg.pdf_data[i], name);
+          const url = await uploadWithRetry(msg.pdf_data[i], name);
           blobUrls.push(url);
           // 進捗ハートビート: itandi多物件のBlobアップは数分かかるため無進捗タイムアウトを延長
-          try { _notifyBatchProgress(null); } catch (_) {}
+          try { _notifyBatchProgress(msg.customer_id || null); } catch (_) {}  // M10修正: null→customer_id で別顧客タイマーの誤延長を防ぐ
           // タブにアップロード進捗を通知（ボタンテキスト更新のため）
           if (sender.tab?.id) {
             chrome.tabs.sendMessage(sender.tab.id, {
@@ -1887,6 +1901,16 @@ var _batchShouldStop = false;
 // resolve 値は { timedOut: boolean, error: string|null } に統一。
 // error は page-script.js が fill-done に載せたエラー内容（フォールバック検索は実行済み）。
 function _notifyFillDone(site, customerId, error) {
+  if (!customerId) {
+    // null のときは最古の1件のみ解決（本来は content script 側で必ず送るべき）
+    var first = _fillDoneWaiters.find(function(w) { return !w.site || !site || w.site === site; });
+    if (first) {
+      clearTimeout(first.timer);
+      first.resolve({ timedOut: false, error: error || null });
+      _fillDoneWaiters = _fillDoneWaiters.filter(function(w) { return w !== first; });
+    }
+    return;
+  }
   var remaining = [];
   _fillDoneWaiters.forEach(function (w) {
     var siteMatch = !w.site || !site || w.site === site;
@@ -1947,15 +1971,9 @@ function _notifyBatchCustomerDone(customerId, propertyCount) {
       if (!_bdw2.customerId) { target = _bdw2; break; }
     }
   }
-  // customerId null や不一致でも最古のウェイターにフォールバック
-  // （顧客は常に1件ずつ直列処理→同時waitは原則1件のため安全）
-  if (!target && _batchCustomerDoneWaiters.length) {
-    target = _batchCustomerDoneWaiters[0];
-    console.warn("[batch-done] customerId不一致→最古waiterにフォールバック signal=" + customerId + " waiter=" + (target.customerId || "null"));
-  }
   if (!target) {
-    console.warn("[batch-done] 待機中のwaiterなし customerId=" + customerId);
-    return;
+    console.warn('[AX] _notifyBatchCustomerDone: no waiter matched for', customerId);
+    return;  // resolve しない・タイムアウト自然消化
   }
   clearInterval(target.stopInterval);
   clearTimeout(target.timer);

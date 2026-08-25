@@ -135,7 +135,19 @@
           clickBtn("確定");
         }
       }
-      setTimeout(afterClose, 1000);
+      // モーダル消失を最大3秒ポーリング（固定1000ms待機の競合を回避）
+      var _m12elapsed = 0;
+      var _m12poll = setInterval(function() {
+        _m12elapsed += 100;
+        var dlg = document.querySelector('[role="dialog"]');
+        if (!dlg || !dlg.offsetParent) {
+          clearInterval(_m12poll);
+          afterClose();
+        } else if (_m12elapsed >= 3000) {
+          clearInterval(_m12poll);
+          afterClose(); // タイムアウトでも進める
+        }
+      }, 100);
     }, 1500);
   }
 
@@ -363,7 +375,11 @@
             if (!clicked) {
               console.log("[AX] selectItandiArea: ward not found, retry: " + wName);
               setTimeout(function () {
-                clickItandiRadio(wName) || (shortName ? clickItandiRadio(shortName) : false);
+                var retryResult = clickItandiRadio(wName) || (shortName ? clickItandiRadio(shortName) : false);
+                if (!retryResult) {
+                  console.warn('[itandi] openNextWardModal: retry failed, aborting');
+                  return;
+                }
                 setTimeout(afterWardSelected, 400 + Math.floor(Math.random() * 300));
               }, 800 + Math.floor(Math.random() * 400));
             } else {
@@ -825,15 +841,23 @@
     setTimeout(function () {
 
       function afterModal() {
-        setTimeout(function () {
-          fillRemainingFields(cond);
-          setTimeout(function () {
-            clickBtn("検索");
+        // 間取り input が現れるまで最大3秒ポーリング（固定500ms待機ではReact再レンダリングが保証されない）
+        var _afterModalPolled = 0;
+        var _afterModalPoll = setInterval(function() {
+          _afterModalPolled += 100;
+          var layoutInput = document.querySelector("input[name='room_layout:in']") ||
+                            document.querySelector("input[name*='layout']");
+          if (layoutInput || _afterModalPolled >= 3000) {
+            clearInterval(_afterModalPoll);
+            fillRemainingFields(cond);
             setTimeout(function () {
-              _safeDone();
-            }, 500);
-          }, 1000);
-        }, 500);
+              clickBtn("検索");
+              setTimeout(function () {
+                _safeDone();
+              }, 500);
+            }, 1000);
+          }
+        }, 100);
       }
 
       if (hasArea) {

@@ -1695,7 +1695,7 @@ const SITE_CONFIG = {
       const linesNote = itandiLines.length ? itandiLines.join(" / ") : null;
 
       // ペット条件の検出
-      const petNote = /ペット|pet/i.test([c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ")) ? "ページ最下部「入居条件（その他）」→「ペット相談」にチェック" : null;
+      const petNote = c.pet === true || /ペット|pet/i.test([c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ")) ? "ページ最下部「入居条件（その他）」→「ペット相談」にチェック" : null;
 
       return [
         {
@@ -2394,12 +2394,14 @@ function openSiteView(customer) {
       walk_minutes:         customer.walk_minutes || null,
       floor_plan:           customer.floor_plan || customer.layout || null,
       building_age:         customer.building_age || null,
-      area_min:             customer.floor_area_min || customer.area_min || null,
+      area_min:             customer.floor_area_min || customer.area_min || customer.min_area || parseAreaMin(customer.preferences) || parseAreaMin(customer.other_requests) || null,
       customer_name:        customer.customer_name,
       property_customer_id: customer.id || null,
       initial_cost_limit:   customer.initial_cost_limit || null,
       prefer_no_shikirei:   detectShikireiFlag(customer),
       ng_points:            customer.ng_points || null,
+      pet_ok:               customer.pet === true || customer.pet === 'true' || false,
+      admin_fee_max:        customer.admin_fee_max || null,
     }});
   } catch (_) { /* ignore（非extension環境での実行対策）*/ }
 
@@ -3359,6 +3361,8 @@ function openInstructions(siteKey) {
           initial_cost_limit:   selectedCustomer.initial_cost_limit || null,
           prefer_no_shikirei:   detectShikireiFlag(selectedCustomer),
           ng_points:            selectedCustomer.ng_points || null,
+          pet_ok:               selectedCustomer.pet === true || selectedCustomer.pet === 'true' || false,
+          admin_fee_max:        selectedCustomer.admin_fee_max || null,
         }});
       } catch (_) { /* ignore */ }
       console.log('[AX] itandi autofill送信:', {
@@ -3822,12 +3826,14 @@ function openInstructions(siteKey) {
           walk_minutes:         adjC.walk_minutes || apiData?.suggested_walk_minutes || null,
           floor_plan:           adjC.floor_plan || null,
           building_age:         adjC.building_age || null,
-          area_min:             adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || null),
+          area_min:             adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null),
           customer_name:        c.customer_name,
           property_customer_id: c.id || null,
           initial_cost_limit:   c.initial_cost_limit || null,
           prefer_no_shikirei:   detectShikireiFlag(c),
           ng_points:            c.ng_points || null,
+          pet_ok:               c.pet === true || c.pet === 'true' || false,
+          admin_fee_max:        c.admin_fee_max || null,
         }});
       } catch (_) { /* ignore */ }
       autofillBtn.textContent = "⏳ 検索中...";
@@ -3989,6 +3995,8 @@ function openInstructions(siteKey) {
           initial_cost_limit:   c0.initial_cost_limit || null,
           prefer_no_shikirei:   detectShikireiFlag(c0),
           ng_points:            c0.ng_points || null,
+          pet_ok:               c0.pet === true || c0.pet === 'true' || false,
+          admin_fee_max:        c0.admin_fee_max || null,
         }});
       } catch (_) { /* ignore */ }
       console.log('[AX] reins autofill送信:', {

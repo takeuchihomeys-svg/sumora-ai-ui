@@ -242,8 +242,12 @@
     if (cond.building_age) {
       var fromYear = new Date().getFullYear() - parseInt(cond.building_age);
       var yearStr = String(fromYear) + "年";
+      var _curYear = new Date().getFullYear();
       var yearSels = [].slice.call(document.querySelectorAll("select")).filter(function (s) {
-        return [].slice.call(s.options).some(function (o) { return o.text.startsWith("2028年"); });
+        return [].slice.call(s.options).some(function (o) {
+          var y = parseInt(o.text, 10);
+          return !isNaN(y) && y >= _curYear + 1;
+        });
       });
       if (yearSels.length) {
         var opt = [].slice.call(yearSels[0].options).find(function (o) { return o.text.startsWith(yearStr); });

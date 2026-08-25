@@ -27,7 +27,9 @@ interface LineMaps {
   itandiMap: Record<string, string[]>;  // internal_name → itandi_names[]
   reinsMap: Record<string, string>;     // internal_name → reins_name
 }
-let _lineMapsCache: { maps: LineMaps; expiresAt: number } | null = null;
+// Promise coalescing: キャッシュ失効直後の並行リクエストが全て同一Promiseを共有する（スタンピード防止）
+let _lineMapsPromise: Promise<LineMaps> | null = null;
+let _lineMapsExpiry = 0;
 
 // ── line_stations キャッシュ（1時間）────────────────────────────────────────
 // byLine: line_name → 順序付き駅名配列（order_idx 昇順）
@@ -36,49 +38,64 @@ interface LineStationsCache {
   byLine: Record<string, string[]>;
   byStation: Record<string, Array<{ line: string; idx: number }>>;
 }
-let _lineStationsCache: { data: LineStationsCache; expiresAt: number } | null = null;
+// Promise coalescing: キャッシュ失効直後の並行リクエストが全て同一Promiseを共有する（スタンピード防止）
+let _lineStationsPromise: Promise<LineStationsCache> | null = null;
+let _lineStationsExpiry = 0;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getLineStations(db: any): Promise<LineStationsCache> {
-  if (_lineStationsCache && Date.now() < _lineStationsCache.expiresAt) return _lineStationsCache.data;
-  const { data: rows } = await db
-    .from("line_stations")
-    .select("line_name, station_name, order_idx")
-    .order("line_name")
-    .order("order_idx");
-  const byLine: Record<string, string[]> = {};
-  const byStation: Record<string, Array<{ line: string; idx: number }>> = {};
-  for (const row of (rows ?? [])) {
-    if (!byLine[row.line_name]) byLine[row.line_name] = [];
-    const idx = byLine[row.line_name].length;
-    byLine[row.line_name].push(row.station_name);
-    if (!byStation[row.station_name]) byStation[row.station_name] = [];
-    byStation[row.station_name].push({ line: row.line_name, idx });
-  }
-  const data: LineStationsCache = { byLine, byStation };
-  _lineStationsCache = { data, expiresAt: Date.now() + 60 * 60 * 1000 };
-  return data;
+  const now = Date.now();
+  if (_lineStationsPromise && now < _lineStationsExpiry) return _lineStationsPromise;
+  _lineStationsExpiry = now + 60 * 60 * 1000;
+  _lineStationsPromise = (async () => {
+    const { data: rows } = await db
+      .from("line_stations")
+      .select("line_name, station_name, order_idx")
+      .order("line_name")
+      .order("order_idx");
+    const byLine: Record<string, string[]> = {};
+    const byStation: Record<string, Array<{ line: string; idx: number }>> = {};
+    for (const row of (rows ?? [])) {
+      if (!byLine[row.line_name]) byLine[row.line_name] = [];
+      const idx = byLine[row.line_name].length;
+      byLine[row.line_name].push(row.station_name);
+      if (!byStation[row.station_name]) byStation[row.station_name] = [];
+      byStation[row.station_name].push({ line: row.line_name, idx });
+    }
+    return { byLine, byStation };
+  })().catch(e => {
+    _lineStationsPromise = null; // エラー時はリセットして次回再試行を許可
+    throw e;
+  });
+  return _lineStationsPromise;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getLineMaps(db: any): Promise<LineMaps> {
-  if (_lineMapsCache && Date.now() < _lineMapsCache.expiresAt) return _lineMapsCache.maps;
-  const { data: rows } = await db
-    .from("line_meta")
-    .select("internal_name, realpro_route_id, itandi_names, reins_name, aliases");
-  const maps: LineMaps = { routeMap: {}, aliasMap: {}, itandiMap: {}, reinsMap: {} };
-  for (const row of (rows ?? []) as Array<{
-    internal_name: string; realpro_route_id: string | null;
-    itandi_names: string[]; reins_name: string | null; aliases: string[];
-  }>) {
-    const name = row.internal_name;
-    if (row.realpro_route_id) maps.routeMap[name] = row.realpro_route_id;
-    if (row.itandi_names?.length) maps.itandiMap[name] = row.itandi_names;
-    if (row.reins_name) maps.reinsMap[name] = row.reins_name;
-    for (const alias of (row.aliases ?? [])) maps.aliasMap[alias] = name;
-  }
-  _lineMapsCache = { maps, expiresAt: Date.now() + 60 * 60 * 1000 };
-  return maps;
+  const now = Date.now();
+  if (_lineMapsPromise && now < _lineMapsExpiry) return _lineMapsPromise;
+  _lineMapsExpiry = now + 60 * 60 * 1000;
+  _lineMapsPromise = (async () => {
+    const { data: rows } = await db
+      .from("line_meta")
+      .select("internal_name, realpro_route_id, itandi_names, reins_name, aliases");
+    const maps: LineMaps = { routeMap: {}, aliasMap: {}, itandiMap: {}, reinsMap: {} };
+    for (const row of (rows ?? []) as Array<{
+      internal_name: string; realpro_route_id: string | null;
+      itandi_names: string[]; reins_name: string | null; aliases: string[];
+    }>) {
+      const name = row.internal_name;
+      if (row.realpro_route_id) maps.routeMap[name] = row.realpro_route_id;
+      if (row.itandi_names?.length) maps.itandiMap[name] = row.itandi_names;
+      if (row.reins_name) maps.reinsMap[name] = row.reins_name;
+      for (const alias of (row.aliases ?? [])) maps.aliasMap[alias] = name;
+    }
+    return maps;
+  })().catch(e => {
+    _lineMapsPromise = null; // エラー時はリセットして次回再試行を許可
+    throw e;
+  });
+  return _lineMapsPromise;
 }
 
 

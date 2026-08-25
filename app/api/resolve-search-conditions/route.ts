@@ -421,6 +421,11 @@ export async function POST(req: NextRequest) {
         }
         continue;
       }
+      // M15: realpro_lines が空の行は（deepseek_nearby 等の半完成行）resolvedStation に入れず fuzzy に回す
+      // ignoreDuplicates:true で既存の正常行は保護済みだが、新規挿入された空行がブロックするため
+      if (!row.realpro_lines || row.realpro_lines.length === 0) {
+        continue;
+      }
       resolvedStation.set(row.token, row);
     }
     if (expiredUnknown.length > 0) {

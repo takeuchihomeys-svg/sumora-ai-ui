@@ -508,7 +508,16 @@
       };
       // ★ 修正(Bug2): エンキュー時だけでなくクリック実行直前にも checked を再評価する実行時ガード
       // （キュー待機中に同期inputが先にcheckedへ変わった場合のトグル解除事故を防止）
-      var _fireClickIfUnchecked = function(el) { if (!isElChecked(el)) fireClick(el); };
+      // ★ 修正(M4): isElChecked がcheckboxを特定できない場合に false を返し続けて
+      //   ポーリング再実行のたびに fireClick が走り無限トグルになるのを防ぐ。
+      //   要素ごとに発火回数をマークし、2回以上はスキップする。
+      var _fireClickIfUnchecked = function(el) {
+        if (!isElChecked(el)) {
+          if (el.__axClickCount >= 2) return;
+          el.__axClickCount = (el.__axClickCount || 0) + 1;
+          fireClick(el);
+        }
+      };
 
       // STEP2: 直接テキスト 完全一致 - 全マッチを順次クリック（同名駅が複数路線に出現するため）
       for (var i = 0; i < els.length; i++) {
@@ -961,12 +970,17 @@
         var toFloor   = rangeMatch[2].trim();
         var fromIdx = FLOOR_RANK.indexOf(fromFloor);
         var toIdx   = FLOOR_RANK.indexOf(toFloor);
-        if (fromIdx < 0) fromIdx = 0;
-        if (toIdx < 0) toIdx = fromIdx;
-        if (fromIdx > toIdx) { var tmp = fromIdx; fromIdx = toIdx; toIdx = tmp; }
-        for (var ri = fromIdx; ri <= toIdx; ri++) {
-          var fv = FLOOR_MAP[FLOOR_RANK[ri]];
-          if (fv && vals.indexOf(fv) < 0) vals.push(fv);
+        // ★ 修正(M5): 未知の間取り文字列の場合 indexOf が -1 を返し、
+        //   0 扱いになって「ワンルーム〜xxx」という意図しない範囲が選択されていた。
+        //   どちらかが -1 なら範囲選択を中止してスキップする。
+        if (fromIdx < 0 || toIdx < 0) {
+          console.warn('[AX] rangeMatch: unknown floor plan, skipping range selection', fromFloor, toFloor);
+        } else {
+          if (fromIdx > toIdx) { var tmp = fromIdx; fromIdx = toIdx; toIdx = tmp; }
+          for (var ri = fromIdx; ri <= toIdx; ri++) {
+            var fv = FLOOR_MAP[FLOOR_RANK[ri]];
+            if (fv && vals.indexOf(fv) < 0) vals.push(fv);
+          }
         }
       } else {
         // カンマ・もしくは・または等で分割し、各トークン内からFLOOR_MAPキーを抽出

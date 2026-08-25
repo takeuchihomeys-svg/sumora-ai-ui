@@ -119,11 +119,16 @@
     var rentMatch = t.match(/([0-9]+(?:\.[0-9]+)?)\s*万/);
     var rent = rentMatch ? parseFloat(rentMatch[1]) * 10000 : 0;
 
+    // 管理費・共益費を抽出して家賃に加算（予算比較は管理費込みで行う）
+    var adminFeeMatch = t.match(/(?:管理費|共益費)[^0-9]*([0-9,]+)\s*円/);
+    var adminFee = adminFeeMatch ? parseInt(adminFeeMatch[1].replace(/,/g, ''), 10) : 0;
+    var effectiveRent = rent + adminFee;
+
     // ── 家賃チェック (30点・割合採点) ─────────────────────────
     // 上限に対する割合でグラデーション → ADの価値が2000円差より大きくなるよう設計
     if (c.rent_max) {
-      if (rent) {
-        var ratio = rent / c.rent_max;
+      if (effectiveRent) {
+        var ratio = effectiveRent / c.rent_max;
         if      (ratio <= 0.85) score += 30; // 15%以上余裕 → 満点
         else if (ratio <= 0.90) score += 28; // 10〜15%余裕
         else if (ratio <= 0.95) score += 26; // 5〜10%余裕
