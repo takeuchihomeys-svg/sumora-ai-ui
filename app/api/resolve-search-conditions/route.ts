@@ -182,12 +182,17 @@ async function resolveNearbyWithDeepSeek(station: string, minutes: number): Prom
       body: JSON.stringify({
         model: "deepseek-chat",
         max_tokens: 300,
-        messages: [{
-          role: "user",
-          content: `大阪府で「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を列挙してください。
-大阪府内の駅のみ対象。JSONの配列形式のみで返してください: ["駅名1", "駅名2", ...]
-駅名には「駅」を付けないでください。10〜20駅程度。`,
-        }],
+        // systemに静的指示を分離 → DeepSeekの自動プレフィックスキャッシュが効く
+        messages: [
+          {
+            role: "system",
+            content: "あなたは大阪府の鉄道路線に詳しいアシスタントです。指定された駅から電車で到達できる大阪府内の駅をJSON配列で返してください。駅名には「駅」を付けず、実在する正式名のみ使用。出力はJSON配列のみ: [\"駅名1\", \"駅名2\", ...]",
+          },
+          {
+            role: "user",
+            content: `「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を10〜20駅列挙してください。`,
+          },
+        ],
         temperature: 0,
       }),
     });
@@ -241,16 +246,22 @@ async function resolveTokenWithDeepSeek(token: string): Promise<TokenResolution 
       body: JSON.stringify({
         model: "deepseek-chat",
         max_tokens: 300,
-        messages: [{
-          role: "user",
-          content: `「${token}」は大阪府のどの駅名または市区名に対応しますか？
+        // systemに静的指示＋wardNamesリストを分離 → DeepSeekの自動プレフィックスキャッシュが効く
+        // （wardNamesは毎回同じ静的リストのため、systemに置くとキャッシュヒット率が高い）
+        messages: [
+          {
+            role: "system",
+            content: `あなたは大阪府の地名・駅名に詳しいアシスタントです。入力されたテキストが大阪府の駅名または市区名のどちらに対応するかをJSONで返してください。
 駅名の場合: {"type":"station","names":["駅名1","駅名2"]}
 市区名の場合: {"type":"ward","names":["大阪市◯◯区","△△市"]}
 どちらでもない場合: {"type":"unknown"}
-JSONのみ返してください。
-駅名には「駅」を付けず、実在する駅の正式名のみ使ってください。
-市区名は次のリストにある名前のみ使用してください: ${wardNames}`,
-        }],
+ルール: 駅名には「駅」を付けない。実在する正式名のみ使用。市区名は以下のリストにある名前のみ使用: ${wardNames}`,
+          },
+          {
+            role: "user",
+            content: `「${token}」はどの駅名または市区名に対応しますか？JSONのみ返してください。`,
+          },
+        ],
         temperature: 0,
       }),
     });
