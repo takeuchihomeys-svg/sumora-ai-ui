@@ -7357,7 +7357,12 @@ export default function Home() {
                     setShowAixMenu(true); setShowStatusMenu(false);
                     setSuggestedAixAction(null);
                     if (selectedConversation?.id && selectedConversation?.status) {
-                      fetch(`/api/aix/suggest?conversation_status=${encodeURIComponent(selectedConversation.status)}&conversation_id=${encodeURIComponent(selectedConversation.id)}`)
+                      const _brainAction = selectedConversation.suggestedAixMeta?.action;
+                      const _brainEnforcement = selectedConversation.suggestedAixMeta?.enforcement_level;
+                      const _aixParams = new URLSearchParams({ conversation_status: selectedConversation.status, conversation_id: selectedConversation.id });
+                      if (_brainAction) _aixParams.set("brain_action", _brainAction);
+                      if (_brainEnforcement) _aixParams.set("brain_enforcement", _brainEnforcement);
+                      fetch(`/api/aix/suggest?${_aixParams.toString()}`)
                         .then((r) => r.json() as Promise<{ ok: boolean; suggested_action?: string | null }>)
                         .then((d) => { if (d.ok && d.suggested_action) setSuggestedAixAction(d.suggested_action); })
                         .catch(() => {});

@@ -71,6 +71,12 @@ export type SuggestedAixMeta = {
   analyzed_msg_ts?: string | null;
   // 直近AIXボタン履歴（最新→旧順・generate-reply RAG文脈強化用）
   last_aix_history?: string | null;
+  // LLMの行動選択理由（≤30字）
+  reason?: string | null;
+  // ai_summary_jsonからの勝ちパターン
+  winning_pattern?: string | null;
+  // ai_summary_jsonからの感情状態
+  customer_emotion?: string | null;
 } | null;
 
 // Canonical mapping from AIX action key → staff guidance note
@@ -1939,6 +1945,9 @@ ${history}`;
       checkpoint_stage: checkpointStage,
       customer_intent: customerIntent,
       latent_intent: latentIntent,
+      reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 30) : null,
+      winning_pattern: ((brainSummaryJson as Record<string, unknown> | null)?.winning_pattern as string) ?? null,
+      customer_emotion: ((brainSummaryJson as Record<string, unknown> | null)?.emotion as string) ?? null,
       // 鮮度ゲートの基準: 今回の分析が見た最新顧客メッセージのcreated_at。
       // cachedモード返却時はこの値が古いまま残るため、generate-reply側で自動的にstale判定される
       analyzed_msg_ts: lastCustomerMsg?.created_at ?? null,

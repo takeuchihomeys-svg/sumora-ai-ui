@@ -2441,6 +2441,8 @@ export async function POST(req: NextRequest) {
       if (brainMeta.note && brainMeta.reply_mode !== 'aix') {
         lines.push(`- 📌 この返信後のスタッフ予定アクション（参考・本文に書かない）: ${brainMeta.note} — この返信の最後の一文がそのアクションへの自然な橋渡しになるよう書くこと`);
       }
+      if (brainMeta.winning_pattern) lines.push("- 🏆 この顧客への効果的アプローチ（過去パターン）: " + brainMeta.winning_pattern);
+      if (brainMeta.customer_emotion) lines.push("- 💡 顧客の感情状態: " + brainMeta.customer_emotion);
       if (hasAction) {
         // 安全ガード: brain キャッシュが estimate_sheet のままでも、顧客が同一メッセージで
         // 新しい検索条件（路線・家賃・徒歩・広さ等）を指定していたら property_send 方向に上書き。
