@@ -2370,6 +2370,11 @@ export async function POST(req: NextRequest) {
         estimateAlreadySent = (estLogsRes.data?.length ?? 0) > 0;
       } catch { /* 判定不能時は従来動作（宣言許可）を維持する */ }
     }
+    // 顧客の現在のメッセージが新規見積依頼なら「送付済み」フラグを解除する
+    // 過去に送付済みでも、新たに「見積出して」と依頼されたら新規依頼として処理（恒久ブロック防止）
+    if (estimateAlreadySent && /見積/.test(message) && /出して|もらえ|お願い|送って|ください|欲しい|してほしい/.test(message)) {
+      estimateAlreadySent = false;
+    }
     const staffPromisedEstimate =
       !!lastStaffMsgForSearch &&
       /(最大限割引|スモ割|イエヤス割|御?見積書?)/.test(lastStaffMsgForSearch) &&
