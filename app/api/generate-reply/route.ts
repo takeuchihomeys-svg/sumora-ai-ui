@@ -1253,7 +1253,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   if (customerMessage && process.env.OPENAI_API_KEY) {
     // AIX-META潜在意識強化(2026-08-25): customer_intent（7分類）と latent_intent（送信動機・潜在意識の自由記述）を
     // 検索クエリに含め、「negative 審査に落ちる不安」等の心理文脈で関連ナレッジがヒットするようにする
-    const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
+    const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
     const lastAixPart = lastAixHistoryText ? `[AIX履歴] ${lastAixHistoryText} ` : "";
     const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
     const searchQuery = safeSlice(`${state}: ${lastAixPart}${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""} ${brainContext}`.trim(), 2000);
@@ -1504,7 +1504,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
   // AIX-META潜在意識強化(2026-08-25): 実例検索クエリにも customer_intent / latent_intent を含める（ナレッジ検索側と同構成）
-  const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
+  const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
   const baseQuery = lastStaffMessage
     ? `${state}: [前返信]${safeSlice(lastStaffMessage, 250)} [顧客]${customerMessage}`
     : customerMessage ? `${state}: ${customerMessage}` : null;

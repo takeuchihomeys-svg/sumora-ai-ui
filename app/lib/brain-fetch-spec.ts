@@ -127,6 +127,10 @@ export function buildBrainFetchSpec(
       if (meta.key_topics?.length) parts.push(meta.key_topics.join(" "));
       // latent_intent（送信動機・潜在意識の自由記述）もRAGクエリ化（例:「審査に落ちる不安」→審査不安解消ナレッジがヒット）
       if (meta.latent_intent) parts.push(sliceSafe(String(meta.latent_intent), 60));
+      // winning_pattern: 顧客の成約パターン → 類似成約事例・アプローチナレッジを引く
+      if (meta.winning_pattern) parts.push(sliceSafe(String(meta.winning_pattern), 80));
+      // customer_emotion: 顧客の感情状態 → 感情別対応ナレッジを引く
+      if (meta.customer_emotion) parts.push(String(meta.customer_emotion));
     }
     return parts.length > 0 ? parts.join(" ") : undefined;
   })();
