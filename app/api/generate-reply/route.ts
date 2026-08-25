@@ -2,6 +2,7 @@
 import { ChatAnthropic } from "@langchain/anthropic";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import {
   PHASE_GUIDE,
   GENERATION_SYSTEM,
@@ -1252,7 +1253,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
     const searchQuery = safeSlice(`${state}: ${lastAixPart}${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""} ${brainContext}`.trim(), 2000);
 
-    const embedding = await getEmbedding(searchQuery);
+    const embedding = await generateEmbedding(searchQuery);
     if (embedding) {
       const { data: vectorResults, error: rpcError } = await supabase.rpc("match_reply_knowledge", {
         query_embedding: embedding,
@@ -1483,32 +1484,6 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   return { text: sections.length > 0 ? "\n\n" + sections.join("\n\n") : "", phraseHits: Math.min(phrases.length, 6), topPrinciples: (topPrinciples ?? []) as KnowledgeRow[] };
 }
 
-// ─── OpenAI 埋め込み生成（generate-reply 側）────────────────────────────────
-async function getEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), 6000); // 6秒でタイムアウト
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: safeSlice(text, 2000) }),
-      signal: controller.signal,
-    });
-    clearTimeout(tid);
-    if (!res.ok) {
-      console.warn("[generate-reply] OpenAI embedding error", res.status, await res.text());
-      return null;
-    }
-    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
-    return data.data?.[0]?.embedding ?? null;
-  } catch {
-    clearTimeout(tid);
-    return null;
-  }
-}
-
 // filterByDirection: 返信の方向性フレーズ（最大20字）から助詞を除いた名詞トークンを抽出する
 // 例 "内見日程の確認" → ["内見日程", "確認"] / "申込意思の確認" → ["申込意思", "確認"]
 function extractDirectionKeywords(direction: string | null): string[] {
@@ -1532,7 +1507,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
     : null;
 
   if (searchQuery && process.env.OPENAI_API_KEY) {
-    const embedding = await getEmbedding(searchQuery);
+    const embedding = await generateEmbedding(searchQuery);
     if (embedding) {
       const { data: similar, error: rpcError } = await supabase.rpc("match_reply_examples", {
         query_embedding: embedding,

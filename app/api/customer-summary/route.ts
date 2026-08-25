@@ -2,6 +2,7 @@
 import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 function getModel() {
   return new ChatAnthropic({
@@ -71,25 +72,6 @@ const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
   * engagement_level: 高（毎日連絡）/中（数日に1回）/低（なかなか返信こない）
   → 100字以内で端的に。例：「比較検討型・安心感重視・費用面で止まりやすい・数日おきに丁寧な長文」`;
 
-// ── OpenAI 埋め込み生成（成約パターン類似検索用・text-embedding-3-small 1536次元）──
-async function getEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      signal: AbortSignal.timeout(6_000),
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
-    return data.data?.[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
-
 // ── 文字列類似度（bigram Dice係数）— 人間性プロファイル同士の部分一致スコアリング用 ──
 function bigrams(s: string): Set<string> {
   const t = s.replace(/[\s・、。/／]/g, "");
@@ -127,7 +109,7 @@ async function fetchWinningPatterns(
   // ── 段階1: 人間性プロファイルで pgvector 類似検索（match_reply_knowledge RPC）──
   const queryText = personalityProfile || conditionQueryText;
   if (queryText && process.env.OPENAI_API_KEY) {
-    const embedding = await getEmbedding(queryText);
+    const embedding = await generateEmbedding(queryText);
     if (embedding) {
       const { data: vectorHits, error: rpcError } = await supabase.rpc("match_reply_knowledge", {
         query_embedding: embedding,

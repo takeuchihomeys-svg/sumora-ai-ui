@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE, STATE_SEARCH_ALIASES, CRITICAL_RULES_COMPACT } from "@/app/lib/line-reply-prompts";
 import { validateAndClean } from "@/app/lib/validate-reply";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 30;
 
@@ -60,22 +61,6 @@ async function analyzeCustomer(message: string, history: string, state: string, 
   } catch { return ""; }
 }
 
-// ─── OpenAI 埋め込み ─────────────────────────────────────────────────────────
-async function getEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data[0]?.embedding ?? null;
-  } catch { return null; }
-}
-
 // ─── 実例取得（6件→12件に増加）──────────────────────────────────────────────
 async function fetchExamples(state: string, message: string, analysisCtx?: string, lastStaffMsg?: string): Promise<string> {
   const aliases = STATE_SEARCH_ALIASES[state] || [state];
@@ -85,7 +70,7 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
     : `${state}: ${message}`;
   const query = analysisCtx ? `${baseQuery} パターン: ${analysisCtx}` : baseQuery;
   if (process.env.OPENAI_API_KEY) {
-    const embedding = await getEmbedding(query);
+    const embedding = await generateEmbedding(query);
     if (embedding) {
       const { data: similar } = await supabase.rpc("match_reply_examples", {
         query_embedding: embedding, match_count: 20, filter_states: aliases,
@@ -125,7 +110,7 @@ async function fetchKnowledge(state: string, customerMessage?: string): Promise<
 
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
   if (customerMessage && process.env.OPENAI_API_KEY) {
-    const embedding = await getEmbedding(`${state}: ${customerMessage}`.slice(0, 2000));
+    const embedding = await generateEmbedding(`${state}: ${customerMessage}`.slice(0, 2000));
     if (embedding) {
       const { data: vectorResults } = await supabase.rpc("match_reply_knowledge", {
         query_embedding: embedding,

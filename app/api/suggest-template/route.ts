@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 60;
 
@@ -98,27 +99,6 @@ function formatHistory(messages: Msg[]): string {
 // 孤立サロゲート（LINE絵文字等）をU+FFFDに置換
 const sanitizeSurrogates = (s: string) =>
   s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
-
-// ─── RAG用embedding生成 ──────────────────────────────────────────────────────
-async function generateEmbedding(text: string): Promise<number[] | null> {
-  if (!process.env.OPENAI_API_KEY) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      signal: AbortSignal.timeout(8_000),
-      headers: {
-        Authorization: "Bearer " + (process.env.OPENAI_API_KEY ?? "").replace(/\s/g, ""),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
-    return data.data?.[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // ─── システムプロンプト Block1（byte-stable → prompt caching が効く）──────────
 const SELECTION_SYSTEM = `あなたは不動産賃貸仲介『スモラ』のLINE営業テンプレート選定AIです。会話履歴とAIXテンプレート一覧から、次にスタッフが送るべきテンプレートを最大3件、適合度順に選びます。

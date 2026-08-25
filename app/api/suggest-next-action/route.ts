@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
 import { PROPERTY_CHECK_RESULT_LABEL, PROPERTY_CHECK_RESULT_DESCRIPTION } from "@/app/lib/aix-taxonomy";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 30;
 
@@ -698,23 +699,14 @@ export async function POST(req: NextRequest) {
         ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction].filter(Boolean).join(" ")
         : "";
       const ragQuery = [lastCustomerMsg.slice(0, 400), metaCtx].filter(Boolean).join(" ").slice(0, 600);
-      const embRes = await fetch("https://api.openai.com/v1/embeddings", {
-        method: "POST",
-        signal: AbortSignal.timeout(5_000),
-        headers: { "Authorization": "Bearer " + process.env.OPENAI_API_KEY.replace(/\s/g, ""), "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "text-embedding-3-small", input: ragQuery }),
-      });
-      if (embRes.ok) {
-        const embData = await embRes.json() as { data?: Array<{ embedding?: number[] }> };
-        const emb = embData.data?.[0]?.embedding;
-        if (emb) {
-          const { data: knRows } = await supabase.rpc("match_reply_knowledge", {
-            query_embedding: emb,
-            match_count: 10,
-            min_importance: 7,
-          });
-          ragKnowledgeRows = (knRows ?? []) as RagKnowledgeRow[];
-        }
+      const emb = await generateEmbedding(ragQuery);
+      if (emb) {
+        const { data: knRows } = await supabase.rpc("match_reply_knowledge", {
+          query_embedding: emb,
+          match_count: 10,
+          min_importance: 7,
+        });
+        ragKnowledgeRows = (knRows ?? []) as RagKnowledgeRow[];
       }
     } catch { /* RAG失敗は無視・既存データのみで継続 */ }
   }

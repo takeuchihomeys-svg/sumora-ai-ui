@@ -5,6 +5,7 @@ import {
   applyGreetingSwap,
   stripRoomLeadingZeros,
 } from "@/app/lib/template-preprocess";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 30;
 
@@ -156,27 +157,6 @@ const AIX_TEMPLATE_MODE_SECTION = `
 × AIXメッセージに記載のない物件情報をお客様条件や会話から作り出す
 × 会話のテキストや文体を参考にして文を変形させる
 ━━━━━━━━━━━━━━━━━━━━`;
-
-// ─── RAG用embedding生成 ──────────────────────────────────────────────────────
-async function generateEmbedding(text: string): Promise<number[] | null> {
-  if (!process.env.OPENAI_API_KEY) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      signal: AbortSignal.timeout(8_000),
-      headers: {
-        Authorization: "Bearer " + (process.env.OPENAI_API_KEY ?? "").replace(/\s/g, ""),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
-    return data.data?.[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // ─── リクエスト型 ────────────────────────────────────────────────────────────
 type AdaptRequestBody = {

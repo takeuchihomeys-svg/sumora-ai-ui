@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -983,16 +984,8 @@ export async function analyzeConversation(
     ].filter(Boolean).join(" ").slice(0, 1000);
     if (ragQueryInput.trim()) {
       try {
-        const qRes = await fetch("https://api.openai.com/v1/embeddings", {
-          method: "POST",
-          signal: AbortSignal.timeout(6_000),
-          headers: { "Authorization": "Bearer " + process.env.OPENAI_API_KEY.replace(/\s/g, ""), "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "text-embedding-3-small", input: ragQueryInput }),
-        });
-        if (qRes.ok) {
-          const qData = await qRes.json() as { data?: Array<{ embedding?: number[] }> };
-          const qEmb = qData.data?.[0]?.embedding;
-          if (qEmb) {
+        const qEmb = await generateEmbedding(ragQueryInput);
+        if (qEmb) {
             const [cpRes, knRes] = await Promise.all([
               // checkpoint RAG: 非incremental + propertyCustomerId がある場合のみ
               // （差分分析では古い会話構造の検索は不要）
@@ -1045,7 +1038,6 @@ export async function analyzeConversation(
               .filter((t) => t.similarity >= 0.4)
               .sort((a, b) => (b.won_count ?? 0) - (a.won_count ?? 0));
           }
-        }
       } catch {
         // RAG失敗は無視・静的バケットのみで動作継続（既存方針）
       }
@@ -2012,24 +2004,6 @@ ${prevSummary ? prevSummary.slice(0, 3500) : "（なし・今回が最初のセ�
 ${historyText}`;
 }
 
-async function getCheckpointEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      signal: AbortSignal.timeout(8_000),
-      headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
-    return data.data?.[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
-
 export async function maybeCreateCheckpoint(conversationId: string, customerName?: string): Promise<void> {
   try {
     // 1) 総メッセージ数 + 最新チェックポイントを並列取得
@@ -2125,7 +2099,7 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
     }
     // embedding生成（RAG検索用・失敗しても無視でOK）
     if (!insErr) {
-      const embedding = await getCheckpointEmbedding(parsed.summary);
+      const embedding = await generateEmbedding(parsed.summary);
       if (embedding) {
         await supabase.from("conversation_checkpoints")
           .update({ embedding })

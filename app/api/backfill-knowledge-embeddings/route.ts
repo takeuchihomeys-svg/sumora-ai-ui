@@ -1,25 +1,8 @@
 ﻿import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 300;
-
-async function getEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // POST: embeddingがない既存ナレッジルールに一括生成・保存（200件ずつ）
 export async function POST(req: Request) {
@@ -52,7 +35,7 @@ export async function POST(req: Request) {
     await Promise.all(
       batch.map(async (row) => {
         const input = `${row.conversation_state ?? "general"}: ${row.content}`;
-        const embedding = await getEmbedding(input);
+        const embedding = await generateEmbedding(input);
         if (!embedding) { failed++; return; }
         const { error: updateError } = await supabase
           .from("ai_reply_knowledge")

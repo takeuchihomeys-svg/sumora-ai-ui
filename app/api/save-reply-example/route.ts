@@ -10,25 +10,6 @@ export const maxDuration = 60;
 // 夜間問い合わせ→翌日返信のケースで評価が粗くならないよう 6h → 24h に拡大
 const PRECISE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-// ─── OpenAI 埋め込み生成（text-embedding-3-small・1536次元）────────────────────
-async function getEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      signal: AbortSignal.timeout(6_000),
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
-
 // conversationState → phrase_dictionary カテゴリ（新5段階 + 旧ステート + AIXステート）
 const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
   // 新5段階
@@ -1009,7 +990,7 @@ export async function POST(req: NextRequest) {
     const mergedEmbeddingInput = previousStaffMessage
       ? `${conversationState}: [前返信]${previousStaffMessage.slice(0, 100)} [顧客]${customerMessage}`
       : `${conversationState}: ${customerMessage}`;
-    const mergedEmbedding = await getEmbedding(mergedEmbeddingInput);
+    const mergedEmbedding = await generateEmbedding(mergedEmbeddingInput);
     const updatePayload: Record<string, unknown> = { sent_reply: mergedReply };
     if (mergedEmbedding) updatePayload.embedding = JSON.stringify(mergedEmbedding);
     if (isStarred) updatePayload.is_starred = true;
@@ -1093,7 +1074,7 @@ export async function POST(req: NextRequest) {
     : previousStaffMessage
       ? `${conversationState}: [前返信]${previousStaffMessage.slice(0, 100)} [顧客]${customerMessage}`
       : `${conversationState}: ${customerMessage}`;
-  const embeddingPromise = getEmbedding(embeddingInput);
+  const embeddingPromise = generateEmbedding(embeddingInput);
 
   // 各ピッカー: 変更されたコンポーネントを reply_angle に記録（analyze-diffs が固有情報スキップを精密化）
   // アクション別の固有情報パーツ（日時・物件名等 — 変化しても学習不要）

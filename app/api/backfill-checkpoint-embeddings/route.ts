@@ -1,30 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 300;
 
 const BATCH_SIZE = 20;
-
-async function getEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      signal: AbortSignal.timeout(10_000),
-      headers: {
-        "Authorization": "Bearer " + apiKey.replace(/\s/g, ""),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
-    return data.data?.[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
 
 function checkAuth(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -72,7 +52,7 @@ export async function POST(req: NextRequest) {
 
     for (const cp of cps) {
       if (!cp.summary) { failed++; continue; }
-      const embedding = await getEmbedding(cp.summary as string);
+      const embedding = await generateEmbedding(cp.summary as string);
       if (!embedding) { failed++; continue; }
       const { error: updateErr } = await supabase
         .from("conversation_checkpoints")

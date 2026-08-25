@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 120;
@@ -10,26 +11,6 @@ const GITHUB_REPO = "takeuchihomeys-svg/sumora-ai-ui";
 
 // アーキテクチャ・設計変更を示すキーワード（コミットメッセージで判定）
 const ARCH_KEYWORDS = ["refactor", "feat:", "redesign", "layer", "cache", "rag", "aix", "brain", "prompt", "architecture", "廃止", "統合", "刷新", "設計"];
-
-async function generateEmbedding(text: string): Promise<number[] | null> {
-  if (!process.env.OPENAI_API_KEY) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      signal: AbortSignal.timeout(8_000),
-      headers: {
-        Authorization: "Bearer " + process.env.OPENAI_API_KEY.replace(/\s/g, ""),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
-    return data.data?.[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
 
 export async function POST(req: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET;

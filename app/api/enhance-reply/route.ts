@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 30;
 
@@ -18,24 +19,6 @@ const STATE_NORMALIZE: Record<string, string> = {
   application: "applying", screening: "applying", contract: "applying",
   application_push: "applying",
 };
-
-async function getEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
 
 const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C: "C案", short_direct: "短く直接" };
 
@@ -76,7 +59,7 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(8),
     customerMessage && process.env.OPENAI_API_KEY
-      ? getEmbedding(lastStaffMsg
+      ? generateEmbedding(lastStaffMsg
           ? `${normalized}: [前返信]${lastStaffMsg.slice(0, 100)} [顧客]${customerMessage}`
           : `${normalized}: ${customerMessage}`)
       : Promise.resolve(null),
