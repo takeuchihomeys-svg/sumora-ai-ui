@@ -1261,7 +1261,8 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
     const lastAixPart = lastAixHistoryText ? `[AIX履歴] ${lastAixHistoryText} ` : "";
     const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
-    const searchQuery = safeSlice(`${state}: ${lastAixPart}${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""} ${brainContext}`.trim(), 2000);
+    // brainContextをstate直後に固定（末尾配置だとsafeSlice 2000字制限で切り落とされるリスクがあるため前詰め）
+    const searchQuery = safeSlice(`${state}: ${brainContext ? `[WE_DO文脈]${brainContext} ` : ""}${lastAixPart}${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""}`.trim(), 2000);
 
     const embedding = await generateEmbedding(searchQuery);
     if (embedding) {
@@ -2454,8 +2455,8 @@ export async function POST(req: NextRequest) {
       if (brainMeta.note && brainMeta.reply_mode !== 'aix') {
         lines.push(`- 📌 スモラスタイル②WE DO宣言（必須・返信末尾に1文として明示する）: ${brainMeta.note} → このスタッフアクションをお客様向けに「私が〇〇させて頂きます！！」の形に言い換えて返信の最後の1文に含めること（例: 「明日管理会社に交渉させて頂きます！！」「ご希望のお部屋をピックアップしてお送りさせて頂きます！！」「お申込みでお部屋抑えさせて頂きます！！」）。ただしZ/F3/Yパターン等の短い締め返信では追加しない`);
       }
-      if (brainMeta.winning_pattern) lines.push("- 🏆 この顧客への効果的アプローチ（過去パターン）: " + brainMeta.winning_pattern);
-      if (brainMeta.customer_emotion) lines.push("- 💡 顧客の感情状態: " + brainMeta.customer_emotion);
+      if (brainMeta.winning_pattern) lines.push("- 🏆 過去の勝ちパターン: " + brainMeta.winning_pattern + " → このパターンに沿った具体アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信に1文含めること");
+      if (brainMeta.customer_emotion) lines.push("- 💡 顧客の感情状態: " + brainMeta.customer_emotion + " → この感情を踏まえ冒頭1文で受け止めること（例: 不安→「ご心配なお気持ち、よくわかります」/ 前向き→「嬉しいです！」）。感情無視の事務的な書き出しは禁止");
       if (hasAction) {
         // 安全ガード: brain キャッシュが estimate_sheet のままでも、顧客が同一メッセージで
         // 新しい検索条件（路線・家賃・徒歩・広さ等）を指定していたら property_send 方向に上書き。
@@ -2472,7 +2473,7 @@ export async function POST(req: NextRequest) {
           lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}`);
         }
       }
-      if (brainMeta.closing_strategy) lines.push(`- 成約戦略: ${brainMeta.closing_strategy}`);
+      if (brainMeta.closing_strategy) lines.push(`- 成約戦略: ${brainMeta.closing_strategy} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること`);
       if (brainMeta.next_steps?.length) {
         lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
         lines.push(`  → 今回の返信で実行するのは Step1（${brainMeta.next_steps[0]}）のみ。Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を今回の本文に先取りして書かないこと（フェーズ先走り禁止）`);
@@ -2487,12 +2488,11 @@ export async function POST(req: NextRequest) {
         // （stale brain_metaの avoid_topics が顧客の現在の質問を封じる逆転を防ぐ）
         const activeAvoidTopics = brainMeta.avoid_topics.filter(t => !message.includes(t));
         if (activeAvoidTopics.length) {
-          lines.push(`- 🚫 絶対に言及しない語・話題: ${activeAvoidTopics.join(" / ")}`);
-          lines.push("  → 言い換え・同義語も禁止（「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと");
+          lines.push(`- 🚫 今回は ${activeAvoidTopics.join(" / ")} には触れない（言い換え・同義語も禁止: 「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。代わりに${brainMeta.reply_direction ? `「${brainMeta.reply_direction}」の方向性` : "reply_directionの方向性"}に沿った具体アクション・事実情報で返信を構成すること。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと`);
         }
       }
       if (brainMeta.urgency_appropriate === false) {
-        lines.push("- ⛔ 緊急表現禁止: 直近のスタッフ送信で既に使用済みのため「今なら」「今しか」「残り◯室」「あと◯件」「急いで」「お早めに」「先着」等の危機感・緊急表現を一切使わない（連発は信頼を失う逆効果）");
+        lines.push("- ⛔ 緊急表現は今回使わない（直近のスタッフ送信で使用済みのため連発は逆効果）:「今なら」「今しか」「残り◯室」「あと◯件」「急いで」「お早めに」「先着」等は一切書かない。代わりに物件の具体的な強み（立地・設備・価格帯）を事実と数字で伝えること（例: 「駅徒歩3分・礼金0・築5年」）");
       }
       if (brainMeta.recommended_tone) {
         // トーン語ラベルだけでは生成LLMに伝わりにくいため、具体的な文体指示に展開して注入する
@@ -2530,7 +2530,7 @@ export async function POST(req: NextRequest) {
       }
       // H2: 顧客固有事実（property_search_params）— DBパターン検索では絶対に出てこない情報
       if (ngProps.length) {
-        lines.push(`- 🚫 提案禁止物件（この顧客がNG確定済み）: ${ngProps.map(p => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`).join(" / ")} — これらの物件名を返信に一切出さない。条件に合っていても再提案・再アピールしない`);
+        lines.push(`- 🚫 提案禁止物件（この顧客がNG確定済み）: ${ngProps.map(p => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`).join(" / ")} — 言及しない。代わりに顧客のこだわり（${psp?.preferences ?? "ご希望条件"}）に合う別物件を新たに探してお送りする旨をWE DO宣言（「〜させて頂きます！！」形）で伝えること`);
       }
       if (psp?.preferences) {
         lines.push(`- 👍 この顧客に刺さるポイント: ${psp.preferences} — 提案・訴求の切り口はここに寄せる`);
@@ -2542,7 +2542,7 @@ export async function POST(req: NextRequest) {
         lines.push(`- 📅 入居希望時期（brain抽出）: ${psp.move_in_time} — 提案・約束をこの時期に整合させること`);
       }
       if (psp?.search_urgency) {
-        lines.push(`- ⚡ 物件探しの緊急度: ${psp.search_urgency}`);
+        lines.push(`- ⚡ 物件探しの緊急度: ${psp.search_urgency} → 高い（★★★）場合: 今すぐピックアップしてお送りする旨をWE DO宣言（「〜させて頂きます！！」形）で伝えること / 低い（★以下）場合: 焦らせず次の連絡タイミングをこちらから約束すること`);
       }
       if (brainFreshForMessage && brainMeta.hesitancy_pattern) {
         const hp = brainMeta.hesitancy_pattern;
