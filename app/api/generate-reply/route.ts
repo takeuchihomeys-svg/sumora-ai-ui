@@ -2796,7 +2796,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // Step1廃止（2026-08）: 旧 analysis（Step1生JSON）の代わりに brainMeta + brainFreshForMessage を渡す
     const messages = buildGenerationMessages(
       message, customerName, aixSourceMessage ? historyForTemplate : history, currentState,
-      brainMeta, brainFreshForMessage, knowledge, examples, phrases, customerConditions, resolvedSummary,
+      brainMeta, brainFreshForMessage, knowledge, examples, phrases,
+      // body.customerConditionsが空のときDBから独自取得したcustomerConditionsDbをフォールバックで使う
+      // → 生成側とfinal-check側の条件情報源の非対称を解消
+      customerConditions || groundTruth.customerConditionsDb || "",
+      resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote, directionNote,
