@@ -1251,7 +1251,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
   if (customerMessage && process.env.OPENAI_API_KEY) {
-    const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
+    // AIX-META潜在意識強化(2026-08-25): customer_intent（7分類）と latent_intent（送信動機・潜在意識の自由記述）を
+    // 検索クエリに含め、「negative 審査に落ちる不安」等の心理文脈で関連ナレッジがヒットするようにする
+    const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
     const lastAixPart = lastAixHistoryText ? `[AIX履歴] ${lastAixHistoryText} ` : "";
     const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
     const searchQuery = safeSlice(`${state}: ${lastAixPart}${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""} ${brainContext}`.trim(), 2000);
@@ -1501,7 +1503,8 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
 
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
-  const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
+  // AIX-META潜在意識強化(2026-08-25): 実例検索クエリにも customer_intent / latent_intent を含める（ナレッジ検索側と同構成）
+  const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, ...(brainMeta.key_topics ?? [])].filter(Boolean).join(" ") : "";
   const baseQuery = lastStaffMessage
     ? `${state}: [前返信]${safeSlice(lastStaffMessage, 250)} [顧客]${customerMessage}`
     : customerMessage ? `${state}: ${customerMessage}` : null;
@@ -2419,7 +2422,7 @@ export async function POST(req: NextRequest) {
       // Step1移植: message-local戦術フィールド（鮮度ゲート通過時のみ発火）
       const qs = brainFreshForMessage ? (brainMeta.customer_questions ?? []) : [];
       const hasTactical = brainFreshForMessage && !!(
-        qs.length || brainMeta.repeated_concern || brainMeta.current_property || brainMeta.hesitancy_pattern || brainMeta.customer_intent
+        qs.length || brainMeta.repeated_concern || brainMeta.current_property || brainMeta.hesitancy_pattern || brainMeta.customer_intent || brainMeta.latent_intent
       );
       // H2(AIX-METAフル活用 2026-08): property_search_params は brain が property_customers +
       // sent_properties から構築した「この顧客だけの確定事実」。パターン検索（pgvector/DB）では
@@ -2551,6 +2554,11 @@ export async function POST(req: NextRequest) {
         if (guide) {
           lines.push(`- 🎯 顧客意図【${brainMeta.customer_intent}】→ ${guide}`);
         }
+      }
+      // 潜在意識 (latent_intent): brainが推論した「なぜ今このメッセージを送ってきたか」の送信動機。
+      // 表面の質問への回答だけでなく、裏にある不安・期待に届く返信を書かせる（message-local分析のため鮮度ゲート必須）
+      if (brainFreshForMessage && brainMeta.latent_intent) {
+        lines.push(`- 💭 送信動機・潜在意識: ${brainMeta.latent_intent} — 表面の質問に答えるだけでなく、この裏にある不安・期待を自然に汲み取って解消・後押しする一文を返信に含めること（※推測を「〜が不安なんですよね」と決めつけて指摘するのは禁止。あくまで自然に寄り添う）`);
       }
       // H1(AIX-METAフル活用 2026-08): future_timeline を hesitancy_pattern と独立に注入。
       // 旧実装は hp==="timeline" の分岐内でのみ使用しており、hp が thinking/null 等のとき

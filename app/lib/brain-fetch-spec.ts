@@ -123,6 +123,8 @@ export function buildBrainFetchSpec(
       if (meta.key_topics?.length) parts.push(meta.key_topics.join(" "));
       // customer_intent をRAGクエリに追加（意図別の返信例・知識をピンポイントで引く）
       if (meta.customer_intent) parts.push(meta.customer_intent);
+      // latent_intent（送信動機・潜在意識の自由記述）もRAGクエリ化（例:「審査に落ちる不安」→審査不安解消ナレッジがヒット）
+      if (meta.latent_intent) parts.push(sliceSafe(String(meta.latent_intent), 60));
     }
     return parts.length > 0 ? parts.join(" ") : undefined;
   })();
