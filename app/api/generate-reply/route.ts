@@ -522,7 +522,7 @@ function buildGenerationMessages(
   const _cleanName = sanitizeCustomerName(customerName);
   const nameNote = _cleanName ? `お客様名：${_cleanName}さん` : "お客様名：不明（名前なしで返信すること・「名称未設定」は絶対に使わない）";
   const conditionsNote = customerConditions
-    ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。条件の重複記載はしない。`
+    ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。条件の重複記載はしない。\n⚠️ first_reply（初回返信）の場合: 上記の主要条件（エリア・家賃・間取り）を必ず行動宣言に埋め込んで言及すること。条件への言及がゼロの返信は不合格。`
     : "";
   // AIX-META戦略（brainGuidanceNote）が存在する場合、ai_summary全文はbrain側で既に消化済みのため
   // summaryNoteは注入しない（戦略の二重注入・矛盾指示を防ぐ）。AIX-META未生成時のみ従来通り注入する。
@@ -3048,6 +3048,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   checkpointFacts: groundTruth.checkpointFacts,
                   customerConditionsDb: groundTruth.customerConditionsDb,
                   isAutoSend: enforceReplyModeGate,   // HIGH-1/2: 自動送信経路のみ true
+                  isEarlyConversation: isFirstEverReplyFromMsgs, // 初回返信はFABRICATED系をwarning格下げ
                   isAix: true,                        // generate-reply はAIX機能そのもの
                   conversationStage: STAGE_JP[currentState] ?? currentState, // MEDIUM-2
                   brainMeta: brainMeta
