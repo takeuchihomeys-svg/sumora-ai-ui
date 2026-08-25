@@ -363,7 +363,7 @@ ${contextParts.join("\n\n")}
 
 JSONで返してください: {"score": 数値, "reason": "30字以内の理由", "ng_flags": ["問題点（あれば）"]}`;
 
-      const dsRes = await fetch("https://api.deepseek.com/chat/completions", {
+      const dsRes = await fetch("https://api.deepseek.com/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${deepseekKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
