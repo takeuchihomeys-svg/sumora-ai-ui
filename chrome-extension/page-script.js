@@ -612,7 +612,11 @@
         if (matchFn(txt)) {
           var inp = labels[i].querySelector('input[type="checkbox"]');
           if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
-          if (inp && !inp.checked) { inp.click(); return true; }
+          if (inp) {
+            if (!inp.checked) inp.click();
+            return true;
+          }
+          // inp が null の場合のみラベルクリック
           labels[i].click(); return true;
         }
       }
@@ -1531,7 +1535,7 @@
                               (txt.startsWith(clean) || clean.startsWith(txt)))) return;
                         var inp = l.querySelector('input[type="checkbox"]');
                         if (!inp && l.htmlFor) inp = document.getElementById(l.htmlFor);
-                        if (!inp) return;
+                        if (!inp) { matched = true; return; } // ★ B5修正: label一致でもinp=nullなら matched=true/ok=false → 安全側で失敗
                         matched = true;
                         if (inp.checked) ok = true;
                       });

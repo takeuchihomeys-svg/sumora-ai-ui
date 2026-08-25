@@ -294,6 +294,8 @@ export type ResolvedSearchConditions = {
   building_age_resolved: number | null;
 };
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   let desired_area: string;
   let lines: string[];

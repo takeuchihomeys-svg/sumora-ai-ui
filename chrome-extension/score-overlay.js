@@ -253,6 +253,14 @@
       }
     }
 
+    // ng_points ペナルティ
+    if (c && c.ng_points) {
+      var ngWords = c.ng_points.split(/[\s、。,，]+/).filter(function(w){ return w.length > 0; });
+      for (var i = 0; i < ngWords.length; i++) {
+        if (text.includes(ngWords[i])) score = Math.max(0, score - 10);
+      }
+    }
+
     return score;
   }
 

@@ -2399,6 +2399,7 @@ function openSiteView(customer) {
       property_customer_id: customer.id || null,
       initial_cost_limit:   customer.initial_cost_limit || null,
       prefer_no_shikirei:   detectShikireiFlag(customer),
+      ng_points:            customer.ng_points || null,
     }});
   } catch (_) { /* ignore（非extension環境での実行対策）*/ }
 
@@ -3233,6 +3234,7 @@ function openInstructions(siteKey) {
         }).catch(function() {});
       }
 
+      const adjC = buildAdjCustomer(c);
       // 臨機応変フォールバック(itandi): station モードで itandiLines 空かつ ward データある → ward に降格
       if (_areaModeSource === "auto" && !isWardArea_itandi && itandiLines.length === 0 && (neighborhoodWard || (apiData?.itandi?.ward_names?.length > 0))) {
         console.log("[AX] 臨機応変(itandi): station→ward 降格（itandiLines 空, ward データあり）");
@@ -3356,6 +3358,7 @@ function openInstructions(siteKey) {
           property_customer_id: selectedCustomer.id || null,
           initial_cost_limit:   selectedCustomer.initial_cost_limit || null,
           prefer_no_shikirei:   detectShikireiFlag(selectedCustomer),
+          ng_points:            selectedCustomer.ng_points || null,
         }});
       } catch (_) { /* ignore */ }
       console.log('[AX] itandi autofill送信:', {
@@ -3824,6 +3827,7 @@ function openInstructions(siteKey) {
           property_customer_id: c.id || null,
           initial_cost_limit:   c.initial_cost_limit || null,
           prefer_no_shikirei:   detectShikireiFlag(c),
+          ng_points:            c.ng_points || null,
         }});
       } catch (_) { /* ignore */ }
       autofillBtn.textContent = "⏳ 検索中...";
@@ -3984,6 +3988,7 @@ function openInstructions(siteKey) {
           property_customer_id: c0.id || null,
           initial_cost_limit:   c0.initial_cost_limit || null,
           prefer_no_shikirei:   detectShikireiFlag(c0),
+          ng_points:            c0.ng_points || null,
         }});
       } catch (_) { /* ignore */ }
       console.log('[AX] reins autofill送信:', {

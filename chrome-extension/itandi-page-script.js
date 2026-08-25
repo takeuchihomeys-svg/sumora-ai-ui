@@ -430,7 +430,10 @@
           return l.querySelector("input[type='checkbox']") && isVis(l);
         });
         if (hasLineLabels && _dlg) { startClickLines(_dlg); return; }
-        if (hasLineLabels && !_dlg) { startClickLines(null); return; } // フォールバック
+        if (hasLineLabels && !_dlg) {
+          console.warn('[itandi] pollLineList: dialog not found, aborting');
+          _abort(); return;
+        }
         if (++_p >= 25) {
           console.warn("[AX] selectItandiLines: 路線リスト5s未描画 → 中断");
           _abort(); return;

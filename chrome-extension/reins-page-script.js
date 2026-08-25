@@ -66,6 +66,19 @@
   };
 
   async function fill(cond) {
+    var _doneSent = false;
+    var _sendDone = function(ok, reason) {
+      if (_doneSent) return;
+      _doneSent = true;
+      var msg = { from: "aixlinx-fill-done" };
+      if (!ok && reason) msg.error = String(reason).slice(0, 300);
+      window.postMessage(msg, "*");
+    };
+    var watchdog = setTimeout(function() {
+      console.warn("[AX] watchdog: 90s timeout — fill-done強制送信");
+      _sendDone(false, "watchdog timeout");
+    }, 90000);
+    try {
     // 連続検索対応: 前回の条件をリセット
     var _resetBtn = [].slice.call(document.querySelectorAll("button, input[type='reset']")).find(function(b) {
       var t = (b.textContent || b.value || "").trim();
@@ -278,9 +291,18 @@
       return b.textContent.trim() === "検索";
     });
     if (searchBtn) searchBtn.click();
+    _sendDone(true, '');
+    } catch(e) {
+      console.error('[REINS fill error]', e);
+      _sendDone(false, String(e));
+    } finally {
+      clearTimeout(watchdog);
+    }
   }
 
   window.addEventListener("axlx-reins-fill", function (e) {
-    fill(e.detail);
+    fill(e.detail).catch(function(err) {
+      console.error('[REINS fill uncaught]', err);
+    });
   });
 })();

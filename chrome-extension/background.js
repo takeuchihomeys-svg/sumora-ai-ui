@@ -2339,6 +2339,9 @@ async function _runBatchSearch(command) {
       var batchSite = sites[j];
       // area_mode='both': 地域（ward）と駅（station）を別々に2回検索・送信
       var areaModePasses = (customer.area_mode === 'both') ? ['ward', 'station'] : [null];
+      // B3修正: both顧客は各パスの0件通知を抑制し、ループ後に合計0件なら1回だけ通知する
+      var _isMultiPass = areaModePasses.length > 1;
+      var _totalPassCount = 0;
       for (var k = 0; k < areaModePasses.length; k++) {
         if (k > 0) {
           // 地域→駅の切り替えインターバル（5〜10秒）
@@ -2358,28 +2361,33 @@ async function _runBatchSearch(command) {
             : null;
           // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
           var resolvedBatchConds = await _batchAutofill(effectiveCustomer, batchSite, batchIsWide);
+          var _passCount = 0;
           if (batchSite === "itandi") {
             // itandi の場合: リアプロと同じく fill-done + batch-customer-done を待つ形に統一
             // itandi-bulk-dl.js の autoSendAllPages が axlx-batch-customer-done シグナルを送信する
-            await _scrapeAndSendRealpro(
+            _passCount = await _scrapeAndSendRealpro(
               fillDoneP,
               String(effectiveCustomer.id),
               effectiveCustomer.customer_name || null,
               resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide),
-              "itandi"
+              "itandi",
+              _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
             );
           } else if (batchSite === "realnetpro") {
             // 修正7: 通常バッチのリアプロ分岐にもスクレイプ→AI比較→LINE送信を追加
             // （従来は autofill + 3秒 sleep のみで結果がどこにも届かなかった）
-            await _scrapeAndSendRealpro(
+            _passCount = await _scrapeAndSendRealpro(
               fillDoneP,
               String(effectiveCustomer.id),
               effectiveCustomer.customer_name || null,
-              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide)
+              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide),
+              null,         // siteLabel → "リアプロ" (default)
+              _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
             );
           } else {
             await new Promise(function(r) { setTimeout(r, 2000 + Math.floor(Math.random() * 2000)); });
           }
+          _totalPassCount += (_passCount || 0);
         } catch (e) {
           // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して全ループを抜ける
           if (e && e.message === "__BATCH_STOPPED__") {
@@ -2390,6 +2398,15 @@ async function _runBatchSearch(command) {
           console.error("[batch] error:", effectiveCustomer.id, batchSite, areaModePasses[k] || "auto", e);
           batchErrors.push(effectiveCustomer.id + "/" + batchSite + "/" + (areaModePasses[k] || "auto") + ": " + ((e && e.message) || e));
         }
+      }
+      // B3修正: area_mode='both' で全パス合計0件の場合のみ1回だけ通知（重複送信防止）
+      if (_isMultiPass && _totalPassCount === 0 && customer.customer_name) {
+        var _bothSiteLabel = batchSite === "itandi" ? "itandi" : "リアプロ";
+        fetch(SUMORA_BATCH_API + "/api/notify-group", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: "🔍【物件0件】" + customer.customer_name + "さんの" + _bothSiteLabel + "検索が0件でした" })
+        }).catch(function() {});
       }
     }
     await _updateBatchCommand(command.id, { processed_customers: i + 1 });
@@ -2968,7 +2985,9 @@ async function _scrapeAndCompareForCustomer(customer) {
 // ── リアプロの fill-done 待機 → bulk-dl.js 全ページ送信完了待機 ──
 // bulk-dl.js の autoSendAllPages が全ページ送信後に axlx-batch-customer-done を送る。
 // background.js はその完了を待ってから次顧客へ移る（ページ競合を防ぐ）。
-async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, conditions, siteLabel) {
+// suppressZeroNotify=true のとき 0件 LINE通知をスキップし、呼び出し元が集計して1回だけ通知する
+// （area_mode='both' の2パス重複通知防止用）
+async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, conditions, siteLabel, suppressZeroNotify) {
   var _site = siteLabel || "リアプロ";
   // fill-done を待つ（検索実行完了シグナル）
   var fillDone = fillDonePromise ? await fillDonePromise : null;
@@ -2990,28 +3009,32 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   if (batchDone && batchDone.stopped) {
     throw new Error("__BATCH_STOPPED__");
   }
+  var _propCount = 0;
   if (batchDone && batchDone.timedOut) {
     console.warn("[scrapeAndCompare] 全ページ送信完了シグナルが5分以内に届きませんでした（次顧客へ続行） customer=" + customerId);
     // タイムアウト = 検索結果0件の可能性が高い → 0件アナウンスとして送信（4人検索→4人分アナウンス要件）
-    if (customerName) {
+    // suppressZeroNotify=true の場合は呼び出し元が集計後に1回だけ通知するためここではスキップ
+    if (!suppressZeroNotify && customerName) {
       fetch(SUMORA_BATCH_API + "/api/notify-group", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした" })
       }).catch(function() {});
     }
+    _propCount = 0;
   } else {
     console.log("[scrapeAndCompare] 全ページ送信完了 customer=" + customerId);
+    _propCount = (batchDone && batchDone.propertyCount) ? batchDone.propertyCount : 0;
   }
-  // 0件時 → LINEグループへアナウンス
-  if (batchDone && batchDone.propertyCount === 0 && customerName) {
+  // 0件時 → LINEグループへアナウンス（timedOut 分岐で既に通知済みの場合は重複しない）
+  if (_propCount === 0 && !(batchDone && batchDone.timedOut) && !suppressZeroNotify && customerName) {
     fetch(SUMORA_BATCH_API + "/api/notify-group", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした" })
     }).catch(function() {});
   }
-  return 0;
+  return _propCount;
 }
 
 // ===== END: 自動化バッチ検索 =====
