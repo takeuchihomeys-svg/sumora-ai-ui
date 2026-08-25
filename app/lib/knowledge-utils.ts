@@ -106,7 +106,7 @@ export async function extractPropertyDetailsFromImage(imageUrl: string): Promise
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "gpt-5.4-nano",
-        max_tokens: 500,
+        max_completion_tokens: 500,
         response_format: { type: "json_object" },
         messages: [{
           role: "user",
@@ -138,12 +138,16 @@ export async function extractPropertyDetailsFromImage(imageUrl: string): Promise
       }),
       signal: AbortSignal.timeout(20_000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn("[extractPropertyDetailsFromImage] OpenAI error", res.status, await res.text());
+      return null;
+    }
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
     const text = data.choices?.[0]?.message?.content;
     if (!text) return null;
     return JSON.parse(text) as PropertyImageDetails;
-  } catch {
+  } catch (e) {
+    console.warn("[extractPropertyDetailsFromImage] exception", e);
     return null;
   }
 }
@@ -160,7 +164,7 @@ export async function extractRecommendationReason(generatedText: string): Promis
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "gpt-5.4-nano",
-        max_tokens: 80,
+        max_completion_tokens: 80,
         messages: [{
           role: "user",
           content: `以下の物件オススメ文から「なぜこの物件をこのお客さんに推薦したか」を40字以内で要約してください。理由のみ返してください。\n\n${generatedText.slice(0, 600)}`,
@@ -168,10 +172,14 @@ export async function extractRecommendationReason(generatedText: string): Promis
       }),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn("[extractRecommendationReason] OpenAI error", res.status, await res.text());
+      return null;
+    }
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
     return data.choices?.[0]?.message?.content?.trim() ?? null;
-  } catch {
+  } catch (e) {
+    console.warn("[extractRecommendationReason] exception", e);
     return null;
   }
 }
