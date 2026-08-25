@@ -139,7 +139,9 @@
 
   // ── SUUMO 検索ボタン注入 ──────────────────────────────────────────────
   function injectSuumoButtons() {
-    document.querySelectorAll(".axlx-itandi-suumo-btn").forEach(function (el) { el.remove(); });
+    // 全削除→再注入はしない（削除行は行DOMごとReactが消すため掃除不要。
+    // 下の parentNode.querySelector チェックが重複注入を防ぐ。
+    // 毎cycle全削除するとDOM churnでチェックボックスのclickが確率的に死ぬ）
     findMaterialBtns().forEach(function (btn) {
       // 既に注入済みなら skip
       var container = btn;
@@ -907,7 +909,13 @@
       for (var i = 0; i < 6 && prev.parentElement; i++) {
         prev = prev.parentElement;
         if (prev.querySelector(".axlx-itandi-cb")) return false; // 既存あり
-        if (prev.classList && prev.classList.contains("CommonButton")) break;
+        if (prev.classList && prev.classList.contains("CommonButton")) {
+          // cb は CommonButton の「兄弟」に注入される → 親要素で存在判定してから確定
+          // （サブツリー内だけ見て break すると常に「未注入」と誤判定し
+          //   inject() が250〜600msごとに永久再実行される）
+          return !(prev.parentElement &&
+                   prev.parentElement.querySelector(".axlx-itandi-cb"));
+        }
       }
       return true; // チェックボックスなし
     });

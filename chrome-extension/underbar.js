@@ -406,6 +406,16 @@
 
   document.addEventListener("mousemove", (e) => {
     if (!miniBtnDrag) return;
+    // ウィンドウ外・iframe上でmouseupしてもドラッグ状態が残らないよう復帰
+    // （5ecee612 で wrap 側に入れたガードと同じ。ミニボタン側の直し漏れ。
+    //   残留するとミニボタンがカーソルに貼り付き全クリックを横取りする）
+    if (e.buttons === 0) {
+      miniBtnDrag = false;
+      posX = parseInt(miniBtnEl.style.left) || posX;
+      posY = parseInt(miniBtnEl.style.top)  || posY;
+      persist();
+      return;
+    }
     const dx = e.clientX - miniBtnSX;
     const dy = e.clientY - miniBtnSY;
     miniBtnEl.style.setProperty("left", Math.max(0, miniBtnSLeft + dx) + "px", "important");

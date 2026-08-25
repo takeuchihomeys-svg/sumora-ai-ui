@@ -105,10 +105,26 @@
     return m2 ? m2[1] : "";
   }
 
+  // フリーワード検索中はSUUMOボタンを注入しない
+  // （見積書ツールの自動フリーワード検索・手動フリーワード検索の結果画面が対象。
+  //   リアプロは全画面 main.php のため、キーワード入力欄の値で画面モードを判定する）
+  function isFreewordSearchActive() {
+    var sels = [
+      'input[name="keyword"]', 'input[name="free_word"]', 'input[name="freeword"]',
+      '#free_word', '#freeword', 'input[type="search"]', 'input[placeholder*="フリーワード"]'
+    ];
+    for (var i = 0; i < sels.length; i++) {
+      var el = document.querySelector(sels[i]);
+      if (el && el.value && el.value.trim()) return true;
+    }
+    return false;
+  }
+
   // リアプロ建物モード: 印刷用PDFボタンを起点に建物ヘッダー要素を特定し
   // 建物ごとに「SUUMO」ボタンを1つ注入する
   function injectSuumoButtons() {
     document.querySelectorAll(".axlx-suumo-btn").forEach(function (el) { el.remove(); });
+    if (isFreewordSearchActive()) return; // フリーワード検索結果には注入しない
     var btns = findPrintBtns();
     var injectedHeaders = new Set();
 
