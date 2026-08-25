@@ -1497,7 +1497,10 @@ async function getEmbedding(text: string): Promise<number[] | null> {
       signal: controller.signal,
     });
     clearTimeout(tid);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn("[generate-reply] OpenAI embedding error", res.status, await res.text());
+      return null;
+    }
     const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
     return data.data?.[0]?.embedding ?? null;
   } catch {

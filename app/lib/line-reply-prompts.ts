@@ -498,7 +498,7 @@ export const PHASE_GUIDE: Record<string, string> = {
 
 // ─── ステート正規化エイリアス（generate-reply・generate-reply-patterns共用）──
 export const STATE_SEARCH_ALIASES: Record<string, string[]> = {
-  first_reply: ["first_reply"],
+  first_reply: ["first_reply", "hearing"],
   hearing:     ["hearing", "condition_hearing", "property_search"],
   proposing:   [
     "proposing", "property_recommendation", "viewing", "estimate_request", "availability_check", "property_send",

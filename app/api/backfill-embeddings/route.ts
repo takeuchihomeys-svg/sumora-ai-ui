@@ -13,7 +13,10 @@ async function getEmbedding(text: string): Promise<number[] | null> {
       body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn("[backfill] OpenAI error", res.status, await res.text());
+      return null;
+    }
     const data = await res.json() as { data: Array<{ embedding: number[] }> };
     return data.data[0]?.embedding ?? null;
   } catch {
