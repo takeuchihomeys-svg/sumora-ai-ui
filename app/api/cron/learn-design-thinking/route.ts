@@ -1,188 +1,135 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 120;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000 });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
 
-const GITHUB_REPO = "takeuchihomeys-svg/sumora-ai-ui";
-
-// アーキテクチャ・設計変更を示すキーワード（コミットメッセージで判定）
-const ARCH_KEYWORDS = ["refactor", "feat:", "redesign", "layer", "cache", "rag", "aix", "brain", "prompt", "architecture", "廃止", "統合", "刷新", "設計"];
-
-export async function POST(req: Request): Promise<Response> {
-  const secret = process.env.CRON_SECRET;
-  const auth = req.headers.get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function GET(req: NextRequest) {
+  const secret = req.nextUrl.searchParams.get("secret");
+  if (secret !== process.env.CRON_SECRET && secret !== process.env.INTERNAL_API_SECRET) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const results = { embedded: 0, extracted: 0, skipped: 0, errors: [] as string[] };
+  const now = new Date();
+  const since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // ── Phase 1: NULL embedding の補完 ──────────────────────────────────────────
-  // system_design_thinking で embedding が未生成の行にOpenAI embeddingを付与する。
-  // RAG検索（match_design_thinking）が効くようになる。
+  // 直近7日に追加・更新されたai_reply_knowledgeのconfirmedエントリ
+  const { data: recentKnowledge } = await supabase
+    .from("ai_reply_knowledge")
+    .select("title, content, category, hypothesis_status, created_at, updated_at")
+    .eq("hypothesis_status", "confirmed")
+    .or(`created_at.gte.${since},updated_at.gte.${since}`)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  // 直近7日に成約したケース
+  const { data: recentWon } = await supabase
+    .from("conversations")
+    .select("customer_name, conversation_state, updated_at")
+    .eq("conversation_state", "closed_won")
+    .gte("updated_at", since)
+    .limit(10);
+
+  // 既存のsystem_design_thinkingタイトル（重複防止）
+  const { data: existingTitles } = await supabase
+    .from("system_design_thinking")
+    .select("title")
+    .eq("is_current", true)
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  if (!recentKnowledge?.length && !recentWon?.length) {
+    return NextResponse.json({ skipped: true, reason: "直近7日の変化なし" });
+  }
+
+  const existingTitleList = (existingTitles ?? []).map(e => e.title).join("\n");
+  const knowledgeSummary = (recentKnowledge ?? [])
+    .map(k => `[${k.category}] ${k.title}: ${(k.content ?? "").slice(0, 200)}`)
+    .join("\n");
+  const wonSummary = (recentWon ?? [])
+    .map(w => `${w.customer_name} → closed_won (${w.updated_at?.slice(0, 10)})`)
+    .join("\n");
+
+  const prompt = `あなたはシステム設計思想を抽出するエージェントです。
+
+【直近7日に追加・更新されたai_reply_knowledgeエントリ】
+${knowledgeSummary || "なし"}
+
+【直近7日の成約件数】
+${wonSummary || "なし"}
+
+【既に記録済みのsystem_design_thinkingタイトル（重複させない）】
+${existingTitleList}
+
+上記の変化から「なぜこのルールが追加されたか」「どんな設計判断が背景にあるか」を読み取り、
+system_design_thinkingに記録すべき設計知見を抽出してください。
+
+以下の形式でJSON配列を返してください（0件の場合は空配列）。
+既存タイトルと内容が重複するものは含めないこと。
+1回のcronで最大3件まで。
+
+[
   {
-    const { data: nullRows } = await supabase
-      .from("system_design_thinking")
-      .select("id, title, insight, rationale")
-      .is("embedding", null)
-      .limit(20);
-
-    for (const row of nullRows ?? []) {
-      const input = [row.title as string, row.insight as string, row.rationale as string]
-        .filter(Boolean)
-        .join("\n");
-      const emb = await generateEmbedding(input);
-      if (emb) {
-        const { error } = await supabase
-          .from("system_design_thinking")
-          .update({ embedding: emb })
-          .eq("id", row.id as string);
-        if (error) results.errors.push(`embed ${row.id}: ${error.message}`);
-        else results.embedded++;
-      }
-    }
+    "title": "短いタイトル（30字以内）",
+    "category": "architecture | prompt_engineering | data_model | ux | performance | ai_design",
+    "insight": "知見の内容（何をどうしたか・200字以内）",
+    "rationale": "なぜそうするか（根拠・100字以内）",
+    "context": "どういう状況で生まれたか（日付含む・100字以内）",
+    "applied_to": "適用したファイル・機能（50字以内）",
+    "tags": ["タグ1", "タグ2"]
   }
+]
 
-  // ── Phase 2: GitHub コミット分析 → 設計思考の自動抽出 ────────────────────
-  // 直近25時間のコミットを読み、アーキテクチャ・設計変更に見えるものを
-  // Haikuで分析してsystem_design_thinkingにINSERTする。
-  if (!process.env.GITHUB_TOKEN) {
-    console.log("[learn-design-thinking] GITHUB_TOKEN未設定 → Phase2スキップ");
-    return NextResponse.json({ ...results, phase2: "skipped: no GITHUB_TOKEN" });
-  }
+抽出できる設計知見がなければ [] を返す。`;
 
-  const since = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
-  let commits: Array<{ sha: string; commit: { message: string } }> = [];
+  let insights: Array<{
+    title: string;
+    category: string;
+    insight: string;
+    rationale: string;
+    context: string;
+    applied_to: string;
+    tags: string[];
+  }> = [];
+
   try {
-    const res = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/commits?since=${since}&per_page=20`,
-      {
-        signal: AbortSignal.timeout(10_000),
-        headers: {
-          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-          Accept: "application/vnd.github.v3+json",
-        },
-      }
-    );
-    if (res.ok) commits = await res.json() as typeof commits;
-  } catch (e) {
-    results.errors.push(`GitHub commits fetch: ${String(e)}`);
-  }
-
-  for (const commit of commits) {
-    const msg = commit.commit.message;
-    const msgLower = msg.toLowerCase();
-
-    // アーキテクチャ変更キーワードが含まれるコミットのみ対象
-    if (!ARCH_KEYWORDS.some((kw) => msgLower.includes(kw))) {
-      results.skipped++;
-      continue;
-    }
-
-    // コミット詳細（diff）を取得
-    let changedFiles = "";
-    let diffSample = "";
-    try {
-      const detailRes = await fetch(
-        `https://api.github.com/repos/${GITHUB_REPO}/commits/${commit.sha}`,
-        {
-          signal: AbortSignal.timeout(10_000),
-          headers: {
-            Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-            Accept: "application/vnd.github.v3+json",
-          },
-        }
-      );
-      if (detailRes.ok) {
-        const detail = await detailRes.json() as {
-          files?: Array<{ filename: string; additions: number; deletions: number; patch?: string }>;
-        };
-        const files = detail.files ?? [];
-        changedFiles = files.map((f) => f.filename).join(", ");
-        // 変更量最大のファイルのdiffを代表サンプルとして使う
-        const biggestFile = files.sort((a, b) => (b.additions + b.deletions) - (a.additions + a.deletions))[0];
-        diffSample = (biggestFile?.patch ?? "").slice(0, 800);
-      }
-    } catch {
-      results.skipped++;
-      continue;
-    }
-
-    // 同一 applied_to で直近2日以内に既存エントリがあればスキップ（重複防止）
-    const { count } = await supabase
-      .from("system_design_thinking")
-      .select("id", { count: "exact", head: true })
-      .ilike("applied_to", `%${changedFiles.slice(0, 80)}%`)
-      .gte("created_at", new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString());
-    if ((count ?? 0) > 0) {
-      results.skipped++;
-      continue;
-    }
-
-    // Haikuで設計思考を抽出
-    type ExtractionResult = {
-      is_design_insight: boolean;
-      title: string;
-      category: "architecture" | "prompt_engineering" | "data_model" | "ux" | "performance" | "ai_design";
-      insight: string;
-      rationale: string;
-    };
-
-    let extracted: ExtractionResult | null = null;
-    try {
-      const resp = await client.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 400,
-        messages: [
-          {
-            role: "user",
-            content:
-              `以下のgitコミットから設計思考・アーキテクチャ知識を抽出してください。\n\n` +
-              `コミットメッセージ:\n${msg.slice(0, 500)}\n\n` +
-              `変更ファイル: ${changedFiles.slice(0, 200)}\n\n` +
-              `diff（代表）:\n${diffSample}\n\n` +
-              `設計上の判断・パターン・知見が読み取れる場合のみis_design_insight:trueにしてください。\n` +
-              `単純なバグ修正・テキスト変更・設定変更はfalseです。\n\n` +
-              `出力形式（JSONのみ）:\n` +
-              `{"is_design_insight":true,"title":"30字以内のタイトル","category":"architecture","insight":"何をどう変えたか（100字以内）","rationale":"なぜそうしたか（80字以内）"}`,
-          },
-        ],
-      });
-      const text = ((resp.content[0] as { text: string }).text ?? "").trim();
-      const match = text.match(/\{[\s\S]+\}/);
-      if (match) extracted = JSON.parse(match[0]) as ExtractionResult;
-    } catch {
-      results.errors.push(`haiku extract ${commit.sha.slice(0, 7)}: failed`);
-      continue;
-    }
-
-    if (!extracted?.is_design_insight) {
-      results.skipped++;
-      continue;
-    }
-
-    // embedding生成 → INSERT
-    const embInput = [extracted.title, extracted.insight, extracted.rationale].filter(Boolean).join("\n");
-    const emb = await generateEmbedding(embInput);
-
-    const { error } = await supabase.from("system_design_thinking").insert({
-      title: extracted.title,
-      category: extracted.category ?? "architecture",
-      insight: extracted.insight,
-      rationale: extracted.rationale,
-      context: `GitHubコミット ${commit.sha.slice(0, 7)} から自動抽出。${new Date().toISOString().slice(0, 10)}`,
-      applied_to: changedFiles.slice(0, 300),
-      tags: ["auto-extracted", "git-commit"],
-      embedding: emb ?? null,
+    const res = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: prompt }],
     });
-
-    if (error) results.errors.push(`insert ${commit.sha.slice(0, 7)}: ${error.message}`);
-    else results.extracted++;
+    const text = res.content[0]?.type === "text" ? res.content[0].text.trim() : "[]";
+    const match = text.match(/\[[\s\S]*\]/);
+    insights = match ? JSON.parse(match[0]) : [];
+  } catch (e) {
+    console.error("[learn-design-thinking] LLM error", e);
+    return NextResponse.json({ error: "LLM failed" }, { status: 500 });
   }
 
-  return NextResponse.json(results);
+  if (!insights.length) {
+    return NextResponse.json({ inserted: 0, reason: "新しい設計知見なし" });
+  }
+
+  const inserted: string[] = [];
+  for (const insight of insights.slice(0, 3)) {
+    const { data, error } = await supabase
+      .from("system_design_thinking")
+      .insert({
+        title: insight.title,
+        category: insight.category,
+        insight: insight.insight,
+        rationale: insight.rationale,
+        context: insight.context,
+        applied_to: insight.applied_to,
+        tags: insight.tags,
+      })
+      .select("id, title")
+      .single();
+    if (!error && data) inserted.push(data.title);
+  }
+
+  console.log(`[learn-design-thinking] inserted ${inserted.length}件:`, inserted);
+  return NextResponse.json({ inserted: inserted.length, titles: inserted });
 }

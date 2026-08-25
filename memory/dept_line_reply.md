@@ -1,6 +1,45 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-08-14
+最終更新: 2026-08-25
+
+---
+
+## ⚡ 作業開始前に必ず実行（LINE返信AI作業のたびに毎回）
+
+```sql
+SELECT title, insight, rationale
+FROM system_design_thinking
+WHERE is_current = true
+ORDER BY created_at DESC
+LIMIT 10;
+```
+
+このテーブルに設計思想・アーキテクチャ判断・禁止パターンが蓄積されている。読まずに作業を始めると設計からぶれる（2026-08-25 実証済み）。
+
+---
+
+## 🏗️ 静的/動的レイヤー設計の絶対原則（2026-08-25 確立・system_design_thinkingに永続化済み）
+
+### 設計の対比概念（必ず理解してから作業する）
+
+| レイヤー | 何を入れるか | 実装場所 |
+|---------|------------|---------|
+| **静的（Static）** | 全顧客共通の汎用ルール・口調原則・横断的パターン | `ai_reply_knowledge`（importance=10→staticBlock / 7〜9→dynamicBlock RAG） |
+| **動的（Dynamic）** | 会話ごとの文脈・戦略・顧客固有の状況分析 | AIX-META（`suggested_aix_meta`）→ `brainContext` → RAGクエリ拡張 |
+
+### ai_reply_knowledge への登録禁止事項（毎セッション必ず守る）
+- **特定顧客の成約会話JSON・対話ログをそのまま登録禁止**（必ず汎用パターンに抽象化する）
+- **content 1000字超のエントリ登録禁止**（500字以内に圧縮してから登録）
+- **「あさみさん」「大野さん」等の個人名をタイトルに含む知識エントリ登録禁止**
+- **特定日付・特定時期（「7月末」「10月頃」等）を含むルールは登録不可**（time-boundなため）
+
+### なぜぶれが起きたか（2026-08-25 調査結果）
+この設計思想は「概念として命名・定義されたことが一度もなかった」のが根本原因。毎セッションのClaudeが文脈から自己推論して実装→間違いを繰り返す構造だった。`system_design_thinking` に12件以上の関連エントリはあったが対比概念の命名がなく判断基準が共有されていなかった。
+
+### staticBlock vs dynamicBlock の境界判断基準
+- `staticBlock`（cache_control:ephemeral・1h TTL）→ byte-stable・全顧客共通のテキストのみ
+- `conversation_state` フィルタを通るルール → dynamicBlock に入れる（静的注入しない）
+- DB由来でも「全顧客共通絶対原則（importance=10）」のみ staticBlock に入れてよい
 
 ---
 
