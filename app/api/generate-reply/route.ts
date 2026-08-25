@@ -599,8 +599,11 @@ function buildGenerationMessages(
       .map((q) => q.trim())
       .filter((q) => q.length > 4 && !detectedQuestions.some((d) => d.includes(q) || q.includes(d)));
     const allDetectedQuestions = [...detectedQuestions, ...detectedQuestionsNoMark];
-    if (allDetectedQuestions.length > 1) {
-      questionsNote = `\n【⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）】\n${
+    if (allDetectedQuestions.length >= 1) {
+      const label = allDetectedQuestions.length > 1
+        ? "⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）"
+        : "⚠️ 質問検出（必ず正面から答えること・「確認します」で逃げることは禁止）";
+      questionsNote = `\n【${label}】\n${
         allDetectedQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n")
       }`;
     }
@@ -2459,8 +2462,13 @@ export async function POST(req: NextRequest) {
         lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
       }
       if (brainMeta.avoid_topics?.length) {
-        lines.push(`- 🚫 絶対に言及しない語・話題: ${brainMeta.avoid_topics.join(" / ")}`);
-        lines.push("  → 言い換え・同義語も禁止（「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと");
+        // 顧客が最新メッセージで自ら言及した語は「避けるべき話題」から除外する
+        // （stale brain_metaの avoid_topics が顧客の現在の質問を封じる逆転を防ぐ）
+        const activeAvoidTopics = brainMeta.avoid_topics.filter(t => !message.includes(t));
+        if (activeAvoidTopics.length) {
+          lines.push(`- 🚫 絶対に言及しない語・話題: ${activeAvoidTopics.join(" / ")}`);
+          lines.push("  → 言い換え・同義語も禁止（「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと");
+        }
       }
       if (brainMeta.urgency_appropriate === false) {
         lines.push("- ⛔ 緊急表現禁止: 直近のスタッフ送信で既に使用済みのため「今なら」「今しか」「残り◯室」「あと◯件」「急いで」「お早めに」「先着」等の危機感・緊急表現を一切使わない（連発は信頼を失う逆効果）");
@@ -2481,8 +2489,11 @@ export async function POST(req: NextRequest) {
         lines.push(`- 📋 テンプレートヒント: 「${brainMeta.template_hint}」スタイルの返信が最も効果的。このラベルに対応する文体・構成パターンを参考にしつつ、顧客の状況に合わせて自然に書くこと`);
       }
       // ── message-local戦術ブロック（Step1廃止に伴いbrainへ移植した分析・brainFreshForMessage時のみ）──
-      if (qs.length > 1) {
-        lines.push(`- ⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）:\n${qs.map((q, i) => `  ${i + 1}. ${q}`).join("\n")}`);
+      if (qs.length >= 1) {
+        const qLabel = qs.length > 1
+          ? "⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）"
+          : "⚠️ 質問検出（必ず正面から答えること・「確認します」で逃げることは禁止）";
+        lines.push(`- ${qLabel}:\n${qs.map((q, i) => `  ${i + 1}. ${q}`).join("\n")}`);
       }
       // 不安系キーワード判定は決定論（コード側）に残す — LLM出力に依存させない（旧Step1と同一リスト・ANXIETY_KEYWORDS）
       if (qs.some((q) => ANXIETY_KEYWORDS.some((k) => q.includes(k)))) {
