@@ -2452,7 +2452,7 @@ export async function POST(req: NextRequest) {
         `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位。強制度: ${isRequired ? "必須（以下の指示に例外なく従う）" : "推奨（原則従うが、顧客の最新メッセージへの応答として不自然になる場合のみ自然さを優先してよい）"}）】`,
       ];
       if (brainMeta.note && brainMeta.reply_mode !== 'aix') {
-        lines.push(`- 📌 この返信後のスタッフ予定アクション（参考・本文に書かない）: ${brainMeta.note} — この返信の最後の一文がそのアクションへの自然な橋渡しになるよう書くこと`);
+        lines.push(`- 📌 スモラスタイル②WE DO宣言（必須・返信末尾に1文として明示する）: ${brainMeta.note} → このスタッフアクションをお客様向けに「私が〇〇させて頂きます！！」の形に言い換えて返信の最後の1文に含めること（例: 「明日管理会社に交渉させて頂きます！！」「ご希望のお部屋をピックアップしてお送りさせて頂きます！！」「お申込みでお部屋抑えさせて頂きます！！」）。ただしZ/F3/Yパターン等の短い締め返信では追加しない`);
       }
       if (brainMeta.winning_pattern) lines.push("- 🏆 この顧客への効果的アプローチ（過去パターン）: " + brainMeta.winning_pattern);
       if (brainMeta.customer_emotion) lines.push("- 💡 顧客の感情状態: " + brainMeta.customer_emotion);
