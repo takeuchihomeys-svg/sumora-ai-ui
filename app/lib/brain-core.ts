@@ -22,7 +22,8 @@ const BRAIN_MODEL = "claude-sonnet-5";
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60_000, maxRetries: 0, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
 
 // Statuses that indicate a closed/inactive conversation — excluded from brain analysis
-export const BRAIN_SKIP_STATUSES = ["applying", "application", "screening", "contract", "closed_won", "closed_lost", "lost", "approved"];
+// applying/application/screening は全成約が通過する申込フェーズのため除外（平均42日・169件の学習例あり）
+export const BRAIN_SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost", "approved"];
 
 // Conversations updated within this window are flagged as urgent
 export const URGENT_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -140,7 +141,7 @@ const PHASE_ACTION_CANDIDATES: Record<string, string[]> = {
 };
 
 // convStatus → フェーズの粗い写像（前回フェーズが無い場合のフォールバック）。
-// キーは STATUS_MEANING と同一集合（contract / approved は BRAIN_SKIP_STATUSES のため到達しない）。
+// キーは STATUS_MEANING と同一集合（contract / approved / closed_* は BRAIN_SKIP_STATUSES のため到達しない）。
 // 未知ステータス・NULL は phaseEstimate=null → 全AIXアクションにフォールバック（取りこぼしゼロ側に倒す）
 const STATUS_TO_PHASE: Record<string, string> = {
   first_reply:             "hearing",
