@@ -319,7 +319,7 @@ ${customerInfo || "（登録情報なし）"}
     notes: result.turning_point ?? null,
     source_conversation_id: conversationId,
     embedding: wpEmbedding ? JSON.stringify(wpEmbedding) : null,
-    importance: isLost ? 7 : 9,
+    importance: isLost ? 8 : 9,
     customer_intent: result.customer_intent ?? null,
     staff_reply_intent: result.staff_reply_intent ?? null,
   });

@@ -15,18 +15,20 @@ export async function POST(req: NextRequest) {
     const eventLabel = event_type === "application" ? "申込" : "成約";
     if (!conversation_id) return NextResponse.json({ ok: false, error: "conversation_id required" }, { status: 400 });
 
-    // 会話履歴を取得（直近80件）
-    const { data: msgs } = await supabase
+    // 会話履歴を取得（直近80件・降順で取得後reverseして時系列順に並べる）
+    // ascending + limit80 は最古80件になり申込直前のメッセージが欠落するため修正
+    const { data: msgsRaw } = await supabase
       .from("messages")
       .select("sender, text, created_at")
       .eq("conversation_id", conversation_id)
       .neq("text", "[画像]")
       .neq("text", "[動画]")
       .not("text", "is", null)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
       .limit(80);
+    const msgs = (msgsRaw ?? []).slice().reverse();
 
-    if (!msgs || msgs.length < 3) {
+    if (!msgs.length || msgs.length < 3) {
       return NextResponse.json({ ok: false, error: "会話履歴が少なすぎます" });
     }
 
