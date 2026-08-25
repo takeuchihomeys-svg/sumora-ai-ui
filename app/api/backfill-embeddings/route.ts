@@ -24,8 +24,12 @@ async function getEmbedding(text: string): Promise<number[] | null> {
 // POST: 埋め込みがない既存レコードに一括生成・保存
 export async function POST(req: Request) {
   const cronSecret = process.env.CRON_SECRET;
+  const internalSecret = process.env.INTERNAL_API_SECRET;
   const authHeader = req.headers.get("authorization");
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  const validAuth =
+    (cronSecret && authHeader === `Bearer ${cronSecret}`) ||
+    (internalSecret && authHeader === `Bearer ${internalSecret}`);
+  if (!validAuth) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   if (!process.env.OPENAI_API_KEY) {
