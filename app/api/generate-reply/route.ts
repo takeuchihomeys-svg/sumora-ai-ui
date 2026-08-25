@@ -1263,7 +1263,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         // M3(AIX-METAフル活用 2026-08): knowledge.limit（デッドフィールドだった）を正として接続。
         // brainが required+closing_strategy 確信時は spec 側で 60 に削減される（genericナレッジ洪水の抑制）
         match_count: spec?.knowledge?.limit ?? spec?.pgvectorMatchCount ?? 100,
-        min_importance: 5,
+        min_importance: 7,
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
       if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
 
