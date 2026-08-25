@@ -190,7 +190,23 @@ const AIX_CAPABILITY_MAP = `
 - property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
 - application_push: 内覧完了後・見積送付後に顧客が前向きな時。審査不安の「解消」を先回りする場面でも有効（申込確定の言質は不要）
 - viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 確定済み未来→meeting_place / 当日・完了後→greeting_viewing ※viewing_invite は顧客メッセージに内覧希望が示された場合に選ぶ。「内覧行きたいらしいですが」「内覧可能ですか」「見に行きたい」等の間接・伝聞・打診表現も内覧希望として viewing_invite を選ぶこと。スタッフが物件を送った後に顧客が内覧・内見・見学・見に行く等のキーワードで反応した場合も viewing_invite。ただしスタッフが送った物件情報内の「〇月〇日以降内覧可能」「内覧可」等の文言をトリガーにしない（顧客メッセージ内のキーワードのみ対象）。物件送付直後で顧客がまだ反応していない場合は aix:null（何も提案しない）が正解
+- 成約の典型順（黄金フロー）: condition_hearing → property_send → property_recommendation → estimate_sheet → viewing_invite → meeting_place → application_push（property_check_result は顧客が物件URLを送ってきた時の割り込みアクションであり順序フローに含めない）
 `.trim();
+
+// 成約会話（closed_won）の aix_usage_logs 遷移分析から得た次打ちアクション推奨マップ（2026-08-25分析・n=15会話）。
+// feedback_static_vs_dynamic_db ルール通り、少サンプルのためDB化せずコード内定数（サンプル50会話超えでテーブル移行を検討）。
+// 値は「Brainプロンプトに注入する推奨文言」。property_check_result / application_push は自己ループが最頻のため分岐文言。
+const AIX_NEXT_ACTION_MAP: Record<string, string> = {
+  condition_hearing: "次は property_send が最頻（2回）",
+  property_send: "次は property_recommendation が最頻（12回・送付直後に必ず1件オススメを打つのが成約パターン）",
+  property_recommendation: "次は estimate_sheet が最頻（5回）",
+  estimate_sheet: "次は application_push が最頻（4回）",
+  viewing_invite: "次は meeting_place が最頻（5回）",
+  meeting_place: "次は property_check_result が最頻（3回）",
+  property_check_result: "自己ループが最頻（13回・顧客が物件URLを送るたびに確認結果を返す）。顧客の反応待ちなら aix:null、確認が一巡して完了したら property_send（3回）または estimate_sheet / viewing_invite（各2回）へ進む",
+  application_push: "自己ループが最頻（3回・催促の再打ち）。終端アクションのため、顧客の反応待ちなら aix:null が正解",
+  acknowledge_check: "次は property_send（1回）",
+};
 
 // 返信文体・共感フレーズ・条件変更文脈の恒久ルール（generate-reply の同名ルールと同一の単一基準）
 // closing_strategy / next_steps / template_hint がこのルールに反する提案を出さないようにするための静的ブロック。
@@ -1430,8 +1446,16 @@ export async function analyzeConversation(
   const recentAixSeqText = aixLogs.slice(0, 3).length > 0
     ? `\n【直近AIXアクション（新→旧順）】${aixLogs.slice(0, 3).map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}`).join(" → ")}`
     : "";
+  // 成約実績・次打ちマップ: 直近の aix_type をキーに AIX_NEXT_ACTION_MAP を引き、成約会話の実測遷移を推奨候補として注入する。
+  // あくまで「推奨候補」であり、REPLY_STYLE_RULES のフェーズ制約（募集状況未確認での内覧誘導禁止等）と
+  // 「物件送付直後で顧客の反応待ちなら aix:null」ルールが常に優先（actionWinRateText と同じ緊張関係を作らないため明記）。
+  const lastAixType = aixLogs[0]?.aix_type ?? null;
+  const nextActionHint = lastAixType ? AIX_NEXT_ACTION_MAP[lastAixType] : undefined;
+  const nextActionMapText = lastAixType && nextActionHint
+    ? `\n【成約実績・次打ちマップ】直近AIXが ${lastAixType} の場合、成約会話では${nextActionHint}。※これは推奨候補。会話の実態（顧客の返信内容・フェーズ制約・募集状況未確認での内覧誘導禁止）と「物件送付直後で顧客の反応待ちなら aix:null」ルールが常に優先。`
+    : "";
   const aixHistoryText = usedAixTypes.length > 0
-    ? `${recentAixSeqText}\n【会話全体で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
+    ? `${recentAixSeqText}${nextActionMapText}\n【会話全体で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
     : "";
 
   // H6(Fable5): 予約送信・未完了タスク・内覧予定を注入（重複提案防止・next_steps の接地）
