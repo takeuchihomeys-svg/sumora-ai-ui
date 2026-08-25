@@ -2438,6 +2438,9 @@ export async function POST(req: NextRequest) {
       const lines: string[] = [
         `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位。強制度: ${isRequired ? "必須（以下の指示に例外なく従う）" : "推奨（原則従うが、顧客の最新メッセージへの応答として不自然になる場合のみ自然さを優先してよい）"}）】`,
       ];
+      if (brainMeta.note && brainMeta.reply_mode !== 'aix') {
+        lines.push(`- 📌 この返信後のスタッフ予定アクション（参考・本文に書かない）: ${brainMeta.note} — この返信の最後の一文がそのアクションへの自然な橋渡しになるよう書くこと`);
+      }
       if (hasAction) {
         // 安全ガード: brain キャッシュが estimate_sheet のままでも、顧客が同一メッセージで
         // 新しい検索条件（路線・家賃・徒歩・広さ等）を指定していたら property_send 方向に上書き。

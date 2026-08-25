@@ -13,6 +13,18 @@ const EXCLUDE_STATUS_PREFIX = "post_aix_";
 
 type PatternRow = { conversation_status: string; action_type: string; source?: string };
 
+// brainから渡される既知のAIXアクションタイプ
+const KNOWN_AIX_TYPES = new Set([
+  "viewing_invite",
+  "meeting_place",
+  "property_check_result",
+  "application_push",
+  "property_send",
+  "property_recommendation",
+  "document_request",
+  "contract_push",
+]);
+
 // sourceごとのスコア重み（予測が当たったデータ=高信頼、キャンセル=低信頼）
 const SOURCE_WEIGHT: Record<string, number> = {
   prediction_accepted: 1.5,  // 予測✓ + 実際に押した → 最強シグナル
@@ -32,6 +44,9 @@ export async function GET(req: NextRequest) {
     const conversationId = searchParams.get("conversation_id") ?? null;
     // aix_type が指定された場合、サブパターン（check_pattern/app_sub_mode/send_mode）を集計して返す
     const aixType = searchParams.get("aix_type") ?? null;
+    // brain から渡されるアクション推薦パラメータ
+    const brainAction = searchParams.get("brain_action") ?? null;
+    const brainEnforcement = searchParams.get("brain_enforcement") ?? null; // 'required' | 'recommended' | null
 
     if (!rawStatus) {
       return NextResponse.json({ ok: false, error: "conversation_status required" }, { status: 400 });
@@ -60,10 +75,47 @@ export async function GET(req: NextRequest) {
       if (w <= 0) continue; // send_cancelled等は除外
       freq[a] = (freq[a] ?? 0) + w;
     }
-    const total = Object.values(freq).reduce((s, v) => s + v, 0);
-    const sorted = Object.entries(freq)
+
+    // ② bis: aix_action_attribution の win_rate で頻度スコアを補正
+    const WIN_RATE_WEIGHT = 2.0;
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: attrRows } = await supabase
+      .from("aix_action_attribution")
+      .select("action_type, win_rate")
+      .gte("period_start", thirtyDaysAgo)
+      .order("period_start", { ascending: false })
+      .limit(50);
+    const winMap: Record<string, { t: number; c: number }> = {};
+    for (const r of attrRows ?? []) {
+      if (r.win_rate == null) continue;
+      const m = winMap[r.action_type] ?? { t: 0, c: 0 };
+      winMap[r.action_type] = { t: m.t + r.win_rate, c: m.c + 1 };
+    }
+    const avgWin: Record<string, number> = Object.fromEntries(
+      Object.entries(winMap).map(([a, m]) => [a, m.t / m.c])
+    );
+    // SOURCE_WEIGHT はそのまま、win_rate boost を上乗せ
+    const score: Record<string, number> = {};
+    for (const [a, f] of Object.entries(freq)) {
+      score[a] = f * (1 + (avgWin[a] ?? 0) * WIN_RATE_WEIGHT);
+    }
+
+    const total = Object.values(score).reduce((s, v) => s + v, 0);
+    const sorted = Object.entries(score)
       .sort((a, b) => b[1] - a[1])
       .map(([action, count]) => ({ action, count, confidence: Math.round((count / total) * 100) / 100 }));
+
+    // ②-b brain_enforcement=required → 周波数スコアをバイパスして即返却
+    if (brainEnforcement === "required" && brainAction && KNOWN_AIX_TYPES.has(brainAction)) {
+      return NextResponse.json({
+        ok: true,
+        suggested_action: brainAction,
+        confidence: 1.0,
+        source: "brain_required",
+        alternatives: sorted.slice(0, 3),
+        sample_size: total,
+      });
+    }
 
     const top = sorted[0];
     if (!top || top.confidence < 0.15) {
@@ -86,6 +138,25 @@ export async function GET(req: NextRequest) {
         // 直前と同じボタンなら2位を推薦（confidenceも2位のものに合わせる）
         suggestedAction = sorted[1].action;
         suggestedConfidence = sorted[1].confidence ?? 0.4;
+      }
+    }
+
+    // ③-b brain_enforcement=recommended → ブレンド補正
+    let alternatives = sorted.slice(0, 3);
+    if (brainEnforcement === "recommended" && brainAction && KNOWN_AIX_TYPES.has(brainAction)) {
+      if (brainAction === suggestedAction) {
+        // brain の推薦が頻度トップと一致 → confidence を50%ブースト（上限1.0）
+        suggestedConfidence = Math.min(1.0, Math.round(suggestedConfidence * 1.5 * 100) / 100);
+      } else {
+        // brain の推薦が頻度トップと異なる → brain を採用し、頻度トップを alternatives[0] に移動
+        const brainEntry = sorted.find((e) => e.action === brainAction);
+        const freqTopEntry = { action: suggestedAction, count: freq[suggestedAction] ?? 0, confidence: suggestedConfidence };
+        suggestedAction = brainAction;
+        suggestedConfidence = brainEntry?.confidence ?? 0.3;
+        alternatives = [
+          freqTopEntry,
+          ...sorted.filter((e) => e.action !== brainAction && e.action !== freqTopEntry.action).slice(0, 2),
+        ];
       }
     }
 
@@ -123,7 +194,7 @@ export async function GET(req: NextRequest) {
       ok: true,
       suggested_action: suggestedAction,
       confidence: suggestedConfidence,
-      alternatives: sorted.slice(0, 3),
+      alternatives,
       sample_size: total,
       suggested_sub_pattern,
     });

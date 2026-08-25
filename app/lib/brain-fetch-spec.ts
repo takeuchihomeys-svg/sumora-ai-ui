@@ -103,6 +103,10 @@ export function buildBrainFetchSpec(
     if (!meta) return undefined;
     const parts: string[] = [];
     if (meta.reply_direction) parts.push(sliceSafe(meta.reply_direction, 60));
+    // checkpoint_stage と customer_intent はメッセージ間で安定する戦略フィールド。
+    // T2(stale)でも有効なRAGシグナルになるため鮮度ゲート外に置く。
+    if (meta.checkpoint_stage) parts.push(meta.checkpoint_stage);
+    if (meta.customer_intent) parts.push(meta.customer_intent);
     if (tierResult.tier === "T1") {
       // 迷い・保留パターン → 検索キーワード化
       const hp = meta.hesitancy_pattern;
@@ -121,8 +125,6 @@ export function buildBrainFetchSpec(
         parts.push(meta.customer_questions.slice(0, 3).join(" "));
       }
       if (meta.key_topics?.length) parts.push(meta.key_topics.join(" "));
-      // customer_intent をRAGクエリに追加（意図別の返信例・知識をピンポイントで引く）
-      if (meta.customer_intent) parts.push(meta.customer_intent);
       // latent_intent（送信動機・潜在意識の自由記述）もRAGクエリ化（例:「審査に落ちる不安」→審査不安解消ナレッジがヒット）
       if (meta.latent_intent) parts.push(sliceSafe(String(meta.latent_intent), 60));
     }
