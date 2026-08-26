@@ -501,10 +501,12 @@ async function handleTextMessage(
 
         // ai_draft は「bg-asyncが現在ロック中でない場合のみ」リセット
         // ロック中（draft_attempted_at が5分以内）は既存下書きを保護する
+        // ただし [AIX誘導中] はセンチネル値なので顧客メッセージ到着時に必ずクリアする
+        // （suggested_aix_meta が null にリセットされた後も [AIX誘導中] が固着するバグを防ぐ）
         await db.from("conversations")
           .update({ ai_draft: null })
           .eq("id", convId)
-          .or(`draft_attempted_at.is.null,draft_attempted_at.lt.${fiveMinAgoStr}`);
+          .or(`draft_attempted_at.is.null,draft_attempted_at.lt.${fiveMinAgoStr},ai_draft.eq."[AIX誘導中]"`);
 
         // 直接トリガー: 60s debounce待ちを排除して即座にbg-asyncを起動
         // - bg-asyncは即200を返す（実処理は自身のafter()で行う）→ 3秒でほぼ確実に完了
