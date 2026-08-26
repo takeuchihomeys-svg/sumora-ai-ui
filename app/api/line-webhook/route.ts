@@ -488,7 +488,7 @@ async function handleTextMessage(
 
       // 60秒デバウンス維持（cron fallback / バースト時の統合生成として機能し続ける）
       await db.from("conversations")
-        .update({ draft_pending_at: new Date().toISOString(), ai_draft: null })
+        .update({ draft_pending_at: new Date().toISOString(), ai_draft: null, draft_attempted_at: null })
         .eq("id", convId);
 
       // 直接トリガー: 60s debounce待ちを排除して即座にbg-asyncを起動
