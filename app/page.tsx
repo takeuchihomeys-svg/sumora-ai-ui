@@ -3247,8 +3247,15 @@ export default function Home() {
           const nl = buffer.indexOf("\n");
           if (nl >= 0) {
             const metaLine = buffer.slice(0, nl);
-            const meta = JSON.parse(metaLine) as { ok: boolean; error?: string; quality?: { is_applying_docs?: boolean }; suggested_aix?: { action: string; note: string } | null };
-            if (!meta.ok) throw new Error(meta.error || "返信案取得失敗");
+            const meta = JSON.parse(metaLine) as { ok: boolean; error?: string; reason?: string; aix?: { action: string; note: string }; quality?: { is_applying_docs?: boolean }; suggested_aix?: { action: string; note: string } | null };
+            if (!meta.ok) {
+              // aix_required はエラーではなくUIへのAIXバナー復元指示（bg-asyncと同じ設計）
+              if (meta.reason === "aix_required" && meta.aix) {
+                setSuggestedAix(meta.aix);
+                return;
+              }
+              throw new Error(meta.error || "返信案取得失敗");
+            }
             qualityFromMeta = meta.quality;
             if (meta.suggested_aix) setSuggestedAix(meta.suggested_aix);
             else setSuggestedAix(null);
