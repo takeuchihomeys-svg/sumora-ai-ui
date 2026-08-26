@@ -227,12 +227,25 @@ export async function POST(req: NextRequest) {
 
   // Atomic claim: 並列bg-asyncが同じ会話を重複生成するのを防ぐ
   // draft_attempted_atが5分以内に設定済みの場合はスキップ（別プロセスが生成中の可能性が高い）
+  // 注: .or()を2回チェーンするとPostgRESTのURLに?or=...&or=...が生成され、
+  // パーサー実装によっては最後のorパラメータのみが有効になるリスクがある。
+  // 単一の.or()に全条件をANDを分配した形で展開することで確実なANDセマンティクスを保証する。
+  // 条件: (ai_draft IS NULL OR ai_draft='[AIX誘導中]') AND (draft_attempted_at IS NULL OR draft_attempted_at < 5min前)
+  // ↓ AND分配展開 ↓
+  // (ai_draft IS NULL AND draft_attempted_at IS NULL)
+  // OR (ai_draft IS NULL AND draft_attempted_at < 5min前)
+  // OR (ai_draft='[AIX誘導中]' AND draft_attempted_at IS NULL)
+  // OR (ai_draft='[AIX誘導中]' AND draft_attempted_at < 5min前)
   const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const { data: claimed } = await db.from("conversations")
     .update({ draft_attempted_at: new Date().toISOString() })
     .eq("id", convId)
-    .or('ai_draft.is.null,ai_draft.eq."[AIX誘導中]"')
-    .or(`draft_attempted_at.is.null,draft_attempted_at.lt.${fiveMinAgo}`)
+    .or(
+      `and(ai_draft.is.null,draft_attempted_at.is.null),` +
+      `and(ai_draft.is.null,draft_attempted_at.lt.${fiveMinAgo}),` +
+      `and(ai_draft.eq."[AIX誘導中]",draft_attempted_at.is.null),` +
+      `and(ai_draft.eq."[AIX誘導中]",draft_attempted_at.lt.${fiveMinAgo})`
+    )
     .select("id");
   if (!claimed?.length) {
     console.log("[bg-async] 同時生成をスキップ（atomic claim失敗）, convId:", convId);

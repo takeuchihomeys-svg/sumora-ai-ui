@@ -265,6 +265,7 @@ async function handleTextMessage(
   account: AccountConfig,
   lineMessageId?: string,
   quotedMessageId?: string,
+  skipDraftTrigger?: boolean,
 ): Promise<boolean> {
   const db = getDb();
   const now = new Date().toISOString();
@@ -470,41 +471,56 @@ async function handleTextMessage(
     });
   }
 
-  // after() B: ai_summary更新 + draft_pending_at設定（autoParseFormatに依存しない）
-  after(async () => {
-    try {
-      const { data: conv } = await db
-        .from("conversations")
-        .select("status")
-        .eq("id", convId)
-        .maybeSingle();
-      const convStatus = (conv?.status as string) || "hearing";
+  // after() B: draft_pending_at設定 + bg-async直接トリガー
+  // skipDraftTrigger=true のとき（スタンプ・同一会話の重複イベント等）は登録しない
+  if (!skipDraftTrigger) {
+    after(async () => {
+      try {
+        const { data: conv } = await db
+          .from("conversations")
+          .select("status")
+          .eq("id", convId)
+          .maybeSingle();
+        const convStatus = (conv?.status as string) || "hearing";
 
-      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
-        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+          ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
-      // 申込以降ステータスはai_summary・ai_draft生成不要（bg-async/cronのSKIP_STATUSESと一致させること）
-      if (BG_ASYNC_SKIP_STATUSES.includes(convStatus)) return;
+        // 申込以降ステータスはai_summary・ai_draft生成不要（bg-async/cronのSKIP_STATUSESと一致させること）
+        if (BG_ASYNC_SKIP_STATUSES.includes(convStatus)) return;
 
-      // 60秒デバウンス維持（cron fallback / バースト時の統合生成として機能し続ける）
-      await db.from("conversations")
-        .update({ draft_pending_at: new Date().toISOString(), ai_draft: null, draft_attempted_at: null })
-        .eq("id", convId);
+        const pendingNow = new Date().toISOString();
+        const fiveMinAgoStr = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
-      // 直接トリガー: 60s debounce待ちを排除して即座にbg-asyncを起動
-      // - bg-asyncは即200を返す（実処理は自身のafter()で行う）→ 3秒でほぼ確実に完了
-      // - awaitにすることでVercelがafter()コールバック終了前にプロセスを終了させるリスクを排除
-      // - draft_pending_at は維持されるため、失敗してもcronが60-120s後にfallbackとして拾う
-      await fetch(`${baseUrl}/api/generate-draft-bg-async`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: convId }),
-        signal: AbortSignal.timeout(3000),
-      }).catch((e) => console.warn("[line-webhook] direct bg-async trigger failed:", e));
-    } catch (e) {
-      console.error("[line-webhook] after() draft_pending_at update failed:", e);
-    }
-  });
+        // draft_pending_at は常に更新（cronフォールバックのシグナル）
+        // draft_attempted_at は bg-async 側のみが管理する — webhook 側では絶対にリセットしない
+        // （リセットするとbg-asyncのatomic claimロックが破壊され多重生成を引き起こす）
+        await db.from("conversations")
+          .update({ draft_pending_at: pendingNow })
+          .eq("id", convId);
+
+        // ai_draft は「bg-asyncが現在ロック中でない場合のみ」リセット
+        // ロック中（draft_attempted_at が5分以内）は既存下書きを保護する
+        await db.from("conversations")
+          .update({ ai_draft: null })
+          .eq("id", convId)
+          .or(`draft_attempted_at.is.null,draft_attempted_at.lt.${fiveMinAgoStr}`);
+
+        // 直接トリガー: 60s debounce待ちを排除して即座にbg-asyncを起動
+        // - bg-asyncは即200を返す（実処理は自身のafter()で行う）→ 3秒でほぼ確実に完了
+        // - awaitにすることでVercelがafter()コールバック終了前にプロセスを終了させるリスクを排除
+        // - draft_pending_at は維持されるため、失敗してもcronが60-120s後にfallbackとして拾う
+        await fetch(`${baseUrl}/api/generate-draft-bg-async`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation_id: convId }),
+          signal: AbortSignal.timeout(3000),
+        }).catch((e) => console.warn("[line-webhook] direct bg-async trigger failed:", e));
+      } catch (e) {
+        console.error("[line-webhook] after() draft_pending_at update failed:", e);
+      }
+    });
+  }
 
   // after() C: エリア指定検知 → resolve-area抽出 → desired_area更新 + LINE通知
   if (isAreaSpecificationMessage(text)) {
@@ -2080,6 +2096,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const imageJobs: Array<{ lineMessageId: string; msgId: string; account: typeof matchedAccount }> = [];
   let anyFailed = false;
 
+  // 同一POSTバッチ内で同一ユーザーに対してafter() Bが複数登録されるのを防ぐ
+  // （LINEが1回のPOSTに複数eventを詰めて送った場合の多重bg-asyncトリガー対策）
+  const draftTriggeredUserIds = new Set<string>();
+
   for (const ev of events) {
     const event = ev as {
       type: string;
@@ -2173,8 +2193,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (!text) continue;
       // LINEリプライ（引用）機能: 引用元メッセージID（LINE API 2023年9月〜）
       const quotedMessageId = event.message?.quotedMessageId;
+      // 同一POSTバッチ内で同一ユーザーに対してドラフトトリガーが複数発火するのを防ぐ
+      // 1回目は通常通り実行、2回目以降はskipDraftTrigger=trueでafter() Bをスキップ
+      const skipDraft = draftTriggeredUserIds.has(userId);
+      draftTriggeredUserIds.add(userId);
       // sync-from-screeningより高速な直接経路で保存（line_message_idで重複防止）
-      const ok = await handleTextMessage(userId, text, matchedAccount, lineMessageId, quotedMessageId);
+      const ok = await handleTextMessage(userId, text, matchedAccount, lineMessageId, quotedMessageId, skipDraft);
       if (!ok) anyFailed = true;
       continue;
     } else if (msgType === "image") {
@@ -2189,8 +2213,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
     } else if (msgType === "sticker") {
       // H4: スタンプは保存も通知もされず消えていた → テキスト経路で "[スタンプ]" として保存・通知
+      // skipDraftTrigger=true: スタンプでai_draft生成は不要（連打で多重生成が起きるのを防ぐ）
       const lineMessageId = event.message?.id;
-      const ok = await handleTextMessage(userId, "[スタンプ]", matchedAccount, lineMessageId);
+      const ok = await handleTextMessage(userId, "[スタンプ]", matchedAccount, lineMessageId, undefined, true);
       if (!ok) anyFailed = true;
       continue;
     } else {
