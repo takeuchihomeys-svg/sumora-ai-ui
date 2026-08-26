@@ -21,7 +21,22 @@ const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract
 
 // プロンプトキャッシュ用静的システムメッセージ（全 condition_change_type 共通のルール部分）。
 // 動的な focus.prompt・targetMessage は userメッセージ側に置く（cache_control なし）。
-const CONDITION_EXTRACT_SYSTEM = `【金額の文脈判断ルール】
+const CONDITION_EXTRACT_SYSTEM = `【条件カテゴリ定義】
+rent_max: 月々の家賃・賃料の上限（例：「8万円以内」「月10万まで」→ 80000, 100000）
+rent_min: 家賃の下限・最低希望額（「7万以上」→ 70000）
+initial_cost_limit: 初期費用（敷金・礼金・仲介手数料等の合計）の上限（「初期費用30万以内」→ 300000）
+desired_area: 希望エリア・地域・最寄り駅名（「渋谷区」「新宿から近い」「池袋駅」等）
+floor_plan: 間取り（「1LDK」「2DK以上」「ワンルーム」等。複数の可能性は最も条件の緩いものを採用）
+walk_minutes: 最寄り駅からの徒歩分数の上限（「駅から10分以内」→ 10）
+commute_station: 通勤・通学先の最寄り駅名（「渋谷まで電車で行きたい」→「渋谷駅」）
+commute_minutes: 通勤先まで電車での所要時間の上限（「30分以内で通える場所」→ 30）
+move_in_time: 入居希望時期・開始日（「来月から」「3月入居」「すぐ」「〇月〇日から」等の文字列）
+building_age: 築年数の上限（「築20年以内」→ 20。「新築」→ 1）
+preferences: こだわり条件・設備要望（オートロック、浴室乾燥機、角部屋、ペット可、宅配ボックス等）
+ng_points: NG条件・除外条件（「1階は嫌」「ガスコンロのみNG」「バストイレ同室NG」等）
+other_requests: 上記カテゴリに属さないその他要望（駐車場付き、即入居可、フリーレント等）
+
+【金額の文脈判断ルール】
 金額のみ（「〇万円以内」等）で何の費用か不明な場合:
 ・「家賃/賃料/月々」に関する文脈 → rent_max
 ・「初期費用/敷金/礼金」に関する文脈 → initial_cost_limit
@@ -32,8 +47,30 @@ const CONDITION_EXTRACT_SYSTEM = `【金額の文脈判断ルール】
 「最寄り駅まで徒歩○分」→ walk_minutes
 「○○駅まで電車で○分」「○○まで○分で行きたい」→ commute_station + commute_minutes
 
-明示された条件のみ（推測禁止）。JSONのみで返してください（不明な項目は省略）:
-{"desired_area":"エリア・駅名","floor_plan":"間取り（例:1LDK）","rent_max":家賃上限円整数,"rent_min":家賃下限円整数,"walk_minutes":最寄り駅まで徒歩分数整数,"commute_station":"通勤先駅名（例:難波駅）","commute_minutes":通勤先まで電車所要分数整数,"move_in_time":"入居時期","building_age":築年数上限整数,"initial_cost_limit":初期費用上限円整数,"preferences":"こだわり条件","ng_points":"NG条件","other_requests":"その他要望"}`;
+【条件変更検出：正例（条件変更と判断する）】
+- 「家賃を8万以内に下げてほしい」→ rent_max: 80000
+- 「渋谷エリアで探してください」→ desired_area: "渋谷"
+- 「2LDKに変更します」→ floor_plan: "2LDK"
+- 「エアコン必須で条件に追加してください」→ preferences に "エアコン" を追加
+- 「駅から5分以内でお願いします」→ walk_minutes: 5
+- 「来月から入居できる物件を」→ move_in_time: "来月"
+- 「駐車場付きも含めてほしい」→ other_requests に "駐車場付き" を追加
+- 「予算を少し上げて12万まで」→ rent_max: 120000
+
+【条件変更検出：負例（条件変更と判断しない → 抽出不要・JSONは{}を返す）】
+- 「いつ空きますか」→ 入居可能日の問い合わせ（条件変更なし）
+- 「この物件の詳細を教えてください」→ 特定物件への質問（条件変更なし）
+- 「ありがとうございます」→ 感謝・相槌（条件変更なし）
+- 「内見したいです」→ 内見依頼（条件変更なし）
+- 「申込書を送ります」→ 申込手続き（条件変更なし）
+- 「今の物件に駐車場はありますか」→ 現物件設備確認（条件変更なし）
+
+【出力JSONスキーマ仕様】
+- 型: {"desired_area":"文字列","floor_plan":"文字列","rent_max":円整数,"rent_min":円整数,"walk_minutes":分数整数,"commute_station":"文字列","commute_minutes":分数整数,"move_in_time":"文字列","building_age":年数整数,"initial_cost_limit":円整数,"preferences":"こだわり条件の文字列","ng_points":"NG条件の文字列","other_requests":"その他要望の文字列"}
+- 不明・言及なし項目は省略（nullではなく省略すること）
+- 推測禁止: 明示された条件のみ。推測や補完は含めない
+- preferences・ng_points・other_requests は既存値に追記する形（上書き禁止）
+- JSONのみで返してください（前後に余分なテキスト・コードブロック記号不要）`;
 
 const BRAIN_CONDITION_FOCUS: Record<string, { fields: string[]; prompt: string; pattern: "add" | "change" }> = {
   area_change:      { fields: ["desired_area"], prompt: "エリア・地域・最寄り駅の変更", pattern: "change" },
@@ -79,7 +116,7 @@ async function applyBrainConditionChange(
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 300,
-      system: [{ type: "text", text: CONDITION_EXTRACT_SYSTEM, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: CONDITION_EXTRACT_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [{ role: "user", content: `お客さんのメッセージから「${focus.prompt}」に関する条件を抽出してください。\n\n【お客さんのメッセージ】\n${targetMessage.slice(0, 400)}` }],
     }),
     signal: AbortSignal.timeout(12_000),
@@ -381,7 +418,7 @@ export async function POST(req: NextRequest) {
 
       const { data: pc } = conv.property_customer_id
         ? await db.from("property_customers")
-          .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions, initial_cost_limit")
+          .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions, initial_cost_limit, structured_conditions")
           .eq("id", conv.property_customer_id).single()
         : { data: null };
 
@@ -414,19 +451,23 @@ export async function POST(req: NextRequest) {
       const normalizedStatus = STATUS_ALIAS[conv.status as string] ?? conv.status;
       const effectiveState = !hasAnyStaffMsg && normalizedStatus === "hearing" ? "first_reply" : (conv.status as string);
 
-      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string; initial_cost_limit?: number } | null;
+      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string; initial_cost_limit?: number; structured_conditions?: Record<string, unknown> | null } | null;
       const pcData = pc as PC;
       // page.tsxのCustomerStructuredForGenと同じ構造（missingConditionsNote注入に必要）
-      const customerStructured = pcData ? {
-        move_in_time: pcData.move_in_time ?? null,
-        rent_max: pcData.rent_max ?? null,
-        desired_area: pcData.desired_area ?? null,
-        walk_minutes: pcData.walk_minutes ?? null,
-        floor_plan: pcData.floor_plan ?? null,
-        initial_cost_limit: pcData.initial_cost_limit ?? null,
-        building_age: pcData.building_age ?? null,
-        other_requests: pcData.other_requests ?? null,
-      } : null;
+      // P1-5: DBのstructured_conditionsカラムが存在する場合は優先して使用する（より完全なデータ）
+      // nullの場合は個別カラムから手動組み立て（フォールバック）
+      const customerStructured = pcData
+        ? (pcData.structured_conditions ?? {
+            move_in_time: pcData.move_in_time ?? null,
+            rent_max: pcData.rent_max ?? null,
+            desired_area: pcData.desired_area ?? null,
+            walk_minutes: pcData.walk_minutes ?? null,
+            floor_plan: pcData.floor_plan ?? null,
+            initial_cost_limit: pcData.initial_cost_limit ?? null,
+            building_age: pcData.building_age ?? null,
+            other_requests: pcData.other_requests ?? null,
+          })
+        : null;
       // formatConditions と同じロジックで全フィールドを統一フォーマット
       const dbConditions = [
         pcData?.desired_area && `エリア: ${pcData.desired_area}`,
