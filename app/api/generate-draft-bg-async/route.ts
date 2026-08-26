@@ -418,7 +418,7 @@ export async function POST(req: NextRequest) {
 
       const { data: pc } = conv.property_customer_id
         ? await db.from("property_customers")
-          .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions, initial_cost_limit, structured_conditions")
+          .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions, initial_cost_limit")
           .eq("id", conv.property_customer_id).single()
         : { data: null };
 
@@ -451,13 +451,11 @@ export async function POST(req: NextRequest) {
       const normalizedStatus = STATUS_ALIAS[conv.status as string] ?? conv.status;
       const effectiveState = !hasAnyStaffMsg && normalizedStatus === "hearing" ? "first_reply" : (conv.status as string);
 
-      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string; initial_cost_limit?: number; structured_conditions?: Record<string, unknown> | null } | null;
+      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string; initial_cost_limit?: number } | null;
       const pcData = pc as PC;
       // page.tsxのCustomerStructuredForGenと同じ構造（missingConditionsNote注入に必要）
-      // P1-5: DBのstructured_conditionsカラムが存在する場合は優先して使用する（より完全なデータ）
-      // nullの場合は個別カラムから手動組み立て（フォールバック）
       const customerStructured = pcData
-        ? (pcData.structured_conditions ?? {
+        ? {
             move_in_time: pcData.move_in_time ?? null,
             rent_max: pcData.rent_max ?? null,
             desired_area: pcData.desired_area ?? null,
@@ -466,7 +464,7 @@ export async function POST(req: NextRequest) {
             initial_cost_limit: pcData.initial_cost_limit ?? null,
             building_age: pcData.building_age ?? null,
             other_requests: pcData.other_requests ?? null,
-          })
+          }
         : null;
       // formatConditions と同じロジックで全フィールドを統一フォーマット
       const dbConditions = [
