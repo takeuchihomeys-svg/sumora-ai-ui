@@ -1003,10 +1003,16 @@ function buildGenerationMessages(
   // brainGuidanceNote の message-local 戦術ブロックへ統合されて消滅。approachNote も
   // reply_direction + recommended_tone（brainGuidanceNote）が代替するため消滅。
   // questionsNote は T2/T3 決定論フォールバック時のみ非空（fresh時は brainGuidanceNote 側が正）。
+
+  // phaseGuide（state 依存の固定テキスト）を独立した humanBlocks[1] に分離（2026-08）
+  // state は 5 種類（first_reply/hearing/proposing/applying/closed_won）の固定値のみ →
+  // 同じ state のリクエストが連続する間、cache_control がキャッシュリード（約0.1x価格）を発動する。
+  // 顧客固有データ（staffContextNote 等）は後続の dynamicBlock に残す。
+  const phaseGuideBlock = `【現在の営業フェーズ】${state}\n${phaseGuide}`;
+
   const dynamicBlock = `${propertyStatusNote}
 ${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
-【現在の営業フェーズ】${state}
-${phaseGuide}${staffContextNote}
+${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
 ${phrases}
@@ -1038,8 +1044,13 @@ ${examples}${examplesInstruction}
     { type: "text" as const, text: priorityOrderNote + baseSystem, cache_control: { type: "ephemeral", ttl: "1h" } },
   ];
   if (dbRules) systemBlocks.push({ type: "text" as const, text: dbRules, cache_control: { type: "ephemeral", ttl: "1h" } });
+  // humanBlocks 3 分割（2026-08 phaseGuide 分離）:
+  // [0] staticBlock（全顧客共通ルール・cache_control あり）
+  // [1] phaseGuideBlock（state 5 種類の固定テキスト・cache_control あり・state 単位でキャッシュリード）
+  // [2] dynamicBlock（顧客固有データ・cache_control なし）
   const humanBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } }> = [
     { type: "text" as const, text: staticBlock, cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text" as const, text: phaseGuideBlock, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamicBlock },
   ];
   return [new SystemMessage({ content: systemBlocks }), new HumanMessage({ content: humanBlocks })];

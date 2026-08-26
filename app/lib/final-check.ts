@@ -1002,6 +1002,27 @@ export interface RevisionLoopResult {
 // Check1でFABRICATED_*が出たとき、情報源と照合して「本当にハルシネーションか」を確認する。
 // 根拠ありと確認されたものをclearedFactsに入れ、Check2でその記述を再指摘しないようにする。
 // fail-open: 照合失敗時は元のissuesをそのまま返す（false positiveを許容する側）。
+
+// プロンプトキャッシュ用静的システム指示（verifyFabricatedIssues 全呼び出しで共通）。
+// 動的な情報源テキスト（checkpointFacts・customerConditionsDb・history・staffSourceText・targets）
+// は user メッセージ側に置く（cache_control なし）。
+const VERIFY_INSTRUCTIONS = `以下の各記述について、情報源に根拠があるかどうかを確認してください。
+
+情報源の優先順位（高い順）:
+1. CHECKPOINTS（確認済み事実セーブポイント）— 最優先。会話中にスタッフが確認した物件情報・条件。
+2. CUSTOMER_CONDITIONS — 顧客DBに登録された条件。
+3. HISTORY — 最近の会話履歴。
+4. SOURCE — スタッフが提供した情報テキスト。
+
+has_basis 判定ルール:
+- has_basis=true: いずれかの情報源の中にその記述を裏付ける根拠（事実・記録・顧客発言）がある場合
+- has_basis=false: どの情報源にも根拠がない場合（捏造・ハルシネーション・LLMが勝手に生成した事実）
+
+注意:
+- 「〇月末入居可能」「〇号室が空いている」「家賃〇〇万円」等の具体的な数値・日付は情報源に明記されている場合のみ has_basis=true
+- 「申込から2週間で入居可能」等の一般的な不動産知識は情報源記載なしでも has_basis=true と判定してよい
+- 会話内でお客様が発言した内容は HISTORY の根拠になる`;
+
 const VERIFY_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -1032,9 +1053,10 @@ async function verifyFabricatedIssues(
   );
   if (targets.length === 0) return { confirmed: issues, clearedFacts: [] };
 
-  const prompt = `以下の各記述について、情報源に根拠があるかどうかを確認してください。
-
-情報源:
+  // プロンプトキャッシュ（2026-08）:
+  // 静的指示（VERIFY_INSTRUCTIONS）を system ブロックに分離し cache_control を付与。
+  // 動的な情報源テキスト・targets は user メッセージに残す（cache_control なし）。
+  const dynamicPrompt = `情報源:
 [CHECKPOINTS]
 ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [/CHECKPOINTS]
@@ -1064,7 +1086,8 @@ ${targets.map((i, idx) => `${idx + 1}. 「${i.evidence}」`).join("\n")}
         max_tokens: 800,
         thinking: { type: "disabled" },
         output_config: { format: { type: "json_schema", schema: VERIFY_SCHEMA } },
-        messages: [{ role: "user", content: prompt }],
+        system: [{ type: "text", text: VERIFY_INSTRUCTIONS, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: dynamicPrompt }],
       }),
     });
     if (!res.ok) throw new Error(`verify HTTP ${res.status}`);

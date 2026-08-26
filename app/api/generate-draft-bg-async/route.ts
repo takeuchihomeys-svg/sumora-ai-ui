@@ -18,6 +18,23 @@ const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract
 // brain が suggested_aix_meta に condition_change_type を書き込んだ後、
 // generate-reply のプロンプト注入だけでなく property_customers の実際のフィールドも更新する。
 // P4 / autoParseFormat が既にバナーエントリを追加済みの場合は重複追加しない。
+
+// プロンプトキャッシュ用静的システムメッセージ（全 condition_change_type 共通のルール部分）。
+// 動的な focus.prompt・targetMessage は userメッセージ側に置く（cache_control なし）。
+const CONDITION_EXTRACT_SYSTEM = `【金額の文脈判断ルール】
+金額のみ（「〇万円以内」等）で何の費用か不明な場合:
+・「家賃/賃料/月々」に関する文脈 → rent_max
+・「初期費用/敷金/礼金」に関する文脈 → initial_cost_limit
+・文脈不明: 〜19万円→rent_max、20万円以上→initial_cost_limit
+金額はすべて円単位整数（「8万」→80000）。
+
+【徒歩 vs 通勤の区別】
+「最寄り駅まで徒歩○分」→ walk_minutes
+「○○駅まで電車で○分」「○○まで○分で行きたい」→ commute_station + commute_minutes
+
+明示された条件のみ（推測禁止）。JSONのみで返してください（不明な項目は省略）:
+{"desired_area":"エリア・駅名","floor_plan":"間取り（例:1LDK）","rent_max":家賃上限円整数,"rent_min":家賃下限円整数,"walk_minutes":最寄り駅まで徒歩分数整数,"commute_station":"通勤先駅名（例:難波駅）","commute_minutes":通勤先まで電車所要分数整数,"move_in_time":"入居時期","building_age":築年数上限整数,"initial_cost_limit":初期費用上限円整数,"preferences":"こだわり条件","ng_points":"NG条件","other_requests":"その他要望"}`;
+
 const BRAIN_CONDITION_FOCUS: Record<string, { fields: string[]; prompt: string; pattern: "add" | "change" }> = {
   area_change:      { fields: ["desired_area"], prompt: "エリア・地域・最寄り駅の変更", pattern: "change" },
   rent_change:      { fields: ["rent_min", "rent_max"], prompt: "家賃・予算の変更（万円単位に注意）", pattern: "change" },
@@ -53,13 +70,17 @@ async function applyBrainConditionChange(
     .select("additional_conditions, desired_area, floor_plan, rent_max, rent_min, walk_minutes, commute_station, commute_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests")
     .eq("id", pcId).maybeSingle();
 
+  // プロンプトキャッシュ（2026-08）:
+  // 静的ルール（CONDITION_EXTRACT_SYSTEM）を system メッセージに分離し cache_control を付与。
+  // 動的な focus.prompt・targetMessage のみ user メッセージに残す。
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01" },
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 300,
-      messages: [{ role: "user", content: `お客さんのメッセージから「${focus.prompt}」に関する条件を抽出してください。\n\n【お客さんのメッセージ】\n${targetMessage.slice(0, 400)}\n\n【金額の文脈判断ルール】\n金額のみ（「〇万円以内」等）で何の費用か不明な場合:\n・「家賃/賃料/月々」に関する文脈 → rent_max\n・「初期費用/敷金/礼金」に関する文脈 → initial_cost_limit\n・文脈不明: 〜19万円→rent_max、20万円以上→initial_cost_limit\n金額はすべて円単位整数（「8万」→80000）。\n\n【徒歩 vs 通勤の区別】\n「最寄り駅まで徒歩○分」→ walk_minutes\n「○○駅まで電車で○分」「○○まで○分で行きたい」→ commute_station + commute_minutes\n\n明示された条件のみ（推測禁止）。JSONのみで返してください（不明な項目は省略）:\n{"desired_area":"エリア・駅名","floor_plan":"間取り（例:1LDK）","rent_max":家賃上限円整数,"rent_min":家賃下限円整数,"walk_minutes":最寄り駅まで徒歩分数整数,"commute_station":"通勤先駅名（例:難波駅）","commute_minutes":通勤先まで電車所要分数整数,"move_in_time":"入居時期","building_age":築年数上限整数,"initial_cost_limit":初期費用上限円整数,"preferences":"こだわり条件","ng_points":"NG条件","other_requests":"その他要望"}` }],
+      system: [{ type: "text", text: CONDITION_EXTRACT_SYSTEM, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: `お客さんのメッセージから「${focus.prompt}」に関する条件を抽出してください。\n\n【お客さんのメッセージ】\n${targetMessage.slice(0, 400)}` }],
     }),
     signal: AbortSignal.timeout(12_000),
   });
