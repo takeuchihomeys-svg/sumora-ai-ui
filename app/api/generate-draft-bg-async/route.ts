@@ -622,7 +622,7 @@ export async function POST(req: NextRequest) {
           .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
           .trim();
         if (partialDraft.length > 20) {
-          await db.from("conversations").update({ ai_draft: partialDraft, draft_pending_at: null }).eq("id", convId).is("ai_draft", null);
+          await db.from("conversations").update({ ai_draft: partialDraft, draft_pending_at: null, draft_attempted_at: null }).eq("id", convId).is("ai_draft", null);
           console.log("[bg-async] saved partial draft:", partialDraft.length, "chars, convId:", convId);
         }
         return;
@@ -638,7 +638,8 @@ export async function POST(req: NextRequest) {
       if (finalDraft) {
         // ai_draft IS NULL ガード: 人間が編集中の場合は上書きしない
         const { error: saveErr } = await db.from("conversations")
-          .update({ ai_draft: finalDraft, draft_pending_at: null, draft_fail_count: 0 })
+          // draft_attempted_at: null でロック解放 → 次メッセージ到着時に after()B が即再claimできる
+          .update({ ai_draft: finalDraft, draft_pending_at: null, draft_fail_count: 0, draft_attempted_at: null })
           .eq("id", convId)
           .is("ai_draft", null);
         if (saveErr) {
