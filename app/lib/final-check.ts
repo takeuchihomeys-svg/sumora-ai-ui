@@ -113,31 +113,39 @@ type RawIssue = { code?: string; message?: string; evidence?: string; suggestion
 type PromptBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } };
 type PromptContent = string | PromptBlock[];
 
-// ─── Sonnet呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
-async function callSonnet(prompt: PromptContent, timeoutMs: number, maxTokens = 2400): Promise<RawIssue[]> {
+// ─── モデル定数 ─────────────────────────────────────────────────────────────
+// rule_check・anomaly_scan・verify・recheck: 明確なルール照合・比較判定のみ → Haiku で十分・高速・低コスト
+// context_check: 10種の複雑な会話理解（MISSED_QUESTION 等）→ 誤検知が revision 誤発火に直結するため Sonnet 維持
+// runGroundedRevision: 実際に返信文を書き直す → 最高品質が必要なため Sonnet 維持
+const MODEL_CHECK_FAST = "claude-haiku-4-5-20251001"; // rule_check / anomaly_scan / verify / recheck
+const MODEL_CHECK_DEEP = "claude-sonnet-5";           // context_check（会話理解が複雑）
+const MODEL_REVISION   = "claude-sonnet-5";           // 返信文の実際の書き直し
+
+// ─── チェック呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
+async function callSonnet(prompt: PromptContent, timeoutMs: number, maxTokens = 2400, model = MODEL_CHECK_DEEP): Promise<RawIssue[]> {
   const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     signal: AbortSignal.timeout(timeoutMs),
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
     body: JSON.stringify({
-      model: "claude-sonnet-5",
+      model,
       max_tokens: maxTokens,
       thinking: { type: "disabled" },
       output_config: { format: { type: "json_schema", schema: ISSUE_SCHEMA } },
       messages: [{ role: "user", content: prompt }],
     }),
   });
-  if (!res.ok) throw new Error(`final-check sonnet HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`final-check ${model} HTTP ${res.status}`);
   const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
-  if (data.stop_reason === "max_tokens") throw new Error("final-check sonnet max_tokens reached");
+  if (data.stop_reason === "max_tokens") throw new Error(`final-check ${model} max_tokens reached`);
   const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
   let parsed: { issues?: RawIssue[] };
   try {
     parsed = JSON.parse(text) as { issues?: RawIssue[] };
   } catch (e) {
-    console.error("[final-check] callSonnet JSON.parse failed:", e, "raw text:", text.slice(0, 200));
-    throw new Error("final-check sonnet JSON parse failed");
+    console.error(`[final-check] callSonnet(${model}) JSON.parse failed:`, e, "raw text:", text.slice(0, 200));
+    throw new Error(`final-check ${model} JSON parse failed`);
   }
   return Array.isArray(parsed.issues) ? parsed.issues : [];
 }
@@ -800,13 +808,14 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, sonne
     }
   }
 
-  // ── 3パス並列Haikuチェック（各パスとも安定ブロックに cache_control 付き）──
-  const passes: Array<{ pass: CheckPass; prompt: PromptContent }> = [
-    { pass: "rule_check", prompt: buildRuleCheckPrompt(draft, ctx) },
-    { pass: "anomaly_scan", prompt: buildAnomalyScanPrompt(draft, ctx) },
-    { pass: "context_check", prompt: buildContextCheckPrompt(draft, ctx) },
+  // ── 3パス並列チェック（rule_check・anomaly_scan=Haiku / context_check=Sonnet）──
+  // context_check のみ Sonnet: 10種の複雑な会話理解が必要で誤検知が revision 誤発火に直結するため
+  const passes: Array<{ pass: CheckPass; prompt: PromptContent; model: string }> = [
+    { pass: "rule_check",    prompt: buildRuleCheckPrompt(draft, ctx),    model: MODEL_CHECK_FAST },
+    { pass: "anomaly_scan",  prompt: buildAnomalyScanPrompt(draft, ctx),  model: MODEL_CHECK_FAST },
+    { pass: "context_check", prompt: buildContextCheckPrompt(draft, ctx), model: MODEL_CHECK_DEEP },
   ];
-  const settled = await Promise.allSettled(passes.map((p) => callSonnet(p.prompt, sonnetTimeoutMs)));
+  const settled = await Promise.allSettled(passes.map((p) => callSonnet(p.prompt, sonnetTimeoutMs, 2400, p.model)));
 
   const passesCompleted: CheckPass[] = [];
 
@@ -982,7 +991,7 @@ export async function runGroundedRevision(
       signal: AbortSignal.timeout(timeoutMs),
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
       body: JSON.stringify({
-        model: "claude-sonnet-5",
+        model: MODEL_REVISION,
         max_tokens: Math.max(2000, Math.ceil(draft.length * 2.5)),
         thinking: { type: "disabled" },
         messages: [{ role: "user", content: buildSonnetRevisionPrompt(draft, issues, ctx) }],
@@ -1151,7 +1160,7 @@ ${targets.map((i, idx) => `${idx + 1}. 「${i.evidence}」`).join("\n")}
       signal: AbortSignal.timeout(timeoutMs),
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
       body: JSON.stringify({
-        model: "claude-sonnet-5",
+        model: MODEL_CHECK_FAST,
         max_tokens: 800,
         thinking: { type: "disabled" },
         output_config: { format: { type: "json_schema", schema: VERIFY_SCHEMA } },
@@ -1291,7 +1300,7 @@ async function runDiffRecheck(
   const targets = check1Issues.filter((i) => i.pass !== "meta" && i.code !== "UNCHECKED_AUTO_SEND");
 
   try {
-    const raw = await callSonnet(buildDiffRecheckPrompt(revised, targets, ctx), timeoutMs, DIFF_RECHECK_MAX_TOKENS);
+    const raw = await callSonnet(buildDiffRecheckPrompt(revised, targets, ctx), timeoutMs, DIFF_RECHECK_MAX_TOKENS, MODEL_CHECK_FAST);
     for (const r of raw) {
       const evidence = (r.evidence ?? "").trim();
       if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード・runFinalCheckと同一）
