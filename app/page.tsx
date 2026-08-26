@@ -49,7 +49,7 @@ type Conversation = {
   isFlagged?: boolean;
   hasViewed?: boolean;
   aiDraft?: string | null;
-  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply" } | null;
+  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply"; two_choice_mode?: boolean; reply_direction_label?: string } | null;
   suggestedNextAix?: string | null;
   messages: Message[];
 };
@@ -7349,6 +7349,8 @@ export default function Home() {
               </span>
 
 
+              {/* 2択モード中（two_choice_mode=true かつ カード未却下）は通常AIXボタンを非表示（重複操作防止） */}
+              {!(selectedConversation?.suggestedAixMeta?.two_choice_mode && !dismissedBrainHintIds.has(selectedConversation?.id ?? "")) && (
               <button
                 onClick={() => {
                   if (activeAixFlow) {
@@ -7385,6 +7387,7 @@ export default function Home() {
               >
                 {activeAixFlow ? `${AIX_ACTION_META[activeAixFlow]?.label} ×` : "AIX"}
               </button>
+              )}
 
               {/* ✅ 確認したショートカットボタン（AIXフロー中・確認誘導なし時は非表示） */}
               {!activeAixFlow && guideToCheckResult && (
@@ -7892,6 +7895,47 @@ export default function Home() {
                     openAixDirect(brainAction);
                   }
                 };
+                // P5-TC: 2択モード（proposingフェーズ + 条件トレードオフ質問検出時）
+                // 成約データ分析(n=15): 条件トレードオフ質問 → property_send/recommendation が最多(5件) vs テキスト返信(2件)
+                // スタッフが「AIXで物件追加オススメ」か「テキスト返信（方向性ラベル付き）」を選ぶ
+                if (brainMeta.two_choice_mode) {
+                  const rdLabel = brainMeta.reply_direction_label;
+                  return (
+                    <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-1 mb-2">
+                        <span className="text-[11px] font-bold text-orange-700">
+                          <svg className="inline shrink-0" style={{marginRight:"3px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                          どちらで対応しますか？
+                        </span>
+                        <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
+                          className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setDismissedBrainHintIds((prev) => new Set([...prev, id]));
+                            setShowAixMenu(false);
+                            setAixInspectLabel(null);
+                            setActiveAixFlow("property_recommendation" as AixActionType);
+                            openPropertyRecommendationPicker("withImage");
+                          }}
+                          className="flex-1 rounded-xl px-3 py-2 text-[12px] font-bold text-white text-center active:opacity-80 leading-tight"
+                          style={{ background: "linear-gradient(135deg, #E65100, #FF9800)" }}>
+                          AIXで物件オススメ
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDismissedBrainHintIds((prev) => new Set([...prev, id]));
+                            generateReply();
+                          }}
+                          className="flex-1 rounded-xl px-3 py-2 text-[12px] font-bold text-white text-center active:opacity-80 leading-tight"
+                          style={{ background: "linear-gradient(135deg, #1565C0, #29B6F6)" }}>
+                          {rdLabel ? `返信する（${rdLabel}）` : "テキスト返信"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
                 if (brainBtnLabel) return (
                   <div className="mx-1 mb-1 rounded-2xl border-2 border-violet-400 bg-violet-50 px-3 py-2.5">
                     <div className="flex items-start gap-2">
