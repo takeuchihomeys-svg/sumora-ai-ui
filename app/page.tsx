@@ -2549,7 +2549,8 @@ export default function Home() {
     return !activeAixFlow && selectedConversation.suggestedAixMeta?.action === "property_send";
   }, [selectedConversation.suggestedAixMeta, activeAixFlow]);
 
-  // 見積書送る誘導: お客様が見積依頼 or スタッフが「作成次第送る」と約束した後、お客様の返信が来ている状態
+  // 見積書送る誘導: お客様が見積依頼していて、スタッフが次に動く番
+  // 顧客メッセージのみを検索対象にする（スタッフが「初期費用」と書いた場合は除外）
   const guideToEstimate = useMemo(() => {
     if (activeAixFlow) return false;
     const msgs: Message[] = selectedConversation.messages || [];
@@ -2557,15 +2558,19 @@ export default function Home() {
     // 最後のメッセージがお客様（＝スタッフが次に動く番）
     const lastMsg = reversed[0];
     if (!lastMsg || lastMsg.sender !== "customer") return false;
-    // 直近スタッフメッセージ or お客様メッセージに見積書関連キーワード
-    const recentTexts = reversed.slice(0, 6).map((m: Message) => m.text || "").join(" ");
+    // 直近の顧客メッセージのみでキーワード判定（スタッフ発言は除外）
+    const recentCustomerTexts = reversed.slice(0, 10)
+      .filter((m: Message) => m.sender === "customer")
+      .slice(0, 3)
+      .map((m: Message) => m.text || "")
+      .join(" ");
     return (
-      recentTexts.includes("見積書") ||
-      recentTexts.includes("見積り") ||
-      recentTexts.includes("見積もり") ||
-      recentTexts.includes("初期費用") ||
-      recentTexts.includes("お見積") ||
-      recentTexts.includes("御見積")
+      recentCustomerTexts.includes("見積書") ||
+      recentCustomerTexts.includes("見積り") ||
+      recentCustomerTexts.includes("見積もり") ||
+      recentCustomerTexts.includes("初期費用") ||
+      recentCustomerTexts.includes("お見積") ||
+      recentCustomerTexts.includes("御見積")
     );
   }, [selectedConversation, activeAixFlow]);
 
