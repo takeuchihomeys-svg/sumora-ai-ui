@@ -8263,12 +8263,13 @@ export default function Home() {
                 checkResult.issues.some((i) => i.severity === "block")
                   ? "border-red-200 bg-red-50"
                   : "border-yellow-200 bg-yellow-50"
-              }`} open={checkResult.issues.some((i) => i.severity === "block")}>
-                <summary className={`cursor-pointer text-[10px] font-bold ${
+              }`}>
+                <summary className={`cursor-pointer select-none text-[10px] font-bold ${
                   checkResult.issues.some((i) => i.severity === "block") ? "text-red-700" : "text-yellow-800"
                 }`}>
                   🧠 最終チェック指摘 {checkResult.issues.length}件
                   {checkResult.issues.some((i) => i.severity === "block") && `（🔴 ${checkResult.issues.filter((i) => i.severity === "block").length}件は要修正）`}
+                  <span className="ml-1 opacity-50">▶ タップで展開</span>
                 </summary>
                 <div className="mt-1 space-y-1.5">
                   {checkResult.issues.map((it, i) => (
