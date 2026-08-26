@@ -251,13 +251,52 @@ export async function POST(req: NextRequest) {
         console.log(JSON.stringify({tag:"degradation:T3",stage:"brain-gate-error",conversationId:convId,reason:"brain_exception",staleAgeMs:null,error:String(brainErr).slice(0,200)}));
       }
 
+      // ── brain完了後: 短時間複数メッセージ対策（DB再取得でtargetMessageを更新）──
+      // brainは30-90秒かかるため、その間に届いた追加メッセージをDB再取得で取り込む
+      // （例: メッセージ1のbg-asyncがatomic claimでロック中にメッセージ2が届いた場合）
+      let effectiveTargetMessage = targetMessage;
+      let effectiveRecentMsgs = recentMsgs;
+      try {
+        const { data: latestMsgsData } = await db.from("messages")
+          .select("sender, text, image_url, created_at, is_aix_generated")
+          .eq("conversation_id", convId)
+          .order("created_at", { ascending: false }).limit(20);
+        if (latestMsgsData && latestMsgsData.length > 0) {
+          type MsgRow = { sender: string; text: string | null; image_url: string | null; created_at?: string; is_aix_generated: boolean | null };
+          const latestList = (latestMsgsData as MsgRow[]).reverse().map((m) => ({
+            sender: m.sender,
+            text: m.text || (m.image_url ? "[画像]" : ""),
+            imageUrl: m.image_url ?? undefined,
+            createdAt: m.created_at,
+            isAix: m.is_aix_generated ?? false,
+          }));
+          const latestStaffIdx = latestList.map((m, i) => m.sender === "staff" ? i : -1).filter((i) => i >= 0).at(-1);
+          const latestAfterStaff = latestStaffIdx !== undefined ? latestList.slice(latestStaffIdx + 1) : latestList;
+          const latestUnreplied = latestAfterStaff
+            .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+            .slice(-3);
+          const latestTarget = latestUnreplied.map((m) => m.text).join("\n");
+          if (latestTarget.trim()) {
+            if (latestTarget !== targetMessage) {
+              console.log("[bg-async] brain後DB再取得: 追加メッセージ検出 convId:", convId,
+                "元:", JSON.stringify(targetMessage.slice(0, 80)),
+                "最新:", JSON.stringify(latestTarget.slice(0, 80)));
+            }
+            effectiveTargetMessage = latestTarget;
+            effectiveRecentMsgs = latestList;
+          }
+        }
+      } catch (refreshErr) {
+        console.warn("[bg-async] brain後DB再取得エラー（初期targetMessageで続行）:", refreshErr);
+      }
+
       // 脳-DBブリッジ: 条件変更検出 → DB自動更新（返信プロンプト注入だけでなくDB側にも反映）
       if (brainGateDirect?.meta?.condition_change_type && conv.property_customer_id) {
         void applyBrainConditionChange(
           db,
           conv.property_customer_id as string,
           convId,
-          targetMessage,
+          effectiveTargetMessage,
           brainGateDirect.meta.condition_change_type as string,
         ).catch((e) => console.warn("[bg-async] brain-condition-bridge error:", e));
       }
@@ -329,7 +368,8 @@ export async function POST(req: NextRequest) {
       const customerConditions = dbConditions || memo;
 
       // お客様メッセージから返信ヒントを自動抽出
-      const msgLines = targetMessage.split("\n").map((l) => l.trim()).filter(Boolean);
+      // ※ effectiveTargetMessage を使う（brain後DB再取得で追加メッセージが含まれている可能性がある）
+      const msgLines = effectiveTargetMessage.split("\n").map((l) => l.trim()).filter(Boolean);
 
       // ① 箇条書き条件（3行以上の短い行）
       const shortLines = msgLines.filter((l) => l.length <= 25);
@@ -346,9 +386,9 @@ export async function POST(req: NextRequest) {
       // 例：「住居年数・勤務先名・携帯番号…」→「今の就職先ですか？？」
       // → フォームはまだ記入していない段階。送付催促は絶対NG。質問に端的に答えるだけ。
       const APPLY_FORM_RE = /住居年数|携帯番号|続柄|勤務先名|勤務先所在地|現住所|本人確認書類|運転免許証|マイナンバー|お申込|申込フォーム|入居審査|緊急連絡先|保証人/;
-      const lastStaffMsgText = recentMsgs.filter((m) => m.sender === "staff" && !m.isAix).at(-1)?.text ?? "";
+      const lastStaffMsgText = effectiveRecentMsgs.filter((m) => m.sender === "staff" && !m.isAix).at(-1)?.text ?? "";
       const staffJustSentFormInfo = APPLY_FORM_RE.test(lastStaffMsgText);
-      const isShortClarifyingQ = targetMessage.trim().length < 40 && /[？?]|ですか|でしょうか|でいい|でもいい/.test(targetMessage);
+      const isShortClarifyingQ = effectiveTargetMessage.trim().length < 40 && /[？?]|ですか|でしょうか|でいい|でもいい/.test(effectiveTargetMessage);
 
       let replyHint = "";
       // first_reply は phase_guide の パターンA が最適対応（挨拶+条件復唱+ピックアップ宣言）
@@ -408,11 +448,12 @@ export async function POST(req: NextRequest) {
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
           body: JSON.stringify({
-            message: targetMessage,
+            message: effectiveTargetMessage,
             state: effectiveState,
             // 紐付き顧客名 → なければ conversationsの表示名（LINEの名前）をフォールバック
             customerName: pcData?.customer_name || (conv.customer_name as string) || "",
-            recentMessages: recentMsgsForGen,
+            // brain後DB再取得で追加メッセージが取り込まれている場合は effectiveRecentMsgs を優先
+            recentMessages: effectiveRecentMsgs !== recentMsgs ? effectiveRecentMsgs : recentMsgsForGen,
             customerConditions,
             customerSummary: pcData?.ai_summary || "",
             // 条件ヒアリング状況（missingConditionsNote注入のために必要）
