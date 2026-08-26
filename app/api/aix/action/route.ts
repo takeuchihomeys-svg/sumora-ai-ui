@@ -205,8 +205,8 @@ async function getPropertyExamples(): Promise<string> {
     .select("sent_reply")
     .in("conversation_state", ["property_recommendation", "proposing"])
     .eq("is_starred", true)
-    .order("created_at", { ascending: false })
-    .limit(20);
+    .limit(8)
+    .order("created_at", { ascending: false });
   if (!data || data.length === 0) return "";
   return (data as { sent_reply: string }[])
     .map((r, i) => `【実例${i + 1}】\n${r.sent_reply}`)
@@ -462,21 +462,11 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
 // generate-reply の match_reply_examples RPC と同じ仕組み。顧客メッセージのembeddingで類似☆実例を引く
 async function getStarredExamplesForAction(states: string[], customerMsg: string): Promise<string> {
   try {
-    // customerMsg のembeddingを取得（OpenAIキーがある場合のみ）
-    const openaiKey = process.env.OPENAI_API_KEY;
-    if (!openaiKey || !customerMsg.trim() || !states || states.length === 0) return "";
+    if (!customerMsg.trim() || !states || states.length === 0) return "";
 
-    const embRes = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${openaiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: safeSlice(customerMsg, 500) }),
-      // タイムアウト必須: ここがハングすると Promise.all 全体が止まりクライアント60秒abortの主因になる
-      // 失敗時は外側の try/catch が "" を返すので生成自体は止まらない
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!embRes.ok) return "";
-    const embData = await embRes.json() as { data: Array<{ embedding: number[] }> };
-    const embedding = embData.data[0]?.embedding;
+    // generateEmbedding経由でembeddingを取得（embedding_cache DBキャッシュ＋メモリFIFO 2層キャッシュを活用）
+    // 旧: OpenAI直接fetch → 同一メッセージでも毎回API課金が発生していた
+    const embedding = await generateEmbedding(safeSlice(customerMsg, 500));
     if (!embedding) return "";
 
     // match_reply_examples RPCで類似☆examplesを取得
@@ -2745,7 +2735,7 @@ ${SMORA_COMMON_RULES}
 保証タイプ: ${guarantorType}
 
 【メッセージ構成（厳守）】
-①挨拶: 「${greetingPhrase}」
+①挨拶: 「（時候の挨拶）」
 ②確認報告: 「${reportBlock}」（[物件名]を解決してから書く・②内の改行は\\nで出力）
 ③タイプ説明: 「${typeDesc}」（②の後に空行を1行入れてから書く）
 ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・ctaはnull）"}
@@ -2762,7 +2752,7 @@ JSONのみ: {"greeting":"①","report":"②（[物件名]解決済み・改行�
         guarantorSystem + guarantorDbRules + AIX_CURATED_AND_CRITICAL_RULES,
         `${name}への保証会社確認報告メッセージ。${recentHistory}` + (guarantorDiffNote ? `\n\n${guarantorDiffNote}` : ""),
         currentAction,
-        brainGuidanceNote || undefined
+        (greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : "") + (brainGuidanceNote || "") || undefined
       );
 
       try {
@@ -2846,7 +2836,7 @@ JSONのみ: {"greeting":"①","report":"②（[物件名]解決済み・改行�
         mgmtInfo = lines.join("\n");
       }
       if (!mgmtInfo) throw new Error("確認結果のテキストが必要です");
-      const mgmtGreeting = greetingPhrase; // 挨拶時間ルール共通化（#19）
+      const mgmtGreeting = "（時候の挨拶）"; // greetingPhraseはdynamicSystemSuffixへ移動（P1-1）
 
       // 共通誘導文（申込/内覧ボタン選択時のクロージング）
       const guidanceType = body.guidance_type as string | undefined;
@@ -2996,7 +2986,7 @@ ${SMORA_COMMON_RULES}
 【お客様の呼び方】必ず「[お客様名]」で呼ぶこと
 
 【メッセージ構成】
-①挨拶：「${mgmtGreeting}」
+①挨拶：「（時候の挨拶）」
 ②結果報告（この一文を軸にする・必ず入れる）：${availabilityStatus === "available" ? "「管理会社に確認しましたところ現在まだ募集しているとのことでした！！」" : "「管理会社に確認しましたところ募集が終了したとのことでした」"}
 ③会話の文脈に合わせた続き（1〜2行）：会話履歴からお客様の質問・希望を読み取り、それに自然につながる内容にする
 
@@ -3025,7 +3015,7 @@ ${SMORA_COMMON_RULES}
 【お客様の呼び方】必ず「[お客様名]」で呼ぶこと
 
 【メッセージ構成】
-①挨拶：「${mgmtGreeting}」
+①挨拶：「（時候の挨拶）」
 ②交渉結果報告：「[物件名]の初期費用について管理会社へ交渉させて頂きました！！」
 ③結果の詳細（1〜2行）：スタッフ入力の交渉結果＋会話履歴のお客様の状況を踏まえた内容
 ④締め（任意）：交渉成功なら喜びを共有、難しかった場合は前向きに締める
@@ -3080,7 +3070,8 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : "")
 
 【スタッフが${check_pattern === "nearby_parking" ? "近隣の月極駐車場を調べた" : "管理会社に確認した"}内容（この情報を必ず使うこと）】
 ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
-        currentAction
+        currentAction,
+        greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
       );
       // 号室の先頭ゼロ除去はメインパス末尾の finalize() で一括処理（⑦で共通化）
 
@@ -3954,7 +3945,7 @@ ${jstTodayStr}
 内覧当日に送る「内覧前挨拶」LINEメッセージを生成してください。
 
 【出力構成（この3行構成を厳守・一字一句このフォーマット）】
-①「[お客様名]${greetingPhrase}」
+①「[お客様名]（時候の挨拶・greetingTimeNoteの挨拶ルールに従う）」
 ②「本日〇〇時お部屋ご案内させて頂きます！」（〇〇を時刻に置き換え。時刻がなければ「本日お部屋ご案内させて頂きます！」）
 ③「本日は何卒よろしくお願い致します！！」
 
@@ -3973,7 +3964,7 @@ ${jstTodayStr}
         ]);
 
         const greetingBeforeSystemFinal = system + greetingViewingDbRules + (greetingBeforeBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + greetingBeforeBrainAddendum : "");
-        message_text = await callClaude(
+        message_text = await callClaudeHaiku(
           greetingBeforeSystemFinal,
           greetingTimeNote + `${name}への内覧前挨拶を生成してください。${dateInfo}${recentHistory}` + (beforeDiffNote ? `\n\n${beforeDiffNote}` : ""),
           currentAction
@@ -4159,7 +4150,7 @@ ${SMORA_COMMON_RULES}`;
 
       const meetingSystemFinal = system + meetingDbRules + (meetingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + meetingBrainAddendum : "");
       const meetingUserFinal = greetingTimeNote + `会話履歴から待ち合わせ時間を読み取り、メッセージを生成してください。${recentHistory}` + (meetingDiffNote ? `\n\n${meetingDiffNote}` : "") + (meetingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + meetingStarNote : "");
-      message_text = await callClaude(meetingSystemFinal, meetingUserFinal, currentAction);
+      message_text = await callClaudeHaiku(meetingSystemFinal, meetingUserFinal, currentAction);
 
     // ── ✅ 確認します ──────────────────────────────────────────────
     } else if (action === "acknowledge_check") {
@@ -4301,7 +4292,7 @@ ${SMORA_COMMON_RULES}
 ${SMORA_COMMON_RULES}
 
 【構成ルール（この順番で・必ず守ること）】
-① 書き出し: 「[お客様名]${greetingPhrase}」（⑤修正: greetingTimeNoteの時間帯・初回・当日挨拶済みルールと整合させる）
+① 書き出し: 「[お客様名]（時候の挨拶）」（greetingTimeNoteの時間帯・初回・当日挨拶済みルールと整合させる）
 ② 依頼の導入: 「お申込みに際しまして以下のものをご準備いただく必要がございます！！」
 ③ 必要書類・情報を「・」の箇条書きで列挙する
   ※補足情報に「まだ頂けていない書類」の指定がある場合は、それだけを列挙する（最優先・勝手に追加しない）
@@ -4326,7 +4317,7 @@ ${SMORA_COMMON_RULES}
         const supUser = `${name}への「お申込みに必要な書類・情報のご提出をお願いする」催促メッセージを生成してください。${extra_input ? `\n【まだ頂けていない書類・補足情報（最優先で使うこと）】${extra_input}` : ""}${recentHistory}`;
         const supSystemFinal = supSystem + supDbRules + (supBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + supBrainAddendum : "");
         const supUserFinal = greetingTimeNote + supUser + (supDiffNote ? `\n\n${supDiffNote}` : "") + (supStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + supStarNote : "");
-        message_text = await callClaude(supSystemFinal, supUserFinal, currentAction);
+        message_text = await callClaude(supSystemFinal, supUserFinal, currentAction, greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined);
 
       // ── 物件探し継続確認 ──────────────────────────────────────────────────
       } else if (followSubMode === "search_continue") {
@@ -4344,7 +4335,7 @@ ${SMORA_COMMON_RULES}
 ${SMORA_COMMON_RULES}
 
 【構成ルール（この順番で・必ず守ること）】
-① 書き出し: 「[お客様名]${greetingPhrase}」（greetingTimeNoteの時間帯・初回・当日挨拶済みルールと整合させる）
+① 書き出し: 「[お客様名]（時候の挨拶）」（greetingTimeNoteの時間帯・初回・当日挨拶済みルールと整合させる）
 ② 新着のご連絡: ${followPropertyName ? `「新しく${followPropertyName}が募集にでましたのでご連絡させていただきました！！」` : `「新しくオススメ出来る物件が募集にでましたのでご連絡させていただきました！！」`}
   ※補足情報に物件の特徴（駅近・築浅・家賃など）があれば、②に一言だけ自然に添えてよい
 ③ 締め（＝メッセージの最後の一文）: 「[お客様名]お部屋探し継続されていますでしょうか！！」
@@ -4367,7 +4358,7 @@ ${SMORA_COMMON_RULES}
         const scUser = `${name}への物件探し継続確認メッセージを生成してください。${followPropertyName ? `\n物件名: ${followPropertyName}` : ""}${extra_input ? `\n補足（物件の特徴など）: ${extra_input}` : ""}${recentHistory}`;
         const scSystemFinal = scSystem + scDbRules + (scBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + scBrainAddendum : "");
         const scUserFinal = greetingTimeNote + scUser + (scDiffNote ? `\n\n${scDiffNote}` : "") + (scStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + scStarNote : "");
-        message_text = await callClaude(scSystemFinal, scUserFinal, currentAction);
+        message_text = await callClaude(scSystemFinal, scUserFinal, currentAction, greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined);
 
       // conversation_match: 過去の会話文脈を最大活用した自然な追客メッセージを生成
       } else if (body.conversation_match) {
@@ -4462,7 +4453,7 @@ ${SMORA_COMMON_RULES}
 ${SMORA_COMMON_RULES}
 
 【構成ルール（この順番で・必ず守ること）】
-① 書き出し: 「[お客様名]${greetingPhrase}」（greetingTimeNoteの挨拶ルールに従う）
+① 書き出し: 「[お客様名]（時候の挨拶）」（greetingTimeNoteの挨拶ルールに従う）
 ② 査収のお礼: ご確認いただいたことへの感謝を自然に入れる
 ③ 全域ピックアップ説明: 指定エリアを含む広域から条件に合う物件を探したが、現在の募集状況では完全に条件を満たす物件がない旨を丁寧に伝える
    ※補足（memo）がある場合はその理由・状況を自然に織り込む（例: 「家賃が上限を超えてしまいますのでオススメできません」等）
@@ -4496,12 +4487,13 @@ ${SMORA_COMMON_RULES}
           { type: "text", text: zenryokuUserFinal },
           { type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } },
         ];
-        message_text = await callClaudeVision(zenryokuSystemFinal, visionContent, currentAction);
+        message_text = await callClaudeVision(zenryokuSystemFinal, visionContent, currentAction, greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined);
       } else {
         message_text = await callClaude(
           zenryokuSystemFinal,
           zenryokuUserFinal,
-          currentAction
+          currentAction,
+          greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
         );
       }
 
