@@ -2485,6 +2485,10 @@ export async function POST(req: NextRequest) {
           lines.push(`- 推奨アクション: 物件ピックアップ対応（property_send方向）— お客様が新しい検索条件（路線・家賃・徒歩・間取り・広さ等）を今回のメッセージで指定しているため、見積書の作成宣言をせず条件を受け止めて物件を探す方向で返信すること。AIXで物件送付後に見積対応。`);
         } else {
           lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}`);
+          // property_check_result 時は propertyFactGateNote の保証会社名断言禁止を解除して明示を強制
+          if (brainMeta.action === "property_check_result") {
+            lines.push(`- ✅ 保証会社名・審査難度の明示（必須・propertyFactGateNote例外）: 管理会社確認済みの結果報告として、保証会社名と審査難度（「審査通過しやすい」または「審査厳し目」）を必ず1文付加すること。例: 「こちらのお部屋の保証会社は〇〇という比較的審査通過しやすい保証会社となっております！！」または「〇〇という審査やや厳し目の保証会社となります！！」。key_topicsに保証会社名がある場合は必ずその名前を使う。propertyFactGateNoteの「保証会社名断言禁止」はこのアクション時は適用されない`);
+          }
         }
       }
       // closing_strategy は winning_pattern との両方がある場合は統合済み（上記）・単独の場合のみ出力
@@ -2553,8 +2557,31 @@ export async function POST(req: NextRequest) {
       if (psp?.ng_points) {
         lines.push(`- ⚠️ この顧客の地雷・NGポイント: ${psp.ng_points} — これに該当する提案・話題を出さない`);
       }
+      // 物件送付文のエリア名具体化強制（成約パターン frequency:5 — 抽象表現禁止）
+      if (brainMeta.action === "property_send" && psp?.area) {
+        lines.push(`- 🗺️ エリア名の具体化（必須・成約パターン）: 物件送付文には「${psp.area}エリア全域から」「${psp.area}×${psp.floor_plan ?? "ご希望条件"}のお部屋」のようにエリア名・主要条件を文中に具体的に埋め込むこと。「ご条件に合ったお部屋」「ご希望のご条件に合ったお部屋」という抽象表現は一切書かない。代わりに「${psp.area}エリア全域からオススメできるお部屋」の形で能動的に表現すること`);
+      }
       if (psp?.move_in_time && !brainMeta?.future_timeline) {
         lines.push(`- 📅 入居希望時期（brain抽出）: ${psp.move_in_time} — 提案・約束をこの時期に整合させること`);
+      }
+      // 入居希望日が30日以内なら申込期限を決定論的に明示（成約パターン: 入居タイムライン緊急性付加）
+      if (psp?.move_in_time && brainMeta?.urgency_appropriate !== false) {
+        const nowJst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+        const curYear = nowJst.getUTCFullYear();
+        const curMonth = nowJst.getUTCMonth() + 1;
+        const curDay = nowJst.getUTCDate();
+        const mText = psp.move_in_time;
+        const mMonthMatch = mText.match(/(\d{1,2})月/);
+        if (mMonthMatch) {
+          const tMonth = parseInt(mMonthMatch[1], 10);
+          const mDayMatch = mText.match(/(\d{1,2})日/);
+          const tDay = mDayMatch ? parseInt(mDayMatch[1], 10) : (mText.includes("末") ? 28 : 1);
+          const tYear = (tMonth < curMonth || (tMonth === curMonth && tDay < curDay)) ? curYear + 1 : curYear;
+          const daysUntil = Math.floor((Date.UTC(tYear, tMonth - 1, tDay) - Date.UTC(curYear, curMonth - 1, curDay)) / 86_400_000);
+          if (daysUntil >= 0 && daysUntil <= 30) {
+            lines.push(`- ⚡ 申込期限明示（必須・成約パターン）: 入居希望日 ${mText} から逆算すると今週中のお申込みが必要です。「${mText}ご入居希望の場合、今週中にお申込みいただく必要がございます！！審査・契約手続きに最短でも2週間程はかかりますので〜」の形で返信末尾に期限を必ず1文で明示すること`);
+          }
+        }
       }
       if (psp?.search_urgency) {
         lines.push(`- ⚡ 物件探しの緊急度: ${psp.search_urgency} → 高い（★★★）場合: 今すぐピックアップしてお送りする旨をWE DO宣言（「〜させて頂きます！！」形）で伝えること / 低い（★以下）場合: 焦らせず次の連絡タイミングをこちらから約束すること`);
@@ -2575,7 +2602,7 @@ export async function POST(req: NextRequest) {
       // 顧客意図 (customer_intent): 問い合わせの根本意図に応じた返信モードを指示
       if (brainFreshForMessage && brainMeta.customer_intent) {
         const INTENT_GUIDE: Record<string, string> = {
-          question:     "質問回答モード ― お客様の疑問に端的に答えるだけ。次アクション催促・送付案内・フォーム提出促しは一切書かない",
+          question:     "質問回答モード ― お客様の疑問に端的に答えるだけ。次アクション催促・送付案内・フォーム提出促しは一切書かない。さらに：customer_questionsに記載の質問のみに答え、無関係な物件名・別物件の空室確認状況・並行審査の言及はavoid_topicsの有無に関わらず一切書かない",
           consultation: "相談応対モード ― 選択肢・アドバイスを提示する。即決プッシュは控える",
           desire:       "願望応対モード ― お客様の希望を受け止め、物件提案・具体化へつなげる",
           decision:     "決定応対モード ― 申込フロー・次ステップをスムーズに案内する",
