@@ -161,7 +161,6 @@ export async function runPropertyBrain(
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-5",
     max_tokens: 1024,
-    temperature: 0,
     system: [
       {
         type: "text",
@@ -352,7 +351,6 @@ export async function runConditionBrain(
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 512,
-      temperature: 0,
       system: [
         {
           type: "text",
