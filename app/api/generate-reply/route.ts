@@ -2131,7 +2131,8 @@ export async function POST(req: NextRequest) {
   // meta が既に "aix" ならAnthropic呼び出し前にゼロコストで中止（cron再試行時など）。
   // null（未分析/webhookワイプ直後）はここでは素通しし、チェックポイントBで再確認する。
   // brainMetaDirect 指定時（bg-asyncのbrain直列実行後）は DB フェッチせずその値を使う
-  if (conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
+  // enforceReplyModeGate=false（手動ボタン）はゲートをスキップ。bg-async/cronのみtrueを渡す設計。
+  if (enforceReplyModeGate && conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
     const gate = externalBrainGate ?? await fetchReplyModeGate(conversationId);
     if (gate?.meta?.reply_mode === "aix") {
       console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(A):", conversationId);
@@ -2900,7 +2901,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // 理由: bg-asyncでブレインが30sタイムアウト→brainGateDirect=null の場合、
     // AとBの間（Anthropicコール中=5〜15s）にブレインが完了して reply_mode="aix" を書くことがある。
     // Aのスナップショット再利用だとこのケースを取りこぼし、テキストとAIXが両方表示されるバグが起きる。
-    if (conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
+    // enforceReplyModeGate=false（手動ボタン）はゲートをスキップ。bg-async/cronのみtrueを渡す設計。
+    if (enforceReplyModeGate && conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
       const freshGateB = await fetchReplyModeGate(conversationId);
       if (freshGateB?.meta?.reply_mode === "aix") {
         console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(B・新鮮フェッチ):", conversationId);
