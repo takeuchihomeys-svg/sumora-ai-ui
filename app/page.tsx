@@ -2549,30 +2549,7 @@ export default function Home() {
     return !activeAixFlow && selectedConversation.suggestedAixMeta?.action === "property_send";
   }, [selectedConversation.suggestedAixMeta, activeAixFlow]);
 
-  // 見積書送る誘導: お客様が見積依頼していて、スタッフが次に動く番
-  // 顧客メッセージのみを検索対象にする（スタッフが「初期費用」と書いた場合は除外）
-  const guideToEstimate = useMemo(() => {
-    if (activeAixFlow) return false;
-    const msgs: Message[] = selectedConversation.messages || [];
-    const reversed = [...msgs].reverse();
-    // 最後のメッセージがお客様（＝スタッフが次に動く番）
-    const lastMsg = reversed[0];
-    if (!lastMsg || lastMsg.sender !== "customer") return false;
-    // 直近の顧客メッセージのみでキーワード判定（スタッフ発言は除外）
-    const recentCustomerTexts = reversed.slice(0, 10)
-      .filter((m: Message) => m.sender === "customer")
-      .slice(0, 3)
-      .map((m: Message) => m.text || "")
-      .join(" ");
-    return (
-      recentCustomerTexts.includes("見積書") ||
-      recentCustomerTexts.includes("見積り") ||
-      recentCustomerTexts.includes("見積もり") ||
-      recentCustomerTexts.includes("初期費用") ||
-      recentCustomerTexts.includes("お見積") ||
-      recentCustomerTexts.includes("御見積")
-    );
-  }, [selectedConversation, activeAixFlow]);
+  // guideToEstimate: 削除済み（brain の action=estimate_sheet に一本化）
 
   // ── AI下書きバックグラウンド生成: DBポーリング（15秒間隔・最大150秒 = bg-asyncのgenerate-replyタイムアウトと一致） ──
   // 旧実装は60秒固定タイムアウトのみで、生成が60秒超かかると必ず「準備中...」→失敗扱いになるバグの原因だった。
@@ -7390,7 +7367,7 @@ export default function Home() {
                       ? "border-[#4CAF50] bg-white text-[#2E7D32] animate-pulse ring-2 ring-[#4CAF50] ring-offset-1"
                       : guideToMeetingPlace
                         ? "border-[#00838F] bg-white text-[#00838F] animate-pulse ring-2 ring-[#00838F] ring-offset-1"
-                        : guideToEstimate
+                        : (selectedConversation.suggestedAixMeta?.action === "estimate_sheet")
                           ? "border-[#FF9800] bg-white text-[#E65100] animate-pulse ring-2 ring-[#FF9800] ring-offset-1"
                           : "border-[#d1d7db] bg-white text-[#111b21]"
                 }`}
@@ -7781,33 +7758,8 @@ export default function Home() {
                 </div>
               );
 
-              // P3.7: 顧客が「初期費用を知りたい」等と発言 → AIX 見積書を送って答える
-              if (aixMetaIsFresh && guideToEstimate && !dismissedEstimateSheetIds.has(id)) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-500 bg-orange-50 px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[12px] font-bold text-orange-800 flex-1">
-                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
-                      初期費用を聞かれています → AIX 見積書で答えよう！
-                    </span>
-                    <button onClick={() => {
-                      setDismissedEstimateSheetIds((prev) => new Set([...prev, id]));
-                      setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
-                      const convName = selectedConversation.customerName;
-                      if (!(activeTasks[id] ?? []).some((t: {task_type: string}) => t.task_type === "estimate_sheet")) {
-                        fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ conversation_id: id, task_type: "estimate_sheet", customer_name: convName, status: "pending" }) }).catch(() => {});
-                      }
-                      setShowTemplateModal(true);
-                    }}
-                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                      style={{ background: "linear-gradient(135deg, #E65100, #F57C00)" }}>AIX 見積書</button>
-                    <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
-                      className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
-                  </div>
-                </div>
-              );
-
-              // P4.5: AIX-METAが estimate_sheet を指示 → 割引見積で差別化！
+              // P4.5: brain が estimate_sheet を指示 → 見積書で費用をご案内しましょう！
+              // （P3.7フロントキーワード判定は削除済み。brain判断に一本化）
               if (
                 aixMetaIsFresh &&
                 selectedConversation.suggestedAixMeta?.action === "estimate_sheet" &&
@@ -7815,7 +7767,7 @@ export default function Home() {
               ) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-500 bg-orange-50 px-3 py-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-[12px] font-bold text-orange-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>他社と比較中 → 割引見積を提示して差別化！</span>
+                    <span className="text-[12px] font-bold text-orange-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>見積書で費用をご案内しましょう！</span>
                     <button onClick={() => {
                       setDismissedEstimateSheetIds((prev) => new Set([...prev, id]));
                       setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
@@ -7827,7 +7779,7 @@ export default function Home() {
                       setShowTemplateModal(true);
                     }}
                       className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                      style={{ background: "linear-gradient(135deg, #E65100, #F57C00)" }}>AIX 割引見積</button>
+                      style={{ background: "linear-gradient(135deg, #E65100, #F57C00)" }}>AIX 見積書</button>
                     <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
                       className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
                   </div>
@@ -13221,12 +13173,12 @@ export default function Home() {
                     isSuggested ||
                     (guideToCheckResult && item.label === "物件確認した（募集状況）") ||
                     (guideToMeetingPlace && item.label === "待ち合わせ場所") ||
-                    (guideToEstimate && item.label === "見積書送る");
+                    (selectedConversation.suggestedAixMeta?.action === "estimate_sheet" && item.label === "見積書送る");
                   const highlightColor =
                     isSuggested ? item.color :
                     guideToCheckResult && item.label === "物件確認した（募集状況）" ? "#4CAF50" :
                     guideToMeetingPlace && item.label === "待ち合わせ場所" ? "#00838F" :
-                    guideToEstimate && item.label === "見積書送る" ? "#FF9800" : "";
+                    (selectedConversation.suggestedAixMeta?.action === "estimate_sheet" && item.label === "見積書送る") ? "#FF9800" : "";
                   return (
                     <div
                       key={item.label}
