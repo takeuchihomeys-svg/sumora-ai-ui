@@ -459,14 +459,35 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
 }
 
 // ☆つき成功返信パターンを類似検索してAIXプロンプトに注入する（LL-04）
-// generate-reply の match_reply_examples RPC と同じ仕組み。顧客メッセージのembeddingで類似☆実例を引く
-async function getStarredExamplesForAction(states: string[], customerMsg: string): Promise<string> {
+// generate-reply の match_reply_examples RPC と同じ仕組み。顧客メッセージ＋brain文脈のembeddingで類似☆実例を引く
+type StarredExamplesBrainHint = {
+  action?: string | null;
+  closing_strategy?: string | null;
+  customer_intent?: string | null;
+  recommended_tone?: string | null;
+  checkpoint_stage?: string | null;
+};
+
+async function getStarredExamplesForAction(
+  states: string[],
+  customerMsg: string,
+  brainMeta?: StarredExamplesBrainHint | null,
+): Promise<string> {
   try {
     if (!customerMsg.trim() || !states || states.length === 0) return "";
 
+    // brain文脈をクエリに追加して検索精度を上げる（action・closing_strategy・customer_intentが一致する例文が上位に来る）
+    const brainCtx = brainMeta ? [
+      brainMeta.action,
+      brainMeta.closing_strategy,
+      brainMeta.customer_intent,
+      brainMeta.recommended_tone,
+      brainMeta.checkpoint_stage,
+    ].filter(Boolean).join(" ") : "";
+    const queryText = safeSlice([brainCtx, customerMsg].filter(Boolean).join(" "), 600);
+
     // generateEmbedding経由でembeddingを取得（embedding_cache DBキャッシュ＋メモリFIFO 2層キャッシュを活用）
-    // 旧: OpenAI直接fetch → 同一メッセージでも毎回API課金が発生していた
-    const embedding = await generateEmbedding(safeSlice(customerMsg, 500));
+    const embedding = await generateEmbedding(queryText);
     if (!embedding) return "";
 
     // match_reply_examples RPCで類似☆examplesを取得
@@ -1152,7 +1173,7 @@ ${SMORA_COMMON_RULES}`;
       const [examples, knowledge, recStarNote, propDbRules, recBrainAddendum, recPatternHints] = await Promise.all([
         getPropertyExamples(),
         getPropertyKnowledge(conversationId, recRagContext),
-        getStarredExamplesForAction(["property_recommendation", "proposing"], latestCustomerMsg),
+        getStarredExamplesForAction(["property_recommendation", "proposing"], latestCustomerMsg, aixBrainMeta),
         fetchPromptRules("property_recommendation", {}).catch(() => ""),
         loadBrainTemplate("property_recommendation"),
         // 類似条件顧客の勝ちパターン（property_selection_patterns）を並列取得
@@ -1463,7 +1484,7 @@ ${SMORA_COMMON_RULES}`;
       try {
         const [coverDiffNote, coverStarNote, coverDbRules, coverBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.estimate_sheet, currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction(AIX_ACTION_TO_STATES.estimate_sheet, latestCustomerMsg),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.estimate_sheet, latestCustomerMsg, aixBrainMeta),
           fetchPromptRules("estimate_sheet", {}).catch(() => ""),
           loadBrainTemplate("estimate_sheet"),
         ]);
@@ -1619,7 +1640,7 @@ ${SMORA_COMMON_RULES}
       const useCompKnowledge = sendMode === "normal" || sendMode === "widen" || sendMode === "viewing";
       const [sendDiffNote, sendStarNote, compPickupNote, compInviteNote, compCalendarNote, sendDbRules, sendBrainAddendum] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.property_send, currentAction, conversationId, latestCustomerMsg, brainContext),
-        getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_send, latestCustomerMsg),
+        getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_send, latestCustomerMsg, aixBrainMeta),
         useCompKnowledge ? getKnowledgeForState(["property_send_pickup"], currentAction) : Promise.resolve(""),
         useCompKnowledge && !skipViewingInvite ? getKnowledgeForState(["property_send_invite"], currentAction) : Promise.resolve(""),
         useCompKnowledge && !skipViewingInvite ? getKnowledgeForState(["property_send_calendar"], currentAction) : Promise.resolve(""),
@@ -1949,7 +1970,7 @@ ${SMORA_COMMON_RULES}
         const calendarNoteForVI = calendarNote || "";
         const [viewingConvMatchDiffNote, viewingConvMatchStarNote, brainAddendumViConv] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.viewing_invite, currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction(AIX_ACTION_TO_STATES.viewing_invite, latestCustomerMsg),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.viewing_invite, latestCustomerMsg, aixBrainMeta),
           loadBrainTemplate("viewing_invite"),
         ]);
 
@@ -2043,7 +2064,7 @@ ${calendarBlock}
       // HIGH-02修正: viewing_invite の全コンポーネント（greeting/situation/invite/closing）を個別に取得
       const [viewingDiffNote, viewingStarNote, compViewingGreeting, compViewingInvite, compViewingClosing, viewingDbRules, viewingBrainAddendum] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.viewing_invite, currentAction, conversationId, latestCustomerMsg, brainContext),
-        getStarredExamplesForAction(AIX_ACTION_TO_STATES.viewing_invite, latestCustomerMsg),
+        getStarredExamplesForAction(AIX_ACTION_TO_STATES.viewing_invite, latestCustomerMsg, aixBrainMeta),
         getKnowledgeForState(["viewing_invite_greeting"], currentAction),
         getKnowledgeForState(["viewing_invite_invite"], currentAction),
         getKnowledgeForState(["viewing_invite_closing"], currentAction),
@@ -2221,7 +2242,7 @@ ${phraseText || "なし"}
       // HIGH-02修正: application_push の全コンポーネントを取得（appeal/cta/reassurance/closing）
       const [appDiffNote, appStarNote, compAppealRaw, compCtaRaw, compReassuranceRaw] = await Promise.all([
         getKnowledgeForState(appKnowledgeStates, currentAction, conversationId, latestCustomerMsg, brainContext),
-        getStarredExamplesForAction(appKnowledgeStates, latestCustomerMsg),
+        getStarredExamplesForAction(appKnowledgeStates, latestCustomerMsg, aixBrainMeta),
         getKnowledgeForState(["application_push_appeal"], currentAction),
         getKnowledgeForState(["application_push_cta"], currentAction),
         getKnowledgeForState(["application_push_reassurance"], currentAction),
@@ -3187,7 +3208,7 @@ ${cmResultLines}
           : "";
         const [pcrDiffNote, pcrStarNote, pcrDbRules, brainAddendumPcrConv] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_check_result, latestCustomerMsg),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_check_result, latestCustomerMsg, aixBrainMeta),
           // 実際に選択された check_pattern を渡す（旧: "availability" ハードコードで unavailable 等のDBルールが引けていなかった）
           fetchPromptRules("property_check_result", { check_pattern: cmPattern || "availability" }).catch(() => ""),
           loadBrainTemplate("property_check_result"),
@@ -3670,7 +3691,7 @@ ${templateText}`;
         }
         const [checkDiffNote, checkStarNote, checkDbRules, checkBrainAddendum] = await Promise.all([
           getKnowledgeForState(checkResultStates, currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction(checkResultStates, latestCustomerMsg),
+          getStarredExamplesForAction(checkResultStates, latestCustomerMsg, aixBrainMeta),
           fetchPromptRules("property_check_result", { check_pattern: patternStr }).catch(() => ""),
           loadBrainTemplate("property_check_result"),
         ]);
@@ -3784,7 +3805,7 @@ ${formItems}`;
         }
         const [hearingCMDiffNote, hearingCMStarNote, hearingCMBrainAddendum] = await Promise.all([
           getKnowledgeForState([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], latestCustomerMsg),
+          getStarredExamplesForAction([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], latestCustomerMsg, aixBrainMeta),
           loadBrainTemplate("condition_hearing"),
         ]);
 
@@ -3839,7 +3860,7 @@ ${SMORA_COMMON_RULES}
       try {
         const [hearingDiffNote, hearingStarNote, hearingDbRules, hearingBrainAddendum] = await Promise.all([
           getKnowledgeForState([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], latestCustomerMsg || ""),
+          getStarredExamplesForAction([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], latestCustomerMsg || "", aixBrainMeta),
           fetchPromptRules("condition_hearing", {}).catch(() => ""),
           loadBrainTemplate("condition_hearing"),
         ]);
@@ -4065,7 +4086,7 @@ ${SMORA_COMMON_RULES}`;
         // base_messageがある場合もadaptMessageToConversationは使わず再生成（テンプレ冒頭が残るため）
         const [mpDiffNote, mpStarNote, mpDbRules, mpCMBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.meeting_place, currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction(AIX_ACTION_TO_STATES.meeting_place, latestCustomerMsg),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.meeting_place, latestCustomerMsg, aixBrainMeta),
           fetchPromptRules("meeting_place", {}).catch(() => ""),
           loadBrainTemplate("meeting_place"),
         ]);
@@ -4124,7 +4145,7 @@ ${mpDate ? `【内覧日】${mpDate}` : ""}
       // 学習済み差分ルール（スタッフ修正から学習したパターン）＋☆成功返信パターン＋DBルールをプロンプト末尾に注入
       const [meetingDiffNote, meetingStarNote, meetingDbRules, meetingBrainAddendum] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.meeting_place, currentAction, conversationId, latestCustomerMsg, brainContext),
-        getStarredExamplesForAction(AIX_ACTION_TO_STATES.meeting_place, latestCustomerMsg),
+        getStarredExamplesForAction(AIX_ACTION_TO_STATES.meeting_place, latestCustomerMsg, aixBrainMeta),
         fetchPromptRules("meeting_place", {}).catch(() => ""),
         loadBrainTemplate("meeting_place"),
       ]);
@@ -4160,7 +4181,7 @@ ${SMORA_COMMON_RULES}`;
         //   （hearing/proposing はお客様向け文体のため混ぜない。states は必ず ["acknowledge_check"] のみ）
         const [ackCMDiffNote, ackCMStarNote, ackCMDbRules, ackCMBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.acknowledge_check, currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction(["acknowledge_check"], latestCustomerMsg),
+          getStarredExamplesForAction(["acknowledge_check"], latestCustomerMsg, aixBrainMeta),
           fetchPromptRules("acknowledge_check", {}).catch(() => ""),
           loadBrainTemplate("acknowledge_check"),
         ]);
@@ -4280,7 +4301,7 @@ ${SMORA_COMMON_RULES}
       if (followSubMode === "apply_supplement") {
         const [supDiffNote, supStarNote, supDbRules, supBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg, aixBrainMeta),
           fetchPromptRules("followup_revive", { follow_sub_mode: followSubMode }).catch(() => ""),
           loadBrainTemplate("followup_revive"),
         ]);
@@ -4323,7 +4344,7 @@ ${SMORA_COMMON_RULES}
       } else if (followSubMode === "search_continue") {
         const [scDiffNote, scStarNote, scDbRules, scBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg, aixBrainMeta),
           fetchPromptRules("followup_revive", { follow_sub_mode: followSubMode }).catch(() => ""),
           loadBrainTemplate("followup_revive"),
         ]);
@@ -4364,7 +4385,7 @@ ${SMORA_COMMON_RULES}
       } else if (body.conversation_match) {
         const [followupCMDiffNote, followupCMStarNote, followupCMDbRules, followupCMBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg, brainContext),
-          getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg, aixBrainMeta),
           fetchPromptRules("followup_revive", {}).catch(() => ""),
           loadBrainTemplate("followup_revive"),
         ]);
@@ -4414,7 +4435,7 @@ ${SMORA_COMMON_RULES}
 
       const [followupDiffNote, followupStarNote, followupDbRules, followupBrainAddendum] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg, brainContext),
-        getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg),
+        getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg, aixBrainMeta),
         fetchPromptRules("followup_revive", {}).catch(() => ""),
         loadBrainTemplate("followup_revive"),
       ]);
