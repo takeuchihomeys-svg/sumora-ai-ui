@@ -221,6 +221,7 @@ function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBloc
 - 「確認してご連絡します」の約束（AIX【確認します】と二重になる）→ 違反
 禁止語彙：少々お待ちください / 申し訳ございません（審査落ち・物件消滅時）/ スモラ /
 名称未設定 / markdown太字 / AIX操作用語（「AIXボタン」等）の顧客向け文への混入 /
+冒頭の書き出しとして「ご連絡ありがとうございます」「ご返信ありがとうございます」（お礼は挨拶ではない。冒頭の単独使用は禁止。本文中での自然なお礼はOK）/
 「〇〇さんご希望のご条件に合った」「ご条件に合うお部屋」等の受け身表現（エリア名・個人名・具体条件との組み合わせでも禁止。検出時 code=RULE_VIOLATION で報告）
 
 code は次から選ぶこと:
@@ -239,7 +240,7 @@ ${dbRulesSliced}
 [/RULES]
 ${finalCheckRulesSliced ? `[FINAL_CHECK_RULES]\n${finalCheckRulesSliced}\n[/FINAL_CHECK_RULES]` : ""}
 【出力例1 - 問題なし】
-ご連絡ありがとうございます。新着物件が出ましたらすぐにお送りいたします。引き続きよろしくお願いいたします。
+かぁなさん、お世話になっております！！先ほどご質問いただいた物件ですが、管理会社に空室確認いたします。確認でき次第ご連絡いたしますね！
 → issues: []
 
 【出力例2 - AIX_BOUNDARY_VIEWING 違反】
