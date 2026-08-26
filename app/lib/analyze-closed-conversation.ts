@@ -134,10 +134,14 @@ export async function analyzeClosedConversation(
   // 2. 全メッセージ + 顧客基本情報を取得
   const { data: conv } = await supabase
     .from("conversations")
-    .select("property_customer_id")
+    .select("property_customer_id, suggested_aix_meta")
     .eq("id", conversationId)
     .maybeSingle();
-  const pcId = (conv as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+  const pcId = (conv as { property_customer_id?: string | null; suggested_aix_meta?: Record<string, unknown> | null } | null)?.property_customer_id ?? null;
+  const purchaseSignalLevel = (
+    (conv as { suggested_aix_meta?: Record<string, unknown> | null } | null)
+      ?.suggested_aix_meta?.purchase_signal_level as string | null
+  ) ?? null;
 
   const { data: msgRows, error: msgErr } = await supabase
     .from("messages")
@@ -316,7 +320,10 @@ ${customerInfo || "（登録情報なし）"}
     closing_action: result.what_worked ?? null,
     human_type_label: label,
     outcome_type: outcome,
-    notes: result.turning_point ?? null,
+    notes: [
+      result.turning_point ?? null,
+      purchaseSignalLevel ? `[signal:${purchaseSignalLevel}]` : null,
+    ].filter(Boolean).join(" / ") || null,
     source_conversation_id: conversationId,
     embedding: wpEmbedding ? JSON.stringify(wpEmbedding) : null,
     importance: isLost ? 8 : 9,

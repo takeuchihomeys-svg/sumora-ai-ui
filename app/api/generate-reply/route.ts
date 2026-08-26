@@ -2495,6 +2495,21 @@ export async function POST(req: NextRequest) {
         lines.push("- 🏆 過去の勝ちパターン: " + brainMeta.winning_pattern + " → このパターンに沿った具体アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信に1文含めること");
       }
       if (brainMeta.customer_emotion) lines.push("- 💡 顧客の感情状態: " + brainMeta.customer_emotion + " → この感情を踏まえ冒頭1文で受け止めること（例: 不安→「ご心配なお気持ち、よくわかります」/ 前向き→「嬉しいです！」）。感情無視の事務的な書き出しは禁止");
+      // ── purchase_signal_level クロージング強度制御 ────────────────────────────
+      // none は干渉ゼロ（現行ロジックをそのまま通す）
+      if (brainMeta.purchase_signal_level === "peak") {
+        lines.push(
+          `- 🔥 購買シグナル: PEAK（申込直前最強シグナル）— 入居日の具体日付確定・競合申込者の自発確認・3件以上の連続具体質問のいずれかを検出。今回の返信で完全クロージングフローを発動すること: ①申込期限を明示（例: 「今週中にお申込み頂ければ一番手でお部屋を抑えられます！」）②申込書類リストをセットで案内 ③WE DO宣言でお部屋確保を約束。urgency_appropriate フラグに関係なく発動（PERM-CLOSING-MOVEIN-DATE-001 と同等のクロージング強度）`
+        );
+      } else if (brainMeta.purchase_signal_level === "strong") {
+        lines.push(
+          `- 🌡️ 購買シグナル: STRONG（申込前の高熱シグナル）— 設備・入居日・費用等の異カテゴリ確認が2件以上重なっている。前の質問に誠実に回答した上で、希少性（「一番手確保」「残り1部屋」等）をさりげなく1文添えてCTAを返信末尾に入れること（WE DO宣言と重複しないよう統合すること）`
+        );
+      } else if (brainMeta.purchase_signal_level === "soft") {
+        lines.push(
+          `- 📶 購買シグナル: SOFT（本気検討始まりシグナル）— 具体的な物件・設備・費用の確認質問を1件検出。質問に誠実に答えた後、次への軽いCTA 1文（例: 「気になれば内覧もできますよ！」「お気軽にどうぞ！」）を返信末尾に自然に添えること（pressure ゼロ・押しつけ禁止）`
+        );
+      }
       if (hasAction) {
         // 安全ガード: brain キャッシュが estimate_sheet のままでも、顧客が同一メッセージで
         // 新しい検索条件（路線・家賃・徒歩・広さ等）を指定していたら property_send 方向に上書き。
