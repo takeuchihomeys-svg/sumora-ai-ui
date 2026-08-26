@@ -165,9 +165,10 @@ function getBaseUrl(): string {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json() as { conversation_id?: string; memo?: string };
+  const body = await req.json() as { conversation_id?: string; memo?: string; source?: "direct" | "ui" };
   const convId = body.conversation_id;
   const memo = body.memo || "";
+  const source = body.source;
   if (!convId) return NextResponse.json({ ok: false }, { status: 400 });
 
   const db = getDb();
@@ -190,7 +191,7 @@ export async function POST(req: NextRequest) {
   if (conv.ai_draft && conv.ai_draft !== "[AIX誘導中]") return NextResponse.json({ ok: true, skipped: "already_has_draft" });
   if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: "status" });
 
-  const { data: msgs, error: msgsErr } = await db.from("messages")
+  let { data: msgs, error: msgsErr } = await db.from("messages")
     .select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", convId)
     .order("created_at", { ascending: false }).limit(20);
 
@@ -200,7 +201,7 @@ export async function POST(req: NextRequest) {
   }
 
   type MsgRow = { sender: string; text: string | null; image_url: string | null; created_at?: string; is_aix_generated: boolean | null };
-  const recentMsgs = ((msgs || []) as MsgRow[])
+  let recentMsgs = ((msgs || []) as MsgRow[])
     .reverse()
     .map((m) => ({
       sender: m.sender,
@@ -216,7 +217,7 @@ export async function POST(req: NextRequest) {
   const unreplied = msgsAfterStaff
     .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
     .slice(-3);
-  const targetMessage = unreplied.map((m) => m.text).join("\n");
+  let targetMessage = unreplied.map((m) => m.text).join("\n");
 
   if (!targetMessage.trim()) {
     // 画像・動画のみで返信対象テキストなし → 生成不能。
@@ -255,6 +256,49 @@ export async function POST(req: NextRequest) {
   // ── ここから重い処理は after() でバックグラウンド実行（Realtimeで通知） ──
   after(async () => {
     try {
+      // ── バーストメッセージ対策（LINEからの直接トリガー時のみ）────────────────
+      // LINEバースト送信（複数メッセージの短時間連続送信）では、2通目以降が
+      // atomic claim でブロックされて skip される。8s sleep の間にバーストメッセージが
+      // 全て DB に保存されるため、brain に全メッセージを渡せる（脳の入力精度向上）。
+      // claim は sleep 前の同期処理で完了済みのため、atomic claim 整合性は変わらない。
+      if (source === "direct") {
+        await new Promise<void>((resolve) => setTimeout(resolve, 8000));
+        try {
+          const { data: burstMsgsData } = await db.from("messages")
+            .select("sender, text, image_url, created_at, is_aix_generated")
+            .eq("conversation_id", convId)
+            .order("created_at", { ascending: false })
+            .limit(20);
+          if (burstMsgsData && burstMsgsData.length > 0) {
+            type BurstMsgRow = { sender: string; text: string | null; image_url: string | null; created_at?: string; is_aix_generated: boolean | null };
+            const burstList = (burstMsgsData as BurstMsgRow[]).reverse().map((m) => ({
+              sender: m.sender,
+              text: m.text || (m.image_url ? "[画像]" : ""),
+              imageUrl: m.image_url ?? undefined,
+              createdAt: m.created_at,
+              isAix: m.is_aix_generated ?? false,
+            }));
+            const burstStaffIdx = burstList.map((m, i) => m.sender === "staff" ? i : -1).filter((i) => i >= 0).at(-1);
+            const burstAfterStaff = burstStaffIdx !== undefined ? burstList.slice(burstStaffIdx + 1) : burstList;
+            const burstUnreplied = burstAfterStaff
+              .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+              .slice(-3);
+            const burstTarget = burstUnreplied.map((m) => m.text).join("\n");
+            if (burstTarget.trim()) {
+              if (burstTarget !== targetMessage) {
+                console.log("[bg-async] バースト再フェッチ: 追加メッセージ検出 convId:", convId,
+                  "元:", JSON.stringify(targetMessage.slice(0, 80)),
+                  "最新:", JSON.stringify(burstTarget.slice(0, 80)));
+              }
+              recentMsgs = burstList;
+              targetMessage = burstTarget;
+            }
+          }
+        } catch (burstErr) {
+          console.warn("[bg-async] バースト再フェッチエラー（初期targetMessageで続行）:", burstErr);
+        }
+      }
+
       // ── brain直列実行（入り口・2026-08直列アーキテクチャ）─────────────────
       // 旧構成: webhookが brain を fire-and-forget 起動 + bg-async が draft 生成
       //   → 完了順序が保証されず suggested_aix_meta の書き込み競合が構造的に存在した。

@@ -513,7 +513,7 @@ async function handleTextMessage(
         await fetch(`${baseUrl}/api/generate-draft-bg-async`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversation_id: convId }),
+          body: JSON.stringify({ conversation_id: convId, source: "direct" }),
           signal: AbortSignal.timeout(3000),
         }).catch((e) => console.warn("[line-webhook] direct bg-async trigger failed:", e));
       } catch (e) {
