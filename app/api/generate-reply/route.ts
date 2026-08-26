@@ -970,6 +970,13 @@ function buildGenerationMessages(
     if (parts.length === 0) return "";
     return `【🎯 戦略参考情報（AIX-METAが未生成のため参考として使用）】\n${parts.join("\n")}\n⚠️ 上記はスタッフへの行動方針であり、物件の事実情報ではありません。「退去予定」「空き予定」「〜月末まで」等の具体的な期日・空室情報は、会話履歴やDBで確認された事実でない限りLINEメッセージ本文に断言・創作しないこと。\n`;
   })();
+  // P0-2: T3ゼロ戦略フォールバック — brainMeta=null かつ ai_summary_json に
+  // winning_pattern/next_action が存在しない場合、summaryNote（顧客サマリー）を根拠に
+  // 成約優先の汎用指示を注入する。summaryNote が存在する = 過去の brain 実行結果が DB に
+  // 残っているため、summaryNote の内容をベースに AI が戦略を推論できる。
+  const closingFallback = !hasAixMetaStrategy && !closingNote && summaryNote
+    ? `\n【🎯 T3フォールバック戦略（AIX-META未生成・ai_summary参考情報も不在）】\n上記の顧客サマリーの内容に基づき、成約を最優先で誘導すること。具体的なWE DO宣言（申込促進・物件確保・見積書提示のうち文脈に合うもの）を返信末尾に必ず含める。\n`
+    : "";
 
   // ── HumanMessage 2-block プロンプトキャッシュ（2026-08）──
   // Block 1（静的ルール群・cache_control: ephemeral）: 顧客共通のルール・ゲート・パターン。
@@ -1010,8 +1017,12 @@ function buildGenerationMessages(
   // 顧客固有データ（staffContextNote 等）は後続の dynamicBlock に残す。
   const phaseGuideBlock = `【現在の営業フェーズ】${state}\n${phaseGuide}`;
 
+  // P0-1: viewingNote（クライアントが渡す内覧関連情報）をdynamicBlockに展開する。
+  // viewingFactNote（物件退去予定/入居中判定）とセットでお客様メッセージ末尾に配置する。
+  const viewingNoteBlock = viewingNote ? `\n\n【内覧情報】${viewingNote}` : "";
+
   const dynamicBlock = `${propertyStatusNote}
-${closingNote}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
+${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
@@ -1022,7 +1033,7 @@ ${quotedContextNote}
 ${history || "なし"}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${viewingFactNote}${viewingIntentShortReplyNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}
+${customerMessage}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}
 
 ${examples}${examplesInstruction}
 

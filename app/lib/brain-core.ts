@@ -997,8 +997,19 @@ export async function analyzeConversation(
     // winning_patterns.situation（人間性ベース）との embedding 類似度が高い。
     type PcForRag = { personality_profile?: string | null; preferences?: string | null; ai_summary?: string | null };
     const pcForRag = (pcResult.data as PcForRag | null);
+    // P0-3/4: winning_pattern と customer_intent を追加。
+    // generate-reply 側は 2026-08-25 強化済みで両フィールドを RAG クエリに含めているが、
+    // brain-core 側の prevMetaCtx が欠落していたため非対称になっていた。
+    // winning_pattern → match_winning_patterns の命中精度向上
+    // customer_intent → match_reply_knowledge の意図別ナレッジ命中率向上
     const prevMetaCtx = opts?.prevMeta
-      ? [opts.prevMeta.closing_strategy, opts.prevMeta.reply_direction, (opts.prevMeta as Record<string, unknown>).checkpoint_stage].filter(Boolean).join(" ")
+      ? [
+          opts.prevMeta.closing_strategy,
+          opts.prevMeta.reply_direction,
+          opts.prevMeta.winning_pattern,
+          opts.prevMeta.customer_intent,
+          (opts.prevMeta as Record<string, unknown>).checkpoint_stage,
+        ].filter(Boolean).join(" ")
       : "";
     const recentCustomerMsgs = typedMessages
       .filter(m => m.sender === "customer" && m.text)
