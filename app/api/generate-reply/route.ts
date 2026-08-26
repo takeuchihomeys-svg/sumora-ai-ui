@@ -2550,6 +2550,10 @@ export async function POST(req: NextRequest) {
       if (brainMeta.template_hint) {
         lines.push(`- 📋 テンプレートヒント: 「${brainMeta.template_hint}」スタイルの返信が最も効果的。このラベルに対応する文体・構成パターンを参考にしつつ、顧客の状況に合わせて自然に書くこと`);
       }
+      // brain が今回この戦略を選んだ理由 — 返信方向性を理解して文案品質を上げるために注入
+      if (brainMeta.reason) {
+        lines.push(`- 💬 戦略選択理由: ${brainMeta.reason}`);
+      }
       // ── message-local戦術ブロック（Step1廃止に伴いbrainへ移植した分析・brainFreshForMessage時のみ）──
       if (qs.length >= 1) {
         const qLabel = qs.length > 1
