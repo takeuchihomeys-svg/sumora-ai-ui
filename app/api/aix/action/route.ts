@@ -522,6 +522,7 @@ const ACTION_MAX_TOKENS: Record<string, number> = {
   meeting_place: 600,            // 待ち合わせ案内
   acknowledge_check: 400,        // 確認しますシンプル返信
   followup_revive: 600,          // 追客メッセージ
+  zenryoku_support: 600,         // 2〜5行の短文生成
 };
 
 function maxTokensForAction(action: string): number {
@@ -1498,7 +1499,7 @@ ${SMORA_COMMON_RULES}
 
         const coverSystemFinal = coverSystem + coverDbRules + (coverBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + coverBrainAddendum : "");
         const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}` + (coverDiffNote ? `\n\n${coverDiffNote}` : "") + (coverStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + coverStarNote : "");
-        const coverResult = await callClaude(
+        const coverResult = await callClaudeHaiku(
           coverSystemFinal,
           coverUserFinal,
           currentAction
@@ -3595,7 +3596,7 @@ ${availableTemplate}`;
         } else {
           // その他: AIは冒頭表現のみ判断（本文構造はコード側で固定）。失敗時はデフォルト冒頭にフォールバック
           try {
-            const aiOpening = (await callClaude(
+            const aiOpening = (await callClaudeHaiku(
               `あなたは不動産賃貸仲介スタッフのメッセージの冒頭表現だけを決めるエンジンです。
 「（冒頭表現）募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！」という固定文の（冒頭表現）に入る一句だけを出力してください。
 ルール:
