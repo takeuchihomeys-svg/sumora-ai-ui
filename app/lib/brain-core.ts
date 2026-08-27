@@ -988,7 +988,7 @@ export async function analyzeConversation(
   let ragCheckpoints: Array<{ checkpoint_index: number; summary: string | null; key_facts: unknown; conversation_stage: string | null; similarity?: number }> = [];
   type RagKnowledgeRow = { title: string | null; content: string | null; category: string | null; conversation_state: string | null; importance: number | null; similarity: number };
   let ragKnowledgeRaw: RagKnowledgeRow[] = [];
-  let ragWinningPatterns: Array<{ situation: string | null; pattern: string; closing_action: string | null; human_type_label: string | null; outcome_type: string; notes: string | null; win_rate: number | null; importance: number; customer_intent: string | null; staff_reply_intent: string | null; similarity: number }> = [];
+  let ragWinningPatterns: Array<{ situation: string | null; pattern: string; closing_action: string | null; human_type_label: string | null; outcome_type: string; notes: string | null; win_rate: number | null; importance: number; customer_intent: string | null; staff_reply_intent: string | null; checkpoint_stage: string | null; similarity: number }> = [];
   let ragTemplates: Array<{ id: string; category: string | null; label: string | null; win_rate: number | null; use_count: number | null; won_count: number | null; similarity: number }> = [];
   // RAG: incremental mode でも実行する（winning_patterns / templates は毎回必要）。
   // checkpoint RAG のみ非incremental 限定（古い会話セーブポイントの検索は差分分析では不要）。
@@ -1073,8 +1073,18 @@ export async function analyzeConversation(
               importance: number;
               customer_intent: string | null;
               staff_reply_intent: string | null;
+              checkpoint_stage: string | null;
               similarity: number;
             }>).filter((w) => w.similarity >= 0.5);
+            // RAGソフトブースト: 現在のcheckpoint_stageと一致するパターンを先頭に並び替える
+            // embedding類似度で取得済みの結果を、フェーズ一致パターンが前に来るよう再ソートするのみ
+            const currentStage = (opts?.prevMeta?.checkpoint_stage as string | null | undefined) ?? null;
+            if (currentStage) {
+              ragWinningPatterns = [
+                ...ragWinningPatterns.filter(w => w.checkpoint_stage === currentStage),
+                ...ragWinningPatterns.filter(w => w.checkpoint_stage !== currentStage),
+              ];
+            }
             // templates RAG: 類似度 0.4 以上、won_count 降順でソート（成約実績を最優先）
             ragTemplates = ((tplRagResult.data ?? []) as typeof ragTemplates)
               .filter((t) => t.similarity >= 0.4)

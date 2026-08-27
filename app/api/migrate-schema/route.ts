@@ -1218,6 +1218,7 @@ CREATE TABLE IF NOT EXISTS winning_patterns (
   pattern               text NOT NULL,
   closing_action        text,
   human_type_label      text,
+  checkpoint_stage      text,
   outcome_type          text NOT NULL DEFAULT 'closed_won',
   notes                 text,
   win_rate              numeric,
@@ -2546,6 +2547,7 @@ LANGUAGE sql STABLE AS $func$
 $func$;
 
 -- match_winning_patterns: customer_intent / staff_reply_intent を返り値に追加（2026-08-24）
+-- checkpoint_stage を返り値に追加（2026-08-27）
 -- ※ 返り値型変更のため DROP→CREATE が必要
 DROP FUNCTION IF EXISTS match_winning_patterns(vector, int, text, int);
 CREATE OR REPLACE FUNCTION match_winning_patterns(
@@ -2566,6 +2568,7 @@ RETURNS TABLE (
   importance int,
   customer_intent text,
   staff_reply_intent text,
+  checkpoint_stage text,
   similarity double precision
 )
 LANGUAGE sql STABLE AS $func$
@@ -2581,6 +2584,7 @@ LANGUAGE sql STABLE AS $func$
     wp.importance,
     wp.customer_intent,
     wp.staff_reply_intent,
+    wp.checkpoint_stage,
     (1 - (wp.embedding <=> query_embedding))::float AS similarity
   FROM winning_patterns wp
   WHERE wp.embedding IS NOT NULL
@@ -2589,6 +2593,9 @@ LANGUAGE sql STABLE AS $func$
   ORDER BY wp.embedding <=> query_embedding
   LIMIT match_count;
 $func$;
+
+-- winning_patterns: checkpoint_stage カラム追加（2026-08-27）
+ALTER TABLE winning_patterns ADD COLUMN IF NOT EXISTS checkpoint_stage TEXT;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

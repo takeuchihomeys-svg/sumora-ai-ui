@@ -134,13 +134,17 @@ export async function analyzeClosedConversation(
   // 2. 全メッセージ + 顧客基本情報を取得
   const { data: conv } = await supabase
     .from("conversations")
-    .select("property_customer_id, suggested_aix_meta")
+    .select("property_customer_id, suggested_aix_meta, last_brain_meta")
     .eq("id", conversationId)
     .maybeSingle();
-  const pcId = (conv as { property_customer_id?: string | null; suggested_aix_meta?: Record<string, unknown> | null } | null)?.property_customer_id ?? null;
+  type ConvRow = { property_customer_id?: string | null; suggested_aix_meta?: Record<string, unknown> | null; last_brain_meta?: Record<string, unknown> | null };
+  const pcId = (conv as ConvRow | null)?.property_customer_id ?? null;
   const purchaseSignalLevel = (
-    (conv as { suggested_aix_meta?: Record<string, unknown> | null } | null)
+    (conv as ConvRow | null)
       ?.suggested_aix_meta?.purchase_signal_level as string | null
+  ) ?? null;
+  const checkpointStageFromMeta = (
+    (conv as ConvRow | null)?.last_brain_meta?.checkpoint_stage as string | null
   ) ?? null;
 
   const { data: msgRows, error: msgErr } = await supabase
@@ -357,6 +361,7 @@ ${customerInfo || "（登録情報なし）"}
     importance: isLost ? 8 : 9,
     customer_intent: result.customer_intent ?? null,
     staff_reply_intent: result.staff_reply_intent ?? null,
+    checkpoint_stage: checkpointStageFromMeta,
   });
   if (wpInsertErr) console.warn("[analyze-closed] winning_patterns insert失敗:", wpInsertErr.message);
 
