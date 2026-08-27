@@ -968,6 +968,7 @@ export default function Home() {
   const [brainLoading, setBrainLoading] = useState(false);
   const [expandedBrainConvId, setExpandedBrainConvId] = useState<string | null>(null);
   const [brainSentProperties, setBrainSentProperties] = useState<Record<string, Array<{property_name: string; room_no: string; sent_at: string}>>>({});
+  const [sentPropsAlert, setSentPropsAlert] = useState<string | null>(null);
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
   const [replyExamplesCount, setReplyExamplesCount] = useState<number | null>(null);
@@ -1476,6 +1477,11 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedPropertyRecommendIds", JSON.stringify([...dismissedPropertyRecommendIds])); } catch {}
   }, [dismissedPropertyRecommendIds]);
+
+  // モーダルが閉じたら送付済み警告バナーも消す
+  useEffect(() => {
+    if (!aixModalType) setSentPropsAlert(null);
+  }, [aixModalType]);
 
   useEffect(() => {
     try { sessionStorage.setItem("suggestViewingTemplateMap", JSON.stringify(suggestViewingTemplateMap)); } catch {}
@@ -5240,7 +5246,7 @@ export default function Home() {
     aixFileInputRef.current?.click();
   };
 
-  const openAixDirect = (type: AixActionType, skipAutoTemplate?: boolean) => {
+  const openAixDirect = async (type: AixActionType, skipAutoTemplate?: boolean) => {
     // AUTO-TEMPLATE: AIXボタン直押し時、win_rate順でキャッシュからベストテンプレートを自動選択
     if (!skipAutoTemplate) {
       const autoCategory = AIX_ACTION_META[type]?.templateCategory;
@@ -5262,6 +5268,26 @@ export default function Home() {
         setPendingTemplateSource(null);
         setPendingTemplateStructure(null);
         setPendingTemplateSample(null);
+      }
+    }
+    // 送付済み物件警告（property_send / property_recommendation 押下時）
+    if ((type === "property_send" || type === "property_recommendation") && selectedConversation?.id) {
+      const _sid = selectedConversation.id;
+      const _pcId = selectedConversation.propertyCustomerId;
+      let _sentProps = brainSentProperties[_sid];
+      if (!_sentProps && _pcId) {
+        try {
+          const _res = await fetch(`/api/check-property-duplicate?property_customer_id=${encodeURIComponent(_pcId)}`);
+          const _json = await _res.json();
+          _sentProps = (_json.list ?? []) as Array<{property_name: string; room_no: string; sent_at: string}>;
+          setBrainSentProperties((prev) => ({ ...prev, [_sid]: _sentProps! }));
+        } catch { /* ignore */ }
+      }
+      if (_sentProps && _sentProps.length > 0) {
+        const _names = _sentProps.slice(0, 5).map((p) => p.property_name + (p.room_no ? ` ${p.room_no}` : "")).join("、");
+        setSentPropsAlert(`送付済み物件が${_sentProps.length}件あります: ${_names}${_sentProps.length > 5 ? "…" : ""}`);
+      } else {
+        setSentPropsAlert(null);
       }
     }
     // CHAIN-2: AIXボタンを押した瞬間に新しいチェーンセッションを開始
@@ -8179,6 +8205,15 @@ export default function Home() {
                   className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white bg-red-500"
                 ><svg className="inline shrink-0 mr-1" style={{verticalAlign:"-2px"}} width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>再生成</button>
                 <button onClick={() => setDraftRetryConvId(null)} className="shrink-0 text-red-400 text-[11px] font-bold">✕</button>
+              </div>
+            )}
+
+            {/* 送付済み物件警告バナー（property_send / property_recommendation 押下時） */}
+            {sentPropsAlert && (
+              <div className="mx-1 mb-1 rounded-2xl border border-amber-300 bg-amber-50 px-3 py-2 flex items-center gap-2">
+                <span className="text-[11px]">⚠</span>
+                <span className="flex-1 text-[11px] font-bold text-amber-800">{sentPropsAlert}</span>
+                <button onClick={() => setSentPropsAlert(null)} className="shrink-0 text-[10px] text-[#aaa] active:text-[#555]">✕</button>
               </div>
             )}
 
