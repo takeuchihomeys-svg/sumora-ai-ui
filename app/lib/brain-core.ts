@@ -238,6 +238,15 @@ const REPLY_STYLE_RULES = `
 - 文脈に合わない共感フレーズを挿入する
 - 物件探し文脈で申込・フォーマット関連のCTAを入れる
 - 募集状況が未確認の段階で内覧誘導フレーズを付ける（「確認して連絡する」で完結させる）
+
+【申込経験者ルール（最優先戦略転換）】
+申込フォーマットを提出した実績がある顧客（2番手・審査落ち・キャンセル含む）は申込の心理障壁が通常顧客の1/3以下。
+この顧客タイプに対する戦略転換ルール（黄金フロー例外）:
+① ベンチマーク物件（申込→落選した物件）より好条件の物件を提案するとき → viewing_invite ではなく application_push を優先
+  訴求文: 「前回のお申込みフォーマットをそのまま使えます！今回は1番手でお部屋を押さえられます！」
+② ベンチマーク物件と同じマンションの別号室が新規募集されたとき → 最優先で提案し即申込訴求（内覧スキップ可能・建物を把握済みのため）
+③ ベンチマーク物件を超えない物件・顧客持ち込み物件 → estimate_sheet（最大割引見積）+ viewing_invite で内覧接点を再構築
+④ 「また別の物件を探しています」という発言は、通常顧客ではhearingのシグナルだが、申込経験者では依然proposingのホット状態として扱う
 `.trim();
 
 // 実態ベースのフェーズ別推奨テンプレートマップ
@@ -371,11 +380,18 @@ function detectPhaseFromBrainMeta(
   // P7: conversations.status は webhook が機械検証（申込書受領等）で立てる最も信頼できるソース。
   // テキストパターン推定より最優先で参照する
   convStatus?: string | null,
+  // 申込経験者フラグ: 申込フォーマット提出実績あり（sent_properties.applicant_rank が存在）
+  // または申込以降ステータス（applying/screening/closed_lost）を経験した顧客。
+  // 2番手落ち・審査落ち・キャンセルも含む。申込の心理障壁が通常顧客の1/3以下の最ホット層。
+  hasApplicationHistory = false,
 ): "hearing" | "proposing" | "viewing" | "applying" {
   if (convStatus === "applying") return "applying";
   const txt = [meta.action, meta.closing_strategy, meta.next_steps].filter(Boolean).join(" ");
   // 優先1: 審査落ち・再スタート文脈 → hearing（「また探したい」「別の物件」等が共存）
-  if (/再探し|また探|別の物件|審査落/.test(txt)) return "hearing";
+  // フェーズ降格バグ修正: 申込経験者（2番手落ち・審査落ち・キャンセル後に別物件を探す顧客）は
+  // 最ホット層であり、「また別の物件を探したい」は hearing シグナルではなく proposing 継続。
+  // hearing に降格すると最コールド扱いになり黄金フローが初回ヒアリングからやり直しになるバグがあった。
+  if (/再探し|また探|別の物件|審査落/.test(txt)) return hasApplicationHistory ? "proposing" : "hearing";
   // 優先2: 純粋な申込・審査待ち（「再」「また」「別」が共存しない場合のみ）
   // P7修正: 旧 /申込|審査/ は「審査不安」「審査が不安」「審査が心配」等の不安フレーズだけで
   // applying 誤爆していた。/申込/ は単独で有効、/審査/ は不安・心配文脈が共存しない場合のみ有効。
@@ -1236,7 +1252,7 @@ export async function analyzeConversation(
   const RECRUIT_LABEL: Record<string, string> = { open: "募集中", move_out_planned: "退去予定", occupied: "入居中", closed: "募集終了" };
   const REACTION_LABEL: Record<string, string> = { interested: "興味あり", rejected: "見送り", no_response: "反応なし" };
   const sentProps = ((sentPropsResult.data ?? []) as SentProp[]);
-  const sentPropsText = sentProps.length > 0
+  let sentPropsText = sentProps.length > 0
     ? `\n【すでに送付済みの物件（${sentProps.length}件）】\n${sentProps.map((p) => {
         const facts = [
           p.rent != null ? `家賃${p.rent.toLocaleString()}円` : "",
@@ -1245,8 +1261,22 @@ export async function analyzeConversation(
           p.customer_reaction ? `顧客反応:${REACTION_LABEL[p.customer_reaction] ?? p.customer_reaction}` : "",
         ].filter(Boolean).join("・");
         return `- ${p.property_name} ${p.room_no}（${new Date(p.sent_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}送付${facts ? `・${facts}` : ""}）`;
-      }).join("\n")}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く）。property_send・property_recommendation の候補から必ず除外すること。`
+      }).join("\n")}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`
     : "";
+
+  // 申込経験者: ベンチマーク物件の注入
+  // applicant_rank が入っている物件 = 顧客が実際に申込んだ（番手がついた）物件。
+  // この物件の条件を基準線として、新規提案の訴求方法（申込プッシュ vs 内覧誘導）を切り替えさせる。
+  const benchmarkProps = sentProps.filter((p) => p.applicant_rank != null);
+  if (benchmarkProps.length > 0) {
+    const bm = benchmarkProps[0]; // 最初の申込物件をベンチマークとする
+    sentPropsText += `\n\n【ベンチマーク物件（顧客が申込→落選した物件）】\n`;
+    sentPropsText += `${bm.property_name ?? "（物件名不明）"} ${bm.room_no ?? ""}: `;
+    sentPropsText += `${bm.applicant_rank}番手で申込→落選済み。\n`;
+    sentPropsText += `この物件の条件が顧客の基準線。\n`;
+    sentPropsText += `新規提案物件を比較し: 上回る場合は application_push（内覧スキップ可）/ 下回る場合は estimate_sheet+viewing_invite を選ぶこと。\n`;
+    sentPropsText += `顧客は申込フォーマット記入・書類提出を経験済み。申込の心理障壁が大幅に低下している。`;
+  }
 
   // ── 物件検索統括コンテキスト ─────────────────────────────────────────
   // sent_properties + property_customers から「物件検索の全体像」を動的に組み立てて注入する。
@@ -1524,9 +1554,19 @@ export async function analyzeConversation(
     ? viewingHistoryRows.map(h => ({ viewing_date: h.scheduled_date, viewing_time: h.scheduled_time, status: h.status }))
     : (viewingsResult.data ?? []) as Viewing[];
   const viewingStatusLabel: Record<string, string> = { scheduled: "予定", done: "完了", cancelled: "キャンセル" };
-  const viewingsText = viewings.length > 0
+  let viewingsText = viewings.length > 0
     ? `\n【内覧履歴・予定】${viewings.map((v) => `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`).join(" / ")}`
     : "";
+  // 内覧済み顧客の特別扱い（修正5）: 完了内覧がある顧客は対面済み＝申込プッシュ優先
+  const completedViewings = viewings.filter((v) =>
+    v.status === "completed" || v.status === "done" || v.status === "完了"
+  );
+  if (completedViewings.length > 0) {
+    viewingsText += `\n【内覧済み顧客・重要】\n`;
+    viewingsText += `この顧客はスタッフと対面済み（内覧完了: ${completedViewings.length}回）。\n`;
+    viewingsText += `対面経験により: ①他社への並行問い合わせが実質終了している ②信頼関係が形成済み ③申込への心理障壁が対面前より大幅に低下。\n`;
+    viewingsText += `次の対応指針: 提案物件が条件に合えば viewing_invite より application_push を優先。物件への反応が薄い場合も「弊社で引き続き探す」前提で関係維持。`;
+  }
 
   // H6(Fable5): ホット顧客・スタッフ要対応フラグ
   const flagParts: string[] = [];
@@ -2562,7 +2602,20 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
 
       // STEP B: brain分析結果からフェーズを推定
       // P7: conversations.status（webhookが機械検証で立てる）を最優先ソースとして渡す
-      const newPhase = detectPhaseFromBrainMeta(meta as Record<string, unknown>, status);
+      // 申込経験者判定: ①現ステータスが申込以降（applying/screening/closed_lost）
+      // ②sent_properties に applicant_rank が存在（申込フォーマット提出実績。2番手・審査落ち含む）
+      // → hearing 降格を抑止して proposing 維持（最ホット顧客の最コールド扱いバグ防止）
+      let hasApplicationHistory = ["applying", "screening", "closed_lost"].includes(status ?? "");
+      const phasePropertyCustomerId = (conv.property_customer_id as string | null) ?? null;
+      if (!hasApplicationHistory && phasePropertyCustomerId) {
+        const { count: rankCount } = await supabase
+          .from("sent_properties")
+          .select("*", { count: "exact", head: true })
+          .eq("property_customer_id", phasePropertyCustomerId)
+          .not("applicant_rank", "is", null);
+        hasApplicationHistory = (rankCount ?? 0) > 0;
+      }
+      const newPhase = detectPhaseFromBrainMeta(meta as Record<string, unknown>, status, hasApplicationHistory);
 
       // STEP C: 既存 conversation_direction を取得（conv には conversation_direction を select 済み）
       const convAsRecord = conv as unknown as Record<string, unknown>;
