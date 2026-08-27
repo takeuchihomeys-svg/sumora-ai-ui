@@ -595,7 +595,8 @@ function buildGenerationMessages(
       .map((q) => q.trim())
       .filter(Boolean);
     // P3強化: 疑問符なしの質問（「〜か教えてください」「〜でしょうか」等）も決定論で検出する
-    const detectedQuestionsNoMark = ((customerMessage || "").match(/[^\n]{4,}(?:か教えて|か知りたい|か気になり|でしょうか|ますでしょうか|か確認|ていただけ|いかがでしょう)[^\n]*/g) ?? [])
+    // 追加: 「〇〇ですか！」（感嘆符終わり質問）・「179,180円ですか」（数字+円+ですか）も質問として検出する
+    const detectedQuestionsNoMark = ((customerMessage || "").match(/[^\n]{4,}(?:か教えて|か知りたい|か気になり|でしょうか|ますでしょうか|か確認|ていただけ|いかがでしょう|ですか[！!])[^\n]*|[\d,，.]+円.*ですか[^\n]*/g) ?? [])
       .map((q) => q.trim())
       .filter((q) => q.length > 4 && !detectedQuestions.some((d) => d.includes(q) || q.includes(d)));
     const allDetectedQuestions = [...detectedQuestions, ...detectedQuestionsNoMark];
@@ -2403,7 +2404,14 @@ export async function POST(req: NextRequest) {
     }
     // 顧客の現在のメッセージが新規見積依頼なら「送付済み」フラグを解除する
     // 過去に送付済みでも、新たに「見積出して」と依頼されたら新規依頼として処理（恒久ブロック防止）
-    if (estimateAlreadySent && /見積/.test(message) && /出して|もらえ|お願い|送って|ください|欲しい|してほしい/.test(message)) {
+    // 顧客が金額について確認・反応している場合（「179,180円ですか！」「176,180円ですよね？」等の
+    // 金額確認質問）も解除する。宣言ブロックより金額質問への回答を優先するため
+    const customerAskingAboutPrice = /[¥￥]?[0-9０-９][0-9０-９,，.．]{2,}[\s　]*円/.test(message);
+    if (
+      estimateAlreadySent &&
+      ((/見積/.test(message) && /出して|もらえ|お願い|送って|ください|欲しい|してほしい/.test(message)) ||
+        customerAskingAboutPrice)
+    ) {
       estimateAlreadySent = false;
     }
     const staffPromisedEstimate =
@@ -3054,14 +3062,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const rawOutput = bodyPart ? fixedGreeting + bodyPart : (trimmedText || fixedGreeting.trim());
                 // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
                 // customerName/lineDisplayName: 本文に混入したLINE表示名を確定的に実名へ置換／除去
-                const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true, customerName, lineDisplayName, estimatePromised, customerMessage: message });
+                const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch });
                 if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
                 // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
                 return { body: cleaned, stopReason };
               }
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
               // aixGates: 通常返信ドラフトのみ機械検証。テンプレート最適化はAIX由来の日時・金額が正当なため対象外
-              const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize, customerName, lineDisplayName, estimatePromised, customerMessage: message });
+              const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch });
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               let outText = cleaned;
               // テンプレート最適化モードの後処理: 号室先頭ゼロ除去 + noEmoji時の絵文字除去（旧adaptルート互換）

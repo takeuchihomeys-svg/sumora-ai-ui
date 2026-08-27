@@ -172,12 +172,22 @@ const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement:
   },
 ];
 
+// 文中の金額（円単位）を正規化して抽出（「176,180円」「¥176,180 円」「１７６，１８０円」→ "176180"）
+// estimatePromised置換の「履歴内金額の引用免除」判定に使用する
+function extractYenAmounts(t: string): string[] {
+  return [...t.matchAll(/[¥￥]?([0-9０-９][0-9０-９,，.．]{2,})[\s　]*円/g)].map((m) =>
+    m[1].replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0)).replace(/[,，.．]/g, ""),
+  );
+}
+
 export function enforceAixGates(
   text: string,
-  opts?: { estimatePromised?: boolean; customerMessage?: string },
+  opts?: { estimatePromised?: boolean; customerMessage?: string; lastStaffMsg?: string },
 ): { cleaned: string; violations: string[] } {
   const violations: string[] = [];
   const usedReplacement = new Set<string>();
+  // 履歴内金額の引用免除用: 直前スタッフメッセージに実在する金額（スタッフが提示済み＝AIが引用してよい金額）
+  const staffPrices = opts?.lastStaffMsg ? extractYenAmounts(opts.lastStaffMsg) : [];
   // 分割払い提案ゲート: お客様が支払い方法を質問していない／「払えない」と言っていないのに
   // AIが「分割払いのご相談も可能です」等を生成した場合、該当文を削除する（置換文は挿入しない）。
   // 分割払いの提案定義はコード・テンプレ・DBのどこにも存在しないため、出現＝LLMの自由生成＝削除が正。
@@ -211,6 +221,17 @@ export function enforceAixGates(
       if (!rule) {
         outSentences.push(s);
         continue;
+      }
+      // 履歴内金額の引用免除: estimatePromised=true の強制置換（promisedReplacement）は、
+      // スタッフが直前に送った金額（例: 176,180円）を引用して顧客の誤認（179,180円）を
+      // 訂正する正当な返答まで潰してしまう。文中の金額が直前スタッフメッセージに実在する
+      // 場合は「履歴内の金額の正当な引用」とみなし、置換せずそのまま通す。
+      if (opts?.estimatePromised && rule.promisedReplacement && staffPrices.length > 0) {
+        const sentencePrices = extractYenAmounts(s);
+        if (sentencePrices.some((p) => staffPrices.includes(p))) {
+          outSentences.push(s);
+          continue;
+        }
       }
       violations.push(`${rule.name}: ${s.trim().slice(0, 40)}`);
       // 同一ルールの違反が複数文ある場合、宣言テンプレは1回だけ挿入し残りは除去（内訳の複数行等）
@@ -265,6 +286,9 @@ export function validateAndClean(
     estimatePromised?: boolean;
     // 分割払いゲート用: お客様の最新メッセージ（支払い方法を質問していない場合、返信中の分割提案文を削除）
     customerMessage?: string;
+    // 履歴内金額の引用免除用: 直前のスタッフメッセージ。返信中の金額がここに実在する場合、
+    // estimatePromised の強制置換（promisedReplacement）をスキップする（正当な金額引用の保護）
+    lastStaffMsg?: string;
   },
 ): { cleaned: string; issues: string[] } {
   const issues: string[] = []
@@ -301,6 +325,7 @@ export function validateAndClean(
     const { cleaned: gated, violations } = enforceAixGates(cleaned, {
       estimatePromised: opts.estimatePromised,
       customerMessage: opts.customerMessage,
+      lastStaffMsg: opts.lastStaffMsg,
     });
     if (violations.length > 0) {
       issues.push(...violations.map(v => "AIXゲート違反(置換済): " + v));
