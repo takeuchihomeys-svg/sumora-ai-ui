@@ -310,6 +310,33 @@ ${customerInfo || "（登録情報なし）"}
 
   // 4-F. winning_patterns: 構造化パターン（RAG検索用）
   // embedding は personality_profile + winning_pattern を結合してベクトル化
+
+  // AIX シーケンス取得（notes / closing_action 強化に使用）
+  const { data: aixLogs } = await supabase
+    .from("aix_usage_logs")
+    .select("aix_type")
+    .eq("conversation_id", conversationId)
+    .order("aix_at", { ascending: true });
+  const aixTypes = (aixLogs ?? []).map((r: { aix_type: string }) => r.aix_type);
+  const aixSequenceString = aixTypes.length > 0 ? aixTypes.join(" → ") : null;
+  const aixTerminalAction = aixTypes.length > 0 ? aixTypes[aixTypes.length - 1] : null;
+
+  // closing_action を AIX ターミナルアクションで強化（what_worked が主、AIX が補足）
+  const closingActionBase = result.what_worked ?? null;
+  const closingAction = (() => {
+    if (!aixSequenceString) return closingActionBase;
+    const terminalLabel =
+      aixTerminalAction === "application_push"
+        ? "申込へのAIX誘導シーケンス完了"
+        : aixTerminalAction === "estimate_sheet"
+        ? "見積書送付シーケンス完了"
+        : aixTerminalAction === "property_recommendation"
+        ? "物件提案シーケンス完了"
+        : `AIXシーケンス完了(${aixTerminalAction})`;
+    const aixSuffix = `${terminalLabel}: ${aixSequenceString}`;
+    return closingActionBase ? `${closingActionBase} / ${aixSuffix}` : aixSuffix;
+  })();
+
   const wpEmbedText = [result.personality_profile, result.winning_pattern].filter(Boolean).join(" / ");
   const wpEmbedding = await generateEmbedding(wpEmbedText).catch(() => null);
   const { error: wpInsertErr } = await supabase.from("winning_patterns").insert({
@@ -317,12 +344,13 @@ ${customerInfo || "（登録情報なし）"}
     pattern: isLost
       ? `【失注パターン】${result.winning_pattern}`
       : result.winning_pattern,
-    closing_action: result.what_worked ?? null,
+    closing_action: closingAction,
     human_type_label: label,
     outcome_type: outcome,
     notes: [
       result.turning_point ?? null,
       purchaseSignalLevel ? `[signal:${purchaseSignalLevel}]` : null,
+      aixSequenceString ? `[aix:${aixSequenceString}]` : null,
     ].filter(Boolean).join(" / ") || null,
     source_conversation_id: conversationId,
     embedding: wpEmbedding ? JSON.stringify(wpEmbedding) : null,
