@@ -30,6 +30,7 @@ type AnalysisJson = {
   human_type_label?: string;
   customer_intent?: string;
   staff_reply_intent?: string;
+  checkpoint_stage?: string;
 };
 
 // Opus 4.8 直接呼び出し（eval-winning-pattern の callSonnet と同パターン）
@@ -223,7 +224,8 @@ ${customerInfo || "（登録情報なし）"}
   "what_worked": "${isLost ? "スタッフが本来取るべきだった対応（改善案・具体的に）" : "スタッフが取った行動のうち最も効果があったもの（具体的に）"}",
   "human_type_label": "このタイプの顧客を一言で表すラベル（例：安心重視・慎重派、費用最優先・即決型、比較検討・背中押し型 等）",
   "customer_intent": "転換点（態度が変わった瞬間）での顧客メッセージの意図（question/consultation/desire/decision/positive/negative/chat のいずれか）",
-  "staff_reply_intent": "その転換点でスタッフが実際に取ったアプローチ（empathy/inform/propose/guide/reassure/push/confirm のいずれか）"
+  "staff_reply_intent": "その転換点でスタッフが実際に取ったアプローチ（empathy/inform/propose/guide/reassure/push/confirm のいずれか）",
+  "checkpoint_stage": "hearing/proposing/viewing/applying/contract のいずれか。会話の成約時点でのフェーズを判定する。hearing=条件ヒアリング中, proposing=物件提案中, viewing=内覧調整中, applying=申込手続き中, contract=契約完了"
 }`;
 
   const rawText = await callOpus(prompt);
