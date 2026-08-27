@@ -2607,6 +2607,28 @@ CREATE TABLE IF NOT EXISTS property_candidate_pools (
 CREATE INDEX IF NOT EXISTS idx_pcp_customer_id ON property_candidate_pools(property_customer_id);
 CREATE INDEX IF NOT EXISTS idx_pcp_sent_at ON property_candidate_pools(sent_at DESC);
 
+-- aix_transition_stats: 成約会話のAIXボタン遷移カウント（2026-08-27追加）
+-- analyze-closed-conversation.ts が成約時に increment_aix_transition() で自動upsert
+-- brain-core.ts が動的に読み込み（AIX_NEXT_ACTION_MAP ハードコードの代替）
+CREATE TABLE IF NOT EXISTS aix_transition_stats (
+  from_aix_type TEXT NOT NULL,
+  to_aix_type TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0,
+  last_updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (from_aix_type, to_aix_type)
+);
+ALTER TABLE aix_transition_stats DISABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION increment_aix_transition(p_from TEXT, p_to TEXT)
+RETURNS void AS $$
+BEGIN
+  INSERT INTO aix_transition_stats (from_aix_type, to_aix_type, count, last_updated_at)
+  VALUES (p_from, p_to, 1, now())
+  ON CONFLICT (from_aix_type, to_aix_type)
+  DO UPDATE SET count = aix_transition_stats.count + 1, last_updated_at = now();
+END;
+$$ LANGUAGE plpgsql;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

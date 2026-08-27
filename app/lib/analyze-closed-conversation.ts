@@ -360,5 +360,17 @@ ${customerInfo || "（登録情報なし）"}
   });
   if (wpInsertErr) console.warn("[analyze-closed] winning_patterns insert失敗:", wpInsertErr.message);
 
+  // 4-G. aix_transition_stats: 成約会話のAIX遷移を蓄積（AIX_NEXT_ACTION_MAP動的更新）
+  // 失注は含めない（成約パターンのみ蓄積）
+  if (!isLost && aixTypes.length >= 2) {
+    for (let i = 0; i < aixTypes.length - 1; i++) {
+      const { error: trErr } = await supabase.rpc("increment_aix_transition", {
+        p_from: aixTypes[i],
+        p_to: aixTypes[i + 1],
+      });
+      if (trErr) console.warn("[analyze-closed] aix_transition_stats upsert失敗:", trErr.message);
+    }
+  }
+
   return { ok: true };
 }

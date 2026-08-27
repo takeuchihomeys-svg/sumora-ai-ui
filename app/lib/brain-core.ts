@@ -197,20 +197,8 @@ const AIX_CAPABILITY_MAP = `
 - 成約の典型順（黄金フロー）: condition_hearing → property_send → property_recommendation → estimate_sheet → viewing_invite → meeting_place → application_push（property_check_result は顧客が物件URLを送ってきた時の割り込みアクションであり順序フローに含めない）
 `.trim();
 
-// 成約会話（closed_won）の aix_usage_logs 遷移分析から得た次打ちアクション推奨マップ（2026-08-25分析・n=15会話）。
-// feedback_static_vs_dynamic_db ルール通り、少サンプルのためDB化せずコード内定数（サンプル50会話超えでテーブル移行を検討）。
-// 値は「Brainプロンプトに注入する推奨文言」。property_check_result / application_push は自己ループが最頻のため分岐文言。
-const AIX_NEXT_ACTION_MAP: Record<string, string> = {
-  condition_hearing: "次は property_send が最頻（2回）",
-  property_send: "次は property_recommendation が最頻（12回・送付直後に必ず1件オススメを打つのが成約パターン）",
-  property_recommendation: "次は estimate_sheet が最頻（5回）",
-  estimate_sheet: "次は application_push が最頻（4回）",
-  viewing_invite: "次は meeting_place が最頻（5回）",
-  meeting_place: "次は property_check_result が最頻（3回）",
-  property_check_result: "自己ループが最頻（13回・顧客が物件URLを送るたびに確認結果を返す）。顧客の反応待ちなら aix:null、確認が一巡して完了したら property_send（3回）または estimate_sheet / viewing_invite（各2回）へ進む",
-  application_push: "自己ループが最頻（3回・催促の再打ち）。終端アクションのため、顧客の反応待ちなら aix:null が正解",
-  acknowledge_check: "次は property_send（1回）",
-};
+// AIX遷移マップはaix_transition_statsテーブルから動的取得（brain関数内で構築）。
+// 旧ハードコード AIX_NEXT_ACTION_MAP は2026-08-27にDB化。
 
 // 返信文体・共感フレーズ・条件変更文脈の恒久ルール（generate-reply の同名ルールと同一の単一基準）
 // closing_strategy / next_steps / template_hint がこのルールに反する提案を出さないようにするための静的ブロック。
@@ -752,7 +740,7 @@ export async function analyzeConversation(
   // limit 30→15: checkpoint（RAG検索含む）が古い会話をカバーするため、直近15件で十分。
   // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
   // count: "exact" は総メッセージ数のプロンプト注入用（B3）
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult, transitionStatsResult] = await Promise.all([
     supabase
       .from("messages")
       // 監査FIX(2026-08-20): quoted_message_id（物件カード引用リプライの判別）と
@@ -915,6 +903,11 @@ export async function analyzeConversation(
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(15),
+  // aix_transition_stats: AIX遷移マップ（成約会話の実測データ・DB動的）
+  supabase
+    .from("aix_transition_stats")
+    .select("from_aix_type, to_aix_type, count")
+    .order("count", { ascending: false }),
   ]);
 
   const { data: messages, error, count: totalMessageCount } = msgResult;
@@ -941,6 +934,12 @@ export async function analyzeConversation(
   // 2) 旧ログ fallback: is_aix_generated=true × sent_at ±3分
   type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null };
   const aixLogs = (aixLogsResult.data ?? []) as AixLog[];
+  // AIX遷移マップ（DB動的）: from_aix_type → [{to, count}] 降順
+  const aixTransitionMap: Record<string, Array<{ to: string; count: number }>> = {};
+  for (const row of (transitionStatsResult.data ?? []) as { from_aix_type: string; to_aix_type: string; count: number }[]) {
+    if (!aixTransitionMap[row.from_aix_type]) aixTransitionMap[row.from_aix_type] = [];
+    aixTransitionMap[row.from_aix_type].push({ to: row.to_aix_type, count: row.count });
+  }
   const aixTypeByLmid = new Map<string, string>();
   for (const l of aixLogs) {
     if (l.line_message_id && l.aix_type) aixTypeByLmid.set(l.line_message_id, l.aix_type);
@@ -1464,13 +1463,13 @@ export async function analyzeConversation(
   const recentAixSeqText = aixLogs.slice(0, 3).length > 0
     ? `\n【直近AIXアクション（新→旧順）】${aixLogs.slice(0, 3).map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}`).join(" → ")}`
     : "";
-  // 成約実績・次打ちマップ: 直近の aix_type をキーに AIX_NEXT_ACTION_MAP を引き、成約会話の実測遷移を推奨候補として注入する。
+  // 成約実績・次打ちマップ（DB動的）: aix_transition_stats から取得した遷移確率を推奨候補として注入する。
   // あくまで「推奨候補」であり、REPLY_STYLE_RULES のフェーズ制約（募集状況未確認での内覧誘導禁止等）と
   // 「物件送付直後で顧客の反応待ちなら aix:null」ルールが常に優先（actionWinRateText と同じ緊張関係を作らないため明記）。
   const lastAixType = aixLogs[0]?.aix_type ?? null;
-  const nextActionHint = lastAixType ? AIX_NEXT_ACTION_MAP[lastAixType] : undefined;
-  const nextActionMapText = lastAixType && nextActionHint
-    ? `\n【成約実績・次打ちマップ】直近AIXが ${lastAixType} の場合、成約会話では${nextActionHint}。※これは推奨候補。会話の実態（顧客の返信内容・フェーズ制約・募集状況未確認での内覧誘導禁止）と「物件送付直後で顧客の反応待ちなら aix:null」ルールが常に優先。`
+  const transitions = lastAixType ? (aixTransitionMap[lastAixType] ?? []) : [];
+  const nextActionMapText = lastAixType && transitions.length > 0
+    ? `\n【成約実績・次打ちマップ】直近AIXが ${lastAixType} の場合、成約会話では${transitions.slice(0, 3).map(t => `${t.to}が${t.count}回`).join("・")}。※推奨候補。会話の実態（顧客の返信内容・フェーズ制約・募集状況未確認での内覧誘導禁止）と「物件送付直後で顧客の反応待ちなら aix:null」ルールが常に優先。`
     : "";
   const aixHistoryText = usedAixTypes.length > 0
     ? `${recentAixSeqText}${nextActionMapText}\n【会話全体で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
