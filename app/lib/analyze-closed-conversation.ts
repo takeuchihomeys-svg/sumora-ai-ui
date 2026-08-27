@@ -316,7 +316,7 @@ ${customerInfo || "（登録情報なし）"}
     .from("aix_usage_logs")
     .select("aix_type")
     .eq("conversation_id", conversationId)
-    .order("aix_at", { ascending: true });
+    .order("created_at", { ascending: true });
   const aixTypes = (aixLogs ?? []).map((r: { aix_type: string }) => r.aix_type);
   const aixSequenceString = aixTypes.length > 0 ? aixTypes.join(" → ") : null;
   const aixTerminalAction = aixTypes.length > 0 ? aixTypes[aixTypes.length - 1] : null;
