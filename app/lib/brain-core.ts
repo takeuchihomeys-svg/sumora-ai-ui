@@ -81,6 +81,7 @@ export type SuggestedAixMeta = {
   // ai_summary_jsonからの感情状態
   customer_emotion?: string | null;
   purchase_signal_level?: "none" | "soft" | "strong" | "peak" | null;  // 購買シグナル強度（none=一般質問 / soft=1件具体確認 / strong=異カテゴリ2件以上 / peak=申込直前最強）
+  human_type_label?: string | null;  // 顧客タイプ（winning_patternsのRAGヒット上位から取得。prevMetaで引き継ぎ）
 } | null;
 
 // Canonical mapping from AIX action key → staff guidance note
@@ -1593,6 +1594,7 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
     }
     const pmNgPoints = (pm.property_search_params as { ng_points?: string } | null)?.ng_points;
     if (pmNgPoints) parts.push("NG条件（前回確定）: " + pmNgPoints + "（この情報はリセット禁止）");
+    if (pm.human_type_label) parts.push("顧客タイプ（前回確定）: " + pm.human_type_label + "（この情報はリセット禁止。顧客の本質的な性格・行動パターンを示す。必ず引き継ぐこと）");
     return parts.join("\n") + "\n\n";
   })() : "";
 
@@ -2010,6 +2012,12 @@ ${history}`;
     const winningPattern = ((brainSummaryJson as Record<string, unknown> | null)?.winning_pattern as string) ?? null;
     if (!winningPattern && brainSummaryJson !== null) console.warn("[brain-core] winning_pattern not found in ai_summary_json:", conversationId);
 
+    // human_type_label: winningPatternが一致するRAGパターンから取得。なければ上位パターンの値を使う
+    const humanTypeLabel: string | null =
+      ragWinningPatterns.find((w) => w.pattern === winningPattern && w.human_type_label)?.human_type_label
+      ?? ragWinningPatterns[0]?.human_type_label
+      ?? null;
+
     // ── 2択UIフラグ決定論ゲート ────────────────────────────────────────────────────
     // 成約データ分析（closed_won 15件 n=7の条件トレードオフ局面）より:
     //   proposingフェーズで条件トレードオフ質問 → property_send/recommendation が最多成約（5件）
@@ -2096,6 +2104,7 @@ ${history}`;
       winning_pattern: winningPattern,
       customer_emotion: ((brainSummaryJson as Record<string, unknown> | null)?.emotion as string) ?? null,
       purchase_signal_level: ((brainSummaryJson as Record<string, unknown> | null)?.purchase_signal_level as "none" | "soft" | "strong" | "peak" | null) ?? null,
+      human_type_label: humanTypeLabel,
       // 鮮度ゲートの基準: 今回の分析が見た最新顧客メッセージのcreated_at。
       // cachedモード返却時はこの値が古いまま残るため、generate-reply側で自動的にstale判定される
       analyzed_msg_ts: lastCustomerMsg?.created_at ?? null,
