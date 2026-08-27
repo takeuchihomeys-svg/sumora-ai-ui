@@ -1234,7 +1234,7 @@ export async function analyzeConversation(
           p.customer_reaction ? `顧客反応:${REACTION_LABEL[p.customer_reaction] ?? p.customer_reaction}` : "",
         ].filter(Boolean).join("・");
         return `- ${p.property_name} ${p.room_no}（${new Date(p.sent_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}送付${facts ? `・${facts}` : ""}）`;
-      }).join("\n")}`
+      }).join("\n")}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く）。property_send・property_recommendation の候補から必ず除外すること。`
     : "";
 
   // ── 物件検索統括コンテキスト ─────────────────────────────────────────
@@ -1466,14 +1466,23 @@ export async function analyzeConversation(
   // 成約実績・次打ちマップ（DB動的）: aix_transition_stats から取得した遷移確率を推奨候補として注入する。
   // あくまで「推奨候補」であり、REPLY_STYLE_RULES のフェーズ制約（募集状況未確認での内覧誘導禁止等）と
   // 「物件送付直後で顧客の反応待ちなら aix:null」ルールが常に優先（actionWinRateText と同じ緊張関係を作らないため明記）。
+  // 連続 property_check_result 検出（自己ループ防止: 3回連続で escalation 強制）
+  let consecutivePcr = 0;
+  for (const l of aixLogs) {
+    if (l.aix_type === "property_check_result") consecutivePcr++;
+    else break;
+  }
+  const pcrLoopWarning = consecutivePcr >= 3
+    ? "\n【⚠️ 自己ループ警告（最重要）】property_check_result が直近" + consecutivePcr + "回連続しています。同じ物件の確認を繰り返しても会話が前進しません。次のアクションは必ず viewing_invite（内覧誘導）または estimate_sheet（見積書）にエスカレーションしてください。property_check_result の再選択は絶対禁止です。"
+    : "";
   const lastAixType = aixLogs[0]?.aix_type ?? null;
   const transitions = lastAixType ? (aixTransitionMap[lastAixType] ?? []) : [];
   const nextActionMapText = lastAixType && transitions.length > 0
     ? `\n【成約実績・次打ちマップ】直近AIXが ${lastAixType} の場合、成約会話では${transitions.slice(0, 3).map(t => `${t.to}が${t.count}回`).join("・")}。※推奨候補。会話の実態（顧客の返信内容・フェーズ制約・募集状況未確認での内覧誘導禁止）と「物件送付直後で顧客の反応待ちなら aix:null」ルールが常に優先。`
     : "";
-  const aixHistoryText = usedAixTypes.length > 0
-    ? `${recentAixSeqText}${nextActionMapText}\n【会話全体で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
-    : "";
+  const aixHistoryText = (usedAixTypes.length > 0 || pcrLoopWarning)
+    ? `${recentAixSeqText}${nextActionMapText}${pcrLoopWarning}\n【会話全体で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
+    : pcrLoopWarning;
 
   // H6(Fable5): 予約送信・未完了タスク・内覧予定を注入（重複提案防止・next_steps の接地）
   type ScheduledMsg = { text: string | null; scheduled_at: string };
@@ -1577,6 +1586,13 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
     if (pm.urgency_appropriate === false) parts.push("緊急表現: 前回判定で使用不可（直近スタッフ送信で使用済み）");
     if (pm.recommended_tone) parts.push(`推奨トーン: ${pm.recommended_tone}`);
     if (pm.purchase_signal_level && ["soft", "strong", "peak"].includes(pm.purchase_signal_level)) parts.push(`購買シグナル（前回蓄積）: ${pm.purchase_signal_level}（この強度は維持・または新着メッセージのシグナルで更新すること。none に戻さない限りリセット禁止）`);
+    const pmNgProps = (pm.property_search_params as { ng_properties?: Array<{ property_name: string; room_no: string }> } | null)?.ng_properties;
+    if (pmNgProps?.length) {
+      const ngNames = pmNgProps.map((p) => p.property_name + (p.room_no ? " " + p.room_no : "")).join("、");
+      parts.push("NG物件（前回確定・再提案禁止）: " + ngNames + "（この情報はリセット禁止。必ず引き継ぐこと）");
+    }
+    const pmNgPoints = (pm.property_search_params as { ng_points?: string } | null)?.ng_points;
+    if (pmNgPoints) parts.push("NG条件（前回確定）: " + pmNgPoints + "（この情報はリセット禁止）");
     return parts.join("\n") + "\n\n";
   })() : "";
 
