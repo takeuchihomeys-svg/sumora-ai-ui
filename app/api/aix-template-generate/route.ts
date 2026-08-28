@@ -287,23 +287,33 @@ type ExampleHit = {
   conversation_state: string;
   is_starred: boolean;
   reply_angle: string | null;
+  aix_action?: string | null;   // match_aix_reply_examples 由来の実例のみセットされる
   similarity: number;
 };
 
-function buildExamplesSection(rows: ExampleHit[]): string {
-  const ranked = rows
-    .filter((ex) => (ex.similarity ?? 0) >= 0.5 && (ex.sent_reply ?? "").trim().length > 0)
+// similarity閾値フィルタ＋⭐/reply_angleブーストの複合スコアで降順ランキング
+// （line_reply実例は0.5 / AIX実例は多様性が高いため0.45に緩和して呼び出す）
+function rankExamples(rows: ExampleHit[], minSimilarity = 0.5): ExampleHit[] {
+  return rows
+    .filter((ex) => (ex.similarity ?? 0) >= minSimilarity && (ex.sent_reply ?? "").trim().length > 0)
     .sort((a, b) => {
       const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0);
       const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0);
       return scoreB - scoreA;
-    })
-    .slice(0, 6);
+    });
+}
+
+// ランキング済み実例リストをプロンプトセクション文字列に整形（並び順は保持する）
+function formatExamplesSection(ranked: ExampleHit[]): string {
   if (ranked.length === 0) return "";
   return "【⭐ スモラの実際の返信例（状況が類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・テンポをこの例から忠実に再現すること。構成・内容は橋渡し文の役割（構造化データはAIXが正）を最優先】\n" +
     ranked.map((ex, i) =>
-      `[例${i + 1}${ex.is_starred ? "⭐" : ""}]\nお客様: 「${safeSlice(ex.customer_message ?? "", 200)}」\nスモラ: 「${safeSlice(ex.sent_reply, 600)}」`
+      `[例${i + 1}${ex.is_starred ? "⭐" : ""}${ex.aix_action ? "・AIX橋渡し文実例" : ""}]\nお客様: 「${safeSlice(ex.customer_message ?? "", 200)}」\nスモラ: 「${safeSlice(ex.sent_reply, 600)}」`
     ).join("\n\n");
+}
+
+function buildExamplesSection(rows: ExampleHit[]): string {
+  return formatExamplesSection(rankExamples(rows).slice(0, 6));
 }
 
 // ─── POST ────────────────────────────────────────────────────────────────────
@@ -491,6 +501,7 @@ export async function POST(req: NextRequest) {
   let knowledgeSection = "";
   let examplesSection = "";
   let ragQueryLength = 0;
+  let aixVecHitCount = 0;   // match_aix_reply_examples のヒット数（テレメトリ用）
   if (process.env.OPENAI_API_KEY) {
     const recentCustomerMsgs = (recentMessages ?? [])
       .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
@@ -537,7 +548,7 @@ export async function POST(req: NextRequest) {
       const emb = await generateEmbedding(ragQuery);
       if (emb) {
         const stateAliases = STATE_SEARCH_ALIASES[normalizedState] ?? [normalizedState];
-        const [wpRes, knRes, exRes] = await Promise.all([
+        const [wpRes, knRes, exRes, aixExRes] = await Promise.all([
           supabase.rpc("match_winning_patterns", {
             query_embedding: emb,
             // H2: メタデータ再ランキングの母集団を確保するため 6→10 に拡大
@@ -555,6 +566,14 @@ export async function POST(req: NextRequest) {
             query_embedding: emb,
             match_count: 20,
             filter_states: stateAliases,
+          }),
+          // AIX専用pgvector検索（match_reply_examplesとは別RPC・entry_source='aix_action' 実例のみ）
+          // match_reply_examples は entry_source='line_reply' ハードコードのためAIX実例が永遠に
+          // ヒットしない → 専用RPCで過去のAIX橋渡し文実例を類似検索する（同一actionは+0.05ブースト）
+          supabase.rpc("match_aix_reply_examples", {
+            query_embedding: emb,
+            match_count: 10,
+            filter_action: actionType ?? null,
           }),
         ]);
         // H2: RPCが返すメタデータ列（checkpoint_stage / customer_intent / win_rate / human_type_label）を型に追加
@@ -601,7 +620,19 @@ export async function POST(req: NextRequest) {
           knowledgeSection = wrapKnowledgeSection(kn.text);
           knowledgeUsedIds.push(...kn.usedIds);
         }
-        const exText = buildExamplesSection((exRes.data ?? []) as ExampleHit[]);
+        // AIX橋渡し文実例（pgvector）: 多様性が高いため閾値を0.45に緩和（⭐+0.15ブーストは共通）
+        aixVecHitCount = ((aixExRes.data ?? []) as ExampleHit[]).length;
+        const aixVecRows = rankExamples((aixExRes.data ?? []) as ExampleHit[], 0.45).slice(0, 4);
+        const lineVecRows = rankExamples((exRes.data ?? []) as ExampleHit[]).slice(0, 6);
+        // マージ: AIX実例を先頭に配置（橋渡し文の実績を優先）・sent_reply本文で重複排除
+        const seenReplies = new Set<string>();
+        const mergedRows = [...aixVecRows, ...lineVecRows].filter((ex) => {
+          const key = (ex.sent_reply ?? "").trim();
+          if (seenReplies.has(key)) return false;
+          seenReplies.add(key);
+          return true;
+        }).slice(0, 8);
+        const exText = formatExamplesSection(mergedRows);
         if (exText) {
           examplesSection = wrapExamplesSection(exText);
         }
@@ -848,7 +879,7 @@ export async function POST(req: NextRequest) {
       ` principles=${topPrinciples.length} loss=${lossPatterns.length} dbRules=${dbRules ? "ok" : "none"}` +
       ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}` +
       ` actionBucket=${actionBucketCategory ? `${actionBucketCategory}:${actionBucketRows.length}` : "-"}` +
-      ` aixEx=${aixExampleRows.length}` +
+      ` aixEx=${aixExampleRows.length} aixVec=${aixVecHitCount}` +
       ` knUsedIds=${knowledgeUsedIds.length}`,
     );
 

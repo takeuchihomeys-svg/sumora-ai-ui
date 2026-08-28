@@ -2645,6 +2645,49 @@ ALTER TABLE aix_generate_log ADD COLUMN IF NOT EXISTS example_backfilled_at TIME
 CREATE INDEX IF NOT EXISTS idx_aix_generate_log_backfill
   ON aix_generate_log(generated_at DESC) WHERE example_backfilled_at IS NULL AND status = 'used';
 
+-- ── match_aix_reply_examples: AIX橋渡し文実例のpgvector類似検索RPC（2026-08-28追加）──
+-- match_reply_examples は entry_source='line_reply' がハードコードされており AIX実例が
+-- 永遠にヒットしないため、entry_source='aix_action' 専用の別RPCとして新設。
+-- （match_reply_examples は generate-reply が使用中のため変更禁止）
+-- filter_action: 同一 aix_action の実例に similarity +0.05 ブースト（同アクション優先）
+CREATE OR REPLACE FUNCTION match_aix_reply_examples(
+  query_embedding vector,
+  match_count integer,
+  filter_action text DEFAULT NULL
+)
+RETURNS TABLE(
+  id uuid,
+  customer_message text,
+  sent_reply text,
+  conversation_state text,
+  is_starred boolean,
+  reply_angle text,
+  aix_action text,
+  similarity double precision
+)
+LANGUAGE sql
+STABLE
+AS $func$
+  SELECT
+    ae.id,
+    ae.customer_message,
+    ae.sent_reply,
+    ae.conversation_state,
+    ae.is_starred,
+    ae.reply_angle,
+    ae.aix_action,
+    CASE
+      WHEN filter_action IS NOT NULL AND ae.aix_action = filter_action
+      THEN (1 - (ae.embedding <=> query_embedding))::float + 0.05
+      ELSE (1 - (ae.embedding <=> query_embedding))::float
+    END AS similarity
+  FROM ai_reply_examples ae
+  WHERE ae.entry_source = 'aix_action'
+    AND ae.embedding IS NOT NULL
+  ORDER BY ae.embedding <=> query_embedding
+  LIMIT match_count
+$func$;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
