@@ -3,6 +3,13 @@ import { after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+import {
+  AIX_STAFF_NOTES,
+  AIX_BUTTON_LABELS,
+  buildAixStaffNote,
+  detectPropertyCheckPattern,
+  normalizeAixActionKey,
+} from "@/app/lib/aix-taxonomy";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -33,6 +40,10 @@ export type SuggestedAixMeta = {
   note: string;
   source: string;
   enforcement_level: "required" | "recommended";
+  // property_check_result の1キー多義解消: 会話文脈から判定したサブパターン
+  // （mgmt_initial_cost / nearby_parking / mgmt_guarantor 等）。判定できた場合、
+  // note は「確認した（条件・交渉）」ボタンへの具体的指示になる（aix-taxonomy.ts 参照）
+  check_pattern?: string | null;
   closing_strategy?: string;
   template_hint?: string;  // 次に使うべきAIXタブのラベルカテゴリ名（TEMPLATE_HINT_ALLOWED_LABELS の含む判定を通過した値のみ。例: "物件ピックアップした", "1件特にオススメする", "①申込み時フォーマット（連帯保証人）"。トーン説明等の自由記述はゲートで null に落ちる）
   next_steps?: string[];  // ["Step1: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 【AIX】○○テンプレートを送る"]
@@ -86,23 +97,12 @@ export type SuggestedAixMeta = {
 
 // Canonical mapping from AIX action key → staff guidance note
 // Keys must match AIX_ACTION_META keys in page.tsx
-const AIX_BRAIN_NOTES: Record<string, string> = {
-  viewing_invite:          "内覧日程の候補を提示してください → AIX【内覧日調整】で日時を選択して送信してください",
-  property_send:           "まず物件をお探しする旨をお客さんに伝えてから、Chrome拡張ツールで検索してください。物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
-  estimate_sheet:          "見積書が届いたら → AIX【見積書送る】で読み取って自動計算＋カバーメッセージを生成できます",
-  application_push:        "AIX【申込へ！】でクロージングメッセージを生成できます",
-  condition_hearing:       "AIX【条件ヒアリング】ボタンで既知情報をスキップした形式で送れます",
-  acknowledge_check:       "送信後 → AIX【確認します】で管理会社への空室確認＋見積書依頼を送ってください（宛先は管理会社です）",
-  followup_revive:         "AIX【追客する】で再接触メッセージを生成できます",
-  property_check_result:   "管理会社から返答が来たら → AIX【物件確認した（募集状況）】で結果報告文を生成してください",
-  property_recommendation: "お客様の条件に最も合う1件を特にオススメとしてAIX【物件オススメ】で提案してください",
-  meeting_place:           "内覧の日時・物件が確定したら → AIX【待ち合わせ】で待ち合わせ場所の案内を送ってください",
-  greeting_viewing:        "内覧前後の挨拶は → AIX【内覧挨拶】でシーンに合わせた挨拶メッセージを生成できます",
-  // ※ STATUS_MEANING にも会話ステータスとして property_search が存在するが、これは意図的な同名
-  //   （ステータス=条件ヒアリング段階 / アクション=拡張ツールでの物件検索実行）。混同注意。
-  //   page.tsx の AIX_ACTION_META には同キー追加済み（「物件を探す」・2026-08確認）。
-  property_search:         "お客さんの条件に合う物件をChrome拡張ツール（リアプロ/itandi/レインズ）で検索してください。送付済み物件は候補から除外すること",
-};
+// 2026-08 AIXボタン種別アナウンス改善: generate-reply の AIX_ACTION_NOTES との二重管理を解消し、
+// aix-taxonomy.ts の AIX_STAFF_NOTES を単一ソースとして共有する（文言乖離の構造的防止）。
+// ※ STATUS_MEANING にも会話ステータスとして property_search が存在するが、これは意図的な同名
+//   （ステータス=条件ヒアリング段階 / アクション=拡張ツールでの物件検索実行）。混同注意。
+//   page.tsx の AIX_ACTION_META には同キー追加済み（「物件を探す」・2026-08確認）。
+const AIX_BRAIN_NOTES: Record<string, string> = AIX_STAFF_NOTES;
 
 // Case1対策: 顧客が物件条件を能動的に問い合わせた局面（「〜はありますか」「広め」「間取り」
 // 「ダブルベッド」「〇LDK」等）の検出用。この局面の正解は property_send
@@ -1793,7 +1793,10 @@ ${history}`;
 
     // Use a canonical action key from AIX_BRAIN_NOTES if Haiku returned one we recognise.
     // If the aix value is unknown or null, fall back to empty string so the row still gets saved.
-    let finalAix = parsed.aix && AIX_BRAIN_NOTES[parsed.aix] ? parsed.aix : null;
+    // 2026-08 AIXボタン種別アナウンス改善: 完全一致だけでなく normalizeAixActionKey で
+    // 語彙近傍の出力（"acknowledge_result"・日本語ラベル・「AIX【見積書送る】で〜」等）も
+    // 正準キーへ正規化する。従来はこれらが全て action=""（ボタン特定不能）に落ちていた。
+    let finalAix: string | null = normalizeAixActionKey(parsed.aix);
     // Case1対策（決定論的矯正・プロンプト任せにしない）:
     // suggested_aix_button は brainAix（Haiku提案）＞ signalAix の優先構造のため、
     // プロンプト側の「送付0件→property_search」誘導で Haiku が property_search を返すと
@@ -1843,6 +1846,23 @@ ${history}`;
       lastCustomerMsg.image_type !== "floor_plan"
     ) {
       finalAix = "estimate_sheet";
+    }
+    // AIXボタン種別アナウンス改善(2026-08): LLMがボタンを特定できなかった場合、
+    // 信号ベース決定論（detectSignalBasedAixFallback）でボタン種別を判定して action を埋める。
+    // 従来この判定結果は conversation_direction.suggested_aix_button のみに使われ、
+    // suggested_aix_meta.action は ""（note=LLM生文字列）のまま保存されていたため、
+    // ホット会話（内覧希望・金額質問・空室確認依頼）でスタッフに「どのボタンを押すか」が
+    // 一切届かない構造だった（実会話調査: きえ/ひろろ/reina 全件で meta 空白のまま手打ち対応）。
+    // ここで判定することで後段の内覧誤提案ガード・品質ゲート・first_reply例外は従来どおり全て適用される。
+    if (finalAix === null) {
+      const fallbackPhase = ((): "hearing" | "proposing" | "viewing" | "applying" => {
+        const cs = typeof parsed.checkpoint_stage === "string" ? parsed.checkpoint_stage : null;
+        if (cs === "hearing" || cs === "proposing" || cs === "viewing" || cs === "applying") return cs;
+        if (phaseEstimate === "hearing" || phaseEstimate === "proposing" || phaseEstimate === "viewing" || phaseEstimate === "applying") return phaseEstimate;
+        return "proposing";
+      })();
+      const signalAix = await detectSignalBasedAixFallback(conversationId, propertyCustomerId, fallbackPhase);
+      if (signalAix && AIX_BRAIN_NOTES[signalAix]) finalAix = signalAix;
     }
     // 内覧誤提案ガード（決定論的矯正・プロンプト任せにしない）:
     // viewing_invite は「顧客の反応」が前提のアクション。①最終メッセージがスタッフ送信
@@ -2137,9 +2157,27 @@ ${history}`;
         })())
       : undefined;
 
+    // ── AIXボタン種別アナウンス組み立て（2026-08）──────────────────────────────
+    // property_check_result の1キー多義解消: 直近会話文脈から check_pattern（初期費用交渉・
+    // 近隣月極・保証会社等）を判定し、「物件確認した（募集状況）」と「確認した（条件・交渉）」の
+    // どちらのUIボタンをどのサブパターンで押すべきかを note で具体的に明示する。
+    const checkKind = finalAix === "property_check_result"
+      ? detectPropertyCheckPattern(typedMessages.slice(0, 8).map((m) => m.text ?? "").join("\n"))
+      : null;
+    // finalAix=null時のnote改善: 従来はLLM生文字列（parsed.action）がそのまま note に入り
+    // 「ボタン特定不能なフリーテキスト」表示になっていた。既知ボタンへ写像できる場合は
+    // 参考ボタン名を明示した具体的指示に整形する（actionは""のまま＝強制はしない）。
+    const freeTextAixKey = !finalAix ? normalizeAixActionKey(parsed.action) : null;
+    const staffNote = finalAix
+      ? buildAixStaffNote(finalAix, checkKind)
+      : freeTextAixKey
+        ? `（参考）AIX【${AIX_BUTTON_LABELS[freeTextAixKey] ?? freeTextAixKey}】での対応が候補です。${(parsed.action ?? "").trim()}`.trim()
+        : (parsed.action ?? "");
+
     return {
       action: finalAix ?? "",
-      note: finalAix ? AIX_BRAIN_NOTES[finalAix] : (parsed.action ?? ""),
+      note: staffNote,
+      check_pattern: checkKind?.check_pattern ?? null,
       source,
       enforcement_level: enforcementLevel,
       closing_strategy: parsed.closing_strategy || undefined,

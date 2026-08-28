@@ -34,6 +34,9 @@ import {
 import { PROPERTY_CONDITION_INQUIRY_RE, type SuggestedAixMeta } from "@/app/lib/brain-core";
 import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
 import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
+// AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
+// AIX_STAFF_NOTES を単一ソースとして brain-core の AIX_BRAIN_NOTES と共有する（文言乖離の構造的防止）
+import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 300;
@@ -203,19 +206,10 @@ function buildSensitiveGateNote(customerMessage: string): string {
 // このルートは brain が確定した action をトレーラーに変換するだけ（旧 deriveSuggestedAix は廃止）。
 
 // action_type → スタッフ向け誘導メモ（brain の action / final-check 境界コードをこの note に変換する）
-const AIX_ACTION_NOTES: Record<string, string> = {
-  acknowledge_check: "送信後 → AIX【確認します】で管理会社への空室確認＋見積書依頼を送ってください（宛先は管理会社です）",
-  property_send: "物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
-  viewing_invite: "AIX【内覧日調整】ボタンで日時を選択してから送信してください",
-  meeting_place: "AIX【待ち合わせ】ボタンで物件住所入り確定メッセージを生成できます",
-  estimate_sheet: "見積書が届いたら → AIX【見積書送る】で画像を読み取って自動計算＋カバーメッセージを生成できます",
-  application_push: "AIX【申込へ！】でクロージングメッセージを生成できます",
-  property_recommendation: "AIX【1件特にオススメする】で1件に絞った詳細訴求文を生成できます",
-  greeting_viewing: "AIX【挨拶（内覧前後）】でフォローメッセージを生成してください",
-  condition_hearing: "AIX【条件ヒアリング】ボタンで既知情報をスキップした形式で送れます",
-  property_check_result: "管理会社・代表・オーナー・近隣月極から回答が来たら → 空室・募集状況はAIX【物件確認した（募集状況）】、保証会社・初期費用交渉・駐車場・ペット可否・退去日・入居可能日などの条件確認はAIX【確認した（条件・交渉）】（check_patternで切替）で結果報告文を生成してください",
-  followup_revive: "AIX【追客する】で再接触メッセージを生成できます",
-};
+// 2026-08 AIXボタン種別アナウンス改善: aix-taxonomy.ts の AIX_STAFF_NOTES を単一ソース化。
+// 「AIX【ボタン名】を押してください: 理由・タイミング」形式で、どのボタンを・なぜ・いつ押すかを明示する。
+// 旧マップに無かった property_search もこれで語彙に入る（従来は SUGGESTED_AIX トレーラーで無言脱落していた）。
+const AIX_ACTION_NOTES: Record<string, string> = AIX_STAFF_NOTES;
 
 // ─── 優先度1(抜け穴対策): final-check AIX境界違反 → AIXボタン切替マップ ────────
 // final-check の AIX_BOUNDARY_* は「本来AIXで送るべき内容をドラフトが自分で書いてしまった」
@@ -481,6 +475,19 @@ function buildAixTimingNote(s: AixTimingSuggestion): string {
   if (s.chained) lines.push(`・連結予約: ${s.aix} 完了後に ${s.chained} を続けて実行する運用（橋渡しでは「募集状況確認と最大限割引の御見積書作成」の両方の行動宣言を含めてよい）。`);
   if (s.extra) lines.push(`・${s.extra}`);
   return lines.join("\n");
+}
+
+// AIXタイミング判定結果をスタッフ向けUIアナウンス（suggested_aix / SUGGESTED_AIXトレーラー）に変換する。
+// 2026-08 AIXボタン種別アナウンス改善: detectAixTiming は従来プロンプト注入専用で、
+// brain(suggested_aix_meta) が沈黙している場合スタッフには何も表示されなかった。
+// 「AIX【ボタン名】を押してください: 理由」＋対応スピード目安＋連結予約を1つの note にまとめて返す。
+function buildAixTimingStaffNote(s: AixTimingSuggestion): string {
+  const parts = [AIX_STAFF_NOTES[s.aix] ?? `AIX【${s.label}】を押してください`];
+  parts.push(`対応目安: ${s.urgency}`);
+  if (s.chained) {
+    parts.push(`見積依頼も同時に来ています → 確認完了後にAIX【${AIX_BUTTON_LABELS[s.chained] ?? s.chained}】を連結して送付してください`);
+  }
+  return parts.join(" ／ ");
 }
 
 // ─── ai_summary_json の構造化サマリー（customer-summary/route.ts の SummaryJson と互換）──
@@ -3124,10 +3131,49 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       auto_ok: false,          // 全チェックfalseなら送信OK候補（クライアントで確定）
     };
 
+    // AIXボタン種別アナウンス改善(2026-08): detectAixTiming（従来プロンプト注入専用）の結果を
+    // UIアナウンス（メタ行 suggested_aix / SUGGESTED_AIX トレーラーのフォールバック）にも反映する。
+    // brain(suggested_aix_meta) が沈黙しているホット会話（内覧希望・金額質問・物件指名等）でも
+    // 「どのボタンを押すべきか」の具体的指示がスタッフに届くようにする。
+    // buildGenerationMessages 内部の判定と同一条件・同一入力で再計算する（純regex・追加コスト無し）。
+    const aixTimingForMeta = (() => {
+      if (isTemplateOptimize || templateNote || replyHint) return null;
+      try {
+        const historyLinesTm = (history || "").split("\n");
+        const lastStaffIdxTm = historyLinesTm
+          .map((l: string, i: number) => (l.startsWith("スモラ:") ? i : -1))
+          .filter((i: number) => i >= 0)
+          .at(-1) ?? -1;
+        const hasRecentCustomerImageTm = historyLinesTm
+          .slice(lastStaffIdxTm + 1)
+          .filter((l: string) => l.startsWith("お客様:"))
+          .some((l: string) => l.includes("【画像を送ってきた】"));
+        return detectAixTiming(message ?? "", {
+          hasCustomerImage: hasRecentCustomerImageTm,
+          estimatePromised,
+          propertyStatus: detectPropertyStatus(history, message ?? "", propertyStatus),
+        });
+      } catch {
+        return null;
+      }
+    })();
+
     // スタッフ向けガイドメモ: brain(AIX-META) の closing_strategy / reply_direction をメタラインで返す。
     // Step1廃止（2026-08）: 両方 null なら過去のbrain実行がDBに残した ai_summary_json.winning_pattern に
-    // フォールバック。action は "closing" のまま（スタッフUI互換維持）
+    // フォールバック。
+    // AIXボタン種別アナウンス改善(2026-08): AIXタイミング判定がヒットした場合は "closing"（ガイドメモ専用）
+    // ではなく実ボタンキー＋「AIX【ボタン名】を押してください: 理由」の具体的指示を優先して返す。
+    // ※SUGGESTED_AIXトレーラーが後着で同等以上の情報に上書きするため互換性は保たれる
+    //  （トレーラーが出ない場合はこのメタ行の値がそのまま表示され続ける＝従来は空白だった箇所）。
     const suggestedAixForMeta = (() => {
+      if (aixTimingForMeta && currentState !== "first_reply") {
+        return {
+          action: aixTimingForMeta.aix,
+          note: buildAixTimingStaffNote(aixTimingForMeta),
+          source: "aix_timing",
+          enforcement_level: "recommended" as const,
+        };
+      }
       const note = brainMeta?.closing_strategy
         || brainMeta?.reply_direction
         || resolvedSummaryJson?.winning_pattern
@@ -3503,15 +3549,27 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       enforcement_level: (brainMeta.enforcement_level || "recommended") as "required" | "recommended",
                       closing_strategy: brainMeta.closing_strategy || undefined,
                     }
-                  : (aixBoundaryHint
-                      ? {
-                          action: aixBoundaryHint.action,
-                          note: `最終チェックでAIX境界（${aixBoundaryHint.code}）の指摘がありました → ${AIX_ACTION_NOTES[aixBoundaryHint.action] ?? "AIXボタンでの対応を検討してください"}`,
-                          source: "final_check_boundary_hint",
-                          enforcement_level: "recommended" as const,
-                          closing_strategy: brainMeta?.closing_strategy || undefined,
-                        }
-                      : null);
+                  // AIXボタン種別アナウンス改善(2026-08): brain が無提案（沈黙）の場合、
+                  // detectAixTiming の決定論判定（物件指名/金額質問/条件変更/内覧意思）を
+                  // フォールバックとしてトレーラーに反映する。従来はプロンプト注入のみで
+                  // UIに何も出ず、ホット会話でスタッフが手打ち対応する原因になっていた。
+                  : (aixTimingForMeta && currentState !== "first_reply")
+                    ? {
+                        action: aixTimingForMeta.aix,
+                        note: buildAixTimingStaffNote(aixTimingForMeta),
+                        source: "aix_timing",
+                        enforcement_level: "recommended" as const,
+                        closing_strategy: brainMeta?.closing_strategy || undefined,
+                      }
+                    : (aixBoundaryHint
+                        ? {
+                            action: aixBoundaryHint.action,
+                            note: `最終チェックでAIX境界（${aixBoundaryHint.code}）の指摘がありました → ${AIX_ACTION_NOTES[aixBoundaryHint.action] ?? "AIXボタンでの対応を検討してください"}`,
+                            source: "final_check_boundary_hint",
+                            enforcement_level: "recommended" as const,
+                            closing_strategy: brainMeta?.closing_strategy || undefined,
+                          }
+                        : null);
               if (suggestedAix) {
                 controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
                 // fire-and-forget — closing_strategyが生成されたらログに保存
