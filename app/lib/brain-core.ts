@@ -39,7 +39,8 @@ export type SuggestedAixMeta = {
   action: string;
   note: string;
   source: string;
-  enforcement_level: "required" | "recommended";
+  // "optional" は cached 返却パス（stale meta の強制アクション抑制）でのみ設定される
+  enforcement_level: "required" | "recommended" | "optional";
   // property_check_result の1キー多義解消: 会話文脈から判定したサブパターン
   // （mgmt_initial_cost / nearby_parking / mgmt_guarantor 等）。判定できた場合、
   // note は「確認した（条件・交渉）」ボタンへの具体的指示になる（aix-taxonomy.ts 参照）
@@ -85,6 +86,16 @@ export type SuggestedAixMeta = {
   analyzed_msg_ts?: string | null;
   // 直近AIXボタン履歴（最新→旧順・generate-reply RAG文脈強化用）
   last_aix_history?: string | null;
+  // ── analyzeConversation → analyzeAndSaveBrainMeta 内部伝搬フィールド ──
+  // SOURCE_ACCEPT_RATE 品質ゲートで finalAix が null 化された事実のフラグ。
+  // conversation_direction 更新側で detectSignalBasedAixFallback の再実行をスキップし、
+  // 抑制済み低品質アクションが suggested_aix_button に復活するバイパス経路を塞ぐ。
+  // ※ 初回接触 null 化・そもそも提案なし等の他の null 理由とは明確に区別する（正当な direction 補完は殺さない）
+  aix_suppressed_by_accept_rate?: boolean;
+  // analyzeConversation 内で detectSignalBasedAixFallback を実行済みか＋その結果（ゲート適用前の値）。
+  // direction 更新側の二重実行（6本のDBクエリ×2）を回避するための持ち回り。
+  signal_aix_ran?: boolean;
+  signal_aix_result?: string | null;
   // LLMの行動選択理由（≤30字）
   reason?: string | null;
   // ai_summary_jsonからの勝ちパターン
@@ -1854,6 +1865,10 @@ ${history}`;
     // ホット会話（内覧希望・金額質問・空室確認依頼）でスタッフに「どのボタンを押すか」が
     // 一切届かない構造だった（実会話調査: きえ/ひろろ/reina 全件で meta 空白のまま手打ち対応）。
     // ここで判定することで後段の内覧誤提案ガード・品質ゲート・first_reply例外は従来どおり全て適用される。
+    // 二重実行回避(2026-08): この判定の実行済みフラグと結果を meta 経由で
+    // analyzeAndSaveBrainMeta の conversation_direction 更新へ持ち回る（再実行=6クエリの重複を解消）
+    let signalAixRan = false;
+    let signalAixResult: string | null = null;
     if (finalAix === null) {
       const fallbackPhase = ((): "hearing" | "proposing" | "viewing" | "applying" => {
         const cs = typeof parsed.checkpoint_stage === "string" ? parsed.checkpoint_stage : null;
@@ -1862,7 +1877,9 @@ ${history}`;
         return "proposing";
       })();
       const signalAix = await detectSignalBasedAixFallback(conversationId, propertyCustomerId, fallbackPhase);
-      if (signalAix && AIX_BRAIN_NOTES[signalAix]) finalAix = signalAix;
+      signalAixRan = true;
+      signalAixResult = signalAix && AIX_BRAIN_NOTES[signalAix] ? signalAix : null;
+      if (signalAixResult) finalAix = signalAixResult;
     }
     // 内覧誤提案ガード（決定論的矯正・プロンプト任せにしない）:
     // viewing_invite は「顧客の反応」が前提のアクション。①最終メッセージがスタッフ送信
@@ -1898,6 +1915,11 @@ ${history}`;
     // 採択率は後段の enforcement_level 降格ゲートでも再利用するため外側スコープに保持する
     let acceptRateOcc = 0;
     let acceptRateConf = 1;
+    // ゲート抑制フラグ: 「品質ゲートによる null」を他の null 理由（初回接触 null 化・提案なし）と
+    // 明確に区別して meta で伝搬する。analyzeAndSaveBrainMeta の direction 更新側は
+    // このフラグが true の場合のみ detectSignalBasedAixFallback を丸ごとスキップし、
+    // 抑制済み低品質アクションの suggested_aix_button への復活（ゲートバイパス）を塞ぐ。
+    let aixSuppressedByAcceptRate = false;
     if (finalAix) {
       const { data: rateData } = await supabase
         .from("trigger_action_rules")
@@ -1908,7 +1930,10 @@ ${history}`;
       if (rateData) {
         acceptRateOcc = (rateData.total_occurrence as number | null) ?? 0;
         acceptRateConf = (rateData.confidence as number | null) ?? 1;
-        if (acceptRateOcc >= 10 && acceptRateConf < 0.3) finalAix = null;
+        if (acceptRateOcc >= 10 && acceptRateConf < 0.3) {
+          finalAix = null;
+          aixSuppressedByAcceptRate = true;
+        }
       }
     }
     // B2(Fable5): reply_mode のフェイルクローズ強制（コード側で決定的に上書き — プロンプト任せにしない）
@@ -2222,6 +2247,11 @@ ${history}`;
       checkpoint_stage: checkpointStage,
       customer_intent: customerIntentFinal,
       latent_intent: latentIntent,
+      // 内部伝搬: SOURCE_ACCEPT_RATE ゲート抑制の事実と、1回目の signalAix 結果の持ち回り
+      // （analyzeAndSaveBrainMeta の direction 更新でのバイパス防止＋二重実行回避に使用）
+      aix_suppressed_by_accept_rate: aixSuppressedByAcceptRate || undefined,
+      signal_aix_ran: signalAixRan || undefined,
+      signal_aix_result: signalAixResult,
       reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 30) : null,
       winning_pattern: winningPattern,
       customer_emotion: ((brainSummaryJson as Record<string, unknown> | null)?.emotion as string) ?? null,
@@ -2504,7 +2534,12 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   if (analysisMode === "cached") {
     // キャッシュ返却パス（Sonnet呼び出しなし・required通知は runBrainAndNotify 側で抑制）
     // stale meta: enforcement_level を "optional" に落として強制アクションを抑制
-    const cachedResult = { ...cachedMeta, source: "cached", enforcement_level: "optional" as const };
+    // 型注釈を明示: Record spread による型チェックすり抜けを塞ぐ（"optional" は SuggestedAixMeta の union に定義済み）
+    const cachedResult: NonNullable<SuggestedAixMeta> = {
+      ...(cachedMeta as NonNullable<SuggestedAixMeta>),
+      source: "cached",
+      enforcement_level: "optional",
+    };
     await supabase
       .from("conversations")
       .update({ suggested_aix_meta: cachedResult, brain_analyzed_at: new Date().toISOString() })
@@ -2838,19 +2873,39 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
           // フェーズ決定論デフォルトに落ちる前に applying_pattern 由来の信号ベース判定を挟む。
           // 優先順位: brainAix > 信号ベース（成約実績順） > フェーズ別デフォルト。
           // 既存の決定論（viewing の内覧テーブル最優先・brainAix 優先）は一切変えない。
-          const signalAix = brainAix
-            ? null
-            : await detectSignalBasedAixFallback(
-                conversationId,
-                (conv.property_customer_id as string | null) ?? null,
-                newPhase,
-              );
-          if (newPhase === "applying") {
-            suggAixButton = brainAix ?? signalAix ?? "application_push";
-          } else if (newPhase === "proposing") {
-            suggAixButton = brainAix ?? signalAix ?? "property_send";
+          // 品質ゲートバイパス対策(2026-08): analyzeConversation が SOURCE_ACCEPT_RATE ゲートで
+          // finalAix を抑制した場合、ここでの fallback 再実行が同じ低品質アクションを
+          // suggested_aix_button に復活させていた（スタッフへの低品質誘導）。
+          // ゲート抑制時は fallback を丸ごとスキップし suggested_aix_button を書かない。
+          // ※ 初回接触 null 化・提案なし等の他の null 理由は従来どおり fallback で補完する。
+          const aixSuppressed = metaRecord.aix_suppressed_by_accept_rate === true;
+          // 二重実行回避: analyzeConversation 側で fallback 実行済みなら、その結果（ゲート適用前の値）を
+          // 持ち回りで再利用する（6本のDBクエリ×2 → ×1）。未実行時（Haiku提案がガードで null 化された
+          // ケース等）のみ従来どおり再実行する。
+          const carriedSignalAix: string | null | undefined = metaRecord.signal_aix_ran === true
+            ? (typeof metaRecord.signal_aix_result === "string" && AIX_BRAIN_NOTES[metaRecord.signal_aix_result]
+                ? (metaRecord.signal_aix_result as string)
+                : null)
+            : undefined; // undefined = 1回目未実行 → 再実行が必要
+          if (aixSuppressed) {
+            suggAixButton = null;
           } else {
-            suggAixButton = brainAix ?? signalAix ?? "condition_hearing";
+            const signalAix = brainAix
+              ? null
+              : carriedSignalAix !== undefined
+                ? carriedSignalAix
+                : await detectSignalBasedAixFallback(
+                    conversationId,
+                    (conv.property_customer_id as string | null) ?? null,
+                    newPhase,
+                  );
+            if (newPhase === "applying") {
+              suggAixButton = brainAix ?? signalAix ?? "application_push";
+            } else if (newPhase === "proposing") {
+              suggAixButton = brainAix ?? signalAix ?? "property_send";
+            } else {
+              suggAixButton = brainAix ?? signalAix ?? "condition_hearing";
+            }
           }
         }
 

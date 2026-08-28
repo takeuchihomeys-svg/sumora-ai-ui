@@ -399,6 +399,8 @@ function detectAixTiming(
   // ── 優先度1: 支払い意思つき金額質問（最ホット・10分以内） ──
   if (AIX_MONEY_QUESTION_RE.test(msg)) {
     if (AIX_PAYMENT_INTENT_RE.test(msg)) {
+      // 見積約束済みの場合は bridge を短い受付文に差し替える（estimatePromiseAckNote の
+      // 「作成宣言を繰り返すな」との矛盾指示を解消。AIX提案=estimate_sheet と最ホット判定は維持）
       return {
         aix: "estimate_sheet",
         label: "見積書送る",
@@ -406,8 +408,12 @@ function detectAixTiming(
         urgency: "10分以内（applying直前の最優先ホットシグナル）",
         highlight: true,
         forbidden: "金額・割引額をAIが生成すること（見積書Vision OCRの実数値のみ送信可）",
-        bridge: "かしこまりました！！最大限割引させて頂いた初期費用の御見積書お送りさせて頂きます😊！！",
-        extra: "支払い意思+金額質問の組み合わせのため、返信には「お気に召されましたらお申込みでお部屋お抑えさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。",
+        bridge: opts.estimatePromised
+          ? "かしこまりました！！確認しご連絡させて頂きます😊！！"
+          : "かしこまりました！！最大限割引させて頂いた初期費用の御見積書お送りさせて頂きます😊！！",
+        extra: opts.estimatePromised
+          ? "見積書は既に約束/送付済みのため作成宣言・割引の約束を繰り返さない（二重宣言防止ルールと整合）。返信には「お気に召されましたらお申込みでお部屋お抑えさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。"
+          : "支払い意思+金額質問の組み合わせのため、返信には「お気に召されましたらお申込みでお部屋お抑えさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。",
       };
     }
     // ── 優先度2: 通常の金額質問（見積未送付・未約束の場合のみ） ──
@@ -2294,8 +2300,13 @@ export async function POST(req: NextRequest) {
   // null（未分析/webhookワイプ直後）はここでは素通しし、チェックポイントBで再確認する。
   // brainMetaDirect 指定時（bg-asyncのbrain直列実行後）は DB フェッチせずその値を使う
   // enforceReplyModeGate=false（手動ボタン）はゲートをスキップ。bg-async/cronのみtrueを渡す設計。
+  // 重複フェッチ解消(2026-08): チェックポイントAで取得した gate を後段の brainGate 構築で再利用する
+  // （AとbrainGate構築の間に suggested_aix_meta への書き込みは無いためスナップショット再利用は安全。
+  //   チェックポイントBの新鮮フェッチは意図的な設計のため対象外）
+  let gateFromCheckpointA: Awaited<ReturnType<typeof fetchReplyModeGate>> = null;
   if (enforceReplyModeGate && conversationId && !isTemplateOptimize && !isFirstReplyGateExempt) {
     const gate = externalBrainGate ?? await fetchReplyModeGate(conversationId);
+    gateFromCheckpointA = gate;
     if (gate?.meta?.reply_mode === "aix") {
       console.log("[generate-reply] reply_mode=aix → 自動ドラフト中止(A):", conversationId);
       return applyAixGateAndRespond(conversationId, gate.meta, gate.customerName);
@@ -2593,7 +2604,8 @@ export async function POST(req: NextRequest) {
     // 全て同一スナップショットを参照する（旧「Step1とbrainの鮮度差」問題が構造的に消える）。
     // brain直列アーキテクチャ: brainMetaDirect 指定時（bg-async経由）は DB 再フェッチをスキップ。
     // bg-async が直前に brain を直列実行して書いた値なので DB と同値（むしろ順序保証つき）＝常にT1（fresh）。
-    const brainGate = externalBrainGate ?? ((conversationId && !isTemplateOptimize)
+    // 重複フェッチ解消(2026-08): チェックポイントAのスナップショットがあれば再利用（毎分cron積算のDB往復1回削減）
+    const brainGate = externalBrainGate ?? gateFromCheckpointA ?? ((conversationId && !isTemplateOptimize)
       ? await fetchReplyModeGate(conversationId)
       : null);
     const brainMeta = brainGate?.meta ?? null;
@@ -3546,7 +3558,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       action: brainMeta.action,
                       note: brainMeta.note || AIX_ACTION_NOTES[brainMeta.action],
                       source: brainMeta.source || "brain",
-                      enforcement_level: (brainMeta.enforcement_level || "recommended") as "required" | "recommended",
+                      // "optional" は brain cached パス（stale meta）で設定される正規値（SuggestedAixMeta の union に定義済み）
+                      enforcement_level: (brainMeta.enforcement_level || "recommended") as "required" | "recommended" | "optional",
                       closing_strategy: brainMeta.closing_strategy || undefined,
                     }
                   // AIXボタン種別アナウンス改善(2026-08): brain が無提案（沈黙）の場合、
