@@ -2636,6 +2636,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- ── analyze-aix-templates: AIX橋渡し文バックフィル（2026-08-28追加）──
+-- aix_generate_log.example_backfilled_at: /api/analyze-aix-templates が該当ログを
+-- ai_reply_examples（entry_source='aix_action' の AIX専用実例バケット）へ
+-- バックフィル処理した時刻。NULL = 未処理（処理対象）。
+-- INSERT失敗時は更新されず次回実行で再試行される（フェイルオープン・analyze-applying と同設計）。
+ALTER TABLE aix_generate_log ADD COLUMN IF NOT EXISTS example_backfilled_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_aix_generate_log_backfill
+  ON aix_generate_log(generated_at DESC) WHERE example_backfilled_at IS NULL AND status = 'used';
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

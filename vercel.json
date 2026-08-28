@@ -227,6 +227,10 @@
     {
       "path": "/api/cron/classify-area-modes",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/analyze-aix-templates",
+      "schedule": "0 21 * * 0"
     }
   ]
 }
