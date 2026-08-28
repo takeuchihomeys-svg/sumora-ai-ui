@@ -160,19 +160,28 @@ export async function POST(req: NextRequest) {
   // ── RAG: winning_patterns + ai_reply_knowledge ───────────────────────────
   let winningSection = "";
   let knowledgeSection = "";
+  let ragQueryLength = 0;
   if (process.env.OPENAI_API_KEY) {
     const recentCustomerMsgs = (recentMessages ?? [])
       .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
       .slice(-3)
       .map((m) => m.text)
       .join(" ");
+    // AIX-META全フィールド（action / closing_strategy / reply_direction / checkpoint_stage）を
+    // 検索ベクトルに含める（brain-coreのprevMeta 5フィールド注入と同じ設計思想）
     const ragQuery = [
       `AIXアクション: ${actionLabel}`,
       customerConditions ? `希望条件: ${customerConditions.slice(0, 200)}` : "",
+      brainMeta?.action && AIX_BUTTON_LABELS[brainMeta.action]
+        ? `Brain推奨アクション: ${AIX_BUTTON_LABELS[brainMeta.action]}`
+        : "",
       brainMeta?.closing_strategy ? `成約戦略: ${brainMeta.closing_strategy}` : "",
+      brainMeta?.reply_direction ? `返信方向: ${brainMeta.reply_direction}` : "",
+      brainMeta?.checkpoint_stage ? `フェーズ詳細: ${brainMeta.checkpoint_stage}` : "",
       conversationState ? `フェーズ: ${STATE_LABEL[conversationState] ?? conversationState}` : "",
       recentCustomerMsgs.slice(0, 200),
-    ].filter(Boolean).join(" | ").slice(0, 1000);
+    ].filter(Boolean).join(" | ").slice(0, 1200);
+    ragQueryLength = ragQuery.length;
 
     try {
       const emb = await generateEmbedding(ragQuery);
@@ -308,7 +317,8 @@ export async function POST(req: NextRequest) {
 
     console.log(
       `[aix-template-generate] action=${actionType || actionCategory || "-"}` +
-      ` rag_wp=${winningSection ? "hit" : "miss"} rag_kn=${knowledgeSection ? "hit" : "miss"} brainMeta=${brainMeta ? "ok" : "none"}`,
+      ` rag_wp=${winningSection ? "hit" : "miss"} rag_kn=${knowledgeSection ? "hit" : "miss"}` +
+      ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}`,
     );
 
     return NextResponse.json({ ok: true, text });
