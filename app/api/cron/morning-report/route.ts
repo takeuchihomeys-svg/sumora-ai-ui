@@ -45,7 +45,8 @@ export async function GET(req: NextRequest) {
       .update({ status: "dismissed", updated_at: new Date().toISOString() })
       .eq("status", "pending")
       // aix_boundary（線引き質問）は人間回答が必須の学習ループ起点のため自動クローズ対象外
-      .neq("category", "aix_boundary")
+      // ※ category は nullable のため NULL 行も自動クローズ対象に含める（.neq だけだと NULL 行が漏れて永久pending化する）
+      .or("category.is.null,category.neq.aix_boundary")
       .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
     supabase.from("aix_feature_suggestions")
       .update({ status: "dismissed", updated_at: new Date().toISOString() })

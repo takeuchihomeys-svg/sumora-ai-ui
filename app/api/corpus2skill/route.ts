@@ -962,7 +962,8 @@ export async function POST(req: NextRequest) {
       .from("ai_feedback_items")
       .update({ status: "expired" })
       .eq("status", "pending")
-      .neq("category", "aix_boundary")
+      // ※ category は nullable のため NULL 行も失効対象に含める（.neq だけだと NULL 行が漏れて永久pending化する）
+      .or("category.is.null,category.neq.aix_boundary")
       .lt("created_at", thirtyDaysAgoForExpire)
       .select("id");
     if (expireError) console.warn("[corpus2skill] pending期限切れ更新失敗:", expireError.message);
