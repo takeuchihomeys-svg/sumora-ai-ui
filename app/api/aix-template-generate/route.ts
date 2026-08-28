@@ -414,9 +414,12 @@ export async function POST(req: NextRequest) {
     future_timeline?: string;             // 入居希望タイムライン（「9/26入居希望」等）
     ng_properties?: string[];             // 再提案禁止物件リスト
     property_search_params?: {            // 会話から抽出した最新の希望条件（DB条件より新しい場合がある）
-      rent_max?: number;
-      move_in_time?: string;
-      preferences?: string[];
+      rent_max?: number | null;           // ※ brain-core は円単位の生値で格納（表示時は万円に変換）
+      move_in_time?: string | null;
+      preferences?: string[] | string | null;  // brain-core（SuggestedAixMeta）は string | null
+      area?: string | null;
+      floor_plan?: string | null;
+      walk_minutes?: number | null;
       [key: string]: unknown;
     };
   };
@@ -537,7 +540,14 @@ export async function POST(req: NextRequest) {
       ? (Array.isArray(psp.preferences) ? psp.preferences.join("・") : (psp.preferences ?? ""))
       : "";
     const pspText = psp
-      ? [psp.move_in_time, psp.rent_max ? `家賃${psp.rent_max}円以下` : null, pspPrefs].filter(Boolean).join("・")
+      ? [
+          psp.area ? `エリア: ${psp.area}` : null,
+          psp.floor_plan ? `間取り: ${psp.floor_plan}` : null,
+          psp.walk_minutes ? `駅徒歩: ${psp.walk_minutes}分以内` : null,
+          psp.move_in_time,
+          psp.rent_max ? `家賃${psp.rent_max}円以下` : null,
+          pspPrefs,
+        ].filter(Boolean).join("・")
       : "";
     const ragQuery = [
       `AIXアクション: ${actionLabel}`,
@@ -560,6 +570,8 @@ export async function POST(req: NextRequest) {
       brainMeta?.human_type_label ? `人物タイプ: ${brainMeta.human_type_label}` : "",
       brainMeta?.repeated_concern ? `繰り返し懸念: ${brainMeta.repeated_concern}` : "",
       pspText ? `希望条件: ${pspText}` : "",
+      // 直前に何のAIXを送ったかは続き文の実例検索に直結する文脈（generate-reply の [AIX履歴] と同形式）
+      ...(brainMeta?.last_aix_history ? [`[AIX履歴]${String(brainMeta.last_aix_history).slice(0, 100)}`] : []),
       conversationState ? `フェーズ: ${STATE_LABEL[conversationState] ?? conversationState}` : "",
       recentCustomerMsgs.slice(0, 200),
     ].filter(Boolean).join(" | ").slice(0, 2000);
@@ -799,6 +811,15 @@ export async function POST(req: NextRequest) {
       "\n"
     : "";
 
+  // preferences が string の場合は配列化、null/undefined の場合は空配列
+  // （string を配列スプレッドすると1文字ずつ分解され「広 / め / ・ / 綺 / 麗」になるバグ防止 — ragQuery側と同処理）
+  const userPromptPrefsRaw = brainMeta?.property_search_params?.preferences;
+  const prefList = Array.isArray(userPromptPrefsRaw)
+    ? userPromptPrefsRaw
+    : typeof userPromptPrefsRaw === "string" && userPromptPrefsRaw
+    ? [userPromptPrefsRaw]
+    : [];
+
   const userPrompt = [
     `━━━━━━━━━━━━━━━━━━━━\n【今回生成する橋渡し文】\n━━━━━━━━━━━━━━━━━━━━`,
     `・AIXボタン種別: ${actionLabel}`,
@@ -820,9 +841,10 @@ export async function POST(req: NextRequest) {
     brainMeta?.property_search_params
       ? `・希望条件（会話由来・最新・優先）: ${
           [
-            brainMeta.property_search_params.rent_max ? `家賃上限${brainMeta.property_search_params.rent_max}万円` : "",
+            // brain-core は rent_max を円単位の生値で格納 → 万円に変換（「90000万円」等の異常値防止）
+            brainMeta.property_search_params.rent_max ? `家賃上限${Math.floor((brainMeta.property_search_params.rent_max ?? 0) / 10000)}万円` : "",
             brainMeta.property_search_params.move_in_time ? `入居希望${brainMeta.property_search_params.move_in_time}` : "",
-            ...(brainMeta.property_search_params.preferences ?? []),
+            ...prefList,
           ].filter(Boolean).join(" / ")
         }（DB条件より優先して参照すること）`
       : "",
@@ -886,6 +908,9 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 1024,
+        // claude-sonnet-5はthinking省略時adaptiveがデフォルト有効 → max_tokens 1024を
+        // thinkingが消費して橋渡し文が途切れるのを防ぐ（generate-replyと同設定）
+        thinking: { type: "disabled" },
         system: systemBlocks,
         messages: [{ role: "user", content: userPrompt }],
       }),
