@@ -70,7 +70,9 @@ export async function GET(req: NextRequest) {
       // H3(Fable5): 30分バックオフ（未試行 or 前回試行から30分経過した行のみ）
       .or(`brain_analyzed_at.is.null,brain_analyzed_at.lt.${backoffCutoff}`)
       .lt("updated_at", cutoff)
-      .neq("ai_draft", "__SHOWN__")
+      // FIX: SQL の neq は NULL 行を除外する（NULL比較は常にFALSE）。brain失敗行は
+      // ai_draft が NULL のことが多く、まさに sweep が拾うべき行が漏れていた
+      .or("ai_draft.is.null,ai_draft.neq.__SHOWN__")
       .order("updated_at", { ascending: false })
       .limit(MAX_SWEEP_PER_RUN);
 

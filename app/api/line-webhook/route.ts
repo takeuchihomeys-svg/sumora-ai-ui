@@ -317,6 +317,16 @@ async function handleTextMessage(
     .update({ last_message: text, last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
     .eq("id", convId);
 
+  // FIX: stale __SHOWN__ 残留対策 — 前サイクルでスタッフ閲覧済み（ai_draft='__SHOWN__'）のまま
+  // 新着顧客メッセージが来ると、brain分析が失敗した場合に brain-sweep が「表示済み」と誤認して
+  // 永久に補填しなくなる。__SHOWN__ センチネルのみを null に戻す（.eq ガードにより実ドラフトには
+  // 触れないため、after() B の bg-async ロック保護とも競合しない）
+  await db
+    .from("conversations")
+    .update({ ai_draft: null })
+    .eq("id", convId)
+    .eq("ai_draft", "__SHOWN__");
+
   // FIX(Fable5 #2 → brain直列化 2026-08): テキスト経路の脳分析は generate-draft-bg-async の
   // after() 入り口で直列実行される（brain完了 → 結果を brainMetaDirect で generate-reply に直接渡す）
   // ため、通常ステータスではここで起動しない（起動すると brain が二重実行され、書き込み競合が復活する）。
@@ -1769,6 +1779,14 @@ async function handleImageMessageSave(
     .update({ last_message: "[画像]", last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
     .eq("id", convId);
 
+  // FIX: stale __SHOWN__ 残留対策（テキスト経路と同一。画像経路には after() B の ai_draft リセットが
+  // 存在しないため、ここでクリアしないと brain-sweep が永久に補填しない）
+  await db
+    .from("conversations")
+    .update({ ai_draft: null })
+    .eq("id", convId)
+    .eq("ai_draft", "__SHOWN__");
+
   // H4: 画像受信もスタッフに基本通知（テキスト経路のP1通知に対応する最小版）
   after(async () => {
     try {
@@ -2233,6 +2251,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         await db.from("conversations")
           .update({ suggested_aix_meta: null })
           .eq("id", conv.id as string);
+        // FIX: stale __SHOWN__ 残留対策 — この経路は meta をクリアするだけで brain 再分析が走らず、
+        // 補填は brain-sweep のみ。__SHOWN__ が残っていると sweep が誤スキップするためクリアする
+        await db.from("conversations")
+          .update({ ai_draft: null })
+          .eq("id", conv.id as string)
+          .eq("ai_draft", "__SHOWN__");
       }
     }
     // video / audio / file は現状スキップ
