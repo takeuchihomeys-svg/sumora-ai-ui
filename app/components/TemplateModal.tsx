@@ -705,7 +705,7 @@ interface TemplateModalProps {
   onRefresh?: () => void;
   customerName?: string;
   conversationState?: string;
-  recentMessages?: Array<{ sender: string; text: string; imageUrl?: string; isAix?: boolean }>;
+  recentMessages?: Array<{ sender: string; text: string; imageUrl?: string; isAix?: boolean; rawCreatedAt?: string }>;
   linkedCustomer?: { id: string; name: string; conditions: string };
   initialCategory?: string;
   highlightKeyword?: string;

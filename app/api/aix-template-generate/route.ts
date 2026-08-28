@@ -106,7 +106,7 @@ type GenerateRequestBody = {
   conversationId?: string;
   customerName?: string;
   conversationState?: string;
-  recentMessages?: Array<{ sender: string; text: string; imageUrl?: string; isAix?: boolean }>;
+  recentMessages?: Array<{ sender: string; text: string; imageUrl?: string; isAix?: boolean; rawCreatedAt?: string }>;
   customerConditions?: string;
   noEmoji?: boolean;
   pendingScheduledMessages?: Array<{ text: string | null }>;
@@ -150,8 +150,55 @@ export async function POST(req: NextRequest) {
   const actionLabel = (actionType && AIX_BUTTON_LABELS[actionType]) || actionCategory || "AIXメッセージ";
   const actionGuide = (actionType && ACTION_GUIDES[actionType]) || "";
 
+  // ── JST現在時刻 ─────────────────────────────────────────────────────────
+  const nowJst = new Date(Date.now() + 9 * 3600 * 1000);
+  const jstHour = nowJst.getUTCHours();
+  const jstMinute = nowJst.getUTCMinutes();
+  const jstDayNames = ["日", "月", "火", "水", "木", "金", "土"];
+  const jstDayOfWeek = jstDayNames[nowJst.getUTCDay()];
+  const jstDateStr = `${nowJst.getUTCMonth() + 1}/${nowJst.getUTCDate()}(${jstDayOfWeek})`;
+  const jstTimeStr = `${jstHour}時${jstMinute < 10 ? "0" : ""}${jstMinute}分`;
+
+  // 管理会社営業時間外かどうか（9時前・18時以降）
+  const isMgmtOutOfHours = jstHour < 9 || jstHour >= 18;
+  const isLateNight = jstHour >= 21;
+  const jstContextNote = `現在: ${jstDateStr} ${jstTimeStr}（JST）` +
+    (isMgmtOutOfHours ? " ※管理会社営業時間外（即日確認を約束しない）" : "") +
+    (isLateNight ? " ※深夜帯（冒頭に「夜分に失礼いたします！！」を検討）" : "");
+
+  // ── 最終顧客メッセージからの経過時間 ──────────────────────────────────────
+  const lastCustomerMsg = (recentMessages ?? [])
+    .filter(m => m.sender === "customer" && m.rawCreatedAt)
+    .slice(-1)[0];
+  let elapsedLabel = "";
+  if (lastCustomerMsg?.rawCreatedAt) {
+    const diffMs = Date.now() - new Date(lastCustomerMsg.rawCreatedAt).getTime();
+    const diffHours = diffMs / 3600000;
+    if (diffHours < 1) elapsedLabel = "即レス文脈（1時間以内）";
+    else if (diffHours < 8) elapsedLabel = "当日内（数時間後）";
+    else if (diffHours < 30) elapsedLabel = "翌日以内";
+    else if (diffHours < 72) elapsedLabel = "2〜3日後（追客文脈）";
+    else elapsedLabel = "3日以上経過（追客文脈・返信ハードルを下げる）";
+  }
+
   // ── Brain戦略（AIX-META）: あれば方向性として利用 ────────────────────────
-  type BrainMeta = { action?: string; closing_strategy?: string; reply_direction?: string; checkpoint_stage?: string };
+  type BrainMeta = {
+    action?: string;
+    closing_strategy?: string;
+    reply_direction?: string;
+    checkpoint_stage?: string;
+    // 追加フィールド（brainが分析済みだが未抽出だったもの）
+    customer_emotion?: string;            // 「前向き」「普通」「不安」等
+    recommended_tone?: string;            // 「共感的」「テキパキ」「慎重」等
+    customer_questions?: string[];        // お客様が質問していること（橋渡し文で拾う）
+    avoid_topics?: string[];              // 禁止話題（「来阪」「早い者勝ち」等）
+    current_property?: string;            // 現在注目している物件名
+    purchase_signal_level?: string;       // 「peak」「strong」「soft」等のクロージング強度
+    latent_intent?: string;               // 表面の質問の裏にある不安や動機
+    last_aix_history?: string[];          // 直前に押したAIXボタン履歴
+    future_timeline?: string;             // 入居希望タイムライン（「9/26入居希望」等）
+    ng_properties?: string[];             // 再提案禁止物件リスト
+  };
   const convResult = conversationId
     ? await supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
     : { data: null };
@@ -178,6 +225,9 @@ export async function POST(req: NextRequest) {
       brainMeta?.closing_strategy ? `成約戦略: ${brainMeta.closing_strategy}` : "",
       brainMeta?.reply_direction ? `返信方向: ${brainMeta.reply_direction}` : "",
       brainMeta?.checkpoint_stage ? `フェーズ詳細: ${brainMeta.checkpoint_stage}` : "",
+      brainMeta?.customer_emotion ? `顧客感情: ${brainMeta.customer_emotion}` : "",
+      brainMeta?.latent_intent ? `潜在動機: ${brainMeta.latent_intent}` : "",
+      brainMeta?.current_property ? `注目物件: ${brainMeta.current_property}` : "",
       conversationState ? `フェーズ: ${STATE_LABEL[conversationState] ?? conversationState}` : "",
       recentCustomerMsgs.slice(0, 200),
     ].filter(Boolean).join(" | ").slice(0, 1200);
@@ -246,7 +296,23 @@ export async function POST(req: NextRequest) {
     ? `━━━━━━━━━━━━━━━━━━━━\n【🧠 Brain戦略 — 生成の方向性】\n━━━━━━━━━━━━━━━━━━━━\n` +
       `成約戦略: ${brainMeta.closing_strategy || "-"}\n` +
       `返信方向: ${brainMeta.reply_direction || "-"}\n` +
-      `チェックポイント: ${brainMeta.checkpoint_stage || "-"}\n\n`
+      `チェックポイント: ${brainMeta.checkpoint_stage || "-"}\n` +
+      (brainMeta.customer_emotion ? `顧客感情: ${brainMeta.customer_emotion}\n` : "") +
+      (brainMeta.recommended_tone ? `推奨トーン: ${brainMeta.recommended_tone}\n` : "") +
+      (brainMeta.purchase_signal_level ? `購買シグナル強度: ${brainMeta.purchase_signal_level}\n` : "") +
+      (brainMeta.current_property ? `注目物件: ${brainMeta.current_property}\n` : "") +
+      (brainMeta.latent_intent ? `潜在動機（裏の不安）: ${brainMeta.latent_intent}\n` : "") +
+      (brainMeta.future_timeline ? `入居希望タイムライン: ${brainMeta.future_timeline}\n` : "") +
+      (brainMeta.customer_questions?.length
+        ? `お客様が質問していること（橋渡し文で拾う）:\n${brainMeta.customer_questions.map(q => `  ・${q}`).join("\n")}\n`
+        : "") +
+      (brainMeta.avoid_topics?.length
+        ? `禁止話題（絶対に触れない）: ${brainMeta.avoid_topics.join("・")}\n`
+        : "") +
+      (brainMeta.last_aix_history?.length
+        ? `直前のAIX履歴: ${brainMeta.last_aix_history.join(" → ")}\n`
+        : "") +
+      "\n"
     : "";
 
   const userPrompt = [
@@ -257,6 +323,10 @@ export async function POST(req: NextRequest) {
     brainMetaSection,
     winningSection,
     knowledgeSection,
+    `━━━━━━━━━━━━━━━━━━━━\n【現在の状況】\n━━━━━━━━━━━━━━━━━━━━`,
+    jstContextNote,
+    elapsedLabel ? `お客様の最終返信から: ${elapsedLabel}` : "",
+    "",
     `━━━━━━━━━━━━━━━━━━━━\n【お客様情報】\n━━━━━━━━━━━━━━━━━━━━`,
     `・お客様名: ${customerName || "〇〇"}さん`,
     `・現在のフェーズ: ${stateLabel}`,
