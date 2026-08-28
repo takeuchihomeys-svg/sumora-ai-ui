@@ -410,7 +410,7 @@ export async function POST(req: NextRequest) {
     key_topics?: string[];                // 返信に必ず含める主要トピック（最大3件）
     human_type_label?: string;            // 人物タイプラベル（winning_patterns RAGヒット上位由来）
     repeated_concern?: string;            // 会話全体で繰り返し出ている懸念テーマ
-    last_aix_history?: string[];          // 直前に押したAIXボタン履歴
+    last_aix_history?: string | string[] | null;  // 直前に押したAIXボタン履歴（brain-core は string | null）
     future_timeline?: string;             // 入居希望タイムライン（「9/26入居希望」等）
     ng_properties?: string[];             // 再提案禁止物件リスト
     property_search_params?: {            // 会話から抽出した最新の希望条件（DB条件より新しい場合がある）
@@ -802,8 +802,8 @@ export async function POST(req: NextRequest) {
       (brainMeta.avoid_topics?.length
         ? `禁止話題（絶対に触れない）: ${brainMeta.avoid_topics.join("・")}\n`
         : "") +
-      (brainMeta.last_aix_history?.length
-        ? `直前のAIX履歴: ${brainMeta.last_aix_history.join(" → ")}\n`
+      (brainMeta.last_aix_history && (Array.isArray(brainMeta.last_aix_history) ? brainMeta.last_aix_history.length > 0 : brainMeta.last_aix_history.length > 0)
+        ? `直前のAIX履歴: ${Array.isArray(brainMeta.last_aix_history) ? brainMeta.last_aix_history.join(" → ") : brainMeta.last_aix_history}\n`
         : "") +
       (brainMeta.ng_properties?.length
         ? `再提案禁止物件（既に送付済み・NG）: ${brainMeta.ng_properties.join("、")}\n`
