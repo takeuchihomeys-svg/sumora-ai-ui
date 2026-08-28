@@ -41,6 +41,8 @@ export const maxDuration = 60;
 //   ③ RAG: winning_patterns + ai_reply_knowledge（バケット別スコアリング）+
 //      ai_reply_examples（⭐実例 — 文体・テンポの忠実な再現）
 //   ④ Brain戦略（suggested_aix_meta）: 検索ベクトル強化 + 生成方向性の注入
+//   ⑤ AIX専用実例バケット: ai_reply_examples の entry_source='aix_action' ＋ 同一 aix_action の
+//      実績（お客様の状況→実際に送った橋渡し文）を直接クエリで注入（2026-08-28）
 //
 // ※ GENERATION_SYSTEM（通常返信専用システム）は意図的に注入しない。
 //   GENERATION_SYSTEM は「見積書カバー文・確認結果報告等はAIX専用のため通常返信では
@@ -410,7 +412,7 @@ export async function POST(req: NextRequest) {
 
   // ── 並列フェッチ①: Brain戦略 + DB学習資産（generate-reply と同一キャッシュ経由）──
   // 各フェッチはエラーでも生成を止めない（資産なしで生成続行 — generate-reply と同方針）
-  const [convResult, topPrinciples, lossPatterns, phraseList, dbRules, actionBucketRes] = await Promise.all([
+  const [convResult, topPrinciples, lossPatterns, phraseList, dbRules, actionBucketRes, aixExamplesRes] = await Promise.all([
     conversationId
       ? supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
       : Promise.resolve({ data: null }),
@@ -430,6 +432,19 @@ export async function POST(req: NextRequest) {
           .order("created_at", { ascending: false })
           .limit(4)
       : Promise.resolve({ data: null }),
+    // A: AIX専用実例フェッチ（entry_source='aix_action' + 同一 aix_action の実績）
+    // 「過去に同じAIXボタンを使ったとき、どんな状況のお客様にどんな橋渡し文を送ったか」を
+    // pgvector RAGとは独立の直接クエリで必ず届ける（⭐優先・新しい順）
+    actionType
+      ? supabase
+          .from("ai_reply_examples")
+          .select("customer_message, sent_reply, conversation_state, is_starred, reply_angle, aix_action")
+          .eq("entry_source", "aix_action")
+          .eq("aix_action", actionType)
+          .order("is_starred", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(8)
+      : Promise.resolve({ data: null }),
   ]);
   const brainMeta = (convResult.data as { suggested_aix_meta?: BrainMeta } | null)?.suggested_aix_meta ?? null;
 
@@ -444,6 +459,28 @@ export async function POST(req: NextRequest) {
         : "【🏠 内見に至った・案内成功の実例パターン（この展開を参考に橋渡し文を組み立てる・文面の丸写しは禁止）】") +
       `\n━━━━━━━━━━━━━━━━━━━━\n` +
       actionBucketRows.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n") + "\n\n"
+    : "";
+
+  // A: AIX実例バケットの整形（同じAIXアクションで実際に送った橋渡し文 — 状況→文の対応を学ぶ）
+  // 0件のときはバケット自体を注入しない（フォールバック不要）
+  type AixExampleRow = {
+    customer_message: string | null;
+    sent_reply: string | null;
+    conversation_state: string | null;
+    is_starred: boolean | null;
+    reply_angle: string | null;
+    aix_action: string | null;
+  };
+  const aixExampleRows = ((aixExamplesRes?.data ?? []) as AixExampleRow[])
+    .filter((r) => (r.sent_reply ?? "").trim().length > 0);
+  const aixExamplesSection = aixExampleRows.length > 0
+    ? `━━━━━━━━━━━━━━━━━━━━\n【過去のAIX実例（同じAIXアクションで実際に送った橋渡し文）】\n━━━━━━━━━━━━━━━━━━━━\n` +
+      `※ 以下はお客様の状況と、そのとき実際に送った橋渡し文の実例です。文体・トーン・構成の参考にしてください。ただし金額・物件名・日程などの固有の事実は今回の会話履歴/AIXメッセージにあるもののみ使うこと（実例からの持ち込みは絶対禁止）。\n\n` +
+      aixExampleRows.map((ex, i) =>
+        `--- 実例${i + 1}${ex.is_starred ? " ⭐" : ""} ---\n` +
+        `[お客様の状況] 「${safeSlice(ex.customer_message ?? "", 200)}」\n` +
+        `[実際に送った橋渡し文] 「${safeSlice(ex.sent_reply ?? "", 600)}」`
+      ).join("\n\n") + "\n\n"
     : "";
 
   // M1: 注入した ai_reply_knowledge の id を収集（レスポンス後に used_count テレメトリ）
@@ -583,17 +620,42 @@ export async function POST(req: NextRequest) {
         ...(STATE_SEARCH_ALIASES[normalizedState] ?? [normalizedState]),
         ...(conversationState ? [conversationState] : []),
       ]));
+      // B: フォールバック実例はAIX実績を優先する3段リトライ
+      //   ① entry_source='aix_action' + aix_action=actionType（同一AIXボタンの実績）
+      //   ② entry_source='aix_action' のみ（アクション不問のAIX橋渡し文実績）
+      //   ③ entry_source='line_reply'（従来 — 通常返信の実例で文体だけでも維持）
+      const fetchFallbackExamples = async () => {
+        const selectCols = "customer_message, sent_reply, conversation_state, is_starred, reply_angle";
+        if (actionType) {
+          const r1 = await supabase
+            .from("ai_reply_examples")
+            .select(selectCols)
+            .eq("entry_source", "aix_action")
+            .eq("aix_action", actionType)
+            .order("is_starred", { ascending: false })
+            .order("created_at", { ascending: false })
+            .limit(6);
+          if ((r1.data?.length ?? 0) > 0) return r1;
+        }
+        const r2 = await supabase
+          .from("ai_reply_examples")
+          .select(selectCols)
+          .eq("entry_source", "aix_action")
+          .order("is_starred", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(6);
+        if ((r2.data?.length ?? 0) > 0) return r2;
+        return supabase
+          .from("ai_reply_examples")
+          .select(selectCols)
+          .in("conversation_state", fbStates)
+          .eq("entry_source", "line_reply")
+          .order("is_starred", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(6);
+      };
       const [fbExRes, fbKnRes] = await Promise.all([
-        !examplesSection
-          ? supabase
-              .from("ai_reply_examples")
-              .select("customer_message, sent_reply, conversation_state, is_starred, reply_angle")
-              .in("conversation_state", fbStates)
-              .eq("entry_source", "line_reply")
-              .order("is_starred", { ascending: false })
-              .order("created_at", { ascending: false })
-              .limit(6)
-          : Promise.resolve({ data: null }),
+        !examplesSection ? fetchFallbackExamples() : Promise.resolve({ data: null }),
         !knowledgeSection
           ? supabase
               .from("ai_reply_knowledge")
@@ -680,6 +742,7 @@ export async function POST(req: NextRequest) {
     actionGuide ? `・この種別の書き方: ${actionGuide}` : "",
     "",
     brainMetaSection,
+    aixExamplesSection,
     winningSection,
     knowledgeSection,
     actionBucketSection,
@@ -785,6 +848,7 @@ export async function POST(req: NextRequest) {
       ` principles=${topPrinciples.length} loss=${lossPatterns.length} dbRules=${dbRules ? "ok" : "none"}` +
       ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}` +
       ` actionBucket=${actionBucketCategory ? `${actionBucketCategory}:${actionBucketRows.length}` : "-"}` +
+      ` aixEx=${aixExampleRows.length}` +
       ` knUsedIds=${knowledgeUsedIds.length}`,
     );
 
