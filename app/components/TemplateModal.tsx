@@ -827,6 +827,24 @@ function stripViewingSubTag(label: string): string {
   return label;
 }
 
+// ✨「この会話に合った文を生成」: AIXカテゴリ名 → aix-taxonomy 正準アクションキー
+// （/api/aix-template-generate に渡す action_type。マップ外カテゴリは actionCategory のみで生成）
+const AIX_CATEGORY_TO_ACTION: Record<string, string> = {
+  "物件ピックアップした【AIX】": "property_send",
+  "物件オススメ【AIX】": "property_recommendation",
+  "物件確認した【AIX】": "property_check_result",
+  "管理会社に確認した【AIX】": "property_check_result",
+  "代表に確認した【AIX】": "property_check_result",
+  "見積書送る【AIX】": "estimate_sheet",
+  "ヒアリング【AIX】": "condition_hearing",
+  "挨拶【AIX】": "greeting_viewing",
+  "内覧へ！【AIX】": "viewing_invite",
+  "内覧【AIX】": "viewing_invite",
+  "申込へ！【AIX】": "application_push",
+  "追客【AIX】": "followup_revive",
+  "確認します【AIX】": "acknowledge_check",
+};
+
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
   initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext, conversationId, priorityTemplateIds,
@@ -888,6 +906,10 @@ export default function TemplateModal({
   const [editSecondMsgType, setEditSecondMsgType] = useState<string | null>(null);
   const [editSecondMsgDelay, setEditSecondMsgDelay] = useState<number | null>(null);
   const [aixKeywordFilter, setAixKeywordFilter] = useState('');
+  // ✨「この会話に合った文を生成」ボタン（AIXカテゴリ一覧上部）の状態
+  const [aixGenLoading, setAixGenLoading] = useState(false);
+  const [aixGenText, setAixGenText] = useState<string | null>(null);
+  const [aixGenError, setAixGenError] = useState<string | null>(null);
   const [vacatingDates, setVacatingDates] = useState<Record<string, { month: number; day: number } | null>>({});
   const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [templateImages, setTemplateImages] = useState<Record<string, File[]>>({});
@@ -2300,6 +2322,44 @@ export default function TemplateModal({
       onRefresh?.();
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  // ✨ カテゴリ切替時は生成結果をクリア（別カテゴリ向けの文を誤送信しないため）
+  useEffect(() => {
+    setAixGenText(null);
+    setAixGenError(null);
+  }, [category]);
+
+  // ✨ 現在の会話コンテキスト（顧客名・条件・直近メッセージ）から
+  // 選択中AIXカテゴリの橋渡し文を生成する（/api/aix-template-generate）
+  const handleAixContextGenerate = async () => {
+    setAixGenLoading(true);
+    setAixGenError(null);
+    try {
+      const res = await fetch("/api/aix-template-generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionType: AIX_CATEGORY_TO_ACTION[category] ?? null,
+          actionCategory: category,
+          conversationId,
+          customerName,
+          conversationState,
+          recentMessages: (recentMessages ?? []).slice(-15),
+          customerConditions: linkedCustomer?.conditions,
+          noEmoji,
+          pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
+          staffMessagedToday: staffMessagedToday ?? false,
+        }),
+      });
+      const data = await res.json() as { ok: boolean; text?: string; error?: string };
+      if (!res.ok || !data.ok || !data.text) throw new Error(data.error || `生成エラー (${res.status})`);
+      setAixGenText(data.text);
+    } catch (e) {
+      setAixGenError(e instanceof Error ? e.message : "生成に失敗しました。再試行してください");
+    } finally {
+      setAixGenLoading(false);
     }
   };
 
@@ -4612,6 +4672,57 @@ export default function TemplateModal({
                       >絵文字なし</button>
                     </div>
                   </div>
+                  {/* ✨ この会話に合った文を生成（AIXカテゴリのみ・橋渡し文のコンテキスト生成） */}
+                  {isAixCategoryActive && !isSearching && (
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={handleAixContextGenerate}
+                        disabled={aixGenLoading}
+                        className={`w-full py-3 rounded-2xl text-[14px] font-bold text-white shadow-sm transition-all ${aixGenLoading ? "opacity-60" : "hover:opacity-90 active:scale-[0.99]"}`}
+                        style={{ background: "linear-gradient(135deg, #7B1FA2, #9C27B0)" }}
+                      >
+                        {aixGenLoading ? "⏳ この会話を分析して生成中..." : "✨ この会話に合った文を生成"}
+                      </button>
+                      {aixGenError && (
+                        <p className="pl-1 text-[11px] font-bold text-red-600">{aixGenError}</p>
+                      )}
+                      {aixGenText !== null && (
+                        <div className="rounded-xl border border-[#9C27B0] bg-[#faf5ff] p-3">
+                          <div className="mb-1.5 flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-[#7B1FA2]">
+                              ✨ AI生成（{CATEGORY_DISPLAY_NAMES[category] ?? category.replace("【AIX】", "")}）
+                            </span>
+                            <button
+                              onClick={() => { setAixGenText(null); setAixGenError(null); }}
+                              className="flex h-6 w-6 items-center justify-center rounded-full text-[13px] text-[#7B1FA2] hover:bg-[#E1BEE7]"
+                            >✕</button>
+                          </div>
+                          <textarea
+                            value={aixGenText}
+                            onChange={(e) => setAixGenText(e.target.value)}
+                            rows={8}
+                            className="w-full rounded-lg border border-[#E1BEE7] bg-white p-2 text-[13px] leading-relaxed outline-none focus:border-[#9C27B0]"
+                          />
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              onClick={() => {
+                                if (!aixGenText.trim()) return;
+                                onSelect?.(aixGenText, undefined, `【AI生成】${CATEGORY_DISPLAY_NAMES[category] ?? category.replace("【AIX】", "")}`, category, null, undefined, true);
+                                onClose();
+                              }}
+                              className="flex-1 rounded-full py-2 text-[13px] font-bold text-white"
+                              style={{ background: "linear-gradient(135deg, #7B1FA2, #AB47BC)" }}
+                            >📤 この文を使う</button>
+                            <button
+                              onClick={handleAixContextGenerate}
+                              disabled={aixGenLoading}
+                              className={`rounded-full border border-[#9C27B0] px-3 py-2 text-[12px] font-bold text-[#7B1FA2] ${aixGenLoading ? "opacity-60" : "hover:bg-[#E1BEE7]"}`}
+                            >🔄 再生成</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {!isSearching && (category === "申込・審査" || displayFiltered.some(t => /同居人|配偶者/.test(t.text))) && (
                     <div className="flex justify-end">
                       <button
