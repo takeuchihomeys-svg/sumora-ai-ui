@@ -2694,9 +2694,20 @@ $func$;
 
 -- ── ai_reply_examples.entry_source の取りうる値（2026-08-28時点の台帳）──
 -- 'line_reply'   … 通常LINE返信の実例（save-reply-example が記録・generate-reply が参照）
--- 'aix_action'   … AIX本文の橋渡し文実績（aix_generate_log 由来・analyze-aix-templates がバックフィル）
+-- 'aix_action'   … AIX本文の橋渡し文実績（aix_generate_log 由来・旧 analyze-aix-templates がバックフィル）
 -- 'aix_template' … 【AIX】テンプレート続き文の実績（template_selection_logs.final_sent_text 由来・
+--                  analyze-aix-templates がバックフィル。
 --                  aix-template-generate「✨この会話に合った文を生成」の本命実例バケット）
+
+-- ── analyze-aix-templates: テンプレート実績バックフィルの冪等ガード（2026-08-28追加）──
+-- template_selection_logs.example_backfilled_at: /api/analyze-aix-templates が該当ログを
+-- ai_reply_examples（entry_source='aix_template'）へバックフィル処理した時刻。
+-- NULL = 未処理（処理対象）。INSERT失敗時は更新されず次回実行で再試行される（フェイルオープン）。
+ALTER TABLE template_selection_logs
+  ADD COLUMN IF NOT EXISTS example_backfilled_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_tsl_backfill
+  ON template_selection_logs(created_at DESC)
+  WHERE example_backfilled_at IS NULL AND aix_action_type IS NOT NULL;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

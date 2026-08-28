@@ -3,25 +3,22 @@ import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
-// ── AIXテンプレート橋渡し文の学習データバックフィル（analyze-aix-templates）────
-// 「✨ この会話に合った文を生成」（aix-template-generate）は ai_reply_examples の
-// AIX専用実例バケット（entry_source='aix_action' + 同一 aix_action）を参照するが、
-// 過去のAIX送信実績がほとんど蓄積されていない。
-//
-// この API は過去の aix_generate_log（AIXが生成し実際に送信確認された橋渡し文）から
-// 「どのAIXアクションで・どんなお客様状況のとき・どんな橋渡し文を送ったか」を復元し、
-// ai_reply_examples に entry_source='aix_action' としてバックフィルする。
+// ── AIXテンプレート実績の週次学習（analyze-aix-templates）────
+// スタッフがAIXボタン後にTemplateModalで選んで送ったテンプレート文
+// (template_selection_logs.final_sent_text) を ai_reply_examples に
+// entry_source='aix_template' としてバックフィルする。
 //
 // データの流れ:
-//   aix_generate_log (status='used')          … 送信確認済みの生成文（学習対象）
-//     ※ スキーマ上の status は generated / used / discarded。
-//       'used' = save-reply-example が送信確認時に更新した「実際に送られた」ログ。
-//   aix_usage_logs (aix_type一致・±5分以内)    … customer_reacted（⭐品質シグナル）/ was_edited
-//   messages (送信直前の customer 3件)         … 「お客様の状況」テキスト
-//   conversations.status                       … 会話フェーズ（conversation_state として保存）
+//   template_selection_logs (aix_action_type IS NOT NULL) … テンプレート選択実績
+//     final_sent_text = 実際に送った文（学習対象）
+//     was_modified_after_adapt = スタッフが編集したか
+//   aix_usage_logs (conversation_id一致・aix_type一致・±60分以内)
+//     generated_text … AIX本文の冒頭200字（customer_messageの文脈として付与）
+//     customer_reacted … ⭐品質シグナル
+//   messages (送信直前の customer 3件) … 「お客様の状況」テキスト
 //
-// 冪等管理: aix_generate_log.example_backfilled_at（migrate-schema で追加）。
-//   - NULL のログのみ処理対象。INSERT 成功（または重複確認）後に更新する。
+// 冪等管理: template_selection_logs.example_backfilled_at
+//   NULL のレコードのみ処理対象。INSERT 成功後に更新。
 //   - 処理失敗したログは更新しない → 次回実行で再試行（フェイルオープン）。
 //   - さらに INSERT 前に同一 sent_reply の重複チェックを必ず行う（二重バックフィル防止）。
 //
@@ -34,8 +31,14 @@ export const maxDuration = 300;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
-// aix_usage_logs との突合窓（生成時刻±5分以内の同一アクションログを送信ログとみなす）
-const USAGE_MATCH_WINDOW_MS = 5 * 60 * 1000;
+// aix_usage_logs との突合窓: AIX送信（usage log）はテンプレート送信の前に起きるため
+// 「テンプレート送信の60分前 〜 5分後」の同一アクションログを直前のAIX送信とみなす
+// （調査で284/285件がこの窓で成立確認済み）
+const USAGE_WINDOW_BEFORE_MS = 60 * 60 * 1000;
+const USAGE_WINDOW_AFTER_MS = 5 * 60 * 1000;
+
+// customer_message に付与するAIX本文の最大文字数
+const AIX_CONTEXT_MAX_CHARS = 200;
 
 // CRON_SECRET（Vercel cron）または INTERNAL_API_SECRET（requireInternalAuth）のどちらかで認証する
 function checkAuth(req: NextRequest): NextResponse | null {
@@ -45,13 +48,15 @@ function checkAuth(req: NextRequest): NextResponse | null {
   return requireInternalAuth(req);
 }
 
-type GenerateLogRow = {
+type TemplateLogRow = {
   id: string;
-  action_type: string;
+  aix_action_type: string;
   conversation_id: string | null;
-  generated_text: string | null;
-  generated_at: string | null;
-  check_pattern: string | null;
+  final_sent_text: string | null;
+  created_at: string | null;
+  was_modified_after_adapt: boolean | null;
+  conversation_status: string | null;
+  brain_template_hint: string | null;
 };
 
 type UsageLogRow = {
@@ -59,33 +64,32 @@ type UsageLogRow = {
   aix_type: string | null;
   created_at: string | null;
   customer_reacted: boolean | null;
-  was_edited: boolean | null;
+  generated_text: string | null; // AIX本文（customer_messageに文脈として追加する）
 };
 
 type LogResult = { inserted: boolean; skipped?: string; error?: string };
 
-// 生成ログ1件をバックフィルする。成功（または重複としてスキップ確定）時のみ
+// テンプレート選択ログ1件をバックフィルする。成功（または重複としてスキップ確定）時のみ
 // example_backfilled_at を更新する。
-async function backfillFromLog(
-  log: GenerateLogRow,
-  conv: { customer_name: string | null; status: string | null } | undefined,
+async function backfillFromTemplateLog(
+  log: TemplateLogRow,
   usageLogs: UsageLogRow[]
 ): Promise<LogResult> {
-  const generatedText = (log.generated_text ?? "").trim();
-  const generatedAt = log.generated_at;
-  if (!generatedText || !generatedAt || !log.conversation_id) {
+  const sentText = (log.final_sent_text ?? "").trim();
+  const sentAt = log.created_at;
+  if (!sentText || !sentAt || !log.conversation_id) {
     // データ不備 → 学習価値なし。マークして確定スキップ（無限再試行防止）
     await markBackfilled(log.id);
     return { inserted: false, skipped: "missing_data" };
   }
 
-  // 重複チェック: 同一 aix_action + 同一 sent_reply が AIX バケットに既に存在すれば挿入しない
+  // 重複チェック: 同一 aix_action + 同一 sent_reply がテンプレートバケットに既に存在すれば挿入しない
   const { data: dup, error: dupErr } = await supabase
     .from("ai_reply_examples")
     .select("id")
-    .eq("entry_source", "aix_action")
-    .eq("aix_action", log.action_type)
-    .eq("sent_reply", generatedText)
+    .eq("entry_source", "aix_template")
+    .eq("aix_action", log.aix_action_type)
+    .eq("sent_reply", sentText)
     .limit(1)
     .maybeSingle();
   if (dupErr) return { inserted: false, error: `重複チェック失敗: ${dupErr.message}` };
@@ -94,63 +98,69 @@ async function backfillFromLog(
     return { inserted: false, skipped: "duplicate" };
   }
 
-  // 送信（生成）時刻の直前の顧客メッセージ3件 → 「お客様の状況」テキスト
+  // 送信時刻の直前の顧客メッセージ3件 → 「お客様の状況」テキスト
   const { data: msgRows, error: msgErr } = await supabase
     .from("messages")
     .select("text")
     .eq("conversation_id", log.conversation_id)
     .eq("sender", "customer")
-    .lt("created_at", generatedAt)
+    .lt("created_at", sentAt)
     .not("text", "is", null)
     .order("created_at", { ascending: false })
     .limit(3);
   if (msgErr) return { inserted: false, error: `messages取得失敗: ${msgErr.message}` };
-  const customerMessage = ((msgRows ?? []) as Array<{ text: string | null }>)
+  let customerMessage = ((msgRows ?? []) as Array<{ text: string | null }>)
     .map((m) => (m.text ?? "").trim())
     .filter((t) => t.length > 0)
     .reverse() // 最新順で取得 → 時系列順に並べ直す
     .join("\n")
     .slice(0, 1000);
 
-  // aix_usage_logs 突合: 同一会話・同一アクション・生成時刻±5分以内の最も近いログ
-  const genTime = new Date(generatedAt).getTime();
+  // aix_usage_logs 突合: 同一会話・同一アクション・「送信60分前〜5分後」窓内で最も時間の近いログ
+  const sentTime = new Date(sentAt).getTime();
   const usage = usageLogs
-    .filter(
-      (u) =>
-        u.conversation_id === log.conversation_id &&
-        u.aix_type === log.action_type &&
-        u.created_at &&
-        Math.abs(new Date(u.created_at).getTime() - genTime) < USAGE_MATCH_WINDOW_MS
-    )
+    .filter((u) => {
+      if (u.conversation_id !== log.conversation_id) return false;
+      if (u.aix_type !== log.aix_action_type) return false;
+      if (!u.created_at) return false;
+      const t = new Date(u.created_at).getTime();
+      return t >= sentTime - USAGE_WINDOW_BEFORE_MS && t <= sentTime + USAGE_WINDOW_AFTER_MS;
+    })
     .sort(
       (a, b) =>
-        Math.abs(new Date(a.created_at!).getTime() - genTime) -
-        Math.abs(new Date(b.created_at!).getTime() - genTime)
+        Math.abs(new Date(a.created_at!).getTime() - sentTime) -
+        Math.abs(new Date(b.created_at!).getTime() - sentTime)
     )[0];
 
-  const wasEdited = usage?.was_edited === true;
+  // 直前のAIX送信本文（冒頭200字）を文脈として customer_message に付与
+  const aixText = (usage?.generated_text ?? "").trim();
+  if (aixText) {
+    const aixContext = `〔直前のAIX送信〕${aixText.slice(0, AIX_CONTEXT_MAX_CHARS)}`;
+    customerMessage = customerMessage ? `${customerMessage}\n${aixContext}` : aixContext;
+  }
+
+  const wasModified = log.was_modified_after_adapt === true;
   const { error: insErr } = await supabase.from("ai_reply_examples").insert({
-    entry_source: "aix_action",
-    aix_action: log.action_type,
+    entry_source: "aix_template",
+    aix_action: log.aix_action_type,
     // 顧客メッセージが1件もない場合は既存の慣例（save-reply-example）に合わせる
     customer_message: customerMessage || "（初回連絡）",
-    sent_reply: generatedText,
-    conversation_state: conv?.status ?? "unknown",
+    sent_reply: sentText,
+    conversation_state: log.conversation_status ?? "unknown",
     conversation_id: log.conversation_id,
-    sent_at: generatedAt,
+    sent_at: sentAt,
     // お客様が反応した実例 = ⭐良い実例（aix-template-generate が is_starred 優先で参照）
     is_starred: usage?.customer_reacted === true,
-    // AI生成のまま送信 / スタッフが編集して送信（usage log なしは ai_generated 扱い）
-    reply_angle: wasEdited ? "ai_edited" : "ai_generated",
+    // AI適応のまま送信 / スタッフが編集して送信
+    reply_angle: wasModified ? "ai_edited" : "ai_generated",
     was_ai_used: true,
-    was_ai_modified: wasEdited,
+    was_ai_modified: wasModified,
     // embedding は付与しない → backfill-embeddings が embedding IS NULL を拾って後追い生成する
   });
   if (insErr) return { inserted: false, error: `ai_reply_examples insert失敗: ${insErr.message}` };
 
   // バックフィル完了 → example_backfilled_at を記録（冪等ガード）
-  // 更新失敗時は inserted:false を返して次回再処理させると重複INSERTになるが、
-  // 次回は上の sent_reply 重複チェックで捕捉されるため二重挿入にはならない
+  // 更新失敗時は次回再処理されるが、上の sent_reply 重複チェックで捕捉されるため二重挿入にはならない
   const marked = await markBackfilled(log.id);
   if (!marked) return { inserted: true, error: "example_backfilled_at更新失敗（重複チェックで次回捕捉）" };
 
@@ -159,7 +169,7 @@ async function backfillFromLog(
 
 async function markBackfilled(logId: string): Promise<boolean> {
   const { error } = await supabase
-    .from("aix_generate_log")
+    .from("template_selection_logs")
     .update({ example_backfilled_at: new Date().toISOString() })
     .eq("id", logId);
   if (error) console.warn("[analyze-aix-templates] example_backfilled_at更新失敗:", error.message);
@@ -182,23 +192,23 @@ export async function POST(req: NextRequest) {
 
   const runLogId = await startCronLog("analyze-aix-templates");
   try {
-    // Step 1: 未処理の送信確認済み生成ログを取得
-    // status='used' = save-reply-example が送信確認時に generated → used へ更新したログ
+    // Step 1: 未処理のテンプレート選択実績を取得
+    // aix_action_type IS NOT NULL = AIXボタン経由のテンプレート送信（学習対象）
     const { data: logRows, error: logErr } = await supabase
-      .from("aix_generate_log")
-      .select("id, action_type, conversation_id, generated_text, generated_at, check_pattern")
-      .eq("status", "used")
-      .not("generated_text", "is", null)
-      .neq("generated_text", "")
+      .from("template_selection_logs")
+      .select("id, aix_action_type, conversation_id, final_sent_text, created_at, was_modified_after_adapt, conversation_status, brain_template_hint")
+      .not("aix_action_type", "is", null)
+      .not("final_sent_text", "is", null)
+      .neq("final_sent_text", "")
       .not("conversation_id", "is", null)
       .is("example_backfilled_at", null)
-      .order("generated_at", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(limit);
     if (logErr) {
       await finishCronLog(runLogId, false, undefined, logErr.message);
       return NextResponse.json({ ok: false, error: logErr.message }, { status: 500 });
     }
-    const logs = (logRows ?? []) as GenerateLogRow[];
+    const logs = (logRows ?? []) as TemplateLogRow[];
 
     if (logs.length === 0) {
       await finishCronLog(runLogId, true, { candidates: 0, inserted: 0 });
@@ -207,27 +217,18 @@ export async function POST(req: NextRequest) {
 
     const convIds = Array.from(new Set(logs.map((l) => l.conversation_id).filter((c): c is string => !!c)));
 
-    // Step 2-3 の一括プリフェッチ: conversations（会話フェーズ）と aix_usage_logs（品質シグナル）
-    const [convRes, usageRes] = await Promise.all([
-      supabase.from("conversations").select("id, customer_name, status").in("id", convIds),
-      supabase
-        .from("aix_usage_logs")
-        .select("conversation_id, aix_type, created_at, customer_reacted, was_edited")
-        .in("conversation_id", convIds),
-    ]);
-    if (convRes.error) {
-      await finishCronLog(runLogId, false, undefined, convRes.error.message);
-      return NextResponse.json({ ok: false, error: convRes.error.message }, { status: 500 });
+    // Step 2-3 の一括プリフェッチ: aix_usage_logs（±60分窓用・generated_text = AIX本文も取得）
+    // ※ conversation_state は template_selection_logs.conversation_status（送信時点のスナップショット）を
+    //   そのまま使うため conversations の再取得は不要
+    const { data: usageRows, error: usageErr } = await supabase
+      .from("aix_usage_logs")
+      .select("conversation_id, aix_type, created_at, customer_reacted, generated_text")
+      .in("conversation_id", convIds);
+    // aix_usage_logs 取得失敗はフェイルオープン（品質シグナル・AIX文脈なしでバックフィル続行）
+    if (usageErr) {
+      console.warn("[analyze-aix-templates] aix_usage_logs取得失敗:", usageErr.message);
     }
-    // aix_usage_logs 取得失敗はフェイルオープン（品質シグナルなしでバックフィル続行）
-    if (usageRes.error) {
-      console.warn("[analyze-aix-templates] aix_usage_logs取得失敗:", usageRes.error.message);
-    }
-    const convMap = new Map(
-      ((convRes.data ?? []) as Array<{ id: string; customer_name: string | null; status: string | null }>)
-        .map((c) => [c.id, { customer_name: c.customer_name, status: c.status }])
-    );
-    const usageLogs = (usageRes.data ?? []) as UsageLogRow[];
+    const usageLogs = (usageRows ?? []) as UsageLogRow[];
 
     // Step 4: 1件ずつバックフィル（1件の失敗は他を止めない）
     let inserted = 0;
@@ -236,11 +237,7 @@ export async function POST(req: NextRequest) {
     const errors: string[] = [];
     for (const log of logs) {
       try {
-        const result = await backfillFromLog(
-          log,
-          log.conversation_id ? convMap.get(log.conversation_id) : undefined,
-          usageLogs
-        );
+        const result = await backfillFromTemplateLog(log, usageLogs);
         if (result.inserted) inserted += 1;
         else if (result.skipped) skipped += 1;
         else {
