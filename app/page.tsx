@@ -9477,11 +9477,9 @@ export default function Home() {
             templateOpenContext === "viewing_follow" ? "内覧" :
             templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込・審査" :
             activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory :
-            // 自動カテゴリ誘導の廃止（2026-08-28）: バナー等の明示コンテキストなしの手動オープンでは
-            // AI提案（nextActionMap）・直近AIX送信（postAixTemplateMap）・2番手検出（suggest2ndHandMap）
-            // によるAIXカテゴリへの自動移動を行わない。ユーザーが最後に見ていたカテゴリのまま開く
-            // （TemplateModal側の lastUserSelectedCategory が記憶）。AI推薦はバッジ表示
-            // （suggestedCategory / priorityTemplateIds）のみで任意参照とする。
+            // AIX送信直後の手動テンプレートボタン押下 → 送信したAIXと同じカテゴリで開く
+            // （バナー経由の post_aix と同じ体験を手動ボタンでも提供）
+            postAixTemplateMap[selectedConversation.id] ? postAixTemplateMap[selectedConversation.id]?.category :
             undefined
           }
           highlightKeyword={
