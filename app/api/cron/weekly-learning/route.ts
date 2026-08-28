@@ -1002,6 +1002,64 @@ async function runChunk3(): Promise<Record<string, unknown>> {
     }
   }
 
+  // Stage C2 (FIX 旧データ競合): used_count>100 の hypothesis 強制審査キュー
+  // 高頻度で生成プロンプトに注入され続けている未検証仮説は影響範囲が大きく、
+  // 誤ルールの場合 rejected されるまで生成を汚染し続けるため、importance に関係なく毎週AI審査にかける。
+  // （keep判定の場合は翌週も再審査対象に残る = 解決するまで強制審査キューに留まる）
+  let highUsageReviewed = 0;
+  const { data: highUsageRaw } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id, title, content, importance, category, conversation_state, used_count")
+    .eq("hypothesis_status", "hypothesis")
+    .gt("used_count", 100)
+    .order("used_count", { ascending: false })
+    .limit(AI_CLASSIFY_BATCH);
+
+  const stageCIds = new Set(stageCRules.map(r => r.id));
+  const highUsageRules = ((highUsageRaw ?? []) as Array<HypothesisRule & { used_count?: number }>)
+    .filter(r => !stageCIds.has(r.id)); // Stage C で審査済みの行は二重審査しない
+
+  if (highUsageRules.length > 0) {
+    highUsageReviewed = highUsageRules.length;
+    const highUsageResult = await aiClassifyBatch(highUsageRules);
+    for (const item of highUsageResult.results) {
+      const rule = highUsageRules.find(r => r.id === item.id);
+      if (!rule) continue;
+      if (item.verdict === "promote") {
+        await supabase
+          .from("ai_reply_knowledge")
+          .update({ hypothesis_status: "confirmed", promoted_by: "weekly_high_usage_judge" })
+          .eq("id", item.id);
+        aiPromoted++;
+      } else if (item.verdict === "reject") {
+        await supabase
+          .from("ai_reply_knowledge")
+          .update({ hypothesis_status: "rejected", rejection_reason: "ai_high_usage_low_quality" })
+          .eq("id", item.id);
+        aiRejected++;
+      } else if (item.verdict === "keep") {
+        // 判断保留 → 人間への質問として起票（knowledge_id で dedup）
+        const question = `[knowledge_id:${rule.id}] ❓【高頻度使用の未検証ルール】このルール候補を採用すべきか確認してください\n\n■ なぜ確認が必要か\nこのルールは未検証（hypothesis）のまま既に ${rule.used_count ?? "100+"}回 AI返信生成に注入されています。誤ったルールの場合、返信品質を継続的に汚染するため優先確認が必要です。\n\n■ 使われそうな場面\n会話フェーズ「${rule.conversation_state ?? "不明"}」でAIが返信する際に使われるルール候補です。\n\n━━ ルール候補 ━━\nタイトル：「${rule.title}」\n内容：${String(rule.content ?? "").slice(0, 400)}\n\n━━ AIによる評価理由 ━━\n${item.reason ?? "（理由なし）"}\n\n❓ 竹内さんへの質問\n① このルールの内容は正しいですか？\n② confirmed（確認済み）として採用してよいですか？`;
+        const { data: existingQ } = await supabase
+          .from("ai_feedback_items")
+          .select("id")
+          .ilike("question", `%${rule.id}%`)
+          .in("status", ["pending", "answered", "applied"])
+          .limit(1);
+        if (!existingQ || existingQ.length === 0) {
+          const raised = await insertAiQuestion({
+            question,
+            category: "knowledge_gap",
+            confidence: "medium",
+            evidence: `used_count=${rule.used_count ?? "100+"} の高頻度使用hypothesis（weekly chunk3 Stage C2 強制審査）`,
+            speculation: `weekly-learning chunk3 Stage C2: used_count>100 強制審査キュー（importance ${rule.importance}）`,
+          });
+          if (raised) questionsRaised++;
+        }
+      }
+    }
+  }
+
   // Stage D: バックグラウンド再評価（フィードバック関数が呼ばれなかった場合の救済）
   // apply_count/correct_countが既に閾値を超えているhypothesisを再チェックして昇格
   const { data: stageDBatch } = await supabase
@@ -1050,7 +1108,8 @@ async function runChunk3(): Promise<Record<string, unknown>> {
     aiRejected,
     questionsRaised,
     feedbackRuleQuestions,
-    message: `chunk3: 自動却下${autoRejected}件・自動昇格${autoPromoted}件・AI昇格${aiPromoted}件・AI却下${aiRejected}件・FBルール再確認${feedbackRuleQuestions}件`,
+    highUsageReviewed,
+    message: `chunk3: 自動却下${autoRejected}件・自動昇格${autoPromoted}件・AI昇格${aiPromoted}件・AI却下${aiRejected}件・高頻度hypothesis強制審査${highUsageReviewed}件・FBルール再確認${feedbackRuleQuestions}件`,
   };
 }
 

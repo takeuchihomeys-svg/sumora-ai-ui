@@ -242,7 +242,8 @@ export function classifyReplyMode(input: ClassifierInput): ClassifierResult {
       suggestedAction: "property_recommendation",
       matchedRule: "hybrid_same_building",
       confidence: "high",
-      shortDraft: "ございます！！\n少々お待ちください！！",
+      // 「少々お待ちください」はfinal-check禁止語（BANNED_WORDS_DETERMINISTIC）のため「しばらく」を使う
+      shortDraft: "ございます！！\nしばらくお待ちください！！",
     };
   }
 

@@ -1039,7 +1039,7 @@ function buildGenerationMessages(
     ? `\n\n【🔗 写真/URL要求検出（最優先）】お客様は物件の写真・画像・URLを求めていますが、これらの送付はAIXツール（物件ピックアップした）またはスタッフ操作で行います。
 【絶対禁止】返信文に「写真をお送りします」「URLをご案内します」「リンクをお送りします」「〜のURLとなります」等、写真・URLを今すぐ送る・案内するような文言を一切書かない。
 ・写真・URL・物件リンクが「今から届く」かのような表現も禁止。
-・返信文は受付・確認の一言のみ：「確認してすぐご案内しますね😊！！」「少々お待ちください！！」程度にとどめる。
+・返信文は受付・確認の一言のみ：「確認してすぐご案内しますね😊！！」「しばらくお待ちください！！」程度にとどめる（「少々お待ちください」はfinal-check禁止語のため絶対に使わない）。
 ・対象物件が特定できる場合は物件名を添えた受付文でよい（写真・URLは書かない）。`
     : "";
 
@@ -1501,17 +1501,38 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           return bConf - aConf;
         });
       if (filteredResults.length > 0) {
+        // FIX(旧データ競合): 未検証hypothesisがRAG注入プールの62%を占め生成を汚染していたため、
+        // hypothesis の混入を各バケット上限の半分までにキャップする（confirmed/legacy(null)は無制限）
+        const capHypothesis = <T extends { hypothesis_status?: string }>(rows: T[], limit: number): T[] => {
+          const hypCap = Math.floor(limit / 2);
+          const out: T[] = [];
+          let hypCount = 0;
+          for (const r of rows) {
+            if (out.length >= limit) break;
+            if (r.hypothesis_status === "hypothesis") {
+              if (hypCount >= hypCap) continue;
+              hypCount++;
+            }
+            out.push(r);
+          }
+          return out;
+        };
         // ナレッジ洪水対策: 差分学習5件・修正対比5件・絶対ルール8件・パターン5件に上限を削減
-        const diffLearned = filteredResults.filter(r => r.title.includes("差分学習")).slice(0, 5);
-        const correctionPairs = filteredResults.filter(r => r.title.includes("修正対比")).slice(0, 5);
+        const diffLearned = capHypothesis(filteredResults.filter(r => r.title.includes("差分学習")), 5);
+        const correctionPairs = capHypothesis(filteredResults.filter(r => r.title.includes("修正対比")), 5);
         // importance=10 は staticBlock（topPrinciplesNote）に注入済みのため除外。importance=8-9 を RAG で最大16件供給
-        const criticalVector = filteredResults.filter(r => r.importance >= 8 && r.importance < 10 && r.category === "principle").slice(0, 16);
+        // FIX(旧データ競合): 【⚠️絶対ルール】バケットは confirmed（検証済み）限定にする。
+        // hypothesis_status が null の行は hypothesis 制度導入前のlegacy（人手キュレーション）として信頼扱いで許可
+        const criticalVector = filteredResults.filter(r =>
+          r.importance >= 8 && r.importance < 10 && r.category === "principle" &&
+          (r.hypothesis_status === "confirmed" || r.hypothesis_status == null)
+        ).slice(0, 16);
         const critical = criticalVector;
-        const patterns = filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 5);
-        const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
+        const patterns = capHypothesis(filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")), 5);
+        const phrases = capHypothesis(filteredResults.filter(r => r.category === "phrase"), 6);
         // pgvector経路での applying_pattern: ベクトル類似度ベースの結果を優先し、なければ静的クエリにフォールバック
         // （RPC は category フィルタなし・importance>=7 のため applying_pattern 行は filteredResults に既に含まれる）
-        const applyingVector = filteredResults.filter(r => r.category === "applying_pattern").slice(0, 3);
+        const applyingVector = capHypothesis(filteredResults.filter(r => r.category === "applying_pattern"), 3);
         const effectiveApplyingList = applyingVector.length > 0 ? applyingVector : applyingList;
         const effectiveApplyingIds = applyingVector.length > 0 ? applyingVector.map(r => r.id).filter(Boolean) : applyingIds;
         const effectiveApplyingBlock = effectiveApplyingList.length > 0
@@ -1520,7 +1541,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           : "";
 
         // pgvector経路での viewing_pattern: ベクトル類似度ベースの結果を優先し、なければ静的クエリにフォールバック
-        const viewingVector = filteredResults.filter(r => r.category === "viewing_pattern").slice(0, 3);
+        const viewingVector = capHypothesis(filteredResults.filter(r => r.category === "viewing_pattern"), 3);
         const effectiveViewingList = viewingVector.length > 0 ? viewingVector : viewingList;
         const effectiveViewingIds = viewingVector.length > 0 ? viewingVector.map(r => r.id).filter(Boolean) : viewingIds;
         const effectiveViewingBlock = effectiveViewingList.length > 0
@@ -1956,7 +1977,7 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
       ? `
 【🔗 リンク（URL）要求検出（最優先）】お客様はURLを求めていますが、URLの送付はAIXツール（物件ピックアップした）がスタッフ操作で行います。
 【絶対禁止】返信文に「〜のURLとなります」「URLをお送りします」「リンクをご案内します」等、URLを送る・案内するような文言を一切書かない。
-→ 返信文は受付・確認の一言のみ：「確認してすぐご案内しますね😊！！」「少々お待ちください！！」程度にとどめる。
+→ 返信文は受付・確認の一言のみ：「確認してすぐご案内しますね😊！！」「しばらくお待ちください！！」程度にとどめる（「少々お待ちください」はfinal-check禁止語のため絶対に使わない）。
 → 対象物件が特定できる場合は物件名を添えた受付文でよい（URLは書かない）。
 → 「気になる物件のURLをお送りください」の聞き返しは絶対禁止。`
       : "";

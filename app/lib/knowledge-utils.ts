@@ -260,7 +260,8 @@ type MatchRpcRow = {
  * ai_reply_knowledge への重複排除 upsert。
  *
  * 1. embedding が提供されている場合: match_reply_knowledge RPC で類似度チェック
- *    → similarity > 0.92 かつ同カテゴリの既存ルールがあれば importance を「既存と新規の高い方」に UPDATE → "merged"
+ *    → similarity > 0.92 かつ同カテゴリの既存ルールがあれば importance を「既存と新規の高い方」に UPDATE、
+ *      content が異なる場合は新規版で上書き（訂正ナレッジが旧誤知識に吸収され破棄されるのを防ぐ）→ "merged"
  * 2. embedding なし or 類似なし: タイトル先頭15文字の ilike チェック
  *    → タイトル重複あり → "skipped"
  * 3. 上記いずれでも重複なし → INSERT → "inserted"
@@ -288,13 +289,26 @@ export async function upsertKnowledge(
       if (similar) {
         // importanceインフレ防止: 加算はせず「既存 vs 新規」の高い方を維持（上限9）
         const newImportance = Math.min(9, Math.max(similar.importance || 0, importance || 0));
+        // FIX(旧データ競合): merged時に既存contentを温存すると、訂正ナレッジ（同じ顧客メッセージをembedding）が
+        // 訂正対象の旧誤知識に吸収され、旧誤内容のimportanceだけ強化される問題があった。
+        // → content は新規版（最新の訂正文）で上書きし、embedding も新content由来のものに更新する。
+        const contentChanged = (content ?? "").trim().length > 0 && content !== similar.content;
         await supabase
           .from("ai_reply_knowledge")
-          .update({ importance: newImportance })
+          .update({
+            importance: newImportance,
+            ...(contentChanged ? { content, embedding: JSON.stringify(embedding) } : {}),
+          })
           .eq("id", similar.id);
 
+        if (contentChanged) {
+          // 週次レビュー用に新旧content差分を必ずログに残す
+          console.log(
+            `[upsertKnowledge] merged+content更新: "${title}" → 既存ID ${similar.id}\n  旧content: ${similar.content.slice(0, 200)}\n  新content: ${content.slice(0, 200)}`,
+          );
+        }
         console.log(
-          `[upsertKnowledge] merged: "${title}" → 既存ID ${similar.id} (similarity=${similar.similarity.toFixed(3)}, importance ${similar.importance}→${newImportance})`,
+          `[upsertKnowledge] merged: "${title}" → 既存ID ${similar.id} (similarity=${similar.similarity.toFixed(3)}, importance ${similar.importance}→${newImportance}, contentUpdated=${contentChanged})`,
         );
         return { result: "merged", id: similar.id };
       }
