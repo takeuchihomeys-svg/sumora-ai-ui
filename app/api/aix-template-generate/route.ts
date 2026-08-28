@@ -121,6 +121,19 @@ const STATE_LABEL: Record<string, string> = {
   screening: "審査中", contract: "契約中", closed_won: "成約済み",
 };
 
+// ─── 相対時刻ラベル生成（会話履歴の各メッセージに付与）──────────────────────
+function relativeTimeLabel(isoStr: string | undefined, nowMs: number): string {
+  if (!isoStr) return "";
+  const diffMs = nowMs - new Date(isoStr).getTime();
+  const diffH = diffMs / 3600000;
+  if (diffH < 0.5) return "（たった今）";
+  if (diffH < 2) return "（約1〜2時間前）";
+  if (diffH < 12) return "（今日）";
+  if (diffH < 36) return "（昨日）";
+  const diffD = Math.round(diffH / 24);
+  return `（${diffD}日前）`;
+}
+
 // ─── POST ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   let body: GenerateRequestBody;
@@ -198,6 +211,12 @@ export async function POST(req: NextRequest) {
     last_aix_history?: string[];          // 直前に押したAIXボタン履歴
     future_timeline?: string;             // 入居希望タイムライン（「9/26入居希望」等）
     ng_properties?: string[];             // 再提案禁止物件リスト
+    property_search_params?: {            // 会話から抽出した最新の希望条件（DB条件より新しい場合がある）
+      rent_max?: number;
+      move_in_time?: string;
+      preferences?: string[];
+      [key: string]: unknown;
+    };
   };
   const convResult = conversationId
     ? await supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
@@ -276,13 +295,15 @@ export async function POST(req: NextRequest) {
   }
 
   // ── コンテキスト整形 ─────────────────────────────────────────────────────
+  const nowMs = Date.now();
   const history = (recentMessages ?? [])
     .slice(-15)
     .map((m) => {
       const who = m.sender === "customer" ? "お客様" : (m.isAix ? "スモラ(AIX送信)" : "スモラ");
-      if (m.text === "[画像]" || m.text === "[動画]") return `${who}: 【画像・資料を送付】`;
+      const timeLabel = relativeTimeLabel(m.rawCreatedAt, nowMs);
+      if (m.text === "[画像]" || m.text === "[動画]") return `${who}${timeLabel}: 【画像・資料を送付】`;
       if (!m.text) return null;
-      return `${who}: ${m.text}`;
+      return `${who}${timeLabel}: ${m.text}`;
     })
     .filter(Boolean)
     .join("\n");
@@ -312,6 +333,9 @@ export async function POST(req: NextRequest) {
       (brainMeta.last_aix_history?.length
         ? `直前のAIX履歴: ${brainMeta.last_aix_history.join(" → ")}\n`
         : "") +
+      (brainMeta.ng_properties?.length
+        ? `再提案禁止物件（既に送付済み・NG）: ${brainMeta.ng_properties.join("、")}\n`
+        : "") +
       "\n"
     : "";
 
@@ -331,6 +355,15 @@ export async function POST(req: NextRequest) {
     `・お客様名: ${customerName || "〇〇"}さん`,
     `・現在のフェーズ: ${stateLabel}`,
     customerConditions ? `・希望条件（DB）: ${customerConditions}` : "",
+    brainMeta?.property_search_params
+      ? `・希望条件（会話由来・最新・優先）: ${
+          [
+            brainMeta.property_search_params.rent_max ? `家賃上限${brainMeta.property_search_params.rent_max}万円` : "",
+            brainMeta.property_search_params.move_in_time ? `入居希望${brainMeta.property_search_params.move_in_time}` : "",
+            ...(brainMeta.property_search_params.preferences ?? []),
+          ].filter(Boolean).join(" / ")
+        }（DB条件より優先して参照すること）`
+      : "",
     staffMessagedToday ? `・本日すでにスタッフが送信済み（冒頭は「お待たせ致しました！！」系にする）` : "",
     noEmoji ? `・絵文字禁止モード: 絵文字を一切使わないこと` : "",
     "",
