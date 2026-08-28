@@ -2645,11 +2645,15 @@ ALTER TABLE aix_generate_log ADD COLUMN IF NOT EXISTS example_backfilled_at TIME
 CREATE INDEX IF NOT EXISTS idx_aix_generate_log_backfill
   ON aix_generate_log(generated_at DESC) WHERE example_backfilled_at IS NULL AND status = 'used';
 
--- ── match_aix_reply_examples: AIX橋渡し文実例のpgvector類似検索RPC（2026-08-28追加）──
+-- ── match_aix_reply_examples: AIX実例のpgvector類似検索RPC（2026-08-28追加）──
 -- match_reply_examples は entry_source='line_reply' がハードコードされており AIX実例が
--- 永遠にヒットしないため、entry_source='aix_action' 専用の別RPCとして新設。
+-- 永遠にヒットしないため、AIX専用の別RPCとして新設。
 -- （match_reply_examples は generate-reply が使用中のため変更禁止）
 -- filter_action: 同一 aix_action の実例に similarity +0.05 ブースト（同アクション優先）
+-- 2026-08-28: entry_source を IN ('aix_template','aix_action') に拡張。
+--   'aix_template' = template_selection_logs.final_sent_text 由来の【AIX】テンプレート続き文
+--   （AIX本文の後にスタッフが実際に送ったテンプレート実例 — aix-template-generate の本命実例）
+--   'aix_action'   = aix_generate_log 由来のAIX橋渡し文（property_send 等の会話的AIX本文）
 CREATE OR REPLACE FUNCTION match_aix_reply_examples(
   query_embedding vector,
   match_count integer,
@@ -2682,11 +2686,17 @@ AS $func$
       ELSE (1 - (ae.embedding <=> query_embedding))::float
     END AS similarity
   FROM ai_reply_examples ae
-  WHERE ae.entry_source = 'aix_action'
+  WHERE ae.entry_source IN ('aix_template', 'aix_action')
     AND ae.embedding IS NOT NULL
   ORDER BY ae.embedding <=> query_embedding
   LIMIT match_count
 $func$;
+
+-- ── ai_reply_examples.entry_source の取りうる値（2026-08-28時点の台帳）──
+-- 'line_reply'   … 通常LINE返信の実例（save-reply-example が記録・generate-reply が参照）
+-- 'aix_action'   … AIX本文の橋渡し文実績（aix_generate_log 由来・analyze-aix-templates がバックフィル）
+-- 'aix_template' … 【AIX】テンプレート続き文の実績（template_selection_logs.final_sent_text 由来・
+--                  aix-template-generate「✨この会話に合った文を生成」の本命実例バケット）
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

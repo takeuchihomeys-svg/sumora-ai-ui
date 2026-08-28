@@ -41,8 +41,9 @@ export const maxDuration = 60;
 //   ③ RAG: winning_patterns + ai_reply_knowledge（バケット別スコアリング）+
 //      ai_reply_examples（⭐実例 — 文体・テンポの忠実な再現）
 //   ④ Brain戦略（suggested_aix_meta）: 検索ベクトル強化 + 生成方向性の注入
-//   ⑤ AIX専用実例バケット: ai_reply_examples の entry_source='aix_action' ＋ 同一 aix_action の
-//      実績（お客様の状況→実際に送った橋渡し文）を直接クエリで注入（2026-08-28）
+//   ⑤ AIX専用実例バケット: ai_reply_examples の entry_source='aix_template'（【AIX】テンプレート
+//      続き文 — template_selection_logs.final_sent_text 由来・本命）＋ entry_source='aix_action'
+//      （AIX本文の橋渡し文実績・補完）を同一 aix_action で直接クエリし統合注入（2026-08-28）
 //
 // ※ GENERATION_SYSTEM（通常返信専用システム）は意図的に注入しない。
 //   GENERATION_SYSTEM は「見積書カバー文・確認結果報告等はAIX専用のため通常返信では
@@ -422,7 +423,7 @@ export async function POST(req: NextRequest) {
 
   // ── 並列フェッチ①: Brain戦略 + DB学習資産（generate-reply と同一キャッシュ経由）──
   // 各フェッチはエラーでも生成を止めない（資産なしで生成続行 — generate-reply と同方針）
-  const [convResult, topPrinciples, lossPatterns, phraseList, dbRules, actionBucketRes, aixExamplesRes] = await Promise.all([
+  const [convResult, topPrinciples, lossPatterns, phraseList, dbRules, actionBucketRes, aixTemplateExRes, aixActionExRes] = await Promise.all([
     conversationId
       ? supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
       : Promise.resolve({ data: null }),
@@ -442,9 +443,21 @@ export async function POST(req: NextRequest) {
           .order("created_at", { ascending: false })
           .limit(4)
       : Promise.resolve({ data: null }),
-    // A: AIX専用実例フェッチ（entry_source='aix_action' + 同一 aix_action の実績）
-    // 「過去に同じAIXボタンを使ったとき、どんな状況のお客様にどんな橋渡し文を送ったか」を
-    // pgvector RAGとは独立の直接クエリで必ず届ける（⭐優先・新しい順）
+    // A-1: 【AIX】テンプレート実例フェッチ（entry_source='aix_template' + 同一 aix_action）
+    // AIX本文の後に実際に送った「続き文」（template_selection_logs.final_sent_text 由来の
+    // バックフィル）。「✨この会話に合った文を生成」が生成すべき本命の実例のため優先取得
+    actionType
+      ? supabase
+          .from("ai_reply_examples")
+          .select("customer_message, sent_reply, conversation_state, is_starred, reply_angle, aix_action")
+          .eq("entry_source", "aix_template")
+          .eq("aix_action", actionType)
+          .order("is_starred", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(6)
+      : Promise.resolve({ data: null }),
+    // A-2: AIX橋渡し文実例フェッチ（entry_source='aix_action' + 同一 aix_action）
+    // property_send 等のAIX本文（会話的メッセージ）実績。テンプレート実例の補完として取得
     actionType
       ? supabase
           .from("ai_reply_examples")
@@ -453,7 +466,7 @@ export async function POST(req: NextRequest) {
           .eq("aix_action", actionType)
           .order("is_starred", { ascending: false })
           .order("created_at", { ascending: false })
-          .limit(8)
+          .limit(4)
       : Promise.resolve({ data: null }),
   ]);
   const brainMeta = (convResult.data as { suggested_aix_meta?: BrainMeta } | null)?.suggested_aix_meta ?? null;
@@ -471,7 +484,7 @@ export async function POST(req: NextRequest) {
       actionBucketRows.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n") + "\n\n"
     : "";
 
-  // A: AIX実例バケットの整形（同じAIXアクションで実際に送った橋渡し文 — 状況→文の対応を学ぶ）
+  // A: AIX実例バケットの整形（テンプレート実例を先頭・橋渡し文実例を補完として1バケットに統合）
   // 0件のときはバケット自体を注入しない（フォールバック不要）
   type AixExampleRow = {
     customer_message: string | null;
@@ -481,15 +494,23 @@ export async function POST(req: NextRequest) {
     reply_angle: string | null;
     aix_action: string | null;
   };
-  const aixExampleRows = ((aixExamplesRes?.data ?? []) as AixExampleRow[])
-    .filter((r) => (r.sent_reply ?? "").trim().length > 0);
+  const seenAixReplies = new Set<string>();
+  const aixExampleRows = [
+    ...((aixTemplateExRes?.data ?? []) as AixExampleRow[]),
+    ...((aixActionExRes?.data ?? []) as AixExampleRow[]),
+  ].filter((r) => {
+    const key = (r.sent_reply ?? "").trim();
+    if (key.length === 0 || seenAixReplies.has(key)) return false;
+    seenAixReplies.add(key);
+    return true;
+  });
   const aixExamplesSection = aixExampleRows.length > 0
-    ? `━━━━━━━━━━━━━━━━━━━━\n【過去のAIX実例（同じAIXアクションで実際に送った橋渡し文）】\n━━━━━━━━━━━━━━━━━━━━\n` +
-      `※ 以下はお客様の状況と、そのとき実際に送った橋渡し文の実例です。文体・トーン・構成の参考にしてください。ただし金額・物件名・日程などの固有の事実は今回の会話履歴/AIXメッセージにあるもののみ使うこと（実例からの持ち込みは絶対禁止）。\n\n` +
+    ? `━━━━━━━━━━━━━━━━━━━━\n【過去の【AIX】テンプレート実例（同じAIXボタン後に実際に送った続き文）】\n━━━━━━━━━━━━━━━━━━━━\n` +
+      `※ 以下はお客様の状況と、そのとき実際に送った続き文（テンプレート文・橋渡し文）の実例です。文体・トーン・構成の参考にしてください。ただし金額・物件名・日程などの固有の事実は今回の会話履歴/AIXメッセージにあるもののみ使うこと（実例からの持ち込みは絶対禁止）。\n\n` +
       aixExampleRows.map((ex, i) =>
         `--- 実例${i + 1}${ex.is_starred ? " ⭐" : ""} ---\n` +
         `[お客様の状況] 「${safeSlice(ex.customer_message ?? "", 200)}」\n` +
-        `[実際に送った橋渡し文] 「${safeSlice(ex.sent_reply ?? "", 600)}」`
+        `[実際に送った続き文] 「${safeSlice(ex.sent_reply ?? "", 600)}」`
       ).join("\n\n") + "\n\n"
     : "";
 
@@ -567,9 +588,10 @@ export async function POST(req: NextRequest) {
             match_count: 20,
             filter_states: stateAliases,
           }),
-          // AIX専用pgvector検索（match_reply_examplesとは別RPC・entry_source='aix_action' 実例のみ）
+          // AIX専用pgvector検索（match_reply_examplesとは別RPC・entry_source IN ('aix_template','aix_action')）
           // match_reply_examples は entry_source='line_reply' ハードコードのためAIX実例が永遠に
-          // ヒットしない → 専用RPCで過去のAIX橋渡し文実例を類似検索する（同一actionは+0.05ブースト）
+          // ヒットしない → 専用RPCで過去の【AIX】テンプレート続き文・橋渡し文実例を類似検索する
+          //（同一actionは+0.05ブースト）
           supabase.rpc("match_aix_reply_examples", {
             query_embedding: emb,
             match_count: 10,
@@ -651,13 +673,23 @@ export async function POST(req: NextRequest) {
         ...(STATE_SEARCH_ALIASES[normalizedState] ?? [normalizedState]),
         ...(conversationState ? [conversationState] : []),
       ]));
-      // B: フォールバック実例はAIX実績を優先する3段リトライ
-      //   ① entry_source='aix_action' + aix_action=actionType（同一AIXボタンの実績）
+      // B: フォールバック実例はAIX実績を優先する4段リトライ
+      //   ⓪ entry_source='aix_template' + aix_action=actionType（【AIX】テンプレート続き文の実績・本命）
+      //   ① entry_source='aix_action' + aix_action=actionType（同一AIXボタンの橋渡し文実績）
       //   ② entry_source='aix_action' のみ（アクション不問のAIX橋渡し文実績）
       //   ③ entry_source='line_reply'（従来 — 通常返信の実例で文体だけでも維持）
       const fetchFallbackExamples = async () => {
         const selectCols = "customer_message, sent_reply, conversation_state, is_starred, reply_angle";
         if (actionType) {
+          const r0 = await supabase
+            .from("ai_reply_examples")
+            .select(selectCols)
+            .eq("entry_source", "aix_template")
+            .eq("aix_action", actionType)
+            .order("is_starred", { ascending: false })
+            .order("created_at", { ascending: false })
+            .limit(6);
+          if ((r0.data?.length ?? 0) > 0) return r0;
           const r1 = await supabase
             .from("ai_reply_examples")
             .select(selectCols)
