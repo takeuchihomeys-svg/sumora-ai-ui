@@ -24,6 +24,32 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
+async function backfillTable<T extends { id: string }>(
+  tableName: string,
+  rows: T[],
+  toText: (row: T) => string,
+): Promise<{ success: number; failed: number }> {
+  let success = 0;
+  let failed = 0;
+  const batchSize = 10;
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const batch = rows.slice(i, i + batchSize);
+    await Promise.all(
+      batch.map(async (row) => {
+        const embedding = await getEmbedding(toText(row));
+        if (!embedding) { failed++; return; }
+        const { error } = await supabase
+          .from(tableName)
+          .update({ embedding: JSON.stringify(embedding) })
+          .eq("id", row.id);
+        if (error) { failed++; } else { success++; }
+      })
+    );
+    if (i + batchSize < rows.length) await new Promise((r) => setTimeout(r, 100));
+  }
+  return { success, failed };
+}
+
 // POST: 埋め込みがない既存レコードに一括生成・保存
 export async function POST(req: Request) {
   const cronSecret = process.env.CRON_SECRET;
@@ -39,55 +65,51 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "OPENAI_API_KEY not set" }, { status: 500 });
   }
 
-  // embedding が NULL のレコードを最大200件取得
-  const { data: rows, error } = await supabase
+  // ── ai_reply_examples ──────────────────────────────────────────────────────
+  const { data: exampleRows, error: exErr } = await supabase
     .from("ai_reply_examples")
     .select("id, conversation_state, customer_message")
     .is("embedding", null)
     .limit(200);
+  if (exErr) return NextResponse.json({ ok: false, error: exErr.message }, { status: 500 });
 
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  if (!rows || rows.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0, message: "全件処理済みです" });
-  }
+  const exResult = await backfillTable(
+    "ai_reply_examples",
+    (exampleRows ?? []) as Array<{ id: string; conversation_state: string; customer_message: string }>,
+    (r) => `${r.conversation_state}: ${r.customer_message}`,
+  );
 
-  let success = 0;
-  let failed = 0;
+  // ── winning_patterns ───────────────────────────────────────────────────────
+  const { data: wpRows, error: wpErr } = await supabase
+    .from("winning_patterns")
+    .select("id, situation, pattern, customer_intent")
+    .is("embedding", null)
+    .limit(100);
+  if (wpErr) return NextResponse.json({ ok: false, error: wpErr.message }, { status: 500 });
 
-  // 10件ずつ並列処理（レート制限対策）
-  const batchSize = 10;
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const batch = rows.slice(i, i + batchSize);
-    await Promise.all(
-      batch.map(async (row) => {
-        const input = `${row.conversation_state}: ${row.customer_message}`;
-        const embedding = await getEmbedding(input);
-        if (!embedding) { failed++; return; }
-        const { error: updateError } = await supabase
-          .from("ai_reply_examples")
-          .update({ embedding: JSON.stringify(embedding) })
-          .eq("id", row.id);
-        if (updateError) { failed++; } else { success++; }
-      })
-    );
-    // バッチ間に少し待機（レート制限対策）
-    if (i + batchSize < rows.length) {
-      await new Promise((r) => setTimeout(r, 100));
-    }
-  }
+  const wpResult = await backfillTable(
+    "winning_patterns",
+    (wpRows ?? []) as Array<{ id: string; situation: string | null; pattern: string; customer_intent: string | null }>,
+    (r) => `${r.customer_intent ?? r.situation ?? ""}: ${r.pattern}`,
+  );
 
-  // まだ残りがあるか確認
-  const { count } = await supabase
+  // ── 残件数確認 ─────────────────────────────────────────────────────────────
+  const { count: exRemaining } = await supabase
     .from("ai_reply_examples")
     .select("id", { count: "exact", head: true })
     .is("embedding", null);
+  const { count: wpRemaining } = await supabase
+    .from("winning_patterns")
+    .select("id", { count: "exact", head: true })
+    .is("embedding", null);
 
+  const totalRemaining = (exRemaining ?? 0) + (wpRemaining ?? 0);
   return NextResponse.json({
     ok: true,
-    processed: success,
-    failed,
-    remaining: count ?? 0,
-    message: (count ?? 0) > 0 ? `残り${count}件あります。もう一度叩いてください` : "全件完了！",
+    ai_reply_examples: exResult,
+    winning_patterns: wpResult,
+    remaining: { ai_reply_examples: exRemaining ?? 0, winning_patterns: wpRemaining ?? 0 },
+    message: totalRemaining > 0 ? `残り${totalRemaining}件あります。もう一度叩いてください` : "全件完了！",
   });
 }
 
@@ -98,14 +120,24 @@ export async function GET(req: Request) {
   const authHeader = req.headers.get("authorization");
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     // 認証なしなら件数確認のみ（従来の GET 動作）
-    const { count } = await supabase
+    const { count: exCount } = await supabase
       .from("ai_reply_examples")
       .select("id", { count: "exact", head: true })
       .is("embedding", null);
-    const { count: total } = await supabase
+    const { count: exTotal } = await supabase
       .from("ai_reply_examples")
       .select("id", { count: "exact", head: true });
-    return NextResponse.json({ remaining: count ?? 0, total: total ?? 0 });
+    const { count: wpCount } = await supabase
+      .from("winning_patterns")
+      .select("id", { count: "exact", head: true })
+      .is("embedding", null);
+    const { count: wpTotal } = await supabase
+      .from("winning_patterns")
+      .select("id", { count: "exact", head: true });
+    return NextResponse.json({
+      ai_reply_examples: { remaining: exCount ?? 0, total: exTotal ?? 0 },
+      winning_patterns: { remaining: wpCount ?? 0, total: wpTotal ?? 0 },
+    });
   }
   // 認証あり（Vercel Cron）: POST と同じバックフィル処理を実行
   return POST(req as unknown as Request);
