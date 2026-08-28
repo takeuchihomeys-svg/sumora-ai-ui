@@ -341,6 +341,148 @@ function buildAvailabilityCheckNote(): string {
 ※ 本ブロックは【🏢 管理会社確認が必要な物件固有情報】内の「確認と連絡をセットで約束する文の禁止」より上位。募集状況確認では②＋③（確認する→確認でき次第連絡する）が正しい型。`;
 }
 
+// ─── AIXタイミング判定（AIXタイミングマップ 2026-08 実装）─────────────────────
+// 顧客メッセージがAIXトリガー条件に該当する場合、プロンプトに「この場面ではAIXボタンを使う
+// 運用指示があり、テキストで物件情報/金額を生成してはいけない」の誘導指示を注入する。
+// aix 推薦の判定本体は brain-core（Haiku分析 + detectSignalBasedAixFallback）に一元化済みのため、
+// ここでは返信文の生成制約（橋渡し文言のみで完結）とボタン名の明示のみを決定論で確定させる。
+// 優先度は AIXタイミングマップ準拠: P0 物件指名 > P1 支払い意思つき金額質問 > P2 通常金額質問
+// > P3 条件変更 > P4 内覧意思。
+type AixTimingSuggestion = {
+  aix: string;
+  label: string;
+  /** property_check_result 完了後に連結予約するボタン（見積依頼が同時に含まれる場合） */
+  chained: string | null;
+  urgency: string;
+  highlight: boolean;
+  forbidden: string;
+  bridge: string;
+  extra: string;
+};
+
+// 物件指名語（空室・取り扱い確認。AIXタイミングマップ P0 の trigger_condition）
+const AIX_NOMINATION_RE = /空(?:室|き|いて)|取り扱い|募集|ありますか|この(?:物件|お?家|部屋)/;
+// 金額質問（初期費用・見積・いくら）
+const AIX_MONEY_QUESTION_RE = /初期費用|見積|お?いくら|費用[^\n]{0,12}(?:教えて|知りたい|どのくらい|どれくらい)|総額/;
+// 支払い意思（最ホットシグナル: 「金額によっては即日初期費用払えます」等）
+const AIX_PAYMENT_INTENT_RE = /払えま|払える|支払えま|即日[^\n]{0,10}(?:払|入金|振り?込)|用意でき|振り?込め|一括で払/;
+// 条件変更・緩和・追加（「もう少し広め」「賃料が上がっても構わない」「仕切れるような」等）
+const AIX_CONDITION_CHANGE_RE = /(?:もう少し|もっと|さらに)[^\n]{0,12}(?:広|安|大き|新し|駅近|きれい|綺麗|抑え)|(?:上がって|高くて|上げて)も(?:構い|大丈夫|OK|いい)|でも(?:大丈夫|構い|いいです|良いです)|のみで(?:調べ|探し|お願い)|仕切れる|条件[^\n]{0,8}(?:変更|追加|緩和|広げ)/;
+// 内覧意思
+const AIX_VIEWING_INTENT_RE = /見に行き|内覧|内見|見学|見てみたい/;
+
+function detectAixTiming(
+  customerMessage: string,
+  opts: { hasCustomerImage: boolean; estimatePromised: boolean; propertyStatus: PropertyStatus },
+): AixTimingSuggestion | null {
+  const msg = (customerMessage || "").trim();
+  if (!msg && !opts.hasCustomerImage) return null;
+
+  // ── 優先度0: 物件指名検出（画像/SUUMO URL添付 + 空室・取り扱い語）→ property_check_result ──
+  const hasPropertyUrl = AVAILABILITY_URL_RE.test(msg);
+  if (opts.hasCustomerImage || hasPropertyUrl) {
+    // URLのみ・コメントほぼなし（「この物件どうですか」の意図で確定）／画像のみも物件指名として扱う
+    const urlOnly = hasPropertyUrl && msg.replace(/https?:\/\/\S+/g, "").trim().length <= 10;
+    const imageOnly = opts.hasCustomerImage && msg.length <= 10;
+    if (AIX_NOMINATION_RE.test(msg) || urlOnly || imageOnly) {
+      const chained = /見積|初期費用/.test(msg) ? "estimate_sheet" : null;
+      return {
+        aix: "property_check_result",
+        label: "物件確認した（募集状況）",
+        chained,
+        urgency: "15分以内に橋渡し→1〜3時間以内に結果報告",
+        highlight: false,
+        forbidden: "空室有無・退去日・入居可能日をテキストで断言すること（実会話では「募集終了」「申込有り2番手」「タッチの差で埋まった」が頻発。「空いています」の生成は即事実誤認）",
+        bridge: "お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させていただきます！！確認出来次第すぐにご連絡させて頂きます😌！！",
+        extra: "URL・物件が複数（連投）の場合は1件ずつ返さず橋渡し1通のみ（バッチ処理・結果は全件まとめて1回で報告）。" +
+          (chained
+            ? "見積依頼も同時に含まれるため、確認完了後に estimate_sheet を連結する（募集状況+見積書をまとめて1回で報告。初回接触の物件指名型顧客に condition_hearing を挟むのは誤り）。"
+            : ""),
+      };
+    }
+  }
+
+  // ── 優先度1: 支払い意思つき金額質問（最ホット・10分以内） ──
+  if (AIX_MONEY_QUESTION_RE.test(msg)) {
+    if (AIX_PAYMENT_INTENT_RE.test(msg)) {
+      return {
+        aix: "estimate_sheet",
+        label: "見積書送る",
+        chained: null,
+        urgency: "10分以内（applying直前の最優先ホットシグナル）",
+        highlight: true,
+        forbidden: "金額・割引額をAIが生成すること（見積書Vision OCRの実数値のみ送信可）",
+        bridge: "かしこまりました！！最大限割引させて頂いた初期費用の御見積書お送りさせて頂きます😊！！",
+        extra: "支払い意思+金額質問の組み合わせのため、返信には「お気に召されましたらお申込みでお部屋お抑えさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。",
+      };
+    }
+    // ── 優先度2: 通常の金額質問（見積未送付・未約束の場合のみ） ──
+    if (!opts.estimatePromised) {
+      return {
+        aix: "estimate_sheet",
+        label: "見積書送る",
+        chained: null,
+        urgency: "2時間以内",
+        highlight: false,
+        forbidden: "金額・割引額をAIが生成すること（見積書Vision OCRの実数値のみ送信可。割引額はスタッフの交渉結果でありAIが数字を作るとクレーム直結）",
+        bridge: "かしこまりました！！最大限割引させて頂いた初期費用の御見積書お送りさせて頂きます😊！！",
+        extra: "",
+      };
+    }
+    return null; // 見積約束済み: estimatePromiseAckNote（二重宣言防止）が正
+  }
+
+  // ── 優先度3: 条件変更・新条件 → property_send（widen/alternative） ──
+  if (AIX_CONDITION_CHANGE_RE.test(msg)) {
+    return {
+      aix: "property_send",
+      label: "物件ピックアップした",
+      chained: null,
+      urgency: "受付返信→半日以内にピックアップ送付",
+      highlight: false,
+      forbidden: "新条件に合う物件の有無を即答すること（在庫ハルシネーション）。「〇〇がいい感じ」等の気に入り表現と同一メッセージでも条件変更が主題のため estimate_sheet 系の見積・申込誘導も絶対NG",
+      bridge: "かしこまりました！！〇〇（顧客の言った新条件を復唱）のご条件に合ったお部屋を△△周辺全域からピックアップしてお送りさせて頂きます😊！！ピックアップ出来次第ご連絡させて頂きます！！",
+      extra: "顧客の言った新条件を必ず復唱すること（実例: 「リビングとベッドを仕切れる1LDK・1DKの間取りや広めの1Kのお部屋を堀江・桜川・大国町周辺全域からピックアップしてお送りさせて頂きます😊！！」）。",
+    };
+  }
+
+  // ── 優先度4: 内覧意思 → viewing_invite（退去予定/入居中は現地内覧不可のため対象外） ──
+  if (
+    AIX_VIEWING_INTENT_RE.test(msg) &&
+    opts.propertyStatus !== "move_out_scheduled" &&
+    opts.propertyStatus !== "occupied"
+  ) {
+    return {
+      aix: "viewing_invite",
+      label: "内覧日調整",
+      chained: null,
+      urgency: "30分〜1時間以内",
+      highlight: false,
+      forbidden: "具体的な内覧候補日時・2択日程提示をAI返信で生成すること（日程はAIX【内覧日調整】専用）。募集状況が未確認の物件への内覧確約",
+      bridge: "かしこまりました！！ご都合よろしいお日にちをお伝えさせて頂きます！！",
+      extra: "",
+    };
+  }
+
+  return null;
+}
+
+// AIXタイミング判定結果をプロンプト注入ブロックに変換する
+function buildAixTimingNote(s: AixTimingSuggestion): string {
+  const lines = [
+    `\n\n【🎛 AIXタイミング判定（確定・最優先 — この場面はAIX【${s.label}】(${s.aix})ボタンの担当場面）】`,
+    `この場面ではスタッフがAIX【${s.label}】ボタンを使う運用指示がある。AIが返信文で物件情報・金額・空室状況の「答え」を生成してはいけない。`,
+    `・返信は橋渡し文言（受付宣言）のみで完結させること。型: 挨拶 → 受領のお礼/かしこまりました → 行動宣言 → 「出来次第/確認出来次第ご連絡させて頂きます」`,
+    `・橋渡し文言の実例（この型に合わせる・文脈に応じて調整）: 「${s.bridge}」`,
+    `・絶対禁止: ${s.forbidden}`,
+    `・対応スピード目安（スタッフ向け・返信文には書かない）: ${s.urgency}`,
+  ];
+  if (s.highlight) lines.push("・⚡ 最優先ホットシグナル: この顧客は今この瞬間が最も申込に近い。事務的な定型文ではなく熱量のある受付宣言にすること。");
+  if (s.chained) lines.push(`・連結予約: ${s.aix} 完了後に ${s.chained} を続けて実行する運用（橋渡しでは「募集状況確認と最大限割引の御見積書作成」の両方の行動宣言を含めてよい）。`);
+  if (s.extra) lines.push(`・${s.extra}`);
+  return lines.join("\n");
+}
+
 // ─── ai_summary_json の構造化サマリー（customer-summary/route.ts の SummaryJson と互換）──
 type ReplySummaryJson = {
   winning_pattern?: string;
@@ -803,6 +945,18 @@ function buildGenerationMessages(
   const isAvailabilityCheckContext = detectAvailabilityCheckContext(customerMessage ?? "");
   const availabilityCheckNote = isAvailabilityCheckContext ? buildAvailabilityCheckNote() : "";
 
+  // AIXタイミング判定（AIXタイミングマップ 2026-08）: 顧客メッセージがAIXトリガー条件に該当する場合、
+  // 「この場面ではAIXボタンを使う運用指示があり、テキストで物件情報/金額を生成してはいけない」を注入する。
+  // テンプレート最適化モード・指定生成モードでは通常返信の文脈判定が成立しないため注入しない。
+  const aixTiming = (templateNote || replyHint)
+    ? null
+    : detectAixTiming(customerMessage ?? "", {
+        hasCustomerImage: hasRecentCustomerImage,
+        estimatePromised,
+        propertyStatus: resolvedPropertyStatus,
+      });
+  const aixTimingNote = aixTiming ? buildAixTimingNote(aixTiming) : "";
+
   // 予算・条件指定の在庫質問（「〇〇円の物件ってありますか」等）の検出。
   // 特定物件の空室確認ではなく「その予算・条件で案内できる物件があるか」の質問。
   // 「確認します」で終わるのは絶対NG — 正直な現状説明＋代替案＋次のアクションが正しい型。
@@ -1034,7 +1188,7 @@ ${quotedContextNote}
 ${history || "なし"}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}
+${customerMessage}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}${aixTimingNote}
 
 ${examples}${examplesInstruction}
 
