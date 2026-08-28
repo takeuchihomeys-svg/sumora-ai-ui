@@ -845,6 +845,11 @@ const AIX_CATEGORY_TO_ACTION: Record<string, string> = {
   "確認します【AIX】": "acknowledge_check",
 };
 
+// 自動カテゴリ誘導の廃止（2026-08-28）: initialCategory の明示指定（バナー・AIXフロー経由）が
+// ない手動オープンでは、ユーザーが最後に選択していたカテゴリをモジュールスコープで記憶し、
+// 「そのままの位置」で開き直す（勝手にAI推薦カテゴリへ移動しない）。
+let lastUserSelectedCategory: string | null = null;
+
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
   initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext, conversationId, priorityTemplateIds,
@@ -871,7 +876,8 @@ export default function TemplateModal({
   // 親からのデータ（props/キャッシュ）があれば即時表示、なければローディング表示
   const [loading, setLoading] = useState(!templatesProp && (!initialTemplates || initialTemplates.length === 0));
   const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
-  const [category, setCategory] = useState(initialCategory || "全般");
+  // 明示指定（バナー・AIXフロー）> 前回ユーザーが見ていたカテゴリ > "全般" の順で初期位置を決める
+  const [category, setCategory] = useState(initialCategory || lastUserSelectedCategory || "全般");
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState(initialSearch ?? "");
   const [newLabel, setNewLabel] = useState("");
@@ -2326,9 +2332,11 @@ export default function TemplateModal({
   };
 
   // ✨ カテゴリ切替時は生成結果をクリア（別カテゴリ向けの文を誤送信しないため）
+  // あわせて最後に見ていたカテゴリを記憶（次回オープン時に同じ位置で開くため。空=AI提案タブは記憶しない）
   useEffect(() => {
     setAixGenText(null);
     setAixGenError(null);
+    if (category) lastUserSelectedCategory = category;
   }, [category]);
 
   // ✨ 現在の会話コンテキスト（顧客名・条件・直近メッセージ）から

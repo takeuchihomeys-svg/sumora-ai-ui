@@ -9476,15 +9476,13 @@ export default function Home() {
             templateOpenContext === "post_aix" ? (postAixTemplateMap[selectedConversation.id]?.category) :
             templateOpenContext === "viewing_follow" ? "内覧" :
             templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込・審査" :
-            suggest2ndHandMap[selectedConversation.id] ? "物件確認した【AIX】" :
             activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory :
-            // AIX送信直後の手動テンプレオープン: 直近AIXのカテゴリで開く（post_aixバナー未経由でも誘導。次のAIX送信で上書きされる）
-            postAixTemplateMap[selectedConversation.id] ? postAixTemplateMap[selectedConversation.id]?.category :
-            (() => {
-              // AI提案（nextActionMap）があれば推薦カテゴリで開く（suggestedCategoryバッジと同じ導出）
-              const action = nextActionMap[selectedConversation.id]?.action;
-              return action ? (AIX_ACTION_META[action]?.templateCategory ?? undefined) : undefined;
-            })()
+            // 自動カテゴリ誘導の廃止（2026-08-28）: バナー等の明示コンテキストなしの手動オープンでは
+            // AI提案（nextActionMap）・直近AIX送信（postAixTemplateMap）・2番手検出（suggest2ndHandMap）
+            // によるAIXカテゴリへの自動移動を行わない。ユーザーが最後に見ていたカテゴリのまま開く
+            // （TemplateModal側の lastUserSelectedCategory が記憶）。AI推薦はバッジ表示
+            // （suggestedCategory / priorityTemplateIds）のみで任意参照とする。
+            undefined
           }
           highlightKeyword={
             templateOpenContext === "next_numbered" ? (

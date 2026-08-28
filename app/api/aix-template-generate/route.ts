@@ -3,6 +3,25 @@ import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { stripRoomLeadingZeros } from "@/app/lib/template-preprocess";
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
+import { safeSlice } from "@/app/lib/safe-slice";
+// 本番LINE返信AI（generate-reply）と共有のプロンプトセクション（単一ソース・二重定義禁止）
+import {
+  SMORA_COMMON_RULES,
+  SMORA_RULES,
+  REAL_ESTATE_RULES,
+  CURATED_REPLY_RULES,
+  SMORA_QUICK_PATTERNS,
+  STATE_SEARCH_ALIASES,
+} from "@/app/lib/line-reply-prompts";
+// generate-reply と同じDB学習資産（絶対原則・失注パターン・フレーズ辞書・DB学習ルール）
+import {
+  getCachedTopPrinciples,
+  getCachedLossPatterns,
+  getCachedPhrases,
+  getCachedPromptRules,
+  resolvePhraseCategories,
+} from "@/app/lib/prompt-cache";
+import { normalizeStatus } from "@/app/lib/status-normalize";
 
 export const maxDuration = 60;
 
@@ -11,8 +30,24 @@ export const maxDuration = 60;
 //
 // AIXテンプレート一覧の「✨ この会話に合った文を生成」ボタン用API。
 // 現在選択中のAIXボタン種別（action_type）＋会話コンテキスト（顧客名・条件・直近
-// メッセージ）をもとに、winning_patterns / ai_reply_knowledge をRAGで引き、
+// メッセージ）をもとに、generate-reply（本番LINE返信AI）と同等の品質スタックで
 // AIXボタンの「送付後の橋渡し文（カバーメッセージ）」を Claude Sonnet で生成する。
+//
+// 品質スタック（2026-08-28 generate-reply 同等化）:
+//   ① 共有プロンプトセクション: SMORA_COMMON_RULES / SMORA_RULES / REAL_ESTATE_RULES /
+//      CURATED_REPLY_RULES / SMORA_QUICK_PATTERNS（line-reply-prompts.ts 単一ソース）
+//   ② DB学習資産: 絶対原則（importance>=8 principle）・失注パターン・ai_prompt_rules・
+//      phrase_dictionary（prompt-cache 経由・generate-reply と同一キャッシュ）
+//   ③ RAG: winning_patterns + ai_reply_knowledge（バケット別スコアリング）+
+//      ai_reply_examples（⭐実例 — 文体・テンポの忠実な再現）
+//   ④ Brain戦略（suggested_aix_meta）: 検索ベクトル強化 + 生成方向性の注入
+//
+// ※ GENERATION_SYSTEM（通常返信専用システム）は意図的に注入しない。
+//   GENERATION_SYSTEM は「見積書カバー文・確認結果報告等はAIX専用のため通常返信では
+//   生成禁止」と定めるが、本APIはまさにそのAIX側の担当であり、丸ごと注入すると
+//   アクション別ガイド（estimate_sheet の定型カバー文等）と正面衝突する。
+//   AIX側で共有すべき営業スタイル・禁止ワードの核は SMORA_COMMON_RULES
+//   （aix/action と同じ）＋下記の読み替えノートでカバーする。
 //
 // 設計原則（責務分離）:
 //   AIX = 構造化コンテンツ（金額・空室・日程・物件名）の正 / このAPI = 橋渡し文のみ。
@@ -20,6 +55,16 @@ export const maxDuration = 60;
 //   （5大ハルシネーション事故の根絶）。会話履歴・予約送信AIXメッセージに実際に
 //   記載がある事実のみ言及可能とする。
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─── 指示の優先順位＋共有ルールの読み替え（システム先頭・最上位）────────────
+const PRIORITY_ORDER_NOTE = `【指示の優先順位（競合時はこの順で解決すること）】
+ハルシネーション絶対禁止 > 役割の境界（橋渡し文のみ） > アクション別の書き方ガイド > Brain戦略 > DB学習ナレッジ・共有ルール > 実例の文体
+
+【共有ルールの読み替え（重要）】
+以下の共有ルール・実例には「通常AI返信では〜は生成禁止（AIXボタン専用）」という記述が含まれる。
+あなたはその【AIX側】の橋渡し文を生成する担当である。したがって「AIX専用」とされている文面
+（見積書カバー文「〜の御見積書となります」等）は、指定されたAIXボタン種別の担当範囲であれば生成してよい。
+逆に、構造化データ（金額・空室状況・内覧日程・物件名・号室）の創作禁止はこのAPIでも絶対に適用される。`;
 
 // ─── 静的システムプロンプト（byte-stable → prompt cache）─────────────────────
 const STATIC_GEN_SYSTEM = `あなたはスモラ（賃貸仲介サービス）のLINE営業担当です。
@@ -49,8 +94,10 @@ AIXボタンで送付した（または送付予定の）構造化メッセー�
 ・お客様名は「〇〇さん」と呼ぶ。LINEでは「様」は絶対に使わない
 ・冒頭挨拶: 通常は「〇〇さんお世話になっております！！」。本日すでにスタッフが送信済みの場合は「お待たせ致しました！！」
 ・長すぎない。3〜7文程度でテンポよく
+・「させて頂きます」「頂きます」を自然に多用する（スモラの文体の核心）
 ・締めは「お手隙の際にご査収ください😌！！」等で圧を下げる（絵文字禁止時は絵文字なしで）
 ・内覧後のシーンで感想を聞かない（「御礼+申込宣言+いつでもご連絡ください」の宣言形で締める）
+・スモラの基本構成: ①直接の呼びかけ・位置づけ → ②スタッフの行動宣言（WE DO）→ ③柔らかい締め。お客様がすべきことは最小限にする
 
 ━━━━━━━━━━━━━━━━━━━━
 【禁止ワード・表現】
@@ -72,6 +119,19 @@ AIXボタンで送付した（または送付予定の）構造化メッセー�
 【出力】
 ━━━━━━━━━━━━━━━━━━━━
 生成した本文のみを出力する。説明・前置き・補足コメント・選択肢の提示は一切書かない。`;
+
+// ─── 共有ルールブロック（generate-reply / aix/action と同一ソース・byte-stable）──
+const SHARED_RULES_SYSTEM = [
+  `━━━━━━━━━━━━━━━━━━━━
+【以下は本番LINE返信AIと共有のスモラルール（橋渡し文にも適用）】
+━━━━━━━━━━━━━━━━━━━━`,
+  SMORA_COMMON_RULES,
+  SMORA_RULES,
+  REAL_ESTATE_RULES,
+  CURATED_REPLY_RULES,
+  `【スモラの実返信パターン集の使い方】以下は実際のやりとりから抽出した文体・言い回しの参考。橋渡し文の役割（構造化データはAIXが正）と競合する部分は役割の境界を優先すること。
+${SMORA_QUICK_PATTERNS}`,
+].join("\n\n");
 
 // ─── アクション別ガイド（正準キー: aix-taxonomy.ts の AIX_BUTTON_LABELS 準拠）──
 const ACTION_GUIDES: Record<string, string> = {
@@ -134,6 +194,90 @@ function relativeTimeLabel(isoStr: string | undefined, nowMs: number): string {
   return `（${diffD}日前）`;
 }
 
+// ─── RAG: ai_reply_knowledge のスコアリング・バケット整形 ─────────────────────
+// generate-reply の fetchKnowledge と同じ複合スコア（similarity × importance × 鮮度）＋
+// バケット分割（差分学習/修正対比/絶対ルール/パターン/フレーズ）の縮約版。
+type KnowledgeHit = {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  importance: number;
+  hypothesis_status?: string | null;
+  created_at?: string;
+  similarity: number;
+};
+
+function buildKnowledgeSections(rows: KnowledgeHit[]): string {
+  const scored = rows
+    .filter((r) => (r.similarity ?? 0) >= 0.5 && r.hypothesis_status !== "rejected" && (r.content ?? "").trim().length > 0)
+    .map((r) => {
+      // 鮮度ファクター（半減期180日）: 古い誤傾向ナレッジより新しい修正ナレッジを優先
+      const daysSince = r.created_at
+        ? (Date.now() - new Date(r.created_at).getTime()) / (1000 * 60 * 60 * 24)
+        : 180;
+      const recencyFactor = Math.pow(0.5, daysSince / 180);
+      const confirmedBonus = r.hypothesis_status === "confirmed" ? 0.05 : 0;
+      return { ...r, score: (r.similarity ?? 0.5) * ((r.importance || 5) / 10) * (0.5 + 0.5 * recencyFactor) + confirmedBonus };
+    })
+    .sort((a, b) => b.score - a.score);
+  if (scored.length === 0) return "";
+
+  const diffLearned = scored.filter((r) => r.title?.includes("差分学習")).slice(0, 4);
+  const correctionPairs = scored.filter((r) => r.title?.includes("修正対比")).slice(0, 3);
+  // 絶対ルールは confirmed / legacy(null) のみ（未検証hypothesisの混入を防ぐ — generate-reply と同方針）
+  const critical = scored.filter((r) =>
+    r.category === "principle" && (r.importance ?? 0) >= 8 &&
+    (r.hypothesis_status === "confirmed" || r.hypothesis_status == null)
+  ).slice(0, 8);
+  const patterns = scored.filter((r) => r.category === "pattern" && !r.title?.includes("差分学習") && !r.title?.includes("修正対比")).slice(0, 4);
+  const phrases = scored.filter((r) => r.category === "phrase").slice(0, 4);
+
+  const sections: string[] = [];
+  if (diffLearned.length > 0) {
+    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+  }
+  if (correctionPairs.length > 0) {
+    sections.push("【🟠 スタッフが修正したポイント】\n" + correctionPairs.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+  }
+  if (critical.length > 0) {
+    sections.push("【⚠️ 絶対ルール（状況関連・DB学習）】\n" + critical.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+  }
+  if (patterns.length > 0) {
+    sections.push("【スモラの営業パターン・原則】\n" + patterns.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+  }
+  if (phrases.length > 0) {
+    sections.push("【スモラのフレーズ】\n" + phrases.map((k) => `「${k.content}」`).join("　"));
+  }
+  return sections.join("\n\n");
+}
+
+// ─── RAG: ai_reply_examples（⭐実例）の整形 ──────────────────────────────────
+type ExampleHit = {
+  customer_message: string;
+  sent_reply: string;
+  conversation_state: string;
+  is_starred: boolean;
+  reply_angle: string | null;
+  similarity: number;
+};
+
+function buildExamplesSection(rows: ExampleHit[]): string {
+  const ranked = rows
+    .filter((ex) => (ex.similarity ?? 0) >= 0.5 && (ex.sent_reply ?? "").trim().length > 0)
+    .sort((a, b) => {
+      const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0);
+      const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0);
+      return scoreB - scoreA;
+    })
+    .slice(0, 6);
+  if (ranked.length === 0) return "";
+  return "【⭐ スモラの実際の返信例（状況が類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・テンポをこの例から忠実に再現すること。構成・内容は橋渡し文の役割（構造化データはAIXが正）を最優先】\n" +
+    ranked.map((ex, i) =>
+      `[例${i + 1}${ex.is_starred ? "⭐" : ""}]\nお客様: 「${safeSlice(ex.customer_message ?? "", 200)}」\nスモラ: 「${safeSlice(ex.sent_reply, 600)}」`
+    ).join("\n\n");
+}
+
 // ─── POST ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   let body: GenerateRequestBody;
@@ -162,6 +306,9 @@ export async function POST(req: NextRequest) {
 
   const actionLabel = (actionType && AIX_BUTTON_LABELS[actionType]) || actionCategory || "AIXメッセージ";
   const actionGuide = (actionType && ACTION_GUIDES[actionType]) || "";
+
+  // 5段階正規化ステート（実例/フレーズ検索のエイリアス解決に使用）
+  const normalizedState = normalizeStatus(conversationState || "hearing");
 
   // ── JST現在時刻 ─────────────────────────────────────────────────────────
   const nowJst = new Date(Date.now() + 9 * 3600 * 1000);
@@ -218,14 +365,25 @@ export async function POST(req: NextRequest) {
       [key: string]: unknown;
     };
   };
-  const convResult = conversationId
-    ? await supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
-    : { data: null };
+
+  // ── 並列フェッチ①: Brain戦略 + DB学習資産（generate-reply と同一キャッシュ経由）──
+  // 各フェッチはエラーでも生成を止めない（資産なしで生成続行 — generate-reply と同方針）
+  const [convResult, topPrinciples, lossPatterns, phraseList, dbRules] = await Promise.all([
+    conversationId
+      ? supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
+      : Promise.resolve({ data: null }),
+    getCachedTopPrinciples().catch((err) => { console.error("[aix-template-generate] topPrinciples失敗:", err); return []; }),
+    getCachedLossPatterns().catch((err) => { console.error("[aix-template-generate] lossPatterns失敗:", err); return []; }),
+    getCachedPhrases(resolvePhraseCategories(normalizedState)).catch((err) => { console.error("[aix-template-generate] phrases失敗:", err); return [] as string[]; }),
+    getCachedPromptRules("generate_reply", { conversation_state: normalizedState })
+      .catch((err) => { console.error("[aix-template-generate] promptRules失敗:", err); return ""; }),
+  ]);
   const brainMeta = (convResult.data as { suggested_aix_meta?: BrainMeta } | null)?.suggested_aix_meta ?? null;
 
-  // ── RAG: winning_patterns + ai_reply_knowledge ───────────────────────────
+  // ── 並列フェッチ②: RAG（winning_patterns + ai_reply_knowledge + ai_reply_examples）──
   let winningSection = "";
   let knowledgeSection = "";
+  let examplesSection = "";
   let ragQueryLength = 0;
   if (process.env.OPENAI_API_KEY) {
     const recentCustomerMsgs = (recentMessages ?? [])
@@ -255,16 +413,24 @@ export async function POST(req: NextRequest) {
     try {
       const emb = await generateEmbedding(ragQuery);
       if (emb) {
-        const [wpRes, knRes] = await Promise.all([
+        const stateAliases = STATE_SEARCH_ALIASES[normalizedState] ?? [normalizedState];
+        const [wpRes, knRes, exRes] = await Promise.all([
           supabase.rpc("match_winning_patterns", {
             query_embedding: emb,
             match_count: 6,
             min_importance: 8,
           }),
+          // generate-reply の fetchKnowledge と同構成（match_count拡大 + importance/similarity/鮮度スコアリング）
           supabase.rpc("match_reply_knowledge", {
             query_embedding: emb,
-            match_threshold: 0.72,
-            match_count: 4,
+            match_count: 40,
+            min_importance: 7,
+          }),
+          // ⭐実例（スタッフの実返信）— 文体・テンポ再現の最重要ソース（generate-reply の fetchExamples と同RPC）
+          supabase.rpc("match_reply_examples", {
+            query_embedding: emb,
+            match_count: 20,
+            filter_states: stateAliases,
           }),
         ]);
         type WpRow = { situation: string | null; pattern: string; closing_action: string | null; notes: string | null; similarity: number };
@@ -282,17 +448,27 @@ export async function POST(req: NextRequest) {
               return `・${parts}`;
             }).join("\n") + "\n\n";
         }
-        const knRows = (knRes.data ?? []) as Array<{ content: string | null }>;
-        if (Array.isArray(knRows) && knRows.length > 0) {
+        const knText = buildKnowledgeSections((knRes.data ?? []) as KnowledgeHit[]);
+        if (knText) {
           knowledgeSection =
-            `━━━━━━━━━━━━━━━━━━━━\n【参考ナレッジ（状況に合った過去の知見）】\n━━━━━━━━━━━━━━━━━━━━\n` +
-            knRows.filter((r) => r.content).map((r) => `・${r.content}`).join("\n") + "\n\n";
+            `━━━━━━━━━━━━━━━━━━━━\n【参照すべき重要ルール（DB学習ナレッジ・セクション順に優先度が高い）】\n━━━━━━━━━━━━━━━━━━━━\n${knText}\n\n`;
+        }
+        const exText = buildExamplesSection((exRes.data ?? []) as ExampleHit[]);
+        if (exText) {
+          examplesSection =
+            `━━━━━━━━━━━━━━━━━━━━\n${exText}\n\n【⭐実例の使い方】上記実例は文体・テンポ・絵文字・感嘆符の参考。言い回しの雰囲気を再現すること。ただし実例に「今すぐ」「即入居可能」等の禁止パターンが含まれていても、現行の禁止ルール・挨拶ルール・ハルシネーション禁止を必ず優先すること。\n\n`;
         }
       }
     } catch {
       // RAG失敗は無視して生成継続（既存方針: adapt/brain-coreと同じ）
     }
   }
+
+  // ── フレーズ辞書（phrase_dictionary — generate-reply と同一キャッシュ）────────
+  const phrasesSection = phraseList.length > 0
+    ? `【スモラのフレーズ集（参考程度に・⭐実例を最優先すること）】\n` +
+      phraseList.slice(0, 10).map((p) => `「${p}」`).join("　") + "\n\n"
+    : "";
 
   // ── コンテキスト整形 ─────────────────────────────────────────────────────
   const nowMs = Date.now();
@@ -354,7 +530,7 @@ export async function POST(req: NextRequest) {
     `━━━━━━━━━━━━━━━━━━━━\n【お客様情報】\n━━━━━━━━━━━━━━━━━━━━`,
     `・お客様名: ${customerName || "〇〇"}さん`,
     `・現在のフェーズ: ${stateLabel}`,
-    customerConditions ? `・希望条件（DB）: ${customerConditions}` : "",
+    customerConditions ? `・希望条件（DB）: ${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。` : "",
     brainMeta?.property_search_params
       ? `・希望条件（会話由来・最新・優先）: ${
           [
@@ -364,16 +540,31 @@ export async function POST(req: NextRequest) {
           ].filter(Boolean).join(" / ")
         }（DB条件より優先して参照すること）`
       : "",
-    staffMessagedToday ? `・本日すでにスタッフが送信済み（冒頭は「お待たせ致しました！！」系にする）` : "",
+    staffMessagedToday ? `・本日すでにスタッフが送信済み（冒頭は「お待たせ致しました！！」系にする。「お世話になっております」の再使用は禁止）` : "",
     noEmoji ? `・絵文字禁止モード: 絵文字を一切使わないこと` : "",
     "",
     pendingSection
       ? `━━━━━━━━━━━━━━━━━━━━\n【🔑 予約送信待ちのAIXメッセージ（物件名・金額など事実の唯一の追加ソース）】\n━━━━━━━━━━━━━━━━━━━━\n${pendingSection}\n`
       : "",
-    `━━━━━━━━━━━━━━━━━━━━\n【会話履歴（事実確認と流れの把握に使う）】\n━━━━━━━━━━━━━━━━━━━━\n${history || "なし"}`,
+    `━━━━━━━━━━━━━━━━━━━━\n【会話履歴（事実確認と流れの把握に使う）】\n━━━━━━━━━━━━━━━━━━━━\nこの履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない・同じ内容を繰り返さない。\n${history || "なし"}`,
     "",
-    `この会話の流れ・お客様の状況に合った「${actionLabel}」の橋渡し文を1通生成してください。金額・空室状況・日程・物件名は上記の会話履歴/AIXメッセージに記載がある事実のみ使い、なければ言及しないこと。出力は本文のみ。`,
+    examplesSection,
+    phrasesSection,
+    `この会話の流れ・お客様の状況に合った「${actionLabel}」の橋渡し文を1通生成してください。金額・空室状況・日程・物件名は上記の会話履歴/AIXメッセージに記載がある事実のみ使い、なければ言及しないこと。⭐実例の文体・テンポを忠実に再現すること。出力は本文のみ。`,
   ].filter(Boolean).join("\n");
+
+  // ── DB学習資産の第2システムブロック（TTLキャッシュ内はbyte-stable → prompt cache対象）──
+  const dbKnowledgeBlock = [
+    topPrinciples.length > 0
+      ? "【📌 絶対原則（DB学習・全顧客共通・常時遵守）】\n" +
+        topPrinciples.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
+      : "",
+    lossPatterns.length > 0
+      ? "【🚫 避けるべき対応（失注実例より）】\n" +
+        lossPatterns.map((p, i) => `${i + 1}. ${p.content}`).join("\n")
+      : "",
+    dbRules ? dbRules.trim() : "",
+  ].filter(Boolean).join("\n\n");
 
   // ── Anthropic API (Claude Sonnet + prompt cache) ─────────────────────────
   const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
@@ -382,6 +573,21 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const systemBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } }> = [
+      {
+        type: "text",
+        text: `${PRIORITY_ORDER_NOTE}\n\n${STATIC_GEN_SYSTEM}\n\n${SHARED_RULES_SYSTEM}`,
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      },
+    ];
+    if (dbKnowledgeBlock) {
+      systemBlocks.push({
+        type: "text",
+        text: dbKnowledgeBlock,
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      });
+    }
+
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       signal: AbortSignal.timeout(55_000),
@@ -394,13 +600,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 1024,
-        system: [
-          {
-            type: "text",
-            text: STATIC_GEN_SYSTEM,
-            cache_control: { type: "ephemeral", ttl: "1h" },
-          },
-        ],
+        system: systemBlocks,
         messages: [{ role: "user", content: userPrompt }],
       }),
     });
@@ -421,6 +621,8 @@ export async function POST(req: NextRequest) {
     console.log(
       `[aix-template-generate] action=${actionType || actionCategory || "-"}` +
       ` rag_wp=${winningSection ? "hit" : "miss"} rag_kn=${knowledgeSection ? "hit" : "miss"}` +
+      ` rag_ex=${examplesSection ? "hit" : "miss"} phrases=${phraseList.length}` +
+      ` principles=${topPrinciples.length} loss=${lossPatterns.length} dbRules=${dbRules ? "ok" : "none"}` +
       ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}`,
     );
 
