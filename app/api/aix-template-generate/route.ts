@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { stripRoomLeadingZeros } from "@/app/lib/template-preprocess";
@@ -194,6 +194,20 @@ function relativeTimeLabel(isoStr: string | undefined, nowMs: number): string {
   return `（${diffD}日前）`;
 }
 
+// ─── ナレッジ使用テレメトリ（generate-reply の incrementKnowledgeUsage と同実装）───
+// used_count を +1、last_used_at を更新。
+// after(): レスポンス返却後もサーバーレス実行コンテキストが凍結される前に完了を保証
+function incrementKnowledgeUsage(ids: string[]): void {
+  if (!ids.length) return;
+  after(async () => {
+    try {
+      await supabase.rpc("increment_knowledge_used_count", { p_ids: [...new Set(ids)] });
+    } catch {
+      // 使用回数更新の失敗は生成に影響させない
+    }
+  });
+}
+
 // ─── RAG: ai_reply_knowledge のスコアリング・バケット整形 ─────────────────────
 // generate-reply の fetchKnowledge と同じ複合スコア（similarity × importance × 鮮度）＋
 // バケット分割（差分学習/修正対比/絶対ルール/パターン/フレーズ）の縮約版。
@@ -208,7 +222,7 @@ type KnowledgeHit = {
   similarity: number;
 };
 
-function buildKnowledgeSections(rows: KnowledgeHit[]): string {
+function buildKnowledgeSections(rows: KnowledgeHit[]): { text: string; usedIds: string[] } {
   const scored = rows
     .filter((r) => (r.similarity ?? 0) >= 0.5 && r.hypothesis_status !== "rejected" && (r.content ?? "").trim().length > 0)
     .map((r) => {
@@ -221,7 +235,7 @@ function buildKnowledgeSections(rows: KnowledgeHit[]): string {
       return { ...r, score: (r.similarity ?? 0.5) * ((r.importance || 5) / 10) * (0.5 + 0.5 * recencyFactor) + confirmedBonus };
     })
     .sort((a, b) => b.score - a.score);
-  if (scored.length === 0) return "";
+  if (scored.length === 0) return { text: "", usedIds: [] };
 
   const diffLearned = scored.filter((r) => r.title?.includes("差分学習")).slice(0, 4);
   const correctionPairs = scored.filter((r) => r.title?.includes("修正対比")).slice(0, 3);
@@ -249,7 +263,19 @@ function buildKnowledgeSections(rows: KnowledgeHit[]): string {
   if (phrases.length > 0) {
     sections.push("【スモラのフレーズ】\n" + phrases.map((k) => `「${k.content}」`).join("　"));
   }
-  return sections.join("\n\n");
+  // M1: 注入したナレッジのidを収集（incrementKnowledgeUsage テレメトリ用）
+  const usedIds = [...diffLearned, ...correctionPairs, ...critical, ...patterns, ...phrases]
+    .map((k) => k.id)
+    .filter(Boolean);
+  return { text: sections.join("\n\n"), usedIds };
+}
+
+// ─── セクションラッパー（RAG本経路とH3フォールバック経路で共有・二重定義禁止）───
+function wrapKnowledgeSection(knText: string): string {
+  return `━━━━━━━━━━━━━━━━━━━━\n【参照すべき重要ルール（DB学習ナレッジ・セクション順に優先度が高い）】\n━━━━━━━━━━━━━━━━━━━━\n${knText}\n\n`;
+}
+function wrapExamplesSection(exText: string): string {
+  return `━━━━━━━━━━━━━━━━━━━━\n${exText}\n\n【⭐実例の使い方】上記実例は文体・テンポ・絵文字・感嘆符の参考。言い回しの雰囲気を再現すること。ただし実例に「今すぐ」「即入居可能」等の禁止パターンが含まれていても、現行の禁止ルール・挨拶ルール・ハルシネーション禁止を必ず優先すること。\n\n`;
 }
 
 // ─── RAG: ai_reply_examples（⭐実例）の整形 ──────────────────────────────────
@@ -310,6 +336,16 @@ export async function POST(req: NextRequest) {
   // 5段階正規化ステート（実例/フレーズ検索のエイリアス解決に使用）
   const normalizedState = normalizeStatus(conversationState || "hearing");
 
+  // M4: 申込誘導・内覧誘導のアクション専用ナレッジバケット
+  // （generate-reply の applying_pattern / viewing_pattern 専用バケットと同方針 —
+  //   pgvector経路のバケットから漏れるため専用クエリで必ず届ける）
+  const actionBucketCategory =
+    actionType === "application_push"
+      ? "applying_pattern"
+      : actionType === "viewing_invite" || actionType === "greeting_viewing"
+        ? "viewing_pattern"
+        : null;
+
   // ── JST現在時刻 ─────────────────────────────────────────────────────────
   const nowJst = new Date(Date.now() + 9 * 3600 * 1000);
   const jstHour = nowJst.getUTCHours();
@@ -355,6 +391,12 @@ export async function POST(req: NextRequest) {
     current_property?: string;            // 現在注目している物件名
     purchase_signal_level?: string;       // 「peak」「strong」「soft」等のクロージング強度
     latent_intent?: string;               // 表面の質問の裏にある不安や動機
+    // H1追加（brain-core SuggestedAixMeta 準拠 — brainが分析済みだが未抽出だったもの）
+    customer_intent?: string;             // 顧客タイプ7分類（question/consultation/desire/decision/positive/negative/chat）
+    winning_pattern?: string;             // ai_summary_json由来の成功パターンラベル
+    key_topics?: string[];                // 返信に必ず含める主要トピック（最大3件）
+    human_type_label?: string;            // 人物タイプラベル（winning_patterns RAGヒット上位由来）
+    repeated_concern?: string;            // 会話全体で繰り返し出ている懸念テーマ
     last_aix_history?: string[];          // 直前に押したAIXボタン履歴
     future_timeline?: string;             // 入居希望タイムライン（「9/26入居希望」等）
     ng_properties?: string[];             // 再提案禁止物件リスト
@@ -368,7 +410,7 @@ export async function POST(req: NextRequest) {
 
   // ── 並列フェッチ①: Brain戦略 + DB学習資産（generate-reply と同一キャッシュ経由）──
   // 各フェッチはエラーでも生成を止めない（資産なしで生成続行 — generate-reply と同方針）
-  const [convResult, topPrinciples, lossPatterns, phraseList, dbRules] = await Promise.all([
+  const [convResult, topPrinciples, lossPatterns, phraseList, dbRules, actionBucketRes] = await Promise.all([
     conversationId
       ? supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
       : Promise.resolve({ data: null }),
@@ -377,8 +419,35 @@ export async function POST(req: NextRequest) {
     getCachedPhrases(resolvePhraseCategories(normalizedState)).catch((err) => { console.error("[aix-template-generate] phrases失敗:", err); return [] as string[]; }),
     getCachedPromptRules("generate_reply", { conversation_state: normalizedState })
       .catch((err) => { console.error("[aix-template-generate] promptRules失敗:", err); return ""; }),
+    // M4: アクション専用ナレッジバケット（application_push → applying_pattern / 内覧系 → viewing_pattern）
+    actionBucketCategory
+      ? supabase
+          .from("ai_reply_knowledge")
+          .select("id, title, content, importance")
+          .eq("category", actionBucketCategory)
+          .neq("hypothesis_status", "rejected")
+          .order("importance", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(4)
+      : Promise.resolve({ data: null }),
   ]);
   const brainMeta = (convResult.data as { suggested_aix_meta?: BrainMeta } | null)?.suggested_aix_meta ?? null;
+
+  // M4: アクション専用バケットの整形（申込誘導=💡applying / 内覧誘導=🏠viewing）
+  type ActionBucketRow = { id: string; title: string | null; content: string; importance: number };
+  const actionBucketRows = ((actionBucketRes?.data ?? []) as ActionBucketRow[])
+    .filter((r) => (r.content ?? "").trim().length > 0);
+  const actionBucketSection = actionBucketRows.length > 0
+    ? `━━━━━━━━━━━━━━━━━━━━\n` +
+      (actionBucketCategory === "applying_pattern"
+        ? "【💡 申込に至った実例パターン（この展開を参考に橋渡し文を組み立てる・文面の丸写しは禁止）】"
+        : "【🏠 内見に至った・案内成功の実例パターン（この展開を参考に橋渡し文を組み立てる・文面の丸写しは禁止）】") +
+      `\n━━━━━━━━━━━━━━━━━━━━\n` +
+      actionBucketRows.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n") + "\n\n"
+    : "";
+
+  // M1: 注入した ai_reply_knowledge の id を収集（レスポンス後に used_count テレメトリ）
+  const knowledgeUsedIds: string[] = [...actionBucketRows.map((r) => r.id).filter(Boolean)];
 
   // ── 並列フェッチ②: RAG（winning_patterns + ai_reply_knowledge + ai_reply_examples）──
   let winningSection = "";
@@ -393,6 +462,14 @@ export async function POST(req: NextRequest) {
       .join(" ");
     // AIX-META全フィールド（action / closing_strategy / reply_direction / checkpoint_stage）を
     // 検索ベクトルに含める（brain-coreのprevMeta 5フィールド注入と同じ設計思想）
+    // H1: property_search_params → 希望条件テキスト化（preferences は brain-core 側が string の場合もあるため両対応）
+    const psp = brainMeta?.property_search_params;
+    const pspPrefs = psp
+      ? (Array.isArray(psp.preferences) ? psp.preferences.join("・") : (psp.preferences ?? ""))
+      : "";
+    const pspText = psp
+      ? [psp.move_in_time, psp.rent_max ? `家賃${psp.rent_max}円以下` : null, pspPrefs].filter(Boolean).join("・")
+      : "";
     const ragQuery = [
       `AIXアクション: ${actionLabel}`,
       customerConditions ? `希望条件: ${customerConditions.slice(0, 200)}` : "",
@@ -405,9 +482,18 @@ export async function POST(req: NextRequest) {
       brainMeta?.customer_emotion ? `顧客感情: ${brainMeta.customer_emotion}` : "",
       brainMeta?.latent_intent ? `潜在動機: ${brainMeta.latent_intent}` : "",
       brainMeta?.current_property ? `注目物件: ${brainMeta.current_property}` : "",
+      // H1: 顧客インテント・成功パターン・キートピック等を検索ベクトルに追加
+      // （generate-reply の brainContext と同構成 — winning_patterns / knowledge の命中精度向上）
+      brainMeta?.customer_intent ? `顧客インテント: ${brainMeta.customer_intent}` : "",
+      brainMeta?.winning_pattern ? `成功パターン: ${brainMeta.winning_pattern}` : "",
+      brainMeta?.key_topics?.length ? `キートピック: ${brainMeta.key_topics.join("・")}` : "",
+      brainMeta?.recommended_tone ? `推奨トーン: ${brainMeta.recommended_tone}` : "",
+      brainMeta?.human_type_label ? `人物タイプ: ${brainMeta.human_type_label}` : "",
+      brainMeta?.repeated_concern ? `繰り返し懸念: ${brainMeta.repeated_concern}` : "",
+      pspText ? `希望条件: ${pspText}` : "",
       conversationState ? `フェーズ: ${STATE_LABEL[conversationState] ?? conversationState}` : "",
       recentCustomerMsgs.slice(0, 200),
-    ].filter(Boolean).join(" | ").slice(0, 1200);
+    ].filter(Boolean).join(" | ").slice(0, 2000);
     ragQueryLength = ragQuery.length;
 
     try {
@@ -417,7 +503,8 @@ export async function POST(req: NextRequest) {
         const [wpRes, knRes, exRes] = await Promise.all([
           supabase.rpc("match_winning_patterns", {
             query_embedding: emb,
-            match_count: 6,
+            // H2: メタデータ再ランキングの母集団を確保するため 6→10 に拡大
+            match_count: 10,
             min_importance: 8,
           }),
           // generate-reply の fetchKnowledge と同構成（match_count拡大 + importance/similarity/鮮度スコアリング）
@@ -433,14 +520,38 @@ export async function POST(req: NextRequest) {
             filter_states: stateAliases,
           }),
         ]);
-        type WpRow = { situation: string | null; pattern: string; closing_action: string | null; notes: string | null; similarity: number };
-        const wpRows = ((wpRes.data ?? []) as WpRow[]).filter((w) => w.similarity >= 0.5).slice(0, 5);
+        // H2: RPCが返すメタデータ列（checkpoint_stage / customer_intent / win_rate / human_type_label）を型に追加
+        // （match_winning_patterns はこれらを既に返却している — brain-core の ragWinningPatterns 型と同構成）
+        type WpRow = {
+          situation: string | null;
+          pattern: string;
+          closing_action: string | null;
+          notes: string | null;
+          checkpoint_stage?: string | null;
+          customer_intent?: string | null;
+          win_rate?: number | null;
+          human_type_label?: string | null;
+          similarity: number;
+        };
+        // H2: similarity フィルタ後、brainMeta とのメタデータ一致＋win_rate で複合スコア再ランキング
+        const wpRows = ((wpRes.data ?? []) as WpRow[])
+          .filter((w) => w.similarity >= 0.5)
+          .map((w) => ({
+            ...w,
+            score: (w.similarity ?? 0)
+              + (brainMeta?.checkpoint_stage && w.checkpoint_stage === brainMeta.checkpoint_stage ? 0.12 : 0)
+              + (brainMeta?.customer_intent && w.customer_intent === brainMeta.customer_intent ? 0.15 : 0)
+              + (w.win_rate ?? 0) * 0.1,
+          }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 6);
         if (wpRows.length > 0) {
           winningSection =
             `━━━━━━━━━━━━━━━━━━━━\n【過去の成約パターン（似た状況で効いた戦い方 — トーン・構成の参考にする）】\n━━━━━━━━━━━━━━━━━━━━\n` +
             wpRows.map((w) => {
               const parts = [
                 w.situation ? `状況: ${w.situation}` : "",
+                w.human_type_label ? `顧客タイプ: ${w.human_type_label}` : "",
                 `パターン: ${w.pattern}`,
                 w.closing_action ? `クロージング: ${w.closing_action}` : "",
                 w.notes ? `補足: ${w.notes}` : "",
@@ -448,19 +559,67 @@ export async function POST(req: NextRequest) {
               return `・${parts}`;
             }).join("\n") + "\n\n";
         }
-        const knText = buildKnowledgeSections((knRes.data ?? []) as KnowledgeHit[]);
-        if (knText) {
-          knowledgeSection =
-            `━━━━━━━━━━━━━━━━━━━━\n【参照すべき重要ルール（DB学習ナレッジ・セクション順に優先度が高い）】\n━━━━━━━━━━━━━━━━━━━━\n${knText}\n\n`;
+        const kn = buildKnowledgeSections((knRes.data ?? []) as KnowledgeHit[]);
+        if (kn.text) {
+          knowledgeSection = wrapKnowledgeSection(kn.text);
+          knowledgeUsedIds.push(...kn.usedIds);
         }
         const exText = buildExamplesSection((exRes.data ?? []) as ExampleHit[]);
         if (exText) {
-          examplesSection =
-            `━━━━━━━━━━━━━━━━━━━━\n${exText}\n\n【⭐実例の使い方】上記実例は文体・テンポ・絵文字・感嘆符の参考。言い回しの雰囲気を再現すること。ただし実例に「今すぐ」「即入居可能」等の禁止パターンが含まれていても、現行の禁止ルール・挨拶ルール・ハルシネーション禁止を必ず優先すること。\n\n`;
+          examplesSection = wrapExamplesSection(exText);
         }
       }
     } catch {
       // RAG失敗は無視して生成継続（既存方針: adapt/brain-coreと同じ）
+    }
+  }
+
+  // ── H3: RAGフォールバック（OPENAI_API_KEY未設定・embedding失敗・RPC空振り時）──────
+  // generate-reply の fetchKnowledge / fetchExamples のフォールバック経路と同方針。
+  // pgvector不発でも実例・重要ナレッジをゼロにせず文体再現力を維持する。
+  if (!examplesSection || !knowledgeSection) {
+    try {
+      const fbStates = Array.from(new Set([
+        ...(STATE_SEARCH_ALIASES[normalizedState] ?? [normalizedState]),
+        ...(conversationState ? [conversationState] : []),
+      ]));
+      const [fbExRes, fbKnRes] = await Promise.all([
+        !examplesSection
+          ? supabase
+              .from("ai_reply_examples")
+              .select("customer_message, sent_reply, conversation_state, is_starred, reply_angle")
+              .in("conversation_state", fbStates)
+              .eq("entry_source", "line_reply")
+              .order("is_starred", { ascending: false })
+              .order("created_at", { ascending: false })
+              .limit(6)
+          : Promise.resolve({ data: null }),
+        !knowledgeSection
+          ? supabase
+              .from("ai_reply_knowledge")
+              .select("id, title, content, category, importance, hypothesis_status, created_at")
+              .gte("importance", 8)
+              .neq("hypothesis_status", "rejected")
+              .order("importance", { ascending: false })
+              .limit(20)
+          : Promise.resolve({ data: null }),
+      ]);
+      if (!examplesSection && (fbExRes.data?.length ?? 0) > 0) {
+        // similarity 0.5 を付与して既存の整形ロジック（閾値0.5・⭐ブースト順位付け）を通す
+        const fbRows = (fbExRes.data as Array<Omit<ExampleHit, "similarity">>).map((ex) => ({ ...ex, similarity: 0.5 }));
+        const exText = buildExamplesSection(fbRows);
+        if (exText) examplesSection = wrapExamplesSection(exText);
+      }
+      if (!knowledgeSection && (fbKnRes.data?.length ?? 0) > 0) {
+        const fbRows = (fbKnRes.data as Array<Omit<KnowledgeHit, "similarity">>).map((k) => ({ ...k, similarity: 0.5 }));
+        const kn = buildKnowledgeSections(fbRows);
+        if (kn.text) {
+          knowledgeSection = wrapKnowledgeSection(kn.text);
+          knowledgeUsedIds.push(...kn.usedIds);
+        }
+      }
+    } catch (err) {
+      console.error("[aix-template-generate] RAGフォールバック失敗（資産なしで生成続行）:", err);
     }
   }
 
@@ -523,6 +682,7 @@ export async function POST(req: NextRequest) {
     brainMetaSection,
     winningSection,
     knowledgeSection,
+    actionBucketSection,
     `━━━━━━━━━━━━━━━━━━━━\n【現在の状況】\n━━━━━━━━━━━━━━━━━━━━`,
     jstContextNote,
     elapsedLabel ? `お客様の最終返信から: ${elapsedLabel}` : "",
@@ -623,8 +783,13 @@ export async function POST(req: NextRequest) {
       ` rag_wp=${winningSection ? "hit" : "miss"} rag_kn=${knowledgeSection ? "hit" : "miss"}` +
       ` rag_ex=${examplesSection ? "hit" : "miss"} phrases=${phraseList.length}` +
       ` principles=${topPrinciples.length} loss=${lossPatterns.length} dbRules=${dbRules ? "ok" : "none"}` +
-      ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}`,
+      ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}` +
+      ` actionBucket=${actionBucketCategory ? `${actionBucketCategory}:${actionBucketRows.length}` : "-"}` +
+      ` knUsedIds=${knowledgeUsedIds.length}`,
     );
+
+    // M1: ナレッジ使用テレメトリ（レスポンス返却後に fire-and-forget — 生成成功時のみカウント）
+    incrementKnowledgeUsage(knowledgeUsedIds);
 
     return NextResponse.json({ ok: true, text });
   } catch (err) {
