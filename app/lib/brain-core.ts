@@ -905,9 +905,11 @@ export async function analyzeConversation(
       .order("created_at", { ascending: false })
       .limit(8),
     // ② この会話で使われたAIXアクション履歴（メッセージ単位の厳密ラベル用）
+    // check_pattern: property_check_result の確認結果（unavailable=募集なし等）。
+    // 「物件確認した」だけでなく「結果どうだったか」を last_aix_history に含めるため取得
     supabase
       .from("aix_usage_logs")
-      .select("aix_type, line_message_id, sent_at, created_at, template_name")
+      .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(30),
@@ -994,7 +996,7 @@ export async function analyzeConversation(
   // AIXアクションのメッセージ単位ラベル解決
   // 1) line_message_id 完全一致（P4以降のログ・直近30日で97%カバー）
   // 2) 旧ログ fallback: is_aix_generated=true × sent_at ±3分
-  type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null };
+  type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null; check_pattern?: string | null };
   const aixLogs = (aixLogsResult.data ?? []) as AixLog[];
   // AIX遷移マップ（DB動的）: from_aix_type → [{to, count}] 降順
   const aixTransitionMap: Record<string, Array<{ to: string; count: number }>> = {};
@@ -1546,8 +1548,10 @@ export async function analyzeConversation(
   // 直近3件の押下順序（新→旧）＋テンプレート名をBrainプロンプトに注入する
   // → usedAixTypesは「この会話で使ったことがある種類」だが、順序・直近性が欠落しているため方向性判断に不十分。
   //   「直前に property_check_result → 次は viewing_invite が定石」等の流れを Brain が正確に判断できるようにする。
+  // check_pattern（確認結果: unavailable=募集なし等）も併記 → 「物件確認した」だけでなく
+  // 「確認して募集がなかった」まで伝わり、代替提案シナリオの読み取りが可能になる
   const recentAixSeqText = aixLogs.slice(0, 3).length > 0
-    ? `\n【直近AIXアクション（新→旧順）】${aixLogs.slice(0, 3).map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}`).join(" → ")}`
+    ? `\n【直近AIXアクション（新→旧順）】${aixLogs.slice(0, 3).map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}${l.check_pattern ? `(結果:${l.check_pattern})` : ""}`).join(" → ")}`
     : "";
   // 成約実績・次打ちマップ（DB動的）: aix_transition_stats から取得した遷移確率を推奨候補として注入する。
   // あくまで「推奨候補」であり、REPLY_STYLE_RULES のフェーズ制約（募集状況未確認での内覧誘導禁止等）と
@@ -2555,13 +2559,15 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   // 直近AIXボタン履歴（最新3件・新→旧順）をAIX-METAに格納してgenerate-replyへ渡す
   const { data: recentAixLogsData } = await supabase
     .from("aix_usage_logs")
-    .select("aix_type, template_name")
+    .select("aix_type, template_name, check_pattern")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(3);
-  const recentAixLogs = (recentAixLogsData ?? []) as Array<{ aix_type: string | null; template_name: string | null }>;
+  const recentAixLogs = (recentAixLogsData ?? []) as Array<{ aix_type: string | null; template_name: string | null; check_pattern?: string | null }>;
+  // check_pattern（確認結果: unavailable=募集なし等）も併記 → generate-reply / aix-template-generate 側で
+  // 「確認したが募集がなかった→代替提案」の訴求文脈を読み取れるようにする
   const recentAixHistoryText = recentAixLogs.length > 0
-    ? recentAixLogs.map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}`).join(" → ")
+    ? recentAixLogs.map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}${l.check_pattern ? `(結果:${l.check_pattern})` : ""}`).join(" → ")
     : null;
 
   const meta = await analyzeConversation(

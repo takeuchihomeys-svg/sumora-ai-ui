@@ -895,6 +895,11 @@ export default function Home() {
   // CHAIN-1: 会話ごとの直近AIXピッカーサブモード（check_pattern / app_sub_mode / send_mode）。
   // AixModalクローズで aixInit* がリセットされた後の post_aix テンプレ選択時に picker_mode を補完する
   const lastPickerModeByConvRef = useRef<Map<string, string | null>>(new Map());
+  // 「1件特にオススメ」訴求シナリオ判定用（aix-template-generate へ渡す）:
+  // 会話ごとの直近ピックアップ種別（代替ピックアップ等）と物件確認結果の生値（unavailable等）。
+  // propertyAvailableByConvRef は boolean 化していて「募集なし」の理由が消えるため生値を別途保持する
+  const lastPickupTypeByConvRef = useRef<Map<string, string>>(new Map());
+  const lastCheckPatternByConvRef = useRef<Map<string, string>>(new Map());
   // CHAIN-2: テンプレ連続送信チェーンのセッション管理（会話ID → セッション）。
   // AIXボタン押下で新規セッションIDを発行し、そこから続く全テンプレ選択に同じIDを付与する。
   // sentCount = このセッションで実送信済みのテンプレ数（次の選択の sequence_no = sentCount + 1）
@@ -5343,6 +5348,9 @@ export default function Home() {
     setShowPropertyPicker(false);
     setAixInitialPickupType(pickupType);
     setAixInitialIsNewArrival(pickupType === "新着1件");
+    // 訴求シナリオ判定用に会話単位でも保持（AixModalクローズで aixInitialPickupType がリセットされた後の
+    // post_aix テンプレ生成でも「代替ピックアップだった」文脈を aix-template-generate へ渡せるようにする）
+    if (selectedConversation?.id) lastPickupTypeByConvRef.current.set(selectedConversation.id, pickupType);
     setShowAixMenu(false);
     setAixInspectLabel(null);
     setActiveAixFlow("property_recommendation");
@@ -9543,6 +9551,9 @@ export default function Home() {
             return meta ? `💡 ${meta.label}がオススメ` : undefined;
           })()}
           conversationId={selectedConversation.id}
+          // 「1件特にオススメ」訴求シナリオ判定用（比較選択型/代替新規提案型/初回提案型の分岐材料）
+          pickupType={lastPickupTypeByConvRef.current.get(selectedConversation.id) ?? aixInitialPickupType ?? null}
+          lastAixCheckPattern={lastCheckPatternByConvRef.current.get(selectedConversation.id) ?? null}
           priorityTemplateIds={(() => {
             // CHAIN-2: チェーン誘導バナー経由なら「次のテンプレ」を最優先で昇格
             const chainNext = chainNextTemplateMap[selectedConversation.id];
@@ -9690,6 +9701,11 @@ export default function Home() {
               // 物件確認結果の空室有無を保持（suggestViewing=空室あり / suggest2ndHand=空室ありだが申込あり）
               if (aixModalType === "property_check_result") {
                 propertyAvailableByConvRef.current.set(selectedConversation.id, Boolean(meta?.suggestViewing || meta?.suggest2ndHand));
+                // 訴求シナリオ判定用: 確認結果の生値（unavailable=募集なし等）を会話単位で保持。
+                // 「募集なし→代替1件提案」の文脈を aix-template-generate に渡すためのソース
+                if (meta?.checkPattern) lastCheckPatternByConvRef.current.set(selectedConversation.id, meta.checkPattern);
+                // 新しい確認をした時点で前回フローのピックアップ種別は古い文脈になるためクリア
+                lastPickupTypeByConvRef.current.delete(selectedConversation.id);
               }
               // AIXフロー使用ログ記録（テンプレート名・カテゴリ含む）
               // P4: LINE message id・送信時刻をワンショット消費（予約送信時は未送信なので使わない）

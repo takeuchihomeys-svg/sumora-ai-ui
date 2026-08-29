@@ -61,7 +61,8 @@ export const maxDuration = 60;
 
 // ─── 指示の優先順位＋共有ルールの読み替え（システム先頭・最上位）────────────
 const PRIORITY_ORDER_NOTE = `【指示の優先順位（競合時はこの順で解決すること）】
-ハルシネーション絶対禁止 > 役割の境界（橋渡し文のみ） > アクション別の書き方ガイド > Brain戦略 > DB学習ナレッジ・共有ルール > 実例の文体
+ハルシネーション絶対禁止 > 役割の境界（橋渡し文のみ） > アクション別の書き方ガイド・訴求シナリオ指示 > Brain戦略 > DB学習ナレッジ・共有ルール > 実例の文体
+※ 訴求シナリオ指示（後述の【シナリオ: 〜】）が実例の冒頭表現・構成と矛盾する場合は、必ずシナリオ指示を優先すること。
 
 【共有ルールの読み替え（重要）】
 以下の共有ルール・実例には「通常AI返信では〜は生成禁止（AIXボタン専用）」という記述が含まれる。
@@ -141,7 +142,7 @@ const ACTION_GUIDES: Record<string, string> = {
   property_send:
     "物件ピックアップ送付の橋渡し文。名前呼びかけ→お探しした物件をお送りする旨→お客様の希望条件との合致点に軽く触れる→「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます」等のCTA→ご査収の締め。物件の具体的スペックはAIX/会話に記載がある範囲のみ。",
   property_recommendation:
-    "1件に絞ったオススメの橋渡し文。「〇〇さんにかなりオススメ出来るお部屋」の特別感を演出し、希望条件とのパーソナライズに触れる。デメリットが会話上明らかな場合は先に開示して即メリットで転換。CTAは内覧誘導または申込誘導。スペック・金額は会話/AIXに記載がある範囲のみ。",
+    "1件を特にオススメする橋渡し文。「〇〇さんにかなりオススメ出来るお部屋」の特別感を演出し、希望条件とのパーソナライズに触れる。冒頭の入り方・比較表現の可否・CTA強度は後続の【訴求シナリオ】指示に必ず従う（比較選択型/代替新規提案型/初回提案型で全く異なる）。デメリットが会話上明らかな場合は先に開示して即メリットで転換。スペック・金額は会話/AIXに記載がある範囲のみ。",
   property_check_result:
     "管理会社等への確認結果を報告する際の橋渡し文。確認結果の中身（空室・金額・日付）はAIXの構造化メッセージが正なので断定して書かない。「確認結果をご報告いたします」の位置づけと次のアクション誘導のみを書く。",
   estimate_sheet:
@@ -162,6 +163,72 @@ const ACTION_GUIDES: Record<string, string> = {
     "確認依頼への受付宣言文。「募集状況確認させていただきます！！」の宣言のみ。確認結果・空室状況を先取りして書かない。",
 };
 
+// ─── 「1件特にオススメ」（property_recommendation）の訴求シナリオ分岐 ─────────
+// 同じ「1件オススメ」ボタンでも会話の流れによって訴求文脈が3種類あり、
+// 冒頭・訴求構造・CTA強度が全く異なる（2026-08-29 訴求ずれ事故の恒久対策）:
+//   compare     = 複数物件送付済み → その中から1件に絞って推す（比較選択型）
+//   alternative = 指定物件が募集なし → 代わりの1件を新規提案（代替新規提案型）
+//   first       = まだ何も送っていない → 初めての1件提案（初回提案型）
+// フロントのピッカー選択（pickupType）→ 直前の空室確認結果（check_pattern）→
+// この会話の物件送付実績（aix_usage_logs）の順でルールベース判定する（LLM推論任せにしない）。
+type RecommendationScenario = "compare" | "alternative" | "first";
+
+function resolveRecommendationScenario(args: {
+  actionType: string | null | undefined;
+  pickupType: string | null | undefined;
+  checkPattern: string | null | undefined;
+  sentPropertyLogCount: number;
+}): RecommendationScenario | null {
+  if (args.actionType !== "property_recommendation") return null;
+  // ① フロントのピッカー選択が最優先（スタッフが明示的に選んだシナリオ）
+  if (args.pickupType === "代替ピックアップ") return "alternative";
+  if (args.pickupType === "新規ピックアップ" || args.pickupType === "条件広げピックアップ" || args.pickupType === "新着1件") return "first";
+  if (args.pickupType === "継続ピックアップ") return "compare";
+  // ② ピッカー情報なし: 直前の空室確認結果から推定（募集なし/別の部屋なら代替提案の文脈）
+  if (args.checkPattern === "unavailable" || args.checkPattern === "alternative") return "alternative";
+  // ③ 物件送付実績から推定（送付ゼロで「お送りした中でも」は事実齟齬になる）
+  if (args.sentPropertyLogCount === 0) return "first";
+  return "compare";
+}
+
+const RECOMMENDATION_SCENARIO_LABELS: Record<RecommendationScenario, string> = {
+  compare: "比較選択型（送付済み物件の中から1件を推す）",
+  alternative: "代替新規提案型（指定物件が募集なし→代わりの1件を新規提案）",
+  first: "初回提案型（初めての1件提案）",
+};
+
+const RECOMMENDATION_SCENARIO_GUIDES: Record<RecommendationScenario, string> = {
+  compare: `【シナリオ: 比較選択型】既にお送りした複数物件の中から1件を特に推す文脈。
+・冒頭は「お送りさせて頂きましたお部屋の中でも〇〇が〜」系で、送付済みリストとの相対比較で「この1件が頭抜けている」特別感を演出する
+・CTAは内覧誘導または申込誘導（中程度の強度）`,
+  alternative: `【シナリオ: 代替新規提案型】お客様が指定/希望された物件が募集終了（空室なし）だったため、代わりの1件を新規にご提案する文脈。
+・🚫「お送りさせて頂きましたお部屋の中でも」「〜の中から」等、複数物件の送付済みを前提にした比較・絞り込み表現は絶対禁止（事実と異なる訴求になる）
+・冒頭は「〇〇さんこちらのお部屋如何でしょうか！！」系で、前置きせず即物件紹介に入る
+・「かなり〇〇さんのご条件に合ったお部屋」の適合性訴求を全面に出す（希望物件が叶わなかった穴を埋める提案であることを意識）
+・締めは「お気に召されましたらお申込みしお部屋を抑えさせて頂きます！！」系の強めの申込CTA（希望物件を逃した直後のため、良い代替は早く押さえるご提案が合理的）`,
+  first: `【シナリオ: 初回提案型】まだ物件をお送りしていないお客様への初めての1件提案。
+・🚫「お送りした中でも」「先日の物件」等、既送付を前提にした表現は絶対禁止
+・「〇〇さんのご条件に合いそうなお部屋が見つかりました！！」系で、希望条件との適合を紹介する
+・CTAは内覧誘導寄りの軽め〜中程度（まず反応を見る）`,
+};
+
+// ピッカー種別に応じた補足ニュアンス（シナリオガイドに追記）
+const PICKUP_TYPE_NOTES: Record<string, string> = {
+  "新着1件": "※新着で出たばかりの物件。鮮度（新着ですぐ動いた方がよい旨）を訴求してよい（会話履歴と矛盾しない範囲で）",
+  "条件広げピックアップ": "※ご希望条件を少し広げてお探しした物件。その旨に軽く触れてよい",
+};
+
+// check_pattern（物件確認結果）→ 日本語ラベル（シナリオ判定事実の注入用）
+const CHECK_PATTERN_LABELS: Record<string, string> = {
+  available: "空室あり（募集中）",
+  alternative: "指定のお部屋は満室・同じ建物の別のお部屋なら募集あり",
+  unavailable: "募集終了（満室・空きなし）",
+  exclusive: "専任物件のためご紹介不可",
+  move_in_date: "入居可能日を確認した",
+  interior_photo: "室内写真を確認した",
+  other_room_check: "別のお部屋について確認した",
+};
+
 // ─── リクエスト型 ────────────────────────────────────────────────────────────
 type GenerateRequestBody = {
   actionType?: string | null;       // 正準キー（property_send 等）。null時はactionCategoryのみで生成
@@ -174,6 +241,9 @@ type GenerateRequestBody = {
   noEmoji?: boolean;
   pendingScheduledMessages?: Array<{ text: string | null }>;
   staffMessagedToday?: boolean;
+  // 「1件特にオススメ」シナリオ判定用（property_recommendation のみ使用）
+  pickupType?: string | null;          // AIXピッカーで選択したピックアップ種別（代替ピックアップ等）
+  lastAixCheckPattern?: string | null; // この会話の直近 property_check_result の結果生値（unavailable等）
 };
 
 const STATE_LABEL: Record<string, string> = {
@@ -337,6 +407,8 @@ export async function POST(req: NextRequest) {
     noEmoji,
     pendingScheduledMessages,
     staffMessagedToday,
+    pickupType,
+    lastAixCheckPattern,
   } = body;
 
   if (!actionType && !actionCategory) {
@@ -426,7 +498,7 @@ export async function POST(req: NextRequest) {
 
   // ── 並列フェッチ①: Brain戦略 + DB学習資産（generate-reply と同一キャッシュ経由）──
   // 各フェッチはエラーでも生成を止めない（資産なしで生成続行 — generate-reply と同方針）
-  const [convResult, topPrinciples, lossPatterns, phraseList, dbRules, actionBucketRes, aixTemplateExRes, aixActionExRes] = await Promise.all([
+  const [convResult, topPrinciples, lossPatterns, phraseList, dbRules, actionBucketRes, aixTemplateExRes, aixActionExRes, aixUsageLogsRes] = await Promise.all([
     conversationId
       ? supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
       : Promise.resolve({ data: null }),
@@ -471,8 +543,49 @@ export async function POST(req: NextRequest) {
           .order("created_at", { ascending: false })
           .limit(4)
       : Promise.resolve({ data: null }),
+    // シナリオ判定用: この会話のAIX使用ログ（物件送付実績・直前の空室確認結果）
+    // フロントの pickupType / lastAixCheckPattern が来ない場合（リロード後・別導線）のDBフォールバック
+    conversationId && actionType === "property_recommendation"
+      ? supabase
+          .from("aix_usage_logs")
+          .select("aix_type, check_pattern, created_at")
+          .eq("conversation_id", conversationId)
+          .in("aix_type", ["property_send", "property_recommendation", "property_check_result"])
+          .order("created_at", { ascending: false })
+          .limit(20)
+      : Promise.resolve({ data: null }),
   ]);
   const brainMeta = (convResult.data as { suggested_aix_meta?: BrainMeta } | null)?.suggested_aix_meta ?? null;
+
+  // ── 「1件特にオススメ」訴求シナリオ判定（compare / alternative / first）──────
+  type AixUsageLogRow = { aix_type: string | null; check_pattern: string | null; created_at: string };
+  const aixUsageLogs = (aixUsageLogsRes?.data ?? []) as AixUsageLogRow[];
+  const sentPropertyLogCount = aixUsageLogs.filter(
+    (l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation"
+  ).length;
+  // 直近の property_check_result の結果。ただし確認より後に物件送付AIXが2件以上ある場合は
+  // 既に別の文脈へ進んでいるため無効化（古い「募集なし」で代替シナリオに誤爆しない）。
+  // ※ 送付1件は許容: 代替フローでは「確認(募集なし)→代替物件AIX送信→橋渡し文生成」の順になるため
+  let dbLastCheckPattern: string | null = null;
+  let checkIsStale = false;
+  {
+    let sendsAfterCheck = 0;
+    for (const l of aixUsageLogs) {
+      if (l.aix_type === "property_check_result") {
+        dbLastCheckPattern = l.check_pattern;
+        checkIsStale = sendsAfterCheck >= 2;
+        break;
+      }
+      if (l.aix_type === "property_send" || l.aix_type === "property_recommendation") sendsAfterCheck++;
+    }
+  }
+  const effectiveCheckPattern = checkIsStale ? null : (lastAixCheckPattern ?? dbLastCheckPattern);
+  const recommendationScenario = resolveRecommendationScenario({
+    actionType,
+    pickupType,
+    checkPattern: effectiveCheckPattern,
+    sentPropertyLogCount,
+  });
 
   // M4: アクション専用バケットの整形（申込誘導=💡applying / 内覧誘導=🏠viewing）
   type ActionBucketRow = { id: string; title: string | null; content: string; importance: number };
@@ -824,6 +937,17 @@ export async function POST(req: NextRequest) {
     `━━━━━━━━━━━━━━━━━━━━\n【今回生成する橋渡し文】\n━━━━━━━━━━━━━━━━━━━━`,
     `・AIXボタン種別: ${actionLabel}`,
     actionGuide ? `・この種別の書き方: ${actionGuide}` : "",
+    // 「1件特にオススメ」の訴求シナリオ（冒頭・比較表現の可否・CTA強度を決定する最優先指示）
+    recommendationScenario
+      ? `・訴求シナリオ（この種別の書き方より優先・実例の冒頭表現と矛盾する場合もこちらを優先）:\n${RECOMMENDATION_SCENARIO_GUIDES[recommendationScenario]}${pickupType && PICKUP_TYPE_NOTES[pickupType] ? `\n${PICKUP_TYPE_NOTES[pickupType]}` : ""}`
+      : "",
+    recommendationScenario
+      ? `・シナリオ判定に使った事実: ${[
+          pickupType ? `ピックアップ種別=${pickupType}` : "",
+          effectiveCheckPattern ? `直前の物件確認結果=${CHECK_PATTERN_LABELS[effectiveCheckPattern] ?? effectiveCheckPattern}` : "",
+          `この会話での物件送付AIX実績=${sentPropertyLogCount}回`,
+        ].filter(Boolean).join(" / ")}`
+      : "",
     "",
     brainMetaSection,
     aixExamplesSection,
@@ -858,7 +982,11 @@ export async function POST(req: NextRequest) {
     "",
     examplesSection,
     phrasesSection,
-    `この会話の流れ・お客様の状況に合った「${actionLabel}」の橋渡し文を1通生成してください。金額・空室状況・日程・物件名は上記の会話履歴/AIXメッセージに記載がある事実のみ使い、なければ言及しないこと。⭐実例の文体・テンポを忠実に再現すること。出力は本文のみ。`,
+    `この会話の流れ・お客様の状況に合った「${actionLabel}」の橋渡し文を1通生成してください。金額・空室状況・日程・物件名は上記の会話履歴/AIXメッセージに記載がある事実のみ使い、なければ言及しないこと。⭐実例の文体・テンポを忠実に再現すること。${
+      recommendationScenario
+        ? `訴求シナリオは「${RECOMMENDATION_SCENARIO_LABELS[recommendationScenario]}」。このシナリオの訴求構造（冒頭・比較表現の可否・CTA強度）を必ず守り、実例の冒頭がシナリオと矛盾する場合はシナリオを優先すること。`
+        : ""
+    }出力は本文のみ。`,
   ].filter(Boolean).join("\n");
 
   // ── DB学習資産の第2システムブロック（TTLキャッシュ内はbyte-stable → prompt cache対象）──
@@ -937,7 +1065,9 @@ export async function POST(req: NextRequest) {
       ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}` +
       ` actionBucket=${actionBucketCategory ? `${actionBucketCategory}:${actionBucketRows.length}` : "-"}` +
       ` aixEx=${aixExampleRows.length} aixVec=${aixVecHitCount}` +
-      ` knUsedIds=${knowledgeUsedIds.length}`,
+      ` knUsedIds=${knowledgeUsedIds.length}` +
+      ` scenario=${recommendationScenario ?? "-"} pickup=${pickupType ?? "-"}` +
+      ` checkPat=${effectiveCheckPattern ?? "-"}${checkIsStale ? "(stale)" : ""} sentProps=${sentPropertyLogCount}`,
     );
 
     // M1: ナレッジ使用テレメトリ（レスポンス返却後に fire-and-forget — 生成成功時のみカウント）

@@ -730,6 +730,11 @@ interface TemplateModalProps {
   // CHAIN-1/CHAIN-2: suggest-next-action 由来の推奨テンプレID配列（送る順番の定番シーケンス）。
   // 配列順で最上位に昇格し、1番目に「🎯 この流れの定番」、2番目以降に「📋 次に続けて送ることが多い」バッジを表示する
   priorityTemplateIds?: string[] | null;
+  // 「1件特にオススメ」の訴求シナリオ判定用（aix-template-generate に渡す）:
+  // AIXピッカーで選択したピックアップ種別（代替ピックアップ/新規ピックアップ等）
+  pickupType?: string | null;
+  // この会話の直近 property_check_result の結果生値（available/alternative/unavailable 等）
+  lastAixCheckPattern?: string | null;
 }
 
 const AVAIL_CHECK_TYPES = [
@@ -853,6 +858,7 @@ let lastUserSelectedCategory: string | null = null;
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
   initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext, conversationId, priorityTemplateIds,
+  pickupType, lastAixCheckPattern,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>(templatesProp ?? initialTemplates ?? []);
   // UX改善④: alert() の代替。モーダル上部にトースト表示して4秒で自動消去（モバイルでブロッキングしない）
@@ -2359,6 +2365,9 @@ export default function TemplateModal({
           noEmoji,
           pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
           staffMessagedToday: staffMessagedToday ?? false,
+          // 「1件特にオススメ」の訴求シナリオ判定用（比較選択型/代替新規提案型/初回提案型）
+          pickupType: pickupType ?? null,
+          lastAixCheckPattern: lastAixCheckPattern ?? null,
         }),
       });
       const data = await res.json() as { ok: boolean; text?: string; error?: string };

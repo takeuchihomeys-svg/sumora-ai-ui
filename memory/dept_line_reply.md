@@ -452,3 +452,32 @@ AI返信の送信前チェックを人間の脳の誤り検出機構でモデル
 - **UI**: 品質バッジが3パス完了＋指摘ゼロで「✅ 3重チェック済み」に格上げ。指摘は🔴/🟡折りたたみリスト（blockあり時は自動展開）。事前生成ドラフト選択時はDBの ai_draft_check をハイドレート
 - **新カラム**: `conversations.ai_draft_check JSONB`（migrate-schema 追記済み・**デプロイ後に migrate-schema 実行が必要**。未実行でも全経路 fail-open で従来動作）
 - コスト ~$0.01/返信（Haiku 3呼び出し）。モデル: claude-haiku-4-5（thinkingなし・temperature 0）
+
+---
+
+## final-check 生成層vs検査層の矛盾一掃（2026-08-29）
+Fable5分析で発見された「正当な文を削除・破壊するルール」を全て修正。優先度: ①全損経路の封鎖 → ②毎回発火する矛盾の除去 → ③誤検知系。
+
+### final-check.ts
+- **CONFIRM_PROMISE_RE自己矛盾の封鎖（最重大）**: SONNET_REVISION_STATICのAIX境界置き換え句「確認して(改めて)ご連絡いたします」がCONFIRM_PROMISE_REに自らマッチし修正が必ず破棄→revision_exhausted→ai_draft null全損の経路があった。置き換え句を「改めてご連絡いたします」に統一し、TIME_INVALID_HONIJITSUのsuggestionも「明日一番にご連絡させて頂きます」（「ご確認し」を除去）に変更
+- **決定的TIME_INVALID_HONIJITSU**: severity を `ctx.isAutoSend ? "block" : "warning"` に（LLM版TIME_INVALIDと対称化。スタッフ確認経路で不要なblock修正ループを止めた）
+- **rule_check**: 冒頭お礼禁止語彙に「頂き/いただき入り（ご連絡頂きありがとうございます）は初回必須挨拶のため対象外」例外を追記。例外2の引用文を「オススメできる物件をピックアップ」に更新しRULE_VIOLATIONも除外対象に追加
+- **anomaly_scan**: 会社標準案内ホワイトリスト追加（審査3日〜10日・最短2週間入居・審査通過までキャンセル料無料・審査落ち費用なし・保証会社費用は総賃料50%前後の一般論）→FABRICATED誤blockで正しい定型回答が削除されるのを防止
+- **assignSeverity**: isEarlyConversation格下げ対象に FABRICATED_PROPERTY を追加（初回の物件名表記ゆれ誤block防止）
+- **context_check**: FILLER_GREETINGを「条件変更・ピックアップ依頼直後のみNG」に限定（生成層は長文・2回目以降で「お世話になっております」必須のため。旧: 無条件NG＝絵文字矛盾と同型の生成層vs検査層矛盾）。出力例13を条件変更文脈に修正+問題なし例13b追加。DOUBLE_DECLARATIONにTikTok二重お礼（ご連絡お礼+動画お礼）の例外追加。WE_DO_MISSING例外の「パターンZ/F3/Y」参照を自己完結の条件記述に置換
+- **SONNET_REVISION_STATIC**: 「させていただきます過剰使用を避ける」指示を撤回→「行動宣言文（WE DO文体）は削除・受け身化しない」に変更（WE DO文体破壊とrecheck棄却空振りの原因だった）
+
+### line-reply-prompts.ts
+- **INITIAL_COST_EXPLANATION**: 「スモラは」→「弊社は」（BANNED_WORDS_DETERMINISTICの「スモラ」に必ずヒットし初期費用説明が毎回block→破壊されていた）。✨2回→1回（決定的dedup発火も解消）
+- **受け身表現「ご条件に合った/合う」の一掃**: 必須パターン・例文の約25箇所を能動表現（「オススメできるお部屋」「〇〇さんご希望の管理費込み〇万以内」等）に置換。物件スクショ時必須ピックアップ宣言・F4のWE DO継続宣言・TikTok例・hearing/proposing例文等。禁止ルール文中の引用（L103/L792/L967/L1257/L1390）はそのまま
+
+### generate-reply/route.ts
+- **センシティブ案件（sensitiveGateNote付き）**: runFinalCheck（チェックのみ）に変更。接地修正・フィードバック再生成をスキップ（手動確認前提の草稿に最大90秒+再生成は無駄＋謝罪ニュアンスをrevisionが壊すリスク）
+- **テンプレ最適化モード**: 決定的禁止語彙スキャン追加（「スモラ」→「弊社」決定的置換、名称未設定/**/少々お待ちくださいは警告ログ）。従来はfinal-check完全バイパスで無防備だった
+- **regen込み総予算**: loop2のbudgetを `min(60s, max(20s, 150s - 経過))` に（最悪2〜3分の膨張を防止）
+
+### DB
+- ai_reply_knowledge 25d65b92（confirmed・importance10）: 「ご条件に合うお部屋ピックアップ」→「オススメできるお部屋ピックアップ」にUPDATE済み
+- ⚠️ 未対応: 同様の受け身表現を含む知識行が他に約20件ある（45554d85/bb8e736c/db6e678a/cfc13e4c/2cc3cc10/b08cc20f等、importance8-10）。うちe9567579・b1308271は受け身表現を「OK」と教える内容で打ち合わせ合意と真っ向矛盾 → 次セッションで棚卸し・is_current=false化を検討
+
+検証: npx tsc --noEmit パス
