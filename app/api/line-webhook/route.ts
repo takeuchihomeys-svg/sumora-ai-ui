@@ -49,6 +49,11 @@ const ACCOUNTS: AccountConfig[] = [
 // generate-draft-bg-async の SKIP_STATUSES・cron 側も必ず同時に更新すること。
 const BG_ASYNC_SKIP_STATUSES = ["applying", "application", "screening", "contract", "closed_won", "closed_lost", "approved", "lost"];
 
+// ── P4: 顧客メッセージ自体に条件語彙が含まれるかの判定 ─────────────────────
+// スタッフ側がヒアリング文脈でなくても（内覧調整中・物件フィードバック中など）、
+// 顧客が自発的に条件を漏らした場合に P4 抽出を発火させるための語彙正規表現。
+const CUSTOMER_CONDITION_VOCAB_RE = /ペット|(?:バス|風呂|トイレ).*別|オートロック|洗面|駐車場|広さ|㎡|帖|畳|築\d|万円|エリア|駅.*徒歩|間取り|日当たり|洗濯機.*置|ベランダ|[2-9]階以上|角部屋|独立洗面|宅配ボックス|インターネット|Wi.Fi|2LDK|1LDK|1K/;
+
 // ── 同一ユーザーのレート制限（3秒以内の連続AI解析をスキップ）─────────────
 // 注意: このMapはインスタンス内のみ有効（Vercelサーバーレスでは複数インスタンスが
 // 並行動作するためベストエフォート）。クロスインスタンスの実質的な保護は
@@ -1207,7 +1212,9 @@ async function extractConditionsFromCasualReply(
   const hasMedCondSignal = /エリア|間取り|家賃|予算|入居/.test(combinedStaffText);
   const isViewingContext = /内覧|集合場所|ご案内.*場所|案内.*場所/.test(combinedStaffText);
   const isConditionContext = (hasStrongCondSignal || hasMedCondSignal) && !isViewingContext;
-  if (!isConditionContext) return;
+  // 顧客メッセージ自体に条件語彙が含まれる場合もOR発火（内覧調整中等に漏れる条件を拾う）
+  const customerMentionsCondition = CUSTOMER_CONDITION_VOCAB_RE.test(customerText || "");
+  if (!isConditionContext && !customerMentionsCondition) return;
 
   // Haiku で「本当に条件メッセージか」を分類（フォーマット知識＋文脈利用）
   const anthropicP4 = new Anthropic({
@@ -1247,7 +1254,7 @@ async function extractConditionsFromCasualReply(
 ${staffContext}
 
 【今回のお客さんの返信】
-${customerText.slice(0, 300)}
+${customerText.slice(0, 600)}
 
 【金額の文脈判断ルール（最重要）】
 お客さんが「〇万円以内でお願いします」のように金額のみ言った場合、スタッフの質問から何の金額か判断すること:

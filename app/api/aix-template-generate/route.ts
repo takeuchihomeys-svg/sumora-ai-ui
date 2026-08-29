@@ -142,9 +142,9 @@ ${SMORA_QUICK_PATTERNS}`,
 // ─── アクション別ガイド（正準キー: aix-taxonomy.ts の AIX_BUTTON_LABELS 準拠）──
 const ACTION_GUIDES: Record<string, string> = {
   property_send:
-    "物件ピックアップ送付の橋渡し文。名前呼びかけ→お探しした物件をお送りする旨→お客様の希望条件との合致点に軽く触れる→「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます」等のCTA→ご査収の締め。物件の具体的スペックはAIX/会話に記載がある範囲のみ。",
+    "物件ピックアップ送付の橋渡し文。名前呼びかけ→お探しした物件をお送りする旨→お客様の希望条件との合致点に軽く触れる→「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます」等のCTA→ご査収の締め。物件の具体的スペックはAIX/会話に記載がある範囲のみ。上記の希望条件（エリア・間取り・家賃・設備等）と物件情報の合致点を最低2つ本文で具体的に言及すること。エリア・間取りが希望と異なる物件の場合は提案する理由（広さ重視のため等・会話履歴に根拠がある場合のみ）を1文添えること。",
   property_recommendation:
-    "1件を特にオススメする橋渡し文。「〇〇さんにかなりオススメ出来るお部屋」の特別感を演出し、希望条件とのパーソナライズに触れる。冒頭の入り方・比較表現の可否・CTA強度は後続の【訴求シナリオ】指示に必ず従う（比較選択型/代替新規提案型/初回提案型で全く異なる）。デメリットが会話上明らかな場合は先に開示して即メリットで転換。スペック・金額は会話/AIXに記載がある範囲のみ。",
+    "1件を特にオススメする橋渡し文。「〇〇さんにかなりオススメ出来るお部屋」の特別感を演出し、希望条件とのパーソナライズに触れる。冒頭の入り方・比較表現の可否・CTA強度は後続の【訴求シナリオ】指示に必ず従う（比較選択型/代替新規提案型/初回提案型で全く異なる）。デメリットが会話上明らかな場合は先に開示して即メリットで転換。スペック・金額は会話/AIXに記載がある範囲のみ。上記の希望条件（エリア・間取り・家賃・設備等）と物件情報の合致点を最低2つ本文で具体的に言及すること。エリア・間取りが希望と異なる物件の場合は提案する理由（広さ重視のため等・会話履歴に根拠がある場合のみ）を1文添えること。",
   property_check_result:
     "管理会社等への確認結果を報告する際の橋渡し文。確認結果の中身（空室・金額・日付）はAIXの構造化メッセージが正なので断定して書かない。「確認結果をご報告いたします」の位置づけと次のアクション誘導のみを書く。",
   estimate_sheet:
@@ -432,6 +432,37 @@ export async function POST(req: NextRequest) {
     ? customerName.replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿豈-﫿A-Za-z\s・]/g, "").trim()
     : "";
 
+  // ── customerConditions ground-truth フォールバック ─────────────────────────
+  // body.customerConditions が空のとき、conversations → property_customers を辿って
+  // 希望条件をDBから復元する（generate-reply と同方針。未紐付け会話の条件ゼロ生成を防ぐ）
+  let resolvedCustomerConditions = customerConditions || "";
+  if (!resolvedCustomerConditions.trim() && conversationId) {
+    const { data: convLink } = await supabase
+      .from("conversations")
+      .select("property_customer_id")
+      .eq("id", conversationId)
+      .single();
+    if (convLink?.property_customer_id) {
+      const { data: pc } = await supabase
+        .from("property_customers")
+        .select("desired_area, floor_plan, rent_max, walk_minutes, move_in_time, preferences, ng_points, other_requests")
+        .eq("id", convLink.property_customer_id)
+        .single();
+      if (pc) {
+        resolvedCustomerConditions = [
+          pc.desired_area ? "エリア: " + pc.desired_area : "",
+          pc.floor_plan ? "間取り: " + pc.floor_plan : "",
+          pc.rent_max ? "家賃上限: " + Math.floor(pc.rent_max / 10000) + "万円" : "",
+          pc.walk_minutes ? "駅徒歩: " + pc.walk_minutes + "分以内" : "",
+          pc.move_in_time ? "入居希望: " + pc.move_in_time : "",
+          pc.preferences ? "希望: " + pc.preferences : "",
+          pc.ng_points ? "NG条件: " + pc.ng_points : "",
+          pc.other_requests ? "その他: " + pc.other_requests : "",
+        ].filter(Boolean).join(" / ").slice(0, 1000);
+      }
+    }
+  }
+
   const actionLabel = (actionType && AIX_BUTTON_LABELS[actionType]) || actionCategory || "AIXメッセージ";
   const actionGuide = (actionType && ACTION_GUIDES[actionType]) || "";
 
@@ -663,7 +694,7 @@ export async function POST(req: NextRequest) {
       : "";
     const ragQuery = [
       `AIXアクション: ${actionLabel}`,
-      customerConditions ? `希望条件: ${customerConditions.slice(0, 200)}` : "",
+      resolvedCustomerConditions ? `希望条件: ${resolvedCustomerConditions.slice(0, 200)}` : "",
       brainMeta?.action && AIX_BUTTON_LABELS[brainMeta.action]
         ? `Brain推奨アクション: ${AIX_BUTTON_LABELS[brainMeta.action]}`
         : "",
@@ -973,7 +1004,7 @@ export async function POST(req: NextRequest) {
         ? `購買シグナル強度: ${brainMeta.purchase_signal_level}${SIGNAL_CTA_GUIDES[brainMeta.purchase_signal_level] ? `（${SIGNAL_CTA_GUIDES[brainMeta.purchase_signal_level]}）` : ""}\n`
         : "") +
       (brainMeta.current_property ? `注目物件: ${brainMeta.current_property}\n` : "") +
-      (brainMeta.latent_intent ? `潜在動機（裏の不安）: ${brainMeta.latent_intent}\n` : "") +
+      (brainMeta.latent_intent ? `潜在動機（裏の不安）: ${brainMeta.latent_intent}\n  → この動機・不安を解消する訴求を最低1つ本文に含めること（例: 審査落ち不安→審査通りやすいお部屋と伝える / 費用不安→初期費用の安さを強調）\n` : "") +
       (brainMeta.future_timeline ? `入居希望タイムライン: ${brainMeta.future_timeline}\n` : "") +
       (brainMeta.key_topics?.length
         ? `必ず含める主要トピック: ${brainMeta.key_topics.join("・")}\n`
@@ -1035,16 +1066,24 @@ export async function POST(req: NextRequest) {
     `━━━━━━━━━━━━━━━━━━━━\n【お客様情報】\n━━━━━━━━━━━━━━━━━━━━`,
     `・お客様名: ${sanitizedCustomerName || "〇〇"}さん`,
     `・現在のフェーズ: ${stateLabel}`,
-    customerConditions ? `・希望条件（DB）: ${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。` : "",
+    resolvedCustomerConditions
+      ? `・希望条件（DB）: ${resolvedCustomerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。`
+      : "・希望条件: 未取得（条件合致の断定表現は使わず、会話履歴に出た事実のみで訴求すること）",
     brainMeta?.property_search_params
       ? `・希望条件（会話由来・最新・優先）: ${
           [
+            brainMeta.property_search_params.area ? `エリア希望: ${brainMeta.property_search_params.area}` : "",
+            brainMeta.property_search_params.floor_plan ? `間取り希望: ${brainMeta.property_search_params.floor_plan}` : "",
+            brainMeta.property_search_params.walk_minutes ? `駅徒歩${brainMeta.property_search_params.walk_minutes}分以内` : "",
             // brain-core は rent_max を円単位の生値で格納 → 万円に変換（「90000万円」等の異常値防止）
             brainMeta.property_search_params.rent_max ? `家賃上限${Math.floor((brainMeta.property_search_params.rent_max ?? 0) / 10000)}万円` : "",
             brainMeta.property_search_params.move_in_time ? `入居希望${brainMeta.property_search_params.move_in_time}` : "",
             ...prefList,
           ].filter(Boolean).join(" / ")
         }（DB条件より優先して参照すること）`
+      : "",
+    brainMeta?.property_search_params?.ng_points
+      ? `・NG条件（絶対にこれらを物件の魅力・合致点として言及しない）: ${brainMeta.property_search_params.ng_points}`
       : "",
     staffMessagedToday ? `・本日すでにスタッフが送信済み（冒頭は「お待たせ致しました！！」系にする。「お世話になっております」の再使用は禁止）` : "",
     noEmoji ? `・絵文字禁止モード: 絵文字を一切使わないこと` : "",

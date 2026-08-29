@@ -9482,6 +9482,7 @@ export default function Home() {
           })()}
           pendingScheduledMessages={scheduledMsgsList.filter(m => m.text)}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
+          memo={memos[selectedConversation.id] || ""}
           initialCategory={
             // CHAIN-2: チェーン誘導経由は次テンプレのカテゴリで開く
             templateOpenContext === "chain_next" ? (templateCache.find((t) => t.id === chainNextTemplateMap[selectedConversation.id])?.category) :

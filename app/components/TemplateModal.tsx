@@ -707,6 +707,8 @@ interface TemplateModalProps {
   conversationState?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string; isAix?: boolean; rawCreatedAt?: string }>;
   linkedCustomer?: { id: string; name: string; conditions: string };
+  // 物件顧客未紐付け時のフォールバック用メモ（AIX生成の customerConditions に使用）
+  memo?: string;
   initialCategory?: string;
   highlightKeyword?: string;
   highlightLabel?: string;
@@ -858,7 +860,7 @@ let lastUserSelectedCategory: string | null = null;
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
   initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext, conversationId, priorityTemplateIds,
-  pickupType, lastAixCheckPattern,
+  pickupType, lastAixCheckPattern, memo,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>(templatesProp ?? initialTemplates ?? []);
   // UX改善④: alert() の代替。モーダル上部にトースト表示して4秒で自動消去（モバイルでブロッキングしない）
@@ -2361,7 +2363,7 @@ export default function TemplateModal({
           customerName,
           conversationState,
           recentMessages: (recentMessages ?? []).slice(-15),
-          customerConditions: linkedCustomer?.conditions,
+          customerConditions: linkedCustomer?.conditions || memo || "",
           noEmoji,
           pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
           staffMessagedToday: staffMessagedToday ?? false,
