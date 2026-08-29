@@ -370,6 +370,7 @@ type ExampleHit = {
   is_starred: boolean;
   reply_angle: string | null;
   aix_action?: string | null;   // match_aix_reply_examples 由来の実例のみセットされる
+  outcome_status?: string | null; // match_aix_reply_examples 由来の実例のみセットされる（成約還流）
   similarity: number;
 };
 
@@ -531,7 +532,7 @@ export async function POST(req: NextRequest) {
     actionType
       ? supabase
           .from("ai_reply_examples")
-          .select("customer_message, sent_reply, conversation_state, is_starred, reply_angle, aix_action")
+          .select("customer_message, sent_reply, conversation_state, is_starred, reply_angle, aix_action, outcome_status")
           .eq("entry_source", "aix_template")
           .eq("aix_action", actionType)
           .order("is_starred", { ascending: false })
@@ -543,7 +544,7 @@ export async function POST(req: NextRequest) {
     actionType
       ? supabase
           .from("ai_reply_examples")
-          .select("customer_message, sent_reply, conversation_state, is_starred, reply_angle, aix_action")
+          .select("customer_message, sent_reply, conversation_state, is_starred, reply_angle, aix_action, outcome_status")
           .eq("entry_source", "aix_action")
           .eq("aix_action", actionType)
           .order("is_starred", { ascending: false })
@@ -618,6 +619,7 @@ export async function POST(req: NextRequest) {
     is_starred: boolean | null;
     reply_angle: string | null;
     aix_action: string | null;
+    outcome_status: string | null;
   };
 
   // M1: 注入した ai_reply_knowledge の id を収集（レスポンス後に used_count テレメトリ）
@@ -766,17 +768,25 @@ export async function POST(req: NextRequest) {
 
         // 【4経路統合】優先タイア: ①直クエリaix_template > ②pgvector AIX > ③直クエリaix_action > ④pgvector line_reply
         // AIX系最大6件・line系最大2件・全体横断dedupe
-        const toUnifiedEx = (r: { customer_message?: string | null; sent_reply?: string | null; is_starred?: boolean | null; aix_action?: string | null }) =>
-          ({ customer_message: r.customer_message ?? null, sent_reply: r.sent_reply ?? null, is_starred: r.is_starred ?? null, aix_action: r.aix_action ?? null });
+        const toUnifiedEx = (r: { customer_message?: string | null; sent_reply?: string | null; is_starred?: boolean | null; aix_action?: string | null; outcome_status?: string | null }) =>
+          ({ customer_message: r.customer_message ?? null, sent_reply: r.sent_reply ?? null, is_starred: r.is_starred ?? null, aix_action: r.aix_action ?? null, outcome_status: r.outcome_status ?? null });
         const tierA = ((aixTemplateExRes?.data ?? []) as AixExampleRow[]).map(toUnifiedEx);
-        const tierB = aixVecRows.map(r => ({ ...r, aix_action: null }));
+        const tierB = aixVecRows.map(r => ({ ...r, aix_action: null, outcome_status: r.outcome_status ?? null }));
         const tierC = ((aixActionExRes?.data ?? []) as AixExampleRow[]).map(toUnifiedEx);
-        const tierD = lineVecRows.map(r => ({ ...r, aix_action: null }));
+        const tierD = lineVecRows.map(r => ({ ...r, aix_action: null, outcome_status: null }));
+
+        // 成約アウトカム還流: closed_won 実例を AIX系の先頭に昇格（成約実績ある実例を few-shot の最初に）
+        // Array.sort は stable のため同一 outcome 内では tierA > tierB > tierC の優先順が維持される
+        const outcomeRank = (s: string | null) =>
+          s === "closed_won" ? 0 : s === "applied" ? 1 : s === "viewing" ? 2 : 3;
+        const sortedTierABC = [...tierA, ...tierB, ...tierC].sort(
+          (a, b) => outcomeRank(a.outcome_status) - outcomeRank(b.outcome_status)
+        );
 
         const seenUnified = new Set<string>();
-        const unifiedAix: { customer_message: string | null; sent_reply: string | null; is_starred: boolean | null; aix_action: string | null }[] = [];
-        const unifiedLine: { customer_message: string | null; sent_reply: string | null; is_starred: boolean | null; aix_action: string | null }[] = [];
-        for (const ex of [...tierA, ...tierB, ...tierC]) {
+        const unifiedAix: { customer_message: string | null; sent_reply: string | null; is_starred: boolean | null; aix_action: string | null; outcome_status: string | null }[] = [];
+        const unifiedLine: { customer_message: string | null; sent_reply: string | null; is_starred: boolean | null; aix_action: string | null; outcome_status: string | null }[] = [];
+        for (const ex of sortedTierABC) {
           const key = (ex.sent_reply ?? "").trim();
           if (!key || seenUnified.has(key)) continue;
           seenUnified.add(key);
@@ -793,7 +803,7 @@ export async function POST(req: NextRequest) {
         unifiedExCount = unified.length;
         if (unified.length > 0) {
           const unifiedText = unified.map((ex, i) =>
-            `--- 実例${i + 1}${ex.is_starred ? " ⭐" : ""}${ex.aix_action && ex.aix_action !== actionType ? ` (AIX:${ex.aix_action})` : ""} ---\n` +
+            `--- 実例${i + 1}${ex.is_starred ? " ⭐" : ""}${ex.outcome_status === "closed_won" ? " 🏆成約" : ex.outcome_status === "applied" ? " 📝申込" : ""}${ex.aix_action && ex.aix_action !== actionType ? ` (AIX:${ex.aix_action})` : ""} ---\n` +
             `[お客様の状況] 「${safeSlice(ex.customer_message ?? "", 200)}」\n` +
             `[実際に送った続き文] 「${safeSlice(ex.sent_reply ?? "", 600)}」`
           ).join("\n\n");

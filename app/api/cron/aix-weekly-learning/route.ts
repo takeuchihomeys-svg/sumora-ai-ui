@@ -238,6 +238,7 @@ type AixPatternExample = {
   customer_message: string | null;
   sent_reply: string | null;
   is_starred: boolean | null;
+  outcome_status: string | null;
 };
 
 async function synthesizeAixPatterns(
@@ -249,7 +250,7 @@ async function synthesizeAixPatterns(
 
   const { data: rows, error } = await supabase
     .from("ai_reply_examples")
-    .select("aix_action, entry_source, conversation_id, customer_message, sent_reply, is_starred")
+    .select("aix_action, entry_source, conversation_id, customer_message, sent_reply, is_starred, outcome_status")
     .in("entry_source", AIX_PATTERN_SOURCES)
     .gte("created_at", sevenDaysAgo)
     .not("sent_reply", "is", null)
@@ -303,8 +304,15 @@ async function synthesizeAixPatterns(
 
   for (const [actionType, examples] of targets) {
     try {
+      // 成約アウトカム還流: closed_won 実例 > ⭐実例 > その他 の優先順で採用
       const picked = [...examples]
-        .sort((a, b) => Number(b.is_starred === true) - Number(a.is_starred === true))
+        .sort((a, b) => {
+          if (a.outcome_status === "closed_won" && b.outcome_status !== "closed_won") return -1;
+          if (b.outcome_status === "closed_won" && a.outcome_status !== "closed_won") return 1;
+          if (a.is_starred && !b.is_starred) return -1;
+          if (!a.is_starred && b.is_starred) return 1;
+          return 0;
+        })
         .slice(0, AIX_PATTERN_EXAMPLES_PER_ACTION);
 
       const examplesText = picked.map((ex, i) => {

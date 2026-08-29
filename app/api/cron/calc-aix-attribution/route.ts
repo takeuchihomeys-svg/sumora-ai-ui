@@ -272,6 +272,34 @@ async function run() {
     }
   }
 
+  // ── アウトカムバックフィル: ai_reply_examples に成約/申込/内覧の成果を反映 ──
+  // AIX系実例（entry_source IN aix_template/aix_action/aix_property/aix_adapt）のうち
+  // 対応会話が status=closed_won/applying/viewing に到達したものに outcome_status を付与。
+  // 成約は最上位のため viewing/applied より後に更新して上書きさせる（priority: won > applied > viewing）
+  // ※ supabase-js は SQLエラーで reject しないため { error } を明示チェック（fail-open）
+  try {
+    const AIX_ENTRY_SOURCES = ["aix_template", "aix_action", "aix_property", "aix_adapt"];
+    const backfillSteps: { statuses: string[]; outcome: string }[] = [
+      // viewing 到達（最も広い条件・先に更新）
+      { statuses: ["viewing", "estimate_request", "applying", "screening", "closed_won"], outcome: "viewing" },
+      // applied 到達（viewing を上書き）
+      { statuses: ["applying", "screening", "closed_won"], outcome: "applied" },
+      // closed_won 到達（最優先・applied を上書き）
+      { statuses: ["closed_won"], outcome: "closed_won" },
+    ];
+    for (const step of backfillSteps) {
+      const { error: bfErr } = await supabase.rpc("backfill_outcome_status", {
+        p_statuses: step.statuses,
+        p_outcome: step.outcome,
+        p_sources: AIX_ENTRY_SOURCES,
+      });
+      if (bfErr) console.error(`[calc-aix-attribution] backfill ${step.outcome}:`, bfErr.message);
+    }
+    console.log("[calc-aix-attribution] outcome backfill done");
+  } catch (e) {
+    console.error("[calc-aix-attribution] outcome backfill failed:", e);
+  }
+
   const summary = {
     logs: usageLogs.length,
     conversations: convIds.length,

@@ -2656,6 +2656,16 @@ CREATE INDEX IF NOT EXISTS idx_aix_generate_log_backfill
 --   'aix_action'   = aix_generate_log 由来のAIX橋渡し文（property_send 等の会話的AIX本文）
 -- 2026-08-29: 'aix_property' を追加（aix_usage_logs 由来のAIX物件本文実績 —
 --   property_send / property_recommendation の実送信文。analyze-aix-property がバックフィル）
+-- 2026-08-29: outcome_status を返却列に追加（成約実例のスコアブーストに使用）。
+--   RETURNS TABLE の変更は CREATE OR REPLACE では不可のため DROP → CREATE で再作成する。
+
+-- ai_reply_examples.outcome_status: 会話の最終成果（closed_won/applied/viewing/none）
+-- calc-aix-attribution 週次バックフィルで更新。成約実例を RAG few-shot の上位に出すために使用
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS outcome_status text;
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS outcome_evaluated_at timestamptz;
+CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_outcome ON ai_reply_examples(outcome_status) WHERE outcome_status IS NOT NULL;
+
+DROP FUNCTION IF EXISTS match_aix_reply_examples(vector, integer, text);
 CREATE OR REPLACE FUNCTION match_aix_reply_examples(
   query_embedding vector,
   match_count integer,
@@ -2669,6 +2679,7 @@ RETURNS TABLE(
   is_starred boolean,
   reply_angle text,
   aix_action text,
+  outcome_status text,
   similarity double precision
 )
 LANGUAGE sql
@@ -2682,6 +2693,7 @@ AS $func$
     ae.is_starred,
     ae.reply_angle,
     ae.aix_action,
+    ae.outcome_status,
     CASE
       WHEN filter_action IS NOT NULL AND ae.aix_action = filter_action
       THEN (1 - (ae.embedding <=> query_embedding))::float + 0.05
@@ -2739,6 +2751,28 @@ ALTER TABLE template_selection_logs
 CREATE INDEX IF NOT EXISTS idx_tsl_backfill
   ON template_selection_logs(created_at DESC)
   WHERE example_backfilled_at IS NULL AND aix_action_type IS NOT NULL;
+
+-- ── 成約アウトカム還流: outcome_status バックフィル用RPC（2026-08-29追加）──
+-- calc-aix-attribution が週次で呼び出し、対応会話が p_statuses のいずれかに到達した
+-- AIX系実例（p_sources）に p_outcome を付与する。呼び出し側が
+-- viewing → applied → closed_won の順に呼ぶことで上位成果が下位を上書きする設計。
+CREATE OR REPLACE FUNCTION backfill_outcome_status(
+  p_statuses text[],
+  p_outcome text,
+  p_sources text[]
+)
+RETURNS void
+LANGUAGE sql
+AS $func$
+  UPDATE ai_reply_examples e
+  SET outcome_status = p_outcome,
+      outcome_evaluated_at = now()
+  FROM conversations c
+  WHERE e.conversation_id = c.id
+    AND c.status = ANY(p_statuses)
+    AND e.entry_source = ANY(p_sources)
+    AND e.outcome_status IS DISTINCT FROM p_outcome;
+$func$;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
