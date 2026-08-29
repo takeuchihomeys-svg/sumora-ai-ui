@@ -121,10 +121,20 @@ export async function POST(req: NextRequest) {
   const { data: customer, error: customerError } = await supabase
     .from("property_customers")
     .select(
-      "rent_max, max_rent, walk_minutes, floor_plan, layout, floor_area_min, pet, building_age, desired_area, preferences, ng_points, initial_cost_limit"
+      "rent_max, max_rent, walk_minutes, floor_plan, layout, floor_area_min, pet, building_age, desired_area, preferences, ng_points, initial_cost_limit, personality_profile, ai_summary_json, exclusion_areas"
     )
     .eq("id", propertyCustomerId)
     .single();
+
+  // AIX-META取得（最新会話からwinning_pattern/repeated_concernを取得）
+  const { data: convRow } = await supabase
+    .from("conversations")
+    .select("suggested_aix_meta")
+    .eq("property_customer_id", propertyCustomerId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const aixMeta = convRow?.suggested_aix_meta as { winning_pattern?: string; repeated_concern?: string } | null;
 
   if (customerError || !customer) {
     return NextResponse.json(
@@ -427,8 +437,16 @@ export async function POST(req: NextRequest) {
       // [QW5] ネガティブシグナル
       if (noResponsePatterns.length > 0) contextParts.push(`【このお客さんがスルーした物件の特徴（低評価にすること）】${noResponsePatterns.join("・")}`);
       if (crossProfileTags.length > 0)  contextParts.push(`【類似顧客の傾向】${crossProfileTags.join("・")}（この顧客の配点傾向: ${weightsUsed}）`);
+      if (aixMeta?.winning_pattern)    contextParts.push(`【この顧客の成約パターン（スコアに応用）】${aixMeta.winning_pattern}`);
+      if (aixMeta?.repeated_concern)   contextParts.push(`【この顧客の繰り返す懸念（懸念を解消できない物件は減点）】${aixMeta.repeated_concern}`);
+      if (customer.personality_profile) contextParts.push(`【顧客タイプ】${customer.personality_profile}`);
+      if (customer.ai_summary_json) {
+        const summaryStr = typeof customer.ai_summary_json === "string"
+          ? customer.ai_summary_json
+          : JSON.stringify(customer.ai_summary_json);
+        contextParts.push(`【顧客AIサマリー】${summaryStr.slice(0, 300)}`);
+      }
 
-      // [QW1] ng_points / preferences / desired_area をプロンプトに追加
       const prompt = `以下の情報を踏まえて、この物件をこのお客さんに推薦する総合スコア（0〜100点）と理由を返してください。
 
 【お客さんの条件】
@@ -436,6 +454,7 @@ export async function POST(req: NextRequest) {
 間取り希望: ${customerFloorPlan ?? "未設定"}
 駅徒歩希望: ${customerWalk ? `${customerWalk}分以内` : "未設定"}
 希望エリア: ${customerDesiredArea ?? "未設定"}
+除外エリア: ${(customer.exclusion_areas as string | null) ?? "なし"}
 NG条件（絶対NG）: ${customerNgPoints ?? "なし"}
 その他こだわり: ${customerPreferences ?? "なし"}
 
