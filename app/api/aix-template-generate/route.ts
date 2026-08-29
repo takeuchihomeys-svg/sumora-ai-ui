@@ -610,8 +610,7 @@ export async function POST(req: NextRequest) {
       actionBucketRows.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n") + "\n\n"
     : "";
 
-  // A: AIX実例バケットの整形（テンプレート実例を先頭・橋渡し文実例を補完として1バケットに統合）
-  // 0件のときはバケット自体を注入しない（フォールバック不要）
+  // A: AIX実例行の型（4経路統合の直クエリ結果キャストで使用）
   type AixExampleRow = {
     customer_message: string | null;
     sent_reply: string | null;
@@ -620,25 +619,6 @@ export async function POST(req: NextRequest) {
     reply_angle: string | null;
     aix_action: string | null;
   };
-  const seenAixReplies = new Set<string>();
-  const aixExampleRows = [
-    ...((aixTemplateExRes?.data ?? []) as AixExampleRow[]),
-    ...((aixActionExRes?.data ?? []) as AixExampleRow[]),
-  ].filter((r) => {
-    const key = (r.sent_reply ?? "").trim();
-    if (key.length === 0 || seenAixReplies.has(key)) return false;
-    seenAixReplies.add(key);
-    return true;
-  });
-  const aixExamplesSection = aixExampleRows.length > 0
-    ? `━━━━━━━━━━━━━━━━━━━━\n【過去の【AIX】テンプレート実例（同じAIXボタン後に実際に送った続き文）】\n━━━━━━━━━━━━━━━━━━━━\n` +
-      `※ 以下はお客様の状況と、そのとき実際に送った続き文（テンプレート文・橋渡し文）の実例です。文体・トーン・構成の参考にしてください。ただし金額・物件名・日程などの固有の事実は今回の会話履歴/AIXメッセージにあるもののみ使うこと（実例からの持ち込みは絶対禁止）。\n\n` +
-      aixExampleRows.map((ex, i) =>
-        `--- 実例${i + 1}${ex.is_starred ? " ⭐" : ""} ---\n` +
-        `[お客様の状況] 「${safeSlice(ex.customer_message ?? "", 200)}」\n` +
-        `[実際に送った続き文] 「${safeSlice(ex.sent_reply ?? "", 600)}」`
-      ).join("\n\n") + "\n\n"
-    : "";
 
   // M1: 注入した ai_reply_knowledge の id を収集（レスポンス後に used_count テレメトリ）
   const knowledgeUsedIds: string[] = [...actionBucketRows.map((r) => r.id).filter(Boolean)];
@@ -649,6 +629,8 @@ export async function POST(req: NextRequest) {
   let examplesSection = "";
   let ragQueryLength = 0;
   let aixVecHitCount = 0;   // match_aix_reply_examples のヒット数（テレメトリ用）
+  let unifiedAixExCount = 0;   // 4経路統合後のAIX系実例件数（テレメトリ用）
+  let unifiedExCount = 0;      // 4経路統合後の実例総数（テレメトリ用）
   if (process.env.OPENAI_API_KEY) {
     const recentCustomerMsgs = (recentMessages ?? [])
       .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
@@ -781,17 +763,48 @@ export async function POST(req: NextRequest) {
         aixVecHitCount = ((aixExRes.data ?? []) as ExampleHit[]).length;
         const aixVecRows = rankExamples((aixExRes.data ?? []) as ExampleHit[], 0.45).slice(0, 4);
         const lineVecRows = rankExamples((exRes.data ?? []) as ExampleHit[]).slice(0, 6);
-        // マージ: AIX実例を先頭に配置（橋渡し文の実績を優先）・sent_reply本文で重複排除
-        const seenReplies = new Set<string>();
-        const mergedRows = [...aixVecRows, ...lineVecRows].filter((ex) => {
+
+        // 【4経路統合】優先タイア: ①直クエリaix_template > ②pgvector AIX > ③直クエリaix_action > ④pgvector line_reply
+        // AIX系最大6件・line系最大2件・全体横断dedupe
+        const toUnifiedEx = (r: { customer_message?: string | null; sent_reply?: string | null; is_starred?: boolean | null; aix_action?: string | null }) =>
+          ({ customer_message: r.customer_message ?? null, sent_reply: r.sent_reply ?? null, is_starred: r.is_starred ?? null, aix_action: r.aix_action ?? null });
+        const tierA = ((aixTemplateExRes?.data ?? []) as AixExampleRow[]).map(toUnifiedEx);
+        const tierB = aixVecRows.map(r => ({ ...r, aix_action: null }));
+        const tierC = ((aixActionExRes?.data ?? []) as AixExampleRow[]).map(toUnifiedEx);
+        const tierD = lineVecRows.map(r => ({ ...r, aix_action: null }));
+
+        const seenUnified = new Set<string>();
+        const unifiedAix: { customer_message: string | null; sent_reply: string | null; is_starred: boolean | null; aix_action: string | null }[] = [];
+        const unifiedLine: { customer_message: string | null; sent_reply: string | null; is_starred: boolean | null; aix_action: string | null }[] = [];
+        for (const ex of [...tierA, ...tierB, ...tierC]) {
           const key = (ex.sent_reply ?? "").trim();
-          if (seenReplies.has(key)) return false;
-          seenReplies.add(key);
-          return true;
-        }).slice(0, 8);
-        const exText = formatExamplesSection(mergedRows);
-        if (exText) {
-          examplesSection = wrapExamplesSection(exText);
+          if (!key || seenUnified.has(key)) continue;
+          seenUnified.add(key);
+          if (unifiedAix.length < 6) unifiedAix.push(ex);
+        }
+        for (const ex of tierD) {
+          const key = (ex.sent_reply ?? "").trim();
+          if (!key || seenUnified.has(key)) continue;
+          seenUnified.add(key);
+          if (unifiedLine.length < 2) unifiedLine.push(ex);
+        }
+        const unified = [...unifiedAix, ...unifiedLine];
+        unifiedAixExCount = unifiedAix.length;
+        unifiedExCount = unified.length;
+        if (unified.length > 0) {
+          const unifiedText = unified.map((ex, i) =>
+            `--- 実例${i + 1}${ex.is_starred ? " ⭐" : ""}${ex.aix_action && ex.aix_action !== actionType ? ` (AIX:${ex.aix_action})` : ""} ---\n` +
+            `[お客様の状況] 「${safeSlice(ex.customer_message ?? "", 200)}」\n` +
+            `[実際に送った続き文] 「${safeSlice(ex.sent_reply ?? "", 600)}」`
+          ).join("\n\n");
+          // 強指示: AIX実例に「忠実に再現」を付ける（旧aixExamplesSectionの弱指示「参考に」から強化）
+          examplesSection =
+            "━━━━━━━━━━━━━━━━━━━━\n" +
+            "【⭐ 実際に送った続き文の実例（AIX橋渡し文・文体再現の最重要ソース）】\n" +
+            "━━━━━━━━━━━━━━━━━━━━\n" +
+            "文体・テンポ・絵文字・感嘆符・構成をこの実例から忠実に再現すること。" +
+            "固有の事実（金額・物件名・日程）は今回の会話履歴/AIXメッセージに記載があるもののみ使うこと（実例からの持ち込みは絶対禁止）。\n\n" +
+            unifiedText + "\n\n";
         }
       }
     } catch {
@@ -997,7 +1010,6 @@ export async function POST(req: NextRequest) {
       : "",
     "",
     brainMetaSection,
-    aixExamplesSection,
     winningSection,
     knowledgeSection,
     actionBucketSection,
@@ -1111,7 +1123,7 @@ export async function POST(req: NextRequest) {
       ` principles=${topPrinciples.length} loss=${lossPatterns.length} dbRules=${dbRulesGeneric ? "ok" : "none"} dbRulesAction=${dbRulesAction ? "ok" : "none"}` +
       ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}` +
       ` actionBucket=${actionBucketCategory ? `${actionBucketCategory}:${actionBucketRows.length}` : "-"}` +
-      ` aixEx=${aixExampleRows.length} aixVec=${aixVecHitCount}` +
+      ` aix_ex=${unifiedAixExCount} unified_ex=${unifiedExCount} aixVec=${aixVecHitCount}` +
       ` knUsedIds=${knowledgeUsedIds.length}` +
       ` scenario=${recommendationScenario ?? "-"} pickup=${pickupType ?? "-"}` +
       ` checkPat=${effectiveCheckPattern ?? "-"}${checkIsStale ? "(stale)" : ""} sentProps=${sentPropertyLogCount}`,
