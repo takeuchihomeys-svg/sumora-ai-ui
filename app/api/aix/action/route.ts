@@ -4,6 +4,7 @@ import { safeSlice } from "@/app/lib/safe-slice";
 import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
+import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 
 export const maxDuration = 300;
@@ -180,6 +181,9 @@ function extractPreferredName(
     .trim();
   // 1文字のみは頭文字の可能性があるのでスキップ（英字2文字以上はYUMAなど実名として使う）
   if (fallbackName.length <= 1) return "";
+  // 絵文字・記号のみのLINE表示名（「⭐️」「♡」等）を実名として使わない（「⭐さん」生成バグの根本原因）。
+  // generate-reply と同じ isPlausiblePersonName ゲートに一元化 → 不合格なら "" を返し「お客様」呼びにフォールバック
+  if (!isPlausiblePersonName(fallbackName)) return "";
   return fallbackName;
 }
 
@@ -1786,15 +1790,24 @@ ${SMORA_COMMON_RULES}
   ・設備・その他はお客様が気にしていた条件（希望条件データにあるもの）から選ぶ
   ・入れる条件は最大4個まで。箇条書きにせず文中に自然に埋め込む
   ・条件のでっち上げ禁止。希望条件データにない条件は絶対に書かない
-  例：「梅田まで30分圏内のエリア全域から[お客様名]にオススメできる2口ガスコンロの初期費用抑えられる9/1入居可能なお部屋ピックアップさせて頂きました😊！！」
+  例：「梅田まで30分圏内のエリアから[お客様名]にオススメできる2口ガスコンロの初期費用抑えられる9/1入居可能なお部屋ピックアップさせて頂きました😊！！」
   ※下の【出力例】に「ご希望のご条件に合ったお部屋」とある部分は、必ず上記ルールで具体条件に置き換えて出力すること`
         : `・「ご希望のご条件に合ったお部屋ピックアップさせて頂きました😊！！」で冒頭を続ける`;
 
       // 挨拶判定: buildGreeting（共通ヘルパー・#19）で一元決定
       // 初回→ご連絡ありがとう / 夜間プロアクティブ→夜分遅くに / 今日挨拶済み→お待たせ / それ以外→お世話になっております
-      const openingLine: string = `①「[お客様名]${greetingPhrase}」で始める`;
+      // ★条件受領直後の例外: 直近のお客様メッセージが希望条件の送付（エリア・家賃・間取り等が並ぶ）なら、
+      //   スタッフの実運用に合わせて「お待たせ致しました」等ではなく条件送付への感謝から始める
+      const CONDITION_SIGNAL_RE = /家賃|万円|万以内|万まで|間取り|1R|1K|1DK|1LDK|2K|2DK|2LDK|3LDK|ワンルーム|エリア|沿線|徒歩|駅|入居|オートロック|バス.?トイレ|セパレート|独立洗面|宅配ボックス|階以上|築/g;
+      const conditionSignalHits = (latestCustomerMsg.match(CONDITION_SIGNAL_RE) ?? []).length;
+      const conditionsJustReceived = customerInitiated && conditionSignalHits >= 3;
+      const psGreetingPhrase = conditionsJustReceived ? "ご条件お送り頂きありがとう御座います😊！！" : greetingPhrase;
+      const openingLine: string = `①「[お客様名]${psGreetingPhrase}」で始める`;
       // 例文・テンプレ用の挨拶文
-      const greetingLine = `${name}${greetingPhrase}`;
+      const greetingLine = `${name}${psGreetingPhrase}`;
+      // エリア表現ルール: 会話で使われた呼び方をそのまま使い、「全域」等の修飾語を勝手に付け足さない
+      // （スタッフが「日本橋周辺エリア」と書いているのにAIが「日本橋周辺全域」に変える品質問題の恒久対策）
+      const areaWordingNote = `\n\n【エリア表現ルール（厳守・過去実例より優先）】エリア名の呼び方は、直近の会話履歴・希望条件データでお客様やスタッフが実際に使った表現をそのまま使うこと（例：スタッフが「日本橋周辺エリア」と書いていたら「日本橋周辺エリア」のまま）。会話・条件データで使われていない「全域」「一帯」等の修飾語を勝手に付け足すことは絶対禁止。過去の実例・成功例・出力例の中に「全域」が含まれていても、今回の会話で使われていなければ真似しないこと。`;
 
       // 新着物件モード用の件数表記（固定テンプレ・AIプロンプト両方で使用）
       const newArrivalImgCount = Array.isArray(image_urls) ? (image_urls as string[]).length : (image_url ? 1 : 0);
@@ -1863,7 +1876,7 @@ ${openingLine}
 【出力例】
 ${greetingLine}
 
-大阪市内全域からカウンターキッチン付きのお部屋でRさんご希望のご条件に近いお部屋ピックアップさせて頂きました！！
+大阪市内からカウンターキッチン付きのお部屋でRさんご希望のご条件に近いお部屋ピックアップさせて頂きました！！
 お手隙の際にご査収ください😌！！${sendExamplesText}`
         : sendMode === "simple"
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
@@ -1887,7 +1900,7 @@ ${openingLine}
 【出力例】
 ${greetingLine}
 
-大阪駅・難波駅周辺全域からRさんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
+大阪駅・難波駅周辺からRさんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
 お手隙の際にご査収ください😌！！${sendExamplesText}`
         : sendMode === "application"
@@ -1969,7 +1982,7 @@ ${openingLine}
 【出力例（条件を広げたモード）】
 ${greetingLine}
 
-大阪駅・難波駅周辺全域から[お客様名]ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
+大阪駅・難波駅周辺から[お客様名]ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
 ご希望の家賃ですと合うお部屋が少ない状況でしたので、少し家賃を広げてピックアップさせて頂きました！！
 
@@ -2001,7 +2014,7 @@ ${body.new_arrival_apply ? `④「お気に召されましたらお申込みし�
 ・設備・その他はお客様が気にしていた条件（希望条件データにあるもの）から選ぶ
 ・入れる条件は最大4個まで（エリア・間取りの2つは必ず含む）。箇条書きにせず文中に自然に埋め込む
 ・条件のでっち上げ禁止。希望条件データにない条件は絶対に書かない
-例：「新着で梅田まで30分圏内のエリア全域から[お客様名]にオススメできる2LDK・2口ガスコンロ付きの9/1入居可能なお部屋が3件募集にでました！！」
+例：「新着で梅田まで30分圏内のエリアから[お客様名]にオススメできる2LDK・2口ガスコンロ付きの9/1入居可能なお部屋が3件募集にでました！！」
 
 【厳守ルール】
 ・上記構成のみ出力。内覧誘導・内覧日時・条件確認・その他の質問や補足は一切追加しない
@@ -2011,7 +2024,7 @@ ${body.new_arrival_apply ? `④「お気に召されましたらお申込みし�
 【出力例（新着物件モード）】
 ${greetingLine}
 
-新着で梅田まで30分圏内のエリア全域から[お客様名]にオススメできる2LDK・2口ガスコンロ付きのお部屋が${newArrivalCountStr}募集にでました！！
+新着で梅田まで30分圏内のエリアから[お客様名]にオススメできる2LDK・2口ガスコンロ付きのお部屋が${newArrivalCountStr}募集にでました！！
 
 お手隙の際にご査収ください😌！！${sendExamplesText}`
         : `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
@@ -2041,7 +2054,7 @@ ${openingLine}
 【出力例（カレンダーなし）】
 ${greetingLine}
 
-大阪駅・難波駅周辺全域から[お客様名]ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
+大阪駅・難波駅周辺から[お客様名]ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
 [お客様名]お気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！
 
@@ -2050,7 +2063,7 @@ ${greetingLine}
 【出力例（カレンダーあり）】
 ${greetingLine}
 
-大阪駅・難波駅周辺全域から[お客様名]ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
+大阪駅・難波駅周辺から[お客様名]ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
 [お客様名]お気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！
 
@@ -2077,7 +2090,7 @@ ${greetingLine}
       if (summaryNote) userParts.push(summaryNote);
       if (pspGuidanceNote) userParts.push(pspGuidanceNote);
 
-      const sendSystemFinal = sendSystem + skipViewingInviteNote + sendDbRules + (sendBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + sendBrainAddendum : "");
+      const sendSystemFinal = sendSystem + areaWordingNote + skipViewingInviteNote + sendDbRules + (sendBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + sendBrainAddendum : "");
       const sendUserFinal = userParts.join("")
         + sendWinningNote
         + sendPropertyExamples
