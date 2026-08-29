@@ -509,6 +509,89 @@ async function getStarredExamplesForAction(
   }
 }
 
+// ── 物件提案系（property_send / property_recommendation）専用の品質スタック ──────────
+
+// 過去の成約パターン（winning_patterns）RAG + AIX-METAメタデータ再ランキング
+// aix-template-generate の H2 実装と同方式: similarity≥0.5 でフィルタ後、
+// checkpoint_stage一致 +0.12 / customer_intent一致 +0.15 / win_rate×0.1 の複合スコアで再ランキング
+async function getWinningPatternsForProperty(
+  queryText: string,
+  brainHint?: { checkpoint_stage?: string | null; customer_intent?: string | null } | null,
+): Promise<string> {
+  try {
+    if (!queryText.trim() || !process.env.OPENAI_API_KEY) return "";
+    const embedding = await generateEmbedding(safeSlice(queryText, 2000));
+    if (!embedding) return "";
+    const { data } = await supabase.rpc("match_winning_patterns", {
+      query_embedding: embedding,
+      match_count: 8,
+      min_importance: 8,
+    });
+    type WpRow = {
+      situation: string | null;
+      pattern: string;
+      closing_action: string | null;
+      notes: string | null;
+      checkpoint_stage?: string | null;
+      customer_intent?: string | null;
+      win_rate?: number | null;
+      human_type_label?: string | null;
+      similarity: number;
+    };
+    const rows = ((data ?? []) as WpRow[])
+      .filter(w => w.similarity >= 0.5)
+      .map(w => ({
+        ...w,
+        score: (w.similarity ?? 0)
+          + (brainHint?.checkpoint_stage && w.checkpoint_stage === brainHint.checkpoint_stage ? 0.12 : 0)
+          + (brainHint?.customer_intent && w.customer_intent === brainHint.customer_intent ? 0.15 : 0)
+          + (w.win_rate ?? 0) * 0.1,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4);
+    if (rows.length === 0) return "";
+    return "\n\n【🏆 過去の成約パターン（似た状況で効いた訴求 — オススメポイントの選択・訴求角度の参考にすること。文の構成・フォーマットは変えない）】\n" +
+      rows.map(w => {
+        const parts = [
+          w.situation ? `状況: ${safeSlice(w.situation, 80)}` : "",
+          w.human_type_label ? `顧客タイプ: ${w.human_type_label}` : "",
+          `パターン: ${safeSlice(w.pattern, 150)}`,
+          w.closing_action ? `クロージング: ${safeSlice(w.closing_action, 60)}` : "",
+        ].filter(Boolean).join(" / ");
+        return `・${parts}`;
+      }).join("\n");
+  } catch {
+    return ""; // 成約パターン取得失敗は生成自体を止めない
+  }
+}
+
+// 過去に実際に送信されたAIX物件本文の実例（entry_source='aix_property'）を取得する。
+// analyze-aix-property cron が aix_usage_logs からバックフィルした実送信文で、
+// is_starred = お客様が反応した実例（customer_reacted）を優先して参照する。
+async function getAixPropertyExamples(actionType: "property_send" | "property_recommendation"): Promise<string> {
+  try {
+    const { data } = await supabase
+      .from("ai_reply_examples")
+      .select("customer_message, sent_reply, is_starred")
+      .eq("entry_source", "aix_property")
+      .eq("aix_action", actionType)
+      .order("is_starred", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(5);
+    const rows = (data ?? []) as Array<{ customer_message: string; sent_reply: string; is_starred: boolean }>;
+    if (rows.length === 0) return "";
+    const label = actionType === "property_send" ? "物件ピックアップ送付文" : "物件オススメ文";
+    return `\n\n【📤 過去に実際に送信した${label}の実例（⭐=お客様が反応した実例。訴求の質・言い回し・条件の織り込み方の参考にすること。物件名・金額・条件は今回の物件のものを使い、実例の数値は絶対に流用しない）】\n` +
+      rows.map((r, i) => {
+        const ctx = (r.customer_message ?? "").split("\n")[0];
+        const ctxLine = ctx && ctx !== "（初回連絡）" ? `状況:「${safeSlice(ctx, 60)}」\n` : "";
+        return `[実例${i + 1}${r.is_starred ? "⭐" : ""}]\n${ctxLine}${safeSlice(r.sent_reply, 400)}`;
+      }).join("\n\n");
+  } catch {
+    return ""; // 実例取得失敗は生成自体を止めない
+  }
+}
+
 // #30: max_tokens 尻切れ検知（ログのみ・エラーは投げない）
 // ※ アクション名はモジュール変数ではなくリクエストスコープの引数で受け取る
 //   （Next.js route handler は同一プロセスで並行実行されるため、モジュール変数だと別リクエストに汚染される）
@@ -885,6 +968,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
       checkpoint_stage?: string | null;
       current_property?: string | null;
       template_hint?: string | null;
+      // 訴求品質向上用（brain-core SuggestedAixMeta と同期・型ドリフト注意: customer_intentはbrain-core側でunion型）
+      customer_intent?: string | null;
+      winning_pattern?: string | null;
+      repeated_concern?: string | null;
+      human_type_label?: string | null;
     };
     const { brainContext, brainMeta: aixBrainMeta, propertyCustomerId: resolvedPCID } = await (async (): Promise<{ brainContext: string; brainMeta: AixLocalBrainMeta | null; propertyCustomerId: string | null }> => {
       if (!conversationId) return { brainContext: "", brainMeta: null, propertyCustomerId: null };
@@ -898,7 +986,18 @@ async function handleAction(request: NextRequest): Promise<Response> {
         const meta = row?.suggested_aix_meta ?? null;
         const pcid = row?.property_customer_id ?? null;
         if (!meta) return { brainContext: "", brainMeta: null, propertyCustomerId: pcid };
-        const context = [meta.closing_strategy, meta.reply_direction, ...(meta.key_topics ?? [])].filter(Boolean).join(" ");
+        // AIX-META全フィールドをRAGクエリ文脈に注入（customer_intent / checkpoint_stage / winning_pattern /
+        // repeated_concern を追加 — winning_patterns・knowledge・☆実例の命中精度向上）
+        const context = [
+          meta.closing_strategy,
+          meta.reply_direction,
+          meta.customer_intent ? `顧客インテント: ${meta.customer_intent}` : null,
+          meta.checkpoint_stage ? `フェーズ: ${meta.checkpoint_stage}` : null,
+          meta.winning_pattern ? `成功パターン: ${meta.winning_pattern}` : null,
+          meta.repeated_concern ? `繰り返し懸念: ${meta.repeated_concern}` : null,
+          meta.human_type_label ? `顧客タイプ: ${meta.human_type_label}` : null,
+          ...(meta.key_topics ?? []),
+        ].filter(Boolean).join(" ");
         return { brainContext: context, brainMeta: meta, propertyCustomerId: pcid };
       } catch { return { brainContext: "", brainMeta: null, propertyCustomerId: null }; }
     })();
@@ -913,6 +1012,25 @@ async function handleAction(request: NextRequest): Promise<Response> {
       }
       if (aixBrainMeta.checkpoint_stage) {
         lines.push(`【📍 会話フェーズ】${aixBrainMeta.checkpoint_stage}`);
+      }
+      if (aixBrainMeta.customer_intent) {
+        const intentGuide: Record<string, string> = {
+          question: "質問への回答を最優先。訴求は簡潔に",
+          consultation: "相談に寄り添う姿勢を示してから提案する",
+          desire: "希望の実現イメージが湧く訴求を前面に",
+          decision: "決断の後押しになる確定情報・強みを明確に",
+          positive: "前向きな流れを活かして次の一歩を示す",
+          negative: "懸念に配慮し押し売り感のない訴求にする",
+          chat: "軽いトーンを保ち売り込みすぎない",
+        };
+        const guide = intentGuide[aixBrainMeta.customer_intent];
+        lines.push(`【🧭 顧客インテント】${aixBrainMeta.customer_intent}${guide ? `（${guide}）` : ""}`);
+      }
+      if (aixBrainMeta.repeated_concern) {
+        lines.push(`【🔁 繰り返し懸念】お客様が繰り返し気にしているテーマ:「${aixBrainMeta.repeated_concern}」。訴求ポイントの選択でこの懸念に応える点を優先すること`);
+      }
+      if (aixBrainMeta.winning_pattern) {
+        lines.push(`【🏅 この顧客に効く成功パターン】${aixBrainMeta.winning_pattern}`);
       }
       if (aixBrainMeta.current_property) {
         lines.push(`【🏠 現在話している物件】${aixBrainMeta.current_property}`);
@@ -1170,12 +1288,16 @@ ${SMORA_COMMON_RULES}`;
         brainContext,
       ].filter(Boolean).join(" ").trim() || undefined;
 
-      const [examples, knowledge, recStarNote, propDbRules, recBrainAddendum, recPatternHints] = await Promise.all([
+      const [examples, knowledge, recStarNote, propDbRules, recBrainAddendum, recWinningNote, recPropertyExamples, recPatternHints] = await Promise.all([
         getPropertyExamples(),
         getPropertyKnowledge(conversationId, recRagContext),
         getStarredExamplesForAction(["property_recommendation", "proposing"], latestCustomerMsg, aixBrainMeta),
         fetchPromptRules("property_recommendation", {}).catch(() => ""),
         loadBrainTemplate("property_recommendation"),
+        // 成約パターンRAG（AIX-META再ランキング）: 顧客条件+META+最新メッセージで「この顧客に効いた訴求」を引く
+        getWinningPatternsForProperty([recRagContext ?? "", latestCustomerMsg].filter(Boolean).join(" "), aixBrainMeta),
+        // 過去に実送信した物件オススメ文の実例（entry_source='aix_property'・⭐=顧客反応あり優先）
+        getAixPropertyExamples("property_recommendation"),
         // 類似条件顧客の勝ちパターン（property_selection_patterns）を並列取得
         (async (): Promise<string[]> => {
           if (!resolvedPCID) return [];
@@ -1260,9 +1382,10 @@ ${SMORA_COMMON_RULES}`;
       const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
 
       const knowledgeSection = knowledge ? `\n\n【物件オススメ時のノウハウ】\n${knowledge}` : "";
-      const examplesSection = examples ? `\n\n【スモラの実際の物件オススメ文（実例）】\n${examples}` : "";
+      // aix_property実例（実送信文・⭐顧客反応あり優先）があれば☆手動実例より優先。両方ある場合は実送信文を先に置く
+      const examplesSection = (recPropertyExamples ? recPropertyExamples : "") + (examples ? `\n\n【スモラの実際の物件オススメ文（実例）】\n${examples}` : "");
       const phrasesSection = phraseText ? `\n\n【よく使うフレーズ】\n${phraseText}` : "";
-      const recUserTextFinal = userText + knowledgeSection + examplesSection + phrasesSection + (recStarNote
+      const recUserTextFinal = userText + recWinningNote + knowledgeSection + examplesSection + phrasesSection + (recStarNote
         ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + recStarNote
         : "");
 
@@ -1638,7 +1761,7 @@ ${SMORA_COMMON_RULES}
       // 学習済み差分ルール（スタッフ修正から学習したパターン）＋☆成功返信パターンをプロンプト末尾に注入
       // + コンポーネント単位の学習ルール（normal/widen/viewingモードのみ: JSON出力でコンポーネント学習が機能するモード）
       const useCompKnowledge = sendMode === "normal" || sendMode === "widen" || sendMode === "viewing";
-      const [sendDiffNote, sendStarNote, compPickupNote, compInviteNote, compCalendarNote, sendDbRules, sendBrainAddendum] = await Promise.all([
+      const [sendDiffNote, sendStarNote, compPickupNote, compInviteNote, compCalendarNote, sendDbRules, sendBrainAddendum, sendWinningNote, sendPropertyExamples] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.property_send, currentAction, conversationId, latestCustomerMsg, brainContext),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_send, latestCustomerMsg, aixBrainMeta),
         useCompKnowledge ? getKnowledgeForState(["property_send_pickup"], currentAction) : Promise.resolve(""),
@@ -1646,6 +1769,10 @@ ${SMORA_COMMON_RULES}
         useCompKnowledge && !skipViewingInvite ? getKnowledgeForState(["property_send_calendar"], currentAction) : Promise.resolve(""),
         fetchPromptRules("property_send", { send_mode: sendMode }).catch(() => ""),
         loadBrainTemplate("property_send"),
+        // 成約パターンRAG（AIX-META再ランキング）: 顧客条件+META+最新メッセージで「この顧客に効いた訴求」を引く
+        getWinningPatternsForProperty([conditionsInfo ?? "", brainContext, latestCustomerMsg].filter(Boolean).join(" "), aixBrainMeta),
+        // 過去に実送信した物件ピックアップ文の実例（entry_source='aix_property'・⭐=顧客反応あり優先）
+        getAixPropertyExamples("property_send"),
       ]);
       // normal/widenモード専用: パーツ別の過去改善ルールを構成ラベル付きで注入
       const componentKnowledgeNote = (sendMode === "normal" || sendMode === "widen" || sendMode === "viewing")
@@ -1897,6 +2024,8 @@ ${greetingLine}
 
       const sendSystemFinal = sendSystem + skipViewingInviteNote + sendDbRules + (sendBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + sendBrainAddendum : "");
       const sendUserFinal = userParts.join("")
+        + sendWinningNote
+        + sendPropertyExamples
         + (sendDiffNote ? `\n\n${sendDiffNote}` : "")
         + (componentKnowledgeNote ? `\n\n${componentKnowledgeNote}` : "")
         + (sendStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + sendStarNote : "");

@@ -231,6 +231,10 @@
     {
       "path": "/api/analyze-aix-templates",
       "schedule": "0 21 * * 0"
+    },
+    {
+      "path": "/api/analyze-aix-property",
+      "schedule": "0 22 * * 0"
     }
   ]
 }

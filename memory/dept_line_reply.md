@@ -1,6 +1,22 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-08-25
+最終更新: 2026-08-29
+
+---
+
+## AIX物件本文（property_send / property_recommendation）品質スタック強化（2026-08-29）
+
+文の基本構成は不変のまま「訴求の質」を generate-reply / aix-template-generate 同等に引き上げた。
+
+- **新学習バケット**: `ai_reply_examples.entry_source='aix_property'` — aix_usage_logs の実送信AIX物件本文。`is_starred = customer_reacted`。初回バックフィル527件（rec 299/⭐146・send 228/⭐140）＋embedding全件生成済み
+- **新cron**: `/api/analyze-aix-property`（毎週日曜UTC22:00）。冪等ガード `aix_usage_logs.property_example_backfilled_at`（migrate-schema反映済み・本番DB適用済み）。customer_message = 直前顧客3件＋AIX-META主要フィールド（ベストエフォート）
+- **RPC拡張**: `match_aix_reply_examples` の entry_source に 'aix_property' 追加（本番適用済み。match_reply_examples は不変）
+- **aix/action 強化**（property_send / property_recommendation 限定）:
+  1. `getWinningPatternsForProperty()` — match_winning_patterns RAG＋AIX-META再ランキング（checkpoint一致+0.12 / intent一致+0.15 / win_rate×0.1・aix-template-generate H2と同方式）
+  2. `getAixPropertyExamples()` — aix_property実例5件（⭐優先）をfew-shot注入
+  3. AixLocalBrainMeta に customer_intent / winning_pattern / repeated_concern / human_type_label 追加 → brainContext（RAGクエリ）＋brainGuidanceNote（🧭インテント別訴求ガイド・🔁繰り返し懸念・🏅成功パターン）に配線
+  4. キャッシュ設計不変: 新規注入は全てuser側 or 動的systemブロック（静的ブロックのキャッシュHIT率を壊さない）
+- **不変**: generate-reply / match_reply_examples / 文の基本構成（🌟フォーマット・①〜⑥構成）は一切変更していない
 
 ---
 

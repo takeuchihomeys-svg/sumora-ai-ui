@@ -2654,6 +2654,8 @@ CREATE INDEX IF NOT EXISTS idx_aix_generate_log_backfill
 --   'aix_template' = template_selection_logs.final_sent_text 由来の【AIX】テンプレート続き文
 --   （AIX本文の後にスタッフが実際に送ったテンプレート実例 — aix-template-generate の本命実例）
 --   'aix_action'   = aix_generate_log 由来のAIX橋渡し文（property_send 等の会話的AIX本文）
+-- 2026-08-29: 'aix_property' を追加（aix_usage_logs 由来のAIX物件本文実績 —
+--   property_send / property_recommendation の実送信文。analyze-aix-property がバックフィル）
 CREATE OR REPLACE FUNCTION match_aix_reply_examples(
   query_embedding vector,
   match_count integer,
@@ -2686,18 +2688,32 @@ AS $func$
       ELSE (1 - (ae.embedding <=> query_embedding))::float
     END AS similarity
   FROM ai_reply_examples ae
-  WHERE ae.entry_source IN ('aix_template', 'aix_action')
+  WHERE ae.entry_source IN ('aix_template', 'aix_action', 'aix_property')
     AND ae.embedding IS NOT NULL
   ORDER BY ae.embedding <=> query_embedding
   LIMIT match_count
 $func$;
 
--- ── ai_reply_examples.entry_source の取りうる値（2026-08-28時点の台帳）──
+-- ── ai_reply_examples.entry_source の取りうる値（2026-08-29時点の台帳）──
 -- 'line_reply'   … 通常LINE返信の実例（save-reply-example が記録・generate-reply が参照）
 -- 'aix_action'   … AIX本文の橋渡し文実績（aix_generate_log 由来・旧 analyze-aix-templates がバックフィル）
 -- 'aix_template' … 【AIX】テンプレート続き文の実績（template_selection_logs.final_sent_text 由来・
 --                  analyze-aix-templates がバックフィル。
 --                  aix-template-generate「✨この会話に合った文を生成」の本命実例バケット）
+-- 'aix_property' … AIX物件本文の実送信実績（aix_usage_logs.generated_text 由来・
+--                  analyze-aix-property がバックフィル。property_send / property_recommendation の
+--                  訴求品質向上用実例バケット — aix/action が直接クエリで参照）
+
+-- ── analyze-aix-property: AIX物件本文バックフィルの冪等ガード（2026-08-29追加）──
+-- aix_usage_logs.property_example_backfilled_at: /api/analyze-aix-property が該当ログを
+-- ai_reply_examples（entry_source='aix_property'）へバックフィル処理した時刻。
+-- NULL = 未処理（処理対象）。INSERT失敗時は更新されず次回実行で再試行される（フェイルオープン）。
+ALTER TABLE aix_usage_logs
+  ADD COLUMN IF NOT EXISTS property_example_backfilled_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_aix_usage_prop_backfill
+  ON aix_usage_logs(created_at DESC)
+  WHERE property_example_backfilled_at IS NULL
+    AND aix_type IN ('property_send','property_recommendation');
 
 -- ── analyze-aix-templates: テンプレート実績バックフィルの冪等ガード（2026-08-28追加）──
 -- template_selection_logs.example_backfilled_at: /api/analyze-aix-templates が該当ログを
