@@ -1179,6 +1179,17 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   }
 }
 
+// フリーテキスト条件（preferences / ng_points / other_requests）のマージ保存用ヘルパー。
+// 既存値を上書きせず「・」区切りで重複排除しつつ結合する。
+function mergeFreeText(existing: string | null | undefined, extracted: string | null | undefined): string | null {
+  if (!extracted?.trim()) return existing ?? null;
+  if (!existing?.trim()) return extracted;
+  const existingItems = existing.split(/[・\n,]/).map(s => s.trim()).filter(Boolean);
+  const newItems = extracted.split(/[・\n,]/).map(s => s.trim()).filter(Boolean);
+  const merged = [...new Set([...existingItems, ...newItems])];
+  return merged.join("・");
+}
+
 // ── P4: カジュアル返信から物件希望条件を自動抽出 ────────────────────────────
 // isFormatMessage() が false のメッセージ（真のカジュアル返信）が対象。
 // スタッフの直近メッセージが条件ヒアリング文脈のとき Haiku で条件を抽出し
@@ -1272,6 +1283,10 @@ ${customerText.slice(0, 600)}
 【エリアと駅名の扱い】
 エリア名（梅田周辺等）と駅名（梅田駅・塚本駅等）が両方ある場合、両方まとめて desired_area に入れる。
 
+【こだわり・NG条件の優先度タグ（preferences / ng_points）】
+絶対に譲れない条件には[必須]、あれば嬉しい条件には[希望]タグを付けること。
+例: 風呂トイレ別[必須]・オートロック[希望]。顧客の言い方（「絶対」「〜じゃないと無理」→[必須]、「できれば」「あったら嬉しい」→[希望]）から判定。判断できない場合はタグなし。
+
 読み取れた条件のみ以下の形式で返してください（不明な項目は省略してください）。
 ※お客さんの返信に明示された条件のみ。スタッフのメッセージに含まれる数字・条件は絶対に抽出しないこと。
 金額はすべて円単位の整数（「8万」→80000、「8万円」→80000）。
@@ -1286,8 +1301,8 @@ ${customerText.slice(0, 600)}
   "move_in_time": "入居時期（例: 9月、来月）",
   "building_age": 築年数上限（整数）,
   "initial_cost_limit": 初期費用上限（円・整数）,
-  "preferences": "こだわり条件（オートロック・独立洗面・ペット可等）",
-  "ng_points": "NG条件（1階NG・木造NG等）",
+  "preferences": "こだわり条件（例: オートロック[希望]・独立洗面・ペット可[必須]）",
+  "ng_points": "NG条件（例: 1階NG[必須]・木造NG[希望]）",
   "other_requests": "その他要望"
 }`,
       }],
@@ -1340,13 +1355,24 @@ ${customerText.slice(0, 600)}
     initial_cost_limit: "初期費用上限", preferences: "こだわり", ng_points: "NG条件", other_requests: "その他",
   };
 
+  // フリーテキスト3カラムは上書きではなくマージ保存（「ペット可・2階以上」→新抽出「オートロック」で消える問題の防止）
+  const FREE_TEXT_FIELDS = new Set(["preferences", "ng_points", "other_requests"]);
+
   const updates: Record<string, unknown> = {};
   const changedFields: Record<string, unknown> = {}; // 実際に値が変わるフィールド（バナー表示用）
   for (const f of CONDITION_FIELDS) {
     const v = extracted[f];
     if (v === null || v === undefined || v === "") continue;
-    updates[f] = v;
     const existingVal = (existingPc as Record<string, unknown> | null)?.[f];
+    if (FREE_TEXT_FIELDS.has(f)) {
+      const merged = mergeFreeText(existingVal as string | null | undefined, typeof v === "string" ? v : String(v));
+      if (merged === null) continue;
+      updates[f] = merged;
+      // マージ結果が既存値と変わる場合のみバナー対象（新規項目の追加があったケース）
+      if (existingVal !== merged) changedFields[f] = merged;
+      continue;
+    }
+    updates[f] = v;
     // 値が変わる場合のみ changedFields に追加（同じ値の上書きはバナー不要）
     if (existingVal !== v) changedFields[f] = v;
   }

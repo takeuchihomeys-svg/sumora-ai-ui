@@ -1435,6 +1435,11 @@ ALTER TABLE aix_generate_log ADD COLUMN IF NOT EXISTS generated_text TEXT;
 -- 線引き質問を check_pattern 粒度で起票し、BOUNDARY-*-aix を condition_key='check_pattern' で保存するための集計元）
 ALTER TABLE aix_generate_log ADD COLUMN IF NOT EXISTS check_pattern TEXT DEFAULT NULL;
 
+-- aix_generate_log: conditions_snapshot（2026-08-29）
+-- 生成時に使った顧客条件（customer_conditions先頭1000字）+ PSP（brainMeta.property_search_params）の
+-- スナップショット。条件違反の事後検証用（aix/action の全insertパスで保存）
+ALTER TABLE aix_generate_log ADD COLUMN IF NOT EXISTS conditions_snapshot JSONB;
+
 -- update_knowledge_feedback_by_ids: apply_count double-counting 修正
 -- 同一 knowledge_id が p_correct_ids と p_wrong_ids 両方に含まれる場合、apply_count が +2 になるバグを修正
 -- apply_count はユニーク ID の union に対して +1 のみ。correct/wrong_count は独立して加算

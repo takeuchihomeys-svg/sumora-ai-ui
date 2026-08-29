@@ -994,6 +994,12 @@ export async function POST(req: NextRequest) {
         ? `⚠️ Brainは別アクション（${AIX_BUTTON_LABELS[brainMeta.action] ?? brainMeta.action}）推奨時点の戦略。今回のボタン種別（${actionLabel}）と矛盾する指示は無視すること\n`
         : "") +
       `成約戦略: ${brainMeta.closing_strategy || "-"}\n` +
+      (brainMeta.winning_pattern
+        ? `・この顧客の成約に効く行動パターン: ${brainMeta.winning_pattern}\n  → 今回のメッセージにこのパターンを応用すること\n`
+        : "") +
+      (brainMeta.human_type_label
+        ? `・顧客タイプ: ${brainMeta.human_type_label}\n`
+        : "") +
       `返信方向: ${brainMeta.reply_direction || "-"}\n` +
       `チェックポイント: ${brainMeta.checkpoint_stage || "-"}\n` +
       (brainMeta.reason ? `Brainの判断理由: ${brainMeta.reason}\n` : "") +
