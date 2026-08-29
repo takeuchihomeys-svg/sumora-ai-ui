@@ -22,6 +22,8 @@ import {
   resolvePhraseCategories,
 } from "@/app/lib/prompt-cache";
 import { normalizeStatus } from "@/app/lib/status-normalize";
+// AIX-META（suggested_aix_meta）の型は brain-core を単一ソースとして参照（type-only importのためランタイム依存なし）
+import type { SuggestedAixMeta } from "@/app/lib/brain-core";
 
 export const maxDuration = 60;
 
@@ -161,6 +163,15 @@ const ACTION_GUIDES: Record<string, string> = {
     "返信が止まったお客様への再接触文。責めない・重くしない。近況伺い+お手伝いできる旨+返信ハードルを下げる一言。",
   acknowledge_check:
     "確認依頼への受付宣言文。「募集状況確認させていただきます！！」の宣言のみ。確認結果・空室状況を先取りして書かない。",
+};
+
+// ─── 即2: purchase_signal_level → CTA強度ガイド（brain-core の4段階定義に対応）──
+// brainが判定した購買シグナル強度をCTAの強さに翻訳して生成指示に含める
+const SIGNAL_CTA_GUIDES: Record<string, string> = {
+  peak: "申込直前の最強シグナル — 申込への具体的CTA（お部屋を抑える宣言）を明確に入れる",
+  strong: "具体的検討シグナル — 次の一歩（内覧・申込）を積極的に促す",
+  soft: "軽い興味段階 — CTAは軽めにして質問・提案で終える",
+  none: "一般質問段階 — 売り込みCTAは入れない",
 };
 
 // ─── 「1件特にオススメ」（property_recommendation）の訴求シナリオ分岐 ─────────
@@ -463,42 +474,30 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Brain戦略（AIX-META）: あれば方向性として利用 ────────────────────────
-  type BrainMeta = {
-    action?: string;
-    closing_strategy?: string;
-    reply_direction?: string;
-    checkpoint_stage?: string;
-    // 追加フィールド（brainが分析済みだが未抽出だったもの）
-    customer_emotion?: string;            // 「前向き」「普通」「不安」等
-    recommended_tone?: string;            // 「共感的」「テキパキ」「慎重」等
-    customer_questions?: string[];        // お客様が質問していること（橋渡し文で拾う）
-    avoid_topics?: string[];              // 禁止話題（「来阪」「早い者勝ち」等）
-    current_property?: string;            // 現在注目している物件名
-    purchase_signal_level?: string;       // 「peak」「strong」「soft」等のクロージング強度
-    latent_intent?: string;               // 表面の質問の裏にある不安や動機
-    // H1追加（brain-core SuggestedAixMeta 準拠 — brainが分析済みだが未抽出だったもの）
-    customer_intent?: string;             // 顧客タイプ7分類（question/consultation/desire/decision/positive/negative/chat）
-    winning_pattern?: string;             // ai_summary_json由来の成功パターンラベル
-    key_topics?: string[];                // 返信に必ず含める主要トピック（最大3件）
-    human_type_label?: string;            // 人物タイプラベル（winning_patterns RAGヒット上位由来）
-    repeated_concern?: string;            // 会話全体で繰り返し出ている懸念テーマ
-    last_aix_history?: string | string[] | null;  // 直前に押したAIXボタン履歴（brain-core は string | null）
-    future_timeline?: string;             // 入居希望タイムライン（「9/26入居希望」等）
-    ng_properties?: string[];             // 再提案禁止物件リスト
-    property_search_params?: {            // 会話から抽出した最新の希望条件（DB条件より新しい場合がある）
-      rent_max?: number | null;           // ※ brain-core は円単位の生値で格納（表示時は万円に変換）
-      move_in_time?: string | null;
-      preferences?: string[] | string | null;  // brain-core（SuggestedAixMeta）は string | null
-      area?: string | null;
-      floor_plan?: string | null;
-      walk_minutes?: number | null;
-      [key: string]: unknown;
-    };
+  // 即2: ローカル独自定義を廃止し brain-core の SuggestedAixMeta を単一ソースとして参照
+  // （型乖離バグの再発防止 — 過去に rent_max 円/万円ズレ・ng_properties デッドコードが同因で発生）。
+  // DB内の旧世代 meta に残る形状（preferences: string[] / last_aix_history: string[] /
+  // ng_properties: string[]）のみ Legacy 差分として上書き許容する。
+  type BrainMetaPsp = {
+    area?: string | null;
+    floor_plan?: string | null;
+    rent_max?: number | null;             // ※ brain-core は円単位の生値で格納（表示時は万円に変換）
+    walk_minutes?: number | null;
+    move_in_time?: string | null;
+    preferences?: string | string[] | null;  // brain-core（SuggestedAixMeta）は string | null・旧metaは string[]
+    ng_points?: string | null;
+    ng_properties?: Array<string | { property_name: string; room_no?: string | null }>;
+    search_urgency?: string;
+    [key: string]: unknown;
+  };
+  type BrainMeta = Omit<NonNullable<SuggestedAixMeta>, "last_aix_history" | "property_search_params"> & {
+    last_aix_history?: string | string[] | null;  // brain-core は string | null・旧metaは string[]
+    property_search_params?: BrainMetaPsp | null;
   };
 
   // ── 並列フェッチ①: Brain戦略 + DB学習資産（generate-reply と同一キャッシュ経由）──
   // 各フェッチはエラーでも生成を止めない（資産なしで生成続行 — generate-reply と同方針）
-  const [convResult, topPrinciples, lossPatterns, phraseList, dbRules, actionBucketRes, aixTemplateExRes, aixActionExRes, aixUsageLogsRes] = await Promise.all([
+  const [convResult, topPrinciples, lossPatterns, phraseList, dbRulesGeneric, dbRulesAction, actionBucketRes, aixTemplateExRes, aixActionExRes, aixUsageLogsRes] = await Promise.all([
     conversationId
       ? supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
       : Promise.resolve({ data: null }),
@@ -507,6 +506,14 @@ export async function POST(req: NextRequest) {
     getCachedPhrases(resolvePhraseCategories(normalizedState)).catch((err) => { console.error("[aix-template-generate] phrases失敗:", err); return [] as string[]; }),
     getCachedPromptRules("generate_reply", { conversation_state: normalizedState })
       .catch((err) => { console.error("[aix-template-generate] promptRules失敗:", err); return ""; }),
+    // 即1: LEARN-AIXルール配線 — aix-weekly-learning / analyze-diffs が action_type=AIXアクション別に
+    // 蓄積する編集差分学習ルール（LEARN-AIX-*）＋アクション専用FEEDBACK等を注入する。
+    // includeGlobal=false のため上の generate_reply フェッチ（action_type='generate_reply' OR NULL）とは
+    // 取得行が排他 → 重複注入なし。includeLearnAix=true で LEARN-AIX-* の除外を解除。
+    actionType
+      ? getCachedPromptRules(actionType, { conversation_state: normalizedState }, false, true)
+          .catch((err) => { console.error("[aix-template-generate] promptRules(action)失敗:", err); return ""; })
+      : Promise.resolve(""),
     // M4: アクション専用ナレッジバケット（application_push → applying_pattern / 内覧系 → viewing_pattern）
     actionBucketCategory
       ? supabase
@@ -556,6 +563,9 @@ export async function POST(req: NextRequest) {
       : Promise.resolve({ data: null }),
   ]);
   const brainMeta = (convResult.data as { suggested_aix_meta?: BrainMeta } | null)?.suggested_aix_meta ?? null;
+
+  // 汎用ルール（generate_reply+global）とアクション別ルール（LEARN-AIX-*含む）を結合
+  const dbRules = [dbRulesGeneric, dbRulesAction].filter(Boolean).join("\n");
 
   // ── 「1件特にオススメ」訴求シナリオ判定（compare / alternative / first）──────
   type AixUsageLogRow = { aix_type: string | null; check_pattern: string | null; created_at: string };
@@ -898,17 +908,54 @@ export async function POST(req: NextRequest) {
 
   const stateLabel = STATE_LABEL[conversationState || ""] || conversationState || "不明";
 
+  // ── 即2: AIX-META 鮮度・整合ゲート ────────────────────────────────────────
+  // analyzed_msg_ts（brainが分析時点で見ていた最新顧客メッセージの時刻）より新しい顧客
+  // メッセージが届いている場合、戦略は古い前提 → 警告付き注入で会話履歴を優先させる
+  // （generate-reply の T1/T2 判定と同じ基準・比較相手はフロントから来た最新の会話履歴）
+  const isStaleMeta = Boolean(
+    brainMeta?.analyzed_msg_ts &&
+    lastCustomerMsg?.rawCreatedAt &&
+    new Date(lastCustomerMsg.rawCreatedAt).getTime() > new Date(brainMeta.analyzed_msg_ts).getTime()
+  );
+
+  // 即2: ng_properties は brain-core が property_search_params 配下に格納する
+  // （旧デッドコード: トップレベル brainMeta.ng_properties 参照は永久に発火しなかった）。
+  // 旧世代metaの string[] 形状もフォールバックで拾う
+  const ngPropsRaw = brainMeta?.property_search_params?.ng_properties ?? [];
+  const ngPropLabels = ngPropsRaw
+    .map((p) => typeof p === "string" ? p : `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)
+    .filter((s) => s.trim().length > 0);
+
   const brainMetaSection = brainMeta
     ? `━━━━━━━━━━━━━━━━━━━━\n【🧠 Brain戦略 — 生成の方向性】\n━━━━━━━━━━━━━━━━━━━━\n` +
+      (isStaleMeta
+        ? `⚠️ この戦略は最新の顧客メッセージ到着前の分析。会話履歴と矛盾する場合は会話履歴を優先すること\n`
+        : "") +
+      (actionType && brainMeta.action && brainMeta.action !== actionType
+        ? `⚠️ Brainは別アクション（${AIX_BUTTON_LABELS[brainMeta.action] ?? brainMeta.action}）推奨時点の戦略。今回のボタン種別（${actionLabel}）と矛盾する指示は無視すること\n`
+        : "") +
       `成約戦略: ${brainMeta.closing_strategy || "-"}\n` +
       `返信方向: ${brainMeta.reply_direction || "-"}\n` +
       `チェックポイント: ${brainMeta.checkpoint_stage || "-"}\n` +
+      (brainMeta.reason ? `Brainの判断理由: ${brainMeta.reason}\n` : "") +
+      (brainMeta.template_hint ? `Brainのテンプレヒント（推奨カテゴリ）: ${brainMeta.template_hint}\n` : "") +
       (brainMeta.customer_emotion ? `顧客感情: ${brainMeta.customer_emotion}\n` : "") +
       (brainMeta.recommended_tone ? `推奨トーン: ${brainMeta.recommended_tone}\n` : "") +
-      (brainMeta.purchase_signal_level ? `購買シグナル強度: ${brainMeta.purchase_signal_level}\n` : "") +
+      (brainMeta.purchase_signal_level
+        ? `購買シグナル強度: ${brainMeta.purchase_signal_level}${SIGNAL_CTA_GUIDES[brainMeta.purchase_signal_level] ? `（${SIGNAL_CTA_GUIDES[brainMeta.purchase_signal_level]}）` : ""}\n`
+        : "") +
       (brainMeta.current_property ? `注目物件: ${brainMeta.current_property}\n` : "") +
       (brainMeta.latent_intent ? `潜在動機（裏の不安）: ${brainMeta.latent_intent}\n` : "") +
       (brainMeta.future_timeline ? `入居希望タイムライン: ${brainMeta.future_timeline}\n` : "") +
+      (brainMeta.key_topics?.length
+        ? `必ず含める主要トピック: ${brainMeta.key_topics.join("・")}\n`
+        : "") +
+      (brainMeta.repeated_concern
+        ? `繰り返し出ている懸念（橋渡し文で必ず拾う）: ${brainMeta.repeated_concern}\n`
+        : "") +
+      (brainMeta.urgency_appropriate === false
+        ? `緊急・煽り表現（「早い者勝ち」「お早めに」等）は使用禁止（この会話では不適切と判定済み）\n`
+        : "") +
       (brainMeta.customer_questions?.length
         ? `お客様が質問していること（橋渡し文で拾う）:\n${brainMeta.customer_questions.map(q => `  ・${q}`).join("\n")}\n`
         : "") +
@@ -918,8 +965,8 @@ export async function POST(req: NextRequest) {
       (brainMeta.last_aix_history && (Array.isArray(brainMeta.last_aix_history) ? brainMeta.last_aix_history.length > 0 : brainMeta.last_aix_history.length > 0)
         ? `直前のAIX履歴: ${Array.isArray(brainMeta.last_aix_history) ? brainMeta.last_aix_history.join(" → ") : brainMeta.last_aix_history}\n`
         : "") +
-      (brainMeta.ng_properties?.length
-        ? `再提案禁止物件（既に送付済み・NG）: ${brainMeta.ng_properties.join("、")}\n`
+      (ngPropLabels.length
+        ? `再提案禁止物件（既に送付済み・NG — 絶対に再度オススメしない）: ${ngPropLabels.join("、")}\n`
         : "") +
       "\n"
     : "";
@@ -1061,7 +1108,7 @@ export async function POST(req: NextRequest) {
       `[aix-template-generate] action=${actionType || actionCategory || "-"}` +
       ` rag_wp=${winningSection ? "hit" : "miss"} rag_kn=${knowledgeSection ? "hit" : "miss"}` +
       ` rag_ex=${examplesSection ? "hit" : "miss"} phrases=${phraseList.length}` +
-      ` principles=${topPrinciples.length} loss=${lossPatterns.length} dbRules=${dbRules ? "ok" : "none"}` +
+      ` principles=${topPrinciples.length} loss=${lossPatterns.length} dbRules=${dbRulesGeneric ? "ok" : "none"} dbRulesAction=${dbRulesAction ? "ok" : "none"}` +
       ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}` +
       ` actionBucket=${actionBucketCategory ? `${actionBucketCategory}:${actionBucketRows.length}` : "-"}` +
       ` aixEx=${aixExampleRows.length} aixVec=${aixVecHitCount}` +

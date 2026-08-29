@@ -19,9 +19,12 @@ interface PromptRuleRow {
 export async function fetchPromptRules(
   actionType: string | null,
   conditions: Record<string, string | boolean | null | undefined> = {},
-  includeGlobal = true  // false のとき globalフォールバック（action_type IS NULL）を除外する。
+  includeGlobal = true, // false のとき globalフォールバック（action_type IS NULL）を除外する。
                         // final_check など「専用ルールのみ」を取りたい場合に使う。
                         // DB に専用ルールが0件なら空文字を返す（汚染なし）。
+  includeLearnAix = false  // true のとき LEARN-AIX-* ルール（aix-weekly-learning / analyze-diffs が
+                           // action_type=AIXアクション別に蓄積する編集差分学習ルール）を除外対象から外す。
+                           // 旧世代の generate_reply 向け LEARN-*（廃止済み・数千件）は引き続き除外。
 ): Promise<string> {
   try {
     // ── 枠取り方式 ──
@@ -44,6 +47,13 @@ export async function fetchPromptRules(
       } else {
         q = q.is("action_type", null);
       }
+      // LEARN-* 除外フィルタ（両クエリ共通のためここで適用）
+      // includeLearnAix=true: LEARN-AIX-* のみ許可（PostgRESTのor構文はワイルドカードに * を使う）
+      if (includeLearnAix) {
+        q = q.or("rule_key.not.like.LEARN-*,rule_key.like.LEARN-AIX-*");
+      } else {
+        q = q.not("rule_key", "like", "LEARN-%");
+      }
       return q;
     };
 
@@ -60,13 +70,11 @@ export async function fetchPromptRules(
     const [permanentRes, highPrioRes] = await Promise.all([
       buildBaseQuery()
         .eq("is_permanent", true)
-        .not("rule_key", "like", "LEARN-%")
         .order("priority", { ascending: false })
         .order("updated_at", { ascending: false, nullsFirst: false })
         .limit(80)
         .abortSignal(AbortSignal.timeout(8_000)),
       buildBaseQuery()
-        .not("rule_key", "like", "LEARN-%")
         .eq("is_permanent", false)
         .gte("priority", 4)
         .order("priority", { ascending: false })

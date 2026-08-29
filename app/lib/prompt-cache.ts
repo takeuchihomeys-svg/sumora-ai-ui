@@ -152,13 +152,14 @@ const RULES_TTL_MS = 60_000; // 60秒
  * コールドスタート失敗時のフォールバックは "" を返す。
  */
 export async function getCachedPromptRules(
-  actionType: "generate_reply" | "final_check",
+  actionType: string,  // "generate_reply" | "final_check" | AIXアクション名（application_push 等）
   conditions: Record<string, string> = {},
   includeGlobal = true,
+  includeLearnAix = false,  // LEARN-AIX-*（AIX編集差分学習）を含める。aix-template-generate のアクション別フェッチ用
 ): Promise<string> {
-  const key = `rules:${actionType}:${JSON.stringify(conditions)}:${includeGlobal}`;
+  const key = `rules:${actionType}:${JSON.stringify(conditions)}:${includeGlobal}:${includeLearnAix}`;
   const cache = getOrCreateCache<{ text: string }>(key, RULES_TTL_MS, async () => {
-    const text = await fetchPromptRules(actionType, conditions, includeGlobal);
+    const text = await fetchPromptRules(actionType, conditions, includeGlobal, includeLearnAix);
     return { text };
   });
   try {
