@@ -144,9 +144,11 @@ function extractPreferredName(messages: Array<{ sender: string; text?: string | 
     return name;
   }
   // フォールバック: 表示名側にも接続表現が混入し得るためサニタイズ＋末尾「さん」除去（二重さん防止）
+  // また記号・絵文字を除去（例: "SATOKO♪" → "SATOKO"）
   return lineDisplayName
     .replace(/^(もし)?(よろしければ|宜しければ|よければ|できれば|出来れば|ぜひ|是非)/, "")
     .replace(/さん$/, "")
+    .replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿豈-﫿A-Za-z\s・]/g, "")
     .trim();
 }
 

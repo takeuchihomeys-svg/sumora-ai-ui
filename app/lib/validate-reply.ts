@@ -10,6 +10,13 @@ const NAME_PLACEHOLDERS = new Set([
   "guest", "Guest", "unknown", "Unknown", "user", "User", "LINE", "line",
 ]);
 
+// 名前から非許容文字（記号・絵文字・数字等）を除去して実名として使える形を抽出する
+// 例: "SATOKO♪" → "SATOKO"、"ゆき♡" → "ゆき"、"H!tom!.M" → "HtomM"
+// isPlausiblePersonName に渡す前の前処理として使う。変換後も判定は isPlausiblePersonName に委ねる。
+export function stripNonNameChars(raw: string): string {
+  return raw.replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿A-Za-z\s・]/g, "").trim();
+}
+
 // 実名として使える形か（true のときのみ「〇〇さん」の呼びかけに使ってよい）
 export function isPlausiblePersonName(raw?: string | null): boolean {
   const n = (raw ?? "").trim();

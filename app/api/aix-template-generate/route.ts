@@ -427,6 +427,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "actionType or actionCategory is required" }, { status: 400 });
   }
 
+  // 記号・絵文字を除去して実名として使える文字のみに正規化（例: "SATOKO♪" → "SATOKO"）
+  const sanitizedCustomerName = customerName
+    ? customerName.replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿豈-﫿A-Za-z\s・]/g, "").trim()
+    : "";
+
   const actionLabel = (actionType && AIX_BUTTON_LABELS[actionType]) || actionCategory || "AIXメッセージ";
   const actionGuide = (actionType && ACTION_GUIDES[actionType]) || "";
 
@@ -1028,7 +1033,7 @@ export async function POST(req: NextRequest) {
     elapsedLabel ? `お客様の最終返信から: ${elapsedLabel}` : "",
     "",
     `━━━━━━━━━━━━━━━━━━━━\n【お客様情報】\n━━━━━━━━━━━━━━━━━━━━`,
-    `・お客様名: ${customerName || "〇〇"}さん`,
+    `・お客様名: ${sanitizedCustomerName || "〇〇"}さん`,
     `・現在のフェーズ: ${stateLabel}`,
     customerConditions ? `・希望条件（DB）: ${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。` : "",
     brainMeta?.property_search_params

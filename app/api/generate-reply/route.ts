@@ -18,6 +18,7 @@ import {
   verifyAmountsAgainstSource,
   enforceCustomerName,
   isPlausiblePersonName,
+  stripNonNameChars,
 } from "@/app/lib/validate-reply";
 import { runFinalCheck, runFinalCheckWithRevision, sha1, type CheckResult } from "@/app/lib/final-check";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
@@ -2367,15 +2368,20 @@ export async function POST(req: NextRequest) {
   // 全滅した場合は名前なし（""）で生成する — 誤った名前で呼びかけるより名前を出さない方が安全。
   if (!customerName && conversationId) {
     const { pcName, convName } = await fetchDbCustomerNames(conversationId);
+    // 記号・絵文字を除去してから判定（例: "SATOKO♪" → "SATOKO"）
     customerName =
-      [pcName, convName, lineDisplayName].find((n) => isPlausiblePersonName(n)) ?? "";
+      [pcName, convName, lineDisplayName]
+        .map((n) => stripNonNameChars(n ?? ""))
+        .find((n) => isPlausiblePersonName(n)) ?? "";
     if (!customerName) {
       console.warn("[generate-reply] 実名として使える顧客名なし（LINE表示名は不採用・名前なしで生成）:", {
         conversationId, lineDisplayName, pcName, convName,
       });
     }
   } else if (!isPlausiblePersonName(customerName)) {
-    customerName = "";
+    // フォールバック: 記号・絵文字を除去して再判定
+    const stripped = stripNonNameChars(customerName);
+    customerName = isPlausiblePersonName(stripped) ? stripped : "";
   }
 
   // activeTaskTypes の自動補完（Cron等で body.activeTaskTypes が渡されない場合のサーバー側フォールバック）
