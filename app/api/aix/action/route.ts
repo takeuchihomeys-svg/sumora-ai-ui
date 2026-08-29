@@ -1182,6 +1182,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
       currentAction === "property_check_result" && typeof check_pattern === "string" && check_pattern
         ? check_pattern
         : null;
+    // 条件違反の事後検証用: 生成時に使った顧客条件＋PSPのスナップショット（aix_generate_log.conditions_snapshot）
+    const conditionsSnapshot = {
+      customer_conditions: customer_conditions ? String(customer_conditions).slice(0, 1000) : null,
+      psp: aixBrainMeta?.property_search_params ?? null,
+    };
     // 早期return用: finalize結果をそのままレスポンスJSONにするショートハンド
     const finalizeResponse = (text: string, extra?: Record<string, unknown>) => {
       const { message, notice } = finalize(text);
@@ -1193,6 +1198,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
               conversation_id: conversationId,
               check_pattern: generateLogCheckPattern,
               generated_text: safeSlice(message, 2000),
+              conditions_snapshot: conditionsSnapshot,
             });
           } catch (e) {
             console.error("[aix/action] aix_generate_log insert failed (after callback):", e);
@@ -3489,6 +3495,7 @@ ${pcrCalendarBlock}
                 conversation_id: conversationId,
                 check_pattern: generateLogCheckPattern,
                 generated_text: safeSlice(exclusiveText, 2000),
+                conditions_snapshot: conditionsSnapshot,
               });
             } catch (e) {
               console.error("[aix/action] aix_generate_log insert failed (exclusive):", e);
@@ -4743,6 +4750,7 @@ ${SMORA_COMMON_RULES}
             conversation_id: conversationId,
             check_pattern: generateLogCheckPattern,
             generated_text: safeSlice(cleanedMessage, 2000),
+            conditions_snapshot: conditionsSnapshot,
             ...(propertyDetails ? { property_details: propertyDetails } : {}),
           });
         } catch (e) {
