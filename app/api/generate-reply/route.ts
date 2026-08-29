@@ -19,7 +19,7 @@ import {
   enforceCustomerName,
   isPlausiblePersonName,
 } from "@/app/lib/validate-reply";
-import { runFinalCheckWithRevision, sha1, type CheckResult } from "@/app/lib/final-check";
+import { runFinalCheck, runFinalCheckWithRevision, sha1, type CheckResult } from "@/app/lib/final-check";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { classifyReplyMode } from "@/app/lib/reply-mode-classifier";
@@ -3335,6 +3335,17 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   outText = amountChecked;
                 }
                 if (noEmoji) outText = outText.replace(/[😊😌🌟✨]/gu, "");
+                // 決定的禁止語彙スキャン（テンプレ最適化は final-check を完全バイパスするため専用の最終防衛線）
+                // 「スモラ」のみ決定的置換可能（→「弊社」）。他は構造依存のため警告ログのみ（テンプレ原文由来の可能性があるため自動削除しない）
+                if (outText.includes("スモラ")) {
+                  console.warn("[validate-reply] template-optimize 禁止語彙「スモラ」検出 → 「弊社」に置換");
+                  outText = outText.split("スモラ").join("弊社");
+                }
+                for (const bannedWord of ["名称未設定", "**", "少々お待ちください"]) {
+                  if (outText.includes(bannedWord)) {
+                    console.warn(`[validate-reply] template-optimize 禁止語彙検出（要目視確認）: ${bannedWord}`);
+                  }
+                }
                 outText = outText.trim();
               }
               // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
@@ -3421,9 +3432,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   checkpointStage: brainMeta?.checkpoint_stage ?? null, // Fix③: brain実態フェーズ（DB stateと乖離検出用）
                   ngProperties: ngPropertiesForCheck.length ? ngPropertiesForCheck : undefined,
                 };
-                const loop = await runFinalCheckWithRevision(draftBody, finalCheckCtx, 90000);
+                // センシティブ案件（クレーム/審査否決/キャンセル）は「参考のみ・手動確認必須」の草稿のため
+                // チェックのみ実行し、接地修正・フィードバック再生成でドラフトを機械的に触らない
+                // （謝罪ニュアンス等を revision が壊すリスク回避＋最大90秒超の無駄コスト削減。指摘の可視化だけで十分）
+                const finalCheckStart = Date.now(); // regen込み総予算の基準時刻（5-12）
+                const loop = sensitiveGateNote
+                  ? { finalDraft: draftBody, finalCheck: await runFinalCheck(draftBody, finalCheckCtx) }
+                  : await runFinalCheckWithRevision(draftBody, finalCheckCtx, 90000);
                 finalCheck = loop.finalCheck;
                 draftBody = loop.finalDraft; // ベスト草稿（成功時=修正版 / 修正不能時=元ドラフト）
+                if (finalCheck.revision_count === undefined) finalCheck.revision_count = 0;
                 finalCheck.regen_count = 0;
                 // ─── 最終チェック問題→フィードバック再生成ループ（最大1リトライ）────
                 // 接地修正ループ（runFinalCheckWithRevision内部）を通しても warning 以上の指摘が
@@ -3437,7 +3455,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const retryIssues = finalCheck.issues.filter(
                   (it) => it.severity === "block" && it.code !== "UNCHECKED_AUTO_SEND"
                 );
-                if (retryIssues.length > 0) {
+                // センシティブ案件は再生成もスキップ（手動確認前提。指摘はトレーラーで可視化される）
+                if (retryIssues.length > 0 && !sensitiveGateNote) {
                   try {
                     const feedback = [
                       "【最終チェック結果のフィードバック】",
@@ -3466,7 +3485,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     );
                     if (gen2.body.trim()) {
                       // 再生成ドラフトにも最終チェック＋接地修正ループを適用（未チェック文は絶対に出さない）
-                      const loop2 = await runFinalCheckWithRevision(gen2.body, finalCheckCtx, 60000);
+                      // 予算はループ単位ではなく「check1開始からの総経過時間」から逆算（regen込みで最悪2〜3分に膨らむのを防止。
+                      // 全体上限150s − 経過時間、下限20s）
+                      const loop2Budget = Math.max(20000, 150000 - (Date.now() - finalCheckStart));
+                      const loop2 = await runFinalCheckWithRevision(gen2.body, finalCheckCtx, Math.min(60000, loop2Budget));
                       draftBody = loop2.finalDraft;
                       finalCheck = loop2.finalCheck;
                       finalCheck.regen_count = 1;
