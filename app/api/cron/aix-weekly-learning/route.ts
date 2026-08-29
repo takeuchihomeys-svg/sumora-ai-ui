@@ -64,6 +64,24 @@ const CHECK_PATTERN_UI_LABELS: Record<string, string> = {
 // Special actions with no current boundary rule — trigger at lower threshold
 const UNDEFINED_BOUNDARY_ACTIONS = new Set(['acknowledge_check', 'followup_revive', 'greeting_viewing']);
 
+// prompt cache: アクション別編集差分学習（Opus）の静的システムプロンプト。
+// 対象のAIXアクション名（動的）は user メッセージに分離する
+const AIX_EDIT_DIFF_SYSTEM = `あなたはLINE賃貸営業AIシステムの品質改善エンジニアです。
+ユーザーメッセージに渡されるAIXボタン（アクション）で生成されたテキストをスタッフが修正した事例を分析し、
+繰り返し発生している修正パターンから改善ルールを抽出してください。
+
+出力形式（JSON配列、厳守）:
+[
+  {"rule": "ルール文（日本語・100字以内・具体的・actionable）", "reason": "なぜこの修正が繰り返されるか"}
+]
+
+ルール抽出の基準:
+- 複数の編集例に共通する修正パターンのみ抽出（1例だけの特殊ケースは除外）
+- 「〜を避ける」「〜の場合は〜にする」など具体的な行動指示として書く
+- 最大3個まで
+- 共通パターンが見つからない場合は空配列 [] を返す
+- 各編集例の [emotion/urgency/mode] ラベルを参照し、特定の顧客状況に依存するパターンがあれば条件付きルールとして記述すること（例: urgency=高の場合は〜、emotion=不安の場合は〜）`;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function detectBoundaryAmbiguity(supabase: any): Promise<number> {
   const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
@@ -199,9 +217,24 @@ const AIX_PATTERN_MAX_ACTIONS = 6;      // 1実行あたりの蒸留対象アク
 const AIX_PATTERN_MIN_EXAMPLES = 3;     // 蒸留に必要な最小実例数
 const AIX_PATTERN_EXAMPLES_PER_ACTION = 10;
 
+// prompt cache: アクション横断で共通の静的システムプロンプト。
+// アクション名（動的）は user メッセージに分離し、最大6アクション分の呼び出しで同一キャッシュを共有する
+const AIX_PATTERN_SYSTEM = `あなたは賃貸仲介LINE営業のコーチです。ユーザーメッセージに渡されるAIXボタン（アクション）で実際に送信された文の実例から、「このアクションの良い送信パターン」を抽出してください。
+
+条件:
+- 固有名詞・物件名・日時に依存しない、どの顧客にも使える普遍パターンのみ
+- ⭐お客様が反応した実例のパターンを特に重視する
+- 各実例に〔Brain文脈〕（Brain推奨action・フェーズ・顧客インテント・成約戦略・勝ちパターン）が付いている場合、「なぜこの送信文がその顧客状況で良かったか」の文脈として使い、条件付きパターン（例: checkpoint_stage=内覧後なら〜）の抽出に活かすこと
+- 薄い・当たり前すぎるものは除外（本当に価値のあるものだけ）
+- 最大2個まで。価値あるパターンがなければ空配列 [] を返す
+
+出力形式（JSON配列のみ・説明不要）:
+[{"title": "パターン名（25文字以内）", "content": "パターンの詳細と使い方（200文字以内）", "trigger": "このパターンが活きる顧客状況の例文（50文字以内）"}]`;
+
 type AixPatternExample = {
   aix_action: string | null;
   entry_source: string;
+  conversation_id: string | null;
   customer_message: string | null;
   sent_reply: string | null;
   is_starred: boolean | null;
@@ -216,7 +249,7 @@ async function synthesizeAixPatterns(
 
   const { data: rows, error } = await supabase
     .from("ai_reply_examples")
-    .select("aix_action, entry_source, customer_message, sent_reply, is_starred")
+    .select("aix_action, entry_source, conversation_id, customer_message, sent_reply, is_starred")
     .in("entry_source", AIX_PATTERN_SOURCES)
     .gte("created_at", sevenDaysAgo)
     .not("sent_reply", "is", null)
@@ -227,6 +260,31 @@ async function synthesizeAixPatterns(
     console.warn("[aix-weekly-learning] synthesizeAixPatterns 取得失敗:", error.message);
     return result;
   }
+
+  // Brain/AIX-META コンテキスト一括取得（fail-open）: パターン抽出時に
+  // 「なぜこの送信が良かったか」の顧客状況文脈（brain_action・checkpoint_stage・customer_intent等）を渡す
+  const patternBrainMap = new Map<string, Record<string, unknown>>();
+  try {
+    const patternConvIds = [...new Set(
+      ((rows ?? []) as AixPatternExample[])
+        .map((r) => r.conversation_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    )];
+    if (patternConvIds.length > 0) {
+      const { data: brainRows } = await supabase
+        .from("conversations")
+        .select("id, suggested_aix_meta, property_customers(ai_summary_json)")
+        .in("id", patternConvIds);
+      for (const row of (brainRows ?? []) as Array<{ id: string; suggested_aix_meta: unknown; property_customers: unknown }>) {
+        const meta = (row.suggested_aix_meta as Record<string, unknown> | null) ?? {};
+        const customer = Array.isArray(row.property_customers)
+          ? (row.property_customers[0] as Record<string, unknown> | null)
+          : (row.property_customers as Record<string, unknown> | null);
+        const summary = (customer?.ai_summary_json as Record<string, unknown> | null) ?? {};
+        patternBrainMap.set(row.id, { ...meta, ...summary });
+      }
+    }
+  } catch { /* fail-open: Brain取得失敗時は文脈なしで蒸留を続行 */ }
 
   // アクション別にグループ化（⭐実例を優先して各アクション最大10件）
   const byAction = new Map<string, AixPatternExample[]>();
@@ -251,27 +309,31 @@ async function synthesizeAixPatterns(
 
       const examplesText = picked.map((ex, i) => {
         const starLabel = ex.is_starred ? "⭐お客様が反応した実例" : "通常実例";
+        // Brain/AIX-META 文脈（取得できた場合のみ付与）
+        const b = patternBrainMap.get(ex.conversation_id ?? "") ?? {};
+        const brainParts = [
+          b.action ? `Brain推奨action: ${String(b.action)}` : "",
+          b.checkpoint_stage ? `フェーズ: ${String(b.checkpoint_stage)}` : "",
+          b.customer_intent ? `顧客インテント: ${String(b.customer_intent)}` : "",
+          b.closing_strategy ? `成約戦略: ${String(b.closing_strategy)}` : "",
+          b.winning_pattern ? `勝ちパターン: ${String(b.winning_pattern)}` : "",
+        ].filter(Boolean);
+        const brainLine = brainParts.length > 0 ? `\n〔Brain文脈〕${brainParts.join(" / ")}` : "";
         return `【実例${i + 1}】[${starLabel} / ${ex.entry_source}]
-お客様の状況: ${(ex.customer_message ?? "").replace(/\n/g, " ").slice(0, 150)}
+お客様の状況: ${(ex.customer_message ?? "").replace(/\n/g, " ").slice(0, 150)}${brainLine}
 送信文: ${(ex.sent_reply ?? "").slice(0, 300)}`;
       }).join("\n\n");
 
       const response = await anthropic.messages.create({
         model: "claude-sonnet-5",
         max_tokens: 1200,
-        system: `あなたは賃貸仲介LINE営業のコーチです。AIXボタン「${ACTION_LABELS[actionType] ?? actionType}」で実際に送信された文の実例から、「このアクションの良い送信パターン」を抽出してください。
-
-条件:
-- 固有名詞・物件名・日時に依存しない、どの顧客にも使える普遍パターンのみ
-- ⭐お客様が反応した実例のパターンを特に重視する
-- 薄い・当たり前すぎるものは除外（本当に価値のあるものだけ）
-- 最大2個まで。価値あるパターンがなければ空配列 [] を返す
-
-出力形式（JSON配列のみ・説明不要）:
-[{"title": "パターン名（25文字以内）", "content": "パターンの詳細と使い方（200文字以内）", "trigger": "このパターンが活きる顧客状況の例文（50文字以内）"}]`,
+        // prompt cache: 静的な抽出指示（AIX_PATTERN_SYSTEM）をキャッシュし、アクション名・実例は user に分離
+        system: [
+          { type: "text", text: AIX_PATTERN_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
+        ],
         messages: [{
           role: "user",
-          content: `以下は過去7日間の「${actionType}」アクションの実送信例です:\n\n${examplesText}`,
+          content: `対象AIXボタン: 「${ACTION_LABELS[actionType] ?? actionType}」（${actionType}）\n\n以下は過去7日間の「${actionType}」アクションの実送信例です:\n\n${examplesText}`,
         }],
       });
 
@@ -324,7 +386,12 @@ export async function POST(req: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY!,
+    timeout: 120_000,
+    maxRetries: 1,
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+  });
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -393,30 +460,18 @@ export async function POST(req: NextRequest) {
         return `【編集例${i + 1}】${brainTag}\nAI生成:\n${ex.ai_draft?.slice(0, 300) ?? ""}\n\nスタッフ送信:\n${ex.sent_reply?.slice(0, 300) ?? ""}`;
       }).join("\n\n---\n\n");
 
-      const systemPrompt = `あなたはLINE賃貸営業AIシステムの品質改善エンジニアです。
-AIXボタン「${actionType}」で生成されたテキストをスタッフが修正した事例を分析し、
-繰り返し発生している修正パターンから改善ルールを抽出してください。
-
-出力形式（JSON配列、厳守）:
-[
-  {"rule": "ルール文（日本語・100字以内・具体的・actionable）", "reason": "なぜこの修正が繰り返されるか"}
-]
-
-ルール抽出の基準:
-- 複数の編集例に共通する修正パターンのみ抽出（1例だけの特殊ケースは除外）
-- 「〜を避ける」「〜の場合は〜にする」など具体的な行動指示として書く
-- 最大3個まで
-- 共通パターンが見つからない場合は空配列 [] を返す
-- 各編集例の [emotion/urgency/mode] ラベルを参照し、特定の顧客状況に依存するパターンがあれば条件付きルールとして記述すること（例: urgency=高の場合は〜、emotion=不安の場合は〜）`;
-
       const response = await anthropic.messages.create({
         model: "claude-opus-5",
         max_tokens: 1000,
         messages: [{
           role: "user",
-          content: `以下は過去7日間の「${actionType}」アクションでスタッフが修正した編集例です:\n\n${examplesText}\n\n繰り返しの修正パターンからルールを抽出してください。`
+          content: `対象AIXボタン: 「${actionType}」\n\n以下は過去7日間の「${actionType}」アクションでスタッフが修正した編集例です:\n\n${examplesText}\n\n繰り返しの修正パターンからルールを抽出してください。`
         }],
-        system: systemPrompt,
+        // prompt cache: アクション横断で共通の静的指示をキャッシュ（11アクション分の呼び出しで同一キャッシュを共有）。
+        // 動的なアクション名・編集例は user メッセージに分離
+        system: [
+          { type: "text", text: AIX_EDIT_DIFF_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
+        ],
       });
 
       const rawText = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";

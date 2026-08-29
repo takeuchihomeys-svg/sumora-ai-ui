@@ -7,7 +7,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 120_000, maxRetries: 1 });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 120_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
 
 const STATE_NORMALIZE: Record<string, string> = {
   condition_hearing: "hearing", property_search: "hearing",

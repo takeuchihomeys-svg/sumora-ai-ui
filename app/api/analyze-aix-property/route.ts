@@ -67,6 +67,7 @@ type AixMetaLite = {
   checkpoint_stage?: string | null;
   closing_strategy?: string | null;
   repeated_concern?: string | null;
+  winning_pattern?: string | null;
   property_search_params?: { preferences?: string | string[] | null } | null;
 };
 
@@ -92,6 +93,7 @@ function buildMetaContext(meta: AixMetaLite | null): string {
     meta.checkpoint_stage ? `フェーズ: ${meta.checkpoint_stage}` : "",
     meta.closing_strategy ? `成約戦略: ${meta.closing_strategy}` : "",
     meta.repeated_concern ? `繰り返し懸念: ${meta.repeated_concern}` : "",
+    meta.winning_pattern ? `勝ちパターン: ${meta.winning_pattern}` : "",
     prefText ? `刺さるポイント: ${prefText}` : "",
   ].filter(Boolean);
   return lines.length > 0 ? `〔AIX-META〕${lines.join(" / ")}` : "";

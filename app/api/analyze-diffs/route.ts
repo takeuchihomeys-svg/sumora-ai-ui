@@ -96,6 +96,8 @@ type BrainContext = {
   checkpoint_stage?: string | null;
   last_aix_history?: string | null;
   next_steps?: string | null;
+  customer_intent?: string | null;
+  winning_pattern?: string | null;
 };
 
 function buildBrainContextText(brainContext: BrainContext): string {
@@ -109,7 +111,44 @@ function buildBrainContextText(brainContext: BrainContext): string {
     brainContext.checkpoint_stage ? "checkpoint_stage: " + brainContext.checkpoint_stage : "",
     brainContext.last_aix_history ? "last_aix_history: " + brainContext.last_aix_history : "",
     brainContext.next_steps ? "next_steps: " + brainContext.next_steps : "",
+    brainContext.customer_intent ? "customer_intent: " + brainContext.customer_intent : "",
+    brainContext.winning_pattern ? "winning_pattern: " + brainContext.winning_pattern : "",
   ].filter(Boolean).join(", ");
+}
+
+// Brain・顧客コンテキストを conversations（suggested_aix_meta + property_customers.ai_summary_json）から
+// 取得して BrainContext に整形する共通ヘルパー（fail-open: 失敗時は null）。
+// メインループ（line_reply）と⑥AIX第2パスの両方で使用する。
+async function fetchBrainContext(conversationId: string | null): Promise<BrainContext | null> {
+  if (!conversationId) return null;
+  try {
+    const { data: brainConvData } = await supabase
+      .from("conversations")
+      .select("suggested_aix_meta, property_customers(ai_summary_json)")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (!brainConvData) return null;
+    const brainMeta = brainConvData.suggested_aix_meta as Record<string, unknown> | null;
+    const brainCustomer = Array.isArray(brainConvData.property_customers)
+      ? (brainConvData.property_customers[0] as Record<string, unknown> | null)
+      : (brainConvData.property_customers as Record<string, unknown> | null);
+    const brainSummary = brainCustomer?.ai_summary_json as Record<string, unknown> | null;
+    return {
+      action: (brainMeta?.action as string | null) ?? null,
+      reply_mode: (brainMeta?.reply_mode as string | null) ?? null,
+      emotion: (brainSummary?.emotion as string | null) ?? null,
+      urgency: (brainSummary?.urgency as string | null) ?? null,
+      closing_strategy: (brainMeta?.closing_strategy as string | null) ?? null,
+      reply_direction: (brainMeta?.reply_direction as string | null) ?? null,
+      checkpoint_stage: (brainMeta?.checkpoint_stage as string | null) ?? null,
+      last_aix_history: (brainMeta?.last_aix_history as string | null) ?? null,
+      next_steps: (brainMeta?.next_steps as string | null) ?? null,
+      customer_intent: (brainMeta?.customer_intent as string | null) ?? null,
+      winning_pattern: (brainSummary?.winning_pattern as string | null) ?? null,
+    };
+  } catch {
+    return null; // fail-open: Brain取得失敗時はコンテキストなしで続行
+  }
 }
 
 async function analyzeStructureDiff(
@@ -1050,7 +1089,7 @@ export async function POST(req: NextRequest) {
   //    'aix_edit' という値は存在しない）。編集有無は was_ai_modified で判別する。
   const { data: aixExamples, error: aixExamplesError } = await supabase
     .from("ai_reply_examples")
-    .select("id, customer_message, ai_draft, sent_reply, conversation_state, aix_action, is_starred")
+    .select("id, conversation_id, customer_message, ai_draft, sent_reply, conversation_state, aix_action, is_starred")
     .eq("was_ai_modified", true)
     .is("diff_analyzed_at", null)
     .not("ai_draft", "is", null)
@@ -1482,34 +1521,8 @@ export async function POST(req: NextRequest) {
     }
 
       // Brain コンテキスト取得（fail-open: 失敗時は null で analyzeDiff 系に渡す）
-      let exBrainContext: BrainContext | null = null;
-      if (exConversationId) {
-        try {
-          const { data: brainConvData } = await supabase
-            .from("conversations")
-            .select("suggested_aix_meta, property_customers(ai_summary_json)")
-            .eq("id", exConversationId)
-            .maybeSingle();
-          if (brainConvData) {
-            const brainMeta = brainConvData.suggested_aix_meta as Record<string, unknown> | null;
-            const brainCustomer = Array.isArray(brainConvData.property_customers)
-              ? (brainConvData.property_customers[0] as Record<string, unknown> | null)
-              : (brainConvData.property_customers as Record<string, unknown> | null);
-            const brainSummary = brainCustomer?.ai_summary_json as Record<string, unknown> | null;
-            exBrainContext = {
-              action: (brainMeta?.action as string | null) ?? null,
-              reply_mode: (brainMeta?.reply_mode as string | null) ?? null,
-              emotion: (brainSummary?.emotion as string | null) ?? null,
-              urgency: (brainSummary?.urgency as string | null) ?? null,
-              closing_strategy: (brainMeta?.closing_strategy as string | null) ?? null,
-              reply_direction: (brainMeta?.reply_direction as string | null) ?? null,
-              checkpoint_stage: (brainMeta?.checkpoint_stage as string | null) ?? null,
-              last_aix_history: (brainMeta?.last_aix_history as string | null) ?? null,
-              next_steps: (brainMeta?.next_steps as string | null) ?? null,
-            };
-          }
-        } catch { /* fail-open: Brain取得失敗時はコンテキストなしで続行 */ }
-      }
+      // customer_intent / winning_pattern を含む共通ヘルパーに一元化
+      const exBrainContext = await fetchBrainContext(exConversationId);
 
     // 完全一致はスキップ（構成が同じなので学習不要）
     if ((ai_draft ?? "").trim() === (sent_reply ?? "").trim()) {
@@ -2043,8 +2056,9 @@ export async function POST(req: NextRequest) {
     }
     // メインループと同様、1件の予期しない例外で第2パス全体を中断しない
     try {
-    const { id, customer_message, ai_draft, sent_reply, conversation_state, aix_action, is_starred } = ex as {
+    const { id, conversation_id: aixConversationId, customer_message, ai_draft, sent_reply, conversation_state, aix_action, is_starred } = ex as {
       id: string;
+      conversation_id: string | null;
       customer_message: string;
       ai_draft: string;
       sent_reply: string;
@@ -2088,12 +2102,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Brain・AIX-META コンテキスト取得（fail-open）: AIX差分でも「どの顧客状況での修正か」を
+    // ルールの汎用性判断に渡す（メインループと同じ規約・従来はAIX第2パスのみ未配線だった）
+    const aixBrainContext = await fetchBrainContext(aixConversationId);
+
     const aixResult = await analyzeDiff(
       customer_message,
       ai_draft,
       sent_reply,
       aixState,
       `\n※ これはAIXボタン「${aixActionLabel(aixState)}」（${aixState}）の生成文をスタッフが修正した差分です。このAIXアクションの生成文に特有の改善パターンを抽出してください。`,
+      aixBrainContext,
     );
     // LLM失敗時は3日後にバックオフして隔離（メインループと同じ規約・null リセットによる毎日失敗ループを防ぐ）
     if (aixResult === null) {

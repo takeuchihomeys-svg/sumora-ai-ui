@@ -76,6 +76,29 @@ type UsageLogRow = {
 
 type LogResult = { inserted: boolean; skipped?: string; error?: string };
 
+// AIX-META（Brain）主要フィールドの軽量型（analyze-aix-property / analyze-aix-adapt と同設計）
+type AixMetaLite = {
+  customer_intent?: string | null;
+  checkpoint_stage?: string | null;
+  closing_strategy?: string | null;
+  repeated_concern?: string | null;
+  winning_pattern?: string | null;
+};
+
+// AIX-META主要フィールドを customer_message 末尾に付与する文脈テキストに変換する。
+// suggested_aix_meta は揮発フィールド（スタッフ返信でクリア）のため、取得できた場合のみベストエフォートで付与。
+function buildMetaContext(meta: AixMetaLite | null): string {
+  if (!meta) return "";
+  const lines = [
+    meta.customer_intent ? `顧客インテント: ${meta.customer_intent}` : "",
+    meta.checkpoint_stage ? `フェーズ: ${meta.checkpoint_stage}` : "",
+    meta.closing_strategy ? `成約戦略: ${meta.closing_strategy}` : "",
+    meta.repeated_concern ? `繰り返し懸念: ${meta.repeated_concern}` : "",
+    meta.winning_pattern ? `勝ちパターン: ${meta.winning_pattern}` : "",
+  ].filter(Boolean);
+  return lines.length > 0 ? `〔AIX-META〕${lines.join(" / ")}` : "";
+}
+
 // テンプレート選択ログ1件をバックフィルする。成功（または重複としてスキップ確定）時のみ
 // example_backfilled_at を更新する。
 async function backfillFromTemplateLog(
@@ -160,6 +183,28 @@ async function backfillFromTemplateLog(
   if (aixText) {
     const aixContext = `〔直前のAIX送信〕${aixText.slice(0, AIX_CONTEXT_MAX_CHARS)}`;
     customerMessage = customerMessage ? `${customerMessage}\n${aixContext}` : aixContext;
+  }
+
+  // AIX-META（Brain）主要フィールドを文脈として付与（揮発フィールドのためベストエフォート・fail-open）
+  // 「なぜこのテンプレが選ばれ・どう編集されたか」の顧客状況文脈を学習データに残す
+  try {
+    const { data: convRow } = await supabase
+      .from("conversations")
+      .select("suggested_aix_meta")
+      .eq("id", log.conversation_id)
+      .maybeSingle();
+    const metaContext = buildMetaContext((convRow?.suggested_aix_meta ?? null) as AixMetaLite | null);
+    if (metaContext) {
+      customerMessage = customerMessage ? `${customerMessage}\n${metaContext}` : metaContext;
+    }
+  } catch {
+    // meta取得失敗は無視（既存の文脈のみでバックフィル続行）
+  }
+
+  // Brainテンプレヒント（brain_template_hint = Brainがこのテンプレを推した理由）があれば文脈に付与
+  const templateHint = (log.brain_template_hint ?? "").trim();
+  if (templateHint) {
+    customerMessage = `${customerMessage}\n〔Brainテンプレヒント〕${templateHint.slice(0, 200)}`.trim();
   }
 
   const wasModified = log.was_modified_after_adapt === true;
