@@ -1,8 +1,10 @@
 ﻿import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { PROPERTY_CHECK_RESULT_LABEL } from "@/app/lib/aix-taxonomy";
 import { safeInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
+import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 300;
 
@@ -180,6 +182,137 @@ ${isUndefined ? "※このアクションは現在【AIXとの役割分担】ル
   return questionCount;
 }
 
+// ============================================================
+// AIXパターン蒸留（synthesizeAixPatterns・2026-08-29追加）
+// corpus2skill の P1（synthesizeSkills）は entry_source='line_reply' 専用で
+// AIXバックフィルデータ（aix_template / aix_property / aix_adapt）を一切処理しない。
+// そのままでは品質精査ゼロのデータが aix-template-generate / aix/action のRAGに
+// 直接使われ続けるため、ここでアクション別に「良い送信パターン」を蒸留して
+// ai_reply_knowledge（category='pattern'）に upsert する。
+//   - importance=8: generate-reply の min_importance=7 を満たしつつ、
+//     corpus2skill の未使用降格（importance>=7 対象）から1段の猶予を持たせる
+//   - conversation_state='aix_{action}': 通常返信のステートマッチと衝突しない名前空間
+// ============================================================
+
+const AIX_PATTERN_SOURCES = ["aix_template", "aix_property", "aix_adapt"];
+const AIX_PATTERN_MAX_ACTIONS = 6;      // 1実行あたりの蒸留対象アクション上限（コスト・時間制御）
+const AIX_PATTERN_MIN_EXAMPLES = 3;     // 蒸留に必要な最小実例数
+const AIX_PATTERN_EXAMPLES_PER_ACTION = 10;
+
+type AixPatternExample = {
+  aix_action: string | null;
+  entry_source: string;
+  customer_message: string | null;
+  sent_reply: string | null;
+  is_starred: boolean | null;
+};
+
+async function synthesizeAixPatterns(
+  supabase: SupabaseClient,
+  anthropic: Anthropic,
+  sevenDaysAgo: string
+): Promise<{ actionsProcessed: number; inserted: number; merged: number; skipped: number }> {
+  const result = { actionsProcessed: 0, inserted: 0, merged: 0, skipped: 0 };
+
+  const { data: rows, error } = await supabase
+    .from("ai_reply_examples")
+    .select("aix_action, entry_source, customer_message, sent_reply, is_starred")
+    .in("entry_source", AIX_PATTERN_SOURCES)
+    .gte("created_at", sevenDaysAgo)
+    .not("sent_reply", "is", null)
+    .not("aix_action", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) {
+    console.warn("[aix-weekly-learning] synthesizeAixPatterns 取得失敗:", error.message);
+    return result;
+  }
+
+  // アクション別にグループ化（⭐実例を優先して各アクション最大10件）
+  const byAction = new Map<string, AixPatternExample[]>();
+  for (const row of (rows ?? []) as AixPatternExample[]) {
+    if (!row.aix_action || !row.sent_reply) continue;
+    const group = byAction.get(row.aix_action) ?? [];
+    group.push(row);
+    byAction.set(row.aix_action, group);
+  }
+
+  // 実例数の多いアクションから最大6件を処理対象にする
+  const targets = [...byAction.entries()]
+    .filter(([, examples]) => examples.length >= AIX_PATTERN_MIN_EXAMPLES)
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, AIX_PATTERN_MAX_ACTIONS);
+
+  for (const [actionType, examples] of targets) {
+    try {
+      const picked = [...examples]
+        .sort((a, b) => Number(b.is_starred === true) - Number(a.is_starred === true))
+        .slice(0, AIX_PATTERN_EXAMPLES_PER_ACTION);
+
+      const examplesText = picked.map((ex, i) => {
+        const starLabel = ex.is_starred ? "⭐お客様が反応した実例" : "通常実例";
+        return `【実例${i + 1}】[${starLabel} / ${ex.entry_source}]
+お客様の状況: ${(ex.customer_message ?? "").replace(/\n/g, " ").slice(0, 150)}
+送信文: ${(ex.sent_reply ?? "").slice(0, 300)}`;
+      }).join("\n\n");
+
+      const response = await anthropic.messages.create({
+        model: "claude-sonnet-5",
+        max_tokens: 1200,
+        system: `あなたは賃貸仲介LINE営業のコーチです。AIXボタン「${ACTION_LABELS[actionType] ?? actionType}」で実際に送信された文の実例から、「このアクションの良い送信パターン」を抽出してください。
+
+条件:
+- 固有名詞・物件名・日時に依存しない、どの顧客にも使える普遍パターンのみ
+- ⭐お客様が反応した実例のパターンを特に重視する
+- 薄い・当たり前すぎるものは除外（本当に価値のあるものだけ）
+- 最大2個まで。価値あるパターンがなければ空配列 [] を返す
+
+出力形式（JSON配列のみ・説明不要）:
+[{"title": "パターン名（25文字以内）", "content": "パターンの詳細と使い方（200文字以内）", "trigger": "このパターンが活きる顧客状況の例文（50文字以内）"}]`,
+        messages: [{
+          role: "user",
+          content: `以下は過去7日間の「${actionType}」アクションの実送信例です:\n\n${examplesText}`,
+        }],
+      });
+
+      const rawText = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
+      const jsonMatch = rawText.match(/\[\s*[\s\S]*\]/);
+      if (!jsonMatch) { result.skipped++; continue; }
+      const patterns: Array<{ title?: string; content?: string; trigger?: string }> = JSON.parse(jsonMatch[0]);
+      if (!Array.isArray(patterns) || patterns.length === 0) { result.skipped++; continue; }
+
+      for (const p of patterns.slice(0, 2)) {
+        if (!p?.title?.trim() || !p?.content?.trim() || p.content.length < 20) continue;
+        const conversationState = `aix_${actionType}`;
+        const embeddingInput = buildKnowledgeEmbeddingInput({
+          trigger_example: p.trigger,
+          content: p.content,
+          conversation_state: conversationState,
+        });
+        const embedding = await generateEmbedding(embeddingInput).catch(() => null);
+        const upserted = await upsertKnowledge(supabase, {
+          title: `[aix_pattern] ${p.title.trim().slice(0, 40)}`,
+          content: p.content.trim(),
+          category: "pattern",
+          importance: 8, // 自動削除・降格からの保護レベル
+          conversation_state: conversationState,
+          ...(embedding ? { embedding } : {}),
+          ...(p.trigger ? { trigger_example: p.trigger } : {}),
+        });
+        if (upserted.result === "inserted") result.inserted++;
+        else if (upserted.result === "merged") result.merged++;
+      }
+      result.actionsProcessed++;
+    } catch (e) {
+      console.error(`[aix-weekly-learning] synthesizeAixPatterns(${actionType}) 失敗:`, e);
+      result.skipped++;
+    }
+  }
+
+  console.log(`[aix-weekly-learning] AIXパターン蒸留: actions=${result.actionsProcessed}, inserted=${result.inserted}, merged=${result.merged}, skipped=${result.skipped}`);
+  return result;
+}
+
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -206,10 +339,13 @@ export async function POST(req: NextRequest) {
   for (const actionType of AIX_ACTIONS) {
     try {
       // Fetch AIX edits for this action from past 7 days
+      // 2026-08-29: entry_source を aix_action のみ → 全AIXバケットに拡張。
+      // aix_template（adapted_text 由来）/ aix_property・aix_adapt（aix_generate_log 由来）にも
+      // ai_draft と was_ai_modified がバックフィルされるため、編集差分の学習対象に含める
       const { data: examples } = await supabase
         .from("ai_reply_examples")
         .select("customer_message, ai_draft, sent_reply, conversation_id")
-        .eq("entry_source", "aix_action")
+        .in("entry_source", ["aix_action", "aix_template", "aix_property", "aix_adapt"])
         .eq("aix_action", actionType)
         .eq("was_ai_modified", true)
         .gte("created_at", sevenDaysAgo)
@@ -313,5 +449,22 @@ AIXボタン「${actionType}」で生成されたテキストをスタッフが�
 
   const boundaryQuestions = await detectBoundaryAmbiguity(supabase);
 
-  return NextResponse.json({ ok: true, weekKey, results, boundaryQuestions });
+  // AIXパターン蒸留: aix_template / aix_property / aix_adapt バケットの品質精査ルート
+  // （失敗しても編集差分学習・線引き質問の結果は返す）
+  const aixPatterns = await synthesizeAixPatterns(supabase, anthropic, sevenDaysAgo).catch((e) => {
+    console.error("[aix-weekly-learning] synthesizeAixPatterns 失敗:", e);
+    return { actionsProcessed: 0, inserted: 0, merged: 0, skipped: 0 };
+  });
+
+  return NextResponse.json({ ok: true, weekKey, results, boundaryQuestions, aixPatterns });
+}
+
+// GET: Vercel Cron は GET でリクエストするため、認証チェック後 POST へ委譲する
+// （GETエクスポートがないと毎週 405 Method Not Allowed で一度も実行されない — corpus2skill と同じ罠）
+export async function GET(req: NextRequest) {
+  const authHeader = req.headers.get("authorization");
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return POST(req);
 }

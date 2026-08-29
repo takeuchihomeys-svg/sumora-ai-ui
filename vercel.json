@@ -194,7 +194,7 @@
     },
     {
       "path": "/api/cron/aix-weekly-learning",
-      "schedule": "30 18 * * 0"
+      "schedule": "30 23 * * 0"
     },
     {
       "path": "/api/cron/brain-sweep",

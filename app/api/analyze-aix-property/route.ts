@@ -32,7 +32,15 @@ const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 
 // 学習対象とみなす本文の最小文字数（挨拶だけの断片・エラー文を除外）
+// ※ 30字未満の短文（「はい」等）はこの条件で同時に除外される
 const MIN_TEXT_LENGTH = 50;
+
+// 品質フィルター（2026-08-29追加）: 物件カード形式（構造化記号で始まる本文）は
+// 「訴求文」バケットへの誤混入とみなし除外する（学習対象は会話的な物件紹介文のみ）
+const CARD_FORMAT_PATTERN = /^[🌟⭐★■━┏◆▼]/;
+
+// ai_draft（スタッフ編集前のAIX原文）を aix_generate_log から引く突合窓（送信60分前まで）
+const DRAFT_LOOKUP_WINDOW_MS = 60 * 60 * 1000;
 
 // CRON_SECRET（Vercel cron）または INTERNAL_API_SECRET（requireInternalAuth）のどちらかで認証する
 function checkAuth(req: NextRequest): NextResponse | null {
@@ -100,6 +108,12 @@ async function backfillFromUsageLog(log: UsageLogRow): Promise<LogResult> {
     return { inserted: false, skipped: "missing_data" };
   }
 
+  // 品質フィルター: 物件カード形式（🌟・■等の構造化記号で始まる）は誤混入とみなし除外
+  if (CARD_FORMAT_PATTERN.test(sentText)) {
+    await markBackfilled(log.id);
+    return { inserted: false, skipped: "card_format" };
+  }
+
   // 重複チェック: 同一 aix_action + 同一 sent_reply が物件バケットに既に存在すれば挿入しない
   const { data: dup, error: dupErr } = await supabase
     .from("ai_reply_examples")
@@ -133,6 +147,10 @@ async function backfillFromUsageLog(log: UsageLogRow): Promise<LogResult> {
     .join("\n")
     .slice(0, 800);
 
+  // 品質フィルター: 顧客メッセージ文脈が1件もない実例は ⭐候補にしない（is_starred=false 強制）
+  // ※ 後段で付与する〔AIX-META〕文脈は顧客発話ではないため、ここで判定を確定させる
+  const hasCustomerContext = customerMessage.length > 0;
+
   // AIX-META主要フィールドを文脈として付与（揮発フィールドのためベストエフォート）
   try {
     const { data: convRow } = await supabase
@@ -149,6 +167,31 @@ async function backfillFromUsageLog(log: UsageLogRow): Promise<LogResult> {
   }
 
   const wasEdited = log.was_edited === true;
+
+  // スタッフ編集前のAIX原文を ai_draft として取得（best-effort）。
+  // aix_usage_logs.generated_text は編集後テキストのため、真の原文は aix_generate_log にある。
+  // これがないと aix-weekly-learning の差分学習（ai_draft IS NOT NULL 条件）で永遠に対象外になる
+  let aiDraft: string | null = null;
+  if (wasEdited) {
+    try {
+      const windowStart = new Date(new Date(anchorAt).getTime() - DRAFT_LOOKUP_WINDOW_MS).toISOString();
+      const { data: genRow } = await supabase
+        .from("aix_generate_log")
+        .select("generated_text")
+        .eq("conversation_id", log.conversation_id)
+        .eq("action_type", log.aix_type)
+        .gte("generated_at", windowStart)
+        .lte("generated_at", anchorAt)
+        .order("generated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const draft = ((genRow?.generated_text as string | null) ?? "").trim();
+      if (draft && draft !== sentText) aiDraft = draft;
+    } catch {
+      // 原文取得失敗は無視（ai_draft なしでバックフィル続行）
+    }
+  }
+
   const { error: insErr } = await supabase.from("ai_reply_examples").insert({
     entry_source: "aix_property",
     aix_action: log.aix_type,
@@ -158,10 +201,12 @@ async function backfillFromUsageLog(log: UsageLogRow): Promise<LogResult> {
     conversation_id: log.conversation_id,
     sent_at: anchorAt,
     // お客様が反応した実例 = ⭐良い実例（aix/action が is_starred 優先で参照）
-    is_starred: log.customer_reacted === true,
+    // 品質フィルター: 顧客メッセージ文脈がない実例は品質シグナルを下げる（⭐にしない）
+    is_starred: hasCustomerContext && log.customer_reacted === true,
     reply_angle: wasEdited ? "ai_edited" : "ai_generated",
     was_ai_used: true,
     was_ai_modified: wasEdited,
+    ...(aiDraft ? { ai_draft: aiDraft } : {}),
     // embedding は付与しない → backfill-embeddings が embedding IS NULL を拾って後追い生成する
   });
   if (insErr) return { inserted: false, error: `ai_reply_examples insert失敗: ${insErr.message}` };

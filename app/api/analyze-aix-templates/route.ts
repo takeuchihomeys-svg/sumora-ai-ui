@@ -31,6 +31,12 @@ export const maxDuration = 300;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
+// ── 品質フィルター（2026-08-29追加）──────────────────────────────
+// 短文（「はい」「承知しました」等）は学習価値がないため除外する
+const MIN_TEXT_LENGTH = 30;
+// 物件カード形式（構造化記号で始まる本文）はテンプレ実例バケットへの誤混入とみなし除外する
+const CARD_FORMAT_PATTERN = /^[🌟⭐★■━┏◆▼]/;
+
 // aix_usage_logs との突合窓: AIX送信（usage log）はテンプレート送信の前に起きるため
 // 「テンプレート送信の60分前 〜 5分後」の同一アクションログを直前のAIX送信とみなす
 // （調査で284/285件がこの窓で成立確認済み）
@@ -53,6 +59,7 @@ type TemplateLogRow = {
   aix_action_type: string;
   conversation_id: string | null;
   final_sent_text: string | null;
+  adapted_text: string | null; // AI適応後・スタッフ編集前のテキスト（ai_draft として保存 → 差分学習対象）
   created_at: string | null;
   was_modified_after_adapt: boolean | null;
   conversation_status: string | null;
@@ -81,6 +88,18 @@ async function backfillFromTemplateLog(
     // データ不備 → 学習価値なし。マークして確定スキップ（無限再試行防止）
     await markBackfilled(log.id);
     return { inserted: false, skipped: "missing_data" };
+  }
+
+  // 品質フィルター①: 30字未満の短文（「はい」「承知しました」等）は学習対象外
+  if (sentText.length < MIN_TEXT_LENGTH) {
+    await markBackfilled(log.id);
+    return { inserted: false, skipped: "too_short" };
+  }
+
+  // 品質フィルター②: 物件カード形式（🌟・■等の構造化記号で始まる）は誤混入とみなし除外
+  if (CARD_FORMAT_PATTERN.test(sentText)) {
+    await markBackfilled(log.id);
+    return { inserted: false, skipped: "card_format" };
   }
 
   // 重複チェック: 同一 aix_action + 同一 sent_reply がテンプレートバケットに既に存在すれば挿入しない
@@ -116,6 +135,10 @@ async function backfillFromTemplateLog(
     .join("\n")
     .slice(0, 1000);
 
+  // 品質フィルター③: 顧客メッセージ文脈が1件もない実例は ⭐候補にしない（is_starred=false 強制）
+  // ※ 後段で付与する〔直前のAIX送信〕文脈は顧客発話ではないため、ここで判定を確定させる
+  const hasCustomerContext = customerMessage.length > 0;
+
   // aix_usage_logs 突合: 同一会話・同一アクション・「送信60分前〜5分後」窓内で最も時間の近いログ
   const sentTime = new Date(sentAt).getTime();
   const usage = usageLogs
@@ -140,6 +163,9 @@ async function backfillFromTemplateLog(
   }
 
   const wasModified = log.was_modified_after_adapt === true;
+  // AI適応後・スタッフ編集前のテキストを ai_draft として保存する。
+  // これがないと aix-weekly-learning の差分学習（ai_draft IS NOT NULL 条件）で永遠に対象外になる
+  const aiDraft = (log.adapted_text ?? "").trim();
   const { error: insErr } = await supabase.from("ai_reply_examples").insert({
     entry_source: "aix_template",
     aix_action: log.aix_action_type,
@@ -150,11 +176,13 @@ async function backfillFromTemplateLog(
     conversation_id: log.conversation_id,
     sent_at: sentAt,
     // お客様が反応した実例 = ⭐良い実例（aix-template-generate が is_starred 優先で参照）
-    is_starred: usage?.customer_reacted === true,
+    // 品質フィルター③: 顧客メッセージ文脈がない実例は品質シグナルを下げる（⭐にしない）
+    is_starred: hasCustomerContext && usage?.customer_reacted === true,
     // AI適応のまま送信 / スタッフが編集して送信
     reply_angle: wasModified ? "ai_edited" : "ai_generated",
     was_ai_used: true,
     was_ai_modified: wasModified,
+    ...(aiDraft && aiDraft !== sentText ? { ai_draft: aiDraft } : {}),
     // embedding は付与しない → backfill-embeddings が embedding IS NULL を拾って後追い生成する
   });
   if (insErr) return { inserted: false, error: `ai_reply_examples insert失敗: ${insErr.message}` };
@@ -196,7 +224,7 @@ export async function POST(req: NextRequest) {
     // aix_action_type IS NOT NULL = AIXボタン経由のテンプレート送信（学習対象）
     const { data: logRows, error: logErr } = await supabase
       .from("template_selection_logs")
-      .select("id, aix_action_type, conversation_id, final_sent_text, created_at, was_modified_after_adapt, conversation_status, brain_template_hint")
+      .select("id, aix_action_type, conversation_id, final_sent_text, adapted_text, created_at, was_modified_after_adapt, conversation_status, brain_template_hint")
       .not("aix_action_type", "is", null)
       .not("final_sent_text", "is", null)
       .neq("final_sent_text", "")
