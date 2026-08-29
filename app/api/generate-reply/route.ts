@@ -3516,6 +3516,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             }
             // f-8: センシティブ検知時は警告メタを冒頭に付与（空生成時は付与しない・テンプレ最適化は sensitiveGateNote="" ）
             finalDraftText = draftBody && sensitiveGateNote ? sensitiveGateNote + draftBody : draftBody;
+            // AIが返信全体を「」で囲む場合がある → センシティブ警告なし時のみ先頭「末尾」ペアを除去
+            if (!sensitiveGateNote && finalDraftText.startsWith("「") && finalDraftText.endsWith("」")) {
+              finalDraftText = finalDraftText.slice(1, -1).trim();
+            }
             // 送信時の再利用判定キー: スタッフのテキストエリアに入る最終形（trim後）のハッシュに更新する
             // （自動修正・センシティブ警告付与でチェック時テキストと変わるため必ず上書き）
             if (finalCheck) finalCheck.checked_text_hash = await sha1(finalDraftText.trim());

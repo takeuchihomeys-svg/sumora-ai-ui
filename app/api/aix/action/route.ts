@@ -742,7 +742,9 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
 // 検出対象: 「名前さん＋挨拶キーワード」または「挨拶キーワード単体」の前にある前置き
 // ※ 名前が本文中に出てくる物件オススメ等では誤検出しないよう、名前は挨拶との直接連接のみ対象
 function extractNotice(text: string, customerName: string): { message: string; notice: string | null } {
-  const trimmed = text.trim();
+  let trimmed = text.trim();
+  // AIが返信全体を「」で囲んで出力することがある → 先頭「末尾」のペアのみ除去
+  if (trimmed.startsWith("「") && trimmed.endsWith("」")) trimmed = trimmed.slice(1, -1).trim();
   const GREETING_KEYWORDS = ["お世話になっております", "お待たせ致しました", "お待たせいたしました", "かしこまりました", "夜分遅くに失礼", "ご連絡頂きありがとうございます"];
 
   // 「名前さん＋挨拶」の連接パターンを検索（名前＋さん＋空白ゼロ個以上＋挨拶）

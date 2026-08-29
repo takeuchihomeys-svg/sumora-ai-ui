@@ -78,11 +78,14 @@ type SupabaseConversationRow = {
 // これらはスタッフ向け内部指示（品質ゲート・次のAIXボタン提案）であり、
 // 顧客向け返信文を入れるテキストボックスには絶対に混入させない。
 function stripInternalTags(text: string): string {
-  return text
+  let t = text
     .replace(/\n?<<<STOP_REASON:[^>]*>>>/g, "")
     .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
     .replace(/\n?<<<FINAL_CHECK:[\s\S]*?>>>/g, "")
     .trim();
+  // AIが返信全体を「」で囲んで出力することがある → 先頭「末尾」のペアのみ除去
+  if (t.startsWith("「") && t.endsWith("」")) t = t.slice(1, -1).trim();
+  return t;
 }
 
 // 最終チェックのハッシュ照合用 SHA-1（Web Crypto。secure context 以外では throw → 呼び出し側で fail-open）
