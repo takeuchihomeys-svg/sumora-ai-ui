@@ -9622,7 +9622,7 @@ export default function Home() {
             return sendMessageText(text, imageUrl, isAix);
           }}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -9716,6 +9716,8 @@ export default function Home() {
                   generated_text: lastAixLogTextRef.current,
                   // 断線④: AixModalで計算したwasEditedをそのまま渡す
                   was_edited: meta?.wasEdited ?? null,
+                  // 「会話を合わせる」生成だったか（analyze-aix-adapt cron の学習対象抽出用）
+                  conversation_match: meta?.conversationMatch ?? null,
                 }),
               }).catch(() => {});
               lastAixLogTextRef.current = null;
@@ -11196,6 +11198,8 @@ export default function Home() {
                 recentConversation: recentConvText,
                 rating,
                 comment: rating === "bad" ? viewingAdaptFeedbackComment : undefined,
+                // 学習カテゴリのアクション別分離: このフローは内覧誘導挨拶（viewing-guide）の adapt
+                actionType: "greeting_viewing",
               }),
             });
             setViewingAdaptFeedbackSent(true);

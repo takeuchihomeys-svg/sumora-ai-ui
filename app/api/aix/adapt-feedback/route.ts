@@ -6,15 +6,37 @@ import Anthropic from "@anthropic-ai/sdk";
 export const maxDuration = 30;
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
 
+// アクション別カテゴリの許可リスト（未知の値・不正値は greeting_viewing にフォールバック）
+// 旧実装は全フィードバックを category="greeting_viewing" 固定で蓄積しており、
+// 他アクション（condition_hearing・property_check_result 等）のフィードバックが混在していた。
+const VALID_ADAPT_ACTION_TYPES = new Set([
+  "greeting_viewing",
+  "viewing_invite",
+  "condition_hearing",
+  "property_check_result",
+  "meeting_place",
+  "application_push",
+  "property_send",
+  "property_recommendation",
+  "estimate_sheet",
+  "acknowledge_check",
+  "followup_revive",
+  "zenryoku_support",
+]);
+
 export async function POST(request: NextRequest) {
   try {
-    const { adaptedText, recentConversation, rating, comment } = await request.json() as {
+    const { adaptedText, recentConversation, rating, comment, actionType } = await request.json() as {
       adaptedText: string;
       baseText?: string;
       recentConversation: string; // 直近会話テキスト
       rating: "good" | "bad";
       comment?: string; // bad時のユーザーコメント
+      actionType?: string; // どのAIXアクションの「会話を合わせる」か（省略時は旧来通り greeting_viewing）
     };
+
+    // 学習カテゴリをアクション別に分離（aix/action の getAdaptImprovementRules が category=actionType で取得する）
+    const category = actionType && VALID_ADAPT_ACTION_TYPES.has(actionType) ? actionType : "greeting_viewing";
 
     if (rating === "good") {
       // 👍: パターンをHaikuで分析してルール化
@@ -42,7 +64,7 @@ ${adaptedText}
         const { data: existing } = await supabase
           .from("adaptation_improvement_rules")
           .select("id, example_count, confidence")
-          .eq("category", "greeting_viewing")
+          .eq("category", category)
           .ilike("rule_text", `%${keyword}%`)
           .limit(1);
 
@@ -59,7 +81,7 @@ ${adaptedText}
         } else {
           // 新規ルールを保存
           await supabase.from("adaptation_improvement_rules").insert({
-            category: "greeting_viewing",
+            category,
             rule_text: rule,
             confidence: 0.6,
             example_count: 1,
@@ -95,7 +117,7 @@ ${adaptedText}`;
       const rule = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
       if (rule) {
         await supabase.from("adaptation_improvement_rules").insert({
-          category: "greeting_viewing",
+          category,
           rule_text: rule,
           confidence: 0.5,
           example_count: 1,
@@ -108,11 +130,11 @@ ${adaptedText}`;
       // ※ ai_feedback_items に priority カラムは無いため confidence: "low" で優先度低を表現し、
       //    UI側（TemplateModal）で adapt_feedback カテゴリを一番下にまとめて表示する
 
-      // 適用されたルール（greeting_viewing の上位アクティブルール）を取得
+      // 適用されたルール（同カテゴリの上位アクティブルール）を取得
       const { data: appliedRules } = await supabase
         .from("adaptation_improvement_rules")
         .select("rule_text, confidence")
-        .eq("category", "greeting_viewing")
+        .eq("category", category)
         .eq("is_active", true)
         .order("confidence", { ascending: false })
         .limit(5);

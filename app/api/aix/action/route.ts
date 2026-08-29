@@ -771,22 +771,75 @@ function extractNotice(text: string, customerName: string): { message: string; n
   return { message: trimmed, notice: null };
 }
 
+// 「会話を合わせる」改善ルール取得（adaptMessageToConversation 専用）
+// adapt-feedback（👍/👎）で蓄積された adaptation_improvement_rules から
+// アクション別（category=actionType）＋共通（category='common'）の高confidenceルールを取得してフォーマットする。
+// ※ 旧データは全て category='greeting_viewing' に蓄積されていた（viewing-guide の内覧誘導挨拶フィードバック由来）ため、
+//   greeting_viewing 以外のアクションには legacy カテゴリを混入させない。
+async function getAdaptImprovementRules(actionType: string): Promise<string> {
+  try {
+    const categories = Array.from(new Set([actionType, "common"]));
+    const { data } = await supabase
+      .from("adaptation_improvement_rules")
+      .select("id, rule_text, confidence, category")
+      .in("category", categories)
+      .eq("is_active", true)
+      .gte("confidence", 0.7)
+      .order("confidence", { ascending: false })
+      .limit(5);
+    const rules = (data ?? []) as { id: string; rule_text: string; category: string }[];
+    if (rules.length === 0) return "";
+    // 使用記録（after()でレスポンス返却後も実行保証・getKnowledgeForState の adaptRules と同方式）
+    const ids = rules.map((r) => r.id).filter(Boolean);
+    if (ids.length > 0) {
+      after(async () => {
+        try {
+          await supabase
+            .from("adaptation_improvement_rules")
+            .update({ last_triggered_at: new Date().toISOString() })
+            .in("id", ids);
+        } catch (e) {
+          console.warn("[aix/action] adaptation_improvement_rules last_triggered_at update failed:", e instanceof Error ? e.message : e);
+        }
+      });
+    }
+    return rules.map((r) => `・${r.rule_text}`).join("\n");
+  } catch (e) {
+    console.error("[aix/action] getAdaptImprovementRules失敗:", e);
+    return ""; // ルール取得失敗は生成自体を止めない
+  }
+}
+
 // base_message適応モード: AIX生成済みメッセージをベースに、会話文脈に合わせた最小限の調整のみを行う
 // （conversation_match + base_message で使用。ゼロから書き直さず、既存ドラフトの品質を維持する）
 // 返り値は生テキスト。呼び出し側で必ず finalizeResponse() を通すこと（号室ゼロ除去・内部メモ分離）
+// improvementRules: getAdaptImprovementRules() で取得したアクション別改善ルール（過去の👍/👎フィードバック学習）
+// brainMeta: AIX-META（suggested_aix_meta）の customer_intent / winning_pattern を言い方の最適化に使う
 async function adaptMessageToConversation(
   baseMessage: string,
   conversationHistory: string,
   customerName: string,
   actionLabel: string,
-  diffNote: string
+  diffNote: string,
+  improvementRules?: string,
+  brainMeta?: { customer_intent?: string | null; winning_pattern?: string | null } | null
 ): Promise<string> {
+  const improvementBlock = improvementRules && improvementRules.trim()
+    ? `\n【会話を合わせる改善ルール（過去フィードバックから学習・必ず守る）】\n${improvementRules.trim()}\n`
+    : "";
+  const metaLines = [
+    brainMeta?.customer_intent ? `意図: ${brainMeta.customer_intent}` : null,
+    brainMeta?.winning_pattern ? `勝ちパターン: ${brainMeta.winning_pattern}` : null,
+  ].filter(Boolean);
+  const brainMetaBlock = metaLines.length > 0
+    ? `\n【お客様意図・最適アプローチ（AIX-META）】\n${metaLines.join("\n")}\n※ ベースメッセージの内容・結果は変えず、「言い方」をこの意図・パターンに寄せること\n`
+    : "";
   const system = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
 
 【お客様名】「${customerName}」
-
+${improvementBlock}${brainMetaBlock}
 【重要】ベースメッセージは既にスタッフが選択した送信内容です。結果・決定・アクションは全て確定済みです。
 
 【あなたのタスク：確定済みメッセージの「言い方」だけを会話に馴染ませる】
@@ -2093,7 +2146,8 @@ ${SMORA_COMMON_RULES}
       if (conversationMatchVI) {
         // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
         if (baseMessage) {
-          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
+          const adaptRulesNoteVI = await getAdaptImprovementRules(currentAction);
+          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "", adaptRulesNoteVI, aixBrainMeta);
           return finalizeResponse(message_text);
         }
         const calendarNoteForVI = calendarNote || "";
@@ -2544,7 +2598,8 @@ ${SMORA_COMMON_RULES}`;
       if (conversationMatch) {
         // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
         if (baseMessage) {
-          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
+          const adaptRulesNoteApp = await getAdaptImprovementRules(currentAction);
+          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "", adaptRulesNoteApp, aixBrainMeta);
           return finalizeResponse(message_text);
         }
         const calendarNoteForApp = calendar_info
@@ -3228,9 +3283,11 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
     } else if (action === "property_check_result") {
       // conversation_match: 会話に合わせた自然文生成（テンプレ固定なし・GENERATION_SYSTEM品質）
       if (body.conversation_match) {
+        // 会話を合わせる改善ルール（このブロック内の adaptMessageToConversation 4呼び出しで共用）
+        const adaptRulesNotePCR = await getAdaptImprovementRules(currentAction);
         // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
         if (baseMessage) {
-          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
+          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "", adaptRulesNotePCR, aixBrainMeta);
           return finalizeResponse(message_text);
         }
 
@@ -3259,7 +3316,7 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
             const cmCnt = cmCountM ? parseInt(cmCountM[1].replace(/[０-９]/g, (c) => String(c.charCodeAt(0) - 0xFF10))) : 1;
             cmBase = cmBuild(cmCnt >= 2 ? `お送り頂きました物件${cmCnt}件につきまして` : "お送り頂きました物件につきまして");
           }
-          message_text = await adaptMessageToConversation(cmBase, recentHistory, name, currentAction, "");
+          message_text = await adaptMessageToConversation(cmBase, recentHistory, name, currentAction, "", adaptRulesNotePCR, aixBrainMeta);
           return finalizeResponse(message_text);
         }
 
@@ -3268,7 +3325,7 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
           const cmExPropName = ((body.exclusive_prop_name as string | undefined) ?? "").trim();
           const cmExRoomNo = ((body.exclusive_room_no as string | undefined) ?? "").trim();
           const cmBase = `お送りいただきました${cmExPropName}${cmExRoomNo}は専任のお部屋となっており、弊社ではご紹介ができないお部屋となります！！\n\nよろしければ私の方で${name}にオススメ出来るお部屋ピックアップさせていただきます😊！！`;
-          message_text = await adaptMessageToConversation(cmBase, recentHistory, name, currentAction, "");
+          message_text = await adaptMessageToConversation(cmBase, recentHistory, name, currentAction, "", adaptRulesNotePCR, aixBrainMeta);
           return finalizeResponse(message_text);
         }
 
@@ -3290,7 +3347,7 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
               ? `こちらが${orPropName}広い間取りのお部屋となります`
               : "こちらが広い間取りのお部屋となります";
           }
-          message_text = await adaptMessageToConversation(cmBase, recentHistory, name, currentAction, "");
+          message_text = await adaptMessageToConversation(cmBase, recentHistory, name, currentAction, "", adaptRulesNotePCR, aixBrainMeta);
           return finalizeResponse(message_text);
         }
 
@@ -3929,7 +3986,8 @@ ${formItems}`;
       if (body.conversation_match) {
         // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
         if (baseMessage) {
-          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
+          const adaptRulesNoteCH = await getAdaptImprovementRules(currentAction);
+          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "", adaptRulesNoteCH, aixBrainMeta);
           return finalizeResponse(message_text, hearingFormExtra);
         }
         const [hearingCMDiffNote, hearingCMStarNote, hearingCMBrainAddendum] = await Promise.all([

@@ -58,7 +58,7 @@ interface AixModalProps {
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -608,6 +608,9 @@ export default function AixModal({
   const sentStepRef = useRef<Record<string, number>>({});
   // AIX完了後テンプレ誘導: /api/aix/action レスポンスの suggest_template_category を保持し、onAfterSend で親（page.tsx）へ渡す
   const suggestTemplateCategoryRef = useRef<string | null>(null);
+  // 直近の生成が「会話を合わせる」（conversation_match）だったか。
+  // onAfterSend 経由で log-aix-usage の conversation_match に記録され、analyze-aix-adapt cron の学習対象になる
+  const lastGenConvMatchRef = useRef(false);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
@@ -2153,6 +2156,8 @@ export default function AixModal({
       }
       setAiDraft(generatedMsg);
       setPreview(useEmoji ? generatedMsg : stripEmoji(generatedMsg));
+      // 「会話を合わせる」生成かを記録（通常生成・再生成で上書きされるため常に最新の生成モードを反映）
+      lastGenConvMatchRef.current = !!extraFlags?.conversation_match;
       // 申込催促系：2通目の締め文を自動生成（1分後送信）
       if (actionType === "application_push" || (actionType === "followup_revive" && followupSubMode === "apply_supplement")) {
         const _n = customerName ? (/(さん|様)$/.test(customerName) ? customerName : `${customerName}さん`) : "お客様";
@@ -2470,6 +2475,7 @@ export default function AixModal({
         scheduled: true,
         wasEdited: schedWasEdited,
         suggestTemplateCategory: suggestTemplateCategoryRef.current ?? undefined,
+        conversationMatch: lastGenConvMatchRef.current,
       });
       onScheduled?.();
       setShowAixScheduleModal(false);
@@ -2588,6 +2594,7 @@ export default function AixModal({
               && stripEmoji(_capSent) !== stripEmoji(_capDraft);
             const capturedRunLearning = runLearning;
             const capturedSuggestTemplateCategory = suggestTemplateCategoryRef.current;
+            const capturedConvMatch = lastGenConvMatchRef.current;
             const sendFn = async () => {
               await capturedOnSend(capturedPreview);
               // UX改善①: 学習は実際に送信が完了した後にのみ実行する
@@ -2607,6 +2614,7 @@ export default function AixModal({
                 sendMode: capturedSendMode ?? undefined,
                 wasEdited: capturedWasEdited,
                 suggestTemplateCategory: capturedSuggestTemplateCategory ?? undefined,
+                conversationMatch: capturedConvMatch,
               });
             };
             onDelayedSend?.(30, sendFn); // 親がsetTimeoutを管理（キャンセル可能）
@@ -2757,6 +2765,7 @@ export default function AixModal({
         sendMode: sendMode ?? undefined,
         wasEdited: _sendWasEdited,
         suggestTemplateCategory: suggestTemplateCategoryRef.current ?? undefined,
+        conversationMatch: lastGenConvMatchRef.current,
       });
       onClose();
     } catch (err) {

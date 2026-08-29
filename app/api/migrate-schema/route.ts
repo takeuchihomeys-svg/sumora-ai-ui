@@ -2703,6 +2703,8 @@ $func$;
 -- 'aix_property' … AIX物件本文の実送信実績（aix_usage_logs.generated_text 由来・
 --                  analyze-aix-property がバックフィル。property_send / property_recommendation の
 --                  訴求品質向上用実例バケット — aix/action が直接クエリで参照）
+-- 'aix_adapt'    … 「会話を合わせる」（conversation_match）で実送信された文の実績
+--                  （aix_usage_logs.conversation_match=true 由来・analyze-aix-adapt がバックフィル）
 
 -- ── analyze-aix-property: AIX物件本文バックフィルの冪等ガード（2026-08-29追加）──
 -- aix_usage_logs.property_example_backfilled_at: /api/analyze-aix-property が該当ログを
@@ -2714,6 +2716,19 @@ CREATE INDEX IF NOT EXISTS idx_aix_usage_prop_backfill
   ON aix_usage_logs(created_at DESC)
   WHERE property_example_backfilled_at IS NULL
     AND aix_type IN ('property_send','property_recommendation');
+
+-- ── analyze-aix-adapt: 「会話を合わせる」送信実例の学習（2026-08-29追加）──
+-- aix_usage_logs.conversation_match: 送信文が「会話を合わせる」（conversation_match）生成だったか。
+--   AixModal（lastGenConvMatchRef）→ page.tsx onAfterSend → /api/log-aix-usage 経由で記録される。
+-- aix_usage_logs.adapt_example_backfilled_at: /api/analyze-aix-adapt が該当ログを
+--   ai_reply_examples（entry_source='aix_adapt'）へバックフィル処理した時刻。
+--   NULL = 未処理（処理対象）。INSERT失敗時は更新されず次回実行で再試行される（フェイルオープン）。
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS conversation_match BOOLEAN;
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS adapt_example_backfilled_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_aix_usage_adapt_backfill
+  ON aix_usage_logs(created_at DESC)
+  WHERE adapt_example_backfilled_at IS NULL
+    AND conversation_match = true;
 
 -- ── analyze-aix-templates: テンプレート実績バックフィルの冪等ガード（2026-08-28追加）──
 -- template_selection_logs.example_backfilled_at: /api/analyze-aix-templates が該当ログを

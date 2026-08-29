@@ -187,9 +187,10 @@ export async function POST(req: NextRequest) {
       send_mode?: string | null;
       generated_text?: string | null;
       was_edited?: boolean | null;
+      conversation_match?: boolean | null;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -223,6 +224,8 @@ export async function POST(req: NextRequest) {
       send_mode: send_mode ?? null,
       generated_text: generated_text ? generated_text.slice(0, 2000) : null,
       was_edited: was_edited ?? null,
+      // 「会話を合わせる」で生成された文か（analyze-aix-adapt cron の学習対象抽出に使用）
+      conversation_match: conversation_match ?? null,
     });
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
