@@ -879,7 +879,8 @@ function buildGenerationMessages(
     ? `\n【🚫 見積書作成宣言の繰り返し禁止（最優先・【💰 見積書カバー文】ゲートより上位）】
 スタッフは直前の返信で既に「割引・御見積書の作成/送付」を約束済み（またはAIX【見積書送る】で見積書送付済み）。
 → 「最大限割引させていただいた御見積書を作成しお送りさせて頂きます」等の作成宣言・割引の約束を絶対にもう一度生成しない（二重宣言になる）
-→ 返信は短い受付文のみ（例:「かしこまりました😊！！」「確認しご連絡させて頂きます😊！！」）。見積・費用の話を新たに展開しない`
+→ 返信は短い受付文のみ（例:「かしこまりました😊！！」「確認しご連絡させて頂きます😊！！」）。見積・費用の話を新たに展開しない
+※ただし例外: お客様が【新しい物件】（URL・物件画像・物件名）を送って初期費用・費用を尋ねた場合はこのブロックを適用しない。新規見積として「最大限割引しました初期費用の御見積書を作成しお送りさせて頂きます！！」の作成宣言を必ず行うこと`
     : "";
 
   const lastAixLine = lastAixHistoryText
@@ -2600,14 +2601,23 @@ export async function POST(req: NextRequest) {
     // 顧客が金額について確認・反応している場合（「179,180円ですか！」「176,180円ですよね？」等の
     // 金額確認質問）も解除する。宣言ブロックより金額質問への回答を優先するため
     const customerAskingAboutPrice = /[¥￥]?[0-9０-９][0-9０-９,，.．]{2,}[\s　]*円/.test(message);
+    // 物件URL/物件特定情報つきの費用質問は「新しい物件への新規見積依頼」→ 送付済み/約束済みフラグを解除する
+    // （過去の別物件の見積送付・約束が新物件の見積作成宣言を恒久ブロックするのを防ぐ。
+    //   例:「この物件の初期費用が知りたいです」＋URL → 会社の定型フローとして必ず見積作成宣言が必要）
+    const hasPropertyRef = /https?:\/\/|suumo|homes\.co|athome|chintai|goodrooms|号室|丁目|マンション|ハイツ|コーポ/i.test(message);
+    const asksCost = /見積|初期費用|スモ割|費用|総額|いくら/.test(message);
+    const isNewPropertyCostAsk = hasPropertyRef && asksCost;
     if (
       estimateAlreadySent &&
       ((/見積/.test(message) && /出して|もらえ|お願い|送って|ください|欲しい|してほしい/.test(message)) ||
-        customerAskingAboutPrice)
+        customerAskingAboutPrice ||
+        isNewPropertyCostAsk)
     ) {
       estimateAlreadySent = false;
     }
+    // staffPromisedEstimate にも同じオーバーライド: 直前の約束は別物件のもの＝新物件は新規見積として扱う
     const staffPromisedEstimate =
+      !isNewPropertyCostAsk &&
       !!lastStaffMsgForSearch &&
       /(最大限割引|スモ割|イエヤス割|御?見積書?)/.test(lastStaffMsgForSearch) &&
       /(作成|お送り|送らせて|送付|割引|お値引)/.test(lastStaffMsgForSearch);
@@ -3512,6 +3522,20 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 aixBoundaryRequired = { action: AIX_BOUNDARY_TO_ACTION[blockIssue.code], code: blockIssue.code };
               } else if (boundaryIssues.length > 0) {
                 aixBoundaryHint = { action: AIX_BOUNDARY_TO_ACTION[boundaryIssues[0].code], code: boundaryIssues[0].code };
+              }
+            }
+            // 同一絵文字の重複を決定的に除去（初出のみ残す・EMOJI_RULEの機械的最終防衛線）
+            // プロンプト指示だけでは絵文字の個数制御は確率的にしか効かないためコードで保証する。
+            // Extended_Pictographic で拾うため許可外絵文字（🥰等）の重複にも効く。
+            // ※テンプレート最適化はテンプレ原文の絵文字配置が正当なため対象外
+            if (!isTemplateOptimize && draftBody) {
+              const seenEmoji = new Set<string>();
+              const deduped = draftBody.replace(/\p{Extended_Pictographic}/gu, (e) =>
+                seenEmoji.has(e) ? "" : (seenEmoji.add(e), e)
+              );
+              if (deduped !== draftBody) {
+                console.warn("[generate-reply] 同一絵文字の重複を機械除去しました");
+                draftBody = deduped;
               }
             }
             // f-8: センシティブ検知時は警告メタを冒頭に付与（空生成時は付与しない・テンプレ最適化は sensitiveGateNote="" ）
