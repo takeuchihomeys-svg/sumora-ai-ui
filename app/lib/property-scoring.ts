@@ -2,8 +2,8 @@
 // match-property-customers / recommend-property の両APIで使用する
 // 画像パース・エリアトークン化・顧客×物件スコアリングを提供
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
-const VISION_MODEL = "claude-sonnet-5"; // 画像読み取りはSonnetで精度優先
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const VISION_MODEL = "gpt-5.4-nano";
 
 export interface ParsedProperty {
   property_name: string;
@@ -19,22 +19,24 @@ export interface ParsedProperty {
 }
 
 export async function parsePropertyFromImage(base64: string, mediaType: string): Promise<ParsedProperty | null> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     signal: AbortSignal.timeout(60_000),
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
+      "Authorization": "Bearer " + OPENAI_API_KEY,
     },
     body: JSON.stringify({
       model: VISION_MODEL,
-      max_tokens: 1000,
-      thinking: { type: "disabled" },
+      max_completion_tokens: 500,
+      response_format: { type: "json_object" },
       messages: [{
         role: "user",
         content: [
-          { type: "image", source: { type: "base64", media_type: mediaType as "image/jpeg" | "image/png" | "image/webp", data: base64 } },
+          {
+            type: "image_url",
+            image_url: { url: "data:" + mediaType + ";base64," + base64, detail: "low" },
+          },
           { type: "text", text: `この賃貸物件の資料画像から情報を読み取って、以下のJSON形式で返してください。
 
 【読み取る項目】
@@ -49,23 +51,7 @@ export async function parsePropertyFromImage(base64: string, mediaType: string):
 9. building_age: 築年数を数値（「2020年築」→2026-2020=6、「築5年」→5）
 10. pet_allowed: ペット可→true、ペット不可→false、記載なし→null
 
-【注意】
-- JSONのみ返す（説明文・前置き不要）
-- 読み取れない項目はnullにする
-- 数値フィールドは文字列ではなく数値型で返す
-
-{
-  "property_name": "",
-  "area": "",
-  "station": "",
-  "nearby_areas": [],
-  "walk_minutes": null,
-  "rent": null,
-  "floor_plan": "",
-  "size": null,
-  "building_age": null,
-  "pet_allowed": null
-}` },
+読み取れない項目はnullにする。数値フィールドは数値型で返す。` },
         ],
       }],
     }),
@@ -73,11 +59,11 @@ export async function parsePropertyFromImage(base64: string, mediaType: string):
 
   if (!res.ok) {
     const errBody = await res.text();
-    console.error("[parsePropertyFromImage] Claude API error:", res.status, errBody);
+    console.error("[parsePropertyFromImage] OpenAI API error:", res.status, errBody);
     return null;
   }
-  const data = await res.json() as { content: Array<{ type: string; text: string }> };
-  const text = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "";
+  const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+  const text = data.choices?.[0]?.message?.content ?? "";
   console.log("[parsePropertyFromImage] raw response:", text);
   try {
     const match = text.match(/\{[\s\S]*\}/);
