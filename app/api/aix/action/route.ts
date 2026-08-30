@@ -2320,13 +2320,12 @@ ${SMORA_COMMON_RULES}
           ? `【内覧可能日時（カレンダー自動取得・この時間で案内すること）】\n${calendarNoteForVI}`
           : "";
 
+        // キャッシュ最適化: 静的（固定指示）と動的（カレンダー・ブレイン・顧客ガイダンス）を分離
         const convMatchVISystem = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
 
 【お客様名】ユーザーメッセージに記載のお客様名を使うこと
-
-${calendarBlock}
 
 【内覧日程を案内する際のルール（最優先）】
 ・カレンダーに複数日がある場合は全日を「直近ですと」ブロック形式で案内する（1日だけ案内して省略するのは絶対禁止）
@@ -2362,13 +2361,18 @@ ${calendarBlock}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
-        const convMatchVISystemFinal = convMatchVISystem + (brainAddendumViConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumViConv : "");
+        const convMatchVIStaticSystem = convMatchVISystem + AIX_CURATED_AND_CRITICAL_RULES;
+        const convMatchVIDynamicSuffix = [
+          calendarBlock,
+          brainAddendumViConv ? `【ブレイン改善ルール】\n${brainAddendumViConv}` : "",
+          brainGuidanceNote || "",
+        ].filter(Boolean).join("\n\n");
         const convMatchVIUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。` + (viewingConvMatchDiffNote ? `\n\n${viewingConvMatchDiffNote}` : "") + (viewingConvMatchStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingConvMatchStarNote : "");
         const rawVI = await callClaude(
-          convMatchVISystemFinal + AIX_CURATED_AND_CRITICAL_RULES,
+          convMatchVIStaticSystem,
           convMatchVIUserFinal,
           currentAction,
-          brainGuidanceNote || undefined
+          convMatchVIDynamicSuffix || undefined
         );
 
         try {
@@ -2775,13 +2779,12 @@ ${SMORA_COMMON_RULES}`;
           : "";
 
         // generate-reply と同等の高品質システムプロンプト構造
+        // キャッシュ最適化: 静的（固定指示）と動的（カレンダー・DBルール・ブレイン）を分離
         const convMatchSystem = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
 
 【お客様名】ユーザーメッセージに記載のお客様名を使うこと
-
-${calendarBlock}
 
 【内覧日程を案内する際のルール（最優先）】
 ・カレンダーに複数日がある場合は全日を自然な文章で案内する（1日だけ案内して他の日を省略するのは絶対禁止）
@@ -2807,12 +2810,17 @@ ${calendarBlock}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const brainAddendumAppConv = await loadBrainTemplate("application_push");
-        const convMatchAppSystemFinal = convMatchSystem + appDbRules + (brainAddendumAppConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppConv : "");
+        const convMatchAppDynamicSuffix = [
+          calendarBlock,
+          appDbRules,
+          brainAddendumAppConv ? `【ブレイン改善ルール】\n${brainAddendumAppConv}` : "",
+        ].filter(Boolean).join("\n\n");
         const convMatchAppUserFinal = `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。` + (appDiffNote ? `\n\n${appDiffNote}` : "") + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
         const raw = await callClaude(
-          convMatchAppSystemFinal,
+          convMatchSystem,
           convMatchAppUserFinal,
-          currentAction
+          currentAction,
+          convMatchAppDynamicSuffix || undefined
         );
 
         try {
@@ -3629,17 +3637,14 @@ ${cmResultLines}
           ? `\n【AIX-META（この局面の最適アプローチ・必ず守る）】\n${pcrMetaLines.join("\n")}\n`
           : "";
 
-        const pcrSystem = `${GENERATION_SYSTEM}
+        // キャッシュ最適化: 静的（GENERATION_SYSTEM/共通ルール/固定指示）と
+        // 動的（確認結果・見積OCR・カレンダー・META・DBルール・ブレイン）を分離し、
+        // 静的側だけを callClaude 第1引数（cache_control付き）に渡す
+        const pcrStaticSystem = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
 
 【お客様名】ユーザーメッセージに記載のお客様名を使うこと
-
-${cmResultBlock}
-
-${cmEstimateFacts.block}
-
-${pcrCalendarBlock}
 
 【この返信の目的】
 ・お客様からリクエストされた物件の確認結果を伝える
@@ -3660,16 +3665,26 @@ ${pcrCalendarBlock}
 ・スタッフの確認結果があるのに「確認させて頂きます」等の確認前メッセージを生成すること
 ・上記の見積書情報に無い金額・費用項目を創作すること
 ・確認済みの物件を「確認中」「引き続き確認します」と保留扱いにすること
-${brainMetaBlockPCR}
+
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
-        const pcrConvSystemFinal = pcrSystem + pcrDbRules + (brainAddendumPcrConv ? "\n\n【ブレイン改善ルール】\n" + brainAddendumPcrConv : "");
+        // 動的（顧客・案件ごとに変わる）ブロック。キャッシュ対象外の第4引数で渡す
+        const pcrDynamicSuffix = [
+          cmResultBlock,
+          cmEstimateFacts.block,
+          pcrCalendarBlock,
+          brainMetaBlockPCR,
+          pcrDbRules,
+          brainAddendumPcrConv ? `【ブレイン改善ルール】\n${brainAddendumPcrConv}` : "",
+        ].filter(Boolean).join("\n\n");
+
         const pcrConvUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrDiffNote ? `\n\n${pcrDiffNote}` : "") + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
         const rawPCR = await callClaude(
-          pcrConvSystemFinal,
+          pcrStaticSystem,
           pcrConvUserFinal,
-          currentAction
+          currentAction,
+          pcrDynamicSuffix || undefined
         );
         try {
           const mPCR = rawPCR.match(/\{[\s\S]*\}/);
@@ -4262,12 +4277,14 @@ ${SMORA_COMMON_RULES}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
-        const hearingCMSystemFinal = hearingCMSystem + (hearingCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + hearingCMBrainAddendum : "");
+        // キャッシュ最適化: hearingCMSystem は全て静的。動的なブレイン改善ルールのみ第4引数へ
+        const hearingCMDynamicSuffix = hearingCMBrainAddendum ? `【ブレイン改善ルール】\n${hearingCMBrainAddendum}` : "";
         const hearingCMUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を読み取り、${name}への挨拶＋ヒアリング導入メッセージを生成してください。` + (hearingCMDiffNote ? `\n\n${hearingCMDiffNote}` : "") + (hearingCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + hearingCMStarNote : "");
         const rawHCM = await callClaude(
-          hearingCMSystemFinal,
+          hearingCMSystem,
           hearingCMUserFinal,
-          currentAction
+          currentAction,
+          hearingCMDynamicSuffix || undefined
         );
         try {
           const mHCM = rawHCM.match(/\{[\s\S]*\}/);
@@ -4522,14 +4539,12 @@ ${SMORA_COMMON_RULES}`;
         const mpAddress = body.meeting_property_address ? String(body.meeting_property_address) : "";
         const mpDate = body.meeting_date ? String(body.meeting_date) : "";
 
+        // キャッシュ最適化: 静的（固定指示）と動的（物件名・住所・内覧日・DBルール・ブレイン）を分離
         const mpSystem = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
 
 【お客様名】ユーザーメッセージに記載のお客様名を使うこと
-${mpPropertyName ? `【物件名】${mpPropertyName}` : ""}
-${mpAddress ? `【住所】${mpAddress}` : ""}
-${mpDate ? `【内覧日】${mpDate}` : ""}
 
 【この返信の目的】
 ・会話の流れに合わせたシンプルな冒頭1文から始める（「かしこまりました！！」は使わず、お客様の言葉・状況に沿った自然な一言）
@@ -4548,12 +4563,19 @@ ${mpDate ? `【内覧日】${mpDate}` : ""}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const mpBaseHint = baseMessage ? `\n\n【参考：前回生成した待ち合わせ情報（日時・物件・住所の参考のみ。冒頭文言は使わない）】\n${baseMessage}` : "";
-        const mpCMSystemFinal = mpSystem + mpDbRules + (mpCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + mpCMBrainAddendum : "");
+        const mpCMDynamicSuffix = [
+          mpPropertyName ? `【物件名】${mpPropertyName}` : "",
+          mpAddress ? `【住所】${mpAddress}` : "",
+          mpDate ? `【内覧日】${mpDate}` : "",
+          mpDbRules,
+          mpCMBrainAddendum ? `【ブレイン改善ルール】\n${mpCMBrainAddendum}` : "",
+        ].filter(Boolean).join("\n\n");
         const mpCMUserFinal = greetingTimeNote + `${recentHistory}${mpBaseHint}\n\n上記の会話を読み取り、${name}への待ち合わせ確定メッセージを生成してください。` + (mpDiffNote ? `\n\n${mpDiffNote}` : "") + (mpStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + mpStarNote : "");
         const rawMP = await callClaude(
-          mpCMSystemFinal,
+          mpSystem,
           mpCMUserFinal,
-          currentAction
+          currentAction,
+          mpCMDynamicSuffix || undefined
         );
         try {
           const mMP = rawMP.match(/\{[\s\S]*\}/);
@@ -4843,12 +4865,17 @@ ${SMORA_COMMON_RULES}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
-        const followupCMSystemFinal = followupCMSystem + followupCMDbRules + (followupCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + followupCMBrainAddendum : "");
+        // キャッシュ最適化: followupCMSystem は全て静的。DBルール・ブレイン改善ルールのみ第4引数へ
+        const followupCMDynamicSuffix = [
+          followupCMDbRules,
+          followupCMBrainAddendum ? `【ブレイン改善ルール】\n${followupCMBrainAddendum}` : "",
+        ].filter(Boolean).join("\n\n");
         const followupCMUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への追客メッセージを生成してください。${extra_input ? `\n補足情報: ${extra_input}` : ""}` + (followupCMDiffNote ? `\n\n${followupCMDiffNote}` : "") + (followupCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + followupCMStarNote : "");
         const rawFCM = await callClaude(
-          followupCMSystemFinal,
+          followupCMSystem,
           followupCMUserFinal,
-          currentAction
+          currentAction,
+          followupCMDynamicSuffix || undefined
         );
         try {
           const mFCM = rawFCM.match(/\{[\s\S]*\}/);
