@@ -9639,7 +9639,7 @@ export default function Home() {
             return sendMessageText(text, imageUrl, isAix);
           }}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[] }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -9740,6 +9740,10 @@ export default function Home() {
                   was_edited: meta?.wasEdited ?? null,
                   // 「会話を合わせる」生成だったか（analyze-aix-adapt cron の学習対象抽出用）
                   conversation_match: meta?.conversationMatch ?? null,
+                  // M1: 物件確認結果の永続化（どの物件がどういう状態だったか）。
+                  // brain-core が【物件別空き状況（確定事実）】としてプロンプトへ注入する
+                  property_names: meta?.propertyNames ?? null,
+                  prop_statuses: meta?.propStatuses ?? null,
                 }),
               }).catch(() => {});
               lastAixLogTextRef.current = null;

@@ -2779,6 +2779,17 @@ AS $func$
     AND e.outcome_status IS DISTINCT FROM p_outcome;
 $func$;
 
+-- ── M1: AIX物件確認結果の永続化（2026-08-30追加）──
+-- 「物件確認した」AIXでスタッフが入力した「どの物件が・どういう状態だったか」を保存する。
+-- 従来は aix_usage_logs.check_pattern（available/unavailable 等の代表1値）しか残らず、
+-- 物件ごとの空き状況（3件中1件だけ空室 等）が捨てられていたため brain が把握できなかった。
+-- property_names: 確認した物件名リスト（AixModal のOCR抽出名 or 手入力名。順序は prop_statuses と対応）
+-- prop_statuses:  各物件の状態 "available"（空室あり）/"unavailable"（募集終了）/"vacating"（退去予定）/"alternative"（代替提案）
+-- AixModal → page.tsx onAfterSend → /api/log-aix-usage 経由で記録され、
+-- brain-core.ts が select して【物件別空き状況（確定事実）】ブロックとしてプロンプトに注入する。
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS property_names TEXT[];
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS prop_statuses TEXT[];
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

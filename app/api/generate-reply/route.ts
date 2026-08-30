@@ -2807,7 +2807,16 @@ export async function POST(req: NextRequest) {
       if (brainMeta.customer_emotion) lines.push("- 💡 顧客の感情状態: " + brainMeta.customer_emotion + " → この感情を踏まえ冒頭1文で受け止めること（例: 不安→「ご心配なお気持ち、よくわかります」/ 前向き→「嬉しいです！」）。感情無視の事務的な書き出しは禁止");
       // ── purchase_signal_level クロージング強度制御 ────────────────────────────
       // none は干渉ゼロ（現行ロジックをそのまま通す）
-      if (brainMeta.purchase_signal_level === "peak") {
+      // M4: engagement_stance="wait"（強推し直後の待ちフェーズ・ネガ文脈直後）ではブロック全体をスキップする。
+      // purchase_signal_level は「熱量が高い→もっと押す」の一方向しか表現できず、
+      // ルール⑦（ネガ文脈）・ルール⑧（強推し直後の了承）の局面で希少性訴求・CTA・申込期限の明示が
+      // 混入すると離脱率が上がる。押しの強さより局面判定を優先する（"push"/null は従来どおり）。
+      const closingGatedByStance = brainMeta.engagement_stance === "wait";
+      if (closingGatedByStance) {
+        lines.push(
+          `- ⏸️ 押し引きスタンス: WAIT（待ちの局面）— 強推し直後の了承、またはネガ文脈（断り・キャンセル・否決・募集終了）の直後です。希少性訴求・申込期限の明示・CTA・新規物件提案は今回の返信に一切入れないこと。受け止めと見守りの姿勢で締めること`
+        );
+      } else if (brainMeta.purchase_signal_level === "peak") {
         lines.push(
           `- 🔥 購買シグナル: PEAK（申込直前最強シグナル）— 入居日の具体日付確定・競合申込者の自発確認・3件以上の連続具体質問のいずれかを検出。今回の返信で完全クロージングフローを発動すること: ①申込期限を明示（例: 「今週中にお申込み頂ければ一番手でお部屋を抑えられます！」）②申込書類リストをセットで案内 ③WE DO宣言でお部屋確保を約束。urgency_appropriate フラグに関係なく発動（PERM-CLOSING-MOVEIN-DATE-001 と同等のクロージング強度）`
         );

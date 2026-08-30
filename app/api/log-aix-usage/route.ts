@@ -188,9 +188,12 @@ export async function POST(req: NextRequest) {
       generated_text?: string | null;
       was_edited?: boolean | null;
       conversation_match?: boolean | null;
+      // M1: 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
+      property_names?: string[] | null;
+      prop_statuses?: string[] | null;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -226,6 +229,15 @@ export async function POST(req: NextRequest) {
       was_edited: was_edited ?? null,
       // 「会話を合わせる」で生成された文か（analyze-aix-adapt cron の学習対象抽出に使用）
       conversation_match: conversation_match ?? null,
+      // M1: 物件確認結果の永続化。property_names[i] と prop_statuses[i] が対応する。
+      // brain-core.ts が select して【物件別空き状況（確定事実）】ブロックに変換する。
+      // 空配列は NULL に落とす（brain 側の length>0 判定を簡潔に保つため）
+      property_names: Array.isArray(property_names) && property_names.length > 0
+        ? property_names.map((n) => String(n ?? "").slice(0, 100))
+        : null,
+      prop_statuses: Array.isArray(prop_statuses) && prop_statuses.length > 0
+        ? prop_statuses.map((s) => String(s ?? "").slice(0, 40))
+        : null,
     });
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

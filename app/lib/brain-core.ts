@@ -103,6 +103,11 @@ export type SuggestedAixMeta = {
   // ai_summary_jsonからの感情状態
   customer_emotion?: string | null;
   purchase_signal_level?: "none" | "soft" | "strong" | "peak" | null;  // 購買シグナル強度（none=一般質問 / soft=1件具体確認 / strong=異カテゴリ2件以上 / peak=申込直前最強）
+  // M4: 押す／待つの局面軸。purchase_signal_level が「熱量→もっと押す」の一方向しか制御できないため、
+  // 「押してはいけない局面」を独立軸で持つ。generate-reply の purchase_signal_level ブロックを
+  // "wait" のときゲート（丸ごとスキップ）する。message-local判定のため前回値は引き継がない。
+  // "wait"=強推し直後の待ちフェーズ・ネガ文脈直後 / "push"=高熱かつ顧客が迷っている / null=通常
+  engagement_stance?: "push" | "wait" | null;
   human_type_label?: string | null;  // 顧客タイプ（winning_patternsのRAGヒット上位から取得。prevMetaで引き継ぎ）
 } | null;
 
@@ -909,7 +914,9 @@ export async function analyzeConversation(
     // 「物件確認した」だけでなく「結果どうだったか」を last_aix_history に含めるため取得
     supabase
       .from("aix_usage_logs")
-      .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern")
+      // M1: property_names / prop_statuses = スタッフが「物件確認した」で入力した物件別の空き状況。
+      // check_pattern（代表1値）では失われる「3件中1件だけ空室」の粒度をbrainに渡すため取得する
+      .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern, property_names, prop_statuses")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(30),
@@ -996,7 +1003,7 @@ export async function analyzeConversation(
   // AIXアクションのメッセージ単位ラベル解決
   // 1) line_message_id 完全一致（P4以降のログ・直近30日で97%カバー）
   // 2) 旧ログ fallback: is_aix_generated=true × sent_at ±3分
-  type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null; check_pattern?: string | null };
+  type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null; check_pattern?: string | null; property_names?: string[] | null; prop_statuses?: string[] | null };
   const aixLogs = (aixLogsResult.data ?? []) as AixLog[];
   // AIX遷移マップ（DB動的）: from_aix_type → [{to, count}] 降順
   const aixTransitionMap: Record<string, Array<{ to: string; count: number }>> = {};
@@ -1665,9 +1672,38 @@ export async function analyzeConversation(
   const checkResultsText = resolvedWithResult.length > 0
     ? `\n【空室確認の回答結果（確定事実）】\n${resolvedWithResult.map((t) => `- ${taskLabel[t.task_type] ?? t.task_type}: ${TASK_RESULT_LABEL[t.result ?? ""] ?? t.result}${t.result_note ? `（${t.result_note.slice(0, 60)}）` : ""}`).join("\n")}\n※「募集終了」「申込済み」となった物件について「募集状況を確認します」と言ってはならない（確認済みの確定事実。再言及は誤情報になる）`
     : "";
+  // M1: AIX「物件確認した」でスタッフが入力した物件別の空き状況（aix_usage_logs.property_names / prop_statuses）。
+  // line_tasks 由来の checkResultsText は「タスク単位の代表1値」しか持たないため、
+  // 「3件確認して1件だけ空室」のような物件粒度の確定事実はここでしか供給できない。
+  // 同じ物件が複数回確認されている場合は最新ログ（aixLogs は created_at 降順）の状態を採用する。
+  const PROP_STATUS_LABEL: Record<string, string> = {
+    available: "空室あり（申込可）",
+    unavailable: "募集終了",
+    vacating: "退去予定（空室予定）",
+    alternative: "代替提案物件",
+  };
+  const propStatusByName = new Map<string, string>();
+  for (const l of aixLogs) {
+    const names = l.property_names ?? [];
+    const statuses = l.prop_statuses ?? [];
+    if (!Array.isArray(names) || names.length === 0) continue;
+    for (let i = 0; i < names.length; i++) {
+      const name = (names[i] ?? "").trim();
+      const status = (statuses[i] ?? "").trim();
+      if (!name || !status) continue;
+      if (!propStatusByName.has(name)) propStatusByName.set(name, status); // 降順なので初出＝最新
+    }
+  }
+  const propAvailabilityText = propStatusByName.size > 0
+    ? `\n【物件別空き状況（確定事実・再確認宣言は絶対禁止）】\n${[...propStatusByName.entries()]
+        .slice(0, 10)
+        .map(([name, status]) => `- ${name}: ${PROP_STATUS_LABEL[status] ?? status}`)
+        .join("\n")}\n※上記で「募集終了」の物件について「募集状況を確認します」と言ってはならない`
+    : "";
+
   const tasksText = (openTasks.length > 0
     ? `\n【この会話の未完了タスク】${openTasks.map((t) => taskLabel[t.task_type] ?? t.task_type).join(" / ")}\n※next_steps はこれらの未完了タスクを考慮すること。`
-    : "") + checkResultsText;
+    : "") + checkResultsText + propAvailabilityText;
 
   type Viewing = { viewing_date: string; viewing_time: string | null; status: string | null };
   // viewing_history（is_primaryを含む全件）を優先・存在しなければviewingsにフォールバック
@@ -1711,9 +1747,9 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で。必ず「〜させて頂きます」「〜する」の行動宣言形で書く（例: 「今日中にご希望条件の物件をピックアップしてお送りします」）。情報提供・受け身文体は禁止。※条件変更（condition_change_type非null）時は変更後の具体条件名（エリア・駅・家賃・設備等）を必ず明記し「その条件で全力ピックアップします」の行動宣言形にすること（「ご希望の条件」「ご希望のご条件」等の抽象表現は禁止）", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ '申込誘導'（estimate_sheet送付直後・同分〜1分以内の申込促進テンプレート）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション。※条件変更（condition_change_type非null）時のStep1は必ず「変更後の具体条件名（エリア・駅・家賃・設備等を明記）でChrome拡張を使って物件を再検索する」を含めること", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "two_choice_mode": "true または false（boolean）。以下の全条件が揃う場合 true: checkpoint_stage='proposing' かつ 送付済み物件が1件以上ある かつ 顧客の最新メッセージが条件に関するトレードオフ質問（例: '築年数は古くなりますか？' '家賃5万円台だとこの条件は難しいですか？' 'ユニットバスOKでもいいですが室内洗濯機は難しいですか？' '5.5万と6.2万の違いは何ですか？' 'この価格は妥当ですか？'等・現在提案中の物件の条件・価格・設備について納得・比較・トレードオフの判断を求める質問）かつ 顧客が明示的に拒否・離脱していない。→ true の場合、AIXで条件に合う物件を追加オススメするか、テキストで相場や理由を説明するかをスタッフが2択で判断する場面。trueにならないケース: 顧客が「この物件の空室はありますか？」等の募集状況確認をしている場合 / 顧客が新しい検索条件を追加している場合（condition_change_type非null）/ aix=viewing_invite・application_push等の確定アクションがある場合。不明な場合は false に倒す", "reply_direction_label": "two_choice_mode=true の場合のみ設定。返信する場合の方向性を10字以内の日本語で（例: '条件説明' '相場説明' '不安解消' '内覧誘導' '価格の根拠説明'）。two_choice_mode=false の場合は必ずnull", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。必ず「〜する」「〜させて頂く」の行動宣言形で書く。受け身文体は禁止。※条件変更直後（condition_change_type非null時）は「変更後条件の具体名+全力ピックアップ宣言」の構成が成約につながる（成約データから検証済み）。「ご希望のご条件」等の抽象表現ではなく変更後の具体条件名（エリア・駅・間取り・こだわり等）を明記すること。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で", "purchase_signal_level": "none/soft/strong/peak のいずれか。none=購買シグナルなし（挨拶・一般質問・雑談のみ、customer_intent=chat/null含む）/ soft=設備・費用・間取り・審査等の具体的な物件確認質問が1件=本気検討始まりシグナル（customer_questions が1件以上かつ具体的内容）/ strong=異カテゴリ2件以上の質問が重なっている（設備→入居日・費用→審査等）または複数物件の同時比較=申込前の高熱シグナル（customer_questions が2件以上かつ異カテゴリ、またはhesitancy_pattern=undecided）/ peak=入居日が具体的な日付・曜日・月で確定している または 他の申込者の有無を顧客側から自発的に確認している または customer_questions が3件以上の連続具体質問=申込直前最強シグナル。判断できない場合は none"}, "reply_direction": "返信の方向性を20字以内で。必ず『〜する』の行動方針形で書く（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識（内覧履歴・送付済み物件・成約パターン・未完了タスク）から導く。必須フィールド・nullは避ける", "key_topics": ["返信本文に必ず含める実質的内容（最大3件・各30字以内）。挨拶・定型文・トーン指示・抽象的方針は書かない（それらは reply_direction / recommended_tone の役割）。具体的な情報・アクションのみ（例: '本人確認書類送付の催促' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列 []"], "avoid_topics": ["返信で絶対に言及しない語・話題（最大5件・各20字以内）。'来阪' は常に含める。顧客が質問していない費用の話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わないCTA等（例: ['来阪', '見積書', '初期費用']）。理由説明・トーン説明は書かず、禁止する語そのものを書く"], "urgency_appropriate": "true または false（boolean値で出力）。直近のスタッフ送信メッセージ1〜2件（[スタッフ] / [AIX:xxx]）に顧客を急かす危機感・緊急表現（ルール③の表現リスト参照）が含まれていれば false、含まれていなければ true", "recommended_tone": "次の5つの文字列のうち1つだけを正確に出力（組み合わせ・修飾・他の表現は禁止）: '共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項を扱う時）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれにも当てはまらない場合）", "customer_questions": ["顧客の最新メッセージに含まれる質問・確認事項を全て列挙（最大5件・各40字以内・質問の意図が分かる形で）。過去メッセージの質問は含めない。質問がなければ空配列 []"], "repeated_concern": "顧客が会話全体で繰り返し確認しているテーマを短句で（例: '費用' '審査' 'キャンセル'）。会話履歴・前回セーブデータで2回以上登場した話題のみ。なければnull", "current_property": "現在話題の中心になっている物件名・号室（例: 'ライオンズ渋谷401'）。会話履歴または【送付済み物件】に実際に登場した表記を一字一句そのまま使う（創作・言い換え・要約禁止）。特定できなければnull", "condition_change_type": "顧客の最新メッセージで検索条件の変更・追加・緩和、または物件ピックアップ依頼があったか。次のいずれか1つの文字列のみ: 'area_change'（エリア変更）/ 'rent_change'（家賃変更）/ 'layout_change'（間取り変更）/ 'equip_add'（設備・収納・こだわり条件の追加。WIC広め・SIC・南向き・オートロック・駐車場付き・ガレージ・ペット可等。【重要】「駐車場付きのお部屋がないか」「駐車場付きで探して」等は equip_add。現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 → aix は property_send が正解。絶対に property_check_result・acknowledge_check を選ばないこと）/ 'condition_relax'（条件緩和・拡大）/ 'pickup_request'（物件を送って・ピックアップ依頼・おすすめ依頼）/ 'multi'（複数変更）。なければnull。※すでに検討中の物件があっても新しい条件を追加したら必ず種別を返す。※【お客様の希望条件】（DB登録済み条件）と同じ内容の再言及は変更ではない", "hesitancy_pattern": "顧客が決断を保留するパターンを最新メッセージで示しているか。'thinking'（検討します）/ 'callback'（また連絡します）/ 'waiting'（少し待ってほしい）/ 'undecided'（複数物件で迷い）/ 'timeline'（○月に決めたい）のいずれか1つ。なければnull", "future_timeline": "顧客が示した具体的な決断・申込タイムライン（例: '9月上旬'）。会話に実際に出た表現のみ（推測日付の創作禁止）。urgencyフィールドと矛盾させない。なければnull", "checkpoint_stage": "会話の実態フェーズ。hearing(ヒアリング中)・proposing(物件提案中)・applying(申込検討中〜申込書提出)・contract(契約済み)のいずれか。conversations.statusやconversation_checkpointsの内容、メッセージの文脈を総合して判断。判断できない場合はnull。", "customer_intent": "お客様の今回の問い合わせ意図。次のいずれか1つ: question(疑問・確認質問―答えるだけでOK) / consultation(相談・アドバイス求め―選択肢提示) / desire(希望・条件・要望の表明―受け止め→提案) / decision(申込・内見・決定の意思表示―次ステップ案内) / positive(物件や提案への前向き反応―背中を押す) / negative(懸念・不安・否定的反応―解消してから次へ) / chat(雑談・一言―軽い返し)。当てはまるものがなければnull。※条件変更ルール（最重要）:最新メッセージにエリア・家賃・間取り・こだわり等の変更・追加・緩和が明示されている場合は、他のintent種別との競合に関係なく必ずdesireに設定すること（condition_change_typeと同一判定基準。フェイルクローズはnullではなくdesireに倒すこと）", "latent_intent": "お客様の送信動機・潜在意識の推論（20〜50字の自由記述）。次の3視点を総合して1文で言語化する: ①なぜ今このタイミングでこのメッセージを送ってきたのか（背景・きっかけ）を推測する ②表面的な質問の裏にある本当の懸念・不安・期待を推測する（例: 築年数を聞く→きれいな部屋への期待 / 初期費用を聞く→予算ギリギリの不安 / 審査を遠回しに確認→審査に落ちる不安） ③会話パターンから心理状態を読む（沈黙後の突然の質問→他社比較・状況変化の可能性 / 返信が短くなった→温度低下や多忙 / 同じ質問の繰り返し→説明が腹落ちしていない不安）。会話履歴に根拠がなく推測できない場合はnull（創作禁止）。※条件変更時の補足（condition_change_type非null時）:latent_intentには「複数回条件を変更しているが物件探しへの意欲は本物。変更を歓迎し新条件で即動くスタンスを明示することで信頼が積み重なり成約につながる」という趣旨を含めること"}
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で。必ず「〜させて頂きます」「〜する」の行動宣言形で書く（例: 「今日中にご希望条件の物件をピックアップしてお送りします」）。情報提供・受け身文体は禁止。※条件変更（condition_change_type非null）時は変更後の具体条件名（エリア・駅・家賃・設備等）を必ず明記し「その条件で全力ピックアップします」の行動宣言形にすること（「ご希望の条件」「ご希望のご条件」等の抽象表現は禁止）", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ '申込誘導'（estimate_sheet送付直後・同分〜1分以内の申込促進テンプレート）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション。※条件変更（condition_change_type非null）時のStep1は必ず「変更後の具体条件名（エリア・駅・家賃・設備等を明記）でChrome拡張を使って物件を再検索する」を含めること", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "two_choice_mode": "true または false（boolean）。以下の全条件が揃う場合 true: checkpoint_stage='proposing' かつ 送付済み物件が1件以上ある かつ 顧客の最新メッセージが条件に関するトレードオフ質問（例: '築年数は古くなりますか？' '家賃5万円台だとこの条件は難しいですか？' 'ユニットバスOKでもいいですが室内洗濯機は難しいですか？' '5.5万と6.2万の違いは何ですか？' 'この価格は妥当ですか？'等・現在提案中の物件の条件・価格・設備について納得・比較・トレードオフの判断を求める質問）かつ 顧客が明示的に拒否・離脱していない。→ true の場合、AIXで条件に合う物件を追加オススメするか、テキストで相場や理由を説明するかをスタッフが2択で判断する場面。trueにならないケース: 顧客が「この物件の空室はありますか？」等の募集状況確認をしている場合 / 顧客が新しい検索条件を追加している場合（condition_change_type非null）/ aix=viewing_invite・application_push等の確定アクションがある場合。不明な場合は false に倒す", "reply_direction_label": "two_choice_mode=true の場合のみ設定。返信する場合の方向性を10字以内の日本語で（例: '条件説明' '相場説明' '不安解消' '内覧誘導' '価格の根拠説明'）。two_choice_mode=false の場合は必ずnull", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。必ず「〜する」「〜させて頂く」の行動宣言形で書く。受け身文体は禁止。※条件変更直後（condition_change_type非null時）は「変更後条件の具体名+全力ピックアップ宣言」の構成が成約につながる（成約データから検証済み）。「ご希望のご条件」等の抽象表現ではなく変更後の具体条件名（エリア・駅・間取り・こだわり等）を明記すること。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "前向き/不安/冷めかけ/普通 のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で", "purchase_signal_level": "none/soft/strong/peak のいずれか。none=購買シグナルなし（挨拶・一般質問・雑談のみ、customer_intent=chat/null含む）/ soft=設備・費用・間取り・審査等の具体的な物件確認質問が1件=本気検討始まりシグナル（customer_questions が1件以上かつ具体的内容）/ strong=異カテゴリ2件以上の質問が重なっている（設備→入居日・費用→審査等）または複数物件の同時比較=申込前の高熱シグナル（customer_questions が2件以上かつ異カテゴリ、またはhesitancy_pattern=undecided）/ peak=入居日が具体的な日付・曜日・月で確定している または 他の申込者の有無を顧客側から自発的に確認している または customer_questions が3件以上の連続具体質問=申込直前最強シグナル。判断できない場合は none"}, "reply_direction": "返信の方向性を20字以内で。必ず『〜する』の行動方針形で書く（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識（内覧履歴・送付済み物件・成約パターン・未完了タスク）から導く。必須フィールド・nullは避ける", "key_topics": ["返信本文に必ず含める実質的内容（最大3件・各30字以内）。挨拶・定型文・トーン指示・抽象的方針は書かない（それらは reply_direction / recommended_tone の役割）。具体的な情報・アクションのみ（例: '本人確認書類送付の催促' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列 []"], "avoid_topics": ["返信で絶対に言及しない語・話題（最大5件・各20字以内）。'来阪' は常に含める。顧客が質問していない費用の話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わないCTA等（例: ['来阪', '見積書', '初期費用']）。理由説明・トーン説明は書かず、禁止する語そのものを書く"], "urgency_appropriate": "true または false（boolean値で出力）。直近のスタッフ送信メッセージ1〜2件（[スタッフ] / [AIX:xxx]）に顧客を急かす危機感・緊急表現（ルール③の表現リスト参照）が含まれていれば false、含まれていなければ true", "recommended_tone": "次の5つの文字列のうち1つだけを正確に出力（組み合わせ・修飾・他の表現は禁止）: '共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項を扱う時）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれにも当てはまらない場合）", "customer_questions": ["顧客の最新メッセージに含まれる質問・確認事項を全て列挙（最大5件・各40字以内・質問の意図が分かる形で）。過去メッセージの質問は含めない。質問がなければ空配列 []"], "repeated_concern": "顧客が会話全体で繰り返し確認しているテーマを短句で（例: '費用' '審査' 'キャンセル'）。会話履歴・前回セーブデータで2回以上登場した話題のみ。なければnull", "current_property": "現在話題の中心になっている物件名・号室（例: 'ライオンズ渋谷401'）。会話履歴または【送付済み物件】に実際に登場した表記を一字一句そのまま使う（創作・言い換え・要約禁止）。特定できなければnull", "condition_change_type": "顧客の最新メッセージで検索条件の変更・追加・緩和、または物件ピックアップ依頼があったか。次のいずれか1つの文字列のみ: 'area_change'（エリア変更）/ 'rent_change'（家賃変更）/ 'layout_change'（間取り変更）/ 'equip_add'（設備・収納・こだわり条件の追加。WIC広め・SIC・南向き・オートロック・駐車場付き・ガレージ・ペット可等。【重要】「駐車場付きのお部屋がないか」「駐車場付きで探して」等は equip_add。現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 → aix は property_send が正解。絶対に property_check_result・acknowledge_check を選ばないこと）/ 'condition_relax'（条件緩和・拡大）/ 'pickup_request'（物件を送って・ピックアップ依頼・おすすめ依頼）/ 'multi'（複数変更）。なければnull。※すでに検討中の物件があっても新しい条件を追加したら必ず種別を返す。※【お客様の希望条件】（DB登録済み条件）と同じ内容の再言及は変更ではない", "hesitancy_pattern": "顧客が決断を保留するパターンを最新メッセージで示しているか。'thinking'（検討します）/ 'callback'（また連絡します）/ 'waiting'（少し待ってほしい）/ 'undecided'（複数物件で迷い）/ 'timeline'（○月に決めたい）のいずれか1つ。なければnull", "future_timeline": "顧客が示した具体的な決断・申込タイムライン（例: '9月上旬'）。会話に実際に出た表現のみ（推測日付の創作禁止）。urgencyフィールドと矛盾させない。なければnull", "checkpoint_stage": "会話の実態フェーズ。hearing(ヒアリング中)・proposing(物件提案中)・applying(申込検討中〜申込書提出)・contract(契約済み)のいずれか。conversations.statusやconversation_checkpointsの内容、メッセージの文脈を総合して判断。判断できない場合はnull。", "customer_intent": "お客様の今回の問い合わせ意図。次のいずれか1つ: question(疑問・確認質問―答えるだけでOK) / consultation(相談・アドバイス求め―選択肢提示) / desire(希望・条件・要望の表明―受け止め→提案) / decision(申込・内見・決定の意思表示―次ステップ案内) / positive(物件や提案への前向き反応―背中を押す) / negative(懸念・不安・否定的反応―解消してから次へ) / chat(雑談・一言―軽い返し)。当てはまるものがなければnull。※条件変更ルール（最重要）:最新メッセージにエリア・家賃・間取り・こだわり等の変更・追加・緩和が明示されている場合は、他のintent種別との競合に関係なく必ずdesireに設定すること（condition_change_typeと同一判定基準。フェイルクローズはnullではなくdesireに倒すこと）", "latent_intent": "お客様の送信動機・潜在意識の推論（20〜50字の自由記述）。次の3視点を総合して1文で言語化する: ①なぜ今このタイミングでこのメッセージを送ってきたのか（背景・きっかけ）を推測する ②表面的な質問の裏にある本当の懸念・不安・期待を推測する（例: 築年数を聞く→きれいな部屋への期待 / 初期費用を聞く→予算ギリギリの不安 / 審査を遠回しに確認→審査に落ちる不安） ③会話パターンから心理状態を読む（沈黙後の突然の質問→他社比較・状況変化の可能性 / 返信が短くなった→温度低下や多忙 / 同じ質問の繰り返し→説明が腹落ちしていない不安）。会話履歴に根拠がなく推測できない場合はnull（創作禁止）。※条件変更時の補足（condition_change_type非null時）:latent_intentには「複数回条件を変更しているが物件探しへの意欲は本物。変更を歓迎し新条件で即動くスタンスを明示することで信頼が積み重なり成約につながる」という趣旨を含めること", "engagement_stance": "今この局面で「押す」べきか「待つ」べきかの姿勢。'push' / 'wait' / null のいずれか1つだけを出力する。'wait'（押してはいけない局面）= ①直前AIXアクションが property_recommendation または property_check_result であり、顧客の最新メッセージが感謝・了承のみ（60字未満・質問・要望・懸念なし）の場合（ルール⑧の局面＝強推し直後の待ちフェーズ）／②直前スタッフ発言または直近3メッセージ以内の顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等のネガワードがある直後（ルール⑦の局面）。'push'（背中を押すべき局面）= purchase_signal_level が 'strong' または 'peak' であり、かつ顧客がまだ迷っている・質問を重ねている（hesitancy_pattern が非null、または customer_questions が1件以上）場合。上記いずれにも当てはまらない場合は null（デフォルト）。判断に迷ったら null に倒す。※'wait' を出した場合、返信側では購買シグナル強度によるクロージング指示（希少性訴求・CTA・申込期限の明示）が全て無効化される。押しの強さより局面判定が優先される設計であり、'wait' と 'push' を同時に成立させてはならない（ルール⑦・⑧が成立するなら purchase_signal_level が peak でも必ず 'wait'）"}
 
-【差分分析モード】userプロンプトに【前回の分析結論】がある場合、それを仮説として参照してよい。新着メッセージが前回結論を変えない場合は前回結論をほぼ維持してJSON出力してよい。ただし申込・内見確定・キャンセル・条件変更・フェーズ遷移のシグナルがあれば前回結論を破棄して再判断すること。JSONは常に全フィールド完全出力（ai_summary/ai_summary_json含む）。ただし customer_questions・repeated_concern・current_property・condition_change_type・hesitancy_pattern・future_timeline・key_topics・customer_intent・latent_intent の9フィールド（message-local分析）は前回結論を引き継がず、必ず今回の新着メッセージから毎回ゼロから再判定すること（前回の質問リスト・保留パターン・前回の物件名や日付を含む必須内容の再掲は禁止）。purchase_signal_level は累積シグナル（message-localではない）。前回値を継承しつつ今回の新着メッセージのシグナルで更新すること（soft→strong への昇圧はするが、strong→none への突然の降格は禁止。会話全体でシグナルを積み上げる設計）。key_topicsは今回のメッセージ文脈から本当に必要な内容のみ。前回送った物件の空き日付・案内可能日など文脈が変わった情報は絶対に引き継がない。
+【差分分析モード】userプロンプトに【前回の分析結論】がある場合、それを仮説として参照してよい。新着メッセージが前回結論を変えない場合は前回結論をほぼ維持してJSON出力してよい。ただし申込・内見確定・キャンセル・条件変更・フェーズ遷移のシグナルがあれば前回結論を破棄して再判断すること。JSONは常に全フィールド完全出力（ai_summary/ai_summary_json含む）。ただし customer_questions・repeated_concern・current_property・condition_change_type・hesitancy_pattern・future_timeline・key_topics・customer_intent・latent_intent・engagement_stance の10フィールド（message-local分析）は前回結論を引き継がず、必ず今回の新着メッセージから毎回ゼロから再判定すること（前回の質問リスト・保留パターン・前回の物件名や日付を含む必須内容の再掲は禁止）。purchase_signal_level は累積シグナル（message-localではない）。前回値を継承しつつ今回の新着メッセージのシグナルで更新すること（soft→strong への昇圧はするが、strong→none への突然の降格は禁止。会話全体でシグナルを積み上げる設計）。key_topicsは今回のメッセージ文脈から本当に必要な内容のみ。前回送った物件の空き日付・案内可能日など文脈が変わった情報は絶対に引き継がない。
 
 【reply_direction / key_topics / avoid_topics / urgency_appropriate / recommended_tone 判断ルール（5品質ルール）】
 以下の5ルールを厳守して新フィールドに反映すること。判定に迷ったら各ルールの「迷った時」の指示に従う:
@@ -1859,6 +1895,8 @@ ${history}`;
       checkpoint_stage?: "hearing" | "proposing" | "viewing" | "applying" | "contract" | null;
       customer_intent?: "question" | "consultation" | "desire" | "decision" | "positive" | "negative" | "chat" | null;
       latent_intent?: string | null;
+      // M4: 押す／待つの局面軸（enumゲートで "push" | "wait" 以外は null に落とす）
+      engagement_stance?: string | null;
     };
 
     // brain-core統合: ai_summary + ai_summary_json をproperty_customersに保存（fire-and-forget）
@@ -2216,6 +2254,14 @@ ${history}`;
     // 条件変更検出時はcustomer_intentを決定論的にdesireに強制（LLM見落とし対策）
     const customerIntentFinal: NonNullable<SuggestedAixMeta>["customer_intent"] | null = conditionChangeType !== null ? "desire" : customerIntent;
 
+    // M4: engagement_stance — enum ゲート（許可リスト不一致は null フェイルクローズ）。
+    // "wait" は generate-reply の purchase_signal_level クロージング指示を丸ごと無効化する強い信号のため、
+    // 誤値・自由記述は必ず null（＝現行動作維持）に倒す。
+    const ENGAGEMENT_STANCES = new Set(["push", "wait"]);
+    const engagementStance = (typeof parsed.engagement_stance === "string" && ENGAGEMENT_STANCES.has(parsed.engagement_stance))
+      ? parsed.engagement_stance as NonNullable<SuggestedAixMeta>["engagement_stance"]
+      : null;
+
     // latent_intent: 送信動機・潜在意識の自由記述（60字上限・空文字/enum誤混入はnullフェイルクローズ）
     const latentIntent = (typeof parsed.latent_intent === "string" && parsed.latent_intent.trim() && !CUSTOMER_INTENTS.has(parsed.latent_intent.trim()))
       ? parsed.latent_intent.trim().slice(0, 60)
@@ -2340,6 +2386,8 @@ ${history}`;
       winning_pattern: winningPattern,
       customer_emotion: ((brainSummaryJson as Record<string, unknown> | null)?.emotion as string) ?? null,
       purchase_signal_level: ((brainSummaryJson as Record<string, unknown> | null)?.purchase_signal_level as "none" | "soft" | "strong" | "peak" | null) ?? null,
+      // M4: 押す／待つの局面軸。generate-reply の purchase_signal_level ブロックのゲートに使う
+      engagement_stance: engagementStance,
       human_type_label: humanTypeLabel,
       // 鮮度ゲートの基準: 今回の分析が見た最新顧客メッセージのcreated_at。
       // cachedモード返却時はこの値が古いまま残るため、generate-reply側で自動的にstale判定される
