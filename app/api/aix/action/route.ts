@@ -378,8 +378,8 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
     // F04: pgvector 経路（customerMsg + OPENAI_API_KEY がある場合）
     // 顧客メッセージの embedding で類似ルールを追加取得し、DB query 結果に文脈優先でマージ
     let vectorExtras: KRow[] = [];
-    if (customerMsg && process.env.OPENAI_API_KEY) {
-      const searchQuery = safeSlice(`${states[0]}: ${customerMsg} ${brainContext ?? ""}`.trim(), 2000);
+    if ((customerMsg || brainContext) && process.env.OPENAI_API_KEY) {
+      const searchQuery = safeSlice(`${states[0]}: ${[brainContext, customerMsg].filter(Boolean).join(" ")}`.trim(), 2000);
       const embedding = await generateEmbedding(searchQuery);
       if (embedding) {
         const { data: vectorResults } = await supabase.rpc("match_reply_knowledge", {
@@ -852,12 +852,10 @@ async function adaptMessageToConversation(
   const brainMetaBlock = metaLines.length > 0
     ? `\n【お客様意図・最適アプローチ（AIX-META）】\n${metaLines.join("\n")}\n※ ベースメッセージの内容・結果は変えず、「言い方」をこの意図・パターンに寄せること\n`
     : "";
-  const system = `${GENERATION_SYSTEM}
+  const adaptStaticSystem = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
 
-【お客様名】「${customerName}」
-${improvementBlock}${brainMetaBlock}
 【重要】ベースメッセージは既にスタッフが選択した送信内容です。結果・決定・アクションは全て確定済みです。
 
 【あなたのタスク：確定済みメッセージの「言い方」だけを会話に馴染ませる】
@@ -868,9 +866,6 @@ ${improvementBlock}${brainMetaBlock}
 あなたの仕事は「会話の流れを読んで何のメッセージを送るか判断する」ことではありません。
 「既に決まったメッセージを、お客様の会話に合わせた言い方に微調整する」ことだけです。
 内容・結果・決定を変えることは一切許されていません。変えてよいのは言葉遣い・つなぎ方・共感の一文だけです。
-
-【ベースメッセージ（内容・結果・構成・トーンをそのまま維持すること）】
-${baseMessage}
 
 【絶対禁止の書き換え（これをやったら失敗）】
 ・ベースメッセージが「物件がなかった/満室だった」と伝えているのに、「募集状況確認させていただきます」「かしこまりました！！確認いたします」等の確認前メッセージに変えること → 絶対禁止
@@ -897,10 +892,19 @@ ${baseMessage}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（調整後のLINEメッセージ全文・改行は\\nで）"}`;
 
+  const adaptDynamic = [
+    `【お客様名】「${customerName}」`,
+    improvementBlock.trim(),
+    brainMetaBlock.trim(),
+    `【ベースメッセージ（内容・結果・構成・トーンをそのまま維持すること）】\n${baseMessage}`,
+    (diffNote ?? "").trim(),
+  ].filter(Boolean).join("\n\n");
+
   const raw = await callClaude(
-    system + diffNote,
+    adaptStaticSystem,
     `${conversationHistory}\n\n上記の会話を読み、確定済みのベースメッセージの内容・結果・アクションは一切変えずに、言い方だけを会話に馴染ませた最終メッセージを出力してください。`,
-    actionLabel
+    actionLabel,
+    adaptDynamic || undefined
   );
   try {
     const m = raw.match(/\{[\s\S]*\}/);
@@ -2008,7 +2012,6 @@ ${SMORA_COMMON_RULES}
       const sendSystem = sendMode === "short"
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件をピックアップしてお客さんに送る際の超シンプルな導入メッセージを1つだけ作成してください。
-${nameNote}
 ${SMORA_COMMON_RULES}
 
 ${aixPropertySendRules}
@@ -2029,11 +2032,10 @@ ${openingLine}
 ${greetingLine}
 
 大阪市内からカウンターキッチン付きのお部屋でRさんご希望のご条件に近いお部屋ピックアップさせて頂きました！！
-お手隙の際にご査収ください😌！！${sendExamplesText}`
+お手隙の際にご査収ください😌！！`
         : sendMode === "simple"
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
-${nameNote}
 ${SMORA_COMMON_RULES}
 
 ${aixPropertySendRules}
@@ -2054,12 +2056,11 @@ ${greetingLine}
 
 大阪駅・難波駅周辺からRさんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
-お手隙の際にご査収ください😌！！${sendExamplesText}`
+お手隙の際にご査収ください😌！！`
         : sendMode === "application"
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
 このお客さんは内覧より先にお申込みで部屋を確保することを優先する流れです。
-${nameNote}
 ${SMORA_COMMON_RULES}
 
 ${aixPropertySendRules}
@@ -2083,11 +2084,10 @@ ${greetingLine}
 
 お気に召されましたらそのままお申込みでお部屋を抑えることが可能です！！
 
-お手隙の際にご査収ください😌！！${sendExamplesText}`
+お手隙の際にご査収ください😌！！`
         : sendMode === "alternative"
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 お客様が希望されていた物件が空室でなかったため、代替物件をピックアップしてお送りする際の導入メッセージを1つだけ作成してください。
-${nameNote}
 ${SMORA_COMMON_RULES}
 
 ${aixPropertySendRules}
@@ -2109,11 +2109,10 @@ ${greetingLine}
 
 [お客様名]お気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！
 
-お手隙の際にご査収ください😌！！${sendExamplesText}`
+お手隙の際にご査収ください😌！！`
         : sendMode === "widen"
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 お客様のご希望条件に完全に合う物件が少なかったため、条件を少し広げて物件をピックアップした際の導入メッセージを1つだけ作成してください。
-${nameNote}
 ${SMORA_COMMON_RULES}
 
 ${aixPropertySendRules}
@@ -2138,7 +2137,7 @@ ${greetingLine}
 
 ご希望の家賃ですと合うお部屋が少ない状況でしたので、少し家賃を広げてピックアップさせて頂きました！！
 
-お手隙の際にご査収ください😌！！${sendExamplesText}
+お手隙の際にご査収ください😌！！
 
 【出力形式（必須）】
 プレーンテキストではなく、以下のJSON形式のみで出力してください（説明・コードブロック不要）：
@@ -2146,7 +2145,6 @@ ${greetingLine}
         : sendMode === "new_arrival"
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 新着物件が募集に出たことをお客さんに知らせる導入メッセージを1つだけ作成してください。
-${nameNote}
 ${SMORA_COMMON_RULES}
 
 ${aixPropertySendRules}
@@ -2178,10 +2176,9 @@ ${greetingLine}
 
 新着で梅田まで30分圏内のエリアから[お客様名]にオススメできる2LDK・2口ガスコンロ付きのお部屋が${newArrivalCountStr}募集にでました！！
 
-お手隙の際にご査収ください😌！！${sendExamplesText}`
+お手隙の際にご査収ください😌！！`
         : `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
-${nameNote}
 ${SMORA_COMMON_RULES}
 
 ${aixPropertySendRules}
@@ -2224,7 +2221,7 @@ ${greetingLine}
 6/20（金）12:00〜14:00
 ご案内可能です！！
 
-お手隙の際にご査収ください😌！！${sendExamplesText}
+お手隙の際にご査収ください😌！！
 
 【出力形式（必須）】
 プレーンテキストではなく、以下のJSON形式のみで出力してください（説明・コードブロック不要）：
@@ -2242,14 +2239,21 @@ ${greetingLine}
       if (summaryNote) userParts.push(summaryNote);
       if (pspGuidanceNote) userParts.push(pspGuidanceNote);
 
-      const sendSystemFinal = sendSystem + areaWordingNote + skipViewingInviteNote + sendDbRules + (sendBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + sendBrainAddendum : "");
+      const sendStaticSystem = sendSystem + areaWordingNote + skipViewingInviteNote;
+      const sendDynamic = [
+        nameNote.trim(),
+        sendExamplesText.trim(),
+        (sendDbRules ?? "").trim(),
+        sendBrainAddendum ? "【ブレイン改善ルール】\n" + sendBrainAddendum : "",
+        (brainGuidanceNote ?? "").trim(),
+      ].filter(Boolean).join("\n\n");
       const sendUserFinal = userParts.join("")
         + sendWinningNote
         + sendPropertyExamples
         + (sendDiffNote ? `\n\n${sendDiffNote}` : "")
         + (componentKnowledgeNote ? `\n\n${componentKnowledgeNote}` : "")
         + (sendStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + sendStarNote : "");
-      const rawSendText = await callClaude(sendSystemFinal, sendUserFinal, currentAction, brainGuidanceNote || undefined);
+      const rawSendText = await callClaude(sendStaticSystem, sendUserFinal, currentAction, sendDynamic || undefined);
       // normal / widen モードはJSON構成パーツで返す（コンポーネント学習ループ用）
       if (sendMode === "normal" || sendMode === "widen" || sendMode === "viewing") {
         let propertySendComponents: Record<string, string> | null = null;
