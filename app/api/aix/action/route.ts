@@ -1201,8 +1201,16 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const brainGuidanceNote = (() => {
       if (!aixBrainMeta) return "";
       const lines: string[] = [];
+      // M4: engagement_stance=wait 時は押しを完全ゲート
+      // generate-reply の closingGatedByStance と同等実装
+      const closingGatedByStance = aixBrainMeta.engagement_stance === "wait";
+      if (closingGatedByStance) {
+        lines.push(
+          `- ⏸️ 押し引きスタンス: WAIT（待ちの局面）— 強推し直後の了承、またはネガ文脈（断り・キャンセル・否決・募集終了）の直後です。希少性訴求・申込期限の明示・CTA・新規物件提案は今回の返信に一切入れないこと。受け止めと見守りの姿勢で締めること`
+        );
+      }
       // ── 戦略系（どう攻めるか）──────────────────────────
-      if (aixBrainMeta.closing_strategy) {
+      if (aixBrainMeta.closing_strategy && !closingGatedByStance) {
         lines.push(`【🎯 成約戦略】${aixBrainMeta.closing_strategy}`);
       }
       if (aixBrainMeta.checkpoint_stage) {
@@ -1224,7 +1232,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
       if (aixBrainMeta.repeated_concern) {
         lines.push(`【🔁 繰り返し懸念】お客様が繰り返し気にしているテーマ:「${aixBrainMeta.repeated_concern}」。訴求ポイントの選択でこの懸念に応える点を優先すること`);
       }
-      if (aixBrainMeta.winning_pattern) {
+      if (aixBrainMeta.winning_pattern && !closingGatedByStance) {
         lines.push(`【🏅 この顧客に効く成功パターン】${aixBrainMeta.winning_pattern}`);
       }
       if (aixBrainMeta.current_property) {
@@ -4644,20 +4652,20 @@ ${SMORA_COMMON_RULES}
 
 【宛先と立場 — 最重要（上記の共通ルールと矛盾する場合はこちらを優先）】
 ・宛先は管理会社またはオーナー（お客様宛てではない）
-・案内しているお客様名: 「${ackCMLabel}」
+・案内しているお客様名: ユーザーメッセージに記載のお客様名を使うこと
 ・スモラは仲介会社として管理会社に「お願いする側」。確認するのは管理会社であり自分ではない
 　× 「募集状況確認させていただきます」（お客様向けの言い回し。管理会社宛てでは意味が逆）
 　○ 「現在も募集中でしょうか」「〜お伺いできますでしょうか」「〜ご確認頂けますでしょうか」
 
 【必ず含める要素（文言は会話に合わせて自然に調整する・順番はこの流れが基本）】
-1. 冒頭1行目: 「${ackCMLabel}のご案内をしております！！」
+1. 冒頭1行目: 「[お客様名]のご案内をしております！！」（[お客様名]はユーザーメッセージに記載のお客様名に置き換える）
 2. どの物件か: 物件名・号室が会話に出ていれば必ず含める（創作禁止）。出ていない場合は駅名・間取り・階数など会話から読み取れた情報だけで特定する
 3. 確認したい内容: お客様の疑問・状況を正確に読み取り、管理会社への質問・依頼の形で1〜2文にする
 4. 初期費用の見積もり依頼（会話でまだ見積もりを依頼していない場合のみ）: 「あわせて最大限割引した初期費用の御見積もりもお願いできますでしょうか！！」
 5. 締め: 「ご確認頂けますと幸いです。よろしくお願い致します！！」（同義の自然な言い換え可）
 
 【自然な文章のためのルール（必ず守ること）】
-・お客様名（${ackCMLabel}）は冒頭の1回だけ。2回以上書かない
+・お客様名は冒頭の1回だけ。2回以上書かない
 ・お客様が物件を見つけた経緯（SUUMOで見た・LINEで送ってきた等）は書かない。管理会社に必要なのは「どの物件か」と「何を確認したいか」だけ
 ・検索条件の羅列をそのまま書かない → 「なんば1K5階」ではなく「なんば駅周辺の1K・5階のお部屋」のような自然な日本語に直す
 ・「！！」で終える文は多くても2〜3文まで。すべての行を「！！」で終えない。「。」「でしょうか？」も混ぜる
@@ -4687,12 +4695,18 @@ ${SMORA_COMMON_RULES}
         // ⑤修正: 管理会社向けメッセージは「お世話になっております禁止」のため、
         //   「必ず挨拶を使え」と指示する greetingTimeNote は連結しない（矛盾指示の排除）
 
-        const ackCMSystemFinal = ackCMSystem + ackCMDbRules + (ackCMBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + ackCMBrainAddendum : "");
+        const ackCMDynamicSuffix = [
+          "【お客様名】ユーザーメッセージに記載のお客様名を使うこと",
+          ackCMDbRules,
+          ackCMBrainAddendum ? `【ブレイン改善ルール】\n${ackCMBrainAddendum}` : "",
+          brainGuidanceNote,
+        ].filter(Boolean).join("\n\n");
         const ackCMUserFinal = `${ackCMLabel}のご案内について、物件の管理会社へ送る確認メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (ackCMDiffNote ? `\n\n${ackCMDiffNote}` : "") + (ackCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + ackCMStarNote : "");
         const rawACM = await callClaude(
-          ackCMSystemFinal,
+          ackCMSystem,
           ackCMUserFinal,
-          currentAction
+          currentAction,
+          ackCMDynamicSuffix || undefined
         );
         message_text = rawACM;
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
@@ -4713,10 +4727,8 @@ ${SMORA_COMMON_RULES}
 
 【メッセージの宛先】管理会社またはオーナー（お客様宛てではない）
 
-【お客様名】「${ackCustomerLabel}」のご案内をしております
-
 【構成ルール（この順番で・必ず守ること）】
-① 書き出し: 「${ackCustomerLabel}のご案内をしております！！」
+① 書き出し: 「[お客様名]のご案内をしております！！」（[お客様名]はユーザーメッセージに記載のお客様名に置き換える）
 ② 確認内容: 会話から読み取った物件名・号室・確認事項を正確に1〜2行
   例: 「○○マンション○号室の募集状況を確認させていただきます！！」
   ※物件名・号室が会話から取れない場合は「ご提案物件」を使う（創作禁止）
@@ -4735,11 +4747,17 @@ ${SMORA_COMMON_RULES}
       // ⑤修正: 管理会社向けメッセージは「お世話になっております禁止」のため、
       //   「必ず挨拶を使え」と指示する greetingTimeNote は連結しない（矛盾指示の排除）
 
-      const ackSystemFinal = ackSystem + ackDbRules + (ackBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + ackBrainAddendum : "");
+      const ackDynamicSuffix = [
+        "【お客様名】ユーザーメッセージに記載のお客様名を使うこと",
+        ackDbRules,
+        ackBrainAddendum ? `【ブレイン改善ルール】\n${ackBrainAddendum}` : "",
+        brainGuidanceNote,
+      ].filter(Boolean).join("\n\n");
       message_text = await callClaude(
-        ackSystemFinal,
+        ackSystem,
         `${ackCustomerLabel}のご案内について、物件の管理会社へ送る「募集状況確認 ＋ 最大限割引した初期費用の御見積もり依頼」メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (ackDiffNote ? `\n\n${ackDiffNote}` : ""),
-        currentAction
+        currentAction,
+        ackDynamicSuffix || undefined
       );
 
     // ── 📣 追客する ──────────────────────────────────────────────
@@ -4869,6 +4887,7 @@ ${SMORA_COMMON_RULES}
         const followupCMDynamicSuffix = [
           followupCMDbRules,
           followupCMBrainAddendum ? `【ブレイン改善ルール】\n${followupCMBrainAddendum}` : "",
+          brainGuidanceNote,
         ].filter(Boolean).join("\n\n");
         const followupCMUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への追客メッセージを生成してください。${extra_input ? `\n補足情報: ${extra_input}` : ""}` + (followupCMDiffNote ? `\n\n${followupCMDiffNote}` : "") + (followupCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + followupCMStarNote : "");
         const rawFCM = await callClaude(
@@ -4907,12 +4926,17 @@ ${SMORA_COMMON_RULES}
 ・押しつけがましくならず、お客様のペースを尊重した文体
 ・2〜4行程度・完成したLINEメッセージのみ出力`;
 
-      const followupSystemFinal = followupSystem + followupDbRules + (followupBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + followupBrainAddendum : "");
+      const followupDynamic = [
+        followupDbRules,
+        followupBrainAddendum ? `【ブレイン改善ルール】\n${followupBrainAddendum}` : "",
+        brainGuidanceNote,
+      ].filter(Boolean).join("\n\n");
       const followupUserFinal = greetingTimeNote + `${name}への追客メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (followupDiffNote ? `\n\n${followupDiffNote}` : "") + (followupStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + followupStarNote : "");
       message_text = await callClaude(
-        followupSystemFinal,
+        followupSystem,
         followupUserFinal,
-        currentAction
+        currentAction,
+        followupDynamic || undefined
       );
       }
 
