@@ -2861,7 +2861,7 @@ export async function POST(req: NextRequest) {
         if (brainMeta?.customer_intent === "negative") return true;
         const lastStaffText = [...recentMessages].reverse().find(m => m.sender === "staff")?.text ?? "";
         const recentText = lastStaffText + (message ?? "");
-        return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難し/.test(recentText);
+        return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難しくなっ/.test(recentText);
       })();
       const effectiveReplyDirection = (() => {
         if (isNegativeContext) return "受け止めのみ（50〜110字）";
