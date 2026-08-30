@@ -2880,6 +2880,21 @@ export async function POST(req: NextRequest) {
         return base;
       })();
 
+      // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
+      const tpoNoteForLLM = (() => {
+        if (isNegativeContext) return "ネガ文脈（断り・否決・募集終了等の直後）";
+        if (isGratitudeReplyTPO) return "感謝返し（短い了承・感謝メッセージ）";
+        const a = brainMeta.action ?? "";
+        if (state === "applying") return "申込後説明";
+        if (a === "viewing_invite" || a === "meeting_place") return "内覧調整";
+        if (a === "application_push") return "申込打診";
+        if (a === "property_send" || a === "property_recommendation") return "物件送付後";
+        if (/費用|見積|初期費用/.test(a)) return "費用説明";
+        if (!brainMeta.action && (state === "initial" || state === "new")) return "初回対応";
+        return null;
+      })();
+      if (tpoNoteForLLM) lines.push(`- 📍 現在の場面: 【${tpoNoteForLLM}】— この場面に合った返し方をすること`);
+
       if (effectiveReplyDirection) lines.push(`- 🎯 返信の方向性: ${effectiveReplyDirection}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
       if (effectiveKeyTopics.length) {
         lines.push(`- ✅ 必ず含める内容（${effectiveKeyTopics.length}件すべて必須）: ${effectiveKeyTopics.join(" / ")}`);
@@ -2987,7 +3002,8 @@ export async function POST(req: NextRequest) {
         }
       }
       // 顧客意図 (customer_intent): 問い合わせの根本意図に応じた返信モードを指示
-      if (brainFreshForMessage && brainMeta.customer_intent) {
+      // stale（T2/T3）でも渡す。前回分析でも方向性として有効なため。
+      if (brainMeta.customer_intent) {
         const INTENT_GUIDE: Record<string, string> = {
           question:     "質問回答モード ― お客様の疑問に端的に答えるだけ。次アクション催促・送付案内・フォーム提出促しは一切書かない。さらに：customer_questionsに記載の質問のみに答え、無関係な物件名・別物件の空室確認状況・並行審査の言及はavoid_topicsの有無に関わらず一切書かない",
           consultation: "相談応対モード ― 選択肢・アドバイスを提示する。即決プッシュは控える",
@@ -2999,7 +3015,8 @@ export async function POST(req: NextRequest) {
         };
         const guide = INTENT_GUIDE[brainMeta.customer_intent];
         if (guide) {
-          lines.push(`- 🎯 顧客意図【${brainMeta.customer_intent}】→ ${guide}`);
+          const staleTag = brainFreshForMessage ? "" : "（前回分析値・参考）";
+          lines.push(`- 🎯 顧客意図${staleTag}【${brainMeta.customer_intent}】→ ${guide}`);
         }
       }
       // 潜在意識 (latent_intent): brainが推論した「なぜ今このメッセージを送ってきたか」の送信動機。
