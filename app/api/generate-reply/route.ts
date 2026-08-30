@@ -2846,17 +2846,30 @@ export async function POST(req: NextRequest) {
         lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
         lines.push(`  → 今回の返信で実行するのは Step1（${brainMeta.next_steps[0]}）のみ。Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を今回の本文に先取りして書かないこと（フェーズ先走り禁止）`);
       }
-      if (brainMeta.reply_direction) lines.push(`- 🎯 返信の方向性: ${brainMeta.reply_direction}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
-      if (brainMeta.key_topics?.length) {
-        lines.push(`- ✅ 必ず含める内容（${brainMeta.key_topics.length}件すべて必須）: ${brainMeta.key_topics.join(" / ")}`);
+      // 感謝返し場面の判定: 40字未満・質問なし・感謝/了承のみ → reply_direction/key_topics/avoid_topicsを上書き
+      const isGratitudeReplyTPO = (() => {
+        const msg = (message ?? "").trim();
+        if (msg.length >= 40) return false;
+        if (/[?？]|希望|したい|ください|教えて|どうすれば|お願い|確認|送っ/.test(msg)) return false;
+        return /ありがとう|了解|わかり|はい！|承知|お願いします$/.test(msg);
+      })();
+      const effectiveReplyDirection = isGratitudeReplyTPO ? "短く感謝を受け取る" : (brainMeta.reply_direction ?? null);
+      const effectiveKeyTopics = isGratitudeReplyTPO ? [] : (brainMeta.key_topics ?? []);
+      const effectiveAvoidTopics = isGratitudeReplyTPO
+        ? [...new Set([...(brainMeta.avoid_topics ?? []), "検討依頼の繰り返し", "物件追加提案"])]
+        : (brainMeta.avoid_topics ?? []);
+
+      if (effectiveReplyDirection) lines.push(`- 🎯 返信の方向性: ${effectiveReplyDirection}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
+      if (effectiveKeyTopics.length) {
+        lines.push(`- ✅ 必ず含める内容（${effectiveKeyTopics.length}件すべて必須）: ${effectiveKeyTopics.join(" / ")}`);
         lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
       }
-      if (brainMeta.avoid_topics?.length) {
+      if (effectiveAvoidTopics.length) {
         // 顧客が最新メッセージで自ら言及した語は「避けるべき話題」から除外する
         // （stale brain_metaの avoid_topics が顧客の現在の質問を封じる逆転を防ぐ）
-        const activeAvoidTopics = brainMeta.avoid_topics.filter(t => !message.includes(t));
+        const activeAvoidTopics = effectiveAvoidTopics.filter(t => !message.includes(t));
         if (activeAvoidTopics.length) {
-          lines.push(`- 🚫 今回は ${activeAvoidTopics.join(" / ")} には触れない（言い換え・同義語も禁止: 「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。代わりに${brainMeta.reply_direction ? `「${brainMeta.reply_direction}」の方向性` : "reply_directionの方向性"}に沿った具体アクション・事実情報で返信を構成すること。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと`);
+          lines.push(`- 🚫 今回は ${activeAvoidTopics.join(" / ")} には触れない（言い換え・同義語も禁止: 「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。代わりに${effectiveReplyDirection ? `「${effectiveReplyDirection}」の方向性` : "reply_directionの方向性"}に沿った具体アクション・事実情報で返信を構成すること。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと`);
         }
       }
       if (brainMeta.urgency_appropriate === false) {
