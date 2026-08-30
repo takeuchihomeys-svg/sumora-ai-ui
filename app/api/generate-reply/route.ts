@@ -1470,9 +1470,6 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
     const lastAixPart = lastAixHistoryText ? `[AIX履歴] ${lastAixHistoryText} ` : "";
     const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
-    // brainContextをstate直後に固定（末尾配置だとsafeSlice 2000字制限で切り落とされるリスクがあるため前詰め）
-    const searchQuery = safeSlice(`${state}: ${brainContext ? `[WE_DO文脈]${brainContext} ` : ""}${lastAixPart}${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""}`.trim(), 2000);
-
     // TPO場面推定（成約会話パターンのRAGブースト 2026-08-30）
     // ai_reply_knowledge（source='closed_won_analysis'）のconversation_stateラベルと一致させてORDER BY優先
     const tpoLabel = (() => {
@@ -1489,6 +1486,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       if (intent === "consultation" || /検討|迷って/.test(customerMessage)) return "検討中フォロー";
       return null;
     })();
+    // brainContextをstate直後に固定（末尾配置だとsafeSlice 2000字制限で切り落とされるリスクがあるため前詰め）
+    // tpoLabelをクエリ先頭に明示して成約TPOパターンのembedding類似度を自然ブースト
+    const searchQuery = safeSlice(`${tpoLabel ? `[TPO:${tpoLabel}] ` : ""}${state}: ${brainContext ? `[WE_DO文脈]${brainContext} ` : ""}${lastAixPart}${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""}`.trim(), 2000);
 
     const embedding = await generateEmbedding(searchQuery);
     if (embedding) {
@@ -1554,7 +1554,23 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           (r.hypothesis_status === "confirmed" || r.hypothesis_status == null)
         ).slice(0, 16);
         const critical = criticalVector;
-        const patterns = capHypothesis(filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")), 5);
+        // patternバケット一本化: closed_won_analysis（成約実例）はhypothesis制限免除・全体上限8件
+        // boost_state + searchQueryのTPOラベルで上位に来た成約パターンが確実に枠に入るようにする
+        const patterns = (() => {
+          const pool = filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比"));
+          const out: typeof pool = [];
+          let hypCount = 0;
+          const hypCap = 3;
+          for (const r of pool) {
+            if (out.length >= 8) break;
+            if (r.hypothesis_status === "hypothesis" && (r as unknown as { source?: string }).source !== "closed_won_analysis") {
+              if (hypCount >= hypCap) continue;
+              hypCount++;
+            }
+            out.push(r);
+          }
+          return out;
+        })();
         const phrases = capHypothesis(filteredResults.filter(r => r.category === "phrase"), 6);
         // pgvector経路での applying_pattern: ベクトル類似度ベースの結果を優先し、なければ静的クエリにフォールバック
         // （RPC は category フィルタなし・importance>=7 のため applying_pattern 行は filteredResults に既に含まれる）

@@ -1066,12 +1066,16 @@ export async function analyzeConversation(
     // brain-core 側の prevMetaCtx が欠落していたため非対称になっていた。
     // winning_pattern → match_winning_patterns の命中精度向上
     // customer_intent → match_reply_knowledge の意図別ナレッジ命中率向上
+    // AIX-META全フィールドをprevMetaCtxに統合（latent_intent/customer_emotion/actionを追加）
     const prevMetaCtx = opts?.prevMeta
       ? [
+          opts.prevMeta.action,
           opts.prevMeta.closing_strategy,
           opts.prevMeta.reply_direction,
           opts.prevMeta.winning_pattern,
           opts.prevMeta.customer_intent,
+          opts.prevMeta.latent_intent,
+          opts.prevMeta.customer_emotion,
           (opts.prevMeta as Record<string, unknown>).checkpoint_stage,
         ].filter(Boolean).join(" ")
       : "";
@@ -1080,13 +1084,28 @@ export async function analyzeConversation(
       .slice(-3)
       .map(m => m.text)
       .join(" ");
+    // TPOラベル推定: AIX-METAから場面を特定してRAGクエリに明示（成約TPOパターン命中精度向上）
+    const lastCustomerMsg = typedMessages.filter(m => m.sender === "customer" && m.text).slice(-1)[0]?.text ?? "";
+    const tpoHint = (() => {
+      const intent = opts?.prevMeta?.customer_intent ?? "";
+      const action = opts?.prevMeta?.action ?? "";
+      const emotion = opts?.prevMeta?.customer_emotion ?? "";
+      if (convStatus === "applying") return "申込後説明";
+      if (/arrange_viewing/.test(action) || /内覧|内見|見学/.test(lastCustomerMsg)) return "内覧調整";
+      if (intent === "negative") return "拒否対応";
+      if (/不安|心配|審査.*通|落ちる/.test(lastCustomerMsg) || /不安|心配/.test(emotion)) return "不安対応";
+      if (intent === "positive" && lastCustomerMsg.length < 40) return "感謝返し";
+      if (intent === "consultation" || /検討|迷って/.test(lastCustomerMsg)) return "検討中フォロー";
+      return null;
+    })();
     const ragQueryInput = [
-      pcForRag?.personality_profile,       // 顧客の人間性（最重要: winning_patterns.situation と意味的に近い）
-      pcForRag?.preferences,               // 希望・こだわり条件
-      prevMetaCtx,                         // 前回の戦略・返信方向・フェーズ
-      convStatus,                          // 現在の会話フェーズ
-      recentCustomerMsgs.slice(0, 200),    // メッセージは補足程度
-    ].filter(Boolean).join(" ").slice(0, 1000);
+      tpoHint ? `[TPO:${tpoHint}]` : null,  // TPO場面明示（成約パターン命中精度向上）
+      pcForRag?.personality_profile,          // 顧客の人間性（winning_patterns.situation と近い）
+      pcForRag?.preferences,                  // 希望・こだわり条件
+      prevMetaCtx,                            // AIX-META: アクション・戦略・意図・感情
+      convStatus,                             // 現在の会話フェーズ
+      recentCustomerMsgs.slice(0, 200),       // 直近顧客メッセージ
+    ].filter(Boolean).join(" ").slice(0, 1500);
     if (ragQueryInput.trim()) {
       try {
         const qEmb = await generateEmbedding(ragQueryInput);
@@ -1107,6 +1126,7 @@ export async function analyzeConversation(
                 query_embedding: qEmb,
                 match_count: 30,
                 min_importance: 8,
+                boost_state: tpoHint ?? null,
               }),
             ]);
             ragCheckpoints = ((cpRes as { data: unknown }).data ?? []) as typeof ragCheckpoints;
