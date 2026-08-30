@@ -1519,11 +1519,11 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       if (!lastStaffMessage || state === "initial" || state === "new") {
         return "初回対応";
       }
-      // 10. 感謝返し（明示的な感謝表現のみ。「了解です」等の誤マッチを防止）
+      // 10. 感謝返し（isGratitudeReplyTPOと同じ60字・同じキーワードで統一）
       if (
-        intent === "positive" &&
-        msg.length < 40 &&
-        /ありがとう|ありがとございます|感謝|助かり(ます|ました)|嬉しい/.test(msg)
+        msg.length < 60 &&
+        !/[?？]|希望|したい|教えて|どうすれば|送っ|ください(?!ませ)/.test(msg) &&
+        /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解/.test(msg)
       ) {
         return "感謝返し";
       }
@@ -2856,9 +2856,12 @@ export async function POST(req: NextRequest) {
         return /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解/.test(msg);
       })();
       // ネガ文脈判定（断り・キャンセル直後の感謝には営業を一切乗せない）
+      // last_aix_historyはAIXアクション名のみでネガキーワードが含まれない → 直前スタッフテキストで判定
       const isNegativeContext = (() => {
-        const recent = (brainMeta?.last_aix_history ?? "") + (message ?? "");
-        return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難し/.test(recent);
+        if (brainMeta?.customer_intent === "negative") return true;
+        const lastStaffText = [...recentMessages].reverse().find(m => m.sender === "staff")?.text ?? "";
+        const recentText = lastStaffText + (message ?? "");
+        return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難し/.test(recentText);
       })();
       const effectiveReplyDirection = (() => {
         if (isNegativeContext) return "受け止めのみ（50〜110字）";
