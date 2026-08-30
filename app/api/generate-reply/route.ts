@@ -1473,6 +1473,23 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     // brainContextをstate直後に固定（末尾配置だとsafeSlice 2000字制限で切り落とされるリスクがあるため前詰め）
     const searchQuery = safeSlice(`${state}: ${brainContext ? `[WE_DO文脈]${brainContext} ` : ""}${lastAixPart}${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""}`.trim(), 2000);
 
+    // TPO場面推定（成約会話パターンのRAGブースト 2026-08-30）
+    // ai_reply_knowledge（source='closed_won_analysis'）のconversation_stateラベルと一致させてORDER BY優先
+    const tpoLabel = (() => {
+      if (!brainMeta) return null;
+      const intent = brainMeta.customer_intent ?? "";
+      const action = brainMeta.action ?? "";
+      const emotion = brainMeta.customer_emotion ?? "";
+      if (state === "applying") return "申込後説明";
+      if (/arrange_viewing/.test(action) || /内覧|内見|見学/.test(customerMessage)) return "内覧調整";
+      if (intent === "negative") return "拒否対応";
+      if (/不安|心配|審査.*通|落ちる/.test(customerMessage) || /不安|心配/.test(emotion)) return "不安対応";
+      if (intent === "positive" && customerMessage.length < 40) return "感謝返し";
+      if (lastStaffMessage && /ピックアップ|お部屋.*送|物件.*紹介/.test(lastStaffMessage)) return "物件送付後";
+      if (intent === "consultation" || /検討|迷って/.test(customerMessage)) return "検討中フォロー";
+      return null;
+    })();
+
     const embedding = await generateEmbedding(searchQuery);
     if (embedding) {
       const { data: vectorResults, error: rpcError } = await supabase.rpc("match_reply_knowledge", {
@@ -1481,6 +1498,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         // brainが required+closing_strategy 確信時は spec 側で 60 に削減される（genericナレッジ洪水の抑制）
         match_count: spec?.knowledge?.limit ?? spec?.pgvectorMatchCount ?? 100,
         min_importance: 7,
+        boost_state: tpoLabel,
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
       if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
 
