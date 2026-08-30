@@ -711,8 +711,11 @@ function isAreaSpecificationMessage(text: string): boolean {
   //    ひらがなのみのトークン（「そのあたり」「ご希望」等）は除外
   const hasPlaceWithSuffix = /[一-鿿ァ-ヶ]{1,8}(?:あたり|周辺|エリア|沿線|辺り)/.test(text);
 
+  // エリア追加パターン: 「〜区もお願い」「〜市もお願い」等
+  const hasAreaAddRequest = /[一-鿿]{1,6}[区市](?:も|をお願い|もお願い)/.test(text);
+
   return adminMatches.length >= 2
-    || (adminMatches.length >= 1 && hasTrigger)
+    || (adminMatches.length >= 1 && (hasTrigger || hasAreaAddRequest))
     || hasStationWord
     || hasLineName
     || hasLinePrefix
@@ -1347,6 +1350,23 @@ ${customerText.slice(0, 600)}
     .select(["desired_area", "floor_plan", "rent_max", "rent_min", "walk_minutes", "commute_station", "commute_minutes", "move_in_time", "building_age", "initial_cost_limit", "preferences", "ng_points", "other_requests"].join(","))
     .eq("id", pcId)
     .maybeSingle();
+
+  // desired_area: インテント分類してマージ（「〜区もお願い」等の追加要求で既存エリアを上書きしない）
+  const existingPcRec = existingPc as unknown as Record<string, unknown> | null;
+  if (extracted.desired_area && existingPcRec?.desired_area) {
+    const existingArea = (existingPcRec.desired_area ?? "") as string;
+    const intentRes = classifyByKeywords(customerText, existingArea)
+      ?? await classifyByAI(anthropicP4, customerText, existingArea);
+    if (intentRes.intent === "ADD") {
+      const newAreas = (extracted.desired_area as string)
+        .split(/[・、,]+/)
+        .map((s: string) => s.trim())
+        .filter((a: string) => a && !existingArea.includes(a));
+      extracted.desired_area = newAreas.length
+        ? `${existingArea}・${newAreas.join("・")}`
+        : existingArea;
+    }
+  }
 
   const FIELD_LABELS: Record<string, string> = {
     desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限",

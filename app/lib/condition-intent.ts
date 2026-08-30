@@ -22,7 +22,7 @@ export function classifyByKeywords(text: string, existingArea?: string | null): 
   }
 
   // ADD: 追加意図キーワード
-  const addPatterns = ["追加", "も見たい", "も含め", "も検討", "プラス", "も良い", "もOK", "も可", "もあり"];
+  const addPatterns = ["追加", "も見たい", "も含め", "も検討", "プラス", "も良い", "もOK", "も可", "もあり", "もお願い", "もいいです", "も希望"];
   if (addPatterns.some((k) => text.includes(k))) return { intent: "ADD", confidence: "keyword" };
 
   // REPLACE: 差し替え意図キーワード
