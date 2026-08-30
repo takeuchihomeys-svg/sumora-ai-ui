@@ -902,6 +902,129 @@ ${baseMessage}
   }
 }
 
+// ─── M2: 見積書OCR → 費用の確定事実ブロック生成 ──────────────────────────
+// 「物件確認した・物件あった」で見積書を同封する場合、割引額・クリーニング費用・初期費用総額が
+// AIに一切渡っておらず「〇〇号室は募集中です」だけの薄い返信になっていた。
+// 実際のスタッフ文は「割引出来る金額が少ないお部屋となり、クリーニング費用が契約の際に必要となりますので、
+// 初期費用はかなりかかってしまうお部屋となります！御見積書同封させて頂きました！」まで踏み込む。
+// → 見積書画像をVisionでOCRし、金額＋そこから導いた説明ヒントを確定事実としてプロンプトに注入する。
+const ESTIMATE_FACT_SYSTEM = `この見積書画像から初期費用の内訳を抽出してください。JSON形式のみ返答（説明文・前置き禁止）：
+{"initial_cost":"146,000円","discount":"5,000円","savings":"20,000円","cleaning_fee":"33,000円","rent":"58,000円","other_notes":"鍵交換費用22,000円"}
+- initial_cost: 初期費用の請求合計額（割引適用後の総額）
+- discount: 当社の割引額（「割引」「値引」「サービス」欄の合計。無ければ null）
+- savings: 一般的な不動産業者と比べた節約額（記載が無ければ null）
+- cleaning_fee: 室内クリーニング費用・ハウスクリーニング代など契約時に支払うクリーニング関連費用（無ければ null）
+- rent: 月額家賃（管理費・共益費込みの記載があればその額）
+- other_notes: 初期費用が高くなっている主因の項目があれば「項目名+金額」を1つだけ（無ければ null）
+金額は必ず「〇〇,〇〇〇円」形式。読み取れない項目は null。推測で金額を作らないこと。`;
+
+type EstimateCostFacts = { block: string; notes: string[] };
+
+function parseYenAmount(v: string | null | undefined): number | null {
+  if (!v) return null;
+  const digits = String(v).replace(/[^\d]/g, "");
+  if (!digits) return null;
+  const n = parseInt(digits, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// 割引が「少ない」と言い切る閾値（スモラの実運用: 3万円未満は訴求ポイントにならない）
+const SMALL_DISCOUNT_THRESHOLD = 30000;
+// 見積書OCRは本文生成の「前」に走る補助処理。SERVER_BUDGET_MS(55s)を本文生成のために残す必要があるため、
+// OCRが遅い場合は打ち切って「見積書同封の事実だけ伝える」ブロックにフォールバックする
+const ESTIMATE_OCR_SOFT_TIMEOUT_MS = 20_000;
+
+async function buildEstimateCostFacts(
+  estimateUrls: (string | null | undefined)[],
+  propertyNames: string[],
+  action: string
+): Promise<EstimateCostFacts> {
+  // index は物件と対応している（null = その物件には見積書なし）
+  const targets = estimateUrls.slice(0, 3);
+  if (!targets.some((u) => !!u)) return { block: "", notes: [] };
+  const badges = ["①", "②", "③"];
+  // OCRが先に終わったらタイマーを破棄する（サーバーレスで空タイマーがイベントループに残らないように）
+  let softTimer: ReturnType<typeof setTimeout> | undefined;
+  const softTimeout = new Promise<({ line: string; note: string } | null)[]>((resolve) => {
+    softTimer = setTimeout(() => resolve(targets.map(() => null)), ESTIMATE_OCR_SOFT_TIMEOUT_MS);
+  });
+  const ocrAll = Promise.all(
+    targets.map(async (url, pi) => {
+      if (!url) return null;
+      const pName = (propertyNames[pi] ?? "").trim() || `物件${badges[pi] ?? String(pi + 1)}`;
+      try {
+        const raw = await callClaudeVision(
+          ESTIMATE_FACT_SYSTEM,
+          [
+            { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
+            { type: "image", source: { type: "url", url } },
+          ],
+          action
+        );
+        const m = raw.match(/\{[\s\S]*\}/);
+        if (!m) return null;
+        const d = JSON.parse(m[0]) as {
+          initial_cost?: string | null; discount?: string | null; savings?: string | null;
+          cleaning_fee?: string | null; rent?: string | null; other_notes?: string | null;
+        };
+        const initialCost = parseYenAmount(d.initial_cost);
+        const discount = parseYenAmount(d.discount);
+        const cleaning = parseYenAmount(d.cleaning_fee);
+        const rent = parseYenAmount(d.rent);
+        const facts: string[] = [];
+        if (d.initial_cost) facts.push(`初期費用合計: ${d.initial_cost}`);
+        if (d.discount) facts.push(`割引額: ${d.discount}`);
+        if (d.savings) facts.push(`一般業者との差額（節約額）: ${d.savings}`);
+        if (d.cleaning_fee) facts.push(`クリーニング費用: ${d.cleaning_fee}（契約時に必要）`);
+        if (d.rent) facts.push(`家賃: ${d.rent}`);
+        if (d.other_notes) facts.push(`高額項目: ${d.other_notes}`);
+        // 金額から導いた「伝え方ヒント」— スタッフの実際の言い回しに寄せる材料
+        const hints: string[] = [];
+        if (discount !== null && discount < SMALL_DISCOUNT_THRESHOLD) {
+          hints.push("割引できる金額が少ないお部屋（割引額を売りにせず「割引出来る金額が少ないお部屋」と正直に伝える）");
+        } else if (discount === null && (d.discount ?? null) === null) {
+          hints.push("割引の記載なし（割引額には触れない）");
+        }
+        if (cleaning !== null) {
+          hints.push("クリーニング費用が契約の際に必要（初期費用が上がる要因として必ず触れる）");
+        }
+        const isHighInitial = initialCost !== null && (rent !== null ? initialCost >= rent * 5 : initialCost >= 300000);
+        if (isHighInitial) {
+          hints.push("初期費用はかなりかかってしまうお部屋（正直に伝えたうえで内覧・申込に繋げる）");
+        }
+        if (facts.length === 0 && hints.length === 0) return null;
+        const lines = [
+          `- ${pName}`,
+          ...facts.map((f) => `  ・${f}`),
+          ...hints.map((h) => `  ※${h}`),
+        ];
+        // notes は aix_usage_logs.prop_cost_notes に永続化して以降の generate-reply でも参照する
+        const note = [pName, ...facts].join(" / ");
+        return { line: lines.join("\n"), note };
+      } catch (e) {
+        console.error("[aix/action] estimate OCR failed:", e);
+        return null;
+      }
+    })
+  );
+  const results = await Promise.race([ocrAll, softTimeout]);
+  if (softTimer) clearTimeout(softTimer);
+  const ok = results.filter((r): r is { line: string; note: string } => r !== null);
+  if (ok.length === 0) {
+    // OCRに失敗しても「見積書を同封する」事実だけは必ず伝える
+    return {
+      block: "【御見積書について（確定事実）】\n・このメッセージと同時に御見積書をお客様へお送りします。「御見積書同封させて頂きました！！」と必ず伝えること。\n・金額の創作は絶対禁止（見積書の中身を読み取れていないため具体的な金額には触れない）。",
+      notes: [],
+    };
+  }
+  const block = `【同封する御見積書の費用情報（OCR結果・確定事実）】
+${ok.map((r) => r.line).join("\n")}
+・このメッセージと同時に御見積書をお客様へお送りします。「御見積書同封させて頂きました！！」に相当する一文を必ず入れること。
+・上記の「※」は費用の伝え方の指示です。該当する内容は必ず本文に自然な日本語で盛り込むこと（例:「こちら割引出来る金額が少ないお部屋となり、クリーニング費用が契約の際に必要となりますので、初期費用はかなりかかってしまうお部屋となります！！」）。
+・上記に無い金額・費用項目を創作することは絶対禁止。`;
+  return { block, notes: ok.map((r) => r.note) };
+}
+
 // AIX完了後のテンプレ誘導: アクション種別 → テンプレートモーダルのカテゴリ名（templates.category の実値）
 // ※page.tsx の AIX_ACTION_META[action].templateCategory と必ず一致させること（フロントはこの値で TemplateModal の initialCategory を開く）
 const AIX_SUGGEST_TEMPLATE_CATEGORY: Record<string, string> = {
@@ -1229,6 +1352,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
     let message_text = "";
     let parsed_estimate_result = null;
     let estimate_text_result = "";
+    // M2: このAIX送信で御見積書を同封したか（レスポンス経由で aix_usage_logs.estimate_sent に永続化する）
+    let estimate_sent_result = false;
     let hearing_intro_result = ""; // condition_hearing のAI導入メッセージ（LL-09）
     let hearing_form_content = ""; // condition_hearing のフォーム本体（別送用・message_textには入れない）
     let cover_letter = ""; // LL-07: 見積書に添えるAIカバーレター（学習ループ対象）
@@ -3304,12 +3429,32 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
     } else if (action === "property_check_result") {
       // conversation_match: 会話に合わせた自然文生成（テンプレ固定なし・GENERATION_SYSTEM品質）
       if (body.conversation_match) {
+        // M2: 同封する見積書の費用情報（割引額・クリーニング費用・初期費用総額）をOCRして確定事実化する。
+        // 従来は estimate_image_urls を受け取りながら conversation_match パスで一切参照しておらず、
+        // 「〇〇号室は募集中です」だけの薄い返信になっていた（見積書送付の事実すら消えていた）。
+        const cmEstUrlsRaw = (body.estimate_image_urls as (string | null)[] | undefined) ?? [];
+        const cmEstSingle = body.estimate_image_url as string | undefined;
+        const cmEstUrls: (string | null | undefined)[] = cmEstUrlsRaw.length > 0 ? cmEstUrlsRaw : (cmEstSingle ? [cmEstSingle] : []);
+        const cmHasEstimate = cmEstUrls.some((u) => !!u);
         // 会話を合わせる改善ルール（このブロック内の adaptMessageToConversation 4呼び出しで共用）
-        const adaptRulesNotePCR = await getAdaptImprovementRules(currentAction);
+        const [adaptRulesNotePCR, cmEstimateFacts] = await Promise.all([
+          getAdaptImprovementRules(currentAction),
+          cmHasEstimate
+            ? buildEstimateCostFacts(cmEstUrls, (property_names as string[] | undefined) ?? [], currentAction)
+            : Promise.resolve({ block: "", notes: [] } as EstimateCostFacts),
+        ]);
+        // 見積書送付の事実 + 費用メモを aix_usage_logs へ永続化させる（クライアント → log-aix-usage）
+        const cmEstimateExtra = cmHasEstimate
+          ? { estimate_sent: true, ...(cmEstimateFacts.notes.length > 0 ? { prop_cost_notes: cmEstimateFacts.notes } : {}) }
+          : undefined;
         // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
         if (baseMessage) {
-          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "", adaptRulesNotePCR, aixBrainMeta);
-          return finalizeResponse(message_text);
+          // 適応モードは原則「金額の創作禁止」だが、OCR済みの費用情報は確定事実として明示的に使用許可する
+          const adaptEstNote = cmEstimateFacts.block
+            ? `\n\n【追加で使ってよい確定事実（同封する御見積書のOCR結果・創作ではありません）】\n${cmEstimateFacts.block}\n※ベースメッセージの結果・構成・アクションは変えず、上記の費用情報を1〜2文で自然に補足すること。`
+            : "";
+          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, adaptEstNote, adaptRulesNotePCR, aixBrainMeta);
+          return finalizeResponse(message_text, cmEstimateExtra);
         }
 
         // バグ修正: 「会話を合わせる」は生成前（aiDraft空）に押される動線のため base_message が無く、
@@ -3386,27 +3531,51 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         const cmPropNamesRaw = ((property_names as string[] | undefined) ?? []).map((s) => (s ?? "").trim());
         const cmStatuses = (prop_statuses as string[] | undefined) ?? [];
         const cmPropCount = (property_count as number | undefined) ?? 0;
+        const cmVacancyDates = (property_vacancy_dates as string[] | undefined) ?? [];
+        const cmFacilities = body.prop_facilities as PropFacilityData[] | undefined;
         const cmPerPropLines = cmPattern === "available" && cmPropCount > 0
           ? Array.from({ length: cmPropCount }, (_, i) => {
               const nm = cmPropNamesRaw[i] || `物件${i + 1}`;
-              return `　- ${nm}: ${CM_STATUS_LABEL[cmStatuses[i] ?? ""] ?? "募集中"}`;
+              const rawVac = (cmVacancyDates[i] ?? "").trim();
+              // 過去日付・年号は落とす（通常生成パスの propList と同じ正規化）
+              const vac = rawVac && !isPastVacancyDate(rawVac) ? rawVac.replace(/^\d{4}年/, "") : "";
+              const facLines = cmFacilities?.[i] ? buildFacilityLines(cmFacilities[i]) : [];
+              return [
+                `　- ${nm}: ${CM_STATUS_LABEL[cmStatuses[i] ?? ""] ?? "募集中"}${vac ? `（${vac}退去予定）` : ""}`,
+                ...facLines.map((l) => `　　・${l}`),
+              ].join("\n");
             }).join("\n")
           : "";
         const cmSinglePropName = typeof property_name === "string" && property_name.trim() ? property_name.trim() : "";
         const cmEndedFloor = body.ended_floor as number | undefined;
         const cmEndedUnit = ((body.ended_unit as string | undefined) ?? "").trim();
+        // 送られた件数 − 確認できた件数 = 募集終了件数。
+        // これを渡さないと AI が「残り3件は引き続き確認中です」と事実に反する保留文を作ってしまう
+        const cmEndedCount = cmSentCount !== null && cmPropCount > 0 && cmSentCount > cmPropCount
+          ? cmSentCount - cmPropCount
+          : 0;
+        const cmAvailableApp = body.available_application as "yes" | "no" | undefined;
+        const cmShowViewingInvite = !!(show_viewing_invite as boolean | undefined);
+        const cmShowAppInvite = !!(body.check_application_invite as boolean | undefined);
         const cmResultLines = [
           `・確認結果: ${CM_RESULT_DESC[cmPattern] ?? "会話履歴から読み取ること"}`,
           cmSinglePropName ? `・対象物件名: ${cmSinglePropName}` : "",
           cmPerPropLines ? `・確認できた物件と状態:\n${cmPerPropLines}` : "",
           cmPattern === "alternative" && cmEndedFloor != null ? `・募集終了だったお部屋: ${cmEndedFloor}階${cmEndedUnit ? `${cmEndedUnit}号室` : ""}` : "",
           cmSentCount !== null ? `・お客様から送られた物件数: ${cmSentCount}件` : "",
+          cmEndedCount > 0
+            ? `・残り${cmEndedCount}件: 確認済みで「募集終了」（申込済み・募集に出ていない）。\n　※「残り${cmEndedCount}件は確認中」「引き続き確認します」等の保留表現は事実に反するため絶対禁止。募集終了として伝え「引き続き条件に合うお部屋を探させて頂きます！！」で締めること`
+            : "",
+          cmAvailableApp === "yes" ? "・お申込状況: 既に1番手のお申込あり → 2番手以降でのお申込となる旨を伝えること" : "",
+          cmShowAppInvite ? "・締めの方向: お申込誘導（お気に召されましたらお申込みしお部屋を抑えさせて頂きます）" : "",
+          !cmShowAppInvite && cmShowViewingInvite ? "・締めの方向: 内覧誘導（ご都合よろしいお日にちにご案内させて頂きます）" : "",
         ].filter(Boolean).join("\n");
         const cmResultBlock = cmPattern
           ? `【スタッフの確認結果（確定事実・必ずこの結果を報告するメッセージにすること）】
 ${cmResultLines}
 ・スタッフは既に募集状況の確認を完了しています。上記の結果を報告するメッセージを作成してください
-・「確認させて頂きます」「確認いたします」等の確認前メッセージの生成は絶対禁止（確認は完了済み）`
+・「確認させて頂きます」「確認いたします」等の確認前メッセージの生成は絶対禁止（確認は完了済み）
+・確認できた物件については「募集中です」で終わらせず、上記の状態・設備・費用情報まで伝えて次のアクション（内覧/申込）に繋げること`
           : "";
 
         const calendarNoteForPCR = calendar_info ? String(calendar_info) : "";
@@ -3429,6 +3598,8 @@ ${SMORA_COMMON_RULES}
 
 ${cmResultBlock}
 
+${cmEstimateFacts.block}
+
 ${pcrCalendarBlock}
 
 【この返信の目的】
@@ -3436,6 +3607,7 @@ ${pcrCalendarBlock}
 ・空室あり → 内覧誘導（カレンダー日程を提示）
 ・満室/募集終了 → 正直に伝えつつ「引き続き探します！！」で前向きに締める
 ・謝罪表現（「申し訳ございません」等）は使わない。「残念ながら」で自然に伝える
+・見積書を同封する場合は「御見積書同封させて頂きました！！」と費用の実情（割引の大小・クリーニング費用・初期費用の高低）まで伝えてから内覧/申込に繋げる
 
 【重要：会話読解ルール（必ず守ること）】
 ・お客様の直近メッセージから「どの物件・号室」の確認を求めているか読み取る
@@ -3447,6 +3619,8 @@ ${pcrCalendarBlock}
 ・「申し訳ございません」等の謝罪表現
 ・物件名の創作
 ・スタッフの確認結果があるのに「確認させて頂きます」等の確認前メッセージを生成すること
+・上記の見積書情報に無い金額・費用項目を創作すること
+・確認済みの物件を「確認中」「引き続き確認します」と保留扱いにすること
 
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
@@ -3466,7 +3640,7 @@ ${pcrCalendarBlock}
           } else { message_text = rawPCR; }
         } catch { message_text = rawPCR; }
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
-        return finalizeResponse(message_text);
+        return finalizeResponse(message_text, cmEstimateExtra);
       }
 
       // 「別の部屋について確認した」は会話を合わせる（conversation_match）専用（通常AIX生成は未対応）
@@ -3673,7 +3847,9 @@ ${patternExample}${knowledgeText}${examplesText}`;
           };
         });
         const fallbackNames = ["①", "②", "③", "④", "⑤"];
-        const hasAnyEstimate = ((body.estimate_image_urls as string[] | undefined)?.length ?? 0) > 0 || !!(estimate_image_url as string | undefined);
+        // estimate_image_urls は物件indexと対応した配列（見積書が無い物件は null）。some() で判定する
+        const hasAnyEstimate = ((body.estimate_image_urls as (string | null)[] | undefined) ?? []).some((u) => !!u) || !!(estimate_image_url as string | undefined);
+        if (hasAnyEstimate) estimate_sent_result = true;
 
         if (propCount === 1) {
           // 1件モード: 物件名があれば直接テンプレ生成（④ 改善）
@@ -3767,6 +3943,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
       // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）
       } else if (pattern === "available") {
         const estimateLine = estimate_image_url ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
+        if (estimate_image_url) estimate_sent_result = true;
         const availableTemplate = available_application === "yes"
           ? `[物件名と号室]募集中となります！！
 現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateLine}
@@ -3927,8 +4104,9 @@ ${templateText}`;
 
       // 見積書テキスト同封: available パターンかつフラグON時、見積書画像から費用テキストを生成・末尾に追加（並列実行）
       if (pattern === "available" && (include_estimate_text as boolean | undefined) && message_text) {
-        const estUrls = (body.estimate_image_urls as string[] | undefined) ?? [];
-        if (estUrls.length > 0) {
+        // 物件indexと対応した配列（見積書が無い物件は null）→ 下の map で pi を物件名の添字に使う
+        const estUrls = (body.estimate_image_urls as (string | null)[] | undefined) ?? [];
+        if (estUrls.some((u) => !!u)) {
           const checkEstSystem = `この見積書画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文なし）：
 {"discount":"34,000円","initial_cost":"146,000円","savings":"102,200円"}
 - discount: 割引額（「〇〇,〇〇〇円」形式）
@@ -3936,6 +4114,8 @@ ${templateText}`;
 - savings: スモラ節約額（一般業者との差額）
 不明はnull。`;
           const checkEstBadges = ["①","②","③","④","⑤"];
+          // null を含むため「実際に見積書がある件数」で単数/複数を判定する
+          const estAttachedCount = estUrls.filter((u) => !!u).length;
           const checkEstResults = await Promise.all(
             estUrls.map(async (url, pi) => {
               if (!url) return null;
@@ -3949,7 +4129,7 @@ ${templateText}`;
                 const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
                 if (!jsonMatch) return null;
                 const estData = JSON.parse(jsonMatch[0]) as { discount?: string | null; initial_cost?: string | null; savings?: string | null };
-                const prefix = estUrls.length > 1 ? `${checkEstBadges[pi] ?? (pi + 1) + "."}【${pName}】` : `【${pName}】`;
+                const prefix = estAttachedCount > 1 ? `${checkEstBadges[pi] ?? (pi + 1) + "."}【${pName}】` : `【${pName}】`;
                 const lines: string[] = [prefix, ""];
                 if (estData.discount) {
                   lines.push("初期費用さらに");
@@ -4765,6 +4945,8 @@ ${SMORA_COMMON_RULES}
       ...(notice ? { notice } : {}),
       ...(parsed_estimate_result ? { parsed_estimate: parsed_estimate_result } : {}),
       ...(estimate_text_result ? { estimate_text: estimate_text_result } : {}),
+      // M2: 御見積書を同封したか（AixModal → onAfterSend → log-aix-usage → aix_usage_logs.estimate_sent）
+      ...(estimate_sent_result ? { estimate_sent: true } : {}),
       // 各ピッカーのパーツ別生成結果（コンポーネント学習ループ用）
       ...(aiComponents ? { ai_components: aiComponents } : {}),
       // viewing_invite AIX生成ドラフト（差分学習ループ用: スタッフが編集して送った場合に差分を記録）

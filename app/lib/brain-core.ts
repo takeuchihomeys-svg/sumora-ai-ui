@@ -916,7 +916,9 @@ export async function analyzeConversation(
       .from("aix_usage_logs")
       // M1: property_names / prop_statuses = スタッフが「物件確認した」で入力した物件別の空き状況。
       // check_pattern（代表1値）では失われる「3件中1件だけ空室」の粒度をbrainに渡すため取得する
-      .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern, property_names, prop_statuses")
+      // M2: estimate_sent / prop_cost_notes = 御見積書の同封有無と見積書OCRの費用情報。
+      // 「見積書を送った」「割引が少ない/クリーニング代が必要/初期費用が高い」までbrainに渡す
+      .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern, property_names, prop_statuses, estimate_sent, prop_cost_notes")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(30),
@@ -1003,7 +1005,7 @@ export async function analyzeConversation(
   // AIXアクションのメッセージ単位ラベル解決
   // 1) line_message_id 完全一致（P4以降のログ・直近30日で97%カバー）
   // 2) 旧ログ fallback: is_aix_generated=true × sent_at ±3分
-  type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null; check_pattern?: string | null; property_names?: string[] | null; prop_statuses?: string[] | null };
+  type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null; check_pattern?: string | null; property_names?: string[] | null; prop_statuses?: string[] | null; estimate_sent?: boolean | null; prop_cost_notes?: string[] | null };
   const aixLogs = (aixLogsResult.data ?? []) as AixLog[];
   // AIX遷移マップ（DB動的）: from_aix_type → [{to, count}] 降順
   const aixTransitionMap: Record<string, Array<{ to: string; count: number }>> = {};
@@ -1701,9 +1703,24 @@ export async function analyzeConversation(
         .join("\n")}\n※上記で「募集終了」の物件について「募集状況を確認します」と言ってはならない`
     : "";
 
+  // M2: 送付済み御見積書の費用情報（aix_usage_logs.estimate_sent / prop_cost_notes）。
+  // 「見積書はもう送ってある」「その物件は割引が少なく初期費用が高い」という確定事実が無いと、
+  // brain は estimate_sheet を再提案し、返信は「御見積書を作成しお送りします」と二重宣言してしまう。
+  const estimateSentLog = aixLogs.find((l) => l.estimate_sent === true);
+  const costNotes = aixLogs
+    .flatMap((l) => (Array.isArray(l.prop_cost_notes) ? l.prop_cost_notes : []))
+    .map((n) => (n ?? "").trim())
+    .filter(Boolean);
+  const uniqueCostNotes = [...new Set(costNotes)].slice(0, 5);
+  const estimateInfoText = estimateSentLog
+    ? `\n【御見積書 送付済み（確定事実）】\n- ${new Date(estimateSentLog.sent_at ?? estimateSentLog.created_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" })}に御見積書を同封して送付済み（AIX: ${estimateSentLog.aix_type ?? "?"}）${
+        uniqueCostNotes.length > 0 ? `\n【送付済み御見積書の費用情報】\n${uniqueCostNotes.map((n) => `- ${n}`).join("\n")}` : ""
+      }\n※「御見積書を作成してお送りします」等の再宣言は禁止（既に送付済み）。費用について聞かれたら上記の金額を根拠に答えること。`
+    : "";
+
   const tasksText = (openTasks.length > 0
     ? `\n【この会話の未完了タスク】${openTasks.map((t) => taskLabel[t.task_type] ?? t.task_type).join(" / ")}\n※next_steps はこれらの未完了タスクを考慮すること。`
-    : "") + checkResultsText + propAvailabilityText;
+    : "") + checkResultsText + propAvailabilityText + estimateInfoText;
 
   type Viewing = { viewing_date: string; viewing_time: string | null; status: string | null };
   // viewing_history（is_primaryを含む全件）を優先・存在しなければviewingsにフォールバック

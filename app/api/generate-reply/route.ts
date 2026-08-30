@@ -2679,6 +2679,8 @@ export async function POST(req: NextRequest) {
 
     // ─── 見積書・割引の「約束済み」検出（見積二重宣言の防止）─────────────────
     // ① aix_usage_logs に estimate_sheet の使用履歴がある（AIXで見積書送付済み）
+    // ①' M2: estimate_sent=true のログがある（「物件確認した・物件あった」に見積書を同封して送ったケース。
+    //     aix_type は property_check_result のため ① では拾えず、直後の返信で見積書を二重宣言していた）
     // ② 直前スタッフ返信が既に割引・見積書の作成/送付を約束している（イエヤス割提示等）
     // のいずれかなら estimatePromised=true とし、estimatePromiseAckNote 注入＋enforceAixGates の
     // 置換文切替で「御見積書を作成しお送りします」宣言の再生成を止める。判定不能時は従来動作を維持。
@@ -2689,7 +2691,7 @@ export async function POST(req: NextRequest) {
           .from("aix_usage_logs")
           .select("id")
           .eq("conversation_id", conversationId)
-          .eq("aix_type", "estimate_sheet")
+          .or("aix_type.eq.estimate_sheet,estimate_sent.is.true")
           .limit(1);
         estimateAlreadySent = (estLogsRes.data?.length ?? 0) > 0;
       } catch { /* 判定不能時は従来動作（宣言許可）を維持する */ }

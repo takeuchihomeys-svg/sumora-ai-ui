@@ -191,9 +191,12 @@ export async function POST(req: NextRequest) {
       // M1: 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
       property_names?: string[] | null;
       prop_statuses?: string[] | null;
+      // M2: 御見積書を同封したか / 見積書OCRで読み取った物件別の費用メモ
+      estimate_sent?: boolean | null;
+      prop_cost_notes?: string[] | null;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -237,6 +240,15 @@ export async function POST(req: NextRequest) {
         : null,
       prop_statuses: Array.isArray(prop_statuses) && prop_statuses.length > 0
         ? prop_statuses.map((s) => String(s ?? "").slice(0, 40))
+        : null,
+      // M2: 御見積書を同封したか（estimate_sheet 以外のAIX＝物件確認したの見積書同封も「送付済み」として残す）。
+      // generate-reply の estimatePromised 判定が aix_type='estimate_sheet' しか見ておらず、
+      // 「物件確認した＋見積書同封」で送った直後に「御見積書を作成しお送りします」と再宣言していた。
+      estimate_sent: estimate_sent === true ? true : null,
+      // 見積書OCRの費用メモ（"物件名 / 初期費用合計: 〇〇円 / 割引額: 〇〇円 / クリーニング費用: 〇〇円"）。
+      // brain-core が【同封済み御見積書の費用情報】としてプロンプトへ注入する
+      prop_cost_notes: Array.isArray(prop_cost_notes) && prop_cost_notes.length > 0
+        ? prop_cost_notes.map((n) => String(n ?? "").slice(0, 300))
         : null,
     });
 

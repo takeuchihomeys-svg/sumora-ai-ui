@@ -59,7 +59,8 @@ interface AixModalProps {
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[] }) => void;
+  // M2: estimateSent / propCostNotes = 御見積書の同封有無とOCRで読み取った物件別費用情報
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[] }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -618,6 +619,11 @@ export default function AixModal({
   // generate() の冒頭で必ずクリアし、パターン切替時に前回の値が残らないようにする（同一index対応）
   const lastCheckPropNamesRef = useRef<string[]>([]);
   const lastCheckPropStatusesRef = useRef<string[]>([]);
+  // M2: 御見積書を同封したか / 見積書OCRから抽出した物件別費用メモ（割引額・クリーニング費用・初期費用）。
+  // onAfterSend 経由で log-aix-usage の estimate_sent / prop_cost_notes に記録され、
+  // brain-core が【同封済み御見積書の費用情報】として、generate-reply が estimatePromised 判定に使う。
+  const lastEstimateSentRef = useRef(false);
+  const lastPropCostNotesRef = useRef<string[]>([]);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
@@ -1676,6 +1682,9 @@ export default function AixModal({
       // M1: 物件確認結果は毎回の生成で作り直す（パターン切替時に前回の物件名・状態を持ち越さない）
       lastCheckPropNamesRef.current = [];
       lastCheckPropStatusesRef.current = [];
+      // M2: 見積書同封フラグ・費用メモも毎回リセット（前回生成の見積書情報を持ち越さない）
+      lastEstimateSentRef.current = false;
+      lastPropCostNotesRef.current = [];
 
       const body: Record<string, unknown> = {
         action: actionType,
@@ -1889,12 +1898,15 @@ export default function AixModal({
             }
           }
           if (allImageUrls.length > 0) { body.image_urls = allImageUrls; body.image_url = allImageUrls[0]; }
-          const estimateUrls: string[] = [];
+          // M2: 物件indexと対応させて渡す（見積書なしの物件は null）。
+          // 旧実装は非nullのみpushしていたため「物件②だけ見積書あり」のとき
+          // サーバ側の propNames[pi] とズレて物件①の名前で費用テキストが作られていた。
+          const estimateUrls: (string | null)[] = [];
           for (let pi = 0; pi < checkPropertyCount; pi++) {
             const ef = checkPropEstimates[pi];
-            if (ef) estimateUrls.push(await uploadImageCached(ef));
+            estimateUrls.push(ef ? await uploadImageCached(ef) : null);
           }
-          if (estimateUrls.length > 0) body.estimate_image_urls = estimateUrls;
+          if (estimateUrls.some(u => u)) body.estimate_image_urls = estimateUrls;
         } else if (checkPattern === "exclusive") {
           // 専任物件: 固定文送信（AI不要）。画像はOCR内部用のみでお客さんには送らない
           if (!exclusivePropName.trim()) throw new Error("物件名を入力してください");
@@ -2159,6 +2171,9 @@ export default function AixModal({
         notice?: string;
         estimate_text?: string;
         parsed_estimate?: Record<string, string>;
+        // M2: 御見積書を同封したか / 見積書OCRから抽出した物件別の費用メモ
+        estimate_sent?: boolean;
+        prop_cost_notes?: string[];
       };
       if (!data.ok) throw new Error(data.error || "生成に失敗しました");
 
@@ -2198,6 +2213,12 @@ export default function AixModal({
       if (data.doc_image_url) setPreviewDocImageUrl(data.doc_image_url as string);
       // AIX完了後テンプレ誘導カテゴリ（API主導。無ければ親側の AIX_ACTION_META にフォールバックされる）
       suggestTemplateCategoryRef.current = typeof data.suggest_template_category === "string" ? data.suggest_template_category : null;
+      // M2: 御見積書の同封有無・OCR費用メモを保持 → onAfterSend 経由で aix_usage_logs に永続化し、
+      // 以降の generate-reply が「見積書送付済み・その費用情報」を確定事実として使えるようにする
+      lastEstimateSentRef.current = data.estimate_sent === true;
+      lastPropCostNotesRef.current = Array.isArray(data.prop_cost_notes)
+        ? (data.prop_cost_notes as unknown[]).map((n) => String(n ?? "")).filter(Boolean)
+        : [];
     } catch (err) {
       if (isStale()) return;
       const name = err instanceof Error ? err.name : "";
@@ -2497,6 +2518,9 @@ export default function AixModal({
         // M1: 物件別空き状況（brain の確定事実ソース）
         propertyNames: lastCheckPropNamesRef.current.length > 0 ? lastCheckPropNamesRef.current : undefined,
         propStatuses: lastCheckPropStatusesRef.current.length > 0 ? lastCheckPropStatusesRef.current : undefined,
+        // M2: 見積書同封の事実・費用情報（generate-reply / brain の確定事実ソース）
+        estimateSent: lastEstimateSentRef.current || undefined,
+        propCostNotes: lastPropCostNotesRef.current.length > 0 ? lastPropCostNotesRef.current : undefined,
       });
       onScheduled?.();
       setShowAixScheduleModal(false);
@@ -2619,6 +2643,9 @@ export default function AixModal({
             // M1: 物件別空き状況も遅延送信パスでキャプチャ（30秒後に別会話へ切替わっても値が壊れない）
             const capturedPropNames = [...lastCheckPropNamesRef.current];
             const capturedPropStatuses = [...lastCheckPropStatusesRef.current];
+            // M2: 見積書同封フラグ・費用メモも同様にキャプチャ
+            const capturedEstimateSent = lastEstimateSentRef.current;
+            const capturedPropCostNotes = [...lastPropCostNotesRef.current];
             const sendFn = async () => {
               await capturedOnSend(capturedPreview);
               // UX改善①: 学習は実際に送信が完了した後にのみ実行する
@@ -2641,6 +2668,8 @@ export default function AixModal({
                 conversationMatch: capturedConvMatch,
                 propertyNames: capturedPropNames.length > 0 ? capturedPropNames : undefined,
                 propStatuses: capturedPropStatuses.length > 0 ? capturedPropStatuses : undefined,
+                estimateSent: capturedEstimateSent || undefined,
+                propCostNotes: capturedPropCostNotes.length > 0 ? capturedPropCostNotes : undefined,
               });
             };
             onDelayedSend?.(30, sendFn); // 親がsetTimeoutを管理（キャンセル可能）
@@ -2795,6 +2824,9 @@ export default function AixModal({
         // M1: 物件別空き状況（brain の確定事実ソース）
         propertyNames: lastCheckPropNamesRef.current.length > 0 ? lastCheckPropNamesRef.current : undefined,
         propStatuses: lastCheckPropStatusesRef.current.length > 0 ? lastCheckPropStatusesRef.current : undefined,
+        // M2: 見積書同封の事実・費用情報（generate-reply / brain の確定事実ソース）
+        estimateSent: lastEstimateSentRef.current || undefined,
+        propCostNotes: lastPropCostNotesRef.current.length > 0 ? lastPropCostNotesRef.current : undefined,
       });
       onClose();
     } catch (err) {

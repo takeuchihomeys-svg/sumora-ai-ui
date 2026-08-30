@@ -9639,7 +9639,7 @@ export default function Home() {
             return sendMessageText(text, imageUrl, isAix);
           }}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[] }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[] }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -9744,6 +9744,10 @@ export default function Home() {
                   // brain-core が【物件別空き状況（確定事実）】としてプロンプトへ注入する
                   property_names: meta?.propertyNames ?? null,
                   prop_statuses: meta?.propStatuses ?? null,
+                  // M2: 御見積書の同封有無とOCRで読み取った費用情報。
+                  // generate-reply の estimatePromised 判定 / brain-core の費用情報注入に使う
+                  estimate_sent: meta?.estimateSent ?? null,
+                  prop_cost_notes: meta?.propCostNotes ?? null,
                 }),
               }).catch(() => {});
               lastAixLogTextRef.current = null;

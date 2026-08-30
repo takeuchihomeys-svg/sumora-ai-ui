@@ -2790,6 +2790,18 @@ $func$;
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS property_names TEXT[];
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS prop_statuses TEXT[];
 
+-- ── M2: AIX見積書同封の事実と費用情報の永続化（2026-08-30追加）──
+-- 「物件確認した・物件あった」で御見積書を同封して送っても、その事実と費用情報が
+-- どこにも残らず、以降の generate-reply / brain が「見積書はまだ送っていない」前提で文を作っていた。
+-- estimate_sent:    このAIX送信で御見積書を同封したか（aix_type='estimate_sheet' 以外の同封も拾う）
+-- prop_cost_notes:  見積書VisionOCRの費用メモ（"物件名 / 初期費用合計: 〇〇円 / 割引額: 〇〇円 / クリーニング費用: 〇〇円"）
+-- /api/aix/action が返す estimate_sent / prop_cost_notes を
+-- AixModal → page.tsx onAfterSend → /api/log-aix-usage が記録し、
+-- brain-core.ts が【同封済み御見積書の費用情報】として、
+-- generate-reply が estimatePromised（見積二重宣言の防止）としてそれぞれ参照する。
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS estimate_sent BOOLEAN;
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS prop_cost_notes TEXT[];
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
