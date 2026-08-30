@@ -821,6 +821,14 @@ async function getAdaptImprovementRules(actionType: string): Promise<string> {
 // 返り値は生テキスト。呼び出し側で必ず finalizeResponse() を通すこと（号室ゼロ除去・内部メモ分離）
 // improvementRules: getAdaptImprovementRules() で取得したアクション別改善ルール（過去の👍/👎フィードバック学習）
 // brainMeta: AIX-META（suggested_aix_meta）の customer_intent / winning_pattern を言い方の最適化に使う
+const RECOMMENDED_TONE_GUIDE: Record<string, string> = {
+  "共感的": "冒頭1文で顧客の気持ちを受け止めてから本題に入る（「〜ですよね」等）。急かさない",
+  "テキパキ": "前置きを省き結論から書く。1文を短く、要点を先に",
+  "慎重": "断定・楽観表現を避け、会話・DBで確認済みの事実のみ正確に伝える",
+  "明るく前向き": "ポジティブな言葉で次の一歩を気持ちよく示す（絵文字の扱いは既存ルールに従う）",
+  "普通": "通常のスモラトーン",
+};
+
 async function adaptMessageToConversation(
   baseMessage: string,
   conversationHistory: string,
@@ -828,7 +836,7 @@ async function adaptMessageToConversation(
   actionLabel: string,
   diffNote: string,
   improvementRules?: string,
-  brainMeta?: { customer_intent?: string | null; winning_pattern?: string | null } | null
+  brainMeta?: { customer_intent?: string | null; winning_pattern?: string | null; closing_strategy?: string | null; recommended_tone?: string | null } | null
 ): Promise<string> {
   const improvementBlock = improvementRules && improvementRules.trim()
     ? `\n【会話を合わせる改善ルール（過去フィードバックから学習・必ず守る）】\n${improvementRules.trim()}\n`
@@ -836,6 +844,10 @@ async function adaptMessageToConversation(
   const metaLines = [
     brainMeta?.customer_intent ? `意図: ${brainMeta.customer_intent}` : null,
     brainMeta?.winning_pattern ? `勝ちパターン: ${brainMeta.winning_pattern}` : null,
+    brainMeta?.closing_strategy ? `成約戦略: ${brainMeta.closing_strategy}（ベースメッセージが既にこの方向のアクションを含む場合は言い回しをこの戦略に寄せるだけに留め、新しいアクションを足さないこと）` : null,
+    brainMeta?.recommended_tone
+      ? `推奨トーン: ${brainMeta.recommended_tone}${RECOMMENDED_TONE_GUIDE[brainMeta.recommended_tone] ? `（${RECOMMENDED_TONE_GUIDE[brainMeta.recommended_tone]}）` : ""}`
+      : null,
   ].filter(Boolean);
   const brainMetaBlock = metaLines.length > 0
     ? `\n【お客様意図・最適アプローチ（AIX-META）】\n${metaLines.join("\n")}\n※ ベースメッセージの内容・結果は変えず、「言い方」をこの意図・パターンに寄せること\n`
@@ -1155,6 +1167,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
       winning_pattern?: string | null;
       repeated_concern?: string | null;
       human_type_label?: string | null;
+      engagement_stance?: "push" | "wait" | null;
     };
     const { brainContext, brainMeta: aixBrainMeta, propertyCustomerId: resolvedPCID } = await (async (): Promise<{ brainContext: string; brainMeta: AixLocalBrainMeta | null; propertyCustomerId: string | null }> => {
       if (!conversationId) return { brainContext: "", brainMeta: null, propertyCustomerId: null };
@@ -3590,6 +3603,32 @@ ${cmResultLines}
           loadBrainTemplate("property_check_result"),
         ]);
 
+        const pcrWaitStance = aixBrainMeta?.engagement_stance === "wait";
+        const pcrAvoidTopics = (aixBrainMeta?.avoid_topics ?? []).filter((t): t is string => typeof t === "string" && t.trim() !== "");
+        const pcrKeyTopics = (aixBrainMeta?.key_topics ?? []).filter((t): t is string => typeof t === "string" && t.trim() !== "");
+        const pcrMetaLines = [
+          pcrWaitStance
+            ? "- ⏸️ 押し引きスタンス: WAIT（待ちの局面）— 強推し直後の了承、またはネガ文脈（断り・キャンセル・否決・募集終了）の直後です。内覧日程の提示・お申込誘導・希少性訴求（「一番手確保」「残り1部屋」「お早めに」「今なら」等）・新規物件の提案は今回の返信に一切入れないこと。上記【スタッフの確認結果】内の「・締めの方向: お申込誘導 / 内覧誘導」の指示および内覧可能日時の提示指示は今回に限り無効とし、空室状況をお伝えした後は「ご検討ください！！」「ご都合に合わせてご連絡ください！！」等の柔らかい締めにすること。このWAIT指示は他のすべての締め・誘導指示に優先する"
+            : "",
+          aixBrainMeta?.closing_strategy
+            ? `- 成約戦略: ${aixBrainMeta.closing_strategy} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること（WE DO宣言は返信全体で1文・重複禁止）${pcrWaitStance ? "。ただしWAITスタンスが優先のため、押し・誘導を含む戦略はそのまま実行せず「お待ちしております」「ご検討頂ければと思います」等の待ちの1文に置き換えること" : ""}`
+            : "",
+          aixBrainMeta?.recommended_tone
+            ? `- 推奨トーン: ${aixBrainMeta.recommended_tone}${RECOMMENDED_TONE_GUIDE[aixBrainMeta.recommended_tone] ? `（${RECOMMENDED_TONE_GUIDE[aixBrainMeta.recommended_tone]}）` : ""}`
+            : "",
+          pcrKeyTopics.length > 0
+            ? `- ✅ 必ず含める内容（${pcrKeyTopics.length}件すべて必須）: ${pcrKeyTopics.join(" / ")} → 各項目を本文で最低1文、会話の流れに自然に織り込むこと（箇条書きの丸写しは禁止）`
+            : "",
+          pcrAvoidTopics.length > 0
+            ? `- ⛔ 絶対禁止の話題（1つでも含めたら不合格）: ${pcrAvoidTopics.join(" / ")}${pcrWaitStance ? " ／ さらにWAIT局面のため「他物件の募集状況確認」「新規物件のピックアップ」「別物件のご提案」「お申込のご案内」「ご検討のお願いの繰り返し」も禁止" : ""}`
+            : (pcrWaitStance
+              ? "- ⛔ 絶対禁止の話題（WAIT局面）: 他物件の募集状況確認 / 新規物件のピックアップ / 別物件のご提案 / お申込のご案内 / ご検討のお願いの繰り返し"
+              : ""),
+        ].filter(Boolean);
+        const brainMetaBlockPCR = pcrMetaLines.length > 0
+          ? `\n【AIX-META（この局面の最適アプローチ・必ず守る）】\n${pcrMetaLines.join("\n")}\n`
+          : "";
+
         const pcrSystem = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
@@ -3621,7 +3660,7 @@ ${pcrCalendarBlock}
 ・スタッフの確認結果があるのに「確認させて頂きます」等の確認前メッセージを生成すること
 ・上記の見積書情報に無い金額・費用項目を創作すること
 ・確認済みの物件を「確認中」「引き続き確認します」と保留扱いにすること
-
+${brainMetaBlockPCR}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
