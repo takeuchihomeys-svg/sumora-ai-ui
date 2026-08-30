@@ -93,6 +93,21 @@ export async function POST(req: Request) {
     (r) => `${r.customer_intent ?? r.situation ?? ""}: ${r.pattern}`,
   );
 
+  // ── ai_reply_knowledge（直接INSERTされた成約TPOパターン等）────────────────
+  const { data: knRows, error: knErr } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id, conversation_state, title, content")
+    .is("embedding", null)
+    .neq("hypothesis_status", "rejected")
+    .limit(150);
+  if (knErr) return NextResponse.json({ ok: false, error: knErr.message }, { status: 500 });
+
+  const knResult = await backfillTable(
+    "ai_reply_knowledge",
+    (knRows ?? []) as Array<{ id: string; conversation_state: string | null; title: string | null; content: string | null }>,
+    (r) => `${r.conversation_state ?? ""}: ${r.title ?? ""} ${r.content ?? ""}`,
+  );
+
   // ── 残件数確認 ─────────────────────────────────────────────────────────────
   const { count: exRemaining } = await supabase
     .from("ai_reply_examples")
@@ -102,13 +117,19 @@ export async function POST(req: Request) {
     .from("winning_patterns")
     .select("id", { count: "exact", head: true })
     .is("embedding", null);
+  const { count: knRemaining } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id", { count: "exact", head: true })
+    .is("embedding", null)
+    .neq("hypothesis_status", "rejected");
 
-  const totalRemaining = (exRemaining ?? 0) + (wpRemaining ?? 0);
+  const totalRemaining = (exRemaining ?? 0) + (wpRemaining ?? 0) + (knRemaining ?? 0);
   return NextResponse.json({
     ok: true,
     ai_reply_examples: exResult,
     winning_patterns: wpResult,
-    remaining: { ai_reply_examples: exRemaining ?? 0, winning_patterns: wpRemaining ?? 0 },
+    ai_reply_knowledge: knResult,
+    remaining: { ai_reply_examples: exRemaining ?? 0, winning_patterns: wpRemaining ?? 0, ai_reply_knowledge: knRemaining ?? 0 },
     message: totalRemaining > 0 ? `残り${totalRemaining}件あります。もう一度叩いてください` : "全件完了！",
   });
 }
@@ -134,9 +155,18 @@ export async function GET(req: Request) {
     const { count: wpTotal } = await supabase
       .from("winning_patterns")
       .select("id", { count: "exact", head: true });
+    const { count: knCount } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id", { count: "exact", head: true })
+      .is("embedding", null)
+      .neq("hypothesis_status", "rejected");
+    const { count: knTotal } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id", { count: "exact", head: true });
     return NextResponse.json({
       ai_reply_examples: { remaining: exCount ?? 0, total: exTotal ?? 0 },
       winning_patterns: { remaining: wpCount ?? 0, total: wpTotal ?? 0 },
+      ai_reply_knowledge: { remaining: knCount ?? 0, total: knTotal ?? 0 },
     });
   }
   // 認証あり（Vercel Cron）: POST と同じバックフィル処理を実行
