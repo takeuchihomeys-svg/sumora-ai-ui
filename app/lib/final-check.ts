@@ -54,6 +54,8 @@ export interface FinalCheckContext {
   // v3 追加（Fable5 brain-vs-finalcheck監査 2026-08-14）
   isAutoSend?: boolean;          // HIGH-1/2: 自動送信経路のみ true → 未完走時fail-closed / MISSED_QUESTION昇格
   conversationStage?: string;    // MEDIUM-2: 現在の会話段階（例: "条件ヒアリング中"）
+  tpoLabel?: string;             // TPO場面（例: "感謝返し" / "ネガ文脈" / "強推し直後の了承"）。
+                                 // generate-reply の tpoNoteForLLM と同一値。context_check の過剰指摘抑制に使用
   checkpointStage?: string | null; // brain実態フェーズ（conversationStageと乖離時に優先）
   sentPropertiesCount?: number;  // MEDIUM-2: 送付済み物件数（0=未送付）
   isAix?: boolean;               // FP-02: AIX機能使用フラグ。false の場合 AIX_BOUNDARY_* コードを除外
@@ -500,8 +502,13 @@ ${draft}
 // 旧実装は nowJstString()（毎分変化）が検査項目4の中に埋め込まれておりプレフィックスを
 // 毎分無効化していたため、【現在時刻】ブロックとして動的部へ移動した（検査内容は同一）。
 function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
-  const stageBlock = ctx.conversationStage
-    ? `[STAGE]\n現在段階: ${ctx.conversationStage}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${ctx.sentPropertiesCount}件` : ""}${ctx.checkpointStage && ctx.checkpointStage !== ctx.conversationStage ? `\nフェーズ乖離: brain実態=${ctx.checkpointStage} DB=${ctx.conversationStage}。実態フェーズで判定すること` : ""}\n[/STAGE]\n`
+  // TPO場面（感謝返し・ネガ文脈・強推し直後 等）。生成側が意図的に話題を絞った局面を
+  // 「不足」と誤検出しないための文脈（generate-reply の tpoNoteForLLM と同一値）
+  const tpoPart = ctx.tpoLabel
+    ? `\n場面(TPO): ${ctx.tpoLabel}。この場面に適した返信かどうかで判定すること。この場面で意図的に省かれた要素（新規物件提案・CTA・申込誘導・条件の再ヒアリング等）を「不足」として指摘しないこと`
+    : "";
+  const stageBlock = (ctx.conversationStage || ctx.tpoLabel)
+    ? `[STAGE]\n現在段階: ${ctx.conversationStage ?? "（不明）"}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${ctx.sentPropertiesCount}件` : ""}${ctx.checkpointStage && ctx.checkpointStage !== ctx.conversationStage ? `\nフェーズ乖離: brain実態=${ctx.checkpointStage} DB=${ctx.conversationStage}。実態フェーズで判定すること` : ""}${tpoPart}\n[/STAGE]\n`
     : "";
   const brainBaselineNote = ctx.brainMeta?.action
     ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。このアクションと矛盾しない返信内容であればSTAGE_SKIPは発行しないこと。\n\n`

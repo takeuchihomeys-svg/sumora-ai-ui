@@ -2760,6 +2760,74 @@ export async function POST(req: NextRequest) {
       console.log(JSON.stringify({tag:"degradation:T3",stage:"detect",conversationId,reason:tierResult.reason,staleAgeMs:tierResult.staleAgeMs??null}));
     }
 
+    // ── TPO判定 + effective制御値（brainGuidanceNote IIFE外に切り出し 2026-08-30）─────
+    // 旧実装は IIFE ローカルだったため finalCheckCtx から参照できず、ファイナルチェックには
+    // TPO上書き前の生 brainMeta が渡っていた（過剰指摘・見逃しの原因）。ここで一度だけ計算し
+    // LLM注入（brainGuidanceNote）とファイナルチェック（finalCheckCtx）で同一値を共有する。
+    // 感謝返し場面の判定（Opus5実データ検証済み 2026-08-30）
+    // 成約113字 vs 停滞118字: 短さより「中身（実体アクション）の有無」が差
+    // 成約の68%が提案入りで悪反応1.6% → 物件提案禁止は逆効果
+    const isGratitudeReplyTPO = (() => {
+      const msg = (message ?? "").trim();
+      if (msg.length >= 60) return false; // 40→60字（実データで60字が妥当）
+      if (/[?？]|希望|したい|教えて|どうすれば|送っ|ください(?!ませ)/.test(msg)) return false;
+      return /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解/.test(msg);
+    })();
+    // ネガ文脈判定（断り・キャンセル直後の感謝には営業を一切乗せない）
+    // 仕様通り直近スタッフ3通を走査（1通のみだと募集終了報告が窓外になるバグを修正）
+    const isNegativeContext = (() => {
+      if (brainMeta?.customer_intent === "negative") return true;
+      const recentStaffTexts = [...recentMessages]
+        .reverse()
+        .filter(m => m.sender === "staff")
+        .slice(0, 3)
+        .map(m => m.text ?? "")
+        .join(" ");
+      const recentText = recentStaffTexts + " " + (message ?? "");
+      return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難しくなっ/.test(recentText);
+    })();
+    // 強推し直後の了承：「1件に絞ってオススメ済み→顧客が了承」フェーズの待ちの姿勢
+    // property_recommendation/check_result後の感謝は「再提案・他物件確認」が逆効果になる
+    const isPostStrongRecommendation = (() => {
+      if (!isGratitudeReplyTPO) return false;
+      if (isNegativeContext) return false;
+      const hist = lastAixHistoryText ?? "";
+      return /property_recommendation|property_check_result/.test(hist);
+    })();
+    const effectiveReplyDirection: string | null = (() => {
+      if (isNegativeContext) return "受け止めのみ（50〜110字）";
+      if (isPostStrongRecommendation) return "感謝を1行で受け取り、検討を見守る待ちの姿勢で締める（50〜110字）。他物件の募集確認・新規ピックアップ・再推奨は書かない";
+      if (isGratitudeReplyTPO) return "感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。予告のみの進捗テンプレ・条件の再ヒアリングで埋めない";
+      return brainMeta?.reply_direction ?? null;
+    })();
+    const effectiveKeyTopics: string[] = (() => {
+      if (isNegativeContext) return [];
+      if (isPostStrongRecommendation) return []; // 待ちフェーズ：余計なアクションを足さない
+      if (isGratitudeReplyTPO) return (brainMeta?.key_topics ?? []).slice(0, 1);
+      return brainMeta?.key_topics ?? [];
+    })();
+    const effectiveAvoidTopics: string[] = (() => {
+      const base = brainMeta?.avoid_topics ?? [];
+      if (isNegativeContext) return [...new Set([...base, "物件提案", "見積提案", "申込誘導"])];
+      if (isPostStrongRecommendation) return [...new Set([...base, "他物件の募集状況確認", "新規物件ピックアップ", "別物件の提案", "申込誘導", "検討依頼の繰り返し"])];
+      if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
+      return base;
+    })();
+    // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
+    const tpoNoteForLLM: string | null = (() => {
+      if (isNegativeContext) return "ネガ文脈（断り・否決・募集終了等の直後）";
+      if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客了承中・待ちフェーズ）";
+      if (isGratitudeReplyTPO) return "感謝返し（短い了承・感謝メッセージ）";
+      const a = brainMeta?.action ?? "";
+      if (state === "applying") return "申込後説明";
+      if (a === "viewing_invite" || a === "meeting_place") return "内覧調整";
+      if (a === "application_push") return "申込打診";
+      if (a === "property_send" || a === "property_recommendation") return "物件送付後";
+      if (/費用|見積|初期費用/.test(a)) return "費用説明";
+      if (!brainMeta?.action && (state === "initial" || state === "new")) return "初回対応";
+      return null;
+    })();
+
     // H7(Fable5) + AIX-META一元化(2026-08) + Step1廃止(2026-08):
     // brainMeta が唯一の戦略指示（＋message-local戦術）としてプロンプトに注入される。
     // AIX-META が存在する場合、buildGenerationMessages 側の closingNote（ai_summary由来の
@@ -2855,70 +2923,7 @@ export async function POST(req: NextRequest) {
         lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
         lines.push(`  → 今回の返信で実行するのは Step1（${brainMeta.next_steps[0]}）のみ。Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を今回の本文に先取りして書かないこと（フェーズ先走り禁止）`);
       }
-      // 感謝返し場面の判定（Opus5実データ検証済み 2026-08-30）
-      // 成約113字 vs 停滞118字: 短さより「中身（実体アクション）の有無」が差
-      // 成約の68%が提案入りで悪反応1.6% → 物件提案禁止は逆効果
-      const isGratitudeReplyTPO = (() => {
-        const msg = (message ?? "").trim();
-        if (msg.length >= 60) return false; // 40→60字（実データで60字が妥当）
-        if (/[?？]|希望|したい|教えて|どうすれば|送っ|ください(?!ませ)/.test(msg)) return false;
-        return /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解/.test(msg);
-      })();
-      // ネガ文脈判定（断り・キャンセル直後の感謝には営業を一切乗せない）
-      // 仕様通り直近スタッフ3通を走査（1通のみだと募集終了報告が窓外になるバグを修正）
-      const isNegativeContext = (() => {
-        if (brainMeta?.customer_intent === "negative") return true;
-        const recentStaffTexts = [...recentMessages]
-          .reverse()
-          .filter(m => m.sender === "staff")
-          .slice(0, 3)
-          .map(m => m.text ?? "")
-          .join(" ");
-        const recentText = recentStaffTexts + " " + (message ?? "");
-        return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難しくなっ/.test(recentText);
-      })();
-      // 強推し直後の了承：「1件に絞ってオススメ済み→顧客が了承」フェーズの待ちの姿勢
-      // property_recommendation/check_result後の感謝は「再提案・他物件確認」が逆効果になる
-      const isPostStrongRecommendation = (() => {
-        if (!isGratitudeReplyTPO) return false;
-        if (isNegativeContext) return false;
-        const hist = lastAixHistoryText ?? "";
-        return /property_recommendation|property_check_result/.test(hist);
-      })();
-      const effectiveReplyDirection = (() => {
-        if (isNegativeContext) return "受け止めのみ（50〜110字）";
-        if (isPostStrongRecommendation) return "感謝を1行で受け取り、検討を見守る待ちの姿勢で締める（50〜110字）。他物件の募集確認・新規ピックアップ・再推奨は書かない";
-        if (isGratitudeReplyTPO) return "感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。予告のみの進捗テンプレ・条件の再ヒアリングで埋めない";
-        return brainMeta.reply_direction ?? null;
-      })();
-      const effectiveKeyTopics = (() => {
-        if (isNegativeContext) return [];
-        if (isPostStrongRecommendation) return []; // 待ちフェーズ：余計なアクションを足さない
-        if (isGratitudeReplyTPO) return (brainMeta.key_topics ?? []).slice(0, 1);
-        return brainMeta.key_topics ?? [];
-      })();
-      const effectiveAvoidTopics = (() => {
-        const base = brainMeta.avoid_topics ?? [];
-        if (isNegativeContext) return [...new Set([...base, "物件提案", "見積提案", "申込誘導"])];
-        if (isPostStrongRecommendation) return [...new Set([...base, "他物件の募集状況確認", "新規物件ピックアップ", "別物件の提案", "申込誘導", "検討依頼の繰り返し"])];
-        if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
-        return base;
-      })();
-
-      // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
-      const tpoNoteForLLM = (() => {
-        if (isNegativeContext) return "ネガ文脈（断り・否決・募集終了等の直後）";
-        if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客了承中・待ちフェーズ）";
-        if (isGratitudeReplyTPO) return "感謝返し（短い了承・感謝メッセージ）";
-        const a = brainMeta.action ?? "";
-        if (state === "applying") return "申込後説明";
-        if (a === "viewing_invite" || a === "meeting_place") return "内覧調整";
-        if (a === "application_push") return "申込打診";
-        if (a === "property_send" || a === "property_recommendation") return "物件送付後";
-        if (/費用|見積|初期費用/.test(a)) return "費用説明";
-        if (!brainMeta.action && (state === "initial" || state === "new")) return "初回対応";
-        return null;
-      })();
+      // TPO判定・effective制御値は IIFE 外で算出済み（finalCheckCtx と共有）
       if (tpoNoteForLLM) lines.push(`- 📍 現在の場面: 【${tpoNoteForLLM}】— この場面に合った返し方をすること`);
 
       if (effectiveReplyDirection) lines.push(`- 🎯 返信の方向性: ${effectiveReplyDirection}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
@@ -3566,12 +3571,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   lastCustomerMessage: message,
                   // Step1廃止（2026-08）: 旧 step1Json（Step1生JSON）→ brainMeta のコンパクトサブセット。
                   // message-local フィールドは鮮度ゲート（brainFreshForMessage）通過時のみ含める
+                  // reply_direction / key_topics / avoid_topics は TPO上書き後の effective値を渡す
+                  // （生brainMetaを渡すと、TPOで封じたはずの話題をファイナルチェックが要求する逆転が起きる）
                   brainContextJson: brainMeta
                     ? JSON.stringify({
                         closing_strategy: brainMeta.closing_strategy ?? null,
-                        reply_direction: brainMeta.reply_direction ?? null,
-                        key_topics: brainMeta.key_topics ?? [],
-                        avoid_topics: brainMeta.avoid_topics ?? [],
+                        reply_direction: effectiveReplyDirection ?? brainMeta.reply_direction ?? null,
+                        key_topics: effectiveKeyTopics,
+                        avoid_topics: effectiveAvoidTopics,
                         recommended_tone: brainMeta.recommended_tone ?? null,
                         next_steps: brainMeta.next_steps ?? [],
                         engagement_stance: brainMeta.engagement_stance ?? null,
@@ -3607,6 +3614,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       }
                     : null,
                   checkpointStage: brainMeta?.checkpoint_stage ?? null, // Fix③: brain実態フェーズ（DB stateと乖離検出用）
+                  tpoLabel: tpoNoteForLLM ?? undefined, // TPO場面（感謝返し/ネガ文脈/強推し直後 等）をチェック側にも共有
                   ngProperties: ngPropertiesForCheck.length ? ngPropertiesForCheck : undefined,
                 };
                 // センシティブ案件（クレーム/審査否決/キャンセル）は「参考のみ・手動確認必須」の草稿のため
