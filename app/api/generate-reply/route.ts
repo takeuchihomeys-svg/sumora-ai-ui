@@ -2846,18 +2846,36 @@ export async function POST(req: NextRequest) {
         lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
         lines.push(`  → 今回の返信で実行するのは Step1（${brainMeta.next_steps[0]}）のみ。Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を今回の本文に先取りして書かないこと（フェーズ先走り禁止）`);
       }
-      // 感謝返し場面の判定: 40字未満・質問なし・感謝/了承のみ → reply_direction/key_topics/avoid_topicsを上書き
+      // 感謝返し場面の判定（Opus5実データ検証済み 2026-08-30）
+      // 成約113字 vs 停滞118字: 短さより「中身（実体アクション）の有無」が差
+      // 成約の68%が提案入りで悪反応1.6% → 物件提案禁止は逆効果
       const isGratitudeReplyTPO = (() => {
         const msg = (message ?? "").trim();
-        if (msg.length >= 40) return false;
-        if (/[?？]|希望|したい|ください|教えて|どうすれば|お願い|確認|送っ/.test(msg)) return false;
-        return /ありがとう|了解|わかり|はい！|承知|お願いします$/.test(msg);
+        if (msg.length >= 60) return false; // 40→60字（実データで60字が妥当）
+        if (/[?？]|希望|したい|教えて|どうすれば|送っ|ください(?!ませ)/.test(msg)) return false;
+        return /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解/.test(msg);
       })();
-      const effectiveReplyDirection = isGratitudeReplyTPO ? "短く感謝を受け取る" : (brainMeta.reply_direction ?? null);
-      const effectiveKeyTopics = isGratitudeReplyTPO ? [] : (brainMeta.key_topics ?? []);
-      const effectiveAvoidTopics = isGratitudeReplyTPO
-        ? [...new Set([...(brainMeta.avoid_topics ?? []), "検討依頼の繰り返し", "物件追加提案"])]
-        : (brainMeta.avoid_topics ?? []);
+      // ネガ文脈判定（断り・キャンセル直後の感謝には営業を一切乗せない）
+      const isNegativeContext = (() => {
+        const recent = (brainMeta?.last_aix_history ?? "") + (message ?? "");
+        return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難し/.test(recent);
+      })();
+      const effectiveReplyDirection = (() => {
+        if (isNegativeContext) return "受け止めのみ（50〜110字）";
+        if (isGratitudeReplyTPO) return "感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。予告のみの進捗テンプレ・条件の再ヒアリングで埋めない";
+        return brainMeta.reply_direction ?? null;
+      })();
+      const effectiveKeyTopics = (() => {
+        if (isNegativeContext) return [];
+        if (isGratitudeReplyTPO) return (brainMeta.key_topics ?? []).slice(0, 1); // 実体アクション1つだけ残す
+        return brainMeta.key_topics ?? [];
+      })();
+      const effectiveAvoidTopics = (() => {
+        const base = brainMeta.avoid_topics ?? [];
+        if (isNegativeContext) return [...new Set([...base, "物件提案", "見積提案", "申込誘導"])];
+        if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
+        return base;
+      })();
 
       if (effectiveReplyDirection) lines.push(`- 🎯 返信の方向性: ${effectiveReplyDirection}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
       if (effectiveKeyTopics.length) {
