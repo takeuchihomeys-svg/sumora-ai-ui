@@ -3574,6 +3574,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                         avoid_topics: brainMeta.avoid_topics ?? [],
                         recommended_tone: brainMeta.recommended_tone ?? null,
                         next_steps: brainMeta.next_steps ?? [],
+                        engagement_stance: brainMeta.engagement_stance ?? null,
                         ...(brainFreshForMessage
                           ? {
                               customer_questions: brainMeta.customer_questions ?? [],
@@ -3602,6 +3603,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     ? {
                         action: (brainMeta.action ?? null) as string | null,
                         enforcement_level: (brainMeta.enforcement_level ?? "recommended") as "required" | "recommended",
+                        engagement_stance: (brainMeta.engagement_stance ?? null) as "push" | "wait" | null,
                       }
                     : null,
                   checkpointStage: brainMeta?.checkpoint_stage ?? null, // Fix③: brain実態フェーズ（DB stateと乖離検出用）
