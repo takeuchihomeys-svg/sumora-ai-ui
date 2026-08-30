@@ -2856,26 +2856,42 @@ export async function POST(req: NextRequest) {
         return /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解/.test(msg);
       })();
       // ネガ文脈判定（断り・キャンセル直後の感謝には営業を一切乗せない）
-      // last_aix_historyはAIXアクション名のみでネガキーワードが含まれない → 直前スタッフテキストで判定
+      // 仕様通り直近スタッフ3通を走査（1通のみだと募集終了報告が窓外になるバグを修正）
       const isNegativeContext = (() => {
         if (brainMeta?.customer_intent === "negative") return true;
-        const lastStaffText = [...recentMessages].reverse().find(m => m.sender === "staff")?.text ?? "";
-        const recentText = lastStaffText + (message ?? "");
+        const recentStaffTexts = [...recentMessages]
+          .reverse()
+          .filter(m => m.sender === "staff")
+          .slice(0, 3)
+          .map(m => m.text ?? "")
+          .join(" ");
+        const recentText = recentStaffTexts + " " + (message ?? "");
         return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難しくなっ/.test(recentText);
+      })();
+      // 強推し直後の了承：「1件に絞ってオススメ済み→顧客が了承」フェーズの待ちの姿勢
+      // property_recommendation/check_result後の感謝は「再提案・他物件確認」が逆効果になる
+      const isPostStrongRecommendation = (() => {
+        if (!isGratitudeReplyTPO) return false;
+        if (isNegativeContext) return false;
+        const hist = lastAixHistoryText ?? "";
+        return /property_recommendation|property_check_result/.test(hist);
       })();
       const effectiveReplyDirection = (() => {
         if (isNegativeContext) return "受け止めのみ（50〜110字）";
+        if (isPostStrongRecommendation) return "感謝を1行で受け取り、検討を見守る待ちの姿勢で締める（50〜110字）。他物件の募集確認・新規ピックアップ・再推奨は書かない";
         if (isGratitudeReplyTPO) return "感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。予告のみの進捗テンプレ・条件の再ヒアリングで埋めない";
         return brainMeta.reply_direction ?? null;
       })();
       const effectiveKeyTopics = (() => {
         if (isNegativeContext) return [];
-        if (isGratitudeReplyTPO) return (brainMeta.key_topics ?? []).slice(0, 1); // 実体アクション1つだけ残す
+        if (isPostStrongRecommendation) return []; // 待ちフェーズ：余計なアクションを足さない
+        if (isGratitudeReplyTPO) return (brainMeta.key_topics ?? []).slice(0, 1);
         return brainMeta.key_topics ?? [];
       })();
       const effectiveAvoidTopics = (() => {
         const base = brainMeta.avoid_topics ?? [];
         if (isNegativeContext) return [...new Set([...base, "物件提案", "見積提案", "申込誘導"])];
+        if (isPostStrongRecommendation) return [...new Set([...base, "他物件の募集状況確認", "新規物件ピックアップ", "別物件の提案", "申込誘導", "検討依頼の繰り返し"])];
         if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
         return base;
       })();
@@ -2883,6 +2899,7 @@ export async function POST(req: NextRequest) {
       // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
       const tpoNoteForLLM = (() => {
         if (isNegativeContext) return "ネガ文脈（断り・否決・募集終了等の直後）";
+        if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客了承中・待ちフェーズ）";
         if (isGratitudeReplyTPO) return "感謝返し（短い了承・感謝メッセージ）";
         const a = brainMeta.action ?? "";
         if (state === "applying") return "申込後説明";
