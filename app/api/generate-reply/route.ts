@@ -2813,6 +2813,9 @@ export async function POST(req: NextRequest) {
       if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
       return base;
     })();
+    // 顧客が最新メッセージで自ら言及した語は avoid_topics から除外
+    // （stale brain_meta の avoid_topics が現在の質問を封じる逆転を防ぐ）
+    const activeAvoidTopics = effectiveAvoidTopics.filter(t => !(message ?? "").includes(t));
     // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
     const tpoNoteForLLM: string | null = (() => {
       if (isNegativeContext) return "ネガ文脈（断り・否決・募集終了等の直後）";
@@ -2932,9 +2935,7 @@ export async function POST(req: NextRequest) {
         lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
       }
       if (effectiveAvoidTopics.length) {
-        // 顧客が最新メッセージで自ら言及した語は「避けるべき話題」から除外する
-        // （stale brain_metaの avoid_topics が顧客の現在の質問を封じる逆転を防ぐ）
-        const activeAvoidTopics = effectiveAvoidTopics.filter(t => !message.includes(t));
+        // activeAvoidTopics は IIFE 外で算出済み（finalCheckCtx と共有）
         if (activeAvoidTopics.length) {
           lines.push(`- 🚫 今回は ${activeAvoidTopics.join(" / ")} には触れない（言い換え・同義語も禁止: 「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。代わりに${effectiveReplyDirection ? `「${effectiveReplyDirection}」の方向性` : "reply_directionの方向性"}に沿った具体アクション・事実情報で返信を構成すること。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと`);
         }
@@ -3578,7 +3579,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                         closing_strategy: brainMeta.closing_strategy ?? null,
                         reply_direction: effectiveReplyDirection ?? brainMeta.reply_direction ?? null,
                         key_topics: effectiveKeyTopics,
-                        avoid_topics: effectiveAvoidTopics,
+                        avoid_topics: activeAvoidTopics,
                         recommended_tone: brainMeta.recommended_tone ?? null,
                         next_steps: brainMeta.next_steps ?? [],
                         engagement_stance: brainMeta.engagement_stance ?? null,
