@@ -5034,8 +5034,8 @@ export default function Home() {
       }).catch(() => {});
     }
 
-    // 募集状況確認メッセージを送った → property_checkタスクを自動生成
-    if (text.trim() && /募集状況確認|空室確認|空き確認|募集確認/.test(text)) {
+    // 募集状況確認メッセージを送った → property_checkタスクを自動生成（AIX送信は除外: 確認結果報告のテキストにもキーワードが含まれるため再生成されてしまう）
+    if (!isAix && text.trim() && /募集状況確認|空室確認|空き確認|募集確認/.test(text)) {
       const convId = selectedConversation.id;
       const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
       if (!alreadyHasCheck) {
@@ -9858,6 +9858,13 @@ export default function Home() {
                   // タスク完了POSTは上の共通ブロック（全未完了タスク完了）で実施済み（二重POST防止）
                   if (meta?.suggest2ndHand) {
                     setSuggest2ndHandMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
+                  }
+                  // availability_check → proposing に昇格（確認結果を送った = 物件提案フェーズへ）
+                  if (selectedConversation.status === "availability_check") {
+                    const _convId = selectedConversation.id;
+                    void supabase.from("conversations").update({ status: "proposing" }).eq("id", _convId).eq("status", "availability_check").then(() => {
+                      setConversations((prev) => prev.map((c) => c.id === _convId && c.status === "availability_check" ? { ...c, status: "proposing" } : c));
+                    }, () => {});
                   }
                 }
               : aixModalType === "property_send"
