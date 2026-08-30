@@ -1090,12 +1090,66 @@ export async function analyzeConversation(
       const intent = opts?.prevMeta?.customer_intent ?? "";
       const action = opts?.prevMeta?.action ?? "";
       const emotion = opts?.prevMeta?.customer_emotion ?? "";
+      const msg = lastCustomerMsg ?? "";
+      const lastStaffMsg = typedMessages.filter(m => m.sender === "staff" && m.text).slice(-1)[0]?.text ?? null;
+      // 1. 申込後説明（state確定・最優先）
       if (convStatus === "applying") return "申込後説明";
-      if (/arrange_viewing/.test(action) || /内覧|内見|見学/.test(lastCustomerMsg)) return "内覧調整";
-      if (intent === "negative") return "拒否対応";
-      if (/不安|心配|審査.*通|落ちる/.test(lastCustomerMsg) || /不安|心配/.test(emotion)) return "不安対応";
-      if (intent === "positive" && lastCustomerMsg.length < 40) return "感謝返し";
-      if (intent === "consultation" || /検討|迷って/.test(lastCustomerMsg)) return "検討中フォロー";
+      // 2. 拒否対応（ネガティブ意図は他条件より優先）
+      if (intent === "negative" || /やめ(とき)?ます|キャンセル|他(で|の会社)|見送り/.test(msg)) {
+        return "拒否対応";
+      }
+      // 3. 不安対応（審査・費用・契約への不安）
+      if (/不安|心配|審査.*(通|落)|落ち(る|たら)|大丈夫でしょうか/.test(msg) || /不安|心配|anxious|worried/.test(emotion)) {
+        return "不安対応";
+      }
+      // 4. 内覧調整（実際のaction値: viewing_invite / meeting_place）
+      if (
+        action === "viewing_invite" ||
+        action === "meeting_place" ||
+        /内覧|内見|見学|現地|待ち合わせ/.test(msg)
+      ) {
+        return "内覧調整";
+      }
+      // 5. 申込前クロージング（顧客側から申込意思・決断の表明）
+      if (/申(し)?込(み)?(たい|します|お願い)|契約したい|決め(ます|ました)|ここにします/.test(msg)) {
+        return "申込前クロージング";
+      }
+      // 6. 申込打診（AI側から申込を打診するアクション）
+      if (action === "application_push") return "申込打診";
+      // 7. 費用説明（初期費用・見積に関する質問）
+      if (/初期費用|見積|敷金|礼金|仲介手数料|保証(会社|料)|家賃.*(いくら|交渉)|費用.*(いくら|どのくらい|教えて)|総額/.test(msg)) {
+        return "費用説明";
+      }
+      // 8. 物件送付後（actionで確実に検出＋従来のlastStaffMsgフォールバック）
+      if (
+        action === "property_send" ||
+        action === "property_recommendation" ||
+        action === "estimate_sheet" ||
+        (lastStaffMsg && /ピックアップ|お部屋.*送|物件.*(紹介|送付|お送り)/.test(lastStaffMsg))
+      ) {
+        return "物件送付後";
+      }
+      // 9. 初回対応（スタッフ発言がまだない＝会話冒頭）
+      if (!lastStaffMsg || convStatus === "initial" || convStatus === "new") {
+        return "初回対応";
+      }
+      // 10. 感謝返し（明示的な感謝表現のみ。「了解です」等の誤マッチを防止）
+      if (
+        intent === "positive" &&
+        msg.length < 40 &&
+        /ありがとう|ありがとございます|感謝|助かり(ます|ました)|嬉しい/.test(msg)
+      ) {
+        return "感謝返し";
+      }
+      // 11. 検討中フォロー（相談意図・迷い・フォロー系アクション）
+      if (
+        intent === "consultation" ||
+        action === "follow_up" ||
+        action === "followup_revive" ||
+        /検討|迷って|考え(て|させて)|悩んで/.test(msg)
+      ) {
+        return "検討中フォロー";
+      }
       return null;
     })();
     const ragQueryInput = [
