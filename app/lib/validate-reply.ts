@@ -13,8 +13,17 @@ const NAME_PLACEHOLDERS = new Set([
 // 名前から非許容文字（記号・絵文字・数字等）を除去して実名として使える形を抽出する
 // 例: "SATOKO♪" → "SATOKO"、"ゆき♡" → "ゆき"、"H!tom!.M" → "HtomM"
 // isPlausiblePersonName に渡す前の前処理として使う。変換後も判定は isPlausiblePersonName に委ねる。
+//
+// NFKC 正規化を先に掛ける理由（2026-08 初回対応バグ）:
+// LINE表示名には全角英字「ＭＩＫＡ」・半角カナ「ﾕｷ」・装飾数字「𝟑ᩚ𝟐ᩚ𝟕ᩚ.」等が頻出する。
+// 正規化なしだとこれらが丸ごと除去され、実名が取れるケースでも空文字になってしまう。
+// NFKC で「ＭＩＫＡ→MIKA」「ﾕｷ→ユキ」「𝟑→3」に畳んでから許容文字で絞る。
+// ※ 数字は意図的に許容しない（"taro_123"→"taro123" のようなハンドル名を実名として
+//    採用してしまい「327さん」等の誤った呼びかけを生むため）。数字混じりは空文字になり、
+//    呼びかけごと削除される（enforceCustomerName 側で助詞まで含めて安全に消す）。
 export function stripNonNameChars(raw: string): string {
-  return raw.replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿A-Za-z\s・]/g, "").trim();
+  const normalized = typeof raw.normalize === "function" ? raw.normalize("NFKC") : raw;
+  return normalized.replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿A-Za-z\s・]/g, "").trim();
 }
 
 // 実名として使える形か（true のときのみ「〇〇さん」の呼びかけに使ってよい）
@@ -37,6 +46,22 @@ function escapeRegExp(s: string): string {
 
 const HONORIFIC_RE_SRC = "(?:さん|サン|様|さま)";
 
+// 呼びかけ「〇〇さん」を削除するとき、直後の助詞まで一緒に消さないと文が壊れる。
+// 例: 「初期費用も割引させて頂き𝟑ᩚ𝟐ᩚ𝟕ᩚ.さんのお引越しにかかる費用を…」
+//      → 「さん」だけ消すと「…頂きのお引越しにかかる費用を…」になり、
+//        文頭で起きると「のお引越しにかかる費用を…」という壊れた返信が送られる（実障害）。
+// 名前を正しい実名に置換できる場合は助詞をそのまま残し、削除する場合のみ助詞も落とす。
+//
+// 対象を「のがにをへ」に限定する理由: 「は」「も」「と」は次の語の1文字目としても頻出し
+//（「はじめまして」「もしよろしければ」「とても」）、消すと本文を壊す。
+// さらに落とすのは tail（読点・空白）が無い＝助詞が名前に直結している場合のみ。
+// 「〇〇さん、はじめまして」は読点があるので「は」は次の文の一部＝絶対に消さない。
+const TRAILING_PARTICLE_RE_SRC = "([のがにをへ])?";
+// 助詞を落としてよいか: 名前と助詞の間に読点・空白・改行が無い場合のみ
+function shouldDropParticle(tail: string): boolean {
+  return tail === "";
+}
+
 // ─── 顧客名の誤り（LINE表示名の混入）を決定論的に修正 ────────────────────────
 // final-check（Haiku）は FABRICATED_NAME を検出できるが、接地修正は
 // [CHECKPOINT]/[CONDITIONS]/[RULES] に無い事実で置換できない仕様のため名前を直せない
@@ -58,11 +83,16 @@ export function enforceCustomerName(
   // ① LINE表示名がそのまま本文に出ている（「H!tom!.Mさん、お世話に…」等）
   if (display && display !== canonical && !isPlausiblePersonName(display)) {
     const esc = escapeRegExp(display);
-    const addressRe = new RegExp(`${esc}\\s*${HONORIFIC_RE_SRC}([、,]?\\s*)`, "g");
-    if (addressRe.test(cleaned)) {
+    const addressReSrc = `${esc}\\s*${HONORIFIC_RE_SRC}([、,]?\\s*)${TRAILING_PARTICLE_RE_SRC}`;
+    if (new RegExp(addressReSrc, "g").test(cleaned)) {
       cleaned = cleaned.replace(
-        new RegExp(`${esc}\\s*${HONORIFIC_RE_SRC}([、,]?\\s*)`, "g"),
-        (_m, tail: string) => (canonical ? `${canonical}さん${tail}` : ""),
+        new RegExp(addressReSrc, "g"),
+        (_m, tail: string, particle: string | undefined) => {
+          const p = particle ?? "";
+          if (canonical) return `${canonical}さん${tail}${p}`;
+          // 名前不明 → 呼びかけごと削除。直結した助詞も落として「のお引越し」等の残骸を防ぐ
+          return shouldDropParticle(tail) ? "" : p;
+        },
       );
       fixes.push(`LINE表示名の呼びかけ「${display}さん」→「${canonical ? `${canonical}さん` : "(削除)"}」`);
     }
@@ -73,8 +103,8 @@ export function enforceCustomerName(
   }
 
   // ② 行頭の呼びかけ「〇〇さん」が実名の形でない（表示名の変形・崩れをAIが書いた場合）
-  const lineHeadAddressRe = /(^|\n)([\s「]*)([^\s、。！!？?\n【】「」（）()・]{1,20})\s*(?:さん|サン|様|さま)([、,]?[ 　]*)/g;
-  cleaned = cleaned.replace(lineHeadAddressRe, (m, br: string, lead: string, base: string, tail: string) => {
+  const lineHeadAddressRe = /(^|\n)([\s「]*)([^\s、。！!？?\n【】「」（）()・]{1,20})\s*(?:さん|サン|様|さま)([、,]?[ 　]*)([のがにをへ])?/g;
+  cleaned = cleaned.replace(lineHeadAddressRe, (m, br: string, lead: string, base: string, tail: string, particle: string | undefined) => {
     if (base === canonical) return m;
     // 実名の形をしているものは第三者名の可能性もあるため一切触らない（誤置換の防止）
     if (isPlausiblePersonName(base)) return m;
@@ -82,7 +112,10 @@ export function enforceCustomerName(
     // detectPlaceholders の検出対象なのでここでは潰さない（潰すと未置換の警告が消えてしまう）
     if (/[〇○＿_{}[\]]/.test(base) || base === "アカウント名") return m;
     fixes.push(`不正な呼びかけ「${base}さん」→「${canonical ? `${canonical}さん` : "(削除)"}」`);
-    return canonical ? `${br}${lead}${canonical}さん${tail}` : `${br}${lead}`;
+    // 削除時は直後の助詞（「〇〇さんのお引越し」の「の」等）も落とす。残すと文頭に助詞が残る
+    const p = particle ?? "";
+    if (canonical) return `${br}${lead}${canonical}さん${tail}${p}`;
+    return shouldDropParticle(tail) ? `${br}${lead}` : `${br}${lead}${p}`;
   });
 
   return { cleaned, fixes };

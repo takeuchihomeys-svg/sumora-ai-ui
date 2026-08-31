@@ -493,8 +493,10 @@ export async function POST(req: NextRequest) {
   }
 
   // 記号・絵文字を除去して実名として使える文字のみに正規化（例: "SATOKO♪" → "SATOKO"）
+  // NFKC を先に掛けて全角英字「ＭＩＫＡ」・半角カナ「ﾕｷ」・装飾文字「𝟑」を畳む
+  //（正規化しないと丸ごと除去され、実名が取れるケースでも空文字になる）
   const sanitizedCustomerName = customerName
-    ? customerName.replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿豈-﫿A-Za-z\s・]/g, "").trim()
+    ? customerName.normalize("NFKC").replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿豈-﫿A-Za-z\s・]/g, "").trim()
     : "";
 
   // ── customerConditions ground-truth フォールバック ─────────────────────────

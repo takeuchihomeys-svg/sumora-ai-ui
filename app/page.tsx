@@ -145,7 +145,10 @@ function extractPreferredName(messages: Array<{ sender: string; text?: string | 
   }
   // フォールバック: 表示名側にも接続表現が混入し得るためサニタイズ＋末尾「さん」除去（二重さん防止）
   // また記号・絵文字を除去（例: "SATOKO♪" → "SATOKO"）
+  // NFKC: 全角英字「ＭＩＫＡ」・半角カナ「ﾕｷ」・装飾文字「𝟑」を先に畳む
+  //（正規化しないと丸ごと除去され、実名が取れるケースでも空文字になる）
   return lineDisplayName
+    .normalize("NFKC")
     .replace(/^(もし)?(よろしければ|宜しければ|よければ|できれば|出来れば|ぜひ|是非)/, "")
     .replace(/さん$/, "")
     .replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿豈-﫿A-Za-z\s・]/g, "")
