@@ -7604,9 +7604,10 @@ export default function Home() {
                 // （家賃懸念 → 物件を探す流れが正しい。初期費用テンプレより物件オススメが適切）
                 const _latestCustMsg = [...msgs].reverse().find((m: Message) => m.sender === "customer")?.text ?? "";
                 const _customerWorriedAboutRent = /家賃.*(高い|高め|少し高|ちょっと高|高くな)|高い.*家賃|高め.*家賃/.test(_latestCustMsg);
-                // 物件ピック直後（suggestPropertyRecommendMap有）は「1件特にオススメする」(P4)を優先
-                // 追客初期費用バナーより物件オススメが先のフェーズのため、P4にフォールスルーさせる
-                if (!isFollowupCost || (!_customerWorriedAboutRent && !suggestPropertyRecommendMap[id])) {
+                // 物件ピック直後（suggestPropertyRecommendMap有 or FollowupMap有）はP4/P4.5を優先
+                // property_recommendation送信後はFollowupMapがセットされるのでP4.5にフォールスルーさせる
+                // （RecommendMapはonAfterSend内で削除されるため条件として使えない）
+                if (!isFollowupCost || (!_customerWorriedAboutRent && !suggestPropertyRecommendMap[id] && !suggestPropertyRecommendFollowupMap[id])) {
                   return (
                     <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
                       <span className="text-[12px] font-bold text-teal-800 flex-1">
