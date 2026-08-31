@@ -83,5 +83,10 @@ export function applyGreetingSwap(templateText: string, staffMessagedToday: bool
  * 生成後の出力テキストに適用する。
  */
 export function stripRoomLeadingZeros(text: string): string {
-  return text.replace(/(?<!\d)0+(\d+)号室/g, "$1号室");
+  // 「号室」付き: 0906号室 → 906号室
+  let result = text.replace(/(?<!\d)0+(\d+)号室/g, "$1号室");
+  // 「号室」なし・先頭ゼロの番号: スペース区切りで続く 0XXX 形式を削除（例: ミカーサ 0203 → ミカーサ）
+  // 先頭ゼロ付きは号室以外の正規な数値（築年・金額等）に出現しないため安全に除去できる
+  result = result.replace(/\s+0\d+(?=[\s　、。！!？?」\n]|$)/g, "");
+  return result;
 }
