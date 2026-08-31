@@ -9647,7 +9647,7 @@ export default function Home() {
             return sendMessageText(text, imageUrl, isAix);
           }}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[] }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -9756,6 +9756,8 @@ export default function Home() {
                   // generate-reply の estimatePromised 判定 / brain-core の費用情報注入に使う
                   estimate_sent: meta?.estimateSent ?? null,
                   prop_cost_notes: meta?.propCostNotes ?? null,
+                  // 改善3-c: スタッフ入力キーワード（続き文生成の ragQuery 強化に使う）
+                  send_keyword: meta?.sendKeyword ?? null,
                 }),
               }).catch(() => {});
               lastAixLogTextRef.current = null;
@@ -11541,6 +11543,11 @@ export default function Home() {
                     setShowPropertySendPicker(false);
                     setAixInitSendMode(key);
                     setAixInitialSendImages([]);
+                    // 続き文（aix-template-generate）に送付文脈を届ける（resolvePropertySendContext用）
+                    if (selectedConversation?.id) {
+                      const PICKUP_LABELS: Record<string, string> = { normal: "初回まとめ", new_arrival: "新着まとめ", widen: "条件広げまとめ", alternative: "代替ピックアップ" };
+                      lastPickupTypeByConvRef.current.set(selectedConversation.id, PICKUP_LABELS[key] ?? key);
+                    }
                     aixMultiFileInputRef.current?.click();
                   }}
                   className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#E8F5E9] active:border-[#2E7D32]"

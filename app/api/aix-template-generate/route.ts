@@ -649,7 +649,7 @@ export async function POST(req: NextRequest) {
     conversationId && (actionType === "property_recommendation" || actionType === "property_send")
       ? supabase
           .from("aix_usage_logs")
-          .select("aix_type, check_pattern, created_at")
+          .select("aix_type, check_pattern, send_keyword, created_at")
           .eq("conversation_id", conversationId)
           .in("aix_type", ["property_send", "property_recommendation", "property_check_result"])
           .order("created_at", { ascending: false })
@@ -662,7 +662,7 @@ export async function POST(req: NextRequest) {
   const dbRules = [dbRulesGeneric, dbRulesAction].filter(Boolean).join("\n");
 
   // ── 「1件特にオススメ」訴求シナリオ判定（compare / alternative / first）──────
-  type AixUsageLogRow = { aix_type: string | null; check_pattern: string | null; created_at: string };
+  type AixUsageLogRow = { aix_type: string | null; check_pattern: string | null; send_keyword?: string | null; created_at: string };
   const aixUsageLogs = (aixUsageLogsRes?.data ?? []) as AixUsageLogRow[];
   const sentPropertyLogCount = aixUsageLogs.filter(
     (l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation"
@@ -699,6 +699,13 @@ export async function POST(req: NextRequest) {
     }
   }
   const effectiveCheckPattern = checkIsStale ? null : (lastAixCheckPattern ?? dbLastCheckPattern);
+  // 改善1-d: 直近の property_send/recommendation ログからスタッフ入力キーワードを取得
+  // aix/action 時にDBへ保存済み。続き文の ragQuery 先頭に注入して実例検索の命中精度を上げる
+  const dbSendKeyword = (
+    aixUsageLogs.find(
+      (l) => (l.aix_type === "property_send" || l.aix_type === "property_recommendation") && l.send_keyword
+    )?.send_keyword ?? null
+  );
   const recommendationScenario = resolveRecommendationScenario({
     actionType,
     pickupType,
@@ -772,7 +779,10 @@ export async function POST(req: NextRequest) {
           pspPrefs,
         ].filter(Boolean).join("・")
       : "";
+    // 改善1-d: スタッフ入力キーワードを ragQuery 先頭に注入（実例の命中軸をキーワードで強化）
+    const kwPrefix = dbSendKeyword ? `【伝えたいこと】${dbSendKeyword} ` : "";
     const ragQuery = [
+      kwPrefix,
       `AIXアクション: ${actionLabel}`,
       // 実例検索の主軸をpgvectorに一本化したため、同一actionType内での「文脈の違い」
       // （初回/継続/新着/条件広げ・訴求シナリオ）を検索ベクトルに載せて実例を会話ごとに散らす

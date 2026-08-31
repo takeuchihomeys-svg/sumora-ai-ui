@@ -2802,6 +2802,13 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS prop_statuses TEXT[];
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS estimate_sent BOOLEAN;
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS prop_cost_notes TEXT[];
 
+-- ── 改善3-c: スタッフ入力キーワードの永続化（2026-08-31追加）──
+-- 「物件ピックアップ」時にスタッフが入力したフリーワードキーワード（例「審査通過する可能性がある」）を保存する。
+-- aix/action の RAG 検索主軸として使用されるが、続き文（aix-template-generate）にも渡すことで
+-- 橋渡し文の訴求軸をキーワードと揃えられる。
+-- 値は aix/action → AixModal.onAfterSend → page.tsx log-aix-usage → DB の順で記録される。
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS send_keyword TEXT;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

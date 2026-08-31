@@ -570,30 +570,60 @@ async function getWinningPatternsForProperty(
 }
 
 // 過去に実際に送信されたAIX物件本文の実例（entry_source='aix_property'）を取得する。
-// analyze-aix-property cron が aix_usage_logs からバックフィルした実送信文で、
-// is_starred = お客様が反応した実例（customer_reacted）を優先して参照する。
-async function getAixPropertyExamples(actionType: "property_send" | "property_recommendation"): Promise<string> {
-  try {
-    const { data } = await supabase
-      .from("ai_reply_examples")
-      .select("customer_message, sent_reply, is_starred")
-      .eq("entry_source", "aix_property")
-      .eq("aix_action", actionType)
-      .order("is_starred", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(5);
-    const rows = (data ?? []) as Array<{ customer_message: string; sent_reply: string; is_starred: boolean }>;
-    if (rows.length === 0) return "";
-    const label = actionType === "property_send" ? "物件ピックアップ送付文" : "物件オススメ文";
-    return `\n\n【📤 過去に実際に送信した${label}の実例（⭐=お客様が反応した実例。訴求の質・言い回し・条件の織り込み方の参考にすること。物件名・金額・条件は今回の物件のものを使い、実例の数値は絶対に流用しない）】\n` +
-      rows.map((r, i) => {
-        const ctx = (r.customer_message ?? "").split("\n")[0];
-        const ctxLine = ctx && ctx !== "（初回連絡）" ? `状況:「${safeSlice(ctx, 60)}」\n` : "";
-        return `[実例${i + 1}${r.is_starred ? "⭐" : ""}]\n${ctxLine}${safeSlice(r.sent_reply, 400)}`;
-      }).join("\n\n");
-  } catch {
-    return ""; // 実例取得失敗は生成自体を止めない
+// queryText がある場合は pgvector 主経路（キーワード・会話文脈で実例が変わる）、
+// なければ従来の固定直クエリにフォールバック。
+async function getAixPropertyExamples(
+  actionType: "property_send" | "property_recommendation",
+  queryText?: string,
+): Promise<string> {
+  type Row = { customer_message: string; sent_reply: string; is_starred: boolean };
+  let rows: Row[] = [];
+
+  // pgvector主経路: キーワード先頭の検索クエリで「この状況に合う実例」を引く
+  if (queryText?.trim() && process.env.OPENAI_API_KEY) {
+    try {
+      const emb = await generateEmbedding(safeSlice(queryText, 2000));
+      if (emb) {
+        const { data } = await supabase.rpc("match_aix_reply_examples", {
+          query_embedding: emb,
+          match_count: 15,
+          filter_action: actionType,
+        });
+        rows = ((data ?? []) as Array<Row & { similarity: number }>)
+          .filter(r => (r.similarity ?? 0) >= 0.45 && (r.sent_reply ?? "").trim())
+          .sort((a, b) => (b.similarity + (b.is_starred ? 0.15 : 0)) - (a.similarity + (a.is_starred ? 0.15 : 0)))
+          .slice(0, 4);
+      }
+    } catch {
+      rows = [];
+    }
   }
+
+  // フォールバック: pgvectorが空のとき従来の固定直クエリ（⭐降順）
+  if (rows.length === 0) {
+    try {
+      const { data } = await supabase
+        .from("ai_reply_examples")
+        .select("customer_message, sent_reply, is_starred")
+        .eq("entry_source", "aix_property")
+        .eq("aix_action", actionType)
+        .order("is_starred", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(5);
+      rows = (data ?? []) as Row[];
+    } catch {
+      return "";
+    }
+  }
+
+  if (rows.length === 0) return "";
+  const label = actionType === "property_send" ? "物件ピックアップ送付文" : "物件オススメ文";
+  return `\n\n【📤 過去に実際に送信した${label}の実例（⭐=お客様が反応した実例。訴求の質・言い回し・条件の織り込み方の参考にすること。物件名・金額・条件は今回の物件のものを使い、実例の数値は絶対に流用しない）】\n` +
+    rows.map((r, i) => {
+      const ctx = (r.customer_message ?? "").split("\n")[0];
+      const ctxLine = ctx && ctx !== "（初回連絡）" ? `状況:「${safeSlice(ctx, 60)}」\n` : "";
+      return `[実例${i + 1}${r.is_starred ? "⭐" : ""}]\n${ctxLine}${safeSlice(r.sent_reply, 400)}`;
+    }).join("\n\n");
 }
 
 // #30: max_tokens 尻切れ検知（ログのみ・エラーは投げない）
@@ -1969,9 +1999,24 @@ ${SMORA_COMMON_RULES}
         ? `\n\n【最重要・内覧提案の省略】今回は内覧提案ブロック（「お気に召されましたらご案内〜」等の内覧誘導文・内覧日時の記載）は一切含めないこと。JSON出力の場合は "invite" と "calendar" を必ず空文字にする。物件紹介のみで締めること。`
         : "";
 
-      // property_send 専用: 文体・人物像の参照のみ（next_action「見積書送付」等は絶対に含めない）
+      // property_send 専用: 決まるパターン・人物像を訴求軸決定に使う（next_action系は除外）
       const summaryNote = customerSummary
-        ? `\n\n【このお客さんのAI要約（参考情報）— 文体・人物像・温度感を合わせること。ただし「next_action」に見積書・御見積書・割引見積等の記述があっても今回の物件ピックアップ文には一切含めないこと。物件紹介構成のみ出力すること】\n${customerSummary}`
+        ? `\n\n【このお客さんのAI要約（決まるパターン・人物像）】\n${customerSummary}\n→ この要約から「このお客様に刺さる訴求軸」（審査の通りやすさ／費用の安さ／設備／立地等）を読み取り、物件の具体的特徴と結びつけた訴求に必ず使うこと。ただし「next_action」に見積書・御見積書等の記述があっても今回の物件ピックアップ文には一切含めないこと。`
+        : "";
+
+      // 顧客状況シグナル: 会話履歴からルールベースで検出し訴求軸として明示（LLM推論任せにしない）
+      const SITUATION_SIGNALS: Array<{ re: RegExp; label: string; guide: string }> = [
+        { re: /審査.{0,8}(落ち|通らな|ダメ|否決|NG)|落ちて(しま|た)|否決/, label: "審査に落ちた経験がある", guide: "「審査が通りやすいお部屋」「保証会社が比較的緩い物件」を選んでお探しした旨を訴求に入れる。ただし「通ります」と断定せず「可能性が高い」等に留める。事実の創作禁止。" },
+        { re: /初期費用.{0,10}(高|厳し|抑え|安く)|予算.{0,6}(オーバー|厳し)/, label: "初期費用に強い不安がある", guide: "礼金0・フリーレント等の初期費用を抑えられる根拠を具体データで示す" },
+        { re: /早く|急ぎ|今月中|すぐに.{0,4}(入居|住)/, label: "入居を急いでいる", guide: "スピード感（すぐ動ける旨・即入居可能等）を訴求に含める" },
+        { re: /なかなか|見つから|決まらな|他社|他の不動産/, label: "他社・他物件で決まらず長期化している", guide: "「今回は条件を変えてお探しした」等、前と違う手を打った点を明示する" },
+      ];
+      const historyForSignal = (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string; text?: string }> : [])
+        .filter(m => m.sender === "customer").map(m => m.text ?? "").join("\n");
+      const hitSignals = SITUATION_SIGNALS.filter(s => s.re.test(historyForSignal));
+      const situationNote = hitSignals.length > 0
+        ? `\n\n【🔍 会話履歴から検出したお客様の状況（訴求の軸として必ず1つ以上を本文に反映すること）】\n` +
+          hitSignals.map(s => `・${s.label} → ${s.guide}`).join("\n")
         : "";
 
       // 物件ピックアップしたの実例を取得（property_send + proposing 両方から）
@@ -1991,9 +2036,13 @@ ${SMORA_COMMON_RULES}
             .join("\n\n")
         : "";
 
+      // 設計知見「TPOラベルはRAGクエリ先頭に置く」: キーワード・送付文脈を先頭に付与して類似実例を精度よく引く
       const sendKeyword = keyword ? String(keyword) : null;
+
+      // keywordRule: スタッフが入力したキーワードを「訴求の主軸」として最優先ブロックに格上げ
+      // 設計知見「禁止制約のみプロンプト・肯定フレーズはRAG実例から学ぶ」に従い、固定例文なし
       const keywordRule = sendKeyword
-        ? `\n\n【キーワード（必ず冒頭の条件紹介部分に自然に組み込むこと）】: ${sendKeyword}\n例：「築浅・南向きの${sendKeyword}ピックアップさせて頂きました！！」のように条件と合わせて使う`
+        ? `\n\n━━━━━━━━━━━━━━━━━━━━\n【🎯 このメッセージで伝えたいこと（スタッフ指定・アクション別の構成ルールより優先）】\n━━━━━━━━━━━━━━━━━━━━\n「${sendKeyword}」\n・これは単なる条件ワードではなく、今回のメッセージの訴求の主軸である\n・ピックアップ行に形容詞として1語埋め込むだけで終わらせず、この主軸が伝わる訴求を本文に必ず含めること\n・上記【会話履歴】【お客様の状況】に、この主軸に関係するお客様の悩み・経緯があれば、そこに応える形で書くこと\n・言い回しは⭐実例の文体から学び、毎回同じ固定フレーズにしないこと\n・🚫 事実の創作は禁止（「審査通過する可能性がある」の場合は「通ります」と断定せず「可能性が高い」等に留める）`
         : "";
 
       // 条件チップ → 具体的説明文の生成指示（AI生成・上記の希望条件・会話履歴を参照させる）
@@ -2061,18 +2110,22 @@ ${SMORA_COMMON_RULES}
       // 学習済み差分ルール（スタッフ修正から学習したパターン）＋☆成功返信パターンをプロンプト末尾に注入
       // + コンポーネント単位の学習ルール（normal/widen/viewingモードのみ: JSON出力でコンポーネント学習が機能するモード）
       const useCompKnowledge = sendMode === "normal" || sendMode === "widen" || sendMode === "viewing";
+      // sendKeyword は L2039 で宣言済み（keywordRule で先に使うため移動）
+      const kwPrefix = sendKeyword ? `【伝えたいこと】${sendKeyword} ` : "";
+      const sendModeLabel = sendMode === "widen" ? "条件を広げてお探しした物件送付 " : sendMode === "new_arrival" ? "新着物件の即案内 " : "";
+      const enrichedRagQuery = [kwPrefix, sendModeLabel, conditionsInfo ?? "", brainContext, latestCustomerMsg].filter(Boolean).join(" ");
       const [sendDiffNote, sendStarNote, compPickupNote, compInviteNote, compCalendarNote, sendDbRules, sendBrainAddendum, sendWinningNote, sendPropertyExamples] = await Promise.all([
-        getKnowledgeForState(AIX_ACTION_TO_STATES.property_send, currentAction, conversationId, latestCustomerMsg, brainContext),
-        getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_send, latestCustomerMsg, aixBrainMeta),
+        getKnowledgeForState(AIX_ACTION_TO_STATES.property_send, currentAction, conversationId, kwPrefix + latestCustomerMsg || latestCustomerMsg, brainContext),
+        getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_send, kwPrefix + latestCustomerMsg || latestCustomerMsg, aixBrainMeta),
         useCompKnowledge ? getKnowledgeForState(["property_send_pickup"], currentAction) : Promise.resolve(""),
         useCompKnowledge && !skipViewingInvite ? getKnowledgeForState(["property_send_invite"], currentAction) : Promise.resolve(""),
         useCompKnowledge && !skipViewingInvite ? getKnowledgeForState(["property_send_calendar"], currentAction) : Promise.resolve(""),
         fetchPromptRules("property_send", { send_mode: sendMode }).catch(() => ""),
         loadBrainTemplate("property_send"),
-        // 成約パターンRAG（AIX-META再ランキング）: 顧客条件+META+最新メッセージで「この顧客に効いた訴求」を引く
-        getWinningPatternsForProperty([conditionsInfo ?? "", brainContext, latestCustomerMsg].filter(Boolean).join(" "), aixBrainMeta),
-        // 過去に実送信した物件ピックアップ文の実例（entry_source='aix_property'・⭐=顧客反応あり優先）
-        getAixPropertyExamples("property_send"),
+        // 成約パターンRAG: キーワード先頭クエリで「この顧客・このキーワードに効いた訴求」を引く
+        getWinningPatternsForProperty(enrichedRagQuery, aixBrainMeta),
+        // 過去実例: pgvector主経路（キーワード・送付文脈で実例が変わる）→固定直クエリフォールバック
+        getAixPropertyExamples("property_send", enrichedRagQuery),
       ]);
       // normal/widenモード専用: パーツ別の過去改善ルールを構成ラベル付きで注入
       const componentKnowledgeNote = (sendMode === "normal" || sendMode === "widen" || sendMode === "viewing")
@@ -2202,6 +2255,7 @@ ${aixPropertySendRules}
 
 【厳守ルール】
 ・①〜⑤の構成のみ出力。内覧誘導・内覧日時・申込誘導・入居時期・条件確認・その他の質問や補足は一切追加しない
+　※例外: userメッセージに【🎯 このメッセージで伝えたいこと】がある場合のみ、その主軸を②または③の文中に自然に織り込むこと（新しい段落は増やさず、既存の構成の中で表現する）
 ・②は「〇〇から[お客様名]ご希望の〜なお部屋ピックアップさせて頂きました！！」の形で1行に完結させる。希望条件が渡されている場合は「ご条件に合った」という抽象表現ではなく具体条件（エリア必須・最大4個）を文中に織り込むこと
 ・③の説明文は広げた条件ごとに具体的な数値・エリア名を使って1文ずつ書く。数値が読み取れない場合は「少し」等の表現を使う。③以外の補足・追加説明は一切書かない
 ・感嘆符は「！！」（スモラスタイル）・LINEでそのまま送れる完成文のみ出力・絵文字は 😊 😌 のみ・1〜2個まで
@@ -2304,14 +2358,15 @@ ${aixPropertySendRules}
 {"intro":"挨拶行（1行のみ）","pickup":"ピックアップ行（条件説明・1行）","vacating":"退去予定文（複数あれば改行で連結・なければ空文字）","invite":"内覧誘導文（なければ空文字）","calendar":"内覧日時（⑤ルールに従い通常は空文字・過去ルールで日時記載傾向あり時のみ「直近ですと〜ご案内可能です！！」）","closing":"お手隙の際にご査収ください😌！！"}`;
 
       const userParts: string[] = [`${name}への物件ピックアップ送付メッセージを作成してください。`];
+      if (keywordRule) userParts.push(keywordRule); // 最優先ブロック（conditionsInfoより前）
       if (conditionsInfo) userParts.push(`\n\n【お客様の希望条件（冒頭に自然に組み込むこと）】\n${conditionsInfo}`);
       if (calendarData) userParts.push(`\n\n【直近3日の内覧可能時間帯（calendar_events+daily_tasks合算済み・この情報をそのまま使うこと）】\n${calendarData}`);
       if (vacatingInfo) userParts.push(`\n\n【退去予定・案内不可の物件情報（必ず全て伝えること）】\n${vacatingInfo}`);
-      if (sendKeyword) userParts.push(`\n\n【キーワード（冒頭の条件紹介に自然に盛り込むこと）】\n${sendKeyword}`);
       if (expandedCondNote) userParts.push(expandedCondNote);
       if (templateSampleNote) userParts.push(templateSampleNote);
       if (templateStructureNote) userParts.push(templateStructureNote);
       if (recentHistory) userParts.push(recentHistory);
+      if (situationNote) userParts.push(situationNote); // 会話履歴から検出した状況シグナル
       if (summaryNote) userParts.push(summaryNote);
       if (pspGuidanceNote) userParts.push(pspGuidanceNote);
 

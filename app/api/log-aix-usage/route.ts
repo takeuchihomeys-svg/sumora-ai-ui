@@ -194,9 +194,11 @@ export async function POST(req: NextRequest) {
       // M2: 御見積書を同封したか / 見積書OCRで読み取った物件別の費用メモ
       estimate_sent?: boolean | null;
       prop_cost_notes?: string[] | null;
+      // 改善3-c: スタッフ入力キーワード
+      send_keyword?: string | null;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -250,6 +252,8 @@ export async function POST(req: NextRequest) {
       prop_cost_notes: Array.isArray(prop_cost_notes) && prop_cost_notes.length > 0
         ? prop_cost_notes.map((n) => String(n ?? "").slice(0, 300))
         : null,
+      // 改善3-c: スタッフが入力したフリーワードキーワード（aix-template-generate の続き文ragQuery に注入する）
+      send_keyword: typeof send_keyword === "string" && send_keyword.trim() ? send_keyword.trim().slice(0, 200) : null,
     });
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
