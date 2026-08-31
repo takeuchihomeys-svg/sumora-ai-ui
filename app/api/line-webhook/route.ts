@@ -332,6 +332,16 @@ async function handleTextMessage(
     .eq("id", convId)
     .eq("ai_draft", "__SHOWN__");
 
+  // 顧客返信 → pending property_check タスクを自動キャンセル（brain呼び出し前に同期実行）
+  // stale なタスクが残ると brain-core L699 等が「確認待ち」と誤判断して property_check_result を
+  // 強制提案してしまう。顧客が返信した時点でタスクを消去し LLM が文脈から正しく判断できるようにする。
+  await db
+    .from("line_tasks")
+    .update({ status: "cancelled" })
+    .eq("conversation_id", convId)
+    .eq("task_type", "property_check")
+    .eq("status", "pending");
+
   // FIX(Fable5 #2 → brain直列化 2026-08): テキスト経路の脳分析は generate-draft-bg-async の
   // after() 入り口で直列実行される（brain完了 → 結果を brainMetaDirect で generate-reply に直接渡す）
   // ため、通常ステータスではここで起動しない（起動すると brain が二重実行され、書き込み競合が復活する）。
@@ -1839,6 +1849,14 @@ async function handleImageMessageSave(
     .update({ ai_draft: null })
     .eq("id", convId)
     .eq("ai_draft", "__SHOWN__");
+
+  // 顧客返信（画像）→ pending property_check タスクを自動キャンセル（テキスト経路と同一理由）
+  await db
+    .from("line_tasks")
+    .update({ status: "cancelled" })
+    .eq("conversation_id", convId)
+    .eq("task_type", "property_check")
+    .eq("status", "pending");
 
   // H4: 画像受信もスタッフに基本通知（テキスト経路のP1通知に対応する最小版）
   after(async () => {

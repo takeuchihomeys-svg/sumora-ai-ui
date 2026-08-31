@@ -678,7 +678,7 @@ async function detectSignalBasedAixFallback(
     // 物件系画像（物件写真/間取り図）→ 空室確認が正解。null/estimate/other は従来通り estimate_sheet。
     if (/^\[画像\]/.test(custText)) {
       const it = lastCustomer?.image_type;
-      if ((it === "property_photo" || it === "floor_plan") && !pendingTaskTypes.includes("property_check")) {
+      if (it === "property_photo" || it === "floor_plan") {
         return "acknowledge_check";
       }
       return "estimate_sheet";
