@@ -2349,6 +2349,11 @@ ${history}`;
         ? `（参考）AIX【${AIX_BUTTON_LABELS[freeTextAixKey] ?? freeTextAixKey}】での対応が候補です。${(parsed.action ?? "").trim()}`.trim()
         : (parsed.action ?? "");
 
+    // finalAix が解決できなかった場合は reply_mode を auto_reply に戻す（最終上書き）。
+    // action="" のまま reply_mode="aix" にすると generate-reply のゲートで自動ドラフトが
+    // 中止され（ai_draft="[AIX誘導中]"）、押すべきAIXボタンも無いためスタッフが手詰まりになる。
+    if (!finalAix) replyMode = "auto_reply";
+
     return {
       action: finalAix ?? "",
       note: staffNote,

@@ -2430,7 +2430,7 @@ export default function Home() {
     } else if (statusFilter === "aix_target") {
       // AIXバッジと同一条件: 次にAIXボタンで対応すべき顧客
       result = result.filter(
-        (c) => c.suggestedNextAix || (c.suggestedAixMeta && c.lastSender === "customer")
+        (c) => c.suggestedNextAix || (!!c.suggestedAixMeta?.action && c.lastSender === "customer")
       );
     } else if (statusFilter !== "all") {
       // 5段階ステータスキーで直接フィルター（旧キーもエイリアスで統一）
@@ -2464,7 +2464,7 @@ export default function Home() {
   // AIX送信対象（AIXバッジと同一条件）の件数
   const aixTargetCount = useMemo(() => {
     return conversations.filter(
-      (c) => c.suggestedNextAix || (c.suggestedAixMeta && c.lastSender === "customer")
+      (c) => c.suggestedNextAix || (!!c.suggestedAixMeta?.action && c.lastSender === "customer")
     ).length;
   }, [conversations]);
 
@@ -6068,8 +6068,9 @@ export default function Home() {
                           <span className="text-[11px] leading-none" title="AI返信案あり">✨</span>
                         )}
                         {/* AIXバッジ: 次にAIXボタンで対応すべき顧客 */}
+                        {/* action="" （ボタン写像不能）のメタではバッジを出さない: 押すボタンが無いのにAIX扱いされる誤誘導を防ぐ */}
                         {(conversation.suggestedNextAix ||
-                          (conversation.suggestedAixMeta && conversation.lastSender === "customer")) && (
+                          (!!conversation.suggestedAixMeta?.action && conversation.lastSender === "customer")) && (
                           <span
                             className="rounded-full bg-[#7C3AED] px-1.5 py-0.5 text-[9px] font-bold text-white leading-none"
                             title={`AIX推奨: ${
@@ -7886,7 +7887,12 @@ export default function Home() {
               // brain が action="" を返した場合に何も表示されない完全空白状態になる穴を塞ぐ
               // 診断修正(内覧バナー誤表示): viewing_invite は顧客の反応が前提のアクション →
               // 最終送信者がスタッフ（物件送付直後等）の間は脳ヒントカードにも出さない
-              if (aixMetaIsFresh && brainMeta?.note && !dismissedBrainHintIds.has(id) && !(brainMeta.action === "viewing_invite" && !customerIsLastSender)) {
+              // 診断修正P5(action=""占有): action が既知AIXボタンに写像できない場合は P5 を出さず
+              // P5.1（[AIX誘導中]誘導）・P5.5 等の後続バナーへフォールスルーする。
+              // brain の自由記述 note だけのカードが P5 枠を占有し、配下バナーを全部隠す問題の対処。
+              // 2択モード（two_choice_mode）は action="" でも成立する独立UIのため例外的に通す。
+              const hasValidAixAction = !!(brainMeta?.action && BRAIN_AIX_LABELS[brainMeta.action]);
+              if (aixMetaIsFresh && brainMeta?.note && (hasValidAixAction || brainMeta.two_choice_mode) && !dismissedBrainHintIds.has(id) && !(brainMeta.action === "viewing_invite" && !customerIsLastSender)) {
                 const brainBtnLabel = BRAIN_AIX_LABELS[brainMeta.action];
                 const brainBtnColor = AIX_ACTION_META[brainMeta.action]?.color ?? "#7C3AED";
                 const brainAction = brainMeta.action as AixActionType;
@@ -10053,7 +10059,7 @@ export default function Home() {
         const ms14d = 14 * 86400_000;
         const ACCT: Record<string, string> = { sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ", hasu: "ハス" };
         const hotList = conversations.filter((c) => c.isHot && !c.isPostApply && now - new Date(c.updatedAt ?? "").getTime() <= ms14d);
-        const aixTargetList = conversations.filter((c) => c.suggestedNextAix || (c.suggestedAixMeta && c.lastSender === "customer"));
+        const aixTargetList = conversations.filter((c) => c.suggestedNextAix || (!!c.suggestedAixMeta?.action && c.lastSender === "customer"));
         const renderRow = (c: Conversation, onClose: () => void) => (
           <div
             key={c.id}
