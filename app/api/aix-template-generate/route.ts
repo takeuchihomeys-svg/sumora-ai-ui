@@ -43,9 +43,9 @@ export const maxDuration = 60;
 //   ③ RAG: winning_patterns + ai_reply_knowledge（バケット別スコアリング）+
 //      ai_reply_examples（⭐実例 — 文体・テンポの忠実な再現）
 //   ④ Brain戦略（suggested_aix_meta）: 検索ベクトル強化 + 生成方向性の注入
-//   ⑤ AIX専用実例バケット: ai_reply_examples の entry_source='aix_template'（【AIX】テンプレート
-//      続き文 — template_selection_logs.final_sent_text 由来・本命）＋ entry_source='aix_action'
-//      （AIX本文の橋渡し文実績・補完）を同一 aix_action で直接クエリし統合注入（2026-08-28）
+//   ⑤ AIX専用実例バケット: pgvector（match_aix_reply_examples）を主軸に、会話ごとに異なる
+//      実例を類似度で引く（2026-08-31 RAG一本化）。actionType固定の直クエリは「同じボタンなら
+//      全員同じ実例」になりテンプレ感の温床だったため、⭐スター付き最優秀2件のみ残して縮小。
 //
 // ※ GENERATION_SYSTEM（通常返信専用システム）は意図的に注入しない。
 //   GENERATION_SYSTEM は「見積書カバー文・確認結果報告等はAIX専用のため通常返信では
@@ -269,6 +269,14 @@ const PROPERTY_SEND_CONTEXT_GUIDE: Record<string, string> = {
   expand: `【条件広げ物件】希望条件を少し広げてお探しした物件。
 ・条件を少し広げてお探ししたことを素直に伝える（冒頭の具体的な言い回しは⭐実例の文体から学んで多様に書くこと）
 ・条件を広げても〇〇（お客様が重視しているポイント）は守れていると伝える`,
+};
+
+// 送付文脈キー → 埋め込み検索用の日本語ラベル（RAGクエリに載せて実例を文脈別に散らす）
+const PROPERTY_SEND_CONTEXT_LABELS: Record<string, string> = {
+  first: "初回物件送付（まだ物件を送っていないお客様への初めてのピックアップ）",
+  followup: "継続物件送付（既に物件を送付済みのお客様への追加ピックアップ）",
+  new_listing: "新着物件の即案内（出たばかりの物件・鮮度訴求）",
+  expand: "条件広げ物件送付（希望条件を少し広げてお探しした物件）",
 };
 
 function resolvePropertySendContext(args: {
@@ -591,7 +599,7 @@ export async function POST(req: NextRequest) {
 
   // ── 並列フェッチ①: Brain戦略 + DB学習資産（generate-reply と同一キャッシュ経由）──
   // 各フェッチはエラーでも生成を止めない（資産なしで生成続行 — generate-reply と同方針）
-  const [convResult, topPrinciples, lossPatterns, phraseList, dbRulesGeneric, dbRulesAction, actionBucketRes, aixTemplateExRes, aixActionExRes, aixUsageLogsRes] = await Promise.all([
+  const [convResult, topPrinciples, lossPatterns, phraseList, dbRulesGeneric, dbRulesAction, actionBucketRes, aixTemplateExRes, aixUsageLogsRes] = await Promise.all([
     conversationId
       ? supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
       : Promise.resolve({ data: null }),
@@ -619,31 +627,22 @@ export async function POST(req: NextRequest) {
           .order("created_at", { ascending: false })
           .limit(4)
       : Promise.resolve({ data: null }),
-    // A-1: 【AIX】テンプレート実例フェッチ（entry_source='aix_template' + 同一 aix_action）
-    // AIX本文の後に実際に送った「続き文」（template_selection_logs.final_sent_text 由来の
-    // バックフィル）。「✨この会話に合った文を生成」が生成すべき本命の実例のため優先取得
+    // A-1: ⭐スター付き【AIX】テンプレート実例のみ（entry_source='aix_template' + 同一 aix_action）
+    // 実例の主経路は pgvector（match_aix_reply_examples）に一本化したが、⭐は
+    // 「スタッフが明示的に最優秀と認定した採用実績」でありベクトル類似度では拾えないため
+    // 最大2件だけ固定シードとして残す（2026-08-31 limit 6 → ⭐限定2件に縮小）
     actionType
       ? supabase
           .from("ai_reply_examples")
           .select("customer_message, sent_reply, conversation_state, is_starred, reply_angle, aix_action, outcome_status")
           .eq("entry_source", "aix_template")
           .eq("aix_action", actionType)
-          .order("is_starred", { ascending: false })
+          .eq("is_starred", true)
           .order("created_at", { ascending: false })
-          .limit(6)
+          .limit(2)
       : Promise.resolve({ data: null }),
-    // A-2: AIX橋渡し文実例フェッチ（entry_source='aix_action' + 同一 aix_action）
-    // property_send 等のAIX本文（会話的メッセージ）実績。テンプレート実例の補完として取得
-    actionType
-      ? supabase
-          .from("ai_reply_examples")
-          .select("customer_message, sent_reply, conversation_state, is_starred, reply_angle, aix_action, outcome_status")
-          .eq("entry_source", "aix_action")
-          .eq("aix_action", actionType)
-          .order("is_starred", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(4)
-      : Promise.resolve({ data: null }),
+    // ※ A-2（entry_source='aix_action' の actionType固定直クエリ）は削除。
+    //    全員同じ実例セットになりテンプレ感の原因だったため match_aix_reply_examples で代替（2026-08-31）
     // シナリオ判定用: この会話のAIX使用ログ（物件送付実績・直前の空室確認結果）
     // フロントの pickupType / lastAixCheckPattern が来ない場合（リロード後・別導線）のDBフォールバック
     // property_send でも送付回数ベースの角度分岐に使用する（初回まとめ / 継続まとめ判定）
@@ -747,6 +746,7 @@ export async function POST(req: NextRequest) {
   let examplesSection = "";
   let ragQueryLength = 0;
   let aixVecHitCount = 0;   // match_aix_reply_examples のヒット数（テレメトリ用）
+  let aixStarSeedCount = 0; // ⭐直クエリ（A-1）で取得した固定シード実例数（テレメトリ用）
   let unifiedAixExCount = 0;   // 4経路統合後のAIX系実例件数（テレメトリ用）
   let unifiedExCount = 0;      // 4経路統合後の実例総数（テレメトリ用）
   if (process.env.OPENAI_API_KEY) {
@@ -774,6 +774,16 @@ export async function POST(req: NextRequest) {
       : "";
     const ragQuery = [
       `AIXアクション: ${actionLabel}`,
+      // 実例検索の主軸をpgvectorに一本化したため、同一actionType内での「文脈の違い」
+      // （初回/継続/新着/条件広げ・訴求シナリオ）を検索ベクトルに載せて実例を会話ごとに散らす
+      actionType === "property_send"
+        ? `送付文脈: ${PROPERTY_SEND_CONTEXT_LABELS[resolvePropertySendContext({ pickupType, priorSentPropertyCount })]}`
+        : "",
+      recommendationScenario ? `訴求シナリオ: ${RECOMMENDATION_SCENARIO_LABELS[recommendationScenario]}` : "",
+      pickupType ? `ピックアップ種別: ${pickupType}` : "",
+      actionType === "property_send" || actionType === "property_recommendation"
+        ? `事前の物件送付回数: ${priorSentPropertyCount}回（${priorSentPropertyCount === 0 ? "初回送付" : "継続送付"}）`
+        : "",
       resolvedCustomerConditions ? `希望条件: ${resolvedCustomerConditions.slice(0, 200)}` : "",
       brainMeta?.action && AIX_BUTTON_LABELS[brainMeta.action]
         ? `Brain推奨アクション: ${AIX_BUTTON_LABELS[brainMeta.action]}`
@@ -827,9 +837,10 @@ export async function POST(req: NextRequest) {
           // match_reply_examples は entry_source='line_reply' ハードコードのためAIX実例が永遠に
           // ヒットしない → 専用RPCで過去の【AIX】テンプレート続き文・橋渡し文実例を類似検索する
           //（同一actionは+0.05ブースト）
+          // 実例の主経路になったため母集団を 10 → 15 に拡大（dedupe後も6件を埋められるように）
           supabase.rpc("match_aix_reply_examples", {
             query_embedding: emb,
-            match_count: 10,
+            match_count: 15,
             filter_action: actionType ?? null,
           }),
         ]);
@@ -879,23 +890,25 @@ export async function POST(req: NextRequest) {
         }
         // AIX橋渡し文実例（pgvector）: 多様性が高いため閾値を0.45に緩和（⭐+0.15ブーストは共通）
         aixVecHitCount = ((aixExRes.data ?? []) as ExampleHit[]).length;
-        const aixVecRows = rankExamples((aixExRes.data ?? []) as ExampleHit[], 0.45).slice(0, 4);
+        // pgvectorがAIX実例の主経路。⭐直クエリ（最大2件）と合わせて6件枠を埋めるため 4 → 8 に拡大
+        const aixVecRows = rankExamples((aixExRes.data ?? []) as ExampleHit[], 0.45).slice(0, 8);
         const lineVecRows = rankExamples((exRes.data ?? []) as ExampleHit[]).slice(0, 6);
 
-        // 【4経路統合】優先タイア: ①直クエリaix_template > ②pgvector AIX > ③直クエリaix_action > ④pgvector line_reply
+        // 【3経路統合】優先タイア: ①⭐直クエリaix_template（固定シード最大2件） >
+        // ②pgvector AIX（主経路・会話ごとに変動） > ③pgvector line_reply
         // AIX系最大6件・line系最大2件・全体横断dedupe
         const toUnifiedEx = (r: { customer_message?: string | null; sent_reply?: string | null; is_starred?: boolean | null; aix_action?: string | null; outcome_status?: string | null }) =>
           ({ customer_message: r.customer_message ?? null, sent_reply: r.sent_reply ?? null, is_starred: r.is_starred ?? null, aix_action: r.aix_action ?? null, outcome_status: r.outcome_status ?? null });
         const tierA = ((aixTemplateExRes?.data ?? []) as AixExampleRow[]).map(toUnifiedEx);
+        aixStarSeedCount = tierA.length;
         const tierB = aixVecRows.map(r => ({ ...r, aix_action: null, outcome_status: r.outcome_status ?? null }));
-        const tierC = ((aixActionExRes?.data ?? []) as AixExampleRow[]).map(toUnifiedEx);
         const tierD = lineVecRows.map(r => ({ ...r, aix_action: null, outcome_status: null }));
 
         // 成約アウトカム還流: closed_won 実例を AIX系の先頭に昇格（成約実績ある実例を few-shot の最初に）
-        // Array.sort は stable のため同一 outcome 内では tierA > tierB > tierC の優先順が維持される
+        // Array.sort は stable のため同一 outcome 内では tierA > tierB の優先順が維持される
         const outcomeRank = (s: string | null) =>
           s === "closed_won" ? 0 : s === "applied" ? 1 : s === "viewing" ? 2 : 3;
-        const sortedTierABC = [...tierA, ...tierB, ...tierC].sort(
+        const sortedTierABC = [...tierA, ...tierB].sort(
           (a, b) => outcomeRank(a.outcome_status) - outcomeRank(b.outcome_status)
         );
 
@@ -1284,7 +1297,7 @@ export async function POST(req: NextRequest) {
       ` principles=${topPrinciples.length} loss=${lossPatterns.length} dbRules=${dbRulesGeneric ? "ok" : "none"} dbRulesAction=${dbRulesAction ? "ok" : "none"}` +
       ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}` +
       ` actionBucket=${actionBucketCategory ? `${actionBucketCategory}:${actionBucketRows.length}` : "-"}` +
-      ` aix_ex=${unifiedAixExCount} unified_ex=${unifiedExCount} aixVec=${aixVecHitCount}` +
+      ` aix_ex=${unifiedAixExCount} unified_ex=${unifiedExCount} aixVec=${aixVecHitCount} starSeed=${aixStarSeedCount}` +
       ` knUsedIds=${knowledgeUsedIds.length}` +
       ` scenario=${recommendationScenario ?? "-"} pickup=${pickupType ?? "-"}` +
       ` checkPat=${effectiveCheckPattern ?? "-"}${checkIsStale ? "(stale)" : ""}` +
