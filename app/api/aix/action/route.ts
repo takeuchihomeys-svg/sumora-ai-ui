@@ -779,7 +779,12 @@ async function callClaude(system: string, user: string, action: string, dynamicS
   }
 }
 
-async function callClaudeHaiku(system: string, user: string, action: string): Promise<string> {
+// dynamicSystemSuffix: 呼び出しごとに変わる動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
+async function callClaudeHaiku(system: string, user: string, action: string, dynamicSystemSuffix?: string): Promise<string> {
+  const systemBlocks: { type: string; text: string; cache_control?: { type: string; ttl?: string } }[] = [
+    { type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } },
+  ];
+  if (dynamicSystemSuffix) systemBlocks.push({ type: "text", text: dynamicSystemSuffix });
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -791,7 +796,7 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 256,
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } }],
+      system: systemBlocks,
       messages: [{ role: "user", content: user }],
     }),
     signal: AbortSignal.timeout(30_000),
@@ -2786,24 +2791,25 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
 ・②の絵文字は😊または😌を1個のみ。語尾は必ず「！！」
 ・お客様の決断を一緒に喜ぶ温かいトーンで。ただし行を増やさない
 
-【物件名+号室の特定 — 会話全体を読んで以下の優先順で探す】
-${property_name ? `物件名は「${property_name}」を使う（指定済み）。会話履歴から号室が分かる場合（スタッフメッセージの「【物件名 号室】」表記や見積書送付時の記載など）は「${property_name} ○号室」のように号室も付ける。号室が不明なら物件名のみでよい。` : `1. お客様自身の発言を最優先（「〇〇にします！」「〇〇で申し込みます」「〇〇に決めました」等で名指しされた物件名）
-2. 会話履歴のスタッフメッセージ冒頭「【物件名 号室】」形式（例:「【ASK-6 201号室】」→「ASK-6 201号室」）
-3. 上記がなければ、会話の中で最後に話題になっていた物件名
-・号室が分かる場合は必ず「物件名 ○号室」の形で含める（例:「マルシェ九条 402号室」）。号室不明なら物件名のみ
-・複数物件が出ている会話では、お客様が申込む意思を示した物件を直近の文脈から選ぶ
-・確実に特定できない場合は「こちらのお部屋」とする。誤った物件名を推測で書くことは絶対禁止`}
-
 【禁止】書類案内・審査案内・初期費用・次ステップ案内は一切書かない。この2行以外を追加しない。物件の感想・アピールも書かない。解説不要。
 ・LINEでそのまま送れる完成文のみ出力
 
 【スモラLINE営業ルール（必ず守る・ただし上記の2行構成が最優先）】
 ${SMORA_COMMON_RULES}`;
 
+        // 動的（顧客/物件ごとに変わる）ブロックはキャッシュ対象の system から分離する
+        const confirmPropertyNameNote = `【物件名+号室の特定 — 会話全体を読んで以下の優先順で探す】
+${property_name ? `物件名は「${property_name}」を使う（指定済み）。会話履歴から号室が分かる場合（スタッフメッセージの「【物件名 号室】」表記や見積書送付時の記載など）は「${property_name} ○号室」のように号室も付ける。号室が不明なら物件名のみでよい。` : `1. お客様自身の発言を最優先（「〇〇にします！」「〇〇で申し込みます」「〇〇に決めました」等で名指しされた物件名）
+2. 会話履歴のスタッフメッセージ冒頭「【物件名 号室】」形式（例:「【ASK-6 201号室】」→「ASK-6 201号室」）
+3. 上記がなければ、会話の中で最後に話題になっていた物件名
+・号室が分かる場合は必ず「物件名 ○号室」の形で含める（例:「マルシェ九条 402号室」）。号室不明なら物件名のみ
+・複数物件が出ている会話では、お客様が申込む意思を示した物件を直近の文脈から選ぶ
+・確実に特定できない場合は「こちらのお部屋」とする。誤った物件名を推測で書くことは絶対禁止`}`;
+
         const brainAddendumAppConfirm = await loadBrainTemplate("application_push");
         const confirmSystemFinal = confirmSystem + appDbRules + (brainAddendumAppConfirm ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppConfirm : "");
         const confirmUserFinal = `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}` + (appDiffNote ? `\n\n${appDiffNote}` : "") + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-        message_text = await callClaude(confirmSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, confirmUserFinal, currentAction, brainGuidanceNote || undefined);
+        message_text = await callClaude(confirmSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, confirmUserFinal, currentAction, [confirmPropertyNameNote, brainGuidanceNote].filter(Boolean).join("\n\n") || undefined);
 
       } else if (appSubMode === "docs_request") {
         // ── 書類依頼: 申込フォーム返送後の会話から不足書類を特定して追加依頼メッセージを生成
@@ -3009,6 +3015,8 @@ ${SMORA_COMMON_RULES}
       let system: string;
       let userMsg: string;
       let appGreetingForUser = "";
+      // 動的（顧客/物件/日付ごとに変わる）ブロック。キャッシュ対象の system から分離して渡す
+      let appDynamicSuffix = "";
 
       if (isScheduled) {
         // ── 退去予定: 固定テンプレート方式（従来通り）
@@ -3022,17 +3030,16 @@ ${SMORA_COMMON_RULES}
         system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 以下のテンプレートを使って、会話履歴から物件名を特定し、完成したLINEメッセージを1つだけ出力してください。
 
-【テンプレート】
+【スモラの言葉・表現】
+${examplesText}`;
+        appDynamicSuffix = `【テンプレート】
 ${template}
 
 【穴埋めルール】
 ・「[物件名]」→ ${property_name ? `「${property_name}」を使う（指定済み）` : '会話履歴から特定（最新の物件名を使う）。見つからなければ「こちらのお部屋」に置換。'}
 ・テンプレートの文言・改行・絵文字は変えない
 ・例外（任意・最大1行）: お客様が会話で審査・キャンセル・「内覧できないのに申込は不安」等の不安を示している場合のみ、末尾に「保証会社の審査が通過するまでキャンセル料は一切かかりませんのでご安心ください😊！！」を1行追加してよい。不安が見えなければ追加しない
-・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
-
-【スモラの言葉・表現】
-${examplesText}`;
+・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）`;
         userMsg = `物件名を会話から特定してテンプレートを完成させてください。${extra_input ? `補足: ${extra_input}` : ""}${templateStructureNote}${recentHistory}` + (phraseText ? `\n\n【スモラのよく使うフレーズ（参考）】\n${phraseText}` : "");
 
       } else {
@@ -3070,11 +3077,6 @@ ${!isSimple ? `【入居希望日と30日入居ルール — 最重要】
 ・入居希望日が今日の日付＋30日より大きく先の場合のみ「〇月〇日頃にお申込み頂ければご希望日でご入居頂けます😊！！」と最適な申込時期を1行で案内する（急かさない）
 ・【絶対禁止】審査期間の話（「審査に3〜10日かかる」「逆算して早めのお申込みを」等）は一切書かない。入居日の話はすべて30日入居ルールだけで説明する` : ""}
 
-【物件名の特定】
-${property_name ? `「${property_name}」を使う（指定済み）` : '会話履歴の最新スタッフメッセージ冒頭「【物件名 号室】」から物件名のみを抽出（例:「【ASK-6 201号室】」→「ASK-6」）。見つからなければ会話全体から特定、それもなければ「こちらのお部屋」。'}
-
-${appealFocus}
-
 【物件アピールの書き方 — 最重要】
 ・「かなりご条件の良い」「ご条件がよく」のような曖昧な表現は禁止 → 必ず会話から具体的な根拠を入れる
 ・家賃/管理費 → 「家賃管理費込○○円とご予算内のかなりお得なお部屋となります！！」
@@ -3105,6 +3107,10 @@ ${isSimple
   ? `{"appeal":"物件アピール（①・物件名+希望理由）","cta":"申込み後押し（②）","reassurance":"不安解消行（任意・なければ空文字）","closing":"締め（③）"}`
   : `{"movein_date":"入居日安心（①・任意・入居希望日の話が出ていなければ空文字）","invite":"内覧案内（②）カレンダーあり時は複数行で日程を含む全文、なければ1行","appeal":"物件アピール（③）","cta":"申込み推奨（④）","reassurance":"不安解消行（任意・なければ空文字）"}`}
 ${examplesText}`;
+        appDynamicSuffix = `【物件名の特定】
+${property_name ? `「${property_name}」を使う（指定済み）` : '会話履歴の最新スタッフメッセージ冒頭「【物件名 号室】」から物件名のみを抽出（例:「【ASK-6 201号室】」→「ASK-6」）。見つからなければ会話全体から特定、それもなければ「こちらのお部屋」。'}
+
+${appealFocus}`;
         const calendarNoteForApp = calendar_info ? `\n\n【直近の来店・内覧可能時間帯（カレンダー自動取得済み — この情報をそのまま②内覧案内に使うこと）】\n${calendar_info}` : "";
         // 30日入居ルール計算用の今日の日付をuserメッセージ側に注入（systemブロックのキャッシュを壊さないよう動的データはここに置く）
         userMsg = `${name}への申込後押しメッセージ。${property_name ? `物件名:${property_name}。` : ""}${extra_input ? `補足:${extra_input}。` : ""}${calendarNoteForApp}${templateStructureNote}${recentHistory}${!isSimple ? `\n【本日の日付】${todayJSTFmt}` : ""}`;
@@ -3117,7 +3123,7 @@ ${examplesText}`;
         + (appDiffNote ? `\n\n${appDiffNote}` : "")
         + (compAppealNote ? `\n\n${compAppealNote}` : "")
         + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-      const rawAppText = await callClaude(appSystemFinal + appDbRules + AIX_CURATED_AND_CRITICAL_RULES, appUserFinal, currentAction, brainGuidanceNote || undefined);
+      const rawAppText = await callClaude(appSystemFinal + appDbRules + AIX_CURATED_AND_CRITICAL_RULES, appUserFinal, currentAction, [appDynamicSuffix, brainGuidanceNote].filter(Boolean).join("\n\n") || undefined);
       if (!isScheduled) {
         // simple/hold_view: JSONパーツを解析してコンポーネント学習ループに渡す
         let appComps: Record<string, string> | null = null;
@@ -3267,17 +3273,6 @@ ${GUARANTOR_COMPANY_LIST_OCR}
 ${SMORA_COMMON_RULES}
 
 【お客様名】ユーザーメッセージに記載のお客様名を使うこと
-【${propertyNameInstruction}】
-
-【確定情報（変更禁止）】
-保証会社名: ${companyName || "資料より確認済み"}
-保証タイプ: ${guarantorType}
-
-【メッセージ構成（厳守）】
-①挨拶: 「（時候の挨拶）」
-②確認報告: 「${reportBlock}」（[物件名]を解決してから書く・②内の改行は\\nで出力）
-③タイプ説明: 「${typeDesc}」（②の後に空行を1行入れてから書く）
-${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・ctaはnull）"}
 
 【重要】
 ・②と③の間には必ず空行を1行入れること（報告→空行→タイプ説明）
@@ -3287,11 +3282,24 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
 【出力形式（必須）】
 JSONのみ: {"greeting":"①","report":"②（[物件名]解決済み・改行は\\nで）","type_desc":"③","cta":"④またはnull"}`;
 
+      // 動的（保証会社名・物件名・誘導文など呼び出しごとに変わる）ブロックは system から分離する
+      const guarantorDynamicNote = `【${propertyNameInstruction}】
+
+【確定情報（変更禁止）】
+保証会社名: ${companyName || "資料より確認済み"}
+保証タイプ: ${guarantorType}
+
+【メッセージ構成（厳守）】
+①挨拶: 「（時候の挨拶）」
+②確認報告: 「${reportBlock}」（[物件名]を解決してから書く・②内の改行は\\nで出力）
+③タイプ説明: 「${typeDesc}」（②の後に空行を1行入れてから書く）
+${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・ctaはnull）"}`;
+
       const rawGuarantorText = await callClaude(
         guarantorSystem + guarantorDbRules + AIX_CURATED_AND_CRITICAL_RULES,
         `${name}への保証会社確認報告メッセージ。${recentHistory}` + (guarantorDiffNote ? `\n\n${guarantorDiffNote}` : ""),
         currentAction,
-        (greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : "") + (brainGuidanceNote || "") || undefined
+        guarantorDynamicNote + "\n\n" + (greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : "") + (brainGuidanceNote || "")
       );
 
       try {
@@ -4180,9 +4188,9 @@ ${name}ご都合よろしいお日にちにご案内させて頂きます😊！
 [物件名と号室]の部分のみ、画像または会話履歴から「マンション名 ○○○号室」の形式で置き換えること（例: アドバンス難波ラシュレ 806号室）。
 号室番号は先頭の0を省略すること（0806 → 806、0102 → 102）。
 号室が不明な場合はマンション名のみ記載する。
-それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
-
-テンプレート:
+それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。`;
+        // テンプレート本文は顧客名・募集終了物件名を含む動的コンテンツ → キャッシュ対象の system から分離
+        const availableFixedDynamic = `テンプレート:
 ${availableTemplate}`;
 
         if (image_url) {
@@ -4190,12 +4198,13 @@ ${availableTemplate}`;
             { type: "text", text: `以下の会話と画像から物件名と号室を特定して[物件名と号室]を置き換えてください。${recentHistory}` },
             { type: "image", source: { type: "url", url: image_url } },
           ];
-          message_text = await callClaudeVision(availableFixedSystem, content, currentAction);
+          message_text = await callClaudeVision(availableFixedSystem, content, currentAction, availableFixedDynamic);
         } else {
           message_text = await callClaude(
             availableFixedSystem,
             `以下の会話から物件名と号室を特定して[物件名と号室]を置き換えてください。${recentHistory}`,
-            currentAction
+            currentAction,
+            availableFixedDynamic
           );
         }
         // 号室の先頭ゼロ除去はメインパス末尾の finalize() で一括処理（⑦で共通化）
@@ -4252,12 +4261,12 @@ ${availableTemplate}`;
           const fixedSystem = `あなたはテキスト置換エンジンです。
 以下のテンプレートを一字一句そのまま出力してください。
 [物件名]の部分のみ、会話履歴から特定した物件名に置き換えること。
-それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
-
-テンプレート:
+それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。`;
+          // テンプレート本文は募集終了号室を含む動的コンテンツ → キャッシュ対象の system から分離
+          const fixedDynamic = `テンプレート:
 ${templateText}`;
 
-          message_text = await callClaude(fixedSystem, `以下の会話から物件名を特定して[物件名]を置き換えてください。${recentHistory}`, currentAction);
+          message_text = await callClaude(fixedSystem, `以下の会話から物件名を特定して[物件名]を置き換えてください。${recentHistory}`, currentAction, fixedDynamic);
 
         } else {
           // 違う間取り: 物件画像から広さ（㎡）を読み取って文に反映
@@ -4273,9 +4282,9 @@ ${templateText}`;
 以下のテンプレートを一字一句そのまま出力してください。
 [物件名]の部分のみ、会話履歴から特定した物件名に置き換えること。
 [㎡]の部分のみ、添付画像から読み取った部屋の広さ（例: 46.2㎡）に置き換えること（画像がない・読み取れない場合は[㎡]ごと削除すること）。
-それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
-
-テンプレート:
+それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。`;
+          // テンプレート本文は募集終了号室を含む動的コンテンツ → キャッシュ対象の system から分離
+          const fixedDynamic = `テンプレート:
 ${templateText}`;
 
           if (image_url) {
@@ -4283,9 +4292,9 @@ ${templateText}`;
               { type: "text", text: `以下の会話から物件名を特定して[物件名]を置き換え、添付画像から部屋の広さを読み取って[㎡]を置き換えてください。${recentHistory}` },
               { type: "image", source: { type: "url", url: image_url } },
             ];
-            message_text = await callClaudeVision(fixedSystem, content, currentAction);
+            message_text = await callClaudeVision(fixedSystem, content, currentAction, fixedDynamic);
           } else {
-            message_text = await callClaude(fixedSystem, `以下の会話から物件名を特定して[物件名]を置き換えてください。[㎡]は削除してください。${recentHistory}`, currentAction);
+            message_text = await callClaude(fixedSystem, `以下の会話から物件名を特定して[物件名]を置き換えてください。[㎡]は削除してください。${recentHistory}`, currentAction, fixedDynamic);
           }
         }
       } else {
@@ -4526,10 +4535,6 @@ ${SMORA_COMMON_RULES}
       const system = `あなたは会話テキストから内覧の日程と時間を抽出するアシスタントです。
 以下の会話から、内覧・案内の日程と時間を抽出してください。
 
-【本日の日付（JST）】
-${jstTodayStr}
-・「明日」「明後日」「来週」「今週土曜」などの相対的な日付表現は、本日の日付を基準に実際の日付へ変換すること
-
 【出力ルール（JSON1行のみ）】
 {"date":"7/3（金）","time":"10:00"}
 
@@ -4539,6 +4544,11 @@ ${jstTodayStr}
 ・日程は見つかるが時間が不明な場合はtimeを空文字に
 ・どちらも不明な場合は両方空文字に
 ・JSONのみ返す（説明文・コメント不要）`;
+
+      // 本日の日付は日次で変わる動的コンテンツ → キャッシュ対象の system から分離
+      const extractDatetimeDynamic = `【本日の日付（JST）】
+${jstTodayStr}
+・「明日」「明後日」「来週」「今週土曜」などの相対的な日付表現は、本日の日付を基準に実際の日付へ変換すること`;
 
       // LLMが出力した曜日は信用せず、月/日から決定論的に曜日を再計算して上書きする
       // （例: 2026/7/21（火）をLLMが「（月）」と誤答するバグの恒久対策）
@@ -4556,7 +4566,7 @@ ${jstTodayStr}
       };
 
       try {
-        const raw = await callClaudeHaiku(system, msgs, currentAction);
+        const raw = await callClaudeHaiku(system, msgs, currentAction, extractDatetimeDynamic);
         const jsonMatch = raw.match(/\{[^}]+\}/);
         if (!jsonMatch) return NextResponse.json({ ok: true, date: "", time: "" });
         const parsed = JSON.parse(jsonMatch[0]) as { date?: string; time?: string };
@@ -4771,13 +4781,6 @@ ${SMORA_COMMON_RULES}
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 会話履歴を読み取り、待ち合わせ確認メッセージを生成してください。
 
-【出力形式（一字一句この構成で）】
-かしこまりました！！
-${mDate}ご案内させて頂きます！！
-
-${mDate}[時間]に${mName}
-現地エントランスお待ち合わせで何卒よろしくお願い致します！！${mAddr ? `\n住所: ${mAddr}` : ""}
-
 【時間の読み取りルール】
 ・会話履歴から待ち合わせの時間（例：11時、14:00、午後2時など）を読み取り [時間] に当てはめること
 ・「11時」→「11:00」、「14時30分」→「14:30」のように整形すること
@@ -4787,9 +4790,17 @@ ${mDate}[時間]に${mName}
 【スモラLINE営業ルール（必ず守る・ただし上記の出力形式が最優先）】
 ${SMORA_COMMON_RULES}`;
 
+      // 日程・物件名・住所は呼び出しごとに変わる動的コンテンツ → キャッシュ対象の system から分離
+      const meetingDynamicSuffix = `【出力形式（一字一句この構成で）】
+かしこまりました！！
+${mDate}ご案内させて頂きます！！
+
+${mDate}[時間]に${mName}
+現地エントランスお待ち合わせで何卒よろしくお願い致します！！${mAddr ? `\n住所: ${mAddr}` : ""}`;
+
       const meetingSystemFinal = system + meetingDbRules + (meetingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + meetingBrainAddendum : "");
       const meetingUserFinal = greetingTimeNote + `会話履歴から待ち合わせ時間を読み取り、メッセージを生成してください。${recentHistory}` + (meetingDiffNote ? `\n\n${meetingDiffNote}` : "") + (meetingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + meetingStarNote : "");
-      message_text = await callClaudeHaiku(meetingSystemFinal, meetingUserFinal, currentAction);
+      message_text = await callClaudeHaiku(meetingSystemFinal, meetingUserFinal, currentAction, meetingDynamicSuffix);
 
     // ── ✅ 確認します ──────────────────────────────────────────────
     } else if (action === "acknowledge_check") {
@@ -4983,31 +4994,32 @@ ${SMORA_COMMON_RULES}
 【スモラLINE営業ルール（必ず守る）】
 ${SMORA_COMMON_RULES}
 
-【構成ルール（この順番で・必ず守ること）】
+【トーン】
+・押しつけがましくない・軽いタッチ
+・返信を強要する表現（「ご返信ください」「お早めに」等）は使わない
+・「〜ご満足いただけるまでサポートします」「引き続きお手伝いします」等の宣言は絶対に入れない
+
+【文字数】①②③の3パート・完成したLINEメッセージのみを出力（JSONや説明文は不要）`;
+
+        // 物件名は呼び出しごとに変わる動的コンテンツ → キャッシュ対象の system から分離
+        const scDynamicNote = `【構成ルール（この順番で・必ず守ること）】
 ① 書き出し: 「[お客様名]（時候の挨拶）」（greetingTimeNoteの時間帯・初回・当日挨拶済みルールと整合させる）
 ② 新着のご連絡: ${followPropertyName ? `「新しく${followPropertyName}が募集にでましたのでご連絡させていただきました！！」` : `「新しくオススメ出来る物件が募集にでましたのでご連絡させていただきました！！」`}
   ※補足情報に物件の特徴（駅近・築浅・家賃など）があれば、②に一言だけ自然に添えてよい
 ③ 締め（＝メッセージの最後の一文）: 「[お客様名]お部屋探し継続されていますでしょうか！！」
   ※③の後に文章を追加しない・サポート宣言・フォロー宣言・補足一切不要
 
-【トーン】
-・押しつけがましくない・軽いタッチ
-・返信を強要する表現（「ご返信ください」「お早めに」等）は使わない
-・「〜ご満足いただけるまでサポートします」「引き続きお手伝いします」等の宣言は絶対に入れない
-
 【禁止事項】
 ・③の後に一切の文章・絵文字・補足を追加しない（③で完全に終える）
 ・補足情報にない物件の設備・家賃・条件を創作しない
 ・物件名を創作しない（${followPropertyName ? `「${followPropertyName}」以外の物件名を出さない` : "物件名が不明な場合は「オススメ出来る物件」のままにする"}）
 ・「様」を使わない（「さん」で統一）
-・🙏絵文字は絶対禁止
-
-【文字数】①②③の3パート・完成したLINEメッセージのみを出力（JSONや説明文は不要）`;
+・🙏絵文字は絶対禁止`;
 
         const scUser = `${name}への物件探し継続確認メッセージを生成してください。${followPropertyName ? `\n物件名: ${followPropertyName}` : ""}${extra_input ? `\n補足（物件の特徴など）: ${extra_input}` : ""}${recentHistory}`;
         const scSystemFinal = scSystem + scDbRules + (scBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + scBrainAddendum : "");
         const scUserFinal = greetingTimeNote + scUser + (scDiffNote ? `\n\n${scDiffNote}` : "") + (scStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + scStarNote : "");
-        message_text = await callClaude(scSystemFinal, scUserFinal, currentAction, greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined);
+        message_text = await callClaude(scSystemFinal, scUserFinal, currentAction, scDynamicNote + (greetingPhrase ? `\n\n【挨拶フレーズ】${greetingPhrase}\n` : ""));
 
       // conversation_match: 過去の会話文脈を最大活用した自然な追客メッセージを生成
       } else if (body.conversation_match) {
