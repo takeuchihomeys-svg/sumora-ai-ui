@@ -1244,6 +1244,7 @@ export default function TemplateModal({
         category,
         templates: candidateTemplates.map((t) => ({ id: t.id, label: t.label, text: t.text, use_count: t.use_count ?? 0, win_rate: t.win_rate ?? null, recommend_shown_count: t.recommend_shown_count ?? null, recommend_picked_count: t.recommend_picked_count ?? null })),
         customer_conditions: linkedCustomer?.conditions ?? null,
+        customer_summary: linkedCustomer?.ai_summary ?? null,
         sub_category: detectedSubCategory,
       }),
     })

@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
       category,
       templates,
       customer_conditions,
+      customer_summary,
       sub_category,
     } = body as {
       conversation_id?: string | null;
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
       category?: string | null;
       templates?: TemplateCandidate[];
       customer_conditions?: string | null;
+      customer_summary?: string | null;
       sub_category?: string | null;
     };
 
@@ -149,6 +151,7 @@ AIXで1通目を送信済みです。次に送る続きのテンプレートを�
 
 ## お客様の希望条件
 ${customer_conditions ? customer_conditions.slice(0, 400) : "（紐付けなし）"}
+${customer_summary ? `\n## お客様プロフィール（AI分析・決まるパターン）\n${customer_summary.slice(0, 300)}\n→ このお客様に刺さる訴求軸（費用・審査・設備・立地等）に合ったテンプレを優先すること` : ""}
 
 ## AIXで送った1通目のメッセージ${action_type ? `（アクション: ${action_type}）` : ""}
 ${(sent_message || "（なし）").slice(0, 800)}

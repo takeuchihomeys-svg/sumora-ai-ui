@@ -254,6 +254,35 @@ const PICKUP_TYPE_NOTES: Record<string, string> = {
   "条件広げピックアップ": "※ご希望条件を少し広げてお探しした物件。その旨に軽く触れてよい",
 };
 
+// ─── property_send（物件ピックアップ）の送付文脈ガイド ──────────────────────────
+// 同じ「物件ピックアップした」ボタンでも、初回か継続かで冒頭・訴求構造が変わる
+const PROPERTY_SEND_CONTEXT_GUIDE: Record<string, string> = {
+  first: `【初回物件送付】まだ物件をお送りしていないお客様への初めてのピックアップ。
+・「〇〇さんのご条件に合いそうなお部屋をいくつかピックアップしました！！」系で希望条件との適合を前面に出す
+・🚫「先日お送りした」「以前ご紹介した」等、既送付を前提にした表現は絶対禁止`,
+  followup: `【継続物件送付（追加ピックアップ）】既に物件をお送りしたことがあるお客様への追加提案。
+・前回との連続性を意識した「引き続きお探しさせて頂きました！！」「さらに〇〇さんに合いそうなお部屋が見つかりました！！」系で追加感を演出
+・前回と重複しない新しい提案であることを伝える`,
+  new_listing: `【新着物件】新着で出た物件を即案内する文脈。
+・「新着で出たお部屋がございます！！」「ちょうど出た物件がございます！！」系で鮮度を強調
+・「人気で早く決まることが多い」等の動機付けを添えてよい（煽りにならない範囲で）`,
+  expand: `【条件広げ物件】希望条件を少し広げてお探しした物件。
+・「ご条件を少し広げてお探ししました！！」と素直に添える（お客様の条件変更ではなくスタッフの提案であると伝える）
+・条件を広げても〇〇（お客様が重視しているポイント）は守れていると伝える`,
+};
+
+function resolvePropertySendContext(args: {
+  pickupType: string | null | undefined;
+  priorSentPropertyCount: number;
+}): string {
+  if (args.pickupType === "新着まとめ" || args.pickupType === "新着1件") return "new_listing";
+  if (args.pickupType === "条件広げまとめ" || args.pickupType === "条件広げピックアップ") return "expand";
+  if (args.pickupType === "初回まとめ") return "first";
+  if (args.pickupType === "継続まとめ" || args.pickupType === "継続ピックアップ") return "followup";
+  // ピッカー情報なし: 送付実績から推定
+  return args.priorSentPropertyCount === 0 ? "first" : "followup";
+}
+
 // check_pattern（物件確認結果）→ 日本語ラベル（シナリオ判定事実の注入用）
 const CHECK_PATTERN_LABELS: Record<string, string> = {
   available: "空室あり（募集中）",
@@ -617,7 +646,8 @@ export async function POST(req: NextRequest) {
       : Promise.resolve({ data: null }),
     // シナリオ判定用: この会話のAIX使用ログ（物件送付実績・直前の空室確認結果）
     // フロントの pickupType / lastAixCheckPattern が来ない場合（リロード後・別導線）のDBフォールバック
-    conversationId && actionType === "property_recommendation"
+    // property_send でも送付回数ベースの角度分岐に使用する（初回まとめ / 継続まとめ判定）
+    conversationId && (actionType === "property_recommendation" || actionType === "property_send")
       ? supabase
           .from("aix_usage_logs")
           .select("aix_type, check_pattern, created_at")
@@ -1107,6 +1137,13 @@ export async function POST(req: NextRequest) {
     // 「1件特にオススメ」の訴求シナリオ（冒頭・比較表現の可否・CTA強度を決定する最優先指示）
     recommendationScenario
       ? `・訴求シナリオ（この種別の書き方より優先・実例の冒頭表現と矛盾する場合もこちらを優先）:\n${RECOMMENDATION_SCENARIO_GUIDES[recommendationScenario]}${pickupType && PICKUP_TYPE_NOTES[pickupType] ? `\n${PICKUP_TYPE_NOTES[pickupType]}` : ""}`
+      : "",
+    // 「物件ピックアップした」の送付文脈（初回 / 継続 / 新着 / 条件広げ）
+    actionType === "property_send"
+      ? (() => {
+          const ctx = resolvePropertySendContext({ pickupType, priorSentPropertyCount });
+          return `・送付文脈（この種別の書き方より優先）:\n${PROPERTY_SEND_CONTEXT_GUIDE[ctx]}\n・文脈判定に使った事実: ピックアップ種別=${pickupType ?? "不明"} / 今回より前の物件送付回数=${priorSentPropertyCount}回`;
+        })()
       : "",
     signalCtaOverride
       ? `・CTA強度の上書き（購買シグナル優先 — アクション種別の書き方より優先）: ${signalCtaOverride}`
