@@ -280,6 +280,8 @@ type GenerateRequestBody = {
   // 「1件特にオススメ」シナリオ判定用（property_recommendation のみ使用）
   pickupType?: string | null;          // AIXピッカーで選択したピックアップ種別（代替ピックアップ等）
   lastAixCheckPattern?: string | null; // この会話の直近 property_check_result の結果生値（unavailable等）
+  // お客様プロフィール（AI分析: 決まるパターン・人物像）— property_customers.ai_summary
+  customerSummary?: string | null;
 };
 
 const STATE_LABEL: Record<string, string> = {
@@ -446,6 +448,7 @@ export async function POST(req: NextRequest) {
     staffMessagedToday,
     pickupType,
     lastAixCheckPattern,
+    customerSummary,
   } = body;
 
   if (!actionType && !actionCategory) {
@@ -1105,8 +1108,8 @@ export async function POST(req: NextRequest) {
     recommendationScenario
       ? `・訴求シナリオ（この種別の書き方より優先・実例の冒頭表現と矛盾する場合もこちらを優先）:\n${RECOMMENDATION_SCENARIO_GUIDES[recommendationScenario]}${pickupType && PICKUP_TYPE_NOTES[pickupType] ? `\n${PICKUP_TYPE_NOTES[pickupType]}` : ""}`
       : "",
-    recommendationScenario && signalCtaOverride
-      ? `・CTA強度の上書き（訴求シナリオ既定より優先）: ${signalCtaOverride}`
+    signalCtaOverride
+      ? `・CTA強度の上書き（購買シグナル優先 — アクション種別の書き方より優先）: ${signalCtaOverride}`
       : "",
     recommendationScenario
       ? `・シナリオ判定に使った事実: ${[
@@ -1127,6 +1130,9 @@ export async function POST(req: NextRequest) {
     `━━━━━━━━━━━━━━━━━━━━\n【お客様情報】\n━━━━━━━━━━━━━━━━━━━━`,
     `・お客様名: ${sanitizedCustomerName || "〇〇"}さん`,
     `・現在のフェーズ: ${stateLabel}`,
+    customerSummary
+      ? `・お客様プロフィール（AI分析・決まるパターン）: ${customerSummary}\n  → このお客様に刺さる訴求軸（例: 審査通りやすさ・費用の安さ・設備・立地等）を読み取り、物件の特徴と結びつけた訴求に使うこと`
+      : "",
     resolvedCustomerConditions
       ? `・希望条件（DB）: ${resolvedCustomerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。`
       : "・希望条件: 未取得（条件合致の断定表現は使わず、会話履歴に出た事実のみで訴求すること）",

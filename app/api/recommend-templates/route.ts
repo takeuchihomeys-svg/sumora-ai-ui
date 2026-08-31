@@ -104,6 +104,7 @@ export async function POST(req: NextRequest) {
       const meta = (convRes.data as { suggested_aix_meta?: Record<string, unknown> | null } | null)?.suggested_aix_meta ?? null;
       const signal = typeof meta?.purchase_signal_level === "string" ? meta.purchase_signal_level : null;
       const stance = typeof meta?.engagement_stance === "string" ? meta.engagement_stance : null;
+      const templateHint = typeof meta?.template_hint === "string" ? meta.template_hint : null;
 
       const aixHistory = aixLogs
         .slice(0, 5)
@@ -129,6 +130,7 @@ export async function POST(req: NextRequest) {
           : stance === "push"
             ? "・局面スタンス: push（次の一歩を促すテンプレを優先）"
             : "",
+        templateHint ? `・Brain推奨テンプレカテゴリ（template_hint）: ${templateHint}（このカテゴリに近いテンプレを優先選択すること）` : "",
       ].filter(Boolean).join("\n");
     }
 
@@ -179,7 +181,7 @@ ${templates.map((t, i) => {
 ## 指示
 希望条件・1通目の内容・今回の状況（送付実績・購買シグナル）・ギャップ分析を踏まえて、
 続けて送るのに最も適切なテンプレートを上位3件まで選び、理由を簡潔に答えてください。
-※「今回の状況」の制約（複数送付前提テンプレの可否・押す／待つ）は希望条件の合致より優先すること。
+※「今回の状況」の制約（複数送付前提テンプレの可否・押す／待つ・Brain推奨カテゴリ）は希望条件の合致より優先すること。
 理由には「○○の希望に応えるため」「△△が伝えられていないため補足として」のように
 ギャップ分析の内容を含めてください。
 

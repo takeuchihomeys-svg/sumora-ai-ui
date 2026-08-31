@@ -706,7 +706,7 @@ interface TemplateModalProps {
   customerName?: string;
   conversationState?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string; isAix?: boolean; rawCreatedAt?: string }>;
-  linkedCustomer?: { id: string; name: string; conditions: string };
+  linkedCustomer?: { id: string; name: string; conditions: string; ai_summary?: string | null };
   // 物件顧客未紐付け時のフォールバック用メモ（AIX生成の customerConditions に使用）
   memo?: string;
   initialCategory?: string;
@@ -2364,6 +2364,7 @@ export default function TemplateModal({
           conversationState,
           recentMessages: (recentMessages ?? []).slice(-15),
           customerConditions: linkedCustomer?.conditions || memo || "",
+          customerSummary: linkedCustomer?.ai_summary ?? null,
           noEmoji,
           pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
           staffMessagedToday: staffMessagedToday ?? false,
