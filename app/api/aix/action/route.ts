@@ -697,7 +697,8 @@ function buildMoveInDeadlineNote(sourceText: string, todayISO: string, todayFmt:
       : `本日から残り${r.daysLeft}日しかなく、お申込みから入居まで最短2週間かかるため間に合わない`;
     return `${head}\n・お客様の入居希望時期「${wish}」＝${r.deadlineISO} は${reason}。${forbid}`;
   }
-  return `${head}\n・お客様の入居希望時期「${wish}」＝${r.deadlineISO}（本日から${r.daysLeft}日後）。十分な余裕があるため「${wish}のご入居にもしっかり対応可能です！！」のように入居時期に言及してよい。\n・言及する場合の日付は「${wish}」の表現に沿わせ、勝手に別の日付へ書き換えないこと。`;
+  const margin = r.daysLeft - MOVE_IN_LEAD_DAYS; // 審査期間（14日）を引いた余裕日数
+  return `${head}\n・お客様の入居希望時期「${wish}」＝${r.deadlineISO}（本日${todayFmt}から${r.daysLeft}日後）。\n・審査・契約・入金の最短期間は2週間。差し引き${margin}日の余裕があるため入居時期に言及してよい。\n・言及するときは「お申込みから審査・ご契約・入居まで通常2週間程度で対応できますので、${wish}のご入居にもしっかり対応可能です！！」のように審査期間を根拠として自然に添えること。\n・言及する場合の日付は「${wish}」の表現に沿わせ、勝手に別の日付へ書き換えないこと。`;
 }
 
 // dynamicSystemSuffix: brainGuidanceNote など顧客別の動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
