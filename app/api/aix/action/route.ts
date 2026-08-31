@@ -192,7 +192,10 @@ async function getPhrases(category: string, customerName?: string): Promise<stri
     .from("phrase_dictionary")
     .select("phrase")
     .eq("category", category)
+    .eq("is_active", true)
+    .gte("priority", 10)
     .order("priority", { ascending: false })
+    .order("id", { ascending: true })
     .limit(15);
   const fallback = customerName || "お客様";
   return (data || []).map((r: { phrase: string }) =>
@@ -2660,9 +2663,6 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
 あにかさんご都合よろしいお日にち御座いますでしょうか😊！！
 ${viewingExamplesText}
 
-【スモラのよく使うフレーズ（参考）】
-${phraseText || "なし"}
-
 【絶対禁止】
 ・「いかがでしょうか？」など「？」で終わる → 必ず末尾は「！！」
 ・内覧誘導の文を2回書く（例：「ご案内します」を繰り返す）
@@ -2687,7 +2687,7 @@ ${phraseText || "なし"}
       const propNamePart = property_name ? `\n【物件名】${property_name}` : "";
       const viewingSystemFinal = system + viewingDbRules + (viewingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + viewingBrainAddendum : "");
       const viewingUserBase = `${name}への内覧お誘いメッセージ。${propNamePart}${vacancyPart}${calendarPart}${templateStructureNote}${recentHistory}`;
-      const viewingUserFinal = greetingTimeNote + viewingUserBase + (viewingDiffNote ? `\n\n${viewingDiffNote}` : "") + (viewingComponentNote ? `\n\n${viewingComponentNote}` : "") + (viewingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingStarNote : "");
+      const viewingUserFinal = greetingTimeNote + viewingUserBase + (viewingDiffNote ? `\n\n${viewingDiffNote}` : "") + (viewingComponentNote ? `\n\n${viewingComponentNote}` : "") + (viewingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingStarNote : "") + (phraseText ? `\n\n【スモラのよく使うフレーズ（参考）】\n${phraseText}` : "");
       const rawViewingText = await callClaude(viewingSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, viewingUserFinal, currentAction, brainGuidanceNote || undefined);
       // JSON構成パーツを解析してコンポーネント学習ループに渡す
       {
@@ -3017,8 +3017,8 @@ ${template}
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
 
 【スモラの言葉・表現】
-${phraseText || "なし"}${examplesText}`;
-        userMsg = `物件名を会話から特定してテンプレートを完成させてください。${extra_input ? `補足: ${extra_input}` : ""}${templateStructureNote}${recentHistory}`;
+${examplesText}`;
+        userMsg = `物件名を会話から特定してテンプレートを完成させてください。${extra_input ? `補足: ${extra_input}` : ""}${templateStructureNote}${recentHistory}` + (phraseText ? `\n\n【スモラのよく使うフレーズ（参考）】\n${phraseText}` : "");
 
       } else {
         // ── simple / hold_view: 会話を読んで申込を後押しするAI生成

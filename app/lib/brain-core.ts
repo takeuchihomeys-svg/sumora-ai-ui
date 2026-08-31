@@ -862,6 +862,7 @@ export async function analyzeConversation(
       .eq("is_permanent", true)
       .is("action_type", null)
       .order("priority", { ascending: false })
+      .order("id", { ascending: true })
       .limit(20),
     // Confirmed top-importance principles (importance >= 9, no pgvector needed)
     // B11(Fable5): .neq は NULL 行を除外する（SQL <> セマンティクス）→ .or で NULL 許容に。
@@ -889,12 +890,14 @@ export async function analyzeConversation(
       .like("rule_key", "BOUNDARY-%")
       .eq("is_active", true)
       .order("priority", { ascending: false })
+      .order("id", { ascending: true })
       .limit(40),
     supabase
       .from("trigger_action_rules")
       .select("keyword, action_type, rule_text")
       .like("keyword", "BOUNDARY%")
       .gte("confidence", 0.5)
+      .order("keyword", { ascending: true })
       .limit(10),
     // 成約パターン（distilled）: RAG化により match_winning_patterns に移行済み。
     // 以前は ai_reply_knowledge category='pattern' を4件バルクフェッチしていたが、
