@@ -2661,7 +2661,6 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
 7/1（水）12:00〜16:00にてご案内可能です😊！！
 
 あにかさんご都合よろしいお日にち御座いますでしょうか😊！！
-${viewingExamplesText}
 
 【絶対禁止】
 ・「いかがでしょうか？」など「？」で終わる → 必ず末尾は「！！」
@@ -2687,7 +2686,7 @@ ${viewingExamplesText}
       const propNamePart = property_name ? `\n【物件名】${property_name}` : "";
       const viewingSystemFinal = system + viewingDbRules + (viewingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + viewingBrainAddendum : "");
       const viewingUserBase = `${name}への内覧お誘いメッセージ。${propNamePart}${vacancyPart}${calendarPart}${templateStructureNote}${recentHistory}`;
-      const viewingUserFinal = greetingTimeNote + viewingUserBase + (viewingDiffNote ? `\n\n${viewingDiffNote}` : "") + (viewingComponentNote ? `\n\n${viewingComponentNote}` : "") + (viewingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingStarNote : "") + (phraseText ? `\n\n【スモラのよく使うフレーズ（参考）】\n${phraseText}` : "");
+      const viewingUserFinal = greetingTimeNote + viewingUserBase + (viewingDiffNote ? `\n\n${viewingDiffNote}` : "") + (viewingComponentNote ? `\n\n${viewingComponentNote}` : "") + (viewingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingStarNote : "") + (phraseText ? `\n\n【スモラのよく使うフレーズ（参考）】\n${phraseText}` : "") + (viewingExamplesText ? viewingExamplesText : "");
       const rawViewingText = await callClaude(viewingSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, viewingUserFinal, currentAction, brainGuidanceNote || undefined);
       // JSON構成パーツを解析してコンポーネント学習ループに渡す
       {
