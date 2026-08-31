@@ -47,24 +47,89 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, recommendations: [] });
     }
 
-    // 1. 直近の会話メッセージを取得（最大10件・新しい順で取得→古い順に並べ直す）
+    // 1. 直近の会話メッセージ + 今回の状況（AIX履歴・Brain戦略）を並列取得
     let conversationHistory = "（会話履歴なし）";
+    // 「今回が単独オススメか、複数送付後の絞り込みか」「お客様の温度感」を推薦判断に効かせる
+    let situationSection = "";
     if (conversation_id) {
-      const { data: msgs } = await supabase
-        .from("messages")
-        .select("sender, text, created_at")
-        .eq("conversation_id", conversation_id)
-        .neq("text", "[画像]")
-        .neq("text", "[動画]")
-        .not("text", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(10);
+      const [msgsRes, aixLogsRes, convRes] = await Promise.all([
+        supabase
+          .from("messages")
+          .select("sender, text, created_at")
+          .eq("conversation_id", conversation_id)
+          .neq("text", "[画像]")
+          .neq("text", "[動画]")
+          .not("text", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(10),
+        supabase
+          .from("aix_usage_logs")
+          .select("aix_type, check_pattern, created_at")
+          .eq("conversation_id", conversation_id)
+          .order("created_at", { ascending: false })
+          .limit(20),
+        supabase
+          .from("conversations")
+          .select("suggested_aix_meta")
+          .eq("id", conversation_id)
+          .single(),
+      ]);
+
+      const msgs = msgsRes.data as Array<{ sender: string; text: string }> | null;
       if (msgs && msgs.length > 0) {
-        conversationHistory = (msgs as Array<{ sender: string; text: string }>)
+        conversationHistory = msgs
           .reverse()
           .map((m) => `${m.sender === "customer" ? "顧客" : "スタッフ"}: ${(m.text || "").slice(0, 120)}`)
           .join("\n");
       }
+
+      type AixLogRow = { aix_type: string | null; check_pattern: string | null; created_at: string };
+      const aixLogs = (aixLogsRes.data ?? []) as AixLogRow[];
+      const propertyLogs = aixLogs.filter(
+        (l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation",
+      );
+      // aix-template-generate と同じ補正: 今回送信したAIX自身がログに入っているため差し引く
+      const CURRENT_SEND_WINDOW_MS = 30 * 60 * 1000;
+      const newest = propertyLogs[0];
+      const selfLogged = Boolean(
+        newest &&
+        newest.aix_type === action_type &&
+        Date.now() - new Date(newest.created_at).getTime() < CURRENT_SEND_WINDOW_MS,
+      );
+      const priorSentPropertyCount = Math.max(0, propertyLogs.length - (selfLogged ? 1 : 0));
+      const priorPropertySendCount = aixLogs.filter(
+        (l, i) => l.aix_type === "property_send" && !(selfLogged && i === 0),
+      ).length;
+
+      const meta = (convRes.data as { suggested_aix_meta?: Record<string, unknown> | null } | null)?.suggested_aix_meta ?? null;
+      const signal = typeof meta?.purchase_signal_level === "string" ? meta.purchase_signal_level : null;
+      const stance = typeof meta?.engagement_stance === "string" ? meta.engagement_stance : null;
+
+      const aixHistory = aixLogs
+        .slice(0, 5)
+        .map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.check_pattern ? `(結果:${l.check_pattern})` : ""}`)
+        .join(" → ");
+
+      situationSection = [
+        "## 今回の状況（テンプレ選定の最重要判断材料）",
+        `・今回のAIXより前にこの会話で物件を送付した回数: ${priorSentPropertyCount}回（うち物件ピックアップ＝複数送付: ${priorPropertySendCount}回）`,
+        priorSentPropertyCount === 0
+          ? "  → 今回が初めての物件送付。「お送りしたお部屋の中でも」等、複数送付済みを前提にした絞り込み系テンプレは選ばない"
+          : "  → 既に送付済みの物件がある。送付済みリストとの比較・絞り込み系テンプレを選んでよい",
+        aixHistory ? `・直近のAIX履歴: ${aixHistory}` : "",
+        signal
+          ? `・お客様の購買シグナル強度: ${signal}${
+              signal === "peak" || signal === "strong"
+                ? "（申込・内覧に直結するテンプレを優先。情報提供だけで終わるテンプレは順位を下げる）"
+                : "（売り込み色の強いクロージングテンプレは順位を下げる）"
+            }`
+          : "",
+        stance === "wait"
+          ? "・局面スタンス: wait（今は押してはいけない局面 — 申込・クロージング系テンプレは選ばない）"
+          : stance === "push"
+            ? "・局面スタンス: push（次の一歩を促すテンプレを優先）"
+            : "",
+      ].filter(Boolean).join("\n");
     }
 
     // 2. Sonnet でおすすめを判断（ギャップ分析が複雑なため）
@@ -85,7 +150,7 @@ ${customer_conditions ? customer_conditions.slice(0, 400) : "（紐付けなし�
 
 ## AIXで送った1通目のメッセージ${action_type ? `（アクション: ${action_type}）` : ""}
 ${(sent_message || "（なし）").slice(0, 800)}
-
+${situationSection ? `\n${situationSection}\n` : ""}
 ## ギャップ分析（内部判断）
 1通目と希望条件を照合し、以下を判断してください：
 - 希望条件のうち1通目でカバーできた点（何があったか）
@@ -112,8 +177,9 @@ ${templates.map((t, i) => {
     }).join("\n\n")}
 
 ## 指示
-希望条件・1通目の内容・ギャップ分析を踏まえて、続けて送るのに最も適切なテンプレートを
-上位3件まで選び、理由を簡潔に答えてください。
+希望条件・1通目の内容・今回の状況（送付実績・購買シグナル）・ギャップ分析を踏まえて、
+続けて送るのに最も適切なテンプレートを上位3件まで選び、理由を簡潔に答えてください。
+※「今回の状況」の制約（複数送付前提テンプレの可否・押す／待つ）は希望条件の合致より優先すること。
 理由には「○○の希望に応えるため」「△△が伝えられていないため補足として」のように
 ギャップ分析の内容を含めてください。
 

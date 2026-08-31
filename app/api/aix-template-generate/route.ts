@@ -187,6 +187,15 @@ const SIGNAL_CTA_GUIDES: Record<string, string> = {
   none: "一般質問段階 — 売り込みCTAは入れない",
 };
 
+// ─── purchase_signal_level → 訴求シナリオのCTA強度を上書きする指示 ──────────────
+// 「1件特にオススメ」は温度感に関係なく同じ強度の文面になっていた（2026-08-31）。
+// シナリオ既定のCTA強度（比較選択型=中/初回提案型=軽め）より購買シグナルを優先させる。
+// ※ engagement_stance='wait'（押してはいけない局面）のときは適用しない（brain-core M4 と同ゲート）
+const SIGNAL_CTA_OVERRIDE: Record<string, string> = {
+  peak: "🔥 購買シグナル peak（申込直前）— シナリオ既定のCTA強度より優先: 「お気に召されましたらお申込みしお部屋を抑えさせて頂きます！！」系の申込直結CTAを必ず入れる。内覧誘導だけで終わらせない",
+  strong: "🔥 購買シグナル strong（具体的検討中）— シナリオ既定のCTA強度より1段強く: 内覧または申込のどちらに進むかを明示し、次の一歩を能動的に促す",
+};
+
 // ─── 「1件特にオススメ」（property_recommendation）の訴求シナリオ分岐 ─────────
 // 同じ「1件オススメ」ボタンでも会話の流れによって訴求文脈が3種類あり、
 // 冒頭・訴求構造・CTA強度が全く異なる（2026-08-29 訴求ずれ事故の恒久対策）:
@@ -201,17 +210,19 @@ function resolveRecommendationScenario(args: {
   actionType: string | null | undefined;
   pickupType: string | null | undefined;
   checkPattern: string | null | undefined;
-  sentPropertyLogCount: number;
+  /** 今回のAIX送信より「前」に物件を送付した回数（今回送信分は含めない） */
+  priorSentPropertyCount: number;
 }): RecommendationScenario | null {
   if (args.actionType !== "property_recommendation") return null;
   // ① フロントのピッカー選択が最優先（スタッフが明示的に選んだシナリオ）
   if (args.pickupType === "代替ピックアップ") return "alternative";
   if (args.pickupType === "新規ピックアップ" || args.pickupType === "条件広げピックアップ" || args.pickupType === "新着1件") return "first";
-  if (args.pickupType === "継続ピックアップ") return "compare";
+  // 「継続ピックアップ」でも過去送付が実際に0件なら比較表現は事実齟齬 → 初回提案型にフォールバック
+  if (args.pickupType === "継続ピックアップ") return args.priorSentPropertyCount > 0 ? "compare" : "first";
   // ② ピッカー情報なし: 直前の空室確認結果から推定（募集なし/別の部屋なら代替提案の文脈）
   if (args.checkPattern === "unavailable" || args.checkPattern === "alternative") return "alternative";
-  // ③ 物件送付実績から推定（送付ゼロで「お送りした中でも」は事実齟齬になる）
-  if (args.sentPropertyLogCount === 0) return "first";
+  // ③ 物件送付実績から推定（過去送付ゼロで「お送りした中でも」は事実齟齬になる）
+  if (args.priorSentPropertyCount === 0) return "first";
   return "compare";
 }
 
@@ -224,7 +235,8 @@ const RECOMMENDATION_SCENARIO_LABELS: Record<RecommendationScenario, string> = {
 const RECOMMENDATION_SCENARIO_GUIDES: Record<RecommendationScenario, string> = {
   compare: `【シナリオ: 比較選択型】既にお送りした複数物件の中から1件を特に推す文脈。
 ・冒頭は「お送りさせて頂きましたお部屋の中でも〇〇が〜」系で、送付済みリストとの相対比較で「この1件が頭抜けている」特別感を演出する
-・CTAは内覧誘導または申込誘導（中程度の強度）`,
+・CTAは内覧誘導または申込誘導（中程度の強度）
+・ただし会話履歴に「複数物件を送った形跡」が見当たらない場合は比較表現を使わず「〇〇さんこちらのお部屋如何でしょうか！！」系に切り替えること`,
   alternative: `【シナリオ: 代替新規提案型】お客様が指定/希望された物件が募集終了（空室なし）だったため、代わりの1件を新規にご提案する文脈。
 ・🚫「お送りさせて頂きましたお部屋の中でも」「〜の中から」等、複数物件の送付済みを前提にした比較・絞り込み表現は絶対禁止（事実と異なる訴求になる）
 ・冒頭は「〇〇さんこちらのお部屋如何でしょうか！！」系で、前置きせず即物件紹介に入る
@@ -623,6 +635,21 @@ export async function POST(req: NextRequest) {
   const sentPropertyLogCount = aixUsageLogs.filter(
     (l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation"
   ).length;
+  // 🚨 今回送信した property_recommendation 自身が既に aix_usage_logs に入っている。
+  // AixModal → onAfterSend → log-aix-usage は post_aix テンプレ生成より先に走るため、
+  // 生の件数をそのまま使うと「送付実績1回」＝ compare 判定になり、1件しか送っていない
+  // 会話でも「お送りさせて頂きましたお部屋の中でも〇〇が〜」という事実と異なる比較表現が
+  // 生成されていた（2026-08-31 訴求ずれ事故）。今回送信分を差し引いた「事前送付回数」で判定する。
+  const CURRENT_SEND_WINDOW_MS = 30 * 60 * 1000;
+  const newestPropertyLog = aixUsageLogs.find(
+    (l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation"
+  );
+  const currentSendAlreadyLogged = Boolean(
+    newestPropertyLog &&
+    newestPropertyLog.aix_type === "property_recommendation" &&
+    Date.now() - new Date(newestPropertyLog.created_at).getTime() < CURRENT_SEND_WINDOW_MS
+  );
+  const priorSentPropertyCount = Math.max(0, sentPropertyLogCount - (currentSendAlreadyLogged ? 1 : 0));
   // 直近の property_check_result の結果。ただし確認より後に物件送付AIXが2件以上ある場合は
   // 既に別の文脈へ進んでいるため無効化（古い「募集なし」で代替シナリオに誤爆しない）。
   // ※ 送付1件は許容: 代替フローでは「確認(募集なし)→代替物件AIX送信→橋渡し文生成」の順になるため
@@ -644,8 +671,15 @@ export async function POST(req: NextRequest) {
     actionType,
     pickupType,
     checkPattern: effectiveCheckPattern,
-    sentPropertyLogCount,
+    priorSentPropertyCount,
   });
+
+  // 温度感（purchase_signal_level）による訴求シナリオのCTA強度上書き。
+  // engagement_stance='wait'（押してはいけない局面）は brain-core M4 と同じゲートで無効化する
+  const signalCtaOverride =
+    brainMeta?.engagement_stance === "wait"
+      ? ""
+      : SIGNAL_CTA_OVERRIDE[brainMeta?.purchase_signal_level ?? ""] ?? "";
 
   // M4: アクション専用バケットの整形（申込誘導=💡applying / 内覧誘導=🏠viewing）
   type ActionBucketRow = { id: string; title: string | null; content: string; importance: number };
@@ -1022,6 +1056,10 @@ export async function POST(req: NextRequest) {
       (brainMeta.purchase_signal_level
         ? `購買シグナル強度: ${brainMeta.purchase_signal_level}${SIGNAL_CTA_GUIDES[brainMeta.purchase_signal_level] ? `（${SIGNAL_CTA_GUIDES[brainMeta.purchase_signal_level]}）` : ""}\n`
         : "") +
+      // M4: 押す／待つの局面軸。wait のときは購買シグナルによるCTA強化を打ち消す
+      (brainMeta.engagement_stance
+        ? `局面スタンス: ${brainMeta.engagement_stance}${brainMeta.engagement_stance === "wait" ? "（今は押してはいけない局面 — 申込・内覧の強いCTAは入れず、不安解消と情報提供にとどめる）" : "（押してよい局面 — 次の一歩を明確に促す）"}\n`
+        : "") +
       (brainMeta.current_property ? `注目物件: ${brainMeta.current_property}\n` : "") +
       (brainMeta.latent_intent ? `潜在動機（裏の不安）: ${brainMeta.latent_intent}\n  → この動機・不安を解消する訴求を最低1つ本文に含めること（例: 審査落ち不安→審査通りやすいお部屋と伝える / 費用不安→初期費用の安さを強調）\n` : "") +
       (brainMeta.future_timeline ? `入居希望タイムライン: ${brainMeta.future_timeline}\n` : "") +
@@ -1067,11 +1105,14 @@ export async function POST(req: NextRequest) {
     recommendationScenario
       ? `・訴求シナリオ（この種別の書き方より優先・実例の冒頭表現と矛盾する場合もこちらを優先）:\n${RECOMMENDATION_SCENARIO_GUIDES[recommendationScenario]}${pickupType && PICKUP_TYPE_NOTES[pickupType] ? `\n${PICKUP_TYPE_NOTES[pickupType]}` : ""}`
       : "",
+    recommendationScenario && signalCtaOverride
+      ? `・CTA強度の上書き（訴求シナリオ既定より優先）: ${signalCtaOverride}`
+      : "",
     recommendationScenario
       ? `・シナリオ判定に使った事実: ${[
           pickupType ? `ピックアップ種別=${pickupType}` : "",
           effectiveCheckPattern ? `直前の物件確認結果=${CHECK_PATTERN_LABELS[effectiveCheckPattern] ?? effectiveCheckPattern}` : "",
-          `この会話での物件送付AIX実績=${sentPropertyLogCount}回`,
+          `今回より前にこの会話で物件を送付した回数=${priorSentPropertyCount}回${priorSentPropertyCount === 0 ? "（＝今回が初めての物件送付。既送付を前提にした比較・絞り込み表現は事実と異なるため絶対禁止）" : ""}`,
         ].filter(Boolean).join(" / ")}`
       : "",
     "",
@@ -1203,7 +1244,9 @@ export async function POST(req: NextRequest) {
       ` aix_ex=${unifiedAixExCount} unified_ex=${unifiedExCount} aixVec=${aixVecHitCount}` +
       ` knUsedIds=${knowledgeUsedIds.length}` +
       ` scenario=${recommendationScenario ?? "-"} pickup=${pickupType ?? "-"}` +
-      ` checkPat=${effectiveCheckPattern ?? "-"}${checkIsStale ? "(stale)" : ""} sentProps=${sentPropertyLogCount}`,
+      ` checkPat=${effectiveCheckPattern ?? "-"}${checkIsStale ? "(stale)" : ""}` +
+      ` sentProps=${sentPropertyLogCount} priorProps=${priorSentPropertyCount}${currentSendAlreadyLogged ? "(self-excluded)" : ""}` +
+      ` signal=${brainMeta?.purchase_signal_level ?? "-"} stance=${brainMeta?.engagement_stance ?? "-"} ctaOverride=${signalCtaOverride ? "on" : "off"}`,
     );
 
     // M1: ナレッジ使用テレメトリ（レスポンス返却後に fire-and-forget — 生成成功時のみカウント）
