@@ -637,7 +637,68 @@ const MOVE_IN_TIMING_RULE = `【入居時期の記載ルール — 必ず守る�
 ・「空室のため即入居可能」と記載してよいのは【①物件資料に空室記載あり（空室確認済み） かつ ②お客様が入居を急いでいる（入居時期制限なし）】の両方を満たす場合のみ
 ・お客様の入居時期が先（急いでいない）場合 → 「ご希望の〇月入居に対応可能」と記載する（〇月はお客様の希望入居時期）
 ・空室記載があっても お客様が急いでいない場合 → 「即入居可能」等の入居時期の記載はしない
-・【🔴 絶対禁止】「〇ヶ月後のご入居にもしっかり対応頂けるお部屋となります」という表現は絶対に使わない`;
+・【🔴 絶対禁止】「〇ヶ月後のご入居にもしっかり対応頂けるお部屋となります」という表現は絶対に使わない
+・入居希望日に「間に合う／対応可能」と断言してよいかは、下記【入居希望日の妥当性チェック】の判定に必ず従うこと（判定がない場合は断言しない）`;
+
+// ── 入居希望日の妥当性チェック（今日の日付と比較して「〜までのご入居に対応可能」と書いてよいか判定） ──
+// 申込から入居までは最短2週間（審査3〜10日＋契約書類＋入金）かかるため、
+// 残り14日未満（＝過去日・当日含む）は「ご希望日までのご入居に対応可能」と断言させない。
+const MOVE_IN_LEAD_DAYS = 14;
+
+// 顧客条件テキストから「入居: 〇〇」の希望入居時期を抜き出す
+function extractMoveInWish(text: string): string {
+  const m = text.match(/入居(?:希望日?|時期)?\s*[:：]\s*([^\n]+)/);
+  return m ? m[1].trim() : "";
+}
+
+// 希望入居時期の自由テキスト（例「8月末」「9/1」「来月中旬」）を締切日（YYYY-MM-DD）と残日数に変換
+function resolveMoveInDeadline(
+  wish: string,
+  todayISO: string
+): { deadlineISO: string; daysLeft: number } | null {
+  if (!wish) return null;
+  const s = wish.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+  const [ty, tm, td] = todayISO.split("-").map(Number);
+  const todayMs = Date.UTC(ty, tm - 1, td);
+  const lastDayOf = (y: number, mo: number) => new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  const make = (month: number, day: number | null, kind: "early" | "mid" | "late") => {
+    if (!month || month < 1 || month > 12) return null;
+    // 年の推定: 今月より前の月なら翌年、今月以降なら今年
+    const year = month < tm ? ty + 1 : ty;
+    const base = day ?? (kind === "early" ? 10 : kind === "mid" ? 20 : lastDayOf(year, month));
+    const dd = Math.max(1, Math.min(base, lastDayOf(year, month)));
+    return {
+      deadlineISO: `${year}-${String(month).padStart(2, "0")}-${String(dd).padStart(2, "0")}`,
+      daysLeft: Math.round((Date.UTC(year, month - 1, dd) - todayMs) / 86_400_000),
+    };
+  };
+  let m: RegExpMatchArray | null;
+  if ((m = s.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/))) return make(+m[1], +m[2], "late");
+  if ((m = s.match(/(\d{1,2})\s*\/\s*(\d{1,2})/)))       return make(+m[1], +m[2], "late");
+  if ((m = s.match(/(\d{1,2})\s*月\s*(?:上旬|初旬|頭)/))) return make(+m[1], null, "early");
+  if ((m = s.match(/(\d{1,2})\s*月\s*中旬/)))            return make(+m[1], null, "mid");
+  if ((m = s.match(/(\d{1,2})\s*月/)))                   return make(+m[1], null, "late");
+  if (/今月/.test(s))  return make(tm, null, "late");
+  if (/来月/.test(s))  return make(tm === 12 ? 1 : tm + 1, null, "late");
+  return null;
+}
+
+// property_recommendation の動的systemブロックに注入する入居日ガードノート
+function buildMoveInDeadlineNote(sourceText: string, todayISO: string, todayFmt: string): string {
+  const head = `\n\n【本日の日付】${todayFmt}\n【入居希望日の妥当性チェック — 最優先・上記「入居時期の記載ルール」より優先】`;
+  const forbid = `\n・【🔴 絶対禁止】「ご希望の〇月末までのご入居にもしっかり対応可能です」「ご希望の〇月入居に対応可能」等、入居希望日・入居期限に間に合う旨を断言する文を一切書かないこと。入居期限そのものへの言及も禁止。\n・入居時期に触れず、物件の強み（家賃・間取り・設備・立地）だけで訴求すること。物件が空室の場合に「空室のため即入居可能」と書くことのみ許可する。`;
+  const wish = extractMoveInWish(sourceText);
+  if (!wish) return `${head}\n・お客様の入居希望日は特定できていない。${forbid}`;
+  const r = resolveMoveInDeadline(wish, todayISO);
+  if (!r) return `${head}\n・お客様の入居希望時期は「${wish}」で、具体的な期日として確定できない。${forbid}`;
+  if (r.daysLeft < MOVE_IN_LEAD_DAYS) {
+    const reason = r.daysLeft <= 0
+      ? `本日（${todayFmt}）時点で既に過ぎている、または本日が最終日`
+      : `本日から残り${r.daysLeft}日しかなく、お申込みから入居まで最短2週間かかるため間に合わない`;
+    return `${head}\n・お客様の入居希望時期「${wish}」＝${r.deadlineISO} は${reason}。${forbid}`;
+  }
+  return `${head}\n・お客様の入居希望時期「${wish}」＝${r.deadlineISO}（本日から${r.daysLeft}日後）。十分な余裕があるため「${wish}のご入居にもしっかり対応可能です！！」のように入居時期に言及してよい。\n・言及する場合の日付は「${wish}」の表現に沿わせ、勝手に別の日付へ書き換えないこと。`;
+}
 
 // dynamicSystemSuffix: brainGuidanceNote など顧客別の動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
 async function callClaude(system: string, user: string, action: string, dynamicSystemSuffix?: string): Promise<string> {
@@ -1415,7 +1476,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
 ・間取り：[間取り名]（[LDKの広さ]、[洋室1の広さ]・[洋室2の広さ]…の順で記載）
 ・[路線名]「[駅名]」徒歩[X]分（★お客様が希望エリア・希望駅・徒歩分数のいずれかを指定している場合のみ記載。何も指定がない場合はこの行を完全に省略する。記載する場合はお客様の希望徒歩分数以内のみ。駅名に「駅」の字は付けない（例：「堺筋本町駅」→「堺筋本町」）。複数路線で同じ駅名・徒歩分数なら1行のみ）
 ・[物件固有の強み1]
-・[物件固有の強み2（築年・ペット可・敷金礼金0円・駐車場あり・バイク置場など。お客様の希望条件に合った特徴を優先して選ぶ。インターネット無料は設備欄へ）]
+・[物件固有の強み2（インターネット無料・独立洗面台・築年・ペット可・敷金礼金0円・駐車場ありなど。お客様の希望条件に合った特徴を優先して選ぶ。下記【設備オススメルール】を必ず適用する）]
 ・[さらにあれば追加]
 
 [物件の家賃・間取り・主な強みを1文でシンプルにまとめるサマリー文。築10年以内のみ「〇〇年築で築年数浅く」と書いてよい（ただし新築物件は「新築」のみとし「築年数浅く」「築浅」は併記しない）。築11年以上の物件はサマリー文に築年・築年数・「鉄筋コンクリート造」などを書かない。例（敷金・礼金ともに0円の場合のみ）：「家賃管理費込[金額]円の[間取り]、敷金礼金なしでかなりオススメ出来るお部屋となります！！」。例（礼金がある場合）：「家賃管理費込[金額]円の[間取り]でかなりオススメ出来るお部屋となります！！」]
@@ -1486,6 +1547,12 @@ ${aixPropertyRecommendationRules}
 ・下の文で家賃・管理費に触れる場合は「家賃管理費込○○円と毎月の費用をしっかり抑えられ〜」のように必ず「毎月の費用」と入れる（「家賃管理費込○○円と費用を〜」のように「毎月の」を省くのは禁止）
 ・下の文（サマリー文・描写段落）でオススメポイントに書いた内容を省いたり矛盾させたりしない
 ・「築浅」という言葉だけで書くことは絶対禁止。築浅物件（新築を除く）は「2022年築で築年数浅く」の形で。新築物件は「新築」の1語のみとし「築年数浅く」「築浅」を併記しない（重複表現になるため絶対禁止）。古い物件は「2006年1月築（築20年）」の括弧形式で記載
+
+【設備オススメルール — 最優先・上の禁止ルールより優先】
+※ここに書かれた設備は「物件資料に実際に記載がある場合のみ」書くこと。資料にない設備を推測で書くのは絶対禁止。
+・インターネット無料（ネット無料／Wi-Fi無料／無料インターネット／光回線無料）がある場合 → 必ず（オススメポイント）に1行入れる。表現例「インターネット無料で毎月の通信費も節約出来ます！！」「Wi-Fi無料で月々のお支払いコストも抑えられます！！」。（設備）欄にも重ねて列挙してよい。※「月額〇〇円お得」「年間〇〇円節約」等の金額換算は引き続き絶対禁止
+・独立洗面台がある場合 → （オススメポイント）に「独立洗面台付き」の行を入れる。お客様が女性と判断できる場合（お名前・AI要約・希望条件・会話内容から判断）は必ず入れ、朝の身支度がしやすい点を1行だけ自然に添える。男性・性別不明の場合は優先度は中程度（他により強いポイントが4つ以上ある場合のみ省略可）
+・お客様の希望条件に「独立洗面台」「インターネット無料」等が明記されている場合は、性別に関わらず必ず（オススメポイント）の上位に置く
 
 {{examples}}
 
@@ -1563,10 +1630,18 @@ ${SMORA_COMMON_RULES}`;
       // キャッシュ分離: system+propDbRules+共通ルール（全顧客共通・キャッシュHIT率HIGH）を静的ブロックに、
       // 顧客固有の brainGuidanceNote + recBrainAddendum を動的ブロックに分ける
       const recSystemStatic = system + propDbRules + AIX_CURATED_AND_CRITICAL_RULES;
-      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "");
 
       const conditionsText = customer_conditions as string | undefined;
       const recCustomerSummary = body.customer_summary as string | undefined;
+      // 入居希望日ガード: 今日（JST）と比較して「ご希望日までのご入居に対応可能」と書いてよいか判定
+      // 動的systemブロック側に入れる（日付は毎日変わるため静的ブロックのキャッシュを壊さない）
+      const moveInDeadlineNote = buildMoveInDeadlineNote(
+        [conditionsText ?? "", recCustomerSummary ?? "", extra_input ? String(extra_input) : ""].join("\n"),
+        todayJST,
+        todayJSTFmt
+      );
+      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "") + moveInDeadlineNote;
+
       const summaryNoteForRec = recCustomerSummary
         ? `\n\n【このお客さんのAI要約 — 人物像・今の状況・次の対応ヒントをオススメ訴求に反映すること】\n${recCustomerSummary}`
         : "";
