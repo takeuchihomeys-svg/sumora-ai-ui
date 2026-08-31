@@ -1028,6 +1028,7 @@ export async function POST(req: NextRequest) {
               .gte("importance", 8)
               .neq("hypothesis_status", "rejected")
               .order("importance", { ascending: false })
+              .order("id", { ascending: true })
               .limit(20)
           : Promise.resolve({ data: null }),
       ]);

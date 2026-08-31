@@ -348,6 +348,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
         .in("conversation_state", states)
         .eq("hypothesis_status", "confirmed") // AIX生成変化ゲート: AI提案→confirmed 経由のみ注入
         .order("importance", { ascending: false })
+        .order("id", { ascending: true })
         .limit(10),
       // ③ スタッフがAIX生成文を編集した実例（リアルタイム品質フィードバック）
       actionType
@@ -364,6 +365,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
         .eq("is_active", true)
         .gte("confidence", 0.7)
         .order("confidence", { ascending: false })
+        .order("id", { ascending: true })
         .limit(5),
     ]);
 
@@ -887,6 +889,7 @@ async function getAdaptImprovementRules(actionType: string): Promise<string> {
       .eq("is_active", true)
       .gte("confidence", 0.7)
       .order("confidence", { ascending: false })
+      .order("id", { ascending: true })
       .limit(5);
     const rules = (data ?? []) as { id: string; rule_text: string; category: string }[];
     if (rules.length === 0) return "";
@@ -3975,6 +3978,7 @@ M/D（曜日）HH:MM〜HH:MM
           .gte("importance", 8)
           .eq("hypothesis_status", "confirmed") // 改善⑧: 他のknowledge取得（L189/199/268/278/321）と同じconfirmedゲートに統一。confirmed済みナレッジのみ注入
           .order("importance", { ascending: false })
+          .order("id", { ascending: true })
           .limit(6),
       ]);
 

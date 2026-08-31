@@ -1092,6 +1092,11 @@ export async function analyzeConversation(
           opts.prevMeta.latent_intent,
           opts.prevMeta.customer_emotion,
           (opts.prevMeta as Record<string, unknown>).checkpoint_stage,
+          // 他3経路（aix/action・aix-template-generate・generate-reply）と対称化
+          opts.prevMeta.purchase_signal_level ? `温度感: ${opts.prevMeta.purchase_signal_level}` : null,
+          opts.prevMeta.engagement_stance ? `押し引き: ${opts.prevMeta.engagement_stance}` : null,
+          opts.prevMeta.repeated_concern ? `繰り返し懸念: ${opts.prevMeta.repeated_concern}` : null,
+          opts.prevMeta.human_type_label ? `人物タイプ: ${opts.prevMeta.human_type_label}` : null,
         ].filter(Boolean).join(" ")
       : "";
     const recentCustomerMsgs = typedMessages
