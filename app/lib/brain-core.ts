@@ -1168,12 +1168,14 @@ export async function analyzeConversation(
       return null;
     })();
     const ragQueryInput = [
-      tpoHint ? `[TPO:${tpoHint}]` : null,  // TPO場面明示（成約パターン命中精度向上）
-      pcForRag?.personality_profile,          // 顧客の人間性（winning_patterns.situation と近い）
-      pcForRag?.preferences,                  // 希望・こだわり条件
-      prevMetaCtx,                            // AIX-META: アクション・戦略・意図・感情
-      convStatus,                             // 現在の会話フェーズ
-      recentCustomerMsgs.slice(0, 200),       // 直近顧客メッセージ
+      tpoHint ? `[TPO:${tpoHint}]` : null,           // TPO場面明示（成約パターン命中精度向上）
+      pcForRag?.personality_profile,                   // 顧客の人間性（winning_patterns.situation と近い）
+      // P1-3: ai_summary（決まるパターン・人物像）をRAGクエリに追加。SELECTしているのに未使用だったデッドフィールドを解消
+      pcForRag?.ai_summary?.slice(0, 200) ?? null,    // AIによる顧客プロファイル分析
+      pcForRag?.preferences,                           // 希望・こだわり条件
+      prevMetaCtx,                                     // AIX-META: アクション・戦略・意図・感情
+      convStatus,                                      // 現在の会話フェーズ
+      recentCustomerMsgs.slice(0, 200),                // 直近顧客メッセージ
     ].filter(Boolean).join(" ").slice(0, 1500);
     if (ragQueryInput.trim()) {
       try {

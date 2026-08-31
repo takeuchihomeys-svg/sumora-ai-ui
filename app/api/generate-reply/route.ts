@@ -1467,7 +1467,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     const pspText = psp
       ? [psp.area, psp.floor_plan, psp.rent_max ? `家賃${psp.rent_max}円以内` : null, psp.preferences].filter(Boolean).join(" ")
       : null;
-    const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
+    // P0-3/P1-4: checkpoint_stage・repeated_concern・human_type_label・purchase_signal_level・engagement_stance を追加
+    // （aix-template-generate・brain-core・aix/action の3経路と対称化。特にpeak/none温度感で申込局面の実例精度向上）
+    const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, brainMeta.checkpoint_stage ? `フェーズ: ${brainMeta.checkpoint_stage}` : null, brainMeta.repeated_concern ? `繰り返し懸念: ${brainMeta.repeated_concern}` : null, brainMeta.human_type_label ? `人物タイプ: ${brainMeta.human_type_label}` : null, brainMeta.purchase_signal_level ? `温度感: ${brainMeta.purchase_signal_level}` : null, brainMeta.engagement_stance ? `押し引き: ${brainMeta.engagement_stance}` : null, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
     const lastAixPart = lastAixHistoryText ? `[AIX履歴] ${lastAixHistoryText} ` : "";
     const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
     // TPO場面推定（成約会話パターンのRAGブースト 2026-08-30）
@@ -1831,7 +1833,8 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   const pspText = psp
     ? [psp.area, psp.floor_plan, psp.rent_max ? `家賃${psp.rent_max}円以内` : null, psp.preferences].filter(Boolean).join(" ")
     : null;
-  const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
+  // P0-3/P1-4: fetchKnowledge側brainContext（L1470）と同構成に統一（checkpoint_stage等を追加）
+  const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, brainMeta.checkpoint_stage ? `フェーズ: ${brainMeta.checkpoint_stage}` : null, brainMeta.repeated_concern ? `繰り返し懸念: ${brainMeta.repeated_concern}` : null, brainMeta.human_type_label ? `人物タイプ: ${brainMeta.human_type_label}` : null, brainMeta.purchase_signal_level ? `温度感: ${brainMeta.purchase_signal_level}` : null, brainMeta.engagement_stance ? `押し引き: ${brainMeta.engagement_stance}` : null, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
   const lastAixPart = brainMeta?.last_aix_history ? `[AIX履歴] ${brainMeta.last_aix_history} ` : "";
   const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
   // brainContextをstate直後に固定（末尾配置だとsafeSlice 2000字制限で切り落とされるリスクがあるため前詰め）

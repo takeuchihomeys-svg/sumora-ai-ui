@@ -812,6 +812,11 @@ export async function POST(req: NextRequest) {
       brainMeta?.recommended_tone ? `推奨トーン: ${brainMeta.recommended_tone}` : "",
       brainMeta?.human_type_label ? `人物タイプ: ${brainMeta.human_type_label}` : "",
       brainMeta?.repeated_concern ? `繰り返し懸念: ${brainMeta.repeated_concern}` : "",
+      // P0-3: 購入意欲・押し引きスタンスをembeddingに乗せる（申込打診・内覧誘導の実例精度向上）
+      brainMeta?.purchase_signal_level ? `温度感: ${brainMeta.purchase_signal_level}` : "",
+      brainMeta?.engagement_stance ? `押し引き: ${brainMeta.engagement_stance}` : "",
+      // P1-2: 顧客プロファイル（AI分析）をRAGクエリに追加（設計知見③の「二重接続」完成）
+      customerSummary ? `顧客プロファイル: ${customerSummary.slice(0, 200)}` : "",
       pspText ? `希望条件: ${pspText}` : "",
       // 直前に何のAIXを送ったかは続き文の実例検索に直結する文脈（generate-reply の [AIX履歴] と同形式）
       ...(brainMeta?.last_aix_history ? [`[AIX履歴]${String(brainMeta.last_aix_history).slice(0, 100)}`] : []),

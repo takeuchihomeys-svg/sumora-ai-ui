@@ -1243,6 +1243,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
 
     // brainMeta（suggested_aix_meta）を1回フェッチしてRAGクエリ精度向上・プロンプト注入に使う
     type AixLocalBrainMeta = {
+      action?: string | null;
       closing_strategy?: string | null;
       reply_direction?: string | null;
       key_topics?: string[] | null;
@@ -1267,6 +1268,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
       repeated_concern?: string | null;
       human_type_label?: string | null;
       engagement_stance?: "push" | "wait" | null;
+      purchase_signal_level?: string | null;
+      latent_intent?: string | null;
+      customer_emotion?: string | null;
+      condition_change_type?: string | null;
+      last_aix_history?: string | null;
     };
     const { brainContext, brainMeta: aixBrainMeta, propertyCustomerId: resolvedPCID } = await (async (): Promise<{ brainContext: string; brainMeta: AixLocalBrainMeta | null; propertyCustomerId: string | null }> => {
       if (!conversationId) return { brainContext: "", brainMeta: null, propertyCustomerId: null };
@@ -1280,9 +1286,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
         const meta = row?.suggested_aix_meta ?? null;
         const pcid = row?.property_customer_id ?? null;
         if (!meta) return { brainContext: "", brainMeta: null, propertyCustomerId: pcid };
-        // AIX-META全フィールドをRAGクエリ文脈に注入（customer_intent / checkpoint_stage / winning_pattern /
-        // repeated_concern を追加 — winning_patterns・knowledge・☆実例の命中精度向上）
+        // AIX-META全フィールドをRAGクエリ文脈に注入（P0-2: meta.action追加で4経路を対称化。
+        // purchase_signal_level/engagement_stanceをembeddingに乗せることで申込打診・内覧誘導の実例精度向上）
         const context = [
+          meta.action ? `推奨アクション: ${meta.action}` : null,
           meta.closing_strategy,
           meta.reply_direction,
           meta.customer_intent ? `顧客インテント: ${meta.customer_intent}` : null,
@@ -1290,6 +1297,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
           meta.winning_pattern ? `成功パターン: ${meta.winning_pattern}` : null,
           meta.repeated_concern ? `繰り返し懸念: ${meta.repeated_concern}` : null,
           meta.human_type_label ? `顧客タイプ: ${meta.human_type_label}` : null,
+          meta.purchase_signal_level ? `温度感: ${meta.purchase_signal_level}` : null,
+          meta.engagement_stance ? `押し引き: ${meta.engagement_stance}` : null,
           ...(meta.key_topics ?? []),
         ].filter(Boolean).join(" ");
         return { brainContext: context, brainMeta: meta, propertyCustomerId: pcid };
@@ -1597,11 +1606,14 @@ ${aixPropertyRecommendationRules}
 ${SMORA_COMMON_RULES}`;
 
       // フォーマット固定: DEFAULT_PROP_SYSTEM を直接使用（DBで上書きしない）
-      // RAG用顧客文脈: 顧客条件 + AIX-META（brainContext）を結合
-      // → 「この顧客に刺さるknowledge」をembedding検索するための検索クエリになる
+      // RAG用顧客文脈: キーワード + 顧客条件 + AIX-META（brainContext）+ 最新メッセージ
+      // P1-1: property_sendと同様にkeyword・latestCustomerMsgを追加して会話ごとに実例が散るようにする
+      const recKwPrefix = keyword ? `【伝えたいこと】${String(keyword)} ` : "";
       const recRagContext = [
+        recKwPrefix,
         customer_conditions ? String(customer_conditions) : "",
         brainContext,
+        latestCustomerMsg,
       ].filter(Boolean).join(" ").trim() || undefined;
 
       const [examples, knowledge, recStarNote, propDbRules, recBrainAddendum, recWinningNote, recPropertyExamples, recPatternHints] = await Promise.all([
@@ -1613,7 +1625,8 @@ ${SMORA_COMMON_RULES}`;
         // 成約パターンRAG（AIX-META再ランキング）: 顧客条件+META+最新メッセージで「この顧客に効いた訴求」を引く
         getWinningPatternsForProperty([recRagContext ?? "", latestCustomerMsg].filter(Boolean).join(" "), aixBrainMeta),
         // 過去に実送信した物件オススメ文の実例（entry_source='aix_property'・⭐=顧客反応あり優先）
-        getAixPropertyExamples("property_recommendation"),
+        // P0-1: queryTextを渡してpgvector主経路を有効化（未渡し時は全顧客が同じ固定5件になる）
+        getAixPropertyExamples("property_recommendation", recRagContext),
         // 類似条件顧客の勝ちパターン（property_selection_patterns）を並列取得
         (async (): Promise<string[]> => {
           if (!resolvedPCID) return [];
