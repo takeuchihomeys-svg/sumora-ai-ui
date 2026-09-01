@@ -56,6 +56,16 @@
     "5K":"16","5DK":"17","5LDK":"18",
     "6LDK":"19","メゾネット":"21","テナント":"20"
   };
+  // リアプロにSLDKは存在しないため代替間取りIDへ展開
+  // 1SLDK → 1LDK(6) + 2DK(8) + 2LDK(9)
+  var SLDK_SUBSTITUTE = {
+    "1SLDK":["6","8","9"],"2SLDK":["9","11","12"],
+    "3SLDK":["12","14","15"],"4SLDK":["15","17","18"]
+  };
+  // SLDK展開後の最上位間取り（範囲選択でtoFloorがさらに上の場合に使う基点）
+  var SLDK_UPPER_LDK = {
+    "1SLDK":"2LDK","2SLDK":"3LDK","3SLDK":"4LDK","4SLDK":"5LDK"
+  };
 
   // route_id → リアプロ路線名（モーダルのボタンテキストと一致）
   var ROUTE_LINE_MAP = {
@@ -968,18 +978,36 @@
         // 「1DK～1LDK」→ 1DKから1LDKまでの範囲を全選択
         var fromFloor = rangeMatch[1].trim();
         var toFloor   = rangeMatch[2].trim();
-        var fromIdx = FLOOR_RANK.indexOf(fromFloor);
-        var toIdx   = FLOOR_RANK.indexOf(toFloor);
-        // ★ 修正(M5): 未知の間取り文字列の場合 indexOf が -1 を返し、
-        //   0 扱いになって「ワンルーム〜xxx」という意図しない範囲が選択されていた。
-        //   どちらかが -1 なら範囲選択を中止してスキップする。
-        if (fromIdx < 0 || toIdx < 0) {
-          console.warn('[AX] rangeMatch: unknown floor plan, skipping range selection', fromFloor, toFloor);
+        if (SLDK_SUBSTITUTE[fromFloor]) {
+          // fromFloor が SLDK（リアプロに存在しない）→ 代替間取りを展開
+          // 例: "1SLDK〜2LDK" → 1LDK + 2DK + 2LDK
+          SLDK_SUBSTITUTE[fromFloor].forEach(function(v) {
+            if (vals.indexOf(v) < 0) vals.push(v);
+          });
+          // toFloor が展開上限(2LDK等)より上なら残り範囲を追加
+          var upperLdk = SLDK_UPPER_LDK[fromFloor];
+          var upperIdx = FLOOR_RANK.indexOf(upperLdk);
+          var toIdx = FLOOR_RANK.indexOf(toFloor);
+          if (upperIdx >= 0 && toIdx > upperIdx) {
+            for (var ri = upperIdx + 1; ri <= toIdx; ri++) {
+              var fv = FLOOR_MAP[FLOOR_RANK[ri]];
+              if (fv && vals.indexOf(fv) < 0) vals.push(fv);
+            }
+          }
         } else {
-          if (fromIdx > toIdx) { var tmp = fromIdx; fromIdx = toIdx; toIdx = tmp; }
-          for (var ri = fromIdx; ri <= toIdx; ri++) {
-            var fv = FLOOR_MAP[FLOOR_RANK[ri]];
-            if (fv && vals.indexOf(fv) < 0) vals.push(fv);
+          var fromIdx = FLOOR_RANK.indexOf(fromFloor);
+          var toIdx   = FLOOR_RANK.indexOf(toFloor);
+          // ★ 修正(M5): 未知の間取り文字列の場合 indexOf が -1 を返し、
+          //   0 扱いになって「ワンルーム〜xxx」という意図しない範囲が選択されていた。
+          //   どちらかが -1 なら範囲選択を中止してスキップする。
+          if (fromIdx < 0 || toIdx < 0) {
+            console.warn('[AX] rangeMatch: unknown floor plan, skipping range selection', fromFloor, toFloor);
+          } else {
+            if (fromIdx > toIdx) { var tmp = fromIdx; fromIdx = toIdx; toIdx = tmp; }
+            for (var ri = fromIdx; ri <= toIdx; ri++) {
+              var fv = FLOOR_MAP[FLOOR_RANK[ri]];
+              if (fv && vals.indexOf(fv) < 0) vals.push(fv);
+            }
           }
         }
       } else {
@@ -987,6 +1015,13 @@
         // 例: "2LDKもしくは、ちょっと広めの1LDK" → ["2LDK", "1LDK"]
         var floorKeys = Object.keys(FLOOR_MAP).sort(function(a,b){ return b.length - a.length; });
         function extractFloor(token) {
+          if (SLDK_SUBSTITUTE[token]) {
+            // SLDKは複数値なので vals に直接追加してnullを返す
+            SLDK_SUBSTITUTE[token].forEach(function(v) {
+              if (vals.indexOf(v) < 0) vals.push(v);
+            });
+            return null;
+          }
           if (FLOOR_MAP[token]) return FLOOR_MAP[token];
           for (var ki = 0; ki < floorKeys.length; ki++) {
             if (token.indexOf(floorKeys[ki]) >= 0) return FLOOR_MAP[floorKeys[ki]];
