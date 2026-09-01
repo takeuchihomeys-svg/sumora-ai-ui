@@ -1600,7 +1600,7 @@ const SITE_CONFIG = {
         steps.push({
           num: n++,
           field: "広さの許容ルール",
-          value: "30㎡未満 → −5㎡まで OK　／　30㎡以上 → −10㎡まで OK",
+          value: "面積下限を自動で −5㎡ 引き下げ（例: 25㎡以上 → 20㎡以上）",
           hint: "専有面積がお客さんの希望より少し小さい物件も候補に含めて確認する",
         });
       }
@@ -1979,7 +1979,11 @@ function buildCondData(c, mode = "pinpoint") {
     rentMin:      rentMin ? formatYen(rentMin) : null,
     rentRange:    buildRentRange(rentMin, effectiveRentMax),
     floorPlan:    c.floor_plan || c.layout || null,
-    areaMin:      c.floor_area_min || parseAreaMin(c.floor_plan) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null,
+    areaMin:      (function() {
+      const raw = c.floor_area_min || parseAreaMin(c.floor_plan) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null;
+      if (!raw || mode !== "wide") return raw;
+      return Math.max(0, raw - 5); // 広げて検索: 面積下限を -5㎡ 自動引き下げ
+    })(),
     areaMax:      c.floor_area_max || null,
     petOk:        c.pet === true,
     walkMin:      c.walk_minutes ? c.walk_minutes + "分以内" : null,
