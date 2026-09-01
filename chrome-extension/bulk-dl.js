@@ -1012,6 +1012,9 @@
       var propertySummaries = selectedTargets.map(function (t, i) {
         return buildPropertySummary(extractCard(t.btn), i);
       });
+      var propertyPool = selectedTargets.map(function (t, i) {
+        return buildPropertyData(extractCard(t.btn), i);
+      });
 
       // 20件ずつバッチに分割して順番に送信（一括送信はタイムアウトするため）
       var batches = [];
@@ -1019,6 +1022,7 @@
         batches.push({
           urls: sendUrls.slice(i, i + BATCH_SIZE),
           summaries: propertySummaries.slice(i, i + BATCH_SIZE),
+          pool: propertyPool.slice(i, i + BATCH_SIZE),
         });
       }
 
@@ -1037,6 +1041,8 @@
           urls: batch.urls,
           customer_name: state.customerName || null,
           property_summaries: batch.summaries,
+          property_pool: batch.pool,
+          customer_id: state.customerId || null,
           customer_conditions: state.customerConditions || null,
           site: "realpro",
         }, function (resp) {
