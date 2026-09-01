@@ -1694,8 +1694,8 @@ const SITE_CONFIG = {
       }
       const linesNote = itandiLines.length ? itandiLines.join(" / ") : null;
 
-      // ペット条件の検出
-      const petNote = c.pet === true || /ペット|pet/i.test([c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ")) ? "ページ最下部「入居条件（その他）」→「ペット相談」にチェック" : null;
+      // ペット条件の検出（動物種名も含む）
+      const petNote = c.pet === true || /ペット|pet|犬|猫|ねこ|豆柴|マメ柴|柴犬|小型犬|中型犬|大型犬|動物飼育|動物可/i.test([c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ")) ? "ページ最下部「入居条件（その他）」→「ペット相談」にチェック" : null;
 
       return [
         {
@@ -2404,7 +2404,7 @@ function openSiteView(customer) {
       initial_cost_limit:   customer.initial_cost_limit || null,
       prefer_no_shikirei:   detectShikireiFlag(customer),
       ng_points:            customer.ng_points || null,
-      pet_ok:               customer.pet === true || customer.pet === 'true' || false,
+      pet_ok:               customer.pet === true || customer.pet === 'true' || /ペット|pet|犬|猫|ねこ|豆柴|マメ柴|柴犬|小型犬|中型犬|大型犬|動物飼育|動物可/i.test([customer.preferences, customer.notes, customer.other_requests, customer.additional_conditions].filter(Boolean).join(" ")),
       admin_fee_max:        customer.admin_fee_max || null,
     }});
   } catch (_) { /* ignore（非extension環境での実行対策）*/ }
@@ -2774,7 +2774,7 @@ function preloadAdjForm(c) {
     document.getElementById("adj-pet").checked = false;
   } else {
     const petFields = [c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ");
-    document.getElementById("adj-pet").checked = /ペット|pet|犬|猫|動物飼育|動物可/i.test(petFields);
+    document.getElementById("adj-pet").checked = /ペット|pet|犬|猫|ねこ|豆柴|マメ柴|柴犬|小型犬|中型犬|大型犬|動物飼育|動物可/i.test(petFields);
   }
 
   // お客様名表示
