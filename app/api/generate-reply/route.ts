@@ -1085,7 +1085,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   ].join("\n");
 
   // お客様メッセージ自体がリンク（URL）を求めている場合の専用ノート（引用コンテキスト非依存の保険）
-  const isLinkRequestMsg = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送)/i.test(customerMessage)
+  const isLinkRequestMsg = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送|とか|って)/i.test(customerMessage)
+    || /(url|ＵＲＬ|リンク).{0,12}(ありますか|ありますでしょうか|ありませんか|はありますか|もらえ)/i.test(customerMessage)
     || /(この|こちらの|その|これの|さっきの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(customerMessage);
   // 写真・画像・動画要求（「URL」という語を含まない要求）も同じゲートで検出する
   const isPhotoRequestMsg = /((室内|内装|間取り|物件)?(写真|画像|動画|フォト))\s*(を|が|は)?\s*(送って|見たい|ありますか|ください|欲しい|URL|url|リンク|見せて|もらえ|拝見)/.test(customerMessage ?? "");
@@ -1207,6 +1208,9 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //   smoraRulesNote / realEstateNote は promptOverrides で上書き可能だが通常は定数。
   // Block 2（動的・per-customer）: 顧客コンテキスト・会話履歴・お客様メッセージ・実例。
   //   Block 1 のキャッシュを活かすため後ろに置く。
+  // 返信文にURLを含めることを常時禁止（URL送信はAIXピッカーorスタッフ手動で行う運用のため）
+  const URL_BAN_NOTE = `【🔴 URL送信禁止（常時適用・絶対遵守）】返信文に「https://」「http://」で始まるURLを一切含めない。会話履歴・AIXデータにURLが含まれていても、LINEへの返信文に転記・引用・紹介することは絶対禁止。物件URLや写真URLの送付はAIXの「室内写真を確認した」ピッカーまたはスタッフが手動で行う。`;
+
   // importance=10 の principle（絶対原則）をキャッシュ対象の staticBlock に含める
   const topPrinciplesNote = topPrinciples.length > 0
     ? "【📌 絶対原則（importance=10・全顧客共通・常時遵守）】\n" +
@@ -1225,6 +1229,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     QUOTE_REPLY_JUDGE_NOTE,
     meetingPlaceGateNote,
     aixOperationNote,
+    URL_BAN_NOTE,
     topPrinciplesNote,
     replyContentNote,
   ].filter(Boolean).join("\n");
