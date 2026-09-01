@@ -2703,7 +2703,8 @@ function setupAreaModeSelector(c, siteKey) {
       : "ward");
 
   // DOM がない状態（underbarモード等）でも currentAreaMode だけはセットしておく
-  _areaModeSource = "auto";
+  // DBに area_mode が明示設定されている場合は "db" にして自動補正（③/③-pre）をスキップ
+  _areaModeSource = _dbMode ? "db" : "auto";
   currentAreaMode = defaultMode;
 
   const selectorEl = document.getElementById("area-mode-selector");
@@ -3524,14 +3525,17 @@ function openInstructions(siteKey) {
         : await resolveAreaWithAPI(adjAreaClean, "auto", adjC.id);
 
       // ② ブレインAPI結果を地域・駅フィールドに反映（明示分離）
+      // DB/ユーザー確定モードの場合は反対フィールドを汚染しない
       if (apiData) {
         const _apiStNames = apiData.realpro?.station_names || [];
         const _apiWdNames = apiData.itandi?.ward_names || apiData.reins?.ward_names || [];
-        if (_apiStNames.length > 0) {
+        // 地域モード(ward)の場合は駅フィールドを上書きしない
+        if (_apiStNames.length > 0 && currentAreaMode !== "ward") {
           document.getElementById("adj-area-station").value = _apiStNames.join("・");
           document.getElementById("adj-area").value = _apiStNames.join("・"); // hidden sync
         }
-        if (_apiWdNames.length > 0) {
+        // 駅モード(station)の場合は地域フィールドを上書きしない
+        if (_apiWdNames.length > 0 && currentAreaMode !== "station") {
           document.getElementById("adj-area-ward").value = _apiWdNames.join("・");
         }
       }
@@ -3582,10 +3586,16 @@ function openInstructions(siteKey) {
       }
 
       // ④ APIデータを route_ids / city_codes に追記
+      // 地域モード(ward)のときは route_ids を追記しない（駅検索を混ぜない）
+      // 駅モード(station)のときは city_codes を追記しない（地域検索を混ぜない）
       if (apiData?.realpro) {
-        (apiData.realpro.route_ids || []).forEach(r => { if (!route_ids.includes(r)) route_ids.push(r); });
+        if (currentAreaMode !== "ward") {
+          (apiData.realpro.route_ids || []).forEach(r => { if (!route_ids.includes(r)) route_ids.push(r); });
+        }
         // ※ パラメータ名は cc: 外側の const c = selectedCustomer をシャドウしないため
-        (apiData.realpro.city_codes || []).forEach(cc => { if (!city_codes.includes(cc)) city_codes.push(cc); });
+        if (currentAreaMode !== "station") {
+          (apiData.realpro.city_codes || []).forEach(cc => { if (!city_codes.includes(cc)) city_codes.push(cc); });
+        }
       }
 
       // ⑤ 臨機応変フォールバック: 解決結果とモードが食い違う場合に自動補正
@@ -4689,7 +4699,7 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
             );
             if (modeBtn) {
               modeBtn.click(); // UI更新（active class 切り替え）
-              _areaModeSource = "auto"; // "user" → "auto" に戻して臨機応変補正を許可
+              _areaModeSource = "db"; // DB設定の area_mode は自動補正しない（"user"と同等）
             }
           }
           // DOM レンダリング完了を待って autofill-btn をクリック
