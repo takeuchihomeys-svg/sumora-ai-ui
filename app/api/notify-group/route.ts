@@ -15,6 +15,20 @@ async function sendGroupMessage(text: string, mentionUserId?: string, groupKey?:
       .maybeSingle();
     targetId = grpRow?.value ?? null;
   }
+  // pickup_group_id 未登録時は group_id にフォールバック
+  if (!targetId && key !== "group_id") {
+    const fallbackId = process.env.LINE_STAFF_GROUP_ID ?? null;
+    if (fallbackId) {
+      targetId = fallbackId;
+    } else {
+      const { data: fallbackRow } = await supabase
+        .from("hanbancyo_settings")
+        .select("value")
+        .eq("key", "group_id")
+        .maybeSingle();
+      targetId = fallbackRow?.value ?? null;
+    }
+  }
   if (!targetId) return;
 
   const token =

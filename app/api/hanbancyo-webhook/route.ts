@@ -80,8 +80,6 @@ export async function POST(req: NextRequest) {
     // グループIDを取得・保存
     const sourceType = event.source?.type;
     const sourceGroupId = event.source?.groupId;
-    const sourceRoomId = (event.source as Record<string, string | undefined>)?.roomId;
-    console.log("[hanbancyo-webhook] source:", JSON.stringify({ type: sourceType, groupId: sourceGroupId, roomId: sourceRoomId, eventType: event.type }));
 
     if (sourceType === "group" && sourceGroupId) {
       // 既存のgroup_idと異なる場合はpickup_group_idとして保存（新グループ自動検出）
