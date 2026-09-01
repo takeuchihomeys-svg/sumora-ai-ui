@@ -742,11 +742,16 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // ── 市区名（WARD_CODE_MAP に完全一致） ─────────────────────────────
+      // ── 市区名（WARD_CODE_MAP に完全一致 or 短縮区名補完） ─────────────────────────────
+      // 「平野区」→「大阪市平野区」、「堺区」→「堺市堺区」のように短縮区名を補完して解決
       const wardKey = WARD_CODE_MAP[tok]
         ? tok
         : WARD_CODE_MAP[tok + "市"]
         ? tok + "市"
+        : WARD_CODE_MAP["大阪市" + tok]
+        ? "大阪市" + tok
+        : WARD_CODE_MAP["堺市" + tok]
+        ? "堺市" + tok
         : null;
       if (wardKey) {
         const code = WARD_CODE_MAP[wardKey];
@@ -987,12 +992,17 @@ commute_constraints: 通勤・通学・乗り換え制約
                 if (!result.reins.ward_names.includes(w))  result.reins.ward_names.push(w);
               }
             } else {
-              // 直接 WARD_CODE_MAP に存在する市区名
-              const code = WARD_CODE_MAP[area] ?? WARD_CODE_MAP[area + "市"] ?? null;
+              // 直接 WARD_CODE_MAP に存在する市区名（短縮区名も補完: 「平野区」→「大阪市平野区」）
+              const fullArea = WARD_CODE_MAP["大阪市" + area] ? "大阪市" + area
+                : WARD_CODE_MAP["堺市" + area] ? "堺市" + area
+                : null;
+              const resolvedAreaKey = fullArea ?? area;
+              const code = WARD_CODE_MAP[resolvedAreaKey] ?? WARD_CODE_MAP[area + "市"] ?? null;
               if (code) {
                 if (!result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
-                if (!result.itandi.ward_names.includes(area)) result.itandi.ward_names.push(area);
-                if (!result.reins.ward_names.includes(area))  result.reins.ward_names.push(area);
+                const wardLabel = resolvedAreaKey;
+                if (!result.itandi.ward_names.includes(wardLabel)) result.itandi.ward_names.push(wardLabel);
+                if (!result.reins.ward_names.includes(wardLabel))  result.reins.ward_names.push(wardLabel);
               } else {
                 // ハードコードで解決できない → ベクトル検索で region_map / station_map を検索
                 await vectorSearchStation(area, db, maps, result);

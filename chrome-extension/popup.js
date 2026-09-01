@@ -3495,6 +3495,16 @@ function openInstructions(siteKey) {
       // ── ボタンを即座にローディング表示（APIを待たせても固まって見えないように）──
       autofillBtn.textContent = "⏳ エリア解決中...";
       autofillBtn.disabled = true;
+      // 「エリア解決中...」固まり防衛: 20秒以内に「検索中...」に進まなければ自動リセット
+      // （APIエラー・JSエラー等で中断した場合、ボタンが永遠に disabled のままになるのを防ぐ）
+      var _areaResolveWatchdog = setTimeout(function() {
+        var _b = document.getElementById("autofill-btn");
+        if (_b && _b.disabled && (_b.textContent || "").includes("エリア解決中")) {
+          _b.textContent = "🔍 リアプロで自動検索";
+          _b.disabled = false;
+          console.warn("[AX] エリア解決中 タイムアウト(20s): 自動リセット");
+        }
+      }, 20000);
       // ブレイン経由: resolve-area + 送付履歴 + 除外リストを1本で取得
       // フォールバック: c.id がない場合（旧顧客）は既存 resolveAreaWithAPI を使う
       const apiData = c.id
@@ -3840,6 +3850,7 @@ function openInstructions(siteKey) {
           admin_fee_max:        c.admin_fee_max || null,
         }});
       } catch (_) { /* ignore */ }
+      clearTimeout(_areaResolveWatchdog); // エリア解決完了 → ウォッチドッグ解除
       autofillBtn.textContent = "⏳ 検索中...";
       autofillBtn.classList.remove("done");
       autofillBtn.classList.add("searching");
