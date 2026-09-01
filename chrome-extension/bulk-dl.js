@@ -390,7 +390,13 @@
         return;
       }
       document.getElementById("axlx-count").textContent = (i + 1) + "/" + targets.length + " DL中";
-      targets[i].btn.click();
+      // btn.click() だとAdobeがPDF URLを横取りする。background経由でchrome.downloads.download()を使う。
+      var dlUrl = targets[i].btn.href || targets[i].btn.getAttribute("href") || "";
+      if (dlUrl && dlUrl.includes("realnetpro.com")) {
+        chrome.runtime.sendMessage({ type: "axlx-download-realpro-pdf", url: dlUrl }, function () { void chrome.runtime.lastError; });
+      } else {
+        targets[i].btn.click();
+      }
       i++;
       _bulkDlTimer = setTimeout(next, 1200 + Math.floor(Math.random() * 1600));
     }

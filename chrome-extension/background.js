@@ -25,26 +25,6 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
   const url    = downloadItem.url || "";
   const dlTabId = downloadItem.tabId;
 
-  // ── リアプロ PDF: Adobeの自動起動を防ぐ ──────────────────────────────────
-  // リンククリック経由DLはOSのデフォルトアプリで自動起動される場合がある。
-  // キャンセルして chrome.downloads.download() で再DLすると自動起動を抑制できる。
-  const isRealproPdf = url.includes("realnetpro.com") && (
-    url.includes(".pdf") ||
-    (downloadItem.mime || "").includes("pdf") ||
-    (downloadItem.mime || "").includes("octet-stream")
-  );
-  if (isRealproPdf) {
-    chrome.downloads.cancel(downloadItem.id).catch(() => {});
-    const fname = (downloadItem.filename || "").split(/[/\\]/).pop() || "物件.pdf";
-    chrome.downloads.download({
-      url,
-      filename: fname,
-      conflictAction: "uniquify",
-      saveAs: false,
-    }).catch((e) => console.warn("[AXLX BG] リアプロPDF再DL失敗:", e.message));
-    return;
-  }
-
   // ── itandi PDF ダウンロードキャプチャ（時刻ベース・タブID不問）────────────
   // Bug fix: window.openで開いた新タブのdlTabIdは元タブと一致しないため時刻ベースで判定
   if (itandiWatchExpiry > 0 && Date.now() < itandiWatchExpiry) {
@@ -2085,6 +2065,19 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg && msg.type === "axlx-batch-progress") {
     // 全ページ送信の進捗ハートビート → 無進捗タイムアウトをリセット（次顧客への早すぎる移行を防ぐ）
     _notifyBatchProgress(msg.customerId || null);
+  }
+  return false;
+});
+
+// リアプロ PDF 手動一括DL: btn.click() の代わりにメッセージ経由でDL → Adobe自動起動を防ぐ
+chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  if (msg && msg.type === "axlx-download-realpro-pdf" && msg.url) {
+    chrome.downloads.download({
+      url: msg.url,
+      conflictAction: "uniquify",
+      saveAs: false,
+    }).catch(function (e) { console.warn("[AXLX BG] リアプロPDF手動DL失敗:", e.message); });
+    sendResponse({ ok: true });
   }
   return false;
 });
