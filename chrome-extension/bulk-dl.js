@@ -373,7 +373,7 @@
     // ダウンロード開始
     _bulkDlStopped = false;
     dlBtn.textContent = "⏹ STOP";
-    dlBtn.style.background = "#d32f2f";
+    dlBtn.style.background = "#43a047";
     dlBtn.style.pointerEvents = "auto"; // STOPボタンは押せる状態に
 
     var i = 0;
