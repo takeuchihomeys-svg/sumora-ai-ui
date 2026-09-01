@@ -69,8 +69,22 @@ export async function POST(req: NextRequest) {
    - 変更がない場合はchangesを空配列にする
    - 判断が難しい場合は現状維持（無理に移動しない）
 
+5. 【地域名の正規化】（地域フィールドにある市区名の短縮形を正式名に展開する）
+   - 大阪府の独立市: 高槻・茨木・吹田・摂津・守口・門真・枚方・東大阪・八尾・寝屋川・大東・四條畷・交野・豊中・池田・箕面・柏原・藤井寺・松原・羽曳野・富田林・河内長野・大阪狭山・和泉・岸和田・貝塚・泉佐野・泉南・阪南・泉大津・高石 → 「〇〇市」を付ける（例: 「高槻」→「高槻市」、「守口」→「守口市」）
+   - 【重要】「門真」は大阪府門真市（独立した市）。「大阪市門真区」は存在しない → 必ず「門真市」
+   - 【重要】「東大阪」は東大阪市（独立した市）。「大阪市東大阪区」は存在しない → 必ず「東大阪市」
+   - 大阪市の区（鶴見区・平野区・城東区・住吉区・住之江区・東住吉区・西成区・浪速区・天王寺区・阿倍野区・生野区・東成区・旭区・都島区・福島区・此花区・西淀川区・淀川区・東淀川区・西区・港区・大正区・中央区・北区）は「大阪市〇〇区」を付ける（例: 「鶴見区」→「大阪市鶴見区」、「平野区」→「大阪市平野区」）
+   - 堺市の区（堺区・北区・西区・中区・東区・南区・美原区）は「堺市〇〇区」を付ける
+   - すでに「〇〇市」「大阪市〇〇区」の形になっている場合は変更不要
+
+6. 【suggested_mode の判定】
+   - 整理後の地域フィールドに市名・区名など行政区画のみが残り、駅名が含まれない → "ward"
+   - 整理後の駅フィールドのみに内容があり、地域フィールドが空 → "station"
+   - 両方に内容がある → "both"
+   - 判断できない場合 → "auto"
+
 JSONのみ返してください（コードブロック不要）:
-{"area_input":"整理後の地域","station_input":"整理後の駅","changes":["変更内容の説明文"]}`;
+{"area_input":"整理後の地域","station_input":"整理後の駅","changes":["変更内容の説明文"],"suggested_mode":"ward"}`;
 
   try {
     const res = await getModel().invoke([new HumanMessage(prompt)]);
@@ -84,6 +98,7 @@ JSONのみ返してください（コードブロック不要）:
       area_input?: string;
       station_input?: string;
       changes?: string[];
+      suggested_mode?: string;
     };
 
     // AIの結果にさらに の/ノ 正規化を適用（AI が見落とした場合の保険）
@@ -93,6 +108,7 @@ JSONのみ返してください（コードブロック不要）:
       area_input: parsed.area_input ?? area_input,
       station_input: finalStation,
       changes: Array.isArray(parsed.changes) ? parsed.changes : [],
+      suggested_mode: parsed.suggested_mode ?? "auto",
     });
   } catch (err) {
     console.error("[organize-area-station] Anthropic call failed:", err);

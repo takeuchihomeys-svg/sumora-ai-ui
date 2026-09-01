@@ -447,7 +447,7 @@ function CustomersPageInner() {
   const [editId, setEditId]         = useState<string | null>(null);
   const [editFields, setEditFields] = useState<EditFields | null>(null);
   const [editSaving, setEditSaving] = useState(false);
-  const [organizeResult, setOrganizeResult] = useState<{ area_input: string; station_input: string; changes: string[] } | null>(null);
+  const [organizeResult, setOrganizeResult] = useState<{ area_input: string; station_input: string; changes: string[]; suggested_mode?: string } | null>(null);
   const [organizeLoading, setOrganizeLoading] = useState(false);
 
   // 条件ログ展開（3件以上のとき「もっと見る」）
@@ -963,7 +963,7 @@ function CustomersPageInner() {
         body: JSON.stringify({ area_input: fields.area_input, station_input: fields.station_input }),
       })
         .then((r) => r.json())
-        .then((data: { area_input: string; station_input: string; changes: string[] }) => {
+        .then((data: { area_input: string; station_input: string; changes: string[]; suggested_mode?: string }) => {
           if (data.changes && data.changes.length > 0) setOrganizeResult(data);
         })
         .catch(() => {})
@@ -981,7 +981,7 @@ function CustomersPageInner() {
         body: JSON.stringify({ area_input: editFields.area_input, station_input: editFields.station_input }),
       });
       if (!res.ok) throw new Error("API error");
-      const data = await res.json() as { area_input: string; station_input: string; changes: string[] };
+      const data = await res.json() as { area_input: string; station_input: string; changes: string[]; suggested_mode?: string };
       setOrganizeResult(data);
     } catch {
       alert("自動整理に失敗しました");
@@ -3298,7 +3298,16 @@ function CustomersPageInner() {
                       <button
                         type="button"
                         onClick={() => {
-                          setEditFields((f) => f && ({ ...f, area_input: organizeResult.area_input, station_input: organizeResult.station_input }));
+                          const sm = organizeResult.suggested_mode;
+                          setEditFields((f) => f && ({
+                            ...f,
+                            area_input: organizeResult.area_input,
+                            station_input: organizeResult.station_input,
+                            ...(sm === "ward"    ? { area_mode_ward: true,  area_mode_station: false } :
+                                sm === "station" ? { area_mode_ward: false, area_mode_station: true  } :
+                                sm === "both"    ? { area_mode_ward: true,  area_mode_station: true  } :
+                                {}),
+                          }));
                           setOrganizeResult(null);
                         }}
                         className="flex-1 text-[12px] font-bold py-2 rounded-xl bg-purple-600 text-white"
