@@ -123,6 +123,7 @@ classifyAreaTokens の結果を受けてグローバルモード（駅 or 地域
 
 | 日付 | 内容 |
 |---|---|
+| 2026-09-01 | **Chrome拡張 送信エラー根本修正 (commit 48ed88cf)**: ①background.js: callMergeApi の AbortSignal を 60s→85s に延長（Vercel maxDuration=90s に対してクライアントが先にタイムアウトしていた）② bulk-dl.js: 送信エラー時にアラートで resp.error の実メッセージを表示（セッション切れ・タイムアウト・APIエラーを区別できるよう改善） |
 | 2026-08-24 | **電車での通勤距離ステップ追加**: `buildCondData()`に`commuteByTrain`フィールド追加（`desired_area`から「○○駅まで電車で△分」正規表現でパース）。realpro/itandi/reinsの手順ステップに「電車での通勤距離: 北加賀屋まで電車で45分以内」を表示。徒歩パターン・bareパターンは対象外（電車/バスキーワード必須）。Dijkstra展開済みなので絞り込み欄への追加入力不要と案内。 |
 | 2026-08-24 | **物件検索ブレイン: classifyAreaTokens で仕分け担当を強化（commit 741dd11b）**: 駅/地域の分類を6段階シグナルで独立判定。JR/阪急プレフィックスを最強シグナルに。STATION_LINE_MAP にある駅名は NEIGHBORHOOD_WARD_MAP に登録されていても駅優先（十三・平野 等）。コンテキスト多数決で曖昧トークン解決。 |
 | 2026-08-24 | **物件検索ブレイン: 能勢電鉄/谷町線全駅誤選択バグ修正**: ①popup-maps.js: 「平野」を谷町線のみに修正（能勢電鉄平野は川西市の別駅）②popup.js decomposeToken第4フォールバック: 「谷町線駒川中野」→`["谷町線","駒川中野"]`が全線展開するバグを修正、`[stk]`のみ返す（路線名を除去） |
@@ -656,6 +657,12 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - **2026-07-05 レインズ一括DL 信頼性修正3件（未コミット）**:
   - background.js: `axlx-reins-watch-tab` ハンドラで既存watcherの旧タイマーを clearTimeout せず上書きしていたレース修正（逐次モードで旧タイマーが35秒後に新watcherを削除→2件目以降のPDF捕捉が失敗するバグ。onCreated側と同じ clearTimeout パターンに統一）
   - background.js: `uploadPdfToBlob` / `callMergeApi` の fetch に `signal: AbortSignal.timeout(60000)` 追加（サーバー無応答時に「Blobアップ中...」で最大5分固まる問題を60秒タイムアウトに）
+- **2026-09-01 Chrome拡張 送信エラー根本修正**:
+  - **症状**: 物件送信時に「送信エラー（次顧客へ）」が表示され、原因が分からない状態
+  - **根本原因①**: callMergeApi の AbortSignal が60s → Vercel maxDuration=90s なのに、クライアントが先にタイムアウトしてエラーになる。多PDFの場合に顕著
+  - **根本原因②**: エラー時に resp.error の実メッセージをUIに表示しておらず、console.errorのみ → 原因が分からない
+  - **修正①（background.js）**: AbortSignal.timeout(60000) → AbortSignal.timeout(85000)（Vercel 90s より5s短く）
+  - **修正②（bulk-dl.js）**: 送信エラー時に alert() で resp.error の実メッセージを表示 + セッション切れ/タイムアウト別のガイダンスを添付
   - reins-bulk-dl.js: `captureOnePdf` の `!freshBtn` rejectパスで `customEvtHdlr` の removeEventListener 漏れを修正（リークしたハンドラが次物件のPDFイベントで発火し進行中キャプチャに干渉）
 - フロー: 路線・駅で絞り込み → 近畿(完全一致) → 大阪府(完全一致) → 路線チェック → 駅列描画待ち(800ms) → 駅を全選択 → 確定
 - 広げて検索: 当駅＋前後各1駅を `clickLabel` で全選択（LINE_STATION_ORDER で隣駅を自動取得）
