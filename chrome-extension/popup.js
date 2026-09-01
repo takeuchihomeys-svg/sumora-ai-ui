@@ -593,6 +593,15 @@ function parseAreaTokens(rawArea) {
         .map(w => (w.startsWith(city) ? w : city + w))
         .join(",")
   );
+  // 「枚方周辺（高槻、茨木、吹田、摂津、守口、門真、鶴見区等）」→「枚方,高槻,茨木,...」に展開
+  // 括弧内に区名・市名・地名が列挙されている場合、中心地名＋括弧内全地名をトークン化する
+  rawArea = rawArea.replace(
+    /([^\s,、・\/（(]{1,10})(?:周辺|近辺|付近|あたり|エリア)[（(]([^)）]{2,})[）)]/g,
+    function(_, center, subList) {
+      var items = subList.replace(/等$|など$|その他$/, "").split(/[,、・\/\s]+/).map(function(s){ return s.trim(); }).filter(Boolean);
+      return [center].concat(items).join(",");
+    }
+  );
   // 「路線名（駅A〜駅B）」→ 区間内の駅リストに展開（例: おおさか東線（野江〜放出）→ JR野江,鴫野,放出）
   rawArea = rawArea.replace(/([ぁ-鿿\w]+線)[（(]([^)）〜～]+)[〜～]([^)）]+)[）)]/g, function(match, lineName, fromStr, toStr) {
     const rangeStations = expandLineRange(lineName, fromStr.trim(), toStr.trim());
@@ -1322,7 +1331,10 @@ function buildAreaRouteCodes(c, mode = "auto") {
     const neighWard = resolveWard(part);
     // LEARNED_STATION_MAPに収録済みの駅は地域ガードを通過させない（学習済み駅が地域扱いされるバグ修正）
     const _isLearnedSt = LEARNED_STATION_MAP[part]?.realpro_lines?.length > 0;
-    if (neighWard && !STATION_LINE_MAP[part] && !_isLearnedSt) {
+    // 「高槻」→「高槻市」のように市サフィックス補完で解決できた場合は市区として優先する
+    // （STATION_LINE_MAPに駅名として登録されていても、〇〇市として解決できれば市区扱い）
+    const _resolvedByMunicipality = !!(WARD_CODE_MAP[part + "市"] || WARD_CODE_MAP["大阪市" + part] || WARD_CODE_MAP["堺市" + part]);
+    if (neighWard && (!STATION_LINE_MAP[part] || _resolvedByMunicipality) && !_isLearnedSt) {
       if (WARD_CODE_MAP[neighWard] && !city_codes.includes(WARD_CODE_MAP[neighWard]))
         city_codes.push(WARD_CODE_MAP[neighWard]);
       continue;

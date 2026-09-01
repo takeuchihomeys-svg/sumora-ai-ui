@@ -181,7 +181,16 @@ function resolveLineInternal(name: string, maps: LineMaps): string | null {
 
 // エリア文字列を駅名・地名トークンに分解（parseAreaTokens の簡易版）
 function parseTokens(area: string): string[] {
-  return area
+  let expanded = area;
+  // 「枚方周辺（高槻、茨木、吹田...）」→「枚方,高槻,茨木,吹田,...」に展開（括弧除去より先に処理）
+  expanded = expanded.replace(
+    /([^\s,、・\/（(]{1,10})(?:周辺|近辺|付近|あたり|エリア)[（(]([^)）]{2,})[）)]/g,
+    (_, center, subList) => {
+      const items = subList.replace(/等$|など$|その他$/, "").split(/[,、・\/\s]+/).map((s: string) => s.trim()).filter(Boolean);
+      return [center, ...items].join(",");
+    }
+  );
+  return expanded
     .replace(/（[^）]*）/g, "")
     .replace(/\([^)]*\)/g, "")
     .replace(/第[一二三]希望[：:]/g, " ")
@@ -821,6 +830,12 @@ commute_constraints: 通勤・通学・乗り換え制約
 ・「路線名 + 駅名」の形式（例: "阪急電鉄京都線 摂津市"）は、駅名のみ stations に含める。路線名は lines に含めない。
   → 路線名は駅名を特定するための文脈情報であり、路線全体を検索する意図ではない。
 ・「阪急京都本線」「阪急電鉄京都線」「阪急京都線」はすべて同じ路線を指す別称。
+・「XXX周辺（A、B、C等）」「XXXエリア（A、B、C）」のように括弧内に地名が列挙されている場合、
+  括弧内の全地名（高槻・吹田・摂津・守口・門真等、駅名と市名が重複するものも含む）は areas に分類する。
+  駅として明示（「〜駅」「〜まで〜分」等）されていない限り、市区名として解釈する。
+  例: "枚方周辺（高槻、茨木、吹田、摂津、守口、門真、鶴見区等）"
+  → areas:["枚方市","高槻市","茨木市","吹田市","摂津市","守口市","門真市","鶴見区"] ← stations は空
+・括弧内に「〇〇区」が1つでも含まれていれば、他の地名も行政地名として解釈する（例: 鶴見区が含まれていれば高槻・吹田等も市区名）。
 
 【例】
 入力: "阪急電鉄京都線 摂津市"
