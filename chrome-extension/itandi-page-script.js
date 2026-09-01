@@ -576,6 +576,23 @@
     "ALC": "alc", "ALC造": "alc",
     "CFT": "cft", "CFT造": "cft",
   };
+  // DBキー → itandi BB サイドバーのラベルテキスト（IDセレクタ失敗時のフォールバック用）
+  var STRUCTURE_LABEL_MAP = {
+    "鉄骨鉄筋コンクリート造": "SRC",
+    "鉄筋コンクリート造": "RC",
+    "鉄骨造": "鉄骨造",
+    "軽量鉄骨造": "軽量鉄骨造",
+    "木造": "木造",
+    "ブロック": "ブロック",
+    "鉄筋ブロック": "鉄筋ブロック",
+    "PC": "PC", "PC造": "PC",
+    "HPC": "HPC", "HPC造": "HPC",
+    "ALC": "ALC", "ALC造": "ALC",
+    "CFT": "CFT", "CFT造": "CFT",
+    "S造": "鉄骨造", "重量鉄骨造": "鉄骨造",
+    "SRC": "SRC", "SRC造": "SRC",
+    "RC": "RC", "RC造": "RC",
+  };
 
   var VALID_LAYOUTS = ["1R","1K","1DK","1LDK","2K","2DK","2LDK","3K","3DK","3LDK","4K","4DK","4LDK","5K_OVER"];
 
@@ -681,7 +698,17 @@
     if (cond.structure_types && cond.structure_types.length) {
       cond.structure_types.forEach(function (s) {
         var v = STRUCTURE_MAP[s];
-        if (v) tick(document.querySelector('input[name="structure_type:in"][id="' + v + '"]'));
+        // ① IDセレクタで直接チェック（最安定）
+        var el = v ? document.querySelector('input[name="structure_type:in"][id="' + v + '"]') : null;
+        if (el) { tick(el); return; }
+        // ② ラベルテキストでフォールバック（itandi BB サイドバー上の表示名で探す）
+        var labelText = STRUCTURE_LABEL_MAP[s] || s;
+        if (clickLabel(labelText)) {
+          console.log("[AX] 構造チェック(label):", labelText);
+          return;
+        }
+        // ③ 元のキー名でも試す
+        if (labelText !== s) clickLabel(s);
       });
     }
     if (cond.pet_ok) {
