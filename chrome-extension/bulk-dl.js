@@ -1042,15 +1042,21 @@
         }, function (resp) {
           if (chrome.runtime.lastError) {
             clearAutoSendState();
+            var errMsg1 = chrome.runtime.lastError.message || "不明なエラー";
             if (countEl) countEl.textContent = "送信エラー（次顧客へ）";
-            console.error("[AXLX bulk-dl] 送信エラー:", chrome.runtime.lastError.message);
+            console.error("[AXLX bulk-dl] 送信エラー:", errMsg1);
+            // エラー詳細をアラートで表示（何が原因か分かるように）
+            alert("LINE送信エラー:\n" + errMsg1 + "\n\n※リアプロにログインし直して再試行してください");
             try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
             return;
           }
           if (!resp || !resp.ok) {
             clearAutoSendState();
+            var errMsg2 = resp ? (resp.error || "サーバーエラー") : "応答なし（タイムアウトの可能性）";
             if (countEl) countEl.textContent = "送信エラー（次顧客へ）";
-            console.error("[AXLX bulk-dl] 送信エラー:", resp ? resp.error : "応答なし");
+            console.error("[AXLX bulk-dl] 送信エラー:", errMsg2);
+            // エラー詳細をアラートで表示（何が原因か分かるように）
+            alert("LINE送信エラー:\n" + errMsg2 + "\n\n※セッション切れの場合: リアプロに再ログインしてください\n※タイムアウトの場合: 物件数を減らして再試行してください");
             try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
             return;
           }
