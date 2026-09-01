@@ -794,6 +794,69 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
+// ─── カレンダー自動登録 ──────────────────────────────────────────────────────
+// 「明日確認します」「〇月〇日にご連絡します」等の約束をcalendar_eventsへ自動登録
+const COMMITMENT_RE = /明日|明後日|来週|今週中|\d+月\d+日|\d+日(?:まで|中|以内|に)|午前中/;
+
+async function detectAndCreateCalendarEvent({
+  sentReply,
+  conversationId,
+  sentAt,
+}: {
+  sentReply: string;
+  conversationId: string;
+  sentAt?: string;
+}): Promise<void> {
+  if (!COMMITMENT_RE.test(sentReply) || sentReply.length < 15) return;
+
+  const today = sentAt ? new Date(sentAt) : new Date();
+  const DOW = ["日","月","火","水","木","金","土"];
+  const todayStr = `${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日（${DOW[today.getDay()]}）`;
+
+  const raw = await callHaiku(`以下はLINE不動産営業のスタッフが送った返信メッセージです。
+「明日確認します」「〇月〇日にご連絡します」などスタッフが将来に行動を約束している場合のみ、日時と内容をJSONで返してください。
+お客様への依頼・質問・単なる日程の言及は対象外です。
+
+今日の日付: ${todayStr}
+
+【スタッフ送信文】
+${sentReply}
+
+JSONのみ（コードブロック不要）:
+{"has_commitment":true,"date":"YYYY-MM-DD","time":"HH:MM or null","all_day":true,"title":"カレンダーイベントタイトル（例: 管理会社確認, 申込可否確認）"}
+約束がなければ: {"has_commitment":false}`, 200);
+
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) return;
+  let parsed: { has_commitment?: boolean; date?: string; time?: string | null; all_day?: boolean; title?: string };
+  try { parsed = JSON.parse(m[0]); } catch { return; }
+  if (!parsed.has_commitment || !parsed.date || !parsed.title) return;
+  if (isNaN(new Date(parsed.date).getTime())) return;
+
+  const startAt = (!parsed.all_day && parsed.time && /^\d{2}:\d{2}$/.test(parsed.time))
+    ? `${parsed.date}T${parsed.time}:00+09:00`
+    : `${parsed.date}T10:00:00+09:00`;
+
+  let customerName: string | null = null;
+  try {
+    const { data: conv } = await supabase.from("conversations")
+      .select("customer_name, display_name").eq("id", conversationId).single();
+    const c = conv as { customer_name?: string; display_name?: string } | null;
+    customerName = c?.customer_name || c?.display_name || null;
+  } catch { /* ignore */ }
+
+  const title = customerName ? `${customerName} ${parsed.title}` : parsed.title;
+  await supabase.from("calendar_events").insert({
+    title,
+    event_type: "other",
+    customer_name: customerName,
+    conversation_id: conversationId,
+    start_at: startAt,
+    all_day: parsed.all_day ?? true,
+    notes: sentReply.slice(0, 200),
+  });
+}
+
 // ─── POST ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   type PostBody = {
@@ -1204,6 +1267,15 @@ export async function POST(req: NextRequest) {
         .eq("status", "generated")
         .gte("generated_at", thirtyMinAgo);
     });
+  }
+
+  // カレンダー自動登録: 約束（明日確認等）が含まれる返信をcalendar_eventsへ自動追加
+  if (conversationId && sentReply) {
+    after(() => detectAndCreateCalendarEvent({
+      sentReply,
+      conversationId,
+      sentAt: typeof sentAt === "string" ? sentAt : undefined,
+    }));
   }
 
   return NextResponse.json({ ok: true, id: data?.id, conversation_state: conversationState });
