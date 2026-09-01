@@ -2809,6 +2809,10 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS prop_cost_notes TEXT[];
 -- 値は aix/action → AixModal.onAfterSend → page.tsx log-aix-usage → DB の順で記録される。
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS send_keyword TEXT;
 
+-- ── structure_types: 物件構造希望（鉄筋・鉄骨・木造等）（2026-09-01追加）──
+-- 複数構造を「・」区切りで保存。page-script.js の STRUCTURE_MAP キーと一致させる
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS structure_types TEXT;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

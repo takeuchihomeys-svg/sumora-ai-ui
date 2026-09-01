@@ -2776,7 +2776,7 @@ function preloadAdjForm(c) {
   document.getElementById("adj-walk").value      = c.walk_minutes || "";
   document.getElementById("adj-age").value       = c.building_age || "";
   document.getElementById("adj-floor").value     = c.floor_plan || c.layout || "";
-  document.getElementById("adj-structure").value   = c.building_structure || c.structure || "";
+  document.getElementById("adj-structure").value   = c.structure_types || "";
   document.getElementById("adj-move-in").value     = c.move_in_time || c.move_in || "";
   document.getElementById("adj-initial-cost").value = c.initial_cost_limit || "";
 
@@ -3341,7 +3341,7 @@ function openInstructions(siteKey) {
         is_wide:         searchMode === "wide",
         area_min:        adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null),
         area_max:        adjAreaMax ? Number(adjAreaMax) : (c.floor_area_max || null),
-        structure_types: (adjStructure || c.building_structure || c.structure || "")
+        structure_types: (adjStructure || c.structure_types || "")
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
         pet_ok:      adjPet,
         preferences: c.preferences || c.notes || null,

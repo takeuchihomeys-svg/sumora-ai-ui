@@ -69,6 +69,7 @@ type Customer = {
   area_mode?: string | null;
   commute_station?: string | null;
   commute_minutes?: number | null;
+  structure_types?: string | null;
 };
 
 // 物件比較（🏠 物件比較）の結果型
@@ -241,6 +242,7 @@ type EditFields = {
   preferences: string; ng_points: string;
   other_requests: string; property_memo: string;
   commute_station: string; commute_minutes: string;
+  structure_types: string;
 };
 
 /** 一時調整: ephemeral per-customer search condition overrides.
@@ -340,11 +342,12 @@ function toEditFields(c: Customer): EditFields {
     property_memo:      c.property_memo      ?? "",
     commute_station:    c.commute_station    ?? "",
     commute_minutes:    c.commute_minutes    ? String(c.commute_minutes) : "",
+    structure_types:    c.structure_types    ?? "",
   };
 }
 
 function emptyEditFields(): EditFields {
-  return { desired_area:"", area_input:"", station_input:"", shikirei_free:false, area_mode_ward:false, area_mode_station:false, floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"", commute_station:"", commute_minutes:"" };
+  return { desired_area:"", area_input:"", station_input:"", shikirei_free:false, area_mode_ward:false, area_mode_station:false, floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"", commute_station:"", commute_minutes:"", structure_types:"" };
 }
 
 /** Seeds a TempAdj draft from the DB customer (same unit conversions as toEditFields). */
@@ -1029,6 +1032,7 @@ function CustomersPageInner() {
                           : editFields.area_mode_ward ? "ward"
                           : editFields.area_mode_station ? "station"
                           : "auto",
+      structure_types:    editFields.structure_types || null,
     };
     try {
       const res = await fetch("/api/property-customers", {
@@ -1124,6 +1128,7 @@ function CustomersPageInner() {
         property_memo:      f.property_memo,
         commute_station:    f.commute_station,
         commute_minutes:    f.commute_minutes,
+        structure_types:    f.structure_types,
       };
       setParsedPreview(preview);
     } finally {
@@ -2531,6 +2536,7 @@ function CustomersPageInner() {
                             {c.commute_station && c.commute_minutes && <Tag label="通勤" value={`${c.commute_station}まで${c.commute_minutes}分`} />}
                             {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
                             {c.building_age && <Tag label="築年" value={`${c.building_age}年`} />}
+                            {c.structure_types && <Tag label="構造" value={c.structure_types} />}
                             {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
                             {detectShikireiFlag(c) && <Tag label="敷礼0" value="敷礼なし" />}
                           </div>
@@ -3434,6 +3440,34 @@ function CustomersPageInner() {
                 <div className="flex-1">
                   <Field label="築年数以内" placeholder="20" type="number"
                     value={editFields.building_age} onChange={(v) => setEditFields((f) => f && ({ ...f, building_age: v }))} />
+                </div>
+              </div>
+              {/* 建物構造 */}
+              <div>
+                <p className="text-[11px] font-semibold text-[#8696a0] mb-1.5">建物構造（複数選択可）</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(["SRC造（鉄骨鉄筋）","RC造（鉄筋コンクリート）","鉄骨造","軽量鉄骨造","木造"] as const).map((label) => {
+                    const key = label === "SRC造（鉄骨鉄筋）" ? "鉄骨鉄筋コンクリート造"
+                              : label === "RC造（鉄筋コンクリート）" ? "鉄筋コンクリート造"
+                              : label === "鉄骨造" ? "鉄骨造"
+                              : label === "軽量鉄骨造" ? "軽量鉄骨造"
+                              : "木造";
+                    const current = (editFields.structure_types || "").split(/[・、,]/).filter(Boolean);
+                    const active = current.includes(key);
+                    return (
+                      <button key={label} type="button"
+                        onClick={() => {
+                          const next = active ? current.filter((s) => s !== key) : [...current, key];
+                          setEditFields((f) => f && ({ ...f, structure_types: next.join("・") }));
+                        }}
+                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors"
+                        style={active
+                          ? { background: "#1565C0", color: "#fff", borderColor: "#1565C0" }
+                          : { background: "#f0f2f5", color: "#555", borderColor: "#e9ecef" }}>
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               <div className="flex gap-2">
