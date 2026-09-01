@@ -363,7 +363,7 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
               condition_value: null,
               rule_text: rule.content,
               reason: `週次バッチ学習ポリシー: ${state}フェーズ / ${new Date().toISOString().slice(0, 10)}`,
-              priority: 6,
+              priority: 8,
               is_active: true,
               updated_at: new Date().toISOString(),
             }, { onConflict: "rule_key" });

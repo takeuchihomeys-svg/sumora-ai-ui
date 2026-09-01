@@ -79,7 +79,7 @@ export async function fetchPromptRules(
         .gte("priority", 4)
         .order("priority", { ascending: false })
         .order("updated_at", { ascending: false, nullsFirst: false })
-        .limit(150)
+        .limit(200)
         .abortSignal(AbortSignal.timeout(8_000)),
     ]);
 

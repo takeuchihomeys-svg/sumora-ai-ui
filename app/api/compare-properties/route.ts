@@ -293,11 +293,12 @@ ${condLines.length > 0 ? condLines.join("\n") : "（条件情報なし）"}
 ${propListText}`;
 
     // ─── 4. Claude Sonnet で比較 ─────────────────────────────────────────────
-    // 修正8: max_tokens 2048→8000。Sonnet 5 は適応思考がデフォルトONで、
-    // max_tokens は思考+本文の合計上限のため、2048だとJSONが途中切断されるリスクがある
+    // thinking: disabled で adaptive thinking を明示無効化（Sonnet 5 はデフォルト ON → コスト激増を防ぐ）
+    // max_tokens: 8000→3000（thinking 無効化により全トークンが JSON 出力に使われるため余裕あり）
     const aiRes = await anthropic.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 8000,
+      max_tokens: 3000,
+      thinking: { type: "disabled" },
       system: [{ type: "text", text: COMPARE_SYSTEM_PROMPT, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [{ role: "user", content: prompt }],
     });
