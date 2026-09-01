@@ -62,18 +62,20 @@
   // ── 行のユニークキー生成（re-inject後の状態復元に使用） ─────────────
   function makeRowKey(btn) {
     var el = btn;
-    for (var i = 0; i < 10 && el && el !== document.body; i++) {
+    for (var i = 0; i < 12 && el && el !== document.body; i++) {
       el = el.parentElement;
-      // itandi の物件URL（/properties/12345）からIDを取得（最安定）
+      // itandi BB の物件URL: /rent_rooms/123, /building_rooms/123, /properties/123 等
       var links = el.querySelectorAll("a[href]");
       for (var j = 0; j < links.length; j++) {
-        var m = (links[j].getAttribute("href") || "").match(/\/properties\/(\w+)/);
+        var href = links[j].getAttribute("href") || "";
+        var m = href.match(/\/(?:rent_rooms|building_rooms|properties|dwellings?|rooms?)\/([A-Za-z0-9_-]+)/);
         if (m) return "pid_" + m[1];
       }
-      // フォールバック: 行テキストの先頭60文字
-      var t = el.textContent.replace(/\s+/g, " ").trim().slice(0, 60);
-      if (t.length > 20) return t;
+      // data属性フォールバック（React が data-id 等を持つ場合）
+      var dataId = el.getAttribute("data-room-id") || el.getAttribute("data-property-id") || el.getAttribute("data-id");
+      if (dataId) return "did_" + dataId;
     }
+    // 位置フォールバック: テキスト先頭60文字は全行で同一になるバグがあるため使用しない
     return "pos_" + btn.getBoundingClientRect().top.toFixed(0);
   }
 
@@ -744,11 +746,16 @@
       // itandi の PDF キャプチャは1件数秒×多物件で5分を超えることがあり、
       // 固定タイムアウトのままだと送信中に次顧客の autofill が走って混線していた。
       try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
-      // DOM更新後もボタンを正しく取得（stale reference 防止）
-      var freshBtn = findFreshBtn(targets[i].rowKey);
-      if (!freshBtn) {
-        console.warn("[AXLX] rowKey=" + targets[i].rowKey + " の物件資料ボタンが見つからず → stale参照を使用");
+      // DOM更新後もボタンを正しく取得
+      // mutObs.disconnect()済みのため、DOM内に存在するなら元の参照を直接使う（rowKeyが全行同一になるバグ回避）
+      var freshBtn;
+      if (targets[i].btn && document.body.contains(targets[i].btn)) {
         freshBtn = targets[i].btn;
+      } else {
+        freshBtn = findFreshBtn(targets[i].rowKey) || targets[i].btn;
+        if (freshBtn !== targets[i].btn) {
+          console.warn("[AXLX] rowKey=" + targets[i].rowKey + " の物件資料ボタンが見つからず → findFreshBtn使用");
+        }
       }
       captureOnePdfWithRetry(freshBtn)
         .then(function (result) {
