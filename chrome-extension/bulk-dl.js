@@ -243,7 +243,7 @@
         _pendingAutoSendDispatched = true;
         console.log("[AXLX bulk-dl] Case B: AJAXページネーション継続 P" + _resumeState.currentPage);
         setTimeout(function () {
-          autoSendOnePage(_resumeState, function (ok, cnt) { _resumeState.sentCount = (_resumeState.sentCount || 0) + (cnt || 0); tryNext(_resumeState); });
+          autoSendOnePage(_resumeState, function (ok, cnt) { _resumeState.sentCount = (_resumeState.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(_resumeState); }, 800); });
         }, 700 + Math.floor(Math.random() * 700));
       }
     }
@@ -878,64 +878,57 @@
     return r.width > 0 && r.height > 0;
   }
 
-  function hasNextPageBtn() {
+  // 「次」テキストを持つ clickable な要素を返す（A/BUTTON/onclick/cursor:pointer 全対応）
+  function _findNextPageEl() {
+    var NEXT_TEXTS = ["次", "次へ", "次のページ", ">", ">>"];
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     var node;
     while ((node = walker.nextNode())) {
       var t = node.textContent.trim();
-      if (t !== "次" && t !== "次へ" && t !== "次のページ" && t !== ">" && t !== ">>") continue;
+      if (NEXT_TEXTS.indexOf(t) === -1) continue;
       var el = node.parentElement;
-      for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
-        if ((el.tagName === "A" || el.tagName === "BUTTON") && _isElVisible(el)) {
-          if (_isDisabledEl(el)) break;
-          if (el.tagName === 'A' && el.href && el.href === location.href) break; // self-link = same page
-          return true;
-        }
+      // 最大6段まで遡って clickable な要素を探す
+      for (var up = 0; up < 6 && el && el !== document.body; up++, el = el.parentElement) {
+        if (!_isElVisible(el)) continue;
+        if (_isDisabledEl(el)) break;
+        var tag = el.tagName;
+        var isClickable = tag === "A" || tag === "BUTTON" ||
+          el.getAttribute("onclick") || el.getAttribute("href") ||
+          window.getComputedStyle(el).cursor === "pointer";
+        if (!isClickable) continue;
+        // self-link チェック（A タグで href が現在URLと完全一致する場合のみ弾く）
+        if (tag === "A" && el.href && el.href !== "javascript:void(0)" && el.href === location.href) break;
+        console.log("[AXLX bulk-dl] _findNextPageEl: 次ボタン発見 tag=" + tag + " text=" + t + " href=" + (el.href || "") + " onclick=" + !!el.getAttribute("onclick"));
+        return el;
       }
     }
+    // フェーズ2: CSSクラス・aria-label ベース
     var candidates = document.querySelectorAll(
       '[aria-label*="次"], .pagination-next, .page-next, a.next, button.next'
     );
     for (var i = 0; i < candidates.length; i++) {
       var c = candidates[i];
       if (_isElVisible(c) && !_isDisabledEl(c) &&
-          !(c.tagName === 'A' && c.href && c.href === location.href)) return true;
+          !(c.tagName === 'A' && c.href && c.href !== "javascript:void(0)" && c.href === location.href)) {
+        console.log("[AXLX bulk-dl] _findNextPageEl: フェーズ2で発見 tag=" + c.tagName);
+        return c;
+      }
     }
-    return false;
+    console.log("[AXLX bulk-dl] _findNextPageEl: 次ボタンが見つかりません（ページネーションなし or 最終ページ）");
+    return null;
+  }
+
+  function hasNextPageBtn() {
+    return _findNextPageEl() !== null;
   }
 
   // ── ページネーション: 「次」ボタンをクリックして true を返す ───────────────
-  // リアプロの「次へ」ボタンは DOM 上どこにあるか機種依存のため多段探索する。
   function clickNextPageBtn() {
-    // フェーズ1: テキストノードウォーカーで「次」「次へ」「>」「>>」を探す
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    var node;
-    while ((node = walker.nextNode())) {
-      var t = node.textContent.trim();
-      if (t !== "次" && t !== "次へ" && t !== "次のページ" && t !== ">" && t !== ">>") continue;
-      var el = node.parentElement;
-      for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
-        if ((el.tagName === "A" || el.tagName === "BUTTON") && _isElVisible(el)) {
-          if (_isDisabledEl(el)) break;
-          if (el.tagName === 'A' && el.href && el.href === location.href) break; // self-link = same page
-          el.click();
-          return true;
-        }
-      }
-    }
-    // フェーズ2: CSSクラス・aria-label ベース（モダンなページャーに対応）
-    var candidates = document.querySelectorAll(
-      '[aria-label*="次"], .pagination-next, .page-next, a.next, button.next'
-    );
-    for (var i = 0; i < candidates.length; i++) {
-      var c = candidates[i];
-      if (_isElVisible(c) && !_isDisabledEl(c) &&
-          !(c.tagName === 'A' && c.href && c.href === location.href)) {
-        c.click();
-        return true;
-      }
-    }
-    return false;
+    var el = _findNextPageEl();
+    if (!el) return false;
+    el.click();
+    console.log("[AXLX bulk-dl] clickNextPageBtn: クリック完了 tag=" + el.tagName);
+    return true;
   }
 
   // ── 全ページ自動送信: 共通の次ページ遷移 or 完了処理 ─────────────────────
@@ -1097,13 +1090,13 @@
       // autofill開始時点でスナップショット済みのお客さん名を使う（名前ずれ防止）
       var state = { active: true, currentPage: 1, customerName: _snap.name, customerConditions: _snap.conditions || null, customerId: _snap.customerId || null, sentCount: 0 };
       setAutoSendState(state);
-      autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); tryNext(state); });
+      autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(state); }, 800); });
     } else {
       // スナップショットなし（手動操作など）→ 従来通りpopupから取得
       getCustomerFromPopup(function (name, conditions, customerId) {
         var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions, customerId: customerId || null, sentCount: 0 };
         setAutoSendState(state);
-        autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); tryNext(state); });
+        autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(state); }, 800); });
       });
     }
   }
