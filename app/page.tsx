@@ -10933,7 +10933,13 @@ export default function Home() {
               {([
                 { key: "新規ピックアップ" as const, label: "初回・1件訴求", desc: "初回のお客様へのピックアップから1件だけオススメ",
                   icon: <path d="M20 32h12M26 26v12M40 26h12v12H40z" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/> },
-                { key: "継続ピックアップ" as const, label: "新着・1件訴求", desc: "継続してお部屋を探しているお客様へのピックアップから1件オススメ",
+                // 🚨 このキーは aix-template-generate の訴求シナリオ判定に直結する。
+                //  「新着1件」＝ 新着型（「新着で1件〜募集に出ました！！」）
+                //  「継続ピックアップ」＝ 比較選択型（「お送りした中でも〜」）
+                //  ラベルとキーがずれると事実と異なる冒頭が生成される（2026-09-01 事故: ラベル"新着"にキー"継続"が紐付いていた）
+                { key: "新着1件" as const, label: "新着・1件訴求", desc: "新着で募集に出たお部屋を1件だけオススメ",
+                  icon: <><path d="M36 22l2.47 5.01 5.53.8-4 3.9.94 5.49L36 34.51l-4.94 2.69.94-5.49-4-3.9 5.53-.8z" stroke="#6366F1" strokeWidth="1.8" strokeLinejoin="round"/><path d="M26 48h20" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round"/></> },
+                { key: "継続ピックアップ" as const, label: "送った中から・1件訴求", desc: "既にお送りした複数物件の中から1件を特にオススメ",
                   icon: <><path d="M22 30a10 10 0 0114.14-1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M50 42a10 10 0 01-14.14 1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M33 24l3 5-5 1M39 48l-3-5 5-1" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></> },
                 { key: "条件広げピックアップ" as const, label: "条件広げ・1件訴求", desc: "希望条件を少し広げたピックアップの中から1件オススメ",
                   icon: <><rect x="22" y="28" width="28" height="18" rx="3" stroke="#6366F1" strokeWidth="1.8"/><path d="M28 28v-4h16v4" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M28 37h16M28 42h10" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 40l4-4 4 4" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></> },

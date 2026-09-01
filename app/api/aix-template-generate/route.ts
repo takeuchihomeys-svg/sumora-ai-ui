@@ -197,53 +197,144 @@ const SIGNAL_CTA_OVERRIDE: Record<string, string> = {
 };
 
 // ─── 「1件特にオススメ」（property_recommendation）の訴求シナリオ分岐 ─────────
-// 同じ「1件オススメ」ボタンでも会話の流れによって訴求文脈が3種類あり、
-// 冒頭・訴求構造・CTA強度が全く異なる（2026-08-29 訴求ずれ事故の恒久対策）:
-//   compare     = 複数物件送付済み → その中から1件に絞って推す（比較選択型）
-//   alternative = 指定物件が募集なし → 代わりの1件を新規提案（代替新規提案型）
-//   first       = まだ何も送っていない → 初めての1件提案（初回提案型）
+// 同じ「1件オススメ」ボタンでも会話の流れによって訴求文脈が5種類あり、
+// 冒頭・訴求構造・CTA強度が全く異なる（2026-08-29 / 08-31 / 09-01 訴求ずれ事故の恒久対策）:
+//   compare         = 複数物件を送付済み → その中から1件に絞って推す（比較選択型）
+//   new_listing     = 新たに募集に出た1件を単独で案内する（新着型）
+//   alternative     = 指定物件が募集なし → 代わりの1件を新規提案（代替新規提案型）
+//   followup_single = 送付実績はあるが「中でも」と言えるほどの複数はない → 新たな1件として提案（追加提案型）
+//   first           = まだ何も送っていない → 初めての1件提案（初回提案型）
 // フロントのピッカー選択（pickupType）→ 直前の空室確認結果（check_pattern）→
 // この会話の物件送付実績（aix_usage_logs）の順でルールベース判定する（LLM推論任せにしない）。
-type RecommendationScenario = "compare" | "alternative" | "first";
+//
+// 【設計思想 — 他の状況適応パターンにも共通で適用する考え方】
+// AIXの文面の「冒頭フレーム」は事実の宣言である（＝送った/送っていない・新着である/ない・
+// 条件を広げた/広げていない）。したがって冒頭フレームは検証可能な事実
+// （送付ログの件数・種別・鮮度、直前の空室確認結果、スタッフのピッカー選択）から
+// **ルールベースで確定**させ、LLMには「そのフレームの中でどう書くか（文体・訴求点）」だけを任せる。
+// 事実に反する冒頭（1件しか送っていないのに「これまでお送りした中でも」）は
+// 顧客からの信頼を最も損なう事故であり、シナリオごとに
+// 「使ってよい冒頭」と「絶対に使わない冒頭（リテラル文字列）」の両方を明示する。
+// この構造は property_send の送付文脈（初回/継続/新着/条件広げ）にも同型で適用済み。
+type RecommendationScenario = "compare" | "new_listing" | "alternative" | "followup_single" | "first";
+
+/** 訴求シナリオ判定の材料となる「この会話の物件送付事実」（今回送信分は含めない） */
+type PropertySendFacts = {
+  /** 今回のAIX送信より「前」に物件を送付した回数 */
+  priorSentPropertyCount: number;
+  /** うち「まとめ送付」（property_send＝複数物件を一度に送るAIX）の回数 */
+  priorBulkSendCount: number;
+  /** うち「1件送付」（property_recommendation＝1件だけ送るAIX）の回数 */
+  priorSingleSendCount: number;
+  /** 直近の物件送付からの経過時間（時間）。送付実績なしは null */
+  hoursSinceLastSend: number | null;
+};
+
+// 「お送りした中でも」は“複数の中から選んだ”という事実の宣言。1週間以上前の送付を
+// 「中でも」で引き合いに出すのは文脈が切れており、お客様側の記憶とも合わない。
+const COMPARE_FRAME_STALE_HOURS = 24 * 7;
+
+/**
+ * 「お送りした中でも〜」（比較選択フレーム）を事実として使ってよいかを判定する。
+ * 竹内の判断軸: 送った物件が1件のみなら“中でも”ではなく「新着/新たな1件」として紹介するのが正。
+ *  - まとめ送付（property_send）が1回でもあれば複数物件を送っている＝比較可能
+ *  - 1件送付（property_recommendation）だけの場合は2回以上でようやく「複数送った」と言える
+ */
+function canUseCompareFrame(f: PropertySendFacts): boolean {
+  if (f.priorBulkSendCount === 0 && f.priorSingleSendCount < 2) return false;
+  if (f.hoursSinceLastSend !== null && f.hoursSinceLastSend > COMPARE_FRAME_STALE_HOURS) return false;
+  return true;
+}
 
 function resolveRecommendationScenario(args: {
   actionType: string | null | undefined;
   pickupType: string | null | undefined;
   checkPattern: string | null | undefined;
-  /** 今回のAIX送信より「前」に物件を送付した回数（今回送信分は含めない） */
-  priorSentPropertyCount: number;
+  facts: PropertySendFacts;
 }): RecommendationScenario | null {
   if (args.actionType !== "property_recommendation") return null;
+  const f = args.facts;
+  const hasPrior = f.priorSentPropertyCount > 0;
+  // 比較フレームが使えないときの受け皿（送付実績があるなら「初回」も嘘になるため追加提案型へ）
+  const nonCompareFallback: RecommendationScenario = hasPrior ? "followup_single" : "first";
   // ① フロントのピッカー選択が最優先（スタッフが明示的に選んだシナリオ）
   if (args.pickupType === "代替ピックアップ") return "alternative";
-  if (args.pickupType === "新規ピックアップ" || args.pickupType === "条件広げピックアップ" || args.pickupType === "新着1件") return "first";
-  // 「継続ピックアップ」でも過去送付が実際に0件なら比較表現は事実齟齬 → 初回提案型にフォールバック
-  if (args.pickupType === "継続ピックアップ") return args.priorSentPropertyCount > 0 ? "compare" : "first";
+  // 新着は「新たに募集に出た1件」の宣言。過去の送付実績の有無に関係なく新着フレームが正
+  if (args.pickupType === "新着1件" || args.pickupType === "新着まとめ") return "new_listing";
+  if (args.pickupType === "新規ピックアップ" || args.pickupType === "初回まとめ") return nonCompareFallback;
+  if (args.pickupType === "条件広げピックアップ" || args.pickupType === "条件広げまとめ") return nonCompareFallback;
+  // 「継続ピックアップ」＝送付済みの中から1件を推す意図。比較できる実体がなければ降格する
+  if (args.pickupType === "継続ピックアップ" || args.pickupType === "継続まとめ") {
+    return canUseCompareFrame(f) ? "compare" : nonCompareFallback;
+  }
   // ② ピッカー情報なし: 直前の空室確認結果から推定（募集なし/別の部屋なら代替提案の文脈）
   if (args.checkPattern === "unavailable" || args.checkPattern === "alternative") return "alternative";
-  // ③ 物件送付実績から推定（過去送付ゼロで「お送りした中でも」は事実齟齬になる）
-  if (args.priorSentPropertyCount === 0) return "first";
-  return "compare";
+  // ③ 物件送付実績から推定（比較表現は「複数送った」事実がある場合のみ許可）
+  if (!hasPrior) return "first";
+  return canUseCompareFrame(f) ? "compare" : "followup_single";
 }
 
 const RECOMMENDATION_SCENARIO_LABELS: Record<RecommendationScenario, string> = {
-  compare: "比較選択型（送付済み物件の中から1件を推す）",
+  compare: "比較選択型（送付済みの複数物件の中から1件を推す）",
+  new_listing: "新着型（新たに募集に出た1件を単独で案内する）",
   alternative: "代替新規提案型（指定物件が募集なし→代わりの1件を新規提案）",
+  followup_single: "追加提案型（送付実績はあるが比較できる複数はない→新たな1件として提案）",
   first: "初回提案型（初めての1件提案）",
+};
+
+// ─── 冒頭フレーム検出（実例フィルタ・生成後ガードで共用する単一ソース）──────────
+// 「既に送った複数物件の中から選んだ」ことを宣言する言い回し
+const COMPARE_FRAME_RE = /(お送り|ご紹介|送らせて|送付|お渡し)[^。！\n]{0,20}(中でも|中から)/;
+// 「新たに募集が出た」ことを宣言する言い回し
+const NEW_LISTING_FRAME_RE = /(新着で|新着物件|募集に出ました|募集にでました|募集でました|募集が出ました)/;
+
+const COMPARE_FRAME_FORBIDDEN = [
+  "これまでお送りさせて頂いたお部屋の中でも",
+  "お送りさせて頂きましたお部屋の中でも",
+  "お送りした中でも",
+  "ご紹介したお部屋の中でも",
+  "〜の中から選ばせて頂いた",
+];
+const NEW_LISTING_FRAME_FORBIDDEN = [
+  "新着で1件〇〇さんにオススメ出来るお部屋が募集に出ました",
+  "新着で〜が募集に出ました",
+  "新着物件",
+];
+
+// シナリオごとの「絶対に使ってはいけない冒頭表現」（プロンプトへリテラルで明示する）
+const RECOMMENDATION_FORBIDDEN_OPENINGS: Record<RecommendationScenario, string[]> = {
+  compare: NEW_LISTING_FRAME_FORBIDDEN,
+  new_listing: COMPARE_FRAME_FORBIDDEN,
+  alternative: [...COMPARE_FRAME_FORBIDDEN, ...NEW_LISTING_FRAME_FORBIDDEN],
+  followup_single: [...COMPARE_FRAME_FORBIDDEN, ...NEW_LISTING_FRAME_FORBIDDEN],
+  first: [...COMPARE_FRAME_FORBIDDEN, ...NEW_LISTING_FRAME_FORBIDDEN],
 };
 
 const RECOMMENDATION_SCENARIO_GUIDES: Record<RecommendationScenario, string> = {
   compare: `【シナリオ: 比較選択型】既にお送りした複数物件の中から1件を特に推す文脈。
 ・送付済みリストとの相対比較で「この1件が頭抜けている」特別感を演出する（冒頭の具体的な言い回しは⭐実例の文体から学んで多様に書くこと）
 ・CTAは内覧誘導または申込誘導（中程度の強度）
+・🚫「新着で〜募集に出ました」等、新たに募集が出たことを宣言する表現は使わない（既送付物件からの選定であり新着の宣言は事実と異なる）
 ・ただし会話履歴に「複数物件を送った形跡」が見当たらない場合は比較表現は使わないこと`,
+  new_listing: `【シナリオ: 新着型】新たに募集に出た物件を1件だけ単独でご案内する文脈。過去に何件お送りしていても、この1件は「新しく募集に出た1件」として紹介する。
+・冒頭は「新着で1件〇〇さんにオススメ出来るお部屋が募集に出ました！！」のように“新たに募集が出た1件である”ことを宣言する（言い回しは⭐実例の文体から学んで多様に書くこと）
+・🚫「これまでお送りさせて頂いたお部屋の中でも」「お送りした中でも」「〜の中から」等、既送付物件の中から絞り込んだことを前提にする比較表現は絶対禁止（今回は新着1件の紹介であり比較対象が存在しない）
+・新着＝早く動いた方がよいという鮮度をCTAに乗せてよい（煽りにならない範囲で）
+・CTAは内覧誘導または申込誘導（中〜強）`,
   alternative: `【シナリオ: 代替新規提案型】お客様が指定/希望された物件が募集終了（空室なし）だったため、代わりの1件を新規にご提案する文脈。
 ・🚫「お送りさせて頂きましたお部屋の中でも」「〜の中から」等、複数物件の送付済みを前提にした比較・絞り込み表現は絶対禁止（事実と異なる訴求になる）
+・🚫 新着だと確認できていないため「新着で」「募集に出ました」と断定しない
 ・前置きせず即物件紹介に入る（冒頭の具体的な言い回しは⭐実例の文体から学んで多様に書くこと）
 ・適合性訴求を全面に出す（希望物件が叶わなかった穴を埋める提案であることを意識）
 ・締めは強めの申込CTA（希望物件を逃した直後のため、良い代替は早く押さえるご提案が合理的）`,
+  followup_single: `【シナリオ: 追加提案型】これまでにも物件をお送りしているが、今回は「送った中から選ぶ」文脈ではなく、新たに1件をご提案する文脈（送付済みが実質1件のみ等で比較対象が存在しない）。
+・🚫「お送りした中でも」「これまでお送りさせて頂いたお部屋の中でも」等、複数送付済みの中から絞り込んだ体の表現は絶対禁止（比較できるだけの複数を送っていないため事実と異なる）
+・🚫 新着だと確認できていないため「新着で」「募集に出ました」と断定しない
+・「追加でお探しした1件」「改めてご提案する1件」として希望条件との適合を前面に出す（冒頭の言い回しは⭐実例の文体から学んで多様に書くこと）
+・CTAは内覧誘導寄りの中程度`,
   first: `【シナリオ: 初回提案型】まだ物件をお送りしていないお客様への初めての1件提案。
 ・🚫「お送りした中でも」「先日の物件」等、既送付を前提にした表現は絶対禁止
+・🚫 新着だと確認できていないため「新着で」「募集に出ました」と断定しない
 ・希望条件との適合を紹介する（冒頭の具体的な言い回しは⭐実例の文体から学んで多様に書くこと）
 ・CTAは内覧誘導寄りの軽め〜中程度（まず反応を見る）`,
 };
@@ -633,6 +724,8 @@ export async function POST(req: NextRequest) {
     // 実例の主経路は pgvector（match_aix_reply_examples）に一本化したが、⭐は
     // 「スタッフが明示的に最優秀と認定した採用実績」でありベクトル類似度では拾えないため
     // 最大2件だけ固定シードとして残す（2026-08-31 limit 6 → ⭐限定2件に縮小）
+    // 2026-09-01: 母集団を8件に拡大し、訴求シナリオと冒頭フレームが一致する⭐を優先して
+    // 2件に絞る（⭐の大半が「お送りした中でも〜」始まりで新着型の生成を汚染していたため）
     actionType
       ? supabase
           .from("ai_reply_examples")
@@ -641,7 +734,7 @@ export async function POST(req: NextRequest) {
           .eq("aix_action", actionType)
           .eq("is_starred", true)
           .order("created_at", { ascending: false })
-          .limit(2)
+          .limit(8)
       : Promise.resolve({ data: null }),
     // ※ A-2（entry_source='aix_action' の actionType固定直クエリ）は削除。
     //    全員同じ実例セットになりテンプレ感の原因だったため match_aix_reply_examples で代替（2026-08-31）
@@ -666,24 +759,39 @@ export async function POST(req: NextRequest) {
   // ── 「1件特にオススメ」訴求シナリオ判定（compare / alternative / first）──────
   type AixUsageLogRow = { aix_type: string | null; check_pattern: string | null; send_keyword?: string | null; created_at: string };
   const aixUsageLogs = (aixUsageLogsRes?.data ?? []) as AixUsageLogRow[];
-  const sentPropertyLogCount = aixUsageLogs.filter(
+  // created_at 降順（新しい順）で取得済み
+  const propertyLogs = aixUsageLogs.filter(
     (l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation"
-  ).length;
+  );
+  const sentPropertyLogCount = propertyLogs.length;
   // 🚨 今回送信した property_recommendation 自身が既に aix_usage_logs に入っている。
   // AixModal → onAfterSend → log-aix-usage は post_aix テンプレ生成より先に走るため、
   // 生の件数をそのまま使うと「送付実績1回」＝ compare 判定になり、1件しか送っていない
   // 会話でも「お送りさせて頂きましたお部屋の中でも〇〇が〜」という事実と異なる比較表現が
   // 生成されていた（2026-08-31 訴求ずれ事故）。今回送信分を差し引いた「事前送付回数」で判定する。
   const CURRENT_SEND_WINDOW_MS = 30 * 60 * 1000;
-  const newestPropertyLog = aixUsageLogs.find(
-    (l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation"
-  );
+  const newestPropertyLog = propertyLogs[0];
   const currentSendAlreadyLogged = Boolean(
     newestPropertyLog &&
     newestPropertyLog.aix_type === "property_recommendation" &&
     Date.now() - new Date(newestPropertyLog.created_at).getTime() < CURRENT_SEND_WINDOW_MS
   );
-  const priorSentPropertyCount = Math.max(0, sentPropertyLogCount - (currentSendAlreadyLogged ? 1 : 0));
+  // 今回送信分を除いた「事前送付ログ」— 件数だけでなく種別（まとめ/1件）と鮮度も見る。
+  // 「お送りした中でも」は“複数の中から選んだ”事実の宣言なので、実質1件しか送っていない
+  // 会話では使えない（＝新着/追加提案として紹介するのが正）。
+  const priorPropertyLogs = currentSendAlreadyLogged ? propertyLogs.slice(1) : propertyLogs;
+  const priorSentPropertyCount = priorPropertyLogs.length;
+  const priorBulkSendCount = priorPropertyLogs.filter((l) => l.aix_type === "property_send").length;
+  const priorSingleSendCount = priorPropertyLogs.filter((l) => l.aix_type === "property_recommendation").length;
+  const hoursSinceLastSend = priorPropertyLogs.length > 0
+    ? (Date.now() - new Date(priorPropertyLogs[0].created_at).getTime()) / 3600000
+    : null;
+  const propertySendFacts: PropertySendFacts = {
+    priorSentPropertyCount,
+    priorBulkSendCount,
+    priorSingleSendCount,
+    hoursSinceLastSend,
+  };
   // 直近の property_check_result の結果。ただし確認より後に物件送付AIXが2件以上ある場合は
   // 既に別の文脈へ進んでいるため無効化（古い「募集なし」で代替シナリオに誤爆しない）。
   // ※ 送付1件は許容: 代替フローでは「確認(募集なし)→代替物件AIX送信→橋渡し文生成」の順になるため
@@ -712,8 +820,22 @@ export async function POST(req: NextRequest) {
     actionType,
     pickupType,
     checkPattern: effectiveCheckPattern,
-    priorSentPropertyCount,
+    facts: propertySendFacts,
   });
+
+  // ── 実例の冒頭フレーム互換判定 ──────────────────────────────────────────────
+  // ⭐実例（ai_reply_examples / entry_source='aix_template'）の大半が
+  // 「お送りさせて頂きましたお部屋の中でも〜」で始まるため、新着型・初回提案型でも
+  // モデルがその冒頭をそのまま引き写す（実例によるフレーム汚染）。
+  // シナリオと矛盾するフレームの実例は後段で並び順を落とし、警告ラベルを付けて注入する。
+  const isExampleFrameCompatible = (text: string | null | undefined): boolean => {
+    if (!recommendationScenario || !text) return true;
+    const hasCompare = COMPARE_FRAME_RE.test(text);
+    const hasNewListing = NEW_LISTING_FRAME_RE.test(text);
+    if (recommendationScenario === "compare") return !hasNewListing;
+    if (recommendationScenario === "new_listing") return !hasCompare;
+    return !hasCompare && !hasNewListing; // alternative / followup_single / first
+  };
 
   // 温度感（purchase_signal_level）による訴求シナリオのCTA強度上書き。
   // engagement_stance='wait'（押してはいけない局面）は brain-core M4 と同じゲートで無効化する
@@ -916,7 +1038,12 @@ export async function POST(req: NextRequest) {
         // AIX系最大6件・line系最大2件・全体横断dedupe
         const toUnifiedEx = (r: { customer_message?: string | null; sent_reply?: string | null; is_starred?: boolean | null; aix_action?: string | null; outcome_status?: string | null }) =>
           ({ customer_message: r.customer_message ?? null, sent_reply: r.sent_reply ?? null, is_starred: r.is_starred ?? null, aix_action: r.aix_action ?? null, outcome_status: r.outcome_status ?? null });
-        const tierA = ((aixTemplateExRes?.data ?? []) as AixExampleRow[]).map(toUnifiedEx);
+        // ⭐固定シード: 訴求シナリオと冒頭フレームが一致するものを優先し最大2件に絞る
+        const starPool = ((aixTemplateExRes?.data ?? []) as AixExampleRow[]).map(toUnifiedEx);
+        const tierA = [
+          ...starPool.filter((e) => isExampleFrameCompatible(e.sent_reply)),
+          ...starPool.filter((e) => !isExampleFrameCompatible(e.sent_reply)),
+        ].slice(0, 2);
         aixStarSeedCount = tierA.length;
         const tierB = aixVecRows.map(r => ({ ...r, aix_action: null, outcome_status: r.outcome_status ?? null }));
         const tierD = lineVecRows.map(r => ({ ...r, aix_action: null, outcome_status: null }));
@@ -925,8 +1052,12 @@ export async function POST(req: NextRequest) {
         // Array.sort は stable のため同一 outcome 内では tierA > tierB の優先順が維持される
         const outcomeRank = (s: string | null) =>
           s === "closed_won" ? 0 : s === "applied" ? 1 : s === "viewing" ? 2 : 3;
+        // 訴求シナリオと冒頭フレームが一致する実例を最優先（不一致でも文体参考として残すが後ろに置き警告を付ける）
+        const frameRank = (t: string | null) => (isExampleFrameCompatible(t) ? 0 : 1);
         const sortedTierABC = [...tierA, ...tierB].sort(
-          (a, b) => outcomeRank(a.outcome_status) - outcomeRank(b.outcome_status)
+          (a, b) =>
+            frameRank(a.sent_reply) - frameRank(b.sent_reply) ||
+            outcomeRank(a.outcome_status) - outcomeRank(b.outcome_status)
         );
 
         const seenUnified = new Set<string>();
@@ -949,9 +1080,14 @@ export async function POST(req: NextRequest) {
         unifiedExCount = unified.length;
         if (unified.length > 0) {
           const unifiedText = unified.map((ex, i) =>
-            `--- 実例${i + 1}${ex.is_starred ? " ⭐" : ""}${ex.outcome_status === "closed_won" ? " 🏆成約" : ex.outcome_status === "applied" ? " 📝申込" : ""}${ex.aix_action && ex.aix_action !== actionType ? ` (AIX:${ex.aix_action})` : ""} ---\n` +
+            `--- 実例${i + 1}${ex.is_starred ? " ⭐" : ""}${ex.outcome_status === "closed_won" ? " 🏆成約" : ex.outcome_status === "applied" ? " 📝申込" : ""}${ex.aix_action && ex.aix_action !== actionType ? ` (AIX:${ex.aix_action})` : ""}` +
+            (isExampleFrameCompatible(ex.sent_reply) ? "" : " ⚠️今回の訴求シナリオとは冒頭フレームが異なる実例") +
+            ` ---\n` +
             `[お客様の状況] 「${safeSlice(ex.customer_message ?? "", 200)}」\n` +
-            `[実際に送った続き文] 「${safeSlice(ex.sent_reply ?? "", 600)}」`
+            `[実際に送った続き文] 「${safeSlice(ex.sent_reply ?? "", 600)}」` +
+            (isExampleFrameCompatible(ex.sent_reply)
+              ? ""
+              : `\n[⚠️注意] この実例の冒頭は今回の訴求シナリオでは事実と異なるため絶対に流用しない。文体・テンポ・絵文字の使い方のみ参考にすること。`)
           ).join("\n\n");
           // 強指示: AIX実例に「忠実に再現」を付ける（旧aixExamplesSectionの弱指示「参考に」から強化）
           examplesSection =
@@ -1169,6 +1305,10 @@ export async function POST(req: NextRequest) {
     recommendationScenario
       ? `・訴求シナリオ（禁止制約はこちらを優先・冒頭フレーズは⭐実例の文体から多様に学ぶこと）:\n${RECOMMENDATION_SCENARIO_GUIDES[recommendationScenario]}${pickupType && PICKUP_TYPE_NOTES[pickupType] ? `\n${PICKUP_TYPE_NOTES[pickupType]}` : ""}`
       : "",
+    // 冒頭フレームは事実の宣言。シナリオごとに使ってはいけない表現をリテラルで明示する
+    recommendationScenario
+      ? `・🚫 このシナリオで絶対に使ってはいけない冒頭表現（1文字でも該当したらやり直し）: ${RECOMMENDATION_FORBIDDEN_OPENINGS[recommendationScenario].map((p) => `「${p}」`).join(" / ")}`
+      : "",
     // 「物件ピックアップした」の送付文脈（初回 / 継続 / 新着 / 条件広げ）
     actionType === "property_send"
       ? (() => {
@@ -1183,7 +1323,13 @@ export async function POST(req: NextRequest) {
       ? `・シナリオ判定に使った事実: ${[
           pickupType ? `ピックアップ種別=${pickupType}` : "",
           effectiveCheckPattern ? `直前の物件確認結果=${CHECK_PATTERN_LABELS[effectiveCheckPattern] ?? effectiveCheckPattern}` : "",
-          `今回より前にこの会話で物件を送付した回数=${priorSentPropertyCount}回${priorSentPropertyCount === 0 ? "（＝今回が初めての物件送付。既送付を前提にした比較・絞り込み表現は事実と異なるため絶対禁止）" : ""}`,
+          `今回より前にこの会話で物件を送付した回数=${priorSentPropertyCount}回（まとめ送付${priorBulkSendCount}回 / 1件送付${priorSingleSendCount}回）`,
+          hoursSinceLastSend !== null ? `直近の物件送付から${Math.round(hoursSinceLastSend)}時間経過` : "",
+          priorSentPropertyCount === 0
+            ? "→ 今回が初めての物件送付。既送付を前提にした比較・絞り込み表現は事実と異なるため絶対禁止"
+            : canUseCompareFrame(propertySendFacts)
+            ? "→ 複数物件を送付済みのため「お送りした中でも」の比較表現が事実として成立する"
+            : "→ 送った物件が実質1件のみ（または送付から日数が空いている）ため「お送りした中でも」等の比較表現は事実と異なる。新たな1件として紹介すること",
         ].filter(Boolean).join(" / ")}`
       : "",
     "",
@@ -1275,38 +1421,79 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      signal: AbortSignal.timeout(55_000),
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "prompt-caching-2024-07-31",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-5",
-        max_tokens: 1024,
-        // claude-sonnet-5はthinking省略時adaptiveがデフォルト有効 → max_tokens 1024を
-        // thinkingが消費して橋渡し文が途切れるのを防ぐ（generate-replyと同設定）
-        thinking: { type: "disabled" },
-        system: systemBlocks,
-        messages: [{ role: "user", content: userPrompt }],
-      }),
-    });
+    const callClaude = async (prompt: string): Promise<{ ok: true; text: string } | { ok: false; status: number }> => {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        signal: AbortSignal.timeout(55_000),
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "prompt-caching-2024-07-31",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-5",
+          max_tokens: 1024,
+          // claude-sonnet-5はthinking省略時adaptiveがデフォルト有効 → max_tokens 1024を
+          // thinkingが消費して橋渡し文が途切れるのを防ぐ（generate-replyと同設定）
+          thinking: { type: "disabled" },
+          system: systemBlocks,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      if (!r.ok) {
+        const errText = await r.text().catch(() => "");
+        console.error(`[aix-template-generate] Anthropic error ${r.status}:`, errText.slice(0, 300));
+        return { ok: false, status: r.status };
+      }
+      const d = await r.json() as { content?: Array<{ type: string; text?: string }> };
+      return { ok: true, text: d.content?.find((b) => b.type === "text")?.text?.trim() ?? "" };
+    };
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      console.error(`[aix-template-generate] Anthropic error ${res.status}:`, errText.slice(0, 300));
-      return NextResponse.json({ ok: false, error: `AI生成エラー: ${res.status}` }, { status: 500 });
+    const first = await callClaude(userPrompt);
+    if (!first.ok) {
+      return NextResponse.json({ ok: false, error: `AI生成エラー: ${first.status}` }, { status: 500 });
     }
-
-    const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-    let text = data.content?.find((b) => b.type === "text")?.text?.trim() ?? "";
+    let text = first.text;
     if (!text) {
       return NextResponse.json({ ok: false, error: "empty result" }, { status: 500 });
     }
     text = stripRoomLeadingZeros(text);
+
+    // ── 訴求フレーム違反の決定論ガード（生成後チェック＋1回だけ再生成）──────────
+    // 「1件しか送っていないのに“これまでお送りした中でも”」「新着でないのに“募集に出ました”」は
+    // 顧客からの信頼を最も損なう事実齟齬。プロンプト指示だけに委ねず出力を検査して弾く。
+    // 判定材料は aix_usage_logs の事実のみ（LLM推論に依存しない）。
+    const detectFrameViolation = (t: string): string | null => {
+      if (!recommendationScenario) return null;
+      if (recommendationScenario !== "compare" && COMPARE_FRAME_RE.test(t)) {
+        return "既送付物件の中から選んだ体の比較表現（「お送りした中でも」等）— この会話では複数物件を送った事実がない";
+      }
+      if (recommendationScenario === "compare" && NEW_LISTING_FRAME_RE.test(t)) {
+        return "新たに募集が出たと断定する表現（「新着で」「募集に出ました」等）— 今回は既送付物件からの選定";
+      }
+      return null;
+    };
+    let frameRetried = false;
+    const violation = detectFrameViolation(text);
+    if (violation && recommendationScenario) {
+      frameRetried = true;
+      console.warn(`[aix-template-generate] frame violation scenario=${recommendationScenario}: ${violation} → 再生成`);
+      const retryPrompt =
+        userPrompt +
+        `\n\n━━━━━━━━━━━━━━━━━━━━\n【🚨 再生成指示（前回の出力が訴求シナリオに違反）】\n━━━━━━━━━━━━━━━━━━━━\n` +
+        `前回の生成文は「${violation}」を含んでおり、この会話の事実と異なります。\n` +
+        `訴求シナリオ「${RECOMMENDATION_SCENARIO_LABELS[recommendationScenario]}」の冒頭フレームを厳守し、該当表現を一切使わずに書き直してください。\n` +
+        `禁止表現: ${RECOMMENDATION_FORBIDDEN_OPENINGS[recommendationScenario].map((p) => `「${p}」`).join(" / ")}\n` +
+        `出力は本文のみ。`;
+      const retry = await callClaude(retryPrompt);
+      if (retry.ok && retry.text) {
+        const retryText = stripRoomLeadingZeros(retry.text);
+        // 再生成が違反を解消していれば採用。まだ違反していれば初回結果を維持する
+        if (!detectFrameViolation(retryText)) text = retryText;
+        else console.warn("[aix-template-generate] frame violation 再生成後も未解消 — 初回結果を返却");
+      }
+    }
 
     console.log(
       `[aix-template-generate] action=${actionType || actionCategory || "-"}` +
@@ -1319,7 +1506,8 @@ export async function POST(req: NextRequest) {
       ` knUsedIds=${knowledgeUsedIds.length}` +
       ` scenario=${recommendationScenario ?? "-"} pickup=${pickupType ?? "-"}` +
       ` checkPat=${effectiveCheckPattern ?? "-"}${checkIsStale ? "(stale)" : ""}` +
-      ` sentProps=${sentPropertyLogCount} priorProps=${priorSentPropertyCount}${currentSendAlreadyLogged ? "(self-excluded)" : ""}` +
+      ` sentProps=${sentPropertyLogCount} priorProps=${priorSentPropertyCount}(bulk=${priorBulkSendCount},single=${priorSingleSendCount})${currentSendAlreadyLogged ? "(self-excluded)" : ""}` +
+      ` lastSendH=${hoursSinceLastSend === null ? "-" : Math.round(hoursSinceLastSend)} compareOk=${recommendationScenario ? canUseCompareFrame(propertySendFacts) : "-"} frameRetry=${frameRetried ? "on" : "off"}` +
       ` signal=${brainMeta?.purchase_signal_level ?? "-"} stance=${brainMeta?.engagement_stance ?? "-"} ctaOverride=${signalCtaOverride ? "on" : "off"}`,
     );
 
