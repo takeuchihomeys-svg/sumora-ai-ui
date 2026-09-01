@@ -41,11 +41,20 @@ function isCookieAllowedUrl(url: string): boolean {
 }
 
 async function getGroupId(): Promise<string | null> {
+  // 物件ピックアップ専用グループ優先（pickup_group_id）
+  const { data: pickupRow } = await supabase
+    .from("hanbancyo_settings")
+    .select("value")
+    .eq("key", "pickup_group_id")
+    .maybeSingle();
+  if (pickupRow?.value) return pickupRow.value as string;
+
+  // fallback: 旧グループ
   const { data } = await supabase
     .from("hanbancyo_settings")
     .select("value")
     .eq("key", "group_id")
-    .single();
+    .maybeSingle();
   return data?.value ?? null;
 }
 

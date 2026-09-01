@@ -78,12 +78,36 @@ export async function POST(req: NextRequest) {
 
   for (const event of body.events ?? []) {
     // グループIDを取得・保存
-    if (event.source?.type === "group" && event.source?.groupId) {
-      const { error: upsertErr } = await supabase
+    const sourceType = event.source?.type;
+    const sourceGroupId = event.source?.groupId;
+    const sourceRoomId = (event.source as Record<string, string | undefined>)?.roomId;
+    console.log("[hanbancyo-webhook] source:", JSON.stringify({ type: sourceType, groupId: sourceGroupId, roomId: sourceRoomId, eventType: event.type }));
+
+    if (sourceType === "group" && sourceGroupId) {
+      // 既存のgroup_idと異なる場合はpickup_group_idとして保存（新グループ自動検出）
+      const { data: existingRow } = await supabase
         .from("hanbancyo_settings")
-        .upsert({ key: "group_id", value: event.source.groupId }, { onConflict: "key" });
-      if (upsertErr) {
-        console.error("[hanbancyo-webhook] hanbancyo_settings upsert失敗:", upsertErr.message);
+        .select("value")
+        .eq("key", "group_id")
+        .maybeSingle();
+      const existingGroupId = existingRow?.value as string | null;
+      if (existingGroupId && existingGroupId !== sourceGroupId) {
+        // 既存のgroup_idと異なる新グループ → pickup_group_idとして登録
+        const { error: pickupErr } = await supabase
+          .from("hanbancyo_settings")
+          .upsert({ key: "pickup_group_id", value: sourceGroupId }, { onConflict: "key" });
+        if (pickupErr) {
+          console.error("[hanbancyo-webhook] pickup_group_id upsert失敗:", pickupErr.message);
+        } else {
+          console.log("[hanbancyo-webhook] pickup_group_id を自動登録:", sourceGroupId);
+        }
+      } else {
+        const { error: upsertErr } = await supabase
+          .from("hanbancyo_settings")
+          .upsert({ key: "group_id", value: sourceGroupId }, { onConflict: "key" });
+        if (upsertErr) {
+          console.error("[hanbancyo-webhook] hanbancyo_settings upsert失敗:", upsertErr.message);
+        }
       }
     }
 

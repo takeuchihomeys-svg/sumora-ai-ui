@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
-async function sendGroupMessage(text: string, mentionUserId?: string): Promise<void> {
-  let targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
+async function sendGroupMessage(text: string, mentionUserId?: string, groupKey?: string): Promise<void> {
+  const key = groupKey ?? "group_id";
+  let targetId: string | null = null;
+  if (key === "group_id") {
+    targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
+  }
   if (!targetId) {
     const { data: grpRow } = await supabase
       .from("hanbancyo_settings")
       .select("value")
-      .eq("key", "group_id")
-      .single();
+      .eq("key", key)
+      .maybeSingle();
     targetId = grpRow?.value ?? null;
   }
   if (!targetId) return;
@@ -43,11 +47,11 @@ async function sendGroupMessage(text: string, mentionUserId?: string): Promise<v
 
 // POST: LINEグループへ任意テキストを通知（バッチ自動化ツールから呼ばれる）
 export async function POST(req: NextRequest) {
-  const body = await req.json() as { text?: string; mention_user_id?: string };
-  const { text, mention_user_id } = body;
+  const body = await req.json() as { text?: string; mention_user_id?: string; group_key?: string };
+  const { text, mention_user_id, group_key } = body;
   if (!text) {
     return NextResponse.json({ ok: false, error: "text required" }, { status: 400 });
   }
-  await sendGroupMessage(text, mention_user_id).catch(console.error);
+  await sendGroupMessage(text, mention_user_id, group_key).catch(console.error);
   return NextResponse.json({ ok: true });
 }

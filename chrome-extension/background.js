@@ -1051,7 +1051,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               fetch(SUMORA_BATCH_API + "/api/notify-group", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: "🔍【物件0件】" + _bc.customer_name + "さんの" + _bulkSiteLabel + "検索が0件でした" })
+                body: JSON.stringify({ text: "🔍【物件0件】" + _bc.customer_name + "さんの" + _bulkSiteLabel + "検索が0件でした", group_key: "pickup_group_id" })
               }).catch(function() {});
             }
           }
@@ -2423,7 +2423,7 @@ async function _runBatchSearch(command) {
         fetch(SUMORA_BATCH_API + "/api/notify-group", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: "🔍【物件0件】" + customer.customer_name + "さんの" + _bothSiteLabel + "検索が0件でした" })
+          body: JSON.stringify({ text: "🔍【物件0件】" + customer.customer_name + "さんの" + _bothSiteLabel + "検索が0件でした", group_key: "pickup_group_id" })
         }).catch(function() {});
       }
     }
@@ -3036,7 +3036,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
       fetch(SUMORA_BATCH_API + "/api/notify-group", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした" })
+        body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした", group_key: "pickup_group_id" })
       }).catch(function() {});
     }
     _propCount = 0;
@@ -3049,7 +3049,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     fetch(SUMORA_BATCH_API + "/api/notify-group", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした" })
+      body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした", group_key: "pickup_group_id" })
     }).catch(function() {});
   }
   return _propCount;
