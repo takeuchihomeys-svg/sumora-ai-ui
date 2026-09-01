@@ -3525,17 +3525,17 @@ function openInstructions(siteKey) {
         : await resolveAreaWithAPI(adjAreaClean, "auto", adjC.id);
 
       // ② ブレインAPI結果を地域・駅フィールドに反映（明示分離）
-      // DB/ユーザー確定モードの場合は反対フィールドを汚染しない
+      // ユーザーが一時調整で手動入力した値がある場合はAPIで上書きしない（バグ修正）
       if (apiData) {
         const _apiStNames = apiData.realpro?.station_names || [];
         const _apiWdNames = apiData.itandi?.ward_names || apiData.reins?.ward_names || [];
-        // 地域モード(ward)の場合は駅フィールドを上書きしない
-        if (_apiStNames.length > 0 && currentAreaMode !== "ward") {
+        // 駅フィールド: ユーザーが手動入力していない場合のみAPIで補完
+        if (_apiStNames.length > 0 && currentAreaMode !== "ward" && !_adjStation_rp) {
           document.getElementById("adj-area-station").value = _apiStNames.join("・");
           document.getElementById("adj-area").value = _apiStNames.join("・"); // hidden sync
         }
-        // 駅モード(station)の場合は地域フィールドを上書きしない
-        if (_apiWdNames.length > 0 && currentAreaMode !== "station") {
+        // 地域フィールド: ユーザーが手動入力していない場合のみAPIで補完
+        if (_apiWdNames.length > 0 && currentAreaMode !== "station" && !_adjWard_rp) {
           document.getElementById("adj-area-ward").value = _apiWdNames.join("・");
         }
       }
@@ -3722,7 +3722,8 @@ function openInstructions(siteKey) {
       // isKnownStation で検証: 地域名・町字名がAIにより駅と誤分類されても混入しない（堀江等の防止）
       // ※ currentAreaMode === "station" 条件を削除: route_idsのみ返りstation_namesが空の場合に
       //   APIが駅名を補完していても除外されてしまうBug2-root-2を修正
-      if (apiData?.realpro?.station_names?.length > 0) {
+      // 手動で駅を指定している場合はAPIの駅名を追記しない（指定外の駅が混入するバグ修正）
+      if (apiData?.realpro?.station_names?.length > 0 && !_adjStation_rp) {
         apiData.realpro.station_names.forEach(s => {
           if (realpro_station_names.includes(s)) return;
           if (isKnownStation(s)) {
