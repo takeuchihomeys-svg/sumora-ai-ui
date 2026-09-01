@@ -878,43 +878,51 @@
     return r.width > 0 && r.height > 0;
   }
 
-  // 「次」テキストを持つ clickable な要素を返す（A/BUTTON/onclick/cursor:pointer 全対応）
+  // 「次」テキストを持つ clickable な要素を返す
   function _findNextPageEl() {
     var NEXT_TEXTS = ["次", "次へ", "次のページ", ">", ">>"];
+
+    // フェーズ0: リアプロ専用 td.pager（最も確実）
+    // リアプロのページネーションは <TD class="pager" onclick="pager(...)">次</TD> の構造
+    var pagerTds = document.querySelectorAll("td.pager");
+    for (var pi = 0; pi < pagerTds.length; pi++) {
+      var pt = pagerTds[pi];
+      if (NEXT_TEXTS.indexOf(pt.textContent.trim()) !== -1 && _isElVisible(pt) && !_isDisabledEl(pt)) {
+        console.log("[AXLX bulk-dl] _findNextPageEl: td.pager で次ボタン発見 onclick=" + (pt.getAttribute("onclick") || ""));
+        return pt;
+      }
+    }
+
+    // フェーズ1: テキストウォーカーで A/BUTTON/onclick持ち要素を探す（汎用）
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     var node;
     while ((node = walker.nextNode())) {
       var t = node.textContent.trim();
       if (NEXT_TEXTS.indexOf(t) === -1) continue;
       var el = node.parentElement;
-      // 最大6段まで遡って clickable な要素を探す
       for (var up = 0; up < 6 && el && el !== document.body; up++, el = el.parentElement) {
         if (!_isElVisible(el)) continue;
         if (_isDisabledEl(el)) break;
         var tag = el.tagName;
-        var isClickable = tag === "A" || tag === "BUTTON" ||
-          el.getAttribute("onclick") || el.getAttribute("href") ||
-          window.getComputedStyle(el).cursor === "pointer";
+        var isClickable = tag === "A" || tag === "BUTTON" || !!el.getAttribute("onclick") || !!el.getAttribute("href");
         if (!isClickable) continue;
-        // self-link チェック（A タグで href が現在URLと完全一致する場合のみ弾く）
         if (tag === "A" && el.href && el.href !== "javascript:void(0)" && el.href === location.href) break;
-        console.log("[AXLX bulk-dl] _findNextPageEl: 次ボタン発見 tag=" + tag + " text=" + t + " href=" + (el.href || "") + " onclick=" + !!el.getAttribute("onclick"));
+        console.log("[AXLX bulk-dl] _findNextPageEl: フェーズ1で発見 tag=" + tag);
         return el;
       }
     }
+
     // フェーズ2: CSSクラス・aria-label ベース
-    var candidates = document.querySelectorAll(
-      '[aria-label*="次"], .pagination-next, .page-next, a.next, button.next'
-    );
+    var candidates = document.querySelectorAll('[aria-label*="次"], .pagination-next, .page-next, a.next, button.next');
     for (var i = 0; i < candidates.length; i++) {
       var c = candidates[i];
-      if (_isElVisible(c) && !_isDisabledEl(c) &&
-          !(c.tagName === 'A' && c.href && c.href !== "javascript:void(0)" && c.href === location.href)) {
+      if (_isElVisible(c) && !_isDisabledEl(c)) {
         console.log("[AXLX bulk-dl] _findNextPageEl: フェーズ2で発見 tag=" + c.tagName);
         return c;
       }
     }
-    console.log("[AXLX bulk-dl] _findNextPageEl: 次ボタンが見つかりません（ページネーションなし or 最終ページ）");
+
+    console.log("[AXLX bulk-dl] _findNextPageEl: 次ボタンなし（最終ページ or 未対応構造）");
     return null;
   }
 
