@@ -144,7 +144,10 @@ export function detectPlaceholders(text: string): string[] {
 // promisedReplacement: 見積書・割引が直前スタッフ返信で約束済み／AIXで送付済み（estimatePromised=true）の場合の
 // 代替置換文。通常の replacement（見積書作成宣言）をそのまま使うと約束済みの宣言を後段で再挿入して
 // 二重宣言になるため、短い受付文に切り替える。
-const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement: string; promisedReplacement?: string }[] = [
+// vacancyDoneReplacement: AIXで空室確認を実行＋結果送信済み（aixVacancyDone=true）の場合の代替置換文。
+// 通常の replacement（"確認しご連絡させて頂きます"）をそのまま使うと、既に確認済みの内容について
+// 「これから確認します」と再宣言することになり二重宣言バグそのものになるため受付文へ切り替える。
+const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement: string; promisedReplacement?: string; vacancyDoneReplacement?: string }[] = [
   {
     // 内覧候補日時の具体提示（「8/7（木）14:00〜」等）→ AIX「内覧へ」ボタン専用
     name: "内覧候補日時",
@@ -209,8 +212,23 @@ const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement:
     test: (s) =>
       /(?:空室でした|空室と確認|空室を確認|空いておりました|募集中と確認|埋まって(?:しまいました|しまっており|おりました|しまったよう)|退去日は\s*[0-9０-９]|から(?:ご)?入居可能です)/.test(s),
     replacement: "確認しご連絡させて頂きます😊！！",
+    vacancyDoneReplacement: "かしこまりました😊！！",
   },
 ];
+
+// AIX【物件確認した】で空室確認を実行＋結果送信済みなのに、返信が「これから確認します」と
+// 未来形で再宣言している文を検出する（プロンプト指示が無視された場合の最終防衛線）。
+// 過去形・完了形（「確認しましたところ」「確認済み」）は正当な結果報告なので除外する。
+const VACANCY_REDECLARE_RE =
+  /(?:空室|空き)(?:状況|状態)?|募集(?:状況|状態)?|お部屋の(?:状況|空き)|管理会社/;
+const VACANCY_REDECLARE_FUTURE_RE =
+  /(?:確認|問い合わせ|問合せ)(?:を)?(?:し(?:て|、)?)?(?:改めて)?(?:させて(?:頂|いただ)き|いたします|致します|します|でき次第|次第)|(?:確認|問い合わせ)し(?:て)?ご連絡/;
+const VACANCY_REDECLARE_PAST_RE =
+  /確認(?:し(?:まし)?た|済み|できまし|が取れ|したところ|いたしましたところ)|確認結果/;
+
+// AIX【物件ピックアップ】で物件送付済みなのに「これからピックアップします」と再宣言する文。
+const PICKUP_REDECLARE_RE =
+  /(?:ピックアップ|お探し|探させて|お部屋を?(?:お)?探し)[^。！!？?\n]{0,20}(?:させて(?:頂|いただ)き|いたします|致します|します|お送り|お届け)/;
 
 // 文中の金額（円単位）を正規化して抽出（「176,180円」「¥176,180 円」「１７６，１８０円」→ "176180"）
 // estimatePromised置換の「履歴内金額の引用免除」判定に使用する
@@ -222,7 +240,16 @@ function extractYenAmounts(t: string): string[] {
 
 export function enforceAixGates(
   text: string,
-  opts?: { estimatePromised?: boolean; customerMessage?: string; lastStaffMsg?: string },
+  opts?: {
+    estimatePromised?: boolean;
+    customerMessage?: string;
+    lastStaffMsg?: string;
+    // AIX【物件確認した】で空室確認を実行＋結果送信済み（generate-reply の aixDone.vacancyCheck / mgmtCheck）。
+    // true の場合、「これから確認します」の再宣言文を削除し、AIXゲートの置換文も受付文に切り替える。
+    aixVacancyDone?: boolean;
+    // AIX【物件ピックアップした】で物件送付済み（generate-reply の aixDone.propertySend）。
+    aixPickupDone?: boolean;
+  },
 ): { cleaned: string; violations: string[] } {
   const violations: string[] = [];
   const usedReplacement = new Set<string>();
@@ -257,6 +284,29 @@ export function enforceAixGates(
         }
         continue;
       }
+      // AIX実行済みアクションの再宣言（空室確認・物件ピックアップ）→ 該当文を削除
+      // プロンプトの【🚫 AIX実行済みアクションの再宣言禁止】が無視された場合の最終防衛線。
+      if (
+        opts?.aixVacancyDone &&
+        VACANCY_REDECLARE_RE.test(s) &&
+        VACANCY_REDECLARE_FUTURE_RE.test(s) &&
+        !VACANCY_REDECLARE_PAST_RE.test(s)
+      ) {
+        violations.push(`空室確認の再宣言(実行済): ${s.trim().slice(0, 40)}`);
+        if (!usedReplacement.has("空室確認の再宣言") && !text.includes("かしこまりました")) {
+          usedReplacement.add("空室確認の再宣言");
+          outSentences.push("かしこまりました😊！！");
+        }
+        continue;
+      }
+      if (opts?.aixPickupDone && PICKUP_REDECLARE_RE.test(s)) {
+        violations.push(`ピックアップ宣言の再宣言(送付済): ${s.trim().slice(0, 40)}`);
+        if (!usedReplacement.has("ピックアップ再宣言") && !text.includes("かしこまりました")) {
+          usedReplacement.add("ピックアップ再宣言");
+          outSentences.push("かしこまりました😊！！");
+        }
+        continue;
+      }
       const rule = AIX_GATE_RULES.find((r) => r.test(s));
       if (!rule) {
         outSentences.push(s);
@@ -278,8 +328,13 @@ export function enforceAixGates(
       if (!usedReplacement.has(rule.name)) {
         usedReplacement.add(rule.name);
         // 約束済みの場合は宣言テンプレを再挿入せず短い受付文に切り替える（二重宣言の再挿入防止）
+        // 置換文の優先順: ①空室確認済み（再宣言になる置換文を回避）② 見積約束済み ③ 通常
         outSentences.push(
-          opts?.estimatePromised && rule.promisedReplacement ? rule.promisedReplacement : rule.replacement,
+          opts?.aixVacancyDone && rule.vacancyDoneReplacement
+            ? rule.vacancyDoneReplacement
+            : opts?.estimatePromised && rule.promisedReplacement
+              ? rule.promisedReplacement
+              : rule.replacement,
         );
       }
     }
@@ -329,6 +384,10 @@ export function validateAndClean(
     // 履歴内金額の引用免除用: 直前のスタッフメッセージ。返信中の金額がここに実在する場合、
     // estimatePromised の強制置換（promisedReplacement）をスキップする（正当な金額引用の保護）
     lastStaffMsg?: string;
+    // AIXで実行＋送信済みのアクション（空室確認 / 物件ピックアップ）。
+    // true の場合、「これから確認します/ピックアップします」の再宣言文を削除する
+    aixVacancyDone?: boolean;
+    aixPickupDone?: boolean;
   },
 ): { cleaned: string; issues: string[] } {
   const issues: string[] = []
@@ -366,6 +425,8 @@ export function validateAndClean(
       estimatePromised: opts.estimatePromised,
       customerMessage: opts.customerMessage,
       lastStaffMsg: opts.lastStaffMsg,
+      aixVacancyDone: opts.aixVacancyDone,
+      aixPickupDone: opts.aixPickupDone,
     });
     if (violations.length > 0) {
       issues.push(...violations.map(v => "AIXゲート違反(置換済): " + v));

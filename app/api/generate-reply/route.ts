@@ -576,6 +576,23 @@ const CONDITION_LABELS: Record<string, string> = {
   other_requests: "⑧その他こだわり",
 };
 
+// ── AIX実行済みアクションの再宣言防止（2026-09-01）─────────────────────────────
+// スタッフがAIXボタン（空室確認・物件ピックアップ・内覧日調整・待ち合わせ等）を押して
+// 実行＋LINE送信まで完了しているのに、generate-reply が「これから確認します」「ピックアップします」と
+// 未来形で再宣言してしまうバグを防ぐ。
+// 実例(2026-08-31): 日生ロイヤルマンション十三の空室確認をAIX【物件確認した】で実施し結果送信済みなのに、
+// 直後の返信が「日生ロイヤルマンション十三につきましては、改めて空室状況確認しご連絡させて頂きます！！」。
+// 判定ソースは aix_usage_logs の aix_type / check_pattern の2列のみ。
+// （property_names / prop_statuses / estimate_sent は本番でほぼ未投入のため依存しない）
+type AixDoneFlags = {
+  vacancyCheck: boolean;   // property_check_result: 空室・募集状況の確認済み
+  mgmtCheck: boolean;      // check_pattern が mgmt_*: 管理会社への確認済み
+  propertySend: boolean;   // property_send / property_recommendation: 物件ピックアップ送付済み
+  viewingInvite: boolean;  // viewing_invite: 内覧日程調整の案内済み
+  meetingPlace: boolean;   // meeting_place: 待ち合わせ場所の案内済み
+  labels: string[];        // プロンプト表示用（例「空室確認（2時間前・結果:募集終了）」）
+};
+
 type PromptOverrides = {
   generationSystem?: string;
   quickPatterns?: string;
@@ -624,7 +641,9 @@ function buildGenerationMessages(
   // importance=10 の principle（staticBlock に注入してプロンプトキャッシュ対象にする）
   topPrinciples: KnowledgeRow[] = [],
   // 直近AIXボタン履歴テキスト（最新→旧順・RAG文脈強化）
-  lastAixHistoryText: string | null = null
+  lastAixHistoryText: string | null = null,
+  // AIXで実行＋送信済みのアクション種別（再宣言禁止ブロックの生成に使用）
+  aixDone: AixDoneFlags | null = null
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -888,6 +907,34 @@ function buildGenerationMessages(
 → 返信は短い受付文のみ（例:「かしこまりました😊！！」「確認しご連絡させて頂きます😊！！」）。見積・費用の話を新たに展開しない
 ※ただし例外: お客様が【新しい物件】（URL・物件画像・物件名）を送って初期費用・費用を尋ねた場合はこのブロックを適用しない。新規見積として「最大限割引しました初期費用の御見積書を作成しお送りさせて頂きます！！」の作成宣言を必ず行うこと`
     : "";
+
+  // ── AIX実行済みアクションの再宣言禁止（汎用版・pickupPromiseAckNote / estimatePromiseAckNote の一般化）──
+  // 竹内指示(2026-08-31):「AIXの確認したを押したら、もう確認してるって事やから、ここの部分出ないようにする。
+  // 考え方として、別のパターンでも」= 空室確認に限らず、AIXで実行＋送信済みの全アクションに横展開する。
+  // 「新しい物件・新規依頼」の解除は呼び出し側（route handler）の aixDone 計算で行うため、
+  // ここに到達している時点で「既に実行済み＝再宣言は二重宣言」が確定している。
+  const aixDoneAckNote = (() => {
+    if (!aixDone) return "";
+    const bans: string[] = [];
+    if (aixDone.vacancyCheck)
+      bans.push("「空室状況を確認します」「改めて確認します」「募集状況を確認しご連絡させて頂きます」等、空室・募集状況の確認を【これから行う】という宣言を書かない（確認済み・結果送信済み）");
+    if (aixDone.mgmtCheck)
+      bans.push("「管理会社に確認します」「管理会社に問い合わせます」等、管理会社への確認を【これから行う】という宣言を書かない（確認済み・結果送信済み）");
+    if (aixDone.propertySend)
+      bans.push("「ピックアップしてお送りします」「お部屋をお探しします」「物件をお送りさせて頂きます」等、物件の検索・送付を【これから行う】という宣言を書かない（送付済み）");
+    if (aixDone.viewingInvite)
+      bans.push("「内覧のご案内をお送りします」「内覧日程を調整します」等、内覧調整を【これから行う】という宣言を書かない（案内済み）");
+    if (aixDone.meetingPlace)
+      bans.push("「待ち合わせ場所をお送りします」等、待ち合わせ案内を【これから行う】という宣言を書かない（案内済み）");
+    if (bans.length === 0) return "";
+    return `\n【🚫 AIX実行済みアクションの再宣言禁止（最優先・next_steps/フェーズ別パターン/実例より上位）】
+スタッフは既に以下のAIXアクションを実行し、その結果をLINEでお客様に送信済み。
+【実行済み】${aixDone.labels.join(" / ")}
+→ 実行済みのアクションを「これから行います」と未来形で宣言することは絶対禁止（既にやったことをもう一度やると言う二重宣言になり、お客様に「話を聞いていない」と受け取られる）
+${bans.map((b) => `→ ${b}`).join("\n")}
+→ 代わりに: 既に送信済みの結果を踏まえて、今回のお客様の反応・懸念に直接答える。添えるべき次の一手が無ければ短い受付文（例:「かしこまりました😊！！」）で締める
+※例外: お客様が【新しい物件】（URL・物件画像・まだ確認していない物件名）を新たに挙げた場合、その物件についての確認宣言は正当。上記禁止は既に実行済みの物件・依頼にのみ適用する`;
+  })();
 
   const lastAixLine = lastAixHistoryText
     ? `\n直近AIXアクション履歴（新→旧）: ${lastAixHistoryText} — 最新のアクション直後のお客様メッセージとして、この流れを踏まえて返信を生成すること。`
@@ -1198,7 +1245,7 @@ function buildGenerationMessages(
   const viewingNoteBlock = viewingNote ? `\n\n【内覧情報】${viewingNote}` : "";
 
   const dynamicBlock = `${propertyStatusNote}
-${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}
+${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
@@ -2688,15 +2735,28 @@ export async function POST(req: NextRequest) {
     // のいずれかなら estimatePromised=true とし、estimatePromiseAckNote 注入＋enforceAixGates の
     // 置換文切替で「御見積書を作成しお送りします」宣言の再生成を止める。判定不能時は従来動作を維持。
     let estimateAlreadySent = false;
+    // AIX実行済みアクション再宣言防止(2026-09-01)用の直近ログ。見積判定クエリと並列実行するため
+    // DB往復の実時間は従来と同じ（見積側は .or フィルタのDB側評価を維持＝既存セマンティクスを一切変えない）。
+    type RecentAixRow = { aix_type: string | null; check_pattern: string | null; created_at: string };
+    let recentAixRows: RecentAixRow[] = [];
     if (conversationId && !isTemplateOptimize) {
       try {
-        const estLogsRes = await supabase
-          .from("aix_usage_logs")
-          .select("id")
-          .eq("conversation_id", conversationId)
-          .or("aix_type.eq.estimate_sheet,estimate_sent.is.true")
-          .limit(1);
+        const [estLogsRes, recentAixRes] = await Promise.all([
+          supabase
+            .from("aix_usage_logs")
+            .select("id")
+            .eq("conversation_id", conversationId)
+            .or("aix_type.eq.estimate_sheet,estimate_sent.is.true")
+            .limit(1),
+          supabase
+            .from("aix_usage_logs")
+            .select("aix_type, check_pattern, created_at")
+            .eq("conversation_id", conversationId)
+            .order("created_at", { ascending: false })
+            .limit(12),
+        ]);
         estimateAlreadySent = (estLogsRes.data?.length ?? 0) > 0;
+        recentAixRows = (recentAixRes.data ?? []) as RecentAixRow[];
       } catch { /* 判定不能時は従来動作（宣言許可）を維持する */ }
     }
     // 顧客の現在のメッセージが新規見積依頼なら「送付済み」フラグを解除する
@@ -2725,6 +2785,85 @@ export async function POST(req: NextRequest) {
       /(最大限割引|スモ割|イエヤス割|御?見積書?)/.test(lastStaffMsgForSearch) &&
       /(作成|お送り|送らせて|送付|割引|お値引)/.test(lastStaffMsgForSearch);
     const estimatePromised = !isTemplateOptimize && (estimateAlreadySent || staffPromisedEstimate);
+
+    // ── AIX実行済みアクションの再宣言防止フラグ（2026-09-01）──────────────────────
+    // 「AIXで実行＋LINE送信まで完了したアクションを、AIが未来形で再宣言する」バグを止めるための判定。
+    // 対象は直近 AIX_DONE_WINDOW_MS 以内に押されたAIXのみ。それ以前は募集状況・在庫が変わり得るため
+    // 再確認宣言は正当な業務であり、恒久ブロックすると「確認します」が永久に言えなくなる（過剰抑制）。
+    const AIX_DONE_WINDOW_MS = 72 * 60 * 60 * 1000; // 72時間（週末を挟む商談の1ターンをカバー）
+    const aixDone: AixDoneFlags | null = (() => {
+      if (isTemplateOptimize || recentAixRows.length === 0) return null;
+      const now = Date.now();
+      const fresh = recentAixRows.filter((l) => {
+        const t = Date.parse(l.created_at ?? "");
+        return Number.isFinite(t) && now - t <= AIX_DONE_WINDOW_MS;
+      });
+      if (fresh.length === 0) return null;
+
+      // ── 解除条件（新規依頼は「未実行」として扱い、正当な宣言を潰さない）──────────
+      // ① 新しい物件の提示（URL・画像）→ その物件は未確認なので空室確認宣言は正当
+      const hasNewPropertyRef = /https?:\/\/|suumo|homes\.co|athome|chintai|goodrooms/i.test(message) || !!screenshotBase64;
+      // ② 明示的な再確認依頼（「まだ空いてますか」「確認してもらえますか」）→ 再確認は正当
+      const asksRecheck = /(まだ|再度|改めて)[^\n]{0,8}(空い|募集|ある|残って)|空い(て|ており)ます(か|でしょうか)|(確認|問い合わせ)(して|し)[^\n]{0,6}(ください|下さい|もらえ|頂け|いただけ|ほしい|欲しい)/.test(message);
+      // ③ 新規ピックアップ依頼・条件変更 → 新条件での物件送付宣言は正当
+      const asksNewPickup =
+        AIX_CONDITION_CHANGE_RE.test(message) ||
+        /(他(に|の)|別の|違う|もっと|追加で|再度)[^\n]{0,10}(物件|お部屋|部屋|ピックアップ|探し)/.test(message) ||
+        /(探して|ピックアップして)[^\n]{0,6}(ください|下さい|もらえ|頂け|いただけ|ほしい|欲しい)/.test(message);
+      // ④ 内覧日程の再調整依頼 → 内覧調整宣言は正当
+      const asksNewViewing = /(別の|他の|違う)[^\n]{0,6}(日|日程|候補|時間)|都合が(悪|つかな)/.test(message);
+
+      const VACANCY_RELEASE = hasNewPropertyRef || asksRecheck;
+      const vacancyCheck = !VACANCY_RELEASE && fresh.some((l) => l.aix_type === "property_check_result");
+      const mgmtCheck = !VACANCY_RELEASE && fresh.some((l) => (l.check_pattern ?? "").startsWith("mgmt_"));
+      const propertySend =
+        !asksNewPickup && fresh.some((l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation");
+      const viewingInvite = !asksNewViewing && fresh.some((l) => l.aix_type === "viewing_invite");
+      const meetingPlace = fresh.some((l) => l.aix_type === "meeting_place");
+
+      if (!vacancyCheck && !mgmtCheck && !propertySend && !viewingInvite && !meetingPlace) return null;
+
+      const AIX_DONE_LABEL: Record<string, string> = {
+        property_check_result: "空室・募集状況の確認",
+        property_send: "物件ピックアップ送付",
+        property_recommendation: "物件おすすめ送付",
+        viewing_invite: "内覧日程の案内",
+        meeting_place: "待ち合わせ場所の案内",
+      };
+      const CHECK_PATTERN_LABEL: Record<string, string> = {
+        available: "空室あり",
+        unavailable: "募集終了",
+        alternative: "代替物件を提案",
+        mgmt_availability: "管理会社に空き確認",
+        mgmt_move_in: "管理会社に入居時期確認",
+        mgmt_initial_cost: "管理会社に初期費用確認",
+        mgmt_equipment: "管理会社に設備確認",
+        mgmt_parking: "管理会社に駐車場確認",
+        mgmt_guarantor: "管理会社に保証人確認",
+      };
+      // 表示は実際に禁止対象になった種別のみ（禁止していないアクションを並べると
+      // 「もう全部やった」という誤読を生み、必要な次の一手まで抑制されるため）
+      const shownTypes = new Set<string>();
+      if (vacancyCheck || mgmtCheck) shownTypes.add("property_check_result");
+      if (propertySend) { shownTypes.add("property_send"); shownTypes.add("property_recommendation"); }
+      if (viewingInvite) shownTypes.add("viewing_invite");
+      if (meetingPlace) shownTypes.add("meeting_place");
+      const labels = fresh
+        .filter((l) => l.aix_type && shownTypes.has(l.aix_type))
+        .slice(0, 5)
+        .map((l) => {
+          const base = AIX_DONE_LABEL[l.aix_type ?? ""] ?? l.aix_type ?? "?";
+          const hours = Math.max(0, Math.round((now - Date.parse(l.created_at)) / 3600000));
+          const when = hours < 1 ? "1時間以内" : `約${hours}時間前`;
+          const result = l.check_pattern ? `・結果:${CHECK_PATTERN_LABEL[l.check_pattern] ?? l.check_pattern}` : "";
+          return `${base}（${when}${result}）`;
+        });
+
+      return { vacancyCheck, mgmtCheck, propertySend, viewingInvite, meetingPlace, labels };
+    })();
+    if (aixDone) {
+      console.log("[generate-reply] AIX実行済み再宣言ブロック適用:", conversationId, JSON.stringify(aixDone));
+    }
 
     if (!process.env.OPENAI_API_KEY) {
       console.warn("[generate-reply] OPENAI_API_KEY not set — pgvector検索無効・フォールバック使用");
@@ -3307,7 +3446,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote, directionNote,
-      estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText
+      estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -3491,14 +3630,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const rawOutput = bodyPart ? fixedGreeting + bodyPart : (trimmedText || fixedGreeting.trim());
                 // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
                 // customerName/lineDisplayName: 本文に混入したLINE表示名を確定的に実名へ置換／除去
-                const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch });
+                const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch, aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend });
                 if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
                 // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
                 return { body: cleaned, stopReason };
               }
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
               // aixGates: 通常返信ドラフトのみ機械検証。テンプレート最適化はAIX由来の日時・金額が正当なため対象外
-              const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch });
+              const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch, aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend });
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               let outText = cleaned;
               // テンプレート最適化モードの後処理: 号室先頭ゼロ除去 + noEmoji時の絵文字除去（旧adaptルート互換）
