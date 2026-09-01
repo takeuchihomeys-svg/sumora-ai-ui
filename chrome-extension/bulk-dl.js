@@ -974,7 +974,7 @@
   // mergePdfs を再利用せず chrome.runtime.sendMessage を直接呼ぶ
   // （コールバック内で onDone を呼ぶため）。
   function autoSendOnePage(state, onDone) {
-    var BATCH_SIZE = 20;
+    var BATCH_SIZE = 10; // 20→10: merge-pdfs の処理時間削減（PDF10件×並列取得+結合+Blob+AI+LINE+DB）
     var countEl = document.getElementById("axlx-count");
     if (countEl) countEl.textContent = "全ページ送信中 P" + state.currentPage + "...";
 

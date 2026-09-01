@@ -328,51 +328,56 @@ export async function POST(req: NextRequest) {
               ? rankedSummaries
               : property_summaries ?? [];
 
-          for (const summary of summariesToRecord) {
-            try {
-              // 先頭行「【N】物件名」「【N🌟】物件名」「【N🌟★】物件名」から物件名を抽出
-              const firstLine = (summary.split("\n")[0] ?? "")
-                .replace(/^【\d+🌟?★?】\s*/, "")
-                .trim();
-              if (!firstLine) continue;
+          // 物件名・号室を全件抽出
+          type PropInfo = { propertyName: string; roomNo: string };
+          const propInfoList: PropInfo[] = summariesToRecord.flatMap((summary) => {
+            const firstLine = (summary.split("\n")[0] ?? "")
+              .replace(/^【\d+🌟?★?】\s*/, "")
+              .trim();
+            if (!firstLine) return [];
+            const roomMatch = firstLine.match(/[\s　]+(\d{1,4})(?:号室?)?$/);
+            const roomNo = roomMatch ? roomMatch[1] : "";
+            const propertyName = roomMatch
+              ? firstLine.slice(0, (roomMatch.index ?? 0)).trim()
+              : firstLine;
+            if (!propertyName) return [];
+            return [{ propertyName, roomNo }];
+          });
 
-              // 物件名末尾の号室表記を分離（例: "○○マンション 203号室" / "○○ハイツ 101"）
-              const roomMatch = firstLine.match(/[\s　]+(\d{1,4})(?:号室?)?$/);
-              const roomNo = roomMatch ? roomMatch[1] : "";
-              const propertyName = roomMatch
-                ? firstLine.slice(0, roomMatch.index).trim()
-                : firstLine;
-              if (!propertyName) continue;
+          if (propInfoList.length > 0) {
+            // 1回の SELECT で全物件の重複チェック（N+1 → 1クエリに削減）
+            const propertyNames = propInfoList.map((p) => p.propertyName);
+            let dupQuery = supabase
+              .from("sent_properties")
+              .select("property_name, room_no")
+              .in("property_name", propertyNames);
+            if (propertyCustomerId) {
+              dupQuery = dupQuery.eq("property_customer_id", propertyCustomerId);
+            } else if (conversation_id) {
+              dupQuery = dupQuery.eq("conversation_id", conversation_id);
+            }
+            const { data: existingRows } = await dupQuery;
+            const existingSet = new Set(
+              (existingRows ?? []).map((r) => `${r.property_name}__${r.room_no}`)
+            );
 
-              // ON CONFLICT DO NOTHING 相当: 同一顧客（または同一会話）への同一物件は挿入しない
-              let dupQuery = supabase
-                .from("sent_properties")
-                .select("id")
-                .eq("property_name", propertyName)
-                .eq("room_no", roomNo)
-                .limit(1);
-              if (propertyCustomerId) {
-                dupQuery = dupQuery.eq("property_customer_id", propertyCustomerId);
-              } else if (conversation_id) {
-                dupQuery = dupQuery.eq("conversation_id", conversation_id);
-              }
-              const { data: existing } = await dupQuery;
-              if (existing && existing.length > 0) continue;
-
+            // 未登録の物件を一括 INSERT（N回 → 1クエリに削減）
+            const toInsert = propInfoList
+              .filter((p) => !existingSet.has(`${p.propertyName}__${p.roomNo}`))
+              .map((p) => ({
+                property_customer_id: propertyCustomerId,
+                conversation_id: conversation_id ?? null,
+                property_name: p.propertyName,
+                room_no: p.roomNo,
+                source: "line_group",
+              }));
+            if (toInsert.length > 0) {
               const { error: insertError } = await supabase
                 .from("sent_properties")
-                .insert({
-                  property_customer_id: propertyCustomerId,
-                  conversation_id: conversation_id ?? null,
-                  property_name: propertyName,
-                  room_no: roomNo,
-                  source: "line_group",
-                });
+                .insert(toInsert);
               if (insertError) {
-                console.error("[merge-pdfs] sent_properties insert失敗（続行）:", insertError.message);
+                console.error("[merge-pdfs] sent_properties 一括insert失敗（続行）:", insertError.message);
               }
-            } catch (recordErr) {
-              console.error("[merge-pdfs] sent_properties 記録失敗（続行）:", recordErr);
             }
           }
         } catch (histErr) {
