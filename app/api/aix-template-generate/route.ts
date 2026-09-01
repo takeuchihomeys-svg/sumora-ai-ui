@@ -22,6 +22,8 @@ import {
   resolvePhraseCategories,
 } from "@/app/lib/prompt-cache";
 import { normalizeStatus } from "@/app/lib/status-normalize";
+// 顧客名の妥当性判定（generate-reply と同一ソース — LINE表示名を実名として使わないゲート）
+import { stripNonNameChars, isPlausiblePersonName } from "@/app/lib/validate-reply";
 // AIX-META（suggested_aix_meta）の型は brain-core を単一ソースとして参照（type-only importのためランタイム依存なし）
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
 
@@ -97,8 +99,9 @@ AIXボタンで送付した（または送付予定の）構造化メッセー�
 ━━━━━━━━━━━━━━━━━━━━
 ・感嘆符は「！！」（全角2つ）のみ使用。「!」「！」1つは絶対禁止
 ・使える絵文字: 😊 😌 🙇‍♀️ 🌟 ✨（1〜2個まで。絵文字禁止指示がある場合は一切使わない）
-・お客様名は「〇〇さん」と呼ぶ。LINEでは「様」は絶対に使わない
-・冒頭挨拶: 通常は「〇〇さんお世話になっております！！」。本日すでにスタッフが送信済みの場合は「お待たせ致しました！！」
+・お客様の呼び方は「（実名）さん」。LINEでは「様」は絶対に使わない
+　🚨 このプロンプト内の「〇〇」「○○」は説明用の伏せ字であり、名前・数値そのものではない。本文にはこれらの記号を絶対に書かない。呼びかけには【お客様情報】の「お客様名」に書かれた実名だけを使う。実名が「不明」と書かれている場合は呼びかけごと省略し、名前を出さずに書き出す
+・冒頭挨拶: 通常は「（実名）さんお世話になっております！！」。本日すでにスタッフが送信済みの場合は「お待たせ致しました！！」
 ・長すぎない。3〜7文程度でテンポよく
 ・「させて頂きます」「頂きます」を自然に多用する（スモラの文体の核心）
 ・締めは「お手隙の際にご査収ください😌！！」等で圧を下げる（絵文字禁止時は絵文字なしで）
@@ -120,6 +123,29 @@ AIXボタンで送付した（または送付予定の）構造化メッセー�
 × 謝罪の多用（「申し訳ございません」の連発）
 × 敷金を初期費用削減として訴求（敷金は返還される預かり金）
 × 号室の先頭ゼロ（0906号室 → 906号室）
+× 「〇〇さん」「○○さん」「[名前]さん」等の伏せ字・プレースホルダーをそのまま本文に書く（実名に置換するか、名前不明なら呼びかけごと省略する）
+
+━━━━━━━━━━━━━━━━━━━━
+【文章構造の原則 — LINEで読める形にする】
+━━━━━━━━━━━━━━━━━━━━
+・1つの文に「設備」「立地」「費用」「おすすめ理由」を全部詰め込まない。訴求は必ず段落に分けて書く
+・以下の段落構成で組み立てる（各段落は空行で区切る。該当する材料がない段落は丸ごと省略する）
+　1段落目: 冒頭の呼びかけ＋挨拶／今回何をお送りしたかの宣言（1〜2文）
+　2段落目: 物件の設備・間取り・広さ等の訴求（お客様の希望条件に合う点を優先。1〜2文）
+　3段落目: 立地・アクセスの訴求（駅徒歩・エリア。材料があれば。1文）
+　4段落目: 費用面の訴求（礼金・フリーレント・初期費用。材料があれば。1文）
+　5段落目: CTA（内覧誘導または申込誘導）＋柔らかい締め（1〜2文）
+・1段落は原則2文まで。3文以上になったら段落を割る
+・読点で延々とつなげた長文（「〜で〜で〜と立地も良く〜」）は禁止。文を切って段落に分ける
+
+━━━━━━━━━━━━━━━━━━━━
+【訴求ポイントの選び方（何を書くかの優先順位）】
+━━━━━━━━━━━━━━━━━━━━
+・書ける材料が複数あるときは「お客様の希望条件・NG条件・潜在動機に直結するもの」から順に選ぶ。会話に出ていない軸を主役にしない
+・優先順位: ①お客様が明示的に挙げた条件（設備・間取り・エリア・家賃上限）②潜在的な不安を解消する事実（費用・審査・入居時期）③その他の付加価値（立地・築年数等）
+・費用の制約（家賃上限・初期費用を抑えたい・貯金が少ない等）が会話や希望条件に出ている場合、礼金0円・フリーレント・初期費用の割引など費用面のメリットが材料にあれば必ず1つ言及する（敷金は預かり金なので費用削減として訴求しない）
+・立地（駅徒歩）だけを訴求して終わらせない。設備・費用の材料があるのに使わないのは訴求漏れ
+・逆に材料がない項目を埋めるために事実を創作することは絶対禁止（ハルシネーション禁止が最上位）
 
 ━━━━━━━━━━━━━━━━━━━━
 【根拠→結論の整合性（重要ルール）】
@@ -157,7 +183,7 @@ const ACTION_GUIDES: Record<string, string> = {
   property_send:
     "物件ピックアップ送付の橋渡し文。名前呼びかけ→お探しした物件をお送りする旨→お客様の希望条件との合致点に軽く触れる→「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます」等のCTA→ご査収の締め。物件の具体的スペックはAIX/会話に記載がある範囲のみ。上記の希望条件（エリア・間取り・家賃・設備等）と物件情報の合致点を最低2つ本文で具体的に言及すること。エリア・間取りが希望と異なる物件の場合は提案する理由（広さ重視のため等・会話履歴に根拠がある場合のみ）を1文添えること。",
   property_recommendation:
-    "1件を特にオススメする橋渡し文。「〇〇さんにかなりオススメ出来るお部屋」の特別感を演出し、希望条件とのパーソナライズに触れる。冒頭の入り方・比較表現の可否・CTA強度は後続の【訴求シナリオ】指示に必ず従う（比較選択型/代替新規提案型/初回提案型で全く異なる）。デメリットが会話上明らかな場合は先に開示して即メリットで転換。スペック・金額は会話/AIXに記載がある範囲のみ。上記の希望条件（エリア・間取り・家賃・設備等）と物件情報の合致点を最低2つ本文で具体的に言及すること。エリア・間取りが希望と異なる物件の場合は提案する理由（広さ重視のため等・会話履歴に根拠がある場合のみ）を1文添えること。",
+    "1件を特にオススメする橋渡し文。「（お客様の実名）さんにかなりオススメ出来るお部屋」のように実名で呼びかけて特別感を演出し（伏せ字のまま書かない）、希望条件とのパーソナライズに触れる。冒頭の入り方・比較表現の可否・CTA強度は後続の【訴求シナリオ】指示に必ず従う（比較選択型/代替新規提案型/初回提案型で全く異なる）。デメリットが会話上明らかな場合は先に開示して即メリットで転換。スペック・金額は会話/AIXに記載がある範囲のみ。上記の希望条件（エリア・間取り・家賃・設備等）と物件情報の合致点を最低2つ本文で具体的に言及すること。エリア・間取りが希望と異なる物件の場合は提案する理由（広さ重視のため等・会話履歴に根拠がある場合のみ）を1文添えること。",
   property_check_result:
     "管理会社等への確認結果を報告する際の橋渡し文。確認結果の中身（空室・金額・日付）はAIXの構造化メッセージが正なので断定して書かない。「確認結果をご報告いたします」の位置づけと次のアクション誘導のみを書く。",
   estimate_sheet:
@@ -296,7 +322,7 @@ const COMPARE_FRAME_FORBIDDEN = [
   "〜の中から選ばせて頂いた",
 ];
 const NEW_LISTING_FRAME_FORBIDDEN = [
-  "新着で1件〇〇さんにオススメ出来るお部屋が募集に出ました",
+  "新着で1件オススメ出来るお部屋が募集に出ました",
   "新着で〜が募集に出ました",
   "新着物件",
 ];
@@ -317,7 +343,7 @@ const RECOMMENDATION_SCENARIO_GUIDES: Record<RecommendationScenario, string> = {
 ・🚫「新着で〜募集に出ました」等、新たに募集が出たことを宣言する表現は使わない（既送付物件からの選定であり新着の宣言は事実と異なる）
 ・ただし会話履歴に「複数物件を送った形跡」が見当たらない場合は比較表現は使わないこと`,
   new_listing: `【シナリオ: 新着型】新たに募集に出た物件を1件だけ単独でご案内する文脈。過去に何件お送りしていても、この1件は「新しく募集に出た1件」として紹介する。
-・冒頭は「新着で1件〇〇さんにオススメ出来るお部屋が募集に出ました！！」のように“新たに募集が出た1件である”ことを宣言する（言い回しは⭐実例の文体から学んで多様に書くこと）
+・冒頭は「新着で1件（お客様の実名）さんにオススメ出来るお部屋が募集に出ました！！」のように“新たに募集が出た1件である”ことを宣言する（名前は実名に置き換える。言い回しは⭐実例の文体から学んで多様に書くこと）
 ・🚫「これまでお送りさせて頂いたお部屋の中でも」「お送りした中でも」「〜の中から」等、既送付物件の中から絞り込んだことを前提にする比較表現は絶対禁止（今回は新着1件の紹介であり比較対象が存在しない）
 ・新着＝早く動いた方がよいという鮮度をCTAに乗せてよい（煽りにならない範囲で）
 ・CTAは内覧誘導または申込誘導（中〜強）`,
@@ -359,7 +385,7 @@ const PROPERTY_SEND_CONTEXT_GUIDE: Record<string, string> = {
 ・「人気で早く決まることが多い」等の動機付けを添えてよい（煽りにならない範囲で）`,
   expand: `【条件広げ物件】希望条件を少し広げてお探しした物件。
 ・条件を少し広げてお探ししたことを素直に伝える（冒頭の具体的な言い回しは⭐実例の文体から学んで多様に書くこと）
-・条件を広げても〇〇（お客様が重視しているポイント）は守れていると伝える`,
+・条件を広げてもお客様が重視しているポイント（具体名で書く）は守れていると伝える`,
 };
 
 // 送付文脈キー → 埋め込み検索用の日本語ラベル（RAGクエリに載せて実例を文脈別に散らす）
@@ -431,6 +457,26 @@ function relativeTimeLabel(isoStr: string | undefined, nowMs: number): string {
   if (diffH < 36) return "（昨日）";
   const diffD = Math.round(diffH / 24);
   return `（${diffD}日前）`;
+}
+
+// ─── 伏せ字プレースホルダーの決定論ガード（生成後・最終防衛線）─────────────────
+// プロンプト内の説明用伏せ字「〇〇」をモデルが本文へそのまま転記する事故の恒久対策
+// （2026-09-01: 「〇〇さんにかなりオススメ出来るお部屋となります」が実送信文面に出た）。
+// 実名があれば置換し、名前不明なら呼びかけごと削除する。
+// 削除時は名前に直結した助詞（「〇〇さんのお引越し」の「の」）も落とす — 残すと
+// 「のお引越し…」という壊れた文になる（validate-reply の enforceCustomerName と同方針）。
+const NAME_PLACEHOLDER_ADDRESS_RE = /[〇○]{2,}\s*(?:さん|サン|様|さま)([、,]?[ 　]*)([のがにをへ])?/g;
+function fixNamePlaceholderAddress(text: string, name: string): { text: string; fixed: boolean } {
+  let fixed = false;
+  const out = text.replace(NAME_PLACEHOLDER_ADDRESS_RE, (_m, tail: string, particle: string | undefined) => {
+    fixed = true;
+    const p = particle ?? "";
+    if (name) return `${name}さん${tail}${p}`;
+    // 読点・空白が無い＝助詞が名前に直結している場合のみ助詞も落とす
+    return tail === "" ? "" : p;
+  });
+  // 呼びかけ削除で行頭に残った読点・空白を整理
+  return { text: fixed ? out.replace(/^[、,　 ]+/gm, "") : out, fixed };
 }
 
 // ─── ナレッジ使用テレメトリ（generate-reply の incrementKnowledgeUsage と同実装）───
@@ -583,40 +629,63 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "actionType or actionCategory is required" }, { status: 400 });
   }
 
-  // 記号・絵文字を除去して実名として使える文字のみに正規化（例: "SATOKO♪" → "SATOKO"）
-  // NFKC を先に掛けて全角英字「ＭＩＫＡ」・半角カナ「ﾕｷ」・装飾文字「𝟑」を畳む
-  //（正規化しないと丸ごと除去され、実名が取れるケースでも空文字になる）
-  const sanitizedCustomerName = customerName
-    ? customerName.normalize("NFKC").replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿豈-﫿A-Za-z\s・]/g, "").trim()
-    : "";
+  // ── 顧客名の確定（generate-reply と同一の妥当性ゲート + DBフォールバック）──────
+  // 🚨 2026-09-01 バグ: 呼び出し元（TemplateModal → page.tsx の extractPreferredName）は
+  // 「会話履歴でスタッフが呼んでいた名前 → LINE表示名」の2段でしか名前を解決しておらず、
+  // 表示名が記号・絵文字のみ（「⭐」等）だと空文字が渡ってくる。本APIにはDBフォールバックが
+  // 無かったため、そのまま `〇〇さん` という伏せ字がプロンプトに入り、生成文にも
+  // 「〇〇さんにかなりオススメ出来る」と伏せ字のまま出力されていた。
+  // generate-reply と同じく property_customers.customer_name → conversations.customer_name を
+  // 辿って実名を復元し、いずれも実名の形でなければ「名前なし」で生成する（誤名で呼ぶより安全）。
+  let resolvedCustomerName = isPlausiblePersonName(customerName)
+    ? (customerName ?? "").trim()
+    : (() => {
+        const stripped = stripNonNameChars(customerName ?? "");
+        return isPlausiblePersonName(stripped) ? stripped : "";
+      })();
 
   // ── customerConditions ground-truth フォールバック ─────────────────────────
   // body.customerConditions が空のとき、conversations → property_customers を辿って
   // 希望条件をDBから復元する（generate-reply と同方針。未紐付け会話の条件ゼロ生成を防ぐ）
   let resolvedCustomerConditions = customerConditions || "";
-  if (!resolvedCustomerConditions.trim() && conversationId) {
+  if (conversationId && (!resolvedCustomerConditions.trim() || !resolvedCustomerName)) {
     const { data: convLink } = await supabase
       .from("conversations")
-      .select("property_customer_id")
+      .select("property_customer_id, customer_name")
       .eq("id", conversationId)
-      .single();
+      .maybeSingle();
+    const convName = ((convLink as { customer_name?: string | null } | null)?.customer_name ?? "").trim();
+    let pcName = "";
     if (convLink?.property_customer_id) {
       const { data: pc } = await supabase
         .from("property_customers")
-        .select("desired_area, floor_plan, rent_max, walk_minutes, move_in_time, preferences, ng_points, other_requests")
+        .select("customer_name, desired_area, floor_plan, rent_max, walk_minutes, move_in_time, preferences, ng_points, other_requests")
         .eq("id", convLink.property_customer_id)
-        .single();
+        .maybeSingle();
       if (pc) {
-        resolvedCustomerConditions = [
-          pc.desired_area ? "エリア: " + pc.desired_area : "",
-          pc.floor_plan ? "間取り: " + pc.floor_plan : "",
-          pc.rent_max ? "家賃上限: " + Math.floor(pc.rent_max / 10000) + "万円" : "",
-          pc.walk_minutes ? "駅徒歩: " + pc.walk_minutes + "分以内" : "",
-          pc.move_in_time ? "入居希望: " + pc.move_in_time : "",
-          pc.preferences ? "希望: " + pc.preferences : "",
-          pc.ng_points ? "NG条件: " + pc.ng_points : "",
-          pc.other_requests ? "その他: " + pc.other_requests : "",
-        ].filter(Boolean).join(" / ").slice(0, 1000);
+        pcName = ((pc as { customer_name?: string | null }).customer_name ?? "").trim();
+        if (!resolvedCustomerConditions.trim()) {
+          resolvedCustomerConditions = [
+            pc.desired_area ? "エリア: " + pc.desired_area : "",
+            pc.floor_plan ? "間取り: " + pc.floor_plan : "",
+            pc.rent_max ? "家賃上限: " + Math.floor(pc.rent_max / 10000) + "万円" : "",
+            pc.walk_minutes ? "駅徒歩: " + pc.walk_minutes + "分以内" : "",
+            pc.move_in_time ? "入居希望: " + pc.move_in_time : "",
+            pc.preferences ? "希望: " + pc.preferences : "",
+            pc.ng_points ? "NG条件: " + pc.ng_points : "",
+            pc.other_requests ? "その他: " + pc.other_requests : "",
+          ].filter(Boolean).join(" / ").slice(0, 1000);
+        }
+      }
+    }
+    if (!resolvedCustomerName) {
+      // property_customers（スタッフが実名に修正できる列）→ conversations（LINE表示名由来）の順
+      resolvedCustomerName =
+        [pcName, convName].map((n) => stripNonNameChars(n)).find((n) => isPlausiblePersonName(n)) ?? "";
+      if (!resolvedCustomerName) {
+        console.warn("[aix-template-generate] 実名として使える顧客名なし（名前なしで生成）:", {
+          conversationId, passed: customerName ?? "", pcName, convName,
+        });
       }
     }
   }
@@ -1342,7 +1411,10 @@ export async function POST(req: NextRequest) {
     elapsedLabel ? `お客様の最終返信から: ${elapsedLabel}` : "",
     "",
     `━━━━━━━━━━━━━━━━━━━━\n【お客様情報】\n━━━━━━━━━━━━━━━━━━━━`,
-    `・お客様名: ${sanitizedCustomerName || "〇〇"}さん`,
+    // 🚨 伏せ字（〇〇）をプロンプトに入れない。入れるとそのまま本文へ転記される（2026-09-01 事故）
+    resolvedCustomerName
+      ? `・お客様名: ${resolvedCustomerName}さん\n  → 呼びかけは必ずこの実名を使う。「〇〇さん」「○○さん」「お客様」等の伏せ字・一般名詞で呼ぶことは絶対禁止`
+      : `・お客様名: 取得できていない（実名不明）\n  → 名前で呼びかけないこと。「〇〇さん」等の伏せ字を書くことは絶対禁止。冒頭は名前なしで「お世話になっております！！」「お待たせ致しました！！」から始める`,
     `・現在のフェーズ: ${stateLabel}`,
     customerSummary
       ? `・お客様プロフィール（AI分析・決まるパターン）: ${customerSummary}\n  → このお客様に刺さる訴求軸（例: 審査通りやすさ・費用の安さ・設備・立地等）を読み取り、物件の特徴と結びつけた訴求に使うこと`
@@ -1367,7 +1439,7 @@ export async function POST(req: NextRequest) {
       ? `・NG条件（絶対にこれらを物件の魅力・合致点として言及しない）: ${brainMeta.property_search_params.ng_points}`
       : "",
     resolvedCustomerConditions || brainMeta?.property_search_params
-      ? `※顧客希望条件に合致するポイントを訴求する際は「〇〇なので条件に合います」という形で物件の具体的特徴（データ）を根拠として示すこと。条件名だけを羅列しない。`
+      ? `※顧客希望条件に合致するポイントを訴求する際は「（物件の具体的特徴）なので条件に合います」という形で物件のデータを根拠として示すこと。条件名だけを羅列しない。\n※訴求は【文章構造の原則】の段落構成に沿って、設備・立地・費用を別々の段落に分けて書くこと（1文に詰め込まない）。特に費用制約（家賃上限・初期費用を抑えたい）がある場合、礼金0円・フリーレント等の費用面メリットが会話/AIXメッセージに記載されていれば必ず1つ言及すること。`
       : "",
     staffMessagedToday ? `・本日すでにスタッフが送信済み（冒頭は「お待たせ致しました！！」系にする。「お世話になっております」の再使用は禁止）` : "",
     noEmoji ? `・絵文字禁止モード: 絵文字を一切使わないこと` : "",
@@ -1379,7 +1451,10 @@ export async function POST(req: NextRequest) {
     "",
     examplesSection,
     phrasesSection,
-    `この会話の流れ・お客様の状況に合った「${actionLabel}」の橋渡し文を1通生成してください。金額・空室状況・日程・物件名は上記の会話履歴/AIXメッセージに記載がある事実のみ使い、なければ言及しないこと。⭐実例の文体・テンポを忠実に再現すること。${
+    `この会話の流れ・お客様の状況に合った「${actionLabel}」の橋渡し文を1通生成してください。金額・空室状況・日程・物件名は上記の会話履歴/AIXメッセージに記載がある事実のみ使い、なければ言及しないこと。⭐実例の文体・テンポを忠実に再現すること。` +
+    `\n【必ず守る2点】①訴求は1文に詰め込まず、設備／立地／費用を空行で区切った段落に分けて書く（【文章構造の原則】の段落構成に従う）。②呼びかけは${
+      resolvedCustomerName ? `「${resolvedCustomerName}さん」の実名のみ` : "省略（名前を書かない）"
+    }。「〇〇さん」等の伏せ字を本文に書いた時点でやり直し。\n${
       recommendationScenario
         ? `訴求シナリオは「${RECOMMENDATION_SCENARIO_LABELS[recommendationScenario]}」。禁止制約（比較表現禁止等）とCTA強度は必ず守ること。冒頭の言い回しは⭐実例の文体を参考に毎回変化させること（固定フレーズを繰り返さない）。`
         : ""
@@ -1460,6 +1535,15 @@ export async function POST(req: NextRequest) {
     }
     text = stripRoomLeadingZeros(text);
 
+    // 伏せ字「〇〇さん」の決定論修正（実名に置換 / 名前不明なら呼びかけごと削除）
+    const nameFix = fixNamePlaceholderAddress(text, resolvedCustomerName);
+    if (nameFix.fixed) {
+      console.warn(
+        `[aix-template-generate] 伏せ字の呼びかけ「〇〇さん」を検出 → ${resolvedCustomerName ? `「${resolvedCustomerName}さん」に置換` : "呼びかけごと削除"}`,
+      );
+      text = nameFix.text;
+    }
+
     // ── 訴求フレーム違反の決定論ガード（生成後チェック＋1回だけ再生成）──────────
     // 「1件しか送っていないのに“これまでお送りした中でも”」「新着でないのに“募集に出ました”」は
     // 顧客からの信頼を最も損なう事実齟齬。プロンプト指示だけに委ねず出力を検査して弾く。
@@ -1488,7 +1572,7 @@ export async function POST(req: NextRequest) {
         `出力は本文のみ。`;
       const retry = await callClaude(retryPrompt);
       if (retry.ok && retry.text) {
-        const retryText = stripRoomLeadingZeros(retry.text);
+        const retryText = fixNamePlaceholderAddress(stripRoomLeadingZeros(retry.text), resolvedCustomerName).text;
         // 再生成が違反を解消していれば採用。まだ違反していれば初回結果を維持する
         if (!detectFrameViolation(retryText)) text = retryText;
         else console.warn("[aix-template-generate] frame violation 再生成後も未解消 — 初回結果を返却");
@@ -1508,7 +1592,8 @@ export async function POST(req: NextRequest) {
       ` checkPat=${effectiveCheckPattern ?? "-"}${checkIsStale ? "(stale)" : ""}` +
       ` sentProps=${sentPropertyLogCount} priorProps=${priorSentPropertyCount}(bulk=${priorBulkSendCount},single=${priorSingleSendCount})${currentSendAlreadyLogged ? "(self-excluded)" : ""}` +
       ` lastSendH=${hoursSinceLastSend === null ? "-" : Math.round(hoursSinceLastSend)} compareOk=${recommendationScenario ? canUseCompareFrame(propertySendFacts) : "-"} frameRetry=${frameRetried ? "on" : "off"}` +
-      ` signal=${brainMeta?.purchase_signal_level ?? "-"} stance=${brainMeta?.engagement_stance ?? "-"} ctaOverride=${signalCtaOverride ? "on" : "off"}`,
+      ` signal=${brainMeta?.purchase_signal_level ?? "-"} stance=${brainMeta?.engagement_stance ?? "-"} ctaOverride=${signalCtaOverride ? "on" : "off"}` +
+      ` name=${resolvedCustomerName ? "ok" : "none"} namePassed=${customerName ? "yes" : "no"} namePlaceholderFix=${nameFix.fixed ? "on" : "off"}`,
     );
 
     // M1: ナレッジ使用テレメトリ（レスポンス返却後に fire-and-forget — 生成成功時のみカウント）
