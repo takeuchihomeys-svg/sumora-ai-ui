@@ -350,25 +350,49 @@
   }
 
   // ── 一括DL ────────────────────────────────────────
+  var _bulkDlStopped = false;
+  var _bulkDlTimer = null;
+
   function bulkDownload() {
     var targets = tracked.filter(function (t) { return t.cb.checked; });
     if (!targets.length) return;
     var dlBtn = document.getElementById("axlx-dl-btn");
-    dlBtn.style.pointerEvents = "none";
-    dlBtn.textContent = "DL中...";
+
+    // ストップ処理（ダウンロード中にボタンを押したら中断）
+    if (_bulkDlTimer !== null) {
+      _bulkDlStopped = true;
+      clearTimeout(_bulkDlTimer);
+      _bulkDlTimer = null;
+      document.getElementById("axlx-count").textContent = "⏹ 中断しました";
+      dlBtn.textContent = "一括DL";
+      dlBtn.style.background = "#ff9800";
+      dlBtn.style.pointerEvents = "auto";
+      return;
+    }
+
+    // ダウンロード開始
+    _bulkDlStopped = false;
+    dlBtn.textContent = "⏹ STOP";
+    dlBtn.style.background = "#d32f2f";
+    dlBtn.style.pointerEvents = "auto"; // STOPボタンは押せる状態に
+
     var i = 0;
     function next() {
-      if (i >= targets.length) {
-        document.getElementById("axlx-count").textContent = "✓ " + targets.length + "件 完了！";
+      _bulkDlTimer = null;
+      if (_bulkDlStopped || i >= targets.length) {
+        if (!_bulkDlStopped) {
+          document.getElementById("axlx-count").textContent = "✓ " + targets.length + "件 完了！";
+          setTimeout(function () { targets.forEach(function (t) { t.cb.checked = false; }); updateBar(); }, 2500);
+        }
         dlBtn.textContent = "一括DL";
+        dlBtn.style.background = "#ff9800";
         dlBtn.style.pointerEvents = "auto";
-        setTimeout(function () { targets.forEach(function (t) { t.cb.checked = false; }); updateBar(); }, 2500);
         return;
       }
       document.getElementById("axlx-count").textContent = (i + 1) + "/" + targets.length + " DL中";
       targets[i].btn.click();
       i++;
-      setTimeout(next, 1200 + Math.floor(Math.random() * 1600));
+      _bulkDlTimer = setTimeout(next, 1200 + Math.floor(Math.random() * 1600));
     }
     next();
   }
