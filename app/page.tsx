@@ -3106,13 +3106,14 @@ export default function Home() {
       );
       contextMsgs = idx >= 0 ? msgs.slice(0, idx + 1) : msgs;
     } else {
-      // 最後のスタッフ返信以降のお客さんメッセージを全部連結（最大3件）
-      // 例: お客さんが①「この物件は？」②「あとこっちも」③「予算変わりました」→3件まとめてAIへ
+      // 最後のスタッフ返信以降のお客さんメッセージを全部連結（最大10件）
+      // 例: お客さんが①「この物件は？」②「あとこっちも」③「予算変わりました」→全件まとめてAIへ
+      // ※旧3件上限だと物件5件送信時に3件しか渡らず「お送り頂きました3件」と誤カウントされるバグがあった
       const lastStaffIdx = msgs.map((m, i) => m.sender === "staff" ? i : -1).filter(i => i >= 0).at(-1);
       const msgsAfterStaff = lastStaffIdx !== undefined ? msgs.slice(lastStaffIdx + 1) : msgs;
       const unrepliedCustomerMsgs = msgsAfterStaff
         .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
-        .slice(-3);
+        .slice(-10);
       targetMessage = unrepliedCustomerMsgs.length > 0
         ? unrepliedCustomerMsgs.map((m) => m.text).join("\n")
         : latestCustomerMessage.trim() || msgs[msgs.length - 1]?.text || "";

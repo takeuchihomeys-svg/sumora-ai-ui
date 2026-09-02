@@ -249,11 +249,12 @@ export async function POST(req: NextRequest) {
     }));
 
   // targetMessage は元のrecentMsgs（注入なし）から計算
+  // ※旧3件上限 → 10件に拡張（物件5件+条件メッセージ等を切り落とさないため）
   const lastStaffIdx = recentMsgs.map((m, i) => m.sender === "staff" ? i : -1).filter((i) => i >= 0).at(-1);
   const msgsAfterStaff = lastStaffIdx !== undefined ? recentMsgs.slice(lastStaffIdx + 1) : recentMsgs;
   const unreplied = msgsAfterStaff
     .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
-    .slice(-3);
+    .slice(-10);
   let targetMessage = unreplied.map((m) => m.text).join("\n");
 
   if (!targetMessage.trim()) {
@@ -319,7 +320,7 @@ export async function POST(req: NextRequest) {
             const burstAfterStaff = burstStaffIdx !== undefined ? burstList.slice(burstStaffIdx + 1) : burstList;
             const burstUnreplied = burstAfterStaff
               .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
-              .slice(-3);
+              .slice(-10);
             const burstTarget = burstUnreplied.map((m) => m.text).join("\n");
             if (burstTarget.trim()) {
               if (burstTarget !== targetMessage) {
@@ -389,7 +390,7 @@ export async function POST(req: NextRequest) {
           const latestAfterStaff = latestStaffIdx !== undefined ? latestList.slice(latestStaffIdx + 1) : latestList;
           const latestUnreplied = latestAfterStaff
             .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
-            .slice(-3);
+            .slice(-10);
           const latestTarget = latestUnreplied.map((m) => m.text).join("\n");
           if (latestTarget.trim()) {
             if (latestTarget !== targetMessage) {
