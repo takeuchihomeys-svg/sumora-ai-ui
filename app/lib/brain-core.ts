@@ -2690,13 +2690,24 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   const customerName = (convData?.customer_name as string | null) ?? undefined;
 
   // メッセージ総数を取得
-  const { count: totalMsgCount } = await supabase
+  const { count: totalMsgCount, error: countErr } = await supabase
     .from("messages")
     .select("*", { count: "exact", head: true })
     .eq("conversation_id", conversationId);
+  if (countErr) {
+    // DB不調時に count=0 扱いで needsFull=true になり、全会話で最高コストのfull分析
+    // （max_tokens 4000 + 21クエリ）が毎回走るのを防ぐ。brain_analyzed_at だけ打刻して
+    // sweep の30分バックオフに乗せる（brain_full_msg_count は書かない = 0汚染防止）
+    console.error("[brain-core] messages count query failed:", conversationId, countErr.message);
+    await supabase
+      .from("conversations")
+      .update({ brain_analyzed_at: new Date().toISOString() })
+      .eq("id", conversationId);
+    return false;
+  }
 
   // 最新顧客メッセージ（緊急キーワード判定用）
-  const { data: latestMsg } = await supabase
+  const { data: latestMsg, error: latestMsgErr } = await supabase
     .from("messages")
     .select("text, created_at")
     .eq("conversation_id", conversationId)
@@ -2704,6 +2715,16 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (latestMsgErr) {
+    // latestText="" 誤判定（bypass判定スキップ）や hoursSinceLastMsg=Infinity による
+    // 不要なfull昇格を防ぐ。countErr と同じくバックオフ打刻のみで中断
+    console.error("[brain-core] latest customer message query failed:", conversationId, latestMsgErr.message);
+    await supabase
+      .from("conversations")
+      .update({ brain_analyzed_at: new Date().toISOString() })
+      .eq("id", conversationId);
+    return false;
+  }
 
   const latestText = latestMsg?.text ?? "";
   const latestMsgAt = latestMsg?.created_at ? new Date(latestMsg.created_at) : null;
@@ -2755,19 +2776,10 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   // RAG化 Phase1: 前回brain分析のフェーズ・AIX候補（conversation_direction に前回書き込んだ値）を
   // ルール事前フィルタ用の事前シグナルとして渡す（Sonnet 実行前にフェーズは確定できないため）
   const prevDir = ((conv as unknown as Record<string, unknown>).conversation_direction ?? null) as Record<string, unknown> | null;
-  // 直近AIXボタン履歴（最新3件・新→旧順）をAIX-METAに格納してgenerate-replyへ渡す
-  const { data: recentAixLogsData } = await supabase
-    .from("aix_usage_logs")
-    .select("aix_type, template_name, check_pattern")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: false })
-    .limit(3);
-  const recentAixLogs = (recentAixLogsData ?? []) as Array<{ aix_type: string | null; template_name: string | null; check_pattern?: string | null }>;
-  // check_pattern（確認結果: unavailable=募集なし等）も併記 → generate-reply / aix-template-generate 側で
-  // 「確認したが募集がなかった→代替提案」の訴求文脈を読み取れるようにする
-  const recentAixHistoryText = recentAixLogs.length > 0
-    ? recentAixLogs.map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}${l.check_pattern ? `(結果:${l.check_pattern})` : ""}`).join(" → ")
-    : null;
+  // 直近AIXボタン履歴（last_aix_history）は analyzeConversation 内の aixLogs（30件取得）から
+  // recentAixSeqText として組み立て済み・meta.last_aix_history に格納されて返る（L2467）。
+  // 以前ここで aix_usage_logs を3件再取得して同フィールドを上書きしていたが、
+  // 同一ソース・同一フォーマットの完全重複クエリだったため削除（2026-09-02）
 
   const meta = await analyzeConversation(
     conversationId,
@@ -2800,7 +2812,8 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   }
 
   // incremental分析の結果は source を brain_incremental にする（full は analyzeConversation の source をそのまま使用）
-  const metaToWrite = { ...meta, last_aix_history: recentAixHistoryText ?? null, ...(analysisMode === "incremental" ? { source: "brain_incremental" } : {}) };
+  // last_aix_history は meta に含まれている（analyzeConversation L2467 で recentAixSeqText を格納済み）
+  const metaToWrite = { ...meta, ...(analysisMode === "incremental" ? { source: "brain_incremental" } : {}) };
   const { data: writtenRows, error } = await supabase
     .from("conversations")
     .update({

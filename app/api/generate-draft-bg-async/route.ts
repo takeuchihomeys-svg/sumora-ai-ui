@@ -278,7 +278,7 @@ export async function POST(req: NextRequest) {
   // OR (ai_draft='[AIX誘導中]' AND draft_attempted_at IS NULL)
   // OR (ai_draft='[AIX誘導中]' AND draft_attempted_at < 5min前)
   const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-  const { data: claimed } = await db.from("conversations")
+  const { data: claimed, error: claimErr } = await db.from("conversations")
     .update({ draft_attempted_at: new Date().toISOString() })
     .eq("id", convId)
     .or(
@@ -288,6 +288,11 @@ export async function POST(req: NextRequest) {
       `and(ai_draft.eq."[AIX誘導中]",draft_attempted_at.lt.${fiveMinAgo})`
     )
     .select("id");
+  if (claimErr) {
+    // DB障害を「別プロセスが生成中」と誤判定するとサイレント未生成になるため区別する
+    console.error("[bg-async] claim UPDATE error:", claimErr.message, "convId:", convId);
+    return NextResponse.json({ ok: false, skipped: "claim_db_error" }, { status: 200 });
+  }
   if (!claimed?.length) {
     console.log("[bg-async] 同時生成をスキップ（atomic claim失敗）, convId:", convId);
     return NextResponse.json({ ok: true, skipped: "in_progress" });
@@ -703,7 +708,16 @@ export async function POST(req: NextRequest) {
           console.log("[bg-async] draft saved OK, length:", finalDraft.length, "convId:", convId);
         }
       } else {
-        console.error("[bg-async] empty draft, convId:", convId, "targetMessage:", targetMessage.slice(0, 50));
+        // 空ドラフト（ストリーム正常終了だが出力なし）も失敗として扱う。
+        // fail_count加算＋3回未満は draft_attempted_at をクリアしないと
+        // UIが「準備中...」のまま固まり、cronも5分バックオフでサイレントスキップされる
+        console.warn("[bg-async] empty draft, convId:", convId, "targetMessage:", targetMessage.slice(0, 50));
+        const failCount = (conv.draft_fail_count ?? 0) + 1;
+        await db.from("conversations").update({
+          draft_fail_count: failCount,
+          draft_last_error: "empty draft (stream ended with no output)",
+          ...(failCount < 3 ? { draft_attempted_at: null } : {}),
+        }).eq("id", convId);
       }
     } catch (err) {
       console.error("[bg-async] unhandled error:", String(err), "convId:", convId);

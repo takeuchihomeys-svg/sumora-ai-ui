@@ -49,13 +49,13 @@ export const maxDuration = 300;
 const CHECKPOINT_HEADER = "【会話履歴サマリー（確認済み事実セーブポイント — 長期会話の文脈）】";
 
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
-// 分析系（synthesizeCustomerContext 専用）: Sonnet — ai_summary なし顧客の即席コンテキスト合成
+// 分析系（synthesizeCustomerContext 専用）: Haiku 4.5（要約・条件抽出タスク用。Sonnet より大幅コスト削減）
 // ※ 旧Step1（analyzeCustomerSituation）は完全廃止済み（2026-08・brain/suggested_aix_meta に一元化）
-// - Sonnet 5 は thinking がデフォルト有効（adaptive）のため明示的に無効化する
-//   （有効だと res.content がブロック配列になり JSON 抽出・トークン消費に影響するため）
+// - Haiku 4.5 は thinking がデフォルト無効だが、明示的に disabled を渡して
+//   res.content が常に string で返る（ブロック配列にならない）ことを保証する
 function createAnalysisModel() {
   return new ChatAnthropic({
-    model: "claude-sonnet-5",
+    model: "claude-haiku-4-5-20251001",
     maxTokens: 2048,
     thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
@@ -656,7 +656,7 @@ function buildGenerationMessages(
   // 見積書・割引の約束済みフラグ（直前スタッフ返信の割引/見積約束 or aix_usage_logs の estimate_sheet 履歴）。
   // true の場合は「御見積書を作成しお送りします」宣言の再生成を禁止し短い受付文へ切り替える（見積二重宣言の防止）
   estimatePromised = false,
-  // importance=10 の principle（staticBlock に注入してプロンプトキャッシュ対象にする）
+  // importance=10 の principle（DB由来のため dynamicBlock 先頭に注入する）
   topPrinciples: KnowledgeRow[] = [],
   // 直近AIXボタン履歴テキスト（最新→旧順・RAG文脈強化）
   lastAixHistoryText: string | null = null,
@@ -1263,7 +1263,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // 返信文にURLを含めることを常時禁止（URL送信はAIXピッカーorスタッフ手動で行う運用のため）
   const URL_BAN_NOTE = `【🔴 URL送信禁止（常時適用・絶対遵守）】返信文に「https://」「http://」で始まるURLを一切含めない。会話履歴・AIXデータにURLが含まれていても、LINEへの返信文に転記・引用・紹介することは絶対禁止。物件URLや写真URLの送付はAIXの「室内写真を確認した」ピッカーまたはスタッフが手動で行う。`;
 
-  // importance=10 の principle（絶対原則）をキャッシュ対象の staticBlock に含める
+  // importance=10 の principle（絶対原則）。DB由来の動的コンテンツのため staticBlock ではなく
+  // dynamicBlock 先頭に注入する（staticBlock に入れると行の増減でキャッシュ全体が無効化されるため）
   const topPrinciplesNote = topPrinciples.length > 0
     ? "【📌 絶対原則（importance=10・全顧客共通・常時遵守）】\n" +
       topPrinciples.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
@@ -1282,8 +1283,6 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     meetingPlaceGateNote,
     aixOperationNote,
     URL_BAN_NOTE,
-    topPrinciplesNote,
-    replyContentNote,
   ].filter(Boolean).join("\n");
 
   // Step1廃止（2026-08）: 旧 currentPropertyNote/repeatedConcernNote/hesitancyNote スロットは
@@ -1301,7 +1300,10 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // viewingFactNote（物件退去予定/入居中判定）とセットでお客様メッセージ末尾に配置する。
   const viewingNoteBlock = viewingNote ? `\n\n【内覧情報】${viewingNote}` : "";
 
-  const dynamicBlock = `${propertyStatusNote}
+  // topPrinciplesNote（DB由来）と replyContentNote（テンプレモードで空文字化）は
+  // staticBlock を汚染しないよう dynamicBlock 側に配置する
+  const dynamicBlock = `${topPrinciplesNote}${replyContentNote}
+${propertyStatusNote}
 ${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
@@ -1496,7 +1498,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           .order("created_at", { ascending: false })
           .limit(lossLimit)
       : Promise.resolve({ data: null }),
-    // importance=10 の principle を staticBlock（プロンプトキャッシュ対象）に注入するため全件取得。
+    // importance=10 の principle を dynamicBlock 先頭（topPrinciplesNote）に注入するため全件取得。
     // importance=9 以下は pgvector criticalVector（RAG最大16件）で供給。
     supabase
       .from("ai_reply_knowledge")
@@ -1504,7 +1506,8 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .eq("category", "principle")
       .eq("importance", 10)
       .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .order("id"),
     // HIGH-05: テンプレート修正学習ルール（テンプレ適用→スタッフ編集→送信から学習したパターン）
     adaptEnabled
       ? supabase
@@ -1704,7 +1707,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         // ナレッジ洪水対策: 差分学習5件・修正対比5件・絶対ルール8件・パターン5件に上限を削減
         const diffLearned = capHypothesis(filteredResults.filter(r => r.title.includes("差分学習")), 5);
         const correctionPairs = capHypothesis(filteredResults.filter(r => r.title.includes("修正対比")), 5);
-        // importance=10 は staticBlock（topPrinciplesNote）に注入済みのため除外。importance=8-9 を RAG で最大16件供給
+        // importance=10 は dynamicBlock 先頭（topPrinciplesNote）に注入済みのため除外。importance=8-9 を RAG で最大16件供給
         // FIX(旧データ競合): 【⚠️絶対ルール】バケットは confirmed（検証済み）限定にする。
         // hypothesis_status が null の行は hypothesis 制度導入前のlegacy（人手キュレーション）として信頼扱いで許可
         const criticalVector = filteredResults.filter(r =>
@@ -1889,7 +1892,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   if (correctionList.length > 0) {
     sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionList.slice(0, 5).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
-  // importance=10 は staticBlock（topPrinciplesNote）に注入済みのため dynamicBlock への再注入はスキップ
+  // importance=10 は dynamicBlock 先頭（topPrinciplesNote）に注入済みのため knowledgeNote への再注入はスキップ
   const criticalFallback = (critical as KnowledgeRow[]).filter(p => (p.importance ?? 10) < 10);
   if (criticalFallback.length > 0) {
     sections.push("【⚠️ 絶対ルール】\n" + criticalFallback.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
@@ -2276,11 +2279,19 @@ type AixGateMeta = SuggestedAixMeta;
 async function fetchReplyModeGate(
   convId: string
 ): Promise<{ meta: AixGateMeta; customerName: string; conversationDirection: Record<string, unknown> | null; brainAnalyzedAt: string | null } | null> {
-  const { data } = await supabase
+  const { data, error: modeErr } = await supabase
     .from("conversations")
     .select("suggested_aix_meta, customer_name, conversation_direction, brain_analyzed_at")
     .eq("id", convId)
     .single();
+  if (modeErr && modeErr.code !== "PGRST116") {
+    // PGRST116（行なし）は従来どおり「ゲート情報なし」= null 扱い。
+    // それ以外のDB障害は fail-close: null を返すと AIX専用顧客(reply_mode="aix")へ
+    // 自動ドラフトが素通りするため、例外を投げて呼び出し元（POST の try）で
+    // draft_pending_at クリア + 500 返却させる（毎分cronの永久リトライも防止）。
+    console.error("[gen-reply] reply_mode gate error:", modeErr.message);
+    throw new Error("gate_unavailable");
+  }
   if (!data) return null;
   return {
     meta: (data.suggested_aix_meta ?? null) as AixGateMeta,
@@ -2299,12 +2310,20 @@ async function applyAixGateAndRespond(
   // .is("ai_draft", null) のアトミッククレームが通知の重複防止を兼ねる
   // （bg-async と cron が同時に来ても通知は1回だけ）。
   // draft_pending_at=null で cron の永久再試行も止まる。
-  const { data: claimed } = await supabase
+  const { data: claimed, error: claimErr } = await supabase
     .from("conversations")
     .update({ ai_draft: "[AIX誘導中]", draft_pending_at: null, draft_attempted_at: null })
     .eq("id", convId)
     .is("ai_draft", null)
     .select("id");
+
+  // DB障害時: sentinel未設定・pending未クリア・スタッフ通知スキップが黙って起きるため、
+  // ログに残しレスポンスに degraded フラグを付けて呼び出し元に伝える
+  // （cron が次回リトライで再度ゲートに到達するため処理自体は継続可能）。
+  const degraded = Boolean(claimErr);
+  if (claimErr) {
+    console.error("[generate-reply] aix-gate claim update error:", convId, claimErr.message);
+  }
 
   if (claimed?.length) {
     const baseUrl =
@@ -2331,6 +2350,7 @@ async function applyAixGateAndRespond(
     JSON.stringify({
       ok: false,
       reason: "aix_required",
+      degraded,
       aix: { action: meta.action ?? null, note: meta.note ?? null },
     }) + "\n",
     { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } }
@@ -2517,6 +2537,12 @@ export async function POST(req: NextRequest) {
       m => m.sender === "staff" && !m.isAix && m.text && m.text !== "[画像]" && m.text !== "[動画]"
     );
 
+  // ─── メイン try（fail-close 境界）───
+  // reply_mode ゲート（チェックポイントA）〜 ai_prompts 取得までの前処理ゾーンも try に含める。
+  // ここで例外が起きると従来は draft_pending_at 未クリアの 500 となり毎分cronが永久リトライしていた。
+  // catch（本関数末尾）が draft_pending_at クリア + 500 返却を行う。
+  // fetchReplyModeGate の DB障害（gate_unavailable throw）もここで fail-close される。
+  try {
   // ─── reply_modeゲート チェックポイントA ───
   // meta が既に "aix" ならAnthropic呼び出し前にゼロコストで中止（cron再試行時など）。
   // null（未分析/webhookワイプ直後）はここでは素通しし、チェックポイントBで再確認する。
@@ -2679,7 +2705,6 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) { console.error("[generate-reply] ai_prompts取得失敗 — ハードコード値にフォールバック:", err); }
 
-  try {
     const currentState = normalizeState(state || "first_reply");
 
     // 画像送付を会話履歴に反映（[画像]をフィルタせず意味のあるラベルに変換）
@@ -3466,7 +3491,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         })()
       : "";
 
-    // テンプレート最適化モードは SystemMessage 側にもモード宣言を追加（dbRules と同じ注入経路）
+    // テンプレート最適化モードのモード宣言。SystemMessage（cache_control 付き dbRules ブロック）に
+    // 連結するとモードの有無でキャッシュが分岐するため、dynamicBlock 末尾（templateNote スロット）に注入する
     const templateSystemNote = isTemplateOptimize
       ? (aixSourceMessage
           ? "\n\n【AIXテンプレート最適化モード】テンプレートの骨格に従い、AIX物件情報から物件の事実を当てはめる。AIX物件オススメと同じ出力形式にしてはいけない。テンプレートが短ければ出力も短くする。詳細ルールはプロンプト末尾の【🟣✨ AIXテンプレート最適化モード】ブロックに従うこと。"
@@ -3500,8 +3526,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       customerConditions || groundTruth.customerConditionsDb || "",
       resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
-      isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
-      resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote, brainGuidanceNote, directionNote,
+      isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
+      resolvedSummaryJson, quotedContextNote, propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone
     );
 
