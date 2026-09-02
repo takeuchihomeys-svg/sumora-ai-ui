@@ -1136,6 +1136,26 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 【🚫 絶対禁止（最優先）】「全力でサポートさせて頂きます」「ご満足頂けるお部屋が見つかるまで」等の締めフレーズを再度使うこと。3行を超える返信。条件まとめ・費用・長い説明の追加。`
     : "";
 
+  // ─── 内覧日程確定後シンプル締め検出 ────────────────────────────────────────
+  // スタッフが内覧日時を確定した後にお客様がシンプル承認 → 余計な詳細を一切出さない
+  // 成約データのパターン: 「はい！！本日何卒よろしくお願い致します😊！！」のみ
+  const VIEWING_SCHEDULED_STAFF_RE = /(?:明日|本日|今日|明後日|[0-9０-９]{1,2}[\/月][0-9０-９]{1,2}(?:日)?)(?:[^。\n]{0,30})(?:ご?案内|内覧|内見)|(?:内覧|内見).*(?:ご案内させて頂き|一緒にご案内)/;
+  const CUSTOMER_VIEWING_ACK_RE = /わかりました|大丈夫です|了解|承知|ありがとう/;
+  const isViewingAppointmentAck = !isSecondClosing
+    && VIEWING_SCHEDULED_STAFF_RE.test(lastStaffMsgRaw)
+    && CUSTOMER_VIEWING_ACK_RE.test(customerMessage);
+  const viewingAppointmentAckNote = isViewingAppointmentAck
+    ? `\n【🤝 内覧日程確定後シンプル締め（最優先・全生成ルールを上書き）】スタッフがすでに内覧日時・物件を確定しており、お客様は「わかりました」「大丈夫です」等でシンプルに承認している。詳細はすでに伝達済みのため、余計な情報を足すとくどくなる。成約データでも同様の場面は短いシンプル締めのみ。
+【返信の型（絶対に守る・これ以外は入れない）】
+① 冒頭挨拶 — 【⏰ 挨拶ルール・最優先】に従う（1フレーズのみ）
+② 締め 1行 — 内覧が本日なら「本日何卒よろしくお願い致します！！」、明日なら「明日何卒よろしくお願い致します！！」
+【🚫 絶対禁止（1つも書かない）】
+・「内覧の詳細についてはご連絡させて頂きます」等（詳細は確定済みのため不要・不自然）
+・別物件への言及・追加提案（「〇〇も一緒にご案内」等は既に前メッセージで伝達済み）
+・「全力でサポートさせて頂きます」等の大きな営業締め文
+・条件まとめ・費用・次のアクション提案の追加`
+    : "";
+
   // 入居可能時期質問の検出 — 2種類のパターンを検出する
   // ① 「最長いつまで入居を伸ばせますか」型（入居期限延長型）
   // ② 「8月末に入居できますか」「〇月中旬に入居は可能ですか」型（特定月への入居可否型）
@@ -1270,7 +1290,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   const viewingNoteBlock = viewingNote ? `\n\n【内覧情報】${viewingNote}` : "";
 
   const dynamicBlock = `${propertyStatusNote}
-${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
