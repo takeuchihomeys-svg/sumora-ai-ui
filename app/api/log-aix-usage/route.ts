@@ -196,9 +196,12 @@ export async function POST(req: NextRequest) {
       prop_cost_notes?: string[] | null;
       // 改善3-c: スタッフ入力キーワード
       send_keyword?: string | null;
+      // M3: 待ち合わせ場所（meeting_place AIX）の物件名・住所
+      meeting_property_name?: string | null;
+      meeting_property_address?: string | null;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -262,6 +265,28 @@ export async function POST(req: NextRequest) {
     // 旧実装は last_brain_meta / brain_full_analyzed_at をクリアして次回強制フル分析を誘発していたが、
     // 前回の分析結論にAIXイベントを Haiku で差分反映し、次の顧客メッセージを cached で処理できるようにする。
     // brain_full_analyzed_at はそのまま維持（10メッセージサイクルを崩さない）。
+    // M3: meeting_place 送信後に viewing_history の最新予定に property_name/address を保存
+    if (aix_type === "meeting_place" && meeting_property_name) {
+      waitUntil((async () => {
+        try {
+          const { data: latestV } = await supabase
+            .from("viewing_history")
+            .select("id")
+            .eq("conversation_id", conversation_id)
+            .neq("status", "done")
+            .order("scheduled_date", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (latestV?.id) {
+            await supabase
+              .from("viewing_history")
+              .update({ property_name: meeting_property_name, property_address: meeting_property_address ?? null })
+              .eq("id", latestV.id);
+          }
+        } catch (e) { console.error("[log-aix-usage] viewing_history meeting_place update failed:", e); }
+      })());
+    }
+
     const STAGE_TRANSITION_AIX_TYPES = [
       "application",
       "application_push",
@@ -270,6 +295,7 @@ export async function POST(req: NextRequest) {
       "estimate_sheet",
       "viewing_invite",
       "greeting_viewing",
+      "meeting_place",
     ];
     if (STAGE_TRANSITION_AIX_TYPES.includes(aix_type)) {
       waitUntil(
@@ -295,7 +321,13 @@ export async function POST(req: NextRequest) {
               viewing_invite: "内見招待AIXを送信した。内見日程の確認・当日案内が主タスク",
               greeting_viewing: "内見挨拶AIXを送信した。内見後のフォローが主タスク",
             };
-            const stageNote = AIX_STAGE_LABEL[aix_type] ?? `${aix_type}AIXを送信した`;
+            // meeting_place は物件名・住所を動的に含める
+            let stageNote = AIX_STAGE_LABEL[aix_type] ?? `${aix_type}AIXを送信した`;
+            if (aix_type === "meeting_place") {
+              stageNote = meeting_property_name
+                ? `待ち合わせ場所AIXを送信した。案内物件: ${meeting_property_name}${meeting_property_address ? `（住所: ${meeting_property_address}）` : ""}。内見当日の現地集合案内が完了している`
+                : "待ち合わせ場所AIXを送信した。内見当日の現地集合案内が完了している";
+            }
 
             // 3. Haiku でメタを差分パッチ（既存のトップレベル import を再利用）
             const patchClient = new Anthropic({

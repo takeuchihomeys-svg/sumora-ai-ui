@@ -2815,6 +2815,11 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS send_keyword TEXT;
 -- 複数構造を「・」区切りで保存。page-script.js の STRUCTURE_MAP キーと一致させる
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS structure_types TEXT;
 
+-- ── viewing_history 待ち合わせ場所カラム（2026-09-02追加）──
+-- meeting_place AIX送信後に log-aix-usage が upsert する。brain-core が viewingsText に注入する。
+ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS property_name TEXT;
+ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS property_address TEXT;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

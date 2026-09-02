@@ -60,7 +60,7 @@ interface AixModalProps {
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
   // M2: estimateSent / propCostNotes = 御見積書の同封有無とOCRで読み取った物件別費用情報
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -2523,6 +2523,9 @@ export default function AixModal({
         propCostNotes: lastPropCostNotesRef.current.length > 0 ? lastPropCostNotesRef.current : undefined,
         // 改善3-c: スタッフ入力キーワード（aix-template-generate の続き文ragQuery に注入する）
         sendKeyword: sendKeyword.trim() || undefined,
+        // M3: 待ち合わせ場所（brain が viewing_history 経由で把握するための橋渡し）
+        meetingPropertyName: actionType === "meeting_place" && meetingPropertyName.trim() ? meetingPropertyName.trim() : undefined,
+        meetingPropertyAddress: actionType === "meeting_place" && meetingPropertyAddress.trim() ? meetingPropertyAddress.trim() : undefined,
       });
       onScheduled?.();
       setShowAixScheduleModal(false);
@@ -2834,6 +2837,9 @@ export default function AixModal({
         propCostNotes: lastPropCostNotesRef.current.length > 0 ? lastPropCostNotesRef.current : undefined,
         // 改善3-c: スタッフ入力キーワード（aix-template-generate の続き文ragQuery に注入する）
         sendKeyword: sendKeyword.trim() || undefined,
+        // M3: 待ち合わせ場所（brain が viewing_history 経由で把握するための橋渡し）
+        meetingPropertyName: actionType === "meeting_place" && meetingPropertyName.trim() ? meetingPropertyName.trim() : undefined,
+        meetingPropertyAddress: actionType === "meeting_place" && meetingPropertyAddress.trim() ? meetingPropertyAddress.trim() : undefined,
       });
       onClose();
     } catch (err) {

@@ -956,7 +956,7 @@ export async function analyzeConversation(
     // viewing_history（is_primary=true）を優先参照 — viewingsの後継テーブル
     supabase
       .from("viewing_history")
-      .select("scheduled_date, scheduled_time, status")
+      .select("scheduled_date, scheduled_time, status, property_name, property_address")
       .eq("conversation_id", conversationId)
       .order("scheduled_date", { ascending: false })
       .limit(3),
@@ -1735,16 +1735,21 @@ export async function analyzeConversation(
     ? `\n【この会話の未完了タスク】${openTasks.map((t) => taskLabel[t.task_type] ?? t.task_type).join(" / ")}\n※next_steps はこれらの未完了タスクを考慮すること。`
     : "") + checkResultsText + propAvailabilityText + estimateInfoText;
 
-  type Viewing = { viewing_date: string; viewing_time: string | null; status: string | null };
+  type Viewing = { viewing_date: string; viewing_time: string | null; status: string | null; property_name?: string | null; property_address?: string | null };
   // viewing_history（is_primaryを含む全件）を優先・存在しなければviewingsにフォールバック
-  type ViewingHistoryRow = { scheduled_date: string; scheduled_time: string | null; status: string | null };
+  type ViewingHistoryRow = { scheduled_date: string; scheduled_time: string | null; status: string | null; property_name?: string | null; property_address?: string | null };
   const viewingHistoryRows = (viewingHistoryResult.data ?? []) as ViewingHistoryRow[];
   const viewings: Viewing[] = viewingHistoryRows.length > 0
-    ? viewingHistoryRows.map(h => ({ viewing_date: h.scheduled_date, viewing_time: h.scheduled_time, status: h.status }))
+    ? viewingHistoryRows.map(h => ({ viewing_date: h.scheduled_date, viewing_time: h.scheduled_time, status: h.status, property_name: h.property_name ?? null, property_address: h.property_address ?? null }))
     : (viewingsResult.data ?? []) as Viewing[];
   const viewingStatusLabel: Record<string, string> = { scheduled: "予定", done: "完了", cancelled: "キャンセル" };
   let viewingsText = viewings.length > 0
-    ? `\n【内覧履歴・予定】${viewings.map((v) => `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`).join(" / ")}`
+    ? `\n【内覧履歴・予定】${viewings.map((v) => {
+        let s = `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`;
+        if (v.property_name) s += ` 物件: ${v.property_name}`;
+        if (v.property_address) s += ` 住所: ${v.property_address}`;
+        return s;
+      }).join(" / ")}`
     : "";
   // 内覧済み顧客の特別扱い（修正5）: 完了内覧がある顧客は対面済み＝申込プッシュ優先
   const completedViewings = viewings.filter((v) =>
@@ -2937,7 +2942,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
           // viewing_history を優先取得・存在しなければviewingsにフォールバック（後方互換）
           const { data: historyRaw } = await supabase
             .from("viewing_history")
-            .select("scheduled_date, scheduled_time, status")
+            .select("scheduled_date, scheduled_time, status, property_name, property_address")
             .eq("conversation_id", conversationId)
             .order("scheduled_date", { ascending: false })
             .limit(10);
