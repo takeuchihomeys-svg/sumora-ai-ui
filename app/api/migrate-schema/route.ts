@@ -1328,6 +1328,8 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start_at ON calendar_events(start_at);
 ALTER TABLE calendar_events DISABLE ROW LEVEL SECURITY;
 ALTER TABLE calendar_events ALTER COLUMN conversation_id TYPE TEXT USING conversation_id::TEXT;
+ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS is_done BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_calendar_events_pending ON calendar_events(start_at) WHERE is_done = false;
 
 -- ── 追加カラム（2026-07-12）──
 

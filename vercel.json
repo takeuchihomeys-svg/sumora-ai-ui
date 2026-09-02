@@ -25,6 +25,10 @@
       "schedule": "*/30 * * * *"
     },
     {
+      "path": "/api/cron/calendar-auto-complete",
+      "schedule": "*/30 * * * *"
+    },
+    {
       "path": "/api/cleanup-images",
       "schedule": "23 3 * * *"
     },

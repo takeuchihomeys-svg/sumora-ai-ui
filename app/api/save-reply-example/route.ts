@@ -796,7 +796,7 @@ export async function PATCH(req: NextRequest) {
 
 // ─── カレンダー自動登録 ──────────────────────────────────────────────────────
 // 「明日確認します」「〇月〇日にご連絡します」等の約束をcalendar_eventsへ自動登録
-const COMMITMENT_RE = /明日|明後日|来週|今週中|\d+月\d+日|\d+日(?:まで|中|以内|に)|午前中/;
+const COMMITMENT_RE = /明日|明後日|本日|今日|来週|今週中?|週明け|[0-9０-９]{1,2}[\/月][0-9０-９]{1,2}|\d+月\d+日|\d+日(?:まで|中|以内|に|より|以降)|[0-9０-９]{1,2}\s*[:：時]\s*[0-9０-９]{0,2}|午前中|朝一|(?:でき|撮影し)次第|有効期限|期限|テレビ電話/;
 
 async function detectAndCreateCalendarEvent({
   sentReply,
@@ -824,8 +824,16 @@ async function detectAndCreateCalendarEvent({
 ${sentReply}
 
 JSONのみ（コードブロック不要）:
-{"has_commitment":true,"date":"YYYY-MM-DD","time":"HH:MM or null","all_day":true,"title":"カレンダーイベントタイトル（例: 管理会社確認, 申込可否確認）","event_type":"viewing|application|other"}
-event_typeの値: "viewing"=内覧・案内・待ち合わせ・現地集合の約束 / "application"=申込フォーム有効期限・書類締切・申込手続き / "other"=それ以外
+{"has_commitment":true,"date":"YYYY-MM-DD","time":"HH:MM or null","all_day":false,"title":"カレンダーイベントタイトル（例: 内覧 エルシオン201, 申込期限 22:00まで）","event_type":"viewing|application|phone|photo|property_send|other"}
+event_typeの値:
+- "viewing": 内覧・案内・待ち合わせ・現地集合の約束
+- "application": 申込フォーム有効期限・書類締切・申込手続き
+- "phone": 電話・テレビ電話・ビデオ通話アポ
+- "photo": 室内撮影・写真撮影
+- "property_send": 物件ピックアップ・物件送付約束
+- "other": それ以外
+all_dayは時刻が特定できない場合のみtrue。時刻があればfalseにしtime("HH:MM")を埋める。
+「新着が出次第」「でき次第」等、日付が特定できない継続約束は has_commitment: false にすること。
 約束がなければ: {"has_commitment":false}`, 200);
 
   const m = raw.match(/\{[\s\S]*\}/);

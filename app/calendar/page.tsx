@@ -5,7 +5,7 @@ import BottomNav from "../components/BottomNav";
 import { registerSW, requestNotifPermission, showNotif } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
 
-type EventType = "viewing" | "contract" | "key_handover" | "other" | "application";
+type EventType = "viewing" | "contract" | "key_handover" | "other" | "application" | "phone" | "photo" | "property_send";
 
 type CalendarEvent = {
   id: string;
@@ -16,6 +16,7 @@ type CalendarEvent = {
   end_at: string | null;
   all_day: boolean;
   notes: string;
+  is_done: boolean;
   _source: "local";
 };
 
@@ -33,12 +34,15 @@ type DailyTask = {
 
 type AnyEvent = CalendarEvent | DailyTask;
 
-const EVENT_TYPE_CONFIG: Record<EventType, { label: string; color: string; bg: string; emoji: string }> = {
-  viewing:      { label: "内覧",   color: "#2196F3", bg: "#e3f2fd", emoji: "🔍" },
-  contract:     { label: "契約",   color: "#4CAF50", bg: "#e8f5e9", emoji: "📝" },
-  key_handover: { label: "鍵渡し", color: "#FF9800", bg: "#fff3e0", emoji: "🔑" },
-  application:  { label: "申込",   color: "#9C27B0", bg: "#f3e5f5", emoji: "📋" },
-  other:        { label: "その他", color: "#9E9E9E", bg: "#f5f5f5", emoji: "📌" },
+const EVENT_TYPE_CONFIG: Record<string, { label: string; color: string; bg: string; emoji: string }> = {
+  viewing:       { label: "内覧",     color: "#2196F3", bg: "#e3f2fd", emoji: "🔍" },
+  contract:      { label: "契約",     color: "#4CAF50", bg: "#e8f5e9", emoji: "📝" },
+  key_handover:  { label: "鍵渡し",   color: "#FF9800", bg: "#fff3e0", emoji: "🔑" },
+  application:   { label: "申込",     color: "#9C27B0", bg: "#f3e5f5", emoji: "📋" },
+  phone:         { label: "電話",     color: "#00BCD4", bg: "#e0f7fa", emoji: "📞" },
+  photo:         { label: "撮影",     color: "#FF5722", bg: "#fbe9e7", emoji: "📸" },
+  property_send: { label: "物件送付", color: "#607D8B", bg: "#eceff1", emoji: "🏠" },
+  other:         { label: "その他",   color: "#9E9E9E", bg: "#f5f5f5", emoji: "📌" },
 };
 
 const SCREENING_COLOR = "#8B5CF6";
@@ -503,26 +507,34 @@ export default function CalendarPage() {
               const localEv = ev as CalendarEvent;
               const cfg = EVENT_TYPE_CONFIG[localEv.event_type] ?? EVENT_TYPE_CONFIG.other;
               const timeStr = localEv.all_day ? "終日" : formatTimeJP(localEv.start_at);
+              const isDone = localEv.is_done;
               return (
                 <button
                   key={localEv.id}
                   onClick={() => openEdit(localEv)}
-                  className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 text-left shadow-sm w-full"
+                  className="flex items-center gap-3 rounded-2xl px-4 py-3 text-left shadow-sm w-full"
+                  style={{ backgroundColor: isDone ? "#f0f2f5" : "white", opacity: isDone ? 0.65 : 1 }}
                 >
                   {/* 時刻 */}
                   <div className="w-12 shrink-0 text-center">
-                    <span className="text-[13px] font-bold text-[#2196F3]">{timeStr}</span>
+                    <span className={`text-[13px] font-bold ${isDone ? "text-[#9aa3ad]" : "text-[#2196F3]"}`}>{timeStr}</span>
                   </div>
-                  {/* 種別バッジ */}
-                  <span
-                    className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold text-white"
-                    style={{ backgroundColor: cfg.color }}
-                  >
-                    {cfg.label}
-                  </span>
+                  {/* 種別バッジ or 完了バッジ */}
+                  {isDone ? (
+                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold text-white bg-[#9aa3ad]">
+                      ✓ 完了
+                    </span>
+                  ) : (
+                    <span
+                      className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold text-white"
+                      style={{ backgroundColor: cfg.color }}
+                    >
+                      {cfg.label}
+                    </span>
+                  )}
                   {/* コンテンツ */}
                   <div className="min-w-0 flex-1">
-                    <span className="text-[14px] font-medium text-[#111b21] leading-snug line-clamp-2">
+                    <span className={`text-[14px] font-medium leading-snug line-clamp-2 ${isDone ? "line-through text-[#9aa3ad]" : "text-[#111b21]"}`}>
                       {localEv.title}
                       {localEv.customer_name ? `　${localEv.customer_name}` : ""}
                     </span>
