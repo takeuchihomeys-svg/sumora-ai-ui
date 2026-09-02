@@ -3755,8 +3755,10 @@ function openInstructions(siteKey) {
             console.log('[AX] リアプロ API補完: 非駅トークンを除外:', s);
           }
         });
-        // 駅が追加された場合: currentAreaMode が station でなければ昇格
-        if (realpro_station_names.length > 0 && currentAreaMode !== 'station') {
+        // 駅が追加された場合: city_codes がない場合のみ station モードに昇格
+        // city_codes がある（大阪市内など地域指定）場合は badge の地域判定を尊重してフリップしない
+        if (realpro_station_names.length > 0 && currentAreaMode !== 'station'
+            && (apiData?.realpro?.city_codes ?? []).length === 0) {
           currentAreaMode = 'station';
           updateAreaModeUI && updateAreaModeUI();
           console.log('[AX] リアプロ API補完: 駅発見 → station モードに昇格');
