@@ -123,6 +123,7 @@ classifyAreaTokens の結果を受けてグローバルモード（駅 or 地域
 
 | 日付 | 内容 |
 |---|---|
+| 2026-09-02 | **リアプロ 構造チェックボックス未選択バグ修正 (popup.js 2箇所)**: ①line 2480: `customer.building_structure \|\| customer.structure` → `customer.structure_types`（存在しないフィールド参照を修正）②lines 3567-3569: リアプロブランチの adjC.structure_types 計算が `adjStructure ? [...] : []`（fallbackなし）だったのを itandi ブランチと同じ `(adjStructure \|\| c.structure_types \|\| "").split(...)` に統一。これにより DB の `structure_types` カラム値が adj フォームで上書きなしのときも正しくページスクリプトへ送信される。DB カラム自体は migrate-schema/route.ts line 2816 で 2026-09-01 追加済み（00:10 JST の cron で適用済みのはず）。 |
 | 2026-09-01 | **Chrome拡張 送信エラー根本修正 (commit 48ed88cf)**: ①background.js: callMergeApi の AbortSignal を 60s→85s に延長（Vercel maxDuration=90s に対してクライアントが先にタイムアウトしていた）② bulk-dl.js: 送信エラー時にアラートで resp.error の実メッセージを表示（セッション切れ・タイムアウト・APIエラーを区別できるよう改善） |
 | 2026-08-24 | **電車での通勤距離ステップ追加**: `buildCondData()`に`commuteByTrain`フィールド追加（`desired_area`から「○○駅まで電車で△分」正規表現でパース）。realpro/itandi/reinsの手順ステップに「電車での通勤距離: 北加賀屋まで電車で45分以内」を表示。徒歩パターン・bareパターンは対象外（電車/バスキーワード必須）。Dijkstra展開済みなので絞り込み欄への追加入力不要と案内。 |
 | 2026-08-24 | **物件検索ブレイン: classifyAreaTokens で仕分け担当を強化（commit 741dd11b）**: 駅/地域の分類を6段階シグナルで独立判定。JR/阪急プレフィックスを最強シグナルに。STATION_LINE_MAP にある駅名は NEIGHBORHOOD_WARD_MAP に登録されていても駅優先（十三・平野 等）。コンテキスト多数決で曖昧トークン解決。 |

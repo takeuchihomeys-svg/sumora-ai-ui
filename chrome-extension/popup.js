@@ -2477,7 +2477,7 @@ function openSiteView(customer) {
   const _areaMinStr = d.areaMin ? d.areaMin + "㎡以上" : null;
   const _areaMaxStr = d.areaMax ? d.areaMax + "㎡以下" : null;
   const _areaSizeStr = [_areaMinStr, _areaMaxStr].filter(Boolean).join("〜") || null;
-  const _structure = customer.building_structure || customer.structure || null;
+  const _structure = customer.structure_types || null;
   // エリアラベル（DB area_mode 優先 → computeAreaModeBadgeHtml と同一ロジック）
   const _areaLabel = (() => {
     const _dbMode = customer.area_mode;
@@ -3564,9 +3564,8 @@ function openInstructions(siteKey) {
         walk_minutes: adjWalk     ? Number(adjWalk)     : (c.walk_minutes || null),
         building_age: adjAge      ? Number(adjAge)      : (c.building_age || null),
         floor_plan:   adjFloor    || c.floor_plan || c.layout || null,
-        structure_types: adjStructure
-          ? adjStructure.split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean)
-          : [],
+        structure_types: (adjStructure || c.structure_types || "")
+          .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
       };
       const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
 
