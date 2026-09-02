@@ -1130,7 +1130,7 @@
       var params = new URLSearchParams(location.search);
       var isAdDesc = params.get("key") === "ad" && params.get("odr") === "desc";
       if (!isAdDesc) {
-        var adLink = document.querySelector('a[href*="key=ad"][href*="odr=desc"]');
+        var adLink = document.querySelector('a[href*="key=ad&"][href*="odr=desc"]');
         if (adLink && adLink.href) {
           console.log("[AXLX bulk-dl] AD高→低ソート適用 → リロード後Case Bで再開");
           var sortState = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0 };
