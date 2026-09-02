@@ -1124,17 +1124,33 @@
     try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
     var _snap = _pendingCustomerForAutoSend;
     _pendingCustomerForAutoSend = null;
-    if (_snap && _snap.name) {
-      // autofill開始時点でスナップショット済みのお客さん名を使う（名前ずれ防止）
-      var state = { active: true, currentPage: 1, customerName: _snap.name, customerConditions: _snap.conditions || null, customerId: _snap.customerId || null, sentCount: 0 };
+
+    function _doStart(name, conditions, customerId) {
+      // AD高→低ソートが未適用ならソートURLへ遷移し、Case Bがリロード後に再開する
+      var params = new URLSearchParams(location.search);
+      var isAdDesc = params.get("key") === "ad" && params.get("odr") === "desc";
+      if (!isAdDesc) {
+        var adLink = document.querySelector('a[href*="key=ad"][href*="odr=desc"]');
+        if (adLink && adLink.href) {
+          console.log("[AXLX bulk-dl] AD高→低ソート適用 → リロード後Case Bで再開");
+          var sortState = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0 };
+          setAutoSendState(sortState);
+          location.href = adLink.href;
+          return;
+        }
+      }
+      var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0 };
       setAutoSendState(state);
       autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(state); }, 800); });
+    }
+
+    if (_snap && _snap.name) {
+      // autofill開始時点でスナップショット済みのお客さん名を使う（名前ずれ防止）
+      _doStart(_snap.name, _snap.conditions, _snap.customerId);
     } else {
       // スナップショットなし（手動操作など）→ 従来通りpopupから取得
       getCustomerFromPopup(function (name, conditions, customerId) {
-        var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions, customerId: customerId || null, sentCount: 0 };
-        setAutoSendState(state);
-        autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(state); }, 800); });
+        _doStart(name, conditions, customerId);
       });
     }
   }
