@@ -816,6 +816,7 @@ async function detectAndCreateCalendarEvent({
   const raw = await callHaiku(`以下はLINE不動産営業のスタッフが送った返信メッセージです。
 「明日確認します」「〇月〇日にご連絡します」などスタッフが将来に行動を約束している場合のみ、日時と内容をJSONで返してください。
 お客様への依頼・質問・単なる日程の言及は対象外です。
+「新着が出次第お送りします」等、日付が特定できない継続約束は has_commitment: false にすること。
 
 今日の日付: ${todayStr}
 
@@ -823,12 +824,13 @@ async function detectAndCreateCalendarEvent({
 ${sentReply}
 
 JSONのみ（コードブロック不要）:
-{"has_commitment":true,"date":"YYYY-MM-DD","time":"HH:MM or null","all_day":true,"title":"カレンダーイベントタイトル（例: 管理会社確認, 申込可否確認）"}
+{"has_commitment":true,"date":"YYYY-MM-DD","time":"HH:MM or null","all_day":true,"title":"カレンダーイベントタイトル（例: 管理会社確認, 申込可否確認）","event_type":"viewing|application|other"}
+event_typeの値: "viewing"=内覧・案内・待ち合わせ・現地集合の約束 / "application"=申込フォーム有効期限・書類締切・申込手続き / "other"=それ以外
 約束がなければ: {"has_commitment":false}`, 200);
 
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) return;
-  let parsed: { has_commitment?: boolean; date?: string; time?: string | null; all_day?: boolean; title?: string };
+  let parsed: { has_commitment?: boolean; date?: string; time?: string | null; all_day?: boolean; title?: string; event_type?: string };
   try { parsed = JSON.parse(m[0]); } catch { return; }
   if (!parsed.has_commitment || !parsed.date || !parsed.title) return;
   if (isNaN(new Date(parsed.date).getTime())) return;
@@ -848,7 +850,7 @@ JSONのみ（コードブロック不要）:
   const title = customerName ? `${customerName} ${parsed.title}` : parsed.title;
   await supabase.from("calendar_events").insert({
     title,
-    event_type: "other",
+    event_type: parsed.event_type ?? "other",
     customer_name: customerName,
     conversation_id: conversationId,
     start_at: startAt,

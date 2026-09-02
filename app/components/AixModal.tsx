@@ -123,17 +123,17 @@ function createViewingCalendarEvent(params: {
     endM = totalMin % 60;
   }
 
-  // JST → UTC（JST = UTC+9）
-  const startJST = new Date(year, month - 1, day, startH, startM, 0);
-  const endJST   = new Date(year, month - 1, day, endH, endM, 0);
-  const toUTC = (d: Date) => new Date(d.getTime() - 9 * 60 * 60 * 1000).toISOString();
+  // JST ISO文字列を直接構築（二重補正バグ修正: new Date(local).getTime() - 9h は誤り）
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const startAt = `${year}-${pad(month)}-${pad(day)}T${pad(startH)}:${pad(startM)}:00+09:00`;
+  const endAt   = `${year}-${pad(month)}-${pad(day)}T${pad(endH)}:${pad(endM)}:00+09:00`;
 
   supabase.from("calendar_events").insert({
     title: `${customerName} 内覧 ${meetingPropertyName}`,
     event_type: "viewing",
     customer_name: customerName || null,
-    start_at: toUTC(startJST),
-    end_at: toUTC(endJST),
+    start_at: startAt,
+    end_at: endAt,
     all_day: false,
     notes: meetingPropertyAddress ? `住所: ${meetingPropertyAddress}` : null,
   }).then(
@@ -2494,10 +2494,10 @@ export default function AixModal({
         saveTemplateCandidate(textToSend, true, schedTrimmedDraft);
       }
 
-      // 待ち合わせ確定後にカレンダーイベントを作成（予約送信の場合も同様）
-      if (actionType === "meeting_place" && meetingDate && meetingTime && meetingPropertyName) {
-        createViewingCalendarEvent({ meetingDate, meetingTime, meetingPropertyName, meetingPropertyAddress, customerName });
-      }
+      // deprecated: save-reply-example after()フックが登録するため不要（二重登録防止）
+      // if (actionType === "meeting_place" && meetingDate && meetingTime && meetingPropertyName) {
+      //   createViewingCalendarEvent({ meetingDate, meetingTime, meetingPropertyName, meetingPropertyAddress, customerName });
+      // }
 
       onAfterSend?.({
         suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
@@ -2797,10 +2797,10 @@ export default function AixModal({
         }
       }
 
-      // 待ち合わせ確定後にカレンダーイベントを作成
-      if (actionType === "meeting_place" && meetingDate && meetingTime && meetingPropertyName) {
-        createViewingCalendarEvent({ meetingDate, meetingTime, meetingPropertyName, meetingPropertyAddress, customerName });
-      }
+      // deprecated: save-reply-example after()フックが登録するため不要（二重登録防止）
+      // if (actionType === "meeting_place" && meetingDate && meetingTime && meetingPropertyName) {
+      //   createViewingCalendarEvent({ meetingDate, meetingTime, meetingPropertyName, meetingPropertyAddress, customerName });
+      // }
 
       // 学習処理（fire-and-forget、G-05: runLearningに集約）
       // 断線④: was_edited を計算してから runLearning に渡し、onAfterSend 経由で log-aix-usage に渡す
