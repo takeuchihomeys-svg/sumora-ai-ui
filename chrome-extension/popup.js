@@ -2747,7 +2747,11 @@ function setupAreaModeSelector(c, siteKey) {
   const hasWardCompoundToken = _cl.areaTokens.some(t =>
     !WARD_CODE_MAP[t] && !NEIGHBORHOOD_WARD_MAP[t] && resolveWardLoose(t));
   // DBのarea_modeが明示設定されている場合は分類結果より優先
-  const _dbMode = (c.area_mode === 'station' || c.area_mode === 'ward') ? c.area_mode : null;
+  // ただし area_mode=station でもテキストが明確な地域（旧バグ誤保存）なら auto 扱いに降格
+  const _isClearlyArea = _cl.hasArea && !_cl.hasStation;
+  const _dbMode = (c.area_mode === 'station' && _isClearlyArea) ? null
+    : (c.area_mode === 'station' || c.area_mode === 'ward') ? c.area_mode
+    : null;
   const defaultMode = _dbMode ||
     ((_cl.hasStation || hasResolvableRoute)
       ? ((hasSpecificWardToken || hasWardCompoundToken) ? "ward" : "station")
@@ -2810,7 +2814,15 @@ function preloadAdjForm(c) {
   if (_areaMode === "ward") {
     _wardStr = _rawArea;
   } else if (_areaMode === "station") {
-    _stStr = _rawArea;
+    // DB に station が保存されていても、テキストが明確な地域なら旧バグ誤保存として補正
+    const _toks2 = _rawArea ? parseAreaTokens(_rawArea) : [];
+    const _cl2   = classifyAreaTokens(_toks2);
+    if (_cl2.hasArea && !_cl2.hasStation) {
+      _wardStr = _rawArea;
+      console.log("[AX] preloadAdjForm: area_mode=station→ward 補正（旧誤保存）:", _rawArea);
+    } else {
+      _stStr = _rawArea;
+    }
   } else {
     // auto: classifyAreaTokens で統一（setupAreaModeSelector と同一ロジック）
     const _toks = _rawArea ? parseAreaTokens(_rawArea) : [];
