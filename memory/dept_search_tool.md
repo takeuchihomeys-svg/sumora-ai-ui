@@ -981,3 +981,32 @@ var NON_RESULT_PAGES = ["GBK001310"];
 - `tracked.length > 0` チェックで物件ありの場合は即停止（Case A に任せる）
 - Staff mode 有効時は `_autoSendArmed = false` にされるためタイマーも自動停止（5分タイムアウトは許容範囲）
 - commit: TBD
+
+---
+
+## 🛠️ 今セッションの修正（2026-09-02）
+
+### A. リアプロPDF一括DL時にAdobeが自動起動する問題（完了）
+- `btn.click()`がnavigation扱いでAdobeに横取りされる → `chrome.runtime.sendMessage({type:"axlx-download-realpro-pdf",url})`に変更
+- `background.js`で`chrome.downloads.download()`を使うメッセージリスナーを追加
+
+### B. 1SLDK間取りの代替マッピング（完了）
+- リアプロ: 1SLDK → 1LDK(6) + 2DK(8) + 2LDK(9)
+- itandi: 1SLDK → 1LDK + 2DK + 2LDK
+- `page-script.js`に`SLDK_SUBSTITUTE`/`SLDK_UPPER_LDK`、`itandi-page-script.js`に`SLDK_SUBSTITUTE_IT`/`SLDK_UPPER_IT`を追加
+
+### C. リアプロ全ページ送信前にAD高→低ソート自動適用（完了）
+- `autoSendAllPages()`冒頭でURLパラメータ確認、未適用なら`key=ad&odr=desc`リンクへ遷移→sessionStorage経由でCase B再開
+- セレクタは`a[href*="key=ad&"]`（`key=addr`との誤マッチ防止のため`&`必須）
+
+### D. 大阪市内で検索時に沿線モーダルが開く問題（完了）
+**根本原因**: `popup-maps.js`の`MULTI_WARD_MAP`に「大阪市内」が未登録のため、`classifyAreaTokens`が「大阪市内」を`unknown`→`station`と誤分類していた
+
+**修正**:
+1. `popup-maps.js`の`MULTI_WARD_MAP`に`"大阪市内": [大阪市全24区]`を追加
+2. `popup.js`の`classifyAreaTokens`の`inWard`チェックに`|| MULTI_WARD_MAP[t]`を追加
+
+これにより：
+- 「大阪市内」が`area`として分類 → `currentAreaMode = "ward"`
+- `preloadAdjForm`が`adj-area-ward = "大阪市内"`, `adj-area-station = ""`に設定
+- page-scriptで`area_mode: "ward"`が渡され、地域モーダルで検索される

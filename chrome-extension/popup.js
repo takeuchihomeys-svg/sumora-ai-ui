@@ -1597,6 +1597,16 @@ const SITE_CONFIG = {
         });
       }
 
+      // ── STEP: 敷金礼金なし ──
+      if (document.getElementById("adj-shikirei-free")?.checked || detectShikireiFlag(c)) {
+        steps.push({
+          num: n++,
+          field: "敷金・礼金なし",
+          value: "チェックあり（自動入力済み）",
+          hint: "詳細検索「初期費用」→「敷金・礼金なし」にチェックを入れる",
+        });
+      }
+
       // ── STEP 8: NG条件（確認用） ──
       if (d.ngPoints) {
         steps.push({
@@ -1708,6 +1718,8 @@ const SITE_CONFIG = {
 
       // ペット条件の検出（動物種名も含む）
       const petNote = c.pet === true || /ペット|pet|犬|猫|ねこ|豆柴|マメ柴|柴犬|小型犬|中型犬|大型犬|動物飼育|動物可/i.test([c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ")) ? "ページ最下部「入居条件（その他）」→「ペット相談」にチェック" : null;
+      // 敷金礼金なし条件の検出
+      const shikireiNote = !!(document.getElementById("adj-shikirei-free")?.checked) || detectShikireiFlag(c);
 
       return [
         {
@@ -1775,6 +1787,12 @@ const SITE_CONFIG = {
               field: "ペット相談",
               value: "チェックあり",
               hint: petNote,
+            } : null,
+            shikireiNote ? {
+              num: 9 + _o,
+              field: "敷金・礼金なし",
+              value: "チェックあり（自動入力済み）",
+              hint: "「初期費用・敷金礼金」→「敷金・礼金なし」にチェック",
             } : null,
           ];
         })(),
@@ -2648,7 +2666,7 @@ function classifyAreaTokens(tokens) {
     // WARD_CODE_MAP = 実際の区コード（大阪市淀川区 等）→ 強い地名シグナル
     // NEIGHBORHOOD_WARD_MAP = 地名→区の対応（十三→淀川区 等）→ 弱い地名シグナル（駅名に負ける）
     var inStrictWard = !!WARD_CODE_MAP[t];
-    var inWard = !!(WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || LEARNED_WARD_MAP[t]);
+    var inWard = !!(WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || LEARNED_WARD_MAP[t] || MULTI_WARD_MAP[t]);
     // STATION_LINE_MAP にある → 駅。ただし WARD_CODE_MAP に完全一致する純粋な市区名は地域優先
     if (inStation && !inStrictWard) return { t: t, type: "station",   reason: "station_map" };
     if (inStation && inStrictWard)  return { t: t, type: "ambiguous", reason: "both_maps" };
@@ -2789,6 +2807,10 @@ function preloadAdjForm(c) {
     const petFields = [c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ");
     document.getElementById("adj-pet").checked = /ペット|pet|犬|猫|ねこ|豆柴|マメ柴|柴犬|小型犬|中型犬|大型犬|動物飼育|動物可/i.test(petFields);
   }
+
+  // 敷金礼金なし: フリーテキスト検出で初期値セット（手動で変更可）
+  const shikireiEl = document.getElementById("adj-shikirei-free");
+  if (shikireiEl) shikireiEl.checked = detectShikireiFlag(c);
 
   // お客様名表示
   const labelEl = document.getElementById("adj-customer-label");
@@ -3334,7 +3356,7 @@ function openInstructions(siteKey) {
       const conditions = {
         rent_max:        itandiEffectiveRentMax,
         area_mode:       _lockedMode_itandi || currentAreaMode,
-        shikirei_free:   detectShikireiFlag(c),
+        shikirei_free:   !!(document.getElementById("adj-shikirei-free")?.checked),
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
         building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
         floor_plan:      adjFloor   || c.floor_plan || c.layout || null,
@@ -3841,7 +3863,7 @@ function openInstructions(siteKey) {
           area_max:        adjAreaMax ? Number(adjAreaMax) : (c.floor_area_max || null),
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
-          shikirei_free: detectShikireiFlag(c),
+          shikirei_free: !!(document.getElementById("adj-shikirei-free")?.checked),
           rp_update_days: adjUpdateDays ? Number(adjUpdateDays) : null,
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
         },
