@@ -130,7 +130,11 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 　→ 正: 何をするから安心なのかを行動で示す
 ⑤ 来阪・来訪タイミングへの言及
 　× 「ご来阪までに」「ご来阪の際に」「ご来阪の前に」「今月末のご来阪までに」等、お客様の来阪・訪問時期を参照する表現
-　→ 正: 「事前にお部屋をピックアップしてお送りさせて頂きます」「お部屋をご確認いただけます」等、来阪タイミングに言及しない表現を使う`;
+　→ 正: 「事前にお部屋をピックアップしてお送りさせて頂きます」「お部屋をご確認いただけます」等、来阪タイミングに言及しない表現を使う
+⑥ 過剰な約束の副詞「すぐに」
+　× 「すぐに」「今すぐ」「即」を行動宣言に使う（「出次第すぐにお送りします」「すぐにご連絡します」等）
+　→ 正: 「出次第お送りさせて頂きます」「確認出来次第ご連絡させて頂きます」等（副詞なし）
+　→ 理由: 「すぐに」は過度な約束・安っぽい印象を与える`;
 
 // ─── 一時的な状況への言及禁止（常時注入・優先度: NG_PHRASE_NOTEと同列）──────────────
 // 過去の会話チェックポイントに「出張中」等が記録されていても、
@@ -141,6 +145,19 @@ const TEMPORARY_SITUATION_NOTE = `\n【🚫 一時的な状況への言及禁止
 // 会話履歴に複数のアポイント・内覧が記録されていても、直近メッセージと無関係な別件予定を
 // 現在の返信文に混入させないようにする。
 const SEPARATE_APPOINTMENT_NOTE = `\n【🚫 別件予定の混入禁止（最優先）】複数の内覧・アポイントが会話履歴に記録されていても、直近の顧客メッセージで明示的に言及されていない別件の予定（別日の内覧・別物件のビデオ通話・未確定の次回アポ等）を現在の返信文に含めないこと。例：J's Garden明日の内覧確認メッセージに、別日予定のモンサント旭町ビデオ通話を混入させない。各予定・内覧・アポイントは独立した会話の流れで個別に扱うこと。`;
+
+// ─── 絵文字位置の決定論的ゲート ─────────────────────────────────────────────
+// お客様が絵文字を文頭・1行目に使っていた場合、返信も1行目の開き言葉直後に絵文字を配置させる。
+// Extended_Pictographic（U+1F300〜）でLINE絵文字を拾う。
+const EMOJI_RE = /\p{Extended_Pictographic}/u;
+function buildEmojiPositionNote(customerMessage: string): string {
+  if (!customerMessage) return "";
+  const firstLine = customerMessage.split(/\n/)[0] ?? "";
+  if (EMOJI_RE.test(firstLine)) {
+    return `\n【😊 絵文字位置ルール（確定）】お客様のメッセージ1行目に絵文字が使われています。返信の1行目（開き言葉の直後）に絵文字を1つ入れること（例:「はい😊！！」「かしこまりました😊！！」）。絵文字を末尾のみに置くことは禁止。`;
+  }
+  return "";
+}
 
 // ─── 共感フレーズ（「全然大丈夫です」/「全然わがままじゃないですよ」）の決定論的ゲート ─────
 // AIが最も間違えるのが「お客様が言っていない言葉（＝わがまま）を勝手に使う」パターン。
@@ -1101,6 +1118,9 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // 共感フレーズ（全然大丈夫です／全然わがままじゃないですよ）の確定ゲート — 常時注入
   const empathyPhraseNote = buildEmpathyPhraseNote(customerMessage);
 
+  // 絵文字位置の確定ゲート — お客様1行目に絵文字 → 返信も1行目に配置を強制
+  const emojiPositionNote = buildEmojiPositionNote(customerMessage);
+
   // ─── 2回目締め検出（直前スタッフが締めの文 + 今回お客様がシンプル承認）─────────────
   // 前回の大きな締めフレーズを繰り返すのを防ぐ。短い承認返し+次アクション1行に収める。
   const lastStaffMsgRaw = lastStaffLines.length > 0 ? lastStaffLines[lastStaffLines.length - 1] : "";
@@ -1250,7 +1270,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   const viewingNoteBlock = viewingNote ? `\n\n【内覧情報】${viewingNote}` : "";
 
   const dynamicBlock = `${propertyStatusNote}
-${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
