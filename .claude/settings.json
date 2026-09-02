@@ -42,7 +42,23 @@
       "PowerShell(\\(Get-Content \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\lib\\\\line-reply-prompts.ts\" | Measure-Object -Line\\).Lines; \\(Get-Content \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\lib\\\\prompt-rules.ts\" | Measure-Object -Line\\).Lines)",
       "PowerShell(npx tsc --noEmit 2>$null)",
       "PowerShell($LASTEXITCODE)",
-      "PowerShell($f = \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\api\\\\migrate-schema\\\\route.ts\"; \\(Get-Content $f | Measure-Object -Line\\).Lines)"
+      "PowerShell($f = \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\api\\\\migrate-schema\\\\route.ts\"; \\(Get-Content $f | Measure-Object -Line\\).Lines)",
+      "Bash(node f.mjs)",
+      "Bash(node g.mjs)",
+      "Bash(node h.mjs)",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/system_design_thinking?select=title,insight&is_current=eq.true&order=created_at.desc&limit=20' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/customers?select=structure_types,building_structure,structure&limit=5' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')",
+      "Bash(curl -v 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/system_design_thinking?select=title,insight&is_current=eq.true&order=created_at.desc&limit=5' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/system_design_thinking?select=title,insight&is_current=eq.true&order=created_at.desc&limit=20' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Accept-Charset: utf-8' --compressed)",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/customers?select=id,structure_types,building_structure&limit=3' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' --compressed)",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/customer_state?select=id,structure_types,building_structure&limit=3' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' --compressed)",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/customer_state?select=id,structure_types&limit=3&structure_types=not.is.null' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' --compressed)",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/property_customers?select=id,structure_types,building_structure&limit=5' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' --compressed)",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/property_customers?select=*&limit=1' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' --compressed)",
+      "Bash(python3 -c \"import sys, json; d=json.load\\(sys.stdin\\); print\\(list\\(d[0].keys\\(\\)\\) if d else 'empty'\\)\")",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/property_customers?select=*&limit=1' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/customer_state?select=*&limit=1' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')"
     ]
   }
 }
