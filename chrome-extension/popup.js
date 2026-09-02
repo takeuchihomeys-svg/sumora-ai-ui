@@ -2659,7 +2659,8 @@ function classifyAreaTokens(tokens) {
   const classified = tokens.map(function(t) {
     if (t.endsWith("線")) return { t: t, type: "station", reason: "route_suffix" };
     if (_lineRe.test(t))  return { t: t, type: "station", reason: "line_prefix" };
-    if (/[市区郡]$/.test(t)) return { t: t, type: "area", reason: "area_suffix" };
+    // computeAreaModeBadgeHtml の hasWard 判定と統一（地域バッジ=地域検索）
+    if (/[市区郡府県]$|(?:市|府|県|都)内$/.test(t)) return { t: t, type: "area", reason: "area_suffix" };
     var tBase = t.replace(/[町村]$/, "");
     var inStation = !!(STATION_LINE_MAP[t] || STATION_LINE_MAP[tBase] ||
       (LEARNED_STATION_MAP[t] && LEARNED_STATION_MAP[t].realpro_lines && LEARNED_STATION_MAP[t].realpro_lines.length > 0));
