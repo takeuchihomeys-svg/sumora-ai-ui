@@ -49,13 +49,14 @@ export const maxDuration = 300;
 const CHECKPOINT_HEADER = "【会話履歴サマリー（確認済み事実セーブポイント — 長期会話の文脈）】";
 
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
-// 分析系（synthesizeCustomerContext 専用）: Haiku 4.5（要約・条件抽出タスク用。Sonnet より大幅コスト削減）
+// 分析系（synthesizeCustomerContext 専用）: Sonnet 5（品質重視・要約結果が返信品質に直結するため）
 // ※ 旧Step1（analyzeCustomerSituation）は完全廃止済み（2026-08・brain/suggested_aix_meta に一元化）
-// - Haiku 4.5 は thinking がデフォルト無効だが、明示的に disabled を渡して
+// - Haiku化は品質劣化リスクあり（synthesize結果がgenerate-replyの文脈として使われるため非推奨）
+// - Sonnet 5 は thinking がデフォルト無効だが、明示的に disabled を渡して
 //   res.content が常に string で返る（ブロック配列にならない）ことを保証する
 function createAnalysisModel() {
   return new ChatAnthropic({
-    model: "claude-haiku-4-5-20251001",
+    model: "claude-sonnet-5",
     maxTokens: 2048,
     thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
