@@ -1,6 +1,36 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-08-29
+最終更新: 2026-09-02
+
+---
+
+## AIX 待ち合わせ場所 Brain 一本化（2026-09-02）
+
+内覧日調整中に「待ち合わせ場所」AIXを送っても Brain が物件名・住所を把握できていなかった根本バグを修正。
+
+**根本原因（4点）:**
+1. `viewing_history` に `property_name`/`property_address` カラムなし → 物件名・住所がDB保存されない
+2. `log-aix-usage` の `STAGE_TRANSITION_AIX_TYPES` に `meeting_place` 未登録 → Brain メタパッチが走らない
+3. `brain-core.ts` が `viewing_history` から日時・ステータスのみSELECT → viewingsText に物件情報なし
+4. AixModal → page.tsx → log-aix-usage の property 情報の橋渡しなし
+
+**修正（5ファイル・commit `d2a86b1d`）:**
+1. `migrate-schema`: `viewing_history` に `property_name TEXT / property_address TEXT` 追加
+2. `log-aix-usage`: `meeting_place` を `STAGE_TRANSITION_AIX_TYPES` に追加 + 物件名・住所を含む動的 stageNote で Brain メタパッチ + viewing_history の最新未完了予定に upsert
+3. `brain-core.ts` 2箇所: viewing_history SELECT に `property_name, property_address` 追加 + viewingsText に「物件: 〇〇 住所: 〇〇」を注入
+4. `AixModal.tsx`: `onAfterSend` 型に `meetingPropertyName/meetingPropertyAddress` 追加 + 両コールサイトで値を渡す
+5. `page.tsx`: `log-aix-usage` fetch に `meeting_property_name/meeting_property_address` を追加
+
+**動作フロー（修正後）:**
+```
+meeting_place AIX 送信
+ → AixModal.onAfterSend に meetingPropertyName/Address を乗せる
+ → page.tsx が log-aix-usage に送信
+ → log-aix-usage が viewing_history.最新予定 に property_name/address を PATCH
+ → STAGE_TRANSITION で Brain メタパッチ起動（「案内物件: 〇〇（住所: 〇〇）内見当日完了」）
+ → 次回 brain-core.ts フル分析で viewingsText に「物件: 〇〇 住所: 〇〇」が注入
+ → generate-reply が物件名・住所を把握した状態で返信生成
+```
 
 ---
 
