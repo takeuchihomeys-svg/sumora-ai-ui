@@ -4,6 +4,7 @@ import { upsertKnowledge, buildKnowledgeEmbeddingInput, generateEmbedding } from
 import { promoteToConfirmed } from "@/app/lib/knowledge-promote";
 import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app/lib/ai-feedback-guard";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
@@ -835,11 +836,8 @@ function splitSentences(text: string): string[] {
 // ── 成約済み・終了済み会話のexampleを除外するpost-filter（2026-08-20追加）──
 // ai_reply_examples には conversation_status カラムがないため、conversation_id で
 // conversations テーブルをフェッチしてステータスを確認する。
-// 除外対象: BRAIN_SKIP_STATUSES と同じステータス、または is_post_apply=true の会話
-const ANALYZE_SKIP_STATUSES = [
-  "applying", "application", "screening", "contract",
-  "closed_won", "closed_lost", "lost", "approved",
-];
+// 除外対象: DRAFT_SKIP_STATUSES（conversation-status.ts に集約）のステータス、
+// または is_post_apply=true の会話
 async function excludeClosedConversationIds(
   items: Array<{ conversation_id?: string | null }>
 ): Promise<Set<string>> {
@@ -854,7 +852,7 @@ async function excludeClosedConversationIds(
   if (!convRows || convRows.length === 0) return new Set();
   return new Set(
     convRows
-      .filter((c) => ANALYZE_SKIP_STATUSES.includes(c.status as string) || !!(c.is_post_apply as boolean))
+      .filter((c) => DRAFT_SKIP_STATUSES.has(c.status as string) || !!(c.is_post_apply as boolean))
       .map((c) => c.id as string)
   );
 }
@@ -872,7 +870,7 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
     .limit(200);
   if (error || !recentExamples || recentExamples.length === 0) return { detected: 0, demoted: 0 };
 
-  // 成約済み・終了済み会話（ANALYZE_SKIP_STATUSES・is_post_apply=true）を除外
+  // 成約済み・終了済み会話（DRAFT_SKIP_STATUSES・is_post_apply=true）を除外
   const _closedIdsRepeat = await excludeClosedConversationIds(
     recentExamples as Array<{ conversation_id?: string | null }>
   );
@@ -1066,7 +1064,7 @@ export async function POST(req: NextRequest) {
     [examples[i], examples[j]] = [examples[j], examples[i]];
   }
 
-  // 成約済み・終了済み会話（ANALYZE_SKIP_STATUSES・is_post_apply=true）をpost-filterで除外
+  // 成約済み・終了済み会話（DRAFT_SKIP_STATUSES・is_post_apply=true）をpost-filterで除外
   // conversation_id でconversationsを参照してステータスを確認する
   if (examples.length > 0) {
     const _closedIds = await excludeClosedConversationIds(

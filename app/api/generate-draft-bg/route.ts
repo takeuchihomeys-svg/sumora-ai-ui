@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
 
 export const maxDuration = 60;
 
@@ -10,7 +11,8 @@ function getDb() {
   );
 }
 
-const SKIP_STATUSES = new Set(["applying", "screening", "contract", "closed_won"]);
+// スキップ対象ステータスは conversation-status.ts に集約
+// （旧ローカル定義は4値のみで application/closed_lost/lost/approved が欠落していた）
 
 const STATUS_ALIAS: Record<string, string> = {
   first_reply:             "hearing",
@@ -43,7 +45,7 @@ export async function POST(req: NextRequest) {
     if (!conv) return NextResponse.json({ ok: false, skipped: true });
     if (conv.last_sender !== "customer") return NextResponse.json({ ok: true, skipped: true });
     if (conv.ai_draft) return NextResponse.json({ ok: true, skipped: true, draft: conv.ai_draft as string });
-    if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: true });
+    if (DRAFT_SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: true });
 
     const [{ data: msgs }, { data: pc }] = await Promise.all([
       db.from("messages").select("sender, text, created_at").eq("conversation_id", convId)

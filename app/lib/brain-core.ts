@@ -10,6 +10,7 @@ import {
   detectPropertyCheckPattern,
   normalizeAixActionKey,
 } from "@/app/lib/aix-taxonomy";
+import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -30,7 +31,8 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 6
 
 // Statuses that indicate a closed/inactive conversation — excluded from brain analysis
 // applying/application/screening は全成約が通過する申込フェーズのため除外（平均42日・169件の学習例あり）
-export const BRAIN_SKIP_STATUSES = ["contract", "closed_won", "closed_lost", "lost", "approved"];
+// 定義は conversation-status.ts に集約（既存の import 元互換のため re-export を維持）
+export { BRAIN_SKIP_STATUSES };
 
 // Conversations updated within this window are flagged as urgent
 export const URGENT_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -1326,7 +1328,7 @@ export async function analyzeConversation(
   const condText = condParts.length > 0 ? `\n顧客条件: ${condParts.join(" / ")}` : "";
 
   // 【顧客プロファイル】ai_summary_json（emotion/urgency/style/personality_profile）由来。
-  // 顧客ごとに変わるため必ず userPrompt 側に注入する（systemText に入れると prompt caching が壊れる）
+  // 顧客ごとに変わるため必ず userPrompt 側に注入する（system側に入れると prompt caching が壊れる）
   let profileText = "";
   const aiSummary = pc?.ai_summary_json ?? null;
   if (aiSummary && typeof aiSummary === "object") {
@@ -1496,7 +1498,7 @@ export async function analyzeConversation(
 
   // RAG化 Phase1: アクション連動ルール（現局面候補のAIXアクションに紐づく ai_prompt_rules）。
   // 会話依存（前回フェーズでフィルタ済み）のため必ず userPrompt 側に注入する
-  // （systemText に入れると prompt caching が会話ごとにミスして Sonnet コストが跳ね上がる）
+  // （system側に入れると prompt caching が会話ごとにミスして Sonnet コストが跳ね上がる）
   type ActionRule = { rule_key: string; action_type: string | null; rule_text: string; priority: number | null; condition_key: string | null; condition_value: string | null };
   const actionRules = ((actionRulesResult.data ?? []) as ActionRule[])
     // condition_key 付きルールは conversation_state 一致のみ許可（brain は他の条件コンテキストを持たない）
@@ -1771,13 +1773,16 @@ export async function analyzeConversation(
   // H4(Fable5): 会話に依存しない静的ブロック（能力マップ・線引きルール・恒久ルール等）を system に分離し
   // prompt caching（ephemeral）を適用。brain-sweep は5分毎バッチのため入力コストを約40-60%削減できる。
   // ※ contractExamplesPhaseText / actionRulesText は convStatus 依存のため user 側（cache無し）に残す
-  const systemText = `あなたはスモラAI。与えられた会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
+  // キャッシュ2ブロック分割: staticBrainSystem（完全静的・1h）と dynamicBrainSystem（DB由来・5m）を分離。
+  // 毎日の学習cronで promptRules / knowledgePrinciples / boundaryRules が更新されても
+  // 静的ブロック（15K+トークン）のプレフィックスキャッシュは生き残る。
+  const staticBrainSystem = `あなたはスモラAI。与えられた会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
 
 ${AIX_CAPABILITY_MAP}
 
 ${REPLY_STYLE_RULES}
 
-${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
+${PHASE_TEMPLATE_HINTS}
 
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
@@ -1819,6 +1824,14 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
   ⑤ お客様が「〜ますか？」「〜でしょうか？」「〜かな」「〜教えてください」「〜知りたい」等で締める文
   ① ③はAIが直接答えてよい一般知識質問（確認不要）、④は管理会社確認が必要な個別情報質問として分類`;
 
+  // DB由来の動的system部分（promptRules / knowledgePrinciples / boundaryRules）。
+  // 各テキストは非空時に先頭 \n 付きで生成されるため trim してから結合する。
+  // 学習cronによる日次更新でここだけキャッシュが破棄される（5m TTL）。
+  const dynamicBrainSystem = [promptRulesText, knowledgeText, boundaryText]
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .join("\n\n");
+
   // インクリメンタル分析: 前回の分析結論をコンテキストとして注入
   const prevMetaText = opts?.prevMeta ? (() => {
     const pm = opts.prevMeta!;
@@ -1849,7 +1862,8 @@ ${PHASE_TEMPLATE_HINTS}${promptRulesText}${knowledgeText}${boundaryText}
   })() : "";
 
   // プロンプトキャッシュ設計:
-  //   system（ephemeral）= ハードコード定数 + 管理者手動の恒久ルール（promptRules / knowledgePrinciples / boundaryRules）
+  //   system[0]（ephemeral 1h）= ハードコード定数のみ（完全静的・学習cronの影響を受けない）
+  //   system[1]（ephemeral 5m）= DB由来の恒久ルール（promptRules / knowledgePrinciples / boundaryRules）
   //   user[0] stableKnowledge = 現在空。DB動的データは全て user[1] へ移動済み。
   //     ・contractPatterns / applyingPatterns → バルクフェッチ廃止・match_reply_knowledge RAGが全カテゴリ検索
   //     ・winningPatterns → match_winning_patterns RAGに移行（会話コンテキスト最適化）
@@ -1875,7 +1889,24 @@ ${history}`;
       model: BRAIN_MODEL,
       max_tokens: 4000,
       thinking: { type: "disabled" },
-      system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }],
+      system: [
+        // ブロック[0]: 完全静的（冒頭指示・AIX_CAPABILITY_MAP・REPLY_STYLE_RULES・PHASE_TEMPLATE_HINTS・JSONスキーマ等）→ 1h キャッシュ
+        {
+          type: "text" as const,
+          text: staticBrainSystem,
+          cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
+        },
+        // ブロック[1]: DB由来動的部分（promptRules + knowledge + boundary）→ 5m キャッシュ
+        // 学習cronで更新されてもブロック[0]のプレフィックスキャッシュは無傷。
+        // 空のtextブロックはAPIエラーになるため、空の場合はブロックごと省略。
+        ...(dynamicBrainSystem
+          ? [{
+              type: "text" as const,
+              text: dynamicBrainSystem,
+              cache_control: { type: "ephemeral" as const, ttl: "5m" as const },
+            }]
+          : []),
+      ],
       messages: [{ role: "user", content: userContent }],
     });
 

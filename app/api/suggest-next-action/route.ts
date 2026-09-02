@@ -2,6 +2,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
+import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { PROPERTY_CHECK_RESULT_LABEL, PROPERTY_CHECK_RESULT_DESCRIPTION } from "@/app/lib/aix-taxonomy";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
@@ -10,14 +11,15 @@ export const maxDuration = 30;
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
 
 // ラベル参照は normalizeStatus() 適用後のみ行うため、正規化後に到達しうるキーだけ持つ
-// （contract/lost/closed_* は SKIP_STATUSES で先に除外され、旧名は normalizeStatus で吸収される）
+// （contract/lost/closed_*/approved は BRAIN_SKIP_STATUSES で先に除外され、旧名は normalizeStatus で吸収される）
 const STATUS_LABEL: Record<string, string> = {
   hearing: "ヒアリング中",
   proposing: "物件提案中",
   applying: "申込手続き中",
 };
 
-const SKIP_STATUSES = new Set(["contract", "lost", "closed_won", "closed_lost"]);
+// スキップ対象は conversation-status.ts の BRAIN_SKIP_STATUSES に統一
+// （旧ローカル定義は approved が欠落していた。applying/screening は次アクション提案対象のため含めない）
 
 // ============================================================================
 // trigger_action_rules の用途分離（category カラム・2026-08-22 導入）
@@ -118,7 +120,7 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   if (!conv) return NextResponse.json({ action: null, reason: "" });
-  if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ action: null, reason: "" });
+  if (BRAIN_SKIP_STATUSES.includes(conv.status as string)) return NextResponse.json({ action: null, reason: "" });
 
   // AIX-META（brain の suggested_aix_meta）を早期にパース。
   // RAGクエリ構築とHaikuプロンプト注入の両方で使うためここで一度だけ処理する。

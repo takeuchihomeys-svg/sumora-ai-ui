@@ -6,6 +6,7 @@ import { classifyByKeywords, classifyByAI, type ConditionIntent } from "@/app/li
 import { mergeConditions, type ConditionFields } from "@/app/lib/condition-merge";
 import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
+import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { recordConditionHistory } from "@/app/lib/condition-history";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
@@ -44,10 +45,8 @@ const ACCOUNTS: AccountConfig[] = [
 // required通知本体も runBrainAndNotify（brain-core）に移設済み
 
 // ── bg-async / after() B と同期させる draft 生成スキップステータス集合 ─────────
-// bg-async が draft 生成ごと早期スキップするステータス（= bg-async 内の brain 直列実行も
-// 走らないステータス）。このリストを変える場合は after() B の早期return・
-// generate-draft-bg-async の SKIP_STATUSES・cron 側も必ず同時に更新すること。
-const BG_ASYNC_SKIP_STATUSES = ["applying", "application", "screening", "contract", "closed_won", "closed_lost", "approved", "lost"];
+// 定義は conversation-status.ts（BG_ASYNC_SKIP_STATUSES）に集約。
+// bg-async・cron 側も同じ定数を import しているため、変更は conversation-status.ts のみで行う。
 
 // ── P4: 顧客メッセージ自体に条件語彙が含まれるかの判定 ─────────────────────
 // スタッフ側がヒアリング文脈でなくても（内覧調整中・物件フィードバック中など）、
@@ -358,7 +357,7 @@ async function handleTextMessage(
         .eq("id", convId)
         .maybeSingle();
       const convStatus = (convRow?.status as string) || "hearing";
-      if (!BG_ASYNC_SKIP_STATUSES.includes(convStatus)) return; // bg-async側のbrain直列実行に任せる
+      if (!BG_ASYNC_SKIP_STATUSES.has(convStatus)) return; // bg-async側のbrain直列実行に任せる
       await runBrainAndNotify(convId);
     } catch (e) {
       console.warn("[line-webhook] brain-notify:", e);
@@ -511,8 +510,8 @@ async function handleTextMessage(
         const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
           ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
-        // 申込以降ステータスはai_summary・ai_draft生成不要（bg-async/cronのSKIP_STATUSESと一致させること）
-        if (BG_ASYNC_SKIP_STATUSES.includes(convStatus)) return;
+        // 申込以降ステータスはai_summary・ai_draft生成不要（bg-async/cronと同じ共有定数）
+        if (BG_ASYNC_SKIP_STATUSES.has(convStatus)) return;
 
         const pendingNow = new Date().toISOString();
         const fiveMinAgoStr = new Date(Date.now() - 5 * 60 * 1000).toISOString();

@@ -22,6 +22,7 @@ import {
 } from "@/app/lib/validate-reply";
 import { runFinalCheck, runFinalCheckWithRevision, sha1, type CheckResult } from "@/app/lib/final-check";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
+import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { classifyReplyMode } from "@/app/lib/reply-mode-classifier";
 import {
@@ -2535,18 +2536,17 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── post_apply / skip_status ガード（手動呼び出しのみ）───
-  // is_post_apply=true または BRAIN_SKIP_STATUSES のステータスの会話に対してスタッフが手動で
+  // is_post_apply=true または DRAFT_SKIP_STATUSES のステータスの会話に対してスタッフが手動で
   // AI生成を実行した場合、draft生成をスキップする。
   // brainMetaDirect 経由（bg-async の brain直列実行後）はすでに bg-async 側でチェック済みのため
   // externalBrainGate !== null の場合はスキップ不要。
-  const BRAIN_SKIP_STATUSES = ["applying","application","screening","contract","closed_won","closed_lost","lost","approved"];
   if (conversationId && externalBrainGate === null && !isTemplateOptimize) {
     const { data: convMeta } = await supabase
       .from("conversations")
       .select("is_post_apply, status")
       .eq("id", conversationId)
       .single();
-    if (convMeta && (convMeta.is_post_apply || BRAIN_SKIP_STATUSES.includes((convMeta.status as string) ?? ""))) {
+    if (convMeta && (convMeta.is_post_apply || DRAFT_SKIP_STATUSES.has((convMeta.status as string) ?? ""))) {
       console.log("[generate-reply] post_apply or skip_status → ドラフト生成スキップ:", {
         conversationId,
         is_post_apply: convMeta.is_post_apply,
@@ -3637,6 +3637,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             ): Promise<{ body: string; stopReason: unknown }> => {
               let fullText = "";
               let stopReason: unknown;
+              // プロンプトキャッシュ効果の観測（コスト最適化の検証基盤）:
+              // LangChain の AIMessageChunk は usage_metadata（正規化済み）または
+              // response_metadata.usage（Anthropic生形式）にキャッシュ統計を載せる。両方を拾う。
+              let cacheUsage: { read: number; write: number; input: number } | null = null;
               for await (const chunk of await streamPromise) {
                 // thinking有効時等、content が string ではなくブロック配列で届くケースに対応。
                 // text ブロックのみ抽出し、thinking ブロックは本文に混ぜない。
@@ -3657,6 +3661,39 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     : "";
                 fullText += text;
                 if (chunk.response_metadata?.stop_reason) stopReason = chunk.response_metadata.stop_reason;
+                // キャッシュ統計の捕捉: message_start 相当のチャンクに input_tokens とキャッシュ内訳が載る
+                const um = (chunk as {
+                  usage_metadata?: {
+                    input_tokens?: number;
+                    input_token_details?: { cache_read?: number; cache_creation?: number };
+                  };
+                }).usage_metadata;
+                if (um && (um.input_tokens ?? 0) > 0) {
+                  cacheUsage = {
+                    read: um.input_token_details?.cache_read ?? 0,
+                    write: um.input_token_details?.cache_creation ?? 0,
+                    input: um.input_tokens ?? 0,
+                  };
+                }
+                const rawUsage = (chunk.response_metadata as {
+                  usage?: { cache_read_input_tokens?: number; cache_creation_input_tokens?: number; input_tokens?: number };
+                } | undefined)?.usage;
+                if (!cacheUsage && rawUsage && typeof rawUsage.input_tokens === "number") {
+                  cacheUsage = {
+                    read: rawUsage.cache_read_input_tokens ?? 0,
+                    write: rawUsage.cache_creation_input_tokens ?? 0,
+                    input: rawUsage.input_tokens ?? 0,
+                  };
+                }
+              }
+              // プロンプトキャッシュ効果の観測ログ（read>0 = キャッシュHIT / write>0 = キャッシュ書込 / どちらも0 = 無効）
+              if (cacheUsage) {
+                console.log(
+                  `[cache:gen-reply] read=${cacheUsage.read}` +
+                  ` write=${cacheUsage.write}` +
+                  ` input=${cacheUsage.input}` +
+                  ` conv=${conversationId}`
+                );
               }
               warnIfTruncated(stopReason, genInputLength);
               if (shouldPrependGreeting && !isTemplateOptimize) {

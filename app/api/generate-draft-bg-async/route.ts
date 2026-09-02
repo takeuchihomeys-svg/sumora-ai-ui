@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
+import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES } from "@/app/lib/conversation-status";
 
 export const maxDuration = 300;
 
@@ -11,16 +12,17 @@ function getDb() {
   );
 }
 
-// brain-core/BRAIN_SKIP_STATUSES・line-webhook/BG_ASYNC_SKIP_STATUSESと同一集合を維持すること
-const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost", "lost", "approved"]);
+// スキップ対象ステータスは conversation-status.ts に集約（BG_ASYNC_SKIP_STATUSES を import）
 
 // ── 脳-DBブリッジ: condition_change_type 検出後にHaikuで条件を抽出しDB更新 ──────────────
 // brain が suggested_aix_meta に condition_change_type を書き込んだ後、
 // generate-reply のプロンプト注入だけでなく property_customers の実際のフィールドも更新する。
 // P4 / autoParseFormat が既にバナーエントリを追加済みの場合は重複追加しない。
 
-// プロンプトキャッシュ用静的システムメッセージ（全 condition_change_type 共通のルール部分）。
-// 動的な focus.prompt・targetMessage は userメッセージ側に置く（cache_control なし）。
+// 条件抽出用の静的システムメッセージ（全 condition_change_type 共通のルール部分）。
+// 動的な focus.prompt・targetMessage は userメッセージ側に置く。
+// 注意: Haiku 4.5 の最小キャッシュプレフィックスは4096トークン。本プロンプトは約2,200トークンで
+// 下回るため cache_control を付けてもサイレントに無効（毎回フル価格）→ 付与しないこと（2026-09）。
 const CONDITION_EXTRACT_SYSTEM = `【条件カテゴリ定義】
 rent_max: 月々の家賃・賃料の上限（例：「8万円以内」「月10万まで」→ 80000, 100000）
 rent_min: 家賃の下限・最低希望額（「7万以上」→ 70000）
@@ -107,16 +109,16 @@ async function applyBrainConditionChange(
     .select("additional_conditions, desired_area, floor_plan, rent_max, rent_min, walk_minutes, commute_station, commute_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests")
     .eq("id", pcId).maybeSingle();
 
-  // プロンプトキャッシュ（2026-08）:
-  // 静的ルール（CONDITION_EXTRACT_SYSTEM）を system メッセージに分離し cache_control を付与。
-  // 動的な focus.prompt・targetMessage のみ user メッセージに残す。
+  // 静的ルール（CONDITION_EXTRACT_SYSTEM）を system に分離し、動的な focus.prompt・targetMessage のみ user に残す。
+  // ※cache_control なし: Haiku 4.5 の最小キャッシュプレフィックスは4096トークンで、
+  //   本プロンプト（約2,200トークン）ではサイレントに無効（毎回フル価格）になるため付与しない。
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 300,
-      system: [{ type: "text", text: CONDITION_EXTRACT_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } }],
+      system: [{ type: "text", text: CONDITION_EXTRACT_SYSTEM }],
       messages: [{ role: "user", content: `お客さんのメッセージから「${focus.prompt}」に関する条件を抽出してください。\n\n【お客さんのメッセージ】\n${targetMessage.slice(0, 400)}` }],
     }),
     signal: AbortSignal.timeout(12_000),
@@ -226,7 +228,7 @@ export async function POST(req: NextRequest) {
   if (conv.last_sender !== "customer") return NextResponse.json({ ok: true, skipped: "not_customer_turn" });
   // "[AIX誘導中]" センチネルは初回バグで貼られた可能性があるため通過させて再生成を試みる
   if (conv.ai_draft && conv.ai_draft !== "[AIX誘導中]") return NextResponse.json({ ok: true, skipped: "already_has_draft" });
-  if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: "status" });
+  if (BG_ASYNC_SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: "status" });
 
   let { data: msgs, error: msgsErr } = await db.from("messages")
     .select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", convId)
@@ -431,6 +433,8 @@ export async function POST(req: NextRequest) {
       // - 見つかれば先頭追加（generateReplyの inject last staff ロジックと統一）
       let hasAnyStaffMsg = hasStaffInLast20;
       let recentMsgsForGen = recentMsgs;
+      // brain後再取得（effectiveRecentMsgs採用）時にも再注入できるよう外側スコープに保持
+      let staffEntry: { sender: string; text: string; imageUrl: string | undefined; createdAt: string | undefined; isAix: boolean } | null = null;
       if (!hasStaffInLast20) {
         const { data: lastStaffData } = await db.from("messages")
           .select("sender, text, created_at")
@@ -442,10 +446,8 @@ export async function POST(req: NextRequest) {
           .maybeSingle();
         if (lastStaffData) {
           hasAnyStaffMsg = true;
-          recentMsgsForGen = [
-            { sender: "staff", text: (lastStaffData.text as string) || "", imageUrl: undefined as string | undefined, createdAt: lastStaffData.created_at as string | undefined, isAix: false },
-            ...recentMsgs,
-          ];
+          staffEntry = { sender: "staff", text: (lastStaffData.text as string) || "", imageUrl: undefined as string | undefined, createdAt: lastStaffData.created_at as string | undefined, isAix: false };
+          recentMsgsForGen = [staffEntry, ...recentMsgs];
         }
       }
 
@@ -532,8 +534,7 @@ export async function POST(req: NextRequest) {
       const activeTaskTypes = (pendingTasks ?? []).map((t: { task_type: string }) => t.task_type);
 
       // AIX誘導タスクがある場合はdraft生成をスキップ（property_checkは短い返しを生成するため除外）
-      const AIX_SKIP_TYPES = ["property_send", "estimate_sheet"];
-      if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.includes(t))) {
+      if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.has(t))) {
         await db.from("conversations")
           .update({ ai_draft: "[AIX誘導中]", draft_pending_at: null })
           .eq("id", convId)
@@ -559,6 +560,19 @@ export async function POST(req: NextRequest) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 180000);
 
+      // brain後DB再取得で effectiveRecentMsgs が採用される場合、L44x で先頭注入した
+      // 「最新の非AIXスタッフ返信」（staffEntry）が破棄され「初めまして」誤生成の原因になる。
+      // 採用が確定したこのタイミングでスタッフ文脈を再注入する
+      let recentMessagesForReply = effectiveRecentMsgs !== recentMsgs ? effectiveRecentMsgs : recentMsgsForGen;
+      if (
+        staffEntry &&
+        !recentMessagesForReply.some(
+          (m: { sender: string; isAix?: boolean }) => m.sender === "staff" && !m.isAix
+        )
+      ) {
+        recentMessagesForReply = [staffEntry, ...recentMessagesForReply];
+      }
+
       let draftRes: Response;
       try {
         draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
@@ -571,7 +585,8 @@ export async function POST(req: NextRequest) {
             // 紐付き顧客名 → なければ conversationsの表示名（LINEの名前）をフォールバック
             customerName: pcData?.customer_name || (conv.customer_name as string) || "",
             // brain後DB再取得で追加メッセージが取り込まれている場合は effectiveRecentMsgs を優先
-            recentMessages: effectiveRecentMsgs !== recentMsgs ? effectiveRecentMsgs : recentMsgsForGen,
+            // （スタッフ文脈が必要な場合は staffEntry 再注入済みの recentMessagesForReply を使用）
+            recentMessages: recentMessagesForReply,
             customerConditions,
             customerSummary: pcData?.ai_summary || "",
             // 条件ヒアリング状況（missingConditionsNote注入のために必要）

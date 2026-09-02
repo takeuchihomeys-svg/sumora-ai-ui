@@ -3477,7 +3477,7 @@ export default function Home() {
     const msgs = selectedConversation.messages;
     const lastStaffIdx = msgs.map((m, i) => m.sender === "staff" ? i : -1).filter(i => i >= 0).at(-1);
     const msgsAfterStaff = lastStaffIdx !== undefined ? msgs.slice(lastStaffIdx + 1) : msgs;
-    const targetMessage = msgsAfterStaff.filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]").slice(-3).map((m) => m.text).join("\n") || latestCustomerMessage.trim() || msgs.at(-1)?.text || "（メッセージなし）";
+    const targetMessage = msgsAfterStaff.filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]").slice(-10).map((m) => m.text).join("\n") || latestCustomerMessage.trim() || msgs.at(-1)?.text || "（メッセージなし）";
 
     // ── ① お客様メッセージから条件リストを自動抽出 ──
     // 改行区切りで短い行が3行以上 = 箇条書き条件リストと判定して抽出

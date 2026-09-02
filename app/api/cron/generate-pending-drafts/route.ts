@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { detectPlaceholders } from "@/app/lib/validate-reply";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
+import { DRAFT_SKIP_STATUSES, AIX_SKIP_TYPES } from "@/app/lib/conversation-status";
 
 function getDb() {
   return createClient(
@@ -16,7 +17,8 @@ export const maxDuration = 300;
 const PER_CONV_TIMEOUT_MS = 120_000; // generate-reply Step1(45s)+Step2(45s)+余裕=120s
 const TIME_BUDGET_MS = 240_000; // maxDuration300sの80%を処理に使う
 
-const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost"]);
+// スキップ対象ステータスは conversation-status.ts に集約
+// （旧ローカル定義は lost/approved が欠落しており bg-async と食い違っていた）
 
 const STATUS_ALIAS: Record<string, string> = {
   first_reply:             "hearing",
@@ -172,7 +174,7 @@ async function run() {
     isFirst = false;
 
     // SKIPチェック: DB書き込み（claim）前に確認してクレーム無駄打ちを防ぐ（修正③）
-    if (SKIP_STATUSES.has(convStatus) || conv.last_sender !== "customer") {
+    if (DRAFT_SKIP_STATUSES.has(convStatus) || conv.last_sender !== "customer") {
       skipped++;
       continue;
     }
@@ -281,8 +283,7 @@ async function run() {
       const activeTaskTypes = (cronPendingTasks ?? []).map((t: { task_type: string }) => t.task_type);
 
       // AIX誘導タスクがある場合はdraft生成をスキップ（property_checkは短い返しを生成するため除外）
-      const AIX_SKIP_TYPES = ["property_send", "estimate_sheet"];
-      if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.includes(t))) {
+      if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.has(t))) {
         await db.from("conversations")
           .update({ ai_draft: "[AIX誘導中]", draft_attempted_at: null })
           .eq("id", convId)
