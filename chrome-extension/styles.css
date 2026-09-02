@@ -141,14 +141,15 @@ body {
 }
 .customer-item:hover, .customer-item:active { background: #e8f4fd; }
 .customer-item.dimmed { opacity: 0.55; }
-.customer-item.done-today { background: #f0f9ff; }
-.customer-item.done-today:hover, .customer-item.done-today:active { background: #e1f5fe; }
+.customer-item.done-today { background: #f0fdf4; }
+.customer-item.done-today:hover, .customer-item.done-today:active { background: #dcfce7; }
 
 .c-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 .dot-new_inquiry  { background: #f44336; }
 .dot-hot          { background: #ff9800; }
 .dot-property_search { background: #2196F3; }
 .dot-pending      { background: #9e9e9e; }
+.dot-applying     { background: #3f51b5; }
 
 .c-body { flex: 1; min-width: 0; }
 .c-name { font-size: 14px; font-weight: 700; color: #111b21; margin-bottom: 2px; }
@@ -173,8 +174,24 @@ body {
 .badge-hot          { background: #fff3e0; color: #e65100; }
 .badge-property_search { background: #e3f2fd; color: #1565C0; }
 .badge-pending      { background: #f5f5f5; color: #757575; }
+.badge-applying     { background: #e8eaf6; color: #3949ab; }
 
 .c-arrow { color: #c5d8e8; flex-shrink: 0; }
+
+/* ── 折りたたみセクション（申込中・検討中） ── */
+.collapsible-section { border-bottom: 1px solid #e9edef; }
+.collapsible-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 14px;
+  font-size: 11px; font-weight: 700;
+  color: #5f6368; background: #f8f9fa;
+  cursor: pointer; user-select: none;
+  border-bottom: 1px solid #f0f2f5;
+}
+.collapsible-header:hover { background: #f0f2f5; }
+.collapsible-arrow { font-size: 9px; transition: transform 0.15s; display: inline-block; }
+.collapsible-header.open .collapsible-arrow { transform: rotate(90deg); }
+.collapsible-count { margin-left: auto; font-weight: 400; color: #9aa3ad; }
 
 .viewed-btn {
   font-size: 10px; font-weight: 700;

@@ -2237,6 +2237,17 @@ async function loadCustomers(forceRefresh = false) {
   }
 }
 
+function renderCollapsibleSection(sectionId, title, customers) {
+  let html = `<div class="collapsible-section">
+    <div class="collapsible-header" data-target="${sectionId}">
+      <span class="collapsible-arrow">▶</span>${title}<span class="collapsible-count">${customers.length}人</span>
+    </div>
+    <div class="collapsible-body" id="${sectionId}" style="display:none">`;
+  customers.forEach((c) => { html += renderCustomerRow(c, false); });
+  html += `</div></div>`;
+  return html;
+}
+
 function renderList(customers) {
   const list = document.getElementById("customer-list");
 
@@ -2245,9 +2256,15 @@ function renderList(customers) {
     return;
   }
 
-  // 紐付け済み・条件あり・条件なし の3グループに分類
-  const linked   = customers.filter((c) => c.is_linked);
-  const unlinked = customers.filter((c) => !c.is_linked);
+  // 申込中・検討中は折りたたみセクションに分離（検索不要のため）
+  const _FOLD = new Set(["applying", "pending"]);
+  const mainList    = customers.filter((c) => !_FOLD.has(c.status));
+  const applyingList = customers.filter((c) => c.status === "applying");
+  const pendingList  = customers.filter((c) => c.status === "pending");
+
+  // 紐付け済み・条件あり・条件なし の3グループに分類（メイン顧客のみ）
+  const linked   = mainList.filter((c) => c.is_linked);
+  const unlinked = mainList.filter((c) => !c.is_linked);
   const withCond = unlinked.filter(hasConditions);
   const noCond   = unlinked.filter((c) => !hasConditions(c));
   const showSections = linked.length > 0 && (withCond.length > 0 || noCond.length > 0);
@@ -2271,7 +2288,22 @@ function renderList(customers) {
     noCond.forEach((c) => { html += renderCustomerRow(c, true); });
   }
 
+  // 折りたたみセクション（申込中・検討中）
+  if (applyingList.length) html += renderCollapsibleSection("coll-applying", "申込中", applyingList);
+  if (pendingList.length)  html += renderCollapsibleSection("coll-pending",  "検討中", pendingList);
+
   list.innerHTML = html;
+
+  // 折りたたみトグル
+  list.querySelectorAll(".collapsible-header").forEach((header) => {
+    header.addEventListener("click", () => {
+      const body = document.getElementById(header.dataset.target);
+      if (!body) return;
+      const open = body.style.display !== "none";
+      body.style.display = open ? "none" : "block";
+      header.classList.toggle("open", !open);
+    });
+  });
 
   list.querySelectorAll(".customer-item").forEach((el) => {
     el.addEventListener("click", () => {

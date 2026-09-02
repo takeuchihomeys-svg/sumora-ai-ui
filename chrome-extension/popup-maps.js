@@ -2526,6 +2526,7 @@ const STATUS_LABELS = {
   hot:              "毎日物件出し",
   property_search:  "物件出し",
   pending:          "検討中",
+  applying:         "申込中",
 };
 // ── REINS 沿線名変換マップ（内部名 → REINS表記） ─────────────────
 // REINSは独自の路線名表記を使う（大阪メトロ表記・JR省略など）
