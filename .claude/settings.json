@@ -58,7 +58,13 @@
       "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/property_customers?select=*&limit=1' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' --compressed)",
       "Bash(python3 -c \"import sys, json; d=json.load\\(sys.stdin\\); print\\(list\\(d[0].keys\\(\\)\\) if d else 'empty'\\)\")",
       "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/property_customers?select=*&limit=1' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')",
-      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/customer_state?select=*&limit=1' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')"
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/customer_state?select=*&limit=1' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')",
+      "Bash(curl -s -X POST https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/rpc/exec_sql -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Content-Type: application/json' -d '{\"sql\": \"ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS property_name TEXT; ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS property_address TEXT; SELECT pg_notify\\('\\\\''pgrst'\\\\'', '\\\\''reload schema'\\\\''\\);\"}')",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/viewing_history?select=property_name,property_address&limit=1' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')",
+      "Bash(curl -s -X POST https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/rpc/exec_sql -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Content-Type: application/json' -d '{\"sql\": \"SELECT pg_notify\\('\\\\''pgrst'\\\\'', '\\\\''reload schema'\\\\''\\);\"}')",
+      "Bash(curl -s \"https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/ai_reply_examples?is_starred=eq.true&select=customer_message,staff_reply&limit=100\" -H \"apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N\" -H \"Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N\")",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/ai_reply_examples?is_starred=eq.true&select=customer_message,staff_reply&limit=100' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -o /tmp/examples.json)"
     ]
   }
 }
