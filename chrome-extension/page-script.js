@@ -960,7 +960,8 @@
         "5K","5DK","5LDK",
         "6LDK","メゾネット"
       ];
-      var fpStr = cond.floor_plan.trim();
+      // 短縮表記を正規化: "1L以上" → "1LDK以上"、"2L〜3L" → "2LDK〜3LDK"
+      var fpStr = cond.floor_plan.trim().replace(/(\d)L(?!\w)/g, '$1LDK');
       var vals = [];
       var ijouMatch = fpStr.match(/^(.+?)以上$/);
       var rangeMatch = fpStr.match(/^(.+?)[～〜](.+?)$/);

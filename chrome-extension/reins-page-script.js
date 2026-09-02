@@ -201,6 +201,8 @@
 
     // ⑤ 間取部屋数 FROM/TO (index 89, 90)
     // ※ 平米表記（30平米以上 等）は間取り条件ではないので除外する
+    // 短縮表記を正規化: "1L以上" → "1LDK以上"（L の後に\wが続かない場合のみ）
+    if (cond.floor_plan) cond.floor_plan = cond.floor_plan.replace(/(\d)L(?!\w)/g, '$1LDK');
     if (cond.floor_plan) {
       var hasIjou = /以上/.test(cond.floor_plan); // 「1LDK以上」などの「以上」フラグ
       var plans = cond.floor_plan.split(/[・,、\/\.\s]+/).filter(function (p) {
