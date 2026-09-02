@@ -624,6 +624,16 @@
         "4K":"4K","4DK":"4DK","4LDK":"4LDK",
         "5K以上":"5K_OVER","5K":"5K_OVER","5K_OVER":"5K_OVER"
       };
+      // SLDKはitandiに存在しないため代替間取りIDへ展開
+      // 1SLDK → 1LDK + 2DK + 2LDK
+      var SLDK_SUBSTITUTE_IT = {
+        "1SLDK":["1LDK","2DK","2LDK"],
+        "2SLDK":["2LDK","3DK","3LDK"],
+        "3SLDK":["3LDK","4DK","4LDK"]
+      };
+      var SLDK_UPPER_IT = {
+        "1SLDK":"2LDK","2SLDK":"3LDK","3SLDK":"4LDK"
+      };
       // ID直接選択が失敗した場合（itandi BBがDOM更新でIDを変えた等）にラベルテキストで探すフォールバック
       function tickFloor(id) {
         var el = document.querySelector('input[name="room_layout:in"][id="' + id + '"]');
@@ -655,20 +665,42 @@
         }
       } else if (rangeMatch) {
         // 「1DK～1LDK」→ 1DKから1LDKまでの範囲を全選択
-        var fromKey = FLOOR_TEXT_IT[rangeMatch[1].trim()] || rangeMatch[1].trim();
-        var toKey   = FLOOR_TEXT_IT[rangeMatch[2].trim()] || rangeMatch[2].trim();
-        var fromIdx = FLOOR_RANK_IT.indexOf(fromKey);
-        var toIdx   = FLOOR_RANK_IT.indexOf(toKey);
-        if (fromIdx < 0) fromIdx = 0;
-        if (toIdx < 0) toIdx = fromIdx;
-        if (fromIdx > toIdx) { var tmp = fromIdx; fromIdx = toIdx; toIdx = tmp; }
-        for (var ri = fromIdx; ri <= toIdx; ri++) {
-          tickFloor(FLOOR_RANK_IT[ri]);
+        var fromRaw = rangeMatch[1].trim();
+        var toRaw   = rangeMatch[2].trim();
+        if (SLDK_SUBSTITUTE_IT[fromRaw]) {
+          // 1SLDK〜2LDK → 1LDK + 2DK + 2LDK
+          SLDK_SUBSTITUTE_IT[fromRaw].forEach(function(id) { tickFloor(id); });
+          // toFloorが展開上限より上なら残り範囲も追加
+          var upperKey = SLDK_UPPER_IT[fromRaw];
+          var upperIdx = FLOOR_RANK_IT.indexOf(upperKey);
+          var toIdx = FLOOR_RANK_IT.indexOf(FLOOR_TEXT_IT[toRaw] || toRaw);
+          if (upperIdx >= 0 && toIdx > upperIdx) {
+            for (var ri = upperIdx + 1; ri <= toIdx; ri++) {
+              tickFloor(FLOOR_RANK_IT[ri]);
+            }
+          }
+        } else {
+          var fromKey = FLOOR_TEXT_IT[fromRaw] || fromRaw;
+          var toKey   = FLOOR_TEXT_IT[toRaw]   || toRaw;
+          var fromIdx = FLOOR_RANK_IT.indexOf(fromKey);
+          var toIdx   = FLOOR_RANK_IT.indexOf(toKey);
+          if (fromIdx < 0 || toIdx < 0) {
+            console.warn("[AX] itandi rangeMatch: unknown floor plan, skipping", fromKey, toKey);
+          } else {
+            if (fromIdx > toIdx) { var tmp = fromIdx; fromIdx = toIdx; toIdx = tmp; }
+            for (var ri = fromIdx; ri <= toIdx; ri++) {
+              tickFloor(FLOOR_RANK_IT[ri]);
+            }
+          }
         }
       } else {
         // もしくは・または等の接続詞でも分割し、修飾語付き文字列からも間取りを抽出
         var itFloorKeys = Object.keys(FLOOR_TEXT_IT).sort(function(a,b){ return b.length - a.length; });
         function extractFloorIT(token) {
+          if (SLDK_SUBSTITUTE_IT[token]) {
+            SLDK_SUBSTITUTE_IT[token].forEach(function(id) { tickFloor(id); });
+            return null;
+          }
           if (FLOOR_TEXT_IT[token]) return FLOOR_TEXT_IT[token];
           for (var ki = 0; ki < itFloorKeys.length; ki++) {
             if (token.indexOf(itFloorKeys[ki]) >= 0) return FLOOR_TEXT_IT[itFloorKeys[ki]];
