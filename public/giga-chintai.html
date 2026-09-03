@@ -156,29 +156,29 @@
       background:linear-gradient(transparent 62%,var(--sun) 62%,var(--sun) 94%,transparent 94%);
     }
     .h1-badge{
-      position:absolute;top:-8px;right:16px;
-      width:74px;height:74px;z-index:2;
+      position:absolute;top:-6px;right:12px;
+      width:54px;height:54px;z-index:2;
       display:flex;flex-direction:column;align-items:center;justify-content:center;
-      background:var(--sun);border-radius:12px;
+      background:var(--sun);border-radius:9px;
       transform:rotate(8deg);
-      filter:drop-shadow(0 3px 6px rgba(17,17,17,.16));
+      filter:drop-shadow(0 2px 4px rgba(17,17,17,.16));
       animation:hb-pulse 1.8s ease-in-out infinite;
     }
     .h1-badge::before{
-      content:"";position:absolute;inset:5px;z-index:-1;
-      background:var(--sun);border-radius:10px;
+      content:"";position:absolute;inset:4px;z-index:-1;
+      background:var(--sun);border-radius:7px;
       transform:rotate(45deg);
     }
     .hb-max{
-      font-size:12px;font-weight:900;line-height:1;
-      color:var(--ink);letter-spacing:.14em;margin-bottom:2px;
+      font-size:9px;font-weight:900;line-height:1;
+      color:var(--ink);letter-spacing:.12em;margin-bottom:1px;
     }
     .hb-zero{
       display:flex;align-items:baseline;line-height:.95;
       font-weight:900;color:var(--ink);
     }
-    .hb-num{font-size:33px;letter-spacing:-.05em;-webkit-text-stroke:.5px var(--ink);}
-    .hb-yen{font-size:15px;margin-left:1px;}
+    .hb-num{font-size:23px;letter-spacing:-.05em;-webkit-text-stroke:.4px var(--ink);}
+    .hb-yen{font-size:11px;margin-left:1px;}
     .h1-note{
       display:block;margin-top:26px;padding-right:6px;
       text-align:right;font-size:10px;font-weight:500;
@@ -491,14 +491,12 @@
     <h1 class="h-hero-main hr-2">
       <span class="h1-copy">初期費用が<span class="h1-word">LINE</span>で<span class="h1-mark">簡単割引</span>！</span>
       <span class="h1-badge"><span class="hb-max">最大</span><span class="hb-zero"><span class="hb-num">0</span><span class="hb-yen">円</span></span></span>
-      <span class="h1-note">※適用には条件があります</span>
     </h1>
 
     <!-- 実績ペア表記（KN-04）＋極小注記（KN-13） -->
     <div class="h-cta-block hr-3">
       <p class="h-evidence-line"><span class="h-ev-tag">8月実績</span><span class="h-ev-weak">平均</span> <em class="h-ev-num">118,220円</em><span class="h-ev-weak"> 節約</span></p>
       <p class="h-ev-pair">家賃7万円の物件なら、初期費用36万円 → <strong>約18万円相当</strong></p>
-      <p class="micro-note">※当社利用者平均（2026年8月実績）。物件・条件により異なります</p>
     </div>
 
     <!-- QRカード（長押し指示・マスコット） -->
@@ -804,6 +802,7 @@
 
 <!-- ⑩ FOOTER -->
 <footer class="footer">
+  <p style="font-size:10px;color:rgba(255,255,255,.45);margin-bottom:10px;line-height:1.7;">※初期費用の最大0円は適用条件があります。物件・審査状況により異なります。<br>※当社利用者平均（2026年8月実績）。物件・条件により異なります。</p>
   <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iNTIiIHZpZXdCb3g9IjAgMCAzMjAgNTIiPjx0ZXh0IHg9IjE2MCIgeT0iMTciIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJIaXJhZ2lubyBTYW5zLEhpcmFnaW5vIEtha3UgR290aGljIFByb04sc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjUyKSI+5aSn6Ziq5biC5Lit5aSu5Yy655Om55S6My00LTEwIOaXpeWuneW+oeWgguODk+ODqzXpmo48L3RleHQ+PHRleHQgeD0iMTYwIiB5PSIzOSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkhpcmFnaW5vIFNhbnMsSGlyYWdpbm8gS2FrdSBHb3RoaWMgUHJvTixzYW5zLXNlcmlmIiBmb250LXNpemU9IjE0IiBmb250LXdlaWdodD0iNjAwIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuNzIpIj7ok67nlKPmpa3moKrlvI/kvJrnpL48L3RleHQ+PC9zdmc+" alt="" aria-hidden="true" style="display:block;margin:0 auto 2px;max-width:100%;height:auto;">
 
 </footer>
