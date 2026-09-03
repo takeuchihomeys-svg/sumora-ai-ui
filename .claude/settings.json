@@ -65,7 +65,9 @@
       "Bash(curl -s \"https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/ai_reply_examples?is_starred=eq.true&select=customer_message,staff_reply&limit=100\" -H \"apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N\" -H \"Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N\")",
       "Bash(python3 -c ' *)",
       "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/ai_reply_examples?is_starred=eq.true&select=customer_message,staff_reply&limit=100' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -o /tmp/examples.json)",
-      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/system_design_thinking?is_current=eq.true&select=title,insight,rationale&order=created_at.desc&limit=10' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')"
+      "Bash(curl -s 'https://wfwsmwxakhyxobytszoq.supabase.co/rest/v1/system_design_thinking?is_current=eq.true&select=title,insight,rationale&order=created_at.desc&limit=10' -H 'apikey: sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N' -H 'Authorization: Bearer sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N')",
+      "WebFetch(domain:sumora.net)",
+      "Bash(base64 -w0)"
     ]
   }
 }

@@ -17,6 +17,7 @@
 | ページ | ファイル | URL | 目的 |
 |--------|----------|-----|------|
 | イエヤス LP | `public/iyeyasu.html` | `/iyeyasu.html` | LINE友だち追加（賃貸仲介） |
+| ギガ賃貸 LP | `public/giga-chintai.html` | `/giga-chintai.html` | LINE友だち追加（ギガ賃貸ブランド）★LINE URL要変更 |
 
 ---
 
@@ -205,6 +206,8 @@ Vercelへの紐付け: `vercel domains add [domain] sumora-ai-ui`
 | 2026-08-19 | ヘッダー削除・TikTokバナー大幅拡大・h1横一列インパクト改善 | `1fb269b` |
 | 2026-08-19 | デザイン崩れ7項目修正 | `66b67a5` |
 | 2026-08-19 | TikTok超え明度爆上げ・ヒーロー100svh化・ネオングロー全面導入 | `920adfc` |
+| 2026-09-03 | ギガ賃貸LP初版（イエヤスLP基ベース・SVGキャラ・ギガグリーン#2A9B52）★LINE URL未設定 | `8ce63346` |
+| 2026-09-03 | ギガ賃貸LP: カラー黄×緑テーマ（--bg-alt:#FFFDE7・--border:#FFE099・--tangerine:#E08800）・フッター蓮産業株式会社base64に差し替え | `c2764cee` |
 
 ---
 
