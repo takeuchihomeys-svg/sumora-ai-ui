@@ -1,4 +1,16 @@
 {
+  "rewrites": [
+    {
+      "source": "/",
+      "has": [{"type": "host", "value": "gigachintai.com"}],
+      "destination": "/giga-chintai.html"
+    },
+    {
+      "source": "/",
+      "has": [{"type": "host", "value": "www.gigachintai.com"}],
+      "destination": "/giga-chintai.html"
+    }
+  ],
   "crons": [
     {
       "path": "/api/cron/daily-brief",
