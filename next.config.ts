@@ -22,6 +22,18 @@ const nextConfig: NextConfig = {
         permanent: false,
         has: [{ type: "host" as const, value: "www.ieyas-chintai.com" }],
       },
+      {
+        source: "/",
+        destination: "/giga-chintai.html",
+        permanent: false,
+        has: [{ type: "host" as const, value: "gigachintai.com" }],
+      },
+      {
+        source: "/",
+        destination: "/giga-chintai.html",
+        permanent: false,
+        has: [{ type: "host" as const, value: "www.gigachintai.com" }],
+      },
     ];
   },
 
