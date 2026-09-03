@@ -208,6 +208,7 @@ Vercelへの紐付け: `vercel domains add [domain] sumora-ai-ui`
 | 2026-08-19 | TikTok超え明度爆上げ・ヒーロー100svh化・ネオングロー全面導入 | `920adfc` |
 | 2026-09-03 | ギガ賃貸LP初版（イエヤスLP基ベース・SVGキャラ・ギガグリーン#2A9B52）★LINE URL未設定 | `8ce63346` |
 | 2026-09-03 | ギガ賃貸LP: カラー黄×緑テーマ（--bg-alt:#FFFDE7・--border:#FFE099・--tangerine:#E08800）・フッター蓮産業株式会社base64に差し替え | `c2764cee` |
+| 2026-09-03 | ギガ賃貸LP Fable5ナレッジ18件全適用：CHECK/ZERO COST/VOICE/2択CTAセクション追加・96px特大0・全セクション末尾CTA・マイクロコピー・社会的証明3段階 | `c83c7ef7` |
 
 ---
 
