@@ -1,0 +1,1117 @@
+﻿<!DOCTYPE html>
+<html lang="ja" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ccircle%20cx='50'%20cy='50'%20r='46'%20fill='%232A9B52'/%3E%3Ctext%20x='50'%20y='68'%20text-anchor='middle'%20font-size='52'%20font-weight='900'%20font-family='sans-serif'%20fill='%23FFD600'%3ES%3C/text%3E%3C/svg%3E">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ギガ賃貸 | LINEでお部屋探し・大阪の賃貸仲介 | ホームズ</title>
+  <style>
+    :root {
+      --forest:           #2A9B52;   /* ギガ賃貸メイングリーン（明るい緑） */
+      --forest-dk:        #1F7A40;
+      --tangerine:        #FF5C00;   /* ギガオレンジ（GIGA感・力強さ） */
+      --sun:              #FFD600;
+      --line:             #06C755;
+      --line-dk:          #05aa47;
+      --line-green:       #06C755;
+      --line-green-dark:  #05aa47;
+      --line-green-deeper:#048a39;
+      --bg:               #ffffff;
+      --bg-alt:           #f0faf5;   /* ギガ賃貸に合わせた薄緑 */
+      --card:             #ffffff;
+      --ink:              #1a1f1b;
+      --muted:            #4a6b55;
+      --border:           #b8e8cc;
+      --lbl:              #2A9B52;
+      --r-pill:           9999px;
+      --r-md:             18px;
+      --r-sm:             10px;
+      --card-shadow:      0 8px 24px rgba(0,0,0,0.18);
+      --font-base:        'Hiragino Maru Gothic ProN','Hiragino Maru Gothic Pro',sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg:     #0f1a10; --bg-alt: #172119; --card:  #1c2d1e;
+        --ink:    #e2f0e4; --muted:  #88b090; --border:#2a3f2c; --lbl: #4cd07a;
+      }
+    }
+    :root[data-theme="dark"]  { --bg:#0f1a10;--bg-alt:#172119;--card:#1c2d1e;--ink:#e2f0e4;--muted:#88b090;--border:#2a3f2c;--lbl:#4cd07a; }
+    :root[data-theme="light"] { --bg:#ffffff;--bg-alt:#f0faf5;--card:#ffffff;--ink:#1a1f1b;--muted:#4a6b55;--border:#b8e8cc;--lbl:#2A9B52; }
+
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html{scroll-behavior:smooth;}
+    body{
+      font-family:'Hiragino Maru Gothic ProN','Hiragino Maru Gothic Pro',sans-serif;
+      font-size:16px;line-height:1.8;color:var(--ink);background:var(--bg);
+      max-width:430px;margin:0 auto;overflow-x:hidden;padding-bottom:90px;
+    }
+
+    /* Scroll reveal */
+    .r{opacity:0;transform:translateY(22px);transition:opacity .55s ease,transform .55s ease;}
+    .r.on{opacity:1;transform:none;}
+    .r.d1{transition-delay:.08s;} .r.d2{transition-delay:.16s;} .r.d3{transition-delay:.24s;}
+    @media(prefers-reduced-motion:reduce){.r{opacity:1;transform:none;transition:none;}}
+
+    /* Animations */
+    @keyframes float-arrow{0%,100%{transform:translateY(0);}50%{transform:translateY(-5px);}}
+    @keyframes fcb-sway{0%,100%{transform:rotate(-2.5deg);}50%{transform:rotate(2.5deg);}}
+    @keyframes fcb-tap-jump{
+      0%  {transform:scale(1) rotate(-2.5deg) translateY(0);}
+      25% {transform:scale(1.25) rotate(8deg) translateY(-18px);}
+      50% {transform:scale(0.92) rotate(-5deg) translateY(4px);}
+      75% {transform:scale(1.1) rotate(4deg) translateY(-8px);}
+      100%{transform:scale(1) rotate(-2.5deg) translateY(0);}
+    }
+    @keyframes fc-pulse{
+      0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(6,199,85,.45);}
+      50%    {transform:scale(1.04);box-shadow:0 0 0 12px rgba(6,199,85,0);}
+    }
+    @keyframes cta-arrow-slide{0%,100%{transform:translateX(0);}50%{transform:translateX(5px);}}
+    @keyframes ck-pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.06);}}
+    /* Hero staggered reveal */
+    @keyframes heroReveal{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+    @keyframes heroMainEntrance{
+      0%  {opacity:0;transform:translateY(10px) scale(.92);}
+      60% {opacity:1;transform:translateY(0)     scale(1.03);}
+      100%{opacity:1;transform:translateY(0)     scale(1);}
+    }
+    /* ↓矢印だけバウンス */
+    @keyframes arrowBounce{0%,100%{transform:translateY(0);}50%{transform:translateY(6px);}}
+    /* 今すぐ追加！バッジ Pulse */
+    @keyframes ctaPulse{
+      0%,100%{transform:translateX(-50%) scale(1);    box-shadow:0 0 0 0 rgba(255,40,80,.22);}
+      50%    {transform:translateX(-50%) scale(1.04); box-shadow:0 0 0 5px rgba(255,40,80,0);}
+    }
+    /* QRカード枠 Glow */
+    @keyframes qrGlow{
+      0%,100%{box-shadow:0 4px 22px rgba(6,199,85,.22),0 0 0 2px rgba(0,200,83,.10);}
+      50%    {box-shadow:0 4px 22px rgba(6,199,85,.22),0 0 0 4px rgba(0,200,83,.18),0 8px 26px rgba(0,200,83,.13);}
+    }
+    /* 固定CTA 4.5秒に1回 attention */
+    @keyframes ctaAttention{
+      0%,100%{transform:scale(1) translateX(0);}
+      4%     {transform:scale(1.02);}
+      8%     {transform:scale(1);}
+      12%    {transform:translateX(2px);}
+      16%    {transform:translateX(0);}
+    }
+    /* 指アイコン */
+    @keyframes fingerBounce{0%,100%{transform:translateY(0);}50%{transform:translateY(3px);}}
+
+    /* ===== #hero ===== */
+    #hero{
+      font-family:'Hiragino Maru Gothic ProN','Hiragino Maru Gothic Pro',sans-serif;
+      max-width:430px;margin:0 auto;background:#fff;position:relative;overflow:visible;
+    }
+    /* #hero * reset removed — global *{margin:0;padding:0} already covers this */
+
+    /* ── TikTok Banner ── */
+    .tt-banner{
+      background:#000;display:flex;align-items:center;
+      justify-content:space-between;padding:8px 18px 8px 14px;gap:10px;
+    }
+    .tt-left{display:flex;align-items:center;gap:7px;flex:1;min-width:0;}
+    .tt-icon{flex-shrink:0;display:flex;align-items:center;}
+    .tt-text{
+      font-size:clamp(11px,3vw,13px);font-weight:900;color:#fff;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .tt-em{color:#FFD600;}
+    .tt-badge{
+      flex-shrink:0;background:#FE2C55;color:#fff;
+      font-size:clamp(9px,2.4vw,11px);font-weight:900;
+      padding:4px 16px;border-radius:6px;letter-spacing:.03em;white-space:nowrap;
+    }
+
+    /* ── Hero White Body ── */
+    .h-body{background:#fff;padding:0;}
+    #hero .h-body{padding-bottom:0;}
+
+    /* Speech bubble */
+    .h-bubble-wrap{padding:20px 12px 0;}
+    .h-bubble{
+      background:#FFD600;border:2.5px solid #111;border-radius:12px;
+      padding:10px 14px;font-size:15px;font-weight:900;color:#111;
+      text-align:center;position:relative;box-shadow:3px 3px 0 #111;
+      display:block;line-height:1.4;
+    }
+    .h-bubble::before{
+      content:'';position:absolute;bottom:-12px;left:50%;transform:translateX(-50%);
+      width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;
+      border-top:12px solid #111;z-index:0;
+    }
+    .h-bubble::after{
+      content:'';position:absolute;bottom:-7px;left:50%;transform:translateX(-50%);
+      width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;
+      border-top:8px solid #FFD600;z-index:1;
+    }
+    .h-bubble-em{color:#06C755;font-style:normal;-webkit-text-stroke:.4px #06C755;}
+
+    /* ── 3段見出し構成（Sub + H1） ── */
+    #hero .h-title-wrap{
+      width:100%;padding:0 12px;margin:14px auto 0;text-align:center;
+    }
+    #hero .h-sub{
+      display:block;font-size:clamp(16px,4.5vw,20px);font-weight:700;
+      color:#777;letter-spacing:.02em;margin-bottom:10px;
+    }
+    .h-title{
+      font-size:clamp(36px,10vw,52px);font-weight:900;color:#111;
+      line-height:1.08;-webkit-text-stroke:.3px #111;letter-spacing:-.02em;
+      text-align:center;
+    }
+    .h-title-line1{display:block;}
+    #hero .h-title-line2{display:block;margin-top:6px;}
+    .h-title-action{
+      white-space:nowrap;word-break:keep-all;overflow-wrap:normal;
+      font-size:clamp(34px,9.8vw,50px);letter-spacing:-.04em;
+    }
+    .h-title-em{font-style:normal;color:var(--line);-webkit-text-stroke:.3px var(--line);}
+
+    /* Green band below H1 */
+    .h-green-band{
+      background:var(--line);color:#fff;font-size:15px;font-weight:900;
+      text-align:center;padding:11px 16px;margin:14px 12px 0;border-radius:12px;letter-spacing:.02em;
+    }
+    .h-gb-em{color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
+
+    /* ── 節約実績バッジ（超コンパクト3要素） ── */
+    #hero .saving-badge{
+      margin:14px auto 10px;width:calc(100% - 48px);max-width:350px;
+      background:#fff;border:1px solid #e5e5e5;border-radius:14px;
+      padding:12px 16px 10px;box-shadow:0 3px 12px rgba(0,0,0,.06);
+      display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;
+    }
+    .sv-top{font-size:13px;font-weight:700;color:#555;letter-spacing:.01em;line-height:1.4;}
+    .sv-tag{
+      display:inline-block;background:var(--line);color:#fff;
+      font-size:10px;font-weight:900;padding:1px 7px;border-radius:3px;
+      letter-spacing:.05em;vertical-align:middle;margin-right:5px;
+    }
+    .sv-num{
+      font-size:clamp(38px,10vw,48px);font-weight:800;color:#e82020;
+      line-height:1;letter-spacing:-.02em;-webkit-text-stroke:.4px #e82020;white-space:nowrap;
+    }
+    .sv-num em{font-style:normal;}
+    .sv-unit{font-size:17px;font-weight:700;vertical-align:baseline;margin-left:4px;-webkit-text-stroke:0;}
+    .sv-note{font-size:9px;color:#bbb;font-weight:600;}
+    /* ── 実績→QR ブリッジ ── */
+    .sv-bridge{
+      font-size:13px;font-weight:900;color:#333;letter-spacing:.02em;
+      text-align:center;padding:0 16px;
+    }
+
+    /* ══════════════════════════════════════════
+       QR Stage — 2-row layout
+       ══════════════════════════════════════════ */
+
+    .qr-stage {
+      overflow: visible;
+      padding: 0 8px 0;
+    }
+
+    /* ── Row 1: 吹き出し ── */
+    .qr-bubble-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 8px;
+    }
+
+    .mascot-bubble {
+      background: #fff;
+      border: 2.5px solid #111;
+      border-radius: 12px 12px 0 12px;
+      padding: 7px 10px;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.55;
+      box-shadow: 2px 2px 0 #111;
+      color: #111;
+      text-align: left;
+      width: 142px;
+    }
+    .mb-free{display:block;font-size:9px;font-weight:700;color:#888;margin-top:3px;}
+
+    /* ── Row 2: 3カラム flex ── */
+    .qr-main-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      overflow: visible;
+      padding-top: 8px;
+    }
+
+    /* 左列: 時計バッジ */
+    .qs-left {
+      flex: 0 0 80px;
+      display: flex;
+      justify-content: center;
+      align-self: center;
+      overflow: visible;
+    }
+
+    .clock-badge {
+      position: relative;
+      width: 78px;
+      height: 78px;
+      border-radius: 50%;
+      background: #FFD600;
+      border: 2.5px solid #111;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 5px 3px;
+      box-shadow: 2px 2px 0 #111;
+      animation: ck-pulse 2.2s ease-in-out infinite;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .ck-sparkle { position: absolute; font-size: 8px; color: #111; }
+    .ck-sp-tl   { top: 4px; right: 4px; }
+    .ck-sp-br   { bottom: 4px; left: 4px; }
+    .ck-icon    { font-size: 15px; line-height: 1; margin-bottom: 1px; }
+    .ck-t1      { font-size: 7px; font-weight: 800; color: #444; line-height: 1.2; margin-bottom: 1px; }
+    .ck-t2      { font-size: 8px; font-weight: 900; color: #c0392b; line-height: 1.25; margin-bottom: 1px; }
+    .ck-t3      { font-size: 7px; font-weight: 800; color: #444; line-height: 1.2; }
+
+    /* 中央列: QRカード */
+    .qs-center {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+    }
+
+    .qr-card-new {
+      background: #fff;
+      border: 3px solid var(--line);
+      border-radius: 16px;
+      padding: 18px 10px 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(6,199,85,.28);
+      width: 100%;
+    }
+
+    .qr-now-badge {
+      position: absolute;
+      top: -10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #FE2C55;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
+      padding: 3px 14px;
+      border-radius: 20px;
+      white-space: nowrap;
+      border: 2px solid #fff;
+      box-shadow: 1px 1px 0 rgba(0,0,0,.1);
+      z-index: 5;
+      animation: ctaPulse 1.8s ease-in-out infinite;
+    }
+
+    .qr-img {
+      display: block;
+      border-radius: 6px;
+      border: 1.5px solid var(--line);
+      width: 100%;
+      height: auto;
+      aspect-ratio: 1/1;
+    }
+
+    .qr-label-new {
+      font-size: 11px;
+      font-weight: 900;
+      color: #333;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    /* 右列: マスコット */
+    .qs-right {
+      flex: 0 0 70px;
+      display: flex;
+      justify-content: center;
+      align-self: flex-end;
+      overflow: visible;
+    }
+
+    .mascot-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      width: 70px;
+      cursor: pointer;
+      overflow: visible;
+    }
+
+    .badge-24h {
+      background: var(--line);
+      color: #fff;
+      font-size: 8px;
+      font-weight: 900;
+      padding: 2px 5px;
+      border-radius: 8px;
+      white-space: nowrap;
+      border: 1.5px solid rgba(255,255,255,0.8);
+      box-shadow: 1px 1px 0 rgba(0,0,0,.15);
+      letter-spacing: 0.01em;
+      align-self: center;
+    }
+
+    .fcb-mascot {
+      display: block;
+      width: 70px;
+      height: auto;
+      transform-origin: 50% 92%;
+      animation: fcb-sway 3s ease-in-out infinite;
+      will-change: transform;
+    }
+
+    .fcb-mascot.tapped {
+      animation: fcb-tap-jump .55s cubic-bezier(.36,.07,.19,.97) forwards;
+    }
+
+    @media(prefers-reduced-motion:reduce) {
+      .fcb-mascot  { animation: none; }
+      .clock-badge { animation: none; }
+    }
+
+    /* ── 実績入り緑帯 ── */
+    .h-evidence-block{
+      background:var(--line);margin:14px 12px 0;border-radius:12px;
+      padding:13px 16px 15px;text-align:center;
+      display:flex;flex-direction:column;align-items:center;gap:7px;
+    }
+    .h-eb-main{color:#fff;font-size:16px;font-weight:900;letter-spacing:.02em;line-height:1.4;font-style:normal;}
+    .h-eb-em{font-style:normal;color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
+    .h-eb-sub{color:rgba(255,255,255,.9);font-size:13px;font-weight:700;letter-spacing:.01em;line-height:1.5;}
+    .h-eb-tag{
+      display:inline-block;background:rgba(255,255,255,.25);padding:1px 7px;
+      border-radius:4px;font-size:10px;font-weight:900;letter-spacing:.05em;
+      vertical-align:middle;margin-right:3px;
+    }
+    .h-eb-num{font-style:normal;color:#FFD600;font-size:20px;font-weight:900;-webkit-text-stroke:.3px #FFD600;}
+    .h-eb-note{font-size:9px;font-weight:600;}
+
+    /* ── QR矢印CTA ── */
+    .qr-cta-arrow{
+      text-align:center;font-size:15px;font-weight:900;color:var(--line);
+      letter-spacing:.05em;padding:10px 0 6px;
+    }
+
+    /* ── QRソロ表示 ── */
+    .qr-solo{display:flex;justify-content:center;padding:0 32px;}
+    .qr-solo-card{
+      background:#fff;border:3px solid var(--line);border-radius:20px;
+      padding:22px 18px 14px;display:flex;flex-direction:column;align-items:center;
+      gap:10px;position:relative;box-shadow:0 6px 28px rgba(6,199,85,.3);width:100%;
+    }
+
+    /* QR直下テキスト */
+    #hero .qr-after-note{
+      text-align:center;font-size:16px;font-weight:900;color:#111;
+      letter-spacing:.02em;padding:0 16px;margin-top:16px;
+    }
+    /* QR内操作補足 */
+    .qr-long-press{
+      font-size:10px;font-weight:600;color:#999;
+      text-align:center;letter-spacing:.02em;margin-top:11px;line-height:1.4;
+    }
+    /* バッジ内👇バウンス */
+    @keyframes badgeArrow{0%,100%{transform:translateY(0);}50%{transform:translateY(4px);}}
+    .badge-arrow{display:inline-block;animation:badgeArrow 1s ease-in-out infinite;}
+    /* QR後2段テキスト */
+    #hero .qr-after-main{
+      text-align:center;font-size:clamp(15px,4.2vw,17px);font-weight:800;color:#111;
+      letter-spacing:.02em;padding:0 24px;margin-top:4px;
+    }
+    .qr-after-sub{
+      text-align:center;font-size:11px;font-weight:700;color:#666;
+      padding:0 16px;margin-top:8px;letter-spacing:.01em;
+    }
+    #hero .qr-after-sub{margin-top:0px;padding:0 24px;font-size:10px;font-weight:400;color:#aaa;}
+
+    /* ── ヒーロー見出し（サブ + 中間 + H1緑） ── */
+    #hero .h-hero-wrap{text-align:center;padding:4px 16px 0;}
+    .h-hero-sub{
+      font-size:clamp(11px,3vw,13px);font-weight:500;color:#444;
+      line-height:1.4;white-space:nowrap;letter-spacing:.02em;text-align:center;
+    }
+    #hero h1.h-hero-main{
+      font-size:clamp(24px,7.8vw,34px);font-weight:900;
+      line-height:1.15;white-space:nowrap;letter-spacing:-.01em;margin-top:4px;
+    }
+    .h1-black{color:#111;-webkit-text-stroke:.2px #111;}
+    .h1-green{color:var(--line);-webkit-text-stroke:.3px var(--line);}
+
+    /* ── CTAブロック（2段 + 実績） ── */
+    #hero .h-cta-block{
+      background:rgba(6,199,85,.07);border:1.5px solid rgba(6,199,85,.28);
+      border-radius:12px;margin:12px 16px 0;padding:6px 16px 7px;
+      text-align:center;display:flex;flex-direction:column;align-items:center;gap:4px;
+    }
+    #hero .h-cta-simple{
+      font-size:clamp(18px,5vw,23px);font-weight:900;color:#111;line-height:1.2;
+      white-space:nowrap;
+    }
+    .h-cta-sub-note{
+      font-size:clamp(11px,3vw,13px);font-weight:500;color:#888;
+      line-height:1.3;letter-spacing:.01em;
+    }
+    .h-cta-em{font-style:normal;color:var(--line);-webkit-text-stroke:.3px var(--line);}
+    .h-evidence-line{
+      font-size:14px;font-weight:700;color:#555;letter-spacing:.01em;line-height:1.3;
+    }
+    #hero .h-ev-tag{
+      display:inline-block;background:var(--line);color:#fff;font-size:10px;
+      font-weight:900;padding:2px 8px;border-radius:4px;letter-spacing:.05em;
+      vertical-align:middle;margin-right:3px;
+    }
+    .h-ev-num{font-style:normal;color:#FE2C55;font-size:19px;font-weight:900;-webkit-text-stroke:.3px #FE2C55;}
+    .h-ev-note{font-size:9px;font-weight:600;vertical-align:super;}
+    .h-ev-weak{font-size:11px;color:#999;font-weight:600;}
+
+    /* ── QRヒーローカード（大型・中央・ラベルなし） ── */
+    #hero .qr-hero-card{
+      position:relative;background:#fff;border:3px solid var(--line);border-radius:20px;
+      padding:16px 10px 8px;width:fit-content;margin:14px auto 0;
+      display:flex;flex-direction:column;align-items:center;
+      animation:qrGlow 2s ease-in-out infinite;
+      overflow:visible;
+    }
+    .qr-hero-img{
+      display:block;width:min(58vw,252px);aspect-ratio:1/1;
+      border-radius:8px;border:2px solid var(--line);
+    }
+
+    /* ── CTA セクション（strip + band 統合） ── */
+    .h-cta-strip{
+      background:var(--line);color:#fff;font-size:14px;font-weight:900;
+      text-align:center;padding:16px 20px 0;display:flex;align-items:center;
+      justify-content:center;gap:0;flex-wrap:wrap;letter-spacing:.02em;
+      margin-top:0;
+    }
+    #hero .h-cta-strip{margin-top:14px;padding:10px 20px 8px;flex-direction:column;align-items:center;gap:9px;}
+    .cta-strip-arr{color:rgba(255,255,255,.55);font-size:13px;}
+    .cta-strip-em{color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
+    .qr-line-em{font-style:normal;color:var(--line);-webkit-text-stroke:.3px var(--line);}
+    .qr-after-weak{font-weight:700;color:#444;}
+    .cta-line-em{font-style:normal;color:#FFD600;-webkit-text-stroke:.3px #FFD600;}
+    .cta-hl-deco{font-style:normal;color:rgba(255,255,255,.32);font-size:.62em;vertical-align:middle;margin:0 2px;}
+    .h-cta-main-copy{font-size:12px;font-weight:900;color:#fff;text-align:center;line-height:1.45;letter-spacing:.02em;}
+    .h-cta-subtitle{font-size:9px;font-weight:600;color:rgba(255,255,255,.60);text-align:center;letter-spacing:.04em;line-height:1.4;}
+
+    /* ── LINE button CTA band ── */
+    .h-cta-band{background:var(--line);padding:0;text-align:center;}
+    #hero .h-cta-band{padding:8px 26px 18px;}
+    .h-cta-headline{font-size:clamp(19px,5.7vw,22px);font-weight:900;color:#fff;letter-spacing:.02em;line-height:1.3;white-space:nowrap;}
+    #hero .h-cta-headline{margin-bottom:12px;}
+    .cta-line-heading{font-size:18px;font-weight:900;color:#fff;margin:0 0 12px;letter-spacing:.02em;}
+    .h-line-btn{
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      background:#fff;color:var(--line-dk);font-size:13px;font-weight:900;
+      padding:14px 18px;border-radius:10px;text-decoration:none;
+      box-shadow:0 3px 0 var(--line-dk);letter-spacing:.02em;
+      border:2px solid var(--line-dk);transition:transform .1s,box-shadow .1s;
+    }
+    .h-line-btn:active{transform:translateY(3px);box-shadow:0 0px 0 var(--line-dk);}
+
+    /* Scan hint */
+    .scan-hint{
+      display:flex;align-items:center;justify-content:center;gap:7px;
+      font-size:12px;font-weight:700;color:#555;margin:14px 0 10px;
+    }
+    .scan-arrow{color:var(--line);font-size:13px;display:inline-block;animation:float-arrow 1.4s ease-in-out infinite;}
+    .scan-arrow:last-child{animation-delay:.28s;}
+
+    /* Merit Cards */
+    .benefit-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 12px;margin-top:12px;}
+    #hero .benefit-row{margin-top:10px;padding:0 12px;}
+    .merit-chip{
+      background:#fff;border:1px solid rgba(6,199,85,.42);border-radius:12px;
+      padding:7px 6px 7px;font-size:clamp(9px,2.4vw,11px);font-weight:700;
+      color:#111;letter-spacing:.01em;text-align:center;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+      box-shadow:0 1px 6px rgba(0,0,0,.06);
+    }
+    .merit-chip-text{line-height:1.3;}
+    #hero .benefit-row .merit-chip:first-child{font-size:clamp(7.5px,2vw,9px);}
+
+    /* ===== MERIT ZONE ===== */
+    .merit-zone{position:relative;z-index:5;padding:20px 20px 44px;background:var(--bg-alt);}
+    .merit-head{text-align:center;margin-bottom:22px;}
+    .merit-eyebrow{display:block;font-size:13px;font-weight:900;color:var(--line);letter-spacing:.02em;margin-bottom:6px;}
+    .merit-title{font-size:26px;font-weight:900;color:#111;line-height:1.3;-webkit-text-stroke:.3px #111;}
+    .merit-title em{font-style:normal;color:var(--line);}
+    .merit-social{
+      display:inline-block;margin-top:10px;background:#fff;border:1.5px solid var(--border);
+      border-radius:999px;padding:5px 14px;font-size:11.5px;font-weight:900;color:#111;
+    }
+    .merit-social em{font-style:normal;color:var(--line);}
+    .merit-cards{display:flex;flex-direction:column;gap:18px;}
+    .merit-card{
+      position:relative;display:flex;align-items:center;gap:14px;background:#fff;
+      border:1.5px solid var(--border);border-radius:18px;padding:20px 16px 16px;
+      box-shadow:0 4px 16px rgba(0,0,0,.07);
+    }
+    .merit-num{
+      position:absolute;top:-12px;left:-6px;background:var(--line);color:#fff;
+      font-size:11px;font-weight:900;padding:4px 10px;border-radius:6px;
+      letter-spacing:.02em;white-space:nowrap;
+    }
+    .merit-icon{
+      flex-shrink:0;width:58px;height:58px;display:flex;align-items:center;
+      justify-content:center;font-size:28px;border-radius:16px;background:#e8fdf1;
+    }
+    .merit-body{flex:1;min-width:0;}
+    .merit-claim{
+      display:inline-block;font-size:10.5px;font-weight:900;color:#fff;
+      padding:2px 9px;border-radius:4px;letter-spacing:.02em;margin-bottom:5px;
+    }
+    .merit-claim.c1{background:var(--line);}
+    .merit-claim.c2{background:#1a1a1a;}
+    .merit-claim.c3{background:var(--line);}
+    .merit-h{font-size:18px;font-weight:900;color:#111;line-height:1.35;}
+    .merit-h em{font-style:normal;color:var(--line);}
+    .merit-sub{margin-top:5px;font-size:12.5px;font-weight:700;color:#555;line-height:1.6;}
+
+    /* ===== SECTIONS ===== */
+    .btn-line{
+      display:flex;align-items:center;justify-content:center;gap:10px;
+      background:var(--line);color:#fff;text-decoration:none;font-size:18px;font-weight:900;
+      padding:18px 20px;border-radius:var(--r-pill);width:100%;max-width:390px;
+      margin:0 auto 12px;box-shadow:0 6px 24px rgba(6,199,85,.44);
+      transition:background .18s,transform .14s,box-shadow .18s;
+    }
+    .btn-line:hover{background:var(--line-dk);transform:translateY(-2px);box-shadow:0 8px 28px rgba(6,199,85,.54);}
+    .btn-line.lg{font-size:19px;padding:20px;}
+    .sec{padding:48px 24px;}
+    .sec.alt{background:var(--bg-alt);}
+    .sec.white{background:var(--card);}
+    .sec-eye{
+      display:inline-block;font-size:11px;font-weight:800;letter-spacing:.1em;
+      text-transform:uppercase;color:var(--lbl);background:var(--bg-alt);
+      padding:4px 12px;border-radius:var(--r-pill);margin-bottom:10px;
+    }
+    .sec.alt .sec-eye{background:var(--card);}
+    .sec-title{font-size:24px;font-weight:900;color:var(--ink);line-height:1.35;text-wrap:balance;margin-bottom:20px;}
+    .about-body{font-size:15px;color:var(--muted);line-height:1.9;}
+    .about-body strong{color:var(--lbl);font-weight:800;}
+    .about-body p+p{margin-top:12px;}
+    .features{display:flex;flex-direction:column;gap:14px;}
+    .feat-card{
+      background:var(--card);border-radius:var(--r-md);padding:20px 18px;
+      display:flex;align-items:flex-start;gap:14px;border:1.5px solid var(--border);
+      transition:transform .18s,box-shadow .18s;
+    }
+    .feat-card:hover{transform:translateY(-3px);box-shadow:0 6px 20px rgba(42,155,82,.1);}
+    .feat-icon{width:48px;height:48px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:var(--r-sm);}
+    .feat-icon svg{width:30px;height:30px;}
+    .feat-icon.g-ic{background:rgba(42,155,82,.12);}
+    .feat-icon.o-ic{background:rgba(255,92,0,.12);}
+    .feat-icon.l-ic{background:rgba(6,199,85,.11);}
+    .feat-tag{display:block;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px;}
+    .feat-tag.g{color:var(--lbl);} .feat-tag.o{color:var(--tangerine);} .feat-tag.l{color:var(--line);}
+    .feat-title{font-size:16px;font-weight:800;color:var(--ink);line-height:1.4;margin-bottom:5px;}
+    .feat-desc{font-size:13px;color:var(--muted);line-height:1.7;}
+    .steps{display:flex;flex-direction:column;}
+    .step{display:flex;gap:16px;position:relative;}
+    .step:not(:last-child)::after{
+      content:'';position:absolute;left:21px;top:44px;bottom:-8px;
+      width:2px;background:var(--border);
+    }
+    .step-num{
+      width:44px;height:44px;border-radius:50%;display:flex;align-items:center;
+      justify-content:center;font-size:18px;font-weight:900;color:#fff;flex-shrink:0;
+    }
+    .step-num.s1{background:var(--forest);}
+    .step-num.s2{background:var(--line);}
+    .step-num.s3{background:var(--line);}
+    .step-body{padding-bottom:32px;}
+    .step:last-child .step-body{padding-bottom:0;}
+    .step-title{font-size:16px;font-weight:800;color:var(--ink);line-height:1.4;margin-bottom:4px;}
+    .step-desc{font-size:13px;color:var(--muted);line-height:1.7;}
+    .final{background:linear-gradient(160deg,#1F7A40 0%,#2A9B52 100%);padding:52px 24px;text-align:center;}
+    .final-hl{font-size:26px;font-weight:900;color:#fff;line-height:1.35;text-wrap:balance;margin-bottom:8px;}
+    .final-hl em{font-style:normal;color:rgba(255,255,255,.9);}
+    .final-sub{font-size:14px;color:rgba(255,255,255,.82);margin-bottom:28px;line-height:1.75;}
+    .final-note{margin-top:14px;font-size:12px;color:rgba(255,255,255,.6);}
+    .footer{background:#091510;color:rgba(255,255,255,.52);padding:20px 20px 24px;text-align:center;font-size:12px;line-height:1.9;}
+    .footer strong{color:rgba(255,255,255,.8);display:block;font-size:13px;margin-bottom:2px;}
+    .footer-line-btn{
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      background:var(--line);color:#fff;text-decoration:none;font-size:15px;font-weight:900;
+      padding:14px 20px;border-radius:var(--r-pill);max-width:320px;
+      margin:16px auto 6px;text-align:center;letter-spacing:.02em;
+    }
+    .fc-pulse-btn{animation:fc-pulse 1.6s ease-in-out infinite;}
+    .bottom-bar{
+      position:fixed;bottom:0;left:0;right:0;
+      background:rgba(9,21,16,.95);
+      backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+      padding:9px 14px;z-index:99;box-shadow:0 -2px 16px rgba(0,0,0,.24);
+    }
+    .bottom-bar-inner{max-width:430px;margin:0 auto;}
+    .bottom-bar a{
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      background:var(--line);color:#fff;text-decoration:none;font-size:16px;font-weight:900;
+      padding:13px;border-radius:var(--r-pill);width:100%;transition:background .18s;
+      animation:ctaAttention 4.5s ease-in-out infinite;
+    }
+    .bottom-bar a:hover{background:var(--line-dk);}
+    .ico{width:20px;height:20px;flex-shrink:0;}
+    .ico-l{width:26px;height:26px;flex-shrink:0;}
+    /* ── Hero reveal classes ── */
+    .hr-1,.hr-2,.hr-3,.hr-4,.hr-5,.hr-6{opacity:0;}
+    .hr-1{animation:heroReveal .28s ease forwards;            animation-delay:0ms;}
+    .hr-2{animation:heroMainEntrance .38s ease forwards;      animation-delay:100ms;}
+    .hr-3{animation:heroReveal .28s ease forwards;            animation-delay:200ms;}
+    .hr-4{animation:heroReveal .28s ease forwards;            animation-delay:300ms;}
+    .hr-5{animation:heroReveal .28s ease forwards;            animation-delay:450ms;}
+    .hr-6{animation:heroReveal .30s ease forwards;            animation-delay:550ms;}
+    /* qr-hero-card は自身に qrGlow があるため hr-6 を上書き合成 */
+    #hero .qr-hero-card.hr-6{
+      animation:heroReveal .30s ease 550ms forwards,qrGlow 2s ease-in-out infinite;
+    }
+    /* ── ↓矢印 ── */
+    .qr-arrow{display:inline-block;animation:arrowBounce 1.2s ease-in-out infinite;}
+    /* ── マスコットバッジ（SVGキャラ） ── */
+    .qr-mascot-wrap{
+      position:absolute;bottom:-8px;right:-53px;
+      width:62px;pointer-events:none;z-index:10;
+      filter:drop-shadow(0 2px 5px rgba(0,0,0,0.13));
+    }
+    .qr-mascot-svg{
+      width:100%;height:auto;display:block;
+      transform-origin:50% 92%;
+      animation:fcb-sway 3s ease-in-out infinite;
+      will-change:transform;
+    }
+    /* ── 社会的証明（ヒーロー見出し直下・1行固定） ── */
+    #hero .h-social-proof{
+      display:flex;align-items:center;justify-content:center;gap:6px;
+      margin:8px 16px 0;white-space:nowrap;line-height:1.4;
+    }
+    .h-sp-stars{
+      color:#FFB400;font-size:clamp(13px,3.8vw,15px);font-weight:900;
+      letter-spacing:.12em;line-height:1;text-shadow:0 1px 0 rgba(0,0,0,.06);
+    }
+    .h-sp-text{
+      font-size:clamp(11px,3.2vw,12px);font-weight:700;color:#555;
+      letter-spacing:.02em;
+    }
+    /* ── 特典明示バッジ（QR矢印の直前・動機→行動の順） ── */
+    .qr-incentive{
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      margin-top:18px;
+    }
+    .qr-inc-slash{color:var(--line);font-size:16px;font-weight:900;line-height:1;}
+    .qr-inc-badge{
+      background:#FFD600;color:#111;font-size:15px;font-weight:900;
+      padding:5px 14px;border-radius:9999px;letter-spacing:.03em;line-height:1.4;
+    }
+    .qr-inc-em{font-style:normal;color:#e82020;-webkit-text-stroke:.3px #e82020;}
+    /* バッジ→矢印→QRを1グループに見せるため矢印上余白を詰める */
+    .qr-incentive + .qr-cta-arrow{padding-top:6px;}
+    /* ── QRカード直下 LINEワンタップボタン ── */
+    #hero .qr-line-btn{
+      display:flex;align-items:center;justify-content:center;gap:9px;
+      width:min(84vw,350px);margin:14px auto 0;
+      background:var(--line);color:#fff;
+      font-size:clamp(16px,4.6vw,17px);font-weight:900;
+      padding:15px 16px;border-radius:12px;text-decoration:none;
+      letter-spacing:.03em;line-height:1;
+      border:2px solid var(--line-dk);
+      box-shadow:0 5px 0 var(--line-dk),0 8px 20px rgba(6,199,85,.35);
+      transition:transform .1s,box-shadow .1s;
+    }
+    #hero .qr-line-btn:active{
+      transform:translateY(4px);
+      box-shadow:0 1px 0 var(--line-dk),0 4px 12px rgba(6,199,85,.3);
+    }
+    .qr-line-btn svg{flex-shrink:0;}
+    /* ── 登録ハードル除去マイクロコピー（LINEボタン直下） ── */
+    .qr-micro-note{
+      text-align:center;font-size:10px;font-weight:700;color:#888;
+      letter-spacing:.04em;line-height:1.5;margin-top:8px;padding:0 16px;
+    }
+    @media(prefers-reduced-motion:reduce){
+      .fc-pulse-btn,.scan-arrow{animation:none!important;}
+      .fcb-mascot{animation:none;}
+      .clock-badge{animation:none;}
+      .qr-mascot-svg{animation:none;}
+      .hr-1,.hr-2,.hr-3,.hr-4,.hr-5,.hr-6{animation:none;opacity:1;transform:none;}
+      .qr-arrow,.qr-now-badge,.badge-arrow{animation:none;}
+      #hero .qr-hero-card,#hero .qr-hero-card.hr-6{animation:none;box-shadow:0 6px 28px rgba(6,199,85,.28);}
+      .bottom-bar a{animation:none;}
+    }
+  </style>
+</head>
+<body>
+<section id="hero" aria-label="ギガ賃貸 ヒーローセクション">
+  <!-- ① TikTok Banner -->
+  <div class="tt-banner" role="banner">
+    <div class="tt-left">
+      <div class="tt-icon" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .55.04.79.1V9.01a6.27 6.27 0 00-.79-.05A6.34 6.34 0 003.15 15.3a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V9.01a8.16 8.16 0 004.77 1.52V7.08a4.85 4.85 0 01-1-.39z" fill="white"/>
+        </svg>
+      </div>
+      <span class="tt-text">賃貸の初期費用で<em class="tt-em">損したくない</em>あなたへ</span>
+    </div>
+    <div class="tt-badge">24時間無料</div>
+  </div>
+
+  <!-- ② Hero White Body -->
+  <div class="h-body">
+    <div class="h-hero-wrap">
+      <p class="h-hero-sub">ギガ賃貸で今すぐお部屋探し！</p>
+      <h1 class="h-hero-main hr-2"><span class="h1-black">初期費用を</span><span class="h1-green">最大限割引！</span></h1>
+    </div>
+    <div class="h-cta-block">
+      <p class="h-cta-simple">LINEで<em class="h-cta-em">かんたん</em>お部屋探し！</p>
+      <p class="h-cta-sub-note">気になる物件がある方は、そのまま送るだけ！</p>
+      <p class="h-evidence-line"><span class="h-ev-tag">8月実績</span><span class="h-ev-weak">｜平均</span> <em class="h-ev-num">118,220円</em><span class="h-ev-weak"> 節約</span><sup class="h-ev-note">※</sup></p>
+    </div>
+
+    <!-- QRコードセクション -->
+    <!-- ★要変更: LINE URL を正式なギガ賃貸URLに差し替えてください（lin.ee/[GIGA_LINE_URL] 全箇所） -->
+    <div class="qr-hero-card" aria-label="QRコード友達追加エリア">
+      <div class="qr-now-badge"><span class="badge-arrow">👇</span> 長押ししてLINEを開く <span class="badge-arrow">👇</span></div>
+      <a href="https://lin.ee/[GIGA_LINE_URL]" target="_blank" rel="noopener noreferrer"
+         aria-label="QRコードを長押しして「リンクを開く」でLINE友だち追加">
+        <img class="qr-hero-img"
+             src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2F[GIGA_LINE_URL]&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
+             alt="ギガ賃貸LINE友達追加QRコード"
+             loading="eager">
+      </a>
+      <div class="qr-mascot-wrap" aria-hidden="true">
+        <!-- ギガ賃貸マスコット（アヒル型キャラ・インラインSVG） -->
+        <svg class="qr-mascot-svg" viewBox="0 0 140 170" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+          <!-- 足（水かき） -->
+          <ellipse cx="52" cy="162" rx="12" ry="5.5" fill="#FFD700" stroke="#111" stroke-width="2.5"/>
+          <ellipse cx="88" cy="162" rx="12" ry="5.5" fill="#FFD700" stroke="#111" stroke-width="2.5"/>
+          <!-- 脚 -->
+          <rect x="47" y="148" width="8" height="12" rx="3" fill="#4DB86B" stroke="#111" stroke-width="2.5"/>
+          <rect x="85" y="148" width="8" height="12" rx="3" fill="#4DB86B" stroke="#111" stroke-width="2.5"/>
+          <!-- 羽（腕） -->
+          <ellipse cx="29" cy="114" rx="10" ry="19" fill="#4DB86B" stroke="#111" stroke-width="2.8" transform="rotate(18 29 114)"/>
+          <ellipse cx="111" cy="114" rx="10" ry="19" fill="#4DB86B" stroke="#111" stroke-width="2.8" transform="rotate(-18 111 114)"/>
+          <!-- ボディ（卵型） -->
+          <ellipse cx="70" cy="118" rx="38" ry="42" fill="#4DB86B" stroke="#111" stroke-width="3"/>
+          <!-- お腹（白） -->
+          <ellipse cx="70" cy="128" rx="26" ry="27" fill="#ffffff" stroke="#111" stroke-width="2.5"/>
+          <!-- お腹のSロゴ（黄・黒縁） -->
+          <text x="70" y="141" text-anchor="middle" font-size="34" font-weight="900"
+                font-family="Arial Black,Arial,sans-serif" fill="#FFD700"
+                stroke="#111" stroke-width="3" paint-order="stroke" stroke-linejoin="round">S</text>
+          <!-- 頭 -->
+          <circle cx="70" cy="64" r="32" fill="#4DB86B" stroke="#111" stroke-width="3"/>
+          <!-- 頭上のミニチュアハウス -->
+          <g>
+            <rect x="55" y="26" width="30" height="17" fill="#FFD700" stroke="#111" stroke-width="2.8"/>
+            <path d="M49 27 L70 9 L91 27 Z" fill="#FFB300" stroke="#111" stroke-width="2.8" stroke-linejoin="round"/>
+            <rect x="64" y="30" width="12" height="9" fill="#ffffff" stroke="#111" stroke-width="2"/>
+            <path d="M70 30 v9 M64 34.5 h12" stroke="#111" stroke-width="1.4"/>
+          </g>
+          <!-- くちばし（前に飛び出す黄色いアヒル嘴） -->
+          <ellipse cx="70" cy="78" rx="18" ry="9.5" fill="#FFD700" stroke="#111" stroke-width="2.8"/>
+          <path d="M54 78 h32" stroke="#111" stroke-width="2" stroke-linecap="round"/>
+          <!-- 目（白目＋黒瞳＋ハイライト） -->
+          <circle cx="56" cy="58" r="10.5" fill="#ffffff" stroke="#111" stroke-width="2.5"/>
+          <circle cx="84" cy="58" r="10.5" fill="#ffffff" stroke="#111" stroke-width="2.5"/>
+          <circle cx="58.5" cy="59" r="4.6" fill="#111"/>
+          <circle cx="81.5" cy="59" r="4.6" fill="#111"/>
+          <circle cx="60" cy="57.2" r="1.5" fill="#ffffff"/>
+          <circle cx="83" cy="57.2" r="1.5" fill="#ffffff"/>
+        </svg>
+      </div>
+      <p class="qr-long-press">長押し →「LINEで開く」を選択</p>
+    </div>
+    <p class="qr-after-main r"><em class="qr-line-em">LINE追加</em><span class="qr-after-weak">ですぐお部屋探しスタート！</span></p>
+    <p class="qr-after-sub r">気になる物件がある方は、そのまま送ってOK！</p>
+    <div class="benefit-row" role="list" aria-label="ギガ賃貸の特典">
+      <div class="merit-chip" role="listitem">
+        <svg width="20" height="20" viewBox="0 0 22 22" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="9" stroke="#06C755" stroke-width="1.5"/><text x="11" y="15.5" text-anchor="middle" font-size="11" font-weight="900" fill="#06C755" font-family="sans-serif">¥</text></svg>
+        <span class="merit-chip-text">初期費用最大限割引！</span>
+      </div>
+      <div class="merit-chip" role="listitem">
+        <svg width="25" height="20" viewBox="0 0 28 22" fill="none" aria-hidden="true"><text x="14" y="16" text-anchor="middle" font-size="14" font-weight="900" fill="#06C755" font-family="sans-serif">¥0</text></svg>
+        <span class="merit-chip-text">仲介手数料0</span>
+      </div>
+      <div class="merit-chip" role="listitem">
+        <svg width="20" height="20" viewBox="0 0 22 22" fill="none" aria-hidden="true"><rect x="2" y="2" width="18" height="13" rx="4" stroke="#06C755" stroke-width="1.5"/><path d="M6 20l3-5" stroke="#06C755" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <span class="merit-chip-text">LINEで完結</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ④ CTA Green Strip -->
+  <div class="h-cta-strip">
+    <p class="h-cta-main-copy">理想のお部屋が見つかるまで、<span class="cta-strip-em">全力でサポート！</span></p>
+    <p class="h-cta-subtitle">相談無料 ｜ 内見無料 ｜ 来店不要</p>
+  </div>
+
+  <!-- LINE Button CTA -->
+  <div class="h-cta-band">
+    <p class="h-cta-headline"><em class="cta-hl-deco">＼</em>今すぐ<em class="cta-line-em">LINE</em>で友だち追加！<em class="cta-hl-deco">／</em></p>
+    <!-- ★要変更: LINE URL -->
+    <a href="https://lin.ee/[GIGA_LINE_URL]" class="h-line-btn" target="_blank" rel="noopener noreferrer">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+      </svg>
+      友達追加する（無料）
+    </a>
+  </div>
+
+  <!-- Merit Zone -->
+  <div class="merit-zone" aria-label="ギガ賃貸の3つの強み">
+    <div class="merit-head r">
+      <span class="merit-eyebrow">ギガ賃貸が選ばれる理由</span>
+      <h2 class="merit-title">ギガ賃貸で<em>もっとお得</em>に！</h2>
+      <p class="merit-social">⭐⭐⭐⭐⭐ <em>TikTokで話題</em>の部屋探し</p>
+    </div>
+    <div class="merit-cards">
+      <article class="merit-card r d1">
+        <span class="merit-num">メリット 01</span>
+        <div class="merit-icon" aria-hidden="true">
+          <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+            <circle cx="17" cy="17" r="15" fill="#e8fdf1"/>
+            <path d="M17 8v2M17 24v2M8 17h2M24 17h2" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="17" cy="17" r="6" fill="none" stroke="#06C755" stroke-width="2"/>
+            <text x="17" y="19.5" text-anchor="middle" font-size="8" font-weight="900" fill="#06C755" font-family="sans-serif">¥</text>
+          </svg>
+        </div>
+        <div class="merit-body">
+          <span class="merit-claim c1">気になる部屋を送るだけ！</span>
+          <h3 class="merit-h">初期費用<em>最大限割引</em></h3>
+          <p class="merit-sub">SUUMO等で見つけた気になる部屋、送るだけでカンタン割引！</p>
+        </div>
+      </article>
+      <article class="merit-card r d2">
+        <span class="merit-num">メリット 02</span>
+        <div class="merit-icon" aria-hidden="true">
+          <svg width="44" height="34" viewBox="0 0 44 34" fill="none">
+            <text x="22" y="25" text-anchor="middle" font-size="20" font-weight="900" fill="#06C755" font-family="'Hiragino Maru Gothic ProN',sans-serif">0円</text>
+          </svg>
+        </div>
+        <div class="merit-body">
+          <span class="merit-claim c2">24時間対応</span>
+          <h3 class="merit-h">仲介手数料<em>0円</em></h3>
+          <p class="merit-sub">深夜でもOK！思い立った瞬間にいつでも相談できます</p>
+        </div>
+      </article>
+      <article class="merit-card r d3">
+        <span class="merit-num">メリット 03</span>
+        <div class="merit-icon" aria-hidden="true">
+          <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+            <rect x="3" y="4" width="28" height="22" rx="6" fill="#e8fdf1" stroke="#06C755" stroke-width="1.8"/>
+            <path d="M8 13h18M8 18h11" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
+            <path d="M7 26l3-4" stroke="#06C755" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="merit-body">
+          <span class="merit-claim c3">来店不要</span>
+          <h3 class="merit-h">LINEで<em>ぜんぶ完結</em></h3>
+          <p class="merit-sub">ご満足いただくまで全力サポート！安心してまかせてください</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ABOUT -->
+<section class="sec white">
+  <div class="r">
+    <span class="sec-eye">About</span>
+    <h2 class="sec-title">ギガ賃貸って何？</h2>
+    <div class="about-body">
+      <p>ギガ賃貸は<strong>大阪エリア専門</strong>の賃貸仲介サービス。面倒なお部屋探しを、LINEでぜーんぶおまかせできちゃいます♪</p>
+      <p><strong>敷金・礼金0円</strong>のお得な物件も多数！仲介手数料もお安くご案内できるかもしれません。まずは気軽にLINEしてみて！</p>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="sec alt">
+  <div class="r">
+    <span class="sec-eye">Features</span>
+    <h2 class="sec-title">ギガ賃貸の強み</h2>
+  </div>
+  <div class="features">
+    <article class="feat-card r d1">
+      <div class="feat-icon g-ic">
+        <svg viewBox="0 0 30 30" fill="none" aria-hidden="true">
+          <path d="M15 4L3 14h3v12h7v-7h4v7h7V14h3L15 4z" fill="rgba(42,155,82,.18)" stroke="#2A9B52" stroke-width="1.8" stroke-linejoin="round"/>
+          <circle cx="15" cy="20" r="3.5" fill="#2A9B52"/>
+          <path d="M13.5 20h3" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <span class="feat-tag g">POINT 01</span>
+        <h3 class="feat-title">敷金・礼金0円物件<br>いっぱいあるやん！</h3>
+        <p class="feat-desc">初期費用をぐっと抑えられる0円物件を多数ご紹介。お財布に優しいお部屋がきっと見つかります。</p>
+      </div>
+    </article>
+    <article class="feat-card r d2">
+      <div class="feat-icon o-ic">
+        <svg viewBox="0 0 30 30" fill="none" aria-hidden="true">
+          <circle cx="15" cy="15" r="12" fill="rgba(255,92,0,.16)" stroke="#FF5C00" stroke-width="1.8"/>
+          <path d="M15 7v8.5l5 3" stroke="#FF5C00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M7 21l3-3" stroke="#FF5C00" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <span class="feat-tag o">POINT 02</span>
+        <h3 class="feat-title">仲介手数料も<br>お安くなるかも！？</h3>
+        <p class="feat-desc">他社より安い手数料でご案内できる物件も。まずはLINEで気軽に聞いてみてください♪</p>
+      </div>
+    </article>
+    <article class="feat-card r d3">
+      <div class="feat-icon l-ic">
+        <svg viewBox="0 0 30 30" fill="none" aria-hidden="true">
+          <rect x="3" y="5" width="24" height="20" rx="4.5" fill="rgba(6,199,85,.14)" stroke="#06C755" stroke-width="1.8"/>
+          <path d="M8 13h14M8 18h9" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="21" cy="9" r="5.5" fill="#06C755"/>
+          <path d="M18.5 9l2 2L24 7" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div>
+        <span class="feat-tag l">POINT 03</span>
+        <h3 class="feat-title">全部LINEで完結<br>来店不要！</h3>
+        <p class="feat-desc">相談から物件紹介・申込みまでぜーんぶLINEでOK。外出なしでお部屋が決まっちゃう♪</p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- STEPS -->
+<section class="sec white">
+  <div class="r">
+    <span class="sec-eye">How to Use</span>
+    <h2 class="sec-title">使い方はカンタン3ステップ</h2>
+  </div>
+  <div class="steps">
+    <div class="step r d1">
+      <div class="step-num s1" aria-hidden="true">1</div>
+      <div class="step-body">
+        <h3 class="step-title">LINEを友だち追加する</h3>
+        <p class="step-desc">下のボタンからギガ賃貸公式LINEを友だち追加！登録無料・3秒でできます。</p>
+      </div>
+    </div>
+    <div class="step r d2">
+      <div class="step-num s2" aria-hidden="true">2</div>
+      <div class="step-body">
+        <h3 class="step-title">条件をLINEで送るだけ♪</h3>
+        <p class="step-desc">エリア・家賃・間取りなど、希望をLINEで送ってください。プロのスタッフが即対応します！</p>
+      </div>
+    </div>
+    <div class="step r d3">
+      <div class="step-num s3" aria-hidden="true">3</div>
+      <div class="step-body">
+        <h3 class="step-title">お気に入りのお部屋を見つける</h3>
+        <p class="step-desc">条件ぴったりの物件をご提案！気に入ったらそのままLINEで申込みもできます。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section class="final r">
+  <h2 class="final-hl">さあ、<em>ギガ賃貸</em>で<br>理想のお部屋を見つけよう！</h2>
+  <p class="final-sub">今すぐLINEで気軽に相談してみて♪<br>登録無料・来店不要・24時間受付</p>
+  <!-- ★要変更: LINE URL -->
+  <a href="https://lin.ee/[GIGA_LINE_URL]" class="btn-line lg" target="_blank" rel="noopener noreferrer">
+    <svg class="ico-l" viewBox="0 0 20 20" fill="white" aria-hidden="true">
+      <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+    </svg>
+    友だち追加して無料相談する
+  </a>
+  <p class="final-note">登録無料 · 24時間相談受付中 · 来店不要</p>
+</section>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iNTIiIHZpZXdCb3g9IjAgMCAzMjAgNTIiPjx0ZXh0IHg9IjE2MCIgeT0iMTciIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJIaXJhZ2lubyBTYW5zLEhpcmFnaW5vIEtha3UgR290aGljIFByb04sc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjUyKSI+5aSn6Ziq5biC5Lit5aSu5Yy65Y2X6Ii55aC0My00LTEwIOesrDXjg6Tjg57jg4jjg5Pjg6s16ZqOPC90ZXh0Pjx0ZXh0IHg9IjE2MCIgeT0iMzkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJIaXJhZ2lubyBTYW5zLEhpcmFnaW5vIEtha3UgR290aGljIFByb04sc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9IjYwMCIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjcyKSI+44Ku44Ks6LOD6LK4772c5qCq5byP5Lya56S+44Ob44O844Og44K6PC90ZXh0Pjwvc3ZnPg==" alt="" aria-hidden="true" style="display:block;margin:0 auto 2px;max-width:100%;height:auto;">
+
+</footer>
+
+<!-- FIXED BOTTOM BAR -->
+<div class="bottom-bar">
+  <div class="bottom-bar-inner">
+  <!-- ★要変更: LINE URL -->
+  <a href="https://lin.ee/[GIGA_LINE_URL]" target="_blank" rel="noopener noreferrer">
+    <svg class="ico" viewBox="0 0 20 20" fill="white" aria-hidden="true">
+      <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+    </svg>
+    長押ししてLINEを開く
+  </a>
+  </div>
+</div>
+
+<script>
+(function () {
+  var els = document.querySelectorAll('.r');
+  if (!('IntersectionObserver' in window)) {
+    els.forEach(function (el) { el.classList.add('on'); });
+    return;
+  }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) {
+        e.target.classList.add('on');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12 });
+  els.forEach(function (el) { io.observe(el); });
+})();
+</script>
+
+<script>
+(function(){
+  var TW=window.innerWidth;
+  if(TW<=480&&typeof window.TikTok!=='undefined'){ /* TikTok WebView skip */ return; }
+  try{
+    var ua=navigator.userAgent||'';
+    var isTTWebView=/BytedanceWebview|ByteLocale|musical_ly/i.test(ua);
+    if(isTTWebView){
+      document.querySelectorAll('a').forEach(function(a){
+        a.addEventListener('click',function(e){
+          var href=a.getAttribute('href');
+          if(href&&href.startsWith('http')&&!href.includes(location.hostname)){
+            e.preventDefault();
+            var inp=document.createElement('input');
+            inp.value=href;
+            document.body.appendChild(inp);
+            inp.select();
+            document.execCommand('copy');
+            document.body.removeChild(inp);
+            alert('URLをコピーしました。ブラウザを開いて貼り付けてください。');
+          }
+        });
+      });
+    }
+  }catch(err){}
+  try{
+    document.querySelectorAll('a[href*="lin.ee"]').forEach(function(a){
+      a.setAttribute('target','_blank');
+      a.setAttribute('rel','noopener noreferrer');
+    });
+  }catch(err2){}
+})();
+</script>
+
+<script>fetch('/api/track-view',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lp:'giga-chintai'})}).catch(function(){});</script>
+</body>
+</html>
