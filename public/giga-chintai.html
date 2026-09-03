@@ -1,533 +1,522 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" data-theme="light">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="format-detection" content="telephone=no">
-<title>ギガ賃貸｜初期費用が最大0円に！大阪の賃貸はLINEで完結</title>
-<meta name="description" content="敷金・礼金・仲介手数料が最大0円。大阪エリア専門のギガ賃貸なら、LINEを送るだけで初期費用をとことん削減。相談無料・来店不要・24時間受付。">
-<style>
-:root{
-  --line:#06C755;
-  --dgreen:#358D26;
-  --deep:#1c5a12;
-  --ink:#191B19;
-  --soft:#e8f8ee;
-  --soft2:#def7c7;
-  --yellow:#FFEA2E;
-  --yellow2:#FFEE59;
-  --marker:#FFF639;
-  --paleyellow:#FFF9E0;
-  --red:#E5382A;
-  --gray-head:#3D523A;
-  --gray-body:#F1F1F1;
-  --gray-total:#C9CFC3;
-}
-*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-html{background:#d9ecdf;}
-body{
-  font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic Medium","Yu Gothic",Meiryo,sans-serif;
-  color:var(--ink);
-  background:#fff;
-  max-width:430px;
-  margin:0 auto;
-  line-height:1.6;
-  font-size:15px;
-  padding-bottom:96px;
-  box-shadow:0 0 24px rgba(0,0,0,.12);
-  overflow-x:hidden;
-  -webkit-font-smoothing:antialiased;
-}
-img{max-width:100%;height:auto;}
-a{color:inherit;text-decoration:none;}
-em{font-style:normal;}
-.num{font-family:"Helvetica Neue",Arial,"Hiragino Sans",sans-serif;font-weight:900;letter-spacing:-.5px;}
-.marker{background:linear-gradient(transparent 72%, var(--marker) 0%);}
+  <meta charset="UTF-8">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ccircle%20cx='50'%20cy='50'%20r='46'%20fill='%234DB86B'/%3E%3Ctext%20x='50'%20y='68'%20text-anchor='middle'%20font-size='52'%20font-weight='900'%20font-family='sans-serif'%20fill='%23FFD700'%3ES%3C/text%3E%3C/svg%3E">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ギガ賃貸 | 初期費用が最大0円に・LINEでお部屋探し（大阪） | ホームズ</title>
+  <style>
+    :root {
+      --forest:    #4DB86B;   /* ギガ賃貸ブランドグリーン */
+      --forest-dk: #2F8F4E;
+      --sun:       #FFD700;   /* 黄色アクセント */
+      --line:      #06C755;   /* CTA・QR枠・ピル専用 */
+      --line-dk:   #05aa47;
+      --line-deep: #048a39;
+      --ink:       #111;
+      --muted:     #555;
+      --bg:        #ffffff;
+      --bg-alt:    #FFFDE7;   /* セクション交互背景の淡黄 */
+      --border:    #FFE099;
+      --r-pill:    9999px;
+      --r-md:      18px;
+    }
 
-/* reveal */
-.r{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease;}
-.r.on{opacity:1;transform:none;}
-.d1{transition-delay:.05s;}.d2{transition-delay:.12s;}.d3{transition-delay:.2s;}.d4{transition-delay:.28s;}.d5{transition-delay:.36s;}
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html{scroll-behavior:smooth;}
+    body{
+      font-family:'Hiragino Maru Gothic ProN','Hiragino Maru Gothic Pro',sans-serif;
+      font-size:16px;line-height:1.8;color:var(--ink);background:var(--bg);
+      max-width:430px;margin:0 auto;overflow-x:hidden;padding-bottom:90px;
+    }
 
-/* ① TikTok band */
-.tiktok-band{
-  background:#111;color:#fff;text-align:center;
-  font-size:12px;font-weight:700;letter-spacing:1.2px;
-  padding:8px 10px;
-}
-.tiktok-band .yy{color:var(--yellow);}
+    /* ===== Scroll reveal ===== */
+    .r{opacity:0;transform:translateY(22px);transition:opacity .55s ease,transform .55s ease;}
+    .r.on{opacity:1;transform:none;}
+    .r.d1{transition-delay:.1s;} .r.d2{transition-delay:.2s;} .r.d3{transition-delay:.3s;}
+    .r.d4{transition-delay:.4s;} .r.d5{transition-delay:.5s;}
+    @media(prefers-reduced-motion:reduce){.r{opacity:1;transform:none;transition:none;}}
 
-/* ② hero */
-.hero{
-  background:
-    radial-gradient(circle at 88% 6%, rgba(255,238,89,.5) 0%, rgba(255,238,89,0) 34%),
-    radial-gradient(circle at 8% 30%, rgba(255,255,255,.9) 0%, rgba(255,255,255,0) 45%),
-    var(--soft);
-  max-width:430px;
-  margin:0 auto;
-  padding:22px 18px 30px;
-  text-align:center;
-  position:relative;
-}
-.rescue-copy{
-  display:inline-block;
-  font-size:13px;font-weight:700;color:var(--deep);
-  background:#fff;border:1.5px solid var(--dgreen);
-  border-radius:999px;padding:5px 14px;
-  margin-bottom:12px;
-}
-.h1-wrap{line-height:1.15;margin-bottom:14px;}
-.h1-l1{display:block;font-size:26px;font-weight:800;color:var(--deep);letter-spacing:1px;}
-.h1-l1 .mk{background:linear-gradient(transparent 68%, var(--marker) 0%);padding:0 2px;}
-.h1-l2{display:block;font-size:30px;font-weight:800;color:var(--deep);margin-top:2px;letter-spacing:.5px;}
-.zero-giant{
-  font-family:"Helvetica Neue",Arial,sans-serif;
-  font-size:96px;font-weight:900;line-height:.95;
-  color:var(--line);
-  -webkit-text-stroke:1.5px var(--deep);
-  text-shadow:5px 3px 0 #0D7C0C;
-  display:inline-block;
-  transform:translateY(8px);
-  letter-spacing:-4px;
-  padding:0 4px;
-}
-.h1-yen{font-size:.62em;font-weight:800;}
-.h-evidence{
-  background:#fff;border-radius:14px;
-  box-shadow:0 0 10px rgba(0,0,0,.12);
-  padding:10px 12px 8px;margin:0 auto 16px;max-width:340px;
-}
-.h-ev-line{font-size:13px;font-weight:700;color:var(--ink);}
-.h-ev-tag{
-  background:var(--yellow);color:#111;border-radius:6px;
-  font-size:11px;font-weight:800;padding:2px 7px;margin-right:6px;
-  display:inline-block;transform:translateY(-1px);
-}
-.h-ev-num{
-  font-family:"Helvetica Neue",Arial,sans-serif;
-  font-size:24px;font-weight:900;color:var(--red);
-  background:linear-gradient(transparent 72%, var(--marker) 0%);
-  padding:0 2px;letter-spacing:-.5px;
-}
-.h-ev-weak{font-size:12px;color:#555;font-weight:600;}
-.micro-note{font-size:10px;color:#7c837c;line-height:1.5;margin-top:6px;}
+    /* ===== Animations ===== */
+    @keyframes fcb-sway{0%,100%{transform:rotate(-2.5deg);}50%{transform:rotate(2.5deg);}}
+    @keyframes qrGlow{
+      0%,100%{box-shadow:0 4px 22px rgba(6,199,85,.22),0 0 0 2px rgba(0,200,83,.10);}
+      50%    {box-shadow:0 4px 22px rgba(6,199,85,.22),0 0 0 4px rgba(0,200,83,.18),0 8px 26px rgba(0,200,83,.13);}
+    }
+    @keyframes ctaAttention{
+      0%,100%{transform:scale(1) translateX(0);}
+      4%{transform:scale(1.02);}8%{transform:scale(1);}
+      12%{transform:translateX(2px);}16%{transform:translateX(0);}
+    }
+    @keyframes ctaPulse{
+      0%,100%{transform:translateX(-50%) scale(1);box-shadow:0 0 0 0 rgba(255,40,80,.22);}
+      50%{transform:translateX(-50%) scale(1.04);box-shadow:0 0 0 5px rgba(255,40,80,0);}
+    }
+    @keyframes badgeArrow{0%,100%{transform:translateY(0);}50%{transform:translateY(4px);}}
+    @keyframes heroReveal{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+    @keyframes heroMainEntrance{
+      0%{opacity:0;transform:translateY(10px) scale(.92);}
+      60%{opacity:1;transform:translateY(0) scale(1.03);}
+      100%{opacity:1;transform:translateY(0) scale(1);}
+    }
+    .hr-1,.hr-2,.hr-3,.hr-4,.hr-5,.hr-6{opacity:0;}
+    .hr-1{animation:heroReveal .28s ease forwards;animation-delay:0ms;}
+    .hr-2{animation:heroMainEntrance .38s ease forwards;animation-delay:100ms;}
+    .hr-3{animation:heroReveal .28s ease forwards;animation-delay:220ms;}
+    .hr-4{animation:heroReveal .30s ease forwards;animation-delay:340ms;}
+    .hr-5{animation:heroReveal .28s ease forwards;animation-delay:480ms;}
+    .hr-6{animation:heroReveal .28s ease forwards;animation-delay:600ms;}
 
-/* QR card */
-.qr-hero-card{
-  background:#fff;border-radius:20px;
-  box-shadow:0 0 10px rgba(0,0,0,.2);
-  border:2.5px solid var(--line);
-  padding:14px 14px 12px;margin:0 auto;max-width:300px;
-  position:relative;
-}
-.qr-now-badge{
-  display:inline-block;
-  background:var(--yellow);color:#111;
-  font-size:13px;font-weight:800;
-  border-radius:999px;padding:5px 14px;
-  margin-bottom:10px;
-  box-shadow:0 3px 0 rgba(0,0,0,.15);
-}
-.qr-hero-img{width:184px;height:184px;display:block;margin:0 auto;border-radius:8px;}
-.qr-long-press{font-size:12px;font-weight:700;color:var(--deep);margin-top:8px;}
-.qr-mascot-wrap{
-  position:absolute;right:-18px;bottom:-14px;width:88px;
-  pointer-events:none;
-  animation:sway 3.2s ease-in-out infinite;
-}
-.qr-mascot-svg{width:100%;display:block;filter:drop-shadow(0 3px 4px rgba(0,0,0,.18));}
-@keyframes sway{0%,100%{transform:rotate(-4deg);}50%{transform:rotate(4deg);}}
+    /* ===== 共通：完全ピル型CTA（KN-14） ===== */
+    .cta-pill{
+      display:flex;align-items:center;justify-content:center;gap:9px;
+      width:min(84vw,350px);margin:0 auto;
+      background:var(--line);color:#fff;
+      font-size:clamp(15px,4.4vw,17px);font-weight:900;
+      padding:16px 18px;border-radius:var(--r-pill);text-decoration:none;
+      letter-spacing:.03em;line-height:1;
+      box-shadow:0 4px 0 var(--line-deep),0 10px 22px rgba(6,199,85,.30);
+      transition:transform .1s,box-shadow .1s;
+    }
+    .cta-pill:active{
+      transform:translateY(3px);
+      box-shadow:0 1px 0 var(--line-deep),0 5px 12px rgba(6,199,85,.25);
+    }
+    .cta-pill.inv{background:#fff;color:var(--line-dk);box-shadow:0 4px 0 var(--line-deep),0 10px 22px rgba(0,0,0,.18);}
+    .cta-pill.inv:active{transform:translateY(3px);box-shadow:0 1px 0 var(--line-deep),0 5px 12px rgba(0,0,0,.15);}
+    .cta-pill svg{flex-shrink:0;}
 
-/* CTA pill */
-.cta-pill{
-  display:flex;align-items:center;justify-content:center;gap:8px;
-  background:var(--line);color:#fff;
-  font-size:17px;font-weight:800;letter-spacing:.5px;
-  border-radius:12px;
-  padding:15px 18px;
-  margin:16px auto 0;max-width:330px;
-  box-shadow:0 4px 0 0 rgba(0,0,0,.21);
-  transition:transform .12s ease,box-shadow .12s ease;
-}
-.cta-pill:active{transform:translateY(4px);box-shadow:none;}
-.cta-pill svg{width:20px;height:20px;flex-shrink:0;}
-.cta-pill.inv{background:#fff;color:var(--deep);}
-.cta-micro{font-size:11px;color:#5a675a;font-weight:600;margin-top:8px;text-align:center;}
+    /* ===== 共通：極小注記（KN-13） ===== */
+    .micro-note{
+      text-align:center;font-size:11px;font-weight:600;color:#999;
+      letter-spacing:.02em;line-height:1.6;margin-top:8px;padding:0 16px;
+    }
 
-/* proof chips */
-.proof-bar{display:flex;gap:6px;justify-content:center;margin-top:18px;}
-.proof-chip{
-  background:#fff;border:1.5px solid var(--soft2);
-  border-radius:10px;padding:7px 6px;flex:1;max-width:120px;
-  font-size:10.5px;font-weight:800;color:var(--deep);line-height:1.35;
-}
-.proof-chip em{display:block;font-size:9px;font-weight:600;color:#6a746a;margin-top:2px;}
+    /* ===== 共通：英大＋和小2段見出し（KN-05） ===== */
+    .sec-head{text-align:center;margin-bottom:24px;}
+    .sec-eye-en{
+      display:block;font-size:clamp(32px,8vw,44px);font-weight:900;
+      letter-spacing:.08em;line-height:1.05;color:var(--ink);
+      font-stretch:condensed;
+    }
+    .sec-eye-en.green{color:var(--forest);}
+    .sec-sub-ja{
+      display:block;margin-top:8px;font-size:clamp(15px,4vw,18px);
+      font-weight:700;color:#555;line-height:1.5;
+    }
+    .sec{padding:44px 22px 48px;}
+    .sec.white{background:var(--bg);}
+    .sec.alt{background:var(--bg-alt);}
+    .sec-cta-wrap{margin-top:28px;}
 
-/* sections */
-.sec{padding:34px 18px 38px;}
-.sec.white{background:#fff;}
-.sec.alt{background:var(--soft);}
-.sec.paleyellow{background:var(--paleyellow);}
-.sec-head{text-align:center;margin-bottom:20px;}
-.sec-title{
-  font-size:23px;font-weight:800;color:var(--deep);
-  letter-spacing:.5px;line-height:1.35;
-}
-.sec-title .mk{background:linear-gradient(transparent 70%, var(--marker) 0%);padding:0 2px;}
-.sec-title .big{font-size:1.3em;color:var(--line);-webkit-text-stroke:.5px var(--deep);}
-.sec-sub{
-  display:inline-block;
-  font-size:12px;font-weight:700;color:#fff;
-  background:var(--dgreen);border-radius:999px;
-  padding:3px 14px;margin-top:8px;letter-spacing:1px;
-}
-.sec-cta-wrap{margin-top:24px;text-align:center;}
+    /* ===== ① TikTok Banner ===== */
+    .tt-banner{
+      background:#000;display:flex;align-items:center;
+      justify-content:space-between;padding:8px 18px 8px 14px;gap:10px;
+    }
+    .tt-left{display:flex;align-items:center;gap:7px;flex:1;min-width:0;}
+    .tt-icon{flex-shrink:0;display:flex;align-items:center;}
+    .tt-text{
+      font-size:clamp(11px,3vw,13px);font-weight:900;color:#fff;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .tt-em{color:var(--sun);}
+    .tt-badge{
+      flex-shrink:0;background:#FE2C55;color:#fff;
+      font-size:clamp(9px,2.4vw,11px);font-weight:900;
+      padding:4px 16px;border-radius:6px;letter-spacing:.03em;white-space:nowrap;
+    }
 
-/* ③ checklist */
-.check-list{list-style:none;max-width:340px;margin:0 auto;}
-.check-item{
-  display:flex;align-items:center;gap:10px;
-  background:var(--soft);
-  border-radius:12px;padding:12px 14px;margin-bottom:9px;
-  font-size:14.5px;font-weight:700;color:var(--ink);
-}
-.check-box{
-  width:24px;height:24px;flex-shrink:0;
-  background:var(--yellow);color:#111;
-  border-radius:6px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:15px;font-weight:900;
-  box-shadow:0 2px 0 rgba(0,0,0,.15);
-}
-.redefine{
-  margin:18px auto 0;max-width:340px;
-  background:#fff;
-  border:2.5px dashed var(--line);
-  border-radius:16px;padding:16px 14px;
-  text-align:center;font-size:15px;font-weight:700;color:var(--ink);line-height:1.7;
-}
-.redefine em{
-  font-weight:800;color:var(--deep);
-  background:linear-gradient(transparent 70%, var(--marker) 0%);
-  padding:0 2px;
-}
+    /* ===== ② Hero（KN-01: FV1画面完結） ===== */
+    #hero{max-width:430px;margin:0 auto;background:#fff;position:relative;overflow:visible;}
+    .h-body{background:#fff;padding:14px 0 18px;}
 
-/* ④ compare */
-.compare-card-outer{
-  background:#fff;border-radius:26px;
-  box-shadow:0 0 10px rgba(0,0,0,.15);
-  padding:20px 12px 22px;
-}
-.compare-premise{
-  text-align:center;font-size:12.5px;font-weight:700;color:#555;margin-bottom:12px;
-}
-.compare-premise .num{font-size:1.25em;color:var(--ink);}
-.compare-grid{display:grid;grid-template-columns:1fr 1.06fr;gap:8px;align-items:start;}
-.cmp-col{border-radius:14px;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,.12);}
-.cmp-col.new{border:2.5px solid var(--yellow);box-shadow:0 3px 10px rgba(184,160,0,.25);}
-.cmp-head{
-  color:#fff;text-align:center;font-weight:800;
-  font-size:13px;letter-spacing:1px;
-  padding:10px 4px;line-height:1.4;
-}
-.cmp-head.old{background:var(--gray-head);}
-.cmp-head.new{background:var(--yellow);color:#111;}
-.cmp-head small{display:block;font-size:9px;font-weight:700;opacity:.85;letter-spacing:.5px;}
-.cmp-body{background:var(--gray-body);}
-.cmp-col.new .cmp-body{background:var(--paleyellow);}
-.cmp-row{
-  min-height:52px;
-  display:flex;flex-direction:column;justify-content:center;
-  padding:5px 10px;
-  border-bottom:1px solid rgba(0,0,0,.07);
-}
-.cmp-name{font-size:10.5px;font-weight:700;color:#556;line-height:1.3;}
-.cmp-col.new .cmp-name{color:#6b5a00;}
-.cmp-price{font-size:15px;font-weight:800;color:var(--ink);letter-spacing:-.3px;line-height:1.3;}
-.cmp-price.zero{color:var(--dgreen);-webkit-text-stroke:.4px var(--dgreen);}
-.cmp-price small{font-size:9px;font-weight:600;color:#8a8a6a;-webkit-text-stroke:0;margin-left:2px;}
-.cmp-total{
-  text-align:center;padding:12px 6px;
-  font-weight:800;line-height:1.3;
-}
-.cmp-total.old{background:var(--gray-total);color:#333;}
-.cmp-total.new{background:var(--soft2);color:var(--deep);}
-.cmp-total .tt-label{display:block;font-size:11px;font-weight:800;letter-spacing:2px;}
-.cmp-total .tt-num{
-  font-family:"Helvetica Neue",Arial,sans-serif;
-  font-size:24px;font-weight:900;letter-spacing:-1px;
-  -webkit-text-stroke:.5px currentColor;
-}
-.cmp-total.new .tt-num{font-size:28px;color:var(--dgreen);}
-.cmp-total .tt-unit{font-size:.55em;font-weight:800;}
-.cmp-total .tt-pre{font-size:.5em;font-weight:800;margin-right:1px;}
+    /* 救済コピー（KN-03） */
+    .rescue-copy{
+      text-align:center;font-size:clamp(12px,3.4vw,13px);font-weight:700;
+      color:#888;letter-spacing:.03em;line-height:1.5;padding:0 16px;
+    }
 
-/* savings bubble */
-.save-bubble{
-  position:relative;
-  margin:26px auto 0;max-width:340px;
-  background:#fff;
-  border:3px solid var(--line);
-  border-radius:20px;
-  padding:18px 14px 14px;
-  text-align:center;
-}
-.save-bubble::before{
-  content:"";position:absolute;top:-14px;left:50%;transform:translateX(-50%);
-  border:12px solid transparent;border-bottom:14px solid var(--line);border-top:0;
-}
-.save-bubble::after{
-  content:"";position:absolute;top:-9px;left:50%;transform:translateX(-50%);
-  border:10px solid transparent;border-bottom:12px solid #fff;border-top:0;
-}
-.sb-label{font-size:14px;font-weight:800;color:var(--ink);}
-.sb-amount{
-  font-family:"Helvetica Neue",Arial,sans-serif;
-  font-size:44px;font-weight:900;color:var(--red);
-  letter-spacing:-2px;line-height:1.1;
-  -webkit-text-stroke:.6px var(--red);
-  background:linear-gradient(transparent 76%, var(--marker) 0%);
-  display:inline-block;padding:0 4px;
-  margin:4px 0 2px;
-}
-.sb-amount .pre{font-size:.42em;letter-spacing:0;margin-right:2px;}
-.sb-amount .unit{font-size:.45em;letter-spacing:0;}
-.sb-tail{font-size:15px;font-weight:800;color:var(--red);}
-.solve-line{
-  text-align:center;margin:0 auto 18px;max-width:360px;
-  font-size:13.5px;font-weight:700;color:var(--ink);line-height:1.7;
-}
-.solve-line strong{color:var(--deep);background:linear-gradient(transparent 70%, var(--marker) 0%);padding:0 2px;}
+    /* H1 + 特大0（KN-02） */
+    #hero h1.h-hero-main{
+      text-align:center;font-weight:900;line-height:1.15;
+      letter-spacing:-.01em;margin-top:2px;padding:0 12px;
+    }
+    .h1-l1{
+      display:block;font-size:clamp(19px,5.2vw,24px);color:var(--ink);
+      -webkit-text-stroke:.2px var(--ink);margin-bottom:2px;
+    }
+    .h1-l2{
+      display:flex;align-items:baseline;justify-content:center;gap:1px;
+      font-size:clamp(26px,7.6vw,34px);color:var(--ink);
+      -webkit-text-stroke:.2px var(--ink);white-space:nowrap;
+    }
+    .zero-giant{
+      display:inline-block;font-style:normal;
+      font-size:clamp(52px,15.5vw,66px);font-weight:900;
+      letter-spacing:-.04em;line-height:1;
+      color:var(--line);-webkit-text-stroke:1px var(--line);
+      padding:0 3px;transform:translateY(3px);
+      background:linear-gradient(transparent 55%,var(--sun) 55%,var(--sun) 92%,transparent 92%);
+    }
+    .h1-yen{
+      font-size:clamp(30px,9vw,40px);color:var(--line);
+      -webkit-text-stroke:.3px var(--line);
+      background:linear-gradient(transparent 55%,var(--sun) 55%,var(--sun) 92%,transparent 92%);
+    }
 
-/* ⑤ reasons */
-.merit-cards{display:flex;flex-direction:column;gap:14px;max-width:360px;margin:0 auto;}
-.merit-card{
-  background:#fff;border-radius:18px;
-  box-shadow:0 0 10px rgba(0,0,0,.12);
-  padding:18px 16px 16px;
-  position:relative;
-  border-top:5px solid var(--yellow);
-}
-.merit-num{
-  position:absolute;top:-13px;left:14px;
-  background:var(--yellow);color:#111;
-  font-size:13px;font-weight:900;letter-spacing:1px;
-  border-radius:999px;padding:3px 13px;
-  box-shadow:0 3px 0 rgba(0,0,0,.15);
-}
-.merit-num .sono{font-size:.75em;font-weight:800;}
-.merit-claim{
-  display:inline-block;font-size:11px;font-weight:800;color:var(--dgreen);
-  border:1.5px solid var(--dgreen);border-radius:999px;
-  padding:1px 10px;margin:6px 0 6px;
-}
-.merit-h{font-size:19px;font-weight:800;color:var(--ink);line-height:1.4;}
-.merit-h em{
-  color:var(--deep);
-  background:linear-gradient(transparent 70%, var(--marker) 0%);
-  padding:0 2px;font-size:1.08em;
-}
-.merit-sub{font-size:12.5px;color:#4c554c;margin-top:6px;line-height:1.7;}
-.merit-area-note{
-  text-align:center;font-size:12.5px;font-weight:700;color:#4c554c;margin:-8px 0 18px;
-}
-.merit-area-note strong{color:var(--deep);}
+    /* 実績ペア表記（KN-04） */
+    .h-cta-block{
+      background:rgba(6,199,85,.07);border:1.5px solid rgba(6,199,85,.28);
+      border-radius:12px;margin:10px 16px 0;padding:9px 14px 8px;
+      text-align:center;display:flex;flex-direction:column;align-items:center;gap:2px;
+    }
+    .h-evidence-line{font-size:14px;font-weight:700;color:#555;letter-spacing:.01em;line-height:1.4;}
+    .h-ev-tag{
+      display:inline-block;background:var(--line);color:#fff;font-size:10px;
+      font-weight:900;padding:2px 8px;border-radius:4px;letter-spacing:.05em;
+      vertical-align:middle;margin-right:4px;
+    }
+    .h-ev-weak{font-size:11px;color:#999;font-weight:600;}
+    .h-ev-num{font-style:normal;color:#FE2C55;font-size:21px;font-weight:900;-webkit-text-stroke:.3px #FE2C55;}
+    .h-ev-pair{font-size:11.5px;font-weight:700;color:#777;line-height:1.5;}
+    .h-ev-pair strong{color:#e82020;font-size:13px;}
+    .h-cta-block .micro-note{margin-top:2px;padding:0;}
 
-/* ⑥ steps */
-.steps{display:flex;flex-direction:column;gap:0;max-width:350px;margin:0 auto;}
-.step{
-  display:flex;gap:14px;align-items:flex-start;
-  background:#fff;border-radius:16px;
-  box-shadow:0 0 8px rgba(0,0,0,.1);
-  padding:16px;
-}
-.step + .step-arrow{text-align:center;font-size:18px;color:var(--dgreen);font-weight:900;padding:4px 0;}
-.step-num{
-  width:42px;height:42px;flex-shrink:0;
-  background:var(--yellow);color:#111;
-  border-radius:50%;
-  display:flex;align-items:center;justify-content:center;
-  font-family:"Helvetica Neue",Arial,sans-serif;
-  font-size:21px;font-weight:900;
-  box-shadow:0 3px 0 rgba(0,0,0,.18);
-}
-.step-title{font-size:16px;font-weight:800;color:var(--deep);line-height:1.4;}
-.step-title .mini{font-size:11px;font-weight:800;color:#fff;background:var(--line);border-radius:6px;padding:1px 7px;margin-left:5px;vertical-align:2px;}
-.step-desc{font-size:12.5px;color:#4c554c;margin-top:4px;line-height:1.7;}
+    /* QRヒーローカード */
+    #hero .qr-hero-card{
+      position:relative;background:#fff;border:3px solid var(--line);border-radius:20px;
+      padding:16px 10px 8px;width:fit-content;margin:16px auto 0;
+      display:flex;flex-direction:column;align-items:center;
+      overflow:visible;
+    }
+    #hero .qr-hero-card.hr-4{
+      animation:heroReveal .30s ease 340ms forwards,qrGlow 2s ease-in-out infinite;
+    }
+    .qr-hero-img{
+      display:block;width:min(56vw,240px);aspect-ratio:1/1;
+      border-radius:8px;border:2px solid var(--line);
+    }
+    .qr-now-badge{
+      position:absolute;top:-10px;left:50%;transform:translateX(-50%);
+      background:#FE2C55;color:#fff;font-size:13px;font-weight:900;
+      padding:3px 14px;border-radius:20px;white-space:nowrap;
+      border:2px solid #fff;box-shadow:1px 1px 0 rgba(0,0,0,.1);z-index:5;
+      animation:ctaPulse 1.8s ease-in-out infinite;
+    }
+    .badge-arrow{display:inline-block;animation:badgeArrow 1s ease-in-out infinite;}
+    .qr-long-press{
+      font-size:10px;font-weight:600;color:#999;text-align:center;
+      letter-spacing:.02em;margin-top:9px;line-height:1.4;
+    }
+    .qr-mascot-wrap{
+      position:absolute;bottom:-30px;right:-80px;
+      width:100px;pointer-events:none;z-index:10;
+      filter:drop-shadow(0 2px 5px rgba(0,0,0,0.13));
+    }
+    .qr-mascot-svg{
+      width:100%;height:auto;display:block;transform-origin:50% 92%;
+      animation:fcb-sway 3s ease-in-out infinite;will-change:transform;
+    }
 
-/* ⑦ results */
-.num-grid{
-  display:grid;grid-template-columns:1fr 1fr;gap:8px;
-  max-width:350px;margin:0 auto;
-}
-.num-card{
-  background:var(--soft);
-  border-radius:12px;padding:10px 6px;text-align:center;
-  border:1.5px solid var(--soft2);
-}
-.num-v{
-  display:block;
-  font-family:"Helvetica Neue",Arial,sans-serif;
-  font-size:21px;font-weight:900;color:var(--dgreen);letter-spacing:-1px;
-  -webkit-text-stroke:.4px var(--dgreen);
-}
-.num-l{font-size:10.5px;font-weight:700;color:#5a675a;}
-.voice-cards{display:flex;flex-direction:column;gap:14px;max-width:360px;margin:18px auto 0;}
-.voice-card{
-  background:#fff;border:1.5px solid #e2ece2;border-radius:16px;
-  box-shadow:0 0 8px rgba(0,0,0,.08);
-  padding:14px 14px 12px;
-}
-.vc-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
-.vc-face{
-  width:40px;height:40px;flex-shrink:0;
-  background:var(--soft);border-radius:50%;
-  display:flex;align-items:center;justify-content:center;font-size:22px;
-}
-.vc-who{display:block;font-size:11.5px;font-weight:700;color:var(--ink);}
-.vc-stars{font-size:12px;color:#f5a623;letter-spacing:1px;}
-.vc-row{
-  display:flex;gap:8px;align-items:flex-start;
-  font-size:12.5px;font-weight:600;color:#3c443c;line-height:1.55;
-  margin-bottom:5px;
-}
-.vc-tag{
-  flex-shrink:0;font-size:10px;font-weight:800;color:#fff;
-  background:#9aa79a;border-radius:5px;padding:2px 7px;margin-top:1px;
-}
-.vc-tag.res{background:var(--red);}
-.vc-row strong{
-  color:var(--red);font-weight:900;
-  background:linear-gradient(transparent 72%, var(--marker) 0%);
-  padding:0 1px;
-}
-.vc-pill{
-  display:inline-block;margin-top:6px;
-  background:var(--yellow);color:#111;
-  font-size:11px;font-weight:800;
-  border-radius:999px;padding:3px 12px;
-}
+    /* QR直下ワンタップボタン + マイクロコピー */
+    #hero .qr-line-btn{margin-top:16px;}
+    #hero .qr-micro-note{
+      text-align:center;font-size:10px;font-weight:700;color:#888;
+      letter-spacing:.04em;line-height:1.5;margin-top:8px;padding:0 16px;
+    }
 
-/* ⑧ final */
-.final{
-  background:linear-gradient(160deg, #1c6b12 0%, var(--dgreen) 55%, #2e7d1f 100%);
-  color:#fff;text-align:center;
-  padding:38px 18px 44px;
-}
-.final-hl{font-size:24px;font-weight:800;line-height:1.5;letter-spacing:.5px;}
-.final-hl em{
-  color:var(--yellow);
-  background:none;
-  -webkit-text-stroke:.4px var(--yellow);
-}
-.final-sub{font-size:13px;font-weight:600;opacity:.92;margin-top:10px;line-height:1.8;}
-.final-qr-card{
-  background:#fff;border-radius:20px;
-  padding:16px 16px 12px;margin:20px auto 0;max-width:260px;
-  box-shadow:0 0 14px rgba(0,0,0,.25);
-}
-.final-qr-img{width:184px;height:184px;display:block;margin:0 auto;border-radius:8px;}
-.final-qr-label{font-size:12px;font-weight:800;color:var(--deep);margin-top:8px;}
-.final-note{font-size:11px;opacity:.85;font-weight:600;margin-top:12px;}
+    /* 瞬間証明バー（KN-09①） */
+    .proof-bar{
+      display:flex;justify-content:center;gap:6px;
+      margin:14px 12px 0;flex-wrap:nowrap;
+    }
+    .proof-chip{
+      flex:1;min-width:0;background:var(--bg-alt);border:1.5px solid var(--border);
+      border-radius:10px;padding:6px 4px;text-align:center;
+      font-size:clamp(9.5px,2.6vw,11px);font-weight:900;color:var(--ink);
+      line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .proof-chip em{font-style:normal;display:block;font-size:clamp(8.5px,2.3vw,10px);font-weight:700;color:#8a7a00;}
+    .proof-chip .pc-star{color:#FFB400;}
 
-/* ⑨ footer */
-.footer{
-  background:#141914;
-  padding:20px 16px calc(20px + env(safe-area-inset-bottom));
-  text-align:center;
-}
+    /* ===== ③ CHECK（KN-07） ===== */
+    .check-list{display:flex;flex-direction:column;gap:9px;}
+    .check-item{
+      display:flex;align-items:center;gap:10px;
+      background:var(--bg-alt);border:1.5px solid var(--border);border-radius:14px;
+      padding:11px 14px;font-size:clamp(13px,3.7vw,14.5px);font-weight:700;color:var(--ink);
+      line-height:1.5;
+    }
+    .check-box{
+      flex-shrink:0;width:22px;height:22px;border-radius:6px;
+      background:var(--line);color:#fff;font-size:13px;font-weight:900;
+      display:flex;align-items:center;justify-content:center;
+    }
+    .redefine{
+      margin-top:20px;background:var(--ink);color:#fff;border-radius:16px;
+      padding:18px 16px;text-align:center;font-size:clamp(14px,4vw,16px);
+      font-weight:900;line-height:1.65;letter-spacing:.02em;
+    }
+    .redefine em{font-style:normal;color:var(--sun);}
 
-/* ⑩ bottom bar */
-.bottom-bar{
-  position:fixed;left:0;right:0;bottom:0;z-index:99;
-  background:rgba(255,255,255,.96);
-  border-top:1px solid #e3e8e3;
-  padding:8px 12px calc(8px + env(safe-area-inset-bottom));
-  backdrop-filter:blur(6px);
-}
-.bottom-bar-inner{max-width:430px;margin:0 auto;}
-.bottom-bar-inner a{
-  display:flex;align-items:center;justify-content:center;gap:8px;
-  background:var(--line);color:#fff;
-  font-size:16px;font-weight:800;letter-spacing:.5px;
-  border-radius:12px;padding:13px 16px;
-  box-shadow:0 4px 0 0 rgba(0,0,0,.21);
-  animation:ctaAttention 2.6s ease-in-out infinite;
-}
-.bottom-bar-inner a:active{transform:translateY(4px);box-shadow:none;animation:none;}
-.bottom-bar-inner .ico{width:20px;height:20px;flex-shrink:0;}
-@keyframes ctaAttention{
-  0%,72%,100%{transform:scale(1);}
-  78%{transform:scale(1.03);}
-  84%{transform:scale(1);}
-  90%{transform:scale(1.03);}
-}
+    /* ===== ④ ZERO COST 足し算分解（KN-08） ===== */
+    .zero-stack{display:flex;flex-direction:column;align-items:center;gap:2px;}
+    .zero-item{
+      width:100%;max-width:340px;background:#fff;border:2px solid var(--sun);
+      border-radius:14px;padding:9px 16px;
+      display:flex;justify-content:space-between;align-items:center;
+      box-shadow:0 2px 8px rgba(0,0,0,.05);
+    }
+    .zero-badge{
+      background:var(--sun);color:var(--ink);font-size:clamp(12px,3.4vw,13.5px);
+      font-weight:900;padding:3px 12px;border-radius:var(--r-pill);letter-spacing:.02em;
+    }
+    .zero-price{
+      font-size:clamp(22px,6.4vw,26px);font-weight:900;color:var(--line);
+      letter-spacing:-.02em;-webkit-text-stroke:.3px var(--line);line-height:1.2;
+    }
+    .zero-plus{
+      font-size:22px;font-weight:900;color:var(--forest);line-height:1;padding:3px 0;
+      text-align:center;
+    }
+    .zero-total{
+      width:100%;max-width:340px;margin-top:10px;
+      background:#fff;border:3px solid var(--forest);border-radius:16px;
+      padding:14px 16px 12px;text-align:center;
+      box-shadow:0 6px 18px rgba(77,184,107,.22);
+    }
+    .zt-label{display:block;font-size:13px;font-weight:900;color:var(--ink);letter-spacing:.04em;}
+    .zt-num{
+      display:block;font-size:clamp(40px,11vw,52px);font-weight:900;color:#e82020;
+      line-height:1.15;letter-spacing:-.03em;-webkit-text-stroke:.5px #e82020;
+      font-stretch:condensed;
+    }
+    .zt-num small{font-size:.42em;font-weight:900;-webkit-text-stroke:0;letter-spacing:0;}
+    .zt-sub{display:block;font-size:12px;font-weight:700;color:#777;}
 
-@media (prefers-reduced-motion: reduce){
-  .r{opacity:1;transform:none;transition:none;}
-  .qr-mascot-wrap,.bottom-bar-inner a{animation:none;}
-}
-@media (max-width:360px){
-  .zero-giant{font-size:80px;}
-  .cmp-price{font-size:13.5px;}
-  .cmp-total .tt-num{font-size:20px;}
-  .cmp-total.new .tt-num{font-size:23px;}
-  .sb-amount{font-size:37px;}
-}
-</style>
+    /* ===== ⑤ MERIT ===== */
+    .merit-cards{display:flex;flex-direction:column;gap:18px;}
+    .merit-card{
+      position:relative;display:flex;align-items:center;gap:14px;background:#fff;
+      border:1.5px solid var(--border);border-radius:var(--r-md);padding:20px 16px 16px;
+      box-shadow:0 4px 16px rgba(0,0,0,.07);
+    }
+    .merit-num{
+      position:absolute;top:-12px;left:-6px;background:var(--line);color:#fff;
+      font-size:11px;font-weight:900;padding:4px 10px;border-radius:6px;
+      letter-spacing:.02em;white-space:nowrap;
+    }
+    .merit-icon{
+      flex-shrink:0;width:58px;height:58px;display:flex;align-items:center;
+      justify-content:center;border-radius:16px;background:#e8fdf1;
+    }
+    .merit-body{flex:1;min-width:0;}
+    .merit-claim{
+      display:inline-block;font-size:10.5px;font-weight:900;color:#fff;
+      background:var(--forest);padding:2px 9px;border-radius:4px;
+      letter-spacing:.02em;margin-bottom:5px;
+    }
+    .merit-claim.dark{background:#1a1a1a;}
+    .merit-h{font-size:18px;font-weight:900;color:var(--ink);line-height:1.35;}
+    .merit-h em{font-style:normal;color:var(--line);}
+    .merit-sub{margin-top:5px;font-size:12.5px;font-weight:700;color:#555;line-height:1.6;}
+    .merit-area-note{
+      text-align:center;margin-bottom:18px;font-size:12.5px;font-weight:700;color:#555;
+    }
+    .merit-area-note strong{color:var(--ink);background:linear-gradient(transparent 62%,var(--sun) 62%);font-weight:900;padding:0 2px;}
+
+    /* ===== ⑥ HOW TO / STEPS ===== */
+    .steps{display:flex;flex-direction:column;}
+    .step{display:flex;gap:16px;position:relative;}
+    .step:not(:last-child)::after{
+      content:'';position:absolute;left:21px;top:44px;bottom:-8px;
+      width:2px;background:var(--border);
+    }
+    .step-num{
+      width:44px;height:44px;border-radius:50%;display:flex;align-items:center;
+      justify-content:center;font-size:18px;font-weight:900;color:#fff;
+      flex-shrink:0;background:var(--forest);
+    }
+    .step-body{padding-bottom:30px;}
+    .step:last-child .step-body{padding-bottom:0;}
+    .step-title{font-size:16px;font-weight:800;color:var(--ink);line-height:1.4;margin-bottom:4px;}
+    .step-desc{font-size:13px;color:#666;line-height:1.7;}
+
+    /* ===== ⑦ VOICE：数字6連打（KN-09②）＋事例カード（KN-10） ===== */
+    .num-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px;}
+    .num-card{
+      background:var(--bg-alt);border:1.5px solid var(--border);border-radius:12px;
+      padding:9px 4px 7px;text-align:center;line-height:1.35;
+    }
+    .num-v{display:block;font-size:clamp(13px,3.8vw,15px);font-weight:900;color:#e82020;letter-spacing:-.02em;}
+    .num-l{display:block;font-size:9.5px;font-weight:700;color:#888;}
+    .voice-cards{display:flex;flex-direction:column;gap:16px;margin-top:24px;}
+    .voice-card{
+      background:#fff;border:2px solid var(--sun);border-radius:16px;
+      padding:16px 16px 14px;box-shadow:0 4px 14px rgba(0,0,0,.06);
+    }
+    .vc-head{display:flex;align-items:center;gap:10px;}
+    .vc-face{font-size:30px;line-height:1;flex-shrink:0;}
+    .vc-meta{flex:1;min-width:0;}
+    .vc-who{display:block;font-size:12.5px;font-weight:900;color:var(--ink);line-height:1.4;}
+    .vc-stars{display:block;color:#FFB400;letter-spacing:.12em;font-size:13px;line-height:1.3;}
+    .vc-flow{margin-top:10px;display:flex;flex-direction:column;gap:5px;}
+    .vc-row{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;font-weight:700;color:#444;line-height:1.55;}
+    .vc-tag{
+      flex-shrink:0;width:64px;text-align:center;font-size:10px;font-weight:900;
+      border-radius:6px;padding:2px 0;margin-top:2px;
+      background:var(--bg-alt);border:1px solid var(--border);color:#8a7a00;
+    }
+    .vc-tag.res{background:var(--line);border-color:var(--line);color:#fff;}
+    .vc-row strong{color:#e82020;}
+    .vc-pill{
+      display:inline-block;margin-top:10px;background:var(--line);color:#fff;
+      font-size:11px;font-weight:900;padding:3px 14px;border-radius:var(--r-pill);
+      letter-spacing:.03em;
+    }
+
+    /* ===== ⑧ 温度別2択CTA（KN-15） ===== */
+    .choice-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+    .choice-card{
+      display:block;background:#fff;border:2px solid var(--line);border-radius:16px;
+      padding:14px 10px 12px;text-align:center;text-decoration:none;color:var(--ink);
+      box-shadow:0 3px 0 var(--line-deep);
+      transition:transform .1s,box-shadow .1s;
+    }
+    .choice-card:active{transform:translateY(3px);box-shadow:0 0 0 var(--line-deep);}
+    .cc-tag{
+      display:inline-block;font-size:10.5px;font-weight:900;color:#fff;
+      background:var(--forest);border-radius:var(--r-pill);padding:2px 12px;letter-spacing:.03em;
+    }
+    .cc-main{display:block;font-size:clamp(12.5px,3.6vw,14px);font-weight:900;margin-top:8px;line-height:1.45;}
+    .cc-main em{font-style:normal;color:var(--line);}
+    .cc-sub{display:block;font-size:10px;color:#888;font-weight:700;margin-top:4px;line-height:1.4;}
+
+    /* ===== ⑨ Final CTA ===== */
+    .final{background:linear-gradient(160deg,#4DB86B 0%,#2F8F4E 100%);padding:48px 24px 52px;text-align:center;}
+    .final-en{
+      display:block;font-size:clamp(30px,7.6vw,40px);font-weight:900;
+      letter-spacing:.08em;color:#fff;line-height:1.05;font-stretch:condensed;
+    }
+    .final-hl{font-size:clamp(20px,5.6vw,24px);font-weight:900;color:#fff;line-height:1.4;margin-top:8px;}
+    .final-hl em{font-style:normal;color:var(--sun);}
+    .final-sub{font-size:13.5px;color:rgba(255,255,255,.85);margin:10px 0 22px;line-height:1.75;}
+    .final-qr-card{
+      background:#fff;border-radius:16px;padding:14px 14px 10px;
+      width:fit-content;margin:0 auto 20px;
+      box-shadow:0 8px 26px rgba(0,0,0,.2);
+    }
+    .final-qr-img{display:block;width:min(42vw,170px);aspect-ratio:1/1;border-radius:8px;border:2px solid var(--line);}
+    .final-qr-label{font-size:10.5px;font-weight:900;color:#333;margin-top:6px;line-height:1.4;}
+    .final-note{margin-top:14px;font-size:12px;color:rgba(255,255,255,.65);}
+
+    /* ===== ⑩ Footer ===== */
+    .footer{background:#091510;color:rgba(255,255,255,.52);padding:20px 20px 24px;text-align:center;font-size:12px;line-height:1.9;}
+
+    /* ===== ⑪ 固定ボトムバー ===== */
+    .bottom-bar{
+      position:fixed;bottom:0;left:0;right:0;
+      background:rgba(9,21,16,.95);
+      backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+      padding:9px 14px;z-index:99;box-shadow:0 -2px 16px rgba(0,0,0,.24);
+    }
+    .bottom-bar-inner{max-width:430px;margin:0 auto;}
+    .bottom-bar a{
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      background:var(--line);color:#fff;text-decoration:none;font-size:16px;font-weight:900;
+      padding:13px;border-radius:var(--r-pill);width:100%;
+      box-shadow:0 4px 0 var(--line-deep);
+      transition:transform .1s,box-shadow .1s;
+      animation:ctaAttention 4.5s ease-in-out infinite;
+    }
+    .bottom-bar a:active{transform:translateY(3px);box-shadow:0 1px 0 var(--line-deep);}
+    .ico{width:20px;height:20px;flex-shrink:0;}
+    .ico-l{width:24px;height:24px;flex-shrink:0;}
+
+    @media(prefers-reduced-motion:reduce){
+      .qr-mascot-svg,.qr-now-badge,.badge-arrow{animation:none;}
+      .hr-1,.hr-2,.hr-3,.hr-4,.hr-5,.hr-6{animation:none;opacity:1;transform:none;}
+      #hero .qr-hero-card.hr-4{animation:none;box-shadow:0 6px 28px rgba(6,199,85,.28);}
+      .bottom-bar a{animation:none;}
+    }
+  </style>
 </head>
 <body>
 
-<!-- ① TikTokバナー -->
-<div class="tiktok-band">＼ <span class="yy">TikTok</span>を見てくれた方の<span class="yy">限定ページ</span> ／</div>
-
-<!-- ② ヒーロー -->
-<section class="hero" aria-label="初期費用が最大0円">
-  <p class="rescue-copy r on">初期費用が高いのは、あなたのせいじゃない。</p>
-  <h1 class="h1-wrap">
-    <span class="h1-l1"><span class="mk">初期費用</span>が</span>
-    <span class="h1-l2">最大<em class="zero-giant">0</em><span class="h1-yen">円</span>に！！</span>
-  </h1>
-  <div class="h-evidence">
-    <p class="h-ev-line"><span class="h-ev-tag">8月実績</span><span class="h-ev-weak">平均</span> <em class="h-ev-num">118,220円</em><span class="h-ev-weak"> 節約</span></p>
-    <p class="micro-note">※当社利用者平均（2026年8月実績）。物件・条件により異なります</p>
-  </div>
-
-  <div class="qr-hero-card" aria-label="QRコード友達追加エリア">
-    <div class="qr-now-badge">👇 長押ししてLINEを開く 👇</div>
-    <a href="https://lin.ee/VeEczzF" target="_blank" rel="noopener noreferrer"
-       aria-label="QRコードを長押しして「リンクを開く」でLINE友だち追加">
-      <img class="qr-hero-img"
-           src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2FVeEczzF&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
-           alt="ギガ賃貸LINE友達追加QRコード"
-           loading="eager">
-    </a>
-    <div class="qr-mascot-wrap" aria-hidden="true">
-      <img class="qr-mascot-svg" src="/giga-chintai-char.png" alt="" aria-hidden="true">
+<section id="hero" aria-label="ギガ賃貸 ヒーローセクション">
+  <!-- ① TikTok Banner -->
+  <div class="tt-banner" role="banner">
+    <div class="tt-left">
+      <div class="tt-icon" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .55.04.79.1V9.01a6.27 6.27 0 00-.79-.05A6.34 6.34 0 003.15 15.3a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V9.01a8.16 8.16 0 004.77 1.52V7.08a4.85 4.85 0 01-1-.39z" fill="white"/>
+        </svg>
+      </div>
+      <span class="tt-text">賃貸の初期費用で<em class="tt-em">損したくない</em>あなたへ</span>
     </div>
-    <p class="qr-long-press">長押し →「LINEで開く」を選択</p>
+    <div class="tt-badge">24時間無料</div>
   </div>
 
-  <a href="https://lin.ee/VeEczzF" class="cta-pill" target="_blank" rel="noopener noreferrer">
-    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/></svg>
-    LINEでちょっと聞いてみる
-  </a>
-  <p class="cta-micro">追加は無料｜しつこい営業なし｜見るだけ・聞くだけOK</p>
+  <!-- ② Hero Body（KN-01: FV1画面完結） -->
+  <div class="h-body">
+    <!-- 救済コピー（KN-03） -->
+    <p class="rescue-copy hr-1">初期費用が高いのは、あなたのせいじゃない。</p>
 
-  <div class="proof-bar" role="list" aria-label="ギガ賃貸の実績">
-    <div class="proof-chip" role="listitem">大阪エリア専門<em>地元密着でご案内</em></div>
-    <div class="proof-chip" role="listitem">TikTokで話題<em>相談ぞくぞく増加中</em></div>
-    <div class="proof-chip" role="listitem">相談・内見 無料<em>24時間受付</em></div>
+    <!-- H1：特大0（KN-02） -->
+    <h1 class="h-hero-main hr-2">
+      <span class="h1-l1">初期費用が</span>
+      <span class="h1-l2">最大<em class="zero-giant">0</em><span class="h1-yen">円</span>に！！</span>
+    </h1>
+
+    <!-- 実績ペア表記（KN-04）＋極小注記（KN-13） -->
+    <div class="h-cta-block hr-3">
+      <p class="h-evidence-line"><span class="h-ev-tag">8月実績</span><span class="h-ev-weak">平均</span> <em class="h-ev-num">118,220円</em><span class="h-ev-weak"> 節約</span></p>
+      <p class="h-ev-pair">家賃7万円の物件なら、初期費用36万円 → <strong>約18万円相当</strong></p>
+      <p class="micro-note">※当社利用者平均（2026年8月実績）。物件・条件により異なります</p>
+    </div>
+
+    <!-- QRカード（長押し指示・マスコット） -->
+    <div class="qr-hero-card hr-4" aria-label="QRコード友達追加エリア">
+      <div class="qr-now-badge"><span class="badge-arrow">👇</span> 長押ししてLINEを開く <span class="badge-arrow">👇</span></div>
+      <a href="https://lin.ee/VeEczzF" target="_blank" rel="noopener noreferrer"
+         aria-label="QRコードを長押しして「リンクを開く」でLINE友だち追加">
+        <img class="qr-hero-img"
+             src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Flin.ee%2FVeEczzF&color=06C755&bgcolor=FFFFFF&format=png&qzone=1"
+             alt="ギガ賃貸LINE友達追加QRコード"
+             loading="eager">
+      </a>
+      <div class="qr-mascot-wrap" aria-hidden="true">
+        <img class="qr-mascot-svg" src="/giga-chintai-char.png" alt="" aria-hidden="true">
+      </div>
+      <p class="qr-long-press">長押し →「LINEで開く」を選択</p>
+    </div>
+
+    <!-- ワンタップLINEボタン（KN-06・KN-14）＋ハードル除去マイクロコピー -->
+    <a href="https://lin.ee/VeEczzF" class="cta-pill qr-line-btn hr-5" target="_blank" rel="noopener noreferrer">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+      </svg>
+      LINEでちょっと聞いてみる
+    </a>
+    <p class="qr-micro-note hr-5">追加は無料｜しつこい営業なし｜見るだけ・聞くだけOK</p>
+
+    <!-- 瞬間証明バー（KN-09①） -->
+    <div class="proof-bar hr-6" role="list" aria-label="ギガ賃貸の実績">
+      <div class="proof-chip" role="listitem">大阪エリア専門<em>地元密着でご案内</em></div>
+      <div class="proof-chip" role="listitem"><span class="pc-star">⭐</span>TikTokで話題<em>相談ぞくぞく増加中</em></div>
+      <div class="proof-chip" role="listitem">相談・内見 無料<em>24時間受付</em></div>
+    </div>
   </div>
 </section>
 
-<!-- ③ お悩みチェック -->
-<section class="sec white" id="check" aria-label="こんなお悩みありませんか">
+<!-- ③ CHECK：疑問形→チェック→再定義（KN-07） -->
+<section class="sec white" id="check" aria-label="こんなお悩みチェック">
   <div class="sec-head r">
-    <h2 class="sec-title">こんな<span class="mk">お悩み</span>、<br>ありませんか？</h2>
-    <span class="sec-sub">1つでも当てはまったらチャンス</span>
+    <span class="sec-eye-en">CHECK</span>
+    <span class="sec-sub-ja">こんなこと、思ってない？</span>
   </div>
-  <ul class="check-list">
+  <ul class="check-list" style="list-style:none;">
     <li class="check-item r d1"><span class="check-box">✓</span>初期費用が高すぎて引っ越せない</li>
     <li class="check-item r d1"><span class="check-box">✓</span>審査に通るか不安…</li>
     <li class="check-item r d2"><span class="check-box">✓</span>不動産屋の営業電話がいや</li>
@@ -539,147 +528,140 @@ em{font-style:normal;}
   </div>
 </section>
 
-<!-- ④ 費用比較（スモラ形式） -->
-<section class="sec alt" id="compare" aria-label="費用比較">
+<!-- ④ ZERO COST：0円の足し算分解（KN-08） -->
+<section class="sec alt" id="zero-sec" aria-label="初期費用ゼロの内訳">
   <div class="sec-head r">
-    <h2 class="sec-title">ギガ賃貸なら<br><span class="mk">全部解決</span>できます！</h2>
-    <span class="sec-sub">初期費用をくらべてみると…</span>
+    <span class="sec-eye-en green">ZERO COST</span>
+    <span class="sec-sub-ja">初期費用、全部ゼロにできる</span>
   </div>
-  <p class="solve-line r">審査が不安な方も、貯金が少ない方も大丈夫。<br><strong>同じお部屋でも「探し方」で金額が変わります</strong></p>
-
-  <div class="compare-card-outer r d1">
-    <p class="compare-premise">※ 家賃 <span class="num">75,000</span>円 のお部屋の場合</p>
-    <div class="compare-grid">
-      <!-- 従来 -->
-      <div class="cmp-col old">
-        <div class="cmp-head old">今までの<br>不動産屋<small>よくある初期費用</small></div>
-        <div class="cmp-body">
-          <div class="cmp-row"><span class="cmp-name">仲介手数料</span><span class="cmp-price num">75,000円</span></div>
-          <div class="cmp-row"><span class="cmp-name">敷金（1ヶ月）</span><span class="cmp-price num">75,000円</span></div>
-          <div class="cmp-row"><span class="cmp-name">礼金（1ヶ月）</span><span class="cmp-price num">75,000円</span></div>
-          <div class="cmp-row"><span class="cmp-name">鍵交換費用</span><span class="cmp-price num">16,500円</span></div>
-          <div class="cmp-row"><span class="cmp-name">ハウスクリーニング</span><span class="cmp-price num">22,000円</span></div>
-        </div>
-        <div class="cmp-total old">
-          <span class="tt-label">合計</span>
-          <span class="tt-num">263,500<span class="tt-unit">円</span></span>
-        </div>
-      </div>
-      <!-- ギガ賃貸 -->
-      <div class="cmp-col new">
-        <div class="cmp-head new">ギガ賃貸<br>の場合<small>同じお部屋でも</small></div>
-        <div class="cmp-body">
-          <div class="cmp-row"><span class="cmp-name">仲介手数料</span><span class="cmp-price zero num">0円〜</span></div>
-          <div class="cmp-row"><span class="cmp-name">敷金</span><span class="cmp-price zero num">0円<small>0円物件あり</small></span></div>
-          <div class="cmp-row"><span class="cmp-name">礼金</span><span class="cmp-price zero num">0円<small>0円物件あり</small></span></div>
-          <div class="cmp-row"><span class="cmp-name">鍵交換費用</span><span class="cmp-price zero num">0円〜</span></div>
-          <div class="cmp-row"><span class="cmp-name">ハウスクリーニング</span><span class="cmp-price zero num">0円〜</span></div>
-        </div>
-        <div class="cmp-total new">
-          <span class="tt-label">合計</span>
-          <span class="tt-num"><span class="tt-pre">最大</span>0<span class="tt-unit">円</span></span>
-        </div>
-      </div>
-    </div>
-
-    <div class="save-bubble r d2">
-      <p class="sb-label">節約できる金額は…</p>
-      <p class="sb-amount num"><span class="pre">最大</span>263,500<span class="unit">円</span></p>
-      <p class="sb-tail">も安くなる可能性！</p>
-      <p class="micro-note">※対象物件の一例です。物件・条件により0円にならない項目もあります</p>
+  <div class="zero-stack">
+    <div class="zero-item r d1"><span class="zero-badge">敷金</span><span class="zero-price">¥0</span></div>
+    <div class="zero-plus r d1" aria-hidden="true">＋</div>
+    <div class="zero-item r d2"><span class="zero-badge">礼金</span><span class="zero-price">¥0</span></div>
+    <div class="zero-plus r d2" aria-hidden="true">＋</div>
+    <div class="zero-item r d3"><span class="zero-badge">仲介手数料</span><span class="zero-price">¥0</span></div>
+    <div class="zero-plus r d3" aria-hidden="true">＋</div>
+    <div class="zero-item r d4"><span class="zero-badge">鍵交換代</span><span class="zero-price">¥0</span></div>
+    <div class="zero-total r d5">
+      <span class="zt-label">合計すると…</span>
+      <span class="zt-num">最大<small>&nbsp;</small>35<small>万円</small></span>
+      <span class="zt-sub">おトクになる可能性も！</span>
     </div>
   </div>
-
-  <div class="sec-cta-wrap r d3">
-    <a href="https://lin.ee/VeEczzF" class="cta-pill" target="_blank" rel="noopener noreferrer">
-      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/></svg>
-      まずLINEで聞いてみる
-    </a>
-    <p class="cta-micro">「私の場合いくら安くなる？」だけでもOK。審査のご相談も歓迎です</p>
-  </div>
+  <p class="micro-note r d5">※対象物件・家賃10万円クラスの一例。物件により0円にならない項目もあります</p>
 </section>
 
-<!-- ⑤ 選ばれる3つの理由 -->
-<section class="sec white" id="merit" aria-label="ギガ賃貸が選ばれる3つの理由">
+<!-- ⑤ MERIT：3つの強み（KN-05・KN-12） -->
+<section class="sec white" id="merit-zone" aria-label="ギガ賃貸の3つの強み">
   <div class="sec-head r">
-    <h2 class="sec-title">選ばれる<span class="big num">3</span>つの理由</h2>
-    <span class="sec-sub">大阪エリア専門の賃貸サービス</span>
+    <span class="sec-eye-en">MERIT</span>
+    <span class="sec-sub-ja">ギガ賃貸が選ばれる3つの理由</span>
   </div>
   <p class="merit-area-note r">ギガ賃貸は<strong>大阪エリア専門</strong>の賃貸仲介サービスです</p>
   <div class="merit-cards">
     <article class="merit-card r d1">
-      <span class="merit-num"><span class="sono">その</span>1</span>
-      <span class="merit-claim">気になる部屋を送るだけ</span>
-      <h3 class="merit-h">初期費用を<em>最大限カット</em></h3>
-      <p class="merit-sub">SUUMO等で見つけた気になる部屋、URLを送るだけでカンタン割引。敷金・礼金0円物件も多数あります。</p>
+      <span class="merit-num">メリット 01</span>
+      <div class="merit-icon" aria-hidden="true">
+        <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+          <circle cx="17" cy="17" r="15" fill="#e8fdf1"/>
+          <path d="M17 8v2M17 24v2M8 17h2M24 17h2" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="17" cy="17" r="6" fill="none" stroke="#06C755" stroke-width="2"/>
+          <text x="17" y="19.5" text-anchor="middle" font-size="8" font-weight="900" fill="#06C755" font-family="sans-serif">¥</text>
+        </svg>
+      </div>
+      <div class="merit-body">
+        <span class="merit-claim">気になる部屋を送るだけ</span>
+        <h3 class="merit-h">初期費用<em>最大限割引</em></h3>
+        <p class="merit-sub">SUUMO等で見つけた気になる部屋、URLを送るだけでカンタン割引！敷金・礼金0円物件も多数あります。</p>
+      </div>
     </article>
     <article class="merit-card r d2">
-      <span class="merit-num"><span class="sono">その</span>2</span>
-      <span class="merit-claim">他社と比べてみて</span>
-      <h3 class="merit-h">仲介手数料<em>0円〜</em></h3>
-      <p class="merit-sub">他社より安い手数料でご案内できる物件も。見積もりだけの比較相談も大歓迎です。</p>
+      <span class="merit-num">メリット 02</span>
+      <div class="merit-icon" aria-hidden="true">
+        <svg width="44" height="34" viewBox="0 0 44 34" fill="none">
+          <text x="22" y="25" text-anchor="middle" font-size="20" font-weight="900" fill="#06C755" font-family="'Hiragino Maru Gothic ProN',sans-serif">0円</text>
+        </svg>
+      </div>
+      <div class="merit-body">
+        <span class="merit-claim dark">他社と比べてみて</span>
+        <h3 class="merit-h">仲介手数料<em>0円〜</em></h3>
+        <p class="merit-sub">他社より安い手数料でご案内できる物件も。見積もりだけの比較相談も大歓迎です。</p>
+      </div>
     </article>
     <article class="merit-card r d3">
-      <span class="merit-num"><span class="sono">その</span>3</span>
-      <span class="merit-claim">来店不要・24時間OK</span>
-      <h3 class="merit-h">LINEで<em>ぜんぶ完結</em></h3>
-      <p class="merit-sub">相談から物件紹介・申込みまで全部LINEでOK。深夜でも思い立った瞬間に送れます。</p>
+      <span class="merit-num">メリット 03</span>
+      <div class="merit-icon" aria-hidden="true">
+        <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+          <rect x="3" y="4" width="28" height="22" rx="6" fill="#e8fdf1" stroke="#06C755" stroke-width="1.8"/>
+          <path d="M8 13h18M8 18h11" stroke="#06C755" stroke-width="2" stroke-linecap="round"/>
+          <path d="M7 26l3-4" stroke="#06C755" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="merit-body">
+        <span class="merit-claim">来店不要・24時間OK</span>
+        <h3 class="merit-h">LINEで<em>ぜんぶ完結</em></h3>
+        <p class="merit-sub">相談から物件紹介・申込みまで全部LINEでOK。深夜でも思い立った瞬間に送れます。</p>
+      </div>
     </article>
   </div>
+  <!-- セクション末尾CTA（KN-12・KN-06） -->
   <div class="sec-cta-wrap r">
     <a href="https://lin.ee/VeEczzF" class="cta-pill" target="_blank" rel="noopener noreferrer">
-      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/></svg>
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+      </svg>
       まずLINEで相談してみる
     </a>
-    <p class="cta-micro">相談だけでもOK。むりに物件をすすめることはありません</p>
+    <p class="micro-note">相談だけでもOK。むりに物件をすすめることはありません</p>
   </div>
 </section>
 
-<!-- ⑥ たったの3ステップ -->
+<!-- ⑥ HOW TO：3ステップ（KN-05・KN-12） -->
 <section class="sec alt" id="steps" aria-label="ご利用の流れ">
   <div class="sec-head r">
-    <h2 class="sec-title">たったの<span class="big num">3</span>ステップ</h2>
-    <span class="sec-sub">LINEを送るだけで完結</span>
+    <span class="sec-eye-en green">HOW TO</span>
+    <span class="sec-sub-ja">使い方はカンタン3ステップ</span>
   </div>
   <div class="steps">
     <div class="step r d1">
       <div class="step-num" aria-hidden="true">1</div>
       <div class="step-body">
-        <h3 class="step-title">LINEを友だち追加<span class="mini">3秒</span></h3>
+        <h3 class="step-title">LINEを友だち追加する</h3>
         <p class="step-desc">下のボタンからギガ賃貸公式LINEを友だち追加。登録無料・3秒でできます。</p>
       </div>
     </div>
-    <div class="step-arrow" aria-hidden="true">▼</div>
     <div class="step r d2">
       <div class="step-num" aria-hidden="true">2</div>
       <div class="step-body">
-        <h3 class="step-title">希望条件を送るだけ</h3>
+        <h3 class="step-title">条件をLINEで送るだけ♪</h3>
         <p class="step-desc">エリア・家賃・間取りなど、希望をLINEで送ってください。プロのスタッフが即対応します！</p>
       </div>
     </div>
-    <div class="step-arrow" aria-hidden="true">▼</div>
     <div class="step r d3">
       <div class="step-num" aria-hidden="true">3</div>
       <div class="step-body">
-        <h3 class="step-title">お気に入りの部屋が見つかる</h3>
+        <h3 class="step-title">お気に入りのお部屋を見つける</h3>
         <p class="step-desc">条件ぴったりの物件をご提案。気に入ったらそのままLINEで申込みもできます。</p>
       </div>
     </div>
   </div>
+  <!-- セクション末尾CTA（KN-12・KN-06） -->
   <div class="sec-cta-wrap r">
     <a href="https://lin.ee/VeEczzF" class="cta-pill" target="_blank" rel="noopener noreferrer">
-      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/></svg>
-      3秒で追加・LINEで聞くだけ
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+      </svg>
+      ちょっと聞いてみる
     </a>
-    <p class="cta-micro">まずは追加だけでも大丈夫です</p>
+    <p class="micro-note">ステップ1は3秒で完了。まずは追加だけでも大丈夫です</p>
   </div>
 </section>
 
-<!-- ⑦ 実際に節約できた金額 -->
-<section class="sec white" id="voice" aria-label="実際に節約できた金額">
+<!-- ⑦ VOICE：数字6連打（KN-09②）＋事例カード3枚（KN-09③・KN-10・KN-12） -->
+<section class="sec white" id="voice" aria-label="お客様の声">
   <div class="sec-head r">
-    <h2 class="sec-title">実際に<span class="mk">節約できた金額</span></h2>
-    <span class="sec-sub">リアルな数字、見せます</span>
+    <span class="sec-eye-en">VOICE</span>
+    <span class="sec-sub-ja">利用者のリアルな節約実例</span>
   </div>
   <div class="num-grid r" role="list" aria-label="節約金額の実例">
     <div class="num-card" role="listitem"><span class="num-v">¥118,000</span><span class="num-l">北区・1K</span></div>
@@ -689,7 +671,7 @@ em{font-style:normal;}
     <div class="num-card" role="listitem"><span class="num-v">¥110,400</span><span class="num-l">城東区・1DK</span></div>
     <div class="num-card" role="listitem"><span class="num-v">¥88,900</span><span class="num-l">西区・1K</span></div>
   </div>
-  <p class="micro-note r" style="text-align:center;">※節約額の一例（2026年8月時点）。物件・条件により異なります</p>
+  <p class="micro-note r">※節約額の一例（2026年8月時点）。物件・条件により異なります</p>
 
   <div class="voice-cards">
     <article class="voice-card r d1">
@@ -700,9 +682,11 @@ em{font-style:normal;}
           <span class="vc-stars" aria-label="星5つ">★★★★★</span>
         </div>
       </div>
-      <div class="vc-row"><span class="vc-tag">悩み</span>貯金15万円で引っ越せる気がしなかった</div>
-      <div class="vc-row"><span class="vc-tag">LINE</span>ダメ元で深夜0時に相談。すぐ返事がきた</div>
-      <div class="vc-row"><span class="vc-tag res">結果</span>敷礼0円物件で<strong>約112,000円</strong>浮いた！</div>
+      <div class="vc-flow">
+        <div class="vc-row"><span class="vc-tag">悩み</span>貯金15万円で引っ越せる気がしなかった</div>
+        <div class="vc-row"><span class="vc-tag">LINE</span>ダメ元で深夜0時に相談。すぐ返事がきた</div>
+        <div class="vc-row"><span class="vc-tag res">結果</span>敷礼0円物件で<strong>約112,000円</strong>浮いた！</div>
+      </div>
       <span class="vc-pill">敷金・礼金0円達成</span>
     </article>
     <article class="voice-card r d2">
@@ -713,9 +697,11 @@ em{font-style:normal;}
           <span class="vc-stars" aria-label="星5つ">★★★★★</span>
         </div>
       </div>
-      <div class="vc-row"><span class="vc-tag">悩み</span>不動産屋の営業電話がとにかく苦手</div>
-      <div class="vc-row"><span class="vc-tag">LINE</span>電話ゼロ・文字のやりとりだけで進んだ</div>
-      <div class="vc-row"><span class="vc-tag res">結果</span>来店なしで契約、手数料<strong>0円</strong>に</div>
+      <div class="vc-flow">
+        <div class="vc-row"><span class="vc-tag">悩み</span>不動産屋の営業電話がとにかく苦手</div>
+        <div class="vc-row"><span class="vc-tag">LINE</span>電話ゼロ・文字のやりとりだけで進んだ</div>
+        <div class="vc-row"><span class="vc-tag res">結果</span>来店なしで契約、手数料<strong>0円</strong>に</div>
+      </div>
       <span class="vc-pill">仲介手数料0円達成</span>
     </article>
     <article class="voice-card r d3">
@@ -726,28 +712,53 @@ em{font-style:normal;}
           <span class="vc-stars" aria-label="星5つ">★★★★★</span>
         </div>
       </div>
-      <div class="vc-row"><span class="vc-tag">悩み</span>夜勤続きでお店に行く時間がない</div>
-      <div class="vc-row"><span class="vc-tag">LINE</span>休憩中に希望条件を送っただけ</div>
-      <div class="vc-row"><span class="vc-tag res">結果</span>内見1回で決定、<strong>約90,000円</strong>おトク</div>
+      <div class="vc-flow">
+        <div class="vc-row"><span class="vc-tag">悩み</span>夜勤続きでお店に行く時間がない</div>
+        <div class="vc-row"><span class="vc-tag">LINE</span>休憩中に希望条件を送っただけ</div>
+        <div class="vc-row"><span class="vc-tag res">結果</span>内見1回で決定、<strong>約90,000円</strong>おトク</div>
+      </div>
       <span class="vc-pill">来店0回で契約</span>
     </article>
   </div>
-  <p class="micro-note r" style="text-align:center;">※個人の感想であり、すべての方に同じ結果を保証するものではありません</p>
+  <p class="micro-note r">※個人の感想であり、すべての方に同じ結果を保証するものではありません</p>
 
+  <!-- セクション末尾CTA（KN-12・KN-06） -->
   <div class="sec-cta-wrap r">
     <a href="https://lin.ee/VeEczzF" class="cta-pill" target="_blank" rel="noopener noreferrer">
-      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/></svg>
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+      </svg>
       まずLINEで相談してみる
     </a>
-    <p class="cta-micro">「同じくらい安くなる？」と聞くだけでもOKです</p>
+    <p class="micro-note">「同じくらい安くなる？」と聞くだけでもOKです</p>
   </div>
 </section>
 
-<!-- ⑧ 最終CTA -->
-<section class="final" aria-label="今すぐ始める">
-  <h2 class="final-hl r">さあ、<em>ギガ賃貸</em>で<br>理想のお部屋を見つけよう</h2>
-  <p class="final-sub r">登録無料・来店不要・24時間受付<br>聞くだけ・見るだけでも大歓迎です</p>
-  <div class="final-qr-card r d1">
+<!-- ⑧ 温度別2択CTA（KN-15） -->
+<section class="sec alt" id="choice" aria-label="あなたに合った始め方">
+  <div class="sec-head r" style="margin-bottom:16px;">
+    <span class="sec-sub-ja" style="margin-top:0;">あなたはどっち？</span>
+  </div>
+  <div class="choice-row r">
+    <a class="choice-card" href="https://lin.ee/VeEczzF" target="_blank" rel="noopener noreferrer">
+      <span class="cc-tag">今すぐ派</span>
+      <span class="cc-main">今すぐ相談したい方<br>→ 下のQRを<em>長押し</em></span>
+      <span class="cc-sub">相談無料・24時間受付</span>
+    </a>
+    <a class="choice-card" href="https://lin.ee/VeEczzF" target="_blank" rel="noopener noreferrer">
+      <span class="cc-tag">じっくり派</span>
+      <span class="cc-main">まずは見てみたい方<br>→ <em>追加だけ</em>でもOK</span>
+      <span class="cc-sub">メッセージは後からで大丈夫</span>
+    </a>
+  </div>
+</section>
+
+<!-- ⑨ FINAL CTA -->
+<section class="final r" aria-label="最終ご案内">
+  <span class="final-en">GIGA CHINTAI</span>
+  <h2 class="final-hl">さあ、<em>ギガ賃貸</em>で<br>理想のお部屋を見つけよう</h2>
+  <p class="final-sub">登録無料・来店不要・24時間受付<br>聞くだけ・見るだけでも大歓迎です</p>
+  <div class="final-qr-card">
     <a href="https://lin.ee/VeEczzF" target="_blank" rel="noopener noreferrer"
        aria-label="QRコードを長押ししてLINE友だち追加">
       <img class="final-qr-img"
@@ -757,25 +768,30 @@ em{font-style:normal;}
     </a>
     <p class="final-qr-label">👆 長押しして「LINEで開く」</p>
   </div>
-  <a href="https://lin.ee/VeEczzF" class="cta-pill inv r d2" target="_blank" rel="noopener noreferrer">
-    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/></svg>
+  <a href="https://lin.ee/VeEczzF" class="cta-pill inv" target="_blank" rel="noopener noreferrer">
+    <svg class="ico-l" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+    </svg>
     LINEでちょっと聞いてみる
   </a>
-  <p class="final-note r d2">登録無料 · 24時間相談受付中 · 来店不要</p>
+  <p class="final-note">登録無料 · 24時間相談受付中 · 来店不要</p>
 </section>
 
-<!-- ⑨ フッター -->
+<!-- ⑩ FOOTER -->
 <footer class="footer">
   <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iNTIiIHZpZXdCb3g9IjAgMCAzMjAgNTIiPjx0ZXh0IHg9IjE2MCIgeT0iMTciIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJIaXJhZ2lubyBTYW5zLEhpcmFnaW5vIEtha3UgR290aGljIFByb04sc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjUyKSI+5aSn6Ziq5biC5Lit5aSu5Yy655Om55S6My00LTEwIOaXpeWuneW+oeWgguODk+ODqzXpmo48L3RleHQ+PHRleHQgeD0iMTYwIiB5PSIzOSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkhpcmFnaW5vIFNhbnMsSGlyYWdpbm8gS2FrdSBHb3RoaWMgUHJvTixzYW5zLXNlcmlmIiBmb250LXNpemU9IjE0IiBmb250LXdlaWdodD0iNjAwIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuNzIpIj7ok67nlKPmpa3moKrlvI/kvJrnpL48L3RleHQ+PC9zdmc+" alt="" aria-hidden="true" style="display:block;margin:0 auto 2px;max-width:100%;height:auto;">
+
 </footer>
 
-<!-- ⑩ 固定ボトムバー -->
+<!-- ⑪ FIXED BOTTOM BAR（KN-06） -->
 <div class="bottom-bar">
   <div class="bottom-bar-inner">
-    <a href="https://lin.ee/VeEczzF" target="_blank" rel="noopener noreferrer">
-      <svg class="ico" viewBox="0 0 20 20" fill="white" aria-hidden="true"><path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/></svg>
-      LINEでちょっと聞いてみる
-    </a>
+  <a href="https://lin.ee/VeEczzF" target="_blank" rel="noopener noreferrer">
+    <svg class="ico" viewBox="0 0 20 20" fill="white" aria-hidden="true">
+      <path d="M10 1C5.03 1 1 4.693 1 9.26c0 3.754 3.138 6.891 7.38 7.483.286.062.676.19.775.435.09.222.058.572.028.798l-.125.748c-.038.222-.175.867.76.473.935-.394 5.05-2.974 6.892-5.092C17.76 12.333 19 10.863 19 9.259 19 4.693 14.97 1 10 1z"/>
+    </svg>
+    LINEでちょっと聞いてみる
+  </a>
   </div>
 </div>
 
