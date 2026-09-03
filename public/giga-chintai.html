@@ -139,28 +139,30 @@
 
     /* H1 + 特大0（KN-02） */
     #hero h1.h-hero-main{
-      text-align:center;font-weight:900;line-height:1.1;
+      text-align:center;font-weight:900;line-height:1.15;
       letter-spacing:-.01em;margin-top:2px;padding:0 12px;
     }
     .h1-l1{
-      display:block;font-size:clamp(20px,5.8vw,26px);color:var(--ink);
-      -webkit-text-stroke:.2px var(--ink);
+      display:block;font-size:clamp(19px,5.2vw,24px);color:var(--ink);
+      -webkit-text-stroke:.2px var(--ink);margin-bottom:2px;
     }
     .h1-l2{
-      display:flex;align-items:center;justify-content:center;gap:2px;
+      display:flex;align-items:baseline;justify-content:center;gap:1px;
       font-size:clamp(26px,7.6vw,34px);color:var(--ink);
       -webkit-text-stroke:.2px var(--ink);white-space:nowrap;
     }
     .zero-giant{
       display:inline-block;font-style:normal;
-      font-size:min(22vw,96px);font-weight:900;
-      letter-spacing:-.04em;font-stretch:condensed;line-height:.9;
+      font-size:clamp(52px,15.5vw,66px);font-weight:900;
+      letter-spacing:-.04em;line-height:1;
       color:var(--line);-webkit-text-stroke:1px var(--line);
-      padding:0 2px;transform:translateY(2px);
+      padding:0 3px;transform:translateY(3px);
+      background:linear-gradient(transparent 55%,var(--sun) 55%,var(--sun) 92%,transparent 92%);
     }
     .h1-yen{
-      font-size:clamp(26px,7.6vw,34px);color:var(--line);
+      font-size:clamp(30px,9vw,40px);color:var(--line);
       -webkit-text-stroke:.3px var(--line);
+      background:linear-gradient(transparent 55%,var(--sun) 55%,var(--sun) 92%,transparent 92%);
     }
 
     /* 実績ペア表記（KN-04） */
