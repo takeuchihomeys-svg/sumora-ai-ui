@@ -972,6 +972,15 @@
   // ── 全ページ自動送信: 共通の次ページ遷移 or 完了処理 ─────────────────────
   // autoSendOnePage の onDone コールバックと start() 内の再開処理で共通利用する。
   function tryNext(state) {
+    // ヒット多すぎ上限: 3ページまで送ったら4ページ目には進まず完了扱い（一括検索では次顧客へ）
+    if (state.currentPage >= 3 && hasNextPageBtn()) {
+      clearAutoSendState();
+      var countElLimit = document.getElementById("axlx-count");
+      if (countElLimit) countElLimit.textContent = "3P上限 → 次へ";
+      console.log("[AXLX bulk-dl] 3ページ上限到達 → " + (state.sentCount || 0) + "件送信。次顧客へ切替。");
+      try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: state.sentCount || 0 }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+      return;
+    }
     if (hasNextPageBtn()) {
       var clicked = clickNextPageBtn();
       if (!clicked) {
