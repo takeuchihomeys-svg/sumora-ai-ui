@@ -2835,14 +2835,32 @@ SELECT pg_notify('pgrst', 'reload schema');
 
 export const maxDuration = 300;
 
-// GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）
+// GET: Vercel CronはGETリクエストを送るため、GETでもマイグレーションを実行する
+// （POSTと同じ CRON_SECRET 認証必須）
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   if (!secret || auth !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return NextResponse.json({ sql: SQL });
+  // Vercel Cron は GET しか送れないため、GETでもPOSTと同じマイグレーションを実行する
+  const { supabase } = await import("@/app/lib/supabase");
+  const statements = splitSql(SQL);
+  const errors: string[] = [];
+  for (const stmt of statements) {
+    try {
+      const { error } = await supabase.rpc("exec_sql", { sql: stmt.endsWith(";") ? stmt : stmt + ";" });
+      if (error) errors.push(error.message);
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  try {
+    await supabase.rpc("exec_sql", { sql: "SELECT pg_notify('pgrst', 'reload schema');" });
+  } catch (e) {
+    console.warn("[migrate-schema] pgrst reload notify failed:", e instanceof Error ? e.message : String(e));
+  }
+  return NextResponse.json({ ok: errors.length === 0, errors, appliedAt: new Date().toISOString() });
 }
 
 // SQLをステートメント単位に分割する（ドル引用符 $$...$$ / $func$...$func$ 内のセミコロンでは分割しない）
