@@ -123,6 +123,9 @@ classifyAreaTokens の結果を受けてグローバルモード（駅 or 地域
 
 | 日付 | 内容 |
 |---|---|
+| 2026-09-05 | **サイト別検索履歴グリッド追加 (commit a6d31439)**: search_history JSONB カラム追加（migrate-schema）。リアプロ/itandi/レインズの自動入力ボタン押下時に realpro_p/w・itandi_p/w・reins_p/w をPATCH記録。顧客行の確認ボタン横に RP(青)/IT(橙)/RE(緑) × P/広 グリッドを表示（検索済=青・未=グレー）。ホバーで日付ツールチップ。c-datesの汎用P:/広:チップを削除しグリッドに統合。 |
+| 2026-09-05 | **顧客行に検索・送付・確認日付チップ追加 (commit 037e9f27)**: `last_pinpoint_search_at` / `last_wide_search_at` カラムをmigrate-schemaに追加。リアプロ・itandi自動入力ボタンクリック時にfire-and-forget PATCHで日付記録。`renderCustomerRow` に `daysAgoText()` ヘルパーと `.c-dates` 日付チップ行を追加（送:N日前 確:N日前 P:N日前 広:N日前）。styles.cssに .dc-sent/.dc-viewed/.dc-pin/.dc-wide のカラーバッジCSSも追加。 |
+| 2026-09-05 | **熱いお客さんリスト欠落バグ修正 (commit 643f1702)**: `needsActionToday()` が `is_flagged` のみ確認し `is_hot` を無視していた。アプリの「🔥あついお客さん」タブは `is_hot===true` で絞り込むが拡張では未参照だった → `is_flagged \|\| is_hot` の両方チェックに変更。あわせて sessionStorage キャッシュTTLを5分→90秒に短縮（フラグ変更後最大5分遅延バグ修正）。 |
 | 2026-09-02 | **リアプロ 構造チェックボックス未選択バグ修正 (popup.js 2箇所)**: ①line 2480: `customer.building_structure \|\| customer.structure` → `customer.structure_types`（存在しないフィールド参照を修正）②lines 3567-3569: リアプロブランチの adjC.structure_types 計算が `adjStructure ? [...] : []`（fallbackなし）だったのを itandi ブランチと同じ `(adjStructure \|\| c.structure_types \|\| "").split(...)` に統一。これにより DB の `structure_types` カラム値が adj フォームで上書きなしのときも正しくページスクリプトへ送信される。DB カラム自体は migrate-schema/route.ts line 2816 で 2026-09-01 追加済み（00:10 JST の cron で適用済みのはず）。 |
 | 2026-09-01 | **Chrome拡張 送信エラー根本修正 (commit 48ed88cf)**: ①background.js: callMergeApi の AbortSignal を 60s→85s に延長（Vercel maxDuration=90s に対してクライアントが先にタイムアウトしていた）② bulk-dl.js: 送信エラー時にアラートで resp.error の実メッセージを表示（セッション切れ・タイムアウト・APIエラーを区別できるよう改善） |
 | 2026-08-24 | **電車での通勤距離ステップ追加**: `buildCondData()`に`commuteByTrain`フィールド追加（`desired_area`から「○○駅まで電車で△分」正規表現でパース）。realpro/itandi/reinsの手順ステップに「電車での通勤距離: 北加賀屋まで電車で45分以内」を表示。徒歩パターン・bareパターンは対象外（電車/バスキーワード必須）。Dijkstra展開済みなので絞り込み欄への追加入力不要と案内。 |
