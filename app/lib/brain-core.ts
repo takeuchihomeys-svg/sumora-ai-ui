@@ -3366,8 +3366,9 @@ async function createCalendarEventFromBrainAction(
 ): Promise<void> {
   const ACTION_CALENDAR_MAP: Record<string, { eventType: string; daysFromNow: number; label: string }> = {
     estimate_sheet:  { eventType: "estimate_sheet",  daysFromNow: 0, label: "御見積書送付" },
-    property_send:   { eventType: "property_send",   daysFromNow: 0, label: "物件ピックアップ送付" },
-    property_search: { eventType: "property_send",   daysFromNow: 0, label: "物件ピックアップ" },
+    // ブレインは顧客メッセージ受信時（スタッフ返信前）に発火するため、物件ピックアップは翌日のタスクとして登録
+    property_send:   { eventType: "property_send",   daysFromNow: 1, label: "物件ピックアップ送付" },
+    property_search: { eventType: "property_send",   daysFromNow: 1, label: "物件ピックアップ" },
     viewing_invite:  { eventType: "viewing",         daysFromNow: 0, label: "内覧調整" },
     phone:           { eventType: "phone",           daysFromNow: 0, label: "電話連絡" },
     follow_up:       { eventType: "follow_up",       daysFromNow: 1, label: "フォローアップ" },

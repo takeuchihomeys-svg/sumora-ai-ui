@@ -809,28 +809,34 @@ async function detectAndCreateCalendarEvent({
 }): Promise<void> {
   if (!COMMITMENT_RE.test(sentReply) || sentReply.length < 15) return;
 
-  const today = sentAt ? new Date(sentAt) : new Date();
+  // JST基準で今日/明日を算出（サーバーTZ非依存。brain-core と同じ方式）
+  const baseMs = sentAt ? new Date(sentAt).getTime() : Date.now();
+  const today = new Date(baseMs + 9 * 60 * 60 * 1000);
+  const tomorrow = new Date(today.getTime() + 86400000);
   const DOW = ["日","月","火","水","木","金","土"];
-  const todayStr = `${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日（${DOW[today.getDay()]}）`;
-  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
-  const todayDateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
-  const tomorrowDateStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth()+1).padStart(2,'0')}-${String(tomorrow.getDate()).padStart(2,'0')}`;
+  const todayStr = `${today.getUTCFullYear()}年${today.getUTCMonth()+1}月${today.getUTCDate()}日（${DOW[today.getUTCDay()]}）`;
+  const todayDateStr = today.toISOString().slice(0, 10);
+  const tomorrowDateStr = tomorrow.toISOString().slice(0, 10);
 
   const raw = await callHaiku(`以下はLINE不動産営業のスタッフが送った返信メッセージです。
 「明日確認します」「〇月〇日にご連絡します」などスタッフが将来に行動を約束している場合のみ、日時と内容をJSONで返してください。
 お客様への依頼・質問・単なる日程の言及は対象外です。
 「新着が出次第」「空室が出次第」等、外部イベント待ちの継続約束は has_commitment: false にすること。
-物件ピックアップ・物件を探して送る約束（「ピックアップでき次第ご連絡します」「お部屋をいくつかピックアップしてご連絡します」「お部屋をピックアップしてご連絡させて頂きます」「物件をご用意してお送りします」等）は has_commitment: true・date=${todayDateStr}・all_day: true・event_type="property_send" とすること。
-見積書・御見積書・お見積もりを作成・送付する約束（「見積書をお送りします」「御見積書をご用意します」「見積書を作成してご連絡します」「お見積もりをお送りします」等）は has_commitment: true・date=${todayDateStr}・all_day: true・event_type="estimate_sheet" とすること。
-スタッフが能動的に行動して結果を連絡する約束（「交渉でき次第ご連絡します」「確認でき次第お知らせします」「折り返しご連絡します」等）は has_commitment: true とし date に ${tomorrowDateStr} を入れ all_day: true とすること。
 
-今日の日付: ${todayStr}
+【date の決め方（最重要）】
+文中に「明日中に」「明日お送りします」「明後日」「〇日までに」「来週」等、明示的な期限・日付がある場合は必ずその日付を date にすること（明日=${tomorrowDateStr}）。カテゴリ別のデフォルト日付は「明示的な日付が無い場合のみ」使う。
+
+物件ピックアップ・物件を探して送る約束（「ピックアップでき次第ご連絡します」「お部屋をいくつかピックアップしてご連絡します」「お部屋をピックアップしてご連絡させて頂きます」「物件をご用意してお送りします」「募集中のお部屋を全て確認させて頂き、お送りさせて頂きます」「お部屋を確認してお送りします」等）は has_commitment: true・all_day: true・event_type="property_send" とし、date は明示的な日付があればその日付、なければ ${todayDateStr} とすること。
+見積書・御見積書・お見積もりを作成・送付する約束（「見積書をお送りします」「御見積書をご用意します」「見積書を作成してご連絡します」「お見積もりをお送りします」等）は has_commitment: true・all_day: true・event_type="estimate_sheet" とし、date は明示的な日付があればその日付（「明日見積書をお送りします」→${tomorrowDateStr}）、なければ ${todayDateStr} とすること。
+スタッフが能動的に行動して結果を連絡する約束（「交渉でき次第ご連絡します」「確認でき次第お知らせします」「折り返しご連絡します」等）は has_commitment: true・all_day: true・event_type="follow_up" とし、date は明示的な日付があればその日付、なければ ${tomorrowDateStr} とすること。
+
+今日の日付: ${todayStr}（明日: ${tomorrowDateStr}）
 
 【スタッフ送信文】
 ${sentReply}
 
 JSONのみ（コードブロック不要）:
-{"has_commitment":true,"date":"YYYY-MM-DD","time":"HH:MM or null","all_day":false,"title":"カレンダーイベントタイトル（例: 内覧 エルシオン201, 申込期限 22:00まで）","event_type":"viewing|application|phone|photo|property_send|other"}
+{"has_commitment":true,"date":"YYYY-MM-DD","time":"HH:MM or null","all_day":false,"title":"カレンダーイベントタイトル（例: 内覧 エルシオン201, 申込期限 22:00まで）","event_type":"viewing|application|phone|photo|property_send|estimate_sheet|follow_up|other"}
 event_typeの値:
 - "viewing": 内覧・案内・待ち合わせ・現地集合の約束
 - "application": 申込フォーム有効期限・書類締切・申込手続き
@@ -842,9 +848,10 @@ event_typeの値:
 - "other": それ以外
 all_dayは時刻が特定できない場合のみtrue。時刻があればfalseにしtime("HH:MM")を埋める。
 「新着が出次第」「空室が出次第」等、外部イベント・在庫待ちは has_commitment: false にすること。
-「ピックアップでき次第」「物件をご用意してご連絡」等、物件を探して送る約束は has_commitment: true・date=${todayDateStr}・all_day: true・event_type="property_send" とすること。
-「見積書をお送りします」「御見積書をご用意します」「お見積もりをお送りします」等、見積書・お見積もり送付の約束は has_commitment: true・date=${todayDateStr}・all_day: true・event_type="estimate_sheet" とすること。
-「交渉でき次第」「確認でき次第」「折り返し連絡」等、スタッフが能動的に行動して連絡する約束は has_commitment: true・date=${tomorrowDateStr}・all_day: true・event_type="follow_up" とすること。
+「ピックアップでき次第」「物件をご用意してご連絡」「お部屋を全て確認してお送りします」等、物件を探して送る約束は has_commitment: true・all_day: true・event_type="property_send"。date は文中の明示的な日付を優先し、無ければ ${todayDateStr}。
+「見積書をお送りします」「御見積書をご用意します」「お見積もりをお送りします」等、見積書・お見積もり送付の約束は has_commitment: true・all_day: true・event_type="estimate_sheet"。date は文中の明示的な日付を優先し、無ければ ${todayDateStr}。
+「交渉でき次第」「確認でき次第」「折り返し連絡」等、スタッフが能動的に行動して連絡する約束は has_commitment: true・all_day: true・event_type="follow_up"。date は文中の明示的な日付を優先し、無ければ ${tomorrowDateStr}。
+例: 「明日中に募集中のお部屋を全て確認させて頂き、お送りさせて頂きます」→ {"has_commitment":true,"date":"${tomorrowDateStr}","time":null,"all_day":true,"title":"物件ピックアップ送付","event_type":"property_send"}
 約束がなければ: {"has_commitment":false}`, 200);
 
   const m = raw.match(/\{[\s\S]*\}/);
@@ -867,9 +874,26 @@ all_dayは時刻が特定できない場合のみtrue。時刻があればfalse�
   } catch { /* ignore */ }
 
   const title = customerName ? `${customerName} ${parsed.title}` : parsed.title;
+  const eventType = parsed.event_type ?? "other";
+
+  // 同日・同会話・同種の未完了イベントが既にあれば重複登録しない
+  // （ブレインの createCalendarEventFromBrainAction が先に登録している場合があるため）
+  try {
+    const { data: existing } = await supabase
+      .from("calendar_events")
+      .select("id")
+      .eq("conversation_id", conversationId)
+      .eq("event_type", eventType)
+      .gte("start_at", `${parsed.date}T00:00:00+09:00`)
+      .lte("start_at", `${parsed.date}T23:59:59+09:00`)
+      .eq("is_done", false)
+      .limit(1);
+    if (existing && existing.length > 0) return;
+  } catch { /* 重複チェック失敗時は登録を続行 */ }
+
   await supabase.from("calendar_events").insert({
     title,
-    event_type: parsed.event_type ?? "other",
+    event_type: eventType,
     customer_name: customerName,
     conversation_id: conversationId,
     start_at: startAt,
@@ -880,7 +904,7 @@ all_dayは時刻が特定できない場合のみtrue。時刻があればfalse�
   // 売上番長グループに通知（fire-and-forget）
   void notifyCalendarCreated({
     customerName,
-    eventType: parsed.event_type ?? "other",
+    eventType,
     startAt,
     allDay: parsed.all_day ?? true,
     title,
