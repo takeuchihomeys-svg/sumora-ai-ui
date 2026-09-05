@@ -604,6 +604,18 @@ function CustomersPageInner() {
   };
   useEffect(() => { fetchCustomers(); }, []);
 
+  // property_customers の変更をリアルタイムで受信して自動再取得
+  // Chrome拡張の「本条件に反映する」ボタン等、他タブ・他端末からの更新を即時反映する
+  useEffect(() => {
+    const ch = supabase
+      .channel("property-customers-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "property_customers" }, () => {
+        void fetchCustomers();
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(ch); };
+  }, []);
+
   // URLパラメータ ?id=xxx でそのお客さんを自動展開
   useEffect(() => {
     const id = searchParams.get("id");
