@@ -123,6 +123,7 @@ classifyAreaTokens の結果を受けてグローバルモード（駅 or 地域
 
 | 日付 | 内容 |
 |---|---|
+| 2026-09-05 | **一時調整: 地域/駅検索切り替え＋顧客別履歴保存 (commit a1b4b4c0)**: ①地域/駅欄への手動入力が顧客DB条件より優先して検索軸を確定（`computeTempAdjOverride()`・最後に編集した欄で判定・`_areaModeSource="user"`で自動補正③/③-pre/⑤を全スキップ。自動バッチの`area_mode_locked`時は無効）。上書きモード時は該当欄のテキストのみ検索エリアに使用。②一時調整5フィールド（地域/駅/賃料上限/面積min/max）をlocalStorage `tempAdj_{customerId}` に顧客別保存（直近3件・800msデバウンス・同一セッション連続編集は先頭更新）、顧客選択時に最新を自動復元（`restoreTempAdj`・自動バッチ中は`_adjRestoreSuppressed`で抑止）。③直近3件を履歴チップで表示・クリック再適用（`renderTempAdjChips`）。④🏙️地域(青)/🚉駅(緑)インジケーター（`#adj-mode-indicator`）で上書きモードを可視化。popup.js / popup.html / styles.css。※実装時の未定義`escapeHtml`→既存`esc()`に修正済み |
 | 2026-09-05 | **サイト別検索履歴グリッド追加 (commit a6d31439)**: search_history JSONB カラム追加（migrate-schema）。リアプロ/itandi/レインズの自動入力ボタン押下時に realpro_p/w・itandi_p/w・reins_p/w をPATCH記録。顧客行の確認ボタン横に RP(青)/IT(橙)/RE(緑) × P/広 グリッドを表示（検索済=青・未=グレー）。ホバーで日付ツールチップ。c-datesの汎用P:/広:チップを削除しグリッドに統合。 |
 | 2026-09-05 | **顧客行に検索・送付・確認日付チップ追加 (commit 037e9f27)**: `last_pinpoint_search_at` / `last_wide_search_at` カラムをmigrate-schemaに追加。リアプロ・itandi自動入力ボタンクリック時にfire-and-forget PATCHで日付記録。`renderCustomerRow` に `daysAgoText()` ヘルパーと `.c-dates` 日付チップ行を追加（送:N日前 確:N日前 P:N日前 広:N日前）。styles.cssに .dc-sent/.dc-viewed/.dc-pin/.dc-wide のカラーバッジCSSも追加。 |
 | 2026-09-05 | **熱いお客さんリスト欠落バグ修正 (commit 643f1702)**: `needsActionToday()` が `is_flagged` のみ確認し `is_hot` を無視していた。アプリの「🔥あついお客さん」タブは `is_hot===true` で絞り込むが拡張では未参照だった → `is_flagged \|\| is_hot` の両方チェックに変更。あわせて sessionStorage キャッシュTTLを5分→90秒に短縮（フラグ変更後最大5分遅延バグ修正）。 |
