@@ -121,6 +121,63 @@ export function buildAixStaffNote(action: string, checkKind?: PropertyCheckKind 
   return AIX_STAFF_NOTES[action] ?? `AIX【${AIX_BUTTON_LABELS[action] ?? action}】を押してください`;
 }
 
+// ─── LINE グループ通知用 短縮ラベル・ノート ─────────────────────────────────────
+// brain required通知 / AIXゲート通知向け。最大3行に収める。
+// UIや prompt の AIX_STAFF_NOTES（長文）とは別管理。
+
+// 通知ヘッダー右辺: 「{name}さん｜{短ラベル}」の短ラベル部分
+export const AIX_LINE_LABELS: Record<string, string> = {
+  acknowledge_check:       "空室確認",
+  property_check_result:   "確認結果の報告",
+  property_send:           "物件ピックアップ",
+  property_recommendation: "物件オススメ",
+  estimate_sheet:          "見積書",
+  viewing_invite:          "内覧日調整",
+  meeting_place:           "待ち合わせ確定",
+  greeting_viewing:        "内覧フォロー",
+  condition_hearing:       "条件ヒアリング",
+  application_push:        "申込クロージング",
+  followup_revive:         "追客",
+  property_search:         "物件ピックアップ",
+};
+
+// 通知2行目: 「次にやること」を1行で
+export const AIX_LINE_NOTES: Record<string, string> = {
+  acknowledge_check:       "受付返信 → AIX【確認します】",
+  property_check_result:   "回答を AIX【物件確認した（募集状況）】で送る",
+  property_send:           "「お探しします」返信 → Chrome拡張 → AIX【物件ピックアップした】",
+  property_recommendation: "1件に絞って AIX【物件オススメ】",
+  estimate_sheet:          "AIX【見積書送る】",
+  viewing_invite:          "AIX【内覧日調整】で候補日を送る",
+  meeting_place:           "AIX【待ち合わせ】",
+  greeting_viewing:        "AIX【内覧挨拶】",
+  condition_hearing:       "AIX【条件ヒアリング】",
+  application_push:        "AIX【申込へ！】",
+  followup_revive:         "AIX【追客する】で再接触",
+  property_search:         "Chrome拡張で検索 → AIX【物件ピックアップした】",
+};
+
+// check_pattern → topic の簡易マップ（brain の check_pattern から topic を引くため）
+const CHECK_PATTERN_TOPICS: Record<string, string> = {
+  nearby_parking:    "近隣月極駐車場",
+  mgmt_initial_cost: "初期費用・礼金等の交渉",
+  mgmt_guarantor:    "保証会社・保証人",
+  mgmt_pet:          "ペット可否",
+  vacate_date:       "退去予定日",
+  mgmt_move_in:      "入居可能日",
+  mgmt_parking:      "駐車場",
+  mgmt_equipment:    "設備",
+};
+
+/** LINE通知用の短縮アクションノート（最大1行）を生成する。 */
+export function buildAixLineNote(action: string, checkPattern?: string | null): string {
+  if (action === "property_check_result" && checkPattern) {
+    const topic = CHECK_PATTERN_TOPICS[checkPattern] ?? checkPattern;
+    return `回答を AIX【確認した（条件・交渉）】で送る（${topic}）`;
+  }
+  return AIX_LINE_NOTES[action] ?? `AIX【${AIX_BUTTON_LABELS[action] ?? action}】`;
+}
+
 // ─── LLM出力の正規化: 生文字列 → 正準ボタンキー ────────────────────────────────
 // brain の parsed.aix / parsed.action は語彙外の文字列（"acknowledge_result"・日本語ラベル・
 // 「AIX【見積書送る】で〜」等の自由記述）を返すことがある。既知ボタンへ写像できる場合は

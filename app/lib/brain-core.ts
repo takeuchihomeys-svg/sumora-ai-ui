@@ -6,7 +6,9 @@ import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
+  AIX_LINE_LABELS,
   buildAixStaffNote,
+  buildAixLineNote,
   detectPropertyCheckPattern,
   normalizeAixActionKey,
 } from "@/app/lib/aix-taxonomy";
@@ -3249,7 +3251,7 @@ export async function runBrainAndNotify(conversationId: string, msgText?: string
 
   const { data: row, error } = await supabase
     .from("conversations")
-    .select("suggested_aix_meta, customer_name, conversation_direction, brain_analyzed_at")
+    .select("suggested_aix_meta, customer_name, conversation_direction, brain_analyzed_at, is_hot")
     .eq("id", conversationId)
     .maybeSingle();
   if (error || !row) {
@@ -3310,12 +3312,21 @@ export async function runBrainAndNotify(conversationId: string, msgText?: string
       // source === "cached" の場合は required通知をスキップ（キャッシュ返却のたびに同じ通知が再送される二重通知防止）
       if (meta && meta.enforcement_level === "required" && meta.source !== "cached") {
         const customerName = snapshot.customerName || "お客様";
-        const actionLabel = AIX_LABEL_JP[meta.action ?? ""] ?? meta.action ?? "対応";
+        const isHot = (row as Record<string, unknown>).is_hot === true;
+        const sigLevel = meta.purchase_signal_level ?? "";
+        const urgencyEmoji = (isHot || sigLevel === "strong" || sigLevel === "peak" || meta.action === "estimate_sheet") ? "🔥" : "🔴";
+        const shortLabel = AIX_LINE_LABELS[meta.action ?? ""] ?? meta.action ?? "対応";
+        const actionNote = buildAixLineNote(meta.action ?? "", (meta as Record<string, unknown>).check_pattern as string | null);
         const lines = [
-          `🔴 ${customerName}さんへ要対応`,
-          `AIX必須：${actionLabel}`,
+          `${urgencyEmoji} ${customerName}さん｜${shortLabel}`,
+          actionNote,
         ];
-        if (meta.note) lines.push(`→ ${meta.note}`);
+        // property_search: 条件サマリーを3行目に追加
+        if (meta.action === "property_search" && meta.property_search_params) {
+          const p = meta.property_search_params as Record<string, unknown>;
+          const parts = [p.area, p.floor_plan, p.rent_max ? `${p.rent_max}万円まで` : null].filter(Boolean);
+          if (parts.length > 0) lines.push((parts as string[]).join(" / "));
+        }
 
         const baseUrl =
           process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??

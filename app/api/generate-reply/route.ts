@@ -38,7 +38,7 @@ import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
 import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
 // AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
 // AIX_STAFF_NOTES を単一ソースとして brain-core の AIX_BRAIN_NOTES と共有する（文言乖離の構造的防止）
-import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
+import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS, AIX_LINE_LABELS, buildAixLineNote } from "@/app/lib/aix-taxonomy";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 300;
@@ -2334,9 +2334,14 @@ async function applyAixGateAndRespond(
         : process.env.VERCEL_URL
           ? `https://${process.env.VERCEL_URL}`
           : "http://localhost:3000");
-    const lines = [`${customerName || "お客様"}さん AIXで対応して`];
-    if (meta.action) lines.push(`推奨アクション: ${meta.action}`);
-    if (meta.note) lines.push(`理由: ${meta.note}`);
+    const shortLabel = AIX_LINE_LABELS[meta.action ?? ""] ?? meta.action ?? "対応";
+    const actionNote = buildAixLineNote(meta.action ?? "", (meta as Record<string, unknown>).check_pattern as string | null);
+    const sigLevel = (meta as Record<string, unknown>).purchase_signal_level as string | undefined;
+    const gateEmoji = (sigLevel === "strong" || sigLevel === "peak" || meta.action === "estimate_sheet") ? "🔥" : "🟡";
+    const lines = [
+      `${gateEmoji} ${customerName || "お客様"}さん｜${shortLabel}`,
+      actionNote,
+    ];
     // notify-group は line-webhook と同じスタッフグループ通知経路（LINE_STAFF_GROUP_ID / hanbancyo_settings）
     await fetch(`${baseUrl}/api/notify-group`, {
       method: "POST",
