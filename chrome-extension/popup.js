@@ -2105,11 +2105,12 @@ let linkedOnly = true;   // 紐付け済みのみ表示（デフォルトON・�
 let todayOnly  = false;  // 今日対応のみ表示
 const selectedCustomerIds = new Set(); // 一括検索: チェック中の顧客IDセット（文字列）
 
-// アプリの「要対応」と同じ基準: linked_conversation.is_flagged === true かつ申込後ステータス除外
+// アプリの「要対応」「あついお客さん」両方を含む: is_flagged または is_hot が true かつ申込後ステータス除外
 var _POST_APPLY_STATUSES = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
 function needsActionToday(c) {
   var conv = c.linked_conversation;
-  if (!conv || !conv.is_flagged) return false;
+  if (!conv) return false;
+  if (!conv.is_flagged && !conv.is_hot) return false;
   return !_POST_APPLY_STATUSES.has(conv.status);
 }
 
@@ -2189,7 +2190,7 @@ function copyText(text) {
 
 // ── View 1: Customer list ──────────────────────────────────────────
 const CUSTOMER_CACHE_KEY = "aixlinx_customers";
-const CUSTOMER_CACHE_TTL = 5 * 60 * 1000; // 5分
+const CUSTOMER_CACHE_TTL = 90 * 1000; // 90秒（フラグ変更が最大5分遅れるバグを修正）
 
 function getCachedCustomers() {
   try {
