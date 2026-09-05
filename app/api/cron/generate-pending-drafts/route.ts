@@ -93,10 +93,11 @@ async function run() {
   // ② 取りこぼし救済: pending_atなし（または10分以上前の古いpending）・下書きなし・24時間以内・未返信
   const { data: orphanedConvs, error: orphanedError } = await db
     .from("conversations")
-    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at, draft_fail_count, brain_analyzed_at")
+    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at, draft_fail_count, brain_analyzed_at, ai_draft")
     .eq("last_sender", "customer")
-    // __TRUNCATED__センチネル（尻切れで保存見送りになった会話）も救済対象に含める
-    .or("ai_draft.is.null,ai_draft.eq.__TRUNCATED__")
+    // __TRUNCATED__・[AIX誘導中]センチネルも救済対象に含める
+    // [AIX誘導中]: AIXタスクが2時間以上放置されたケース（処理ループ内でスタック判定後に進む）
+    .or(`ai_draft.is.null,ai_draft.eq.__TRUNCATED__,ai_draft.eq."[AIX誘導中]"`)
     .or("draft_pending_at.is.null,draft_pending_at.lt." + tenMinutesAgo)
     // DB側リトライ制御: 10分以内に生成試行済み（draft_attempted_at）ならスキップ
     // （インメモリMapはVercelサーバーレスでインスタンス間共有されないため、DBフラグが本命の防波堤）
@@ -277,20 +278,31 @@ async function run() {
       ].filter(Boolean).join("\n");
 
       const { data: cronPendingTasks } = await db.from("line_tasks")
-        .select("task_type")
+        .select("task_type, created_at")
         .eq("conversation_id", convId)
         .eq("status", "pending");
       const activeTaskTypes = (cronPendingTasks ?? []).map((t: { task_type: string }) => t.task_type);
 
       // AIX誘導タスクがある場合はdraft生成をスキップ（property_checkは短い返しを生成するため除外）
       if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.has(t))) {
-        await db.from("conversations")
-          .update({ ai_draft: "[AIX誘導中]", draft_attempted_at: null })
-          .eq("id", convId)
-          .is("ai_draft", null);
-        console.log("[generate-pending-drafts] AIXタスク進行中のためdraft生成スキップ:", convId, activeTaskTypes);
-        skipped++;
-        continue;
+        // 既に[AIX誘導中]かつタスクが2時間以上前に作成 → スタック判定・救済試行
+        const AIX_STUCK_MS = 2 * 60 * 60 * 1000;
+        const convAiDraft = (conv as Record<string, unknown>).ai_draft as string | null | undefined;
+        const isAlreadySentinel = convAiDraft === "[AIX誘導中]";
+        const oldestAixMs = Math.min(...(cronPendingTasks ?? [])
+          .filter((t: { task_type: string }) => AIX_SKIP_TYPES.has(t.task_type))
+          .map((t: { created_at: string | null }) => t.created_at ? Date.parse(t.created_at) : Infinity));
+        const isStuck = isAlreadySentinel && isFinite(oldestAixMs) && (Date.now() - oldestAixMs) > AIX_STUCK_MS;
+        if (!isStuck) {
+          await db.from("conversations")
+            .update({ ai_draft: "[AIX誘導中]", draft_attempted_at: null })
+            .eq("id", convId)
+            .is("ai_draft", null);
+          console.log("[generate-pending-drafts] AIXタスク進行中のためdraft生成スキップ:", convId, activeTaskTypes);
+          skipped++;
+          continue;
+        }
+        console.log("[generate-pending-drafts] AIXタスク2時間以上スタック・救済試行:", convId, activeTaskTypes);
       }
 
       // ── brain直列実行（bg-async と同じ入口の cron 版・2026-08直列アーキテクチャ）─────
@@ -449,7 +461,9 @@ async function run() {
         }
         // 成功時: 下書き保存 ＋ attempted_at クリア + fail_count リセット（API障害回復後にorphaned救済が再度拾えるようにする）
         // .is("ai_draft", null) ガード: bg-async が先に保存した下書きを上書きしない
-        await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null, draft_fail_count: 0 }).eq("id", convId).is("ai_draft", null);
+        const convAiDraftForSave = (conv as Record<string, unknown>).ai_draft as string | null | undefined;
+        const saveGuard = convAiDraftForSave === "[AIX誘導中]" ? `ai_draft.is.null,ai_draft.eq."[AIX誘導中]"` : "ai_draft.is.null";
+        await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null, draft_fail_count: 0 }).eq("id", convId).or(saveGuard);
         processed++;
       } else {
         // タグ除去後に本文が空 → 生成失敗として記録（attempted_at は残し10分バックオフで再試行させる）

@@ -533,19 +533,30 @@ export async function POST(req: NextRequest) {
       console.log("[bg-async] calling generate-reply at:", baseUrl, "convId:", convId, "state:", effectiveState);
 
       const { data: pendingTasks } = await db.from("line_tasks")
-        .select("task_type")
+        .select("task_type, created_at")
         .eq("conversation_id", convId)
         .eq("status", "pending");
       const activeTaskTypes = (pendingTasks ?? []).map((t: { task_type: string }) => t.task_type);
 
       // AIX誘導タスクがある場合はdraft生成をスキップ（property_checkは短い返しを生成するため除外）
       if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.has(t))) {
-        await db.from("conversations")
-          .update({ ai_draft: "[AIX誘導中]", draft_pending_at: null })
-          .eq("id", convId)
-          .is("ai_draft", null);
-        console.log("[bg-async] AIXタスク進行中のためdraft生成スキップ:", convId, activeTaskTypes);
-        return;
+        // 既に[AIX誘導中]かつタスクが2時間以上前に作成 → スタック判定・テキストドラフト生成に進む
+        // （staff がAIXモーダルをキャンセルした等でタスクが放置されたケースの救済）
+        const AIX_STUCK_MS = 2 * 60 * 60 * 1000;
+        const isAlreadySentinel = conv.ai_draft === "[AIX誘導中]";
+        const oldestAixMs = Math.min(...(pendingTasks ?? [])
+          .filter((t: { task_type: string }) => AIX_SKIP_TYPES.has(t.task_type))
+          .map((t: { created_at: string | null }) => t.created_at ? Date.parse(t.created_at) : Infinity));
+        const isStuck = isAlreadySentinel && isFinite(oldestAixMs) && (Date.now() - oldestAixMs) > AIX_STUCK_MS;
+        if (!isStuck) {
+          await db.from("conversations")
+            .update({ ai_draft: "[AIX誘導中]", draft_pending_at: null })
+            .eq("id", convId)
+            .is("ai_draft", null);
+          console.log("[bg-async] AIXタスク進行中のためdraft生成スキップ:", convId, activeTaskTypes);
+          return;
+        }
+        console.log("[bg-async] AIXタスク2時間以上スタック・テキストドラフト生成試行:", convId, activeTaskTypes);
       }
 
       // brain が AIX を指示している場合は下書き生成をスキップ（line_tasks有無に関わらず）
