@@ -179,6 +179,9 @@
         <div id="adj-form" class="adj-form" style="display:none">
           <div class="adj-title">⚙️ 一時調整 <span class="adj-note">DBは変更しません</span></div>
 
+          <!-- 一時調整が検索軸を上書きしている時のインジケーター（JSで表示制御） -->
+          <div id="adj-mode-indicator" class="adj-mode-indicator" style="display:none"></div>
+
           <!-- 駅/地域 切替ボタンは2フィールド化により不要（hidden で内部互換維持） -->
           <div id="area-mode-selector" style="display:none">
             <div class="area-mode-btns">
@@ -204,6 +207,8 @@
               <span class="adj-label">駅</span>
               <input class="adj-input" id="adj-area-station" type="text" placeholder="例: 梅田 難波" />
             </div>
+            <!-- 顧客別 一時調整履歴チップ（直近3件・クリックで再適用） -->
+            <div id="adj-history-chips" class="adj-history-chips" style="display:none"></div>
             <div class="adj-row">
               <span class="adj-label">賃料上限</span>
               <input class="adj-input adj-num" id="adj-rent-max" type="number" placeholder="例:110000" step="1000" />

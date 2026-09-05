@@ -522,6 +522,26 @@ body {
 .adj-check-label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; }
 .adj-label-text { color: #555; }
 
+/* ── 一時調整: 検索モードインジケーター（地域=青 / 駅=緑） ── */
+.adj-mode-indicator {
+  display: inline-block;
+  font-size: 11px; font-weight: 700;
+  border-radius: 6px; padding: 3px 8px; margin-bottom: 6px;
+}
+.adj-mode-indicator.mode-ward    { background: #e3f2fd; color: #1565c0; border: 1px solid #90caf9; }
+.adj-mode-indicator.mode-station { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+
+/* ── 一時調整: 顧客別履歴チップ（直近3件） ── */
+.adj-history-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 2px 62px; }
+.adj-history-chip {
+  font-size: 10px; color: #6d4c41; background: #fff3e0;
+  border: 1px solid #ffcc80; border-radius: 10px;
+  padding: 2px 8px; cursor: pointer; white-space: nowrap;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+.adj-history-chip:hover { background: #ffe0b2; }
+.adj-chip-date { color: #bcaaa4; font-size: 9px; }
+
 .autofill-btn {
   width: 100%; padding: 11px;
   background: linear-gradient(135deg, #e65100, #ff9800);

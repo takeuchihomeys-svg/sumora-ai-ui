@@ -2945,6 +2945,9 @@ function preloadAdjForm(c) {
       }
     }
   }
+
+  // 一時調整履歴の復元（顧客別 localStorage）+ チップ描画 + インジケーター更新
+  restoreTempAdj(c);
 }
 
 function calcUpdateDays(dateStr, status) {
@@ -3023,6 +3026,177 @@ function buildAdjCustomer(c) {
     initial_cost_limit: adjInitialCost ? Number(adjInitialCost) : (c.initial_cost_limit || null),
   };
 }
+
+// ── 一時調整: 優先モード判定・顧客別履歴（localStorage）・インジケーター ──────
+// Feature 1: 地域/駅欄への手動入力は顧客DB条件より優先して検索軸を確定する
+// Feature 2: 顧客別に直近3件の一時調整をlocalStorageへ保存し、顧客選択時に復元
+// Feature 3: 一時調整が検索軸を上書きしている時にインジケーターを表示
+let _adjLastEditedField  = null;  // "ward" | "station" | null — 最後に手動編集された地域/駅欄
+let _adjDirty            = false; // 一時調整5フィールド（地域/駅/賃料/面積min/max）に編集があったか
+let _adjDraftCustomerId  = null;  // このセッションで履歴保存済みの顧客ID（連続編集は先頭エントリを更新）
+let _adjSaveTimer        = null;  // oninput → localStorage 保存のデバウンスタイマー
+let _adjRestoreSuppressed = false; // 自動バッチ（pendingPopupCmd）中は履歴の自動復元をしない
+
+// 一時調整の上書きモードを判定: "ward" | "station" | null（null=顧客デフォルトで検索）
+function computeTempAdjOverride() {
+  const w = document.getElementById("adj-area-ward")?.value.trim()    || "";
+  const s = document.getElementById("adj-area-station")?.value.trim() || "";
+  if (!_adjLastEditedField) return null; // 手動編集なし → 従来どおり顧客条件
+  if (_adjLastEditedField === "ward"    && w) return "ward";
+  if (_adjLastEditedField === "station" && s) return "station";
+  // 最後に編集した欄が空にされた → 値が残っている方を採用
+  if (w && !s) return "ward";
+  if (s && !w) return "station";
+  return null;
+}
+
+// Feature 3: 「🏙️ 地域で検索中」(青) / 「🚉 駅で検索中」(緑) インジケーター更新
+function updateAdjModeIndicator() {
+  const el = document.getElementById("adj-mode-indicator");
+  if (!el) return;
+  const mode = computeTempAdjOverride();
+  if (mode === "ward") {
+    el.className = "adj-mode-indicator mode-ward";
+    el.textContent = "🏙️ 地域で検索中（一時調整優先）";
+    el.style.display = "inline-block";
+  } else if (mode === "station") {
+    el.className = "adj-mode-indicator mode-station";
+    el.textContent = "🚉 駅で検索中（一時調整優先）";
+    el.style.display = "inline-block";
+  } else {
+    el.style.display = "none"; // 一時調整が空 → 顧客デフォルト（表示なし）
+  }
+}
+
+// 顧客別の一時調整履歴を localStorage から読む（キー: tempAdj_{customerId}）
+function loadTempAdjHistory(cid) {
+  if (!cid) return [];
+  try {
+    const raw = localStorage.getItem("tempAdj_" + cid);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (_) { return []; }
+}
+
+// 現在のフォーム値をスナップショットして履歴先頭に保存（最大3件・同一内容は重複排除）
+function saveTempAdjSnapshot(cid) {
+  if (!cid) return;
+  const entry = {
+    area:      document.getElementById("adj-area-ward")?.value.trim()    || "",
+    station:   document.getElementById("adj-area-station")?.value.trim() || "",
+    rent_max:  document.getElementById("adj-rent-max")?.value || "",
+    area_min:  document.getElementById("adj-area-min")?.value || "",
+    area_max:  document.getElementById("adj-area-max")?.value || "",
+    edited:    _adjLastEditedField,
+    last_used: new Date().toISOString(),
+  };
+  const _same = (h) => h.area === entry.area && h.station === entry.station &&
+    String(h.rent_max) === String(entry.rent_max) &&
+    String(h.area_min) === String(entry.area_min) &&
+    String(h.area_max) === String(entry.area_max);
+  let hist = loadTempAdjHistory(cid);
+  if (String(_adjDraftCustomerId) === String(cid) && hist.length > 0) {
+    // 同一編集セッション内の連続入力 → 先頭エントリを更新（履歴を汚さない）
+    hist = [entry].concat(hist.slice(1).filter((h) => !_same(h)));
+  } else {
+    hist = [entry].concat(hist.filter((h) => !_same(h)));
+  }
+  hist = hist.slice(0, 3);
+  try { localStorage.setItem("tempAdj_" + cid, JSON.stringify(hist)); } catch (_) {}
+  _adjDraftCustomerId = cid;
+  renderTempAdjChips(cid);
+}
+
+// 履歴チップ（直近3件）を地域/駅フィールド下に描画。クリックで再適用
+function renderTempAdjChips(cid) {
+  const box = document.getElementById("adj-history-chips");
+  if (!box) return;
+  const hist = cid ? loadTempAdjHistory(cid) : [];
+  if (hist.length === 0) { box.style.display = "none"; box.innerHTML = ""; return; }
+  box.innerHTML = hist.map((e, i) => {
+    const parts = [];
+    if (e.area)     parts.push("🏙️" + e.area);
+    if (e.station)  parts.push("🚉" + e.station);
+    if (e.rent_max) parts.push((Math.round(Number(e.rent_max) / 1000) / 10) + "万");
+    if (e.area_min) parts.push(e.area_min + "㎡~");
+    if (e.area_max) parts.push("~" + e.area_max + "㎡");
+    const label = parts.join(" ") || "(空)";
+    const dateStr = e.last_used ? e.last_used.split("T")[0].slice(5).replace("-", "/") : "";
+    return '<button type="button" class="adj-history-chip" data-idx="' + i + '" title="' + esc(label) + '">' +
+      esc(label.length > 24 ? label.slice(0, 24) + "…" : label) +
+      (dateStr ? ' <span class="adj-chip-date">' + dateStr + "</span>" : "") +
+      "</button>";
+  }).join("");
+  box.style.display = "flex";
+  box.querySelectorAll(".adj-history-chip").forEach((btn) => {
+    btn.onclick = () => {
+      const e = hist[Number(btn.dataset.idx)];
+      if (e) { applyTempAdjEntry(e); }
+    };
+  });
+}
+
+// 履歴エントリをフォームに適用（チップクリック・顧客選択時の復元で使用）
+function applyTempAdjEntry(e) {
+  const wardEl = document.getElementById("adj-area-ward");
+  const stEl   = document.getElementById("adj-area-station");
+  if (wardEl) wardEl.value = e.area || "";
+  if (stEl)   stEl.value   = e.station || "";
+  const hid = document.getElementById("adj-area");
+  if (hid && (e.area || e.station)) hid.value = [e.station, e.area].filter(Boolean).join("・");
+  const rentEl = document.getElementById("adj-rent-max");
+  if (rentEl && e.rent_max !== undefined) rentEl.value = e.rent_max;
+  const minEl = document.getElementById("adj-area-min");
+  if (minEl && e.area_min !== undefined) minEl.value = e.area_min;
+  const maxEl = document.getElementById("adj-area-max");
+  if (maxEl && e.area_max !== undefined) maxEl.value = e.area_max;
+  _adjLastEditedField = e.edited ||
+    (e.area && !e.station ? "ward" : e.station && !e.area ? "station" : null);
+  _adjDirty = true;
+  updateAdjModeIndicator();
+}
+
+// 顧客選択時: 前回の一時調整を復元 + チップ描画 + インジケーター更新
+// preloadAdjForm（DB値セット）の後に呼ぶこと
+function restoreTempAdj(c) {
+  _adjLastEditedField = null;
+  _adjDirty = false;
+  const cid = c && c.id;
+  const hist = cid ? loadTempAdjHistory(cid) : [];
+  if (hist.length > 0 && !_adjRestoreSuppressed) {
+    applyTempAdjEntry(hist[0]);
+    _adjDirty = false; // 復元直後は未編集扱い（検索実行時の再保存はチップ再適用/手動編集時のみ）
+  }
+  renderTempAdjChips(cid);
+  updateAdjModeIndicator();
+}
+
+// 一時調整フィールドの oninput ハンドラ登録（起動時に1回だけ実行）
+function initTempAdjHandlers() {
+  function scheduleSave() {
+    _adjDirty = true;
+    clearTimeout(_adjSaveTimer);
+    _adjSaveTimer = setTimeout(() => {
+      if (selectedCustomer && selectedCustomer.id) saveTempAdjSnapshot(selectedCustomer.id);
+    }, 800);
+  }
+  const wardEl = document.getElementById("adj-area-ward");
+  const stEl   = document.getElementById("adj-area-station");
+  if (wardEl) wardEl.addEventListener("input", () => {
+    _adjLastEditedField = "ward";
+    updateAdjModeIndicator();
+    scheduleSave();
+  });
+  if (stEl) stEl.addEventListener("input", () => {
+    _adjLastEditedField = "station";
+    updateAdjModeIndicator();
+    scheduleSave();
+  });
+  ["adj-rent-max", "adj-area-min", "adj-area-max"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("input", scheduleSave);
+  });
+}
+initTempAdjHandlers();
 
 // ── 未登録地名ヘルパー（博士連携: 駅でも地名マップにもないトークンを検出） ──────
 // ※ トップレベル定義必須: deleteLearnedToken / correctLearnedToken（トップレベル関数）から
@@ -3602,8 +3776,22 @@ function openInstructions(siteKey) {
       // 調整フォームの値を優先して使う
       const _adjWard_rp    = document.getElementById("adj-area-ward")?.value.trim()    || "";
       const _adjStation_rp = document.getElementById("adj-area-station")?.value.trim() || "";
-      const adjArea     = [_adjStation_rp, _adjWard_rp].filter(Boolean).join("・")
-                       || document.getElementById("adj-area")?.value.trim() || "";
+      // ★ 一時調整優先ルール: 地域/駅欄への手動入力は顧客DB条件より優先して検索軸を確定する
+      //   （自動バッチの area_mode_locked がある場合はバッチ指定を尊重して無効化）
+      const _tempAdjOverride = _lockedMode ? null : computeTempAdjOverride();
+      if (_tempAdjOverride) {
+        currentAreaMode = _tempAdjOverride;
+        _areaModeSource = "user"; // 以後の自動補正（③/③-pre/⑤）を全てスキップ
+        document.getElementById("btn-mode-station")?.classList.toggle("active", _tempAdjOverride === "station");
+        document.getElementById("btn-mode-ward")?.classList.toggle("active", _tempAdjOverride === "ward");
+        updateAdjModeIndicator();
+        console.log("[AX] 一時調整優先: " + _tempAdjOverride + " モードで検索（顧客デフォルトを上書き）");
+      }
+      // 上書きモード時は該当欄のテキストのみを検索エリアに使う（もう一方の軸の条件は使わない）
+      const adjArea = _tempAdjOverride === "ward"    ? _adjWard_rp
+                    : _tempAdjOverride === "station" ? _adjStation_rp
+                    : ([_adjStation_rp, _adjWard_rp].filter(Boolean).join("・")
+                       || document.getElementById("adj-area")?.value.trim() || "");
       const adjRentMax  = document.getElementById("adj-rent-max").value;
       const adjAreaMin    = document.getElementById("adj-area-min").value;
       const adjAreaMax    = document.getElementById("adj-area-max").value;
@@ -3613,6 +3801,11 @@ function openInstructions(siteKey) {
       const adjStructure  = document.getElementById("adj-structure").value.trim();
       const adjPet        = document.getElementById("adj-pet").checked;
       const adjUpdateDays = document.getElementById("adj-update-days")?.value || "";
+      // 一時調整履歴: 手動編集 or チップ再適用があった場合は検索実行時点の内容を保存
+      if (c.id && _adjDirty) {
+        clearTimeout(_adjSaveTimer); // デバウンス待ちの重複保存を防止
+        saveTempAdjSnapshot(c.id);
+      }
       const adjC = {
         desired_area: adjArea     || c.desired_area || c.area  || null,
         area:         adjArea     || c.desired_area || c.area  || null,
@@ -4418,7 +4611,10 @@ document.addEventListener("DOMContentLoaded", () => {
           var pBtnEl = document.querySelector('.mode-btn[data-mode="pinpoint"]');
           if (pBtnEl) pBtnEl.click();
         }
+        // 自動バッチ: 一時調整履歴の自動復元をしない（検索条件を確定的に保つ）
+        _adjRestoreSuppressed = true;
         openInstructions(cmd.site);
+        _adjRestoreSuppressed = false;
         // Step ④a: setupAreaModeSelector の自動判定をウェブアプリのボタン押下で上書きする
         // 'both' のとき: 1回目は ward として実行（2回目の station は webapp が 10秒後に発火）
         if (cmd.areaMode === 'station' || cmd.areaMode === 'ward' || cmd.areaMode === 'both') {
@@ -4467,7 +4663,10 @@ document.addEventListener("DOMContentLoaded", () => {
         var pBtnEl2 = document.querySelector('.mode-btn[data-mode="pinpoint"]');
         if (pBtnEl2) pBtnEl2.click();
       }
+      // 自動バッチ: 一時調整履歴の自動復元をしない（検索条件を確定的に保つ）
+      _adjRestoreSuppressed = true;
       openInstructions(cmd.site);
+      _adjRestoreSuppressed = false;
       // 'both' のとき: 1回目は ward として実行（2回目の station は webapp が 10秒後に発火）
       if (cmd.areaMode === 'station' || cmd.areaMode === 'ward' || cmd.areaMode === 'both') {
         var _modeBtn2 = (cmd.areaMode === 'station') ? 'btn-mode-station' : 'btn-mode-ward';
