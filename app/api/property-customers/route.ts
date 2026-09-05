@@ -61,9 +61,13 @@ async function checkAllDone(): Promise<void> {
   } catch { /* 失敗は無視 */ }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const singleId = new URL(req.url).searchParams.get("id");
+  const pcQuery = singleId
+    ? supabase.from("property_customers").select("*").eq("id", singleId)
+    : supabase.from("property_customers").select("*").order("updated_at", { ascending: false });
   const [{ data, error }, { data: convData }] = await Promise.all([
-    supabase.from("property_customers").select("*").order("updated_at", { ascending: false }),
+    pcQuery,
     supabase
       .from("conversations")
       .select("id, property_customer_id, last_message, last_sender, updated_at, account, status, profile_image_url, customer_name, is_hot, is_flagged")

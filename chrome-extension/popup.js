@@ -3054,6 +3054,26 @@ function calcUpdateDays(dateStr, status) {
   return "14";
 }
 
+// アプリ側で条件変更があった場合でも最新値をフォームに反映するため、
+// adj フォームを開くたびに1件だけ最新データをAPIから取得する。
+async function fetchFreshCustomer(id) {
+  if (!id) return null;
+  try {
+    const res = await fetch(`${API_BASE}/api/property-customers?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data) ? (data[0] ?? null) : (data ?? null);
+  } catch { return null; }
+}
+
+// fetchFreshCustomer の結果でallCustomers・selectedCustomerのキャッシュを更新する
+function syncFreshToCache(fresh) {
+  if (!fresh?.id) return;
+  const idx = (allCustomers || []).findIndex(x => x.id === fresh.id);
+  if (idx >= 0) Object.assign(allCustomers[idx], fresh);
+  if (selectedCustomer?.id === fresh.id) Object.assign(selectedCustomer, fresh);
+}
+
 function buildAdjCustomer(c) {
   const adjWard    = document.getElementById("adj-area-ward")?.value.trim()    || "";
   const adjStation = document.getElementById("adj-area-station")?.value.trim() || "";
@@ -3418,6 +3438,13 @@ function openInstructions(siteKey) {
     preloadAdjForm(selectedCustomer);
     wireAdjSaveBtn(selectedCustomer);
     setupAreaModeSelector(selectedCustomer, "itandi");
+    fetchFreshCustomer(selectedCustomer?.id).then(fresh => {
+      if (!fresh) return;
+      syncFreshToCache(fresh);
+      preloadAdjForm(selectedCustomer);
+      wireAdjSaveBtn(selectedCustomer);
+      setupAreaModeSelector(selectedCustomer, "itandi");
+    });
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "🔍 itandiで自動検索";
     autofillBtn.className = "autofill-btn";
@@ -3858,6 +3885,13 @@ function openInstructions(siteKey) {
 
     // ── 駅/地域 切替ボタン（混在条件の検出） ──────────────────────────
     setupAreaModeSelector(c0, "realpro");
+    fetchFreshCustomer(c0?.id).then(fresh => {
+      if (!fresh) return;
+      syncFreshToCache(fresh);
+      preloadAdjForm(c0);
+      wireAdjSaveBtn(c0);
+      setupAreaModeSelector(c0, "realpro");
+    });
 
     autofillBtn.onclick = async () => {
       // pendingPopupCmd（自動バッチ）経由の click か手動クリックかを区別
@@ -4328,6 +4362,13 @@ function openInstructions(siteKey) {
     preloadAdjForm(c0);
     wireAdjSaveBtn(c0);
     setupAreaModeSelector(c0, "reins");
+    fetchFreshCustomer(c0?.id).then(fresh => {
+      if (!fresh) return;
+      syncFreshToCache(fresh);
+      preloadAdjForm(c0);
+      wireAdjSaveBtn(c0);
+      setupAreaModeSelector(c0, "reins");
+    });
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ REINSに自動入力";
     autofillBtn.className = "autofill-btn";
