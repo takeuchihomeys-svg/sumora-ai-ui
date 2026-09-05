@@ -812,12 +812,14 @@ async function detectAndCreateCalendarEvent({
   const today = sentAt ? new Date(sentAt) : new Date();
   const DOW = ["日","月","火","水","木","金","土"];
   const todayStr = `${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日（${DOW[today.getDay()]}）`;
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const tomorrowDateStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth()+1).padStart(2,'0')}-${String(tomorrow.getDate()).padStart(2,'0')}`;
 
   const raw = await callHaiku(`以下はLINE不動産営業のスタッフが送った返信メッセージです。
 「明日確認します」「〇月〇日にご連絡します」などスタッフが将来に行動を約束している場合のみ、日時と内容をJSONで返してください。
 お客様への依頼・質問・単なる日程の言及は対象外です。
 「新着が出次第」「空室が出次第」等、外部イベント待ちの継続約束は has_commitment: false にすること。
-スタッフが能動的に行動して結果を連絡する約束（「交渉でき次第ご連絡します」「確認でき次第お知らせします」「折り返しご連絡します」等）は has_commitment: true とし date に 2026-09-06 を入れ all_day: true とすること。
+スタッフが能動的に行動して結果を連絡する約束（「交渉でき次第ご連絡します」「確認でき次第お知らせします」「折り返しご連絡します」等）は has_commitment: true とし date に ${tomorrowDateStr} を入れ all_day: true とすること。
 
 今日の日付: ${todayStr}
 
@@ -836,7 +838,7 @@ event_typeの値:
 - "other": それ以外
 all_dayは時刻が特定できない場合のみtrue。時刻があればfalseにしtime("HH:MM")を埋める。
 「新着が出次第」「空室が出次第」等、外部イベント・在庫待ちは has_commitment: false にすること。
-「交渉でき次第」「確認でき次第」「折り返し連絡」等、スタッフが能動的に行動して連絡する約束は has_commitment: true・date=2026-09-06・all_day: true・event_type="follow_up" とすること。
+「交渉でき次第」「確認でき次第」「折り返し連絡」等、スタッフが能動的に行動して連絡する約束は has_commitment: true・date=${tomorrowDateStr}・all_day: true・event_type="follow_up" とすること。
 約束がなければ: {"has_commitment":false}`, 200);
 
   const m = raw.match(/\{[\s\S]*\}/);
