@@ -876,6 +876,78 @@ all_dayは時刻が特定できない場合のみtrue。時刻があればfalse�
     all_day: parsed.all_day ?? true,
     notes: sentReply.slice(0, 200),
   });
+
+  // 売上番長グループに通知（fire-and-forget）
+  void notifyCalendarCreated({
+    customerName,
+    eventType: parsed.event_type ?? "other",
+    startAt,
+    allDay: parsed.all_day ?? true,
+    title,
+  });
+}
+
+// ─── カレンダー登録通知 ──────────────────────────────────────────────────────
+// calendar_events へ自動登録した際に売上番長LINEグループへ通知する
+async function notifyCalendarCreated({
+  customerName,
+  eventType,
+  startAt,
+  allDay,
+  title,
+}: {
+  customerName: string | null;
+  eventType: string;
+  startAt: string;
+  allDay: boolean;
+  title: string;
+}): Promise<void> {
+  try {
+    const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
+    if (!token) return;
+    let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
+    if (!groupId) {
+      const { data: grp } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
+      groupId = (grp?.value as string) ?? null;
+    }
+    if (!groupId) return;
+
+    const EVENT_TYPE_LABEL: Record<string, string> = {
+      viewing: "内覧",
+      application: "申込",
+      phone: "電話",
+      photo: "撮影",
+      property_send: "物件ピックアップ",
+      estimate_sheet: "御見積書送付",
+      follow_up: "フォローアップ",
+      other: "その他",
+    };
+    const label = EVENT_TYPE_LABEL[eventType] ?? eventType;
+
+    // JSTで日付・時刻を整形（サーバーTZに依存しないようUTCゲッターを使用）
+    const JST_OFFSET = 9 * 60 * 60 * 1000;
+    const jstEv = new Date(new Date(startAt).getTime() + JST_OFFSET);
+    const jstNow = new Date(Date.now() + JST_OFFSET);
+    const todayStr = jstNow.toISOString().slice(0, 10);
+    const tomorrowStr = new Date(jstNow.getTime() + 86400000).toISOString().slice(0, 10);
+    const evDateStr = jstEv.toISOString().slice(0, 10);
+
+    let dateLabel: string;
+    if (evDateStr === todayStr) dateLabel = "本日";
+    else if (evDateStr === tomorrowStr) dateLabel = "明日";
+    else dateLabel = `${jstEv.getUTCMonth() + 1}月${jstEv.getUTCDate()}日`;
+
+    const timeLabel = allDay ? "終日" : `${String(jstEv.getUTCHours()).padStart(2, "0")}:${String(jstEv.getUTCMinutes()).padStart(2, "0")}`;
+    const nameStr = customerName ? `${customerName}｜` : "";
+
+    const text = `📅 ${nameStr}${label}\n${dateLabel} ${timeLabel}`;
+
+    await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+    });
+  } catch { /* 失敗は無視 */ }
 }
 
 // ─── カレンダー消込 ──────────────────────────────────────────────────────────
