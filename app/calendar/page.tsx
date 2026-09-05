@@ -5,7 +5,7 @@ import BottomNav from "../components/BottomNav";
 import { registerSW, requestNotifPermission, showNotif } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
 
-type EventType = "viewing" | "contract" | "key_handover" | "other" | "application" | "phone" | "photo" | "property_send";
+type EventType = "viewing" | "contract" | "key_handover" | "other" | "application" | "phone" | "photo" | "property_send" | "estimate_sheet" | "follow_up";
 
 type CalendarEvent = {
   id: string;
@@ -41,8 +41,10 @@ const EVENT_TYPE_CONFIG: Record<string, { label: string; color: string; bg: stri
   application:   { label: "申込",     color: "#9C27B0", bg: "#f3e5f5", emoji: "📋" },
   phone:         { label: "電話",     color: "#00BCD4", bg: "#e0f7fa", emoji: "📞" },
   photo:         { label: "撮影",     color: "#FF5722", bg: "#fbe9e7", emoji: "📸" },
-  property_send: { label: "物件送付", color: "#607D8B", bg: "#eceff1", emoji: "🏠" },
-  other:         { label: "その他",   color: "#9E9E9E", bg: "#f5f5f5", emoji: "📌" },
+  property_send:  { label: "物件送付",   color: "#607D8B", bg: "#eceff1", emoji: "🏠" },
+  estimate_sheet: { label: "御見積書",   color: "#E91E63", bg: "#fce4ec", emoji: "📄" },
+  follow_up:      { label: "フォロー",   color: "#FF9800", bg: "#fff8e1", emoji: "📋" },
+  other:          { label: "その他",     color: "#9E9E9E", bg: "#f5f5f5", emoji: "📌" },
 };
 
 const SCREENING_COLOR = "#8B5CF6";
