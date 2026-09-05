@@ -2815,6 +2815,11 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS send_keyword TEXT;
 -- 複数構造を「・」区切りで保存。page-script.js の STRUCTURE_MAP キーと一致させる
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS structure_types TEXT;
 
+-- ── ピンポイント/広域検索の最終実行日時（2026-09-05追加）──
+-- popup.js の駅/地域モード別に「最後にいつ検索したか」を記録する
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS last_pinpoint_search_at TIMESTAMPTZ;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS last_wide_search_at TIMESTAMPTZ;
+
 -- ── viewing_history 待ち合わせ場所カラム（2026-09-02追加）──
 -- meeting_place AIX送信後に log-aix-usage が upsert する。brain-core が viewingsText に注入する。
 ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS property_name TEXT;

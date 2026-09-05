@@ -166,6 +166,31 @@ body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+.c-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+.date-chip {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dc-sent   { background: #e3f2fd; color: #1565c0; }
+.dc-viewed { background: #e8f5e9; color: #2e7d32; }
+.dc-pin    { background: #fff3e0; color: #e65100; }
+.dc-wide   { background: #f3e5f5; color: #6a1b9a; }
+
+@media (prefers-color-scheme: dark) {
+  .dc-sent   { background: #1a3a5c; color: #90caf9; }
+  .dc-viewed { background: #1a3a2a; color: #a5d6a7; }
+  .dc-pin    { background: #3a2a10; color: #ffcc80; }
+  .dc-wide   { background: #2a1a3a; color: #ce93d8; }
+}
+
 .s-badge {
   font-size: 10px; font-weight: 700;
   padding: 2px 7px; border-radius: 8px; flex-shrink: 0;

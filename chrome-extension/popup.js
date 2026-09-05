@@ -2388,6 +2388,16 @@ async function markPropertyViewed(id) {
   }
 }
 
+function daysAgoText(isoStr) {
+  if (!isoStr) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(isoStr); d.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - d) / 86400000);
+  if (diff <= 0) return "今日";
+  if (diff === 1) return "昨日";
+  return diff + "日前";
+}
+
 function renderCustomerRow(c, dimmed) {
   const d = buildCondData(c);
   const metaParts = [];
@@ -2407,6 +2417,18 @@ function renderCustomerRow(c, dimmed) {
       <div class="c-body">
         <div class="c-name">${c.is_linked ? '<span class="link-chip">🔗</span>' : ""}${esc(c.customer_name)}${computeAreaModeBadgeHtml(d.area)}</div>
         ${meta ? `<div class="c-meta">${esc(meta)}</div>` : ""}
+        ${(function() {
+          const chips = [];
+          const sent = daysAgoText(c.last_property_sent_at);
+          const viewed = daysAgoText(c.property_viewed_at);
+          const pin = daysAgoText(c.last_pinpoint_search_at);
+          const wide = daysAgoText(c.last_wide_search_at);
+          if (sent)   chips.push('<span class="date-chip dc-sent">送:' + sent + '</span>');
+          if (viewed) chips.push('<span class="date-chip dc-viewed">確:' + viewed + '</span>');
+          if (pin)    chips.push('<span class="date-chip dc-pin">P:' + pin + '</span>');
+          if (wide)   chips.push('<span class="date-chip dc-wide">広:' + wide + '</span>');
+          return chips.length ? '<div class="c-dates">' + chips.join('') + '</div>' : '';
+        })()}
       </div>
       <span class="s-badge badge-${esc(c.status)}">${esc(label)}</span>
       <button class="viewed-btn${isViewedToday(c) ? " viewed-done" : ""}" data-id="${esc(String(c.id))}">${isViewedToday(c) ? "☑" : "確認"}</button>
@@ -3475,6 +3497,19 @@ function openInstructions(siteKey) {
           });
         });
       }
+      // 検索日時を記録（fire-and-forget）
+      if (selectedCustomer?.id) {
+        const _srchField = searchMode === "wide" ? "last_wide_search_at" : "last_pinpoint_search_at";
+        fetch(API_BASE + "/api/property-customers", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: selectedCustomer.id, [_srchField]: new Date().toISOString() }),
+        }).then(() => {
+          const idx = allCustomers.findIndex((x) => x.id === selectedCustomer.id);
+          if (idx >= 0) { allCustomers[idx][_srchField] = new Date().toISOString(); selectedCustomer[_srchField] = new Date().toISOString(); }
+          sessionStorage.removeItem(CUSTOMER_CACHE_KEY);
+        }).catch(() => {});
+      }
       autofillBtn.textContent = "✓ 自動検索中...";
       autofillBtn.classList.add("done");
       setTimeout(() => {
@@ -3958,6 +3993,19 @@ function openInstructions(siteKey) {
           console.warn("[AX] fill-done タイムアウト: 25秒以内に完了通知が来なかったためリセット");
         }
       }, 25000);
+      // 検索日時を記録（fire-and-forget）
+      if (selectedCustomer?.id) {
+        const _srchField = searchMode === "wide" ? "last_wide_search_at" : "last_pinpoint_search_at";
+        fetch(API_BASE + "/api/property-customers", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: selectedCustomer.id, [_srchField]: new Date().toISOString() }),
+        }).then(() => {
+          const idx = allCustomers.findIndex((x) => x.id === selectedCustomer.id);
+          if (idx >= 0) { allCustomers[idx][_srchField] = new Date().toISOString(); selectedCustomer[_srchField] = new Date().toISOString(); }
+          sessionStorage.removeItem(CUSTOMER_CACHE_KEY);
+        }).catch(() => {});
+      }
     };
   } else if (siteKey === "reins") {
     adjForm.style.display = "block";
