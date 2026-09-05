@@ -2388,6 +2388,25 @@ async function markPropertyViewed(id) {
   }
 }
 
+function buildSshGrid(sh) {
+  var d = sh || {};
+  var sites = [
+    { key: "realpro", label: "RP", cls: "ssh-rp", tip: "リアプロ" },
+    { key: "itandi",  label: "IT", cls: "ssh-it", tip: "itandi" },
+    { key: "reins",   label: "RE", cls: "ssh-re", tip: "レインズ" },
+  ];
+  return '<div class="ssh-grid">' + sites.map(function(s) {
+    var p = d[s.key + "_p"], w = d[s.key + "_w"];
+    var pTip = p ? (s.tip + " ピンポイント: " + daysAgoText(p)) : (s.tip + " ピンポイント: 未検索");
+    var wTip = w ? (s.tip + " 広げて: " + daysAgoText(w)) : (s.tip + " 広げて: 未検索");
+    return '<div class="ssh-col">' +
+      '<span class="ssh-site-label ' + s.cls + '">' + s.label + '</span>' +
+      '<span class="ssh-m ' + (p ? "ssh-hit" : "ssh-miss") + '" title="' + pTip + '">P</span>' +
+      '<span class="ssh-m ' + (w ? "ssh-hit" : "ssh-miss") + '" title="' + wTip + '">広</span>' +
+      '</div>';
+  }).join('') + '</div>';
+}
+
 function daysAgoText(isoStr) {
   if (!isoStr) return null;
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -2421,16 +2440,13 @@ function renderCustomerRow(c, dimmed) {
           const chips = [];
           const sent = daysAgoText(c.last_property_sent_at);
           const viewed = daysAgoText(c.property_viewed_at);
-          const pin = daysAgoText(c.last_pinpoint_search_at);
-          const wide = daysAgoText(c.last_wide_search_at);
           if (sent)   chips.push('<span class="date-chip dc-sent">送:' + sent + '</span>');
           if (viewed) chips.push('<span class="date-chip dc-viewed">確:' + viewed + '</span>');
-          if (pin)    chips.push('<span class="date-chip dc-pin">P:' + pin + '</span>');
-          if (wide)   chips.push('<span class="date-chip dc-wide">広:' + wide + '</span>');
           return chips.length ? '<div class="c-dates">' + chips.join('') + '</div>' : '';
         })()}
       </div>
       <span class="s-badge badge-${esc(c.status)}">${esc(label)}</span>
+      ${buildSshGrid(c.search_history)}
       <button class="viewed-btn${isViewedToday(c) ? " viewed-done" : ""}" data-id="${esc(String(c.id))}">${isViewedToday(c) ? "☑" : "確認"}</button>
       <svg class="c-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
     </div>`;
@@ -3497,16 +3513,23 @@ function openInstructions(siteKey) {
           });
         });
       }
-      // 検索日時を記録（fire-and-forget）
+      // 検索日時をサイト別に記録（fire-and-forget）
       if (selectedCustomer?.id) {
+        const _mode = searchMode === "wide" ? "w" : "p";
+        const _sh = Object.assign({}, selectedCustomer.search_history || {});
+        _sh["itandi_" + _mode] = new Date().toISOString();
         const _srchField = searchMode === "wide" ? "last_wide_search_at" : "last_pinpoint_search_at";
+        const _now = new Date().toISOString();
         fetch(API_BASE + "/api/property-customers", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: selectedCustomer.id, [_srchField]: new Date().toISOString() }),
+          body: JSON.stringify({ id: selectedCustomer.id, search_history: _sh, [_srchField]: _now }),
         }).then(() => {
           const idx = allCustomers.findIndex((x) => x.id === selectedCustomer.id);
-          if (idx >= 0) { allCustomers[idx][_srchField] = new Date().toISOString(); selectedCustomer[_srchField] = new Date().toISOString(); }
+          if (idx >= 0) {
+            allCustomers[idx].search_history = _sh; allCustomers[idx][_srchField] = _now;
+            selectedCustomer.search_history = _sh; selectedCustomer[_srchField] = _now;
+          }
           sessionStorage.removeItem(CUSTOMER_CACHE_KEY);
         }).catch(() => {});
       }
@@ -3993,16 +4016,23 @@ function openInstructions(siteKey) {
           console.warn("[AX] fill-done タイムアウト: 25秒以内に完了通知が来なかったためリセット");
         }
       }, 25000);
-      // 検索日時を記録（fire-and-forget）
+      // 検索日時をサイト別に記録（fire-and-forget）
       if (selectedCustomer?.id) {
+        const _mode = searchMode === "wide" ? "w" : "p";
+        const _sh = Object.assign({}, selectedCustomer.search_history || {});
+        _sh["realpro_" + _mode] = new Date().toISOString();
         const _srchField = searchMode === "wide" ? "last_wide_search_at" : "last_pinpoint_search_at";
+        const _now = new Date().toISOString();
         fetch(API_BASE + "/api/property-customers", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: selectedCustomer.id, [_srchField]: new Date().toISOString() }),
+          body: JSON.stringify({ id: selectedCustomer.id, search_history: _sh, [_srchField]: _now }),
         }).then(() => {
           const idx = allCustomers.findIndex((x) => x.id === selectedCustomer.id);
-          if (idx >= 0) { allCustomers[idx][_srchField] = new Date().toISOString(); selectedCustomer[_srchField] = new Date().toISOString(); }
+          if (idx >= 0) {
+            allCustomers[idx].search_history = _sh; allCustomers[idx][_srchField] = _now;
+            selectedCustomer.search_history = _sh; selectedCustomer[_srchField] = _now;
+          }
           sessionStorage.removeItem(CUSTOMER_CACHE_KEY);
         }).catch(() => {});
       }
@@ -4177,6 +4207,26 @@ function openInstructions(siteKey) {
         });
       });
 
+      // 検索日時をサイト別に記録（fire-and-forget）
+      if (selectedCustomer?.id) {
+        const _mode = searchMode === "wide" ? "w" : "p";
+        const _sh = Object.assign({}, selectedCustomer.search_history || {});
+        _sh["reins_" + _mode] = new Date().toISOString();
+        const _srchField = searchMode === "wide" ? "last_wide_search_at" : "last_pinpoint_search_at";
+        const _now = new Date().toISOString();
+        fetch(API_BASE + "/api/property-customers", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: selectedCustomer.id, search_history: _sh, [_srchField]: _now }),
+        }).then(() => {
+          const idx = allCustomers.findIndex((x) => x.id === selectedCustomer.id);
+          if (idx >= 0) {
+            allCustomers[idx].search_history = _sh; allCustomers[idx][_srchField] = _now;
+            selectedCustomer.search_history = _sh; selectedCustomer[_srchField] = _now;
+          }
+          sessionStorage.removeItem(CUSTOMER_CACHE_KEY);
+        }).catch(() => {});
+      }
       autofillBtn.textContent = "✓ 入力しました！";
       autofillBtn.classList.add("done");
       setTimeout(() => {

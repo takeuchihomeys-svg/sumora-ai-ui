@@ -191,6 +191,45 @@ body {
   .dc-wide   { background: #2a1a3a; color: #ce93d8; }
 }
 
+/* サイト別検索履歴グリッド（リアプロ/itandi/レインズ × P/広） */
+.ssh-grid {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.ssh-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.ssh-site-label {
+  font-size: 8px;
+  font-weight: 800;
+  padding: 1px 3px;
+  border-radius: 2px;
+  color: #fff;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+.ssh-rp { background: #1565c0; }
+.ssh-it { background: #e65100; }
+.ssh-re { background: #2e7d32; }
+.ssh-m {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.1;
+  cursor: default;
+}
+.ssh-hit { color: #1976d2; }
+.ssh-miss { color: #ccc; }
+
+@media (prefers-color-scheme: dark) {
+  .ssh-hit { color: #90caf9; }
+  .ssh-miss { color: #555; }
+}
+
 .s-badge {
   font-size: 10px; font-weight: 700;
   padding: 2px 7px; border-radius: 8px; flex-shrink: 0;

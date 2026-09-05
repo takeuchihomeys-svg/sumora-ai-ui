@@ -2815,6 +2815,9 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS send_keyword TEXT;
 -- 複数構造を「・」区切りで保存。page-script.js の STRUCTURE_MAP キーと一致させる
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS structure_types TEXT;
 
+-- ── search_history: サイト別検索履歴（2026-09-05追加）──
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS search_history JSONB DEFAULT '{}';
+
 -- ── ピンポイント/広域検索の最終実行日時（2026-09-05追加）──
 -- popup.js の駅/地域モード別に「最後にいつ検索したか」を記録する
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS last_pinpoint_search_at TIMESTAMPTZ;
