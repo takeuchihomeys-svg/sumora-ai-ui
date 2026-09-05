@@ -796,7 +796,7 @@ export async function PATCH(req: NextRequest) {
 
 // ─── カレンダー自動登録 ──────────────────────────────────────────────────────
 // 「明日確認します」「〇月〇日にご連絡します」等の約束をcalendar_eventsへ自動登録
-const COMMITMENT_RE = /明日|明後日|本日|今日|来週|今週中?|週明け|[0-9０-９]{1,2}[\/月][0-9０-９]{1,2}|\d+月\d+日|\d+日(?:まで|中|以内|に|より|以降)|[0-9０-９]{1,2}\s*[:：時]\s*[0-9０-９]{0,2}|午前中|朝一|(?:でき|出来|撮影し)次第|有効期限|期限|テレビ電話|御?見積書/;
+const COMMITMENT_RE = /明日|明後日|本日|今日|来週|今週中?|週明け|[0-9０-９]{1,2}[\/月][0-9０-９]{1,2}|\d+月\d+日|\d+日(?:まで|中|以内|に|より|以降)|[0-9０-９]{1,2}\s*[:：時]\s*[0-9０-９]{0,2}|午前中|朝一|(?:でき|出来|撮影し)次第|有効期限|期限|テレビ電話|御?見積書|ピックアップ/;
 
 async function detectAndCreateCalendarEvent({
   sentReply,
@@ -820,7 +820,7 @@ async function detectAndCreateCalendarEvent({
 「明日確認します」「〇月〇日にご連絡します」などスタッフが将来に行動を約束している場合のみ、日時と内容をJSONで返してください。
 お客様への依頼・質問・単なる日程の言及は対象外です。
 「新着が出次第」「空室が出次第」等、外部イベント待ちの継続約束は has_commitment: false にすること。
-物件ピックアップ・物件を探して送る約束（「ピックアップでき次第ご連絡します」「お部屋をいくつかピックアップしてご連絡します」「物件をご用意してお送りします」等）は has_commitment: true・date=${todayDateStr}・all_day: true・event_type="property_send" とすること。
+物件ピックアップ・物件を探して送る約束（「ピックアップでき次第ご連絡します」「お部屋をいくつかピックアップしてご連絡します」「お部屋をピックアップしてご連絡させて頂きます」「物件をご用意してお送りします」等）は has_commitment: true・date=${todayDateStr}・all_day: true・event_type="property_send" とすること。
 見積書・御見積書を作成・送付する約束（「見積書をお送りします」「御見積書をご用意します」「見積書を作成してご連絡します」等）は has_commitment: true・date=${todayDateStr}・all_day: true・event_type="estimate_sheet" とすること。
 スタッフが能動的に行動して結果を連絡する約束（「交渉でき次第ご連絡します」「確認でき次第お知らせします」「折り返しご連絡します」等）は has_commitment: true とし date に ${tomorrowDateStr} を入れ all_day: true とすること。
 
