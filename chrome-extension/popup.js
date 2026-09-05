@@ -2401,8 +2401,8 @@ function buildSshGrid(sh) {
     var wTip = w ? (s.tip + " 広げて: " + daysAgoText(w)) : (s.tip + " 広げて: 未検索");
     return '<div class="ssh-col">' +
       '<span class="ssh-site-label ' + s.cls + '">' + s.label + '</span>' +
-      '<span class="ssh-m ' + (p ? "ssh-hit" : "ssh-miss") + '" title="' + pTip + '">P</span>' +
-      '<span class="ssh-m ' + (w ? "ssh-hit" : "ssh-miss") + '" title="' + wTip + '">広</span>' +
+      '<span class="ssh-m ' + (p ? "ssh-hit" : "ssh-miss") + '" title="' + pTip + '">' + (p ? "✓" : "P") + '</span>' +
+      '<span class="ssh-m ' + (w ? "ssh-hit" : "ssh-miss") + '" title="' + wTip + '">' + (w ? "✓" : "広") + '</span>' +
       '</div>';
   }).join('') + '</div>';
 }

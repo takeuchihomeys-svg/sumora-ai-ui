@@ -222,11 +222,11 @@ body {
   line-height: 1.1;
   cursor: default;
 }
-.ssh-hit { color: #1976d2; }
-.ssh-miss { color: #ccc; }
+.ssh-hit { color: #fff; background: #1976d2; border-radius: 3px; padding: 0 2px; }
+.ssh-miss { color: #bbb; }
 
 @media (prefers-color-scheme: dark) {
-  .ssh-hit { color: #90caf9; }
+  .ssh-hit { color: #fff; background: #1565c0; }
   .ssh-miss { color: #555; }
 }
 
