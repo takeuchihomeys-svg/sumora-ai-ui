@@ -796,7 +796,7 @@ export async function PATCH(req: NextRequest) {
 
 // ─── カレンダー自動登録 ──────────────────────────────────────────────────────
 // 「明日確認します」「〇月〇日にご連絡します」等の約束をcalendar_eventsへ自動登録
-const COMMITMENT_RE = /明日|明後日|本日|今日|来週|今週中?|週明け|[0-9０-９]{1,2}[\/月][0-9０-９]{1,2}|\d+月\d+日|\d+日(?:まで|中|以内|に|より|以降)|[0-9０-９]{1,2}\s*[:：時]\s*[0-9０-９]{0,2}|午前中|朝一|(?:でき|撮影し)次第|有効期限|期限|テレビ電話|御?見積書/;
+const COMMITMENT_RE = /明日|明後日|本日|今日|来週|今週中?|週明け|[0-9０-９]{1,2}[\/月][0-9０-９]{1,2}|\d+月\d+日|\d+日(?:まで|中|以内|に|より|以降)|[0-9０-９]{1,2}\s*[:：時]\s*[0-9０-９]{0,2}|午前中|朝一|(?:でき|出来|撮影し)次第|有効期限|期限|テレビ電話|御?見積書/;
 
 async function detectAndCreateCalendarEvent({
   sentReply,
@@ -876,6 +876,22 @@ all_dayは時刻が特定できない場合のみtrue。時刻があればfalse�
     all_day: parsed.all_day ?? true,
     notes: sentReply.slice(0, 200),
   });
+}
+
+// ─── カレンダー消込 ──────────────────────────────────────────────────────────
+// AIXの見積書送付（estimate_sheet）・物件ピックアップ送付（property_send）は「約束の履行」送信。
+// 送信確定（save-reply-example到達）時点で、同会話の同種未完了イベントを自動でis_done=trueにする
+async function markCalendarEventsDone(
+  conversationId: string,
+  eventType: "estimate_sheet" | "property_send",
+): Promise<void> {
+  const { error } = await supabase
+    .from("calendar_events")
+    .update({ is_done: true })
+    .eq("conversation_id", conversationId)
+    .eq("event_type", eventType)
+    .eq("is_done", false);
+  if (error) console.error("[save-reply-example] calendar mark-done failed:", error.message);
 }
 
 // ─── POST ────────────────────────────────────────────────────────────────────
@@ -1038,6 +1054,17 @@ export async function POST(req: NextRequest) {
   // skipNormalize=true の場合（AixModal側で既に正規化済み）はノーマライズをスキップ
   const conversationState = skipNormalize ? rawResolved : (STATE_NORMALIZE[rawResolved] ?? rawResolved);
 
+  // ─── カレンダー処理の種別判定 ───
+  // AIX estimate_sheet / property_send（サブキー付き含む）は約束の「履行」送信なので、
+  // 新規カレンダー登録（detectAndCreateCalendarEvent）ではなく既存未完了イベントの消込を行う
+  const aixActionStr = typeof aix_action === "string" ? aix_action : "";
+  const fulfillmentEventType: "estimate_sheet" | "property_send" | null =
+    entry_source === "aix_action" && aixActionStr.startsWith("estimate_sheet")
+      ? "estimate_sheet"
+      : entry_source === "aix_action" && aixActionStr.startsWith("property_send")
+        ? "property_send"
+        : null;
+
   // ─── 分割送信マージ: 90秒以内に同じcustomerMessageで送ったものは1レコードに結合 ───
   // LINEでは1つの返信を複数メッセージに分けて送ることが多い。別レコードにすると
   // RAGが断片的な文のみ参照してしまうため、1つの完全な返信として結合して保存する。
@@ -1099,6 +1126,21 @@ export async function POST(req: NextRequest) {
           .eq("status", "generated")
           .gte("generated_at", thirtyMinAgo);
       });
+    }
+
+    // カレンダー: マージパス（分割送信2通目）でも登録/消込を行う
+    // （見積書カバーレター等、2通目にのみ約束文が含まれるケースが早期returnで落ちるのを防止）
+    if (conversationId) {
+      if (fulfillmentEventType) {
+        after(() => markCalendarEventsDone(conversationId, fulfillmentEventType).catch((e) =>
+          console.error("[save-reply-example] calendar mark-done failed:", e)));
+      } else {
+        after(() => detectAndCreateCalendarEvent({
+          sentReply,
+          conversationId,
+          sentAt: typeof sentAt === "string" ? sentAt : undefined,
+        }).catch((e) => console.error("[save-reply-example] calendar detect failed:", e)));
+      }
     }
 
     return NextResponse.json({ ok: true, id: splitCandidate.id, merged: true });
@@ -1291,12 +1333,18 @@ export async function POST(req: NextRequest) {
   }
 
   // カレンダー自動登録: 約束（明日確認等）が含まれる返信をcalendar_eventsへ自動追加
+  // AIX estimate_sheet / property_send は約束の「履行」送信 → 新規登録せず未完了イベントを消込
   if (conversationId && sentReply) {
-    after(() => detectAndCreateCalendarEvent({
-      sentReply,
-      conversationId,
-      sentAt: typeof sentAt === "string" ? sentAt : undefined,
-    }));
+    if (fulfillmentEventType) {
+      after(() => markCalendarEventsDone(conversationId, fulfillmentEventType).catch((e) =>
+        console.error("[save-reply-example] calendar mark-done failed:", e)));
+    } else {
+      after(() => detectAndCreateCalendarEvent({
+        sentReply,
+        conversationId,
+        sentAt: typeof sentAt === "string" ? sentAt : undefined,
+      }).catch((e) => console.error("[save-reply-example] calendar detect failed:", e)));
+    }
   }
 
   return NextResponse.json({ ok: true, id: data?.id, conversation_state: conversationState });
