@@ -3344,5 +3344,68 @@ export async function runBrainAndNotify(conversationId: string, msgText?: string
     }
   })();
 
+  // ブレインのaction判断時にカレンダーへ直接登録（テキスト解析不要・通知失敗の影響を受けない fire-and-forget）
+  if (conversationId && snapshot.meta.action) {
+    void createCalendarEventFromBrainAction(conversationId, snapshot.meta.action, snapshot.customerName || null)
+      .catch((e) => console.error("[brain-core] calendar from brain action failed:", e));
+  }
+
   return snapshot;
+}
+
+/**
+ * ブレインが判断した AIX action からカレンダーイベントを直接登録する。
+ * COMMITMENT_RE + Haiku のテキスト解析に頼らず、ブレインの判断をそのままタスク化する。
+ * 同日・同会話・同種の未完了イベントが既にある場合は重複登録しない
+ * （ブレインは同一会話・同日に複数回発火しうるため必須のガード）。
+ */
+async function createCalendarEventFromBrainAction(
+  conversationId: string,
+  action: string,
+  customerName: string | null,
+): Promise<void> {
+  const ACTION_CALENDAR_MAP: Record<string, { eventType: string; daysFromNow: number; label: string }> = {
+    estimate_sheet:  { eventType: "estimate_sheet",  daysFromNow: 0, label: "御見積書送付" },
+    property_send:   { eventType: "property_send",   daysFromNow: 0, label: "物件ピックアップ送付" },
+    property_search: { eventType: "property_send",   daysFromNow: 0, label: "物件ピックアップ" },
+    viewing_invite:  { eventType: "viewing",         daysFromNow: 0, label: "内覧調整" },
+    phone:           { eventType: "phone",           daysFromNow: 0, label: "電話連絡" },
+    follow_up:       { eventType: "follow_up",       daysFromNow: 1, label: "フォローアップ" },
+  };
+  const cfg = ACTION_CALENDAR_MAP[action];
+  if (!cfg) return;
+
+  // JSTでの今日/明日を算出
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const targetDate = new Date(jstNow.getTime() + cfg.daysFromNow * 86400000);
+  const dateStr = targetDate.toISOString().slice(0, 10); // YYYY-MM-DD
+  const startAt = `${dateStr}T10:00:00+09:00`;
+
+  const title = customerName ? `${customerName} ${cfg.label}` : cfg.label;
+
+  try {
+    // 同日・同会話・同種イベントが既に存在する場合は重複登録しない
+    const { data: existing } = await supabase
+      .from("calendar_events")
+      .select("id")
+      .eq("conversation_id", conversationId)
+      .eq("event_type", cfg.eventType)
+      .gte("start_at", `${dateStr}T00:00:00+09:00`)
+      .lte("start_at", `${dateStr}T23:59:59+09:00`)
+      .eq("is_done", false)
+      .limit(1);
+    if (existing && existing.length > 0) return; // 既存あり → スキップ
+
+    await supabase.from("calendar_events").insert({
+      title,
+      event_type: cfg.eventType,
+      customer_name: customerName,
+      conversation_id: conversationId,
+      start_at: startAt,
+      all_day: true,
+      notes: `[Brain AIX] action=${action}`,
+    });
+  } catch (e) {
+    console.warn("[brain-core] createCalendarEventFromBrainAction failed:", conversationId, e instanceof Error ? e.message : e);
+  }
 }
