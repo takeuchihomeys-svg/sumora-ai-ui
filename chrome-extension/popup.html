@@ -177,7 +177,7 @@
 
         <!-- 一時調整フォーム（リアプロ+アンダーバーのみ表示） -->
         <div id="adj-form" class="adj-form" style="display:none">
-          <div class="adj-title">⚙️ 一時調整 <span class="adj-note">DBは変更しません</span></div>
+          <div class="adj-title">⚙️ 一時調整 <span class="adj-note">検索のみ調整（💾で本条件に保存可）</span></div>
 
           <!-- 一時調整が検索軸を上書きしている時のインジケーター（JSで表示制御） -->
           <div id="adj-mode-indicator" class="adj-mode-indicator" style="display:none"></div>
@@ -283,6 +283,12 @@
                 <option value="1ヶ月以内">1ヶ月以内</option>
               </select>
             </div>
+          </div>
+
+          <!-- 一時調整を顧客の本条件としてDB保存するボタン -->
+          <div class="adj-save-row" id="adj-save-row" style="display:none">
+            <button id="adj-save-btn" type="button" title="一時調整の内容をお客さんの本条件に上書き保存します（DB更新）">💾 本条件に反映する</button>
+            <span id="adj-save-status" class="adj-save-status"></span>
           </div>
         </div>
       </div>

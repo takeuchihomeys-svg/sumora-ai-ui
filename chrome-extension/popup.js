@@ -2579,7 +2579,10 @@ function openSiteView(customer) {
           // selectedCustomer を merged の値で上書き
           selectedCustomer = { ...customer, ...merged };
           // adj フォームも更新
-          if (document.getElementById("adj-area")) preloadAdjForm(selectedCustomer);
+          if (document.getElementById("adj-area")) {
+            preloadAdjForm(selectedCustomer);
+            wireAdjSaveBtn(selectedCustomer); // merged後の新オブジェクトに配線し直す
+          }
         }
       } catch (e) {
         console.error("[AX] merge-conditions error:", e);
@@ -2948,6 +2951,93 @@ function preloadAdjForm(c) {
 
   // 一時調整履歴の復元（顧客別 localStorage）+ チップ描画 + インジケーター更新
   restoreTempAdj(c);
+}
+
+// ── 一時調整 → 本条件反映（DB保存）───────────────────────────────
+// 保存ボタンの表示制御＋クリック配線。顧客未選択（id無し）なら非表示。
+function wireAdjSaveBtn(c) {
+  const row = document.getElementById("adj-save-row");
+  const btn = document.getElementById("adj-save-btn");
+  if (!row || !btn) return;
+  if (!c || !c.id) { row.style.display = "none"; return; }
+  row.style.display = "flex";
+  btn.onclick = () => applyAdjToCustomer(c);
+}
+
+// 一時調整フォームの入力値を property_customers に PATCH で上書き保存する。
+// 空欄のフィールドはボディに含めない（DBを空文字で上書きしない）。
+async function applyAdjToCustomer(c) {
+  if (!c || !c.id) return;
+  const btn      = document.getElementById("adj-save-btn");
+  const statusEl = document.getElementById("adj-save-status");
+  const val = (id) => document.getElementById(id)?.value.trim() || "";
+  const numVal = (id) => {
+    const v = val(id);
+    return v !== "" && !isNaN(Number(v)) ? Number(v) : null;
+  };
+
+  const body = { id: c.id };
+
+  // 地域・駅 → desired_area / area_mode
+  const ward    = val("adj-area-ward");
+  const station = val("adj-area-station");
+  if (ward && station) {
+    body.desired_area = ward + "・" + station;
+    body.area_mode = "auto";
+  } else if (ward) {
+    body.desired_area = ward;
+    body.area_mode = "ward";
+  } else if (station) {
+    body.desired_area = station;
+    body.area_mode = "station";
+  }
+  // どちらも空 → エリアは更新しない
+
+  const rentMax     = numVal("adj-rent-max");     if (rentMax !== null)     body.rent_max = rentMax;
+  const areaMin     = numVal("adj-area-min");     if (areaMin !== null)     body.floor_area_min = areaMin;
+  const areaMax     = numVal("adj-area-max");     if (areaMax !== null)     body.floor_area_max = areaMax;
+  const walk        = numVal("adj-walk");         if (walk !== null)        body.walk_minutes = walk;
+  const age         = numVal("adj-age");          if (age !== null)         body.building_age = age;
+  const floor       = val("adj-floor");           if (floor)                body.floor_plan = floor;
+  const structure   = val("adj-structure");       if (structure)            body.structure_types = structure;
+  const initialCost = numVal("adj-initial-cost"); if (initialCost !== null) body.initial_cost_limit = initialCost;
+  const moveIn      = val("adj-move-in");         if (moveIn)               body.move_in_time = moveIn;
+  body.pet = !!document.getElementById("adj-pet")?.checked;
+  // ※ last_property_sent_at は含めない（API側のステータス自動昇降格ロジックが発火するため）
+
+  if (statusEl) { statusEl.textContent = "保存中..."; statusEl.className = "adj-save-status saving"; }
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/property-customers`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+
+    // メモリ上の顧客オブジェクト・一覧・キャッシュを同期（フォームは再preloadしない）
+    const { id: _saveId, ...savedFields } = body;
+    Object.assign(c, savedFields);
+    if (selectedCustomer && selectedCustomer.id === c.id) Object.assign(selectedCustomer, savedFields);
+    const idx = allCustomers.findIndex((x) => x.id === c.id);
+    if (idx >= 0) allCustomers[idx] = { ...allCustomers[idx], ...savedFields };
+    sessionStorage.removeItem(CUSTOMER_CACHE_KEY);
+
+    if (statusEl) {
+      statusEl.textContent = "✅ 反映しました";
+      statusEl.className = "adj-save-status ok";
+      setTimeout(() => {
+        if (statusEl.textContent === "✅ 反映しました") {
+          statusEl.textContent = "";
+          statusEl.className = "adj-save-status";
+        }
+      }, 3000);
+    }
+  } catch (e) {
+    console.warn("[AX] applyAdjToCustomer failed:", e);
+    if (statusEl) { statusEl.textContent = "❌ エラー"; statusEl.className = "adj-save-status err"; }
+  }
+  if (btn) btn.disabled = false;
 }
 
 function calcUpdateDays(dateStr, status) {
@@ -3326,6 +3416,7 @@ function openInstructions(siteKey) {
   if (siteKey === "itandi") {
     adjForm.style.display = "block";
     preloadAdjForm(selectedCustomer);
+    wireAdjSaveBtn(selectedCustomer);
     setupAreaModeSelector(selectedCustomer, "itandi");
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "🔍 itandiで自動検索";
@@ -3763,6 +3854,7 @@ function openInstructions(siteKey) {
     adjForm.style.display = "block";
     const c0 = selectedCustomer;
     preloadAdjForm(c0);
+    wireAdjSaveBtn(c0);
 
     // ── 駅/地域 切替ボタン（混在条件の検出） ──────────────────────────
     setupAreaModeSelector(c0, "realpro");
@@ -4234,6 +4326,7 @@ function openInstructions(siteKey) {
     adjForm.style.display = "block";
     const c0 = selectedCustomer;
     preloadAdjForm(c0);
+    wireAdjSaveBtn(c0);
     setupAreaModeSelector(c0, "reins");
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ REINSに自動入力";

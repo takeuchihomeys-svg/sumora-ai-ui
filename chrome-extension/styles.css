@@ -542,6 +542,23 @@ body {
 .adj-history-chip:hover { background: #ffe0b2; }
 .adj-chip-date { color: #bcaaa4; font-size: 9px; }
 
+/* ── 一時調整: 本条件に反映（DB保存）ボタン ── */
+.adj-save-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+#adj-save-btn {
+  padding: 7px 12px;
+  background: linear-gradient(135deg, #ef6c00, #ffb300);
+  color: white; border: none; border-radius: 8px;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+  white-space: nowrap;
+}
+#adj-save-btn:hover { opacity: 0.92; }
+#adj-save-btn:active { transform: scale(0.98); }
+#adj-save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.adj-save-status { font-size: 11px; font-weight: 700; }
+.adj-save-status.saving { color: #888; }
+.adj-save-status.ok { color: #2e7d32; }
+.adj-save-status.err { color: #c62828; }
+
 .autofill-btn {
   width: 100%; padding: 11px;
   background: linear-gradient(135deg, #e65100, #ff9800);
