@@ -3137,7 +3137,7 @@ export async function POST(req: NextRequest) {
         );
       }
       if (hasAction) {
-        // 安全ガード: brain キャッシュが estimate_sheet のままでも、顧客が同一メッセージで
+        // 安全ガード①: brain キャッシュが estimate_sheet のままでも、顧客が同一メッセージで
         // 新しい検索条件（路線・家賃・徒歩・広さ等）を指定していたら property_send 方向に上書き。
         // brain-core.ts 側の例外ルールと二重に守る（stale キャッシュ対策）。
         const latestCustText = brainMeta.action === "estimate_sheet"
@@ -3146,8 +3146,31 @@ export async function POST(req: NextRequest) {
         const isConditionOverride = brainMeta.action === "estimate_sheet" &&
           (/調べてほし[いく]|探してほし[いく]|探して欲[しく]|徒歩[0-9０-９]+分|家賃.{0,6}万|[0-9０-９]+万以下|広め|路線のみ|沿線|環状線|条件.{0,3}絞|条件.{0,3}変[えわ]/.test(latestCustText) ||
           /【[^】]{2,15}】[^。！\n]{0,5}[⇒→＝:：]/.test(latestCustText));
-        if (isConditionOverride) {
-          lines.push(`- 推奨アクション: 物件ピックアップ対応（property_send方向）— お客様が新しい検索条件（路線・家賃・徒歩・間取り・広さ等）を今回のメッセージで指定しているため、見積書の作成宣言をせず条件を受け止めて物件を探す方向で返信すること。AIXで物件送付後に見積対応。`);
+        // 安全ガード②: estimate_sheet は message-local アクション（顧客が「今回のメッセージ」で費用を
+        // 質問している場合のみ有効）。stale（T2/T3）では前回セッションの費用質問分類が残存するため
+        // brainFreshForMessage ゲートを適用し注入を抑止する。
+        // ガード①で検出できない条件ヒアリング（間取り・築年数・設備等の一般質問）もこれで網羅する。
+        const isEstimateSheetStale = brainMeta.action === "estimate_sheet" && !brainFreshForMessage;
+        // 安全ガード③: T1（brainFresh=true）でも、顧客の直近メッセージに費用関連語がない場合は
+        // estimate_sheet を注入しない（brain-core の旧 .slice(-3) バグ由来の誤分類残留対策）。
+        // 直近3件の顧客メッセージを参照（「よろしくお願いします」のみでも前のメッセージで費用言及があれば許可）。
+        const recentCustForEstimate = [...recentMessages]
+          .filter(m => m.sender === "customer" && m.text)
+          .slice(-3)
+          .map(m => m.text || "")
+          .join(" ");
+        const isEstimateRelevant = brainMeta.action === "estimate_sheet" &&
+          /見積|初期費用|費用|おいくら|いくら|合計|金額|費用感|敷金|礼金|割引|値引|予算/.test(recentCustForEstimate);
+        // T1かつ費用ワードなし → 明示的に抑制（スキップでなく抑制ノートを注入してLLMに作成宣言を禁止させる）
+        const isEstimateIrrelevant = brainMeta.action === "estimate_sheet" && brainFreshForMessage && !isEstimateRelevant;
+        if (isConditionOverride || isEstimateSheetStale || isEstimateIrrelevant) {
+          if (isConditionOverride) {
+            lines.push(`- 推奨アクション: 物件ピックアップ対応（property_send方向）— お客様が新しい検索条件（路線・家賃・徒歩・間取り・広さ等）を今回のメッセージで指定しているため、見積書の作成宣言をせず条件を受け止めて物件を探す方向で返信すること。AIXで物件送付後に見積対応。`);
+          } else if (isEstimateIrrelevant) {
+            lines.push(`- ⚠️ 見積アクション保留: brainがestimate_sheetを記録しているが、直近のお客様メッセージに見積・費用関連の語がない。今回の返信に「御見積書」「お見積もり」「最大限割引」等の作成宣言を一切含めないこと。お客様の現在のメッセージ（条件ヒアリング・検索依頼等）にのみ応答すること。`);
+          }
+          // isEstimateSheetStale のみの場合: アクション注入を完全スキップ（stale estimate_sheet を
+          // 「御見積書送付」として LLM に注入しない。物件条件ヒアリング場面への残留を防ぐ）。
         } else {
           lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}`);
           // property_check_result 時は propertyFactGateNote の保証会社名断言禁止を解除して明示を強制
