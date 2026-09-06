@@ -1104,19 +1104,20 @@ export async function analyzeConversation(
           opts.prevMeta.human_type_label ? `人物タイプ: ${opts.prevMeta.human_type_label}` : null,
         ].filter(Boolean).join(" ")
       : "";
+    // typedMessages は created_at DESC（新→旧）順。先頭が最新。
     const recentCustomerMsgs = typedMessages
       .filter(m => m.sender === "customer" && m.text)
-      .slice(-3)
+      .slice(0, 3)  // DESC先頭3件 = 最新3件（旧: .slice(-3) は最古3件を返していたバグ）
       .map(m => m.text)
       .join(" ");
     // TPOラベル推定: AIX-METAから場面を特定してRAGクエリに明示（成約TPOパターン命中精度向上）
-    const lastCustomerMsg = typedMessages.filter(m => m.sender === "customer" && m.text).slice(-1)[0]?.text ?? "";
+    const lastCustomerMsg = typedMessages.find(m => m.sender === "customer" && Boolean(m.text))?.text ?? "";
     const tpoHint = (() => {
       const intent = opts?.prevMeta?.customer_intent ?? "";
       const action = opts?.prevMeta?.action ?? "";
       const emotion = opts?.prevMeta?.customer_emotion ?? "";
       const msg = lastCustomerMsg ?? "";
-      const lastStaffMsg = typedMessages.filter(m => m.sender === "staff" && m.text).slice(-1)[0]?.text ?? null;
+      const lastStaffMsg = typedMessages.find(m => m.sender === "staff" && Boolean(m.text))?.text ?? null;
       // 1. 申込後説明（state確定・最優先）
       if (convStatus === "applying") return "申込後説明";
       // 2. 拒否対応（ネガティブ意図は他条件より優先）
