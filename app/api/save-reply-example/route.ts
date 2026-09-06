@@ -1055,7 +1055,7 @@ async function markRelatedDailyTasksDone(
     // eventType に応じてコンテンツフィルターを設定
     const contentFilter =
       eventType === "property_send"
-        ? "content.like.%物件ピックアップ%,content.like.%🏠%"
+        ? "content.like.%物件ピックアップ%,content.like.%🏠%,content.like.%物件送%,content.like.%物件おく%,content.like.%物件オスス%,content.like.%物件おすす%"
         : "content.like.%御見積書%,content.like.%見積書%,content.like.%📄%";
 
     // 同じ顧客名・未完了・対象キーワードを含むタスクを取得
@@ -1254,7 +1254,8 @@ export async function POST(req: NextRequest) {
   const fulfillmentEventType: "estimate_sheet" | "property_send" | null =
     entry_source === "aix_action" && aixActionStr.startsWith("estimate_sheet")
       ? "estimate_sheet"
-      : entry_source === "aix_action" && aixActionStr.startsWith("property_send")
+      : entry_source === "aix_action" &&
+          (aixActionStr.startsWith("property_send") || aixActionStr.startsWith("property_recommendation"))
         ? "property_send"
         : null;
 
