@@ -307,7 +307,16 @@ export function enforceAixGates(
         }
         continue;
       }
-      const rule = AIX_GATE_RULES.find((r) => r.test(s));
+      const rule = AIX_GATE_RULES.find((r) => {
+        if (!r.test(s)) return false;
+        // 内覧候補日時: スタッフ自身が提案済みの日付を引用している文は免除（二重ゲート防止）
+        // 例: スタッフ「9/7（月）16:00よりオンライン内覧…」→ 顧客「はい大丈夫」→ AI「9/7（月）16:00より内覧…」
+        if (r.name === "内覧候補日時" && opts?.lastStaffMsg) {
+          const dateMatch = s.match(/[0-9０-９]{1,2}\s*[\/／月]\s*[0-9０-９]{1,2}/);
+          if (dateMatch && opts.lastStaffMsg.includes(dateMatch[0])) return false;
+        }
+        return true;
+      });
       if (!rule) {
         outSentences.push(s);
         continue;

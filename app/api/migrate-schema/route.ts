@@ -487,8 +487,10 @@ $$;
 CREATE INDEX IF NOT EXISTS ai_reply_knowledge_embedding_idx ON ai_reply_knowledge USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
 -- created_at を戻り値に追加（generate-reply の鮮度スコアリングで使用）。
 -- 戻り値の型変更は CREATE OR REPLACE では不可のため既存関数を先に DROP する
+-- match_reply_knowledge: 4引数版(boost_state付き)を正本とする。3引数overloadはPGRST203の原因になるため削除。
+-- boost_state=NULLで呼び出すと従来の3引数版と同じ動作（後方互換）。
 DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer);
-CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7)
+CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
 RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text, created_at timestamptz)
 LANGUAGE sql STABLE AS $$
   SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
@@ -498,7 +500,10 @@ LANGUAGE sql STABLE AS $$
   FROM ai_reply_knowledge ak
   WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
     AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
-  ORDER BY ak.embedding <=> query_embedding LIMIT match_count
+  ORDER BY
+    CASE WHEN boost_state IS NOT NULL AND ak.conversation_state = boost_state THEN 0 ELSE 1 END,
+    ak.embedding <=> query_embedding
+  LIMIT match_count
 $$;
 
 -- トリガーアクションルールテーブル（キーワード→AIXアクション マッピング）
@@ -1115,9 +1120,9 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS was_edited BOOLEAN;
 -- ⑥ match_reply_knowledge を hypothesis_status ADD COLUMN の後に再定義
 --    （line 479 での定義は hypothesis_status が存在しない新規環境で失敗するため、
 --      hypothesis_status ADD COLUMN（line 802）の後にも再実行する）
---    戻り値型の変更に備え DROP → CREATE で再定義（created_at は鮮度スコアリング用）
+--    4引数版(boost_state付き)を正本として再定義。3引数overloadはDROPして解消（PGRST203防止）。
 DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer);
-CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7)
+CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
 RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text, created_at timestamptz)
 LANGUAGE sql STABLE AS $$
   SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
@@ -1127,7 +1132,10 @@ LANGUAGE sql STABLE AS $$
   FROM ai_reply_knowledge ak
   WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
     AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
-  ORDER BY ak.embedding <=> query_embedding LIMIT match_count
+  ORDER BY
+    CASE WHEN boost_state IS NOT NULL AND ak.conversation_state = boost_state THEN 0 ELSE 1 END,
+    ak.embedding <=> query_embedding
+  LIMIT match_count
 $$;
 
 -- 自動返信化準備スコアの時系列スナップショット（週次 upsert で最新1件になるのを防ぐ）

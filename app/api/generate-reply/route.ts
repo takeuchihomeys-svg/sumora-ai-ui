@@ -2898,7 +2898,12 @@ export async function POST(req: NextRequest) {
         /(他(に|の)|別の|違う|もっと|追加で|再度)[^\n]{0,10}(物件|お部屋|部屋|ピックアップ|探し)/.test(message) ||
         /(探して|ピックアップして)[^\n]{0,6}(ください|下さい|もらえ|頂け|いただけ|ほしい|欲しい)/.test(message);
       // ④ 内覧日程の再調整依頼 → 内覧調整宣言は正当
-      const asksNewViewing = /(別の|他の|違う)[^\n]{0,6}(日|日程|候補|時間)|都合が(悪|つかな)/.test(message);
+      // 内覧日程再調整 or 顧客が提案済み日時を受諾した場合（例: 「はい大丈夫です！」「その日でお願いします」）
+      // 受諾時は viewingInvite=false にしてL944-945の内覧宣言禁止ノートを解除する（返信に日時を含めることが正当になるため）
+      const asksNewViewing = /(別の|他の|違う)[^\n]{0,6}(日|日程|候補|時間)|都合が(悪|つかな)/.test(message) ||
+        (!!lastStaffMsgForSearch &&
+          /[0-9０-９]{1,2}\s*[\/月]\s*[0-9０-９]{1,2}/.test(lastStaffMsgForSearch) &&
+          /大丈夫|はい|OK|お願いします|その日で|で大丈夫|承知|かしこまり/.test(message));
 
       const VACANCY_RELEASE = hasNewPropertyRef || asksRecheck;
       const vacancyCheck = !VACANCY_RELEASE && fresh.some((l) => l.aix_type === "property_check_result");

@@ -2493,7 +2493,7 @@ const FULL_BYPASS_RE = /申込|申し込|入居(したい|します|希望)|契�
 // インクリメンタル昇格語: 急ぎではあるがincremental（前回結論+新着）で十分対応できる語
 // 「今日/明日/お願いします/内覧/見積」等の日常的な商談語はcachedをスキップするが
 // fullではなくincrementalで対応（コスト削減の核心）
-const INCREMENTAL_BYPASS_RE = /内見|内覧|見学|見に行|決め(ます|ました|たい)|急ぎ|至急|別の(物件|部屋)|検討します|また連絡|連絡します|少し待って|迷って|悩んで|保留|保留中|考えさせて|考え中|後で|後ほど|検討中|初期費用|見積|費用感|諸費用|仲介手数料|敷金|礼金|保証料|かしこまり|ありがとうございます|ありがとうございました|よろしくお願いします|よろしくお願いいたします|承知しました|わかりました|了解しました/;
+const INCREMENTAL_BYPASS_RE = /内見|内覧|見学|見に行|決め(ます|ました|たい)|急ぎ|至急|別の(物件|部屋)|検討します|また連絡|連絡します|少し待って|迷って|悩んで|保留|保留中|考えさせて|考え中|後で|後ほど|検討中|初期費用|見積|費用感|諸費用|仲介手数料|敷金|礼金|保証料|かしこまり|ありがとうございます|ありがとうございました|よろしくお願いします|よろしくお願いいたします|承知しました|わかりました|了解しました|大丈夫|はい|オッケー|OK|その日で|いいです/;
 
 function formatJstDateShort(iso: string | null): string {
   if (!iso) return "";
@@ -2765,6 +2765,8 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
       ...(cachedMeta as NonNullable<SuggestedAixMeta>),
       source: "cached",
       enforcement_level: "optional",
+      // キャッシュ返却時は reply_mode=aix を auto_reply に降格（AIX誘導中のまま自動ドラフトが止まるため）
+      ...((cachedMeta as NonNullable<SuggestedAixMeta>).reply_mode === "aix" ? { reply_mode: "auto_reply" as const } : {}),
     };
     await supabase
       .from("conversations")
