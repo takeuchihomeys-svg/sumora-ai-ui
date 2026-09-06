@@ -917,6 +917,7 @@ all_dayは時刻が特定できない場合のみtrue。時刻があればfalse�
     startAt,
     allDay: parsed.all_day ?? true,
     title,
+    rawTitle: parsed.title,
   });
 }
 
@@ -928,12 +929,14 @@ async function notifyCalendarCreated({
   startAt,
   allDay,
   title,
+  rawTitle,
 }: {
   customerName: string | null;
   eventType: string;
   startAt: string;
   allDay: boolean;
   title: string;
+  rawTitle?: string;
 }): Promise<void> {
   try {
     const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
@@ -994,7 +997,7 @@ async function notifyCalendarCreated({
       await sbScreening.from("daily_tasks").insert({
         id: `dt_sumora_${Date.now()}`,
         customer_name: customerName ?? "",
-        content: `${emoji} ${title}`,
+        content: `${emoji} ${customerName ? `[${customerName}] ` : ""}${rawTitle ?? title}`,
         date: evDateStr,
         time: allDay ? "" : `${String(jstEv.getUTCHours()).padStart(2, "0")}:${String(jstEv.getUTCMinutes()).padStart(2, "0")}`,
         end_time: "",
@@ -1019,6 +1022,69 @@ async function markCalendarEventsDone(
     .eq("event_type", eventType)
     .eq("is_done", false);
   if (error) console.error("[save-reply-example] calendar mark-done failed:", error.message);
+}
+
+// ─── daily_tasks 消込 ────────────────────────────────────────────────────────
+// AIXで物件送付 / 見積書送付したとき、screening-admin の daily_tasks で
+// 同じ顧客名・同種の未完了タスクを自動的に done=true にする（fire-and-forget）
+async function markRelatedDailyTasksDone(
+  conversationId: string,
+  eventType: "estimate_sheet" | "property_send",
+): Promise<void> {
+  try {
+    const screeningUrl = process.env.SCREENING_ADMIN_SUPABASE_URL;
+    const screeningKey = process.env.SCREENING_ADMIN_SUPABASE_ANON_KEY;
+    if (!screeningUrl || !screeningKey) return;
+
+    // 顧客名を conversations テーブルから取得
+    let customerName: string | null = null;
+    try {
+      const { data: conv } = await supabase
+        .from("conversations")
+        .select("customer_name, display_name")
+        .eq("id", conversationId)
+        .single();
+      const c = conv as { customer_name?: string; display_name?: string } | null;
+      customerName = c?.customer_name || c?.display_name || null;
+    } catch { /* ignore */ }
+
+    if (!customerName) return; // 顧客名がなければスキップ
+
+    const sbScreening = createClient(screeningUrl, screeningKey);
+
+    // eventType に応じてコンテンツフィルターを設定
+    const contentFilter =
+      eventType === "property_send"
+        ? "content.like.%物件ピックアップ%,content.like.%🏠%"
+        : "content.like.%御見積書%,content.like.%見積書%,content.like.%📄%";
+
+    // 同じ顧客名・未完了・対象キーワードを含むタスクを取得
+    const { data: tasks, error: fetchError } = await sbScreening
+      .from("daily_tasks")
+      .select("id")
+      .eq("customer_name", customerName)
+      .eq("done", false)
+      .or(contentFilter);
+
+    if (fetchError) {
+      console.error("[save-reply-example] markRelatedDailyTasksDone fetch failed:", fetchError.message);
+      return;
+    }
+    if (!tasks || tasks.length === 0) return;
+
+    // 対象タスクを一括で done=true に更新
+    const ids = (tasks as { id: string }[]).map((t) => t.id);
+    const { error: updateError } = await sbScreening
+      .from("daily_tasks")
+      .update({ done: true })
+      .in("id", ids);
+
+    if (updateError) {
+      console.error("[save-reply-example] markRelatedDailyTasksDone update failed:", updateError.message);
+    }
+  } catch (e) {
+    console.error("[save-reply-example] markRelatedDailyTasksDone error:", e);
+  }
 }
 
 // ─── POST ────────────────────────────────────────────────────────────────────
@@ -1261,6 +1327,7 @@ export async function POST(req: NextRequest) {
       if (fulfillmentEventType) {
         after(() => markCalendarEventsDone(conversationId, fulfillmentEventType).catch((e) =>
           console.error("[save-reply-example] calendar mark-done failed:", e)));
+        after(() => markRelatedDailyTasksDone(conversationId, fulfillmentEventType));
       } else {
         after(() => detectAndCreateCalendarEvent({
           sentReply,
@@ -1465,6 +1532,7 @@ export async function POST(req: NextRequest) {
     if (fulfillmentEventType) {
       after(() => markCalendarEventsDone(conversationId, fulfillmentEventType).catch((e) =>
         console.error("[save-reply-example] calendar mark-done failed:", e)));
+      after(() => markRelatedDailyTasksDone(conversationId, fulfillmentEventType));
     } else {
       after(() => detectAndCreateCalendarEvent({
         sentReply,

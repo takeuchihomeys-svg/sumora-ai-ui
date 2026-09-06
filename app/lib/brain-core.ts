@@ -3429,7 +3429,7 @@ async function createCalendarEventFromBrainAction(
       await sbScreening.from("daily_tasks").insert({
         id: `dt_sumora_${Date.now()}`,
         customer_name: customerName ?? "",
-        content: `${emoji} ${title}`,
+        content: `${emoji} ${customerName ? `[${customerName}] ` : ""}${cfg.label}`,
         date: dateStr,
         time: "",
         end_time: "",
