@@ -6,6 +6,8 @@ import { registerSW, requestNotifPermission, showNotif } from "../lib/notificati
 import { supabase } from "../lib/supabase";
 
 type EventType = "viewing" | "contract" | "key_handover" | "other" | "application" | "phone" | "photo" | "property_send" | "estimate_sheet" | "follow_up";
+type KeyMethod = "現地" | "管理会社" | "itandi";
+type ViewingProperty = { name: string; key_method: KeyMethod };
 
 type CalendarEvent = {
   id: string;
@@ -79,6 +81,41 @@ function jstInputToISO(value: string): string {
   return new Date(`${value}:00+09:00`).toISOString();
 }
 
+function buildViewingNotes(count: number, props: ViewingProperty[], additionalNotes: string): string {
+  const lines: string[] = [`件数: ${count}件`];
+  for (let i = 0; i < count; i++) {
+    const p = props[i] ?? { name: "", key_method: "現地" as KeyMethod };
+    const label = count > 1 ? `物件${i + 1}` : "物件";
+    lines.push(`${label}: ${p.name.trim() || "（未記入）"}（${p.key_method}）`);
+  }
+  if (additionalNotes.trim()) lines.push("", additionalNotes.trim());
+  return lines.join("\n");
+}
+
+function parseViewingNotes(notes: string): { count: number; props: ViewingProperty[]; additionalNotes: string } {
+  const lines = notes.split("\n");
+  let count = 1;
+  const props: ViewingProperty[] = [];
+  const remainingLines: string[] = [];
+  let propsParsed = false;
+
+  for (const line of lines) {
+    const countMatch = line.match(/^件数:\s*(\d+)件/);
+    if (countMatch) { count = parseInt(countMatch[1]); continue; }
+    const propMatch = line.match(/^物件\d*:\s*(.*?)（(現地|管理会社|itandi)）/);
+    if (propMatch) {
+      props.push({ name: propMatch[1].trim(), key_method: propMatch[2] as KeyMethod });
+      propsParsed = true;
+      continue;
+    }
+    if (line.trim() === "" && propsParsed && remainingLines.length === 0) continue;
+    remainingLines.push(line);
+  }
+
+  while (props.length < count) props.push({ name: "", key_method: "現地" });
+  return { count, props, additionalNotes: remainingLines.join("\n").trim() };
+}
+
 export default function CalendarPage() {
   const today = new Date();
 
@@ -101,6 +138,8 @@ export default function CalendarPage() {
     notes: "",
     sync_to_screening: false,
   });
+  const [viewingCount, setViewingCount] = useState(1);
+  const [viewingProperties, setViewingProperties] = useState<ViewingProperty[]>([{ name: "", key_method: "現地" }]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
@@ -223,11 +262,22 @@ export default function CalendarPage() {
       sync_to_screening: false,
     });
     setEditingEvent(null);
+    setViewingCount(1);
+    setViewingProperties([{ name: "", key_method: "現地" }]);
     setFormError("");
     setShowModal(true);
   };
 
   const openEdit = (ev: CalendarEvent) => {
+    let notesForForm = ev.notes || "";
+    let vCount = 1;
+    let vProps: ViewingProperty[] = [{ name: "", key_method: "現地" }];
+    if (ev.event_type === "viewing") {
+      const parsed = parseViewingNotes(ev.notes || "");
+      vCount = parsed.count;
+      vProps = parsed.props;
+      notesForForm = parsed.additionalNotes;
+    }
     setForm({
       title: ev.title,
       event_type: ev.event_type,
@@ -235,9 +285,11 @@ export default function CalendarPage() {
       start_at: toLocalInputValue(new Date(ev.start_at)),
       end_at: ev.end_at ? toLocalInputValue(new Date(ev.end_at)) : "",
       all_day: ev.all_day,
-      notes: ev.notes || "",
+      notes: notesForForm,
       sync_to_screening: false,
     });
+    setViewingCount(vCount);
+    setViewingProperties(vProps);
     setEditingEvent(ev);
     setFormError("");
     setShowModal(true);
@@ -254,6 +306,10 @@ export default function CalendarPage() {
     const dateStr = form.start_at.slice(0, 10);
     const timeStr = form.all_day ? "" : form.start_at.slice(11, 16);
 
+    const finalNotes = form.event_type === "viewing"
+      ? buildViewingNotes(viewingCount, viewingProperties, form.notes)
+      : form.notes.trim();
+
     const payload = {
       title: form.title.trim(),
       event_type: form.event_type,
@@ -261,7 +317,7 @@ export default function CalendarPage() {
       start_at: jstInputToISO(form.start_at),
       end_at: form.end_at ? jstInputToISO(form.end_at) : null,
       all_day: form.all_day,
-      notes: form.notes.trim(),
+      notes: finalNotes,
     };
 
     try {
@@ -701,6 +757,77 @@ export default function CalendarPage() {
                   ))}
                 </div>
               </div>
+
+              {/* 内覧専用フィールド */}
+              {form.event_type === "viewing" && (
+                <div className="mb-4 rounded-xl border-2 border-[#e3f2fd] bg-[#f0f8ff] p-4">
+                  <div className="mb-3 text-xs font-semibold text-[#1565C0]">🔍 内覧詳細</div>
+
+                  {/* 件数 */}
+                  <div className="mb-3">
+                    <label className="mb-1 block text-xs font-semibold text-[#54656f]">内覧件数</label>
+                    <div className="flex gap-2">
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <button
+                          key={n}
+                          onClick={() => {
+                            setViewingCount(n);
+                            setViewingProperties(prev => {
+                              const next = [...prev];
+                              while (next.length < n) next.push({ name: "", key_method: "現地" });
+                              return next.slice(0, Math.max(n, next.length));
+                            });
+                          }}
+                          className="flex-1 rounded-xl py-2 text-sm font-bold transition"
+                          style={viewingCount === n
+                            ? { backgroundColor: "#2196F3", color: "white" }
+                            : { backgroundColor: "#e3f2fd", color: "#1565C0" }
+                          }
+                        >
+                          {n}件
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 各物件 */}
+                  {viewingProperties.slice(0, viewingCount).map((prop, i) => (
+                    <div key={i} className={i > 0 ? "mt-3 border-t border-[#e3f2fd] pt-3" : ""}>
+                      {viewingCount > 1 && (
+                        <div className="mb-1 text-xs font-semibold text-[#1565C0]">物件{i + 1}</div>
+                      )}
+                      <div className="mb-2">
+                        <label className="mb-1 block text-xs text-[#54656f]">物件名</label>
+                        <input
+                          type="text"
+                          value={prop.name}
+                          onChange={(e) => setViewingProperties(prev => prev.map((p, j) => j === i ? { ...p, name: e.target.value } : p))}
+                          placeholder="例：〇〇マンション 101号室"
+                          className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-[#54656f]">鍵の開け方</label>
+                        <div className="flex gap-2">
+                          {(["現地", "管理会社", "itandi"] as KeyMethod[]).map(method => (
+                            <button
+                              key={method}
+                              onClick={() => setViewingProperties(prev => prev.map((p, j) => j === i ? { ...p, key_method: method } : p))}
+                              className="flex-1 rounded-xl py-2 text-xs font-bold transition"
+                              style={prop.key_method === method
+                                ? { backgroundColor: "#2196F3", color: "white" }
+                                : { backgroundColor: "#e3f2fd", color: "#1565C0" }
+                              }
+                            >
+                              {method}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* タイトル */}
               <div className="mb-4">

@@ -3400,6 +3400,11 @@ async function createCalendarEventFromBrainAction(
       .limit(1);
     if (existing && existing.length > 0) return; // 既存あり → スキップ
 
+    // 内覧の場合は手動フォームと同じ構造化notes形式で保存（後で編集しやすくするため）
+    const calNotes = cfg.eventType === "viewing"
+      ? "件数: 1件\n物件: （未確定）（現地）"
+      : `[Brain AIX] action=${action}`;
+
     await supabase.from("calendar_events").insert({
       title,
       event_type: cfg.eventType,
@@ -3407,7 +3412,7 @@ async function createCalendarEventFromBrainAction(
       conversation_id: conversationId,
       start_at: startAt,
       all_day: true,
-      notes: `[Brain AIX] action=${action}`,
+      notes: calNotes,
     });
 
     // 申込ツール（screening-admin daily_tasks）にも同期（取りこぼし防止）

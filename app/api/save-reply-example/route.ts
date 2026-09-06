@@ -892,6 +892,14 @@ all_dayは時刻が特定できない場合のみtrue。時刻があればfalse�
     if (existing && existing.length > 0) return;
   } catch { /* 重複チェック失敗時は登録を続行 */ }
 
+  // 内覧の場合は編集しやすい構造化notesで保存（手動フォームと同じ形式）
+  let autoNotes: string;
+  if (eventType === "viewing") {
+    autoNotes = `件数: 1件\n物件: （未確定）（現地）`;
+  } else {
+    autoNotes = sentReply.slice(0, 200);
+  }
+
   await supabase.from("calendar_events").insert({
     title,
     event_type: eventType,
@@ -899,7 +907,7 @@ all_dayは時刻が特定できない場合のみtrue。時刻があればfalse�
     conversation_id: conversationId,
     start_at: startAt,
     all_day: parsed.all_day ?? true,
-    notes: sentReply.slice(0, 200),
+    notes: autoNotes,
   });
 
   // 売上番長グループに通知（fire-and-forget）
