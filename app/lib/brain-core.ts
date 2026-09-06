@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
@@ -3408,6 +3409,28 @@ async function createCalendarEventFromBrainAction(
       all_day: true,
       notes: `[Brain AIX] action=${action}`,
     });
+
+    // 申込ツール（screening-admin daily_tasks）にも同期（取りこぼし防止）
+    const screeningUrl = process.env.SCREENING_ADMIN_SUPABASE_URL;
+    const screeningKey = process.env.SCREENING_ADMIN_SUPABASE_ANON_KEY;
+    if (screeningUrl && screeningKey) {
+      const EVENT_EMOJI: Record<string, string> = {
+        viewing: "🔍", application: "📋", phone: "📞", photo: "📸",
+        property_send: "🏠", estimate_sheet: "📄", follow_up: "📋", other: "📌",
+      };
+      const emoji = EVENT_EMOJI[cfg.eventType] ?? "📅";
+      const sbScreening = createClient(screeningUrl, screeningKey);
+      await sbScreening.from("daily_tasks").insert({
+        id: `dt_sumora_${Date.now()}`,
+        customer_name: customerName ?? "",
+        content: `${emoji} ${title}`,
+        date: dateStr,
+        time: "",
+        end_time: "",
+        done: false,
+        created_at: dateStr,
+      });
+    }
   } catch (e) {
     console.warn("[brain-core] createCalendarEventFromBrainAction failed:", conversationId, e instanceof Error ? e.message : e);
   }

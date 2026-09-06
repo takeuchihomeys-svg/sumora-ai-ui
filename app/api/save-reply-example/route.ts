@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { learnFromModifiedExample } from "@/app/lib/auto-knowledge";
@@ -971,6 +972,28 @@ async function notifyCalendarCreated({
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
     });
+
+    // 申込ツール（screening-admin daily_tasks）にも同期（取りこぼし防止）
+    const screeningUrl = process.env.SCREENING_ADMIN_SUPABASE_URL;
+    const screeningKey = process.env.SCREENING_ADMIN_SUPABASE_ANON_KEY;
+    if (screeningUrl && screeningKey) {
+      const EVENT_EMOJI: Record<string, string> = {
+        viewing: "🔍", application: "📋", phone: "📞", photo: "📸",
+        property_send: "🏠", estimate_sheet: "📄", follow_up: "📋", other: "📌",
+      };
+      const emoji = EVENT_EMOJI[eventType] ?? "📅";
+      const sbScreening = createClient(screeningUrl, screeningKey);
+      await sbScreening.from("daily_tasks").insert({
+        id: `dt_sumora_${Date.now()}`,
+        customer_name: customerName ?? "",
+        content: `${emoji} ${title}`,
+        date: evDateStr,
+        time: allDay ? "" : `${String(jstEv.getUTCHours()).padStart(2, "0")}:${String(jstEv.getUTCMinutes()).padStart(2, "0")}`,
+        end_time: "",
+        done: false,
+        created_at: evDateStr,
+      });
+    }
   } catch { /* 失敗は無視 */ }
 }
 
