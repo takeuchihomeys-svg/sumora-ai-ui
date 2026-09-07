@@ -900,7 +900,10 @@ function buildGenerationMessages(
   // → AIが同じピックアップ宣言を再生成する二重宣言バグを防ぎ、短い確認文のみに制限する。
   //   実際の物件送付はAIX「物件ピックアップした」で行う（送信後にUIが誘導バナーを表示済み）。
   const trimmedCustomerMsg = (customerMessage || "").trim();
+  // 複数メッセージ結合時（\n含む）は後続の感謝文が前の行動シグナルをマスクするため短い感謝チェックを無効化
+  const hasMultipleMessages = customerMessage.includes("\n");
   const isShortAckMsg =
+    !hasMultipleMessages &&
     trimmedCustomerMsg.length > 0 &&
     trimmedCustomerMsg.length <= 60 &&
     /(ありがとう|感謝|助かり(ます|ました)|嬉しい|宜しく|よろしく|おねがいします|おねがい致します|おねがいいたします|お願いします|お願い致します|お願いいたします|了解|承知|かしこまり|わかりました|分かりました|楽しみ|お任せ|おまかせ|引き続き)/.test(trimmedCustomerMsg) &&
@@ -911,6 +914,19 @@ function buildGenerationMessages(
     /ピックアップ/.test(lastStaffMsg) &&
     /(お送り|送らせて|お届け|送付)/.test(lastStaffMsg) &&
     !lastStaffMsg.includes("ご査収ください"); // 「ご査収ください」= 物件送付済みの完了文なので約束中ではない
+  // 「また物件探してみます」= LLMが「自分で探す・goodbye」と誤解しやすい慣用表現。
+  // 実際はスモラへの継続物件提案依頼シグナル。
+  const searchAgainSignal =
+    /また物件探して|物件探してみ|改めて探して|もう一度探して|引き続き探して/.test(customerMessage);
+  const searchAgainNote = searchAgainSignal
+    ? `\n【🔍 継続物件探索シグナル検知（最優先指示）】
+「また物件探してみます」「また探してみます」等の発言はお客様が自分一人で探すという意味ではない。
+スモラへの「引き続き物件を探して送ってほしい」という継続依頼の慣用表現。
+→ 必ず「気になるお部屋があればいつでもお知らせください」または「こちらでもピックアップしてお送りしますね！」という積極的な物件提供の姿勢を示すこと。
+→ 絶対に「またご連絡をお待ちしております」等、お客様からの連絡を受け身で待つだけの返信を生成しない。
+例: 「はい😊！！気になるお部屋があればいつでもお送りください！！こちらでも随時ピックアップしてお送りさせて頂きます😊！！何卒よろしくお願い致します！！」`
+    : "";
+
   const pickupPromiseAckNote = (!isFollowUp && staffPromisedPickup && isShortAckMsg)
     ? `\n【🚫 ピックアップ宣言の繰り返し禁止（最優先・フェーズ別パターン/条件変更検出より上位）】
 スタッフは直前の返信で既に「物件をピックアップしてお送りします」と約束済み。今回のお客様のメッセージはその約束に対する感謝・承諾のみ。
@@ -1305,11 +1321,18 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // viewingFactNote（物件退去予定/入居中判定）とセットでお客様メッセージ末尾に配置する。
   const viewingNoteBlock = viewingNote ? `\n\n【内覧情報】${viewingNote}` : "";
 
+  // 複数メッセージ結合時は番号付きで全通への返信を明示し末尾優先バイアスを防ぐ
+  const customerMsgLines = (customerMessage || "").split("\n").filter(Boolean);
+  const customerMsgBlock = !isFollowUp && customerMsgLines.length > 1
+    ? `【お客様の最新メッセージ（${customerMsgLines.length}通・すべてに対して1つの返信を生成すること）】\n` +
+      customerMsgLines.map((line, i) => `[${i + 1}通目] ${line}`).join("\n")
+    : `${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}\n${customerMessage}`;
+
   // topPrinciplesNote（DB由来）と replyContentNote（テンプレモードで空文字化）は
   // staticBlock を汚染しないよう dynamicBlock 側に配置する
-  const dynamicBlock = `${topPrinciplesNote}${replyContentNote}
+  const dynamicBlock =`${topPrinciplesNote}${replyContentNote}
 ${propertyStatusNote}
-${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
@@ -1319,8 +1342,7 @@ ${quotedContextNote}
 【直近の会話履歴（スモラ自身の返信も含む）】この履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない。
 ${history || "なし"}
 
-${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}${aixTimingNote}
+${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}${aixTimingNote}
 
 ${examples}${examplesInstruction}
 
