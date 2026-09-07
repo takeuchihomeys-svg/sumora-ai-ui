@@ -903,7 +903,7 @@ function buildGenerationMessages(
   const isShortAckMsg =
     trimmedCustomerMsg.length > 0 &&
     trimmedCustomerMsg.length <= 60 &&
-    /(ありがとう|宜しく|よろしく|おねがいします|おねがい致します|おねがいいたします|お願いします|お願い致します|お願いいたします|了解|承知|楽しみ)/.test(trimmedCustomerMsg) &&
+    /(ありがとう|感謝|助かり(ます|ました)|嬉しい|宜しく|よろしく|おねがいします|おねがい致します|おねがいいたします|お願いします|お願い致します|お願いいたします|了解|承知|かしこまり|わかりました|分かりました|楽しみ|お任せ|おまかせ|引き続き)/.test(trimmedCustomerMsg) &&
     !/[?？]/.test(trimmedCustomerMsg) &&
     !/(家賃|エリア|間取り|物件|条件|変更|広げ|安く|抑え|内覧|見積|申込|キャンセル)/.test(trimmedCustomerMsg);
   const staffPromisedPickup =
@@ -1636,8 +1636,8 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       // 10. 感謝返し（isGratitudeReplyTPOと同じ60字・同じキーワードで統一）
       if (
         msg.length < 60 &&
-        !/[?？]|希望|したい|教えて|どうすれば|送っ|ください(?!ませ)/.test(msg) &&
-        /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解/.test(msg)
+        !/[?？]|希望|したい|教えて|どうすれば|送って(ください|ほしい|もらえ)|ください(?!ませ)/.test(msg) &&
+        /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|宜しくお願い|おねがいします|おねがいいたします|おねがい致します|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解|楽しみ|お任せ|おまかせ|引き続き/.test(msg)
       ) {
         return "感謝返し";
       }
@@ -3010,8 +3010,15 @@ export async function POST(req: NextRequest) {
     const isGratitudeReplyTPO = (() => {
       const msg = (message ?? "").trim();
       if (msg.length >= 60) return false; // 40→60字（実データで60字が妥当）
-      if (/[?？]|希望|したい|教えて|どうすれば|送っ|ください(?!ませ)/.test(msg)) return false;
+      if (/[?？]|希望|したい|教えて|どうすれば|送って(ください|ほしい|もらえ)|ください(?!ませ)/.test(msg)) return false;
       return /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|おねがいします|おねがいいたします|おねがい致します|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解/.test(msg);
+    })();
+    // 一時保留判定（「出先」「後で確認」等、顧客が今は動けない意思表示）
+    // 2026-09-06の承知いたしましたバグ（197字過剰返信）の根本原因への対処
+    const isTemporaryLeaveMsg = (() => {
+      const msg = (message ?? "").trim();
+      if (msg.length === 0 || msg.length >= 150) return false;
+      return /出先|後で確認|後ほど|確認次第|今は確認|あとで|のちほど|帰ったら|帰り次第|夜に|夜確認|明日確認|後日|ゆっくり確認|確認してから|見てから連絡|見てみます/.test(msg);
     })();
     // ネガ文脈判定（断り・キャンセル直後の感謝には営業を一切乗せない）
     // 仕様通り直近スタッフ3通を走査（1通のみだと募集終了報告が窓外になるバグを修正）
@@ -3024,7 +3031,7 @@ export async function POST(req: NextRequest) {
         .map(m => m.text ?? "")
         .join(" ");
       const recentText = recentStaffTexts + " " + (message ?? "");
-      return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難しくなっ/.test(recentText);
+      return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難しくなっ|見送り|辞退|白紙|他社で|他の会社|他社さん|やめ(とき)?ます|解約|破談/.test(recentText);
     })();
     // 強推し直後の了承：「1件に絞ってオススメ済み→顧客が了承」フェーズの待ちの姿勢
     // property_recommendation/check_result後の感謝は「再提案・他物件確認」が逆効果になる
@@ -3032,16 +3039,24 @@ export async function POST(req: NextRequest) {
       if (!isGratitudeReplyTPO) return false;
       if (isNegativeContext) return false;
       const hist = lastAixHistoryText ?? "";
-      return /property_recommendation|property_check_result/.test(hist);
+      if (!/property_recommendation|property_check_result/.test(hist)) return false;
+      // 直近5メッセージ以内にproperty系アクションがあった場合のみ有効（古い履歴への誤反応防止）
+      const recentCount = recentMessages.slice(0, 5).length;
+      if (recentCount < 1) return false;
+      // recentMessagesの直近5件にスタッフ返信が存在し、property送付の痕跡があるかチェック
+      const recentTexts = recentMessages.slice(0, 5).map(m => m.text ?? "").join(" ");
+      return /ピックアップ|物件.*(お送り|送付|紹介)|property_recommendation|property_check_result/.test(recentTexts);
     })();
     const effectiveReplyDirection: string | null = (() => {
-      if (isNegativeContext) return "受け止めのみ（50〜110字）";
+      if (isNegativeContext) return "受け止めのみ（50〜110字）。謝罪禁止。開口語は「かしこまりました！！」。「申し訳ございません」「残念ながら」等のネガティブ語禁止";
+      if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。物件追加・条件ヒアリング・長文説明は一切禁止";
       if (isPostStrongRecommendation) return "感謝を1行で受け取り、検討を見守る待ちの姿勢で締める（50〜110字）。他物件の募集確認・新規ピックアップ・再推奨は書かない";
-      if (isGratitudeReplyTPO) return "感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。予告のみの進捗テンプレ・条件の再ヒアリングで埋めない";
+      if (isGratitudeReplyTPO) return "感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。アクション例:「ピックアップ出来次第お送りします！！」「確認出来次第ご連絡します！！」。予告のみの進捗テンプレ・条件の再ヒアリング・情報追加は絶対禁止";
       return brainMeta?.reply_direction ?? null;
     })();
     const effectiveKeyTopics: string[] = (() => {
       if (isNegativeContext) return [];
+      if (isTemporaryLeaveMsg) return [];
       if (isPostStrongRecommendation) return []; // 待ちフェーズ：余計なアクションを足さない
       if (isGratitudeReplyTPO) return (brainMeta?.key_topics ?? []).slice(0, 1);
       return brainMeta?.key_topics ?? [];
@@ -3049,6 +3064,7 @@ export async function POST(req: NextRequest) {
     const effectiveAvoidTopics: string[] = (() => {
       const base = brainMeta?.avoid_topics ?? [];
       if (isNegativeContext) return [...new Set([...base, "物件提案", "見積提案", "申込誘導"])];
+      if (isTemporaryLeaveMsg) return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "条件ヒアリング", "詳細説明"])];
       if (isPostStrongRecommendation) return [...new Set([...base, "他物件の募集状況確認", "新規物件ピックアップ", "別物件の提案", "申込誘導", "検討依頼の繰り返し"])];
       if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
       return base;
@@ -3059,6 +3075,7 @@ export async function POST(req: NextRequest) {
     // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
     const tpoNoteForLLM: string | null = (() => {
       if (isNegativeContext) return "ネガ文脈（断り・否決・募集終了等の直後）";
+      if (isTemporaryLeaveMsg) return "一時保留（顧客が今は確認できない・後で連絡すると宣言。30〜60字の超短返しのみ。「承知いたしました」絶対禁止）";
       if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客了承中・待ちフェーズ）";
       if (isGratitudeReplyTPO) return "感謝返し（短い了承・感謝メッセージ）";
       const a = brainMeta?.action ?? "";
@@ -3066,8 +3083,19 @@ export async function POST(req: NextRequest) {
       if (a === "viewing_invite" || a === "meeting_place") return "内覧調整";
       if (a === "application_push") return "申込打診";
       if (a === "property_send" || a === "property_recommendation") return "物件送付後";
+      if (a === "estimate_sheet" || a === "cost_explanation" || a === "initial_cost") return "費用説明";
       if (/費用|見積|初期費用/.test(a)) return "費用説明";
       if (!brainMeta?.action && (state === "initial" || state === "new")) return "初回対応";
+      // tpoLabelに存在するがtpoNoteForLLMに欠落していた種別を補完（不安対応・検討中フォロー）
+      const msg2 = message ?? "";
+      if (/不安|心配|審査.*(通|落)|落ち(る|たら)|大丈夫でしょうか/.test(msg2)) return "不安対応（顧客が審査・費用・手続きに不安。まず不安を受け止め、具体的な安心材料を1つだけ添える。100〜150字以内。「大丈夫ですよ」の軽い返しは避ける）";
+      const a2 = brainMeta?.action ?? "";
+      if (
+        brainMeta?.customer_intent === "consultation" ||
+        a2 === "follow_up" ||
+        a2 === "followup_revive" ||
+        /検討|迷って|考え(て|させて)|悩んで/.test(msg2)
+      ) return "検討中フォロー（顧客がまだ迷っている段階。急かさない。新情報がある場合のみ1点だけ伝える。70〜120字）";
       return null;
     })();
 
