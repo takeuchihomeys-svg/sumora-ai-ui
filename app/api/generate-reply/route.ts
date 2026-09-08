@@ -210,7 +210,7 @@ const SENSITIVE_CLAIM_RE = /クレーム|苦情|納得(いか|でき)|話が違�
 const SENSITIVE_REJECT_RE = /審査[^。！!？?\n]{0,8}(否決|落ち(た(?!ら)|まし|てしまい)|通りませんでした|通らなかった|不承認|NG(でし|になり|だっ)|ダメ(でし|だっ))|否決/;
 // ※「キャンセル料」「キャンセルできますか」等の不安系質問は通常AI回答の範囲（brainGuidanceNoteの保留パターン対応等で対応済み）のため除外し、
 //   キャンセル・解約の「意向」とリスケ（日程変更）依頼のみ検知する
-const SENSITIVE_CANCEL_RE = /(?:キャンセル|解約|取消|取り消し?|白紙|辞退)(?!料|金|でき|出来|可能)(?:を|は|に|で)?(?:したい|します|させて|お願い|希望|することに|する事に)|なかったことに|見送(?:り(?:たい|ます)|らせて)|やめ(?:たい|ます|ておき|とき)|リスケ|(?:日程|日にち|日時|予定)[^。！!？?\n]{0,6}(?:変更|ずら|延期)/;
+const SENSITIVE_CANCEL_RE = /(?:キャンセル|解約|取消|取り消し?|白紙|辞退)(?!料|金|でき|出来|可能)(?:を|は|に|で)?(?:したい|します|させて|お願い|希望|することに|する事に)|なかったことに|見送(?:り(?:たい|ます)|らせて)|やめ(?:たい|ます|ておき|とき)|リスケ(?:[をはにで])?(?:したい|させて|お願い|希望|お願いし)|(?:日程|日にち|日時|予定)[^。！!？?\n]{0,6}(?:変更|ずら|延期)(?:[をにで])?(?:したい|させて|お願い|希望)/;
 
 function detectSensitiveCase(text: string): string | null {
   if (!text) return null;
@@ -725,6 +725,15 @@ function buildGenerationMessages(
   const nameNote = _cleanName ? `お客様名：${_cleanName}さん` : "お客様名：不明（名前なしで返信すること・「名称未設定」は絶対に使わない）";
   const conditionsNote = customerConditions
     ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。条件の重複記載はしない。\n⚠️ 【絶対禁止・打ち合わせ合意ルール】「〇〇さんご希望のご条件に合った〜」「ご条件に合うお部屋」等の受け身表現はエリア名・具体条件と組み合わせても禁止。代わりに「〇〇エリアからオススメできるお部屋」「〇〇エリアから探してお届けします」等の能動表現を使うこと（エリアの呼び方は会話で使われた表現をそのまま使い「全域」等を勝手に付け足さない）。\n⚠️ first_reply（初回返信）の場合: 上記の主要条件（エリア・家賃・間取り）を必ず行動宣言に埋め込んで言及すること。条件への言及がゼロの返信は不合格。`
+    : "";
+  // conditionsNote が空かつ顧客メッセージにエリア・家賃が含まれる場合のインライン補完
+  // route.ts 自体は DB から条件を取得しないため、フロントが customerConditions を渡さなかった
+  // ケースをここでフォールバックカバーする（isConditionPresented は後段のTPOブロックで定義）
+  const _inlineConditionsMsgForFallback = (customerMessage ?? "").trim();
+  const _hasAreaInMsg = /[一-龯ぁ-んァ-ン]{2,}(?:駅|区|市|町|村|周辺|エリア|あたり|付近)/.test(_inlineConditionsMsgForFallback);
+  const _hasRentInMsg = /[0-9０-９]+万(?:円|以内|〜|まで|以下|円以内)/.test(_inlineConditionsMsgForFallback);
+  const inlineConditionsFallback = (!customerConditions && _hasAreaInMsg && _hasRentInMsg && _inlineConditionsMsgForFallback.length > 0 && _inlineConditionsMsgForFallback.length <= 300)
+    ? `\n【⚠️ 顧客が今回のメッセージで直接エリア・家賃条件を提示しています】\nメッセージ: 「${_inlineConditionsMsgForFallback}」\n⇒ このエリア名・家賃帯を必ず返信の行動宣言に具体的に埋め込むこと。例: 「桜川・西九条・九条エリアから6万〜7万5000円以内のお部屋を全てピックアップしてお送りさせて頂きます！！」。「ご条件に合ったお部屋」「全力でサポートします」等の抽象表現は禁止。`
     : "";
   // AIX-META戦略（brainGuidanceNote）が存在する場合、ai_summary全文はbrain側で既に消化済みのため
   // summaryNoteは注入しない（戦略の二重注入・矛盾指示を防ぐ）。AIX-META未生成時のみ従来通り注入する。
@@ -1335,7 +1344,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // staticBlock を汚染しないよう dynamicBlock 側に配置する
   const dynamicBlock =`${topPrinciplesNote}${replyContentNote}
 ${propertyStatusNote}
-${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
@@ -3029,6 +3038,15 @@ export async function POST(req: NextRequest) {
     // 旧実装は IIFE ローカルだったため finalCheckCtx から参照できず、ファイナルチェックには
     // TPO上書き前の生 brainMeta が渡っていた（過剰指摘・見逃しの原因）。ここで一度だけ計算し
     // LLM注入（brainGuidanceNote）とファイナルチェック（finalCheckCtx）で同一値を共有する。
+    // 顧客が今回のメッセージで具体的なエリア・家賃条件を提示しているか判定
+    // true の場合は isNegativeContext 等の TPO 誤発動から保護し、条件受け取り返信を強制する
+    const isConditionPresented = (() => {
+      const msg = (message ?? "").trim();
+      if (msg.length === 0 || msg.length > 300) return false;
+      const hasArea = /[一-龯ぁ-んァ-ン]{2,}(?:駅|区|市|町|村|周辺|エリア|あたり|付近)/.test(msg);
+      const hasRent = /[0-9０-９]+万(?:円|以内|〜|まで|以下|円以内)/.test(msg);
+      return hasArea && hasRent;
+    })();
     // 感謝返し場面の判定（Opus5実データ検証済み 2026-08-30）
     // 成約113字 vs 停滞118字: 短さより「中身（実体アクション）の有無」が差
     // 成約の68%が提案入りで悪反応1.6% → 物件提案禁止は逆効果
@@ -3065,7 +3083,7 @@ export async function POST(req: NextRequest) {
         .map(m => m.text ?? "")
         .join(" ");
       const recentText = recentStaffTexts + " " + (message ?? "");
-      return /断り|キャンセル|できません|否決|募集終了|申し訳|中断|残念|難しくなっ|見送り|辞退|白紙|他社で|他の会社|他社さん|やめ(とき)?ます|解約|破談/.test(recentText);
+      return /断り(ました|させて頂|をいただ)|キャンセル.{0,8}(したい|します|しました|になり)|否決|募集終了|難しくなっ|見送り(たい|ます|になり|させて)|辞退(したい|します|しました)|白紙(に戻|になり)|他社で(契約|申込|決め)|他の会社で(契約|申込|決め)|他社さん.*決め|やめ(とき)?ます|解約(したい|します|しました)|破談/.test(recentText);
     })();
     // 強推し直後の了承：「1件に絞ってオススメ済み→顧客が了承」フェーズの待ちの姿勢
     // property_recommendation/check_result後の感謝は「再提案・他物件確認」が逆効果になる
@@ -3082,6 +3100,7 @@ export async function POST(req: NextRequest) {
       return /ピックアップ|物件.*(お送り|送付|紹介)|property_recommendation|property_check_result/.test(recentTexts);
     })();
     const effectiveReplyDirection: string | null = (() => {
+      if (isConditionPresented && brainMeta?.customer_intent !== "negative") return "受け取ったエリア・家賃条件を冒頭で復唱し、即ピックアップ・送付宣言をWE DO形式で明示する（100〜180字）。開口語は「かしこまりました！！」。条件のエリア名・家賃上限を文中に必ず具体的に埋め込む。「ご条件に合ったお部屋」「全力でサポート」等の抽象表現禁止。「新着あれば」「日々更新」等の受け身待ち文言も禁止";
       if (isNegativeContext) return "受け止めのみ（50〜110字）。謝罪禁止。開口語は「かしこまりました！！」。開口語の後に必ず次のアクション（物件日々更新される旨・新着あればお知らせする旨等）を1文添えること。「かしこまりました！！」単独で終了は禁止。「申し訳ございません」「残念ながら」等のネガティブ語禁止";
       if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。物件追加・条件ヒアリング・長文説明は一切禁止";
       if (isThinkingMsg) return "検討中の待ちフェーズ。70〜120字の短返し。開口語は「はい😊！！」。①ごゆっくりご検討ください②何かあればお申し付けください③顧客名先頭のサポート継続宣言の3点セット。申込誘導・希少性煽り・内見誘導・物件追加提案は絶対禁止";
@@ -3090,6 +3109,10 @@ export async function POST(req: NextRequest) {
       return brainMeta?.reply_direction ?? null;
     })();
     const effectiveKeyTopics: string[] = (() => {
+      if (isConditionPresented) {
+        const baseTopics = brainMeta?.key_topics ?? [];
+        return baseTopics.length > 0 ? baseTopics : ["エリア・家賃条件を受け取り即ピックアップ宣言"];
+      }
       if (isNegativeContext) return [];
       if (isTemporaryLeaveMsg) return [];
       if (isThinkingMsg) return [];
