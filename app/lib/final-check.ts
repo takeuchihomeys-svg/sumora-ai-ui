@@ -15,7 +15,14 @@
 // - check-reply/route.ts    …… 送信時（スタッフ編集後）の再チェック。自動修正なし（runFinalCheckのみ）
 
 import { checkNameConsistency } from "./validate-reply";
-import { PHASE_PROHIBITIONS } from "./line-reply-prompts";
+import {
+  PHASE_PROHIBITIONS,
+  FORM_LABEL_RE,
+  CUSTOMER_ESTIMATE_INTENT_RE,
+  CUSTOMER_PROPERTY_REF_RE,
+  CUSTOMER_ROOM_POSITIVE_RE,
+  STAFF_ESTIMATE_PROMISE_RE,
+} from "./line-reply-prompts";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -227,6 +234,7 @@ function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBloc
 - 内覧の具体的な候補日時（「8/7（木）14:00〜」等）を提示 → 違反
 - 初期費用の金額・内訳を直接提示（「敷金○万円・礼金○万円・合計○万円」等）→ 違反 / AIX_BOUNDARY_ESTIMATE
   【例外】「御見積書を作成しお送りします」「最大限割引した御見積書をお送りします」等の作成宣言のみ（金額なし）はOK
+  ただし first_reply/hearing・物件未送付・顧客の費用質問なし（①〜⑧条件フォームの「⑦初期費用」は項目ラベルであり質問ではない）の場合は TIMING_VOCAB_MISMATCH 対象（決定論で block。LLM側は重複指摘不要）
 - 住所・集合場所・集合時間の案内 → 違反
 - 物件名・家賃・間取りの初出提示 → 違反 / 申込確定文・必要書類リスト → 違反
 - 入居可能日・退去日の回答（希望時期を「聞く」のはOK、「答える」のはNG）→ 違反
@@ -304,7 +312,7 @@ ${finalCheckRulesSliced ? `[FINAL_CHECK_RULES]\n${finalCheckRulesSliced}\n[/FINA
 「通常返信AIは宣言のみ・実行はAIX」の原則に基づく境界線の正確な判断:
 
 【初期費用・見積（AIX_BOUNDARY_ESTIMATE）】
-OK: 「御見積書を作成してお送りします」「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」（金額なし・AIXシートが実際の数字を送る前提の宣言）
+OK: 「御見積書を作成してお送りします」「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」（金額なし・AIXシートが実際の数字を送る前提の宣言。※ただし初回対応・条件ヒアリング中・物件未送付で顧客が費用を質問していない場合は決定論 TIMING_VOCAB_MISMATCH が block する）
 OK: 「初期費用については御見積書にてご案内させていただきます」（案内の予告のみ）
 違反: 「敷金○ヶ月分・礼金○ヶ月分・保証料○%で初期費用合計は約○万円です」（金額・内訳の直接提示）
 違反: 「初期費用は○万円になります」（具体的な金額の直接提示）
@@ -822,7 +830,7 @@ function assignSeverity(pass: CheckPass, code: string, isAutoSend = false, isEar
   if (code === "NG_PROPERTY_MENTION" || code === "INTRO_REPEAT") return "block"; // プロンプトで block と指示していたが分岐が無く常に warning だった
   // 2026-09-08 §5: 決定論由来の block 級コード（LLM が recheck で同名を返した場合も block を維持）
   if (
-    code === "STATE_REGRESSION" || code === "SYSTEM_MARKER_LEAK" || code === "NAME_PLACEHOLDER" ||
+    code === "STATE_REGRESSION" || code === "TIMING_VOCAB_MISMATCH" || code === "SYSTEM_MARKER_LEAK" || code === "NAME_PLACEHOLDER" ||
     code === "NAME_FULLNAME_LEAK" || code === "VIEWING_BEFORE_VACANCY" || code === "FABRICATED_POLICY_DET" ||
     code === "NEGATIVE_APOLOGY"
   ) return "block";
@@ -866,6 +874,13 @@ const BANNED_WORDS_DETERMINISTIC = [
   "TikTok映え", "インスタ映え", "共益費込", "緊急連絡先設定可", "緊急連絡先可",
   "申し込んでください", "急いでください", "他のお客様も見て", "申し込まないと",
   "撮影して頂け", "撮影していただけ", "ご撮影",
+  // 2026-09-08 語彙タイミング: 主語逆転・未発生行為の完了形（どの state でも誤り）
+  "審査いたします", "審査致します", "審査を行い",            // 審査主体は管理会社・保証会社
+  "重要事項説明させて頂き", "重要事項説明させていただき",     // 宅建士行為・審査前には存在しない
+  "交渉させて頂きましたので", "交渉済みですので",             // 交渉が履歴に無い完了形（履歴照合は E10 NEGOTIATED_DONE_BAN）
+  "先ほどお送りした御見積書", "先程お送りした御見積書", "先ほどお送りしたお見積書",  // 未送付物の送済み表現（V9 と二重防御）
+  "御見積書となります", "お見積書となります", "見積書を同封",   // AIX 送付カバー文（line_reply では書かない）
+  "初期費用は家賃の", "家賃の2ヶ月分", "家賃の3ヶ月分",       // 物件未確定の金額断定
 ];
 
 // ─── 決定論チェック群（runFinalCheck / runDiffRecheck の両方で実行。LLM不要・約0ms）─────────
@@ -1031,7 +1046,9 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
 }
 
 // ─── §5 追加決定論チェック（2026-09-08 Fable5）────────────────────────────────────────
-type BannedPattern = { re: RegExp; code: string; msg: string; sug: string; onlyTpo?: RegExp; histRe?: RegExp; blockAlways?: boolean };
+type BannedPattern = { re: RegExp; code: string; msg: string; sug: string; onlyTpo?: RegExp; histRe?: RegExp; blockAlways?: boolean;
+  /** 履歴（allHist）に一致すれば免除（例: 見積送付済みなら金額言及可） */
+  skipIfHistRe?: RegExp };
 const BANNED_PATTERNS: BannedPattern[] = [
   { re: /コスパ/, code: "BANNED_WORD", msg: "「コスパ」表現は禁止", sug: "「好条件」「お値打ちな条件」に変更" },
   { re: /仲介手数料[^\n。]{0,8}割引/, code: "FABRICATED_POLICY_DET", msg: "仲介手数料は固定（割引不可）", sug: "「初期費用を最大限割引」に変更", blockAlways: true },
@@ -1044,6 +1061,8 @@ const BANNED_PATTERNS: BannedPattern[] = [
   { re: /^[^\n]{1,12}さん[、,\s]*(?:はい|かしこまりました)/m, code: "NAME_BEFORE_OPENING", msg: "開口語の前に名前を置かない（「〇〇さんはい！！」は禁止）", sug: "「はい😊！！」単独行で始める" },
   { re: /審査を進めさせて/, code: "BANNED_WORD", msg: "審査の主体は管理会社（「審査を進め」はスタッフ常用句だが要確認）", sug: "「お申込み手続きを進めさせて頂きます」に変更" },
   { re: /申し訳(?:ございません|ありません|御座いません)|ご迷惑(?:を)?おかけ|残念ながら|大変恐縮ですが/, code: "NEGATIVE_APOLOGY", msg: "ネガ文脈（否決・募集終了・断り）での謝罪・ネガ語は禁止", sug: "「〇〇さんご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます」等のサポート継続宣言に変更", onlyTpo: /ネガ文脈|内覧キャンセル|顧客自身の断り/, histRe: /否決|審査(?:落ち|に通らな|の結果)|募集(?:終了|停止)|埋まって|他社で決め|キャンセル/, blockAlways: true },
+  // 2026-09-08 語彙タイミング: 見積書提示前の初期費用金額断定（見積送付済みなら免除）
+  { re: /初期費用(?:は|が)?[^\n。]{0,6}(?:約|およそ|大体|だいたい)?[0-9０-９]{1,3}(?:万|,000)円?(?:程度|ほど|くらい|前後)/, code: "COST_ASSERTION_NO_ESTIMATE", msg: "見積書提示前の初期費用金額の断定（物件ごとに礼金・保証料が異なる）", sug: "「お部屋が決まりましたら最大限割引したお見積書をお送りします」に変更", skipIfHistRe: /見積書(?:を)?お送り(?:させて(?:頂|いただ)きました|しました)|ご査収/, blockAlways: false },
 ];
 
 function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssue[] {
@@ -1060,6 +1079,7 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
   // E1 文脈付き禁止パターン（NEGATIVE_APOLOGY は onlyTpo でネガ文脈限定 → 不安対応の1文謝罪と競合しない）
   for (const p of BANNED_PATTERNS) {
     if (p.onlyTpo && !p.onlyTpo.test(tpo) && !(p.histRe && p.histRe.test(allHist))) continue;
+    if (p.skipIfHistRe && p.skipIfHistRe.test(allHist)) continue;
     const m = text.match(p.re);
     if (m) push("rule_check", p.blockAlways ? "block" : sevAuto(), p.code, p.msg, m[0], p.sug);
   }
@@ -1076,9 +1096,24 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
   // E4 短い了承なのに直前約束の復唱 WE DO が無い（WAIT 免除とは独立に評価）
   if (/短い了承/.test(tpo) && !ACTION_DECL_RE.test(text.replace(BOILERPLATE_RE, "")))
     push("context_check", sevAuto(), "PROMISE_ECHO_MISSING", "短い了承の場面ですが直前スタッフ約束の復唱WE DO文がありません", text.trim().slice(0, 30), "「〇〇ピックアップ出来次第お送りさせて頂きます」等、直前約束を1文復唱する");
-  // E5 見積書の文脈外持ち出し
-  if (/見積/.test(text) && !/費用|見積|総額|いくら|初期|金額|お金|安く|高い|割引|お支払|予算/.test(allHist) && !/費用説明|申込/.test(tpo))
-    push("context_check", sevAuto(), "ESTIMATE_NO_TRIGGER", "費用・見積の依頼が会話に無いのに御見積書の作成・送付を宣言しています", firstSentenceAround(text, /見積/), "ピックアップ宣言に置き換える");
+  // E5 見積書の文脈外持ち出し（2026-09-08 語彙タイミング差し替え）
+  //   免除は「顧客の依頼・質問形」「顧客の特定物件送付」「送付済み物件への前向き反応」「直前スタッフ約束の復唱」のみ。
+  //   allHist の語出現（初期／費用／割引＝初回テンプレ・フォームラベル「⑦初期費用」に常在）では免除しない。
+  //   first_reply/hearing・物件未送付 proposing は isAutoSend に関係なく block（UI が止めるのは block のみ）。
+  {
+    const custForEst = customerTextsForBan(ctx);
+    const staffRecent = lastStaffTexts(ctx, 2);
+    const customerWantsEstimate = CUSTOMER_ESTIMATE_INTENT_RE.test(custForEst) || CUSTOMER_PROPERTY_REF_RE.test(custForEst);
+    const roomPositive = (ctx.sentPropertiesCount ?? 0) > 0 && CUSTOMER_ROOM_POSITIVE_RE.test(custForEst);
+    const staffPromised = STAFF_ESTIMATE_PROMISE_RE.test(staffRecent);
+    const tpoAllows = /費用説明|申込|物件送付後|内覧後/.test(tpo);
+    if (ESTIMATE_RE.test(text) && !customerWantsEstimate && !roomPositive && !staffPromised && !tpoAllows) {
+      const early = EARLY_PHASE.has(ctx.phaseKey ?? "") || (ctx.phaseKey === "proposing" && (ctx.sentPropertiesCount ?? 0) === 0);
+      push("context_check", early ? "block" : sevAuto(), "ESTIMATE_NO_TRIGGER",
+        "お客様の費用質問・見積依頼・特定物件送付・前向き反応・直前スタッフ約束のいずれも無いのに御見積書の作成・送付を宣言しています（⑦初期費用は項目ラベル）",
+        firstSentenceAround(text, ESTIMATE_RE), "ピックアップ宣言に置き換える");
+    }
+  }
   // E6 退去予定・入居中物件への内覧誘導
   if (/退去予定|[0-9０-９]{1,2}月退去|退去後|入居中|退去前/.test(allHist) &&
       /(?:ご都合よろしい|今週末|いつでも)[^\n。]{0,15}ご案内|内覧(?:でき|出来|可能)(?!ません|ない|次第)/.test(text) &&
@@ -1097,17 +1132,32 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
   // E9 スタッフが確定日時を提示済みの後の「ご都合よろしいお日にち」再質問
   if (GOCHOUGO_RE.test(text) && /[0-9０-９]{1,2}[\/／月][0-9０-９]{1,2}[^\n]{0,14}(?:ご案内|お待ち|でお願い|確定|決定)|(?:ご案内|内覧)(?:日|の日程)(?:は|が)?[^\n]{0,8}(?:確定|決ま)/.test(lastStaffTexts(ctx, 2)))
     push("context_check", sevAuto(), "GOCHOUGO_AFTER_FIXED", "内覧日時が確定済みなのに再度「ご都合よろしいお日にち」を尋ねています", firstSentenceAround(text, GOCHOUGO_RE), "確定日時をそのまま書く");
-  // E10 フェーズ別禁止事項（生成側 PHASE_PROHIBITIONS と同一定義 — A-8）
+  // E10 フェーズ別禁止事項（生成側 PHASE_PROHIBITIONS と同一定義 — A-8・2026-09-08 語彙タイミング拡張）
+  //   state × 顧客トリガー（FORM_LABEL_RE 除去後の顧客直近4件＋最新）× 直前スタッフ約束（直近2件）で解禁判定。
+  //   語彙タイミング ban は code TIMING_VOCAB_MISMATCH、従来の state 逆行 ban は STATE_REGRESSION（両方 assignSeverity で block 維持）。
   const def = ctx.phaseKey ? PHASE_PROHIBITIONS[ctx.phaseKey as keyof typeof PHASE_PROHIBITIONS] : undefined;
   if (def) {
+    const custAll = customerTextsForBan(ctx);
+    const staffRecent = lastStaffTexts(ctx, 2);
     for (const b of def.bans) {
+      if (b.onlyIf && !b.onlyIf({ sentPropertiesCount: ctx.sentPropertiesCount })) continue;
       const m = text.match(b.re);
       if (!m) continue;
       if (b.allowIfCustomerAsked && /他(の|にも)?(物件|お部屋)|別の(物件|お部屋)|申(し)?込(み)?(たい|します|お願い)|内覧(したい|お願い)|見てみたい/.test(cust)) continue;
-      push("rule_check", b.severity === "block" ? "block" : sevAuto(), "STATE_REGRESSION", `【${def.label}】${b.why}: 「${m[0]}」`, m[0], b.fix);
+      if (b.allowIfCustomerRe && b.allowIfCustomerRe.test(custAll)) continue;
+      if (b.allowIfStaffRe && b.allowIfStaffRe.test(staffRecent)) continue;
+      push("rule_check", b.severity === "block" ? "block" : sevAuto(), b.code ?? "STATE_REGRESSION", `【${def.label}】${b.why}: 「${m[0]}」`, m[0], b.fix);
     }
   }
   return issues;
+}
+
+// ─── 語彙タイミング（E5/E10）用ヘルパー（2026-09-08）────────────────────────────────
+const ESTIMATE_RE = /(?:御|お)?見積(?:書|り|もり)?/;
+const EARLY_PHASE = new Set(["first_reply", "hearing"]);
+/** 顧客側テキスト（直近4件＋最新）。条件フォームの項目ラベル（⑦初期費用 等）を除去してから照合する */
+function customerTextsForBan(ctx: FinalCheckContext): string {
+  return `${lastCustomerTexts(ctx, 4)}\n${ctx.lastCustomerMessage ?? ""}`.replace(FORM_LABEL_RE, "");
 }
 
 // ─── 語彙セマンティクス（主語・方向・前提）決定論チェック（2026-09-08 Fable5）─────────────
@@ -1746,7 +1796,7 @@ function inferDiffIssuePass(code: string, check1Issues: CheckIssue[]): CheckPass
       code === "FILLER_GREETING" || code === "PASSIVE_ONLY" || code === "SUBJECT_CONFUSION" ||
       code === "CONDITION_ADD_MISROUTED" || code === "STAFF_REQUEST_OMITTED" ||
       code === "INTRO_REPEAT" || code === "WE_DO_MISSING_DET" || code === "GENERIC_ONLY_REPLY" ||
-      code === "PROMISE_ECHO_MISSING" || code === "ESTIMATE_NO_TRIGGER" || code === "VIEWING_BEFORE_VACANCY" ||
+      code === "PROMISE_ECHO_MISSING" || code === "ESTIMATE_NO_TRIGGER" || code === "COST_ASSERTION_NO_ESTIMATE" || code === "VIEWING_BEFORE_VACANCY" ||
       code === "APPLY_WITHOUT_INTENT" || code === "POST_APPLY_VIEWING" || code === "TENSE_MISMATCH" ||
       code === "FEEDBACK_PREMATURE" || code === "GOCHOUGO_AFTER_FIXED" || code === "GOCHOUGO_AFTER_DATE" ||
       code === "GUIDE_BEFORE_PROPERTY" || code === "CONFIRM_SUBJECT_THEFT" || code === "PHOTO_NO_PREMISE" ||

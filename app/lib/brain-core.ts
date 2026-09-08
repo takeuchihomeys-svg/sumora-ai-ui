@@ -14,6 +14,7 @@ import {
   normalizeAixActionKey,
 } from "@/app/lib/aix-taxonomy";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
+import { isConditionFormMessage } from "@/app/lib/line-reply-prompts";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -662,7 +663,8 @@ async function detectSignalBasedAixFallback(
     // 信号1（成約実績最多ライン）: 最終顧客メッセージに見積・初期費用の話題 → estimate_sheet
     // applying_pattern の most_effective 最多。見積書→申込誘導→申込の3ステップが成約最短ルート。
     // （コスト懸念＝信号0.9・見積送付済み＝信号3 は上で先に除外済み）
-    if (/見積|初期費用/.test(custText)) return "estimate_sheet";
+    // 2026-09-08: ①〜⑧条件フォームの「⑦初期費用」は項目ラベル（route.ts detectAixTiming と同じ除外・四者同名）
+    if (!isConditionFormMessage(custText) && /見積|初期費用(?![】：:]|の限度)/.test(custText)) return "estimate_sheet";
 
     // 信号TikTok（弊社SNS動画流入 → property_search）:
     // 弊社TikTok/Instagramの動画で物件に興味を持って問い合わせてきた顧客。

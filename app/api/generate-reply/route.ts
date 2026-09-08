@@ -15,6 +15,15 @@ import {
   PHASE_COMMON_FORMAT,
   buildPhaseProhibitionNote,
   type PhaseKey,
+  // 2026-09-08 語彙タイミング共有トリガー（prompts / final-check / few-shot / AIX 判定の四者同名）
+  FORM_LABEL_RE,
+  isConditionFormMessage,
+  CUSTOMER_ESTIMATE_INTENT_RE,
+  CUSTOMER_PROPERTY_REF_RE,
+  CUSTOMER_ROOM_POSITIVE_RE,
+  STAFF_ESTIMATE_PROMISE_RE,
+  CUSTOMER_SCREENING_CONCERN_RE,
+  CUSTOMER_APPLY_OR_DOC_RE,
 } from "@/app/lib/line-reply-prompts";
 import {
   validateAndClean,
@@ -211,9 +220,10 @@ const GRATITUDE_POS_RE = /ありがと|感謝|助かり|嬉しい|うれしい|�
 // 送付完了文（ご査収ください／お送りさせて頂きました）は「約束中」ではないので null。
 export function detectStaffPromise(staffText: string): { label: string; echo: string } | null {
   if (!staffText) return null;
-  if (/ご査収ください|お送りさせて頂きました|お送りいたしました/.test(staffText) && !/次第/.test(staffText)) return null;
+  if (/ご査収ください|お送りさせて頂きました|お送りさせていただきました|お送りいたしました|お送りしました|送付いたしました|送付させて頂きました/.test(staffText) && !/次第/.test(staffText)) return null;
   if (/撮影|写真.{0,6}お送り|動画.{0,6}お送り/.test(staffText)) return { label: "室内撮影して送付", echo: "撮影出来次第お送りさせて頂きます！！" };
-  if (/見積/.test(staffText)) return { label: "お見積書の作成・送付", echo: "最大限割引しました初期費用のお見積書作成しお送りさせて頂きます！！" };
+  // 見積 echo は「作成・お送り」の約束形（STAFF_ESTIMATE_PROMISE_RE）に限る（「見積」の語出現だけでは復唱しない）
+  if (STAFF_ESTIMATE_PROMISE_RE.test(staffText)) return { label: "お見積書の作成・送付", echo: "最大限割引しました初期費用のお見積書作成しお送りさせて頂きます！！" };
   if (/募集状況|空室|空き.{0,4}確認/.test(staffText)) return { label: "募集状況の確認", echo: "募集状況確認出来次第ご連絡させて頂きます！！" };
   if (/ピックアップ|お調べ|お探し|オススメできるお部屋/.test(staffText)) return { label: "条件に合う物件のピックアップ送付", echo: "〇〇周辺全域から〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！" };
   if (/ご案内させて頂きます|内覧/.test(staffText) && /[0-9０-９]{1,2}時/.test(staffText)) return { label: "内覧の実施（日時確定）", echo: "当日何卒よろしくお願い致します！！" };
@@ -468,7 +478,8 @@ type AixTimingSuggestion = {
 // 物件指名語（空室・取り扱い確認。AIXタイミングマップ P0 の trigger_condition）
 const AIX_NOMINATION_RE = /空(?:室|き|いて)|取り扱い|募集|ありますか|この(?:物件|お?家|部屋)/;
 // 金額質問（初期費用・見積・いくら）
-const AIX_MONEY_QUESTION_RE = /初期費用|見積|お?いくら|費用[^\n]{0,12}(?:教えて|知りたい|どのくらい|どれくらい)|総額/;
+// 2026-09-08: 項目ラベル形（「初期費用】」「初期費用の限度額」「⑦初期費用 ⇒」）と「いくらでも」を除外（条件フォーム⑦での見積誤発火が根本原因）
+const AIX_MONEY_QUESTION_RE = /初期費用(?![】：:]|の限度|の上限|\s*[⇒→])|見積|(?<!でも)お?いくら(?!でも)|費用[^\n]{0,12}(?:教えて|知りたい|どのくらい|どれくらい)|総額/;
 // 支払い意思（最ホットシグナル: 「金額によっては即日初期費用払えます」等）
 const AIX_PAYMENT_INTENT_RE = /払えま|払える|支払えま|即日[^\n]{0,10}(?:払|入金|振り?込)|用意でき|振り?込め|一括で払/;
 // 条件変更・緩和・追加（「もう少し広め」「賃料が上がっても構わない」「仕切れるような」等）
@@ -482,6 +493,18 @@ function detectAixTiming(
 ): AixTimingSuggestion | null {
   const msg = (customerMessage || "").trim();
   if (!msg && !opts.hasCustomerImage) return null;
+
+  // ── 優先度 -1: 条件フォーム除外（2026-09-08 根本原因）。
+  //    ①〜⑧フォームの「⑦初期費用」は項目ラベルであり質問ではない。ラベル除去後の本文に
+  //    CUSTOMER_ESTIMATE_INTENT_RE（依頼・質問形）も特定物件参照も無ければ金額判定を一切行わず、
+  //    PHASE_GUIDE パターンA（ピックアップ宣言のみ）に委ねる。
+  if (isConditionFormMessage(msg)) {
+    const body = msg.replace(FORM_LABEL_RE, "");
+    if (!CUSTOMER_ESTIMATE_INTENT_RE.test(body) && !CUSTOMER_PROPERTY_REF_RE.test(body)) {
+      console.info("[aixTiming] condition form → skip money/nomination (ラベル語による見積誤発火防止)");
+      return null;
+    }
+  }
 
   // ── 優先度0: 物件指名検出（画像/SUUMO URL添付 + 空室・取り扱い語）→ property_check_result ──
   const hasPropertyUrl = AVAILABILITY_URL_RE.test(msg);
@@ -582,6 +605,7 @@ function detectAixTiming(
 function buildAixTimingNote(s: AixTimingSuggestion): string {
   const lines = [
     `\n\n【🎛 AIXタイミング判定（確定・最優先 — この場面はAIX【${s.label}】(${s.aix})ボタンの担当場面）】`,
+    `・優先順位: 【🚫 フェーズ絶対禁止】（PHASE_PROHIBITIONS・final-check STATE_REGRESSION / TIMING_VOCAB_MISMATCH で block）に抵触する語彙は、下の橋渡し実例に含まれていても書かない。抵触する場合はピックアップ宣言に置き換える。`,
     `この場面ではスタッフがAIX【${s.label}】ボタンを使う運用指示がある。AIが返信文で物件情報・金額・空室状況の「答え」を生成してはいけない。`,
     `・返信は橋渡し文言（受付宣言）のみで完結させること。型: 挨拶 → 受領のお礼/かしこまりました → 行動宣言 → 「出来次第/確認出来次第ご連絡させて頂きます」`,
     `・橋渡し文言の実例（この型に合わせる・文脈に応じて調整）: 「${s.bridge}」`,
@@ -1246,7 +1270,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 
   // 見積書カバー文はAIXの「見積書送る」ボタン専用。generate-replyでは見積書を添付できないため、
   // 添付済みを装う文面・金額内訳をAI返信案に出さない（内覧日時ゲート viewingFactNote と同型の常時注入ゲート）
-  const estimateGateNote = `\n\n【💰 見積書カバー文の生成は絶対禁止（最優先）】「〜の御見積書となります」「御見積書をお送りします＋ご査収ください」のような、見積書を既に添付した体のカバーメッセージ・初期費用の金額内訳は絶対に出力しない。見積書本体はAIXの「見積書送る」ボタンで別途作成・添付して送るため、AI返信案には含めない。初期費用・見積の質問への返信は「かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」の作成宣言のみ許可（物件名入りの見積書送付文・金額内訳・見積書に対する「ご査収ください」は書かない）。この物件の家賃・管理費（共益費）・敷金・礼金の実額もAIは物件資料画像を読めないため断言・推測禁止。会話履歴内でスタッフが既に伝えた金額をそのまま引用する場合のみ言及可。それ以外は『確認しご連絡させて頂きます😊！！』または見積書作成宣言で返すこと。敷金・礼金の一般論（通常0〜2ヶ月分等）は可。※直前のスタッフ返信で既に見積書の作成・送付や割引を約束済みの場合（【🚫 見積書作成宣言の繰り返し禁止】ブロックがある場合）は、この作成宣言も繰り返さず短い受付文のみとする。
+  const estimateGateNote = `\n\n【💰 見積書カバー文の生成は絶対禁止（最優先）】「〜の御見積書となります」「御見積書をお送りします＋ご査収ください」のような、見積書を既に添付した体のカバーメッセージ・初期費用の金額内訳は絶対に出力しない。見積書本体はAIXの「見積書送る」ボタンで別途作成・添付して送るため、AI返信案には含めない。お客様が最新メッセージで初期費用・見積を明示的に質問・依頼している場合（または特定物件のURL・画像を送付している場合）に限り、作成宣言「かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」を許可する（物件名入りの見積書送付文・金額内訳・見積書に対する「ご査収ください」は書かない）。①〜⑧条件フォーム受信時・費用質問なし・物件未送付の返信ではこの作成宣言の句自体も禁止（【🚫 フェーズ絶対禁止】TIMING_VOCAB_MISMATCH で block）。その場合は「〇〇周辺全域から〇〇さんご希望の〔条件〕のお部屋全てピックアップしてお送りさせて頂きます」のピックアップ宣言に置き換える。この物件の家賃・管理費（共益費）・敷金・礼金の実額もAIは物件資料画像を読めないため断言・推測禁止。会話履歴内でスタッフが既に伝えた金額をそのまま引用する場合のみ言及可。それ以外は『確認しご連絡させて頂きます😊！！』または見積書作成宣言で返すこと。敷金・礼金の一般論（通常0〜2ヶ月分等）は可。※直前のスタッフ返信で既に見積書の作成・送付や割引を約束済みの場合（【🚫 見積書作成宣言の繰り返し禁止】ブロックがある場合）は、この作成宣言も繰り返さず短い受付文のみとする。
 ・【📌 見積書・初期費用への言及は「お客様が質問している場合のみ」（最優先ゲート）】お客様の最新メッセージが初期費用・見積書・費用について質問・依頼している場合のみ、見積書作成宣言を使ってよい。お客様が「前向きに検討しています」「決まり次第ご連絡します」「かしこまりました」「よろしくお願いします」「ありがとうございます」等、費用・見積書に触れていない場合は、見積書・初期費用の説明・作成宣言・割引の言及を一切含めず、承諾とサポート姿勢のみで返信を締めること。過去の会話で初期費用の話題があったとしても、現在のメッセージが費用と無関係であれば絶対に蒸し返さない。★重要例外（条件フォーム）: ①〜⑧の番号付き条件フォーム形式のメッセージ（「⑦初期費用の限度額：〇万円」等を含むもの）は費用の質問・依頼ではない。このメッセージへの返信で「見積書」「御見積」「お見積」は絶対に書かない。条件フォームへの正しい返信は「条件を受け取った旨＋物件ピックアップ宣言」のみ。
 ・【💳 分割払い提案の絶対禁止】分割払い・クレジットカード払い等の支払い方法の提案・言及は、お客様が「分割できますか」等と支払い方法を明示的に質問した場合、または「初期費用を払えない」と言った場合のみ許可。それ以外では絶対に書かない。特に「初期費用を抑えたい」への回答として分割払いを提案することは絶対禁止（正しい選択肢は ①より初期費用の安い物件の提案 ②スタッフによる割引 のみ）。`;
 
@@ -1421,7 +1445,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // 成約優先の汎用指示を注入する。summaryNote が存在する = 過去の brain 実行結果が DB に
   // 残っているため、summaryNote の内容をベースに AI が戦略を推論できる。
   const closingFallback = !hasAixMetaStrategy && !closingNote && summaryNote
-    ? `\n【🎯 T3フォールバック戦略（AIX-META未生成・ai_summary参考情報も不在）】\n上記の顧客サマリーの内容に基づき、成約を最優先で誘導すること。具体的なWE DO宣言（申込促進・物件確保・見積書提示のうち文脈に合うもの）を返信末尾に必ず含める。\n`
+    ? `\n【🎯 T3フォールバック戦略（AIX-META未生成・ai_summary参考情報も不在）】\n上記の顧客サマリーの内容に基づき、成約を最優先で誘導すること。具体的なWE DO宣言（申込促進・物件確保・ピックアップ宣言のうち文脈に合うもの）を返信末尾に必ず含める。見積書提示はお客様が費用・見積を質問している場合のみ（費用文脈が無ければ見積書ではなくピックアップ宣言を選ぶ）。\n`
     : "";
 
   // ── HumanMessage 2-block プロンプトキャッシュ（2026-08）──
@@ -2150,9 +2174,16 @@ const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C:
 // final-check.ts runVocabSemanticChecks（V7/V10/V9）と同名の前提条件（三者同名）。minKeep フェイルオープン維持。
 function buildPremiseExcludeRe(staffHist: string, customerMessage: string): RegExp | null {
   const parts: string[] = [];
-  if (!/撮影|写真|動画|オンライン内見|オンライン内覧/.test(staffHist + "\n" + customerMessage)) parts.push("撮影");
+  // 顧客テキストは条件フォームの項目ラベル（⑦初期費用 等）を剥がしてから照合する
+  const cust = (customerMessage ?? "").replace(FORM_LABEL_RE, "");
+  if (!/撮影|写真|動画|オンライン内見|オンライン内覧/.test(staffHist + "\n" + cust)) parts.push("撮影");
   if (!/【画像】|お送りさせて頂きました|お送りしました|ピックアップしお送り|property_send|ご査収/.test(staffHist)) parts.push("ご査収");
   if (!/[0-9０-９]{1,2}\s*[\/／月]\s*[0-9０-９]{1,2}.{0,10}[0-9０-９]{1,2}時/.test(staffHist)) parts.push("現地到着|到着しております|本日[0-9０-９]{1,2}時");
+  // 2026-09-08 見積前提: 顧客の費用質問・特定物件送付・前向き反応・直前スタッフ約束のいずれも無ければ見積語彙入りの実例を落とす
+  if (!CUSTOMER_ESTIMATE_INTENT_RE.test(cust) && !CUSTOMER_PROPERTY_REF_RE.test(cust) && !CUSTOMER_ROOM_POSITIVE_RE.test(cust) && !STAFF_ESTIMATE_PROMISE_RE.test(staffHist))
+    parts.push("(?:御|お)?見積(?:書|り|もり)?");
+  if (!CUSTOMER_SCREENING_CONCERN_RE.test(cust)) parts.push("審査面|保証会社|独立系");
+  if (!CUSTOMER_APPLY_OR_DOC_RE.test(cust)) parts.push("申込書類|入居申込書|必要書類|身分証(?:の)?(?:お写真|コピー)");
   return parts.length ? new RegExp(parts.join("|")) : null;
 }
 // 実例ヘッダー（pgvector経路・フォールバック経路で共通。文体のみ再現・業務内容は現在の会話に従う）
@@ -2165,6 +2196,9 @@ function derivePremiseLabel(reply: string): string {
   if (/現地|到着|本日[0-9０-９]{1,2}時/.test(reply)) labels.push("内覧日時確定済み");
   if (/確認(?:でき|出来)次第/.test(reply)) labels.push("管理会社への確認事項が発生している");
   if (/ご都合よろしいお日にち/.test(reply)) labels.push("特定物件を推した直後");
+  if (/見積/.test(reply)) labels.push("お客様が費用・見積を質問／特定物件を送付／内覧後前向き反応のいずれかが会話にある（①〜⑧フォームの⑦初期費用は該当しない）");
+  if (/審査面|保証会社/.test(reply)) labels.push("お客様が審査・保証の不安を自ら発言済み");
+  if (/申込書類|必要書類|身分証/.test(reply)) labels.push("お客様が申込意思を表明済み");
   return labels.join("・");
 }
 
@@ -2436,9 +2470,11 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
 → 対象物件が特定できる場合は物件名を添えた受付文でよい（URLは書かない）。
 → 「気になる物件のURLをお送りください」の聞き返しは絶対禁止。`
       : "";
+    // 2026-09-08: 見積例文は顧客が費用を質問／特定物件を参照している時のみ出す（引用画像だけで見積宣言を誘導しない）
+    const quoteEstimateAllowed = CUSTOMER_ESTIMATE_INTENT_RE.test(custText) || CUSTOMER_PROPERTY_REF_RE.test(custText);
     const imageNameSuppressNote = isImage
       ? `
-引用した画像がどの物件かはスタッフにしか判断できないため、返信文に物件名・マンション名は絶対に含めないこと（「最大限割引した初期費用の御見積書をご用意します！！」のように物件名なしで返す）。`
+引用した画像がどの物件かはスタッフにしか判断できないため、返信文に物件名・マンション名は絶対に含めないこと（${quoteEstimateAllowed ? "「最大限割引した初期費用の御見積書をご用意します！！」" : "「お送り頂きましたお部屋の募集状況確認させて頂きます！！」"}のように物件名なしで返す${quoteEstimateAllowed ? "" : "。お客様が費用を質問していないため見積書の宣言は書かない"}）。`
       : "";
     return `
 【💬 引用リプライ検出（確定事実・最優先文脈）】
