@@ -2213,9 +2213,10 @@ ${history}`;
 
     // ── 5新フィールド決定論ゲート（finalAix矯正群・reply_modeフェイルクローズと同型 — プロンプト任せにしない）──
 
-    // reply_direction: 20字上限をコード強制（超過はLLM逸脱）
+    // reply_direction: 120字上限（2026-09-08: 20字ラベルでは TPO由来の effectiveReplyDirection（100〜200字）に
+    // 情報量で劣り「申込みを前に進める」程度に縮退していた。短いラベルは reply_direction_label が担う）
     const replyDirection = typeof parsed.reply_direction === "string" && parsed.reply_direction.trim()
-      ? parsed.reply_direction.trim().slice(0, 20)
+      ? parsed.reply_direction.trim().slice(0, 120)
       : null;
 
     // key_topics: 文字列のみ・空要素/重複除去・最大3件・各40字

@@ -809,6 +809,7 @@ function assignSeverity(pass: CheckPass, code: string, isAutoSend = false, isEar
   if (pass === "rule_check" && code.startsWith("AIX_BOUNDARY")) return "block";
   if (pass === "anomaly_scan" && (code === "FABRICATED_AMOUNT" || code === "FABRICATED_AVAILABILITY")) return "block";
   if (code === "FABRICATED_PROPERTY" || code === "FABRICATED_DATE") return "block";
+  if (code === "NG_PROPERTY_MENTION" || code === "INTRO_REPEAT") return "block"; // プロンプトで block と指示していたが分岐が無く常に warning だった
   if (isAutoSend && pass === "context_check" && code === "MISSED_QUESTION") return "block";
   // FN-006: context_check の TIME_INVALID は自動送信のみ block、スタッフ確認経路は warning
   if (pass === "context_check" && code === "TIME_INVALID") {
@@ -824,7 +825,113 @@ function normalizeForMatch(s: string): string {
 
 // HIGH-3(Fable5): 決定的禁止語彙スキャン（LLM前に実行・Haiku見逃しを排除）
 // evidenceは本文実在が保証されるのでL283の降格ガード対象外（ループ外で別処理）
-const BANNED_WORDS_DETERMINISTIC = ["スモラ", "名称未設定", "少々お待ちください", "**", "承知いたしました", "承知しました", "ご連絡お待ちくださいませ"];
+const BANNED_WORDS_DETERMINISTIC = ["スモラ", "名称未設定", "少々お待ちください", "**", "承知いたしました", "承知しました", "承知致しました", "ご連絡お待ちくださいませ", "ご連絡お待ちしております", "お待ちくださいませ", "名無し"];
+
+// ─── 決定論チェック群（runFinalCheck / runDiffRecheck の両方で実行。LLM不要・約0ms）─────────
+// 2026-09-08: 修正版に対する再検査欠落（THANK_OPENING等が recheck で見られない）と
+// WE_DO_MISSING の LLM 依存（直近2ヶ月で発行0件）を解消するため共通関数化。
+const WAIT_TPO_RE = /一時保留|感謝返し|強推し直後|ネガ文脈/;
+const BOILERPLATE_RE = /かしこまりました|はい|お世話になっております|お待たせ致しました|お待たせいたしました|よろしくお願い|宜しくお願い|何卒|全力でサポート|お気軽に[^。！!\n]{0,12}(ください|下さい)|ご満足(頂|いただ)け[^。！!\n]{0,20}|またご連絡|ご連絡お待ち|お待ちしております|引き続き|ありがとうございます|こちらこそ/g;
+const ACTION_DECL_RE = /(ピックアップ|お送り|送付|お調べ|お探し|探し|確認|ご案内|案内|作成|お作り|交渉|手配|お伝え|お申込み|申込|抑え|押さえ|お取り|取り寄せ|お渡し|ご用意|ご提案|提案)[^\n。！!]{0,30}(させて(?:頂|いただ)き|いたし|致し|し)ます/;
+const CUSTOMER_REQUEST_RE = /[?？]|お願い|希望|したい|ですか|ますか|でしょうか|教えて|ください|もらえ|いただけ|頂け|条件|家賃|エリア|間取り|[0-9０-９]+万/;
+
+function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  const tpo = ctx.tpoLabel ?? "";
+
+  // ① 禁止語彙
+  for (const word of BANNED_WORDS_DETERMINISTIC) {
+    if (text.includes(word)) {
+      issues.push({ pass: "rule_check", severity: "block", code: "BANNED_WORD", message: `禁止語彙「${word}」が含まれています`, evidence: word, suggestion: `「${word}」を削除してください` });
+    }
+  }
+
+  // ② 18時以降 or 土日の「本日中に」（顧客への依頼文「本日中にご返信頂けますと」は除外）
+  for (const sameDayPhrase of ["本日中に", "今日中に", "今日のうちに", "本日のうちに"]) {
+    const idx = text.indexOf(sameDayPhrase);
+    if (idx === -1) continue;
+    const after = text.slice(idx + sameDayPhrase.length, idx + sameDayPhrase.length + 20);
+    if (/頂けます|いただけます|ください|お願い/.test(after)) break;
+    const jst = new Date(Date.now() + 9 * 3600 * 1000);
+    const jstHour = jst.getUTCHours();
+    const jstDay = jst.getUTCDay();
+    const isWeekend = jstDay === 0 || jstDay === 6;
+    if (jstHour >= 18 || isWeekend) {
+      issues.push({
+        pass: "context_check",
+        severity: ctx.isAutoSend ? "block" : "warning",
+        code: "TIME_INVALID_HONIJITSU",
+        message: `${isWeekend ? "土日" : "18時以降"}のため「${sameDayPhrase}」は実行不可能な約束です`,
+        evidence: text.slice(Math.max(0, idx - 10), Math.min(text.length, idx + sameDayPhrase.length + 10)),
+        suggestion: isWeekend ? "「週明け一番にご連絡させて頂きます」等に変更してください" : "「明日一番にご連絡させて頂きます」等に変更してください",
+      });
+    }
+    break;
+  }
+
+  // ③ NG③違反: 「ありがとうございます」書き出し（名前行・絵文字を剥がしてから判定。感謝返しTPOは除外）
+  if (!/感謝返し|強推し直後/.test(tpo)) {
+    const stripped = text.trimStart()
+      .replace(/^[^\n]{0,12}(?:さん|様)[、,！!\s]*/, "")
+      .replace(/^[\s！!、。😊😌🙇✨🌟]+/, "");
+    const head = stripped.slice(0, 30);
+    const thankRe = /^(?:(?:ご(?:連絡|返信|回答|返答|確認|質問|要望)|お忙しい中|早速の?(?:ご)?返信|お写真)[^\n]{0,12}?)?(?:ありがとう|有難う|有り難う)(?:ございます|御座います)/;
+    if (thankRe.test(head) && !/(頂き|いただき)/.test(head.slice(0, head.search(/ありがとう|有難う|有り難う/) + 1))) {
+      issues.push({
+        pass: "rule_check", severity: "warning", code: "THANK_OPENING",
+        message: "返信が「ありがとうございます」で始まっています（NG③違反）。「お世話になっております！！」「お待たせ致しました！！」「はい😊！！」等から始めてください",
+        evidence: text.trimStart().slice(0, 20),
+        suggestion: `冒頭を「お世話になっております！！」または「はい😊！！」に変更`,
+      });
+    }
+  }
+
+  // ④ 「！！」過剰（文字数比: 100字あたり2回超かつ5回以上。会社文体の4〜6回は対象外）
+  const exclamCount = (text.match(/！！/g) ?? []).length;
+  if (exclamCount >= 5 && exclamCount > Math.ceil(text.length / 50)) {
+    issues.push({ pass: "rule_check", severity: "warning", code: "EXCLAMATION_OVERUSE", message: `「！！」が${exclamCount}回使用されています（${text.length}字に対して過剰）`, evidence: `「！！」×${exclamCount}回`, suggestion: "「！！」を「！」に変えるか文を短縮してください" });
+  }
+
+  // ⑤ NG確定物件の言及（決定論・block）
+  for (const p of ctx.ngProperties ?? []) {
+    const core = p.replace(/\s*\[.*?\]\s*$/, "").trim();
+    if (core.length >= 2 && text.includes(core)) {
+      issues.push({ pass: "rule_check", severity: "block", code: "NG_PROPERTY_MENTION", message: `提案禁止物件「${core}」に言及しています`, evidence: core, suggestion: `「${core}」への言及を削除してください` });
+    }
+  }
+
+  // ⑥ 自己紹介の再生成（2回目以降の会話で「はじめまして」「〇〇と申します」）
+  const hasStaffHistory = (ctx.recentMessages ?? []).some((m) => m.sender === "staff");
+  if (hasStaffHistory) {
+    const m = text.match(/はじめまして|担当(?:させて頂き|させていただき|いたし|致し)ます[^。\n]{1,10}と申します|と申します/);
+    if (m) {
+      issues.push({ pass: "context_check", severity: "block", code: "INTRO_REPEAT", message: "既にやり取りのある顧客に対して自己紹介・初回挨拶を再生成しています", evidence: m[0], suggestion: "「○○さん お世話になっております！！」から始めてください" });
+    }
+  }
+
+  // ⑦ 具体アクション欠落（WE_DO_MISSING_DET）／汎用のみ返信（GENERIC_ONLY_REPLY）
+  //   定型句を除去した残りに「行動動詞＋宣言語尾」が1文も無ければ発行。待ち系TPOは除外
+  if (!WAIT_TPO_RE.test(tpo)) {
+    const residue = text.replace(BOILERPLATE_RE, "");
+    const hasActionDecl = ACTION_DECL_RE.test(residue);
+    const customerAsked = CUSTOMER_REQUEST_RE.test(ctx.lastCustomerMessage ?? "");
+    if (!hasActionDecl) {
+      const isGenericOnly = customerAsked && text.replace(/\s/g, "").length < 40;
+      issues.push({
+        pass: "context_check",
+        severity: ctx.isAutoSend || isGenericOnly ? "block" : "warning",
+        code: isGenericOnly ? "GENERIC_ONLY_REPLY" : "WE_DO_MISSING_DET",
+        message: isGenericOnly
+          ? "顧客が質問・条件・依頼をしているのに40字未満の受諾文のみです"
+          : "具体的な行動宣言（ピックアップ/確認/交渉/お送り/ご案内 等＋対象）が1文もありません",
+        evidence: text.trim().slice(0, 30),
+        suggestion: "顧客メッセージの固有名詞（エリア・物件名・条件・日付）を復唱し「○○をピックアップしてお送りさせて頂きます」等の具体アクション＋期限を1文入れてください",
+      });
+    }
+  }
+
+  return issues;
+}
 
 // ─── メイン: 決定的プリチェック + 3パス並列チェック ──────────────────────────
 // 絶対にthrowしない（全pass失敗でも issues=[] / passes_completed=[] の fail-open 結果を返す）
@@ -833,69 +940,8 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, sonne
   const issues: CheckIssue[] = [];
   const draftNorm = normalizeForMatch(draft);
 
-  // ── HIGH-3: 決定的禁止語彙スキャン（Haiku前・確実に検出）──
-  for (const word of BANNED_WORDS_DETERMINISTIC) {
-    if (draft.includes(word)) {
-      issues.push({
-        pass: "rule_check",
-        severity: "block",
-        code: "BANNED_WORD",
-        message: `禁止語彙「${word}」が含まれています`,
-        evidence: word,
-        suggestion: `「${word}」を削除してください`,
-      });
-    }
-  }
-
-  // ── 時刻ベース決定的チェック: 18時以降の「本日中に」は実行不可能な約束 ──
-  for (const sameDayPhrase of ["本日中に", "今日中に", "今日のうちに", "本日のうちに"]) {
-    if (draft.includes(sameDayPhrase)) {
-      const jstHour = new Date(Date.now() + 9 * 3600 * 1000).getUTCHours();
-      if (jstHour >= 18) {
-        const idx = draft.indexOf(sameDayPhrase);
-        const start = Math.max(0, idx - 10);
-        const end = Math.min(draft.length, idx + sameDayPhrase.length + 10);
-        issues.push({
-          pass: "context_check",
-          // LLM版TIME_INVALID（assignSeverity）と対称: 自動送信のみblock・スタッフ確認経路はwarning
-          severity: ctx.isAutoSend ? "block" : "warning",
-          code: "TIME_INVALID_HONIJITSU",
-          message: `18時以降のため「${sameDayPhrase}」は実行不可能な約束です`,
-          evidence: draft.slice(start, end),
-          // 「ご確認し」を含めない（CONFIRM_PROMISE_REガードに掛かり修正が破棄されるため）
-          suggestion: "「明日一番にご連絡させて頂きます」等に変更してください",
-        });
-      }
-      break;
-    }
-  }
-
-  // ── NG③違反: 「ありがとうございます」書き出し（冒頭20字で検出・LLMが見逃す頻出バグ）──
-  // NG_PHRASE_NOTE③（route.ts）では書き出し禁止を指示しているが final-check に検出コードがなかった
-  const firstChars = draft.trimStart().slice(0, 20);
-  if (/^(ありがとうございます|ご連絡ありがとうございます)/.test(firstChars)) {
-    issues.push({
-      pass: "rule_check",
-      severity: "warning",
-      code: "THANK_OPENING",
-      message: "返信が「ありがとうございます」で始まっています（NG③違反）。「お世話になっております！！」「お待たせ致しました！！」「はい😊！！」等から始めてください",
-      evidence: firstChars,
-      suggestion: `「${firstChars}」→「お世話になっております！！」または「はい😊！！」に変更`,
-    });
-  }
-
-  // ── EXCLAMATION_OVERUSE: 「！！」が1返信に5回以上（過剰テンション・スタッフ手修正の主因）──
-  const exclamCount = (draft.match(/！！/g) ?? []).length;
-  if (exclamCount >= 5) {
-    issues.push({
-      pass: "rule_check",
-      severity: "warning",
-      code: "EXCLAMATION_OVERUSE",
-      message: `「！！」が${exclamCount}回使用されています（1返信3回以内が目安）。過剰なテンションは不自然に見えます`,
-      evidence: `「！！」×${exclamCount}回`,
-      suggestion: "「！！」を「！」に変えるか文を短縮して3回以内に収めてください",
-    });
-  }
+  // ── 決定論チェック群（禁止語・本日中・THANK_OPENING・！！過剰・NG物件・自己紹介再生成・具体アクション欠落）──
+  issues.push(...runDeterministicChecks(draft, ctx));
 
   // ── 3パス並列チェック（rule_check・anomaly_scan=Haiku / context_check=Sonnet）──
   // context_check のみ Sonnet: 10種の複雑な会話理解が必要で誤検知が revision 誤発火に直結するため
@@ -1295,7 +1341,8 @@ const DIFF_RECHECK_CODES = `AIX_BOUNDARY_VIEWING / AIX_BOUNDARY_ESTIMATE / AIX_B
 AIX_BOUNDARY_APPLICATION / AIX_BOUNDARY_MOVEIN / AIX_BOUNDARY_PROMISE / AIX_BOUNDARY_DB /
 BANNED_WORD / RULE_VIOLATION / FABRICATED_AMOUNT / FABRICATED_AVAILABILITY / FABRICATED_PROPERTY /
 FABRICATED_DATE / FABRICATED_NAME / FABRICATED_POLICY / MISSED_QUESTION / STAGE_MISMATCH /
-DOUBLE_DECLARATION / TIME_INVALID / STAGE_SKIP`;
+DOUBLE_DECLARATION / TIME_INVALID / STAGE_SKIP / WE_DO_MISSING / FILLER_GREETING / PASSIVE_ONLY /
+SUBJECT_CONFUSION / CONDITION_ADD_MISROUTED / STAFF_REQUEST_OMITTED / NG_PROPERTY_MENTION`;
 
 function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx: FinalCheckContext): string {
   const issuesJson = JSON.stringify(
@@ -1337,7 +1384,9 @@ function inferDiffIssuePass(code: string, check1Issues: CheckIssue[]): CheckPass
   if (orig && orig.pass !== "meta") return orig.pass;
   if (code.startsWith("FABRICATED_")) return "anomaly_scan";
   if (code === "MISSED_QUESTION" || code === "STAGE_MISMATCH" || code === "DOUBLE_DECLARATION" ||
-      code === "STAGE_SKIP" || code.startsWith("TIME_INVALID")) return "context_check";
+      code === "STAGE_SKIP" || code.startsWith("TIME_INVALID") || code === "WE_DO_MISSING" ||
+      code === "FILLER_GREETING" || code === "PASSIVE_ONLY" || code === "SUBJECT_CONFUSION" ||
+      code === "CONDITION_ADD_MISROUTED" || code === "STAFF_REQUEST_OMITTED") return "context_check";
   return "rule_check"; // AIX_BOUNDARY_* / BANNED_WORD / RULE_VIOLATION / 不明code
 }
 
@@ -1353,40 +1402,8 @@ async function runDiffRecheck(
   const issues: CheckIssue[] = [];
   const draftNorm = normalizeForMatch(revised);
 
-  // ── 決定的チェックは修正版にも常時適用（runFinalCheckと同一。LLM不要・約0ms）──
-  for (const word of BANNED_WORDS_DETERMINISTIC) {
-    if (revised.includes(word)) {
-      issues.push({
-        pass: "rule_check",
-        severity: "block",
-        code: "BANNED_WORD",
-        message: `禁止語彙「${word}」が含まれています`,
-        evidence: word,
-        suggestion: `「${word}」を削除してください`,
-      });
-    }
-  }
-  for (const sameDayPhrase of ["本日中に", "今日中に", "今日のうちに", "本日のうちに"]) {
-    if (revised.includes(sameDayPhrase)) {
-      const jstHour = new Date(Date.now() + 9 * 3600 * 1000).getUTCHours();
-      if (jstHour >= 18) {
-        const idx = revised.indexOf(sameDayPhrase);
-        const start = Math.max(0, idx - 10);
-        const end = Math.min(revised.length, idx + sameDayPhrase.length + 10);
-        issues.push({
-          pass: "context_check",
-          // LLM版TIME_INVALID（assignSeverity）と対称: 自動送信のみblock・スタッフ確認経路はwarning
-          severity: ctx.isAutoSend ? "block" : "warning",
-          code: "TIME_INVALID_HONIJITSU",
-          message: `18時以降のため「${sameDayPhrase}」は実行不可能な約束です`,
-          evidence: revised.slice(start, end),
-          // 「ご確認し」を含めない（CONFIRM_PROMISE_REガードに掛かり修正が破棄されるため）
-          suggestion: "「明日一番にご連絡させて頂きます」等に変更してください",
-        });
-      }
-      break;
-    }
-  }
+  // ── 決定的チェックは修正版にも常時適用（runFinalCheck と完全同一セット。LLM不要・約0ms）──
+  issues.push(...runDeterministicChecks(revised, ctx));
 
   // 差分検証の対象: meta（PARTIALLY_UNCHECKED）/ UNCHECKED_AUTO_SEND はテキスト修正で
   // 解消できないissueなので除外（従来もrevision対象から除外していたものと同じ）
