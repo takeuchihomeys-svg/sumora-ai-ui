@@ -511,3 +511,41 @@ Fable5分析で発見された「正当な文を削除・破壊するルール�
 - ⚠️ 未対応: 同様の受け身表現を含む知識行が他に約20件ある（45554d85/bb8e736c/db6e678a/cfc13e4c/2cc3cc10/b08cc20f等、importance8-10）。うちe9567579・b1308271は受け身表現を「OK」と教える内容で打ち合わせ合意と真っ向矛盾 → 次セッションで棚卸し・is_current=false化を検討
 
 検証: npx tsc --noEmit パス
+
+
+---
+
+## TPO判定 7ラベル体系・gratitudeActionHint・conditionDetail（2026-09-08 Fable5監査）
+`generate-reply/route.ts` の TPO ブロック（`// ── TPO共通ヘルパ（2026-09-08 誤発動対策 / 監査パッチ）──` 以降）を全面改修。生成（tpoNoteForLLM）・チェック（final-check）・few-shot（line-reply-prompts【📍 TPO別返し方】）の三者で**同名ラベル**を使う。
+
+### 7場面ラベル（tpoNoteForLLM 先頭語 = prompts ■場面【…】 = final-check 正規表現）
+| ラベル | フラグ | 開口語 | 字数 | final-check |
+|---|---|---|---|---|
+| 条件提示 | `isConditionPresented` | かしこまりました！！ | 100〜180 | CONDITION_OPENING |
+| 内覧キャンセル | `isViewingCancel` | かしこまりました！！ | 50〜100 | WAIT_TPO / CONDITION_OPENING |
+| ネガ文脈（顧客自身の断り） | `negativeDetail.kind="withdrawal"` | かしこまりました！！ | 50〜110 | WAIT_TPO / CONDITION_OPENING |
+| ネガ文脈（否決・募集終了報告への了承） | `negativeDetail.kind="staff_report"` | はい！！ | 50〜110 | WAIT_TPO |
+| 一時保留 | `isTemporaryLeaveMsg` | はい😊！！ | 30〜60 | WAIT_TPO / GRATITUDE_OPENING |
+| 検討中フォロー | `isThinkingMsg`（＋brain follow_up） | はい😊！！ | 70〜120 | WAIT_TPO / GRATITUDE_OPENING |
+| 強推し直後の了承 | `isPostStrongRecommendation` | はい😊！！ | 50〜110 | WAIT_TPO / GRATITUDE_OPENING |
+| 感謝返し | `isGratitudeReplyTPO` | はい😊！！ | 40〜130 | WAIT_TPO / GRATITUDE_OPENING |
+
+### 主要構造
+- **モジュールスコープ共通ヘルパ**（EMOJI_RE 直後）: `stripDecoration` / `coreLength`（絵文字除去後 code point）/ `IMPLICIT_QUESTION_RE`（?なし疑問）/ `IMPLICIT_REQUEST_RE` / `SOFT_DECLINE_RE` / `INFO_PROVIDE_RE` / `GRATITUDE_POS_RE` / `CLOSER_ONLY_RE` / `ACK_TOPIC_EXCL_RE` / `TPO_NEUTRAL_ACK_RE`。`isShortAckMsg`（buildGenerationMessages）と `isGratitudeReplyTPO` が同一集合を共有。**export しない**（Route export 型エラー）
+- **TPO_HARD_REQUEST_RE（話題語）/ TPO_SOFT_REQUEST_RE（文型）分離**。isThinkingMsg は SOFT を `TPO_THINK_TIME_REQUEST_RE`（考えさせてください等）で免除。「相談してから決めたい」は HARD の「決めたい」と衝突するため `msgForReq` で先に除去
+- **conditionDetail**: `{presented, areas[], rent, hasRequest, changeRequest, reason}`。reason ∈ form / area+rent / existing_property_ref / request_over_condition / no_rent / no_area / empty。`isConditionChangeRequest`（片方のみ＋条件語）は待ち系TPOの誤発動保護専用で方向性は強制しない。`conditionDirection` に areas/rent をリテラル埋め込み
+- **negativeDetail**: 断り表現（WITHDRAWAL_SRC）を TPO_REQUEST_RE より**先に**評価し、断り句を除去した `rest` に除外を当てる。スタッフ側走査は「短い了承のみ・72h以内・代替提案なし・結果報告形」に限定。AIX履歴 `最新:property_check_result...結果:unavailable` は決定論で確定。brain `customer_intent=negative` は `engagement_stance=wait` との併用でのみ補助証拠
+- **isPostStrongRecommendation**: `/最新:([^\s→]+)/` でラベル抽出（旧 split は「（新→旧順）」ヘッダーの→で割れて恒久 false だった）。`property_recommendation` のみ対象、`property_check_result(結果:available)` は対象外。直近スタッフ1通が `isAix` or 推薦語を含むこと
+- **gratitudeActionHint**: 直前スタッフ発言から決定論で1アクション選択（ピックアップ約束→出来次第お送り / ご査収→お手隙＋私の方でも / 確認・交渉中→確認出来次第 / 見積→気になる点 / 内覧→現地でお待ち）。LLM に選ばせない
+- **anyPartRestNeutral**: 待ち系（一時保留/検討中）は「1通該当＋残りは TPO_NEUTRAL_ACK_RE」で成立。純感謝のみ everyPart
+- **tpo_debug** に `conditionReason` / `isConditionChangeRequest` / `negativeKind` / `isViewingCancel` 追加（A-2）。1週間後に `ai_draft_check->'tpo_debug'` を集計し reason / kind 分布を確認、FPが出たら語彙を**削る**（足さない）
+
+### 回帰テスト
+`scratchpad/tpo_regression.mjs`（route.ts からブロックを抽出→ts.transpileModule→100ケース固定）。TPO改修時は必ず実行。テストは route.ts のマーカーコメント（`// ── TPO判定 共通ヘルパ（2026-09-08 監査）` / `// ── TPO共通ヘルパ（2026-09-08 誤発動対策 / 監査パッチ）──` / `const effectiveKeyTopics`）に依存するので、コメントを変えたらテストも直す
+
+### 優先度B（未対応）
+- brain-fetch-spec.ts の `lastCustomerMsgAt` null で無条件 T1 → T2 扱いへ
+- FRESHNESS_TOLERANCE_MS=5秒連投問題
+- `TPO_SOFT_REQUEST_RE` の `できます` を `できます(?:か|でしょ|よね|[?？])` に絞る（「確認できます次第」FN）
+- 「10万円台なら厳しいです。梅田で」の否定上限を条件提示から除外
+- tpo_debug を reply_logs 側にも複製し is_edited と突合
