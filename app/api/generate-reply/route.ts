@@ -159,6 +159,33 @@ const SEPARATE_APPOINTMENT_NOTE = `\n【🚫 別件予定の混入禁止（最�
 // お客様が絵文字を文頭・1行目に使っていた場合、返信も1行目の開き言葉直後に絵文字を配置させる。
 // Extended_Pictographic（U+1F300〜）でLINE絵文字を拾う。
 const EMOJI_RE = /\p{Extended_Pictographic}/u;
+
+// ── TPO判定 共通ヘルパ（2026-09-08 監査）─────────────────────────────────────
+// buildGenerationMessages の isShortAckMsg と route handler の TPO 判定で同一集合を共有する。
+// ※ Route Handler のため export しない（Next.js の Route export 型検査に引っかかる）
+// 絵文字（ZWJ・VS16・スキントーン含む）・記号連打・空白を除去した実質本文
+const stripDecoration = (s: string): string =>
+  s.replace(/[\p{Extended_Pictographic}\u200D\uFE0F\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}]/gu, "")
+   .replace(/([！!？?。、，,．.〜～ー…♪]|\s)+/g, "$1");
+// UTF-16 単位ではなく code point 単位の実質文字数
+const coreLength = (s: string): number => Array.from(stripDecoration(s)).length;
+// 疑問形（?なし）: 「契約日はいつになりますか」「鍵は現地で受け取ればいいですか」
+const IMPLICIT_QUESTION_RE = /(?:ます|です|でしょう|ません)か(?:[ねぇ]?(?:[。！!、\s]|$))|いつ(?:頃|ごろ|まで|から|に|が|です|でしょ|になり|になる|くらい)|いくら|どこ|どちら|どの(?:物件|お部屋|方)|どう(?:なり|すれ|いう|やって|でしょ)|何(?:時|日|円|曜)|なん(?:時|日|じ)|でいい(?:です)?か|ればいい|ればよい|必要(?:です|でしょう)/;
+// 依頼形（?なし）: 「確認お願いします」「送付よろしくお願いします」「してほしい」
+const IMPLICIT_REQUEST_RE = /(?:確認|連絡|手配|送付|作成|調整|対応|手続き|予約|変更|追加|案内)[をも]?(?:お願い|おねがい|よろしく)|してほしい|して欲しい|してもらいたい|していただきたい|して頂きたい/;
+// 柔らかい断り（isNegativeContext の withdrawalRe と二重化して gratitude/shortAck から確実に外す）
+const SOFT_DECLINE_RE = /見送(?:らせて|ります|りたい|ろうと)|やめ(?:て|とき|とこ)|遠慮(?:し|させ)|今回は(?:結構|大丈夫|やめ|見送|なし)|お断り|他で(?:決め|契約)|決まりました|決まったので/;
+// 情報提供・選択確定（復唱＋次工程が必要なので感謝短返しにしない）
+const INFO_PROVIDE_RE = /住所|勤務先|年収|来月|今月|上旬|中旬|下旬|月末|[A-Za-zＡ-Ｚａ-ｚ]案|で進めて|で決め|に決め|にします|の方で(?:お願い|進め)/;
+// 純感謝・了承語（isGratitudeReplyTPO / isShortAckMsg 共通集合）
+const GRATITUDE_POS_RE = /ありがと|感謝|助かり|嬉しい|うれしい|よろしく|宜しく|おねがい|お願い(?:し|いた|致)|承知|かしこまり|わかりました|分かりました|了解|りょうかい|^はい[！!。]*$|OK|オッケー|おっけ|大丈夫です|楽しみ|お任せ|おまかせ|引き続き|どうも|サンキュー|ありがたい/i;
+// 締めフィラー通（「では失礼します」単独で来ても感謝返しを壊さない）
+const CLOSER_ONLY_RE = /^(?:では|それでは)?(?:失礼(?:します|いたします|致します)|以上です|また(?:ご)?連絡(?:します|いたします)|よろしくです)[！!。]*$/;
+// 感謝・了承以外の話題（申込意思・日時確定・予算変更・キャンセル等）
+const ACK_TOPIC_EXCL_RE = /(家賃|エリア|間取り|物件|条件|変更|広げ|安く|抑え|内覧|見積|申込|キャンセル|予算|[0-9０-９]+(万|円|時|日|階|畳|㎡)|駅近|以内|以上)/;
+// 感謝・了承のみの1通（複数通結合時に「中立」として扱い、待ち系TPOの判定を阻害しない）
+const TPO_NEUTRAL_ACK_RE = /^(?:ありがとうございます|ありがとうございました|ありがとう|了解です|了解しました|承知しました|わかりました|分かりました|かしこまりました|よろしくお願いします|よろしくお願いいたします|お願いします|はい|OK|ok|おっけーです)[!！。😊😌🙏]*$/;
+
 function buildEmojiPositionNote(customerMessage: string): string {
   if (!customerMessage) return "";
   const firstLine = customerMessage.split(/\n/)[0] ?? "";
@@ -924,13 +951,22 @@ function buildGenerationMessages(
   const trimmedCustomerMsg = (customerMessage || "").trim();
   // 複数メッセージ結合時（\n含む）は後続の感謝文が前の行動シグナルをマスクするため短い感謝チェックを無効化
   const hasMultipleMessages = customerMessage.includes("\n");
+  // 2026-09-08: isGratitudeReplyTPO と同一集合（GRATITUDE_POS_RE / IMPLICIT_* / SOFT_DECLINE / ACK_TOPIC_EXCL）に統一。
+  // 長さは絵文字除去後の code point 数（🙇‍♂️連打で60字超になる FN を防ぐ）
+  // A-4: 複数通結合でも全通が中立の感謝・了承（「ありがとうございます\nよろしくお願いします」）なら二重宣言防止を有効化
+  const allPartsNeutralAck =
+    hasMultipleMessages &&
+    trimmedCustomerMsg.split("\n").map((s) => s.trim()).filter(Boolean).every((p) => TPO_NEUTRAL_ACK_RE.test(p));
   const isShortAckMsg =
-    !hasMultipleMessages &&
+    (!hasMultipleMessages || allPartsNeutralAck) &&
     trimmedCustomerMsg.length > 0 &&
-    trimmedCustomerMsg.length <= 60 &&
-    /(ありがとう|感謝|助かり(ます|ました)|嬉しい|宜しく|よろしく|おねがいします|おねがい致します|おねがいいたします|お願いします|お願い致します|お願いいたします|了解|承知|かしこまり|わかりました|分かりました|楽しみ|お任せ|おまかせ|引き続き)/.test(trimmedCustomerMsg) &&
+    coreLength(trimmedCustomerMsg) < 60 &&
+    GRATITUDE_POS_RE.test(stripDecoration(trimmedCustomerMsg)) &&
     !/[?？]/.test(trimmedCustomerMsg) &&
-    !/(家賃|エリア|間取り|物件|条件|変更|広げ|安く|抑え|内覧|見積|申込|キャンセル|予算|駅近|[0-9０-９]+(万|円|時|日|階|畳|㎡)|以内|以上)/.test(trimmedCustomerMsg);
+    !IMPLICIT_QUESTION_RE.test(trimmedCustomerMsg) &&
+    !IMPLICIT_REQUEST_RE.test(trimmedCustomerMsg) &&
+    !SOFT_DECLINE_RE.test(trimmedCustomerMsg) &&
+    !ACK_TOPIC_EXCL_RE.test(trimmedCustomerMsg);
   const staffPromisedPickup =
     !!lastStaffMsg &&
     /ピックアップ/.test(lastStaffMsg) &&
@@ -965,7 +1001,7 @@ function buildGenerationMessages(
     ? `\n【🚫 見積書作成宣言の繰り返し禁止（最優先・【💰 見積書カバー文】ゲートより上位）】
 スタッフは直前の返信で既に「割引・御見積書の作成/送付」を約束済み（またはAIX【見積書送る】で見積書送付済み）。
 → 「最大限割引させていただいた御見積書を作成しお送りさせて頂きます」等の作成宣言・割引の約束を絶対にもう一度生成しない（二重宣言になる）
-→ 返信は短い受付文のみ（例:「かしこまりました😊！！」「確認しご連絡させて頂きます😊！！」）。見積・費用の話を新たに展開しない
+→ 返信は短い受付文のみ（例:「はい😊！！確認しご連絡させて頂きます😊！！」）。開口語単独で終わらない。見積・費用の話を新たに展開しない
 ※ただし例外: お客様が【新しい物件】（URL・物件画像・物件名）を送って初期費用・費用を尋ねた場合はこのブロックを適用しない。新規見積として「最大限割引しました初期費用の御見積書を作成しお送りさせて頂きます！！」の作成宣言を必ず行うこと`
     : "";
 
@@ -3052,103 +3088,269 @@ export async function POST(req: NextRequest) {
     // LLM注入（brainGuidanceNote）とファイナルチェック（finalCheckCtx）で同一値を共有する。
     // 顧客が今回のメッセージで具体的なエリア・家賃条件を提示しているか判定
     // true の場合は isNegativeContext 等の TPO 誤発動から保護し、条件受け取り返信を強制する
-    // ── TPO共通ヘルパ（2026-09-08 誤発動対策）──
-    // 質問・依頼・希望を含むメッセージは「待ち」系TPO（感謝返し/一時保留/検討中）から必ず除外する
-    const TPO_REQUEST_RE = /[?？]|希望|したい|できます|可能です|教えて|ください(?!ませ)|もらえ|いただけ|頂け|お願いでき|内覧|内見|見学|申込|書類|初期費用|見積|交渉|送って/;
-    // 複数通結合（\n）時は各通を個別判定し、1通でも非該当なら TPO を立てない（末尾優先バイアス対策の横展開）
+    // ── TPO共通ヘルパ（2026-09-08 誤発動対策 / 監査パッチ）──
+    // 話題系（内覧・申込・見積等）: 全TPOで必ず除外。「申し込み」「見たい/行きたい」も依頼として扱う
+    const TPO_HARD_REQUEST_RE = /希望|教えて|内覧|内見|見学|申(?:し)?込|書類|初期費用|見積|交渉|送って|(?:見|行き|借り|住み|知り|聞き|決め|伺い)たい/;
+    // 文型系（?・ください・いただけ等）。「？」無しの疑問形（〜ますか/ですか/でしょうか）も拾う
+    const TPO_SOFT_REQUEST_RE = /[?？]|したい|(?:ます|です|でしょう|ますでしょう)か[ねぇ]?(?:[。！!、\s]|$)|できます|可能です|ください(?!ませ)|もらえ|いただけ|頂け|お願いでき/;
+    const TPO_REQUEST_RE = new RegExp(`${TPO_HARD_REQUEST_RE.source}|${TPO_SOFT_REQUEST_RE.source}`);
+    // 「時間が欲しい・考えさせて欲しい」型は依頼形でも判断保留（isThinkingMsg で SOFT 除外を免除）
+    const TPO_THINK_TIME_REQUEST_RE = /(?:検討|考え|相談)(?:させて(?:ください|下さい|頂|いただ|もらえ)|したい)|(?:お?時間|少し|もう少し|しばらく)(?:を|だけ)?(?:ください|下さい|頂け|いただけ|頂きたい|いただきたい|欲しい|ほしい)|考える時間/;
+    // 複数通結合（\n）時は各通を個別判定（末尾優先バイアス対策の横展開）
     const tpoMsgParts = (message ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
     const everyPart = (pred: (s: string) => boolean) => tpoMsgParts.length > 0 && tpoMsgParts.every(pred);
-    const isConditionPresented = (() => {
-      const msg = (message ?? "").trim().slice(0, 800); // 300字上限を撤廃（条件フォーム①〜⑧対応）。先頭800字で判定
-      if (msg.length === 0) return false;
-      // 構造化フォーム（【〇〇】⇒ / ①〜⑧）は無条件で条件提示扱い
-      if (/【[^】]{1,12}】\s*⇒|[①②③④⑤⑥⑦⑧]/.test(msg)) return true;
-      const hasArea = /[一-龯ぁ-んァ-ンー]{2,}(?:駅|区|市|町|村|周辺|エリア|あたり|付近|沿線|線)|梅田|なんば|難波|心斎橋|本町|堀江|天王寺|新大阪|京橋|天満|福島|野田|中津|十三|江坂|西九条|九条|桜川|阿波座|谷町|上本町|鶴橋|玉造|森ノ宮|弁天町|大正|住之江|北浜|淀屋橋|肥後橋|四ツ橋|長堀|松屋町|南森町|扇町|都島|野江|関目|蒲生|放出|今里|布施|尼崎|西宮|神戸|三宮|豊中|吹田|茨木|高槻|枚方|寝屋川|守口|門真|東大阪|八尾|堺/.test(msg);
-      const hasRent = /[0-9０-９]+(?:\.[0-9０-９]+)?万(?:円|以内|〜|まで|以下|円以内|台|前後|くらい|程度)?|予算[はも]?\s*[0-9０-９]+|[0-9０-９]{2,3},?[0０]{3}円|[0-9０-９]{1,2}(?:\.[0-9０-９]+)?以下|[0-9０-９]{1,2}(?:\.[0-9０-９]+)?まで/.test(msg);
-      return hasArea && hasRent;
+    // 待ち系（一時保留/検討中）用: 1通以上が該当 かつ 残りは全て中立（感謝・了承のみ）で成立（TPO_NEUTRAL_ACK_RE はモジュールスコープ）
+    const anyPartRestNeutral = (pred: (s: string) => boolean) =>
+      tpoMsgParts.length > 0 && tpoMsgParts.some(pred) && tpoMsgParts.every((p) => pred(p) || TPO_NEUTRAL_ACK_RE.test(p));
+    // 直近スタッフ1通（recentMessages は oldest-first → reverse().find で最新）
+    const tpoLatestStaff = [...recentMessages].reverse().find((m) => m.sender === "staff") ?? null;
+    const tpoLatestStaffText = tpoLatestStaff?.text ?? "";
+
+    // ── 条件提示判定（2026-09-08 監査改修）──
+    // ①エリア語彙拡張＋ひらがな接頭の誤検出排除 ②家賃以外の金額（初期費用/礼金/年収等）をマスク
+    // ③漢数字・接頭語付き裸数字対応 ④既存物件への依頼・質問は条件提示より優先して false
+    // ⑤丸数字1個単独では発火しない ⑥抽出値（areas/rent）を露出して effectiveReplyDirection に埋め込む
+    const AREA_NAMED_RE = /梅田|なんば|難波|心斎橋|本町|堀江|天王寺|新大阪|京橋|天満|福島|野田|中津|十三|江坂|西九条|九条|桜川|阿波座|谷町|谷四|谷六|谷九|上本町|鶴橋|玉造|森ノ宮|弁天町|大正|住之江|北浜|淀屋橋|肥後橋|四ツ橋|四つ橋|長堀|松屋町|南森町|扇町|都島|野江|関目|蒲生|放出|今里|布施|尼崎|西宮|神戸|三宮|豊中|吹田|茨木|高槻|枚方|寝屋川|守口|門真|東大阪|八尾|堺|北摂|南大阪|北大阪|阪神間|ミナミ|キタ|京都|奈良|兵庫|阿倍野|天六|千里|箕面|池田|伊丹|宝塚|川西|明石|姫路|岸和田|和泉|泉佐野|富田林|大東|四條畷|交野|摂津|生駒|柏原|松原|藤井寺|羽曳野|長居|平野|我孫子|天下茶屋|岸里|玉出|住吉|帝塚山|文の里|田辺|針中野|緑橋|深江橋|高井田|長田|荒本|新石切|野田阪神|千鳥橋|伝法|出来島|千船|杭全|加美|久宝寺|新今宮|動物園前|恵美須|大国町|花園町|北加賀屋|南港|コスモスクエア|中之島|渡辺橋|海老江|新福島|南方|西中島|東三国|東淀川|上新庄|淡路|天神橋|中崎町|大阪城公園|清水|太子橋|千林|大日|古川橋|萱島|香里園|樟葉|くずは|鴻池新田|住道|徳庵|河内永和|俊徳道|長瀬|弥刀|近鉄八尾|河内山本|なかもず|中百舌鳥|新金岡|北花田|三国ヶ丘|堺東|泉ヶ丘|光明池|和泉中央|大阪市内/g;
+    // 接頭は漢字/カタカナのみ（「できれば駅近」「この地区」「都市ガス」「新幹線」の誤検出を排除）
+    const AREA_SUFFIX_RE = /[一-龯ァ-ヶー]{2,}(?:駅(?!近|チカ)|区|市(?!ガス|場)|町|村|府|県|丁目)|[一-龯ァ-ヶー]{2,}(?<!新幹|回|無|有|配|視|目|直|前|通信|路)線|[一-龯ァ-ヶー]{2,}(?:周辺|エリア|あたり|付近|近辺|界隈|方面|沿線|寄り|圏内)|(?:阪急|阪神|京阪|近鉄|南海|JR)(?:沿線|線|沿い)?/g;
+    // 家賃以外の金額（初期費用・礼金・年収等）を先にマスクする
+    const NON_RENT_CTX_RE = /(?:初期費用|初期|礼金|敷金|保証金|敷引|保証料|年収|月収|貯金|手数料|仲介|鍵交換|火災保険|清掃費|クリーニング|駐車場|値引|割引|交渉)\s*[はがも:：で]?\s*(?:[0-9０-９]+(?:[,，][0-9０-９]{3})*(?:\.[0-9０-９]+)?|[一二三四五六七八九十]+)\s*(?:万|千)?(?:円)?/g;
+    const RENT_PREFIX = "(?:(?:予算|家賃|賃料|上限|max|MAX)[はもが:：]?\\s*)?";
+    const RENT_RE = new RegExp(
+      RENT_PREFIX + "(?:[0-9０-９]+(?:\\.[0-9０-９]+)?|[一二三四五六七八九十]+)万(?:[0-9０-９一二三四五六七八九]+千?)?(?:円)?(?:以内|〜|~|まで|以下|台|前後|くらい|ぐらい|程度|位|後半|前半)?" +
+      "|" + RENT_PREFIX + "[0-9０-９]{2,3}[,，]?[0０]{3}円?(?:以内|まで|以下|前後|くらい)?" +
+      "|(?:予算|家賃|賃料|上限|max|MAX)[はもが:：]?\\s*[0-9０-９]+(?:\\.[0-9０-９]+)?",
+      "g",
+    );
+    // 「条件を出している」ことを示す語（依頼文との切り分け）
+    const CONDITION_MARKER_RE = /希望|条件|エリア|予算|家賃|間取り|探し|ピックアップ|変更|広げ|絞|抑え|以内|まで|台|くらい|程度|前後|駅近|徒歩|築|階|向き|設備|オートロック|バストイレ|独立洗面|管理費込|共益費込/;
+    // 既存物件への依頼・質問（内覧/申込/見積/？）
+    const REQUEST_INTENT_RE = /内覧|内見|見学|申込|申し込み|申し込む|契約|審査|見積|書類|持ち物|鍵|入居日|引き渡し|[?？]/;
+    // 送付済み物件への言及は条件語があっても条件提示扱いしない
+    const EXISTING_PROPERTY_REF_RE = /送って(?:もらった|いただいた|くださった|頂いた)|先日の|先程の|さっきの|この物件|その物件|こちらの物件|上の物件|下の物件|[0-9０-９]+(?:件目|つ目|番目)|[ABCＡＢＣ]の(?:物件|お部屋|方)|の方で/;
+
+    type ConditionDetail = {
+      presented: boolean;      // 従来の isConditionPresented（エリア＋家賃 両方 or フォーム）
+      areas: string[];         // 抽出エリア（復唱用）
+      rent: string | null;     // 抽出家賃（復唱用）
+      hasRequest: boolean;     // 依頼・質問併記あり（方向性に「先に回答」を足す）
+      changeRequest: boolean;  // エリアのみ/家賃のみ＋条件語（待ち系TPO誤発動からの保護専用・方向性は強制しない）
+      reason: string;
+    };
+    const conditionDetail: ConditionDetail = (() => {
+      const msg = (message ?? "").trim().slice(0, 800);
+      const none = (reason: string, extra: Partial<ConditionDetail> = {}): ConditionDetail =>
+        ({ presented: false, areas: [], rent: null, hasRequest: false, changeRequest: false, reason, ...extra });
+      if (msg.length === 0) return none("empty");
+      const hasRequest = REQUEST_INTENT_RE.test(msg);
+      const refersExisting = EXISTING_PROPERTY_REF_RE.test(msg);
+      const hasMarker = CONDITION_MARKER_RE.test(msg);
+      // 構造化フォーム: 【〇〇】⇒ / 丸数字2個以上 / 丸数字1個＋条件語
+      const circled = (msg.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length;
+      if (/【[^】]{1,12}】\s*[⇒→:：]/.test(msg) || circled >= 2 || (circled === 1 && hasMarker)) {
+        return { presented: true, areas: [], rent: null, hasRequest, changeRequest: false, reason: "form" };
+      }
+      const masked = msg.replace(NON_RENT_CTX_RE, (m) => "＠".repeat(m.length));
+      const rent = (masked.match(RENT_RE) ?? [])[0] ?? null;
+      const raw = [...(msg.match(AREA_SUFFIX_RE) ?? []), ...(msg.match(AREA_NAMED_RE) ?? [])];
+      // 重複・包含（「大阪市」⊂「大阪市内」）を除去し長い方を残す
+      const areas = raw.filter((a, i) => raw.indexOf(a) === i && !raw.some((b) => b !== a && b.length > a.length && b.includes(a)));
+      const hasArea = areas.length > 0;
+      const hasRent = !!rent;
+      if (refersExisting) return none("existing_property_ref", { areas, rent, hasRequest });
+      if (!(hasArea && hasRent)) {
+        const changeRequest = (hasArea || hasRent) && hasMarker && !hasRequest;
+        return none(hasArea ? "no_rent" : "no_area", { areas, rent, hasRequest, changeRequest });
+      }
+      if (hasRequest && !hasMarker) return none("request_over_condition", { areas, rent, hasRequest });
+      return { presented: true, areas, rent, hasRequest, changeRequest: false, reason: "area+rent" };
     })();
-    // 感謝返し場面の判定（Opus5実データ検証済み 2026-08-30）
-    // 成約113字 vs 停滞118字: 短さより「中身（実体アクション）の有無」が差
-    // 成約の68%が提案入りで悪反応1.6% → 物件提案禁止は逆効果
+    const isConditionPresented = conditionDetail.presented;
+    const isConditionChangeRequest = conditionDetail.changeRequest;
+
+    // ── 感謝返し（2026-09-08 監査改修: ?なし疑問文・依頼形・柔らかい断り・情報提供を除外、実質文字数で判定）──
     const isGratitudeReplyTPO = (() => {
-      const msg = (message ?? "").trim();
-      if (msg.length === 0 || msg.length >= 60) return false; // 40→60字（実データで60字が妥当）
-      if (isConditionPresented) return false;
-      if (TPO_REQUEST_RE.test(msg) || /どうすれば/.test(msg)) return false;
-      // isShortAckMsg と除外セットを共通化（申込意思・日時確定・予算変更・キャンセルを感謝返しに落とさない）
-      if (/(家賃|エリア|間取り|物件|条件|変更|広げ|安く|抑え|キャンセル|予算|[0-9０-９]+(万|円|時|日|階|畳|㎡)|駅近|以内|以上)/.test(msg)) return false;
-      return everyPart((p) => /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|おねがいします|おねがいいたします|おねがい致します|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解/.test(p));
+      const raw = (message ?? "").trim();
+      if (raw.length === 0) return false;
+      const core = stripDecoration(raw);
+      const len = Array.from(core).length;
+      if (len === 0 || len >= 60) return false;
+      if (isConditionPresented || isConditionChangeRequest) return false;
+      // 「内覧の件、よろしくお願いします」= 手配済み案件への承諾。名詞句「〜の件」を除いてから依頼判定
+      const forReq = core.replace(/(?:内覧|内見|見学|お?申込み?|見積(?:書)?|書類|初期費用|契約|審査)の件/g, "");
+      if (TPO_REQUEST_RE.test(forReq) || /どうすれば/.test(forReq)) return false;
+      if (IMPLICIT_QUESTION_RE.test(core)) return false;
+      if (IMPLICIT_REQUEST_RE.test(core)) return false;
+      if (SOFT_DECLINE_RE.test(core)) return false;
+      if (INFO_PROVIDE_RE.test(core)) return false;
+      if (ACK_TOPIC_EXCL_RE.test(forReq)) return false; // 「内覧の件、よろしく」は forReq で名詞句除去済み
+      return everyPart((p) => {
+        const q = stripDecoration(p);
+        return GRATITUDE_POS_RE.test(q) || CLOSER_ONLY_RE.test(q);
+      });
     })();
-    // 一時保留判定（「出先」「後で確認」等、顧客が今は動けない意思表示）
-    // 2026-09-06の承知いたしましたバグ（197字過剰返信）の根本原因への対処
+
+    // ── 一時保留（『今動けない状況語』or『後で見る・確認・返信する宣言』に限定。「検討」「考え」は isThinkingMsg に譲る）──
     const isTemporaryLeaveMsg = (() => {
       const msg = (message ?? "").trim();
-      if (msg.length === 0 || msg.length >= 80) return false; // 150→80字（条件付き長文を巻き込まない）
-      if (isConditionPresented) return false;
-      if (TPO_REQUEST_RE.test(msg)) return false; // 「後日内覧したいです」「今日の夜に内覧できますか？」等は保留ではない
-      // 「後日」「夜に」単独では判定せず、『今動けない』複合パターン or 明確な保留語に限定
-      const explicit = /出先|外出中|移動中|仕事中|運転中|手が離せ|後で確認|後ほど確認|確認次第(?:ご|連絡|返信)|今は確認|あとで確認|のちほど|帰ったら|帰り次第|夜確認|明日確認|ゆっくり確認|確認してから|見てから連絡|後ほど(?:ご|連絡|返信|見)/;
-      return everyPart((p) => explicit.test(p));
+      if (msg.length === 0 || msg.length >= 80) return false;
+      if (isConditionPresented || isConditionChangeRequest) return false;
+      if (TPO_REQUEST_RE.test(msg)) return false; // 「後日内覧したいです」「Bはまだ空いてますか」等は保留ではない
+      // 既読・興味表明は保留ではない（「移動中に見ました！2件目が気になります」）
+      if (/見ました|拝見しました|確認しました|確認できました|気になり|気に入|良さそう|よさそう|いいですね/.test(msg)) return false;
+      // スタッフへの猶予付与は保留ではない（「確認してからで大丈夫ですよ」）
+      if (/で(?:大丈夫|構いません|構わない|OK|オッケー|いいです|結構です)/.test(msg)) return false;
+      const explicit = new RegExp([
+        "出先|外出中|外出して|移動中|仕事中|勤務中|会議中|接客中|運転中|出張中|電車(?:の中|なので|に乗って)|手が離せ|立て込ん|バタバタ|忙し(?:い|く)(?:ので|ため|て)",
+        "(?:後で|あとで|後ほど|のちほど|後日|夜に?|夕方|明日|帰ったら|帰り次第|帰って(?:から|きたら)|落ち着いたら|時間(?:が|の)?(?:ある|空いた)(?:時|とき)に?|ゆっくり)(?:[^、。！!?？\\n]{0,8})?(?:見(?:ま|て|さ|る|よ)|み(?:ます|ておき|とき|る)|拝見|確認|返信|返し|返事|連絡|チェック)",
+        "確認(?:次第|出来次第|でき次第)(?:ご|連絡|返信|返事)|確認してから(?:ご?連絡|返信|返事|また|改めて)|見てから(?:ご?連絡|返信)|今は確認|後ほど(?:ご|連絡|返信)",
+      ].join("|"));
+      return anyPartRestNeutral((p) => explicit.test(p));
     })();
-    // 「検討します」「少し考えます」等の判断保留メッセージ（TPO4種をスルーしてしまう穴を塞ぐ）
-    // → 申込誘導・物件追加提案を封じ、急かさない待ちの姿勢を強制する
+
+    // ── 検討中（HARD/SOFT 分離＋時間要求型免除。旧 thinkExcl「検討して」は「検討してみます」を殺すデッドコードだった）──
     const isThinkingMsg = (() => {
       const msg = (message ?? "").trim();
       if (msg.length === 0 || msg.length >= 150) return false;
-      if (isConditionPresented) return false;
-      // 質問・依頼・内覧/申込意思を含む「検討」は判断保留ではない（「内覧を検討しています、空いてますか？」等）
-      if (TPO_REQUEST_RE.test(msg) || /お願い|検討(?:お願い|して|ください|頂け|いただけ)|ご検討|検討した結果|道に迷/.test(msg)) return false;
-      // ネガ（断り）や一時保留（出先）とは別に「判断保留」を独立判定。「検討」は文末形に限定
-      return everyPart((p) =>
-        /検討(?:します|させて|中です|中で|してみます|いたします|致します)|少し検討|考えさせて|考え(?:てみます|てみる|ます|てます)|悩んで|迷って(?!る場所)|もう少し(?:考|時間)/.test(p) &&
-        !/(キャンセル|やめ|断り|他社|他の会社)/.test(p)
-      );
+      if (isConditionPresented || isConditionChangeRequest) return false;
+      // 「相談してから決めたい」「検討した上でお返事します」= 判断保留の定型。HARD の「決めたい」（申込意思）と衝突するため先に除去
+      const msgForReq = msg.replace(/(?:相談|検討|考え)(?:して|し|した)?(?:から|上で|後で?|た後で?)(?:決め|お返事|返事|ご?連絡)(?:たい|ます|し|させて)?/g, "");
+      if (TPO_HARD_REQUEST_RE.test(msgForReq)) return false;
+      if (TPO_SOFT_REQUEST_RE.test(msgForReq) && !TPO_THINK_TIME_REQUEST_RE.test(msgForReq)) return false;
+      // スタッフへの検討依頼・比較相談・不安相談・道案内は別TPO（「よろしくお願いします」併記は除外しない）
+      if (/(?<!よろしく|宜しく)お願い(?:し|致|いた)|ご検討|検討(?:して|を)(?:ください|下さい|頂|いただ|もらえ|欲しい|ほしい)|検討した結果|道に迷|どちら|どっち|比べ|比較|審査|通るか|落ち(?:る|たら|ない)/.test(msg)) return false;
+      // 「〜で/を/と考えてます」は条件・意向表明（「もうちょっと考えます」は救済）
+      const thinkRe = /検討(?:します|させて|中です|中で|中なので|してみます|してみる|いたします|致します)|少し検討|考えさせて|(?<![でをはに])(?<!(?<!ちょっ)と)考え(?:てみます|てみる|ます|てます|中|てから)|悩(?:んで|み中)|迷って(?!る場所)|もう少し(?:考|時間|だけ)|時間を(?:ください|下さい|頂|いただ|もらえ)|考える時間|相談(?:して|します|してみ|の上|し(?:てから)?)|持ち帰|決めかね|決められ(?:ない|ず|ません)|決めきれ/;
+      return anyPartRestNeutral((p) => thinkRe.test(p) && !/(キャンセル|やめ|断り|他社|他の会社)/.test(p));
     })();
-    // ネガ文脈判定（断り・キャンセル直後の感謝には営業を一切乗せない）
-    // 仕様通り直近スタッフ3通を走査（1通のみだと募集終了報告が窓外になるバグを修正）
-    const isNegativeContext = (() => {
+
+    // ── ネガ文脈（2026-09-08 監査刷新）──
+    // ①断り表現を TPO_REQUEST_RE より先に評価（「キャンセルしたいです」到達不能バグ修正）
+    // ②brain customer_intent=negative（=懸念・不安）単独判定を廃止し補助証拠に格下げ（不安対応TPOを封殺していた）
+    // ③スタッフ側走査を結果報告形・72h以内・代替提案なし・AIX履歴優先に限定 ④isReschedule を前向き日程提案形に限定 ⑤isShortAckOnly 40→80字
+    type NegativeDetail = { kind: "withdrawal" | "staff_report" | null; viewingCancel: boolean };
+    const negativeDetail: NegativeDetail = (() => {
+      const none: NegativeDetail = { kind: null, viewingCancel: false };
       const msg = (message ?? "").trim();
-      // 条件提示中はネガ扱いしない（NEG-4: 矛盾注入の根絶。計算順序を isConditionPresented 優先に固定）
-      if (isConditionPresented) return false;
-      // 質問・依頼・再開意欲を含む顧客メッセージはネガ固着から即除外（募集終了報告後の「Bの内覧したいです」等）
-      if (TPO_REQUEST_RE.test(msg) || /また探し|再開|新し(い|く)条件|別の(物件|お部屋)|他の(物件|お部屋)/.test(msg)) return false;
-      // リスケ依頼（キャンセル＋別日）はネガではない（NEG-3）
-      const isReschedule = /キャンセル/.test(msg) && /別日|来週|改めて|リスケ|変更|日に|日程/.test(msg);
-      if (isReschedule) return false;
-      // stale intent（T2）は採用しない（NEG-2）
-      if (brainFreshForMessage && brainMeta?.customer_intent === "negative") return true;
-      // 顧客自身の断り表現（主判定）
-      const customerNegRe = /断り(ました|させて頂|をいただ)|キャンセル.{0,8}(したい|します|しました|になり)|見送り(たい|ます|になり)|辞退(したい|します|しました)|白紙(に戻|になり)|他社で(契約|申込|決め)|他の会社で(契約|申込|決め)|他社さん.*決め|やめ(とき)?ます|解約(したい|します|しました)|破談/;
-      if (customerNegRe.test(msg)) return true;
-      // スタッフ側走査は直近1通のみ・かつ顧客が短い了承のみを返した場合に限定（NEG-1: 3通固着の解消）
-      const lastStaff = [...recentMessages].reverse().find(m => m.sender === "staff")?.text ?? "";
-      const isShortAckOnly = msg.length <= 40 && /ありがとう|承知|かしこまり|わかりました|分かりました|了解|残念/.test(msg);
-      if (!isShortAckOnly) return false;
-      return /否決|募集終了|埋まって(しまい|おり)|審査.{0,6}(通らな|落ち|NG)/.test(lastStaff);
+      if (msg.length === 0) return none;
+      if (isConditionPresented || isConditionChangeRequest) return none;
+      const WITHDRAWAL_SRC = [
+        "お?断り(?:ました|させて(?:頂|いただ)|をいただ|します|したい|いたします)",
+        "キャンセル(?:で|を|に|させて|し|の)?.{0,10}(?:したい|します|しました|になり|お願い|ください|いただ|頂|たいです)",
+        "見送(?:り|ら)(?:たい|ます|せて|になり)",
+        "辞退(?:したい|します|しました|させて|いたします)",
+        "白紙(?:に戻|になり)",
+        "(?:他社|他の(?:会社|仲介|業者|不動産)|別の(?:会社|仲介|業者|不動産)|他のところ|別のところ|知人|友人|親戚|自分)(?:で|に|の紹介で|さん.{0,6}で?)(?:契約|申込|決め|決まり|見つけ)",
+        "(?:他|別)の(?:物件|お部屋)(?:で|に)(?:決め|決まり|契約|申込)",
+        "やめ(?:とき|てお|ておき|ることにし|ようと思い)?ます",
+        "やめ(?:ました|ることに)",
+        "解約(?:で|を|の)?.{0,6}(?:お願い|したい|します|しました|させて)",
+        "退去(?:します|することに|予定|いたします|が決ま)",
+        "引っ?越(?:すことに|しが決ま|し先が決ま)",
+        "諦め(?:ます|ました|ようと)",
+        "(?:今回は|一旦)(?:見送|なしで|遠慮|保留に)",
+        "破談",
+        // 内覧・来店に行けなくなった（別日提案が無ければ内覧キャンセル。提案付きは isReschedule が先に除外）
+        "(?:行け|伺え|来れ|行くことができ|行く事ができ|行くことが出来|行く事が出来)なく(?:なり|なっ)",
+      ].join("|");
+      const withdrawalRe = new RegExp(WITHDRAWAL_SRC);
+      const withdrawalHit = withdrawalRe.test(msg);
+      // 断り句（＋直前の対象名詞「申込の」「内覧」）を除去した残余。残余に質問・依頼が残れば「断り＋質問」なので質問回答パスへ
+      const rest = withdrawalHit
+        ? msg
+            .replace(new RegExp(`(?:お?申(?:し)?込(?:み)?|内覧|内見|見学|見積(?:書)?|契約|予約|審査|お部屋|物件)(?:の|を|は|も)?\\s*(?:${WITHDRAWAL_SRC})`, "g"), "")
+            .replace(new RegExp(WITHDRAWAL_SRC, "g"), "")
+        : msg;
+      // リスケ（キャンセル＋前向きな日程提案）はネガではない。旧 /変更|日に|日程/ は理由説明を誤除外していた
+      const isReschedule =
+        /キャンセル|延期|ずら|行けなく|伺えなく/.test(msg) &&
+        /別日|別の日|改めて|リスケ|日程(?:を|の)?(?:変更|調整|再調整|相談)|(?:来週|今週|明日|明後日|来月|[0-9０-９]{1,2}日|[月火水木金土日]曜)(?:は|に|で|なら|の)?(?:いかが|可能|大丈夫|どう|空い|お願い|希望|都合|変更)/.test(msg);
+      if (isReschedule) return none;
+      if (TPO_REQUEST_RE.test(rest)) return none;
+      if (/また探し|再開|新し(?:い|く)条件|(?:別|他)の(?:物件|お部屋)(?:も|を|は|が|、)?(?:探|見|紹介|お願い|あれ|あり|教え)/.test(rest)) return none;
+      if (withdrawalHit) {
+        const viewingCancel = /内覧|内見|見学|案内|行けな|伺えな/.test(msg) && !/他社|他の(?:会社|仲介)|決め(?:ました|た)|辞退|解約|退去/.test(msg);
+        return { kind: "withdrawal", viewingCancel };
+      }
+      // スタッフ側走査: 顧客が短い了承のみを返した場合に限定（除外は上流の TPO_REQUEST_RE／再開語で担保済み）
+      const isShortAckOnly = msg.length <= 80 && /ありがとう|承知|かしこまり|わかりました|分かりました|了解|残念|そうでしたか|そうですか|仕方|しょうがない|ご縁/.test(msg);
+      if (!isShortAckOnly) return none;
+      // AIX履歴の最新が「募集終了報告」なら決定論で確定（brain-core L1656: 「最新:<aix_type>(...)(結果:<check_pattern>)」）
+      const aixSaysUnavailable = /最新:property_check_result[^\s→]*結果:unavailable/.test(lastAixHistoryText ?? "");
+      // 72時間より前のスタッフ発言は固着させない（createdAt 欠落時は従来通り走査）
+      const staffAgeMs = tpoLatestStaff?.createdAt ? Date.now() - new Date(tpoLatestStaff.createdAt).getTime() : null;
+      if (staffAgeMs !== null && staffAgeMs > 72 * 60 * 60 * 1000) return none;
+      // スタッフが同時に代替提案をしている場合はネガではない（顧客は提案への感謝を返している）
+      if (/https?:\/\/|代わり|かわり|こちら(?:は|も|など)?(?:いかが|おすすめ|オススメ)|ピックアップ|ご紹介|おすすめ|オススメ/.test(tpoLatestStaffText)) return none;
+      // 結果報告形に限定（事前確認宣言・仮定説明・安心材料説明を除外）
+      const staffHypothetical = /確認(?:し|いた|させ)|場合|たら|もし|ご安心|ほとんど/.test(tpoLatestStaffText);
+      const staffNegResultRe = /否決|不承認|募集終了(?:でした|となって|しており|していました|とのこと|です)|埋まって(?:しまい|おり|いました|しまって)|満室(?:でした|となって|とのこと)|先約|他の方で決まり|申込が入って(?:しまい|おり)|審査.{0,8}(?:通らな|通りません|落ち|NG|見送り|承認が(?:下り|おり)ません|難しい)(?:かった|でした|ました|となり|とのこと|になり|と)/;
+      const staffSaysNeg = !staffHypothetical && staffNegResultRe.test(tpoLatestStaffText);
+      // ブレイン由来は補助証拠のみ（customer_intent=negative は「懸念・不安」定義であり断りではない）
+      const brainCorroborates =
+        brainFreshForMessage &&
+        lastCustomerMsgAt != null &&
+        brainMeta?.engagement_stance === "wait" &&
+        brainMeta?.customer_intent === "negative";
+      return (aixSaysUnavailable || staffSaysNeg || brainCorroborates) ? { kind: "staff_report", viewingCancel: false } : none;
     })();
-    // 強推し直後の了承：「1件に絞ってオススメ済み→顧客が了承」フェーズの待ちの姿勢
-    // property_recommendation/check_result後の感謝は「再提案・他物件確認」が逆効果になる
+    const isNegativeContext = negativeDetail.kind !== null;
+    const isViewingCancel = negativeDetail.viewingCancel;
+
+    // ── 強推し直後の了承（2026-09-08 監査FIX: 旧実装はヘッダー「（新→旧順）」の→で split され恒久 false）──
     const isPostStrongRecommendation = (() => {
-      if (!isGratitudeReplyTPO) return false;
-      if (isNegativeContext) return false;
-      // T2（stale）では last_aix_history が前メッセージ時点のため判定しない
-      if (!brainFreshForMessage) return false;
-      const hist = lastAixHistoryText ?? "";
-      // 履歴は「新→旧」列挙。先頭要素（最新アクション）のみを対象にする（過去1回の推薦への誤反応防止）
-      const latestAction = hist.split(/\s*(?:→|>|,|、|\/|\||;)\s*/)[0] ?? "";
-      // property_check_result は available のみ（unavailable=募集終了直後に代替提案を封じない）
-      if (!/property_recommendation|property_check_result_available/.test(latestAction)) return false;
-      // recentMessages は oldest-first → slice(-5) で「直近5件」を走査（旧 slice(0,5) は最古5件=ウェルカム文で常時true になるバグ）
-      const recentTexts = recentMessages.slice(-5).map(m => m.text ?? "").join(" ");
-      return /ピックアップ|物件.*(お送り|送付|紹介|オススメ|おすすめ)/.test(recentTexts);
+      if (isNegativeContext || isConditionPresented) return false;
+      const msg = (message ?? "").trim();
+      // 了承の受け口: 感謝返し OR 「確認・閲覧系の短い了承」（強推し文脈でのみ採用）
+      const isViewAck = msg.length > 0 && msg.length < 60 &&
+        !TPO_REQUEST_RE.test(msg) &&
+        everyPart((p) => /確認(?:して|させて)?(?:み|いただき|頂き)?ます|見て(?:み|おき)ます|拝見(?:し|いたし|致し)ます|チェック(?:して|し)(?:み)?ます|目を通(?:し|させて)/.test(p) || TPO_NEUTRAL_ACK_RE.test(p));
+      if (!isGratitudeReplyTPO && !isViewAck) return false;
+      if (!brainFreshForMessage) return false; // T2（stale）では last_aix_history が前メッセージ時点
+      // 「最新:」ラベル以降を抽出（split 廃止）。property_check_result(結果:available) は前進フェーズのため対象外
+      const latestAction = /最新:([^\s→]+)/.exec(lastAixHistoryText ?? "")?.[1] ?? "";
+      if (!/^property_recommendation\b/.test(latestAction)) return false;
+      // 時間境界: 直近スタッフ1通が AIX 推薦文であること（数日後の別件感謝に PSR が乗る FP を防ぐ）
+      if (!tpoLatestStaff) return false;
+      const looksLikeRecommendation = /オススメ|おすすめ|お薦め|特に|イチオシ|一押し|こちらの(?:物件|お部屋)|ご検討/.test(tpoLatestStaffText);
+      return !!tpoLatestStaff.isAix || looksLikeRecommendation;
+    })();
+
+    // ── 感謝返しの具体アクションを直前スタッフ発言から決定論で1つ選ぶ（LLM に選ばせない）──
+    const gratitudeActionHint: string = (() => {
+      const s = tpoLatestStaffText;
+      if (/ピックアップ/.test(s) && /(お送り|送らせて|お届け|送付)/.test(s) && !/ご査収/.test(s))
+        return "「ピックアップ出来次第お送りさせて頂きます！！」（ピックアップは約束済み。条件列挙・初期費用割引文の再掲禁止）";
+      if (/ご査収|お送りしました|お送りさせて頂きました|お送りいたしました|添付/.test(s))
+        return "「お手隙の際にご査収ください😌！！」＋「私の方でも〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」（主語はスタッフ。「確認でき次第ご連絡」は主語混乱のため禁止）";
+      if (/管理会社|オーナー|交渉|空室確認|確認(?:して|させて|いたし)/.test(s))
+        return "「確認出来次第ご連絡させて頂きます！！」";
+      if (/見積|御見積|初期費用/.test(s))
+        return "「気になる点等ございましたらいつでもお気軽にご連絡ください！！」（「ご検討の程」の再掲は絶対禁止）";
+      if (/内覧|内見|ご案内|待ち合わせ/.test(s))
+        return "「当日は現地にてお待ちしております！！」（日時または場所を1つだけ復唱）";
+      return "「気になる点等出てきましたらいつでもお気軽にご連絡ください！！」";
+    })();
+    // ── 条件提示の方向性（抽出値をリテラル埋め込み・3行構成固定）──
+    const conditionDirection: string = (() => {
+      const areaTxt = conditionDetail.areas.length ? conditionDetail.areas.join("・") : "（顧客文中のエリア名をそのまま）";
+      const rentTxt = conditionDetail.rent ?? "（顧客文中の家賃表記をそのまま）";
+      const answerFirst = conditionDetail.hasRequest ? "顧客の質問・依頼が併記されているので、2行目の前に1文で直接回答すること。" : "";
+      return `条件提示（エリア=${areaTxt} / 家賃=${rentTxt}）。3行構成で100〜180字。` +
+        `1行目「かしこまりました！！」（単独行）。${answerFirst}` +
+        `2行目：「${areaTxt}周辺全域から${rentTxt}」＋顧客が書いた付帯条件（間取り・徒歩分・築年・設備・管理費込 等）を列挙して「〇〇さんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！」。` +
+        `3行目「ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します！！」。` +
+        `禁止：「ご条件に合ったお部屋」「全力でサポート」「お探しします」等の抽象語／「新着あれば」「日々更新」等の受け身文／「本日中」「なるべく早く」等の時間約束／足りない条件の聞き返し（まず送る）／「〜をご希望ですね」の単体確認文。エリア名と家賃表記は必ず原文どおり本文に埋め込むこと`;
     })();
     const effectiveReplyDirection: string | null = (() => {
-      if (isConditionPresented) return "受け取ったエリア・家賃条件を冒頭で復唱し、即ピックアップ・送付宣言をWE DO形式で明示する（100〜180字）。開口語は「かしこまりました！！」。条件のエリア名・家賃上限を文中に必ず具体的に埋め込む。「ご条件に合ったお部屋」「全力でサポート」等の抽象表現禁止。「新着あれば」「日々更新」等の受け身待ち文言も禁止";
-      if (isNegativeContext) return "受け止めのみ（50〜110字）。謝罪禁止。開口語は「かしこまりました！！」。開口語の後に必ず次のアクション（物件日々更新される旨・新着あればお知らせする旨等）を1文添えること。「かしこまりました！！」単独で終了は禁止。「申し訳ございません」「残念ながら」等のネガティブ語禁止";
-      if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。物件追加・条件ヒアリング・長文説明は一切禁止";
-      if (isThinkingMsg) return "検討中の待ちフェーズ。70〜120字の短返し。開口語は「はい😊！！」。①ごゆっくりご検討ください②何かあればお申し付けください③顧客名先頭のサポート継続宣言の3点セット。申込誘導・希少性煽り・内見誘導・物件追加提案は絶対禁止";
-      if (isPostStrongRecommendation) return "感謝を1行で受け取り、検討を見守る待ちの姿勢で締める（50〜110字）。他物件の募集確認・新規ピックアップ・再推奨は書かない";
-      if (isGratitudeReplyTPO) return "感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。アクション例:「ピックアップ出来次第お送りします！！」「確認出来次第ご連絡します！！」。予告のみの進捗テンプレ・条件の再ヒアリング・情報追加は絶対禁止";
+      if (isConditionPresented) return conditionDirection;
+      if (isViewingCancel) return "内覧キャンセルの受け止め（50〜100字）。開口語は「かしこまりました！！」（単独行）。謝罪・残念語禁止。「またご都合の良い日がございましたらいつでもお申し付けください」の1文で別日を軽く開放するのみ。物件追加提案・申込誘導禁止";
+      if (negativeDetail.kind === "withdrawal") return "顧客自身の断り・キャンセルの受け止め（50〜110字）。開口語は「かしこまりました！！」（単独行）。2行目「またお部屋探しの際はいつでもお気軽にご連絡ください😊！！」で扉を開け、3行目「この度はありがとうございました！！」で締める。謝罪禁止・「申し訳ございません」「残念ながら」等のネガティブ語禁止・引き留め提案（他にもオススメ〜）禁止・「かしこまりました！！」単独終了禁止";
+      if (negativeDetail.kind === "staff_report") return "否決・募集終了報告への短い了承に対する受け止め（50〜110字）。開口語は「はい！！」（感謝・了承に「かしこまりました」は使わない）。2行目は顧客名先頭のサポート継続宣言（「〇〇さんにご満足頂けるお部屋が見つかるまでお部屋探し継続し全力でサポートさせて頂きます😌！！」）。3行目に次の一手を1文（別保証会社でご案内可能なお部屋／新着ピックアップ出来次第お送り）。謝罪・「残念ながら」禁止・会話終了の受け身締め禁止";
+      if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」（単独行）一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。この場面では具体アクション宣言は不要（何も宣言しない）。物件追加・内見誘導・条件ヒアリング・長文説明は一切禁止";
+      if (isThinkingMsg) return "検討中の待ちフェーズ。70〜120字の短返し。開口語は「はい😊！！」（単独行）。①ごゆっくりご検討ください②ご不明点・ご家族様からのご質問等あれば何なりとお申し付けください③顧客名先頭のサポート継続宣言の3点セット。申込誘導・希少性煽り（人気のため早めに）・内見誘導・物件追加提案・「ご検討の程よろしく」の再掲は絶対禁止";
+      if (isPostStrongRecommendation) return "強推し直後の了承。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。①感謝を1行で受け取る②直前に推薦したお部屋（物件名が分かれば名前で、不明なら「先ほどのお部屋」）をお手隙の際にごゆっくりご確認いただく旨1文③ご内覧・ご不明点はいつでもお申し付けくださいの開放1文④締め。合計50〜110字。他物件の募集確認・新規ピックアップ宣言・別物件の提案・申込誘導・「ご検討の程よろしくお願いします」の再掲は絶対禁止。顧客が「見てみます」（未来形）なら「ご覧頂きありがとう」等の既読扱いも禁止";
+      if (isGratitudeReplyTPO) return `感謝を1行で受け取り、次のアクション文を1つだけ添える: ${gratitudeActionHint}。合計40〜130字。開口語は「はい😊！！」（単独行）一択（「かしこまりました」「承知いたしました」禁止）。締めは「何卒よろしくお願い致します！！」。上記以外のアクション・予告のみの進捗テンプレ・条件の再ヒアリング・情報追加は絶対禁止`;
       return brainMeta?.reply_direction ?? null;
     })();
     const effectiveKeyTopics: string[] = (() => {
@@ -3165,11 +3367,17 @@ export async function POST(req: NextRequest) {
     })();
     const effectiveAvoidTopics: string[] = (() => {
       const base = brainMeta?.avoid_topics ?? [];
-      if (isNegativeContext) return [...new Set([...base, "物件提案", "見積提案", "申込誘導"])];
-      if (isTemporaryLeaveMsg) return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "条件ヒアリング", "詳細説明"])];
-      if (isThinkingMsg) return [...new Set([...base, "申込誘導", "希少性煽り", "内見誘導", "物件追加提案", "条件ヒアリング"])];
-      if (isPostStrongRecommendation) return [...new Set([...base, "他物件の募集状況確認", "新規物件ピックアップ", "別物件の提案", "申込誘導", "検討依頼の繰り返し"])];
+      if (isConditionPresented) return [...new Set([...base, "条件の再ヒアリング", "見積提案", "申込誘導", "内見誘導", "抽象的なサポート宣言"])];
+      if (isViewingCancel) return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "謝罪"])];
+      if (negativeDetail.kind === "withdrawal") return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "引き留め", "謝罪"])];
+      if (negativeDetail.kind === "staff_report") return [...new Set([...base, "見積提案", "申込誘導", "謝罪"])];
+      // 両方 true（「出先なので後ほど検討します」）は thinking の禁止セットも和集合にする
+      if (isTemporaryLeaveMsg) return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "条件ヒアリング", "詳細説明", ...(isThinkingMsg ? ["希少性煽り", "内見誘導", "物件追加提案"] : [])])];
+      if (isThinkingMsg) return [...new Set([...base, "申込誘導", "希少性煽り", "内見誘導", "物件追加提案", "条件ヒアリング", "検討依頼の繰り返し"])];
+      if (isPostStrongRecommendation) return [...new Set([...base, "他物件の募集状況確認", "新規物件ピックアップ", "別物件の提案", "申込誘導", "検討依頼の繰り返し", "初期費用割引の再掲"])];
       if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
+      // A-3: brain action=follow_up 経由の「検討中フォロー」ラベル（tpoNoteForLLM 後段）にも isThinkingMsg と同じ禁止セットを乗せる
+      if (brainMeta?.action === "follow_up" || brainMeta?.action === "followup_revive") return [...new Set([...base, "申込誘導", "希少性煽り", "内見誘導", "物件追加提案", "条件ヒアリング", "検討依頼の繰り返し"])];
       return base;
     })();
     // 顧客が最新メッセージで自ら言及した語は avoid_topics から除外
@@ -3177,11 +3385,15 @@ export async function POST(req: NextRequest) {
     const activeAvoidTopics = effectiveAvoidTopics.filter(t => !(message ?? "").includes(t));
     // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
     const tpoNoteForLLM: string | null = (() => {
-      if (isNegativeContext) return "ネガ文脈（断り・否決・募集終了等の直後）";
+      if (isConditionPresented) return "条件提示（顧客がエリア・家賃条件を提示。かしこまりました！！→条件を行動宣言に埋め込み→即ピックアップ宣言の3行。100〜180字）";
+      if (isViewingCancel) return "内覧キャンセル（別日開放のみ。物件追加・申込誘導禁止。50〜100字）";
+      if (isNegativeContext) return negativeDetail.kind === "withdrawal"
+        ? "ネガ文脈（顧客自身の断り・キャンセル。開口語「かしこまりました！！」→扉を開ける1文→お礼で締め。引き留め禁止）"
+        : "ネガ文脈（否決・募集終了報告への短い了承。開口語「はい！！」→顧客名先頭のサポート継続宣言→次の一手1文。謝罪禁止）";
       if (isTemporaryLeaveMsg) return "一時保留（顧客が今は確認できない・後で連絡すると宣言。30〜60字の超短返しのみ。「承知いたしました」絶対禁止）";
       if (isThinkingMsg) return "検討中フォロー（顧客がまだ迷っている・判断保留。急かさない。申込誘導・希少性煽り絶対禁止。70〜120字）";
-      if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客了承中・待ちフェーズ）";
-      if (isGratitudeReplyTPO) return "感謝返し（短い了承・感謝メッセージ）";
+      if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客が確認/了承中の待ちフェーズ。再ピックアップ宣言・別物件提案は絶対禁止。開口語「はい😊！！」）";
+      if (isGratitudeReplyTPO) return "感謝返し（短い了承・感謝メッセージ。開口語「はい😊！！」一択）";
       const a = brainMeta?.action ?? "";
       if (state === "applying") return "申込後説明";
       if (a === "viewing_invite" || a === "meeting_place") return "内覧調整";
@@ -4407,6 +4619,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     tpo_label: tpoNoteForLLM ?? null,
                     tier: tierResult.tier,
                     isConditionPresented, isNegativeContext, isThinkingMsg, isTemporaryLeaveMsg, isGratitudeReplyTPO, isPostStrongRecommendation,
+                    // A-2（2026-09-08 監査）: 発動率の内訳監査用
+                    conditionReason: conditionDetail.reason,
+                    isConditionChangeRequest,
+                    negativeKind: negativeDetail.kind,
+                    isViewingCancel,
                   } } })
                   .eq("id", conversationId)
                   .then(({ error: chkErr }) => {

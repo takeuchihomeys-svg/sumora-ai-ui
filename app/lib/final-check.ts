@@ -830,7 +830,7 @@ const BANNED_WORDS_DETERMINISTIC = ["スモラ", "名称未設定", "少々お�
 // ─── 決定論チェック群（runFinalCheck / runDiffRecheck の両方で実行。LLM不要・約0ms）─────────
 // 2026-09-08: 修正版に対する再検査欠落（THANK_OPENING等が recheck で見られない）と
 // WE_DO_MISSING の LLM 依存（直近2ヶ月で発行0件）を解消するため共通関数化。
-const WAIT_TPO_RE = /一時保留|感謝返し|強推し直後|ネガ文脈/;
+const WAIT_TPO_RE = /一時保留|感謝返し|強推し直後|ネガ文脈|検討中フォロー|内覧キャンセル/;
 const BOILERPLATE_RE = /かしこまりました|はい|お世話になっております|お待たせ致しました|お待たせいたしました|よろしくお願い|宜しくお願い|何卒|全力でサポート|お気軽に[^。！!\n]{0,12}(ください|下さい)|ご満足(頂|いただ)け[^。！!\n]{0,20}|またご連絡|ご連絡お待ち|お待ちしております|引き続き|ありがとうございます|こちらこそ/g;
 const ACTION_DECL_RE = /(ピックアップ|お送り|送付|お調べ|お探し|探し|確認|ご案内|案内|作成|お作り|交渉|手配|お伝え|お申込み|申込|抑え|押さえ|お取り|取り寄せ|お渡し|ご用意|ご提案|提案)[^\n。！!]{0,30}(させて(?:頂|いただ)き|いたし|致し|し)ます/;
 const CUSTOMER_REQUEST_RE = /[?？]|お願い|希望|したい|ですか|ますか|でしょうか|教えて|ください|もらえ|いただけ|頂け|条件|家賃|エリア|間取り|[0-9０-９]+万/;
@@ -883,6 +883,18 @@ function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssu
         evidence: text.trimStart().slice(0, 20),
         suggestion: `冒頭を「お世話になっております！！」または「はい😊！！」に変更`,
       });
+    }
+  }
+
+  // ③' 開口語の決定論チェック（場面ラベルごとに開口語を1択に固定。修正版 recheck でも同一関数で走る）
+  {
+    const stripped = text.trimStart().replace(/^[^\n]{0,12}(?:さん|様)[、,！!\s]*/, "");
+    const head = stripped.slice(0, 12);
+    if (/感謝返し|強推し直後|一時保留|検討中フォロー/.test(tpo) && !/^はい/.test(head)) {
+      issues.push({ pass: "rule_check", severity: "warning", code: "GRATITUDE_OPENING", message: "感謝・了承・保留の場面の開口語は「はい😊！！」一択です（「かしこまりました」「承知いたしました」「ありがとうございます」で始めない）", evidence: text.trimStart().slice(0, 20), suggestion: "冒頭を「はい😊！！」（単独行）に変更" });
+    }
+    if (/条件提示|内覧キャンセル|顧客自身の断り/.test(tpo) && !/^かしこまりました/.test(head)) {
+      issues.push({ pass: "rule_check", severity: "warning", code: "CONDITION_OPENING", message: "条件提示・断り受け止めの場面の開口語は「かしこまりました！！」一択です", evidence: text.trimStart().slice(0, 20), suggestion: "冒頭を「かしこまりました！！」（単独行）に変更" });
     }
   }
 
