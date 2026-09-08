@@ -577,3 +577,37 @@ Fable5分析で発見された「正当な文を削除・破壊するルール�
 - `TPO_SOFT_REQUEST_RE` の `できます` を `できます(?:か|でしょ|よね|[?？])` に絞る（「確認できます次第」FN）
 - 「10万円台なら厳しいです。梅田で」の否定上限を条件提示から除外
 - tpo_debug を reply_logs 側にも複製し is_edited と突合
+
+
+---
+
+## 優先度S G10/G26/G7/G6/G30 文脈判定統合（2026-09-08 Fable5 実装）
+
+3つの共有モジュールを新設し、生成（route.ts）・検査（final-check.ts）・brain（brain-core.ts）・後処理（validate-reply.ts）が同じ判定オブジェクトを参照する「verdict 1回計算 → 三層同一」型に揃えた。新 TPO を足す時はこの型に従う（route: verdict 計算 → finalCheckCtx / detCtx / postDetCtx の **3か所** に同じ値 → check-reply 経路は ctx から再計算）。
+
+### 四者同名 対応表
+
+| ギャップ | 共有定義 | 生成側（route.ts） | 検査側（final-check.ts） | その他 |
+|---|---|---|---|---|
+| G10 離脱誤判定 | `app/lib/move-out-context.ts`（`classifyMoveOutSubject` / `moveOutEvidenceText` / `MOVE_OUT_PATTERN` / `CURRENT_HOME_MOVEOUT_CLAUSE_RE`） | `moveOutSubject`（tpoLatestStaffText 直後）→ WITHDRAWAL_SRC 対象名詞必須化＋二重ガード／`isGratitudeReplyTPO` 除外／方向性「入居時期情報」／`detectPropertyStatus` の haystack を evidence 化／`SOFT_DECLINE_RE` の裸「決まりました」廃止 | ctx.moveOutSubject → `FAREWELL_ON_MOVEOUT_INFO`（block）、E6 VIEWING_BEFORE_VACANCY の履歴を `moveOutEvidenceText` 経由に | brain-core.ts 3か所 `moveOutEvidenceFromMsgs`／prompts L220・L369・L1414 に「現住居の退去は除く」 |
+| G26 創作約束 | `app/lib/confirmation-context.ts`（`resolveConfirmationContext` / `applyAixTiming` / `stripUnbackedConfirmPromise` / `CONFIRM_PROMISE_SENTENCE_RE`） | `confirmCtx`（route）→ `buildGenerationMessages` 内で `applyAixTiming` → `managementNote` を verdict でゲート＋`confirmationGateNote` 新設／`gratitudeActionHint` 対象付き／bridge から「すぐに」「確認しご連絡（対象なし）」除去／`buildAixTimingNote` の締めを AIX 種別分岐／`confirmCtxFinal` = applyAixTiming(confirmCtx, aixTimingForMeta) を ctx に | V5/V6 を verdict 基準に置換（`CONFIRM_NO_OBJECT` warning→**block**、`CONFIRM_OBJECT_UNSTATED` 新設）／WE_DO・PROMISE_ECHO 判定から根拠無し確認文を除外／修正ループ guard `CONFIRM_PROMISE_RE` を共有定数に | replyHint（property_check タスク）も対象付きに |
+| G7 主語逆転 | aix-taxonomy `AIX_ACTION_REPLY_DIRECTION.viewing_invite.weDo` を単一真実源 | `viewingIntentShortReplyNote` 例文／viewing_invite bridge を weDo に／NG_PHRASE_NOTE ⑧ 3動詞パラダイム＋⑯-2 | `BANNED_WORDS_DETERMINISTIC` に「全文脈で誤りの形」のみ追加（お伝え／ご内覧させて頂け／撮影お願い／撮影後すぐに 等。「ご都合よろしいお日にちにご案内」は V3 に残す） | prompts VOCAB_SEMANTICS ■C-2（ご案内＝スタッフ／内覧＝顧客／撮影＝スタッフ／都合＝顧客）・D-④・禁止列挙・few-shot 3場面追加／validate-reply 内覧候補日時 replacement を条件節＋疑問形に |
+| G6 断言禁止 | `validate-reply.ts ASSERTION_BAN_RULES`（DISCLOSURE / VACANCY / MOVEIN_DATE / SCREENING） | `aixVacancyDone` を finalCheckCtx に（validateAndClean と同値）／propertyFactGateNote に告知事項・審査を追記 | `runAssertionBanChecks`（block 固定・免除は aixVacancyDone／スタッフ直近3件の完了形報告／AIX 結果フロー＋staffSourceText の3経路のみ。顧客発言は根拠にしない）／`assignSeverity` block 維持 | validateAndClean の旧「確認結果断言」を ASSERTION_BAN_RULES 由来に置換（staffConfirmedRe 免除）／prompts VOCAB_SEMANTICS ■F＋自己チェック(6) |
+| G30 宛名・挨拶 | `app/lib/greeting.ts`（`resolveGreeting` / `enforceOpening` / `buildFirstGreeting`）＋`validate-reply.ts PLACEHOLDER_NAME_CORE_RE` | `greetingDecision`（alreadyGreetedToday 直後）→ `greetingNote` リテラル埋め込み（3候補選択を廃止・「夜分遅く禁止」撤廃）／初回強制置換ブロックを `enforceOpening` に統合（非初回も waited / late_apology / 夜間は enforce）／`customerName = normalizeCustomerName()` 単一経路 | ⑦ `OPENING_GREETING_MISMATCH` / `GREETING_WAITED_MISUSE` / `OPENING_GREETING_UNEXPECTED`／`NAME_PLACEHOLDER` 派生形 block＋ctx.customerName 空扱い／GREETING_BLOCK_RE・BOILERPLATE_RE に決定論挨拶を追加 | page.tsx `\|\| "名無し"` → `""`／prompts SMORA_QUICK_PATTERNS 冒頭ルール・確認後に戻る冒頭・VOCAB_SEMANTICS ■G |
+
+### 挨拶の決定論（greeting.ts）
+first > late_apology（tpo「進捗催促対応」）> waited（最終スタッフ発言より後の最古顧客 msg から ≥3h）> none（当日挨拶済み）> standard。夜間接頭辞「夜遅くに失礼します！！」は JST 22:00〜04:59 かつ直前スタッフ発言 60 分以上前のみ。`createdAt` 欠落時は waited=null → standard に倒れる。AIX 自動返信も staff 扱いで待ち時間リセット（意図どおり）。
+
+### 監査
+`conversations.ai_draft_check.tpo_debug` に `moveOutSubject` / `confirmCtx{allowed,source,object}` / `greeting{kind,reason}` を追加。発動率調査は同カラムから取れる。
+
+### 回帰テスト
+`scratchpad/g_all_test.ts`（58ケース: G10 主語14／G26 verdict 10／G30 挨拶13／G6 正負12／final-check 決定論 9）。実行はプロジェクト直下にコピーして `npx tsx`（import を `./app/lib/` に置換）。`g10.mjs`・`g6_test.js` も既存。
+
+### 残存リスク（実装後に監査）
+- G26: allowed=true だが本文に対象語が無い `CONFIRM_OBJECT_UNSTATED` が手動時 warning で多発する場合 → `CONFIRM_OBJECT_RE` にラベル語を追加（ラベル語は追加済み）
+- G6: 免除経路②はスタッフ直近3件のみ。4件以上前の確認結果を復唱すると block → 実運用で発生したら window を 5 に拡張
+- G30: `ai_prompt_rules` に「夜分遅く禁止」「お待たせ致しました禁止」の同旨行が残っていれば必須側が勝てず再発する（実装時に確認・下記参照）
+- G13（条件提示誤判定）への引き継ぎ: `PROPOSED_PROPERTY_REF_RE`（move-out-context.ts）に `[①-⑩]` が入っているので「提案物件への言及」判定に再利用できる
+
+検証: `npx tsc --noEmit` パス／回帰 58/58 パス

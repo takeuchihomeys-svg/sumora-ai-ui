@@ -43,6 +43,10 @@ import {
   normalizeCustomerName,
 } from "@/app/lib/validate-reply";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+// 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
+import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, type MoveOutSubject } from "@/app/lib/move-out-context";
+import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
+import { resolveGreeting, enforceOpening, buildFirstGreeting, type GreetingDecision } from "@/app/lib/greeting";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { safeSlice } from "@/app/lib/safe-slice";
@@ -126,14 +130,11 @@ function createTemplateOptimizeModel() {
 // 「名称未設定」はLINEプロフィール取得失敗時のプレースホルダー。名前として絶対に使わない。
 // さらに「H!tom!.M」「ゆき♡」等の記号・数字・絵文字混じりのLINE表示名も名前として使わない
 // （実名「Hitomi」と食い違い、final-check が FABRICATED_NAME を出す原因になる）。
-// 判定は app/lib/validate-reply.ts の isPlausiblePersonName に一元化する（二重定義禁止）。
+// 判定は app/lib/validate-reply.ts の normalizeCustomerName に一元化する（二重定義禁止）。
+// G30（2026-09-08 Fable5）: buildFirstGreeting は app/lib/greeting.ts へ移設（resolveGreeting / enforceOpening と同一定義）。
+// sanitizeCustomerName は normalizeCustomerName（敬称除去・プレースホルダ派生の除外・姓抽出）に一本化
 function sanitizeCustomerName(name: string): string {
-  if (!isPlausiblePersonName(name)) return "";
-  return name.trim();
-}
-function buildFirstGreeting(customerName: string): string {
-  const n = sanitizeCustomerName(customerName);
-  return `${n ? `${n}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！`;
+  return normalizeCustomerName(name);
 }
 
 // ─── 中身のないフレーズの禁止リスト（greetingNote と同じく常時注入・冒頭ルールは greetingNote が正）─────
@@ -159,7 +160,7 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 　→ 正: 「事前にお部屋をピックアップしてお送りさせて頂きます」「お部屋をご確認いただけます」等、来阪タイミングに言及しない表現を使う
 ⑥ 過剰な約束の副詞「すぐに」
 　× 「すぐに」「今すぐ」「即」を行動宣言に使う（「出次第すぐにお送りします」「すぐにご連絡します」等）
-　→ 正: 「出次第お送りさせて頂きます」「確認出来次第ご連絡させて頂きます」等（副詞なし）
+　→ 正: 「出次第お送りさせて頂きます」「募集状況確認出来次第ご連絡させて頂きます」等（副詞なし・確認対象付き）
 　→ 理由: 「すぐに」は過度な約束・安っぽい印象を与える
 ⑦ 形式的な了解フレーズ（具体アクションなし）
 　× 「承知いたしました」「承知しました」単独 → 必ず「はい！！」または「かしこまりました！！」を使う（TPO: 依頼・お願い=かしこまりました！！、感謝・了承=はい！！）
@@ -168,9 +169,12 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 　→ 正（依頼・お願いへの返し）: 「かしこまりました！！〇〇エリアでピックアップさせて頂きます！！」「かしこまりました！！お風呂広めのお部屋を中心にお調べさせて頂きます！！」
 　→ 正（感謝・了承への返し）: 「はい😊！！ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！」
 　→ NG: 「かしこまりました！！何卒よろしくお願い致します！！」（行動宣言なし→WE_DO_MISSING対象）
-⑧ 主語逆転（お客様の行為をスタッフが、スタッフの行為をお客様が行う形）
-　× 「ご都合よろしいお日にちをお伝えさせて頂きます」「ご内覧させて頂きます」「撮影いただき」「ご案内いただいた（お客様送付物）」
-　→ 正: 「ご都合よろしいお日にち御座いますでしょうか」「ご内覧頂けます／ご案内させて頂きます」「撮影してお送りします」「お送り頂いた」
+⑧ 主語逆転（お客様の行為をスタッフが、スタッフの行為をお客様が行う形）— 3動詞の主語を先に決める
+　・ご案内＝スタッフ（お客様を現地でご案内する）。× 「ご案内頂けます」「ご案内いただいた（お客様送付物）」　○ 「ご案内させて頂きます」
+　・内覧＝お客様（お部屋を見る）。× 「ご内覧させて頂きます」「ご内覧させて頂けます」　○ 「ご内覧頂けます」「ご内覧可能な日程をお知らせください」
+　・撮影＝スタッフ（室内を撮って送る）。× 「撮影いただき」「撮影お願いします」「撮影後すぐに」　○ 「撮影してお送りさせて頂きます」「撮影出来次第お送りさせて頂きます」
+　・都合＝お客様のもの。× 「ご都合よろしいお日にちをお伝え／お知らせさせて頂きます」（スタッフが伝える物ではない）　○ 「ご都合よろしいお日にち御座いますでしょうか」
+　→ 正の組み合わせ: 「お気に召されましたらご都合よろしいお日にち御座いますでしょうか！！ご案内させて頂きます！！」／「お送り頂いた」
 ⑨ 前提の無い業務語彙（会話履歴に存在しない約束・送付・日程）
 　× 履歴に撮影・写真・動画の約束が無いのに「撮影出来次第お送り」／未送付なのに「ご査収ください」「先ほどお送りした御見積書」／日程未確定なのに「本日〇時ご案内」「現地到着」
 　→ 正: 直前のスタッフ約束（ピックアップ／募集状況確認／見積作成）をそのまま復唱するWE DO（⭐実例に出てきた業務語彙でも、現在の会話に同じ前提が無ければ真似しない）
@@ -182,7 +186,8 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 ⑬ 本人に「様」・フルネーム（身分証・申込書の氏名）は禁止。呼称はスタッフが最初に使った「〇〇さん」のみ
 ⑭ 「〇〇さんはい！！」「〇〇さんかしこまりました！！」のように開口語の前に名前を置かない
 ⑮ 「少々お時間頂」「確認中です」「承りました」「ご確認のほど」「〜とのことですね」「まず〜次に〜」は禁止（正例: 「出来次第お送りさせて頂きます」「明日一番にご連絡させて頂きます」）
-⑯ 顧客が「拝見します」「後で見ます」（未来形）の時に「ご覧頂きありがとうございます」「気になるお部屋はございましたか」（既読・感想前提）は禁止 → 「お手隙の際にご査収ください」`;
+⑯ 顧客が「拝見します」「後で見ます」（未来形）の時に「ご覧頂きありがとうございます」「気になるお部屋はございましたか」（既読・感想前提）は禁止 → 「お手隙の際にご査収ください」
+⑯-2 「ご都合よろしいお日にちに」＋スタッフ作業（撮影・確認・お送り・作成・見積）の接続は禁止（お客様の都合をスタッフの作業タイミングに繋げる主語逆転）。「ご都合よろしいお日にちにご案内」は「お気に召されましたら」条件節＋日程を尋ねる疑問形とセットの時のみ（条件なし・疑問形なしの単独締めは内覧の押し付け）`;
 
 // ─── 一時的な状況への言及禁止（常時注入・優先度: NG_PHRASE_NOTEと同列）──────────────
 // 過去の会話チェックポイントに「出張中」等が記録されていても、
@@ -214,7 +219,9 @@ const IMPLICIT_QUESTION_RE = /(?:ます|です|でしょう|ません)か(?:[ね
 // 依頼形（?なし）: 「確認お願いします」「送付よろしくお願いします」「してほしい」
 const IMPLICIT_REQUEST_RE = /(?:確認|連絡|手配|送付|作成|調整|対応|手続き|予約|変更|追加|案内)[をも]?(?:お願い|おねがい|よろしく)|してほしい|して欲しい|してもらいたい|していただきたい|して頂きたい/;
 // 柔らかい断り（isNegativeContext の withdrawalRe と二重化して gratitude/shortAck から確実に外す）
-const SOFT_DECLINE_RE = /見送(?:らせて|ります|りたい|ろうと)|やめ(?:て|とき|とこ)|遠慮(?:し|させ)|今回は(?:結構|大丈夫|やめ|見送|なし)|お断り|他で(?:決め|契約)|決まりました|決まったので/;
+// G10（2026-09-08 Fable5）: 「決まりました／決まったので」の裸一致は「引越しが決まったので探してます」（探索開始）まで断りにしていた。
+// 決定語は対象名詞（他社・別の物件・引っ越し先・住む所）付きのみ断りとみなす
+const SOFT_DECLINE_RE = /見送(?:らせて|ります|りたい|ろうと)|やめ(?:て|とき|とこ)|遠慮(?:し|させ)|今回は(?:結構|大丈夫|やめ|見送|なし)|お断り|他で(?:決め|契約)|(?:他(?:社|の(?:会社|仲介|業者))|別の(?:会社|仲介|業者|ところ)|(?:他|別)の(?:物件|お?部屋)|引っ?越し先|住む(?:所|ところ|家))(?:で|が|に|は)?決ま(?:りました|ったので|った)/;
 // 情報提供・選択確定（復唱＋次工程が必要なので感謝短返しにしない）
 const INFO_PROVIDE_RE = /住所|勤務先|年収|来月|今月|上旬|中旬|下旬|月末|[A-Za-zＡ-Ｚａ-ｚ]案|で進めて|で決め|に決め|にします|の方で(?:お願い|進め)/;
 // 純感謝・了承語（isGratitudeReplyTPO / isShortAckMsg 共通集合）
@@ -381,10 +388,9 @@ const QUOTE_REPLY_JUDGE_NOTE = `
 type PropertyStatus = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
 
 // 退去予定・入居中を示すキーワード（現地内覧不可 → 内覧日程提案を禁止すべき状態）
-// ⚠️ 「退去後」は除外: AIが「退去後すぐにご案内します」と返信すると履歴に残り
-//    次回の検出が誤発火するフィードバックループの原因となるため、単独パターンから除外。
-// ⚠️ 「入居者」「居住中」は省略: 会話内でお客様が現居住状況を話す文脈でも一致してしまうため。
-const MOVE_OUT_PATTERN = /退去予定|入居中|[0-9０-９]{1,2}\s*月末?\s*退去|退去[はが]?[0-9０-９]{1,2}\s*月/;
+// G10（2026-09-08 Fable5）: 定義は app/lib/move-out-context.ts MOVE_OUT_PATTERN に集約（brain-core.ts・final-check.ts と四者同名）。
+// 判定対象テキストは moveOutEvidenceText（スタッフ行全採用／顧客行は現住居の退去句を伏字化し提案物件への言及が残る行のみ）に限定する。
+// 顧客は提案物件の退去日を自分から知り得ないため、「今の家は3月末退去予定です」（入居時期情報）を募集状況に誤読しない。
 
 // スタッフが内覧可能日を明示した場合は「退去前」判定を取り消す（誤ブロック防止）
 // 直近スタッフ発言で「8/24からご案内」「内覧可能」等が確認できれば退去前制限は解除済みとみなす
@@ -393,7 +399,7 @@ const VIEWING_CONFIRMED_PATTERN =
 
 function detectPropertyStatus(history: string | null | undefined, customerMessage: string, explicit?: PropertyStatus): PropertyStatus {
   if (explicit && explicit !== "unknown") return explicit;
-  const haystack = `${history ?? ""}\n${customerMessage}`;
+  const haystack = moveOutEvidenceText(history, customerMessage);
   if (MOVE_OUT_PATTERN.test(haystack)) {
     // 直近5件のスタッフ発言で内覧可能が確認済みなら退去前判定を取り消す
     const recentStaffText = (history ?? "").split("\n")
@@ -531,9 +537,10 @@ function detectAixTiming(
         urgency: "15分以内に橋渡し→1〜3時間以内に結果報告",
         highlight: false,
         forbidden: "空室有無・退去日・入居可能日をテキストで断言すること（実会話では「募集終了」「申込有り2番手」「タッチの差で埋まった」が頻発。「空いています」の生成は即事実誤認）",
+        // G26（2026-09-08 Fable5）: 「すぐに」除去（HASTY_PROMISE）・確認対象「募集状況」を締めにも書く
         bridge: chained
-          ? "お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させて頂き、最大限割引させて頂いた御見積書も合わせてお送りさせて頂きます！！確認出来次第すぐにご連絡させて頂きます😌！！"
-          : "お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させていただきます！！確認出来次第すぐにご連絡させて頂きます😌！！",
+          ? "お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させて頂き、最大限割引させて頂いた御見積書も合わせてお送りさせて頂きます！！募集状況確認出来次第ご連絡させて頂きます😌！！"
+          : "お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます😌！！",
         extra: "URL・物件が複数（連投）の場合は1件ずつ返さず橋渡し1通のみ（バッチ処理・結果は全件まとめて1回で報告）。" +
           (chained
             ? `見積トリガー（${v!.trigger}: ${v!.reason}）が同時に成立するため、確認完了後に estimate_sheet を連結する（募集状況+見積書をまとめて1回で報告。初回接触の物件指名型顧客に condition_hearing を挟むのは誤り）。`
@@ -567,7 +574,8 @@ function detectAixTiming(
       urgency: "10分以内",
       highlight: true,
       forbidden: "金額・割引額をAIが生成すること／見積作成宣言の繰り返し",
-      bridge: "かしこまりました！！確認しご連絡させて頂きます😊！！",
+      // G26: 旧「確認しご連絡させて頂きます」（対象なし＝創作約束）→ 申込誘導の受付文へ
+      bridge: "かしこまりました！！お気に召されましたらお申込みでお部屋お押さえさせて頂きます😊！！",
       extra: "見積書は既に約束/送付済みのため作成宣言・割引の約束を繰り返さない（二重宣言防止ルールと整合）。「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。",
     };
   }
@@ -581,7 +589,8 @@ function detectAixTiming(
       urgency: "受付返信→半日以内にピックアップ送付",
       highlight: false,
       forbidden: "新条件に合う物件の有無を即答すること（在庫ハルシネーション）。「〇〇がいい感じ」等の気に入り表現と同一メッセージでも条件変更が主題のため estimate_sheet 系の見積・申込誘導も絶対NG",
-      bridge: "かしこまりました！！〇〇（顧客の言った新条件を復唱）のご条件に合ったお部屋を△△周辺全域からピックアップしてお送りさせて頂きます😊！！ピックアップ出来次第ご連絡させて頂きます！！",
+      // G26: 締めは「ピックアップ出来次第お送り」（この場面に確認対象は無い）
+      bridge: "かしこまりました！！〇〇（顧客の言った新条件を復唱）のご条件に合ったお部屋を△△周辺全域からピックアップしてお送りさせて頂きます😊！！ピックアップ出来次第お送りさせて頂きます！！",
       extra: "顧客の言った新条件を必ず復唱すること（実例: 「リビングとベッドを仕切れる1LDK・1DKの間取りや広めの1Kのお部屋を堀江・桜川・大国町周辺全域からピックアップしてお送りさせて頂きます😊！！」）。エリア名自体（駅名・区名・地名）は顧客が使った表現をそのまま使うが、行動宣言では必ず末尾に「周辺全域から」を付ける（「周辺全域」は全フェーズで例外なし必須）。",
     };
   }
@@ -599,7 +608,9 @@ function detectAixTiming(
       urgency: "30分〜1時間以内",
       highlight: false,
       forbidden: "具体的な内覧候補日時・2択日程提示をAI返信で生成すること（日程はAIX【内覧日調整】専用）。募集状況が未確認の物件への内覧確約",
-      bridge: "かしこまりました！！ご都合よろしいお日にちをお伝えさせて頂きます！！",
+      // G7（2026-09-08 Fable5）: 旧 bridge「ご都合よろしいお日にちをお伝えさせて頂きます」は主語逆転文を「確定・最優先」で注入していた再生産源。
+      // aix-taxonomy viewing_invite.weDo（条件節＋疑問形）を単一真実源にする
+      bridge: AIX_ACTION_REPLY_DIRECTION.viewing_invite.weDo,
       extra: "",
     };
   }
@@ -609,11 +620,21 @@ function detectAixTiming(
 
 // AIXタイミング判定結果をプロンプト注入ブロックに変換する
 function buildAixTimingNote(s: AixTimingSuggestion): string {
+  // G26/G7（2026-09-08 Fable5）: 旧固定型「→ 出来次第/確認出来次第ご連絡させて頂きます」は AIX 種別を問わず確認約束を注入していた
+  // （創作約束の再生産源）。締めを AIX 種別で分岐し、viewing_invite は日程を尋ねる疑問形のみ（主語逆転の禁止を明記）
+  const closer =
+    s.aix === "property_check_result" || s.aix === "acknowledge_check"
+      ? "「〇〇（確認対象: 募集状況 等）確認出来次第ご連絡させて頂きます」"
+    : s.aix === "viewing_invite"
+      ? "日程を尋ねる疑問形（「ご都合よろしいお日にち御座いますでしょうか」／「ご内覧可能な日程をお知らせください」）→「ご案内させて頂きます」。日程はお客様が持っているので「お伝え／お知らせさせて頂きます」と書かない。「ご内覧させて頂きます」も禁止（内覧するのはお客様）"
+    : s.aix === "estimate_sheet"
+      ? "「お送りさせて頂きます」（見積は作成・送付宣言で締める）"
+    : "「ピックアップ出来次第お送りさせて頂きます」（この場面に確認対象は無い。「確認出来次第ご連絡」は書かない）";
   const lines = [
     `\n\n【🎛 AIXタイミング判定（確定・最優先 — この場面はAIX【${s.label}】(${s.aix})ボタンの担当場面）】`,
     `・優先順位: 【🚫 フェーズ絶対禁止】（PHASE_PROHIBITIONS・final-check STATE_REGRESSION / TIMING_VOCAB_MISMATCH で block）に抵触する語彙は、下の橋渡し実例に含まれていても書かない。抵触する場合はピックアップ宣言に置き換える。`,
     `この場面ではスタッフがAIX【${s.label}】ボタンを使う運用指示がある。AIが返信文で物件情報・金額・空室状況の「答え」を生成してはいけない。`,
-    `・返信は橋渡し文言（受付宣言）のみで完結させること。型: 挨拶 → 受領のお礼/かしこまりました → 行動宣言 → 「出来次第/確認出来次第ご連絡させて頂きます」`,
+    `・返信は橋渡し文言（受付宣言）のみで完結させること。型: 挨拶 → 受領のお礼/かしこまりました → 行動宣言 → ${closer}`,
     `・橋渡し文言の実例（この型に合わせる・文脈に応じて調整）: 「${s.bridge}」`,
     `・絶対禁止: ${s.forbidden}`,
     `・対応スピード目安（スタッフ向け・返信文には書かない）: ${s.urgency}`,
@@ -791,7 +812,11 @@ function buildGenerationMessages(
   // A-5: 条件提示TPO（conditionChangeNote の「ピックアップ宣言禁止」節と衝突するため、条件提示時は差分復唱＋ピックアップ宣言に切替）
   isConditionPresentedFlag = false,
   // 2026-09-08 Fable5: 見積書の文脈判定 verdict（estimateGateNote / detectAixTiming / estimatePromiseAckNote / phaseProhibition の単一真実源）
-  estimateVerdict: EstimateContextVerdict | null = null
+  estimateVerdict: EstimateContextVerdict | null = null,
+  // G26（2026-09-08 Fable5）: 確認約束 verdict（route.ts resolveConfirmationContext）。aixTiming と合成して managementNote / confirmationGateNote に使う
+  confirmCtxIn: ConfirmationContextVerdict = { allowed: false, source: "none", object: null, reason: "未計算" },
+  // G30（2026-09-08 Fable5）: 冒頭挨拶の決定論結果（route.ts resolveGreeting）。greetingNote にリテラル埋め込み
+  greetingDecision?: GreetingDecision,
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -808,40 +833,31 @@ function buildGenerationMessages(
     ? isFirstEverReplyOverride
     : lastStaffLines.length === 0;
 
-  // 本日（JST 9時リセット）の会話で挨拶済みか
-  // alreadyGreetedToday が渡された場合はそちらを優先（タイムスタンプ精度が高い）
-  // フォールバック: history 全体から判定（createdAt なしの場合）
-  const alreadyGreeted = alreadyGreetedToday !== undefined
+  // G30（2026-09-08 Fable5）: 挨拶は route.ts resolveGreeting() で決定論確定済み（待たせた時間・当日挨拶済み・深夜帯・会話連続中）。
+  // LLM に「お世話に／お待たせ／いつもありがとう」の3候補から選ばせる旧方式は廃止し、確定した opening をリテラル埋め込みする。
+  // 旧「夜分遅くに失礼致します 絶対禁止」は撤廃（22:00〜04:59 は決定論で「夜遅くに失礼します！！」を付与。LLM 自身は書かない）。
+  // greetingDecision 未渡し（想定外経路）のみ従来の履歴フォールバック
+  const gd = greetingDecision;
+  const alreadyGreetedFallback = alreadyGreetedToday !== undefined
     ? alreadyGreetedToday
     : lastStaffLines.some(
         l => l.includes("お世話になっております") ||
-             l.includes("夜分遅くに失礼") ||
              l.includes("はじめまして") ||
              l.includes("ご連絡頂きありがとうございます") ||
              /^スモラ:\s*「?[^\s]{1,10}さん/.test(l)
       );
-
-  // 【重要】「夜分遅くに失礼致します」はスタッフが先にお客様に連絡するときの言葉。
-  // generate-replyは常にお客様からのメッセージへの「返信」なので使用しない。
-  // お客様が深夜に連絡してきた場合も「お世話になっております」で返す。
-  const greetingNote = alreadyGreeted
-    ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み。今回は絶対に使わない。「はい！！」「かしこまりました！！」など短い言葉で直接本文から始める。「ありがとうございます」を挨拶代わりの書き出しに使うことも禁止（お礼は本文中で文脈が伴う場合のみ）。`
-    : isFirstEverReply
-      ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「${buildFirstGreeting(customerName)}」で始める（一字一句変更・省略禁止）。「お世話になっております」「夜分遅くに失礼致します」は絶対禁止。`
-      : `\n【⏰ 挨拶ルール・最優先】現在${jstHour}時台（JST）。今回の冒頭は「${sanitizeCustomerName(customerName) ? `${sanitizeCustomerName(customerName)}さんお世話になっております！！` : "お世話になっております！！"}」を使う。
-【許可される冒頭フレーズはこの3つのみ】
-・「${sanitizeCustomerName(customerName) ? `${sanitizeCustomerName(customerName)}さん、` : ""}お世話になっております！！」（標準・迷ったらこれ）
-・「${sanitizeCustomerName(customerName) ? `${sanitizeCustomerName(customerName)}さん、` : ""}お待たせ致しました！！」（お客様を待たせた後・物件や資料をお送りする時）
-・「${sanitizeCustomerName(customerName) ? `${sanitizeCustomerName(customerName)}さん、` : ""}いつもありがとうございます！！」（継続的にやりとりしているお客様への感謝が自然な文脈のみ）
-【冒頭の禁止】「ありがとうございます」「ご連絡ありがとうございます」「ご返信ありがとうございます」だけを挨拶代わりの書き出しに使うことは絶対禁止（お礼は挨拶ではない。お礼を言う場合は挨拶の後、本文中で文脈を伴って使う）。「夜分遅くに失礼致します」は返信時には絶対禁止（スタッフから先に連絡するときのみ使う言葉）。`;
-
-  const managementNote = isWeekend
-    ? `\n【管理会社の状況・必ず守ること】本日は土日。物件の募集状況確認（空室確認）は土日でも可能なので「確認させていただきます！確認出来次第ご連絡させていただきます！！」と伝えてよい。ただし交渉（フリーレント・値引き・条件変更・審査再挑戦など）は土日不可。交渉が必要な場合は「月曜日一番で管理会社に交渉させていただきます！！」と伝える。`
-    : jstHour >= 18
-      ? `\n【管理会社の状況・必ず守ること】現在${jstHour}時台（JST）。18時以降のため管理会社の営業時間が終了している。確認が必要な場合は「本日は管理会社の営業時間が終了しておりますので、明日一番でご確認しご連絡させて頂きます！！」と伝える。当日中の回答を約束しない。`
-      : jstHour < 9
-        ? `\n【管理会社の状況・必ず守ること】現在${jstHour}時台（JST）。管理会社の営業時間前（営業は9時〜18時）。確認が必要な場合は「本日、管理会社の営業開始後に確認し、確認出来次第ご連絡させて頂きます！！」と伝える。営業時間前の即時確認・即時回答を約束しない。`
-        : `\n【管理会社の状況】現在${jstHour}時台（JST）。管理会社営業中（平日9時〜18時）。確認が必要な場合は「管理会社に確認させていただきます！！確認出来次第ご連絡させていただきます！！」と伝えてよい。`;
+  const greetingNote = !gd
+    ? (isFirstEverReply
+        ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「${buildFirstGreeting(customerName)}」で始める（一字一句変更・省略禁止）。`
+        : alreadyGreetedFallback
+          ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み。今回は絶対に使わない。「はい！！」「かしこまりました！！」など短い言葉で直接本文から始める。`
+          : `\n【⏰ 挨拶ルール・最優先】長い返信・重要な連絡・条件確認の冒頭は「${sanitizeCustomerName(customerName) ? `${sanitizeCustomerName(customerName)}さん` : ""}お世話になっております！！」で固定。「お待たせ致しました」「夜遅くに」「夜分遅くに」は自分で書かない。`)
+    : gd.kind === "none"
+      ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み（${gd.reason}）。今回は「お世話になっております」「お待たせ致しました」「いつもありがとうございます」を絶対に書かない。「はい！！」「かしこまりました！！」など短い開口語（単独行）か本文から直接始める。「ありがとうございます」を挨拶代わりの書き出しに使うことも禁止（お礼は本文中で文脈が伴う場合のみ）。${gd.nightPrefix ? `ただし現在深夜帯のため先頭行は「${gd.nightPrefix}」で固定（一字一句変更禁止。この行の後に改行して本文）。` : ""}`
+      : gd.kind === "standard"
+        ? `\n【⏰ 挨拶ルール・最優先】現在${jstHour}時台（JST）・お客様の最新メッセージから${gd.waitedMs !== null ? Math.round(gd.waitedMs / 60000) : "?"}分（3時間未満＝待たせていない）。長い返信・重要な連絡・条件確認の冒頭は「${gd.opening}」で固定（一字一句変更禁止）。短い承認・単純な返答は挨拶なしで「はい！！」「かしこまりました！！」から始めてよい。
+【冒頭の絶対禁止】「お待たせ致しました」（3時間以上待たせた時だけ使う語。今回は該当しない）／「はじめまして」「〜と申します」（初回のみ）／「ありがとうございます」「ご連絡ありがとうございます」だけの書き出し（お礼は挨拶ではない）／自分で「夜遅くに」「夜分遅くに」を書く（時間帯挨拶はシステムが付与する）。`
+        : `\n【⏰ 挨拶ルール・最優先】${gd.kind === "first" ? "これはお客様への【はじめての返信】" : gd.kind === "waited" ? `お客様の最新メッセージから約${Math.round((gd.waitedMs ?? 0) / 3600000)}時間経過（返信に時間がかかった）` : "進捗催促への対応"}。必ず「${gd.opening}」で始める（一字一句変更・省略・追加禁止。この行の後に改行して本文）。「お世話になっております」「いつもありがとうございます」「ありがとうございます」だけの書き出しは禁止。自分で「夜遅くに」「夜分遅くに」を追加しない（必要なら付与済み）。`;
 
   const dateNote = `\n【📅 今日の日付（JST・必ず基準にすること）】${getJSTDateString()} — 「明日」「明後日」「今週」などの相対表現や具体的な日付（○日）は全てこの日付を起点に計算すること`;
 
@@ -1242,6 +1258,28 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
       });
   const aixTimingNote = aixTiming ? buildAixTimingNote(aixTiming) : "";
 
+  // G26（2026-09-08 Fable5）: 確認約束 verdict に AIX タイミング判定を合成（route.ts confirmCtxFinal と同じ pure 関数 → 三層で同値）
+  const confirmCtx = applyAixTiming(confirmCtxIn, aixTiming?.aix ?? null);
+
+  // G26: 管理会社ノートは verdict でゲート。確認対象が無い返信に「確認させて頂きます／確認出来次第ご連絡」を営業時間の説明付きで
+  // 無条件注入していた（創作約束の再生産源）。allowed の時のみ、確認対象「${confirmCtx.object}」をリテラルで前置させる
+  const managementNote = !confirmCtx.allowed
+    ? `\n【管理会社の状況】現在${jstHour}時台（JST）${isWeekend ? "・土日" : ""}。この返信には管理会社への確認対象が存在しない（${confirmCtx.reason}）ため、「確認させて頂きます」「確認出来次第ご連絡」「明日一番でご確認」等の確認約束を書かない（営業時間・曜日の説明も不要）。`
+    : isWeekend
+      ? `\n【管理会社の状況・必ず守ること】本日は土日。「${confirmCtx.object}」の確認（空室確認）は土日でも可能なので「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」と伝えてよい。ただし交渉（フリーレント・値引き・条件変更・審査再挑戦など）は土日不可。交渉が必要な場合は「月曜日一番で管理会社に交渉させて頂きます！！」と伝える。`
+      : jstHour >= 18
+        ? `\n【管理会社の状況・必ず守ること】現在${jstHour}時台（JST）。18時以降のため管理会社の営業時間が終了している。「${confirmCtx.object}」の確認は「本日は管理会社の営業時間が終了しておりますので、明日一番で${confirmCtx.object}を確認しご連絡させて頂きます！！」と伝える（確認対象「${confirmCtx.object}」を必ず書く）。当日中の回答を約束しない。`
+        : jstHour < 9
+          ? `\n【管理会社の状況・必ず守ること】現在${jstHour}時台（JST）。管理会社の営業時間前（営業は9時〜18時）。「${confirmCtx.object}」の確認は「本日、管理会社の営業開始後に${confirmCtx.object}を確認し、確認出来次第ご連絡させて頂きます！！」と伝える（確認対象を必ず書く）。営業時間前の即時確認・即時回答を約束しない。`
+          : `\n【管理会社の状況】現在${jstHour}時台（JST）。管理会社営業中（平日9時〜18時）。「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」と伝えてよい（確認対象「${confirmCtx.object}」を必ず本文に書く。「すぐに」は付けない）。`;
+
+  // G26: 確認約束の決定論ゲート（dynamicBlock 末尾・お客様メッセージ直後に注入）。募集状況確認文脈（availabilityCheckNote）は型自体が確認宣言なので二重注入しない
+  const confirmationGateNote = !confirmCtx.allowed && !isAvailabilityCheckContext
+    ? `\n\n【🚫 確認約束の禁止（決定論・確認対象なし）】この返信に「確認出来次第ご連絡」「確認しご連絡」「確認の上ご連絡」を書いてはいけない（理由: ${confirmCtx.reason}）。確認する事実が会話に存在しないのに確認を約束するのは創作約束。行動宣言は「〇〇周辺全域から〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」または直前スタッフ約束の復唱にする。`
+    : confirmCtx.allowed
+      ? `\n\n【✅ 確認対象（決定論）】この返信で確認を約束してよい対象は「${confirmCtx.object}」（根拠: ${confirmCtx.reason}）。書く場合は必ず「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」のように対象を前置する。「すぐに」は付けない。同じ返信内で確認宣言を二重に書かない。`
+      : "";
+
   // 予算・条件指定の在庫質問（「〇〇円の物件ってありますか」等）の検出。
   // 特定物件の空室確認ではなく「その予算・条件で案内できる物件があるか」の質問。
   // 「確認します」で終わるのは絶対NG — 正直な現状説明＋代替案＋次のアクションが正しい型。
@@ -1276,7 +1314,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
       customerMessage ?? "",
     );
   const viewingIntentShortReplyNote = hasViewingIntent && resolvedPropertyStatus !== "move_out_scheduled" && resolvedPropertyStatus !== "occupied"
-    ? `\n\n【📅 内覧希望への返信は短く（最重要）】お客様が内覧希望を明示しています。返信は「かしこまりました！！ご都合よろしいお日にちをお伝えさせて頂きます！！」程度の短い承認文のみにしてください。以下は絶対禁止：① 申込み提案（「先にお申込みでお部屋を押さえることも可能」等）② 内覧を促す誘導文（「お気に召されましたら〜」は不要）③ その他の追加情報。内覧日程の詳細はAIX【内覧日調整】から別途送るため、この返信には含めない。`
+    // G7（2026-09-08 Fable5）: 旧例文「ご都合よろしいお日にちをお伝えさせて頂きます」は主語逆転（都合の持ち主はお客様）。aix-taxonomy viewing_invite.weDo を単一真実源にする
+    ? `\n\n【📅 内覧希望への返信は短く（最重要）】お客様が内覧希望を明示しています。返信は「${AIX_ACTION_REPLY_DIRECTION.viewing_invite.weDo}」程度の短い承認文のみにしてください。以下は絶対禁止：① 申込み提案（「先にお申込みでお部屋を押さえることも可能」等）② 内覧を促す誘導文（「お気に召されましたら〜」は不要）③ その他の追加情報 ④「ご都合よろしいお日にちをお伝えさせて頂きます」「お知らせさせて頂きます」（都合の持ち主はお客様。日程は尋ねる形のみ）。内覧日程の詳細はAIX【内覧日調整】から別途送るため、この返信には含めない。`
     : "";
 
   // 見積書カバー文はAIXの「見積書送る」ボタン専用。generate-replyでは見積書を添付できないため添付済みを装う文面・金額内訳を出さない。
@@ -1285,7 +1324,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   const estimateGateNote = buildEstimateGateNote(estimateVerdict);
 
   // 空室確認結果・入居可能日・保証会社等の物件固有情報はAIXの「物件確認した」系ボタン専用。generate-replyでは管理会社確認前の結果捏造を防ぐ（estimateGateNote と同型の常時注入ゲート）
-  const propertyFactGateNote = `\n\n【🏢 管理会社確認が必要な物件固有情報の断言は絶対禁止（最優先）】「空室でした」「現在も募集中と確認できました」「埋まってしまいました」「退去日は〇月〇日です」「〇月〇日からご入居可能です」のような、管理会社に確認した体の結果報告や具体的な退去日・入居可能日の断言は絶対に出力しない。空室状況・退去予定日・入居可能日に加え、この物件の「保証会社名・保証料の金額・審査基準・ペット飼育可否・駐車場の空きと料金・設備の有無・礼金/家賃交渉の結果」も管理会社への確認が必要な確定事実であり、確認前にAIが「この物件の保証会社は〇〇です」「保証料は総賃料の〇%です」等と断言・推測してはいけない。保証会社の役割・審査の一般的な流れ・連帯保証人との違いなどの一般論は即答してよい。物件固有の質問には「確認しご連絡させて頂きます😊！！」の宣言のみ。確認結果の報告はAIX【確認した（条件・交渉）】（物件確認した系ボタン）で別途生成・送信する。例外：会話履歴内でスタッフが既に伝えた確定情報（退去日・入居可能日・保証会社名等）をそのまま引用する場合のみ言及可。新たな日付・募集状況・保証条件をAIが推測して生成することは禁止。\n・【⚠️ 退去予定の断言禁止】「退去後すぐにご案内できます」「退去後すぐにご内覧いただけます」「〇月以降ご案内可能です」のような退去予定を前提とした案内文は、管理会社から退去予定が確認済みである事実が会話履歴にある場合のみ使用すること。確認していない場合は「空室状況を確認してご連絡させて頂きます😊！！」とし、退去予定を勝手に断定しない。\n・【⚠️ 「管理会社に確認してご連絡します」の文章での約束禁止】「管理会社に確認しご連絡させて頂きます」「確認してからご連絡いたします」のように、確認と連絡をセットで約束する文をLINE返信に書いてはいけない。確認が必要な内容はスタッフがAIX【確認します】ボタンで対応する。AI返信では「かしこまりました！！」「確認いたします！！」程度の短い受付のみ書き、「ご連絡させて頂きます」まで続けない。水道代・インターネット・設備の有無など管理会社への確認事項も同様。\n・【⚠️ スタッフが送った物件画像への「内容確認します」禁止】お客様が画像（物件資料・見積書）を送り返してきた場合、その画像はスタッフが先に送った物件の資料であることが多い。「お送り頂きました画像の内容を確認させて頂きます」「画像を確認しご連絡します」のように、まるで初めて見る資料かのように「内容確認します」と書いてはいけない。お客様の具体的な質問（「ここは誰か住んでいましたか？」等）にはその質問に直接答えるか、分からない場合は「確認いたします！！」とのみ伝える。`;
+  const propertyFactGateNote = `\n\n【🏢 管理会社確認が必要な物件固有情報の断言は絶対禁止（最優先）】「空室でした」「現在も募集中と確認できました」「埋まってしまいました」「退去日は〇月〇日です」「〇月〇日からご入居可能です」のような、管理会社に確認した体の結果報告や具体的な退去日・入居可能日の断言は絶対に出力しない。空室状況・退去予定日・入居可能日に加え、この物件の「保証会社名・保証料の金額・審査基準・ペット飼育可否・駐車場の空きと料金・設備の有無・礼金/家賃交渉の結果」も管理会社への確認が必要な確定事実であり、確認前にAIが「この物件の保証会社は〇〇です」「保証料は総賃料の〇%です」等と断言・推測してはいけない。保証会社の役割・審査の一般的な流れ・連帯保証人との違いなどの一般論は即答してよい。物件固有の質問には「〇〇（対象: 募集状況／ご入居可能日／ペット飼育の可否／駐車場の空き状況／保証会社・審査条件 等）確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」の宣言のみ（確認対象を必ず本文に書く。対象の無い「確認しご連絡」は禁止）。確認結果の報告はAIX【確認した（条件・交渉）】（物件確認した系ボタン）で別途生成・送信する。告知事項（事故・トラブル・騒音・心理的瑕疵）の有無、「審査は大丈夫です」等の根拠なし安心も同じく管理会社・保証会社の確認結果が無い限り断言しない。例外：会話履歴内でスタッフが既に伝えた確定情報（退去日・入居可能日・保証会社名等）をそのまま引用する場合のみ言及可。新たな日付・募集状況・保証条件をAIが推測して生成することは禁止。\n・【⚠️ 退去予定の断言禁止】「退去後すぐにご案内できます」「退去後すぐにご内覧いただけます」「〇月以降ご案内可能です」のような退去予定を前提とした案内文は、管理会社から退去予定が確認済みである事実が会話履歴にある場合のみ使用すること。確認していない場合は「空室状況を確認してご連絡させて頂きます😊！！」とし、退去予定を勝手に断定しない。\n・【⚠️ 対象の無い確認約束の禁止】お客様が物件固有の事実を聞いていない返信で「確認しご連絡させて頂きます」「確認出来次第ご連絡」を締めに使うことは禁止（創作約束。final-check CONFIRM_NO_OBJECT で block）。確認事項が実在する場合（【✅ 確認対象（決定論）】が出ている時）は上記の対象付き宣言1文のみ書き、同じ返信内で二重に確認宣言しない。水道代・インターネット・設備の有無など管理会社への確認事項も「設備・利用条件確認させて頂きます」のように対象を書く。\n・【⚠️ スタッフが送った物件画像への「内容確認します」禁止】お客様が画像（物件資料・見積書）を送り返してきた場合、その画像はスタッフが先に送った物件の資料であることが多い。「お送り頂きました画像の内容を確認させて頂きます」「画像を確認しご連絡します」のように、まるで初めて見る資料かのように「内容確認します」と書いてはいけない。お客様の具体的な質問（「ここは誰か住んでいましたか？」等）にはその質問に直接答えるか、分からない場合は「確認いたします！！」とのみ伝える。`;
 
   // 待ち合わせ確定文はAIXの「待ち合わせ」ボタン専用。generate-replyでは住所・集合場所・集合時間の出力を禁止（propertyFactGateNoteと同型の常時注入ゲート）
   const meetingPlaceGateNote = [
@@ -1526,7 +1565,7 @@ ${quotedContextNote}
 【直近の会話履歴（スモラ自身の返信も含む）】この履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない。
 ${history || "なし"}
 
-${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}${estimateGateNote}${aixTimingNote}
+${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${confirmationGateNote}${availabilityCheckNote}${budgetInventoryNote}${estimateGateNote}${aixTimingNote}
 
 ${examples}${examplesInstruction}
 
@@ -2920,7 +2959,9 @@ export async function POST(req: NextRequest) {
       });
     }
   } else {
-    customerName = normalizeCustomerName(customerName) || (isPlausiblePersonName(stripNonNameChars(customerName)) ? stripNonNameChars(customerName) : "");
+    // G30（2026-09-08 Fable5）: 旧 fallback「isPlausiblePersonName(stripNonNameChars(...))」は normalizeCustomerName が
+    // 意図的に落とした名前（プレースホルダ派生・一般ニックネーム）を復活させる迂回路だったため廃止（正規化の単一経路）
+    customerName = normalizeCustomerName(customerName);
   }
   // S-5: 顧客自身が書いた「〇〇様／〇〇さん」（連名者・保証人・家族等）は NAME_MISMATCH の除外リストに入れる
   const allowNamesForCheck: string[] = (() => {
@@ -2955,7 +2996,7 @@ export async function POST(req: NextRequest) {
   }
   // アクティブタスク状態をreplyHintに反映（動的コンテキスト注入）
   if (activeTaskTypes.includes("property_check")) {
-    replyHint = "【募集状況確認中★最重要】現在スタッフが物件の募集状況を確認している最中です。内覧日程・物件提案・見積書の話は絶対にしない。お客様の短い返信（「すいません」「ありがとう」「わかりました」等）には「大丈夫ですよ！！確認でき次第すぐにご連絡させて頂きます！！😊」のような短い返しのみ行う。（この指示は property_check タスクがアクティブな場合のみ適用。スタッフが物件送付済みでお客様が受取確認しているだけの場合は対象外）"
+    replyHint = "【募集状況確認中★最重要】現在スタッフが物件の募集状況を確認している最中です。内覧日程・物件提案・見積書の話は絶対にしない。お客様の短い返信（「すいません」「ありがとう」「わかりました」等）には「大丈夫ですよ！！募集状況確認出来次第ご連絡させて頂きます😊！！」のような短い返しのみ行う（確認対象「募集状況」を必ず書く。「すぐに」禁止）。（この指示は property_check タスクがアクティブな場合のみ適用。スタッフが物件送付済みでお客様が受取確認しているだけの場合は対象外）"
       + (replyHint ? "\n" + replyHint : "");
   }
 
@@ -3359,6 +3400,19 @@ export async function POST(req: NextRequest) {
     const tpoLatestStaff = [...recentMessages].reverse().find((m) => m.sender === "staff") ?? null;
     const tpoLatestStaffText = tpoLatestStaff?.text ?? "";
 
+    // G10（2026-09-08 Fable5）: 退去・引越し語の主語（現住居＝入居時期情報／提案物件／部屋探し終了）。
+    //   negativeDetail（withdrawal 二重ガード）・isGratitudeReplyTPO・方向性・final-check（FAREWELL_ON_MOVEOUT_INFO）で共有
+    const moveOutSubject: MoveOutSubject = classifyMoveOutSubject(message ?? "");
+    // G26（2026-09-08 Fable5）: 確認約束 verdict（生成 managementNote/confirmationGateNote・bridge・final-check V5/V6 の三層で同一オブジェクト）。
+    //   effectiveAction は鮮度ゲート済み。AIX タイミング判定は後段 applyAixTiming で合成（confirmCtxFinal）
+    const confirmCtx: ConfirmationContextVerdict = resolveConfirmationContext({
+      customerMessage: message ?? "",
+      lastStaffMessage: lastStaffMsgForSearch,
+      brainAction: effectiveAction,
+      activeTaskTypes,
+    });
+    console.info("[confirmCtx]", JSON.stringify({ allowed: confirmCtx.allowed, source: confirmCtx.source, object: confirmCtx.object, moveOutSubject }));
+
     // ── 条件提示判定（2026-09-08 監査改修）──
     // ①エリア語彙拡張＋ひらがな接頭の誤検出排除 ②家賃以外の金額（初期費用/礼金/年収等）をマスク
     // ③漢数字・接頭語付き裸数字対応 ④既存物件への依頼・質問は条件提示より優先して false
@@ -3477,6 +3531,7 @@ export async function POST(req: NextRequest) {
       if (IMPLICIT_REQUEST_RE.test(core)) return false;
       if (SOFT_DECLINE_RE.test(core)) return false;
       if (INFO_PROVIDE_RE.test(core)) return false;
+      if (moveOutSubject === "current_home") return false; // G10: 退去時期報告は復唱＋次工程が必要（感謝短返し禁止）
       if (ACK_TOPIC_EXCL_RE.test(forReq)) return false; // 「内覧の件、よろしく」は forReq で名詞句除去済み
       return everyPart((p) => {
         const q = stripDecoration(p);
@@ -3547,9 +3602,13 @@ export async function POST(req: NextRequest) {
         "(?:他|別)の(?:物件|お部屋)(?:で|に)(?:決め|決まり|契約|申込)",
         "やめ(?:とき|てお|ておき|ることにし|ようと思い)?ます",
         "やめ(?:ました|ることに)",
-        "解約(?:で|を|の)?.{0,6}(?:お願い|したい|します|しました|させて)",
-        "退去(?:します|することに|予定|いたします|が決ま)",
-        "引っ?越(?:すことに|しが決ま|し先が決ま)",
+        // ── G10（2026-09-08 Fable5）: 退去・解約・引越しは対象名詞を必須にする。顧客の現住居の退去・引越し動機は離脱ではなく入居時期情報
+        //    （旧「退去予定」「引っ越すことに」「解約…お願い」の主語なし一致は「今の家は3月末退去予定です」を離脱扱いにしていた）
+        "(?:お?申(?:し)?込(?:み)?|ご?契約|内覧|内見|予約|審査)(?:の|を|は|も)?\\s*(?:解約|取り下げ|取りやめ|取り消し|やめ|なし)(?:で|を|に|したい|します|お願い|させて|ください|になり)?",
+        "(?:そちら|その|この|こちらの|ご?提案(?:いただい|頂い)た|送って(?:もらった|いただいた|頂いた))(?:の)?(?:物件|お?部屋)(?:は|を|も|の)?[^\\n。]{0,10}?(?:辞退|やめ|見送|なし|キャンセル|結構です|大丈夫です)",
+        "引っ?越し先(?:が|は|も)?(?:決ま|見つか)",
+        "(?:お?部屋探し|物件探し|お?家探し|引っ?越し|転居)(?:自体|の話|の件|は|を|が|も)?\\s*(?:なくな|無くな|中止|白紙|取りやめ|取り止め|やめ|辞め|見送|延期)",
+        "お世話になりました",
         "諦め(?:ます|ました|ようと)",
         "(?:今回は|一旦)(?:見送|なしで|遠慮|保留に)",
         "破談",
@@ -3557,7 +3616,12 @@ export async function POST(req: NextRequest) {
         "(?:行け|伺え|来れ|行くことができ|行く事ができ|行くことが出来|行く事が出来)なく(?:なり|なっ)",
       ].join("|");
       const withdrawalRe = new RegExp(WITHDRAWAL_SRC);
-      const withdrawalHit = withdrawalRe.test(msg);
+      const withdrawalHit = (() => {
+        if (!withdrawalRe.test(msg)) return false;
+        // G10 二重ガード: 現住居の退去句（「今の家は3月末で解約」等）を除くと断り語が消える → 入居時期情報であって断りではない
+        if (moveOutSubject === "current_home" && !withdrawalRe.test(msg.replace(CURRENT_HOME_MOVEOUT_CLAUSE_RE, ""))) return false;
+        return true;
+      })();
       // 断り句（＋直前の対象名詞「申込の」「内覧」）を除去した残余。残余に質問・依頼が残れば「断り＋質問」なので質問回答パスへ
       const rest = withdrawalHit
         ? msg
@@ -3626,8 +3690,11 @@ export async function POST(req: NextRequest) {
         return "「ピックアップ出来次第お送りさせて頂きます！！」（ピックアップは約束済み。条件列挙・初期費用割引文の再掲禁止）";
       if (/ご査収|お送りしました|お送りさせて頂きました|お送りいたしました|添付/.test(s))
         return "「お手隙の際にご査収ください😌！！」＋「私の方でも〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」（主語はスタッフ。「確認でき次第ご連絡」は主語混乱のため禁止）";
-      if (/管理会社|オーナー|交渉|空室確認|確認(?:して|させて|いたし)/.test(s))
-        return "「確認出来次第ご連絡させて頂きます！！」";
+      if (/管理会社|オーナー|交渉|空室確認|募集状況|確認(?:して|させて|いたし)/.test(s)) {
+        // G26（2026-09-08 Fable5）: 確認対象を必ずリテラルで書く（対象の無い「確認出来次第ご連絡」は創作約束として final-check で block）
+        const obj = findConfirmObject(s) ?? (/交渉/.test(s) ? "家賃・条件交渉の可否" : "募集状況");
+        return `「${obj}確認出来次第ご連絡させて頂きます！！」（確認対象「${obj}」を必ず書く。「すぐに」禁止）`;
+      }
       if (/見積|御見積|初期費用/.test(s))
         return "「気になる点等ございましたらいつでもお気軽にご連絡ください！！」（「ご検討の程」の再掲は絶対禁止）";
       if (/内覧|内見|ご案内|待ち合わせ/.test(s))
@@ -3650,6 +3717,9 @@ export async function POST(req: NextRequest) {
       if (isViewingCancel) return "内覧キャンセルの受け止め（50〜100字）。開口語は「かしこまりました！！」（単独行）。謝罪・残念語禁止。「またご都合の良い日がございましたらいつでもお申し付けください」の1文で別日を軽く開放するのみ。物件追加提案・申込誘導禁止";
       if (negativeDetail.kind === "withdrawal") return "顧客自身の断り・キャンセルの受け止め（50〜110字）。開口語は「かしこまりました！！」（単独行）。2行目「またお部屋探しの際はいつでもお気軽にご連絡ください😊！！」で扉を開け、3行目「この度はありがとうございました！！」で締める。謝罪禁止・「申し訳ございません」「残念ながら」等のネガティブ語禁止・引き留め提案（他にもオススメ〜）禁止・「かしこまりました！！」単独終了禁止";
       if (negativeDetail.kind === "staff_report") return "否決・募集終了報告への短い了承に対する受け止め（50〜110字）。開口語は「はい！！」（感謝・了承に「かしこまりました」は使わない）。2行目は顧客名先頭のサポート継続宣言（「〇〇さんにご満足頂けるお部屋が見つかるまでお部屋探し継続し全力でサポートさせて頂きます😌！！」）。3行目に次の一手を1文（別保証会社でご案内可能なお部屋／新着ピックアップ出来次第お送り）。謝罪・「残念ながら」禁止・会話終了の受け身締め禁止";
+      // G10（2026-09-08 Fable5）: 顧客の現住居の退去・引越し時期報告は離脱ではなく入居時期情報。復唱＋逆算した入居時期の確認→探索継続
+      if (moveOutSubject === "current_home" && !isConditionPresented && !isConditionChangeRequest)
+        return "入居時期情報（お客様ご自身の現住居の退去・引越し時期の報告。探索継続）。開口語「かしこまりました！！」（単独行）→退去時期を復唱して逆算した入居時期を1文で確認（例「〇月末ご退去との事ですので〇月ご入居に向けて」）→ピックアップ宣言 or 未取得条件のヒアリング1問。会話終了・お礼締め・「またお部屋探しの際は」・謝罪禁止。60〜120字";
       if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」（単独行）一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。この場面では具体アクション宣言は不要（何も宣言しない）。物件追加・内見誘導・条件ヒアリング・長文説明は一切禁止";
       if (isThinkingMsg) return "検討中の待ちフェーズ。70〜120字の短返し。開口語は「はい😊！！」（単独行）。①ごゆっくりご検討ください②ご不明点・ご家族様からのご質問等あれば何なりとお申し付けください③顧客名先頭のサポート継続宣言の3点セット。申込誘導・希少性煽り（人気のため早めに）・内見誘導・物件追加提案・「ご検討の程よろしく」の再掲は絶対禁止";
       if (isPostStrongRecommendation) return "強推し直後の了承。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。①感謝を1行で受け取る②直前に推薦したお部屋（物件名が分かれば名前で、不明なら「先ほどのお部屋」）をお手隙の際にごゆっくりご確認いただく旨1文③ご内覧・ご不明点はいつでもお申し付けくださいの開放1文④締め。合計50〜110字。他物件の募集確認・新規ピックアップ宣言・別物件の提案・申込誘導・「ご検討の程よろしくお願いします」の再掲は絶対禁止。顧客が「見てみます」（未来形）なら「ご覧頂きありがとう」等の既読扱いも禁止";
@@ -3700,6 +3770,8 @@ export async function POST(req: NextRequest) {
     // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
     const tpoNoteForLLM: string | null = (() => {
       if (isConditionPresented) return "条件提示（顧客がエリア・家賃条件を提示。かしこまりました！！→条件を行動宣言に埋め込み→即ピックアップ宣言の3行。100〜180字）";
+      // G10（2026-09-08 Fable5）: 現住居の退去・引越し時期の報告は入居時期情報（探索継続）。effectiveReplyDirection の同名分岐と対
+      if (moveOutSubject === "current_home" && !isConditionPresented && !isConditionChangeRequest && negativeDetail.kind === null) return "入居時期情報（現住居の退去・引越し時期の報告。探索継続）";
       if (isViewingCancel) return "内覧キャンセル（別日開放のみ。物件追加・申込誘導禁止。50〜100字）";
       if (isNegativeContext) return negativeDetail.kind === "withdrawal"
         ? "ネガ文脈（顧客自身の断り・キャンセル。開口語「かしこまりました！！」→扉を開ける1文→お礼で締め。引き留め禁止）"
@@ -4161,6 +4233,19 @@ export async function POST(req: NextRequest) {
       });
     })();
 
+    // G30（2026-09-08 Fable5）: 冒頭挨拶を決定論で確定（生成プロンプト・後処理 enforceOpening・final-check ⑦ の三者同名）。
+    // first > late_apology（進捗催促）> waited（3h以上）> none（当日挨拶済み）> standard。夜間接頭辞は 22:00〜04:59 かつ直前スタッフ発言 60 分以上前のみ。
+    // 進捗催促ラベルは tpoNoteForLLM（proposing）に出る（effectiveReplyDirection は direction 文字列なので両方を見る）
+    const greetingDecision: GreetingDecision = resolveGreeting({
+      customerName,
+      isFirstEverReply: shouldPrependGreeting,
+      alreadyGreetedToday: alreadyGreetedToday ?? false,
+      recentMessages,
+      jstHour: getJSTHour(),
+      isProgressPush: /進捗催促対応/.test(`${tpoNoteForLLM ?? ""}\n${effectiveReplyDirection ?? ""}`),
+    });
+    console.log("[greeting]", greetingDecision.kind, greetingDecision.reason, JSON.stringify(greetingDecision.opening));
+
     const latestCustomerMsg = [...recentMessages].reverse().find(m => m.sender === "customer");
     const latestStaffMsg = [...recentMessages].reverse().find(m => m.sender === "staff");
     const isAmbiguousReply = !!latestCustomerMsg &&
@@ -4269,7 +4354,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
       tpoGuidanceNote,
       phaseGuideKey, isConditionPresented,
-      estimateVerdict
+      estimateVerdict,
+      confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）
+      greetingDecision,    // G30: 冒頭挨拶の決定論結果（リテラル埋め込み）
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -4349,6 +4436,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         return null;
       }
     })();
+    // G26（2026-09-08 Fable5）: AIX タイミング判定を確認約束 verdict に合成（buildGenerationMessages 内と同じ pure 関数 → 三層で同値）。
+    // これが無いと property_check_result の正しい bridge「募集状況確認出来次第ご連絡」が自分の final-check（CONFIRM_NO_OBJECT）で block される
+    const confirmCtxFinal: ConfirmationContextVerdict = applyAixTiming(confirmCtx, aixTimingForMeta?.aix ?? null);
 
     // スタッフ向けガイドメモ: brain(AIX-META) の closing_strategy / reply_direction をメタラインで返す。
     // Step1廃止（2026-08）: 両方 null なら過去のbrain実行がDBに残した ai_summary_json.winning_pattern に
@@ -4467,38 +4557,26 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               if (shouldPrependGreeting && !isTemplateOptimize) {
                 // 真の初回: 全バッファして冒頭挨拶を強制置換（AIが誤生成しても確実に正しい名前を出す）
                 // ※テンプレート最適化モードは常に下の通常バッファ経路（テンプレの構成を挨拶強制置換で壊さない）
-                // AIの本文先頭が挨拶パターンなら「挨拶センテンスのみ」を正規表現で除去して固定挨拶に置き換え、
-                // 挨拶で始まっていなければ全文を本文として保持し先頭に固定挨拶を追加する。
-                // （旧実装は改行基準で先頭を捨てていたため、AIが挨拶＋本文を改行なし1行で返すと本文が全消滅していた）
-                const trimmedText = fullText.trimStart();
-                const aiGreetingPattern = /^(?:「?[^\n]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|お世話に|ご連絡|この度|こんにちは|こんばんは|おはよう|夜分遅く)/;
-                // 挨拶センテンス1文分（呼びかけ＋挨拶キーワード＋文末「！！」「。」または改行まで）にマッチする
-                const greetingSentencePattern = /^(?:「?[^\n！!。]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|お世話に|ご連絡|この度|こんにちは|こんばんは|おはよう|夜分遅く|お部屋探し[^！!。\n]{0,30}申します|[^！!。\n]{0,20}と申します)[^！!。\n]{0,40}?(?:[！!。]+|\n)\s*/;
-                let bodyPart: string;
-                if (aiGreetingPattern.test(trimmedText)) {
-                  // 冒頭の挨拶センテンスを最大4文まで除去（「はじめまして😊！！」「この度ご連絡〜！！」「〜鈴木と申します！！」等）
-                  let rest = trimmedText;
-                  for (let i = 0; i < 4 && greetingSentencePattern.test(rest); i++) {
-                    rest = rest.replace(greetingSentencePattern, "");
-                  }
-                  bodyPart = rest.trim();
-                } else {
-                  bodyPart = trimmedText.trim();
-                }
-                // customerName が空の場合は「さん、」部分を除去（「さん、はじめまして」の防止）
-                const fixedGreeting = `${buildFirstGreeting(customerName)}\n\n`;
-                // 除去後が空（挨拶のみ生成・除去しすぎ）の場合はAI出力をそのまま使う（本文ゼロ防止フォールバック）
-                const rawOutput = bodyPart ? fixedGreeting + bodyPart : (trimmedText || fixedGreeting.trim());
+                // G30（2026-09-08 Fable5）: 挨拶は resolveGreeting で決定論確定済み。LLM 出力の冒頭挨拶センテンスを
+                // 剥がして固定挨拶に置換する（greeting.ts enforceOpening。旧 aiGreetingPattern / greetingSentencePattern を移設）
+                const { cleaned: openingFixed, fixes: openingFixes } = enforceOpening(fullText, greetingDecision);
+                if (openingFixes.length) console.log("[greeting] enforce:", openingFixes);
                 // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
                 // customerName/lineDisplayName: 本文に混入したLINE表示名を確定的に実名へ置換／除去
-                const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch, aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend });
+                const { cleaned, issues } = validateAndClean(openingFixed, { aixGates: true, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch, aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend });
                 if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
                 // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
                 return { body: cleaned, stopReason };
               }
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
+              // G30: waited（3h以上）/ late_apology（進捗催促）/ 夜間接頭辞は enforceOpening で確定差し込み。
+              //      standard / none は LLM が挨拶を書いた場合のみ決定論の opening に差し替え（プロンプト＋final-check に委ねる）
+              const { cleaned: openingFixed, fixes: openingFixes } = isTemplateOptimize
+                ? { cleaned: fullText, fixes: [] as string[] }
+                : enforceOpening(fullText, greetingDecision);
+              if (openingFixes.length) console.log("[greeting] enforce:", openingFixes);
               // aixGates: 通常返信ドラフトのみ機械検証。テンプレート最適化はAIX由来の日時・金額が正当なため対象外
-              const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch, aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend });
+              const { cleaned, issues } = validateAndClean(openingFixed, { aixGates: !isTemplateOptimize, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch, aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend });
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               let outText = cleaned;
               // テンプレート最適化モードの後処理: 号室先頭ゼロ除去 + noEmoji時の絵文字除去（旧adaptルート互換）
@@ -4635,6 +4713,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   checkpointStage: brainMeta?.checkpoint_stage ?? null, // Fix③: brain実態フェーズ（DB stateと乖離検出用）
                   tpoLabel: tpoNoteForLLM ?? undefined, // TPO場面（感謝返し/ネガ文脈/強推し直後 等）をチェック側にも共有
                   ngProperties: ngPropertiesForCheck.length ? ngPropertiesForCheck : undefined,
+                  // 2026-09-08 Fable5 G10/G26/G6/G30: 生成側と同一オブジェクトを検査側に渡す（三者同名）。detCtx / postDetCtx にも同じ行を置く
+                  moveOutSubject,                                                  // G10
+                  confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
+                  aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
+                  greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
                 };
                 // センシティブ案件（クレーム/審査否決/キャンセル）は「参考のみ・手動確認必須」の草稿のため
                 // チェックのみ実行し、接地修正・フィードバック再生成でドラフトを機械的に触らない
@@ -4737,6 +4820,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
                     sentPropertiesCount: estimateVerdict.sentPropertiesCount,
                     estimateContext: estimateVerdict,
+                    moveOutSubject,                                                  // G10
+                    confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
+                    aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
+                    greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
                   };
                   const nameRes = enforceCustomerName(draftBody, { customerName, lineDisplayName });
                   draftBody = nameRes.cleaned;
@@ -4811,7 +4898,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
             if (!isTemplateOptimize && finalCheck && draftBody) {
               try {
-                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET)/;
+                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|GREETING_WAITED_MISUSE)/;
                 const postDetCtx = {
                   recentMessages, lastCustomerMessage: message, isAutoSend: enforceReplyModeGate,
                   isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
@@ -4819,6 +4906,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
                   sentPropertiesCount: estimateVerdict.sentPropertiesCount,
                   estimateContext: estimateVerdict,
+                  moveOutSubject,                                                  // G10
+                  confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
+                  aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
+                  greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
                   ngProperties: brainFreshForMessage
                     ? (brainMeta?.property_search_params?.ng_properties ?? []).filter((p) => p?.property_name).map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)
                     : undefined,
@@ -5020,6 +5111,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     isConditionChangeRequest,
                     negativeKind: negativeDetail.kind,
                     isViewingCancel,
+                    // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・挨拶決定の監査用
+                    moveOutSubject,
+                    confirmCtx: { allowed: confirmCtxFinal.allowed, source: confirmCtxFinal.source, object: confirmCtxFinal.object },
+                    greeting: { kind: greetingDecision.kind, reason: greetingDecision.reason },
                   } } })
                   .eq("id", conversationId)
                   .then(({ error: chkErr }) => {

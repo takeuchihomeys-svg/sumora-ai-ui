@@ -14,7 +14,11 @@
 // - generate-reply/route.ts …… runFinalCheckWithRevision（チェック+接地修正ループ。最大2チェック）
 // - check-reply/route.ts    …… 送信時（スタッフ編集後）の再チェック。自動修正なし（runFinalCheckのみ）
 
-import { checkNameConsistency } from "./validate-reply";
+import { checkNameConsistency, ASSERTION_BAN_RULES, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE } from "./validate-reply";
+// 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶（generate-reply / brain-core と四者同名）
+import { moveOutEvidenceText, type MoveOutSubject } from "./move-out-context";
+import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, type ConfirmationContextVerdict } from "./confirmation-context";
+import { NIGHT_PREFIX, type GreetingKind } from "./greeting";
 import {
   PHASE_PROHIBITIONS,
   FORM_LABEL_RE,
@@ -91,6 +95,17 @@ export interface FinalCheckContext {
   allowNames?: string[];
   /** generate-reply の resolveState().guideKey（first_reply/hearing/proposing/viewing/applying/closed_won/closed_lost）。STATE_REGRESSION 判定に使用 */
   phaseKey?: string;
+  // ── G10 / G26 / G6 / G30（2026-09-08 Fable5）。route.ts は finalCheckCtx / detCtx / postDetCtx の3か所に同じ値を渡す ──
+  /** G10: generate-reply classifyMoveOutSubject()（現住居の退去報告を離脱と誤読した会話終了返信を FAREWELL_ON_MOVEOUT_INFO で block） */
+  moveOutSubject?: MoveOutSubject;
+  /** G26: generate-reply の確認約束 verdict（同一オブジェクト）。check-reply 経路は省略可（ctx から再計算） */
+  confirmationContext?: ConfirmationContextVerdict | null;
+  activeTaskTypes?: string[];
+  /** G6: AIX【物件確認した】(property_check_result) / mgmt_* 完了（route.ts aixDone.vacancyCheck || mgmtCheck）。VACANCY/MOVEIN を免除 */
+  aixVacancyDone?: boolean;
+  /** G30: resolveGreeting().kind / .opening（OPENING_GREETING_* の対称検査） */
+  greetingKind?: GreetingKind;
+  expectedOpening?: string;
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -837,7 +852,10 @@ function assignSeverity(pass: CheckPass, code: string, isAutoSend = false, isEar
   if (
     code === "STATE_REGRESSION" || code === "TIMING_VOCAB_MISMATCH" || code === "SYSTEM_MARKER_LEAK" || code === "NAME_PLACEHOLDER" ||
     code === "NAME_FULLNAME_LEAK" || code === "VIEWING_BEFORE_VACANCY" || code === "FABRICATED_POLICY_DET" ||
-    code === "NEGATIVE_APOLOGY"
+    code === "NEGATIVE_APOLOGY" ||
+    // 2026-09-08 Fable5 G6/G26/G10: 宅建業法断言・創作確認約束・退去報告への会話終了は決定論 block（LLM recheck でも維持）
+    code === "DISCLOSURE_ASSERTION" || code === "VACANCY_ASSERTION" || code === "MOVEIN_DATE_ASSERTION" || code === "SCREENING_ASSURANCE" ||
+    code === "CONFIRM_NO_OBJECT" || code === "FAREWELL_ON_MOVEOUT_INFO"
   ) return "block";
   if (isAutoSend && pass === "context_check" && code === "MISSED_QUESTION") return "block";
   // FN-006: context_check の TIME_INVALID は自動送信のみ block、スタッフ確認経路は warning
@@ -886,13 +904,27 @@ const BANNED_WORDS_DETERMINISTIC = [
   "先ほどお送りした御見積書", "先程お送りした御見積書", "先ほどお送りしたお見積書",  // 未送付物の送済み表現（V9 と二重防御）
   "御見積書となります", "お見積書となります", "見積書を同封",   // AIX 送付カバー文（line_reply では書かない）
   "初期費用は家賃の", "家賃の2ヶ月分", "家賃の3ヶ月分",       // 物件未確定の金額断定
+  // 2026-09-08 G7/G26/G30（Fable5）— どの文脈でも誤りの形のみ（AIX テンプレ正規文と同型の語は入れない。修正ループ guard でも自動的に効く）
+  // 都合の持ち主逆転（V2 GOCHOUGO_REVERSED と二重防御）
+  "ご都合よろしいお日にちをお伝え", "ご都合よろしいお日にちお伝え",
+  "ご都合よろしいお日にちをお知らせさせて", "ご都合よろしいお日にちお知らせさせて", "ご都合のよい日をお伝えさせて",
+  // 顧客の都合→スタッフ作業（V1 GOCHOUGO_STAFF_TASK と二重防御）
+  "ご都合よろしいお日にちに撮影", "ご都合よろしいお日にちに確認", "ご都合よろしいお日にちにお送り", "ご都合よろしいお日にちに作成",
+  // 内覧・ご案内・撮影の主語逆転
+  "ご内覧させて頂け", "ご内覧させていただけ", "ご案内頂けます", "ご案内いただけます",
+  "撮影頂け", "撮影して頂き", "撮影お願い", "撮影をお願い",
+  // 「すぐに」＋約束（HASTY_PROMISE の 0ms 版）
+  "撮影後すぐに", "撮影次第すぐに", "撮影でき次第すぐに", "撮影出来次第すぐに",
+  "確認出来次第すぐに", "確認でき次第すぐに", "確認し次第すぐに", "確認次第すぐに",
+  // プレースホルダ名の呼びかけ（"名無し" は既存。PLACEHOLDER_ADDRESS_DET_RE と二重防御）
+  "権兵衛", "未設定さん", "未設定様", "ゲストさん", "ゲスト様",
 ];
 
 // ─── 決定論チェック群（runFinalCheck / runDiffRecheck の両方で実行。LLM不要・約0ms）─────────
 // 2026-09-08: 修正版に対する再検査欠落（THANK_OPENING等が recheck で見られない）と
 // WE_DO_MISSING の LLM 依存（直近2ヶ月で発行0件）を解消するため共通関数化。
 const WAIT_TPO_RE = /一時保留|感謝返し|短い了承|強推し直後|ネガ文脈|検討中フォロー|内覧キャンセル|成約後サポート/;
-const BOILERPLATE_RE = /かしこまりました|はい|お世話になっております|お待たせ致しました|お待たせいたしました|よろしくお願い|宜しくお願い|何卒|全力でサポート|お気軽に[^。！!\n]{0,12}(ください|下さい)|ご満足(頂|いただ)け[^。！!\n]{0,20}|またご連絡|ご連絡お待ち|お待ちしております|引き続き|ありがとうございます|こちらこそ/g;
+const BOILERPLATE_RE = /かしこまりました|はい|お世話になっております|お待たせ致しました|お待たせいたしました|夜遅くに失礼します|ご連絡遅くなり申し訳(?:御座|ござ)いません|よろしくお願い|宜しくお願い|何卒|全力でサポート|お気軽に[^。！!\n]{0,12}(ください|下さい)|ご満足(頂|いただ)け[^。！!\n]{0,20}|またご連絡|ご連絡お待ち|お待ちしております|引き続き|ありがとうございます|こちらこそ/g;
 // A-11: 行動動詞に説明・対応・相談・調整・紹介・割引・進め・撮影・ご連絡・お聞き・伺 を追加（「ご説明させて頂きます」等が WE DO と認識されなかった）
 const ACTION_DECL_RE = /(ピックアップ|お送り|送付|お調べ|お探し|探し|確認|ご案内|案内|作成|お作り|交渉|手配|お伝え|お申込み|申込|抑え|押さえ|お取り|取り寄せ|お渡し|ご用意|ご提案|提案|ご説明|説明|対応|ご相談|相談|調整|お届け|ご紹介|紹介|割引|進め|撮影|ご連絡|お聞き|伺)[^\n。！!]{0,30}(させて(?:頂|いただ)き|いたし|致し|し)ます/;
 // A-11: 裸の「お願い」が「よろしくお願いします」に一致していた（短い了承が GENERIC_ONLY_REPLY block になる）。依頼形のみに限定＋暗黙条件語を追加
@@ -907,7 +939,8 @@ const CUSTOMER_APPLY_DECL_RE = /申(?:し)?込(?:み)?(?:たい|します|お願
 // S-4: 生成側 isFirstEverReplyFromMsgs と同一のメディアのみ判定（画像・動画・スタンプのみのスタッフ送信は「返信済み」に数えない）
 const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/;
 // S-4: 初回挨拶ブロック（「〇〇さん、はじめまして😊！！…鈴木と申します！！\n\n」）を開口語判定の前に剥がす
-const GREETING_BLOCK_RE = /^(?:[^\n]{0,12}(?:さん|様)[、,\s]*)?(?:はじめまして|初めまして|この度はご連絡|この度ご連絡|お部屋探しを担当|お部屋探しご担当)[^\n]*\n+/;
+// G30（2026-09-08 Fable5）: 決定論挨拶（夜間接頭辞・お世話に・お待たせ・ご連絡遅くなり）も開口語判定の前に剥がす（resolveGreeting と同名）
+const GREETING_BLOCK_RE = /^(?:夜遅くに失礼します[！!]*\s*)?(?:[^\n]{0,12}(?:さん|様)[、,\s]*)?(?:はじめまして|初めまして|この度はご連絡|この度ご連絡|お部屋探しを担当|お部屋探しご担当|お世話になっております|お待たせ(?:致|いた)しました|ご連絡遅くなり申し訳)[^\n]*\n+/;
 
 export function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const issues: CheckIssue[] = [];
@@ -973,6 +1006,43 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     }
   }
 
+  // ⑦ G30（2026-09-08 Fable5）: 冒頭挨拶の対称検査。resolveGreeting（生成側）が確定した kind / opening と本文の冒頭を照合する。
+  //    「お待たせ致しました」の可否は経過時間の事実（≥3h）で決まる。check-reply 経路（greetingKind 未渡し）は検査しない
+  if (ctx.greetingKind && !isFirstReply) {
+    const headRaw = text.trimStart();
+    const head = headRaw.slice(0, 80);
+    const expected = (ctx.expectedOpening ?? "").trim();
+    const hasWaited = /お待たせ(?:致|いた)しました/.test(head);
+    const hasLateApology = /ご連絡遅くなり申し訳/.test(head);
+    const hasStandard = /お世話になっております|いつもありがとうございます/.test(head);
+    const hasNight = /夜(?:分)?遅くに失礼/.test(head);
+    const expectsNight = expected.startsWith(NIGHT_PREFIX);
+    // 7-a 確定挨拶（waited / late_apology / 夜間接頭辞）で始まっていない
+    if ((ctx.greetingKind === "waited" || ctx.greetingKind === "late_apology" || expectsNight) && expected && !headRaw.startsWith(expected)) {
+      issues.push({ pass: "rule_check", severity: ctx.isAutoSend ? "block" : "warning", code: "OPENING_GREETING_MISMATCH",
+        message: `冒頭は「${expected}」で始める決定です（${ctx.greetingKind}）が、本文の冒頭が異なります`,
+        evidence: head.slice(0, 30), suggestion: `先頭行を「${expected}」に置き換える（その後に改行して本文）` });
+    }
+    // 7-b 3時間以上待たせていない（standard / none）のに「お待たせ致しました」
+    if (hasWaited && ctx.greetingKind !== "waited") {
+      issues.push({ pass: "rule_check", severity: ctx.isAutoSend ? "block" : "warning", code: "GREETING_WAITED_MISUSE",
+        message: "お客様の最新メッセージから3時間未満なのに「お待たせ致しました」で始めています（待たせた事実が無い）",
+        evidence: head.slice(0, 30), suggestion: ctx.greetingKind === "none" ? "挨拶を削除し「はい！！」「かしこまりました！！」から始める" : `「${expected || "お世話になっております！！"}」に変更` });
+    }
+    // 7-c 当日挨拶済み（none）なのに定型挨拶／進捗催促（late_apology）なのに「お待たせ」
+    if (ctx.greetingKind === "none" && (hasStandard || hasLateApology)) {
+      issues.push({ pass: "rule_check", severity: "warning", code: "OPENING_GREETING_UNEXPECTED",
+        message: "本日の会話で冒頭挨拶は既に使用済みなのに定型挨拶で始めています",
+        evidence: head.slice(0, 30), suggestion: "挨拶行を削除し「はい！！」「かしこまりました！！」または本文から始める" });
+    }
+    // 7-d 夜間接頭辞は決定論で付与するもの。LLM 自身が「夜分遅くに」を書く／深夜帯でないのに夜間挨拶を書く
+    if (hasNight && (!expectsNight || /夜分遅く/.test(head))) {
+      issues.push({ pass: "rule_check", severity: ctx.isAutoSend ? "block" : "warning", code: "OPENING_GREETING_UNEXPECTED",
+        message: expectsNight ? "夜間挨拶は「夜遅くに失礼します！！」の形のみ（「夜分遅くに」は不可）" : "深夜帯（22:00〜04:59・会話連続中を除く）ではないのに夜間挨拶を書いています",
+        evidence: head.slice(0, 30), suggestion: expectsNight ? `先頭行を「${NIGHT_PREFIX}」に変更` : "夜間挨拶を削除" });
+    }
+  }
+
   // ③' 開口語の決定論チェック（場面ラベルごとに開口語を1択に固定。修正版 recheck でも同一関数で走る。初回返信は免除）
   if (!isFirstReply) {
     const head = openingHead.slice(0, 12);
@@ -981,6 +1051,19 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     }
     if (/条件提示|内覧キャンセル|顧客自身の断り/.test(tpo) && !/^かしこまりました/.test(head)) {
       issues.push({ pass: "rule_check", severity: "warning", code: "CONDITION_OPENING", message: "条件提示・断り受け止めの場面の開口語は「かしこまりました！！」一択です", evidence: text.trimStart().slice(0, 20), suggestion: "冒頭を「かしこまりました！！」（単独行）に変更" });
+    }
+  }
+
+  // ③''-0 G30（2026-09-08 Fable5）: プレースホルダ名の派生形（「名無しの権兵衛さん」「ゲスト01さん」）の呼びかけは block。
+  //   ctx.customerName 自体がプレースホルダ派生なら空名扱いにして checkNameConsistency の基準名にしない（UI の || "名無し" デフォルト対策）
+  {
+    const m = text.match(PLACEHOLDER_ADDRESS_DET_RE);
+    if (m) issues.push({ pass: "rule_check", severity: "block", code: "NAME_PLACEHOLDER",
+      message: `プレースホルダ名の呼びかけ「${m[0]}」が含まれています（顧客名不明時は呼びかけを省略する）`,
+      evidence: m[0], suggestion: `「${m[0]}」と直後の助詞を削除し、名前なしで書く` });
+    if (ctx.customerName && PLACEHOLDER_NAME_CORE_RE.test(ctx.customerName)) {
+      console.warn("[final-check] customerName がプレースホルダ派生のため空扱い:", ctx.customerName);
+      ctx = { ...ctx, customerName: "" };
     }
   }
 
@@ -1021,7 +1104,9 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   const cust = ctx.lastCustomerMessage ?? "";
   const custIsPureAck = cust.trim().length > 0 && cust.trim().length <= 25 && PURE_ACK_RE.test(cust.trim());
   if (!WAIT_TPO_RE.test(tpo) && !(tpo === "" && custIsPureAck)) {
-    const residue = text.replace(BOILERPLATE_RE, "");
+    // G26（2026-09-08 Fable5）: 根拠の無い「確認出来次第ご連絡」を WE DO に数えない（WE_DO_MISSING を確認約束で回避するインセンティブを消す）
+    const weDoBase = stripUnbackedConfirmPromise(text, getConfirmVerdict(ctx));
+    const residue = weDoBase.replace(BOILERPLATE_RE, "");
     const hasActionDecl = ACTION_DECL_RE.test(residue);
     const customerAsked = CUSTOMER_REQUEST_RE.test(cust);
     if (!hasActionDecl) {
@@ -1044,9 +1129,43 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   // ⑧ 語彙セマンティクス（主語・方向・前提の履歴照合）— 初回・recheck の両方で走る
   issues.push(...runVocabSemanticChecks(text, ctx));
 
+  // ⑧' G6 宅建業法: 管理会社確認前の断言禁止（告知事項・空室・入居可能日）＋根拠なし審査安心（初回・recheck・後処理後の全経路で走る）
+  issues.push(...runAssertionBanChecks(text, ctx));
+
   // ⑨ §5 追加チェック（文脈付き禁止パターン・マーカー漏れ・絵文字・約束復唱・見積文脈外・退去前内覧・申込意思・時制・確定後再質問・フェーズ禁止）
   issues.push(...runDeterministicExtras(text, ctx));
 
+  return issues;
+}
+
+// ─── G6 宅建業法: 管理会社確認前の断言禁止（2026-09-08 Fable5）──────────────────────────
+// 告知事項・空室状況・入居可能日は「管理会社確認の結果」を持つ情報源が無い限り断言禁止。審査は根拠なし安心禁止。
+// 宅建業法47条（重要事項の不告知・誤認）リスクのため severity は isAutoSend に関係なく常に block。
+// 定義（正規表現・置換文）は validate-reply.ts ASSERTION_BAN_RULES と同一定数（後処理置換とチェックの対称性）。
+// 免除は「情報源あり」の3経路のみ。顧客が日付・空室を言っただけでは免除しない（顧客発言は情報源ではない）:
+//   ① ctx.aixVacancyDone — AIX【物件確認した】/ mgmt_* 完了（空室・入居日のみ。告知・審査は対象外）
+//   ② スタッフ直近3件（AIX送付文含む）に確認結果報告（rule.staffConfirmedRe: 「管理会社に確認しましたところ空室」等）
+//   ③ AIX 結果送信フロー（ctx.isAix or brainMeta.action=property_check_result）で staffSourceText に対象語（rule.sourceRe）
+function runAssertionBanChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  const staffRecent = lastStaffTexts(ctx, 3);
+  const source = ctx.staffSourceText ?? "";
+  const aixResultFlow = !!ctx.isAix || ctx.brainMeta?.action === "property_check_result";
+  for (const r of ASSERTION_BAN_RULES) {
+    const m = text.match(r.re);
+    if (!m) continue;
+    const exemptBy =
+      r.exemptOnAixVacancyDone && ctx.aixVacancyDone ? "aixVacancyDone"
+      : r.staffConfirmedRe.test(staffRecent) ? "staffConfirmed"
+      : aixResultFlow && r.sourceRe.test(source) ? "staffSource"
+      : null;
+    if (exemptBy) {
+      // 監査用に info で残す（UI は block のみ止める）。clearedFacts と同様に2回目チェックでも再指摘しない
+      issues.push({ pass: "rule_check", severity: "info", code: `${r.code}_EXEMPT`, message: `${r.msg}（免除: ${exemptBy}）`, evidence: m[0], suggestion: "確認済み情報の伝達として許容" });
+      continue;
+    }
+    issues.push({ pass: "rule_check", severity: "block", code: r.code, message: r.msg, evidence: m[0], suggestion: r.sug });
+  }
   return issues;
 }
 
@@ -1057,8 +1176,9 @@ type BannedPattern = { re: RegExp; code: string; msg: string; sug: string; onlyT
 const BANNED_PATTERNS: BannedPattern[] = [
   { re: /コスパ/, code: "BANNED_WORD", msg: "「コスパ」表現は禁止", sug: "「好条件」「お値打ちな条件」に変更" },
   { re: /仲介手数料[^\n。]{0,8}割引/, code: "FABRICATED_POLICY_DET", msg: "仲介手数料は固定（割引不可）", sug: "「初期費用を最大限割引」に変更", blockAlways: true },
-  { re: /即入居可能/, code: "BANNED_WORD", msg: "「即入居可能」は資料明記時のみ", sug: "削除" },
-  { re: /(?:すぐに|今すぐ)(?:お送り|ご連絡|お知らせ|ピックアップ|ご案内|お調べ|確認|動)/, code: "HASTY_PROMISE", msg: "「すぐに／今すぐ」の過度な約束", sug: "「出来次第」に変更" },
+  // G6: 旧 /即入居可能/ 行は MOVEIN_DATE_ASSERTION（「即」head・block）が包含するため削除（二重指摘防止）
+  // G26/G7: 「すぐに」約束は文脈に関係なく誤り（HASTY_PROMISE を block 固定。bridge 実例からも除去済み）
+  { re: /(?:すぐに|今すぐ)(?:お送り|ご連絡|お知らせ|ピックアップ|ご案内|お調べ|確認|動)/, code: "HASTY_PROMISE", msg: "「すぐに／今すぐ」の過度な約束", sug: "「出来次第」に変更", blockAlways: true },
   { re: /少々お時間(?:頂|いただ|頂戴)/, code: "BANNED_WORD", msg: "曖昧な時間表現", sug: "「明日一番に〜させて頂きます」等の具体タイミングに変更" },
   { re: /(?:とのことですね|をご希望ですね)/, code: "ECHO_CONFIRM", msg: "オウム返しの単体確認文", sug: "条件は行動宣言の修飾として埋め込む" },
   { re: /まず[^\n。]{0,20}次に/, code: "LIST_STRUCTURE", msg: "「まず〜次に〜」の列挙構成", sug: "行動宣言1文に統合" },
@@ -1099,7 +1219,8 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
   if (emojis.length > 2 || disallowed.length > 0 || new Set(emojis).size !== emojis.length)
     push("rule_check", "warning", "EMOJI_RULE_DET", `絵文字が${emojis.length}個（許可外: ${disallowed.join("") || "なし"}／重複: ${new Set(emojis).size !== emojis.length ? "あり" : "なし"}）`, emojis.join(""), "😊😌🌟✨のみ・合計2個以内・同一絵文字は1回");
   // E4 短い了承なのに直前約束の復唱 WE DO が無い（WAIT 免除とは独立に評価）
-  if (/短い了承/.test(tpo) && !ACTION_DECL_RE.test(text.replace(BOILERPLATE_RE, "")))
+  //    G26: 根拠の無い確認約束は復唱 WE DO に数えない（verdict は生成側と同一）
+  if (/短い了承/.test(tpo) && !ACTION_DECL_RE.test(stripUnbackedConfirmPromise(text, getConfirmVerdict(ctx)).replace(BOILERPLATE_RE, "")))
     push("context_check", sevAuto(), "PROMISE_ECHO_MISSING", "短い了承の場面ですが直前スタッフ約束の復唱WE DO文がありません", text.trim().slice(0, 30), "「〇〇ピックアップ出来次第お送りさせて頂きます」等、直前約束を1文復唱する");
   // E5 見積書の文脈外持ち出し（2026-09-08 Fable5 verdict 一本化）
   //   生成側と同じ verdict（isMisumoriContextAppropriate）を参照。verdict 無し（check-reply 経路）は共有 RE でフォールバック。
@@ -1139,10 +1260,22 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
     }
   }
   // E6 退去予定・入居中物件への内覧誘導
-  if (/退去予定|[0-9０-９]{1,2}月退去|退去後|入居中|退去前/.test(allHist) &&
+  //    G10（2026-09-08 Fable5）: 判定対象は moveOutEvidenceText（スタッフ行全採用／顧客行は現住居の退去句を伏字化し提案物件への言及が残る行のみ）。
+  //    顧客の「今の家は3月末退去予定です」（入居時期情報）で提案物件を退去予定扱いにしない（route.ts detectPropertyStatus と同名）
+  const moveOutHist = moveOutEvidenceText(
+    `${staffHist}\n${custHist.split("\n").filter(Boolean).map((l) => `お客様:${l}`).join("\n")}`, cust,
+  );
+  if (/退去予定|[0-9０-９]{1,2}月退去|退去後|入居中|退去前/.test(moveOutHist) &&
       /(?:ご都合よろしい|今週末|いつでも)[^\n。]{0,15}ご案内|内覧(?:でき|出来|可能)(?!ません|ない|次第)/.test(text) &&
       !/以降(?:に|は)?(?:ご案内|ご内覧)|退去後(?:に)?ご案内|先に(?:抑|押さ)え/.test(text))
     push("context_check", "block", "VIEWING_BEFORE_VACANCY", "退去予定・入居中物件に対して現時点での内覧誘導をしています", firstSentenceAround(text, /ご案内|内覧/), "「[退去予定日]以降にご案内可能」または「お申込みで先に押さえてからご内覧」に変更");
+  // E6' G10 現住居の退去・引越し報告（探索継続）に対する会話終了返信（離脱と誤読）
+  if (ctx.moveOutSubject === "current_home" &&
+      /またお部屋探しの際は|この度はありがとうございました|ご縁があり|またのご縁|またの機会|お気をつけて|お元気で/.test(text))
+    push("context_check", "block", "FAREWELL_ON_MOVEOUT_INFO",
+      "お客様の現住居の退去・引越し報告（入居時期情報）を離脱と誤読し、会話終了の返信をしています",
+      firstSentenceAround(text, /またお部屋探し|この度は|ご縁|またの機会|お気をつけて|お元気で/),
+      "退去時期を復唱し「〇月ご入居に間に合うようピックアップさせて頂きます」の探索継続宣言に変更");
   // E7 意思確認前の申込宣言／申込後の内覧・写真提案
   if (/お申込(?:み)?(?:を)?(?:入れ|させて(?:頂|いただ)き|いたし)ま/.test(text) && !CUSTOMER_APPLY_DECL_RE.test(`${custHist}\n${cust}`) && !/申込/.test(tpo))
     push("context_check", sevAuto(), "APPLY_WITHOUT_INTENT", "お客様の申込意思が履歴に無いのに申込を入れる宣言をしています", firstSentenceAround(text, /お申込/), "「お気に召されましたらお申込みでお部屋押さえさせて頂きます」の条件付き提案に変更");
@@ -1208,8 +1341,10 @@ const CONDITION_CLAUSE_RE = /お気に召|気に入って|気になる|ご希望
 const QUESTION_FORM_RE = /(?:でしょうか|ますか|ございますか|御座いますか|お知らせください|お聞かせください|教えて(?:ください|頂け|いただけ))/;
 const CUSTOMER_DATE_RE = /(?:[0-9０-９]{1,2}\s*[\/／月]\s*[0-9０-９]{1,2}|[0-9０-９]{1,2}日|[0-9０-９]{1,2}時|明日|明後日|今日|本日|今週|来週|週末|土日|平日|午前|午後|以降|(?:月|火|水|木|金|土|日)曜)/;
 const CUSTOMER_CONFIRM_RE = /確認(?:します|しておきます|して(?:みます|おきます|また|から)|させて(?:頂|いただ)きます|いたします)|見ておきます|見てみます|目を通し/;
-const CONFIRM_NEXT_RE = /確認(?:でき|出来|し)次第/;
-const CONFIRM_OBJECT_RE = /募集状況|空室|空き|内覧可能|内見可能|割引|番手|管理会社|貸主|オーナー|入居可能|退去|審査|暗証番号|条件|可否|(?:について|の件|を)確認/;
+// G26（2026-09-08 Fable5）: confirmation-context.ts と同一定数（四者同名: 生成・bridge・検査・修正ループ guard）
+const CONFIRM_NEXT_RE = SHARED_CONFIRM_NEXT_RE;
+// CONFIRM_OBJECT_LABELS（confirmation-context.ts）のラベル語と整合させる（ご入居可能日・ペット・駐車場・保証会社・設備・鍵・交渉）
+const CONFIRM_OBJECT_RE = /募集状況|空室|空き|内覧可能|内見可能|割引|番手|管理会社|貸主|オーナー|入居可能|ご入居可能日|退去|審査|暗証番号|条件|可否|ペット|駐車場|保証会社|設備|鍵|交渉|(?:について|の件|を)確認/;
 const PHOTO_RE = /撮影/;
 // A-11: スタッフ側前提から「写真」単独を外す（「物件写真を送付しました」は撮影約束ではない）
 const PHOTO_PREMISE_RE = /撮影|動画|オンライン内見|オンライン内覧|ビデオ通話|室内(?:を)?(?:撮|見せ)|写真(?:を)?(?:撮|撮影)/;
@@ -1230,6 +1365,15 @@ function lastStaffTexts(ctx: FinalCheckContext, n: number): string {
 }
 function lastCustomerTexts(ctx: FinalCheckContext, n: number): string {
   return (ctx.recentMessages ?? []).filter((m) => m.sender !== "staff").slice(-n).map((m) => m.text).join("\n");
+}
+/** G26: 確認約束 verdict。generate-reply 経路は同一オブジェクト（ctx.confirmationContext）、check-reply 経路は ctx から再計算（厳格側に倒れる） */
+function getConfirmVerdict(ctx: FinalCheckContext): ConfirmationContextVerdict {
+  return ctx.confirmationContext ?? resolveConfirmationContext({
+    customerMessage: ctx.lastCustomerMessage ?? "",
+    lastStaffMessage: lastStaffTexts(ctx, 1),
+    brainAction: ctx.brainMeta?.action ?? null,
+    activeTaskTypes: ctx.activeTaskTypes ?? null,
+  });
 }
 function firstSentenceAround(text: string, re: RegExp): string {
   const m = text.match(re);
@@ -1288,22 +1432,31 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
       evidence: firstSentenceAround(text, GOCHOUGO_RE),
       suggestion: "お客様の伝えた日をそのまま復唱し「〇日でご都合よろしいお時間御座いますでしょうか」または確定日時の宣言に変更" });
   }
-  // V5 お客様が「確認します」と言ったのにスタッフが「確認でき次第」— 確認の主語奪取
-  //    A-11: 管理会社確認文脈（「管理会社に確認でき次第」「募集状況確認出来次第」）は免除
-  const confirmSentence = CONFIRM_NEXT_RE.test(text) ? firstSentenceAround(text, CONFIRM_NEXT_RE) : "";
-  const isMgmtConfirmCtx = /管理会社|オーナー|貸主|募集状況|空室|空き|番手|入居可能|退去/.test(confirmSentence);
-  if (CONFIRM_NEXT_RE.test(text) && CUSTOMER_CONFIRM_RE.test(cust) && !isMgmtConfirmCtx) {
-    issues.push({ pass: "context_check", severity: "block", code: "CONFIRM_SUBJECT_THEFT",
-      message: "お客様が「確認します」と言っています。確認の主語はお客様であり、スタッフの「確認でき次第ご連絡」は主語混乱です",
-      evidence: firstSentenceAround(text, CONFIRM_NEXT_RE),
-      suggestion: "「お手隙の際にご査収ください！！私の方でも〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」に変更" });
-  }
-  // V6 確認対象の無い「確認でき次第」
-  else if (CONFIRM_NEXT_RE.test(text) && !CONFIRM_OBJECT_RE.test(text) && !CONFIRM_OBJECT_RE.test(cust)) {
-    issues.push({ pass: "rule_check", severity: "warning", code: "CONFIRM_NO_OBJECT",
-      message: "「確認でき次第」に確認対象（〇〇の募集状況／内覧可能日／割引可否）がありません。確認すべき事実が無い汎用締めです",
-      evidence: firstSentenceAround(text, CONFIRM_NEXT_RE),
-      suggestion: "確認対象を明示するか、直前のスタッフ約束（ピックアップ／見積作成）の復唱に置き換える" });
+  // V5/V6 確認約束の主語・対象（G26 2026-09-08 Fable5: verdict は生成側 resolveConfirmationContext と同一オブジェクト。
+  //    旧 V6 は「本文か顧客文に対象語があれば可」の語出現判定＋warning だったため、顧客「よろしくお願いします」への
+  //    「確認出来次第ご連絡」（創作約束）が素通りしていた。verdict.allowed=false は CONFIRM_NO_OBJECT を block に昇格）
+  const confirmHitRe = CONFIRM_NEXT_RE.test(text) ? CONFIRM_NEXT_RE : CONFIRM_PROMISE_SENTENCE_RE.test(text) ? CONFIRM_PROMISE_SENTENCE_RE : null;
+  if (confirmHitRe) {
+    const verdict = getConfirmVerdict(ctx);
+    const confirmSentence = firstSentenceAround(text, confirmHitRe);
+    // A-11: 管理会社確認文脈（「管理会社に確認でき次第」「募集状況確認出来次第」）は主語奪取から免除
+    const isMgmtConfirmCtx = /管理会社|オーナー|貸主|募集状況|空室|空き|番手|入居可能|退去/.test(confirmSentence);
+    if ((verdict.source === "customer_self_confirm" || CUSTOMER_CONFIRM_RE.test(cust)) && !isMgmtConfirmCtx && !verdict.allowed) {
+      issues.push({ pass: "context_check", severity: "block", code: "CONFIRM_SUBJECT_THEFT",
+        message: "お客様が「確認します」と言っています。確認の主語はお客様であり、スタッフの「確認でき次第ご連絡」は主語混乱です",
+        evidence: confirmSentence,
+        suggestion: "「お手隙の際にご査収ください！！私の方でも〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」に変更" });
+    } else if (!verdict.allowed) {
+      issues.push({ pass: "context_check", severity: "block", code: "CONFIRM_NO_OBJECT",
+        message: `確認対象が会話文脈に存在しないのに確認を約束しています（創作約束・${verdict.reason}）`,
+        evidence: confirmSentence,
+        suggestion: "確認約束文を削除し「〇〇周辺全域から〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」または直前スタッフ約束の復唱に置き換える" });
+    } else if (verdict.object && !CONFIRM_OBJECT_RE.test(confirmSentence)) {
+      issues.push({ pass: "rule_check", severity: ctx.isAutoSend ? "block" : "warning", code: "CONFIRM_OBJECT_UNSTATED",
+        message: `確認対象「${verdict.object}」が確認約束の文に書かれていません`,
+        evidence: confirmSentence,
+        suggestion: `「${verdict.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」のように対象を前置する` });
+    }
   }
   // V7 前提の無い「撮影」— 履歴（スタッフ約束 or 顧客希望）に撮影・写真・動画が無い
   if (PHOTO_RE.test(text) && !PHOTO_PREMISE_RE.test(staffHist) && !CUSTOMER_PHOTO_WANT_RE.test(custHist + "\n" + cust)) {
@@ -1598,7 +1751,8 @@ const RECHECK_MS = 15000;   // Sonnet差分再チェック用（旧8000ms → So
 // AIX【確認します】との二重宣言（AIX_BOUNDARY_PROMISE = block）を warning 修正が生み出してしまう。
 // 「元ドラフトに無く修正後に出現した」場合のみ修正を破棄する（元から含まれる場合は check1 で検査済み）。
 // スタッフの約束文のみ捕捉。顧客への依頼句「ご確認後にご連絡ください」等は対象外
-const CONFIRM_PROMISE_RE = /確認[^\n。]{0,20}ご連絡(?:いた|させて頂)(?!ください)/;
+// G26（2026-09-08 Fable5）: confirmation-context.ts CONFIRM_PROMISE_SENTENCE_RE と同一定数（四者同名）
+const CONFIRM_PROMISE_RE = CONFIRM_PROMISE_SENTENCE_RE;
 
 export interface RevisionLoopResult {
   finalDraft: string;      // テキストボックスに入れるベスト草稿
@@ -1785,7 +1939,9 @@ EMOJI_RULE_DET / SYSTEM_MARKER_LEAK / QUOTE_UNBALANCED / NEGATIVE_APOLOGY / HAST
 VIEWING_BEFORE_VACANCY / APPLY_WITHOUT_INTENT / POST_APPLY_VIEWING / TENSE_MISMATCH / FEEDBACK_PREMATURE / GOCHOUGO_AFTER_FIXED /
 ECHO_CONFIRM / LIST_STRUCTURE / DOUBLE_KEIGO / FABRICATED_POLICY_DET / GOCHOUGO_STAFF_TASK / GOCHOUGO_REVERSED / GOCHOUGO_NO_CONDITION /
 GOCHOUGO_AFTER_DATE / GUIDE_BEFORE_PROPERTY / CONFIRM_SUBJECT_THEFT / CONFIRM_NO_OBJECT / PHOTO_NO_PREMISE / PHOTO_REPLACES_VIEWING /
-UNSENT_CLAIM / JUSHU_BEFORE_SEND / SELF_HONORIFIC / GUIDE_POSSIBLE_NO_DATE / SASETE_OVERUSE / APPLY_PUSH_NO_INTENT`;
+UNSENT_CLAIM / JUSHU_BEFORE_SEND / SELF_HONORIFIC / GUIDE_POSSIBLE_NO_DATE / SASETE_OVERUSE / APPLY_PUSH_NO_INTENT /
+CONFIRM_OBJECT_UNSTATED / FAREWELL_ON_MOVEOUT_INFO / DISCLOSURE_ASSERTION / VACANCY_ASSERTION / MOVEIN_DATE_ASSERTION / SCREENING_ASSURANCE /
+OPENING_GREETING_MISMATCH / OPENING_GREETING_UNEXPECTED / GREETING_WAITED_MISUSE`;
 
 function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx: FinalCheckContext): string {
   const issuesJson = JSON.stringify(
@@ -1836,7 +1992,7 @@ function inferDiffIssuePass(code: string, check1Issues: CheckIssue[]): CheckPass
       code === "FEEDBACK_PREMATURE" || code === "GOCHOUGO_AFTER_FIXED" || code === "GOCHOUGO_AFTER_DATE" ||
       code === "GUIDE_BEFORE_PROPERTY" || code === "CONFIRM_SUBJECT_THEFT" || code === "PHOTO_NO_PREMISE" ||
       code === "PHOTO_REPLACES_VIEWING" || code === "UNSENT_CLAIM" || code === "JUSHU_BEFORE_SEND" ||
-      code === "APPLY_PUSH_NO_INTENT") return "context_check";
+      code === "APPLY_PUSH_NO_INTENT" || code === "CONFIRM_NO_OBJECT" || code === "FAREWELL_ON_MOVEOUT_INFO") return "context_check";
   return "rule_check"; // AIX_BOUNDARY_* / BANNED_WORD / RULE_VIOLATION / 不明code
 }
 

@@ -16,6 +16,8 @@ import {
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
+// G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
+import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "@/app/lib/move-out-context";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -471,12 +473,9 @@ function detectPhaseFromBrainMeta(
 // 退去予定・入居中の物件は現地内覧が不可能なため、viewing_invite（内覧誘導）を提案せず
 // application_push（申込で部屋を先押さえ）へ差し替える。
 // DBに物件募集状況カラムが無いため、会話メッセージ（スタッフ送付の物件情報を含む）からの
-// テキスト検出で判定する。正規表現は app/api/generate-reply/route.ts の MOVE_OUT_PATTERN と
-// 完全同一に保つこと（変更時は両方を同時更新）。
-// ⚠️ 「退去後」は除外: AIが「退去後すぐにご案内します」と返信すると履歴に残り
-//    次回の検出が誤発火するフィードバックループの原因となるため、単独パターンから除外。
-// ⚠️ 「入居者」「居住中」は省略: 顧客が現居住状況を話す文脈でも一致してしまうため。
-const MOVE_OUT_PATTERN = /退去予定|入居中|[0-9０-９]{1,2}\s*月末?\s*退去|退去[はが]?[0-9０-９]{1,2}\s*月/;
+// テキスト検出で判定する。正規表現 MOVE_OUT_PATTERN は app/lib/move-out-context.ts に集約（import）。
+// G10（2026-09-08 Fable5）: 判定対象は moveOutEvidenceFromMsgs（スタッフ行全採用／顧客行は現住居の退去句を伏字化し
+//    提案物件への言及が残る行のみ）。顧客の「今の家は3月末退去予定です」（入居時期情報）で application_push に差し替えない。
 
 // ── P5: 成約データ（applying_pattern 26件・全件importance=9）由来の信号ベースAIX決定 ────────
 // suggested_aix_button の 1-b 分岐（非viewingフェーズ）で brainAix（Haiku提案）が null だった場合の
@@ -651,7 +650,7 @@ async function detectSignalBasedAixFallback(
       // 退去予定/入居中物件では現地内覧不可 → 申込誘導へ差し替え（旧 redirectMoveOut 相当）。
       // 「退去予定」情報は通常スタッフが物件情報として送るため、顧客だけでなく
       // スタッフ送信を含む直近10件（msgs）全体で検出する。
-      const moveOutDetected = MOVE_OUT_PATTERN.test(msgs.map((m) => m.text ?? "").join("\n"));
+      const moveOutDetected = MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs(msgs));
       return moveOutDetected ? "application_push" : "viewing_invite";
     }
 
@@ -2091,7 +2090,7 @@ ${history}`;
         Boolean(lastCustomerMsg && new Date(lastCustomerMsg.created_at).getTime() > new Date(lastPropertySentAt).getTime());
       if (!lastMsgIsCustomer || !customerRespondedAfterSend) {
         finalAix = null;
-      } else if (MOVE_OUT_PATTERN.test(typedMessages.map((m) => m.text ?? "").join("\n"))) {
+      } else if (MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs(typedMessages))) {
         // 退去予定/入居中物件では現地内覧不可（旧 redirectMoveOut 相当）:
         // Haiku 提案がガードを通過して viewing_invite に確定する場合でも、
         // 会話履歴（スタッフ送付の物件情報を含む直近15件）に退去予定/入居中の記述があれば
@@ -3081,9 +3080,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
                 .order("created_at", { ascending: false })
                 .limit(10);
               // 退去予定/入居中物件では現地内覧不可 → 申込誘導へ差し替え
-              const schedMoveOut = MOVE_OUT_PATTERN.test(
-                (lastMsgRows ?? []).map((m) => m.text ?? "").join("\n"),
-              );
+              const schedMoveOut = MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs(lastMsgRows ?? []));
               viewingPhaseDetail = "scheduling";
               suggAixButton = lastMsgRows?.[0]?.sender === "customer"
                 ? (schedMoveOut ? "application_push" : "viewing_invite")

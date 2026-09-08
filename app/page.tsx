@@ -2390,7 +2390,7 @@ export default function Home() {
         const autoStatus = c.status || "hearing";
         return {
           id: String(c.id),
-          customerName: c.customer_name || "名無し",
+          customerName: c.customer_name || "", // G30: 「名無し」デフォルトは実名として採用され「名無しの権兵衛さん」呼びかけの原因になっていた
           lastMessage: c.last_message || "メッセージなし",
           lastSender: (c.last_sender as "customer" | "staff" | undefined) ?? undefined,
           status: autoStatus,
