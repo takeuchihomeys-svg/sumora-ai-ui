@@ -4,6 +4,19 @@
 
 ---
 
+## 見積書の文脈理解（Fable5・2026-09-08）— 黄金ルール
+
+**見積書は state 非依存。解禁は4証拠（費用質問／見積依頼／特定物件送付／送付後前向き反応）＋約束復唱のみ。判定は `isMisumoriContextAppropriate` の単一 verdict を三層共有。**
+
+- **単一 verdict**: `app/lib/estimate-context.ts` の `isMisumoriContextAppropriate()` が `{ mode: declare | echo_only | forbid, trigger, severity, sentPropertiesCount, signals }` を返す。route.ts で1回だけ計算し、生成（`buildEstimateGateNote` → dynamicBlock）・AIX（`detectAixTiming.opts.estimateVerdict`）・検査（final-check `ctx.estimateContext` → E5 ESTIMATE_NO_TRIGGER / E10 TIMING_VOCAB_MISMATCH / ESTIMATE_REPEAT_PROMISE）が同じオブジェクトを参照する。
+- **優先順位**: closed_won / brain.avoid_topics ハード禁止 → 顧客の見積依頼（送付済みでも再解禁） → 約束済み＝echo_only（新物件＋費用質問は除外） → 費用質問 → 顧客の物件送付（暗黙の見積依頼） → 送付済み∧前向き反応（条件変更が主題なら不可） → 直前約束の復唱 → none。
+- **廃止した誤ルール**: VOCAB_STEP_TIMING「主戦場は viewing・applying／禁止 first_reply・hearing」（state 起点）、`AIX_MONEY_QUESTION_RE`（語出現）、route.ts 独自 `hasPropertyRef`/`asksCost`/`staffPromisedEstimate` regex、brain-core 信号0.96/1 の独自 regex、final-check E5 の `tpoAllows` 死んだ免除、`sentPropertiesCount` インライン式3重複（→ `countSentProperties()`・見積書画像・地図は除外）。
+- **共有 RE**（line-reply-prompts.ts）: `CUSTOMER_COST_QUESTION_RE`（費用質問・「気になる／心配／抑えたい」含む）／`CUSTOMER_ESTIMATE_REQUEST_RE`（見積依頼）／`CUSTOMER_ESTIMATE_INTENT_RE`（両者 union・後方互換）／`CUSTOMER_PROPERTY_REF_RE`／`CUSTOMER_PROPERTY_POSITIVE_RE`／`STAFF_ESTIMATE_PROMISE_RE`／`CUSTOMER_CONDITION_CHANGE_RE`／`ESTIMATE_WORD_RE`（export・final-check ESTIMATE_RE と同一）。
+- **「最大限割引」の2語彙分離**: (A) 訴求宣言「初期費用も最大限割引させて頂き〜」= 全 state 可。(B) 結合形「最大限割引した御見積書」= verdict declare 時のみ。条件フォーム（①〜⑧）のみ受信 → 見積語彙ゼロ・ピックアップ宣言。
+- **将来課題**: `last_brain_meta.estimate_context` JSONB 保存（誤爆の実値再集計）、`SuggestedAixMeta.cost_question / property_reaction` 追加で customer_questions の regex 走査撤去。
+
+---
+
 ## 残存ギャップ統合修正 S/A（Fable5・2026-09-08）
 
 TPO判定の「上流と両脇」4層を修正。設計書の優先度S 5件・A 16件を実装（設計知見5件は system_design_thinking に INSERT 済み）。

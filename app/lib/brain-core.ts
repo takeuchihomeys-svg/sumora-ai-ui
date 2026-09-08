@@ -14,7 +14,8 @@ import {
   normalizeAixActionKey,
 } from "@/app/lib/aix-taxonomy";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
-import { isConditionFormMessage } from "@/app/lib/line-reply-prompts";
+// 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
+import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -613,20 +614,14 @@ async function detectSignalBasedAixFallback(
     // 誤爆ガード①: 内覧希望が主目的のメッセージは信号0.95（viewing_invite）に任せる。
     // 誤爆ガード②: 「もっと安い物件ないですか」等の別物件依頼はピックアップ系（信号0.97/0.9）に任せる。
     // ※ コスト懸念（信号0.9）・見積送付済み（信号3）を先に除外する並び順を変えないこと。
+    // 2026-09-08 Fable5: 独自 regex（「予算」含み・「？」単独で依頼形扱い）を廃止し、共有 CUSTOMER_ESTIMATE_INTENT_RE に統一
+    //   （route.ts detectAixTiming / final-check E5 / estimate-context.ts と四者同名）。条件フォームの項目ラベルは剥がしてから照合。
     {
-      const estimateKeyword =
-        /(初期費用|見積|スモ割|総額|予算|全部で.{0,6}いくら|費用.{0,6}(内訳|詳細)|いくら.{0,8}(かかる|かかり|です|でしょう))/;
-      const estimateRequestForm =
-        /(いくら|どの(くらい|位)|内訳|教え|知りたい|いただけ|頂け|ください|下さい|ですか|でしょうか|お願い|？|\?)/;
+      const custBody = custText.replace(FORM_LABEL_RE, " ");
       const viewingReq = /(内覧|内見|見学).{0,4}(したい|希望|でき|いつ|日程|調整)/;
       const otherPropertyReq =
         /(安|抑え)[^。！!？?\n]{0,10}(物件|お?部屋)|(物件|お?部屋)[^。！!？?\n]{0,8}(ない(です|でしょう)?か|あります|ありません)/;
-      if (
-        estimateKeyword.test(custText) &&
-        estimateRequestForm.test(custText) &&
-        !viewingReq.test(custText) &&
-        !otherPropertyReq.test(custText)
-      ) {
+      if (CUSTOMER_ESTIMATE_INTENT_RE.test(custBody) && !viewingReq.test(custText) && !otherPropertyReq.test(custText)) {
         return "estimate_sheet";
       }
     }
@@ -663,8 +658,9 @@ async function detectSignalBasedAixFallback(
     // 信号1（成約実績最多ライン）: 最終顧客メッセージに見積・初期費用の話題 → estimate_sheet
     // applying_pattern の most_effective 最多。見積書→申込誘導→申込の3ステップが成約最短ルート。
     // （コスト懸念＝信号0.9・見積送付済み＝信号3 は上で先に除外済み）
-    // 2026-09-08: ①〜⑧条件フォームの「⑦初期費用」は項目ラベル（route.ts detectAixTiming と同じ除外・四者同名）
-    if (!isConditionFormMessage(custText) && /見積|初期費用(?![】：:]|の限度)/.test(custText)) return "estimate_sheet";
+    // 2026-09-08 Fable5: 語出現（/見積|初期費用/）ではなく、項目ラベル除去後の依頼・質問形（CUSTOMER_ESTIMATE_INTENT_RE）でのみ estimate_sheet
+    //   （条件フォームの「⑦初期費用」ラベル・「初期費用を貯めてる途中」等の語出現では発火しない・四者同名）
+    if (!isConditionFormMessage(custText) && CUSTOMER_ESTIMATE_INTENT_RE.test(custText.replace(FORM_LABEL_RE, " "))) return "estimate_sheet";
 
     // 信号TikTok（弊社SNS動画流入 → property_search）:
     // 弊社TikTok/Instagramの動画で物件に興味を持って問い合わせてきた顧客。

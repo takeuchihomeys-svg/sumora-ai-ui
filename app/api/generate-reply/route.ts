@@ -19,12 +19,21 @@ import {
   FORM_LABEL_RE,
   isConditionFormMessage,
   CUSTOMER_ESTIMATE_INTENT_RE,
+  CUSTOMER_ESTIMATE_REQUEST_RE,
+  CUSTOMER_COST_QUESTION_RE,
   CUSTOMER_PROPERTY_REF_RE,
   CUSTOMER_ROOM_POSITIVE_RE,
   STAFF_ESTIMATE_PROMISE_RE,
   CUSTOMER_SCREENING_CONCERN_RE,
   CUSTOMER_APPLY_OR_DOC_RE,
 } from "@/app/lib/line-reply-prompts";
+// 2026-09-08 Fable5: 見積書の文脈判定を単一 verdict に統合（生成 estimateGateNote / AIX detectAixTiming / final-check E5・E10 が共有）
+import {
+  isMisumoriContextAppropriate,
+  countSentProperties,
+  buildEstimateGateNote,
+  type EstimateContextVerdict,
+} from "@/app/lib/estimate-context";
 import {
   validateAndClean,
   verifyAmountsAgainstSource,
@@ -477,9 +486,7 @@ type AixTimingSuggestion = {
 
 // 物件指名語（空室・取り扱い確認。AIXタイミングマップ P0 の trigger_condition）
 const AIX_NOMINATION_RE = /空(?:室|き|いて)|取り扱い|募集|ありますか|この(?:物件|お?家|部屋)/;
-// 金額質問（初期費用・見積・いくら）
-// 2026-09-08: 項目ラベル形（「初期費用】」「初期費用の限度額」「⑦初期費用 ⇒」）と「いくらでも」を除外（条件フォーム⑦での見積誤発火が根本原因）
-const AIX_MONEY_QUESTION_RE = /初期費用(?![】：:]|の限度|の上限|\s*[⇒→])|見積|(?<!でも)お?いくら(?!でも)|費用[^\n]{0,12}(?:教えて|知りたい|どのくらい|どれくらい)|総額/;
+// 金額質問の判定は isMisumoriContextAppropriate() の verdict（estimate-context.ts）に一本化（旧 AIX_MONEY_QUESTION_RE は 2026-09-08 廃止）
 // 支払い意思（最ホットシグナル: 「金額によっては即日初期費用払えます」等）
 const AIX_PAYMENT_INTENT_RE = /払えま|払える|支払えま|即日[^\n]{0,10}(?:払|入金|振り?込)|用意でき|振り?込め|一括で払/;
 // 条件変更・緩和・追加（「もう少し広め」「賃料が上がっても構わない」「仕切れるような」等）
@@ -489,31 +496,34 @@ const AIX_VIEWING_INTENT_RE = /見に行き|内覧|内見|見学|見てみたい
 
 function detectAixTiming(
   customerMessage: string,
-  opts: { hasCustomerImage: boolean; estimatePromised: boolean; propertyStatus: PropertyStatus },
+  opts: {
+    hasCustomerImage: boolean;
+    estimatePromised: boolean;
+    propertyStatus: PropertyStatus;
+    /** isMisumoriContextAppropriate() の verdict（単一真実源）。null = 判定不能 → 見積提案しない */
+    estimateVerdict: EstimateContextVerdict | null;
+  },
 ): AixTimingSuggestion | null {
   const msg = (customerMessage || "").trim();
   if (!msg && !opts.hasCustomerImage) return null;
+  const v = opts.estimateVerdict;
+  const estimateDeclare = !!v && v.mode === "declare";
+  const isFormOnly = isConditionFormMessage(msg) && !estimateDeclare;
 
-  // ── 優先度 -1: 条件フォーム除外（2026-09-08 根本原因）。
-  //    ①〜⑧フォームの「⑦初期費用」は項目ラベルであり質問ではない。ラベル除去後の本文に
-  //    CUSTOMER_ESTIMATE_INTENT_RE（依頼・質問形）も特定物件参照も無ければ金額判定を一切行わず、
-  //    PHASE_GUIDE パターンA（ピックアップ宣言のみ）に委ねる。
-  if (isConditionFormMessage(msg)) {
-    const body = msg.replace(FORM_LABEL_RE, "");
-    if (!CUSTOMER_ESTIMATE_INTENT_RE.test(body) && !CUSTOMER_PROPERTY_REF_RE.test(body)) {
-      console.info("[aixTiming] condition form → skip money/nomination (ラベル語による見積誤発火防止)");
-      return null;
-    }
+  // ── 旧 優先度-1（条件フォーム除外）は verdict 側に統合。フォームのみ（trigger=none）は金額・指名判定を行わない ──
+  if (isFormOnly) {
+    console.info("[aixTiming] condition form → skip (verdict.trigger=none)");
+    return null;
   }
 
-  // ── 優先度0: 物件指名検出（画像/SUUMO URL添付 + 空室・取り扱い語）→ property_check_result ──
+  // ── 優先度0: 物件指名（画像 / URL）→ property_check_result。見積連結は verdict が declare の時のみ ──
   const hasPropertyUrl = AVAILABILITY_URL_RE.test(msg);
   if (opts.hasCustomerImage || hasPropertyUrl) {
     // URLのみ・コメントほぼなし（「この物件どうですか」の意図で確定）／画像のみも物件指名として扱う
     const urlOnly = hasPropertyUrl && msg.replace(/https?:\/\/\S+/g, "").trim().length <= 10;
     const imageOnly = opts.hasCustomerImage && msg.length <= 10;
     if (AIX_NOMINATION_RE.test(msg) || urlOnly || imageOnly) {
-      const chained = /見積|初期費用/.test(msg) ? "estimate_sheet" : null;
+      const chained = estimateDeclare ? "estimate_sheet" : null;
       return {
         aix: "property_check_result",
         label: "物件確認した（募集状況）",
@@ -521,49 +531,45 @@ function detectAixTiming(
         urgency: "15分以内に橋渡し→1〜3時間以内に結果報告",
         highlight: false,
         forbidden: "空室有無・退去日・入居可能日をテキストで断言すること（実会話では「募集終了」「申込有り2番手」「タッチの差で埋まった」が頻発。「空いています」の生成は即事実誤認）",
-        bridge: "お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させていただきます！！確認出来次第すぐにご連絡させて頂きます😌！！",
+        bridge: chained
+          ? "お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させて頂き、最大限割引させて頂いた御見積書も合わせてお送りさせて頂きます！！確認出来次第すぐにご連絡させて頂きます😌！！"
+          : "お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させていただきます！！確認出来次第すぐにご連絡させて頂きます😌！！",
         extra: "URL・物件が複数（連投）の場合は1件ずつ返さず橋渡し1通のみ（バッチ処理・結果は全件まとめて1回で報告）。" +
           (chained
-            ? "見積依頼も同時に含まれるため、確認完了後に estimate_sheet を連結する（募集状況+見積書をまとめて1回で報告。初回接触の物件指名型顧客に condition_hearing を挟むのは誤り）。"
+            ? `見積トリガー（${v!.trigger}: ${v!.reason}）が同時に成立するため、確認完了後に estimate_sheet を連結する（募集状況+見積書をまとめて1回で報告。初回接触の物件指名型顧客に condition_hearing を挟むのは誤り）。`
             : ""),
       };
     }
   }
 
-  // ── 優先度1: 支払い意思つき金額質問（最ホット・10分以内） ──
-  if (AIX_MONEY_QUESTION_RE.test(msg)) {
-    if (AIX_PAYMENT_INTENT_RE.test(msg)) {
-      // 見積約束済みの場合は bridge を短い受付文に差し替える（estimatePromiseAckNote の
-      // 「作成宣言を繰り返すな」との矛盾指示を解消。AIX提案=estimate_sheet と最ホット判定は維持）
-      return {
-        aix: "estimate_sheet",
-        label: "見積書送る",
-        chained: null,
-        urgency: "10分以内（applying直前の最優先ホットシグナル）",
-        highlight: true,
-        forbidden: "金額・割引額をAIが生成すること（見積書Vision OCRの実数値のみ送信可）",
-        bridge: opts.estimatePromised
-          ? "かしこまりました！！確認しご連絡させて頂きます😊！！"
-          : "かしこまりました！！最大限割引させて頂いた初期費用の御見積書お送りさせて頂きます😊！！",
-        extra: opts.estimatePromised
-          ? "見積書は既に約束/送付済みのため作成宣言・割引の約束を繰り返さない（二重宣言防止ルールと整合）。返信には「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。"
-          : "支払い意思+金額質問の組み合わせのため、返信には「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。",
-      };
-    }
-    // ── 優先度2: 通常の金額質問（見積未送付・未約束の場合のみ） ──
-    if (!opts.estimatePromised) {
-      return {
-        aix: "estimate_sheet",
-        label: "見積書送る",
-        chained: null,
-        urgency: "2時間以内",
-        highlight: false,
-        forbidden: "金額・割引額をAIが生成すること（見積書Vision OCRの実数値のみ送信可。割引額はスタッフの交渉結果でありAIが数字を作るとクレーム直結）",
-        bridge: "かしこまりました！！最大限割引させて頂いた初期費用の御見積書お送りさせて頂きます😊！！",
-        extra: "",
-      };
-    }
-    return null; // 見積約束済み: estimatePromiseAckNote（二重宣言防止）が正
+  // ── 優先度1/2: 見積書（verdict が declare の時のみ。語出現では出さない） ──
+  if (estimateDeclare) {
+    const payment = AIX_PAYMENT_INTENT_RE.test(msg);
+    return {
+      aix: "estimate_sheet",
+      label: "見積書送る",
+      chained: null,
+      urgency: payment ? "10分以内（applying直前の最優先ホットシグナル）" : "2時間以内",
+      highlight: payment,
+      forbidden: "金額・割引額をAIが生成すること（見積書Vision OCRの実数値のみ送信可。割引額はスタッフの交渉結果でありAIが数字を作るとクレーム直結）",
+      bridge: "かしこまりました！！最大限割引させて頂いた初期費用の御見積書お送りさせて頂きます😊！！",
+      extra:
+        `見積トリガー: ${v!.trigger}（${v!.reason}）。` +
+        (payment ? "支払い意思+金額質問のため「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。" : ""),
+    };
+  }
+  // 見積約束済み（echo_only）で支払い意思あり → 受付文＋申込誘導（AIX提案は estimate_sheet のまま highlight）
+  if (v?.mode === "echo_only" && AIX_PAYMENT_INTENT_RE.test(msg)) {
+    return {
+      aix: "estimate_sheet",
+      label: "見積書送る",
+      chained: null,
+      urgency: "10分以内",
+      highlight: true,
+      forbidden: "金額・割引額をAIが生成すること／見積作成宣言の繰り返し",
+      bridge: "かしこまりました！！確認しご連絡させて頂きます😊！！",
+      extra: "見積書は既に約束/送付済みのため作成宣言・割引の約束を繰り返さない（二重宣言防止ルールと整合）。「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。",
+    };
   }
 
   // ── 優先度3: 条件変更・新条件 → property_send（widen/alternative） ──
@@ -783,7 +789,9 @@ function buildGenerationMessages(
   // S-2: resolveState().guideKey（PHASE_GUIDE / STAGE_JP / 禁止事項の単一キー）。未指定時は state をそのまま使う
   phaseGuideKey?: PhaseKey,
   // A-5: 条件提示TPO（conditionChangeNote の「ピックアップ宣言禁止」節と衝突するため、条件提示時は差分復唱＋ピックアップ宣言に切替）
-  isConditionPresentedFlag = false
+  isConditionPresentedFlag = false,
+  // 2026-09-08 Fable5: 見積書の文脈判定 verdict（estimateGateNote / detectAixTiming / estimatePromiseAckNote / phaseProhibition の単一真実源）
+  estimateVerdict: EstimateContextVerdict | null = null
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -1095,7 +1103,9 @@ function buildGenerationMessages(
   // スタッフが直前の返信で「最大限割引した御見積書をお送りします」等を約束済み、
   // またはAIX【見積書送る】で見積書送付済みの場合、AIが同じ作成宣言を再生成する二重宣言を防ぐ。
   // 実際の見積書はAIX【見積書送る】で作成・送付する（estimateGateNote より上位に注入）。
-  const estimatePromiseAckNote = estimatePromised
+  // 2026-09-08: 注入判定は verdict.mode === "echo_only" に統合（verdict 無し経路は旧 estimatePromised フラグでフォールバック）
+  const estimateEchoOnly = estimateVerdict ? estimateVerdict.mode === "echo_only" : estimatePromised;
+  const estimatePromiseAckNote = estimateEchoOnly
     ? `\n【🚫 見積書作成宣言の繰り返し禁止（最優先・【💰 見積書カバー文】ゲートより上位）】
 スタッフは直前の返信で既に「割引・御見積書の作成/送付」を約束済み（またはAIX【見積書送る】で見積書送付済み）。
 → 「最大限割引させていただいた御見積書を作成しお送りさせて頂きます」等の作成宣言・割引の約束を絶対にもう一度生成しない（二重宣言になる）
@@ -1228,6 +1238,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
         hasCustomerImage: hasRecentCustomerImage,
         estimatePromised,
         propertyStatus: resolvedPropertyStatus,
+        estimateVerdict,
       });
   const aixTimingNote = aixTiming ? buildAixTimingNote(aixTiming) : "";
 
@@ -1268,11 +1279,10 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     ? `\n\n【📅 内覧希望への返信は短く（最重要）】お客様が内覧希望を明示しています。返信は「かしこまりました！！ご都合よろしいお日にちをお伝えさせて頂きます！！」程度の短い承認文のみにしてください。以下は絶対禁止：① 申込み提案（「先にお申込みでお部屋を押さえることも可能」等）② 内覧を促す誘導文（「お気に召されましたら〜」は不要）③ その他の追加情報。内覧日程の詳細はAIX【内覧日調整】から別途送るため、この返信には含めない。`
     : "";
 
-  // 見積書カバー文はAIXの「見積書送る」ボタン専用。generate-replyでは見積書を添付できないため、
-  // 添付済みを装う文面・金額内訳をAI返信案に出さない（内覧日時ゲート viewingFactNote と同型の常時注入ゲート）
-  const estimateGateNote = `\n\n【💰 見積書カバー文の生成は絶対禁止（最優先）】「〜の御見積書となります」「御見積書をお送りします＋ご査収ください」のような、見積書を既に添付した体のカバーメッセージ・初期費用の金額内訳は絶対に出力しない。見積書本体はAIXの「見積書送る」ボタンで別途作成・添付して送るため、AI返信案には含めない。お客様が最新メッセージで初期費用・見積を明示的に質問・依頼している場合（または特定物件のURL・画像を送付している場合）に限り、作成宣言「かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」を許可する（物件名入りの見積書送付文・金額内訳・見積書に対する「ご査収ください」は書かない）。①〜⑧条件フォーム受信時・費用質問なし・物件未送付の返信ではこの作成宣言の句自体も禁止（【🚫 フェーズ絶対禁止】TIMING_VOCAB_MISMATCH で block）。その場合は「〇〇周辺全域から〇〇さんご希望の〔条件〕のお部屋全てピックアップしてお送りさせて頂きます」のピックアップ宣言に置き換える。この物件の家賃・管理費（共益費）・敷金・礼金の実額もAIは物件資料画像を読めないため断言・推測禁止。会話履歴内でスタッフが既に伝えた金額をそのまま引用する場合のみ言及可。それ以外は『確認しご連絡させて頂きます😊！！』または見積書作成宣言で返すこと。敷金・礼金の一般論（通常0〜2ヶ月分等）は可。※直前のスタッフ返信で既に見積書の作成・送付や割引を約束済みの場合（【🚫 見積書作成宣言の繰り返し禁止】ブロックがある場合）は、この作成宣言も繰り返さず短い受付文のみとする。
-・【📌 見積書・初期費用への言及は「お客様が質問している場合のみ」（最優先ゲート）】お客様の最新メッセージが初期費用・見積書・費用について質問・依頼している場合のみ、見積書作成宣言を使ってよい。お客様が「前向きに検討しています」「決まり次第ご連絡します」「かしこまりました」「よろしくお願いします」「ありがとうございます」等、費用・見積書に触れていない場合は、見積書・初期費用の説明・作成宣言・割引の言及を一切含めず、承諾とサポート姿勢のみで返信を締めること。過去の会話で初期費用の話題があったとしても、現在のメッセージが費用と無関係であれば絶対に蒸し返さない。★重要例外（条件フォーム）: ①〜⑧の番号付き条件フォーム形式のメッセージ（「⑦初期費用の限度額：〇万円」等を含むもの）は費用の質問・依頼ではない。このメッセージへの返信で「見積書」「御見積」「お見積」は絶対に書かない。条件フォームへの正しい返信は「条件を受け取った旨＋物件ピックアップ宣言」のみ。
-・【💳 分割払い提案の絶対禁止】分割払い・クレジットカード払い等の支払い方法の提案・言及は、お客様が「分割できますか」等と支払い方法を明示的に質問した場合、または「初期費用を払えない」と言った場合のみ許可。それ以外では絶対に書かない。特に「初期費用を抑えたい」への回答として分割払いを提案することは絶対禁止（正しい選択肢は ①より初期費用の安い物件の提案 ②スタッフによる割引 のみ）。`;
+  // 見積書カバー文はAIXの「見積書送る」ボタン専用。generate-replyでは見積書を添付できないため添付済みを装う文面・金額内訳を出さない。
+  // 2026-09-08 Fable5: 旧・約900字の禁止列挙（常時注入・staticBlock）を isMisumoriContextAppropriate() の verdict に基づく
+  // ポジティブ定義に置換。顧客ごとに変わるため dynamicBlock（aixTimingNote の直前）に注入する。
+  const estimateGateNote = buildEstimateGateNote(estimateVerdict);
 
   // 空室確認結果・入居可能日・保証会社等の物件固有情報はAIXの「物件確認した」系ボタン専用。generate-replyでは管理会社確認前の結果捏造を防ぐ（estimateGateNote と同型の常時注入ゲート）
   const propertyFactGateNote = `\n\n【🏢 管理会社確認が必要な物件固有情報の断言は絶対禁止（最優先）】「空室でした」「現在も募集中と確認できました」「埋まってしまいました」「退去日は〇月〇日です」「〇月〇日からご入居可能です」のような、管理会社に確認した体の結果報告や具体的な退去日・入居可能日の断言は絶対に出力しない。空室状況・退去予定日・入居可能日に加え、この物件の「保証会社名・保証料の金額・審査基準・ペット飼育可否・駐車場の空きと料金・設備の有無・礼金/家賃交渉の結果」も管理会社への確認が必要な確定事実であり、確認前にAIが「この物件の保証会社は〇〇です」「保証料は総賃料の〇%です」等と断言・推測してはいけない。保証会社の役割・審査の一般的な流れ・連帯保証人との違いなどの一般論は即答してよい。物件固有の質問には「確認しご連絡させて頂きます😊！！」の宣言のみ。確認結果の報告はAIX【確認した（条件・交渉）】（物件確認した系ボタン）で別途生成・送信する。例外：会話履歴内でスタッフが既に伝えた確定情報（退去日・入居可能日・保証会社名等）をそのまま引用する場合のみ言及可。新たな日付・募集状況・保証条件をAIが推測して生成することは禁止。\n・【⚠️ 退去予定の断言禁止】「退去後すぐにご案内できます」「退去後すぐにご内覧いただけます」「〇月以降ご案内可能です」のような退去予定を前提とした案内文は、管理会社から退去予定が確認済みである事実が会話履歴にある場合のみ使用すること。確認していない場合は「空室状況を確認してご連絡させて頂きます😊！！」とし、退去予定を勝手に断定しない。\n・【⚠️ 「管理会社に確認してご連絡します」の文章での約束禁止】「管理会社に確認しご連絡させて頂きます」「確認してからご連絡いたします」のように、確認と連絡をセットで約束する文をLINE返信に書いてはいけない。確認が必要な内容はスタッフがAIX【確認します】ボタンで対応する。AI返信では「かしこまりました！！」「確認いたします！！」程度の短い受付のみ書き、「ご連絡させて頂きます」まで続けない。水道代・インターネット・設備の有無など管理会社への確認事項も同様。\n・【⚠️ スタッフが送った物件画像への「内容確認します」禁止】お客様が画像（物件資料・見積書）を送り返してきた場合、その画像はスタッフが先に送った物件の資料であることが多い。「お送り頂きました画像の内容を確認させて頂きます」「画像を確認しご連絡します」のように、まるで初めて見る資料かのように「内容確認します」と書いてはいけない。お客様の具体的な質問（「ここは誰か住んでいましたか？」等）にはその質問に直接答えるか、分からない場合は「確認いたします！！」とのみ伝える。`;
@@ -1471,7 +1481,6 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     NG_PHRASE_NOTE,
     TEMPORARY_SITUATION_NOTE,
     SEPARATE_APPOINTMENT_NOTE,
-    estimateGateNote,
     propertyFactGateNote,
     QUOTE_REPLY_JUDGE_NOTE,
     meetingPlaceGateNote,
@@ -1489,7 +1498,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // 同じ state のリクエストが連続する間、cache_control がキャッシュリード（約0.1x価格）を発動する。
   // 顧客固有データ（staffContextNote 等）は後続の dynamicBlock に残す。
   // S-2 / A-8 / §4-2: 全フェーズ共通の型（PHASE_COMMON_FORMAT）を先頭に、フェーズ別禁止事項を末尾に連結（state 単位で固定なのでキャッシュは維持される）
-  const phaseGuideBlock = `${PHASE_COMMON_FORMAT}\n\n【現在の営業フェーズ】${effectivePhase}\n${phaseGuide}${buildPhaseProhibitionNote(effectivePhase)}`;
+  // 2026-09-08: ctx（送付済み物件数）を渡し、proposing 送付済みで「見積書禁止」が誤表示されないようにする（final-check E10 onlyIf と同値）
+  const phaseGuideBlock = `${PHASE_COMMON_FORMAT}\n\n【現在の営業フェーズ】${effectivePhase}\n${phaseGuide}${buildPhaseProhibitionNote(effectivePhase, { sentPropertiesCount: estimateVerdict?.sentPropertiesCount ?? 0 })}`;
 
   // P0-1: viewingNote（クライアントが渡す内覧関連情報）をdynamicBlockに展開する。
   // viewingFactNote（物件退去予定/入居中判定）とセットでお客様メッセージ末尾に配置する。
@@ -1516,7 +1526,7 @@ ${quotedContextNote}
 【直近の会話履歴（スモラ自身の返信も含む）】この履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない。
 ${history || "なし"}
 
-${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}${aixTimingNote}
+${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${availabilityCheckNote}${budgetInventoryNote}${estimateGateNote}${aixTimingNote}
 
 ${examples}${examplesInstruction}
 
@@ -3169,23 +3179,19 @@ export async function POST(req: NextRequest) {
     // 物件URL/物件特定情報つきの費用質問は「新しい物件への新規見積依頼」→ 送付済み/約束済みフラグを解除する
     // （過去の別物件の見積送付・約束が新物件の見積作成宣言を恒久ブロックするのを防ぐ。
     //   例:「この物件の初期費用が知りたいです」＋URL → 会社の定型フローとして必ず見積作成宣言が必要）
-    const hasPropertyRef = /https?:\/\/|suumo|homes\.co|athome|chintai|goodrooms|号室|丁目|マンション|ハイツ|コーポ/i.test(message);
-    const asksCost = /見積|初期費用|スモ割|費用|総額|いくら/.test(message);
+    // 2026-09-08 Fable5: 共有 RE（CUSTOMER_PROPERTY_REF_RE / CUSTOMER_COST_QUESTION_RE / STAFF_ESTIMATE_PROMISE_RE）に統一
+    const hasPropertyRef = CUSTOMER_PROPERTY_REF_RE.test(message);
+    const asksCost = CUSTOMER_COST_QUESTION_RE.test(message.replace(FORM_LABEL_RE, " "));
     const isNewPropertyCostAsk = hasPropertyRef && asksCost;
     if (
       estimateAlreadySent &&
-      ((/見積/.test(message) && /出して|もらえ|お願い|送って|ください|欲しい|してほしい/.test(message)) ||
-        customerAskingAboutPrice ||
-        isNewPropertyCostAsk)
+      (CUSTOMER_ESTIMATE_REQUEST_RE.test(message) || customerAskingAboutPrice || isNewPropertyCostAsk)
     ) {
       estimateAlreadySent = false;
     }
     // staffPromisedEstimate にも同じオーバーライド: 直前の約束は別物件のもの＝新物件は新規見積として扱う
     const staffPromisedEstimate =
-      !isNewPropertyCostAsk &&
-      !!lastStaffMsgForSearch &&
-      /(最大限割引|スモ割|イエヤス割|御?見積書?)/.test(lastStaffMsgForSearch) &&
-      /(作成|お送り|送らせて|送付|割引|お値引)/.test(lastStaffMsgForSearch);
+      !isNewPropertyCostAsk && !!lastStaffMsgForSearch && STAFF_ESTIMATE_PROMISE_RE.test(lastStaffMsgForSearch);
     const estimatePromised = !isTemplateOptimize && (estimateAlreadySent || staffPromisedEstimate);
 
     // ── AIX実行済みアクションの再宣言防止フラグ（2026-09-01）──────────────────────
@@ -3426,6 +3432,27 @@ export async function POST(req: NextRequest) {
     const isConditionPresented = conditionDetail.presented
       && !((phaseGuideKey === "applying" || phaseGuideKey === "closed_won") && !(brainFreshForMessage && brainMeta?.condition_change_type));
     const isConditionChangeRequest = conditionDetail.changeRequest;
+
+    // ── 2026-09-08 Fable5: 見積書の文脈判定（単一 verdict・1回だけ計算）──────────────────
+    // 生成（estimateGateNote / estimatePromiseAckNote / phaseProhibition）・AIX（detectAixTiming）・
+    // 検査（final-check E5 / E10）の三層がこの verdict を共有する。state では判定しない。
+    const sentPropertiesCount = countSentProperties(recentMessages);
+    const lastStaffIdxForEst = recentMessages.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0).at(-1) ?? -1;
+    const unrepliedCustomerTexts = recentMessages.slice(lastStaffIdxForEst + 1).filter((m) => m.sender === "customer").map((m) => m.text ?? "");
+    const estimateVerdict: EstimateContextVerdict = isMisumoriContextAppropriate({
+      customerMessage: message,
+      sentPropertiesCount,
+      recentCustomerMessages: unrepliedCustomerTexts,
+      lastStaffMessage: lastStaffMsgForSearch,
+      brainAction: brainMeta?.action ?? null,
+      brainMeta,
+      brainFresh: brainFreshForMessage,
+      phaseKey: phaseGuideKey,
+      hasCustomerImage: unrepliedCustomerTexts.some((t) => /【画像を送ってきた】|【画像】|\[画像\]/.test(t)),
+      estimatePromised,
+    });
+    console.info("[estimate-ctx]", estimateVerdict.trigger, estimateVerdict.mode, estimateVerdict.signals.join(","));
+
     // A-1: 絵文字・記号のみ（スタンプ単独の sentinel 除去後を含む）
     const isDecorOnlyMsg = (message ?? "").trim().length > 0 && DECOR_ONLY_RE.test((message ?? "").trim());
     // A-13: 不安・関西弁ネガ（isConditionPresented・isViewingCancel の直後・applying より先に評価）
@@ -4241,7 +4268,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
       tpoGuidanceNote,
-      phaseGuideKey, isConditionPresented
+      phaseGuideKey, isConditionPresented,
+      estimateVerdict
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -4315,6 +4343,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
           hasCustomerImage: hasRecentCustomerImageTm,
           estimatePromised,
           propertyStatus: detectPropertyStatus(history, message ?? "", propertyStatus),
+          estimateVerdict,
         });
       } catch {
         return null;
@@ -4548,9 +4577,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   finalCheckRules: finalCheckRules || undefined,
                   recentMessages,
                   lastCustomerMessage: message,
-                  // 2026-09-08 語彙セマンティクス: 送付済み物件数を履歴から決定論で算出（V3 GUIDE_BEFORE_PROPERTY / V10 JUSHU_BEFORE_SEND の実値保証）
-                  // 「お送りさせて頂きます」等の約束文は送付済みに数えない（送付完了文・画像送付のみ）
-                  sentPropertiesCount: recentMessages.filter((m) => m.sender === "staff" && /【画像】|お送りさせて頂きました|お送りいたしました|お送りしました|ご査収/.test(m.text ?? "")).length,
+                  // 2026-09-08 語彙セマンティクス: 送付済み物件数を履歴から決定論で算出（countSentProperties: 見積書画像・地図等は除外）
+                  sentPropertiesCount: estimateVerdict.sentPropertiesCount,
+                  // 見積書の文脈判定 verdict（生成側と同一オブジェクト → E5 / E10 で参照）
+                  estimateContext: estimateVerdict,
                   // Step1廃止（2026-08）: 旧 step1Json（Step1生JSON）→ brainMeta のコンパクトサブセット。
                   // message-local フィールドは鮮度ゲート（brainFreshForMessage）通過時のみ含める
                   // reply_direction / key_topics / avoid_topics は TPO上書き後の effective値を渡す
@@ -4705,7 +4735,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
                     phaseKey: phaseGuideKey, customerName: customerName || undefined,
                     allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
-                    sentPropertiesCount: recentMessages.filter((m) => m.sender === "staff" && /【画像】|お送りさせて頂きました|お送りいたしました|お送りしました|ご査収/.test(m.text ?? "")).length,
+                    sentPropertiesCount: estimateVerdict.sentPropertiesCount,
+                    estimateContext: estimateVerdict,
                   };
                   const nameRes = enforceCustomerName(draftBody, { customerName, lineDisplayName });
                   draftBody = nameRes.cleaned;
@@ -4786,7 +4817,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
                   phaseKey: phaseGuideKey, customerName: customerName || undefined,
                   allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
-                  sentPropertiesCount: recentMessages.filter((m) => m.sender === "staff" && /【画像】|お送りさせて頂きました|お送りいたしました|お送りしました|ご査収/.test(m.text ?? "")).length,
+                  sentPropertiesCount: estimateVerdict.sentPropertiesCount,
+                  estimateContext: estimateVerdict,
                   ngProperties: brainFreshForMessage
                     ? (brainMeta?.property_search_params?.ng_properties ?? []).filter((p) => p?.property_name).map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)
                     : undefined,

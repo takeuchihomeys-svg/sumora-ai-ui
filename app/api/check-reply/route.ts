@@ -3,6 +3,7 @@ import { requireInternalAuth } from "@/app/lib/api-auth";
 import { getCachedPromptRules } from "@/app/lib/prompt-cache";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { runFinalCheck } from "@/app/lib/final-check";
+import { countSentProperties } from "@/app/lib/estimate-context";
 import { supabase } from "@/app/lib/supabase";
 
 // ─── 送信時の最終チェックAPI（スタッフ編集後テキストの再チェック専用）───────────
@@ -86,7 +87,8 @@ export async function POST(req: NextRequest) {
   }
   const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/;
   const hasStaffText = recentMessages.some((m) => m.sender === "staff" && !!(m.text || "").trim() && !MEDIA_ONLY_RE.test(m.text || ""));
-  const sentPropertiesCount = recentMessages.filter((m) => m.sender === "staff" && /【画像】|お送りさせて頂きました|お送りいたしました|お送りしました|ご査収/.test(m.text ?? "")).length;
+  // 2026-09-08 Fable5: generate-reply と同じ countSentProperties()（見積書画像・地図等の非物件送付は除外）
+  const sentPropertiesCount = countSentProperties(recentMessages);
 
   // haikuTimeoutMs=2500: 送信時専用の短いタイムアウト（クライアント 2800ms 以内に収まる）
   // generate-reply は runFinalCheckWithRevision 経由でデフォルト 8000ms を使用

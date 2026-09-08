@@ -18,11 +18,14 @@ import { checkNameConsistency } from "./validate-reply";
 import {
   PHASE_PROHIBITIONS,
   FORM_LABEL_RE,
+  ESTIMATE_WORD_RE,
   CUSTOMER_ESTIMATE_INTENT_RE,
   CUSTOMER_PROPERTY_REF_RE,
-  CUSTOMER_ROOM_POSITIVE_RE,
+  CUSTOMER_PROPERTY_POSITIVE_RE,
   STAFF_ESTIMATE_PROMISE_RE,
 } from "./line-reply-prompts";
+// 2026-09-08 Fable5: 見積書の文脈判定 verdict（generate-reply の isMisumoriContextAppropriate() と同一オブジェクト）
+import type { EstimateContextVerdict } from "./estimate-context";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -67,7 +70,9 @@ export interface FinalCheckContext {
   tpoLabel?: string;             // TPO場面（例: "感謝返し" / "ネガ文脈" / "強推し直後の了承"）。
                                  // generate-reply の tpoNoteForLLM と同一値。context_check の過剰指摘抑制に使用
   checkpointStage?: string | null; // brain実態フェーズ（conversationStageと乖離時に優先）
-  sentPropertiesCount?: number;  // MEDIUM-2: 送付済み物件数（0=未送付）
+  sentPropertiesCount?: number;  // MEDIUM-2: 送付済み物件数（0=未送付）。estimate-context.ts countSentProperties() 由来
+  /** generate-reply の isMisumoriContextAppropriate() verdict（生成側と同一オブジェクト）。check-reply 経路では省略可（共有 RE でフォールバック） */
+  estimateContext?: EstimateContextVerdict | null;
   isAix?: boolean;               // FP-02: AIX機能使用フラグ。false の場合 AIX_BOUNDARY_* コードを除外
   isEarlyConversation?: boolean; // FP-04: 会話初期（情報源が薄い）フラグ。FABRICATED系を warning に格下げ
   /** Brain（suggested_aix_meta）の判定結果。context_check のSTAGE_SKIP抑制に使用 */
@@ -234,7 +239,7 @@ function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBloc
 - 内覧の具体的な候補日時（「8/7（木）14:00〜」等）を提示 → 違反
 - 初期費用の金額・内訳を直接提示（「敷金○万円・礼金○万円・合計○万円」等）→ 違反 / AIX_BOUNDARY_ESTIMATE
   【例外】「御見積書を作成しお送りします」「最大限割引した御見積書をお送りします」等の作成宣言のみ（金額なし）はOK
-  ただし first_reply/hearing・物件未送付・顧客の費用質問なし（①〜⑧条件フォームの「⑦初期費用」は項目ラベルであり質問ではない）の場合は TIMING_VOCAB_MISMATCH 対象（決定論で block。LLM側は重複指摘不要）
+  ただし顧客の費用質問・見積依頼・特定物件送付・送付済み物件への前向き反応のいずれも無い場合（①〜⑧条件フォームの「⑦初期費用」は項目ラベルであり質問ではない）は state を問わず TIMING_VOCAB_MISMATCH / ESTIMATE_NO_TRIGGER 対象（決定論で判定。LLM側は重複指摘不要）
 - 住所・集合場所・集合時間の案内 → 違反
 - 物件名・家賃・間取りの初出提示 → 違反 / 申込確定文・必要書類リスト → 違反
 - 入居可能日・退去日の回答（希望時期を「聞く」のはOK、「答える」のはNG）→ 違反
@@ -312,7 +317,7 @@ ${finalCheckRulesSliced ? `[FINAL_CHECK_RULES]\n${finalCheckRulesSliced}\n[/FINA
 「通常返信AIは宣言のみ・実行はAIX」の原則に基づく境界線の正確な判断:
 
 【初期費用・見積（AIX_BOUNDARY_ESTIMATE）】
-OK: 「御見積書を作成してお送りします」「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」（金額なし・AIXシートが実際の数字を送る前提の宣言。※ただし初回対応・条件ヒアリング中・物件未送付で顧客が費用を質問していない場合は決定論 TIMING_VOCAB_MISMATCH が block する）
+OK: 「御見積書を作成してお送りします」「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」（金額なし・AIXシートが実際の数字を送る前提の宣言。※ただし顧客の費用質問・見積依頼・特定物件送付・送付済み物件への前向き反応のいずれも無い場合は state を問わず決定論 TIMING_VOCAB_MISMATCH / ESTIMATE_NO_TRIGGER が判定する）
 OK: 「初期費用については御見積書にてご案内させていただきます」（案内の予告のみ）
 違反: 「敷金○ヶ月分・礼金○ヶ月分・保証料○%で初期費用合計は約○万円です」（金額・内訳の直接提示）
 違反: 「初期費用は○万円になります」（具体的な金額の直接提示）
@@ -1096,22 +1101,41 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
   // E4 短い了承なのに直前約束の復唱 WE DO が無い（WAIT 免除とは独立に評価）
   if (/短い了承/.test(tpo) && !ACTION_DECL_RE.test(text.replace(BOILERPLATE_RE, "")))
     push("context_check", sevAuto(), "PROMISE_ECHO_MISSING", "短い了承の場面ですが直前スタッフ約束の復唱WE DO文がありません", text.trim().slice(0, 30), "「〇〇ピックアップ出来次第お送りさせて頂きます」等、直前約束を1文復唱する");
-  // E5 見積書の文脈外持ち出し（2026-09-08 語彙タイミング差し替え）
-  //   免除は「顧客の依頼・質問形」「顧客の特定物件送付」「送付済み物件への前向き反応」「直前スタッフ約束の復唱」のみ。
-  //   allHist の語出現（初期／費用／割引＝初回テンプレ・フォームラベル「⑦初期費用」に常在）では免除しない。
-  //   first_reply/hearing・物件未送付 proposing は isAutoSend に関係なく block（UI が止めるのは block のみ）。
+  // E5 見積書の文脈外持ち出し（2026-09-08 Fable5 verdict 一本化）
+  //   生成側と同じ verdict（isMisumoriContextAppropriate）を参照。verdict 無し（check-reply 経路）は共有 RE でフォールバック。
+  //   解禁は「顧客の費用質問／見積依頼／特定物件送付／送付済み物件への前向き反応／直前スタッフ約束の復唱」のみ（state 非依存）。
+  //   物件未送付・条件フォームは isAutoSend に関係なく block（UI が止めるのは block のみ）。
   {
-    const custForEst = customerTextsForBan(ctx);
-    const staffRecent = lastStaffTexts(ctx, 2);
-    const customerWantsEstimate = CUSTOMER_ESTIMATE_INTENT_RE.test(custForEst) || CUSTOMER_PROPERTY_REF_RE.test(custForEst);
-    const roomPositive = (ctx.sentPropertiesCount ?? 0) > 0 && CUSTOMER_ROOM_POSITIVE_RE.test(custForEst);
-    const staffPromised = STAFF_ESTIMATE_PROMISE_RE.test(staffRecent);
-    const tpoAllows = /費用説明|申込|物件送付後|内覧後/.test(tpo);
-    if (ESTIMATE_RE.test(text) && !customerWantsEstimate && !roomPositive && !staffPromised && !tpoAllows) {
-      const early = EARLY_PHASE.has(ctx.phaseKey ?? "") || (ctx.phaseKey === "proposing" && (ctx.sentPropertiesCount ?? 0) === 0);
-      push("context_check", early ? "block" : sevAuto(), "ESTIMATE_NO_TRIGGER",
-        "お客様の費用質問・見積依頼・特定物件送付・前向き反応・直前スタッフ約束のいずれも無いのに御見積書の作成・送付を宣言しています（⑦初期費用は項目ラベル）",
-        firstSentenceAround(text, ESTIMATE_RE), "ピックアップ宣言に置き換える");
+    const v = ctx.estimateContext ?? null;
+    let allowed: boolean;
+    let sev: "block" | "warning";
+    let why: string;
+    if (v) {
+      allowed = v.mode !== "forbid";
+      sev = v.severity;
+      why = `${v.reason}（trigger=${v.trigger} / ${v.signals.join(",")}）`;
+    } else {
+      const custForEst = customerTextsForBan(ctx);
+      const staffRecent = lastStaffTexts(ctx, 2);
+      const sentN = ctx.sentPropertiesCount ?? 0;
+      allowed =
+        CUSTOMER_ESTIMATE_INTENT_RE.test(custForEst) ||
+        CUSTOMER_PROPERTY_REF_RE.test(custForEst) ||
+        (sentN > 0 && CUSTOMER_PROPERTY_POSITIVE_RE.test(custForEst)) ||
+        STAFF_ESTIMATE_PROMISE_RE.test(staffRecent);
+      sev = sentN === 0 ? "block" : "warning";
+      why = "お客様の費用質問・見積依頼・特定物件送付・前向き反応・直前スタッフ約束のいずれも無い";
+    }
+    if (ESTIMATE_RE.test(text) && !allowed) {
+      push("context_check", sev === "block" ? "block" : sevAuto(), "ESTIMATE_NO_TRIGGER",
+        `${why}のに御見積書の作成・送付を宣言しています（⑦初期費用は項目ラベル）`,
+        firstSentenceAround(text, ESTIMATE_RE), "ピックアップ宣言または短い受付文に置き換える");
+    }
+    // echo_only なのに新規作成宣言形 → 二重宣言
+    if (v?.mode === "echo_only" && /見積(?:書|り|もり)?[^\n。]{0,12}(?:作成して|作成し|作成いたし|お作りし)/.test(text)) {
+      push("context_check", sevAuto(), "ESTIMATE_REPEAT_PROMISE",
+        "見積書は既に約束／送付済みなのに新規の作成宣言を繰り返しています",
+        firstSentenceAround(text, ESTIMATE_RE), "「お見積書はお送りさせて頂きますね」の復唱または短い受付文に変更");
     }
   }
   // E6 退去予定・入居中物件への内覧誘導
@@ -1139,7 +1163,18 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
   if (def) {
     const custAll = customerTextsForBan(ctx);
     const staffRecent = lastStaffTexts(ctx, 2);
+    const v = ctx.estimateContext ?? null;
     for (const b of def.bans) {
+      // 見積 ban は verdict 一本化: forbid 以外はスキップ（E5 が担当）。forbid でも severity は verdict に従う
+      const isEstimateBan = b.code === "TIMING_VOCAB_MISMATCH" && b.re.source === ESTIMATE_RE.source;
+      if (isEstimateBan && v) {
+        if (v.mode !== "forbid") continue;
+        const m = text.match(b.re);
+        if (!m) continue;
+        push("rule_check", v.severity === "block" ? "block" : sevAuto(), "TIMING_VOCAB_MISMATCH",
+          `【${def.label}】${b.why}: 「${m[0]}」（${v.reason}）`, m[0], b.fix);
+        continue;
+      }
       if (b.onlyIf && !b.onlyIf({ sentPropertiesCount: ctx.sentPropertiesCount })) continue;
       const m = text.match(b.re);
       if (!m) continue;
@@ -1153,8 +1188,8 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
 }
 
 // ─── 語彙タイミング（E5/E10）用ヘルパー（2026-09-08）────────────────────────────────
-const ESTIMATE_RE = /(?:御|お)?見積(?:書|り|もり)?/;
-const EARLY_PHASE = new Set(["first_reply", "hearing"]);
+// prompts.ts ESTIMATE_WORD_RE と同一定数（E10 の見積 ban 判定は b.re.source 比較で行うため）
+const ESTIMATE_RE = ESTIMATE_WORD_RE;
 /** 顧客側テキスト（直近4件＋最新）。条件フォームの項目ラベル（⑦初期費用 等）を除去してから照合する */
 function customerTextsForBan(ctx: FinalCheckContext): string {
   return `${lastCustomerTexts(ctx, 4)}\n${ctx.lastCustomerMessage ?? ""}`.replace(FORM_LABEL_RE, "");
@@ -1746,7 +1781,7 @@ DOUBLE_DECLARATION / TIME_INVALID / STAGE_SKIP / WE_DO_MISSING / FILLER_GREETING
 SUBJECT_CONFUSION / CONDITION_ADD_MISROUTED / STAFF_REQUEST_OMITTED / NG_PROPERTY_MENTION /
 THANK_OPENING / GRATITUDE_OPENING / CONDITION_OPENING / EXCLAMATION_OVERUSE / INTRO_REPEAT / WE_DO_MISSING_DET / GENERIC_ONLY_REPLY /
 NAME_MISMATCH / NAME_PLACEHOLDER / NAME_OVERUSE / NAME_FULLNAME_LEAK / NAME_BEFORE_OPENING / PROMISE_ECHO_MISSING / TIME_INVALID_HONIJITSU /
-EMOJI_RULE_DET / SYSTEM_MARKER_LEAK / QUOTE_UNBALANCED / NEGATIVE_APOLOGY / HASTY_PROMISE / ESTIMATE_NO_TRIGGER / STATE_REGRESSION /
+EMOJI_RULE_DET / SYSTEM_MARKER_LEAK / QUOTE_UNBALANCED / NEGATIVE_APOLOGY / HASTY_PROMISE / ESTIMATE_NO_TRIGGER / ESTIMATE_REPEAT_PROMISE / TIMING_VOCAB_MISMATCH / STATE_REGRESSION /
 VIEWING_BEFORE_VACANCY / APPLY_WITHOUT_INTENT / POST_APPLY_VIEWING / TENSE_MISMATCH / FEEDBACK_PREMATURE / GOCHOUGO_AFTER_FIXED /
 ECHO_CONFIRM / LIST_STRUCTURE / DOUBLE_KEIGO / FABRICATED_POLICY_DET / GOCHOUGO_STAFF_TASK / GOCHOUGO_REVERSED / GOCHOUGO_NO_CONDITION /
 GOCHOUGO_AFTER_DATE / GUIDE_BEFORE_PROPERTY / CONFIRM_SUBJECT_THEFT / CONFIRM_NO_OBJECT / PHOTO_NO_PREMISE / PHOTO_REPLACES_VIEWING /
@@ -1796,7 +1831,7 @@ function inferDiffIssuePass(code: string, check1Issues: CheckIssue[]): CheckPass
       code === "FILLER_GREETING" || code === "PASSIVE_ONLY" || code === "SUBJECT_CONFUSION" ||
       code === "CONDITION_ADD_MISROUTED" || code === "STAFF_REQUEST_OMITTED" ||
       code === "INTRO_REPEAT" || code === "WE_DO_MISSING_DET" || code === "GENERIC_ONLY_REPLY" ||
-      code === "PROMISE_ECHO_MISSING" || code === "ESTIMATE_NO_TRIGGER" || code === "COST_ASSERTION_NO_ESTIMATE" || code === "VIEWING_BEFORE_VACANCY" ||
+      code === "PROMISE_ECHO_MISSING" || code === "ESTIMATE_NO_TRIGGER" || code === "ESTIMATE_REPEAT_PROMISE" || code === "COST_ASSERTION_NO_ESTIMATE" || code === "VIEWING_BEFORE_VACANCY" ||
       code === "APPLY_WITHOUT_INTENT" || code === "POST_APPLY_VIEWING" || code === "TENSE_MISMATCH" ||
       code === "FEEDBACK_PREMATURE" || code === "GOCHOUGO_AFTER_FIXED" || code === "GOCHOUGO_AFTER_DATE" ||
       code === "GUIDE_BEFORE_PROPERTY" || code === "CONFIRM_SUBJECT_THEFT" || code === "PHOTO_NO_PREMISE" ||
