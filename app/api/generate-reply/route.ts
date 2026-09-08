@@ -143,7 +143,16 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 　× 「かしこまりました！！」単独で終わる返信（具体アクションなし）→ 必ず後続に「〜させて頂きます！！」等の行動宣言を続けること。「かしこまりました！！何卒よろしくお願い致します！！」は不完全
 　→ 正（依頼・お願いへの返し）: 「かしこまりました！！〇〇エリアでピックアップさせて頂きます！！」「かしこまりました！！お風呂広めのお部屋を中心にお調べさせて頂きます！！」
 　→ 正（感謝・了承への返し）: 「はい😊！！ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！」
-　→ NG: 「かしこまりました！！何卒よろしくお願い致します！！」（行動宣言なし→WE_DO_MISSING対象）`;
+　→ NG: 「かしこまりました！！何卒よろしくお願い致します！！」（行動宣言なし→WE_DO_MISSING対象）
+⑧ 主語逆転（お客様の行為をスタッフが、スタッフの行為をお客様が行う形）
+　× 「ご都合よろしいお日にちをお伝えさせて頂きます」「ご内覧させて頂きます」「撮影いただき」「ご案内いただいた（お客様送付物）」
+　→ 正: 「ご都合よろしいお日にち御座いますでしょうか」「ご内覧頂けます／ご案内させて頂きます」「撮影してお送りします」「お送り頂いた」
+⑨ 前提の無い業務語彙（会話履歴に存在しない約束・送付・日程）
+　× 履歴に撮影・写真・動画の約束が無いのに「撮影出来次第お送り」／未送付なのに「ご査収ください」「先ほどお送りした御見積書」／日程未確定なのに「本日〇時ご案内」「現地到着」
+　→ 正: 直前のスタッフ約束（ピックアップ／募集状況確認／見積作成）をそのまま復唱するWE DO（⭐実例に出てきた業務語彙でも、現在の会話に同じ前提が無ければ真似しない）
+⑩ 「確認でき次第ご連絡」の誤用
+　× お客様が「確認します」と言った返答に使う（確認の主語はお客様）／確認対象（〇〇の募集状況・内覧可能日・割引可否）を書かない汎用締め
+　→ 正: 「お手隙の際にご査収ください！！私の方でも〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」／「〇〇の募集状況確認いたします！！確認出来次第ご連絡させて頂きます」`;
 
 // ─── 一時的な状況への言及禁止（常時注入・優先度: NG_PHRASE_NOTEと同列）──────────────
 // 過去の会話チェックポイントに「出張中」等が記録されていても、
@@ -179,6 +188,21 @@ const SOFT_DECLINE_RE = /見送(?:らせて|ります|りたい|ろうと)|や�
 const INFO_PROVIDE_RE = /住所|勤務先|年収|来月|今月|上旬|中旬|下旬|月末|[A-Za-zＡ-Ｚａ-ｚ]案|で進めて|で決め|に決め|にします|の方で(?:お願い|進め)/;
 // 純感謝・了承語（isGratitudeReplyTPO / isShortAckMsg 共通集合）
 const GRATITUDE_POS_RE = /ありがと|感謝|助かり|嬉しい|うれしい|よろしく|宜しく|おねがい|お願い(?:し|いた|致)|承知|かしこまり|わかりました|分かりました|了解|りょうかい|^はい[！!。]*$|OK|オッケー|おっけ|大丈夫です|楽しみ|お任せ|おまかせ|引き続き|どうも|サンキュー|ありがたい/i;
+
+// ─── 直前スタッフ約束の検出（2026-09-08 語彙セマンティクス・決定論）────────────────────
+// 短い了承語への返信は「直前のスタッフ約束の復唱WE DO」に固定する（promiseEchoNote / tpoNoteForLLM「短い了承」）。
+// 検出順は 撮影 → 見積 → 募集状況確認 → ピックアップ → 内覧確定 に固定（複数該当時は最も具体的な約束を優先）。
+// 送付完了文（ご査収ください／お送りさせて頂きました）は「約束中」ではないので null。
+export function detectStaffPromise(staffText: string): { label: string; echo: string } | null {
+  if (!staffText) return null;
+  if (/ご査収ください|お送りさせて頂きました|お送りいたしました/.test(staffText) && !/次第/.test(staffText)) return null;
+  if (/撮影|写真.{0,6}お送り|動画.{0,6}お送り/.test(staffText)) return { label: "室内撮影して送付", echo: "撮影出来次第お送りさせて頂きます！！" };
+  if (/見積/.test(staffText)) return { label: "お見積書の作成・送付", echo: "最大限割引しました初期費用のお見積書作成しお送りさせて頂きます！！" };
+  if (/募集状況|空室|空き.{0,4}確認/.test(staffText)) return { label: "募集状況の確認", echo: "募集状況確認出来次第ご連絡させて頂きます！！" };
+  if (/ピックアップ|お調べ|お探し|オススメできるお部屋/.test(staffText)) return { label: "条件に合う物件のピックアップ送付", echo: "〇〇周辺全域から〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！" };
+  if (/ご案内させて頂きます|内覧/.test(staffText) && /[0-9０-９]{1,2}時/.test(staffText)) return { label: "内覧の実施（日時確定）", echo: "当日何卒よろしくお願い致します！！" };
+  return null;
+}
 // 締めフィラー通（「では失礼します」単独で来ても感謝返しを壊さない）
 const CLOSER_ONLY_RE = /^(?:では|それでは)?(?:失礼(?:します|いたします|致します)|以上です|また(?:ご)?連絡(?:します|いたします)|よろしくです)[！!。]*$/;
 // 感謝・了承以外の話題（申込意思・日時確定・予算変更・キャンセル等）
@@ -1005,6 +1029,17 @@ function buildGenerationMessages(
 ※ただし例外: お客様が【新しい物件】（URL・物件画像・物件名）を送って初期費用・費用を尋ねた場合はこのブロックを適用しない。新規見積として「最大限割引しました初期費用の御見積書を作成しお送りさせて頂きます！！」の作成宣言を必ず行うこと`
     : "";
 
+  // ── 直前スタッフ約束の復唱（2026-09-08 語彙セマンティクス）──────────────────────────
+  // 短い了承語（よろしくお願いします／かしこまりました／はい）は意味的に空なので、LLMが⭐実例の業務語彙
+  // （撮影・ご査収・内覧日程）を無文脈で流用しやすい。「直前のスタッフ約束をそのまま復唱するWE DO」を
+  // 決定論で1行渡し、約束に無い語彙の持ち出しを禁止する。pickup/estimate 専用ノートが出ている時は二重注入しない。
+  const staffPromise = (!isFollowUp && isShortAckMsg && !pickupPromiseAckNote && !estimatePromiseAckNote)
+    ? detectStaffPromise(lastStaffMsg ?? "")
+    : null;
+  const promiseEchoNote = staffPromise
+    ? `\n【🔁 直前のスタッフ約束の復唱（決定論・最優先）】お客様の最新メッセージは短い了承語で、内容は「直前のスタッフ約束への了承」です。直前の約束: ${staffPromise.label}（未履行）。返信は開口語「はい😊！！」（単独行）＋この約束をそのまま復唱するWE DO 1文（例:「${staffPromise.echo}」）＋締め1文のみ（場面【短い了承】）。撮影・ご査収・内覧日程・申込誘導など、直前の約束に無い業務語彙を新たに持ち出さない。「ご都合よろしいお日にちに」をスタッフ作業に接続しない。`
+    : "";
+
   // ── AIX実行済みアクションの再宣言禁止（汎用版・pickupPromiseAckNote / estimatePromiseAckNote の一般化）──
   // 竹内指示(2026-08-31):「AIXの確認したを押したら、もう確認してるって事やから、ここの部分出ないようにする。
   // 考え方として、別のパターンでも」= 空室確認に限らず、AIXで実行＋送信済みの全アクションに横展開する。
@@ -1392,7 +1427,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // staticBlock を汚染しないよう dynamicBlock 側に配置する
   const dynamicBlock =`${topPrinciplesNote}${replyContentNote}
 ${propertyStatusNote}
-${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
@@ -2016,8 +2051,36 @@ function extractDirectionKeywords(direction: string | null): string[] {
 
 const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C: "C案", short_direct: "短く直接" };
 
-async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null): Promise<string> {
+// ─── few-shot 前提フィルタ（2026-09-08 語彙セマンティクス）──────────────────────────
+// 実例は「お客様:/スモラ:」1ペアで表示されるため「前返信＝撮影約束」等の前提が剥がれ、
+// 「よろしくお願いします→撮影出来次第お送り」の無文脈マッピングが起きる。
+// 現在の会話（直前スタッフ発言＋顧客メッセージ）に前提が無い語彙を含む実例は注入前に落とす。
+// final-check.ts runVocabSemanticChecks（V7/V10/V9）と同名の前提条件（三者同名）。minKeep フェイルオープン維持。
+function buildPremiseExcludeRe(staffHist: string, customerMessage: string): RegExp | null {
+  const parts: string[] = [];
+  if (!/撮影|写真|動画|オンライン内見|オンライン内覧/.test(staffHist + "\n" + customerMessage)) parts.push("撮影");
+  if (!/【画像】|お送りさせて頂きました|お送りしました|ピックアップしお送り|property_send|ご査収/.test(staffHist)) parts.push("ご査収");
+  if (!/[0-9０-９]{1,2}\s*[\/／月]\s*[0-9０-９]{1,2}.{0,10}[0-9０-９]{1,2}時/.test(staffHist)) parts.push("現地到着|到着しております|本日[0-9０-９]{1,2}時");
+  return parts.length ? new RegExp(parts.join("|")) : null;
+}
+// 実例ヘッダー（pgvector経路・フォールバック経路で共通。文体のみ再現・業務内容は現在の会話に従う）
+const EXAMPLES_HEADER_NOTE = "— 文体・テンポ・感嘆符・絵文字・長さのみをこの例から再現すること。業務内容（撮影／確認／ご査収／ご案内日時／見積送付 等の約束）は例の丸写し禁止。各例の業務語彙はその会話固有の前提（直前のスタッフ約束・送付済み物件・確定日程）に依存しており、現在の会話履歴に同じ前提が無ければ真似しない（会話内容・文脈は当該顧客の履歴を最優先）。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n";
+// 前提ラベルは決定論で生成（LLMに選ばせない）。実例本文から「この語彙が成立する前提」を注記する
+function derivePremiseLabel(reply: string): string {
+  const labels: string[] = [];
+  if (/撮影|写真|動画/.test(reply)) labels.push("直前返信で室内撮影・写真送付を約束済み（現在の会話に同じ約束が無ければ真似しない）");
+  if (/ご査収|お送りした|お送りさせて頂きました/.test(reply)) labels.push("直前に物件・資料を送付済み");
+  if (/現地|到着|本日[0-9０-９]{1,2}時/.test(reply)) labels.push("内覧日時確定済み");
+  if (/確認(?:でき|出来)次第/.test(reply)) labels.push("管理会社への確認事項が発生している");
+  if (/ご都合よろしいお日にち/.test(reply)) labels.push("特定物件を推した直後");
+  return labels.join("・");
+}
+
+async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, staffHistoryForPremise?: string | null): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
+  // 前提フィルタ用のスタッフ履歴（follow-up でなくても直前スタッフ発言を使う）
+  const premiseStaffHist = [staffHistoryForPremise ?? "", lastStaffMessage ?? "", brainMeta?.last_aix_history ?? ""].filter(Boolean).join("\n");
+  const premiseExcludeRe = buildPremiseExcludeRe(premiseStaffHist, customerMessage ?? "");
 
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
@@ -2063,17 +2126,20 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）
         const excludeRe = spec?.examples?.excludeReplyRe ?? null;
         const minKeep = spec?.examples?.minKeepAfterExclude ?? 3;
+        // 2026-09-08: 現在の会話に前提（撮影約束・送付済み・日程確定）が無い語彙を含む実例を除外（premiseExcludeRe）
+        const combinedExclude = (s: string) => (excludeRe?.test(s) ?? false) || (premiseExcludeRe?.test(s) ?? false);
         let kept = ranked;
-        if (excludeRe) {
-          const filtered = ranked.filter(ex => !excludeRe.test(ex.sent_reply ?? ""));
+        if (excludeRe || premiseExcludeRe) {
+          const filtered = ranked.filter(ex => !combinedExclude(ex.sent_reply ?? ""));
           kept = filtered.length >= minKeep ? filtered : ranked;
         }
         const sorted = kept.slice(0, 8);
 
-        return "\n\n【⭐ スモラの実際の返信例（状況が最も類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。文体の参考（会話内容・文脈は当該顧客の履歴を最優先）。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
+        return "\n\n【⭐ スモラの実際の返信例（状況が最も類似した実例・類似度順）" + EXAMPLES_HEADER_NOTE +
           sorted.map((ex, i) => {
             const angleTag = ex.reply_angle && ex.reply_angle !== "starred" ? `|${ANGLE_LABEL[ex.reply_angle] ?? ex.reply_angle}` : "";
-            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`;
+            const premise = derivePremiseLabel(ex.sent_reply ?? "");
+            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`;
           }).join("\n\n");
         }
       }
@@ -2141,8 +2207,9 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）
   const excludeReFb = spec?.examples?.excludeReplyRe ?? null;
   const minKeepFb = spec?.examples?.minKeepAfterExclude ?? 3;
-  if (excludeReFb) {
-    const filtered = fallbackRanked.filter(ex => !excludeReFb.test(ex.sent_reply ?? ""));
+  // 2026-09-08: 前提フィルタ（premiseExcludeRe）をフォールバック経路にも適用
+  if (excludeReFb || premiseExcludeRe) {
+    const filtered = fallbackRanked.filter(ex => !((excludeReFb?.test(ex.sent_reply ?? "") ?? false) || (premiseExcludeRe?.test(ex.sent_reply ?? "") ?? false)));
     if (filtered.length >= minKeepFb) fallbackRanked = filtered;
   }
 
@@ -2150,11 +2217,12 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
 
   if (all.length === 0) return "";
 
-  return "\n\n【⭐ スモラの実際の返信例（☆をつけた良質な実例）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。文体の参考（会話内容・文脈は当該顧客の履歴を最優先）。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
+  return "\n\n【⭐ スモラの実際の返信例（☆をつけた良質な実例）" + EXAMPLES_HEADER_NOTE +
     all.map((ex, i) => {
       const ra = (ex as { reply_angle?: string | null }).reply_angle;
       const angleTag = ra && ra !== "starred" ? `|${ANGLE_LABEL[ra] ?? ra}` : "";
-      return `[例${i + 1}${angleTag}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`;
+      const premise = derivePremiseLabel(ex.sent_reply ?? "");
+      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`;
     }).join("\n\n");
 }
 
@@ -3393,6 +3461,9 @@ export async function POST(req: NextRequest) {
       if (isTemporaryLeaveMsg) return "一時保留（顧客が今は確認できない・後で連絡すると宣言。30〜60字の超短返しのみ。「承知いたしました」絶対禁止）";
       if (isThinkingMsg) return "検討中フォロー（顧客がまだ迷っている・判断保留。急かさない。申込誘導・希少性煽り絶対禁止。70〜120字）";
       if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客が確認/了承中の待ちフェーズ。再ピックアップ宣言・別物件提案は絶対禁止。開口語「はい😊！！」）";
+      // 2026-09-08 語彙セマンティクス: 直前スタッフ約束が検出できる短い了承は「短い了承（約束の復唱）」場面に固定
+      //（buildGenerationMessages の promiseEchoNote / final-check の WAIT_TPO_RE・GRATITUDE_OPENING と同名）
+      if (isGratitudeReplyTPO && !isFollowUp && detectStaffPromise(lastStaffMsgForSearch ?? "")) return "短い了承（直前スタッフ約束への了承。開口語「はい😊！！」→直前約束の復唱WE DO 1文→締め。約束に無い業務語彙（撮影・ご査収・内覧日程）を持ち出さない。40〜90字）";
       if (isGratitudeReplyTPO) return "感謝返し（短い了承・感謝メッセージ。開口語「はい😊！！」一択）";
       const a = brainMeta?.action ?? "";
       if (state === "applying") return "申込後説明";
@@ -3722,7 +3793,7 @@ export async function POST(req: NextRequest) {
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixHistoryText)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
-      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta)
+      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta, lastStaffMsgForSearch ?? null)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
       getCachedPhrases(fetchSpec.phrases.categories)
         .catch((err) => { console.error("[generate-reply] getCachedPhrases失敗 — フレーズなしで生成続行:", err); return [] as string[]; }),
@@ -4235,6 +4306,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   finalCheckRules: finalCheckRules || undefined,
                   recentMessages,
                   lastCustomerMessage: message,
+                  // 2026-09-08 語彙セマンティクス: 送付済み物件数を履歴から決定論で算出（V3 GUIDE_BEFORE_PROPERTY / V10 JUSHU_BEFORE_SEND の実値保証）
+                  // 「お送りさせて頂きます」等の約束文は送付済みに数えない（送付完了文・画像送付のみ）
+                  sentPropertiesCount: recentMessages.filter((m) => m.sender === "staff" && /【画像】|お送りさせて頂きました|お送りいたしました|お送りしました|ご査収/.test(m.text ?? "")).length,
                   // Step1廃止（2026-08）: 旧 step1Json（Step1生JSON）→ brainMeta のコンパクトサブセット。
                   // message-local フィールドは鮮度ゲート（brainFreshForMessage）通過時のみ含める
                   // reply_direction / key_topics / avoid_topics は TPO上書き後の effective値を渡す

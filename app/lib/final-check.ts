@@ -825,12 +825,31 @@ function normalizeForMatch(s: string): string {
 
 // HIGH-3(Fable5): 決定的禁止語彙スキャン（LLM前に実行・Haiku見逃しを排除）
 // evidenceは本文実在が保証されるのでL283の降格ガード対象外（ループ外で別処理）
-const BANNED_WORDS_DETERMINISTIC = ["スモラ", "名称未設定", "少々お待ちください", "**", "承知いたしました", "承知しました", "承知致しました", "ご連絡お待ちくださいませ", "ご連絡お待ちしております", "お待ちくださいませ", "名無し"];
+const BANNED_WORDS_DETERMINISTIC = [
+  "スモラ", "名称未設定", "少々お待ちください", "**",
+  "承知いたしました", "承知しました", "承知致しました",
+  "ご連絡お待ちくださいませ", "ご連絡お待ちしております", "お待ちくださいませ", "名無し",
+  // 2026-09-08 語彙セマンティクス（主語逆転・自敬・宛先逆転・既存文書禁止の決定論化。prompts VOCAB_SEMANTICS と同名）
+  "ご内覧させて頂き", "ご内覧させていただき",          // 内覧の主語はお客様
+  "ご案内させて頂けます", "ご案内させていただけます",   // 可能形で主語が反転する誤文
+  "撮影いただき", "撮影頂き", "撮影していただき",       // 撮影の主語はスタッフ
+  "ご共有頂き", "ご共有いただき",                       // 業者間語（prompts で文書禁止済み）
+  "ご案内いただいた", "ご案内頂いた",                   // 顧客送付物に「ご案内」
+  "お部屋が見つかり次第", "見つかり次第ご連絡",          // prompts で文書禁止済み
+  "ご査収いただきありがとう", "ご査収頂きありがとう",   // 未受領物への感謝
+  "拝見させて頂", "拝見させていただ",                   // 二重謙譲
+  "お伺いさせて頂", "お伺いさせていただ",
+  "ご覧になられ",
+  "審査させて頂き", "審査させていただき", "審査を進めさせて", // 審査主体は管理会社
+  "契約させて頂き", "契約させていただき",
+  "のご案内をしております", "番手確認", "物確",          // 管理会社向け文体の混入
+  "御見積もりをお願いできます", "お見積もりをお願いできます",
+];
 
 // ─── 決定論チェック群（runFinalCheck / runDiffRecheck の両方で実行。LLM不要・約0ms）─────────
 // 2026-09-08: 修正版に対する再検査欠落（THANK_OPENING等が recheck で見られない）と
 // WE_DO_MISSING の LLM 依存（直近2ヶ月で発行0件）を解消するため共通関数化。
-const WAIT_TPO_RE = /一時保留|感謝返し|強推し直後|ネガ文脈|検討中フォロー|内覧キャンセル/;
+const WAIT_TPO_RE = /一時保留|感謝返し|短い了承|強推し直後|ネガ文脈|検討中フォロー|内覧キャンセル/;
 const BOILERPLATE_RE = /かしこまりました|はい|お世話になっております|お待たせ致しました|お待たせいたしました|よろしくお願い|宜しくお願い|何卒|全力でサポート|お気軽に[^。！!\n]{0,12}(ください|下さい)|ご満足(頂|いただ)け[^。！!\n]{0,20}|またご連絡|ご連絡お待ち|お待ちしております|引き続き|ありがとうございます|こちらこそ/g;
 const ACTION_DECL_RE = /(ピックアップ|お送り|送付|お調べ|お探し|探し|確認|ご案内|案内|作成|お作り|交渉|手配|お伝え|お申込み|申込|抑え|押さえ|お取り|取り寄せ|お渡し|ご用意|ご提案|提案)[^\n。！!]{0,30}(させて(?:頂|いただ)き|いたし|致し|し)ます/;
 const CUSTOMER_REQUEST_RE = /[?？]|お願い|希望|したい|ですか|ますか|でしょうか|教えて|ください|もらえ|いただけ|頂け|条件|家賃|エリア|間取り|[0-9０-９]+万/;
@@ -890,7 +909,7 @@ function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssu
   {
     const stripped = text.trimStart().replace(/^[^\n]{0,12}(?:さん|様)[、,！!\s]*/, "");
     const head = stripped.slice(0, 12);
-    if (/感謝返し|強推し直後|一時保留|検討中フォロー/.test(tpo) && !/^はい/.test(head)) {
+    if (/感謝返し|短い了承|強推し直後|一時保留|検討中フォロー/.test(tpo) && !/^はい/.test(head)) {
       issues.push({ pass: "rule_check", severity: "warning", code: "GRATITUDE_OPENING", message: "感謝・了承・保留の場面の開口語は「はい😊！！」一択です（「かしこまりました」「承知いたしました」「ありがとうございます」で始めない）", evidence: text.trimStart().slice(0, 20), suggestion: "冒頭を「はい😊！！」（単独行）に変更" });
     }
     if (/条件提示|内覧キャンセル|顧客自身の断り/.test(tpo) && !/^かしこまりました/.test(head)) {
@@ -942,6 +961,173 @@ function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssu
     }
   }
 
+  // ⑧ 語彙セマンティクス（主語・方向・前提の履歴照合）— 初回・recheck の両方で走る
+  issues.push(...runVocabSemanticChecks(text, ctx));
+
+  return issues;
+}
+
+// ─── 語彙セマンティクス（主語・方向・前提）決定論チェック（2026-09-08 Fable5）─────────────
+// 「撮影出来次第お送り」「ご都合よろしいお日にちに撮影」等の誤用は、文脈非依存の禁止語では捕捉できない
+// （語そのものは正しい場面で使われる）。会話履歴（直近スタッフ発言・顧客発言）と照合して前提の有無を判定する。
+// 生成側 prompts VOCAB_SEMANTICS / few-shot 前提フィルタ（route.ts fetchExamples）と同名の条件（三者同名）。
+// recentMessages は oldest-first（route.ts と同順）。直近N件は必ず slice(-N) で取る。
+const GOCHOUGO_RE = /ご都合(?:の)?(?:よろしい|宜しい|良い|よい)(?:お)?(?:日にち|日|お?時間|タイミング)/;
+const STAFF_TASK_AFTER_GOCHOUGO_RE = /ご都合(?:の)?(?:よろしい|宜しい|良い|よい)(?:お)?(?:日にち|日)に[^。！!\n]{0,12}?(撮影|確認|お送り|送付|作成|お見積|見積|ピックアップ|お調べ)/;
+const GOCHOUGO_REVERSED_RE = /ご都合(?:の)?(?:よろしい|宜しい|良い|よい)(?:お)?(?:日にち|日)(?:を|は)?[^。！!\n]{0,6}?(?:お伝え|お知らせ)(?:させて(?:頂|いただ)き|いたし|致し|し)ま/;
+const GOCHOUGO_GUIDE_RE = /ご都合(?:の)?(?:よろしい|宜しい|良い|よい)(?:お)?(?:日にち|日)に[^。！!\n]{0,12}?(?:ご案内|ご内覧|内覧)/;
+const CONDITION_CLAUSE_RE = /お気に召|気に入って|気になる|ご希望(?:でしたら|の際|があれば)|よろしければ/;
+const QUESTION_FORM_RE = /(?:でしょうか|ますか|ございますか|御座いますか|お知らせください|お聞かせください|教えて(?:ください|頂け|いただけ))/;
+const CUSTOMER_DATE_RE = /(?:[0-9０-９]{1,2}\s*[\/／月]\s*[0-9０-９]{1,2}|[0-9０-９]{1,2}日|[0-9０-９]{1,2}時|明日|明後日|今日|本日|今週|来週|週末|土日|平日|午前|午後|以降|(?:月|火|水|木|金|土|日)曜)/;
+const CUSTOMER_CONFIRM_RE = /確認(?:します|しておきます|して(?:みます|おきます|また|から)|させて(?:頂|いただ)きます|いたします)|見ておきます|見てみます|目を通し/;
+const CONFIRM_NEXT_RE = /確認(?:でき|出来|し)次第/;
+const CONFIRM_OBJECT_RE = /募集状況|空室|空き|内覧可能|内見可能|割引|番手|管理会社|貸主|オーナー|入居可能|退去|審査|暗証番号|条件|可否|(?:について|の件|を)確認/;
+const PHOTO_RE = /撮影/;
+const PHOTO_PREMISE_RE = /撮影|写真|動画|オンライン内見|オンライン内覧|ビデオ通話|室内(?:を)?(?:撮|見せ)/;
+const CUSTOMER_PHOTO_WANT_RE = /写真|動画|撮影|オンライン|内見(?:でき|出来)ません|行けな|遠方|見に行けな/;
+const SATSUEI_SUBST_RE = /(?:内見|内覧|見)(?:したい|に行きたい|できますか|出来ますか|は?できない|は?出来ない|はできないんですか)/;
+const SENT_CLAIM_RE = /(?:先ほど|先程|先日)?お送り(?:させて(?:頂|いただ)い|し)た(?:御|お)?(?:見積|物件|資料|写真)/;
+const JUSHU_RE = /ご査収/;
+const SELF_HONORIFIC_RE = /ご確認(?:した|しました)(?:通り|とおり|ところ)/;
+const GUIDE_POSSIBLE_RE = /ご案内可能です/;
+const GUIDE_DATE_RE = /[0-9０-９]{1,2}\s*[\/／月]\s*[0-9０-９]{1,2}|[0-9０-９]{1,2}[:：時]/;
+const SASETE_RE = /させて(?:頂|いただ)/g;
+const APPLY_PUSH_RE = /お申込みで(?:お部屋)?(?:抑え|押さえ)|お申込みという形/;
+const CUSTOMER_APPLY_INTENT_RE = /申込|申し込|申請|決め|押さえ|抑え|内覧(?:しました|に行きました|行ってきました)|見てきました/;
+
+function lastStaffTexts(ctx: FinalCheckContext, n: number): string {
+  // oldest-first 前提。直近 n 件のスタッフ発言を結合（AIX 送付文も含む）
+  return (ctx.recentMessages ?? []).filter((m) => m.sender === "staff").slice(-n).map((m) => m.text).join("\n");
+}
+function lastCustomerTexts(ctx: FinalCheckContext, n: number): string {
+  return (ctx.recentMessages ?? []).filter((m) => m.sender !== "staff").slice(-n).map((m) => m.text).join("\n");
+}
+function firstSentenceAround(text: string, re: RegExp): string {
+  const m = text.match(re);
+  if (!m || m.index === undefined) return text.slice(0, 40);
+  const start = Math.max(0, text.lastIndexOf("\n", m.index), text.lastIndexOf("。", m.index));
+  const endCandidates = [text.indexOf("\n", m.index), text.indexOf("。", m.index)].filter((i) => i >= 0);
+  const end = endCandidates.length ? Math.min(...endCandidates) : text.length;
+  return text.slice(start, end).trim() || text.slice(0, 40);
+}
+
+export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  const cust = ctx.lastCustomerMessage ?? "";
+  const staffHist = lastStaffTexts(ctx, 6);
+  const custHist = lastCustomerTexts(ctx, 4);
+  const blockOrWarn = (b: boolean): CheckSeverity => (b ? "block" : "warning");
+
+  // V1 ご都合よろしいお日にち＋スタッフ作業（撮影・確認・お送り…）— 都合の持ち主逆転
+  if (STAFF_TASK_AFTER_GOCHOUGO_RE.test(text)) {
+    issues.push({ pass: "rule_check", severity: "block", code: "GOCHOUGO_STAFF_TASK",
+      message: "「ご都合よろしいお日にちに」をスタッフ側の作業（撮影・確認・お送り等）に接続しています。お客様の都合はお客様の行為（内覧）にのみ使います",
+      evidence: firstSentenceAround(text, STAFF_TASK_AFTER_GOCHOUGO_RE),
+      suggestion: "「ご都合よろしいお日にちに」を削除し「撮影出来次第お送りさせて頂きます」「確認出来次第ご連絡させて頂きます」等スタッフ主語の文にする" });
+  }
+  // V2 ご都合よろしいお日にちをお伝えさせて頂きます — 主語逆転
+  if (GOCHOUGO_REVERSED_RE.test(text)) {
+    issues.push({ pass: "rule_check", severity: "block", code: "GOCHOUGO_REVERSED",
+      message: "お客様の都合をスタッフが「お伝え／お知らせ」する形になっています（主語逆転）",
+      evidence: firstSentenceAround(text, GOCHOUGO_REVERSED_RE),
+      suggestion: "「ご都合よろしいお日にち御座いますでしょうか！！」に変更" });
+  }
+  // V3 条件節も疑問形も無い「ご都合よろしいお日にちにご案内」— 内覧の押し付け／未送付での内覧誘導
+  if (GOCHOUGO_GUIDE_RE.test(text)) {
+    const sent = firstSentenceAround(text, GOCHOUGO_GUIDE_RE);
+    const hasCondition = CONDITION_CLAUSE_RE.test(sent);
+    const hasQuestion = QUESTION_FORM_RE.test(text);
+    const noPropertySent = (ctx.sentPropertiesCount ?? 1) === 0 && !/property_send|物件|お部屋/.test(staffHist);
+    if (noPropertySent) {
+      issues.push({ pass: "context_check", severity: "block", code: "GUIDE_BEFORE_PROPERTY",
+        message: "物件を1件も送っていない段階で内覧案内を宣言しています（順番が逆）",
+        evidence: sent, suggestion: "内覧誘導文を削除し「ピックアップ出来次第お送りさせて頂きます」に変更" });
+    } else if (!hasCondition && !hasQuestion) {
+      issues.push({ pass: "rule_check", severity: blockOrWarn(!!ctx.isAutoSend), code: "GOCHOUGO_NO_CONDITION",
+        message: "「ご都合よろしいお日にちにご案内」がお客様の選択条件（お気に召されましたら）も日程質問も無く単独で置かれています（内覧の押し付け・会話が進まない）",
+        evidence: sent,
+        suggestion: "「お気に召されましたらご都合よろしいお日にち御座いますでしょうか！！ご案内させて頂きます😊！！」に変更" });
+    }
+  }
+  // V4 お客様が候補日・確定日を伝えた後の「ご都合よろしいお日にち」再質問
+  if (GOCHOUGO_RE.test(text) && CUSTOMER_DATE_RE.test(cust) && !/(?:以降|または|又は|か)[^。\n]{0,20}ご都合/.test(text)) {
+    issues.push({ pass: "context_check", severity: blockOrWarn(!!ctx.isAutoSend), code: "GOCHOUGO_AFTER_DATE",
+      message: "お客様が既に日程（候補日・確定日）を伝えているのに再度「ご都合よろしいお日にち」を尋ねています",
+      evidence: firstSentenceAround(text, GOCHOUGO_RE),
+      suggestion: "お客様の伝えた日をそのまま復唱し「〇日でご都合よろしいお時間御座いますでしょうか」または確定日時の宣言に変更" });
+  }
+  // V5 お客様が「確認します」と言ったのにスタッフが「確認でき次第」— 確認の主語奪取
+  if (CONFIRM_NEXT_RE.test(text) && CUSTOMER_CONFIRM_RE.test(cust)) {
+    issues.push({ pass: "context_check", severity: "block", code: "CONFIRM_SUBJECT_THEFT",
+      message: "お客様が「確認します」と言っています。確認の主語はお客様であり、スタッフの「確認でき次第ご連絡」は主語混乱です",
+      evidence: firstSentenceAround(text, CONFIRM_NEXT_RE),
+      suggestion: "「お手隙の際にご査収ください！！私の方でも〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」に変更" });
+  }
+  // V6 確認対象の無い「確認でき次第」
+  else if (CONFIRM_NEXT_RE.test(text) && !CONFIRM_OBJECT_RE.test(text) && !CONFIRM_OBJECT_RE.test(cust)) {
+    issues.push({ pass: "rule_check", severity: "warning", code: "CONFIRM_NO_OBJECT",
+      message: "「確認でき次第」に確認対象（〇〇の募集状況／内覧可能日／割引可否）がありません。確認すべき事実が無い汎用締めです",
+      evidence: firstSentenceAround(text, CONFIRM_NEXT_RE),
+      suggestion: "確認対象を明示するか、直前のスタッフ約束（ピックアップ／見積作成）の復唱に置き換える" });
+  }
+  // V7 前提の無い「撮影」— 履歴（スタッフ約束 or 顧客希望）に撮影・写真・動画が無い
+  if (PHOTO_RE.test(text) && !PHOTO_PREMISE_RE.test(staffHist) && !CUSTOMER_PHOTO_WANT_RE.test(custHist + "\n" + cust)) {
+    issues.push({ pass: "context_check", severity: "block", code: "PHOTO_NO_PREMISE",
+      message: "会話履歴に撮影・写真・動画の約束もお客様の希望も無いのに「撮影」を持ち出しています（実例の文脈外流用）",
+      evidence: firstSentenceAround(text, PHOTO_RE),
+      suggestion: "「〇〇周辺全域から〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」等、直前のスタッフ約束の復唱に変更" });
+  }
+  // V8 お客様の「内見したい」を撮影・動画送付に置き換え
+  if (PHOTO_RE.test(text) && SATSUEI_SUBST_RE.test(cust) && !/(?:内覧|内見)(?:不可|できません|出来ません|が難しい)/.test(text)) {
+    issues.push({ pass: "context_check", severity: "block", code: "PHOTO_REPLACES_VIEWING",
+      message: "お客様は自分で内覧したいと言っています。スタッフの撮影・動画送付に置き換えず「ご案内させて頂きます」で受けてください",
+      evidence: firstSentenceAround(text, PHOTO_RE),
+      suggestion: "「開始次第お部屋ご案内させて頂きます！！」に変更（内覧不可の場合のみ理由を添えて代替提案）" });
+  }
+  // V9 未送付物を送済みとして言及
+  {
+    const m = text.match(SENT_CLAIM_RE);
+    if (m) {
+      const obj = /見積/.test(m[0]) ? /見積/ : /写真/.test(m[0]) ? /写真|画像/ : /物件|お部屋|【画像】/;
+      if (!obj.test(staffHist)) {
+        issues.push({ pass: "context_check", severity: "block", code: "UNSENT_CLAIM",
+          message: "まだ送っていない物（見積書・物件・写真）を「先ほどお送りした」と送済み扱いにしています",
+          evidence: m[0], suggestion: "「〜作成しお送りさせて頂きます」の未来形に変更" });
+      }
+    }
+  }
+  // V10 未送付での「ご査収」
+  if (JUSHU_RE.test(text) && (ctx.sentPropertiesCount ?? 1) === 0 && !/【画像】|お送り|送付|見積/.test(staffHist)) {
+    issues.push({ pass: "context_check", severity: "warning", code: "JUSHU_BEFORE_SEND",
+      message: "何も送っていない段階で「ご査収ください」と書いています（査収＝受け取って確認する行為）",
+      evidence: firstSentenceAround(text, JUSHU_RE), suggestion: "「ご査収」を削除し送付宣言（〜お送りさせて頂きます）に変更" });
+  }
+  // V11 自敬表現
+  if (SELF_HONORIFIC_RE.test(text)) {
+    issues.push({ pass: "rule_check", severity: "warning", code: "SELF_HONORIFIC",
+      message: "自分の確認行為に「ご」を付けています（自敬表現）",
+      evidence: firstSentenceAround(text, SELF_HONORIFIC_RE), suggestion: "「確認しましたところ」に変更" });
+  }
+  // V12 日時なしの「ご案内可能です」
+  if (GUIDE_POSSIBLE_RE.test(text) && !GUIDE_DATE_RE.test(firstSentenceAround(text, GUIDE_POSSIBLE_RE))) {
+    issues.push({ pass: "rule_check", severity: "warning", code: "GUIDE_POSSIBLE_NO_DATE",
+      message: "日時を示さない「ご案内可能です」は上から目線・丸投げの締めです（日時列挙直後のみ可）",
+      evidence: firstSentenceAround(text, GUIDE_POSSIBLE_RE),
+      suggestion: "「お気に召されましたらご都合よろしいお日にち御座いますでしょうか！！ご案内させて頂きます」に変更" });
+  }
+  // V13 させて頂く過剰（4回以上）
+  const saseteCount = (text.match(SASETE_RE) ?? []).length;
+  if (saseteCount >= 4) {
+    issues.push({ pass: "rule_check", severity: "warning", code: "SASETE_OVERUSE",
+      message: `「させて頂きます」が${saseteCount}回あります（上限3回）`,
+      evidence: `させて頂く×${saseteCount}`, suggestion: "ご連絡・確認・サポート・ピックアップは「いたします」に言い換える" });
+  }
+  // V14 内覧・申込意思の無い顧客への即申込誘導
+  if (APPLY_PUSH_RE.test(text) && !CUSTOMER_APPLY_INTENT_RE.test(custHist + "\n" + cust) && !/強推し直後/.test(ctx.tpoLabel ?? "")) {
+    issues.push({ pass: "context_check", severity: "warning", code: "APPLY_PUSH_NO_INTENT",
+      message: "お客様が内覧済み・申込意思を示した履歴が無いのに「お申込みで押さえ」を提案しています",
+      evidence: firstSentenceAround(text, APPLY_PUSH_RE), suggestion: "直前のお客様アクションに対応するWE DO（ピックアップ／内覧日程調整／募集状況確認）に変更" });
+  }
   return issues;
 }
 
