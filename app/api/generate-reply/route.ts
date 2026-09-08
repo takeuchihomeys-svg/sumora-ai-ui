@@ -12,6 +12,9 @@ import {
   REPLY_CONTENT_RULES,
   CURATED_REPLY_RULES,
   STATE_SEARCH_ALIASES,
+  PHASE_COMMON_FORMAT,
+  buildPhaseProhibitionNote,
+  type PhaseKey,
 } from "@/app/lib/line-reply-prompts";
 import {
   validateAndClean,
@@ -19,8 +22,9 @@ import {
   enforceCustomerName,
   isPlausiblePersonName,
   stripNonNameChars,
+  normalizeCustomerName,
 } from "@/app/lib/validate-reply";
-import { runFinalCheck, runFinalCheckWithRevision, sha1, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { safeSlice } from "@/app/lib/safe-slice";
@@ -38,7 +42,7 @@ import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
 import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
 // AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
 // AIX_STAFF_NOTES を単一ソースとして brain-core の AIX_BRAIN_NOTES と共有する（文言乖離の構造的防止）
-import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS, AIX_LINE_LABELS, buildAixLineNote } from "@/app/lib/aix-taxonomy";
+import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS, AIX_LINE_LABELS, AIX_ACTION_REPLY_DIRECTION, buildAixLineNote, normalizeAixActionKey } from "@/app/lib/aix-taxonomy";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 300;
@@ -77,6 +81,8 @@ function createGenerationModel() {
     maxTokens: 1500,
     thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+    // A-14: SDK 既定の再試行（2回）× 45s で全体 deadline を食い潰すため 1 回に制限
+    maxRetries: 1,
     clientOptions: { timeout: 45_000 },
     betas: ["prompt-caching-2024-07-31"],
   });
@@ -152,7 +158,13 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 　→ 正: 直前のスタッフ約束（ピックアップ／募集状況確認／見積作成）をそのまま復唱するWE DO（⭐実例に出てきた業務語彙でも、現在の会話に同じ前提が無ければ真似しない）
 ⑩ 「確認でき次第ご連絡」の誤用
 　× お客様が「確認します」と言った返答に使う（確認の主語はお客様）／確認対象（〇〇の募集状況・内覧可能日・割引可否）を書かない汎用締め
-　→ 正: 「お手隙の際にご査収ください！！私の方でも〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」／「〇〇の募集状況確認いたします！！確認出来次第ご連絡させて頂きます」`;
+　→ 正: 「お手隙の際にご査収ください！！私の方でも〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」／「〇〇の募集状況確認いたします！！確認出来次第ご連絡させて頂きます」
+⑪ 履歴に費用・見積の話題が無い場面で「御見積書を作成しお送り」は禁止（物件探しの文脈では常にピックアップ宣言）
+⑫ 「〇〇さん」「アカウント名さん」を字面のまま書くのは禁止。名前不明時は呼びかけを省く
+⑬ 本人に「様」・フルネーム（身分証・申込書の氏名）は禁止。呼称はスタッフが最初に使った「〇〇さん」のみ
+⑭ 「〇〇さんはい！！」「〇〇さんかしこまりました！！」のように開口語の前に名前を置かない
+⑮ 「少々お時間頂」「確認中です」「承りました」「ご確認のほど」「〜とのことですね」「まず〜次に〜」は禁止（正例: 「出来次第お送りさせて頂きます」「明日一番にご連絡させて頂きます」）
+⑯ 顧客が「拝見します」「後で見ます」（未来形）の時に「ご覧頂きありがとうございます」「気になるお部屋はございましたか」（既読・感想前提）は禁止 → 「お手隙の際にご査収ください」`;
 
 // ─── 一時的な状況への言及禁止（常時注入・優先度: NG_PHRASE_NOTEと同列）──────────────
 // 過去の会話チェックポイントに「出張中」等が記録されていても、
@@ -179,7 +191,8 @@ const stripDecoration = (s: string): string =>
 // UTF-16 単位ではなく code point 単位の実質文字数
 const coreLength = (s: string): number => Array.from(stripDecoration(s)).length;
 // 疑問形（?なし）: 「契約日はいつになりますか」「鍵は現地で受け取ればいいですか」
-const IMPLICIT_QUESTION_RE = /(?:ます|です|でしょう|ません)か(?:[ねぇ]?(?:[。！!、\s]|$))|いつ(?:頃|ごろ|まで|から|に|が|です|でしょ|になり|になる|くらい)|いくら|どこ|どちら|どの(?:物件|お部屋|方)|どう(?:なり|すれ|いう|やって|でしょ)|何(?:時|日|円|曜)|なん(?:時|日|じ)|でいい(?:です)?か|ればいい|ればよい|必要(?:です|でしょう)/;
+// S-1（2026-09-08）: 「いくらでも」「どこでも」は疑問ではなく許容表明。negative lookahead で除外
+const IMPLICIT_QUESTION_RE = /(?:ます|です|でしょう|ません)か(?:[ねぇ]?(?:[。！!、\s]|$))|いつ(?:頃|ごろ|まで|から|に|が|です|でしょ|になり|になる|くらい)|いくら(?!でも)|どこ(?!でも|も)|どちら(?!でも|も)|どの(?:物件|お部屋|方)|どう(?:なり|すれ|いう|やって|でしょ)|何(?:時|日|円|曜)|なん(?:時|日|じ)|でいい(?:です)?か|ればいい|ればよい|必要(?:です|でしょう)/;
 // 依頼形（?なし）: 「確認お願いします」「送付よろしくお願いします」「してほしい」
 const IMPLICIT_REQUEST_RE = /(?:確認|連絡|手配|送付|作成|調整|対応|手続き|予約|変更|追加|案内)[をも]?(?:お願い|おねがい|よろしく)|してほしい|して欲しい|してもらいたい|していただきたい|して頂きたい/;
 // 柔らかい断り（isNegativeContext の withdrawalRe と二重化して gratitude/shortAck から確実に外す）
@@ -187,7 +200,10 @@ const SOFT_DECLINE_RE = /見送(?:らせて|ります|りたい|ろうと)|や�
 // 情報提供・選択確定（復唱＋次工程が必要なので感謝短返しにしない）
 const INFO_PROVIDE_RE = /住所|勤務先|年収|来月|今月|上旬|中旬|下旬|月末|[A-Za-zＡ-Ｚａ-ｚ]案|で進めて|で決め|に決め|にします|の方で(?:お願い|進め)/;
 // 純感謝・了承語（isGratitudeReplyTPO / isShortAckMsg 共通集合）
-const GRATITUDE_POS_RE = /ありがと|感謝|助かり|嬉しい|うれしい|よろしく|宜しく|おねがい|お願い(?:し|いた|致)|承知|かしこまり|わかりました|分かりました|了解|りょうかい|^はい[！!。]*$|OK|オッケー|おっけ|大丈夫です|楽しみ|お任せ|おまかせ|引き続き|どうも|サンキュー|ありがたい/i;
+// S-1（2026-09-08）: 日本語に \b が無いため境界を lookaround で明示する。
+//   英字 OK は前後に英字が無い場合のみ（「TikTok」の tikt"ok" に /i で一致していた）。
+//   和語は否定・慣用の続き（よろしくない／どうもうまく／楽しみにしてたのに）を negative lookahead で除外。
+const GRATITUDE_POS_RE = /ありがと|感謝|助かり|嬉しい|うれしい|よろしく(?!ない|なかっ|なさそう)|宜しく(?!ない)|おねがい|お願い(?:し|いた|致)|承知|かしこまり|わかりました|分かりました|了解|りょうかい|^はい[！!。]*$|(?<![A-Za-z])OK(?![A-Za-z])|オッケー|おっけ|大丈夫です|楽しみ(?!にして(?:た|い)た(?:のに|んですが))|お任せ|おまかせ|引き続き|どうも(?!うまく|上手く|なら|しても)|サンキュー|ありがたい/i;
 
 // ─── 直前スタッフ約束の検出（2026-09-08 語彙セマンティクス・決定論）────────────────────
 // 短い了承語への返信は「直前のスタッフ約束の復唱WE DO」に固定する（promiseEchoNote / tpoNoteForLLM「短い了承」）。
@@ -208,7 +224,24 @@ const CLOSER_ONLY_RE = /^(?:では|それでは)?(?:失礼(?:します|いたし
 // 感謝・了承以外の話題（申込意思・日時確定・予算変更・キャンセル等）
 const ACK_TOPIC_EXCL_RE = /(家賃|エリア|間取り|物件|条件|変更|広げ|安く|抑え|内覧|見積|申込|キャンセル|予算|[0-9０-９]+(万|円|時|日|階|畳|㎡)|駅近|以内|以上)/;
 // 感謝・了承のみの1通（複数通結合時に「中立」として扱い、待ち系TPOの判定を阻害しない）
-const TPO_NEUTRAL_ACK_RE = /^(?:ありがとうございます|ありがとうございました|ありがとう|了解です|了解しました|承知しました|わかりました|分かりました|かしこまりました|よろしくお願いします|よろしくお願いいたします|お願いします|はい|OK|ok|おっけーです)[!！。😊😌🙏]*$/;
+const TPO_NEUTRAL_ACK_RE = /^(?:ありがとうございます|ありがとうございました|ありがとう|了解です|了解しました|承知しました|わかりました|分かりました|かしこまりました|よろしくお願いします|よろしくお願いいたします|お願いします|はい|OK|ok|おっけーです|\[スタンプ\])[!！。😊😌🙏]*$/;
+// A-1（2026-09-08）: スタンプ単独・絵文字のみ・記号のみのメッセージ（LINE sentinel「[スタンプ]」除去後）。短い了承として扱う
+const DECOR_ONLY_RE = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}\u200d\ufe0f\s！!。、〜ー]+$/u;
+const STAMP_LINE_RE = /^\s*\[スタンプ\]\s*$/m;
+// A-13（2026-09-08）: 不安・関西弁ネガの専用TPO
+const ANXIETY_RE = /不安|心配|怖い|大丈夫(?:ですか|でしょうか|かな|やろか)|やけど[！!]|あかん|微妙(?:やな|です|かも)|審査.*(?:通|落)|落ち(?:る|たら)|どうなりますか/;
+// A-12（2026-09-08）: リスケ要望は内覧確定締めにしない
+const RESCHEDULE_RE = /別日|別の日|変更|ずらし|都合(?:が)?悪|難しく|延期|キャンセル/;
+// A-4（2026-09-08）: effectiveReplyDirection が null の時の state 別フォールバック（固定文の廃止）
+const STATE_FALLBACK_DIRECTION: Record<string, string> = {
+  first_reply: "初回対応。挨拶（システム通知に従う）→顧客メッセージの質問・条件に事実で1文回答→ピックアップ宣言（条件が無ければ「ご希望条件お聞かせ頂けますと幸いです」）。150〜220字",
+  hearing: "条件受領中。揃った条件（エリア・家賃）を行動宣言に埋め込んで即ピックアップ宣言。足りない条件の聞き返しは1点まで。100〜180字",
+  proposing: "商談継続中。顧客の質問・要望を1文で受け止め、具体名詞（エリア・物件名・条件・日付）を含むWE DO宣言（ピックアップ・交渉・確認）を1つだけ添える。100〜150字",
+  viewing: "内覧調整・内覧後フォロー。日程は確定分をそのまま復唱（新規提案はAIX）。内覧後は感想を受けて見積橋渡しまたは次物件ピックアップ宣言。80〜150字",
+  applying: "申込・審査中。書類受領・審査進捗・契約案内のいずれかに直接回答。別物件提案・再ピックアップ・条件ヒアリング禁止。60〜150字",
+  closed_won: "成約後サポート。質問に直接回答し「ご入居までしっかりサポートさせて頂きます」で締める。申込打診・ピックアップ・見積・内覧禁止。60〜120字",
+  closed_lost: "失注後の再接触。「お世話になっております」→再連絡への感謝1文→再ピックアップ宣言→サポート継続宣言。初回挨拶・謝罪・フォーム再送禁止。80〜140字",
+};
 
 function buildEmojiPositionNote(customerMessage: string): string {
   if (!customerMessage) return "";
@@ -314,7 +347,7 @@ const QUOTE_REPLY_JUDGE_NOTE = `
 この場合は「気になる物件のURLをお送りください」ではなく、その物件を前提に返信を生成すること。
 【⚠️ ただし内覧誘導の前に募集状況を必ずゲートすること】
 ・当該物件が退去予定・入居中の場合は、現地内覧日程（[日付][時間帯]や2択提示）を絶対に提案しない。
-  「退去日以降のご案内」または「お申込みでお部屋を先に抑えてからのご内覧」を案内する。
+  「退去日以降のご案内」または「お申込みでお部屋を先に押さえてからのご内覧」を案内する。
 ・退去予定でないことが明らかな空室物件のみ、内覧日程調整の方向で返信してよい。
 【💡 リンク（URL）そのものを求められた場合は内覧に飛ばさない】
 ・お客様が引用先の物件について「リンク教えて」「URL教えて」「この部屋のリンク（URL）ください」等、
@@ -360,7 +393,7 @@ function buildPropertyStatusNote(status: PropertyStatus): string {
     return `\n【🚨 物件募集状況（確定事実・最優先 — 他のどのルールより上位）】この物件は退去予定/入居中です。現地内覧は退去日の翌日以降のみ可能で、今は現地内覧できません。
 ・内覧日程（[日付][時間帯]や2択日程提示）は絶対に提案しない。「〇日にご内覧いかがですか」等の現地内覧日の提示も禁止。
 ・入居可能時期を聞かれたら「ご入居可能日を管理会社に確認しご連絡させて頂きます😊！！」のみ伝える（AIが「クリーニング・鍵交換で2〜3週間」等から日程を自動計算して断定案内することは絶対禁止）。
-・内覧・興味を示されたら「退去前のため現在は現地ご案内ができません。退去後すぐにご案内させて頂きます！！お気に召されましたらお申込みでお部屋を先に抑えておくことも可能です😊！！」の方向で返す。`;
+・内覧・興味を示されたら「退去前のため現在は現地ご案内ができません。退去後すぐにご案内させて頂きます！！お気に召されましたらお申込みでお部屋を先に押さえておくことも可能です😊！！」の方向で返す。`;
   }
   return "";
 }
@@ -406,7 +439,7 @@ function buildAvailabilityCheckNote(): string {
 ・「ご都合よろしいお日にちに」
 ・「ご案内させて頂きます」「お部屋ご案内させて頂きます」等の内覧誘導フレーズ全般
 ・内覧日程の提案・2択日程提示・「ご内覧いかがでしょうか」
-・「お申込みでお部屋を先に抑えておくことも可能です」等の申込誘導
+・「お申込みでお部屋を先に押さえておくことも可能です」等の申込誘導
 ・「空室でした」「現在も募集中です」「〇月〇日退去予定です」等、未確認の募集状況・退去日・入居可能日の断言
 ・「何卒よろしくお願い致します！！」以外の中身のない締め・追加の勧誘文
 ※ 本ブロックは【📅 内覧日時の具体的提案は絶対禁止】内の「内覧に触れる場合は『お気に召されましたら〜』のみ許可」より上位。この文脈ではその例外許可も無効とする。
@@ -490,8 +523,8 @@ function detectAixTiming(
           ? "かしこまりました！！確認しご連絡させて頂きます😊！！"
           : "かしこまりました！！最大限割引させて頂いた初期費用の御見積書お送りさせて頂きます😊！！",
         extra: opts.estimatePromised
-          ? "見積書は既に約束/送付済みのため作成宣言・割引の約束を繰り返さない（二重宣言防止ルールと整合）。返信には「お気に召されましたらお申込みでお部屋お抑えさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。"
-          : "支払い意思+金額質問の組み合わせのため、返信には「お気に召されましたらお申込みでお部屋お抑えさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。",
+          ? "見積書は既に約束/送付済みのため作成宣言・割引の約束を繰り返さない（二重宣言防止ルールと整合）。返信には「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。"
+          : "支払い意思+金額質問の組み合わせのため、返信には「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。",
       };
     }
     // ── 優先度2: 通常の金額質問（見積未送付・未約束の場合のみ） ──
@@ -722,9 +755,15 @@ function buildGenerationMessages(
   // AIXで実行＋送信済みのアクション種別（再宣言禁止ブロックの生成に使用）
   aixDone: AixDoneFlags | null = null,
   // 場面と返信方針（TPO）独立ブロック。brainMeta 有無に関係なく注入される（2026-09-08）
-  tpoGuidanceNote = ""
+  tpoGuidanceNote = "",
+  // S-2: resolveState().guideKey（PHASE_GUIDE / STAGE_JP / 禁止事項の単一キー）。未指定時は state をそのまま使う
+  phaseGuideKey?: PhaseKey,
+  // A-5: 条件提示TPO（conditionChangeNote の「ピックアップ宣言禁止」節と衝突するため、条件提示時は差分復唱＋ピックアップ宣言に切替）
+  isConditionPresentedFlag = false
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
+  // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
+  const effectivePhase: string = phaseGuideKey ?? state;
   const jstDay = getJSTDayOfWeek();
   const isWeekend = jstDay === 0 || jstDay === 6;
 
@@ -775,7 +814,10 @@ function buildGenerationMessages(
   const dateNote = `\n【📅 今日の日付（JST・必ず基準にすること）】${getJSTDateString()} — 「明日」「明後日」「今週」などの相対表現や具体的な日付（○日）は全てこの日付を起点に計算すること`;
 
   const _cleanName = sanitizeCustomerName(customerName);
-  const nameNote = _cleanName ? `お客様名：${_cleanName}さん` : "お客様名：不明（名前なしで返信すること・「名称未設定」は絶対に使わない）";
+  // S-5: 呼称ルールを断定形に。名前不明時は例文の「〇〇さん」を読み替える指示を明示（先頭改行で直前ノートとの癒着を防ぐ）
+  const nameNote = _cleanName
+    ? `\n【お客様の呼称】${_cleanName}さん（この呼び方以外禁止。「様」・フォーム記載のフルネーム・1返信3回以上は不合格。開口語の前に名前を置かない）\n`
+    : `\n【お客様名】不明。例文の「〇〇さん」「〇〇さんご希望の」は呼びかけ部分を省いて読み替える。「〇〇さん」を字面で書く・名前を創作する・「名称未設定」を使うのは不合格\n`;
   const conditionsNote = customerConditions
     ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。条件の重複記載はしない。\n⚠️ 【絶対禁止・打ち合わせ合意ルール】「〇〇さんご希望のご条件に合った〜」「ご条件に合うお部屋」等の受け身表現はエリア名・具体条件と組み合わせても禁止。代わりに「〇〇エリアからオススメできるお部屋」「〇〇エリアから探してお届けします」等の能動表現を使うこと（エリアの呼び方は会話で使われた表現をそのまま使い「全域」等を勝手に付け足さない）。\n⚠️ first_reply（初回返信）の場合: 上記の主要条件（エリア・家賃・間取り）を必ず行動宣言に埋め込んで言及すること。条件への言及がゼロの返信は不合格。`
     : "";
@@ -814,7 +856,7 @@ function buildGenerationMessages(
         .filter(([key]) => !!customerStructured[key as keyof CustomerStructured])
         .map(([, label]) => label)
     : [];
-  const missingConditionsNote = (missingItems.length > 0 && (state === "hearing" || state === "first_reply" || state === "condition_hearing"))
+  const missingConditionsNote = (missingItems.length > 0 && (effectivePhase === "hearing" || effectivePhase === "first_reply"))
     ? `\n【📋 条件ヒアリング状況】\n確認済み: ${confirmedItems.length > 0 ? confirmedItems.join(" / ") : "なし"}\n未確認: ${missingItems.join(" / ")}\n※ 確認済み項目は絶対に聞き返さない。未確認項目を自然な流れで1〜2個まで聞く。`
     : "";
 
@@ -839,7 +881,8 @@ function buildGenerationMessages(
     : "";
 
   // フェーズ別の行動指針を取得（phase_guide はコード側 line-reply-prompts.ts を正とする・DBオーバーライドなし）
-  const phaseGuide = PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
+  // S-2: phaseGuideKey（resolveState 済み）を優先。viewing / closed_lost ガイドがここで初めて到達可能になる
+  const phaseGuide = PHASE_GUIDE[effectivePhase] ?? PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
 
 
   // ── Step1廃止（2026-08）: 旧「分析結果から各フィールドを抽出」ブロックの置換 ──────────
@@ -914,7 +957,7 @@ function buildGenerationMessages(
 ③ 行動宣言 — お部屋をお探しする／お送りする旨（表現は下記のスタイル指定に従う）
 ④ サポート継続宣言 — 「〇〇さんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます😌！！」の方向で締める
 【🚫 条件変更文脈での絶対禁止CTA（最優先・フェーズ別パターンより上位）】お客様が新しい条件・追加条件を出した場面では、以下を絶対に出力しない：
-・申込フォーマット／申込書類の案内／「お申込みでお部屋を先に抑える」等の申込誘導
+・申込フォーマット／申込書類の案内／「お申込みでお部屋を先に押さえる」等の申込誘導
 ・見積書の作成宣言・送付宣言・初期費用の金額提示
 ・条件ヒアリングフォーム（①入居時期〜⑧その他要望）等のフォーマット送付
 ・内覧日程の提案・内覧誘導
@@ -927,6 +970,11 @@ function buildGenerationMessages(
         // 拡大・緩和（condition_relax）の場合: ピックアップ宣言 + まだ聞けていない条件を1〜2点確認してよい
         if (changeType === "condition_relax") {
           conditionChangeNote = `\n【🔄 ${label}検出】必ずピックアップ宣言を行うこと。正しい型:「かしこまりました！！[変更後の条件を具体的に反映]で[名前]さんのご希望のご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！」。条件拡大の効果・見通し（「選択肢が広がった」「見つけやすくなる」等）をお客様に解説する文は絶対禁止（行動宣言のみ）。さらに「まだ聞けていない重要条件（間取り・築年数など）」が1〜2点あれば追加確認してよい（すでに分かっている条件は聞き返さない）。${conditionChangeShapeNote}`;
+        } else if (isConditionPresentedFlag) {
+          // A-5（G-3）: 条件提示TPO（エリア＋家賃をメッセージで提示）と同時発火した場合、
+          // 「ピックアップしてお送りは禁止」節は conditionDirection の必須宣言と正面衝突するため出さない。
+          // 前回条件との差分復唱を新条件でのピックアップ宣言に埋め込む形に切り替える
+          conditionChangeNote = `\n【🔄 ${label}検出（条件提示と同時）】前回条件との差分（変更されたエリア・家賃・設備）を復唱し、場面通知【条件提示】の3行構成（かしこまりました！！→新条件でのピックアップ宣言→締め）に埋め込むこと。追加条件の聞き返しは禁止。${conditionChangeShapeNote}`;
         } else {
           // 条件変更・設備追加・ピックアップ依頼: 追加質問は禁止、追客継続スタイルで完結
           conditionChangeNote = `\n【🔄 ${label}検出（最重要・絶対遵守）】追加条件を聞き返すことは絶対禁止。変更・追加された条件を具体的な言葉（エリア名・設備名）にして、即座に追客継続の行動宣言で完結させること。
@@ -981,7 +1029,9 @@ function buildGenerationMessages(
   const allPartsNeutralAck =
     hasMultipleMessages &&
     trimmedCustomerMsg.split("\n").map((s) => s.trim()).filter(Boolean).every((p) => TPO_NEUTRAL_ACK_RE.test(p));
-  const isShortAckMsg =
+  // A-1: スタンプ単独・絵文字のみは「短い了承」として扱う（条件全列挙のピックアップ二重宣言を防ぐ）
+  const isDecorOnlyMsgLocal = trimmedCustomerMsg.length > 0 && DECOR_ONLY_RE.test(trimmedCustomerMsg);
+  const isShortAckMsg = isDecorOnlyMsgLocal || (
     (!hasMultipleMessages || allPartsNeutralAck) &&
     trimmedCustomerMsg.length > 0 &&
     coreLength(trimmedCustomerMsg) < 60 &&
@@ -990,7 +1040,7 @@ function buildGenerationMessages(
     !IMPLICIT_QUESTION_RE.test(trimmedCustomerMsg) &&
     !IMPLICIT_REQUEST_RE.test(trimmedCustomerMsg) &&
     !SOFT_DECLINE_RE.test(trimmedCustomerMsg) &&
-    !ACK_TOPIC_EXCL_RE.test(trimmedCustomerMsg);
+    !ACK_TOPIC_EXCL_RE.test(trimmedCustomerMsg));
   const staffPromisedPickup =
     !!lastStaffMsg &&
     /ピックアップ/.test(lastStaffMsg) &&
@@ -1080,9 +1130,10 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
         : "";
 
   // ⭐実例がある場合: 文体参考として使うが、ルール（禁止ワード・挨拶等）は常に最優先
+  // A-10: 実例ゼロ時は「実例外パターン禁止」（ルール8）が充足不能になるため明示的に解除し、PHASE_GUIDE の例文を型として使わせる
   const examplesInstruction = examples
     ? "\n\n【⭐実例の使い方】上記実例は文体・テンポ・絵文字・感嘆符の参考。言い回しの雰囲気を再現すること。ただし実例に「今すぐ」「すぐに」「即入居可能」「お世話になっております（初回時）」等の古いパターンが含まれていても、現行の禁止ルール・挨拶ルールを必ず優先すること。"
-    : "";
+    : "\n\n【⭐実例なし】今回は参照できる実例がありません。「⭐実例にない対応パターンは作らない」ルールは適用しない。PHASE_GUIDE の該当パターン例文と場面通知の構成のみを型として使い、業務内容は履歴の事実だけで組み立てること。";
 
   // 実例があってもQUICK_PATTERNSの核心ルール（挨拶・禁止ワード）は維持する
   // 挨拶状態に応じて QUICK_PATTERNS の冒頭ルールを上書き（greetingNote との競合を解消）
@@ -1127,7 +1178,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   const lastStaffLineIdx = historyLinesForCheck.map((l, i) => l.startsWith("スモラ:") ? i : -1).filter(i => i >= 0).at(-1) ?? -1;
   const customerLinesAfterLastStaff = historyLinesForCheck.slice(lastStaffLineIdx + 1).filter(l => l.startsWith("お客様:"));
   const hasRecentCustomerImage = customerLinesAfterLastStaff.some(l => l.includes("【画像を送ってきた】"));
-  const applicationFormNote = (state === "applying" && isApplicationFormText && !hasRecentCustomerImage)
+  const applicationFormNote = (effectivePhase === "applying" && isApplicationFormText && !hasRecentCustomerImage)
     ? `\n\n【🚨 申込フォーム受取・身分証なし検出】お客様からフォーム（個人情報テキスト）が送られてきたが、身分証明書の写真がない。返信には必ず「身分証明書（運転免許証またはマイナンバーカード）の表裏のお写真もお送りいただけますでしょうか！！」を含めること。フォーム未記入欄（勤務先等）があれば同時に確認する。パターンG-1で対応。`
     : "";
 
@@ -1178,7 +1229,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 
   // 内覧日時の具体的提案はAIXの「内覧へ」ボタン専用。generate-replyでは絶対に具体的日時を出さない
   const viewingFactNote = (resolvedPropertyStatus === "move_out_scheduled" || resolvedPropertyStatus === "occupied")
-    ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。「退去後すぐにご案内します」「お申込みでお部屋を先に抑えてからのご内覧も可能です」の方向で返すこと。`
+    ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。「退去後すぐにご案内します」「お申込みでお部屋を先に押さえてからのご内覧も可能です」の方向で返すこと。`
     : isAvailabilityCheckContext
       // 募集状況が未確認の段階では「お気に召されましたら〜ご案内」の例外許可を出さない（内覧誘導は順番が逆）
       ? `\n\n【📅 内覧日時の具体的提案は絶対禁止（最優先）】「〇/〇（木）14:00〜」「直近ですと[日付][時間帯]」「〇〇でご都合いかがでしょうか」のような具体的な内覧候補日時・2択日程提示は絶対に出力しない。[日付][時間帯]プレースホルダーも使用禁止。さらに今回は募集状況が未確認の段階のため、「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！」等の内覧誘導フレーズも一切書かない（【🚨 募集状況確認の文脈】が正）。`
@@ -1190,7 +1241,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
       customerMessage ?? "",
     );
   const viewingIntentShortReplyNote = hasViewingIntent && resolvedPropertyStatus !== "move_out_scheduled" && resolvedPropertyStatus !== "occupied"
-    ? `\n\n【📅 内覧希望への返信は短く（最重要）】お客様が内覧希望を明示しています。返信は「かしこまりました！！ご都合よろしいお日にちをお伝えさせて頂きます！！」程度の短い承認文のみにしてください。以下は絶対禁止：① 申込み提案（「先にお申込みでお部屋を抑えることも可能」等）② 内覧を促す誘導文（「お気に召されましたら〜」は不要）③ その他の追加情報。内覧日程の詳細はAIX【内覧日調整】から別途送るため、この返信には含めない。`
+    ? `\n\n【📅 内覧希望への返信は短く（最重要）】お客様が内覧希望を明示しています。返信は「かしこまりました！！ご都合よろしいお日にちをお伝えさせて頂きます！！」程度の短い承認文のみにしてください。以下は絶対禁止：① 申込み提案（「先にお申込みでお部屋を押さえることも可能」等）② 内覧を促す誘導文（「お気に召されましたら〜」は不要）③ その他の追加情報。内覧日程の詳細はAIX【内覧日調整】から別途送るため、この返信には含めない。`
     : "";
 
   // 見積書カバー文はAIXの「見積書送る」ボタン専用。generate-replyでは見積書を添付できないため、
@@ -1241,13 +1292,14 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   const lastStaffMsgRaw = lastStaffLines.length > 0 ? lastStaffLines[lastStaffLines.length - 1] : "";
   const PRIOR_CLOSING_RE = /全力でサポートさせて頂きます|ご満足頂けるお部屋が見つかるまで|全力でお探しさせて頂きます|何卒よろしくお願い致します|新着が出次第(?:すぐに)?お送り|新着物件が出次第|出次第すぐにお送り/;
   const CUSTOMER_SIMPLE_ACK_RE = /^[\s　]*(ありがとうございます|ありがとうございました|ありがとう|よろしくお願いいたします|よろしくお願い致します|よろしくお願いします|よろしくおねがいいたします|よろしくおねがいします|よろしくおねがい致します|おねがいします|お願いします|楽しみにしています|頑張ります|待っています|お待ちしています|期待してます|了解|わかりました|嬉しいです|御手数ですが)/;
-  const isSecondClosing = PRIOR_CLOSING_RE.test(lastStaffMsgRaw) && CUSTOMER_SIMPLE_ACK_RE.test(customerMessage.trim());
+  // G-9: pickupPromiseAckNote（2行以内）と secondClosingNote（3行構成）の行数指示競合を防ぐため、pickup 側発火時は抑制
+  const isSecondClosing = !pickupPromiseAckNote && PRIOR_CLOSING_RE.test(lastStaffMsgRaw) && CUSTOMER_SIMPLE_ACK_RE.test(customerMessage.trim());
   const secondClosingNote = isSecondClosing
     ? `\n【🔁 2回目締め検出（最優先・全生成ルールを上書き）】直前スタッフ返信で「全力でサポートさせて頂きます」等の大きな締め文を既に送っている。お客様は「ありがとうございます」「よろしくお願いします」等でシンプルに承認している。
 【返信の型（絶対に守る・これ以外は入れない）】
 ① 冒頭挨拶 — 【⏰ 挨拶ルール・最優先】に従う（1フレーズのみ）
 ② 短い受け返し 1行 — 「こちらこそよろしくお願い致します！！」「ありがとうございます！！」等
-③ 次アクション宣言 1行 — 「新着物件が出次第すぐにお送りさせて頂きます！！」等（条件・費用の言及は禁止）
+③ 次アクション宣言 1行 — 「新着物件が出次第お送りさせて頂きます！！」等（条件・費用の言及は禁止。「すぐに」は禁止）
 【🚫 絶対禁止（最優先）】「全力でサポートさせて頂きます」「ご満足頂けるお部屋が見つかるまで」等の締めフレーズを再度使うこと。3行を超える返信。条件まとめ・費用・長い説明の追加。`
     : "";
 
@@ -1265,10 +1317,12 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     "|(?:内覧|内見).*(?:ご案内させて頂き|一緒にご案内)" +
     "|住所[:：]\\s*.{5,}"
   );
-  const CUSTOMER_VIEWING_ACK_RE = /わかりました|大丈夫です|了解|承知|ありがとう|よろしくお願い|お願いします/;
+  // A-12（E-2）: 先頭アンカー付きの了承文型に限定し、リスケ要望（「別日でお願いします」「時間変更お願いします」）は除外
+  const CUSTOMER_VIEWING_ACK_RE = /^(?:はい|了解|承知|かしこまり|わかりました|分かりました|大丈夫です|お願いします|よろしくお願い|ありがとう)[^\n]{0,12}$/m;
   const isViewingAppointmentAck = !isSecondClosing
     && VIEWING_SCHEDULED_STAFF_RE.test(recentStaffText)
-    && CUSTOMER_VIEWING_ACK_RE.test(customerMessage);
+    && CUSTOMER_VIEWING_ACK_RE.test(customerMessage.trim())
+    && !RESCHEDULE_RE.test(customerMessage);
   const viewingAppointmentAckNote = isViewingAppointmentAck
     ? `\n【🤝 内覧日程確定後シンプル締め（最優先・全生成ルールを上書き・以下の全ルールより上位）】スタッフがすでに内覧日時・物件・待ち合わせ場所を確定しており、お客様がシンプルに承認している。詳細はすでに伝達済み。
 【返信の型（絶対に守る・これ以外は入れない）】
@@ -1410,7 +1464,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // state は 5 種類（first_reply/hearing/proposing/applying/closed_won）の固定値のみ →
   // 同じ state のリクエストが連続する間、cache_control がキャッシュリード（約0.1x価格）を発動する。
   // 顧客固有データ（staffContextNote 等）は後続の dynamicBlock に残す。
-  const phaseGuideBlock = `【現在の営業フェーズ】${state}\n${phaseGuide}`;
+  // S-2 / A-8 / §4-2: 全フェーズ共通の型（PHASE_COMMON_FORMAT）を先頭に、フェーズ別禁止事項を末尾に連結（state 単位で固定なのでキャッシュは維持される）
+  const phaseGuideBlock = `${PHASE_COMMON_FORMAT}\n\n【現在の営業フェーズ】${effectivePhase}\n${phaseGuide}${buildPhaseProhibitionNote(effectivePhase)}`;
 
   // P0-1: viewingNote（クライアントが渡す内覧関連情報）をdynamicBlockに展開する。
   // viewingFactNote（物件退去予定/入居中判定）とセットでお客様メッセージ末尾に配置する。
@@ -1441,12 +1496,13 @@ ${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${
 
 ${examples}${examplesInstruction}
 
-↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : "スモラの直前返信の流れを踏まえ、⭐実例の文体・テンポを参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。"}
+↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : `スモラの直前返信の流れを踏まえ、${examples ? "⭐実例の文体・テンポ" : "PHASE_GUIDE の例文の文体・テンポ"}を参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。`}
 長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}`;
 
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
   // 戦略の優先規定（AIX-META一元化）: 指示が競合した場合の解決順を最上位で1行宣言する
-  const priorityOrderNote = "【指示の優先順位（競合時はこの順で解決すること）】ハードゲート（内覧日時・見積・物件事実制約）> AIX-META戦略 > フェーズ別パターン > ai_summary参考情報\n\n";
+  // A-8: tpoGuidanceNote ヘッダ（「AIX-META戦略より上位」）と矛盾していた優先順位宣言に「場面と返信方針」を追加
+  const priorityOrderNote = "【指示の優先順位（競合時はこの順で解決すること）】ハードゲート（内覧日時・見積・物件事実制約）> 場面と返信方針（TPO）> AIX-META戦略 > フェーズ別パターン > ai_summary参考情報\n\n";
   const baseSystem = promptOverrides?.generationSystem ?? GENERATION_SYSTEM;
   // ── プロンプトキャッシュ（2026-08）──
   // 全顧客共通の priorityOrderNote + GENERATION_SYSTEM（約8,900字 ≒ 5,000+トークン）を
@@ -1471,29 +1527,65 @@ ${examples}${examplesInstruction}
   return [new SystemMessage({ content: systemBlocks }), new HumanMessage({ content: humanBlocks })];
 }
 
-const ALLOWED_STATES = new Set([
-  "first_reply", "hearing", "proposing", "applying", "closed_won",
-  // 旧キーも受け付ける（後方互換）
-  "condition_hearing", "property_search", "property_recommendation",
-  "viewing", "estimate_request", "availability_check", "application", "screening", "contract",
-]);
-
-// 旧ステータスキーを新5段階に正規化
+// ─── 状態解決（S-2 / 2026-09-08 Fable5）────────────────────────────────────────────
+// 旧実装は normalizeState が viewing を proposing に畳むため PHASE_GUIDE.viewing が到達不能で、
+// TPO 判定は生 state・ガイドは正規化 state の二重基準になり、closed_lost／未知キーが最も危険な
+// 「初回挨拶」側（first_reply）に無ログで倒れていた。resolveState が phase / guideKey / searchState の
+// 3値を1関数で返し、未知キーのフェイルセーフは「初回挨拶を出さない側」に倒して必ず state:unknown ログを出す。
+const ALLOWED_STATES = new Set<string>(["first_reply", "hearing", "proposing", "viewing", "applying", "closed_won", "closed_lost"]);
 const STATE_ALIAS: Record<string, string> = {
-  condition_hearing:       "hearing",
-  property_search:         "hearing",
-  property_recommendation: "proposing",
-  viewing:                 "proposing",
-  estimate_request:        "proposing",
-  availability_check:      "proposing",
-  application:             "applying",
-  screening:               "applying",
-  contract:                "applying",
+  condition_hearing: "hearing", property_search: "hearing", searching: "hearing",
+  property_recommendation: "proposing", estimate_request: "proposing", availability_check: "proposing",
+  initial: "first_reply", new: "first_reply", new_inquiry: "first_reply",
+  application: "applying", screening: "applying", contract: "applying",
+  lost: "closed_lost", cancelled: "closed_lost", closed: "closed_lost",
+  // viewing は独立 state（PHASE_GUIDE.viewing を生かす）
 };
+// RAG 検索用の5段階（viewing / closed_lost は proposing の実例・知識も引けるよう畳む）
+const RAG_PHASE: Record<string, string> = { viewing: "proposing", closed_lost: "proposing" };
+// AIX 固有キー（greeting_viewing 等）→ 親フェーズの逆引き（先勝ち・ALLOWED_STATES 自体は除外）
+const SEARCH_ALIAS_REVERSE: Record<string, string> = (() => {
+  const out: Record<string, string> = {};
+  for (const [parent, kids] of Object.entries(STATE_SEARCH_ALIASES)) {
+    for (const k of kids as string[]) {
+      if (ALLOWED_STATES.has(k) || out[k]) continue;
+      out[k] = parent;
+    }
+  }
+  return out;
+})();
 
+type ResolvedState = { phase: string; guideKey: PhaseKey; searchState: string; raw: string; known: boolean };
+
+function resolveState(
+  raw: string | null | undefined,
+  opts: { hasStaffMsg: boolean; checkpointStage?: string | null; brainFresh: boolean; conditionPresented?: boolean; conversationId?: string },
+): ResolvedState {
+  const k = (raw ?? "").trim();
+  const aliased = STATE_ALIAS[k] ?? SEARCH_ALIAS_REVERSE[k] ?? k;
+  let phase: string;
+  let known = true;
+  if (!k || !ALLOWED_STATES.has(aliased)) {
+    // フェイルセーフは「初回挨拶を出さない」側に倒す（スタッフ発言があれば proposing）
+    phase = opts.hasStaffMsg ? "proposing" : "first_reply";
+    known = false;
+    console.warn(JSON.stringify({ tag: "state:unknown", raw: k || "(empty)", inferred: phase, conversationId: opts.conversationId ?? null }));
+  } else {
+    phase = aliased;
+  }
+  let guideKey = phase as PhaseKey;
+  // hearing で条件が揃っている → 聞き返し禁止の proposing ガイドへ前倒し（DB status は触らない）
+  if (phase === "hearing" && opts.conditionPresented) guideKey = "proposing";
+  // brain checkpoint_stage は fresh かつ前進方向のみ採用
+  const cs = opts.brainFresh ? (opts.checkpointStage ?? null) : null;
+  if (cs === "viewing" && (phase === "proposing" || phase === "hearing")) guideKey = "viewing";
+  if (cs === "applying" && phase === "proposing") guideKey = "applying";
+  if (cs === "contract" && (phase === "applying" || phase === "proposing")) guideKey = "closed_won";
+  return { phase, guideKey, searchState: RAG_PHASE[guideKey] ?? guideKey, raw: k, known };
+}
+// 後方互換（isFirstReplyGateExempt 等の軽量判定用。ログは resolveState 側で出る）
 function normalizeState(k: string): string {
-  const resolved = STATE_ALIAS[k] ?? k;
-  return ALLOWED_STATES.has(resolved) ? resolved : "first_reply";
+  return resolveState(k, { hasStaffMsg: true, brainFresh: false }).phase;
 }
 
 // ─── phrase_dictionary → conversationState マッピング（複数カテゴリ対応）────
@@ -2076,7 +2168,7 @@ function derivePremiseLabel(reply: string): string {
   return labels.join("・");
 }
 
-async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, staffHistoryForPremise?: string | null): Promise<string> {
+async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, staffHistoryForPremise?: string | null, brainFresh = true): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
   // 前提フィルタ用のスタッフ履歴（follow-up でなくても直前スタッフ発言を使う）
   const premiseStaffHist = [staffHistoryForPremise ?? "", lastStaffMessage ?? "", brainMeta?.last_aix_history ?? ""].filter(Boolean).join("\n");
@@ -2118,9 +2210,11 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         const boostStates = spec?.examples?.boostStates ?? [];
         const dirKwds = extractDirectionKeywords(spec?.examples?.filterByDirection ?? null);
         const brainIntent = brainMeta?.customer_intent ?? null;
+        // S-3: customer_intent は message-local。stale（T2/cached）では intent ブーストを 0.2 → 0.05 に落とす
+        const intentBoost = brainFresh ? 0.2 : 0.05;
         const ranked = [...aboveThreshold].sort((a, b) => {
-          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? 0.2 : 0);
-          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? 0.2 : 0);
+          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? intentBoost : 0);
+          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? intentBoost : 0);
           return scoreB - scoreA;
         });
         // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）
@@ -2243,9 +2337,10 @@ function extractPreferredName(
     if (msg.sender !== "staff" || !msg.text) continue;
     // 冒頭の呼びかけのみ対象（文中の「オーナーさん」等の第三者言及は拾わない）
     // {1,8}: 「関さん」等の1文字漢字名も許可（形の妥当性はNAME_SHAPE_REが判定）
-    const m = msg.text.match(/^[\s「]*([^\s、。！？\n【】「」（）・]{1,8}?)さん/);
+    // S-5: 「田中様」「山田さま」形も抽出対象に拡張（従来は「さん」呼びのみ）
+    const m = msg.text.match(/^[\s「]*([^\s、。！？\n【】「」（）・]{1,10}?)\s*(?:さん|サン|様|さま)/);
     if (!m) continue;
-    const name = m[1];
+    const name = normalizeCustomerName(m[1]) || m[1];
     if (NON_NAME_RE.test(name)) continue;
     if (name.length > 8) continue;
     // 名前の形（ひらがな/カタカナ/漢字/英字のみ）に一致しない候補は名前ではない
@@ -2261,7 +2356,8 @@ function extractPreferredName(
   // 🚨 LINE表示名（「H!tom!.M」等の記号・数字・絵文字混じり）はここで捨てる。
   //    実名の形でないものを返すと「H!tom!.Mさん」と呼びかけてしまい実名と食い違う。
   //    呼び出し側は "" を受けてDBの customer_name にフォールバックする。
-  return isPlausiblePersonName(fallback) ? fallback : "";
+  //    S-5: normalizeCustomerName で敬称除去・かな分かち書き結合・姓抽出まで正規化する
+  return normalizeCustomerName(fallback);
 }
 
 // ─── 顧客名をDBから解決（LINE表示名より customer_name を優先するための取得）────
@@ -2350,7 +2446,7 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
 お客様は引用先の内容について話している。引用先が物件画像・物件名・物件URLの場合、
 その物件への興味として扱い、「気になる物件のURLをお送りください」等の聞き返しは絶対にせず、その物件を前提に返信を生成すること。
 ただし内覧日程調整・空室確認の方向で返信するのは、当該物件が退去予定・入居中でない場合に限る。
-退去予定・入居中の物件の場合は、現地内覧日程は提案せず「退去日以降のご案内」または「お申込みでお部屋を先に抑えてからのご内覧」を案内すること。${linkRequestNote}${imageNameSuppressNote}`;
+退去予定・入居中の物件の場合は、現地内覧日程は提案せず「退去日以降のご案内」または「お申込みでお部屋を先に押さえてからのご内覧」を案内すること。${linkRequestNote}${imageNameSuppressNote}`;
   } catch (err) {
     // quoted_message_id カラム未作成環境・クエリ失敗時は通常生成にフォールバック
     console.warn("[generate-reply] 引用コンテキスト取得失敗 — 通常生成で続行:", err);
@@ -2568,6 +2664,8 @@ export async function POST(req: NextRequest) {
   let vacatingDate: VacatingDate = null;
   let staffMessagedToday = false;
   let aixSourceMessage = ""; // AIXカテゴリ最適化: AIXが送信したテキストをベースに改善（設定時はAIX最適化モード）
+  // S-4: 呼び出し元が DB から算出した「スタッフのテキスト返信が1件でもあるか」（履歴窓20件外の初回判定ズレ防止）。未渡し=undefined
+  let hasStaffRepliedFromBody: boolean | undefined;
   try {
     const body = await req.json() as {
       message: string;
@@ -2609,6 +2707,8 @@ export async function POST(req: NextRequest) {
       vacatingDate?: { month: number; day: number } | null;
       staffMessagedToday?: boolean;
       aixSourceMessage?: string;    // AIXカテゴリ最適化: AIXが送信したテキストを渡す（設定時は会話全体ではなくこのテキストを改善）
+      // S-4: messages count where sender=staff and text not media-only（呼び出し元が DB で算出。初回判定の履歴窓外落ち防止）
+      hasStaffReplied?: boolean;
     };
     message = body.message;
     state = body.state;
@@ -2645,6 +2745,7 @@ export async function POST(req: NextRequest) {
     vacatingDate = body.vacatingDate ?? null;
     staffMessagedToday = body.staffMessagedToday === true;
     aixSourceMessage = body.aixSourceMessage || "";
+    hasStaffRepliedFromBody = typeof body.hasStaffReplied === "boolean" ? body.hasStaffReplied : undefined;
     externalBrainGate = body.brainMetaDirect
       ? {
           meta: body.brainMetaDirect.meta ?? null,
@@ -2679,6 +2780,19 @@ export async function POST(req: NextRequest) {
   message = _sanitizeSurrogates(message);
   recentMessages = recentMessages.map(m => ({ ...m, text: _sanitizeSurrogates(m.text) }));
   aixSourceMessage = _sanitizeSurrogates(aixSourceMessage);
+  // A-1: LINE sentinel「[スタンプ]」行を除去してから TPO 判定に回す（スタンプ単独は装飾のみ＝短い了承扱い）。
+  //      全行スタンプなら「[スタンプ]」1行を残す（空メッセージ扱いにならないよう TPO_NEUTRAL_ACK_RE / DECOR 判定側で吸収）
+  if (!isTemplateOptimize && STAMP_LINE_RE.test(message)) {
+    const stripped = message.split("\n").filter((l) => !STAMP_LINE_RE.test(l)).join("\n").trim();
+    message = stripped || "😊";
+  }
+  // A-16: Vision抽出テキスト（「[画像] 」始まり）はスクショ内容としてラベル付け＋端末ステータス等のノイズ除去
+  if (!isTemplateOptimize && /^\[画像\] /.test(message)) {
+    message = "【スクショ内容】" + message
+      .replace(/^\[画像\] /, "")
+      .replace(/\d{1,2}:\d{2}\s*(?:5G|4G|LTE)?|1分で完了[^\n]*|お問い合わせ\(無料\)/g, "")
+      .trim();
+  }
 
   // テンプレート最適化モード: 旧adaptルートで実績のある前処理をプロンプト組み立て前に適用
   // （退去予定日/内覧可能日の◯月◯日置換 + 挨拶差し替え。共有lib: app/lib/template-preprocess.ts）
@@ -2750,23 +2864,30 @@ export async function POST(req: NextRequest) {
   //   ④ 呼び出し元から渡された名前
   // ①〜④はいずれも isPlausiblePersonName を通過したものだけ採用する。
   // 全滅した場合は名前なし（""）で生成する — 誤った名前で呼びかけるより名前を出さない方が安全。
+  // S-5: 全候補を normalizeCustomerName（敬称除去・記号除去・かな分かち書き結合・姓抽出）で正規化してから採用
   if (!customerName && conversationId) {
     const { pcName, convName } = await fetchDbCustomerNames(conversationId);
-    // 記号・絵文字を除去してから判定（例: "SATOKO♪" → "SATOKO"）
-    customerName =
-      [pcName, convName, lineDisplayName]
-        .map((n) => stripNonNameChars(n ?? ""))
-        .find((n) => isPlausiblePersonName(n)) ?? "";
+    customerName = [pcName, convName, lineDisplayName].map(normalizeCustomerName).find(Boolean) ?? "";
     if (!customerName) {
       console.warn("[generate-reply] 実名として使える顧客名なし（LINE表示名は不採用・名前なしで生成）:", {
         conversationId, lineDisplayName, pcName, convName,
       });
     }
-  } else if (!isPlausiblePersonName(customerName)) {
-    // フォールバック: 記号・絵文字を除去して再判定
-    const stripped = stripNonNameChars(customerName);
-    customerName = isPlausiblePersonName(stripped) ? stripped : "";
+  } else {
+    customerName = normalizeCustomerName(customerName) || (isPlausiblePersonName(stripNonNameChars(customerName)) ? stripNonNameChars(customerName) : "");
   }
+  // S-5: 顧客自身が書いた「〇〇様／〇〇さん」（連名者・保証人・家族等）は NAME_MISMATCH の除外リストに入れる
+  const allowNamesForCheck: string[] = (() => {
+    const out = new Set<string>();
+    for (const m of recentMessages) {
+      if (m.sender !== "customer" || !m.text) continue;
+      for (const mm of m.text.matchAll(/([一-鿿々]{1,4}|[ぁ-んゝゞ]{2,6}|[ァ-ヴヽヾー]{2,6})\s*(?:様|さま|さん)/g)) {
+        const n = normalizeCustomerName(mm[1]);
+        if (n) out.add(n);
+      }
+    }
+    return [...out].slice(0, 8);
+  })();
 
   // activeTaskTypes の自動補完（Cron等で body.activeTaskTypes が渡されない場合のサーバー側フォールバック）
   // line_tasks から進行中（status=pending）のタスクを検出して補完する。
@@ -2865,7 +2986,9 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) { console.error("[generate-reply] ai_prompts取得失敗 — ハードコード値にフォールバック:", err); }
 
-    const currentState = normalizeState(state || "first_reply");
+    // S-2: 暫定の state 解決（brain 鮮度・条件提示は未確定なので後段で resolveState を再実行して phaseGuideKey を確定する）
+    const hasAnyStaffTextMsg = recentMessages.some((m) => m.sender === "staff" && !!m.text && !/^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/.test(m.text));
+    const currentState = resolveState(state, { hasStaffMsg: hasAnyStaffTextMsg, brainFresh: false, conversationId }).phase;
 
     // 画像送付を会話履歴に反映（[画像]をフィルタせず意味のあるラベルに変換）
     // 連続する画像メッセージ（同一sender・同一isAixフラグ）は1エントリにまとめて枚数を _imageCount に記録
@@ -2942,9 +3065,11 @@ export async function POST(req: NextRequest) {
     // 真の初回判定（冒頭挨拶を強制注入するかどうか）
     // 画像のみは「スタッフが返信した」とみなさないが、AIX経由の返信はカウントする
     // ※ AIXでのみ送信した場合に isFirstEverReply=true のまま残るバグを防ぐ
-    const isFirstEverReplyFromMsgs = !recentMessages.some(
-      m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
-    );
+    // S-4: 「初回か否か」は履歴窓（20件）ではなく DB 事実（body.hasStaffReplied）を優先。未渡しなら従来の推定
+    //      メディアのみ（画像・動画・スタンプ・ファイル）のスタッフ送信は「返信済み」に数えない（final-check MEDIA_ONLY_RE と同定義）
+    const isFirstEverReplyFromMsgs = typeof hasStaffRepliedFromBody === "boolean"
+      ? !hasStaffRepliedFromBody
+      : !hasAnyStaffTextMsg;
     const shouldPrependGreeting = isFirstEverReplyFromMsgs && currentState === "first_reply";
 
     // follow-up検知（履歴末尾がスモラ = 2通目以降の生成）
@@ -3150,6 +3275,24 @@ export async function POST(req: NextRequest) {
       console.log(JSON.stringify({tag:"degradation:T3",stage:"detect",conversationId,reason:tierResult.reason,staleAgeMs:tierResult.staleAgeMs??null}));
     }
 
+    // ── S-3: brainMeta の message-local フィールドを鮮度でゲート（2026-09-08 Fable5）──
+    // action / reply_direction / key_topics / engagement_stance は「最新メッセージを見て書かれる値」であり、
+    // T2（stale）／cached（enforcement_level=optional）／burst（bg-async 中に2通目到着）では前メッセージ向けの
+    // 誤誘導になる（null より悪い）。stale 時は null に落として決定論 TPO ＋ STATE_FALLBACK_DIRECTION に委ねる。
+    // followup_revive は「顧客返信への生成」では定義上常に stale（追客は無応答時のアクション）。
+    const MESSAGE_LOCAL_ACTIONS = new Set(["viewing_invite", "application_push", "meeting_place", "followup_revive", "acknowledge_check", "estimate_sheet", "property_recommendation", "greeting_viewing", "property_check_result"]);
+    const isCachedMeta = brainMeta?.source === "cached" || brainMeta?.enforcement_level === "optional";
+    const rawAction: string | null = normalizeAixActionKey(brainMeta?.action ?? null);
+    const effectiveAction: string | null = (() => {
+      if (!rawAction) return null;
+      if (rawAction === "followup_revive") return null;
+      if (MESSAGE_LOCAL_ACTIONS.has(rawAction) && (!brainFreshForMessage || isCachedMeta)) return null;
+      return rawAction;
+    })();
+    if (rawAction && !effectiveAction && !isTemplateOptimize) {
+      console.log(JSON.stringify({ tag: "brain:stale-action-dropped", rawAction, tier: tierResult.tier, cached: isCachedMeta, conversationId }));
+    }
+
     // ── TPO判定 + effective制御値（brainGuidanceNote IIFE外に切り出し 2026-08-30）─────
     // 旧実装は IIFE ローカルだったため finalCheckCtx から参照できず、ファイナルチェックには
     // TPO上書き前の生 brainMeta が渡っていた（過剰指摘・見逃しの原因）。ここで一度だけ計算し
@@ -3233,13 +3376,33 @@ export async function POST(req: NextRequest) {
       if (hasRequest && !hasMarker) return none("request_over_condition", { areas, rent, hasRequest });
       return { presented: true, areas, rent, hasRequest, changeRequest: false, reason: "area+rent" };
     })();
-    const isConditionPresented = conditionDetail.presented;
+    // ── S-2: 状態の最終確定（brain 鮮度・条件提示・checkpoint_stage を反映した guideKey / searchState）──
+    const resolvedState = resolveState(state, {
+      hasStaffMsg: hasAnyStaffTextMsg,
+      checkpointStage: brainMeta?.checkpoint_stage ?? null,
+      brainFresh: brainFreshForMessage,
+      conditionPresented: conditionDetail.presented,
+      conversationId,
+    });
+    const phaseGuideKey: PhaseKey = resolvedState.guideKey;
+    const searchState = resolvedState.searchState;
+    // 申込中・成約後は条件提示ガードを無効化（申込フォーム内の住所＋家賃で誤発動）。brain fresh で条件変更が立っている時のみ例外
+    const isConditionPresented = conditionDetail.presented
+      && !((phaseGuideKey === "applying" || phaseGuideKey === "closed_won") && !(brainFreshForMessage && brainMeta?.condition_change_type));
     const isConditionChangeRequest = conditionDetail.changeRequest;
+    // A-1: 絵文字・記号のみ（スタンプ単独の sentinel 除去後を含む）
+    const isDecorOnlyMsg = (message ?? "").trim().length > 0 && DECOR_ONLY_RE.test((message ?? "").trim());
+    // A-13: 不安・関西弁ネガ（isConditionPresented・isViewingCancel の直後・applying より先に評価）
+    const isAnxietyMsg = ANXIETY_RE.test(message ?? "") && (message ?? "").length < 200 && !isConditionPresented;
 
     // ── 感謝返し（2026-09-08 監査改修: ?なし疑問文・依頼形・柔らかい断り・情報提供を除外、実質文字数で判定）──
     const isGratitudeReplyTPO = (() => {
       const raw = (message ?? "").trim();
       if (raw.length === 0) return false;
+      // A-6（G-6）: スタッフ返信済みの follow-up 生成では「感謝を受け取る」方向を再注入しない（二重返信防止）
+      if (isFollowUp) return false;
+      // A-1: スタンプ単独・絵文字のみは短い了承として感謝返しに流す
+      if (isDecorOnlyMsg) return true;
       const core = stripDecoration(raw);
       const len = Array.from(core).length;
       if (len === 0 || len >= 60) return false;
@@ -3257,6 +3420,15 @@ export async function POST(req: NextRequest) {
         return GRATITUDE_POS_RE.test(q) || CLOSER_ONLY_RE.test(q);
       });
     })();
+
+    // ── A-6（G-5）: 「短い了承」ラベル条件と promiseEchoNote 条件の述語統一 ──
+    //   buildGenerationMessages 側の promiseEchoNote は isShortAckMsg && !pickupPromiseAckNote && !estimatePromiseAckNote で発火する。
+    //   ラベル側も同じ3条件（直前約束あり／ピックアップ約束済みでない／見積約束済みでない）で「短い了承」を立て、それ以外は「感謝返し」に落とす
+    const shortAckPromise = isGratitudeReplyTPO && !isFollowUp && !!detectStaffPromise(lastStaffMsgForSearch ?? "");
+    const staffPromisedPickupForLabel = !!lastStaffMsgForSearch
+      && /ピックアップ/.test(lastStaffMsgForSearch)
+      && /(お送り|送らせて|お届け|送付)/.test(lastStaffMsgForSearch)
+      && !lastStaffMsgForSearch.includes("ご査収ください");
 
     // ── 一時保留（『今動けない状況語』or『後で見る・確認・返信する宣言』に限定。「検討」「考え」は isThinkingMsg に譲る）──
     const isTemporaryLeaveMsg = (() => {
@@ -3419,19 +3591,30 @@ export async function POST(req: NextRequest) {
       if (isThinkingMsg) return "検討中の待ちフェーズ。70〜120字の短返し。開口語は「はい😊！！」（単独行）。①ごゆっくりご検討ください②ご不明点・ご家族様からのご質問等あれば何なりとお申し付けください③顧客名先頭のサポート継続宣言の3点セット。申込誘導・希少性煽り（人気のため早めに）・内見誘導・物件追加提案・「ご検討の程よろしく」の再掲は絶対禁止";
       if (isPostStrongRecommendation) return "強推し直後の了承。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。①感謝を1行で受け取る②直前に推薦したお部屋（物件名が分かれば名前で、不明なら「先ほどのお部屋」）をお手隙の際にごゆっくりご確認いただく旨1文③ご内覧・ご不明点はいつでもお申し付けくださいの開放1文④締め。合計50〜110字。他物件の募集確認・新規ピックアップ宣言・別物件の提案・申込誘導・「ご検討の程よろしくお願いします」の再掲は絶対禁止。顧客が「見てみます」（未来形）なら「ご覧頂きありがとう」等の既読扱いも禁止";
       if (isGratitudeReplyTPO) return `感謝を1行で受け取り、次のアクション文を1つだけ添える: ${gratitudeActionHint}。合計40〜130字。開口語は「はい😊！！」（単独行）一択（「かしこまりました」「承知いたしました」禁止）。締めは「何卒よろしくお願い致します！！」。上記以外のアクション・予告のみの進捗テンプレ・条件の再ヒアリング・情報追加は絶対禁止`;
-      return brainMeta?.reply_direction ?? null;
+      // A-13: 不安対応（applying より先に評価。謝罪は「ご不安にさせてしまい申し訳ございません」の1文のみ許可）
+      if (isAnxietyMsg) return "不安対応（100〜150字）。開口語は「はい😊！！」または受け止め1文から。①不安を1文で受け止める（謝罪が必要な場合のみ「ご不安にさせてしまい申し訳ございません」の1文まで）②具体的な安心材料を1つだけ添える（保証会社通過までキャンセル料なし／独立系保証会社で再審査可／審査3〜10日 等・履歴にある事実のみ）③次アクション1文。「大丈夫ですよ」「ご安心ください」の根拠なし安心づけ禁止";
+      // A-7 / S-3: brain action が有効（fresh）なら顧客向け方向性に変換して採用（スタッフ操作文は注入しない）
+      if (effectiveAction && AIX_ACTION_REPLY_DIRECTION[effectiveAction]) {
+        const d = AIX_ACTION_REPLY_DIRECTION[effectiveAction];
+        return `${d.direction}。WE DO例:「${d.weDo}」。禁止: ${d.forbid}`;
+      }
+      // S-3: reply_direction は message-local。fresh の時のみ採用し、stale なら state 別フォールバックへ
+      if (brainFreshForMessage && !isCachedMeta && brainMeta?.reply_direction) return brainMeta.reply_direction;
+      // A-4: state 別フォールバック（固定文「WE DO宣言を1文添える」の廃止）
+      return STATE_FALLBACK_DIRECTION[phaseGuideKey] ?? null;
     })();
     const effectiveKeyTopics: string[] = (() => {
+      // S-3: key_topics も message-local。stale/cached では採用しない
+      const freshTopics = brainFreshForMessage && !isCachedMeta ? (brainMeta?.key_topics ?? []) : [];
       if (isConditionPresented) {
-        const baseTopics = brainMeta?.key_topics ?? [];
-        return baseTopics.length > 0 ? baseTopics : ["エリア・家賃条件を受け取り即ピックアップ宣言"];
+        return freshTopics.length > 0 ? freshTopics : ["エリア・家賃条件を受け取り即ピックアップ宣言"];
       }
       if (isNegativeContext) return [];
       if (isTemporaryLeaveMsg) return [];
       if (isThinkingMsg) return [];
       if (isPostStrongRecommendation) return []; // 待ちフェーズ：余計なアクションを足さない
-      if (isGratitudeReplyTPO) return (brainMeta?.key_topics ?? []).slice(0, 1);
-      return brainMeta?.key_topics ?? [];
+      if (isGratitudeReplyTPO) return freshTopics.slice(0, 1);
+      return freshTopics;
     })();
     const effectiveAvoidTopics: string[] = (() => {
       const base = brainMeta?.avoid_topics ?? [];
@@ -3445,7 +3628,7 @@ export async function POST(req: NextRequest) {
       if (isPostStrongRecommendation) return [...new Set([...base, "他物件の募集状況確認", "新規物件ピックアップ", "別物件の提案", "申込誘導", "検討依頼の繰り返し", "初期費用割引の再掲"])];
       if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
       // A-3: brain action=follow_up 経由の「検討中フォロー」ラベル（tpoNoteForLLM 後段）にも isThinkingMsg と同じ禁止セットを乗せる
-      if (brainMeta?.action === "follow_up" || brainMeta?.action === "followup_revive") return [...new Set([...base, "申込誘導", "希少性煽り", "内見誘導", "物件追加提案", "条件ヒアリング", "検討依頼の繰り返し"])];
+      //      S-3: followup_revive は effectiveAction で常に null に落ちるため、ラベル側と同じく rawAction ではなく「検討中フォロー」条件（isThinkingMsg）で担保する
       return base;
     })();
     // 顧客が最新メッセージで自ら言及した語は avoid_topics から除外
@@ -3463,30 +3646,40 @@ export async function POST(req: NextRequest) {
       if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客が確認/了承中の待ちフェーズ。再ピックアップ宣言・別物件提案は絶対禁止。開口語「はい😊！！」）";
       // 2026-09-08 語彙セマンティクス: 直前スタッフ約束が検出できる短い了承は「短い了承（約束の復唱）」場面に固定
       //（buildGenerationMessages の promiseEchoNote / final-check の WAIT_TPO_RE・GRATITUDE_OPENING と同名）
-      if (isGratitudeReplyTPO && !isFollowUp && detectStaffPromise(lastStaffMsgForSearch ?? "")) return "短い了承（直前スタッフ約束への了承。開口語「はい😊！！」→直前約束の復唱WE DO 1文→締め。約束に無い業務語彙（撮影・ご査収・内覧日程）を持ち出さない。40〜90字）";
+      // A-6（G-5）: ラベル条件と promiseEchoNote の条件を同一述語 shortAckPromise に統一。
+      //   pickupPromiseAckNote / estimatePromiseAckNote が出る場面（ピックアップ約束済み・見積約束済み）は promiseEchoNote が出ないためラベルを「感謝返し」に落とす
+      if (shortAckPromise && !staffPromisedPickupForLabel && !estimatePromised) return "短い了承（直前スタッフ約束への了承。開口語「はい😊！！」→直前約束の復唱WE DO 1文→締め。約束に無い業務語彙（撮影・ご査収・内覧日程）を持ち出さない。40〜90字）";
       if (isGratitudeReplyTPO) return "感謝返し（短い了承・感謝メッセージ。開口語「はい😊！！」一択）";
-      const a = brainMeta?.action ?? "";
-      if (state === "applying") return "申込後説明";
+      // A-13（B-6）: 不安対応は applying / brain action ラベルより先に評価（applying 中の「審査落ちたら…」が「申込後説明」に落ちていた）
+      if (isAnxietyMsg) return "不安対応（顧客が審査・費用・手続きに不安。まず不安を受け止め、具体的な安心材料を1つだけ添える。100〜150字以内。「大丈夫ですよ」の軽い返しは避ける。謝罪は「ご不安にさせてしまい申し訳ございません」の1文のみ可）";
+      // S-3: action は effectiveAction（鮮度ゲート済み）のみ参照。stale action から「内覧調整」「申込打診」ラベルが立たない
+      const a = effectiveAction ?? "";
+      // A-4: applying は「短い了承」→「申込後説明（本文付き）」の順
+      if (phaseGuideKey === "applying") {
+        if (isGratitudeReplyTPO) return "短い了承（applying。開口語「はい😊！！」＋履歴にある直近約束（審査結果連絡/書類確認/契約案内）の復唱1文＋締め。40〜90字）";
+        return "申込後説明（申込・審査・契約手続き中。書類受領／審査進捗／契約案内のいずれかに直接回答し、別物件提案・再ピックアップ・条件ヒアリング・内覧提案は書かない。60〜150字）";
+      }
       if (a === "viewing_invite" || a === "meeting_place") return "内覧調整";
       if (a === "application_push") return "申込打診";
       if (a === "property_send" || a === "property_recommendation") return "物件送付後";
-      if (a === "estimate_sheet" || a === "cost_explanation" || a === "initial_cost") return "費用説明";
-      if (/費用|見積|初期費用/.test(a)) return "費用説明";
-      if (!brainMeta?.action && (state === "initial" || state === "new")) return "初回対応";
-      // tpoLabelに存在するがtpoNoteForLLMに欠落していた種別を補完（不安対応・検討中フォロー）
+      if (a === "estimate_sheet") return "費用説明";
+      // 内見フェーズ専用TPO（修正率91.3%の原因: viewingに対応するTPO分岐がなかった。S-2 で phaseGuideKey=viewing が到達可能に）
       const msg2 = message ?? "";
-      if (/不安|心配|審査.*(通|落)|落ち(る|たら)|大丈夫でしょうか/.test(msg2)) return "不安対応（顧客が審査・費用・手続きに不安。まず不安を受け止め、具体的な安心材料を1つだけ添える。100〜150字以内。「大丈夫ですよ」の軽い返しは避ける）";
-      const a2 = brainMeta?.action ?? "";
-      // THK-2: consultation intent 単独・単語一致では発火させない（isThinkingMsg と同一ロジックに統一）
-      if (a2 === "follow_up" || a2 === "followup_revive") return "検討中フォロー（顧客がまだ迷っている段階。急かさない。新情報がある場合のみ1点だけ伝える。70〜120字）";
-      // 内見フェーズ専用TPO（修正率91.3%の原因: viewingに対応するTPO分岐がなかった）
-      if (state === "viewing") {
+      if (phaseGuideKey === "viewing") {
         const isPostView = /どうでした|どうでしたか|気に入|気に入り|申込|決め|考え|いかが|ご感想|雰囲気/.test(msg2);
         if (isPostView) return "内見後クロージング（内見を終えた顧客への返信。感想を1文で聞き、気に入った場合は申込を自然に促す文を添える。100〜150字）";
         return "内見調整（日時・場所の確認・調整。顧客名先頭の簡潔な返し。30〜80字）";
       }
-      // proposingでAIXアクションがnullの場合のフォールバック注入（ドラフト品質が最低水準の根本対策）
-      if (state === "proposing" && !brainMeta?.action) {
+      if (phaseGuideKey === "closed_won") return "成約後サポート（質問に直接回答し「ご入居までしっかりサポートさせて頂きます」で締める。申込打診・ピックアップ・見積・内覧禁止。60〜120字）";
+      if (phaseGuideKey === "closed_lost") return "失注後の再接触（「お世話になっております」→再連絡への感謝1文→再ピックアップ宣言→サポート継続宣言。初回挨拶・謝罪・フォーム再送禁止。80〜140字）";
+      // A-4: proposing で action が無い場合は「懸念→条件変換」「進捗催促対応」「商談継続」の3分岐
+      if (phaseGuideKey === "proposing" && !a) {
+        if (/狭い|暗い|遠い|古い|うるさい|微妙|ちょっと|イマイチ|いまいち|気になる点/.test(msg2) && !TPO_REQUEST_RE.test(msg2)) {
+          return "懸念→条件変換（顧客の感想・懸念語を条件語に変換し「かしこまりました！！〇〇（変換後条件）のお部屋を中心に〇〇さんにオススメできるお部屋再度ピックアップしお送りさせて頂きます！！」。共感文だけの返信は不合格。80〜130字）";
+        }
+        if (/まだ(?:です|でしょうか|ですか)|連絡(?:ない|来ない|まだ)|どうなり(?:ました|ましたか)|進捗|いつ(?:頃)?(?:送|連絡|届)/.test(msg2)) {
+          return "進捗催促対応（「ご連絡遅くなり申し訳御座いません。」＋現状事実1文＋次アクション1文。100〜150字。「お待たせ致しました」「確認中です」禁止）";
+        }
         return "商談継続中の汎用返答。顧客の質問・要望を1文で受け止め、具体的な行動宣言（ピックアップ・交渉・確認）を1つだけ添えて100〜150字で返す。初期費用・家賃交渉の場合は「最大限交渉させて頂きます！！」等の具体表現を使う。抽象的な「確認します」禁止";
       }
       return null;
@@ -3498,7 +3691,8 @@ export async function POST(req: NextRequest) {
     // フォールバック戦略）は注入されない（brainGuidanceNote 非空をシグナルとして抑制される）。
     const brainGuidanceNote = (() => {
       if (!brainMeta) return "";
-      const hasAction = !!brainMeta.action;
+      // S-3: action は鮮度ゲート済みの effectiveAction を基準にする（stale action を「必須」として注入しない）
+      const hasAction = !!effectiveAction;
       const hasStrategy = !!(brainMeta.closing_strategy || brainMeta.next_steps?.length);
       const hasExtendedFields = !!(
         brainMeta.reply_direction ||
@@ -3525,7 +3719,7 @@ export async function POST(req: NextRequest) {
       // 実質戦略（action / reply_direction / key_topics / closing_strategy / next_steps）が無い場合は
       // 「補助メタ」ヘッダーにする → buildGenerationMessages 側の hasAixMetaStrategy が false になり
       // summaryNote 全文・closingNote・closingFallback が従来通り注入される（空箱が戦略を殺すバグの修正）
-      const hasRealStrategy = hasAction || hasStrategy || !!brainMeta.reply_direction || !!(brainMeta.key_topics?.length);
+      const hasRealStrategy = hasAction || hasStrategy || (brainFreshForMessage && !isCachedMeta && (!!brainMeta.reply_direction || !!(brainMeta.key_topics?.length)));
       // enforcement_level を強制度文言に反映（型定義済みだが未使用だったフィールドの活用）
       const isRequired = brainMeta.enforcement_level === "required";
       const lines: string[] = [
@@ -3534,7 +3728,7 @@ export async function POST(req: NextRequest) {
           : `【🧠 AIX-META補助メタ（戦略指示は未生成。以下は顧客状態の参考情報。返信の方向性は「場面と返信方針」ブロックとAI要約に従うこと）】`,
       ];
       if (brainMeta.note && brainMeta.reply_mode !== 'aix') {
-        lines.push(`- 📌 スモラスタイル②WE DO宣言（必須・返信末尾に1文として明示する）: ${brainMeta.note} → このスタッフアクションをお客様向けに「私が〇〇させて頂きます！！」の形に言い換えて返信の最後の1文に含めること（例: 「明日管理会社に交渉させて頂きます！！」「ご希望のお部屋をピックアップしてお送りさせて頂きます！！」「お申込みでお部屋抑えさせて頂きます！！」）。ただしZ/F3/Yパターン等の短い締め返信では追加しない`);
+        lines.push(`- 📌 スモラスタイル②WE DO宣言（必須・返信末尾に1文として明示する）: ${brainMeta.note} → このスタッフアクションをお客様向けに「私が〇〇させて頂きます！！」の形に言い換えて返信の最後の1文に含めること（例: 「明日管理会社に交渉させて頂きます！！」「ご希望のお部屋をピックアップしてお送りさせて頂きます！！」「お申込みでお部屋押さえさせて頂きます！！」）。ただしZ/F3/Yパターン等の短い締め返信では追加しない`);
       }
       // winning_pattern + closing_strategy の両方がある場合は1文のWE DO宣言に統合（二重宣言防止）
       if (brainMeta.winning_pattern && brainMeta.closing_strategy) {
@@ -3549,7 +3743,8 @@ export async function POST(req: NextRequest) {
       // purchase_signal_level は「熱量が高い→もっと押す」の一方向しか表現できず、
       // ルール⑦（ネガ文脈）・ルール⑧（強推し直後の了承）の局面で希少性訴求・CTA・申込期限の明示が
       // 混入すると離脱率が上がる。押しの強さより局面判定を優先する（"push"/null は従来どおり）。
-      const closingGatedByStance = brainMeta.engagement_stance === "wait";
+      // S-3: engagement_stance は message-local。fresh の時のみ「待ち」ゲートを効かせる（stale の wait が押すべき局面を封じない）
+      const closingGatedByStance = brainFreshForMessage && !isCachedMeta && brainMeta.engagement_stance === "wait";
       if (closingGatedByStance) {
         lines.push(
           `- ⏸️ 押し引きスタンス: WAIT（待ちの局面）— 強推し直後の了承、またはネガ文脈（断り・キャンセル・否決・募集終了）の直後です。希少性訴求・申込期限の明示・CTA・新規物件提案は今回の返信に一切入れないこと。受け止めと見守りの姿勢で締めること`
@@ -3567,45 +3762,47 @@ export async function POST(req: NextRequest) {
           `- 📶 購買シグナル: SOFT（本気検討始まりシグナル）— 具体的な物件・設備・費用の確認質問を1件検出。質問に誠実に答えた後、次への軽いCTA 1文（例: 「気になれば内覧もできますよ！」「お気軽にどうぞ！」）を返信末尾に自然に添えること（pressure ゼロ・押しつけ禁止）`
         );
       }
-      if (hasAction) {
+      if (rawAction && !effectiveAction) {
+        // S-3: stale / cached の message-local アクションは「採用しない」ことを明示（無言スキップだと LLM が履歴から同じ行動を再構成する）
+        lines.push(`※ brain の推奨アクション（${rawAction}）は前メッセージ時点の判定のため今回は採用しない。最新メッセージへの直接応答を優先`);
+      }
+      if (hasAction && effectiveAction) {
         // 安全ガード①: brain キャッシュが estimate_sheet のままでも、顧客が同一メッセージで
         // 新しい検索条件（路線・家賃・徒歩・広さ等）を指定していたら property_send 方向に上書き。
         // brain-core.ts 側の例外ルールと二重に守る（stale キャッシュ対策）。
-        const latestCustText = brainMeta.action === "estimate_sheet"
+        const latestCustText = effectiveAction === "estimate_sheet"
           ? ([...recentMessages].reverse().find(m => m.sender === "customer" && m.text)?.text ?? "")
           : "";
-        const isConditionOverride = brainMeta.action === "estimate_sheet" &&
+        const isConditionOverride = effectiveAction === "estimate_sheet" &&
           (/調べてほし[いく]|探してほし[いく]|探して欲[しく]|徒歩[0-9０-９]+分|家賃.{0,6}万|[0-9０-９]+万以下|広め|路線のみ|沿線|環状線|条件.{0,3}絞|条件.{0,3}変[えわ]/.test(latestCustText) ||
           /【[^】]{2,15}】[^。！\n]{0,5}[⇒→＝:：]/.test(latestCustText));
-        // 安全ガード②: estimate_sheet は message-local アクション（顧客が「今回のメッセージ」で費用を
-        // 質問している場合のみ有効）。stale（T2/T3）では前回セッションの費用質問分類が残存するため
-        // brainFreshForMessage ゲートを適用し注入を抑止する。
-        // ガード①で検出できない条件ヒアリング（間取り・築年数・設備等の一般質問）もこれで網羅する。
-        const isEstimateSheetStale = brainMeta.action === "estimate_sheet" && !brainFreshForMessage;
         // 安全ガード③: T1（brainFresh=true）でも、顧客の直近メッセージに費用関連語がない場合は
         // estimate_sheet を注入しない（brain-core の旧 .slice(-3) バグ由来の誤分類残留対策）。
         // 直近3件の顧客メッセージを参照（「よろしくお願いします」のみでも前のメッセージで費用言及があれば許可）。
+        // ※ 旧ガード②（stale estimate_sheet）は S-3 の effectiveAction ゲートに統合済み
         const recentCustForEstimate = [...recentMessages]
           .filter(m => m.sender === "customer" && m.text)
           .slice(-3)
           .map(m => m.text || "")
           .join(" ");
-        const isEstimateRelevant = brainMeta.action === "estimate_sheet" &&
+        const isEstimateRelevant = effectiveAction === "estimate_sheet" &&
           /見積|初期費用|費用|おいくら|いくら|合計|金額|費用感|敷金|礼金|割引|値引|予算/.test(recentCustForEstimate);
         // T1かつ費用ワードなし → 明示的に抑制（スキップでなく抑制ノートを注入してLLMに作成宣言を禁止させる）
-        const isEstimateIrrelevant = brainMeta.action === "estimate_sheet" && brainFreshForMessage && !isEstimateRelevant;
-        if (isConditionOverride || isEstimateSheetStale || isEstimateIrrelevant) {
+        const isEstimateIrrelevant = effectiveAction === "estimate_sheet" && !isEstimateRelevant;
+        if (isConditionOverride || isEstimateIrrelevant) {
           if (isConditionOverride) {
             lines.push(`- 推奨アクション: 物件ピックアップ対応（property_send方向）— お客様が新しい検索条件（路線・家賃・徒歩・間取り・広さ等）を今回のメッセージで指定しているため、見積書の作成宣言をせず条件を受け止めて物件を探す方向で返信すること。AIXで物件送付後に見積対応。`);
           } else if (isEstimateIrrelevant) {
             lines.push(`- ⚠️ 見積アクション保留: brainがestimate_sheetを記録しているが、直近のお客様メッセージに見積・費用関連の語がない。今回の返信に「御見積書」「お見積もり」「最大限割引」等の作成宣言を一切含めないこと。お客様の現在のメッセージ（条件ヒアリング・検索依頼等）にのみ応答すること。`);
           }
-          // isEstimateSheetStale のみの場合: アクション注入を完全スキップ（stale estimate_sheet を
-          // 「御見積書送付」として LLM に注入しない。物件条件ヒアリング場面への残留を防ぐ）。
         } else {
-          lines.push(`- 推奨アクション: ${AIX_ACTION_NOTES[brainMeta.action] ?? brainMeta.action}`);
+          // A-7: スタッフ操作文（AIX_STAFF_NOTES「AIX【〇〇】を押してください」）の二重注入を廃止し、顧客向け direction / WE DO / 禁止を注入する
+          const dir = AIX_ACTION_REPLY_DIRECTION[effectiveAction];
+          lines.push(dir
+            ? `- 推奨アクション（${AIX_BUTTON_LABELS[effectiveAction] ?? effectiveAction}）: ${dir.direction}。WE DO例:「${dir.weDo}」。禁止: ${dir.forbid}`
+            : `- 推奨アクション: ${AIX_BUTTON_LABELS[effectiveAction] ?? effectiveAction}（この場面に合った受付・宣言文のみ。AIX操作語はお客様向け本文に書かない）`);
           // property_check_result 時は propertyFactGateNote の保証会社名断言禁止を解除して明示を強制
-          if (brainMeta.action === "property_check_result") {
+          if (effectiveAction === "property_check_result") {
             lines.push(`- ✅ 保証会社名・審査難度の明示（必須・propertyFactGateNote例外）: 管理会社確認済みの結果報告として、保証会社名と審査難度（「審査通過しやすい」または「審査厳し目」）を必ず1文付加すること。例: 「こちらのお部屋の保証会社は〇〇という比較的審査通過しやすい保証会社となっております！！」または「〇〇という審査やや厳し目の保証会社となります！！」。key_topicsに保証会社名がある場合は必ずその名前を使う。propertyFactGateNoteの「保証会社名断言禁止」はこのアクション時は適用されない`);
           }
         }
@@ -3669,7 +3866,7 @@ export async function POST(req: NextRequest) {
         lines.push(`- ⚠️ この顧客の地雷・NGポイント: ${psp.ng_points} — これに該当する提案・話題を出さない`);
       }
       // 物件送付文のエリア名具体化強制（成約パターン frequency:5 — 抽象表現禁止）
-      if (brainMeta.action === "property_send" && psp?.area) {
+      if (effectiveAction === "property_send" && psp?.area) {
         lines.push(`- 🗺️ エリア名の具体化（必須・成約パターン）: 物件送付文には「${psp.area}エリアから」「${psp.area}×${psp.floor_plan ?? "ご希望条件"}のお部屋」のようにエリア名・主要条件を文中に具体的に埋め込むこと。「ご条件に合ったお部屋」「ご希望のご条件に合ったお部屋」という抽象表現は一切書かない。代わりに「${psp.area}エリアからオススメできるお部屋」の形で能動的に表現すること（エリアの呼び方は会話で使われた表現をそのまま使い「全域」等を勝手に付け足さない）`);
       }
       if (psp?.move_in_time && !brainMeta?.future_timeline) {
@@ -3701,7 +3898,7 @@ export async function POST(req: NextRequest) {
         const hp = brainMeta.hesitancy_pattern;
         const timeline = brainMeta.future_timeline ?? null;
         if (hp === "thinking" || hp === "callback") {
-          lines.push(`- 🤔 保留パターン検出（${hp === "thinking" ? "検討中" : "また連絡"}）: お客様は一旦保留している。「お気軽にご連絡ください」だけで終わらないこと。必ず以下を1つ添える: ①物件の好条件・希少性を一言（「かなり好条件のお部屋ですので」等） ②申込促し（「お気に召されましたらお申込みしてお部屋抑えさせて頂きます！！」） ③待機中の具体アクション約束（「新着出次第随時お送りします」）`);
+          lines.push(`- 🤔 保留パターン検出（${hp === "thinking" ? "検討中" : "また連絡"}）: お客様は一旦保留している。「お気軽にご連絡ください」だけで終わらないこと。必ず以下を1つ添える: ①物件の好条件・希少性を一言（「かなり好条件のお部屋ですので」等） ②申込促し（「お気に召されましたらお申込みしてお部屋押さえさせて頂きます！！」） ③待機中の具体アクション約束（「新着出次第随時お送りします」）`);
         } else if (hp === "waiting") {
           lines.push("- ⏳ 「少し待って」パターン検出: お客様は決断に踏み出せていない。バリアを取り除くこと: 「保証会社の審査が通過するまでの間はキャンセル料は一切かかりませんのでご安心ください😊！！審査期間中にお部屋のご案内もさせて頂けますので、実際に見てからご判断いただけます！！」のように安心感を先に伝える");
         } else if (hp === "timeline" && timeline) {
@@ -3744,8 +3941,13 @@ export async function POST(req: NextRequest) {
         lines.push(`※ brain分析の鮮度が不足（最新メッセージ送信後に分析が追いついていない）。直近メッセージ固有の戦術（hesitancy・customer_questions等）は省略済み。最新メッセージの意図は会話履歴から直接読むこと`);
       }
       // Fix③: checkpoint_stage（brain実態フェーズ）がDB上のstate（currentState）と乖離している場合に明示する
-      if (brainMeta.checkpoint_stage && brainMeta.checkpoint_stage !== currentState) {
-        lines.push(`- ⚠️ 会話実態フェーズ（brain判定）: ${brainMeta.checkpoint_stage} ※DB上の状態(${currentState})と乖離あり — 実態フェーズを優先すること`);
+      // S-2: resolveState が guideKey に反映済み（viewing/applying/contract→closed_won の前進補正）なら乖離警告は出さない
+      {
+        const cs = brainMeta.checkpoint_stage;
+        const reflected = !!cs && (phaseGuideKey === cs || (cs === "contract" && phaseGuideKey === "closed_won"));
+        if (cs && !reflected && cs !== currentState) {
+          lines.push(`- ⚠️ 会話実態フェーズ（brain判定）: ${cs} ※DB上の状態(${currentState})と乖離あり — 実態フェーズを優先すること`);
+        }
       }
       lines.push("※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。");
       return lines.join("\n") + "\n";
@@ -3772,7 +3974,8 @@ export async function POST(req: NextRequest) {
     })();
 
     // brain誘導型フェッチ仕様（v1: baseline = 従来動作と同一。T1動的選択は次フェーズ）
-    const fetchSpec = buildBrainFetchSpec(brainMeta, currentState, tierResult);
+    // S-2: RAG（知識・実例・フレーズ）は searchState（viewing/closed_lost は proposing に畳んだ5段階）で引く
+    const fetchSpec = buildBrainFetchSpec(brainMeta, searchState, tierResult);
     const analysisContext = fetchSpec.analysisContext;
 
     // ── T1動的選択の監視ログ（Promise.all 前に spec の発火内容を記録） ──
@@ -3791,9 +3994,9 @@ export async function POST(req: NextRequest) {
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
-      fetchKnowledge(currentState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixHistoryText)
+      fetchKnowledge(searchState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixHistoryText)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
-      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta, lastStaffMsgForSearch ?? null)
+      fetchExamples(searchState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta, lastStaffMsgForSearch ?? null, brainFreshForMessage && !isCachedMeta)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
       getCachedPhrases(fetchSpec.phrases.categories)
         .catch((err) => { console.error("[generate-reply] getCachedPhrases失敗 — フレーズなしで生成続行:", err); return [] as string[]; }),
@@ -3934,7 +4137,7 @@ export async function POST(req: NextRequest) {
 ◆ プレースホルダ置換: 「アカウント名」→「${customerName || "〇〇"}さん」。物件名・家賃・間取り等はAIX物件情報から読み取った実際の値に置換する。不明な値は「〇〇」のまま残す（でたらめな値を絶対に入れない）
 ◆ 挨拶: テンプレートに冒頭挨拶が含まれている場合はそのまま維持する（【⏰ 挨拶ルール】はテンプレート最適化モードでは無視。「お世話になっております」等の挨拶・結び文を削除しない）
 ◆ 訴求ポイント指定: ${templateFocusPoints.length > 0 ? `スタッフ指定の訴求軸【${templateFocusPoints.join("・")}】を文中で最も強調すること` : "なし"}
-◆ 申込フォーム誘導フレーズの強制置換: 「お申込フォーマット」「ご本人確認書類」を含む文は出力禁止。申込案内が必要な場合は「お気に召されましたらお申込みしお部屋抑えさせて頂きます！！」、内覧案内が必要な場合は「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」に必ず置き換える。
+◆ 申込フォーム誘導フレーズの強制置換: 「お申込フォーマット」「ご本人確認書類」を含む文は出力禁止。申込案内が必要な場合は「お気に召されましたらお申込みしお部屋押さえさせて頂きます！！」、内覧案内が必要な場合は「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」に必ず置き換える。
 ◆ 捏造禁止ゲート: 内覧日時・見積金額内訳・空室確認結果・待ち合わせ場所の捏造禁止（AIX物件情報にない情報を補完しない）
 ${noEmoji ? "◆ 絵文字は一切使用しない（テンプレートに絵文字があっても全て削除）\n" : ""}${soloEntry ? "◆ 1人入居モード（厳守）: 同居人・配偶者・同居者・家族構成・入居人数・お子様・子ども・子供・同居・ご家族 を含む行はすべて出力しない（完全に削除）\n" : ""}${templateLabel ? `【テンプレート名】${templateLabel}\n` : ""}${templateCategory ? `【テンプレートカテゴリ】${templateCategory}\n` : ""}【テンプレート原文（出力の骨格・長さ・構成の基準 — これに従うこと）】
 ${preprocessedTemplate}
@@ -3955,7 +4158,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ】\n${pend
 ◆ 挨拶: テンプレートに冒頭挨拶が含まれている場合はそのまま維持する（【⏰ 挨拶ルール】はテンプレート最適化モードでは無視。「お世話になっております」等の挨拶・結び文を削除しない）
 ◆ 訴求ポイント指定: ${templateFocusPoints.length > 0 ? `スタッフ指定の訴求軸【${templateFocusPoints.join("・")}】を文中で最も強調すること` : "なし"}
 ◆ 禁止: テンプレにない新しい質問リストの発明・会話履歴と矛盾する内容・スモラが既に案内済みの情報の繰り返し
-◆ 申込フォーム誘導フレーズの強制置換（骨格維持・フェーズ指示より優先）: 「お申込フォーマット」「ご本人確認書類」を含む文は出力禁止。申込案内が必要な場合は「お気に召されましたらお申込みしお部屋抑えさせて頂きます！！」、内覧案内が必要な場合は「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」に必ず置き換える。
+◆ 申込フォーム誘導フレーズの強制置換（骨格維持・フェーズ指示より優先）: 「お申込フォーマット」「ご本人確認書類」を含む文は出力禁止。申込案内が必要な場合は「お気に召されましたらお申込みしお部屋押さえさせて頂きます！！」、内覧案内が必要な場合は「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」に必ず置き換える。
 ${noEmoji ? "◆ 絵文字は一切使用しない（テンプレートに絵文字があっても全て削除）\n" : ""}${soloEntry ? "◆ 1人入居モード（厳守）: 同居人・配偶者・同居者・家族構成・入居人数・お子様・子ども・子供・同居・ご家族 を含む行はすべて出力しない（完全に削除）\n" : ""}${templateLabel ? `【テンプレート名】${templateLabel}\n` : ""}${templateCategory ? `【テンプレートカテゴリ】${templateCategory}\n` : ""}【テンプレート原文（前処理済み）】
 ${preprocessedTemplate}
 ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件名・家賃・オススメポイントはここから最優先で読む）】\n${pendingSection}\n` : ""}${learnedRulesSection ? `\n${learnedRulesSection}\n` : ""}
@@ -4001,7 +4204,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
-      tpoGuidanceNote
+      tpoGuidanceNote,
+      phaseGuideKey, isConditionPresented
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -4290,8 +4494,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   first_reply: "初回対応（挨拶・条件ヒアリング開始）",
                   hearing: "条件ヒアリング中",
                   proposing: "物件提案・案内中",
+                  viewing: "内覧調整・内覧後フォロー中",
                   applying: "申込準備中",
                   closed_won: "成約済み",
+                  closed_lost: "失注後の再接触",
                 };
                 // ng_properties: brainGuidanceNote IIFE内の ngProps と同一ロジック（IIFE外から再導出）
                 // brainFreshForMessage ゲートは IIFE側と揃える（stale時は古いリストで「安全」誤認を防ぐ）
@@ -4343,12 +4549,19 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   checkpointFacts: groundTruth.checkpointFacts,
                   customerConditionsDb: groundTruth.customerConditionsDb,
                   isAutoSend: enforceReplyModeGate,   // HIGH-1/2: 自動送信経路のみ true
-                  isEarlyConversation: isFirstEverReplyFromMsgs, // 初回返信はFABRICATED系をwarning格下げ
+                  // S-4: 生成側 shouldPrependGreeting（初回挨拶強制）と同値。開口語チェック／INTRO_REPEAT の初回免除に使う
+                  isEarlyConversation: isFirstEverReplyFromMsgs,
                   isAix: true,                        // generate-reply はAIX機能そのもの
-                  conversationStage: STAGE_JP[currentState] ?? currentState, // MEDIUM-2
+                  // S-2: 段階ラベルは phaseGuideKey 基準（TPO・PHASE_GUIDE・final-check で同一キー）
+                  conversationStage: STAGE_JP[phaseGuideKey] ?? currentState, // MEDIUM-2
+                  phaseKey: phaseGuideKey,
+                  // S-5: 顧客名の一貫性チェック（checkNameConsistency）用
+                  customerName: customerName || undefined,
+                  allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
                   brainMeta: brainMeta
                     ? {
-                        action: (brainMeta.action ?? null) as string | null,
+                        // S-3: チェック側にも鮮度ゲート済み action を渡す（stale action で STAGE_SKIP 抑制・Brain判定済み免除が効かないように）
+                        action: effectiveAction,
                         enforcement_level: (brainMeta.enforcement_level ?? "recommended") as "required" | "recommended",
                         engagement_stance: (brainMeta.engagement_stance ?? null) as "push" | "wait" | null,
                       }
@@ -4441,13 +4654,44 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (nameFixes.length > 0) {
                   console.warn("[generate-reply] 最終チェック後の顧客名修正:", nameFixes);
                   draftBody = nameFixed;
-                  finalCheck.issues = finalCheck.issues.filter((i) => i.code !== "FABRICATED_NAME");
+                  // S-5(f): FABRICATED_NAME の一括削除は、実際に置換した名前（nameFixes の evidence）を含む指摘のみに限定
+                  const fixedNames = nameFixes.map((f) => (f.match(/「([^」]+)さん」/)?.[1] ?? "")).filter(Boolean);
+                  finalCheck.issues = finalCheck.issues.filter((i) => !(i.code === "FABRICATED_NAME" && fixedNames.some((n) => i.evidence.includes(n))));
                   finalCheck.ok = !finalCheck.issues.some((i) => i.severity === "block");
                 }
               } catch (checkErr) {
-                console.error("[generate-reply] final-check失敗（fail-open・チェックなしで続行）:", checkErr);
+                // A-2: final-check の例外時も決定論チェック（純関数・LLM不要）だけは必ず実行する（fail-open with deterministic）
+                console.error("[generate-reply] final-check失敗（fail-open・決定論チェックのみで続行）:", checkErr);
                 console.log(JSON.stringify({tag:"degradation:fail-open",path:"exception",conversationId,error:String(checkErr).slice(0,300)}));
-                finalCheck = null;
+                try {
+                  const detCtx = {
+                    recentMessages, lastCustomerMessage: message, isAutoSend: enforceReplyModeGate,
+                    isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
+                    phaseKey: phaseGuideKey, customerName: customerName || undefined,
+                    allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
+                    sentPropertiesCount: recentMessages.filter((m) => m.sender === "staff" && /【画像】|お送りさせて頂きました|お送りいたしました|お送りしました|ご査収/.test(m.text ?? "")).length,
+                  };
+                  const nameRes = enforceCustomerName(draftBody, { customerName, lineDisplayName });
+                  draftBody = nameRes.cleaned;
+                  const det = runDeterministicChecks(draftBody, detCtx);
+                  const degraded: CheckResult = {
+                    ok: !det.some((i) => i.severity === "block"),
+                    issues: det,
+                    passes_completed: [],
+                    elapsed_ms: 0,
+                    checked_text_hash: await sha1(draftBody.trim()),
+                    revision_count: 0,
+                    regen_count: 0,
+                  };
+                  if (enforceReplyModeGate) {
+                    degraded.issues.push({ pass: "rule_check", severity: "block", code: "UNCHECKED_AUTO_SEND", message: "LLMチェック未完了のため自動送信不可", evidence: "", suggestion: "手動確認" });
+                    degraded.ok = false;
+                  }
+                  finalCheck = degraded;
+                } catch (detErr) {
+                  console.error("[generate-reply] 決定論チェックも失敗（チェックなしで続行）:", detErr);
+                  finalCheck = null;
+                }
               }
             }
             // ─── 優先度1(抜け穴対策): AIX切替検出 ─────────────────────────────
@@ -4485,34 +4729,41 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 draftBody = deduped;
               }
             }
-            // 顧客名不一致・二重生成検出（「itさん」「it_0さん」等の異なる名前が混在する個人情報混入リスク）
-            // 9.6%（48件）で発生していた最重要品質問題への機械的最終防衛線
-            if (!isTemplateOptimize && draftBody) {
-              const nameMatches = [...draftBody.matchAll(/([^\s「」。！\n]{1,8})さん/g)];
-              const uniqueNames = new Set(nameMatches.map(m => m[1]).filter(n => n.length >= 1));
-              if (uniqueNames.size >= 2) {
-                const nameList = [...uniqueNames].join(" / ");
-                console.warn("[generate-reply] 顧客名不一致検出:", nameList);
-                if (finalCheck) {
-                  finalCheck.issues = finalCheck.issues ?? [];
-                  finalCheck.issues.push({
-                    pass: "rule_check",
-                    severity: "block",
-                    code: "NAME_MISMATCH",
-                    message: `返信内に複数の顧客名（${nameList}）が混在しています。個人情報混入リスク。正しい名前に統一してください`,
-                    evidence: nameList,
-                    suggestion: "正しい顧客名1種類に統一し、重複文を削除してください",
-                  } as CheckIssue);
-                  finalCheck.ok = false;
-                }
+            // S-5(e): 旧・貪欲正規表現による NAME_MISMATCH ブロック（「私の方でも竹田さん」を別名扱いして block）は廃止。
+            //         名前チェックは checkNameConsistency（final-check runDeterministicChecks 内）が初回・recheck・後処理後に同一条件で走る
+            // A-14 / §5: システムマーカー（<<<FINAL_CHECK 等）が本文に混入した場合は最終防衛線として除去
+            if (!isTemplateOptimize && draftBody && /<<<(?:FINAL|SUGGESTED|STOP)/.test(draftBody)) {
+              console.warn("[generate-reply] 本文にシステムマーカー混入 → 除去");
+              draftBody = draftBody.replace(/\n?<<<(?:FINAL|SUGGESTED|STOP)[\s\S]*$/, "").trim();
+            }
+            // AIが返信全体を「」で囲む場合がある → 先頭「末尾」ペアを除去（後処理再検査より前に行う）
+            if (!isTemplateOptimize && draftBody.startsWith("「") && draftBody.endsWith("」")) {
+              draftBody = draftBody.slice(1, -1).trim();
+            }
+            // A-3（H-3/H-4）: 後処理（enforceCustomerName・絵文字重複除去・「」除去・マーカー除去）で本文が変わった後に
+            //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
+            if (!isTemplateOptimize && finalCheck && draftBody) {
+              try {
+                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET)/;
+                const postDetCtx = {
+                  recentMessages, lastCustomerMessage: message, isAutoSend: enforceReplyModeGate,
+                  isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
+                  phaseKey: phaseGuideKey, customerName: customerName || undefined,
+                  allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
+                  sentPropertiesCount: recentMessages.filter((m) => m.sender === "staff" && /【画像】|お送りさせて頂きました|お送りいたしました|お送りしました|ご査収/.test(m.text ?? "")).length,
+                  ngProperties: brainFreshForMessage
+                    ? (brainMeta?.property_search_params?.ng_properties ?? []).filter((p) => p?.property_name).map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)
+                    : undefined,
+                };
+                const postDet = runDeterministicChecks(draftBody, postDetCtx);
+                finalCheck.issues = [...finalCheck.issues.filter((i) => !DET_CODES_RE.test(i.code)), ...postDet];
+                finalCheck.ok = !finalCheck.issues.some((i) => i.severity === "block");
+              } catch (postErr) {
+                console.warn("[generate-reply] 後処理後の決定論再検査に失敗（元の結果を維持）:", postErr);
               }
             }
             // f-8: センシティブ検知時は警告メタを冒頭に付与（空生成時は付与しない・テンプレ最適化は sensitiveGateNote="" ）
             finalDraftText = draftBody && sensitiveGateNote ? sensitiveGateNote + draftBody : draftBody;
-            // AIが返信全体を「」で囲む場合がある → センシティブ警告なし時のみ先頭「末尾」ペアを除去
-            if (!sensitiveGateNote && finalDraftText.startsWith("「") && finalDraftText.endsWith("」")) {
-              finalDraftText = finalDraftText.slice(1, -1).trim();
-            }
             // 送信時の再利用判定キー: スタッフのテキストエリアに入る最終形（trim後）のハッシュに更新する
             // （自動修正・センシティブ警告付与でチェック時テキストと変わるため必ず上書き）
             if (finalCheck) finalCheck.checked_text_hash = await sha1(finalDraftText.trim());
@@ -4692,6 +4943,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   .update({ ai_draft_check: { ...finalCheck, tpo_debug: {
                     tpo_label: tpoNoteForLLM ?? null,
                     tier: tierResult.tier,
+                    // S-2 / S-3（2026-09-08）: 状態解決・鮮度ゲートの監査用
+                    phaseGuideKey, rawState: resolvedState.raw, stateKnown: resolvedState.known,
+                    rawAction, effectiveAction, isCachedMeta,
                     isConditionPresented, isNegativeContext, isThinkingMsg, isTemporaryLeaveMsg, isGratitudeReplyTPO, isPostStrongRecommendation,
                     // A-2（2026-09-08 監査）: 発動率の内訳監査用
                     conditionReason: conditionDetail.reason,

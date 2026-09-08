@@ -300,6 +300,8 @@ export async function POST(req: NextRequest) {
 
   // ── ここから重い処理は after() でバックグラウンド実行（Realtimeで通知） ──
   after(async () => {
+    // A-9（2026-09-08）: バースト再実行の残予算判定用（maxDuration=300s）
+    const bgStartedAt = Date.now();
     try {
       // ── バーストメッセージ対策（LINEからの直接トリガー時のみ）────────────────
       // LINEバースト送信（複数メッセージの短時間連続送信）では、2通目以降が
@@ -404,6 +406,27 @@ export async function POST(req: NextRequest) {
               console.log("[bg-async] brain後DB再取得: 追加メッセージ検出 convId:", convId,
                 "元:", JSON.stringify(targetMessage.slice(0, 80)),
                 "最新:", JSON.stringify(latestTarget.slice(0, 80)));
+              // A-9: brain は元 targetMessage を見て message-local フィールド（action/reply_direction/key_topics 等）を
+              //      書いているため、2通目到着後にそのまま渡すと「前メッセージ向けの誤誘導」になる。
+              //      残予算が十分（generate-reply 180s + 再brain 45s を 300s 内に収める）なら brain を1回だけ再実行し、
+              //      再実行できない／失敗した場合は brainGateDirect を渡さず generate-reply 側の DB フェッチ＋鮮度判定（T2）に委ねる
+              const elapsedMs = Date.now() - bgStartedAt;
+              if (brainGateDirect && elapsedMs < 75_000) {
+                try {
+                  const rerun = await Promise.race([
+                    runBrainAndNotify(convId, latestTarget),
+                    new Promise<null>((resolve) => setTimeout(() => resolve(null), 45_000)),
+                  ]);
+                  console.log("[bg-async] burst brain rerun:", convId, rerun ? "fresh" : "null(T2 fallback)", "elapsedMs:", elapsedMs);
+                  brainGateDirect = rerun;
+                } catch (rerunErr) {
+                  console.warn("[bg-async] burst brain rerun failed（brainMetaDirect を渡さず T2 に委ねる）:", convId, String(rerunErr));
+                  brainGateDirect = null;
+                }
+              } else if (brainGateDirect) {
+                console.log("[bg-async] burst detected but budget exhausted → brainMetaDirect を渡さず T2 に委ねる:", convId, "elapsedMs:", elapsedMs);
+                brainGateDirect = null;
+              }
             }
             effectiveTargetMessage = latestTarget;
             effectiveRecentMsgs = latestList;
@@ -615,6 +638,8 @@ export async function POST(req: NextRequest) {
             conversationId: convId,
             // reply_modeゲート有効化（brain判定がaixなら自動ドラフトを生成しない）
             enforceReplyModeGate: true,
+            // S-4: 初回判定を履歴窓（20件）ではなく全履歴の事実で渡す（初回挨拶の強制／免除を生成・検査で一致させる）
+            hasStaffReplied: hasAnyStaffMsg,
             // brain直列実行の結果を直接渡す（generate-reply側のDBフェッチをスキップ）。
             // 直前に自分で書いた値なので鮮度保証あり。null時は渡さず従来のDBフェッチに任せる
             ...(brainGateDirect ? { brainMetaDirect: brainGateDirect } : {}),

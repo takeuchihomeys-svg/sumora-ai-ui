@@ -14,6 +14,9 @@
 // - generate-reply/route.ts …… runFinalCheckWithRevision（チェック+接地修正ループ。最大2チェック）
 // - check-reply/route.ts    …… 送信時（スタッフ編集後）の再チェック。自動修正なし（runFinalCheckのみ）
 
+import { checkNameConsistency } from "./validate-reply";
+import { PHASE_PROHIBITIONS } from "./line-reply-prompts";
+
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
 
@@ -69,6 +72,13 @@ export interface FinalCheckContext {
   clearedFacts?: string[];
   /** brainMeta.property_search_params.ng_properties から派生したNG確定物件名リスト（"物件名 [号室]" 形式）。本文にこれらが含まれていたらblock */
   ngProperties?: string[];
+  // ── S-5 / S-2 / A-8（2026-09-08 Fable5）──
+  /** 確定顧客名（normalizeCustomerName 済み or 生値）。checkNameConsistency の基準名 */
+  customerName?: string;
+  /** 顧客自身が書いた第三者名（連名者・保証人等）。NAME_MISMATCH から除外する */
+  allowNames?: string[];
+  /** generate-reply の resolveState().guideKey（first_reply/hearing/proposing/viewing/applying/closed_won/closed_lost）。STATE_REGRESSION 判定に使用 */
+  phaseKey?: string;
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -810,6 +820,12 @@ function assignSeverity(pass: CheckPass, code: string, isAutoSend = false, isEar
   if (pass === "anomaly_scan" && (code === "FABRICATED_AMOUNT" || code === "FABRICATED_AVAILABILITY")) return "block";
   if (code === "FABRICATED_PROPERTY" || code === "FABRICATED_DATE") return "block";
   if (code === "NG_PROPERTY_MENTION" || code === "INTRO_REPEAT") return "block"; // プロンプトで block と指示していたが分岐が無く常に warning だった
+  // 2026-09-08 §5: 決定論由来の block 級コード（LLM が recheck で同名を返した場合も block を維持）
+  if (
+    code === "STATE_REGRESSION" || code === "SYSTEM_MARKER_LEAK" || code === "NAME_PLACEHOLDER" ||
+    code === "NAME_FULLNAME_LEAK" || code === "VIEWING_BEFORE_VACANCY" || code === "FABRICATED_POLICY_DET" ||
+    code === "NEGATIVE_APOLOGY"
+  ) return "block";
   if (isAutoSend && pass === "context_check" && code === "MISSED_QUESTION") return "block";
   // FN-006: context_check の TIME_INVALID は自動送信のみ block、スタッフ確認経路は warning
   if (pass === "context_check" && code === "TIME_INVALID") {
@@ -840,21 +856,40 @@ const BANNED_WORDS_DETERMINISTIC = [
   "拝見させて頂", "拝見させていただ",                   // 二重謙譲
   "お伺いさせて頂", "お伺いさせていただ",
   "ご覧になられ",
-  "審査させて頂き", "審査させていただき", "審査を進めさせて", // 審査主体は管理会社
+  "審査させて頂き", "審査させていただき",                // 審査主体は管理会社（「審査を進めさせて」は BANNED_PATTERNS で warning 運用）
   "契約させて頂き", "契約させていただき",
   "のご案内をしております", "番手確認", "物確",          // 管理会社向け文体の混入
   "御見積もりをお願いできます", "お見積もりをお願いできます",
+  // 2026-09-08 §5: プレースホルダ・システムマーカー・形式的了解句・誤用語彙・命令形の申込催促・撮影主語逆転
+  "〇〇", "○○", "アカウント名", "<<<", ">>>", "[REPLY]", "【AIX-META",
+  "承りました", "ご確認のほど", "確認中です", "確認して参ります",
+  "TikTok映え", "インスタ映え", "共益費込", "緊急連絡先設定可", "緊急連絡先可",
+  "申し込んでください", "急いでください", "他のお客様も見て", "申し込まないと",
+  "撮影して頂け", "撮影していただけ", "ご撮影",
 ];
 
 // ─── 決定論チェック群（runFinalCheck / runDiffRecheck の両方で実行。LLM不要・約0ms）─────────
 // 2026-09-08: 修正版に対する再検査欠落（THANK_OPENING等が recheck で見られない）と
 // WE_DO_MISSING の LLM 依存（直近2ヶ月で発行0件）を解消するため共通関数化。
-const WAIT_TPO_RE = /一時保留|感謝返し|短い了承|強推し直後|ネガ文脈|検討中フォロー|内覧キャンセル/;
+const WAIT_TPO_RE = /一時保留|感謝返し|短い了承|強推し直後|ネガ文脈|検討中フォロー|内覧キャンセル|成約後サポート/;
 const BOILERPLATE_RE = /かしこまりました|はい|お世話になっております|お待たせ致しました|お待たせいたしました|よろしくお願い|宜しくお願い|何卒|全力でサポート|お気軽に[^。！!\n]{0,12}(ください|下さい)|ご満足(頂|いただ)け[^。！!\n]{0,20}|またご連絡|ご連絡お待ち|お待ちしております|引き続き|ありがとうございます|こちらこそ/g;
-const ACTION_DECL_RE = /(ピックアップ|お送り|送付|お調べ|お探し|探し|確認|ご案内|案内|作成|お作り|交渉|手配|お伝え|お申込み|申込|抑え|押さえ|お取り|取り寄せ|お渡し|ご用意|ご提案|提案)[^\n。！!]{0,30}(させて(?:頂|いただ)き|いたし|致し|し)ます/;
-const CUSTOMER_REQUEST_RE = /[?？]|お願い|希望|したい|ですか|ますか|でしょうか|教えて|ください|もらえ|いただけ|頂け|条件|家賃|エリア|間取り|[0-9０-９]+万/;
+// A-11: 行動動詞に説明・対応・相談・調整・紹介・割引・進め・撮影・ご連絡・お聞き・伺 を追加（「ご説明させて頂きます」等が WE DO と認識されなかった）
+const ACTION_DECL_RE = /(ピックアップ|お送り|送付|お調べ|お探し|探し|確認|ご案内|案内|作成|お作り|交渉|手配|お伝え|お申込み|申込|抑え|押さえ|お取り|取り寄せ|お渡し|ご用意|ご提案|提案|ご説明|説明|対応|ご相談|相談|調整|お届け|ご紹介|紹介|割引|進め|撮影|ご連絡|お聞き|伺)[^\n。！!]{0,30}(させて(?:頂|いただ)き|いたし|致し|し)ます/;
+// A-11: 裸の「お願い」が「よろしくお願いします」に一致していた（短い了承が GENERIC_ONLY_REPLY block になる）。依頼形のみに限定＋暗黙条件語を追加
+const CUSTOMER_REQUEST_RE = /[?？]|お願い(?!(?:いた|致|し)ます|いたします|します)|お願いでき|お願いしたい|希望|したい|ですか|ますか|でしょうか|教えて|ください|もらえ|いただけ|頂け|条件|家賃|エリア|間取り|[0-9０-９]+万|狭い|広い|広め|欲しい|ほしい|必要|がいい|以上|以内|階/;
+// 純粋な了承・感謝・締め挨拶のみのメッセージ（25字以内）。tpo 空でも WE DO を免除する
+const PURE_ACK_RE = /^(?:ありがとう|有難う|よろしく|宜しく|お願い|了解|わかりました|分かりました|承知|こちらこそ|はい|OK|ok|オッケー|助かります|お世話|失礼|楽しみ|ございます|いたします|します|です|[\s！!。、〜ー😊😌🙇🙏✨🌟🏻♀♂‍️]|m\(_ _\)m)+$/u;
+// 説明・回答形の文末（質問への直接回答が1文以上あれば WE_DO 欠落を info に格下げ）
+const EXPLANATORY_RE = /(?:となります|でございます|御座います|ございます|可能です|大丈夫です|問題ございません|かかります|発生(?:し|いた)します)[！!。]/g;
+const ALLOWED_EMOJI = new Set(["😊", "😌", "🌟", "✨"]);
+// 顧客の申込意思（申込宣言の前提。V14 の CUSTOMER_APPLY_INTENT_RE より厳密）
+const CUSTOMER_APPLY_DECL_RE = /申(?:し)?込(?:み)?(?:たい|します|お願い|で(?:お願い|進め)|させて)|押さえ(?:て|たい)|抑え(?:て|たい)|決め(?:ます|たい|ました)|契約(?:したい|します)/;
+// S-4: 生成側 isFirstEverReplyFromMsgs と同一のメディアのみ判定（画像・動画・スタンプのみのスタッフ送信は「返信済み」に数えない）
+const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/;
+// S-4: 初回挨拶ブロック（「〇〇さん、はじめまして😊！！…鈴木と申します！！\n\n」）を開口語判定の前に剥がす
+const GREETING_BLOCK_RE = /^(?:[^\n]{0,12}(?:さん|様)[、,\s]*)?(?:はじめまして|初めまして|この度はご連絡|この度ご連絡|お部屋探しを担当|お部屋探しご担当)[^\n]*\n+/;
 
-function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+export function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const issues: CheckIssue[] = [];
   const tpo = ctx.tpoLabel ?? "";
 
@@ -866,11 +901,12 @@ function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssu
   }
 
   // ② 18時以降 or 土日の「本日中に」（顧客への依頼文「本日中にご返信頂けますと」は除外）
+  //   A-11: 依頼文で break していたため後続の同日約束語が検査されなかった → continue に修正
   for (const sameDayPhrase of ["本日中に", "今日中に", "今日のうちに", "本日のうちに"]) {
     const idx = text.indexOf(sameDayPhrase);
     if (idx === -1) continue;
     const after = text.slice(idx + sameDayPhrase.length, idx + sameDayPhrase.length + 20);
-    if (/頂けます|いただけます|ください|お願い/.test(after)) break;
+    if (/頂けます|いただけます|ください|お願い/.test(after)) continue;
     const jst = new Date(Date.now() + 9 * 3600 * 1000);
     const jstHour = jst.getUTCHours();
     const jstDay = jst.getUTCDay();
@@ -888,27 +924,38 @@ function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssu
     break;
   }
 
-  // ③ NG③違反: 「ありがとうございます」書き出し（名前行・絵文字を剥がしてから判定。感謝返しTPOは除外）
-  if (!/感謝返し|強推し直後/.test(tpo)) {
-    const stripped = text.trimStart()
-      .replace(/^[^\n]{0,12}(?:さん|様)[、,！!\s]*/, "")
+  // S-4: 初回返信（生成側が挨拶ブロックを強制挿入する）では開口語チェックを免除。
+  //      2回目以降は挨拶ブロック→名前行（「お客様」は名前ではない）→絵文字 の順に剥がしてから先頭を判定する
+  const isFirstReply = !!ctx.isEarlyConversation;
+  const openingHead = (() => {
+    const s = text.trimStart()
+      .replace(GREETING_BLOCK_RE, "")
+      .replace(/^(?![^\n]{0,12}お客様)[^\n]{0,12}(?:さん|様)[、,！!\s]*/, "")
       .replace(/^[\s！!、。😊😌🙇✨🌟]+/, "");
-    const head = stripped.slice(0, 30);
+    return s;
+  })();
+  // TPO 連動の開口語修正案（CONDITION_OPENING と矛盾する修正案を出さない）
+  const openingSuggestion = /条件提示|内覧キャンセル|顧客自身の断り/.test(tpo) ? "冒頭を「かしこまりました！！」に変更"
+    : /感謝|了承|保留|検討中|強推し/.test(tpo) ? "冒頭を「はい😊！！」に変更"
+    : "冒頭を「お世話になっております！！」に変更";
+
+  // ③ NG③違反: 「ありがとうございます」書き出し（名前行・絵文字を剥がしてから判定。感謝返しTPO・初回返信は除外）
+  if (!isFirstReply && !/感謝返し|強推し直後/.test(tpo)) {
+    const head = openingHead.slice(0, 30);
     const thankRe = /^(?:(?:ご(?:連絡|返信|回答|返答|確認|質問|要望)|お忙しい中|早速の?(?:ご)?返信|お写真)[^\n]{0,12}?)?(?:ありがとう|有難う|有り難う)(?:ございます|御座います)/;
     if (thankRe.test(head) && !/(頂き|いただき)/.test(head.slice(0, head.search(/ありがとう|有難う|有り難う/) + 1))) {
       issues.push({
         pass: "rule_check", severity: "warning", code: "THANK_OPENING",
         message: "返信が「ありがとうございます」で始まっています（NG③違反）。「お世話になっております！！」「お待たせ致しました！！」「はい😊！！」等から始めてください",
         evidence: text.trimStart().slice(0, 20),
-        suggestion: `冒頭を「お世話になっております！！」または「はい😊！！」に変更`,
+        suggestion: openingSuggestion,
       });
     }
   }
 
-  // ③' 開口語の決定論チェック（場面ラベルごとに開口語を1択に固定。修正版 recheck でも同一関数で走る）
-  {
-    const stripped = text.trimStart().replace(/^[^\n]{0,12}(?:さん|様)[、,！!\s]*/, "");
-    const head = stripped.slice(0, 12);
+  // ③' 開口語の決定論チェック（場面ラベルごとに開口語を1択に固定。修正版 recheck でも同一関数で走る。初回返信は免除）
+  if (!isFirstReply) {
+    const head = openingHead.slice(0, 12);
     if (/感謝返し|短い了承|強推し直後|一時保留|検討中フォロー/.test(tpo) && !/^はい/.test(head)) {
       issues.push({ pass: "rule_check", severity: "warning", code: "GRATITUDE_OPENING", message: "感謝・了承・保留の場面の開口語は「はい😊！！」一択です（「かしこまりました」「承知いたしました」「ありがとうございます」で始めない）", evidence: text.trimStart().slice(0, 20), suggestion: "冒頭を「はい😊！！」（単独行）に変更" });
     }
@@ -917,10 +964,15 @@ function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssu
     }
   }
 
-  // ④ 「！！」過剰（文字数比: 100字あたり2回超かつ5回以上。会社文体の4〜6回は対象外）
+  // ③'' S-5: 顧客名の一貫性（プレースホルダ／別名混在／フルネーム＋様／回数超過）— 初回・recheck・check-reply・後処理後で同一関数
+  for (const n of checkNameConsistency(text, ctx.customerName ?? "", { isAutoSend: ctx.isAutoSend, allowNames: ctx.allowNames })) {
+    issues.push({ pass: "rule_check", severity: n.severity, code: n.code, message: n.message, evidence: n.evidence, suggestion: n.suggestion });
+  }
+
+  // ④ 「！！」過剰（A-11: 5回以上は無条件 warning・7回以上かつ自動送信は block）
   const exclamCount = (text.match(/！！/g) ?? []).length;
-  if (exclamCount >= 5 && exclamCount > Math.ceil(text.length / 50)) {
-    issues.push({ pass: "rule_check", severity: "warning", code: "EXCLAMATION_OVERUSE", message: `「！！」が${exclamCount}回使用されています（${text.length}字に対して過剰）`, evidence: `「！！」×${exclamCount}回`, suggestion: "「！！」を「！」に変えるか文を短縮してください" });
+  if (exclamCount >= 5) {
+    issues.push({ pass: "rule_check", severity: exclamCount >= 7 && ctx.isAutoSend ? "block" : "warning", code: "EXCLAMATION_OVERUSE", message: `「！！」が${exclamCount}回使用されています（${text.length}字に対して過剰。上限3回）`, evidence: `「！！」×${exclamCount}回`, suggestion: "「！！」を「！」に変えるか文を短縮してください（「！！」は1返信3回以内）" });
   }
 
   // ⑤ NG確定物件の言及（決定論・block）
@@ -932,7 +984,10 @@ function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssu
   }
 
   // ⑥ 自己紹介の再生成（2回目以降の会話で「はじめまして」「〇〇と申します」）
-  const hasStaffHistory = (ctx.recentMessages ?? []).some((m) => m.sender === "staff");
+  //    S-4: route の isFirstEverReplyFromMsgs と同条件（メディアのみのスタッフ送信は履歴に数えない）＋初回免除
+  const hasStaffHistory = !isFirstReply && (ctx.recentMessages ?? []).some(
+    (m) => m.sender === "staff" && !!(m.text || "").trim() && !MEDIA_ONLY_RE.test(m.text || ""),
+  );
   if (hasStaffHistory) {
     const m = text.match(/はじめまして|担当(?:させて頂き|させていただき|いたし|致し)ます[^。\n]{1,10}と申します|と申します/);
     if (m) {
@@ -941,19 +996,24 @@ function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssu
   }
 
   // ⑦ 具体アクション欠落（WE_DO_MISSING_DET）／汎用のみ返信（GENERIC_ONLY_REPLY）
-  //   定型句を除去した残りに「行動動詞＋宣言語尾」が1文も無ければ発行。待ち系TPOは除外
-  if (!WAIT_TPO_RE.test(tpo)) {
+  //   定型句を除去した残りに「行動動詞＋宣言語尾」が1文も無ければ発行。待ち系TPOは除外。
+  //   A-11: tpo が空でも純粋な了承文（25字以内）への返信は免除／説明文が1文以上あれば info に格下げ／GENERIC は残量<25字で判定
+  const cust = ctx.lastCustomerMessage ?? "";
+  const custIsPureAck = cust.trim().length > 0 && cust.trim().length <= 25 && PURE_ACK_RE.test(cust.trim());
+  if (!WAIT_TPO_RE.test(tpo) && !(tpo === "" && custIsPureAck)) {
     const residue = text.replace(BOILERPLATE_RE, "");
     const hasActionDecl = ACTION_DECL_RE.test(residue);
-    const customerAsked = CUSTOMER_REQUEST_RE.test(ctx.lastCustomerMessage ?? "");
+    const customerAsked = CUSTOMER_REQUEST_RE.test(cust);
     if (!hasActionDecl) {
-      const isGenericOnly = customerAsked && text.replace(/\s/g, "").length < 40;
+      const residueLen = residue.replace(/[\s！!。、😊😌🌟✨]/g, "").length;
+      const isGenericOnly = customerAsked && residueLen < 25;
+      const hasExplanation = customerAsked && (text.match(EXPLANATORY_RE) ?? []).length >= 1;
       issues.push({
         pass: "context_check",
-        severity: ctx.isAutoSend || isGenericOnly ? "block" : "warning",
+        severity: hasExplanation ? "info" : (ctx.isAutoSend || isGenericOnly ? "block" : "warning"),
         code: isGenericOnly ? "GENERIC_ONLY_REPLY" : "WE_DO_MISSING_DET",
         message: isGenericOnly
-          ? "顧客が質問・条件・依頼をしているのに40字未満の受諾文のみです"
+          ? "顧客が質問・条件・依頼をしているのに定型句以外の中身が25字未満です"
           : "具体的な行動宣言（ピックアップ/確認/交渉/お送り/ご案内 等＋対象）が1文もありません",
         evidence: text.trim().slice(0, 30),
         suggestion: "顧客メッセージの固有名詞（エリア・物件名・条件・日付）を復唱し「○○をピックアップしてお送りさせて頂きます」等の具体アクション＋期限を1文入れてください",
@@ -964,6 +1024,89 @@ function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssu
   // ⑧ 語彙セマンティクス（主語・方向・前提の履歴照合）— 初回・recheck の両方で走る
   issues.push(...runVocabSemanticChecks(text, ctx));
 
+  // ⑨ §5 追加チェック（文脈付き禁止パターン・マーカー漏れ・絵文字・約束復唱・見積文脈外・退去前内覧・申込意思・時制・確定後再質問・フェーズ禁止）
+  issues.push(...runDeterministicExtras(text, ctx));
+
+  return issues;
+}
+
+// ─── §5 追加決定論チェック（2026-09-08 Fable5）────────────────────────────────────────
+type BannedPattern = { re: RegExp; code: string; msg: string; sug: string; onlyTpo?: RegExp; histRe?: RegExp; blockAlways?: boolean };
+const BANNED_PATTERNS: BannedPattern[] = [
+  { re: /コスパ/, code: "BANNED_WORD", msg: "「コスパ」表現は禁止", sug: "「好条件」「お値打ちな条件」に変更" },
+  { re: /仲介手数料[^\n。]{0,8}割引/, code: "FABRICATED_POLICY_DET", msg: "仲介手数料は固定（割引不可）", sug: "「初期費用を最大限割引」に変更", blockAlways: true },
+  { re: /即入居可能/, code: "BANNED_WORD", msg: "「即入居可能」は資料明記時のみ", sug: "削除" },
+  { re: /(?:すぐに|今すぐ)(?:お送り|ご連絡|お知らせ|ピックアップ|ご案内|お調べ|確認|動)/, code: "HASTY_PROMISE", msg: "「すぐに／今すぐ」の過度な約束", sug: "「出来次第」に変更" },
+  { re: /少々お時間(?:頂|いただ|頂戴)/, code: "BANNED_WORD", msg: "曖昧な時間表現", sug: "「明日一番に〜させて頂きます」等の具体タイミングに変更" },
+  { re: /(?:とのことですね|をご希望ですね)/, code: "ECHO_CONFIRM", msg: "オウム返しの単体確認文", sug: "条件は行動宣言の修飾として埋め込む" },
+  { re: /まず[^\n。]{0,20}次に/, code: "LIST_STRUCTURE", msg: "「まず〜次に〜」の列挙構成", sug: "行動宣言1文に統合" },
+  { re: /ご(?:入居|検討|内覧|確認|来店|来社|契約|利用|移転)され(?:る|ます|た|て)/, code: "DOUBLE_KEIGO", msg: "二重敬語「ご〜される」", sug: "「ご入居の場合」「ご検討のタイミング」等に変更" },
+  { re: /^[^\n]{1,12}さん[、,\s]*(?:はい|かしこまりました)/m, code: "NAME_BEFORE_OPENING", msg: "開口語の前に名前を置かない（「〇〇さんはい！！」は禁止）", sug: "「はい😊！！」単独行で始める" },
+  { re: /審査を進めさせて/, code: "BANNED_WORD", msg: "審査の主体は管理会社（「審査を進め」はスタッフ常用句だが要確認）", sug: "「お申込み手続きを進めさせて頂きます」に変更" },
+  { re: /申し訳(?:ございません|ありません|御座いません)|ご迷惑(?:を)?おかけ|残念ながら|大変恐縮ですが/, code: "NEGATIVE_APOLOGY", msg: "ネガ文脈（否決・募集終了・断り）での謝罪・ネガ語は禁止", sug: "「〇〇さんご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます」等のサポート継続宣言に変更", onlyTpo: /ネガ文脈|内覧キャンセル|顧客自身の断り/, histRe: /否決|審査(?:落ち|に通らな|の結果)|募集(?:終了|停止)|埋まって|他社で決め|キャンセル/, blockAlways: true },
+];
+
+function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  const tpo = ctx.tpoLabel ?? "";
+  const cust = ctx.lastCustomerMessage ?? "";
+  const staffHist = lastStaffTexts(ctx, 6);
+  const custHist = lastCustomerTexts(ctx, 4);
+  const allHist = `${staffHist}\n${custHist}\n${cust}`;
+  const sevAuto = (): CheckSeverity => (ctx.isAutoSend ? "block" : "warning");
+  const push = (pass: CheckPass, severity: CheckSeverity, code: string, message: string, evidence: string, suggestion: string) =>
+    issues.push({ pass, severity, code, message, evidence, suggestion });
+
+  // E1 文脈付き禁止パターン（NEGATIVE_APOLOGY は onlyTpo でネガ文脈限定 → 不安対応の1文謝罪と競合しない）
+  for (const p of BANNED_PATTERNS) {
+    if (p.onlyTpo && !p.onlyTpo.test(tpo) && !(p.histRe && p.histRe.test(allHist))) continue;
+    const m = text.match(p.re);
+    if (m) push("rule_check", p.blockAlways ? "block" : sevAuto(), p.code, p.msg, m[0], p.sug);
+  }
+  // E2 システムマーカー漏れ・「」不均衡
+  const marker = text.match(/<<<[^\n]{0,20}|>>>|\[AIX誘導中\]|__SHOWN__|\{\s*"[a-z_]+"\s*:/);
+  if (marker) push("rule_check", "block", "SYSTEM_MARKER_LEAK", "システム用マーカー・JSONが本文に混入しています", marker[0], "マーカー以降を削除");
+  if ((text.match(/「/g) ?? []).length !== (text.match(/」/g) ?? []).length)
+    push("rule_check", "warning", "QUOTE_UNBALANCED", "「」の対応が取れていません（返信全体を括った名残）", text.slice(0, 20), "不要な「」を削除");
+  // E3 絵文字ルール（😊😌🌟✨のみ・合計2個以内・同一絵文字1回）
+  const emojis = (text.match(/\p{Extended_Pictographic}/gu) ?? []).filter((e) => !/[！!？?©®™]/.test(e));
+  const disallowed = emojis.filter((e) => !ALLOWED_EMOJI.has(e));
+  if (emojis.length > 2 || disallowed.length > 0 || new Set(emojis).size !== emojis.length)
+    push("rule_check", "warning", "EMOJI_RULE_DET", `絵文字が${emojis.length}個（許可外: ${disallowed.join("") || "なし"}／重複: ${new Set(emojis).size !== emojis.length ? "あり" : "なし"}）`, emojis.join(""), "😊😌🌟✨のみ・合計2個以内・同一絵文字は1回");
+  // E4 短い了承なのに直前約束の復唱 WE DO が無い（WAIT 免除とは独立に評価）
+  if (/短い了承/.test(tpo) && !ACTION_DECL_RE.test(text.replace(BOILERPLATE_RE, "")))
+    push("context_check", sevAuto(), "PROMISE_ECHO_MISSING", "短い了承の場面ですが直前スタッフ約束の復唱WE DO文がありません", text.trim().slice(0, 30), "「〇〇ピックアップ出来次第お送りさせて頂きます」等、直前約束を1文復唱する");
+  // E5 見積書の文脈外持ち出し
+  if (/見積/.test(text) && !/費用|見積|総額|いくら|初期|金額|お金|安く|高い|割引|お支払|予算/.test(allHist) && !/費用説明|申込/.test(tpo))
+    push("context_check", sevAuto(), "ESTIMATE_NO_TRIGGER", "費用・見積の依頼が会話に無いのに御見積書の作成・送付を宣言しています", firstSentenceAround(text, /見積/), "ピックアップ宣言に置き換える");
+  // E6 退去予定・入居中物件への内覧誘導
+  if (/退去予定|[0-9０-９]{1,2}月退去|退去後|入居中|退去前/.test(allHist) &&
+      /(?:ご都合よろしい|今週末|いつでも)[^\n。]{0,15}ご案内|内覧(?:でき|出来|可能)(?!ません|ない|次第)/.test(text) &&
+      !/以降(?:に|は)?(?:ご案内|ご内覧)|退去後(?:に)?ご案内|先に(?:抑|押さ)え/.test(text))
+    push("context_check", "block", "VIEWING_BEFORE_VACANCY", "退去予定・入居中物件に対して現時点での内覧誘導をしています", firstSentenceAround(text, /ご案内|内覧/), "「[退去予定日]以降にご案内可能」または「お申込みで先に押さえてからご内覧」に変更");
+  // E7 意思確認前の申込宣言／申込後の内覧・写真提案
+  if (/お申込(?:み)?(?:を)?(?:入れ|させて(?:頂|いただ)き|いたし)ま/.test(text) && !CUSTOMER_APPLY_DECL_RE.test(`${custHist}\n${cust}`) && !/申込/.test(tpo))
+    push("context_check", sevAuto(), "APPLY_WITHOUT_INTENT", "お客様の申込意思が履歴に無いのに申込を入れる宣言をしています", firstSentenceAround(text, /お申込/), "「お気に召されましたらお申込みでお部屋押さえさせて頂きます」の条件付き提案に変更");
+  if (/申込後説明|申込打診/.test(tpo) && /(?:内覧|ご案内)(?:を)?(?:お勧め|オススメ|いかが)|物件(?:の)?写真(?:を)?お送り/.test(text))
+    push("context_check", "warning", "POST_APPLY_VIEWING", "申込フェーズで内覧・物件写真の提案をしています", firstSentenceAround(text, /内覧|ご案内|写真/), "審査・書類・見積の案内に置き換える");
+  // E8 時制ミス／感想先取り
+  if (/(?:拝見|確認|見て)(?:します|させて(?:頂|いただ)きます|みます|おきます)/.test(cust) && /ご覧(?:頂|いただ)きありがとう|ご確認(?:頂|いただ)きありがとう/.test(text))
+    push("context_check", sevAuto(), "TENSE_MISMATCH", "お客様はこれから見る（未来形）のに見終わった扱いにしています", firstSentenceAround(text, /ご覧|ご確認/), "「お手隙の際にご査収ください」に変更");
+  if (/気になるお部屋(?:は)?(?:ございました|ありました)|いかがでしたか|ご感想/.test(text) && !/見ました|拝見しました|確認しました|見てきました|内覧(?:しました|してきました)|気に入|良さそう|いいですね|微妙|狭い|遠い|どうでした/.test(cust))
+    push("context_check", sevAuto(), "FEEDBACK_PREMATURE", "お客様がまだ見ていない・反応していない段階で感想を聞いています", firstSentenceAround(text, /気になる|いかが|ご感想/), "感想確認を削除しWE DO継続宣言に変更");
+  // E9 スタッフが確定日時を提示済みの後の「ご都合よろしいお日にち」再質問
+  if (GOCHOUGO_RE.test(text) && /[0-9０-９]{1,2}[\/／月][0-9０-９]{1,2}[^\n]{0,14}(?:ご案内|お待ち|でお願い|確定|決定)|(?:ご案内|内覧)(?:日|の日程)(?:は|が)?[^\n]{0,8}(?:確定|決ま)/.test(lastStaffTexts(ctx, 2)))
+    push("context_check", sevAuto(), "GOCHOUGO_AFTER_FIXED", "内覧日時が確定済みなのに再度「ご都合よろしいお日にち」を尋ねています", firstSentenceAround(text, GOCHOUGO_RE), "確定日時をそのまま書く");
+  // E10 フェーズ別禁止事項（生成側 PHASE_PROHIBITIONS と同一定義 — A-8）
+  const def = ctx.phaseKey ? PHASE_PROHIBITIONS[ctx.phaseKey as keyof typeof PHASE_PROHIBITIONS] : undefined;
+  if (def) {
+    for (const b of def.bans) {
+      const m = text.match(b.re);
+      if (!m) continue;
+      if (b.allowIfCustomerAsked && /他(の|にも)?(物件|お部屋)|別の(物件|お部屋)|申(し)?込(み)?(たい|します|お願い)|内覧(したい|お願い)|見てみたい/.test(cust)) continue;
+      push("rule_check", b.severity === "block" ? "block" : sevAuto(), "STATE_REGRESSION", `【${def.label}】${b.why}: 「${m[0]}」`, m[0], b.fix);
+    }
+  }
   return issues;
 }
 
@@ -983,7 +1126,8 @@ const CUSTOMER_CONFIRM_RE = /確認(?:します|しておきます|して(?:み�
 const CONFIRM_NEXT_RE = /確認(?:でき|出来|し)次第/;
 const CONFIRM_OBJECT_RE = /募集状況|空室|空き|内覧可能|内見可能|割引|番手|管理会社|貸主|オーナー|入居可能|退去|審査|暗証番号|条件|可否|(?:について|の件|を)確認/;
 const PHOTO_RE = /撮影/;
-const PHOTO_PREMISE_RE = /撮影|写真|動画|オンライン内見|オンライン内覧|ビデオ通話|室内(?:を)?(?:撮|見せ)/;
+// A-11: スタッフ側前提から「写真」単独を外す（「物件写真を送付しました」は撮影約束ではない）
+const PHOTO_PREMISE_RE = /撮影|動画|オンライン内見|オンライン内覧|ビデオ通話|室内(?:を)?(?:撮|見せ)|写真(?:を)?(?:撮|撮影)/;
 const CUSTOMER_PHOTO_WANT_RE = /写真|動画|撮影|オンライン|内見(?:でき|出来)ません|行けな|遠方|見に行けな/;
 const SATSUEI_SUBST_RE = /(?:内見|内覧|見)(?:したい|に行きたい|できますか|出来ますか|は?できない|は?出来ない|はできないんですか)/;
 const SENT_CLAIM_RE = /(?:先ほど|先程|先日)?お送り(?:させて(?:頂|いただ)い|し)た(?:御|お)?(?:見積|物件|資料|写真)/;
@@ -1037,7 +1181,8 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
     const sent = firstSentenceAround(text, GOCHOUGO_GUIDE_RE);
     const hasCondition = CONDITION_CLAUSE_RE.test(sent);
     const hasQuestion = QUESTION_FORM_RE.test(text);
-    const noPropertySent = (ctx.sentPropertiesCount ?? 1) === 0 && !/property_send|物件|お部屋/.test(staffHist);
+    // A-11: sentPropertiesCount の実値のみで判定（履歴の「物件」「お部屋」語は約束文にも出るため根拠にしない）
+    const noPropertySent = ctx.sentPropertiesCount === 0;
     if (noPropertySent) {
       issues.push({ pass: "context_check", severity: "block", code: "GUIDE_BEFORE_PROPERTY",
         message: "物件を1件も送っていない段階で内覧案内を宣言しています（順番が逆）",
@@ -1050,14 +1195,19 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
     }
   }
   // V4 お客様が候補日・確定日を伝えた後の「ご都合よろしいお日にち」再質問
-  if (GOCHOUGO_RE.test(text) && CUSTOMER_DATE_RE.test(cust) && !/(?:以降|または|又は|か)[^。\n]{0,20}ご都合/.test(text)) {
+  //    A-11: 日付語＋意向語（希望・行けます・大丈夫・お願い 等）の共起を要求（「明日確認します」等の単なる日付言及で誤発火していた）
+  const custDateIntent = CUSTOMER_DATE_RE.test(cust) && /希望|行け|伺え|大丈夫|お願い|空い|都合|なら|でお願い|がいい|にし/.test(cust);
+  if (GOCHOUGO_RE.test(text) && custDateIntent && !/(?:以降|または|又は|か)[^。\n]{0,20}ご都合/.test(text)) {
     issues.push({ pass: "context_check", severity: blockOrWarn(!!ctx.isAutoSend), code: "GOCHOUGO_AFTER_DATE",
       message: "お客様が既に日程（候補日・確定日）を伝えているのに再度「ご都合よろしいお日にち」を尋ねています",
       evidence: firstSentenceAround(text, GOCHOUGO_RE),
       suggestion: "お客様の伝えた日をそのまま復唱し「〇日でご都合よろしいお時間御座いますでしょうか」または確定日時の宣言に変更" });
   }
   // V5 お客様が「確認します」と言ったのにスタッフが「確認でき次第」— 確認の主語奪取
-  if (CONFIRM_NEXT_RE.test(text) && CUSTOMER_CONFIRM_RE.test(cust)) {
+  //    A-11: 管理会社確認文脈（「管理会社に確認でき次第」「募集状況確認出来次第」）は免除
+  const confirmSentence = CONFIRM_NEXT_RE.test(text) ? firstSentenceAround(text, CONFIRM_NEXT_RE) : "";
+  const isMgmtConfirmCtx = /管理会社|オーナー|貸主|募集状況|空室|空き|番手|入居可能|退去/.test(confirmSentence);
+  if (CONFIRM_NEXT_RE.test(text) && CUSTOMER_CONFIRM_RE.test(cust) && !isMgmtConfirmCtx) {
     issues.push({ pass: "context_check", severity: "block", code: "CONFIRM_SUBJECT_THEFT",
       message: "お客様が「確認します」と言っています。確認の主語はお客様であり、スタッフの「確認でき次第ご連絡」は主語混乱です",
       evidence: firstSentenceAround(text, CONFIRM_NEXT_RE),
@@ -1097,7 +1247,7 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
     }
   }
   // V10 未送付での「ご査収」
-  if (JUSHU_RE.test(text) && (ctx.sentPropertiesCount ?? 1) === 0 && !/【画像】|お送り|送付|見積/.test(staffHist)) {
+  if (JUSHU_RE.test(text) && ctx.sentPropertiesCount === 0 && !/【画像】|お送りさせて頂きました|お送りしました|送付しました|見積/.test(staffHist)) {
     issues.push({ pass: "context_check", severity: "warning", code: "JUSHU_BEFORE_SEND",
       message: "何も送っていない段階で「ご査収ください」と書いています（査収＝受け取って確認する行為）",
       evidence: firstSentenceAround(text, JUSHU_RE), suggestion: "「ご査収」を削除し送付宣言（〜お送りさせて頂きます）に変更" });
@@ -1123,7 +1273,10 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
       evidence: `させて頂く×${saseteCount}`, suggestion: "ご連絡・確認・サポート・ピックアップは「いたします」に言い換える" });
   }
   // V14 内覧・申込意思の無い顧客への即申込誘導
-  if (APPLY_PUSH_RE.test(text) && !CUSTOMER_APPLY_INTENT_RE.test(custHist + "\n" + cust) && !/強推し直後/.test(ctx.tpoLabel ?? "")) {
+  //     A-11: 条件節付き（「お気に召されましたら〜押さえ」）・物件送付後TPO は免除
+  const applyPushSentence = APPLY_PUSH_RE.test(text) ? firstSentenceAround(text, APPLY_PUSH_RE) : "";
+  const applyPushConditional = CONDITION_CLAUSE_RE.test(applyPushSentence);
+  if (APPLY_PUSH_RE.test(text) && !applyPushConditional && !/強推し直後|物件送付後/.test(ctx.tpoLabel ?? "") && !CUSTOMER_APPLY_INTENT_RE.test(custHist + "\n" + cust)) {
     issues.push({ pass: "context_check", severity: "warning", code: "APPLY_PUSH_NO_INTENT",
       message: "お客様が内覧済み・申込意思を示した履歴が無いのに「お申込みで押さえ」を提案しています",
       evidence: firstSentenceAround(text, APPLY_PUSH_RE), suggestion: "直前のお客様アクションに対応するWE DO（ピックアップ／内覧日程調整／募集状況確認）に変更" });
@@ -1540,7 +1693,14 @@ AIX_BOUNDARY_APPLICATION / AIX_BOUNDARY_MOVEIN / AIX_BOUNDARY_PROMISE / AIX_BOUN
 BANNED_WORD / RULE_VIOLATION / FABRICATED_AMOUNT / FABRICATED_AVAILABILITY / FABRICATED_PROPERTY /
 FABRICATED_DATE / FABRICATED_NAME / FABRICATED_POLICY / MISSED_QUESTION / STAGE_MISMATCH /
 DOUBLE_DECLARATION / TIME_INVALID / STAGE_SKIP / WE_DO_MISSING / FILLER_GREETING / PASSIVE_ONLY /
-SUBJECT_CONFUSION / CONDITION_ADD_MISROUTED / STAFF_REQUEST_OMITTED / NG_PROPERTY_MENTION`;
+SUBJECT_CONFUSION / CONDITION_ADD_MISROUTED / STAFF_REQUEST_OMITTED / NG_PROPERTY_MENTION /
+THANK_OPENING / GRATITUDE_OPENING / CONDITION_OPENING / EXCLAMATION_OVERUSE / INTRO_REPEAT / WE_DO_MISSING_DET / GENERIC_ONLY_REPLY /
+NAME_MISMATCH / NAME_PLACEHOLDER / NAME_OVERUSE / NAME_FULLNAME_LEAK / NAME_BEFORE_OPENING / PROMISE_ECHO_MISSING / TIME_INVALID_HONIJITSU /
+EMOJI_RULE_DET / SYSTEM_MARKER_LEAK / QUOTE_UNBALANCED / NEGATIVE_APOLOGY / HASTY_PROMISE / ESTIMATE_NO_TRIGGER / STATE_REGRESSION /
+VIEWING_BEFORE_VACANCY / APPLY_WITHOUT_INTENT / POST_APPLY_VIEWING / TENSE_MISMATCH / FEEDBACK_PREMATURE / GOCHOUGO_AFTER_FIXED /
+ECHO_CONFIRM / LIST_STRUCTURE / DOUBLE_KEIGO / FABRICATED_POLICY_DET / GOCHOUGO_STAFF_TASK / GOCHOUGO_REVERSED / GOCHOUGO_NO_CONDITION /
+GOCHOUGO_AFTER_DATE / GUIDE_BEFORE_PROPERTY / CONFIRM_SUBJECT_THEFT / CONFIRM_NO_OBJECT / PHOTO_NO_PREMISE / PHOTO_REPLACES_VIEWING /
+UNSENT_CLAIM / JUSHU_BEFORE_SEND / SELF_HONORIFIC / GUIDE_POSSIBLE_NO_DATE / SASETE_OVERUSE / APPLY_PUSH_NO_INTENT`;
 
 function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx: FinalCheckContext): string {
   const issuesJson = JSON.stringify(
@@ -1584,7 +1744,14 @@ function inferDiffIssuePass(code: string, check1Issues: CheckIssue[]): CheckPass
   if (code === "MISSED_QUESTION" || code === "STAGE_MISMATCH" || code === "DOUBLE_DECLARATION" ||
       code === "STAGE_SKIP" || code.startsWith("TIME_INVALID") || code === "WE_DO_MISSING" ||
       code === "FILLER_GREETING" || code === "PASSIVE_ONLY" || code === "SUBJECT_CONFUSION" ||
-      code === "CONDITION_ADD_MISROUTED" || code === "STAFF_REQUEST_OMITTED") return "context_check";
+      code === "CONDITION_ADD_MISROUTED" || code === "STAFF_REQUEST_OMITTED" ||
+      code === "INTRO_REPEAT" || code === "WE_DO_MISSING_DET" || code === "GENERIC_ONLY_REPLY" ||
+      code === "PROMISE_ECHO_MISSING" || code === "ESTIMATE_NO_TRIGGER" || code === "VIEWING_BEFORE_VACANCY" ||
+      code === "APPLY_WITHOUT_INTENT" || code === "POST_APPLY_VIEWING" || code === "TENSE_MISMATCH" ||
+      code === "FEEDBACK_PREMATURE" || code === "GOCHOUGO_AFTER_FIXED" || code === "GOCHOUGO_AFTER_DATE" ||
+      code === "GUIDE_BEFORE_PROPERTY" || code === "CONFIRM_SUBJECT_THEFT" || code === "PHOTO_NO_PREMISE" ||
+      code === "PHOTO_REPLACES_VIEWING" || code === "UNSENT_CLAIM" || code === "JUSHU_BEFORE_SEND" ||
+      code === "APPLY_PUSH_NO_INTENT") return "context_check";
   return "rule_check"; // AIX_BOUNDARY_* / BANNED_WORD / RULE_VIOLATION / 不明code
 }
 

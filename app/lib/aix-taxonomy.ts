@@ -74,6 +74,25 @@ export const AIX_STAFF_NOTES: Record<string, string> = {
   property_search:         "Chrome拡張ツール（リアプロ/itandi/レインズ）で物件を検索してください: お客様の条件に合う物件を探す場面です（送付済み物件は候補から除外）。URLが揃ったらAIX【物件ピックアップした】で送付します",
 };
 
+// ─── brain action → 顧客向け返信方向性（A-7 / 2026-09-08 Fable5）──────────────────
+// generate-reply の brainGuidanceNote は従来 AIX_STAFF_NOTES（スタッフ操作文「AIX【〇〇】を押してください」）を
+// 「推奨アクション」として LLM に二重注入していた。LLM が書くのは顧客向け本文なので、
+// action ごとに「顧客向けの方向性 / WE DO 1文 / 禁止」を定義してこちらを注入する。
+export type AixActionReplyDirection = { direction: string; weDo: string; forbid: string };
+export const AIX_ACTION_REPLY_DIRECTION: Record<string, AixActionReplyDirection> = {
+  acknowledge_check:       { direction: "お客様が示した物件の募集状況を確認する受付宣言のみで完結", weDo: "お送り頂きました物件の募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます！！", forbid: "空室有無・退去日・入居可能日の断言／内覧誘導／申込誘導" },
+  property_check_result:   { direction: "管理会社確認の結果報告（AIX送信済みの結果を踏まえ、お客様の反応に直接答える）", weDo: "お気に召されましたらご都合よろしいお日にち御座いますでしょうか！！ご案内させて頂きます！！", forbid: "「これから確認します」の再宣言／未確認事実の創作" },
+  property_send:           { direction: "条件受領→ピックアップ宣言（実物件はAIXで送付するため本文に物件名・家賃を書かない）", weDo: "〇〇周辺全域から〇〇さんにオススメできるお部屋ピックアップしお送りさせて頂きます！！", forbid: "物件名・家賃・間取りの初出提示／見積・申込・内覧誘導／条件の聞き返し" },
+  property_recommendation: { direction: "1件に絞った再提案はAIXで行うため、本文は受付＋オススメ1件を送る宣言のみ", weDo: "〇〇さんに特にオススメできるお部屋を1件に絞ってお送りさせて頂きます！！", forbid: "物件名・家賃の初出提示／複数物件の羅列" },
+  estimate_sheet:          { direction: "見積書の作成宣言のみ（金額・内訳はAIX見積書で送る）", weDo: "最大限割引させて頂いた初期費用の御見積書作成しお送りさせて頂きます！！", forbid: "金額・内訳・割引額の生成／「ご査収ください」等の添付済み文" },
+  viewing_invite:          { direction: "内覧希望の受付のみ（候補日時はAIX内覧日調整で送る）", weDo: "かしこまりました！！ご都合よろしいお日にち御座いますでしょうか！！ご案内させて頂きます！！", forbid: "具体的な候補日時・2択日程／申込誘導／募集未確認物件への内覧確約" },
+  meeting_place:           { direction: "内覧確定の受付（住所・集合場所・時間はAIX待ち合わせで送る）", weDo: "内覧の詳細についてはご連絡させて頂きます！！", forbid: "住所・集合場所・集合時間の記載" },
+  greeting_viewing:        { direction: "内覧当日・前後の短い挨拶（40〜80字）", weDo: "本日何卒よろしくお願い致します！！", forbid: "感想ヒアリング／別物件提案／長文" },
+  condition_hearing:       { direction: "未取得条件の確認（フォーム本体はAIXで送る）", weDo: "ご希望条件お聞かせ頂けますと幸いです！！", forbid: "①〜⑧フォーム全文の生成／確認済み条件の聞き返し" },
+  application_push:        { direction: "お客様が前向きな場面での申込誘導（希少性煽り禁止・事実ベースの期限のみ）", weDo: "お気に召されましたらお申込みでお部屋押さえさせて頂きます！！", forbid: "「埋まってしまいます」「残り1部屋」等の煽り／書類リストの生成" },
+  property_search:         { direction: "条件受領→ピックアップ宣言", weDo: "〇〇周辺全域から〇〇さんにオススメできるお部屋ピックアップしお送りさせて頂きます！！", forbid: "物件名・家賃の初出提示／条件の聞き返し" },
+};
+
 // ─── property_check_result の check_pattern 決定論判定 ─────────────────────────
 // brain の action 語彙は property_check_result 1キーだが、UIは
 // 「物件確認した（募集状況）」と「確認した（条件・交渉）」の2親ボタンに分かれる（1キー多義問題）。

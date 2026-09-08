@@ -1,6 +1,21 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-09-02
+最終更新: 2026-09-08
+
+---
+
+## 残存ギャップ統合修正 S/A（Fable5・2026-09-08）
+
+TPO判定の「上流と両脇」4層を修正。設計書の優先度S 5件・A 16件を実装（設計知見5件は system_design_thinking に INSERT 済み）。
+
+- **状態層（S-2）**: `resolveState()` が phase / guideKey / searchState の3値を返す単一入口。`viewing` 独立復活・`closed_lost` 新設（PHASE_GUIDE.closed_lost）・未知 state は `state:unknown` ログ＋「初回挨拶を出さない側」へフェイルセーフ。`buildGenerationMessages(..., phaseGuideKey, isConditionPresented)`。STAGE_JP に viewing / closed_lost。
+- **名前層（S-5）**: `validate-reply.ts` に `normalizeCustomerName` / `checkNameConsistency`（NAME_MISMATCH / NAME_PLACEHOLDER / NAME_FULLNAME_LEAK / NAME_OVERUSE）。route.ts の貪欲 NAME_MISMATCH ブロックは廃止。final-check `ctx.customerName / allowNames / phaseKey` 追加。
+- **鮮度層（S-3 / A-7 / A-9）**: `effectiveAction`（message-local action は fresh かつ非cached のみ）。reply_direction / key_topics / engagement_stance も同ゲート。stale 時は `STATE_FALLBACK_DIRECTION[phaseGuideKey]`。`AIX_ACTION_REPLY_DIRECTION`（aix-taxonomy）で顧客向け方向性を注入（スタッフ操作文の二重注入廃止）。bg-async は burst 検出時に brain を1回再実行（残予算不足なら brainMetaDirect を渡さず T2）。
+- **検査対称性層（S-1 / S-4 / A-2 / A-3 / A-11 / §5）**: `GRATITUDE_POS_RE` の `OK`/i が TikTok に一致していた境界バグ修正。final-check 開口語チェックは初回免除＋挨拶ブロック剥がし、INTRO_REPEAT は MEDIA_ONLY 除外。`runDeterministicChecks` を export し、final-check 例外時の決定論 fail-open（A-2）と後処理後の再検査→ハッシュ更新（A-3）。`runDeterministicExtras`（BANNED_PATTERNS / SYSTEM_MARKER_LEAK / EMOJI_RULE_DET / PROMISE_ECHO_MISSING / ESTIMATE_NO_TRIGGER / VIEWING_BEFORE_VACANCY / APPLY_WITHOUT_INTENT / TENSE_MISMATCH / FEEDBACK_PREMATURE / GOCHOUGO_AFTER_FIXED / STATE_REGRESSION）。`PHASE_PROHIBITIONS`（prompts）を生成・検査で共有。check-reply は ai_draft_check.tpo_debug から tpo_label / phaseGuideKey を引いて ctx に渡す。
+- **TPO（A-1 / A-4 / A-5 / A-6 / A-12 / A-13）**: `[スタンプ]`・絵文字のみは短い了承。不安対応 `isAnxietyMsg` を applying より先に評価。`shortAckPromise` で「短い了承」ラベルと promiseEchoNote を同述語化。リスケ要望は内覧確定締めにしない。条件提示×condition_change の衝突解消。
+- **prompts（A-15 / §4）**: 例文の「すぐに」「承知しました」除去、部屋の「抑え」→「押さえ」統一（43箇所）、`PHASE_COMMON_FORMAT` を全 PHASE_GUIDE 先頭に連結、STYLE_RULE 更新、NG_PHRASE_NOTE ⑪〜⑯。
+- **監査**: `ai_draft_check.tpo_debug` に phaseGuideKey / rawState / stateKnown / rawAction / effectiveAction / isCachedMeta を追加。ログ `state:unknown` / `brain:stale-action-dropped`。
+- **未実装（B群・次回）**: 英語了承語、深夜挨拶、RENT_RE 数値制限、BROAD_AREA、final_check_codes カラム（migrate-schema 同時更新必須）、lastStaffMsg 4定義の統一、営業日判定共通化。
 
 ---
 

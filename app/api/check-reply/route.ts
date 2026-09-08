@@ -3,6 +3,7 @@ import { requireInternalAuth } from "@/app/lib/api-auth";
 import { getCachedPromptRules } from "@/app/lib/prompt-cache";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { runFinalCheck } from "@/app/lib/final-check";
+import { supabase } from "@/app/lib/supabase";
 
 // ─── 送信時の最終チェックAPI（スタッフ編集後テキストの再チェック専用）───────────
 // page.tsx executeSend() が「生成時チェックのハッシュと不一致」（=スタッフが編集した）
@@ -64,6 +65,29 @@ export async function POST(req: NextRequest) {
   ]);
   const lastCustomerMessage = [...recentMessages].reverse().find((m) => m.sender === "customer")?.text;
 
+  // A-3（2026-09-08）: generate-reply が保存した tpo_label / phaseGuideKey を ai_draft_check.tpo_debug から引き、
+  // 生成時と送信時で同一の場面ラベル・フェーズで決定論チェックが走るようにする（従来は ctx 欠落で
+  // WAIT免除・開口語チェック・STATE_REGRESSION が送信時だけ効かなかった）。fail-open（取得失敗は従来どおり）
+  let tpoLabel: string | undefined;
+  let phaseKey: string | undefined;
+  if (conversationId) {
+    try {
+      const { data: convRow } = await supabase
+        .from("conversations")
+        .select("ai_draft_check")
+        .eq("id", conversationId)
+        .maybeSingle();
+      const dbg = (convRow as { ai_draft_check?: { tpo_debug?: { tpo_label?: string | null; phaseGuideKey?: string | null } } | null } | null)?.ai_draft_check?.tpo_debug;
+      tpoLabel = dbg?.tpo_label ?? undefined;
+      phaseKey = dbg?.phaseGuideKey ?? undefined;
+    } catch (e) {
+      console.warn("[check-reply] ai_draft_check 取得失敗（ctx なしで続行）:", e instanceof Error ? e.message : e);
+    }
+  }
+  const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/;
+  const hasStaffText = recentMessages.some((m) => m.sender === "staff" && !!(m.text || "").trim() && !MEDIA_ONLY_RE.test(m.text || ""));
+  const sentPropertiesCount = recentMessages.filter((m) => m.sender === "staff" && /【画像】|お送りさせて頂きました|お送りいたしました|お送りしました|ご査収/.test(m.text ?? "")).length;
+
   // haikuTimeoutMs=2500: 送信時専用の短いタイムアウト（クライアント 2800ms 以内に収まる）
   // generate-reply は runFinalCheckWithRevision 経由でデフォルト 8000ms を使用
   const result = await runFinalCheck(text, {
@@ -75,6 +99,11 @@ export async function POST(req: NextRequest) {
     checkpointFacts: groundTruth.checkpointFacts,
     customerConditionsDb: groundTruth.customerConditionsDb,
     staffSourceText: customerName ? `お客様のお名前: ${customerName}さん` : undefined,
+    customerName: customerName || undefined,
+    tpoLabel,
+    phaseKey,
+    isEarlyConversation: !hasStaffText,
+    sentPropertiesCount,
     isAix,
     brainMeta: suggestedAixMeta
       ? {

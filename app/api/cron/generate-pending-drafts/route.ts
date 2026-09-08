@@ -235,7 +235,8 @@ async function run() {
 
       const targetMessage = sanitizeSurrogates(unreplied.map(m => m.text).join("\n"));
       // 未読が画像/動画プレースホルダのみなら生成スキップ（文脈自体はrecentMessagesで保持される）
-      const hasRealText = unreplied.some(m => m.text !== "[画像]" && m.text !== "[動画]");
+      // A-1（2026-09-08）: 「[スタンプ]」も画像/動画と同じ sentinel 扱い（スタンプ単独で条件全列挙ピックアップが生成されるのを防ぐ）
+      const hasRealText = unreplied.some(m => m.text !== "[画像]" && m.text !== "[動画]" && m.text !== "[スタンプ]");
       if (!targetMessage.trim()) { skipped++; continue; }
       if (!hasRealText) {
         // 画像/動画のみ：返信生成不可のため sentinel を書き込んで orphaned の無限10分ループを止める
@@ -344,6 +345,8 @@ async function run() {
           conversationId: convId,
           // reply_modeゲート有効化（brain判定がaixなら自動ドラフトを生成しない）
           enforceReplyModeGate: true,
+          // S-4: 初回判定を履歴窓ではなく全履歴の事実で渡す（生成側の初回挨拶強制と final-check の初回免除を一致させる）
+          hasStaffReplied: hasStaffMsg,
           // brain直列実行の結果を直接渡す（generate-reply側のDBフェッチをスキップ）。
           // null（stale判定で未実行 / 分析失敗）時は渡さず従来のDBフェッチに任せる
           ...(brainGateDirect ? { brainMetaDirect: brainGateDirect } : {}),

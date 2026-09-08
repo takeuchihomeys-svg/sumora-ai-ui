@@ -121,6 +121,101 @@ export function enforceCustomerName(
   return { cleaned, fixes };
 }
 
+// ─── 顧客名の正規化・一貫性チェック（S-5 / 2026-09-08 Fable5）────────────────────
+// 旧実装（route.ts の貪欲 /([^\s「」。！\n]{1,8})さん/g）は「私の方でも竹田さん」を「私の方でも竹田」と
+// 捕捉して正当返信を block し、逆に「竹田頼正様」「〇〇さん」「山田さん（一貫した誤名）」は素通りしていた。
+// 名前は normalizeCustomerName で1つに確定し、検査は「アンカー付き・単一スクリプト候補＋第三者辞書＋sameName 比較」で行う。
+// 初回・recheck・check-reply・後処理後で同じ関数を走らせる（final-check runDeterministicChecks から呼ぶ）。
+const HONORIFIC_TAIL_RE = /(?:様|さま|サマ|さん|サン|ちゃん|くん|君|氏)$/;
+const GENERIC_NICKNAMES = new Set(["パパ", "ママ", "ねこ", "いぬ", "猫", "犬", "匿名", "名無し", "名称未設定", "お客様", "お客さま"]);
+
+/** 確定名の正規化。敬称除去・記号除去・かな分かち書き結合・姓抽出。実名形でなければ "" */
+export function normalizeCustomerName(raw?: string | null): string {
+  let n = stripNonNameChars((raw ?? "").trim()).replace(HONORIFIC_TAIL_RE, "").trim();
+  const segs = n.split(/[\s・]+/).filter(Boolean);
+  if (segs.length === 0) return "";
+  if (segs.length >= 2) {
+    const allKana = segs.every((s) => /^[ぁ-んゝゞァ-ヴヽヾー]+$/.test(s));
+    n = allKana ? segs.join("") : segs[0]; // 「あ や」→「あや」／「山田 太郎」→「山田」
+  }
+  if (GENERIC_NICKNAMES.has(n)) return "";
+  return isPlausiblePersonName(n) ? n : "";
+}
+const toHira = (s: string) => s.replace(/[ァ-ヴ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
+const sameName = (a: string, b: string) => {
+  const x = toHira(a).toLowerCase(), y = toHira(b).toLowerCase();
+  return x === y || x.endsWith(y) || y.endsWith(x);
+};
+
+// 第三者・一般名詞の「〇〇さん」（顧客名候補から除外）
+export const THIRD_PARTY_SAN_RE = /^(?:お客|皆|みな|大家|オーナー|管理会社|管理|業者|保証会社|担当者?|旦那|奥|お母|お父|お子|お姉|お兄|彼氏|彼女|息子|娘|ご主人|お嬢|ご家族|仲介|不動産屋|鈴木|スタッフ|皆様|みなさま|お客様)$/;
+// 呼びかけ候補: 行頭・空白・句読点・括弧・絵文字の直後のみ、名前部分は単一スクリプト限定（貪欲巻き込みを構造的に排除）
+const ADDRESS_CAND_RE = /(?:^|[\s、。！!？?「（(]|\p{Extended_Pictographic})([ぁ-んゝゞァ-ヴヽヾー]{2,6}|[一-鿿々]{1,4}|[A-Za-z]{2,12})(?:さん|サン|様|さま)/gmu;
+const PLACEHOLDER_ADDRESS_RE = /(?:〇〇|○○|アカウント名|\[名前\]|\{name\})\s*(?:さん|様)?/;
+
+export type NameIssue = {
+  code: "NAME_MISMATCH" | "NAME_PLACEHOLDER" | "NAME_OVERUSE" | "NAME_FULLNAME_LEAK";
+  severity: "block" | "warning";
+  evidence: string;
+  message: string;
+  suggestion: string;
+};
+
+export function checkNameConsistency(
+  text: string,
+  canonicalRaw: string | null | undefined,
+  opts?: { isAutoSend?: boolean; allowNames?: string[] },
+): NameIssue[] {
+  const issues: NameIssue[] = [];
+  const canon = normalizeCustomerName(canonicalRaw);
+  const allow = (opts?.allowNames ?? []).map(normalizeCustomerName).filter(Boolean);
+  const ph = text.match(PLACEHOLDER_ADDRESS_RE);
+  if (ph) {
+    issues.push({
+      code: "NAME_PLACEHOLDER", severity: "block", evidence: ph[0],
+      message: "名前プレースホルダ（〇〇さん等）が未置換のまま残っています",
+      suggestion: canon ? `「${canon}さん」に置換` : "呼びかけごと削除（名前なしで返信）",
+    });
+  }
+  const foreign = new Set<string>();
+  for (const m of text.matchAll(ADDRESS_CAND_RE)) {
+    const cand = m[1];
+    if (THIRD_PARTY_SAN_RE.test(cand)) continue;
+    if (canon && sameName(cand, canon)) continue;
+    if (allow.some((a) => sameName(cand, a))) continue; // 連名者・保証人など顧客自身が書いた名前
+    // ひらがな候補は動詞・助詞断片（「よろしければ」「頂き」等）が混ざりやすいため実名形チェックを追加
+    if (/^[ぁ-んゝゞ]+$/.test(cand) && !isPlausiblePersonName(cand)) continue;
+    foreign.add(cand);
+  }
+  if (foreign.size > 0) {
+    const list = [...foreign].join(" / ");
+    issues.push({
+      code: "NAME_MISMATCH", severity: canon || opts?.isAutoSend ? "block" : "warning", evidence: list,
+      message: canon ? `確定名「${canon}さん」以外の呼びかけ（${list}）が混在しています` : `お客様名が不明の会話で名前（${list}）を創作しています`,
+      suggestion: canon ? `全て「${canon}さん」に統一` : "呼びかけを削除し名前なしで返信",
+    });
+  }
+  if (canon) {
+    const full = text.match(new RegExp(`${escapeRegExp(canon)}[ぁ-ん一-鿿々]{1,4}\\s*(?:様|さま)`));
+    if (full) {
+      issues.push({
+        code: "NAME_FULLNAME_LEAK", severity: "block", evidence: full[0],
+        message: "フルネーム＋様の呼びかけです（本人確認書類の氏名を返信に書かない）",
+        suggestion: `「${canon}さん」に置換`,
+      });
+    }
+    const cnt = (text.match(new RegExp(`${escapeRegExp(canon)}(?:さん|サン|様|さま)`, "g")) ?? []).length;
+    if (cnt >= 3) {
+      issues.push({
+        code: "NAME_OVERUSE", severity: "warning", evidence: `${canon}さん×${cnt}`,
+        message: `顧客名の呼びかけが${cnt}回あります`,
+        suggestion: "冒頭1回＋本文1回（計2回）以内",
+      });
+    }
+  }
+  return issues;
+}
+
 // 送信前の未置換プレースホルダーを検出（送信ブロック用）
 const PLACEHOLDER_ALLOWLIST = new Set(["[画像]", "[動画]", "[スタンプ]"]);
 
