@@ -20,7 +20,7 @@ import {
   isPlausiblePersonName,
   stripNonNameChars,
 } from "@/app/lib/validate-reply";
-import { runFinalCheck, runFinalCheckWithRevision, sha1, type CheckResult } from "@/app/lib/final-check";
+import { runFinalCheck, runFinalCheckWithRevision, sha1, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { safeSlice } from "@/app/lib/safe-slice";
@@ -3045,6 +3045,15 @@ export async function POST(req: NextRequest) {
       if (msg.length === 0 || msg.length >= 150) return false;
       return /出先|後で確認|後ほど|確認次第|今は確認|あとで|のちほど|帰ったら|帰り次第|夜に|夜確認|明日確認|後日|ゆっくり確認|確認してから|見てから連絡/.test(msg);
     })();
+    // 「検討します」「少し考えます」等の判断保留メッセージ（TPO4種をスルーしてしまう穴を塞ぐ）
+    // → 申込誘導・物件追加提案を封じ、急かさない待ちの姿勢を強制する
+    const isThinkingMsg = (() => {
+      const msg = (message ?? "").trim();
+      if (msg.length === 0 || msg.length >= 150) return false;
+      // ネガ（断り）や一時保留（出先）とは別に「判断保留」を独立判定
+      return /検討|考えさせて|考え(て|てみ|てみます|てます)|悩んで|迷って|もう少し(考|時間)/.test(msg) &&
+        !/(キャンセル|やめ|断り|他社|他の会社)/.test(msg);
+    })();
     // ネガ文脈判定（断り・キャンセル直後の感謝には営業を一切乗せない）
     // 仕様通り直近スタッフ3通を走査（1通のみだと募集終了報告が窓外になるバグを修正）
     const isNegativeContext = (() => {
@@ -3075,6 +3084,7 @@ export async function POST(req: NextRequest) {
     const effectiveReplyDirection: string | null = (() => {
       if (isNegativeContext) return "受け止めのみ（50〜110字）。謝罪禁止。開口語は「かしこまりました！！」。開口語の後に必ず次のアクション（物件日々更新される旨・新着あればお知らせする旨等）を1文添えること。「かしこまりました！！」単独で終了は禁止。「申し訳ございません」「残念ながら」等のネガティブ語禁止";
       if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。物件追加・条件ヒアリング・長文説明は一切禁止";
+      if (isThinkingMsg) return "検討中の待ちフェーズ。70〜120字の短返し。開口語は「はい😊！！」。①ごゆっくりご検討ください②何かあればお申し付けください③顧客名先頭のサポート継続宣言の3点セット。申込誘導・希少性煽り・内見誘導・物件追加提案は絶対禁止";
       if (isPostStrongRecommendation) return "感謝を1行で受け取り、検討を見守る待ちの姿勢で締める（50〜110字）。他物件の募集確認・新規ピックアップ・再推奨は書かない";
       if (isGratitudeReplyTPO) return "感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。アクション例:「ピックアップ出来次第お送りします！！」「確認出来次第ご連絡します！！」。予告のみの進捗テンプレ・条件の再ヒアリング・情報追加は絶対禁止";
       return brainMeta?.reply_direction ?? null;
@@ -3082,6 +3092,7 @@ export async function POST(req: NextRequest) {
     const effectiveKeyTopics: string[] = (() => {
       if (isNegativeContext) return [];
       if (isTemporaryLeaveMsg) return [];
+      if (isThinkingMsg) return [];
       if (isPostStrongRecommendation) return []; // 待ちフェーズ：余計なアクションを足さない
       if (isGratitudeReplyTPO) return (brainMeta?.key_topics ?? []).slice(0, 1);
       return brainMeta?.key_topics ?? [];
@@ -3090,6 +3101,7 @@ export async function POST(req: NextRequest) {
       const base = brainMeta?.avoid_topics ?? [];
       if (isNegativeContext) return [...new Set([...base, "物件提案", "見積提案", "申込誘導"])];
       if (isTemporaryLeaveMsg) return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "条件ヒアリング", "詳細説明"])];
+      if (isThinkingMsg) return [...new Set([...base, "申込誘導", "希少性煽り", "内見誘導", "物件追加提案", "条件ヒアリング"])];
       if (isPostStrongRecommendation) return [...new Set([...base, "他物件の募集状況確認", "新規物件ピックアップ", "別物件の提案", "申込誘導", "検討依頼の繰り返し"])];
       if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
       return base;
@@ -3101,6 +3113,7 @@ export async function POST(req: NextRequest) {
     const tpoNoteForLLM: string | null = (() => {
       if (isNegativeContext) return "ネガ文脈（断り・否決・募集終了等の直後）";
       if (isTemporaryLeaveMsg) return "一時保留（顧客が今は確認できない・後で連絡すると宣言。30〜60字の超短返しのみ。「承知いたしました」絶対禁止）";
+      if (isThinkingMsg) return "検討中フォロー（顧客がまだ迷っている・判断保留。急かさない。申込誘導・希少性煽り絶対禁止。70〜120字）";
       if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客了承中・待ちフェーズ）";
       if (isGratitudeReplyTPO) return "感謝返し（短い了承・感謝メッセージ）";
       const a = brainMeta?.action ?? "";
@@ -3121,6 +3134,16 @@ export async function POST(req: NextRequest) {
         a2 === "followup_revive" ||
         /検討|迷って|考え(て|させて)|悩んで/.test(msg2)
       ) return "検討中フォロー（顧客がまだ迷っている段階。急かさない。新情報がある場合のみ1点だけ伝える。70〜120字）";
+      // 内見フェーズ専用TPO（修正率91.3%の原因: viewingに対応するTPO分岐がなかった）
+      if (state === "viewing") {
+        const isPostView = /どうでした|どうでしたか|気に入|気に入り|申込|決め|考え|いかが|ご感想|雰囲気/.test(msg2);
+        if (isPostView) return "内見後クロージング（内見を終えた顧客への返信。感想を1文で聞き、気に入った場合は申込を自然に促す文を添える。100〜150字）";
+        return "内見調整（日時・場所の確認・調整。顧客名先頭の簡潔な返し。30〜80字）";
+      }
+      // proposingでAIXアクションがnullの場合のフォールバック注入（ドラフト品質が最低水準の根本対策）
+      if (state === "proposing" && !brainMeta?.action) {
+        return "商談継続中の汎用返答。顧客の質問・要望を1文で受け止め、具体的な行動宣言（ピックアップ・交渉・確認）を1つだけ添えて100〜150字で返す。初期費用・家賃交渉の場合は「最大限交渉させて頂きます！！」等の具体表現を使う。抽象的な「確認します」禁止";
+      }
       return null;
     })();
 
@@ -4098,6 +4121,28 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               if (deduped !== draftBody) {
                 console.warn("[generate-reply] 同一絵文字の重複を機械除去しました");
                 draftBody = deduped;
+              }
+            }
+            // 顧客名不一致・二重生成検出（「itさん」「it_0さん」等の異なる名前が混在する個人情報混入リスク）
+            // 9.6%（48件）で発生していた最重要品質問題への機械的最終防衛線
+            if (!isTemplateOptimize && draftBody) {
+              const nameMatches = [...draftBody.matchAll(/([^\s「」。！\n]{1,8})さん/g)];
+              const uniqueNames = new Set(nameMatches.map(m => m[1]).filter(n => n.length >= 1));
+              if (uniqueNames.size >= 2) {
+                const nameList = [...uniqueNames].join(" / ");
+                console.warn("[generate-reply] 顧客名不一致検出:", nameList);
+                if (finalCheck) {
+                  finalCheck.issues = finalCheck.issues ?? [];
+                  finalCheck.issues.push({
+                    pass: "rule_check",
+                    severity: "block",
+                    code: "NAME_MISMATCH",
+                    message: `返信内に複数の顧客名（${nameList}）が混在しています。個人情報混入リスク。正しい名前に統一してください`,
+                    evidence: nameList,
+                    suggestion: "正しい顧客名1種類に統一し、重複文を削除してください",
+                  } as CheckIssue);
+                  finalCheck.ok = false;
+                }
               }
             }
             // f-8: センシティブ検知時は警告メタを冒頭に付与（空生成時は付与しない・テンプレ最適化は sensitiveGateNote="" ）

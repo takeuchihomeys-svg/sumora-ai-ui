@@ -870,6 +870,33 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, sonne
     }
   }
 
+  // ── NG③違反: 「ありがとうございます」書き出し（冒頭20字で検出・LLMが見逃す頻出バグ）──
+  // NG_PHRASE_NOTE③（route.ts）では書き出し禁止を指示しているが final-check に検出コードがなかった
+  const firstChars = draft.trimStart().slice(0, 20);
+  if (/^(ありがとうございます|ご連絡ありがとうございます)/.test(firstChars)) {
+    issues.push({
+      pass: "rule_check",
+      severity: "warning",
+      code: "THANK_OPENING",
+      message: "返信が「ありがとうございます」で始まっています（NG③違反）。「お世話になっております！！」「お待たせ致しました！！」「はい😊！！」等から始めてください",
+      evidence: firstChars,
+      suggestion: `「${firstChars}」→「お世話になっております！！」または「はい😊！！」に変更`,
+    });
+  }
+
+  // ── EXCLAMATION_OVERUSE: 「！！」が1返信に5回以上（過剰テンション・スタッフ手修正の主因）──
+  const exclamCount = (draft.match(/！！/g) ?? []).length;
+  if (exclamCount >= 5) {
+    issues.push({
+      pass: "rule_check",
+      severity: "warning",
+      code: "EXCLAMATION_OVERUSE",
+      message: `「！！」が${exclamCount}回使用されています（1返信3回以内が目安）。過剰なテンションは不自然に見えます`,
+      evidence: `「！！」×${exclamCount}回`,
+      suggestion: "「！！」を「！」に変えるか文を短縮して3回以内に収めてください",
+    });
+  }
+
   // ── 3パス並列チェック（rule_check・anomaly_scan=Haiku / context_check=Sonnet）──
   // context_check のみ Sonnet: 10種の複雑な会話理解が必要で誤検知が revision 誤発火に直結するため
   const passes: Array<{ pass: CheckPass; prompt: PromptContent; model: string }> = [
