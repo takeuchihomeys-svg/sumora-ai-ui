@@ -4124,7 +4124,8 @@ export default function Home() {
             body: JSON.stringify({
               text: replyDraft.trim(),
               conversationId: selectedConversation.id,
-              recentMessages: selectedConversation.messages.slice(-10).map((m) => ({ sender: m.sender, text: m.text || "" })),
+              // G32: createdAt を渡すと check-reply が generate-reply と同じ resolveGreeting で冒頭決定を再計算する（四者同名）
+              recentMessages: selectedConversation.messages.slice(-10).map((m) => ({ sender: m.sender, text: m.text || "", createdAt: m.rawCreatedAt || undefined })),
               customerName: selectedConversation?.customerName ?? "",
               suggestedAixMeta: selectedConversation.suggestedAixMeta ?? null,
             }),

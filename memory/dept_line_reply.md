@@ -828,7 +828,7 @@ GROUP BY 1,2,3 ORDER BY 4 DESC;
 ```
 
 ### 引き継ぎ
-- [ ] page.tsx の送信ボタン側が check-reply に `recentMessages[].createdAt` を渡しているか確認（渡していなければ追加 → 復元経路ではなく再計算経路になる）
+- [x] page.tsx の送信ボタン側が check-reply に `recentMessages[].createdAt`（`m.rawCreatedAt`）を渡すようにした → 再計算経路が有効（復元経路は createdAt 欠落時のフォールバック）
 - [ ] `ai_prompt_rules` に「3時間以上待たせたらお待たせ致しました」等の同旨行が残っていれば is_active=false に（禁止語 block と衝突し修正ループを回す）
 - [ ] 2週間後: OPENER_MISMATCH の発火率と編集率を確認。FP が多い kind（特に question の asksAction 判定）は `openerAllowed` を**広げる**（opener を足さない）
 - [ ] system_design_thinking に G32 知見 5 件 INSERT 済み（二層・禁止語・audit・四者同名の増幅リスク・了承のみは未返信に数えない）
