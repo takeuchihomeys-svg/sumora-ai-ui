@@ -3,6 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { learnFromModifiedExample } from "@/app/lib/auto-knowledge";
+// 2026-09-09 Fable5 みく事例: 送信文の姿勢フラグ（締め種別・復唱率・温度）。route.ts tpo_debug.stance_draft と同じ関数群（deriveCloserSignals / evalConditionEcho）
+import { computeStanceLite } from "@/app/lib/reply-context";
 
 // Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
 export const maxDuration = 60;
@@ -1453,7 +1455,18 @@ export async function POST(req: NextRequest) {
         aix_action: typeof aix_action === "string" && aix_action ? aix_action : null,
         customer_intent: customerIntent,
         // 2026-09-09 Fable5 往復文脈スナップショット（migrate-schema: reply_context_snapshot JSONB）
-        reply_context_snapshot: body.tpoDebug && typeof body.tpoDebug === "object" ? body.tpoDebug : null,
+        // 2026-09-09 Fable5 みく事例: 送信文側の stance_sent_lite をマージ（was_ai_modified=false は stance_draft と同値なので draft をコピー）。
+        //   pair/hedge は snapshot から再構築できないため pair 非依存の軽量版のみ（締め種別・ヘッジ種別・復唱率・絵文字・字数）。新カラム不要（JSONB）
+        reply_context_snapshot: (() => {
+          const base = body.tpoDebug && typeof body.tpoDebug === "object" ? { ...body.tpoDebug } : null;
+          if (!sentReply?.trim()) return base;
+          try {
+            const lite = wasAiModified === false && base?.stance_draft
+              ? base.stance_draft
+              : computeStanceLite(sentReply, customerMessage ?? "");
+            return { ...(base ?? {}), stance_sent_lite: lite };
+          } catch { return base; }
+        })(),
       })
       .select("id")
       .single(),

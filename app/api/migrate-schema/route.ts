@@ -2687,6 +2687,10 @@ CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_outcome ON ai_reply_examples(ou
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS reply_context_snapshot JSONB;
 CREATE INDEX IF NOT EXISTS idx_are_ctx_rule ON ai_reply_examples ((reply_context_snapshot->'turnPair'->>'ruleId'));
 CREATE INDEX IF NOT EXISTS idx_are_ctx_has ON ai_reply_examples (((reply_context_snapshot->'substance'->>'has')::boolean)) WHERE reply_context_snapshot IS NOT NULL;
+-- 2026-09-09 Fable5 みく事例: 姿勢（締め種別）の下書き→送信 遷移行列用（stance_draft / stance_sent_lite は JSONB 内・新カラム不要）
+--   SELECT reply_context_snapshot->'stance_draft'->>'closer_kind', reply_context_snapshot->'stance_sent_lite'->>'closer_kind', reply_context_snapshot->'turnPair'->>'ruleId', COUNT(*), AVG(was_ai_modified::int)
+--   FROM ai_reply_examples WHERE reply_context_snapshot ? 'stance_draft' AND created_at >= now() - interval '14 days' GROUP BY 1,2,3 ORDER BY 4 DESC
+CREATE INDEX IF NOT EXISTS idx_are_ctx_closer ON ai_reply_examples ((reply_context_snapshot->'stance_draft'->>'closer_kind')) WHERE reply_context_snapshot IS NOT NULL;
 
 DROP FUNCTION IF EXISTS match_aix_reply_examples(vector, integer, text);
 CREATE OR REPLACE FUNCTION match_aix_reply_examples(

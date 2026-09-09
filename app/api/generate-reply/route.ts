@@ -70,6 +70,9 @@ import {
   MSG_SEP, splitMessageUnits, analyzeSubstance, mergeBrainEvidence,
   classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair,
   buildPairDirection, buildTurnPairNote, type PairContext, type SubstanceVerdict,
+  // 2026-09-09 Fable5 みく事例: ヘッジゲート・締めポリシー・姿勢（生成・検査・tpo_debug が同一 verdict を参照）
+  resolveHedgeAllowance, stripPreemptiveRelax, resolveCloser, predictCloserSignals, computeStanceFlags, buildStanceNote, STAFF_SEARCHED_RE,
+  type HedgeVerdict, type CloserVerdict,
 } from "@/app/lib/reply-context";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
@@ -827,6 +830,10 @@ function buildGenerationMessages(
   turnPairNote = "",
   // 2026-09-09 Fable5: 通単位の配列（MSG_SEP / body.customerMessages）。1通内の改行を「N通」に分割しない
   customerMessageUnits: string[] = [],
+  // 2026-09-09 Fable5 みく事例: buildStanceNote() の【🧭 姿勢】ブロック（往復文脈の直後・tpoGuidanceNote より上位）
+  stanceNote = "",
+  // 2026-09-09 Fable5 みく事例: ヘッジ verdict（budgetInventoryNote の発火を「顧客の疑問形質問」にゲート）
+  hedgeVerdict: HedgeVerdict | null = null,
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -886,7 +893,7 @@ function buildGenerationMessages(
   const _hasAreaInMsg = /[一-龯ぁ-んァ-ン]{2,}(?:駅|区|市|町|村|周辺|エリア|あたり|付近)/.test(_inlineConditionsMsgForFallback);
   const _hasRentInMsg = /[0-9０-９]+万(?:円|以内|〜|まで|以下|円以内)/.test(_inlineConditionsMsgForFallback);
   const inlineConditionsFallback = (!customerConditions && _hasAreaInMsg && _hasRentInMsg && _inlineConditionsMsgForFallback.length > 0 && _inlineConditionsMsgForFallback.length <= 300)
-    ? `\n【⚠️ 顧客が今回のメッセージで直接エリア・家賃条件を提示しています】\nメッセージ: 「${_inlineConditionsMsgForFallback}」\n⇒ このエリア名・家賃帯を必ず返信の行動宣言に具体的に埋め込むこと。例: 「桜川・西九条・九条エリアから6万〜7万5000円以内のお部屋を全てピックアップしてお送りさせて頂きます！！」。「ご条件に合ったお部屋」「全力でサポートします」等の抽象表現は禁止。`
+    ? `\n【⚠️ 顧客が今回のメッセージで直接エリア・家賃条件を提示しています】\nメッセージ: 「${_inlineConditionsMsgForFallback}」\n⇒ このエリア名・家賃帯を必ず返信の行動宣言に具体的に埋め込むこと。例: 「桜川・西九条・九条エリアから6万〜7万5000円以内のお部屋を全てピックアップしてお送りさせて頂きます！！」。「ご条件に合ったお部屋」等の抽象表現は禁止。具体宣言の代わりに「全力でサポート」だけで済ませるのは禁止（具体宣言の後の締めとしては必須）。`
     : "";
   // AIX-META戦略（brainGuidanceNote）が存在する場合、ai_summary全文はbrain側で既に消化済みのため
   // summaryNoteは注入しない（戦略の二重注入・矛盾指示を防ぐ）。AIX-META未生成時のみ従来通り注入する。
@@ -1014,6 +1021,7 @@ function buildGenerationMessages(
 ② 条件を理解した旨 — 「かしこまりました！！」＋ お客様が出した条件を具体的な言葉（エリア名・設備名・家賃・間取り）でそのまま拾う。オウム返しの疑問形（「〇〇をご希望ですね」）は禁止
 ③ 行動宣言 — お部屋をお探しする／お送りする旨（表現は下記のスタイル指定に従う）
 ④ サポート継続宣言 — 「〇〇さんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます😌！！」の方向で締める
+⑤ 禁止 — 実現可能性への言及（難しい・少ない・可能性）・条件緩和・代替案の先回り提案・お客様の自己ヘッジ（難しいと思う・あれば教えて）の復唱（探した後に結果と一緒に報告する）
 【🚫 条件変更文脈での絶対禁止CTA（最優先・フェーズ別パターンより上位）】お客様が新しい条件・追加条件を出した場面では、以下を絶対に出力しない：
 ・申込フォーマット／申込書類の案内／「お申込みでお部屋を先に押さえる」等の申込誘導
 ・見積書の作成宣言・送付宣言・初期費用の金額提示
@@ -1023,7 +1031,7 @@ function buildGenerationMessages(
 【🚫 条件変更への解説・評価の禁止（絶対）】お客様の条件変更・追加に対して、その効果・メリット・見通しを解説する文は絶対に書かない。ただ受け入れて「あなたのご条件に合った物件を探す」コミットメントのみ伝える。
 ・NG:「エリアが広がりましたので、より条件に近いお部屋を見つけやすくなるかと思います」（変更効果の解説・上から目線・可能性の示唆）
 ・NG:「選択の幅が広がりますので〜見つかります」「選択肢が広がって良かったですね」（お客様の判断を評価する表現）
-・NG:「ご条件に合うお部屋が少ない状況でしたので広げました」（言い訳・理由解説）
+・NG: 探す前の「少ない状況になりそう」「難しい可能性もあるので条件を変えた提案も」の予測・先回り提案（探した後の過去形結果報告「〜ですと少ない状況でしたので〜まで広げてピックアップさせて頂きました」はAIX物件送付文でのみ可）
 ・OK:「〇〇も含めて〇〇さんのご希望のご条件に合ったお部屋をピックアップしてお送りさせて頂きます」（承諾＋条件合致コミットメント）${noReproposeNote}`;
         // 拡大・緩和（condition_relax）の場合: ピックアップ宣言 + まだ聞けていない条件を1〜2点確認してよい
         if (changeType === "condition_relax") {
@@ -1295,17 +1303,19 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // 「確認します」で終わるのは絶対NG — 正直な現状説明＋代替案＋次のアクションが正しい型。
   const BUDGET_INVENTORY_RE = /(?:賃料|家賃|月々?|円以内|万(?:以内|円台|円くら|以下))[^\n]{0,20}(?:物件|お?部屋|もの|ところ)[^\n]{0,30}(?:ありますか|あります？|ありませんか|ございますか|ないですか)/;
   const BUDGET_INVENTORY_SOURCE_RE = /TikTok|tiktok|ティックトック|Instagram|インスタ|SNS|広告|掲載|サイト|スモラ|弊社/;
+  // 2026-09-09 Fable5 みく事例: 発火は resolveHedgeAllowance の「顧客の疑問形質問（customerAsked）」にゲート（条件フォーム・条件付き依頼では発火しない）
   const isBudgetInventoryQuestion = !isAvailabilityCheckContext &&
+    (!hedgeVerdict || hedgeVerdict.customerAsked.yes) &&
     (BUDGET_INVENTORY_RE.test(customerMessage ?? "") ||
      (BUDGET_INVENTORY_SOURCE_RE.test(customerMessage ?? "") && /ありますか|ございますか/.test(customerMessage ?? "")));
   const budgetInventoryNote = isBudgetInventoryQuestion
     ? `\n\n【🚨 予算・条件指定の在庫質問（確定・最優先）】
 お客様は特定物件の空室確認ではなく「その予算・条件で案内できる物件があるか」を聞いています。
 【✅ この質問への正しい返信の型】
-① その予算・条件で案内できる物件が実際にあるかを正直に伝える（ある/少ない/難しい＋理由）
+① その予算・条件で案内できる物件が実際にあるかを正直に伝える（ある/少ない/難しい＋理由。断言せず「傾向として」）
 ② 難しい場合は「なぜ難しいか」の理由を具体的に説明する（例:「TikTok掲載物件は広さが大きく家賃15万円以上がほとんどとなります！！」）
 ③ 代替案（別エリア・別条件・別媒体の物件等）を必ずセットで提示する
-④ 代替案から具体的に前進できる次のアクション（全件送る・ピックアップする等）を示す
+④ 代替案から具体的に前進できる次のアクション（全件送る・ピックアップする等）を示す。探索宣言（「〇〇さんのご条件でしっかりピックアップしてお送りさせて頂きます」）を同じ返信に必ず入れる。優先順位の聞き返し禁止
 【🔴 絶対NG】「確認してご連絡します」のみで終わる → 何も答えていない。信頼を損なう絶対禁止。
 【🔴 絶対NG】「確認します→確認でき次第連絡します」の空室確認パターンを使う → これは特定物件の募集状況確認の型であり、この質問には不適切。`
     : "";
@@ -1462,6 +1472,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 ③ 条件を理解した旨 — お客様が出した条件を具体的な言葉でそのまま拾う（オウム返しの疑問形は禁止）
 ④ 物件ピックアップの行動宣言
 ⑤ 「〇〇さんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます😌！！」で締める
+⑥ 禁止：実現可能性への言及（難しい・少ない・可能性）・条件緩和・代替案の先回り提案・お客様の自己ヘッジ（難しいと思う・あれば教えて）の復唱（探した後に結果と一緒に報告する）
 【🚫 解説禁止】条件変更・追加の効果やメリットの解説（「エリアが広がりましたので、より条件に近いお部屋を見つけやすくなるかと思います」等）は絶対に書かない。承諾＋「〇〇さんのご希望のご条件に合ったお部屋を探してお送りする」コミットメントのみ。
 【🚫 絶対禁止CTA（フェーズ別パターンより上位）】申込フォーマット・申込書類の案内・申込誘導／見積書の作成宣言・送付宣言・初期費用の金額提示／条件ヒアリングフォーム（①〜⑧）等のフォーマット送付／内覧日程の提案。CTAは「お部屋をお送りすること」のみ。`
     : "";
@@ -1567,7 +1578,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // staticBlock を汚染しないよう dynamicBlock 側に配置する
   const dynamicBlock =`${topPrinciplesNote}${replyContentNote}
 ${propertyStatusNote}
-${turnPairNote}${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${turnPairNote}${stanceNote}${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
@@ -3739,7 +3750,21 @@ export async function POST(req: NextRequest) {
         ? { customer_intent: brainMeta.customer_intent, customer_questions: brainMeta.customer_questions, condition_change_type: brainMeta.condition_change_type, hesitancy_pattern: brainMeta.hesitancy_pattern, repeated_concern: brainMeta.repeated_concern, customer_concern: brainMeta.customer_concern }
         : null,
     });
-    const pairContext: PairContext = resolveTurnPair(lastStaffTurn, customerResponse, substance, lastStaffMsgForSearch || tpoLatestStaffText || "");
+    // ── 2026-09-09 Fable5 みく事例: ヘッジ許容（探索済み証拠 > 顧客の疑問形質問 > 禁止）。pairContext より先に計算し PAIR_MATRIX の探索済みセル選択にも使う
+    //   生成（latent_intent / winning_pattern / closing_strategy / customer_questions / conditionDirection / 【姿勢】）・検査（final-check runHedgeChecks）・tpo_debug が同一 verdict
+    const hedge: HedgeVerdict = resolveHedgeAllowance({
+      customerMessage: message ?? "",
+      substance,
+      staff: lastStaffTurn,
+      customer: customerResponse,
+      lastStaffText: lastStaffMsgForSearch || tpoLatestStaffText || "",
+      lastCustomerAt: lastCustomerMsgAt,
+      recentAixRows,
+      lastAixHistory: lastAixHistoryText,
+      isAixPropertySendMode: !!aixSourceMessage && STAFF_SEARCHED_RE.test(aixSourceMessage),
+    });
+    console.info("[hedge]", JSON.stringify({ allowance: hedge.allowance, searched: hedge.searched, asked: hedge.customerAsked.yes, selfHedge: hedge.customerSelfHedge.yes, statedRelax: hedge.customerStatedRelax.yes }));
+    const pairContext: PairContext = resolveTurnPair(lastStaffTurn, customerResponse, substance, lastStaffMsgForSearch || tpoLatestStaffText || "", { searched: hedge.searched.yes });
     const pairDirection = buildPairDirection(pairContext, { brainReplyDirection: brainMeta?.reply_direction ?? null, brainFresh: brainFreshForMessage && !isCachedMeta });
     // ラベル: tpoNoteForLLM ↔ prompts「■ 場面【…】」↔ final-check WAIT_TPO_RE（after_wait の検討中セルは「検討中フォロー」を含めて WE DO 免除を維持）
     const pairTpoLabel = pairContext.rule ? `${pairContext.rule.tpoLabel}（往復: ${pairContext.summary}。${pairContext.rule.length}）` : null;
@@ -3763,16 +3788,27 @@ export async function POST(req: NextRequest) {
         return "「当日は現地にてお待ちしております！！」（日時または場所を1つだけ復唱）";
       return "「気になる点等出てきましたらいつでもお気軽にご連絡ください！！」";
     })();
-    // ── 条件提示の方向性（抽出値をリテラル埋め込み・3行構成固定）──
+    // ── 2026-09-09 Fable5 みく事例: 締め verdict（断り＞成果物＞日程＞検討中＞質問＞セル指定＞具体宣言あり節目）。生成前は「宣言はこれから書く」前提の予測 ──
+    //   旧 conditionDirection は3行目を「ピックアップ出来次第…何卒」に固定し「全力でサポート」を禁止語にしていた（正解の伴走締めを構造的に出せず、LLM が禁止された締めの穴をヘッジ文で埋めていた）
+    const closerVerdict: CloserVerdict = resolveCloser(
+      pairContext,
+      predictCloserSignals({ aixSourceText: aixSourceMessage }),
+      { customerName: customerName ?? "", isFirstContact: isFirstEverReplyFromMsgs, asksCustomerTask: false },
+    );
+    console.info("[closer]", JSON.stringify({ closer: closerVerdict.closer, nanisotsu: closerVerdict.nanisotsu, reason: closerVerdict.reason }));
+    // ── 条件提示の方向性（抽出値をリテラル埋め込み・3〜4行構成固定。締めは closerVerdict のリテラル）──
     const conditionDirection: string = (() => {
       const areaTxt = conditionDetail.areas.length ? conditionDetail.areas.join("・") : "（顧客文中のエリア名をそのまま）";
       const rentTxt = conditionDetail.rent ?? "（顧客文中の家賃表記をそのまま）";
       const answerFirst = conditionDetail.hasRequest ? "顧客の質問・依頼が併記されているので、2行目の前に1文で直接回答すること。" : "";
-      return `条件提示（エリア=${areaTxt} / 家賃=${rentTxt}）。3行構成で100〜180字。` +
+      const closerLines = closerVerdict.text ? closerVerdict.text.split("\n") : [];
+      const line3 = closerLines[0] ? `3行目「${closerLines[0]}」（単独行）。` : "3行目は行動宣言で終える（追加締めなし）。";
+      const line4 = closerLines[1] ? `4行目「${closerLines[1]}」。` : "";
+      return `条件提示（エリア=${areaTxt} / 家賃=${rentTxt}）。3〜4行構成で100〜180字。` +
         `1行目「かしこまりました！！」（単独行）。${answerFirst}` +
-        `2行目：「${areaTxt}周辺全域から${rentTxt}」＋顧客が書いた付帯条件（間取り・徒歩分・築年・設備・管理費込 等）を列挙して「〇〇さんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！」。` +
-        `3行目「ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します！！」。` +
-        `禁止：「ご条件に合ったお部屋」「全力でサポート」「お探しします」等の抽象語／「新着あれば」「日々更新」等の受け身文／「本日中」「なるべく早く」等の時間約束／足りない条件の聞き返し（まず送る）／「〜をご希望ですね」の単体確認文。エリア名と家賃表記は必ず原文どおり本文に埋め込むこと`;
+        `2行目：「${areaTxt}周辺全域から${rentTxt}」＋顧客が書いた付帯条件（間取り・徒歩分・築年・設備・管理費込 等）を原文の語のまま列挙して「〇〇さんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！」。` +
+        line3 + line4 +
+        `禁止：2行目の具体宣言の代わりに「ご条件に合ったお部屋」「全力でサポート」「お探しします」等の抽象語だけで済ませること（3行目の締めとしての伴走宣言は必須）／「新着あれば」「日々更新」等の受け身文／「本日中」「なるべく早く」等の時間約束／足りない条件の聞き返し（まず送る）／「〜をご希望ですね」の単体確認文／条件の実現可能性への言及（難しい・厳しい・少ない・可能性・かもしれません）／条件緩和・代替案の先回り提案（条件を1つ変えた場合・優先順位・妥協・〇〇未満まで広げる）／顧客の自己ヘッジ「難しいと思う」「あれば教えて」の復唱。エリア名と家賃表記は必ず原文どおり本文に埋め込むこと`;
     })();
     const effectiveReplyDirection: string | null = (() => {
       if (isConditionPresented) return conditionDirection;
@@ -3921,7 +3957,11 @@ export async function POST(req: NextRequest) {
         brainMeta.template_hint
       );
       // Step1移植: message-local戦術フィールド（鮮度ゲート通過時のみ発火）
-      const qs = brainFreshForMessage ? (brainMeta.customer_questions ?? []) : [];
+      // 2026-09-09 Fable5 みく事例: 未探索（forbid_preemptive）の時は「条件を変えた場合の代替」型の質問を注入しない（brain が顧客の自己ヘッジを質問化していた）
+      const RELAX_Q_RE = /条件を?(?:一つ|1つ|ひとつ|どれか)?変え|代替|緩め|難しい場合|優先/;
+      const qsRaw = brainFreshForMessage ? (brainMeta.customer_questions ?? []) : [];
+      const qs = hedge.allowance === "forbid_preemptive" ? qsRaw.filter((q) => !RELAX_Q_RE.test(q)) : qsRaw;
+      const droppedRelaxQ = qsRaw.length !== qs.length;
       const hasTactical = brainFreshForMessage && !!(
         qs.length || brainMeta.repeated_concern || brainMeta.current_property || brainMeta.hesitancy_pattern || brainMeta.customer_intent || brainMeta.latent_intent
       );
@@ -3949,10 +3989,14 @@ export async function POST(req: NextRequest) {
         lines.push(`- 📌 スモラスタイル②WE DO宣言（必須・返信末尾に1文として明示する）: ${brainMeta.note} → このスタッフアクションをお客様向けに「私が〇〇させて頂きます！！」の形に言い換えて返信の最後の1文に含めること（例: 「明日管理会社に交渉させて頂きます！！」「ご希望のお部屋をピックアップしてお送りさせて頂きます！！」「お申込みでお部屋押さえさせて頂きます！！」）。ただしZ/F3/Yパターン等の短い締め返信では追加しない`);
       }
       // winning_pattern + closing_strategy の両方がある場合は1文のWE DO宣言に統合（二重宣言防止）
-      if (brainMeta.winning_pattern && brainMeta.closing_strategy) {
-        lines.push(`- 🏆 勝ちパターン×成約戦略: 【勝ちパターン】${brainMeta.winning_pattern} ／ 【成約戦略】${brainMeta.closing_strategy} → 両者を統合した1アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信末尾に1文のみ含めること（WE DO宣言は返信全体で1文・重複禁止）`);
-      } else if (brainMeta.winning_pattern) {
-        lines.push("- 🏆 過去の勝ちパターン: " + brainMeta.winning_pattern + " → このパターンに沿った具体アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信に1文含めること");
+      // 2026-09-09 Fable5 みく事例: 未探索の時は brain 戦略から代替案・条件緩和の先回り節を剥がしてから注入（顧客⑧の自己ヘッジが closing_strategy に昇格していた）
+      const wp = hedge.allowance === "forbid_preemptive" ? stripPreemptiveRelax(brainMeta.winning_pattern) : (brainMeta.winning_pattern ?? "");
+      const cs = hedge.allowance === "forbid_preemptive" ? stripPreemptiveRelax(brainMeta.closing_strategy) : (brainMeta.closing_strategy ?? "");
+      const relaxGuard = hedge.allowance === "forbid_preemptive" ? "（未探索のため代替案・条件緩和は宣言しない。WE DO はご希望条件そのままのピックアップ宣言1文）" : "";
+      if (wp && cs) {
+        lines.push(`- 🏆 勝ちパターン×成約戦略: 【勝ちパターン】${wp} ／ 【成約戦略】${cs} → 両者を統合した1アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信末尾に1文のみ含めること（WE DO宣言は返信全体で1文・重複禁止）${relaxGuard}`);
+      } else if (wp) {
+        lines.push("- 🏆 過去の勝ちパターン: " + wp + " → このパターンに沿った具体アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信に1文含めること" + relaxGuard);
       }
       if (brainMeta.customer_emotion) lines.push("- 💡 顧客の感情状態: " + brainMeta.customer_emotion + " → この感情を踏まえ冒頭1文で受け止めること（例: 不安→「ご心配なお気持ち、よくわかります」/ 前向き→「嬉しいです！」）。感情無視の事務的な書き出しは禁止");
       // ── purchase_signal_level クロージング強度制御 ────────────────────────────
@@ -4026,7 +4070,7 @@ export async function POST(req: NextRequest) {
         }
       }
       // closing_strategy は winning_pattern との両方がある場合は統合済み（上記）・単独の場合のみ出力
-      if (brainMeta.closing_strategy && !brainMeta.winning_pattern) lines.push(`- 成約戦略: ${brainMeta.closing_strategy} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること`);
+      if (cs && !wp) lines.push(`- 成約戦略: ${cs} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること${relaxGuard}`);
       if (brainMeta.next_steps?.length) {
         lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
         lines.push(`  → 今回の返信で実行するのは Step1（${brainMeta.next_steps[0]}）のみ。Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を今回の本文に先取りして書かないこと（フェーズ先走り禁止）`);
@@ -4060,6 +4104,9 @@ export async function POST(req: NextRequest) {
           ? "⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）"
           : "⚠️ 質問検出（必ず正面から答えること・「確認します」で逃げることは禁止）";
         lines.push(`- ${qLabel}:\n${qs.map((q, i) => `  ${i + 1}. ${q}`).join("\n")}`);
+      }
+      if (droppedRelaxQ) {
+        lines.push("- お客様は「条件を変えた場合の代替」を求めているが、まだ探していないので今回は答えない。ご希望条件そのままのピックアップ宣言で応え、代替案はピックアップ結果と一緒に報告する（先回りの「難しい可能性」は禁止）");
       }
       // 不安系キーワード判定は決定論（コード側）に残す — LLM出力に依存させない（旧Step1と同一リスト・ANXIETY_KEYWORDS）
       if (qs.some((q) => ANXIETY_KEYWORDS.some((k) => q.includes(k)))) {
@@ -4148,7 +4195,12 @@ export async function POST(req: NextRequest) {
       // 表面の質問への回答だけでなく、裏にある不安・期待に届く返信を書かせる（message-local分析のため鮮度ゲート必須）
       if (brainFreshForMessage && brainMeta.latent_intent) {
         // 2026-09-09 Fable5: 旧「不安を汲み取る一文」指示が「お気持ち、よくわかります」を生んでいた → 事実か代替案で応える
-        lines.push(`- 💭 送信動機・潜在意識: ${brainMeta.latent_intent} — この動機には『事実』か『代替案（条件を変えた再ピックアップ宣言）』で応える。共感語（お気持ち・ご心配な・お察し・わかります・寄り添う）で応えるのは禁止。推測を「〜が不安なんですよね」と指摘するのも禁止`);
+        // 2026-09-09 Fable5 みく事例: 旧『代替案（条件を変えた再ピックアップ宣言）で応える』がみくの先回りヘッジ締めの生成源。ヘッジ verdict で応え方を切替え、未探索時は代替案節を剥がす
+        const li = hedge.allowance === "forbid_preemptive" ? stripPreemptiveRelax(brainMeta.latent_intent) : brainMeta.latent_intent;
+        const answerWith = hedge.allowance === "allow_after_search" ? "『事実』か『過去形の結果報告＋実行済み代替』"
+          : hedge.allowance === "allow_on_customer_ask" ? "『事実（傾向として）』＋『ご希望条件でのピックアップ宣言』"
+          : "『事実』か『ご希望条件そのままでのピックアップ宣言』";
+        if (li) lines.push(`- 💭 送信動機・潜在意識: ${li} — この動機には${answerWith}で応える。共感語（お気持ち・ご心配な・お察し・わかります・寄り添う）で応えるのは禁止。推測を「〜が不安なんですよね」と指摘するのも禁止`);
       }
       // H1(AIX-METAフル活用 2026-08): future_timeline を hesitancy_pattern と独立に注入。
       // 旧実装は hp==="timeline" の分岐内でのみ使用しており、hp が thinking/null 等のとき
@@ -4179,6 +4231,8 @@ export async function POST(req: NextRequest) {
     // 「生成はTPOなし・チェックはTPOあり」の非対称が発生していた）。
     // 2026-09-09 Fable5 往復文脈ブロック（dynamicBlock で tpoGuidanceNote の直前・ハードゲートの次）。follow-up 生成では注入しない
     const turnPairNote = isFollowUp || isTemplateOptimize ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "");
+    // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
+    const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "" });
 
     const tpoGuidanceNote = (() => {
       const lines: string[] = [];
@@ -4447,6 +4501,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       greetingDecision,    // G30: 冒頭挨拶の決定論結果（リテラル埋め込み）
       turnPairNote,        // 2026-09-09 Fable5: 往復文脈ブロック
       customerMsgUnits,    // 2026-09-09 Fable5: 通単位の配列（[N通目] 表示は通単位のみ）
+      stanceNote,          // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック
+      hedge,               // 2026-09-09 Fable5 みく事例: budgetInventoryNote の発火ゲート
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -4809,6 +4865,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
+                  hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
                 };
                 // センシティブ案件（クレーム/審査否決/キャンセル）は「参考のみ・手動確認必須」の草稿のため
                 // チェックのみ実行し、接地修正・フィードバック再生成でドラフトを機械的に触らない
@@ -4919,6 +4976,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                     greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
                     substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
+                    hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
                   };
                   const nameRes = enforceCustomerName(draftBody, { customerName, lineDisplayName });
                   draftBody = nameRes.cleaned;
@@ -4993,7 +5051,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
             if (!isTemplateOptimize && finalCheck && draftBody) {
               try {
-                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|GREETING_WAITED_MISUSE)/;
+                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|GREETING_WAITED_MISUSE|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT)/;
                 const postDetCtx = {
                   recentMessages, lastCustomerMessage: message, isAutoSend: enforceReplyModeGate,
                   isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
@@ -5006,6 +5064,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
+                  hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
                   ngProperties: brainFreshForMessage
                     ? (brainMeta?.property_search_params?.ng_properties ?? []).filter((p) => p?.property_name).map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)
                     : undefined,
@@ -5040,6 +5099,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // 往復文脈（Turn-Pair）＋実質判定（Substance）
               substance: { has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, residue: substance.residue.slice(0, 120), evidence: substance.evidence },
               turnPair: { staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, staffEvidence: lastStaffTurn.evidence.slice(0, 60), customer: customerResponse.kind, customerSecondary: customerResponse.secondary, customerObject: customerResponse.object, customerSource: customerResponse.source, ruleId: pairContext.ruleId, precedence: pairContext.rule?.precedence ?? null },
+              // 2026-09-09 Fable5 みく事例: ヘッジゲート・締め・姿勢フラグ（save-reply-example が stance_sent_lite をマージし、下書き→送信の遷移行列 SQL に使う）
+              hedge: { allowance: hedge.allowance, searched: hedge.searched, customerAsked: hedge.customerAsked.yes, customerSelfHedge: hedge.customerSelfHedge.yes, customerStatedRelax: hedge.customerStatedRelax.yes },
+              closer: { kind: closerVerdict.closer, nanisotsu: closerVerdict.nanisotsu, reason: closerVerdict.reason },
+              stance_draft: finalDraftText ? computeStanceFlags(finalDraftText, pairContext, hedge, { customerName: customerName ?? "", customerText: message ?? "", isFirstContact: isFirstEverReplyFromMsgs }) : null,
               effectiveReplyDirection: (effectiveReplyDirection ?? "").slice(0, 300),
               brainReplyDirection: brainMeta?.reply_direction ?? null,
               brainClosingStrategy: (brainMeta?.closing_strategy ?? "").slice(0, 200) || null,

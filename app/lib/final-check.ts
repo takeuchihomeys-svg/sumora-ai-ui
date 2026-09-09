@@ -31,7 +31,16 @@ import {
 // 2026-09-08 Fable5: 見積書の文脈判定 verdict（generate-reply の isMisumoriContextAppropriate() と同一オブジェクト）
 import type { EstimateContextVerdict } from "./estimate-context";
 // 2026-09-09 Fable5 往復文脈（Turn-Pair）＋実質判定（Substance）: generate-reply と同一オブジェクト（省略時は ctx から再計算）
-import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair, STAFF_KIND_JA, CUSTOMER_KIND_JA, type SubstanceVerdict, type PairContext } from "./reply-context";
+import {
+  analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair, STAFF_KIND_JA, CUSTOMER_KIND_JA, type SubstanceVerdict, type PairContext,
+  // 2026-09-09 Fable5 みく事例: ヘッジゲート・締めポリシー・姿勢ギャップ（生成側 route.ts / buildStanceNote と同一関数）
+  resolveHedgeAllowance, resolveCloser, deriveCloserSignals, extractEchoTokens, evalConditionEcho, classifyScheduleCommitment, resolveAnswerability, detectExcusePhrases,
+  CLOSER_TEXT, PRE_PICKUP_HEDGE_RE, SEARCH_REPORT_RE, RELAX_PROPOSAL_RE, PAST_REPORT_RE, SEARCH_DECL_RE, SELF_HEDGE_ECHO_RE, CUST_STATED_RELAX_RE,
+  STAFF_ASSERT_SCHEDULE_RE, SCHEDULE_ASK_RE, DEFERRED_ANSWER_RE, NANISOTSU_RE, OPEN_DOOR_RE, WAIT_SOFTLY_RE, RESULT_EXCUSE_RE,
+  type HedgeVerdict, type CloserVerdict, type ExcuseFlag,
+} from "./reply-context";
+// 2026-09-09 Fable5: check-reply 経路（isConditionPresented フラグ無し）でも条件フォームを condition_change に分類する（route.ts conditionDetail reason:'form' と同定義）
+import { isConditionFormMessage } from "./line-reply-prompts";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -115,6 +124,9 @@ export interface FinalCheckContext {
   substance?: SubstanceVerdict;
   /** 直前スタッフ発話 × 顧客返答の往復ペア。省略時は recentMessages から再計算 */
   pairContext?: PairContext;
+  // ── 2026-09-09 Fable5 みく事例: ヘッジゲート・締めポリシー（route.ts resolveHedgeAllowance / resolveCloser と同一オブジェクト。check-reply 経路は省略可＝再計算）──
+  hedge?: HedgeVerdict;
+  closerVerdict?: CloserVerdict;
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -959,18 +971,27 @@ const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*
 const GREETING_BLOCK_RE = /^(?:夜遅くに失礼します[！!]*\s*)?(?:[^\n]{0,12}(?:さん|様)[、,\s]*)?(?:はじめまして|初めまして|この度はご連絡|この度ご連絡|お部屋探しを担当|お部屋探しご担当|お世話になっております|お待たせ(?:致|いた)しました|ご連絡遅くなり申し訳)[^\n]*\n+/;
 
 // ─── 2026-09-09 Fable5 往復文脈: ctx 解決（generate-reply 経路は同一オブジェクト、check-reply 経路は再計算）─────────
-function resolveReplyContext(ctx: FinalCheckContext): { sub: SubstanceVerdict; pair: PairContext } {
+function resolveReplyContext(ctx: FinalCheckContext): { sub: SubstanceVerdict; pair: PairContext; hedge: HedgeVerdict } {
   const cust = ctx.lastCustomerMessage ?? "";
-  if (ctx.substance && ctx.pairContext) return { sub: ctx.substance, pair: ctx.pairContext };
-  const lastStaff = [...(ctx.recentMessages ?? [])].reverse().find((m) => m.sender === "staff" && !MEDIA_ONLY_RE.test(m.text))?.text ?? "";
-  const staff = classifyLastStaffTurn(lastStaff);
-  const sub = ctx.substance ?? analyzeSubstance(cust, undefined, { staffAskedQuestion: staff.kind === "question_to_customer" });
-  if (ctx.pairContext) return { sub, pair: ctx.pairContext };
-  const customer = classifyCustomerResponse(sub, staff);
-  return { sub, pair: resolveTurnPair(staff, customer, sub, lastStaff) };
+  const lastStaffMsg = [...(ctx.recentMessages ?? [])].reverse().find((m) => m.sender === "staff" && !MEDIA_ONLY_RE.test(m.text));
+  const lastStaff = lastStaffMsg?.text ?? "";
+  let sub = ctx.substance, pair = ctx.pairContext;
+  if (!sub || !pair) {
+    const staff = classifyLastStaffTurn(lastStaff);
+    sub = sub ?? analyzeSubstance(cust, undefined, { staffAskedQuestion: staff.kind === "question_to_customer" });
+    // check-reply 経路は route.ts のフラグが無いので、条件フォーム（①〜⑧／【…】⇒）だけは同定義の isConditionFormMessage で condition_change に寄せる
+    pair = pair ?? resolveTurnPair(staff, classifyCustomerResponse(sub, staff, { isConditionPresented: isConditionFormMessage(cust) }), sub, lastStaff);
+  }
+  // check-reply 経路（aix_usage_logs 無し）は過去形の直前スタッフ本文だけを探索証拠に採る（保守的＝forbid 寄り）
+  const hedge = ctx.hedge ?? resolveHedgeAllowance({
+    customerMessage: cust, substance: sub, staff: pair.staff, customer: pair.customer, lastStaffText: pair.lastStaffText,
+    lastCustomerAt: [...(ctx.recentMessages ?? [])].reverse().find((m) => m.sender === "customer")?.createdAt ?? null,
+  });
+  return { sub, pair, hedge };
 }
 // 「文を足す」修正が正解の骨格系コード（修正ループの長さ上限・evidence 残存プリフィルタから除外する）
-export const SKELETON_CODES = new Set(["REPLY_SKELETON_MISSING", "CONCERN_UNADDRESSED", "EMPTY_CLOSER", "PAIR_ELEMENT_MISSING", "SPLIT_ACK_REPLY", "GENERIC_ONLY_REPLY", "WE_DO_MISSING_DET", "WE_DO_MISSING"]);
+// 2026-09-09 Fable5: CLOSER_MISSING / CONDITION_ECHO_MISSING も「文を足す」修正（PREEMPTIVE_HEDGE 等の削除系は含めない）
+export const SKELETON_CODES = new Set(["REPLY_SKELETON_MISSING", "CONCERN_UNADDRESSED", "EMPTY_CLOSER", "PAIR_ELEMENT_MISSING", "SPLIT_ACK_REPLY", "GENERIC_ONLY_REPLY", "WE_DO_MISSING_DET", "WE_DO_MISSING", "CLOSER_MISSING", "CONDITION_ECHO_MISSING"]);
 // 回答・説明形の文（「〜となります」「〜ので、」等）。REPLY_SKELETON の「回答／提案」判定に使う
 const ANSWER_RE = /(?:となります|でございます|御座います|ございます|可能です|大丈夫です|問題(?:ございません|ありません|ない)|かかります|発生(?:し|いた)します|(?:多数|沢山|たくさん)(?:ございます|あります|御座います)|オススメ|おすすめ|お勧め|ご提案|(?:の|な)ため[、,]|ので[、,]|です(?:ので|が)[、,]|ため[！!。]|(?:出来|でき)ます[！!。]|傾向|一般的に|目安)/;
 const NO_DECL_TPO_RE = /一時保留|強推し直後/;
@@ -1248,19 +1269,24 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     // sub.has が主、CUSTOMER_REQUEST_RE は後方互換の従
     const customerAsked = skelSub.has || CUSTOMER_REQUEST_RE.test(cust);
     if (!hasActionDecl) {
+      const sig = deriveCloserSignals(text);
       const residueLen = residue.replace(/[\s！!。、😊😌🌟✨]/g, "").length;
-      const isGenericOnly = customerAsked && residueLen < 25;
-      const hasExplanation = customerAsked && (text.match(EXPLANATORY_RE) ?? []).length >= 1;
+      // 2026-09-09 Fable5: GENERIC_ONLY は「具体宣言なしの全力サポート締め」（あやさん型）に限定。それ以外は WE_DO_MISSING_DET
+      const isGenericOnly = sig.usedCommit && !sig.hasConcreteDeclaration;
+      // 感謝・挨拶の「ございます！」を説明文に数えない（あやさん型が info に降格していた）。GENERIC_ONLY は説明文があっても降格しない
+      const hasExplanation = customerAsked && !isGenericOnly && (text.replace(/ありがとうございます|お世話になっております/g, "").match(EXPLANATORY_RE) ?? []).length >= 1;
       const pairStrict = skelPair.rule?.precedence === "override_wait";
       issues.push({
         pass: "context_check",
-        severity: hasExplanation ? "info" : (ctx.isAutoSend || isGenericOnly || skelSub.has || pairStrict ? "block" : "warning"),
+        severity: hasExplanation ? "info" : (ctx.isAutoSend || isGenericOnly || residueLen < 25 || skelSub.has || pairStrict ? "block" : "warning"),
         code: isGenericOnly ? "GENERIC_ONLY_REPLY" : "WE_DO_MISSING_DET",
         message: (isGenericOnly
-          ? "顧客が質問・条件・依頼をしているのに定型句以外の中身が25字未満です"
+          ? "「全力でサポート」が具体宣言（エリア・条件を復唱したピックアップ/確認宣言）の代わりになっている（あやさん型の汎用返信）"
           : "具体的な行動宣言（ピックアップ/確認/交渉/お送り/ご案内 等＋対象）が1文もありません") + `【往復文脈】${skelPair.summary}`,
         evidence: text.trim().slice(0, 30),
-        suggestion: skelPair.rule?.example ?? "顧客メッセージの固有名詞（エリア・物件名・条件・日付）を復唱し「○○をピックアップしてお送りさせて頂きます」等の具体アクション＋期限を1文入れてください",
+        suggestion: skelPair.rule?.example ?? (isGenericOnly
+          ? "「〇〇周辺全域から〇〇さんご希望の△△のお部屋ピックアップしてお送りさせて頂きます！！」を先に置き、その後の締めとしてのみ全力サポートを残す"
+          : "顧客メッセージの固有名詞（エリア・物件名・条件・日付）を復唱し「○○をピックアップしてお送りさせて頂きます」等の具体アクション＋期限を1文入れてください"),
       });
     }
   }
@@ -1277,6 +1303,142 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   // ⑩ 2026-09-09 Fable5 往復文脈: 返信骨格（REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSING / SPLIT_ACK_REPLY / FEELING_TEMPLATE）
   issues.push(...runSkeletonChecks(text, ctx));
 
+  // ⑪ 2026-09-09 Fable5 みく事例: ヘッジゲート（PREEMPTIVE_HEDGE / FABRICATED_SEARCH_REPORT / CONDITION_RELAX_UNASKED / HEDGE_WITHOUT_SEARCH_DECL / SELF_HEDGE_ECHO）
+  //    ・締めポリシー（CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE）
+  //    ・姿勢ギャップ（CONDITION_ECHO_MISSING / SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / 煽り・受け身5種）
+  issues.push(...runHedgeChecks(text, ctx), ...runCloserChecks(text, ctx), ...runStanceChecks(text, ctx));
+
+  return issues;
+}
+
+// ─── 2026-09-09 Fable5 みく事例: ヘッジゲート検査（生成側 resolveHedgeAllowance と同一 verdict）───────────
+function runHedgeChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  const { hedge } = resolveReplyContext(ctx);
+  const hint = `【ヘッジ判定】${hedge.summary}。`;
+  const name = ctx.customerName ? `${ctx.customerName}さん` : "〇〇さん";
+  const supportCloser = CLOSER_TEXT.commit_until_found(ctx.customerName ?? "");
+  const sentences = text.split(/(?<=[。！!\n])/).map((s) => s.trim()).filter(Boolean);
+  const hasSearchDecl = SEARCH_DECL_RE.test(text);
+  const customerRelaxed = hedge.customerStatedRelax.yes || CUST_STATED_RELAX_RE.test(ctx.lastCustomerMessage ?? "");
+  // ヘッジ語を含む節（読点区切り）が過去形か（「少ない状況になる可能性がございますので、〜ピックアップさせて頂きました」の後半に引きずられない）
+  const clauseIsPast = (s: string, m: string) => {
+    const clause = s.split(/[、,]/).find((c) => c.includes(m)) ?? s;
+    return PAST_REPORT_RE.test(clause);
+  };
+  const seen = new Set<string>();
+  for (const s of sentences) {
+    const h = s.match(PRE_PICKUP_HEDGE_RE);
+    if (h && !seen.has("PH")) {
+      if (hedge.allowance === "forbid_preemptive") {
+        seen.add("PH");
+        issues.push({ pass: "context_check", severity: "block", code: "PREEMPTIVE_HEDGE",
+          message: `まだ探していない段階で条件の実現可能性を先回りしてヘッジしています（正解返信2618件中0件・頼りがいを削ぐ）。${hint}`,
+          evidence: h[0], suggestion: `この文を削除し、ご希望条件をそのまま復唱したピックアップ宣言の後に「${supportCloser}」で締める（代替案はピックアップ結果と一緒に報告する）` });
+      } else if (hedge.allowance === "allow_after_search" && !clauseIsPast(s, h[0])) {
+        seen.add("PH");
+        issues.push({ pass: "context_check", severity: "block", code: "PREEMPTIVE_HEDGE",
+          message: `探索済みですが未来形の予測で書かれています（正解は過去形の結果報告のみ）。${hint}`,
+          evidence: h[0], suggestion: "「〇〇のご条件ですと合うお部屋が少ない状況でしたので、△△まで広げてピックアップさせて頂きました！！」の過去形＋実行済み代替に書き直す" });
+      } else if (hedge.allowance === "allow_on_customer_ask" && !hasSearchDecl) {
+        seen.add("PH");
+        issues.push({ pass: "context_check", severity: "block", code: "HEDGE_WITHOUT_SEARCH_DECL",
+          message: `お客様の直接質問への傾向回答はよいが、探索宣言がセットになっていません。${hint}`,
+          evidence: h[0], suggestion: `「傾向として〜が多いですが、${name}のご条件でしっかりピックアップしてお送りさせて頂きます！！」の形にする` });
+      }
+    }
+    const r = s.match(SEARCH_REPORT_RE);
+    if (r && hedge.allowance !== "allow_after_search" && !seen.has("FS")) {
+      seen.add("FS");
+      issues.push({ pass: "context_check", severity: "block", code: "FABRICATED_SEARCH_REPORT",
+        message: `物件送付（AIX）の実績が無いのに「探した結果」として書いています。${hint}`,
+        evidence: r[0], suggestion: "結果報告を削除し、ピックアップ宣言（未来形）に戻す。結果はAIX物件送付文で報告する" });
+    }
+    const x = s.match(RELAX_PROPOSAL_RE);
+    if (x && !seen.has("CR")) {
+      const exempt = (hedge.allowance === "allow_after_search" && clauseIsPast(s, x[0])) || hedge.allowance === "allow_on_customer_ask" || customerRelaxed;
+      if (!exempt) {
+        seen.add("CR");
+        issues.push({ pass: "context_check", severity: "block", code: "CONDITION_RELAX_UNASKED",
+          message: `お客様が緩和条件を述べていないのに条件緩和・代替案を先回りで提案しています${hedge.customerSelfHedge.yes ? `（顧客の自己ヘッジ「${hedge.customerSelfHedge.evidence}」を戦略に昇格させない）` : ""}。${hint}`,
+          evidence: x[0], suggestion: `この文を削除し、ご希望条件そのままのピックアップ宣言→「${supportCloser}」で締める。緩和が必要かはピックアップ結果で示す` });
+      }
+    }
+  }
+  if (hedge.customerSelfHedge.yes) {
+    const e = text.match(SELF_HEDGE_ECHO_RE);
+    if (e) issues.push({ pass: "rule_check", severity: "warning", code: "SELF_HEDGE_ECHO",
+      message: `お客様の自己ヘッジに同意・復唱しています（正解は復唱せず条件そのままで探す宣言）。${hint}`, evidence: e[0], suggestion: `同意文を削除し、「${supportCloser}」で締める` });
+  }
+  return issues;
+}
+
+// ─── 2026-09-09 Fable5: 締め検査（生成側 resolveCloser と同一関数）─────────────────────────────
+function runCloserChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const out: CheckIssue[] = [];
+  const { pair } = resolveReplyContext(ctx);
+  const sig = deriveCloserSignals(text);
+  const opts = { customerName: ctx.customerName ?? "", isFirstContact: !!ctx.isEarlyConversation, asksCustomerTask: sig.asksCustomerTask };
+  // 生成前予測（ctx.closerVerdict）は下書きに成果物・日程が現れた時点で無効。none 予測も下書きで再判定する
+  const v = ctx.closerVerdict && ctx.closerVerdict.closer !== "none" && !sig.deliverableAttached && !sig.scheduleFixed ? ctx.closerVerdict : resolveCloser(pair, sig, opts);
+  const head = text.trim().slice(0, 30);
+  if (sig.usedCommit && sig.deliverableAttached)
+    out.push({ pass: "context_check", severity: "warning", code: "COMMIT_AFTER_DELIVERABLE", message: "成果物送付時に全力サポート締めを重ねている（正解 property_send 系0件）", evidence: text.match(/[^\n]*全力でサポート[^\n]*/)?.[0] ?? "全力でサポート", suggestion: "締めを「お手隙の際にご査収ください😌！！」のみにする" });
+  if (sig.usedNanisotsu && !v.nanisotsu)
+    out.push({ pass: "context_check", severity: "warning", code: "NANISOTSU_MISPLACED", message: `この場面で何卒は冗長（${v.reason}）。AI生成26% vs 正解14%`, evidence: text.match(NANISOTSU_RE)?.[0] ?? "何卒", suggestion: "「何卒よろしくお願い致します」行を削除" });
+  if (v.closer === "commit_until_found" && !sig.usedCommit)
+    out.push({ pass: "context_check", severity: "warning", code: "CLOSER_MISSING", message: "節目の具体宣言の後に伴走宣言が無い（スタッフ編集で全力サポート追加8件／削除0件）", evidence: head, suggestion: `最終行に「${v.text}」を追加` });
+  if (sig.hasResultExcuse && sig.deliverableAttached && pair.customer.kind === "condition_change")
+    out.push({ pass: "rule_check", severity: "warning", code: "RESULT_EXCUSE", message: "お客様主導の条件変更に「少ない状況でしたので広げました」の言い訳行（AIX widen でスタッフが2/2削除）", evidence: text.match(RESULT_EXCUSE_RE)?.[0] ?? head, suggestion: "言い訳行を削り、広げた条件を含む復唱＋ご査収のみにする" });
+  if ((sig.usedOpenDoor || sig.usedWait) && (v.closer === "commit_until_found" || v.closer === "receive_check"))
+    out.push({ pass: "context_check", severity: "warning", code: "PASSIVE_CLOSER", message: "我々が動く場面で受け身締め（いつでもお気軽に／ごゆっくり）", evidence: text.match(OPEN_DOOR_RE)?.[0] ?? text.match(WAIT_SOFTLY_RE)?.[0] ?? head, suggestion: `締めを「${v.text || CLOSER_TEXT[v.closer](opts.customerName)}」に置換` });
+  return out;
+}
+
+// ─── 2026-09-09 Fable5: 姿勢ギャップ検査（編集400件の上位: 具体復唱101・決め打ち22・可否保留11・煽り/受け身18）───────
+const EXCUSE_META: Record<ExcuseFlag, { code: string; sev: CheckSeverity; msg: string; sug: string }> = {
+  widen_excuse: { code: "WIDEN_EXCUSE_REDUNDANT", sev: "warning", msg: "お客様が自分で広げた条件を「少ない状況でしたので広げました」と言い訳している", sug: "その1文を削除し、広げた結果（エリア・条件の列挙）だけ渡して「お手隙の際にご査収ください😌！！」" },
+  reassurance_no_basis: { code: "REASSURANCE_NO_BASIS", sev: "warning", msg: "根拠となる事実文の無い「ご安心ください」", sug: "削除し、事実（〜となります）か行動宣言に置き換える" },
+  urgency: { code: "URGENCY_NO_INTENT", sev: "warning", msg: "申込意思・割引見積の無い段階での希少性煽り（急かし削除7件）", sug: "煽り語を削除。見積送付後・前向き反応後にのみ「お気に召されましたらお部屋埋まってしまう前に〜」" },
+  consider_push: { code: "CONSIDER_PUSH", sev: "warning", msg: "「ご検討ください」で顧客に委ねて終えている", sug: "「気になる物件がございましたらいつでもお気軽にお送りください！！お送りいただき次第募集状況確認させて頂きます！！」型の受け宣言に置換" },
+  humble_wait: { code: "HUMBLE_WAIT", sev: "warning", msg: "「〜いただけますと幸いです／少々お時間」の受け身のお願い", sug: "こちらの行動宣言（〜させて頂きます）に置換" },
+};
+function runStanceChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  const { sub, pair } = resolveReplyContext(ctx);
+  const tpo = ctx.tpoLabel ?? "";
+  const cust = ctx.lastCustomerMessage ?? "";
+  const head = text.trim().slice(0, 30);
+  // ① 条件復唱率（拡張101件）
+  const echoable = pair.customer.kind === "condition_change" || sub.kinds.includes("condition");
+  if (echoable && !CLOSED_TPO_RE.test(tpo) && !NO_DECL_TPO_RE.test(tpo)) {
+    const echo = evalConditionEcho(text, extractEchoTokens(cust));
+    if (echo.expected.length >= 2 && echo.ratio < 0.5) {
+      issues.push({ pass: "context_check", severity: echo.echoed.length === 0 ? "block" : "warning", code: "CONDITION_ECHO_MISSING",
+        message: `お客様の条件${echo.expected.length}件中${echo.echoed.length}件しか復唱していない（抽象語に逃げている）`, evidence: head,
+        suggestion: `行動宣言に「${echo.missing.join("・")}」をそのまま埋め込む（「ご条件に合った」は禁止）` });
+    }
+  }
+  // ② 決め打ち断定（断定削除22件）
+  const commit = classifyScheduleCommitment(cust, pair.lastStaffText);
+  if ((commit === "customer_asking" || commit === "staff_proposing") && STAFF_ASSERT_SCHEDULE_RE.test(text) && !SCHEDULE_ASK_RE.test(text)) {
+    issues.push({ pass: "context_check", severity: ctx.isAutoSend ? "block" : "warning", code: "SCHEDULE_ASSERT_UNCONFIRMED",
+      message: "お客様が日時を確定していないのに確定形で締めている（正解: 「はい！！ご案内可能です😊！！」＋「〜お待ち合わせ如何でしょうか！！」）",
+      evidence: text.match(STAFF_ASSERT_SCHEDULE_RE)?.[0] ?? head, suggestion: "「〜で何卒よろしくお願い致します」を「〜お待ち合わせ如何でしょうか😊！！」に、質問形の返しには冒頭に「はい！！お部屋ご案内可能です😊！！」" });
+  }
+  // ③ 可否即答（断定追加11件）
+  const fact = resolveAnswerability(cust);
+  if (fact && DEFERRED_ANSWER_RE.test(text) && !text.includes(fact.answer.replace(/[！!]+$/, "").slice(0, 10))) {
+    issues.push({ pass: "context_check", severity: "warning", code: "FACT_DEFERRED_ANSWER",
+      message: `即答できる既知事実（${fact.key}）を「確認します」に逃がしている（正解は言い切り＋次の一手）`,
+      evidence: text.match(DEFERRED_ANSWER_RE)?.[0] ?? head, suggestion: `「${fact.answer}」と言い切り、続けて「${fact.next || "次の一手（見積・内見）を宣言"}」` });
+  }
+  // ④ 保険・受け身・煽り語（18件）
+  for (const e of detectExcusePhrases(text, pair, extractEchoTokens(cust))) {
+    const m = EXCUSE_META[e.flag];
+    const sev: CheckSeverity = (e.flag === "urgency" && ctx.isAutoSend) ? "block" : m.sev;
+    issues.push({ pass: "rule_check", severity: sev, code: m.code, message: m.msg, evidence: e.evidence, suggestion: m.sug });
+  }
   return issues;
 }
 
@@ -2103,7 +2265,10 @@ GOCHOUGO_AFTER_DATE / GUIDE_BEFORE_PROPERTY / CONFIRM_SUBJECT_THEFT / CONFIRM_NO
 UNSENT_CLAIM / JUSHU_BEFORE_SEND / SELF_HONORIFIC / GUIDE_POSSIBLE_NO_DATE / SASETE_OVERUSE / APPLY_PUSH_NO_INTENT /
 CONFIRM_OBJECT_UNSTATED / FAREWELL_ON_MOVEOUT_INFO / DISCLOSURE_ASSERTION / VACANCY_ASSERTION / MOVEIN_DATE_ASSERTION / SCREENING_ASSURANCE /
 OPENING_GREETING_MISMATCH / OPENING_GREETING_UNEXPECTED / GREETING_WAITED_MISUSE /
-REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSING / SPLIT_ACK_REPLY / FEELING_TEMPLATE`;
+REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSING / SPLIT_ACK_REPLY / FEELING_TEMPLATE /
+PREEMPTIVE_HEDGE / FABRICATED_SEARCH_REPORT / CONDITION_RELAX_UNASKED / HEDGE_WITHOUT_SEARCH_DECL / SELF_HEDGE_ECHO /
+CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE / CONDITION_ECHO_MISSING /
+SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / WIDEN_EXCUSE_REDUNDANT / REASSURANCE_NO_BASIS / URGENCY_NO_INTENT / CONSIDER_PUSH / HUMBLE_WAIT`;
 
 function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx: FinalCheckContext): string {
   const issuesJson = JSON.stringify(
@@ -2150,6 +2315,9 @@ function inferDiffIssuePass(code: string, check1Issues: CheckIssue[]): CheckPass
       code === "CONDITION_ADD_MISROUTED" || code === "STAFF_REQUEST_OMITTED" ||
       code === "INTRO_REPEAT" || code === "WE_DO_MISSING_DET" || code === "GENERIC_ONLY_REPLY" ||
       code === "REPLY_SKELETON_MISSING" || code === "CONCERN_UNADDRESSED" || code === "EMPTY_CLOSER" || code === "PAIR_ELEMENT_MISSING" || code === "SPLIT_ACK_REPLY" ||
+      code === "PREEMPTIVE_HEDGE" || code === "FABRICATED_SEARCH_REPORT" || code === "CONDITION_RELAX_UNASKED" || code === "HEDGE_WITHOUT_SEARCH_DECL" ||
+      code === "CLOSER_MISSING" || code === "COMMIT_AFTER_DELIVERABLE" || code === "NANISOTSU_MISPLACED" || code === "PASSIVE_CLOSER" || code === "CONDITION_ECHO_MISSING" ||
+      code === "SCHEDULE_ASSERT_UNCONFIRMED" || code === "FACT_DEFERRED_ANSWER" ||
       code === "PROMISE_ECHO_MISSING" || code === "ESTIMATE_NO_TRIGGER" || code === "ESTIMATE_REPEAT_PROMISE" || code === "COST_ASSERTION_NO_ESTIMATE" || code === "VIEWING_BEFORE_VACANCY" ||
       code === "APPLY_WITHOUT_INTENT" || code === "POST_APPLY_VIEWING" || code === "TENSE_MISMATCH" ||
       code === "FEEDBACK_PREMATURE" || code === "GOCHOUGO_AFTER_FIXED" || code === "GOCHOUGO_AFTER_DATE" ||

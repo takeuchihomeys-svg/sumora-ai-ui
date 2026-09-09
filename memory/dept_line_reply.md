@@ -665,3 +665,67 @@ first > late_apology（tpo「進捗催促対応」）> waited（最終スタッ�
 - [ ] デプロイ後: あみ・みくの会話で再生成し `ai_draft_check.tpo_debug.turnPair.ruleId` が `VI_CONCERN` / `ES_WILL_SEND`、`finalCheckCodes` に block なし、`draftHead` が「かしこまりました！！」で終わらないことを REST で確認
 - [ ] 2週間後: `reply_context_snapshot` で ruleId 別編集率を集計。FEELING_TEMPLATE（お気持ち…わかります）の編集率が warning 平均より高ければ BANNED_WORDS_DETERMINISTIC に昇格。PAIR_ELEMENT_MISSING（override_wait=block）の FP が出たら detect を**緩める**（mustInclude を足さない）
 - [ ] staffContextNote は turnPairNote と併存させたまま（設計書は turnPairNote 時に省略）。プロンプト長が問題になれば `${turnPairNote && !isFollowUp ? "" : staffContextNote}` に
+
+---
+
+## 返信の「姿勢」体系化 — ヘッジゲート・締めポリシー・姿勢ギャップ検査（2026-09-09 Fable5・みく事例）
+**実害**: みく（イエヤス・条件フォーム受信）のAI締め「35㎡以上は少し難しい可能性もございますので、条件を1つ変えた場合のご提案もあわせて〜」をスタッフが削除し「みくさんがご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます😌！！何卒よろしくお願い致します！！」に差替。
+**根本原因**: ①route.ts latent_intent 注入文『代替案（条件を変えた再ピックアップ宣言）で応える』＋ brain が顧客⑧の自己ヘッジ「難しいと思うので条件を変えた場合に…」を winning_pattern/closing_strategy に昇格 → 無加工注入 ②conditionDirection が3行目を「ピックアップ出来次第…何卒」に固定し「全力でサポート」を**禁止語**にしていた（正解の伴走締めを構造的に出せず、LLM が穴をヘッジ文で埋めた） ③REAL_ESTATE_RULES「条件を絞るほど希少。どれか1つ緩めると広がると伝え優先順位を聞くのが正解」が常時注入 ④PAIR_MATRIX に condition_ask×condition_change セルが無く rule=null ⑤final-check にヘッジ・締め種別・復唱率の検査ゼロ。
+
+### 姿勢モデル（「見つかるまで伴走する頼れる担当者」）
+①主導権（可否は言い切る・日程は提案形で顧客に返す）②具体（顧客の語のまま復唱）③伴走（具体宣言→伴走締めの順。宣言の代わりにしない）④誠実（探す前に難しさを語らない。探した後の過去形結果報告のみ）⑤温度（😊😌2個・！！3回以内・受け身語で終えない）⑥急かさない ⑦何卒は「お願いの入口」のみ。VOCAB_SEMANTICS「■ 0. 姿勢ガイド」・PHASE_COMMON_FORMAT 締め行・buildStanceNote【🧭 姿勢】が同文。
+
+### 四者同名（reply-context.ts が単一真実源。grep キー: `resolveHedgeAllowance` / `resolveCloser` / `computeStanceFlags`）
+| 関数/定数 | 役割 | 参照箇所 |
+|---|---|---|
+| `resolveHedgeAllowance` → `HedgeVerdict` | 探索済み証拠（aix_usage_logs 顧客最新以降の property_send 系 > AIX物件送付文生成中 > 直前スタッフ本文の過去形結果報告（非条件変更時） > last_aix_history）＞ 顧客の疑問形質問（FEAS_TOPIC＋INTERROGATIVE_END・「あれば教えて」の条件付き依頼は除外）＞ forbid_preemptive。customerSelfHedge / customerStatedRelax も返す | route.ts hedge（pairContext より先・`resolveTurnPair(..., {searched})`）／latent_intent・winning_pattern・closing_strategy・customer_questions の `stripPreemptiveRelax`／budgetInventoryNote 発火ゲート／final-check `resolveReplyContext().hedge`／tpo_debug.hedge |
+| `resolveCloser` → `CloserVerdict`（`CloserKind` = commit_until_found / receive_check / open_door / wait_softly / none） | 優先: 断り＞成果物添付（DELIVERABLE_RE）＞日程確定＞検討中＞後日送付＞質問回答＞セル closer＞具体宣言あり節目（condition_change/concern/condition_ask/初回）→commit。nanisotsu = rule.nanisotsu ?? (初回 or condition_ask or 顧客への依頼)、直前スタッフが何卒済みなら false | route.ts closerVerdict（`predictCloserSignals` で生成前予測）→ conditionDirection 3〜4行目リテラル／buildStanceNote 締め行／final-check runCloserChecks／tpo_debug.closer |
+| `PAIR_MATRIX.closer / nanisotsu / hedgeAllowed` | 全セルに締め既定を追記。新セル **CA_CONDITION**（condition_ask×condition_change・みく正解 example・commit＋何卒）／**ANY_CONDITION_CHANGE**（*×condition_change・瑞希 example・commit）／**PS_CONDITION_CHANGE_SEARCHED**（旧 PS_CONDITION_CHANGE の結果報告 example・hedgeAllowed・receive_check）。PS_CONDITION_CHANGE は宣言型 example に差替。PS_THINKING / PS_WILL_SEND / CP_ACK / ANY_WILL_SEND の example から何卒を削除 | resolveTurnPair は searched で hedgeAllowed セルを選ぶ |
+| `classifyCustomerResponse` ②' | 条件の宣言形（CUST_CONDITION_STATEMENT_RE: 2LDK／7万以内／「家賃…で探」等）を flag/brain 無し経路でも condition_change に寄せる（decline/question/concern/positive/schedule/decision 同居時は付けない）。final-check `resolveReplyContext` は `isConditionFormMessage` で isConditionPresented を再現 | check-reply 経路の CA_CONDITION / PS_CONDITION_CHANGE 到達に必須 |
+| `computeStanceFlags` / `computeStanceLite` | closer_kind / closer_expected / hedge_kind / echo_ratio / schedule_commitment / fact_deferred / excuse_flags / emoji_count / exclaim_count / char_len | route.ts tpo_debug.stance_draft（pair 依存）／save-reply-example `stance_sent_lite`（pair 非依存の軽量版。was_ai_modified=false は draft をコピー） |
+| `extractEchoTokens` / `evalConditionEcho` / `FORM_LABEL_RE` | 顧客条件トークン（数字・間取り・設備・エリア）を FORM_LABEL_RE 除去後に抽出。FORM_LABEL_RE の定義は reply-context.ts に移動し line-reply-prompts.ts は再 export | buildStanceNote「📌 条件トークン」／CONDITION_ECHO_MISSING |
+| `KNOWN_FACT_ANSWERS` / `resolveAnswerability` | 即答してよい既知事実4件（写真のみ契約可・大阪府域対応・カード払い・2番手申込可）。ASSERTION_BAN 対象（告知・空室・入居日・審査）は含めない | buildStanceNote「✅ 即答」／FACT_DEFERRED_ANSWER |
+| `classifyScheduleCommitment` / `STAFF_ASSERT_SCHEDULE_RE` | customer_fixed / customer_asking / staff_proposing / none | buildStanceNote「🗓 日程は提案形」／SCHEDULE_ASSERT_UNCONFIRMED |
+| `detectExcusePhrases` | widen_excuse / reassurance_no_basis / urgency / consider_push / humble_wait | 5コード |
+
+### final-check.ts 新コード（`runHedgeChecks` / `runCloserChecks` / `runStanceChecks`・runDeterministicChecks ⑪）
+| コード | 条件 | severity |
+|---|---|---|
+| PREEMPTIVE_HEDGE | PRE_PICKUP_HEDGE_RE（難しい可能性／少ない状況になり／条件を1つ変えた場合／優先順位をお聞かせ）が forbid 時、または allow_after_search で当該節が過去形でない | block |
+| CONDITION_RELAX_UNASKED | RELAX_PROPOSAL_RE（条件を変えた場合・代替案・優先順位）。免除: 探索後の過去形／顧客の疑問形質問／顧客が緩和条件を明言 | block |
+| FABRICATED_SEARCH_REPORT | SEARCH_REPORT_RE（少ない状況でした／募集ございませんでした）が allow_after_search 以外 | block |
+| HEDGE_WITHOUT_SEARCH_DECL | allow_on_customer_ask で傾向回答に探索宣言（SEARCH_DECL_RE）が無い | block |
+| SELF_HEDGE_ECHO | 顧客の自己ヘッジに同意（難しいと思います／おっしゃる通り） | warning |
+| GENERIC_ONLY_REPLY（限定） | `usedCommit && !hasConcreteDeclaration`（具体宣言なしの全力サポート＝あやさん型）に限定。それ以外は WE_DO_MISSING_DET。感謝の「ございます！」を説明文に数えない | block |
+| CLOSER_MISSING | closer=commit_until_found なのに COMMIT_CLOSER_RE 無し（SKELETON_CODES＝文を足す修正） | warning |
+| COMMIT_AFTER_DELIVERABLE | 成果物添付（🌟・号室・見積書・ピックアップしました）に全力サポート | warning |
+| NANISOTSU_MISPLACED | 何卒があるのに verdict.nanisotsu=false（条件変更・事務往復・日程・質問回答・成果物） | warning |
+| PASSIVE_CLOSER | commit / receive が期待される場面で「いつでもお気軽に／ごゆっくり」締め | warning |
+| RESULT_EXCUSE | 顧客主導の条件変更＋成果物に「少ない状況でしたので広げました」 | warning |
+| CONDITION_ECHO_MISSING | 条件トークン≥2 で復唱率<50%（SKELETON_CODES） | 復唱0 → block、他 warning |
+| SCHEDULE_ASSERT_UNCONFIRMED | 顧客が日時未確定（customer_asking / staff_proposing）で「〜で何卒」「ご案内させて頂きます」の確定形・「如何でしょうか」無し | warning（isAutoSend → block） |
+| FACT_DEFERRED_ANSWER | 既知事実の質問に「確認させて頂きます」で逃げる | warning |
+| WIDEN_EXCUSE_REDUNDANT / REASSURANCE_NO_BASIS / URGENCY_NO_INTENT / CONSIDER_PUSH / HUMBLE_WAIT | detectExcusePhrases | warning（URGENCY は isAutoSend → block） |
+- route.ts DET_CODES_RE・final-check DIFF_RECHECK_CODES・inferDiffIssuePass に全コード追加済み（後処理後 recheck で置換される）
+- FinalCheckContext に `hedge` / `closerVerdict` 追加。route.ts の finalCheckCtx / detCtx / postDetCtx 3か所に同一オブジェクト
+
+### プロンプト（line-reply-prompts.ts）
+- PHASE_COMMON_FORMAT: 締め行（resolveCloser と同名）＋先回りヘッジ禁止行を追加
+- VOCAB_SEMANTICS 冒頭に「■ 0. 姿勢ガイド」①〜⑦
+- TIMING_FEWSHOT 末尾に締め・姿勢の正例4（みく／瑞希／うの結果報告／慶次依頼）・NG例4（先回りヘッジ／あやさん型／事務往復の何卒／日程決め打ち）
+- 【予算・条件指定の在庫質問】は「疑問形の直接質問のみ」に限定＋探索宣言必須。「▼ 予算と条件のトレードオフ質問」に条件付き依頼の除外。REAL_ESTATE_RULES「条件を絞るほど〜優先順位を聞くのが正解」→ (a)疑問形質問 (b)探索後の結果報告 のみ可に置換
+- route.ts: conditionDirection 禁止語から「全力でサポート」を削除し3〜4行目を closerVerdict リテラルに／inlineConditionsFallback・conditionChangeShapeNote NG例・newConditionRequestNote ⑥・conditionChangeShapeNote ⑤ にヘッジ禁止を追記／budgetInventoryNote を hedge.customerAsked にゲート
+
+### DB
+- 新カラム不要（reply_context_snapshot JSONB に hedge / closer / stance_draft / stance_sent_lite）。migrate-schema に `idx_are_ctx_closer` 追記
+- 監視 SQL: `SELECT reply_context_snapshot->'stance_draft'->>'closer_kind' AS draft_closer, reply_context_snapshot->'stance_sent_lite'->>'closer_kind' AS sent_closer, reply_context_snapshot->'turnPair'->>'ruleId' AS rule, COUNT(*), AVG(was_ai_modified::int) FROM ai_reply_examples WHERE reply_context_snapshot ? 'stance_draft' AND created_at >= now() - interval '14 days' GROUP BY 1,2,3 ORDER BY 4 DESC`
+
+### 回帰テスト
+`app/lib/__tests__/stance.test.ts`（17件・vitest 不要の自己完結ハーネス）。実行: `npx tsx app/lib/__tests__/stance.test.ts`
+
+### 判断メモ・引き継ぎ
+- 「全力でサポート」は具体宣言の**代わり**（あやさん型）は GENERIC_ONLY_REPLY block、具体宣言の**後**（みく型）は必須（CLOSER_MISSING）。両者は `hasConcreteDeclaration`（CONCRETE_DECL_RE）で区別
+- 「何卒」は文脈依存: 初回・条件受領（condition_ask への回答）・書類依頼のみ付ける。進行中の条件変更（瑞希）・事務往復・日程・成果物・質問回答には付けない（warning 止まり）
+- みくの復唱率は「12月／10分以内／20万以内／35㎡」を落とすと 4/8=0.5 でギリギリ。期待返信は 35㎡以上 も復唱する形
+- [ ] 2週間後: NANISOTSU_MISPLACED / CLOSER_MISSING / PASSIVE_CLOSER の発火率と編集率を stance_draft→stance_sent_lite 遷移行列で確認し、編集率が高いものを block に昇格。FP が出たら detect を緩める
+- [ ] promiseEchoNote（短い了承）の「締め1文」が何卒を生むと NANISOTSU_MISPLACED warning が出る。発火が多ければ promiseEchoNote の締めを「約束復唱で終える」に明文化
