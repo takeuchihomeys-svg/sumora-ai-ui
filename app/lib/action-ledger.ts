@@ -482,11 +482,6 @@ export const CUSTOMER_ASKS_MORE_RE = /(?:他|別|違う|もっと|追加)(?:の|
 export const ATTACHED_DELIVERABLE_RE = /🌟|[0-9０-９]{2,4}号室|御見積書|お見積書|見積書同封|https?:\/\//;
 /** 完了形の送付報告（約束未履行時に禁止） */
 export const COMPLETED_SEND_RE = /お送り(?:させて(?:頂|いただ)き|いたし|致し|し)ました|ピックアップ(?:させて(?:頂|いただ)き|いたし|致し|し)ました|ご査収ください/;
-/** 未来形のピックアップ宣言（SENT_IGNORED の対象文） */
-export const LEDGER_SEARCH_DECL_RE = /ピックアップ[^\n。！!]{0,24}(?:させて(?:頂|いただ)き|いたし|致し)ます/;
-/** 既送付に触れる表現（SENT_IGNORED の充足条件。PS_CONDITION_CHANGE.mustInclude と同値） */
-export const SENT_ACK_RE = /再度|改めて|新たに|(?:別|他)の(?:お部屋|物件)|追加で|(?:お送り|ご提案|ご紹介)(?:した|させて(?:頂|いただ)いた)(?:お部屋|物件)|こちらの(?:お部屋|物件)|(?:選択肢|候補)として|も含め/;
-
 export const DONE_PRESUPPOSING_VOCAB: DonePresupVocab[] = [
   { key: 'redo_pickup', re: new RegExp(`(?:再度|改めて|もう一度)${NX}{0,16}?(?:ピックアップ|お探し|お調べ|お部屋(?:を)?探)${NOT_CUST}`),
     requires: ['propertiesSent'], requiresLabel: '物件送付 ≥1', code: 'DONE_PRESUPPOSED_WITHOUT_EVIDENCE', severity: 'block',

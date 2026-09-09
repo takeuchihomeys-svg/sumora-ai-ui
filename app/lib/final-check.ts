@@ -40,7 +40,7 @@ import {
   type HedgeVerdict, type CloserVerdict, type ExcuseFlag,
 } from "./reply-context";
 // 2026-09-09 Fable5 行動台帳: generate-reply と同一オブジェクト（省略時は recentMessages から再計算）。実行前提語ゲート・自動修正は action-ledger の同じ関数
-import { buildActionLedger, checkDonePresupposition, applyLedgerAutoFix, COMPLETED_SEND_RE, LEDGER_SEARCH_DECL_RE, SENT_ACK_RE, ATTACHED_DELIVERABLE_RE, type ActionLedger } from "./action-ledger";
+import { buildActionLedger, checkDonePresupposition, applyLedgerAutoFix, COMPLETED_SEND_RE, ATTACHED_DELIVERABLE_RE, type ActionLedger } from "./action-ledger";
 // 2026-09-09 Fable5: check-reply 経路（isConditionPresented フラグ無し）でも条件フォームを condition_change に分類する（route.ts conditionDetail reason:'form' と同定義）
 import { isConditionFormMessage } from "./line-reply-prompts";
 
@@ -1028,8 +1028,8 @@ function resolveReplyContext(ctx: FinalCheckContext): { sub: SubstanceVerdict; p
   return { sub, pair, hedge, ledger };
 }
 // 「文を足す」修正が正解の骨格系コード（修正ループの長さ上限・evidence 残存プリフィルタから除外する）
-// 2026-09-09 Fable5: CLOSER_MISSING / CONDITION_ECHO_MISSING も「文を足す」修正（PREEMPTIVE_HEDGE 等の削除系は含めない）。SENT_IGNORED（既送付に触れる文を足す）も同様
-export const SKELETON_CODES = new Set(["REPLY_SKELETON_MISSING", "CONCERN_UNADDRESSED", "EMPTY_CLOSER", "PAIR_ELEMENT_MISSING", "SPLIT_ACK_REPLY", "GENERIC_ONLY_REPLY", "WE_DO_MISSING_DET", "WE_DO_MISSING", "CLOSER_MISSING", "CONDITION_ECHO_MISSING", "SENT_IGNORED"]);
+// 2026-09-09 Fable5: CLOSER_MISSING / CONDITION_ECHO_MISSING も「文を足す」修正（PREEMPTIVE_HEDGE 等の削除系は含めない）
+export const SKELETON_CODES = new Set(["REPLY_SKELETON_MISSING", "CONCERN_UNADDRESSED", "EMPTY_CLOSER", "PAIR_ELEMENT_MISSING", "SPLIT_ACK_REPLY", "GENERIC_ONLY_REPLY", "WE_DO_MISSING_DET", "WE_DO_MISSING", "CLOSER_MISSING", "CONDITION_ECHO_MISSING"]);
 /** 2026-09-09 行動台帳: 決定論置換（applyLedgerAutoFix）で直せるコード。block がこれだけなら Sonnet 修正を呼ばない */
 export const LEDGER_FIX_CODES = new Set(["DONE_PRESUPPOSED_WITHOUT_EVIDENCE", "UNSENT_CLAIM", "PROMISE_ECHO_MISMATCH"]);
 // 回答・説明形の文（「〜となります」「〜ので、」等）。REPLY_SKELETON の「回答／提案」判定に使う
@@ -1350,7 +1350,7 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   //    ・姿勢ギャップ（CONDITION_ECHO_MISSING / SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / 煽り・受け身5種）
   issues.push(...runHedgeChecks(text, ctx), ...runCloserChecks(text, ctx), ...runStanceChecks(text, ctx));
 
-  // ⑫ 2026-09-09 Fable5 行動台帳（DONE_PRESUPPOSED_WITHOUT_EVIDENCE / UNSENT_CLAIM / PROMISE_ECHO_MISMATCH / SENT_IGNORED）
+  // ⑫ 2026-09-09 Fable5 行動台帳（DONE_PRESUPPOSED_WITHOUT_EVIDENCE / UNSENT_CLAIM / PROMISE_ECHO_MISMATCH）
   issues.push(...runLedgerChecks(text, ctx));
 
   return issues;
@@ -1359,7 +1359,7 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
 // ─── 2026-09-09 Fable5 行動台帳検査（A: 実行前提語 / B: 約束未履行なのに完了形 / C: 既送付無視）。生成側 buildLedgerNote と同じ checkDonePresupposition ───
 function runLedgerChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const issues: CheckIssue[] = [];
-  const { sub, pair, ledger } = resolveReplyContext(ctx);
+  const { ledger } = resolveReplyContext(ctx);
   const name = ctx.customerName ? `${ctx.customerName}さん` : "〇〇さん";
   // 成果物添付＝物件ラベル・見積書・URL の実体がある時（完了形動詞だけの「ピックアップさせて頂きました」は添付ではない）
   const isDeliverable = ctx.isDeliverableReply ?? ATTACHED_DELIVERABLE_RE.test(text);
@@ -1381,21 +1381,15 @@ function runLedgerChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
       message: `直前の「ピックアップしてお送りします」宣言はまだ履行されていない（物件送付0件）のに完了形で書いています。${hint}`,
       evidence: m[0], suggestion: `「${m[0]}」→「ピックアップ出来次第お送りさせて頂きます」に置換` });
   }
-  // C. 送付済み≥1 × 条件変更 × 初回型の宣言のみ（既送付に触れない）
-  const isCondChange = pair.customer.kind === "condition_change" || pair.customer.secondary.includes("condition_change") || sub.kinds.includes("condition");
-  if (ledger.facts.propertiesSentCount >= 1 && isCondChange && !isDeliverable && LEDGER_SEARCH_DECL_RE.test(text) && !SENT_ACK_RE.test(text)) {
-    issues.push({ pass: "context_check", severity: "warning", code: "SENT_IGNORED",
-      message: `既に${ledger.facts.propertiesSentCount}件送付済みなのに、初回のようにピックアップ宣言だけで既送付物件に触れていません。${hint}`,
-      evidence: firstSentenceAround(text, LEDGER_SEARCH_DECL_RE),
-      suggestion: `「〇〇も含めて再度ピックアップしてお送りさせて頂きます！！お送りした物件（${ledger.facts.propertiesSentNames.slice(0, 3).join("・") || "送付済み"}）も選択肢として残して頂ければ幸いです！！」の形にする` });
-  }
+  // 送付済み×条件変更で「既送付物件に触れろ」と強制するチェック（旧 SENT_IGNORED）は、成約データにない
+  // 「選択肢として残しつつ」等の創作文を誘発するため廃止（2026-09-09）。台帳に無い文は足させない。
   return issues;
 }
 
 /** 2026-09-09 行動台帳: 修正ループの指示に台帳の根拠と「台帳に無い事実を書かない」制約を添える（decorate は台帳系コードのみ） */
 export function decorateFixInstruction(issue: CheckIssue, ledger: ActionLedger): CheckIssue {
-  if (!LEDGER_FIX_CODES.has(issue.code) && issue.code !== "SENT_IGNORED") return issue;
-  return { ...issue, suggestion: `${issue.suggestion ?? ""}。根拠=行動台帳: ${ledger.summary}。禁止: 台帳に無い送付・確認・案内の事実を新たに書く／文を追加する（SENT_IGNORED を除く）。許可: 語の削除・「出来次第お送りさせて頂きます」への置換` };
+  if (!LEDGER_FIX_CODES.has(issue.code)) return issue;
+  return { ...issue, suggestion: `${issue.suggestion ?? ""}。根拠=行動台帳: ${ledger.summary}。禁止: 台帳に無い送付・確認・案内の事実を新たに書く／文を追加する。許可: 語の削除・「出来次第お送りさせて頂きます」への置換` };
 }
 
 // ─── 2026-09-09 Fable5 みく事例: ヘッジゲート検査（生成側 resolveHedgeAllowance と同一 verdict）───────────
@@ -2372,7 +2366,7 @@ REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSI
 PREEMPTIVE_HEDGE / FABRICATED_SEARCH_REPORT / CONDITION_RELAX_UNASKED / HEDGE_WITHOUT_SEARCH_DECL / SELF_HEDGE_ECHO /
 CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE / CONDITION_ECHO_MISSING /
 SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / WIDEN_EXCUSE_REDUNDANT / REASSURANCE_NO_BASIS / URGENCY_NO_INTENT / CONSIDER_PUSH / HUMBLE_WAIT /
-DONE_PRESUPPOSED_WITHOUT_EVIDENCE / PROMISE_ECHO_MISMATCH / SENT_IGNORED`;
+DONE_PRESUPPOSED_WITHOUT_EVIDENCE / PROMISE_ECHO_MISMATCH`;
 
 function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx: FinalCheckContext): string {
   const issuesJson = JSON.stringify(
@@ -2428,7 +2422,7 @@ function inferDiffIssuePass(code: string, check1Issues: CheckIssue[]): CheckPass
       code === "GUIDE_BEFORE_PROPERTY" || code === "CONFIRM_SUBJECT_THEFT" || code === "PHOTO_NO_PREMISE" ||
       code === "PHOTO_REPLACES_VIEWING" || code === "UNSENT_CLAIM" || code === "JUSHU_BEFORE_SEND" ||
       code === "APPLY_PUSH_NO_INTENT" || code === "CONFIRM_NO_OBJECT" || code === "FAREWELL_ON_MOVEOUT_INFO" ||
-      code === "DONE_PRESUPPOSED_WITHOUT_EVIDENCE" || code === "PROMISE_ECHO_MISMATCH" || code === "SENT_IGNORED") return "context_check";
+      code === "DONE_PRESUPPOSED_WITHOUT_EVIDENCE" || code === "PROMISE_ECHO_MISMATCH") return "context_check";
   return "rule_check"; // AIX_BOUNDARY_* / BANNED_WORD / RULE_VIOLATION / 不明code
 }
 

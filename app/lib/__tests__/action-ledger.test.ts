@@ -165,15 +165,15 @@ const sentAix: LedgerAixRow[] = [{ aix_type: "property_send", created_at: T("09-
 const sentLedger = buildActionLedger({ recentAixRows: sentAix, messages: sentMessages, lastCustomerAt: T("09-09T11:45"), now: Date.parse(T("09-09T11:46")) });
 
 describe("送付済み段階", () => {
-  it("#7 redo_after_send_pass: 送付済み（2件）で「改めてピックアップ」は exempt=evidence・SENT_IGNORED なし", () => {
+  it("#7 redo_after_send_pass: 送付済み（2件）で「再度ピックアップ」は exempt=evidence", () => {
     expect(sentLedger.facts.propertiesSentCount).toBe(2);
     expect(sentLedger.facts.propertiesSentNames).toEqual(["グランドール福島 402号室", "ラ・フォーレ野田 305号室"]);
     expect(sentLedger.facts.pickupPromisedUnfulfilled).toBe(false); // 10:40 の宣言は 11:00 送付で履行
-    const text = "かしこまりました😊！！\n大阪市内に絞らせて頂き、9万以内・1LDKでみくさんにオススメできるお部屋を再度ピックアップしてお送りさせて頂きます！！\n先にお送りしたグランドール福島 402号室も選択肢として残して頂きつつ、みくさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます😌！！";
+    const text = "かしこまりました😊！！\n大阪市内に絞らせて頂き、9万以内・1LDKでみくさんにオススメできるお部屋を再度ピックアップしてお送りさせて頂きます！！\nみくさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます😌！！";
     const hits = checkDonePresupposition(text, sentLedger, { customerMessage: MIKU_1145, name: "みくさん" });
     expect(hits.find((h) => h.key === "redo_pickup")?.exempt).toBe("evidence");
     const c = codesOf(text, ctxOf(MIKU_1145, sentMessages, sentLedger));
-    expect(c.filter((x) => /DONE_PRESUPPOSED|UNSENT_CLAIM|SENT_IGNORED/.test(x))).toEqual([]);
+    expect(c.filter((x) => /DONE_PRESUPPOSED|UNSENT_CLAIM/.test(x))).toEqual([]);
     const { pair } = buildPair(MIKU_1145, SENT_BODY, sentLedger, { lastStaffAt: T("09-09T11:00"), custAt: T("09-09T11:45") });
     expect(pair.ruleId).toBe("PS_CONDITION_CHANGE");
     expect(pair.redo).toBe("再度");
@@ -181,17 +181,16 @@ describe("送付済み段階", () => {
     expect(closer.closer).toBe("commit_until_found");
     expect(closer.nanisotsu).toBe(false);
   });
-  it("#8 sent_ignored_warning: 送付済み × 条件変更 × 初回型宣言のみ → SENT_IGNORED(warning)・suggestion に「も含めて再度」", () => {
+  it("#8 sent_no_forced_mention: 送付済み × 条件変更 × 初回型宣言のみ → 既送付への言及を強制しない（台帳に無い文を足させない）", () => {
     const text = "かしこまりました😊！！\n大阪市内・9万以内・1LDKでみくさんにオススメできるお部屋をピックアップさせて頂きます！！\nみくさんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！";
     const issues = runDeterministicChecks(text, ctxOf(MIKU_1145, sentMessages, sentLedger));
-    const si = issues.find((i) => i.code === "SENT_IGNORED");
-    expect(si?.severity).toBe("warning");
-    expect(si?.suggestion ?? "").toContain("も含めて再度");
+    expect(issues.find((i) => i.code === "SENT_IGNORED")).toBe(undefined);
+    expect(issues.some((i) => /選択肢として|残して頂/.test(i.suggestion ?? ""))).toBe(false);
   });
-  it("#9 sent_ignored_ack_pass: 「2LDKも含めて改めて…お送りした物件も選択肢として」は issue なし", () => {
-    const text = "かしこまりました！！\n2LDKも含めてみくさんにオススメできるお部屋改めてピックアップしてお送りさせて頂きます！！\nお送りした物件も選択肢として残して頂ければ幸いです！！";
+  it("#9 redo_after_send_ack_pass: 「2LDKも含めて改めてピックアップ」（成約実例型）は issue なし", () => {
+    const text = "かしこまりました！！\n2LDKも含めてみくさんにオススメできるお部屋改めてピックアップしてお送りさせて頂きます！！\nみくさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます😌！！";
     const c = codesOf(text, ctxOf(MIKU_1145, sentMessages, sentLedger));
-    expect(c.filter((x) => /DONE_PRESUPPOSED|UNSENT_CLAIM|SENT_IGNORED|PROMISE_ECHO/.test(x))).toEqual([]);
+    expect(c.filter((x) => /DONE_PRESUPPOSED|UNSENT_CLAIM|PROMISE_ECHO/.test(x))).toEqual([]);
   });
   it("#19 hedge_searched_ledger: 顧客最新+1分の property_send は hedge.searched=ledger:aix_log・PS_CONDITION_CHANGE_SEARCHED", () => {
     const msgs: LedgerMessage[] = [...sentMessages, { sender: "staff", text: SENT_BODY, createdAt: T("09-09T11:46") }];
