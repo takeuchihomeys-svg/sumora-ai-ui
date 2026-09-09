@@ -775,3 +775,60 @@ FROM ai_reply_examples WHERE sent_at > now() - interval '7 days';
 - [ ] Phase3: extract-property-info L154（estimate_sheet 由来画像を sent_properties に入れない）・page.tsx property_send 押下時に property_names 全量投入
 - [ ] pickupPromiseAckNote は従来通り短い了承限定。条件変更・質問時の約束情報は【📒 行動台帳】＋ PD_* セルで届く（二重注入なし）
 - [ ] 顧客の「大阪の市内付近でお願い」「〇〇はNGで」を condition_change に寄せる regex（CUST_CONDITION_STATEMENT_RE / KIND_RE condition）を追加済み。誤発火があれば `市内|付近|NG` を絞る
+
+---
+
+## 2026-09-09 G32 「お待たせ致しました」全廃と冒頭二層（挨拶行＋開口語）の意味ベース確定（Fable5 じゅにあ事例・竹内方針）
+
+### 事例と根本原因
+- じゅにあ 11:13 スタッフ送信 → 11:45 顧客「よろしくお願いします🙇」（了承のみ）→ 15:36「我孫子駅から天王寺駅までの間で探して頂いてもいいですか？」＋15:37 条件 → AI 16:16「じゅにあさん**お待たせ致しました**！！…」（NG）／実送信 16:17「**かしこまりました😊！！** 我孫子駅から…探させて頂きます！！」
+- 直接原因: G30/G31 の `resolveGreeting` が「時間（3h）」と「成果物有無」で `kind=waited` を決めていた。11:45 の了承のみメッセージが待ち起点になり 4.5h ≥ 3h → waited → `enforceOpening` が無条件前置 → final-check ⑦ が正解の「かしこまりました」を MISMATCH 扱い（生成・後処理・検査の三者で誤りを増幅）
+- 構造欠陥: 「お待たせ致しました（結果報告）」と「かしこまりました（引き受け）」が排他的な意味カテゴリであることがコードのどこにも表現されておらず、時間軸と意味軸を1つの分岐に混ぜていた。自動返信へ移行すると「返信を待たせた」前提自体が消える
+
+### 冒頭語セマンティクス（正解 1,355 件・2026-05-25〜09-09）
+| 冒頭 | 件数 | 意味 | 使う条件 | G32 |
+|---|---|---|---|---|
+| 挨拶なし（本題・目的語付き受領礼・物件名・名前行のみ） | 412 (30%) | 会話連続中／受領礼／結果直入 | 当日挨拶済み、または「〇〇お送り頂きありがとうございます」「🌟物件名」で開始 | 維持 |
+| かしこまりました | 311 (23%) | 依頼・条件・断り・日程の**引き受け** | customerKind ∈ {condition_change, decline} または依頼形の question／行動要求を含む了承 | 維持・時間に無関係 |
+| お世話になっております | 222 (16%) | 名前付きの**再開の挨拶行** | 当日その顧客に未送信 かつ 初回でない | 維持（時刻ベース） |
+| はい | 194 (14%) | 了承・お礼・感想・自己宣言の**受け止め** | ack_only／positive／thinking／will_send_later で行動要求なし | 維持 |
+| はじめまして | 127 (9%) | 真の初回 | isFirstEverReply | 維持 |
+| お待たせ致しました | 13 (1.0%) | 約束した結果を持ってきた | — | **廃止（禁止語）** |
+| 承知しました | 4 | — | — | かしこまりました に正規化 |
+- 二層は **お世話に→かしこまりました 54／→はい 9 のみ**。「お待たせ→開口語」0、「はじめまして→開口語」0。AI お待たせ→スタッフ修正 4 件の置換先は お世話に／名前行／かしこまりました／催促謝罪。逆方向 0 件
+
+### 新ロジック（`app/lib/greeting.ts`・四者同名: buildGreetingNote／enforceOpening／final-check ⑦／toGreetingLite）
+- `GreetingKind` = first | late_apology | standard | none（**waited 廃止**）。挨拶行は接触の事実だけ: 初回→はじめまして／`isProgressPushMessage`（了承のみは催促に数えない）→ご連絡遅くなり／当日挨拶済み→なし／それ以外→〇〇さんお世話になっております。夜間接頭辞は従来どおり
+- `resolveOpener`: 開口語は `classifyCustomerResponse.kind` × `substance.kinds`（asksAction）だけで決める。decline/condition_change/依頼形 question→kashikomari、ack_only/positive/thinking/will_send_later（行動要求なし）→hai、情報質問・answer・concern・deliverable→none。`openerAllowed` 内の LLM 出力は尊重、外なら置換／除去、**無い時に足さない**
+- 経過時間は `GreetingDecision.audit`（waitedMs / originCreatedAt / originTextHead / alreadyGreetedToday / customerKind / isDeliverableReply）に保存するだけで決定に使わない。起点は「実質のある最古の未返信メッセージ」（了承のみは起点にしない）
+- 禁止語: `WAITED_RE` / `stripWaited`（文中どこでも文節ごと除去）／final-check `BANNED_WORDS_DETERMINISTIC` に お待たせ致しました・お待たせいたしました・お待たせしました（block・suggestion は decision 付き）
+- `normalizeGreetingLite`: DB の旧形式（kind=waited）を standard に写像し opening の お待たせ→お世話に に置換（check-reply 復元用）
+- final-check ⑦: 7-a 確定挨拶行（late_apology／夜間）不一致 → OPENING_GREETING_MISMATCH／7-b 催促でないのに謝罪行・7-c none なのに定型挨拶・7-d 夜間 → OPENING_GREETING_UNEXPECTED／7-e 開口語が openerAllowed の外 → **OPENER_MISMATCH**（新コード・warning）。GREETING_WAITED_MISUSE は廃止
+- check-reply: `recentMessages[].createdAt` があれば generate-reply と同じ `resolveGreeting` で再計算、無ければ `tpo_debug.greeting` の復元値（first なのにスタッフ送信済みなら破棄）
+- 進捗催促ラベル（route.ts tpoNoteForLLM）も `isProgressPushMessage` に統一
+
+### 生成側・few-shot・テンプレからの「お待たせ」除去（BANNED_WORD block で送信不能になるため同時変更）
+- prompts ■G 全置換（二層の説明）・L516 正例・L1674・L1728・PHASE_COMMON_FORMAT（依頼形質問→かしこまりました）
+- reply-context: PS_CONDITION_CHANGE_SEARCHED example → お世話に、ES_CONCERN example から「はい！！」除去（concern の許容集合と整合）、PD_QUESTION に `suggestion` 追加（`PairRule.suggestion?` 新設・PAIR_ELEMENT_MISSING が example より優先）＋ mustInclude に「させて頂きます」
+- aix/action `buildGreeting`: staffMessagedToday → ""（挨拶行なし）。テンプレ・few-shot の「お待たせいたしました！！」は `${greetingPhrase}`（空なら本題から）に。greetingTimeNote は空フレーズ時「挨拶行を書かない」文に
+- template-preprocess `selectGreeting`: 当日送信済み→""（21時以降は夜分遅く）。`applyGreetingSwap` は "" なら改行ごと消す
+- aix-template-generate（3か所）・AixModal テンプレ・AixManualModal 説明文・brain-core REPLY_STYLE_RULES から除去。stance.test の fixture を お世話に／はい に
+- 残存（意図的）: 検出・剥がし用 regex（GREETING_STRIP_RE / GREETING_BLOCK_RE / BOILERPLATE_RE / GREETING_KEYWORDS / SQL ilike）、禁止を書いた指示文、action-ledger.test の過去スタッフ文 fixture
+
+### 回帰テスト
+`npx tsx app/lib/__tests__/greeting.test.ts`（19件: じゅにあ T1〜T4／挨拶行 T5〜T10／催促 T11〜T12／後処理・禁止語 T13〜T17）＋ stance 17件＋ action-ledger 23件 全 PASS。tsc エラー0。コミット `9d4b8d3f`
+
+### 週次 SQL（廃止の妥当性検証）
+```sql
+SELECT (reply_context_snapshot->'greeting'->>'kind') AS kind, (reply_context_snapshot->'greeting'->>'opener') AS opener,
+       width_bucket(((reply_context_snapshot->'greeting'->'audit'->>'waitedMs')::bigint)/3600000.0, 0, 24, 8) AS waited_h_bucket,
+       COUNT(*), AVG(was_ai_modified::int) AS edit_rate
+FROM ai_reply_examples WHERE reply_context_snapshot ? 'greeting' AND created_at >= now() - interval '14 days'
+GROUP BY 1,2,3 ORDER BY 4 DESC;
+```
+
+### 引き継ぎ
+- [ ] page.tsx の送信ボタン側が check-reply に `recentMessages[].createdAt` を渡しているか確認（渡していなければ追加 → 復元経路ではなく再計算経路になる）
+- [ ] `ai_prompt_rules` に「3時間以上待たせたらお待たせ致しました」等の同旨行が残っていれば is_active=false に（禁止語 block と衝突し修正ループを回す）
+- [ ] 2週間後: OPENER_MISMATCH の発火率と編集率を確認。FP が多い kind（特に question の asksAction 判定）は `openerAllowed` を**広げる**（opener を足さない）
+- [ ] system_design_thinking に G32 知見 5 件 INSERT 済み（二層・禁止語・audit・四者同名の増幅リスク・了承のみは未返信に数えない）
