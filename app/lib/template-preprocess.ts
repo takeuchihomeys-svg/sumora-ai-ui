@@ -60,22 +60,24 @@ export function applyVacatingDateToTemplate(templateText: string, vacatingDate: 
 }
 
 /**
- * 挨拶ルール: 本日スタッフ送信済みなら「お待たせ致しました」（21時以降は「夜分遅くに失礼致します」）、
+ * 挨拶ルール: 本日スタッフ送信済みなら挨拶行なし（21時以降は「夜分遅くに失礼致します」）、
  * 未送信なら「お世話になっております」。
+ * G32（2026-09-09 Fable5 じゅにあ事例・竹内方針）: 「お待たせ致しました」は返信から全廃（final-check BANNED_WORD）。
  */
 export function selectGreeting(staffMessagedToday: boolean, jstHour: number): string {
   return staffMessagedToday
-    ? (jstHour >= 21 ? "夜分遅くに失礼致します！！" : "お待たせ致しました！！")
+    ? (jstHour >= 21 ? "夜分遅くに失礼致します！！" : "")
     : "お世話になっております！！";
 }
 
 /**
- * テンプレート内の挨拶文をルールに従って正しい挨拶に差し替える。
+ * テンプレート内の挨拶文をルールに従って正しい挨拶に差し替える。置換値が "" なら改行ごと消す。
  */
 export function applyGreetingSwap(templateText: string, staffMessagedToday: boolean): string {
-  const GREETING_RE = /お世話になっております！！?|お待たせ致しました！！?|夜分遅くに失礼致します！！?/g;
+  const GREETING_RE = /(?:お世話になっております|お待たせ致しました|お待たせいたしました|夜分遅くに失礼致します)！！?\n?/g;
   const jstHour = (new Date().getUTCHours() + 9) % 24;
-  return templateText.replace(GREETING_RE, selectGreeting(staffMessagedToday, jstHour));
+  const greeting = selectGreeting(staffMessagedToday, jstHour);
+  return templateText.replace(GREETING_RE, (m) => (greeting ? `${greeting}${m.endsWith("\n") ? "\n" : ""}` : ""));
 }
 
 /**

@@ -135,7 +135,8 @@ function buildFacilityLines(f: PropFacilityData): string[] {
 // ・21時以降 または 早朝5時以前にスタッフからプロアクティブに連絡する場合は「夜分遅くに失礼致します」
 // ・お客様から連絡が来た返信場面（customerInitiated=true）では時間帯に関わらず通常挨拶
 // ・初回（isFirstEverReply）→「ご連絡頂きありがとうございます😊！！」
-// ・今日すでにスタッフが送信済み（staffMessagedToday）→「お待たせ致しました！！」
+// ・今日すでにスタッフが送信済み（staffMessagedToday）→ 挨拶行なし（名前行のみ「〇〇さん」で開始＝正解 挨拶なし 412 件内の名前行パターン）
+//   G32（2026-09-09 Fable5 じゅにあ事例・竹内方針）: 「お待たせ致しました」は返信から全廃（final-check BANNED_WORD で block されるため生成側からも除去）
 function buildGreeting(
   jstHour: number,
   isFirstEverReply: boolean,
@@ -144,7 +145,7 @@ function buildGreeting(
 ): string {
   if (isFirstEverReply) return "ご連絡頂きありがとうございます😊！！";
   if (!customerInitiated && (jstHour >= 21 || jstHour <= 5)) return "夜分遅くに失礼致します！！";
-  if (staffMessagedToday) return "お待たせ致しました！！";
+  if (staffMessagedToday) return "";
   return "お世話になっております！！";
 }
 
@@ -1202,7 +1203,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
 
     // 今日（JST）スタッフがすでに挨拶メッセージを送っているか判定 → 挨拶を切り替える
     // お世話になっておりますは1日1回の挨拶（おはようございますと同じ）
-    // こちら（スタッフ）の最後の送信が今日 → 今日すでに挨拶済み → お待たせ致しました
+    // こちら（スタッフ）の最後の送信が今日 → 今日すでに挨拶済み → 挨拶行なし（G32: お待たせ致しました は禁止語）
     // こちらの最後の送信が昨日以前（または送信なし） → 今日初めての挨拶 → お世話になっております
     const todayJST = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const toJSTDate = (iso: string) => new Date(new Date(iso).getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -1230,7 +1231,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const todayJSTFmt = todayJST.replace(/(\d{4})-(\d{2})-(\d{2})/, (_, y, m, d) => `${y}年${parseInt(m)}月${parseInt(d)}日`);
     const greetingPhrase = buildGreeting(jstHourNow, isFirstEverReply, staffMessagedToday, customerInitiated);
     // AI自由生成プロンプトに注入する挨拶時間ルール（挨拶を含みうるアクションで使用）
-    const greetingTimeNote = `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は必ず「${greetingPhrase}」を使うこと（21時以降・早朝5時以前にこちらからプロアクティブに連絡する場合は「夜分遅くに失礼致します！！」）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。\n・名前と挨拶文は必ず同じ行につなげて書くこと（例：「〇〇さん${greetingPhrase}」）。名前だけを単独の行・単独の一文に置くのは絶対禁止。`;
+    // G32: 当日送信済み（greetingPhrase=""）は挨拶行なし。「お待たせ致しました」は禁止語
+    const greetingTimeNote = greetingPhrase
+      ? `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は必ず「${greetingPhrase}」を使うこと（21時以降・早朝5時以前にこちらからプロアクティブに連絡する場合は「夜分遅くに失礼致します！！」）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。「お待たせ致しました」「お待たせいたしました」は禁止語。\n・名前と挨拶文は必ず同じ行につなげて書くこと（例：「〇〇さん${greetingPhrase}」）。名前だけを単独の行・単独の一文に置くのは絶対禁止。`
+      : `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。本日すでにこちらから送信済みのため挨拶行は書かない（「お世話になっております」「お待たせ致しました」「お待たせいたしました」は禁止）。名前行「〇〇さん」または本題から始めること。`;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -2080,9 +2084,9 @@ ${SMORA_COMMON_RULES}
         : `・「ご希望のご条件に合ったお部屋ピックアップさせて頂きました😊！！」で冒頭を続ける`;
 
       // 挨拶判定: buildGreeting（共通ヘルパー・#19）で一元決定
-      // 初回→ご連絡ありがとう / 夜間プロアクティブ→夜分遅くに / 今日挨拶済み→お待たせ / それ以外→お世話になっております
+      // 初回→ご連絡ありがとう / 夜間プロアクティブ→夜分遅くに / 今日挨拶済み→挨拶行なし（G32） / それ以外→お世話になっております
       // ★条件受領直後の例外: 直近のお客様メッセージが希望条件の送付（エリア・家賃・間取り等が並ぶ）なら、
-      //   スタッフの実運用に合わせて「お待たせ致しました」等ではなく条件送付への感謝から始める
+      //   スタッフの実運用に合わせて定型挨拶ではなく条件送付への感謝から始める
       const CONDITION_SIGNAL_RE = /家賃|万円|万以内|万まで|間取り|1R|1K|1DK|1LDK|2K|2DK|2LDK|3LDK|ワンルーム|エリア|沿線|徒歩|駅|入居|オートロック|バス.?トイレ|セパレート|独立洗面|宅配ボックス|階以上|築/g;
       const conditionSignalHits = (latestCustomerMsg.match(CONDITION_SIGNAL_RE) ?? []).length;
       const conditionsJustReceived = customerInitiated && conditionSignalHits >= 3;
@@ -3900,8 +3904,7 @@ ${SMORA_COMMON_RULES}
       // 各パターンの実データ由来お手本（DBに☆つき実例が少ないため直書き）
       const PATTERN_EXAMPLES: Record<string, string> = {
         available: `[パターン例: 空室あり・内覧誘導]
-スモラ:「お待たせいたしました！！
-〇〇（物件名）空室確認取れました😊！！
+スモラ:「${greetingPhrase ? `${greetingPhrase}\n` : ""}〇〇（物件名）空室確認取れました😊！！
 ぜひご内覧させていただきたいのですが
 直近ですと
 6/15（月）15:00〜17:00
@@ -3909,8 +3912,7 @@ ${SMORA_COMMON_RULES}
 ご案内可能です！！
 〇〇さんご都合いかがでしょうか😌！！」`,
         alternative: `[パターン例: 満室・代替案あり]
-スモラ:「お待たせいたしました！！
-確認させていただきました物件のお部屋残念ながら全て募集が終了しておりました🙇‍♀️！！
+スモラ:「${greetingPhrase ? `${greetingPhrase}\n` : ""}確認させていただきました物件のお部屋残念ながら全て募集が終了しておりました🙇‍♀️！！
 ただAPRILE南森町は一回り広い33.62㎡のお部屋が募集中です！！
 こちらのお部屋〇〇さんお気に召されましたらご案内させていただきます！！
 ご都合いかがでしょうか😊！！」`,
@@ -3925,18 +3927,16 @@ ${SMORA_COMMON_RULES}
 
       const PATTERN_INSTRUCTION: Record<string, string> = {
         available: calendarNote
-          ? `物件を確認した結果「空室あり・入居可能」でした。お待たせしたお礼と空室報告をしたあと、提供された内覧可能日時を以下フォーマットで含めてください：
+          ? `物件を確認した結果「空室あり・入居可能」でした。空室報告をしたあと、提供された内覧可能日時を以下フォーマットで含めてください：
 「直近ですと
 M/D（曜日）HH:MM〜HH:MM
 M/D（曜日）HH:MM〜HH:MM
 ご案内可能です！！」
 案内不可の日は除外。締めは「ご都合いかがでしょうか😌！！」`
-          : "物件を確認した結果「空室あり・入居可能」でした。お待たせしたお礼と空室報告をして、内覧日程の調整へ自然に誘導してください。",
+          : "物件を確認した結果「空室あり・入居可能」でした。空室報告をして、内覧日程の調整へ自然に誘導してください。",
         alternative: floor_plan_match === "same"
           ? `以下の構成・文体で一字一句この通りに作成してください（[物件名]部分のみ会話履歴から特定して置き換える）：
-「お待たせいたしました！！
-
-お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
+「${greetingPhrase ? `${greetingPhrase}\n\n` : ""}お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
 
 別の階数となりますが、同じ間取りで
 [物件名]で現在募集中のお部屋御座いましたので、最大限割引しました御見積書と併せてお送りさせて頂きました！！
@@ -4005,7 +4005,7 @@ ${SMORA_COMMON_RULES}
 【お客様の呼び方】必ず「[お客様名]」で呼ぶこと（他の呼び方・〇〇さんの置き換えし忘れ禁止）
 
 【作成ルール】
-・「お待たせいたしました！！」で始める
+・冒頭は【挨拶の時間ルール】の挨拶フレーズで始める（当日送信済みで挨拶フレーズが無い場合は挨拶行なしで結果報告から始める）。「お待たせいたしました」「お待たせ致しました」は禁止語
 ・画像（物件資料）が添付されている場合は物件名・間取りなどを読み取って言及する
 ・会話履歴がある場合はその流れを踏まえた自然な報告文にする
 ・感嘆符は「！！」（スモラスタイル）
@@ -4091,7 +4091,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
             : endedPropCount > 0
               ? `${name}お送りいただきました物件の中で\n`
               : `${name}確認させていただきました！！\n`;
-          message_text = `${greeting1}\n${sentHeader1}${message_text}${endedSection}`;
+          message_text = `${greeting1 ? `${greeting1}\n` : ""}${sentHeader1}${message_text}${endedSection}`; // G32: 当日送信済みは挨拶行なし
         } else {
           // 複数物件モード: per-property ステータスで箇条書き + クロージング
           const recommendIdx = (body.recommend_prop_index as number | undefined) ?? -1;
@@ -4147,7 +4147,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const header = (all_properties_available as boolean | undefined) && endedPropCount === 0
             ? `${name}お送り頂きました\n`
             : `${name}お送り頂きました物件の中で\n`;
-          message_text = `${greeting}\n${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${recommendNote}${estimateSection}${vacancySection}${endedSection}`;
+          message_text = `${greeting ? `${greeting}\n` : ""}${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${recommendNote}${estimateSection}${vacancySection}${endedSection}`; // G32: 当日送信済みは挨拶行なし
         }
 
       // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）
@@ -4230,9 +4230,8 @@ ${availableTemplate}`;
       // 「同じ間取り」「違う間取り」は固定テンプレートを完全に守らせる専用フロー
       } else if (pattern === "alternative" && (floor_plan_match === "same" || floor_plan_match === "different")) {
         if (floor_plan_match === "same") {
-          const templateText = `お待たせいたしました！！
-
-お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
+          // G32: 冒頭は buildGreeting（当日送信済みなら空＝本題から）。「お待たせいたしました」は禁止語
+          const templateText = `${greetingPhrase ? `${greetingPhrase}\n\n` : ""}お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
 
 別の階数となりますが、同じ間取りで
 [物件名]で現在募集中のお部屋御座いましたので、最大限割引しました御見積書と併せてお送りさせて頂きました！！
@@ -4250,9 +4249,7 @@ ${templateText}`;
 
         } else {
           // 違う間取り: 物件画像から広さ（㎡）を読み取って文に反映
-          const templateText = `お待たせいたしました！！
-
-お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
+          const templateText = `${greetingPhrase ? `${greetingPhrase}\n\n` : ""}お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
 
 別の間取り（[㎡]）となりますが
 [物件名]で現在募集中のお部屋が御座いますので、最大限割引しました御見積書と併せてお送りさせて頂きました！！

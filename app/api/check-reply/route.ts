@@ -5,6 +5,9 @@ import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { runFinalCheck } from "@/app/lib/final-check";
 // 2026-09-09 Fable5 行動台帳: generate-reply と同じ buildActionLedger（aix_usage_logs > line_tasks > 本文）で送付実績を決める
 import { buildActionLedger, type LedgerAixRow, type LedgerTask } from "@/app/lib/action-ledger";
+// G32（2026-09-09 Fable5 じゅにあ事例）: 冒頭決定（挨拶行＋開口語）を generate-reply と同じ resolveGreeting で再計算（四者同名）。createdAt が無ければ tpo_debug.greeting の復元値
+import { resolveGreeting, toGreetingLite, normalizeGreetingLite, computeAlreadyGreetedToday, isProgressPushMessage, type GreetingDecisionLite } from "@/app/lib/greeting";
+import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "@/app/lib/reply-context";
 import { supabase } from "@/app/lib/supabase";
 
 // ─── 送信時の最終チェックAPI（スタッフ編集後テキストの再チェック専用）───────────
@@ -25,7 +28,7 @@ export async function POST(req: NextRequest) {
 
   let text = "";
   let conversationId: string | undefined;
-  let recentMessages: Array<{ sender: string; text: string }> = [];
+  let recentMessages: Array<{ sender: string; text: string; createdAt?: string }> = [];
   let customerName: string | undefined;
   let isAix = false;
   let suggestedAixMeta: {
@@ -37,7 +40,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as {
       text?: string;
       conversationId?: string;
-      recentMessages?: Array<{ sender: string; text: string }>;
+      recentMessages?: Array<{ sender: string; text: string; createdAt?: string }>;
       customerName?: string;
       isAix?: boolean;
       suggestedAixMeta?: {
@@ -72,6 +75,7 @@ export async function POST(req: NextRequest) {
   // WAIT免除・開口語チェック・STATE_REGRESSION が送信時だけ効かなかった）。fail-open（取得失敗は従来どおり）
   let tpoLabel: string | undefined;
   let phaseKey: string | undefined;
+  let greetingLite: GreetingDecisionLite | undefined;
   if (conversationId) {
     try {
       const { data: convRow } = await supabase
@@ -79,9 +83,11 @@ export async function POST(req: NextRequest) {
         .select("ai_draft_check")
         .eq("id", conversationId)
         .maybeSingle();
-      const dbg = (convRow as { ai_draft_check?: { tpo_debug?: { tpo_label?: string | null; phaseGuideKey?: string | null } } | null } | null)?.ai_draft_check?.tpo_debug;
+      const dbg = (convRow as { ai_draft_check?: { tpo_debug?: { tpo_label?: string | null; phaseGuideKey?: string | null; greeting?: unknown } } | null } | null)?.ai_draft_check?.tpo_debug;
       tpoLabel = dbg?.tpo_label ?? undefined;
       phaseKey = dbg?.phaseGuideKey ?? undefined;
+      // G32: 生成時の冒頭決定（旧形式 kind=waited は normalizeGreetingLite が standard へ写像）
+      greetingLite = normalizeGreetingLite(dbg?.greeting) ?? undefined;
     } catch (e) {
       console.warn("[check-reply] ai_draft_check 取得失敗（ctx なしで続行）:", e instanceof Error ? e.message : e);
     }
@@ -103,6 +109,33 @@ export async function POST(req: NextRequest) {
   });
   const sentPropertiesCount = ledger.facts.propertiesSentCount;
 
+  // G32: 冒頭決定（四者同名）。createdAt があれば generate-reply と同じ resolveGreeting で再計算、無ければ tpo_debug.greeting の復元値
+  //      （復元値が first なのにスタッフ送信済みなら古い decision の誤適用防止のため破棄）
+  let greetingDecision: GreetingDecisionLite | undefined = greetingLite && greetingLite.kind === "first" && hasStaffText ? undefined : greetingLite;
+  if (recentMessages.some((m) => !!m.createdAt)) {
+    try {
+      const lastStaff = [...recentMessages].reverse().find((m) => m.sender === "staff");
+      const staffTurn = classifyLastStaffTurn(lastStaff?.text ?? "", { recentAixRows: (aixRes.data ?? []) as never, lastStaffAt: lastStaff?.createdAt ?? null, ledger });
+      const substance = analyzeSubstance(lastCustomerMessage, undefined, { staffAskedQuestion: staffTurn.kind === "question_to_customer" });
+      const customerResponse = classifyCustomerResponse(substance, staffTurn);
+      greetingDecision = toGreetingLite(resolveGreeting({
+        customerName: customerName ?? "",
+        isFirstEverReply: !hasStaffText,
+        alreadyGreetedToday: computeAlreadyGreetedToday(recentMessages) ?? false,
+        recentMessages,
+        jstHour: (new Date().getUTCHours() + 9) % 24,
+        isProgressPush: isProgressPushMessage(lastCustomerMessage, { isAckOnly: substance.isAckOnly }),
+        isSubstantive: (t) => analyzeSubstance(t).has,
+        customerKind: customerResponse.kind,
+        customerSecondary: customerResponse.secondary,
+        substanceKinds: substance.kinds,
+        isDeliverableReply: isAix,
+      }));
+    } catch (e) {
+      console.warn("[check-reply] greeting 再計算失敗（復元値で続行）:", e instanceof Error ? e.message : e);
+    }
+  }
+
   // haikuTimeoutMs=2500: 送信時専用の短いタイムアウト（クライアント 2800ms 以内に収まる）
   // generate-reply は runFinalCheckWithRevision 経由でデフォルト 8000ms を使用
   const result = await runFinalCheck(text, {
@@ -117,6 +150,7 @@ export async function POST(req: NextRequest) {
     customerName: customerName || undefined,
     tpoLabel,
     phaseKey,
+    greetingDecision, // G32: 冒頭の対称検査（final-check ⑦）の正
     isEarlyConversation: !hasStaffText,
     sentPropertiesCount,
     // 台帳は渡すが ledgerStrict=false（スタッフ編集文の再チェック＝実行前提語は warning に留め、判断はスタッフに返す）

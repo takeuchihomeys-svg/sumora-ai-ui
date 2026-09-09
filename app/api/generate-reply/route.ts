@@ -46,7 +46,7 @@ import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1,
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, type MoveOutSubject } from "@/app/lib/move-out-context";
 import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
-import { resolveGreeting, enforceOpening, buildFirstGreeting, type GreetingDecision } from "@/app/lib/greeting";
+import { resolveGreeting, enforceOpening, buildFirstGreeting, buildGreetingNote, computeAlreadyGreetedToday, toGreetingLite, isProgressPushMessage, type GreetingDecision } from "@/app/lib/greeting";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { safeSlice } from "@/app/lib/safe-slice";
@@ -72,6 +72,8 @@ import {
   buildPairDirection, buildTurnPairNote, type PairContext, type SubstanceVerdict,
   // 2026-09-09 Fable5 みく事例: ヘッジゲート・締めポリシー・姿勢（生成・検査・tpo_debug が同一 verdict を参照）
   resolveHedgeAllowance, stripPreemptiveRelax, resolveCloser, predictCloserSignals, computeStanceFlags, buildStanceNote, STAFF_SEARCHED_RE,
+  // G32（2026-09-09 Fable5 じゅにあ事例）: 開口語なし（結果報告）の根拠（AIX 確認結果・見積テンプレ）
+  STAFF_CONFIRM_REPORT_RE, STAFF_ESTIMATE_RE,
   type HedgeVerdict, type CloserVerdict,
 } from "@/app/lib/reply-context";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
@@ -165,7 +167,7 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 　→ 正: 具体的な次のアクションで締める（例:「ピックアップ出来次第お送りさせて頂きます！！」「ご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます😌！！」）
 ③ 挨拶代わりのお礼で書き出す
 　× 「ありがとうございます！！」「ご連絡ありがとうございます！！」で返信を始める
-　→ 正: 【⏰ 挨拶ルール・最優先】の冒頭フレーズ（お世話になっております／お待たせ致しました／いつもありがとうございます）から始める
+　→ 正: 【⏰ 挨拶ルール・最優先】の冒頭フレーズ（お世話になっております のみ。お待たせ致しました・いつもありがとうございます は禁止語）から始める
 ④ 曖昧な安心付与
 　× 「ご安心ください」（根拠となる具体的行動を伴わない場合）「大丈夫ですよ」単独
 　→ 正: 何をするから安心なのかを行動で示す
@@ -861,8 +863,8 @@ function buildGenerationMessages(
     ? isFirstEverReplyOverride
     : lastStaffLines.length === 0;
 
-  // G30（2026-09-08 Fable5）: 挨拶は route.ts resolveGreeting() で決定論確定済み（待たせた時間・当日挨拶済み・深夜帯・会話連続中）。
-  // LLM に「お世話に／お待たせ／いつもありがとう」の3候補から選ばせる旧方式は廃止し、確定した opening をリテラル埋め込みする。
+  // G30（2026-09-08 Fable5）: 挨拶は route.ts resolveGreeting() で決定論確定済み（初回・催促・当日挨拶済み・深夜帯・会話連続中）。
+  // LLM に候補から選ばせる旧方式は廃止し、確定した opening をリテラル埋め込みする（G32: お待たせ致しました は禁止語）。
   // 旧「夜分遅くに失礼致します 絶対禁止」は撤廃（22:00〜04:59 は決定論で「夜遅くに失礼します！！」を付与。LLM 自身は書かない）。
   // greetingDecision 未渡し（想定外経路）のみ従来の履歴フォールバック
   const gd = greetingDecision;
@@ -874,18 +876,14 @@ function buildGenerationMessages(
              l.includes("ご連絡頂きありがとうございます") ||
              /^スモラ:\s*「?[^\s]{1,10}さん/.test(l)
       );
-  const greetingNote = !gd
-    ? (isFirstEverReply
+  // G31（2026-09-09 Fable5 じゅにあ事例）: 挨拶行（接触・約束の事実）＋開口語（顧客メッセージの意味）の二層を greeting.ts buildGreetingNote が decision から生成（四者同名）
+  const greetingNote = gd
+    ? buildGreetingNote(gd, jstHour)
+    : (isFirstEverReply
         ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「${buildFirstGreeting(customerName)}」で始める（一字一句変更・省略禁止）。`
         : alreadyGreetedFallback
           ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み。今回は絶対に使わない。「はい！！」「かしこまりました！！」など短い言葉で直接本文から始める。`
-          : `\n【⏰ 挨拶ルール・最優先】長い返信・重要な連絡・条件確認の冒頭は「${sanitizeCustomerName(customerName) ? `${sanitizeCustomerName(customerName)}さん` : ""}お世話になっております！！」で固定。「お待たせ致しました」「夜遅くに」「夜分遅くに」は自分で書かない。`)
-    : gd.kind === "none"
-      ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み（${gd.reason}）。今回は「お世話になっております」「お待たせ致しました」「いつもありがとうございます」を絶対に書かない。「はい！！」「かしこまりました！！」など短い開口語（単独行）か本文から直接始める。「ありがとうございます」を挨拶代わりの書き出しに使うことも禁止（お礼は本文中で文脈が伴う場合のみ）。${gd.nightPrefix ? `ただし現在深夜帯のため先頭行は「${gd.nightPrefix}」で固定（一字一句変更禁止。この行の後に改行して本文）。` : ""}`
-      : gd.kind === "standard"
-        ? `\n【⏰ 挨拶ルール・最優先】現在${jstHour}時台（JST）・お客様の最新メッセージから${gd.waitedMs !== null ? Math.round(gd.waitedMs / 60000) : "?"}分（3時間未満＝待たせていない）。長い返信・重要な連絡・条件確認の冒頭は「${gd.opening}」で固定（一字一句変更禁止）。短い承認・単純な返答は挨拶なしで「はい！！」「かしこまりました！！」から始めてよい。
-【冒頭の絶対禁止】「お待たせ致しました」（3時間以上待たせた時だけ使う語。今回は該当しない）／「はじめまして」「〜と申します」（初回のみ）／「ありがとうございます」「ご連絡ありがとうございます」だけの書き出し（お礼は挨拶ではない）／自分で「夜遅くに」「夜分遅くに」を書く（時間帯挨拶はシステムが付与する）。`
-        : `\n【⏰ 挨拶ルール・最優先】${gd.kind === "first" ? "これはお客様への【はじめての返信】" : gd.kind === "waited" ? `お客様の最新メッセージから約${Math.round((gd.waitedMs ?? 0) / 3600000)}時間経過（返信に時間がかかった）` : "進捗催促への対応"}。必ず「${gd.opening}」で始める（一字一句変更・省略・追加禁止。この行の後に改行して本文）。「お世話になっております」「いつもありがとうございます」「ありがとうございます」だけの書き出しは禁止。自分で「夜遅くに」「夜分遅くに」を追加しない（必要なら付与済み）。`;
+          : `\n【⏰ 挨拶ルール・最優先】長い返信・重要な連絡・条件確認の冒頭は「${sanitizeCustomerName(customerName) ? `${sanitizeCustomerName(customerName)}さん` : ""}お世話になっております！！」で固定。「お待たせ致しました」は禁止語。「夜遅くに」「夜分遅くに」は自分で書かない。`);
 
   const dateNote = `\n【📅 今日の日付（JST・必ず基準にすること）】${getJSTDateString()} — 「明日」「明後日」「今週」などの相対表現や具体的な日付（○日）は全てこの日付を起点に計算すること`;
 
@@ -3803,6 +3801,9 @@ export async function POST(req: NextRequest) {
     //   生成（latent_intent / winning_pattern / closing_strategy / customer_questions / conditionDirection / 【姿勢】）・検査（final-check runHedgeChecks）・tpo_debug が同一 verdict
     // 生成する返信自体が AIX 物件送付文（成果物添付）＝「こちらの物件」「お送りした」は添付物を指す（台帳ゲートの deliverable 免除と同値）
     const isAixPropertySendMode = !!aixSourceMessage && STAFF_SEARCHED_RE.test(aixSourceMessage);
+    // G31/G32: この返信自体が「約束した結果」を届けるか（AIX 物件送付 or 確認結果・見積テンプレを本文に持つ）。resolveOpener の deliverable（開口語なし）根拠
+    const isAixCheckResultMode = !!aixSourceMessage && (STAFF_CONFIRM_REPORT_RE.test(aixSourceMessage) || STAFF_ESTIMATE_RE.test(aixSourceMessage));
+    const isDeliverableReplyForGreeting = isAixPropertySendMode || isAixCheckResultMode;
     const hedge: HedgeVerdict = resolveHedgeAllowance({
       customerMessage: message ?? "",
       substance,
@@ -3984,7 +3985,8 @@ export async function POST(req: NextRequest) {
         if (/狭い|暗い|遠い|古い|うるさい|微妙|ちょっと|イマイチ|いまいち|気になる点/.test(msg2) && !TPO_REQUEST_RE.test(msg2)) {
           return `懸念→条件変換（顧客の感想・懸念語を条件語に変換し「かしこまりました！！〇〇（変換後条件）のお部屋を中心に〇〇さんにオススメできるお部屋${ledger.facts.redoAllowed ? "再度" : ""}ピックアップしお送りさせて頂きます！！」。共感文だけの返信は不合格。80〜130字）`;
         }
-        if (/まだ(?:です|でしょうか|ですか)|連絡(?:ない|来ない|まだ)|どうなり(?:ました|ましたか)|進捗|いつ(?:頃)?(?:送|連絡|届)/.test(msg2)) {
+        // G32: 進捗催促の判定は greeting.ts isProgressPushMessage と同名（了承のみは催促に数えない）
+        if (isProgressPushMessage(message, { isAckOnly: substance.isAckOnly })) {
           return "進捗催促対応（「ご連絡遅くなり申し訳御座いません。」＋現状事実1文＋次アクション1文。100〜150字。「お待たせ致しました」「確認中です」禁止）";
         }
         return "商談継続中の汎用返答。顧客の質問・要望を1文で受け止め、具体的な行動宣言（ピックアップ・交渉・確認）を1つだけ添えて100〜150字で返す。初期費用・家賃交渉の場合は「最大限交渉させて頂きます！！」等の具体表現を使う。抽象的な「確認します」禁止";
@@ -4407,42 +4409,28 @@ export async function POST(req: NextRequest) {
     const phrases = formatPhrases(phraseList, knowledgeResult.phraseHits >= 3 ? 4 : 12);
 
 
-    // JST 当日（0:00〜23:59）で挨拶済み判定
-    // createdAt が含まれるメッセージだけを使用（タイムスタンプなしはフォールバックへ）
-    const hasTimestamps = recentMessages.some(m => !!m.createdAt);
-    const alreadyGreetedToday = (() => {
-      if (!hasTimestamps) return undefined;
-      // JST 当日の 0:00〜23:59（UTC換算）
-      // JST 0:00 = UTC 前日15:00 なので、JST日付の 0:00 UTC から 9時間引いて実際のUTC境界に変換する
-      // （旧実装は Date.UTC(JST日付, 0:00) をそのまま使っており JST 9:00 起点になっていた = JST 0〜9時に当日判定が常にfalse）
-      const jst = new Date(Date.now() + 9 * 3600 * 1000);
-      const dayStartUtc = Date.UTC(
-        jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate()
-      ) - 9 * 3600 * 1000;
-      const jstDayStart = new Date(dayStartUtc);
-      const jstDayEnd = new Date(dayStartUtc + 24 * 3600 * 1000 - 1);
-      // AIX自動返信も「挨拶済み」としてカウントする（当日AIXが送っていたら「お世話になっております」を省略）
-      // ※ first_reply 判定（hasAnyStaffMsg）とは別の目的: あちらは「人間が返信したか」、こちらは「今日挨拶を送ったか」
-      return recentMessages.some(m => {
-        if (m.sender !== "staff" || !m.createdAt) return false;
-        if (!m.text || m.text === "[画像]" || m.text === "[動画]") return false;
-        const ts = new Date(m.createdAt);
-        return ts >= jstDayStart && ts <= jstDayEnd;
-      });
-    })();
+    // JST 当日（0:00〜23:59）で挨拶済み判定（AIX 自動返信も「挨拶済み」に数える。画像/動画のみは除く）。
+    // G31: 同一ロジックを greeting.ts computeAlreadyGreetedToday へ移設（check-reply と同関数）。createdAt が無ければ undefined → フォールバック
+    const alreadyGreetedToday = computeAlreadyGreetedToday(recentMessages);
 
-    // G30（2026-09-08 Fable5）: 冒頭挨拶を決定論で確定（生成プロンプト・後処理 enforceOpening・final-check ⑦ の三者同名）。
-    // first > late_apology（進捗催促）> waited（3h以上）> none（当日挨拶済み）> standard。夜間接頭辞は 22:00〜04:59 かつ直前スタッフ発言 60 分以上前のみ。
-    // 進捗催促ラベルは tpoNoteForLLM（proposing）に出る（effectiveReplyDirection は direction 文字列なので両方を見る）
+    // G32（2026-09-09 Fable5 じゅにあ事例・竹内方針）: 「お待たせ致しました」全廃。挨拶行は接触の事実（初回／催促／当日未挨拶／当日挨拶済み／夜間）、
+    // 開口語は顧客メッセージの意味（classifyCustomerResponse）から確定。経過時間は audit にのみ保存し決定に使わない。
+    // 生成プロンプト（buildGreetingNote）・後処理（enforceOpening）・final-check ⑦・tpo_debug.greeting の四者同名。
+    // 夜間接頭辞は 22:00〜04:59 かつ直前スタッフ発言 60 分以上前のみ。
     const greetingDecision: GreetingDecision = resolveGreeting({
       customerName,
       isFirstEverReply: shouldPrependGreeting,
       alreadyGreetedToday: alreadyGreetedToday ?? false,
       recentMessages,
       jstHour: getJSTHour(),
-      isProgressPush: /進捗催促対応/.test(`${tpoNoteForLLM ?? ""}\n${effectiveReplyDirection ?? ""}`),
+      isProgressPush: isProgressPushMessage(message, { isAckOnly: substance.isAckOnly }),
+      isSubstantive: (t) => analyzeSubstance(t).has,
+      customerKind: customerResponse.kind,
+      customerSecondary: customerResponse.secondary,
+      substanceKinds: substance.kinds,
+      isDeliverableReply: isDeliverableReplyForGreeting,
     });
-    console.log("[greeting]", greetingDecision.kind, greetingDecision.reason, JSON.stringify(greetingDecision.opening));
+    console.log("[greeting]", greetingDecision.kind, greetingDecision.opener, greetingDecision.reason, `audit.waitedMs=${greetingDecision.audit.waitedMs ?? "-"}`);
 
     const latestCustomerMsg = [...recentMessages].reverse().find(m => m.sender === "customer");
     const latestStaffMsg = [...recentMessages].reverse().find(m => m.sender === "staff");
@@ -4773,8 +4761,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 return { body: cleaned, stopReason };
               }
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
-              // G30: waited（3h以上）/ late_apology（進捗催促）/ 夜間接頭辞は enforceOpening で確定差し込み。
-              //      standard / none は LLM が挨拶を書いた場合のみ決定論の opening に差し替え（プロンプト＋final-check に委ねる）
+              // G32: late_apology（催促）/ 夜間接頭辞は enforceOpening で確定差し込み。
+              //      standard / none は LLM が挨拶行・お待たせを書いた時のみ決定論の挨拶行に差し替え（お待たせは常に除去。プロンプト＋final-check に委ねる）
               const { cleaned: openingFixed, fixes: openingFixes } = isTemplateOptimize
                 ? { cleaned: fullText, fixes: [] as string[] }
                 : enforceOpening(fullText, greetingDecision);
@@ -4927,7 +4915,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   moveOutSubject,                                                  // G10
                   confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
                   aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
-                  greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
+                  greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳（生成側と同一オブジェクト・四者同名）
@@ -5039,7 +5027,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     moveOutSubject,                                                  // G10
                     confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
                     aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
-                    greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
+                    greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                     substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                     hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
                     ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
@@ -5117,7 +5105,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
             if (!isTemplateOptimize && finalCheck && draftBody) {
               try {
-                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|GREETING_WAITED_MISUSE|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT|DONE_PRESUPPOSED_WITHOUT_EVIDENCE|PROMISE_ECHO_MISMATCH)/;
+                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|OPENER_MISMATCH|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT|DONE_PRESUPPOSED_WITHOUT_EVIDENCE|PROMISE_ECHO_MISMATCH)/;
                 const postDetCtx = {
                   recentMessages, lastCustomerMessage: message, isAutoSend: enforceReplyModeGate,
                   isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
@@ -5128,7 +5116,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   moveOutSubject,                                                  // G10
                   confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
                   aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
-                  greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
+                  greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
@@ -5162,7 +5150,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               isViewingCancel,
               moveOutSubject,
               confirmCtx: { allowed: confirmCtxFinal.allowed, source: confirmCtxFinal.source, object: confirmCtxFinal.object },
-              greeting: { kind: greetingDecision.kind, reason: greetingDecision.reason },
+              greeting: toGreetingLite(greetingDecision), // G32: kind/opener/audit（waitedMs・起点・customerKind）を保存（check-reply が復元・週次 SQL で冒頭差分を集計）
               // 往復文脈（Turn-Pair）＋実質判定（Substance）
               substance: { has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, residue: substance.residue.slice(0, 120), evidence: substance.evidence },
               turnPair: { staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, staffEvidence: lastStaffTurn.evidence.slice(0, 60), customer: customerResponse.kind, customerSecondary: customerResponse.secondary, customerObject: customerResponse.object, customerSource: customerResponse.source, ruleId: pairContext.ruleId, precedence: pairContext.rule?.precedence ?? null },

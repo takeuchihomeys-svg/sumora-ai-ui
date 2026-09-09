@@ -66,7 +66,7 @@ describe("ヘッジ許可", () => {
     const aix = [{ aix_type: "property_send_widen", created_at: "2026-09-09T02:00:00Z" }];
     const { hedge } = build(cust, staff, { aix });
     expect(hedge.allowance).toBe("allow_after_search");
-    const ok = "うのさんお待たせ致しました！！\n伏見駅・竹田駅周辺全域からうのさんご希望の1LDK・家賃8万円以内のお部屋ピックアップさせて頂きました！！\n1LDKのご条件ですと合うお部屋が少ない状況でしたので、間取りの範囲を少し広げてピックアップさせて頂きました！！\nお手隙の際にご査収ください😌！！";
+    const ok = "うのさんお世話になっております！！\n伏見駅・竹田駅周辺全域からうのさんご希望の1LDK・家賃8万円以内のお部屋ピックアップさせて頂きました！！\n1LDKのご条件ですと合うお部屋が少ない状況でしたので、間取りの範囲を少し広げてピックアップさせて頂きました！！\nお手隙の際にご査収ください😌！！";
     const c = codes(ok, cust, staff, { hedge });
     expect(c.some((x) => x.startsWith("PREEMPTIVE_HEDGE") || x.startsWith("FABRICATED_SEARCH_REPORT") || x.startsWith("CONDITION_RELAX_UNASKED"))).toBe(false);
     const future = ok.replace("少ない状況でしたので", "少ない状況になる可能性がございますので");
@@ -114,7 +114,7 @@ describe("締めなし", () => {
   it("N1 成果物添付: receive_check・全力サポートを重ねると COMMIT_AFTER_DELIVERABLE", () => {
     const cust = "阿波座・本町で2LDK 17万以内でお願いします";
     const staff = "ご希望条件お聞かせください";
-    const ok = "rさんお待たせ致しました！！\n阿波座・本町周辺全域からrさんにオススメできる2LDK・家賃17万円以内のお部屋ピックアップさせて頂きました！！\n🌟レジデンス本町 801号室\nお手隙の際にご査収ください😌！！";
+    const ok = "rさんお世話になっております！！\n阿波座・本町周辺全域からrさんにオススメできる2LDK・家賃17万円以内のお部屋ピックアップさせて頂きました！！\n🌟レジデンス本町 801号室\nお手隙の際にご査収ください😌！！";
     const { pair } = build(cust, staff);
     expect(resolveCloser(pair, deriveCloserSignals(ok), { customerName: "r" }).closer).toBe("receive_check");
     expect(codes(ok + "\nrさんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます！！", cust, staff, { customerName: "r" })).toContain("COMMIT_AFTER_DELIVERABLE:warning");
@@ -122,7 +122,7 @@ describe("締めなし", () => {
   it("N2 日程打診: 疑問形で終える・確定形＋何卒は SCHEDULE_ASSERT_UNCONFIRMED", () => {
     const cust = "月曜日は内覧可能でしょうか？";
     const staff = "🌟ISM大阪城公園 508号室\nお気に召されましたらご都合よろしいお日にち御座いますでしょうか😊！！";
-    const ng = "お待たせ致しました！！\n月曜日ご案内させて頂きます！！\n9/7（月）にISM大阪城公園 508号室 現地エントランスお待ち合わせで何卒よろしくお願い致します😊！！";
+    const ng = "はい！！\n月曜日ご案内させて頂きます！！\n9/7（月）にISM大阪城公園 508号室 現地エントランスお待ち合わせで何卒よろしくお願い致します😊！！";
     const c = codes(ng, cust, staff, { customerName: "前田" });
     expect(c).toContain("SCHEDULE_ASSERT_UNCONFIRMED:warning");
     const ok = "はい！！\nお部屋ご案内可能です😊！！\n9/7（月）【15:00】にISM大阪城公園 508号室 現地エントランスお待ち合わせ如何でしょうか！！";

@@ -425,6 +425,8 @@ export type PairRule = {
   mustInclude: { label: string; detect: RegExp }[];
   mustNot: string[];
   example: string;
+  /** G32: PAIR_ELEMENT_MISSING の修正案（省略時は example。別顧客名入りの例文を修正案にしないため） */
+  suggestion?: string;
   length: string;
   /** セル既定の締め。resolveCloser で 断り＞成果物＞日程 が優先される。省略=resolveCloser の既定 */
   closer?: CloserKind;
@@ -478,8 +480,10 @@ export const PAIR_MATRIX: PairRule[] = [
   { id: "PD_QUESTION", staff: "pickup_declared", customer: "question", precedence: "override_wait",
     tpoLabel: "質問（ピックアップ約束中）",
     direction: "ピックアップ約束中（未送付・台帳: {ledger}）にお客様が質問した。①質問に履歴の事実で直接回答1文（分からなければ「確認しご連絡」対象付き）②「〇〇さんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」の履行約束1文。実行済み語禁止。80〜160字",
-    mustInclude: [{ label: "質問への直接回答", detect: /となります|です|ございます|可能|傾向/ }, { label: "履行約束の復唱", detect: /(?:ピックアップ|見つかり)(?:出来|でき)?次第[^\n]{0,12}お送り/ }],
+    // G32: 依頼形の質問（「〜で探して頂けますか」）への「探させて頂きます」も回答として認識する
+    mustInclude: [{ label: "質問への直接回答", detect: /となります|です|ございます|可能|傾向|させて頂きます|させていただきます|いたします/ }, { label: "履行約束の復唱", detect: /(?:ピックアップ|見つかり)(?:出来|でき)?次第[^\n]{0,12}お送り/ }],
     mustNot: ["実行済み含意語", "「こちらの物件」等の指示語", "条件の聞き返し"],
+    suggestion: "質問への直接回答（〜となります／〜です）を1文入れる。依頼形の質問（探して頂けますか）なら「かしこまりました！！」＋探索宣言が回答",
     example: "トイレと洗面所別のお部屋につきましては、設備分家賃が高くなる傾向がございます！！(3,000円～5,000円程）\n\nトイレ・洗面所別のご条件も含めてあやさんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！何卒よろしくお願い致します！！",
     length: "80〜160字", closer: "none", nanisotsu: true },
 
@@ -552,7 +556,7 @@ export const PAIR_MATRIX: PairRule[] = [
       { label: "初期費用を抑えた別物件を探す宣言", detect: new RegExp("(?:初期費用|費用|家賃).{0,15}(?:抑え|安い|抑えられ).{0,30}(?:探|ピックアップ|お調べ)") },
     ],
     mustNot: ["値引き確約", "共感語のみ", "申込誘導"],
-    example: "はい！！\nこちらの2物件は、礼金がかかりますので初期費用高くなってしまいます。\n別物件で初期費用抑えられるオススメ出来るお部屋探させて頂きます！！\n何卒よろしくお願い致します😌！！",
+    example: "こちらの2物件は、礼金がかかりますので初期費用高くなってしまいます。\n別物件で初期費用抑えられるオススメ出来るお部屋探させて頂きます！！\n何卒よろしくお願い致します😌！！",
     length: "90〜150字", closer: "commit_until_found", nanisotsu: true },
 
   { id: "ES_POSITIVE", staff: "estimate_send", customer: "positive", precedence: "after_wait",
@@ -622,7 +626,7 @@ export const PAIR_MATRIX: PairRule[] = [
     direction: "新条件で実際にピックアップした結果を送る。「〇〇のご条件ですと合うお部屋が少ない状況でしたので、△△まで広げてピックアップさせて頂きました」の過去形＋実行済み代替のみ可。締めはご査収",
     mustInclude: [{ label: "結果報告（過去形）", detect: /ピックアップ(?:させて(?:頂|いただ)き|いたし|致し)ました|募集(?:ございません|御座いません)でした/ }],
     mustNot: ["未来形の予測（〜可能性がございます）", "全力サポート・何卒の締め"],
-    example: "慶次さんお待たせ致しました！！\n北区・福島区・西区周辺全域から探させていただいたのですが、以前お送りさせていただいたお部屋以外の新着物件募集ございませんでした。\nメロディーハイム九条203号室も好条件のお部屋となりますので並行して選択肢に残しつつ、新着物件が出次第ピックアップしてお送りさせていただきます！！",
+    example: "慶次さんお世話になっております！！\n北区・福島区・西区周辺全域から探させていただいたのですが、以前お送りさせていただいたお部屋以外の新着物件募集ございませんでした。\nメロディーハイム九条203号室も好条件のお部屋となりますので並行して選択肢に残しつつ、新着物件が出次第ピックアップしてお送りさせていただきます！！",
     length: "100〜180字", closer: "receive_check", nanisotsu: false, hedgeAllowed: true },
 
   { id: "QC_ANSWER", staff: "question_to_customer", customer: "*", precedence: "after_wait",

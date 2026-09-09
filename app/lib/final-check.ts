@@ -18,7 +18,7 @@ import { checkNameConsistency, ASSERTION_BAN_RULES, PLACEHOLDER_ADDRESS_DET_RE, 
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶（generate-reply / brain-core と四者同名）
 import { moveOutEvidenceText, type MoveOutSubject } from "./move-out-context";
 import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, type ConfirmationContextVerdict } from "./confirmation-context";
-import { NIGHT_PREFIX, type GreetingKind } from "./greeting";
+import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, type GreetingKind, type GreetingDecisionLite } from "./greeting";
 import {
   PHASE_PROHIBITIONS,
   FORM_LABEL_RE,
@@ -121,6 +121,8 @@ export interface FinalCheckContext {
   /** G30: resolveGreeting().kind / .opening（OPENING_GREETING_* の対称検査） */
   greetingKind?: GreetingKind;
   expectedOpening?: string;
+  /** G31: 挨拶行＋開口語の二層決定（generate-reply は toGreetingLite、check-reply は tpo_debug.greeting 復元）。⑦ の対称検査の正 */
+  greetingDecision?: GreetingDecisionLite;
   // ── 2026-09-09 Fable5 往復文脈（REPLY_SKELETON / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSING / SPLIT_ACK_REPLY）──
   /** 顧客最新メッセージの実質判定。route.ts が1回計算し finalCheckCtx/detCtx/postDetCtx に同一オブジェクトを渡す。check-reply 経路は省略可（再計算） */
   substance?: SubstanceVerdict;
@@ -918,6 +920,8 @@ function normalizeForMatch(s: string): string {
 // evidenceは本文実在が保証されるのでL283の降格ガード対象外（ループ外で別処理）
 const BANNED_WORDS_DETERMINISTIC = [
   "スモラ", "名称未設定", "少々お待ちください", "**",
+  // G32（2026-09-09 Fable5 じゅにあ事例・竹内方針）: 「お待たせ」は返信から全廃（自動返信では「待たせた」前提が消える。greeting.ts WAITED_RE と同名）
+  "お待たせ致しました", "お待たせいたしました", "お待たせしました",
   "承知いたしました", "承知しました", "承知致しました",
   "ご連絡お待ちくださいませ", "ご連絡お待ちしております", "お待ちくださいませ", "名無し",
   // 2026-09-08 語彙セマンティクス（主語逆転・自敬・宛先逆転・既存文書禁止の決定論化。prompts VOCAB_SEMANTICS と同名）
@@ -983,8 +987,9 @@ const CUSTOMER_APPLY_DECL_RE = /申(?:し)?込(?:み)?(?:たい|します|お願
 // S-4: 生成側 isFirstEverReplyFromMsgs と同一のメディアのみ判定（画像・動画・スタンプのみのスタッフ送信は「返信済み」に数えない）
 const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/;
 // S-4: 初回挨拶ブロック（「〇〇さん、はじめまして😊！！…鈴木と申します！！\n\n」）を開口語判定の前に剥がす
-// G30（2026-09-08 Fable5）: 決定論挨拶（夜間接頭辞・お世話に・お待たせ・ご連絡遅くなり）も開口語判定の前に剥がす（resolveGreeting と同名）
-const GREETING_BLOCK_RE = /^(?:夜遅くに失礼します[！!]*\s*)?(?:[^\n]{0,12}(?:さん|様)[、,\s]*)?(?:はじめまして|初めまして|この度はご連絡|この度ご連絡|お部屋探しを担当|お部屋探しご担当|お世話になっております|お待たせ(?:致|いた)しました|ご連絡遅くなり申し訳)[^\n]*\n+/;
+// G30（2026-09-08 Fable5）: 決定論挨拶（夜間接頭辞・お世話に・ご連絡遅くなり）も開口語判定の前に剥がす（resolveGreeting と同名）
+// G32: お待たせ系は禁止語（① BANNED_WORD で block）だが、開口語判定の前に剥がす対象としては維持
+const GREETING_BLOCK_RE = /^(?:夜遅くに失礼します[！!]*\s*)?(?:[^\n]{0,12}(?:さん|様)[、,\s]*)?(?:はじめまして|初めまして|この度はご連絡|この度ご連絡|お部屋探しを担当|お部屋探しご担当|お世話になっております|お待たせ(?:致|いた)?しました|ご連絡遅くなり申し訳)[^\n]*\n+/;
 
 // ─── 2026-09-09 Fable5 往復文脈: ctx 解決（generate-reply 経路は同一オブジェクト、check-reply 経路は再計算）─────────
 /** 2026-09-09 行動台帳: generate-reply 経路は同一オブジェクト、check-reply 経路は recentMessages から再計算（aix_usage_logs 無し・保守的）。ctx 単位で1回だけ計算 */
@@ -1107,7 +1112,7 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
     if (!m.detect.test(text)) {
       issues.push({ pass: "context_check", severity: pairStrict ? "block" : "warning", code: "PAIR_ELEMENT_MISSING",
         message: `往復文脈（${STAFF_KIND_JA[pair.staff.kind]}→${CUSTOMER_KIND_JA[pair.customer.kind]}）の必須要素「${m.label}」がありません`,
-        evidence: head, suggestion: pair.rule!.example });
+        evidence: head, suggestion: pair.rule!.suggestion ?? pair.rule!.example }); // G32: 別顧客名入りの example より場面の指示（suggestion）を優先
     }
   }
 
@@ -1144,10 +1149,15 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   const issues: CheckIssue[] = [];
   const tpo = ctx.tpoLabel ?? "";
 
-  // ① 禁止語彙
+  // ① 禁止語彙（G32: お待たせ系は削除案を decision 付きで出す）
+  const BANNED_WORD_SUGGESTION: Record<string, string> = {
+    "お待たせ致しました": "この文節を削除。挨拶行は【⏰ 挨拶ルール】の決定（当日未挨拶→「〇〇さんお世話になっております！！」／当日挨拶済み→なし）、開口語は顧客メッセージの意味（依頼・条件→「かしこまりました！！」／了承→「はい😊！！」／結果報告→本題・名前行）に従う",
+  };
+  BANNED_WORD_SUGGESTION["お待たせいたしました"] = BANNED_WORD_SUGGESTION["お待たせ致しました"];
+  BANNED_WORD_SUGGESTION["お待たせしました"] = BANNED_WORD_SUGGESTION["お待たせ致しました"];
   for (const word of BANNED_WORDS_DETERMINISTIC) {
     if (text.includes(word)) {
-      issues.push({ pass: "rule_check", severity: "block", code: "BANNED_WORD", message: `禁止語彙「${word}」が含まれています`, evidence: word, suggestion: `「${word}」を削除してください` });
+      issues.push({ pass: "rule_check", severity: "block", code: "BANNED_WORD", message: `禁止語彙「${word}」が含まれています`, evidence: word, suggestion: BANNED_WORD_SUGGESTION[word] ?? `「${word}」を削除してください` });
     }
   }
 
@@ -1197,47 +1207,56 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     if (thankRe.test(head) && !/(頂き|いただき)/.test(head.slice(0, head.search(/ありがとう|有難う|有り難う/) + 1))) {
       issues.push({
         pass: "rule_check", severity: "warning", code: "THANK_OPENING",
-        message: "返信が「ありがとうございます」で始まっています（NG③違反）。「お世話になっております！！」「お待たせ致しました！！」「はい😊！！」等から始めてください",
+        message: "返信が「ありがとうございます」で始まっています（NG③違反）。「お世話になっております！！」「はい😊！！」「かしこまりました！！」等から始めてください",
         evidence: text.trimStart().slice(0, 20),
         suggestion: openingSuggestion,
       });
     }
   }
 
-  // ⑦ G30（2026-09-08 Fable5）: 冒頭挨拶の対称検査。resolveGreeting（生成側）が確定した kind / opening と本文の冒頭を照合する。
-  //    「お待たせ致しました」の可否は経過時間の事実（≥3h）で決まる。check-reply 経路（greetingKind 未渡し）は検査しない
-  if (ctx.greetingKind && !isFirstReply) {
+  // ⑦ G32（2026-09-09 Fable5）: 冒頭の対称検査。generate-reply（toGreetingLite）／check-reply（tpo_debug.greeting 復元 or 再計算）が渡す
+  //    GreetingDecisionLite を唯一の正とする。旧 ctx（greetingKind/expectedOpening）は normalizeGreetingLite で吸収。
+  //    「お待たせ」の可否は ① BANNED_WORD が block 済み（時間根拠は廃止）。ここでは挨拶行と開口語の一致だけを見る
+  const gdl: GreetingDecisionLite | null = ctx.greetingDecision
+    ?? (ctx.greetingKind ? normalizeGreetingLite({ kind: ctx.greetingKind, opening: ctx.expectedOpening ?? "" }) : null);
+  if (gdl && !isFirstReply && gdl.kind !== "first") {
     const headRaw = text.trimStart();
     const head = headRaw.slice(0, 80);
-    const expected = (ctx.expectedOpening ?? "").trim();
-    const hasWaited = /お待たせ(?:致|いた)しました/.test(head);
+    const expected = gdl.openingLine.trim();
     const hasLateApology = /ご連絡遅くなり申し訳/.test(head);
     const hasStandard = /お世話になっております|いつもありがとうございます/.test(head);
     const hasNight = /夜(?:分)?遅くに失礼/.test(head);
-    const expectsNight = expected.startsWith(NIGHT_PREFIX);
-    // 7-a 確定挨拶（waited / late_apology / 夜間接頭辞）で始まっていない
-    if ((ctx.greetingKind === "waited" || ctx.greetingKind === "late_apology" || expectsNight) && expected && !headRaw.startsWith(expected)) {
+    const expectsNight = !!gdl.nightPrefix;
+    // 7-a 確定挨拶行（late_apology／夜間接頭辞）で始まっていない
+    if ((gdl.kind === "late_apology" || expectsNight) && expected && !headRaw.startsWith(expected)) {
       issues.push({ pass: "rule_check", severity: ctx.isAutoSend ? "block" : "warning", code: "OPENING_GREETING_MISMATCH",
-        message: `冒頭は「${expected}」で始める決定です（${ctx.greetingKind}）が、本文の冒頭が異なります`,
+        message: `冒頭は「${expected}」で始める決定です（${gdl.kind}: ${gdl.reason}）が、本文の冒頭が異なります`,
         evidence: head.slice(0, 30), suggestion: `先頭行を「${expected}」に置き換える（その後に改行して本文）` });
     }
-    // 7-b 3時間以上待たせていない（standard / none）のに「お待たせ致しました」
-    if (hasWaited && ctx.greetingKind !== "waited") {
-      issues.push({ pass: "rule_check", severity: ctx.isAutoSend ? "block" : "warning", code: "GREETING_WAITED_MISUSE",
-        message: "お客様の最新メッセージから3時間未満なのに「お待たせ致しました」で始めています（待たせた事実が無い）",
-        evidence: head.slice(0, 30), suggestion: ctx.greetingKind === "none" ? "挨拶を削除し「はい！！」「かしこまりました！！」から始める" : `「${expected || "お世話になっております！！"}」に変更` });
+    // 7-b 進捗催促（late_apology）以外で謝罪行から始めている（催促の実質が無い謝罪は禁止: PHASE_COMMON_FORMAT）
+    if (hasLateApology && gdl.kind !== "late_apology") {
+      issues.push({ pass: "rule_check", severity: "warning", code: "OPENING_GREETING_UNEXPECTED",
+        message: "お客様は結果を催促していないのに「ご連絡遅くなり申し訳御座いません」で始めています",
+        evidence: head.slice(0, 30), suggestion: gdl.kind === "standard" ? `「${expected}」に変更` : "謝罪行を削除し開口語または本題から始める" });
     }
-    // 7-c 当日挨拶済み（none）なのに定型挨拶／進捗催促（late_apology）なのに「お待たせ」
-    if (ctx.greetingKind === "none" && (hasStandard || hasLateApology)) {
+    // 7-c 当日挨拶済み（none）なのに定型挨拶行
+    if (gdl.kind === "none" && hasStandard) {
       issues.push({ pass: "rule_check", severity: "warning", code: "OPENING_GREETING_UNEXPECTED",
         message: "本日の会話で冒頭挨拶は既に使用済みなのに定型挨拶で始めています",
-        evidence: head.slice(0, 30), suggestion: "挨拶行を削除し「はい！！」「かしこまりました！！」または本文から始める" });
+        evidence: head.slice(0, 30), suggestion: `挨拶行を削除し ${gdl.opener === "none" ? "本題" : OPENER_JA[gdl.opener]} から始める` });
     }
-    // 7-d 夜間接頭辞は決定論で付与するもの。LLM 自身が「夜分遅くに」を書く／深夜帯でないのに夜間挨拶を書く
+    // 7-d 夜間接頭辞は決定論で付与するもの
     if (hasNight && (!expectsNight || /夜分遅く/.test(head))) {
       issues.push({ pass: "rule_check", severity: ctx.isAutoSend ? "block" : "warning", code: "OPENING_GREETING_UNEXPECTED",
         message: expectsNight ? "夜間挨拶は「夜遅くに失礼します！！」の形のみ（「夜分遅くに」は不可）" : "深夜帯（22:00〜04:59・会話連続中を除く）ではないのに夜間挨拶を書いています",
         evidence: head.slice(0, 30), suggestion: expectsNight ? `先頭行を「${NIGHT_PREFIX}」に変更` : "夜間挨拶を削除" });
+    }
+    // 7-e 開口語（挨拶行・名前行を剥がした先頭）が decision の許容集合の外（enforceOpener と同名。無い場合は指摘しない＝足さない）
+    const op = detectOpener(openingHead);
+    if (op && !gdl.openerAllowed.includes(op.opener)) {
+      issues.push({ pass: "rule_check", severity: "warning", code: "OPENER_MISMATCH",
+        message: `開口語「${op.match.trim()}」はこの場面の許容（${gdl.openerAllowed.map((k) => OPENER_JA[k]).join("／")}）にありません（${gdl.openerReason}）`,
+        evidence: openingHead.slice(0, 20), suggestion: gdl.opener === "none" ? "開口語を削除して本題から始める" : `開口語を ${OPENER_JA[gdl.opener]} に変更` });
     }
   }
 
@@ -2361,7 +2380,7 @@ ECHO_CONFIRM / LIST_STRUCTURE / DOUBLE_KEIGO / FABRICATED_POLICY_DET / GOCHOUGO_
 GOCHOUGO_AFTER_DATE / GUIDE_BEFORE_PROPERTY / CONFIRM_SUBJECT_THEFT / CONFIRM_NO_OBJECT / PHOTO_NO_PREMISE / PHOTO_REPLACES_VIEWING /
 UNSENT_CLAIM / JUSHU_BEFORE_SEND / SELF_HONORIFIC / GUIDE_POSSIBLE_NO_DATE / SASETE_OVERUSE / APPLY_PUSH_NO_INTENT /
 CONFIRM_OBJECT_UNSTATED / FAREWELL_ON_MOVEOUT_INFO / DISCLOSURE_ASSERTION / VACANCY_ASSERTION / MOVEIN_DATE_ASSERTION / SCREENING_ASSURANCE /
-OPENING_GREETING_MISMATCH / OPENING_GREETING_UNEXPECTED / GREETING_WAITED_MISUSE /
+OPENING_GREETING_MISMATCH / OPENING_GREETING_UNEXPECTED / OPENER_MISMATCH /
 REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSING / SPLIT_ACK_REPLY / FEELING_TEMPLATE /
 PREEMPTIVE_HEDGE / FABRICATED_SEARCH_REPORT / CONDITION_RELAX_UNASKED / HEDGE_WITHOUT_SEARCH_DECL / SELF_HEDGE_ECHO /
 CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE / CONDITION_ECHO_MISSING /
