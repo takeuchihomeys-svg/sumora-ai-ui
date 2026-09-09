@@ -5,7 +5,9 @@
 // 原則: 表層特徴（文字数・感謝語・?）ではなく「定型を剥がした残余」「直前スタッフ発話への応答関係」「fresh brain の抽出結果」の
 // 3証拠で判定する。route.ts で1回だけ計算し、TPOゲート／effectiveReplyDirection／tpoNoteForLLM／dynamicBlock／
 // final-check（finalCheckCtx / detCtx / postDetCtx）／tpo_debug が同一オブジェクトを参照する（見積 verdict・confirmCtx と同型）。
-// 循環 import 禁止: このファイルは他の app/lib/* を import しない。
+// 循環 import 禁止: このファイルは他の app/lib/* を runtime import しない（action-ledger は type-only）。
+// 2026-09-09 Fable5 行動台帳: action-ledger.ts → reply-context.ts の一方向 runtime 依存。ここは `import type` のみ（TDZ 回避）
+import type { ActionLedger } from "./action-ledger";
 
 // ─────────────────────────────────────────────────────────────
 // 0. メッセージ単位（page.tsx / bg-async が未返信メッセージを結合する専用区切り）
@@ -154,7 +156,7 @@ const KIND_RE: Array<[SubstanceKind, RegExp]> = [
   ["request",   /希望|教えて|内覧|内見|見学|申(?:し)?込|書類|見積|交渉|送って(?:ください|ほしい|欲しい|もらえ|いただけ|頂け)|(?:見|行き|借り|住み|知り|聞き|決め|伺い)たい|してほしい|して欲しい|お願いでき|(?:も|で|を)お?(?:ねがい|願い)(?:します|いたします|致します)|詳細/],
   ["question",  /[?？]|(?:ます|です|でしょう|ません)か(?:[ねぇ]?(?:[。！!、\s]|$))|いつ(?:頃|ごろ|まで|から|に|が|です|でしょ|になり|になる|くらい)|いくら(?!でも)|どこ(?!でも|も)|どちら(?!でも|も)|どの(?:物件|お部屋|方)|どう(?:なり|すれ|いう|やって|でしょ|ですか)|何(?:時|日|円|曜)|なん(?:時|日|じ)/],
   ["schedule",  /明日|明後日|来週|今週|来月|今月|週末|土日|平日|[0-9０-９]{1,2}[月\/][0-9０-９]{1,2}|[0-9０-９]{1,2}日|[月火水木金土日]曜|[0-9０-９]{1,2}[:：.時][0-9０-９]{0,2}|午前|午後|夕方|以降|までに|頃に|ごろ|(?:送ら|送り)(?:せて)?(?:いただき|頂き)?ます/],
-  ["condition", /家賃|予算|万円|エリア|駅|線|徒歩|間取り|[1-4１-４](?:LDK|DK|K|R)|ワンルーム|築|向き|設備|オートロック|バストイレ|独立洗面|管理費|共益費|駐車場|ペット|楽器|二人|2人|同棲|ルームシェア|[一-龯ァ-ヶ]{1,6}(?:区|市|町)|周辺|以内|以上|でも大丈夫|このままで/],
+  ["condition", /家賃|予算|万円|エリア|駅|線|徒歩|間取り|[1-4１-４](?:LDK|DK|K|R)|ワンルーム|築|向き|設備|オートロック|バストイレ|独立洗面|管理費|共益費|駐車場|ペット|楽器|二人|2人|同棲|ルームシェア|[一-龯ァ-ヶ]{1,6}(?:区|市|町)|市内|市外|区内|付近|周辺|以内|以上|でも大丈夫|このままで|(?:は|が)?NG(?:で|です)/],
   ["decision",  /申(?:し)?込(?:み)?(?:たい|します|お願い|で|させて)|決め(?:ます|たい|ました)|契約(?:したい|します)|押さえ|抑え|進めて|[0-9０-９]{3,4}(?:号室)?でお?(?:ねがい|願い)|号室/],
   ["decline",   /見送|やめ|遠慮|お断り|他で(?:決め|契約)|キャンセル|辞退|白紙|ストップ/],
   ["info",      /住所|勤務先|年収|収入|勤続|保証人|緊急連絡先|保険証|入居(?:日|時期|予定)|退去|引っ?越し|出産|上旬|中旬|下旬|月末|資金|貯め|に決め|にします/],
@@ -234,9 +236,9 @@ export function mergeBrainEvidence(v: SubstanceVerdict, brain: BrainLite, brainF
 // 3. 直前スタッフ発話の分類（StaffTurn）
 // ─────────────────────────────────────────────────────────────
 export type StaffTurnKind =
-  | "viewing_invite" | "property_send" | "estimate_send" | "question_to_customer"
+  | "viewing_invite" | "property_send" | "pickup_declared" | "estimate_send" | "question_to_customer"
   | "confirmation_promise" | "condition_ask" | "check_result" | "apply_push" | "other";
-export type StaffTurn = { kind: StaffTurnKind; source: "aix_log" | "aix_history" | "regex" | "none"; evidence: string };
+export type StaffTurn = { kind: StaffTurnKind; source: "ledger" | "aix_log" | "aix_history" | "regex" | "none"; evidence: string };
 export type AixRow = { aix_type: string | null; check_pattern?: string | null; created_at: string | null };
 
 const AIX_TO_STAFF: Record<string, StaffTurnKind> = {
@@ -245,20 +247,45 @@ const AIX_TO_STAFF: Record<string, StaffTurnKind> = {
   estimate_sheet: "estimate_send", property_check_result: "check_result",
   application_push: "apply_push", condition_hearing: "condition_ask", acknowledge_check: "confirmation_promise",
 };
-const STAFF_ESTIMATE_RE = /御見積書|お見積書|お見積り|見積書|初期費用.{0,12}[0-9０-９,，]+円/;
-const STAFF_VIEWING_INVITE_RE = /(?:ご内覧|内覧|内見|ご案内).{0,25}(?:如何|いかが|ご都合)|ご都合(?:の)?よろしいお日にち|ご案内可能です|[0-9０-９]{1,2}[:：時][0-9０-９]{0,2}.{0,12}(?:ご案内|案内可能)/;
-const STAFF_APPLY_PUSH_RE = /お申込み?(?:し|で)お部屋(?:を)?(?:抑え|押さえ)|お申込み?(?:頂け|いただけ)ます/;
-const STAFF_QUESTION_RE = /(?:でしょうか|ますか|ですか|ございますか|御座いますか|お聞かせ(?:ください|頂け|いただけ)|教えて(?:頂け|いただけ|ください))[！!？?😊😌]*$/;
-const STAFF_CONDITION_ASK_RE = /お部屋お探し中|ご希望(?:の)?条件|①【ご入居の時期】|ご希望のエリア|条件(?:を)?お聞かせ/;
-const STAFF_CONFIRM_PROMISE_RE = /(?:確認|お調べ)(?:させて(?:頂|いただ)き|いたし|致し|し)[^\n。！!]{0,25}(?:ご連絡|お送り|お伝え)|(?:確認|撮影)(?:出来|でき)次第/;
-const STAFF_PROPERTY_SEND_RE = /🌟|ピックアップ(?:させて頂きました|させていただきました|いたしました|しました)|ご査収ください|お送りさせて頂きました|お送りさせていただきました|号室|[0-9０-９.．]+万円/;
+// ── 共有正規表現（2026-09-09 Fable5 行動台帳: action-ledger.ts が import する。生成・検査・台帳が同じ定数を参照＝四者同名）──
+export const STAFF_ESTIMATE_RE = /御見積書|お見積書|お見積り|見積書|初期費用.{0,12}[0-9０-９,，]+円/;
+export const STAFF_ESTIMATE_WORD_RE = /(?:御|お)?見積(?:書|り|もり)/;
+export const STAFF_ESTIMATE_DECL_RE = /(?:御|お)?見積(?:書|り|もり)[^\n。]{0,40}?(?:作成|お送り|お出し)[^\n。]{0,16}(?:させて(?:頂|いただ)きます|いたします|致します|します)|(?:御|お)?見積(?:書|り|もり)[^\n。]{0,12}(?:出来|でき)次第/;
+export const STAFF_VIEWING_INVITE_RE = /(?:ご内覧|内覧|内見|ご案内).{0,25}(?:如何|いかが|ご都合)|ご都合(?:の)?よろしいお日にち|ご案内可能です|[0-9０-９]{1,2}[:：時][0-9０-９]{0,2}.{0,12}(?:ご案内|案内可能)/;
+export const STAFF_APPLY_PUSH_RE = /お申込み?(?:し|で)お部屋(?:を)?(?:抑え|押さえ)|お申込み?(?:頂け|いただけ)ます/;
+export const STAFF_QUESTION_RE = /(?:でしょうか|ますか|ですか|ございますか|御座いますか|お聞かせ(?:ください|頂け|いただけ)|教えて(?:頂け|いただけ|ください))[！!？?😊😌]*$/;
+export const STAFF_CONDITION_ASK_RE = /お部屋お探し中|ご希望(?:の)?条件|①【ご入居の時期】|ご希望のエリア|条件(?:を)?お聞かせ/;
+export const STAFF_CONFIRM_PROMISE_RE = /(?:確認|お調べ)(?:させて(?:頂|いただ)き|いたし|致し|し)[^\n。！!]{0,25}(?:ご連絡|お送り|お伝え)|(?:確認|撮影)(?:出来|でき)次第/;
+export const STAFF_CONFIRM_DECL_RE = /(?:確認|お調べ|問い合わせ)(?:させて(?:頂|いただ)き|いたし|致し|し)[^\n。！!]{0,25}(?:ご連絡|お送り|お伝え)|(?:確認|撮影)(?:出来|でき)次第/;
+export const STAFF_CONFIRM_REPORT_RE = /確認(?:しました|いたしました|致しました)(?:ところ|所)|とのこと(?:で|です|でした)|募集(?:中|終了|ございません|御座いません|ありません)(?:でした|です|とのこと)/;
+export const STAFF_NON_PROPERTY_RE = /待ち合わせ|集合場所|地図|申込書|申込み?時フォーマット|フォーマット|必要書類|身分証/;
+/** 宣言（未来形）: ピックアップ…します／お送りさせて頂きます／出来次第。※ 実行の証拠にしない（「お部屋探し全力でサポート」の締め文は宣言に数えない） */
+export const STAFF_PICKUP_DECL_RE = /(?:ピックアップ|お探し|お部屋探し(?!全力))[^\n。]{0,40}?(?:させて(?:頂|いただ)きます|いたします|致します|します)|(?:ピックアップ|お探し)[^\n。]{0,12}(?:出来|でき)次第/;
+/** 実行（過去形・成果物）。旧 STAFF_PROPERTY_SEND_RE から裸の「号室」「万円」を除外（「9万以内」「見積本文の号室」を送付と誤判定しない） */
+export const STAFF_PROPERTIES_DONE_RE = /🌟|ご査収ください|お送り(?:させて(?:頂|いただ)き|いたし|致し|し)ました|送らせて(?:頂|いただ)きました|ピックアップ(?:させて(?:頂|いただ)き|いたし|致し|し)ました|見つかりませんでした|少ない状況でした/;
+/** 未送付なのに「再度／改めて／追加で／別の物件」（検査 DONE_PRESUPPOSED_WITHOUT_EVIDENCE と同名） */
+export const REDO_CLAIM_RE = /(?:再度|改めて|もう一度|追加で|(?:別|他)の(?:物件|お部屋)|新たな(?:物件|お部屋))[^\n。]{0,24}(?:ピックアップ|お探し|お送り|ご提案|ご紹介|お届け)/;
+/** 裸の「号室」「万円」（台帳が送付実績を持つ時／台帳なし の時だけ送付扱い） */
+const STAFF_BARE_PROPERTY_RE = /[0-9０-９]{2,4}号室|[0-9０-９.．]+万円/;
+/** action-ledger の LedgerKind → StaffTurnKind（action-ledger 側 LEDGER_TO_STAFF と同値。type-only 依存を守るため文字列キーで持つ） */
+const LEDGER_KIND_TO_STAFF: Record<string, StaffTurnKind> = {
+  pickup_declared: "pickup_declared", properties_sent: "property_send", estimate_declared: "estimate_send", estimate_sent: "estimate_send",
+  viewing_invited: "viewing_invite", meeting_place_sent: "viewing_invite", question_asked: "question_to_customer",
+  confirmation_promised: "confirmation_promise", confirmation_reported: "check_result", condition_asked: "condition_ask", application_guided: "apply_push",
+};
 
 export function classifyLastStaffTurn(
   lastStaffText: string | null | undefined,
-  opts: { recentAixRows?: AixRow[]; lastStaffAt?: string | null; lastAixHistory?: string | null; windowMs?: number } = {},
+  opts: { recentAixRows?: AixRow[]; lastStaffAt?: string | null; lastAixHistory?: string | null; windowMs?: number; ledger?: ActionLedger | null } = {},
 ): StaffTurn {
   const text = (lastStaffText ?? "").trim();
   const windowMs = opts.windowMs ?? 3 * 60 * 1000;
+  // ⓪ 行動台帳（一次証拠を統合済み）: 直前スタッフ発言 ±3分に対応するエントリ
+  const le = opts.ledger?.facts.lastStaffEntry ?? null;
+  if (le) {
+    const k = LEDGER_KIND_TO_STAFF[le.kind];
+    if (k) return { kind: k, source: "ledger", evidence: `${le.kind}/${le.status}/${le.source}=${le.evidence.slice(0, 40)}` };
+  }
   // ① 一次証拠: aix_usage_logs。直前スタッフ発言の送信時刻 ±3分の行のみ紐付ける（古いAIX行を手打ち発言に誤帰属させない）
   const at = Date.parse(opts.lastStaffAt ?? "");
   if (Number.isFinite(at)) {
@@ -272,7 +299,7 @@ export function classifyLastStaffTurn(
       return { kind, source: "aix_log", evidence: `${hit.aix_type}${hit.check_pattern ? "/" + hit.check_pattern : ""}@${hit.created_at}` };
     }
   }
-  // ② 本文の決定論。優先: 見積 > 内覧打診 > 申込打診 > 条件ヒアリング > 質問（末尾行） > 確認約束 > 物件送付
+  // ② 本文の決定論。優先: 見積 > 内覧打診 > 申込打診 > 条件ヒアリング > 質問（末尾行） > 確認約束 > 【宣言】 > 【実行】
   //   （条件ヒアリングは「ご希望条件お聞かせください」の疑問形を含むため質問より先に判定する）
   if (text) {
     const lastLine = text.split("\n").filter(Boolean).slice(-1)[0] ?? "";
@@ -281,12 +308,19 @@ export function classifyLastStaffTurn(
     if (STAFF_APPLY_PUSH_RE.test(text)) return { kind: "apply_push", source: "regex", evidence: text.match(STAFF_APPLY_PUSH_RE)![0] };
     if (STAFF_CONDITION_ASK_RE.test(text)) return { kind: "condition_ask", source: "regex", evidence: text.match(STAFF_CONDITION_ASK_RE)![0] };
     if (STAFF_QUESTION_RE.test(lastLine)) return { kind: "question_to_customer", source: "regex", evidence: lastLine.slice(-30) };
-    if (STAFF_CONFIRM_PROMISE_RE.test(text)) return { kind: "confirmation_promise", source: "regex", evidence: text.match(STAFF_CONFIRM_PROMISE_RE)![0] };
-    if (STAFF_PROPERTY_SEND_RE.test(text)) return { kind: "property_send", source: "regex", evidence: text.match(STAFF_PROPERTY_SEND_RE)![0] };
+    if (STAFF_CONFIRM_PROMISE_RE.test(text) && !STAFF_PICKUP_DECL_RE.test(text)) return { kind: "confirmation_promise", source: "regex", evidence: text.match(STAFF_CONFIRM_PROMISE_RE)![0] };
+    // 2026-09-09 Fable5 みく事例: 宣言（未来形）を実行より先に判定。みく 10:40「ピックアップしてお送りさせて頂きます」はここ。
+    //   DELIVERABLE_RE（🌟・号室・ました）があれば宣言ではなく成果物送付
+    if (STAFF_PICKUP_DECL_RE.test(text) && !DELIVERABLE_RE.test(text)) return { kind: "pickup_declared", source: "regex", evidence: text.match(STAFF_PICKUP_DECL_RE)![0].slice(0, 40) };
+    if (STAFF_PROPERTIES_DONE_RE.test(text)) return { kind: "property_send", source: "regex", evidence: text.match(STAFF_PROPERTIES_DONE_RE)![0] };
+    // 裸の「号室」「万円」は台帳が送付実績を持つ時のみ送付扱い（台帳なし＝従来互換）
+    if (STAFF_BARE_PROPERTY_RE.test(text) && (!opts.ledger || opts.ledger.facts.propertiesSentCount > 0)) return { kind: "property_send", source: "regex", evidence: text.match(STAFF_BARE_PROPERTY_RE)![0] };
   }
-  // ③ 本文が無い（画像のみ等）→ brain の last_aix_history「最新:xxx」
+  // ③ 本文が無い（画像のみ等）→ brain の last_aix_history「最新:xxx」。台帳が「送付0件」の時は property_send を採らない（前日 AIX の誤帰属防止）
   const m = /最新:([a-z_]+)/.exec(opts.lastAixHistory ?? "");
-  if (m && AIX_TO_STAFF[m[1]]) return { kind: AIX_TO_STAFF[m[1]], source: "aix_history", evidence: m[0] };
+  if (m && AIX_TO_STAFF[m[1]] && !(AIX_TO_STAFF[m[1]] === "property_send" && opts.ledger && opts.ledger.facts.propertiesSentCount === 0)) return { kind: AIX_TO_STAFF[m[1]], source: "aix_history", evidence: m[0] };
+  // ④ 本文が無くても台帳が未履行約束を持つ
+  if (opts.ledger?.facts.pickupPromisedUnfulfilled) return { kind: "pickup_declared", source: "ledger", evidence: "ledger:pickupPromisedUnfulfilled" };
   return { kind: "other", source: text ? "regex" : "none", evidence: "" };
 }
 
@@ -319,7 +353,8 @@ const CUST_CALLBACK_RE = /(?:後ほど|あとで|また|改めて|後日|次回|
 const CUST_THINKING_RE = /検討(?:します|させて|いたします|致します|中|してみ)|考え(?:ます|てみ|させて|中)|相談(?:して|し|させて)|持ち帰|決めかね|決められ(?:ない|ず|ません)|時間を(?:ください|下さい|頂|いただ)|迷います|迷い|どうなのかな|どうかな/;
 const CUST_POSITIVE_RE = /気に入|良さそう|よさそう|いいですね|素敵|ぜひ|是非|進めて|申(?:し)?込(?:み)?(?:たい|します|お願い|で)|内覧(?:したい|お願い|希望|行き)|見に行き|大丈夫だと思います|問題ない/;
 /** 条件の宣言形（間取り・家賃上限・エリア＋探す/お願い）。語の出現（「駅で待ち合わせ」の「駅」）では発火しない */
-const CUST_CONDITION_STATEMENT_RE = /[1-4１-４](?:LDK|DK|K|R)|ワンルーム|[0-9０-９.．]+万(?:円)?(?:以内|以下|まで|台|くらい|位|前後|程度)|(?:家賃|予算|間取り|条件|エリア|築|徒歩)[^\n]{0,20}(?:で|は|を|に)[^\n]{0,12}(?:探|お願い|希望|変|広げ|絞|追加|変更|お伝え)|周辺(?:全域)?(?:で|から)[^\n]{0,20}(?:探|お願い|希望)/;
+// 2026-09-09 行動台帳（みく 11:45）: エリア限定「大阪の市内付近でお願いします」・NG 追加「京都・尼崎はNGで」も条件の宣言形
+const CUST_CONDITION_STATEMENT_RE = /[1-4１-４](?:LDK|DK|K|R)|ワンルーム|[0-9０-９.．]+万(?:円)?(?:以内|以下|まで|台|くらい|位|前後|程度)|(?:家賃|予算|間取り|条件|エリア|築|徒歩)[^\n]{0,20}(?:で|は|を|に)[^\n]{0,12}(?:探|お願い|希望|変|広げ|絞|追加|変更|お伝え)|(?:周辺(?:全域)?|市内|市外|区内|付近|沿線)(?:で|から|に)[^\n]{0,20}(?:探|お願い|希望|絞|限定)|(?:は|が)NG(?:で|です)|(?:は|が)?(?:なし|無し|除外|以外)で(?:お願い|希望)/;
 
 export function classifyCustomerResponse(sub: SubstanceVerdict, staff: StaffTurn, flags: CustomerResponseFlags = {}): CustomerResponse {
   const raw = sub.normalized;
@@ -397,6 +432,8 @@ export type PairRule = {
   nanisotsu?: boolean;
   /** このセルで先回りヘッジ（探索後の結果報告）を許すか。省略=false（resolveHedgeAllowance の verdict が最終決定） */
   hedgeAllowed?: boolean;
+  /** 2026-09-09 行動台帳: 送付実績の有無で example を出し分ける（buildTurnPairNote が ledger.facts.propertiesSentCount で選ぶ） */
+  exampleBySent?: { none: string; sent: string };
 };
 
 const DECL_TAIL = "(?:させて(?:頂|いただ)き|いたし|致し)ます";
@@ -415,14 +452,49 @@ export const PAIR_MATRIX: PairRule[] = [
     example: "かしこまりました😊！！\n\n梅田まで1本で行ける沿線周辺全域から9万以内・1LDK・カウンターキッチン希望・築10年以内でみくさんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！\n\nみくさんがご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます😌！！\n何卒よろしくお願い致します！！",
     length: "100〜180字", closer: "commit_until_found", nanisotsu: true },
 
+  // ── 2026-09-09 Fable5 みく事例（行動台帳）: 宣言のみ（未送付）段階での条件絞り込み／NG追加。
+  //    旧実装は staff=other → ANY_CONDITION_CHANGE の「再ピックアップ宣言」に落ち「再度」が出た ──
+  { id: "PD_CONDITION_CHANGE", staff: "pickup_declared", customer: "condition_change", precedence: "override_wait",
+    tpoLabel: "条件絞り込み（ピックアップ約束中・まだ1件も送っていない）",
+    direction: "我々は直前に「〇〇の条件でピックアップしてお送りします」と宣言しただけで、物件はまだ1件も送っていない（台帳: {ledger}）。お客様がその宣言に条件の追加/絞り込み（エリア限定・NG等）を重ねた。①「かしこまりました😊！！」単独行 ②追加条件を「〇〇に絞らせて頂き」の肯定形で受け（NGは「京都・尼崎を除き」ではなく「大阪市内に絞らせて頂き」に変換。NG名は復唱しない）、直前宣言の条件を数字・語を一字も変えずに復唱した未来形のピックアップ宣言1文 ③「〇〇さんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」の履行約束1文 ④締め。初回の宣言をまだ実行していないので「再度／改めて／新たに／追加で／別の」は一切使わない。100〜180字",
+    mustInclude: [
+      { label: "絞り込みを肯定形で反映した条件復唱のピックアップ宣言（未来形）", detect: new RegExp(`(?:に絞(?:らせて|って)|エリアで|エリアから|周辺(?:全域)?から|市内|中心に)[^\\n]{0,80}ピックアップ[^\\n。！!]{0,24}${DECL_TAIL}`) },
+      { label: "前回条件の復唱（エリア／家賃／間取りのいずれか）", detect: /(?:周辺|全域|沿線|以内|万|LDK|DK|[0-9０-９]K|ワンルーム|築|徒歩)/ },
+      { label: "履行約束「ピックアップ出来次第お送り」", detect: /(?:ピックアップ|見つかり|見つけ)(?:出来|でき)?次第[^\n]{0,12}お送り/ },
+    ],
+    mustNot: ["実行済みを含意する語（再度・改めて・もう一度・新たに・追加で・別の・こちらの・先ほどお送りした）— 送付0件", "送付済み物件への言及・「〇〇も選択肢に」", "「〜をお届けします」等の抽象締め（未来形宣言＋出来次第お送りで統一）", "NG語の羅列（京都・尼崎はNGで）の復唱", "実現可能性の予測（難しい・少ない・可能性）", "条件緩和・代替案の先回り提案", "条件の聞き返し", "直前宣言の条件の数字・語の改変", "全力サポート締めの二重化（直前発言で既に言っている）"],
+    example: "かしこまりました😊！！\n\n大阪市内に絞らせて頂き、梅田まで1本で行ける沿線・9万以内・1LDK・カウンターキッチン希望・築10年以内でみくさんにオススメできるお部屋をピックアップさせて頂きます！！\n\nみくさんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！何卒よろしくお願い致します！！",
+    length: "100〜180字", closer: "commit_until_found", nanisotsu: true },
+  // 直前発言の CA_CONDITION は必ず全力サポートを含むため resolveCloser の priorCommit で none＋何卒に落ちる＝みく 11:48 実送信と一致
+
+  { id: "PD_ACK", staff: "pickup_declared", customer: "ack_only", precedence: "after_wait",
+    tpoLabel: "短い了承（ピックアップ約束への了承）",
+    direction: "我々のピックアップ宣言にお客様が「よろしくお願いします」等の了承のみを返した。開口語「はい😊！！」→「〇〇さんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」の履行約束復唱1文のみ。台帳: {ledger}。実行済み語禁止。40〜80字",
+    mustInclude: [{ label: "履行約束の復唱", detect: /(?:ピックアップ|見つかり)(?:出来|でき)?次第[^\n]{0,12}お送り/ }],
+    mustNot: ["実行済み含意語（再度・改めて・追加で）", "条件の再列挙", "全力サポート・何卒の再掲", "新規の業務語彙（撮影・ご査収・内覧日程）"],
+    example: "はい😊！！\nみくさんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！",
+    length: "40〜80字", closer: "none", nanisotsu: false },
+
+  { id: "PD_QUESTION", staff: "pickup_declared", customer: "question", precedence: "override_wait",
+    tpoLabel: "質問（ピックアップ約束中）",
+    direction: "ピックアップ約束中（未送付・台帳: {ledger}）にお客様が質問した。①質問に履歴の事実で直接回答1文（分からなければ「確認しご連絡」対象付き）②「〇〇さんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」の履行約束1文。実行済み語禁止。80〜160字",
+    mustInclude: [{ label: "質問への直接回答", detect: /となります|です|ございます|可能|傾向/ }, { label: "履行約束の復唱", detect: /(?:ピックアップ|見つかり)(?:出来|でき)?次第[^\n]{0,12}お送り/ }],
+    mustNot: ["実行済み含意語", "「こちらの物件」等の指示語", "条件の聞き返し"],
+    example: "トイレと洗面所別のお部屋につきましては、設備分家賃が高くなる傾向がございます！！(3,000円～5,000円程）\n\nトイレ・洗面所別のご条件も含めてあやさんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！何卒よろしくお願い致します！！",
+    length: "80〜160字", closer: "none", nanisotsu: true },
+
   { id: "ANY_CONDITION_CHANGE", staff: "*", customer: "condition_change", precedence: "override_wait",
     tpoLabel: "条件変更（エリア・家賃・間取り・設備の追加/変更）",
-    direction: "お客様が条件の追加/変更を伝えた。①「かしこまりました！！」②新条件を復唱した再ピックアップ宣言1文 ③伴走締め。聞き返し禁止。90〜160字",
+    direction: "お客様が条件の追加/変更を伝えた（台帳: {ledger}）。①「かしこまりました！！」②新条件を復唱した{redo}ピックアップ宣言1文 ③伴走締め。聞き返し禁止。台帳が物件送付0件なら実行済み含意語（再度・改めて・追加で・別の）を使わず「ピックアップ出来次第お送りさせて頂きます」を添える。90〜160字",
     mustInclude: [
-      { label: "新条件を復唱した再ピックアップ宣言", detect: new RegExp(`(?:周辺|全域|沿線|以内|万|LDK|DK|[0-9０-９]K|ワンルーム|造|向き|階|徒歩|築)[^\\n]{0,80}ピックアップ[^\\n。！!]{0,24}${DECL_TAIL}`) },
+      { label: "新条件を復唱した{redo}ピックアップ宣言", detect: new RegExp(`(?:周辺|全域|沿線|以内|万|LDK|DK|[0-9０-９]K|ワンルーム|造|向き|階|徒歩|築)[^\\n]{0,80}ピックアップ[^\\n。！!]{0,24}${DECL_TAIL}`) },
     ],
-    mustNot: ["実現可能性の予測（難しい・少ない・可能性）", "条件緩和・代替案の先回り提案", "「少ない状況でしたので広げました」の言い訳（探していない）", "聞き返し", "再送宣言"],
+    mustNot: ["実現可能性の予測（難しい・少ない・可能性）", "条件緩和・代替案の先回り提案", "「少ない状況でしたので広げました」の言い訳（探していない）", "聞き返し", "再送宣言", "台帳に送付実績が無いのに「再度」「改めて」「新たに」「追加で」「別の」を付ける"],
     example: "かしこまりました！！\n2LDKのご条件で、枚方・高槻・吹田・守口・門真・鶴見区周辺全域から瑞希さんにオススメ出来るお部屋新たにピックアップしてお送りさせて頂きます😌！！\n瑞希さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
+    exampleBySent: {
+      none: "かしこまりました😊！！\n〇〇に絞らせて頂き、〇〇のご条件で〇〇さんにオススメできるお部屋をピックアップさせて頂きます！！\n〇〇さんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！",
+      sent: "かしこまりました！！\n2LDKのご条件で、枚方・高槻・吹田・守口・門真・鶴見区周辺全域から瑞希さんにオススメ出来るお部屋新たにピックアップしてお送りさせて頂きます😌！！\n瑞希さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
+    },
     length: "90〜160字", closer: "commit_until_found", nanisotsu: false },
 
   { id: "VI_CONCERN", staff: "viewing_invite", customer: "concern", precedence: "override_wait",
@@ -535,10 +607,10 @@ export const PAIR_MATRIX: PairRule[] = [
 
   { id: "PS_CONDITION_CHANGE", staff: "property_send", customer: "condition_change", precedence: "override_wait",
     tpoLabel: "条件変更（物件送付後）",
-    direction: "既存 conditionDirection を使う。差分条件の復唱＋新条件で再ピックアップ宣言（未来形・まだ探していない）＋送付済み物件は選択肢として残す1文＋伴走締め。実現可能性の予測・「少ない状況でしたので」の言い訳は禁止。110〜180字",
+    direction: "我々は既に物件を送っている（台帳: {ledger}）。差分条件の復唱＋新条件で{redo}ピックアップ宣言（未来形・まだ探していない。送付済みなので「新たに」「改めて」「引き続き」「〇〇も含めて」が使える）＋送付済み物件（{sentNames}）は「並行して選択肢に残しつつ」の1文（台帳に物件名がある時のみ）＋伴走締め。実現可能性の予測・「少ない状況でしたので」の言い訳は禁止。110〜180字",
     mustInclude: [
       { label: "新条件の復唱", detect: /(?:区|駅|線|万円|万以内|万|以下|以内|階|広め|築|LDK|DK|[0-9０-９]K|ワンルーム|徒歩|周辺)/ },
-      { label: "再ピックアップ宣言", detect: new RegExp(`ピックアップ.{0,20}${DECL_TAIL}`) },
+      { label: "{redo}ピックアップ宣言（送付済み前提なので再度／新たに／別の候補 可）", detect: new RegExp(`ピックアップ.{0,20}${DECL_TAIL}`) },
     ],
     mustNot: ["条件の聞き返し", "送付済み物件の再送宣言", "実現可能性の予測（難しい・少ない・可能性）", "条件緩和・代替案の先回り提案", "「少ない状況でしたので広げました」の言い訳（探していない）"],
     example: "かしこまりました！！\n2LDKのご条件で、枚方・高槻・吹田・守口・門真・鶴見区周辺全域から瑞希さんにオススメ出来るお部屋新たにピックアップしてお送りさせて頂きます😌！！\n瑞希さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
@@ -609,7 +681,7 @@ export const PAIR_MATRIX: PairRule[] = [
 ];
 
 export const STAFF_KIND_JA: Record<StaffTurnKind, string> = {
-  viewing_invite: "内覧打診", property_send: "物件送付", estimate_send: "見積書送付", question_to_customer: "お客様への質問",
+  viewing_invite: "内覧打診", property_send: "物件送付", pickup_declared: "ピックアップ約束（宣言のみ・まだ送っていない）", estimate_send: "見積書送付", question_to_customer: "お客様への質問",
   confirmation_promise: "確認の約束", condition_ask: "条件ヒアリング", check_result: "募集状況の確認結果報告", apply_push: "申込打診", other: "その他",
 };
 export const CUSTOMER_KIND_JA: Record<CustomerResponseKind, string> = {
@@ -629,13 +701,25 @@ export interface PairContext {
   /** LLM 注入・修正指示・tpo_debug にそのまま使える1行要約 */
   summary: string;
   lastStaffText: string;
+  /** 2026-09-09 行動台帳（route.ts で1回構築・生成/検査/締め/ヘッジが同一参照）。check-reply 旧経路は null */
+  ledger: ActionLedger | null;
+  /** {redo} 置換値: 送付実績あり→「再度」／なし→「」 */
+  redo: string;
 }
 
-export function resolveTurnPair(staff: StaffTurn, customer: CustomerResponse, substance: SubstanceVerdict, lastStaffText: string, opts: { searched?: boolean } = {}): PairContext {
+/** {redo}: 台帳に物件送付実績がある時だけ「再度」。生成 direction／検査 label／final-check suggestion が同じ関数 */
+export function redoWord(ledger: ActionLedger | null | undefined): string { return ledger && ledger.facts.propertiesSentCount > 0 ? "再度" : ""; }
+
+export function resolveTurnPair(
+  staff: StaffTurn, customer: CustomerResponse, substance: SubstanceVerdict, lastStaffText: string,
+  opts: { searched?: boolean; ledger?: ActionLedger | null } = {},
+): PairContext {
   // 2026-09-09 Fable5: 同一セルに「未探索（宣言型）」と「探索済み（結果報告型・hedgeAllowed）」がある時は resolveHedgeAllowance の searched で選ぶ
+  // 「探索済み」＝顧客最新発言より後の送付（hedgeAllowed セル選択）。全期間の propertiesSentCount は {redo} 用で混同しない
+  const searched = !!opts.searched || !!opts.ledger?.facts.propertiesSentSinceCustomerLatest;
   const exact = PAIR_MATRIX.filter((r) => r.staff === staff.kind && r.customer === customer.kind);
   const rule =
-    (opts.searched ? exact.find((r) => r.hedgeAllowed) : exact.find((r) => !r.hedgeAllowed)) ??
+    (searched ? exact.find((r) => r.hedgeAllowed) : exact.find((r) => !r.hedgeAllowed)) ??
     exact[0] ??
     PAIR_MATRIX.find((r) => r.staff === "*" && r.customer === customer.kind) ??
     PAIR_MATRIX.find((r) => r.staff === staff.kind && r.customer === "*") ??
@@ -644,17 +728,27 @@ export function resolveTurnPair(staff: StaffTurn, customer: CustomerResponse, su
     `${STAFF_KIND_JA[staff.kind]} → ${CUSTOMER_KIND_JA[customer.kind]}` +
     (customer.secondary.length ? `＋${customer.secondary.map((k) => CUSTOMER_KIND_JA[k]).join("・")}` : "") +
     (substance.concerns.length ? `（懸念: ${substance.concerns.map((c) => `${c.label}「${c.phrase}」`).join("、")}）` : "") +
-    (customer.object && !substance.concerns.length ? `（対象: ${customer.object}）` : "");
-  return { staff, customer, substance, rule, ruleId: rule?.id ?? null, summary, lastStaffText: lastStaffText ?? "" };
+    (customer.object && !substance.concerns.length ? `（対象: ${customer.object}）` : "") +
+    (opts.ledger ? `｜台帳: ${opts.ledger.summary}` : "");
+  return { staff, customer, substance, rule, ruleId: rule?.id ?? null, summary, lastStaffText: lastStaffText ?? "", ledger: opts.ledger ?? null, redo: redoWord(opts.ledger) };
 }
 
-/** 方向指示文（決定論リテラル）。{object}/{fix} を実値に置換し、fresh brain の reply_direction は末尾に「参考」で添える */
-export function buildPairDirection(pair: PairContext, opts: { brainReplyDirection?: string | null; brainFresh: boolean }): string | null {
-  if (!pair.rule) return null;
+/** {object}/{fix}/{redo}/{ledger}/{sentNames} の置換（生成・検査・note の三者が同じ関数） */
+export function fillPairPlaceholders(s: string, pair: PairContext): string {
   const object = pair.customer.object ?? pair.substance.concerns[0]?.phrase ?? "";
   const fix = pair.substance.concerns.map((c) => c.fix).join("、") || "ご希望条件のお部屋を中心に";
-  const dir = pair.rule.direction.replace(/\{object\}/g, object).replace(/\{fix\}/g, fix);
-  const must = pair.rule.mustInclude.map((m, i) => `${i + 1}.${m.label}`).join(" ");
+  return s
+    .replace(/\{object\}/g, object).replace(/\{fix\}/g, fix)
+    .replace(/\{redo\}/g, pair.redo)
+    .replace(/\{ledger\}/g, pair.ledger?.summary ?? "記録なし")
+    .replace(/\{sentNames\}/g, pair.ledger?.facts.propertiesSentNames.join("・") || "送付済み物件");
+}
+
+/** 方向指示文（決定論リテラル）。{object}/{fix}/{redo}/{ledger} を実値に置換し、fresh brain の reply_direction は末尾に「参考」で添える */
+export function buildPairDirection(pair: PairContext, opts: { brainReplyDirection?: string | null; brainFresh: boolean }): string | null {
+  if (!pair.rule) return null;
+  const dir = fillPairPlaceholders(pair.rule.direction, pair);
+  const must = pair.rule.mustInclude.map((m, i) => `${i + 1}.${fillPairPlaceholders(m.label, pair)}`).join(" ");
   const ref = opts.brainFresh && opts.brainReplyDirection ? ` brain方向性（参考）:「${opts.brainReplyDirection}」` : "";
   return `${dir}。必須要素: ${must}。禁止: ${pair.rule.mustNot.join("／")}${ref}`;
 }
@@ -664,19 +758,21 @@ export function buildTurnPairNote(pair: PairContext, customerMessage: string, cu
   const staffJa = STAFF_KIND_JA[pair.staff.kind];
   const custJa = CUSTOMER_KIND_JA[pair.customer.kind];
   const object = pair.customer.object ?? pair.substance.concerns[0]?.phrase ?? "";
-  const fix = pair.substance.concerns.map((c) => c.fix).join("、");
   const lines: string[] = [];
   lines.push("【🔁 往復文脈 — 最上位（「場面と返信方針」より上位・ハードゲートの次）】");
   lines.push(`この返信は「我々が直前に送った〈${staffJa}〉」に対して、お客様が「〈${custJa}〉${object ? `（対象: ${object}）` : ""}」を返してきた、その返しである。単発メッセージへの相槌ではない。`);
   lines.push(`- 我々の直前発言（${staffJa}／根拠: ${pair.staff.source}${pair.staff.evidence ? "=" + pair.staff.evidence.slice(0, 40) : ""}）: 「${pair.lastStaffText.replace(/\s+/g, " ").slice(0, 160)}」`);
+  // 2026-09-09 行動台帳: 「我々が既にしたこと」を往復文脈の前提として明示（宣言≠実行）
+  if (pair.ledger) lines.push(`- 我々が既にしたこと（行動台帳・確定事実）: ${pair.ledger.summary}${pair.ledger.facts.pickupPromisedUnfulfilled && pair.ledger.facts.propertiesSentCount === 0 ? " → 直前の宣言はまだ履行していない。この返信は『約束の維持』であって『やり直し』ではない" : ""}`);
   lines.push(`- お客様の返答（${custJa}${pair.customer.secondary.length ? " ＋ " + pair.customer.secondary.map((k) => CUSTOMER_KIND_JA[k]).join("・") : ""}）: 「${customerMessage.split(MSG_SEP).join(" ／ ").replace(/\s+/g, " ").slice(0, 200)}」`);
   if (pair.rule) {
-    lines.push(`- → この返信の役割: ${pair.rule.direction.replace(/\{object\}/g, object).replace(/\{fix\}/g, fix || "ご希望条件のお部屋を中心に")}`);
+    lines.push(`- → この返信の役割: ${fillPairPlaceholders(pair.rule.direction, pair)}`);
     lines.push("- 必須要素（それぞれ本文で1文以上・欠けたら不合格）:");
-    pair.rule.mustInclude.forEach((m, i) => lines.push(`  ${["①", "②", "③", "④", "⑤"][i] ?? i + 1} ${m.label}`));
+    pair.rule.mustInclude.forEach((m, i) => lines.push(`  ${["①", "②", "③", "④", "⑤"][i] ?? i + 1} ${fillPairPlaceholders(m.label, pair)}`));
     lines.push(`- 禁止: ${pair.rule.mustNot.join(" / ")}`);
     lines.push(`- 型（成約実例。文体・テンポ・構成を踏襲し、固有名詞・エリア・物件名は今回の会話の事実に置換。顧客名は「${customerName || "〇〇"}さん」）:`);
-    lines.push(`「${pair.rule.example}」`);
+    const ex = pair.rule.exampleBySent ? (pair.ledger && pair.ledger.facts.propertiesSentCount > 0 ? pair.rule.exampleBySent.sent : pair.rule.exampleBySent.none) : pair.rule.example;
+    lines.push(`「${ex}」`);
   } else {
     lines.push("- → この返信の役割: 直前発言の流れを引き継ぎ、お客様の返答の中身に直接答えてから次の行動を宣言する");
   }
@@ -709,6 +805,8 @@ export interface HedgeContextInput {
   lastAixHistory?: string | null;
   /** 生成する返信自体が AIX 物件送付文（aixSourceMessage が結果報告形） */
   isAixPropertySendMode?: boolean;
+  /** 2026-09-09 行動台帳（あれば searched の第1判定） */
+  ledger?: ActionLedger | null;
 }
 const AIX_SEARCH_TYPES = new Set(["property_send", "property_recommendation", "property_send_new_arrival", "property_send_widen"]);
 /** スタッフ本文の「探した結果」（過去形のみ。未来形「探します」は含めない） */
@@ -729,13 +827,20 @@ export function resolveHedgeAllowance(ctx: HedgeContextInput): HedgeVerdict {
   const aixHit = Number.isFinite(custAt)
     ? (ctx.recentAixRows ?? []).find((r) => !!r.aix_type && AIX_SEARCH_TYPES.has(r.aix_type) && Date.parse(r.created_at ?? "") >= custAt)
     : undefined;
-  if (aixHit) searched = { yes: true, source: "aix_log", evidence: `${aixHit.aix_type}@${aixHit.created_at}` };
+  // 2026-09-09 行動台帳: 顧客最新以降の物件送付（aix_log > line_task > 本文）を第1判定にする（台帳が無い check-reply 旧経路は従来フォールバック）
+  if (ctx.ledger?.facts.propertiesSentSinceCustomerLatest) {
+    const ev = [...ctx.ledger.entries].reverse().find((e) => e.kind === "properties_sent" && e.status === "done");
+    searched = { yes: true, source: "aix_log", evidence: `ledger:${ev?.source ?? "?"}=${(ev?.evidence ?? "").slice(0, 40)}` };
+  }
+  else if (aixHit) searched = { yes: true, source: "aix_log", evidence: `${aixHit.aix_type}@${aixHit.created_at}` };
   else if (ctx.isAixPropertySendMode) searched = { yes: true, source: "aix_mode", evidence: "aix_property_send" };
   else if (!isNewCondition && ctx.staff.kind === "property_send" && STAFF_SEARCHED_RE.test(ctx.lastStaffText)) searched = { yes: true, source: "staff_text", evidence: ctx.lastStaffText.match(STAFF_SEARCHED_RE)![0] };
-  else if (!isNewCondition && !ctx.lastStaffText.trim()) {
+  else if (!isNewCondition && !ctx.lastStaffText.trim() && !(ctx.ledger && ctx.ledger.facts.propertiesSentCount === 0)) {
     const m = /最新:(property_send|property_recommendation|property_send_widen|property_send_new_arrival)\b/.exec(ctx.lastAixHistory ?? "");
     if (m) searched = { yes: true, source: "aix_history", evidence: m[0] };
   }
+  // pickup_declared は未来形＝ searched=false 固定（宣言を実行の証拠にしない）
+  if (ctx.staff.kind === "pickup_declared" && searched.source === "staff_text") searched = { yes: false, source: "none", evidence: "" };
   const askLine = lines.find((p) => FEAS_TOPIC_RE.test(p) && INTERROGATIVE_END_RE.test(p) && !CONDITIONAL_REQUEST_RE.test(p) && !PURE_ACK_SENT_RE.test(p));
   const customerAsked = { yes: !!askLine, evidence: askLine ?? "" };
   const selfLine = lines.find((p) => CUST_SELF_HEDGE_RE.test(p) || (CONDITIONAL_REQUEST_RE.test(p) && FEAS_TOPIC_RE.test(p)));
@@ -821,14 +926,18 @@ export interface CloserVerdict { closer: CloserKind; nanisotsu: boolean; text: s
 export function resolveCloser(
   pair: PairContext,
   sig: Pick<CloserSignals, "hasConcreteDeclaration" | "deliverableAttached" | "scheduleFixed">,
-  opts: { customerName: string; isFirstContact?: boolean; asksCustomerTask?: boolean },
+  opts: { customerName: string; isFirstContact?: boolean; asksCustomerTask?: boolean; ledger?: ActionLedger | null },
 ): CloserVerdict {
   const name = opts.customerName || "";
   const c = pair.customer.kind, s = pair.staff.kind;
-  const priorCommit = COMMIT_CLOSER_RE.test(pair.lastStaffText ?? "");
+  // 2026-09-09 行動台帳: 本文欠落時の保険（直前がピックアップ宣言で台帳 evidence に「全力」があれば直前で伴走締め済み）
+  const ledger = opts.ledger ?? pair.ledger;
+  const priorCommit = COMMIT_CLOSER_RE.test(pair.lastStaffText ?? "") ||
+    (!!ledger && pair.staff.kind === "pickup_declared" && /全力/.test(ledger.facts.lastStaffEntry?.evidence ?? ""));
   const priorNanisotsu = NANISOTSU_RE.test(pair.lastStaffText ?? "");
   const mk = (closer: CloserKind, nanisotsu: boolean, reason: string): CloserVerdict => {
-    const n = nanisotsu && !priorNanisotsu;
+    // セルが nanisotsu を明示（PD_CONDITION_CHANGE＝みく 11:48 実送信は直前の何卒に続けて何卒）する時は直前の何卒で抑制しない
+    const n = nanisotsu && (!priorNanisotsu || pair.rule?.nanisotsu === true);
     const body = CLOSER_TEXT[closer](name);
     return { closer, nanisotsu: n, text: [body, n ? NANISOTSU_TEXT : ""].filter(Boolean).join("\n"), reason };
   };
@@ -843,7 +952,7 @@ export function resolveCloser(
   // s === "condition_ask" は「ヒアリング回答（answer / condition_change）」を含む
   const milestone = c === "condition_change" || c === "concern" || s === "condition_ask" || !!opts.isFirstContact || ruleCloser === "commit_until_found";
   if (milestone && sig.hasConcreteDeclaration) {
-    if (priorCommit) return mk("none", true, "直前で全力サポート済み→約束宣言＋何卒のみ（PRIOR_CLOSING_RE）");
+    if (priorCommit) return mk("none", pair.rule?.nanisotsu ?? true, "直前で全力サポート済み→約束宣言＋何卒のみ（PRIOR_CLOSING_RE）");
     // 何卒＝「お願いの入口」（初回・ヒアリング回答＝フォーム受領・顧客への依頼）のみ。進行中の条件変更（瑞希例）は付けない
     const nanisotsu = pair.rule?.nanisotsu ?? (!!opts.isFirstContact || s === "condition_ask" || !!opts.asksCustomerTask);
     return mk("commit_until_found", nanisotsu, "具体宣言を伴う節目→見つかるまで伴走宣言（hearing86/proposing84/first_reply13）");

@@ -729,3 +729,49 @@ first > late_apology（tpo「進捗催促対応」）> waited（最終スタッ�
 - みくの復唱率は「12月／10分以内／20万以内／35㎡」を落とすと 4/8=0.5 でギリギリ。期待返信は 35㎡以上 も復唱する形
 - [ ] 2週間後: NANISOTSU_MISPLACED / CLOSER_MISSING / PASSIVE_CLOSER の発火率と編集率を stance_draft→stance_sent_lite 遷移行列で確認し、編集率が高いものを block に昇格。FP が出たら detect を緩める
 - [ ] promiseEchoNote（短い了承）の「締め1文」が何卒を生むと NANISOTSU_MISPLACED warning が出る。発火が多ければ promiseEchoNote の締めを「約束復唱で終える」に明文化
+
+
+---
+
+## 2026-09-09 行動台帳（Action Ledger）— 「我々が何をしたか」を生成・検査・ブレイン・学習に届ける（Fable5 みく事例）
+
+### 事例と根本原因
+- みく 10:40 スタッフ「…ピックアップして**お送りさせて頂きます**」（宣言のみ・物件0件）→ 11:45 顧客「大阪の市内付近で（京都・尼崎はNG）」→ AI 11:46「大阪市内に絞って**再度**ピックアップ…」（NG）／実送信 11:48「大阪市内に絞らせて頂き、〔条件復唱〕でピックアップさせて頂きます！！ピックアップ出来次第お送りさせて頂きます！！何卒」
+- 生成源: `classifyLastStaffTurn` が未来形宣言を `other` に落とし `ANY_CONDITION_CHANGE` の「再ピックアップ宣言」direction が LLM に渡った。検査側 suggestion（旧 L1032/L1046「再度ピックアップしてお送り」）と DOUBLE_DECLARATION→修正ループが「再度」を挿入する直接機序
+- 構造欠陥: 「宣言（promised）」と「実行（done）」を区別する構造が無く、送付実績は `countSentProperties`（🌟 regex・見積本文の🌟割引を誤カウント）だけだった
+
+### 行動台帳の構造（`app/lib/action-ledger.ts`）
+- `buildActionLedger({recentAixRows, messages, lineTasks, lastAixHistory, lastCustomerAt})` → `{entries, facts, summary}`
+- entries: `kind`（pickup_declared / properties_sent / estimate_declared / estimate_sent / viewing_invited / meeting_place_sent / question_asked / confirmation_promised / confirmation_reported / condition_asked / application_guided / followup_sent / media_sent）× `status`（promised / done）× `source` × `confidence`。promised→done は `fulfilledBy` でリンク。done 直後の顧客反応 `customerReactionAfter`
+- 証拠ソース優先順: **aix_usage_logs(3) > line_tasks・brain last_aix_history(2) > スタッフ本文 regex(1)**。AIX 行 ±3分（or line_message_id 一致）のスタッフ本文には regex を当てない（見積 AIX 本文の🌟・[画像]を物件送付に数えない）
+- facts: propertiesSentCount / propertiesSentNames / propertiesSentSinceCustomerLatest / estimateSent / pickupPromisedUnfulfilled / confirmationPromisedUnfulfilled / viewingInvited / applicationGuided / lastStaffEntry / recentDone(72h) / redoAllowed
+- 依存方向: action-ledger → reply-context（runtime）。reply-context は `import type` のみ。共有 STAFF_* regex は reply-context が定義・export
+
+### 四者同名の接続
+- 生成（route.ts）: `ledger` を1回構築 → `buildLedgerNote`【📒 我々の行動台帳】（往復文脈の直前）／`buildLastStaffAnnotation`（staffContextNote 注記）／`classifyLastStaffTurn({ledger})`／`resolveHedgeAllowance({ledger})`／`resolveTurnPair({ledger})`（`{redo}` `{ledger}` `{sentNames}` プレースホルダ）／`resolveCloser({ledger})`／生成直後 `applyLedgerAutoFix`（決定論・Sonnet 不使用）
+- 往復セル: `StaffTurnKind` に `pickup_declared` 追加。新セル **PD_CONDITION_CHANGE**（example=みく 11:48 実送信）／**PD_ACK**／**PD_QUESTION**。ANY_CONDITION_CHANGE は `exampleBySent`（none/sent）で出し分け。PS_CONDITION_CHANGE は `{sentNames}` を並行選択肢に
+- 検査（final-check.ts）: `runLedgerChecks` — **DONE_PRESUPPOSED_WITHOUT_EVIDENCE**（block: 再度／改めて／追加で／他の／こちらの／ご提案した ＋ 対象。warning: 再度空室確認／〇〇も含め／継続語）・**UNSENT_CLAIM**（お送りした〇〇・by_object）・**PROMISE_ECHO_MISMATCH**（宣言未履行で完了形・warning）・**SENT_IGNORED**（送付済み×条件変更×初回型宣言のみ・warning・SKELETON_CODES）。免除 4 種: evidence / deliverable_reply / customer_ref / customer_asks_more。`ledgerStrict`（generate-reply=block、check-reply=warning）
+- 修正ループ: block が LEDGER_FIX_CODES だけなら `applyLedgerAutoFix` で決定論置換（Sonnet 不呼出）。混在時は `decorateFixInstruction` で台帳根拠を添え、Sonnet 修正プロンプトに `[ACTION_LEDGER]` 注入。DOUBLE_DECLARATION は「約束未履行 × 条件変更」で決定論フィルタ
+- suggestion の「再度」は `redoWord(ledger)` で出し分け（検査側 suggestion が禁止語の供給源にならない）
+- 学習: `tpo_debug.ledger`（summary / facts / entries / regexSentCount）→ page.tsx → save-reply-example → `reply_context_snapshot`。brain-core: `suggested_aix_meta.action_ledger` ＋ プロンプト【行動台帳（確定事実）】。新カラム不要（JSONB）
+
+### モード（ロールバック）
+- `ACTION_LEDGER_MODE` = shadow（計算＋`[ledger-diff]` ログのみ）／**inject（既定）**／enforce（sentPropertiesCount・aixDone.propertySend を台帳に統一）
+- check-reply は台帳（aix_usage_logs + line_tasks）で sentPropertiesCount を算出（countSentProperties は @deprecated → enforce 確認後に削除）
+
+### 回帰テスト
+- `npx tsx app/lib/__tests__/action-ledger.test.ts`（23件）＋ `stance.test.ts`（17件）全 PASS
+
+### 週次 SQL
+```sql
+SELECT count(*) FILTER (WHERE (reply_context_snapshot->'ledger'->'facts'->>'redoAllowed')='false' AND sent_reply ~ '再度|改めて') AS redo_without_evidence,
+       count(*) FILTER (WHERE (reply_context_snapshot->'ledger'->'facts'->>'pickupPromisedUnfulfilled')='true' AND sent_reply ~ '出来次第') AS promise_echo_ok,
+       count(*) FILTER (WHERE (reply_context_snapshot->'ledger'->>'regexSentCount')::int <> (reply_context_snapshot->'ledger'->'facts'->>'propertiesSentCount')::int) AS regex_vs_ledger_diff
+FROM ai_reply_examples WHERE sent_at > now() - interval '7 days';
+```
+
+### 引き継ぎ
+- [ ] 2日後: `[ledger-diff]` の差分が「見積本文／[画像]／地図」に限られることを確認 → `ACTION_LEDGER_MODE=enforce`（sentPropertiesCount・aixDone 統一）→ countSentProperties 削除
+- [ ] Phase3: extract-property-info L154（estimate_sheet 由来画像を sent_properties に入れない）・page.tsx property_send 押下時に property_names 全量投入
+- [ ] pickupPromiseAckNote は従来通り短い了承限定。条件変更・質問時の約束情報は【📒 行動台帳】＋ PD_* セルで届く（二重注入なし）
+- [ ] 顧客の「大阪の市内付近でお願い」「〇〇はNGで」を condition_change に寄せる regex（CUST_CONDITION_STATEMENT_RE / KIND_RE condition）を追加済み。誤発火があれば `市内|付近|NG` を絞る

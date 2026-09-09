@@ -74,6 +74,11 @@ import {
   resolveHedgeAllowance, stripPreemptiveRelax, resolveCloser, predictCloserSignals, computeStanceFlags, buildStanceNote, STAFF_SEARCHED_RE,
   type HedgeVerdict, type CloserVerdict,
 } from "@/app/lib/reply-context";
+// 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
+//   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
+import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask } from "@/app/lib/action-ledger";
+/** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
+const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 300;
@@ -275,7 +280,7 @@ const STATE_FALLBACK_DIRECTION: Record<string, string> = {
   viewing: "内覧調整・内覧後フォロー。日程は確定分をそのまま復唱（新規提案はAIX）。内覧後は感想を受けて見積橋渡しまたは次物件ピックアップ宣言。80〜150字",
   applying: "申込・審査中。書類受領・審査進捗・契約案内のいずれかに直接回答。別物件提案・再ピックアップ・条件ヒアリング禁止。60〜150字",
   closed_won: "成約後サポート。質問に直接回答し「ご入居までしっかりサポートさせて頂きます」で締める。申込打診・ピックアップ・見積・内覧禁止。60〜120字",
-  closed_lost: "失注後の再接触。「お世話になっております」→再連絡への感謝1文→再ピックアップ宣言→サポート継続宣言。初回挨拶・謝罪・フォーム再送禁止。80〜140字",
+  closed_lost: "失注後の再接触。「お世話になっております」→再連絡への感謝1文→以前のご条件を基にしたピックアップ宣言（「改めて」は【📒 行動台帳】に送付実績がある時のみ）→サポート継続宣言。初回挨拶・謝罪・フォーム再送禁止。80〜140字",
 };
 
 function buildEmojiPositionNote(customerMessage: string): string {
@@ -761,6 +766,8 @@ type AixDoneFlags = {
   viewingInvite: boolean;  // viewing_invite: 内覧日程調整の案内済み
   meetingPlace: boolean;   // meeting_place: 待ち合わせ場所の案内済み
   labels: string[];        // プロンプト表示用（例「空室確認（2時間前・結果:募集終了）」）
+  /** 2026-09-09 行動台帳（enforce）: 解除条件③（新規ピックアップ依頼）。台帳 recentDone.propertySend で propertySend を上書きする時に再適用する */
+  asksNewPickup?: boolean;
 };
 
 type PromptOverrides = {
@@ -834,6 +841,10 @@ function buildGenerationMessages(
   stanceNote = "",
   // 2026-09-09 Fable5 みく事例: ヘッジ verdict（budgetInventoryNote の発火を「顧客の疑問形質問」にゲート）
   hedgeVerdict: HedgeVerdict | null = null,
+  // 2026-09-09 Fable5 行動台帳: buildLedgerNote() の【📒 我々の行動台帳】ブロック（往復文脈の直前・台帳が往復文脈の前提として先に読まれる）
+  actionLedgerNote: string = "",
+  // 2026-09-09 Fable5 行動台帳: staffContextNote に付ける直前発言の宣言／実行注記（buildLastStaffAnnotation）
+  ledgerAnnotation: string = "",
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -1045,9 +1056,10 @@ function buildGenerationMessages(
           // 条件変更・設備追加・ピックアップ依頼: 追加質問は禁止、追客継続スタイルで完結
           conditionChangeNote = `\n【🔄 ${label}検出（最重要・絶対遵守）】追加条件を聞き返すことは絶対禁止。変更・追加された条件を具体的な言葉（エリア名・設備名）にして、即座に追客継続の行動宣言で完結させること。
 【追客継続の正しいスタイル（必ず守る）】
-・「ピックアップしてお送りします」は禁止（すぐに物件を送れる状況ではないため）
-・正しい型: 「かしこまりました！！[エリア]のお部屋で[名前]さんのご条件に合ったお部屋の新着状況随時確認させて頂きオススメ出来るお部屋募集に出次第お送りさせて頂きます！！何卒よろしくお願い致します😊！！」
-・ポイント: 「新着状況随時確認」「募集に出次第お送り」のフレーズを使って継続的に追い続けている姿勢を伝える${conditionChangeShapeNote}`;
+・「お送りしました」「ご査収」等の完了報告は禁止（すぐに物件を送れる状況ではないため）。宣言は未来形「ピックアップさせて頂きます！！ピックアップ出来次第お送りさせて頂きます！！」
+・どちらの型（宣言のみ／送付済み）かは【📒 行動台帳】の物件送付件数で決める。「再度」「改めて」「追加で」は送付実績がある時だけ
+・送付済みの場合の型: 「かしこまりました！！[エリア]のお部屋で[名前]さんのご条件に合ったお部屋の新着状況随時確認させて頂きオススメ出来るお部屋募集に出次第お送りさせて頂きます！！何卒よろしくお願い致します😊！！」
+・ポイント: 「新着状況随時確認」「募集に出次第お送り」のフレーズは送付済み段階で継続的に追い続けている姿勢を伝える${conditionChangeShapeNote}`;
         }
   }
 
@@ -1192,7 +1204,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   const staffContextNote = isFollowUp && lastStaffMsg
     ? `\n【⚠️ 最重要：スモラは既にこのお客様メッセージに返信済み】\nスモラが直前に送った内容：「${lastStaffMsg}」${lastAixLine}\n→ お客様はまだ返信していない。これはその【続きのメッセージ】。前の返信で伝えた内容を絶対に繰り返さない。前の返信を踏まえて補足・追加・次のアクション提案など、自然につながる内容を生成すること。`
     : lastStaffMsg
-      ? `\n【⚠️ スモラが直前に送った内容（必ず踏まえること）】「${lastStaffMsg}」${lastAixLine}\n→ この返信の後にお客様が上記メッセージを送った。会話の流れを引き継いで自然な続きを生成すること。`
+      ? `\n【⚠️ スモラが直前に送った内容（必ず踏まえること）】「${lastStaffMsg}」${lastAixLine}${ledgerAnnotation ? `\n${ledgerAnnotation}` : ""}\n→ この返信の後にお客様が上記メッセージを送った。会話の流れを引き継いで自然な続きを生成すること。`
       : lastAixLine
         ? `\n【⚠️ 直前のAIXアクション情報】${lastAixLine}`
         : "";
@@ -1578,7 +1590,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // staticBlock を汚染しないよう dynamicBlock 側に配置する
   const dynamicBlock =`${topPrinciplesNote}${replyContentNote}
 ${propertyStatusNote}
-${turnPairNote}${stanceNote}${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
@@ -3023,6 +3035,22 @@ export async function POST(req: NextRequest) {
       console.error("[generate-reply] activeTaskTypes DB補完失敗:", err);
     }
   }
+  // 2026-09-09 Fable5 行動台帳用: pending＋completed・直近30日・20件（activeTaskTypes は従来通り pending のみ）。fail-open
+  let ledgerTasks: LedgerTask[] = [];
+  if (conversationId && !isTemplateOptimize) {
+    try {
+      const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const { data } = await supabase
+        .from("line_tasks")
+        .select("task_type, status, created_at, completed_at")
+        .eq("conversation_id", conversationId)
+        .in("status", ["pending", "completed"])
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      ledgerTasks = (data ?? []) as LedgerTask[];
+    } catch (err) { console.error("[generate-reply] ledger line_tasks 取得失敗:", err); }
+  }
   // アクティブタスク状態をreplyHintに反映（動的コンテキスト注入）
   if (activeTaskTypes.includes("property_check")) {
     replyHint = "【募集状況確認中★最重要】現在スタッフが物件の募集状況を確認している最中です。内覧日程・物件提案・見積書の話は絶対にしない。お客様の短い返信（「すいません」「ありがとう」「わかりました」等）には「大丈夫ですよ！！募集状況確認出来次第ご連絡させて頂きます😊！！」のような短い返しのみ行う（確認対象「募集状況」を必ず書く。「すぐに」禁止）。（この指示は property_check タスクがアクティブな場合のみ適用。スタッフが物件送付済みでお客様が受取確認しているだけの場合は対象外）"
@@ -3219,7 +3247,8 @@ export async function POST(req: NextRequest) {
     let estimateAlreadySent = false;
     // AIX実行済みアクション再宣言防止(2026-09-01)用の直近ログ。見積判定クエリと並列実行するため
     // DB往復の実時間は従来と同じ（見積側は .or フィルタのDB側評価を維持＝既存セマンティクスを一切変えない）。
-    type RecentAixRow = { aix_type: string | null; check_pattern: string | null; created_at: string };
+    // 2026-09-09 Fable5 行動台帳: 台帳の一次証拠列（sent_at / line_message_id / generated_text / property_names / estimate_sent）まで取得
+    type RecentAixRow = LedgerAixRow;
     let recentAixRows: RecentAixRow[] = [];
     if (conversationId && !isTemplateOptimize) {
       try {
@@ -3232,10 +3261,10 @@ export async function POST(req: NextRequest) {
             .limit(1),
           supabase
             .from("aix_usage_logs")
-            .select("aix_type, check_pattern, created_at")
+            .select("aix_type, check_pattern, created_at, sent_at, line_message_id, generated_text, property_names, estimate_sent, template_name")
             .eq("conversation_id", conversationId)
             .order("created_at", { ascending: false })
-            .limit(12),
+            .limit(30),
         ]);
         estimateAlreadySent = (estLogsRes.data?.length ?? 0) > 0;
         recentAixRows = (recentAixRes.data ?? []) as RecentAixRow[];
@@ -3336,13 +3365,13 @@ export async function POST(req: NextRequest) {
         .slice(0, 5)
         .map((l) => {
           const base = AIX_DONE_LABEL[l.aix_type ?? ""] ?? l.aix_type ?? "?";
-          const hours = Math.max(0, Math.round((now - Date.parse(l.created_at)) / 3600000));
+          const hours = Math.max(0, Math.round((now - Date.parse(l.created_at ?? "")) / 3600000));
           const when = hours < 1 ? "1時間以内" : `約${hours}時間前`;
           const result = l.check_pattern ? `・結果:${CHECK_PATTERN_LABEL[l.check_pattern] ?? l.check_pattern}` : "";
           return `${base}（${when}${result}）`;
         });
 
-      return { vacancyCheck, mgmtCheck, propertySend, viewingInvite, meetingPlace, labels };
+      return { vacancyCheck, mgmtCheck, propertySend, viewingInvite, meetingPlace, labels, asksNewPickup };
     })();
     if (aixDone) {
       console.log("[generate-reply] AIX実行済み再宣言ブロック適用:", conversationId, JSON.stringify(aixDone));
@@ -3435,10 +3464,27 @@ export async function POST(req: NextRequest) {
     // ── 2026-09-09 Fable5 往復文脈: 直前スタッフ発話の分類 → 顧客メッセージの実質判定（1回だけ計算し四者が参照）──
     //   lastStaffTurn: aix_usage_logs（直前スタッフ発言 ±3分）> 本文 regex > brain last_aix_history
     //   substance   : 定型（感謝・了承・締め）と待ち句を剥がした残余に懸念・質問・依頼・条件・予定・決定・断り・情報を当てる。fresh brain は補助証拠
+    // ── 2026-09-09 Fable5 G1 行動台帳: 我々が【何をしたか＝done】【何をすると言ったか＝promised】を一次証拠から1回構築。
+    //    生成（ledgerNote / staffContextNote 注記 / 往復文脈 / hedge.searched / sentPropertiesCount / aixDone）・検査（finalCheckCtx 3か所）・
+    //    tpo_debug → reply_context_snapshot が同一オブジェクトを参照する（四者同名）。shadow モードは計算＋差分ログのみ
+    const ledger: ActionLedger = buildActionLedger({
+      recentAixRows,
+      messages: recentMessages.map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.createdAt, isAix: m.isAix, lineMessageId: null })),
+      lineTasks: ledgerTasks,
+      lastAixHistory: lastAixHistoryText,
+      lastCustomerAt: lastCustomerMsgAt,
+    });
+    console.info("[ledger]", JSON.stringify({ summary: ledger.summary, facts: { sent: ledger.facts.propertiesSentCount, est: ledger.facts.estimateSent, promised: ledger.facts.pickupPromisedUnfulfilled, redo: ledger.facts.redoAllowed, sinceCust: ledger.facts.propertiesSentSinceCustomerLatest, last: ledger.facts.lastStaffEntry?.kind ?? null }, mode: ACTION_LEDGER_MODE }));
+    const ledgerActive = ACTION_LEDGER_MODE !== "shadow" && !isTemplateOptimize;
+    const ledgerForCtx: ActionLedger | null = ledgerActive ? ledger : null;
+    // Phase2（enforce）: aixDone.propertySend を台帳 recentDone.propertySend（aix_log > line_task > 本文・72h）に統一（解除条件 asksNewPickup は従来通り）
+    if (aixDone && ACTION_LEDGER_MODE === "enforce") aixDone.propertySend = !aixDone.asksNewPickup && ledger.facts.recentDone.propertySend;
+
     const lastStaffTurn = classifyLastStaffTurn(lastStaffMsgForSearch || tpoLatestStaffText, {
       recentAixRows,
       lastStaffAt: tpoLatestStaff?.createdAt ?? null,
       lastAixHistory: lastAixHistoryText,
+      ledger: ledgerForCtx,
     });
     const substanceBase = analyzeSubstance(message ?? "", customerMsgUnits, { staffAskedQuestion: lastStaffTurn.kind === "question_to_customer" });
     const substance: SubstanceVerdict = mergeBrainEvidence(
@@ -3540,8 +3586,11 @@ export async function POST(req: NextRequest) {
     // ── 2026-09-08 Fable5: 見積書の文脈判定（単一 verdict・1回だけ計算）──────────────────
     // 生成（estimateGateNote / estimatePromiseAckNote / phaseProhibition）・AIX（detectAixTiming）・
     // 検査（final-check E5 / E10）の三層がこの verdict を共有する。state では判定しない。
-    const sentPropertiesCount = countSentProperties(recentMessages);
-    const lastStaffIdxForEst = recentMessages.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0).at(-1) ?? -1;
+    // 2026-09-09 Fable5 行動台帳（G31）: 旧 countSentProperties（🌟 regex）と台帳（aix_type 一次証拠）の差分を shadow ログ。enforce で台帳に統一
+    const regexSentCount = countSentProperties(recentMessages);
+    const sentPropertiesCount = ACTION_LEDGER_MODE === "enforce" && !isTemplateOptimize ? ledger.facts.propertiesSentCount : regexSentCount;
+    if (regexSentCount !== ledger.facts.propertiesSentCount) console.info("[ledger-diff]", JSON.stringify({ regexCount: regexSentCount, ledgerCount: ledger.facts.propertiesSentCount, conversationId }));
+    const lastStaffIdxForEst =recentMessages.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0).at(-1) ?? -1;
     const unrepliedCustomerTexts = recentMessages.slice(lastStaffIdxForEst + 1).filter((m) => m.sender === "customer").map((m) => m.text ?? "");
     const estimateVerdict: EstimateContextVerdict = isMisumoriContextAppropriate({
       customerMessage: message,
@@ -3752,6 +3801,8 @@ export async function POST(req: NextRequest) {
     });
     // ── 2026-09-09 Fable5 みく事例: ヘッジ許容（探索済み証拠 > 顧客の疑問形質問 > 禁止）。pairContext より先に計算し PAIR_MATRIX の探索済みセル選択にも使う
     //   生成（latent_intent / winning_pattern / closing_strategy / customer_questions / conditionDirection / 【姿勢】）・検査（final-check runHedgeChecks）・tpo_debug が同一 verdict
+    // 生成する返信自体が AIX 物件送付文（成果物添付）＝「こちらの物件」「お送りした」は添付物を指す（台帳ゲートの deliverable 免除と同値）
+    const isAixPropertySendMode = !!aixSourceMessage && STAFF_SEARCHED_RE.test(aixSourceMessage);
     const hedge: HedgeVerdict = resolveHedgeAllowance({
       customerMessage: message ?? "",
       substance,
@@ -3761,10 +3812,11 @@ export async function POST(req: NextRequest) {
       lastCustomerAt: lastCustomerMsgAt,
       recentAixRows,
       lastAixHistory: lastAixHistoryText,
-      isAixPropertySendMode: !!aixSourceMessage && STAFF_SEARCHED_RE.test(aixSourceMessage),
+      isAixPropertySendMode,
+      ledger: ledgerForCtx,
     });
     console.info("[hedge]", JSON.stringify({ allowance: hedge.allowance, searched: hedge.searched, asked: hedge.customerAsked.yes, selfHedge: hedge.customerSelfHedge.yes, statedRelax: hedge.customerStatedRelax.yes }));
-    const pairContext: PairContext = resolveTurnPair(lastStaffTurn, customerResponse, substance, lastStaffMsgForSearch || tpoLatestStaffText || "", { searched: hedge.searched.yes });
+    const pairContext: PairContext = resolveTurnPair(lastStaffTurn, customerResponse, substance, lastStaffMsgForSearch || tpoLatestStaffText || "", { searched: hedge.searched.yes, ledger: ledgerForCtx });
     const pairDirection = buildPairDirection(pairContext, { brainReplyDirection: brainMeta?.reply_direction ?? null, brainFresh: brainFreshForMessage && !isCachedMeta });
     // ラベル: tpoNoteForLLM ↔ prompts「■ 場面【…】」↔ final-check WAIT_TPO_RE（after_wait の検討中セルは「検討中フォロー」を含めて WE DO 免除を維持）
     const pairTpoLabel = pairContext.rule ? `${pairContext.rule.tpoLabel}（往復: ${pairContext.summary}。${pairContext.rule.length}）` : null;
@@ -3793,7 +3845,7 @@ export async function POST(req: NextRequest) {
     const closerVerdict: CloserVerdict = resolveCloser(
       pairContext,
       predictCloserSignals({ aixSourceText: aixSourceMessage }),
-      { customerName: customerName ?? "", isFirstContact: isFirstEverReplyFromMsgs, asksCustomerTask: false },
+      { customerName: customerName ?? "", isFirstContact: isFirstEverReplyFromMsgs, asksCustomerTask: false, ledger: ledgerForCtx },
     );
     console.info("[closer]", JSON.stringify({ closer: closerVerdict.closer, nanisotsu: closerVerdict.nanisotsu, reason: closerVerdict.reason }));
     // ── 条件提示の方向性（抽出値をリテラル埋め込み・3〜4行構成固定。締めは closerVerdict のリテラル）──
@@ -3925,11 +3977,12 @@ export async function POST(req: NextRequest) {
         return "内見調整（日時・場所の確認・調整。顧客名先頭の簡潔な返し。30〜80字）";
       }
       if (phaseGuideKey === "closed_won") return "成約後サポート（質問に直接回答し「ご入居までしっかりサポートさせて頂きます」で締める。申込打診・ピックアップ・見積・内覧禁止。60〜120字）";
-      if (phaseGuideKey === "closed_lost") return "失注後の再接触（「お世話になっております」→再連絡への感謝1文→再ピックアップ宣言→サポート継続宣言。初回挨拶・謝罪・フォーム再送禁止。80〜140字）";
+      // 2026-09-09 行動台帳: 「再度／改めて」は台帳に送付実績がある時だけ（ledgerRedo）
+      if (phaseGuideKey === "closed_lost") return `失注後の再接触（「お世話になっております」→再連絡への感謝1文→${ledger.facts.redoAllowed ? "改めて" : ""}以前のご条件を基にしたピックアップ宣言→サポート継続宣言。初回挨拶・謝罪・フォーム再送禁止。80〜140字）`;
       // A-4: proposing で action が無い場合は「懸念→条件変換」「進捗催促対応」「商談継続」の3分岐
       if (phaseGuideKey === "proposing" && !a) {
         if (/狭い|暗い|遠い|古い|うるさい|微妙|ちょっと|イマイチ|いまいち|気になる点/.test(msg2) && !TPO_REQUEST_RE.test(msg2)) {
-          return "懸念→条件変換（顧客の感想・懸念語を条件語に変換し「かしこまりました！！〇〇（変換後条件）のお部屋を中心に〇〇さんにオススメできるお部屋再度ピックアップしお送りさせて頂きます！！」。共感文だけの返信は不合格。80〜130字）";
+          return `懸念→条件変換（顧客の感想・懸念語を条件語に変換し「かしこまりました！！〇〇（変換後条件）のお部屋を中心に〇〇さんにオススメできるお部屋${ledger.facts.redoAllowed ? "再度" : ""}ピックアップしお送りさせて頂きます！！」。共感文だけの返信は不合格。80〜130字）`;
         }
         if (/まだ(?:です|でしょうか|ですか)|連絡(?:ない|来ない|まだ)|どうなり(?:ました|ましたか)|進捗|いつ(?:頃)?(?:送|連絡|届)/.test(msg2)) {
           return "進捗催促対応（「ご連絡遅くなり申し訳御座いません。」＋現状事実1文＋次アクション1文。100〜150字。「お待たせ致しました」「確認中です」禁止）";
@@ -4231,6 +4284,9 @@ export async function POST(req: NextRequest) {
     // 「生成はTPOなし・チェックはTPOあり」の非対称が発生していた）。
     // 2026-09-09 Fable5 往復文脈ブロック（dynamicBlock で tpoGuidanceNote の直前・ハードゲートの次）。follow-up 生成では注入しない
     const turnPairNote = isFollowUp || isTemplateOptimize ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "");
+    // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】（往復文脈の直前）＋ 直前発言の宣言／実行注記（staffContextNote）。shadow では注入しない
+    const actionLedgerNote = isFollowUp || !ledgerActive ? "" : buildLedgerNote(ledger, { customerName: customerName ?? "" });
+    const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "" });
 
@@ -4503,6 +4559,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       customerMsgUnits,    // 2026-09-09 Fable5: 通単位の配列（[N通目] 表示は通単位のみ）
       stanceNote,          // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック
       hedge,               // 2026-09-09 Fable5 みく事例: budgetInventoryNote の発火ゲート
+      actionLedgerNote,    // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】ブロック
+      ledgerAnnotation,    // 2026-09-09 Fable5 行動台帳: 直前発言の宣言／実行注記
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -4765,6 +4823,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             const gen1 = await consumeGeneration(genStream);
             draftBody = gen1.body;
             genStopReason = gen1.stopReason;
+            // 2026-09-09 Fable5 行動台帳: 生成直後の決定論自動修正（Sonnet 不使用）。台帳に実績が無い「再度／改めて／お送りした〇〇／完了形」を
+            //   語の削除・未来形置換で正す（final-check 修正ループと同じ applyLedgerAutoFix）。テンプレ最適化・follow-up は対象外
+            if (ledgerActive && !isFollowUp && draftBody.trim()) {
+              const fx = applyLedgerAutoFix(draftBody, ledger, { customerMessage: message ?? "", name: customerName ? `${customerName}さん` : "〇〇さん", isDeliverableReply: isAixPropertySendMode });
+              if (fx.applied.length) { console.info("[ledger-autofix]", JSON.stringify(fx.applied)); draftBody = fx.text; }
+            }
             // ─── 最終チェック+接地修正ループ（前頭前野モデル v2 / claude-haiku-4-5）────
             // check1(≤2.5s) → blockあり時のみ 接地修正(≤3.5s) → check2(≤2.5s)。チェックは計2回上限。
             // 修正は checkpoint事実・DBルール・顧客条件に接地し、引用検証を通らない置換は破棄。
@@ -4866,6 +4930,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
+                  ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳（生成側と同一オブジェクト・四者同名）
                 };
                 // センシティブ案件（クレーム/審査否決/キャンセル）は「参考のみ・手動確認必須」の草稿のため
                 // チェックのみ実行し、接地修正・フィードバック再生成でドラフトを機械的に触らない
@@ -4977,6 +5042,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
                     substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                     hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
+                    ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   };
                   const nameRes = enforceCustomerName(draftBody, { customerName, lineDisplayName });
                   draftBody = nameRes.cleaned;
@@ -5051,7 +5117,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
             if (!isTemplateOptimize && finalCheck && draftBody) {
               try {
-                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|GREETING_WAITED_MISUSE|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT)/;
+                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|GREETING_WAITED_MISUSE|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT|DONE_PRESUPPOSED_WITHOUT_EVIDENCE|PROMISE_ECHO_MISMATCH|SENT_IGNORED)/;
                 const postDetCtx = {
                   recentMessages, lastCustomerMessage: message, isAutoSend: enforceReplyModeGate,
                   isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
@@ -5065,6 +5131,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
+                  ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   ngProperties: brainFreshForMessage
                     ? (brainMeta?.property_search_params?.ng_properties ?? []).filter((p) => p?.property_name).map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)
                     : undefined,
@@ -5102,6 +5169,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // 2026-09-09 Fable5 みく事例: ヘッジゲート・締め・姿勢フラグ（save-reply-example が stance_sent_lite をマージし、下書き→送信の遷移行列 SQL に使う）
               hedge: { allowance: hedge.allowance, searched: hedge.searched, customerAsked: hedge.customerAsked.yes, customerSelfHedge: hedge.customerSelfHedge.yes, customerStatedRelax: hedge.customerStatedRelax.yes },
               closer: { kind: closerVerdict.closer, nanisotsu: closerVerdict.nanisotsu, reason: closerVerdict.reason },
+              // 2026-09-09 Fable5 行動台帳（JSONB → page.tsx → save-reply-example → reply_context_snapshot に自動転送。週次 SQL で regex vs ledger 差分・再度誤用を集計）
+              ledger: {
+                summary: ledger.summary, mode: ACTION_LEDGER_MODE,
+                facts: { propertiesSentCount: ledger.facts.propertiesSentCount, propertiesSentNames: ledger.facts.propertiesSentNames.slice(0, 6), estimateSent: ledger.facts.estimateSent, pickupPromisedUnfulfilled: ledger.facts.pickupPromisedUnfulfilled, pickupPromisedAt: ledger.facts.pickupPromisedAt, confirmationPromisedUnfulfilled: ledger.facts.confirmationPromisedUnfulfilled, propertiesSentSinceCustomerLatest: ledger.facts.propertiesSentSinceCustomerLatest, redoAllowed: ledger.facts.redoAllowed, lastStaffEntry: ledger.facts.lastStaffEntry ? { kind: ledger.facts.lastStaffEntry.kind, status: ledger.facts.lastStaffEntry.status, source: ledger.facts.lastStaffEntry.source } : null },
+                entries: ledger.entries.slice(-6).map((e) => ({ kind: e.kind, status: e.status, at: e.at, source: e.source, confidence: e.confidence, react: e.customerReactionAfter ?? null })),
+                regexSentCount,
+              },
               stance_draft: finalDraftText ? computeStanceFlags(finalDraftText, pairContext, hedge, { customerName: customerName ?? "", customerText: message ?? "", isFirstContact: isFirstEverReplyFromMsgs }) : null,
               effectiveReplyDirection: (effectiveReplyDirection ?? "").slice(0, 300),
               brainReplyDirection: brainMeta?.reply_direction ?? null,

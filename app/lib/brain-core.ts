@@ -18,6 +18,8 @@ import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "@/app/lib/move-out-context";
+// 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
+import { buildActionLedger } from "@/app/lib/action-ledger";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -98,6 +100,11 @@ export type SuggestedAixMeta = {
   analyzed_msg_ts?: string | null;
   // 直近AIXボタン履歴（最新→旧順・generate-reply RAG文脈強化用）
   last_aix_history?: string | null;
+  // 2026-09-09 Fable5 行動台帳（action-ledger.ts buildActionLedger の要約・facts。JSONB のため migrate-schema 不要）
+  action_ledger?: {
+    summary: string;
+    facts: { propertiesSentCount: number; estimateSent: boolean; pickupPromisedUnfulfilled: boolean; lastStaffEntry: { kind: string; status: string } | null };
+  } | null;
   // ── analyzeConversation → analyzeAndSaveBrainMeta 内部伝搬フィールド ──
   // SOURCE_ACCEPT_RATE 品質ゲートで finalAix が null 化された事実のフラグ。
   // conversation_direction 更新側で detectSignalBasedAixFallback の再実行をスキップし、
@@ -929,7 +936,7 @@ export async function analyzeConversation(
       // check_pattern（代表1値）では失われる「3件中1件だけ空室」の粒度をbrainに渡すため取得する
       // M2: estimate_sent / prop_cost_notes = 御見積書の同封有無と見積書OCRの費用情報。
       // 「見積書を送った」「割引が少ない/クリーニング代が必要/初期費用が高い」までbrainに渡す
-      .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern, property_names, prop_statuses, estimate_sent, prop_cost_notes")
+      .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern, property_names, prop_statuses, estimate_sent, prop_cost_notes, generated_text")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(30),
@@ -1675,6 +1682,14 @@ export async function analyzeConversation(
   const aixHistoryText = (usedAixTypes.length > 0 || pcrLoopWarning)
     ? `${recentAixSeqText}${nextActionMapText}${pcrLoopWarning}\n【会話全体で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
     : pcrLoopWarning;
+  // 2026-09-09 Fable5 行動台帳: last_aix_history（AIX 3件・時刻なし・宣言/実行の区別なし）を補強。手打ち送付・宣言も含む確定事実を brain に渡す
+  const brainLedger = buildActionLedger({
+    recentAixRows: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at ?? null, line_message_id: l.line_message_id, property_names: l.property_names ?? null, estimate_sent: l.estimate_sent ?? null, template_name: l.template_name ?? null, generated_text: (l as { generated_text?: string | null }).generated_text ?? null })),
+    messages: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at, isAix: !!m.is_aix_generated, lineMessageId: m.line_message_id })),
+    lineTasks: ((openTasksResult.data ?? []) as Array<{ task_type: string; status: string; created_at: string; resolved_at: string | null }>).map((t) => ({ task_type: t.task_type, status: t.status, created_at: t.created_at, completed_at: t.resolved_at })),
+    lastCustomerAt: typedMessages.find((m) => m.sender === "customer")?.created_at ?? null,
+  });
+  const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
 
   // H6(Fable5): 予約送信・未完了タスク・内覧予定を注入（重複提案防止・next_steps の接地）
   type ScheduledMsg = { text: string | null; scheduled_at: string };
@@ -1876,7 +1891,7 @@ ${PHASE_TEMPLATE_HINTS}
   //     ・templates → match_templates RAGに移行（会話フェーズ最適化・use_count/won_count更新でのキャッシュ破棄解消）
   //   user[1] customerSpecific（cache無し）= 上記DB動的データ + 顧客固有データ + 会話履歴
   const stableKnowledgeText = ``;
-  const customerSpecificText = `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+  const customerSpecificText = `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -2485,6 +2500,11 @@ ${history}`;
       analyzed_msg_ts: lastCustomerMsg?.created_at ?? null,
       // 直近AIXアクション履歴文字列（generate-reply RAG文脈強化用・recentAixSeqText組み立て済み）
       last_aix_history: recentAixSeqText || null,
+      // 2026-09-09 Fable5 行動台帳（JSONB・migrate-schema 不要）。generate-reply の一次証拠は route 側 buildActionLedger（同一関数）
+      action_ledger: {
+        summary: brainLedger.summary,
+        facts: { propertiesSentCount: brainLedger.facts.propertiesSentCount, estimateSent: brainLedger.facts.estimateSent, pickupPromisedUnfulfilled: brainLedger.facts.pickupPromisedUnfulfilled, lastStaffEntry: brainLedger.facts.lastStaffEntry ? { kind: brainLedger.facts.lastStaffEntry.kind, status: brainLedger.facts.lastStaffEntry.status } : null },
+      },
     };
   } catch (e) {
     console.warn(`[brain-core] Haiku analysis failed: conv=${conversationId}`, e instanceof Error ? e.message : e);

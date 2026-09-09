@@ -36,9 +36,11 @@ import {
   // 2026-09-09 Fable5 みく事例: ヘッジゲート・締めポリシー・姿勢ギャップ（生成側 route.ts / buildStanceNote と同一関数）
   resolveHedgeAllowance, resolveCloser, deriveCloserSignals, extractEchoTokens, evalConditionEcho, classifyScheduleCommitment, resolveAnswerability, detectExcusePhrases,
   CLOSER_TEXT, PRE_PICKUP_HEDGE_RE, SEARCH_REPORT_RE, RELAX_PROPOSAL_RE, PAST_REPORT_RE, SEARCH_DECL_RE, SELF_HEDGE_ECHO_RE, CUST_STATED_RELAX_RE,
-  STAFF_ASSERT_SCHEDULE_RE, SCHEDULE_ASK_RE, DEFERRED_ANSWER_RE, NANISOTSU_RE, OPEN_DOOR_RE, WAIT_SOFTLY_RE, RESULT_EXCUSE_RE,
+  STAFF_ASSERT_SCHEDULE_RE, SCHEDULE_ASK_RE, DEFERRED_ANSWER_RE, NANISOTSU_RE, OPEN_DOOR_RE, WAIT_SOFTLY_RE, RESULT_EXCUSE_RE, DELIVERABLE_RE, redoWord,
   type HedgeVerdict, type CloserVerdict, type ExcuseFlag,
 } from "./reply-context";
+// 2026-09-09 Fable5 行動台帳: generate-reply と同一オブジェクト（省略時は recentMessages から再計算）。実行前提語ゲート・自動修正は action-ledger の同じ関数
+import { buildActionLedger, checkDonePresupposition, applyLedgerAutoFix, COMPLETED_SEND_RE, LEDGER_SEARCH_DECL_RE, SENT_ACK_RE, ATTACHED_DELIVERABLE_RE, type ActionLedger } from "./action-ledger";
 // 2026-09-09 Fable5: check-reply 経路（isConditionPresented フラグ無し）でも条件フォームを condition_change に分類する（route.ts conditionDetail reason:'form' と同定義）
 import { isConditionFormMessage } from "./line-reply-prompts";
 
@@ -127,6 +129,13 @@ export interface FinalCheckContext {
   // ── 2026-09-09 Fable5 みく事例: ヘッジゲート・締めポリシー（route.ts resolveHedgeAllowance / resolveCloser と同一オブジェクト。check-reply 経路は省略可＝再計算）──
   hedge?: HedgeVerdict;
   closerVerdict?: CloserVerdict;
+  // ── 2026-09-09 Fable5 行動台帳（Action Ledger）──
+  /** route.ts buildActionLedger と同一オブジェクト。check-reply 旧経路は省略可＝recentMessages から再計算（aix_usage_logs 無し・保守的） */
+  ledger?: ActionLedger;
+  /** 生成中の返信自体が AIX 成果物（物件送付文・見積送付文）＝「こちらの物件」「お送りした」は添付物を指すので免除 */
+  isDeliverableReply?: boolean;
+  /** true=DONE_PRESUPPOSED_WITHOUT_EVIDENCE / UNSENT_CLAIM を block（generate-reply inject/enforce）。false/省略=warning（check-reply のスタッフ編集文） */
+  ledgerStrict?: boolean;
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -573,8 +582,14 @@ function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): PromptB
     if (!pair.rule) return "";
     return `\n往復文脈: 我々=${STAFF_KIND_JA[pair.staff.kind]}→お客様=${CUSTOMER_KIND_JA[pair.customer.kind]}。必須要素: ${pair.rule.mustInclude.map((m) => m.label).join(" / ")}（これらは省略可能な要素ではない。欠けていれば WE_DO_MISSING / MISSED_QUESTION として指摘すること）`;
   })();
+  // 2026-09-09 行動台帳: 「我々が実際にしたこと」（一次証拠=aix_usage_logs）を段階情報に添える。DOUBLE_DECLARATION の誤発行（条件更新を伴う宣言の再提示）を抑止
+  const ledgerPart = (() => {
+    if (!ctx.lastCustomerMessage && !ctx.ledger) return "";
+    const l = resolveLedger(ctx);
+    return `\n行動台帳（我々が実際にしたこと・一次証拠=aix_usage_logs）: ${l.summary}${l.facts.pickupPromisedUnfulfilled && l.facts.propertiesSentCount === 0 ? "\n※ 行動台帳が『ピックアップ約束・未履行』で顧客が条件を変更した場合、絞り込みを反映した宣言の再提示は DOUBLE_DECLARATION ではない（同じ約束の繰り返しではなく更新）" : ""}`;
+  })();
   const stageBlock = (ctx.conversationStage || ctx.tpoLabel)
-    ? `[STAGE]\n現在段階: ${ctx.conversationStage ?? "（不明）"}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${ctx.sentPropertiesCount}件` : ""}${ctx.checkpointStage && ctx.checkpointStage !== ctx.conversationStage ? `\nフェーズ乖離: brain実態=${ctx.checkpointStage} DB=${ctx.conversationStage}。実態フェーズで判定すること` : ""}${tpoPart}${pairPart}\n[/STAGE]\n`
+    ? `[STAGE]\n現在段階: ${ctx.conversationStage ?? "（不明）"}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${sentCountOf(ctx)}件` : ""}${ctx.checkpointStage && ctx.checkpointStage !== ctx.conversationStage ? `\nフェーズ乖離: brain実態=${ctx.checkpointStage} DB=${ctx.conversationStage}。実態フェーズで判定すること` : ""}${ledgerPart}${tpoPart}${pairPart}\n[/STAGE]\n`
     : "";
   const brainBaselineNote = ctx.brainMeta?.action
     ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。このアクションと矛盾しない返信内容であればSTAGE_SKIPは発行しないこと。\n\n`
@@ -715,6 +730,7 @@ ${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2
 【3. 二重宣言（DOUBLE_DECLARATION）】
 発行しないケース:
 - 内容が実質的に異なる場合（前回は「物件を探します」、今回は「○○区限定で探します」等）
+- [STAGE] の行動台帳が『ピックアップ約束・未履行』で顧客が条件を変更・絞り込んだ場合の、絞り込みを反映した宣言の再提示（同じ約束の繰り返しではなく約束の更新）
 - 顧客側からの再質問・再確認に応えて繰り返す場合（顧客が促した場合）
 - TikTok・SNS動画経由の初回返信で「ご連絡頂きありがとうございます」＋「動画みていただきありがとうございます」の
   お礼が連続する場合（TikTok流入時の必須文言セットであり二重宣言ではない）
@@ -971,27 +987,51 @@ const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*
 const GREETING_BLOCK_RE = /^(?:夜遅くに失礼します[！!]*\s*)?(?:[^\n]{0,12}(?:さん|様)[、,\s]*)?(?:はじめまして|初めまして|この度はご連絡|この度ご連絡|お部屋探しを担当|お部屋探しご担当|お世話になっております|お待たせ(?:致|いた)しました|ご連絡遅くなり申し訳)[^\n]*\n+/;
 
 // ─── 2026-09-09 Fable5 往復文脈: ctx 解決（generate-reply 経路は同一オブジェクト、check-reply 経路は再計算）─────────
-function resolveReplyContext(ctx: FinalCheckContext): { sub: SubstanceVerdict; pair: PairContext; hedge: HedgeVerdict } {
+/** 2026-09-09 行動台帳: generate-reply 経路は同一オブジェクト、check-reply 経路は recentMessages から再計算（aix_usage_logs 無し・保守的）。ctx 単位で1回だけ計算 */
+const ledgerCache = new WeakMap<FinalCheckContext, ActionLedger>();
+function resolveLedger(ctx: FinalCheckContext): ActionLedger {
+  if (ctx.ledger) return ctx.ledger;
+  const cached = ledgerCache.get(ctx);
+  if (cached) return cached;
+  const built = buildActionLedger({
+    recentAixRows: [],
+    messages: (ctx.recentMessages ?? []).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt, isAix: m.isAix })),
+    lastCustomerAt: [...(ctx.recentMessages ?? [])].reverse().find((m) => m.sender === "customer")?.createdAt ?? null,
+  });
+  ledgerCache.set(ctx, built);
+  return built;
+}
+/** 送付済み物件数の単一参照（台帳があれば台帳、無ければ route/check-reply の sentPropertiesCount、どちらも無ければ再計算） */
+function sentCountOf(ctx: FinalCheckContext): number {
+  if (ctx.ledger) return ctx.ledger.facts.propertiesSentCount;
+  if (ctx.sentPropertiesCount !== undefined) return ctx.sentPropertiesCount;
+  return resolveLedger(ctx).facts.propertiesSentCount;
+}
+function resolveReplyContext(ctx: FinalCheckContext): { sub: SubstanceVerdict; pair: PairContext; hedge: HedgeVerdict; ledger: ActionLedger } {
   const cust = ctx.lastCustomerMessage ?? "";
   const lastStaffMsg = [...(ctx.recentMessages ?? [])].reverse().find((m) => m.sender === "staff" && !MEDIA_ONLY_RE.test(m.text));
   const lastStaff = lastStaffMsg?.text ?? "";
+  const ledger = resolveLedger(ctx);
   let sub = ctx.substance, pair = ctx.pairContext;
   if (!sub || !pair) {
-    const staff = classifyLastStaffTurn(lastStaff);
+    const staff = classifyLastStaffTurn(lastStaff, { ledger });
     sub = sub ?? analyzeSubstance(cust, undefined, { staffAskedQuestion: staff.kind === "question_to_customer" });
     // check-reply 経路は route.ts のフラグが無いので、条件フォーム（①〜⑧／【…】⇒）だけは同定義の isConditionFormMessage で condition_change に寄せる
-    pair = pair ?? resolveTurnPair(staff, classifyCustomerResponse(sub, staff, { isConditionPresented: isConditionFormMessage(cust) }), sub, lastStaff);
+    pair = pair ?? resolveTurnPair(staff, classifyCustomerResponse(sub, staff, { isConditionPresented: isConditionFormMessage(cust) }), sub, lastStaff, { ledger });
   }
   // check-reply 経路（aix_usage_logs 無し）は過去形の直前スタッフ本文だけを探索証拠に採る（保守的＝forbid 寄り）
   const hedge = ctx.hedge ?? resolveHedgeAllowance({
     customerMessage: cust, substance: sub, staff: pair.staff, customer: pair.customer, lastStaffText: pair.lastStaffText,
     lastCustomerAt: [...(ctx.recentMessages ?? [])].reverse().find((m) => m.sender === "customer")?.createdAt ?? null,
+    ledger,
   });
-  return { sub, pair, hedge };
+  return { sub, pair, hedge, ledger };
 }
 // 「文を足す」修正が正解の骨格系コード（修正ループの長さ上限・evidence 残存プリフィルタから除外する）
-// 2026-09-09 Fable5: CLOSER_MISSING / CONDITION_ECHO_MISSING も「文を足す」修正（PREEMPTIVE_HEDGE 等の削除系は含めない）
-export const SKELETON_CODES = new Set(["REPLY_SKELETON_MISSING", "CONCERN_UNADDRESSED", "EMPTY_CLOSER", "PAIR_ELEMENT_MISSING", "SPLIT_ACK_REPLY", "GENERIC_ONLY_REPLY", "WE_DO_MISSING_DET", "WE_DO_MISSING", "CLOSER_MISSING", "CONDITION_ECHO_MISSING"]);
+// 2026-09-09 Fable5: CLOSER_MISSING / CONDITION_ECHO_MISSING も「文を足す」修正（PREEMPTIVE_HEDGE 等の削除系は含めない）。SENT_IGNORED（既送付に触れる文を足す）も同様
+export const SKELETON_CODES = new Set(["REPLY_SKELETON_MISSING", "CONCERN_UNADDRESSED", "EMPTY_CLOSER", "PAIR_ELEMENT_MISSING", "SPLIT_ACK_REPLY", "GENERIC_ONLY_REPLY", "WE_DO_MISSING_DET", "WE_DO_MISSING", "CLOSER_MISSING", "CONDITION_ECHO_MISSING", "SENT_IGNORED"]);
+/** 2026-09-09 行動台帳: 決定論置換（applyLedgerAutoFix）で直せるコード。block がこれだけなら Sonnet 修正を呼ばない */
+export const LEDGER_FIX_CODES = new Set(["DONE_PRESUPPOSED_WITHOUT_EVIDENCE", "UNSENT_CLAIM", "PROMISE_ECHO_MISMATCH"]);
 // 回答・説明形の文（「〜となります」「〜ので、」等）。REPLY_SKELETON の「回答／提案」判定に使う
 const ANSWER_RE = /(?:となります|でございます|御座います|ございます|可能です|大丈夫です|問題(?:ございません|ありません|ない)|かかります|発生(?:し|いた)します|(?:多数|沢山|たくさん)(?:ございます|あります|御座います)|オススメ|おすすめ|お勧め|ご提案|(?:の|な)ため[、,]|ので[、,]|です(?:ので|が)[、,]|ため[！!。]|(?:出来|でき)ます[！!。]|傾向|一般的に|目安)/;
 const NO_DECL_TPO_RE = /一時保留|強推し直後/;
@@ -1011,8 +1051,10 @@ const FEELING_TEMPLATE_PATTERNS: Array<{ re: RegExp; msg: string; sug: string; o
 function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const issues: CheckIssue[] = [];
   const tpo = ctx.tpoLabel ?? "";
-  const { sub, pair } = resolveReplyContext(ctx);
+  const { sub, pair, ledger } = resolveReplyContext(ctx);
   const pairHint = `【往復文脈】${pair.summary}。`;
+  // 2026-09-09 行動台帳: suggestion の「再度」は送付実績がある時だけ（検査側 suggestion が禁止語の供給源にならないように。生成側 {redo} と同じ関数）
+  const redo = redoWord(ledger);
   const head = text.trim().slice(0, 30); // evidence は必ず返信本文由来（顧客文を evidence にすると修正ループが回らない）
   const weDoBase = stripUnbackedConfirmPromise(text, getConfirmVerdict(ctx));
   const residue = weDoBase.replace(BOILERPLATE_RE, "");
@@ -1029,7 +1071,7 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
       message: `顧客メッセージに${sub.kinds.join("・") || "実質的な内容"}があるのに、返信に「回答／提案」も「次に何をするかの行動宣言」もありません（受け止め・了承・共感のみ）。${pairHint}`,
       evidence: head,
       suggestion: sub.concerns.length
-        ? `懸念（${sub.concerns.map((c) => c.label).join("・")}）に事実で答え、「${sub.concerns.map((c) => c.fix).join("、")}再度ピックアップしてお送りさせて頂きます」の形で1文宣言する`
+        ? `懸念（${sub.concerns.map((c) => c.label).join("・")}）に事実で答え、「${sub.concerns.map((c) => c.fix).join("、")}${redo}ピックアップしてお送りさせて頂きます」の形で1文宣言する`
         : sub.kinds.includes("schedule")
           ? "顧客が予告した行動（後日送る・相談する）を先取りして受ける宣言（「お送り頂き次第募集状況確認し御見積書とあわせてご連絡させて頂きます」）＋直前送付物への次のステップを1文ずつ入れる"
           : "顧客メッセージの固有名詞を復唱し「〇〇をピックアップしてお送りさせて頂きます」等の具体アクションを1文入れる" });
@@ -1043,7 +1085,7 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
       issues.push({ pass: "context_check", severity: "block", code: "CONCERN_UNADDRESSED",
         message: `顧客の懸念「${unaddressed.map((c) => `${c.label}（${c.phrase}）`).join("、")}」に対する回答・代替案・別候補の宣言が返信にありません。${pairHint}`,
         evidence: head,
-        suggestion: unaddressed.map((c) => `「${c.fix}再度ピックアップしてお送りさせて頂きます」`).join("／") });
+        suggestion: unaddressed.map((c) => `「${c.fix}${redo}ピックアップしてお送りさせて頂きます」`).join("／") });
     }
   }
 
@@ -1308,7 +1350,52 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   //    ・姿勢ギャップ（CONDITION_ECHO_MISSING / SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / 煽り・受け身5種）
   issues.push(...runHedgeChecks(text, ctx), ...runCloserChecks(text, ctx), ...runStanceChecks(text, ctx));
 
+  // ⑫ 2026-09-09 Fable5 行動台帳（DONE_PRESUPPOSED_WITHOUT_EVIDENCE / UNSENT_CLAIM / PROMISE_ECHO_MISMATCH / SENT_IGNORED）
+  issues.push(...runLedgerChecks(text, ctx));
+
   return issues;
+}
+
+// ─── 2026-09-09 Fable5 行動台帳検査（A: 実行前提語 / B: 約束未履行なのに完了形 / C: 既送付無視）。生成側 buildLedgerNote と同じ checkDonePresupposition ───
+function runLedgerChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  const { sub, pair, ledger } = resolveReplyContext(ctx);
+  const name = ctx.customerName ? `${ctx.customerName}さん` : "〇〇さん";
+  // 成果物添付＝物件ラベル・見積書・URL の実体がある時（完了形動詞だけの「ピックアップさせて頂きました」は添付ではない）
+  const isDeliverable = ctx.isDeliverableReply ?? ATTACHED_DELIVERABLE_RE.test(text);
+  const hint = `【行動台帳】${ledger.summary}。`;
+  // 証拠の質: generate-reply 経路（ledgerStrict）は block。台帳を渡していない check-reply 旧経路（スタッフ編集文）は warning
+  const strict = ctx.ledgerStrict ?? !!ctx.ledger;
+  for (const h of checkDonePresupposition(text, ledger, { customerMessage: ctx.lastCustomerMessage ?? "", name, isDeliverableReply: isDeliverable })) {
+    if (h.exempt) continue;
+    const severity: CheckSeverity = h.severity === "warning" || !strict ? "warning" : "block";
+    issues.push({ pass: "context_check", severity, code: h.code,
+      message: `${h.label}ですが、台帳に該当する実行記録がありません（必要: ${h.requiresLabel}）。${hint}`,
+      evidence: h.evidence,
+      suggestion: `「${h.sentence}」→「${h.fixed || "（文ごと削除）"}」に置換（他の文は触らない。台帳に無い事実を書き足さない）` });
+  }
+  // B. 宣言のみ・未履行なのに完了形
+  if (ledger.facts.pickupPromisedUnfulfilled && ledger.facts.propertiesSentCount === 0 && !isDeliverable) {
+    const m = text.match(COMPLETED_SEND_RE);
+    if (m) issues.push({ pass: "context_check", severity: "warning", code: "PROMISE_ECHO_MISMATCH",
+      message: `直前の「ピックアップしてお送りします」宣言はまだ履行されていない（物件送付0件）のに完了形で書いています。${hint}`,
+      evidence: m[0], suggestion: `「${m[0]}」→「ピックアップ出来次第お送りさせて頂きます」に置換` });
+  }
+  // C. 送付済み≥1 × 条件変更 × 初回型の宣言のみ（既送付に触れない）
+  const isCondChange = pair.customer.kind === "condition_change" || pair.customer.secondary.includes("condition_change") || sub.kinds.includes("condition");
+  if (ledger.facts.propertiesSentCount >= 1 && isCondChange && !isDeliverable && LEDGER_SEARCH_DECL_RE.test(text) && !SENT_ACK_RE.test(text)) {
+    issues.push({ pass: "context_check", severity: "warning", code: "SENT_IGNORED",
+      message: `既に${ledger.facts.propertiesSentCount}件送付済みなのに、初回のようにピックアップ宣言だけで既送付物件に触れていません。${hint}`,
+      evidence: firstSentenceAround(text, LEDGER_SEARCH_DECL_RE),
+      suggestion: `「〇〇も含めて再度ピックアップしてお送りさせて頂きます！！お送りした物件（${ledger.facts.propertiesSentNames.slice(0, 3).join("・") || "送付済み"}）も選択肢として残して頂ければ幸いです！！」の形にする` });
+  }
+  return issues;
+}
+
+/** 2026-09-09 行動台帳: 修正ループの指示に台帳の根拠と「台帳に無い事実を書かない」制約を添える（decorate は台帳系コードのみ） */
+export function decorateFixInstruction(issue: CheckIssue, ledger: ActionLedger): CheckIssue {
+  if (!LEDGER_FIX_CODES.has(issue.code) && issue.code !== "SENT_IGNORED") return issue;
+  return { ...issue, suggestion: `${issue.suggestion ?? ""}。根拠=行動台帳: ${ledger.summary}。禁止: 台帳に無い送付・確認・案内の事実を新たに書く／文を追加する（SENT_IGNORED を除く）。許可: 語の削除・「出来次第お送りさせて頂きます」への置換` };
 }
 
 // ─── 2026-09-09 Fable5 みく事例: ヘッジゲート検査（生成側 resolveHedgeAllowance と同一 verdict）───────────
@@ -1542,7 +1629,7 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
     } else {
       const custForEst = customerTextsForBan(ctx);
       const staffRecent = lastStaffTexts(ctx, 2);
-      const sentN = ctx.sentPropertiesCount ?? 0;
+      const sentN = sentCountOf(ctx); // 2026-09-09 行動台帳に統一
       allowed =
         CUSTOMER_ESTIMATE_INTENT_RE.test(custForEst) ||
         CUSTOMER_PROPERTY_REF_RE.test(custForEst) ||
@@ -1612,7 +1699,7 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
           `【${def.label}】${b.why}: 「${m[0]}」（${v.reason}）`, m[0], b.fix);
         continue;
       }
-      if (b.onlyIf && !b.onlyIf({ sentPropertiesCount: ctx.sentPropertiesCount })) continue;
+      if (b.onlyIf && !b.onlyIf({ sentPropertiesCount: sentCountOf(ctx) })) continue;
       const m = text.match(b.re);
       if (!m) continue;
       if (b.allowIfCustomerAsked && /他(の|にも)?(物件|お部屋)|別の(物件|お部屋)|申(し)?込(み)?(たい|します|お願い)|内覧(したい|お願い)|見てみたい/.test(cust)) continue;
@@ -1654,7 +1741,8 @@ const PHOTO_RE = /撮影/;
 const PHOTO_PREMISE_RE = /撮影|動画|オンライン内見|オンライン内覧|ビデオ通話|室内(?:を)?(?:撮|見せ)|写真(?:を)?(?:撮|撮影)/;
 const CUSTOMER_PHOTO_WANT_RE = /写真|動画|撮影|オンライン|内見(?:でき|出来)ません|行けな|遠方|見に行けな/;
 const SATSUEI_SUBST_RE = /(?:内見|内覧|見)(?:したい|に行きたい|できますか|出来ますか|は?できない|は?出来ない|はできないんですか)/;
-const SENT_CLAIM_RE = /(?:先ほど|先程|先日)?お送り(?:させて(?:頂|いただ)い|し)た(?:御|お)?(?:見積|物件|資料|写真)/;
+// 2026-09-09 行動台帳: 旧 SENT_CLAIM_RE（V9）は action-ledger DONE_PRESUPPOSING_VOCAB.prior_sent_claim（同名 code UNSENT_CLAIM）に統合。写真のみ従来の staffHist 判定を残す
+const SENT_PHOTO_CLAIM_RE = /(?:先ほど|先程|先日)?お送り(?:させて(?:頂|いただ)い|し)た(?:お)?写真/;
 const JUSHU_RE = /ご査収/;
 const SELF_HONORIFIC_RE = /ご確認(?:した|しました)(?:通り|とおり|ところ)/;
 const GUIDE_POSSIBLE_RE = /ご案内可能です/;
@@ -1714,8 +1802,8 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
     const sent = firstSentenceAround(text, GOCHOUGO_GUIDE_RE);
     const hasCondition = CONDITION_CLAUSE_RE.test(sent);
     const hasQuestion = QUESTION_FORM_RE.test(text);
-    // A-11: sentPropertiesCount の実値のみで判定（履歴の「物件」「お部屋」語は約束文にも出るため根拠にしない）
-    const noPropertySent = ctx.sentPropertiesCount === 0;
+    // A-11: sentPropertiesCount の実値のみで判定（履歴の「物件」「お部屋」語は約束文にも出るため根拠にしない）。2026-09-09 行動台帳に統一
+    const noPropertySent = sentCountOf(ctx) === 0;
     if (noPropertySent) {
       issues.push({ pass: "context_check", severity: "block", code: "GUIDE_BEFORE_PROPERTY",
         message: "物件を1件も送っていない段階で内覧案内を宣言しています（順番が逆）",
@@ -1776,23 +1864,24 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
       evidence: firstSentenceAround(text, PHOTO_RE),
       suggestion: "「開始次第お部屋ご案内させて頂きます！！」に変更（内覧不可の場合のみ理由を添えて代替提案）" });
   }
-  // V9 未送付物を送済みとして言及
+  // V9 未送付物を送済みとして言及 — 2026-09-09 行動台帳: 見積・物件は runLedgerChecks（prior_sent_claim → UNSENT_CLAIM）に統合。写真（台帳外）のみ従来判定
   {
-    const m = text.match(SENT_CLAIM_RE);
-    if (m) {
-      const obj = /見積/.test(m[0]) ? /見積/ : /写真/.test(m[0]) ? /写真|画像/ : /物件|お部屋|【画像】/;
-      if (!obj.test(staffHist)) {
-        issues.push({ pass: "context_check", severity: "block", code: "UNSENT_CLAIM",
-          message: "まだ送っていない物（見積書・物件・写真）を「先ほどお送りした」と送済み扱いにしています",
-          evidence: m[0], suggestion: "「〜作成しお送りさせて頂きます」の未来形に変更" });
-      }
+    const m = text.match(SENT_PHOTO_CLAIM_RE);
+    if (m && !/写真|画像/.test(staffHist)) {
+      issues.push({ pass: "context_check", severity: "block", code: "UNSENT_CLAIM",
+        message: "まだ送っていない写真を「先ほどお送りした」と送済み扱いにしています",
+        evidence: m[0], suggestion: "「撮影出来次第お写真お送りさせて頂きます」の未来形に変更" });
     }
   }
-  // V10 未送付での「ご査収」
-  if (JUSHU_RE.test(text) && ctx.sentPropertiesCount === 0 && !/【画像】|お送りさせて頂きました|お送りしました|送付しました|見積/.test(staffHist)) {
-    issues.push({ pass: "context_check", severity: "warning", code: "JUSHU_BEFORE_SEND",
-      message: "何も送っていない段階で「ご査収ください」と書いています（査収＝受け取って確認する行為）",
-      evidence: firstSentenceAround(text, JUSHU_RE), suggestion: "「ご査収」を削除し送付宣言（〜お送りさせて頂きます）に変更" });
+  // V10 未送付での「ご査収」（2026-09-09 行動台帳: 物件送付0件 かつ 見積未送付 かつ この返信が成果物添付でない）
+  {
+    const lf = resolveLedger(ctx).facts;
+    const isDeliverable = ctx.isDeliverableReply ?? ATTACHED_DELIVERABLE_RE.test(text);
+    if (JUSHU_RE.test(text) && sentCountOf(ctx) === 0 && !lf.estimateSent && !isDeliverable && !/【画像】|お送りさせて頂きました|お送りしました|送付しました|見積/.test(staffHist)) {
+      issues.push({ pass: "context_check", severity: "warning", code: "JUSHU_BEFORE_SEND",
+        message: "何も送っていない段階で「ご査収ください」と書いています（査収＝受け取って確認する行為）",
+        evidence: firstSentenceAround(text, JUSHU_RE), suggestion: "「ご査収」を削除し送付宣言（〜お送りさせて頂きます）に変更" });
+    }
   }
   // V11 自敬表現
   if (SELF_HONORIFIC_RE.test(text)) {
@@ -1872,6 +1961,15 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, sonne
       });
     }
   });
+
+  // ── 2026-09-09 行動台帳: DOUBLE_DECLARATION の決定論フィルタ。台帳が「ピックアップ約束・未履行」で顧客が条件を変更した時、
+  //    絞り込みを反映した宣言の再提示は二重宣言ではない（みく事例の直接機序: この warning → 修正ループが suggestion の「再度」を挿入していた）──
+  if (ctx.lastCustomerMessage && issues.some((i) => i.code === "DOUBLE_DECLARATION")) {
+    const { pair: p0, ledger: l0 } = resolveReplyContext(ctx);
+    if (l0.facts.pickupPromisedUnfulfilled && (p0.customer.kind === "condition_change" || p0.customer.secondary.includes("condition_change"))) {
+      for (let i = issues.length - 1; i >= 0; i--) if (issues[i].code === "DOUBLE_DECLARATION") issues.splice(i, 1);
+    }
+  }
 
   // ── 部分未完走警告（2パス未満の場合は常に通知・自動送信時はblock）──
   if (passesCompleted.length < 2) {
@@ -1974,6 +2072,7 @@ AIXボタン（物件送付・見積提示・内見日程調整等の具体的�
 - 既存の提案・宣言（「〜いたします」等）を無断で削除する
 - 冒頭の感謝・挨拶文（「ご条件お送り頂きありがとう御座います😊！！」等）を削除・省略する（全体書き直しの場合も必ず先頭に残す）
 - 修正対象の指摘箇所以外の文体・構成を変える
+- [ACTION_LEDGER] に記録が無い送付・確認・案内を完了扱いにする語（再度／改めて／先ほどお送りした／こちらの物件）を残す、または新たに書く
 - 「修正後：」「以下修正版です」等の前置きを出力する
 
 修正後の文章のみを出力してください（説明・前置き不要）。`;
@@ -1996,10 +2095,14 @@ function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: Fin
   const historyNote = ctx.recentMessages?.length
     ? `\n[HISTORY]（直近会話履歴・最新5件）\n${formatHistory(ctx.recentMessages, 5)}\n[/HISTORY]\n`
     : "";
+  // 2026-09-09 行動台帳: 修正時に「我々が実際にしたこと」を渡し、台帳に無い行為を「再度／改めて／先ほどお送りした」の前提にさせない
+  const ledgerNote = (ctx.lastCustomerMessage || ctx.ledger)
+    ? `\n[ACTION_LEDGER]（我々が実際にしたこと。ここに無い行為を「再度／改めて／先ほどお送りした」等の前提にしない）\n${resolveLedger(ctx).summary}\n[/ACTION_LEDGER]\n`
+    : "";
   const dynamic = `[ISSUES]
 ${issues.map((i) => `- [${i.code}] ${i.message}（該当箇所:「${i.evidence}」${i.suggestion ? ` / 修正案: ${i.suggestion}` : ""}）`).join("\n")}
 [/ISSUES]
-${customerMsgNote}${pairNote}${historyNote}${brainNote}
+${customerMsgNote}${pairNote}${ledgerNote}${historyNote}${brainNote}
 [CHECKPOINT]（確認済み事実・最高権威）
 ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [/CHECKPOINT]
@@ -2268,7 +2371,8 @@ OPENING_GREETING_MISMATCH / OPENING_GREETING_UNEXPECTED / GREETING_WAITED_MISUSE
 REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSING / SPLIT_ACK_REPLY / FEELING_TEMPLATE /
 PREEMPTIVE_HEDGE / FABRICATED_SEARCH_REPORT / CONDITION_RELAX_UNASKED / HEDGE_WITHOUT_SEARCH_DECL / SELF_HEDGE_ECHO /
 CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE / CONDITION_ECHO_MISSING /
-SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / WIDEN_EXCUSE_REDUNDANT / REASSURANCE_NO_BASIS / URGENCY_NO_INTENT / CONSIDER_PUSH / HUMBLE_WAIT`;
+SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / WIDEN_EXCUSE_REDUNDANT / REASSURANCE_NO_BASIS / URGENCY_NO_INTENT / CONSIDER_PUSH / HUMBLE_WAIT /
+DONE_PRESUPPOSED_WITHOUT_EVIDENCE / PROMISE_ECHO_MISMATCH / SENT_IGNORED`;
 
 function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx: FinalCheckContext): string {
   const issuesJson = JSON.stringify(
@@ -2323,7 +2427,8 @@ function inferDiffIssuePass(code: string, check1Issues: CheckIssue[]): CheckPass
       code === "FEEDBACK_PREMATURE" || code === "GOCHOUGO_AFTER_FIXED" || code === "GOCHOUGO_AFTER_DATE" ||
       code === "GUIDE_BEFORE_PROPERTY" || code === "CONFIRM_SUBJECT_THEFT" || code === "PHOTO_NO_PREMISE" ||
       code === "PHOTO_REPLACES_VIEWING" || code === "UNSENT_CLAIM" || code === "JUSHU_BEFORE_SEND" ||
-      code === "APPLY_PUSH_NO_INTENT" || code === "CONFIRM_NO_OBJECT" || code === "FAREWELL_ON_MOVEOUT_INFO") return "context_check";
+      code === "APPLY_PUSH_NO_INTENT" || code === "CONFIRM_NO_OBJECT" || code === "FAREWELL_ON_MOVEOUT_INFO" ||
+      code === "DONE_PRESUPPOSED_WITHOUT_EVIDENCE" || code === "PROMISE_ECHO_MISMATCH" || code === "SENT_IGNORED") return "context_check";
   return "rule_check"; // AIX_BOUNDARY_* / BANNED_WORD / RULE_VIOLATION / 不明code
 }
 
@@ -2440,7 +2545,9 @@ export async function runFinalCheckWithRevision(
         (!i.evidence || draftNormW.includes(normalizeForMatch(i.evidence)))
     );
     if (passableWarnIssues.length === 0) return { finalDraft: draft, finalCheck: check1 };
-    const revised = await runGroundedRevision(draft, passableWarnIssues, ctx, REVISION_MS);
+    // 2026-09-09 行動台帳: 台帳系 warning の修正指示に根拠と制約を添える
+    const ledgerW = resolveLedger(ctx);
+    const revised = await runGroundedRevision(draft, passableWarnIssues.map((i) => decorateFixInstruction(i, ledgerW)), ctx, REVISION_MS);
     if (!revised) return { finalDraft: draft, finalCheck: check1 };
 
     // (3) 決定的プリスキャン（約0ms）: 禁止語彙、および修正で新規挿入された
@@ -2502,7 +2609,19 @@ export async function runFinalCheckWithRevision(
         (!i.evidence || draftNormB.includes(normalizeForMatch(i.evidence)))
     );
     if (passableBlockIssues.length === 0) break;
-    const revised = await runGroundedRevision(currentDraft, passableBlockIssues, ctx, REVISION_MS);
+    // 2026-09-09 行動台帳: block が台帳系（再度／お送りした／完了形）だけなら決定論置換（applyLedgerAutoFix）で直す（Sonnet 15s 節約・意味の変質ゼロ）。
+    //   他の block が混在する時は Sonnet 修正に台帳の根拠・制約を添える
+    const ledgerB = resolveLedger(ctx);
+    const blocksOnly = passableBlockIssues.filter((i) => i.severity === "block");
+    const allLedger = blocksOnly.length > 0 && blocksOnly.every((i) => LEDGER_FIX_CODES.has(i.code));
+    let revised: string | null;
+    if (allLedger) {
+      const r = applyLedgerAutoFix(currentDraft, ledgerB, { customerMessage: ctx.lastCustomerMessage ?? "", name: ctx.customerName ? `${ctx.customerName}さん` : "〇〇さん", isDeliverableReply: ctx.isDeliverableReply });
+      revised = r.applied.length ? r.text : null;
+      if (revised) console.log("[final-check] ledger-autofix:", r.applied);
+    } else {
+      revised = await runGroundedRevision(currentDraft, passableBlockIssues.map((i) => decorateFixInstruction(i, ledgerB)), ctx, REVISION_MS);
+    }
     if (!revised) break; // 修正失敗/ガード違反 → give up gracefully
     // CONFIRM_PROMISE_RE ガード（blockパス・warningパスと対称）
     if (CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(currentDraft)) break;

@@ -3,7 +3,8 @@ import { requireInternalAuth } from "@/app/lib/api-auth";
 import { getCachedPromptRules } from "@/app/lib/prompt-cache";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { runFinalCheck } from "@/app/lib/final-check";
-import { countSentProperties } from "@/app/lib/estimate-context";
+// 2026-09-09 Fable5 行動台帳: generate-reply と同じ buildActionLedger（aix_usage_logs > line_tasks > 本文）で送付実績を決める
+import { buildActionLedger, type LedgerAixRow, type LedgerTask } from "@/app/lib/action-ledger";
 import { supabase } from "@/app/lib/supabase";
 
 // ─── 送信時の最終チェックAPI（スタッフ編集後テキストの再チェック専用）───────────
@@ -87,8 +88,20 @@ export async function POST(req: NextRequest) {
   }
   const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/;
   const hasStaffText = recentMessages.some((m) => m.sender === "staff" && !!(m.text || "").trim() && !MEDIA_ONLY_RE.test(m.text || ""));
-  // 2026-09-08 Fable5: generate-reply と同じ countSentProperties()（見積書画像・地図等の非物件送付は除外）
-  const sentPropertiesCount = countSentProperties(recentMessages);
+  // 2026-09-09 Fable5 行動台帳: generate-reply と同じ buildActionLedger（一次証拠 aix_usage_logs > line_tasks > 本文 regex）。fail-open
+  const [aixRes, taskRes] = conversationId
+    ? await Promise.all([
+        supabase.from("aix_usage_logs").select("aix_type, check_pattern, created_at, sent_at, line_message_id, generated_text, property_names, estimate_sent").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(30).then((r) => r, () => ({ data: [] as LedgerAixRow[] })),
+        supabase.from("line_tasks").select("task_type, status, created_at, completed_at").eq("conversation_id", conversationId).in("status", ["pending", "completed"]).order("created_at", { ascending: false }).limit(20).then((r) => r, () => ({ data: [] as LedgerTask[] })),
+      ])
+    : [{ data: [] as LedgerAixRow[] }, { data: [] as LedgerTask[] }];
+  const ledger = buildActionLedger({
+    recentAixRows: (aixRes.data ?? []) as LedgerAixRow[],
+    messages: recentMessages,
+    lineTasks: (taskRes.data ?? []) as LedgerTask[],
+    lastCustomerAt: null,
+  });
+  const sentPropertiesCount = ledger.facts.propertiesSentCount;
 
   // haikuTimeoutMs=2500: 送信時専用の短いタイムアウト（クライアント 2800ms 以内に収まる）
   // generate-reply は runFinalCheckWithRevision 経由でデフォルト 8000ms を使用
@@ -106,6 +119,8 @@ export async function POST(req: NextRequest) {
     phaseKey,
     isEarlyConversation: !hasStaffText,
     sentPropertiesCount,
+    // 台帳は渡すが ledgerStrict=false（スタッフ編集文の再チェック＝実行前提語は warning に留め、判断はスタッフに返す）
+    ledger, ledgerStrict: false,
     isAix,
     brainMeta: suggestedAixMeta
       ? {

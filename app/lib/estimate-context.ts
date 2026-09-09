@@ -86,6 +86,11 @@ export type EstimateContextInput = {
 const STAFF_PROPERTY_SENT_RE = /🌟|【画像】|\[画像\]|https?:\/\/|お送りさせて頂きました|お送りいたしました|お送りしました|送らせて頂きました|ご査収|[0-9０-９]{2,4}号室/;
 const STAFF_NON_PROPERTY_SEND_RE = /(?:御|お)?見積(?:書|り|もり)|待ち合わせ|集合場所|地図|申込書|申込み?時フォーマット|フォーマット|必要書類|身分証/;
 
+/**
+ * @deprecated 2026-09-09 Fable5 行動台帳（G31）: 🌟 regex 頼みで estimate_sheet 本文の「🌟割引」「[画像]」を物件送付と誤カウントする。
+ *   一次証拠（aix_usage_logs.aix_type > line_tasks > 本文）を統合した action-ledger.ts buildActionLedger().facts.propertiesSentCount を使うこと。
+ *   ACTION_LEDGER_MODE=enforce で generate-reply から外れ、差分ログ [ledger-diff] の確認後に削除する（Phase 2）
+ */
 export function countSentProperties(history: HistoryMessage[]): number {
   return history.filter((m) => {
     if (m.sender !== "staff") return false;
