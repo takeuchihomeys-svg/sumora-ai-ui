@@ -2,6 +2,8 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
 import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES } from "@/app/lib/conversation-status";
+// 2026-09-09 Fable5: 複数通の結合は "\n" ではなく MSG_SEP（1通内の改行を「N通」に分割しない）
+import { MSG_SEP } from "@/app/lib/reply-context";
 
 export const maxDuration = 300;
 
@@ -257,7 +259,7 @@ export async function POST(req: NextRequest) {
   const unreplied = msgsAfterStaff
     .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
     .slice(-10);
-  let targetMessage = unreplied.map((m) => m.text).join("\n");
+  let targetMessage = unreplied.map((m) => m.text).join(MSG_SEP);
 
   if (!targetMessage.trim()) {
     // 画像・動画のみで返信対象テキストなし → 生成不能。
@@ -330,7 +332,7 @@ export async function POST(req: NextRequest) {
             const burstUnreplied = burstAfterStaff
               .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
               .slice(-10);
-            const burstTarget = burstUnreplied.map((m) => m.text).join("\n");
+            const burstTarget = burstUnreplied.map((m) => m.text).join(MSG_SEP);
             if (burstTarget.trim()) {
               if (burstTarget !== targetMessage) {
                 console.log("[bg-async] バースト再フェッチ: 追加メッセージ検出 convId:", convId,
@@ -400,7 +402,7 @@ export async function POST(req: NextRequest) {
           const latestUnreplied = latestAfterStaff
             .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
             .slice(-10);
-          const latestTarget = latestUnreplied.map((m) => m.text).join("\n");
+          const latestTarget = latestUnreplied.map((m) => m.text).join(MSG_SEP);
           if (latestTarget.trim()) {
             if (latestTarget !== targetMessage) {
               console.log("[bg-async] brain後DB再取得: 追加メッセージ検出 convId:", convId,
@@ -517,7 +519,7 @@ export async function POST(req: NextRequest) {
 
       // お客様メッセージから返信ヒントを自動抽出
       // ※ effectiveTargetMessage を使う（brain後DB再取得で追加メッセージが含まれている可能性がある）
-      const msgLines = effectiveTargetMessage.split("\n").map((l) => l.trim()).filter(Boolean);
+      const msgLines = effectiveTargetMessage.split(MSG_SEP).join("\n").split("\n").map((l) => l.trim()).filter(Boolean);
 
       // ① 箇条書き条件（3行以上の短い行）
       const shortLines = msgLines.filter((l) => l.length <= 25);
@@ -620,6 +622,8 @@ export async function POST(req: NextRequest) {
           signal: controller.signal,
           body: JSON.stringify({
             message: effectiveTargetMessage,
+            // 2026-09-09 Fable5: 通単位の配列（generate-reply の splitMessageUnits が優先して使う）
+            customerMessages: effectiveTargetMessage.split(MSG_SEP).map((s) => s.trim()).filter(Boolean),
             state: effectiveState,
             // 紐付き顧客名 → なければ conversationsの表示名（LINEの名前）をフォールバック
             customerName: pcData?.customer_name || (conv.customer_name as string) || "",

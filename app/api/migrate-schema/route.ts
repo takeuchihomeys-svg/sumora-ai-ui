@@ -2680,6 +2680,14 @@ ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS outcome_status text;
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS outcome_evaluated_at timestamptz;
 CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_outcome ON ai_reply_examples(outcome_status) WHERE outcome_status IS NOT NULL;
 
+-- ai_reply_examples.reply_context_snapshot（2026-09-09 Fable5 往復文脈）:
+--   送信時点の conversations.ai_draft_check.tpo_debug（substance / turnPair / finalCheckCodes 等）のスナップショット。
+--   行単位で「TPO×実質×編集率」の相関を追う（集計例:
+--   SELECT reply_context_snapshot->'turnPair'->>'ruleId', COUNT(*), AVG(was_ai_modified::int) FROM ai_reply_examples WHERE reply_context_snapshot IS NOT NULL GROUP BY 1）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS reply_context_snapshot JSONB;
+CREATE INDEX IF NOT EXISTS idx_are_ctx_rule ON ai_reply_examples ((reply_context_snapshot->'turnPair'->>'ruleId'));
+CREATE INDEX IF NOT EXISTS idx_are_ctx_has ON ai_reply_examples (((reply_context_snapshot->'substance'->>'has')::boolean)) WHERE reply_context_snapshot IS NOT NULL;
+
 DROP FUNCTION IF EXISTS match_aix_reply_examples(vector, integer, text);
 CREATE OR REPLACE FUNCTION match_aix_reply_examples(
   query_embedding vector,

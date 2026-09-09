@@ -611,3 +611,57 @@ first > late_apology（tpo「進捗催促対応」）> waited（最終スタッ�
 - G13（条件提示誤判定）への引き継ぎ: `PROPOSED_PROPERTY_REF_RE`（move-out-context.ts）に `[①-⑩]` が入っているので「提案物件への言及」判定に再利用できる
 
 検証: `npx tsc --noEmit` パス／回帰 58/58 パス
+
+
+---
+
+## 往復文脈（Turn-Pair）＋実質判定（Substance）による返信骨格の再建（2026-09-09 Fable5）
+
+**実害**: あみ（内覧打診→「新生児と2階どうかな」）・みく（見積送付→「検討します＋気になる物件を明日以降送ります」）が「はい😊！！…かしこまりました！！」の中身ゼロ返信で「✅そのまま送信OK」。
+**根本原因**: ①待ち系TPOは1つも発動せず、生成文を作っていたのは `AIX_ACTION_REPLY_DIRECTION[effectiveAction]`（内覧誘導禁止／オススメ1件）と骨格指示ゼロの4文字ラベル「物件送付後」。brain の正しい reply_direction は action に負けて捨てられていた ②`customerMessage.split("\n")` が1通内改行を「2通」に分割し分割相槌骨格を誘導 ③final-check は検出していたが page.tsx `autoOk` が checkResult を見ず、brain action ありで指摘リスト非表示。修正ループも「文を足す」修正を長さ上限・evidence残存で棄却していた。
+
+### 新モジュール `app/lib/reply-context.ts`（四者同名の単一真実源・他 lib を import しない）
+| 関数/定数 | 役割 |
+|---|---|
+| `MSG_SEP` / `splitMessageUnits` | 複数通結合の専用区切り（`\n⁣\n`）。page.tsx / bg-async / bg が結合＋`customerMessages` 配列も送る。1通内改行は分割しない |
+| `analyzeSubstance` → `SubstanceVerdict` | 定型（PURE_ACK_SENT_RE）と待ち句（WAIT_PHRASE_RE）を剥がした残余に KIND_RE（concern/question/request/condition/schedule/decision/decline/info/answer）を当てる。`has` / `isAckOnly` / `concerns[]`（CONCERN_RULES 12種: strongRe 単独 or topicRe＋CONCERN_HEDGE_RE。各 `replyRe`（対応語）と `fix`（条件変換リテラル）付き） |
+| `mergeBrainEvidence` | fresh brain（customer_questions / condition_change_type / repeated_concern / customer_concern）を補助証拠として合流 |
+| `classifyLastStaffTurn` | 直前スタッフ発話 → viewing_invite / property_send / estimate_send / question_to_customer / confirmation_promise / condition_ask / check_result / apply_push / other。優先: aix_usage_logs（±3分）> 本文regex > brain last_aix_history |
+| `classifyCustomerResponse` | 顧客返答 → decline > condition_change > question > concern > will_send_later > thinking > positive > answer > ack_only > other（行単位で最強行。対象語付きの迷いは concern、「また連絡します」は thinking） |
+| `PAIR_MATRIX` / `resolveTurnPair` | staff×customer セル（VI_CONCERN / VI_POSITIVE / VI_THINKING / ES_WILL_SEND / ES_THINKING / ES_CONCERN / ES_POSITIVE / PS_CONCERN / PS_THINKING / PS_WILL_SEND / PS_QUESTION / PS_CONDITION_CHANGE / QC_ANSWER / CP_ACK / ANY_DECLINE / ANY_QUESTION / ANY_CONCERN / ANY_WILL_SEND）。各セルに tpoLabel / direction / mustInclude(detect) / mustNot / example / precedence（override_wait＝待ち系TPO・AIX action より先／after_wait＝AIX action より先） |
+| `buildPairDirection` / `buildTurnPairNote` | effectiveReplyDirection 用の決定論リテラル／dynamicBlock【🔁 往復文脈】ブロック |
+
+### route.ts の変更点
+- `substance` / `lastStaffTurn` / `customerResponse` / `pairContext` を1回だけ計算 → TPOゲート・effectiveReplyDirection・effectiveKeyTopics（mustInclude）・activeAvoidTopics（mustNot 和集合・必須要素と衝突する avoid は除外）・tpoNoteForLLM（`rule.tpoLabel（往復: summary。字数）`）・turnPairNote・finalCheckCtx/detCtx/postDetCtx・tpo_debug が同一オブジェクト
+- **待ち系TPOゲート**: `isGratitudeReplyTPO` / `isThinkingMsg` / `isPostStrongRecommendation` は `substance.has` なら false、`isTemporaryLeaveMsg` は schedule のみ許容。`isDecorOnlyMsg` に `[スタンプ]` sentinel
+- `tpoMsgParts` / `customerMsgBlock` は通単位（旧 `split("\n")` 廃止）。`anyPartRestNeutral` は stripDecoration 後に中立判定
+- 「物件送付後」4文字ラベル → 骨格付き「物件送付後の了承（…）」。hesitancy / latent_intent 指示文から「好条件一言・申込促し」「不安を汲み取る一文」を除去
+- tpo_debug に `substance` / `turnPair` / `effectiveReplyDirection` / `brainReplyDirection` / `finalCheckCodes` / `revisionOutcome` / `draftHead` 追加（トレーラーと ai_draft_check 両方）
+
+### final-check.ts の新チェック（`runSkeletonChecks`・runDeterministicChecks 末尾）
+| コード | 条件 | severity |
+|---|---|---|
+| REPLY_SKELETON_MISSING | 実質ありなのに回答文（ANSWER_RE）も行動宣言（ACTION_DECL_RE / RECEIVE_DECL_RE）も無い | has かつ 非一時保留/強推し → block、他 warning |
+| CONCERN_UNADDRESSED | 懸念 `replyRe` が「回答文 or 行動宣言文」に無い（共感文のオウム返しは不可） | block |
+| EMPTY_CLOSER | 最終行（定型締めを除く）が「かしこまりました／承知しました」等で行動宣言なし | block |
+| PAIR_ELEMENT_MISSING | セルの mustInclude 欠落 | override_wait → block、after_wait → warning |
+| SPLIT_ACK_REPLY | 「はい😊！！」開始＋「かしこまりました！！」終了＋残量<40字 | block |
+| FEELING_TEMPLATE | 「お気持ち…わかります」／「ごゆっくりご検討ください」（命令形）／懸念への「はい😊！！」開始 | warning |
+- WE_DO_MISSING_DET / GENERIC_ONLY_REPLY の免除は `sub.isAckOnly` と「待ち系TPO ∧ !has」のみ。`sub.has` or override_wait なら block
+- 修正ループ: `SKELETON_CODES` を含む修正は maxLen=max(2倍,400)、evidence残存プリフィルタから除外。SONNET_REVISION_STATIC に骨格系修正ルール、buildSonnetRevisionPrompt に [PAIR_CONTEXT][SUBSTANCE]
+- page.tsx: `autoOk` が `parsedCheck.ok !== false && block なし` を見る。バッジ「⚠️ 要修正（N件）」「△ 確認推奨（N件）」。brain action ありでも指摘リスト表示
+
+### DB
+- `ai_reply_examples.reply_context_snapshot JSONB`（＋index 2本）: 送信時点の tpo_debug を page.tsx → save-reply-example `tpoDebug` で保存。migrate-schema 追記済み・**本番適用済み（2026-09-09・insert_reply_ctx.mjs で exec_sql 実行）**
+- 集計: `SELECT reply_context_snapshot->'turnPair'->>'ruleId', COUNT(*), AVG(was_ai_modified::int) FROM ai_reply_examples WHERE reply_context_snapshot IS NOT NULL GROUP BY 1`
+- system_design_thinking に設計知見5件 INSERT 済み
+
+### 回帰テスト
+`scratchpad/reply_ctx_test.ts`（17ケース×substance/staff/customer/rule＋PAIR_MATRIX 自己整合＋final-check 骨格 block 正負。151 assert）。実行はプロジェクト直下にコピーして import を `./app/lib/` に置換 → `npx tsx`。
+
+### 判断メモ・引き継ぎ
+- 「1度確認してまた改めて連絡します」（B-14）は **thinking → ES_THINKING**（設計書の ES_WILL_SEND ではない）。正解返信（愛乃さん）に「募集状況確認・見積書」が無く ES_WILL_SEND の mustInclude で block されるため。`will_send_later` は「物件を送る」予告（送/共有 語）に限定
+- PS_QUESTION の第2要素は「〜させて頂き、〜がオススメです」の提案形も可（成約実例が DECL_TAIL 単独で不合格だった）
+- [ ] デプロイ後: あみ・みくの会話で再生成し `ai_draft_check.tpo_debug.turnPair.ruleId` が `VI_CONCERN` / `ES_WILL_SEND`、`finalCheckCodes` に block なし、`draftHead` が「かしこまりました！！」で終わらないことを REST で確認
+- [ ] 2週間後: `reply_context_snapshot` で ruleId 別編集率を集計。FEELING_TEMPLATE（お気持ち…わかります）の編集率が warning 平均より高ければ BANNED_WORDS_DETERMINISTIC に昇格。PAIR_ELEMENT_MISSING（override_wait=block）の FP が出たら detect を**緩める**（mustInclude を足さない）
+- [ ] staffContextNote は turnPairNote と併存させたまま（設計書は turnPairNote 時に省略）。プロンプト長が問題になれば `${turnPairNote && !isFollowUp ? "" : staffContextNote}` に

@@ -9,6 +9,8 @@ import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage } from "./lib/application-form-detect";
 import { detectPlaceholders } from "./lib/validate-reply";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
+// 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
+import { MSG_SEP } from "./lib/reply-context";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
@@ -3097,9 +3099,12 @@ export default function Home() {
     // → AIが「それ以降の会話」を見て混乱しないようにする
     let targetMessage: string;
     let contextMsgs: typeof msgs;
+    // 2026-09-09 Fable5: 通単位の配列（generate-reply body.customerMessages。分割相槌の根治）
+    let customerMessageUnits: string[] = [];
 
     if (targetOverrideMessage?.text?.trim()) {
       targetMessage = targetOverrideMessage.text.trim();
+      customerMessageUnits = [targetMessage];
       // IDで正確にメッセージ位置を特定してそれ以降を除外（テキスト一致より確実）
       const idx = msgs.findLastIndex(
         (m) => m.id === targetOverrideMessage.id
@@ -3114,9 +3119,13 @@ export default function Home() {
       const unrepliedCustomerMsgs = msgsAfterStaff
         .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
         .slice(-10);
+      // 2026-09-09 Fable5: "\n" 結合は1通内改行と複数通を区別できず「[1通目]ありがとう／[2通目]懸念」の分割相槌骨格を誘導していた → MSG_SEP
       targetMessage = unrepliedCustomerMsgs.length > 0
-        ? unrepliedCustomerMsgs.map((m) => m.text).join("\n")
+        ? unrepliedCustomerMsgs.map((m) => m.text).join(MSG_SEP)
         : latestCustomerMessage.trim() || msgs[msgs.length - 1]?.text || "";
+      customerMessageUnits = unrepliedCustomerMsgs.length > 0
+        ? unrepliedCustomerMsgs.map((m) => m.text)
+        : (targetMessage ? [targetMessage] : []);
       contextMsgs = msgs;
     }
 
@@ -3199,6 +3208,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: targetMessage,
+          customerMessages: customerMessageUnits,
           state: effectiveState,
           conversationId: selectedConversation.id,
           customerName: selectedConversation.customerName,
@@ -3293,11 +3303,12 @@ export default function Home() {
 
       // <<<FINAL_CHECK:...>>> トレーラー（最終チェック結果）を解析してバッジ・送信時ハッシュ照合に使う
       const checkTrailerMatch = fullText.match(/<<<FINAL_CHECK:([\s\S]+?)>>>/);
+      // 2026-09-09 Fable5: autoOk 判定にも使うためローカルに保持（state の checkResult はこのクロージャでは古い値）
+      let parsedCheck: CheckResult | null = null;
       if (checkTrailerMatch) {
-        try { setCheckResult(JSON.parse(checkTrailerMatch[1]) as CheckResult); } catch { setCheckResult(null); }
-      } else {
-        setCheckResult(null);
+        try { parsedCheck = JSON.parse(checkTrailerMatch[1]) as CheckResult; } catch { parsedCheck = null; }
       }
+      setCheckResult(parsedCheck);
 
       // 内部タグ（STOP_REASON / SUGGESTED_AIX / FINAL_CHECK）は順序・有無を問わず全て除去してからテキストボックスへ
       const finalDraft = stripInternalTags(fullText);
@@ -3309,7 +3320,9 @@ export default function Home() {
       // B-2: 品質判定（生成完了後の静的チェック — プレースホルダー残存・短すぎ・申込書類フェーズ）
       const hasPlaceholder = /\[[^\]]{1,20}\]/.test(finalDraft);
       const isSuspiciouslyShort = finalDraft.length < 20;
-      const autoOk = !hasPlaceholder && !isSuspiciouslyShort && !qualityFromMeta?.is_applying_docs;
+      // 2026-09-09 Fable5: final-check の ok=false / block ありは「✅そのまま送信OK」にしない（旧実装は checkResult を一切見ていなかった）
+      const autoOk = !hasPlaceholder && !isSuspiciouslyShort && !qualityFromMeta?.is_applying_docs
+        && parsedCheck?.ok !== false && !(parsedCheck?.issues ?? []).some((i) => i.severity === "block");
       setReplyQuality({ auto_ok: autoOk, is_applying_docs: qualityFromMeta?.is_applying_docs ?? false });
 
       // 生成完了後にテキストエリアへフォーカスしてスクロール
@@ -4019,6 +4032,7 @@ export default function Home() {
             aiDraft: aiDraftRef.current || undefined,
             conversationState: selectedConversation.status,
             isScheduled: true,
+            tpoDebug: checkResult?.tpo_debug ?? null,
             // MED-05修正: 予約送信もtemplate_id を記録（通常送信と対称化）
             ...(selectedTemplateIdRef.current ? { template_id: selectedTemplateIdRef.current } : {}),
             // 🚫 AIXカテゴリのテンプレートは通常返信学習に混入させない
@@ -4499,6 +4513,8 @@ export default function Home() {
             // 自動☆は廃止（☆はユーザーが明示的に付けた場合のみ深層分析）
             isStarred: false,
             sentAt: new Date().toISOString(),
+            // 2026-09-09 Fable5: 往復文脈スナップショット（ai_draft_check.tpo_debug）を行単位で保存（reply_context_snapshot）
+            tpoDebug: checkResult?.tpo_debug ?? null,
             // テンプレート経由の場合は template_id を記録（☆・差分学習をテンプレに紐付ける）
             ...(selectedTemplateIdRef.current ? { template_id: selectedTemplateIdRef.current } : {}),
             // 🚫 AIXカテゴリのテンプレートは通常返信学習に混入させない
@@ -8319,19 +8335,24 @@ export default function Home() {
                     ? "bg-green-100 text-green-700"
                     : "bg-yellow-100 text-yellow-700"
                 }`}>
-                  {replyQuality.auto_ok
-                    ? (checkResult && checkResult.ok && (checkResult.revision_count ?? 0) > 0 && !checkResult.revision_exhausted
-                        ? `✅ ${checkResult.revision_count}回修正で問題解消`
-                        : checkResult && checkResult.ok && checkResult.issues.length === 0 && checkResult.passes_completed.length === 3
-                          ? "✅ 3重チェック済み"
-                          : "✅ そのまま送信OK")
-                    : replyQuality.is_applying_docs ? "⚠️ 申込書類・要確認" : "⚠️ 要確認"}
+                  {/* 2026-09-09 Fable5: バッジは checkResult.ok と block/warning の有無から決める（ok=false or block →要修正、warning のみ →確認推奨） */}
+                  {(() => {
+                    const blockCount = (checkResult?.issues ?? []).filter((i) => i.severity === "block").length;
+                    const warnCount = (checkResult?.issues ?? []).filter((i) => i.severity === "warning").length;
+                    if (checkResult && (checkResult.ok === false || blockCount > 0)) return `⚠️ 要修正（${blockCount || checkResult.issues.length}件）`;
+                    if (!replyQuality.auto_ok) return replyQuality.is_applying_docs ? "⚠️ 申込書類・要確認" : "⚠️ 要確認";
+                    if (warnCount > 0) return `△ 確認推奨（${warnCount}件）`;
+                    if (checkResult && checkResult.ok && (checkResult.revision_count ?? 0) > 0 && !checkResult.revision_exhausted) return `✅ ${checkResult.revision_count}回修正で問題解消`;
+                    if (checkResult && checkResult.ok && checkResult.issues.length === 0 && checkResult.passes_completed.length === 3) return "✅ 3重チェック済み";
+                    return "✅ そのまま送信OK";
+                  })()}
                 </span>
               </div>
             )}
 
             {/* 🧠 最終チェック指摘リスト（block=🔴 / warning=🟡・折りたたみ式） */}
-            {checkResult && checkResult.issues.length > 0 && replyDraft.trim() && !selectedConversation.suggestedAixMeta?.action && (
+            {/* 2026-09-09 Fable5: brain action の有無で指摘リストを隠さない（隠すと final-check の block が「✅そのまま送信OK」の裏で素通りする） */}
+            {checkResult && checkResult.issues.length > 0 && replyDraft.trim() && (
               <details className={`mb-1 rounded-lg border px-2 py-1 ${
                 checkResult.issues.some((i) => i.severity === "block")
                   ? "border-red-200 bg-red-50"

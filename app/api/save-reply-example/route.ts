@@ -1106,6 +1106,9 @@ export async function POST(req: NextRequest) {
     entry_source?: string; // 'line_reply'（LINE返信AI由来）| 'aix_action'（AIX生成文由来）
     aix_action?: string; // AIXボタン種別（property_recommendation / viewing_invite 等・サブキー付き含む）。entry_source='aix_action' のとき AixModal が渡す
     customer_intent?: string; // 顧客意図（brain出力優先・なければサーバー側でキーワード分類）
+    // 2026-09-09 Fable5 往復文脈: 送信時点の conversations.ai_draft_check.tpo_debug（substance / turnPair / finalCheckCodes）。
+    // page.tsx は checkResult.tpo_debug をそのまま送る。行単位の TPO×実質×編集率 集計用（reply_context_snapshot JSONB）
+    tpoDebug?: Record<string, unknown> | null;
   };
   let body: PostBody;
   try {
@@ -1449,6 +1452,8 @@ export async function POST(req: NextRequest) {
         entry_source: entry_source === "aix_action" ? "aix_action" : "line_reply",
         aix_action: typeof aix_action === "string" && aix_action ? aix_action : null,
         customer_intent: customerIntent,
+        // 2026-09-09 Fable5 往復文脈スナップショット（migrate-schema: reply_context_snapshot JSONB）
+        reply_context_snapshot: body.tpoDebug && typeof body.tpoDebug === "object" ? body.tpoDebug : null,
       })
       .select("id")
       .single(),

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
+import { MSG_SEP } from "@/app/lib/reply-context";
 
 export const maxDuration = 60;
 
@@ -71,7 +72,9 @@ export async function POST(req: NextRequest) {
     const unreplied = msgsAfterStaff
       .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
       .slice(-3);
-    const targetMessage = unreplied.map((m) => m.text).join("\n");
+    // 2026-09-09 Fable5: 複数通は MSG_SEP で結合（1通内の改行を「N通」に分割しない）＋配列でも渡す
+    const customerMessages = unreplied.map((m) => m.text as string);
+    const targetMessage = customerMessages.join(MSG_SEP);
 
     if (!targetMessage.trim()) return NextResponse.json({ ok: true, skipped: true });
 
@@ -101,6 +104,7 @@ export async function POST(req: NextRequest) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: targetMessage,
+        customerMessages,
         state: effectiveState,
         customerName: pcData?.customer_name || "",
         recentMessages: recentMsgs,

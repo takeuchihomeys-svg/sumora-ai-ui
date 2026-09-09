@@ -65,6 +65,12 @@ import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainF
 // AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
 // AIX_STAFF_NOTES を単一ソースとして brain-core の AIX_BRAIN_NOTES と共有する（文言乖離の構造的防止）
 import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS, AIX_LINE_LABELS, AIX_ACTION_REPLY_DIRECTION, buildAixLineNote, normalizeAixActionKey } from "@/app/lib/aix-taxonomy";
+// 2026-09-09 Fable5 往復文脈（Turn-Pair）＋実質判定（Substance）: 生成・検査・few-shot・tpo_debug の四者同名（reply-context.ts が単一真実源）
+import {
+  MSG_SEP, splitMessageUnits, analyzeSubstance, mergeBrainEvidence,
+  classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair,
+  buildPairDirection, buildTurnPairNote, type PairContext, type SubstanceVerdict,
+} from "@/app/lib/reply-context";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 300;
@@ -817,6 +823,10 @@ function buildGenerationMessages(
   confirmCtxIn: ConfirmationContextVerdict = { allowed: false, source: "none", object: null, reason: "未計算" },
   // G30（2026-09-08 Fable5）: 冒頭挨拶の決定論結果（route.ts resolveGreeting）。greetingNote にリテラル埋め込み
   greetingDecision?: GreetingDecision,
+  // 2026-09-09 Fable5 往復文脈: buildTurnPairNote() の【🔁 往復文脈】ブロック（tpoGuidanceNote より上位）
+  turnPairNote = "",
+  // 2026-09-09 Fable5: 通単位の配列（MSG_SEP / body.customerMessages）。1通内の改行を「N通」に分割しない
+  customerMessageUnits: string[] = [],
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -1545,17 +1555,19 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   const viewingNoteBlock = viewingNote ? `\n\n【内覧情報】${viewingNote}` : "";
 
   // 複数メッセージ結合時は番号付きで全通への返信を明示し末尾優先バイアスを防ぐ
-  const customerMsgLines = (customerMessage || "").split("\n").filter(Boolean);
+  // 2026-09-09 Fable5: 旧 split("\n") は1通内の改行を「2通」に分割し「[1通目]ありがとう／[2通目]懸念」→「はい😊！！＋かしこまりました！！」の
+  //   分割相槌骨格を誘導していた。通単位（MSG_SEP / customerMessageUnits）でのみ分割する
+  const customerMsgLines = splitMessageUnits(customerMessage, customerMessageUnits);
   const customerMsgBlock = !isFollowUp && customerMsgLines.length > 1
-    ? `【お客様の最新メッセージ（${customerMsgLines.length}通・すべてに対して1つの返信を生成すること）】\n` +
+    ? `【お客様の最新メッセージ（${customerMsgLines.length}通・1つの流れとして読み、1つの返信を生成すること。通ごとに相槌を打たない）】\n` +
       customerMsgLines.map((line, i) => `[${i + 1}通目] ${line}`).join("\n")
-    : `${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}\n${customerMessage}`;
+    : `${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}\n${(customerMessage || "").split(MSG_SEP).join("\n")}`;
 
   // topPrinciplesNote（DB由来）と replyContentNote（テンプレモードで空文字化）は
   // staticBlock を汚染しないよう dynamicBlock 側に配置する
   const dynamicBlock =`${topPrinciplesNote}${replyContentNote}
 ${propertyStatusNote}
-${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${turnPairNote}${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
@@ -2751,9 +2763,12 @@ export async function POST(req: NextRequest) {
   let aixSourceMessage = ""; // AIXカテゴリ最適化: AIXが送信したテキストをベースに改善（設定時はAIX最適化モード）
   // S-4: 呼び出し元が DB から算出した「スタッフのテキスト返信が1件でもあるか」（履歴窓20件外の初回判定ズレ防止）。未渡し=undefined
   let hasStaffRepliedFromBody: boolean | undefined;
+  // 2026-09-09 Fable5: 通単位の配列（page.tsx / bg-async / bg が MSG_SEP 結合と併せて送る）。未渡しなら MSG_SEP で分割
+  let customerMessagesBody: string[] = [];
   try {
     const body = await req.json() as {
       message: string;
+      customerMessages?: string[];
       state: string;
       customerName?: string;
       recentMessages?: RecentMessage[];
@@ -2796,6 +2811,9 @@ export async function POST(req: NextRequest) {
       hasStaffReplied?: boolean;
     };
     message = body.message;
+    customerMessagesBody = Array.isArray(body.customerMessages)
+      ? body.customerMessages.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
     state = body.state;
     conversationId = body.conversationId || "";
     includeStopReason = body.includeStopReason === true;
@@ -3390,15 +3408,36 @@ export async function POST(req: NextRequest) {
     const TPO_REQUEST_RE = new RegExp(`${TPO_HARD_REQUEST_RE.source}|${TPO_SOFT_REQUEST_RE.source}`);
     // 「時間が欲しい・考えさせて欲しい」型は依頼形でも判断保留（isThinkingMsg で SOFT 除外を免除）
     const TPO_THINK_TIME_REQUEST_RE = /(?:検討|考え|相談)(?:させて(?:ください|下さい|頂|いただ|もらえ)|したい)|(?:お?時間|少し|もう少し|しばらく)(?:を|だけ)?(?:ください|下さい|頂け|いただけ|頂きたい|いただきたい|欲しい|ほしい)|考える時間/;
-    // 複数通結合（\n）時は各通を個別判定（末尾優先バイアス対策の横展開）
-    const tpoMsgParts = (message ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
+    // 複数通結合時は各通を個別判定（末尾優先バイアス対策の横展開）
+    // 2026-09-09 Fable5: 旧 split("\n") は1通内の改行で分割し、みくの isThinkingMsg を2行目で殺していた → 通単位（MSG_SEP / body.customerMessages）
+    const customerMsgUnits = splitMessageUnits(message, customerMessagesBody);
+    const tpoMsgParts = customerMsgUnits;
     const everyPart = (pred: (s: string) => boolean) => tpoMsgParts.length > 0 && tpoMsgParts.every(pred);
     // 待ち系（一時保留/検討中）用: 1通以上が該当 かつ 残りは全て中立（感謝・了承のみ）で成立（TPO_NEUTRAL_ACK_RE はモジュールスコープ）
+    //   中立判定は装飾（🙇🏻‍♀️ 等）除去後に当てる（FN 対策）
     const anyPartRestNeutral = (pred: (s: string) => boolean) =>
-      tpoMsgParts.length > 0 && tpoMsgParts.some(pred) && tpoMsgParts.every((p) => pred(p) || TPO_NEUTRAL_ACK_RE.test(p));
+      tpoMsgParts.length > 0 && tpoMsgParts.some(pred) && tpoMsgParts.every((p) => pred(p) || TPO_NEUTRAL_ACK_RE.test(stripDecoration(p).trim()));
     // 直近スタッフ1通（recentMessages は oldest-first → reverse().find で最新）
     const tpoLatestStaff = [...recentMessages].reverse().find((m) => m.sender === "staff") ?? null;
     const tpoLatestStaffText = tpoLatestStaff?.text ?? "";
+
+    // ── 2026-09-09 Fable5 往復文脈: 直前スタッフ発話の分類 → 顧客メッセージの実質判定（1回だけ計算し四者が参照）──
+    //   lastStaffTurn: aix_usage_logs（直前スタッフ発言 ±3分）> 本文 regex > brain last_aix_history
+    //   substance   : 定型（感謝・了承・締め）と待ち句を剥がした残余に懸念・質問・依頼・条件・予定・決定・断り・情報を当てる。fresh brain は補助証拠
+    const lastStaffTurn = classifyLastStaffTurn(lastStaffMsgForSearch || tpoLatestStaffText, {
+      recentAixRows,
+      lastStaffAt: tpoLatestStaff?.createdAt ?? null,
+      lastAixHistory: lastAixHistoryText,
+    });
+    const substanceBase = analyzeSubstance(message ?? "", customerMsgUnits, { staffAskedQuestion: lastStaffTurn.kind === "question_to_customer" });
+    const substance: SubstanceVerdict = mergeBrainEvidence(
+      substanceBase,
+      brainMeta
+        ? { customer_questions: brainMeta.customer_questions, customer_intent: brainMeta.customer_intent, condition_change_type: brainMeta.condition_change_type, repeated_concern: brainMeta.repeated_concern, hesitancy_pattern: brainMeta.hesitancy_pattern, customer_concern: brainMeta.customer_concern }
+        : null,
+      brainFreshForMessage && !isCachedMeta,
+    );
+    console.info("[reply-context]", JSON.stringify({ has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, units: customerMsgUnits.length }));
 
     // G10（2026-09-08 Fable5）: 退去・引越し語の主語（現住居＝入居時期情報／提案物件／部屋探し終了）。
     //   negativeDetail（withdrawal 二重ガード）・isGratitudeReplyTPO・方向性・final-check（FAREWELL_ON_MOVEOUT_INFO）で共有
@@ -3508,7 +3547,7 @@ export async function POST(req: NextRequest) {
     console.info("[estimate-ctx]", estimateVerdict.trigger, estimateVerdict.mode, estimateVerdict.signals.join(","));
 
     // A-1: 絵文字・記号のみ（スタンプ単独の sentinel 除去後を含む）
-    const isDecorOnlyMsg = (message ?? "").trim().length > 0 && DECOR_ONLY_RE.test((message ?? "").trim());
+    const isDecorOnlyMsg = (message ?? "").trim().length > 0 && (DECOR_ONLY_RE.test((message ?? "").trim()) || /^(?:\[スタンプ\]\s*)+$/.test((message ?? "").trim()));
     // A-13: 不安・関西弁ネガ（isConditionPresented・isViewingCancel の直後・applying より先に評価）
     const isAnxietyMsg = ANXIETY_RE.test(message ?? "") && (message ?? "").length < 200 && !isConditionPresented;
 
@@ -3520,6 +3559,8 @@ export async function POST(req: NextRequest) {
       if (isFollowUp) return false;
       // A-1: スタンプ単独・絵文字のみは短い了承として感謝返しに流す
       if (isDecorOnlyMsg) return true;
+      // 2026-09-09 Fable5: 実質あり（条件追加・日程・号室選択・懸念）は感謝返しにしない（「福島区もお願いします」の誤発動 23/131 を根治）
+      if (substance.has) return false;
       const core = stripDecoration(raw);
       const len = Array.from(core).length;
       if (len === 0 || len >= 60) return false;
@@ -3552,6 +3593,8 @@ export async function POST(req: NextRequest) {
     const isTemporaryLeaveMsg = (() => {
       const msg = (message ?? "").trim();
       if (msg.length === 0 || msg.length >= 80) return false;
+      // 2026-09-09 Fable5: 実質あり（予定語のみは可: 「帰ったら見ます」）は一時保留ではない
+      if (substance.has && !substance.kinds.every((k) => k === "schedule")) return false;
       if (isConditionPresented || isConditionChangeRequest) return false;
       if (TPO_REQUEST_RE.test(msg)) return false; // 「後日内覧したいです」「Bはまだ空いてますか」等は保留ではない
       // 既読・興味表明は保留ではない（「移動中に見ました！2件目が気になります」）
@@ -3570,6 +3613,8 @@ export async function POST(req: NextRequest) {
     const isThinkingMsg = (() => {
       const msg = (message ?? "").trim();
       if (msg.length === 0 || msg.length >= 150) return false;
+      // 2026-09-09 Fable5: 裸の「検討します」だけが検討中フォロー。懸念・持込予告・質問・条件を含むものは往復文脈（PAIR_MATRIX）へ
+      if (substance.has) return false;
       if (isConditionPresented || isConditionChangeRequest) return false;
       // 「相談してから決めたい」「検討した上でお返事します」= 判断保留の定型。HARD の「決めたい」（申込意思）と衝突するため先に除去
       const msgForReq = msg.replace(/(?:相談|検討|考え)(?:して|し|した)?(?:から|上で|後で?|た後で?)(?:決め|お返事|返事|ご?連絡)(?:たい|ます|し|させて)?/g, "");
@@ -3578,7 +3623,7 @@ export async function POST(req: NextRequest) {
       // スタッフへの検討依頼・比較相談・不安相談・道案内は別TPO（「よろしくお願いします」併記は除外しない）
       if (/(?<!よろしく|宜しく)お願い(?:し|致|いた)|ご検討|検討(?:して|を)(?:ください|下さい|頂|いただ|もらえ|欲しい|ほしい)|検討した結果|道に迷|どちら|どっち|比べ|比較|審査|通るか|落ち(?:る|たら|ない)/.test(msg)) return false;
       // 「〜で/を/と考えてます」は条件・意向表明（「もうちょっと考えます」は救済）
-      const thinkRe = /検討(?:します|させて|中です|中で|中なので|してみます|してみる|いたします|致します)|少し検討|考えさせて|(?<![でをはに])(?<!(?<!ちょっ)と)考え(?:てみます|てみる|ます|てます|中|てから)|悩(?:んで|み中)|迷って(?!る場所)|もう少し(?:考|時間|だけ)|時間を(?:ください|下さい|頂|いただ|もらえ)|考える時間|相談(?:して|します|してみ|の上|し(?:てから)?)|持ち帰|決めかね|決められ(?:ない|ず|ません)|決めきれ/;
+      const thinkRe = /検討(?:します|させて|中です|中で|中なので|してみます|してみる|いたします|致します)|少し検討|考えさせて|(?<![でをはに])(?<!(?<!ちょっ)と)考え(?:てみます|てみる|ます|てます|中|てから)|悩(?:んで|み中)|迷って(?!る場所)|迷います|迷い|どうなのかな|どうかな|考えます|もう少し(?:考|時間|だけ)|時間を(?:ください|下さい|頂|いただ|もらえ)|考える時間|相談(?:して|します|してみ|の上|し(?:てから)?)|持ち帰|決めかね|決められ(?:ない|ず|ません)|決めきれ/;
       return anyPartRestNeutral((p) => thinkRe.test(p) && !/(キャンセル|やめ|断り|他社|他の会社)/.test(p));
     })();
 
@@ -3666,7 +3711,8 @@ export async function POST(req: NextRequest) {
 
     // ── 強推し直後の了承（2026-09-08 監査FIX: 旧実装はヘッダー「（新→旧順）」の→で split され恒久 false）──
     const isPostStrongRecommendation = (() => {
-      if (isNegativeContext || isConditionPresented) return false;
+      // 2026-09-09 Fable5: 実質あり（懸念・質問・条件）は「了承」ではない
+      if (isNegativeContext || isConditionPresented || substance.has) return false;
       const msg = (message ?? "").trim();
       // 了承の受け口: 感謝返し OR 「確認・閲覧系の短い了承」（強推し文脈でのみ採用）
       const isViewAck = msg.length > 0 && msg.length < 60 &&
@@ -3682,6 +3728,22 @@ export async function POST(req: NextRequest) {
       const looksLikeRecommendation = /オススメ|おすすめ|お薦め|特に|イチオシ|一押し|こちらの(?:物件|お部屋)|ご検討/.test(tpoLatestStaffText);
       return !!tpoLatestStaff.isAix || looksLikeRecommendation;
     })();
+
+    // ── 2026-09-09 Fable5 往復文脈: 顧客返答の分類 → PAIR_MATRIX の単一 verdict（generate / final-check / tpo_debug で同一オブジェクト）──
+    //   あみ（内覧打診→2階懸念）・みく（見積送付→持込予告）は待ち系TPOゼロ発動で AIX_ACTION_REPLY_DIRECTION（内覧誘導禁止／オススメ1件）と
+    //   4文字ラベル「物件送付後」が生成文を作っていた。往復ペアで方向性を確定し、override_wait セルは待ち系TPO・AIX action より先に return する
+    const customerResponse = classifyCustomerResponse(substance, lastStaffTurn, {
+      isThinkingMsg, isTemporaryLeaveMsg, isConditionChangeRequest, isConditionPresented,
+      negativeKind: negativeDetail.kind,
+      brain: brainFreshForMessage && !isCachedMeta && brainMeta
+        ? { customer_intent: brainMeta.customer_intent, customer_questions: brainMeta.customer_questions, condition_change_type: brainMeta.condition_change_type, hesitancy_pattern: brainMeta.hesitancy_pattern, repeated_concern: brainMeta.repeated_concern, customer_concern: brainMeta.customer_concern }
+        : null,
+    });
+    const pairContext: PairContext = resolveTurnPair(lastStaffTurn, customerResponse, substance, lastStaffMsgForSearch || tpoLatestStaffText || "");
+    const pairDirection = buildPairDirection(pairContext, { brainReplyDirection: brainMeta?.reply_direction ?? null, brainFresh: brainFreshForMessage && !isCachedMeta });
+    // ラベル: tpoNoteForLLM ↔ prompts「■ 場面【…】」↔ final-check WAIT_TPO_RE（after_wait の検討中セルは「検討中フォロー」を含めて WE DO 免除を維持）
+    const pairTpoLabel = pairContext.rule ? `${pairContext.rule.tpoLabel}（往復: ${pairContext.summary}。${pairContext.rule.length}）` : null;
+    console.info("[turn-pair]", JSON.stringify({ staff: lastStaffTurn.kind, customer: customerResponse.kind, secondary: customerResponse.secondary, object: customerResponse.object, ruleId: pairContext.ruleId, precedence: pairContext.rule?.precedence ?? null }));
 
     // ── 感謝返しの具体アクションを直前スタッフ発言から決定論で1つ選ぶ（LLM に選ばせない）──
     const gratitudeActionHint: string = (() => {
@@ -3720,12 +3782,16 @@ export async function POST(req: NextRequest) {
       // G10（2026-09-08 Fable5）: 顧客の現住居の退去・引越し時期報告は離脱ではなく入居時期情報。復唱＋逆算した入居時期の確認→探索継続
       if (moveOutSubject === "current_home" && !isConditionPresented && !isConditionChangeRequest)
         return "入居時期情報（お客様ご自身の現住居の退去・引越し時期の報告。探索継続）。開口語「かしこまりました！！」（単独行）→退去時期を復唱して逆算した入居時期を1文で確認（例「〇月末ご退去との事ですので〇月ご入居に向けて」）→ピックアップ宣言 or 未取得条件のヒアリング1問。会話終了・お礼締め・「またお部屋探しの際は」・謝罪禁止。60〜120字";
+      // 2026-09-09 Fable5 往復文脈: override_wait セル（懸念・持込予告・質問・条件変更）は待ち系TPO・AIX action より先に確定
+      if (pairContext.rule?.precedence === "override_wait" && pairDirection) return pairDirection;
       if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」（単独行）一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。この場面では具体アクション宣言は不要（何も宣言しない）。物件追加・内見誘導・条件ヒアリング・長文説明は一切禁止";
-      if (isThinkingMsg) return "検討中の待ちフェーズ。70〜120字の短返し。開口語は「はい😊！！」（単独行）。①ごゆっくりご検討ください②ご不明点・ご家族様からのご質問等あれば何なりとお申し付けください③顧客名先頭のサポート継続宣言の3点セット。申込誘導・希少性煽り（人気のため早めに）・内見誘導・物件追加提案・「ご検討の程よろしく」の再掲は絶対禁止";
+      if (isThinkingMsg) return "検討中の待ちフェーズ。70〜130字の短返し。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」（命令形「ごゆっくりご検討ください」は不可）②直前送付物への次ステップ1文（「お気に召されましたらご内覧頂けます／お申込しお部屋抑えさせて頂きます」）は必ず入れる③気になる点出てきましたらいつでもお気軽にご連絡ください。「かしこまりました！！」単独終了・申込誘導・希少性煽り（人気のため早めに）・物件追加提案・「ご検討の程よろしく」の再掲は絶対禁止";
       if (isPostStrongRecommendation) return "強推し直後の了承。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。①感謝を1行で受け取る②直前に推薦したお部屋（物件名が分かれば名前で、不明なら「先ほどのお部屋」）をお手隙の際にごゆっくりご確認いただく旨1文③ご内覧・ご不明点はいつでもお申し付けくださいの開放1文④締め。合計50〜110字。他物件の募集確認・新規ピックアップ宣言・別物件の提案・申込誘導・「ご検討の程よろしくお願いします」の再掲は絶対禁止。顧客が「見てみます」（未来形）なら「ご覧頂きありがとう」等の既読扱いも禁止";
       if (isGratitudeReplyTPO) return `感謝を1行で受け取り、次のアクション文を1つだけ添える: ${gratitudeActionHint}。合計40〜130字。開口語は「はい😊！！」（単独行）一択（「かしこまりました」「承知いたしました」禁止）。締めは「何卒よろしくお願い致します！！」。上記以外のアクション・予告のみの進捗テンプレ・条件の再ヒアリング・情報追加は絶対禁止`;
       // A-13: 不安対応（applying より先に評価。謝罪は「ご不安にさせてしまい申し訳ございません」の1文のみ許可）
       if (isAnxietyMsg) return "不安対応（100〜150字）。開口語は「はい😊！！」または受け止め1文から。①不安を1文で受け止める（謝罪が必要な場合のみ「ご不安にさせてしまい申し訳ございません」の1文まで）②具体的な安心材料を1つだけ添える（保証会社通過までキャンセル料なし／独立系保証会社で再審査可／審査3〜10日 等・履歴にある事実のみ）③次アクション1文。「大丈夫ですよ」「ご安心ください」の根拠なし安心づけ禁止";
+      // 2026-09-09 Fable5 往復文脈: after_wait セル（内覧受諾・検討中・回答受領・了承）は AIX action より先（brain の正しい reply_direction が L3735 で action に負けて捨てられていた）
+      if (pairContext.rule && pairDirection) return pairDirection;
       // A-7 / S-3: brain action が有効（fresh）なら顧客向け方向性に変換して採用（スタッフ操作文は注入しない）
       if (effectiveAction && AIX_ACTION_REPLY_DIRECTION[effectiveAction]) {
         const d = AIX_ACTION_REPLY_DIRECTION[effectiveAction];
@@ -3742,6 +3808,8 @@ export async function POST(req: NextRequest) {
       if (isConditionPresented) {
         return freshTopics.length > 0 ? freshTopics : ["エリア・家賃条件を受け取り即ピックアップ宣言"];
       }
+      // 2026-09-09 Fable5 往復文脈: セルの必須要素を「必ず含める内容」に（final-check PAIR_ELEMENT_MISSING と同名）
+      if (pairContext.rule) return pairContext.rule.mustInclude.map((m) => m.label);
       if (isNegativeContext) return [];
       if (isTemporaryLeaveMsg) return [];
       if (isThinkingMsg) return [];
@@ -3749,7 +3817,7 @@ export async function POST(req: NextRequest) {
       if (isGratitudeReplyTPO) return freshTopics.slice(0, 1);
       return freshTopics;
     })();
-    const effectiveAvoidTopics: string[] = (() => {
+    const effectiveAvoidTopicsBase: string[] = (() => {
       const base = brainMeta?.avoid_topics ?? [];
       if (isConditionPresented) return [...new Set([...base, "条件の再ヒアリング", "見積提案", "申込誘導", "内見誘導", "抽象的なサポート宣言"])];
       if (isViewingCancel) return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "謝罪"])];
@@ -3764,12 +3832,23 @@ export async function POST(req: NextRequest) {
       //      S-3: followup_revive は effectiveAction で常に null に落ちるため、ラベル側と同じく rawAction ではなく「検討中フォロー」条件（isThinkingMsg）で担保する
       return base;
     })();
+    // 2026-09-09 Fable5 往復文脈: セルの禁止事項（mustNot）を和集合
+    const effectiveAvoidTopics: string[] = pairContext.rule
+      ? [...new Set([...effectiveAvoidTopicsBase, ...pairContext.rule.mustNot])]
+      : effectiveAvoidTopicsBase;
     // 顧客が最新メッセージで自ら言及した語は avoid_topics から除外
     // （stale brain_meta の avoid_topics が現在の質問を封じる逆転を防ぐ）
-    const activeAvoidTopics = effectiveAvoidTopics.filter(t => !(message ?? "").includes(t));
+    // 2026-09-09 Fable5: 往復セルの必須要素と衝突する avoid（ES_WILL_SEND で brain avoid_topics「見積書」が必須要素「御見積書とあわせて」と衝突）も除外
+    const activeAvoidTopics = effectiveAvoidTopics.filter(t =>
+      !(message ?? "").includes(t) &&
+      !(pairContext.rule?.mustInclude.some((m) => m.label.includes(t)) ?? false)
+    );
     // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
     const tpoNoteForLLM: string | null = (() => {
       if (isConditionPresented) return "条件提示（顧客がエリア・家賃条件を提示。かしこまりました！！→条件を行動宣言に埋め込み→即ピックアップ宣言の3行。100〜180字）";
+      // 2026-09-09 Fable5 往復文脈: override_wait セル（提案後の懸念／提案後の検討・持込予告／質問回答／条件変更）は待ち系ラベルより先
+      //   ラベルは WAIT_TPO_RE 非該当語のみ（final-check の WE DO 免除を受けない）
+      if (pairContext.rule?.precedence === "override_wait" && pairTpoLabel) return pairTpoLabel;
       // G10（2026-09-08 Fable5）: 現住居の退去・引越し時期の報告は入居時期情報（探索継続）。effectiveReplyDirection の同名分岐と対
       if (moveOutSubject === "current_home" && !isConditionPresented && !isConditionChangeRequest && negativeDetail.kind === null) return "入居時期情報（現住居の退去・引越し時期の報告。探索継続）";
       if (isViewingCancel) return "内覧キャンセル（別日開放のみ。物件追加・申込誘導禁止。50〜100字）";
@@ -3794,9 +3873,13 @@ export async function POST(req: NextRequest) {
         if (isGratitudeReplyTPO) return "短い了承（applying。開口語「はい😊！！」＋履歴にある直近約束（審査結果連絡/書類確認/契約案内）の復唱1文＋締め。40〜90字）";
         return "申込後説明（申込・審査・契約手続き中。書類受領／審査進捗／契約案内のいずれかに直接回答し、別物件提案・再ピックアップ・条件ヒアリング・内覧提案は書かない。60〜150字）";
       }
+      // 2026-09-09 Fable5 往復文脈: after_wait セル（内覧調整／検討中フォロー／申込打診／顧客回答の受領 等）は AIX action 由来の4文字ラベルより先
+      if (pairContext.rule && pairTpoLabel) return pairTpoLabel;
       if (a === "viewing_invite" || a === "meeting_place") return "内覧調整";
       if (a === "application_push") return "申込打診";
-      if (a === "property_send" || a === "property_recommendation") return "物件送付後";
+      // 2026-09-09 Fable5: substance.has=false の純粋了承のみ到達するので骨格を持たせる（旧「物件送付後」4文字ラベルは骨格指示ゼロだった）
+      if (a === "property_send" || a === "property_recommendation")
+        return "物件送付後の了承（開口語「はい😊！！」→直前送付物件をごゆっくりご確認いただく1文→ご不明点・ご内覧はいつでもお申し付けください→締め。40〜100字。「かしこまりました」単独終了不可）";
       if (a === "estimate_sheet") return "費用説明";
       // 内見フェーズ専用TPO（修正率91.3%の原因: viewingに対応するTPO分岐がなかった。S-2 で phaseGuideKey=viewing が到達可能に）
       const msg2 = message ?? "";
@@ -4033,7 +4116,8 @@ export async function POST(req: NextRequest) {
         const hp = brainMeta.hesitancy_pattern;
         const timeline = brainMeta.future_timeline ?? null;
         if (hp === "thinking" || hp === "callback") {
-          lines.push(`- 🤔 保留パターン検出（${hp === "thinking" ? "検討中" : "また連絡"}）: お客様は一旦保留している。「お気軽にご連絡ください」だけで終わらないこと。必ず以下を1つ添える: ①物件の好条件・希少性を一言（「かなり好条件のお部屋ですので」等） ②申込促し（「お気に召されましたらお申込みしてお部屋押さえさせて頂きます！！」） ③待機中の具体アクション約束（「新着出次第随時お送りします」）`);
+          // 2026-09-09 Fable5: 成約データ反映（検討中系の正解返信に希少性一言・申込促しは0件）
+          lines.push(`- 🤔 保留パターン検出（${hp === "thinking" ? "検討中" : "また連絡"}）: 急かさない。「お気軽にご連絡ください」「ごゆっくりご検討ください」だけで終わらないこと。必ず以下を1つ添える: ①お客様が予告した行動を先取りする宣言（「お送り頂けましたら募集状況確認し御見積書とあわせてご連絡させて頂きます」） ②待機中の具体アクション約束（「〇〇さんにオススメできるお部屋出てきましたら随時ピックアップしてお送りさせて頂きます」） ③直前送付物の次ステップ（「お気に召されましたらご内覧／お申込しお部屋抑えさせて頂きます」）。好条件・希少性の一言／申込促しは禁止（検討中系の正解返信に0件）`);
         } else if (hp === "waiting") {
           lines.push("- ⏳ 「少し待って」パターン検出: お客様は決断に踏み出せていない。バリアを取り除くこと: 「保証会社の審査が通過するまでの間はキャンセル料は一切かかりませんのでご安心ください😊！！審査期間中にお部屋のご案内もさせて頂けますので、実際に見てからご判断いただけます！！」のように安心感を先に伝える");
         } else if (hp === "timeline" && timeline) {
@@ -4063,7 +4147,8 @@ export async function POST(req: NextRequest) {
       // 潜在意識 (latent_intent): brainが推論した「なぜ今このメッセージを送ってきたか」の送信動機。
       // 表面の質問への回答だけでなく、裏にある不安・期待に届く返信を書かせる（message-local分析のため鮮度ゲート必須）
       if (brainFreshForMessage && brainMeta.latent_intent) {
-        lines.push(`- 💭 送信動機・潜在意識: ${brainMeta.latent_intent} — 表面の質問に答えるだけでなく、この裏にある不安・期待を自然に汲み取って解消・後押しする一文を返信に含めること（※推測を「〜が不安なんですよね」と決めつけて指摘するのは禁止。あくまで自然に寄り添う）`);
+        // 2026-09-09 Fable5: 旧「不安を汲み取る一文」指示が「お気持ち、よくわかります」を生んでいた → 事実か代替案で応える
+        lines.push(`- 💭 送信動機・潜在意識: ${brainMeta.latent_intent} — この動機には『事実』か『代替案（条件を変えた再ピックアップ宣言）』で応える。共感語（お気持ち・ご心配な・お察し・わかります・寄り添う）で応えるのは禁止。推測を「〜が不安なんですよね」と指摘するのも禁止`);
       }
       // H1(AIX-METAフル活用 2026-08): future_timeline を hesitancy_pattern と独立に注入。
       // 旧実装は hp==="timeline" の分岐内でのみ使用しており、hp が thinking/null 等のとき
@@ -4092,6 +4177,9 @@ export async function POST(req: NextRequest) {
     // brainMeta の有無（T1/T2/T3）に関係なく必ず生成プロンプトへ注入する。
     // 旧実装は brainGuidanceNote IIFE 内にあり T3 で消えていた（final-check には tpoLabel が届くため
     // 「生成はTPOなし・チェックはTPOあり」の非対称が発生していた）。
+    // 2026-09-09 Fable5 往復文脈ブロック（dynamicBlock で tpoGuidanceNote の直前・ハードゲートの次）。follow-up 生成では注入しない
+    const turnPairNote = isFollowUp || isTemplateOptimize ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "");
+
     const tpoGuidanceNote = (() => {
       const lines: string[] = [];
       if (tpoNoteForLLM) lines.push(`- 📍 現在の場面: 【${tpoNoteForLLM}】— この場面に合った返し方をすること`);
@@ -4357,6 +4445,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）
       greetingDecision,    // G30: 冒頭挨拶の決定論結果（リテラル埋め込み）
+      turnPairNote,        // 2026-09-09 Fable5: 往復文脈ブロック
+      customerMsgUnits,    // 2026-09-09 Fable5: 通単位の配列（[N通目] 表示は通単位のみ）
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -4718,6 +4808,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
                   aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
+                  substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                 };
                 // センシティブ案件（クレーム/審査否決/キャンセル）は「参考のみ・手動確認必須」の草稿のため
                 // チェックのみ実行し、接地修正・フィードバック再生成でドラフトを機械的に触らない
@@ -4758,6 +4849,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       ),
                       "",
                       "注意:",
+                      // 2026-09-09 Fable5 往復文脈: 再生成でも骨格（直前発話×顧客返答・必須要素）を落とさない
+                      `- 【往復文脈】${pairContext.summary}`,
+                      ...(pairContext.rule ? [`- 【必須要素】${pairContext.rule.mustInclude.map((m, i) => `${i + 1}.${m.label}`).join(" ")}（各1文以上。「かしこまりました！！」で終えず行動宣言またはサポート継続宣言で終える）`] : []),
                       "- 指摘箇所だけを直すのではなく、返信全体を自然な文章として書き直すこと",
                       "- 問題のなかった部分の内容・トーンは維持すること",
                       "- 返信本文のみを出力すること（説明・前置き・修正内容の解説は書かない）",
@@ -4824,6 +4918,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
                     aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                     greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
+                    substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   };
                   const nameRes = enforceCustomerName(draftBody, { customerName, lineDisplayName });
                   draftBody = nameRes.cleaned;
@@ -4898,7 +4993,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
             if (!isTemplateOptimize && finalCheck && draftBody) {
               try {
-                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|GREETING_WAITED_MISUSE)/;
+                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|GREETING_WAITED_MISUSE)/;
                 const postDetCtx = {
                   recentMessages, lastCustomerMessage: message, isAutoSend: enforceReplyModeGate,
                   isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
@@ -4910,6 +5005,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
                   aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.opening, // G30
+                  substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   ngProperties: brainFreshForMessage
                     ? (brainMeta?.property_search_params?.ng_properties ?? []).filter((p) => p?.property_name).map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)
                     : undefined,
@@ -4926,6 +5022,34 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // 送信時の再利用判定キー: スタッフのテキストエリアに入る最終形（trim後）のハッシュに更新する
             // （自動修正・センシティブ警告付与でチェック時テキストと変わるため必ず上書き）
             if (finalCheck) finalCheck.checked_text_hash = await sha1(finalDraftText.trim());
+            // 2026-09-09 Fable5: tpo_debug をトレーラーと ai_draft_check の両方に載せる（page.tsx が save-reply-example へ転送し reply_context_snapshot に保存）
+            //   TPO誤発動率・往復ペア・final-check 結果の定量化用。JSONB のため migrate-schema 更新不要
+            const tpoDebug: Record<string, unknown> | null = finalCheck && !isTemplateOptimize ? {
+              tpo_label: tpoNoteForLLM ?? null,
+              tier: tierResult.tier,
+              phaseGuideKey, rawState: resolvedState.raw, stateKnown: resolvedState.known,
+              rawAction, effectiveAction, isCachedMeta,
+              isConditionPresented, isNegativeContext, isThinkingMsg, isTemporaryLeaveMsg, isGratitudeReplyTPO, isPostStrongRecommendation,
+              conditionReason: conditionDetail.reason,
+              isConditionChangeRequest,
+              negativeKind: negativeDetail.kind,
+              isViewingCancel,
+              moveOutSubject,
+              confirmCtx: { allowed: confirmCtxFinal.allowed, source: confirmCtxFinal.source, object: confirmCtxFinal.object },
+              greeting: { kind: greetingDecision.kind, reason: greetingDecision.reason },
+              // 往復文脈（Turn-Pair）＋実質判定（Substance）
+              substance: { has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, residue: substance.residue.slice(0, 120), evidence: substance.evidence },
+              turnPair: { staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, staffEvidence: lastStaffTurn.evidence.slice(0, 60), customer: customerResponse.kind, customerSecondary: customerResponse.secondary, customerObject: customerResponse.object, customerSource: customerResponse.source, ruleId: pairContext.ruleId, precedence: pairContext.rule?.precedence ?? null },
+              effectiveReplyDirection: (effectiveReplyDirection ?? "").slice(0, 300),
+              brainReplyDirection: brainMeta?.reply_direction ?? null,
+              brainClosingStrategy: (brainMeta?.closing_strategy ?? "").slice(0, 200) || null,
+              brainCustomerQuestions: brainMeta?.customer_questions ?? [],
+              lastStaffMsgHead: (lastStaffMsgForSearch ?? "").slice(0, 80),
+              finalCheckCodes: finalCheck.issues.map((i) => `${i.code}:${i.severity}`),
+              revisionOutcome: finalCheck.revision_exhausted ? "exhausted" : finalCheck.ok ? "ok" : "warn",
+              draftHead: (finalDraftText ?? "").trim().slice(0, 200),
+            } : null;
+            if (finalCheck && tpoDebug) finalCheck.tpo_debug = tpoDebug;
             if (finalDraftText) controller.enqueue(encoder.encode(finalDraftText));
             // FINAL_CHECK トレーラー（メタ行1行目は出力済みのためトレーラーが唯一の伝達手段。
             // クライアントは SUGGESTED_AIX と同様に内部タグとして除去・解析する。STOP_REASON は必ず最後）
@@ -5099,23 +5223,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 void supabase
                   .from("conversations")
                   // tpo_debug: TPO誤発動率の定量化用（2026-09-08）。JSONBのため migrate-schema 更新不要
-                  .update({ ai_draft_check: { ...finalCheck, tpo_debug: {
-                    tpo_label: tpoNoteForLLM ?? null,
-                    tier: tierResult.tier,
-                    // S-2 / S-3（2026-09-08）: 状態解決・鮮度ゲートの監査用
-                    phaseGuideKey, rawState: resolvedState.raw, stateKnown: resolvedState.known,
-                    rawAction, effectiveAction, isCachedMeta,
-                    isConditionPresented, isNegativeContext, isThinkingMsg, isTemporaryLeaveMsg, isGratitudeReplyTPO, isPostStrongRecommendation,
-                    // A-2（2026-09-08 監査）: 発動率の内訳監査用
-                    conditionReason: conditionDetail.reason,
-                    isConditionChangeRequest,
-                    negativeKind: negativeDetail.kind,
-                    isViewingCancel,
-                    // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・挨拶決定の監査用
-                    moveOutSubject,
-                    confirmCtx: { allowed: confirmCtxFinal.allowed, source: confirmCtxFinal.source, object: confirmCtxFinal.object },
-                    greeting: { kind: greetingDecision.kind, reason: greetingDecision.reason },
-                  } } })
+                  // 2026-09-09 Fable5: 中身はトレーラー送出前に組み立てた tpoDebug（substance / turnPair / finalCheckCodes / draftHead 等）と同一
+                  .update({ ai_draft_check: { ...finalCheck, tpo_debug: finalCheck.tpo_debug ?? null } })
                   .eq("id", conversationId)
                   .then(({ error: chkErr }) => {
                     if (chkErr) console.warn("[generate-reply] ai_draft_check save error:", conversationId, chkErr.message);
