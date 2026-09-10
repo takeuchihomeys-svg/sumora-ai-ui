@@ -79,6 +79,13 @@ export interface SubstanceVerdict {
   /** 通単位（MSG_SEP / 配列） */
   units: string[];
   evidence: string[];
+  /** 2026-09-10 Fable5 みく事例: 定型（感謝・了承・締め）と待ち句を剥がした残余がゼロ。isAckOnly ⊂ isPureBoilerplate。
+   *  「ありがとうございます！確認させていただきます」は isAckOnly=false / isPureBoilerplate=true の中間状態。
+   *  brain の抽出結果は「residue の中身」を説明する値なので、これが true の時 brain は STRONG_KIND を足せない */
+  isPureBoilerplate: boolean;
+  /** 待ち句（検討します／確認します／また連絡します）の検出結果。thinking 分類の唯一の入口。
+   *  analyzeSubstance / classifyCustomerResponse / PS_THINKING の鏡写しが同じ語彙を参照する（四者同名） */
+  waitSignal: WaitSignal;
 }
 
 const STRONG_KINDS: SubstanceKind[] = ["concern", "question", "request", "condition", "schedule", "decision", "decline", "info", "answer"];
@@ -92,6 +99,25 @@ const WAIT_PHRASE_SRC =
   "(?:少し|もう少し|一度|一旦|ゆっくり|じっくり)?(?:検討|考え|相談)(?:させて(?:いただき|頂き|もらい)?ます|します|いたします|致します|してみます|てみます|ます|中です|中で)|(?:後で|あとで|後ほど|のちほど|帰ったら|落ち着いたら|時間(?:が|の)?ある時に|仕事終わりに)?(?:ゆっくり|じっくり)?(?:確認|拝見|見|チェック)(?:させて(?:いただき|頂き|もらい)?ます|します|いたします|致します|ます)|(?:1度|一度|1回|一回|一旦)?(?:確認|拝見|見|チェック)(?:して|し)(?:から|また|改めて|の上で?|次第|、)|(?:後ほど|あとで|また|改めて|再度)?(?:改めて)?(?:ご?連絡|返信|お返事)(?:させて(?:いただき|頂き)?ます|します|いたします|致します)";
 const WAIT_PHRASE_RE = new RegExp(WAIT_PHRASE_SRC);
 const WAIT_PHRASE_RE_G = new RegExp(WAIT_PHRASE_SRC, "g");
+
+// ─── 2026-09-10 Fable5 みく事例: 待ち句の動詞クラス（thinking 分類の唯一の入口）───
+// GOYUKKURI_MIRROR（L1354付近）・CUSTOMER_KAKUNIN_SIGNAL_RE と同じ語彙圏を使う。
+// 旧実装は CUST_THINKING_RE だけが「確認／拝見／チェック」を知らず、PS_THINKING（direction 本文は
+// 「確認します→ご確認」の鏡写しを明記）に到達できなかった。
+export type WaitVerb = "検討" | "確認" | "相談" | "連絡";
+export type WaitSignal = { yes: boolean; verb: WaitVerb | null; phrase: string };
+const WAIT_VERB_MAP: Array<[WaitVerb, RegExp]> = [
+  ["検討", /検討|考え|悩|迷/],
+  ["確認", /確認|拝見|チェック|見|目を通/],
+  ["相談", /相談|話し合|持ち帰/],
+  ["連絡", /ご?連絡|返信|お返事/],
+];
+export function detectWaitSignal(normalized: string): WaitSignal {
+  const m = WAIT_PHRASE_RE.exec(normalized);
+  if (!m) return { yes: false, verb: null, phrase: "" };
+  const hit = WAIT_VERB_MAP.find(([, re]) => re.test(m[0]));
+  return { yes: true, verb: hit ? hit[0] : null, phrase: m[0] };
+}
 
 export const CONCERN_HEDGE_RE =
   /不安|心配|迷(?:い|う|って|います|ってます|っちゃ)|悩(?:み|んで|む|ましい)|どう(?:なの)?かな|どうかな|どうなんでしょう|気になっ?(?:て|ちゃ|ります)|微妙|難し(?:い|く|そう)|厳し(?:い|く|そう)|きつ(?:い|く|そう)|怖(?:い|く)|大丈夫(?:なの)?(?:です|でしょう)?か|ネック|引っかか|懸念|かなと|かなぁ|かな(?:[。…！!、\s]|$)|ですかね|ですよね[…。]|💦/mu;
@@ -172,6 +198,7 @@ export function analyzeSubstance(
   const evidence: string[] = [];
   const none = (why: string): SubstanceVerdict => ({
     has: false, kinds: [], concerns: [], isAckOnly: true, residue: "", residueLen: 0, normalized, units: unitList, evidence: [why],
+    isPureBoilerplate: true, waitSignal: detectWaitSignal(normalized),
   });
   if (!normalized) return none("empty");
   if (/^(?:\[スタンプ\]\s*)+$/.test((customerMessage ?? "").trim())) return none("decor_only");
@@ -186,8 +213,11 @@ export function analyzeSubstance(
     .filter((s) => Array.from(s).length >= 2 && !isAckSent(s))
     .join(" ");
   const residueLen = cpLen(residue);
+  const waitSignal = detectWaitSignal(normalized);
+  // 2026-09-10 Fable5: 定型と待ち句を剥がした残余がゼロ（本文に実質ゼロ）。brain のガード基準はこちら
+  const isPureBoilerplate = residueLen === 0;
   // 純粋な了承: 全文が定型文のみ（待ち句「検討します」は了承ではないので isAckOnly=false・has=false の中間状態）
-  const isAckOnly = residueLen === 0 && sents.every((s) => isAckSent(s) || (!WAIT_PHRASE_RE.test(s) && cpLen(s) < 2));
+  const isAckOnly = isPureBoilerplate && sents.every((s) => isAckSent(s) || (!WAIT_PHRASE_RE.test(s) && cpLen(s) < 2));
   if (isAckOnly) return { ...none("ack_only"), isAckOnly: true };
 
   const kinds = new Set<SubstanceKind>();
@@ -207,29 +237,133 @@ export function analyzeSubstance(
   if (residueLen >= 10 && kinds.size === 0) { kinds.add("statement"); evidence.push(`residue:${residueLen}`); }
 
   const has = STRONG_KINDS.some((k) => kinds.has(k)) || residueLen >= 10;
-  return { has, kinds: [...kinds], concerns, isAckOnly: false, residue, residueLen, normalized, units: unitList, evidence };
+  return { has, kinds: [...kinds], concerns, isAckOnly: false, residue, residueLen, normalized, units: unitList, evidence, isPureBoilerplate, waitSignal };
 }
 
-/** fresh brain のみ補助証拠として合流させる（stale は渡さない） */
-export type BrainLite = {
-  customer_questions?: string[] | null;
-  customer_intent?: string | null;
-  condition_change_type?: string | null;
-  repeated_concern?: string | null;
-  hesitancy_pattern?: string | null;
-  customer_concern?: { topic?: string | null; object?: string | null } | null;
-} | null | undefined;
+// ─────────────────────────────────────────────────────────────
+// 2-b. BrainScope — brain フィールドの「意味のスコープ」分離
+// 2026-09-10 Fable5 みく事例:
+//   message-local = このメッセージについての判定 / conversation = 会話全体の方針。
+//   分類器（mergeBrainEvidence / classifyCustomerResponse）は message-local しか受け取れない。
+//   scope が必須リテラル型なので、conversation-scope 側を渡すとコンパイルエラーになる。
+//   根拠: brain-core.ts の各フィールドのプロンプト定義。「message-local リセット10件」のリストは
+//   鮮度リセットのリストであって意味スコープのリストではない（repeated_concern / future_timeline /
+//   current_property という conversation-scope 3件が混入している）。下流はこれを scope と読み替えていた。
+// ─────────────────────────────────────────────────────────────
+export type HesitancyPattern = "thinking" | "callback" | "waiting" | "undecided" | "timeline";
 
-export function mergeBrainEvidence(v: SubstanceVerdict, brain: BrainLite, brainFresh: boolean): SubstanceVerdict {
-  if (!brainFresh || !brain || v.isAckOnly) return v;
+/** 「今回のメッセージが何であるか」の判定に使ってよいフィールドだけを持つ */
+export type BrainMessageLocal = {
+  readonly scope: "message-local";
+  /** brain-core「最新メッセージに含まれる質問…過去メッセージの質問は含めない」 */
+  customer_questions: string[] | null;
+  /** 同「最新メッセージで…述べた懸念…過去メッセージの懸念は含めない」。
+   *  ただし差分分析モードで前回値が残りうるため、必ず本文アンカー（anchorBrainConcern）を要求する */
+  customer_concern: { topic?: string | null; object?: string | null } | null;
+  /** 同「最新メッセージで検索条件の変更・追加・緩和…があったか」 */
+  condition_change_type: string | null;
+  /** 同「決断を保留するパターンを最新メッセージで示しているか」 */
+  hesitancy_pattern: HesitancyPattern | null;
+  /** 同「お客様の今回の問い合わせ意図」。定義が広い（negative=懸念・不安）ため
+   *  単独で kind を立てない。corroboration（補助証拠）専用 */
+  customer_intent: string | null;
+};
+
+/** 「返信の方針・禁止事項」に使うが、「今回のメッセージが何であるか」の判定には**使わない** */
+export type BrainConversationScope = {
+  readonly scope: "conversation";
+  /** brain-core「顧客が**会話全体で**繰り返し確認しているテーマ…2回以上登場した話題のみ」。
+   *  実データ上位は 初期費用16 / 審査5 / 費用3 ＝賃貸客なら誰でも持つ恒常論点。
+   *  **このメッセージが懸念であることを一切示さない** */
+  repeated_concern: string | null;
+  engagement_stance: "push" | "wait" | null;
+  avoid_topics: string[];
+  reply_direction: string | null;
+  latent_intent: string | null;
+  closing_strategy: string | null;
+  winning_pattern: string | null;
+  current_property: string | null;
+  future_timeline: string | null;
+  purchase_signal_level: string | null;
+  checkpoint_stage: string | null;
+};
+
+type RawBrainMeta = Record<string, unknown>;
+const HESITANCY_VALUES: readonly string[] = ["thinking", "callback", "waiting", "undecided", "timeline"];
+const asHesitancy = (v: unknown): HesitancyPattern | null =>
+  typeof v === "string" && HESITANCY_VALUES.includes(v) ? (v as HesitancyPattern) : null;
+const asStrArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/** brainMeta → message-local。**呼び出し側でフィールドを手で詰めない**（repeated_concern の再混入を構造的に防ぐ唯一の入口） */
+export function toBrainMessageLocal(bm: RawBrainMeta | null | undefined): BrainMessageLocal | null {
+  if (!bm) return null;
+  return {
+    scope: "message-local",
+    customer_questions: Array.isArray(bm.customer_questions) ? asStrArr(bm.customer_questions) : null,
+    customer_concern: (bm.customer_concern as BrainMessageLocal["customer_concern"]) ?? null,
+    condition_change_type: (bm.condition_change_type as string | null) ?? null,
+    hesitancy_pattern: asHesitancy(bm.hesitancy_pattern),
+    customer_intent: (bm.customer_intent as string | null) ?? null,
+  };
+}
+
+/** brainMeta → conversation-scope。方針・禁止・RAG クエリ用。分類器には**渡せない**（型エラー） */
+export function toBrainConversationScope(bm: RawBrainMeta | null | undefined): BrainConversationScope | null {
+  if (!bm) return null;
+  const st = bm.engagement_stance;
+  return {
+    scope: "conversation",
+    repeated_concern: (bm.repeated_concern as string | null) ?? null,
+    engagement_stance: st === "push" || st === "wait" ? st : null,
+    avoid_topics: asStrArr(bm.avoid_topics),
+    reply_direction: (bm.reply_direction as string | null) ?? null,
+    latent_intent: (bm.latent_intent as string | null) ?? null,
+    closing_strategy: (bm.closing_strategy as string | null) ?? null,
+    winning_pattern: (bm.winning_pattern as string | null) ?? null,
+    current_property: (bm.current_property as string | null) ?? null,
+    future_timeline: (bm.future_timeline as string | null) ?? null,
+    purchase_signal_level: (bm.purchase_signal_level as string | null) ?? null,
+    checkpoint_stage: (bm.checkpoint_stage as string | null) ?? null,
+  };
+}
+
+/** @deprecated 2026-09-10 Fable5: scope を区別しない旧型。BrainMessageLocal / BrainConversationScope に置換済み */
+export type BrainLite = BrainMessageLocal | null | undefined;
+
+/** fresh な **message-local** brain のみ補助証拠として合流させる。
+ *  2026-09-10 Fable5 みく事例:
+ *   ① residue が空（本文に実質ゼロ）の時は brain は STRONG_KIND を足せない。
+ *      brain の抽出結果は「residue の中身」を説明する値であって、residue の不在を覆せない。
+ *      旧ガードは isAckOnly のみで、待ち句を含む中間状態（residue="" / isAckOnly=false）が素通りしていた。
+ *   ② concern は message-local な customer_concern のみ。しかも本文アンカー必須
+ *      （customer_concern は鮮度リセット対象外＝差分分析で前回値が残りうる第2の誤爆経路）。
+ *   ③ repeated_concern（conversation-scope）と customer_intent（定義が広い）は**加算条件から全廃**。 */
+export function mergeBrainEvidence(v: SubstanceVerdict, brain: BrainMessageLocal | null | undefined, brainFresh: boolean): SubstanceVerdict {
+  if (!brainFresh || !brain) return v;
+  if (v.isPureBoilerplate) {
+    return { ...v, evidence: [...v.evidence, `brain.skipped:pure_boilerplate:${v.isAckOnly ? "ack_only" : "wait_only"}`] };
+  }
   const kinds = new Set(v.kinds); const evidence = [...v.evidence];
   if ((brain.customer_questions?.length ?? 0) > 0) { kinds.add("question"); evidence.push("brain.customer_questions"); }
   if (brain.condition_change_type && brain.condition_change_type !== "none") { kinds.add("condition"); evidence.push("brain.condition_change_type"); }
-  if (brain.repeated_concern || brain.customer_intent === "negative" || brain.customer_concern?.topic) {
-    kinds.add("concern");
-    evidence.push(`brain.${brain.customer_concern?.topic ? "customer_concern" : brain.repeated_concern ? "repeated_concern" : "intent:negative"}`);
-  }
+  const anchored = anchorBrainConcern(brain.customer_concern, v.normalized);
+  if (anchored) { kinds.add("concern"); evidence.push(`brain.customer_concern:${anchored}`); }
   return { ...v, kinds: [...kinds], evidence, has: v.has || STRONG_KINDS.some((k) => kinds.has(k)) };
+}
+
+/** brain の懸念が本文に実在するか。topic/object のどちらかが本文に現れる時だけ採用する。
+ *  「初期費用の支払い方法」のような長い topic は CUST_CONCERN_OBJECT_RE で対象語に縮約してから照合する。
+ *  ※ CUST_CONCERN_OBJECT_RE は後段で定義（この関数は実行時にしか参照しないので TDZ にならない） */
+export function anchorBrainConcern(
+  cc: BrainMessageLocal["customer_concern"], normalized: string,
+): string | null {
+  for (const c of [cc?.object, cc?.topic]) {
+    if (!c || Array.from(c).length < 2) continue;
+    if (normalized.includes(c)) return c;
+    const tok = c.match(CUST_CONCERN_OBJECT_RE)?.[0];
+    if (tok && normalized.includes(tok)) return tok;
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -333,19 +467,23 @@ export function classifyLastStaffTurn(
 // ─────────────────────────────────────────────────────────────
 export type CustomerResponseKind =
   | "concern" | "positive" | "thinking" | "will_send_later" | "question" | "decline" | "condition_change" | "answer" | "ack_only" | "other";
-export type CustomerResponse = {
-  kind: CustomerResponseKind;
+export type CustomerResponseSource = "regex" | "flag" | "brain";
+type CustomerResponseBase = {
   secondary: CustomerResponseKind[];
-  /** 懸念の対象語（2階／お風呂／家賃…）。無ければ null */
-  object: string | null;
   evidence: string;
-  source: "regex" | "flag" | "brain";
+  source: CustomerResponseSource;
 };
+/** 2026-09-10 Fable5: concern だけ object を **非 null 必須**にする。
+ *  「懸念（）」と空括弧でレンダリングされる状態＝懸念の対象が本文に存在しない状態を、型として作れなくする */
+export type CustomerResponse =
+  | (CustomerResponseBase & { kind: "concern"; object: string })
+  | (CustomerResponseBase & { kind: Exclude<CustomerResponseKind, "concern">; object: string | null });
 export type CustomerResponseFlags = {
   isThinkingMsg?: boolean; isTemporaryLeaveMsg?: boolean;
   isConditionChangeRequest?: boolean; isConditionPresented?: boolean;
   negativeKind?: "withdrawal" | "staff_report" | null;
-  brain?: BrainLite; // fresh のみ
+  /** fresh の message-local のみ。conversation-scope は型として渡せない */
+  brain?: BrainMessageLocal | null;
 };
 const PRIORITY: CustomerResponseKind[] = ["decline", "condition_change", "question", "concern", "will_send_later", "thinking", "positive", "answer", "ack_only", "other"];
 const CUST_DECLINE_RE = /見送(?:らせて|ります|りたい|ろうと)|やめ(?:て|とき|とこ)|遠慮(?:し|させ)|今回は(?:結構|大丈夫|やめ|見送|なし)|お断り|他で(?:決め|契約)|キャンセル(?:で|し|お願い)/;
@@ -411,7 +549,9 @@ export function classifyCustomerResponse(sub: SubstanceVerdict, staff: StaffTurn
     if (sub.concerns.length > 0 && (CONCERN_HEDGE_RE.test(p) || sub.concerns.some((c) => p.includes(c.phrase)))) put("concern", p);
     // (B)「あればお送りください」は我々への依頼であって持込予告ではない
     if (CUST_WILL_SEND_RE.test(p) && !CUST_ASKS_US_TO_SEND_RE.test(p)) put("will_send_later", p);
-    if (CUST_THINKING_RE.test(p) || CUST_CALLBACK_RE.test(p) || flags.isThinkingMsg) put("thinking", p);
+    // 2026-09-10 Fable5: 待ち句は analyzeSubstance と同じ語彙で判定する。CUST_THINKING_RE には
+    //   「確認／拝見／チェック／見ます」が1語も無く、WAIT_PHRASE_SRC・CUSTOMER_KAKUNIN_SIGNAL_RE とだけ乖離していた
+    if (CUST_THINKING_RE.test(p) || CUST_CALLBACK_RE.test(p) || WAIT_PHRASE_RE.test(p) || flags.isThinkingMsg) put("thinking", p);
     if (CUST_POSITIVE_RE.test(p)) put("positive", p);
   }
   // ②' 2026-09-09 Fable5: 条件の宣言形（「2LDKで探してまして」「阿波座・本町で2LDK 17万以内でお願いします」）は flag/brain が無い経路
@@ -426,12 +566,23 @@ export function classifyCustomerResponse(sub: SubstanceVerdict, staff: StaffTurn
   // ④ brain（fresh のみ）は補助証拠: regex が拾えなかった懸念・質問・条件変更を追加するだけで regex を上書きしない
   const b = flags.brain;
   if (b) {
-    if (!found.has("concern") && (b.customer_intent === "negative" || !!b.repeated_concern || b.hesitancy_pattern === "concern" || !!b.customer_concern?.topic)) put("concern", `brain:${b.customer_concern?.topic ?? b.customer_intent ?? b.hesitancy_pattern ?? "repeated_concern"}`);
+    // ④-a 懸念は message-local な customer_concern のみ。かつ本文アンカー必須。
+    //     repeated_concern（会話全体で2回以上のテーマ）と customer_intent==="negative"（定義=懸念・不安）は加算条件から全廃
+    const anchoredConcern = anchorBrainConcern(b.customer_concern, raw);
+    if (!found.has("concern") && anchoredConcern) put("concern", `brain:customer_concern=${anchoredConcern}`);
     if (!found.has("question") && (b.customer_questions?.length ?? 0) > 0) put("question", `brain:customer_questions[${b.customer_questions!.length}]`);
     if (!found.has("condition_change") && b.condition_change_type && b.condition_change_type !== "none") put("condition_change", `brain:condition_change_type=${b.condition_change_type}`);
+    // ④-b 旧実装の `b.hesitancy_pattern === "concern"` は HESITANCY_PATTERNS に存在しない値で**永久に false**（死んだ条件）。
+    //     正しい値 thinking / callback / undecided は一切使われていなかった。thinking 側に合流させる
+    if (!found.has("thinking") && (b.hesitancy_pattern === "thinking" || b.hesitancy_pattern === "callback" || b.hesitancy_pattern === "undecided")) {
+      put("thinking", `brain:hesitancy_pattern=${b.hesitancy_pattern}`);
+    }
   }
   // ⑤ 「迷います」「どうかな」は対象語（階・お風呂・家賃…）があれば concern、無ければ thinking
-  if (found.has("concern") && found.has("thinking") && !CUST_CONCERN_OBJECT_RE.test(raw) && sub.concerns.length === 0) found.delete("concern");
+  //   2026-09-10 Fable5: 安全網を「thinking が同時に立っていること」から切り離す
+  //   （旧実装は found.has("thinking") を発火条件にしていたため、thinking が立たない brain 単独誤爆を落とせなかった）
+  const concernObject: string | null = raw.match(CUST_CONCERN_OBJECT_RE)?.[0] ?? sub.concerns[0]?.phrase ?? null;
+  if (found.has("concern") && !concernObject) found.delete("concern");        // 対象語ゼロの懸念は成立しない
   if (found.has("concern") && sub.concerns.length > 0) found.delete("thinking"); // 対象付きの迷いは懸念が主
   // ⑤' 2026-09-10 Fable5: 「送っていいですか」は回答を要する質問ではなく持込予告（正解は受け口＋業務フロー宣言）。
   //    他に本物の質問行が無い時だけ question を落とす（「送っていいですか？あと初期費用はいくら？」は question を残す）
@@ -442,11 +593,16 @@ export function classifyCustomerResponse(sub: SubstanceVerdict, staff: StaffTurn
 
   // ack_only は残余がある時は主分類にしない（「ありがとう＋702号室お願いします」は了承ではない）
   const ordered = PRIORITY.filter((k) => found.has(k) && k !== "ack_only");
-  const primary: CustomerResponseKind = ordered[0] ?? (sub.residueLen >= 2 ? "other" : "ack_only");
+  const primary: CustomerResponseKind =
+    ordered[0] ?? (sub.residueLen >= 2 ? "other" : sub.waitSignal.yes ? "thinking" : "ack_only");
   const secondary = ordered.slice(1);
   const ev = found.get(primary) ?? "";
-  const objectMatch = raw.match(CUST_CONCERN_OBJECT_RE);
-  return { kind: primary, secondary, object: objectMatch ? objectMatch[0] : null, evidence: ev, source: ev.startsWith("brain:") ? "brain" : ev.startsWith("flag:") ? "flag" : "regex" };
+  const source: CustomerResponseSource = ev.startsWith("brain:") ? "brain" : ev.startsWith("flag:") ? "flag" : "regex";
+  if (primary === "concern") {
+    // 型上 object: string が必須＝上の ⑤ で保証済み（non-null assertion は仕様の表明）
+    return { kind: "concern", object: concernObject!, secondary, evidence: ev, source };
+  }
+  return { kind: primary, secondary, object: concernObject, evidence: ev, source };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -484,6 +640,9 @@ export type PairMustInclude = {
   /** PAIR_ELEMENT_MISSING の修正案リテラル。省略時のみ rule.suggestion → rule.example にフォールバックする。
    *  example を fix に使うと修正ループが example を丸写しさせる（あみ事例の再発経路）ので、要素ごとに必ず持たせる */
   fix?: string;
+  /** 2026-09-10 Fable5: 必須要素が「A or B」の選択肢を持つ時、brain avoid と衝突する側を**除外**して
+   *  残る側をリテラルで指名する。文を足す指示ではなく選択肢を削る指示なので、創作を誘発しない */
+  preferWhenAvoid?: Array<{ avoid: RegExp; use: string }>;
 };
 export type PairRule = {
   id: string;
@@ -601,10 +760,14 @@ export const PAIR_MATRIX: PairRule[] = [
 
   { id: "VI_CONCERN", staff: "viewing_invite", customer: "concern", precedence: "override_wait",
     tpoLabel: "提案後の懸念（内覧打診への懸念返答）",
-    direction: "我々の内覧打診に対し顧客が物件の懸念（{object}）を返した。①「〇〇さんお世話になっております！！」または「ご要望お聞かせ頂きありがとうございます😊！！」型の受け止め1文（共感語禁止）②履歴にある事実で答えられる時のみ事実回答1文（無ければ省略）③懸念を条件語に変換した再ピックアップ宣言1文（{fix}）④内覧は「お気に召されましたらいつでも」の開放のみで押さない⑤締め。120〜200字",
+    // 2026-09-10 Fable5: 完成文のリテラル（「ご要望お聞かせ頂きありがとうございます😊！！」）を direction から除去
+    //   （example 側にのみ残し、examplePremise / exampleRequires の前提ゲートを効かせる）
+    direction: "我々の内覧打診に対し顧客が物件の懸念（{object}）を返した。①お客様が使った語のままの受け止め1文（共感語禁止・開口語は置かない）②履歴にある事実で答えられる時のみ事実回答1文（無ければ省略）③懸念を条件語に変換した再ピックアップ宣言1文④内覧は「お気に召されましたらいつでも」の開放のみで押さない⑤締め。120〜200字",
     mustInclude: [
-      { label: "懸念対象の復唱（例: お子様との階段の上り下り）", detect: /階段|[0-9０-９]+階|1階|１階|エレベーター|お子様|新生児|お風呂|広め|築|家賃|初期費用|審査/ },
-      { label: "懸念→条件変換の再ピックアップ宣言", detect: new RegExp(`(?:中心に|条件に合|優先して).{0,40}(?:ピックアップ|お調べ|お探し|探さ|お送り).{0,30}${DECL_TAIL}`) },
+      { label: "懸念（{object}）対象の復唱", detect: /階段|[0-9０-９]+階|1階|１階|エレベーター|お子様|新生児|お風呂|広め|築|家賃|初期費用|審査/,
+        fix: "お客様が挙げた懸念対象「{object}」をそのままの語で1文に入れる（お客様が書いていない語は足さない）" },
+      { label: "懸念→条件変換の再ピックアップ宣言", detect: new RegExp(`(?:中心に|条件に合|優先して).{0,40}(?:ピックアップ|お調べ|お探し|探さ|お送り).{0,30}${DECL_TAIL}`),
+        fix: "「{fix}〇〇さんにオススメできるお部屋{redo}ピックアップしお送りさせて頂きます！！」の形で1文だけ宣言する" },
     ],
     mustNot: ["「お気持ち、よくわかります」等の共感フレーズ", "「かしこまりました！！」で終える", "「はい😊！！」開始", "内覧日程の再提案・候補日時", "申込誘導・希少性煽り", "「2階でも大丈夫」等の根拠なし安心づけ", "懸念を質問で返す"],
     example: "あみさんお世話になっております！！\nご要望お聞かせ頂きありがとうございます😊！！\n新生児のお子様との階段の上り下りはご負担になりますので、1階またはエレベーター付きのお部屋を中心にあみさんにオススメできるお部屋再度ピックアップしお送りさせて頂きます！！\nこちらのお部屋も含めお気に召されましたらいつでもご内覧頂けますので、あみさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます😌！！",
@@ -688,10 +851,14 @@ export const PAIR_MATRIX: PairRule[] = [
 
   { id: "PS_CONCERN", staff: "property_send", customer: "concern", precedence: "override_wait",
     tpoLabel: "提案後の懸念（物件送付後）",
-    direction: "送付物件への懸念（{object}）を条件に変換し再ピックアップ宣言。「ご要望お聞かせ頂きありがとうございます😊！！」→「{fix}〇〇さんにオススメできるお部屋お調べさせて頂きます！！」→サポート継続。共感文だけは不合格。90〜150字",
+    // 2026-09-10 Fable5: 完成文のリテラル（「ご要望お聞かせ頂きありがとうございます😊！！」「〜お調べさせて頂きます！！」）を
+    //   direction から除去（example 側にのみ残し前提ゲートを効かせる）。direction は無条件に注入されるため second-order の生成源だった
+    direction: "送付物件への懸念（{object}）を、お客様が使った語のまま条件に変換し、その条件で{redo}ピックアップする宣言。開口語は置かず受け止め1文から入る。共感文だけは不合格。90〜150字",
     mustInclude: [
-      { label: "懸念→条件語の復唱（広め／1階／初期費用抑えめ等）", detect: /広め|広い|1階|１階|エレベーター|抑え|近い|新し|静か|明る|築浅|保証会社/ },
-      { label: "再ピックアップ宣言", detect: new RegExp(`(?:中心に|条件に合|優先して).{0,30}(?:お調べ|ピックアップ|お探し|探さ).{0,30}${DECL_TAIL}`) },
+      { label: "懸念（{object}）→条件語の復唱", detect: /広め|広い|1階|１階|エレベーター|抑え|近い|新し|静か|明る|築浅|保証会社/,
+        fix: "お客様が挙げた懸念対象「{object}」を条件語に変換した「{fix}」を1文に入れる（お客様が書いていない条件語は足さない）" },
+      { label: "{redo}ピックアップ宣言", detect: new RegExp(`(?:中心に|条件に合|優先して).{0,30}(?:お調べ|ピックアップ|お探し|探さ).{0,30}${DECL_TAIL}`),
+        fix: "「{fix}〇〇さんにオススメできるお部屋お調べさせて頂きます！！」の形で1文だけ宣言する" },
     ],
     mustNot: ["「お気持ちよくわかります」等の共感語", "送付物件の擁護・説得", "内覧誘導・申込誘導", "「かしこまりました！！」単独終了", "「はい😊！！」開始"],
     example: "あみさんお世話になっております！！\nご要望お聞かせ頂きありがとうございます😊！！\nお風呂広めのお部屋を中心にあみさんにオススメできるお部屋お調べさせて頂きます！！\nあみさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
@@ -705,13 +872,18 @@ export const PAIR_MATRIX: PairRule[] = [
     mustInclude: [
       { label: "急かさない受け止め（顧客が使った動詞をそのまま鏡写しにする）", detect: /ごゆっくり/, when: hasGoyukkuriMirrorVerb,
         fix: "顧客が『検討します』なら「ごゆっくりご検討頂けますと幸いです😊！！」／『確認します』なら「ごゆっくりご確認頂けますと幸いです😊！！」／『相談してみます』なら「ごゆっくりご相談頂けますと幸いです😊！！」" },
-      { label: "随時ピックアップ宣言 or 扉を開ける1文", detect: /随時|出てきましたら|出次第|いつでも|内覧/ },
+      { label: "随時ピックアップ宣言 or 扉を開ける1文", detect: /随時|出てきましたら|出次第|いつでも|内覧/,
+        preferWhenAvoid: [{ avoid: /新規.{0,6}ピックアップ|再ピックアップ|別物件|物件提案/,
+          use: "「お部屋お気に召されましたら、実際にお部屋ご案内させて頂きますのでいつでもお気軽にご連絡ください😌！！」（＝扉を開ける側を選ぶ。随時ピックアップ側は brain が避けよと言っているので書かない）" }] },
     ],
     mustNot: ["申込誘導", "希少性煽り（人気のため早めに等）", "「かしこまりました！！」単独終了", "検討依頼の繰り返し（ご検討の程〜）", "顧客が言っていない動詞での「ごゆっくり〇〇」（相談と言っていないのに『ご相談』等）"],
     example: "お世話になっております！！\nかしこまりました！！ごゆっくりご相談頂けますと幸いです😊！！\nまた〇〇さんにオススメできるお部屋出てきましたら随時ピックアップしてお送りさせて頂きます！！",
     examplePremise: "お客様が『（誰かに）相談してみます』と明言した場合（rさん実例）。相談の言及が無い場面でこの文を出すと文脈が壊れる",
     exampleRequires: /相談|話し合|家族|旦那|主人|妻|嫁|親|同居|友人|彼氏|彼女|二人で|2人で/,
-    exampleFallback: "はい😊！！\nごゆっくりご検討頂けますと幸いです！！\nまた〇〇さんにオススメできるお部屋出てきましたら随時ピックアップしてお送りさせて頂きます！！",
+    // 2026-09-10 Fable5 みく事例: 旧 fallback は「随時ピックアップしてお送りさせて頂きます」を含み、
+    //   avoid_topics に新規ピックアップがある会話では example 自体が禁止語の供給源になっていた。
+    //   VI_THINKING / ES_THINKING の成約実文と同型の「扉を開ける」型に差し替える
+    exampleFallback: "はい😊！！\nごゆっくりご確認頂けますと幸いです！！\nお部屋お気に召されましたら、実際にお部屋ご案内させて頂きますのでいつでもお気軽にご連絡ください😌！！",
     length: "70〜130字", closer: "wait_softly", nanisotsu: false },
 
   { id: "PS_WILL_SEND", staff: "property_send", customer: "will_send_later", precedence: "override_wait",
@@ -864,7 +1036,19 @@ export interface PairContext {
   redo: string;
   /** 2026-09-10 Fable5: 顧客が「送る」と予告した物の種類（will_send_later 以外は "unknown"） */
   sendObject: WillSendObject;
+  /** 2026-09-10 Fable5: 証拠ゼロの懸念セルを棄却した記録（tpo_debug / final-check が参照） */
+  cellGuard: CellGuard;
+  /** セル必須要素 × brain 方針の衝突。route.ts が detectCellConflicts で埋める */
+  conflicts: CellConflict[];
 }
+
+export type CellGuard = {
+  /** 懸念セルを棄却して降格したか（証拠ゼロの concern） */
+  concernDemoted: boolean;
+  demotedFrom: CustomerResponseKind | null;
+  demotedTo: CustomerResponseKind | null;
+  reason: string | null;
+};
 
 /** {redo}: 台帳に物件送付実績がある時だけ「再度」。生成 direction／検査 label／final-check suggestion が同じ関数 */
 export function redoWord(ledger: ActionLedger | null | undefined): string { return ledger && ledger.facts.propertiesSentCount > 0 ? "再度" : ""; }
@@ -876,30 +1060,61 @@ export function resolveTurnPair(
   // 2026-09-09 Fable5: 同一セルに「未探索（宣言型）」と「探索済み（結果報告型・hedgeAllowed）」がある時は resolveHedgeAllowance の searched で選ぶ
   // 「探索済み」＝顧客最新発言より後の送付（hedgeAllowed セル選択）。全期間の propertiesSentCount は {redo} 用で混同しない
   const searched = !!opts.searched || !!opts.ledger?.facts.propertiesSentSinceCustomerLatest;
-  const exact = PAIR_MATRIX.filter((r) => r.staff === staff.kind && r.customer === customer.kind);
+
+  // 2026-09-10 Fable5 みく事例: 懸念セルは「懸念の対象語が本文に実在する」時だけ引く。
+  // customer.object===null かつ substance.concerns===[] は「懸念の証拠が本文に一切ない」ことの決定的な指紋であり、
+  // 従来はその状態でも PS_CONCERN が選ばれ direction が「懸念（）」と空括弧でレンダリングされていた。
+  // classifyCustomerResponse 側は型で保証済みだが、check-reply 経路・古い snapshot 復元経路のための二重防護。
+  const concernUnanchored =
+    customer.kind === "concern" && !customer.object && substance.concerns.length === 0;
+  const effectiveKind: CustomerResponseKind = concernUnanchored
+    ? (substance.waitSignal.yes ? "thinking" : substance.isPureBoilerplate ? "ack_only" : "other")
+    : customer.kind;
+  const cellGuard: CellGuard = concernUnanchored
+    ? { concernDemoted: true, demotedFrom: "concern", demotedTo: effectiveKind,
+        reason: `懸念の対象語ゼロ（object=null / concerns=[] / residue="${substance.residue.slice(0, 20)}"）` }
+    : { concernDemoted: false, demotedFrom: null, demotedTo: null, reason: null };
+  if (concernUnanchored) console.warn("[turn-pair] concern demoted:", cellGuard.reason, "→", effectiveKind);
+  // summary 以降は effectiveKind を使う（tpo_debug に降格の事実が残る）
+  const custForCtx: CustomerResponse =
+    concernUnanchored
+      ? { kind: effectiveKind as Exclude<CustomerResponseKind, "concern">, object: null,
+          secondary: customer.secondary, evidence: customer.evidence, source: customer.source }
+      : customer;
+
+  const exact = PAIR_MATRIX.filter((r) => r.staff === staff.kind && r.customer === effectiveKind);
   const rule =
     (searched ? exact.find((r) => r.hedgeAllowed) : exact.find((r) => !r.hedgeAllowed)) ??
     exact[0] ??
-    PAIR_MATRIX.find((r) => r.staff === "*" && r.customer === customer.kind) ??
+    PAIR_MATRIX.find((r) => r.staff === "*" && r.customer === effectiveKind) ??
     PAIR_MATRIX.find((r) => r.staff === staff.kind && r.customer === "*") ??
     null;
   const summary =
-    `${STAFF_KIND_JA[staff.kind]} → ${CUSTOMER_KIND_JA[customer.kind]}` +
-    (customer.secondary.length ? `＋${customer.secondary.map((k) => CUSTOMER_KIND_JA[k]).join("・")}` : "") +
+    `${STAFF_KIND_JA[staff.kind]} → ${CUSTOMER_KIND_JA[effectiveKind]}` +
+    (custForCtx.secondary.length ? `＋${custForCtx.secondary.map((k) => CUSTOMER_KIND_JA[k]).join("・")}` : "") +
     (substance.concerns.length ? `（懸念: ${substance.concerns.map((c) => `${c.label}「${c.phrase}」`).join("、")}）` : "") +
-    (customer.object && !substance.concerns.length ? `（対象: ${customer.object}）` : "") +
+    (custForCtx.object && !substance.concerns.length ? `（対象: ${custForCtx.object}）` : "") +
     (opts.ledger ? `｜台帳: ${opts.ledger.summary}` : "");
   // 2026-09-10 Fable5: 予告の対象（物件／条件／書類）。要素④の中身と見積予告の要否を決める唯一の分岐軸（state 非依存）
   const sendObject: WillSendObject =
-    customer.kind === "will_send_later" || customer.secondary.includes("will_send_later")
+    effectiveKind === "will_send_later" || custForCtx.secondary.includes("will_send_later")
       ? classifyWillSendObject(substance.normalized) : "unknown";
-  return { staff, customer, substance, rule, ruleId: rule?.id ?? null, summary, lastStaffText: lastStaffText ?? "", ledger: opts.ledger ?? null, redo: redoWord(opts.ledger), sendObject };
+  return { staff, customer: custForCtx, substance, rule, ruleId: rule?.id ?? null, summary,
+           lastStaffText: lastStaffText ?? "", ledger: opts.ledger ?? null, redo: redoWord(opts.ledger),
+           sendObject, cellGuard, conflicts: [] };
 }
 
-/** {object}/{fix}/{redo}/{ledger}/{sentNames} の置換（生成・検査・note の三者が同じ関数） */
+/** {object}/{fix}/{redo}/{ledger}/{sentNames} の置換（生成・検査・note の三者が同じ関数）。
+ *  2026-09-10 Fable5: 旧実装の `|| "ご希望条件のお部屋を中心に"` は「懸念の実体がゼロの時にこそ汎用の条件復唱文を供給する」
+ *  仕様で、LLM がその空欄を brain の repeated_concern と過去条件で埋める入口になっていた。廃止する。 */
 export function fillPairPlaceholders(s: string, pair: PairContext): string {
-  const object = pair.customer.object ?? pair.substance.concerns[0]?.phrase ?? "";
-  const fix = pair.substance.concerns.map((c) => c.fix).join("、") || "ご希望条件のお部屋を中心に";
+  const object = pair.customer.kind === "concern" ? pair.customer.object : (pair.substance.concerns[0]?.phrase ?? "");
+  // fix は「顧客が書いた対象語」から決定論で導く（成約データに無い文を作らないため、汎用フォールバックは持たない）
+  const fixFromObject = (o: string): string =>
+    CONCERN_RULES.find((r) => r.strongRe?.test(o) || r.topicRe?.test(o))?.fix ?? "";
+  const fix = pair.substance.concerns.map((c) => c.fix).join("、") || (object ? fixFromObject(object) : "");
+  assertPlaceholder(s, "{object}", object, pair);
+  assertPlaceholder(s, "{fix}", fix, pair);
   return s
     .replace(/\{object\}/g, object).replace(/\{fix\}/g, fix)
     .replace(/\{redo\}/g, pair.redo)
@@ -907,22 +1122,42 @@ export function fillPairPlaceholders(s: string, pair: PairContext): string {
     .replace(/\{sentNames\}/g, pair.ledger?.facts.propertiesSentNames.join("・") || "送付済み物件");
 }
 
+/** 開発時アサート: 証拠が無いのにセルが選ばれた瞬間に落ちる。本番は console.error + tpo_debug 行きにする */
+function assertPlaceholder(tpl: string, token: string, value: string, pair: PairContext): void {
+  if (!tpl.includes(token) || value) return;
+  const msg = `[pair-placeholder] ${token} が空のまま ${pair.ruleId} をレンダリングしようとした` +
+    `（customer=${pair.customer.kind} object=${(pair.customer as { object?: string | null }).object ?? "null"}` +
+    ` concerns=${pair.substance.concerns.length} residue="${pair.substance.residue.slice(0, 20)}"）`;
+  if (process.env.NODE_ENV !== "production") throw new Error(msg);
+  console.error(msg);
+}
+
 /** 方向指示文（決定論リテラル）。{object}/{fix}/{redo}/{ledger} を実値に置換し、fresh brain の reply_direction は末尾に「参考」で添える */
-export function buildPairDirection(pair: PairContext, opts: { brainReplyDirection?: string | null; brainFresh: boolean }): string | null {
+export function buildPairDirection(
+  pair: PairContext,
+  opts: { brainReplyDirection?: string | null; brainFresh: boolean; strategy?: BrainConversationScope | null },
+): string | null {
   if (!pair.rule) return null;
   const dir = fillPairPlaceholders(pair.rule.direction, pair);
   // 2026-09-10 Fable5: when が false の要素（この場面に無い要素）は direction にも出さない
-  const must = pair.rule.mustInclude.filter((m) => !m.when || m.when(pair))
-    .map((m, i) => `${i + 1}.${fillPairPlaceholders(m.label, pair)}`).join(" ");
+  const avoids = opts.brainFresh ? (opts.strategy?.avoid_topics ?? []) : [];
+  const must = pair.rule.mustInclude.filter((m) => !m.when || m.when(pair)).map((m, i) => {
+    const pick = m.preferWhenAvoid?.find((p) => avoids.some((t) => p.avoid.test(t)));
+    return `${i + 1}.${fillPairPlaceholders(m.label, pair)}${pick ? `【この場面では必ず → ${pick.use}】` : ""}`;
+  }).join(" ");
   const ref = opts.brainFresh && opts.brainReplyDirection ? ` brain方向性（参考）:「${opts.brainReplyDirection}」` : "";
   return `${dir}。必須要素: ${must}。禁止: ${pair.rule.mustNot.join("／")}${ref}`;
 }
 
 /** dynamicBlock に注入する【往復文脈】ブロック（tpoGuidanceNote より上位・ハードゲートの次） */
-export function buildTurnPairNote(pair: PairContext, customerMessage: string, customerName: string): string {
+export function buildTurnPairNote(
+  pair: PairContext, customerMessage: string, customerName: string,
+  opts: { strategy?: BrainConversationScope | null; brainFresh?: boolean } = {},
+): string {
   const staffJa = STAFF_KIND_JA[pair.staff.kind];
   const custJa = CUSTOMER_KIND_JA[pair.customer.kind];
   const object = pair.customer.object ?? pair.substance.concerns[0]?.phrase ?? "";
+  const avoids = opts.brainFresh === false ? [] : (opts.strategy?.avoid_topics ?? []);
   const lines: string[] = [];
   lines.push("【🔁 往復文脈 — 最上位（「場面と返信方針」より上位・ハードゲートの次）】");
   lines.push(`この返信は「我々が直前に送った〈${staffJa}〉」に対して、お客様が「〈${custJa}〉${object ? `（対象: ${object}）` : ""}」を返してきた、その返しである。単発メッセージへの相槌ではない。`);
@@ -934,7 +1169,10 @@ export function buildTurnPairNote(pair: PairContext, customerMessage: string, cu
     lines.push(`- → この返信の役割: ${fillPairPlaceholders(pair.rule.direction, pair)}`);
     lines.push("- 必須要素（それぞれ本文で1文以上・欠けたら不合格）:");
     const actives = pair.rule.mustInclude.filter((m) => !m.when || m.when(pair));
-    actives.forEach((m, i) => lines.push(`  ${["①", "②", "③", "④", "⑤"][i] ?? i + 1} ${fillPairPlaceholders(m.label, pair)}`));
+    actives.forEach((m, i) => {
+      const pick = m.preferWhenAvoid?.find((p) => avoids.some((t) => p.avoid.test(t)));
+      lines.push(`  ${["①", "②", "③", "④", "⑤"][i] ?? i + 1} ${fillPairPlaceholders(m.label, pair)}${pick ? `【この場面では必ず → ${pick.use}】` : ""}`);
+    });
     lines.push(`- 禁止: ${pair.rule.mustNot.join(" / ")}`);
     // 2026-09-10 Fable5 あみ事例: example は「ある前提が成立していた場面の実文」。前提が今回成立していないなら文をそのまま渡さない
     const premiseOk = !pair.rule.exampleRequires || pair.rule.exampleRequires.test(normalizeCustomerText(customerMessage));
@@ -1385,4 +1623,64 @@ export function buildVocabAnchorNote(customerAll: string, pair: PairContext | nu
     ? `・「ごゆっくり」を使うなら後続語は必ず「${hit.expect}」（お客様の言葉の鏡写し）`
     : "・お客様は「検討する／確認する／相談する／見る」のいずれも言っていない → 「ごゆっくり〜」自体を書かない");
   return lines.join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────
+// 11. セル必須要素 × brain 方針の衝突検出（2026-09-10 Fable5 みく事例）
+//     旧 route.ts の解消は `m.label.includes(t)`（日本語ラベルの部分文字列一致）で avoid 側を削るだけだった。
+//     「新規物件ピックアップ」と「再ピックアップ宣言」は部分文字列一致しないので衝突と認識されず、
+//     プロンプトに「✅ 再ピックアップ宣言 必須」と「🚫 新規物件ピックアップ禁止」が同居し、
+//     しかも禁止行の文面自体が「代わりに ${effectiveReplyDirection} の方向性に沿え」と誤った direction を指し直していた。
+//     方針: avoid は従来どおり削る（プロンプト内矛盾を作らない）が、**削った事実を必ず記録し検査で warning にする**。
+//           セルを自動で切り替えることはしない（決定を2つに増やさない）。
+// ─────────────────────────────────────────────────────────────
+export type CellConflictKind = "avoid_vs_must" | "stance_wait_vs_proposal";
+export type CellConflict = {
+  kind: CellConflictKind;
+  ruleId: string;
+  element: string;
+  brainValue: string;
+  message: string;
+};
+
+/** 意味クラス。必須要素ラベルと avoid_topics の**両方をこの表で正規化してから**突き合わせる */
+const CONFLICT_CLASSES: Array<{ id: string; element: RegExp; avoid: RegExp }> = [
+  { id: "new_pickup", element: /ピックアップ宣言|お調べ|お探し|探す宣言|新規[^。]{0,6}提案/,
+    avoid: /新規.{0,6}ピックアップ|再ピックアップ|別物件|他物件|物件提案|別のお部屋/ },
+  { id: "estimate", element: /見積/, avoid: /見積/ },
+  { id: "viewing",  element: /内覧|ご案内/, avoid: /内見|内覧|ご案内/ },
+  { id: "apply",    element: /申込/, avoid: /申込/ },
+  { id: "vacancy",  element: /募集状況|空室/, avoid: /募集状況|空室/ },
+];
+/** engagement_stance="wait"（今は待つ局面）で出してはいけない要素クラス */
+const PROPOSAL_CLASSES = new Set(["new_pickup", "viewing", "apply"]);
+
+export function detectCellConflicts(
+  pair: PairContext, strategy: BrainConversationScope | null | undefined, brainFresh: boolean,
+): CellConflict[] {
+  if (!brainFresh || !strategy || !pair.rule) return [];
+  const out: CellConflict[] = [];
+  for (const m of pair.rule.mustInclude.filter((x) => !x.when || x.when(pair))) {
+    const cls = CONFLICT_CLASSES.find((c) => c.element.test(m.label));
+    if (!cls) continue;
+    for (const t of strategy.avoid_topics) {
+      if (!cls.avoid.test(t)) continue;
+      out.push({ kind: "avoid_vs_must", ruleId: pair.rule.id, element: m.label, brainValue: t,
+        message: `セル ${pair.rule.id} の必須要素「${m.label}」が brain avoid_topics「${t}」と正面衝突（意味クラス: ${cls.id}）。avoid を削る前にセル選択を疑う` });
+    }
+    if (strategy.engagement_stance === "wait" && PROPOSAL_CLASSES.has(cls.id)) {
+      out.push({ kind: "stance_wait_vs_proposal", ruleId: pair.rule.id, element: m.label, brainValue: "wait",
+        message: `brain の engagement_stance="wait"（今は待つ局面）なのに、セル ${pair.rule.id} が「${m.label}」（新規提案・押し）を必須にしている` });
+    }
+  }
+  return out;
+}
+
+/** avoid を除外すべきか（旧 route.ts の `m.label.includes(t)` の置換。意味クラスで判定する） */
+export function avoidConflictsWithCell(pair: PairContext, topic: string): boolean {
+  if (!pair.rule) return false;
+  return pair.rule.mustInclude.filter((m) => !m.when || m.when(pair)).some((m) => {
+    const cls = CONFLICT_CLASSES.find((c) => c.element.test(m.label));
+    return !!cls && cls.avoid.test(topic);
+  });
 }

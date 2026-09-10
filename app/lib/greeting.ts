@@ -202,6 +202,9 @@ export function resolveOpener(o: {
         ? r("kashikomari", ["kashikomari", "hai", "none"], "了承＋行動要求（申込・内覧・日程）は引き受け")
         : r("hai", ["hai", "none"], "了承・感想・保留の受け止め（正解 了承のみ→はい37／かしこまりました 2）");
     case "concern":
+      // 2026-09-10 Fable5 みく事例: ここに来るのは「懸念の対象語が本文に実在する」時だけになった
+      //   （resolveTurnPair / classifyCustomerResponse が証拠ゼロの concern を thinking・ack_only に降格するため）。
+      //   「ありがとうございます！確認させていただきます」は thinking → 上の分岐で hai になる
       return r("none", ["none", "kashikomari"], "懸念は受け止め文から（正解 懸念→はい 1）");
     case "answer":
       return r("none", ["none", "hai", "kashikomari"], "我々の質問への回答は本題から");

@@ -42,7 +42,7 @@ import {
   stripNonNameChars,
   normalizeCustomerName,
 } from "@/app/lib/validate-reply";
-import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, type MoveOutSubject } from "@/app/lib/move-out-context";
 import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
@@ -77,6 +77,10 @@ import {
   // G32（2026-09-09 Fable5 じゅにあ事例）: 開口語なし（結果報告）の根拠（AIX 確認結果・見積テンプレ）
   STAFF_CONFIRM_REPORT_RE, STAFF_ESTIMATE_RE,
   type HedgeVerdict, type CloserVerdict,
+  // 2026-09-10 Fable5 みく事例: brain フィールドの意味スコープ分離（message-local / conversation）と
+  //   セル必須要素 × brain 方針の衝突検出（avoid を削る前にセル選択を疑うための記録）
+  toBrainMessageLocal, toBrainConversationScope, detectCellConflicts, avoidConflictsWithCell,
+  type BrainConversationScope, type CellConflict,
 } from "@/app/lib/reply-context";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
@@ -2300,8 +2304,10 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   const pspText = psp
     ? [psp.area, psp.floor_plan, psp.rent_max ? `家賃${psp.rent_max}円以内` : null, psp.preferences].filter(Boolean).join(" ")
     : null;
-  // P0-3/P1-4: fetchKnowledge側brainContext（L1470）と同構成に統一（checkpoint_stage等を追加）
-  const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, brainMeta.checkpoint_stage ? `フェーズ: ${brainMeta.checkpoint_stage}` : null, brainMeta.repeated_concern ? `繰り返し懸念: ${brainMeta.repeated_concern}` : null, brainMeta.human_type_label ? `人物タイプ: ${brainMeta.human_type_label}` : null, brainMeta.purchase_signal_level ? `温度感: ${brainMeta.purchase_signal_level}` : null, brainMeta.engagement_stance ? `押し引き: ${brainMeta.engagement_stance}` : null, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
+  // 2026-09-10 Fable5 みく事例: few-shot は「今回の場面の文型」を引く検索なので message-local に寄せる。
+  //   conversation-scope の repeated_concern / closing_strategy / winning_pattern は外す（NG 文の語彙供給源だった）。
+  //   fetchKnowledge 側（方針検索）は conversation-scope のままでよい＝そちらは変更しない
+  const brainContext = brainMeta ? [brainMeta.action, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.customer_emotion, brainMeta.checkpoint_stage ? `フェーズ: ${brainMeta.checkpoint_stage}` : null, brainMeta.human_type_label ? `人物タイプ: ${brainMeta.human_type_label}` : null, brainMeta.purchase_signal_level ? `温度感: ${brainMeta.purchase_signal_level}` : null, brainMeta.engagement_stance ? `押し引き: ${brainMeta.engagement_stance}` : null, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
   const lastAixPart = brainMeta?.last_aix_history ? `[AIX履歴] ${brainMeta.last_aix_history} ` : "";
   const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
   // brainContextをstate直後に固定（末尾配置だとsafeSlice 2000字制限で切り落とされるリスクがあるため前詰め）
@@ -3487,13 +3493,13 @@ export async function POST(req: NextRequest) {
       ledger: ledgerForCtx,
     });
     const substanceBase = analyzeSubstance(message ?? "", customerMsgUnits, { staffAskedQuestion: lastStaffTurn.kind === "question_to_customer" });
-    const substance: SubstanceVerdict = mergeBrainEvidence(
-      substanceBase,
-      brainMeta
-        ? { customer_questions: brainMeta.customer_questions, customer_intent: brainMeta.customer_intent, condition_change_type: brainMeta.condition_change_type, repeated_concern: brainMeta.repeated_concern, hesitancy_pattern: brainMeta.hesitancy_pattern, customer_concern: brainMeta.customer_concern }
-        : null,
-      brainFreshForMessage && !isCachedMeta,
-    );
+    // 2026-09-10 Fable5 みく事例: brain フィールドを「意味のスコープ」で二分する。
+    //   message-local（このメッセージについての判定）だけが分類器に入れる。conversation-scope（会話全体の方針）は
+    //   fresh であってもメッセージ単位の証拠にしない。変換はこの2関数だけが入口（フィールドを手詰めしない）
+    const brainLocal = toBrainMessageLocal(brainMeta as Record<string, unknown> | null);
+    const brainStrategy: BrainConversationScope | null = toBrainConversationScope(brainMeta as Record<string, unknown> | null);
+    const brainLocalFresh = brainFreshForMessage && !isCachedMeta;
+    const substance: SubstanceVerdict = mergeBrainEvidence(substanceBase, brainLocal, brainLocalFresh);
     console.info("[reply-context]", JSON.stringify({ has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, units: customerMsgUnits.length }));
 
     // G10（2026-09-08 Fable5）: 退去・引越し語の主語（現住居＝入居時期情報／提案物件／部屋探し終了）。
@@ -3800,9 +3806,7 @@ export async function POST(req: NextRequest) {
     const customerResponse = classifyCustomerResponse(substance, lastStaffTurn, {
       isThinkingMsg, isTemporaryLeaveMsg, isConditionChangeRequest, isConditionPresented,
       negativeKind: negativeDetail.kind,
-      brain: brainFreshForMessage && !isCachedMeta && brainMeta
-        ? { customer_intent: brainMeta.customer_intent, customer_questions: brainMeta.customer_questions, condition_change_type: brainMeta.condition_change_type, hesitancy_pattern: brainMeta.hesitancy_pattern, repeated_concern: brainMeta.repeated_concern, customer_concern: brainMeta.customer_concern }
-        : null,
+      brain: brainLocalFresh ? brainLocal : null,       // conversation-scope は型として渡せない
     });
     // ── 2026-09-09 Fable5 みく事例: ヘッジ許容（探索済み証拠 > 顧客の疑問形質問 > 禁止）。pairContext より先に計算し PAIR_MATRIX の探索済みセル選択にも使う
     //   生成（latent_intent / winning_pattern / closing_strategy / customer_questions / conditionDirection / 【姿勢】）・検査（final-check runHedgeChecks）・tpo_debug が同一 verdict
@@ -3825,7 +3829,14 @@ export async function POST(req: NextRequest) {
     });
     console.info("[hedge]", JSON.stringify({ allowance: hedge.allowance, searched: hedge.searched, asked: hedge.customerAsked.yes, selfHedge: hedge.customerSelfHedge.yes, statedRelax: hedge.customerStatedRelax.yes }));
     const pairContext: PairContext = resolveTurnPair(lastStaffTurn, customerResponse, substance, lastStaffMsgForSearch || tpoLatestStaffText || "", { searched: hedge.searched.yes, ledger: ledgerForCtx });
-    const pairDirection = buildPairDirection(pairContext, { brainReplyDirection: brainMeta?.reply_direction ?? null, brainFresh: brainFreshForMessage && !isCachedMeta });
+    // 2026-09-10 Fable5: セル必須要素 × brain 方針の衝突。avoid を削る前に「セル選択を疑う」ための記録
+    const cellConflicts: CellConflict[] = detectCellConflicts(pairContext, brainStrategy, brainLocalFresh);
+    pairContext.conflicts = cellConflicts;
+    if (cellConflicts.length) console.warn("[cell-conflict]", JSON.stringify(cellConflicts));
+    if (pairContext.cellGuard.concernDemoted) console.warn("[cell-guard]", pairContext.cellGuard.reason);
+    const pairDirection = buildPairDirection(pairContext, {
+      brainReplyDirection: brainStrategy?.reply_direction ?? null, brainFresh: brainLocalFresh, strategy: brainStrategy,
+    });
     // ラベル: tpoNoteForLLM ↔ prompts「■ 場面【…】」↔ final-check WAIT_TPO_RE（after_wait の検討中セルは「検討中フォロー」を含めて WE DO 免除を維持）
     const pairTpoLabel = pairContext.rule ? `${pairContext.rule.tpoLabel}（往復: ${pairContext.summary}。${pairContext.rule.length}）` : null;
     console.info("[turn-pair]", JSON.stringify({ staff: lastStaffTurn.kind, customer: customerResponse.kind, secondary: customerResponse.secondary, object: customerResponse.object, ruleId: pairContext.ruleId, precedence: pairContext.rule?.precedence ?? null }));
@@ -3935,9 +3946,9 @@ export async function POST(req: NextRequest) {
     // 顧客が最新メッセージで自ら言及した語は avoid_topics から除外
     // （stale brain_meta の avoid_topics が現在の質問を封じる逆転を防ぐ）
     // 2026-09-09 Fable5: 往復セルの必須要素と衝突する avoid（ES_WILL_SEND で brain avoid_topics「見積書」が必須要素「御見積書とあわせて」と衝突）も除外
+    // 2026-09-10 Fable5 みく事例: 部分文字列一致 → 意味クラス一致（「新規物件ピックアップ」と「再ピックアップ宣言」を衝突と認識する）
     const activeAvoidTopics = effectiveAvoidTopics.filter(t =>
-      !(message ?? "").includes(t) &&
-      !(pairContext.rule?.mustInclude.some((m) => m.label.includes(t)) ?? false)
+      !(message ?? "").includes(t) && !avoidConflictsWithCell(pairContext, t)
     );
     // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
     const tpoNoteForLLM: string | null = (() => {
@@ -4174,8 +4185,10 @@ export async function POST(req: NextRequest) {
       if (qs.some((q) => ANXIETY_KEYWORDS.some((k) => q.includes(k)))) {
         lines.push("- 🚨 不安系質問検出: お客様はリスク・ルール・契約上の不安を持っている。曖昧・ぼかした回答（「可能性があります」「かもしれません」）は信頼を損なう。不動産ルール・事実・リスクを具体的に説明し、リスクがある場合は正直に伝えた上で必ず代替案をセットで提示すること");
       }
-      if (brainFreshForMessage && brainMeta.repeated_concern) {
-        lines.push(`- 💭 迷いパターン検出: このお客様は「${brainMeta.repeated_concern}」について繰り返し確認している。表面的な質問の裏に根本的な不安がある。今回の返信でその不安を正面から・具体的な数字・事実で解消すること。同じ説明の繰り返しはNG — 別の角度・具体例で伝える`);
+      // 2026-09-10 Fable5 みく事例: repeated_concern は conversation-scope（会話全体で2回以上出た論点）。
+      //   「今回のメッセージが懸念だ」という指示に変換しない。本文に実質ゼロ（isPureBoilerplate）の時は一切出さない
+      if (brainFreshForMessage && brainStrategy?.repeated_concern && !substance.isPureBoilerplate) {
+        lines.push(`- 💭 会話全体を通じた関心事: このお客様は会話全体で「${brainStrategy.repeated_concern}」を繰り返し確認している（※これは会話の論点であって「今回のメッセージが懸念だ」という意味ではない）。今回のメッセージがこの論点に触れている場合に**限り**事実で答える。触れていなければ一切言及しない`);
       }
       if (brainFreshForMessage && brainMeta.current_property) {
         lines.push(brainMeta.condition_change_type
@@ -4296,7 +4309,7 @@ export async function POST(req: NextRequest) {
     const vocabAnchorNote = isFollowUp || isTemplateOptimize
       ? ""
       : buildVocabAnchorNote(`${message ?? ""}\n${unrepliedCustomerTexts.join("\n")}`, pairContext);
-    const turnPairNote = (isFollowUp || isTemplateOptimize ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "")) + vocabAnchorNote;
+    const turnPairNote = (isFollowUp || isTemplateOptimize ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "", { strategy: brainStrategy, brainFresh: brainLocalFresh })) + vocabAnchorNote;
     // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】（往復文脈の直前）＋ 直前発言の宣言／実行注記（staffContextNote）。shadow では注入しない
     const actionLedgerNote = isFollowUp || !ledgerActive ? "" : buildLedgerNote(ledger, { customerName: customerName ?? "" });
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
@@ -4929,6 +4942,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
+                  brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 みく事例: 会話スコープ方針・セル衝突（四者同名）
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳（生成側と同一オブジェクト・四者同名）
                 };
                 // センシティブ案件（クレーム/審査否決/キャンセル）は「参考のみ・手動確認必須」の草稿のため
@@ -5041,6 +5055,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                     substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                     hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
+                    brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 みく事例: 会話スコープ方針・セル衝突
                     ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   };
                   const nameRes = enforceCustomerName(draftBody, { customerName, lineDisplayName });
@@ -5116,7 +5131,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
             if (!isTemplateOptimize && finalCheck && draftBody) {
               try {
-                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|OPENER_MISMATCH|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT|DONE_PRESUPPOSED_WITHOUT_EVIDENCE|PROMISE_ECHO_MISMATCH)/;
+                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|OPENER_MISMATCH|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT|DONE_PRESUPPOSED_WITHOUT_EVIDENCE|PROMISE_ECHO_MISMATCH|UNPROMPTED_PROPOSAL|CELL_AVOID_CONFLICT|ECHO_FROM_BRAIN_NOT_CUSTOMER)/;
                 const postDetCtx = {
                   recentMessages, lastCustomerMessage: message, isAutoSend: enforceReplyModeGate,
                   isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
@@ -5130,6 +5145,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
+                  brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 みく事例: 会話スコープ方針・セル衝突
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   ngProperties: brainFreshForMessage
                     ? (brainMeta?.property_search_params?.ng_properties ?? []).filter((p) => p?.property_name).map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)
@@ -5163,8 +5179,19 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               confirmCtx: { allowed: confirmCtxFinal.allowed, source: confirmCtxFinal.source, object: confirmCtxFinal.object },
               greeting: toGreetingLite(greetingDecision), // G32: kind/opener/audit（waitedMs・起点・customerKind）を保存（check-reply が復元・週次 SQL で冒頭差分を集計）
               // 往復文脈（Turn-Pair）＋実質判定（Substance）
-              substance: { has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, residue: substance.residue.slice(0, 120), evidence: substance.evidence },
-              turnPair: { staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, staffEvidence: lastStaffTurn.evidence.slice(0, 60), customer: customerResponse.kind, customerSecondary: customerResponse.secondary, customerObject: customerResponse.object, customerSource: customerResponse.source, ruleId: pairContext.ruleId, precedence: pairContext.rule?.precedence ?? null },
+              substance: { has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, residue: substance.residue.slice(0, 120), evidence: substance.evidence, isPureBoilerplate: substance.isPureBoilerplate, waitSignal: substance.waitSignal },
+              turnPair: { staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, staffEvidence: lastStaffTurn.evidence.slice(0, 60), customer: pairContext.customer.kind, customerSecondary: pairContext.customer.secondary, customerObject: pairContext.customer.object, customerSource: pairContext.customer.source, ruleId: pairContext.ruleId, precedence: pairContext.rule?.precedence ?? null, cellGuard: pairContext.cellGuard },
+              // 2026-09-10 Fable5 みく事例: セル×brain方針の衝突・会話スコープ方針・修正前の指摘コード
+              cellConflicts,
+              brainStrategy: brainStrategy ? { engagement_stance: brainStrategy.engagement_stance, repeated_concern: brainStrategy.repeated_concern, avoid_topics: brainStrategy.avoid_topics } : null,
+              preRevisionCodes: finalCheck.pre_revision_issues ?? [],
+              unanchoredConditionEchoes: finalDraftText
+                ? findUnanchoredConditionEchoes(
+                    finalDraftText,
+                    [message ?? "", ...recentMessages.filter((m) => m.sender === "customer").map((m) => m.text)].join("\n"),
+                    `${customerConditions}\n${groundTruth.customerConditionsDb ?? ""}`,
+                  )
+                : [],
               // 2026-09-09 Fable5 みく事例: ヘッジゲート・締め・姿勢フラグ（save-reply-example が stance_sent_lite をマージし、下書き→送信の遷移行列 SQL に使う）
               hedge: { allowance: hedge.allowance, searched: hedge.searched, customerAsked: hedge.customerAsked.yes, customerSelfHedge: hedge.customerSelfHedge.yes, customerStatedRelax: hedge.customerStatedRelax.yes },
               closer: { kind: closerVerdict.closer, nanisotsu: closerVerdict.nanisotsu, reason: closerVerdict.reason },

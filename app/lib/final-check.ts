@@ -40,6 +40,8 @@ import {
   // 2026-09-10 Fable5 あみ事例: 顧客アンカー語彙・持込予告（生成側 buildVocabAnchorNote / PAIR_MATRIX と同一定数）
   fillPairPlaceholders, CUSTOMER_ANCHORED_VOCAB, checkGoyukkuriMirror, CUST_WILL_SEND_SELF_PRED, classifyWillSendObject,
   type HedgeVerdict, type CloserVerdict, type ExcuseFlag,
+  // 2026-09-10 Fable5 みく事例: 会話スコープ方針・セル衝突（生成側と同一オブジェクト）
+  type BrainConversationScope, type CellConflict,
 } from "./reply-context";
 // 2026-09-09 Fable5 行動台帳: generate-reply と同一オブジェクト（省略時は recentMessages から再計算）。実行前提語ゲート・自動修正は action-ledger の同じ関数
 import { buildActionLedger, checkDonePresupposition, applyLedgerAutoFix, COMPLETED_SEND_RE, ATTACHED_DELIVERABLE_RE, type ActionLedger } from "./action-ledger";
@@ -72,6 +74,10 @@ export interface CheckResult {
   regen_count?: number;           // 指摘フィードバック付き再生成の回数（0 or 1）
   // ── 2026-09-09 Fable5 往復文脈: generate-reply が substance / turnPair / finalCheckCodes 等を積む監査用（JSONB。page.tsx が save-reply-example に転送）──
   tpo_debug?: Record<string, unknown> | null;
+  /** 2026-09-10 Fable5: 修正ループ実行前（check1）の指摘コード。
+   *  最終 CheckResult は recheck で丸ごと置換されるため、revision_count>0 で issues が空になった時に
+   *  「何を直したのか」を追える唯一の記録。みく事例は「誤った direction に合わせて1回書き換えて問題解消と表示した」が追跡不能だった */
+  pre_revision_issues?: string[];
 }
 
 export interface FinalCheckContext {
@@ -140,6 +146,13 @@ export interface FinalCheckContext {
   isDeliverableReply?: boolean;
   /** true=DONE_PRESUPPOSED_WITHOUT_EVIDENCE / UNSENT_CLAIM を block（generate-reply inject/enforce）。false/省略=warning（check-reply のスタッフ編集文） */
   ledgerStrict?: boolean;
+  // ── 2026-09-10 Fable5 みく事例（UNPROMPTED_PROPOSAL / CELL_AVOID_CONFLICT）──
+  /** brain の会話スコープ方針（engagement_stance / avoid_topics）。
+   *  検査は「今回のメッセージが何か」の判定にはこれを使わない。UNPROMPTED_PROPOSAL の severity と
+   *  CELL_AVOID_CONFLICT の警告にのみ使う。check-reply 経路は省略可（severity が warning に落ちるだけ） */
+  brainStrategy?: BrainConversationScope | null;
+  /** route.ts detectCellConflicts の結果（同一オブジェクト） */
+  cellConflicts?: CellConflict[];
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -1151,6 +1164,80 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   return issues;
 }
 
+// ─── 2026-09-10 Fable5 みく事例: 余計な行動宣言（UNPROMPTED_PROPOSAL）・セル衝突（CELL_AVOID_CONFLICT）・
+//     顧客も DB も書いていない条件語の復唱（ECHO_FROM_BRAIN_NOT_CUSTOMER・shadow） ───
+
+/** 新規の探索・提案宣言（実行済み含意語つき／なし の両方） */
+const NEW_PICKUP_DECL_RE = new RegExp(
+  `(?:中心に|条件に合|優先して|新たに|改めて|再度|別(?:の|物件))[^\\n。！!]{0,30}(?:お調べ|ピックアップ|お探し|探さ)[^\\n。！!]{0,20}(?:させて(?:頂|いただ)き|いたし|致し)ます` +
+  `|(?:オススメ|おすすめ|お勧め)(?:できる|出来る)[^\\n。！!]{0,16}(?:お部屋|物件)[^\\n。！!]{0,24}(?:お調べ|ピックアップ|お探し)[^\\n。！!]{0,16}(?:させて(?:頂|いただ)き|いたし|致し)ます`
+);
+
+/** 2026-09-10 Fable5 みく事例:
+ *  顧客が条件・要望・懸念を1文字も書いていない（residue="" ＝ isPureBoilerplate）のに、
+ *  返信が新規の探索・提案を宣言している。決定論チェック12系統に「余計な行動宣言」を見る項目が
+ *  1つも無かった（REPLY_SKELETON_MISSING は「足りない」方向専用）。修正は削除のみ。
+ *  データ根拠: 顧客メッセージが実質ゼロの生成 473件のうち通常返信 209件。そのうち「再ピックアップ宣言／条件復唱」は 3件で、
+ *  3件とも人が全面書き換え・そのまま送信 0件。逆方向（residue 空なのに新規提案が正解）は 0件 ＝削除のみで直る。 */
+export function runProposalChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  const { sub, pair, ledger } = resolveReplyContext(ctx);
+  if (!sub.isPureBoilerplate) return issues;                       // 顧客が実質を書いている＝提案は文脈内
+  const actives = (pair.rule?.mustInclude ?? []).filter((m) => !m.when || m.when(pair));
+  const waitSaid = ctx.brainStrategy?.engagement_stance === "wait";
+  const avoidSaid = (ctx.brainStrategy?.avoid_topics ?? []).some((t) => /新規.{0,6}ピックアップ|再ピックアップ|別物件|物件提案/.test(t));
+  for (const s of text.split(/(?<=[。！!\n])/).map((x) => x.trim()).filter(Boolean)) {
+    if (!NEW_PICKUP_DECL_RE.test(s)) continue;
+    if (actives.some((m) => m.detect.test(s))) continue;            // 免除①: 選ばれたセルがまさにこの文を要求している
+    if (ledger.facts.pickupPromisedUnfulfilled && /(?:ピックアップ|見つかり)(?:出来|でき)?次第/.test(s)) continue; // 免除②: 未履行約束の復唱
+    issues.push({
+      pass: "context_check", severity: waitSaid || avoidSaid ? "block" : "warning",
+      code: "UNPROMPTED_PROPOSAL",
+      message: `お客様のメッセージは定型（お礼・待ち句）のみで、条件・要望・懸念が1文字もありません（residue=""）。それなのに新規の探索・提案を宣言しています` +
+        `${waitSaid ? "（brain: engagement_stance=wait ＝今は待つ局面）" : ""}${avoidSaid ? "（brain: avoid_topics に新規物件ピックアップ）" : ""}`,
+      evidence: s.slice(0, 60),
+      suggestion: "この1文を削除する（足すべき文は無い）。受け止め1文＋扉を開ける1文で完結させる",
+    });
+  }
+  return issues;
+}
+
+/** セル必須要素 × brain 方針の正面衝突（warning・診断専用。修正ループ対象外） */
+export function runCellConflictChecks(_text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const conflicts = ctx.cellConflicts ?? ctx.pairContext?.conflicts ?? [];
+  return conflicts.map((c) => ({
+    pass: "context_check" as const, severity: "warning" as const, code: "CELL_AVOID_CONFLICT",
+    message: c.message,
+    evidence: `${c.ruleId}／${c.element}`,          // evidence は本文由来でなくてよい（修正対象ではなく診断）
+    suggestion: "この返信を直すのではなく、セル選択（往復ペアの customer.kind）が正しいかを tpo_debug で確認する。brain の方針と必須要素が正面衝突している時は、たいていセル選択の方が誤っている",
+  }));
+}
+
+/** 顧客が一度も書いておらず、DB 条件（property_search_params）にも無い条件語の復唱。
+ *  2026-09-10 Fable5: 母数不足（turnPair 経路のログ 22〜24件・該当生成 3件）のため shadow（tpo_debug 記録のみ）で開始。
+ *  2週間の発火率と「その語を人が削除したか」を SQL で見てから warning 昇格を判断する。 */
+export const UNANCHORED_CONDITION_MODE: "shadow" | "warning" =
+  (process.env.UNANCHORED_CONDITION_MODE as "shadow" | "warning") ?? "shadow";
+
+const CONDITION_ECHO_WORDS = ["築浅", "広め", "初期費用", "駅近", "1階", "エレベーター", "南向き", "オートロック", "独立洗面", "駐車場", "ペット", "角部屋", "バストイレ別"];
+
+export function findUnanchoredConditionEchoes(reply: string, customerAllText: string, dbConditions: string): string[] {
+  const src = `${customerAllText}\n${dbConditions}`;
+  return CONDITION_ECHO_WORDS.filter((w) => reply.includes(w) && !src.includes(w));
+}
+
+export function runUnanchoredConditionChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const hits = findUnanchoredConditionEchoes(
+    text,
+    [ctx.lastCustomerMessage ?? "", ...(ctx.recentMessages ?? []).filter((m) => m.sender === "customer").map((m) => m.text)].join("\n"),
+    ctx.customerConditionsDb ?? "",
+  );
+  if (hits.length === 0 || UNANCHORED_CONDITION_MODE === "shadow") return [];
+  return [{ pass: "rule_check", severity: "warning", code: "ECHO_FROM_BRAIN_NOT_CUSTOMER",
+    message: `お客様も DB 条件も書いていない条件語「${hits.join("・")}」を復唱しています（brain の会話全体の論点から持ち込まれた可能性）`,
+    evidence: hits[0], suggestion: `「${hits.join("・")}」を削除する（お客様が書いた語だけを復唱する）` }];
+}
+
 export function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const issues: CheckIssue[] = [];
   const tpo = ctx.tpoLabel ?? "";
@@ -1379,6 +1466,10 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
 
   // ⑫ 2026-09-09 Fable5 行動台帳（DONE_PRESUPPOSED_WITHOUT_EVIDENCE / UNSENT_CLAIM / PROMISE_ECHO_MISMATCH）
   issues.push(...runLedgerChecks(text, ctx));
+
+  // ⑬ 2026-09-10 Fable5 みく事例: 余計な行動宣言（UNPROMPTED_PROPOSAL）・セル衝突（CELL_AVOID_CONFLICT）・
+  //    顧客も DB も書いていない条件語（ECHO_FROM_BRAIN_NOT_CUSTOMER・shadow 既定）
+  issues.push(...runProposalChecks(text, ctx), ...runCellConflictChecks(text, ctx), ...runUnanchoredConditionChecks(text, ctx));
 
   return issues;
 }
@@ -2564,6 +2655,9 @@ export async function runFinalCheckWithRevision(
   const check1 = await runFinalCheck(draft, ctx);
   checkIterations++;
   check1.revision_count = 0;
+  // 2026-09-10 Fable5: 最終 CheckResult は recheck で丸ごと置換されるため、修正前の指摘をここで保存する
+  const preRevisionIssues = check1.issues.map((i) => `${i.code}:${i.severity}`);
+  check1.pre_revision_issues = preRevisionIssues;
   if (check1.issues.length === 0) return { finalDraft: draft, finalCheck: check1 };
 
   // ── FABRICATED_* 照合検証: 本当にハルシネーションかを確認し clearedFacts を構築 ──
@@ -2602,6 +2696,8 @@ export async function runFinalCheckWithRevision(
     const draftNormW = normalizeForMatch(draft);
     const passableWarnIssues = check1.issues.filter(
       (i) => i.code !== "UNCHECKED_AUTO_SEND" &&
+        // 2026-09-10 Fable5: CELL_AVOID_CONFLICT は診断専用（本文を直しても解消しない）＝修正ループに渡さない
+        i.code !== "CELL_AVOID_CONFLICT" &&
         (!i.evidence || draftNormW.includes(normalizeForMatch(i.evidence)))
     );
     if (passableWarnIssues.length === 0) return { finalDraft: draft, finalCheck: check1 };
@@ -2641,6 +2737,7 @@ export async function runFinalCheckWithRevision(
       // finalDraft=修正版と整合し、送信時ハッシュ再利用の穴と監査不整合を同時に塞ぐ）
       recheck.revised_text = revised;
       recheck.revision_count = 1;
+      recheck.pre_revision_issues = preRevisionIssues;
       return { finalDraft: revised, finalCheck: recheck };
     }
 
@@ -2715,6 +2812,7 @@ export async function runFinalCheckWithRevision(
   }
 
   bestCheck.revision_count = revisionCount;
+  bestCheck.pre_revision_issues = preRevisionIssues;
   if (bestCheck.issues.some((i) => i.severity === "block")) {
     bestCheck.revision_exhausted = true; // blockが残った → スタッフ手動確認必須
   }
