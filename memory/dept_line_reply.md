@@ -882,3 +882,55 @@ GROUP BY 1,2,3 ORDER BY 4 DESC;
 - [ ] `ai_prompt_rules` に「3時間以上待たせたらお待たせ致しました」等の同旨行が残っていれば is_active=false に（禁止語 block と衝突し修正ループを回す）
 - [ ] 2週間後: OPENER_MISMATCH の発火率と編集率を確認。FP が多い kind（特に question の asksAction 判定）は `openerAllowed` を**広げる**（opener を足さない）
 - [ ] system_design_thinking に G32 知見 5 件 INSERT 済み（二層・禁止語・audit・四者同名の増幅リスク・了承のみは未返信に数えない）
+
+---
+
+## 2026-09-10 Fable5 みく事例 — ブレインの会話スコープ・フィールドがメッセージ判定を汚染する構造の是正
+
+**症状**: みく 18:50「ありがとうございます！確認させていただきます🙇」に対し、AI が「ご要望お聞かせ頂きありがとうございます😊！！／初期費用を抑えられる、築浅・広めのお部屋を中心に…お調べさせて頂きます！！」と、条件を受け取った直後のテンプレを返した（返信になっていない）。final-check は ok:true / issues:[] / revision_count:1 で素通り。
+
+### 根本原因
+1. `repeated_concern`（＝会話全体で2回以上出た論点）を `mergeBrainEvidence` と `classifyCustomerResponse` が「このメッセージが懸念である」証拠として無条件採用していた。実データ 96会話中 70件（73%）が保持、うち 66件（94%）は `customer_concern=null`＝メッセージ由来の証拠ゼロ。
+2. 唯一のガードが `isAckOnly` で、待ち句を含む中間状態（`residue="" / isAckOnly=false`）が素通り。誤爆14件中4件がこの「確認します／検討させていただきます」型。
+3. `resolveTurnPair` が `customerObject===null`（懸念の対象が本文に無い指紋）を棄却条件に使わず PS_CONCERN を選び、`fillPairPlaceholders` の汎用フォールバック `|| "ご希望条件のお部屋を中心に"` が証拠の欠落を文面の完成度で覆い隠していた。
+
+### 新しい設計（app/lib/reply-context.ts）
+- **BrainScope 型分離**: `BrainMessageLocal`（`scope:"message-local"` 必須リテラル。customer_questions / customer_concern / condition_change_type / hesitancy_pattern / customer_intent）と `BrainConversationScope`（`scope:"conversation"`。repeated_concern / engagement_stance / avoid_topics / reply_direction / latent_intent / closing_strategy / winning_pattern / current_property / future_timeline / purchase_signal_level / checkpoint_stage）。変換は `toBrainMessageLocal` / `toBrainConversationScope` の2関数だけが入口（呼び出し側でフィールドを手詰めしない）。分類器は message-local しか受け取れないシグネチャ＝conversation-scope を渡すとコンパイルエラー。
+- **`SubstanceVerdict.isPureBoilerplate`（residueLen===0）と `.waitSignal`（検討／確認／相談／連絡）を新設**。brain 合流のガードを `isAckOnly` から `isPureBoilerplate` に移した（`isAckOnly ⊂ isPureBoilerplate`）。`brain.skipped:pure_boilerplate:*` が evidence に残る。
+- **`anchorBrainConcern`**: brain の customer_concern は topic/object が本文に実在する時だけ採用（差分分析モードの前回値持ち越し対策）。`repeated_concern` と `customer_intent==="negative"` は加算条件から全廃。旧 `hesitancy_pattern === "concern"`（存在しない値＝永久 false の死んだ条件）は thinking に合流。
+- **`CustomerResponse` を判別共用体化**: concern だけ `object: string` 必須＝「対象語のない懸念」を型として作れない。
+- **`resolveTurnPair` のセル選択ガード**: `kind==="concern" && !object && substance.concerns.length===0` なら懸念セルを引かず `waitSignal.yes ? thinking : isPureBoilerplate ? ack_only : other` に降格し `pair.cellGuard` に記録（check-reply・古い snapshot 復元経路の二重防護）。
+- **`fillPairPlaceholders` の汎用フォールバック廃止** ＋ `assertPlaceholder`（{object}/{fix} が空のままレンダリングされたら dev は throw・本番は console.error）。
+- **`WAIT_PHRASE_RE` を thinking の入口に追加**（CUST_THINKING_RE には「確認／拝見／チェック」が1語も無く、PS_THINKING の「確認します→ご確認」鏡写しに到達できなかった）。
+- **PS_CONCERN / VI_CONCERN の direction から完成文リテラルを除去**（NG 出力「ご要望お聞かせ頂きありがとうございます😊！！」は direction リテラルとして2箇所に存在し、example と違って**無条件に注入**されていた）。要素ごとに `fix` を付与。
+- **`PairMustInclude.preferWhenAvoid`**: 「A or B」の必須要素は brain avoid と衝突する側を除外して残る側をリテラル指名（文を足す指示ではなく選択肢を削る指示＝創作を誘発しない）。PS_THINKING に付与し、`exampleFallback` を「随時ピックアップ」型 →「扉を開ける」型（ES_THINKING/VI_THINKING の成約実文と同型）に差し替え。
+- **`detectCellConflicts` / `avoidConflictsWithCell`**: 必須要素ラベルと avoid_topics を意味クラス表（new_pickup / estimate / viewing / apply / vacancy）で正規化してから突き合わせる。旧 `m.label.includes(t)` は「新規物件ピックアップ」と「再ピックアップ宣言」を衝突と認識できなかった。
+
+### 新コード（app/lib/final-check.ts）
+| code | 条件 | severity |
+|---|---|---|
+| `UNPROMPTED_PROPOSAL` | `substance.isPureBoilerplate`（顧客が条件・要望・懸念を1文字も書いていない）のに新規の探索・提案を宣言。免除① 選ばれたセルがまさにその文を要求 ② 未履行ピックアップ約束の復唱 | brain が `engagement_stance=wait` or `avoid_topics` に新規ピックアップ → **block** / それ以外 → warning |
+| `CELL_AVOID_CONFLICT` | `ctx.cellConflicts`（セル必須要素 × brain 方針の正面衝突）。診断専用・修正ループから除外 | warning |
+| `ECHO_FROM_BRAIN_NOT_CUSTOMER` | 顧客も DB 条件も書いていない条件語の復唱。`UNANCHORED_CONDITION_MODE=shadow`（既定）は tpo_debug 記録のみ | warning（昇格後） |
+
+`CheckResult.pre_revision_issues` を新設（最終 CheckResult は recheck で丸ごと置換されるため、「何を直したのか」を追える唯一の記録）。`SKELETON_CODES` には**入れない**（削除系）。
+
+### tpo_debug の追加項目
+`substance.isPureBoilerplate` / `substance.waitSignal` / `turnPair.cellGuard` / `cellConflicts` / `brainStrategy`（engagement_stance・repeated_concern・avoid_topics）/ `preRevisionCodes` / `unanchoredConditionEchoes`。`turnPair.customer*` は降格後の `pairContext.customer` を記録する。
+
+### みく 18:50 の修正後 期待返信（セル: PS_THINKING・開口語 hai・締め wait_softly）
+```
+はい😊！！
+ごゆっくりご確認頂けますと幸いです！！
+お部屋お気に召されましたら、実際にお部屋ご案内させて頂きますのでいつでもお気軽にご連絡ください😌！！
+```
+
+### 回帰テスト
+`npx tsx app/lib/__tests__/brain-scope.test.ts` = **24 PASS**（S: residue と brain スコープ8／T: セル選択7／U: brain 方針3／V: final-check 5）。既存 pair-example 21・greeting 19・action-ledger 23・stance 17 も全 PASS（回帰なし）。`npx tsc --noEmit` エラー0。コミット `9fbd2482`
+
+### 引き継ぎ
+- [ ] 1週間後: `tpo_debug.cellConflicts` の発火率と `turnPair.cellGuard.concernDemoted` の件数を SQL で確認。`UNPROMPTED_PROPOSAL:warning` が誤検知ゼロなら block 昇格を検討
+- [ ] 2週間後: `reply_context_snapshot->'unanchoredConditionEchoes'` × `ai_draft <> sent_reply` で `ECHO_FROM_BRAIN_NOT_CUSTOMER` の shadow → warning 昇格を判断（`UNANCHORED_CONDITION_MODE=warning`）
+- [ ] `preRevisionCodes` が入ったので「revision_count>0 で issues が空」＝誤った direction に合わせて書き換えたケースを SQL で追える。週次で `preRevisionCodes` と `finalCheckCodes` の差分を見る
+- [ ] `current_property` / `future_timeline` / `avoid_topics` も conversation-scope。今回は分類器からは切り離したが、生成 note 側で「今回のメッセージの性質」として使っていないか次セッションで棚卸しする
+- [x] system_design_thinking に4件 INSERT 済み（意味スコープ2軸・residue が最強の一次証拠・空プレースホルダは証拠ゼロの指紋・衝突したらセル選択を疑う）
