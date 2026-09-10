@@ -46,9 +46,13 @@ const cpLen = (s: string) => Array.from(s.replace(/[\s、。！!？?…]/g, ""))
 // ─────────────────────────────────────────────────────────────
 // 2. 実質判定（Substance）
 // ─────────────────────────────────────────────────────────────
+// 2026-09-10 Fable5 Sさん事例: "positive"（前向き反応）を追加。
+//   旧実装は「アーバネックス気になります」を statement（＝どの CustomerResponseKind にも写像を持たない
+//   残余ラベル）に落とし、下流には other としてしか伝わらなかった＝「出口のない kind」。
+//   分類体系を増やす時は必ず出口（下流のどの列に落ちるか）を1つ以上定義する。
 export type SubstanceKind =
   | "concern" | "question" | "request" | "condition" | "schedule"
-  | "decision" | "decline" | "info" | "answer" | "statement";
+  | "decision" | "decline" | "info" | "answer" | "positive" | "statement";
 
 export type ConcernKey =
   | "floor" | "old" | "price" | "far" | "narrow" | "dark" | "screening"
@@ -186,6 +190,9 @@ const KIND_RE: Array<[SubstanceKind, RegExp]> = [
   ["decision",  /申(?:し)?込(?:み)?(?:たい|します|お願い|で|させて)|決め(?:ます|たい|ました)|契約(?:したい|します)|押さえ|抑え|進めて|[0-9０-９]{3,4}(?:号室)?でお?(?:ねがい|願い)|号室/],
   ["decline",   /見送|やめ|遠慮|お断り|他で(?:決め|契約)|キャンセル|辞退|白紙|ストップ/],
   ["info",      /住所|勤務先|年収|収入|勤続|保証人|緊急連絡先|保険証|入居(?:日|時期|予定)|退去|引っ?越し|出産|上旬|中旬|下旬|月末|資金|貯め|に決め|にします/],
+  // 2026-09-10 Fable5 Sさん事例: 前向き反応。ここで捕まえないと「アーバネックス気になります」(13字) が
+  //   L237 の statement（kinds.size===0 が条件）に落ち、classifyCustomerResponse に写像が無く必ず other になる
+  ["positive",  /気になり(?:ます|まし)|気になる(?:物件|お部屋)|気に入(?:り|っ|ら)|良さそう|よさそう|いいですね|良いですね|いい感じ|良い感じ|素敵|すてき|好み(?:です|かも)|興味(?:が)?(?:あり|湧)|(?:内見|内覧|見学|下見)[^\n]{0,6}?(?:し?たい|希望|お願い|(?:出来|でき)(?:ます|る|れ|ば)?|可能)|見てみたい|見たいです/],
 ];
 
 export function analyzeSubstance(
@@ -236,7 +243,9 @@ export function analyzeSubstance(
   if (opts.staffAskedQuestion && residueLen >= 2 && kinds.size === 0) { kinds.add("answer"); evidence.push("answer:staffAsk"); }
   if (residueLen >= 10 && kinds.size === 0) { kinds.add("statement"); evidence.push(`residue:${residueLen}`); }
 
-  const has = STRONG_KINDS.some((k) => kinds.has(k)) || residueLen >= 10;
+  // 2026-09-10 Fable5 Sさん事例: 前向き反応は「実質あり」（＝WE DO を要求する）。
+  //   「良さそうですね」(7字) は residueLen<10 で has=false に落ちていた。STRONG_KINDS 自体は触らない
+  const has = STRONG_KINDS.some((k) => kinds.has(k)) || kinds.has("positive") || residueLen >= 10;
   return { has, kinds: [...kinds], concerns, isAckOnly: false, residue, residueLen, normalized, units: unitList, evidence, isPureBoilerplate, waitSignal };
 }
 
@@ -405,6 +414,13 @@ export const STAFF_PROPERTIES_DONE_RE = /🌟|ご査収ください|お送り(?:
 export const REDO_CLAIM_RE = /(?:再度|改めて|もう一度|追加で|(?:別|他)の(?:物件|お部屋)|新たな(?:物件|お部屋))[^\n。]{0,24}(?:ピックアップ|お探し|お送り|ご提案|ご紹介|お届け)/;
 /** 裸の「号室」「万円」（台帳が送付実績を持つ時／台帳なし の時だけ送付扱い） */
 const STAFF_BARE_PROPERTY_RE = /[0-9０-９]{2,4}号室|[0-9０-９.．]+万円/;
+// ─── 2026-09-10 Fable5 Sさん事例: 「顧客に送られたメッセージ」と「社内の記帳行」を分ける ───
+/** 顧客に実際に送られたメッセージの証拠であるソース。
+ *  line_task は「社内タスクの完了記録」であって顧客への送信ではない（本文カラムを持たず、
+ *  完了通知先は社内グループ）。直前スタッフ発言の根拠にしてはならない。
+ *  action-ledger.ts が runtime import する（定義はこの1か所）。 */
+export const LEDGER_OUTBOUND_SOURCES: ReadonlySet<string> = new Set(["aix_log", "staff_text", "aix_history"]);
+
 /** action-ledger の LedgerKind → StaffTurnKind（action-ledger 側 LEDGER_TO_STAFF と同値。type-only 依存を守るため文字列キーで持つ） */
 const LEDGER_KIND_TO_STAFF: Record<string, StaffTurnKind> = {
   pickup_declared: "pickup_declared", properties_sent: "property_send", estimate_declared: "estimate_send", estimate_sent: "estimate_send",
@@ -419,8 +435,10 @@ export function classifyLastStaffTurn(
   const text = (lastStaffText ?? "").trim();
   const windowMs = opts.windowMs ?? 3 * 60 * 1000;
   // ⓪ 行動台帳（一次証拠を統合済み）: 直前スタッフ発言 ±3分に対応するエントリ
+  //    2026-09-10 Fable5 Sさん事例: 社内の記帳行（line_task）は「顧客に送られたメッセージ」ではないので
+  //    ここで確定させない（①aix_usage_logs / ②本文 regex に進ませる）。⓪は台帳の single point of failure
   const le = opts.ledger?.facts.lastStaffEntry ?? null;
-  if (le) {
+  if (le && LEDGER_OUTBOUND_SOURCES.has(le.source)) {
     const k = LEDGER_KIND_TO_STAFF[le.kind];
     if (k) return { kind: k, source: "ledger", evidence: `${le.kind}/${le.status}/${le.source}=${le.evidence.slice(0, 40)}` };
   }
@@ -472,6 +490,9 @@ type CustomerResponseBase = {
   secondary: CustomerResponseKind[];
   evidence: string;
   source: CustomerResponseSource;
+  /** 2026-09-10 Fable5 Sさん事例: 前向き反応の下位種別。kind!=="positive" の時は null。
+   *  生成 direction・検査 mustInclude・tpo_debug・学習が同じ verdict を参照する（四者同名） */
+  positive: PositiveVerdict | null;
 };
 /** 2026-09-10 Fable5: concern だけ object を **非 null 必須**にする。
  *  「懸念（）」と空括弧でレンダリングされる状態＝懸念の対象が本文に存在しない状態を、型として作れなくする */
@@ -525,19 +546,101 @@ export function CUST_WILL_SEND_SELF_PRED(text: string): { yes: boolean; evidence
 }
 const CUST_CALLBACK_RE = /(?:後ほど|あとで|また|改めて|後日|次回|確認して|見てから).{0,16}?(?:ご?連絡|返信|お返事)(?:させて|いたし|します|致し)/;
 const CUST_THINKING_RE = /検討(?:します|させて|いたします|致します|中|してみ)|考え(?:ます|てみ|させて|中)|相談(?:して|し|させて)|持ち帰|決めかね|決められ(?:ない|ず|ません)|時間を(?:ください|下さい|頂|いただ)|迷います|迷い|どうなのかな|どうかな/;
-const CUST_POSITIVE_RE = /気に入|良さそう|よさそう|いいですね|素敵|ぜひ|是非|進めて|申(?:し)?込(?:み)?(?:たい|します|お願い|で)|内覧(?:したい|お願い|希望|行き)|見に行き|大丈夫だと思います|問題ない/;
+// ─────────────────────────────────────────────────────────────
+// 2026-09-10 Fable5 Sさん事例: 前向き反応（positive）の3層。
+//  T1 appraisal        = 我々が送った物件・見積への評価。単独では前向きにしない（要 staff=資料送付系）
+//  T2 viewing_explicit = 内見意思の明示（単独で最強・成約プール n=169・最頻）
+//  T3 named_only       = 物件名のみの短文（n=868 と最大だが誤検出源）。台帳の送付済み物件名と
+//                        一致した時だけ appraisal 相当に昇格させる
+// 「気になります」＝「内見したいの婉曲表現」は 2026-09-09 の業務フローギャップ分析で
+// hidden business rule として特定済み・未実装だったもの。ここで初めて実装する。
+// ─────────────────────────────────────────────────────────────
+export type PositiveKind = "viewing_explicit" | "appraisal";
+export type PositiveVerdict = {
+  kind: PositiveKind;
+  /** 発火した実テキスト（tpo_debug / direction の {positiveEvidence}） */
+  evidence: string;
+  /** 昇格経路（regex / ledger_named） */
+  source: "regex" | "ledger_named";
+};
+
+/** T2: 内見意思の明示（成約プール n=169 / ★56）。単独で positive 確定・question より上位。
+ *  成約実文「条件など含め好条件で気になるのですが内見などはできますか？？」を取るため 6字までの介在を許す */
+export const CUST_VIEWING_INTENT_RE =
+  /(?:内見|内覧|見学|下見)[^\n]{0,6}?(?:し?たい|希望|お願い|(?:出来|でき)(?:ます|る|れ|ば)?|可能|させて(?:頂|いただ)き)|見てみたい|見たいです|拝見したい|オンライン(?:内覧|内見)|見に行き/;
+
+/** T1: 我々が送った物件・見積への評価（成約プール 気になる88 / 良さそう26 / いい感じ27 / 興味17 / これがいい11 / 一番7 / あり3）。
+ *  ⚠ 単独では positive にしない。直前スタッフ発言が資料送付系（MATERIALS_SENT_STAFF_KINDS）の時だけ発火する。
+ *  ⚠ CONCERN_HEDGE_RE にも「気になっ?(?:て|ちゃ|ります)」があるが、あちらは concerns[] が立っている時だけ
+ *     有効（CONCERN_RULES の topicRe を要求）。物件名に topicRe は当たらないので競合しない。 */
+export const CUST_POSITIVE_APPRAISAL_RE =
+  /気になり(?:ます|まし)|気になる(?:物件|お部屋)|気に入(?:り|っ|ら)|良さそう|よさそう|いいですね|良いですね|いい感じ|良い感じ|素敵|すてき|好み(?:です|かも)|好きです|興味(?:が)?(?:あり|湧)|(?:これ|こちら|ここ|それ|そちら)(?:が|に)(?:いい|良い|しま|決め)|(?:一番|1番|特に)[^\n]{0,8}(?:気に|良|いい|好み)|あり(?:だと|かな)です?/;
+
+/** T3: 物件名のみの短文（3〜24字・記号のみ）。台帳の送付済み物件名と一致した時だけ採る */
+const CUST_NAME_ONLY_RE = /^[ぁ-んァ-ヶ一-龥A-Za-zＡ-Ｚａ-ｚ0-9０-９・ー\s]{3,24}[!！]*$/;
+
+/** 弱シグナル（単独では前向き扱いしない。実装では採らない＝記録・将来分析用） */
+export const CUST_POSITIVE_WEAK_RE = /検討(?:し)?たい|前向きに|候補に(?:入れ|し)|候補として/;
+
+/** T1 が「我々が送ったものへの評価」になる直前スタッフ種別 */
+export const MATERIALS_SENT_STAFF_KINDS: ReadonlySet<StaffTurnKind> =
+  new Set<StaffTurnKind>(["property_send", "estimate_send", "check_result", "viewing_invite"]);
+
+/** 物件名の照合キー。号室を落とした core と、先頭のブランド名ブロック（カナ/英字3字以上）の両方を返す。
+ *  実データ: 我々が「アーバネックス谷町四丁目1102号室」を送り、顧客は「アーバネックス」とだけ書く */
+export function propertyMatchKeys(name: string): string[] {
+  const core = (name ?? "").replace(/\s*[0-9０-９]{1,4}\s*号室\s*$/, "").replace(/\s+/g, "").trim();
+  const keys = new Set<string>();
+  if (Array.from(core).length >= 3) keys.add(core);
+  const head = core.match(/^[ァ-ヶーA-Za-zＡ-Ｚａ-ｚ]{3,}/)?.[0];
+  if (head && Array.from(head).length >= 3) keys.add(head);
+  return [...keys];
+}
+
+/** 前向き反応の判定（生成 direction・検査 mustInclude・tpo_debug・学習が同じ verdict を参照） */
+export function resolvePositive(
+  sub: SubstanceVerdict,
+  staff: StaffTurn,
+  ledger: ActionLedger | null,
+): PositiveVerdict | null {
+  const raw = sub.normalized;
+  const lines = raw.split("\n").map((s) => s.trim()).filter(Boolean);
+  const v = lines.find((p) => CUST_VIEWING_INTENT_RE.test(p));
+  if (v) return { kind: "viewing_explicit", evidence: v.slice(0, 40), source: "regex" };
+  if (!MATERIALS_SENT_STAFF_KINDS.has(staff.kind)) return null;   // ← T1 の必須ゲート
+  const a = lines.find((p) => CUST_POSITIVE_APPRAISAL_RE.test(p));
+  if (a) return { kind: "appraisal", evidence: a.slice(0, 40), source: "regex" };
+  // T3: 「アーバネックス」等の物件名のみ。台帳の送付済み物件名と一致する時だけ（誤検出源なので単独では採らない）
+  const sentNames = ledger?.facts.propertiesSentNames ?? [];
+  const named = lines.find((p) => CUST_NAME_ONLY_RE.test(p) &&
+    sentNames.some((n) => propertyMatchKeys(n).some((k) => p.includes(k))));
+  if (named) return { kind: "appraisal", evidence: named.slice(0, 40), source: "ledger_named" };
+  return null;
+}
+
+/** @deprecated 2026-09-10 Fable5: 旧 CUST_POSITIVE_RE は「気になる」を1語も知らなかった。
+ *  判定は resolvePositive（下位種別＋staff ゲート付き）が行う。この定数は互換のための語彙合成のみ */
+export const CUST_POSITIVE_RE = new RegExp(
+  `${CUST_VIEWING_INTENT_RE.source}|${CUST_POSITIVE_APPRAISAL_RE.source}` +
+  `|ぜひ|是非|進めて|申(?:し)?込(?:み)?(?:たい|します|お願い|で)|大丈夫だと思います|問題ない`,
+);
 /** 条件の宣言形（間取り・家賃上限・エリア＋探す/お願い）。語の出現（「駅で待ち合わせ」の「駅」）では発火しない */
 // 2026-09-09 行動台帳（みく 11:45）: エリア限定「大阪の市内付近でお願いします」・NG 追加「京都・尼崎はNGで」も条件の宣言形
 const CUST_CONDITION_STATEMENT_RE = /[1-4１-４](?:LDK|DK|K|R)|ワンルーム|[0-9０-９.．]+万(?:円)?(?:以内|以下|まで|台|くらい|位|前後|程度)|(?:家賃|予算|間取り|条件|エリア|築|徒歩)[^\n]{0,20}(?:で|は|を|に)[^\n]{0,12}(?:探|お願い|希望|変|広げ|絞|追加|変更|お伝え)|(?:周辺(?:全域)?|市内|市外|区内|付近|沿線)(?:で|から|に)[^\n]{0,20}(?:探|お願い|希望|絞|限定)|(?:は|が)NG(?:で|です)|(?:は|が)?(?:なし|無し|除外|以外)で(?:お願い|希望)/;
 
-export function classifyCustomerResponse(sub: SubstanceVerdict, staff: StaffTurn, flags: CustomerResponseFlags = {}): CustomerResponse {
+export function classifyCustomerResponse(
+  sub: SubstanceVerdict, staff: StaffTurn,
+  flags: CustomerResponseFlags & { ledger?: ActionLedger | null } = {},
+): CustomerResponse {
   const raw = sub.normalized;
   const lines = raw.split("\n").map((s) => s.trim()).filter(Boolean);
   const found = new Map<CustomerResponseKind, string>();
   const put = (k: CustomerResponseKind, ev: string) => { if (!found.has(k)) found.set(k, ev); };
   if (sub.isAckOnly) {
-    return { kind: "ack_only", secondary: [], object: null, evidence: raw.slice(0, 30), source: "regex" };
+    return { kind: "ack_only", secondary: [], object: null, evidence: raw.slice(0, 30), source: "regex", positive: null };
   }
+  // 2026-09-10 Fable5 Sさん事例: 前向き反応の下位種別（T1 評価語は直前が資料送付系の時だけ／T2 内見明示は無条件）
+  const positive = resolvePositive(sub, staff, flags.ledger ?? null);
   // ① 上位フラグ（route.ts 計算済み。同名述語を二重実装しない）
   if (flags.negativeKind === "withdrawal") put("decline", "flag:withdrawal");
   if (flags.isConditionChangeRequest || flags.isConditionPresented) put("condition_change", flags.isConditionPresented ? "flag:isConditionPresented" : "flag:isConditionChangeRequest");
@@ -552,8 +655,8 @@ export function classifyCustomerResponse(sub: SubstanceVerdict, staff: StaffTurn
     // 2026-09-10 Fable5: 待ち句は analyzeSubstance と同じ語彙で判定する。CUST_THINKING_RE には
     //   「確認／拝見／チェック／見ます」が1語も無く、WAIT_PHRASE_SRC・CUSTOMER_KAKUNIN_SIGNAL_RE とだけ乖離していた
     if (CUST_THINKING_RE.test(p) || CUST_CALLBACK_RE.test(p) || WAIT_PHRASE_RE.test(p) || flags.isThinkingMsg) put("thinking", p);
-    if (CUST_POSITIVE_RE.test(p)) put("positive", p);
   }
+  if (positive) put("positive", `${positive.kind}:${positive.evidence}`);
   // ②' 2026-09-09 Fable5: 条件の宣言形（「2LDKで探してまして」「阿波座・本町で2LDK 17万以内でお願いします」）は flag/brain が無い経路
   //    （check-reply / final-check 再計算）でも condition_change に寄せる。断り・質問・懸念・前向き・日程・決定が同居する時は付けない
   if (!found.has("condition_change") && !found.has("decline") && !found.has("question") && !found.has("concern") && !found.has("positive")
@@ -592,17 +695,26 @@ export function classifyCustomerResponse(sub: SubstanceVerdict, staff: StaffTurn
   if (flags.isTemporaryLeaveMsg && !found.has("will_send_later") && !found.has("concern") && !found.has("question")) put("other", "flag:isTemporaryLeaveMsg");
 
   // ack_only は残余がある時は主分類にしない（「ありがとう＋702号室お願いします」は了承ではない）
-  const ordered = PRIORITY.filter((k) => found.has(k) && k !== "ack_only");
+  let ordered = PRIORITY.filter((k) => found.has(k) && k !== "ack_only");
+  // ⑦ 2026-09-10 Fable5 Sさん事例: 内見意思の明示は疑問形でも「質問」ではなく「内覧受付」。
+  //    成約実文「条件など含め好条件で気になるのですが内見などはできますか？？」
+  //      →「はい！！〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！」（回答文ではなく提案）
+  //    PRIORITY 自体は動かさない（decline / condition_change / concern には負けたままにする）
+  if (positive?.kind === "viewing_explicit" && found.has("positive")
+      && !found.has("decline") && !found.has("concern") && !found.has("condition_change")) {
+    ordered = ["positive", ...ordered.filter((k) => k !== "positive")];
+  }
   const primary: CustomerResponseKind =
     ordered[0] ?? (sub.residueLen >= 2 ? "other" : sub.waitSignal.yes ? "thinking" : "ack_only");
   const secondary = ordered.slice(1);
   const ev = found.get(primary) ?? "";
   const source: CustomerResponseSource = ev.startsWith("brain:") ? "brain" : ev.startsWith("flag:") ? "flag" : "regex";
+  const positiveOut = primary === "positive" || secondary.includes("positive") ? positive : null;
   if (primary === "concern") {
     // 型上 object: string が必須＝上の ⑤ で保証済み（non-null assertion は仕様の表明）
-    return { kind: "concern", object: concernObject!, secondary, evidence: ev, source };
+    return { kind: "concern", object: concernObject!, secondary, evidence: ev, source, positive: positiveOut };
   }
-  return { kind: primary, secondary, object: concernObject, evidence: ev, source };
+  return { kind: primary, secondary, object: concernObject, evidence: ev, source, positive: positiveOut };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -629,6 +741,106 @@ export const WILL_SEND_ACCEPT_RE =
   /(?:いつでも|ございましたら|見つかりましたら|出てきましたら)[^\n。！!]{0,16}(?:お送りください|お送り(?:頂|いただ)け|送ってください)/;
 /** 予告文脈で物件フロー（募集状況確認＋見積予告）を要求する条件 */
 export const isPropertyForecast = (p: PairContext): boolean => p.sendObject === "property" || p.sendObject === "unknown";
+
+// ─────────────────────────────────────────────────────────────
+// 内覧のご案内提案（2026-09-10 Fable5 Sさん事例）
+//  [Y] 「〜ご都合よろしいお日にちにご案内させて頂きます」 n=443
+//      具体日時あり 40/443(9%) / 条件節あり 414/443(93%) / aix=viewing_invite わずか2
+//      → 日時を出さない意思表明。**通常返信（brain不在T3含む）で可**。竹内の指摘の正解形。
+//  [X] 「〜ご都合よろしいお日にち御座いますでしょうか」 n=51
+//      具体日時あり 49/51(96%) / aix=viewing_invite 47/51
+//      → 候補日時提示の直後の確認疑問文。**AIX【内覧日調整】専用。通常返信で書かせてはならない**。
+//  表層文字列が同じでも、疑問形か宣言形か・条件節の有無・具体日時の同伴で業務上の意味と権限が反転する。
+//  禁止と許可を同じ語で管理すると必ずどちらかを潰すので regex レベルで分離する。
+// ─────────────────────────────────────────────────────────────
+/** [Y] 通常返信で許可される内覧のご案内提案（条件節付き・日時を出さない） */
+export const VIEWING_OFFER_SOFT_RE =
+  /(?:よろしければ|宜しければ|お気に召され(?:ましたら|た)|お気に召し(?:ましたら)|ご希望(?:で)?(?:あれば|ございましたら|御座いましたら))[^\n]{0,48}?(?:ご案内|ご内覧|ご覧)(?:させて(?:頂|いただ)き|いたし|致し)ます/;
+/** [X] AIX【内覧日調整】専用。通常返信では block（final-check VIEWING_DATE_ASK_WITHOUT_AIX） */
+export const VIEWING_DATE_ASK_RE =
+  /ご都合(?:の)?よろしい(?:お日にち|日)[^\n]{0,16}(?:御座います|ございます|ありますでしょうか|でしょうか)/;
+/** 条件節なしの裸型（正解 14/443＝7%・禁止形）。JS の可変長 lookbehind は部分一致で回避されるため、
+ *  条件節の有無は VIEWING_OFFER_SOFT_RE との併用（isBareViewingOffer）で判定する */
+export const VIEWING_OFFER_BARE_RE = /[^\n]{0,8}さんご都合(?:の)?よろしいお日にちに/;
+export function isBareViewingOffer(text: string): boolean {
+  return VIEWING_OFFER_BARE_RE.test(text ?? "") && !VIEWING_OFFER_SOFT_RE.test(text ?? "");
+}
+
+/** [Y] の実文型リテラル（創作禁止・この2つから選ぶ）。
+ *  条件節の選択規則（実測 お気に召されましたら≈250x / よろしければ 51件=全体1%）:
+ *   顧客が特定物件を指名して前向き表明済み → 「よろしければ」（仮定の「お気に召されましたら」は不自然）
+ *   未指名・複数提案中                     → 「お気に召されましたら」（多数派・より安全）
+ *  スタッフ実送信（Sさん）がまさに前者の判断。 */
+export function viewingOfferLiteral(customerName: string, named: boolean, count = 1): string {
+  const n = customerName ? `${customerName}さん` : "〇〇さん";
+  const obj = count >= 2 ? `${count}部屋` : "お部屋";
+  return named
+    ? `よろしければ${n}ご都合よろしいお日にちに${obj}ご案内させて頂きます😌！！`
+    : `${n}お気に召されましたらご都合よろしいお日にちに${obj}ご案内させて頂きます😊！！`;
+}
+
+/** ご査収への感謝（全正解 5,881件中 45件＝0.8%。低頻度・高精度の**条件発火句**） */
+export const GRATITUDE_FOR_REVIEW_RE = /ご査収(?:いただき|頂き)ありがとうございます/;
+export const GRATITUDE_FOR_REVIEW_LITERAL = "ご査収頂きありがとうございます😊！！";
+/** 直前スタッフ発言が資料送付か（実テキスト＝記帳行ではなく本文の文字列そのもの） */
+export const STAFF_MATERIALS_SENT_RE =
+  /ご査収(?:ください|下さい)|お送り(?:させて(?:頂|いただ)き|いたし|致し|し)ました|送らせて(?:頂|いただ)きました|同封(?:させて(?:頂|いただ)き|いたし|致し)ました|添付(?:させて(?:頂|いただ)き|いたし|致し)ました/;
+
+/** 顧客が指名した物件（台帳の送付済み物件名との照合が一次証拠。brain current_property は corroboration のみ） */
+export type NamedPropertyVerdict = {
+  /** 顧客が書いた表記そのまま（表記揺れを直さない。実データ KANOASIA→KANOACIA / konon神崎川 のまま受けた例あり） */
+  asWritten: string | null;
+  /** 台帳の送付済み物件名と一致したか（一次証拠） */
+  matchedSent: boolean;
+  /** brain conversation-scope の current_property と一致したか（記録のみ・判定には使わない） */
+  brainAgrees: boolean;
+  /** 顧客が指名した件数（2件以上なら「それぞれ／N部屋」で受ける） */
+  count: number;
+};
+
+export function resolveNamedProperty(
+  sub: SubstanceVerdict, ledger: ActionLedger | null, brainCurrentProperty?: string | null,
+): NamedPropertyVerdict {
+  const text = sub.normalized;
+  const hits: string[] = [];
+  for (const n of ledger?.facts.propertiesSentNames ?? []) {
+    const k = propertyMatchKeys(n).find((key) => text.includes(key));
+    if (k) hits.push(k);
+  }
+  const uniqHits = [...new Set(hits)];
+  const brainKeys = brainCurrentProperty ? propertyMatchKeys(brainCurrentProperty) : [];
+  return {
+    asWritten: uniqHits[0] ?? null,
+    matchedSent: uniqHits.length > 0,
+    brainAgrees: brainKeys.some((k) => uniqHits.some((h) => h.includes(k) || k.includes(h))),
+    count: uniqHits.length,
+  };
+}
+
+/** 「ご査収頂きありがとうございます」の唯一のゲート（AND・片方だけでは出さない）。
+ *  実測: 資料送付あり×顧客ありがとう n=14 → 発火3（21%・最高）／「ありがとう」だけ 1,346件中23件（1.7%） */
+export type MaterialsVerdict = {
+  staffSent: boolean; staffEvidence: string;
+  customerSaw: boolean; customerEvidence: string;
+  thanksAllowed: boolean;
+};
+export function resolveMaterialsContext(
+  lastStaffText: string, sub: SubstanceVerdict,
+  ledger: ActionLedger | null, positive: PositiveVerdict | null, named: NamedPropertyVerdict,
+): MaterialsVerdict {
+  const m = (lastStaffText ?? "").match(STAFF_MATERIALS_SENT_RE);
+  const le = ledger?.facts.lastStaffEntry ?? null;
+  const byLedger = !!le && le.status === "done" && (le.kind === "properties_sent" || le.kind === "estimate_sent");
+  const staffSent = !!m || byLedger;
+  const thanks = sub.normalized.match(/ありがとう|有難う|感謝/);
+  // 「その資料を見たことの証拠」= ありがとう / T1 の感想語 / 特定物件名の指名
+  const customerSaw = !!thanks || !!positive || named.matchedSent;
+  return {
+    staffSent, staffEvidence: m?.[0] ?? (byLedger ? `ledger:${le!.kind}` : ""),
+    customerSaw, customerEvidence: thanks?.[0] ?? positive?.evidence ?? named.asWritten ?? "",
+    thanksAllowed: staffSent && customerSaw,
+  };
+}
 
 export type PairMustInclude = {
   label: string;
@@ -782,6 +994,63 @@ export const PAIR_MATRIX: PairRule[] = [
     mustNot: ["申込誘導", "別物件提案", "募集未確認物件への内覧確約"],
     example: "かしこまりました！！\nお部屋ご案内させていただきます！！\nタクミさんご都合よろしいお日にち御座いますでしょうか😊！！",
     length: "40〜90字", closer: "none", nanisotsu: false },
+
+  // ── 2026-09-10 Fable5 Sさん事例: 物件送付・強推し後の前向き反応。
+  //    最頻の営業局面でありながら PAIR_MATRIX に1セルも無く、rule=null → 汎用 direction に落ちていた。
+  //    precedence は override_wait（after_wait だと isGratitudeReplyTPO 分岐に先取りされ、
+  //    「お手隙の際にご査収ください」＋ピックアップという別場面の hint に上書きされる）。
+  { id: "PS_POSITIVE", staff: "property_send", customer: "positive", precedence: "override_wait",
+    tpoLabel: "前向き反応（物件送付後・内覧のご案内提案）",
+    direction:
+      "我々が送ったお部屋に対してお客様が前向きな反応（{positiveEvidence}）を返した。" +
+      "①【直前に我々が資料を送り、お客様がそれを見た証拠がある時のみ】ご査収頂いたことへの感謝1行（**物件名は入れない**。これは『資料を見てくれたこと』への礼であって感想への礼ではない） " +
+      "②開口語「かしこまりました！！」単独行 " +
+      "③次の一手を1つだけ。内覧のご案内は物件非依存なので「お部屋」で受け、お客様が指名した物件名は復唱しない。" +
+      "具体的な候補日時は書かない（候補日時の提示は AIX【内覧日調整】専用）。60〜130字",
+    mustInclude: [
+      { label: "ご査収頂いたことへの感謝（物件名は入れない）", detect: GRATITUDE_FOR_REVIEW_RE,
+        when: (p) => p.materials.thanksAllowed, severity: "warning",
+        fix: `1行目を「${GRATITUDE_FOR_REVIEW_LITERAL}」にする（物件名・感想語は入れない）` },
+      { label: "開口語「かしこまりました！！」", detect: /かしこまりました/, severity: "warning",
+        fix: "「かしこまりました！！」を単独行で置く" },
+      { label: "内覧のご案内提案（条件節付き・具体日時なし）", detect: VIEWING_OFFER_SOFT_RE,
+        when: (p) => p.customer.positive?.kind === "viewing_explicit", severity: "block",
+        fix: "{viewingOffer}" },
+      { label: "次の一手を1つだけ（内覧のご案内提案／募集状況の確認／御見積書の作成 のいずれか1つ。内覧提案が第一候補）",
+        detect: new RegExp(`${VIEWING_OFFER_SOFT_RE.source}|(?:募集状況|空室状況)[^\\n]{0,8}確認(?:させて(?:頂|いただ)き|いたし|致し)|(?:御|お)?見積(?:書|り)?[^\\n]{0,24}(?:作成|お送り)(?:させて(?:頂|いただ)き|いたし|致し)`),
+        when: (p) => p.customer.positive?.kind === "appraisal", severity: "block",
+        preferWhenAvoid: [{ avoid: /内覧|内見|ご案内|来店|来阪/,
+          use: "「{namedProperty}の募集状況確認させて頂きます！！」（内覧提案は brain が避けよと言っているので書かない）" }],
+        fix: "{viewingOffer}（第一候補）／費用・見積の話が出ている時のみ「{namedProperty}の初期費用お見積書お送りさせて頂きます！！」" },
+    ],
+    mustNot: [
+      "お客様の感想そのものへのお礼（「〇〇気になって頂きありがとうございます」型。成約データ 0/5,881 件）",
+      "内覧のご案内提案をする時の物件名の復唱（内覧は物件非依存。「お部屋」で受ける）",
+      "具体的な候補日時・曜日の提示（AIX【内覧日調整】専用）",
+      "「ご都合よろしいお日にち御座いますでしょうか」の疑問形（候補日時を出した直後の AIX 専用文型・96%が日時とセット）",
+      "条件節なしの裸「〇〇さんご都合よろしいお日にちに」（正解 14/443＝7%）",
+      "申込誘導・希少性煽り（「埋まってしまいます」）",
+      "「かしこまりました！！」単独終了",
+      "次の一手を2つ以上並べること",
+    ],
+    example: "ご査収頂きありがとうございます😊！！\nかしこまりました！！\nよろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！",
+    examplePremise: "直前に我々が物件資料を『ご査収ください』付きで送り、お客様がそれを見た上で前向き反応を返した場合",
+    exampleRequires: /ありがとう|有難う|気になり|気に入|良さそう|よさそう|いいですね|素敵|いい感じ/,
+    exampleFallback: "かしこまりました！！\n{viewingOffer}",
+    length: "60〜130字", closer: "none", nanisotsu: false },
+
+  // ── 募集状況の確認結果報告後の前向き反応。check_result は PAIR_MATRIX に1セルも無い「孤児 StaffTurnKind」だった ──
+  { id: "CR_POSITIVE", staff: "check_result", customer: "positive", precedence: "override_wait",
+    tpoLabel: "前向き反応（募集状況報告後・内覧のご案内提案）",
+    direction: "我々が募集状況の確認結果を報告した後、お客様が前向きな反応（{positiveEvidence}）を返した。①開口語「かしこまりました！！」②内覧のご案内提案を1文（条件節付き・具体日時なし）。募集状況の再確認は宣言しない（報告済み）。60〜120字",
+    mustInclude: [
+      { label: "開口語「かしこまりました！！」", detect: /かしこまりました|はい/, severity: "warning", fix: "「かしこまりました！！」を単独行で置く" },
+      { label: "内覧のご案内提案（条件節付き・具体日時なし）", detect: VIEWING_OFFER_SOFT_RE, severity: "block", fix: "{viewingOffer}" },
+    ],
+    mustNot: ["募集状況の再確認宣言（報告済み）", "具体的な候補日時の提示（AIX 専用）", "「ご都合よろしいお日にち御座いますでしょうか」", "申込誘導", "「かしこまりました！！」単独終了"],
+    example: "かしこまりました😊！！\nよろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！",
+    examplePremise: "募集状況が『ご紹介可能』で報告済みの場合",
+    length: "60〜120字", closer: "none", nanisotsu: false },
 
   { id: "VI_THINKING", staff: "viewing_invite", customer: "thinking", precedence: "after_wait",
     tpoLabel: "検討中フォロー（内覧打診後）",
@@ -953,6 +1222,17 @@ export const PAIR_MATRIX: PairRule[] = [
     exampleFallback: "かしこまりました！！\nお伺いしたご条件でオススメできるお部屋ピックアップしてお送りさせて頂きます😊！！",
     length: "60〜120字", closer: "none", nanisotsu: false },
 
+  // ── 孤児 StaffTurnKind の解消: check_result × 任意（ANY_QUESTION 等の `* × customer` より後に効く） ──
+  { id: "CR_ANY", staff: "check_result", customer: "*", precedence: "after_wait",
+    tpoLabel: "確認結果報告後の応答",
+    direction: "我々が募集状況の確認結果を報告した直後の返し。報告済みの内容を再宣言せず、お客様の返答の中身に直接答えてから次の一手を1つだけ宣言する。60〜130字",
+    mustInclude: [{ label: "次の一手 or 直接回答",
+      detect: new RegExp(`(?:となります|ございます|可能です|(?:出来|でき)ます)|${VIEWING_OFFER_SOFT_RE.source}|(?:ピックアップ|お調べ|ご案内|お送り)(?:させて(?:頂|いただ)き|いたし|致し)ます`), severity: "warning",
+      fix: "報告した募集状況を前提にした次の一手（内覧のご案内提案／別候補のピックアップ）を1文だけ宣言する" }],
+    mustNot: ["募集状況の再確認宣言（報告済み）", "具体的な候補日時の提示（AIX 専用）"],
+    example: "かしこまりました！！\n〇〇さんお気に召されましたらご都合よろしいお日にちにご案内させて頂きます😊！！",
+    length: "60〜130字", closer: "none", nanisotsu: false },
+
   { id: "CP_ACK", staff: "confirmation_promise", customer: "ack_only", precedence: "after_wait",
     tpoLabel: "短い了承（直前スタッフ約束への了承）",
     direction: "既存「短い了承」（promiseEchoNote）と同一。開口語「はい😊！！」→直前約束の復唱WE DO 1文→締め。40〜90字",
@@ -1007,6 +1287,22 @@ export const PAIR_MATRIX: PairRule[] = [
     example: "お世話になっております！！\nはい😊！！\n気になるお部屋ございましたらいつでもお送りください！！\nお送り頂きました物件の募集状況確認させて頂き、最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！",
     examplePremise: "お客様が『気になる物件を後日送る』と予告した場合（このセルの条件そのもの）",
     length: "80〜160字", closer: "none", nanisotsu: false },
+
+  // ── ワイルドカード: 残る positive セル（pickup_declared / condition_ask / confirmation_promise / apply_push / other）──
+  //    ANY_OTHER / ANY_ANSWER は作らない。other は「証拠が何も立たなかった」ことの指紋であり、
+  //    そこにセルを与えると mustInclude が全会話に流れ込む（証拠の不在が検出不能になる）。
+  { id: "ANY_POSITIVE", staff: "*", customer: "positive", precedence: "override_wait",
+    tpoLabel: "前向き反応",
+    direction: "お客様が前向きな反応（{positiveEvidence}）を返した。①開口語「かしこまりました！！」②次の一手を1つだけ（内覧のご案内提案／募集状況の確認／御見積書の作成。内覧提案が第一候補）。具体的な候補日時は書かない。60〜130字",
+    mustInclude: [
+      { label: "開口語", detect: /かしこまりました|はい/, severity: "warning", fix: "「かしこまりました！！」を単独行で置く" },
+      { label: "次の一手を1つだけ（内覧のご案内提案／募集状況の確認／御見積書の作成）",
+        detect: new RegExp(`${VIEWING_OFFER_SOFT_RE.source}|(?:募集状況|空室状況)[^\\n]{0,8}確認(?:させて(?:頂|いただ)き|いたし|致し)|(?:御|お)?見積(?:書|り)?[^\\n]{0,24}(?:作成|お送り)(?:させて(?:頂|いただ)き|いたし|致し)`),
+        severity: "block", fix: "{viewingOffer}（第一候補）" },
+    ],
+    mustNot: ["具体的な候補日時の提示（AIX 専用）", "「ご都合よろしいお日にち御座いますでしょうか」", "条件節なしの裸「〇〇さんご都合よろしいお日にちに」", "申込誘導", "希少性煽り", "「かしこまりました！！」単独終了"],
+    example: "かしこまりました😊！！\n〇〇さんお気に召されましたらご都合よろしいお日にちにご案内させて頂きます😊！！",
+    length: "60〜130字", closer: "none", nanisotsu: false },
 ];
 
 export const STAFF_KIND_JA: Record<StaffTurnKind, string> = {
@@ -1040,6 +1336,12 @@ export interface PairContext {
   cellGuard: CellGuard;
   /** セル必須要素 × brain 方針の衝突。route.ts が detectCellConflicts で埋める */
   conflicts: CellConflict[];
+  /** 2026-09-10 Fable5: 直前に資料を送ったか／顧客がそれを見た証拠があるか（ご査収感謝の唯一のゲート） */
+  materials: MaterialsVerdict;
+  /** 顧客が指名した物件（台帳の送付済み物件名との照合が一次証拠。brain current_property は corroboration のみ） */
+  namedProperty: NamedPropertyVerdict;
+  /** 顧客名（{viewingOffer} リテラルの生成に必要） */
+  customerName: string;
 }
 
 export type CellGuard = {
@@ -1055,7 +1357,7 @@ export function redoWord(ledger: ActionLedger | null | undefined): string { retu
 
 export function resolveTurnPair(
   staff: StaffTurn, customer: CustomerResponse, substance: SubstanceVerdict, lastStaffText: string,
-  opts: { searched?: boolean; ledger?: ActionLedger | null } = {},
+  opts: { searched?: boolean; ledger?: ActionLedger | null; customerName?: string; brainCurrentProperty?: string | null } = {},
 ): PairContext {
   // 2026-09-09 Fable5: 同一セルに「未探索（宣言型）」と「探索済み（結果報告型・hedgeAllowed）」がある時は resolveHedgeAllowance の searched で選ぶ
   // 「探索済み」＝顧客最新発言より後の送付（hedgeAllowed セル選択）。全期間の propertiesSentCount は {redo} 用で混同しない
@@ -1079,7 +1381,7 @@ export function resolveTurnPair(
   const custForCtx: CustomerResponse =
     concernUnanchored
       ? { kind: effectiveKind as Exclude<CustomerResponseKind, "concern">, object: null,
-          secondary: customer.secondary, evidence: customer.evidence, source: customer.source }
+          secondary: customer.secondary, evidence: customer.evidence, source: customer.source, positive: customer.positive }
       : customer;
 
   const exact = PAIR_MATRIX.filter((r) => r.staff === staff.kind && r.customer === effectiveKind);
@@ -1099,9 +1401,13 @@ export function resolveTurnPair(
   const sendObject: WillSendObject =
     effectiveKind === "will_send_later" || custForCtx.secondary.includes("will_send_later")
       ? classifyWillSendObject(substance.normalized) : "unknown";
+  // 2026-09-10 Fable5 Sさん事例: 物件名の指名（台帳照合が一次証拠）と資料送付の往復（ご査収感謝のゲート）
+  const namedProperty = resolveNamedProperty(substance, opts.ledger ?? null, opts.brainCurrentProperty ?? null);
+  const materials = resolveMaterialsContext(lastStaffText ?? "", substance, opts.ledger ?? null, custForCtx.positive, namedProperty);
   return { staff, customer: custForCtx, substance, rule, ruleId: rule?.id ?? null, summary,
            lastStaffText: lastStaffText ?? "", ledger: opts.ledger ?? null, redo: redoWord(opts.ledger),
-           sendObject, cellGuard, conflicts: [] };
+           sendObject, cellGuard, conflicts: [],
+           materials, namedProperty, customerName: opts.customerName ?? "" };
 }
 
 /** {object}/{fix}/{redo}/{ledger}/{sentNames} の置換（生成・検査・note の三者が同じ関数）。
@@ -1119,7 +1425,11 @@ export function fillPairPlaceholders(s: string, pair: PairContext): string {
     .replace(/\{object\}/g, object).replace(/\{fix\}/g, fix)
     .replace(/\{redo\}/g, pair.redo)
     .replace(/\{ledger\}/g, pair.ledger?.summary ?? "記録なし")
-    .replace(/\{sentNames\}/g, pair.ledger?.facts.propertiesSentNames.join("・") || "送付済み物件");
+    .replace(/\{sentNames\}/g, pair.ledger?.facts.propertiesSentNames.join("・") || "送付済み物件")
+    // 2026-09-10 Fable5 Sさん事例。{viewingOffer} は常に非空リテラル（assertPlaceholder は掛けない）
+    .replace(/\{positiveEvidence\}/g, pair.customer.positive?.evidence ?? "")
+    .replace(/\{namedProperty\}/g, pair.namedProperty.asWritten ?? "お部屋")
+    .replace(/\{viewingOffer\}/g, viewingOfferLiteral(pair.customerName, pair.namedProperty.matchedSent, pair.namedProperty.count));
 }
 
 /** 開発時アサート: 証拠が無いのにセルが選ばれた瞬間に落ちる。本番は console.error + tpo_debug 行きにする */

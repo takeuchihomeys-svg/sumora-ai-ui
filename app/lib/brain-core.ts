@@ -2698,6 +2698,22 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
  * webhook（顧客メッセージ受信直後）と brain-sweep cron（バックストップ）から呼ばれる。
  * 分析対象外（クローズ済み等）や分析失敗時は何も書かない（meta は null のまま → sweep が再試行）。
  */
+/** 2026-09-10 Fable5 Sさん事例（原因D）: 分析対象外で早期 return する時も brain_analyzed_at を打刻する。
+ *  H3(Fable5) の「失敗時も打刻して30分バックオフに乗せる」設計がこの3経路にだけ適用されておらず、
+ *  is_post_apply=true / line_status=blocked の同じ数行が brain-sweep の全枠を永久に占有していた
+ *  （直近24h: processed 1 / failed 899 ＝「sweep が5分以内に補填する」というコメントは虚偽だった）。 */
+async function stampSkipped(conversationId: string, reason: string): Promise<false> {
+  try {
+    await supabase.from("conversations")
+      .update({ brain_analyzed_at: new Date().toISOString() })
+      .eq("id", conversationId);
+  } catch (e) {
+    console.warn("[brain-core] stampSkipped failed (fire-and-forget):", conversationId, e instanceof Error ? e.message : e);
+  }
+  console.info("[brain-core] skip(stamped):", conversationId, reason);
+  return false;
+}
+
 export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<boolean> {
   const { data: conv, error: selectError } = await supabase
     .from("conversations")
@@ -2712,13 +2728,13 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   if (!conv) return false;
 
   const status = (conv.status as string | null) ?? null;
-  if (status && BRAIN_SKIP_STATUSES.includes(status)) return false;
+  if (status && BRAIN_SKIP_STATUSES.includes(status)) return stampSkipped(conversationId, `status=${status}`);
   // 申込以降バッジあり（スタッフが手動マーク）→ 別ツールで管理中のため分析不要
-  if ((conv as unknown as Record<string, unknown>).is_post_apply === true) return false;
+  if ((conv as unknown as Record<string, unknown>).is_post_apply === true) return stampSkipped(conversationId, "is_post_apply");
 
   // H6(Fable5): ブロック済み/フォロー解除の顧客は分析しない（Haiku浪費 + 無意味な提案の防止）
   const lineStatus = (conv.line_status as string | null) ?? null;
-  if (lineStatus === "blocked" || lineStatus === "unfollowed") return false;
+  if (lineStatus === "blocked" || lineStatus === "unfollowed") return stampSkipped(conversationId, `line_status=${lineStatus}`);
 
   // B5(Fable5): stale-write 対策のウォーターマーク。連続メッセージで分析A→Bが並走した場合、
   // 古い方（msg2を含まない解析）が後着で勝つのを防ぐ — 書き込み時に updated_at 一致を条件にする

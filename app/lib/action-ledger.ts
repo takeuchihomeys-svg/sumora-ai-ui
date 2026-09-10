@@ -14,10 +14,11 @@ import {
   STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, STAFF_ESTIMATE_WORD_RE, STAFF_ESTIMATE_DECL_RE,
   STAFF_NON_PROPERTY_RE, STAFF_CONFIRM_DECL_RE, STAFF_CONFIRM_REPORT_RE, STAFF_VIEWING_INVITE_RE,
   STAFF_APPLY_PUSH_RE, STAFF_CONDITION_ASK_RE, STAFF_QUESTION_RE, REDO_CLAIM_RE,
+  LEDGER_OUTBOUND_SOURCES,
   type StaffTurn, type StaffTurnKind, type CustomerResponseKind,
 } from './reply-context';
 // 再 export（生成・検査が action-ledger 経由でも同じ定数を得る）
-export { STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, REDO_CLAIM_RE };
+export { STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, REDO_CLAIM_RE, LEDGER_OUTBOUND_SOURCES };
 
 export type LedgerKind =
   | 'pickup_declared' | 'properties_sent' | 'estimate_declared' | 'estimate_sent'
@@ -101,7 +102,12 @@ export type LedgerAixRow = {
   template_name?: string | null;
 };
 export type LedgerMessage = { sender: string; text: string; createdAt?: string; isAix?: boolean; lineMessageId?: string | null };
-export type LedgerTask = { task_type: string; status: string; created_at?: string | null; completed_at?: string | null };
+export type LedgerTask = {
+  task_type: string; status: string; created_at?: string | null; completed_at?: string | null;
+  /** 2026-09-10 Fable5 Sさん事例: property_check の確認結果（available / taken / second_position / move_out_planned）。
+   *  NULL は「AIX 送信で機械的に閉じられただけ＝顧客に報告していない」ことを意味する */
+  result?: string | null;
+};
 export interface LedgerInput {
   recentAixRows?: LedgerAixRow[];
   /** oldest-first（route.ts recentMessages と同じ並び） */
@@ -206,6 +212,29 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
   return null;
 }
 
+/** 直前スタッフ発言に対応する台帳エントリを選ぶ。
+ *  2026-09-10 Fable5 Sさん事例: AIX 送信は page.tsx → line-tasks/complete により、その会話の全 pending タスクを
+ *  直後に completed にするため `line_tasks.completed_at > aix.sent_at` が **構造上 常に成立**する
+ *  （差は数百ms〜数秒＝必ず ±3分窓内）。旧実装は「at が後」というだけで conf2 の記帳行を採用し、
+ *  AIX 自身を別の行動で上書きしていた（Sさん事例は 0.898 秒差で敗北）。さらに完全同時刻でも
+ *  ⑤ の confidence 降順 → stable sort → .reverse() で低信頼が勝つ逆向きだった。
+ *  優先順位: ①顧客に送られた証拠か ②confidence ③実発言時刻への近さ ④at（安定化） */
+function pickLastStaffEntry(merged: LedgerEntry[], lastStaffAt: number): LedgerEntry | null {
+  const win = merged.filter((e) => near(ms(e.at), lastStaffAt, AIX_ATTACH_WINDOW_MS));
+  if (win.length === 0) return null;
+  const rank = (e: LedgerEntry): number[] => [
+    LEDGER_OUTBOUND_SOURCES.has(e.source) ? 1 : 0,
+    e.confidence,
+    -Math.abs(ms(e.at) - lastStaffAt),
+    ms(e.at) || 0,
+  ];
+  return [...win].sort((a, b) => {
+    const x = rank(a), y = rank(b);
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return y[i] - x[i];
+    return 0;
+  })[0] ?? null;
+}
+
 export function buildActionLedger(input: LedgerInput): ActionLedger {
   const now = input.now ?? Date.now();
   const msgs = input.messages ?? [];
@@ -269,7 +298,10 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
       entries.push({ kind: 'estimate_sent', status: 'done', at: task.completed_at ?? task.created_at ?? null, source: 'line_task', confidence: 2, evidence: `line_tasks.estimate_sheet=${status}`, detail: { estimateFor: [], taskStatus: status } });
     } else if (task.task_type === 'property_check') {
       if (status === 'pending') entries.push({ kind: 'confirmation_promised', status: 'promised', at: task.created_at ?? null, source: 'line_task', confidence: 2, evidence: 'line_tasks.property_check=pending', detail: { object: '募集状況', taskStatus: status } });
-      else if (isDone) entries.push({ kind: 'confirmation_reported', status: 'done', at: task.completed_at ?? null, source: 'line_task', confidence: 2, evidence: `line_tasks.property_check=${status}`, detail: { object: '募集状況', taskStatus: status } });
+      // 2026-09-10 Fable5 Sさん事例: 「顧客へ報告した」と言えるのは result（available/taken/second_position/
+      //   move_out_planned）が入っている時だけ。AIX 送信が機械的に閉じた result=NULL 行は報告ではない。
+      //   isDone && !task.result → 台帳に何も立てない（偽の直前発言を作らない）
+      else if (isDone && task.result) entries.push({ kind: 'confirmation_reported', status: 'done', at: task.completed_at ?? null, source: 'line_task', confidence: 2, evidence: `line_tasks.property_check=${status}/result=${task.result}`, detail: { object: '募集状況', checkPattern: task.result, taskStatus: status } });
     }
   }
 
@@ -322,7 +354,7 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
   const lastStaffMsg = [...msgs].reverse().find((m) => m.sender === 'staff' && (m.text ?? '').trim() && !MEDIA_ONLY_RE.test(m.text ?? ''));
   const lastStaffAt = ms(lastStaffMsg?.createdAt);
   const lastStaffEntry = Number.isFinite(lastStaffAt)
-    ? [...merged].reverse().find((e) => near(ms(e.at), lastStaffAt, AIX_ATTACH_WINDOW_MS)) ?? null
+    ? pickLastStaffEntry(merged, lastStaffAt)
     : [...merged].reverse().find((e) => e.source === 'aix_history') ?? null;
   const promises = merged.filter((e) => e.status === 'promised');
   const unfulfilled = (k: LedgerKind) => promises.filter((p) => p.kind === k && p.fulfilledBy == null);

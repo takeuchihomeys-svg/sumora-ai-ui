@@ -3890,6 +3890,13 @@ export default function Home() {
     if (sendLongPressedRef.current) { sendLongPressedRef.current = false; return; }
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
+    // 2026-09-10 Fable5 Sさん事例（原因E）: AIが直せなかった block が残っている（revision_exhausted）時は二段確認。
+    //   旧実装は details が閉じたままで警告が見えず、送信ボタンはそのまま押せた
+    const unresolvedBlocks = checkResult?.revision_exhausted
+      ? (checkResult.issues ?? []).filter((i) => i.severity === "block").length
+      : 0;
+    if (unresolvedBlocks > 0 && draftIsAi
+      && !window.confirm(`🤖 AIが自動修正できなかった指摘が ${unresolvedBlocks}件 残っています。\nこのまま送信しますか？`)) return;
     void executeSend();
   };
 
@@ -8353,8 +8360,12 @@ export default function Home() {
 
             {/* 🧠 最終チェック指摘リスト（block=🔴 / warning=🟡・折りたたみ式） */}
             {/* 2026-09-09 Fable5: brain action の有無で指摘リストを隠さない（隠すと final-check の block が「✅そのまま送信OK」の裏で素通りする） */}
+            {/* 2026-09-10 Fable5 Sさん事例: AIが直せなかった block が残っている時は既定で開く
+                （旧実装は details が閉じたままで「手動で修正してください」の赤文字が既定では見えなかった） */}
             {checkResult && checkResult.issues.length > 0 && replyDraft.trim() && (
-              <details className={`mb-1 rounded-lg border px-2 py-1 ${
+              <details
+                open={!!checkResult.revision_exhausted && checkResult.issues.some((i) => i.severity === "block")}
+                className={`mb-1 rounded-lg border px-2 py-1 ${
                 checkResult.issues.some((i) => i.severity === "block")
                   ? "border-red-200 bg-red-50"
                   : "border-yellow-200 bg-yellow-50"

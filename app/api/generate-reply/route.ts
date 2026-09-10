@@ -69,7 +69,7 @@ import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS, AIX_LINE_LABELS, AIX_ACTION_REPLY_D
 import {
   MSG_SEP, splitMessageUnits, analyzeSubstance, mergeBrainEvidence,
   classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair,
-  buildPairDirection, buildTurnPairNote, type PairContext, type SubstanceVerdict,
+  buildPairDirection, buildTurnPairNote, fillPairPlaceholders, type PairContext, type SubstanceVerdict,
   // 2026-09-10 Fable5 あみ事例: 持込予告（(A)顧客が送る／(B)我々に送って の分離）と顧客アンカー語彙（生成・検査・修正が同一定数）
   classifyWillSendObject, CUST_WILL_SEND_SELF_PRED, buildVocabAnchorNote,
   // 2026-09-09 Fable5 みく事例: ヘッジゲート・締めポリシー・姿勢（生成・検査・tpo_debug が同一 verdict を参照）
@@ -284,7 +284,13 @@ const RESCHEDULE_RE = /別日|別の日|変更|ずらし|都合(?:が)?悪|難�
 const STATE_FALLBACK_DIRECTION: Record<string, string> = {
   first_reply: "初回対応。挨拶（システム通知に従う）→顧客メッセージの質問・条件に事実で1文回答→ピックアップ宣言（条件が無ければ「ご希望条件お聞かせ頂けますと幸いです」）。150〜220字",
   hearing: "条件受領中。揃った条件（エリア・家賃）を行動宣言に埋め込んで即ピックアップ宣言。足りない条件の聞き返しは1点まで。100〜180字",
-  proposing: "商談継続中。顧客の質問・要望を1文で受け止め、具体名詞（エリア・物件名・条件・日付）を含むWE DO宣言（ピックアップ・交渉・確認）を1つだけ添える。100〜150字",
+  // 2026-09-10 Fable5 Sさん事例: WE DO 候補を「ピックアップ・交渉・確認」で閉じていたため、正解（内覧のご案内提案）に
+  //   到達する言語的経路が消えていた。「〇〇の1文を添えろ」型にせず**選択肢の列挙**にする（創作を誘発しない）
+  proposing:
+    "商談継続中。顧客の質問・要望を1文で受け止め、具体名詞（エリア・物件名・条件・日付）を含む WE DO 宣言を1つだけ添える。" +
+    "WE DO は次のいずれか1つを文脈から選ぶ（複数並べない・当てはまるものが無ければ書かない）: " +
+    "①内覧のご案内提案（「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」。**具体的な候補日時は書かない**。候補日時の提示は AIX【内覧日調整】専用） " +
+    "②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤家賃・条件の交渉。100〜150字",
   viewing: "内覧調整・内覧後フォロー。日程は確定分をそのまま復唱（新規提案はAIX）。内覧後は感想を受けて見積橋渡しまたは次物件ピックアップ宣言。80〜150字",
   applying: "申込・審査中。書類受領・審査進捗・契約案内のいずれかに直接回答。別物件提案・再ピックアップ・条件ヒアリング禁止。60〜150字",
   closed_won: "成約後サポート。質問に直接回答し「ご入居までしっかりサポートさせて頂きます」で締める。申込打診・ピックアップ・見積・内覧禁止。60〜120字",
@@ -1531,7 +1537,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // 成約優先の汎用指示を注入する。summaryNote が存在する = 過去の brain 実行結果が DB に
   // 残っているため、summaryNote の内容をベースに AI が戦略を推論できる。
   const closingFallback = !hasAixMetaStrategy && !closingNote && summaryNote
-    ? `\n【🎯 T3フォールバック戦略（AIX-META未生成・ai_summary参考情報も不在）】\n上記の顧客サマリーの内容に基づき、成約を最優先で誘導すること。具体的なWE DO宣言（申込促進・物件確保・ピックアップ宣言のうち文脈に合うもの）を返信末尾に必ず含める。見積書提示はお客様が費用・見積を質問している場合のみ（費用文脈が無ければ見積書ではなくピックアップ宣言を選ぶ）。\n`
+    // 2026-09-10 Fable5 Sさん事例: WE DO 候補に「内覧のご案内提案」を追加（四者同名。STATE_FALLBACK_DIRECTION.proposing と同じ列挙）
+    ? `\n【🎯 T3フォールバック戦略（AIX-META未生成・ai_summary参考情報も不在）】\n上記の顧客サマリーの内容に基づき、成約を最優先で誘導すること。具体的なWE DO宣言を1つだけ返信末尾に必ず含める（複数並べない）: ①内覧のご案内提案（「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」・具体的な候補日時は書かない＝AIX【内覧日調整】専用）②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤申込でお部屋を抑える提案。見積書提示はお客様が費用・見積を質問している場合のみ（費用文脈が無ければ見積書ではなくピックアップ宣言・内覧提案を選ぶ）。\n`
     : "";
 
   // ── HumanMessage 2-block プロンプトキャッシュ（2026-08）──
@@ -2655,10 +2662,13 @@ type AixGateMeta = SuggestedAixMeta;
 
 async function fetchReplyModeGate(
   convId: string
-): Promise<{ meta: AixGateMeta; customerName: string; conversationDirection: Record<string, unknown> | null; brainAnalyzedAt: string | null } | null> {
+): Promise<{ meta: AixGateMeta; lastMeta: Record<string, unknown> | null; customerName: string; conversationDirection: Record<string, unknown> | null; brainAnalyzedAt: string | null } | null> {
   const { data, error: modeErr } = await supabase
     .from("conversations")
-    .select("suggested_aix_meta, customer_name, conversation_direction, brain_analyzed_at")
+    // 2026-09-10 Fable5 Sさん事例: last_brain_meta を T3（suggested_aix_meta=null）の第2ソースにする。
+    //   ⚠ 列名は実在するもののみ（status はあるが state は無い／last_brain_meta はあるが brain_meta は無い）。
+    //   存在しない列を select するとエラーで全行が返らず静かに0件になる。
+    .select("suggested_aix_meta, last_brain_meta, customer_name, conversation_direction, brain_analyzed_at")
     .eq("id", convId)
     .single();
   if (modeErr && modeErr.code !== "PGRST116") {
@@ -2672,6 +2682,7 @@ async function fetchReplyModeGate(
   if (!data) return null;
   return {
     meta: (data.suggested_aix_meta ?? null) as AixGateMeta,
+    lastMeta: (data.last_brain_meta ?? null) as Record<string, unknown> | null,
     customerName: (data.customer_name as string) || "",
     conversationDirection: (data.conversation_direction ?? null) as Record<string, unknown> | null,
     brainAnalyzedAt: (data.brain_analyzed_at as string | null) ?? null,
@@ -2771,6 +2782,8 @@ export async function POST(req: NextRequest) {
   // （bg-asyncは自分で書いた直後の値を渡すため問題なし）
   let externalBrainGate: {
     meta: AixGateMeta;
+    /** 2026-09-10 Fable5: T3（meta=null）時の会話スコープ方針の第2ソース。bg-async 直列経路では常に null */
+    lastMeta: Record<string, unknown> | null;
     customerName: string;
     conversationDirection: Record<string, unknown> | null;
     brainAnalyzedAt: string | null;
@@ -2881,6 +2894,7 @@ export async function POST(req: NextRequest) {
     externalBrainGate = body.brainMetaDirect
       ? {
           meta: body.brainMetaDirect.meta ?? null,
+          lastMeta: null,   // bg-async 直列経路は直前に書いた meta を渡すので第2ソースは不要
           customerName: body.brainMetaDirect.customerName ?? "",
           conversationDirection: body.brainMetaDirect.conversationDirection ?? null,
           brainAnalyzedAt: body.brainMetaDirect.brainAnalyzedAt ?? null,
@@ -3048,7 +3062,9 @@ export async function POST(req: NextRequest) {
       const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
       const { data } = await supabase
         .from("line_tasks")
-        .select("task_type, status, created_at, completed_at")
+        // 2026-09-10 Fable5 Sさん事例: result（確認結果）が NULL の completed は「AIX 送信で機械的に閉じられただけ」で
+        //   顧客に報告していない。台帳が confirmation_reported を立てるかの判定に必須の列
+        .select("task_type, status, created_at, completed_at, result")
         .eq("conversation_id", conversationId)
         .in("status", ["pending", "completed"])
         .gte("created_at", since)
@@ -3500,7 +3516,20 @@ export async function POST(req: NextRequest) {
     //   message-local（このメッセージについての判定）だけが分類器に入れる。conversation-scope（会話全体の方針）は
     //   fresh であってもメッセージ単位の証拠にしない。変換はこの2関数だけが入口（フィールドを手詰めしない）
     const brainLocal = toBrainMessageLocal(brainMeta as Record<string, unknown> | null);
-    const brainStrategy: BrainConversationScope | null = toBrainConversationScope(brainMeta as Record<string, unknown> | null);
+    // 2026-09-10 Fable5 Sさん事例（原因D）: brainStrategy（conversation-scope＝返信方針と禁止事項）は
+    //   suggested_aix_meta が無い時に last_brain_meta で補填してよい。reply_direction / engagement_stance /
+    //   avoid_topics / checkpoint_stage / closing_strategy は「会話全体の方針」であり1メッセージ古くても壊れない。
+    //   ⚠ brainLocal（message-local）は**絶対に last_brain_meta から作らない**。customer_questions /
+    //     customer_concern / condition_change_type / hesitancy_pattern は「そのメッセージについての判定」で、
+    //     別メッセージの判定を流用すると誤爆する（isPureBoilerplate ガードの前提が壊れる）。
+    const brainStrategyPrimary = toBrainConversationScope(brainMeta as Record<string, unknown> | null);
+    const brainStrategyFallback = brainStrategyPrimary ? null : toBrainConversationScope(brainGate?.lastMeta ?? null);
+    const brainStrategy: BrainConversationScope | null = brainStrategyPrimary ?? brainStrategyFallback;
+    const brainStrategySource: "suggested_aix_meta" | "last_brain_meta" | "none" =
+      brainStrategyPrimary ? "suggested_aix_meta" : brainStrategyFallback ? "last_brain_meta" : "none";
+    if (brainStrategySource === "last_brain_meta") {
+      console.info("[brain-strategy] T3 fallback: last_brain_meta を conversation-scope 方針として採用", conversationId);
+    }
     const brainLocalFresh = brainFreshForMessage && !isCachedMeta;
     const substance: SubstanceVerdict = mergeBrainEvidence(substanceBase, brainLocal, brainLocalFresh);
     console.info("[reply-context]", JSON.stringify({ has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, units: customerMsgUnits.length }));
@@ -3810,6 +3839,8 @@ export async function POST(req: NextRequest) {
       isThinkingMsg, isTemporaryLeaveMsg, isConditionChangeRequest, isConditionPresented,
       negativeKind: negativeDetail.kind,
       brain: brainLocalFresh ? brainLocal : null,       // conversation-scope は型として渡せない
+      // 2026-09-10 Fable5 Sさん事例: 送付済み物件名との照合（物件名のみの短文を前向き反応に昇格させる一次証拠）
+      ledger: ledgerForCtx,
     });
     // ── 2026-09-09 Fable5 みく事例: ヘッジ許容（探索済み証拠 > 顧客の疑問形質問 > 禁止）。pairContext より先に計算し PAIR_MATRIX の探索済みセル選択にも使う
     //   生成（latent_intent / winning_pattern / closing_strategy / customer_questions / conditionDirection / 【姿勢】）・検査（final-check runHedgeChecks）・tpo_debug が同一 verdict
@@ -3831,7 +3862,12 @@ export async function POST(req: NextRequest) {
       ledger: ledgerForCtx,
     });
     console.info("[hedge]", JSON.stringify({ allowance: hedge.allowance, searched: hedge.searched, asked: hedge.customerAsked.yes, selfHedge: hedge.customerSelfHedge.yes, statedRelax: hedge.customerStatedRelax.yes }));
-    const pairContext: PairContext = resolveTurnPair(lastStaffTurn, customerResponse, substance, lastStaffMsgForSearch || tpoLatestStaffText || "", { searched: hedge.searched.yes, ledger: ledgerForCtx });
+    // 2026-09-10 Fable5 Sさん事例: customerName は {viewingOffer} リテラルの生成に必須。
+    //   brainCurrentProperty は conversation-scope なので「名前を作る根拠」にはせず corroboration（記録）のみ
+    const pairContext: PairContext = resolveTurnPair(lastStaffTurn, customerResponse, substance, lastStaffMsgForSearch || tpoLatestStaffText || "", {
+      searched: hedge.searched.yes, ledger: ledgerForCtx,
+      customerName: customerName ?? "", brainCurrentProperty: brainStrategy?.current_property ?? null,
+    });
     // 2026-09-10 Fable5: セル必須要素 × brain 方針の衝突。avoid を削る前に「セル選択を疑う」ための記録
     const cellConflicts: CellConflict[] = detectCellConflicts(pairContext, brainStrategy, brainLocalFresh);
     pairContext.conflicts = cellConflicts;
@@ -3909,6 +3945,12 @@ export async function POST(req: NextRequest) {
       }
       // S-3: reply_direction は message-local。fresh の時のみ採用し、stale なら state 別フォールバックへ
       if (brainFreshForMessage && !isCachedMeta && brainMeta?.reply_direction) return brainMeta.reply_direction;
+      // 2026-09-10 Fable5 Sさん事例（原因D）: T3（suggested_aix_meta=null）でも last_brain_meta の
+      //   conversation-scope な reply_direction は「会話全体の方針」として使える（1メッセージ古くても壊れない）。
+      //   brain-sweep が「5分以内に補填する」というコメントは実測 899/900 失敗で虚偽だった。
+      if (brainStrategySource === "last_brain_meta" && brainStrategy?.reply_direction) {
+        return `${brainStrategy.reply_direction}（※直近の分析結果に基づく会話全体の方針。今回のメッセージの中身は本文から読み取ること）`;
+      }
       // A-4: state 別フォールバック（固定文「WE DO宣言を1文添える」の廃止）
       return STATE_FALLBACK_DIRECTION[phaseGuideKey] ?? null;
     })();
@@ -4010,7 +4052,8 @@ export async function POST(req: NextRequest) {
         if (isProgressPushMessage(message, { isAckOnly: substance.isAckOnly })) {
           return "進捗催促対応（「ご連絡遅くなり申し訳御座いません。」＋現状事実1文＋次アクション1文。100〜150字。「お待たせ致しました」「確認中です」禁止）";
         }
-        return "商談継続中の汎用返答。顧客の質問・要望を1文で受け止め、具体的な行動宣言（ピックアップ・交渉・確認）を1つだけ添えて100〜150字で返す。初期費用・家賃交渉の場合は「最大限交渉させて頂きます！！」等の具体表現を使う。抽象的な「確認します」禁止";
+        // 2026-09-10 Fable5 Sさん事例: WE DO 候補に内覧のご案内提案を追加（STATE_FALLBACK_DIRECTION.proposing と同じ列挙＝四者同名）
+        return "商談継続中の汎用返答。顧客の質問・要望を1文で受け止め、具体的な行動宣言を1つだけ添えて100〜150字で返す（次のいずれか1つ: ①内覧のご案内提案「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」＝具体的な候補日時は書かない（AIX【内覧日調整】専用）②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤家賃・条件の交渉）。初期費用・家賃交渉の場合は「最大限交渉させて頂きます！！」等の具体表現を使う。抽象的な「確認します」禁止";
       }
       return null;
     })();
@@ -4322,7 +4365,8 @@ export async function POST(req: NextRequest) {
     const tpoGuidanceNote = (() => {
       const lines: string[] = [];
       if (tpoNoteForLLM) lines.push(`- 📍 現在の場面: 【${tpoNoteForLLM}】— この場面に合った返し方をすること`);
-      const fallbackDirection = "顧客の最新メッセージ内の質問・条件・依頼にそれぞれ直接回答し、具体名詞（エリア・物件名・条件・日付）を含むWE DO宣言を1文添える";
+      // 2026-09-10 Fable5 Sさん事例: WE DO の選択肢に内覧のご案内提案を第1候補として含める（四者同名）
+      const fallbackDirection = "顧客の最新メッセージ内の質問・条件・依頼にそれぞれ直接回答し、具体名詞（エリア・物件名・条件・日付）を含む WE DO 宣言を1つだけ添える（次のいずれか1つ: ①内覧のご案内提案「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」＝具体的な候補日時は書かない ②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤家賃・条件の交渉）";
       lines.push(`- 🎯 返信の方向性: ${effectiveReplyDirection ?? fallbackDirection}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
       if (effectiveKeyTopics.length) {
         lines.push(`- ✅ 必ず含める内容（${effectiveKeyTopics.length}件すべて必須）: ${effectiveKeyTopics.join(" / ")}`);
@@ -4989,7 +5033,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       "注意:",
                       // 2026-09-09 Fable5 往復文脈: 再生成でも骨格（直前発話×顧客返答・必須要素）を落とさない
                       `- 【往復文脈】${pairContext.summary}`,
-                      ...(pairContext.rule ? [`- 【必須要素】${pairContext.rule.mustInclude.map((m, i) => `${i + 1}.${m.label}`).join(" ")}（各1文以上。「かしこまりました！！」で終えず行動宣言またはサポート継続宣言で終える）`] : []),
+                      // 2026-09-10 Fable5 Sさん事例: rule=null だと【必須要素】行が丸ごと落ち、regen が
+                      //   「何を書けばよいか」の材料を1つも受け取れなかった（修正ループが枯れる第3の経路）。
+                      //   null でも WE DO の**選択肢**は渡す（「〇〇の1文を添えろ」型の強制はしない）。
+                      //   when が false の要素（この場面に無い要素）は出さない＋{viewingOffer} 等は実値に置換する
+                      ...(pairContext.rule
+                        ? [`- 【必須要素】${pairContext.rule.mustInclude.filter((m) => !m.when || m.when(pairContext)).map((m, i) => `${i + 1}.${fillPairPlaceholders(m.label, pairContext)}`).join(" ")}（各1文以上。「かしこまりました！！」で終えず行動宣言またはサポート継続宣言で終える）`]
+                        : ["- 【WE DO の選択肢】次のいずれか1つだけを文脈から選ぶ（複数並べない）: ①内覧のご案内提案（「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」・具体的な候補日時は書かない）②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤条件・家賃の交渉"]),
                       "- 指摘箇所だけを直すのではなく、返信全体を自然な文章として書き直すこと",
                       "- 問題のなかった部分の内容・トーンは維持すること",
                       "- 返信本文のみを出力すること（説明・前置き・修正内容の解説は書かない）",
@@ -5092,6 +5142,20 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // - hint: 軽度（warning級 / 修正で解消済み）の AIX_BOUNDARY 指摘
             //   → brain(suggested_aix_meta) が無提案だった場合のフォールバック候補（recommended）にする
             //     （従来 final-check の検出結果は SUGGESTED_AIX に一切反映されていなかった）
+            // 2026-09-10 Fable5 Sさん事例（原因E）: revision_exhausted（AIが直せなかった block が残っている）は
+            //   自動送信のハードストップにする。壊れたドラフトをそのまま顧客に送らず、スタッフの目に入れる。
+            //   ※ 手動経路（enforceReplyModeGate=false）は従来どおり元ドラフト＋指摘表示のまま（強制置換はしない）
+            if (!isTemplateOptimize && finalCheck && enforceReplyModeGate && finalCheck.revision_exhausted
+                && finalCheck.issues.some((it) => it.severity === "block")
+                && !finalCheck.issues.some((it) => it.code === "REVISION_EXHAUSTED_AUTO_SEND")) {
+              finalCheck.issues.push({
+                pass: "meta", severity: "block", code: "REVISION_EXHAUSTED_AUTO_SEND",
+                message: "AIが自動修正を試みても block 指摘が解消できませんでした（revision_exhausted）。自動送信は行わずスタッフ確認に回します",
+                evidence: finalCheck.issues.find((it) => it.severity === "block")?.evidence ?? "",
+                suggestion: "残っている指摘を手動で直してから送信してください",
+              });
+              finalCheck.ok = false;
+            }
             let aixBoundaryRequired: { action: string; code: string } | null = null;
             let aixBoundaryHint: { action: string; code: string } | null = null;
             if (!isTemplateOptimize && finalCheck) {
@@ -5187,6 +5251,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // 2026-09-10 Fable5 みく事例: セル×brain方針の衝突・会話スコープ方針・修正前の指摘コード
               cellConflicts,
               brainStrategy: brainStrategy ? { engagement_stance: brainStrategy.engagement_stance, repeated_concern: brainStrategy.repeated_concern, avoid_topics: brainStrategy.avoid_topics } : null,
+              // 2026-09-10 Fable5 Sさん事例: 前向き反応の下位種別・資料送付の往復・顧客が指名した物件・方針の出所
+              brainStrategySource,
+              positive: pairContext.customer.positive,
+              materials: pairContext.materials,
+              namedProperty: pairContext.namedProperty,
               preRevisionCodes: finalCheck.pre_revision_issues ?? [],
               unanchoredConditionEchoes: finalDraftText
                 ? findUnanchoredConditionEchoes(

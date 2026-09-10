@@ -111,7 +111,7 @@ describe("T セル選択", () => {
   it("T4 対象語のない brain 単独 concern はセルが降格する（check-reply 経路の二重防護）", () => {
     const sub = analyzeSubstance(MIKU_CUST);
     const staff = classifyLastStaffTurn(MIKU_STAFF, {});
-    const forged = { kind: "concern", object: null as unknown as string, secondary: [], evidence: "brain:repeated_concern", source: "brain" } as CustomerResponse;
+    const forged = { kind: "concern", object: null as unknown as string, secondary: [], evidence: "brain:repeated_concern", source: "brain", positive: null } as CustomerResponse;
     const pair = resolveTurnPair(staff, forged, sub, MIKU_STAFF, {});
     expect(pair.cellGuard.concernDemoted).toBe(true); expect(pair.ruleId).toBe("PS_THINKING");
     expect(pair.customer.kind).toBe("thinking");

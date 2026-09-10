@@ -87,10 +87,13 @@ describe("台帳（みく）", () => {
     expect(f.lastStaffEntry?.kind).toBe("pickup_declared");
     expect(f.lastStaffEntry?.status).toBe("promised");
   });
-  it("#2 classify_miku_1040: 10:40 本文は pickup_declared（source=ledger）", () => {
+  it("#2 classify_miku_1040: 10:40 本文は pickup_declared（台帳の直前エントリが line_task＝社内記帳なので ⓪ は確定させず本文 regex に落ちる）", () => {
     const st = classifyLastStaffTurn(MIKU_1040, { ledger: mikuLedger, lastStaffAt: T("09-09T10:40") });
     expect(st.kind).toBe("pickup_declared");
-    expect(st.source).toBe("ledger");
+    // 2026-09-10 Fable5 Sさん事例: line_tasks は本文カラムを持たず完了通知先も社内グループ＝顧客送信記録ではない。
+    //   LEDGER_OUTBOUND_SOURCES（aix_log / staff_text / aix_history）以外は ⓪ で確定させず①②へ進ませる
+    expect(mikuLedger.facts.lastStaffEntry?.source).toBe("line_task");
+    expect(st.source).toBe("regex");
     // 台帳なしでも本文 regex で宣言（未来形）を実行より先に判定する
     expect(classifyLastStaffTurn(MIKU_1040).kind).toBe("pickup_declared");
   });

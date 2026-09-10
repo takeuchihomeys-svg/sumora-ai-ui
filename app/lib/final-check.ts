@@ -39,6 +39,8 @@ import {
   STAFF_ASSERT_SCHEDULE_RE, SCHEDULE_ASK_RE, DEFERRED_ANSWER_RE, NANISOTSU_RE, OPEN_DOOR_RE, WAIT_SOFTLY_RE, RESULT_EXCUSE_RE, DELIVERABLE_RE, redoWord,
   // 2026-09-10 Fable5 あみ事例: 顧客アンカー語彙・持込予告（生成側 buildVocabAnchorNote / PAIR_MATRIX と同一定数）
   fillPairPlaceholders, CUSTOMER_ANCHORED_VOCAB, checkGoyukkuriMirror, CUST_WILL_SEND_SELF_PRED, classifyWillSendObject,
+  // 2026-09-10 Fable5 Sさん事例: 前向き反応 → 内覧のご案内提案（[Y]型）と AIX 専用の候補日時確認（[X]型）の分離
+  VIEWING_OFFER_SOFT_RE, VIEWING_DATE_ASK_RE, viewingOfferLiteral,
   type HedgeVerdict, type CloserVerdict, type ExcuseFlag,
   // 2026-09-10 Fable5 みく事例: 会話スコープ方針・セル衝突（生成側と同一オブジェクト）
   type BrainConversationScope, type CellConflict,
@@ -918,7 +920,9 @@ function assignSeverity(pass: CheckPass, code: string, isAutoSend = false, isEar
     code === "DISCLOSURE_ASSERTION" || code === "VACANCY_ASSERTION" || code === "MOVEIN_DATE_ASSERTION" || code === "SCREENING_ASSURANCE" ||
     // 2026-09-10 Fable5 あみ事例: 顧客が言っていない語（LLM recheck でも block を維持）
     code === "VOCAB_MIRROR_MISMATCH" ||
-    code === "CONFIRM_NO_OBJECT" || code === "FAREWELL_ON_MOVEOUT_INFO"
+    code === "CONFIRM_NO_OBJECT" || code === "FAREWELL_ON_MOVEOUT_INFO" ||
+    // 2026-09-10 Fable5 Sさん事例: [X]型（AIX【内覧日調整】専用の候補日時確認）の通常返信混入は決定論 block
+    code === "VIEWING_DATE_ASK_WITHOUT_AIX"
   ) return "block";
   if (isAutoSend && pass === "context_check" && code === "MISSED_QUESTION") return "block";
   // FN-006: context_check の TIME_INVALID は自動送信のみ block、スタッフ確認経路は warning
@@ -1039,7 +1043,9 @@ function resolveReplyContext(ctx: FinalCheckContext): { sub: SubstanceVerdict; p
     const staff = classifyLastStaffTurn(lastStaff, { ledger });
     sub = sub ?? analyzeSubstance(cust, undefined, { staffAskedQuestion: staff.kind === "question_to_customer" });
     // check-reply 経路は route.ts のフラグが無いので、条件フォーム（①〜⑧／【…】⇒）だけは同定義の isConditionFormMessage で condition_change に寄せる
-    pair = pair ?? resolveTurnPair(staff, classifyCustomerResponse(sub, staff, { isConditionPresented: isConditionFormMessage(cust) }), sub, lastStaff, { ledger });
+    // 2026-09-10 Fable5 Sさん事例: 台帳（送付済み物件名・直前スタッフ発言）と顧客名は前向き反応の判定・
+    //   {viewingOffer} リテラルの生成に必要なので check-reply 経路でも渡す（生成側と同じ verdict）
+    pair = pair ?? resolveTurnPair(staff, classifyCustomerResponse(sub, staff, { isConditionPresented: isConditionFormMessage(cust), ledger }), sub, lastStaff, { ledger, customerName: ctx.customerName ?? "" });
   }
   // check-reply 経路（aix_usage_logs 無し）は過去形の直前スタッフ本文だけを探索証拠に採る（保守的＝forbid 寄り）
   const hedge = ctx.hedge ?? resolveHedgeAllowance({
@@ -1068,6 +1074,17 @@ const FEELING_TEMPLATE_PATTERNS: Array<{ re: RegExp; msg: string; sug: string; o
   { re: /ごゆっくりご検討(?:ください|下さい)/, msg: "「ごゆっくりご検討ください」は命令形（正解は「ごゆっくりご検討頂けますと幸いです」＋次のステップ提示）", sug: "「ごゆっくりご検討頂けますと幸いです！！」に直し、直前送付物への次のステップと顧客予告を先取りして受ける宣言を1文入れる" },
   { re: /ごゆっくり(?:ご検討|ご確認|ご相談)[^\n]*/, msg: "「ごゆっくり〜」だけで行動宣言が無い", sug: "「お気に召されましたら〜」「お送り頂き次第募集状況確認し御見積書とあわせて〜」等を追加", onlyIfNoAction: true },
 ];
+
+/** 選ばれたセルの必須要素のうち、本文に無いものの fix リテラルを修正案にする。
+ *  2026-09-10 Fable5 Sさん事例: ruleId=null だと skelPair.rule が undefined → ハードコードのデフォルト文に
+ *  フォールバックし、その文は「ピックアップしてお送りする」しか提示しなかった（内覧提案への道が塞がれる）。
+ *  fix は要素ごとのリテラルであり example（別場面の実文）ではない。 */
+function pairFixSuggestion(pair: PairContext, text: string): string | null {
+  const missing = (pair.rule?.mustInclude ?? [])
+    .filter((m) => (!m.when || m.when(pair)) && !m.detect.test(text) && !!m.fix)
+    .map((m) => fillPairPlaceholders(m.fix!, pair));
+  return missing.length ? missing.join("／") : null;
+}
 
 /** 2026-09-09 Fable5: 返信骨格チェック（受け止め→回答/代替→行動宣言→締め）。生成側 buildTurnPairNote / PAIR_MATRIX と同名 */
 function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
@@ -1120,7 +1137,9 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
       issues.push({ pass: "context_check", severity: "block", code: "EMPTY_CLOSER",
         message: `返信が「${last}」で終わっており、その後に次の行動宣言がありません（正解返信で「かしこまりました」終わりは0件）。${pairHint}`,
         evidence: last,
-        suggestion: "了解句の直後に「〇〇（顧客の懸念・予定・条件を復唱）を△△させて頂きます！！」の一人称行動宣言を1文足し、締めは「何卒よろしくお願い致します😌！！」等にする" });
+        // 2026-09-10 Fable5 Sさん事例: 選ばれたセルの fix リテラルを最優先（汎用文言はピックアップ以外の道を塞ぐ）
+        suggestion: pairFixSuggestion(pair, text)
+          ?? "了解句の直後に「〇〇（顧客の懸念・予定・条件を復唱）を△△させて頂きます！！」の一人称行動宣言を1文足し、締めは「何卒よろしくお願い致します😌！！」等にする" });
     }
   }
 
@@ -1131,7 +1150,8 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
       issues.push({ pass: "context_check", severity: m.severity ?? (pairStrict ? "block" : "warning"), code: "PAIR_ELEMENT_MISSING",
         message: `往復文脈（${STAFF_KIND_JA[pair.staff.kind]}→${CUSTOMER_KIND_JA[pair.customer.kind]}）の必須要素「${fillPairPlaceholders(m.label, pair)}」がありません`,
         // 2026-09-10 Fable5: 修正案に example（別場面の実文）を使うと修正ループが NG 文を再注入する（あみ事例の再発経路）
-        evidence: head, suggestion: m.fix ?? pair.rule!.suggestion ?? pair.rule!.example });
+        //   fix は {viewingOffer} 等のプレースホルダを持つのでここで実値に置換する（生成・検査・修正が同じリテラル）
+        evidence: head, suggestion: m.fix ? fillPairPlaceholders(m.fix, pair) : (pair.rule!.suggestion ?? pair.rule!.example) });
     }
   }
 
@@ -1159,6 +1179,38 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
       issues.push({ pass: "rule_check", severity: "warning", code: "FEELING_TEMPLATE",
         message: `「はい😊！！」開始ですが、顧客は懸念・条件を送っています（「はい」は受諾・Yes/No回答の開口語。正解返信では4%）。${pairHint}`,
         evidence: body.slice(0, 8), suggestion: "「〇〇さんお世話になっております！！」または受け止め1文から始める" });
+    }
+  }
+
+  // ⑦ 2026-09-10 Fable5 Sさん事例: VIEWING_DATE_ASK_WITHOUT_AIX —
+  //    [X]型「ご都合よろしいお日にち御座いますでしょうか」は候補日時を提示した直後に置く
+  //    AIX【内覧日調整】専用の確認疑問文（n=51 のうち 96% が具体日時とセット・47/51 が aix=viewing_invite）。
+  //    [Y]型「よろしければ〜ご案内させて頂きます」（n=443・条件節あり 414）は通常返信で可＝置換先。
+  {
+    const m = text.match(VIEWING_DATE_ASK_RE);
+    const hasConcreteDate = /[0-9０-９]{1,2}[\/／月][0-9０-９]{1,2}|[0-9０-９]{1,2}[:：時]|[月火水木金土日]曜|本日|明日|明後日/.test(text);
+    const viewingAixDone = ledger.facts.viewingInvited || ledger.facts.meetingPlaceSent || pair.staff.kind === "viewing_invite";
+    if (m && !hasConcreteDate && !viewingAixDone && !ctx.isDeliverableReply) {
+      issues.push({ pass: "context_check", severity: "block", code: "VIEWING_DATE_ASK_WITHOUT_AIX",
+        message: `「${m[0]}」は候補日時を提示した直後に置く AIX【内覧日調整】専用の文型です（正解51件中49件が具体日時とセット）。本文に候補日時が無く、内覧打診の実績も台帳にありません。${pairHint}`,
+        evidence: m[0],
+        suggestion: `「${viewingOfferLiteral(pair.customerName || ctx.customerName || "", pair.namedProperty.matchedSent, pair.namedProperty.count)}」の宣言形に置き換える（候補日時の提示は AIX【内覧日調整】専用）` });
+    }
+  }
+
+  // ⑧ 2026-09-10 Fable5 Sさん事例: VIEWING_OFFER_NAME_ECHO —
+  //    内覧のご案内は物件非依存のアクション。成約データの物件名復唱率は 61%/39% で、
+  //    内覧提案の文では非復唱（「お部屋」で受ける）が正解側。同一行に物件名を復唱していたら warning。
+  {
+    const nm = pair.namedProperty.asWritten;
+    if (nm && pair.customer.kind === "positive") {
+      const line = text.split("\n").find((l) => VIEWING_OFFER_SOFT_RE.test(l) && l.includes(nm));
+      if (line) {
+        issues.push({ pass: "context_check", severity: "warning", code: "VIEWING_OFFER_NAME_ECHO",
+          message: `内覧のご案内提案の文に物件名「${nm}」を復唱しています。内覧は物件非依存のアクションなので「お部屋」で受けます。${pairHint}`,
+          evidence: line.slice(0, 60),
+          suggestion: `「${nm}」を削り「${viewingOfferLiteral(pair.customerName || ctx.customerName || "", pair.namedProperty.matchedSent, pair.namedProperty.count)}」にする（物件名の復唱は見積作成・募集状況確認・申込の時だけ）` });
+      }
     }
   }
   return issues;
@@ -1438,9 +1490,12 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
           ? "「全力でサポート」が具体宣言（エリア・条件を復唱したピックアップ/確認宣言）の代わりになっている（あやさん型の汎用返信）"
           : "具体的な行動宣言（ピックアップ/確認/交渉/お送り/ご案内 等＋対象）が1文もありません") + `【往復文脈】${skelPair.summary}`,
         evidence: text.trim().slice(0, 30),
-        suggestion: skelPair.rule?.example ?? (isGenericOnly
+        // 2026-09-10 Fable5 Sさん事例: 旧実装は rule.example（別場面の実文）を suggestion に使い、
+        //   rule=null の時はピックアップ以外の道が無い汎用文にフォールバックしていた（内覧提案が消える経路）。
+        //   選ばれたセルの fix リテラル優先 → 無ければ WE DO の「選択肢」を列挙する（1文を足せと命じない）
+        suggestion: pairFixSuggestion(skelPair, text) ?? (isGenericOnly
           ? "「〇〇周辺全域から〇〇さんご希望の△△のお部屋ピックアップしてお送りさせて頂きます！！」を先に置き、その後の締めとしてのみ全力サポートを残す"
-          : "顧客メッセージの固有名詞（エリア・物件名・条件・日付）を復唱し「○○をピックアップしてお送りさせて頂きます」等の具体アクション＋期限を1文入れてください"),
+          : "顧客メッセージの固有名詞（エリア・物件名・条件・日付）を復唱し、次の一手を1つだけ宣言する。候補: 内覧のご案内提案（「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」・具体日時は書かない）／募集状況の確認／御見積書の作成／ご条件に合うお部屋のピックアップ"),
       });
     }
   }
@@ -2523,7 +2578,8 @@ PREEMPTIVE_HEDGE / FABRICATED_SEARCH_REPORT / CONDITION_RELAX_UNASKED / HEDGE_WI
 CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE / CONDITION_ECHO_MISSING /
 SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / WIDEN_EXCUSE_REDUNDANT / REASSURANCE_NO_BASIS / URGENCY_NO_INTENT / CONSIDER_PUSH / HUMBLE_WAIT /
 DONE_PRESUPPOSED_WITHOUT_EVIDENCE / PROMISE_ECHO_MISMATCH /
-UNANCHORED_VOCAB / VOCAB_MIRROR_MISMATCH`;
+UNANCHORED_VOCAB / VOCAB_MIRROR_MISMATCH /
+VIEWING_DATE_ASK_WITHOUT_AIX / VIEWING_OFFER_NAME_ECHO`;
 
 function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx: FinalCheckContext): string {
   const issuesJson = JSON.stringify(
@@ -2579,7 +2635,8 @@ function inferDiffIssuePass(code: string, check1Issues: CheckIssue[]): CheckPass
       code === "GUIDE_BEFORE_PROPERTY" || code === "CONFIRM_SUBJECT_THEFT" || code === "PHOTO_NO_PREMISE" ||
       code === "PHOTO_REPLACES_VIEWING" || code === "UNSENT_CLAIM" || code === "JUSHU_BEFORE_SEND" ||
       code === "APPLY_PUSH_NO_INTENT" || code === "CONFIRM_NO_OBJECT" || code === "FAREWELL_ON_MOVEOUT_INFO" ||
-      code === "DONE_PRESUPPOSED_WITHOUT_EVIDENCE" || code === "PROMISE_ECHO_MISMATCH") return "context_check";
+      code === "DONE_PRESUPPOSED_WITHOUT_EVIDENCE" || code === "PROMISE_ECHO_MISMATCH" ||
+      code === "VIEWING_DATE_ASK_WITHOUT_AIX" || code === "VIEWING_OFFER_NAME_ECHO") return "context_check";
   return "rule_check"; // AIX_BOUNDARY_* / BANNED_WORD / RULE_VIOLATION / 不明code
 }
 
