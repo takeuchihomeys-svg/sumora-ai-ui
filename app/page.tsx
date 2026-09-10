@@ -2109,6 +2109,39 @@ export default function Home() {
     }
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 2026-09-11: 会話を開いた直後、コンテンツ高さが伸びる間だけ最下部に追従する。
+  // 単一画像は max-h-56（＝読み込み前の高さ 0）で場所を確保しないため、既存の
+  // rAF/80ms/120ms スクロールはいずれも画像読み込み前に走り、その後に数百〜千px
+  // 押し下げられて過去の位置に取り残されていた（conversations 側の再スクロールも
+  // distFromBottom < 150 の条件を外れるため発火しない）。
+  // 伸びが続く限り追従を延長し、ユーザーが操作したら即座に中止する。
+  useEffect(() => {
+    if (!selectedId) return;
+    if ((aiSearchMessageIds[selectedId] || []).length > 0) return; // AI検索は該当メッセージへ飛ばすので追従しない
+    const el = chatScrollRef.current;
+    const content = el?.firstElementChild;
+    if (!el || !content) return;
+    let active = true;
+    let softUntil = Date.now() + 1500;
+    const hardUntil = Date.now() + 10000;
+    const stop = () => { active = false; };
+    const ro = new ResizeObserver(() => {
+      const now = Date.now();
+      if (!active || now > softUntil || now > hardUntil) return;
+      el.scrollTop = el.scrollHeight;
+      softUntil = now + 1500; // 画像が順次読み込まれる間は追従を延長
+    });
+    ro.observe(content);
+    el.addEventListener("wheel", stop, { passive: true });
+    el.addEventListener("touchmove", stop, { passive: true });
+    return () => {
+      active = false;
+      ro.disconnect();
+      el.removeEventListener("wheel", stop);
+      el.removeEventListener("touchmove", stop);
+    };
+  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // メッセージ更新時スクロール
   useEffect(() => {
     if (!chatScrollRef.current) return;
