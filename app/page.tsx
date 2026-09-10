@@ -2109,38 +2109,55 @@ export default function Home() {
     }
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 2026-09-11: 会話を開いた直後、コンテンツ高さが伸びる間だけ最下部に追従する。
-  // 単一画像は max-h-56（＝読み込み前の高さ 0）で場所を確保しないため、既存の
-  // rAF/80ms/120ms スクロールはいずれも画像読み込み前に走り、その後に数百〜千px
-  // 押し下げられて過去の位置に取り残されていた（conversations 側の再スクロールも
-  // distFromBottom < 150 の条件を外れるため発火しない）。
-  // 伸びが続く限り追従を延長し、ユーザーが操作したら即座に中止する。
+  // 2026-09-11: 会話を開いた時に必ず最新メッセージを表示する。
+  // チャット面は常時DOMにあり hidden(display:none)⇔flex を切り替える構造のため、
+  // 切替直後は scrollHeight=0 で「最下部へ」が空振りする。既存の rAF/80ms/120ms は
+  // その待ち時間を当て推量で埋めていたが、履歴が長い（メッセージは件数制限なしで全件取得）
+  // ほど描画が遅れて競争に負け、先頭付近に取り残されていた。画像（単一画像は max-h-56 で
+  // 読み込み前の高さ0）は取り残される距離を広げる二次要因。
+  // タイマーではなく「高さが変わったら最下部へ」に変え、伸びが続く限り追従を延長する。
+  // ユーザーが操作したら即中止（読んでいる最中に引き戻さない）。
   useEffect(() => {
     if (!selectedId) return;
     if ((aiSearchMessageIds[selectedId] || []).length > 0) return; // AI検索は該当メッセージへ飛ばすので追従しない
-    const el = chatScrollRef.current;
-    const content = el?.firstElementChild;
-    if (!el || !content) return;
     let active = true;
+    let ro: ResizeObserver | null = null;
+    let raf = 0;
+    let attached: HTMLDivElement | null = null;
     let softUntil = Date.now() + 1500;
     const hardUntil = Date.now() + 10000;
     const stop = () => { active = false; };
-    const ro = new ResizeObserver(() => {
-      const now = Date.now();
-      if (!active || now > softUntil || now > hardUntil) return;
+    const attach = () => {
+      if (!active) return;
+      const el = chatScrollRef.current;
+      const content = el?.firstElementChild;
+      // 切替直後は ref 未設定・中身未描画のことがあるので用意できるまで待つ
+      if (!el || !content) {
+        if (Date.now() < hardUntil) raf = requestAnimationFrame(attach);
+        return;
+      }
+      attached = el;
       el.scrollTop = el.scrollHeight;
-      softUntil = now + 1500; // 画像が順次読み込まれる間は追従を延長
-    });
-    ro.observe(content);
-    el.addEventListener("wheel", stop, { passive: true });
-    el.addEventListener("touchmove", stop, { passive: true });
+      ro = new ResizeObserver(() => {
+        const now = Date.now();
+        if (!active || now > softUntil || now > hardUntil) return;
+        el.scrollTop = el.scrollHeight;
+        softUntil = now + 1500; // 描画・画像が順次入る間は追従を延長
+      });
+      ro.observe(content);
+      el.addEventListener("wheel", stop, { passive: true });
+      el.addEventListener("touchmove", stop, { passive: true });
+    };
+    attach();
     return () => {
       active = false;
-      ro.disconnect();
-      el.removeEventListener("wheel", stop);
-      el.removeEventListener("touchmove", stop);
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+      attached?.removeEventListener("wheel", stop);
+      attached?.removeEventListener("touchmove", stop);
     };
-  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+    // mobileView も依存に入れる: hidden→flex に切り替わった時点で改めて追従し直す
+  }, [selectedId, mobileView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // メッセージ更新時スクロール
   useEffect(() => {
