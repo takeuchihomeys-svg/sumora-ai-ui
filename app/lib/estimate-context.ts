@@ -35,6 +35,7 @@ export type EstimateTrigger =
   | "customer_estimate_request"
   | "customer_cost_question"
   | "customer_sent_property"
+  | "customer_will_send_property"   // 2026-09-10 Fable5 あみ事例: まだ届いていない「予告」
   | "after_property_sent"
   | "staff_promise_echo"
   | "none";
@@ -78,6 +79,11 @@ export type EstimateContextInput = {
   hasCustomerImage?: boolean;
   /** aix_usage_logs の estimate_sheet 送付済み or 直前スタッフ約束（route.ts estimatePromised） */
   estimatePromised?: boolean;
+  /** 顧客が「気になる物件を（後日）送る」と予告した（reply-context classifyWillSendObject === "property" ∧ (B)依頼形でない）。
+   *  物件はまだ届いていないが、業務フロー上「届き次第 募集状況確認＋最大限割引の御見積書」を返すのが正解（成約 n=9 の④）。
+   *  予告形（〜お送りさせて頂きます）のみ解禁され、見積本体のカバー文・金額は従来どおり AIX 専用。 */
+  customerWillSendProperty?: boolean;
+  customerWillSendEvidence?: string | null;
 };
 
 // ─── 送付済み物件数（route.ts 3箇所のインライン式・check-reply を統合）──────────────
@@ -192,6 +198,15 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
     return { ...base, appropriate: true, mode: "declare", trigger: "customer_sent_property", severity: "warning", reason: "お客様が特定物件（URL・画像・号室）を送付", evidence: firstMatch(CUSTOMER_PROPERTY_REF_RE, msg) ?? "【画像】" };
   }
 
+  // 4.5 顧客の物件持込「予告」（まだ届いていない）→ 予告形の見積宣言のみ解禁
+  //     step 2（echo_only）より後に置くことで、既に約束済みの時の二重宣言防止と両立する
+  if (input.customerWillSendProperty) {
+    signals.push("re:will_send_property");
+    return { ...base, appropriate: true, mode: "declare", trigger: "customer_will_send_property", severity: "warning",
+      reason: "お客様が「気になる物件を送る」と予告（届き次第 募集状況確認＋最大限割引の御見積書を送る業務フローの予告。物件は未受領）",
+      evidence: input.customerWillSendEvidence ?? null };
+  }
+
   // 5. スタッフ物件送付後の前向き反応（条件変更が主題・条件フォームは除外）
   if (sent > 0 && !isConditionChange && !isForm) {
     if (rePositive || brainPositive || brainSaysEstimate) {
@@ -231,6 +246,7 @@ export function buildEstimateGateNote(v: EstimateContextVerdict | null): string 
     `\n・お客様の費用質問: ${v.trigger === "customer_cost_question" ? `あり『${v.evidence ?? ""}』` : "なし"}` +
     `\n・お客様の見積依頼: ${v.trigger === "customer_estimate_request" ? `あり『${v.evidence ?? ""}』` : "なし"}` +
     `\n・お客様の特定物件提示（URL/画像/号室）: ${v.trigger === "customer_sent_property" ? `あり『${v.evidence ?? ""}』` : "なし"}` +
+    `\n・お客様の物件持込予告（まだ届いていない）: ${v.trigger === "customer_will_send_property" ? `あり『${v.evidence ?? ""}』` : "なし"}` +
     `\n・物件送付後の前向き反応: ${v.trigger === "after_property_sent" ? `あり『${v.evidence ?? ""}』` : "なし"}` +
     `\n・スタッフの見積約束: ${v.trigger === "staff_promise_echo" ? `済み『${v.evidence ?? ""}』` : "未"}`;
   if (v.mode === "declare") {
@@ -238,6 +254,9 @@ export function buildEstimateGateNote(v: EstimateContextVerdict | null): string 
       common + facts +
       `\n→ 判定: 【許可】${v.reason}。作成宣言「かしこまりました！！最大限割引させて頂いた御見積書を作成しお送りさせて頂きます！！」を1回だけ書く（2回以上・過去形「お送りしました」・物件名入りカバー文・金額は禁止）。` +
       (v.trigger === "customer_sent_property" ? "物件送付への返信のため「お部屋の募集状況確認させて頂きます」を先に置き、見積作成宣言を続ける（順序固定）。" : "") +
+      (v.trigger === "customer_will_send_property"
+        ? "お客様はまだ物件を送っていない（予告）。「お送り頂きました物件の募集状況確認させて頂き、最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！」の未来形1文のみ。物件名・金額・「ご査収ください」等の添付前提カバー文は書かない。"
+        : "") +
       "\n【見積書作成宣言を使ってよい文脈はこの4つのみ】①お客様が費用・初期費用・総額・いくらを質問 ②お客様が見積を依頼 ③お客様が特定物件（URL・画像・号室）を送付 ④スタッフ送付物件にお客様が前向き反応"
     );
   }

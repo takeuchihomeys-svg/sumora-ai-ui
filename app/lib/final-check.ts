@@ -37,6 +37,8 @@ import {
   resolveHedgeAllowance, resolveCloser, deriveCloserSignals, extractEchoTokens, evalConditionEcho, classifyScheduleCommitment, resolveAnswerability, detectExcusePhrases,
   CLOSER_TEXT, PRE_PICKUP_HEDGE_RE, SEARCH_REPORT_RE, RELAX_PROPOSAL_RE, PAST_REPORT_RE, SEARCH_DECL_RE, SELF_HEDGE_ECHO_RE, CUST_STATED_RELAX_RE,
   STAFF_ASSERT_SCHEDULE_RE, SCHEDULE_ASK_RE, DEFERRED_ANSWER_RE, NANISOTSU_RE, OPEN_DOOR_RE, WAIT_SOFTLY_RE, RESULT_EXCUSE_RE, DELIVERABLE_RE, redoWord,
+  // 2026-09-10 Fable5 あみ事例: 顧客アンカー語彙・持込予告（生成側 buildVocabAnchorNote / PAIR_MATRIX と同一定数）
+  fillPairPlaceholders, CUSTOMER_ANCHORED_VOCAB, checkGoyukkuriMirror, CUST_WILL_SEND_SELF_PRED, classifyWillSendObject,
   type HedgeVerdict, type CloserVerdict, type ExcuseFlag,
 } from "./reply-context";
 // 2026-09-09 Fable5 行動台帳: generate-reply と同一オブジェクト（省略時は recentMessages から再計算）。実行前提語ゲート・自動修正は action-ledger の同じ関数
@@ -901,6 +903,8 @@ function assignSeverity(pass: CheckPass, code: string, isAutoSend = false, isEar
     code === "NEGATIVE_APOLOGY" ||
     // 2026-09-08 Fable5 G6/G26/G10: 宅建業法断言・創作確認約束・退去報告への会話終了は決定論 block（LLM recheck でも維持）
     code === "DISCLOSURE_ASSERTION" || code === "VACANCY_ASSERTION" || code === "MOVEIN_DATE_ASSERTION" || code === "SCREENING_ASSURANCE" ||
+    // 2026-09-10 Fable5 あみ事例: 顧客が言っていない語（LLM recheck でも block を維持）
+    code === "VOCAB_MIRROR_MISMATCH" ||
     code === "CONFIRM_NO_OBJECT" || code === "FAREWELL_ON_MOVEOUT_INFO"
   ) return "block";
   if (isAutoSend && pass === "context_check" && code === "MISSED_QUESTION") return "block";
@@ -1107,12 +1111,14 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
     }
   }
 
-  // ④ PAIR_ELEMENT_MISSING — 行列セルの必須要素（override_wait は block・after_wait は warning）
+  // ④ PAIR_ELEMENT_MISSING — 行列セルの必須要素（when で場面に無い要素は評価しない・severity は要素>precedence）
   for (const m of pair.rule?.mustInclude ?? []) {
+    if (m.when && !m.when(pair)) continue;
     if (!m.detect.test(text)) {
-      issues.push({ pass: "context_check", severity: pairStrict ? "block" : "warning", code: "PAIR_ELEMENT_MISSING",
-        message: `往復文脈（${STAFF_KIND_JA[pair.staff.kind]}→${CUSTOMER_KIND_JA[pair.customer.kind]}）の必須要素「${m.label}」がありません`,
-        evidence: head, suggestion: pair.rule!.suggestion ?? pair.rule!.example }); // G32: 別顧客名入りの example より場面の指示（suggestion）を優先
+      issues.push({ pass: "context_check", severity: m.severity ?? (pairStrict ? "block" : "warning"), code: "PAIR_ELEMENT_MISSING",
+        message: `往復文脈（${STAFF_KIND_JA[pair.staff.kind]}→${CUSTOMER_KIND_JA[pair.customer.kind]}）の必須要素「${fillPairPlaceholders(m.label, pair)}」がありません`,
+        // 2026-09-10 Fable5: 修正案に example（別場面の実文）を使うと修正ループが NG 文を再注入する（あみ事例の再発経路）
+        evidence: head, suggestion: m.fix ?? pair.rule!.suggestion ?? pair.rule!.example });
     }
   }
 
@@ -1368,6 +1374,8 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   //    ・締めポリシー（CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE）
   //    ・姿勢ギャップ（CONDITION_ECHO_MISSING / SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / 煽り・受け身5種）
   issues.push(...runHedgeChecks(text, ctx), ...runCloserChecks(text, ctx), ...runStanceChecks(text, ctx));
+  // ⑪' 2026-09-10 Fable5 あみ事例: 顧客が言っていない語（UNANCHORED_VOCAB / VOCAB_MIRROR_MISMATCH）
+  issues.push(...runVocabAnchorChecks(text, ctx));
 
   // ⑫ 2026-09-09 Fable5 行動台帳（DONE_PRESUPPOSED_WITHOUT_EVIDENCE / UNSENT_CLAIM / PROMISE_ECHO_MISMATCH）
   issues.push(...runLedgerChecks(text, ctx));
@@ -1492,6 +1500,39 @@ function runCloserChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
     out.push({ pass: "rule_check", severity: "warning", code: "RESULT_EXCUSE", message: "お客様主導の条件変更に「少ない状況でしたので広げました」の言い訳行（AIX widen でスタッフが2/2削除）", evidence: text.match(RESULT_EXCUSE_RE)?.[0] ?? head, suggestion: "言い訳行を削り、広げた条件を含む復唱＋ご査収のみにする" });
   if ((sig.usedOpenDoor || sig.usedWait) && (v.closer === "commit_until_found" || v.closer === "receive_check"))
     out.push({ pass: "context_check", severity: "warning", code: "PASSIVE_CLOSER", message: "我々が動く場面で受け身締め（いつでもお気軽に／ごゆっくり）", evidence: text.match(OPEN_DOOR_RE)?.[0] ?? text.match(WAIT_SOFTLY_RE)?.[0] ?? head, suggestion: `締めを「${v.text || CLOSER_TEXT[v.closer](opts.customerName)}」に置換` });
+  return out;
+}
+
+// ─── 2026-09-10 Fable5 あみ事例: 顧客アンカー語彙（生成側 buildVocabAnchorNote と同一テーブル）───
+//   「顧客が一言も言っていないのに使うと文脈が壊れる語」を検出し、必ず正しい代替リテラルを suggestion で返す。
+function runVocabAnchorChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const out: CheckIssue[] = [];
+  const { pair } = resolveReplyContext(ctx);
+  const cust = ctx.lastCustomerMessage ?? "";
+  const custHist = lastCustomerTexts(ctx, 3);
+  const staffPrev = lastStaffTexts(ctx, 1);
+  // 免除の探索範囲: 顧客の最新＋直近3件＋直前スタッフ発言（スタッフが「ご家族でご相談ください」と言った後の復唱を潰さない）
+  const anchorHay = `${cust}\n${custHist}\n${staffPrev}`;
+  const vctx = { reply: text, customerText: cust, lastCustomerTexts: custHist, lastStaffText: staffPrev, pair };
+  for (const v of CUSTOMER_ANCHORED_VOCAB) {
+    const m = text.match(v.re);
+    if (!m) continue;
+    const anchored = v.requires.test(anchorHay);
+    const forbidden = v.forbidWhen ? v.forbidWhen(vctx) : false;
+    if (anchored && !forbidden) continue;
+    out.push({ pass: "context_check", severity: v.severity, code: "UNANCHORED_VOCAB",
+      message: `${forbidden ? "この場面では使えない語" : "お客様が一言も言っていない語"}「${m[0]}」を使っています。${v.why}`,
+      evidence: m[0], suggestion: v.replace });
+  }
+  const g = checkGoyukkuriMirror(text, `${cust}\n${custHist}`);
+  if (g && !g.ok) {
+    out.push({ pass: "context_check", severity: g.expected ? "block" : "warning", code: "VOCAB_MIRROR_MISMATCH",
+      message: g.expected
+        ? `「ごゆっくり${g.used}」ですが、お客様が言ったのは「${g.expected.replace("ご", "")}」です（後続語は顧客の動詞の鏡写しが正解 33件中 31件=94%）`
+        : `「ごゆっくり${g.used}」ですが、お客様は間を置く行動（検討する・確認する・相談する・見る）を一言も言っていません（「ごゆっくり」正解 33件中 31件は顧客の該当語あり）`,
+      evidence: `ごゆっくり${g.used}`,
+      suggestion: g.expected ? `「ごゆっくり${g.expected}頂けますと幸いです😊！！」に直す` : "「ごゆっくり〜」の行を削除し、その位置に行動宣言（募集状況確認・ピックアップ等）を置く" });
+  }
   return out;
 }
 
@@ -1643,13 +1684,18 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
       const custForEst = customerTextsForBan(ctx);
       const staffRecent = lastStaffTexts(ctx, 2);
       const sentN = sentCountOf(ctx); // 2026-09-09 行動台帳に統一
+      // 2026-09-10 Fable5 あみ事例: 顧客の物件持込「予告」（まだ届いていない）も業務フロー上の解禁条件
+      //   （届き次第 募集状況確認＋最大限割引の御見積書。estimate-context の customer_will_send_property と同一判定）
+      const wsFallback = CUST_WILL_SEND_SELF_PRED(cust);
+      const wsObj = classifyWillSendObject(cust);
       allowed =
         CUSTOMER_ESTIMATE_INTENT_RE.test(custForEst) ||
         CUSTOMER_PROPERTY_REF_RE.test(custForEst) ||
+        (wsFallback.yes && wsObj !== "condition" && wsObj !== "document") ||
         (sentN > 0 && CUSTOMER_PROPERTY_POSITIVE_RE.test(custForEst)) ||
         STAFF_ESTIMATE_PROMISE_RE.test(staffRecent);
       sev = sentN === 0 ? "block" : "warning";
-      why = "お客様の費用質問・見積依頼・特定物件送付・前向き反応・直前スタッフ約束のいずれも無い";
+      why = "お客様の費用質問・見積依頼・特定物件送付・持込予告・前向き反応・直前スタッフ約束のいずれも無い";
     }
     if (ESTIMATE_RE.test(text) && !allowed) {
       push("context_check", sev === "block" ? "block" : sevAuto(), "ESTIMATE_NO_TRIGGER",
@@ -2385,7 +2431,8 @@ REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSI
 PREEMPTIVE_HEDGE / FABRICATED_SEARCH_REPORT / CONDITION_RELAX_UNASKED / HEDGE_WITHOUT_SEARCH_DECL / SELF_HEDGE_ECHO /
 CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE / CONDITION_ECHO_MISSING /
 SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / WIDEN_EXCUSE_REDUNDANT / REASSURANCE_NO_BASIS / URGENCY_NO_INTENT / CONSIDER_PUSH / HUMBLE_WAIT /
-DONE_PRESUPPOSED_WITHOUT_EVIDENCE / PROMISE_ECHO_MISMATCH`;
+DONE_PRESUPPOSED_WITHOUT_EVIDENCE / PROMISE_ECHO_MISMATCH /
+UNANCHORED_VOCAB / VOCAB_MIRROR_MISMATCH`;
 
 function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx: FinalCheckContext): string {
   const issuesJson = JSON.stringify(

@@ -259,8 +259,12 @@ export const STAFF_CONFIRM_PROMISE_RE = /(?:確認|お調べ)(?:させて(?:頂|
 export const STAFF_CONFIRM_DECL_RE = /(?:確認|お調べ|問い合わせ)(?:させて(?:頂|いただ)き|いたし|致し|し)[^\n。！!]{0,25}(?:ご連絡|お送り|お伝え)|(?:確認|撮影)(?:出来|でき)次第/;
 export const STAFF_CONFIRM_REPORT_RE = /確認(?:しました|いたしました|致しました)(?:ところ|所)|とのこと(?:で|です|でした)|募集(?:中|終了|ございません|御座いません|ありません)(?:でした|です|とのこと)/;
 export const STAFF_NON_PROPERTY_RE = /待ち合わせ|集合場所|地図|申込書|申込み?時フォーマット|フォーマット|必要書類|身分証/;
-/** 宣言（未来形）: ピックアップ…します／お送りさせて頂きます／出来次第。※ 実行の証拠にしない（「お部屋探し全力でサポート」の締め文は宣言に数えない） */
-export const STAFF_PICKUP_DECL_RE = /(?:ピックアップ|お探し|お部屋探し(?!全力))[^\n。]{0,40}?(?:させて(?:頂|いただ)きます|いたします|致します|します)|(?:ピックアップ|お探し)[^\n。]{0,12}(?:出来|でき)次第/;
+/** 宣言（未来形）: ピックアップ…します／お送りさせて頂きます／出来次第。※ 実行の証拠にしない（「お部屋探し全力でサポート」の締め文は宣言に数えない）
+ *  2026-09-10 Fable5 あみ事例: 13:24「新着でオススメできるお部屋出次第お送りさせていただきます」を取りこぼしていた
+ *  （→ staff=other → ANY_WILL_SEND 誤選択）。「オススメできるお部屋…お送りします」「出次第お送り」を宣言に含める。
+ *  ※ 過去形・成果物（DELIVERABLE_RE / STAFF_PROPERTIES_DONE_RE）は呼び出し側で先に判定されるので送付済みを宣言に誤判定しない */
+export const STAFF_PICKUP_DECL_RE =
+  /(?:ピックアップ|お探し|お部屋探し(?!全力))[^\n。]{0,40}?(?:させて(?:頂|いただ)きます|いたします|致します|します)|(?:ピックアップ|お探し)[^\n。]{0,12}(?:出来|でき)次第|(?:オススメ|おすすめ|お勧め)(?:(?:出来|でき)る|の)?[^\n。]{0,12}(?:お部屋|物件)[^\n。]{0,24}?(?:お送り|ご紹介|ご提案)[^\n。]{0,12}(?:させて(?:頂|いただ)きます|いたします|致します|します)|(?:新着|募集|出|見つかり)(?:が)?(?:出)?次第[^\n。]{0,20}(?:お送り|ご連絡|ご紹介)/;
 /** 実行（過去形・成果物）。旧 STAFF_PROPERTY_SEND_RE から裸の「号室」「万円」を除外（「9万以内」「見積本文の号室」を送付と誤判定しない） */
 export const STAFF_PROPERTIES_DONE_RE = /🌟|ご査収ください|お送り(?:させて(?:頂|いただ)き|いたし|致し|し)ました|送らせて(?:頂|いただ)きました|ピックアップ(?:させて(?:頂|いただ)き|いたし|致し|し)ました|見つかりませんでした|少ない状況でした/;
 /** 未送付なのに「再度／改めて／追加で／別の物件」（検査 DONE_PRESUPPOSED_WITHOUT_EVIDENCE と同名） */
@@ -347,8 +351,40 @@ const PRIORITY: CustomerResponseKind[] = ["decline", "condition_change", "questi
 const CUST_DECLINE_RE = /見送(?:らせて|ります|りたい|ろうと)|やめ(?:て|とき|とこ)|遠慮(?:し|させ)|今回は(?:結構|大丈夫|やめ|見送|なし)|お断り|他で(?:決め|契約)|キャンセル(?:で|し|お願い)/;
 const CUST_QUESTION_RE = /[?？]|(?:ます|です|でしょう|ません)か(?:ね|ねぇ)?(?:[。！!、]|$)|いくら(?!でも)|いつ(?:頃|ごろ|まで|から|に)|可能でしょうか|教えて(?:ください|頂け|いただけ|もらえ)/;
 const CUST_CONCERN_OBJECT_RE = /[0-9０-９]+階|階段|エレベーター|お風呂|浴室|浴槽|家賃|初期費用|礼金|敷金|審査|保証会社|駅(?:から|まで)?(?:遠|距離|徒歩)|築(?:年|古)|日当たり|広さ|間取り|駐車場|周辺|治安|騒音|新生児|赤ちゃん|子供|お子|ペット|外観|内装/;
-/** 「気になる物件を後で送る」型（持込予告）。単なる「また連絡します」（callback）は thinking に流す */
-const CUST_WILL_SEND_RE = /(?:明日|明日以降|後日|また|改めて|後ほど|次回|週末|来週|見つけたら|あれば|出てきたら|気になる).{0,24}?(?:送らせて|お送り|送り(?:ます|させて)|送ります|共有(?:し|させて))|(?:気になる|候補|物件|お部屋).{0,15}(?:何件|いくつ|数件|複数).{0,20}(?:送|共有)/;
+// ─── 2026-09-10 Fable5 あみ事例: 「顧客が自分で送る」(A) と「我々に送ってほしい」(B) を分離する ───
+// 旧 CUST_WILL_SEND_RE は `気になる.{0,24}お送り` を含み「気になる物件あればお送りください」(B) にも一致していた。
+// (B) は 203件・(A) は 28件で語彙が完全に別（随時ピックアップ: B 9件 / A 0件、募集状況確認: A 21% / B 1.5%）。
+/** (B) 顧客が「我々に送って」と依頼する形。will_send_later からは必ず除外する */
+export const CUST_ASKS_US_TO_SEND_RE =
+  /(?:お送り|送って|共有して|見せて|教えて)(?:ください|下さい|頂け|いただけ|もらえ|くれ|欲しい|ほしい|お願い)/;
+/** (A) 顧客が「自分が送る」と予告する形（一人称の授受表現のみ。成約データ n=9 全件に一致） */
+const CUST_WILL_SEND_RE =
+  /送らせて(?:頂|いただ|もら)|お送りさせて(?:頂|いただ)|(?:送|共有)りま?す(?:ね|ので|よ)?|送ります|送っても(?:いい|良い|大丈夫|宜しい|よろしい)|お送りしても(?:いい|良い|大丈夫)|共有(?:させて(?:頂|いただ)|します)|送らせてください/;
+/** 顧客が「送っていいですか」と許可を求めた（受け口「いつでもお送りください」を返す条件。成約 2/9 はこの形） */
+export const CUST_SEND_PERMISSION_RE =
+  /送っても(?:いい|良い|大丈夫|宜しい|よろしい)|送らせて(?:もらっ|頂い|いただい)ても(?:いい|良い|大丈夫)|送らせてください|送っていい|送らせて(?:もらって|頂いて|いただいて)(?:いい|良い|大丈夫)/;
+
+/** 予告された物の種類。要素④の中身と見積予告の要否を決める唯一の分岐軸（state 非依存） */
+export type WillSendObject = "property" | "condition" | "document" | "unknown";
+const WS_DOCUMENT_RE = /書類|身分証|免許|保険証|通帳|源泉|在籍|申込書|住民票|印鑑証明/;
+const WS_PROPERTY_RE = /物件|お?部屋|マンション|ハイツ|コーポ|レジデンス|号室|スクショ|スクリーンショット|写真|画像|URL|リンク|スーモ|suumo|ホームズ|候補|間取り図/i;
+const WS_CONDITION_RE = /条件|ご希望|希望条件|エリア|家賃|予算|要望/;
+export function classifyWillSendObject(customerText: string): WillSendObject {
+  const t = normalizeCustomerText(customerText);
+  const line = t.split("\n").map((s) => s.trim()).filter(Boolean).find((p) => CUST_WILL_SEND_RE.test(p)) ?? t;
+  if (WS_DOCUMENT_RE.test(line)) return "document";
+  if (WS_PROPERTY_RE.test(line)) return "property";
+  if (WS_CONDITION_RE.test(line)) return "condition";
+  return "unknown"; // 既定は物件フロー（成約 n=9 中 8件が物件）
+}
+
+/** (A) 持込予告か（(B)依頼形は除外）。route.ts の estimate 入力・final-check E5 フォールバックが同一判定を使う */
+export function CUST_WILL_SEND_SELF_PRED(text: string): { yes: boolean; evidence: string | null } {
+  const t = normalizeCustomerText(text);
+  const line = t.split("\n").map((s) => s.trim()).filter(Boolean)
+    .find((p) => CUST_WILL_SEND_RE.test(p) && !CUST_ASKS_US_TO_SEND_RE.test(p));
+  return { yes: !!line, evidence: line ? line.slice(0, 40) : null };
+}
 const CUST_CALLBACK_RE = /(?:後ほど|あとで|また|改めて|後日|次回|確認して|見てから).{0,16}?(?:ご?連絡|返信|お返事)(?:させて|いたし|します|致し)/;
 const CUST_THINKING_RE = /検討(?:します|させて|いたします|致します|中|してみ)|考え(?:ます|てみ|させて|中)|相談(?:して|し|させて)|持ち帰|決めかね|決められ(?:ない|ず|ません)|時間を(?:ください|下さい|頂|いただ)|迷います|迷い|どうなのかな|どうかな/;
 const CUST_POSITIVE_RE = /気に入|良さそう|よさそう|いいですね|素敵|ぜひ|是非|進めて|申(?:し)?込(?:み)?(?:たい|します|お願い|で)|内覧(?:したい|お願い|希望|行き)|見に行き|大丈夫だと思います|問題ない/;
@@ -373,7 +409,8 @@ export function classifyCustomerResponse(sub: SubstanceVerdict, staff: StaffTurn
     if (CUST_DECLINE_RE.test(p)) put("decline", p);
     if (CUST_QUESTION_RE.test(p)) put("question", p);
     if (sub.concerns.length > 0 && (CONCERN_HEDGE_RE.test(p) || sub.concerns.some((c) => p.includes(c.phrase)))) put("concern", p);
-    if (CUST_WILL_SEND_RE.test(p)) put("will_send_later", p);
+    // (B)「あればお送りください」は我々への依頼であって持込予告ではない
+    if (CUST_WILL_SEND_RE.test(p) && !CUST_ASKS_US_TO_SEND_RE.test(p)) put("will_send_later", p);
     if (CUST_THINKING_RE.test(p) || CUST_CALLBACK_RE.test(p) || flags.isThinkingMsg) put("thinking", p);
     if (CUST_POSITIVE_RE.test(p)) put("positive", p);
   }
@@ -396,6 +433,10 @@ export function classifyCustomerResponse(sub: SubstanceVerdict, staff: StaffTurn
   // ⑤ 「迷います」「どうかな」は対象語（階・お風呂・家賃…）があれば concern、無ければ thinking
   if (found.has("concern") && found.has("thinking") && !CUST_CONCERN_OBJECT_RE.test(raw) && sub.concerns.length === 0) found.delete("concern");
   if (found.has("concern") && sub.concerns.length > 0) found.delete("thinking"); // 対象付きの迷いは懸念が主
+  // ⑤' 2026-09-10 Fable5: 「送っていいですか」は回答を要する質問ではなく持込予告（正解は受け口＋業務フロー宣言）。
+  //    他に本物の質問行が無い時だけ question を落とす（「送っていいですか？あと初期費用はいくら？」は question を残す）
+  if (found.has("question") && found.has("will_send_later") && CUST_SEND_PERMISSION_RE.test(raw)
+    && !lines.some((p) => CUST_QUESTION_RE.test(p) && !CUST_SEND_PERMISSION_RE.test(p))) found.delete("question");
   // ⑥ 一時保留（出先なので後で見ます）は「後で送る予告」ではない
   if (flags.isTemporaryLeaveMsg && !found.has("will_send_later") && !found.has("concern") && !found.has("question")) put("other", "flag:isTemporaryLeaveMsg");
 
@@ -414,6 +455,36 @@ export function classifyCustomerResponse(sub: SubstanceVerdict, staff: StaffTurn
 export type PairPrecedence = "override_wait" | "after_wait";
 /** 締めの種別（2026-09-09 Fable5 みく事例）。resolveCloser / CLOSER_TEXT / PAIR_MATRIX.closer / final-check runCloserChecks / stance_draft が同名 */
 export type CloserKind = "commit_until_found" | "receive_check" | "open_door" | "wait_softly" | "none";
+
+// ─── 2026-09-10 Fable5: 持込予告の業務フロー語（生成 direction・検査 mustInclude・few-shot・修正 fix が同一定数を参照）───
+// 「送られてきたら募集状況確認＋最大限割引した初期費用の御見積書」は、直前に我々が何をしたか（state）に関係なく同一。
+// 分岐軸は sendObject（顧客が何を送ると予告したか）だけ。
+/** ④-a 送られた物件の募集状況（空室状況）を確認する宣言。成約 6/9・「募集状況を確認させて頂きます」n=75 */
+export const WILL_SEND_RECEIVE_CHECK_RE =
+  /(?:募集状況|空室状況|空き状況|募集状況等)[^\n。！!]{0,8}(?:を|の)?確認(?:させて(?:頂|いただ)き|いたし|致し|し)/;
+/** ④-b 最大限割引した初期費用の御見積書の「予告」。まだ物件は届いていない（見積本体ではない）。「最大限割引した見積」n=352 */
+export const WILL_SEND_ESTIMATE_FORECAST_RE =
+  /(?:最大限|最大)割引[^\n。！!]{0,24}(?:御|お)?見積|(?:御|お)?見積(?:書|り|もり)?[^\n。！!]{0,24}(?:お送り|ご連絡|あわせて|併せて|ご用意|作成)/;
+/** ④-c 予告の対象が「条件」の時の探索宣言（成約 [9]） */
+export const WILL_SEND_CONDITION_SEARCH_RE =
+  /(?:条件に合(?:った|う)|ご条件(?:で|に沿|に合))[^\n。！!]{0,20}(?:お部屋|物件)[^\n。！!]{0,16}(?:探さ|お探し|ピックアップ)/;
+/** ③ 受け口（顧客が「送っていいですか」と許可を求めた時のみ）。「いつでも送ってください」n=4 */
+export const WILL_SEND_ACCEPT_RE =
+  /(?:いつでも|ございましたら|見つかりましたら|出てきましたら)[^\n。！!]{0,16}(?:お送りください|お送り(?:頂|いただ)け|送ってください)/;
+/** 予告文脈で物件フロー（募集状況確認＋見積予告）を要求する条件 */
+export const isPropertyForecast = (p: PairContext): boolean => p.sendObject === "property" || p.sendObject === "unknown";
+
+export type PairMustInclude = {
+  label: string;
+  detect: RegExp;
+  /** false を返す時はこの要素を direction にも検査にも出さない（例: 条件を送る予告に見積予告を要求しない） */
+  when?: (pair: PairContext) => boolean;
+  /** 省略時は precedence 由来（override_wait=block / after_wait=warning） */
+  severity?: "block" | "warning";
+  /** PAIR_ELEMENT_MISSING の修正案リテラル。省略時のみ rule.suggestion → rule.example にフォールバックする。
+   *  example を fix に使うと修正ループが example を丸写しさせる（あみ事例の再発経路）ので、要素ごとに必ず持たせる */
+  fix?: string;
+};
 export type PairRule = {
   id: string;
   staff: StaffTurnKind | "*";
@@ -422,9 +493,15 @@ export type PairRule = {
   /** tpoNoteForLLM ↔ few-shot「■ 場面【…】」↔ final-check の同名ラベル */
   tpoLabel: string;
   direction: string;
-  mustInclude: { label: string; detect: RegExp }[];
+  mustInclude: PairMustInclude[];
   mustNot: string[];
   example: string;
+  /** その example が成立する前提（例:「顧客が『家族と相談する』と言った場合」）。省略=セル条件そのものが前提 */
+  examplePremise?: string;
+  /** 顧客メッセージ（normalizeCustomerText 後）がこれに一致しない時、example をそのまま出さない */
+  exampleRequires?: RegExp;
+  /** 前提不成立時に出す前提節を削った短縮版。省略時は「型のみ提示・文はそのまま使わない」注記付きで example を出す */
+  exampleFallback?: string;
   /** G32: PAIR_ELEMENT_MISSING の修正案（省略時は example。別顧客名入りの例文を修正案にしないため） */
   suggestion?: string;
   length: string;
@@ -485,7 +562,27 @@ export const PAIR_MATRIX: PairRule[] = [
     mustNot: ["実行済み含意語", "「こちらの物件」等の指示語", "条件の聞き返し"],
     suggestion: "質問への直接回答（〜となります／〜です）を1文入れる。依頼形の質問（探して頂けますか）なら「かしこまりました！！」＋探索宣言が回答",
     example: "トイレと洗面所別のお部屋につきましては、設備分家賃が高くなる傾向がございます！！(3,000円～5,000円程）\n\nトイレ・洗面所別のご条件も含めてあやさんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！何卒よろしくお願い致します！！",
+    examplePremise: "お客様が設備（トイレ・洗面所別）の費用差を質問した場合",
+    exampleRequires: /トイレ|洗面|設備|別|家賃(?:は|が|って)/,
     length: "80〜160字", closer: "none", nanisotsu: true },
+
+  // ── 2026-09-10 Fable5 あみ事例: ピックアップ宣言のみ（未送付）の段階で、顧客が「気になる物件を自分で送る」と予告した ──
+  //    直前 13:24 に「出次第お送りします」と宣言済み＝我々の探索宣言の繰り返しは重複。主軸は顧客が送ってくる物件を受ける宣言。
+  { id: "PD_WILL_SEND", staff: "pickup_declared", customer: "will_send_later", precedence: "override_wait",
+    tpoLabel: "持込予告（ピックアップ約束中・まだ1件も送っていない）",
+    direction: "我々は直前に「オススメできるお部屋が出次第お送りします」と宣言しただけで、物件はまだ1件も送っていない（台帳: {ledger}）。お客様は『こちらでも気になる物件を見つけたら送ります』と予告した。①開口語「はい😊！！」②「気になるお部屋ございましたらいつでもお送りください！！」の受け口1文 ③【核】お送り頂きました物件の募集状況を確認し、最大限割引した初期費用の御見積書とあわせてご連絡する宣言1文。直前で既にピックアップを宣言しているので「随時ピックアップしてお送りします」は書かない（重複）。お客様は『相談する』とも『検討する』とも言っていないので「ごゆっくりご相談／ご検討」は書かない。80〜160字",
+    mustInclude: [
+      { label: "送られた物件の募集状況を確認する宣言", detect: WILL_SEND_RECEIVE_CHECK_RE, when: isPropertyForecast,
+        fix: "「お送り頂きました物件の募集状況確認させて頂きます！！」を1文入れる" },
+      { label: "最大限割引した初期費用の御見積書の予告", detect: WILL_SEND_ESTIMATE_FORECAST_RE, when: isPropertyForecast,
+        fix: "「最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！」を続ける" },
+      { label: "ご条件に合うお部屋を探す宣言", detect: WILL_SEND_CONDITION_SEARCH_RE, when: (p) => p.sendObject === "condition",
+        fix: "「ご条件お送りいただきましたら条件に合ったお部屋探させて頂きます😊！！」を1文入れる" },
+    ],
+    mustNot: ["「随時ピックアップしてお送りします」（直前13:24で宣言済み＝重複。かつ (A) 場面の正解 0/246）", "顧客が言っていない「ご相談」（(A) 正解 28件中 0件）", "顧客が言っていない「ごゆっくり」「ご検討」", "実行済み含意語（再度・改めて・追加で・別の）— 送付0件", "申込誘導・希少性煽り", "「かしこまりました！！」単独終了"],
+    example: "はい😊！！\n気になるお部屋ございましたらいつでもお送りください！！\nお送り頂きました物件の募集状況確認させて頂き、最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！",
+    examplePremise: "お客様が『気になる物件を後日送る』と予告した場合（このセルの条件そのもの）",
+    length: "80〜160字", closer: "none", nanisotsu: false },
 
   { id: "ANY_CONDITION_CHANGE", staff: "*", customer: "condition_change", precedence: "override_wait",
     tpoLabel: "条件変更（エリア・家賃・間取り・設備の追加/変更）",
@@ -499,6 +596,7 @@ export const PAIR_MATRIX: PairRule[] = [
       none: "かしこまりました😊！！\n〇〇に絞らせて頂き、〇〇のご条件で〇〇さんにオススメできるお部屋をピックアップさせて頂きます！！\n〇〇さんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！",
       sent: "かしこまりました！！\n2LDKのご条件で、枚方・高槻・吹田・守口・門真・鶴見区周辺全域から瑞希さんにオススメ出来るお部屋新たにピックアップしてお送りさせて頂きます😌！！\n瑞希さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
     },
+    examplePremise: "物件を1件以上送付済みの場合（未送付は exampleBySent.none 側が選ばれる）",
     length: "90〜160字", closer: "commit_until_found", nanisotsu: false },
 
   { id: "VI_CONCERN", staff: "viewing_invite", customer: "concern", precedence: "override_wait",
@@ -510,6 +608,8 @@ export const PAIR_MATRIX: PairRule[] = [
     ],
     mustNot: ["「お気持ち、よくわかります」等の共感フレーズ", "「かしこまりました！！」で終える", "「はい😊！！」開始", "内覧日程の再提案・候補日時", "申込誘導・希少性煽り", "「2階でも大丈夫」等の根拠なし安心づけ", "懸念を質問で返す"],
     example: "あみさんお世話になっております！！\nご要望お聞かせ頂きありがとうございます😊！！\n新生児のお子様との階段の上り下りはご負担になりますので、1階またはエレベーター付きのお部屋を中心にあみさんにオススメできるお部屋再度ピックアップしお送りさせて頂きます！！\nこちらのお部屋も含めお気に召されましたらいつでもご内覧頂けますので、あみさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます😌！！",
+    examplePremise: "新生児のお子様＋階段の懸念が出た場合",
+    exampleRequires: /階段|[0-9０-９]+階|エレベーター|新生児|赤ちゃん|お子/,
     length: "120〜200字", closer: "commit_until_found", nanisotsu: false },
 
   { id: "VI_POSITIVE", staff: "viewing_invite", customer: "positive", precedence: "after_wait",
@@ -523,29 +623,46 @@ export const PAIR_MATRIX: PairRule[] = [
   { id: "VI_THINKING", staff: "viewing_invite", customer: "thinking", precedence: "after_wait",
     tpoLabel: "検討中フォロー（内覧打診後）",
     direction: "急かさない受け止め＋内覧の扉を開けたまま待つ。「はい😊！！」→「ごゆっくりご検討頂けますと幸いです！！」→「ご内覧出来ますので、気になる点出てきましたらいつでもお気軽にご連絡ください😌！！」。70〜120字",
-    mustInclude: [{ label: "急かさない受け止め", detect: /ごゆっくり/ }, { label: "内覧の扉を開ける1文", detect: /内覧|いつでも/ }],
-    mustNot: ["希少性煽り", "申込誘導", "物件追加提案", "「かしこまりました」開口語"],
+    mustInclude: [
+      { label: "急かさない受け止め（顧客が使った動詞をそのまま鏡写しにする）", detect: /ごゆっくり/, when: hasGoyukkuriMirrorVerb,
+        fix: "顧客が『検討します』なら「ごゆっくりご検討頂けますと幸いです😊！！」／『確認します』なら「ごゆっくりご確認頂けますと幸いです😊！！」" },
+      { label: "内覧の扉を開ける1文", detect: /内覧|いつでも/ },
+    ],
+    mustNot: ["希少性煽り", "申込誘導", "物件追加提案", "「かしこまりました」開口語", "顧客が言っていない動詞での「ごゆっくり〇〇」"],
     example: "はい😊！！\nごゆっくりご検討頂けますと幸いです！！\nご内覧出来ますので、あいさん気になる点出てきましたらいつでもお気軽にご連絡ください😌！！",
+    examplePremise: "お客様が『検討します／考えます』と明言した場合",
+    exampleRequires: /検討|考え|悩|迷/,
     length: "70〜120字", closer: "open_door", nanisotsu: false },
 
   { id: "ES_WILL_SEND", staff: "estimate_send", customer: "will_send_later", precedence: "override_wait",
     tpoLabel: "提案後の検討・持込予告（見積送付後）",
-    direction: "我々の見積送付に対し顧客が「検討する＋気になる物件を後日送る」と返した。①「〇〇さんお世話になっております！！」②「はい😊！！ごゆっくりご検討頂けますと幸いです！！」（急かさない）③送ってもらう物件を先取りして受ける宣言（お送り頂き次第募集状況確認＋最大限割引の御見積書とあわせてご連絡）④直前の見積物件は「お気に召されましたらお申込しお部屋抑えさせて頂きます」で扉を開けたまま⑤締め。120〜220字",
+    direction: "我々の見積送付に対しお客様が「気になる物件を後日送る」と返した。①開口語「はい😊！！」②（お客様が『検討する』『確認する』と自分で言った時だけ）その動詞をそのまま鏡写しにした「ごゆっくりご〇〇頂けますと幸いです！！」③【核】お送り頂いた物件は募集状況確認＋最大限割引した初期費用の御見積書をあわせてご連絡する宣言1文 ④直前の見積物件は「お気に召されましたらお申込しお部屋抑えさせて頂きます」で扉を開けたまま。120〜220字",
     mustInclude: [
-      { label: "見積の検討を急かさない1文", detect: /ごゆっくり|ご検討|ご確認/ },
-      { label: "後日送られる物件を先取りして受ける宣言（募集状況確認）", detect: /(?:お送り|送って|いつでも)(?:頂|いただ|ください).{0,40}(?:募集状況|確認)|募集状況.{0,20}確認/ },
-      { label: "その物件の見積も出す宣言", detect: /(?:御見積書|お見積書|見積).{0,25}(?:作成|お送り|ご用意|あわせて|ご連絡)/ },
+      { label: "お送り頂いた物件の募集状況を確認する宣言", detect: WILL_SEND_RECEIVE_CHECK_RE,
+        fix: "「お送り頂きました物件の募集状況確認させて頂きます！！」を1文入れる" },
+      { label: "最大限割引した初期費用の御見積書をあわせて送る予告", detect: WILL_SEND_ESTIMATE_FORECAST_RE,
+        fix: "「最大限割引させて頂いた初期費用の御見積書とあわせてご連絡させて頂きます！！」を続ける" },
     ],
-    mustNot: ["申込催促・希少性煽り（人気のため早めに等）", "こちらからの新規1件推し宣言（顧客が自分で送ると言っている）", "「かしこまりました！！」単独終了", "「ごゆっくりご検討ください」だけの締め"],
+    mustNot: ["申込催促・希少性煽り", "こちらからの新規1件推し宣言（顧客が自分で送ると言っている）", "「随時ピックアップしてお送りします」（我々が探して送る宣言。この場面の正解 246件中 0件）", "顧客が言っていない「ご相談」", "「かしこまりました！！」単独終了"],
     example: "みくさんお世話になっております！！\nはい😊！！ごゆっくりご検討頂けますと幸いです！！\n気になるお部屋ございましたらお送りください！！お送り頂き次第募集状況確認させて頂き、最大限割引させて頂いた初期費用の御見積書とあわせてご連絡させて頂きます！！\nエストレーラ305号室もお気に召されましたらお申込しお部屋抑えさせて頂きますので、いつでもお気軽にご連絡ください😌！！",
+    examplePremise: "お客様が『検討します』と明言し、かつ直前に見積書を送った物件（エストレーラ305号室）が存在する場合",
+    exampleRequires: /検討|考え|悩|迷|持ち帰/,
+    exampleFallback: "はい😊！！\n気になるお部屋ございましたらお送りください！！お送り頂き次第募集状況確認させて頂き、最大限割引させて頂いた初期費用の御見積書とあわせてご連絡させて頂きます！！",
     length: "120〜220字", closer: "open_door", nanisotsu: false },
 
   { id: "ES_THINKING", staff: "estimate_send", customer: "thinking", precedence: "after_wait",
     tpoLabel: "検討中フォロー（見積送付後）",
     direction: "急かさない受け止め＋次工程（内覧／申込）の開放1文。「はい😊！！ごゆっくりご確認頂けますと幸いです！！」→「お部屋お気に召されましたら実際にご案内させて頂きますのでいつでもお気軽にご連絡ください😌！！」。70〜130字",
-    mustInclude: [{ label: "急かさない受け止め", detect: /ごゆっくり/ }, { label: "次工程の開放（内覧／申込／不明点）", detect: /お気に召され|ご不明|ご不安|いつでも/ }],
+    mustInclude: [
+      { label: "急かさない受け止め（顧客が使った動詞をそのまま鏡写しにする）", detect: /ごゆっくり/, when: hasGoyukkuriMirrorVerb,
+        fix: "顧客が『確認します』なら「ごゆっくりご確認頂けますと幸いです😊！！」／『検討します』なら「ごゆっくりご検討頂けますと幸いです😊！！」" },
+      { label: "次工程の開放（内覧／申込／不明点）", detect: /お気に召され|ご不明|ご不安|いつでも/ },
+    ],
     mustNot: ["申込催促・希少性煽り", "別物件提案", "初期費用割引の再掲", "「かしこまりました」開口語"],
     example: "愛乃さん、お世話になっております！！\nはい😊！！ごゆっくりご確認頂けますと幸いです！！\nお部屋お気に召されましたら、実際にお部屋ご案内させて頂きますのでいつでもお気軽にご連絡ください😌！！",
+    examplePremise: "お客様が『確認します／拝見します』と言った場合",
+    exampleRequires: /確認|拝見|見(?:て|ま)|目を通/,
+    exampleFallback: "はい😊！！\nお部屋お気に召されましたら、実際にお部屋ご案内させて頂きますのでいつでもお気軽にご連絡ください😌！！",
     length: "70〜130字", closer: "wait_softly", nanisotsu: false },
 
   { id: "ES_CONCERN", staff: "estimate_send", customer: "concern", precedence: "override_wait",
@@ -557,6 +674,8 @@ export const PAIR_MATRIX: PairRule[] = [
     ],
     mustNot: ["値引き確約", "共感語のみ", "申込誘導"],
     example: "こちらの2物件は、礼金がかかりますので初期費用高くなってしまいます。\n別物件で初期費用抑えられるオススメ出来るお部屋探させて頂きます！！\n何卒よろしくお願い致します😌！！",
+    examplePremise: "礼金が発生する物件で初期費用の高さを指摘された場合",
+    exampleRequires: /高|礼金|敷金|初期費用|予算/,
     length: "90〜150字", closer: "commit_until_found", nanisotsu: true },
 
   { id: "ES_POSITIVE", staff: "estimate_send", customer: "positive", precedence: "after_wait",
@@ -576,26 +695,42 @@ export const PAIR_MATRIX: PairRule[] = [
     ],
     mustNot: ["「お気持ちよくわかります」等の共感語", "送付物件の擁護・説得", "内覧誘導・申込誘導", "「かしこまりました！！」単独終了", "「はい😊！！」開始"],
     example: "あみさんお世話になっております！！\nご要望お聞かせ頂きありがとうございます😊！！\nお風呂広めのお部屋を中心にあみさんにオススメできるお部屋お調べさせて頂きます！！\nあみさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
+    examplePremise: "お風呂の広さの懸念が出た場合",
+    exampleRequires: /風呂|浴室|浴槽|広|狭/,
     length: "90〜150字", closer: "commit_until_found", nanisotsu: false },
 
   { id: "PS_THINKING", staff: "property_send", customer: "thinking", precedence: "after_wait",
     tpoLabel: "検討中フォロー（物件送付後）",
-    direction: "急かさない受け止め＋随時ピックアップ宣言 or 内覧の扉を開ける1文。「はい😊！！」→「ごゆっくりご検討（ご相談）頂けますと幸いです！！」→「ご条件に合うお部屋出てきましたら随時ピックアップしてお送りさせて頂きます」or「気になる点出てきましたらいつでもお気軽にご連絡ください」。70〜130字",
-    mustInclude: [{ label: "急かさない受け止め", detect: /ごゆっくり|ご相談|ご検討/ }, { label: "随時ピックアップ宣言 or 扉を開ける1文", detect: /随時|出てきましたら|出次第|いつでも|内覧/ }],
-    mustNot: ["申込誘導", "希少性煽り（人気のため早めに等）", "「かしこまりました！！」単独終了", "検討依頼の繰り返し（ご検討の程〜）"],
-    example: "お世話になっております！！\nかしこまりました！！ごゆっくりご相談頂けますと幸いです😊！！\nまたrさんにオススメできるお部屋出てきましたら随時ピックアップしてお送りさせて頂きます！！",
+    direction: "急かさない受け止め＋随時ピックアップ宣言 or 内覧の扉を開ける1文。「はい😊！！」→「ごゆっくりご〇〇頂けますと幸いです！！」（〇〇はお客様が使った動詞の鏡写し＝検討します→ご検討／確認します→ご確認／相談してみます→ご相談。お客様が言っていない語は使わない）→「ご条件に合うお部屋出てきましたら随時ピックアップしてお送りさせて頂きます」or「気になる点出てきましたらいつでもお気軽にご連絡ください」。70〜130字",
+    mustInclude: [
+      { label: "急かさない受け止め（顧客が使った動詞をそのまま鏡写しにする）", detect: /ごゆっくり/, when: hasGoyukkuriMirrorVerb,
+        fix: "顧客が『検討します』なら「ごゆっくりご検討頂けますと幸いです😊！！」／『確認します』なら「ごゆっくりご確認頂けますと幸いです😊！！」／『相談してみます』なら「ごゆっくりご相談頂けますと幸いです😊！！」" },
+      { label: "随時ピックアップ宣言 or 扉を開ける1文", detect: /随時|出てきましたら|出次第|いつでも|内覧/ },
+    ],
+    mustNot: ["申込誘導", "希少性煽り（人気のため早めに等）", "「かしこまりました！！」単独終了", "検討依頼の繰り返し（ご検討の程〜）", "顧客が言っていない動詞での「ごゆっくり〇〇」（相談と言っていないのに『ご相談』等）"],
+    example: "お世話になっております！！\nかしこまりました！！ごゆっくりご相談頂けますと幸いです😊！！\nまた〇〇さんにオススメできるお部屋出てきましたら随時ピックアップしてお送りさせて頂きます！！",
+    examplePremise: "お客様が『（誰かに）相談してみます』と明言した場合（rさん実例）。相談の言及が無い場面でこの文を出すと文脈が壊れる",
+    exampleRequires: /相談|話し合|家族|旦那|主人|妻|嫁|親|同居|友人|彼氏|彼女|二人で|2人で/,
+    exampleFallback: "はい😊！！\nごゆっくりご検討頂けますと幸いです！！\nまた〇〇さんにオススメできるお部屋出てきましたら随時ピックアップしてお送りさせて頂きます！！",
     length: "70〜130字", closer: "wait_softly", nanisotsu: false },
 
   { id: "PS_WILL_SEND", staff: "property_send", customer: "will_send_later", precedence: "override_wait",
-    tpoLabel: "提案後の検討・持込予告（物件送付後）",
-    direction: "急かさない受け止め＋顧客が送る／相談する行動を先取りして受ける宣言（条件に合う部屋が出たら随時ピックアップ／送って頂いた物件は募集状況確認）。90〜150字",
+    tpoLabel: "提案後の持込予告（物件送付後）",
+    direction: "我々が物件を送った後、お客様が「気になる物件を（後日）送る」と予告した。①開口語「はい！！」または「かしこまりました！！」②（お客様が『送っていいですか』と許可を求めた時だけ）「気になるお部屋ございましたらいつでもお送りください😊！！」③【核】お送り頂き次第の業務フロー1文＝募集状況確認＋最大限割引した初期費用の御見積書。我々が探して送る話（随時ピックアップ）はこの場面では書かない。90〜160字",
     mustInclude: [
-      { label: "急かさない受け止め", detect: /ごゆっくり|ご相談|ご検討/ },
-      { label: "先取りの行動宣言（随時ピックアップ or 募集状況確認）", detect: /(?:随時|出次第|出てきましたら|お送り頂き次第|お送り頂けましたら|届き次第).{0,30}(?:ピックアップ|お送り|確認)/ },
+      { label: "送られた物件の募集状況を確認する宣言", detect: WILL_SEND_RECEIVE_CHECK_RE, when: isPropertyForecast,
+        fix: "「お送りいただき次第、募集状況を確認させて頂きます！！」を1文入れる" },
+      { label: "最大限割引した初期費用の御見積書の予告", detect: WILL_SEND_ESTIMATE_FORECAST_RE, when: isPropertyForecast, severity: "warning",
+        fix: "「最大限割引しました初期費用の御見積書もあわせてお送りさせて頂きます！！」を続ける" },
+      { label: "ご条件に合うお部屋を探す宣言", detect: WILL_SEND_CONDITION_SEARCH_RE, when: (p) => p.sendObject === "condition",
+        fix: "「ご条件お送りいただきましたら条件に合ったお部屋探させて頂きます😊！！」を1文入れる" },
+      { label: "送付の受け口", detect: WILL_SEND_ACCEPT_RE, when: (p) => CUST_SEND_PERMISSION_RE.test(p.substance.normalized), severity: "warning",
+        fix: "「気になるお部屋ございましたらいつでもお送りください😊！！」を先に置く" },
     ],
-    mustNot: ["申込誘導", "希少性煽り", "「かしこまりました！！」単独終了"],
-    example: "お世話になっております！！\nかしこまりました！！ごゆっくりご相談頂けますと幸いです😊！！\nまたrさんにオススメできるお部屋出てきましたら随時ピックアップしてお送りさせて頂きますので、気になる点出てきましたらいつでもお気軽にご連絡ください！！",
-    length: "90〜150字", closer: "open_door", nanisotsu: false },
+    mustNot: ["「随時ピックアップしてお送りします」（我々が探す宣言。顧客が物件を送った直後の正解 246件中 0件・(B)場面専用の語彙）", "顧客が『相談』と言っていないのに「ご相談」（正解 (A) 28件中 0件）", "顧客が『検討』『確認』と言っていないのに「ごゆっくり」", "申込誘導", "希少性煽り", "「かしこまりました！！」単独終了"],
+    example: "はい😊！！\n気になる物件がございましたらいつでもお気軽にお送りください！！\nお送りいただき次第、募集状況を確認させて頂きます！！最大限割引しました初期費用の御見積書もあわせてお送りさせて頂きます！！",
+    examplePremise: "お客様が『気になる物件を後日送る』と予告した場合（このセルの条件そのもの）",
+    length: "90〜160字", closer: "open_door", nanisotsu: false },
 
   { id: "PS_QUESTION", staff: "property_send", customer: "question", precedence: "override_wait",
     tpoLabel: "質問回答（物件送付後）",
@@ -606,7 +741,9 @@ export const PAIR_MATRIX: PairRule[] = [
       { label: "次工程の宣言 or 提案", detect: new RegExp(`${DECL_TAIL}|させて(?:頂|いただ)き[、,]|(?:オススメ|おすすめ|お勧め)(?:です|致します|いたします)`) },
     ],
     mustNot: ["宅建業法上の根拠なし断言（空室・告知事項・入居可能日）", "質問で質問を返す"],
-    example: "rさんお世話になっております！！\nスプランディッド難波WESTⅡのような好条件のお部屋はすぐに埋まってしまう可能性が高いお部屋となります！！\nお気に召されたお部屋を一度弊社撮影またはオンライン内見をさせて頂き、お部屋を抑えた状態で9月13日以降にご内覧頂くのがオススメです😊！！",
+    example: "〇〇さんお世話になっております！！\nスプランディッド難波WESTⅡのような好条件のお部屋はすぐに埋まってしまう可能性が高いお部屋となります！！\nお気に召されたお部屋を一度弊社撮影またはオンライン内見をさせて頂き、お部屋を抑えた状態で9月13日以降にご内覧頂くのがオススメです😊！！",
+    examplePremise: "人気物件の押さえ方を質問され、撮影・オンライン内見の運用が履歴にある場合",
+    exampleRequires: /内覧|内見|見(?:たい|に行)|押さえ|抑え|埋ま|人気/,
     length: "100〜160字", closer: "none", nanisotsu: false },
 
   { id: "PS_CONDITION_CHANGE", staff: "property_send", customer: "condition_change", precedence: "override_wait",
@@ -618,6 +755,7 @@ export const PAIR_MATRIX: PairRule[] = [
     ],
     mustNot: ["条件の聞き返し", "送付済み物件の再送宣言", "実現可能性の予測（難しい・少ない・可能性）", "条件緩和・代替案の先回り提案", "「少ない状況でしたので広げました」の言い訳（探していない）"],
     example: "かしこまりました！！\n2LDKのご条件で、枚方・高槻・吹田・守口・門真・鶴見区周辺全域から瑞希さんにオススメ出来るお部屋新たにピックアップしてお送りさせて頂きます😌！！\n瑞希さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
+    examplePremise: "物件送付済み（＝『新たに』が使える）場合",
     length: "110〜180字", closer: "commit_until_found", nanisotsu: false },
 
   // 探索済み（aix_usage_logs に顧客最新以降の property_send 系がある／AIX物件送付文生成中）の時だけ resolveTurnPair が選ぶ結果報告セル
@@ -638,6 +776,9 @@ export const PAIR_MATRIX: PairRule[] = [
     ],
     mustNot: ["回答内容への評価コメント", "同じ質問の再確認"],
     example: "かしこまりました！！\n初期費用も最大限割引させていただいたお見積書作成しお送りさせていただきます😊！！",
+    examplePremise: "お客様の回答が費用・見積に関するもので、estimate verdict が declare の場合",
+    exampleRequires: /初期費用|費用|見積|いくら|金額|割引/,
+    exampleFallback: "かしこまりました！！\nお伺いしたご条件でオススメできるお部屋ピックアップしてお送りさせて頂きます😊！！",
     length: "60〜120字", closer: "none", nanisotsu: false },
 
   { id: "CP_ACK", staff: "confirmation_promise", customer: "ack_only", precedence: "after_wait",
@@ -662,6 +803,8 @@ export const PAIR_MATRIX: PairRule[] = [
     mustInclude: [{ label: "直接回答 or 確認宣言", detect: /(?:となります|ございます|可能です|問題ございません|かかります|(?:出来|でき)ます)|確認させて(?:頂|いただ)き/ }],
     mustNot: ["質問返し", "根拠なし断言"],
     example: "はい！かなり入ってくる可能性は低くなります！換気フィルターの定期的な清掃、防虫フィルターを設置行いますと虫の侵入を防ぐ事が出来ます！！\n内装の色味についてはブラウン基調となります！",
+    examplePremise: "虫の侵入・内装色を質問された場合",
+    exampleRequires: /虫|換気|内装|色|フィルター/,
     length: "100〜160字", closer: "none", nanisotsu: false },
 
   { id: "ANY_CONCERN", staff: "*", customer: "concern", precedence: "override_wait",
@@ -673,15 +816,25 @@ export const PAIR_MATRIX: PairRule[] = [
     ],
     mustNot: ["共感フレーズ", "「かしこまりました！！」単独終了", "「はい😊！！」開始"],
     example: "かしこまりました😊！！\n夜職・ブラックでもご入居できるお部屋は多数ございますので、審査に通りやすい保証会社中心にお部屋ピックアップさせて頂きます！！\nご不安な点も含めて全力でサポートさせて頂きますので、何卒よろしくお願い致します😌！！",
+    examplePremise: "審査・夜職・ブラックの不安を口にした場合",
+    exampleRequires: /審査|保証|ブラック|夜職|水商売|滞納|無職|生活保護/,
     length: "100〜160字", closer: "commit_until_found", nanisotsu: true },
 
   { id: "ANY_WILL_SEND", staff: "*", customer: "will_send_later", precedence: "override_wait",
-    tpoLabel: "提案後の検討・持込予告",
-    direction: "PS_WILL_SEND と同じ骨格。顧客が予告した行動を先取りして受ける宣言を必ず1文。90〜160字",
-    mustInclude: [{ label: "先取りの行動宣言", detect: /(?:随時|出次第|出てきましたら|お送り頂き次第|お送り頂けましたら|届き次第).{0,30}(?:ピックアップ|お送り|確認|ご連絡)/ }],
-    mustNot: ["申込誘導", "希少性煽り", "「かしこまりました！！」単独終了"],
-    example: "お世話になっております！！\nかしこまりました！！ごゆっくりご相談頂けますと幸いです😊！！\nまた〇〇さんにオススメできるお部屋出てきましたら随時ピックアップしてお送りさせて頂きますので、気になる点出てきましたらいつでもお気軽にご連絡ください！！",
-    length: "90〜160字", closer: "open_door", nanisotsu: false },
+    tpoLabel: "持込予告",
+    direction: "お客様が『自分で気になる物件（または条件）を送る』と予告した。PD_WILL_SEND と同じ骨格。①開口語「はい😊！！」②【核】お送り頂き次第の業務フロー1文（物件＝募集状況確認＋最大限割引の御見積書／条件＝条件に合うお部屋を探す）。我々が探して送る話（随時ピックアップ）・お客様が言っていない「ご相談」「ご検討」は書かない。80〜160字",
+    mustInclude: [
+      { label: "送られた物件の募集状況を確認する宣言", detect: WILL_SEND_RECEIVE_CHECK_RE, when: isPropertyForecast,
+        fix: "「お送り頂きました物件の募集状況確認させて頂きます！！」を1文入れる" },
+      { label: "最大限割引した初期費用の御見積書の予告", detect: WILL_SEND_ESTIMATE_FORECAST_RE, when: isPropertyForecast,
+        fix: "「最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！」を続ける" },
+      { label: "ご条件に合うお部屋を探す宣言", detect: WILL_SEND_CONDITION_SEARCH_RE, when: (p) => p.sendObject === "condition",
+        fix: "「ご条件お送りいただきましたら条件に合ったお部屋探させて頂きます😊！！」を1文入れる" },
+    ],
+    mustNot: ["「随時ピックアップしてお送りします」（(B)『我々に送って』場面専用の語彙。(A) では正解 0/246）", "顧客が言っていない「ご相談」", "顧客が言っていない「ごゆっくり」「ご検討」", "申込誘導", "希少性煽り", "「かしこまりました！！」単独終了"],
+    example: "お世話になっております！！\nはい😊！！\n気になるお部屋ございましたらいつでもお送りください！！\nお送り頂きました物件の募集状況確認させて頂き、最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！",
+    examplePremise: "お客様が『気になる物件を後日送る』と予告した場合（このセルの条件そのもの）",
+    length: "80〜160字", closer: "none", nanisotsu: false },
 ];
 
 export const STAFF_KIND_JA: Record<StaffTurnKind, string> = {
@@ -709,6 +862,8 @@ export interface PairContext {
   ledger: ActionLedger | null;
   /** {redo} 置換値: 送付実績あり→「再度」／なし→「」 */
   redo: string;
+  /** 2026-09-10 Fable5: 顧客が「送る」と予告した物の種類（will_send_later 以外は "unknown"） */
+  sendObject: WillSendObject;
 }
 
 /** {redo}: 台帳に物件送付実績がある時だけ「再度」。生成 direction／検査 label／final-check suggestion が同じ関数 */
@@ -734,7 +889,11 @@ export function resolveTurnPair(
     (substance.concerns.length ? `（懸念: ${substance.concerns.map((c) => `${c.label}「${c.phrase}」`).join("、")}）` : "") +
     (customer.object && !substance.concerns.length ? `（対象: ${customer.object}）` : "") +
     (opts.ledger ? `｜台帳: ${opts.ledger.summary}` : "");
-  return { staff, customer, substance, rule, ruleId: rule?.id ?? null, summary, lastStaffText: lastStaffText ?? "", ledger: opts.ledger ?? null, redo: redoWord(opts.ledger) };
+  // 2026-09-10 Fable5: 予告の対象（物件／条件／書類）。要素④の中身と見積予告の要否を決める唯一の分岐軸（state 非依存）
+  const sendObject: WillSendObject =
+    customer.kind === "will_send_later" || customer.secondary.includes("will_send_later")
+      ? classifyWillSendObject(substance.normalized) : "unknown";
+  return { staff, customer, substance, rule, ruleId: rule?.id ?? null, summary, lastStaffText: lastStaffText ?? "", ledger: opts.ledger ?? null, redo: redoWord(opts.ledger), sendObject };
 }
 
 /** {object}/{fix}/{redo}/{ledger}/{sentNames} の置換（生成・検査・note の三者が同じ関数） */
@@ -752,7 +911,9 @@ export function fillPairPlaceholders(s: string, pair: PairContext): string {
 export function buildPairDirection(pair: PairContext, opts: { brainReplyDirection?: string | null; brainFresh: boolean }): string | null {
   if (!pair.rule) return null;
   const dir = fillPairPlaceholders(pair.rule.direction, pair);
-  const must = pair.rule.mustInclude.map((m, i) => `${i + 1}.${fillPairPlaceholders(m.label, pair)}`).join(" ");
+  // 2026-09-10 Fable5: when が false の要素（この場面に無い要素）は direction にも出さない
+  const must = pair.rule.mustInclude.filter((m) => !m.when || m.when(pair))
+    .map((m, i) => `${i + 1}.${fillPairPlaceholders(m.label, pair)}`).join(" ");
   const ref = opts.brainFresh && opts.brainReplyDirection ? ` brain方向性（参考）:「${opts.brainReplyDirection}」` : "";
   return `${dir}。必須要素: ${must}。禁止: ${pair.rule.mustNot.join("／")}${ref}`;
 }
@@ -772,10 +933,21 @@ export function buildTurnPairNote(pair: PairContext, customerMessage: string, cu
   if (pair.rule) {
     lines.push(`- → この返信の役割: ${fillPairPlaceholders(pair.rule.direction, pair)}`);
     lines.push("- 必須要素（それぞれ本文で1文以上・欠けたら不合格）:");
-    pair.rule.mustInclude.forEach((m, i) => lines.push(`  ${["①", "②", "③", "④", "⑤"][i] ?? i + 1} ${fillPairPlaceholders(m.label, pair)}`));
+    const actives = pair.rule.mustInclude.filter((m) => !m.when || m.when(pair));
+    actives.forEach((m, i) => lines.push(`  ${["①", "②", "③", "④", "⑤"][i] ?? i + 1} ${fillPairPlaceholders(m.label, pair)}`));
     lines.push(`- 禁止: ${pair.rule.mustNot.join(" / ")}`);
-    lines.push(`- 型（成約実例。文体・テンポ・構成を踏襲し、固有名詞・エリア・物件名は今回の会話の事実に置換。顧客名は「${customerName || "〇〇"}さん」）:`);
-    const ex = pair.rule.exampleBySent ? (pair.ledger && pair.ledger.facts.propertiesSentCount > 0 ? pair.rule.exampleBySent.sent : pair.rule.exampleBySent.none) : pair.rule.example;
+    // 2026-09-10 Fable5 あみ事例: example は「ある前提が成立していた場面の実文」。前提が今回成立していないなら文をそのまま渡さない
+    const premiseOk = !pair.rule.exampleRequires || pair.rule.exampleRequires.test(normalizeCustomerText(customerMessage));
+    const ex = pair.rule.exampleBySent
+      ? (pair.ledger && pair.ledger.facts.propertiesSentCount > 0 ? pair.rule.exampleBySent.sent : pair.rule.exampleBySent.none)
+      : premiseOk ? pair.rule.example : (pair.rule.exampleFallback ?? pair.rule.example);
+    if (pair.rule.examplePremise && !premiseOk) {
+      lines.push(`- 型（⚠ この成約実例は【${pair.rule.examplePremise}】の場面のもので、今回のお客様のメッセージにはその前提が**無い**。骨格（開口語→受け→行動宣言→締めの並びと文体）だけを真似し、文はそのまま使わない。前提に依存する語（ご相談・ご検討・随時ピックアップ等）は1語も持ち込まない）:`);
+    } else if (pair.rule.examplePremise) {
+      lines.push(`- 型（成約実例。前提【${pair.rule.examplePremise}】は今回も成立している。文体・テンポ・構成を踏襲し、固有名詞・エリア・物件名は今回の会話の事実に置換。顧客名は「${customerName || "〇〇"}さん」）:`);
+    } else {
+      lines.push(`- 型（成約実例。文体・テンポ・構成を踏襲し、固有名詞・エリア・物件名は今回の会話の事実に置換。顧客名は「${customerName || "〇〇"}さん」）:`);
+    }
     lines.push(`「${ex}」`);
   } else {
     lines.push("- → この返信の役割: 直前発言の流れを引き継ぎ、お客様の返答の中身に直接答えてから次の行動を宣言する");
@@ -946,10 +1118,12 @@ export function resolveCloser(
     return { closer, nanisotsu: n, text: [body, n ? NANISOTSU_TEXT : ""].filter(Boolean).join("\n"), reason };
   };
   if (c === "decline") return mk("none", false, "断り→扉1文で終える（引き留め・謝罪・サポート宣言なし）");
+  // 2026-09-10 Fable5: 持込予告はセルが締めを持つ（PD/ANY=none：受け宣言で終える／ES=open_door：直前の見積物件の扉を開ける）。
+  //   本文の「最大限割引した御見積書」は未来形の予告であって成果物添付ではないため deliverableAttached より先に判定する
+  if (c === "will_send_later") return mk(pair.rule?.closer ?? "open_door", pair.rule?.nanisotsu ?? false, "持込予告→先取り宣言で終える（セル指定）");
   if (sig.deliverableAttached) return mk("receive_check", false, "成果物添付→ご査収一択（正解674件／property_send 系で全力・何卒は0件）");
   if (sig.scheduleFixed) return mk("none", false, "日程確定・打診→疑問形/確定文で終える（断定削除22件・何卒削除26件の型）");
   if (c === "thinking") return mk("wait_softly", false, "検討中→ごゆっくり＋扉。急かし禁止");
-  if (c === "will_send_later") return mk("open_door", false, "後日送付予告→先取り宣言の後に扉のみ");
   if (c === "question" && s !== "condition_ask") return mk("none", false, "質問回答で終える（質問系988件中926件が何卒なし）");
   const ruleCloser = pair.rule?.closer;
   if (ruleCloser && ruleCloser !== "commit_until_found") return mk(ruleCloser, pair.rule?.nanisotsu ?? false, `PAIR_MATRIX ${pair.ruleId} の closer 指定`);
@@ -1116,4 +1290,99 @@ export function buildStanceNote(pair: PairContext, hedge: HedgeVerdict, closer: 
   L.push("- 🌡 温度: 😊😌は2個以内・！！は3回以内。「ご安心ください」「ご検討ください」「恐縮ですが」「〜いただけますと幸いです」「少々お時間」で終えず、こちらの行動宣言で終える。呼称は「〇〇さん」");
   L.push("- 🕰 急かさない: 「埋まってしまう前に」「お早めに」は見積送付後・お客様の前向き反応後のみ");
   return L.join("\n") + "\n\n";
+}
+
+// ─────────────────────────────────────────────────────────────
+// 10. 顧客アンカー語彙（2026-09-10 Fable5 あみ事例）— 「顧客が言っていないのに使うと文脈が壊れる語」。
+//     生成（buildVocabAnchorNote）・検査（final-check runVocabAnchorChecks）・修正（suggestion）が同一テーブルを参照する。
+//     根拠: 「ごゆっくりご相談」正解 n=2 / 顧客が『相談』と明言 2件（100%）。「ご相談」を含む正解 23件のうち
+//     顧客が物件を送ると言った場面は 0件。顧客が物件を送った直後の正解 246件中「随時ピックアップ」0件。
+//     設計上の注意: 禁止語を足すと LLM は同義語に逃げる（「ご検討」を締めで抑制した結果「ご相談」に逃げた）。
+//     したがって replace に正しい代替をリテラルで必ず持たせる。
+// ─────────────────────────────────────────────────────────────
+export type VocabAnchorCtx = { reply: string; customerText: string; lastCustomerTexts: string; lastStaffText: string; pair: PairContext | null };
+export type VocabAnchor = {
+  key: string;
+  /** 返信側に現れる語 */
+  re: RegExp;
+  /** 顧客側（最新＋直近顧客発言＋直前スタッフ発言）にこれが無ければ「顧客が言っていない語」 */
+  requires: RegExp;
+  /** requires を満たしていても不可な文脈 */
+  forbidWhen?: (c: VocabAnchorCtx) => boolean;
+  severity: "block" | "warning";
+  why: string;
+  /** 必ずリテラルの代替を渡す（禁止だけを足すと同義語に逃げる） */
+  replace: string;
+  /** 生成側 note で「書かない語」として提示する見出し */
+  label: string;
+};
+
+export const CUSTOMER_SOUDAN_SIGNAL_RE =
+  /相談|話し合|打ち合わせ|家族|ご家族|旦那|主人|奥さん|妻|嫁|夫|親|両親|母|父|同居|友人|友達|彼氏|彼女|二人で|2人で|皆で|みんなで/;
+export const CUSTOMER_KENTOU_SIGNAL_RE = /検討|考え|悩|迷|持ち帰|決めかね|決められ/;
+export const CUSTOMER_KAKUNIN_SIGNAL_RE = /確認|チェック|見て(?:み|から|おき)|拝見|目を通/;
+export const CUSTOMER_ASKS_CONTINUOUS_PICKUP_RE =
+  /(?:また|引き続き|今後|次|新着|出たら|出てきたら|あれば|ありましたら)[^\n]{0,16}(?:ご紹介|紹介|ピックアップ|探し|お願い|送っ|教えて)|条件のあう物件|新しい(?:物件|お部屋)/;
+
+export const CUSTOMER_ANCHORED_VOCAB: VocabAnchor[] = [
+  { key: "goyukkuri_soudan", label: "ごゆっくりご相談", re: /ごゆっくりご相談/, requires: CUSTOMER_SOUDAN_SIGNAL_RE, severity: "block",
+    why: "「ごゆっくりご相談頂けますと幸いです」は、お客様が『（誰かに）相談してみます』と明言した時だけの文（正解 n=2／2件とも顧客が相談と明言＝100%）。相談の言及が無い場面での使用は正解データに0件",
+    replace: "お客様が『検討します』と言っているなら「ごゆっくりご検討頂けますと幸いです😊！！」／『確認します』なら「ごゆっくりご確認頂けますと幸いです😊！！」／どちらも言っていないなら「ごゆっくり〜」の行ごと削除して行動宣言に置き換える" },
+
+  { key: "gosoudan_any", label: "ご相談（ご相談ください以外）", re: /ご相談(?!ください|下さい)/, requires: CUSTOMER_SOUDAN_SIGNAL_RE, severity: "warning",
+    why: "「ご相談」はお客様が相談・家族・同居人等に言及した時のみ（正解 23件の直前顧客メッセージは全件が相談・質問の持ちかけ。顧客が物件を送ると言った場面は 0件）",
+    replace: "「ご相談」→「ご連絡」に置換する（末尾クローザーは「いつでもお気軽にご連絡ください😌！！」が正解 n=113。「ご相談ください」は n=11 で AI 使用 7件中 6件が無根拠・5件が人に削除された）" },
+
+  { key: "zuiji_pickup_on_will_send", label: "随時ピックアップしてお送りします",
+    re: /随時[^\n]{0,8}ピックアップ|出次第[^\n]{0,10}ピックアップ|出てきましたら[^\n]{0,12}ピックアップ/,
+    requires: CUSTOMER_ASKS_CONTINUOUS_PICKUP_RE, severity: "block",
+    forbidWhen: (c) => c.pair?.customer.kind === "will_send_later" || (c.pair?.customer.secondary.includes("will_send_later") ?? false),
+    why: "「随時ピックアップしてお送りします」は『我々が探して送る』宣言で、(B)『我々に送って』と依頼された場面の語彙（9/203）。お客様が『自分で物件を送る』と言った場面の正解 246件中 0件。直前にピックアップ宣言済みなら重複でもある",
+    replace: "この1文を削除し、「お送り頂きました物件の募集状況確認させて頂き、最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！」に置き換える" },
+
+  { key: "gokazoku", label: "ご家族", re: /ご家族(?:様)?/, requires: /家族|旦那|主人|妻|嫁|夫|子供|子ども|お子|同居|両親|親|息子|娘/, severity: "warning",
+    why: "お客様が家族構成に言及していないのに「ご家族」を出すと事実の創作になる",
+    replace: "「ご家族」を削除し「〇〇さん」に一本化する" },
+
+  { key: "gokentou", label: "ご検討頂けますと／ごゆっくりご検討", re: /ご検討(?:頂|いただ)け(?:ます|れば)|ごゆっくりご検討/, requires: CUSTOMER_KENTOU_SIGNAL_RE, severity: "warning",
+    why: "「ご検討」はお客様が『検討します／考えます／悩んでいます』と言った時のミラー（ごゆっくりご検討 正解 21件中 20件=95%が顧客の該当語あり）",
+    replace: "お客様が『送ります』と言っているだけなら検討促しは不要。行を削除し受け宣言（募集状況確認＋御見積書）に置き換える" },
+];
+
+/** 「ごゆっくり」の後続語は顧客の動詞の鏡写し（正解 33件中 31件=94%・例外2件のみ） */
+const GOYUKKURI_USED_RE = /ごゆっくり(ご(?:検討|確認|相談|覧))/;
+const GOYUKKURI_MIRROR: Array<{ verb: RegExp; expect: string }> = [
+  { verb: CUSTOMER_KENTOU_SIGNAL_RE, expect: "ご検討" },
+  { verb: CUSTOMER_KAKUNIN_SIGNAL_RE, expect: "ご確認" },
+  { verb: /相談|話し合/, expect: "ご相談" },
+  { verb: /見(?:させて|ま)|拝見|眺め|目を通/, expect: "ご覧" },
+];
+/** PAIR_MATRIX の「ごゆっくり」必須要素ゲート: お客様が間を置く行動（検討／確認／相談／見る）を言っている時だけ要求する */
+export function hasGoyukkuriMirrorVerb(pair: PairContext): boolean {
+  return GOYUKKURI_MIRROR.some((r) => r.verb.test(pair.substance.normalized));
+}
+export type GoyukkuriVerdict = { used: string; expected: string | null; ok: boolean };
+export function checkGoyukkuriMirror(reply: string, customerAll: string): GoyukkuriVerdict | null {
+  const m = reply.match(GOYUKKURI_USED_RE);
+  if (!m) return null;
+  const used = m[1];
+  const hit = GOYUKKURI_MIRROR.find((r) => r.verb.test(customerAll));
+  const expected = hit ? hit.expect : null;
+  return { used, expected, ok: expected != null && expected === used };
+}
+
+/** 生成側に「使える語／使えない語＋正しい代替」をリテラルで渡す。禁止だけを渡すと同義語に逃げる（ご検討→ご相談） */
+export function buildVocabAnchorNote(customerAll: string, pair: PairContext | null): string {
+  const lines: string[] = ["\n\n【🔤 お客様が言っていない語（この返信で書いてはいけない語と、その代わりに書く語）】"];
+  for (const v of CUSTOMER_ANCHORED_VOCAB) {
+    const anchored = v.requires.test(customerAll);
+    const forbidden = v.forbidWhen ? v.forbidWhen({ reply: "", customerText: customerAll, lastCustomerTexts: "", lastStaffText: "", pair }) : false;
+    if (anchored && !forbidden) continue;
+    lines.push(`・「${v.label}」系は書かない — ${v.why}\n  → 代わりに: ${v.replace}`);
+  }
+  const hit = GOYUKKURI_MIRROR.find((r) => r.verb.test(customerAll));
+  lines.push(hit
+    ? `・「ごゆっくり」を使うなら後続語は必ず「${hit.expect}」（お客様の言葉の鏡写し）`
+    : "・お客様は「検討する／確認する／相談する／見る」のいずれも言っていない → 「ごゆっくり〜」自体を書かない");
+  return lines.join("\n");
 }

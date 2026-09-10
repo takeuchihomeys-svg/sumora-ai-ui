@@ -70,6 +70,8 @@ import {
   MSG_SEP, splitMessageUnits, analyzeSubstance, mergeBrainEvidence,
   classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair,
   buildPairDirection, buildTurnPairNote, type PairContext, type SubstanceVerdict,
+  // 2026-09-10 Fable5 あみ事例: 持込予告（(A)顧客が送る／(B)我々に送って の分離）と顧客アンカー語彙（生成・検査・修正が同一定数）
+  classifyWillSendObject, CUST_WILL_SEND_SELF_PRED, buildVocabAnchorNote,
   // 2026-09-09 Fable5 みく事例: ヘッジゲート・締めポリシー・姿勢（生成・検査・tpo_debug が同一 verdict を参照）
   resolveHedgeAllowance, stripPreemptiveRelax, resolveCloser, predictCloserSignals, computeStanceFlags, buildStanceNote, STAFF_SEARCHED_RE,
   // G32（2026-09-09 Fable5 じゅにあ事例）: 開口語なし（結果報告）の根拠（AIX 確認結果・見積テンプレ）
@@ -3590,6 +3592,9 @@ export async function POST(req: NextRequest) {
     if (regexSentCount !== ledger.facts.propertiesSentCount) console.info("[ledger-diff]", JSON.stringify({ regexCount: regexSentCount, ledgerCount: ledger.facts.propertiesSentCount, conversationId }));
     const lastStaffIdxForEst =recentMessages.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0).at(-1) ?? -1;
     const unrepliedCustomerTexts = recentMessages.slice(lastStaffIdxForEst + 1).filter((m) => m.sender === "customer").map((m) => m.text ?? "");
+    // 2026-09-10 Fable5 あみ事例: 持込予告は customerResponse 分類より前に必要なため決定論 regex で先に判定する（reply-context と同一定数）
+    const willSendObj = classifyWillSendObject(message ?? "");
+    const willSendSelf = CUST_WILL_SEND_SELF_PRED(message ?? "");
     const estimateVerdict: EstimateContextVerdict = isMisumoriContextAppropriate({
       customerMessage: message,
       sentPropertiesCount,
@@ -3601,6 +3606,8 @@ export async function POST(req: NextRequest) {
       phaseKey: phaseGuideKey,
       hasCustomerImage: unrepliedCustomerTexts.some((t) => /【画像を送ってきた】|【画像】|\[画像\]/.test(t)),
       estimatePromised,
+      customerWillSendProperty: willSendSelf.yes && (willSendObj === "property" || willSendObj === "unknown"),
+      customerWillSendEvidence: willSendSelf.evidence,
     });
     console.info("[estimate-ctx]", estimateVerdict.trigger, estimateVerdict.mode, estimateVerdict.signals.join(","));
 
@@ -4285,7 +4292,11 @@ export async function POST(req: NextRequest) {
     // 旧実装は brainGuidanceNote IIFE 内にあり T3 で消えていた（final-check には tpoLabel が届くため
     // 「生成はTPOなし・チェックはTPOあり」の非対称が発生していた）。
     // 2026-09-09 Fable5 往復文脈ブロック（dynamicBlock で tpoGuidanceNote の直前・ハードゲートの次）。follow-up 生成では注入しない
-    const turnPairNote = isFollowUp || isTemplateOptimize ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "");
+    // 2026-09-10 Fable5 あみ事例: 【🔤 お客様が言っていない語】（禁止＋正しい代替をリテラルで）。往復文脈ブロックの直後に連結する
+    const vocabAnchorNote = isFollowUp || isTemplateOptimize
+      ? ""
+      : buildVocabAnchorNote(`${message ?? ""}\n${unrepliedCustomerTexts.join("\n")}`, pairContext);
+    const turnPairNote = (isFollowUp || isTemplateOptimize ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "")) + vocabAnchorNote;
     // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】（往復文脈の直前）＋ 直前発言の宣言／実行注記（staffContextNote）。shadow では注入しない
     const actionLedgerNote = isFollowUp || !ledgerActive ? "" : buildLedgerNote(ledger, { customerName: customerName ?? "" });
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);

@@ -452,6 +452,56 @@ page.tsx のピッカー3ボタンが `check_pattern` をAIXモーダルへ直�
 
 ## テンプレソート順を複合スコア化（2026-07-04・B4）
 - **並び順**: `TemplateModal.tsx` の一覧ソートを `score = use_count*0.4 + win_rate*100*0.6` の降順に変更。スコア同点は従来どおり sort_order 昇順（現状は全テンプレ score=0 のため表示は従来と同一・手動並べ替えも有効）
+
+---
+
+## 持込予告（will_send_later）の業務フロー統一＋example 前提ラベル機構（2026-09-10・Fable5・あみ事例）
+
+### 事例
+あみ（スモラ・物件提案中）。13:24 スタッフ「新着でオススメできるお部屋出次第お送りさせていただきます」（ピックアップ宣言・未実行）→ 15:32 顧客「こちらも気になる物件見つけたら送らせて頂きます！」→ 15:42 AI が「ごゆっくりご相談頂けますと幸いです／また出てきましたら随時ピックアップしてお送りします」を返した。
+竹内指摘: **顧客は「相談」と一言も言っていない。顧客が物件を送ってきたら「募集状況の確認＋最大限割引した初期費用の御見積書」を返すのが業務フロー。**
+
+### 根本原因（3つ）
+1. `ANY_WILL_SEND` / `PS_WILL_SEND` の example が **rさんの「顧客が相談すると言った」場面の実文**で、前提ラベルが無いため LLM が丸写しした（NG 出力は example とほぼ一字一句同じ）
+2. 業務フローの核（募集状況確認＋最大限割引の御見積書）が **`ES_WILL_SEND` の mustInclude にしか無かった**。PS/ANY は「随時ピックアップ」しか要求せず、(B)「我々に送って」場面の語彙が (A)「顧客が送る」場面に混入していた
+3. `STAFF_PICKUP_DECL_RE` が「オススメできるお部屋…お送りします」「出次第お送り」に一致せず staff=other → `ANY_WILL_SEND` に落ちていた
+
+### 実装（新コード）
+- `reply-context.ts`
+  - `CUST_WILL_SEND_RE` を一人称の授受表現のみに限定。`CUST_ASKS_US_TO_SEND_RE`（(B)依頼形）に一致する行は will_send_later から除外
+  - `CUST_SEND_PERMISSION_RE`／`classifyWillSendObject()`（property/condition/document/unknown）／`CUST_WILL_SEND_SELF_PRED()` を新設。`PairContext.sendObject` を追加（**分岐軸は state ではなく sendObject**）
+  - 業務フロー共有定数: `WILL_SEND_RECEIVE_CHECK_RE` / `WILL_SEND_ESTIMATE_FORECAST_RE` / `WILL_SEND_CONDITION_SEARCH_RE` / `WILL_SEND_ACCEPT_RE` / `isPropertyForecast()`
+  - `PairMustInclude` に `when` / `severity` / `fix` を追加。`PairRule` に `examplePremise` / `exampleRequires` / `exampleFallback` を追加
+  - **`PD_WILL_SEND` 新設**（pickup_declared × will_send_later＝あみのセル）。ES/PS/ANY_WILL_SEND を統一（example から「ご相談」「随時ピックアップ」を全削除）
+  - `STAFF_PICKUP_DECL_RE` 拡張（「オススメできるお部屋…お送りします」「出次第お送り／ご連絡」）
+  - `resolveCloser`: 持込予告はセル指定の closer を尊重（deliverableAttached より先。「最大限割引した御見積書」は予告であって添付ではない）
+  - §10 `CUSTOMER_ANCHORED_VOCAB` / `checkGoyukkuriMirror()` / `hasGoyukkuriMirrorVerb()` / `buildVocabAnchorNote()`
+- `final-check.ts`: `runVocabAnchorChecks()`（`UNANCHORED_VOCAB` / `VOCAB_MIRROR_MISMATCH`）、`PAIR_ELEMENT_MISSING` を `when`/`severity`/`fix` 対応、E5 フォールバックに持込予告免除、`VOCAB_MIRROR_MISMATCH` を block 維持リストへ
+- `estimate-context.ts`: `customer_will_send_property` トリガー新設（**予告と実行でゲートの解禁条件を分ける**）。予告形1文のみ解禁・見積本体は従来どおり AIX 専用
+- `route.ts`: estimate 入力に予告フラグ、`buildVocabAnchorNote()` を往復文脈ブロック直後に注入
+- `line-reply-prompts.ts` `TIMING_FEWSHOT`: 持込予告の ◎/✗ 例3件を追加
+
+### 黄金ルール（追加）
+- **example には必ず「成立前提」を添える**。前提が今回成立しないなら実例文を渡さず「骨格のみ・文はそのまま使わない」に切り替える。修正ループの suggestion に example を使わない（NG 文の再注入経路）
+- **禁止語を足す時は必ず正しい代替をリテラルで同時に渡す**（禁止だけだと同義語に逃げる。ご検討を抑制→ご相談が出た）
+- **「ごゆっくり」の後続語は顧客の動詞の鏡写し**（検討／確認／相談／覧）。顧客がどれも言っていなければ「ごゆっくり」自体を書かない
+- **「顧客が送る」(A) と「我々に送って」(B) は別場面**。regex レベルで分離する（語彙統計も分けないと汚染される）
+
+### あみ 15:42 の期待返信（修正後）
+```
+はい😊！！
+気になるお部屋ございましたらいつでもお送りください！！
+お送り頂きました物件の募集状況確認させて頂き、最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！
+```
+
+### 回帰テスト
+`app/lib/__tests__/pair-example.test.ts`（21件）。実行 `npx tsx app/lib/__tests__/pair-example.test.ts`。
+既存 `greeting`(19) / `action-ledger`(23) / `stance`(17) も全 PASS・`npx tsc --noEmit` エラー0。
+
+### 引き継ぎ
+- [ ] `PD_WILL_SEND` の実運用ログ（tpo_debug の ruleId 分布）で ANY_WILL_SEND への落下が消えたか確認する
+- [ ] `UNANCHORED_VOCAB` の発火率を見て、辞書に追加すべき語（「ご家族」以外の創作語）が無いか棚卸しする
+- [ ] `sendObject="document"`（書類を送る予告）は現状 受領宣言のみ＝専用セル無し。頻度が出たらセル化を検討
 - **DB**: `templates.win_rate NUMERIC DEFAULT 0` を追加（本番適用済み・migrate-schema にも追記済み）
 - **同期**: 週次cron `calc-aix-attribution` が集計後に aix_action_attribution 全期間を template_id 単位で集約し `templates.win_rate = Σclosed_won / Σunique_conversations` を更新
 - **API**: GET /api/templates が use_count / win_rate を返すようになった
