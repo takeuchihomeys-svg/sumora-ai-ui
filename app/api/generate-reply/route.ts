@@ -703,7 +703,7 @@ function warnIfTruncated(stopReason: unknown, inputLength: number): void {
 // brain(suggested_aix_meta = SuggestedAixMeta) に一元化した。
 // 戦略フィールド（closing_strategy / reply_direction / key_topics / avoid_topics /
 // urgency_appropriate / recommended_tone / next_steps / action）と
-// message-local戦術フィールド（customer_questions / repeated_concern / current_property /
+// 鮮度従属フィールド（customer_questions / repeated_concern / current_property /
 // condition_change_type / hesitancy_pattern / future_timeline）は
 // brainGuidanceNote（POSTハンドラ内）と conditionChangeNote（buildGenerationMessages内）が
 // brainMeta から読む。フォールバックは3層（LLMフォールバックは設けない）:
@@ -3406,9 +3406,12 @@ export async function POST(req: NextRequest) {
     // ── AIX-META 鮮度判定 → brain鮮度ティア判定（T1=fresh / T2=stale / T3=null）─────
     // 戦略フィールド（closing_strategy / reply_direction / key_topics / avoid_topics /
     // urgency_appropriate / recommended_tone / next_steps）は差分分析モードでも維持される設計のため
-    // staleでも採用する。message-localフィールド（customer_questions / repeated_concern /
+    // staleでも採用する。鮮度従属フィールド（customer_questions / repeated_concern /
     // current_property / condition_change_type / hesitancy_pattern / future_timeline）は
     // 「最新の顧客メッセージ」に従属するため、brainがそのメッセージを見た後の分析でのみ採用する。
+    // ⚠ ここは「鮮度」の軸であって「意味スコープ」の軸ではない。repeated_concern / future_timeline /
+    // current_property は fresh でも conversation-scope（BrainConversationScope）であり、
+    // 「今回のメッセージが何であるか」の判定には使えない（reply-context.ts の toBrainMessageLocal を参照）。
     // cachedモード返却は analyzed_msg_ts が古いまま保存されるためここで自然に弾かれる（追加ロジック不要）。
     // 判定本体は detectBrainTier（brain-fetch-spec.ts）に一元化（旧inline brainFreshForMessage と同値）。
     const lastCustomerMsgAt = [...recentMessages].reverse().find((m) => m.sender === "customer")?.createdAt ?? null;
