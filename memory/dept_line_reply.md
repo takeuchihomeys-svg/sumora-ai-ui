@@ -536,6 +536,65 @@ AIが「入居日が早いほど日割家賃は少ない」と**逆に**誤回�
 - **suggest-status-update/route.ts**: 呼び出し元ゼロのデッドコードと判明 → 冒頭にDEAD CODEコメント追記（削除はせず温存）
 - 検証: tsc --noEmit パス。検知テスト8ケース（個人/法人/法人2フィールド/入居申込書即時/条件フォーマット非検知/雑談非検知/ヒントのみ/連帯保証人系）全て期待どおり
 
+---
+
+## 前向き反応（「気になります」）→ ご査収感謝＋内覧提案（2026-09-10・Fable5・Sさん事例）
+
+### 事例
+Sさん（スモラ・conversation `3890f691-bd82-4196-9fb8-46ddd5e33fc5`）。19:05 AIX 物件強推し（資料7枚＋「お手隙の際にご査収ください😊！！」）→ 20:24 顧客「ありがとうございます！ **アーバネックス気になります！**」→ 20:28 AI が「アーバネックス気になって頂きありがとうございます😊！！／かしこまりました！！」（**2行37字・行動宣言ゼロ**・block 2件を残して `revision_exhausted`）。
+20:29 スタッフ実送信（正解）:
+```
+ご査収頂きありがとうございます😊！！
+かしこまりました！！
+よろしければSさんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！
+```
+竹内指摘: **①見てくれた事への感謝（ご査収頂きありがとうございます）②内覧もご都合よろしいお日にちにご案内させて頂く旨** を入れる。
+
+### 根本原因（A〜E・A+B+C を同時に入れて初めて正解への道が開く）
+- **A**: `CUST_POSITIVE_RE` に「気になる」が1語も無く、`KIND_RE` にも前向き語が無い → residue 13字が `statement`（＝下流に写像を持たない残余ラベル）→ customer=`other`
+- **B**: `lastStaffEntry` が「±3分窓内で at 最大」だけを見ていたため、AIX 送信が自動で閉じる `line_tasks`（conf2・社内記帳）が **0.898秒差**で conf3 の AIX 実メッセージに勝ち、staff=`check_result` に誤分類
+- **C**: PAIR_MATRIX は 100セル中 62セルしか解決できず `property_send × positive` も `check_result × *` も無い → `ruleId=null` → 汎用 direction の WE DO 候補が「ピックアップ・交渉・確認」で閉じており内覧提案に至る言語的経路が消える
+- **D**: brain 不在（T3）。brain-sweep は `is_post_apply=true` の3行に飢餓して直近24h **processed 1 / failed 899**（「5分以内に補填」は虚偽）。正解を持つ `last_brain_meta` は generate-reply から一度も読まれていなかった
+- **E**: ①direction ②final-check の suggestion ③regen の【必須要素】の3経路から同時に内覧提案が消えるため、修正ループは「回数不足」ではなく**材料不足**で枯れた（C の従属現象）
+
+### 実装（コミット `fb728adf`）
+- `reply-context.ts`
+  - `SubstanceKind` に `"positive"` 追加＋`KIND_RE` に前向き語行。`has` に `|| kinds.has("positive")`（「良さそうですね」7字が実質なしに落ちるのを止める）
+  - `PositiveVerdict`（`viewing_explicit` / `appraisal`）＋`resolvePositive()`。**T1 評価語は直前スタッフが資料送付系（`MATERIALS_SENT_STAFF_KINDS`）の時だけ**／T2 内見明示は無条件／T3 物件名のみは**台帳の送付済み物件名と一致した時だけ**昇格（`propertyMatchKeys()` は「アーバネックス谷町四丁目1102号室」→「アーバネックス」のブランド頭も鍵にする）
+  - `CustomerResponseKind` は増やさない（10×10 の空セルを増やさない）。下位種別は `CustomerResponse.positive` フィールドで持つ
+  - `classifyCustomerResponse` に `flags.ledger`。`PRIORITY` は動かさず、**T2 のみ質問より上に引き上げる限定オーバーライド**（decline/concern/condition_change には負けたまま）
+  - `LEDGER_OUTBOUND_SOURCES`（aix_log / staff_text / aix_history）新設。`classifyLastStaffTurn` の⓪台帳分岐にガード
+  - [X]/[Y] 分離: `VIEWING_OFFER_SOFT_RE`（条件節付き宣言形・n=443・**通常返信で可**）／`VIEWING_DATE_ASK_RE`（「御座いますでしょうか」・n=51 の96%が具体日時とセット・**AIX【内覧日調整】専用**）／`isBareViewingOffer()`／`viewingOfferLiteral(name, named, count)`
+  - `GRATITUDE_FOR_REVIEW_RE`／`STAFF_MATERIALS_SENT_RE`／`resolveMaterialsContext()`（**staffSent AND customerSaw の時だけ thanksAllowed**）／`resolveNamedProperty()`
+  - 新セル4つ: **`PS_POSITIVE`**（property_send × positive）／`CR_POSITIVE`／`ANY_POSITIVE`／`CR_ANY`。網羅 62→79セル（positive 列・check_result 行を完全カバー）。**`ANY_OTHER` / `ANY_ANSWER` は作らない**（other は証拠ゼロの指紋。セルを与えると mustInclude が全会話に流れ込む）
+  - `PairContext` に `materials` / `namedProperty` / `customerName`。`fillPairPlaceholders` に `{positiveEvidence}` / `{namedProperty}` / `{viewingOffer}`
+- `action-ledger.ts`: `LedgerTask.result` 追加／`property_check=completed` は **result 非 NULL の時だけ** `confirmation_reported`／`pickLastStaffEntry()`（①outbound か ②confidence ③実発言時刻への近さ ④at）
+- `final-check.ts`: `pairFixSuggestion()`（選ばれたセルの fix リテラルを suggestion にする）を `EMPTY_CLOSER` / `WE_DO_MISSING_DET` / `GENERIC_ONLY_REPLY` に適用（`rule.example` を suggestion に使うのを廃止）。`PAIR_ELEMENT_MISSING` の fix も `fillPairPlaceholders` を通す。新コード **`VIEWING_DATE_ASK_WITHOUT_AIX`(block)** / **`VIEWING_OFFER_NAME_ECHO`(warning)**
+- `route.ts`: `STATE_FALLBACK_DIRECTION.proposing` / `closingFallback` / `tpoNoteForLLM` proposing / `fallbackDirection` の4か所を **WE DO の選択肢①〜⑤（内覧提案が第1）** に統一（四者同名）。`fetchReplyModeGate` が `last_brain_meta` も返し、**conversation-scope 方針のみ**フォールバック（message-local は絶対に流用しない）。regen フィードバックは rule=null でも【WE DO の選択肢】を渡す。`revision_exhausted`＋block 残存を**自動送信のハードストップ**に（`REVISION_EXHAUSTED_AUTO_SEND`）
+- `brain-core.ts`: `stampSkipped()` — status / is_post_apply / line_status の早期 return でも `brain_analyzed_at` を打刻して30分バックオフに乗せる
+- `brain-sweep/route.ts`: `is_post_apply` / `line_status` フィルタ2行（NULL 行を落とさない `.or` 形式）
+- `page.tsx`: `revision_exhausted && block>0` で指摘 `<details>` を既定 open ＋ 送信の二段確認
+
+### 黄金ルール（追加）
+- **分類体系を増やす時は必ず「出口」を定義する**。下流のどの列に落ちるかが無いラベル（statement）は、検出できない故障を作る
+- **台帳の「直前スタッフ発言」は時刻順で選ばない**。①顧客に送られた証拠か ②confidence の順。`line_tasks` は本文カラムを持たず完了通知先も社内グループ＝100% 社内の記帳
+- **同じ日本語でも AIX 専用文型と通常返信可の文型は regex レベルで分離する**。全面禁止にすると正解への道が消える
+- **「文を足せ」型の検査が許される3条件**: ①セルの mustInclude として確定 ②成約データの実文型リテラルを渡す ③**リテラル内の全ての名詞・数値・日付が verdict 由来**（汎用名詞のみなら常に可）。SENT_IGNORED が越えていたのは②③であって「追加」という行為ではなかった
+- **「後段が拾う」前提は cron ログの実測成功率（n≥100）を確認するまで置かない**。同時に、後段に依存しない一次証拠だけで正解に到達できる経路を必ず用意する（PS_POSITIVE は brain の値を1つも参照しない）
+- **内覧のご案内提案では物件名を復唱しない**（内覧は物件非依存）。復唱するのは見積作成・募集状況確認・内覧開始日確認・申込（物件依存）の時だけ
+
+### 回帰テスト
+`app/lib/__tests__/positive-viewing.test.ts`（16件・T-01〜T-16）。実行 `npx tsx app/lib/__tests__/positive-viewing.test.ts`。
+既存 `brain-scope`(24) / `pair-example`(21) / `greeting`(19) / `action-ledger`(23) / `stance`(17) も全 PASS・`npx tsc --noEmit` エラー0。
+※ `action-ledger.test.ts #2` の期待値を更新（miku 10:40 の `classifyLastStaffTurn.source` は `ledger` → `regex`。台帳の直前エントリが line_task＝社内記帳なので⓪で確定させない仕様変更の反映。kind は `pickup_declared` のまま）
+
+### 引き継ぎ
+- [ ] デプロイ後1時間、`cron_run_logs` の brain-sweep `result_json` を監視して `processed>0` を確認する（飢餓解除の検証）
+- [ ] `MAX_SWEEP_PER_RUN=3`（5分×3＝36件/h）は直近24hの顧客メッセージ122件に対して余裕が薄い。**飢餓解除後に1週間実測してから**見直す（先に上げない）
+- [ ] tpo_debug の `ruleId` 分布で `PS_POSITIVE` / `ANY_POSITIVE` の発火率と `ruleId=null` 率（改修前 7/24=29%）を確認
+- [ ] Phase 2（未実装・要オーナー承認）: T3 で生成され `revision_exhausted` かつ block≥1、その後 brain が分析を終えた会話に限り1回だけ再生成する（`generate-pending-drafts` の救済条件を narrow に拡張・`ai_draft_check.regen_after_brain` フラグで1会話1回）
+- [ ] `revision_exhausted && block>0` のドラフトを `ai_reply_examples` の自動取り込みから外す（壊れたドラフトを正解プールに混ぜない）— 今回は未実装
+
 
 ---
 
