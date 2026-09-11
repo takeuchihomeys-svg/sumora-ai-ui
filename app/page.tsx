@@ -2566,11 +2566,14 @@ export default function Home() {
     if (filteredConversations.length === 0) return;
     // URLパラメータ指定の会話は自動上書きしない
     if (convParamRef.current && convParamRef.current === selectedId) return;
+    // 開いている会話が絞り込み条件から外れても（例: AIX絞り込み中に送信して要対応でなくなった）
+    // 別の顧客へ勝手に切り替えない。会話自体が存在しない時だけ先頭を選ぶ
+    if (selectedId && conversations.some((conversation) => conversation.id === selectedId)) return;
     const exists = filteredConversations.some((conversation) => conversation.id === selectedId);
     if (!exists) {
       setSelectedId(filteredConversations[0].id);
     }
-  }, [filteredConversations, selectedId]);
+  }, [filteredConversations, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedConversation = useMemo(() => {
     if (filteredConversations.length === 0) {
