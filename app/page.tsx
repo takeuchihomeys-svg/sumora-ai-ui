@@ -5814,15 +5814,25 @@ export default function Home() {
           <div className="border-b border-[#e9edef] bg-white px-3 pb-1.5 pt-[max(10px,env(safe-area-inset-top))]">
             {/* ステータスフィルター（上段）＋ハンバーガー左上 */}
             <div className="relative flex items-center justify-center mb-1.5">
-              {/* ハンバーガー（左端） */}
-              <button
-                onClick={() => setShowHamburgerMenu(true)}
-                className="absolute left-0 flex flex-col gap-[4px] px-1 py-1"
-              >
-                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
-                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
-                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
-              </button>
+              {/* 左端: ハンバーガー＋管理ツール切替 */}
+              <div className="absolute left-0 flex items-center gap-1.5">
+                <button
+                  onClick={() => setShowHamburgerMenu(true)}
+                  className="flex flex-col gap-[4px] px-1 py-1"
+                >
+                  <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
+                  <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
+                  <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
+                </button>
+                {/* 申込管理ツール（sumora-screening-admin）へ同じウィンドウで切り替え */}
+                <a
+                  href="https://sumora-screening-admin.vercel.app"
+                  className="rounded-lg border border-[#0f8f44]/40 bg-[#e9f9ee] px-2 py-0.5 text-[11px] font-black leading-tight text-[#0f8f44] active:opacity-60"
+                  title="申込管理ツールへ切り替え"
+                >
+                  管理ツール
+                </a>
+              </div>
               {/* 右端ボタン群 */}
               <div className="absolute right-0 flex items-center">
                 {/* AIXパネルボタン（アツい・要対応リスト） */}
