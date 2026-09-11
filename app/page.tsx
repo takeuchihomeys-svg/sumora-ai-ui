@@ -1400,6 +1400,8 @@ export default function Home() {
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomPanelRef = useRef<HTMLDivElement | null>(null);
   const justOpenedRef = useRef(false); // 会話を開いた直後フラグ（メッセージ取得完了後に最下部強制スクロール）
+  // 本文検索から会話を開いた時の着地先（ユーザーが触る or 期限切れまで、最下部の代わりにここへ飛ぶ）
+  const searchJumpRef = useRef<{ id: string; until: number } | null>(null);
   const scrollAfterFetchRef = useRef<string>(""); // Effect1でfetch完了したconvId → Effect3でスクロール
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1938,8 +1940,8 @@ export default function Home() {
                   prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
                 );
                 scrollAfterFetchRef.current = selectedId;
-                // DOM描画後に追加スクロール（フォールバック）
-                setTimeout(() => { if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, 80);
+                // DOM描画後に追加スクロール（フォールバック。検索から開いた場合はヒット位置へ）
+                setTimeout(() => scrollToBottom(), 80);
               });
           }
           return;
@@ -1964,8 +1966,8 @@ export default function Home() {
         setConversations((prev) =>
           prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
         );
-        // DOM描画後に追加スクロール（長い履歴がレンダリングされた後を保証）
-        setTimeout(() => { if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, 80);
+        // DOM描画後に追加スクロール（長い履歴がレンダリングされた後を保証。検索から開いた場合はヒット位置へ）
+        setTimeout(() => scrollToBottom(), 80);
       });
   }, [selectedId]);
 
@@ -2087,12 +2089,22 @@ export default function Home() {
   // scrollTop を直接セットする最確実スクロール（scrollIntoView より信頼性が高い）
   const scrollToBottom = () => {
     const el = chatScrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const jump = searchJumpRef.current;
+    if (jump && Date.now() < jump.until) {
+      const target = document.getElementById(`msg-${jump.id}`);
+      if (target) { target.scrollIntoView({ block: "center" }); return; }
+    }
+    el.scrollTop = el.scrollHeight;
   };
 
   // 会話を開いたとき：DOM描画後に最下部へ（requestAnimationFrameで描画完了を待つ）
   useEffect(() => {
     if (!selectedId) return;
+    // 本文検索から開いた場合は一番新しいヒットへ着地（以降の scrollToBottom はここへ飛ぶ）
+    searchJumpRef.current = searchHitMsgIds.length > 0
+      ? { id: searchHitMsgIds[searchHitMsgIds.length - 1], until: Date.now() + 10000 }
+      : null;
     const matchedMsgIds = aiSearchMessageIds[selectedId] || [];
     if (matchedMsgIds.length > 0) {
       // AI検索マッチがあればそのメッセージへ
@@ -2126,7 +2138,8 @@ export default function Home() {
     let attached: HTMLDivElement | null = null;
     let softUntil = Date.now() + 1500;
     const hardUntil = Date.now() + 10000;
-    const stop = () => { active = false; };
+    // ユーザーが触ったら追従を止め、検索ヒットへの着地指定も解除（以後は通常どおり最下部へ）
+    const stop = () => { active = false; searchJumpRef.current = null; };
     const attach = () => {
       if (!active) return;
       const el = chatScrollRef.current;
@@ -2137,11 +2150,11 @@ export default function Home() {
         return;
       }
       attached = el;
-      el.scrollTop = el.scrollHeight;
+      scrollToBottom(); // 検索から開いた場合はヒット位置へ
       ro = new ResizeObserver(() => {
         const now = Date.now();
         if (!active || now > softUntil || now > hardUntil) return;
-        el.scrollTop = el.scrollHeight;
+        scrollToBottom();
         softUntil = now + 1500; // 描画・画像が順次入る間は追従を延長
       });
       ro.observe(content);
@@ -2569,6 +2582,19 @@ export default function Home() {
       filteredConversations[0]
     );
   }, [filteredConversations, conversations, selectedId]);
+
+  // 本文検索でヒットしたメッセージID（LINEと同じく、トークは全件表示してヒット位置へ飛ぶ・枠で強調する）。
+  // 顧客名に一致する検索・AI検索中は対象外（それぞれ全件表示／AI検索のヒットを使う）
+  const searchHitMsgIds = useMemo(() => {
+    const sq = searchQuery.trim().toLowerCase();
+    if (!sq || aiSearchIds !== null) return [] as string[];
+    const sqBase = sq.replace(/さん$/, "").trim();
+    const nameLower = selectedConversation.customerName?.toLowerCase() || "";
+    if (nameLower.includes(sq) || (sqBase.length > 0 && nameLower.includes(sqBase))) return [] as string[];
+    return (selectedConversation.messages || [])
+      .filter((m) => m.text?.toLowerCase().includes(sq))
+      .map((m) => m.id);
+  }, [searchQuery, aiSearchIds, selectedConversation]);
 
   // line_message_id → message.id のルックアップ（引用スクロール用）
   const lineMessageIdToMsgId = useMemo(() => {
@@ -6864,23 +6890,13 @@ export default function Home() {
           <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-3 py-4 md:px-6">
             <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
               {(() => {
-                // 顧客名にマッチする検索の場合はメッセージをフィルタしない（LINEと同じ挙動）
-                // 「Sさん」→「S」のように末尾の「さん」を除去してから照合
-                const sq = searchQuery.trim().toLowerCase();
-                const sqBase = sq.replace(/さん$/, "").trim();
-                const nameLower = selectedConversation.customerName?.toLowerCase() || "";
-                const isNameSearch = sq && (
-                  nameLower.includes(sq) ||
-                  (sqBase.length > 0 && nameLower.includes(sqBase))
-                );
-                const q = aiSearchIds !== null || isNameSearch ? "" : sq;
-                const displayMessages = q
-                  ? selectedConversation.messages.filter((m) => m.text?.toLowerCase().includes(q))
-                  : groupImageMessages(selectedConversation.messages);
+                // 検索中でもトークは絞り込まず全件表示する（LINEと同じ挙動）。
+                // 本文ヒットは searchHitMsgIds で枠を付け、開いた時にヒット位置へスクロールする
+                const displayMessages = groupImageMessages(selectedConversation.messages);
                 if (displayMessages.length === 0) {
                   return (
                     <div className="rounded-2xl bg-white px-4 py-6 text-center text-sm text-[#667781] shadow-sm">
-                      {q ? `「${searchQuery}」に一致するメッセージがありません` : "メッセージがありません"}
+                      メッセージがありません
                     </div>
                   );
                 }
@@ -6902,9 +6918,9 @@ export default function Home() {
                       </div>
                     );
                   }
-                  const isAiMatch = selectedId
+                  const isAiMatch = (selectedId
                     ? (aiSearchMessageIds[selectedId] || []).includes(message.id)
-                    : false;
+                    : false) || searchHitMsgIds.includes(message.id);
                   elems.push(
                     <div
                       key={message.id}
