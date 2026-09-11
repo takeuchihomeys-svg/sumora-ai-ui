@@ -14,7 +14,7 @@ import {
   STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, STAFF_ESTIMATE_WORD_RE, STAFF_ESTIMATE_DECL_RE,
   STAFF_NON_PROPERTY_RE, STAFF_CONFIRM_DECL_RE, STAFF_CONFIRM_REPORT_RE, STAFF_VIEWING_INVITE_RE,
   STAFF_APPLY_PUSH_RE, STAFF_CONDITION_ASK_RE, STAFF_QUESTION_RE, REDO_CLAIM_RE,
-  LEDGER_OUTBOUND_SOURCES,
+  LEDGER_OUTBOUND_SOURCES, pickupRound, redoWord,
   type StaffTurn, type StaffTurnKind, type CustomerResponseKind,
 } from './reply-context';
 // 再 export（生成・検査が action-ledger 経由でも同じ定数を得る）
@@ -290,9 +290,15 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     if (task.task_type === 'property_send') {
       if (status === 'pending') entries.push({ kind: 'pickup_declared', status: 'promised', at: task.created_at ?? null, source: 'line_task', confidence: 2, evidence: 'line_tasks.property_send=pending', detail: { taskStatus: status } });
       else if (isDone && task.completed_at) {
+        // 2026-09-11 統合設計（経路E3・みく/Aoi 事例）: AIX 送信は会話の pending タスクを全て閉じるため、condition_hearing /
+        //   property_check_result / zenryoku_support で機械的に閉じられた property_send まで「物件送付」になっていた（偽送付→送付件数の水増し・
+        //   ピックアップ約束の偽の履行）。近くに物件系 AIX または本文の物件送付がある時だけ記帳する（property_check result=NULL と同じ原則）
         const tc = ms(task.completed_at);
         const nearEstimate = entries.some((e) => e.kind === 'estimate_sent' && near(ms(e.at), tc, TASK_DONE_GUARD_MS));
-        if (!nearEstimate) entries.push({ kind: 'properties_sent', status: 'done', at: task.completed_at, source: 'line_task', confidence: 2, evidence: `line_tasks.property_send=${status}`, detail: { propertyCount: 1, propertyNames: [], taskStatus: status } });
+        const nearPropertyExec =
+          aixRows.some((r) => AIX_KIND[r.aix_type as string]?.kind === 'properties_sent' && near(ms(r.sent_at ?? r.created_at), tc, TASK_DONE_GUARD_MS)) ||
+          entries.some((e) => e.kind === 'properties_sent' && e.source === 'staff_text' && near(ms(e.at), tc, TASK_DONE_GUARD_MS));
+        if (!nearEstimate && nearPropertyExec) entries.push({ kind: 'properties_sent', status: 'done', at: task.completed_at, source: 'line_task', confidence: 2, evidence: `line_tasks.property_send=${status}`, detail: { propertyCount: 1, propertyNames: [], taskStatus: status } });
       }
     } else if (task.task_type === 'estimate_sheet' && isDone) {
       entries.push({ kind: 'estimate_sent', status: 'done', at: task.completed_at ?? task.created_at ?? null, source: 'line_task', confidence: 2, evidence: `line_tasks.estimate_sheet=${status}`, detail: { estimateFor: [], taskStatus: status } });
@@ -313,10 +319,14 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
   }
 
   // ⑤ 重複除去: 同 kind+status で ±3分 → 高信頼を残し propertyNames は和集合
+  //   2026-09-11 統合設計（経路E4・楓馬事例）: 顧客への送信証拠（LEDGER_OUTBOUND_SOURCES）を優先して残す。旧実装は confidence 降順のみで、
+  //   手打ち宣言（staff_text, conf1）の約1秒後に webhook が作る line_task pending（conf2）が勝ち、送信の証拠が消えていた
+  const rank = (e: LedgerEntry) => (LEDGER_OUTBOUND_SOURCES.has(e.source) ? 10 : 0) + e.confidence;
   const merged: LedgerEntry[] = [];
-  for (const e of [...entries].sort((a, b) => b.confidence - a.confidence)) {
+  for (const e of [...entries].sort((a, b) => rank(b) - rank(a))) {
     const dup = merged.find((x) => x.kind === e.kind && x.status === e.status && (x.at === e.at || near(ms(x.at), ms(e.at), DEDUP_WINDOW_MS)));
     if (dup) {
+      dup.confidence = Math.max(dup.confidence, e.confidence) as 3 | 2 | 1;
       dup.detail.propertyNames = uniq([...(dup.detail.propertyNames ?? []), ...(e.detail.propertyNames ?? [])]);
       if (dup.detail.propertyNames.length) dup.detail.propertyCount = Math.max(dup.detail.propertyCount ?? 0, dup.detail.propertyNames.length);
       dup.detail.estimateFor = uniq([...(dup.detail.estimateFor ?? []), ...(e.detail.estimateFor ?? [])]);
@@ -422,7 +432,9 @@ function fmtJst(iso: string | null): string {
 
 /** dynamicBlock 注入用【📒 我々の行動台帳】（往復文脈ブロックの直前）。禁止語と代替表現をリテラルで渡す */
 export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName?: string; maxEntries?: number } = {}): string {
-  const name = opts.customerName ? `${opts.customerName}さん` : '〇〇さん';
+  // 2026-09-11 統合設計（経路B）: 名前不明時に「〇〇さん」を書かない（呼びかけごと省く）
+  const name = opts.customerName ? `${opts.customerName}さん` : '';
+  const nameNi = name ? `${name}に` : '';
   const f = ledger.facts;
   const shown = ledger.entries.filter((e) => e.kind !== 'media_sent').slice(-(opts.maxEntries ?? 6));
   const lines: string[] = ['【📒 我々の行動台帳 — 確定事実（履歴の推測より上位・往復文脈の前提）】'];
@@ -443,8 +455,8 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
   if (!f.redoAllowed) {
     lines.push('→ したがって「再度」「改めて」「もう一度」「追加で」「別の物件」「先ほどお送りした物件」「ご査収ください」は使えない（1件も送っていないため二度目は存在しない）。');
     lines.push(f.pickupPromisedUnfulfilled
-      ? `→ 使える表現: 「${name}にオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」／条件が変わった場合は「〇〇に絞らせて頂き、…ピックアップさせて頂きます！！」（宣言は1文・条件列挙の全文再掲はしない）`
-      : `→ 使える表現: 「${name}にオススメできるお部屋ピックアップしてお送りさせて頂きます！！」`);
+      ? `→ 使える表現: 「${nameNi}オススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」／条件が変わった場合は「（追加条件）に絞らせて頂き、…ピックアップさせて頂きます！！」（宣言は1文・条件列挙の全文再掲はしない）`
+      : `→ 使える表現: 「${nameNi}オススメできるお部屋ピックアップしてお送りさせて頂きます！！」`);
   } else {
     lines.push(`→ 送付済み物件（${f.propertiesSentNames.join('・') || `${f.propertiesSentCount}件`}）は「先にお送りした物件」として言及可。新条件なら「再度ピックアップしてお送り」可。送付済み物件を「これからお送りします」と未来形で再宣言しない。`);
   }
@@ -458,7 +470,9 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
 export function buildLastStaffAnnotation(ledger: ActionLedger): string {
   const e = ledger.facts.lastStaffEntry;
   if (!e) return '';
-  if (e.status === 'promised') return `※この発言は「${LEDGER_KIND_JA[e.kind]}」の【宣言のみ】で、まだ履行していない（${ledger.facts.propertiesSentCount === 0 ? '物件0件送付' : `送付済み${ledger.facts.propertiesSentCount}件は以前のもの`}）。「再度」「改めて」は成立しない。`;
+  // 2026-09-11 統合設計（経路E1）: 「再度」の可否は redoWord(ledger) の1関数だけで書く（旧実装は同じ台帳から buildActionLedgerNote が「再度可」、
+  //   ここが「再度不成立」と逆の指示を出していた）。ラウンドの文言は pickupRound(ledger).note
+  if (e.status === 'promised') return `※この発言は「${LEDGER_KIND_JA[e.kind]}」の【宣言のみ】で、まだ履行していない（${pickupRound(ledger).note}）。${redoWord(ledger) ? '送付済み物件は以前のもの。この宣言を「完了した」と書かない。' : '「再度」「改めて」は成立しない（1件も送っていないため二度目は存在しない）。'}`;
   return `※この発言は「${LEDGER_KIND_JA[e.kind]}」を【実行済み】（根拠: ${e.source}）。同じ行動を未来形で再宣言しない。`;
 }
 
@@ -504,7 +518,8 @@ export interface DonePresupVocab {
 const NX = '[^\\n。！!]';
 const NOT_CUST = `(?!${NX}{0,24}(?:いただ|頂い|頂け|ください|下さい))`;
 const REDO = /(?:再度|改めて|もう一度)/;
-const DECL = (name: string) => `${name}にオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！`;
+// 2026-09-11 統合設計（経路B）: name="" なら呼びかけごと省く（旧実装は呼び出し側の「〇〇さん」フォールバックを本文に書き込んでいた）
+const DECL = (name: string) => `${name ? `${name}に` : ''}オススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！`;
 /** 顧客が先に既送付物へ言及（「先ほどの物件」「送ってもらった見積」）→ 復唱免除 */
 export const CUSTOMER_PRIOR_REF_RE = /(?:先ほど|先程|さっき|前回|以前|こちら|上記|送って(?:いただい|もらっ|くれ)た|頂いた|届いた)[^\n]{0,8}(?:物件|お部屋|見積|資料|写真)|(?:物件|お部屋|見積書?)[^\n]{0,6}(?:ありがとう|拝見|見ました|確認しました|届きました)/;
 /** 顧客が「他の／別の／追加で」を先に言った → 「他の物件も」免除 */

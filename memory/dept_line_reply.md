@@ -993,3 +993,39 @@ GROUP BY 1,2,3 ORDER BY 4 DESC;
 - [ ] `preRevisionCodes` が入ったので「revision_count>0 で issues が空」＝誤った direction に合わせて書き換えたケースを SQL で追える。週次で `preRevisionCodes` と `finalCheckCodes` の差分を見る
 - [ ] `current_property` / `future_timeline` / `avoid_topics` も conversation-scope。今回は分類器からは切り離したが、生成 note 側で「今回のメッセージの性質」として使っていないか次セッションで棚卸しする
 - [x] system_design_thinking に4件 INSERT 済み（意味スコープ2軸・residue が最強の一次証拠・空プレースホルダは証拠ゼロの指紋・衝突したらセル選択を疑う）
+
+---
+
+## 2026-09-11 返信生成 × 最終チェックの衝突解消（経路 A〜G・統合設計）
+
+### 竹内の依頼
+「返信とファイナルチェックの部分でぶつかっている。どこかボトルネックになっている。設計知見と協力して改善する」。UI（最終チェックパネル折りたたみ）は 0e50ffe0 で修正済み（page.tsx は今回触らない）。
+
+### 根本原因（1行）
+同じ事実（もう送ったか／質問に答えたか／締めの場面か／顧客名）を、生成・後処理・決定論検査・LLM 検査・修正指示が**別の regex・別のデータ源**で判定し、さらに suggestion・後処理の置換文・生成ノートが verdict を経由しない**固定リテラル**（別顧客の example・〇〇・「かしこまりました😊！！」）になっていた。生成が正しく書いた必須文を後処理が消し（F）、検査が狭い語彙で正解を落とし（C・D）、修正ループには材料が無い（A・B）。loop2 で1回タイムアウトすると修正枠ごと消える（G）。
+
+### 経路別の結論と対処
+| 経路 | 結論 | 対処（単一真実源） |
+|---|---|---|
+| A suggestion に別顧客の実文 | 部分（流入は実証・本文への貼り付けは0件） | `PairMustInclude.fix` を**型で必須**化（29要素に追加）・`PairRule.suggestion` 削除・`pairElementSuggestion` は fix のみ・修正プロンプトの例文は `selectPairExample`（生成と同じ前提ゲート） |
+| B 〇〇 未置換 | 部分（本文漏れは🐥の1件・suggestion への混入は広い） | `fillNameSlot`（{name}／〇〇さん を確定名で埋める・不明なら呼びかけ＋助詞ごと削除）を reply-context に新設し fillPairPlaceholders・validateAndClean（aixGates 時）・修正版に適用。名前フォールバック「〇〇さん」全廃。confirmationGateNote の固定句を削除 |
+| C 回答検出が狭い | 確定（偽陽性 82%） | `hasDirectAnswer` / `ANSWER_FORM_RE`（人の実送信 n=519 の回答形・絵文字後置OK）を ①④⑦・質問セル detect が共有。`questionForm`（依頼形なら行動宣言が回答）。EXPLANATORY_RE / ANSWER_RE 廃止 |
+| D 締めの矛盾 | 確定（成約の締め正解 5/5 が block） | `resolveClosing`（decline/farewell）・`ANY_FAREWELL`（closingOnly）・`farewell_ack` staff 種別・`isClosedVerdict` を ①⑦・修正プロンプト（REVISION_MODE=closing）・LLM [STAGE] が共有。足す系の代わりに削る系 `CLOSING_FORWARD_PUSH`(warning) |
+| E 台帳 vs staff 判定 | 字義どおりは否定（0件）・実在5経路 | E1 `pickupRound`（「まだ1件も送っていない」を固定文で持たない）／E2 ③ last_aix_history は本文も時刻も無い時だけ／E3 機械的に閉じた property_send を物件送付にしない／E4 重複除去は送信証拠を優先／E5 PROMISE_ECHO_MISSING と生成側の約束検出を台帳で絞る／E6 check-reply も同じ入力で pairContext |
+| F 後処理が削りすぎ | 確定（YUYA・it_0 の直接原因） | `resolvePickupGate`（送付後の未履行宣言・条件変更・ピックアップを必須にするセルでは再宣言禁止にしない）で aixDone を整合。`PICKUP_KEEP_RE`（出来次第お送り・全力サポートは消さない）・`protect=isCellRequiredSentence`・受付文は削除位置でなく先頭へ・見積金額内訳ゲートは顧客条件の復唱を免除・安全弁 `GATE_PAIR_CONFLICT`（削除で骨格 block が増えたらピックアップゲートだけ取り消し）・applyLedgerAutoFix を gen2 にも |
+| G context_check 未完了 | 部分（落ちるパスは毎回違う・loop2 で致命的） | `runFinalCheck` を deadline 連動（パス上限 20/15/25s）＋失敗パスのみ1回再送・`pass_failures`/`pass_ms` 記録・check1 の締切＝予算−修正枠・差分再検査は完了パスを引き継ぐ（`diff_verified`）・改善比較から UNCHECKED_AUTO_SEND を除外・check-reply は生成時結果の再利用（`context_hash`）＋context_check を Haiku に |
+
+### 矛盾マトリクスの解消規則（抜粋）
+足す指示と削る指示が同じ場面で出る時は、その場面の verdict（セル・締め・台帳）が片方を「出さない」。優先順位ルールは足さない。M1 セル必須要素＞ピックアップ再宣言ゲート／M4 締め verdict＞足す系／M7 回答判定は hasDirectAnswer の1関数／M8 thanksAllowed の時だけ BANNED「ご査収頂きありがとう」免除／M13 足す系 block がある時 NANISOTSU は info／M14 確認約束が許可されている時は修正ガードを外す／M16 DOUBLE_DECLARATION はセル必須要素の文なら除去／M18 差分再検査の passes 洗浄を廃止。
+
+### テスト
+`npx tsx app/lib/__tests__/gen-check-conflict.test.ts` = **29 PASS**（YUYA / it_0 / 楓馬 / ﾓﾓｶ / 慶次 / うえっち / 🐥 / みく の実文フィクスチャ）。既存 positive-viewing 16・brain-scope 24・pair-example 21・greeting 19・action-ledger 23・stance 17 全 PASS。action-ledger #2・#20 の期待値は E4（送信証拠を優先して残す）に合わせて更新（旧期待値は line_task が staff_text を吸収する挙動そのもの）。`npx tsc --noEmit` エラー0。
+
+### やらなかったこと（理由）
+page.tsx・MAX_CHECK_ITERATIONS／予算の引き上げ（材料不足が原因）・UNCHECKED_AUTO_SEND の warning 化（自動送信 fail-closed）・G6 断言禁止の緩和・事実の正確性（ﾓﾓｶ「1時間」）・「再度」の可否を next ラウンドで変えること（成約データで裏付けてから）・STAFF_VIEWING_INVITE_RE の窓拡大・ちあき★の謝罪可否（竹内判断）・差分再検査で欠けたパスの単独再実行（今回は UNCHECKED_AUTO_SEND を引き継ぐだけ）・isGratitudeReplyTPO の farewell 連動（PURE_ACK 拡張で感謝返しに自然に入るため）・aix-template-generate の fixNamePlaceholderAddress 統合。
+
+### 引き継ぎ
+- [ ] 3日後: `ai_draft_check->'issues'` の suggestion に他顧客名（みく・瑞希・愛乃・スプランディッド・梅田・9月13日・換気）と 〇〇／△△ が0件か SQL で確認
+- [ ] 1週間後: `revision_exhausted` 率（日次）・`tpo_debug.postprocess.reverted`（GATE_PAIR_CONFLICT）件数・`pass_failures` の内訳を確認。check-reply の context_check（Haiku 2.3s）のタイムアウトが30%超なら passes から外す方式へ
+- [ ] `CLOSING_FORWARD_PUSH`(warning) の発火と人の削除率を見て、締めの ANY_FAREWELL 例文（成約★舞桜）の妥当性を確認
+- [ ] 「再度」の可否（next ラウンド）: ai_reply_examples で propertiesSentCount>0 かつ直前がピックアップ宣言の正解に「再度」が含まれる率を出してから redoWord を見直す

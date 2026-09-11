@@ -42,7 +42,7 @@ import {
   stripNonNameChars,
   normalizeCustomerName,
 } from "@/app/lib/validate-reply";
-import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, type MoveOutSubject } from "@/app/lib/move-out-context";
 import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
@@ -81,6 +81,8 @@ import {
   //   セル必須要素 × brain 方針の衝突検出（avoid を削る前にセル選択を疑うための記録）
   toBrainMessageLocal, toBrainConversationScope, detectCellConflicts, avoidConflictsWithCell,
   type BrainConversationScope, type CellConflict,
+  // 2026-09-11 統合設計（返信生成×最終チェックの衝突解消）: ピックアップ再宣言ゲートの解除判定・必須要素の保護・顧客名スロット・断り語彙の単一真実源
+  resolvePickupGate, isCellRequiredSentence, fillNameSlot, CUST_WITHDRAWAL_SRC,
 } from "@/app/lib/reply-context";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
@@ -202,7 +204,7 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 　→ 正: 直前のスタッフ約束（ピックアップ／募集状況確認／見積作成）をそのまま復唱するWE DO（⭐実例に出てきた業務語彙でも、現在の会話に同じ前提が無ければ真似しない）
 ⑩ 「確認でき次第ご連絡」の誤用
 　× お客様が「確認します」と言った返答に使う（確認の主語はお客様）／確認対象（〇〇の募集状況・内覧可能日・割引可否）を書かない汎用締め
-　→ 正: 「お手隙の際にご査収ください！！私の方でも〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」／「〇〇の募集状況確認いたします！！確認出来次第ご連絡させて頂きます」
+　→ 正: 「お手隙の際にご査収ください！！」（ピックアップ約束が未履行の時だけ「私の方でもオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」を続ける）／「（確認対象）の募集状況確認いたします！！確認出来次第ご連絡させて頂きます」
 ⑪ 履歴に費用・見積の話題が無い場面で「御見積書を作成しお送り」は禁止（物件探しの文脈では常にピックアップ宣言）
 ⑫ 「〇〇さん」「アカウント名さん」を字面のまま書くのは禁止。名前不明時は呼びかけを省く
 ⑬ 本人に「様」・フルネーム（身分証・申込書の氏名）は禁止。呼称はスタッフが最初に使った「〇〇さん」のみ
@@ -263,7 +265,8 @@ export function detectStaffPromise(staffText: string): { label: string; echo: st
   // 見積 echo は「作成・お送り」の約束形（STAFF_ESTIMATE_PROMISE_RE）に限る（「見積」の語出現だけでは復唱しない）
   if (STAFF_ESTIMATE_PROMISE_RE.test(staffText)) return { label: "お見積書の作成・送付", echo: "最大限割引しました初期費用のお見積書作成しお送りさせて頂きます！！" };
   if (/募集状況|空室|空き.{0,4}確認/.test(staffText)) return { label: "募集状況の確認", echo: "募集状況確認出来次第ご連絡させて頂きます！！" };
-  if (/ピックアップ|お調べ|お探し|オススメできるお部屋/.test(staffText)) return { label: "条件に合う物件のピックアップ送付", echo: "〇〇周辺全域から〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！" };
+  // 2026-09-11 統合設計（経路B）: echo から名前・エリアの 〇〇 スロットを外す（LLM が字面で書き写し BANNED_WORD〇〇＋NAME_PLACEHOLDER の block を生んでいた）
+  if (/ピックアップ|お調べ|お探し|オススメできるお部屋/.test(staffText)) return { label: "条件に合う物件のピックアップ送付", echo: "オススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！" };
   if (/ご案内させて頂きます|内覧/.test(staffText) && /[0-9０-９]{1,2}時/.test(staffText)) return { label: "内覧の実施（日時確定）", echo: "当日何卒よろしくお願い致します！！" };
   return null;
 }
@@ -782,6 +785,8 @@ type AixDoneFlags = {
   labels: string[];        // プロンプト表示用（例「空室確認（2時間前・結果:募集終了）」）
   /** 2026-09-09 行動台帳（enforce）: 解除条件③（新規ピックアップ依頼）。台帳 recentDone.propertySend で propertySend を上書きする時に再適用する */
   asksNewPickup?: boolean;
+  /** 2026-09-11 統合設計（経路F1）: resolvePickupGate の判定理由（tpo_debug.postprocess 用） */
+  pickupGateReason?: string;
 };
 
 type PromptOverrides = {
@@ -859,6 +864,8 @@ function buildGenerationMessages(
   actionLedgerNote: string = "",
   // 2026-09-09 Fable5 行動台帳: staffContextNote に付ける直前発言の宣言／実行注記（buildLastStaffAnnotation）
   ledgerAnnotation: string = "",
+  // 2026-09-11 統合設計（経路E5）: 台帳の「未履行のピックアップ約束」（ledgerActive 時のみ非 null）。本文 regex の約束検出と AND で使う
+  ledgerPickupPromised: boolean | null = null,
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -1129,11 +1136,13 @@ function buildGenerationMessages(
     !IMPLICIT_REQUEST_RE.test(trimmedCustomerMsg) &&
     !SOFT_DECLINE_RE.test(trimmedCustomerMsg) &&
     !ACK_TOPIC_EXCL_RE.test(trimmedCustomerMsg));
+  // 2026-09-11 統合設計（経路E5）: 台帳が有効な時は台帳の未履行約束とも一致する時だけ（本文 regex 単独の約束検出を台帳で絞る）
   const staffPromisedPickup =
     !!lastStaffMsg &&
     /ピックアップ/.test(lastStaffMsg) &&
     /(お送り|送らせて|お届け|送付)/.test(lastStaffMsg) &&
-    !lastStaffMsg.includes("ご査収ください"); // 「ご査収ください」= 物件送付済みの完了文なので約束中ではない
+    !lastStaffMsg.includes("ご査収ください") && // 「ご査収ください」= 物件送付済みの完了文なので約束中ではない
+    ledgerPickupPromised !== false;
   // 「また物件探してみます」= LLMが「自分で探す・goodbye」と誤解しやすい慣用表現。
   // 実際はスモラへの継続物件提案依頼シグナル。
   const searchAgainSignal =
@@ -1173,9 +1182,15 @@ function buildGenerationMessages(
   // 短い了承語（よろしくお願いします／かしこまりました／はい）は意味的に空なので、LLMが⭐実例の業務語彙
   // （撮影・ご査収・内覧日程）を無文脈で流用しやすい。「直前のスタッフ約束をそのまま復唱するWE DO」を
   // 決定論で1行渡し、約束に無い語彙の持ち出しを禁止する。pickup/estimate 専用ノートが出ている時は二重注入しない。
-  const staffPromise = (!isFollowUp && isShortAckMsg && !pickupPromiseAckNote && !estimatePromiseAckNote)
+  const staffPromiseRaw = (!isFollowUp && isShortAckMsg && !pickupPromiseAckNote && !estimatePromiseAckNote)
     ? detectStaffPromise(lastStaffMsg ?? "")
     : null;
+  // 2026-09-11 統合設計（経路E5）: ピックアップ約束の復唱は台帳に未履行約束がある時だけ（台帳有効時）。echo の顧客名はここで埋める
+  const staffPromise = staffPromiseRaw && /ピックアップ/.test(staffPromiseRaw.label) && ledgerPickupPromised === false
+    ? null
+    : staffPromiseRaw && /ピックアップ/.test(staffPromiseRaw.label)
+      ? { ...staffPromiseRaw, echo: fillNameSlot(`{name}に${staffPromiseRaw.echo}`, sanitizeCustomerName(customerName)) }
+      : staffPromiseRaw;
   const promiseEchoNote = staffPromise
     ? `\n【🔁 直前のスタッフ約束の復唱（決定論・最優先）】お客様の最新メッセージは短い了承語で、内容は「直前のスタッフ約束への了承」です。直前の約束: ${staffPromise.label}（未履行）。返信は開口語「はい😊！！」（単独行）＋この約束をそのまま復唱するWE DO 1文（例:「${staffPromise.echo}」）＋締め1文のみ（場面【短い了承】）。撮影・ご査収・内覧日程・申込誘導など、直前の約束に無い業務語彙を新たに持ち出さない。「ご都合よろしいお日にちに」をスタッフ作業に接続しない。`
     : "";
@@ -1315,7 +1330,9 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 
   // G26: 確認約束の決定論ゲート（dynamicBlock 末尾・お客様メッセージ直後に注入）。募集状況確認文脈（availabilityCheckNote）は型自体が確認宣言なので二重注入しない
   const confirmationGateNote = !confirmCtx.allowed && !isAvailabilityCheckContext
-    ? `\n\n【🚫 確認約束の禁止（決定論・確認対象なし）】この返信に「確認出来次第ご連絡」「確認しご連絡」「確認の上ご連絡」を書いてはいけない（理由: ${confirmCtx.reason}）。確認する事実が会話に存在しないのに確認を約束するのは創作約束。行動宣言は「〇〇周辺全域から〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」または直前スタッフ約束の復唱にする。`
+    // 2026-09-11 統合設計（経路B/D・🐥事例）: 旧文は TPO に関係なく（生成の 68%）「〇〇周辺全域から〇〇さんに…ピックアップ出来次第」の固定句を
+    //   行動宣言として命じ、感謝返し・締めの場面にもピックアップ約束と 〇〇 リテラルを持ち込ませていた。行動宣言は往復文脈にだけ従わせる
+    ? `\n\n【🚫 確認約束の禁止（決定論・確認対象なし）】この返信に「確認出来次第ご連絡」「確認しご連絡」「確認の上ご連絡」を書いてはいけない（理由: ${confirmCtx.reason}）。確認する事実が会話に存在しないのに確認を約束するのは創作約束。確認約束は書かない。行動宣言は【🔁 往復文脈】の方向と必須要素だけに従う（感謝返し・締めの場面では行動宣言を足さない）。`
     : confirmCtx.allowed
       ? `\n\n【✅ 確認対象（決定論）】この返信で確認を約束してよい対象は「${confirmCtx.object}」（根拠: ${confirmCtx.reason}）。書く場合は必ず「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」のように対象を前置する。「すぐに」は付けない。同じ返信内で確認宣言を二重に書かない。`
       : "";
@@ -3686,11 +3703,16 @@ export async function POST(req: NextRequest) {
     // ── A-6（G-5）: 「短い了承」ラベル条件と promiseEchoNote 条件の述語統一 ──
     //   buildGenerationMessages 側の promiseEchoNote は isShortAckMsg && !pickupPromiseAckNote && !estimatePromiseAckNote で発火する。
     //   ラベル側も同じ3条件（直前約束あり／ピックアップ約束済みでない／見積約束済みでない）で「短い了承」を立て、それ以外は「感謝返し」に落とす
-    const shortAckPromise = isGratitudeReplyTPO && !isFollowUp && !!detectStaffPromise(lastStaffMsgForSearch ?? "");
+    // 2026-09-11 統合設計（経路E5）: 台帳が有効な時はピックアップ約束の検出を台帳の未履行約束で絞る（buildGenerationMessages と同じ条件）
+    const ledgerPickupOpenForLabel = ACTION_LEDGER_MODE !== "shadow" && !isTemplateOptimize ? ledger.facts.pickupPromisedUnfulfilled : null;
+    const shortAckPromiseRaw = detectStaffPromise(lastStaffMsgForSearch ?? "");
+    const shortAckPromise = isGratitudeReplyTPO && !isFollowUp && !!shortAckPromiseRaw
+      && !(/ピックアップ/.test(shortAckPromiseRaw.label) && ledgerPickupOpenForLabel === false);
     const staffPromisedPickupForLabel = !!lastStaffMsgForSearch
       && /ピックアップ/.test(lastStaffMsgForSearch)
       && /(お送り|送らせて|お届け|送付)/.test(lastStaffMsgForSearch)
-      && !lastStaffMsgForSearch.includes("ご査収ください");
+      && !lastStaffMsgForSearch.includes("ご査収ください")
+      && ledgerPickupOpenForLabel !== false;
 
     // ── 一時保留（『今動けない状況語』or『後で見る・確認・返信する宣言』に限定。「検討」「考え」は isThinkingMsg に譲る）──
     const isTemporaryLeaveMsg = (() => {
@@ -3740,29 +3762,9 @@ export async function POST(req: NextRequest) {
       const msg = (message ?? "").trim();
       if (msg.length === 0) return none;
       if (isConditionPresented || isConditionChangeRequest) return none;
-      const WITHDRAWAL_SRC = [
-        "お?断り(?:ました|させて(?:頂|いただ)|をいただ|します|したい|いたします)",
-        "キャンセル(?:で|を|に|させて|し|の)?.{0,10}(?:したい|します|しました|になり|お願い|ください|いただ|頂|たいです)",
-        "見送(?:り|ら)(?:たい|ます|せて|になり)",
-        "辞退(?:したい|します|しました|させて|いたします)",
-        "白紙(?:に戻|になり)",
-        "(?:他社|他の(?:会社|仲介|業者|不動産)|別の(?:会社|仲介|業者|不動産)|他のところ|別のところ|知人|友人|親戚|自分)(?:で|に|の紹介で|さん.{0,6}で?)(?:契約|申込|決め|決まり|見つけ)",
-        "(?:他|別)の(?:物件|お部屋)(?:で|に)(?:決め|決まり|契約|申込)",
-        "やめ(?:とき|てお|ておき|ることにし|ようと思い)?ます",
-        "やめ(?:ました|ることに)",
-        // ── G10（2026-09-08 Fable5）: 退去・解約・引越しは対象名詞を必須にする。顧客の現住居の退去・引越し動機は離脱ではなく入居時期情報
-        //    （旧「退去予定」「引っ越すことに」「解約…お願い」の主語なし一致は「今の家は3月末退去予定です」を離脱扱いにしていた）
-        "(?:お?申(?:し)?込(?:み)?|ご?契約|内覧|内見|予約|審査)(?:の|を|は|も)?\\s*(?:解約|取り下げ|取りやめ|取り消し|やめ|なし)(?:で|を|に|したい|します|お願い|させて|ください|になり)?",
-        "(?:そちら|その|この|こちらの|ご?提案(?:いただい|頂い)た|送って(?:もらった|いただいた|頂いた))(?:の)?(?:物件|お?部屋)(?:は|を|も|の)?[^\\n。]{0,10}?(?:辞退|やめ|見送|なし|キャンセル|結構です|大丈夫です)",
-        "引っ?越し先(?:が|は|も)?(?:決ま|見つか)",
-        "(?:お?部屋探し|物件探し|お?家探し|引っ?越し|転居)(?:自体|の話|の件|は|を|が|も)?\\s*(?:なくな|無くな|中止|白紙|取りやめ|取り止め|やめ|辞め|見送|延期)",
-        "お世話になりました",
-        "諦め(?:ます|ました|ようと)",
-        "(?:今回は|一旦)(?:見送|なしで|遠慮|保留に)",
-        "破談",
-        // 内覧・来店に行けなくなった（別日提案が無ければ内覧キャンセル。提案付きは isReschedule が先に除外）
-        "(?:行け|伺え|来れ|行くことができ|行く事ができ|行くことが出来|行く事が出来)なく(?:なり|なっ)",
-      ].join("|");
+      // 2026-09-11 統合設計（経路D）: 断りの語彙は reply-context の CUST_WITHDRAWAL_SRC に一本化（classifyCustomerResponse・resolveClosing と同一定数）
+      //   G10（2026-09-08 Fable5）の「退去・解約・引越しは対象名詞必須」、内覧に行けなくなった（isReschedule が先に除外）の規則も同定数に移設済み
+      const WITHDRAWAL_SRC = CUST_WITHDRAWAL_SRC;
       const withdrawalRe = new RegExp(WITHDRAWAL_SRC);
       const withdrawalHit = (() => {
         if (!withdrawalRe.test(msg)) return false;
@@ -3864,10 +3866,28 @@ export async function POST(req: NextRequest) {
     console.info("[hedge]", JSON.stringify({ allowance: hedge.allowance, searched: hedge.searched, asked: hedge.customerAsked.yes, selfHedge: hedge.customerSelfHedge.yes, statedRelax: hedge.customerStatedRelax.yes }));
     // 2026-09-10 Fable5 Sさん事例: customerName は {viewingOffer} リテラルの生成に必須。
     //   brainCurrentProperty は conversation-scope なので「名前を作る根拠」にはせず corroboration（記録）のみ
+    // 2026-09-11 統合設計（経路D）: 直前スタッフ発言より前の顧客発言（断り→スタッフ締め→お礼 の往復で締め verdict を立てる）
+    const priorCustomerText = (() => {
+      const lastStaffIdx = recentMessages.map((m) => m.sender).lastIndexOf("staff");
+      if (lastStaffIdx < 0) return "";
+      return [...recentMessages.slice(0, lastStaffIdx)].reverse().find((m) => m.sender === "customer")?.text ?? "";
+    })();
     const pairContext: PairContext = resolveTurnPair(lastStaffTurn, customerResponse, substance, lastStaffMsgForSearch || tpoLatestStaffText || "", {
       searched: hedge.searched.yes, ledger: ledgerForCtx,
       customerName: customerName ?? "", brainCurrentProperty: brainStrategy?.current_property ?? null,
+      priorCustomerText,
     });
+    // ── 2026-09-11 統合設計（経路F1・YUYA/it_0 事例）: aixDone.propertySend（aix_usage_logs 72h 窓）を台帳・往復文脈と整合させる ──
+    //   送付後の未履行ピックアップ宣言／顧客の条件変更／ピックアップ宣言を必須要素に持つセルでは「再宣言禁止」にしない。
+    //   生成ノート（aixDoneAckNote）・後処理（validateAndClean aixPickupDone）・検査（finalCheckCtx.aixDone）が同じ値を見る（四者同名）。
+    //   asksNewPickup（AIX_CONDITION_CHANGE_RE）はログ用に残し、判定は往復文脈 verdict に一本化する
+    const pickupGate = resolvePickupGate(!!aixDone?.propertySend, pairContext);
+    if (aixDone) {
+      if (aixDone.propertySend !== pickupGate.redeclareBlocked) console.info("[pickup-gate]", JSON.stringify({ before: aixDone.propertySend, after: pickupGate.redeclareBlocked, reason: pickupGate.reason }));
+      aixDone.propertySend = pickupGate.redeclareBlocked;
+      aixDone.pickupGateReason = pickupGate.reason;
+      if (!pickupGate.redeclareBlocked) aixDone.labels = aixDone.labels.filter((l) => !/物件(?:ピックアップ|おすすめ)送付/.test(l));
+    }
     // 2026-09-10 Fable5: セル必須要素 × brain 方針の衝突。avoid を削る前に「セル選択を疑う」ための記録
     const cellConflicts: CellConflict[] = detectCellConflicts(pairContext, brainStrategy, brainLocalFresh);
     pairContext.conflicts = cellConflicts;
@@ -3883,10 +3903,14 @@ export async function POST(req: NextRequest) {
     // ── 感謝返しの具体アクションを直前スタッフ発言から決定論で1つ選ぶ（LLM に選ばせない）──
     const gratitudeActionHint: string = (() => {
       const s = tpoLatestStaffText;
-      if (/ピックアップ/.test(s) && /(お送り|送らせて|お届け|送付)/.test(s) && !/ご査収/.test(s))
+      // 2026-09-11 統合設計（経路E5/B）: ピックアップ約束の復唱は台帳に未履行約束がある時だけ（台帳有効時）。顧客名はスロットで埋める
+      const pickupOpen = ledgerPickupOpenForLabel !== false;
+      if (pickupOpen && /ピックアップ/.test(s) && /(お送り|送らせて|お届け|送付)/.test(s) && !/ご査収/.test(s))
         return "「ピックアップ出来次第お送りさせて頂きます！！」（ピックアップは約束済み。条件列挙・初期費用割引文の再掲禁止）";
       if (/ご査収|お送りしました|お送りさせて頂きました|お送りいたしました|添付/.test(s))
-        return "「お手隙の際にご査収ください😌！！」＋「私の方でも〇〇さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」（主語はスタッフ。「確認でき次第ご連絡」は主語混乱のため禁止）";
+        return pickupOpen
+          ? `「お手隙の際にご査収ください😌！！」＋「${fillNameSlot("私の方でも{name}にオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！", customerName ?? "")}」（主語はスタッフ。「確認でき次第ご連絡」は主語混乱のため禁止）`
+          : "「お手隙の際にご査収ください😌！！」（主語はスタッフ。「確認でき次第ご連絡」は主語混乱のため禁止。台帳に無いピックアップ約束を新たに書かない）";
       if (/管理会社|オーナー|交渉|空室確認|募集状況|確認(?:して|させて|いたし)/.test(s)) {
         // G26（2026-09-08 Fable5）: 確認対象を必ずリテラルで書く（対象の無い「確認出来次第ご連絡」は創作約束として final-check で block）
         const obj = findConfirmObject(s) ?? (/交渉/.test(s) ? "家賃・条件交渉の可否" : "募集状況");
@@ -4620,6 +4644,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       hedge,               // 2026-09-09 Fable5 みく事例: budgetInventoryNote の発火ゲート
       actionLedgerNote,    // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】ブロック
       ledgerAnnotation,    // 2026-09-09 Fable5 行動台帳: 直前発言の宣言／実行注記
+      ledgerActive ? ledger.facts.pickupPromisedUnfulfilled : null, // 2026-09-11 統合設計（経路E5）: 約束検出を台帳で絞る
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -4750,6 +4775,62 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // f-8: センシティブ案件（クレーム/審査否決/キャンセル・リスケ）検知時はドラフト冒頭に警告メタを付与
             // ※テンプレート最適化モードは会話への返信生成ではないため付与しない
             const sensitiveGateNote = !isTemplateOptimize ? buildSensitiveGateNote(message) : "";
+            // ─── 2026-09-11 統合設計（経路F）: 後処理（validateAndClean）の共通化＋安全弁 ───────────────
+            //   ①事前の免除: 選ばれたセルの必須要素／未履行約束の復唱（isCellRequiredSentence）はゲートで削除しない（protect）
+            //   ②事後の取り消し: ゲートの削除で新たに骨格系 block（決定論・約0ms）が出たら、取り消せるゲート（ピックアップ再宣言のみ）を外して
+            //     もう一度 validateAndClean にかけ、GATE_PAIR_CONFLICT（warning・pass=meta）として記録する。
+            //     断言禁止（G6・宅建業法）・内覧候補日時・待ち合わせ確定・物件固有金額・見積書カバー文・分割払い提案は取り消さない
+            //   gen1・gen2 の両方が同じ関数を通る（旧実装は applyLedgerAutoFix が gen1 だけだった）
+            const postprocessLog: Array<{ gen: number; code: string; introduced: string[]; reverted: string[] }> = [];
+            let lastGateEdits: Array<{ rule: string; before: string; after: string | null; reversible: boolean }> = [];
+            let lastValidateIssues: string[] = [];
+            let genIndex = 0;
+            const gateCheckCtx = {
+              recentMessages, lastCustomerMessage: message, customerName: customerName || undefined,
+              tpoLabel: tpoNoteForLLM ?? undefined, isEarlyConversation: isFirstEverReplyFromMsgs,
+              substance, pairContext, hedge, closerVerdict,
+              confirmationContext: confirmCtxFinal, activeTaskTypes,
+              estimateContext: estimateVerdict, sentPropertiesCount: estimateVerdict.sentPropertiesCount,
+              ledger: ledgerForCtx ?? undefined, ledgerStrict: ledgerActive, isDeliverableReply: isAixPropertySendMode,
+            };
+            const runValidate = (openingFixed: string, aixGates: boolean): { cleaned: string; issues: string[] } => {
+              const vOpts = {
+                aixGates, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch,
+                customerConditions: customerConditions || groundTruth.customerConditionsDb || "",
+                protect: (s: string) => isCellRequiredSentence(s, pairContext),
+                aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend,
+              };
+              let vr = validateAndClean(openingFixed, vOpts);
+              if (aixGates && vr.gateEdits.some((e) => e.reversible)) {
+                try {
+                  // 多重集合で比較（同じ PAIR_ELEMENT_MISSING が別要素で既に出ていても、ゲートの削除で1件増えたら検知する）
+                  const beforeCodes = skeletonBlockCodes(openingFixed, gateCheckCtx);
+                  const introduced = skeletonBlockCodes(vr.cleaned, gateCheckCtx).filter((c) => {
+                    const i = beforeCodes.indexOf(c);
+                    if (i >= 0) { beforeCodes.splice(i, 1); return false; }
+                    return true;
+                  });
+                  if (introduced.length) {
+                    const reverted = vr.gateEdits.filter((e) => e.reversible).map((e) => e.before.trim().slice(0, 40));
+                    console.warn("[postprocess] GATE_PAIR_CONFLICT → ピックアップ再宣言ゲートを取り消し:", JSON.stringify({ introduced, reverted }));
+                    postprocessLog.push({ gen: genIndex, code: "GATE_PAIR_CONFLICT", introduced: [...new Set(introduced)], reverted });
+                    vr = validateAndClean(openingFixed, { ...vOpts, aixPickupDone: false });
+                  }
+                } catch (e) {
+                  console.warn("[postprocess] 安全弁の評価に失敗（ゲート結果のまま続行）:", e instanceof Error ? e.message : e);
+                }
+              }
+              lastGateEdits = vr.gateEdits;
+              lastValidateIssues = vr.issues;
+              return { cleaned: vr.cleaned, issues: vr.issues };
+            };
+            /** 行動台帳の決定論自動修正（gen1・gen2 共通。名前不明時は呼びかけごと省く＝「〇〇さん」を本文に書き込まない） */
+            const applyLedgerFixToDraft = (body: string): string => {
+              if (!ledgerActive || isFollowUp || !body.trim()) return body;
+              const fx = applyLedgerAutoFix(body, ledger, { customerMessage: message ?? "", name: customerName ? `${customerName}さん` : "", isDeliverableReply: isAixPropertySendMode });
+              if (fx.applied.length) { console.info("[ledger-autofix]", JSON.stringify(fx.applied)); return fx.text; }
+              return body;
+            };
             // ─── 生成ストリーム消費＋後処理の共通関数 ───────────────────────
             // 1回目生成と「最終チェック指摘フィードバック再生成」（下のリトライループ）の両方で使うため関数化。
             // 挨拶強制置換・validateAndClean・テンプレ後処理のロジックは従来と同一。
@@ -4826,7 +4907,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (openingFixes.length) console.log("[greeting] enforce:", openingFixes);
                 // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
                 // customerName/lineDisplayName: 本文に混入したLINE表示名を確定的に実名へ置換／除去
-                const { cleaned, issues } = validateAndClean(openingFixed, { aixGates: true, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch, aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend });
+                const { cleaned, issues } = runValidate(openingFixed, true);
                 if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
                 // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
                 return { body: cleaned, stopReason };
@@ -4839,7 +4920,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 : enforceOpening(fullText, greetingDecision);
               if (openingFixes.length) console.log("[greeting] enforce:", openingFixes);
               // aixGates: 通常返信ドラフトのみ機械検証。テンプレート最適化はAIX由来の日時・金額が正当なため対象外
-              const { cleaned, issues } = validateAndClean(openingFixed, { aixGates: !isTemplateOptimize, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch, aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend });
+              const { cleaned, issues } = runValidate(openingFixed, !isTemplateOptimize);
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               let outText = cleaned;
               // テンプレート最適化モードの後処理: 号室先頭ゼロ除去 + noEmoji時の絵文字除去（旧adaptルート互換）
@@ -4879,15 +4960,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               return { body: outText, stopReason };
             };
             // 1回目の生成
+            genIndex = 1;
             const gen1 = await consumeGeneration(genStream);
             draftBody = gen1.body;
             genStopReason = gen1.stopReason;
             // 2026-09-09 Fable5 行動台帳: 生成直後の決定論自動修正（Sonnet 不使用）。台帳に実績が無い「再度／改めて／お送りした〇〇／完了形」を
             //   語の削除・未来形置換で正す（final-check 修正ループと同じ applyLedgerAutoFix）。テンプレ最適化・follow-up は対象外
-            if (ledgerActive && !isFollowUp && draftBody.trim()) {
-              const fx = applyLedgerAutoFix(draftBody, ledger, { customerMessage: message ?? "", name: customerName ? `${customerName}さん` : "〇〇さん", isDeliverableReply: isAixPropertySendMode });
-              if (fx.applied.length) { console.info("[ledger-autofix]", JSON.stringify(fx.applied)); draftBody = fx.text; }
-            }
+            //   2026-09-11 統合設計: gen1・gen2 共通の applyLedgerFixToDraft（名前不明時に「〇〇さん」を書き込まない）
+            draftBody = applyLedgerFixToDraft(draftBody);
             // ─── 最終チェック+接地修正ループ（前頭前野モデル v2 / claude-haiku-4-5）────
             // check1(≤2.5s) → blockあり時のみ 接地修正(≤3.5s) → check2(≤2.5s)。チェックは計2回上限。
             // 修正は checkpoint事実・DBルール・顧客条件に接地し、引用検証を通らない置換は破棄。
@@ -4991,6 +5071,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
                   brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 みく事例: 会話スコープ方針・セル衝突（四者同名）
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳（生成側と同一オブジェクト・四者同名）
+                  // 2026-09-11 統合設計（経路F1）: 後処理ゲートの判断（resolvePickupGate 整合後）。生成ノート・後処理・検査が同じ値
+                  aixDone: aixDone ? { propertySend: aixDone.propertySend, vacancyCheck: aixDone.vacancyCheck, mgmtCheck: aixDone.mgmtCheck, pickupGateReason: aixDone.pickupGateReason } : null,
                 };
                 // センシティブ案件（クレーム/審査否決/キャンセル）は「参考のみ・手動確認必須」の草稿のため
                 // チェックのみ実行し、接地修正・フィードバック再生成でドラフトを機械的に触らない
@@ -5015,16 +5097,26 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const retryIssues = finalCheck.issues.filter(
                   (it) => it.severity === "block" && it.code !== "UNCHECKED_AUTO_SEND"
                 );
+                // 2026-09-11 統合設計（D1）: 再生成すると finalCheck が loop2 で丸ごと置換されるため、1回目生成のチェック結果を別に残す
+                const firstPass = { issues: finalCheck.pre_revision_issues ?? finalCheck.issues.map((i) => `${i.code}:${i.severity}`), head: draftBody.slice(0, 80) };
                 // センシティブ案件は再生成もスキップ（手動確認前提。指摘はトレーラーで可視化される）
                 if (retryIssues.length > 0 && !sensitiveGateNote) {
                   try {
+                    // 2026-09-11 統合設計（S3・YUYA 事例）: 同じ修正案を重複して渡さない（同じ文を3回貼らせない）
+                    const seenRetry = new Set<string>();
+                    const retryIssuesDedup = retryIssues.filter((it) => {
+                      const k = `${it.code}|${it.suggestion ?? ""}`;
+                      if (seenRetry.has(k)) return false;
+                      seenRetry.add(k);
+                      return true;
+                    });
                     const feedback = [
                       "【最終チェック結果のフィードバック】",
                       "あなたが直前に生成した返信ドラフトを最終チェックした結果、以下の問題が見つかりました。",
                       "問題を全て解消した返信を、これまでと同じ指示・同じ条件で最初から書き直してください。",
                       "",
                       "検出された問題:",
-                      ...retryIssues.map((it, i) =>
+                      ...retryIssuesDedup.map((it, i) =>
                         `${i + 1}. ${it.message}` +
                         (it.evidence ? `（該当箇所:「${it.evidence}」）` : "") +
                         (it.suggestion ? ` → 修正方法: ${it.suggestion}` : "")
@@ -5039,7 +5131,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       //   when が false の要素（この場面に無い要素）は出さない＋{viewingOffer} 等は実値に置換する
                       ...(pairContext.rule
                         ? [`- 【必須要素】${pairContext.rule.mustInclude.filter((m) => !m.when || m.when(pairContext)).map((m, i) => `${i + 1}.${fillPairPlaceholders(m.label, pairContext)}`).join(" ")}（各1文以上。「かしこまりました！！」で終えず行動宣言またはサポート継続宣言で終える）`]
-                        : ["- 【WE DO の選択肢】次のいずれか1つだけを文脈から選ぶ（複数並べない）: ①内覧のご案内提案（「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」・具体的な候補日時は書かない）②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤条件・家賃の交渉"]),
+                        // 2026-09-11 統合設計（経路B）: 内覧提案リテラルは {viewingOffer}（顧客名スロット済み・名前不明なら呼びかけなし）
+                        : [`- 【WE DO の選択肢】次のいずれか1つだけを文脈から選ぶ（複数並べない）: ①内覧のご案内提案（「${fillPairPlaceholders("{viewingOffer}", pairContext)}」・具体的な候補日時は書かない）②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤条件・家賃の交渉`]),
                       "- 指摘箇所だけを直すのではなく、返信全体を自然な文章として書き直すこと",
                       "- 問題のなかった部分の内容・トーンは維持すること",
                       "- 返信本文のみを出力すること（説明・前置き・修正内容の解説は書かない）",
@@ -5049,18 +5142,23 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       retryIssues.map((it) => it.code).join(",")
                     );
                     const retryMessages = [...messages, new AIMessage(draftBody), new HumanMessage(feedback)];
+                    genIndex = 2;
                     const gen2 = await consumeGeneration(
                       createGenerationModel().stream(retryMessages)
                     );
                     if (gen2.body.trim()) {
+                      // 2026-09-11 統合設計: gen2 にも gen1 と同じ台帳の決定論自動修正を掛ける（旧実装は gen1 のみ＝非対称）
+                      const gen2Body = applyLedgerFixToDraft(gen2.body);
                       // 再生成ドラフトにも最終チェック＋接地修正ループを適用（未チェック文は絶対に出さない）
                       // 予算はループ単位ではなく「check1開始からの総経過時間」から逆算（regen込みで最悪2〜3分に膨らむのを防止。
                       // 全体上限150s − 経過時間、下限20s）
                       const loop2Budget = Math.max(20000, 150000 - (Date.now() - finalCheckStart));
-                      const loop2 = await runFinalCheckWithRevision(gen2.body, finalCheckCtx, Math.min(60000, loop2Budget));
+                      const loop2 = await runFinalCheckWithRevision(gen2Body, finalCheckCtx, Math.min(60000, loop2Budget));
                       draftBody = loop2.finalDraft;
                       finalCheck = loop2.finalCheck;
                       finalCheck.regen_count = 1;
+                      finalCheck.first_pass_issues = firstPass.issues;
+                      finalCheck.first_pass_draft_head = firstPass.head;
                       genStopReason = gen2.stopReason ?? genStopReason;
                       console.log(
                         "[generate-reply] 再生成後チェック:",
@@ -5198,7 +5296,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
             if (!isTemplateOptimize && finalCheck && draftBody) {
               try {
-                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|OPENER_MISMATCH|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT|DONE_PRESUPPOSED_WITHOUT_EVIDENCE|PROMISE_ECHO_MISMATCH|UNPROMPTED_PROPOSAL|CELL_AVOID_CONFLICT|ECHO_FROM_BRAIN_NOT_CUSTOMER)/;
+                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|OPENER_MISMATCH|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT|DONE_PRESUPPOSED_WITHOUT_EVIDENCE|PROMISE_ECHO_MISMATCH|UNPROMPTED_PROPOSAL|CELL_AVOID_CONFLICT|ECHO_FROM_BRAIN_NOT_CUSTOMER|CLOSING_FORWARD_PUSH)/;
                 const postDetCtx = {
                   recentMessages, lastCustomerMessage: message, isAutoSend: enforceReplyModeGate,
                   isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
@@ -5225,11 +5323,24 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 console.warn("[generate-reply] 後処理後の決定論再検査に失敗（元の結果を維持）:", postErr);
               }
             }
+            // 2026-09-11 統合設計（経路F・安全弁）: 後処理ゲートとセル必須要素の衝突で取り消した記録を finalCheck.issues に残す（warning・診断）
+            if (!isTemplateOptimize && finalCheck && postprocessLog.length) {
+              for (const p of postprocessLog) {
+                finalCheck.issues.push({
+                  pass: "meta", severity: "warning", code: "GATE_PAIR_CONFLICT",
+                  message: `後処理のピックアップ再宣言ゲートが往復文脈の必須要素を削除し骨格系 block（${p.introduced.join("・")}）を作ったため、ゲートを取り消しました（生成${p.gen}回目）`,
+                  evidence: p.reverted[0] ?? "",
+                  suggestion: "対応不要（診断）。頻発する場合は resolvePickupGate の解除条件と aix_usage_logs の送付記録を確認する",
+                });
+              }
+            }
             // f-8: センシティブ検知時は警告メタを冒頭に付与（空生成時は付与しない・テンプレ最適化は sensitiveGateNote="" ）
             finalDraftText = draftBody && sensitiveGateNote ? sensitiveGateNote + draftBody : draftBody;
             // 送信時の再利用判定キー: スタッフのテキストエリアに入る最終形（trim後）のハッシュに更新する
             // （自動修正・センシティブ警告付与でチェック時テキストと変わるため必ず上書き）
             if (finalCheck) finalCheck.checked_text_hash = await sha1(finalDraftText.trim());
+            // 2026-09-11 統合設計（経路G・T4）: check-reply が「同じテキスト×同じ顧客文」なら生成時の3パス結果を再利用する判定キー
+            if (finalCheck) finalCheck.context_hash = await sha1((message ?? "").trim());
             // 2026-09-09 Fable5: tpo_debug をトレーラーと ai_draft_check の両方に載せる（page.tsx が save-reply-example へ転送し reply_context_snapshot に保存）
             //   TPO誤発動率・往復ペア・final-check 結果の定量化用。JSONB のため migrate-schema 更新不要
             const tpoDebug: Record<string, unknown> | null = finalCheck && !isTemplateOptimize ? {
@@ -5247,7 +5358,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               greeting: toGreetingLite(greetingDecision), // G32: kind/opener/audit（waitedMs・起点・customerKind）を保存（check-reply が復元・週次 SQL で冒頭差分を集計）
               // 往復文脈（Turn-Pair）＋実質判定（Substance）
               substance: { has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, residue: substance.residue.slice(0, 120), evidence: substance.evidence, isPureBoilerplate: substance.isPureBoilerplate, waitSignal: substance.waitSignal },
-              turnPair: { staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, staffEvidence: lastStaffTurn.evidence.slice(0, 60), customer: pairContext.customer.kind, customerSecondary: pairContext.customer.secondary, customerObject: pairContext.customer.object, customerSource: pairContext.customer.source, ruleId: pairContext.ruleId, precedence: pairContext.rule?.precedence ?? null, cellGuard: pairContext.cellGuard },
+              turnPair: { staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, staffEvidence: lastStaffTurn.evidence.slice(0, 60), customer: pairContext.customer.kind, customerSecondary: pairContext.customer.secondary, customerObject: pairContext.customer.object, customerSource: pairContext.customer.source, ruleId: pairContext.ruleId, precedence: pairContext.rule?.precedence ?? null, cellGuard: pairContext.cellGuard,
+                // 2026-09-11 統合設計: 締め verdict・質問の形（生成・検査・修正プロンプトと同じ値）
+                closing: pairContext.closing, questionForm: pairContext.customer.questionForm ?? null },
+              // 2026-09-11 統合設計（経路F）: 後処理の監査（ゲートの削除・置換・取り消し・aixDone の整合結果）。JSONB のため migrate-schema 更新不要
+              postprocess: {
+                validateIssues: lastValidateIssues.slice(0, 12),
+                gateEdits: lastGateEdits.map((e) => ({ rule: e.rule, before: e.before.trim().slice(0, 60), after: e.after, reversible: e.reversible })),
+                aixDone: aixDone ? { propertySend: aixDone.propertySend, vacancyCheck: aixDone.vacancyCheck, mgmtCheck: aixDone.mgmtCheck, pickupGateReason: aixDone.pickupGateReason ?? null } : null,
+                reverted: postprocessLog.length ? postprocessLog : null,
+              },
               // 2026-09-10 Fable5 みく事例: セル×brain方針の衝突・会話スコープ方針・修正前の指摘コード
               cellConflicts,
               brainStrategy: brainStrategy ? { engagement_stance: brainStrategy.engagement_stance, repeated_concern: brainStrategy.repeated_concern, avoid_topics: brainStrategy.avoid_topics } : null,

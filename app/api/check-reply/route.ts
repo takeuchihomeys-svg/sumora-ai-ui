@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { getCachedPromptRules } from "@/app/lib/prompt-cache";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
-import { runFinalCheck } from "@/app/lib/final-check";
+import { runFinalCheck, sha1, type CheckResult } from "@/app/lib/final-check";
 // 2026-09-09 Fable5 行動台帳: generate-reply と同じ buildActionLedger（aix_usage_logs > line_tasks > 本文）で送付実績を決める
 import { buildActionLedger, type LedgerAixRow, type LedgerTask } from "@/app/lib/action-ledger";
 // G32（2026-09-09 Fable5 じゅにあ事例）: 冒頭決定（挨拶行＋開口語）を generate-reply と同じ resolveGreeting で再計算（四者同名）。createdAt が無ければ tpo_debug.greeting の復元値
 import { resolveGreeting, toGreetingLite, normalizeGreetingLite, computeAlreadyGreetedToday, isProgressPushMessage, type GreetingDecisionLite } from "@/app/lib/greeting";
-import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "@/app/lib/reply-context";
+import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair, type PairContext, type SubstanceVerdict } from "@/app/lib/reply-context";
+import { isConditionFormMessage } from "@/app/lib/line-reply-prompts";
+
+// 2026-09-11 統合設計（経路G・T4）: 送信時チェック（2.3s）は Sonnet の context_check が時間内にほぼ返らない（24h で約76%タイムアウト）。
+//   context_check を Haiku で走らせる（生成時の3パス結果を未完走の結果で上書きしない）。モデル ID は final-check の MODEL_CHECK_FAST と同じ
+const MODEL_CHECK_FAST_FOR_SEND = "claude-haiku-4-5-20251001";
 import { supabase } from "@/app/lib/supabase";
 
 // ─── 送信時の最終チェックAPI（スタッフ編集後テキストの再チェック専用）───────────
@@ -76,6 +81,7 @@ export async function POST(req: NextRequest) {
   let tpoLabel: string | undefined;
   let phaseKey: string | undefined;
   let greetingLite: GreetingDecisionLite | undefined;
+  let stored: (CheckResult & { context_hash?: string }) | undefined;
   if (conversationId) {
     try {
       const { data: convRow } = await supabase
@@ -83,6 +89,7 @@ export async function POST(req: NextRequest) {
         .select("ai_draft_check")
         .eq("id", conversationId)
         .maybeSingle();
+      stored = (convRow as { ai_draft_check?: (CheckResult & { context_hash?: string }) | null } | null)?.ai_draft_check ?? undefined;
       const dbg = (convRow as { ai_draft_check?: { tpo_debug?: { tpo_label?: string | null; phaseGuideKey?: string | null; greeting?: unknown } } | null } | null)?.ai_draft_check?.tpo_debug;
       tpoLabel = dbg?.tpo_label ?? undefined;
       phaseKey = dbg?.phaseGuideKey ?? undefined;
@@ -92,22 +99,52 @@ export async function POST(req: NextRequest) {
       console.warn("[check-reply] ai_draft_check 取得失敗（ctx なしで続行）:", e instanceof Error ? e.message : e);
     }
   }
+  // 2026-09-11 統合設計（経路G・T4）: 同じテキスト×同じ顧客文なら、生成時に3パス完走したチェック結果をそのまま返す
+  //   （送信時の2.3sチェックが生成時の完走結果を未完走の結果で上書きしていた。page.tsx は変更しない＝サーバ側だけで直す）
+  try {
+    if (stored && (stored.passes_completed?.length ?? 0) === 3 && stored.checked_text_hash === await sha1(text.trim())
+        && !!stored.context_hash && stored.context_hash === await sha1((lastCustomerMessage ?? "").trim())) {
+      const { revised_text: _r, ...rest } = stored;
+      void _r;
+      return NextResponse.json({ ...rest, reused_from_generation: true });
+    }
+  } catch (e) {
+    console.warn("[check-reply] 生成時結果の再利用判定に失敗（再チェックで続行）:", e instanceof Error ? e.message : e);
+  }
   const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/;
   const hasStaffText = recentMessages.some((m) => m.sender === "staff" && !!(m.text || "").trim() && !MEDIA_ONLY_RE.test(m.text || ""));
   // 2026-09-09 Fable5 行動台帳: generate-reply と同じ buildActionLedger（一次証拠 aix_usage_logs > line_tasks > 本文 regex）。fail-open
   const [aixRes, taskRes] = conversationId
     ? await Promise.all([
         supabase.from("aix_usage_logs").select("aix_type, check_pattern, created_at, sent_at, line_message_id, generated_text, property_names, estimate_sent").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(30).then((r) => r, () => ({ data: [] as LedgerAixRow[] })),
-        supabase.from("line_tasks").select("task_type, status, created_at, completed_at").eq("conversation_id", conversationId).in("status", ["pending", "completed"]).order("created_at", { ascending: false }).limit(20).then((r) => r, () => ({ data: [] as LedgerTask[] })),
+        // 2026-09-11 統合設計（L6）: result 列も取る（property_check の result=NULL は「機械的に閉じられただけ」で報告ではない＝generate-reply と同じ台帳）
+        supabase.from("line_tasks").select("task_type, status, created_at, completed_at, result").eq("conversation_id", conversationId).in("status", ["pending", "completed"]).order("created_at", { ascending: false }).limit(20).then((r) => r, () => ({ data: [] as LedgerTask[] })),
       ])
     : [{ data: [] as LedgerAixRow[] }, { data: [] as LedgerTask[] }];
+  const lastCustomerAt = [...recentMessages].reverse().find((m) => m.sender === "customer")?.createdAt ?? null;
   const ledger = buildActionLedger({
     recentAixRows: (aixRes.data ?? []) as LedgerAixRow[],
     messages: recentMessages,
     lineTasks: (taskRes.data ?? []) as LedgerTask[],
-    lastCustomerAt: null,
+    lastCustomerAt,
   });
   const sentPropertiesCount = ledger.facts.propertiesSentCount;
+  // 2026-09-11 統合設計（L6・経路E6）: 往復文脈を generate-reply と同じ入力（aix 行・直前スタッフ時刻・台帳・直前の顧客発言）で作り、
+  //   final-check に渡す（旧実装は final-check 内で aix 行・時刻なしに再計算し、生成時と別の staff 判定が context_check に同居していた）
+  let substanceForCheck: SubstanceVerdict | undefined;
+  let pairContextForCheck: PairContext | undefined;
+  try {
+    const lastStaffForPair = [...recentMessages].reverse().find((m) => m.sender === "staff" && !MEDIA_ONLY_RE.test(m.text || ""));
+    const lastStaffIdx = recentMessages.map((m) => m.sender).lastIndexOf("staff");
+    const priorCustomerText = lastStaffIdx < 0 ? "" : [...recentMessages.slice(0, lastStaffIdx)].reverse().find((m) => m.sender === "customer")?.text ?? "";
+    const staffTurn = classifyLastStaffTurn(lastStaffForPair?.text ?? "", { recentAixRows: (aixRes.data ?? []) as never, lastStaffAt: lastStaffForPair?.createdAt ?? null, ledger });
+    substanceForCheck = analyzeSubstance(lastCustomerMessage, undefined, { staffAskedQuestion: staffTurn.kind === "question_to_customer" });
+    const customer = classifyCustomerResponse(substanceForCheck, staffTurn, { isConditionPresented: isConditionFormMessage(lastCustomerMessage ?? ""), ledger });
+    pairContextForCheck = resolveTurnPair(staffTurn, customer, substanceForCheck, lastStaffForPair?.text ?? "", { ledger, customerName: customerName ?? "", priorCustomerText });
+  } catch (e) {
+    console.warn("[check-reply] 往復文脈の構築に失敗（final-check 内の再計算で続行）:", e instanceof Error ? e.message : e);
+    substanceForCheck = undefined; pairContextForCheck = undefined;
+  }
 
   // G32: 冒頭決定（四者同名）。createdAt があれば generate-reply と同じ resolveGreeting で再計算、無ければ tpo_debug.greeting の復元値
   //      （復元値が first なのにスタッフ送信済みなら古い decision の誤適用防止のため破棄）
@@ -136,8 +173,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // haikuTimeoutMs=2500: 送信時専用の短いタイムアウト（クライアント 2800ms 以内に収まる）
-  // generate-reply は runFinalCheckWithRevision 経由でデフォルト 8000ms を使用
+  // timeoutMs=2300: 送信時専用の短いタイムアウト（クライアント 2800ms 以内に収まる）。再送はしない（時間が無い）
+  // generate-reply は runFinalCheckWithRevision 経由で deadline 連動（パス上限 rule 20s / anomaly 15s / context 25s・失敗パスは1回再送）
   const result = await runFinalCheck(text, {
     dbRules,
     finalCheckRules: finalCheckRules || undefined,
@@ -162,7 +199,8 @@ export async function POST(req: NextRequest) {
           enforcement_level: (suggestedAixMeta.enforcement_level ?? "recommended") as "required" | "recommended",
         }
       : null,
-  }, 2500);
+    substance: substanceForCheck, pairContext: pairContextForCheck,
+  }, { timeoutMs: 2300, retry: false, passModels: { context_check: MODEL_CHECK_FAST_FOR_SEND } });
   delete result.revised_text; // このモードでは絶対に書き換え結果を返さない
 
   return NextResponse.json(result);

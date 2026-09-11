@@ -1,3 +1,8 @@
+// 2026-09-11 統合設計（経路B）: 顧客名スロット（{name}／〇〇さん）の決定論置換は reply-context の fillNameSlot が唯一の実装。
+//   reply-context は他の app/lib/* を runtime import しない（依存ゼロ）ので循環 import にならない
+import { fillNameSlot } from "./reply-context";
+export { fillNameSlot };
+
 // ─── 顧客名の妥当性判定（LINE表示名を実名として使わないためのゲート）───────────
 // LINEの表示名は「H!tom!.M」「ゆき♡」「taro_123」のように記号・数字・絵文字を含むことが多く、
 // これをそのまま「〇〇さん」と呼びかけると実名（Hitomi 等）と食い違い、お客様の信頼を損なう。
@@ -325,7 +330,23 @@ export const ASSERTION_BAN_RULES: AssertionBanRule[] = [
   },
 ];
 
-const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement: string; promisedReplacement?: string; vacancyDoneReplacement?: string; assertion?: AssertionBanRule }[] = [
+/** ゲートの判定に使う文脈（顧客条件の復唱免除に使う） */
+type GateOpts = { customerMessage?: string; lastStaffMsg?: string; customerConditions?: string };
+// ─── 2026-09-11 統合設計（経路F2・楓馬/YUYA 事例）: 顧客条件の復唱は「見積金額内訳」ゲートの対象外 ───
+//   旧実装は「家賃」「管理費」「共益費」と「N万円」が同じ文にあるだけで見積内訳とみなし、
+//   「家賃9万円〜13万円・2LDK…でピックアップ」を見積作成宣言／「確認しご連絡」に置換していた（PAIR_ELEMENT_MISSING・CONFIRM_NO_OBJECT を誘発）。
+//   条件＝範囲または上限の表記で、数字が顧客文・DB 条件・直前スタッフ文に実在し、費用内訳語（敷金・礼金・初期費用…）を含まない文
+const RANGE_OR_CAP_RE = /[0-9０-９.．]+\s*万?(?:円)?\s*[〜~～ー-]\s*[0-9０-９.．]+\s*万|[0-9０-９.．]+\s*万(?:円)?\s*(?:以内|以下|前後|まで|程度)/;
+const COST_WORD_RE = /初期費用|敷金|礼金|仲介手数料|保証料|鍵交換|火災保険|前家賃|日割|御見積|お見積|見積|合計|総額|内訳|割引|スモ割|節約/;
+const toHalfNum = (t: string) => t.replace(/[０-９．]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
+export function isCustomerConditionEcho(s: string, o?: GateOpts): boolean {
+  if (COST_WORD_RE.test(s) || !RANGE_OR_CAP_RE.test(s)) return false;
+  const src = toHalfNum(`${o?.customerMessage ?? ""}\n${o?.customerConditions ?? ""}\n${o?.lastStaffMsg ?? ""}`);
+  const nums = [...toHalfNum(s).matchAll(/[0-9.]+(?=\s*(?:万|[〜~～ー-]))/g)].map((m) => m[0]);
+  return nums.length > 0 && nums.every((n) => src.includes(n));
+}
+
+const AIX_GATE_RULES: { name: string; test: (s: string, o?: GateOpts) => boolean; replacement: string; promisedReplacement?: string; vacancyDoneReplacement?: string; assertion?: AssertionBanRule }[] = [
   {
     // 内覧候補日時の具体提示（「8/7（木）14:00〜」等）→ AIX「内覧へ」ボタン専用
     name: "内覧候補日時",
@@ -340,12 +361,12 @@ const AIX_GATE_RULES: { name: string; test: (s: string) => boolean; replacement:
     // 見積金額内訳（「敷金50,000円」「家賃72,000円」「敷金1ヶ月分」等）→ AIX「見積書送る」ボタン専用
     // AIは物件資料・見積書の画像を読めないため、物件固有の金額・数値（家賃・管理費・割引額等）の生成は絶対禁止
     name: "見積金額内訳",
-    test: (s) =>
+    test: (s, o) => !isCustomerConditionEcho(s, o) && (
       (/[0-9０-９][0-9０-９,，．.]*\s*(?:万\s*)?円/.test(s) &&
         /(?:初期費用|敷金|礼金|仲介手数料|保証料|鍵交換|火災保険|前?家賃|管理費|共益費|日割|御見積|お見積|見積|合計|総額|内訳|割引|スモ割|節約)/.test(s)) ||
       // 「敷金1ヶ月分」等の月数表記（円なし）も物件固有数値としてブロック
       (/[0-9０-９]+(?:[.．][0-9０-９]+)?\s*[ヶケか]月分?/.test(s) &&
-        /(?:敷金|礼金|保証料|前家賃)/.test(s)),
+        /(?:敷金|礼金|保証料|前家賃)/.test(s))),
     replacement: "最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！",
     promisedReplacement: "確認しご連絡させて頂きます😊！！",
   },
@@ -410,6 +431,14 @@ const VACANCY_REDECLARE_PAST_RE =
 // AIX【物件ピックアップ】で物件送付済みなのに「これからピックアップします」と再宣言する文。
 const PICKUP_REDECLARE_RE =
   /(?:ピックアップ|お探し|探させて|お部屋を?(?:お)?探し)[^。！!？?\n]{0,20}(?:させて(?:頂|いただ)き|いたします|致します|します|お送り|お届け)/;
+/** 2026-09-11 統合設計（経路F1）: ピックアップ再宣言ゲートの対象から常に外す文。
+ *  「出来次第お送り」「出来ましたらお送り」＝既存約束の履行形（スタッフの実際の正解返信もこの形）、「全力でサポート」「見つかるまで」＝締め */
+const PICKUP_KEEP_RE = /(?:出来|でき)(?:次第|ましたら)[^\n]{0,12}お送り|全力で(?:お部屋探し)?サポート|見つかるまで/;
+/** 挨拶行（開口語の挿入位置を決める時に飛ばす行） */
+const GREETING_LINE_RE = /お世話になっております|はじめまして|初めまして|夜遅くに失礼|ご連絡遅くなり/;
+
+/** 後処理ゲートが本文を削除・置換した記録（tpo_debug.postprocess と GATE_PAIR_CONFLICT の安全弁が参照） */
+export type GateEdit = { rule: string; before: string; after: string | null; reversible: boolean };
 
 // 文中の金額（円単位）を正規化して抽出（「176,180円」「¥176,180 円」「１７６，１８０円」→ "176180"）
 // estimatePromised置換の「履歴内金額の引用免除」判定に使用する
@@ -428,12 +457,21 @@ export function enforceAixGates(
     // AIX【物件確認した】で空室確認を実行＋結果送信済み（generate-reply の aixDone.vacancyCheck / mgmtCheck）。
     // true の場合、「これから確認します」の再宣言文を削除し、AIXゲートの置換文も受付文に切り替える。
     aixVacancyDone?: boolean;
-    // AIX【物件ピックアップした】で物件送付済み（generate-reply の aixDone.propertySend）。
+    // AIX【物件ピックアップした】で物件送付済み（generate-reply の aixDone.propertySend＝resolvePickupGate 整合後）。
     aixPickupDone?: boolean;
+    /** 2026-09-11 統合設計（経路F）: 削除してはいけない文（isCellRequiredSentence＝選ばれたセルの必須要素／未履行約束の復唱）。route が渡す */
+    protect?: (sentence: string) => boolean;
+    /** 顧客の DB 条件（見積金額内訳ゲートの「顧客条件の復唱」免除に使う） */
+    customerConditions?: string;
   },
-): { cleaned: string; violations: string[] } {
+): { cleaned: string; violations: string[]; edits: GateEdit[] } {
   const violations: string[] = [];
+  const edits: GateEdit[] = [];
   const usedReplacement = new Set<string>();
+  // 削除系ゲートの置換文「かしこまりました😊！！」は削除位置に入れず、ループ後に本文先頭（挨拶行の直後）へ1回だけ入れる
+  //   （旧実装は削除位置＝末尾に入れて EMPTY_CLOSER の block をゲート自身が作っていた: it_0 事例）
+  let needAck = false;
+  const gateOpts: GateOpts = { customerMessage: opts?.customerMessage, lastStaffMsg: opts?.lastStaffMsg, customerConditions: opts?.customerConditions };
   // 履歴内金額の引用免除用: 直前スタッフメッセージに実在する金額（スタッフが提示済み＝AIが引用してよい金額）
   const staffPrices = opts?.lastStaffMsg ? extractYenAmounts(opts.lastStaffMsg) : [];
   // 分割払い提案ゲート: お客様が支払い方法を質問していない／「払えない」と言っていないのに
@@ -456,13 +494,11 @@ export function enforceAixGates(
         violations.push(`分割払い提案(削除): ${s.trim().slice(0, 40)}`);
         continue;
       }
-      // 見積書作成宣言の繰り返し（約束済みの場合のみ短文へ置換。本文に既に受付文があれば削除のみ）
+      // 見積書作成宣言の繰り返し（約束済みの場合のみ削除。受付文は本文先頭に1回だけ入れる）
       if (opts?.estimatePromised && estimateDeclarationRe.test(s)) {
         violations.push(`見積作成宣言の繰り返し: ${s.trim().slice(0, 40)}`);
-        if (!usedReplacement.has("見積作成宣言の繰り返し") && !text.includes("かしこまりました")) {
-          usedReplacement.add("見積作成宣言の繰り返し");
-          outSentences.push("かしこまりました😊！！");
-        }
+        edits.push({ rule: "見積作成宣言の繰り返し", before: s, after: null, reversible: false });
+        needAck = true;
         continue;
       }
       // AIX実行済みアクションの再宣言（空室確認・物件ピックアップ）→ 該当文を削除
@@ -474,22 +510,19 @@ export function enforceAixGates(
         !VACANCY_REDECLARE_PAST_RE.test(s)
       ) {
         violations.push(`空室確認の再宣言(実行済): ${s.trim().slice(0, 40)}`);
-        if (!usedReplacement.has("空室確認の再宣言") && !text.includes("かしこまりました")) {
-          usedReplacement.add("空室確認の再宣言");
-          outSentences.push("かしこまりました😊！！");
-        }
+        edits.push({ rule: "空室確認の再宣言", before: s, after: null, reversible: false });
+        needAck = true;
         continue;
       }
-      if (opts?.aixPickupDone && PICKUP_REDECLARE_RE.test(s)) {
+      // 2026-09-11 統合設計（経路F1）: 履行約束の復唱・締め（PICKUP_KEEP_RE）と、選ばれたセルの必須要素／未履行約束の復唱（protect）は削除しない
+      if (opts?.aixPickupDone && PICKUP_REDECLARE_RE.test(s) && !PICKUP_KEEP_RE.test(s) && !opts.protect?.(s)) {
         violations.push(`ピックアップ宣言の再宣言(送付済): ${s.trim().slice(0, 40)}`);
-        if (!usedReplacement.has("ピックアップ再宣言") && !text.includes("かしこまりました")) {
-          usedReplacement.add("ピックアップ再宣言");
-          outSentences.push("かしこまりました😊！！");
-        }
+        edits.push({ rule: "ピックアップ再宣言", before: s, after: null, reversible: true });
+        needAck = true;
         continue;
       }
       const rule = AIX_GATE_RULES.find((r) => {
-        if (!r.test(s)) return false;
+        if (!r.test(s, gateOpts)) return false;
         // 内覧候補日時: スタッフ自身が提案済みの日付を引用している文は免除（二重ゲート防止）
         // 例: スタッフ「9/7（月）16:00よりオンライン内覧…」→ 顧客「はい大丈夫」→ AI「9/7（月）16:00より内覧…」
         if (r.name === "内覧候補日時" && opts?.lastStaffMsg) {
@@ -521,22 +554,33 @@ export function enforceAixGates(
         usedReplacement.add(rule.name);
         // 約束済みの場合は宣言テンプレを再挿入せず短い受付文に切り替える（二重宣言の再挿入防止）
         // 置換文の優先順: ①空室確認済み（再宣言になる置換文を回避）② 見積約束済み ③ 通常
-        outSentences.push(
+        const rep =
           opts?.aixVacancyDone && rule.vacancyDoneReplacement
             ? rule.vacancyDoneReplacement
             : opts?.estimatePromised && rule.promisedReplacement
               ? rule.promisedReplacement
-              : rule.replacement,
-        );
+              : rule.replacement;
+        outSentences.push(rep);
+        edits.push({ rule: rule.name, before: s, after: rep, reversible: false });
+      } else {
+        edits.push({ rule: rule.name, before: s, after: null, reversible: false });
       }
     }
     return outSentences.join("");
   });
   // 違反行の除去で生じた3連以上の改行を2連（空行1つ）に圧縮
-  const cleaned = violations.length > 0
+  let cleaned = violations.length > 0
     ? outLines.join("\n").replace(/\n{3,}/g, "\n\n")
     : text;
-  return { cleaned, violations };
+  // 削除系ゲートの受付文: 最初の非挨拶行が開口語（かしこまりました／はい）でない時だけ、挨拶行の直後に1回入れる
+  if (needAck && !/かしこまりました/.test(cleaned)) {
+    const lines = cleaned.split("\n");
+    const gi = lines.findIndex((l) => l.trim() && !GREETING_LINE_RE.test(l));
+    if (gi >= 0 && !/^はい/.test(lines[gi].trim())) lines.splice(gi, 0, "かしこまりました😊！！");
+    else if (gi < 0) lines.push("かしこまりました😊！！");
+    cleaned = lines.join("\n").replace(/\n{3,}/g, "\n\n");
+  }
+  return { cleaned, violations, edits };
 }
 
 // ─── 物件固有金額のソース検証（テンプレート最適化モード用の軽量ポストチェック）───
@@ -580,9 +624,14 @@ export function validateAndClean(
     // true の場合、「これから確認します/ピックアップします」の再宣言文を削除する
     aixVacancyDone?: boolean;
     aixPickupDone?: boolean;
+    /** 2026-09-11 統合設計（経路F）: ゲートが削除してはいけない文（isCellRequiredSentence） */
+    protect?: (sentence: string) => boolean;
+    /** 顧客の DB 条件（見積金額内訳ゲートの顧客条件復唱免除） */
+    customerConditions?: string;
   },
-): { cleaned: string; issues: string[] } {
+): { cleaned: string; issues: string[]; gateEdits: GateEdit[] } {
   const issues: string[] = []
+  let gateEdits: GateEdit[] = []
   let cleaned = text
   // **太字** → 太字なしに除去
   if (/\*\*[^*]+\*\*/.test(cleaned)) {
@@ -600,6 +649,13 @@ export function validateAndClean(
       cleaned = named
     }
   }
+  // 2026-09-11 統合設計（経路B・🐥事例）: 通常返信（aixGates）では「〇〇さん」「{name}」を確定名で埋める／名前不明なら呼びかけ＋直結助詞ごと削除。
+  //   gen1・gen2 の両方を通る唯一の後処理なのでここに置く（旧実装は detectPlaceholders に任せて残し、BANNED_WORD〇〇＋NAME_PLACEHOLDER の
+  //   二重 block を LLM 修正でしか消せなかった）。名前以外の 〇〇 スロットは埋めない。テンプレート最適化（aixGates=false）は対象外
+  if (opts?.aixGates && /[〇○]{2,}\s*(?:さん|サン|様|さま)|\{name\}/.test(cleaned)) {
+    const filled = fillNameSlot(cleaned, normalizeCustomerName(opts.customerName));
+    if (filled !== cleaned) { issues.push("NAME_SLOT_FILLED"); cleaned = filled; }
+  }
   // さんさん → さん
   if (/さんさん/.test(cleaned)) {
     issues.push("敬称重複(さんさん)")
@@ -613,17 +669,20 @@ export function validateAndClean(
   banned.forEach(w => { if (cleaned.includes(w)) issues.push("禁止ワード: " + w) })
   // AIXゲート機械検証（opt-in: generate-reply の通常返信ドラフトのみ。テンプレート最適化・パターン生成は対象外）
   if (opts?.aixGates) {
-    const { cleaned: gated, violations } = enforceAixGates(cleaned, {
+    const { cleaned: gated, violations, edits } = enforceAixGates(cleaned, {
       estimatePromised: opts.estimatePromised,
       customerMessage: opts.customerMessage,
       lastStaffMsg: opts.lastStaffMsg,
       aixVacancyDone: opts.aixVacancyDone,
       aixPickupDone: opts.aixPickupDone,
+      protect: opts.protect,
+      customerConditions: opts.customerConditions,
     });
     if (violations.length > 0) {
       issues.push(...violations.map(v => "AIXゲート違反(置換済): " + v));
       cleaned = gated;
+      gateEdits = edits;
     }
   }
-  return { cleaned, issues }
+  return { cleaned, issues, gateEdits }
 }

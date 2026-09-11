@@ -92,8 +92,10 @@ describe("台帳（みく）", () => {
     expect(st.kind).toBe("pickup_declared");
     // 2026-09-10 Fable5 Sさん事例: line_tasks は本文カラムを持たず完了通知先も社内グループ＝顧客送信記録ではない。
     //   LEDGER_OUTBOUND_SOURCES（aix_log / staff_text / aix_history）以外は ⓪ で確定させず①②へ進ませる
-    expect(mikuLedger.facts.lastStaffEntry?.source).toBe("line_task");
-    expect(st.source).toBe("regex");
+    // 2026-09-11 統合設計（経路E4・楓馬事例）: 重複除去は顧客への送信証拠（staff_text）を優先して残す。
+    //   旧期待値 line_task / regex は「line_task が staff_text を吸収して送信の証拠が消える」挙動そのものだった
+    expect(mikuLedger.facts.lastStaffEntry?.source).toBe("staff_text");
+    expect(st.source).toBe("ledger");
     // 台帳なしでも本文 regex で宣言（未来形）を実行より先に判定する
     expect(classifyLastStaffTurn(MIKU_1040).kind).toBe("pickup_declared");
   });
@@ -277,14 +279,15 @@ describe("往復セル・台帳の細部", () => {
     expect(c).not.toContain("GENERIC_ONLY_REPLY:block");
     expect(c.filter((x) => /PAIR_ELEMENT_MISSING|DONE_PRESUPPOSED/.test(x))).toEqual([]);
   });
-  it("#20 line_task_dedup: 手打ち宣言 15:36:00 ＋ line_tasks pending 15:36:05 → pickup_declared 1件（source=line_task, conf2）", () => {
+  // 2026-09-11 統合設計（経路E4）: 残すのは顧客への送信証拠（staff_text）。confidence は重複の最大値（2）を引き継ぐ
+  it("#20 line_task_dedup: 手打ち宣言 15:36:00 ＋ line_tasks pending 15:36:05 → pickup_declared 1件（source=staff_text, conf2）", () => {
     const l = buildActionLedger({
       messages: [{ sender: "customer", text: MIKU_FORM, createdAt: T("09-09T15:30") }, { sender: "staff", text: MIKU_1040, createdAt: T("09-09T15:36") }],
       lineTasks: [{ task_type: "property_send", status: "pending", created_at: new Date(Date.parse(T("09-09T15:36")) + 5000).toISOString() }],
     });
     const decl = l.entries.filter((e) => e.kind === "pickup_declared");
     expect(decl.length).toBe(1);
-    expect(decl[0].source).toBe("line_task");
+    expect(decl[0].source).toBe("staff_text");
     expect(decl[0].confidence).toBe(2);
     expect(staffKindOf(decl[0])).toBe("pickup_declared");
   });
