@@ -2803,7 +2803,7 @@ export default function Home() {
       aiDraftRef.current = selectedConversation.aiDraft;
       setDisplaySource("ai_draft");
       // 事前生成ドラフトの最終チェック結果をDBから復元（ハッシュ一致なら送信時0msで通過）
-      // カラム未追加・取得失敗は fail-open（送信時に /api/check-reply へフォールバック）
+      // 取得失敗は fail-open（送信時の再チェックは行わない＝スタッフが編集した文は正解として扱う）
       {
         const hydrateConvId = selectedConversation.id;
         supabase.from("conversations").select("ai_draft_check").eq("id", hydrateConvId).single()
@@ -3978,13 +3978,7 @@ export default function Home() {
     if (sendLongPressedRef.current) { sendLongPressedRef.current = false; return; }
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
-    // 2026-09-10 Fable5 Sさん事例（原因E）: AIが直せなかった block が残っている（revision_exhausted）時は二段確認。
-    //   旧実装は details が閉じたままで警告が見えず、送信ボタンはそのまま押せた
-    const unresolvedBlocks = checkResult?.revision_exhausted
-      ? (checkResult.issues ?? []).filter((i) => i.severity === "block").length
-      : 0;
-    if (unresolvedBlocks > 0 && draftIsAi
-      && !window.confirm(`🤖 AIが自動修正できなかった指摘が ${unresolvedBlocks}件 残っています。\nこのまま送信しますか？`)) return;
+    // 未編集のAI下書きに残った block 指摘は executeSend の送信確認モーダルで提示する（二重確認はしない）
     void executeSend();
   };
 
@@ -4202,39 +4196,21 @@ export default function Home() {
       }
     }
     // ── 最終チェック（前頭前野モデル・3重チェック）──
-    // 生成時チェック済みテキストならハッシュ一致で0ms通過（大多数のケース）。
-    // スタッフが編集した場合のみ /api/check-reply で3パス再チェック（2.8sタイムアウト・fail-open）。
-    // block指摘あり → 送信確認モーダルで指摘を提示し、スタッフの明示確認後のみ送信続行。
-    // warningは絶対にブロックしない / タイムアウト・エラーも絶対にブロックしない。
+    // チェックはAIが文を作った時（生成時）だけ行う（ハルシネーション防止）。
+    // スタッフが編集・手入力した文はスタッフの判断が正解なので、送信時に再チェックしない。
+    // 未編集のAI下書き（生成時チェックとハッシュ一致）に block 指摘が残っていれば、送信確認モーダルで提示する。
     if (replyDraft.trim() && !finalCheckSkipRef.current) {
-      if (finalCheckBusyRef.current) return; // チェック待ちの間の連打ガード
+      if (finalCheckBusyRef.current) return; // 連打ガード
       finalCheckBusyRef.current = true;
-      let latestCheck: CheckResult | null = checkResult;
+      let isUneditedAiDraft = false;
       try {
-        const hash = await sha1Hex(replyDraft.trim());
-        if (!latestCheck || latestCheck.checked_text_hash !== hash) {
-          const res = await fetch("/api/check-reply", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-            body: JSON.stringify({
-              text: replyDraft.trim(),
-              conversationId: selectedConversation.id,
-              // G32: createdAt を渡すと check-reply が generate-reply と同じ resolveGreeting で冒頭決定を再計算する（四者同名）
-              recentMessages: selectedConversation.messages.slice(-10).map((m) => ({ sender: m.sender, text: m.text || "", createdAt: m.rawCreatedAt || undefined })),
-              customerName: selectedConversation?.customerName ?? "",
-              suggestedAixMeta: selectedConversation.suggestedAixMeta ?? null,
-            }),
-            signal: AbortSignal.timeout(2800),
-          });
-          latestCheck = res.ok ? (await res.json() as CheckResult) : null;
-          if (latestCheck) setCheckResult(latestCheck);
-        }
+        isUneditedAiDraft = !!checkResult && checkResult.checked_text_hash === await sha1Hex(replyDraft.trim());
       } catch {
-        latestCheck = null; // fail-open: チェック失敗は送信をブロックしない
+        isUneditedAiDraft = false;
       } finally {
         finalCheckBusyRef.current = false;
       }
-      const blockIssues = latestCheck?.issues.filter((i) => i.severity === "block") ?? [];
+      const blockIssues = isUneditedAiDraft ? (checkResult?.issues.filter((i) => i.severity === "block") ?? []) : [];
       if (blockIssues.length > 0) {
         setCheckModalIssues(blockIssues);
         finalCheckSkipRef.current = true; // モーダルの「送信する」では再チェックせず送信を続行する

@@ -12,7 +12,8 @@
 //
 // 呼び出し元:
 // - generate-reply/route.ts …… runFinalCheckWithRevision（チェック+接地修正ループ。最大2チェック）
-// - check-reply/route.ts    …… 送信時（スタッフ編集後）の再チェック。自動修正なし（runFinalCheckのみ）
+// - check-reply/route.ts    …… 送信時の再チェック用ルート。2026-09-11 以降、画面からは呼ばない
+//                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
 import { checkNameConsistency, ASSERTION_BAN_RULES, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE } from "./validate-reply";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶（generate-reply / brain-core と四者同名）
