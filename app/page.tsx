@@ -5836,15 +5836,22 @@ export default function Home() {
               </div>
               {/* 右端ボタン群 */}
               <div className="absolute right-0 flex items-center">
-                {/* AIXパネルボタン（アツい・要対応リスト） */}
+                {/* AIX送信対象フィルター: トーク一覧を AIX バッジが付く顧客だけに絞る（もう一度押すと解除） */}
                 <button
-                  onClick={() => setShowAixHotPanel(true)}
-                  className="flex items-center justify-center px-2 py-1 mr-0.5"
-                  title="AIXリスト（アツい・要対応）"
+                  onClick={() => { setStatusFilter((prev) => prev === "aix_target" ? "all" : "aix_target"); setShowGroupFilter(false); }}
+                  className="relative flex items-center justify-center px-2 py-1 mr-0.5"
+                  title="AIXで送る必要があるお客様だけ表示"
                 >
-                  <span className="rounded-lg border border-[#1565C0]/40 bg-[#e8f4fd] px-2 py-0.5 text-[11px] font-black text-[#1565C0] leading-tight">
+                  <span className={`rounded-lg border px-2 py-0.5 text-[11px] font-black leading-tight ${
+                    statusFilter === "aix_target"
+                      ? "border-[#7C3AED] bg-[#7C3AED] text-white"
+                      : "border-[#1565C0]/40 bg-[#e8f4fd] text-[#1565C0]"
+                  }`}>
                     AIX
                   </span>
+                  {aixTargetCount > 0 && statusFilter !== "aix_target" && (
+                    <span className="absolute right-0.5 top-0 h-2 w-2 rounded-full bg-[#7C3AED]" />
+                  )}
                 </button>
                 {/* 要対応フィルターボタン（鈴木担当） */}
                 <button
