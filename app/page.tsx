@@ -5828,7 +5828,7 @@ export default function Home() {
                     遷移先は管理ツール PWA の manifest start_url と同じページ（ルートはダッシュボードになるため） */}
                 <a
                   href="https://sumora-screening-admin.vercel.app/line-management"
-                  className="rounded-lg border border-[#0f8f44]/40 bg-[#e9f9ee] px-2 py-0.5 text-[11px] font-black leading-tight text-[#0f8f44] active:opacity-60"
+                  className="rounded-lg border border-[#1565C0]/40 bg-[#e8f4fd] px-2 py-0.5 text-[11px] font-black leading-tight text-[#1565C0] active:opacity-60"
                   title="申込管理ツールへ切り替え"
                 >
                   管理ツール
