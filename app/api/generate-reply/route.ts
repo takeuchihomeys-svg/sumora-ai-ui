@@ -41,8 +41,11 @@ import {
   isPlausiblePersonName,
   stripNonNameChars,
   normalizeCustomerName,
+  // 2026-09-11 竹内方針3: 呼び名の唯一の決定（生成・後処理・検査・check-reply が同じ verdict）
+  resolveAddressName,
+  type AddressNameVerdict,
 } from "@/app/lib/validate-reply";
-import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, type MoveOutSubject } from "@/app/lib/move-out-context";
 import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
@@ -87,6 +90,10 @@ import {
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
 import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask } from "@/app/lib/action-ledger";
+// 2026-09-11 竹内方針1〜5（統合設計 §7）: 生成失敗文の文言と「正解例として使えるか」の唯一の判定
+import { GENERATION_FAILURE_TEXT, isUsableExampleText } from "@/app/lib/example-hygiene";
+// 2026-09-11 竹内方針4・5: few-shot 注入前の「承知→かしこまりました」「すぐに除去」（後処理・検査と同じ定義）
+import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -187,7 +194,7 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 　→ 正: 「出次第お送りさせて頂きます」「募集状況確認出来次第ご連絡させて頂きます」等（副詞なし・確認対象付き）
 　→ 理由: 「すぐに」は過度な約束・安っぽい印象を与える
 ⑦ 形式的な了解フレーズ（具体アクションなし）
-　× 「承知いたしました」「承知しました」単独 → 必ず「はい！！」または「かしこまりました！！」を使う（TPO: 依頼・お願い=かしこまりました！！、感謝・了承=はい！！）
+　× 「承知いたしました」「承知しました」「承知致しました」は文中も含め使わない → 受け止めは「かしこまりました！！」か「〇〇の件かしこまりました！！」、感謝・了承は「はい！！」（2026-09-11 竹内方針4）
 　× 「ご連絡お待ちくださいませ」「ご連絡お待ちしております」（受け身の単独締め）→ 具体アクション宣言を前置した上で「何卒よろしくお願い致します😌！！」で締める
 　× 「かしこまりました！！」単独で終わる返信（具体アクションなし）→ 必ず後続に「〜させて頂きます！！」等の行動宣言を続けること。「かしこまりました！！何卒よろしくお願い致します！！」は不完全
 　→ 正（依頼・お願いへの返し）: 「かしこまりました！！〇〇エリアでピックアップさせて頂きます！！」「かしこまりました！！お風呂広めのお部屋を中心にお調べさせて頂きます！！」
@@ -290,7 +297,7 @@ const STATE_FALLBACK_DIRECTION: Record<string, string> = {
   // 2026-09-10 Fable5 Sさん事例: WE DO 候補を「ピックアップ・交渉・確認」で閉じていたため、正解（内覧のご案内提案）に
   //   到達する言語的経路が消えていた。「〇〇の1文を添えろ」型にせず**選択肢の列挙**にする（創作を誘発しない）
   proposing:
-    "商談継続中。顧客の質問・要望を1文で受け止め、具体名詞（エリア・物件名・条件・日付）を含む WE DO 宣言を1つだけ添える。" +
+    "商談継続中。顧客の質問・要望を1文で受け止め、具体名詞（エリア・条件）を含む WE DO 宣言を1つだけ添える（物件名・号室・日付は書かない）。" +
     "WE DO は次のいずれか1つを文脈から選ぶ（複数並べない・当てはまるものが無ければ書かない）: " +
     "①内覧のご案内提案（「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」。**具体的な候補日時は書かない**。候補日時の提示は AIX【内覧日調整】専用） " +
     "②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤家賃・条件の交渉。100〜150字",
@@ -449,7 +456,7 @@ function buildPropertyStatusNote(status: PropertyStatus): string {
     return `\n【🚨 物件募集状況（確定事実・最優先 — 他のどのルールより上位）】この物件は退去予定/入居中です。現地内覧は退去日の翌日以降のみ可能で、今は現地内覧できません。
 ・内覧日程（[日付][時間帯]や2択日程提示）は絶対に提案しない。「〇日にご内覧いかがですか」等の現地内覧日の提示も禁止。
 ・入居可能時期を聞かれたら「ご入居可能日を管理会社に確認しご連絡させて頂きます😊！！」のみ伝える（AIが「クリーニング・鍵交換で2〜3週間」等から日程を自動計算して断定案内することは絶対禁止）。
-・内覧・興味を示されたら「退去前のため現在は現地ご案内ができません。退去後すぐにご案内させて頂きます！！お気に召されましたらお申込みでお部屋を先に押さえておくことも可能です😊！！」の方向で返す。`;
+・内覧・興味を示されたら「退去前のため現在は現地ご案内ができません。退去後ご案内させて頂きます！！お気に召されましたらお申込みでお部屋を先に押さえておくことも可能です😊！！」の方向で返す。`;
   }
   return "";
 }
@@ -1361,7 +1368,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 
   // 内覧日時の具体的提案はAIXの「内覧へ」ボタン専用。generate-replyでは絶対に具体的日時を出さない
   const viewingFactNote = (resolvedPropertyStatus === "move_out_scheduled" || resolvedPropertyStatus === "occupied")
-    ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。「退去後すぐにご案内します」「お申込みでお部屋を先に押さえてからのご内覧も可能です」の方向で返すこと。`
+    ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。「退去後ご案内させて頂きます」「お申込みでお部屋を先に押さえてからのご内覧も可能です」の方向で返すこと。`
     : isAvailabilityCheckContext
       // 募集状況が未確認の段階では「お気に召されましたら〜ご案内」の例外許可を出さない（内覧誘導は順番が逆）
       ? `\n\n【📅 内覧日時の具体的提案は絶対禁止（最優先）】「〇/〇（木）14:00〜」「直近ですと[日付][時間帯]」「〇〇でご都合いかがでしょうか」のような具体的な内覧候補日時・2択日程提示は絶対に出力しない。[日付][時間帯]プレースホルダーも使用禁止。さらに今回は募集状況が未確認の段階のため、「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！」等の内覧誘導フレーズも一切書かない（【🚨 募集状況確認の文脈】が正）。`
@@ -1409,8 +1416,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     ? `\n\n【🔗 写真/URL要求検出（最優先）】お客様は物件の写真・画像・URLを求めていますが、これらの送付はAIXツール（物件ピックアップした）またはスタッフ操作で行います。
 【絶対禁止】返信文に「写真をお送りします」「URLをご案内します」「リンクをお送りします」「〜のURLとなります」等、写真・URLを今すぐ送る・案内するような文言を一切書かない。
 ・写真・URL・物件リンクが「今から届く」かのような表現も禁止。
-・返信文は受付・確認の一言のみ：「確認してすぐご案内しますね😊！！」「しばらくお待ちください！！」程度にとどめる（「少々お待ちください」はfinal-check禁止語のため絶対に使わない）。
-・対象物件が特定できる場合は物件名を添えた受付文でよい（写真・URLは書かない）。`
+・返信文は受付・確認の一言のみ：「確認させて頂きます😊！！」「しばらくお待ちください！！」程度にとどめる（「少々お待ちください」はfinal-check禁止語のため絶対に使わない）。
+・物件名・号室は書かない（「お送り頂きました物件」で受ける。写真・URLも書かない。2026-09-11 竹内方針2）。`
     : "";
 
   // 共感フレーズ（全然大丈夫です／全然わがままじゃないですよ）の確定ゲート — 常時注入
@@ -2345,13 +2352,14 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
     if (embedding) {
       const { data: similar, error: rpcError } = await supabase.rpc("match_reply_examples", {
         query_embedding: embedding,
-        match_count: spec?.examples.pgvectorMatchCount ?? 20,
+        // 2026-09-11 データ衛生: 生成失敗文・テスト送信を後段で除外する分（+4）を多めに取る
+        match_count: (spec?.examples.pgvectorMatchCount ?? 20) + 4,
         filter_states: stateAliases,
       }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; customer_intent: string | null; similarity: number }> | null; error: unknown };
 
       if (!rpcError && similar && similar.length > 0) {
-        // 類似度0.5未満は低品質として除外
-        const aboveThreshold = similar.filter(ex => ex.similarity >= 0.5);
+        // 類似度0.5未満は低品質として除外。生成失敗文・テスト送信は正解例にしない（isUsableExampleText）
+        const aboveThreshold = similar.filter(ex => ex.similarity >= 0.5 && isUsableExampleText(ex.sent_reply));
         if (aboveThreshold.length > 0) {
         // ★+0.15 に加え、4案から選ばれた実例（reply_angle あり）は+0.1 追加ブースト
         // T1: spec.examples.boostStates（brainが重視するフェーズ）に一致する実例はさらに+0.1
@@ -2381,7 +2389,8 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
           sorted.map((ex, i) => {
             const angleTag = ex.reply_angle && ex.reply_angle !== "starred" ? `|${ANGLE_LABEL[ex.reply_angle] ?? ex.reply_angle}` : "";
             const premise = derivePremiseLabel(ex.sent_reply ?? "");
-            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`;
+            // 2026-09-11 竹内方針4・5（E4-f）: 実例の「承知しました」「すぐに」は注入前に決定論で正規化（DB の本文は書き換えない）
+            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${normalizeBannedPhrasing(ex.sent_reply ?? "").text}」`;
           }).join("\n\n");
         }
       }
@@ -2408,9 +2417,10 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
       .limit(120),
   ]);
 
-  const sameStateList = sameStateFull ?? [];
+  // 2026-09-11 データ衛生: ☆付きの生成失敗文（hearing の最新☆）がフォールバックの先頭に来ていた → 読む側で除外
+  const sameStateList = (sameStateFull ?? []).filter((ex) => isUsableExampleText(ex.sent_reply));
   const allStateList = (allStateFull ?? []).filter(
-    (ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
+    (ex) => isUsableExampleText(ex.sent_reply) && !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
   );
 
   // T1: boostStates（brainが重視するフェーズ）一致を同priority・同☆内の優先基準に追加
@@ -2464,49 +2474,13 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
       const ra = (ex as { reply_angle?: string | null }).reply_angle;
       const angleTag = ra && ra !== "starred" ? `|${ANGLE_LABEL[ra] ?? ra}` : "";
       const premise = derivePremiseLabel(ex.sent_reply ?? "");
-      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`;
+      // 2026-09-11 竹内方針4・5: 注入前に承知→かしこまりました・すぐに除去（DB の本文は書き換えない）
+      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${normalizeBannedPhrasing(ex.sent_reply ?? "").text}」`;
     }).join("\n\n");
 }
 
-// ─── スタッフが実際に呼んでいた名前を会話履歴から抽出 ────────────────────────
-// LINE表示名が短縮・略称の場合（例: "N"）、スタッフが実際に使っていた呼び名を優先する
-function extractPreferredName(
-  messages: Array<{ sender: string; text?: string | null }>,
-  lineDisplayName: string
-): string {
-  // 部分一致で除外（^先頭一致だと「通過後にオーナー」等が素通りするため含有一致に変更）
-  // 「よろし」等の接続表現も除外（「よろしければサさん…」→「よろしければサ」誤抽出防止）
-  const NON_NAME_RE = /(お客様|オーナー|大家|管理|業者|保証|担当|スタッフ|弊社|不動産|審査|通過|契約|入居|退去|申込|内覧|皆|各位|こちら|まずは|引き続き|何卒|改めて|よろし|宜し|もしよ|できれば|出来れば|ぜひ|是非)/;
-  // 名前の形のみ許可: ひらがな2〜6字 / カタカナ2〜6字 / 漢字1〜4字 / 英字2〜12字（スクリプト混在=「よろしければサ」「頂きサ」等の文断片を排除）
-  const NAME_SHAPE_RE = /^[ぁ-ん]{2,6}$|^[ァ-ン]{2,6}$|^[一-鿿々]{1,4}$|^[A-Za-z]{2,12}$/;
-  // 動詞・助詞に使われる文字が中間に混ざる候補は文断片とみなして拒否（先頭・末尾は名前でも使われるため対象外）
-  const FRAGMENT_CHAR_RE = /[てでにをはがもやかなきしれめとのどこそあいう]/;
-  for (const msg of [...messages].reverse()) {
-    if (msg.sender !== "staff" || !msg.text) continue;
-    // 冒頭の呼びかけのみ対象（文中の「オーナーさん」等の第三者言及は拾わない）
-    // {1,8}: 「関さん」等の1文字漢字名も許可（形の妥当性はNAME_SHAPE_REが判定）
-    // S-5: 「田中様」「山田さま」形も抽出対象に拡張（従来は「さん」呼びのみ）
-    const m = msg.text.match(/^[\s「]*([^\s、。！？\n【】「」（）・]{1,10}?)\s*(?:さん|サン|様|さま)/);
-    if (!m) continue;
-    const name = normalizeCustomerName(m[1]) || m[1];
-    if (NON_NAME_RE.test(name)) continue;
-    if (name.length > 8) continue;
-    // 名前の形（ひらがな/カタカナ/漢字/英字のみ）に一致しない候補は名前ではない
-    if (!NAME_SHAPE_RE.test(name)) continue;
-    if (name.length >= 3 && FRAGMENT_CHAR_RE.test(name.slice(1, -1))) continue;
-    return name;
-  }
-  // フォールバック: クライアント渡し名にも「よろしければサ」等の汚染が乗り得るためサニタイズ＋末尾「さん」除去（二重さん防止）
-  const fallback = lineDisplayName
-    .replace(/^(もし)?(よろしければ|宜しければ|よければ|できれば|出来れば|ぜひ|是非)/, "")
-    .replace(/さん$/, "")
-    .trim();
-  // 🚨 LINE表示名（「H!tom!.M」等の記号・数字・絵文字混じり）はここで捨てる。
-  //    実名の形でないものを返すと「H!tom!.Mさん」と呼びかけてしまい実名と食い違う。
-  //    呼び出し側は "" を受けてDBの customer_name にフォールバックする。
-  //    S-5: normalizeCustomerName で敬称除去・かな分かち書き結合・姓抽出まで正規化する
-  return normalizeCustomerName(fallback);
-}
+// ─── 2026-09-11 竹内方針3: 旧 extractPreferredName（1行目の行頭しか見ない・カタカナ「サン」を敬称に含む）は廃止。
+//     呼び名は validate-reply.ts の resolveAddressName が唯一の決定（下の「顧客名の確定」）
 
 // ─── 顧客名をDBから解決（LINE表示名より customer_name を優先するための取得）────
 // conversations.customer_name は line-webhook が LINEプロフィールの displayName で
@@ -2580,8 +2554,8 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
       ? `
 【🔗 リンク（URL）要求検出（最優先）】お客様はURLを求めていますが、URLの送付はAIXツール（物件ピックアップした）がスタッフ操作で行います。
 【絶対禁止】返信文に「〜のURLとなります」「URLをお送りします」「リンクをご案内します」等、URLを送る・案内するような文言を一切書かない。
-→ 返信文は受付・確認の一言のみ：「確認してすぐご案内しますね😊！！」「しばらくお待ちください！！」程度にとどめる（「少々お待ちください」はfinal-check禁止語のため絶対に使わない）。
-→ 対象物件が特定できる場合は物件名を添えた受付文でよい（URLは書かない）。
+→ 返信文は受付・確認の一言のみ：「確認させて頂きます😊！！」「しばらくお待ちください！！」程度にとどめる（「少々お待ちください」はfinal-check禁止語のため絶対に使わない）。
+→ 物件名・号室は書かない（「お送り頂きました物件」で受ける。URLも書かない。2026-09-11 竹内方針2）。
 → 「気になる物件のURLをお送りください」の聞き返しは絶対禁止。`
       : "";
     // 2026-09-08: 見積例文は顧客が費用を質問／特定物件を参照している時のみ出す（引用画像だけで見積宣言を誘導しない）
@@ -2879,9 +2853,8 @@ export async function POST(req: NextRequest) {
     enforceReplyModeGate = body.enforceReplyModeGate === true;
     lineDisplayName = (body.customerName || "").trim();
     recentMessages = body.recentMessages || [];
-    // LINE表示名より会話でスタッフが実際に使った呼び名を優先。
-    // 実名の形でない表示名（「H!tom!.M」等）は "" が返り、下のDB解決にフォールバックする。
-    customerName = extractPreferredName(recentMessages, lineDisplayName);
+    // 2026-09-11 竹内方針3: 呼び名は下の「顧客名の確定」で resolveAddressName が1回だけ決める（旧 extractPreferredName は廃止）
+    customerName = "";
     customerConditions = body.customerConditions || "";
     customerSummary = body.customerSummary || "";
     bodySummaryJson = body.summaryJson;
@@ -3019,27 +2992,34 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ─── 顧客名の確定（LINE表示名を実名として使わない）────────────────────────
-  // 優先順:
-  //   ① 会話履歴でスタッフが実際に呼んでいた名前（extractPreferredName・呼び名として最も正確）
-  //   ② DB property_customers.customer_name（スタッフが顧客管理画面で実名に修正できる列）
-  //   ③ DB conversations.customer_name（line-webhook がLINE表示名で更新する列）
-  //   ④ 呼び出し元から渡された名前
-  // ①〜④はいずれも isPlausiblePersonName を通過したものだけ採用する。
-  // 全滅した場合は名前なし（""）で生成する — 誤った名前で呼びかけるより名前を出さない方が安全。
-  // S-5: 全候補を normalizeCustomerName（敬称除去・記号除去・かな分かち書き結合・姓抽出）で正規化してから採用
-  if (!customerName && conversationId) {
-    const { pcName, convName } = await fetchDbCustomerNames(conversationId);
-    customerName = [pcName, convName, lineDisplayName].map(normalizeCustomerName).find(Boolean) ?? "";
-    if (!customerName) {
-      console.warn("[generate-reply] 実名として使える顧客名なし（LINE表示名は不採用・名前なしで生成）:", {
-        conversationId, lineDisplayName, pcName, convName,
-      });
+  // ─── 顧客名の確定（2026-09-11 竹内方針3: 実際に呼んでいる名前のまま・途中で変えない）────────────────
+  //   resolveAddressName が唯一の決定（validate-reply.ts）。優先: ①直近スタッフ送信（人間・AIX）の行頭の呼びかけ ②強いつながり
+  //   （〇〇さんにオススメ／ご希望）③スタッフの呼び履歴が無い時だけ顧客の名乗り ④DB property_customers ⑤表示名 ⑥""（名前を出さない）。
+  //   旧実装は extractPreferredName（1行目しか見ない・カタカナ「サン」で AIX カードの「ネッサンス」から「ネッ」を抽出）→ 表示名 → DB の順で、
+  //   page 経路と bg 経路で呼び名が変わっていた（見木: page=響夢／bg=見木）。page / bg どちらでも DB 名を常に引いて1回だけ決める
+  let addressName: AddressNameVerdict = { name: "", source: "none", evidence: "", at: null, aliases: [] };
+  {
+    const { pcName, convName } = conversationId ? await fetchDbCustomerNames(conversationId) : { pcName: "", convName: "" };
+    const displayName = lineDisplayName || convName;
+    addressName = resolveAddressName({ messages: recentMessages, displayName, pcName });
+    // 窓内にスタッフの呼びかけが無い時だけ、スタッフ送信を limit 100 で1回引いて決め直す
+    if (!addressName.source.startsWith("staff") && conversationId) {
+      try {
+        const { data: staffRows } = await supabase
+          .from("messages").select("sender, text, created_at")
+          .eq("conversation_id", conversationId).eq("sender", "staff")
+          .order("created_at", { ascending: false }).limit(100);
+        const older = ((staffRows ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).reverse()
+          .map((r) => ({ sender: r.sender, text: r.text, createdAt: r.created_at }));
+        if (older.length) addressName = resolveAddressName({ messages: [...older, ...recentMessages], displayName, pcName });
+      } catch (e) {
+        console.warn("[generate-reply] 呼び名の履歴取得に失敗（窓内の結果で続行）:", e instanceof Error ? e.message : e);
+      }
     }
-  } else {
-    // G30（2026-09-08 Fable5）: 旧 fallback「isPlausiblePersonName(stripNonNameChars(...))」は normalizeCustomerName が
-    // 意図的に落とした名前（プレースホルダ派生・一般ニックネーム）を復活させる迂回路だったため廃止（正規化の単一経路）
-    customerName = normalizeCustomerName(customerName);
+    customerName = addressName.name;
+    if (!customerName) {
+      console.warn("[generate-reply] 実名として使える呼び名なし（名前なしで生成）:", { conversationId, lineDisplayName, pcName, convName });
+    }
   }
   // S-5: 顧客自身が書いた「〇〇様／〇〇さん」（連名者・保証人・家族等）は NAME_MISMATCH の除外リストに入れる
   const allowNamesForCheck: string[] = (() => {
@@ -3561,6 +3541,8 @@ export async function POST(req: NextRequest) {
       lastStaffMessage: lastStaffMsgForSearch,
       brainAction: effectiveAction,
       activeTaskTypes,
+      // 2026-09-11 §5.2: 会話に実在する物件名（照合専用。生成の文面には出さない＝竹内方針2）
+      conversationObjects: { propertyNames: ledger.facts.propertiesSentNames },
     });
     console.info("[confirmCtx]", JSON.stringify({ allowed: confirmCtx.allowed, source: confirmCtx.source, object: confirmCtx.object, moveOutSubject }));
 
@@ -3956,7 +3938,7 @@ export async function POST(req: NextRequest) {
       if (pairContext.rule?.precedence === "override_wait" && pairDirection) return pairDirection;
       if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」（単独行）一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。この場面では具体アクション宣言は不要（何も宣言しない）。物件追加・内見誘導・条件ヒアリング・長文説明は一切禁止";
       if (isThinkingMsg) return "検討中の待ちフェーズ。70〜130字の短返し。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」（命令形「ごゆっくりご検討ください」は不可）②直前送付物への次ステップ1文（「お気に召されましたらご内覧頂けます／お申込しお部屋抑えさせて頂きます」）は必ず入れる③気になる点出てきましたらいつでもお気軽にご連絡ください。「かしこまりました！！」単独終了・申込誘導・希少性煽り（人気のため早めに）・物件追加提案・「ご検討の程よろしく」の再掲は絶対禁止";
-      if (isPostStrongRecommendation) return "強推し直後の了承。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。①感謝を1行で受け取る②直前に推薦したお部屋（物件名が分かれば名前で、不明なら「先ほどのお部屋」）をお手隙の際にごゆっくりご確認いただく旨1文③ご内覧・ご不明点はいつでもお申し付けくださいの開放1文④締め。合計50〜110字。他物件の募集確認・新規ピックアップ宣言・別物件の提案・申込誘導・「ご検討の程よろしくお願いします」の再掲は絶対禁止。顧客が「見てみます」（未来形）なら「ご覧頂きありがとう」等の既読扱いも禁止";
+      if (isPostStrongRecommendation) return "強推し直後の了承。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。①感謝を1行で受け取る②直前に推薦したお部屋（物件名は書かず「先ほどのお部屋」。2026-09-11 竹内方針2）をお手隙の際にごゆっくりご確認いただく旨1文③ご内覧・ご不明点はいつでもお申し付けくださいの開放1文④締め。合計50〜110字。他物件の募集確認・新規ピックアップ宣言・別物件の提案・申込誘導・「ご検討の程よろしくお願いします」の再掲は絶対禁止。顧客が「見てみます」（未来形）なら「ご覧頂きありがとう」等の既読扱いも禁止";
       if (isGratitudeReplyTPO) return `感謝を1行で受け取り、次のアクション文を1つだけ添える: ${gratitudeActionHint}。合計40〜130字。開口語は「はい😊！！」（単独行）一択（「かしこまりました」「承知いたしました」禁止）。締めは「何卒よろしくお願い致します！！」。上記以外のアクション・予告のみの進捗テンプレ・条件の再ヒアリング・情報追加は絶対禁止`;
       // A-13: 不安対応（applying より先に評価。謝罪は「ご不安にさせてしまい申し訳ございません」の1文のみ許可）
       if (isAnxietyMsg) return "不安対応（100〜150字）。開口語は「はい😊！！」または受け止め1文から。①不安を1文で受け止める（謝罪が必要な場合のみ「ご不安にさせてしまい申し訳ございません」の1文まで）②具体的な安心材料を1つだけ添える（保証会社通過までキャンセル料なし／独立系保証会社で再審査可／審査3〜10日 等・履歴にある事実のみ）③次アクション1文。「大丈夫ですよ」「ご安心ください」の根拠なし安心づけ禁止";
@@ -4305,7 +4287,7 @@ export async function POST(req: NextRequest) {
         }
       }
       if (psp?.search_urgency) {
-        lines.push(`- ⚡ 物件探しの緊急度: ${psp.search_urgency} → 高い（★★★）場合: 今すぐピックアップしてお送りする旨をWE DO宣言（「〜させて頂きます！！」形）で伝えること / 低い（★以下）場合: 焦らせず次の連絡タイミングをこちらから約束すること`);
+        lines.push(`- ⚡ 物件探しの緊急度: ${psp.search_urgency} → 高い（★★★）場合: ピックアップしてお送りする旨をWE DO宣言（「〜させて頂きます！！」形。「すぐに／今すぐ」は書かない）で伝えること / 低い（★以下）場合: 焦らせず次の連絡タイミングをこちらから約束すること`);
       }
       if (brainFreshForMessage && brainMeta.hesitancy_pattern) {
         const hp = brainMeta.hesitancy_pattern;
@@ -4393,7 +4375,7 @@ export async function POST(req: NextRequest) {
       const lines: string[] = [];
       if (tpoNoteForLLM) lines.push(`- 📍 現在の場面: 【${tpoNoteForLLM}】— この場面に合った返し方をすること`);
       // 2026-09-10 Fable5 Sさん事例: WE DO の選択肢に内覧のご案内提案を第1候補として含める（四者同名）
-      const fallbackDirection = "顧客の最新メッセージ内の質問・条件・依頼にそれぞれ直接回答し、具体名詞（エリア・物件名・条件・日付）を含む WE DO 宣言を1つだけ添える（次のいずれか1つ: ①内覧のご案内提案「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」＝具体的な候補日時は書かない ②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤家賃・条件の交渉）";
+      const fallbackDirection = "顧客の最新メッセージ内の質問・条件・依頼にそれぞれ直接回答し、具体名詞（エリア・条件。物件名・号室・日付は書かない）を含む WE DO 宣言を1つだけ添える（次のいずれか1つ: ①内覧のご案内提案「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」＝具体的な候補日時は書かない ②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤家賃・条件の交渉）";
       lines.push(`- 🎯 返信の方向性: ${effectiveReplyDirection ?? fallbackDirection}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
       if (effectiveKeyTopics.length) {
         lines.push(`- ✅ 必ず含める内容（${effectiveKeyTopics.length}件すべて必須）: ${effectiveKeyTopics.join(" / ")}`);
@@ -4795,10 +4777,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               confirmationContext: confirmCtxFinal, activeTaskTypes,
               estimateContext: estimateVerdict, sentPropertiesCount: estimateVerdict.sentPropertiesCount,
               ledger: ledgerForCtx ?? undefined, ledgerStrict: ledgerActive, isDeliverableReply: isAixPropertySendMode,
+              nameAliases: addressName.aliases,
             };
             const runValidate = (openingFixed: string, aixGates: boolean): { cleaned: string; issues: string[] } => {
               const vOpts = {
                 aixGates, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch,
+                // 2026-09-11 竹内方針3: 呼びかけ位置の別名を確定名に統一（applySurfaceFixes ①）
+                nameAliases: addressName.aliases,
                 customerConditions: customerConditions || groundTruth.customerConditionsDb || "",
                 protect: (s: string) => isCellRequiredSentence(s, pairContext),
                 aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend,
@@ -4806,9 +4791,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               let vr = validateAndClean(openingFixed, vOpts);
               if (aixGates && vr.gateEdits.some((e) => e.reversible)) {
                 try {
-                  // 多重集合で比較（同じ PAIR_ELEMENT_MISSING が別要素で既に出ていても、ゲートの削除で1件増えたら検知する）
-                  const beforeCodes = skeletonBlockCodes(openingFixed, gateCheckCtx);
-                  const introduced = skeletonBlockCodes(vr.cleaned, gateCheckCtx).filter((c) => {
+                  // 多重集合で比較（同じ要素が別に既に欠けていても、ゲートの削除で1件増えたら検知する）
+                  // 2026-09-11 竹内方針1: PAIR_ELEMENT_MISSING は info（観測専用）になったので、severity 非依存の cellElementGaps（セル必須要素の欠落ラベル）
+                  //   ＋ block で残る骨格系（EMPTY_CLOSER / SPLIT_ACK_REPLY）で比較する（旧 skeletonBlockCodes だけだと安全弁が黙って無効になる・E1-k）
+                  const gapCodes = (t: string) => [...cellElementGaps(t, gateCheckCtx), ...skeletonBlockCodes(t, gateCheckCtx)];
+                  const beforeCodes = gapCodes(openingFixed);
+                  const introduced = gapCodes(vr.cleaned).filter((c) => {
                     const i = beforeCodes.indexOf(c);
                     if (i >= 0) { beforeCodes.splice(i, 1); return false; }
                     return true;
@@ -5054,6 +5042,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   // S-5: 顧客名の一貫性チェック（checkNameConsistency）用
                   customerName: customerName || undefined,
                   allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
+                  // 2026-09-11 竹内方針3: スタッフが過去に呼んだ名前・顧客の名乗りは block しない（resolveAddressName の aliases）
+                  nameAliases: addressName.aliases,
                   brainMeta: brainMeta
                     ? {
                         // S-3: チェック側にも鮮度ゲート済み action を渡す（stale action で STAGE_SKIP 抑制・Brain判定済み免除が効かないように）
@@ -5201,6 +5191,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
                     phaseKey: phaseGuideKey, customerName: customerName || undefined,
                     allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
+                    nameAliases: addressName.aliases,                                // 2026-09-11 竹内方針3
                     sentPropertiesCount: estimateVerdict.sentPropertiesCount,
                     estimateContext: estimateVerdict,
                     moveOutSubject,                                                  // G10
@@ -5299,12 +5290,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
             if (!isTemplateOptimize && finalCheck && draftBody) {
               try {
-                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|SYMPATHY_ECHO|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|OPENER_MISMATCH|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT|DONE_PRESUPPOSED_WITHOUT_EVIDENCE|PROMISE_ECHO_MISMATCH|UNPROMPTED_PROPOSAL|CELL_AVOID_CONFLICT|ECHO_FROM_BRAIN_NOT_CUSTOMER|CLOSING_FORWARD_PUSH)/;
+                const DET_CODES_RE = /^(?:BANNED_WORD|THANK_OPENING|GRATITUDE_OPENING|CONDITION_OPENING|EXCLAMATION_OVERUSE|NG_PROPERTY_MENTION|INTRO_REPEAT|WE_DO_MISSING_DET|GENERIC_ONLY_REPLY|REPLY_SKELETON_MISSING|CONCERN_UNADDRESSED|EMPTY_CLOSER|PAIR_ELEMENT_MISSING|SPLIT_ACK_REPLY|FEELING_TEMPLATE|SYMPATHY_ECHO|NAME_|PROMISE_ECHO_MISSING|TIME_INVALID_HONIJITSU|EMOJI_RULE_DET|SYSTEM_MARKER_LEAK|QUOTE_UNBALANCED|NEGATIVE_APOLOGY|HASTY_PROMISE|ESTIMATE_NO_TRIGGER|STATE_REGRESSION|VIEWING_BEFORE_VACANCY|APPLY_WITHOUT_INTENT|POST_APPLY_VIEWING|TENSE_MISMATCH|FEEDBACK_PREMATURE|GOCHOUGO_|CONFIRM_|PHOTO_|JUSHU_|GUIDE_|SASETE_OVERUSE|APPLY_PUSH_NO_INTENT|UNSENT_CLAIM|SELF_HONORIFIC|ECHO_CONFIRM|LIST_STRUCTURE|DOUBLE_KEIGO|FABRICATED_POLICY_DET|FAREWELL_ON_MOVEOUT_INFO|DISCLOSURE_ASSERTION|VACANCY_ASSERTION|MOVEIN_DATE_ASSERTION|SCREENING_ASSURANCE|OPENING_GREETING_|OPENER_MISMATCH|PREEMPTIVE_HEDGE|FABRICATED_SEARCH_REPORT|CONDITION_RELAX_UNASKED|HEDGE_WITHOUT_SEARCH_DECL|SELF_HEDGE_ECHO|CLOSER_MISSING|COMMIT_AFTER_DELIVERABLE|NANISOTSU_MISPLACED|PASSIVE_CLOSER|RESULT_EXCUSE|CONDITION_ECHO_MISSING|SCHEDULE_ASSERT_UNCONFIRMED|FACT_DEFERRED_ANSWER|WIDEN_EXCUSE_REDUNDANT|REASSURANCE_NO_BASIS|URGENCY_NO_INTENT|CONSIDER_PUSH|HUMBLE_WAIT|DONE_PRESUPPOSED_WITHOUT_EVIDENCE|PROMISE_ECHO_MISMATCH|UNPROMPTED_PROPOSAL|CELL_AVOID_CONFLICT|ECHO_FROM_BRAIN_NOT_CUSTOMER|CLOSING_FORWARD_PUSH|TYPO_)/;
                 const postDetCtx = {
                   recentMessages, lastCustomerMessage: message, isAutoSend: enforceReplyModeGate,
                   isEarlyConversation: isFirstEverReplyFromMsgs, tpoLabel: tpoNoteForLLM ?? undefined,
                   phaseKey: phaseGuideKey, customerName: customerName || undefined,
                   allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
+                  nameAliases: addressName.aliases,                                // 2026-09-11 竹内方針3
                   sentPropertiesCount: estimateVerdict.sentPropertiesCount,
                   estimateContext: estimateVerdict,
                   moveOutSubject,                                                  // G10
@@ -5359,6 +5351,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               moveOutSubject,
               confirmCtx: { allowed: confirmCtxFinal.allowed, source: confirmCtxFinal.source, object: confirmCtxFinal.object },
               greeting: toGreetingLite(greetingDecision), // G32: kind/opener/audit（waitedMs・起点・customerKind）を保存（check-reply が復元・週次 SQL で冒頭差分を集計）
+              // 2026-09-11 竹内方針3: 呼び名の決定根拠（JSONB のため migrate-schema 更新不要）
+              address_name: { name: addressName.name, source: addressName.source, evidence: addressName.evidence.slice(0, 40), aliases: addressName.aliases.slice(0, 6) },
               // 往復文脈（Turn-Pair）＋実質判定（Substance）
               substance: { has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, residue: substance.residue.slice(0, 120), evidence: substance.evidence, isPureBoilerplate: substance.isPureBoilerplate, waitSignal: substance.waitSignal },
               turnPair: { staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, staffEvidence: lastStaffTurn.evidence.slice(0, 60), customer: pairContext.customer.kind, customerSecondary: pairContext.customer.secondary, customerObject: pairContext.customer.object, customerSource: pairContext.customer.source, ruleId: pairContext.ruleId, precedence: pairContext.rule?.precedence ?? null, cellGuard: pairContext.cellGuard,
@@ -5593,7 +5587,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             console.error("generate-reply stream error:", streamErr);
             // フォールバックテキストを返す（無言クローズだとフロントが空ドラフト表示になるため）
             try {
-              controller.enqueue(encoder.encode("（AI返信の生成に失敗しました。再生成をお試しください）"));
+              // 2026-09-11 データ衛生: 文言の出所は example-hygiene の定数1か所（送信停止・保存停止・学習除外が同じ定数で判定する）
+              controller.enqueue(encoder.encode(GENERATION_FAILURE_TEXT));
             } catch { /* controller already closed */ }
             // ストリームを先に閉じてクライアントの generating=true を即解放する
             // Supabaseのクリーンアップは fire-and-forget でバックグラウンド実行

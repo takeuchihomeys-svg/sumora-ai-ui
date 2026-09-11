@@ -2,6 +2,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
 import { generateEmbedding, upsertKnowledge, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
+import { isUsableExampleText } from "@/app/lib/example-hygiene";
 
 export const maxDuration = 60;
 
@@ -120,7 +121,8 @@ export async function GET(req: NextRequest) {
       page++;
     }
 
-    const unprocessed = examples.filter((ex) => !processedIds.has(ex.id as string));
+    // 2026-09-11 データ衛生: 生成失敗文・テスト送信からナレッジを作らない（失敗文由来の差分学習11行の再発防止）
+    const unprocessed = examples.filter((ex) => !processedIds.has(ex.id as string) && isUsableExampleText(ex.sent_reply as string));
     const toProcess = unprocessed.slice(0, 15);
 
     let totalAdded = 0;

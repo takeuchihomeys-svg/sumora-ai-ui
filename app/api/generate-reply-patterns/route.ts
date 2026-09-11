@@ -4,6 +4,8 @@ import { supabase } from "@/app/lib/supabase";
 import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE, STATE_SEARCH_ALIASES, CRITICAL_RULES_COMPACT } from "@/app/lib/line-reply-prompts";
 import { validateAndClean } from "@/app/lib/validate-reply";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+// 2026-09-11 データ衛生: 生成失敗文・テスト送信を正解例として注入しない（読む側で除外・行は削除しない）
+import { isUsableExampleText } from "@/app/lib/example-hygiene";
 
 export const maxDuration = 30;
 
@@ -76,7 +78,7 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
         query_embedding: embedding, match_count: 20, filter_states: aliases,
       }) as { data: Array<{ customer_message: string; sent_reply: string; is_starred: boolean; reply_angle: string | null; similarity: number }> | null };
       if (similar && similar.length > 0) {
-        const above = similar.filter(e => e.similarity >= 0.45);
+        const above = similar.filter(e => e.similarity >= 0.45 && isUsableExampleText(e.sent_reply));
         if (above.length > 0) {
           const sorted = [...above].sort((a, b) => {
             // ★+0.15 に加え、4案から選ばれた実例（reply_angle あり）は+0.1 追加ブースト
@@ -99,9 +101,10 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
     .eq("is_starred", true)
     .order("created_at", { ascending: false })
     .limit(25);
-  if (!data || data.length === 0) return "";
+  const usable = (data ?? []).filter((e) => isUsableExampleText(e.sent_reply));
+  if (usable.length === 0) return "";
   return "\n\n【⭐ スモラの実際の返信例】\n" +
-    data.map((e, i) => `[例${i + 1}]\nお客様: 「${e.customer_message}」\nスモラ: 「${e.sent_reply}」`).join("\n\n");
+    usable.map((e, i) => `[例${i + 1}]\nお客様: 「${e.customer_message}」\nスモラ: 「${e.sent_reply}」`).join("\n\n");
 }
 
 // ─── ナレッジ取得（3層）────────────────────────────────────────────────────

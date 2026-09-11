@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { isUsableExampleText, isUsableAiDraft } from "@/app/lib/example-hygiene";
 
 export const maxDuration = 300;
 
@@ -55,8 +56,10 @@ export async function GET(req: NextRequest) {
   }
 
   // 短すぎる返信はJS側で除外（DBにlength関数で WHERE できないため）
+  // 2026-09-11 データ衛生: 生成失敗文（送信文・下書き）には☆を付けない
   const qualityExamples = (examples ?? []).filter(ex =>
-    ((ex.sent_reply as string | null)?.length ?? 0) >= 30
+    ((ex.sent_reply as string | null)?.length ?? 0) >= 30 &&
+    isUsableExampleText(ex.sent_reply as string | null) && isUsableAiDraft(ex.ai_draft as string | null)
   );
   // was_ai_modified=false を先頭に（純粋なAI承認シグナルを優先分析）
   const sortedExamples = [

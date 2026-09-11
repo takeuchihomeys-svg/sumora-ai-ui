@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+// 2026-09-11 データ衛生: 生成失敗文・テスト送信を正解例として注入しない（読む側で除外）
+import { isUsableExampleText } from "@/app/lib/example-hygiene";
 
 export const maxDuration = 30;
 
@@ -94,7 +96,7 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
     }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; similarity: number }> | null; error: unknown };
 
     if (!rpcError && similar && similar.length > 0) {
-      const sorted = [...similar].sort((a, b) => {
+      const sorted = similar.filter((ex) => isUsableExampleText(ex.sent_reply)).sort((a, b) => {
         const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0);
         const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0);
         return scoreB - scoreA;
@@ -119,9 +121,11 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
     .order("created_at", { ascending: false })
     .limit(10);
 
-  const examples = (exampleRows || []).length > 0
+  const usableRows = ((exampleRows || []) as { customer_message: string; sent_reply: string; reply_angle?: string | null }[])
+    .filter((r) => isUsableExampleText(r.sent_reply));
+  const examples = usableRows.length > 0
     ? "\n【⭐ スモラの実際の送信例（文体・感嘆符・絵文字はこれに合わせる。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ）】\n" +
-      (exampleRows as { customer_message: string; sent_reply: string; reply_angle?: string | null }[])
+      usableRows
         .map((r, i) => {
           const angleTag = r.reply_angle && r.reply_angle !== "starred" ? `|${{"A":"王道","B":"シンプル","C":"C案","short_direct":"短く直接"}[r.reply_angle] ?? r.reply_angle}` : "";
           return `[例${i + 1}${angleTag}]\nお客様:「${r.customer_message}」\nスモラ:「${r.sent_reply}」`;

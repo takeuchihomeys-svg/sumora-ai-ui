@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app/lib/ai-feedback-guard";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { isUsableExampleText, isUsableAiDraft } from "@/app/lib/example-hygiene";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
@@ -284,7 +285,8 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
 
   if (fetchErr) throw new Error(fetchErr.message);
 
-  const examples = (rawExamples ?? []) as DiffExample[];
+  // 2026-09-11 データ衛生: 生成失敗文（下書き・送信文とも）・テスト送信は差分分析の対象にしない
+  const examples = ((rawExamples ?? []) as DiffExample[]).filter((ex) => isUsableExampleText(ex.sent_reply) && (ex.ai_draft == null || isUsableAiDraft(ex.ai_draft)));
 
   if (examples.length === 0) {
     return { chunk, processed: 0, newRules: 0, questionsRaised: 0, message: `chunk${chunk}: 直近7日の修正差分なし` };
@@ -475,7 +477,9 @@ async function runWeeklyMetricsRollup(): Promise<Record<string, unknown>> {
       .limit(2000);
     if (error) throw new Error(error.message);
 
-    const all = (rows ?? []) as Array<{ ai_draft: string | null; sent_reply: string | null; was_ai_modified: boolean | null }>;
+    // 2026-09-11 データ衛生: 生成失敗文は KPI の母集団から外す（失敗文の「無修正送信」を未修正率に数えない）
+    const all = ((rows ?? []) as Array<{ ai_draft: string | null; sent_reply: string | null; was_ai_modified: boolean | null }>)
+      .filter((r) => isUsableExampleText(r.sent_reply) && (r.ai_draft == null || isUsableAiDraft(r.ai_draft)));
     // AI案が存在した返信のみが unmodified_rate / edit distance の母集団（手書きは別カウント）
     const withDraft = all.filter((r) => (r.ai_draft ?? "").trim().length > 0);
     const handwritten = all.length - withDraft.length;

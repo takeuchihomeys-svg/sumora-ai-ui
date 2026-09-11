@@ -120,7 +120,8 @@ describe("Sさん 20:24（原因A+B+C の統合）", () => {
     const issues = issuesOf(S_NG, ctx);
     const codes = issues.map((i) => `${i.code}:${i.severity}`);
     expect(codes).toContain("EMPTY_CLOSER:block");
-    expect(codes).toContain("PAIR_ELEMENT_MISSING:block");
+    // 2026-09-11 竹内方針1: 必須要素は観測専用（info）。block は EMPTY_CLOSER が担う（修正案の出所は同じ fix）
+    expect(codes).toContain("PAIR_ELEMENT_MISSING:info");
     const sug = issues.filter((i) => i.code === "EMPTY_CLOSER" || i.code === "PAIR_ELEMENT_MISSING").map((i) => i.suggestion).join("／");
     expect(sug).toContain("ご都合よろしいお日にちにお部屋ご案内させて頂きます");
     expect(sug).not.toContain("{viewingOffer}");
@@ -177,14 +178,18 @@ describe("原因A: 前向き反応の下位種別", () => {
       .toBe("Sさんお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！");
   });
 
-  it("T-10 「内見したいです」（T2 明示）は viewing_explicit。内覧提案が block で要求される", () => {
+  // 2026-09-11 竹内方針1（§3.2・E1-f）: 前向きセルの要素は「次の一手を1つ」だけ（ご案内／募集状況の確認／見積の作成）。
+  //   スタッフは内見の明言に条件節なしの「お部屋ご案内させて頂きます」で答える（PS 5/14）＝裸型でも要素を満たす。必須要素は info（観測専用）
+  it("T-10 「内見したいです」（T2 明示）は viewing_explicit。条件節なしの「ご案内させて頂きます」で要素を満たし、次の一手が無ければ info", () => {
     const cust = "内見したいです";
     const L = sLedger(cust);
     const { pair, sub } = buildPair(cust, S_AIX_1905, L, { lastStaffAt: T("09-10T19:05:15"), custAt: T("09-10T20:24:00") });
     expect(pair.customer.kind).toBe("positive");
     expect(pair.customer.positive?.kind).toBe("viewing_explicit");
-    const c = codesOf("かしこまりました！！\n募集状況確認させて頂きます！！", ctxOf(cust, L, pair, sub));
-    expect(c).toContain("PAIR_ELEMENT_MISSING:block");
+    expect(codesOf("かしこまりました！！\nお部屋ご案内させて頂きます😊！！", ctxOf(cust, L, pair, sub)).some((x) => x.startsWith("PAIR_ELEMENT_MISSING"))).toBe(false);
+    const c = codesOf("よろしくお願い致します！！", ctxOf(cust, L, pair, sub));
+    expect(c).toContain("PAIR_ELEMENT_MISSING:info");
+    expect(c).not.toContain("PAIR_ELEMENT_MISSING:block");
   });
 
   it("T-11 「内見などはできますか？？」は質問ではなく内覧受付（ANY_QUESTION に落ちない）", () => {
@@ -242,12 +247,14 @@ describe("原因C: [X]型と[Y]型の分離", () => {
     expect(c).toContain("VIEWING_DATE_ASK_WITHOUT_AIX:block");
   });
 
-  it("T-15 条件節なしの裸型は [Y] に一致せず PAIR_ELEMENT_MISSING が出る", () => {
+  // 2026-09-11 竹内方針1: 裸型も「ご案内させて頂きます」＝次の一手なので必須要素は満たす（期待を反転）。裸型は語彙検査 GOCHOUGO_NO_CONDITION（warning）が担う
+  it("T-15 条件節なしの裸型は [Y] に一致しないが、次の一手（ご案内）として必須要素は満たす。裸型は GOCHOUGO_NO_CONDITION が見る", () => {
     const draft = "ご査収頂きありがとうございます😊！！\nかしこまりました！！\nSさんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！";
     expect(VIEWING_OFFER_SOFT_RE.test(draft)).toBe(false);
     expect(isBareViewingOffer(draft)).toBe(true);
     const c = codesOf(draft, ctxOf(S_CUST_2024, L, P.pair, P.sub));
-    expect(c).toContain("PAIR_ELEMENT_MISSING:block");
+    expect(c.some((x) => x.startsWith("PAIR_ELEMENT_MISSING"))).toBe(false);
+    expect(c).toContain("GOCHOUGO_NO_CONDITION:warning");
   });
 
   it("T-16 内覧提案の文で物件名を復唱したら warning（内覧は物件非依存）", () => {

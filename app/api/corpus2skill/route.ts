@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { safeInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
+import { isUsableExampleText, isUsableAiDraft, EXCLUDE_FAILED_SENT_LIKE } from "@/app/lib/example-hygiene";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
@@ -644,6 +645,9 @@ async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
     .eq("was_ai_modified", true)
     .not("ai_draft", "is", null)
     .not("sent_reply", "is", null)
+    // 2026-09-11 データ衛生: 生成失敗文を「AIの誤り」として診断材料にしない（両列 NOT NULL 前提なので like 除外で安全）
+    .not("ai_draft", "like", EXCLUDE_FAILED_SENT_LIKE)
+    .not("sent_reply", "like", EXCLUDE_FAILED_SENT_LIKE)
     .eq("entry_source", "line_reply")
     .gte("created_at", thirtyDaysAgo)
     .order("created_at", { ascending: false })
@@ -1040,7 +1044,14 @@ export async function POST(req: NextRequest) {
   console.log(`[corpus2skill] 盲点発見: questions=${blindSpots.questionsSaved}`);
   console.log(`[corpus2skill] AIXズレ分析: pairsFound=${mismatchResult.pairsFound}, suggestionsInserted=${mismatchResult.suggestionsInserted}`);
 
-  const { data: examples, queueIds } = examplesResult as { data: Example[] | null; queueIds: string[] };
+  const { data: examplesRaw, queueIds } = examplesResult as { data: Example[] | null; queueIds: string[] };
+  // 2026-09-11 データ衛生: 生成失敗文（送信文・下書き）・テスト送信はスキル合成の材料にしない（読む側で除外・行は削除しない）
+  const examples = examplesRaw
+    ? examplesRaw.filter((e) => {
+        const r = e as unknown as { sent_reply?: string | null; ai_draft?: string | null };
+        return isUsableExampleText(r.sent_reply) && (r.ai_draft == null || isUsableAiDraft(r.ai_draft));
+      })
+    : null;
 
   if (!examples || examples.length === 0) {
     await finishCronLog(runLogId, true, {

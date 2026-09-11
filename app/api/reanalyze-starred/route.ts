@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { isUsableExampleText } from "@/app/lib/example-hygiene";
 
 export const maxDuration = 60;
 
@@ -182,6 +183,8 @@ export async function POST(req: NextRequest) {
 
   let totalAdded = 0;
   for (const ex of examples) {
+    // 2026-09-11 データ衛生: 生成失敗文・テスト送信からナレッジを作らない
+    if (!isUsableExampleText(ex.sent_reply as string)) continue;
     const state = ex.conversation_state as string;
     const added = await analyzeExample(
       ex.id as string,

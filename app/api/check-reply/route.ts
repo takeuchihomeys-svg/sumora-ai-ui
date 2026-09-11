@@ -9,6 +9,8 @@ import { buildActionLedger, type LedgerAixRow, type LedgerTask } from "@/app/lib
 import { resolveGreeting, toGreetingLite, normalizeGreetingLite, computeAlreadyGreetedToday, isProgressPushMessage, type GreetingDecisionLite } from "@/app/lib/greeting";
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair, type PairContext, type SubstanceVerdict } from "@/app/lib/reply-context";
 import { isConditionFormMessage } from "@/app/lib/line-reply-prompts";
+// 2026-09-11 竹内方針3: 呼び名の唯一の決定（generate-reply と同じ関数）
+import { resolveAddressName } from "@/app/lib/validate-reply";
 
 // 2026-09-11 統合設計（経路G・T4）: 送信時チェック（2.3s）は Sonnet の context_check が時間内にほぼ返らない（24h で約76%タイムアウト）。
 //   context_check を Haiku で走らせる（生成時の3パス結果を未完走の結果で上書きしない）。モデル ID は final-check の MODEL_CHECK_FAST と同じ
@@ -64,6 +66,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
   if (!text) return NextResponse.json({ error: "text required" }, { status: 400 });
+  // 2026-09-11 竹内方針3: 呼び名は generate-reply と同じ resolveAddressName で決める（旧: body.customerName の生値をそのまま基準名にしていた）
+  const addressName = resolveAddressName({ messages: recentMessages, displayName: customerName ?? "" });
+  customerName = addressName.name || undefined;
 
   // ルール + 正解データを並列取得（fetchGroundTruth は throw せず1.5sで諦める fail-open）
   // ルールは共有キャッシュ（prompt-cache.ts: TTL60秒 + SWR + fail-open）経由で取得
@@ -185,6 +190,7 @@ export async function POST(req: NextRequest) {
     customerConditionsDb: groundTruth.customerConditionsDb,
     staffSourceText: customerName ? `お客様のお名前: ${customerName}さん` : undefined,
     customerName: customerName || undefined,
+    nameAliases: addressName.aliases,
     tpoLabel,
     phaseKey,
     greetingDecision, // G32: 冒頭の対称検査（final-check ⑦）の正

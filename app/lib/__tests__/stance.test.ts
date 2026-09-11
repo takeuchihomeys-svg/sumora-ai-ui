@@ -85,11 +85,12 @@ describe("ヘッジ許可", () => {
 });
 
 describe("締めあり", () => {
-  it("C1 みく正解文: closer=commit/nanisotsu=true・指摘ゼロ", () => {
+  // 2026-09-11 竹内方針1（§3.2・E1-e）: CA_CONDITION の伴走締めはスタッフ実文 3/18 → セル既定の締めは none（何卒は維持）。伴走締めを書いても指摘しない
+  it("C1 みく正解文: closer=none（CA_CONDITION）/nanisotsu=true・指摘ゼロ", () => {
     const { pair } = build(MIKU_FORM, ASK, { flags: { isConditionPresented: true } });
     const ok = "かしこまりました😊！！\n\n梅田まで1本で行ける沿線周辺全域から9万以内・1LDK・カウンターキッチン希望・築10年以内でみくさんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！\n\nみくさんがご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます😌！！\n何卒よろしくお願い致します！！";
     const v = resolveCloser(pair, deriveCloserSignals(ok), { customerName: "みく" });
-    expect(v.closer).toBe("commit_until_found"); expect(v.nanisotsu).toBe(true);
+    expect(v.closer).toBe("none"); expect(v.nanisotsu).toBe(true);
     expect(codes(ok, MIKU_FORM, ASK).filter((x) => /HEDGE|RELAX|CLOSER|NANISOTSU|GENERIC|ECHO/.test(x))).toEqual([]);
   });
   it("C2 条件変更（瑞希）: commit・何卒なし。何卒を付けると NANISOTSU_MISPLACED warning", () => {
@@ -151,13 +152,16 @@ describe("姿勢ギャップ", () => {
     expect(tokens).not.toContain("⑦20万");
     const abstract = "かしこまりました！！\nご希望のご条件に合ったお部屋ピックアップしてお送りさせて頂きます！！\nみくさんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます😌！！";
     expect(evalConditionEcho(abstract, tokens).echoed.length).toBe(0);
-    expect(codes(abstract, MIKU_FORM, ASK)).toContain("CONDITION_ECHO_MISSING:block");
+    // 2026-09-11 竹内方針2: 復唱は表示のみ（warning）。復唱ゼロの正解が 14/119 残り、条件フォームの 21% はエリアも数値も復唱しない
+    expect(codes(abstract, MIKU_FORM, ASK)).toContain("CONDITION_ECHO_MISSING:warning");
+    expect(codes(abstract, MIKU_FORM, ASK)).not.toContain("CONDITION_ECHO_MISSING:block");
   });
-  it("S2 あやさん型（具体宣言なしの全力サポート）: GENERIC_ONLY_REPLY block。具体宣言があれば発火しない", () => {
+  // 2026-09-11 竹内方針1: GENERIC_ONLY_REPLY は観測専用（info）。編集で解消4／発生5＝スタッフの判断と相関なし
+  it("S2 あやさん型（具体宣言なしの全力サポート）: GENERIC_ONLY_REPLY は info（観測）。具体宣言があれば発火しない", () => {
     const cust = "桜川・西九条エリアで7万以内でお願いします";
     const staff = "ご希望条件お聞かせください";
     const generic = "ご条件お送り頂きありがとうございます！！\nあやさんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます！！\n何卒よろしくお願い致します😌！！";
-    expect(codes(generic, cust, staff, { customerName: "あや" })).toContain("GENERIC_ONLY_REPLY:block");
+    expect(codes(generic, cust, staff, { customerName: "あや" })).toContain("GENERIC_ONLY_REPLY:info");
     const ok = "かしこまりました！！\n桜川・西九条周辺全域から7万以内であやさんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！\nあやさんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます😌！！";
     expect(codes(ok, cust, staff, { customerName: "あや" }).some((x) => x.startsWith("GENERIC_ONLY"))).toBe(false);
   });
@@ -169,10 +173,11 @@ describe("姿勢ギャップ", () => {
     const c3 = codes("こちらこそご丁寧にありがとうございます😊\n物件が揃い次第お送りいたしますので、少々お時間いただけますと幸いです😌", "ありがとうございます。よろしくお願いします", "ピックアップしてお送りさせて頂きます！！");
     expect(c3).toContain("HUMBLE_WAIT:warning");
   });
-  it("S4 computeStanceFlags: みくNG文は closer_kind=preemptive_hedge・期待は commit", () => {
+  // 2026-09-11 竹内方針1: CA_CONDITION のセル既定の締めは none（伴走締めはスタッフ実文 3/18）
+  it("S4 computeStanceFlags: みくNG文は closer_kind=preemptive_hedge・期待は none（CA_CONDITION）", () => {
     const { pair, hedge } = build(MIKU_FORM, ASK, { flags: { isConditionPresented: true } });
     const f = computeStanceFlags("かしこまりました😊！！\n梅田まで1本で行ける沿線周辺全域から9万以内・1LDKでみくさんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！\n35㎡以上は少し難しい可能性もございます😌！！", pair, hedge, { customerName: "みく", customerText: MIKU_FORM });
-    expect(f.closer_kind).toBe("preemptive_hedge"); expect(f.closer_expected).toBe("commit_until_found"); expect(f.hedge_kind).toBe("preemptive");
+    expect(f.closer_kind).toBe("preemptive_hedge"); expect(f.closer_expected).toBe("none"); expect(f.hedge_kind).toBe("preemptive");
   });
   it("S5 computeStanceLite（送信文側）: みく正解文は commit/何卒あり・復唱率0.5以上", () => {
     const lite = computeStanceLite("かしこまりました😊！！\n梅田まで1本で行ける沿線周辺全域から9万以内・1LDK・カウンターキッチン希望・築10年以内・35㎡以上でみくさんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！\nみくさんがご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます😌！！\n何卒よろしくお願い致します！！", MIKU_FORM);

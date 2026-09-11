@@ -15,10 +15,13 @@
 // - check-reply/route.ts    …… 送信時の再チェック用ルート。2026-09-11 以降、画面からは呼ばない
 //                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
-import { checkNameConsistency, ASSERTION_BAN_RULES, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE } from "./validate-reply";
+import { checkNameConsistency, ASSERTION_BAN_RULES, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
+// 2026-09-11 竹内方針1・5: 誤字（warning のみ）・「すぐに」の唯一の定義（後処理と検査が同じ正規表現）
+import { detectTypos } from "./typo-check";
+import { HASTY_ADVERB_TEST_RE } from "./banned-phrasing";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶（generate-reply / brain-core と四者同名）
 import { moveOutEvidenceText, type MoveOutSubject } from "./move-out-context";
-import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, type ConfirmationContextVerdict } from "./confirmation-context";
+import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, SEARCH_CONFIRM_RE, type ConfirmationContextVerdict } from "./confirmation-context";
 import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, type GreetingKind, type GreetingDecisionLite } from "./greeting";
 import {
   PHASE_PROHIBITIONS,
@@ -35,7 +38,7 @@ import type { EstimateContextVerdict } from "./estimate-context";
 import {
   analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair, STAFF_KIND_JA, CUSTOMER_KIND_JA, type SubstanceVerdict, type PairContext,
   // 2026-09-09 Fable5 みく事例: ヘッジゲート・締めポリシー・姿勢ギャップ（生成側 route.ts / buildStanceNote と同一関数）
-  resolveHedgeAllowance, resolveCloser, deriveCloserSignals, extractEchoTokens, evalConditionEcho, classifyScheduleCommitment, resolveAnswerability, detectExcusePhrases,
+  resolveHedgeAllowance, resolveCloser, deriveCloserSignals, extractEchoTokens, evalConditionEcho, resolveCustomerDocScope, isEchoableScope, classifyScheduleCommitment, resolveAnswerability, detectExcusePhrases,
   CLOSER_TEXT, PRE_PICKUP_HEDGE_RE, SEARCH_REPORT_RE, RELAX_PROPOSAL_RE, PAST_REPORT_RE, SEARCH_DECL_RE, SELF_HEDGE_ECHO_RE, CUST_STATED_RELAX_RE,
   STAFF_ASSERT_SCHEDULE_RE, SCHEDULE_ASK_RE, DEFERRED_ANSWER_RE, NANISOTSU_RE, OPEN_DOOR_RE, WAIT_SOFTLY_RE, RESULT_EXCUSE_RE, DELIVERABLE_RE, redoWord,
   // 2026-09-10 Fable5 あみ事例: 顧客アンカー語彙・持込予告（生成側 buildVocabAnchorNote / PAIR_MATRIX と同一定数）
@@ -46,7 +49,7 @@ import {
   // 2026-09-10 Fable5 みく事例: 会話スコープ方針・セル衝突（生成側と同一オブジェクト）
   type BrainConversationScope, type CellConflict,
   // 2026-09-11 統合設計（返信生成×最終チェックの衝突解消）: 回答検出・必須要素判定・免除・例文選択・顧客名スロットの単一真実源
-  hasDirectAnswer, PROPOSAL_FORM_RE, mustIncludeSatisfied, isCellRequiredSentence, selectPairExample, fillPairTokens, fillNameSlot,
+  hasDirectAnswer, PROPOSAL_FORM_RE, mustIncludeSatisfied, isCellRequiredSentence, selectPairExample, fillPairTokens, fillNameSlot, CONFIRM_DECL_WITH_OBJECT_RE,
   type PairMustInclude,
 } from "./reply-context";
 // 2026-09-09 Fable5 行動台帳: generate-reply と同一オブジェクト（省略時は recentMessages から再計算）。実行前提語ゲート・自動修正は action-ledger の同じ関数
@@ -136,6 +139,11 @@ export interface FinalCheckContext {
   customerName?: string;
   /** 顧客自身が書いた第三者名（連名者・保証人等）。NAME_MISMATCH から除外する */
   allowNames?: string[];
+  /** 2026-09-11 竹内方針3: resolveAddressName の aliases（スタッフが過去に呼んだ名前・顧客の名乗り・DB名のトークン）。
+   *  呼びかけ位置でも NAME_MISMATCH にしない（後処理 unifyAddressAliases が確定名に統一する） */
+  nameAliases?: string[];
+  /** 基準時刻（ms）。曜日の誤字判定・TIME_INVALID_HONIJITSU に使う（常設の回帰スクリプトは送信時刻を渡す。既定 Date.now()） */
+  now?: number;
   /** generate-reply の resolveState().guideKey（first_reply/hearing/proposing/viewing/applying/closed_won/closed_lost）。STATE_REGRESSION 判定に使用 */
   phaseKey?: string;
   // ── G10 / G26 / G6 / G30（2026-09-08 Fable5）。route.ts は finalCheckCtx / detCtx / postDetCtx の3か所に同じ値を渡す ──
@@ -624,7 +632,9 @@ function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): PromptB
     if (!pair.rule) return closingLine;
     // when が false の要素（この場面に無い要素）は出さない＋プレースホルダを実値に置換（生成と同じ）
     const must = pair.rule.mustInclude.filter((m) => !m.when || m.when(pair)).map((m) => fillPairPlaceholders(m.label, pair));
-    return `\n往復文脈: 我々=${STAFF_KIND_JA[pair.staff.kind]}→お客様=${CUSTOMER_KIND_JA[pair.customer.kind]}。必須要素: ${must.join(" / ") || "なし"}（これらは省略可能な要素ではない。欠けていれば WE_DO_MISSING / MISSED_QUESTION として指摘すること）${closingLine}`;
+    // 2026-09-11 竹内方針1: 必須要素は「生成の参考情報」。スタッフの実際の返信を優先するため、欠落を LLM に指摘させない
+    //   （旧文言「欠けていれば WE_DO_MISSING として指摘すること」は決定論で info に下げた要求の裏口になっていた・V-2）
+    return `\n往復文脈: 我々=${STAFF_KIND_JA[pair.staff.kind]}→お客様=${CUSTOMER_KIND_JA[pair.customer.kind]}。必須要素（生成の参考情報）: ${must.join(" / ") || "なし"}（欠落を指摘しない。スタッフの実際の返信はこの要素を含まないことが多い）${closingLine}`;
   })();
   // 2026-09-09 行動台帳: 「我々が実際にしたこと」を段階情報に添える。DOUBLE_DECLARATION の誤発行（条件更新を伴う宣言の再提示）を抑止
   // 2026-09-11 統合設計（経路E1）: 一次証拠は aix_usage_logs > line_tasks > 本文（旧表記は aix_usage_logs のみで誤り）。
@@ -929,6 +939,8 @@ ${draft}
 // FP-04: 会話初期は FABRICATED_AMOUNT / FABRICATED_AVAILABILITY を warning に格下げ（偽陽性防止）
 // FN-006: context_check の TIME_INVALID を自動送信時のみ block に昇格
 function assignSeverity(pass: CheckPass, code: string, isAutoSend = false, isEarlyConversation = false): CheckSeverity {
+  // 2026-09-11 竹内方針1: 必須要素・骨格系は観測専用（LLM・差分再検査が同名コードを返しても info。修正ループにも渡らない）
+  if (OBSERVE_ONLY_CODES.has(code)) return "info";
   // FP-04: 会話初期（情報源が薄い）は誤block防止のため FABRICATED 系を warning に格下げ
   // FABRICATED_PROPERTY も対象（初回は顧客が書いた物件名の表記ゆれを「写し間違い」と誤blockしやすいため）
   if (isEarlyConversation && (code === "FABRICATED_AMOUNT" || code === "FABRICATED_AVAILABILITY" || code === "FABRICATED_PROPERTY")) {
@@ -1009,9 +1021,7 @@ const BANNED_WORDS_DETERMINISTIC = [
   // 内覧・ご案内・撮影の主語逆転
   "ご内覧させて頂け", "ご内覧させていただけ", "ご案内頂けます", "ご案内いただけます",
   "撮影頂け", "撮影して頂き", "撮影お願い", "撮影をお願い",
-  // 「すぐに」＋約束（HASTY_PROMISE の 0ms 版）
-  "撮影後すぐに", "撮影次第すぐに", "撮影でき次第すぐに", "撮影出来次第すぐに",
-  "確認出来次第すぐに", "確認でき次第すぐに", "確認し次第すぐに", "確認次第すぐに",
+  // （旧:「〜次第すぐに」8語。2026-09-11 竹内方針5: HASTY_PROMISE（banned-phrasing の HASTY_ADVERB_RE）と10件すべて重複していたので削除）
   // プレースホルダ名の呼びかけ（"名無し" は既存。PLACEHOLDER_ADDRESS_DET_RE と二重防御）
   "権兵衛", "未設定さん", "未設定様", "ゲストさん", "ゲスト様",
 ];
@@ -1022,7 +1032,9 @@ const BANNED_WORDS_DETERMINISTIC = [
 const WAIT_TPO_RE = /一時保留|感謝返し|短い了承|強推し直後|ネガ文脈|検討中フォロー|内覧キャンセル|成約後サポート/;
 const BOILERPLATE_RE = /かしこまりました|はい|お世話になっております|お待たせ致しました|お待たせいたしました|夜遅くに失礼します|ご連絡遅くなり申し訳(?:御座|ござ)いません|よろしくお願い|宜しくお願い|何卒|全力でサポート|お気軽に[^。！!\n]{0,12}(ください|下さい)|ご満足(頂|いただ)け[^。！!\n]{0,20}|またご連絡|ご連絡お待ち|お待ちしております|引き続き|ありがとうございます|こちらこそ/g;
 // A-11: 行動動詞に説明・対応・相談・調整・紹介・割引・進め・撮影・ご連絡・お聞き・伺 を追加（「ご説明させて頂きます」等が WE DO と認識されなかった）
-const ACTION_DECL_RE = /(ピックアップ|お送り|送付|お調べ|お探し|探し|探さ|確認|ご案内|案内|作成|お作り|交渉|手配|お伝え|お申込み|申込|抑え|押さえ|お取り|取り寄せ|お渡し|ご用意|ご提案|提案|ご説明|説明|対応|ご相談|相談|調整|お届け|ご紹介|紹介|割引|進め|撮影|ご連絡|お聞き|伺)[^\n。！!]{0,30}(させて(?:頂|いただ)き|いたし|致し|し)ます/;
+// 2026-09-11 竹内方針1（E1-h）: 語彙の穴を塞ぐ（観測値を歪ませない）。「探させて頂きます」は旧「探さ」が「さ」を食って「させて」に一致しなかった。
+//   「お申し込みをさせて」は「申込」にしか一致しなかった
+const ACTION_DECL_RE = /(ピックアップ|お送り|送付|お調べ|お探し|探し|探(?=させ)|探さ(?!せ)|確認|ご案内|案内|作成|お作り|交渉|手配|お伝え|お申(?:し)?込(?:み)?|申(?:し)?込(?:み)?|抑え|押さえ|お取り|取り寄せ|お渡し|ご用意|ご提案|提案|ご説明|説明|対応|ご相談|相談|調整|お届け|ご紹介|紹介|割引|進め|撮影|ご連絡|お聞き|伺)[^\n。！!]{0,30}(させて(?:頂|いただ)き|いたし|致し|し)ます/;
 // A-11: 裸の「お願い」が「よろしくお願いします」に一致していた（短い了承が GENERIC_ONLY_REPLY block になる）。依頼形のみに限定＋暗黙条件語を追加
 const CUSTOMER_REQUEST_RE = /[?？]|お願い(?!(?:いた|致|し)ます|いたします|します)|お願いでき|お願いしたい|希望|したい|ですか|ますか|でしょうか|教えて|ください|もらえ|いただけ|頂け|条件|家賃|エリア|間取り|[0-9０-９]+万|狭い|広い|広め|欲しい|ほしい|必要|がいい|以上|以内|階/;
 // 純粋な了承・感謝・締め挨拶のみのメッセージ（25字以内）。tpo 空でも WE DO を免除する
@@ -1086,9 +1098,27 @@ function resolveReplyContext(ctx: FinalCheckContext): { sub: SubstanceVerdict; p
   });
   return { sub, pair, hedge, ledger };
 }
+// ─── 2026-09-11 竹内方針1（統合設計 §2 方針1・§3.1）: 必須要素・骨格系は「観測専用」──────────────────
+//   正解777件（下書き→送信576組）で PEM は「編集で解消」26件・「編集で発生」33件、REPLY_SKELETON 24/13、WE_DO 18/17、CONCERN 4/3、GENERIC 4/5。
+//   スタッフの判断（編集・送信）と相関が無い＝block の根拠にならない。severity は常に info（tpo_debug の観測用に message/suggestion は残す）。
+//   LLM 由来の同名コード（WE_DO_MISSING 等）も assignSeverity で info。修正ループには isRevisable で渡さない（V-1: info に下げるだけでは
+//   他の block/warning と一緒に修正 LLM に渡り「要素を足す書き直し」が続いていた）
+export const OBSERVE_ONLY_CODES: ReadonlySet<string> = new Set([
+  "PAIR_ELEMENT_MISSING", "REPLY_SKELETON_MISSING", "CONCERN_UNADDRESSED", "WE_DO_MISSING_DET", "GENERIC_ONLY_REPLY", "WE_DO_MISSING",
+]);
+/** 表示はするが修正ループに渡さない warning（足す系・表示のみ。方針1/2） */
+const DISPLAY_ONLY_CODES: ReadonlySet<string> = new Set(["CONDITION_ECHO_MISSING", "CLOSER_MISSING", "CELL_AVOID_CONFLICT", "UNCHECKED_AUTO_SEND"]);
+/** 修正ループ（runGroundedRevision・差分再検査の対象）へ渡してよい指摘か。warning 経路・block 経路・差分再検査が同じ関数で絞る */
+export function isRevisable(i: CheckIssue): boolean {
+  if (i.severity === "info") return false;
+  if (OBSERVE_ONLY_CODES.has(i.code) || DISPLAY_ONLY_CODES.has(i.code)) return false;
+  if (i.code.startsWith("TYPO_")) return false; // 誤字は決定論の自動修正（applySurfaceFixes）だけで直す
+  return true;
+}
 // 「文を足す」修正が正解の骨格系コード（修正ループの長さ上限・evidence 残存プリフィルタから除外する）
-// 2026-09-09 Fable5: CLOSER_MISSING / CONDITION_ECHO_MISSING も「文を足す」修正（PREEMPTIVE_HEDGE 等の削除系は含めない）
-export const SKELETON_CODES = new Set(["REPLY_SKELETON_MISSING", "CONCERN_UNADDRESSED", "EMPTY_CLOSER", "PAIR_ELEMENT_MISSING", "SPLIT_ACK_REPLY", "GENERIC_ONLY_REPLY", "WE_DO_MISSING_DET", "WE_DO_MISSING", "CLOSER_MISSING", "CONDITION_ECHO_MISSING"]);
+// 2026-09-09 Fable5: CLOSER_MISSING も「文を足す」修正（PREEMPTIVE_HEDGE 等の削除系は含めない）
+// 2026-09-11 竹内方針1・2: 観測専用コードと CONDITION_ECHO_MISSING（表示のみ）は外す。block で残る足す系は EMPTY_CLOSER / SPLIT_ACK_REPLY だけ
+export const SKELETON_CODES = new Set(["EMPTY_CLOSER", "SPLIT_ACK_REPLY", "CLOSER_MISSING"]);
 /** 2026-09-09 行動台帳: 決定論置換（applyLedgerAutoFix）で直せるコード。block がこれだけなら Sonnet 修正を呼ばない */
 export const LEDGER_FIX_CODES = new Set(["DONE_PRESUPPOSED_WITHOUT_EVIDENCE", "UNSENT_CLAIM", "PROMISE_ECHO_MISMATCH"]);
 // 2026-09-11 統合設計（経路C）: 旧 ANSWER_RE は hasDirectAnswer（回答形）＋ PROPOSAL_FORM_RE（提案形）に置換
@@ -1106,7 +1136,8 @@ export const META_NARRATION_LINE_RE = /(?:^|\n)[^\n]{0,80}(?:する場面です|
 // 確認の質問（「ペットは飼われていないですよね？」）は対象外にするため疑問符が続くものは除く
 export const SYMPATHY_ECHO_RE = /[^\n。！!？?]{0,30}(?:気になり|心配|不安|大変|困り|悩み|迷い|迷われ)[^\n。！!？?]{0,6}(?:ますよね|ですよね)(?![？?])[😊😌🙇]*[！!。]*/;
 // 「お待ちしております」型の受け宣言（お送りお待ちしております 等）は WE DO 相当として認める
-const RECEIVE_DECL_RE = /(?:お電話|ご連絡|お送り|物件|お返事|ご返答|ご来店|お越し|お写真|画像)[^\n。！!]{0,12}お待ち(?:して|いたして|致して|し)おります/;
+// 2026-09-11 竹内方針1（E1-h）: 「現地エントランスにてお待ちしております」（待ち合わせの受け宣言）も WE DO 相当
+const RECEIVE_DECL_RE = /(?:お電話|ご連絡|お送り|物件|お返事|ご返答|ご来店|お越し|お写真|画像|現地|エントランス)[^\n。！!]{0,12}お待ち(?:して|いたして|致して|し)おります/;
 const FEELING_TEMPLATE_PATTERNS: Array<{ re: RegExp; msg: string; sug: string; onlyIfNoAction?: boolean }> = [
   { re: /お気持ち[^\n。]{0,14}(?:わかり|分かり|お察し|理解|存じ)/, msg: "「お気持ち…わかります」型の共感文（成約・正解返信に出現0件）", sug: "共感文を削除し、懸念への事実回答＋懸念を条件に取り込んだ行動宣言に置き換える" },
   { re: /ごゆっくりご検討(?:ください|下さい)/, msg: "「ごゆっくりご検討ください」は命令形（正解は「ごゆっくりご検討頂けますと幸いです」＋次のステップ提示）", sug: "「ごゆっくりご検討頂けますと幸いです！！」に直し、直前送付物への次のステップと顧客予告を先取りして受ける宣言を1文入れる" },
@@ -1154,14 +1185,13 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const qf = pair.customer.questionForm ?? null;
   const joinedForAnswer = sentences.filter((s) => !FEELING_SENTENCE_RE.test(s)).join("\n");
   const hasAnswer = hasDirectAnswer(joinedForAnswer, qf).yes || PROPOSAL_FORM_RE.test(joinedForAnswer);
-  const pairStrict = pair.rule?.precedence === "override_wait";
   // 2026-09-11 統合設計（経路D）: 締め verdict（① と ⑦ で共有）
   const isClosed = isClosedVerdict(pair, tpo);
 
   // ① REPLY_SKELETON_MISSING — 実質があるのに「回答／提案」も「行動宣言」も無い
+  //   2026-09-11 竹内方針1: 観測専用（info）。スタッフの実文と相関が無い（編集で解消24／発生13）
   if (!sub.isAckOnly && !isClosed && !hasAction && !hasAnswer) {
-    const sev: CheckSeverity = sub.has && !NO_DECL_TPO_RE.test(tpo) ? "block" : "warning";
-    issues.push({ pass: "context_check", severity: sev, code: "REPLY_SKELETON_MISSING",
+    issues.push({ pass: "context_check", severity: "info", code: "REPLY_SKELETON_MISSING",
       message: `顧客メッセージに${sub.kinds.join("・") || "実質的な内容"}があるのに、返信に「回答／提案」も「次に何をするかの行動宣言」もありません（受け止め・了承・共感のみ）。${pairHint}`,
       evidence: head,
       // 2026-09-11 統合設計（経路A/B）: 〇〇／△△ を含むリテラルを出さない（セルの fix を最優先）
@@ -1173,11 +1203,13 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   }
 
   // ② CONCERN_UNADDRESSED — 懸念語に対応する語が「回答文 or 行動宣言文」に無い（共感文でのオウム返しは対応に数えない）
-  if (sub.concerns.length > 0 && !isClosed) {
+  //   2026-09-11 竹内方針1: 観測専用（info）。場面が条件変更（condition_change＝条件フォーム・条件の宣言）の時は出さない
+  //   （条件フォームの①〜⑧を懸念と誤認した偽陽性が 26/45。場面の判定が「出さない」を決める）
+  if (sub.concerns.length > 0 && !isClosed && pair.customer.kind !== "condition_change") {
     const addressed = sentences.filter((s) => ACTION_DECL_RE.test(s) || RECEIVE_DECL_RE.test(s) || isAnswerOrProposal(s, qf)).join("\n");
     const unaddressed = sub.concerns.filter((c) => !c.replyRe.test(addressed));
     if (unaddressed.length > 0) {
-      issues.push({ pass: "context_check", severity: "block", code: "CONCERN_UNADDRESSED",
+      issues.push({ pass: "context_check", severity: "info", code: "CONCERN_UNADDRESSED",
         message: `顧客の懸念「${unaddressed.map((c) => `${c.label}（${c.phrase}）`).join("、")}」に対する回答・代替案・別候補の宣言が返信にありません。${pairHint}`,
         evidence: head,
         suggestion: unaddressed.map((c) => `「${c.fix}${redo}ピックアップしてお送りさせて頂きます」`).join("／") });
@@ -1199,8 +1231,10 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
     }
   }
 
-  // ④ PAIR_ELEMENT_MISSING — 行列セルの必須要素（when で場面に無い要素は評価しない・severity は要素>precedence）
+  // ④ PAIR_ELEMENT_MISSING — 行列セルの必須要素（when で場面に無い要素は評価しない）
   //   2026-09-11 統合設計（経路A）: 修正案は要素の fix だけ（example＝別顧客の実文へのフォールバックは廃止）。同一修正案は1回だけ出す
+  //   2026-09-11 竹内方針1: 実際のスタッフの返信を優先する。m.severity・precedence に関係なく常に info（観測専用・書き直しを強制しない）。
+  //   正解777件で PEM は「編集で解消」26件・「編集で発生」33件＝スタッフの判断と相関なし。後処理ゲートの安全弁は cellElementGaps（severity 非依存）が担う
   const seenPairSug = new Set<string>();
   for (const m of pair.rule?.mustInclude ?? []) {
     if (m.when && !m.when(pair)) continue;
@@ -1208,7 +1242,7 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
       const sug = pairElementSuggestion(m, pair);
       const dupSug = seenPairSug.has(sug);
       seenPairSug.add(sug);
-      issues.push({ pass: "context_check", severity: m.severity ?? (pairStrict ? "block" : "warning"), code: "PAIR_ELEMENT_MISSING",
+      issues.push({ pass: "context_check", severity: "info", code: "PAIR_ELEMENT_MISSING",
         message: `往復文脈（${STAFF_KIND_JA[pair.staff.kind]}→${CUSTOMER_KIND_JA[pair.customer.kind]}）の必須要素「${fillPairPlaceholders(m.label, pair)}」がありません`,
         evidence: head, suggestion: dupSug ? "（上と同じ修正で満たされる）" : sug });
     }
@@ -1376,6 +1410,9 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   };
   BANNED_WORD_SUGGESTION["お待たせいたしました"] = BANNED_WORD_SUGGESTION["お待たせ致しました"];
   BANNED_WORD_SUGGESTION["お待たせしました"] = BANNED_WORD_SUGGESTION["お待たせ致しました"];
+  // 2026-09-11 竹内方針4（E4-g）: 承知系は「削除」ではなく「かしこまりました」に置換（既定の「削除してください」は文中の承知で文を壊す）
+  for (const w of ["承知いたしました", "承知しました", "承知致しました"])
+    BANNED_WORD_SUGGESTION[w] = "「かしこまりました」に置換（文中の「〜とのこと、承知いたしました」も「〜の件かしこまりました」）";
   // 2026-09-11 統合設計（M8）: PS_POSITIVE の fix「ご査収頂きありがとうございます」は資料送付×顧客が見た証拠（materials.thanksAllowed）の時だけ
   //   正解（成約 45 件）。同じ verdict の時は BANNED_WORD「ご査収頂きありがとう」を免除する（生成の必須要素と検査の禁止語の正面衝突を解消）
   const thanksAllowed = /ご査収(?:頂|いただ)きありがとう/.test(text) && !!ctx.lastCustomerMessage && resolveReplyContext(ctx).pair.materials.thanksAllowed;
@@ -1393,7 +1430,7 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     if (idx === -1) continue;
     const after = text.slice(idx + sameDayPhrase.length, idx + sameDayPhrase.length + 20);
     if (/頂けます|いただけます|ください|お願い/.test(after)) continue;
-    const jst = new Date(Date.now() + 9 * 3600 * 1000);
+    const jst = new Date((ctx.now ?? Date.now()) + 9 * 3600 * 1000);
     const jstHour = jst.getUTCHours();
     const jstDay = jst.getUTCDay();
     const isWeekend = jstDay === 0 || jstDay === 6;
@@ -1510,7 +1547,7 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   }
 
   // ③'' S-5: 顧客名の一貫性（プレースホルダ／別名混在／フルネーム＋様／回数超過）— 初回・recheck・check-reply・後処理後で同一関数
-  for (const n of checkNameConsistency(text, ctx.customerName ?? "", { isAutoSend: ctx.isAutoSend, allowNames: ctx.allowNames })) {
+  for (const n of checkNameConsistency(text, ctx.customerName ?? "", { isAutoSend: ctx.isAutoSend, allowNames: ctx.allowNames, aliases: ctx.nameAliases })) {
     issues.push({ pass: "rule_check", severity: n.severity, code: n.code, message: n.message, evidence: n.evidence, suggestion: n.suggestion });
   }
 
@@ -1565,13 +1602,14 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
       // 2026-09-11 統合設計（経路C・ﾓﾓｶ/𝒮 事例）: 旧 EXPLANATORY_RE は「となります😊！！」の絵文字で不一致・「予定しております／流れになります／
       //   ございません」を知らず、正しく答えた返信を block していた。hasDirectAnswer（定型句を剥がしてから判定）に統一し、
       //   質問に答えている時は info に下げる（質問セル＝回答だけを求める。次工程の要求は PAIR_ELEMENT_MISSING 側で担保）
+      // 2026-09-11 竹内方針1: 観測専用（info）。スタッフの実文と相関が無い（WE_DO 編集で解消18／発生17・GENERIC 4/5）。
+      //   判定材料（回答形・説明文・残量）は message に残して tpo_debug で観測する
       const ans = hasDirectAnswer(text, skelPair.customer.questionForm ?? null);
       const hasExplanation = customerAsked && !isGenericOnly && ans.form === "answer";
-      const answeredQuestion = skelPair.customer.kind === "question" && ans.yes;
-      const pairStrict = skelPair.rule?.precedence === "override_wait";
+      void residueLen; void hasExplanation;
       issues.push({
         pass: "context_check",
-        severity: hasExplanation || answeredQuestion ? "info" : (ctx.isAutoSend || isGenericOnly || residueLen < 25 || skelSub.has || pairStrict ? "block" : "warning"),
+        severity: "info",
         code: isGenericOnly ? "GENERIC_ONLY_REPLY" : "WE_DO_MISSING_DET",
         message: (isGenericOnly
           ? "「全力でサポート」が具体宣言（エリア・条件を復唱したピックアップ/確認宣言）の代わりになっている（あやさん型の汎用返信）"
@@ -1619,7 +1657,19 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   if (issues.some((i) => i.severity === "block" && ADD_TYPE_CODES.has(i.code)))
     for (const i of issues) if (i.code === "NANISOTSU_MISPLACED") i.severity = "info";
 
+  // ⑮ 2026-09-11 竹内方針1（統合設計 §4）: 誤字（TYPO_*）。後処理 applySurfaceFixes の自動修正の後に残ったものだけが出る（warning・block しない・修正ループ対象外）
+  issues.push(...runTypoChecks(text, ctx));
+
   return issues;
+}
+/** 誤字の検出（warning）。evidence は一致した文字列、suggestion は置換後の文字列 */
+export function runTypoChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  return detectTypos(text, { customerName: ctx.customerName ?? "", now: ctx.now }).map((h) => ({
+    pass: "rule_check" as const, severity: "warning" as const, code: h.code,
+    message: `誤字の可能性「${h.evidence === "\n" ? "\\n" : h.evidence}」`,
+    evidence: h.evidence,
+    suggestion: h.fixed === null ? "誤字を直してください（置換先は文脈で判断）" : `「${h.fixed === "\n" ? "（改行）" : h.fixed}」に直す`,
+  }));
 }
 /** 「文を足す」系の骨格 block（M13 の判定・GATE_PAIR_CONFLICT の安全弁が参照） */
 const ADD_TYPE_CODES = new Set(["REPLY_SKELETON_MISSING", "EMPTY_CLOSER", "PAIR_ELEMENT_MISSING", "WE_DO_MISSING_DET", "GENERIC_ONLY_REPLY"]);
@@ -1628,6 +1678,16 @@ const ADD_TYPE_CODES = new Set(["REPLY_SKELETON_MISSING", "EMPTY_CLOSER", "PAIR_
  *  route の後処理（validateAndClean）の前後で比較し、ゲートの削除で新たに骨格系 block が出たら取り消せるゲートを外す */
 export function skeletonBlockCodes(text: string, ctx: FinalCheckContext): string[] {
   return runDeterministicChecks(text, ctx).filter((i) => i.severity === "block" && SKELETON_CODES.has(i.code)).map((i) => i.code);
+}
+/** 2026-09-11 竹内方針1（統合設計 §2 方針1(d)・E1-k）: 選ばれたセルの必須要素のうち、本文で満たされていないもののラベル（多重集合）。
+ *  severity に依存しない（PAIR_ELEMENT_MISSING を info に下げても、後処理ゲートが必須要素文を消したことを検知できる）。
+ *  route の GATE_PAIR_CONFLICT 安全弁が validateAndClean の前後で比較する（skeletonBlockCodes と併用） */
+export function cellElementGaps(text: string, ctx: FinalCheckContext): string[] {
+  if (!ctx.lastCustomerMessage) return [];
+  const { pair } = resolveReplyContext(ctx);
+  return (pair.rule?.mustInclude ?? [])
+    .filter((m) => (!m.when || m.when(pair)) && !mustIncludeSatisfied(m, text, pair))
+    .map((m) => `CELL:${m.label}`);
 }
 
 // ─── 2026-09-09 Fable5 行動台帳検査（A: 実行前提語 / B: 約束未履行なのに完了形 / C: 既送付無視）。生成側 buildLedgerNote と同じ checkDonePresupposition ───
@@ -1799,13 +1859,19 @@ function runStanceChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const cust = ctx.lastCustomerMessage ?? "";
   const head = text.trim().slice(0, 30);
   // ① 条件復唱率（拡張101件）
-  const echoable = pair.customer.kind === "condition_change" || sub.kinds.includes("condition");
-  if (echoable && !CLOSED_TPO_RE.test(tpo) && !NO_DECL_TPO_RE.test(tpo)) {
-    const echo = evalConditionEcho(text, extractEchoTokens(cust));
+  // 2026-09-11 竹内方針2（統合設計 §2 方針2(b)）: 復唱を見るのは条件フォーム・自由記述の条件の時だけ（resolveCustomerDocScope＝生成の stanceNote と同じ関数）。
+  //   物件送付・申込フォームは復唱しない（正解 0/18・0/4）。物件名・建物名・所在階・住所・日付はトークンにしない。
+  //   severity は warning（表示のみ・修正ループ対象外）。絞り込み後も復唱ゼロの正解が 14/119（単発）・23/147（本番同等）残り、
+  //   条件フォームの 21% はエリアも数値も復唱しない＝block の根拠にならない。「ご条件に合った」はスタッフ正解の 60% が使うので禁止しない
+  void sub;
+  const docScope = resolveCustomerDocScope(cust);
+  if (isEchoableScope(docScope) && !CLOSED_TPO_RE.test(tpo) && !NO_DECL_TPO_RE.test(tpo)) {
+    const echo = evalConditionEcho(text, docScope.tokens);
     if (echo.expected.length >= 2 && echo.ratio < 0.5) {
-      issues.push({ pass: "context_check", severity: echo.echoed.length === 0 ? "block" : "warning", code: "CONDITION_ECHO_MISSING",
-        message: `お客様の条件${echo.expected.length}件中${echo.echoed.length}件しか復唱していない（抽象語に逃げている）`, evidence: head,
-        suggestion: `行動宣言に「${echo.missing.join("・")}」をそのまま埋め込む（「ご条件に合った」は禁止）` });
+      const area = docScope.areaWords.slice(0, 3).join("・");
+      issues.push({ pass: "context_check", severity: "warning", code: "CONDITION_ECHO_MISSING",
+        message: `お客様の条件${echo.expected.length}件中${echo.echoed.length}件しか復唱していません（表示のみ）`, evidence: head,
+        suggestion: `${area ? `お客様のエリア表記（${area}）を「${area}周辺全域から」の形で入れる。` : ""}家賃・間取りは入れてよい（${echo.missing.slice(0, 4).join("・")}）。物件名・号室・階・住所・日付は入れない` });
     }
   }
   // ② 決め打ち断定（断定削除22件）
@@ -1871,7 +1937,8 @@ const BANNED_PATTERNS: BannedPattern[] = [
   { re: /仲介手数料[^\n。]{0,8}割引/, code: "FABRICATED_POLICY_DET", msg: "仲介手数料は固定（割引不可）", sug: "「初期費用を最大限割引」に変更", blockAlways: true },
   // G6: 旧 /即入居可能/ 行は MOVEIN_DATE_ASSERTION（「即」head・block）が包含するため削除（二重指摘防止）
   // G26/G7: 「すぐに」約束は文脈に関係なく誤り（HASTY_PROMISE を block 固定。bridge 実例からも除去済み）
-  { re: /(?:すぐに|今すぐ)(?:お送り|ご連絡|お知らせ|ピックアップ|ご案内|お調べ|確認|動)/, code: "HASTY_PROMISE", msg: "「すぐに／今すぐ」の過度な約束", sug: "「出来次第」に変更", blockAlways: true },
+  // 2026-09-11 竹内方針5: 正規表現は banned-phrasing の HASTY_ADVERB_RE（後処理 stripHastyAdverb と同じ定義）。旧正規表現は「すぐに手配／共有」「すぐご案内」を取りこぼしていた
+  { re: HASTY_ADVERB_TEST_RE, code: "HASTY_PROMISE", msg: "「すぐに／今すぐ」の過度な約束", sug: "「すぐに」を削除（例：確認出来次第ご連絡させて頂きます／退去後ご案内させて頂きます）", blockAlways: true },
   { re: /少々お時間(?:頂|いただ|頂戴)/, code: "BANNED_WORD", msg: "曖昧な時間表現", sug: "「明日一番に〜させて頂きます」等の具体タイミングに変更" },
   { re: /(?:とのことですね|をご希望ですね)/, code: "ECHO_CONFIRM", msg: "オウム返しの単体確認文", sug: "条件は行動宣言の修飾として埋め込む" },
   { re: /まず[^\n。]{0,20}次に/, code: "LIST_STRUCTURE", msg: "「まず〜次に〜」の列挙構成", sug: "行動宣言1文に統合" },
@@ -2085,7 +2152,29 @@ function getConfirmVerdict(ctx: FinalCheckContext): ConfirmationContextVerdict {
     lastStaffMessage: lastStaffTexts(ctx, 1),
     brainAction: ctx.brainMeta?.action ?? null,
     activeTaskTypes: ctx.activeTaskTypes ?? null,
+    conversationObjects: { propertyNames: resolveLedger(ctx).facts.propertiesSentNames },
   });
+}
+/** 2026-09-11 §5.2（E5-m・V5/V6）: 確認宣言の対象語が会話に実在するか。宣言文（「〇〇確認させて頂きます」）と「確認出来次第」の2文を1組で読み、
+ *  対象語のトークンが顧客の未返信発言・直近の会話・台帳の送付済み物件名のどれかにあれば、その対象語を返す（無ければ null） */
+const CONFIRM_GENERIC_TOKEN_RE = /^(?:募集状況|空室状況|空室|状況|確認|初期費用|費用|お部屋|物件|ご内覧|内覧|管理会社|オーナー|貸主|ご連絡|お見積書|御見積書|見積書|見積|可否|条件|詳細|お送り|のご案内|ご案内)$/;
+function replyAnchoredConfirmObject(text: string, ctx: FinalCheckContext): string | null {
+  const phrases: string[] = [];
+  for (const m of text.matchAll(new RegExp(CONFIRM_DECL_WITH_OBJECT_RE.source, "g"))) phrases.push(m[1]);
+  for (const m of text.matchAll(/([^\n。！!]{2,30}?)(?:を|の)?(?:管理会社(?:様)?に)?確認(?:でき|出来|し)次第/g)) phrases.push(m[1]);
+  if (phrases.length === 0) return null;
+  const hay = [
+    ctx.lastCustomerMessage ?? "",
+    ...(ctx.recentMessages ?? []).map((m) => m.text),
+    ...resolveLedger(ctx).facts.propertiesSentNames,
+  ].join("\n").normalize("NFKC");
+  for (const p of phrases) {
+    const tokens = (p.normalize("NFKC").match(/[0-9]{1,2}月[0-9]{1,2}日|[0-9]{1,2}\/[0-9]{1,2}|[0-9]{2,4}|[一-龯々ァ-ヶーA-Za-z]{2,}/g) ?? [])
+      .filter((t) => !CONFIRM_GENERIC_TOKEN_RE.test(t));
+    const hit = tokens.find((t) => hay.includes(t) || (/^[0-9]{1,2}月[0-9]{1,2}日$/.test(t) && hay.includes(t.replace(/月/, "/").replace(/日$/, ""))));
+    if (hit) return p.trim();
+  }
+  return null;
 }
 function firstSentenceAround(text: string, re: RegExp): string {
   const m = text.match(re);
@@ -2147,12 +2236,20 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
   // V5/V6 確認約束の主語・対象（G26 2026-09-08 Fable5: verdict は生成側 resolveConfirmationContext と同一オブジェクト。
   //    旧 V6 は「本文か顧客文に対象語があれば可」の語出現判定＋warning だったため、顧客「よろしくお願いします」への
   //    「確認出来次第ご連絡」（創作約束）が素通りしていた。verdict.allowed=false は CONFIRM_NO_OBJECT を block に昇格）
-  const confirmHitRe = CONFIRM_NEXT_RE.test(text) ? CONFIRM_NEXT_RE : CONFIRM_PROMISE_SENTENCE_RE.test(text) ? CONFIRM_PROMISE_SENTENCE_RE : null;
+  // 2026-09-11 §5.2（E5-m）: 物件を探す約束（「お部屋確認でき次第お送り」）は確認約束から除く（ピックアップ宣言として扱う）
+  const textForConfirm = text.replace(new RegExp(`[^\\n。！!]*${SEARCH_CONFIRM_RE.source}[^\\n。！!]*`, "g"), "");
+  const confirmHitRe = CONFIRM_NEXT_RE.test(textForConfirm) ? CONFIRM_NEXT_RE : CONFIRM_PROMISE_SENTENCE_RE.test(textForConfirm) ? CONFIRM_PROMISE_SENTENCE_RE : null;
   if (confirmHitRe) {
     const verdict = getConfirmVerdict(ctx);
-    const confirmSentence = firstSentenceAround(text, confirmHitRe);
+    const confirmSentence = firstSentenceAround(textForConfirm, confirmHitRe);
+    // 「〇〇確認させて頂きます！！\n確認出来次第ご連絡させて頂きます！！」の2文を1組で読む（直前の行も対象の記載とみなす）
+    const confirmPair = (() => {
+      const idx = textForConfirm.indexOf(confirmSentence);
+      const before = idx > 0 ? textForConfirm.slice(0, idx).split(/[\n。]/).filter((s) => s.trim()).slice(-1)[0] ?? "" : "";
+      return `${before}\n${confirmSentence}`;
+    })();
     // A-11: 管理会社確認文脈（「管理会社に確認でき次第」「募集状況確認出来次第」）は主語奪取から免除
-    const isMgmtConfirmCtx = /管理会社|オーナー|貸主|募集状況|空室|空き|番手|入居可能|退去/.test(confirmSentence);
+    const isMgmtConfirmCtx = /管理会社|オーナー|貸主|募集状況|空室|空き|番手|入居可能|退去/.test(confirmPair);
     if ((verdict.source === "customer_self_confirm" || CUSTOMER_CONFIRM_RE.test(cust)) && !isMgmtConfirmCtx && !verdict.allowed) {
       issues.push({ pass: "context_check", severity: "block", code: "CONFIRM_SUBJECT_THEFT",
         message: "お客様が「確認します」と言っています。確認の主語はお客様であり、スタッフの「確認でき次第ご連絡」は主語混乱です",
@@ -2160,11 +2257,20 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
         // 2026-09-11 統合設計（経路B）: 〇〇 リテラルを出さない（名前は確定名のみ・無ければ呼びかけなし）
         suggestion: `「お手隙の際にご査収ください！！」に変更（確認の主語はお客様）${ctx.lastCustomerMessage && resolveReplyContext(ctx).ledger.facts.pickupPromisedUnfulfilled ? `。未履行のピックアップ約束があれば「${fillNameSlot("私の方でも{name}にオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！", ctx.customerName ?? "")}」を続ける` : ""}` });
     } else if (!verdict.allowed) {
-      issues.push({ pass: "context_check", severity: "block", code: "CONFIRM_NO_OBJECT",
-        message: `確認対象が会話文脈に存在しないのに確認を約束しています（創作約束・${verdict.reason}）`,
-        evidence: confirmSentence,
-        suggestion: "確認約束文を削除する（直前スタッフ発言に約束があればその対象語のままの復唱に置き換える。新しい約束・固有名詞は足さない）" });
-    } else if (verdict.object && !CONFIRM_OBJECT_RE.test(confirmSentence)) {
+      // 2026-09-11 §5.2（E5-m）: 返信に書いた確認対象が会話に実在する（敷金礼金なしのお部屋・86、87…番・8月7日のご内覧・クレール元町203号室 等）なら
+      //   創作約束ではない → block せず info（reply_anchored_object）。対象が会話に無い確認約束は従来どおり block
+      const anchored = replyAnchoredConfirmObject(textForConfirm, ctx);
+      if (anchored) {
+        issues.push({ pass: "context_check", severity: "info", code: "CONFIRM_NO_OBJECT",
+          message: `確認対象「${anchored.slice(0, 24)}」が会話に実在するため許容（reply_anchored_object・${verdict.reason}）`,
+          evidence: confirmSentence, suggestion: "対象語が会話にある確認約束として許容" });
+      } else {
+        issues.push({ pass: "context_check", severity: "block", code: "CONFIRM_NO_OBJECT",
+          message: `確認対象が会話文脈に存在しないのに確認を約束しています（創作約束・${verdict.reason}）`,
+          evidence: confirmSentence,
+          suggestion: "確認約束文を削除する（直前スタッフ発言に約束があればその対象語のままの復唱に置き換える。新しい約束・固有名詞は足さない）" });
+      }
+    } else if (verdict.object && !CONFIRM_OBJECT_RE.test(confirmPair)) {
       issues.push({ pass: "rule_check", severity: ctx.isAutoSend ? "block" : "warning", code: "CONFIRM_OBJECT_UNSTATED",
         message: `確認対象「${verdict.object}」が確認約束の文に書かれていません`,
         evidence: confirmSentence,
@@ -2414,9 +2520,10 @@ const SONNET_REVISION_STATIC = `あなたは不動産会社のLINE返信文の�
    顧客が実際に聞いていること・伝えていることに沿った返信に全体を書き直す。
    「見積書を作成します」等の宣言を顧客が求めていないのに入れないこと。
 
-【骨格系 block（REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSING / SPLIT_ACK_REPLY / GENERIC_ONLY_REPLY / WE_DO_MISSING）の修正ルール】
+【骨格系 block（EMPTY_CLOSER / SPLIT_ACK_REPLY）の修正ルール】
+★ この節は [ISSUES] に EMPTY_CLOSER か SPLIT_ACK_REPLY がある時だけ適用する。それ以外の指摘の修正では文を足さない（必須要素の有無は修正の対象ではない。スタッフの実際の返信を優先する）。
 ★ [REVISION_MODE] がある時はこの節より [REVISION_MODE] に従う（締め・断り＝文を足さず削るだけ／質問への回答＝③行動宣言と自己検証(b)は任意）。
-この指摘は「文を削る」のではなく「文を足す」修正。元ドラフトの短さを維持しない（2〜5倍になって正常）。
+EMPTY_CLOSER / SPLIT_ACK_REPLY は「文を削る」のではなく「文を足す」修正（この2コードの時だけ、元ドラフトより長くなってよい）。
 1. [PAIR_CONTEXT] を最初に読む。返信は「スタッフが直前に送った内容」に対する「お客様の返答」への応答であり、直前発言の続きとして噛み合っていなければならない。各通に個別に相槌を打つ構成にしない。
 2. 4要素をこの順で必ず含める（②③のどちらかが欠けたら不合格）: ①受け止め1文（「（[CUSTOMER_NAME] の名前）さんお世話になっております！！」（名前不明なら呼びかけなし）or「かしこまりました！！」＋懸念・予定の固有名詞復唱。共感テンプレ禁止）②回答 or 受け1文（懸念→履歴にある事実 or 対応方針／後日連絡の予告→急かさない＋先取りして受ける／質問→直接回答）③次の行動宣言1文（一人称・対象付き。対象はお客様の懸念・予定・条件の固有名詞）④締め1文（「かしこまりました！！」「ごゆっくりご検討ください！！」を最終行にしない）。
 3. 禁止: 「はい😊！！」開始（Yes/No質問を除く）／「お気持ち」を含む文／「ごゆっくりご検討ください」（命令形）／「すぐに」／申込催促・希少性煽り／懸念を質問で返す。
@@ -2486,7 +2593,7 @@ function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: Fin
       : "（該当セルなし: 受け止め→回答/代替→行動宣言→締め）";
     const ex = pair.rule ? selectPairExample(pair, ctx.lastCustomerMessage) : null;
     const exLine = ex?.text ? `型（成約実例・前提${ex.premiseOk ? "成立" : "不成立＝骨格のみ参照し文は使わない"}）: 「${ex.text}」\n` : "";
-    return `\n${modeNote}[PAIR_CONTEXT]（往復文脈: ${pair.summary}）\n直前スタッフ発言: 「${pair.lastStaffText.replace(/\s+/g, " ").slice(0, 160)}」\n必須要素: ${must}\n${pair.rule ? `禁止: ${pair.rule.mustNot.map((x) => fillPairTokens(x, pair)).join("／")}\n${exLine}` : ""}[/PAIR_CONTEXT]\n[SUBSTANCE]（顧客メッセージの実質: has=${sub.has} kinds=${sub.kinds.join(",") || "なし"}${sub.concerns.length ? ` 懸念=${sub.concerns.map((c) => `${c.label}「${c.phrase}」→${c.fix}`).join("／")}` : ""}）\n[/SUBSTANCE]\n`;
+    return `\n${modeNote}[PAIR_CONTEXT]（往復文脈: ${pair.summary}）\n直前スタッフ発言: 「${pair.lastStaffText.replace(/\s+/g, " ").slice(0, 160)}」\n場面の要素（参考情報。EMPTY_CLOSER／SPLIT_ACK_REPLY の修正時だけ使う・欠落を理由に文を足さない）: ${must}\n${pair.rule ? `禁止: ${pair.rule.mustNot.map((x) => fillPairTokens(x, pair)).join("／")}\n${exLine}` : ""}[/PAIR_CONTEXT]\n[SUBSTANCE]（顧客メッセージの実質: has=${sub.has} kinds=${sub.kinds.join(",") || "なし"}${sub.concerns.length ? ` 懸念=${sub.concerns.map((c) => `${c.label}「${c.phrase}」→${c.fix}`).join("／")}` : ""}）\n[/SUBSTANCE]\n`;
   })();
   const nameNote = `\n[CUSTOMER_NAME] ${ctx.customerName ? `${ctx.customerName}さん` : "不明（呼びかけは書かない。「〇〇さん」と書かない）"}\n`;
   // 修正案が同じ指摘は1回だけ渡す（同じ文を3回貼らせない: YUYA 事例）
@@ -2764,13 +2871,15 @@ ${targets.map((i, idx) => `${idx + 1}. 「${i.evidence}」`).join("\n")}
 // - 失敗時は passes_completed=[] を返す → 呼び出し元の採用条件が落ち、元ドラフト+check1に
 //   フォールバックする（fail-open。従来の挙動と同じ）
 
+// 2026-09-11 竹内方針1（V-3）: 観測専用コード（PAIR_ELEMENT_MISSING / REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED /
+//   WE_DO_MISSING(_DET) / GENERIC_ONLY_REPLY）と表示のみの CONDITION_ECHO_MISSING / CLOSER_MISSING は再検査 LLM が発行できるコードから外す
 const DIFF_RECHECK_CODES = `AIX_BOUNDARY_VIEWING / AIX_BOUNDARY_ESTIMATE / AIX_BOUNDARY_MEETING / AIX_BOUNDARY_PROPERTY /
 AIX_BOUNDARY_APPLICATION / AIX_BOUNDARY_MOVEIN / AIX_BOUNDARY_PROMISE / AIX_BOUNDARY_DB /
 BANNED_WORD / RULE_VIOLATION / FABRICATED_AMOUNT / FABRICATED_AVAILABILITY / FABRICATED_PROPERTY /
 FABRICATED_DATE / FABRICATED_NAME / FABRICATED_POLICY / MISSED_QUESTION / STAGE_MISMATCH /
-DOUBLE_DECLARATION / TIME_INVALID / STAGE_SKIP / WE_DO_MISSING / FILLER_GREETING / PASSIVE_ONLY /
+DOUBLE_DECLARATION / TIME_INVALID / STAGE_SKIP / FILLER_GREETING / PASSIVE_ONLY /
 SUBJECT_CONFUSION / CONDITION_ADD_MISROUTED / STAFF_REQUEST_OMITTED / NG_PROPERTY_MENTION /
-THANK_OPENING / GRATITUDE_OPENING / CONDITION_OPENING / EXCLAMATION_OVERUSE / INTRO_REPEAT / WE_DO_MISSING_DET / GENERIC_ONLY_REPLY /
+THANK_OPENING / GRATITUDE_OPENING / CONDITION_OPENING / EXCLAMATION_OVERUSE / INTRO_REPEAT /
 NAME_MISMATCH / NAME_PLACEHOLDER / NAME_OVERUSE / NAME_FULLNAME_LEAK / NAME_BEFORE_OPENING / PROMISE_ECHO_MISSING / TIME_INVALID_HONIJITSU /
 EMOJI_RULE_DET / SYSTEM_MARKER_LEAK / QUOTE_UNBALANCED / NEGATIVE_APOLOGY / HASTY_PROMISE / ESTIMATE_NO_TRIGGER / ESTIMATE_REPEAT_PROMISE / TIMING_VOCAB_MISMATCH / STATE_REGRESSION /
 VIEWING_BEFORE_VACANCY / APPLY_WITHOUT_INTENT / POST_APPLY_VIEWING / TENSE_MISMATCH / FEEDBACK_PREMATURE / GOCHOUGO_AFTER_FIXED /
@@ -2779,9 +2888,9 @@ GOCHOUGO_AFTER_DATE / GUIDE_BEFORE_PROPERTY / CONFIRM_SUBJECT_THEFT / CONFIRM_NO
 UNSENT_CLAIM / JUSHU_BEFORE_SEND / SELF_HONORIFIC / GUIDE_POSSIBLE_NO_DATE / SASETE_OVERUSE / APPLY_PUSH_NO_INTENT /
 CONFIRM_OBJECT_UNSTATED / FAREWELL_ON_MOVEOUT_INFO / DISCLOSURE_ASSERTION / VACANCY_ASSERTION / MOVEIN_DATE_ASSERTION / SCREENING_ASSURANCE /
 OPENING_GREETING_MISMATCH / OPENING_GREETING_UNEXPECTED / OPENER_MISMATCH /
-REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSING / SPLIT_ACK_REPLY / FEELING_TEMPLATE / SYMPATHY_ECHO /
+EMPTY_CLOSER / SPLIT_ACK_REPLY / FEELING_TEMPLATE / SYMPATHY_ECHO /
 PREEMPTIVE_HEDGE / FABRICATED_SEARCH_REPORT / CONDITION_RELAX_UNASKED / HEDGE_WITHOUT_SEARCH_DECL / SELF_HEDGE_ECHO /
-CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE / CONDITION_ECHO_MISSING /
+COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE /
 SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / WIDEN_EXCUSE_REDUNDANT / REASSURANCE_NO_BASIS / URGENCY_NO_INTENT / CONSIDER_PUSH / HUMBLE_WAIT /
 DONE_PRESUPPOSED_WITHOUT_EVIDENCE / PROMISE_ECHO_MISMATCH /
 UNANCHORED_VOCAB / VOCAB_MIRROR_MISMATCH /
@@ -2866,7 +2975,8 @@ async function runDiffRecheck(
 
   // 差分検証の対象: meta（PARTIALLY_UNCHECKED）/ UNCHECKED_AUTO_SEND はテキスト修正で
   // 解消できないissueなので除外（従来もrevision対象から除外していたものと同じ）
-  const targets = check1Issues.filter((i) => i.pass !== "meta" && i.code !== "UNCHECKED_AUTO_SEND");
+  // 2026-09-11 竹内方針1（V-3）: 観測専用コード（必須要素・骨格系）は再検査 LLM に「未解決」として再発行させない
+  const targets = check1Issues.filter((i) => i.pass !== "meta" && i.code !== "UNCHECKED_AUTO_SEND" && !OBSERVE_ONLY_CODES.has(i.code));
 
   try {
     const raw = await callSonnet(buildDiffRecheckPrompt(revised, targets, ctx), timeoutMs, DIFF_RECHECK_MAX_TOKENS, MODEL_CHECK_FAST);
@@ -2975,7 +3085,8 @@ export async function runFinalCheckWithRevision(
     const passableWarnIssues = check1.issues.filter(
       (i) => i.code !== "UNCHECKED_AUTO_SEND" &&
         // 2026-09-10 Fable5: CELL_AVOID_CONFLICT は診断専用（本文を直しても解消しない）＝修正ループに渡さない
-        i.code !== "CELL_AVOID_CONFLICT" &&
+        // 2026-09-11 竹内方針1（V-1）: 観測専用・表示のみ・誤字・info は isRevisable で除外（「要素を足す書き直し」を修正 LLM に渡さない）
+        isRevisable(i) &&
         (!i.evidence || draftNormW.includes(normalizeForMatch(i.evidence)))
     );
     if (passableWarnIssues.length === 0) return { finalDraft: draft, finalCheck: check1 };
@@ -2984,7 +3095,9 @@ export async function runFinalCheckWithRevision(
     const revisedRaw = await runGroundedRevision(draft, passableWarnIssues.map((i) => decorateFixInstruction(i, ledgerW)), ctx, REVISION_MS);
     if (!revisedRaw) return { finalDraft: draft, finalCheck: check1 };
     // 2026-09-11 統合設計（経路B/N3）: 修正版にも顧客名スロットを決定論で適用
-    const revised = fillNameSlot(revisedRaw, ctx.customerName ?? "");
+    // 2026-09-11 竹内方針1・3・4・5: 生成の後処理と同じ applySurfaceFixes（別名の統一・承知→かしこまりました・すぐに除去・誤字・名前スロット）。
+    //   下の禁止語プリスキャンで「承知」を含む修正版を丸ごと捨てていた（E4）のを、置換で救う
+    const revised = applySurfaceFixes(revisedRaw, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now }).text;
 
     // (3) 決定的プリスキャン（約0ms）: 禁止語彙、および修正で新規挿入された
     //     「確認して…ご連絡」系の句（AIX_BOUNDARY_PROMISE と正面衝突）を検出したら即破棄
@@ -3042,6 +3155,8 @@ export async function runFinalCheckWithRevision(
     const draftNormB = normalizeForMatch(currentDraft);
     const passableBlockIssues = currentCheck.issues.filter(
       (i) => i.code !== "UNCHECKED_AUTO_SEND" &&
+        // 2026-09-11 竹内方針1（V-1）: block と一緒に観測専用・表示のみ・誤字の指摘を修正 LLM へ渡さない（同じ isRevisable）
+        isRevisable(i) &&
         (!i.evidence || draftNormB.includes(normalizeForMatch(i.evidence)))
     );
     if (passableBlockIssues.length === 0) break;
@@ -3061,7 +3176,8 @@ export async function runFinalCheckWithRevision(
     }
     if (!revised) break; // 修正失敗/ガード違反 → give up gracefully
     // 2026-09-11 統合設計（経路B/N3）: 修正版にも顧客名スロットを決定論で適用（修正 LLM が「〇〇さん」を書いても BANNED_WORD にしない）
-    revised = fillNameSlot(revised, ctx.customerName ?? "");
+    // 2026-09-11 竹内方針1・3・4・5: 生成の後処理と同じ applySurfaceFixes（fillNameSlot を含む）
+    revised = applySurfaceFixes(revised, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now }).text;
     // CONFIRM_PROMISE_RE ガード（blockパス・warningパスと対称）。確認約束が verdict で許可されている／直前スタッフが確認約束の時は外す（M14）
     if (!confirmPromiseOk(ctx) && CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(currentDraft)) break;
 

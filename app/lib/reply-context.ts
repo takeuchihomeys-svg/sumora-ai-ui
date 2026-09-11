@@ -187,6 +187,8 @@ export const CONCERN_RULES: ConcernRule[] = [
     fix: "お申込みでお部屋を抑えた上で" },
 ];
 
+/** 譲歩形（「古くても大丈夫」「遠くてもOK」）は懸念ではない（懸念判定の前に行から除く） */
+const CONCESSION_RE = /(?:古|遠|狭|暗|高)く(?:て)?も(?:大丈夫|可|OK|ok|いい|良い|構わ|問題|平気)|(?:築年数|築年|広さ|階数)[^\n。！!？?]{0,6}(?:こだわり(?:なし|無し|ありません|ない)|気にしない|問わない|不問)/g;
 const KIND_RE: Array<[SubstanceKind, RegExp]> = [
   ["request",   /希望|教えて|内覧|内見|見学|申(?:し)?込|書類|見積|交渉|送って(?:ください|ほしい|欲しい|もらえ|いただけ|頂け)|(?:見|行き|借り|住み|知り|聞き|決め|伺い)たい|してほしい|して欲しい|お願いでき|(?:も|で|を)お?(?:ねがい|願い)(?:します|いたします|致します)|詳細/],
   ["question",  /[?？]|(?:ます|です|でしょう|ません)か(?:[ねぇ]?(?:[。！!、\s]|$))|いつ(?:頃|ごろ|まで|から|に|が|です|でしょ|になり|になる|くらい)|いくら(?!でも)|どこ(?!でも|も)|どちら(?!でも|も)|どの(?:物件|お部屋|方)|どう(?:なり|すれ|いう|やって|でしょ|ですか)|何(?:時|日|円|曜)|なん(?:時|日|じ)/],
@@ -234,16 +236,33 @@ export function analyzeSubstance(
 
   const kinds = new Set<SubstanceKind>();
   const concerns: ConcernHit[] = [];
-  const hedge = CONCERN_HEDGE_RE.test(normalized);
+  // 2026-09-11 竹内方針2（統合設計 §5.1・E5-i/j）: 懸念はテンプレート貼り返し（「※審査に不安な事がある方〜」）とフォームラベル
+  //   （④【希望築年数】等）を剥がした本文で、話題語とヘッジ語が「同じ行（\n・。！？区切り）」にある時だけ。譲歩形（古くても大丈夫）は先に除く。
+  //   旧実装は本文全体で「どこかの不安」×「ラベルの築年・家賃・広さ」を組み合わせ、条件フォームで懸念を3つ同時に立てていた
+  const docScope = resolveCustomerDocScope(customerMessage);
+  const concernLines = normalizeCustomerText(docScope.body)
+    .split(/\n|(?<=[。！!？?])/)
+    .map((s) => s.replace(CONCESSION_RE, "").trim())
+    .filter(Boolean);
   for (const r of CONCERN_RULES) {
-    const strong = r.strongRe?.exec(normalized) ?? null;
-    const topic = r.topicRe?.exec(normalized) ?? null;
-    if (strong || (topic && hedge)) {
-      concerns.push({ key: r.key, label: r.label, phrase: (strong ?? topic)![0], replyRe: r.replyRe, fix: r.fix });
+    let phrase: string | null = null;
+    for (const line of concernLines) {
+      const strong = r.strongRe?.exec(line) ?? null;
+      if (strong) { phrase = strong[0]; break; }
+      const topic = r.topicRe?.exec(line) ?? null;
+      if (topic && CONCERN_HEDGE_RE.test(line)) { phrase = topic[0]; break; }
     }
+    if (phrase) concerns.push({ key: r.key, label: r.label, phrase, replyRe: r.replyRe, fix: r.fix });
   }
   if (concerns.length > 0) { kinds.add("concern"); evidence.push(`concern:${concerns.map((c) => c.key).join(",")}`); }
-  for (const [k, re] of KIND_RE) if (re.test(residue)) { kinds.add(k); evidence.push(`kind:${k}`); }
+  // 2026-09-11 竹内方針2: 物件送付（URL・物件情報）・申込フォームは「条件」ではない（駅・区・駐車場の語だけで condition が立ち、
+  //   CONDITION_CHANGE セルに入って復唱を要求していた。物件送付 20/52・申込フォーム全件）
+  const noCondition = docScope.scope === "property_share" || docScope.scope === "application_form";
+  for (const [k, re] of KIND_RE) {
+    if (k === "condition" && noCondition) continue;
+    if (re.test(residue)) { kinds.add(k); evidence.push(`kind:${k}`); }
+  }
+  if (docScope.scope !== "none") evidence.push(`scope:${docScope.scope}`);
   // 往復文脈: 我々が直前に質問していれば、了承以外の短文は「回答」（「ついてます」「プリウスです」）
   if (opts.staffAskedQuestion && residueLen >= 2 && kinds.size === 0) { kinds.add("answer"); evidence.push("answer:staffAsk"); }
   if (residueLen >= 10 && kinds.size === 0) { kinds.add("statement"); evidence.push(`residue:${residueLen}`); }
@@ -568,7 +587,7 @@ export const PROPOSAL_FORM_RE = /オススメ|おすすめ|お勧め|ご提案|�
 const ANSWER_BOILERPLATE_RE = /ありがとう(?:ございま(?:す|した)|御座います)|お世話になっております|お待ちしております|(?:何卒)?(?:よろしく|宜しく)お願い(?:いた|致)?します/g;
 /** 対象語の無い先送り（「確認出来次第改めてご連絡」だけ）は回答に数えない */
 const DEFERRAL_ONLY_RE = /(?:改めて|確認(?:出来|でき)次第|分かり次第|わかり次第)[^\n。！!]{0,12}ご連絡/;
-const CONFIRM_DECL_WITH_OBJECT_RE = /([^\n。！!、]{2,24}?)(?:を|について(?:は)?)?(?:管理会社(?:様)?に)?確認させて(?:頂|いただ)き/;
+export const CONFIRM_DECL_WITH_OBJECT_RE = /([^\n。！!、]{2,24}?)(?:を|について(?:は)?)?(?:管理会社(?:様)?に)?確認させて(?:頂|いただ)き/;
 
 export type QuestionForm = "request" | "info";
 export type AnswerVerdict = { yes: boolean; form: "answer" | "request_decl" | "confirm_decl" | null; evidence: string };
@@ -582,8 +601,14 @@ export function hasDirectAnswer(text: string, questionForm: QuestionForm | null 
     if (ANSWER_FORM_RE.test(s)) return { yes: true, form: "answer", evidence: s.slice(0, 40) };
   }
   if (questionForm === "request") {
-    const d = body.match(new RegExp(`[^\\n。！!]{0,40}${DECL_TAIL}`));
-    if (d) return { yes: true, form: "request_decl", evidence: d[0].slice(-40) };
+    // 2026-09-11 竹内方針1: 対象の無い先送り（「確認出来次第改めてご連絡させて頂きます」）だけの文は依頼への回答に数えない
+    const declRe = new RegExp(`[^\\n。！!]{0,40}${DECL_TAIL}`);
+    const deferralDeclRe = new RegExp(`${DEFERRAL_ONLY_RE.source}[^\\n。！!]{0,6}${DECL_TAIL}`);
+    for (const s of sentences) {
+      if (DEFERRAL_ONLY_RE.test(s) && !declRe.test(s.replace(deferralDeclRe, ""))) continue;
+      const d = s.match(declRe);
+      if (d) return { yes: true, form: "request_decl", evidence: d[0].slice(-40) };
+    }
   }
   const c = body.match(CONFIRM_DECL_WITH_OBJECT_RE);
   if (c && c[1].replace(/[\s、]/g, "").length >= 2) return { yes: true, form: "confirm_decl", evidence: c[0].slice(-40) };
@@ -591,8 +616,10 @@ export function hasDirectAnswer(text: string, questionForm: QuestionForm | null 
 }
 
 /** 依頼形の質問（我々の行動を求める）: 慶次「北区、福島区ではやはりいい条件の物件はないですか？」 */
+// 2026-09-11 竹内方針1（§3.2・E1-c）: 有無（「〜ありますか」「他は無さそう」）・費用（「初期費用いくら」「安くできる」）も依頼形。
+//   スタッフはこれらに「かしこまりました！！」＋ピックアップ宣言／御見積書作成の宣言で答える（費用質問74件中42件が見積宣言型・金額回答は5件）
 const CUST_REQUEST_QUESTION_RE =
-  /(?:探して|出して|作って|送って|調べて|確認して|交渉して)(?:頂|いただ|もら|くれ)[^\n？?]{0,8}か|(?:物件|お部屋|部屋|見積|割引|交渉)[^\n？?]{0,16}(?:(?:可能|できます|出来ます)(?:でしょう)?か|(?:ない|あります|ございます)(?:です|でしょう)?か)/;
+  /(?:探して|出して|作って|送って|調べて|確認して|交渉して)(?:頂|いただ|もら|くれ)[^\n？?]{0,8}か|(?:物件|お部屋|部屋|見積|割引|交渉)[^\n？?]{0,16}(?:(?:可能|できます|出来ます)(?:でしょう)?か|(?:ない|あります|ございます)(?:です|でしょう)?か)|(?:で|は|って|とか)?(?:あります|ない|無い|なさそう|無さそう)(?:です|でしょう)?か|他は|ほかは|初期費用[^\n]{0,8}(?:いくら|教え)|見積(?:もり)?[^\n]{0,6}(?:出|頂|いただ)|安く(?:でき|なり)|抑え(?:られ|る)(?:こと)?(?:は)?(?:でき|可能)/;
 export function classifyQuestionForm(normalized: string): QuestionForm {
   return CUST_REQUEST_QUESTION_RE.test(normalized ?? "") ? "request" : "info";
 }
@@ -985,20 +1012,51 @@ export type PairRule = {
 };
 
 const DECL_TAIL = "(?:させて(?:頂|いただ)き|いたし|致し)ます";
+/** 2026-09-11 竹内方針1（§3.2・E1-e）: 条件を復唱した探索宣言（スタッフ実文の語彙「〜探してお届けします」「ご提案させて頂きます」「探させて頂きます」も含む）。
+ *  CA_CONDITION / ANY_CONDITION_CHANGE / PD_CONDITION_CHANGE / PS_CONDITION_CHANGE が共有 */
+const CONDITION_SEARCH_DECL_RE = new RegExp(
+  "(?:周辺|全域|沿線|以内|万|LDK|DK|[0-9０-９]K|ワンルーム|エリア|付近|駅|区|市|㎡|築|徒歩|造|向き|階)[^\\n]{0,120}(?:ピックアップ|探さ|探(?=させ)|お探しさせ|お届け|ご提案)" +
+  "|ご?条件に合(?:った|う)(?:お部屋|物件)[^\\n。！!]{0,10}(?:ピックアップ|探さ|探(?=させ))");
+const SEARCH_VERB_RE = /ピックアップ|探さ|探(?=させ)|お探しさせ|お届け|ご提案/;
+/** 条件の復唱（検査 CONDITION_ECHO と同じ evalConditionEcho・resolveCustomerDocScope を使う）＋探索宣言 */
+function conditionEchoDeclared(t: string, p: PairContext): boolean {
+  if (CONDITION_SEARCH_DECL_RE.test(t)) return true;
+  if (!SEARCH_VERB_RE.test(t)) return false;
+  const scope = resolveCustomerDocScope(p.substance.normalized);
+  return scope.tokens.length > 0 && evalConditionEcho(t, scope.tokens).echoed.length > 0;
+}
+/** 2026-09-11 竹内方針1（§3.2）: 懸念セルの探索宣言。前置き（中心に／条件に合／優先して）を要求しない（「エレベーター付き…の条件で…ピックアップ」
+ *  「初期費用抑えてのご入居が可能なお部屋探させていただきます」「随時確認させて頂き…出次第お送り」を取りこぼしていた・7/8→2/8） */
+const CONCERN_SEARCH_DECL_RE = new RegExp(
+  `(?:ピックアップ|お探しさせ|探さ|探(?=させ)|お調べ|ご紹介|随時確認)[^\\n。！!]{0,30}(?:(?:させて(?:頂|いただ)き|いたし|致し)ます|出次第|出来次第)`);
+/** 懸念対象の復唱: 固定語リストをやめ、analyzeSubstance が拾った懸念の replyRe（洗濯・駅から遠い・広さ等も含む）で判定する */
+function concernEchoed(t: string, p: PairContext): boolean {
+  // 懸念が本文から立っていない（brain 由来の concern 分類）時だけ旧来の固定語で判定する
+  if (p.substance.concerns.length === 0) return CUST_CONCERN_OBJECT_FALLBACK_RE.test(t);
+  return p.substance.concerns.some((c) => c.replyRe.test(t));
+}
+const CUST_CONCERN_OBJECT_FALLBACK_RE = /階|お風呂|家賃|初期費用|審査|駅|築|広|日当たり|駐車場|治安|お子様|新生児|エレベーター/;
+/** 2026-09-11 竹内方針1（§3.2・E1-f）: 前向きセルの「次の一手を1つ」（ご案内／募集状況・空室の確認／見積の作成／回答形） */
+const NEXT_MOVE_RE = new RegExp(
+  `${VIEWING_OFFER_SOFT_RE.source}|ご案内${DECL_TAIL}|(?:募集状況|空室状況|内覧可能か)[^\\n。！!]{0,20}(?:確認|お調べ)|見積[^\\n。！!]{0,24}(?:作成|お送り|ご用意)`);
 
 /** 2026-09-11 統合設計: 必須要素の充足判定（runSkeletonChecks ④・pairFixSuggestion・runProposalChecks 免除①・後処理ゲート免除が同じ関数） */
 export function mustIncludeSatisfied(m: PairMustInclude, text: string, pair: PairContext): boolean {
   return m.detectFn ? m.detectFn(text, pair) : m.detect.test(text);
 }
 /** 質問セルの「直接回答」要素（hasDirectAnswer が唯一の判定。detect は後方互換の語彙表示用） */
+// 2026-09-11 竹内方針1（§3.2・E1-c/d）: 対象付き行動宣言は質問の形に関係なく回答と認める（hasDirectAnswer(t,"request")）。
+//   現行の依頼形判定では 174/228、request 扱いなら 226/228 の正解が満たす（スタッフは有無・費用の質問にも宣言で答える）
 export const DIRECT_ANSWER_DETECT: Pick<PairMustInclude, "detect" | "detectFn"> = {
   detect: ANSWER_FORM_RE,
-  detectFn: (t: string, p: PairContext) => hasDirectAnswer(t, p.customer.questionForm ?? null).yes,
+  detectFn: (t: string) => hasDirectAnswer(t, "request").yes,
 };
-/** 質問への回答の fix（名詞・数値・日付を含まない型指示） */
+/** 質問への回答の fix（名詞・数値・日付を含まない型指示）。2026-09-11 竹内方針1: スタッフ実文の4型（物件名は入れない） */
 const ANSWER_FIX =
-  "質問に[CHECKPOINT]・履歴にある事実だけで「〜となります／〜でございます／〜しております／〜ございません」の形で1文答える。" +
-  "依頼形の質問なら「かしこまりました！！」＋依頼の語を復唱した宣言が回答。事実が無ければ「（質問の対象語）を確認させて頂きます」（空室・告知事項・入居可能日は断言しない）";
+  "質問の種類で型を選ぶ（物件名・建物名は書かない）。①事実の質問: [CHECKPOINT]・履歴にある事実だけで「〜となります！！／〜可能です！！」の1文で答えて終える（次工程を足さない）" +
+  "②費用の質問: 金額は答えず「かしこまりました！！」＋「最大限割引させて頂いた初期費用の御見積書作成しお送りさせて頂きます😊！！」" +
+  "③有無・依頼の質問: 「かしこまりました！！」＋お客様の語のままのエリア・条件で「〜で{name}にオススメ出来るお部屋ピックアップしてお送りさせて頂きます！！」" +
+  "④事実が無い: 「お送り頂きました物件の（質問の対象語）確認させて頂きます！！」（空室・告知事項・入居可能日は断言しない）";
 /** 免除①②の共有: 選ばれたセルのアクティブな必須要素を満たす文／未履行ピックアップ約束の復唱文。
  *  runProposalChecks（UNPROMPTED_PROPOSAL）・validate-reply enforceAixGates（ピックアップ再宣言ゲート）・DOUBLE_DECLARATION フィルタが同じ関数 */
 export function isCellRequiredSentence(s: string, pair: PairContext): boolean {
@@ -1012,16 +1070,16 @@ export const PAIR_MATRIX: PairRule[] = [
   //    latent_intent「代替案で応える」＋ conditionDirection「全力でサポート禁止」の穴を LLM が先回りヘッジで埋めていた ──
   { id: "CA_CONDITION", staff: "condition_ask", customer: "condition_change", precedence: "override_wait",
     tpoLabel: "条件提示（条件ヒアリングへの条件フォーム／条件回答）",
-    direction: "我々の条件ヒアリングに対しお客様が条件（フォーム／箇条書き）を返した。①「かしこまりました😊！！」単独行 ②お客様の言葉のままエリア・家賃・間取り・付帯条件（築年・設備・広さ・徒歩）を復唱した「〇〇さんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！」宣言1文（数字・条件を一文字も変えない） ③締め「〇〇さんがご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます😌！！」 ④「何卒よろしくお願い致します！！」。100〜180字",
+    // 2026-09-11 竹内方針1（§3.2・E1-e）: スタッフ実文（n=18・中央129字）の型に合わせる。「見つかるまで伴走する締め」は 3/18 しか書かないので必須から削除・closer は none
+    direction: "我々の条件ヒアリングに対しお客様が条件（フォーム／箇条書き）を返した。①「ご条件お送り頂きありがとうございます😊！！」または「かしこまりました！！」 ②お客様の言葉のままエリア・家賃・間取りを復唱したピックアップ宣言1文（物件名・建物名は書かない。「〜周辺全域から{name}にオススメできるお部屋ピックアップさせて頂きます！！」） ③任意「ピックアップ出来次第お送りさせて頂きます！！」 ④任意「何卒よろしくお願い致します！！」。96〜143字",
     mustInclude: [
-      { label: "条件を復唱したピックアップ宣言（エリア／家賃／間取りのいずれかを含む）", detect: new RegExp(`(?:周辺|全域|沿線|以内|万|LDK|DK|[0-9０-９]K|ワンルーム)[^\\n]{0,80}ピックアップ[^\\n。！!]{0,24}${DECL_TAIL}`),
-        fix: "お客様のメッセージにあるエリア・家賃・間取り・付帯条件をその語のまま（数字・語を変えない）並べ、「〜で{name}にオススメできるお部屋ピックアップしてお送りさせて頂きます！！」の1文にする（条件語を足さない）" },
-      { label: "見つかるまで伴走する締め", detect: /全力で(?:お部屋探し)?サポート|ご満足(?:頂|いただ)(?:く|ける)お部屋が(?:見つかる|みつかる)まで/,
-        fix: "締めに「{name}がご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます😌！！」を置く" },
+      { label: "条件を復唱したピックアップ宣言（エリア／家賃／間取りのいずれかを含む）", detect: CONDITION_SEARCH_DECL_RE, detectFn: conditionEchoDeclared,
+        fix: "お客様のメッセージにあるエリア・家賃・間取りをその語のまま（数字・語を変えない）並べ、「〜周辺全域から{name}にオススメできるお部屋ピックアップさせて頂きます！！」の1文にする（条件語を足さない・物件名は書かない）" },
     ],
     mustNot: ["未着手条件への「難しい可能性」「少ない状況」等の実現可能性の予測", "「条件を1つ変えた場合のご提案」「優先順位をお聞かせ」等の条件緩和の先回り提案", "お客様の自己ヘッジ（難しいと思う・あれば教えて）の復唱・同意", "条件を単体で確認する文", "見積書・募集状況確認・審査の先回り", "「新着あれば」等の受け身文", "物件名・号室の創作"],
-    example: "かしこまりました😊！！\n\n梅田まで1本で行ける沿線周辺全域から9万以内・1LDK・カウンターキッチン希望・築10年以内でみくさんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！\n\nみくさんがご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます😌！！\n何卒よろしくお願い致します！！",
-    length: "100〜180字", closer: "commit_until_found", nanisotsu: true },
+    // 2026-09-11 竹内方針1: 実送信から伴走締めの1行を削除しただけ（文は足さない）
+    example: "かしこまりました😊！！\n\n梅田まで1本で行ける沿線周辺全域から9万以内・1LDK・カウンターキッチン希望・築10年以内でみくさんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！\n何卒よろしくお願い致します！！",
+    length: "96〜143字", closer: "none", nanisotsu: true },
 
   // ── 2026-09-09 Fable5 みく事例（行動台帳）: 宣言のみ（未送付）段階での条件絞り込み／NG追加。
   //    旧実装は staff=other → ANY_CONDITION_CHANGE の「再ピックアップ宣言」に落ち「再度」が出た ──
@@ -1029,15 +1087,16 @@ export const PAIR_MATRIX: PairRule[] = [
     // 2026-09-11 統合設計（経路E1）: 「まだ1件も送っていない」を固定文で持たない（2回目以降のピックアップ宣言で台帳「送付N件」と自己矛盾した）。
     //   ラウンドの文言は pickupRound(ledger) → {pickupRoundNote} の1関数から作る
     tpoLabel: "条件絞り込み（ピックアップ約束中）",
-    direction: "我々は直前に「〇〇の条件でピックアップしてお送りします」と宣言しただけで、その宣言はまだ履行していない（{pickupRoundNote}／台帳: {ledger}）。お客様がその宣言に条件の追加/絞り込み（エリア限定・NG等）を重ねた。①「かしこまりました😊！！」単独行 ②追加条件を「〇〇に絞らせて頂き」の肯定形で受け（NGは「京都・尼崎を除き」ではなく「大阪市内に絞らせて頂き」に変換。NG名は復唱しない）、直前宣言の条件を数字・語を一字も変えずに復唱した未来形のピックアップ宣言1文 ③「{name}にオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」の履行約束1文 ④締め。直前の宣言をまだ実行していないので「再度／改めて／新たに／追加で／別の」は一切使わない。100〜180字",
+    direction: "我々は直前に「〇〇の条件でピックアップしてお送りします」と宣言しただけで、その宣言はまだ履行していない（{pickupRoundNote}／台帳: {ledger}）。お客様がその宣言に条件の追加/絞り込み（エリア限定・NG等）を重ねた。①「かしこまりました😊！！」単独行 ②追加条件を「〇〇に絞らせて頂き」の肯定形で受け（NGは「京都・尼崎を除き」ではなく「大阪市内に絞らせて頂き」に変換。NG名は復唱しない）、直前宣言の条件を数字・語を一字も変えずに復唱した未来形のピックアップ宣言1文 ③任意「{name}にオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」の履行約束1文 ④締め。直前の宣言をまだ実行していないので「再度／改めて／新たに／追加で／別の」は一切使わない。100〜180字",
     mustInclude: [
       // 2026-09-11 統合設計（経路C・YUYA 事例）: 追加条件をエリア以外（「家賃は管理費込みで〜のご条件として」）で受けた正しい宣言を取りこぼしていた → 「ご条件として／で」「込みで」を許す
+      // 2026-09-11 竹内方針1: スタッフ実文の「〜付近から…ご条件に合ったお部屋ピックアップ」も満たす（CONDITION_SEARCH_DECL_RE／evalConditionEcho と共有）
       { label: "絞り込みを肯定形で反映した条件復唱のピックアップ宣言（未来形）", detect: new RegExp(`(?:に絞(?:らせて|って)|エリアで|エリアから|周辺(?:全域)?から|市内|中心に|ご?条件(?:として|で|にて)|込みで)[^\\n]{0,120}ピックアップ[^\\n。！!]{0,24}${DECL_TAIL}`),
+        detectFn: (t, p) => new RegExp(`(?:に絞(?:らせて|って)|エリアで|エリアから|周辺(?:全域)?から|市内|中心に|ご?条件(?:として|で|にて)|込みで)[^\\n]{0,120}ピックアップ[^\\n。！!]{0,24}${DECL_TAIL}`).test(t) || conditionEchoDeclared(t, p),
         fix: "お客様が追加した条件を「〜に絞らせて頂き」の肯定形で受け（NG名は復唱しない）、直前宣言の条件を一字も変えずに復唱した「〜で{name}にオススメできるお部屋をピックアップさせて頂きます！！」の1文にする" },
       { label: "前回条件の復唱（エリア／家賃／間取りのいずれか）", detect: /(?:周辺|全域|沿線|以内|万|LDK|DK|[0-9０-９]K|ワンルーム|築|徒歩)/,
         fix: "直前スタッフ宣言にあるエリア／家賃／間取りの語をそのまま1つ以上含める（直前宣言に無い条件語は足さない）" },
-      { label: "履行約束「ピックアップ出来次第お送り」", detect: /(?:ピックアップ|見つかり|見つけ)(?:出来|でき)?次第[^\n]{0,12}お送り/,
-        fix: "「{name}にオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」を1文入れる" },
+      // 2026-09-11 竹内方針1（§3.2）: 「履行約束（ピックアップ出来次第お送り）」はスタッフ実文 3/8 → 必須から削除（direction ③ は任意）
     ],
     mustNot: ["実行済みを含意する語（再度・改めて・もう一度・新たに・追加で・別の・こちらの・先ほどお送りした）— 直前の宣言は未履行（{pickupRoundNote}）", "送付済み物件への言及・「〇〇も選択肢に」", "「〜をお届けします」等の抽象締め（未来形宣言＋出来次第お送りで統一）", "NG語の羅列（京都・尼崎はNGで）の復唱", "実現可能性の予測（難しい・少ない・可能性）", "条件緩和・代替案の先回り提案", "条件の聞き返し", "直前宣言の条件の数字・語の改変", "全力サポート締めの二重化（直前発言で既に言っている）"],
     example: "かしこまりました😊！！\n\n大阪市内に絞らせて頂き、梅田まで1本で行ける沿線・9万以内・1LDK・カウンターキッチン希望・築10年以内でみくさんにオススメできるお部屋をピックアップさせて頂きます！！\n\nみくさんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！何卒よろしくお願い致します！！",
@@ -1047,7 +1106,8 @@ export const PAIR_MATRIX: PairRule[] = [
   { id: "PD_ACK", staff: "pickup_declared", customer: "ack_only", precedence: "after_wait",
     tpoLabel: "短い了承（ピックアップ約束への了承）",
     direction: "我々のピックアップ宣言にお客様が「よろしくお願いします」等の了承のみを返した。開口語「はい😊！！」→「{name}にオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」の履行約束復唱1文のみ。台帳: {ledger}。実行済み語禁止。40〜80字",
-    mustInclude: [{ label: "履行約束の復唱", detect: /(?:ピックアップ|見つかり)(?:出来|でき)?次第[^\n]{0,12}お送り/,
+    // 2026-09-11 竹内方針1（§3.2）: 「出次第／で次第／出来次第」も履行約束（スタッフ実文の表記。欠落 14→9）
+    mustInclude: [{ label: "履行約束の復唱", detect: /(?:出|で|出来|でき)次第[^\n]{0,12}(?:お送り|ご連絡)/,
       fix: "「{name}にオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」を1文入れる" }],
     mustNot: ["実行済み含意語（再度・改めて・追加で）", "条件の再列挙", "全力サポート・何卒の再掲", "新規の業務語彙（撮影・ご査収・内覧日程）"],
     example: "はい😊！！\nみくさんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！",
@@ -1055,13 +1115,12 @@ export const PAIR_MATRIX: PairRule[] = [
 
   { id: "PD_QUESTION", staff: "pickup_declared", customer: "question", precedence: "override_wait",
     tpoLabel: "質問（ピックアップ約束中）",
-    direction: "ピックアップ約束中（{pickupRoundNote}・台帳: {ledger}）にお客様が質問した。①質問に履歴の事実で直接回答1文（分からなければ「確認しご連絡」対象付き）②「{name}にオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」の履行約束1文。実行済み語禁止。80〜160字",
+    direction: "ピックアップ約束中（{pickupRoundNote}・台帳: {ledger}）にお客様が質問した。①質問に履歴の事実で直接回答1文（分からなければ「確認しご連絡」対象付き）②任意で「{name}にオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」。実行済み語禁止。80〜160字",
     // G32: 依頼形の質問（「〜で探して頂けますか」）への「探させて頂きます」も回答として認識する
     // 2026-09-11 統合設計（経路C）: 裸の /です|いたします/ は「お願いいたします」にも一致して甘すぎた → hasDirectAnswer（依頼形なら行動宣言を回答とみなす）に統一
+    // 2026-09-11 竹内方針1（§3.2・E1-c）: 「履行約束の復唱」はスタッフ実文 2/26 → 必須から削除（direction ② は任意）
     mustInclude: [
       { label: "質問への直接回答", ...DIRECT_ANSWER_DETECT, fix: ANSWER_FIX },
-      { label: "履行約束の復唱", detect: /(?:ピックアップ|見つかり)(?:出来|でき)?次第[^\n]{0,12}お送り/,
-        fix: "「{name}にオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！」を1文入れる" },
     ],
     mustNot: ["実行済み含意語", "「こちらの物件」等の指示語", "条件の聞き返し"],
     example: "トイレと洗面所別のお部屋につきましては、設備分家賃が高くなる傾向がございます！！(3,000円～5,000円程）\n\nトイレ・洗面所別のご条件も含めてあやさんにオススメ出来るお部屋ピックアップ出来次第お送りさせて頂きます！！何卒よろしくお願い致します！！",
@@ -1089,11 +1148,15 @@ export const PAIR_MATRIX: PairRule[] = [
 
   { id: "ANY_CONDITION_CHANGE", staff: "*", customer: "condition_change", precedence: "override_wait",
     tpoLabel: "条件変更（エリア・家賃・間取り・設備の追加/変更）",
-    direction: "お客様が条件の追加/変更を伝えた（台帳: {ledger}）。①「かしこまりました！！」②新条件を復唱した{redo}ピックアップ宣言1文 ③伴走締め。聞き返し禁止。台帳が物件送付0件なら実行済み含意語（再度・改めて・追加で・別の）を使わず「ピックアップ出来次第お送りさせて頂きます」を添える。90〜160字",
+    // 2026-09-11 竹内方針1（§3.2・E1-e）: 初回返信×条件フォームの実文（n=59）は「挨拶→ご条件お礼→条件復唱の探索宣言（86%）→全力サポート（58%）→
+    //   初期費用も最大限割引（51%）→何卒」。初回は探索宣言か全力サポートのどちらかで満たす
+    direction: "お客様が条件の追加/変更を伝えた（台帳: {ledger}）。①「かしこまりました！！」（初回返信は挨拶→「ご条件お送り頂きありがとうございます😊！！」）②新条件をお客様の語のまま復唱した{redo}ピックアップ宣言1文（物件名・建物名は書かない）③初回返信は「全力でサポートさせて頂きます」「初期費用も最大限割引させて頂き、費用を出来る限り抑えさせて頂きます」→何卒。聞き返し禁止。台帳が物件送付0件なら実行済み含意語（再度・改めて・追加で・別の）を使わない。90〜160字",
     mustInclude: [
       // 2026-09-11 統合設計（経路C・じゅにあ事例）: 「平野区も含めて…ピックアップ」を取りこぼしていた（区・市・駅・線 が語彙外）
-      { label: "新条件を復唱した{redo}ピックアップ宣言", detect: new RegExp(`(?:周辺|全域|沿線|以内|万|LDK|DK|[0-9０-９]K|ワンルーム|造|向き|階|徒歩|築|区|市|駅|線)[^\\n]{0,80}ピックアップ[^\\n。！!]{0,24}${DECL_TAIL}`),
-        fix: "お客様のメッセージの新条件をその語のまま復唱し「〜で{name}にオススメ出来るお部屋{redo}ピックアップしてお送りさせて頂きます！！」の1文にする（条件語を足さない・変えない）" },
+      // 2026-09-11 竹内方針1: 「〜探してお届けします」「ご提案させて頂きます」（スタッフ実文）も探索宣言。初回返信は全力サポート宣言でも満たす
+      { label: "新条件を復唱した{redo}ピックアップ宣言", detect: CONDITION_SEARCH_DECL_RE,
+        detectFn: (t, p) => conditionEchoDeclared(t, p) || (!p.lastStaffText.trim() && /全力で(?:お部屋探し)?サポート/.test(t)),
+        fix: "お客様のメッセージの新条件をその語のまま復唱し「〜で{name}にオススメ出来るお部屋{redo}ピックアップしてお送りさせて頂きます！！」の1文にする（条件語を足さない・変えない・物件名は書かない）" },
     ],
     mustNot: ["実現可能性の予測（難しい・少ない・可能性）", "条件緩和・代替案の先回り提案", "「少ない状況でしたので広げました」の言い訳（探していない）", "聞き返し", "再送宣言", "台帳に送付実績が無いのに「再度」「改めて」「新たに」「追加で」「別の」を付ける"],
     example: "かしこまりました！！\n2LDKのご条件で、枚方・高槻・吹田・守口・門真・鶴見区周辺全域から瑞希さんにオススメ出来るお部屋新たにピックアップしてお送りさせて頂きます😌！！\n瑞希さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
@@ -1110,9 +1173,9 @@ export const PAIR_MATRIX: PairRule[] = [
     //   （example 側にのみ残し、examplePremise / exampleRequires の前提ゲートを効かせる）
     direction: "我々の内覧打診に対し顧客が物件の懸念（{object}）を返した。①お客様が使った語のままの受け止め1文（共感語禁止・開口語は置かない）②履歴にある事実で答えられる時のみ事実回答1文（無ければ省略）③懸念を条件語に変換した再ピックアップ宣言1文④内覧は「お気に召されましたらいつでも」の開放のみで押さない⑤締め。120〜200字",
     mustInclude: [
-      { label: "懸念（{object}）対象の復唱", detect: /階段|[0-9０-９]+階|1階|１階|エレベーター|お子様|新生児|お風呂|広め|築|家賃|初期費用|審査/,
+      { label: "懸念（{object}）対象の復唱", detect: /階段|[0-9０-９]+階|1階|１階|エレベーター|お子様|新生児|お風呂|広め|築|家賃|初期費用|審査/, detectFn: concernEchoed,
         fix: "お客様が挙げた懸念対象「{object}」をそのままの語で1文に入れる（お客様が書いていない語は足さない）" },
-      { label: "懸念→条件変換の再ピックアップ宣言", detect: new RegExp(`(?:中心に|条件に合|優先して).{0,40}(?:ピックアップ|お調べ|お探し|探さ|お送り).{0,30}${DECL_TAIL}`),
+      { label: "懸念→条件変換の再ピックアップ宣言", detect: CONCERN_SEARCH_DECL_RE,
         fix: "「{fix}{name}にオススメできるお部屋{redo}ピックアップしお送りさせて頂きます！！」の形で1文だけ宣言する" },
     ],
     mustNot: ["「お気持ち、よくわかります」等の共感フレーズ", "「かしこまりました！！」で終える", "「はい😊！！」開始", "内覧日程の再提案・候補日時", "申込誘導・希少性煽り", "「2階でも大丈夫」等の根拠なし安心づけ", "懸念を質問で返す"],
@@ -1139,27 +1202,20 @@ export const PAIR_MATRIX: PairRule[] = [
   //    「お手隙の際にご査収ください」＋ピックアップという別場面の hint に上書きされる）。
   { id: "PS_POSITIVE", staff: "property_send", customer: "positive", precedence: "override_wait",
     tpoLabel: "前向き反応（物件送付後・内覧のご案内提案）",
+    // 2026-09-11 竹内方針1・2（§3.2・E1-f）: スタッフ実文に合わせ「ご査収感謝」（1/14）「開口語かしこまりました」（3/14）を必須から削除。
+    //   要素は「次の一手を1つ」だけ（ご案内／募集状況・空室の確認／見積の作成／回答形）。物件名は入れない（{namedProperty}→「お部屋」）
     direction:
       "我々が送ったお部屋に対してお客様が前向きな反応（{positiveEvidence}）を返した。" +
-      "①【直前に我々が資料を送り、お客様がそれを見た証拠がある時のみ】ご査収頂いたことへの感謝1行（**物件名は入れない**。これは『資料を見てくれたこと』への礼であって感想への礼ではない） " +
-      "②開口語「かしこまりました！！」単独行 " +
-      "③次の一手を1つだけ。内覧のご案内は物件非依存なので「お部屋」で受け、お客様が指名した物件名は復唱しない。" +
+      "次の一手を1つだけ（お客様が内見したいと明言した時は「お部屋ご案内させて頂きます😊！！」／新しい物件が送られた時は「募集状況と初期費用、管理会社に確認させて頂きます」／見積の作成）。" +
+      "内覧のご案内は物件非依存なので「お部屋」で受け、物件名・建物名は書かない。" +
       "具体的な候補日時は書かない（候補日時の提示は AIX【内覧日調整】専用）。60〜130字",
     mustInclude: [
-      { label: "ご査収頂いたことへの感謝（物件名は入れない）", detect: GRATITUDE_FOR_REVIEW_RE,
-        when: (p) => p.materials.thanksAllowed, severity: "warning",
-        fix: `1行目を「${GRATITUDE_FOR_REVIEW_LITERAL}」にする（物件名・感想語は入れない）` },
-      { label: "開口語「かしこまりました！！」", detect: /かしこまりました/, severity: "warning",
-        fix: "「かしこまりました！！」を単独行で置く" },
-      { label: "内覧のご案内提案（条件節付き・具体日時なし）", detect: VIEWING_OFFER_SOFT_RE,
-        when: (p) => p.customer.positive?.kind === "viewing_explicit", severity: "block",
-        fix: "{viewingOffer}" },
-      { label: "次の一手を1つだけ（内覧のご案内提案／募集状況の確認／御見積書の作成 のいずれか1つ。内覧提案が第一候補）",
-        detect: new RegExp(`${VIEWING_OFFER_SOFT_RE.source}|(?:募集状況|空室状況)[^\\n]{0,8}確認(?:させて(?:頂|いただ)き|いたし|致し)|(?:御|お)?見積(?:書|り)?[^\\n]{0,24}(?:作成|お送り)(?:させて(?:頂|いただ)き|いたし|致し)`),
-        when: (p) => p.customer.positive?.kind === "appraisal", severity: "block",
+      { label: "次の一手を1つだけ（ご案内／募集状況の確認／御見積書の作成 のいずれか1つ）",
+        detect: NEXT_MOVE_RE,
+        detectFn: (t) => NEXT_MOVE_RE.test(t) || hasDirectAnswer(t, null).form === "answer",
         preferWhenAvoid: [{ avoid: /内覧|内見|ご案内|来店|来阪/,
-          use: "「{namedProperty}の募集状況確認させて頂きます！！」（内覧提案は brain が避けよと言っているので書かない）" }],
-        fix: "{viewingOffer}（第一候補）／費用・見積の話が出ている時のみ「{namedProperty}の初期費用お見積書お送りさせて頂きます！！」" },
+          use: "「お部屋の募集状況確認させて頂きます！！」（内覧提案は brain が避けよと言っているので書かない）" }],
+        fix: "お客様が内見したいと明言していれば「お部屋ご案内させて頂きます😊！！」、評価だけなら「{viewingOffer}」／費用・見積の話が出ている時のみ「お部屋の初期費用お見積書お送りさせて頂きます！！」" },
     ],
     mustNot: [
       "お客様の感想そのものへのお礼（「〇〇気になって頂きありがとうございます」型。成約データ 0/5,881 件）",
@@ -1171,8 +1227,9 @@ export const PAIR_MATRIX: PairRule[] = [
       "「かしこまりました！！」単独終了",
       "次の一手を2つ以上並べること",
     ],
-    example: "ご査収頂きありがとうございます😊！！\nかしこまりました！！\nよろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！",
-    examplePremise: "直前に我々が物件資料を『ご査収ください』付きで送り、お客様がそれを見た上で前向き反応を返した場合",
+    // 2026-09-11 竹内方針1: 「ご査収頂きありがとうございます」の1行を削除（スタッフ実文 1/14。文は足さない）
+    example: "かしこまりました！！\nよろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！",
+    examplePremise: "我々が送ったお部屋にお客様が前向きな評価（気になる・良さそう）を返した場合",
     exampleRequires: /ありがとう|有難う|気になり|気に入|良さそう|よさそう|いいですね|素敵|いい感じ/,
     exampleFallback: "かしこまりました！！\n{viewingOffer}",
     length: "60〜130字", closer: "none", nanisotsu: false },
@@ -1180,10 +1237,12 @@ export const PAIR_MATRIX: PairRule[] = [
   // ── 募集状況の確認結果報告後の前向き反応。check_result は PAIR_MATRIX に1セルも無い「孤児 StaffTurnKind」だった ──
   { id: "CR_POSITIVE", staff: "check_result", customer: "positive", precedence: "override_wait",
     tpoLabel: "前向き反応（募集状況報告後・内覧のご案内提案）",
-    direction: "我々が募集状況の確認結果を報告した後、お客様が前向きな反応（{positiveEvidence}）を返した。①開口語「かしこまりました！！」②内覧のご案内提案を1文（条件節付き・具体日時なし）。募集状況の再確認は宣言しない（報告済み）。60〜120字",
+    // 2026-09-11 竹内方針1（§3.2・E1-f）: 要素は「次の一手を1つ」だけ（条件節付き [Y] 型はスタッフ実文 0/7・内見の明言には「お部屋ご案内させて頂きます」）
+    direction: "我々が募集状況の確認結果を報告した後、お客様が前向きな反応（{positiveEvidence}）を返した。次の一手を1つ（内見したいと明言していれば「お部屋ご案内させて頂きます😊！！」、それ以外は内覧のご案内提案・具体日時なし）。募集状況の再確認は宣言しない（報告済み）。60〜120字",
     mustInclude: [
-      { label: "開口語「かしこまりました！！」", detect: /かしこまりました|はい/, severity: "warning", fix: "「かしこまりました！！」を単独行で置く" },
-      { label: "内覧のご案内提案（条件節付き・具体日時なし）", detect: VIEWING_OFFER_SOFT_RE, severity: "block", fix: "{viewingOffer}" },
+      { label: "次の一手を1つ（内覧のご案内）", detect: NEXT_MOVE_RE,
+        detectFn: (t) => NEXT_MOVE_RE.test(t) || hasDirectAnswer(t, null).form === "answer",
+        fix: "お客様が内見したいと明言していれば「お部屋ご案内させて頂きます😊！！」、それ以外は「{viewingOffer}」" },
     ],
     mustNot: ["募集状況の再確認宣言（報告済み）", "具体的な候補日時の提示（AIX 専用）", "「ご都合よろしいお日にち御座いますでしょうか」", "申込誘導", "「かしこまりました！！」単独終了"],
     example: "かしこまりました😊！！\nよろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！",
@@ -1215,8 +1274,9 @@ export const PAIR_MATRIX: PairRule[] = [
         fix: "「最大限割引させて頂いた初期費用の御見積書とあわせてご連絡させて頂きます！！」を続ける" },
     ],
     mustNot: ["申込催促・希少性煽り", "こちらからの新規1件推し宣言（顧客が自分で送ると言っている）", "「随時ピックアップしてお送りします」（我々が探して送る宣言。この場面の正解 246件中 0件）", "顧客が言っていない「ご相談」", "「かしこまりました！！」単独終了"],
-    example: "みくさんお世話になっております！！\nはい😊！！ごゆっくりご検討頂けますと幸いです！！\n気になるお部屋ございましたらお送りください！！お送り頂き次第募集状況確認させて頂き、最大限割引させて頂いた初期費用の御見積書とあわせてご連絡させて頂きます！！\nエストレーラ305号室もお気に召されましたらお申込しお部屋抑えさせて頂きますので、いつでもお気軽にご連絡ください😌！！",
-    examplePremise: "お客様が『検討します』と明言し、かつ直前に見積書を送った物件（エストレーラ305号室）が存在する場合",
+    // 2026-09-11 竹内方針2: 他顧客の物件名（エストレーラ305号室）の行を削除（文は足さない）
+    example: "みくさんお世話になっております！！\nはい😊！！ごゆっくりご検討頂けますと幸いです！！\n気になるお部屋ございましたらお送りください！！お送り頂き次第募集状況確認させて頂き、最大限割引させて頂いた初期費用の御見積書とあわせてご連絡させて頂きます！！",
+    examplePremise: "お客様が『検討します』と明言し、かつ直前に見積書を送った物件が存在する場合",
     exampleRequires: /検討|考え|悩|迷|持ち帰/,
     exampleFallback: "はい😊！！\n気になるお部屋ございましたらお送りください！！お送り頂き次第募集状況確認させて頂き、最大限割引させて頂いた初期費用の御見積書とあわせてご連絡させて頂きます！！",
     length: "120〜220字", closer: "open_door", nanisotsu: false },
@@ -1268,8 +1328,10 @@ export const PAIR_MATRIX: PairRule[] = [
     direction: "送付物件への懸念（{object}）を、お客様が使った語のまま条件に変換し、その条件で{redo}ピックアップする宣言。開口語は置かず受け止め1文から入る。共感文だけは不合格。90〜150字",
     mustInclude: [
       { label: "懸念（{object}）→条件語の復唱", detect: /広め|広い|1階|１階|エレベーター|抑え|近い|新し|静か|明る|築浅|保証会社/,
+        detectFn: (t, p) => /広め|広い|1階|１階|エレベーター|抑え|近い|新し|静か|明る|築浅|保証会社/.test(t) || concernEchoed(t, p),
         fix: "お客様が挙げた懸念対象「{object}」を条件語に変換した「{fix}」を1文に入れる（お客様が書いていない条件語は足さない）" },
-      { label: "{redo}ピックアップ宣言", detect: new RegExp(`(?:中心に|条件に合|優先して).{0,30}(?:お調べ|ピックアップ|お探し|探さ).{0,30}${DECL_TAIL}`),
+      // 2026-09-11 竹内方針1（§3.2）: 前置き「中心に|条件に合|優先して」を必須にしない（スタッフ実文 7/8 を取りこぼしていた）
+      { label: "{redo}ピックアップ宣言", detect: CONCERN_SEARCH_DECL_RE,
         fix: "「{fix}{name}にオススメできるお部屋お調べさせて頂きます！！」の形で1文だけ宣言する" },
     ],
     mustNot: ["「お気持ちよくわかります」等の共感語", "送付物件の擁護・説得", "内覧誘導・申込誘導", "「かしこまりました！！」単独終了", "「はい😊！！」開始"],
@@ -1319,16 +1381,15 @@ export const PAIR_MATRIX: PairRule[] = [
 
   { id: "PS_QUESTION", staff: "property_send", customer: "question", precedence: "override_wait",
     tpoLabel: "質問回答（物件送付後）",
-    direction: "質問に履歴・知識にある事実のみで直接回答（不明なら「〇〇を管理会社に確認させて頂きます」＋対象復唱）→回答を前提にした次工程1文。100〜160字",
+    // 2026-09-11 竹内方針1（§3.2・E1-d）: 事実回答で終える実文（8/65）が block されていた → 「次工程」は必須から削除（任意）
+    direction: "質問に履歴・知識にある事実のみで直接回答（不明なら「お送り頂きました物件の（対象語）確認させて頂きます」。物件名は書かない）。次工程の1文は任意。100〜160字",
     mustInclude: [
       // 2026-09-11 統合設計（経路C）: 回答判定は hasDirectAnswer（ANSWER_FORM_RE・依頼形の行動宣言・対象付き確認宣言）に統一
       { label: "直接回答 or 対象を復唱した確認宣言", ...DIRECT_ANSWER_DETECT, fix: ANSWER_FIX },
-      // 「〜させて頂き、〜がオススメです」の提案形も次工程として認める（成約実例 rさん）
-      { label: "次工程の宣言 or 提案", detect: new RegExp(`${DECL_TAIL}|させて(?:頂|いただ)き[、,]|(?:オススメ|おすすめ|お勧め)(?:です|致します|いたします)`),
-        fix: "回答を前提にした次工程を1文だけ宣言する（募集状況の確認／御見積書の作成／{viewingOffer} のいずれか1つ。回答に無い物件名・日付は書かない）" },
     ],
     mustNot: ["宅建業法上の根拠なし断言（空室・告知事項・入居可能日）", "質問で質問を返す"],
-    example: "〇〇さんお世話になっております！！\nスプランディッド難波WESTⅡのような好条件のお部屋はすぐに埋まってしまう可能性が高いお部屋となります！！\nお気に召されたお部屋を一度弊社撮影またはオンライン内見をさせて頂き、お部屋を抑えた状態で9月13日以降にご内覧頂くのがオススメです😊！！",
+    // 2026-09-11 竹内方針2: 他顧客の物件名（スプランディッド難波WESTⅡのような）と日付（9月13日以降に）を削除（文は足さない）
+    example: "〇〇さんお世話になっております！！\n好条件のお部屋はすぐに埋まってしまう可能性が高いお部屋となります！！\nお気に召されたお部屋を一度弊社撮影またはオンライン内見をさせて頂き、お部屋を抑えた状態でご内覧頂くのがオススメです😊！！",
     examplePremise: "人気物件の押さえ方を質問され、撮影・オンライン内見の運用が履歴にある場合",
     exampleRequires: /内覧|内見|見(?:たい|に行)|押さえ|抑え|埋ま|人気/,
     length: "100〜160字", closer: "none", nanisotsu: false },
@@ -1354,7 +1415,8 @@ export const PAIR_MATRIX: PairRule[] = [
     mustInclude: [{ label: "結果報告（過去形）", detect: /ピックアップ(?:させて(?:頂|いただ)き|いたし|致し)ました|募集(?:ございません|御座いません)でした/,
       fix: "実際にピックアップした結果を過去形で1文報告する（「〜ピックアップさせて頂きました」／無ければ「新着物件募集ございませんでした」。台帳に無い件数・物件名は書かない）" }],
     mustNot: ["未来形の予測（〜可能性がございます）", "全力サポート・何卒の締め"],
-    example: "慶次さんお世話になっております！！\n北区・福島区・西区周辺全域から探させていただいたのですが、以前お送りさせていただいたお部屋以外の新着物件募集ございませんでした。\nメロディーハイム九条203号室も好条件のお部屋となりますので並行して選択肢に残しつつ、新着物件が出次第ピックアップしてお送りさせていただきます！！",
+    // 2026-09-11 竹内方針2: 他顧客の物件名（メロディーハイム九条203号室）と「選択肢に残しつつ」（PS_CONDITION_CHANGE の禁止文）を削除（文は足さない）
+    example: "慶次さんお世話になっております！！\n北区・福島区・西区周辺全域から探させていただいたのですが、以前お送りさせていただいたお部屋以外の新着物件募集ございませんでした。\n新着物件が出次第ピックアップしてお送りさせていただきます！！",
     length: "100〜180字", closer: "receive_check", nanisotsu: false, hedgeAllowed: true },
 
   { id: "QC_ANSWER", staff: "question_to_customer", customer: "*", precedence: "after_wait",
@@ -1434,9 +1496,9 @@ export const PAIR_MATRIX: PairRule[] = [
     tpoLabel: "提案後の懸念",
     direction: "PS_CONCERN と同じ骨格（直前スタッフ種別 other/check_result でも懸念は必ず『事実回答＋条件変換した再ピックアップ』）。{fix}",
     mustInclude: [
-      { label: "懸念対象の復唱", detect: /階|お風呂|家賃|初期費用|審査|駅|築|広|日当たり|駐車場|治安|お子様|新生児/,
+      { label: "懸念対象の復唱", detect: /階|お風呂|家賃|初期費用|審査|駅|築|広|日当たり|駐車場|治安|お子様|新生児/, detectFn: concernEchoed,
         fix: "お客様が挙げた懸念対象「{object}」をそのままの語で1文に入れる（お客様が書いていない語は足さない）" },
-      { label: "再ピックアップ or 安心材料の事実", detect: new RegExp(`(?:ピックアップ|お調べ|お探し|探さ).{0,30}${DECL_TAIL}|多数ございます|可能です`),
+      { label: "再ピックアップ or 安心材料の事実", detect: new RegExp(`${CONCERN_SEARCH_DECL_RE.source}|多数ございます|可能です`),
         fix: "お客様の懸念を条件語に変換し「〜を中心に{name}にオススメできるお部屋{redo}ピックアップしお送りさせて頂きます！！」の形で1文だけ宣言する（条件語はお客様の懸念から導けるものだけ）" },
     ],
     mustNot: ["共感フレーズ", "「かしこまりました！！」単独終了", "「はい😊！！」開始"],
@@ -1466,12 +1528,12 @@ export const PAIR_MATRIX: PairRule[] = [
   //    そこにセルを与えると mustInclude が全会話に流れ込む（証拠の不在が検出不能になる）。
   { id: "ANY_POSITIVE", staff: "*", customer: "positive", precedence: "override_wait",
     tpoLabel: "前向き反応",
-    direction: "お客様が前向きな反応（{positiveEvidence}）を返した。①開口語「かしこまりました！！」②次の一手を1つだけ（内覧のご案内提案／募集状況の確認／御見積書の作成。内覧提案が第一候補）。具体的な候補日時は書かない。60〜130字",
+    // 2026-09-11 竹内方針1（§3.2・E1-f）: 要素は「次の一手を1つ」だけ（開口語の必須は削除。スタッフ実文の「ご案内させて頂きます」「募集状況と初期費用、管理会社に確認」も認める）
+    direction: "お客様が前向きな反応（{positiveEvidence}）を返した。次の一手を1つだけ（内見したいと明言していれば「お部屋ご案内させて頂きます😊！！」／内覧のご案内提案／募集状況の確認／御見積書の作成）。物件名・建物名は書かない。具体的な候補日時は書かない。60〜130字",
     mustInclude: [
-      { label: "開口語", detect: /かしこまりました|はい/, severity: "warning", fix: "「かしこまりました！！」を単独行で置く" },
-      { label: "次の一手を1つだけ（内覧のご案内提案／募集状況の確認／御見積書の作成）",
-        detect: new RegExp(`${VIEWING_OFFER_SOFT_RE.source}|(?:募集状況|空室状況)[^\\n]{0,8}確認(?:させて(?:頂|いただ)き|いたし|致し)|(?:御|お)?見積(?:書|り)?[^\\n]{0,24}(?:作成|お送り)(?:させて(?:頂|いただ)き|いたし|致し)`),
-        severity: "block", fix: "{viewingOffer}（第一候補）" },
+      { label: "次の一手を1つだけ（ご案内／募集状況の確認／御見積書の作成）", detect: NEXT_MOVE_RE,
+        detectFn: (t) => NEXT_MOVE_RE.test(t) || hasDirectAnswer(t, null).form === "answer",
+        fix: "お客様が内見したいと明言していれば「お部屋ご案内させて頂きます😊！！」、それ以外は「{viewingOffer}」" },
     ],
     mustNot: ["具体的な候補日時の提示（AIX 専用）", "「ご都合よろしいお日にち御座いますでしょうか」", "条件節なしの裸「〇〇さんご都合よろしいお日にちに」", "申込誘導", "希少性煽り", "「かしこまりました！！」単独終了"],
     example: "かしこまりました😊！！\n〇〇さんお気に召されましたらご都合よろしいお日にちにご案内させて頂きます😊！！",
@@ -1700,10 +1762,15 @@ export function fillPairTokens(s: string, pair: PairContext): string {
     .replace(/\{object\}/g, object).replace(/\{fix\}/g, fix)
     .replace(/\{redo\}/g, pair.redo)
     .replace(/\{ledger\}/g, pair.ledger?.summary ?? "記録なし")
-    .replace(/\{sentNames\}/g, pair.ledger?.facts.propertiesSentNames.join("・") || "送付済み物件")
+    // 2026-09-11 竹内方針2（E3-e/f）: 物件名・建物名は生成の文面に出さない（照合用の事実 propertiesSentNames / namedProperty は内部に残す）。
+    //   号室付き物件名を含む下書き 204件のうち 42件（21%）をスタッフが削除・別物件に変更した
+    .replace(/\{sentNames\}/g, "送付済みのお部屋")
     // 2026-09-10 Fable5 Sさん事例。{viewingOffer} は常に非空リテラル（assertPlaceholder は掛けない）
-    .replace(/\{positiveEvidence\}/g, pair.customer.positive?.evidence ?? "")
-    .replace(/\{namedProperty\}/g, pair.namedProperty.asWritten ?? "お部屋")
+    // 2026-09-11 竹内方針2: 顧客の前向き反応の引用からも物件名は外す（「〇〇気になります」→「お部屋気になります」）
+    .replace(/\{positiveEvidence\}/g, pair.namedProperty.asWritten
+      ? (pair.customer.positive?.evidence ?? "").split(pair.namedProperty.asWritten).join("お部屋")
+      : (pair.customer.positive?.evidence ?? ""))
+    .replace(/\{namedProperty\}/g, "お部屋")
     .replace(/\{viewingOffer\}/g, viewingOfferLiteral(pair.customerName, pair.namedProperty.matchedSent, pair.namedProperty.count))
     .replace(/\{pickupRoundNote\}/g, pickupRound(pair.ledger).note);
 }
@@ -1778,9 +1845,10 @@ export function buildTurnPairNote(
     if (pair.rule.examplePremise && !sel.premiseOk) {
       lines.push(`- 型（⚠ この成約実例は【${pair.rule.examplePremise}】の場面のもので、今回のお客様のメッセージにはその前提が**無い**。骨格（開口語→受け→行動宣言→締めの並びと文体）だけを真似し、文はそのまま使わない。前提に依存する語（ご相談・ご検討・随時ピックアップ等）は1語も持ち込まない）:`);
     } else if (pair.rule.examplePremise) {
-      lines.push(`- 型（成約実例。前提【${pair.rule.examplePremise}】は今回も成立している。文体・テンポ・構成を踏襲し、固有名詞・エリア・物件名は今回の会話の事実に置換。${nameHint}）:`);
+      // 2026-09-11 竹内方針2（E3-e）: 旧文言「物件名は今回の会話の事実に置換」は物件名を書けという指示になっていた
+      lines.push(`- 型（成約実例。前提【${pair.rule.examplePremise}】は今回も成立している。文体・テンポ・構成を踏襲し、エリアは今回のお客様の表記に置換。物件名・号室は書かない（「お送り頂きました物件」で受ける）。${nameHint}）:`);
     } else {
-      lines.push(`- 型（成約実例。文体・テンポ・構成を踏襲し、固有名詞・エリア・物件名は今回の会話の事実に置換。${nameHint}）:`);
+      lines.push(`- 型（成約実例。文体・テンポ・構成を踏襲し、エリアは今回のお客様の表記に置換。物件名・号室は書かない（「お送り頂きました物件」で受ける）。${nameHint}）:`);
     }
     lines.push(`「${ex}」`);
   } else {
@@ -1983,17 +2051,92 @@ export function resolveCloser(
  *  line-reply-prompts.ts は本定義を再 export する（循環 import 禁止のため定義はこちら） */
 export const FORM_LABEL_RE = /[①-⑩]\s*(?:【[^】\n]{0,20}】|(?:ご?入居時期|ご?希望家賃|家賃|間取り|築年数|ご?希望エリア|エリア(?:・駅)?|駅徒歩|初期費用(?:の限度額|の上限)?|その他(?:ご?希望|条件)?))\s*[⇒→:：]?|【[^】\n]{0,20}】\s*[⇒→:：]/g;
 const toHalfWidth = (s: string) => s.replace(/[０-９Ａ-Ｚａ-ｚ]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0)).replace(/位内/g, "以内");
+/** 間取りの大文字化（2ldk→2LDK）。顧客文・下書きの両方にかける */
+const upperLayout = (s: string) => s.replace(/([1-4１-４])\s*(ldk|sldk|dk|k|r)(?![a-zA-Z])/gi, (_m, n: string, l: string) => `${n}${l.toUpperCase()}`);
 export const ECHO_TOKEN_RE = /[0-9.〜~]+(?:万円?以内|万円?|万以内|円|帖|畳|㎡|平米|分以内|分|年以内|年|階|月|日|時)|[1-4](?:LDK|DK|K|R)|ワンルーム|[一-龯ァ-ヶー]{1,8}(?:駅|線|区|市|町)|カウンターキッチン|対面キッチン|独立洗面|バストイレ別|オートロック|ペット可?|駐車場|鉄筋|RC|木造|鉄骨|フリーレント|敷金|礼金|南向き|角部屋/g;
+
+// ─── 2026-09-11 竹内方針2（統合設計 §2 方針2・§5.1）: 顧客文書の場面を決める唯一の関数 ─────────────────
+//   復唱（生成の stanceNote・検査 CONDITION_ECHO・学習 echo_ratio・PAIR 必須要素）と懸念判定（analyzeSubstance）が同じ verdict を見る。
+//   ・物件送付（URL・物件情報の貼付・スクショ書き起こし）と申込フォームは復唱しない（正解の復唱 0/18・0/4）→ tokens=[]
+//   ・物件名・建物名・号室・所在階・住所・日付は復唱トークンにしない（物件名を入れ間違える危険・スタッフの復唱率 9%）
+/** 条件フォーム（①〜⑧／【…】⇒）。line-reply-prompts は本定義を再 export する（循環 import 禁止のため定義はこちら） */
+export function isConditionFormMessage(msg: string): boolean {
+  const m = (msg ?? "").trim().slice(0, 800);
+  const circled = (m.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length;
+  return /【[^】]{1,12}】\s*[⇒→:：]/.test(m) || circled >= 2;
+}
+/** スタッフのフォームテンプレートの貼り返し（顧客が末尾ごと返してくる・90件中41件）。懸念判定・復唱の前に剥がす */
+export const TEMPLATE_ECHO_RE = /_{5,}[\s\S]*$|※\s*審査に不安な事がある方[^\n]*|審査面柔軟にサポートさせて頂きます[！!]?|【お部屋お探し中！?】|（[^）\n]{0,20}ご希望のお部屋探しご条件）/g;
+const APPLICATION_FORM_STRONG_RE = /お申込者様記入欄|記入欄|緊急連絡先欄|連帯保証人欄/;
+const APPLICATION_FORM_FIELD_RE = /生年月日|勤続年数|年収|勤務先(?:名|住所)?|現住所|緊急連絡先/g;
+const PROPERTY_SHARE_RE = /https?:\/\/|物件名[：:]|号室|問い合わせ番号|お問合せ番号|賃貸(?:住宅)?情報|管理費\s*[0-9０-９]|階建|by SUUMO|LIFULL|suumo|homes\.co|athome|canary|smocca|スマイティ|【画像】|\[画像\]/i;
+const CONDITION_WORD_RE = /家賃|予算|万円|エリア|駅|線|徒歩|間取り|[1-4１-４](?:LDK|DK|K|R)|ワンルーム|築|向き|設備|オートロック|バストイレ|独立洗面|駐車場|ペット|[一-龯]{1,6}(?:区|市|町)|付近|周辺|以内|以上/i;
+export type CustomerDocScope = "application_form" | "condition_form" | "property_share" | "condition_freeform" | "none";
+export type CustomerDocScopeVerdict = {
+  scope: CustomerDocScope;
+  /** テンプレート貼り返しとフォームラベルを剥がした本文（懸念判定・復唱が共有） */
+  body: string;
+  /** 復唱対象トークン（物件送付・申込フォームでは空） */
+  tokens: string[];
+  /** お客様のエリア表記（周辺・付近・駅・沿線を除いた語） */
+  areaWords: string[];
+};
+const PREF_START_RE = /^(?:北海道|東京都|京都府|大阪府|[一-龯]{2,3}県)/;
+const PLACE_TOKEN_RE = /(?:駅|線|区|市|町)$/;
+/** 地名トークンの部分一致キー（「大阪市平野区加美駅」→ 大阪・平野・加美）。駅・線・区・市・町を除いた2字以上 */
+function placeKeys(token: string): string[] {
+  return token.split(/(?<=[市区町駅線])/).map((s) => s.replace(/(?:駅|線|区|市|町)$/, "")).filter((s) => s.length >= 2);
+}
+export function resolveCustomerDocScope(customerText: string | null | undefined): CustomerDocScopeVerdict {
+  const raw = (customerText ?? "").split(MSG_SEP).join("\n");
+  const body = raw.replace(TEMPLATE_ECHO_RE, "").replace(FORM_LABEL_RE, " ");
+  const appFields = new Set(raw.match(APPLICATION_FORM_FIELD_RE) ?? []).size;
+  let scope: CustomerDocScope;
+  if (APPLICATION_FORM_STRONG_RE.test(raw) || appFields >= 2) scope = "application_form";
+  else if (isConditionFormMessage(raw)) scope = "condition_form";
+  else if (PROPERTY_SHARE_RE.test(raw)) scope = "property_share";
+  else if (CONDITION_WORD_RE.test(toHalfWidth(body))) scope = "condition_freeform";
+  else scope = "none";
+  if (scope === "application_form" || scope === "property_share" || scope === "none") return { scope, body, tokens: [], areaWords: [] };
+  const t = upperLayout(toHalfWidth(body));
+  const tokens: string[] = [];
+  for (const m of t.matchAll(ECHO_TOKEN_RE)) {
+    const tok = m[0];
+    const after = t.slice((m.index ?? 0) + tok.length, (m.index ?? 0) + tok.length + 6);
+    if (/[0-9]+(?:年(?!以内)|月|日|時)$/.test(tok)) continue;                          // 日付・年・時刻（スタッフの復唱率 9%）
+    if (/階$/.test(tok) && !/^(?:以上|以下|以外|希望|より上)/.test(after)) continue;   // 所在階（条件用法33件に対し所在階357件）
+    if (/[ァ-ヶー]{2,}/.test(tok) && PLACE_TOKEN_RE.test(tok)) continue;             // カタカナ建物名＋町・駅（ビオラコート幸町 等）
+    if (PREF_START_RE.test(tok)) continue;                                            // 都道府県から始まる住所の連結
+    if (/^[0-9.,〜~]+円$/.test(tok)) continue;                                        // 万の付かない「N円」（物件の賃料・管理費表記）
+    tokens.push(tok);
+  }
+  // エリア表記: 条件フォームは「エリア・駅」欄の値、自由記述は地名トークン
+  const areaWords = new Set<string>();
+  if (scope === "condition_form") {
+    for (const m of raw.matchAll(/(?:エリア|駅)[^】\n]{0,10}】?\s*[⇒→:：]\s*([^\n]+)/g))
+      for (const w of m[1].split(/[、,・/／\s]+/)) {
+        const k = w.replace(/(?:周辺|付近|全域|沿線|エリア|方面|あたり|辺り)+$/, "").replace(/(?:駅|線)$/, "").trim();
+        if (k.length >= 2 && !/^[0-9]/.test(k)) areaWords.add(k);
+      }
+  }
+  for (const tok of tokens) if (PLACE_TOKEN_RE.test(tok)) for (const k of placeKeys(tok)) areaWords.add(k);
+  return { scope, body, tokens: [...new Set(tokens)], areaWords: [...areaWords] };
+}
+/** 互換ラッパー（旧 API）。場面判定とトークンのフィルタは resolveCustomerDocScope が唯一 */
 export function extractEchoTokens(customerText: string): string[] {
-  const t = toHalfWidth((customerText ?? "").split(MSG_SEP).join("\n").replace(FORM_LABEL_RE, ""));
-  return [...new Set(t.match(ECHO_TOKEN_RE) ?? [])];
+  return resolveCustomerDocScope(customerText).tokens;
 }
 export type EchoVerdict = { expected: string[]; echoed: string[]; missing: string[]; ratio: number };
+/** 復唱の評価。地名は部分一致（「加美駅周辺」で「平野区加美駅」を満たす）・間取りは大文字化して比較 */
 export function evalConditionEcho(draft: string, tokens: string[]): EchoVerdict {
-  const d = toHalfWidth(draft ?? "");
-  const echoed = tokens.filter((k) => d.includes(k));
+  const d = upperLayout(toHalfWidth(draft ?? ""));
+  const echoed = tokens.filter((k) => d.includes(k) || (PLACE_TOKEN_RE.test(k) && placeKeys(k).some((p) => d.includes(p))));
   const missing = tokens.filter((k) => !echoed.includes(k));
   return { expected: tokens, echoed, missing, ratio: tokens.length ? echoed.length / tokens.length : 1 };
+}
+/** 復唱を要求してよい場面か（条件フォーム・自由記述の条件だけ。検査・生成・PAIR 必須要素が同じ関数） */
+export function isEchoableScope(v: CustomerDocScopeVerdict): boolean {
+  return v.scope === "condition_form" || v.scope === "condition_freeform";
 }
 
 // 日程の確定度（決め打ち断定22件）
@@ -2104,7 +2247,9 @@ export function computeStanceLite(text: string, customerText: string): StanceLit
 export function buildStanceNote(pair: PairContext, hedge: HedgeVerdict, closer: CloserVerdict, opts: { customerName: string; customerText: string }): string {
   // 2026-09-11 統合設計（経路B）: 名前不明時に「〇〇さん」を生成ノートへ書かない（呼びかけごと省く）
   const name = opts.customerName ? `${opts.customerName}さん` : "";
-  const tokens = extractEchoTokens(opts.customerText);
+  // 2026-09-11 竹内方針2: 復唱の指示は条件フォーム・自由記述の条件の時だけ（物件送付・申込フォームで物件属性・個人情報を「一字も変えずに」埋め込ませていた）
+  const docScope = resolveCustomerDocScope(opts.customerText);
+  const tokens = isEchoableScope(docScope) ? docScope.tokens : [];
   const fact = resolveAnswerability(opts.customerText);
   const sched = classifyScheduleCommitment(opts.customerText, pair.lastStaffText);
   const L: string[] = ["【🧭 姿勢 — 「見つかるまで伴走する頼れる担当者」（往復文脈の次・場面通知より上位）】"];
@@ -2114,8 +2259,8 @@ export function buildStanceNote(pair: PairContext, hedge: HedgeVerdict, closer: 
     L.push(`- ✅ ヘッジ判定（${hedge.summary}）: 「〇〇のご条件ですと合うお部屋が少ない状況でしたので、△△まで広げてピックアップさせて頂きました」の過去形＋実行済み代替のみ可。未来形の予測は禁止。締めは「お手隙の際にご査収ください😌！！」`);
   else
     L.push(`- ✅ ヘッジ判定（${hedge.summary}）: 傾向を「傾向として〜が多いですが」と1文で正直に答えてよい。必ず「${name ? `${name}の` : ""}ご条件でしっかりピックアップしてお送りさせて頂きます！！」の探索宣言を同じ返信に入れる。優先順位の聞き返しは禁止（まず探す）`);
-  if (tokens.length >= 2)
-    L.push(`- 📌 お客様の条件トークン（この語を一文字も変えずに行動宣言へ埋め込む。「ご条件に合った」「ご希望の」で置き換えない）: ${tokens.join("・")}`);
+  if (isEchoableScope(docScope) && (docScope.areaWords.length > 0 || tokens.length >= 2))
+    L.push(`- 📌 条件の復唱（任意）: エリアはお客様の表記のまま${docScope.areaWords.length ? `「${docScope.areaWords.slice(0, 3).join("・")}周辺全域から」の形` : "「（エリア）周辺全域から」の形"}。家賃・間取りは入れてよい（必須ではない）${tokens.some((t) => !/(?:駅|線|区|市|町)$/.test(t)) ? `: ${tokens.filter((t) => !/(?:駅|線|区|市|町)$/.test(t)).slice(0, 6).join("・")}` : ""}。物件名・建物名・号室・階・住所・日付は書かない`);
   L.push(closer.text
     ? `- 🔚 締め（最終行に置く。行動宣言の代わりにしない）: 「${closer.text.replace(/\n/g, "」＋「")}」（${closer.reason}）`
     : `- 🔚 締め: 追加の締め文なし（${closer.reason}）。「全力でサポート」「何卒よろしく」を足さない`);

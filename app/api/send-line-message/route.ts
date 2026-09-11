@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
+import { isGenerationFailureText } from "@/app/lib/example-hygiene";
 
 // LINE アカウント → チャンネルアクセストークンのマッピング
 // line_contacts.account（日本語名）→ 英語キー の変換も行う
@@ -62,6 +63,11 @@ export async function POST(req: NextRequest) {
 
   if (!line_user_id || (!message && !image_url)) {
     return NextResponse.json({ ok: false, error: "line_user_id and message or image_url required" }, { status: 400 });
+  }
+  // 2026-09-11 データ衛生（統合設計 §7）: 生成失敗文（「AI返信の生成に失敗しました…」）はお客様に送らない
+  //   （9/11 に手動送信で実際に LINE 配信された。スタッフが下書き欄の失敗文をそのまま送信した経路を止める）
+  if (message && isGenerationFailureText(message)) {
+    return NextResponse.json({ ok: false, error: "generation_failure_text", message: "AI返信の生成に失敗した文は送信できません。再生成するか本文を入力してください" }, { status: 400 });
   }
 
   // conversations.account が null/wrong でも line_contacts から正しいアカウントを解決

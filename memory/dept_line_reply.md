@@ -1029,3 +1029,53 @@ page.tsx・MAX_CHECK_ITERATIONS／予算の引き上げ（材料不足が原因�
 - [ ] 1週間後: `revision_exhausted` 率（日次）・`tpo_debug.postprocess.reverted`（GATE_PAIR_CONFLICT）件数・`pass_failures` の内訳を確認。check-reply の context_check（Haiku 2.3s）のタイムアウトが30%超なら passes から外す方式へ
 - [ ] `CLOSING_FORWARD_PUSH`(warning) の発火と人の削除率を見て、締めの ANY_FAREWELL 例文（成約★舞桜）の妥当性を確認
 - [ ] 「再度」の可否（next ラウンド）: ai_reply_examples で propertiesSentCount>0 かつ直前がピックアップ宣言の正解に「再度」が含まれる率を出してから redoWord を見直す
+
+
+---
+
+## 2026-09-11 竹内方針1〜5（必須要素・物件名の復唱・呼び名・承知・すぐに）統合設計の実装
+
+### 竹内の方針
+1. 必須要素（PAIR_ELEMENT_MISSING）はスタッフの実際の返信を優先。最終チェックのこの枠は「誤字の確認」に限定し、必須要素の有無で block しない
+2. 物件名・建物名は復唱しない（生成で埋め込まない・検査で要求しない）
+3. 呼び名は実際に呼んでいる名前のまま。途中で変えない
+4. 「承知いたしました／承知しました／承知致しました」は使わない →「かしこまりました」
+5. 「すぐに」は使わない
+
+### 正解文の回帰（常設: `npx tsx --env-file=.env.local scripts/audit-final-check-vs-staff.ts`）
+正解 777件（line_reply・修正あり or ☆・会話あり）→ 生成失敗文2件除外・直前に顧客発言なし22件 → 測定753件。
+| モード | 変更前 | 変更後 |
+|---|---|---|
+| 本番同等（未返信の顧客発言を連結・既定） | 361/753＝47.9% | **42/753＝5.6%** |
+| 単発（旧測定・--last-unit-only） | 336/753＝44.6%（竹内報告の44%） | 60/753＝8.0%（CONFIRM 20件は単発で前の通の物件名を渡さない測定上の見かけ） |
+| 後処理なし（--raw） | ― | 69/753＝9.2%（HASTY 20・承知を含む BANNED が残る＝後処理で直る分） |
+| AI 下書き（--draft・下書き≠送信 534件） | ― | 66/534＝12.4%（本当の誤りは止まる。NAME_MISMATCH は清水さん会話の「吉永さん」1件だけ） |
+変更前→後（本番同等）: PAIR_ELEMENT_MISSING 186→0 / CONDITION_ECHO_MISSING 82→0 / NAME_MISMATCH 57→0 / CONCERN_UNADDRESSED 52→0 / BANNED_WORD 34→16 / WE_DO_MISSING_DET 28→0 / REPLY_SKELETON_MISSING 25→0 / HASTY_PROMISE 17→0 / GENERIC_ONLY_REPLY 10→0 / CONFIRM_NO_OBJECT 9→1。
+既定の閾値 10%・コード別上限（観測専用と ECHO・HASTY は 0件、NAME / CONFIRM は 0.5%）・`scripts/audit-final-check-baseline.json`（id→コードのみ）で回帰を検知。
+
+### 実装（1つの事実を1つの関数で決める）
+- **観測専用** `OBSERVE_ONLY_CODES`（PEM / REPLY_SKELETON / CONCERN_UNADDRESSED / WE_DO_MISSING(_DET) / GENERIC_ONLY）は常に info。`isRevisable` で修正ループ（warning・block 両経路・差分再検査）に渡さない。LLM の context_check プロンプトから「欠けていれば指摘」を削除。修正プロンプトの骨格系節は EMPTY_CLOSER / SPLIT_ACK_REPLY の時だけ。後処理ゲートの安全弁は severity 非依存の `cellElementGaps`
+- **誤字** `app/lib/typo-check.ts`（敬称の二重・語の重複・脱字辞書・助詞の重複・「！、」・\n 漏れ・曜日＝日付を正）。自動修正は後処理、残りだけ TYPO_* warning（block しない）。誤検出: 正解 13/753（全て実誤字）・人の送信 1.35%・AIX 0.36%・下書き 2.48%
+- **承知・すぐに** `app/lib/banned-phrasing.ts`（normalizeShochi / stripHastyAdverb。否定先読みは「に?」の前）。後処理・修正版・few-shot 注入前・HASTY_PROMISE 検査が同じ正規表現。「〜次第すぐに」の BANNED 8語は HASTY と重複なので削除。生成指示の「単独使用禁止」「退去後すぐに」「今すぐピックアップ」「確認してすぐご案内」を書き換え
+- **後処理の入口** `applySurfaceFixes`（validate-reply.ts）＝別名の統一→承知・すぐに→誤字→名前スロット。validateAndClean の末尾と final-check の修正版2か所
+- **場面の判定** `resolveCustomerDocScope`（reply-context.ts）＝申込フォーム／条件フォーム／物件送付／自由記述の条件／なし。物件送付・申込フォームは tokens 空。建物名・所在階・住所・日付・N円はトークンにしない。CONDITION_ECHO は条件の場面だけ warning。懸念はテンプレート貼り返しとラベルを剥がした本文で「同じ行」のみ・譲歩形を除く
+- **物件名を生成に入れない** 台帳 summary・note は件数のみ、{sentNames}/{namedProperty}→「お部屋」、{positiveEvidence} から物件名を除く、他顧客の物件名入り example を削除だけで修正、「物件名は事実に置換」「物件名を添えた受付文でよい」を「物件名は書かない」に
+- **呼び名** `resolveAddressName`（直近スタッフの行頭呼びかけ→強いつながり→スタッフ履歴が無い時だけ名乗り→DB名→表示名）。`normalizeDisplayName`（分割・結合しない・ちゃんを残す）。検査は呼びかけ位置の別名だけ block・前方一致・カタカナ「サン」除外・紹介者文脈除外。aliases は後処理で確定名に統一。generate-reply の extractPreferredName を廃止（page / bg で呼び名が変わっていた）。tpo_debug.address_name に根拠
+- **PAIR_MATRIX** 質問セルは hasDirectAnswer(request)・ANSWER_FIX 4型（費用は見積宣言）・PD_QUESTION 履行約束と PS_QUESTION 次工程を削除。CA_CONDITION 伴走締め削除（closer none）。条件の探索宣言は「お届け・ご提案・探させて」も。懸念セルは前置き不要・懸念の replyRe で判定。前向きセルは「次の一手を1つ」だけ（ご査収感謝・開口語を削除）
+- **CONFIRM_NO_OBJECT** 見積依頼・送付済み物件の名指し・内覧希望・番号の並びを確認対象に。「確認させて頂き、」も確認約束。物件を探す約束（お部屋確認でき次第）は除外。返信の確認対象が会話に実在すれば info（reply_anchored_object）
+- **データ衛生** `app/lib/example-hygiene.ts`。失敗文・テスト送信を few-shot・学習・評価から読む側で除外、送信（400）と保存で止める（行は削除しない）
+
+### テスト
+新規 banned-phrasing 11 / typo-check 12 / name 14 / echo-scope 10 / concern-confirm 11 / hygiene 6 / skeleton-observe 23（匿名化した正解代表20件）全 PASS。既存7本 gen-check-conflict 32 / positive-viewing 16 / brain-scope 24 / pair-example 21 / greeting 19 / action-ledger 23 / stance 17 全 PASS（期待値の更新は :block→:info／:warning、CA_CONDITION の closer none、前向きセルの「ご案内させて頂きます」を次の一手と認める＝T-10/T-15 を反転）。`npx tsc --noEmit` エラー0。
+
+### 残った block（本番同等 42件）
+BANNED 16（ご連絡お待ちしております6・承りました4・ご内覧させて頂き2・見つかり次第ご連絡1・番手確認1・共益費込1・名無し1）＝竹内確認事項⑤／SCREENING_ASSURANCE 5・VACANCY 2・DISCLOSURE 1・MOVEIN 1（宅建業法の断言禁止＝維持）／VOCAB_MIRROR_MISMATCH 5（「拝見します」への「ごゆっくりご確認／ご覧」＝検査側の偽陽性の可能性・要調査）ほか各1〜2件。
+
+### 竹内確認事項（未決）
+① EMPTY_CLOSER / SPLIT_ACK_REPLY を block で残すか ② スタッフ履歴がある会話で名乗り後も元の呼び名を続けるか ③「すぐに埋まってしまう」は対象外でよいか ④ 失敗文由来の ai_reply_knowledge 11行を rejected にするか ⑤ スタッフが使う BANNED 語（承りました・ご連絡お待ちしております）の禁止を維持するか ⑥ CLOSER_MISSING を warning 表示で残すか ⑦ 曜日の自動修正は日付を正としてよいか
+
+### 引き継ぎ
+- [ ] AIX 側（aix/action の名前解決・「次第すぐに」文言、aix-template-generate の名前解決）は aix_feature_suggestions 経由で提案（直接パッチ禁止）。page.tsx:126 の extractPreferredName コピーも申し送り
+- [ ] 1週間後: tpo_debug.address_name.source の分布と NAME_ALIAS_UNIFIED の件数、TYPO_* warning の件数を SQL で確認
+- [ ] 常設スクリプトを週1で回し、baseline からの回帰（新たに block になった正解）が出たら原因のコードを調べる
+- [ ] VOCAB_MIRROR_MISMATCH（拝見→ご確認）の5件を正解に合わせるか判断

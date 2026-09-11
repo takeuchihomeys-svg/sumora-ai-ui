@@ -408,8 +408,10 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     },
     redoAllowed: sentDone.length > 0,
   };
+  // 2026-09-11 竹内方針2（E3-e）: summary は {ledger} 経由で生成プロンプトに入るので物件名を含めない（件数だけ）。
+  //   物件名（propertiesSentNames）は照合用の事実として facts に残す（前向き反応の指名照合・CONFIRM の対象照合）
   const summary =
-    `物件送付${facts.propertiesSentCount}件${facts.propertiesSentNames.length ? `(${facts.propertiesSentNames.slice(0, 3).join('・')})` : ''}` +
+    `物件送付${facts.propertiesSentCount}件` +
     `／見積${facts.estimateSent ? '送付済' : '未'}` +
     `／ピックアップ約束${facts.pickupPromisedUnfulfilled ? `未履行×${facts.pickupPromisedCount}` : 'なし'}` +
     `／確認約束${facts.confirmationPromisedUnfulfilled ? '未履行' : facts.confirmationReported ? '報告済' : 'なし'}` +
@@ -443,22 +445,24 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
     lines.push('これまでに我々がしたこと（古→新）:');
     shown.forEach((e, i) => {
       const what = e.status === 'promised' ? `${LEDGER_KIND_JA[e.kind]}を**宣言**（未実行）` : `${LEDGER_KIND_JA[e.kind]}を**実行**`;
-      const det = e.kind === 'properties_sent' ? `${e.detail.propertyCount ?? 1}件${e.detail.propertyNames?.length ? `: ${e.detail.propertyNames.join('・')}` : ''}`
-        : e.kind === 'estimate_sent' && e.detail.estimateFor?.length ? e.detail.estimateFor.join('・')
+      // 2026-09-11 竹内方針2: 物件名は列挙しない（生成に物件名を持ち込む経路を断つ）
+      const det = e.kind === 'properties_sent' ? `${e.detail.propertyCount ?? 1}件`
+        : e.kind === 'estimate_sent' && e.detail.estimateFor?.length ? `${e.detail.estimateFor.length}件分`
         : e.detail.checkPattern ? `結果=${e.detail.checkPattern}` : e.detail.object ? `対象=${e.detail.object}` : '';
       const ful = e.status === 'promised' ? (e.fulfilledBy == null ? '→ まだ履行していない' : '→ 履行済み') : '';
       const react = e.customerReactionAfter && e.customerReactionAfter !== 'none' ? `／お客様の反応: ${e.customerReactionAfter}` : '';
       lines.push(`${['①', '②', '③', '④', '⑤', '⑥'][i] ?? i + 1} ${fmtJst(e.at)} ${what}${det ? `（${det}）` : ''}${ful}${react}`);
     });
   }
-  lines.push(`確定: 物件はこれまで${f.propertiesSentCount === 0 ? '1件も送っていない' : `${f.propertiesSentCount}件送付済み${f.propertiesSentNames.length ? `（${f.propertiesSentNames.join('・')}）` : ''}`}。見積書は${f.estimateSent ? `送付済み${f.estimateSentFor.length ? `（${f.estimateSentFor.join('・')}）` : ''}` : '未送付'}。${f.pickupPromisedUnfulfilled ? `ピックアップは${fmtJst(f.pickupPromisedAt)}に約束済みで未履行。` : ''}${f.confirmationPromisedUnfulfilled ? `「${f.confirmationPromisedObject ?? '確認'}」の確認を約束済みで未報告。` : ''}`);
+  lines.push(`確定: 物件はこれまで${f.propertiesSentCount === 0 ? '1件も送っていない' : `${f.propertiesSentCount}件送付済み`}。見積書は${f.estimateSent ? '送付済み' : '未送付'}。${f.pickupPromisedUnfulfilled ? `ピックアップは${fmtJst(f.pickupPromisedAt)}に約束済みで未履行。` : ''}${f.confirmationPromisedUnfulfilled ? `「${f.confirmationPromisedObject ?? '確認'}」の確認を約束済みで未報告。` : ''}`);
   if (!f.redoAllowed) {
     lines.push('→ したがって「再度」「改めて」「もう一度」「追加で」「別の物件」「先ほどお送りした物件」「ご査収ください」は使えない（1件も送っていないため二度目は存在しない）。');
     lines.push(f.pickupPromisedUnfulfilled
       ? `→ 使える表現: 「${nameNi}オススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！」／条件が変わった場合は「（追加条件）に絞らせて頂き、…ピックアップさせて頂きます！！」（宣言は1文・条件列挙の全文再掲はしない）`
       : `→ 使える表現: 「${nameNi}オススメできるお部屋ピックアップしてお送りさせて頂きます！！」`);
   } else {
-    lines.push(`→ 送付済み物件（${f.propertiesSentNames.join('・') || `${f.propertiesSentCount}件`}）は「先にお送りした物件」として言及可。新条件なら「再度ピックアップしてお送り」可。送付済み物件を「これからお送りします」と未来形で再宣言しない。`);
+    // 2026-09-11 竹内方針2: 物件名は書かない（「先にお送りしたお部屋」で受ける）
+    lines.push(`→ 送付済みのお部屋（${f.propertiesSentCount}件）は「先にお送りしたお部屋」として言及可（物件名・号室は書かない）。新条件なら「再度ピックアップしてお送り」可。送付済み物件を「これからお送りします」と未来形で再宣言しない。`);
   }
   if (f.estimateSent) lines.push('→ 御見積書は送付済み。「御見積書を作成しお送りします」の再宣言は禁止（金額変更依頼がある場合のみ「再作成」）。');
   else lines.push('→ 御見積書は未送付。「先ほどお送りした御見積書」「ご検討の程」は使えない。');

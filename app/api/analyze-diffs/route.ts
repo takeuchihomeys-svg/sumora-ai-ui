@@ -5,6 +5,7 @@ import { promoteToConfirmed } from "@/app/lib/knowledge-promote";
 import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app/lib/ai-feedback-guard";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
+import { EXCLUDE_FAILED_SENT_LIKE } from "@/app/lib/example-hygiene";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
@@ -865,6 +866,9 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
     .eq("was_ai_modified", true)
     .not("ai_draft", "is", null)
     .not("sent_reply", "is", null)
+    // 2026-09-11 データ衛生: 生成失敗文の下書き・送信文を「削除パターン」の材料にしない（両列 NOT NULL 前提）
+    .not("ai_draft", "like", EXCLUDE_FAILED_SENT_LIKE)
+    .not("sent_reply", "like", EXCLUDE_FAILED_SENT_LIKE)
     .gte("created_at", fourteenDaysAgo)
     .order("created_at", { ascending: false })
     .limit(200);
@@ -1044,6 +1048,9 @@ export async function POST(req: NextRequest) {
     .is("diff_analyzed_at", null)
     .not("ai_draft", "is", null)
     .not("sent_reply", "is", null)
+    // 2026-09-11 データ衛生: 生成失敗文の下書きを「AIの誤り」として差分分析しない（両列 NOT NULL 前提。行は削除しない）
+    .not("ai_draft", "like", EXCLUDE_FAILED_SENT_LIKE)
+    .not("sent_reply", "like", EXCLUDE_FAILED_SENT_LIKE)
     // AIX生成文を除外しLINE返信AI由来のみ対象にする（entry_source で明示的に区分）
     .eq("entry_source", "line_reply")
     .order("created_at", { ascending: true })

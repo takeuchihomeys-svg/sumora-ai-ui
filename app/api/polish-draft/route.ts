@@ -2,6 +2,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
+import { isUsableExampleText } from "@/app/lib/example-hygiene";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
 
@@ -72,9 +73,11 @@ export async function POST(req: NextRequest) {
   const quickPatterns    = promptMap["smora_quick_patterns"] ?? "";
   const realEstateRules  = promptMap["real_estate_rules"]    ?? "";
 
-  const examplesText = (examples ?? []).length > 0
+  // 2026-09-11 データ衛生: 生成失敗文・テスト送信は正解例にしない（読む側で除外）
+  const usableExamples = ((examples ?? []) as { sent_reply: string }[]).filter((r) => isUsableExampleText(r.sent_reply));
+  const examplesText = usableExamples.length > 0
     ? "【⭐ スモラの実際の返信例（文体・テンポ・言い回しをこれに合わせる）】\n" +
-      (examples as { sent_reply: string }[])
+      usableExamples
         .map((r, i) => `[例${i + 1}]\n${r.sent_reply}`)
         .join("\n\n")
     : "";

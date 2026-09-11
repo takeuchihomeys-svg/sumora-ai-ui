@@ -8,11 +8,16 @@
 //   (3) 鮮度ゲート済み brain action / アクティブタスクが確認系
 //   (4) 顧客が特定物件を指名した（URL・物件名・「この物件」）— 質問形が無くても募集状況確認は正しい行動
 //   (5) detectAixTiming が property_check_result（applyAixTiming で後付け・route/final-check 双方で同じ pure 関数）
-import { CUSTOMER_PROPERTY_REF_RE } from "./line-reply-prompts";
+import { CUSTOMER_PROPERTY_REF_RE, CUSTOMER_COST_QUESTION_RE } from "./line-reply-prompts";
+// 2026-09-11 竹内方針（統合設計 §5.2・E5-n）: スタッフの確認宣言は reply-context の STAFF_CONFIRM_DECL_RE が唯一の定義（同名で中身の違う2定義を解消）
+import { STAFF_CONFIRM_DECL_RE, CUST_VIEWING_INTENT_RE, propertyMatchKeys } from "./reply-context";
 
 export type ConfirmationSource =
   | "customer_fact_question"
   | "customer_property_nomination"
+  | "customer_estimate_request"
+  | "customer_named_known_property"
+  | "customer_viewing_request"
   | "staff_confirm_promise"
   | "brain_confirm_action"
   | "active_property_check"
@@ -37,14 +42,24 @@ export const CONFIRM_OBJECT_LABELS: Array<[RegExp, string]> = [
   [/(?:家賃|賃料|礼金|敷金|初期費用)[^\n]{0,8}(?:交渉|下げ|安く|値引|相談)|フリーレント|値引き|値下げ/, "家賃・条件交渉の可否"],
   [/水道|インターネット|ネット(?:無料|込|代)|Wi-?Fi|ガス|エアコン|設備|楽器|事務所(?:利用|使用)|SOHO|二人入居|ルームシェア|同棲/, "設備・利用条件"],
   [/暗証番号|鍵|カギ|オートロック/, "鍵・現地の入室方法"],
+  // 2026-09-11 §5.2（E5-m）: 見積・初期費用・内覧可否も確認対象（スタッフ正解「クレール元町203号室、初期費用確認出来次第…」「8月7日のご内覧につきまして管理会社に確認」）
+  [/見積|初期費用/, "初期費用"],
+  [/内覧|内見|見学/, "ご内覧可否"],
 ];
 const FACT_QUESTION_RE = /ありますか|あります？|ますか|ですか|でしょうか|いかが|どう(?:です|でしょう|なって)|教えて|知りたい|いつ|可能|できます|出来ます|大丈夫|[?？]/;
 /** 顧客が「自分で確認します」— final-check CUSTOMER_CONFIRM_RE と同名 */
 export const CUSTOMER_SELF_CONFIRM_RE = /確認(?:します|しておきます|して(?:みます|おきます|また|から)|させて(?:頂|いただ)きます|いたします)|見ておきます|見てみます|目を通し/;
-const STAFF_CONFIRM_PROMISE_RE = /(?<!ご)確認(?:させて(?:頂|いただ)き|いたし|致し|し)(?:ます|て)|確認(?:でき|出来|し)次第|お調べ(?:して|させて)/;
-const STAFF_CONFIRM_OBJECT_RE = /募集状況|空室|空き|管理会社|オーナー|貸主|番手|入居可能|退去|交渉|ペット|駐車場|保証会社|設備|水道|ネット|鍵|暗証番号/;
-/** 顧客の物件指名（URL・物件名転記・「この物件」）— CUSTOMER_PROPERTY_REF_RE（prompts）と URL */
-const PROPERTY_NOMINATION_RE = new RegExp(`${CUSTOMER_PROPERTY_REF_RE.source}|https?:\\/\\/|物件名|号室|賃料|管理費|[0-9０-９]+(?:件目|つ目|番目)`);
+/** 直前スタッフの確認約束。STAFF_CONFIRM_DECL_RE（reply-context）を基に、読点で続く「確認させて頂き、」も通す（E5-n: 1件の取りこぼし） */
+const STAFF_CONFIRM_PROMISE_RE = new RegExp(`${STAFF_CONFIRM_DECL_RE.source}|(?<!ご)確認(?:させて(?:頂|いただ)き|いたし|致し|し)(?:ます|て|[、,])|お調べ(?:して|させて)`);
+const STAFF_CONFIRM_OBJECT_RE = /募集状況|空室|空き|管理会社|オーナー|貸主|番手|入居可能|退去|交渉|ペット|駐車場|保証会社|設備|水道|ネット|鍵|暗証番号|初期費用|見積|内覧|内見/;
+/** 顧客の物件指名（URL・物件名転記・「この物件」・番号の並び「86、87…番」）— CUSTOMER_PROPERTY_REF_RE（prompts）と URL */
+const PROPERTY_NOMINATION_RE = new RegExp(`${CUSTOMER_PROPERTY_REF_RE.source}|https?:\\/\\/|物件名|号室|賃料|管理費|[0-9０-９]+(?:件目|つ目|番目)|[0-9０-９]{2,3}(?:[、,][0-9０-９]{2,3})+(?:番)?`);
+/** 顧客の見積・初期費用の依頼（CUSTOMER_COST_QUESTION_RE ＋ 依頼形） */
+const CUSTOMER_ESTIMATE_REQUEST_RE = /(?:御|お)?見積(?:書|り|もり)?[^\n。]{0,10}(?:ください|下さい|お願い|頂け|いただけ|もらえ|欲しい|ほしい|出して|送って)|初期費用[^\n。]{0,10}(?:教えて|知りたい|出して|送って|お願い)/;
+/** 顧客の内覧希望に日付が付いたもの（「8/7に内見したい」） */
+const CUSTOMER_DATED_VIEWING_RE = /[0-9０-９]{1,2}[\/／月][0-9０-９]{1,2}[^\n。]{0,12}(?:内覧|内見|見学)|(?:内覧|内見|見学)[^\n。]{0,12}[0-9０-９]{1,2}[\/／月][0-9０-９]{1,2}/;
+/** 物件を探す約束（「お部屋確認でき次第」「物件確認出来次第お送り」）は管理会社への確認約束ではない（E5-m: 2件の取り違え） */
+export const SEARCH_CONFIRM_RE = /(?:お部屋|物件|新着)[^\n。！!]{0,4}確認(?:でき|出来)次第/;
 /** 鮮度ゲート済み effectiveAction のうち確認宣言が正しいもの（property_check_result は結果報告フェーズなので含めない） */
 export const BRAIN_CONFIRM_ACTIONS: ReadonlySet<string> = new Set(["acknowledge_check"]);
 export const CONFIRM_ACTIVE_TASKS: ReadonlySet<string> = new Set(["property_check"]);
@@ -65,6 +80,8 @@ export function resolveConfirmationContext(input: {
   /** 鮮度ゲート済み action（route.ts effectiveAction）。stale な rawAction は渡さない */
   brainAction?: string | null;
   activeTaskTypes?: readonly string[] | null;
+  /** 2026-09-11 §5.2: 会話に実在する物件名（台帳の送付済み物件名など）。検査側の照合にだけ使う（生成の文面に物件名は出さない＝方針2） */
+  conversationObjects?: { propertyNames: string[] } | null;
 }): ConfirmationContextVerdict {
   const cust = (input.customerMessage || "").trim();
   const staff = (input.lastStaffMessage || "").trim();
@@ -78,6 +95,19 @@ export function resolveConfirmationContext(input: {
   }
   if (PROPERTY_NOMINATION_RE.test(cust)) {
     return { allowed: true, source: "customer_property_nomination", object: custObject ?? "募集状況", reason: "顧客が特定物件を指名（募集状況確認が次工程）" };
+  }
+  // 2026-09-11 §5.2（E5-m）: 見積・初期費用の依頼 → 募集状況・初期費用の確認は正しい次工程
+  if (CUSTOMER_ESTIMATE_REQUEST_RE.test(cust) || CUSTOMER_COST_QUESTION_RE.test(cust)) {
+    return { allowed: true, source: "customer_estimate_request", object: "募集状況・初期費用", reason: "顧客が見積・初期費用を依頼" };
+  }
+  // 顧客の本文に送付済み物件名（照合キー）がある → その物件の募集状況確認（resolvePositive の T3 と同じ照合）
+  const names = input.conversationObjects?.propertyNames ?? [];
+  if (names.some((n) => propertyMatchKeys(n).some((k) => k.length >= 2 && cust.includes(k)))) {
+    return { allowed: true, source: "customer_named_known_property", object: custObject ?? "募集状況", reason: "顧客が送付済み物件を名指し" };
+  }
+  // 内覧の希望（明示・日付付き）→ ご内覧可否・募集状況の確認（VIEWING_BEFORE_VACANCY と同じ前提）
+  if (CUST_VIEWING_INTENT_RE.test(cust) || CUSTOMER_DATED_VIEWING_RE.test(cust)) {
+    return { allowed: true, source: "customer_viewing_request", object: "ご内覧可否・募集状況", reason: "顧客が内覧を希望" };
   }
   if (staff && STAFF_CONFIRM_PROMISE_RE.test(staff) && STAFF_CONFIRM_OBJECT_RE.test(staff)) {
     return { allowed: true, source: "staff_confirm_promise", object: findConfirmObject(staff) ?? "募集状況", reason: "直前スタッフ発言の確認約束を復唱" };
@@ -103,6 +133,10 @@ export function applyAixTiming(v: ConfirmationContextVerdict, aix: string | null
 /** 根拠の無い「確認…ご連絡」「確認出来次第」を含む文を本文から除く（WE_DO 判定用。allowed=true なら無変換） */
 export function stripUnbackedConfirmPromise(text: string, verdict: ConfirmationContextVerdict): string {
   if (verdict.allowed) return text;
+  // 2026-09-11 §5.2: 物件を探す約束（お部屋確認でき次第お送り）は確認約束ではない＝ピックアップ宣言として残す
+  if (SEARCH_CONFIRM_RE.test(text) && !CONFIRM_PROMISE_SENTENCE_RE.test(text.replace(new RegExp(`[^\\n。！!]*${SEARCH_CONFIRM_RE.source}[^\\n。！!]*`, "g"), ""))) {
+    return text;
+  }
   return text
     .replace(new RegExp(CONFIRM_PROMISE_SENTENCE_RE.source, "g"), "")
     .replace(/[^\n。！!]*確認(?:でき|出来|し)次第[^\n。！!]*/g, "");

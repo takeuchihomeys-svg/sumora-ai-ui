@@ -5,6 +5,8 @@ import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from
 import { learnFromModifiedExample } from "@/app/lib/auto-knowledge";
 // 2026-09-09 Fable5 みく事例: 送信文の姿勢フラグ（締め種別・復唱率・温度）。route.ts tpo_debug.stance_draft と同じ関数群（deriveCloserSignals / evalConditionEcho）
 import { computeStanceLite } from "@/app/lib/reply-context";
+// 2026-09-11 データ衛生: 生成失敗文・テスト送信を正解例・学習材料にしない（読む側と書く側で同じ関数）
+import { isUsableExampleText, isUsableAiDraft, isGenerationFailureText } from "@/app/lib/example-hygiene";
 
 // Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
 export const maxDuration = 60;
@@ -757,6 +759,12 @@ export async function PATCH(req: NextRequest) {
   if ((existing.entry_source as string | null) === "aix_action") {
     return NextResponse.json({ ok: true, skippedAnalysis: true });
   }
+  // 🚫 2026-09-11 データ衛生: 生成失敗文（送信文）・テスト送信はナレッジ化しない（☆フラグ自体は人の操作なので残す）
+  if (!isUsableExampleText(existing.sent_reply as string | null)) {
+    return NextResponse.json({ ok: true, skippedAnalysis: true, reason: "unusable_sent_reply" });
+  }
+  // 生成失敗文の下書きは「AIの誤り」ではないので差分学習に使わない
+  const usableDraft = isUsableAiDraft(existing.ai_draft as string | null) ? (existing.ai_draft as string) : null;
 
   // ☆追加時 → 星ブーストで再分析（aiDraft があれば差分学習も実行）
   // after()化: ☆フラグ更新（最低限の保存）は完了済みのため、Sonnet分析チェーンは
@@ -766,18 +774,18 @@ export async function PATCH(req: NextRequest) {
       analyzeAndSaveKnowledge(existing.id, existing.conversation_state, existing.customer_message, existing.sent_reply, true),
       extractAndSavePhrases(existing.conversation_state, existing.sent_reply, true),
     ];
-    if (existing.ai_draft) {
-      const patchSim = textSimilarity((existing.ai_draft as string).trim(), (existing.sent_reply as string).trim());
-      jobs.push(analyzeDiff(existing.id, existing.conversation_state, existing.customer_message, existing.ai_draft, existing.sent_reply, patchSim));
+    if (usableDraft) {
+      const patchSim = textSimilarity(usableDraft.trim(), (existing.sent_reply as string).trim());
+      jobs.push(analyzeDiff(existing.id, existing.conversation_state, existing.customer_message, usableDraft, existing.sent_reply, patchSim));
     }
     // 401修正: 旧実装ではブラウザ（app/page.tsx starMessage）が /api/auto-knowledge を
     // Authorizationヘッダなしで叩いて常に401だった。サーバー側から直接呼ぶ。
     // ☆ = スタッフが承認した良い修正 → AI案と送信文の差分を自動ナレッジ化
-    if (existing.ai_draft && (existing.was_ai_modified as boolean)) {
+    if (usableDraft && (existing.was_ai_modified as boolean)) {
       jobs.push(
         learnFromModifiedExample({
           exampleId: existing.id as string,
-          aiDraft: existing.ai_draft as string,
+          aiDraft: usableDraft,
           sentReply: existing.sent_reply as string,
           conversationState: existing.conversation_state as string,
           customerMessage: existing.customer_message as string,
@@ -1122,7 +1130,7 @@ export async function POST(req: NextRequest) {
     conversationState: rawState,
     customerMessage,
     sentReply,
-    aiDraft,
+    aiDraft: aiDraftRaw,
     isStarred,
     previousStaffMessage,
     conversationId,
@@ -1133,6 +1141,13 @@ export async function POST(req: NextRequest) {
     entry_source,
     aix_action,
   } = body;
+  // 2026-09-11 データ衛生（統合設計 §7）: 生成失敗文の下書きは「AIの下書きが無かった」扱い
+  //   （旧実装は無修正送信＝wasAiUsed で autoStarred が付き、失敗文が☆付きの正解例として保存されていた）
+  const aiDraft = isUsableAiDraft(aiDraftRaw) ? aiDraftRaw : undefined;
+  // 送信文そのものが失敗文なら保存も学習チェーンも起動しない（行を作らない。既存行は読む側で除外）
+  if (isGenerationFailureText(sentReply)) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "generation_failure_text" });
+  }
   const templateId = typeof body.template_id === "string" ? body.template_id : null;
   let replyAngle = typeof body.replyAngle === "string" ? body.replyAngle : null;
 

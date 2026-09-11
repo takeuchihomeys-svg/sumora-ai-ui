@@ -70,10 +70,12 @@ describe("W 持込予告（will_send_later）", () => {
     expect(build(AMI_CUST, AMI_STAFF).pair.ruleId).toBe("PD_WILL_SEND");
   });
 
-  it("W4 あみ 15:42 の NG は UNANCHORED_VOCAB / PAIR_ELEMENT_MISSING の block", () => {
+  // 2026-09-11 竹内方針1: 必須要素の欠落は観測専用（info）。block は UNANCHORED_VOCAB（顧客が言っていない語）が担う
+  it("W4 あみ 15:42 の NG は UNANCHORED_VOCAB の block・必須要素の欠落は info（観測）", () => {
     const c = codes(AMI_NG, AMI_CUST, AMI_STAFF);
     expect(c).toContain("UNANCHORED_VOCAB:block");     // ごゆっくりご相談 ＋ 随時ピックアップ
-    expect(c).toContain("PAIR_ELEMENT_MISSING:block"); // 募集状況確認 ／ 御見積書
+    expect(c).toContain("PAIR_ELEMENT_MISSING:info");  // 募集状況確認 ／ 御見積書
+    expect(c).not.toContain("PAIR_ELEMENT_MISSING:block");
   });
 
   it("W5 修正後の返信は block 0", () => {

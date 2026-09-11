@@ -20,6 +20,8 @@ import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } fr
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "@/app/lib/move-out-context";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
 import { buildActionLedger } from "@/app/lib/action-ledger";
+// 2026-09-11 データ衛生: 正解例として使えるかの唯一の判定（生成失敗文・テスト送信を除外）
+import { isUsableExampleText } from "@/app/lib/example-hygiene";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -295,7 +297,7 @@ const REPLY_STYLE_RULES = `
 
 ■ 橋渡し返信の型（AIX押下までのつなぎ・必ずこの構成にする）
 挨拶 → 受領のお礼/かしこまりました → 何を確認・作成するかの行動宣言 → 「出来次第/確認出来次第ご連絡させて頂きます」で完結
-- 空室確認: 「お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させていただきます！！確認出来次第すぐにご連絡させて頂きます😌！！」
+- 空室確認: 「お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させていただきます！！確認出来次第ご連絡させて頂きます😌！！」
 - 見積: 「かしこまりました！！最大限割引させて頂いた初期費用の御見積書お送りさせて頂きます😊！！」
 - 条件変更: 顧客の言った新条件を必ず復唱してから「〇〇のご条件に合ったお部屋を△△周辺からピックアップしてお送りさせて頂きます😊！！」（エリアの呼び方は顧客が使った表現をそのまま使う）
 - 営業時間外の確認系依頼: 「本日管理会社がお休みのため、営業開始次第一番に確認（交渉）させて頂きます！！」
@@ -1378,7 +1380,9 @@ export async function analyzeConversation(
   const statusText = convStatus ? `\n現在のステータス: ${statusMeaning}` : "";
 
   // Recent starred examples (good replies) for this customer
-  const examples = (examplesResult.data ?? []) as Array<{ sent_reply: string | null; is_starred: boolean | null }>;
+  // 2026-09-11 データ衛生: 生成失敗文（☆付きで混入していた）・テスト送信は優良返信例にしない（読む側で除外）
+  const examples = ((examplesResult.data ?? []) as Array<{ sent_reply: string | null; is_starred: boolean | null }>)
+    .filter((e) => isUsableExampleText(e.sent_reply));
   const examplesText = examples.length > 0
     ? `\n過去のスタッフ優良返信例:\n${examples.map((e) => `- ${e.sent_reply ?? ""}`).join("\n")}`
     : "";
@@ -1562,7 +1566,7 @@ export async function analyzeConversation(
     const st = Array.isArray(e.conversations) ? e.conversations[0]?.status : e.conversations?.status;
     return st === "closed_won" ? "成約" : "申込到達";
   };
-  const rawContractExamples = (contractExamplesResult.data ?? []) as ContractExample[];
+  const rawContractExamples = ((contractExamplesResult.data ?? []) as ContractExample[]).filter((e) => isUsableExampleText(e.sent_reply));
   // 現在のステータスと同じ段階の返信例を優先し、最大3件・各100字に切り詰め
   const stateMatched = rawContractExamples.filter((e) => e.conversation_state === convStatus);
   const stateOthers = rawContractExamples.filter((e) => e.conversation_state !== convStatus);

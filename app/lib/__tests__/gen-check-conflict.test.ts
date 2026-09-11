@@ -6,7 +6,7 @@ import {
   fillPairPlaceholders, fillNameSlot, hasDirectAnswer, resolvePickupGate, viewingOfferLiteral, selectPairExample,
   isCellRequiredSentence, pickupRound, PAIR_MATRIX, type PairContext,
 } from "../reply-context";
-import { runDeterministicChecks, pairElementSuggestion, passTimeoutMs, skeletonBlockCodes, type FinalCheckContext } from "../final-check";
+import { runDeterministicChecks, pairElementSuggestion, passTimeoutMs, skeletonBlockCodes, cellElementGaps, type FinalCheckContext } from "../final-check";
 import { enforceAixGates, validateAndClean, normalizeCustomerName } from "../validate-reply";
 import { buildActionLedger, applyLedgerAutoFix, type LedgerAixRow } from "../action-ledger";
 
@@ -100,8 +100,9 @@ describe("経路F 後処理ゲートと必須要素（YUYA / it_0 / 楓馬）", 
     ok(/ピックアップ出来次第お送り/.test(v.cleaned), `cleaned=${v.cleaned}`);
     ok(/5〜6万円のご条件として/.test(v.cleaned), "条件復唱の宣言が見積金額内訳ゲートで置換された");
     const sk = skeletonBlockCodes(v.cleaned, yuya.ctx);
-    expect(sk.includes("PAIR_ELEMENT_MISSING")).toBe(false);
     expect(sk.includes("EMPTY_CLOSER")).toBe(false);
+    // 2026-09-11 竹内方針1: PAIR_ELEMENT_MISSING は info になったので、安全弁は severity 非依存の cellElementGaps で比べる（ゲートで欠落が増えない）
+    expect(cellElementGaps(v.cleaned, yuya.ctx)).toEqual(cellElementGaps(YUYA_GEN2, yuya.ctx));
   });
 
   it("T03 YUYA: スタッフの実際の正解「物件ピックアップ出来ましたらお送り」はゲートで削除されない（PICKUP_KEEP_RE）", () => {
