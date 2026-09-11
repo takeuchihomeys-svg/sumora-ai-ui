@@ -939,7 +939,7 @@ function assignSeverity(pass: CheckPass, code: string, isAutoSend = false, isEar
   if (code === "NG_PROPERTY_MENTION" || code === "INTRO_REPEAT") return "block"; // プロンプトで block と指示していたが分岐が無く常に warning だった
   // 2026-09-08 §5: 決定論由来の block 級コード（LLM が recheck で同名を返した場合も block を維持）
   if (
-    code === "STATE_REGRESSION" || code === "TIMING_VOCAB_MISMATCH" || code === "SYSTEM_MARKER_LEAK" || code === "NAME_PLACEHOLDER" ||
+    code === "STATE_REGRESSION" || code === "TIMING_VOCAB_MISMATCH" || code === "SYSTEM_MARKER_LEAK" || code === "NAME_PLACEHOLDER" || code === "SYMPATHY_ECHO" ||
     code === "NAME_FULLNAME_LEAK" || code === "VIEWING_BEFORE_VACANCY" || code === "FABRICATED_POLICY_DET" ||
     code === "NEGATIVE_APOLOGY" ||
     // 2026-09-08 Fable5 G6/G26/G10: 宅建業法断言・創作確認約束・退去報告への会話終了は決定論 block（LLM recheck でも維持）
@@ -1099,6 +1099,11 @@ const CLOSED_TPO_RE = /成約後サポート|内覧キャンセル|顧客自身�
 const EMPTY_CLOSER_LINE_RE = /^(?:かしこまりました|承知(?:いた|致)?しました|了解(?:いた|致)?しました|承りました)[😊😌]*[！!。]*$/;
 const TRAILING_BOILERPLATE_LINE_RE = /^(?:(?:何卒|引き続き)?(?:よろしく|宜しく)お願い(?:いた|致)?します|全力でサポート[^\n]*|お気軽に[^\n]{0,14}(?:ください|下さい)|ご満足(?:頂|いただ)け[^\n]*|お待ちしております)[😊😌]*[！!。]*$/;
 const FEELING_SENTENCE_RE = /お気持ち|わかります|分かります|お察し/;
+/** AIへの内部指示の地の文が本文に漏れた行（「コンロサイズの懸念を条件に変換して再ピックアップ宣言する場面です。」等） */
+export const META_NARRATION_LINE_RE = /(?:^|\n)[^\n]{0,80}(?:する場面です|の場面です|場面になります|往復文脈|必須要素|行動台帳|WE ?DO宣言)[^\n]*/;
+/** お客様の気持ち・懸念を代弁して同調する文（「〜気になりますよね」「ご心配ですよね」）。スタッフ実送信6,090通中3通 */
+// 確認の質問（「ペットは飼われていないですよね？」）は対象外にするため疑問符が続くものは除く
+export const SYMPATHY_ECHO_RE = /[^\n。！!？?]{0,30}(?:気になり|心配|不安|大変|困り|悩み|迷い|迷われ)[^\n。！!？?]{0,6}(?:ますよね|ですよね)(?![？?])[😊😌🙇]*[！!。]*/;
 // 「お待ちしております」型の受け宣言（お送りお待ちしております 等）は WE DO 相当として認める
 const RECEIVE_DECL_RE = /(?:お電話|ご連絡|お送り|物件|お返事|ご返答|ご来店|お越し|お写真|画像)[^\n。！!]{0,12}お待ち(?:して|いたして|致して|し)おります/;
 const FEELING_TEMPLATE_PATTERNS: Array<{ re: RegExp; msg: string; sug: string; onlyIfNoAction?: boolean }> = [
@@ -1228,6 +1233,13 @@ function runSkeletonChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
     }
   }
 
+  // ⑥-0 SYMPATHY_ECHO（block）— 気持ちの代弁・同調文。共感語を禁止した結果の言い換え（「〜気になりますよね」）もここで止める
+  {
+    const echo = text.match(SYMPATHY_ECHO_RE);
+    if (echo) issues.push({ pass: "rule_check", severity: "block", code: "SYMPATHY_ECHO",
+      message: "お客様の気持ちを代弁・同調する文です（スタッフ実送信6,090通中3通・共感語は正解返信で0件）",
+      evidence: echo[0].trim(), suggestion: "この1文を削除する（代わりの文は足さない。懸念は条件に取り込んだ行動宣言で応える）" });
+  }
   // ⑥ FEELING_TEMPLATE（warning）— 共感テンプレ・命令形の検討促し・「はい😊！！」開始
   for (const p of FEELING_TEMPLATE_PATTERNS) {
     if (p.onlyIfNoAction && (hasAction || hasAnswer || (pair.rule?.precedence === "after_wait" && pair.customer.kind === "thinking"))) continue;
@@ -1891,6 +1903,9 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
   // E2 システムマーカー漏れ・「」不均衡
   const marker = text.match(/<<<[^\n]{0,20}|>>>|\[AIX誘導中\]|__SHOWN__|\{\s*"[a-z_]+"\s*:/);
   if (marker) push("rule_check", "block", "SYSTEM_MARKER_LEAK", "システム用マーカー・JSONが本文に混入しています", marker[0], "マーカー以降を削除");
+  // 内部指示の地の文（「〜する場面です」等）が本文に漏れた行。スタッフ実送信6,090通中0件
+  const metaLine = text.match(META_NARRATION_LINE_RE);
+  if (metaLine) push("rule_check", "block", "SYSTEM_MARKER_LEAK", "AIへの内部指示（場面の説明）が本文に混入しています", metaLine[0].trim(), "この行を削除");
   if ((text.match(/「/g) ?? []).length !== (text.match(/」/g) ?? []).length)
     push("rule_check", "warning", "QUOTE_UNBALANCED", "「」の対応が取れていません（返信全体を括った名残）", text.slice(0, 20), "不要な「」を削除");
   // E3 絵文字ルール（😊😌🌟✨のみ・合計2個以内・同一絵文字1回）
@@ -2763,7 +2778,7 @@ GOCHOUGO_AFTER_DATE / GUIDE_BEFORE_PROPERTY / CONFIRM_SUBJECT_THEFT / CONFIRM_NO
 UNSENT_CLAIM / JUSHU_BEFORE_SEND / SELF_HONORIFIC / GUIDE_POSSIBLE_NO_DATE / SASETE_OVERUSE / APPLY_PUSH_NO_INTENT /
 CONFIRM_OBJECT_UNSTATED / FAREWELL_ON_MOVEOUT_INFO / DISCLOSURE_ASSERTION / VACANCY_ASSERTION / MOVEIN_DATE_ASSERTION / SCREENING_ASSURANCE /
 OPENING_GREETING_MISMATCH / OPENING_GREETING_UNEXPECTED / OPENER_MISMATCH /
-REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSING / SPLIT_ACK_REPLY / FEELING_TEMPLATE /
+REPLY_SKELETON_MISSING / CONCERN_UNADDRESSED / EMPTY_CLOSER / PAIR_ELEMENT_MISSING / SPLIT_ACK_REPLY / FEELING_TEMPLATE / SYMPATHY_ECHO /
 PREEMPTIVE_HEDGE / FABRICATED_SEARCH_REPORT / CONDITION_RELAX_UNASKED / HEDGE_WITHOUT_SEARCH_DECL / SELF_HEDGE_ECHO /
 CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE / CONDITION_ECHO_MISSING /
 SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / WIDEN_EXCUSE_REDUNDANT / REASSURANCE_NO_BASIS / URGENCY_NO_INTENT / CONSIDER_PUSH / HUMBLE_WAIT /

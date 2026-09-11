@@ -359,5 +359,28 @@ describe("経路G タイムアウト配分・順序依存", () => {
   });
 });
 
+// ══════════ かぁな（2026-09-11 18:50 生成）: 内部指示の地の文漏れ・気持ちの代弁（同調）══════════
+const KAANA_CUST = "コンロのところ少し大きめで広くがいいなって思うんですけど中々ないですよね、、、\n皆同じくらい小さいコンロ2口とかで…";
+const KAANA_STAFF = "かぁなさんお送りさせて頂きましたお部屋、お気に召されましたらお部屋ご案内させて頂きます😌！！";
+const KAANA_DRAFT = "コンロサイズの懸念を条件に変換して再ピックアップ宣言する場面です。\n\nかぁなさんお送りさせて頂きましたお部屋、コンロサイズ気になりますよね😊！！\n\nコンロ大きめ・広めのキッチンのお部屋を中心に、かぁなさんにオススメできるお部屋再度ピックアップしお送りさせて頂きます！！";
+const KAANA_CLEAN = "かしこまりました！！\n\nコンロ大きめ・広めのキッチンのお部屋を中心に、かぁなさんにオススメできるお部屋再度ピックアップしお送りさせて頂きます！！";
+describe("かぁな: 地の文漏れ・同調文", () => {
+  const kaana = ctxOf(KAANA_CUST, KAANA_STAFF, "かぁな");
+  it("T27 内部指示の地の文（〜する場面です）と同調文（〜気になりますよね）を block", () => {
+    const codes = blockCodes(KAANA_DRAFT, kaana);
+    expect(codes).toContain("SYSTEM_MARKER_LEAK");
+    expect(codes).toContain("SYMPATHY_ECHO");
+  });
+  it("T28 2文を除いた本文ではどちらも出ない", () => {
+    const codes = issuesOf(KAANA_CLEAN, kaana).map((i) => i.code);
+    expect(codes).not.toContain("SYSTEM_MARKER_LEAK");
+    expect(codes).not.toContain("SYMPATHY_ECHO");
+  });
+  it("T29 確認の質問（〜ないですよね？）は同調文扱いしない", () => {
+    const codes = issuesOf("かしこまりました！！\nペットは飼われていないですよね？", kaana).map((i) => i.code);
+    expect(codes).not.toContain("SYMPATHY_ECHO");
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log("\n失敗:\n" + failures.map((f) => " - " + f).join("\n")); process.exit(1); }
