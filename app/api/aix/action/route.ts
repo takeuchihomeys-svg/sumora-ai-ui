@@ -1634,7 +1634,8 @@ ${SMORA_COMMON_RULES}`;
             let q = supabase
               .from("property_selection_patterns")
               .select("selling_points, property_customer_id")
-              .eq("customer_reaction", "interested")
+              // 正解は「スタッフが選んで送った物件」。顧客の返信有無では判定しない
+              .eq("selection_label", "selected")
               .gte("customer_rent_max", Math.round(rentMax * 0.85))
               .lte("customer_rent_max", Math.round(rentMax * 1.15))
               .limit(200);
@@ -1706,7 +1707,7 @@ ${SMORA_COMMON_RULES}`;
       // 類似条件顧客の実績から「刺さりやすいポイント」をプロンプトに注入
       // データが溜まるほど精度UP。データなし（初期）は空文字でスキップ。
       const patternHintsNote = recPatternHints.length > 0
-        ? `\n\n【📊 類似条件のお客様に刺さりやすいポイント（実績データ由来）】\n以下のポイントを持つ物件が、同じ家賃帯・間取り希望のお客様から「興味あり」の反応を多く得ています。（オススメポイント）の選択時に優先的に訴求してください。\n${recPatternHints.join("・")}`
+        ? `\n\n【📊 類似条件のお客様にスタッフが選んで送った物件の特徴（実績データ由来）】\n同じ家賃帯・間取り希望のお客様に、スタッフが実際に選んで送った物件に多い特徴です。（オススメポイント）の選択時に優先的に訴求してください。\n${recPatternHints.join("・")}`
         : "";
       const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
 

@@ -324,9 +324,10 @@ export async function POST(req: NextRequest) {
   let weightsUsed: string = "default";   // [QW8] 使用配点記録
   try {
     // クロス顧客パターン（家賃帯±15% + 同間取り）
+    // 正解ラベルは「スタッフが選んで送った（selection_label='selected'）」。顧客の返信有無では判定しない
     let crossQ = supabase
       .from("property_selection_patterns")
-      .select("selling_points, property_customer_id, customer_profile_tags, customer_reaction")
+      .select("selling_points, property_customer_id, customer_profile_tags, selection_label")
       .gte("customer_rent_max", Math.round((customerRentMax ?? 0) * 0.85))
       .lte("customer_rent_max", Math.round((customerRentMax ?? 0) * 1.15))
       .limit(200);
@@ -335,9 +336,8 @@ export async function POST(req: NextRequest) {
     // 個人顧客パターン（このお客さん自身の履歴）
     const personalQ = supabase
       .from("property_selection_patterns")
-      .select("selling_points, customer_reaction, recommendation_reason")
+      .select("selling_points, selection_label, recommendation_reason")
       .eq("property_customer_id", propertyCustomerId)
-      .in("customer_reaction", ["interested", "no_response"])
       .order("created_at", { ascending: false })
       .limit(30);
 
@@ -370,19 +370,19 @@ export async function POST(req: NextRequest) {
         } catch { return null; }
       })() : Promise.resolve(null),
     ]) as [
-      { data: Array<{ selling_points: string[]; property_customer_id: string; customer_profile_tags: string[] | null; customer_reaction: string }> | null },
-      { data: Array<{ selling_points: string[]; customer_reaction: string; recommendation_reason: string | null }> | null },
+      { data: Array<{ selling_points: string[]; property_customer_id: string; customer_profile_tags: string[] | null; selection_label: string }> | null },
+      { data: Array<{ selling_points: string[]; selection_label: string; recommendation_reason: string | null }> | null },
       string[] | null,
     ];
     ragKnowledge = ragResult ?? [];
 
-    // クロス顧客: 1顧客あたり5件キャップで頻度集計（interested のみ）
+    // クロス顧客: 1顧客あたり5件キャップで頻度集計（スタッフが選んで送った物件のみ）
     if (crossResult.data && crossResult.data.length > 0) {
       const counts: Record<string, number> = {};
       const seenPerCustomer: Record<string, number> = {};
       const tagCounts: Record<string, number> = {};
       for (const row of crossResult.data) {
-        if (row.customer_reaction !== "interested") continue;
+        if (row.selection_label !== "selected") continue;
         const cid = row.property_customer_id ?? "__unknown__";
         if ((seenPerCustomer[cid] ?? 0) >= 5) continue;
         seenPerCustomer[cid] = (seenPerCustomer[cid] ?? 0) + 1;
@@ -393,16 +393,16 @@ export async function POST(req: NextRequest) {
       crossProfileTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([t]) => t);
     }
 
-    // 個人顧客: このお客さんが反応したセリングポイント集計
+    // 個人顧客: このお客さんにスタッフが選んだ物件の特徴／同じ候補から選ばなかった物件の特徴
     if (personalResult.data && personalResult.data.length > 0) {
       const personalCounts: Record<string, number> = {};
-      // [QW5] ネガティブシグナル集計
+      // [QW5] ネガティブシグナル（スタッフが選ばなかった候補）集計
       const noResponseCounts: Record<string, number> = {};
       for (const row of personalResult.data) {
-        if (row.customer_reaction === "interested") {
+        if (row.selection_label === "selected") {
           for (const pt of (row.selling_points ?? []))
             personalCounts[pt] = (personalCounts[pt] ?? 0) + 1;
-        } else if (row.customer_reaction === "no_response") {
+        } else if (row.selection_label === "not_selected") {
           for (const pt of (row.selling_points ?? []))
             noResponseCounts[pt] = (noResponseCounts[pt] ?? 0) + 1;
         }
@@ -432,10 +432,10 @@ export async function POST(req: NextRequest) {
     try {
       const contextParts: string[] = [];
       if (ragKnowledge.length > 0)      contextParts.push(`【物件スコアリングノウハウ】\n${ragKnowledge.join("\n")}`);
-      if (patternHints.length > 0)      contextParts.push(`【類似顧客に刺さったポイント】${patternHints.join("・")}`);
-      if (personalPatterns.length > 0)  contextParts.push(`【このお客さん自身が反応したポイント】${personalPatterns.join("・")}`);
-      // [QW5] ネガティブシグナル
-      if (noResponsePatterns.length > 0) contextParts.push(`【このお客さんがスルーした物件の特徴（低評価にすること）】${noResponsePatterns.join("・")}`);
+      if (patternHints.length > 0)      contextParts.push(`【類似条件のお客様にスタッフが選んで送った物件の特徴】${patternHints.join("・")}`);
+      if (personalPatterns.length > 0)  contextParts.push(`【このお客様にスタッフが選んで送った物件の特徴】${personalPatterns.join("・")}`);
+      // [QW5] ネガティブシグナル（同じ候補の中からスタッフが選ばなかった物件）
+      if (noResponsePatterns.length > 0) contextParts.push(`【同じ候補の中からスタッフが選ばなかった物件の特徴（低評価寄りにすること）】${noResponsePatterns.join("・")}`);
       if (crossProfileTags.length > 0)  contextParts.push(`【類似顧客の傾向】${crossProfileTags.join("・")}（この顧客の配点傾向: ${weightsUsed}）`);
       if (aixMeta?.winning_pattern)    contextParts.push(`【この顧客の成約パターン（スコアに応用）】${aixMeta.winning_pattern}`);
       if (aixMeta?.repeated_concern)   contextParts.push(`【この顧客の繰り返す懸念（懸念を解消できない物件は減点）】${aixMeta.repeated_concern}`);

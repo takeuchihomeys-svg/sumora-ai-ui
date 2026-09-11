@@ -2351,6 +2351,17 @@ CREATE INDEX IF NOT EXISTS idx_psp_customer_id ON property_selection_patterns(pr
 CREATE INDEX IF NOT EXISTS idx_psp_reaction    ON property_selection_patterns(customer_reaction);
 CREATE INDEX IF NOT EXISTS idx_psp_rent_max    ON property_selection_patterns(customer_rent_max);
 CREATE INDEX IF NOT EXISTS idx_psp_log_id      ON property_selection_patterns(aix_usage_log_id);
+-- 正解ラベル（2026-09-11追加）: スタッフが選んで送った物件=selected / 同時の候補で選ばれなかった物件=not_selected。
+-- 顧客反応（customer_reaction）は正誤ではなく補助シグナル。対比行（未送付）は customer_reaction=NULL
+ALTER TABLE property_selection_patterns ADD COLUMN IF NOT EXISTS selection_label TEXT DEFAULT 'selected';
+UPDATE property_selection_patterns SET selection_label = 'not_selected' WHERE aix_usage_log_id IS NULL AND selection_label = 'selected';
+UPDATE property_selection_patterns SET customer_reaction = NULL WHERE aix_usage_log_id IS NULL AND customer_reaction IS NOT NULL;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'psp_selection_label_check') THEN
+    ALTER TABLE property_selection_patterns ADD CONSTRAINT psp_selection_label_check CHECK (selection_label IN ('selected','not_selected'));
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_psp_selection_label ON property_selection_patterns(selection_label);
 
 -- ── system_design_thinking（2026-08-22追加）──
 -- 設計思考・アーキテクチャ知識を蓄積するテーブル。
