@@ -8449,11 +8449,10 @@ export default function Home() {
 
             {/* 🧠 最終チェック指摘リスト（block=🔴 / warning=🟡・折りたたみ式） */}
             {/* 2026-09-09 Fable5: brain action の有無で指摘リストを隠さない（隠すと final-check の block が「✅そのまま送信OK」の裏で素通りする） */}
-            {/* 2026-09-10 Fable5 Sさん事例: AIが直せなかった block が残っている時は既定で開く
-                （旧実装は details が閉じたままで「手動で修正してください」の赤文字が既定では見えなかった） */}
+            {/* 既定は折りたたみ（開いたままだと入力欄が画面外に押し出される）。AIが直せなかった block は
+                サマリー行に「手動修正」を出して閉じたままでも分かるようにし、開いた時は高さを制限して内側でスクロール */}
             {checkResult && checkResult.issues.length > 0 && replyDraft.trim() && (
               <details
-                open={!!checkResult.revision_exhausted && checkResult.issues.some((i) => i.severity === "block")}
                 className={`mb-1 rounded-lg border px-2 py-1 ${
                 checkResult.issues.some((i) => i.severity === "block")
                   ? "border-red-200 bg-red-50"
@@ -8464,9 +8463,12 @@ export default function Home() {
                 }`}>
                   🧠 最終チェック指摘 {checkResult.issues.length}件
                   {checkResult.issues.some((i) => i.severity === "block") && `（🔴 ${checkResult.issues.filter((i) => i.severity === "block").length}件は要修正）`}
+                  {checkResult.revision_exhausted && checkResult.issues.some((i) => i.severity === "block") && (
+                    <span className="ml-1 text-red-600">🤖 手動修正</span>
+                  )}
                   <span className="ml-1 opacity-50">▶ タップで展開</span>
                 </summary>
-                <div className="mt-1 space-y-1.5">
+                <div className="mt-1 max-h-[35vh] space-y-1.5 overflow-y-auto overscroll-contain pr-1">
                   {checkResult.issues.map((it, i) => (
                     <div key={i} className="text-[10px] leading-snug">
                       <div className="font-medium text-[#333]">{it.severity === "block" ? "🔴" : "🟡"} {it.message}</div>
