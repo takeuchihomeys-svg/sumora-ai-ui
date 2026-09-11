@@ -5824,9 +5824,10 @@ export default function Home() {
                   <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
                   <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
                 </button>
-                {/* 申込管理ツール（sumora-screening-admin）へ同じウィンドウで切り替え */}
+                {/* 申込管理ツール（sumora-screening-admin）へ同じウィンドウで切り替え。
+                    遷移先は管理ツール PWA の manifest start_url と同じページ（ルートはダッシュボードになるため） */}
                 <a
-                  href="https://sumora-screening-admin.vercel.app"
+                  href="https://sumora-screening-admin.vercel.app/line-management"
                   className="rounded-lg border border-[#0f8f44]/40 bg-[#e9f9ee] px-2 py-0.5 text-[11px] font-black leading-tight text-[#0f8f44] active:opacity-60"
                   title="申込管理ツールへ切り替え"
                 >
