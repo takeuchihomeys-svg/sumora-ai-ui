@@ -2482,6 +2482,19 @@ export default function Home() {
     }
   };
 
+  // 一覧の「AIX」バッジ条件（次にAIXボタンで対応すべき顧客）。バッジ・絞り込み・件数で共有する
+  const isAixBadge = (c: Conversation) =>
+    !!c.suggestedNextAix || (!!c.suggestedAixMeta?.action && c.lastSender === "customer");
+  // 一覧の「要対応」バッジ条件（手動フラグ or 顧客最終発言から12時間以上・未読）。バッジ・AIX絞り込みで共有する
+  const isNeedsActionBadge = (c: Conversation) => {
+    if (flaggedConvIds.has(c.id)) return true;
+    if (c.lastSender !== "customer") return false;
+    const age = Date.now() - new Date(c.updatedAt || 0).getTime();
+    if (age < 12 * 60 * 60 * 1000) return false;
+    const readAt = manuallyReadAt[c.id];
+    return !(readAt && new Date(readAt) >= new Date(c.updatedAt || 0));
+  };
+
   const filteredConversations = useMemo(() => {
     let result = conversations;
     // アカウントフィルター
@@ -2496,10 +2509,8 @@ export default function Home() {
       const postApplyStatuses = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
       result = result.filter((c) => flaggedConvIds.has(c.id) && !postApplyStatuses.has(STATUS_ALIAS[c.status] ?? c.status));
     } else if (statusFilter === "aix_target") {
-      // AIXバッジと同一条件: 次にAIXボタンで対応すべき顧客
-      result = result.filter(
-        (c) => c.suggestedNextAix || (!!c.suggestedAixMeta?.action && c.lastSender === "customer")
-      );
+      // AIXバッジ かつ 要対応バッジの両方が付いている顧客のみ
+      result = result.filter((c) => isAixBadge(c) && isNeedsActionBadge(c));
     } else if (statusFilter !== "all") {
       // 5段階ステータスキーで直接フィルター（旧キーもエイリアスで統一）
       result = result.filter((c) => (STATUS_ALIAS[c.status] ?? c.status) === statusFilter);
@@ -2527,14 +2538,12 @@ export default function Home() {
     return [...result].sort((a, b) =>
       new Date(b.updatedAt ?? "").getTime() - new Date(a.updatedAt ?? "").getTime()
     );
-  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds]);
+  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds, manuallyReadAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // AIX送信対象（AIXバッジと同一条件）の件数
+  // AIX送信対象（AIXバッジ かつ 要対応バッジ）の件数。AIXボタンの紫ドットに使う
   const aixTargetCount = useMemo(() => {
-    return conversations.filter(
-      (c) => c.suggestedNextAix || (!!c.suggestedAixMeta?.action && c.lastSender === "customer")
-    ).length;
-  }, [conversations]);
+    return conversations.filter((c) => isAixBadge(c) && isNeedsActionBadge(c)).length;
+  }, [conversations, flaggedConvIds, manuallyReadAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
@@ -6191,8 +6200,7 @@ export default function Home() {
                         )}
                         {/* AIXバッジ: 次にAIXボタンで対応すべき顧客 */}
                         {/* action="" （ボタン写像不能）のメタではバッジを出さない: 押すボタンが無いのにAIX扱いされる誤誘導を防ぐ */}
-                        {(conversation.suggestedNextAix ||
-                          (!!conversation.suggestedAixMeta?.action && conversation.lastSender === "customer")) && (
+                        {isAixBadge(conversation) && (
                           <span
                             className="rounded-full bg-[#7C3AED] px-1.5 py-0.5 text-[9px] font-bold text-white leading-none"
                             title={`AIX推奨: ${
@@ -6246,13 +6254,7 @@ export default function Home() {
                             {assignees[conversation.id]}
                           </span>
                         )}
-                        {(flaggedConvIds.has(conversation.id) || (() => {
-                          if (conversation.lastSender !== "customer") return false;
-                          const age = Date.now() - new Date(conversation.updatedAt || 0).getTime();
-                          if (age < 12 * 60 * 60 * 1000) return false;
-                          const readAt = manuallyReadAt[conversation.id];
-                          return !(readAt && new Date(readAt) >= new Date(conversation.updatedAt || 0));
-                        })()) && (
+                        {isNeedsActionBadge(conversation) && (
                           <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">
                             要対応
                           </span>
