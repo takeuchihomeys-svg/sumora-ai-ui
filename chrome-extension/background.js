@@ -884,7 +884,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (!_cid) { sendResponse({ ok: false, error: "no customerId" }); return; }
 
           // fill-done後にスクレイプ→LINE送信するため先に作成
-          var _siteFillDone = _createFillDoneWaiter("itandi", String(_cid), 90000);
+          var _siteFillDone = _createFillDoneWaiter("itandi", String(_cid), _fillDoneTimeoutMs("itandi"));
 
           // itandiタブを探す（なければ新規作成）
           var _allTabs = await chrome.tabs.query({});
@@ -1025,7 +1025,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           try {
             // fill-done ウェイターを autofill 発火「前」に生成（先着シグナルを取りこぼさないため）
             var _bulkFillDone = (_bulkSite === "realnetpro" || _bulkSite === "itandi")
-              ? _createFillDoneWaiter(_bulkSite, String(_bc.id), 90000)
+              ? _createFillDoneWaiter(_bulkSite, String(_bc.id), _fillDoneTimeoutMs(_bulkSite))
               : null;
             var _bulkConds = await _batchAutofill(_bc, _bulkSite, false);
             // fill-done → axlx-batch-customer-done を待ってから次顧客へ（混線防止）
@@ -1928,6 +1928,13 @@ function _notifyFillDone(site, customerId, error) {
   _fillDoneWaiters = remaining;
 }
 
+// fill-done（自動入力完了の合図）を待つ上限。page-script 側のウォッチドッグより5秒長くする
+// itandi は路線ごとに駅リストが切り替わり、「電車1本」の沿線全駅選択（13路線）で時間がかかるため150秒＋5秒（2026-09-12 竹内）
+var FILL_DONE_TIMEOUT_MS = { itandi: 155000, realnetpro: 90000 };
+function _fillDoneTimeoutMs(site) {
+  return FILL_DONE_TIMEOUT_MS[site] || 90000;
+}
+
 function _createFillDoneWaiter(site, customerId, timeoutMs) {
   return new Promise(function (resolve) {
     var entry = { site: site || null, customerId: customerId || null, resolve: resolve, timer: null };
@@ -2407,10 +2414,10 @@ async function _runBatchSearch(command) {
           : customer;
         try {
           // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
-          // リアプロ・itandi ともモーダル操作/ページロードで60秒を超えることがあるため90秒に統一
+          // モーダル操作/ページロードで60秒を超えることがあるため リアプロ90秒・itandi155秒（FILL_DONE_TIMEOUT_MS）
           // customerId を渡して他顧客の遅延 fill-done が誤解決しないよう保護する
           var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
-            ? _createFillDoneWaiter(batchSite, String(effectiveCustomer.id), 90000)
+            ? _createFillDoneWaiter(batchSite, String(effectiveCustomer.id), _fillDoneTimeoutMs(batchSite))
             : null;
           // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
           var resolvedBatchConds = await _batchAutofill(effectiveCustomer, batchSite, batchIsWide);
@@ -3048,7 +3055,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     throw new Error("__BATCH_STOPPED__");
   }
   if (!fillDone || fillDone.timedOut) {
-    throw new Error(_site + " 検索完了シグナル（fill-done）が90秒以内に届きませんでした。");
+    throw new Error(_site + " 検索完了シグナル（fill-done）が" + Math.round(_fillDoneTimeoutMs(siteLabel === "itandi" ? "itandi" : "realnetpro") / 1000) + "秒以内に届きませんでした。");
   }
   if (fillDone.error) {
     throw new Error("page-script側エラー（スキップ）: " + fillDone.error);

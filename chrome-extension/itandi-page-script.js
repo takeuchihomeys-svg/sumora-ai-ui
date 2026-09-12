@@ -848,11 +848,13 @@
   }
 
   function fill(cond) {
-    // 85秒ウォッチドッグ: フリーズ/例外時にbackground.jsを強制解放
+    // 150秒ウォッチドッグ: フリーズ/例外時にbackground.jsを強制解放
+    // background.js の待ち上限（FILL_DONE_TIMEOUT_MS.itandi=155秒）より5秒短くする。
+    // 2026-09-12 竹内: 85秒→150秒（路線ごとの駅選択・「電車1本」の沿線全駅選択で85秒に届くため）
     var _watchdog = setTimeout(function () {
-      console.warn("[AX] watchdog: 85s timeout — fill-done強制送信");
+      console.warn("[AX] watchdog: 150s timeout — fill-done強制送信");
       window.postMessage({ from: "aixlinx-fill-done", error: "watchdog-timeout" }, "*");
-    }, 85000);
+    }, 150000);
     function _safeDone(errMsg) {
       clearTimeout(_watchdog);
       var msg = { from: "aixlinx-fill-done" };
