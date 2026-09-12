@@ -62,6 +62,29 @@ body {
   flex-shrink: 0;
 }
 
+/* ── AIXモード（スタッフモードの左。ONで AIX 指示に連動した自動物件検索） ── */
+.aix-btn {
+  background: rgba(255,255,255,0.15);
+  border: none; border-radius: 14px;
+  margin-left: auto; margin-right: 6px;
+  padding: 5px 12px;
+  color: #fff; font-size: 11px; font-weight: 900; letter-spacing: 0.04em;
+  cursor: pointer; white-space: nowrap;
+}
+.aix-btn:hover { background: rgba(255,255,255,0.28); }
+.aix-btn.on {
+  background: #7c3aed;
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.45);
+}
+/* AIX ボタンが margin-left:auto で右寄せを担うので、隣のスタッフモードは詰めて並べる */
+.aix-btn + .staff-btn { margin-left: 0; }
+.aix-banner {
+  background: #7c3aed; color: #fff;
+  font-size: 12px; font-weight: bold;
+  text-align: center; padding: 6px 10px;
+  flex-shrink: 0;
+}
+
 /* ── View system ── */
 .view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
 .view.active { display: flex; }
@@ -603,7 +626,9 @@ body.mini-mode .header-sub,
 body.mini-mode #collapse-btn,
 body.mini-mode #refresh-btn,
 body.mini-mode #staff-mode-btn,
-body.mini-mode #staff-mode-banner {
+body.mini-mode #staff-mode-banner,
+body.mini-mode #aix-mode-btn,
+body.mini-mode #aix-mode-banner {
   display: none !important;
 }
 body.mini-mode .header-left {

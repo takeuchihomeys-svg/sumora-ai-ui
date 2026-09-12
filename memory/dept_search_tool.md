@@ -123,6 +123,7 @@ classifyAreaTokens の結果を受けてグローバルモード（駅 or 地域
 
 | 日付 | 内容 |
 |---|---|
+| 2026-09-12 | **AIXモード（v2.5.1）**: ヘッダーのスタッフモードの左に `#aix-mode-btn`「AIX」トグル（ON時「AIX連動中」紫 `.aix-btn.on`＋紫バナー `#aix-mode-banner`）。状態は `chrome.storage.local.aixMode`（PCごと・TTLなし）。**スタッフモードと排他**（片方ONでもう片方OFF・popup.js `_initAixModeUI` / スタッフ側クリックでも `aixMode:false`）。background.js `_isAixModeActive()` → `_pollAndRunBatch` が pending API を `?aix=1` 付きで呼ぶ。バッジは スタッフ=「手動」緑 ＞ AIX=「AIX」紫。**サーバー側**: ブレインが AIX要対応（aix_action_items）を「物件ピックアップした／物件オススメ／物件を探す」で新規・変更登録した時、`app/lib/aix-action-items.ts enqueueAixPropertySearch` が紐付き物件顧客の `batch_property_search`（sites=["realnetpro"]・payload.source="aix"）を automation_commands に積む（同顧客の pending/running があれば積まない）。`/api/automation/pending` は `?aix=1` の PC にだけ source=aix を渡し、どの PC も AIX モードにしないまま3時間経過したものは error で閉じる。`/api/automation/trigger` の既存コマンド再利用判定から source=aix を除外。検索→売上番長グループ送信は既存の一括検索（_runBatchSearch → _scrapeAndSendRealpro → bulk-dl → merge-pdfs）そのまま。**実機未確認**（AIXモードON→ブレインが物件ピックアップ判定→自動検索→LINE送信の通し）。拡張の再読み込み必須（background.js / popup.* 変更） |
 | 2026-09-05 | **一時調整→DB反映ボタン追加 (commit 3a82a0c9)**: 一時調整フォームに「💾 本条件に反映する」ボタンを新設。押下で PATCH /api/property-customers を呼び顧客のDB条件を上書き更新（賃料上限・面積min/max・エリア）。地域/駅フィールドの入力状況に応じて `area_mode` も自動設定（地域→ward・駅→station）。保存中/成功/失敗のフィードバックを `#adj-save-status` に表示。成功時はメモリ内顧客オブジェクトと sessionStorage キャッシュも同期更新（再読込不要で反映）。popup.html / popup.js / styles.css |
 | 2026-09-05 | **一時調整: 地域/駅検索切り替え＋顧客別履歴保存 (commit a1b4b4c0)**: ①地域/駅欄への手動入力が顧客DB条件より優先して検索軸を確定（`computeTempAdjOverride()`・最後に編集した欄で判定・`_areaModeSource="user"`で自動補正③/③-pre/⑤を全スキップ。自動バッチの`area_mode_locked`時は無効）。上書きモード時は該当欄のテキストのみ検索エリアに使用。②一時調整5フィールド（地域/駅/賃料上限/面積min/max）をlocalStorage `tempAdj_{customerId}` に顧客別保存（直近3件・800msデバウンス・同一セッション連続編集は先頭更新）、顧客選択時に最新を自動復元（`restoreTempAdj`・自動バッチ中は`_adjRestoreSuppressed`で抑止）。③直近3件を履歴チップで表示・クリック再適用（`renderTempAdjChips`）。④🏙️地域(青)/🚉駅(緑)インジケーター（`#adj-mode-indicator`）で上書きモードを可視化。popup.js / popup.html / styles.css。※実装時の未定義`escapeHtml`→既存`esc()`に修正済み |
 | 2026-09-05 | **サイト別検索履歴グリッド追加 (commit a6d31439)**: search_history JSONB カラム追加（migrate-schema）。リアプロ/itandi/レインズの自動入力ボタン押下時に realpro_p/w・itandi_p/w・reins_p/w をPATCH記録。顧客行の確認ボタン横に RP(青)/IT(橙)/RE(緑) × P/広 グリッドを表示（検索済=青・未=グレー）。ホバーで日付ツールチップ。c-datesの汎用P:/広:チップを削除しグリッドに統合。 |
@@ -616,7 +617,8 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 
 ## 🔁 引き継ぎ事項（次セッションへ）
 
-- 現在のバージョン: **v2.4.8**（manifest.json 記載）
+- 現在のバージョン: **v2.5.1**（manifest.json 記載・2026-09-12 AIXモード追加）
+- **2026-09-12 AIXモード 実機確認待ち**: 自動化用PCで拡張を再読み込み → リアプロにログインしたタブを開いたまま「AIX」ON → ブレインが物件ピックアップ/物件オススメの AIX要対応を出した顧客（物件出し顧客に紐付き）で、30秒以内に自動検索→売上番長グループへ物件が届くかを確認する
 - **2026-08-24 setupAreaModeSelector クラッシュ修正**:
   - **症状**: 一括検索中に `axlx-switch-customer` を受信すると popup.js:2501 で `TypeError: Cannot read properties of null (reading 'style')` が発生し、その後のリアプロ/itandi ボタンが押せなくなる
   - **根本原因**: `setupAreaModeSelector` が DOM要素（`area-mixed-notice` 等）の存在を前提にしていたが、underbar モードの一括検索フロー（`openSiteView → openInstructions`）では instructions パネルの DOM 要素が存在しない状態で呼ばれる

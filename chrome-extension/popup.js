@@ -4702,7 +4702,10 @@ function _initStaffModeUI() {
       var next = !_staffModeOn;
       _renderStaffMode(next); // 即時反映（storage.onChanged でも同期される）
       try {
-        chrome.storage.local.set({ staffMode: next, staffModeAt: next ? Date.now() : null });
+        // スタッフモード（自動で動かない）と AIX モード（AIX に連動して自動で動く）は排他
+        var upd = { staffMode: next, staffModeAt: next ? Date.now() : null };
+        if (next) upd.aixMode = false;
+        chrome.storage.local.set(upd);
       } catch (_) { /* ignore */ }
       // スタッフモードON → 要対応へ自動切替
       if (next) {
@@ -4715,9 +4718,49 @@ function _initStaffModeUI() {
   }
 }
 
+// ── AIXモード（2026-09-12 竹内方針）────────────────────────────────
+// ONの間このPCは、AIXで「物件ピックアップした／物件オススメ／物件を探す」の指示が出たお客さんの自動検索コマンド
+// （サーバーが aix_action_items 登録時に automation_commands へ source=aix で積む）を拾い、既存の一括検索で
+// 検索→売上番長グループへ送信する。実際の判定は background.js（_isAixModeActive → pending API に ?aix=1）。
+// 状態は chrome.storage.local { aixMode }（PCごと・TTLなし）。スタッフモードとは排他。
+var _aixModeOn = false;
+
+function _renderAixMode(on) {
+  _aixModeOn = !!on;
+  var btn = document.getElementById("aix-mode-btn");
+  var banner = document.getElementById("aix-mode-banner");
+  if (btn) {
+    btn.classList.toggle("on", _aixModeOn);
+    btn.textContent = _aixModeOn ? "AIX連動中" : "AIX";
+  }
+  if (banner) banner.style.display = _aixModeOn ? "block" : "none";
+}
+
+function _initAixModeUI() {
+  try {
+    chrome.storage.local.get(["aixMode"], function(res) { _renderAixMode(!!(res && res.aixMode)); });
+    chrome.storage.local.onChanged.addListener(function(changes) {
+      if (changes.aixMode) _renderAixMode(!!changes.aixMode.newValue);
+    });
+  } catch (_) { /* ignore */ }
+  var btn = document.getElementById("aix-mode-btn");
+  if (btn) {
+    btn.addEventListener("click", function() {
+      var next = !_aixModeOn;
+      _renderAixMode(next);
+      try {
+        var upd = { aixMode: next };
+        if (next) { upd.staffMode = false; upd.staffModeAt = null; }
+        chrome.storage.local.set(upd);
+      } catch (_) { /* ignore */ }
+    });
+  }
+}
+
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   _initStaffModeUI();
+  _initAixModeUI();
   // DBが空なら既存ハードコードデータをシード → 学習済みマップをロード
   seedMapsIfEmpty().then(() => fetchLearnedMaps());
   // DBの駅→路線キャッシュをロード（24hローカルキャッシュ・失敗時はhardcodedマップで動作継続）
@@ -4730,7 +4773,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!cmd) return;
       chrome.storage.session.remove("pendingPopupCmd");
       // openPopup() 失敗時に background.js が立てた赤バッジを消す（スタッフモード中はバッジ「手動」を維持）
-      try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : '' }); } catch (_) {}
+      try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : (_aixModeOn ? 'AIX' : '') }); } catch (_) {}
       var c = allCustomers.find(function(x) {
         return String(x.id) === String(cmd.customerId);
       });
@@ -4782,7 +4825,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // allCustomers 未ロードなら DOMContentLoaded の then() 側で処理されるので無視
     if (!allCustomers || allCustomers.length === 0) return;
     chrome.storage.session.remove("pendingPopupCmd");
-    try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : '' }); } catch (_) {}
+    try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : (_aixModeOn ? 'AIX' : '') }); } catch (_) {}
     var c = allCustomers.find(function(x) {
       return String(x.id) === String(cmd.customerId);
     });

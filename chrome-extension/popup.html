@@ -16,6 +16,8 @@
         <span class="header-sep">|</span>
         <span class="header-sub">物件検索サポート</span>
       </div>
+      <!-- AIXモード切替（ONの間、AIXで物件ピックアップ・物件オススメの指示が出たお客さんをこのPCで自動検索し売上番長グループへ送る。スタッフモードとは排他） -->
+      <button class="aix-btn" id="aix-mode-btn" title="AIXモード：ONの間、AIXで「物件ピックアップした」「物件オススメ」の指示が出たお客さんを、このPCで自動で物件検索して売上番長グループへ送ります">AIX</button>
       <!-- スタッフモード切替（ONの間このPCは自動化コマンドを無視・手動操作専用になる） -->
       <button class="staff-btn" id="staff-mode-btn" title="スタッフモード：ONの間、このPCは自動化コマンドを無視します（2時間で自動OFF）">スタッフモード</button>
       <!-- アンダーバーモード時のみ表示：展開/折りたたみトグル -->
@@ -34,6 +36,8 @@
 
     <!-- スタッフモード中バナー（消し忘れ防止のため常時目立たせる） -->
     <div id="staff-mode-banner" class="staff-banner" style="display:none">スタッフモード中 — 自動化は停止しています（手動操作のみ・2時間で自動OFF）</div>
+    <!-- AIXモード中バナー -->
+    <div id="aix-mode-banner" class="aix-banner" style="display:none">AIXモード中 — AIXの指示（物件ピックアップ・物件オススメ）に連動して自動で物件検索し、売上番長グループへ送ります</div>
 
     <!-- ▼ VIEW 1: お客さん一覧 -->
     <div id="view-list" class="view active">

@@ -2146,21 +2146,41 @@ async function _isStaffModeActive() {
   }
 }
 
+// ── AIXモード（2026-09-12 竹内方針）──────────────────────────────────────
+// ONの間このPCは、AIXで「物件ピックアップした／物件オススメ／物件を探す」の指示が出たお客さんの
+// 自動検索コマンド（automation_commands.payload.source="aix"）も claim する（pending API に ?aix=1）。
+// OFFのPCは AIX 由来コマンドを claim しない＝AIXモードのPCだけが AIX に連動して動く。スタッフモードとは排他（popup 側で制御）。
+async function _isAixModeActive() {
+  try {
+    var st = await chrome.storage.local.get(["aixMode"]);
+    return !!st.aixMode;
+  } catch (e) {
+    return false;
+  }
+}
+
 function _updateStaffModeBadge(on) {
   try {
     if (on) {
       chrome.action.setBadgeText({ text: "手動" });
       chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
-    } else {
-      chrome.action.setBadgeText({ text: "" });
+      return;
     }
+    _isAixModeActive().then(function(aixOn) {
+      if (aixOn) {
+        chrome.action.setBadgeText({ text: "AIX" });
+        chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
+      } else {
+        chrome.action.setBadgeText({ text: "" });
+      }
+    });
   } catch (e) { /* ignore */ }
 }
 
 // popup のトグル操作・TTL自動解除をバッジに即時反映
 chrome.storage.onChanged.addListener(function(changes, area) {
-  if (area === "local" && changes.staffMode) {
-    _updateStaffModeBadge(!!changes.staffMode.newValue);
+  if (area === "local" && (changes.staffMode || changes.aixMode)) {
+    _isStaffModeActive().then(_updateStaffModeBadge);
   }
 });
 
@@ -2189,7 +2209,9 @@ async function _pollAndRunBatch() {
       return;
     }
     // 修正9: pending ポーリングに10秒タイムアウト / 修正10: 共有シークレットヘッダー
-    var res = await fetch(SUMORA_BATCH_API + "/api/automation/pending", {
+    // AIXモードのPCだけが AIX 由来（source=aix）の自動検索コマンドも受け取る
+    var _aixOn = await _isAixModeActive();
+    var res = await fetch(SUMORA_BATCH_API + "/api/automation/pending" + (_aixOn ? "?aix=1" : ""), {
       cache: "no-store",
       headers: await _getAutomationKeyHeader(),
       signal: AbortSignal.timeout(10000),

@@ -81,6 +81,42 @@ export async function syncAixActionItem(input: {
     if (error) { if (!/duplicate|unique/i.test(error.message)) console.warn("[aix-action-items] insert failed:", error.message); return; }
   }
   await pushToHanbancyoGroup(buildAixActionNotice(customerName, action!, checkPattern));
+  if (AIX_AUTO_SEARCH_ACTIONS.has(action!)) {
+    await enqueueAixPropertySearch(conversationId, action!).catch((e) =>
+      console.warn("[aix-action-items] enqueue auto search failed:", conversationId, e instanceof Error ? e.message : e));
+  }
+}
+
+/** AIX モード（拡張の AIX ボタン ON の PC）で自動の物件検索→売上番長グループ送信を行う AIX 指示 */
+const AIX_AUTO_SEARCH_ACTIONS = new Set(["property_send", "property_recommendation", "property_search"]);
+/** AIX 連動の自動検索で使う検索サイト（Web画面の「リアプロで検索」と同じキー） */
+const AIX_AUTO_SEARCH_SITES = ["realnetpro"];
+
+/**
+ * AIX で物件ピックアップ・物件オススメの指示が出たお客さんの自動検索コマンドを積む（2026-09-12 竹内方針「AIXモード」）。
+ * payload.source="aix" のコマンドは AIX モードの PC だけが claim する（/api/automation/pending ?aix=1）。
+ * 物件出し顧客（property_customers）に紐付いていない会話は条件が無いので積まない。同じ顧客の未実行・実行中があれば積まない。
+ */
+async function enqueueAixPropertySearch(conversationId: string, action: string): Promise<void> {
+  const { data: conv } = await supabase
+    .from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
+  const customerId = (conv?.property_customer_id as string | null | undefined) ?? null;
+  if (!customerId) return;
+  const { data: existing } = await supabase
+    .from("automation_commands")
+    .select("id")
+    .in("status", ["pending", "running"])
+    .contains("customer_ids", [customerId])
+    .limit(1);
+  if (existing && existing.length > 0) return;
+  const { error } = await supabase.from("automation_commands").insert({
+    command_type: "batch_property_search",
+    customer_ids: [customerId],
+    sites: AIX_AUTO_SEARCH_SITES,
+    payload: { source: "aix", aix_action: action, conversation_id: conversationId, is_wide: false },
+    status: "pending",
+  });
+  if (error) console.warn("[aix-action-items] automation insert failed:", error.message);
 }
 
 /** スタッフがその会話で AIX を送った → 未完了を完了（✅）にする。押した AIX がブレインの指示と同じかも残す */

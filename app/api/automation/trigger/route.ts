@@ -48,10 +48,12 @@ export async function POST(req: NextRequest) {
   }
 
   if (!body.force) {
+    // AIX 由来（payload.source="aix"・AIXモードのPC待ち）のコマンドは再利用しない（別物）
     const { data: existing } = await supabase
       .from("automation_commands")
       .select("id, status")
       .in("status", ["pending", "running"])
+      .or("payload->>source.is.null,payload->>source.neq.aix")
       .limit(1);
 
     if (existing && existing.length > 0) {
