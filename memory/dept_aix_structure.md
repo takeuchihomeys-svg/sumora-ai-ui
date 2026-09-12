@@ -32,6 +32,7 @@ AIX は LINE返信画面の右下ボタンから起動するアクションシ�
 | 物件送る | #00897B | property_send | openAixDirect | |
 | 物件確認した | #4CAF50 | property_check_result | openAixDirect | guideToCheckResult時ハイライト |
 | 見積書送る | #FF9800 | estimate_sheet | openAixWithImagePicker | 画像必須 |
+| 初期費用を説明 | #2E7D32 | cost_explain | openAixDirect | 2026-09-12 追加。報酬・還元額を入力→テンプレ生成（AI不使用） |
 | 内覧へ！ | #9C27B0 | — | 展開式トグル | サブメニュー親（直接モーダル開かない） |
 | └ 日程調整する | #9C27B0 | viewing_invite | openAixDirect | 内覧へ！のサブ |
 | └ 待ち合わせ | #00838F | meeting_place | openAixDirect | 内覧へ！のサブ |
@@ -56,6 +57,14 @@ AIX は LINE返信画面の右下ボタンから起動するアクションシ�
 | estimate_sheet | 物件+間取り → Claude API | /api/aix/action |
 | property_check_result | パターン選択 → Claude API | /api/aix/action |
 | **meeting_place** | **クライアント側テンプレート生成（AI不使用）** | なし |
+| **cost_explain** | **クライアント側テンプレート生成（AI不使用・app/lib/cost-explain-text.ts）** | なし |
+
+### cost_explain（初期費用を説明）— 2026-09-12 竹内・あや事例
+- 使う場面: 費用の安さを不審に思われた・安い理由を聞かれた時（値引きの相談・金額の質問は別）
+- state: `costNoFee`（貸主から手数料なし）/ `costFeeLabel`（家賃1ヶ月分等）/ `costFeeYen` / `costRefundYen`（直近の AIX 見積書の「🌟〇〇円割引」を初期値）/ `costSavingYen`（「より〇〇円節約」を初期値）
+- 文: 仕組み（仲介手数料0円・オーナー様からの広告料を還元・金額差は還元の有無）＋具体額（貸主から〇〇円頂き〇〇円を〇〇さんの初期費用に還元・利益も残る）を1通。お客様が仲介手数料に触れていれば「仲介手数料は0円で大丈夫です！！」から
+- ブレイン: 場面の証拠 S8_cost_doubt（`customerDoubtsCheapness`）→ 見積書送る/確認します/AIXなし を cost_explain に（decision_source=signal:scene_S8_cost_doubt）
+- AIX種別を足す時の登録先の全体像は、この節の上の4箇所セット＋ aix-taxonomy（AIX_STAFF_NOTES がブレインの検査を兼ねる）・brain-core（能力マップ・PHASE_ACTION_CANDIDATES・AIX_LABEL_JP）・action-ledger（AIX_KIND）・log-aix-usage・学習の一覧
 
 ### meeting_place 専用state
 ```
@@ -101,7 +110,7 @@ meetingPropertyInputRef  — 画像input ref
 page.tsx の IIFE 内 `AIX_INSPECT` オブジェクト。
 **新アクションを追加したら必ずここに説明を追記する。**
 
-現在登録済み: 物件オススメ / 物件送る / 物件確認した / 見積書送る / 内覧へ！ / 申込へ！ / 待ち合わせ
+現在登録済み: 物件オススメ / 物件送る / 物件確認した / 見積書送る / 初期費用を説明 / 内覧へ！ / 申込へ！ / 待ち合わせ
 
 ---
 
