@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
+import { maskForEmbedding } from "@/app/lib/pii-mask";
 
 // ─── テキスト類似度（bigram Jaccard）#31 ─────────────────────────────────────
 // 空白除去後の2文字グラム集合の Jaccard 係数（0〜1）。語順の入れ替えに頑健。
@@ -27,8 +28,9 @@ export function textSimilarity(a: string, b: string): number {
 // 優先順: メモリ → DB → OpenAI API生成 → DB+メモリに保存。
 const embeddingCache = new Map<string, number[]>();
 
+// 2026-09-13 RAG 監査: 検索の問いの個人情報は埋め込みの共通入口で伏せ字にする（maskForEmbedding の根拠は pii-mask.ts）
 export async function generateEmbedding(text: string): Promise<number[] | null> {
-  const cacheKey = text.slice(0, 2000);
+  const cacheKey = maskForEmbedding(text).slice(0, 2000);
 
   // メモリキャッシュ確認（最速）
   if (embeddingCache.has(cacheKey)) return embeddingCache.get(cacheKey)!;

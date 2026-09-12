@@ -189,3 +189,14 @@ export function maskPII(text: string, knownNames?: (string | null | undefined)[]
 
   return result;
 }
+
+// 2026-09-13 RAG 監査: 検索の問い（直近の顧客発言を含む）が平文のまま OpenAI に送られ、同じ平文が embedding_cache に期限なしで残っていた
+//   （電話番号・郵便番号・生年月日・個人番号らしい行が251行。マイナンバーカード画像の文字起こし・申込フォームの記入内容も入っていた）。
+//   埋め込み（knowledge-utils generateEmbedding）の共通入口で使う: maskPII＋生年月日（西暦年つき）・12桁の番号。検索の意味（場面・物件・金額）は残る
+const BIRTHDATE_RE = /(?:19|20)\d{2}\s*[年/.\-]\s*\d{1,2}\s*[月/.\-]\s*\d{1,2}\s*日?/g;
+const LONG_ID_RE = /(?<!\d)\d{4}[\s-]?\d{4}[\s-]?\d{4}(?!\d)/g; // マイナンバー（12桁）・免許証番号等
+export function maskForEmbedding(text: string): string {
+  if (!text) return text;
+  // 生年月日は maskPII の「月日を月に丸める」より先に伏せる（丸めると「2006年10月中」のように年と月が残る）
+  return maskPII(text.replace(BIRTHDATE_RE, "[日付非表示]").replace(LONG_ID_RE, "[番号非表示]"));
+}

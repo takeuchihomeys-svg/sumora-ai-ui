@@ -25,6 +25,7 @@ const IN_FLIGHT_GRACE_MS = 3 * 60 * 1000; // 3 minutes
 // H3(Fable5): 失敗バックオフ — analyzeAndSaveBrainMeta は失敗時も brain_analyzed_at を書くため、
 // 直近30分以内に試行済みの行は再試行しない（決定的に失敗する会話の永久リトライ・sweep飢餓を防ぐ）
 const RETRY_BACKOFF_MS = 30 * 60 * 1000; // 30 minutes
+const EMBEDDING_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // embedding_cache は30日で消す
 
 async function withConcurrency<T, R>(
   items: T[],
@@ -51,6 +52,14 @@ export async function GET(req: NextRequest) {
   }
 
   const runLogId = await startCronLog("brain-sweep");
+
+  // 2026-09-13 RAG 監査: embedding_cache（検索の問いの平文＋埋め込み）に期限が無く、7日で約3,700行ずつ増え続けていた。
+  //   キャッシュなので30日より古い行は消す（5分毎の sweep のうち毎時0〜4分の1回だけ）
+  if (new Date().getUTCMinutes() < 5) {
+    const { error: purgeErr } = await supabase.from("embedding_cache").delete()
+      .lt("created_at", new Date(Date.now() - EMBEDDING_CACHE_TTL_MS).toISOString());
+    if (purgeErr) console.warn("[brain-sweep] embedding_cache purge failed:", purgeErr.message);
+  }
 
   try {
     const cutoff = new Date(Date.now() - IN_FLIGHT_GRACE_MS).toISOString();
