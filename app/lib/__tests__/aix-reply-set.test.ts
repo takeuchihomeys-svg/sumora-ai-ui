@@ -1,6 +1,9 @@
-// 2026-09-12 竹内方針A: 「AIX で送る場面」の判定（resolveReplyAix）の回帰テスト。
+// 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: resolveReplyAix はブレインの判断を読むだけ。
+//   旧（2c86c209）の「場面表 S1〜S5 → AIX」の11ケースは aix-scene-evidence.test.ts へ期待値を変えずに移した（場面は証拠）。
+//   旧「brain とずれたら場面を採る」「断言コードから AIX を選ぶ」は廃止（判断の持ち主をブレインに一本化したため期待値を変更）。
 // 実行: npx tsx app/lib/__tests__/aix-reply-set.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { resolveReplyAix, type ReplyAixInput } from "../aix-reply-set";
+import { resolveReplyAix, resolveReplyAixDecision, confirmationBasisAction, resolveBodySafety, type ReplyAixInput, type BrainAixDecision } from "../aix-reply-set";
+import { detectAixSceneEvidence } from "../aix-scene-evidence";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
 function describe(name: string, fn: () => void) { current = name; fn(); }
@@ -13,72 +16,86 @@ function expect<T>(actual: T) {
 }
 const base = (o: Partial<ReplyAixInput>): ReplyAixInput => ({ latestCustomerTurn: "", hasCustomerImage: false, conversationStatus: "proposing", ...o });
 const r = (o: Partial<ReplyAixInput>) => resolveReplyAix(base(o));
+const brain = (action: string, o: Partial<BrainAixDecision> = {}): BrainAixDecision =>
+  ({ action, check_pattern: null, enforcement_level: "recommended", note: null, fresh: true, ...o });
 
-describe("場面表 S1〜S5", () => {
-  it("S1 11c492f7「どの部屋が今ところ空室ですか？」→ property_check_result（after_confirm）", () => {
-    const x = r({ latestCustomerTurn: "どの部屋が今ところ空室ですか？" });
-    expect(x?.action).toBe("property_check_result"); expect(x?.timing).toBe("after_confirm"); expect(x?.scene).toBe("S1_vacancy");
+describe("① fresh＋action → ブレインの判断を採る", () => {
+  it("場面（S4 内覧）とずれていてもブレインの application_push", () => {
+    const x = r({ latestCustomerTurn: "明日ってまだ空いてますか？", brainDecision: brain("application_push") });
+    expect(x?.action).toBe("application_push"); expect(x?.source).toBe("brain");
   });
-  it("S1 送付物件への指示語＋空き質問 → property_check_result", () => {
-    expect(r({ latestCustomerTurn: "さっきのお部屋まだ空いてますか？", sentPropertyCount: 3 })?.scene).toBe("S1_vacancy");
+  it("場面と同じ AIX → 橋渡し文は場面の行（S1）", () => {
+    const x = r({ latestCustomerTurn: "この物件まだ空いてますか？", brainDecision: brain("property_check_result") });
+    expect(x?.action).toBe("property_check_result"); expect(x?.scene).toBe("S1_vacancy"); expect(x?.timing).toBe("after_confirm");
   });
-  it("S1 URL＋空室語（旧 P0）→ property_check_result", () => {
-    expect(r({ latestCustomerTurn: "https://suumo.jp/chintai/xx/ ここ空いてますか" })?.action).toBe("property_check_result");
+  it("ブレインの enforcement_level をそのまま使う", () => {
+    expect(r({ latestCustomerTurn: "ありがとうございます", brainDecision: brain("viewing_invite", { enforcement_level: "required" }) })?.enforcement).toBe("required");
+    expect(r({ latestCustomerTurn: "ありがとうございます", brainDecision: brain("viewing_invite") })?.enforcement).toBe("recommended");
   });
-  it("S2「この物件の最短入居可能日はいつですか？」→ mgmt_move_in", () => {
-    const x = r({ latestCustomerTurn: "この物件の最短入居可能日はいつですか？" });
-    expect(x?.check_pattern).toBe("mgmt_move_in"); expect(x?.forbidden.includes("MOVEIN_DATE_ASSERTION")).toBe(true);
+  it("ブレインの note を表示に使う", () => {
+    expect(r({ latestCustomerTurn: "ありがとうございます", brainDecision: brain("application_push", { note: "申込誘導" }) })?.note).toBe("申込誘導");
   });
-  it("S2 退去予定の物件 → vacate_date", () => {
-    expect(r({ latestCustomerTurn: "この物件いつから住めますか？", propertyStatus: "move_out_scheduled" })?.check_pattern).toBe("vacate_date");
-  });
-  it("S3 物件ありの審査質問 → mgmt_guarantor", () => {
-    expect(r({ latestCustomerTurn: "この物件って審査厳しいですか？" })?.check_pattern).toBe("mgmt_guarantor");
-  });
-  it("S3 物件が特定できない審査不安（096825c8 型の一般論）→ null", () => {
-    expect(r({ latestCustomerTurn: "現在大学4年生で内定があります。審査通りますか？" })).toBe(null);
-  });
-  it("S4 82e2d5cf「明日ってまだ空いてますか？彼氏がいけるみたい」→ viewing_invite", () => {
-    expect(r({ latestCustomerTurn: "明日ってまだ空いてますか？彼氏がいけるみたいで" })?.action).toBe("viewing_invite");
-  });
-  it("S4「拝見したいです」→ viewing_invite", () => expect(r({ latestCustomerTurn: "メロディハイムの別の部屋も拝見したいです" })?.action).toBe("viewing_invite"));
-  it("S5「9/9の15時からお願いします！」＋viewing_invite 履歴 → meeting_place（bridge=null）", () => {
-    const x = r({ latestCustomerTurn: "9/9の15時からお願いします！", aixHistory: [{ aix_type: "viewing_invite" }] });
-    expect(x?.action).toBe("meeting_place"); expect(x?.bridge).toBe(null); expect(x?.timing).toBe("now");
-  });
-  it("S5 viewing_invite 履歴なしの時刻指定 → meeting_place にしない", () => {
-    expect(r({ latestCustomerTurn: "9/9の15時からお願いします！" })?.action === "meeting_place").toBe(false);
+  it("acknowledge_check は顧客向けにセットしない → property_check_result（表示の変換）", () => {
+    expect(r({ latestCustomerTurn: "ありがとうございます", brainDecision: brain("acknowledge_check") })?.action).toBe("property_check_result");
   });
 });
 
-describe("除外・優先", () => {
-  it("screening 段階（下書きを作らない）→ null", () => expect(r({ latestCustomerTurn: "この物件まだ空いてますか？", conversationStatus: "screening" })).toBe(null));
-  it("初回返信 → null", () => expect(r({ latestCustomerTurn: "この物件まだ空いてますか？", isFirstReply: true })).toBe(null));
-  it("brain とずれた時は場面の判定を採る", () => {
-    const x = r({ latestCustomerTurn: "明日ってまだ空いてますか？", brainCandidate: { action: "application_push" } });
-    expect(x?.action).toBe("viewing_invite"); expect(x?.source).toBe("scene");
+describe("② fresh＋action='' → 場面ヒットがあっても AIX なし", () => {
+  it("S1 空室質問でもブレインが '' なら null", () => {
+    expect(r({ latestCustomerTurn: "この物件まだ空いてますか？", brainDecision: brain("") })).toBe(null);
   });
-  it("場面なし＋brain → brain を recommended で", () => {
-    const x = r({ latestCustomerTurn: "ありがとうございます", brainCandidate: { action: "application_push" } });
-    expect(x?.source).toBe("brain"); expect(x?.enforcement).toBe("recommended");
-  });
-  it("brain の acknowledge_check は顧客向けにセットしない → property_check_result", () => {
-    expect(r({ latestCustomerTurn: "ありがとうございます", brainCandidate: { action: "acknowledge_check" } })?.action).toBe("property_check_result");
+  it("ブレインの判断なし（T3）＋S4 → null", () => {
+    expect(r({ latestCustomerTurn: "メロディハイムの別の部屋も拝見したいです", brainDecision: null })).toBe(null);
   });
 });
 
-describe("生成後（assertionHits / unresolvedBlock）", () => {
-  it("assertionHits=VACANCY_ASSERTION だけ → S1（橋渡しは後処理の置換文と同じ）", () => {
-    const x = r({ latestCustomerTurn: "ありがとうございます", assertionHits: ["VACANCY_ASSERTION"] });
-    expect(x?.action).toBe("property_check_result"); expect(x?.source).toBe("assertion"); expect(x?.bridge).toBe("最新の空き状況を確認しご連絡させて頂きます😊！！");
+describe("③④ stale / cached → AIX なし・本文の安全は残る", () => {
+  it("③ stale＋場面ヒット → AIX null、bodySafety.bridge あり", () => {
+    const o = base({ latestCustomerTurn: "この物件の最短入居可能日はいつですか？", brainDecision: brain("property_check_result", { fresh: false }) });
+    const d = resolveReplyAixDecision(o);
+    expect(d.aix).toBe(null); expect(d.brainStale).toBe(true);
+    const s = resolveBodySafety(detectAixSceneEvidence(o), o);
+    expect(!!s?.bridge).toBe(true); expect(s?.forbidden.includes("MOVEIN_DATE_ASSERTION")).toBe(true);
+    // 確認約束は本文の安全の根拠（S2）で認める＝AIX のセットとは別
+    expect(confirmationBasisAction(s, d.aix)).toBe("property_check_result");
   });
-  it("assertionHits=MOVEIN_DATE_ASSERTION → S2", () => expect(r({ latestCustomerTurn: "了解です", assertionHits: ["MOVEIN_DATE_ASSERTION"] })?.check_pattern).toBe("mgmt_move_in"));
-  it("assertionHits=SCREENING_ASSURANCE → S3", () => expect(r({ latestCustomerTurn: "了解です", assertionHits: ["SCREENING_ASSURANCE"] })?.check_pattern).toBe("mgmt_guarantor"));
-  it("DISCLOSURE_ASSERTION は専用 AIX が無い → null", () => expect(r({ latestCustomerTurn: "了解です", assertionHits: ["DISCLOSURE_ASSERTION"] })).toBe(null));
-  it("unresolvedBlock（AIX_BOUNDARY_ESTIMATE）→ required", () => {
-    const x = r({ latestCustomerTurn: "了解です", unresolvedBlock: "AIX_BOUNDARY_ESTIMATE" });
-    expect(x?.action).toBe("estimate_sheet"); expect(x?.enforcement).toBe("required");
+  it("④ cached（呼び出し側で fresh=false）→ null", () => {
+    expect(r({ latestCustomerTurn: "ありがとうございます", brainDecision: brain("viewing_invite", { fresh: false, enforcement_level: "optional" }) })).toBe(null);
   });
+});
+
+describe("⑤ ブレインの check_pattern を判定し直さない", () => {
+  it("brain=property_check_result / mgmt_move_in → mgmt_move_in のまま（顧客発言が審査でも）", () => {
+    const x = r({ latestCustomerTurn: "この物件って審査厳しいですか？", brainDecision: brain("property_check_result", { check_pattern: "mgmt_move_in" }) });
+    expect(x?.check_pattern).toBe("mgmt_move_in"); expect(x?.label).toBe("確認した（条件・交渉）→入居可能日");
+  });
+  it("brain=property_check_result / mgmt_initial_cost → そのまま（場面の行は引かない）", () => {
+    const x = r({ latestCustomerTurn: "ありがとうございます", brainDecision: brain("property_check_result", { check_pattern: "mgmt_initial_cost" }) });
+    expect(x?.check_pattern).toBe("mgmt_initial_cost"); expect(x?.scene).toBe(null);
+  });
+});
+
+describe("⑥ 生成後（unresolvedBlock）", () => {
+  it("unresolvedBlock＋ブレインが '' → AIX null・stopAutoSend", () => {
+    const d = resolveReplyAixDecision(base({ latestCustomerTurn: "了解です", brainDecision: brain(""), unresolvedBlock: "AIX_BOUNDARY_ESTIMATE" }));
+    expect(d.aix).toBe(null); expect(d.stopAutoSend).toBe(true);
+  });
+  it("unresolvedBlock＋ブレインに action → そのまま required に上げる（AIX は選び直さない）", () => {
+    const d = resolveReplyAixDecision(base({ latestCustomerTurn: "了解です", brainDecision: brain("viewing_invite"), unresolvedBlock: "AIX_BOUNDARY_ESTIMATE" }));
+    expect(d.aix?.action).toBe("viewing_invite"); expect(d.aix?.enforcement).toBe("required"); expect(d.stopAutoSend).toBe(true);
+  });
+  it("assertionHits だけでは AIX を選ばない", () => {
+    expect(r({ latestCustomerTurn: "ありがとうございます", brainDecision: brain(""), assertionHits: ["VACANCY_ASSERTION"] })).toBe(null);
+  });
+  it("場面表に行の無いコード（DISCLOSURE_ASSERTION）は自動送信を止めない", () => {
+    expect(resolveReplyAixDecision(base({ latestCustomerTurn: "了解です", brainDecision: brain(""), unresolvedBlock: "DISCLOSURE_ASSERTION" })).stopAutoSend).toBe(false);
+  });
+});
+
+describe("除外", () => {
+  it("screening 段階（下書きを作らない）→ null", () => expect(r({ latestCustomerTurn: "この物件まだ空いてますか？", conversationStatus: "screening", brainDecision: brain("property_check_result") })).toBe(null));
+  it("初回返信 → null", () => expect(r({ latestCustomerTurn: "この物件まだ空いてますか？", isFirstReply: true, brainDecision: brain("property_check_result") })).toBe(null));
+  it("語彙外の action → null", () => expect(r({ latestCustomerTurn: "了解です", brainDecision: brain("unknown_action_xyz") })).toBe(null));
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

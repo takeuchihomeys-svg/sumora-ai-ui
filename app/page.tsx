@@ -4322,7 +4322,8 @@ export default function Home() {
       // AIドラフトのSUGGESTED_AIXトレーラーを退避（直後の setSuggestedAix(null) で破棄されるため）
       // draftIsAi ガード: スタッフが📌メモを実際に見た状態（AIドラフト送信）のときのみ消費する
       const consumedAix = (textSent && draftIsAi && suggestedAix?.action) ? suggestedAix : null;
-      const trailerSaysPropertyCheck = !!(consumedAix && /物件確認/.test(consumedAix.action));
+      // 2026-09-12 段1（明確なバグ修正）: action はキー（property_check_result 等）なので日本語ラベル /物件確認/ には一度も当たっていなかった
+      const trailerSaysPropertyCheck = !!(consumedAix && (consumedAix.action === "property_check_result" || consumedAix.action === "acknowledge_check"));
 
       // 送信に成功した分だけ入力欄をクリア（失敗した分は残して再送できるようにする）
       // FIX #11: suggestedAix は送信後も30秒以上持続させる（スタッフへの指示を送信後も表示）
@@ -7870,7 +7871,8 @@ export default function Home() {
                     <button onClick={() => setDismissedViewingInviteIds((prev) => new Set([...prev, id]))}
                       className="shrink-0 text-sky-400 text-[11px] font-bold">✕</button>
                   </div>
-                  {suggestedAix?.note && <p className="text-[10px] text-sky-600 mt-1 pl-1 leading-relaxed">{suggestedAix.note}</p>}
+                  {/* 2026-09-12 段1: 出どころはブレインの meta だけ（生成トレーラーの note を混ぜない） */}
+                  {selectedConversation.suggestedAixMeta?.note && <p className="text-[10px] text-sky-600 mt-1 pl-1 leading-relaxed">{selectedConversation.suggestedAixMeta.note}</p>}
                 </div>
               );
 
@@ -7892,7 +7894,7 @@ export default function Home() {
                     <button onClick={() => setDismissedMeetingPlaceIds(prev => new Set([...prev, id]))}
                       className="shrink-0 text-teal-500 text-[11px] font-bold">✕</button>
                   </div>
-                  {suggestedAix?.note && <p className="text-[10px] text-teal-600 mt-1 pl-1 leading-relaxed">{suggestedAix.note}</p>}
+                  {selectedConversation.suggestedAixMeta?.note && <p className="text-[10px] text-teal-600 mt-1 pl-1 leading-relaxed">{selectedConversation.suggestedAixMeta.note}</p>}
                 </div>
               );
 
@@ -7921,7 +7923,7 @@ export default function Home() {
                     <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
                       className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
                   </div>
-                  {suggestedAix?.note && <p className="text-[10px] text-orange-600 mt-1 pl-1 leading-relaxed">{suggestedAix.note}</p>}
+                  {selectedConversation.suggestedAixMeta?.note && <p className="text-[10px] text-orange-600 mt-1 pl-1 leading-relaxed">{selectedConversation.suggestedAixMeta.note}</p>}
                 </div>
               );
 
@@ -7999,6 +8001,12 @@ export default function Home() {
                     setShowTemplateModal(true);
                   } else if (Object.keys(AIX_ACTION_META).includes(brainAction)) {
                     setActiveAixFlow(brainAction);
+                    // 2026-09-12 段1: ブレインが決めた check_pattern（mgmt_move_in 等）をそのままモーダルに渡す（判定し直さない）
+                    const brainCp = (brainMeta as { check_pattern?: string | null }).check_pattern ?? null;
+                    const BRAIN_CP_OK = ["available", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_guarantor", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
+                    if (brainAction === "property_check_result" && brainCp && (BRAIN_CP_OK as readonly string[]).includes(brainCp)) {
+                      setAixInitCheckPattern(brainCp as (typeof BRAIN_CP_OK)[number]);
+                    }
                     openAixDirect(brainAction);
                   }
                 };

@@ -1,30 +1,29 @@
 // app/lib/aix-reply-set.ts
-// 2026-09-12 竹内方針A: 「この返信は AIX で送る／確認後に AIX で結果を送る」場面の判定を1関数（resolveReplyAix）にまとめる。
-// 生成（プロンプト注入 buildAixTimingNote）・メタ行 suggested_aix・SUGGESTED_AIX トレーラー・ai_draft_check.suggested_aix・
-// 後処理の断言置換文（ASSERTION_REPLACEMENT）が同じ出力を見る。段と段のあいだに優先順位ルールを足さない。
-// 旧 route.ts detectAixTiming（P0 物件指名／見積／条件変更／内覧の4分岐）と AIX_BOUNDARY_TO_ACTION の写像はここへ移した。
+// 2026-09-12 竹内方針「AIX のセットはブレインが判断する」統合設計 段1:
+//   AIX をセットするか・どの AIX か・check_pattern・enforcement は **ブレイン（brain-core analyzeConversation）だけ** が決める。
+//   この関数（resolveReplyAix）はブレインの判断を読んで、画面・トレーラー・ai_draft_check・プロンプトに載せる形に整えるだけ。
+//   場面表 S1〜S7（aix-scene-evidence.ts detectAixSceneEvidence）は判断者ではなく、
+//     (a) ブレインへの入力（証拠）
+//     (b) 本文の安全（resolveBodySafety: 断言しない・橋渡し文・確認約束の根拠）
+//   の2役だけを持つ。場面ヒットから AIX を足すことはしない（学習されない判断を増やさない）。
 //
-// 判定の順番（1つの関数の中の場面表。「上から順に見る」）
-//   1. 下書きを作らない段階（DRAFT_SKIP_STATUSES）→ null
-//   2. 初回返信 → null
-//   3. 決定論の場面検出（SCENES の順）
-//   4. 場面が無く、断言コード（assertionHits）がある → そのコードが属する行（source='assertion'）
-//   5. それでも無ければ brain の推定を recommended で使う（source='brain'。check_pattern は detectPropertyCheckPattern で判定し直す）
-//   6. unresolvedBlock（final-check で直せなかった block）があれば enforcement='required'
-// 場面表の並び: 既存の優先度（物件指名 > 見積 > 条件変更 > 内覧）を保ったまま S2/S3/S5 を差し込んだ。
-//   S1 空室 → S2 入居日 → S3 審査 → S6 見積 → S7 条件変更 → S5 日時の指定 → S4 内覧希望
-//   （S5 を S4 より先に見るのは「木曜13時に内覧予約お願いします」＋viewing_invite 送付済み＝待ち合わせの場面だから）
-import { isConditionFormMessage } from "./line-reply-prompts";
-import type { EstimateContextVerdict } from "./estimate-context";
-import { AIX_ACTION_REPLY_DIRECTION, AIX_BUTTON_LABELS, AIX_STAFF_NOTES, detectPropertyCheckPattern } from "./aix-taxonomy";
+// resolveReplyAix の見る順番
+//   1. 下書きを作らない段階（DRAFT_SKIP_STATUSES）・初回返信 → null
+//   2. ブレインの判断が今回の顧客発言より古い（T2/T3）・cached → AIX は null（本文の安全は resolveBodySafety で別に返す）
+//   3. fresh で action がある → action / check_pattern はブレインの値のまま（判定し直さない）。
+//      timing / bridge / forbidden は sceneSafetyRow（決まった AIX から行を引く＋証拠から本文の安全を引く）
+//   4. fresh で action='' → null（場面表が AIX を足さない）
+//   5. unresolvedBlock（final-check で直せなかった断言）は AIX を選ばない。ブレインに action があれば required に上げ、
+//      無ければ stopAutoSend だけを返す（自動送信を止めるのは安全のため）
+import { AIX_ACTION_REPLY_DIRECTION, AIX_BUTTON_LABELS, AIX_STAFF_NOTES } from "./aix-taxonomy";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
+import { BRIDGE_VACANCY_CHECK, BRIDGE_MOVEIN_CHECK, BRIDGE_SCREENING_CHECK, ASSERTION_REPLACEMENT } from "./scene-patterns";
 import {
-  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE,
-  BRIDGE_VACANCY_CHECK, BRIDGE_MOVEIN_CHECK, BRIDGE_SCREENING_CHECK, ASSERTION_REPLACEMENT,
-} from "./scene-patterns";
+  AVAILABILITY_URL_RE, AIX_PAYMENT_INTENT_RE, detectAixSceneEvidence, isConfirmationScene,
+  type AixSceneEvidence, type SceneEvidenceInput, type SceneId, type PropertyStatusLite,
+} from "./aix-scene-evidence";
 
-export type PropertyStatusLite = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
-export type SceneId = "S1_vacancy" | "S2_move_in" | "S3_screening" | "S4_viewing" | "S5_time_spec" | "S6_estimate" | "S7_condition_change" | "application";
+export type { SceneId, PropertyStatusLite };
 /** 本文で書かない範囲（断言検査のコード） */
 export type ForbiddenCode = "VACANCY_ASSERTION" | "VIEWING_BEFORE_VACANCY" | "MOVEIN_DATE_ASSERTION" | "SCREENING_ASSURANCE" | "VIEWING_DATETIME" | "MEETING_DETAIL" | "ESTIMATE_AMOUNT" | "INVENTORY_ASSERTION";
 
@@ -41,8 +40,10 @@ export type ReplyAix = {
   forbidden: ForbiddenCode[];
   /** プロンプト用の禁止説明文 */
   forbiddenText: string;
+  /** 本文の安全の行を引いた場面（証拠。判断ではない） */
   scene: SceneId | null;
-  source: "scene" | "assertion" | "brain";
+  /** 判断者は常にブレイン */
+  source: "brain";
   reason_code: string;
   /** 以下はプロンプト注入（buildAixTimingNote）用 */
   chained: string | null;
@@ -53,67 +54,29 @@ export type ReplyAix = {
   note: string;
 };
 
-export type ReplyAixInput = {
-  /** 今回の顧客発言（スタッフ文は含めない） */
-  latestCustomerTurn: string;
-  /** 直前スタッフ発言より後に顧客が画像を送った */
-  hasCustomerImage: boolean;
-  /** oldest-first */
-  recentMessages?: ReadonlyArray<{ sender: string; text?: string | null; isAix?: boolean | null }>;
-  /** 直近の AIX 使用（aix_usage_logs） */
-  aixHistory?: ReadonlyArray<{ aix_type?: string | null; check_pattern?: string | null }>;
-  /** 行動台帳の送付物件数（ledger.facts.propertiesSentCount） */
-  sentPropertyCount?: number;
+/** ブレインの判断（suggested_aix_meta / last_brain_meta）。fresh = 今回の顧客発言を見た実分析（cached・optional でない） */
+export type BrainAixDecision = {
+  action: string | null;
+  check_pattern: string | null;
+  enforcement_level: string | null;
+  note: string | null;
+  fresh: boolean;
+};
+
+export type ReplyAixInput = SceneEvidenceInput & {
   conversationStatus?: string | null;
   isFirstReply?: boolean;
-  propertyStatus?: PropertyStatusLite;
-  /** isMisumoriContextAppropriate() の verdict（見積判定の単一真実源） */
-  estimateVerdict?: EstimateContextVerdict | null;
-  /** brain の推定（数ある入力の1つ） */
-  brainCandidate?: { action?: string | null; check_pattern?: string | null; note?: string | null } | null;
-  /** 生成後だけ: final-check / 後処理で出た断言・AIX 境界コード */
+  /** ブレインの判断（唯一の判断者）。null = ブレインの判断なし（T3） */
+  brainDecision?: BrainAixDecision | null;
+  /** 生成後だけ: final-check / 後処理で出た断言・AIX 境界コード（AIX は選ばない。記録用） */
   assertionHits?: string[];
-  /** 生成後だけ: final-check で直せなかった block コード */
+  /** 生成後だけ: final-check で直せなかった block コード（enforcement を上げる／自動送信を止めるだけ） */
   unresolvedBlock?: string | null;
 };
 
-// ─── 募集状況の質問（旧 route.ts detectAvailabilityCheckContext をここへ移設。route.ts の availabilityCheckNote もこの関数を使う）───
-export const AVAILABILITY_URL_RE = /https?:\/\/|suumo|homes\.co\.jp|athome|itandi|rea-?pro|リアプロ|レインズ|ietty|chintai/i;
-export const AVAILABILITY_PROPERTY_RE = /マンション|ハイツ|コーポ|レジデンス|ハイム|メゾン|アパート|グランド|シャトー|[0-9０-９]{2,4}\s*号室|(?:この|こちらの|その|さっきの|先ほどの)(?:物件|お?部屋)|物件資料|物件/;
-const AVAILABILITY_EXPLICIT_RE = /空(?:き|いて|いている|室)|募集(?:中|状況|して|出て|され)|まだ(?:あり|空|募集|残|大丈夫)|埋ま(?:って|り)|申込(?:み)?(?:入って|は入|ありま)/;
-const AVAILABILITY_QUESTION_RE = /ありますか|あります？|ますか|ですか|でしょうか|いかが|どう(?:です|でしょう)|教えて|知りたい|[?？]/;
-const AVAILABILITY_EXCLUDE_RE = /見積|初期費用|スモ割|総額|内覧|内見|見学/;
-
-export function detectAvailabilityCheckContext(customerMessage: string): boolean {
-  const msg = (customerMessage || "").trim();
-  if (!msg) return false;
-  if (AVAILABILITY_EXCLUDE_RE.test(msg)) return false;
-  // 2026-09-12 竹内方針A-3（82e2d5cf）: 「明日ってまだ空いてますか」は内覧枠の質問（scene-patterns の時間枠判定と共有）
-  if (allVacancyWordsAreSlots(msg) && !/空(?:き|室)|募集|埋ま|申込/.test(msg)) return false;
-  if (AVAILABILITY_EXPLICIT_RE.test(msg)) return true;
-  if (AVAILABILITY_URL_RE.test(msg)) return true;
-  return AVAILABILITY_PROPERTY_RE.test(msg) && AVAILABILITY_QUESTION_RE.test(msg);
-}
-
-// 旧 detectAixTiming の定数（P0 物件指名語・支払い意思・条件変更）
-const AIX_NOMINATION_RE = /空(?:室|き|いて)|取り扱い|募集|ありますか|この(?:物件|お?家|部屋)/;
-const AIX_PAYMENT_INTENT_RE = /払えま|払える|支払えま|即日[^\n]{0,10}(?:払|入金|振り?込)|用意でき|振り?込め|一括で払/;
-export const AIX_CONDITION_CHANGE_RE =/(?:もう少し|もっと|さらに)[^\n]{0,12}(?:広|安|大き|新し|駅近|きれい|綺麗|抑え)|(?:上がって|高くて|上げて)も(?:構い|大丈夫|OK|いい)|でも(?:大丈夫|構い|いいです|良いです)|のみで(?:調べ|探し|お願い)|仕切れる|条件[^\n]{0,8}(?:変更|追加|緩和|広げ)/;
-/** 物件の特定（号室・「どの部屋」・送付物件への指示語） */
-const ROOM_NO_RE = /[0-9０-９]{3,4}\s*号室?/;
-const WHICH_ROOM_RE = /どの(?:お?部屋|物件|号室)/;
-const DEMONSTRATIVE_RE = /こちら|この|その|そちら|ここ|そこ|さっき|先ほど|先程|送って(?:もらった|頂いた|いただいた|くださった)|お送り(?:頂いた|いただいた)|[①-⑩]|[0-9０-９]+(?:件目|つ目|番目)/;
-
 const VACANCY_FORBID = "空室有無・退去日・入居可能日をテキストで断言すること（実会話では「募集終了」「申込有り2番手」「タッチの差で埋まった」が頻発。「空いています」の生成は即事実誤認）";
 
-/** 物件が特定できるか（S1/S2/S3 の前提） */
-export function isPropertySpecified(msg: string, o: { hasCustomerImage: boolean; sentPropertyCount?: number }): boolean {
-  if (o.hasCustomerImage || AVAILABILITY_URL_RE.test(msg) || ROOM_NO_RE.test(msg) || WHICH_ROOM_RE.test(msg)) return true;
-  if (AVAILABILITY_PROPERTY_RE.test(msg)) return true;
-  return (o.sentPropertyCount ?? 0) > 0 && DEMONSTRATIVE_RE.test(msg);
-}
-
-type SceneHit = Omit<ReplyAix, "enforcement" | "source" | "note"> & { note?: string };
+type SceneHit = Omit<ReplyAix, "enforcement" | "source" | "note">;
 
 function labelFor(action: string, checkPattern: string | null): string {
   if (checkPattern === "mgmt_move_in") return "確認した（条件・交渉）→入居可能日";
@@ -122,8 +85,7 @@ function labelFor(action: string, checkPattern: string | null): string {
   return AIX_BUTTON_LABELS[action] ?? action;
 }
 
-function sceneS1(o: ReplyAixInput, msg: string, estimateDeclare: boolean, reason: string): SceneHit {
-  const chained = estimateDeclare ? "estimate_sheet" : null;
+function sceneS1(o: SceneEvidenceInput, msg: string, chained: string | null, reason: string): SceneHit {
   return {
     action: "property_check_result", check_pattern: null, label: labelFor("property_check_result", null),
     timing: "after_confirm",
@@ -140,14 +102,13 @@ function sceneS1(o: ReplyAixInput, msg: string, estimateDeclare: boolean, reason
   };
 }
 
-function sceneS2(o: ReplyAixInput, estimateDeclare: boolean, reason: string): SceneHit {
-  const cp = o.propertyStatus === "move_out_scheduled" ? "vacate_date" : "mgmt_move_in";
+function sceneS2(cp: string, chained: string | null, reason: string): SceneHit {
   return {
     action: "property_check_result", check_pattern: cp, label: labelFor("property_check_result", cp),
     timing: "after_confirm",
     bridge: `${BRIDGE_MOVEIN_CHECK}確認出来次第ご連絡させて頂きます😌！！`,
     forbidden: ["MOVEIN_DATE_ASSERTION"], forbiddenText: "この物件の入居可能日・退去日を具体的な日付でテキストに書くこと（結果は AIX【確認した（条件・交渉）→入居可能日】で送る）。物件を特定しない一般論（お申込から最短2週間程）は可",
-    scene: "S2_move_in", reason_code: reason, chained: estimateDeclare ? "estimate_sheet" : null,
+    scene: "S2_move_in", reason_code: reason, chained,
     urgency: "15分以内に橋渡し→管理会社回答後に結果報告", highlight: false, extra: "",
   };
 }
@@ -181,7 +142,7 @@ function sceneS5(reason: string): SceneHit {
   };
 }
 
-function sceneS6(o: ReplyAixInput, msg: string, echoPayment: boolean): SceneHit {
+function sceneS6(o: SceneEvidenceInput, msg: string, echoPayment: boolean, reason?: string): SceneHit {
   const payment = AIX_PAYMENT_INTENT_RE.test(msg);
   const v = o.estimateVerdict;
   return {
@@ -193,12 +154,12 @@ function sceneS6(o: ReplyAixInput, msg: string, echoPayment: boolean): SceneHit 
     forbiddenText: echoPayment
       ? "金額・割引額をAIが生成すること／見積作成宣言の繰り返し"
       : "金額・割引額をAIが生成すること（見積書Vision OCRの実数値のみ送信可。割引額はスタッフの交渉結果でありAIが数字を作るとクレーム直結）",
-    scene: "S6_estimate", reason_code: echoPayment ? "estimate_echo_payment" : `estimate_${v?.trigger ?? "declare"}`, chained: null,
+    scene: "S6_estimate", reason_code: reason ?? (echoPayment ? "estimate_echo_payment" : `estimate_${v?.trigger ?? "declare"}`), chained: null,
     urgency: payment || echoPayment ? "10分以内（applying直前の最優先ホットシグナル）" : "2時間以内",
     highlight: payment || echoPayment,
     extra: echoPayment
       ? "見積書は既に約束/送付済みのため作成宣言・割引の約束を繰り返さない（二重宣言防止ルールと整合）。「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。"
-      : `見積トリガー: ${v?.trigger}（${v?.reason}）。` + (payment ? "支払い意思+金額質問のため「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。" : ""),
+      : (v ? `見積トリガー: ${v.trigger}（${v.reason}）。` : "") + (payment ? "支払い意思+金額質問のため「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。" : ""),
   };
 }
 
@@ -213,64 +174,41 @@ function sceneS7(): SceneHit {
   };
 }
 
-function hasViewingInviteBefore(o: ReplyAixInput): boolean {
-  if ((o.aixHistory ?? []).some((a) => a.aix_type === "viewing_invite")) return true;
-  const staff = (o.recentMessages ?? []).filter((m) => m.sender === "staff").slice(-5);
-  return staff.some((m) => /ご都合よろしいお日にち|ご内覧可能な日程|内覧日程|ご案内可能(?:な|です)|ご案内させて頂けます/.test(m.text ?? ""));
+function genericRow(action: string, cp: string | null, reason: string): SceneHit {
+  return {
+    action, check_pattern: cp, label: labelFor(action, cp),
+    timing: action === "property_check_result" ? "after_confirm" : "now",
+    bridge: null, forbidden: [], forbiddenText: AIX_ACTION_REPLY_DIRECTION[action]?.forbid ?? "",
+    scene: null, reason_code: reason, chained: null, urgency: "", highlight: false, extra: "",
+  };
 }
 
-/** 決定論の場面検出（生成前・生成後で同じ）。旧 detectAixTiming の後継 */
-export function detectReplyAixScene(o: ReplyAixInput): SceneHit | null {
+/** 証拠（場面）→ 本文の安全の行（橋渡し・禁止・急ぎ度）。AIX の決定には使わない */
+function rowForEvidence(e: AixSceneEvidence, o: SceneEvidenceInput): SceneHit {
   const msg = (o.latestCustomerTurn || "").trim();
-  if (!msg && !o.hasCustomerImage) return null;
-  const v = o.estimateVerdict ?? null;
-  const estimateDeclare = !!v && v.mode === "declare";
-  // 条件フォームのみ（trigger=none）は金額・指名判定を行わない
-  if (isConditionFormMessage(msg) && !estimateDeclare) return null;
-
-  const specified = isPropertySpecified(msg, { hasCustomerImage: o.hasCustomerImage, sentPropertyCount: o.sentPropertyCount });
-  const slotQuestion = SLOT_AVAILABILITY_Q_RE.test(msg);
-
-  // S1 空室確認: 旧 P0（画像/URL＋指名語、URLのみ・画像のみ）＋ 文字だけの空室質問で物件が特定できる場合
-  const hasPropertyUrl = AVAILABILITY_URL_RE.test(msg);
-  if (o.hasCustomerImage || hasPropertyUrl) {
-    const urlOnly = hasPropertyUrl && msg.replace(/https?:\/\/\S+/g, "").trim().length <= 10;
-    const imageOnly = o.hasCustomerImage && msg.length <= 10;
-    if ((AIX_NOMINATION_RE.test(msg) && !slotQuestion) || urlOnly || imageOnly) return sceneS1(o, msg, estimateDeclare, "property_nomination");
+  switch (e.scene) {
+    case "S1_vacancy": return sceneS1(o, msg, e.chained, e.reasonCode);
+    case "S2_move_in": return sceneS2(e.checkPattern ?? "mgmt_move_in", e.chained, e.reasonCode);
+    case "S3_screening": return sceneS3(e.reasonCode);
+    case "S4_viewing": return sceneS4(e.reasonCode);
+    case "S5_time_spec": return sceneS5(e.reasonCode);
+    case "S6_estimate": return sceneS6(o, msg, !!e.echoPayment, e.reasonCode);
+    case "S7_condition_change": return sceneS7();
+    default: return genericRow(e.candidateAction, e.checkPattern, e.reasonCode);
   }
-  // S2 入居日（物件あり）/ S3 審査（物件あり）: 「この物件の〜ですか？」は募集状況の質問形にも当たるので、文字だけの S1 より先に見る
-  if (MOVEIN_Q_RE.test(msg) && specified) return sceneS2(o, estimateDeclare, "move_in_question");
-  if (SCREENING_Q_RE.test(msg) && specified) return sceneS3("screening_question");
-  if (!slotQuestion && specified && detectAvailabilityCheckContext(msg)) return sceneS1(o, msg, estimateDeclare, "availability_question");
-
-  // S6 見積（verdict が declare の時のみ。語出現では出さない）
-  if (estimateDeclare) return sceneS6(o, msg, false);
-  if (v?.mode === "echo_only" && AIX_PAYMENT_INTENT_RE.test(msg)) return sceneS6(o, msg, true);
-
-  // S7 条件変更
-  if (AIX_CONDITION_CHANGE_RE.test(msg)) return sceneS7();
-
-  // S5 日時の指定（viewing_invite を送った後の「9/9の15時からお願いします」）
-  if (TIME_SPEC_RE.test(msg) && TIME_REQUEST_RE.test(msg) && hasViewingInviteBefore(o)) return sceneS5("time_spec_after_viewing_invite");
-
-  // S4 内覧希望（退去予定/入居中は現地内覧不可のため対象外）
-  if ((VIEWING_INTENT_RE.test(msg) || slotQuestion) && o.propertyStatus !== "move_out_scheduled" && o.propertyStatus !== "occupied") {
-    return sceneS4(slotQuestion ? "viewing_slot_question" : "viewing_intent");
-  }
-  return null;
 }
 
-/** 断言・AIX 境界コード → 場面表の行（旧 route.ts AIX_BOUNDARY_TO_ACTION を統合）。告知事項は専用 AIX が無いので行なし */
-export function sceneForCode(code: string, o: ReplyAixInput): SceneHit | null {
+/** 断言・AIX 境界コード → 置き換える文・禁止の行（旧 route.ts AIX_BOUNDARY_TO_ACTION）。**AIX を選ぶ用途には使わない** */
+export function sceneForCode(code: string, o: SceneEvidenceInput): SceneHit | null {
   const estimateDeclare = !!o.estimateVerdict && o.estimateVerdict.mode === "declare";
   switch (code) {
     case "VACANCY_ASSERTION":
     case "VIEWING_BEFORE_VACANCY":
     case "AIX_BOUNDARY_PROMISE":
-      return { ...sceneS1(o, o.latestCustomerTurn ?? "", false, `code:${code}`), bridge: ASSERTION_REPLACEMENT.VACANCY_ASSERTION, chained: null };
+      return { ...sceneS1(o, o.latestCustomerTurn ?? "", null, `code:${code}`), bridge: ASSERTION_REPLACEMENT.VACANCY_ASSERTION, chained: null };
     case "MOVEIN_DATE_ASSERTION":
     case "AIX_BOUNDARY_MOVEIN":
-      return { ...sceneS2(o, estimateDeclare, `code:${code}`), bridge: ASSERTION_REPLACEMENT.MOVEIN_DATE_ASSERTION };
+      return { ...sceneS2(o.propertyStatus === "move_out_scheduled" ? "vacate_date" : "mgmt_move_in", estimateDeclare ? "estimate_sheet" : null, `code:${code}`), bridge: ASSERTION_REPLACEMENT.MOVEIN_DATE_ASSERTION };
     case "SCREENING_ASSURANCE":
       return { ...sceneS3(`code:${code}`), bridge: ASSERTION_REPLACEMENT.SCREENING_ASSURANCE };
     case "AIX_BOUNDARY_VIEWING": return sceneS4(`code:${code}`);
@@ -287,9 +225,32 @@ export function sceneForCode(code: string, o: ReplyAixInput): SceneHit | null {
   }
 }
 
-/** AIX_BOUNDARY / 断言コードのうち場面表に行があるもの */
+/** AIX_BOUNDARY / 断言コードのうち場面表に行があるもの（final-check の直せなかった block を自動送信停止に回す対象） */
 export function isSceneMappedCode(code: string): boolean {
   return sceneForCode(code, { latestCustomerTurn: "", hasCustomerImage: false }) !== null;
+}
+
+/**
+ * 決まった AIX（ブレインの action / check_pattern）から本文の安全の行を引く。
+ * 証拠が同じ AIX を指していればその行（橋渡し文が顧客発言に合う）、違えば AIX 自体の行。
+ * action / check_pattern は呼び出し側（ブレイン）の値で上書きする＝判定し直さない。
+ */
+export function sceneSafetyRow(action: string, checkPattern: string | null, o: SceneEvidenceInput, evidence: AixSceneEvidence | null): SceneHit {
+  const msg = (o.latestCustomerTurn || "").trim();
+  let row: SceneHit;
+  if (evidence && evidence.candidateAction === action && (action !== "property_check_result" || !checkPattern || checkPattern === evidence.checkPattern)) {
+    row = rowForEvidence(evidence, o);
+  } else if (action === "property_check_result") {
+    row = checkPattern === "mgmt_move_in" || checkPattern === "vacate_date" ? sceneS2(checkPattern, null, `brain:${action}`)
+      : checkPattern === "mgmt_guarantor" ? sceneS3(`brain:${action}`)
+      : genericRow(action, checkPattern, `brain:${action}`);
+  } else if (action === "viewing_invite") row = sceneS4(`brain:${action}`);
+  else if (action === "meeting_place") row = sceneS5(`brain:${action}`);
+  else if (action === "estimate_sheet") row = sceneS6(o, msg, o.estimateVerdict?.mode === "echo_only", `brain:${action}`);
+  else if (action === "property_send") row = sceneS7();
+  else if (action === "application_push") row = sceneForCode("AIX_BOUNDARY_APPLICATION", o)!;
+  else row = genericRow(action, checkPattern, `brain:${action}`);
+  return { ...row, action, check_pattern: checkPattern, label: labelFor(action, checkPattern) };
 }
 
 function staffNoteFor(r: Omit<ReplyAix, "note">): string {
@@ -300,50 +261,94 @@ function staffNoteFor(r: Omit<ReplyAix, "note">): string {
   if (r.timing === "after_confirm") parts.push(base);
   if (r.urgency) parts.push(`対応目安: ${r.urgency}`);
   if (r.chained) parts.push(`見積依頼も同時に来ています → 確認完了後にAIX【${AIX_BUTTON_LABELS[r.chained] ?? r.chained}】を連結して送付してください`);
-  if (r.enforcement === "required") parts.unshift("最終チェックで直せない指摘が残りました。この内容は AIX から送ってください");
   return parts.join(" ／ ");
 }
 
-/** 「AIX で送る場面」の唯一の判定。生成前（assertionHits/unresolvedBlock なし）と生成後（あり）で同じ関数を呼ぶ */
-export function resolveReplyAix(o: ReplyAixInput): ReplyAix | null {
-  if (o.conversationStatus && DRAFT_SKIP_STATUSES.has(o.conversationStatus)) return null;
-  if (o.isFirstReply) return null;
+const REQUIRED_PREFIX = "最終チェックで直せない指摘が残りました。この内容は AIX から送ってください";
 
-  let hit: SceneHit | null = detectReplyAixScene(o);
-  let source: ReplyAix["source"] = "scene";
-  if (!hit) {
-    for (const c of o.assertionHits ?? []) {
-      const h = sceneForCode(c, o);
-      if (h) { hit = h; source = "assertion"; break; }
-    }
+export type ReplyAixDecision = {
+  /** ブレインが決めた AIX（表示・トレーラー・ai_draft_check 用の形）。null = AIX をセットしない */
+  aix: ReplyAix | null;
+  /** 直せなかった断言がある → 自動送信を止める（[AIX誘導中]）。AIX の選択とは別 */
+  stopAutoSend: boolean;
+  /** 読んだブレインの判断が古い／cached だった（ログ用） */
+  brainStale: boolean;
+};
+
+/** ブレインの判断を読んで、画面・本文に載せる形に整える（唯一の判断者はブレイン） */
+export function resolveReplyAixDecision(o: ReplyAixInput): ReplyAixDecision {
+  const none = { aix: null, stopAutoSend: false, brainStale: false };
+  if (o.conversationStatus && DRAFT_SKIP_STATUSES.has(o.conversationStatus)) return none;
+  if (o.isFirstReply) return none;
+
+  const unresolved = !!(o.unresolvedBlock && isSceneMappedCode(o.unresolvedBlock));
+  const d = o.brainDecision ?? null;
+  const brainStale = !d?.fresh;
+  const rawAction = d?.fresh ? (d.action ?? "").trim() : "";
+  if (!rawAction || !AIX_STAFF_NOTES[rawAction]) {
+    // 古い判断・cached・ブレインが AIX なし・語彙外 → AIX はセットしない（場面表が AIX を足さない）
+    return { aix: null, stopAutoSend: unresolved, brainStale };
   }
-  if (!hit && o.unresolvedBlock) {
-    const h = sceneForCode(o.unresolvedBlock, o);
-    if (h) { hit = h; source = "assertion"; }
+
+  const evidence = detectAixSceneEvidence(o);
+  let hit: SceneHit;
+  if (rawAction === "acknowledge_check") {
+    // acknowledge_check（管理会社宛て）は顧客向けの下書きにセットしない → S1 の property_check_result にまとめる（表示の変換）
+    hit = { ...sceneS1(o, o.latestCustomerTurn ?? "", null, "brain:acknowledge_check"), bridge: ASSERTION_REPLACEMENT.VACANCY_ASSERTION };
+  } else {
+    hit = sceneSafetyRow(rawAction, d?.check_pattern ?? null, o, evidence);
   }
-  if (!hit && o.brainCandidate?.action && AIX_STAFF_NOTES[o.brainCandidate.action]) {
-    const a = o.brainCandidate.action;
-    // acknowledge_check（管理会社宛て）は顧客向けの下書きにセットしない → S1 の property_check_result にまとめる
-    if (a === "acknowledge_check") {
-      hit = { ...sceneS1(o, o.latestCustomerTurn ?? "", false, "brain:acknowledge_check"), bridge: ASSERTION_REPLACEMENT.VACANCY_ASSERTION };
-    } else {
-      const kind = a === "property_check_result" ? detectPropertyCheckPattern((o.latestCustomerTurn ?? "").trim()) : null;
-      const cp = kind?.check_pattern ?? null;
-      hit = {
-        action: a, check_pattern: cp, label: labelFor(a, cp),
-        timing: a === "property_check_result" ? "after_confirm" : "now",
-        bridge: null, forbidden: [], forbiddenText: AIX_ACTION_REPLY_DIRECTION[a]?.forbid ?? "",
-        scene: null, reason_code: `brain:${a}`, chained: null, urgency: "", highlight: false, extra: "",
-        note: o.brainCandidate.note ?? undefined,
-      };
-    }
-    source = "brain";
-  }
-  if (!hit) return null;
-  const enforcement: ReplyAix["enforcement"] = o.unresolvedBlock && sceneForCode(o.unresolvedBlock, o) ? "required" : "recommended";
-  const { note: hitNote, ...rest } = hit;
-  const r: Omit<ReplyAix, "note"> = { ...rest, enforcement, source };
-  return { ...r, note: source === "brain" && hitNote ? hitNote : staffNoteFor(r) };
+  const enforcement: ReplyAix["enforcement"] = unresolved || d?.enforcement_level === "required" ? "required" : "recommended";
+  const r: Omit<ReplyAix, "note"> = { ...hit, enforcement, source: "brain" };
+  const baseNote = d?.note?.trim() ? d.note.trim() : staffNoteFor(r);
+  return { aix: { ...r, note: unresolved ? `${REQUIRED_PREFIX} ／ ${baseNote}` : baseNote }, stopAutoSend: unresolved, brainStale };
+}
+
+/** 互換: AIX だけを返す（生成前・生成後で同じ関数） */
+export function resolveReplyAix(o: ReplyAixInput): ReplyAix | null {
+  return resolveReplyAixDecision(o).aix;
+}
+
+// ─── 本文の安全（AIX の判断とは別。証拠で動く）───
+export type BodySafety = {
+  scene: SceneId;
+  /** 証拠が指す候補の AIX（締めの型の選択にだけ使う。AIX のセットには使わない） */
+  candidateAction: string;
+  label: string;
+  bridge: string | null;
+  forbidden: ForbiddenCode[];
+  forbiddenText: string;
+  /** テキストで物件情報・金額・空室状況の答えを書かない */
+  noPropertyInfoInText: boolean;
+  /** 確認約束を認める根拠（S1/S2/S3 = 確認が要る質問） */
+  confirmationBasis: "property_check_result" | null;
+  urgency: string;
+  chained: string | null;
+  highlight: boolean;
+  extra: string;
+};
+
+/**
+ * 証拠（顧客が空室・入居日・審査・内覧・見積などを聞いた）から、本文の安全だけを返す。
+ * AIX がセットされない時（ブレインが '' ・ stale）でも「断言しない＋確認いたします」の橋渡しと禁止事項を注入するため。
+ */
+export function resolveBodySafety(evidence: AixSceneEvidence | null, o: SceneEvidenceInput): BodySafety | null {
+  if (!evidence) return null;
+  const row = rowForEvidence(evidence, o);
+  return {
+    scene: evidence.scene, candidateAction: evidence.candidateAction, label: row.label,
+    bridge: row.bridge, forbidden: row.forbidden, forbiddenText: row.forbiddenText,
+    noPropertyInfoInText: true,
+    confirmationBasis: isConfirmationScene(evidence) ? "property_check_result" : null,
+    urgency: row.urgency, chained: row.chained, highlight: row.highlight, extra: row.extra,
+  };
+}
+
+/** 確認約束 verdict（applyAixTiming）に渡す根拠の AIX。本文の安全（確認が要る質問）＋ブレインの action のどちらか */
+export function confirmationBasisAction(safety: BodySafety | null, aix: ReplyAix | null): string | null {
+  if (safety?.confirmationBasis) return safety.confirmationBasis;
+  if (aix && (aix.action === "property_check_result" || aix.action === "acknowledge_check")) return aix.action;
+  return null;
 }
 
 /** 画面・DB に載せる形（ai_draft_check.suggested_aix / SUGGESTED_AIX トレーラー / メタ行） */
@@ -354,7 +359,7 @@ export function toSuggestedAixPayload(r: ReplyAix, extra?: { closing_strategy?: 
     timing: r.timing,
     bridge: r.bridge,
     note: r.note,
-    source: r.source === "scene" ? "aix_reply_set" : r.source === "assertion" ? "final_check_assertion" : "brain",
+    source: "brain" as const,
     scene: r.scene,
     reason_code: r.reason_code,
     enforcement_level: r.enforcement,

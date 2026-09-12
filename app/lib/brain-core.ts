@@ -26,6 +26,8 @@ import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygie
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（timeZone 抜けの UTC 表示を防ぐ）
 import { jstMD, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
+// 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 分析モード判定（決定論の場面の証拠で cached→incremental に格上げ）
+import { decideAnalysisMode } from "@/app/lib/brain-analysis-mode";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -2530,8 +2532,7 @@ const MESSAGES_PER_CHECKPOINT = 15;  // 前回作成時から15件以上増え�
 const CHECKPOINT_MIN_MESSAGES = 11;  // 総メッセージ数 > 10 で初回作成
 
 // フル分析スキップ判定: 10メッセージに1回のフル分析（それ以外はキャッシュ返却）
-const FULL_ANALYSIS_EVERY_N_MESSAGES = 10;
-const FULL_REFRESH_EVERY_N_MESSAGES = 30;  // フル分析から30件で強制フルリフレッシュ（アンカリング防止）
+// 2026-09-12 段1: FULL_ANALYSIS_EVERY_N_MESSAGES(10) / FULL_REFRESH_EVERY_N_MESSAGES(30) は brain-analysis-mode.ts（decideAnalysisMode）へ移設
 const INCREMENTAL_MIN_RECENT = 5;           // incremental差分窓の最低件数
 const INCREMENTAL_MAX_MESSAGES = 40;        // incremental差分窓の最大件数
 // フル分析昇格語: 商談の重大な転換点（申込/契約/審査/キャンセル/他社流出）のみ
@@ -2805,31 +2806,40 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
   const isFullBypass = FULL_BYPASS_RE.test(latestText);
   const isIncrementalBypass = !isFullBypass && (INCREMENTAL_BYPASS_RE.test(latestText) || PROPERTY_CONDITION_INQUIRY_RE.test(latestText));
 
-  // 3段階モード判定: full / incremental / cached
+  // 3段階モード判定: full / incremental / cached（decideAnalysisMode に切り出し・単体テストあり）
   const msgsSinceDeep = (totalMsgCount ?? 0) - ((convData?.brain_deep_msg_count as number | null) ?? 0);
-  const needsFull =
-    !cachedMeta ||
-    (totalMsgCount ?? 0) < 11 ||
-    isFullBypass ||                                              // 申込/契約/審査/キャンセルは必ずfull
-    hoursSinceLastFull >= 24 ||
-    hoursSinceLastMsg >= 24 ||
-    msgsSinceDeep >= FULL_REFRESH_EVERY_N_MESSAGES;
-
-  const analysisMode: "full" | "incremental" | "cached" =
-    needsFull ? "full" :
-    (isIncrementalBypass || msgsSinceLastFull >= FULL_ANALYSIS_EVERY_N_MESSAGES) ? "incremental" :
-    "cached";
+  const cachedFacts = ((cachedMeta?.action_ledger as { facts?: { propertiesSentCount?: number } } | undefined)?.facts) ?? null;
+  const { mode: analysisMode, upgradeReason } = decideAnalysisMode({
+    hasCachedMeta: !!cachedMeta,
+    totalMsgCount: totalMsgCount ?? 0,
+    isFullBypass,
+    isIncrementalBypass,
+    hoursSinceLastFull,
+    hoursSinceLastMsg,
+    msgsSinceDeep,
+    msgsSinceLastFull,
+    latestCustomerText: latestText,
+    latestCustomerMsgAt: latestMsg?.created_at ?? null,
+    prevAnalyzedMsgTs: typeof cachedMeta?.analyzed_msg_ts === "string" ? (cachedMeta.analyzed_msg_ts as string) : null,
+    prevAction: typeof cachedMeta?.action === "string" ? (cachedMeta.action as string) : null,
+    sentPropertyCount: typeof cachedFacts?.propertiesSentCount === "number" ? cachedFacts.propertiesSentCount : 0,
+  });
+  console.log(JSON.stringify({ tag: "brain:mode", conversationId, mode: analysisMode, upgradeReason }));
 
   if (analysisMode === "cached") {
     // キャッシュ返却パス（Sonnet呼び出しなし・required通知は runBrainAndNotify 側で抑制）
     // stale meta: enforcement_level を "optional" に落として強制アクションを抑制
     // 型注釈を明示: Record spread による型チェックすり抜けを塞ぐ（"optional" は SuggestedAixMeta の union に定義済み）
+    // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: cached は今回の顧客発言を見ていない判断なので AIX を持ち越さない。
+    //   action / check_pattern を空にし reply_mode=auto_reply（conversation-scope のフィールド closing_strategy 等は残す）。
+    //   analyzed_msg_ts は古いまま＝generate-reply 側でも stale と判定される
     const cachedResult: NonNullable<SuggestedAixMeta> = {
       ...(cachedMeta as NonNullable<SuggestedAixMeta>),
       source: "cached",
       enforcement_level: "optional",
-      // キャッシュ返却時は reply_mode=aix を auto_reply に降格（AIX誘導中のまま自動ドラフトが止まるため）
-      ...((cachedMeta as NonNullable<SuggestedAixMeta>).reply_mode === "aix" ? { reply_mode: "auto_reply" as const } : {}),
+      action: "",
+      check_pattern: null,
+      reply_mode: "auto_reply",
     };
     await supabase
       .from("conversations")
@@ -3412,6 +3422,10 @@ export async function runBrainAndNotify(conversationId: string, msgText?: string
       .catch((e) => console.error("[brain-core] calendar from brain action failed:", e));
   }
 
+  // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: cached 返却は今回の顧客発言を見ていない＝鮮度保証なし。
+  //   上の契約（「自分で今書いた値なので鮮度保証あり」）を正しくするため null を返し、呼び出し元は DB から取り直して stale 判定する
+  //   （通知・条件ブレイン等の副作用は従来どおり上で実行済み）
+  if (snapshot.meta.source === "cached") return null;
   return snapshot;
 }
 

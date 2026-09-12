@@ -53,10 +53,13 @@ import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1,
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
 import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
 // 2026-09-12 竹内方針A: 時間枠の「空いて」判定（断言検査・募集状況判定・AIX 場面判定が共有）
+// 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: resolveReplyAixDecision はブレインの判断を読むだけ。
+//   場面の検出（aix-scene-evidence）は本文の安全（resolveBodySafety）と確認約束の根拠にだけ使う
 import {
-  resolveReplyAix, detectReplyAixScene, detectAvailabilityCheckContext, isSceneMappedCode, toSuggestedAixPayload,
-  AIX_CONDITION_CHANGE_RE, type ReplyAix, type ReplyAixInput,
+  resolveReplyAixDecision, resolveBodySafety, confirmationBasisAction, isSceneMappedCode, toSuggestedAixPayload,
+  type ReplyAix, type ReplyAixInput, type BodySafety, type BrainAixDecision,
 } from "@/app/lib/aix-reply-set";
+import { detectAixSceneEvidence, detectAvailabilityCheckContext, AIX_CONDITION_CHANGE_RE } from "@/app/lib/aix-scene-evidence";
 import { resolveGreeting, enforceOpening, buildFirstGreeting, buildGreetingNote, computeAlreadyGreetedToday, toGreetingLite, isProgressPushMessage, type GreetingDecision } from "@/app/lib/greeting";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
@@ -70,7 +73,7 @@ import {
 } from "@/app/lib/template-preprocess";
 // Step1完全廃止（2026-08）: brain(suggested_aix_meta) が唯一の分析ソース。
 // SuggestedAixMeta 型と条件問い合わせ検出 regex は brain-core と共有する（二重定義禁止）
-import { PROPERTY_CONDITION_INQUIRY_RE, type SuggestedAixMeta } from "@/app/lib/brain-core";
+import { PROPERTY_CONDITION_INQUIRY_RE, runBrainAndNotify, type SuggestedAixMeta } from "@/app/lib/brain-core";
 import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
 import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
 // AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
@@ -492,12 +495,20 @@ function buildAvailabilityCheckNote(): string {
 // 旧 detectAixTiming（P0 物件指名／見積／条件変更／内覧）・AIX_BOUNDARY_TO_ACTION・AIX_* 正規表現は場面表（S1〜S7）へ移した。
 
 // AIXタイミング判定結果をプロンプト注入ブロックに変換する
-function buildAixTimingNote(r: ReplyAix): string {
-  // 2026-09-12 竹内方針A: 入力は resolveReplyAix の場面判定（bridge / forbiddenText / timing は場面表の定数）
+// 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 2つに分ける
+//   r（ブレインが決めた AIX・fresh の時だけ）→「どの AIX で送るか」の見出し＋橋渡しの型
+//   safety（証拠がある時）→「テキストで物件情報・金額を書かない・橋渡し文」だけ（AIX ボタンの指示は書かない）
+function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null): string {
+  if (!r && !safety) return "";
+  const src = r
+    ? { aix: r.action, label: r.label, chained: r.chained, urgency: r.urgency, highlight: r.highlight, extra: r.extra, forbidden: r.forbiddenText, bridge0: r.bridge }
+    : { aix: safety!.candidateAction, label: safety!.label, chained: safety!.chained, urgency: safety!.urgency, highlight: safety!.highlight, extra: safety!.extra, forbidden: safety!.forbiddenText, bridge0: safety!.bridge };
+  // ブレインの AIX と証拠の場面がずれている時は、本文の安全（禁止）は証拠の方も足す
+  const extraForbid = r && safety && safety.forbiddenText && safety.forbiddenText !== r.forbiddenText ? `／${safety.forbiddenText}` : "";
   const s = {
-    aix: r.action, label: r.label, chained: r.chained, urgency: r.urgency, highlight: r.highlight, extra: r.extra,
-    forbidden: r.forbiddenText,
-    bridge: r.bridge ?? AIX_ACTION_REPLY_DIRECTION[r.action]?.weDo ?? "かしこまりました！！",
+    ...src,
+    forbidden: `${src.forbidden}${extraForbid}`,
+    bridge: src.bridge0 ?? AIX_ACTION_REPLY_DIRECTION[src.aix]?.weDo ?? "かしこまりました！！",
   };
   // G26/G7（2026-09-08 Fable5）: 旧固定型「→ 出来次第/確認出来次第ご連絡させて頂きます」は AIX 種別を問わず確認約束を注入していた
   // （創作約束の再生産源）。締めを AIX 種別で分岐し、viewing_invite は日程を尋ねる疑問形のみ（主語逆転の禁止を明記）
@@ -510,9 +521,13 @@ function buildAixTimingNote(r: ReplyAix): string {
       ? "「お送りさせて頂きます」（見積は作成・送付宣言で締める）"
     : "「ピックアップ出来次第お送りさせて頂きます」（この場面に確認対象は無い。「確認出来次第ご連絡」は書かない）";
   const lines = [
-    `\n\n【🎛 AIXタイミング判定（確定・最優先 — この場面はAIX【${s.label}】(${s.aix})ボタンの担当場面）】`,
+    r
+      ? `\n\n【🎛 AIXタイミング判定（確定・最優先 — ブレインの判断: この返信はAIX【${s.label}】(${s.aix})ボタンで送る）】`
+      : `\n\n【🛡 本文の安全（決定論の証拠・最優先 — 顧客が確認の要る事柄を聞いている）】`,
     `・優先順位: 【🚫 フェーズ絶対禁止】（PHASE_PROHIBITIONS・final-check STATE_REGRESSION / TIMING_VOCAB_MISMATCH で block）に抵触する語彙は、下の橋渡し実例に含まれていても書かない。抵触する場合はピックアップ宣言に置き換える。`,
-    `この場面ではスタッフがAIX【${s.label}】ボタンを使う運用指示がある。AIが返信文で物件情報・金額・空室状況の「答え」を生成してはいけない。`,
+    r
+      ? `この場面ではスタッフがAIX【${s.label}】ボタンを使う運用指示がある。AIが返信文で物件情報・金額・空室状況の「答え」を生成してはいけない。`
+      : `AIが返信文で物件情報・金額・空室状況・日程の「答え」を生成してはいけない（確認・送付はスタッフが行う）。`,
     `・返信は橋渡し文言（受付宣言）のみで完結させること。型: 挨拶 → 受領のお礼/かしこまりました → 行動宣言 → ${closer}`,
     `・橋渡し文言の実例（この型に合わせる・文脈に応じて調整）: 「${s.bridge}」`,
     `・絶対禁止: ${s.forbidden}`,
@@ -696,8 +711,10 @@ function buildGenerationMessages(
   ledgerAnnotation: string = "",
   // 2026-09-11 統合設計（経路E5）: 台帳の「未履行のピックアップ約束」（ledgerActive 時のみ非 null）。本文 regex の約束検出と AND で使う
   ledgerPickupPromised: boolean | null = null,
-  // 2026-09-12 竹内方針A: 呼び出し側で1回だけ計算した場面判定（detectReplyAixScene）。プロンプト注入・メタ行・トレーラーが同じ結果を見る
+  // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: ブレインが決めた AIX（resolveReplyAixDecision・fresh の時だけ非 null）
   aixScenePre: ReplyAix | null = null,
+  // 同段1: 証拠から引いた本文の安全（AIX がセットされない時も断言しない・橋渡しを注入する）
+  bodySafetyPre: BodySafety | null = null,
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -1135,12 +1152,15 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // AIXタイミング判定（AIXタイミングマップ 2026-08）: 顧客メッセージがAIXトリガー条件に該当する場合、
   // 「この場面ではAIXボタンを使う運用指示があり、テキストで物件情報/金額を生成してはいけない」を注入する。
   // テンプレート最適化モード・指定生成モードでは通常返信の文脈判定が成立しないため注入しない。
-  // 2026-09-12 竹内方針A: 場面判定は aix-reply-set.ts の場面表（呼び出し側で計算済み）。プロンプトには決定論の場面（source=scene）だけを注入する
+  // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 「どの AIX で送るか」はブレインの判断（aixScenePre）だけ。
+  //   本文の安全（断言しない・橋渡し）は証拠（bodySafetyPre）で別に注入する（ブレインが AIX なし・stale でも効く）
   const aixTiming = (templateNote || replyHint) ? null : aixScenePre;
-  const aixTimingNote = aixTiming ? buildAixTimingNote(aixTiming) : "";
+  const bodySafety = (templateNote || replyHint) ? null : bodySafetyPre;
+  const aixTimingNote = buildAixTimingNote(aixTiming, bodySafety);
 
-  // G26（2026-09-08 Fable5）: 確認約束 verdict に AIX タイミング判定を合成（route.ts confirmCtxFinal と同じ pure 関数 → 三層で同値）
-  const confirmCtx = applyAixTiming(confirmCtxIn, aixTiming?.action ?? null);
+  // G26（2026-09-08 Fable5）: 確認約束 verdict に合成（route.ts confirmCtxFinal と同じ pure 関数・同じ根拠 → 三層で同値）
+  //   根拠 = 証拠が確認の要る質問（S1/S2/S3）または ブレインの action が property_check_result / acknowledge_check
+  const confirmCtx = applyAixTiming(confirmCtxIn, confirmationBasisAction(bodySafety, aixTiming));
 
   // G26: 管理会社ノートは verdict でゲート。確認対象が無い返信に「確認させて頂きます／確認出来次第ご連絡」を営業時間の説明付きで
   // 無条件注入していた（創作約束の再生産源）。allowed の時のみ、確認対象「${confirmCtx.object}」をリテラルで前置させる
@@ -4390,10 +4410,24 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
 
     // Sonnetでストリーミング生成
     // Step1廃止（2026-08）: 旧 analysis（Step1生JSON）の代わりに brainMeta + brainFreshForMessage を渡す
-    // ─── 2026-09-12 竹内方針A: 「AIX で送る場面」の判定（aix-reply-set.ts）を1回だけ計算 ───
-    //   aixScenePre   : 決定論の場面表（S1〜S7）。プロンプト注入（buildAixTimingNote）と確認約束 verdict に使う（初回返信でも注入する＝従来どおり）
-    //   replyAixPre   : resolveReplyAix（段階・初回除外・brain の推定を含む）。メタ行 suggested_aix に使う
-    //   生成後は assertionHits / unresolvedBlock を足して同じ関数を呼び直し、トレーラー・ai_draft_check.suggested_aix にする
+    // ─── 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1 ───
+    //   brainDecision : ブレインの判断（suggested_aix_meta ?? last_brain_meta）。fresh = 今回の顧客発言を見た実分析（cached・optional でない）
+    //   replyAixPre   : resolveReplyAixDecision（ブレインの判断を読むだけ）。プロンプト「どの AIX で送るか」・メタ行 suggested_aix に使う
+    //   bodySafetyPre : 証拠（detectAixSceneEvidence）から引いた本文の安全。プロンプト注入と確認約束 verdict に使う（初回返信でも注入する＝従来どおり）
+    //   生成後は unresolvedBlock を足して同じ関数を呼び直し、トレーラー・ai_draft_check.suggested_aix にする（AIX は選び直さない）
+    //   ※ 画面を開くと suggested_aix_meta が null に消される（page.tsx）ため、手動再生成は last_brain_meta（full/incremental の時だけ書かれる実分析）を読む
+    const brainDecisionSrc = (brainMeta ?? (brainGate?.lastMeta as SuggestedAixMeta | null) ?? null) as SuggestedAixMeta | null;
+    const brainDecision: BrainAixDecision | null = brainDecisionSrc ? (() => {
+      const srcTier = detectBrainTier(brainDecisionSrc, lastCustomerMsgAt);
+      const fresh = srcTier.brainFreshForMessage && brainDecisionSrc.source !== "cached" && brainDecisionSrc.enforcement_level !== "optional";
+      return {
+        action: normalizeAixActionKey(brainDecisionSrc.action ?? null) || null,
+        check_pattern: (brainDecisionSrc as { check_pattern?: string | null }).check_pattern ?? null,
+        enforcement_level: brainDecisionSrc.enforcement_level ?? null,
+        note: brainDecisionSrc.note ?? null,
+        fresh,
+      };
+    })() : null;
     const replyAixInput: ReplyAixInput | null = (isTemplateOptimize || templateNote || replyHint) ? null : (() => {
       const historyLinesTm = (history || "").split("\n");
       const lastStaffIdxTm = historyLinesTm
@@ -4414,15 +4448,30 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         isFirstReply: currentState === "first_reply",
         propertyStatus: detectPropertyStatus(history, message ?? "", propertyStatus),
         estimateVerdict,
-        brainCandidate: brainMeta?.action ? { action: brainMeta.action, check_pattern: (brainMeta as { check_pattern?: string | null }).check_pattern ?? null, note: brainMeta.note ?? null } : null,
+        brainDecision,
       };
     })();
-    const aixTimingForMeta: ReplyAix | null = (() => {
-      if (!replyAixInput) return null;
-      const hit = detectReplyAixScene(replyAixInput);
-      return hit ? { ...hit, enforcement: "recommended" as const, source: "scene" as const, note: hit.note ?? "" } : null;
-    })();
-    const replyAixPre: ReplyAix | null = replyAixInput ? resolveReplyAix(replyAixInput) : null;
+    const replyAixPreDecision = replyAixInput ? resolveReplyAixDecision(replyAixInput) : null;
+    const replyAixPre: ReplyAix | null = replyAixPreDecision?.aix ?? null;
+    const sceneEvidencePre = replyAixInput ? detectAixSceneEvidence(replyAixInput) : null;
+    const bodySafetyPre: BodySafety | null = replyAixInput ? resolveBodySafety(sceneEvidencePre, replyAixInput) : null;
+    if (replyAixInput && !isTemplateOptimize) {
+      console.log(JSON.stringify({
+        tag: replyAixPreDecision?.brainStale ? "aix:brain-stale-no-aix" : "aix:brain-decision",
+        conversationId, tier: tierResult.tier, brainAction: brainDecision?.action ?? null, fresh: brainDecision?.fresh ?? false,
+        setAix: replyAixPre?.action ?? null, sceneEvidence: sceneEvidencePre?.scene ?? null,
+      }));
+    }
+    // 手動生成でブレインの判断が古い時: 生成はブロックせず、ブレインを後ろで起動する（結果は画面のリアルタイム更新で P5 カードに届く）。
+    //   bg-async / cron 経路（enforceReplyModeGate=true）は自前でブレインを直列実行するので起動しない。60秒以内に分析済みなら二重起動しない
+    if (conversationId && !enforceReplyModeGate && !isTemplateOptimize && replyAixInput && !brainDecision?.fresh
+        && !replyAixInput.isFirstReply && !(replyAixInput.conversationStatus && DRAFT_SKIP_STATUSES.has(replyAixInput.conversationStatus))) {
+      const analyzedAtMs = brainGate?.brainAnalyzedAt ? new Date(brainGate.brainAnalyzedAt).getTime() : NaN;
+      if (Number.isNaN(analyzedAtMs) || Date.now() - analyzedAtMs > 60_000) {
+        const convIdForBrain = conversationId;
+        after(() => runBrainAndNotify(convIdForBrain).then(() => {}, (e) => console.warn("[generate-reply] stale brain rerun failed:", convIdForBrain, e instanceof Error ? e.message : e)));
+      }
+    }
 
     const messages = buildGenerationMessages(
       message, customerName, aixSourceMessage ? historyForTemplate : history, currentState,
@@ -4447,7 +4496,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       actionLedgerNote,    // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】ブロック
       ledgerAnnotation,    // 2026-09-09 Fable5 行動台帳: 直前発言の宣言／実行注記
       ledgerActive ? ledger.facts.pickupPromisedUnfulfilled : null, // 2026-09-11 統合設計（経路E5）: 約束検出を台帳で絞る
-      aixTimingForMeta,    // 2026-09-12 竹内方針A: 場面判定（aix-reply-set.ts）
+      replyAixPre,         // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: ブレインが決めた AIX（fresh の時だけ）
+      bodySafetyPre,       // 同段1: 証拠から引いた本文の安全
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -4500,9 +4550,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       auto_ok: false,          // 全チェックfalseなら送信OK候補（クライアントで確定）
     };
 
-    // 2026-09-12 竹内方針A: 場面判定（aixScenePre / replyAixPre）は buildGenerationMessages の前で1回だけ計算済み。
-    // G26: AIX 場面判定を確認約束 verdict に合成（buildGenerationMessages 内と同じ pure 関数 → 三層で同値）
-    const confirmCtxFinal: ConfirmationContextVerdict = applyAixTiming(confirmCtx, aixTimingForMeta?.action ?? null);
+    // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: replyAixPre / bodySafetyPre は buildGenerationMessages の前で1回だけ計算済み。
+    // G26: 確認約束 verdict に合成（buildGenerationMessages 内と同じ pure 関数・同じ根拠 → 三層で同値）
+    const confirmCtxFinal: ConfirmationContextVerdict = applyAixTiming(confirmCtx, confirmationBasisAction(bodySafetyPre, replyAixPre));
 
     // スタッフ向けガイドメモ: brain(AIX-META) の closing_strategy / reply_direction をメタラインで返す。
     // Step1廃止（2026-08）: 両方 null なら過去のbrain実行がDBに残した ai_summary_json.winning_pattern に
@@ -5033,20 +5083,26 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               });
               finalCheck.ok = false;
             }
-            // 2026-09-12 竹内方針A: 生成後の AIX セットは resolveReplyAix を「断言・AIX境界コード（assertionHits）」と
-            //   「final-check で直せなかった block（unresolvedBlock）」を足して呼び直した結果だけで決める（旧 required>brain>aix_timing>hint の優先順位は廃止）
+            // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 生成後も AIX はブレインの判断のまま（断言コードから AIX を選ばない）。
+            //   final-check で直せなかった block（unresolvedBlock）は enforcement を required に上げる／自動送信を止める（stopAutoSend）だけ。
+            //   ブレインが AIX なしで本文が直せない時は suggested_aix=null（P5.1 の汎用の案内）＋ [AIX誘導中]
             let replyAixPost: ReplyAix | null = replyAixPre;
             let aixBoundaryRequired: { action: string; code: string } | null = null;
             if (!isTemplateOptimize && finalCheck && replyAixInput) {
               const mapped = finalCheck.issues.filter((it) => isSceneMappedCode(it.code));
               const unresolved = finalCheck.revision_exhausted ? mapped.find((it) => it.severity === "block") ?? null : null;
-              replyAixPost = resolveReplyAix({
+              const post = resolveReplyAixDecision({
                 ...replyAixInput,
                 assertionHits: mapped.map((it) => it.code),
                 unresolvedBlock: unresolved?.code ?? null,
               });
-              if (replyAixPost?.enforcement === "required" && unresolved) {
-                aixBoundaryRequired = { action: replyAixPost.action, code: unresolved.code };
+              replyAixPost = post.aix;
+              if (post.stopAutoSend && unresolved) {
+                aixBoundaryRequired = { action: replyAixPost?.action ?? "", code: unresolved.code };
+                if (!replyAixPost) {
+                  // ブレインは AIX なし・本文は直せない食い違い（段2で brain_decision_logs.body_block_code に記録する）
+                  console.log(JSON.stringify({ tag: "aix:body-block-without-brain-aix", conversationId, code: unresolved.code, brainAction: brainDecision?.action ?? null, fresh: brainDecision?.fresh ?? false }));
+                }
               }
             }
             // 同一絵文字の重複を決定的に除去（初出のみ残す・EMOJI_RULEの機械的最終防衛線）

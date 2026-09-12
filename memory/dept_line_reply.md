@@ -4,7 +4,15 @@
 
 ---
 
-## AIX で送る場面は resolveReplyAix 1関数（竹内方針A フェーズ1・2026-09-12）— 黄金ルール
+## AIX のセットはブレインが判断する（竹内方針・統合設計 段1・2026-09-12）— 黄金ルール（下の方針A を上書き）
+- **AIX をセットするか・どの AIX か・check_pattern・enforcement はブレイン（brain-core analyzeConversation）だけ**。`resolveReplyAixDecision`（aix-reply-set.ts）はブレインの判断（suggested_aix_meta ?? last_brain_meta）を読んで形を整えるだけ。fresh（analyzed_msg_ts ≥ 最新顧客発言・cached/optional でない）の時だけ AIX をセット。stale/cached/action='' は AIX なし。場面表・断言コードから AIX を足さない
+- 場面の検出は `app/lib/aix-scene-evidence.ts` detectAixSceneEvidence（**証拠**）。使い道は ①ブレインの分析モード格上げ（brain-analysis-mode.ts decideAnalysisMode: 新しい顧客発言に証拠 or 前回 action あり → cached→incremental。ログ `brain:mode` upgradeReason）②本文の安全（resolveBodySafety: 橋渡し・禁止・確認約束の根拠 S1/S2/S3）
+- cached 返却は action=''・check_pattern=null・reply_mode=auto_reply で書く。runBrainAndNotify は cached なら null を返す
+- unresolvedBlock は AIX を選ばない（ブレインに action→required／無い→stopAutoSend で [AIX誘導中]＋suggested_aix=null。ログ `aix:body-block-without-brain-aix`）
+- 手動生成で stale → after() でブレインを後ろ起動（60秒以内に分析済みならしない）。page.tsx 4325 の property_check タスク自動作成が初めて動く（キー比較に修正）
+- 段2（未）: ブレインのプロンプトに証拠欄・実績欄、LLM null 時の S2/S3/S5、brain_decision_logs 列追加、brain_aix_feedback、cron/brain-aix-eval、aix_feature_suggestions 4件
+
+## （旧）AIX で送る場面は resolveReplyAix 1関数（竹内方針A フェーズ1・2026-09-12）— 段1で上書き済み
 - **場面判定は `app/lib/aix-reply-set.ts` resolveReplyAix だけ**。旧 detectAixTiming・AIX_BOUNDARY_TO_ACTION・トレーラーの優先順位（required>brain>aix_timing>hint）は廃止。場面表 S1 空室／S2 入居日（mgmt_move_in・退去予定は vacate_date）／S3 審査（mgmt_guarantor）／S4 内覧／S5 日時指定→meeting_place（bridge=null）／S6 見積／S7 条件変更。場面 > 断言コード > brain の推定の順（1関数の中）
 - 生成後は assertionHits（断言・AIX境界コード）と unresolvedBlock（直せなかった block）を足して同じ関数を呼び直し、SUGGESTED_AIX トレーラーと **ai_draft_check.suggested_aix** に保存（check_pattern・timing・bridge 付き）。required は ai_draft="[AIX誘導中]"（suggested_aix_button への書き込みは廃止）
 - 時間枠の「空いて」・入居日/審査の質問・橋渡し文は `app/lib/scene-patterns.ts`（依存ゼロ）。後処理の断言置換文も同じ定数（ASSERTION_REPLACEMENT）
