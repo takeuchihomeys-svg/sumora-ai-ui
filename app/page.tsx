@@ -8220,7 +8220,9 @@ export default function Home() {
               // property_recommendation の postAixTemplate がある場合も抑制（次はテンプレで決めにいく）
               const hasPropertyCheckTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_check");
               const isPostRec = postAixTemplateMap[id]?.actionType === "property_recommendation";
-              if (hasPropertyCheckTask && !suggestPropertyRecommendMap[id] && !isPostRec) return (
+              // 2026-09-12 竹内（あや・名無しの権兵衛事例）: 帯はブレインが同じ AIX を判断している時だけ（残っているやることだけでは出さない）。
+              //   旧: やることの有無だけで出ていて、ブレインが見積書送る（または AIX なし）の時に「物件確認した／物件を送る」が出ていた
+              if (hasPropertyCheckTask && sameAixAction(brainAixAction, "property_check_result") && !suggestPropertyRecommendMap[id] && !isPostRec) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-[#4CAF50] bg-[#e8f5e9] px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] font-bold text-[#2e7d32] flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件確認した</span>
@@ -8234,7 +8236,8 @@ export default function Home() {
 
               // P6: 物件ピックアップした（タスクあり or サジェスト）
               const isCustomerFormatMsg = false;
-              if ((suggestPropertySendMap[id] || hasPropertySendTask || isCustomerFormatMsg) && !suggest2ndHandMap[id] && !dismissedPropertySendIds.has(id)) return (
+              const brainSaysPropertyDelivery = sameAixAction(brainAixAction, "property_send") || sameAixAction(brainAixAction, "property_recommendation");
+              if ((suggestPropertySendMap[id] || hasPropertySendTask || isCustomerFormatMsg) && brainSaysPropertyDelivery && !suggest2ndHandMap[id] && !dismissedPropertySendIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2">
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <span className="text-[12px] font-bold text-teal-700 leading-snug"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → 物件を送る or 募集状況を確認する</span>

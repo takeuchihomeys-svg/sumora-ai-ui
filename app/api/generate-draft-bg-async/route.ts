@@ -563,7 +563,13 @@ export async function POST(req: NextRequest) {
         .select("task_type, created_at")
         .eq("conversation_id", convId)
         .eq("status", "pending");
-      const activeTaskTypes = (pendingTasks ?? []).map((t: { task_type: string }) => t.task_type);
+      // 2026-09-12 竹内（名無しの権兵衛事例）: 24時間以上前のやること（誤作成・放置）は下書きを止めない。
+      //   旧: 「スタック救済」は ai_draft が既に [AIX誘導中] の時だけで、顧客の新着ごとに ai_draft が空に戻るため永久に救済されず、
+      //   9/10 の誤作成タスクで 9/12 の「初期費用教えて下さい」に下書きが出なかった（残っていた物件ピックアップのやること 29件）
+      const AIX_TASK_FRESH_MS = 24 * 60 * 60 * 1000;
+      const freshPendingTasks = (pendingTasks ?? []).filter((t: { created_at: string | null }) =>
+        !!t.created_at && Date.now() - Date.parse(t.created_at) < AIX_TASK_FRESH_MS);
+      const activeTaskTypes = freshPendingTasks.map((t: { task_type: string }) => t.task_type);
 
       // AIX誘導タスクがある場合はdraft生成をスキップ（property_checkは短い返しを生成するため除外）
       if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.has(t))) {
@@ -571,7 +577,7 @@ export async function POST(req: NextRequest) {
         // （staff がAIXモーダルをキャンセルした等でタスクが放置されたケースの救済）
         const AIX_STUCK_MS = 2 * 60 * 60 * 1000;
         const isAlreadySentinel = conv.ai_draft === "[AIX誘導中]";
-        const oldestAixMs = Math.min(...(pendingTasks ?? [])
+        const oldestAixMs = Math.min(...freshPendingTasks
           .filter((t: { task_type: string }) => AIX_SKIP_TYPES.has(t.task_type))
           .map((t: { created_at: string | null }) => t.created_at ? Date.parse(t.created_at) : Infinity));
         const isStuck = isAlreadySentinel && isFinite(oldestAixMs) && (Date.now() - oldestAixMs) > AIX_STUCK_MS;

@@ -282,7 +282,11 @@ async function run() {
         .select("task_type, created_at")
         .eq("conversation_id", convId)
         .eq("status", "pending");
-      const activeTaskTypes = (cronPendingTasks ?? []).map((t: { task_type: string }) => t.task_type);
+      // 2026-09-12 竹内（名無しの権兵衛事例）: 24時間以上前のやること（誤作成・放置）は下書きを止めない（bg-async と同じ）
+      const AIX_TASK_FRESH_MS = 24 * 60 * 60 * 1000;
+      const freshCronTasks = (cronPendingTasks ?? []).filter((t: { created_at: string | null }) =>
+        !!t.created_at && Date.now() - Date.parse(t.created_at) < AIX_TASK_FRESH_MS);
+      const activeTaskTypes = freshCronTasks.map((t: { task_type: string }) => t.task_type);
 
       // AIX誘導タスクがある場合はdraft生成をスキップ（property_checkは短い返しを生成するため除外）
       if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.has(t))) {
@@ -290,7 +294,7 @@ async function run() {
         const AIX_STUCK_MS = 2 * 60 * 60 * 1000;
         const convAiDraft = (conv as Record<string, unknown>).ai_draft as string | null | undefined;
         const isAlreadySentinel = convAiDraft === "[AIX誘導中]";
-        const oldestAixMs = Math.min(...(cronPendingTasks ?? [])
+        const oldestAixMs = Math.min(...freshCronTasks
           .filter((t: { task_type: string }) => AIX_SKIP_TYPES.has(t.task_type))
           .map((t: { created_at: string | null }) => t.created_at ? Date.parse(t.created_at) : Infinity));
         const isStuck = isAlreadySentinel && isFinite(oldestAixMs) && (Date.now() - oldestAixMs) > AIX_STUCK_MS;

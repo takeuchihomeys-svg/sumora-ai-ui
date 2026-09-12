@@ -2878,8 +2878,11 @@ export async function analyzeAndSaveBrainMeta(
 
   const status = (conv.status as string | null) ?? null;
   if (status && BRAIN_SKIP_STATUSES.includes(status)) return stampSkipped(conversationId, `status=${status}`);
-  // 申込以降バッジあり（スタッフが手動マーク）→ 別ツールで管理中のため分析不要
-  if ((conv as unknown as Record<string, unknown>).is_post_apply === true) return stampSkipped(conversationId, "is_post_apply");
+  // 2026-09-12 竹内（名無しの権兵衛事例）: 旧「申込以降バッジあり（is_post_apply）→ 分析不要」は廃止。
+  //   申込中でもお客様は並行して別の物件の内見・初期費用を聞く（「因みに、昭和グランドハイツ恵比寿の初期費用教えて下さい」→ AIX 見積書送る）。
+  //   30日で is_post_apply の会話 13件にスタッフが AIX を 91回押していた（物件オススメ34・物件ピックアップ17・物件確認11・見積書10…）のに、
+  //   ブレインは全て skip(stamped) で判断していなかった。status の BRAIN_SKIP_STATUSES（契約・成約以降）と同じく、申込中は分析対象
+  //   （conversation-status.ts「applying/screening は brain 分析対象」と同じ考え方）
 
   // H6(Fable5): ブロック済み/フォロー解除の顧客は分析しない（Haiku浪費 + 無意味な提案の防止）
   const lineStatus = (conv.line_status as string | null) ?? null;

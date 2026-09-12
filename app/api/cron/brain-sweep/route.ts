@@ -68,9 +68,8 @@ export async function GET(req: NextRequest) {
       // （writer 側の analyzeAndSaveBrainMeta は null status を許容 → 永久に分析されない盲点だった）
       .or(`status.is.null,status.not.in.(${BRAIN_SKIP_STATUSES.join(",")})`)
       // 2026-09-10 Fable5 Sさん事例（原因D）: writer 側（analyzeAndSaveBrainMeta）が分析対象外にする行を
-      //   クエリ側でも除外する。旧実装はこの2条件を持たず、is_post_apply=true の3行が MAX_SWEEP_PER_RUN=3 の
-      //   全枠を永久に占有していた（直近24h: processed 1 / failed 899）。NULL 行を落とさない .or 形式で書く
-      .or("is_post_apply.is.null,is_post_apply.eq.false")
+      //   クエリ側でも除外する（NULL 行を落とさない .or 形式）。
+      // 2026-09-12 竹内（名無しの権兵衛事例）: writer が is_post_apply（申込中）を分析対象にしたので、ここでも除外しない
       .or("line_status.is.null,line_status.not.in.(blocked,unfollowed)")
       // H3(Fable5): 30分バックオフ（未試行 or 前回試行から30分経過した行のみ）
       .or(`brain_analyzed_at.is.null,brain_analyzed_at.lt.${backoffCutoff}`)
