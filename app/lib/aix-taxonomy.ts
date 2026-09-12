@@ -133,6 +133,19 @@ export function detectPropertyCheckPattern(recentText: string): PropertyCheckKin
   return null;
 }
 
+// 2026-09-12 段2: check_pattern の値（場面の証拠 S2/S3 が出した mgmt_move_in / vacate_date / mgmt_guarantor 等）から
+// detectPropertyCheckPattern と同じ形の PropertyCheckKind を作る（ブレインの note を同じ文面にするため）
+export function propertyCheckKindFor(pattern: string | null | undefined): PropertyCheckKind | null {
+  const d = CHECK_PATTERN_DETECTORS.find((x) => x.pattern === pattern);
+  if (!d) return null;
+  return {
+    check_pattern: d.pattern,
+    ui_button: "確認した（条件・交渉）",
+    topic: d.topic,
+    note: `AIX【確認した（条件・交渉）】を押してください: ${d.topic}の確認結果を顧客への報告文に変換する場面です（サブパターン: ${d.pattern}。結果報告の手打ちはNG）`,
+  };
+}
+
 // action キー＋check_pattern 判定結果からスタッフ向けアナウンスを1文で組み立てる。
 // property_check_result で条件・交渉系サブパターンが特定できた場合は
 // 2ボタン併記の丸投げ文言ではなく「確認した（条件・交渉）」への具体的指示に切り替える。

@@ -10,7 +10,6 @@ import {
   AIX_LINE_LABELS,
   buildAixStaffNote,
   buildAixLineNote,
-  detectPropertyCheckPattern,
   normalizeAixActionKey,
 } from "@/app/lib/aix-taxonomy";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
@@ -28,6 +27,11 @@ import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 import { jstMD, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
 // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 分析モード判定（決定論の場面の証拠で cached→incremental に格上げ）
 import { decideAnalysisMode } from "@/app/lib/brain-analysis-mode";
+// 2026-09-12 同 段2: 場面の証拠（決定論）とスタッフが押した AIX の実績（brain_aix_feedback）をブレインの入力にする
+import {
+  unrepliedCustomerTurn, sceneEvidenceForTurn, sceneSignalFallback, compactSceneEvidence, buildSceneEvidencePromptText,
+  resolveBrainCheckPattern, feedbackGateRate, type FeedbackRow,
+} from "@/app/lib/brain-aix-feedback";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -126,6 +130,10 @@ export type SuggestedAixMeta = {
   // direction 更新側の二重実行（6本のDBクエリ×2）を回避するための持ち回り。
   signal_aix_ran?: boolean;
   signal_aix_result?: string | null;
+  // 2026-09-12 段2: 判断の出どころ（'llm' / 'correction:*' / 'signal:*' / 'signal:scene_S2|S3|S5' / 'guard:*'）と
+  // 今回の顧客発言の場面の証拠（aix-scene-evidence の要約）。brain_decision_logs と cron/brain-aix-eval が読む
+  decision_source?: string | null;
+  scene_evidence?: { scene: string; candidate: string; check_pattern: string | null; reason: string; property_by: string | null } | null;
   // LLMの行動選択理由（≤30字）
   reason?: string | null;
   // ai_summary_jsonからの勝ちパターン
@@ -1703,6 +1711,27 @@ export async function analyzeConversation(
     lastCustomerAt: typedMessages.find((m) => m.sender === "customer")?.created_at ?? null,
   });
   const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
+  // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段2:
+  //   今回の顧客発言（最後のスタッフ発言より後の未返信の連投全体）の場面を決定論で1回だけ出し、「証拠」としてプロンプトに渡す。
+  //   あわせてスタッフが実際に押した AIX の実績（brain_aix_feedback・cron/brain-aix-eval が毎日集計）を事実として渡す。
+  //   AIX を決めるのはブレイン（場面を規則として書かない・場面ヒットで finalAix を上書きしない）。
+  const unrepliedTurn = unrepliedCustomerTurn(typedMessages);
+  const sceneEvidence = sceneEvidenceForTurn(unrepliedTurn, {
+    sentPropertyCount: brainLedger.facts.propertiesSentCount,
+    aixHistory: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null })),
+    recentMessages: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text })),
+    moveOutScheduled: MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs(typedMessages)),
+  });
+  let brainAixFeedback: FeedbackRow[] = [];
+  try {
+    const { data: fbRows } = await supabase
+      .from("brain_aix_feedback")
+      .select("key, kind, action, check_pattern, scene, decision_source, n, pressed, matched, alt_top, window_days");
+    brainAixFeedback = ((fbRows ?? []) as FeedbackRow[]).map((r) => ({ ...r, alt_top: Array.isArray(r.alt_top) ? r.alt_top : [] }));
+  } catch (e) {
+    console.warn("[brain-core] brain_aix_feedback read failed (fail-open):", e instanceof Error ? e.message : e);
+  }
+  const sceneEvidenceText = buildSceneEvidencePromptText(sceneEvidence, brainAixFeedback);
 
   // H6(Fable5): 予約送信・未完了タスク・内覧予定を注入（重複提案防止・next_steps の接地）
   type ScheduledMsg = { text: string | null; scheduled_at: string };
@@ -1904,7 +1933,7 @@ ${PHASE_TEMPLATE_HINTS}
   //     ・templates → match_templates RAGに移行（会話フェーズ最適化・use_count/won_count更新でのキャッシュ破棄解消）
   //   user[1] customerSpecific（cache無し）= 上記DB動的データ + 顧客固有データ + 会話履歴
   const stableKnowledgeText = ``;
-  const customerSpecificText = `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+  const customerSpecificText = `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${sceneEvidenceText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -2031,6 +2060,10 @@ ${history}`;
     // 語彙近傍の出力（"acknowledge_result"・日本語ラベル・「AIX【見積書送る】で〜」等）も
     // 正準キーへ正規化する。従来はこれらが全て action=""（ボタン特定不能）に落ちていた。
     let finalAix: string | null = normalizeAixActionKey(parsed.aix);
+    // 2026-09-12 段2: 判断の出どころ（brain_decision_logs.decision_source・brain-aix-eval で出どころ別の一致率を測る）
+    let decisionSource: string | null = finalAix ? "llm" : null;
+    // 場面の信号（S2/S3）で決まった時の check_pattern（証拠の check_pattern を優先する）
+    let sceneSignalCheckPattern: string | null = null;
     // Case1対策（決定論的矯正・プロンプト任せにしない）:
     // suggested_aix_button は brainAix（Haiku提案）＞ signalAix の優先構造のため、
     // プロンプト側の「送付0件→property_search」誘導で Haiku が property_search を返すと
@@ -2045,6 +2078,7 @@ ${history}`;
       PROPERTY_CONDITION_INQUIRY_RE.test(lastCustomerMsg.text)
     ) {
       finalAix = "property_send";
+      decisionSource = "correction:property_condition";
     }
     // 構造化条件フォーム送信対策（決定論的矯正）:
     // 顧客が【ご希望の家賃】⇒〇万 / 【初期費用の限度額】⇒〇万 等の整理済みヒアリングシートを送付した場合、
@@ -2061,6 +2095,7 @@ ${history}`;
           !/(見積|総額|いくら|内訳|費用.{0,6}(教|知|詳|いくら)|？|\?)/.test(lastCustomerMsg.text)))
     ) {
       finalAix = "property_send";
+      decisionSource = "correction:condition_form";
     }
     // 画像のみ送信対策（決定論的矯正・プロンプト任せにしない）:
     // 顧客がテキストなしで画像だけを送ってきた場合（messages上は "[画像]" プレースホルダー）、
@@ -2080,6 +2115,7 @@ ${history}`;
       lastCustomerMsg.image_type !== "floor_plan"
     ) {
       finalAix = "estimate_sheet";
+      decisionSource = "correction:image_only";
     }
     // AIXボタン種別アナウンス改善(2026-08): LLMがボタンを特定できなかった場合、
     // 信号ベース決定論（detectSignalBasedAixFallback）でボタン種別を判定して action を埋める。
@@ -2102,7 +2138,19 @@ ${history}`;
       const signalAix = await detectSignalBasedAixFallback(conversationId, propertyCustomerId, fallbackPhase);
       signalAixRan = true;
       signalAixResult = signalAix && AIX_BRAIN_NOTES[signalAix] ? signalAix : null;
-      if (signalAixResult) finalAix = signalAixResult;
+      if (signalAixResult) {
+        finalAix = signalAixResult;
+        decisionSource = `signal:${signalAixResult}`;
+      } else {
+        // 2026-09-12 段2: 既存の信号でも決まらない時だけ、今回の顧客発言の場面の証拠（S2 入居日 / S3 審査 / S5 日時指定）を信号として加える。
+        //   既存の信号の結果は変えない（加えるだけ）。decision_source='signal:scene_*' で brain-aix-eval の学習対象にする。
+        const sceneSig = sceneSignalFallback(sceneEvidence);
+        if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action]) {
+          finalAix = sceneSig.action;
+          sceneSignalCheckPattern = sceneSig.checkPattern;
+          decisionSource = sceneSig.decisionSource;
+        }
+      }
     }
     // 内覧誤提案ガード（決定論的矯正・プロンプト任せにしない）:
     // viewing_invite は「顧客の反応」が前提のアクション。①最終メッセージがスタッフ送信
@@ -2124,12 +2172,14 @@ ${history}`;
         Boolean(lastCustomerMsg && new Date(lastCustomerMsg.created_at).getTime() > new Date(lastPropertySentAt).getTime());
       if (!lastMsgIsCustomer || !customerRespondedAfterSend) {
         finalAix = null;
+        decisionSource = "guard:viewing";
       } else if (MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs(typedMessages))) {
         // 退去予定/入居中物件では現地内覧不可（旧 redirectMoveOut 相当）:
         // Haiku 提案がガードを通過して viewing_invite に確定する場合でも、
         // 会話履歴（スタッフ送付の物件情報を含む直近15件）に退去予定/入居中の記述があれば
         // 申込で部屋を先押さえする application_push へ差し替える。
         finalAix = "application_push";
+        decisionSource = "guard:viewing";
       }
     }
     // Quality gate: suppress AIX suggestions with < 30% acceptance rate over 10+ samples.
@@ -2142,21 +2192,17 @@ ${history}`;
     // 明確に区別して meta で伝搬する。analyzeAndSaveBrainMeta の direction 更新側は
     // このフラグが true の場合のみ detectSignalBasedAixFallback を丸ごとスキップし、
     // 抑制済み低品質アクションの suggested_aix_button への復活（ゲートバイパス）を塞ぐ。
-    let aixSuppressedByAcceptRate = false;
+    // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段2:
+    //   読み先を存在しない SOURCE_ACCEPT_RATE:{a}:brain（trigger_action_rules）から brain_aix_feedback（cron/brain-aix-eval が
+    //   ブレインの判断とスタッフが押した AIX を1件ずつ対にして集計した一致率）に変えた。
+    //   null 化（<0.3）は外した（今のデータ量では強すぎる・旧ゲートも一度も効いていなかったので挙動は変わらない）。
+    //   一致率は下の required→recommended 降格だけに使う。aixSuppressedByAcceptRate は互換のため残す（常に false）。
+    const aixSuppressedByAcceptRate = false;
     if (finalAix) {
-      const { data: rateData } = await supabase
-        .from("trigger_action_rules")
-        .select("confidence, total_occurrence")
-        .eq("keyword", `SOURCE_ACCEPT_RATE:${finalAix}:${source}`)
-        .eq("action_type", finalAix)
-        .maybeSingle();
-      if (rateData) {
-        acceptRateOcc = (rateData.total_occurrence as number | null) ?? 0;
-        acceptRateConf = (rateData.confidence as number | null) ?? 1;
-        if (acceptRateOcc >= 10 && acceptRateConf < 0.3) {
-          finalAix = null;
-          aixSuppressedByAcceptRate = true;
-        }
+      const rate = feedbackGateRate(brainAixFeedback, finalAix);
+      if (rate) {
+        acceptRateOcc = rate.n;
+        acceptRateConf = rate.rate;
       }
     }
     // B2(Fable5): reply_mode のフェイルクローズ強制（コード側で決定的に上書き — プロンプト任せにしない）
@@ -2185,6 +2231,7 @@ ${history}`;
     if (!hasStaffEngagement && !isIncremental) {
       finalAix = null;
       replyMode = undefined;
+      decisionSource = "guard:first_contact";
     }
 
     // template_hint バリデーションゲート: AIXタブのラベルカテゴリ名（許可リストの含む判定）のみ通す。
@@ -2216,8 +2263,7 @@ ${history}`;
 
     // 低採択率アクション降格ゲート: 採択率35%未満（10件以上の実績）のアクションは
     // required → recommended へ自動降格する（例: application_push 30% / mgmt_check_submode 0%）。
-    // SOURCE_ACCEPT_RATE:{action}:{source} の取得値（上のゲートで保持済み）を再利用し追加クエリなし。
-    // 30%未満は上の完全抑制ゲートで finalAix=null 済みのため、実効帯域は 30〜35%。
+    // brain_aix_feedback の一致率（上で保持済み）を再利用し追加クエリなし（2026-09-12 段2: null 化を外したので 35%未満すべてが降格の対象）。
     // 例外: meeting_place は内覧フェーズが scheduling / confirmed_future 相当の間は降格しない
     // （日程調整中〜確定済み未来の待ち合わせ案内は文脈上必須のため）。
     let enforcementLevel: "required" | "recommended" = isUrgent ? "required" : "recommended";
@@ -2428,9 +2474,8 @@ ${history}`;
     // property_check_result の1キー多義解消: 直近会話文脈から check_pattern（初期費用交渉・
     // 近隣月極・保証会社等）を判定し、「物件確認した（募集状況）」と「確認した（条件・交渉）」の
     // どちらのUIボタンをどのサブパターンで押すべきかを note で具体的に明示する。
-    const checkKind = finalAix === "property_check_result"
-      ? detectPropertyCheckPattern(typedMessages.slice(0, 8).map((m) => m.text ?? "").join("\n"))
-      : null;
+    // 2026-09-12 段2: 出どころは 場面の信号 → 場面の証拠（S2/S3）→ 未返信の顧客発言だけに detectPropertyCheckPattern（resolveBrainCheckPattern）
+    const checkKind = resolveBrainCheckPattern(finalAix, sceneEvidence, sceneSignalCheckPattern, unrepliedTurn.text);
     // finalAix=null時のnote改善: 従来はLLM生文字列（parsed.action）がそのまま note に入り
     // 「ボタン特定不能なフリーテキスト」表示になっていた。既知ボタンへ写像できる場合は
     // 参考ボタン名を明示した具体的指示に整形する（actionは""のまま＝強制はしない）。
@@ -2500,6 +2545,9 @@ ${history}`;
       aix_suppressed_by_accept_rate: aixSuppressedByAcceptRate || undefined,
       signal_aix_ran: signalAixRan || undefined,
       signal_aix_result: signalAixResult,
+      // 2026-09-12 段2: 判断の出どころと今回の顧客発言の場面の証拠（JSONB・スキーマ変更不要）。brain_decision_logs にも同じ値を残す
+      decision_source: finalAix ? decisionSource : (decisionSource === "guard:viewing" || decisionSource === "guard:first_contact" ? decisionSource : null),
+      scene_evidence: compactSceneEvidence(sceneEvidence),
       reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 30) : null,
       winning_pattern: winningPattern,
       customer_emotion: ((brainSummaryJson as Record<string, unknown> | null)?.emotion as string) ?? null,
@@ -2840,6 +2888,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
       action: "",
       check_pattern: null,
       reply_mode: "auto_reply",
+      decision_source: null,
     };
     await supabase
       .from("conversations")
@@ -2932,7 +2981,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
     // brain_decision_logs: Brain判断を記録（fail-open: エラーがあってもメイン処理を止めない）
     try {
       const metaObj = meta as Record<string, unknown>;
-      await supabase.from("brain_decision_logs").insert({
+      const baseRow = {
         conversation_id: conversationId,
         suggested_action: typeof metaObj.action === "string" ? metaObj.action : null,
         suggested_reply_mode: typeof metaObj.reply_mode === "string" ? metaObj.reply_mode : null,
@@ -2940,7 +2989,21 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
         enforcement_level: typeof metaObj.enforcement_level === "string" ? metaObj.enforcement_level : null,
         conversation_status: status,
         source: "brain_core",
+      };
+      // 2026-09-12 段2: cron/brain-aix-eval がスタッフの押した AIX と対にするための列（migrate-schema で追加）
+      const { error: insErr } = await supabase.from("brain_decision_logs").insert({
+        ...baseRow,
+        suggested_check_pattern: typeof metaObj.check_pattern === "string" ? metaObj.check_pattern : null,
+        decision_source: typeof metaObj.decision_source === "string" ? metaObj.decision_source : null,
+        analysis_mode: analysisMode,
+        analyzed_msg_ts: typeof metaObj.analyzed_msg_ts === "string" ? metaObj.analyzed_msg_ts : null,
+        scene_evidence: metaObj.scene_evidence ? JSON.stringify(metaObj.scene_evidence) : null,
       });
+      if (insErr) {
+        // 列がまだ無い環境（migrate-schema 未実行）でも判断ログを失わない
+        console.warn("[brain-core] brain_decision_logs insert (extended) failed, retry base columns:", conversationId, insErr.message);
+        await supabase.from("brain_decision_logs").insert(baseRow);
+      }
     } catch (e) {
       console.warn("[brain-core] brain_decision_logs insert failed:", conversationId,
         e instanceof Error ? e.message : String(e));

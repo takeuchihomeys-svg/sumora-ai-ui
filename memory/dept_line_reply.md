@@ -10,7 +10,16 @@
 - cached 返却は action=''・check_pattern=null・reply_mode=auto_reply で書く。runBrainAndNotify は cached なら null を返す
 - unresolvedBlock は AIX を選ばない（ブレインに action→required／無い→stopAutoSend で [AIX誘導中]＋suggested_aix=null。ログ `aix:body-block-without-brain-aix`）
 - 手動生成で stale → after() でブレインを後ろ起動（60秒以内に分析済みならしない）。page.tsx 4325 の property_check タスク自動作成が初めて動く（キー比較に修正）
-- 段2（未）: ブレインのプロンプトに証拠欄・実績欄、LLM null 時の S2/S3/S5、brain_decision_logs 列追加、brain_aix_feedback、cron/brain-aix-eval、aix_feature_suggestions 4件
+- **段2（2026-09-12 完了）: ブレインが場面を材料に判断し、スタッフの AIX から学ぶ**
+  - brain-core analyzeConversation: 未返信の顧客発言（unrepliedCustomerTurn）に場面の証拠を1回だけ当て、プロンプトの行動台帳の隣に【今回の顧客発言の場面（証拠。AIX を決めるのはあなた）】【この場面でスタッフが押した AIX の実績】【過去の判断と代わりに押された AIX】を注入（buildSceneEvidencePromptText・規則として書かない）
+  - LLM の aix が null で既存の信号（detectSignalBasedAixFallback）も null の時だけ、S2→property_check_result/mgmt_move_in(vacate_date)・S3→/mgmt_guarantor・S5→meeting_place を**加える**（sceneSignalFallback・decision_source='signal:scene_S2|S3|S5'）。既存の信号の結果は変えない。S1/S4/S6/S7 は信号にしない
+  - check_pattern の出どころ（resolveBrainCheckPattern）: 場面の信号 → 証拠 S2/S3 → 未返信の顧客発言だけに detectPropertyCheckPattern（旧: 直近8件・スタッフ文込み）
+  - meta と brain_decision_logs に decision_source（llm / correction:* / signal:* / guard:viewing / guard:first_contact）・scene_evidence・analysis_mode・analyzed_msg_ts・suggested_check_pattern。generate-reply は body_block_code を最新の判断の行に書く
+  - 採択率ゲート: 読み先を SOURCE_ACCEPT_RATE:{a}:brain（trigger_action_rules）→ **brain_aix_feedback**（feedbackGateRate）。**null 化は外し** required→recommended 降格（押された判断の中の一致率 <35%・pressed≥10）だけ。aix_suppressed_by_accept_rate は常に false（互換）
+  - 新 cron `/api/cron/brain-aix-eval`（毎日 11:20 UTC）: pairBrainDecisions（次の判断 or 24h までに最初に押された AIX・30分以内の連続押しは1件・acknowledge_check=property_check_result）→ actual_*/matched 書き戻し → brain_aix_feedback に action / action_cp / decision_source / scene_staff を upsert（n≥10）。**trigger_action_rules には書かない**
+  - 基準（2026-09-12・30日）: 判断281／押し727／判定264中一致92。action あり190中一致27、そのうち AIX が押された56中27（48%）。action=none は 65/74 が「押されなかった」
+  - aix_feature_suggestions に4件（aix-shadow-eval で predictor=brain／log-aix-usage に brain_suggested_*／suggestion_source と suggestion_accepted の数え方／aix-weekly-learning の check_pattern 食い違い）
+  - 1〜2週間後の確認: ブレインだけ当たっていた27件相当を落としていないか・場面だけ当たっていた7件相当（S5 meeting_place 等）を拾えているか（scratchpad/scene-vs-staff.ts の A2 と同じ集計）
 
 ## （旧）AIX で送る場面は resolveReplyAix 1関数（竹内方針A フェーズ1・2026-09-12）— 段1で上書き済み
 - **場面判定は `app/lib/aix-reply-set.ts` resolveReplyAix だけ**。旧 detectAixTiming・AIX_BOUNDARY_TO_ACTION・トレーラーの優先順位（required>brain>aix_timing>hint）は廃止。場面表 S1 空室／S2 入居日（mgmt_move_in・退去予定は vacate_date）／S3 審査（mgmt_guarantor）／S4 内覧／S5 日時指定→meeting_place（bridge=null）／S6 見積／S7 条件変更。場面 > 断言コード > brain の推定の順（1関数の中）

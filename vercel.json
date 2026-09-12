@@ -217,6 +217,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/brain-aix-eval",
+      "schedule": "20 11 * * *"
+    },
+    {
       "path": "/api/analyze-applying",
       "schedule": "30 12 * * 0"
     },

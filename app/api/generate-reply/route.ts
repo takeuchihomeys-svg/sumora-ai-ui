@@ -5102,6 +5102,22 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (!replyAixPost) {
                   // ブレインは AIX なし・本文は直せない食い違い（段2で brain_decision_logs.body_block_code に記録する）
                   console.log(JSON.stringify({ tag: "aix:body-block-without-brain-aix", conversationId, code: unresolved.code, brainAction: brainDecision?.action ?? null, fresh: brainDecision?.fresh ?? false }));
+                  // 2026-09-12 段2: 同じ会話で最新のブレインの判断の行に body_block_code を残す（ブレインの学習材料・fail-open）
+                  const blockCode = unresolved.code;
+                  after(async () => {
+                    try {
+                      const { data: lastDec } = await supabase
+                        .from("brain_decision_logs")
+                        .select("id")
+                        .eq("conversation_id", conversationId)
+                        .order("created_at", { ascending: false })
+                        .limit(1)
+                        .maybeSingle();
+                      if (lastDec?.id) await supabase.from("brain_decision_logs").update({ body_block_code: blockCode }).eq("id", lastDec.id);
+                    } catch (e) {
+                      console.warn("[generate-reply] body_block_code update failed:", conversationId, e instanceof Error ? e.message : e);
+                    }
+                  });
                 }
               }
             }

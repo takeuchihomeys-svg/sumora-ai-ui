@@ -2859,6 +2859,43 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS last_wide_search_at TIME
 ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS property_name TEXT;
 ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS property_address TEXT;
 
+-- ── brain_decision_logs: ブレインの AIX 判断とスタッフが押した AIX の対（2026-09-12 統合設計 段2）──
+-- brain-core analyzeAndSaveBrainMeta が suggested_* / decision_source / analysis_mode / analyzed_msg_ts / scene_evidence を書き、
+-- generate-reply が body_block_code（ブレインは AIX なし・本文の断言は直せない食い違い）を書き、
+-- cron/brain-aix-eval が actual_* / matched（次の判断または24時間までに最初に押された aix_usage_logs）を書き戻す。
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS suggested_check_pattern TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS decision_source TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS analysis_mode TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS analyzed_msg_ts TIMESTAMPTZ;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS scene_evidence TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS body_block_code TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS actual_aix_type TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS actual_check_pattern TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS actual_at TIMESTAMPTZ;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS matched BOOLEAN;
+
+-- ── brain_aix_feedback: ブレインの AIX 判断の一致率と「代わりに押された AIX」（2026-09-12 統合設計 段2）──
+-- trigger_action_rules は使わない（trigger_rule_category が既定で keyword_rule に分類し、
+-- ブレインの信号・aix-shadow-eval・learn-trigger-rules に n-gram キーワードとして混ざるため）。
+-- kind: action（ブレインの action 別）/ action_cp（action|check_pattern 別）/ decision_source（判断の出どころ別）/ scene_staff（場面ごとにスタッフが押した AIX）
+CREATE TABLE IF NOT EXISTS brain_aix_feedback (
+  key TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  action TEXT,
+  check_pattern TEXT,
+  scene TEXT,
+  decision_source TEXT,
+  n INTEGER NOT NULL DEFAULT 0,
+  matched INTEGER NOT NULL DEFAULT 0,
+  alt_top JSONB,
+  window_days INTEGER,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- pressed: 窓の中でスタッフが何かの AIX を押した判断の数（一致率の分母・押されずテキストで返した判断は含めない）
+ALTER TABLE brain_aix_feedback ADD COLUMN IF NOT EXISTS pressed INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_brain_aix_feedback_kind ON brain_aix_feedback(kind);
+ALTER TABLE brain_aix_feedback DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
