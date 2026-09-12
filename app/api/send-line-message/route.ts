@@ -140,12 +140,6 @@ export async function POST(req: NextRequest) {
 
   // スタッフ送信メッセージに「物件ピックアップ・お送り」フレーズ → 物件出しタスク自動作成 + ステータス変更
   if (message) {
-    const STAFF_SEND_KEYWORDS = [
-      "物件ピックアップ", "お部屋ピックアップ", "ピックアップさせて頂", "ピックアップ出来次第",
-      "物件をお送り", "物件お送り", "お部屋をお送り", "お部屋お送り",
-      "物件を送らせていただ", "物件を送ります", "物件送ります",
-      "物件をピックアップ", "ピックアップします",
-    ];
     // 「ご査収ください」はAIX物件ピックアップしたの完了文に含まれる→実際の送信であり予告ではないので除外
     const isActualSend = message.includes("ご査収ください");
 
@@ -182,7 +176,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const triggered = !isActualSend && STAFF_SEND_KEYWORDS.some((k) => message.includes(k));
+    // 2026-09-12 竹内（あや事例）: 「お部屋お送り頂きますと…御見積させて頂きます」（お客様が送る側）・「お部屋お送りいただきありがとうございます」
+    //   でも「お部屋お送り」のキーワードに当たり物件ピックアップのやることが作られていた。キーワード検知を別判断にせず、
+    //   ブレインの約束の判定（行動台帳 classifyStaffTextForLedger の pickup_declared）と同じ判定で作る（旧 STAFF_SEND_KEYWORDS は削除）
+    //   「新着が出次第お送り」の条件付きの約束は、いつ届けるか決まっていないのでやることを作らない（ブレインの約束→AIX と同じ扱い）
+    const sendEntry = classifyStaffTextForLedger(message, null);
+    const triggered = !isActualSend && sendEntry?.kind === "pickup_declared"
+      && !/(?:新着|募集|出|見つかり)(?:が)?(?:出)?次第/.test(sendEntry.evidence ?? "");
     if (triggered) {
       after(async () => {
         try {

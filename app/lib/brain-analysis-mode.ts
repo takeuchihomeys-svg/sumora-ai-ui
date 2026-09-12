@@ -16,8 +16,10 @@ export type AnalysisModeInput = {
   hoursSinceLastMsg: number;
   msgsSinceDeep: number;
   msgsSinceLastFull: number;
-  /** 最新の顧客発言（分析モードの格上げ判定用） */
+  /** 最新の顧客発言（分析モードの格上げ判定用）。brain-core は未返信の顧客の連投全体（URL→「こちらです！」の分割送信を1まとまり）を渡す */
   latestCustomerText: string;
+  /** 未返信の連投に画像があるか（連投全体を渡す時は先頭行の [画像] では判定できないため別に渡す） */
+  latestTurnHasImage?: boolean;
   latestCustomerMsgAt: string | null;
   /** 前回の実分析（last_brain_meta）が見た最新顧客発言の時刻 */
   prevAnalyzedMsgTs: string | null;
@@ -51,7 +53,7 @@ export function decideAnalysisMode(i: AnalysisModeInput): { mode: "full" | "incr
   if (hasUnseenCustomerMsg) {
     const evidence = detectAixSceneEvidence({
       latestCustomerTurn: i.latestCustomerText,
-      hasCustomerImage: /^\[画像\]/.test(i.latestCustomerText),
+      hasCustomerImage: i.latestTurnHasImage ?? /^\[画像\]/.test(i.latestCustomerText),
       sentPropertyCount: i.sentPropertyCount,
     });
     if (evidence) return { mode: "incremental", upgradeReason: `scene_evidence:${evidence.scene}` };

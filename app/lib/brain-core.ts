@@ -31,7 +31,7 @@ import { jstMD, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
 // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 分析モード判定（決定論の場面の証拠で cached→incremental に格上げ）
 import { decideAnalysisMode } from "@/app/lib/brain-analysis-mode";
 // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した発言は必ず分析し直す（cached で前回の「もう1件の内覧日確定」を持ち越さない）
-import { detectPropertyPass } from "@/app/lib/reply-context";
+import { detectPropertyPass, CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
 // 2026-09-12 同 段2: 場面の証拠（決定論）とスタッフが押した AIX の実績（brain_aix_feedback）をブレインの入力にする
 import {
   unrepliedCustomerTurn, sceneEvidenceForTurn, sceneSignalFallback, compactSceneEvidence, buildSceneEvidencePromptText,
@@ -257,6 +257,7 @@ const AIX_CAPABILITY_MAP = `
   【重要例外】顧客が同時に路線・駅名・家賃上限・徒歩分数・間取り・広さ等の新しい検索条件を示している場合は、気に入り表現があっても estimate_sheet を選ばない → property_send が正しい（条件変更が主題のサイン）。「家賃は〜万まで」という家賃予算の表明は「初期費用・総額の話題」ではない（家賃予算 ≠ 初期費用）。「○○がいい感じ」+「環状線のみで調べてほしい」「9万以下で探してほしい」等の組み合わせは常に property_send。
 - acknowledge_check: 顧客が物件URL・物件名を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと
 - 【AIX なし】顧客が「何件か気になる物件送ってもいいですか」「送りますね」等、これから自分で物件を送る予告をしただけの時は、どの AIX も選ばない（aix:null）。物件が届いてから募集状況確認・御見積書（acknowledge_check / estimate_sheet）。返信は「いつでもお送りください＋お送り頂き次第募集状況確認し御見積書とあわせてご連絡」（2026-09-12 竹内）
+- 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・あや事例）
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
 - property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
@@ -2224,15 +2225,32 @@ ${history}`;
     // 2026-09-12 竹内（Sさん事例）: 募集状況等の確認の宣言 → AIX【物件確認した】。お客様から物件確認の依頼があった時だけ
     //   （判定は customerRequestedPropertyCheck＝line-tasks の物件確認タスクと同じ。スタッフの宣言より前の顧客の連投を見る）
     const messagesOldestFirst = [...typedMessages].reverse(); // typedMessages は新しい順 → 古い順で渡す
+    // 2026-09-12 竹内（あや事例）: 最後の顧客の連投が「これから自分で物件を送る予告」（「気に入った物件があって初期費用を知りたい」を含む）で、
+    //   物件そのもの（URL・画像）がまだ届いていないか。届く前は AIX なし（届いたら募集状況確認・見積書をブレインが判断）
+    const lastCustomerTurnText = (() => {
+      const arr = [...messagesOldestFirst];
+      while (arr.length && arr[arr.length - 1].sender !== "customer") arr.pop();
+      const out: string[] = [];
+      for (let i = arr.length - 1; i >= 0 && arr[i].sender === "customer"; i--) out.unshift(arr[i].text ?? "");
+      return out.join("\n");
+    })();
+    const customerWillSendFirst = !!lastCustomerTurnText && !/https?:\/\/|\[画像\]/.test(lastCustomerTurnText)
+      && CUST_WILL_SEND_SELF_PRED(lastCustomerTurnText).yes;
     const promiseAix = resolveStaffPromiseAix(brainLedger.facts, messagesOldestFirst, {
       customerRequestedCheck: customerRequestedPropertyCheck({
         recentMessages: messagesOldestFirst.map((m) => ({ sender: m.sender, text: m.text })),
         sentPropertyCount: brainLedger.facts.propertiesSentCount,
       }),
+      customerWillSend: customerWillSendFirst,
     });
     if (promiseAix) {
       finalAix = promiseAix.action;
       decisionSource = `promise:${promiseAix.kind}`;
+    }
+    // 未返信の顧客の連投が持込予告（物件はまだ届いていない）→ AIX なし。旧: プロンプトのルールだけで、あや事例は見積書送るになった
+    if (!promiseAix && finalAix && messagesOldestFirst[messagesOldestFirst.length - 1]?.sender === "customer" && customerWillSendFirst) {
+      finalAix = null;
+      decisionSource = "rule:customer_will_send";
     }
     // 2026-09-12 竹内（愛乃事例）「AIX の内覧日調整をセット」: 内覧日調整を送った後にお客様が別の日程を尋ねた
     //   （「それ以外だと何日になりますか？」「土日は可能ですか」）→ 候補日時は AIX【内覧日調整】で送る（候補日時の手打ち・AI 生成は禁止）。
@@ -2909,6 +2927,17 @@ export async function analyzeAndSaveBrainMeta(
 
   const latestText = latestMsg?.text ?? "";
   const latestMsgAt = latestMsg?.created_at ? new Date(latestMsg.created_at) : null;
+  // 2026-09-12 竹内（あや事例・find-brain-gaps G2）: お客様は「URL」→「こちらです！」のように分けて送る。
+  //   旧: 分析し直すかを最後の1通（「こちらです！」）だけで判定 → 物件が届いたことに気づかず cached（前の判断のまま・AIX なし）。
+  //   最後のスタッフ発言より後の顧客の連投全体（未返信のまとまり）で判定する（場面の証拠・持込予告・見送りと同じ単位）
+  const { data: recentForTurn } = await supabase
+    .from("messages")
+    .select("sender, text")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(12);
+  const latestTurn = unrepliedCustomerTurn((recentForTurn ?? []) as Array<{ sender: string; text: string | null }>);
+  const latestTurnText = latestTurn.text || latestText;
   const hoursSinceLastMsg = latestMsgAt && lastFullAt
     ? (latestMsgAt.getTime() - lastFullAt.getTime()) / (1000 * 60 * 60)
     : Infinity;
@@ -2923,7 +2952,9 @@ export async function analyzeAndSaveBrainMeta(
   // 2026-09-12 竹内（KENYOU 事例）: 「フジパレスは無しでお願いします」（送付物件の一部を外した）も必ず分析し直す。
   //   旧: bypass 語彙に無く cached → 1通前（住之江内覧可能でしょうか）の reply_direction・closing_strategy・customer_intent=decision が残り、
   //   返信が「残りの物件を中心に進めさせて頂きます」になった
-  const isIncrementalBypass = !isFullBypass && (!!runOpts?.forceIncremental || INCREMENTAL_BYPASS_RE.test(latestText) || PROPERTY_CONDITION_INQUIRY_RE.test(latestText) || isConditionFormMessage(latestText) || !!detectPropertyPass(latestText));
+  const isIncrementalBypass = !isFullBypass && (!!runOpts?.forceIncremental || INCREMENTAL_BYPASS_RE.test(latestText) || PROPERTY_CONDITION_INQUIRY_RE.test(latestText) || isConditionFormMessage(latestText) || !!detectPropertyPass(latestTurnText)
+    // 物件そのもの（URL・画像）が未返信の連投に届いた → 必ず分析し直す（募集状況確認・見積書の判断が要る）
+    || /https?:\/\//.test(latestTurnText) || latestTurn.hasImage);
 
   // 3段階モード判定: full / incremental / cached（decideAnalysisMode に切り出し・単体テストあり）
   const msgsSinceDeep = (totalMsgCount ?? 0) - ((convData?.brain_deep_msg_count as number | null) ?? 0);
@@ -2937,7 +2968,8 @@ export async function analyzeAndSaveBrainMeta(
     hoursSinceLastMsg,
     msgsSinceDeep,
     msgsSinceLastFull,
-    latestCustomerText: latestText,
+    latestCustomerText: latestTurnText,
+    latestTurnHasImage: latestTurn.hasImage,
     latestCustomerMsgAt: latestMsg?.created_at ?? null,
     prevAnalyzedMsgTs: typeof cachedMeta?.analyzed_msg_ts === "string" ? (cachedMeta.analyzed_msg_ts as string) : null,
     prevAction: typeof cachedMeta?.action === "string" ? (cachedMeta.action as string) : null,

@@ -88,6 +88,24 @@ it("物件名指しの見積依頼 →「初期費用確認出来次第…お見
   const msgs = [C("クレール元町の見積りお願いしたいです。"), S(t)];
   expect(resolveStaffPromiseAix(facts(t), msgs, asked(msgs))?.action ?? null).toBe("estimate_sheet");
 });
+// 2026-09-12 竹内（あや事例）: 物件が届く前の「お送り頂き次第…御見積書作成しお送り」は届いてからの約束 → AIX なし
+it("あや: 手元の物件の見積依頼（未送付）→「お送り頂き次第…最大限割引した初期費用の御見積書作成しお送りさせて頂きます」→ AIX なし", () => {
+  const t = "かしこまりました😊！！\nお気に召されましたお部屋お送り頂き次第、最大限割引しました初期費用の御見積書作成しお送りさせて頂きます！！";
+  const msgs = [C("他の不動産屋さんで内覧したお家があり、良さそうだなって思った物件がありまして、初期費用がどれくらいになるか教えていただきたいのですが、可能でしょうか？"), S(t)];
+  expect(resolveStaffPromiseAix(facts(t), msgs, { ...asked(msgs), customerWillSend: true })).toBe(null);
+});
+it("初回挨拶「お部屋探しを担当させて頂きます鈴木と申します」だけ → ピックアップ宣言ではない（AIX なし）", () => {
+  const t = "ryouさん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！";
+  expect(classifyStaffTextForLedger(t, null)?.kind === "pickup_declared").toBe(false);
+});
+it("「ご希望条件に合ったお部屋ピックアップしてお送りさせて頂きます」→ 条件ヒアリングではなくピックアップ宣言", () => {
+  const t = "谷9周辺全域からもアヤさんのご希望条件に合ったお部屋ピックアップしてお送りさせて頂きます😊！！";
+  expect(classifyStaffTextForLedger(t, null)?.kind ?? null).toBe("pickup_declared");
+});
+it("フォーム記入の依頼（ご入力いただけましたら…ピックアップ）は条件ヒアリングのまま", () => {
+  const t = "かしこまりました！！ 上記お部屋探しフォーマットご入力いただけましたら私の方でオススメできるお部屋ピックアップさせていただきます😊！！";
+  expect(classifyStaffTextForLedger(t, null)?.kind ?? null).toBe("condition_asked");
+});
 it("確認結果を報告済み（履行済み）→ AIX なし", () => {
   const msgs = [C("こちら空いてますか？\nhttps://example.com/room/1"), S(S_CONFIRM)];
   expect(resolveStaffPromiseAix(facts(S_CONFIRM, { conf: false }), msgs, asked(msgs))).toBe(null);

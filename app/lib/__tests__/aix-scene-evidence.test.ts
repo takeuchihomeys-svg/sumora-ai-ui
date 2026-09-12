@@ -92,6 +92,15 @@ describe("分析モード判定（decideAnalysisMode）", () => {
     const x = decideAnalysisMode(modeBase({ msgsSinceLastFull: 10 }));
     expect(x.mode).toBe("incremental"); expect(x.upgradeReason).toBe(null);
   });
+  // 2026-09-12 竹内（あや事例・G2）: 「URL」→「こちらです！」の分割送信。最後の1通だけでは物件の到着が見えず cached になっていた
+  it("あや: 未返信の連投（URL＋こちらです！）で判定 → 物件が届いた＝incremental", () => {
+    const x = decideAnalysisMode(modeBase({ latestCustomerText: "https://www.homes.co.jp/chintai/room/0990651/\nこちらです！" }));
+    expect(x.mode).toBe("incremental"); expect(x.upgradeReason).toBe("scene_evidence:S1_vacancy");
+  });
+  it("連投に画像がある（latestTurnHasImage）→ 物件の画像として格上げ", () => {
+    const x = decideAnalysisMode(modeBase({ latestCustomerText: "こちらです！", latestTurnHasImage: true }));
+    expect(x.mode).toBe("incremental");
+  });
 });
 
 describe("内覧の別日程（2026-09-12 竹内・愛乃事例: 内覧日調整を送った後 → AIX 内覧日調整）", () => {

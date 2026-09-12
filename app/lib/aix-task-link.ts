@@ -52,7 +52,12 @@ export function resolveStaffPromiseAix(
     confirmationPromisedUnfulfilled?: boolean;
   },
   messages: ReadonlyArray<{ sender: string; text?: string | null }>,
-  opts: { customerRequestedCheck?: boolean } = {},
+  opts: {
+    customerRequestedCheck?: boolean;
+    /** 宣言より前の顧客の連投が「これから自分で物件を送る予告」（CUST_WILL_SEND_SELF_PRED・URL/画像なし）。
+     *  2026-09-12 竹内（あや事例）: 物件はまだ届いていないので、見積書・物件確認の宣言があっても AIX はまだ無い（届いてからブレインが判断） */
+    customerWillSend?: boolean;
+  } = {},
 ): { action: "estimate_sheet" | "property_send" | "property_check_result"; kind: "estimate" | "pickup" | "check" } | null {
   const last = [...messages].reverse().find((m) => {
     const t = (m.text ?? "").trim();
@@ -61,6 +66,8 @@ export function resolveStaffPromiseAix(
   if (!last || last.sender !== "staff") return null;
   const e = facts.lastStaffEntry;
   if (!e || e.status !== "promised") return null;
+  // 物件が届く前の「お送り頂き次第…御見積書」は、届いてからの約束（見積るものがまだ無い）
+  if (opts.customerWillSend && (e.kind === "estimate_declared" || e.kind === "confirmation_promised")) return null;
   // 2026-09-12 竹内（find-brain-gaps G4）: 「お送り頂きました物件の募集状況確認させて頂きます😊！！確認出来次第、最大限割引させていただいた初期費用の
   //   お見積書お送りさせて頂きます」のような確認＋見積書の宣言は、台帳では見積書の宣言になるが、スタッフが先に押すのは物件確認した
   //   （150日の実績: 最初に押された AIX 48件中 物件確認した 34件（71%）・見積書送る 11件。確認の後に見積書が続いたのは 34件中 11件）。
