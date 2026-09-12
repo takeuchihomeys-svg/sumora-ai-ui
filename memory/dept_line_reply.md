@@ -4,6 +4,21 @@
 
 ---
 
+## 「ご連絡お待ちしております」「承りました」は場面で使う・「次第すぐに」を塞ぐ（竹内方針B・E・2026-09-12）— 黄金ルール
+- **2語は禁止語（BANNED_WORDS_DETERMINISTIC）から外した**。根拠はプロンプトの文言だけで件数の根拠が無かった（9a452f16・d73b739f）。audit block 43→33/758（5.7%→4.4%）、baseline 更新済み
+- **「ご連絡お待ちしております」の唯一の判定は `resolveAwaitContact`（reply-context.ts）**。resolveTurnPair が1回計算して `pair.awaitContact` に入れ、締め（resolveCloser の await_contact）・検査（AWAIT_CONTACT_MISPLACED）・stance の closer_kind が同じ値を見る
+  - allowed: 条件の付かない連絡予告（依頼・質問・条件なし・検討/相談してから は除く）／「お待ちいただけますか」／了承だけで1つ前の顧客発言が予告。いずれも未履行のピックアップ約束が無いこと。時期をなぞる（「明日のご連絡お待ちしております😊！！」・今日→本日）
+  - 条件付きの予告（〜次第・〜あれば）→ open_door で条件をなぞる（「決まりましたらいつでもお気軽にご連絡ください😌！！」「何かございましたら〜」）。検討・相談してから連絡 → 従来の wait_softly
+  - 誤用は AWAIT_CONTACT_MISPLACED **warning**（依頼・質問・条件への返信か未履行の約束がある時。根拠が下書き削除 3/3 件と少ないので block にしない）
+  - 既知の限界: 「近隣駐車場を調べてご連絡します」は analyzeSubstance が「駐車場」を condition と数えるので allowed にならない（保守側）
+- **「承りました」**: 目的語の無い形（行頭・！！の直後）は `normalizeBareUketamawari`（banned-phrasing.ts・normalizeBannedPhrasing の中）で「かしこまりました」に置換。目的語付きは残し、キャンセル/内覧/希望の目的語が顧客の直近の発言3件に無ければ UKETAMAWARI_OBJECT_UNANCHORED **block**（`findUnanchoredUketamawari`・スタッフ実送信6通で偽陽性0・CODE_CAPS 0.5%）。修正版のプリスキャンも同じ関数（runAwaitUketamawariChecks）
+- **「次第すぐに」**: `SHIDAI_HASTY_RE`（banned-phrasing.ts）を stripHastyAdverb の先頭に追加（20字超・一覧外の動詞の取りこぼし予防。入居・引越・住は残す）。HASTY_ADVERB_TEST_RE は2つの正規表現の合成＝除去と検査が同じ定義
+- 注入・出力の穴: brain-core の優良返信例・成約例、enhance-reply の実例と出力、generate-reply-patterns の実例、polish-draft の実例と出力に normalizeBannedPhrasing（＋方針Dの fixExampleWeekdays）を通した
+- プロンプト: line-reply-prompts（GENERATION_SYSTEM・SMORA_COMMON_RULES・713 の許可文・一時保留の括弧書き削除）、route.ts NG_PHRASE_NOTE ⑦⑮ を新ルールに。正例（608/703/1082/844/1737）はそのまま
+- AIX 側はコードに触らず aix_feature_suggestions に登録: 97fa9db0（S1 全力サポート「次第すぐに」）・2ac5861f（S2 物件確認した MGMT 定型文）
+- 竹内さんの画面作業（提案のみ）: 改善案タブの aix_edit 候補7件（「すぐに」入り）の採否、テンプレ 642f8b5c の「新着で出次第すぐに」
+- テスト: `npx tsx app/lib/__tests__/await-contact.test.ts`（30）・banned-phrasing.test.ts に H6〜H9
+
 ## 呼び名は元の名前で固定（竹内方針C・2026-09-12）— 黄金ルール
 - **呼び名の決定は `resolveAddressName`（validate-reply.ts）1つ。サーバーでは `resolveAddressNameForConversation`（app/lib/address-name-server.ts）経由で generate-reply と check-reply が同じ入力（DB名・履歴150件＝顧客発言・is_aix_generated 込み・窓）で決める**。旧 check-reply は窓内の表示名だけだった
 - **元の名前の固定**: 最新の呼び名が名前の開示（名乗り「と申します」・申込フォーマットの申込者欄の最初の氏名・本人確認書類 OCR の「氏名」）と同じで、スタッフがその名前を初めて使ったのが開示より後、かつ開示の前は別の名前で呼んでいた → 開示前に最後に使った名前（source=staff_original_locked）。開示名・一時的に使った名前は aliases（unifyAddressAliases が元の名前へ戻す）。実測: yt・まりあ・Noriyuki の3会話で元に戻る時点の予測外れが解消（固定の発火11通）

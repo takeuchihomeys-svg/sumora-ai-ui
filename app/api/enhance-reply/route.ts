@@ -2,7 +2,9 @@
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 // 2026-09-11 データ衛生: 生成失敗文・テスト送信を正解例として注入しない（読む側で除外）
-import { isUsableExampleText } from "@/app/lib/example-hygiene";
+import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
+// 2026-09-12 竹内方針E: 実例の注入前と出力に、生成と同じ決定論置換を通す
+import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 
 export const maxDuration = 30;
 
@@ -105,7 +107,7 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
       const examples = "\n【⭐ スモラの実際の送信例（状況が類似した良質な実例・類似度順）— 文体・言い回し・感嘆符・絵文字はこれに合わせる。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
         sorted.map((ex, i) => {
           const angleTag = ex.reply_angle && ex.reply_angle !== "starred" ? `|${ANGLE_LABEL[ex.reply_angle] ?? ex.reply_angle}` : "";
-          return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]\nお客様:「${ex.customer_message}」\nスモラ:「${ex.sent_reply}」`;
+          return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]\nお客様:「${ex.customer_message}」\nスモラ:「${fixExampleWeekdays(normalizeBannedPhrasing(ex.sent_reply ?? "").text)}」`;
         }).join("\n\n");
 
       return { knowledge, examples };
@@ -128,7 +130,7 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
       usableRows
         .map((r, i) => {
           const angleTag = r.reply_angle && r.reply_angle !== "starred" ? `|${{"A":"王道","B":"シンプル","C":"C案","short_direct":"短く直接"}[r.reply_angle] ?? r.reply_angle}` : "";
-          return `[例${i + 1}${angleTag}]\nお客様:「${r.customer_message}」\nスモラ:「${r.sent_reply}」`;
+          return `[例${i + 1}${angleTag}]\nお客様:「${r.customer_message}」\nスモラ:「${fixExampleWeekdays(normalizeBannedPhrasing(r.sent_reply ?? "").text)}」`;
         })
         .join("\n\n")
     : "";
@@ -256,7 +258,8 @@ ${currentDraft.trim()}
     }
 
     const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-    const enhanced = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() || "";
+    // 2026-09-12 竹内方針E: 返信AIの補助ボタンも生成と同じ決定論置換（すぐに除去・承知→かしこまりました・単独の承りました）
+    const enhanced = normalizeBannedPhrasing(data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() || "").text;
 
     return NextResponse.json({ ok: true, enhanced });
   } catch (err) {

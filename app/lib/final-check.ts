@@ -18,7 +18,7 @@
 import { checkNameConsistency, ASSERTION_BAN_RULES, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 // 2026-09-11 竹内方針1・5: 誤字（warning のみ）・「すぐに」の唯一の定義（後処理と検査が同じ正規表現）
 import { detectTypos } from "./typo-check";
-import { HASTY_ADVERB_TEST_RE } from "./banned-phrasing";
+import { HASTY_ADVERB_TEST_RE, findUnanchoredUketamawari } from "./banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する
 import { jstParts, WEEKDAYS_JA } from "./jst-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶（generate-reply / brain-core と四者同名）
@@ -43,6 +43,8 @@ import {
   resolveHedgeAllowance, resolveCloser, deriveCloserSignals, extractEchoTokens, evalConditionEcho, resolveCustomerDocScope, isEchoableScope, classifyScheduleCommitment, resolveAnswerability, detectExcusePhrases,
   CLOSER_TEXT, PRE_PICKUP_HEDGE_RE, SEARCH_REPORT_RE, RELAX_PROPOSAL_RE, PAST_REPORT_RE, SEARCH_DECL_RE, SELF_HEDGE_ECHO_RE, CUST_STATED_RELAX_RE,
   STAFF_ASSERT_SCHEDULE_RE, SCHEDULE_ASK_RE, DEFERRED_ANSWER_RE, NANISOTSU_RE, OPEN_DOOR_RE, WAIT_SOFTLY_RE, RESULT_EXCUSE_RE, DELIVERABLE_RE, redoWord,
+  // 2026-09-12 竹内方針B: 顧客の連絡予告（締め resolveCloser と同じ verdict）
+  AWAIT_CONTACT_PHRASE_RE, resolveAwaitContact,
   // 2026-09-10 Fable5 あみ事例: 顧客アンカー語彙・持込予告（生成側 buildVocabAnchorNote / PAIR_MATRIX と同一定数）
   fillPairPlaceholders, CUSTOMER_ANCHORED_VOCAB, checkGoyukkuriMirror, CUST_WILL_SEND_SELF_PRED, classifyWillSendObject,
   // 2026-09-10 Fable5 Sさん事例: 前向き反応 → 内覧のご案内提案（[Y]型）と AIX 専用の候補日時確認（[X]型）の分離
@@ -680,7 +682,7 @@ function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): PromptB
    【例外】次の場合は対象外: ①内覧キャンセル・保留連絡への3文以内の短い了解返信 ②お客様の締め挨拶・社交辞令（「こちらこそ」「よろしくお願いします」等）への返し ③スタッフが直前にピックアップ約束済みで短い承諾のみ返す場合。
 8. フィラー挨拶（FILLER_GREETING）：顧客の最新メッセージが条件変更・条件追加・条件緩和・ピックアップ依頼である場合に限り、返信冒頭の「お世話になっております」「いつもお世話になっております」を NG とする（この場面は「かしこまりました！！」で直接行動宣言に入るのが正）。
    【重要】長い返信・重要な連絡・条件確認の返信、および2回目以降の通常会話での冒頭「〇〇さんお世話になっております！！」は会社標準の書き出しであり指摘しないこと。
-9. 主語混乱（SUBJECT_CONFUSION）：物件送付後にお客様が確認する場面（顧客が「確認します」等と述べた直後）で、スタッフが「確認でき次第すぐにご連絡させて頂きます」等の表現を使っていれば NG。ただし管理会社への確認（空室確認・交渉中）の文脈は除外。
+9. 主語混乱（SUBJECT_CONFUSION）：物件送付後にお客様が確認する場面（顧客が「確認します」等と述べた直後）で、スタッフが「確認でき次第ご連絡させて頂きます」等の表現を使っていれば NG。ただし管理会社への確認（空室確認・交渉中）の文脈は除外。
 10. 受け身文体（PASSIVE_ONLY）：全体的に受け身文体（〜いただければ・〜よろしいでしょうか・ご検討ください）のみで締まっていて、スタッフの能動的な行動宣言（〜いたします・〜させて頂きます等）が一切ない場合は NG。
 11. 条件追加の誤ルーティング（CONDITION_ADD_MISROUTED）★重要：顧客の最新メッセージが【特定の物件を名指ししていない条件追加】（「あと、ペット可能でお願いします」「駐車場も必要です」「2LDKでお願いします」「2階以上がいいです」等。物件名・物件URL・号室・「この物件」「あの物件」「さっき送ってもらった物件」等の特定物件参照を含まない）であるにもかかわらず、返信が「管理会社に確認させて頂きます」「確認出来次第ご連絡させて頂きます」等の確認宣言で応じている場合は NG。
    正しい返信は「〇〇条件でお部屋ピックアップさせて頂きます！！ピックアップ出来次第ご連絡させて頂きます！！」の再ピックアップ宣言。特定物件を指していない以上、管理会社に問い合わせる対象が存在しないため確認宣言は誤り。
@@ -987,7 +989,8 @@ const BANNED_WORDS_DETERMINISTIC = [
   // G32（2026-09-09 Fable5 じゅにあ事例・竹内方針）: 「お待たせ」は返信から全廃（自動返信では「待たせた」前提が消える。greeting.ts WAITED_RE と同名）
   "お待たせ致しました", "お待たせいたしました", "お待たせしました",
   "承知いたしました", "承知しました", "承知致しました",
-  "ご連絡お待ちくださいませ", "ご連絡お待ちしております", "お待ちくださいませ", "名無し",
+  // 2026-09-12 竹内方針B: 「ご連絡お待ちしております」は禁止語から外し、場面の判定（resolveAwaitContact → AWAIT_CONTACT_MISPLACED）に移した
+  "ご連絡お待ちくださいませ", "お待ちくださいませ", "名無し",
   // 2026-09-08 語彙セマンティクス（主語逆転・自敬・宛先逆転・既存文書禁止の決定論化。prompts VOCAB_SEMANTICS と同名）
   "ご内覧させて頂き", "ご内覧させていただき",          // 内覧の主語はお客様
   "ご案内させて頂けます", "ご案内させていただけます",   // 可能形で主語が反転する誤文
@@ -1005,7 +1008,8 @@ const BANNED_WORDS_DETERMINISTIC = [
   "御見積もりをお願いできます", "お見積もりをお願いできます",
   // 2026-09-08 §5: プレースホルダ・システムマーカー・形式的了解句・誤用語彙・命令形の申込催促・撮影主語逆転
   "〇〇", "○○", "アカウント名", "<<<", ">>>", "[REPLY]", "【AIX-META",
-  "承りました", "ご確認のほど", "確認中です", "確認して参ります",
+  // 2026-09-12 竹内方針B: 「承りました」は禁止語から外した（目的語の無い形は normalizeBareUketamawari で置換、目的語の照合は UKETAMAWARI_OBJECT_UNANCHORED）
+  "ご確認のほど", "確認中です", "確認して参ります",
   "TikTok映え", "インスタ映え", "共益費込", "緊急連絡先設定可", "緊急連絡先可",
   "申し込んでください", "急いでください", "他のお客様も見て", "申し込まないと",
   "撮影して頂け", "撮影していただけ", "ご撮影",
@@ -1644,6 +1648,8 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   //    ・締めポリシー（CLOSER_MISSING / COMMIT_AFTER_DELIVERABLE / NANISOTSU_MISPLACED / PASSIVE_CLOSER / RESULT_EXCUSE）
   //    ・姿勢ギャップ（CONDITION_ECHO_MISSING / SCHEDULE_ASSERT_UNCONFIRMED / FACT_DEFERRED_ANSWER / 煽り・受け身5種）
   issues.push(...runHedgeChecks(text, ctx), ...runCloserChecks(text, ctx), ...runStanceChecks(text, ctx));
+  // ⑪'' 2026-09-12 竹内方針B: 「ご連絡お待ちしております」「承りました」の場面（AWAIT_CONTACT_MISPLACED / UKETAMAWARI_OBJECT_UNANCHORED）
+  issues.push(...runAwaitUketamawariChecks(text, ctx));
   // ⑪' 2026-09-10 Fable5 あみ事例: 顧客が言っていない語（UNANCHORED_VOCAB / VOCAB_MIRROR_MISMATCH）
   issues.push(...runVocabAnchorChecks(text, ctx));
 
@@ -1810,6 +1816,32 @@ function runCloserChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
     out.push({ pass: "rule_check", severity: "warning", code: "RESULT_EXCUSE", message: "お客様主導の条件変更に「少ない状況でしたので広げました」の言い訳行（AIX widen でスタッフが2/2削除）", evidence: text.match(RESULT_EXCUSE_RE)?.[0] ?? head, suggestion: "言い訳行を削り、広げた条件を含む復唱＋ご査収のみにする" });
   if ((sig.usedOpenDoor || sig.usedWait) && (v.closer === "commit_until_found" || v.closer === "receive_check"))
     out.push({ pass: "context_check", severity: "warning", code: "PASSIVE_CLOSER", message: "我々が動く場面で受け身締め（いつでもお気軽に／ごゆっくり）", evidence: text.match(OPEN_DOOR_RE)?.[0] ?? text.match(WAIT_SOFTLY_RE)?.[0] ?? head, suggestion: `締めを「${v.text || CLOSER_TEXT[v.closer](opts.customerName)}」に置換` });
+  return out;
+}
+
+// ─── 2026-09-12 竹内方針B: 「ご連絡お待ちしております」「承りました」の場面検査（修正版のプリスキャンも同じ関数）─────────
+//   ・AWAIT_CONTACT_MISPLACED: 顧客の連絡予告が無い（resolveAwaitContact＝締めと同じ verdict）のに、依頼・質問・条件への返信か
+//     未履行のピックアップ約束がある場面で「ご連絡お待ちしております」。warning（根拠は下書き削除 3/3 件＝n が少ないので block にしない）
+//   ・UKETAMAWARI_OBJECT_UNANCHORED: 「内覧のキャンセル承りました」等の目的語が顧客の直近の発言に無い（SHIGI 事例）。
+//     スタッフ実送信6通（直近の顧客発言3件で照合）で偽陽性0 → block
+export function runAwaitUketamawariChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
+  const out: CheckIssue[] = [];
+  const aw = text.match(AWAIT_CONTACT_PHRASE_RE);
+  if (aw && ctx.lastCustomerMessage) {
+    const { pair, sub, ledger } = resolveReplyContext(ctx);
+    const ac = pair.awaitContact ?? resolveAwaitContact({ customerMessage: sub.normalized, substance: sub, ledger });
+    const asks = sub.kinds.includes("request") || sub.kinds.includes("question") || sub.kinds.includes("condition");
+    if (!ac.allowed && (asks || ledger.facts.pickupPromisedUnfulfilled))
+      out.push({ pass: "context_check", severity: "warning", code: "AWAIT_CONTACT_MISPLACED",
+        message: `お客様は自分から連絡すると言っていない${asks ? "（依頼・質問への返信）" : "（未履行のピックアップ約束がある＝次に動くのはスタッフ）"}のに「ご連絡お待ちしております」（スタッフは依頼・質問の場面で 3/3 件削除）`,
+        evidence: aw[0], suggestion: "この行を削除し、こちらの行動宣言で終える" });
+  }
+  const hay = [ctx.lastCustomerMessage ?? "", lastCustomerTexts(ctx, 3)].join("\n");
+  const u = findUnanchoredUketamawari(text, hay);
+  if (u)
+    out.push({ pass: "context_check", severity: "block", code: "UKETAMAWARI_OBJECT_UNANCHORED",
+      message: `「${u.object}」をお客様は伝えていないのに「${u.evidence}」（承りましたの目的語はお客様が今回伝えた事項だけ）`,
+      evidence: u.evidence, suggestion: `「${u.evidence}」の行を削除する（お客様が伝えた事項だけを「〜承りました」の目的語にする）` });
   return out;
 }
 
@@ -3104,6 +3136,10 @@ export async function runFinalCheckWithRevision(
     // (3) 決定的プリスキャン（約0ms）: 禁止語彙、および修正で新規挿入された
     //     「確認して…ご連絡」系の句（AIX_BOUNDARY_PROMISE と正面衝突）を検出したら即破棄
     if (BANNED_WORDS_DETERMINISTIC.some((w) => revised.includes(w))) {
+      return { finalDraft: draft, finalCheck: check1 };
+    }
+    // 2026-09-12 竹内方針B: 禁止語から外した2語は、初回検査と同じ場面判定で block になる修正版だけを捨てる
+    if (runAwaitUketamawariChecks(revised, ctx).some((i) => i.severity === "block")) {
       return { finalDraft: draft, finalCheck: check1 };
     }
     if (!confirmPromiseOk(ctx) && CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(draft)) {

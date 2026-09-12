@@ -526,10 +526,11 @@ export function applySurfaceFixes(
   const u = unifyAddressAliases(out, opts?.customerName, opts?.aliases);
   if (u.fixes.length) { out = u.text; applied.push(...u.fixes); }
   const b = normalizeBannedPhrasing(out);
-  if (b.shochi || b.hasty) {
+  if (b.shochi || b.hasty || b.uketamawari) {
     out = b.text;
     if (b.shochi) applied.push(`SHOCHI_TO_KASHIKOMARI×${b.shochi}`);
     if (b.hasty) applied.push(`HASTY_ADVERB_REMOVED×${b.hasty}`);
+    if (b.uketamawari) applied.push(`BARE_UKETAMAWARI_TO_KASHIKOMARI×${b.uketamawari}`); // 2026-09-12 竹内方針B
   }
   const t = applyTypoAutoFix(out, { customerName: canonOf(opts?.customerName), now: opts?.now });
   if (t.applied.length) {

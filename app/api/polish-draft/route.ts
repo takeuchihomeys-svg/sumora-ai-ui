@@ -2,7 +2,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
-import { isUsableExampleText } from "@/app/lib/example-hygiene";
+import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
+import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
 
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
   const examplesText = usableExamples.length > 0
     ? "【⭐ スモラの実際の返信例（文体・テンポ・言い回しをこれに合わせる）】\n" +
       usableExamples
-        .map((r, i) => `[例${i + 1}]\n${r.sent_reply}`)
+        .map((r, i) => `[例${i + 1}]\n${fixExampleWeekdays(normalizeBannedPhrasing(r.sent_reply ?? "").text)}`)
         .join("\n\n")
     : "";
 
@@ -144,7 +145,8 @@ export async function POST(req: NextRequest) {
     const textBlock = message.content.find(
       (b): b is Extract<typeof message.content[number], { type: "text" }> => b.type === "text",
     );
-    const polished = textBlock ? textBlock.text.trim() : draft;
+    // 2026-09-12 竹内方針E: 出力にも生成と同じ決定論置換（すぐに除去・承知→かしこまりました・単独の承りました）
+    const polished = normalizeBannedPhrasing(textBlock ? textBlock.text.trim() : draft).text;
     return NextResponse.json({ ok: true, polished });
   } catch (err) {
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });

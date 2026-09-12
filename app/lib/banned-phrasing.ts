@@ -21,8 +21,53 @@ export const SHOCHI_RE = /承知(?:いた|致)?しました/g;
  */
 export const HASTY_ADVERB_RE =
   /(?:今)?すぐ(?!に?(?:は|でも|ご?入居|お?引(?:っ)?越|住|埋ま|決ま|なくな|無くな|快適|手前|近く|そば|横|裏))に?(?=(?:お送り|ご連絡|お知らせ|ピックアップ|ご案内|お調べ|確認|動|手配|ご手配|共有|ご提案|ご報告|ご紹介)|[^\n。！!？?]{0,20}?(?:させて(?:頂|いただ)き|いたし|致し|し)ます)/g;
-/** 検査用（g なし・lastIndex を持たない） */
-export const HASTY_ADVERB_TEST_RE = new RegExp(HASTY_ADVERB_RE.source);
+/**
+ * 2026-09-12 竹内方針E: 「次第」起点の「すぐに」（HASTY_ADVERB_RE の後読み条件＝一覧語／20字以内の動詞 に当たらない形の取りこぼし対策）。
+ *   ・「確認取れ次第すぐに＋20字超＋ご連絡させて頂きます」「出次第すぐにお電話差し上げます」を除去する（実データでの追加効果は0件・予防）
+ *   ・入居・引越・住 の除外は HASTY_ADVERB_RE と揃える（「次第すぐにご入居頂けます」は MOVEIN_DATE_ASSERTION の担当なので残す）
+ *   $1 に「次第」（と後続の読点・空白）を残す
+ */
+export const SHIDAI_HASTY_RE = /(次第[、,]?[ \t　]*)(?:今)?すぐ(?!に?(?:は|でも|ご?入居|お?引(?:っ)?越|住))に?(?=[^\n。！!？?])/g;
+/** 検査用（g なし・lastIndex を持たない）。除去（stripHastyAdverb）と同じ2つの正規表現の合成 */
+export const HASTY_ADVERB_TEST_RE = new RegExp(`${SHIDAI_HASTY_RE.source}|${HASTY_ADVERB_RE.source}`);
+
+/**
+ * 2026-09-12 竹内方針B: 目的語の無い「承りました」（行頭・文頭）。スタッフ実送信 0/6,107通（6通は全て「目的語＋承りました」）。
+ *   → 「かしこまりました」に置換する（生成後・few-shot 注入前・修正版が normalizeBannedPhrasing で同じ関数を通る）
+ *   目的語付き（「内覧のキャンセル承りました」「〇〇のご希望も承りました」）は残す。目的語の照合は findUnanchoredUketamawari
+ */
+const BARE_UKETAMAWARI_RE = /(^|[\n！!。😊😌][ \t　]*)承りました/g;
+/** 置換の結果「かしこまりました！！かしこまりました！！」と並んだ時は後ろを落とす */
+const DOUBLE_KASHIKO_RE = /(かしこまりました[😊😌]*[！!。]*)[ \t　]*\n?[ \t　]*かしこまりました[😊😌]*[！!。]*/g;
+export function normalizeBareUketamawari(text: string): { text: string; count: number } {
+  const count = (text.match(BARE_UKETAMAWARI_RE) ?? []).length;
+  if (count === 0) return { text, count: 0 };
+  const out = text.replace(BARE_UKETAMAWARI_RE, "$1かしこまりました").replace(DOUBLE_KASHIKO_RE, "$1");
+  return { text: out, count };
+}
+
+/** 目的語付き「承りました」（「〜の件、承りました」「〜のご希望も承りました」）。目的語は同じ行の直前 2〜40字 */
+const OBJECT_UKETAMAWARI_RE = /([^\n！!。]{2,40}?)(?:の件)?[、,]?[ \t　]*承りました/g;
+/** 目的語の種類と、それが顧客発言にある証拠（顧客の直近の発言群で照合する） */
+const UKETAMAWARI_ANCHORS: Array<{ key: "cancel" | "viewing" | "wish"; obj: RegExp; cust: RegExp; label: string }> = [
+  { key: "cancel", obj: /キャンセル|取り消し|取消/, cust: /キャンセル|取り消|取消|取りやめ|やめ(?:ます|たい|て|る)|見送|行けなく|行けません|難しくなり/, label: "キャンセル" },
+  { key: "viewing", obj: /内覧|内見|ご案内|見学/, cust: /内覧|内見|見学|見に行|拝見|案内/, label: "内覧" },
+  { key: "wish", obj: /希望|とのこと/, cust: /希望|条件|嬉しい|うれしい|助か|がいい|が良い|たい|欲しい|ほしい|[0-9０-９]+万|以内|以上|なし|無し|可/, label: "ご希望" },
+];
+/**
+ * 目的語付き「承りました」の目的語が、顧客の直近の発言に無いもの（SHIGI 事例: キャンセルしていない顧客へ「内覧のキャンセル承りました」）。
+ *   キャンセル＞内覧＞希望 の順に目的語の種類を1つ決め、その証拠が customerHay に無ければ返す。
+ *   スタッフ実送信6通（直近の顧客発言3件で照合）で偽陽性0。
+ */
+export function findUnanchoredUketamawari(text: string, customerHay: string): { evidence: string; object: string } | null {
+  for (const m of (text ?? "").matchAll(OBJECT_UKETAMAWARI_RE)) {
+    const obj = m[1];
+    const a = UKETAMAWARI_ANCHORS.find((x) => x.obj.test(obj));
+    if (!a) continue;
+    if (!a.cust.test(customerHay ?? "")) return { evidence: m[0].trim(), object: a.label };
+  }
+  return null;
+}
 
 const KASHIKO = "かしこまりました";
 /** 行頭の単独「かしこまりました[😊😌]*[！!。、,]*」（対象の無い開口語） */
@@ -57,9 +102,12 @@ export function normalizeShochi(text: string): { text: string; count: number } {
 
 /** 約束の「すぐに／今すぐ」を除去し、残った読点を整える */
 export function stripHastyAdverb(text: string): { text: string; count: number } {
-  const count = (text.match(HASTY_ADVERB_RE) ?? []).length;
+  // 方針E: 「次第」起点を先に除去し、残りを従来の HASTY_ADVERB_RE で除去する（件数は両方の合計）
+  const shidai = (text.match(SHIDAI_HASTY_RE) ?? []).length;
+  const t0 = shidai ? text.replace(SHIDAI_HASTY_RE, "$1") : text;
+  const count = shidai + (t0.match(HASTY_ADVERB_RE) ?? []).length;
   if (count === 0) return { text, count: 0 };
-  const out = text
+  const out = t0
     .replace(HASTY_ADVERB_RE, "")
     .replace(/、{2,}/g, "、")
     .replace(/(^|\n)([ \t　]*)、/g, "$1$2");
@@ -67,8 +115,9 @@ export function stripHastyAdverb(text: string): { text: string; count: number } 
 }
 
 /** 方針4・5の決定論置換（生成・後処理・修正版・few-shot 注入の共通入口） */
-export function normalizeBannedPhrasing(text: string): { text: string; shochi: number; hasty: number } {
-  const a = normalizeShochi(text);
+export function normalizeBannedPhrasing(text: string): { text: string; shochi: number; hasty: number; uketamawari: number } {
+  const u = normalizeBareUketamawari(text);
+  const a = normalizeShochi(u.text);
   const b = stripHastyAdverb(a.text);
-  return { text: b.text, shochi: a.count, hasty: b.count };
+  return { text: b.text, shochi: a.count, hasty: b.count, uketamawari: u.count };
 }

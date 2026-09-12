@@ -21,7 +21,9 @@ import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "@/app/lib/move-out-co
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
 import { buildActionLedger } from "@/app/lib/action-ledger";
 // 2026-09-11 データ衛生: 正解例として使えるかの唯一の判定（生成失敗文・テスト送信を除外）
-import { isUsableExampleText } from "@/app/lib/example-hygiene";
+import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
+// 2026-09-12 竹内方針E: 実例の注入前に生成と同じ決定論置換（すぐに除去・承知→かしこまりました・単独の承りました）を通す
+import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（timeZone 抜けの UTC 表示を防ぐ）
 import { jstMD, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
 
@@ -1387,7 +1389,7 @@ export async function analyzeConversation(
   const examples = ((examplesResult.data ?? []) as Array<{ sent_reply: string | null; is_starred: boolean | null }>)
     .filter((e) => isUsableExampleText(e.sent_reply));
   const examplesText = examples.length > 0
-    ? `\n過去のスタッフ優良返信例:\n${examples.map((e) => `- ${e.sent_reply ?? ""}`).join("\n")}`
+    ? `\n過去のスタッフ優良返信例:\n${examples.map((e) => `- ${fixExampleWeekdays(normalizeBannedPhrasing(e.sent_reply ?? "").text)}`).join("\n")}`
     : "";
 
   // key_facts は jsonb 配列（{type, value}[]）で返る — 文字列連結すると [object Object] になるため value を整形する
@@ -1579,7 +1581,7 @@ export async function analyzeConversation(
     .map((k) => `- ${(k.title ?? "").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 600)}`)
     .join("\n");
   const contractExampleLines = contractExamples
-    .map((e) => `- [${outcomeOf(e)}] (${e.conversation_state ?? "不明"}段階) 「${(e.sent_reply ?? "").replace(/\n/g, " ").slice(0, 250)}」`)
+    .map((e) => `- [${outcomeOf(e)}] (${e.conversation_state ?? "不明"}段階) 「${fixExampleWeekdays(normalizeBannedPhrasing(e.sent_reply ?? "").text).replace(/\n/g, " ").slice(0, 250)}」`)
     .join("\n");
 
   // 安定部分（成功法則のみ）→ キャッシュブロックに含める

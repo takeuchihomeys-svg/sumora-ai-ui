@@ -5,7 +5,9 @@ import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE, STATE
 import { validateAndClean } from "@/app/lib/validate-reply";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 // 2026-09-11 データ衛生: 生成失敗文・テスト送信を正解例として注入しない（読む側で除外・行は削除しない）
-import { isUsableExampleText } from "@/app/lib/example-hygiene";
+import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
+// 2026-09-12 竹内方針E: 実例の注入前に生成と同じ決定論置換（出力は validateAndClean → applySurfaceFixes で同じ関数を通る）
+import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 
 export const maxDuration = 30;
 
@@ -88,7 +90,7 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
           }).slice(0, 25);
           return "\n\n【⭐ スモラの実際の返信例（文体・言い回し・感嘆符・絵文字を最優先で再現すること）】\n" +
             sorted.map((e, i) =>
-              `[例${i + 1}${e.is_starred ? "⭐" : ""}]\nお客様: 「${e.customer_message}」\nスモラ: 「${e.sent_reply}」`
+              `[例${i + 1}${e.is_starred ? "⭐" : ""}]\nお客様: 「${e.customer_message}」\nスモラ: 「${fixExampleWeekdays(normalizeBannedPhrasing(e.sent_reply ?? "").text)}」`
             ).join("\n\n");
         }
       }
@@ -104,7 +106,7 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
   const usable = (data ?? []).filter((e) => isUsableExampleText(e.sent_reply));
   if (usable.length === 0) return "";
   return "\n\n【⭐ スモラの実際の返信例】\n" +
-    usable.map((e, i) => `[例${i + 1}]\nお客様: 「${e.customer_message}」\nスモラ: 「${e.sent_reply}」`).join("\n\n");
+    usable.map((e, i) => `[例${i + 1}]\nお客様: 「${e.customer_message}」\nスモラ: 「${fixExampleWeekdays(normalizeBannedPhrasing(e.sent_reply ?? "").text)}」`).join("\n\n");
 }
 
 // ─── ナレッジ取得（3層）────────────────────────────────────────────────────

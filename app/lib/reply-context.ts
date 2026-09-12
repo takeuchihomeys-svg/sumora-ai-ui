@@ -842,7 +842,7 @@ export function classifyCustomerResponse(
 // ─────────────────────────────────────────────────────────────
 export type PairPrecedence = "override_wait" | "after_wait";
 /** 締めの種別（2026-09-09 Fable5 みく事例）。resolveCloser / CLOSER_TEXT / PAIR_MATRIX.closer / final-check runCloserChecks / stance_draft が同名 */
-export type CloserKind = "commit_until_found" | "receive_check" | "open_door" | "wait_softly" | "none";
+export type CloserKind = "commit_until_found" | "receive_check" | "open_door" | "wait_softly" | "await_contact" | "none";
 
 // ─── 2026-09-10 Fable5: 持込予告の業務フロー語（生成 direction・検査 mustInclude・few-shot・修正 fix が同一定数を参照）───
 // 「送られてきたら募集状況確認＋最大限割引した初期費用の御見積書」は、直前に我々が何をしたか（state）に関係なく同一。
@@ -1580,6 +1580,10 @@ export interface PairContext {
   customerName: string;
   /** 2026-09-11 統合設計（経路D）: 締め verdict（断り・探索終了のお礼）。生成（ANY_FAREWELL/ANY_DECLINE）・検査（isClosedVerdict）・修正プロンプト（REVISION_MODE=closing）・tpo_debug が同じ値 */
   closing: ClosingVerdict;
+  /** 2026-09-12 竹内方針B: 顧客が自分から連絡すると予告したか（「ご連絡お待ちしております」の唯一のゲート）。
+   *  resolveTurnPair が resolveAwaitContact で1回だけ計算し、締め（resolveCloser）・検査（AWAIT_CONTACT_MISPLACED）が同じ値を見る。
+   *  旧 snapshot・テストの手組み PairContext では省略可（省略＝予告なし） */
+  awaitContact?: AwaitContactVerdict;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1657,6 +1661,8 @@ export function resolveTurnPair(
 
   // 2026-09-11 統合設計（経路D）: 締め verdict が立つ時はセル探索より先に確定（CR_ANY 等の「次の一手を宣言」セルを締めに当てない）
   const closing = resolveClosing(substance, custForCtx, lastStaffText ?? "", opts.priorCustomerText ?? "");
+  // 2026-09-12 竹内方針B: 顧客の連絡予告（締め・検査が同じ verdict を見る）
+  const awaitContact = resolveAwaitContact({ customerMessage: substance.normalized, priorCustomerText: opts.priorCustomerText ?? "", substance, ledger: opts.ledger ?? null });
   const pool = PAIR_MATRIX.filter((r) => !r.closingOnly);
   const exact = pool.filter((r) => r.staff === staff.kind && r.customer === effectiveKind);
   const rule =
@@ -1684,7 +1690,7 @@ export function resolveTurnPair(
   return { staff, customer: custForCtx, substance, rule, ruleId: rule?.id ?? null, summary,
            lastStaffText: lastStaffText ?? "", ledger: opts.ledger ?? null, redo: redoWord(opts.ledger),
            sendObject, cellGuard, conflicts: [],
-           materials, namedProperty, customerName: opts.customerName ?? "", closing };
+           materials, namedProperty, customerName: opts.customerName ?? "", closing, awaitContact };
 }
 
 /** {object}/{fix}/{redo}/{ledger}/{sentNames} の置換（生成・検査・note の三者が同じ関数）。
@@ -1974,8 +1980,81 @@ export const CLOSER_TEXT: Record<CloserKind, (name: string) => string> = {
   receive_check: () => "お手隙の際にご査収ください😌！！",
   open_door: () => "気になる点出てきましたらいつでもお気軽にご連絡ください😌！！",
   wait_softly: () => "ごゆっくりご検討頂けますと幸いです😊！！気になる点出てきましたらいつでもお気軽にご連絡ください！！",
+  await_contact: () => "ご連絡お待ちしております😊！！",
   none: () => "",
 };
+
+// ─── 2026-09-12 竹内方針B: 「ご連絡お待ちしております」は顧客が自分から連絡すると予告した時だけ ─────────────────
+//   スタッフ手打ち 6,107通中12通。10通は顧客の連絡予告の直後、2通は顧客側が次に動く場面（お待ちいただけますか／予告の後の了承）。
+//   依頼・質問の直後は0通（下書きにあっても 3/3 件削除）。条件付きの予告（〜次第・〜あれば）の後は 0/11 件で、
+//   代わりに「〜ましたらお気軽にご連絡ください」と条件をなぞって返していた。検討・相談してから連絡 は 4/13 件（既定の wait_softly のまま）。
+/** 顧客が自分から連絡すると言っている */
+export const CUSTOMER_WILL_CONTACT_RE =
+  /(?:ご?連絡|れんらく|お?返事|返信)(?:は|を)?(?:させて(?:頂|いただ|もら)(?:い|き)?ます|させてもらいます|します|いたします|致します|入れます|する(?=[ねよのかわ！!。\s〜ー]|$))/;
+/** 条件付きの予告（決まり次第・分かったら・何かあれば 連絡します） */
+export const CONDITIONAL_CONTACT_RE = /(?:次第|あれば|ありましたら|(?:決まっ|分かっ|わかっ|でき|出来)たら|際(?:に|は))[^。！!\n]{0,8}(?:ご?連絡|れんらく|お?返事|返信)/;
+/** 検討・相談・確認してから連絡（検討中の待ち句＝wait_softly の担当） */
+const THINK_THEN_CONTACT_RE = /(?:検討|考え|相談|確認|見て|拝見)(?:して|し)?(?:から|また|改めて|の上で?|次第)[^。！!\n]{0,6}(?:ご?連絡|れんらく|お?返事|返信)/;
+/** 顧客が「待って」と依頼（「1日ほどお待ちいただけますか」） */
+const CUSTOMER_WAIT_REQUEST_RE = /(?:お待ち|待って)(?:いただけ|頂け|もらえ|ください|下さい|て(?:ください|下さい|もらえ))/;
+/** 本文の「ご連絡お待ちしております」（検査・stance が同じ定義を見る） */
+export const AWAIT_CONTACT_PHRASE_RE = /ご連絡(?:の程)?(?:を)?お待ちしております/;
+const CONTACT_TIMING_RE = /本日|今日|明日|明後日|今週中|来週|週末|[月火水木金土日]曜(?:日)?|帰宅後|[0-9０-９]{1,2}月(?:中旬|上旬|下旬|頃|中)?/;
+export type AwaitContactVerdict = {
+  /** 「ご連絡お待ちしております」で締めてよい */
+  allowed: boolean;
+  /** 条件付きの予告（〜次第・〜あれば）。締めは条件をなぞる open_door */
+  conditional: boolean;
+  /** 条件付きの予告の条件部分を「〜ましたら」にした語（「決まりましたら」）。作れない時は null */
+  conditionEcho: string | null;
+  /** 顧客の文の時期（「明日」→「明日のご連絡お待ちしております」）。無ければ null */
+  timingEcho: string | null;
+  reason: string;
+};
+export const NO_AWAIT_CONTACT: AwaitContactVerdict = { allowed: false, conditional: false, conditionEcho: null, timingEcho: null, reason: "" };
+/** 条件部分を「〜ましたら」に言い換える（決まり次第→決まりましたら／分かったら→分かりましたら／何かあれば→何かございましたら） */
+function conditionEchoOf(text: string): string | null {
+  const m = /([一-龯ぁ-んァ-ヶー]{0,6}?)(次第|あれば|ありましたら|(?:決まっ|分かっ|わかっ|でき|出来)たら)/.exec(text);
+  if (!m) return null;
+  const stem = m[1], tail = m[2];
+  if (tail === "あれば" || tail === "ありましたら") return `${/^(?:何か|なにか)$/.test(stem) || !stem ? "何か" : stem}ございましたら`;
+  if (tail === "次第") {
+    if (!stem || /[をがはに]$/.test(stem)) return null;
+    return `${stem}ましたら`;
+  }
+  const past = tail.replace(/ったら$/, "りましたら").replace(/(でき|出来)たら$/, "$1ましたら");
+  return `${stem}${past}`;
+}
+/**
+ * 顧客が自分から連絡すると予告したか（締めの唯一の判定）。allowed は次のどちらかで、どちらもスタッフ側に未履行のピックアップ約束が無いこと:
+ *   (a) 今回の顧客発言が条件の付かない連絡予告で、依頼・質問・条件を含まない（検討してから連絡 は除く）／顧客が「お待ちいただけますか」と頼んだ
+ *   (b) 今回が了承・お礼だけで、1つ前の顧客発言が連絡予告か「お待ちいただけ」の依頼
+ */
+export function resolveAwaitContact(input: {
+  customerMessage: string; priorCustomerText?: string | null; substance: Pick<SubstanceVerdict, "kinds" | "isAckOnly">; ledger?: ActionLedger | null;
+}): AwaitContactVerdict {
+  const cur = (input.customerMessage ?? "").replace(/\r/g, "");
+  const prior = (input.priorCustomerText ?? "").replace(/\r/g, "");
+  const kinds = input.substance.kinds ?? [];
+  const hasAsk = kinds.includes("request") || kinds.includes("question") || kinds.includes("condition");
+  const pickupOpen = !!input.ledger?.facts.pickupPromisedUnfulfilled;
+  const timingOf = (s: string): string | null => { const t = CONTACT_TIMING_RE.exec(s)?.[0] ?? null; return t === "今日" ? "本日" : t; };
+  const isPlainWillContact = (s: string) => CUSTOMER_WILL_CONTACT_RE.test(s) && !CONDITIONAL_CONTACT_RE.test(s) && !THINK_THEN_CONTACT_RE.test(s);
+  if (CONDITIONAL_CONTACT_RE.test(cur) && CUSTOMER_WILL_CONTACT_RE.test(cur) && !THINK_THEN_CONTACT_RE.test(cur) && !hasAsk)
+    return { allowed: false, conditional: true, conditionEcho: conditionEchoOf(cur), timingEcho: null, reason: "条件付きの連絡予告（0/11件）→条件をなぞって「〜ましたらお気軽にご連絡ください」" };
+  if (pickupOpen) return { ...NO_AWAIT_CONTACT, reason: "スタッフ側に未履行のピックアップ約束がある（待つのはお客様）" };
+  if (CUSTOMER_WAIT_REQUEST_RE.test(cur))
+    return { allowed: true, conditional: false, conditionEcho: null, timingEcho: timingOf(cur), reason: "顧客が「お待ちいただけますか」と依頼（ハル事例）" };
+  if (isPlainWillContact(cur) && !hasAsk)
+    return { allowed: true, conditional: false, conditionEcho: null, timingEcho: timingOf(cur), reason: "顧客が自分から連絡すると予告（スタッフ実送信12件中10件）" };
+  if (input.substance.isAckOnly && prior && (isPlainWillContact(prior) || CUSTOMER_WAIT_REQUEST_RE.test(prior)))
+    return { allowed: true, conditional: false, conditionEcho: null, timingEcho: timingOf(prior), reason: "連絡予告の後の了承（次に動くのはお客様）" };
+  return NO_AWAIT_CONTACT;
+}
+/** await_contact の締め文（時期があれば「明日のご連絡お待ちしております」） */
+export function awaitContactCloserText(v: AwaitContactVerdict | null | undefined): string {
+  return `${v?.timingEcho ? v.timingEcho + "の" : ""}ご連絡お待ちしております😊！！`;
+}
 export const NANISOTSU_TEXT = "何卒よろしくお願い致します！！";
 
 export interface CloserSignals {
@@ -2013,18 +2092,23 @@ export function resolveCloser(
   const priorCommit = COMMIT_CLOSER_RE.test(pair.lastStaffText ?? "") ||
     (!!ledger && pair.staff.kind === "pickup_declared" && /全力/.test(ledger.facts.lastStaffEntry?.evidence ?? ""));
   const priorNanisotsu = NANISOTSU_RE.test(pair.lastStaffText ?? "");
-  const mk = (closer: CloserKind, nanisotsu: boolean, reason: string): CloserVerdict => {
+  const mk = (closer: CloserKind, nanisotsu: boolean, reason: string, bodyOverride?: string): CloserVerdict => {
     // セルが nanisotsu を明示（PD_CONDITION_CHANGE＝みく 11:48 実送信は直前の何卒に続けて何卒）する時は直前の何卒で抑制しない
     const n = nanisotsu && (!priorNanisotsu || pair.rule?.nanisotsu === true);
-    const body = CLOSER_TEXT[closer](name);
+    const body = bodyOverride ?? CLOSER_TEXT[closer](name);
     return { closer, nanisotsu: n, text: [body, n ? NANISOTSU_TEXT : ""].filter(Boolean).join("\n"), reason };
   };
+  const ac = pair.awaitContact ?? NO_AWAIT_CONTACT;
   if (c === "decline") return mk("none", false, "断り→扉1文で終える（引き留め・謝罪・サポート宣言なし）");
   // 2026-09-10 Fable5: 持込予告はセルが締めを持つ（PD/ANY=none：受け宣言で終える／ES=open_door：直前の見積物件の扉を開ける）。
   //   本文の「最大限割引した御見積書」は未来形の予告であって成果物添付ではないため deliverableAttached より先に判定する
   if (c === "will_send_later") return mk(pair.rule?.closer ?? "open_door", pair.rule?.nanisotsu ?? false, "持込予告→先取り宣言で終える（セル指定）");
   if (sig.deliverableAttached) return mk("receive_check", false, "成果物添付→ご査収一択（正解674件／property_send 系で全力・何卒は0件）");
   if (sig.scheduleFixed) return mk("none", false, "日程確定・打診→疑問形/確定文で終える（断定削除22件・何卒削除26件の型）");
+  // 2026-09-12 竹内方針B: 顧客の連絡予告（resolveAwaitContact）。検討中（wait_softly）より先に判定する
+  if (ac.allowed) return mk("await_contact", false, ac.reason, awaitContactCloserText(ac));
+  if (ac.conditional)
+    return mk("open_door", false, ac.reason, `${ac.conditionEcho ?? "気になる点出てきましたら"}いつでもお気軽にご連絡ください😌！！`);
   if (c === "thinking") return mk("wait_softly", false, "検討中→ごゆっくり＋扉。急かし禁止");
   if (c === "question" && s !== "condition_ask") return mk("none", false, "質問回答で終える（質問系988件中926件が何卒なし）");
   const ruleCloser = pair.rule?.closer;
@@ -2208,7 +2292,7 @@ export function computeStanceFlags(text: string, pair: PairContext, hedge: Hedge
   const sched = classifyScheduleCommitment(opts.customerText, pair.lastStaffText);
   const fact = resolveAnswerability(opts.customerText);
   const closer_kind: StanceFlags["closer_kind"] =
-    sig.hasPrePickupHedge ? "preemptive_hedge" : sig.usedCommit ? "commit_until_found" : sig.usedReceive ? "receive_check" : sig.usedWait ? "wait_softly" : sig.usedOpenDoor ? "open_door" : sig.usedNanisotsu || sig.scheduleFixed ? "none" : "other";
+    sig.hasPrePickupHedge ? "preemptive_hedge" : sig.usedCommit ? "commit_until_found" : sig.usedReceive ? "receive_check" : sig.usedWait ? "wait_softly" : AWAIT_CONTACT_PHRASE_RE.test(text) ? "await_contact" : sig.usedOpenDoor ? "open_door" : sig.usedNanisotsu || sig.scheduleFixed ? "none" : "other";
   return {
     closer_kind, closer_expected: v.closer, closer_reason: v.reason,
     hedge_allowance: hedge.allowance,
@@ -2235,7 +2319,7 @@ export function computeStanceLite(text: string, customerText: string): StanceLit
   const sig = deriveCloserSignals(text);
   const echo = evalConditionEcho(text, extractEchoTokens(customerText));
   return {
-    closer_kind: sig.hasPrePickupHedge ? "preemptive_hedge" : sig.usedCommit ? "commit_until_found" : sig.usedReceive ? "receive_check" : sig.usedWait ? "wait_softly" : sig.usedOpenDoor ? "open_door" : sig.usedNanisotsu || sig.scheduleFixed ? "none" : "other",
+    closer_kind: sig.hasPrePickupHedge ? "preemptive_hedge" : sig.usedCommit ? "commit_until_found" : sig.usedReceive ? "receive_check" : sig.usedWait ? "wait_softly" : AWAIT_CONTACT_PHRASE_RE.test(text ?? "") ? "await_contact" : sig.usedOpenDoor ? "open_door" : sig.usedNanisotsu || sig.scheduleFixed ? "none" : "other",
     has_commit: sig.usedCommit, has_nanisotsu: sig.usedNanisotsu,
     hedge_kind: sig.hasPrePickupHedge ? "preemptive" : SEARCH_REPORT_RE.test(text) ? "search_report" : RELAX_PROPOSAL_RE.test(text) ? "relax_proposal" : null,
     echo_ratio: Math.round(echo.ratio * 100) / 100, echo_missing: echo.missing,

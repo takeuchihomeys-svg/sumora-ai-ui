@@ -56,6 +56,8 @@ const CODE_CAPS: Record<string, number> = {
   PAIR_ELEMENT_MISSING: 0, REPLY_SKELETON_MISSING: 0, CONCERN_UNADDRESSED: 0, WE_DO_MISSING_DET: 0, GENERIC_ONLY_REPLY: 0,
   CONDITION_ECHO_MISSING: 0, HASTY_PROMISE: 0,
   NAME_MISMATCH: 0.005, CONFIRM_NO_OBJECT: 0.005,
+  // 2026-09-12 竹内方針B: 目的語の無い/顧客発言に無い「承りました」の検査（正解6通で偽陽性0）
+  UKETAMAWARI_OBJECT_UNANCHORED: 0.005,
 };
 
 const norm = (s: string) => (s ?? "").replace(/\s+/g, "");

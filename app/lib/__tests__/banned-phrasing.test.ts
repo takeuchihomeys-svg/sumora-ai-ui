@@ -1,6 +1,6 @@
 // 2026-09-11 竹内方針4・5: 「承知しました」系→「かしこまりました」・約束の「すぐに」除去（banned-phrasing.ts）の回帰テスト。
 // 実行: npx tsx app/lib/__tests__/banned-phrasing.test.ts（vitest 不要の自己完結ハーネス。全 PASS で exit 0）
-import { normalizeShochi, stripHastyAdverb, normalizeBannedPhrasing } from "../banned-phrasing";
+import { normalizeShochi, stripHastyAdverb, normalizeBannedPhrasing, HASTY_ADVERB_TEST_RE } from "../banned-phrasing";
 import { runDeterministicChecks } from "../final-check";
 
 // ── ミニハーネス ──
@@ -51,6 +51,22 @@ describe("方針5 すぐに除去", () => {
   });
   it("H5 「すぐご案内」（に なし）も除く", () => {
     expect(stripHastyAdverb("確認してすぐご案内させて頂きます！！").text).toBe("確認してご案内させて頂きます！！");
+  });
+  // 2026-09-12 竹内方針E: 「次第」起点の取りこぼし（20字超・一覧外の動詞）
+  it("H6 「次第すぐに」＋20字超の動詞 →「すぐに」だけ除去", () => {
+    const src = "確認取れ次第すぐに空き状況と初期費用の詳細を最大限割引したお見積書にまとめてご連絡させて頂きます！！";
+    expect(stripHastyAdverb(src).text).toBe("確認取れ次第空き状況と初期費用の詳細を最大限割引したお見積書にまとめてご連絡させて頂きます！！");
+    expect(HASTY_ADVERB_TEST_RE.test(src)).toBe(true);
+  });
+  it("H7 「出次第すぐにお電話差し上げます」→「出次第お電話差し上げます」", () => {
+    expect(stripHastyAdverb("出次第すぐにお電話差し上げます！！").text).toBe("出次第お電話差し上げます！！");
+  });
+  it("H8 変えない: 顧客の希望を伝える「審査通過次第すぐにご入居したい旨」", () => {
+    const s = "審査通過次第すぐにご入居したい旨管理会社にお伝えさせて頂きます！！";
+    expect(stripHastyAdverb(s).text).toBe(s);
+  });
+  it("H9 「新着物件が出次第、すぐにお送り」→ 読点は残して「すぐに」だけ除去", () => {
+    expect(stripHastyAdverb("新着物件が出次第、すぐにお送りさせて頂きます！！").text).toBe("新着物件が出次第、お送りさせて頂きます！！");
   });
 });
 
