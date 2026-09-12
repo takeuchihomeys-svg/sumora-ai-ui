@@ -636,7 +636,12 @@ async function resolveEngagementSignal(
     .eq("id", signal.id as string);
 }
 
+/** 物件ポータルの共有文（物件名：／交通：／所在地：／価格：のうち2項目以上）。URL が無くても物件シェア */
+const PROPERTY_LISTING_SHAPE_RE = /(?:物件名|交通|所在地|価格|物件種目)\s*[:：][\s\S]*(?:物件名|交通|所在地|価格|物件種目)\s*[:：]/;
+
 function isFormatMessage(text: string): boolean {
+  // 物件ポータルの共有文（物件名：／交通：／所在地：…）は条件フォーマットではない（物件の家賃・間取りで条件を上書きしない）
+  if (PROPERTY_LISTING_SHAPE_RE.test(text)) return false;
   // 物件サイトURLが含まれる場合、残りテキストに変更意図キーワードがなければ条件フォーマットとみなさない
   // （SUUMO等のURLカードに付くタイトル「十三 1LDK 9階」を条件更新と誤解析するバグ防止）
   if (isPropertySiteUrl(text)) {
@@ -696,6 +701,11 @@ function isFormatMessage(text: string): boolean {
 // 保守的条件: 市区町村サフィックス付きトークンが2個以上、またはトリガーワードと1個以上の組み合わせ
 function isAreaSpecificationMessage(text: string): boolean {
   if (isFormatMessage(text)) return false; // autoParseFormat handles this
+  // 2026-09-12 竹内（じゅにあ事例）: お客様が物件のリンク（athome 等）や物件情報（物件名／交通／所在地）を送ってきたのは
+  //   「物件シェア＝物件確認（募集状況確認＋御見積書）」であって地域指定ではない。旧は物件情報の「交通：〇〇駅」「所在地」を
+  //   地域指定と読み、希望エリアに沿線の駅を丸ごと追加して【地域指定】をグループに流していた（7件の物件で希望エリアが河内長野・藤井寺まで膨張）。
+  //   判定は条件の自動抽出（extractConditionsFromCasualReply）と同じ isPropertySiteUrl ＋ 物件情報の形
+  if (isPropertySiteUrl(text) || PROPERTY_LISTING_SHAPE_RE.test(text)) return false;
   // 自転車 + 分数 → エリア指定として扱う（自転車圏内→駅リスト展開）
   if (/自転車|チャリ/.test(text) && /\d+分/.test(text)) return true;
 
