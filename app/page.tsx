@@ -10,7 +10,7 @@ import { isApplicationFormMessage } from "./lib/application-form-detect";
 import { detectPlaceholders } from "./lib/validate-reply";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
-import { MSG_SEP } from "./lib/reply-context";
+import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
@@ -4566,13 +4566,9 @@ export default function Home() {
       nextActionFetchingRef.current.delete(selectedConversation.id);
       void fetchNextAction(selectedConversation.id);
 
-      // 初期費用訴求メッセージ送信後 → 追客テンプレートバナーを表示
-      const SHOKI_KEYWORDS = ["初期費用", "敷金礼金なし", "敷金・礼金なし", "敷礼なし", "費用を抑え", "費用が抑え"];
-      if (textSent && textToSend && SHOKI_KEYWORDS.some(kw => textToSend.includes(kw))) {
-        const cid = selectedConversation.id;
-        setSuggestNextTemplateMap(prev => ({ ...prev, [cid]: { num: "追客初期費用", category: "追客" } }));
-        setDismissedNextTemplateIds(prev => { const n = new Set(prev); n.delete(cid); return n; });
-      }
+      // 旧: スタッフの送信文に「初期費用」等があれば【追客】初期費用テンプレート（見積書を送る）バナーを出していた → 2026-09-12 廃止。
+      //   竹内（じゅにあ事例）「見積書はお客さんから物件が送られてからセットされる形」。「お送り頂き次第…初期費用の御見積書とあわせてご連絡」
+      //   のような受け口の返信でも見積書が誘導されていた。見積書の要否はお客様の発言を見てブレインが判断する（AIX要対応）
 
       // 2通目自動送信スケジュール（extrasClearと分離した専用refで管理・テキスト送信成功時のみ）
       if (textSent && secondMsgCapture) {
@@ -5174,7 +5170,21 @@ export default function Home() {
     }
 
     // 募集状況確認メッセージを送った → property_checkタスクを自動生成（AIX送信は除外: 確認結果報告のテキストにもキーワードが含まれるため再生成されてしまう）
-    if (!isAix && text.trim() && /募集状況確認|空室確認|空き確認|募集確認/.test(text)) {
+    // 2026-09-12 竹内（じゅにあ事例）: お客様が「物件送ってもいいですか」と自分で送る予告をした直後の
+    //   「お送り頂きました物件の募集状況確認させて頂き…」は、届いてからの約束（まだ確認するものが無い）→ タスクを作らない。
+    //   判定は返信 AI と同じ CUST_WILL_SEND_SELF_PRED（直前の顧客発言のまとまり）
+    const _msgsForPromise = selectedConversation.messages || [];
+    const _lastCustTurn = (() => {
+      const out: string[] = [];
+      for (let i = _msgsForPromise.length - 1; i >= 0; i--) {
+        const m = _msgsForPromise[i];
+        if (m.sender === "customer") out.unshift(m.text || "");
+        else if (out.length > 0) break;
+      }
+      return out.join("\n");
+    })();
+    const _custWillSendFirst = !!_lastCustTurn && !/https?:\/\/|\[画像\]/.test(_lastCustTurn) && CUST_WILL_SEND_SELF_PRED(_lastCustTurn).yes;
+    if (!isAix && text.trim() && /募集状況確認|空室確認|空き確認|募集確認/.test(text) && !_custWillSendFirst) {
       const convId = selectedConversation.id;
       const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
       if (!alreadyHasCheck) {

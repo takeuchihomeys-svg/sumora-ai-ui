@@ -8,6 +8,7 @@ import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { recordConditionHistory } from "@/app/lib/condition-history";
+import { CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 export const maxDuration = 120;
@@ -1540,6 +1541,10 @@ const CONFIRM_PHRASES = ["確認してほしい", "確認してください", "�
 const CONFIRM_TARGETS = ["物件", "初期費用", "空室", "この部屋", "この物件"];
 
 function detectTaskType(text: string): "property_check" | "property_send" | null {
+  // 2026-09-12 竹内（じゅにあ事例）: 「何件か気になる物件送ってもいいですか？」はお客様が自分で送る予告。
+  //   「物件送って」の部分一致で物件出しタスク（→「やること: 物件ピックアップした」・グループ通知）を作っていた。
+  //   物件が届くまでタスクは作らない（届いたら募集状況確認＋見積）。判定は返信 AI と同じ CUST_WILL_SEND_SELF_PRED
+  if (CUST_WILL_SEND_SELF_PRED(text).yes) return null;
   if (PROPERTY_CHECK_KEYWORDS.some((k) => text.includes(k))) return "property_check";
   // "確認してほしい/ください/お願い" + 物件/初期費用 の組み合わせ
   if (CONFIRM_PHRASES.some((p) => text.includes(p)) && CONFIRM_TARGETS.some((t) => text.includes(t))) return "property_check";

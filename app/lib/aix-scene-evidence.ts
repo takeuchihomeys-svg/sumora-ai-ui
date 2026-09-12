@@ -8,6 +8,7 @@
 // 検出の中身は 2c86c209 の aix-reply-set.ts detectReplyAixScene から変えずに移設した（期待値も同じ）。
 // 依存は scene-patterns / line-reply-prompts の定数 / estimate-context の型だけ（brain-core から import しても循環しない）。
 import { isConditionFormMessage } from "./line-reply-prompts";
+import { CUST_WILL_SEND_SELF_PRED } from "./reply-context";
 import type { EstimateContextVerdict } from "./estimate-context";
 import {
   allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE,
@@ -102,6 +103,11 @@ export function hasViewingInviteBefore(o: Pick<SceneEvidenceInput, "aixHistory" 
 export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence | null {
   const msg = (o.latestCustomerTurn || "").trim();
   if (!msg && !o.hasCustomerImage) return null;
+  // 2026-09-12 竹内（じゅにあ事例）: 「何件か気になる物件送ってもいいですか？」＝お客様が自分で送る予告。
+  //   物件はまだ届いていないので、募集状況の確認も見積も AIX もまだ無い（届いてから）。返信は受け口＋「お送り頂き次第募集状況確認…」。
+  //   旧: 「物件」＋「〜ですか」で S1 空室確認に当たり、ブレインの証拠・物件確認タスク・「確認した」誘導が出ていた。
+  //   判定は返信側と同じ CUST_WILL_SEND_SELF_PRED（reply-context）。URL・画像が一緒に届いていれば通常どおり判定する
+  if (!o.hasCustomerImage && !AVAILABILITY_URL_RE.test(msg) && CUST_WILL_SEND_SELF_PRED(msg).yes) return null;
   const v = o.estimateVerdict ?? null;
   const estimateDeclare = !!v && v.mode === "declare";
   // 条件フォームのみ（trigger=none）は金額・指名判定を行わない
@@ -194,6 +200,8 @@ export function customerRequestedPropertyCheck(o: {
   // ① 募集状況・入居日・審査の質問（本文の安全と同じ判定）
   if (isConfirmationScene(detectAixSceneEvidence({ latestCustomerTurn: text, hasCustomerImage, sentPropertyCount }))) return true;
   if (isConditionFormMessage(text)) return false;
+  // お客様が自分で送る予告（まだ物件は届いていない）は依頼ではない（届いた時に判定する）
+  if (!hasCustomerImage && !AVAILABILITY_URL_RE.test(text) && CUST_WILL_SEND_SELF_PRED(text).yes) return false;
   const specBy = propertySpecifiedBy(text, { hasCustomerImage, sentPropertyCount });
   // ② お客様が物件そのもの（画像・URL・号室）を送ってきた → 募集状況の確認と御見積書が業務の流れ（竹内 2026-09-10）
   if (specBy === "image" || specBy === "url" || specBy === "room_no") return true;
