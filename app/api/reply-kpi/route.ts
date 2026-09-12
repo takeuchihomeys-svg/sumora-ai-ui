@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { jstWeekMondayYmd } from "@/app/lib/jst-date";
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -30,14 +31,8 @@ export async function GET(req: NextRequest) {
   // 週次バケットに集計
   const weeklyMap: Record<string, { total: number; ai_used: number; ai_modified: number; starred: number }> = {};
   for (const row of rows) {
-    const d = new Date(row.created_at);
-    // ISO週の月曜日を週キーとして使う
-    const dayOfWeek = d.getDay(); // 0=日, 1=月...
-    const diffToMonday = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek);
-    const monday = new Date(d);
-    monday.setDate(d.getDate() + diffToMonday);
-    monday.setHours(0, 0, 0, 0);
-    const weekKey = monday.toISOString().slice(0, 10);
+    // ISO週の月曜日（日本時間）を週キーとして使う（2026-09-12 方針D: UTC の週境界だった）
+    const weekKey = jstWeekMondayYmd(row.created_at);
 
     if (!weeklyMap[weekKey]) {
       weeklyMap[weekKey] = { total: 0, ai_used: 0, ai_modified: 0, starred: 0 };

@@ -91,9 +91,11 @@ import {
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
 import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask } from "@/app/lib/action-ledger";
 // 2026-09-11 竹内方針1〜5（統合設計 §7）: 生成失敗文の文言と「正解例として使えるか」の唯一の判定
-import { GENERATION_FAILURE_TEXT, isUsableExampleText } from "@/app/lib/example-hygiene";
+import { GENERATION_FAILURE_TEXT, isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
 // 2026-09-11 竹内方針4・5: few-shot 注入前の「承知→かしこまりました」「すぐに除去」（後処理・検査と同じ定義）
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
+// 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（曜日表をプロンプトに渡し LLM に曜日を計算させない）
+import { jstParts, jstDateLabel, weekdayTable } from "@/app/lib/jst-date";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -732,21 +734,16 @@ const ANXIETY_KEYWORDS = ["名義", "審査", "保証", "リスク", "キャン�
 
 
 
-// ─── JST時刻取得 ─────────────────────────────────────────────────────────────
+// ─── JST時刻取得（2026-09-12 方針D: jst-date の関数に一本化）─────────────────
 function getJSTHour(): number {
-  return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCHours();
+  return jstParts().hour;
 }
 // 0=日, 1=月, ..., 6=土
 function getJSTDayOfWeek(): number {
-  return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCDay();
+  return jstParts().dow;
 }
 function getJSTDateString(): string {
-  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  const m = jst.getUTCMonth() + 1;
-  const d = jst.getUTCDate();
-  const days = ["日", "月", "火", "水", "木", "金", "土"];
-  const dow = days[jst.getUTCDay()];
-  return `${m}月${d}日（${dow}）`;
+  return jstDateLabel();
 }
 
 // GENERATION_SYSTEM / SMORA_QUICK_PATTERNS / REAL_ESTATE_RULES は @/app/lib/line-reply-prompts からインポート済み
@@ -911,7 +908,7 @@ function buildGenerationMessages(
           ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み。今回は絶対に使わない。「はい！！」「かしこまりました！！」など短い言葉で直接本文から始める。`
           : `\n【⏰ 挨拶ルール・最優先】長い返信・重要な連絡・条件確認の冒頭は「${sanitizeCustomerName(customerName) ? `${sanitizeCustomerName(customerName)}さん` : ""}お世話になっております！！」で固定。「お待たせ致しました」は禁止語。「夜遅くに」「夜分遅くに」は自分で書かない。`);
 
-  const dateNote = `\n【📅 今日の日付（JST・必ず基準にすること）】${getJSTDateString()} — 「明日」「明後日」「今週」などの相対表現や具体的な日付（○日）は全てこの日付を起点に計算すること`;
+  const dateNote = `\n【📅 今日の日付（JST・必ず基準にすること）】${getJSTDateString()} — 「明日」「明後日」「今週」などの相対表現や具体的な日付（○日）は全てこの日付を起点に計算すること\n【📅 曜日表（JST・今日から14日分）】${weekdayTable(Date.now(), 14)} — 日付に曜日を付ける時はこの表の曜日をそのまま使う（自分で曜日を計算しない）。表に無い日付には曜日を付けない`;
 
   const _cleanName = sanitizeCustomerName(customerName);
   // S-5: 呼称ルールを断定形に。名前不明時は例文の「〇〇さん」を読み替える指示を明示（先頭改行で直前ノートとの癒着を防ぐ）
@@ -2390,7 +2387,8 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
             const angleTag = ex.reply_angle && ex.reply_angle !== "starred" ? `|${ANGLE_LABEL[ex.reply_angle] ?? ex.reply_angle}` : "";
             const premise = derivePremiseLabel(ex.sent_reply ?? "");
             // 2026-09-11 竹内方針4・5（E4-f）: 実例の「承知しました」「すぐに」は注入前に決定論で正規化（DB の本文は書き換えない）
-            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${normalizeBannedPhrasing(ex.sent_reply ?? "").text}」`;
+            // 2026-09-12 竹内方針D: 曜日の誤りは日付を正として直す（RPC の戻りに created_at が無いので、食い違う曜日だけ外す）
+            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${fixExampleWeekdays(normalizeBannedPhrasing(ex.sent_reply ?? "").text)}」`;
           }).join("\n\n");
         }
       }
@@ -2403,14 +2401,14 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   //   .not("embedding","is",null) を付けると embedding未生成の重要データが永久に参照されない）
   const [{ data: sameStateFull }, { data: allStateFull }] = await Promise.all([
     // 同フェーズ全件: ☆降順 → 新着順
-    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred, reply_angle")
+    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred, reply_angle, created_at")
       .in("conversation_state", stateAliases)
       .eq("entry_source", "line_reply")
       .order("is_starred", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(60),
     // 全フェーズ全件: ☆降順 → 新着順
-    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred, reply_angle")
+    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred, reply_angle, created_at")
       .eq("entry_source", "line_reply")
       .order("is_starred", { ascending: false })
       .order("created_at", { ascending: false })
@@ -2475,7 +2473,8 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
       const angleTag = ra && ra !== "starred" ? `|${ANGLE_LABEL[ra] ?? ra}` : "";
       const premise = derivePremiseLabel(ex.sent_reply ?? "");
       // 2026-09-11 竹内方針4・5: 注入前に承知→かしこまりました・すぐに除去（DB の本文は書き換えない）
-      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${normalizeBannedPhrasing(ex.sent_reply ?? "").text}」`;
+      // 2026-09-12 竹内方針D: 曜日の誤りは書いた日（created_at）の暦で、日付を正として直す
+      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${fixExampleWeekdays(normalizeBannedPhrasing(ex.sent_reply ?? "").text, ex.created_at)}」`;
     }).join("\n\n");
 }
 
@@ -4269,10 +4268,7 @@ export async function POST(req: NextRequest) {
       }
       // 入居希望日が30日以内なら申込期限を決定論的に明示（成約パターン: 入居タイムライン緊急性付加）
       if (psp?.move_in_time && brainMeta?.urgency_appropriate !== false) {
-        const nowJst = new Date(Date.now() + 9 * 60 * 60 * 1000);
-        const curYear = nowJst.getUTCFullYear();
-        const curMonth = nowJst.getUTCMonth() + 1;
-        const curDay = nowJst.getUTCDate();
+        const { y: curYear, m: curMonth, d: curDay } = jstParts();
         const mText = psp.move_in_time;
         const mMonthMatch = mText.match(/(\d{1,2})月/);
         if (mMonthMatch) {

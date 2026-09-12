@@ -9,6 +9,7 @@
 //   ・「お待たせ致しました／お待たせいたしました／お待たせしました」は禁止語: 後処理 stripWaited で文節ごと除去、final-check BANNED_WORD で block。
 //   ・生成（buildGreetingNote）・後処理（enforceOpening）・検査（final-check ⑦）・保存（toGreetingLite）が同じ GreetingDecision を参照する（四者同名）。
 import { normalizeCustomerName } from "./validate-reply";
+import { jstDayStartMs } from "./jst-date"; // 2026-09-12 竹内方針D: JST の日付計算は jst-date に一本化
 import type { CustomerResponseKind, SubstanceKind } from "./reply-context"; // type-only（実行時の循環 import なし）
 
 export type GreetingKind = "first" | "late_apology" | "standard" | "none";
@@ -157,8 +158,7 @@ export function msSinceLastStaff(messages: Msg[], now = Date.now()): number | nu
 /** JST 当日 0:00〜23:59 にテキストのスタッフ送信（AIX 含む・画像/動画のみは除く）があれば true。createdAt が 1 件も無ければ undefined */
 export function computeAlreadyGreetedToday(messages: Msg[], now = Date.now()): boolean | undefined {
   if (!messages.some((m) => !!m.createdAt)) return undefined;
-  const jst = new Date(now + 9 * 3600 * 1000);
-  const dayStartUtc = Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate()) - 9 * 3600 * 1000;
+  const dayStartUtc = jstDayStartMs(now);
   const dayEndUtc = dayStartUtc + 24 * 3600 * 1000 - 1;
   return messages.some((m) => {
     if (m.sender !== "staff" || !m.createdAt) return false;

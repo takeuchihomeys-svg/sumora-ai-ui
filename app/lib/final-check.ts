@@ -19,6 +19,8 @@ import { checkNameConsistency, ASSERTION_BAN_RULES, PLACEHOLDER_ADDRESS_DET_RE, 
 // 2026-09-11 竹内方針1・5: 誤字（warning のみ）・「すぐに」の唯一の定義（後処理と検査が同じ正規表現）
 import { detectTypos } from "./typo-check";
 import { HASTY_ADVERB_TEST_RE } from "./banned-phrasing";
+// 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する
+import { jstParts, WEEKDAYS_JA } from "./jst-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶（generate-reply / brain-core と四者同名）
 import { moveOutEvidenceText, type MoveOutSubject } from "./move-out-context";
 import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, SEARCH_CONFIRM_RE, type ConfirmationContextVerdict } from "./confirmation-context";
@@ -271,7 +273,10 @@ async function callSonnet(prompt: PromptContent, timeoutMs: number, maxTokens = 
 function jstTime(iso: string | undefined): string {
   if (!iso) return "";
   try {
-    return ` (${new Date(new Date(iso).getTime() + 9 * 3600000).toISOString().slice(11, 16)} JST)`;
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return "";
+    const p = jstParts(t);
+    return ` (${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")} JST)`;
   } catch { return ""; }
 }
 
@@ -297,9 +302,8 @@ function formatStaffMessages(msgs: FinalCheckContext["recentMessages"], limit: n
 }
 
 function nowJstString(): string {
-  const jst = new Date(Date.now() + 9 * 3600 * 1000);
-  const days = ["日", "月", "火", "水", "木", "金", "土"];
-  return `${jst.getUTCFullYear()}/${jst.getUTCMonth() + 1}/${jst.getUTCDate()}（${days[jst.getUTCDay()]}）${jst.getUTCHours()}:${String(jst.getUTCMinutes()).padStart(2, "0")} JST`;
+  const p = jstParts();
+  return `${p.y}/${p.m}/${p.d}（${WEEKDAYS_JA[p.dow]}）${p.hour}:${String(p.minute).padStart(2, "0")} JST`;
 }
 
 // ─── Pass 1: 前頭前野（ルール照合 / rule_check）────────────────────────────────
@@ -1430,9 +1434,7 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     if (idx === -1) continue;
     const after = text.slice(idx + sameDayPhrase.length, idx + sameDayPhrase.length + 20);
     if (/頂けます|いただけます|ください|お願い/.test(after)) continue;
-    const jst = new Date((ctx.now ?? Date.now()) + 9 * 3600 * 1000);
-    const jstHour = jst.getUTCHours();
-    const jstDay = jst.getUTCDay();
+    const { hour: jstHour, dow: jstDay } = jstParts(ctx.now ?? Date.now());
     const isWeekend = jstDay === 0 || jstDay === 6;
     if (jstHour >= 18 || isWeekend) {
       issues.push({

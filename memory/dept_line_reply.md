@@ -1,8 +1,18 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-09-08
+最終更新: 2026-09-12
 
 ---
+
+## 曜日は日付を正・日本時間で計算（竹内方針D・2026-09-12）— 黄金ルール
+- **日本時間の日付・曜日は `app/lib/jst-date.ts` の関数だけで計算する**（jstParts / jstYmd / jstMD / jstMDHm / jstDateLabel / jstYmdWeekday / jstDayStartMs / jstWeekMondayYmd / weekdayForMonthDay / weekdayTable / fixDateWeekdays）。書き方は「+9h→getUTC*」の1通り。+9h した Date にローカル getter（getMonth/getDay 等）は禁止（ローカル実行で +18h）
+- 根本原因: 下書きの曜日の食い違い 26/331件中24件が前年（2025年）の暦＝LLM が明日以降の曜日を自分で計算していた → generate-reply の dateNote と brain の【時間情報】に **14日分の曜日表** を渡し「表に無い日付には曜日を付けない」
+- 安全網: 後処理 TYPO_WEEKDAY_MISMATCH（typo-check）は jst-date の correctDateWeekdayMatch を使う（typo-check.weekdayFor は weekdayForMonthDay の再エクスポート）
+- few-shot 衛生: example-hygiene.fixExampleWeekdays を注入直前に通す（created_at が分かる経路＝その日の暦で付け替え／pgvector RPC は created_at が無いので食い違う曜日だけ外す）。DB の行は書き換えない
+- 実害修正: brain-core の【すでに送付済みの物件】送付日（timeZone 抜けで UTC 日付・sent_properties 144行）→ jstMD。bg-async の条件バナー時刻・daily-brief の曜日 → jstParts。reply-kpi の週キー → JST の月曜
+- AIX 側は aix_feature_suggestions a3cc50bf（[曜日] AIX 生成文の曜日を日本時間の暦で補正する）で提案。コードは直接直していない
+- 未対応（竹内さん確認待ち）: fill-estimate の作成日（UTC）・property-tasks / hanbancyo-webhook の todayStart（UTC 0時＝JST 9時境界）
+- テスト: `npx tsx app/lib/__tests__/jst-date.test.ts`（16）・hygiene.test.ts に W1〜W4
 
 ## 見積書の文脈理解（Fable5・2026-09-08）— 黄金ルール
 

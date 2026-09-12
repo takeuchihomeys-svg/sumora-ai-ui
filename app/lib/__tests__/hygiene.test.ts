@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/hygiene.test.ts（vitest 不要の自己完結ハーネス。全 PASS で exit 0）
 import * as fs from "fs";
 import * as path from "path";
-import { GENERATION_FAILURE_TEXT, isUsableExampleText, isUsableAiDraft, isGenerationFailureText } from "../example-hygiene";
+import { GENERATION_FAILURE_TEXT, isUsableExampleText, isUsableAiDraft, isGenerationFailureText, fixExampleWeekdays } from "../example-hygiene";
 
 // ── ミニハーネス ──
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
@@ -43,6 +43,25 @@ describe("書く側で止める（送信・保存）", () => {
   it("S3 save-reply-example は失敗文の送信文を保存しない", () => {
     const s = src("api/save-reply-example/route.ts");
     expect(/isGenerationFailureText\(sentReply\)/.test(s)).toBe(true);
+  });
+});
+
+describe("few-shot 注入前の曜日補正（2026-09-12 竹内方針D）", () => {
+  it("W1 e650e29e 型: 8/1（金）8/2（土）8/3（日）→ 書いた日の暦で 土・日・月（日付を正とする）", () => {
+    const s = "8/1（金）8/2（土）8/3（日）でしたらご案内可能です😊！！";
+    expect(fixExampleWeekdays(s, "2026-07-28T05:00:00Z")).toBe("8/1（土）8/2（日）8/3（月）でしたらご案内可能です😊！！");
+  });
+  it("W2 created_at が分からない実例は、食い違う曜日だけ外す（日付は残す・正しい曜日はそのまま）", () => {
+    const now = Date.parse("2026-09-12T03:00:00Z");
+    expect(fixExampleWeekdays("7/23（水）と7/24（金）でご案内可能です", null, now)).toBe("7/23と7/24（金）でご案内可能です");
+  });
+  it("W3 日付の無い文・正しい曜日の文は変えない", () => {
+    expect(fixExampleWeekdays("かしこまりました！！", "2026-07-28T05:00:00Z")).toBe("かしこまりました！！");
+    expect(fixExampleWeekdays("9/14（月）14時でご案内させて頂きます", "2026-09-11T05:00:00Z")).toBe("9/14（月）14時でご案内させて頂きます");
+  });
+  it("W4 generate-reply の few-shot 注入2か所が fixExampleWeekdays を通している", () => {
+    const s = src("api/generate-reply/route.ts");
+    expect((s.match(/fixExampleWeekdays\(normalizeBannedPhrasing\(ex\.sent_reply/g) ?? []).length).toBe(2);
   });
 });
 

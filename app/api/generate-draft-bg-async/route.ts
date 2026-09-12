@@ -4,6 +4,7 @@ import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core"
 import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES } from "@/app/lib/conversation-status";
 // 2026-09-09 Fable5: 複数通の結合は "\n" ではなく MSG_SEP（1通内の改行を「N通」に分割しない）
 import { MSG_SEP } from "@/app/lib/reply-context";
+import { jstParts } from "@/app/lib/jst-date";
 
 export const maxDuration = 300;
 
@@ -171,8 +172,9 @@ async function applyBrainConditionChange(
   const hasPending = ((pc?.additional_conditions as string | null) ?? "")
     .split("\n").some(l => l.trim() && !l.startsWith("【"));
   if (!hasPending && Object.keys(changedFields).length > 0) {
-    const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
-    const ts = `${String(jst.getMonth() + 1).padStart(2, "0")}/${String(jst.getDate()).padStart(2, "0")} ${String(jst.getHours()).padStart(2, "0")}:${String(jst.getMinutes()).padStart(2, "0")}`;
+    // 2026-09-12 方針D: +9h した Date にローカル getter を使うとローカル実行で +18h になる → jstParts（+9h→getUTC*）に統一
+    const jst = jstParts();
+    const ts = `${String(jst.m).padStart(2, "0")}/${String(jst.d).padStart(2, "0")} ${String(jst.hour).padStart(2, "0")}:${String(jst.minute).padStart(2, "0")}`;
     const note = Object.entries(changedFields).map(([k, v]) => `${BRAIN_COND_LABELS[k] ?? k}: ${v}`).join("、");
     const pendingEntry = `[${ts}|auto] ${note}`;
     const { data: latest } = await db.from("property_customers")

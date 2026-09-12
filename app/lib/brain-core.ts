@@ -22,6 +22,8 @@ import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "@/app/lib/move-out-co
 import { buildActionLedger } from "@/app/lib/action-ledger";
 // 2026-09-11 データ衛生: 正解例として使えるかの唯一の判定（生成失敗文・テスト送信を除外）
 import { isUsableExampleText } from "@/app/lib/example-hygiene";
+// 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（timeZone 抜けの UTC 表示を防ぐ）
+import { jstMD, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -1064,7 +1066,7 @@ export async function analyzeConversation(
         const aixType = exact ?? fuzzy;
         senderLabel = aixType ? `AIX:${aixType}` : (m.is_aix_generated ? "AIX" : "スタッフ");
       }
-      const dateLabel = new Date(m.created_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" });
+      const dateLabel = jstMD(m.created_at);
       const imageTag = m.image_type && IMAGE_TYPE_LABEL[m.image_type] && /^\[画像\]/.test(m.text ?? "")
         ? `（画像種別: ${IMAGE_TYPE_LABEL[m.image_type]}）` : "";
       const quoted = m.quoted_message_id ? msgByLmid.get(m.quoted_message_id) : undefined;
@@ -1314,8 +1316,9 @@ export async function analyzeConversation(
   const daysSinceLastCustomerMsg = lastCustomerMsg
     ? Math.floor((Date.now() - new Date(lastCustomerMsg.created_at).getTime()) / 86_400_000)
     : null;
-  const todayStr = new Date().toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" });
-  const timingText = `\n【時間情報】今日: ${todayStr} / 最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）`;
+  // 2026-09-12 方針D: 今日に曜日を付け、14日分の曜日表も渡す（closing_strategy 等で曜日を自分で計算させない）
+  const todayStr = jstYmdWeekday();
+  const timingText = `\n【時間情報】今日: ${todayStr}（曜日表: ${weekdayTable(Date.now(), 14)}。日付に曜日を付ける時はこの表を使い、表に無い日付には曜日を付けない） /最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）`;
 
   // Build customer conditions context
   type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null; ai_summary?: string | null; ai_summary_json?: Record<string, unknown> | null; personality_profile?: string | null; pet?: boolean | null; floor_area_min?: number | null; floor_area_max?: number | null; commute_station?: string | null; commute_minutes?: number | null; area_mode?: string | null; initial_cost_limit?: number | null; building_age?: number | null; other_requests?: string | null } | null;
@@ -1422,7 +1425,7 @@ export async function analyzeConversation(
           p.applicant_rank != null ? `${p.applicant_rank}番手` : "",
           p.customer_reaction ? `顧客反応:${REACTION_LABEL[p.customer_reaction] ?? p.customer_reaction}` : "",
         ].filter(Boolean).join("・");
-        return `- ${p.property_name} ${p.room_no}（${new Date(p.sent_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}送付${facts ? `・${facts}` : ""}）`;
+        return `- ${p.property_name} ${p.room_no}（${jstMD(p.sent_at)}送付${facts ? `・${facts}` : ""}）`;
       }).join("\n")}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`
     : "";
 
@@ -1753,7 +1756,7 @@ export async function analyzeConversation(
     .filter(Boolean);
   const uniqueCostNotes = [...new Set(costNotes)].slice(0, 5);
   const estimateInfoText = estimateSentLog
-    ? `\n【御見積書 送付済み（確定事実）】\n- ${new Date(estimateSentLog.sent_at ?? estimateSentLog.created_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" })}に御見積書を同封して送付済み（AIX: ${estimateSentLog.aix_type ?? "?"}）${
+    ? `\n【御見積書 送付済み（確定事実）】\n- ${jstMD(estimateSentLog.sent_at ?? estimateSentLog.created_at)}に御見積書を同封して送付済み（AIX: ${estimateSentLog.aix_type ?? "?"}）${
         uniqueCostNotes.length > 0 ? `\n【送付済み御見積書の費用情報】\n${uniqueCostNotes.map((n) => `- ${n}`).join("\n")}` : ""
       }\n※「御見積書を作成してお送りします」等の再宣言は禁止（既に送付済み）。費用について聞かれたら上記の金額を根拠に答えること。`
     : "";
@@ -2218,8 +2221,7 @@ ${history}`;
       let protectedMeetingPlace = false;
       if (finalAix === "meeting_place") {
         // analyzeAndSaveBrainMeta の viewingPhaseDetail 分岐と同型の決定論でフェーズを導出
-        const nowJstGate = new Date(Date.now() + 9 * 3600 * 1000);
-        const todayJstGate = `${nowJstGate.getUTCFullYear()}-${String(nowJstGate.getUTCMonth() + 1).padStart(2, "0")}-${String(nowJstGate.getUTCDate()).padStart(2, "0")}`;
+        const todayJstGate = jstYmd();
         const upcomingViewing = viewings
           .filter(v => (v.status === "scheduled" || v.status == null) && v.viewing_date >= todayJstGate)
           .sort((a, b) => a.viewing_date.localeCompare(b.viewing_date))[0] ?? null;
@@ -2541,8 +2543,7 @@ const INCREMENTAL_BYPASS_RE = /内見|内覧|見学|見に行|決め(ます|ま�
 
 function formatJstDateShort(iso: string | null): string {
   if (!iso) return "";
-  const d = new Date(new Date(iso).getTime() + 9 * 3600 * 1000);
-  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+  return jstMD(iso);
 }
 
 // H3(Fable5): checkpoint 生成の静的命令を system に分離し prompt caching を適用。
@@ -3034,8 +3035,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
 
         // JST 今日の日付を YYYY-MM-DD で取得（UTC+9 を手動計算）
         // viewing 分岐と全フェーズ共通の calendar_events is_hot 補完の両方で使用
-        const nowJst = new Date(Date.now() + 9 * 3600 * 1000);
-        const todayJst = `${nowJst.getUTCFullYear()}-${String(nowJst.getUTCMonth() + 1).padStart(2, "0")}-${String(nowJst.getUTCDate()).padStart(2, "0")}`;
+        const todayJst = jstYmd();
 
         // P6(抜け穴対策): brain(Haiku)が提案し品質ゲートを通過したAIXアクション（meta.action）を
         // 決定論デフォルトより優先する統一規則。viewing だけは内覧テーブル由来の決定論を最優先
@@ -3437,9 +3437,7 @@ async function createCalendarEventFromBrainAction(
   if (!cfg) return;
 
   // JSTでの今日/明日を算出
-  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  const targetDate = new Date(jstNow.getTime() + cfg.daysFromNow * 86400000);
-  const dateStr = targetDate.toISOString().slice(0, 10); // YYYY-MM-DD
+  const dateStr = jstYmd(Date.now() + cfg.daysFromNow * 86400000); // YYYY-MM-DD（JST）
   const startAt = `${dateStr}T10:00:00+09:00`;
 
   const title = customerName ? `${customerName} ${cfg.label}` : cfg.label;

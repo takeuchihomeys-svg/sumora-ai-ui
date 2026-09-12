@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { jstParts } from "@/app/lib/jst-date";
 
 export const maxDuration = 60;
 
@@ -53,9 +54,9 @@ function msgPreview(msg: string | null, max = 22): string {
 }
 
 // JST曜日: 0=日 1=月 2=火 3=水 4=木 5=金 6=土
+// 2026-09-12 方針D: +9h した ms にローカル getDay を使うとローカル実行で二重にずれる → jstParts（+9h→getUTC*）に統一
 function getJSTDayOfWeek(): number {
-  const jstMs = Date.now() + 9 * 60 * 60 * 1000;
-  return new Date(jstMs).getDay();
+  return jstParts().dow;
 }
 
 function pickByDay<T>(arr: T[]): T {

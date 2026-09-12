@@ -17,6 +17,8 @@ import {
   LEDGER_OUTBOUND_SOURCES, pickupRound, redoWord,
   type StaffTurn, type StaffTurnKind, type CustomerResponseKind,
 } from './reply-context';
+// 2026-09-12 竹内方針D: JST の日付表示は jst-date に一本化
+import { jstMDHm } from './jst-date';
 // 再 export（生成・検査が action-ledger 経由でも同じ定数を得る）
 export { STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, REDO_CLAIM_RE, LEDGER_OUTBOUND_SOURCES };
 
@@ -428,8 +430,7 @@ export function ledgerKindOfStaffTurn(k: StaffTurnKind): LedgerKind | null { ret
 function fmtJst(iso: string | null): string {
   const t = ms(iso);
   if (!Number.isFinite(t)) return '時刻不明';
-  const d = new Date(t + 9 * 60 * MIN);
-  return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+  return jstMDHm(t);
 }
 
 /** dynamicBlock 注入用【📒 我々の行動台帳】（往復文脈ブロックの直前）。禁止語と代替表現をリテラルで渡す */

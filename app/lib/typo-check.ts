@@ -6,7 +6,9 @@
 //   誤検出（正解 775件）: 12件ヒット＝全てスタッフ実文の誤字。除外前の偽陽性は「中でできる」と行末の「、、」の2件のみ（除外済み）
 //   誤字として扱わないもの: 「で次第」単独（人の送信で60件ある常用表記）・ご教授・御見積し・拝見させて（BANNED の担当）・
 //   英字/数字/URL の反復・customerName に含まれる反復（めちめち等）
-//   依存ゼロ（他の app/lib/* を import しない）。
+//   依存は jst-date（依存ゼロ）だけ。
+
+import { DATE_WEEKDAY_RE, correctDateWeekdayMatch } from "./jst-date";
 
 export type TypoCode =
   | "TYPO_DUP_HONORIFIC" | "TYPO_DUP_TOKEN" | "TYPO_KANA_DROP" | "TYPO_PARTICLE_DUP"
@@ -57,27 +59,9 @@ const PUNCT_AFTER_EXCL_RE = /([！!])[、。]/g;
 const DOUBLE_TOUTEN_RE = /、、(?=[^\n])/g;
 const ESCAPE_LEAK_RE = /\\n/g;
 
-const WEEKDAYS = "日月火水木金土";
-const toHalf = (s: string) => s.replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
-/** 「M/D（曜）」「M月D日（曜）」「M月D日(曜日)」 */
-const DATE_WEEKDAY_RE = /([0-9０-９]{1,2})(?:[\/／]|月)([0-9０-９]{1,2})日?\s*[（(]([日月火水木金土])(?:曜日?)?[）)]/g;
-
-/** JST の現在日±6か月で年を推定して曜日を計算する（aix/action の曜日計算と同じく日付を正とする） */
-export function weekdayFor(month: number, day: number, now: number): string | null {
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const jstNow = new Date(now + 9 * 3600 * 1000);
-  const y0 = jstNow.getUTCFullYear();
-  let best: { diff: number; wd: number } | null = null;
-  for (const y of [y0 - 1, y0, y0 + 1]) {
-    const t = Date.UTC(y, month - 1, day);
-    const d = new Date(t);
-    if (d.getUTCMonth() !== month - 1) continue; // 2/30 等
-    const diff = Math.abs(t - Date.UTC(y0, jstNow.getUTCMonth(), jstNow.getUTCDate()));
-    if (diff > 184 * 86400 * 1000) continue;
-    if (!best || diff < best.diff) best = { diff, wd: d.getUTCDay() };
-  }
-  return best ? WEEKDAYS[best.wd] : null;
-}
+// 2026-09-12 竹内方針D: 曜日の計算は jst-date.ts の1関数（weekdayForMonthDay・correctDateWeekdayMatch）に一本化。
+//   few-shot の衛生（example-hygiene）も同じ関数で直す。weekdayFor は既存の呼び出し元のための再エクスポート
+export { weekdayForMonthDay as weekdayFor } from "./jst-date";
 
 function rules(now: number): Rule[] {
   return [
@@ -89,11 +73,8 @@ function rules(now: number): Rule[] {
     { code: "TYPO_PUNCT", re: PUNCT_AFTER_EXCL_RE, fix: (m) => m[1] },
     { code: "TYPO_PUNCT", re: DOUBLE_TOUTEN_RE, fix: () => "、" },
     {
-      code: "TYPO_WEEKDAY_MISMATCH", re: DATE_WEEKDAY_RE, fix: (m) => {
-        const wd = weekdayFor(Number(toHalf(m[1])), Number(toHalf(m[2])), now);
-        if (!wd || wd === m[3]) return m[0]; // 一致（または日付として無効）→ 誤字ではない
-        return m[0].replace(/[（(][日月火水木金土]/, (s) => s[0] + wd);
-      },
+      // 一致（または日付として無効）→ 原文のまま＝誤字ではない
+      code: "TYPO_WEEKDAY_MISMATCH", re: new RegExp(DATE_WEEKDAY_RE.source, "g"), fix: (m) => correctDateWeekdayMatch(m[0], m[1], m[2], m[3], now),
     },
   ];
 }
