@@ -31,7 +31,7 @@ import { jstMD, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
 // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 分析モード判定（決定論の場面の証拠で cached→incremental に格上げ）
 import { decideAnalysisMode } from "@/app/lib/brain-analysis-mode";
 // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した発言は必ず分析し直す（cached で前回の「もう1件の内覧日確定」を持ち越さない）
-import { detectPropertyPass, CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
+import { detectPropertyPass, CUST_WILL_SEND_SELF_PRED, analyzeSubstance } from "@/app/lib/reply-context";
 // 2026-09-12 同 段2: 場面の証拠（決定論）とスタッフが押した AIX の実績（brain_aix_feedback）をブレインの入力にする
 import {
   unrepliedCustomerTurn, sceneEvidenceForTurn, sceneSignalFallback, compactSceneEvidence, buildSceneEvidencePromptText,
@@ -2225,10 +2225,17 @@ ${history}`;
     // 2026-09-12 竹内（Sさん事例）: 募集状況等の確認の宣言 → AIX【物件確認した】。お客様から物件確認の依頼があった時だけ
     //   （判定は customerRequestedPropertyCheck＝line-tasks の物件確認タスクと同じ。スタッフの宣言より前の顧客の連投を見る）
     const messagesOldestFirst = [...typedMessages].reverse(); // typedMessages は新しい順 → 古い順で渡す
+    // 2026-09-12 竹内（YUYA 事例）: スタッフの宣言の後にお客様が了承だけ返した（「お願いします！」）→ 宣言の AIX を保つ。
+    //   その時の「確認の依頼があったか」「持込予告か」は宣言より前のお客様の連投で見る（了承の1通で見ると依頼が消える）
+    const lastIsCustomer = messagesOldestFirst[messagesOldestFirst.length - 1]?.sender === "customer";
+    const customerAckAfter = lastIsCustomer && !unrepliedTurn.hasImage && !!unrepliedTurn.text.trim()
+      && analyzeSubstance(unrepliedTurn.text, [unrepliedTurn.text]).isAckOnly;
+    const lastStaffIdx = messagesOldestFirst.map((m) => m.sender).lastIndexOf("staff");
+    const promiseBasis = customerAckAfter && lastStaffIdx >= 0 ? messagesOldestFirst.slice(0, lastStaffIdx + 1) : messagesOldestFirst;
     // 2026-09-12 竹内（あや事例）: 最後の顧客の連投が「これから自分で物件を送る予告」（「気に入った物件があって初期費用を知りたい」を含む）で、
     //   物件そのもの（URL・画像）がまだ届いていないか。届く前は AIX なし（届いたら募集状況確認・見積書をブレインが判断）
     const lastCustomerTurnText = (() => {
-      const arr = [...messagesOldestFirst];
+      const arr = [...promiseBasis];
       while (arr.length && arr[arr.length - 1].sender !== "customer") arr.pop();
       const out: string[] = [];
       for (let i = arr.length - 1; i >= 0 && arr[i].sender === "customer"; i--) out.unshift(arr[i].text ?? "");
@@ -2238,10 +2245,11 @@ ${history}`;
       && CUST_WILL_SEND_SELF_PRED(lastCustomerTurnText).yes;
     const promiseAix = resolveStaffPromiseAix(brainLedger.facts, messagesOldestFirst, {
       customerRequestedCheck: customerRequestedPropertyCheck({
-        recentMessages: messagesOldestFirst.map((m) => ({ sender: m.sender, text: m.text })),
+        recentMessages: promiseBasis.map((m) => ({ sender: m.sender, text: m.text })),
         sentPropertyCount: brainLedger.facts.propertiesSentCount,
       }),
       customerWillSend: customerWillSendFirst,
+      customerAckAfter,
     });
     if (promiseAix) {
       finalAix = promiseAix.action;

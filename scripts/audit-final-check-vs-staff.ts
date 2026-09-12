@@ -223,7 +223,7 @@ type RowResult = {
     if (HASTY_ADVERB_TEST_RE.test(DRAFT ? (e.ai_draft ?? "") : e.sent_reply)) policyDiff.push("すぐに除去");
     const src = DRAFT ? (e.ai_draft ?? "") : e.sent_reply;
     if (DRAFT && (!src.trim() || !isUsableExampleText(src) || norm(src) === norm(e.sent_reply))) continue;
-    const text = RAW ? src : applySurfaceFixes(src, { customerName: name, aliases: addr.aliases, now: sendAt, fillName: true }).text;
+    const text = RAW ? src : applySurfaceFixes(src, { customerName: name, aliases: addr.aliases, now: sendAt, fillName: true, customerMessage: cust }).text;
     const surfaceChanged = text !== src;
     let issues: CheckIssue[];
     try { issues = runDeterministicChecks(text, ctx); }

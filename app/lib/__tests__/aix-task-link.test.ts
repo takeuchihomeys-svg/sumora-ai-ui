@@ -106,6 +106,17 @@ it("フォーム記入の依頼（ご入力いただけましたら…ピック�
   const t = "かしこまりました！！ 上記お部屋探しフォーマットご入力いただけましたら私の方でオススメできるお部屋ピックアップさせていただきます😊！！";
   expect(classifyStaffTextForLedger(t, null)?.kind ?? null).toBe("condition_asked");
 });
+// 2026-09-12 竹内（YUYA 事例）: 確認の宣言 → お客様「お願いします！」→ 物件確認した を保つ（実績 26/35＝74%・確認します 0件）
+it("YUYA: 確認の宣言の後にお客様が「お願いします！」だけ → AIX 物件確認した のまま", () => {
+  const t = "かしこまりました！！\nお送り頂きました物件の募集状況確認させて頂きます😊！！\n確認出来次第ご連絡させて頂きます！！";
+  const before = [C("阪急神戸本線 十三 徒歩7分\n1R 4万円\nhttps://myhome.nifty.com/smp/rent/osaka/1/"), C("ここはどうでしょうか？"), S(t)];
+  expect(resolveStaffPromiseAix(facts(t), [...before, C("お願いします！")], { ...asked(before), customerAckAfter: true })?.action ?? null).toBe("property_check_result");
+});
+it("宣言の後にお客様が了承以外（質問・条件）を返した → この規則は使わない", () => {
+  const t = "かしこまりました！！\nお送り頂きました物件の募集状況確認させて頂きます😊！！";
+  const before = [C("ここ空いてますか？ https://suumo.jp/chintai/bc_1/"), S(t)];
+  expect(resolveStaffPromiseAix(facts(t), [...before, C("あと初期費用も知りたいです")], { ...asked(before), customerAckAfter: false })).toBe(null);
+});
 it("確認結果を報告済み（履行済み）→ AIX なし", () => {
   const msgs = [C("こちら空いてますか？\nhttps://example.com/room/1"), S(S_CONFIRM)];
   expect(resolveStaffPromiseAix(facts(S_CONFIRM, { conf: false }), msgs, asked(msgs))).toBe(null);

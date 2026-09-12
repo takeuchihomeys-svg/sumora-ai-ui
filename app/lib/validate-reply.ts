@@ -4,6 +4,8 @@ import { fillNameSlot } from "./reply-context";
 // 2026-09-11 竹内方針1・4・5（統合設計 §1）: 後処理の決定論修正（承知→かしこまりました・すぐに除去・誤字）は依存ゼロの2モジュールが唯一の定義
 import { normalizeBannedPhrasing } from "./banned-phrasing";
 import { applyTypoAutoFix } from "./typo-check";
+// 2026-09-12 竹内（YUYA 事例）: お客様が送った物件は「お送り頂きました物件」（共有文の駅名・徒歩分で呼ばない）
+import { normalizeSharedPropertyReference } from "./shared-property-ref";
 // 2026-09-12 竹内方針A: 時間枠の「空いて」・断言置換文は AIX 場面判定（aix-reply-set）と同じ定数
 import { isScheduleSlotVacancy, ASSERTION_REPLACEMENT } from "./scene-patterns";
 export { fillNameSlot };
@@ -521,10 +523,16 @@ export function unifyAddressAliases(text: string, canonRaw: string | null | unde
  *  validateAndClean の末尾（ゲートの後）と final-check の修正版の2か所で同じ関数を通す（ゲートで生じる「域から域から」も消える） */
 export function applySurfaceFixes(
   text: string,
-  opts?: { customerName?: string | null; aliases?: string[]; now?: number; /** 〇〇さん／{name} を確定名で埋めるか（テンプレート最適化は false） */ fillName?: boolean },
+  opts?: {
+    customerName?: string | null; aliases?: string[]; now?: number; /** 〇〇さん／{name} を確定名で埋めるか（テンプレート最適化は false） */ fillName?: boolean;
+    /** 返信するお客様の連投（物件の共有文・URL・画像があれば、共有文の駅名・徒歩分で物件を呼ばない。2026-09-12 竹内・YUYA 事例） */
+    customerMessage?: string | null;
+  },
 ): { text: string; applied: string[] } {
   const applied: string[] = [];
   let out = text;
+  const sp = normalizeSharedPropertyReference(out, opts?.customerMessage);
+  if (sp.count) { out = sp.text; applied.push(`SHARED_PROPERTY_REF×${sp.count}`); }
   const u = unifyAddressAliases(out, opts?.customerName, opts?.aliases);
   if (u.fixes.length) { out = u.text; applied.push(...u.fixes); }
   const b = normalizeBannedPhrasing(out);
@@ -1030,7 +1038,7 @@ export function validateAndClean(
   // 2026-09-11 竹内方針1・3・4・5（統合設計 §1）: 末尾（ゲートの後）で決定論の表層修正（別名の統一・承知→かしこまりました・すぐに除去・誤字）。
   //   gen1・gen2 の両方を通る唯一の後処理。final-check の修正版も同じ applySurfaceFixes を通す
   {
-    const sf = applySurfaceFixes(cleaned, { customerName: opts?.customerName, aliases: opts?.nameAliases, now: opts?.now, fillName: !!opts?.aixGates });
+    const sf = applySurfaceFixes(cleaned, { customerName: opts?.customerName, aliases: opts?.nameAliases, now: opts?.now, fillName: !!opts?.aixGates, customerMessage: opts?.aixGates ? opts?.customerMessage : null });
     if (sf.applied.length > 0) {
       issues.push(...sf.applied.map((a) => "表層修正: " + a));
       cleaned = sf.text;

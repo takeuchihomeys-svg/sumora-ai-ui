@@ -57,13 +57,20 @@ export function resolveStaffPromiseAix(
     /** 宣言より前の顧客の連投が「これから自分で物件を送る予告」（CUST_WILL_SEND_SELF_PRED・URL/画像なし）。
      *  2026-09-12 竹内（あや事例）: 物件はまだ届いていないので、見積書・物件確認の宣言があっても AIX はまだ無い（届いてからブレインが判断） */
     customerWillSend?: boolean;
+    /** 宣言の後にお客様が了承だけを返した（「お願いします！」「ありがとうございます」）。
+     *  2026-09-12 竹内（YUYA 事例）: 確認の宣言 → お客様「お願いします！」→ ブレインが 確認します（acknowledge_check）に戻していた。
+     *  実績（150日）: 確認の宣言＋お客様の了承の後に押された AIX 35件中 物件確認した 26件（74%）・確認します 0件 → 宣言の AIX を保つ */
+    customerAckAfter?: boolean;
   } = {},
 ): { action: "estimate_sheet" | "property_send" | "property_check_result"; kind: "estimate" | "pickup" | "check" } | null {
-  const last = [...messages].reverse().find((m) => {
+  const nonMedia = messages.filter((m) => {
     const t = (m.text ?? "").trim();
     return t && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(t);
   });
-  if (!last || last.sender !== "staff") return null;
+  const lastAny = nonMedia[nonMedia.length - 1];
+  if (!lastAny || (lastAny.sender !== "staff" && !opts.customerAckAfter)) return null;
+  const last = [...nonMedia].reverse().find((m) => m.sender === "staff");
+  if (!last) return null;
   const e = facts.lastStaffEntry;
   if (!e || e.status !== "promised") return null;
   // 物件が届く前の「お送り頂き次第…御見積書」は、届いてからの約束（見積るものがまだ無い）

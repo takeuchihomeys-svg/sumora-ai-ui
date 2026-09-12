@@ -100,6 +100,8 @@ import {
   // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した（探索継続）の判定。断り判定の除外・分類・brain 戦略の抑止が同じ関数
   detectPropertyPass,
 } from "@/app/lib/reply-context";
+// 2026-09-12 竹内（YUYA 事例）: お客様が送った物件の呼び方（生成の指示と後処理が同じ判定）
+import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
 import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask } from "@/app/lib/action-ledger";
@@ -1260,6 +1262,11 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 ・返信文は受付・確認の一言のみ：「確認させて頂きます😊！！」「しばらくお待ちください！！」程度にとどめる（「少々お待ちください」はfinal-check禁止語のため絶対に使わない）。
 ・物件名・号室は書かない（「お送り頂きました物件」で受ける。写真・URLも書かない。2026-09-11 竹内方針2）。`
     : "";
+  // 2026-09-12 竹内（YUYA 事例）: お客様が物件そのもの（URL・画像・ポータルの共有文）を送ってきた時の呼び方。
+  //   後処理（applySurfaceFixes → normalizeSharedPropertyReference）でも置き換えるが、最初から正しく書かせる
+  const sharedPropertyNote = customerSharedProperty(customerMessage)
+    ? `\n\n【🏠 お客様が送った物件の呼び方】お客様が送ってきた物件は「お送り頂きました物件（お部屋）」と呼ぶ（例:「お送り頂きました物件の募集状況確認させて頂きます😊！！」）。物件名・号室・駅名・徒歩分・家賃・間取りで呼ばない（×「十三徒歩7分の物件」×「4万円の1Rのお部屋」）。`
+    : "";
 
   // 共感フレーズ（全然大丈夫です／全然わがままじゃないですよ）の確定ゲート — 常時注入
   const empathyPhraseNote = buildEmpathyPhraseNote(customerMessage);
@@ -1476,7 +1483,7 @@ ${quotedContextNote}
 【直近の会話履歴（スモラ自身の返信も含む）】この履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない。
 ${history || "なし"}
 
-${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${confirmationGateNote}${availabilityCheckNote}${budgetInventoryNote}${estimateGateNote}${aixTimingNote}
+${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${sharedPropertyNote}${confirmationGateNote}${availabilityCheckNote}${budgetInventoryNote}${estimateGateNote}${aixTimingNote}
 
 ${examples}${examplesInstruction}
 
