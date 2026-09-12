@@ -27,7 +27,9 @@ const APPLY_INTENT_RE = /申(し)?込(み)?(たい|します|お願い)|契約�
 const VIEWING_RE = /内覧|内見|見学|現地|待ち合わせ|見てみたい|見に行/;
 const COST_RE = /初期費用|見積|敷金|礼金|仲介手数料|保証(会社|料)|家賃.*(いくら|交渉)|費用.*(いくら|どのくらい|教えて)|総額/;
 const CONSIDER_RE = /検討|迷って|考え(て|させて)|悩んで/;
-const THANKS_RE = /ありがとう|ありがとございます|感謝|助かり(ます|ました)|嬉しい/;
+// 感謝返し: 返信生成の isGratitudeReplyTPO と同じ 60字・同じキーワード・質問/依頼の除外（RAG の場面ラベルと返信方針を同じ条件で発火させる）
+const THANKS_RE = /ありがとう|ありがとございます|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|宜しくお願い|おねがいします|おねがいいたします|おねがい致します|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解|楽しみ|お任せ|おまかせ|引き続き/;
+const THANKS_EXCLUDE_RE = /[?？]|希望|したい|教えて|どうすれば|送って(ください|ほしい|もらえ)|ください(?!ませ)/;
 const PICKUP_STAFF_RE = /ピックアップ|お部屋.*送|物件.*(紹介|送付|お送り)/;
 
 export function inferTpoHint(o: TpoInput): string | null {
@@ -44,7 +46,7 @@ export function inferTpoHint(o: TpoInput): string | null {
   if (VIEWING_RE.test(msg)) return "内覧調整";
   if (COST_RE.test(msg)) return "費用説明";
   if (CONSIDER_RE.test(msg)) return "検討中フォロー";
-  if (msg.length < 40 && THANKS_RE.test(msg)) return "感謝返し";
+  if (msg.length < 60 && !THANKS_EXCLUDE_RE.test(msg) && THANKS_RE.test(msg)) return "感謝返し";
   // ── 会話の冒頭 ──
   if (!o.lastStaffMsg || o.convStatus === "initial" || o.convStatus === "new") return "初回対応";
   // ── 最後の手段: ブレインの前回の出力・直前のスタッフ発言から ──

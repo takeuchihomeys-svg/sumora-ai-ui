@@ -1017,10 +1017,20 @@ export async function POST(req: NextRequest) {
       recentCustomerMsgs.slice(0, 200),
     ].filter(Boolean).join(" | ").slice(0, 2000);
     ragQueryLength = ragQuery.length;
+    // 2026-09-13 AIX-META × RAG 監査: 問いは「探す文書と同じ構成」にする。上の ragQuery（AIX-META・プロファイル 約20項目）は
+    //   成功パターン（人物像＋パターンで埋め込み）にだけ使い、ナレッジ・実例（state＋顧客発言で埋め込み・戦略語なし）は
+    //   キーワード＋state＋顧客発言の問いで引く（本番の問いで戦略語入りの問いは実例・ナレッジの精度を下げていた: 0.636→0.666 / 0.485→0.525）
+    const docQuery = recentCustomerMsgs.trim()
+      ? `${kwPrefix}${normalizedState}: [顧客]${recentCustomerMsgs.slice(0, 600)}`.slice(0, 2000)
+      : ragQuery;
 
     try {
-      const emb = await generateEmbedding(ragQuery);
-      if (emb) {
+      const [emb, docEmbRaw] = await Promise.all([
+        generateEmbedding(ragQuery),
+        docQuery === ragQuery ? Promise.resolve(null) : generateEmbedding(docQuery),
+      ]);
+      const docEmb = docEmbRaw ?? emb;
+      if (emb && docEmb) {
         const stateAliases = STATE_SEARCH_ALIASES[normalizedState] ?? [normalizedState];
         const [wpRes, knRes, exRes, aixExRes] = await Promise.all([
           supabase.rpc("match_winning_patterns", {
@@ -1031,13 +1041,13 @@ export async function POST(req: NextRequest) {
           }),
           // generate-reply の fetchKnowledge と同構成（match_count拡大 + importance/similarity/鮮度スコアリング）
           supabase.rpc("match_reply_knowledge", {
-            query_embedding: emb,
+            query_embedding: docEmb,
             match_count: 40,
             min_importance: 7,
           }),
           // ⭐実例（スタッフの実返信）— 文体・テンポ再現の最重要ソース（generate-reply の fetchExamples と同RPC）
           supabase.rpc("match_reply_examples", {
-            query_embedding: emb,
+            query_embedding: docEmb,
             match_count: 20,
             filter_states: stateAliases,
           }),
@@ -1047,7 +1057,7 @@ export async function POST(req: NextRequest) {
           //（同一actionは+0.05ブースト）
           // 実例の主経路になったため母集団を 10 → 15 に拡大（dedupe後も6件を埋められるように）
           supabase.rpc("match_aix_reply_examples", {
-            query_embedding: emb,
+            query_embedding: docEmb,
             match_count: 15,
             filter_action: actionType ?? null,
           }),

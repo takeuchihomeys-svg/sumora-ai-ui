@@ -1174,19 +1174,33 @@ export async function analyzeConversation(
       prevAction: opts?.prevMeta?.action ?? null,
       prevEmotion: (opts?.prevMeta as { customer_emotion?: string | null } | undefined)?.customer_emotion ?? null,
     });
+    // 2026-09-13 AIX-META × RAG 監査: 問いは「探す文書と同じ構成」にする（1本の問いを全 RAG で使い回すのをやめ、2本に分けた）。
+    //   ① ナレッジ（本文・きっかけ例＋state で埋め込み・戦略語なし）→ 場面ラベル＋state＋直前のスタッフ発言＋今回の顧客の連投
+    //     旧: 前回の AIX-META（action・closing_strategy・reply_direction・意図・温度感 等12項目）・プロファイルを混ぜた1本の問い
+    //     → 本番の問いで「実際にスタッフが送った返信」への近さ 0.485 → 文書と同じ構成で 0.525。前回の判断が自分の検索を引っぱる自己強化も解消
+    //   ② 成功パターン（personality_profile＋winning_pattern で埋め込み）・テンプレート（カテゴリ＋ラベル）→ 人物像と戦略の問い（文書側にも戦略語がある）
+    const lastStaffForRag = typedMessages.find(m => m.sender === "staff" && Boolean(m.text))?.text ?? "";
     const ragQueryInput = [
-      tpoHint ? `[TPO:${tpoHint}]` : null,           // TPO場面明示（成約パターン命中精度向上）
-      pcForRag?.personality_profile,                   // 顧客の人間性（winning_patterns.situation と近い）
-      // P1-3: ai_summary（決まるパターン・人物像）をRAGクエリに追加。SELECTしているのに未使用だったデッドフィールドを解消
-      pcForRag?.ai_summary?.slice(0, 200) ?? null,    // AIによる顧客プロファイル分析
-      pcForRag?.preferences,                           // 希望・こだわり条件
-      prevMetaCtx,                                     // AIX-META: アクション・戦略・意図・感情
-      convStatus,                                      // 現在の会話フェーズ
-      recentCustomerMsgs.slice(0, 200),                // 直近顧客メッセージ
+      tpoHint ? `[TPO:${tpoHint}]` : null,
+      `${convStatus ?? ""}:`,
+      lastStaffForRag ? `[前返信]${lastStaffForRag.slice(0, 150)}` : null,
+      `[顧客]${(unrepliedTurnForTpo || recentCustomerMsgs).slice(0, 600)}`,
     ].filter(Boolean).join(" ").slice(0, 1500);
+    // 人物像・戦略が1つも無い会話（初回・プロファイル未作成）は空にして、ナレッジと同じ問いで引く（state だけの短い問いは精度が出ない）
+    const strategyParts = [
+      pcForRag?.personality_profile,                   // 顧客の人間性（winning_patterns の埋め込み元と同じ）
+      pcForRag?.ai_summary?.slice(0, 200) ?? null,     // AIによる顧客プロファイル分析
+      pcForRag?.preferences,                           // 希望・こだわり条件
+      prevMetaCtx,                                     // 前回の AIX-META（戦略・人物タイプ・温度感）
+    ].filter(Boolean);
+    const strategyQueryInput = strategyParts.length ? [...strategyParts, convStatus].filter(Boolean).join(" ").slice(0, 1500) : "";
     if (ragQueryInput.trim()) {
       try {
-        const qEmb = await generateEmbedding(ragQueryInput);
+        const [qEmb, sEmbRaw] = await Promise.all([
+          generateEmbedding(ragQueryInput),
+          strategyQueryInput.trim() ? generateEmbedding(strategyQueryInput) : Promise.resolve(null),
+        ]);
+        const sEmb = sEmbRaw ?? qEmb; // 人物像・戦略が無い会話（初回など）はナレッジと同じ問いで引く
         if (qEmb) {
             // 2026-09-13 RAG 監査: 過去のセーブデータの検索（match_conversation_checkpoints）はやめた。
             //   ① RPC が uuid と text の型不一致で毎回エラー＝一度もプロンプトに入っていなかった（error を捨てていた）。
@@ -1201,15 +1215,15 @@ export async function analyzeConversation(
                 min_importance: 8,
                 boost_state: tpoHint ?? null,
               }),
-              // winning_patterns RAG: incremental でも実行（人間性ベースのクロージング戦略は毎回必要）
+              // winning_patterns RAG: incremental でも実行（人間性ベースのクロージング戦略は毎回必要）。人物像・戦略の問いで引く
               supabase.rpc("match_winning_patterns", {
-                query_embedding: qEmb,
+                query_embedding: sEmb,
                 match_count: 9,
                 min_importance: 8,
               }),
-              // templates RAG: 会話フェーズ・戦略に最も近いテンプレを取得（バルクフェッチ廃止）
+              // templates RAG: 会話フェーズ・戦略に最も近いテンプレを取得（バルクフェッチ廃止）。人物像・戦略の問いで引く
               supabase.rpc("match_templates", {
-                query_embedding: qEmb,
+                query_embedding: sEmb,
                 match_count: 8,
               }),
             ]);
@@ -1222,7 +1236,7 @@ export async function analyzeConversation(
                 return arr.length ? Math.round(Math.max(...arr.map((r) => r.similarity ?? 0)) * 1000) / 1000 : null;
               };
               console.log(JSON.stringify({
-                tag: "brain:rag", conversationId, tpo: tpoHint ?? null, qlen: ragQueryInput.length,
+                tag: "brain:rag", conversationId, tpo: tpoHint ?? null, qlen: ragQueryInput.length, slen: strategyQueryInput.length,
                 knowledge: { n: (knRes.data ?? []).length, max: maxSim(knRes.data), err: knRes.error?.message ?? null },
                 winning: { n: (wpRagResult.data ?? []).length, max: maxSim(wpRagResult.data), err: wpRagResult.error?.message ?? null },
                 templates: { n: (tplRagResult.data ?? []).length, max: maxSim(tplRagResult.data), err: tplRagResult.error?.message ?? null },

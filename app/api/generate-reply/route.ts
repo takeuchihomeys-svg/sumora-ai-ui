@@ -3,6 +3,7 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
+import { inferTpoHint } from "@/app/lib/tpo-hint";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import {
   PHASE_GUIDE,
@@ -1773,89 +1774,25 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
   if (customerMessage && process.env.OPENAI_API_KEY) {
-    // AIX-META潜在意識強化(2026-08-25): customer_intent（7分類）と latent_intent（送信動機・潜在意識の自由記述）を
-    // 検索クエリに含め、「negative 審査に落ちる不安」等の心理文脈で関連ナレッジがヒットするようにする
-    // property_search_params から検索条件（エリア・間取り・家賃上限・こだわり）をRAGクエリ化
-    const psp = brainMeta?.property_search_params;
-    const pspText = psp
-      ? [psp.area, psp.floor_plan, psp.rent_max ? `家賃${psp.rent_max}円以内` : null, psp.preferences].filter(Boolean).join(" ")
-      : null;
-    // P0-3/P1-4: checkpoint_stage・repeated_concern・human_type_label・purchase_signal_level・engagement_stance を追加
-    // （aix-template-generate・brain-core・aix/action の3経路と対称化。特にpeak/none温度感で申込局面の実例精度向上）
-    const brainContext = brainMeta ? [brainMeta.action, brainMeta.closing_strategy, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.winning_pattern, brainMeta.customer_emotion, brainMeta.checkpoint_stage ? `フェーズ: ${brainMeta.checkpoint_stage}` : null, brainMeta.repeated_concern ? `繰り返し懸念: ${brainMeta.repeated_concern}` : null, brainMeta.human_type_label ? `人物タイプ: ${brainMeta.human_type_label}` : null, brainMeta.purchase_signal_level ? `温度感: ${brainMeta.purchase_signal_level}` : null, brainMeta.engagement_stance ? `押し引き: ${brainMeta.engagement_stance}` : null, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
-    const lastAixPart = lastAixHistoryText ? `[AIX履歴] ${lastAixHistoryText} ` : "";
+    // 2026-09-13 AIX-META × RAG 監査: 問いは「文書と同じ構成」にする（場面ラベル＋state＋直前のスタッフ発言＋今回の顧客発言）。
+    //   ナレッジの埋め込みは本文・きっかけ例＋state から作られていて戦略語は入っていない。
+    //   旧: AIX-META（action・closing_strategy・reply_direction・意図・温度感・押し引き・人物タイプ 等 13項目＋key_topics）・AIX履歴・
+    //   analysisContext（同じ項目の二重注入）を足していた → 本番の問い40件で「実際にスタッフが送った返信」への近さが
+    //   0.485（旧）→ 0.525（文書と同じ構成）。AIX-META は場面ラベル（boost_state＝距離への加点）と下の並べ替えで使う
+    void lastAixHistoryText; void analysisContext;
     const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
-    // TPO場面推定（成約会話パターンのRAGブースト 2026-08-30）
-    // ai_reply_knowledge（source='closed_won_analysis'）のconversation_stateラベルと一致させてORDER BY優先
-    const tpoLabel = (() => {
-      if (!brainMeta) return null;
-      const intent = brainMeta.customer_intent ?? "";
-      const action = brainMeta.action ?? "";
-      const emotion = brainMeta.customer_emotion ?? "";
-      const msg = customerMessage ?? "";
-      // 1. 申込後説明（state確定・最優先）
-      if (state === "applying") return "申込後説明";
-      // 2. 拒否対応（ネガティブ意図は他条件より優先）
-      if (intent === "negative" || /やめ(とき)?ます|キャンセル|他(で|の会社)|見送り/.test(msg)) {
-        return "拒否対応";
-      }
-      // 3. 不安対応（審査・費用・契約への不安）
-      if (/不安|心配|審査.*(通|落)|落ち(る|たら)|大丈夫でしょうか/.test(msg) || /不安|心配|anxious|worried/.test(emotion)) {
-        return "不安対応";
-      }
-      // 4. 内覧調整（実際のaction値: viewing_invite / meeting_place）
-      if (
-        action === "viewing_invite" ||
-        action === "meeting_place" ||
-        /内覧|内見|見学|現地|待ち合わせ/.test(msg)
-      ) {
-        return "内覧調整";
-      }
-      // 5. 申込前クロージング（顧客側から申込意思・決断の表明）
-      if (/申(し)?込(み)?(たい|します|お願い)|契約したい|決め(ます|ました)|ここにします/.test(msg)) {
-        return "申込前クロージング";
-      }
-      // 6. 申込打診（AI側から申込を打診するアクション）
-      if (action === "application_push") return "申込打診";
-      // 7. 費用説明（初期費用・見積に関する質問）
-      if (/初期費用|見積|敷金|礼金|仲介手数料|保証(会社|料)|家賃.*(いくら|交渉)|費用.*(いくら|どのくらい|教えて)|総額/.test(msg)) {
-        return "費用説明";
-      }
-      // 8. 物件送付後（actionで確実に検出＋従来のlastStaffMessageフォールバック）
-      if (
-        action === "property_send" ||
-        action === "property_recommendation" ||
-        action === "estimate_sheet" ||
-        (lastStaffMessage && /ピックアップ|お部屋.*送|物件.*(紹介|送付|お送り)/.test(lastStaffMessage))
-      ) {
-        return "物件送付後";
-      }
-      // 9. 初回対応（スタッフ発言がまだない＝会話冒頭）
-      if (!lastStaffMessage || state === "initial" || state === "new") {
-        return "初回対応";
-      }
-      // 10. 感謝返し（isGratitudeReplyTPOと同じ60字・同じキーワードで統一）
-      if (
-        msg.length < 60 &&
-        !/[?？]|希望|したい|教えて|どうすれば|送って(ください|ほしい|もらえ)|ください(?!ませ)/.test(msg) &&
-        /ありがとう|感謝|助かり(ます|ました)|嬉しい|よろしくお願い|宜しくお願い|おねがいします|おねがいいたします|おねがい致します|お願いします|お願いいたします|お願い致します|承知|かしこまり|わかりました|分かりました|了解|楽しみ|お任せ|おまかせ|引き続き/.test(msg)
-      ) {
-        return "感謝返し";
-      }
-      // 11. 検討中フォロー（相談意図・迷い・フォロー系アクション）
-      if (
-        intent === "consultation" ||
-        action === "follow_up" ||
-        action === "followup_revive" ||
-        /検討|迷って|考え(て|させて)|悩んで/.test(msg)
-      ) {
-        return "検討中フォロー";
-      }
-      return null;
-    })();
-    // brainContextをstate直後に固定（末尾配置だとsafeSlice 2000字制限で切り落とされるリスクがあるため前詰め）
-    // tpoLabelをクエリ先頭に明示して成約TPOパターンのembedding類似度を自然ブースト
-    const searchQuery = safeSlice(`${tpoLabel ? `[TPO:${tpoLabel}] ` : ""}${state}: ${brainContext ? `[WE_DO文脈]${brainContext} ` : ""}${lastAixPart}${lastStaffPart}[顧客]${customerMessage} ${analysisContext ?? ""}`.trim(), 2000);
+    // TPO場面推定: ブレインと同じ判定（tpo-hint.ts・今回の顧客発言を先に見て、AIX-META の action 等は最後の手段）。
+    //   ブレインの判断が無い（T3）時も顧客発言から判定する（旧: brainMeta が無いと null＝場面ラベルなし）
+    const tpoLabel = inferTpoHint({
+      customerTurn: customerMessage ?? "",
+      lastStaffMsg: lastStaffMessage ?? null,
+      convStatus: state,
+      prevIntent: brainMeta?.customer_intent ?? null,
+      prevAction: brainMeta?.action ?? null,
+      prevEmotion: brainMeta?.customer_emotion ?? null,
+    });
+    // tpoLabel をクエリ先頭に明示（成約 TPO パターン＝ナレッジの conversation_state と同じ語）
+    const searchQuery = safeSlice(`${tpoLabel ? `[TPO:${tpoLabel}] ` : ""}${state}: ${lastStaffPart}[顧客]${customerMessage}`.trim(), 2000);
 
     const embedding = await generateEmbedding(searchQuery);
     if (embedding) {
@@ -2178,22 +2115,15 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
 
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
-  // AIX-META潜在意識強化(2026-08-25): 実例検索クエリにも customer_intent / latent_intent を含める（ナレッジ検索側と同構成）
-  // property_search_params から検索条件（エリア・間取り・家賃上限・こだわり）をRAGクエリ化
-  const psp = brainMeta?.property_search_params;
-  const pspText = psp
-    ? [psp.area, psp.floor_plan, psp.rent_max ? `家賃${psp.rent_max}円以内` : null, psp.preferences].filter(Boolean).join(" ")
-    : null;
-  // 2026-09-10 Fable5 みく事例: few-shot は「今回の場面の文型」を引く検索なので message-local に寄せる。
-  //   conversation-scope の repeated_concern / closing_strategy / winning_pattern は外す（NG 文の語彙供給源だった）。
-  //   fetchKnowledge 側（方針検索）は conversation-scope のままでよい＝そちらは変更しない
-  const brainContext = brainMeta ? [brainMeta.action, brainMeta.reply_direction, brainMeta.recommended_tone, brainMeta.customer_intent, brainMeta.latent_intent, brainMeta.customer_emotion, brainMeta.checkpoint_stage ? `フェーズ: ${brainMeta.checkpoint_stage}` : null, brainMeta.human_type_label ? `人物タイプ: ${brainMeta.human_type_label}` : null, brainMeta.purchase_signal_level ? `温度感: ${brainMeta.purchase_signal_level}` : null, brainMeta.engagement_stance ? `押し引き: ${brainMeta.engagement_stance}` : null, ...(brainMeta.key_topics ?? []), pspText].filter(Boolean).join(" ") : "";
-  const lastAixPart = brainMeta?.last_aix_history ? `[AIX履歴] ${brainMeta.last_aix_history} ` : "";
-  const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 150)} ` : "";
-  // brainContextをstate直後に固定（末尾配置だとsafeSlice 2000字制限で切り落とされるリスクがあるため前詰め）
-  // fetchKnowledge（L1264）と同一パターンを適用
+  // 2026-09-13 AIX-META × RAG 監査: 問いは「文書と同じ構成」にする。
+  //   実例の埋め込みは save-reply-example で `${state}: [前返信]${前返信 100字} [顧客]${顧客発言}` から作られている（戦略語は入っていない）。
+  //   旧: ここに AIX-META（action・reply_direction・意図・温度感・押し引き 等 10〜15項目）と analysisContext を足していた
+  //   → 問いのベクトルが文書から離れ、本番の問い38件で「実際にスタッフが送った返信」への近さが下がっていた
+  //   （最も近い1件 cos 0.633 → 文書と同じ構成で 0.669）。AIX-META は下の並べ替え（意図一致の加点）にだけ使う
+  void analysisContext; // 旧: 問いに追記していた（二重注入）。引数は互換のため残す
+  const lastStaffPart = lastStaffMessage ? `[前返信]${safeSlice(lastStaffMessage, 100)} ` : "";
   const searchQuery = (customerMessage || lastStaffMessage)
-    ? safeSlice(`${state}: ${brainContext ? `[WE_DO文脈]${brainContext} ` : ""}${lastAixPart}${lastStaffPart}[顧客]${customerMessage ?? ""} ${analysisContext ?? ""}`.trim(), 2000)
+    ? safeSlice(`${state}: ${lastStaffPart}${customerMessage ? `[顧客]${customerMessage}` : ""}`.trim(), 2000)
     : null;
 
   if (searchQuery && process.env.OPENAI_API_KEY) {
@@ -2215,8 +2145,10 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         const boostStates = spec?.examples?.boostStates ?? [];
         const dirKwds = extractDirectionKeywords(spec?.examples?.filterByDirection ?? null);
         const brainIntent = brainMeta?.customer_intent ?? null;
-        // S-3: customer_intent は message-local。stale（T2/cached）では intent ブーストを 0.2 → 0.05 に落とす
-        const intentBoost = brainFresh ? 0.2 : 0.05;
+        // S-3: customer_intent は message-local。stale（T2/cached）では小さく
+        // 2026-09-13: +0.2 は類似度の幅（0.5〜0.8）に対して大きすぎ、似ていない実例を上げていた。
+        //   本番の問い38件で 0.05 が最良（上位8件の平均 cos 0.5536 → 0.5575）→ fresh 0.05 / stale 0.02
+        const intentBoost = brainFresh ? 0.05 : 0.02;
         const ranked = [...aboveThreshold].sort((a, b) => {
           const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? intentBoost : 0);
           const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? intentBoost : 0);
@@ -4212,6 +4144,7 @@ export async function POST(req: NextRequest) {
         excludeReplyRe: fetchSpec.examples.excludeReplyRe?.source ?? null,
         boostStates: fetchSpec.examples.boostStates,
         knowledgeLimit: fetchSpec.knowledge.limit,
+        // 2026-09-13: analysisContext は検索の問いに入れなくなった（文書と同じ構成の問いに変更）。長さは観測用に残す
         analysisContextLen: analysisContext?.length ?? 0,
       } }));
     }

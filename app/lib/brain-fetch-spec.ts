@@ -96,6 +96,8 @@ export function buildBrainFetchSpec(
 ): BrainFetchSpec {
   const primaryStates = STATE_SEARCH_ALIASES[currentState] || [currentState];
 
+  // 2026-09-13 AIX-META × RAG 監査: analysisContext は検索の問いに入れなくなった（戦略語を問いに混ぜると、戦略語の無い文書から
+  //   問いが離れて精度が下がる。本番の問いで実例 0.636→0.666・ナレッジ 0.485→0.525）。AIX-META は並べ替え（加点）で使う。以下は観測用に残す
   // analysisContext: generate-reply 内の既存IIFE（旧Step1置換・検索クエリ強化）と同じ導出。
   // 鮮度ゲート適用: T2(stale)では戦略フィールド reply_direction のみ、
   // T1(fresh)では message-local 戦術フィールドも合成する。T3はメタなし＝undefined。

@@ -388,7 +388,9 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
     // 顧客メッセージの embedding で類似ルールを追加取得し、DB query 結果に文脈優先でマージ
     let vectorExtras: KRow[] = [];
     if ((customerMsg || brainContext) && process.env.OPENAI_API_KEY) {
-      const searchQuery = safeSlice(`${states[0]}: ${[brainContext, customerMsg].filter(Boolean).join(" ")}`.trim(), 2000);
+      // 2026-09-13 AIX-META × RAG 監査: 問いは文書（ナレッジ＝本文＋state）と同じ構成に。AIX-META（戦略語）は問いに混ぜると精度が下がる
+      //   （本番の問い40件でナレッジの近さ 0.485 → 0.525）。顧客発言が無い時だけ AIX-META で引く
+      const searchQuery = safeSlice(`${states[0]}: ${customerMsg || brainContext}`.trim(), 2000);
       const embedding = await generateEmbedding(searchQuery);
       if (embedding) {
         const { data: vectorResults } = await supabase.rpc("match_reply_knowledge", {
@@ -489,15 +491,11 @@ async function getStarredExamplesForAction(
   try {
     if (!customerMsg.trim() || !states || states.length === 0) return "";
 
-    // brain文脈をクエリに追加して検索精度を上げる（action・closing_strategy・customer_intentが一致する例文が上位に来る）
-    const brainCtx = brainMeta ? [
-      brainMeta.action,
-      brainMeta.closing_strategy,
-      brainMeta.customer_intent,
-      brainMeta.recommended_tone,
-      brainMeta.checkpoint_stage,
-    ].filter(Boolean).join(" ") : "";
-    const queryText = safeSlice([brainCtx, customerMsg].filter(Boolean).join(" "), 600);
+    // 2026-09-13 AIX-META × RAG 監査: 問いは実例の埋め込みと同じ構成（`${state}: ${顧客発言}`）にする。
+    //   旧: brain 文脈（action・closing_strategy・customer_intent・tone・stage）を先頭に足していた → 問いが実例から離れ、
+    //   本番の問い38件で「実際にスタッフが送った返信」への近さが下がっていた（最も近い1件 cos 0.636 → 0.666）
+    void brainMeta;
+    const queryText = safeSlice(`${states[0]}: ${customerMsg}`, 600);
 
     // generateEmbedding経由でembeddingを取得（embedding_cache DBキャッシュ＋メモリFIFO 2層キャッシュを活用）
     const embedding = await generateEmbedding(queryText);
@@ -1607,12 +1605,14 @@ ${SMORA_COMMON_RULES}`;
       // RAG用顧客文脈: キーワード + 顧客条件 + AIX-META（brainContext）+ 最新メッセージ
       // P1-1: property_sendと同様にkeyword・latestCustomerMsgを追加して会話ごとに実例が散るようにする
       const recKwPrefix = keyword ? `【伝えたいこと】${String(keyword)} ` : "";
+      // 2026-09-13 AIX-META × RAG 監査: 実例・ナレッジを引く問いには AIX-META（戦略語）を混ぜない（文書側に無い語で問いが離れる）。
+      //   成功パターン（人物像＋パターンで埋め込み）を引く問いにだけ AIX-META を足す
       const recRagContext = [
         recKwPrefix,
         customer_conditions ? String(customer_conditions) : "",
-        brainContext,
         latestCustomerMsg,
       ].filter(Boolean).join(" ").trim() || undefined;
+      const recStrategyContext = [recRagContext ?? "", brainContext].filter(Boolean).join(" ");
 
       const [examples, knowledge, recStarNote, propDbRules, recBrainAddendum, recWinningNote, recPropertyExamples, recPatternHints] = await Promise.all([
         getPropertyExamples(),
@@ -1621,7 +1621,7 @@ ${SMORA_COMMON_RULES}`;
         fetchPromptRules("property_recommendation", {}).catch(() => ""),
         loadBrainTemplate("property_recommendation"),
         // 成約パターンRAG（AIX-META再ランキング）: 顧客条件+META+最新メッセージで「この顧客に効いた訴求」を引く
-        getWinningPatternsForProperty([recRagContext ?? "", latestCustomerMsg].filter(Boolean).join(" "), aixBrainMeta),
+        getWinningPatternsForProperty(recStrategyContext, aixBrainMeta),
         // 過去に実送信した物件オススメ文の実例（entry_source='aix_property'・⭐=顧客反応あり優先）
         // P0-1: queryTextを渡してpgvector主経路を有効化（未渡し時は全顧客が同じ固定5件になる）
         getAixPropertyExamples("property_recommendation", recRagContext),
@@ -2128,7 +2128,9 @@ ${SMORA_COMMON_RULES}
       // sendKeyword は L2039 で宣言済み（keywordRule で先に使うため移動）
       const kwPrefix = sendKeyword ? `【伝えたいこと】${sendKeyword} ` : "";
       const sendModeLabel = sendMode === "widen" ? "条件を広げてお探しした物件送付 " : sendMode === "new_arrival" ? "新着物件の即案内 " : "";
-      const enrichedRagQuery = [kwPrefix, sendModeLabel, conditionsInfo ?? "", brainContext, latestCustomerMsg].filter(Boolean).join(" ");
+      // 2026-09-13 AIX-META × RAG 監査: 実例を引く問いには AIX-META を混ぜない。成功パターンを引く問いにだけ足す
+      const enrichedRagQuery = [kwPrefix, sendModeLabel, conditionsInfo ?? "", latestCustomerMsg].filter(Boolean).join(" ");
+      const enrichedStrategyQuery = [enrichedRagQuery, brainContext].filter(Boolean).join(" ");
       const [sendDiffNote, sendStarNote, compPickupNote, compInviteNote, compCalendarNote, sendDbRules, sendBrainAddendum, sendWinningNote, sendPropertyExamples] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.property_send, currentAction, conversationId, kwPrefix + latestCustomerMsg || latestCustomerMsg, brainContext),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_send, kwPrefix + latestCustomerMsg || latestCustomerMsg, aixBrainMeta),
@@ -2138,7 +2140,7 @@ ${SMORA_COMMON_RULES}
         fetchPromptRules("property_send", { send_mode: sendMode }).catch(() => ""),
         loadBrainTemplate("property_send"),
         // 成約パターンRAG: キーワード先頭クエリで「この顧客・このキーワードに効いた訴求」を引く
-        getWinningPatternsForProperty(enrichedRagQuery, aixBrainMeta),
+        getWinningPatternsForProperty(enrichedStrategyQuery, aixBrainMeta),
         // 過去実例: pgvector主経路（キーワード・送付文脈で実例が変わる）→固定直クエリフォールバック
         getAixPropertyExamples("property_send", enrichedRagQuery),
       ]);
