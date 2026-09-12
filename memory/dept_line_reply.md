@@ -1138,3 +1138,57 @@ BANNED 16（ご連絡お待ちしております6・承りました4・ご内覧
 - [ ] 1週間後: tpo_debug.address_name.source の分布と NAME_ALIAS_UNIFIED の件数、TYPO_* warning の件数を SQL で確認
 - [ ] 常設スクリプトを週1で回し、baseline からの回帰（新たに block になった正解）が出たら原因のコードを調べる
 - [ ] VOCAB_MIRROR_MISMATCH（拝見→ご確認）の5件を正解に合わせるか判断
+
+---
+
+## 2026-09-12 要約（竹内方針A〜E・統合設計「AIX のセットはブレインが判断する」段1・段2・仕上げ）
+
+### 竹内の方針（最優先）
+「AIX のセットはブレインが判断する。だから、そこはブレインの AIX 判断の部分に学習される」。AIX をセットするか・どの AIX か・check_pattern はブレインが唯一の判断者。返信の生成・後処理・最終チェック・画面はブレインの判断を読むだけ。スタッフが押した AIX はブレインの判断に学習として戻す。固定の場面表をブレインより先に置かない。
+
+### 今日のコミット
+| コミット | 内容 |
+|---|---|
+| 7dadb58f | 方針D: 日本時間の日付・曜日を jst-date.ts に一本化し、LLM に14日分の曜日表を渡す |
+| 10157363 | 方針C: 呼び名は元の名前で固定（開示直後の一時切替に追従しない・人間の呼び名を AIX より優先） |
+| abe11ce4 | 方針B・E: 「ご連絡お待ちしております」「承りました」は場面で使う・「次第すぐに」の取りこぼしを塞ぐ |
+| 2c86c209 | 方針A: resolveReplyAix 新設・断言検査の誤検出修正（**場面表が先に AIX を決める形だったので段1で上書き**。断言検査の修正と scene-patterns.ts は残す） |
+| 1113dc4c | 正解文回帰の baseline 更新（block 43/754=5.7% → 25/758=3.3%） |
+| 8aecd918 | 統合設計 段1: 判断の持ち主をブレインに一本化・古い判断を AIX に使わない・画面の出どころ |
+| dccdc2d8 | 統合設計 段2: 場面を証拠としてブレインに渡す・スタッフの AIX から学ぶ（cron/brain-aix-eval・brain_aix_feedback） |
+
+### 仕上げで確認した数字（2026-09-12）
+- `app/lib/__tests__/*.test.ts` 20ファイル全 PASS（aix-reply-set 18・aix-scene-evidence 20・brain-aix-feedback 32 ほか）。`npx tsc --noEmit` エラー0
+- 正解文回帰: block 25/759=3.3%（baseline に対する回帰なし・改善なしのため baseline は更新していない）
+
+### どこがブレインの判断を読むか（段1の結果）
+- generate-reply: `brainDecision`（suggested_aix_meta ?? last_brain_meta・detectBrainTier と cached/optional で fresh 判定）→ `resolveReplyAixDecision` → プロンプトの「どの AIX で送るか」・SUGGESTED_AIX トレーラー・ai_draft_check.suggested_aix（source は常に brain）・[AIX誘導中]
+- 本文の安全は証拠で動く: `resolveBodySafety`（橋渡し・禁止）・`confirmationBasisAction`（S1/S2/S3 の証拠 or ブレインの action で確認約束を認める）。AIX は選ばない
+- page.tsx: P3.5 / P3.6 / P4.5 の説明文は suggestedAixMeta.note、P5 の runBrainAix はブレインの check_pattern を渡す
+
+### ブレインがどの場面でどの AIX をセットするか
+- 決めるのは LLM（analyzeConversation）。場面の検出は【今回の顧客発言の場面（証拠。AIX を決めるのはあなた）】と【この場面でスタッフが押した AIX の実績】として渡すだけ
+- LLM も既存の信号（detectSignalBasedAixFallback）も AIX を返さない時だけ: S2 入居日 → property_check_result / mgmt_move_in（退去予定は vacate_date）、S3 審査 → property_check_result / mgmt_guarantor、S5 日時指定 → meeting_place（decision_source=signal:scene_*）
+- S1 空室・S4 内覧・S6 見積・S7 条件変更は信号にしない（LLM と既存の信号・矯正に任せる。空室は acknowledge_check / property_check_result、画像だけの送信は estimate_sheet への矯正、内覧は guard:viewing で顧客の反応が無ければ出さない・退去予定なら application_push）
+- check_pattern: 場面の信号 → 証拠 S2/S3 → 未返信の顧客発言だけに detectPropertyCheckPattern
+
+### 学習ループ（スタッフが押した AIX → ブレイン）
+- 直したもの: brain_decision_logs に10列（decision_source・analysis_mode・analyzed_msg_ts・scene_evidence・body_block_code・actual_*・matched 等）、brain_aix_feedback（pressed 列あり）、cron/brain-aix-eval（毎日 11:20 UTC）、ブレインの降格ゲートの読み先を brain_aix_feedback に（null 化は外した）
+- 基準: action あり190件のうち AIX が押された56件中27件一致（48%）。押されなかった判断まで分母にすると 27/190（14%）
+- aix_feature_suggestions に登録（AIX 学習パスはコードを直さない）:
+  - 段2: 4d32b711（aix-shadow-eval で predictor=brain）・b20e86bb（log-aix-usage に brain_suggested_*）・884b76d4（suggestion_source と suggestion_accepted の数え方）・d5b8f9d7（aix-weekly-learning で check_pattern の食い違い）
+  - 仕上げ: fd0ef481（suggest-next-action の P8 AIXバナーが固定ルールでブレインと別に AIX を出している。30日で chain_rule 由来の提示105件・09-05以降 property_recommendation 23件のうちブレインは property_send 11・acknowledge_check 4・なし 5）・e101a27d（/api/aix/suggest に鮮度を見ずに brain_action を渡している・fresh でブレインが AIX なしでも頻度トップを推薦）・f971f9cd（P5 ブレインカードの ✕ がどこにも記録されない → brain_decision_logs.outcome に戻す）
+- system_design_thinking に5件: 8b66c4c7（AIX のセット判断はブレインが唯一の持ち主）・a9c8b06b（古い判断・cached を AIX に使わない）・3d11a730（押した AIX とブレインの判断を対にする・分母は押された判断）・bde79ebe（方針B・E）・1270ee36（方針D）。方針C は 83617cc2（09-11 登録済み）
+
+### 引き継ぎ
+- [ ] cron/brain-aix-eval の初回実行を確認（brain_aix_feedback に行が入るか・scene_staff が n≥10 たまるか）。プロンプトに入る実績欄の実際の中身を1件見る
+- [ ] 本番で ai_draft_check.suggested_aix.source が aix_reply_set / final_check_assertion の件数が0か、ブレインが '' なのに AIX がセットされた件数が0か SQL で確認
+- [ ] ログ `brain:mode` の upgradeReason 件数で、cached→incremental 格上げによる LLM 呼び出しの増加を測る
+- [ ] 1〜2週間後: ブレインだけ当たっていた27件相当を落としていないか・場面だけ当たっていた7件相当（S5 meeting_place など）を拾えているか（scratchpad/scene-vs-staff.ts の A2 と同じ集計）
+- [ ] 未確認: brain-sweep が T2（stale）の会話も補うか／analyzeAndSaveBrainMeta の同じ会話での排他／page.tsx 4325 修正で動き出した property_check タスク自動作成の運用影響／brain_decision_logs に 09-05 より前のデータが無い理由
+- [ ] cached で runBrainAndNotify が null を返すため、brain-sweep の集計でその分が「失敗」と数えられる（ログの数字だけの影響）
+
+### 竹内確認事項（未決）
+① P8 AIXバナー（suggest-next-action）: ブレインが fresh で「AIX なし」の時もバナーを出すか（fd0ef481 の方針）
+② AIX ボタンの点滅（guideToCheckResult: status=availability_check や直前のスタッフ発言で決まる）もブレインの判断に揃えるか
+③ property_check タスクの自動作成（4325 修正で初めて動く）をそのまま運用してよいか
