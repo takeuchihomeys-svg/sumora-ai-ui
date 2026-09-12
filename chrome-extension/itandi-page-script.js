@@ -401,7 +401,8 @@
   // ── 路線・駅モーダル ─────────────────────────────────────────────────────
   // 戻り値: boolean（モーダルを開けたか）
   // onError: 路線選択失敗時のコールバック（省略時はonDoneにフォールバック）
-  function selectItandiLines(lineNames, stationNames, onDone, onError) {
+  // selectAllStations: 「梅田まで電車1本」（popup.js resolveDirectCommute）→ 各路線の駅リストに出た駅をすべて選択する
+  function selectItandiLines(lineNames, stationNames, onDone, onError, selectAllStations) {
     if (!lineNames || !lineNames.length) return false;
     var opened = clickBtn("路線・駅で絞り込む") || clickBtn("路線・駅を絞り込む")
               || clickBtn("路線・駅で絞り込み") || clickBtn("路線で絞り込む")
@@ -494,6 +495,49 @@
       // 全路線クリック後まとめて選択しても最後の路線の駅しか選択できないバグを修正。
       // 路線ごとにクリック→1500ms待機→その路線の駅を選択 の順に処理する。
       var _selectedSt = new Set(); // 選択完了した駅の正規化名（重複クリック防止）
+      // 駅リストと路線リストはどちらも checkbox 付き label。路線一覧が出た時点のラベル文言を路線として覚え、
+      // 駅の全選択ではそれ以外（＝路線クリック後に出た駅）だけを押す。React の再描画でノードが替わっても文言で判定できる
+      var _lineLabelTexts = {};
+      [].slice.call(dlg.querySelectorAll("label")).forEach(function(l) {
+        if (l.querySelector("input[type='checkbox']")) _lineLabelTexts[norm(l.textContent.replace(/\s+/g, ""))] = true;
+      });
+      var _allSelectedCount = 0;
+      function selectAllStationsOfLine(done) {
+        var root = document.querySelector('[role="dialog"]') || dlg;
+        function stationLabels() {
+          return [].slice.call(root.querySelectorAll("label")).filter(function(l) {
+            if (!l.querySelector("input[type='checkbox']") || !isVis(l)) return false;
+            var t = norm(l.textContent.replace(/\s+/g, ""));
+            return t && !_lineLabelTexts[t] && !/線|電鉄|鉄道|モノレール/.test(t);
+          });
+        }
+        var labels = stationLabels();
+        if (!labels.length) { console.log("[AX] 電車1本: 駅リストなし（路線のみ選択）"); done(); return; }
+        // 「すべて選択」系があれば先に押し、残った未選択だけを1件ずつ押す（全選択後に個別を押してトグル解除しない）
+        var allLbl = labels.find(function(l) { return /^(?:全て|すべて|全駅)(?:選択)?$|全選択/.test(norm(l.textContent.replace(/\s+/g, ""))); });
+        var i = 0, list = [];
+        function clickNext() {
+          if (i >= list.length) {
+            var checked = stationLabels().filter(function(l) { var inp = l.querySelector("input[type='checkbox']"); return inp && inp.checked; }).length;
+            _allSelectedCount += checked;
+            console.log("[AX] 電車1本: " + lineNames[lineIdx - 1] + " の駅 " + checked + "/" + stationLabels().length + " 選択");
+            done(); return;
+          }
+          var inp = list[i++].querySelector("input[type='checkbox']");
+          if (inp && !inp.checked) inp.click();
+          setTimeout(clickNext, 40 + Math.floor(Math.random() * 60));
+        }
+        function collectAndClick() {
+          list = stationLabels().filter(function(l) {
+            var inp = l.querySelector("input[type='checkbox']");
+            return l !== allLbl && inp && !inp.checked;
+          });
+          clickNext();
+        }
+        var allInp = allLbl && allLbl.querySelector("input[type='checkbox']");
+        if (allInp && !allInp.checked) { allInp.click(); setTimeout(collectAndClick, 400); }
+        else collectAndClick();
+      }
       function clickNextLine() {
         if (lineIdx >= lineNames.length) {
           if (!anyLineClicked) {
@@ -501,7 +545,8 @@
             _abort(); return;
           }
           // 全路線・駅の選択完了 → 確定
-          var _missing = stNames.filter(function(s) { return !_selectedSt.has(norm(s)); });
+          var _missing = selectAllStations ? [] : stNames.filter(function(s) { return !_selectedSt.has(norm(s)); });
+          if (selectAllStations) console.log("[AX] 電車1本: 沿線の駅を計" + _allSelectedCount + "駅選択");
           if (_missing.length) console.log("[AX] 選択できなかった駅: " + _missing.join(", "));
           setTimeout(function () {
             clickBtn("確定");
@@ -512,6 +557,15 @@
         var clicked = clickLabel(lineNames[lineIdx], dlg);
         if (clicked) anyLineClicked = true;
         lineIdx++;
+
+        if (selectAllStations) {
+          // 路線が見つからなかった時は駅リストが前の路線のままなので押さない
+          if (!clicked) { setTimeout(clickNextLine, 300); return; }
+          setTimeout(function() {
+            selectAllStationsOfLine(function() { setTimeout(clickNextLine, 400 + Math.floor(Math.random() * 400)); });
+          }, 900 + Math.floor(Math.random() * 600));
+          return;
+        }
 
         if (!stNames.length) {
           // 駅指定なし → 路線だけ選択して次へ
@@ -934,7 +988,7 @@
         var opened = selectItandiLines(cond.itandi_lines, stNames, afterModal, function() {
           console.warn('[AX] 路線選択失敗 → fill-done(error)');
           _safeDone('itandi路線選択失敗');
-        });
+        }, !!cond.select_all_line_stations);
         if (!opened) {
           var _errL = '路線・駅で絞り込みボタンが見つかりませんでした';
           console.warn('[AX] ' + _errL);

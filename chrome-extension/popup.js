@@ -3774,6 +3774,24 @@ function openInstructions(siteKey) {
         });
       }
 
+      // 「梅田まで電車1本」: リアプロと同じ判定で乗り換えなしの沿線を選び、itandi でも各路線の駅をすべて選択する
+      let _selectAllLineStations_it = false;
+      const _direct_it = resolveDirectCommute(rawArea);
+      if (_direct_it && !_adjStation_it && _lockedMode_itandi !== "ward" && !(_areaModeSource === "user" && isWardArea_itandi)) {
+        _direct_it.lines.forEach(l => {
+          const v = ITANDI_LINE_MAP_FILL[l];
+          (Array.isArray(v) ? v : (v ? [v] : [])).forEach(m => { if (!itandiLines.includes(m)) itandiLines.push(m); });
+        });
+        stationNames = [...new Set([...(stationNames || []), ..._direct_it.hub_stations])];
+        if (isWardArea_itandi) {
+          isWardArea_itandi = false;
+          currentAreaMode = "station";
+          updateAreaModeUI();
+        }
+        _selectAllLineStations_it = true;
+        console.log("[AX] itandi 電車1本: " + _direct_it.targets.join("・") + " に乗り換えなしの沿線 → 駅をすべて選択", itandiLines);
+      }
+
       // 広げて検索：賃料上限を自動拡張
       // preloadAdjFormで初期値が入るためadjRentMaxは常にtruthy。
       // お客さんのデフォルト値と異なる場合のみ手動変更とみなす。
@@ -3821,6 +3839,7 @@ function openInstructions(siteKey) {
         town_area:   null, // ward_town_mapで代替（後方互換用として残す）
         itandi_lines: !isWardArea_itandi ? itandiLines : [],
         station_names: stationNames,
+        select_all_line_stations: _selectAllLineStations_it,
         unknown_tokens: unknownTokens.length > 0 ? unknownTokens : null,
       };
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
@@ -4251,7 +4270,7 @@ function openInstructions(siteKey) {
       // 手動で駅を入力した場合・地域モードを手動で選んだ場合はスタッフの指定を優先する
       let _selectAllLineStations = false;
       const _direct = resolveDirectCommute(adjAreaClean);
-      if (_direct && !_adjStation_rp && !(_areaModeSource === "user" && currentAreaMode === "ward")) {
+      if (_direct && !_adjStation_rp && _lockedMode !== "ward" && !(_areaModeSource === "user" && currentAreaMode === "ward")) {
         _selectAllLineStations = true;
         _direct.route_ids.forEach(r => { if (!route_ids.includes(r)) route_ids.push(r); });
         _direct.hub_stations.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
