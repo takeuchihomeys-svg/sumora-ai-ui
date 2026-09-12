@@ -250,6 +250,31 @@ const BRAIN_AIX_LABELS: Record<string, string> = {
   property_search:         "AIX \u7269\u4ef6\u3092\u63a2\u3059",
 };
 
+// AIX \u304c\u5fc5\u8981\u304b\u3069\u3046\u304b\u306f\u30d6\u30ec\u30a4\u30f3\u3060\u3051\u304c\u5224\u65ad\u3059\u308b\uff082026-09-12 \u7af9\u5185\u65b9\u91dd\uff09\u3002
+// \u30d6\u30ec\u30a4\u30f3\u306e\u5224\u65ad\u304c\u300c\u6700\u65b0\u306e\u9867\u5ba2\u767a\u8a00\u300d\u3092\u898b\u305f\u5f8c\u306e\u3082\u306e\u304b\u3092\u8fd4\u3059\u3002\u753b\u9762\u306e AIX \u8a98\u5c0e\uff08P3\u301cP8 \u30d0\u30ca\u30fc\u30fbAIX \u30dc\u30bf\u30f3\u306e\u70b9\u6ec5\u30fb
+// \u300c\u78ba\u8a8d\u3057\u305f\u300d\u30b7\u30e7\u30fc\u30c8\u30ab\u30c3\u30c8\uff09\u306f\u3059\u3079\u3066\u3053\u306e\u5224\u5b9a\u3092\u901a\u3059\u3002\u30d6\u30ec\u30a4\u30f3\u304c\u5224\u65ad\u3057\u3066\u3044\u306a\u3044 AIX \u3092\u51fa\u3059\u3068\u3001\u8aa4\u308a\u3092\u5b66\u7fd2\u3067\u76f4\u305b\u305a\u7d1b\u3089\u308f\u3057\u3044\u305f\u3081\u3002
+// requireTs=false: analyzed_msg_ts \u3092\u6301\u305f\u306a\u3044\u5224\u65ad\uff08\u751f\u6210\u6642\u306e SUGGESTED_AIX \u30c8\u30ec\u30fc\u30e9\u30fc\u3002\u751f\u6210\u5074\u3067\u30d6\u30ec\u30a4\u30f3\u306e\u9bae\u5ea6\u3092\u78ba\u8a8d\u6e08\u307f\uff09\u3082\u8a8d\u3081\u308b
+const BRAIN_AIX_FRESHNESS_MS = 8000;
+function isBrainAixFresh(
+  meta: { analyzed_msg_ts?: string | null } | null | undefined,
+  msgs: Message[],
+  requireTs = true,
+): boolean {
+  if (!meta) return false;
+  const latestCustomerMsgTs = msgs.filter((m) => m.sender === "customer").at(-1)?.rawCreatedAt ?? null;
+  if (!meta.analyzed_msg_ts) return !requireTs;
+  if (!latestCustomerMsgTs) return false;
+  return new Date(meta.analyzed_msg_ts).getTime() >= new Date(latestCustomerMsgTs).getTime() - BRAIN_AIX_FRESHNESS_MS;
+}
+
+// \u753b\u9762\u306e AIX \u63d0\u6848\u304c\u30d6\u30ec\u30a4\u30f3\u306e\u5224\u65ad\u3068\u540c\u3058 AIX \u304b\u3002property_check \u306f property_check_result \u306e\u65e7\u540d\u306a\u306e\u3067\u540c\u4e00\u8996\u3059\u308b
+// \uff08acknowledge_check \u306f\u7ba1\u7406\u4f1a\u793e\u5b9b\u3066\u306e\u5225\u30dc\u30bf\u30f3\u306a\u306e\u3067\u540c\u4e00\u8996\u3057\u306a\u3044\uff1d\u30d6\u30ec\u30a4\u30f3\u3068\u9055\u3046\u30dc\u30bf\u30f3\u3092\u958b\u304b\u305b\u306a\u3044\uff09
+function sameAixAction(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const norm = (x: string) => (x === "property_check" ? "property_check_result" : x);
+  return norm(a) === norm(b);
+}
+
 // templateCategory \u2192 AixActionType \u306e\u9006\u5f15\u304d\uff08\u30c6\u30f3\u30d7\u30ec\u9078\u629e\u6642\u306e\u30a2\u30af\u30b7\u30e7\u30f3\u6c7a\u5b9a\u306b\u4f7f\u7528\uff09
 const TEMPLATE_CATEGORY_TO_ACTION: Record<string, AixActionType> = Object.fromEntries(
   Object.entries(AIX_ACTION_META)
@@ -2627,40 +2652,52 @@ export default function Home() {
     [selectedConversation.messages]
   );
 
-  // 空室確認メッセージを送った後 → AIX「物件確認した」ボタンに誘導
-  const guideToCheckResult = useMemo(() => {
-    if (activeAixFlow) return false;
-    if (selectedConversation.status === "availability_check") return true;
+  // ブレインが「今の顧客発言に対して AIX が必要」と判断した AIX（無ければ null）。
+  // 2026-09-12 竹内方針: AIX が必要かどうかはブレインだけが判断する。ブレインが判断していない AIX を
+  // バナーや点滅で出すと紛らわしく、誤った判断を学習で直せないため、画面の AIX 誘導はすべてこの値だけを見る。
+  // 下書き表示時に suggestedAixMeta は null 化され、同じブレインの判断が suggestedAix に退避されるので、そちらも読む。
+  const brainAixAction = useMemo<string | null>(() => {
     const msgs: Message[] = selectedConversation.messages || [];
-    const lastStaff = [...msgs].reverse().find((m: Message) => m.sender === "staff");
-    return !!(lastStaff?.text && (
-      lastStaff.text.includes("確認出来次第") ||
-      lastStaff.text.includes("確認させていただきます") ||
-      lastStaff.text.includes("募集状況確認")
-    ));
-  }, [selectedConversation, activeAixFlow]);
+    const fromMeta = selectedConversation.suggestedAixMeta as { action?: string | null; analyzed_msg_ts?: string | null } | null;
+    if (fromMeta?.action) return isBrainAixFresh(fromMeta, msgs) ? fromMeta.action : null;
+    const kept = suggestedAix as { action?: string | null; analyzed_msg_ts?: string | null } | null;
+    if (kept?.action) return isBrainAixFresh(kept, msgs, false) ? kept.action : null;
+    return null;
+  }, [selectedConversation.suggestedAixMeta, selectedConversation.messages, suggestedAix]);
 
-  // 待ち合わせ誘導: AIX-METAが meeting_place を指示している場合のみ
+  // AIX「物件確認した」ボタンに誘導（点滅・「確認した」ショートカット）: ブレインが property_check_result と判断した時だけ
+  // 旧: ステータス availability_check や直前のスタッフ文言（「確認出来次第」等）で点滅 → ブレインの判断と無関係に出ていたため廃止
+  const guideToCheckResult = useMemo(() => {
+    return !activeAixFlow && sameAixAction(brainAixAction, "property_check_result");
+  }, [brainAixAction, activeAixFlow]);
+
+  // 待ち合わせ誘導: ブレインが meeting_place と判断した場合のみ
   const guideToMeetingPlace = useMemo(() => {
-    return !activeAixFlow && selectedConversation.suggestedAixMeta?.action === "meeting_place";
-  }, [selectedConversation.suggestedAixMeta, activeAixFlow]);
+    return !activeAixFlow && brainAixAction === "meeting_place";
+  }, [brainAixAction, activeAixFlow]);
 
-  // お客様が内覧希望を示した場合 → AIX 内覧日調整バナーを表示
-  // brain-driven（suggestedAixMeta.action === "viewing_invite"）またはクライアント側キーワード検知のどちらかで発火
+  // お客様が内覧希望を示した場合 → AIX 内覧日調整バナー: ブレインが viewing_invite と判断した場合のみ
+  // 旧: クライアント側キーワード検知（内覧したい等）でも発火 → ブレインが判断していないバナーになるため廃止
   const guideToViewingSpecific = useMemo(() => {
     if (activeAixFlow) return false;
     const _msgs: Message[] = selectedConversation.messages || [];
     const lastSender = selectedConversation.lastSender ?? _msgs[_msgs.length - 1]?.sender;
     if (lastSender !== "customer") return false;
-    if (selectedConversation.suggestedAixMeta?.action === "viewing_invite") return true;
-    const recentTexts = [..._msgs].reverse().slice(0, 6).map((m: Message) => m.text || "").join(" ");
-    return /内覧(?:行き|し|希望|したい|可能|いき)|内見(?:行き|し|希望|したい|可能)|見学(?:したい|希望|行き)|見に行き/.test(recentTexts);
-  }, [selectedConversation, activeAixFlow]);
+    return brainAixAction === "viewing_invite";
+  }, [selectedConversation.messages, selectedConversation.lastSender, brainAixAction, activeAixFlow]);
 
-  // 新着物件待ちパターン: AIX-METAが property_send を指示している場合のみ
+  // 新着物件待ちパターン: ブレインが property_send と判断した場合のみ
   const guideToNewListingRecommend = useMemo(() => {
-    return !activeAixFlow && selectedConversation.suggestedAixMeta?.action === "property_send";
-  }, [selectedConversation.suggestedAixMeta, activeAixFlow]);
+    return !activeAixFlow && brainAixAction === "property_send";
+  }, [brainAixAction, activeAixFlow]);
+
+  // P8（suggest-next-action）の AIX バナー: ブレインが同じ AIX を判断している時だけ出す。
+  // ブレインが「AIX なし」や別の AIX と判断している時は出さない（生成ボタンのグレー化・注意文もこれに従う）
+  const nextAixBannerBacked = useMemo(() => {
+    const id = selectedConversation?.id ?? "";
+    const sugg = nextActionMap[id];
+    return !!(sugg?.action && !dismissedNextActionIds.has(id) && sameAixAction(sugg.action, brainAixAction));
+  }, [selectedConversation?.id, nextActionMap, dismissedNextActionIds, brainAixAction]);
 
   // guideToEstimate: 削除済み（brain の action=estimate_sheet に一本化）
 
@@ -7461,7 +7498,7 @@ export default function Home() {
                 <button
                   onClick={generateReply}
                   disabled={generating || !selectedConversation.id}
-                  className={`shrink-0 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${generating ? "border-blue-300 bg-blue-50 text-blue-600" : (nextActionMap[selectedConversation?.id ?? ""] && !dismissedNextActionIds.has(selectedConversation?.id ?? "")) ? "border-gray-200 bg-gray-100 text-gray-400" : "border-[#d1d7db] bg-white text-[#111b21]"}`}
+                  className={`shrink-0 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${generating ? "border-blue-300 bg-blue-50 text-blue-600" : nextAixBannerBacked ? "border-gray-200 bg-gray-100 text-gray-400" : "border-[#d1d7db] bg-white text-[#111b21]"}`}
                 >
                   {generating ? (
                     <>
@@ -7470,7 +7507,7 @@ export default function Home() {
                     </>
                   ) : replyDraft ? (<><svg className="inline shrink-0 mr-1" style={{verticalAlign:"-2px"}} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>再生成</>) : "AI文案を作成"}
                 </button>
-                {(nextActionMap[selectedConversation?.id ?? ""] && !dismissedNextActionIds.has(selectedConversation?.id ?? "")) && (
+                {nextAixBannerBacked && (
                   <span className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">AIXバナーの推薦を先にご確認ください</span>
                 )}
               </span>
@@ -7505,7 +7542,7 @@ export default function Home() {
                       ? "border-[#4CAF50] bg-white text-[#2E7D32] animate-pulse ring-2 ring-[#4CAF50] ring-offset-1"
                       : guideToMeetingPlace
                         ? "border-[#00838F] bg-white text-[#00838F] animate-pulse ring-2 ring-[#00838F] ring-offset-1"
-                        : (selectedConversation.suggestedAixMeta?.action === "estimate_sheet")
+                        : (brainAixAction === "estimate_sheet")
                           ? "border-[#FF9800] bg-white text-[#E65100] animate-pulse ring-2 ring-[#FF9800] ring-offset-1"
                           : "border-[#d1d7db] bg-white text-[#111b21]"
                 }`}
@@ -7679,13 +7716,8 @@ export default function Home() {
               const hasPropertySendTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_send");
               const isApplyStatus = ["applying", "screening", "contract"].includes(selectedConversation.status ?? "");
 
-              // AIX鮮度チェック: analyzed_msg_tsが最新顧客メッセージより古い場合はバナーを出さない
-              const BANNER_FRESHNESS_MS = 8000;
-              const latestCustomerMsgTs = msgs.filter((m: Message) => m.sender === "customer").at(-1)?.rawCreatedAt ?? null;
-              const _aixMetaAny = selectedConversation.suggestedAixMeta as any;
-              const aixMetaIsFresh: boolean = !latestCustomerMsgTs || !_aixMetaAny?.analyzed_msg_ts
-                ? false
-                : new Date(_aixMetaAny.analyzed_msg_ts).getTime() >= new Date(latestCustomerMsgTs).getTime() - BANNER_FRESHNESS_MS;
+              // AIX鮮度チェック: analyzed_msg_tsが最新顧客メッセージより古い場合はバナーを出さない（判定は isBrainAixFresh に一本化）
+              const aixMetaIsFresh: boolean = isBrainAixFresh(selectedConversation.suggestedAixMeta as { analyzed_msg_ts?: string | null } | null, msgs);
 
               // P0: 番号付きテンプレート連動 / 追客初期費用テンプレート誘導
               const nextTmpl = suggestNextTemplateMap[id];
@@ -8218,7 +8250,9 @@ export default function Home() {
                   property_check: "物件確認した",
                 };
 
-                // action あり → AIXボタン
+                // action あり → AIXボタン。ただしブレインが同じ AIX を判断している時だけ（2026-09-12 竹内方針）。
+                // ブレインが「AIX なし」や別の AIX と判断している時に固定ルールの AIX を出すと紛らわしいので出さない
+                if (nextSugg.action && !nextAixBannerBacked) return null;
                 if (nextSugg.action) {
                   // 案5: 却下ログ送信（却下理由付き）+ バナー閉じの共通処理
                   const logDismiss = (dismissedReason: string | null) => {
