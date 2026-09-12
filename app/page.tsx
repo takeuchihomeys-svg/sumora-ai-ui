@@ -2510,8 +2510,12 @@ export default function Home() {
   // 一覧の「AIX」バッジ条件（次にAIXボタンで対応すべき顧客）。バッジ・絞り込み・件数で共有する
   // 2026-09-12 竹内方針: AIX が必要かどうかはブレインだけが判断する（売上番長グループの「AIX要対応」と同じ基準）。
   //   旧: suggested_next_aix（ブレイン外の AIX Worker が書く列）でもバッジを出していた → ブレインの判断のみに統一
-  const isAixBadge = (c: Conversation) =>
-    !!c.suggestedAixMeta?.action && c.lastSender === "customer";
+  //   条件は aix-action-items.syncAixActionItem と同じ: 実在の AIX ボタン・reply_mode=aix・cached（今回の発言を見ていない判断）でない
+  //   （6〜8月の旧形式 meta の action="follow_up"/"null" 等でバッジが出ていたのも止まる）
+  const isAixBadge = (c: Conversation) => {
+    const m = c.suggestedAixMeta as { action?: string | null; reply_mode?: string | null; source?: string | null } | null | undefined;
+    return !!m?.action && !!BRAIN_AIX_LABELS[m.action] && m.reply_mode === "aix" && m.source !== "cached" && c.lastSender === "customer";
+  };
   // 一覧の「要対応」バッジ条件（手動フラグ or 顧客最終発言から12時間以上・未読）。バッジ・AIX絞り込みで共有する
   const isNeedsActionBadge = (c: Conversation) => {
     if (flaggedConvIds.has(c.id)) return true;

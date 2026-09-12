@@ -10,6 +10,7 @@
 //   定時一覧       … cron/announce-aix-actions（10:30〜20:30 の2時間ごと）
 import { supabase } from "@/app/lib/supabase";
 import { buildAixActionNotice } from "@/app/lib/aix-action-text";
+import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
 export { aixButtonText, buildAixActionNotice, buildAixActionList, type AixActionItemRow } from "@/app/lib/aix-action-text";
 
 /** 売上番長グループへ push（宛先・トークンの決め方は notify-group と同じ: env → hanbancyo_settings.group_id） */
@@ -45,8 +46,8 @@ export async function syncAixActionItem(input: {
   // cached は今回の顧客発言を見ていない判断なので使わない
   if (!meta || meta.source === "cached") return;
   const action = meta.action || null;
-  // 初回返信（reply_mode=null）は人の挨拶返信で、AIX要対応ではない
-  const needsAix = !!action && meta.reply_mode === "aix";
+  // 初回返信（reply_mode=null）は人の挨拶返信で、AIX要対応ではない。実在の AIX ボタンだけ（画面の AIX バッジ isAixBadge と同じ条件）
+  const needsAix = !!action && !!AIX_BUTTON_LABELS[action] && meta.reply_mode === "aix";
   const checkPattern = meta.check_pattern ?? null;
 
   const { data: open } = await supabase
