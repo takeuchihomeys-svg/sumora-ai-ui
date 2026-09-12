@@ -127,11 +127,41 @@ export function stripNightGreeting(text: string): { text: string; count: number 
   return { text: out, count };
 }
 
+/**
+ * 2026-09-12 竹内「挨拶も重ねないようにする」: 1通の返信に挨拶は1つだけ。2つ目以降の挨拶の一文を除去する。
+ *   挨拶 = はじめまして（初回の名乗り一式の先頭）／お世話になっております（いつも〜含む）／いつもありがとうございます／
+ *          こんにちは・こんばんは・おはようございます／ご連絡遅くなり申し訳御座いません
+ *   最初に出た挨拶を残す（挨拶の決定 greeting.ts が先頭に置いたものが残る）。呼びかけ（〇〇さん）付きの2つ目は呼びかけごと除去。
+ *   実データ（直近30日の AI 下書き 993件）: 挨拶が2つ以上の下書き5件はスタッフが全件削って送っていた（送信文で2つ以上は0件）
+ */
+const GREETING_UNIT_RE =
+  /(?:[^\n！!。]{0,15}(?:さん|様)[、,]?[ \t　]*)?(?:はじめまして|初めまして|(?:いつも)?お世話になっております|いつもありがとうございます|こんにちは|こんばんは|おはようございます|ご連絡遅くなり(?:大変)?申し訳(?:御座|ござ)いません)[😊😌🙇]*[！!。、]*[ \t　]*/g;
+export function dedupeGreetings(text: string): { text: string; count: number } {
+  const matches = [...text.matchAll(GREETING_UNIT_RE)];
+  if (matches.length < 2) return { text, count: 0 };
+  let out = "";
+  let last = 0;
+  matches.forEach((m, i) => {
+    const start = m.index ?? 0;
+    out += text.slice(last, start);
+    let end = start + m[0].length;
+    if (i === 0) out += m[0];
+    // 2つ目以降の挨拶が1行まるごとなら、その行の改行も落とす（空行を残さない）
+    else if ((start === 0 || text[start - 1] === "\n") && text[end] === "\n") end += 1;
+    last = end;
+  });
+  out += text.slice(last);
+  // 除去で生じた行頭の読点を整える
+  out = out.replace(/(^|\n)[ \t　]*[、,]/g, "$1").replace(/^\n+/, "");
+  return { text: out, count: matches.length - 1 };
+}
+
 /** 方針4・5の決定論置換（生成・後処理・修正版・few-shot 注入の共通入口） */
-export function normalizeBannedPhrasing(text: string): { text: string; shochi: number; hasty: number; uketamawari: number; night: number } {
+export function normalizeBannedPhrasing(text: string): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number } {
   const n = stripNightGreeting(text);
-  const u = normalizeBareUketamawari(n.text);
+  const g = dedupeGreetings(n.text);
+  const u = normalizeBareUketamawari(g.text);
   const a = normalizeShochi(u.text);
   const b = stripHastyAdverb(a.text);
-  return { text: b.text, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count };
+  return { text: b.text, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count, greetDup: g.count };
 }
