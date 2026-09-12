@@ -6,6 +6,7 @@ import { normalizeBannedPhrasing } from "./banned-phrasing";
 import { applyTypoAutoFix } from "./typo-check";
 // 2026-09-12 竹内（YUYA 事例）: お客様が送った物件は「お送り頂きました物件」（共有文の駅名・徒歩分で呼ばない）
 import { normalizeSharedPropertyReference } from "./shared-property-ref";
+import { stripMetaNarration } from "./meta-narration";
 // 2026-09-12 竹内方針A: 時間枠の「空いて」・断言置換文は AIX 場面判定（aix-reply-set）と同じ定数
 import { isScheduleSlotVacancy, ASSERTION_REPLACEMENT } from "./scene-patterns";
 export { fillNameSlot };
@@ -531,6 +532,9 @@ export function applySurfaceFixes(
 ): { text: string; applied: string[] } {
   const applied: string[] = [];
   let out = text;
+  // 2026-09-12 竹内（あや事例）: AI の作業メモ（「〜という質問への直接回答を組み立てます。」「〇〇さんへの返信案：」）は下書き欄に絶対に入れない
+  const meta = stripMetaNarration(out);
+  if (meta.removed.length) { out = meta.text; applied.push(`META_NARRATION_REMOVED×${meta.removed.length}`); }
   const sp = normalizeSharedPropertyReference(out, opts?.customerMessage);
   if (sp.count) { out = sp.text; applied.push(`SHARED_PROPERTY_REF×${sp.count}`); }
   const u = unifyAddressAliases(out, opts?.customerName, opts?.aliases);

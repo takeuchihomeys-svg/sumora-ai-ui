@@ -182,5 +182,32 @@ describe("S8 費用の安さへの不安・疑問 → 初期費用を説明（20
   });
 });
 
+describe("S6' 見積書の後の総額・追加分の確認 → 見積書送る（2026-09-12 竹内・あや事例）", () => {
+  const EST = { aixHistory: [{ aix_type: "estimate_sheet" }] };
+  it("あや「日割り家賃無しで284,500円になる感じですか？」→ estimate_amount_confirm", () => {
+    const x = ev({ ...EST, latestCustomerTurn: "ありがとうございます🙇🏻‍♀️\n日割り家賃無しで284,500円になる感じですか？" });
+    expect(x?.candidateAction).toBe("estimate_sheet"); expect(x?.reasonCode).toBe("estimate_amount_confirm");
+  });
+  it("あや「先程の初期費用から…高くなることはないのでしょうか？猫がいるのでプラス67000になりますか？」→ estimate_amount_confirm", () => {
+    expect(ev({ ...EST, latestCustomerTurn: "そうなんですね！ありがとうございます🙇🏻‍♀️՞\nでは先程の初期費用から日割り家賃抜きで\n高くなることはないのでしょうか？\n猫がいるのでプラス67000になりますか？" })?.reasonCode).toBe("estimate_amount_confirm");
+  });
+  it("きえ「お見積もり内容以外に契約時に追加でかかってくる費用はありますでしょうか？」→ estimate_amount_confirm", () => {
+    expect(ev({ ...EST, latestCustomerTurn: "また、こちらのお見積もり内容以外に契約時に追加でかかってくる費用はありますでしょうか？(退去時のクリーニング代以外)" })?.reasonCode).toBe("estimate_amount_confirm");
+  });
+  it("見積書をまだ送っていない → この場面にしない", () => {
+    expect(ev({ latestCustomerTurn: "日割り家賃無しで284,500円になる感じですか？" })?.reasonCode === "estimate_amount_confirm").toBe(false);
+  });
+  it("家賃の条件「家賃8万円くらいに抑えたいのでその場合は1Kになりますよね？」→ この場面にしない", () => {
+    expect(ev({ ...EST, latestCustomerTurn: "家賃8万円くらいに抑えたいのでその場合は1Kになりますよね？" })?.reasonCode === "estimate_amount_confirm").toBe(false);
+  });
+  it("他社比較の安さへの不安（みこと）は S8 初期費用を説明が先", () => {
+    expect(ev({ ...EST, latestCustomerTurn: "他社だと38万円だったのですが本当に22万円より高くなることはないですか？" })?.scene).toBe("S8_cost_doubt");
+  });
+  it("スタッフ文の見積書本文（🌟〇〇円割引）でも見積書の後と分かる", () => {
+    const x = ev({ latestCustomerTurn: "猫がいるのでプラス67000になりますか？", recentMessages: [{ sender: "staff", text: "【LIVIAZ NAMBA KRASS 1201号室】\n\n初期費用さらに\n🌟24,000円割引させて頂き\n初期費用：199,500円" }] });
+    expect(x?.reasonCode).toBe("estimate_amount_confirm");
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

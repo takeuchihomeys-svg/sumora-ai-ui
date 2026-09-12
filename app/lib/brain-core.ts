@@ -260,6 +260,7 @@ const AIX_CAPABILITY_MAP = `
 - acknowledge_check: 顧客が物件URL・物件名を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと ※スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて結果をまだ報告していない時は acknowledge_check ではなく property_check_result（その後のお客様の返事が了承・スタンプだけでも同じ。2026-09-12 竹内・Sさん事例。確認の約束の後に押された AIX に acknowledge_check は0件）
 - 【AIX なし】顧客が「何件か気になる物件送ってもいいですか」「送りますね」等、これから自分で物件を送る予告をしただけの時は、どの AIX も選ばない（aix:null）。物件が届いてから募集状況確認・御見積書（acknowledge_check / estimate_sheet）。返信は「いつでもお送りください＋お送り頂き次第募集状況確認し御見積書とあわせてご連絡」（2026-09-12 竹内）
 - 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・あや事例）
+- estimate_sheet（見積書を送った後の総額・追加分の確認）: 顧客が「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」「追加でかかる費用はありますか？」と総額や追加分（ペット敷金・火災保険等）を確かめた時は、追加分を反映した御見積書を送り直して見て確認して頂く（estimate_sheet）。見積書の再送を避けない。本文で総額を計算・断言しない（「〜円でお間違いございません」は書かない）（2026-09-12 竹内・あや事例）
 - cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・あや事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
@@ -2286,6 +2287,13 @@ ${history}`;
       finalAix = "cost_explain";
       decisionSource = "signal:scene_S8_cost_doubt";
     }
+    // 2026-09-12 竹内（あや事例）「見積書を見てもらった方が分かりやすい為、見積書を送ってお客さんに確認してもらう」:
+    //   見積書を送った後の総額・追加分の確認（「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」）
+    //   → 追加分を反映した御見積書を送り直す。旧: LLM が AIX なし＋本文から「見積書の再送」を外し、本文で総額を「お間違いございません」と断言した
+    if (!promiseAix && sceneEvidence?.reasonCode === "estimate_amount_confirm" && (finalAix === null || finalAix === "acknowledge_check")) {
+      finalAix = "estimate_sheet";
+      decisionSource = "signal:scene_S6_amount_confirm";
+    }
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);
       if (rate) {
@@ -2420,6 +2428,11 @@ ${history}`;
       // ルール②: 費用質問なし・見積送付アクションでもない → 自発的な費用話題を禁止
       avoidSet.add("見積書");
       avoidSet.add("初期費用");
+    }
+    // 2026-09-12 竹内（あや事例）: 見積書送るの判断なのに、LLM が avoid_topics に「見積書の再送」を入れ、返信側の見積の文脈判定が forbid になっていた
+    //   （判断と本文の方針が逆向き）。見積書送るの時は見積・費用系の言及禁止を外す
+    if (finalAix === "estimate_sheet") {
+      for (const t of Array.from(avoidSet)) if (/見積|初期費用|総額|費用/.test(t)) avoidSet.delete(t);
     }
     // 来阪を必ず先頭固定で残して最大5件（末尾sliceで来阪が落ちるのを防ぐ）
     const avoidTopics = ["来阪", ...Array.from(avoidSet).filter((t) => t !== "来阪")].slice(0, 5);

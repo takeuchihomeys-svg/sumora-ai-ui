@@ -100,6 +100,26 @@ export function hasViewingInviteBefore(o: Pick<SceneEvidenceInput, "aixHistory" 
   return staff.some((m) => /ご都合よろしいお日にち|ご内覧可能な日程|内覧日程|ご案内可能(?:な|です)|ご案内させて頂けます/.test(m.text ?? ""));
 }
 
+/** 見積書を送った後か（aix_usage_logs の見積書送る、または直近スタッフ文の御見積書） */
+export function hasEstimateBefore(o: Pick<SceneEvidenceInput, "aixHistory" | "recentMessages">): boolean {
+  if ((o.aixHistory ?? []).some((a) => a.aix_type === "estimate_sheet")) return true;
+  const staff = (o.recentMessages ?? []).filter((m) => m.sender === "staff").slice(-12);
+  return staff.some((m) => /初期費用さらに|円割引させて頂き|(?:御|お)見積書(?:と|を)?(?:なります|同封|お送りさせて(?:頂|いただ)きました)|ご査収/.test(m.text ?? ""));
+}
+
+// 2026-09-12 竹内（あや事例）「見積書を送って、見積書を見てもらった方が分かりやすい為、見積書を送ってお客さんに確認してもらう」:
+//   見積書を送った後にお客様が総額・追加分を確かめた（「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」
+//   「追加でかかってくる費用はありますでしょうか」）→ 追加分を反映した御見積書を送り直して確認して頂く（AIX 見積書送る）。本文で総額を計算・断言しない。
+//   初期費用の語が無い金額の質問（「家賃8万円くらいに抑えたいのでその場合は1Kになりますよね？」＝家賃の条件）は含めない
+const COST_CONTEXT_RE = /初期費用|総額|合計|トータル|全部で|見積|日割|敷金|礼金|火災保険|保証料|鍵交換|クリーニング|追加|プラス|別途|上乗せ|高くなる/;
+const AMOUNT_CONFIRM_RE = /(?:[0-9０-９][0-9０-９,，]*円|[0-9０-９]+(?:\.[0-9]+)?万)[^\n]{0,20}(?:になる|になります|で合って|であって|でよろしい|で大丈夫|感じ|くらい|ぐらい|程度)[^\n]{0,10}(?:ですか|でしょうか|か[？?]|[？?])|(?:高くなる|追加|プラス|別途|上乗せ)[^\n]{0,20}(?:なりますか|ありますか|ありますでしょうか|なりますでしょうか|ない(?:の)?ですか|ないでしょうか|ですか|でしょうか)/;
+export function customerConfirmsEstimateTotal(customerTurn: string): boolean {
+  const t = (customerTurn || "").normalize("NFKC");
+  if (!t.trim() || /^\s*\[画像\]/.test(t)) return false;
+  if (!COST_CONTEXT_RE.test(t)) return false;
+  return AMOUNT_CONFIRM_RE.test(t);
+}
+
 /** 決定論の場面の証拠（生成前・生成後・ブレインで同じ）。AIX は決めない */
 export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence | null {
   const msg = (o.latestCustomerTurn || "").trim();
@@ -147,6 +167,10 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   //   実データ（200日）: 検出3件（あや・𝓡・みこと）全てでスタッフは仕組み（仲介手数料0円・広告料の還元）を説明した。値引きの相談は含めない
   if (customerDoubtsCheapness(msg)) {
     return ev({ scene: "S8_cost_doubt", candidateAction: "cost_explain", checkPattern: null, timing: "now", chained: null, reasonCode: "cost_doubt" });
+  }
+  // S6' 見積書の後の総額・追加分の確認 → 追加分を反映した御見積書を送り直す（customerConfirmsEstimateTotal の根拠参照）
+  if (hasEstimateBefore(o) && customerConfirmsEstimateTotal(msg)) {
+    return ev({ scene: "S6_estimate", candidateAction: "estimate_sheet", checkPattern: null, timing: "now", chained: null, reasonCode: "estimate_amount_confirm" });
   }
 
   // S4' 内覧の別日程の問い合わせ（内覧日調整を送った後の「それ以外だと何日になりますか？」「土日は可能ですか」）→ 内覧日調整

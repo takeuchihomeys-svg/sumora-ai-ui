@@ -16,6 +16,7 @@
 //                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
+import { stripMetaNarration, isMetaNarrationLine } from "./meta-narration";
 // 2026-09-11 竹内方針1・5: 誤字（warning のみ）・「すぐに」の唯一の定義（後処理と検査が同じ正規表現）
 import { detectTypos } from "./typo-check";
 import { HASTY_ADVERB_TEST_RE, findUnanchoredUketamawari } from "./banned-phrasing";
@@ -2010,6 +2011,10 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
   // 内部指示の地の文（「〜する場面です」等）が本文に漏れた行。スタッフ実送信6,090通中0件
   const metaLine = text.match(META_NARRATION_LINE_RE);
   if (metaLine) push("rule_check", "block", "SYSTEM_MARKER_LEAK", "AIへの内部指示（場面の説明）が本文に混入しています", metaLine[0].trim(), "この行を削除");
+  else {
+    const workNote = text.split("\n").find((l) => isMetaNarrationLine(l));
+    if (workNote) push("rule_check", "block", "SYSTEM_MARKER_LEAK", "AIの作業メモ（〜への回答を組み立てます／返信案：）が本文に混入しています", workNote.trim(), "この行を削除");
+  }
   if ((text.match(/「/g) ?? []).length !== (text.match(/」/g) ?? []).length)
     push("rule_check", "warning", "QUOTE_UNBALANCED", "「」の対応が取れていません（返信全体を括った名残）", text.slice(0, 20), "不要な「」を削除");
   // E3 絵文字ルール（😊😌🌟✨のみ・合計2個以内・同一絵文字1回）
@@ -2706,6 +2711,8 @@ export async function runGroundedRevision(
     let revised = (data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "").trim();
     // 「修正後：」「【修正版】」等の前置き文を除去
     revised = revised.replace(/^(?:修正後[：:]\s*|【修正版[^】]*】\s*|以下(?:が|は)修正\S*\s*|修正した(?:返信)?文[：:]\s*)[\n]*/u, "").trim();
+    // 2026-09-12 竹内（あや事例）: 「「284,500円になる感じですか？」という金額確認質問への直接回答を組み立てます。」等の作業メモも除く
+    revised = stripMetaNarration(revised).text.trim();
     if (!revised || revised === draft.trim()) return null;
     // AIX違反の大量削除で正当に短くなるケースを救済（下限を20%に緩和）
     // 2026-09-09 Fable5: 骨格系（SKELETON_CODES）は「文を足す」修正が正解＝元の40字が150字前後になるのが正常。上限を max(2倍, 400字) に
