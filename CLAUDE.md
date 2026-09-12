@@ -97,6 +97,14 @@ WHERE is_current = true
 ORDER BY created_at DESC LIMIT 10;
 ```
 
+### 思った通りに行かない返信・AIX の原因を探す時（抜けの見つけ方）
+直近10件に埋もれないよう、診断の型はタグで引く。直したら `穴:G1`〜`穴:G6` のタグ付きで登録する（詳細は `memory/dept_line_reply.md`）。
+```sql
+SELECT title, insight FROM system_design_thinking
+WHERE is_current = true AND 'ブレイン診断' = ANY(tags);
+```
+先回りの道具: `npx tsx --env-file=.env.local scripts/find-brain-gaps.ts --days=30`
+
 ---
 
 ## ノウハウ参照
