@@ -2921,6 +2921,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS aix_action_items_one_pending ON aix_action_ite
 CREATE INDEX IF NOT EXISTS aix_action_items_status_done_at ON aix_action_items (status, done_at);
 ALTER TABLE aix_action_items DISABLE ROW LEVEL SECURITY;
 
+-- ── RAG の厳密化（2026-09-13 RAG 監査）──
+-- ivfflat.probes=1（既定）＋索引後の WHERE で近い行を取りこぼしていた（例文検索は厳密上位8件と0〜4件しか重ならない→修正後 8/8）。
+-- 対象は小さい表（最大約1万行・約75ms）なので probes を lists 以上にして全区画を調べる＝常に厳密な結果。
+-- ※ CREATE OR REPLACE FUNCTION は関数の SET を消すので、必ず全ての match_* 定義より後ろに置く。
+-- ※ ivfflat.probes は vector 拡張の読み込み後に定義される設定なので、先に vector の演算を1回実行する（無いと permission denied）
+SELECT '[1,0]'::vector <=> '[0,1]'::vector;
+-- セーブデータ検索: 引数 uuid と列 text の比較で毎回 ERROR 42883 になっていた。定義が migrate-schema に無かったので追加（ブレインからは呼ばない・古い版は G6 のため）
+CREATE OR REPLACE FUNCTION match_conversation_checkpoints(conversation_id_param uuid, query_embedding vector, match_count integer DEFAULT 3, min_similarity double precision DEFAULT 0.3)
+ RETURNS TABLE(id uuid, checkpoint_index integer, summary text, key_facts jsonb, conversation_stage text, similarity double precision)
+ LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT cc.id, cc.checkpoint_index, cc.summary, cc.key_facts, cc.conversation_stage,
+    (1 - (cc.embedding <=> query_embedding))::double precision AS similarity
+  FROM conversation_checkpoints cc
+  WHERE cc.conversation_id = conversation_id_param::text
+    AND cc.embedding IS NOT NULL
+    AND 1 - (cc.embedding <=> query_embedding) >= min_similarity
+  ORDER BY cc.embedding <=> query_embedding
+  LIMIT match_count;
+END;
+$$;
+ALTER FUNCTION match_reply_knowledge(vector, integer, integer, text) SET ivfflat.probes = 100;
+ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET ivfflat.probes = 100;
+ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET ivfflat.probes = 100;
+ALTER FUNCTION match_winning_patterns(vector, integer, text, integer) SET ivfflat.probes = 100;
+ALTER FUNCTION match_design_thinking(vector, integer, text) SET ivfflat.probes = 100;
+ALTER FUNCTION match_conversation_checkpoints(uuid, vector, integer, double precision) SET ivfflat.probes = 100;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

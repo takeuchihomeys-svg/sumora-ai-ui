@@ -1235,17 +1235,12 @@ export async function analyzeConversation(
       try {
         const qEmb = await generateEmbedding(ragQueryInput);
         if (qEmb) {
-            const [cpRes, knRes] = await Promise.all([
-              // checkpoint RAG: 非incremental + propertyCustomerId がある場合のみ
-              // （差分分析では古い会話構造の検索は不要）
-              (!isIncremental && propertyCustomerId)
-                ? supabase.rpc("match_conversation_checkpoints", {
-                    conversation_id_param: conversationId,
-                    query_embedding: qEmb,
-                    match_count: 6,
-                    min_similarity: 0.5,
-                  })
-                : Promise.resolve({ data: null }),
+            // 2026-09-13 RAG 監査: 過去のセーブデータの検索（match_conversation_checkpoints）はやめた。
+            //   ① RPC が uuid と text の型不一致で毎回エラー＝一度もプロンプトに入っていなかった（error を捨てていた）。
+            //   ② セーブデータは積み上げ式で最新1件が全量（下の latestCheckpoint で毎回入る）。古い版は置き換え済みの金額・状態を含むため、
+            //      直して入れると古い事実の注入（穴:G6）になる（あや: 1版目「エスリード…1番手で申込入っている」）。
+            //   残りの3本は2段の直列をやめて1回の並列にした（旧: checkpoints+knowledge → winning+templates）
+            const [knRes, wpRagResult, tplRagResult] = await Promise.all([
               // match_reply_knowledge: incremental でも実行（原則・知識は毎回必要）
               supabase.rpc("match_reply_knowledge", {
                 query_embedding: qEmb,
@@ -1253,12 +1248,7 @@ export async function analyzeConversation(
                 min_importance: 8,
                 boost_state: tpoHint ?? null,
               }),
-            ]);
-            ragCheckpoints = ((cpRes as { data: unknown }).data ?? []) as typeof ragCheckpoints;
-            ragKnowledgeRaw = ((knRes as { data: unknown }).data ?? []) as RagKnowledgeRow[];
-
-            // winning_patterns RAG: incremental でも実行（人間性ベースのクロージング戦略は毎回必要）
-            const [wpRagResult, tplRagResult] = await Promise.all([
+              // winning_patterns RAG: incremental でも実行（人間性ベースのクロージング戦略は毎回必要）
               supabase.rpc("match_winning_patterns", {
                 query_embedding: qEmb,
                 match_count: 9,
@@ -1270,6 +1260,21 @@ export async function analyzeConversation(
                 match_count: 8,
               }),
             ]);
+            ragKnowledgeRaw = ((knRes as { data: unknown }).data ?? []) as RagKnowledgeRow[];
+            // 2026-09-13 RAG 監査: RPC の error を捨てていたため、検索が丸ごと死んでいても気づけなかった（セーブデータ検索は毎回エラーだった）。
+            //   件数・エラー・最大類似度を1行で出す（精度の見張りと、改善の前後比較に使う）
+            {
+              const maxSim = (rows: unknown) => {
+                const arr = (rows ?? []) as Array<{ similarity?: number }>;
+                return arr.length ? Math.round(Math.max(...arr.map((r) => r.similarity ?? 0)) * 1000) / 1000 : null;
+              };
+              console.log(JSON.stringify({
+                tag: "brain:rag", conversationId, tpo: tpoHint ?? null, qlen: ragQueryInput.length,
+                knowledge: { n: (knRes.data ?? []).length, max: maxSim(knRes.data), err: knRes.error?.message ?? null },
+                winning: { n: (wpRagResult.data ?? []).length, max: maxSim(wpRagResult.data), err: wpRagResult.error?.message ?? null },
+                templates: { n: (tplRagResult.data ?? []).length, max: maxSim(tplRagResult.data), err: tplRagResult.error?.message ?? null },
+              }));
+            }
             ragWinningPatterns = ((wpRagResult.data ?? []) as Array<{
               situation: string | null;
               pattern: string;
@@ -1298,8 +1303,9 @@ export async function analyzeConversation(
               .filter((t) => t.similarity >= 0.4)
               .sort((a, b) => (b.won_count ?? 0) - (a.won_count ?? 0));
           }
-      } catch {
-        // RAG失敗は無視・静的バケットのみで動作継続（既存方針）
+      } catch (e) {
+        // RAG失敗は静的バケットのみで動作継続（既存方針）。ただし握り潰さずログに残す
+        console.warn(JSON.stringify({ tag: "brain:rag", conversationId, error: e instanceof Error ? e.message : String(e) }));
       }
     }
   }
