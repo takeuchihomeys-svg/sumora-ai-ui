@@ -15,6 +15,7 @@ import {
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
+import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "@/app/lib/move-out-context";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
@@ -2204,6 +2205,15 @@ ${history}`;
     //   null 化（<0.3）は外した（今のデータ量では強すぎる・旧ゲートも一度も効いていなかったので挙動は変わらない）。
     //   一致率は下の required→recommended 降格だけに使う。aixSuppressedByAcceptRate は互換のため残す（常に false）。
     const aixSuppressedByAcceptRate = false;
+    // 2026-09-12 竹内「見積書送る宣言したら AIX 見積書送る をセット」: 会話の最後がスタッフの未履行の宣言なら、
+    //   それを履行する AIX が次にやること（見積書の宣言→見積書送る／今ピックアップする宣言→物件ピックアップした）。
+    //   規則は aix-task-link.resolveStaffPromiseAix（宣言の判定は行動台帳と同じ）。スタッフの宣言送信直後に send-line-message が
+    //   このブレインを再実行する（forceIncremental）→ AIX要対応に登録され売上番長グループへ「〇〇さん → AIX【見積書送る】」
+    const promiseAix = resolveStaffPromiseAix(brainLedger.facts, [...typedMessages].reverse()); // typedMessages は新しい順 → 古い順で渡す
+    if (promiseAix) {
+      finalAix = promiseAix.action;
+      decisionSource = `promise:${promiseAix.kind}`;
+    }
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);
       if (rate) {
@@ -2238,8 +2248,9 @@ ${history}`;
     //   （action は出さず初回の挨拶下書きを優先するが、AIX要対応と AIX モードの自動検索は起こす）
     let firstContactPickup: "property_send" | null = null;
     if (!hasStaffEngagement && !isIncremental) {
-      const firstCustText = [...typedMessages].reverse().find((m) => m.sender === "customer")?.text ?? "";
-      if (finalAix === "property_send" || finalAix === "property_search" || isConditionFormMessage(firstCustText)) {
+      // typedMessages は新しい順。初回の顧客発言のどれかが条件フォームなら条件受領
+      const custSentConditionForm = typedMessages.some((m) => m.sender === "customer" && isConditionFormMessage(m.text ?? ""));
+      if (finalAix === "property_send" || finalAix === "property_search" || custSentConditionForm) {
         firstContactPickup = "property_send";
       }
       finalAix = null;
@@ -2784,7 +2795,11 @@ async function stampSkipped(conversationId: string, reason: string): Promise<fal
   return false;
 }
 
-export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<boolean> {
+export async function analyzeAndSaveBrainMeta(
+  conversationId: string,
+  // 2026-09-12: スタッフの宣言送信直後（send-line-message）は顧客の新着が無くても cached にせず分析し直す（宣言→AIX の判断のため）
+  runOpts?: { forceIncremental?: boolean },
+): Promise<boolean> {
   const { data: conv, error: selectError } = await supabase
     .from("conversations")
     .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction, brain_full_analyzed_at, brain_full_msg_count, brain_deep_analyzed_at, brain_deep_msg_count, last_brain_meta, customer_name, is_post_apply")
@@ -2867,7 +2882,7 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
 
   const isFullBypass = FULL_BYPASS_RE.test(latestText);
   // 2026-09-12: 条件フォーム（①〜⑧）も必ず分析し直す（条件が来たら AIX【物件ピックアップした】→ AIX モードの自動検索につなげるため cached にしない）
-  const isIncrementalBypass = !isFullBypass && (INCREMENTAL_BYPASS_RE.test(latestText) || PROPERTY_CONDITION_INQUIRY_RE.test(latestText) || isConditionFormMessage(latestText));
+  const isIncrementalBypass = !isFullBypass && (!!runOpts?.forceIncremental || INCREMENTAL_BYPASS_RE.test(latestText) || PROPERTY_CONDITION_INQUIRY_RE.test(latestText) || isConditionFormMessage(latestText));
 
   // 3段階モード判定: full / incremental / cached（decideAnalysisMode に切り出し・単体テストあり）
   const msgsSinceDeep = (totalMsgCount ?? 0) - ((convData?.brain_deep_msg_count as number | null) ?? 0);
@@ -3390,10 +3405,14 @@ export type BrainGateSnapshot = {
  *     従来の generate-reply 側 DBフェッチにフォールバックすること
  *     （チェックポイントBの「Step1後の再確認」で brain-sweep の補填を拾える余地を残す）
  */
-export async function runBrainAndNotify(conversationId: string, msgText?: string): Promise<BrainGateSnapshot | null> {
+export async function runBrainAndNotify(
+  conversationId: string,
+  msgText?: string,
+  runOpts?: { forceIncremental?: boolean },
+): Promise<BrainGateSnapshot | null> {
   let analyzed = false;
   try {
-    analyzed = await analyzeAndSaveBrainMeta(conversationId);
+    analyzed = await analyzeAndSaveBrainMeta(conversationId, runOpts);
   } catch (e) {
     console.warn("[brain-core] runBrainAndNotify analyze failed:", conversationId, e instanceof Error ? e.message : e);
   }

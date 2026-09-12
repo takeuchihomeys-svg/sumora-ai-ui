@@ -2,6 +2,11 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { isGenerationFailureText } from "@/app/lib/example-hygiene";
+import { classifyStaffTextForLedger } from "@/app/lib/action-ledger";
+import { runBrainAndNotify } from "@/app/lib/brain-core";
+
+// 宣言直後のブレイン再分析（after 内で最大 ~20秒待ち＋分析）に余裕を持たせる
+export const maxDuration = 120;
 
 // LINE アカウント → チャンネルアクセストークンのマッピング
 // line_contacts.account（日本語名）→ 英語キー の変換も行う
@@ -230,29 +235,45 @@ export async function POST(req: NextRequest) {
               });
             }
 
-            // 売上番長グループへアナウンス
-            let groupId: string | null = null;
-            const envId = process.env.LINE_STAFF_GROUP_ID;
-            if (envId) {
-              groupId = envId;
-            } else {
-              const { data: grpRow } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
-              groupId = grpRow?.value ?? null;
-            }
-            const groupToken = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
-            if (groupId && groupToken) {
-              await fetch("https://api.line.me/v2/bot/message/push", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", Authorization: `Bearer ${groupToken}` },
-                body: JSON.stringify({
-                  to: groupId,
-                  messages: [{ type: "text", text: `🏠【物件出し開始】\n${customerName}さんへの物件ピックアップを開始しました` }],
-                }),
-                signal: AbortSignal.timeout(10_000),
-              }).catch(() => {});
-            }
+            // 旧「🏠【物件出し開始】〇〇さんへの物件ピックアップを開始しました」は 2026-09-12 に廃止。
+            //   同じ送信でブレインが宣言→AIX【物件ピックアップした】を判断し、AIX要対応（〇〇さん → AIX【物件ピックアップした】）として
+            //   売上番長グループへ届くため（二重通知になる）。条件付き（出次第）の宣言は AIX要対応にならない
+            void customerName;
           }
         } catch {}
+      });
+    }
+  }
+
+  // 2026-09-12 竹内「見積書送る宣言したら AIX 見積書送る をセット。LINE グループにアナウンスするまでがセット」:
+  //   スタッフが見積書・物件ピックアップを宣言した送信の直後にブレインを分析し直す（顧客の新着が無くても forceIncremental）。
+  //   ブレインが「未履行の宣言 → それを履行する AIX」（aix-task-link.resolveStaffPromiseAix）と判断 → AIX要対応に登録・
+  //   売上番長グループへ「〇〇さん → AIX【見積書送る】」。宣言の判定は行動台帳と同じ classifyStaffTextForLedger
+  if (message) {
+    const promiseEntry = classifyStaffTextForLedger(message, null);
+    if (promiseEntry?.status === "promised" && (promiseEntry.kind === "estimate_declared" || promiseEntry.kind === "pickup_declared")) {
+      const sentAtIso = new Date(Date.now() - 60_000).toISOString();
+      after(async () => {
+        try {
+          const { data: convRow } = await supabase
+            .from("conversations").select("id")
+            .eq("line_user_id", line_user_id).eq("account", accountKey).maybeSingle();
+          if (!convRow?.id) return;
+          const cid = convRow.id as string;
+          // 画面（page.tsx）がこの送信を messages に保存するのを待つ（ブレインが宣言を読めるように・最大15秒）
+          for (let i = 0; i < 8; i++) {
+            const { data: saved } = await supabase
+              .from("messages").select("id")
+              .eq("conversation_id", cid).eq("sender", "staff").gte("created_at", sentAtIso)
+              .limit(1);
+            if (saved && saved.length > 0) break;
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+          await new Promise((r) => setTimeout(r, 2000)); // 会話行の更新（updated_at）が落ち着いてから分析（ウォーターマーク競合を避ける）
+          await runBrainAndNotify(cid, undefined, { forceIncremental: true });
+        } catch (e) {
+          console.warn("[send-line-message] brain after staff promise failed:", e instanceof Error ? e.message : e);
+        }
       });
     }
   }
