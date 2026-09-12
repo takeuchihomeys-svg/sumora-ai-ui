@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import {
   buildPropertyBrainContext,
   formatContextForPrompt,
@@ -158,9 +159,12 @@ export async function runPropertyBrain(
 
   const dynamicPrompt = buildDynamicPrompt(ctx);
 
+  // 2026-09-13 RAG 監査: Sonnet 5 は thinking 省略時に自動で思考ブロックが入ることがあり、content[0] だけ読むと本文が空になる
+  //   → thinking を明示的に無効化し、text ブロックを探して読む（brain-core / aix と同じ）
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-5",
     max_tokens: 1024,
+    thinking: { type: "disabled" },
     system: [
       {
         type: "text",
@@ -170,8 +174,10 @@ export async function runPropertyBrain(
     ],
     messages: [{ role: "user", content: dynamicPrompt }],
   });
+  logLlmUsage("property-brain", msg.usage);
 
-  const raw = msg.content[0]?.type === "text" ? msg.content[0].text.trim() : "";
+  const textBlock = msg.content.find((c) => c.type === "text");
+  const raw = textBlock && textBlock.type === "text" ? textBlock.text.trim() : "";
 
   // JSON抽出（```json ブロック対応）
   const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/) ?? raw.match(/(\{[\s\S]*\})/);
@@ -348,9 +354,11 @@ export async function runConditionBrain(
 
   let raw = "";
   try {
+    // 2026-09-13: thinking を明示的に無効化し、text ブロックを探して読む（上の propertyBrain と同じ理由）
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 512,
+      thinking: { type: "disabled" },
       system: [
         {
           type: "text",
@@ -360,7 +368,9 @@ export async function runConditionBrain(
       ],
       messages: [{ role: "user", content: dynamicPrompt }],
     });
-    raw = msg.content[0]?.type === "text" ? msg.content[0].text.trim() : "";
+    logLlmUsage("condition-brain", msg.usage);
+    const textBlock = msg.content.find((c) => c.type === "text");
+    raw = textBlock && textBlock.type === "text" ? textBlock.text.trim() : "";
   } catch (e) {
     console.error("[conditionBrain] Sonnet-5 call failed:", e);
     return null;

@@ -17,6 +17,7 @@
 
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 import { stripMetaNarration, isMetaNarrationLine } from "./meta-narration";
+import { logLlmUsage, type AnthropicUsageLike } from "./llm-usage-log";
 // 2026-09-11 竹内方針1・5: 誤字（warning のみ）・「すぐに」の唯一の定義（後処理と検査が同じ正規表現）
 import { detectTypos } from "./typo-check";
 import { HASTY_ADVERB_TEST_RE, findUnanchoredUketamawari } from "./banned-phrasing";
@@ -258,7 +259,8 @@ async function callSonnet(prompt: PromptContent, timeoutMs: number, maxTokens = 
     }),
   });
   if (!res.ok) throw new Error(`final-check ${model} HTTP ${res.status}`);
-  const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
+  const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string; usage?: AnthropicUsageLike };
+  logLlmUsage("final-check:check", data.usage, { model });
   if (data.stop_reason === "max_tokens") throw new Error(`final-check ${model} max_tokens reached`);
   const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
   let parsed: { issues?: RawIssue[] };
@@ -2670,15 +2672,14 @@ ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 ${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
 [/CONDITIONS]
 
-[RULES]（会社ルール）
-${(ctx.dbRules || "なし").slice(0, 20000)}
-[/RULES]
-
 [ORIGINAL_DRAFT]
 ${draft}
 [/ORIGINAL_DRAFT]`;
+  // 2026-09-13 RAG 監査: 会社ルール（DB・最大2万字＝約1.8万トークン）は会話によらず同じなのに動的ブロックに入っていて、
+  //   自動修正のたびに満額で払っていた（下書きの38%で自動修正が走る）。固定の指示の直後に独立ブロックで置き 1h キャッシュ
   return [
     { type: "text" as const, text: SONNET_REVISION_STATIC, cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text" as const, text: `[RULES]（会社ルール）\n${(ctx.dbRules || "なし").slice(0, 20000)}\n[/RULES]`, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamic },
   ];
 }
@@ -2706,9 +2707,10 @@ export async function runGroundedRevision(
       }),
     });
     if (!res.ok) return null;
-    const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
+    const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string; usage?: AnthropicUsageLike };
+    logLlmUsage("final-check:revision", data.usage);
     if (data.stop_reason === "max_tokens") return null;
-    let revised = (data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "").trim();
+    let revised =(data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "").trim();
     // 「修正後：」「【修正版】」等の前置き文を除去
     revised = revised.replace(/^(?:修正後[：:]\s*|【修正版[^】]*】\s*|以下(?:が|は)修正\S*\s*|修正した(?:返信)?文[：:]\s*)[\n]*/u, "").trim();
     // 2026-09-12 竹内（あや事例）: 「「284,500円になる感じですか？」という金額確認質問への直接回答を組み立てます。」等の作業メモも除く
@@ -2889,7 +2891,8 @@ ${targets.map((i, idx) => `${idx + 1}. 「${i.evidence}」`).join("\n")}
       }),
     });
     if (!res.ok) throw new Error(`verify HTTP ${res.status}`);
-    const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+    const data = await res.json() as { content?: Array<{ type: string; text?: string }>; usage?: AnthropicUsageLike };
+    logLlmUsage("final-check:verify", data.usage);
     const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     const parsed = JSON.parse(text) as { results?: Array<{ evidence: string; has_basis: boolean }> };
     const results = parsed.results ?? [];

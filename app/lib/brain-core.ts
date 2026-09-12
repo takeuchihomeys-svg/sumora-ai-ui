@@ -18,6 +18,7 @@ import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } fr
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { parseCheckpointOutput } from "@/app/lib/checkpoint-format";
+import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
@@ -1985,14 +1986,16 @@ ${history}`;
           text: staticBrainSystem,
           cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
         },
-        // ブロック[1]: DB由来動的部分（promptRules + knowledge + boundary）→ 5m キャッシュ
+        // ブロック[1]: DB由来動的部分（promptRules + knowledge + boundary）→ 1h キャッシュ
         // 学習cronで更新されてもブロック[0]のプレフィックスキャッシュは無傷。
         // 空のtextブロックはAPIエラーになるため、空の場合はブロックごと省略。
+        // 2026-09-13 RAG 監査: 旧 5m は45回中12回で書き直し（直前の呼び出しから5分13秒〜51分）＝ブレイン入力費用の約11%の損。
+        //   内容が変われば TTL に関係なくキャッシュは外れるので、5m にする利点は無い → 1h
         ...(dynamicBrainSystem
           ? [{
               type: "text" as const,
               text: dynamicBrainSystem,
-              cache_control: { type: "ephemeral" as const, ttl: "5m" as const },
+              cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
             }]
           : []),
       ],
@@ -2005,10 +2008,12 @@ ${history}`;
     const cacheCreation = usageAny.cache_creation_input_tokens ?? 0;
     const inputTokens = response.usage.input_tokens ?? 0;
     if (cacheRead > 0) {
-      console.log(`[brain-core] cache HIT  conv=${conversationId} read=${cacheRead} input=${inputTokens}`);
+      // 2026-09-13: HIT の時も書き込み（created）を出す（DB ブロックだけ書き直した回が HIT に見えて分からなかった）
+      console.log(`[brain-core] cache HIT  conv=${conversationId} read=${cacheRead} created=${cacheCreation} input=${inputTokens}`);
     } else {
       console.log(`[brain-core] cache MISS conv=${conversationId} created=${cacheCreation} input=${inputTokens}`);
     }
+    logLlmUsage("brain", response.usage, { conversationId, mode: opts?.mode ?? "full" });
 
     // claude-sonnet-5 はextended thinkingを使うためcontent[0]がthinking型になることがある
     // content.find()でtextブロックを確実に取得する
@@ -2846,6 +2851,7 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
       system: [{ type: "text", text: CHECKPOINT_STATIC_SYSTEM, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }],
       messages: [{ role: "user", content: maskPII(userContent, [customerName]) }],
     });
+    logLlmUsage("checkpoint", response.usage, { conversationId, stop: response.stop_reason });
     // analyzeConversation と同じ content.find() で thinking ブロック対策
     const raw = response.content.find((c) => c.type === "text")?.text ?? "";
     const parsedResult = parseCheckpointOutput(raw, response.stop_reason);

@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
+import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { supabase } from "@/app/lib/supabase";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
@@ -767,6 +768,7 @@ async function callClaude(system: string, user: string, action: string, dynamicS
     });
     if (!res.ok) throw new Error(`Claude error: ${await res.text()}`);
     const data = await res.json();
+    logLlmUsage("aix", data.usage, { action, model: MODEL });
     warnIfTruncated(data, system.length + user.length, action);
     return data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
   };
@@ -806,6 +808,7 @@ async function callClaudeHaiku(system: string, user: string, action: string, dyn
   });
   if (!res.ok) throw new Error(`Claude Haiku error: ${await res.text()}`);
   const data = await res.json();
+  logLlmUsage("aix", data.usage, { action, model: "haiku" });
   warnIfTruncated(data, system.length + user.length, action);
   return data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
 }
@@ -840,6 +843,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
   });
   if (!res.ok) throw new Error(`Claude Vision error: ${await res.text()}`);
   const data = await res.json();
+  logLlmUsage("aix:vision", data.usage, { action, model: MODEL });
   warnIfTruncated(data, system.length + JSON.stringify(content).length, action);
   // Sonnet5はthinkingブロックが content[0] に入るため find() で最初のtextブロックを取得する
   const visionText = data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";

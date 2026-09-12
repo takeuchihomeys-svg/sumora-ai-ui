@@ -2,6 +2,7 @@
 import { ChatAnthropic } from "@langchain/anthropic";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
+import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import {
   PHASE_GUIDE,
@@ -4674,7 +4675,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // プロンプトキャッシュ効果の観測（コスト最適化の検証基盤）:
               // LangChain の AIMessageChunk は usage_metadata（正規化済み）または
               // response_metadata.usage（Anthropic生形式）にキャッシュ統計を載せる。両方を拾う。
-              let cacheUsage: { read: number; write: number; input: number } | null = null;
+              let cacheUsage: { read: number; write: number; input: number; inputIsTotal?: boolean } | null = null;
               for await (const chunk of await streamPromise) {
                 // thinking有効時等、content が string ではなくブロック配列で届くケースに対応。
                 // text ブロックのみ抽出し、thinking ブロックは本文に混ぜない。
@@ -4707,6 +4708,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     read: um.input_token_details?.cache_read ?? 0,
                     write: um.input_token_details?.cache_creation ?? 0,
                     input: um.input_tokens ?? 0,
+                    inputIsTotal: true, // LangChain の usage_metadata.input_tokens はキャッシュ分を含む合計
                   };
                 }
                 const rawUsage = (chunk.response_metadata as {
@@ -4728,6 +4730,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   ` input=${cacheUsage.input}` +
                   ` conv=${conversationId}`
                 );
+                // 2026-09-13 RAG 監査: 全経路で同じ形（read/write/uncached/total）に。LangChain の input は合計なので非キャッシュ分に直す
+                logLlmUsage("generate-reply", {
+                  cache_read_input_tokens: cacheUsage.read,
+                  cache_creation_input_tokens: cacheUsage.write,
+                  input_tokens: cacheUsage.inputIsTotal ? Math.max(0, cacheUsage.input - cacheUsage.read - cacheUsage.write) : cacheUsage.input,
+                }, { conversationId });
               }
               warnIfTruncated(stopReason, genInputLength);
               if (shouldPrependGreeting && !isTemplateOptimize) {
