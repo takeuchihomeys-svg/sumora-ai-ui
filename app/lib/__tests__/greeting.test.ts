@@ -164,5 +164,31 @@ describe("開口語の後処理・禁止語", () => {
   });
 });
 
+describe("2026-09-12 竹内（あや事例）: 条件フォームを送ってくれた → 感謝してピックアップ宣言", () => {
+  const ASK: M = { sender: "staff", text: "よろしければ、私の方でご希望のご条件に合ったお部屋お探しさせて頂きます！\nお手隙の際にご入力頂きますと、ご条件に合ったお部屋ピックアップしお送りさせて頂きます😌！！", createdAt: "2026-09-06T14:15:16Z" };
+  const FORM: M = { sender: "customer", text: "（あやさんご希望のお部屋探しご条件）\n①ご入居時期　10月29日〜11月1日\n②ご希望家賃（管理費込み）　6万〜7万\n③ご希望間取り　1K、1LDK\n⑤ご希望エリア・最寄り駅　大国町", createdAt: "2026-09-06T18:42:52Z" };
+  const NOW = Date.parse("2026-09-07T03:15:00Z");
+  it("F1 フォーム記入の依頼は条件ヒアリング・フォームは条件の提示", () => {
+    const staff = classifyLastStaffTurn(ASK.text);
+    const cr = classifyCustomerResponse(analyzeSubstance(FORM.text), staff);
+    expect(staff.kind).toBe("condition_ask"); expect(cr.kind).toBe("condition_change");
+  });
+  it("F2 開口語は かしこまりました ではなく感謝（conditionFormThanks）", () => {
+    const d = decide([ASK, FORM], NOW, 12);
+    expect(d.opener).toBe("none"); expect(d.conditionFormThanks).toBe(true);
+    expect(buildGreetingNote(d, 12)).toContain("ご条件お送り頂きありがとうございます😊！！");
+  });
+  it("F3 「かしこまりました！！」で始めた下書き → 感謝の1文に置き換わる", () => {
+    const d = decide([ASK, FORM], NOW, 12);
+    expect(enforceOpening("かしこまりました！！\n大国町周辺全域から6万〜7万・1K、1LDKでピックアップしお送りさせて頂きます！！", d).cleaned)
+      .toStartWith("ご条件お送り頂きありがとうございます😊！！\n大国町周辺全域から");
+  });
+  it("F4 既に感謝がある下書きは足さない", () => {
+    const d = decide([ASK, FORM], NOW, 12);
+    const t = "ご条件お送り頂きありがとうございます😊！！\n大国町周辺全域からピックアップしお送りさせて頂きます！！";
+    expect(enforceOpening(t, d).cleaned).toBe(t);
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failures.length) { console.log(failures.join("\n")); process.exit(1); }

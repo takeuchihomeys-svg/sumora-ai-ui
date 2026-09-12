@@ -11,6 +11,11 @@
 import { canonOf } from "./validate-reply";
 import { jstDayStartMs } from "./jst-date"; // 2026-09-12 竹内方針D: JST の日付計算は jst-date に一本化
 import type { CustomerResponseKind, SubstanceKind } from "./reply-context"; // type-only（実行時の循環 import なし）
+import { isConditionFormMessage } from "./reply-context"; // reply-context は greeting を import しない（循環なし）
+
+/** お客様が条件フォームを送ってくれた時の感謝の1文（竹内 2026-09-12・あや事例。スタッフ実送信の型） */
+export const CONDITION_FORM_THANKS = "ご条件お送り頂きありがとうございます😊！！";
+const CONDITION_FORM_THANKS_RE = /ご?条件[^\n。！!]{0,8}お送り(?:頂|いただ)き[^\n。！!]{0,4}ありがとう|ご(?:入力|記入)(?:頂|いただ)き[^\n。！!]{0,4}ありがとう/;
 
 export type GreetingKind = "first" | "late_apology" | "standard" | "none";
 export type OpenerKind = "kashikomari" | "hai" | "none";
@@ -46,6 +51,8 @@ export type GreetingDecision = {
   openerReason: string;
   reason: string;
   audit: GreetingAudit;
+  /** お客様が条件フォーム（①〜⑧）を送ってくれた → 開口語の代わりに「ご条件お送り頂きありがとうございます😊！！」（初回は挨拶行が兼ねるので false） */
+  conditionFormThanks?: boolean;
 };
 
 /** DB（tpo_debug.greeting → reply_context_snapshot）・check-reply 転送用の軽量形 */
@@ -178,12 +185,17 @@ export function resolveOpener(o: {
   customerSecondary?: CustomerResponseKind[];
   substanceKinds?: SubstanceKind[];
   isDeliverableReply?: boolean;
+  /** 未返信の顧客発言に条件フォーム（①〜⑧）がある */
+  customerSentConditionForm?: boolean;
 }): Pick<GreetingDecision, "opener" | "openerAllowed" | "openerReason"> {
   const r = (opener: OpenerKind, openerAllowed: OpenerKind[], openerReason: string) => ({ opener, openerAllowed, openerReason });
   if (o.greetingKind === "first" || o.greetingKind === "late_apology") {
     return r("none", ["none"], `${o.greetingKind}: 挨拶行が開口語を兼ねる（正解: はじめまして→開口語 0 件）`);
   }
   if (o.isDeliverableReply) return r("none", ["none", "hai"], "結果報告は物件名・結果・名前行から本題（正解: 結果報告の冒頭は お世話に／名前行／🌟物件名。お待たせは廃止）");
+  // 2026-09-12 竹内（あや事例）「フォーマット送ってもらった事に対して感謝をする。感謝して物件ピックアップする事を伝える」
+  //   → 開口語「かしこまりました」ではなく「ご条件お送り頂きありがとうございます😊！！」から（スタッフ実送信の型）
+  if (o.customerSentConditionForm) return r("none", ["none"], "お客様が条件フォームを送ってくれた → 開口語ではなく「ご条件お送り頂きありがとうございます😊！！」の感謝から");
   const kinds = new Set(o.substanceKinds ?? []);
   const asksAction = kinds.has("request") || kinds.has("condition") || kinds.has("schedule") || kinds.has("decision");
   switch (o.customerKind) {
@@ -248,12 +260,18 @@ export function resolveGreeting(opts: {
     alreadyGreetedToday: opts.alreadyGreetedToday, customerKind: opts.customerKind, isDeliverableReply: !!opts.isDeliverableReply,
   };
 
+  // 未返信の顧客発言（最後のスタッフ発言より後）に条件フォームがあるか（判定は reply-context.isConditionFormMessage と同じ）
+  const lastStaffIdx = opts.recentMessages.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0).at(-1) ?? -1;
+  const customerSentConditionForm = opts.recentMessages.slice(lastStaffIdx + 1)
+    .some((m) => m.sender === "customer" && isConditionFormMessage(m.text ?? ""));
+
   const mk = (kind: GreetingKind, openingLine: string, enforce: boolean, reason: string): GreetingDecision => {
     const op = resolveOpener({
       greetingKind: kind, customerKind: opts.customerKind, customerSecondary: opts.customerSecondary,
-      substanceKinds: opts.substanceKinds, isDeliverableReply: !!opts.isDeliverableReply,
+      substanceKinds: opts.substanceKinds, isDeliverableReply: !!opts.isDeliverableReply, customerSentConditionForm,
     });
-    return { kind, openingLine, opening: openingLine, nightPrefix, enforce, ...op, reason, audit };
+    const conditionFormThanks = customerSentConditionForm && kind !== "first" && kind !== "late_apology" && !opts.isDeliverableReply;
+    return { kind, openingLine, opening: openingLine, nightPrefix, enforce, ...op, reason, audit, conditionFormThanks };
   };
 
   if (opts.isFirstEverReply) return mk("first", nightPrefix + buildFirstGreeting(name), true, "真の初回");
@@ -339,7 +357,14 @@ export function enforceOpening(text: string, d: GreetingDecision): { cleaned: st
   const o = enforceOpener(rest, d);
   rest = o.rest.trim();
   fixes.push(...o.fixes);
-  const touched = stripped || o.fixes.length > 0;
+  // 2026-09-12 竹内（あや事例）: 条件フォームを送ってくれた時は感謝の1文から（無ければ本文の先頭に足す。スタッフ実送信の型）
+  let thanked = false;
+  if (d.conditionFormThanks && rest && !CONDITION_FORM_THANKS_RE.test(rest)) {
+    rest = `${CONDITION_FORM_THANKS}\n${rest}`;
+    thanked = true;
+    fixes.push("条件フォームへの感謝「ご条件お送り頂きありがとうございます」を先頭に追加");
+  }
+  const touched = stripped || o.fixes.length > 0 || thanked;
   if (!d.enforce) {
     if (!touched) return { cleaned: text, fixes };
     return { cleaned: d.openingLine && stripped ? `${d.openingLine}\n${rest}` : rest || text, fixes };
@@ -358,7 +383,8 @@ export function buildGreetingNote(d: GreetingDecision, jstHour: number): string 
   const openerLine = d.opener === "none"
     ? `開口語: なし。${where}は本題（回答・物件名・結果・「ご条件お送り頂きありがとうございます！！」のような目的語付きの受領お礼）から始める（${d.openerReason}）${d.openerAllowed.length > 1 ? `。${d.openerAllowed.filter((k) => k !== "none").map((k) => OPENER_JA[k]).join("／")}で始めても良い` : ""}`
     : `開口語: ${where}は ${OPENER_JA[d.opener]}（${d.openerReason}）。絵文字は「かしこまりました😊！！」「はい😊！！」の位置のみ`;
-  const forbidLine = forbidden.length ? `開口語の禁止: ${forbidden.join("／")}で始めない。` : "";
+  const forbidLine = (forbidden.length ? `開口語の禁止: ${forbidden.join("／")}で始めない。` : "")
+    + (d.conditionFormThanks ? `お客様が条件フォームを送ってくれたので、${where}は必ず「${CONDITION_FORM_THANKS}」（フォームへの感謝）→ 続けてお客様の条件（エリア・家賃・間取り等をお客様の語のまま）で物件をピックアップしてお送りする宣言。` : "");
   const common = `「お待たせ致しました」「お待たせしました」は禁止語（返信を待たせた体裁を作らない。結果報告でも使わない）。「ありがとうございます」「ご連絡ありがとうございます」だけの書き出しは禁止（目的語付き「〇〇お送り頂きありがとうございます」は可）。「夜遅くに失礼します」「夜分遅くに失礼致します」は返信に書かない（時間帯を問わず）。`;
   switch (d.kind) {
     case "first":
