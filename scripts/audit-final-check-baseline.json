@@ -1,7 +1,7 @@
 {
- "generatedAt": "2026-09-12T02:34:46.931Z",
+ "generatedAt": "2026-09-12T02:56:41.363Z",
  "mode": "production",
- "rate": 0.04353562005277045,
+ "rate": 0.032981530343007916,
  "n": 758,
  "rows": {
   "0722dde2-33df-4ce6-8796-7bed528000bb": [],
@@ -155,9 +155,7 @@
   "17498170-fb0e-4e17-b315-af6c3d4b73c3": [],
   "4661a30f-9558-473f-b9c2-d188078a4e8e": [],
   "5da55a88-4d3b-479d-a97f-7bdbc454d003": [],
-  "7c80b31b-acbc-4edc-ac9b-3059afdbc950": [
-   "SCREENING_ASSURANCE"
-  ],
+  "7c80b31b-acbc-4edc-ac9b-3059afdbc950": [],
   "5749a3b4-8d94-4b92-b463-c50eb15ad7c3": [],
   "b05ad2ce-6666-48d7-8a2f-54e44f4f3628": [],
   "8c8e3691-9e4c-45ce-8ef5-5d3c251c7d02": [],
@@ -375,9 +373,7 @@
   "a54e8eaa-1c0a-485d-9511-bed544ffcb91": [],
   "6d838fd4-7446-48c6-aa12-b91ba040cc89": [],
   "15b0d391-61b4-4386-860b-4d14b4076674": [],
-  "99482059-9046-4954-ac4b-4059df7ab986": [
-   "DISCLOSURE_ASSERTION"
-  ],
+  "99482059-9046-4954-ac4b-4059df7ab986": [],
   "154c6aad-2058-4484-808d-27217abc918a": [],
   "ce53b959-e5d2-4013-8788-3a57877f2039": [],
   "f158151e-a3a7-4acf-b159-884d8c67fa97": [],
@@ -500,9 +496,7 @@
   "4c8deddf-6699-48f2-9c68-2603d86d3756": [],
   "dd96984d-2499-44d1-8b75-2442ae6c0417": [],
   "72f2f31b-36a1-489d-9d2c-f9b788a9839b": [],
-  "7a7c74f5-42dc-4ea3-8796-f509818d820a": [
-   "SCREENING_ASSURANCE"
-  ],
+  "7a7c74f5-42dc-4ea3-8796-f509818d820a": [],
   "b63b0fd4-26fd-4add-9ad0-a90ee9f75a03": [],
   "b924e6bb-d7b9-43f7-a041-df0a57ea02c7": [],
   "fc5da632-8e8c-4a7b-86de-fac9edee01ab": [],
@@ -528,9 +522,7 @@
   "8746b2a0-01fd-4291-94cc-c04bb0273492": [],
   "a3abca10-cd2f-46ed-82d8-3ad6c453ec73": [],
   "6866fa27-d82b-48d5-a03e-520ab109b010": [],
-  "c31f7082-65cd-44d1-96e8-f0ac6cd9c3c0": [
-   "MOVEIN_DATE_ASSERTION"
-  ],
+  "c31f7082-65cd-44d1-96e8-f0ac6cd9c3c0": [],
   "e4bd1a87-46d7-41c6-a803-76e211f12c69": [],
   "32331b38-7355-44b4-a15e-73eccb045446": [],
   "0969a40b-ac2e-4211-91a5-36a6cd814a2d": [],
@@ -628,9 +620,7 @@
   "1df87070-87c9-47e4-b5df-8e0ad1874672": [],
   "fe252728-5ec8-4942-b82c-59255f442668": [],
   "ef7dea12-0619-4ff7-8683-c21bc35ece3b": [],
-  "24e89bc5-a5ae-48bf-93e0-7a80568be232": [
-   "SCREENING_ASSURANCE"
-  ],
+  "24e89bc5-a5ae-48bf-93e0-7a80568be232": [],
   "6afde188-64cc-45e2-b0c3-7879fc479a03": [],
   "e287ec2b-ddd3-47b5-8e60-51bbb6ca54d1": [],
   "d401b393-fdd9-4d24-9261-bdf701d949e7": [],
@@ -662,17 +652,13 @@
   "b9e7a47c-6da6-4c51-8013-c8711ebf2d7a": [],
   "635d7fee-b649-4f7f-b4eb-a608a50deb24": [],
   "69353b75-be66-4488-bcff-4cf68e73ab41": [],
-  "60b75de8-83eb-4534-be41-3b6a30392e9b": [
-   "VIEWING_BEFORE_VACANCY"
-  ],
+  "60b75de8-83eb-4534-be41-3b6a30392e9b": [],
   "a45cd2da-d20d-4616-ac44-8fb03bfcf4e3": [],
   "2014ad4c-55dd-4bc5-ba9a-b3140f97e9da": [],
   "bcaeb1a7-0d76-4460-b25d-9c3ef9dd9bf7": [],
   "64331533-2344-4e71-82e4-c8a78c099893": [],
   "c16d3ae0-9118-445b-a153-a512915cd03b": [],
-  "a8aa132e-d173-4fcf-8254-30f54067c814": [
-   "VIEWING_BEFORE_VACANCY"
-  ],
+  "a8aa132e-d173-4fcf-8254-30f54067c814": [],
   "d4ce14db-19fe-407a-9ca4-b68f250a07bb": [],
   "6371d06c-c610-451e-bba9-39d4b682a521": [],
   "8633b81c-b85d-4295-a812-c98da5987e1a": [],
@@ -822,9 +808,7 @@
   "b61730f9-ff2e-4b10-88aa-50cbbba7df3c": [],
   "e4678dd6-b74e-4b60-88c4-8e5209f5bd9a": [],
   "18d2e1bc-bbd1-4dc7-983c-1eea74ec7c53": [],
-  "82e2d5cf-97ae-46cf-add4-051a8d9cde1b": [
-   "VACANCY_ASSERTION"
-  ],
+  "82e2d5cf-97ae-46cf-add4-051a8d9cde1b": [],
   "7d5e9121-b22e-4b00-b094-3e150641b254": [],
   "51af2884-9002-443b-955d-b0abaaadd033": [],
   "4f7fe4fa-1403-488f-bf52-7d6ada31b6f2": [],
