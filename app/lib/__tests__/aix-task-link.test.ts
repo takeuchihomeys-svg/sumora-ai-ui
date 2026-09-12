@@ -112,6 +112,14 @@ it("YUYA: 確認の宣言の後にお客様が「お願いします！」だけ 
   const before = [C("阪急神戸本線 十三 徒歩7分\n1R 4万円\nhttps://myhome.nifty.com/smp/rent/osaka/1/"), C("ここはどうでしょうか？"), S(t)];
   expect(resolveStaffPromiseAix(facts(t), [...before, C("お願いします！")], { ...asked(before), customerAckAfter: true })?.action ?? null).toBe("property_check_result");
 });
+// 2026-09-12 竹内（Sさん事例）: 確認の宣言 → お客様がスタンプだけ → 物件確認した（旧: スタンプで確認の依頼の判定が外れ 確認します）
+it("Sさん: 確認の宣言の後にお客様がスタンプだけ → 宣言より前の依頼で判定し AIX 物件確認した", () => {
+  const t = "かしこまりました！！\nお送り頂きました物件、募集状況確認させて頂きます😊！！\n確認出来次第ご連絡させて頂きます！！";
+  const before = [C("追加でこちらも空いているか確認お願いしたいです"), C("[画像] スプランディッド本町グラン 1604"), S(t)];
+  expect(resolveStaffPromiseAix(facts(t), [...before, C("[スタンプ]")], { ...asked(before), customerAckAfter: true })?.action ?? null).toBe("property_check_result");
+  // スタンプを含めた全体で依頼を判定すると外れる（旧の不具合の再現）
+  expect(asked([...before, C("[スタンプ]")]).customerRequestedCheck).toBe(false);
+});
 it("宣言の後にお客様が了承以外（質問・条件）を返した → この規則は使わない", () => {
   const t = "かしこまりました！！\nお送り頂きました物件の募集状況確認させて頂きます😊！！";
   const before = [C("ここ空いてますか？ https://suumo.jp/chintai/bc_1/"), S(t)];

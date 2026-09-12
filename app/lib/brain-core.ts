@@ -255,7 +255,7 @@ const AIX_CAPABILITY_MAP = `
 【aixキー選択の使いどころ基準（迷ったらここを優先）】
 - estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が物件画像だけを送ってきた（テキストなし・スクショのみ）／顧客が特定物件を気に入った（かつ新条件指定なし）／初期費用・総額を質問してきた時点で迷わず選ぶ
   【重要例外】顧客が同時に路線・駅名・家賃上限・徒歩分数・間取り・広さ等の新しい検索条件を示している場合は、気に入り表現があっても estimate_sheet を選ばない → property_send が正しい（条件変更が主題のサイン）。「家賃は〜万まで」という家賃予算の表明は「初期費用・総額の話題」ではない（家賃予算 ≠ 初期費用）。「○○がいい感じ」+「環状線のみで調べてほしい」「9万以下で探してほしい」等の組み合わせは常に property_send。
-- acknowledge_check: 顧客が物件URL・物件名を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと
+- acknowledge_check: 顧客が物件URL・物件名を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと ※スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて結果をまだ報告していない時は acknowledge_check ではなく property_check_result（その後のお客様の返事が了承・スタンプだけでも同じ。2026-09-12 竹内・Sさん事例。確認の約束の後に押された AIX に acknowledge_check は0件）
 - 【AIX なし】顧客が「何件か気になる物件送ってもいいですか」「送りますね」等、これから自分で物件を送る予告をしただけの時は、どの AIX も選ばない（aix:null）。物件が届いてから募集状況確認・御見積書（acknowledge_check / estimate_sheet）。返信は「いつでもお送りください＋お送り頂き次第募集状況確認し御見積書とあわせてご連絡」（2026-09-12 竹内）
 - 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・あや事例）
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
@@ -2254,6 +2254,14 @@ ${history}`;
     if (promiseAix) {
       finalAix = promiseAix.action;
       decisionSource = `promise:${promiseAix.kind}`;
+    }
+    // 2026-09-12 竹内（Sさん事例）: スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて、まだ結果を報告していない
+    //   （台帳の確認の約束が未履行）のに、LLM が 確認します（acknowledge_check）を選んだ → 物件確認した（結果の報告）に直す。
+    //   実績（150日）: 確認の約束の後に押された AIX に 確認します は 0件（物件確認した 78・見積書送る 18）。
+    //   旧: お客様のスタンプだけで確認の依頼の判定が外れ、約束の規則が効かず 確認します になっていた（約束の規則側も修正済み）
+    if (!promiseAix && finalAix === "acknowledge_check" && brainLedger.facts.confirmationPromisedUnfulfilled) {
+      finalAix = "property_check_result";
+      decisionSource = "correction:check_already_declared";
     }
     // 未返信の顧客の連投が持込予告（物件はまだ届いていない）→ AIX なし。旧: プロンプトのルールだけで、あや事例は見積書送るになった
     if (!promiseAix && finalAix && messagesOldestFirst[messagesOldestFirst.length - 1]?.sender === "customer" && customerWillSendFirst) {
