@@ -953,6 +953,9 @@ function parseAreaCondition(text) {
     // 直通
     m = t.match(/^(.+?)(?:駅)?直通$/);
     if (m) { const s = normalizeStation(m[1]); if (s) return { station: s, mode: "transfer", transfers: 0 }; }
+    // 電車1本（「梅田まで電車1本」「梅田に一本で行ける」）＝乗り換えなし
+    m = t.match(/^(.+?)(?:駅)?(?:まで|から|へ|に)?(?:電車|地下鉄)?で?[1１一]本/);
+    if (m) { const s = normalizeStation(m[1]); if (s) return { station: s, mode: "transfer", transfers: 0 }; }
     // 所要時間
     m = t.match(new RegExp(`^(.+?)(?:駅)?(?:から|まで|へ)?(?:(?:電車|徒歩)で?)?(${NUM})分(?:以内|くらい|程度|圏内)?$`));
     if (m) { const s = normalizeStation(m[1]); if (s) return { station: s, mode: "time", minutes: kanjiToNum(m[2]) }; }
@@ -1244,6 +1247,57 @@ function getOneTransferLines(hubStations) {
     }
   }
   return [...lines];
+}
+
+// ── 「梅田まで電車1本」＝目的駅に乗り換えなしで着く沿線の駅すべて（2026-09-12 竹内）──
+// 「梅田まで電車1本」「梅田まで乗り換えなし」「梅田直通」→ 梅田・東梅田・西梅田・大阪梅田・大阪（STATION_HUB_MAP）の
+// 全路線を沿線に選び、その沿線の駅をリアプロの駅ページですべて選択する（page-script の select_all_line_stations）。
+// 駅一覧は LINE_STATION_ORDER が部分的（阪急神戸線は武庫之荘まで等）なため、リアプロの駅ページ（全駅が出る）を正とする。
+const DIRECT_COMMUTE_RE = /^(.{1,12}?)駅?(?:まで|から|へ|に)?(?:電車|地下鉄|JR)?で?(?:[1１一]本|(?:乗り?換え?|のりかえ)(?:なし|無し|不要|ゼロ|[0０]回)|直通)/;
+// 乗り換えなしで直通運転している路線（その路線の駅から目的駅まで1本）
+const DIRECT_THROUGH_LINES = {
+  "大阪市高速軌道御堂筋線": ["北大阪急行南北線"], // 御堂筋線は江坂から北急へ直通（千里中央・箕面萱野まで1本）
+  "北大阪急行南北線": ["大阪市高速軌道御堂筋線"],
+  "JR東西線": ["福知山線", "片町線"],              // JR宝塚線・学研都市線と直通
+};
+const DIRECT_THROUGH_BY_STATION = {
+  "大阪": ["福知山線"], // JR宝塚線は大阪始発（尼崎から先も乗り換えなし）
+};
+function resolveDirectCommute(rawArea) {
+  if (!rawArea) return null;
+  const targets = [], hubStations = [], lines = [];
+  const push = (arr, v) => { if (v && !arr.includes(v)) arr.push(v); };
+  for (const part of rawArea.split(/[、，,・\/\s]+/)) {
+    const m = part.match(DIRECT_COMMUTE_RE);
+    if (!m) continue;
+    for (let tgt of m[1].split(/または|もしくは|[かや]/)) {
+      tgt = tgt.replace(/駅$/, "").trim();
+      for (const _pfx of LINE_PREFIXES_TO_STRIP) {
+        if (tgt.startsWith(_pfx) && tgt.length > _pfx.length) { tgt = tgt.slice(_pfx.length).trim(); break; }
+      }
+      tgt = AREA_STATION_ALIASES[tgt] || STATION_ALIASES[tgt] || tgt;
+      // 「梅田までバス1本」等の取り違え防止: 目的駅はハブ or 既知駅の完全一致のみ（あいまい一致は使わない）
+      if (!tgt || /まで|から|バス|徒歩|自転車/.test(tgt)) continue;
+      const hub = (typeof STATION_HUB_MAP !== "undefined" && STATION_HUB_MAP[tgt])
+        || ((STATION_LINE_MAP[tgt] || LEARNED_STATION_MAP[tgt]?.realpro_lines?.length) ? [tgt] : null);
+      if (!hub) continue;
+      push(targets, tgt);
+      for (const st of hub) {
+        push(hubStations, st);
+        const stLines = STATION_LINE_MAP[st] || getLearnedStationLines(st) || [];
+        for (const l of stLines) {
+          push(lines, l);
+          (DIRECT_THROUGH_LINES[l] || []).forEach(tl => push(lines, tl));
+        }
+        (DIRECT_THROUGH_BY_STATION[st] || []).forEach(tl => push(lines, tl));
+      }
+    }
+  }
+  if (!targets.length) return null;
+  const route_ids = [];
+  lines.forEach(l => push(route_ids, lineNameToRouteId(l)));
+  if (!route_ids.length) return null;
+  return { targets, hub_stations: hubStations, lines, route_ids };
 }
 
 function buildAreaRouteCodes(c, mode = "auto") {
@@ -2099,6 +2153,12 @@ let selectedSite = null;
 let searchMode = "pinpoint"; // "pinpoint" | "wide"
 let currentAreaMode = "ward"; // "station" | "ward" — ボタン押下が絶対ルール（自動判定より優先）
 let _areaModeSource = "auto"; // "auto"=静的/API自動判定, "user"=手動クリック — "user"のときAPIによる上書きを禁止
+// currentAreaMode を「駅で選択／地域で選択」ボタンに反映する
+// （2026-09-12: 未定義のまま3箇所で呼ばれ、自動で駅モードへ昇格する時に ReferenceError で自動入力が止まっていた）
+function updateAreaModeUI() {
+  document.getElementById("btn-mode-station")?.classList.toggle("active", currentAreaMode === "station");
+  document.getElementById("btn-mode-ward")?.classList.toggle("active", currentAreaMode === "ward");
+}
 let currentAccount = ""; // "" = すべて / "sumora" / "ieyasu" / "giga" / "hasu"
 let currentAreaTypeFilter = ""; // "" = all / "station" = 駅 / "ward" = 地域
 let linkedOnly = true;   // 紐付け済みのみ表示（デフォルトON・初期表示を軽くする）
@@ -4186,6 +4246,22 @@ function openInstructions(siteKey) {
         }
       }
 
+      // 「梅田まで電車1本」: 梅田・大阪梅田等に乗り換えなしで着く全沿線を選び、その沿線の駅をすべて選択する
+      // （旧: 「梅田」1駅だけが駅指定され、沿線の他の駅が検索対象から漏れていた）
+      // 手動で駅を入力した場合・地域モードを手動で選んだ場合はスタッフの指定を優先する
+      let _selectAllLineStations = false;
+      const _direct = resolveDirectCommute(adjAreaClean);
+      if (_direct && !_adjStation_rp && !(_areaModeSource === "user" && currentAreaMode === "ward")) {
+        _selectAllLineStations = true;
+        _direct.route_ids.forEach(r => { if (!route_ids.includes(r)) route_ids.push(r); });
+        _direct.hub_stations.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+        if (currentAreaMode !== "station") {
+          currentAreaMode = "station";
+          updateAreaModeUI && updateAreaModeUI();
+        }
+        console.log("[AX] 電車1本: " + _direct.targets.join("・") + " に乗り換えなしの沿線 → 駅をすべて選択", _direct.lines);
+      }
+
       // 地名マップから町字レベルのトークンを検索（駅モード時はスキップ：所在地フィールドに入らないようにする）
       const neighPart = currentAreaMode === "station" ? null : (areaParts.find(p =>
         NEIGHBORHOOD_WARD_MAP[p] && !STATION_LINE_MAP[p] &&
@@ -4280,6 +4356,7 @@ function openInstructions(siteKey) {
           city_codes,
           route_ids,
           station_names: realpro_station_names,
+          select_all_line_stations: _selectAllLineStations,
           detail_area:   effectiveDetailArea,
           detail_ward:   effectiveDetailWard,
           town_names:    customerTownNames,

@@ -1512,6 +1512,29 @@
                   return;
                 }
                 var stNamesStr = (cond.station_names || []).join('・');
+                // 「梅田まで電車1本」（popup.js resolveDirectCommute）: 選んだ沿線の駅をすべて選択する。
+                // 駅ページには選んだ沿線の全駅が出る（拡張の路線駅マップより網羅的）ので、見えている駅を全部チェックする。
+                // 前回試行から選択数が増えない（サイト側の選択上限等）ときは選べた駅で進める（全件検索にはしない）。
+                var _selAllPrevChecked = -1;
+                function selectAllLineStations() {
+                  var inputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]'))
+                    .filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); });
+                  if (!inputs.length) return false;
+                  var unchecked = inputs.filter(function(inp) { return !inp.checked; });
+                  var checkedCount = inputs.length - unchecked.length;
+                  if (!unchecked.length) {
+                    console.log('[AX] STEP D(電車1本): 沿線の全' + inputs.length + '駅を選択');
+                    return true;
+                  }
+                  if (checkedCount > 0 && checkedCount === _selAllPrevChecked) {
+                    console.warn('[AX] STEP D(電車1本): ' + checkedCount + '/' + inputs.length + '駅で選択が止まった → 選べた駅で検索');
+                    showWarnToast('沿線の駅を' + checkedCount + '/' + inputs.length + '駅選択しました');
+                    return true;
+                  }
+                  _selAllPrevChecked = checkedCount;
+                  unchecked.forEach(function(inp) { enqueueHumanClick(inp, _clickIfUnchecked, 20, 45); });
+                  return false;
+                }
                 // STEP D: 駅ページが描画され、かつ指定駅が選択されるまでリトライ
                 waitForClick(
                   function() {
@@ -1543,6 +1566,7 @@
                     if (!_stIdInputs.length) return false;
                     var _visStParents = _stIdInputs.filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); });
                     if (!_visStParents.length) return false; // 駅セクションがまだ描画されていない
+                    if (cond.select_all_line_stations) return selectAllLineStations();
                     var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
                     var vis = labels.filter(function(l) { return isVisible(l); });
                     // ★ 修正: 前顧客のモーダル残留選択を「毎パス」クリアする
