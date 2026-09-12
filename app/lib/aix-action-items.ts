@@ -40,14 +40,18 @@ export async function pushToHanbancyoGroup(text: string): Promise<boolean> {
 export async function syncAixActionItem(input: {
   conversationId: string;
   customerName: string;
-  meta: { action?: string | null; check_pattern?: string | null; reply_mode?: string | null; source?: string | null; analyzed_msg_ts?: string | null } | null;
+  meta: {
+    action?: string | null; check_pattern?: string | null; reply_mode?: string | null; source?: string | null; analyzed_msg_ts?: string | null;
+    condition_change_type?: string | null; first_contact_pickup?: string | null;
+  } | null;
 }): Promise<void> {
   const { conversationId, customerName, meta } = input;
   // cached は今回の顧客発言を見ていない判断なので使わない
   if (!meta || meta.source === "cached") return;
-  const action = meta.action || null;
-  // 初回返信（reply_mode=null）は人の挨拶返信で、AIX要対応ではない。実在の AIX ボタンだけ（画面の AIX バッジ isAixBadge と同じ条件）
-  const needsAix = !!action && !!AIX_BUTTON_LABELS[action] && meta.reply_mode === "aix";
+  // 初回（スタッフ未返信）でお客様が条件を送ってきた: action は出さない（挨拶下書き優先）が、ブレインが残した「物件ピックアップが必要」を使う
+  const action = meta.action || meta.first_contact_pickup || null;
+  // 実在の AIX ボタンだけ。reply_mode=aix（ブレインが AIX 必要と判断）か、初回の条件受領（first_contact_pickup）
+  const needsAix = !!action && !!AIX_BUTTON_LABELS[action] && (meta.reply_mode === "aix" || !!meta.first_contact_pickup);
   const checkPattern = meta.check_pattern ?? null;
 
   const { data: open } = await supabase
@@ -68,7 +72,14 @@ export async function syncAixActionItem(input: {
   }
 
   if (open) {
-    if (open.action === action && (open.check_pattern ?? null) === checkPattern) return; // 同じ指示は再通知しない
+    if (open.action === action && (open.check_pattern ?? null) === checkPattern) {
+      // 同じ指示は再通知しない。ただし物件ピックアップ待ちのままお客様が条件を変えた時は、新しい条件で検索し直す
+      if (AIX_AUTO_SEARCH_ACTIONS.has(action!) && meta.condition_change_type) {
+        await enqueueAixPropertySearch(conversationId, action!).catch((e) =>
+          console.warn("[aix-action-items] re-enqueue on condition change failed:", conversationId, e instanceof Error ? e.message : e));
+      }
+      return;
+    }
     await supabase.from("aix_action_items")
       .update({ action, check_pattern: checkPattern, customer_name: customerName || null, brain_analyzed_msg_ts: meta.analyzed_msg_ts ?? null, notified_at: now, updated_at: now })
       .eq("id", open.id).eq("status", "pending");

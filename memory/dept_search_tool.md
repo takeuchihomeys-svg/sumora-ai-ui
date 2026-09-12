@@ -618,6 +618,7 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 ## 🔁 引き継ぎ事項（次セッションへ）
 
 - 現在のバージョン: **v2.5.1**（manifest.json 記載・2026-09-12 AIXモード追加）
+- **2026-09-12 AIXモードの自動検索が起きる条件**: ①初回（スタッフ未返信）でお客様が条件フォーム・物件探しを送った（brain meta `first_contact_pickup`。挨拶下書きは従来どおり）②ブレインが AIX【物件ピックアップした／物件オススメ／物件を探す】と判断（reply_mode=aix）③物件ピックアップ待ちのままお客様が条件を変えた（brain meta `condition_change_type` あり → 同じ指示でも再検索）。いずれも会話が物件出し顧客（conversations.property_customer_id）に紐付いている時だけ。条件フォームは cached にせず必ず再分析（brain-core isIncrementalBypass）
 - **2026-09-12 AIXモード 実機確認待ち**: 自動化用PCで拡張を再読み込み → リアプロにログインしたタブを開いたまま「AIX」ON → ブレインが物件ピックアップ/物件オススメの AIX要対応を出した顧客（物件出し顧客に紐付き）で、30秒以内に自動検索→売上番長グループへ物件が届くかを確認する
 - **2026-08-24 setupAreaModeSelector クラッシュ修正**:
   - **症状**: 一括検索中に `axlx-switch-customer` を受信すると popup.js:2501 で `TypeError: Cannot read properties of null (reading 'style')` が発生し、その後のリアプロ/itandi ボタンが押せなくなる

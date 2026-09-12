@@ -133,6 +133,10 @@ export type SuggestedAixMeta = {
   // 2026-09-12 段2: 判断の出どころ（'llm' / 'correction:*' / 'signal:*' / 'signal:scene_S2|S3|S5' / 'guard:*'）と
   // 今回の顧客発言の場面の証拠（aix-scene-evidence の要約）。brain_decision_logs と cron/brain-aix-eval が読む
   decision_source?: string | null;
+  // 2026-09-12 竹内方針「条件がきたら AIX に連動して自動で物件検索」: 真の初回（スタッフ未返信）でお客様が条件を送ってきた時、
+  //   初回例外で action/reply_mode は出さない（初回の挨拶下書きを優先）が、物件ピックアップが必要という判断はここに残す。
+  //   aix-action-items.syncAixActionItem が読み、AIX要対応（物件ピックアップした）と AIX モードの自動検索を起こす
+  first_contact_pickup?: "property_send" | null;
   scene_evidence?: { scene: string; candidate: string; check_pattern: string | null; reason: string; property_by: string | null } | null;
   // LLMの行動選択理由（≤30字）
   reason?: string | null;
@@ -2229,7 +2233,14 @@ ${history}`;
     const hasStaffEngagement = typedMessages.some(
       m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
     );
+    // 2026-09-12 竹内方針: 初回でもお客様が条件（条件フォーム・物件探しの依頼）を送ってきたら、物件ピックアップが必要な判断は残す
+    //   （action は出さず初回の挨拶下書きを優先するが、AIX要対応と AIX モードの自動検索は起こす）
+    let firstContactPickup: "property_send" | null = null;
     if (!hasStaffEngagement && !isIncremental) {
+      const firstCustText = [...typedMessages].reverse().find((m) => m.sender === "customer")?.text ?? "";
+      if (finalAix === "property_send" || finalAix === "property_search" || isConditionFormMessage(firstCustText)) {
+        firstContactPickup = "property_send";
+      }
       finalAix = null;
       replyMode = undefined;
       decisionSource = "guard:first_contact";
@@ -2548,6 +2559,7 @@ ${history}`;
       signal_aix_result: signalAixResult,
       // 2026-09-12 段2: 判断の出どころと今回の顧客発言の場面の証拠（JSONB・スキーマ変更不要）。brain_decision_logs にも同じ値を残す
       decision_source: finalAix ? decisionSource : (decisionSource === "guard:viewing" || decisionSource === "guard:first_contact" ? decisionSource : null),
+      first_contact_pickup: firstContactPickup,
       scene_evidence: compactSceneEvidence(sceneEvidence),
       reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 30) : null,
       winning_pattern: winningPattern,
@@ -2853,7 +2865,8 @@ export async function analyzeAndSaveBrainMeta(conversationId: string): Promise<b
     : Infinity;
 
   const isFullBypass = FULL_BYPASS_RE.test(latestText);
-  const isIncrementalBypass = !isFullBypass && (INCREMENTAL_BYPASS_RE.test(latestText) || PROPERTY_CONDITION_INQUIRY_RE.test(latestText));
+  // 2026-09-12: 条件フォーム（①〜⑧）も必ず分析し直す（条件が来たら AIX【物件ピックアップした】→ AIX モードの自動検索につなげるため cached にしない）
+  const isIncrementalBypass = !isFullBypass && (INCREMENTAL_BYPASS_RE.test(latestText) || PROPERTY_CONDITION_INQUIRY_RE.test(latestText) || isConditionFormMessage(latestText));
 
   // 3段階モード判定: full / incremental / cached（decideAnalysisMode に切り出し・単体テストあり）
   const msgsSinceDeep = (totalMsgCount ?? 0) - ((convData?.brain_deep_msg_count as number | null) ?? 0);
@@ -3419,7 +3432,7 @@ export async function runBrainAndNotify(conversationId: string, msgText?: string
       await syncAixActionItem({
         conversationId,
         customerName: snapshot.customerName,
-        meta: snapshot.meta as unknown as { action?: string | null; check_pattern?: string | null; reply_mode?: string | null; source?: string | null; analyzed_msg_ts?: string | null },
+        meta: snapshot.meta as unknown as Parameters<typeof syncAixActionItem>[0]["meta"],
       });
     } catch (e) {
       console.warn("[brain-core] syncAixActionItem failed:", conversationId, e instanceof Error ? e.message : e);
