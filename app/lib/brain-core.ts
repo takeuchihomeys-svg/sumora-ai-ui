@@ -3409,18 +3409,22 @@ export async function runBrainAndNotify(conversationId: string, msgText?: string
   // （契約どおり「有効な分析結果がある時のみスナップショット」に統一。notify も meta が無ければ不要）。
   if (!snapshot.meta) return null;
 
-  // 以下3つはスナップショット返却に不要 → fire-and-forget で 90s race budget を節約
-  // is_hot格上げ通知（brain完了後に鈴木メンション送信）
-  if (msgText) {
-    void (async () => {
-      try {
-        const { notifySuzukiReply } = await import("@/app/lib/notify-suzuki");
-        await notifySuzukiReply(supabase as any, conversationId, msgText);
-      } catch (e) {
-        console.warn("[brain-core] notifySuzukiReply failed:", e instanceof Error ? e.message : e);
-      }
-    })();
-  }
+  // 以下はスナップショット返却に不要 → fire-and-forget で 90s race budget を節約
+  // 2026-09-12 竹内方針: 売上番長グループへの返信・AIX 系の通知は「AIX要対応」だけにする。
+  //   旧: 熱い客の返信ごとの鈴木メンション（notifySuzukiReply）・required 通知（🔥/🔴 〇〇さん｜ラベル）→ 廃止し、
+  //   ブレインが今回の顧客発言を見て AIX 必要と判断した時だけ「〇〇さん → AIX【ボタン】」を1件通知し、一覧（cron）で✅管理する
+  void (async () => {
+    try {
+      const { syncAixActionItem } = await import("@/app/lib/aix-action-items");
+      await syncAixActionItem({
+        conversationId,
+        customerName: snapshot.customerName,
+        meta: snapshot.meta as unknown as { action?: string | null; check_pattern?: string | null; reply_mode?: string | null; source?: string | null; analyzed_msg_ts?: string | null },
+      });
+    } catch (e) {
+      console.warn("[brain-core] syncAixActionItem failed:", conversationId, e instanceof Error ? e.message : e);
+    }
+  })();
 
   // 物件条件ブレイン信号: brain が条件変化 or ヒアリング/提案フェーズを検出したら runConditionBrain を起動
   // line-webhook after() F を廃止し、brain 分析結果を起点とした信号制御に統一
@@ -3440,45 +3444,6 @@ export async function runBrainAndNotify(conversationId: string, msgText?: string
       }
     })();
   }
-
-  // required 通知（旧line-webhook brain after() から移設。全件通知は通知疲れのため required のみ）
-  void (async () => {
-    try {
-      const meta = snapshot.meta;
-      // source === "cached" の場合は required通知をスキップ（キャッシュ返却のたびに同じ通知が再送される二重通知防止）
-      if (meta && meta.enforcement_level === "required" && meta.source !== "cached") {
-        const customerName = snapshot.customerName || "お客様";
-        const isHot = (row as Record<string, unknown>).is_hot === true;
-        const sigLevel = meta.purchase_signal_level ?? "";
-        const urgencyEmoji = (isHot || sigLevel === "strong" || sigLevel === "peak" || meta.action === "estimate_sheet") ? "🔥" : "🔴";
-        const shortLabel = AIX_LINE_LABELS[meta.action ?? ""] ?? meta.action ?? "対応";
-        const actionNote = buildAixLineNote(meta.action ?? "", (meta as Record<string, unknown>).check_pattern as string | null);
-        const lines = [
-          `${urgencyEmoji} ${customerName}さん｜${shortLabel}`,
-          actionNote,
-        ];
-        // property_search: 条件サマリーを3行目に追加
-        if (meta.action === "property_search" && meta.property_search_params) {
-          const p = meta.property_search_params as Record<string, unknown>;
-          const parts = [p.area, p.floor_plan, p.rent_max ? `${p.rent_max}万円まで` : null].filter(Boolean);
-          if (parts.length > 0) lines.push((parts as string[]).join(" / "));
-        }
-
-        const baseUrl =
-          process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
-          (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-        await fetch(`${baseUrl}/api/notify-group`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: lines.join("\n") }),
-          signal: AbortSignal.timeout(5_000),
-        });
-      }
-    } catch (e) {
-      // 通知失敗は分析成功を無効化しない（スナップショットはそのまま返す）
-      console.warn("[brain-core] runBrainAndNotify notify failed:", conversationId, e instanceof Error ? e.message : e);
-    }
-  })();
 
   // ブレインのaction判断時にカレンダーへ直接登録（テキスト解析不要・通知失敗の影響を受けない fire-and-forget）
   if (conversationId && snapshot.meta.action) {

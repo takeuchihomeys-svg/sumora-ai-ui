@@ -2516,30 +2516,9 @@ async function applyAixGateAndRespond(
     console.error("[generate-reply] aix-gate claim update error:", convId, claimErr.message);
   }
 
-  if (claimed?.length) {
-    const baseUrl =
-      process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
-      (process.env.VERCEL_PROJECT_PRODUCTION_URL
-        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-        : process.env.VERCEL_URL
-          ? `https://${process.env.VERCEL_URL}`
-          : "http://localhost:3000");
-    const shortLabel = AIX_LINE_LABELS[meta.action ?? ""] ?? meta.action ?? "対応";
-    const actionNote = buildAixLineNote(meta.action ?? "", (meta as Record<string, unknown>).check_pattern as string | null);
-    const sigLevel = (meta as Record<string, unknown>).purchase_signal_level as string | undefined;
-    const gateEmoji = (sigLevel === "strong" || sigLevel === "peak" || meta.action === "estimate_sheet") ? "🔥" : "🟡";
-    const lines = [
-      `${gateEmoji} ${customerName || "お客様"}さん｜${shortLabel}`,
-      actionNote,
-    ];
-    // notify-group は line-webhook と同じスタッフグループ通知経路（LINE_STAFF_GROUP_ID / hanbancyo_settings）
-    await fetch(`${baseUrl}/api/notify-group`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: lines.join("\n") }),
-      signal: AbortSignal.timeout(5000),
-    }).catch((e) => console.warn("[generate-reply] aix-gate notify failed:", String(e)));
-  }
+  // 2026-09-12 竹内方針: 売上番長グループへの AIX 指示は「AIX要対応」（brain-core runBrainAndNotify → aix-action-items）に一本化。
+  //   旧: ここでも「🔥/🟡 〇〇さん｜ラベル」を通知しており、ブレインの required 通知と二重になっていた → 通知は出さない
+  void customerName;
 
   // ストリーミング呼び出し元のメタ行プロトコル互換（1行JSON+改行）
   return new Response(

@@ -261,6 +261,14 @@ export async function POST(req: NextRequest) {
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
+    // 売上番長グループの「AIX要対応」: この会話の未完了を完了（一覧で✅）にする（2026-09-12 竹内方針）
+    try {
+      const { completeAixActionItem } = await import("@/app/lib/aix-action-items");
+      await completeAixActionItem(conversation_id, aix_type);
+    } catch (e) {
+      console.warn("[log-aix-usage] completeAixActionItem failed:", conversation_id, e instanceof Error ? e.message : e);
+    }
+
     // ステージ変化AIX送信 → 軽量メタパッチ更新（fire-and-forget）
     // 旧実装は last_brain_meta / brain_full_analyzed_at をクリアして次回強制フル分析を誘発していたが、
     // 前回の分析結論にAIXイベントを Haiku で差分反映し、次の顧客メッセージを cached で処理できるようにする。

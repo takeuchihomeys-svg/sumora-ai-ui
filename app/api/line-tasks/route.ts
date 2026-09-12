@@ -72,10 +72,12 @@ export async function DELETE(req: NextRequest) {
     if (clearErr) console.error("[line-tasks/delete] sentinelクリア失敗:", task.conversation_id, clearErr);
   }
 
-  const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
-  const text = `🚫【${label} キャンセル】\n${task.customer_name as string}さんのタスクが取り消されました`;
-
-  sendGroupMessage(text).catch(console.error);
+  // 取消通知は物件出しのみ（2026-09-12 竹内方針: 物件確認・見積書対応は返信・AIX 系なのでグループに流さない）
+  if (task.task_type === "property_send") {
+    const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
+    const text = `🚫【${label} キャンセル】\n${task.customer_name as string}さんのタスクが取り消されました`;
+    sendGroupMessage(text).catch(console.error);
+  }
   return NextResponse.json({ ok: true });
 }
 
@@ -136,7 +138,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: error?.message }, { status: 500 });
   }
 
-  if (!silent) {
+  // 2026-09-12 竹内方針: 売上番長グループへの返信・AIX 系の通知は「AIX要対応」だけ → 物件確認・見積書対応の依頼通知は出さない（物件出しのみ）
+  if (!silent && task_type === "property_send") {
     const label = TASK_LABEL[task_type] ?? task_type;
     const emoji = TASK_EMOJI[task_type] ?? "📋";
     const text = `${emoji}【${label}依頼】\n${customer_name}さんの${label}を開始しました\n担当スタッフ: 対応よろしくお願いします！`;

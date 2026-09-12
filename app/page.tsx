@@ -2508,8 +2508,10 @@ export default function Home() {
   };
 
   // 一覧の「AIX」バッジ条件（次にAIXボタンで対応すべき顧客）。バッジ・絞り込み・件数で共有する
+  // 2026-09-12 竹内方針: AIX が必要かどうかはブレインだけが判断する（売上番長グループの「AIX要対応」と同じ基準）。
+  //   旧: suggested_next_aix（ブレイン外の AIX Worker が書く列）でもバッジを出していた → ブレインの判断のみに統一
   const isAixBadge = (c: Conversation) =>
-    !!c.suggestedNextAix || (!!c.suggestedAixMeta?.action && c.lastSender === "customer");
+    !!c.suggestedAixMeta?.action && c.lastSender === "customer";
   // 一覧の「要対応」バッジ条件（手動フラグ or 顧客最終発言から12時間以上・未読）。バッジ・AIX絞り込みで共有する
   const isNeedsActionBadge = (c: Conversation) => {
     if (flaggedConvIds.has(c.id)) return true;
@@ -10159,7 +10161,7 @@ export default function Home() {
         const ms14d = 14 * 86400_000;
         const ACCT: Record<string, string> = { sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ", hasu: "ハス" };
         const hotList = conversations.filter((c) => c.isHot && !c.isPostApply && now - new Date(c.updatedAt ?? "").getTime() <= ms14d);
-        const aixTargetList = conversations.filter((c) => c.suggestedNextAix || (!!c.suggestedAixMeta?.action && c.lastSender === "customer"));
+        const aixTargetList = conversations.filter(isAixBadge);
         const renderRow = (c: Conversation, onClose: () => void) => (
           <div
             key={c.id}

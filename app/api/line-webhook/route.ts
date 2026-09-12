@@ -392,14 +392,7 @@ async function handleTextMessage(
         .eq("id", convId)
         .is("acquisition_source", null)
         .then(({ error }) => { if (error) console.warn("[acquisition_source]", error.message); });
-
-      const { data: convInfo } = await db
-        .from("conversations")
-        .select("customer_name")
-        .eq("id", convId)
-        .maybeSingle();
-      await notifyNewCustomer(db, convId, (convInfo?.customer_name as string) || "")
-        .catch(e => console.warn("[notifyNewCustomer]", e));
+      // 2026-09-12 竹内方針: 売上番長グループへの返信・AIX 系の通知は「AIX要対応」だけ。新着の @鈴木 メンション（notifyNewCustomer）は廃止
     }
   });
 
@@ -595,7 +588,7 @@ async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
       await db.from("property_customers")
         .update({ status: "hot", updated_at: new Date().toISOString() })
         .eq("id", data.id);
-      notifyHanbancyoGroup(db, data.customer_name ?? "").catch((e) => console.warn("[line-webhook] autoUpgradeToHot notify:", e));
+      // 2026-09-12 竹内方針: 「返信きた！！今が熱い！！」の @鈴木 メンション（notifyHanbancyoGroup）は廃止（AIX要対応に一本化）
     }
   }
 }
@@ -1591,14 +1584,16 @@ async function autoDetectTask(
     db.from("conversations").update({ is_flagged: true }).eq("id", convId),
   ]);
 
-  // 売上番長グループへアナウンス
+  // 売上番長グループへアナウンス（物件出しのみ）
+  // 2026-09-12 竹内方針: 物件確認の依頼は返信・AIX 系なので通知しない（ブレインの判断→「AIX要対応」で届く）
+  if (taskType === "property_check") return;
   const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
   const groupId = grpRow?.value as string | undefined;
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
   if (!groupId || !token) return;
 
-  const label = taskType === "property_check" ? "物件確認" : "物件出し";
-  const emoji = taskType === "property_check" ? "🔍" : "🏠";
+  const label = "物件出し";
+  const emoji = "🏠";
   const msgText = `${emoji}【${label}依頼 自動検知】\n${customerName}さんから「${label}」の依頼が届きました\n対応よろしくお願いします！`;
 
   try {
@@ -1616,82 +1611,6 @@ async function autoDetectTask(
   }
 }
 
-// 新規客が来た → @鈴木メンションで即時通知
-async function notifyNewCustomer(db: ReturnType<typeof getDb>, convId: string, customerName: string) {
-  let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
-  if (!groupId) {
-    const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
-    groupId = (grpRow?.value as string) ?? null;
-  }
-  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
-  if (!groupId || !token) return;
-
-  const { data: suzukiRow } = await db.from("hanbancyo_settings").select("value").eq("key", "suzuki_line_user_id").maybeSingle();
-  const suzukiUserId = suzukiRow?.value as string | undefined;
-
-  // 今日の新着件数を取得
-  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  jstNow.setUTCHours(0, 0, 0, 0);
-  const todayStart = new Date(jstNow.getTime() - 9 * 60 * 60 * 1000).toISOString();
-  const { count: todayNewCount } = await db
-    .from("conversations")
-    .select("id", { count: "exact", head: true })
-    .gt("created_at", todayStart);
-
-  const name = customerName || "名称未設定";
-  const countNote = (todayNewCount ?? 0) > 1 ? `（今日${todayNewCount}人目）` : "（今日初めての新着！）";
-
-  const text = `@鈴木 祥平 【新着】${name}が入ってきた！！${countNote}\n第一印象で全部決まるから！！今日中に必ず返して！！`;
-
-  type MentionMsg = { type: "text"; text: string; mentionees?: { index: number; length: number; type: "user"; userId: string }[] };
-  const message: MentionMsg = suzukiUserId
-    ? { type: "text", text, mentionees: [{ index: 0, length: 6, type: "user", userId: suzukiUserId }] }
-    : { type: "text", text };
-
-  try {
-    await fetch("https://api.line.me/v2/bot/message/push", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ to: groupId, messages: [message] }),
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch (e) {
-    console.warn("[notifyNewCustomer] push failed:", e);
-  }
-}
-
-async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: string) {
-  let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
-  if (!groupId) {
-    const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
-    groupId = (grpRow?.value as string) ?? null;
-  }
-  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
-  if (!groupId || !token) return;
-
-  const { data: suzukiRow } = await db.from("hanbancyo_settings").select("value").eq("key", "suzuki_line_user_id").maybeSingle();
-  const suzukiUserId = suzukiRow?.value as string | undefined;
-
-  const text = `@鈴木 祥平 ${customerName}から返信きた！！今が熱い！！今すぐ詰めて！！`;
-  type MentionMsg = { type: "text"; text: string; mentionees?: { index: number; length: number; type: "user"; userId: string }[] };
-  const message: MentionMsg = suzukiUserId
-    ? { type: "text", text, mentionees: [{ index: 0, length: 6, type: "user", userId: suzukiUserId }] }
-    : { type: "text", text };
-
-  try {
-    const res = await fetch("https://api.line.me/v2/bot/message/push", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ to: groupId, messages: [message] }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) {
-      console.error("[notifyHanbancyoGroup] LINE push failed:", res.status, await res.text());
-    }
-  } catch (e) {
-    console.warn("[notifyHanbancyoGroup] push failed:", e);
-  }
-}
 
 // ── エリア指定検知 → resolve-area抽出 → desired_area更新 + LINE通知 ──────────
 // isAreaSpecificationMessage() をパスしたメッセージのみ呼ばれる（after()内で実行）
@@ -1857,22 +1776,8 @@ async function handleImageMessageSave(
     .eq("task_type", "property_check")
     .eq("status", "pending");
 
-  // H4: 画像受信もスタッフに基本通知（テキスト経路のP1通知に対応する最小版）
-  after(async () => {
-    try {
-      const { data: convData } = await db.from("conversations")
-        .select("customer_name").eq("id", convId).maybeSingle();
-      const nm = (convData?.customer_name as string | null) || "名称未設定";
-      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
-        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-      await fetch(`${baseUrl}/api/notify-group`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: `${nm}さんから画像きた\n\n次やること: 画像の内容を確認して返信` }),
-        signal: AbortSignal.timeout(5_000),
-      });
-    } catch (e) { console.warn("[line-webhook] image notify:", e); }
-  });
+  // 「〇〇さんから画像きた」通知は 2026-09-12 廃止（竹内方針: 売上番長グループへの返信・AIX 系の通知は「AIX要対応」だけ。
+  //   画像への対応が AIX ならブレインの判断 → AIX要対応で届く）
 
   // FIX(Fable5 #2+ズレ5): 画像受信でも brain分析 + required通知（🔴）を実行
   after(async () => {

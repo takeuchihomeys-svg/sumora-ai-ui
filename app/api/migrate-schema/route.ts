@@ -2896,6 +2896,29 @@ ALTER TABLE brain_aix_feedback ADD COLUMN IF NOT EXISTS pressed INTEGER NOT NULL
 CREATE INDEX IF NOT EXISTS idx_brain_aix_feedback_kind ON brain_aix_feedback(kind);
 ALTER TABLE brain_aix_feedback DISABLE ROW LEVEL SECURITY;
 
+-- ── aix_action_items: 売上番長グループの「AIX要対応」一覧（2026-09-12 竹内方針）──
+-- ブレインが AIX 必要と判断した会話を1会話1件の pending で持ち、スタッフが AIX を送ったら done（一覧で✅）。
+-- 登録・1件通知は brain-core runBrainAndNotify、完了は log-aix-usage、定時一覧は cron/announce-aix-actions
+CREATE TABLE IF NOT EXISTS aix_action_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL,
+  customer_name TEXT,
+  action TEXT NOT NULL,
+  check_pattern TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done', 'dismissed')),
+  brain_analyzed_msg_ts TIMESTAMPTZ,
+  notified_at TIMESTAMPTZ,
+  done_at TIMESTAMPTZ,
+  done_aix_type TEXT,
+  done_matched BOOLEAN,
+  dismissed_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS aix_action_items_one_pending ON aix_action_items (conversation_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS aix_action_items_status_done_at ON aix_action_items (status, done_at);
+ALTER TABLE aix_action_items DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

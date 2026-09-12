@@ -76,11 +76,13 @@ export async function POST(req: NextRequest) {
     if (clearErr) console.error("[line-tasks/complete] sentinelクリア失敗:", task.conversation_id, clearErr);
   }
 
-  const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
-  const suffix = source === "aix" ? "AIX送信で完了しました" : "2通送信で自動完了しました";
-  const text = `✅【${label} 完了】\n${task.customer_name as string}さんへ${suffix}`;
-
-  sendGroupMessage(text).catch(console.error);
+  // 完了通知は物件出しのみ（2026-09-12 竹内方針: 物件確認・見積書対応は返信・AIX 系。完了は「AIX要対応」一覧の✅で見る）
+  if (task.task_type === "property_send") {
+    const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
+    const suffix = source === "aix" ? "AIX送信で完了しました" : "2通送信で自動完了しました";
+    const text = `✅【${label} 完了】\n${task.customer_name as string}さんへ${suffix}`;
+    sendGroupMessage(text).catch(console.error);
+  }
 
   // 物件出し完了時：紐付き顧客の property_send_count を自動+1
   if (task.task_type === "property_send") {
