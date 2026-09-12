@@ -94,6 +94,25 @@ describe("分析モード判定（decideAnalysisMode）", () => {
   });
 });
 
+describe("内覧の別日程（2026-09-12 竹内・愛乃事例: 内覧日調整を送った後 → AIX 内覧日調整）", () => {
+  const afterInvite = { aixHistory: [{ aix_type: "viewing_invite" }] };
+  it("「それ以外だと何日になりますか？」→ S4 viewing_date_alternative", () => {
+    const x = ev({ latestCustomerTurn: "それ以外だと何日になりますか？", ...afterInvite });
+    expect(x?.scene).toBe("S4_viewing"); expect(x?.reasonCode).toBe("viewing_date_alternative"); expect(x?.candidateAction).toBe("viewing_invite");
+  });
+  it("「土日は可能ですか？」→ 内覧日調整", () => expect(ev({ latestCustomerTurn: "土日は可能ですか？", ...afterInvite })?.reasonCode).toBe("viewing_date_alternative"));
+  it("「来週でご都合いい日ってありますか？？」→ 内覧日調整", () => expect(ev({ latestCustomerTurn: "すいません今週実家に帰るので、、 来週でご都合いい日ってありますか？？", ...afterInvite })?.reasonCode).toBe("viewing_date_alternative"));
+  it("「土日でも大丈夫ですか」は条件変更（S7）ではなく内覧日調整", () => expect(ev({ latestCustomerTurn: "土日でも大丈夫ですか？", ...afterInvite })?.scene).toBe("S4_viewing"));
+  it("具体的な日時＋依頼「14日の16:00でお願いしたいです」→ 待ち合わせ（S5）のまま", () => expect(ev({ latestCustomerTurn: "では14日の16:00でお願いしたいです！", ...afterInvite })?.scene).toBe("S5_time_spec"));
+  it("エリアの「〜以外」は内覧の別日程にしない（内覧日調整を送った後でも）", () => {
+    expect(ev({ latestCustomerTurn: "平野区加美駅付近以外で大阪市内の物件を教えてほしいです", ...afterInvite })?.reasonCode === "viewing_date_alternative").toBe(false);
+  });
+  it("提示日の受諾「明日ってまだ空いてますか？…お願いしたいです」は内覧の別日程にしない（実データの次は待ち合わせ）", () => {
+    expect(ev({ latestCustomerTurn: "明日ってまだ空いてますか？ 私行けないんですけど彼氏がいけるみたいでお願いしたいです！", ...afterInvite })?.reasonCode === "viewing_date_alternative").toBe(false);
+  });
+  it("内覧日調整を送る前は「土日は可能ですか？」でも内覧の別日程にしない", () => expect(ev({ latestCustomerTurn: "土日は可能ですか？" })?.reasonCode === "viewing_date_alternative").toBe(false));
+});
+
 describe("物件確認の依頼（2026-09-12 竹内: 物件確認したはお客様から依頼があった時だけ）", () => {
   const S = (text: string) => ({ sender: "staff", text });
   const C = (text: string) => ({ sender: "customer", text });

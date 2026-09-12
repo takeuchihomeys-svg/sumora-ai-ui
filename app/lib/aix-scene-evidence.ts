@@ -11,7 +11,7 @@ import { isConditionFormMessage } from "./line-reply-prompts";
 import { CUST_WILL_SEND_SELF_PRED } from "./reply-context";
 import type { EstimateContextVerdict } from "./estimate-context";
 import {
-  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE,
+  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
 } from "./scene-patterns";
 
 export type PropertyStatusLite = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
@@ -138,6 +138,12 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   }
   if (!slotQuestion && specified && detectAvailabilityCheckContext(msg)) {
     return ev({ scene: "S1_vacancy", candidateAction: "property_check_result", checkPattern: null, timing: "after_confirm", chained: estimateDeclare ? "estimate_sheet" : null, reasonCode: "availability_question", propertySpecifiedBy: specBy });
+  }
+
+  // S4' 内覧の別日程の問い合わせ（内覧日調整を送った後の「それ以外だと何日になりますか？」「土日は可能ですか」）→ 内覧日調整
+  //   2026-09-12 竹内・愛乃事例。条件変更（S7「〜でも大丈夫」）より先に見る。具体的な日時の指定＋依頼（S5・待ち合わせ）は除く
+  if (hasViewingInviteBefore(o) && VIEWING_DATE_ALT_RE.test(msg) && !(TIME_SPEC_RE.test(msg) && TIME_REQUEST_RE.test(msg)) && !VIEWING_DAY_COMMIT_RE.test(msg)) {
+    return ev({ scene: "S4_viewing", candidateAction: "viewing_invite", checkPattern: null, timing: "now", chained: null, reasonCode: "viewing_date_alternative" });
   }
 
   // S6 見積（verdict が declare の時のみ。語出現では出さない）

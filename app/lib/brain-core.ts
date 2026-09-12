@@ -257,6 +257,7 @@ const AIX_CAPABILITY_MAP = `
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
 - property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
 - application_push: 内覧完了後に顧客が前向きな時、または顧客が自分から申込の意思を示した時。審査不安の「解消」を先回りする場面でも有効（申込確定の言質は不要）。見積送付後の「ありがとうございます」「いいですね」等の前向き反応だけでは選ばない（内覧のご案内が先＝viewing_invite。黄金フロー順）
+- viewing_invite（内覧日調整を送った後）: 顧客が「それ以外だと何日」「土日は可能ですか」「他の日程は」等、別の日程を尋ねたら viewing_invite（候補日時は AIX で送る。本文で日程を手打ちしない）。具体的な日時を指定して依頼したら meeting_place（2026-09-12 竹内）
 - viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 確定済み未来→meeting_place / 当日・完了後→greeting_viewing ※viewing_invite は顧客メッセージに内覧希望が示された場合に選ぶ。「内覧行きたいらしいですが」「内覧可能ですか」「見に行きたい」等の間接・伝聞・打診表現も内覧希望として viewing_invite を選ぶこと。スタッフが物件を送った後に顧客が内覧・内見・見学・見に行く等のキーワードで反応した場合も viewing_invite。ただしスタッフが送った物件情報内の「〇月〇日以降内覧可能」「内覧可」等の文言をトリガーにしない（顧客メッセージ内のキーワードのみ対象）。物件送付直後で顧客がまだ反応していない場合は aix:null（何も提案しない）が正解
 - 成約の典型順（黄金フロー）: condition_hearing → property_send → property_recommendation → estimate_sheet → viewing_invite → meeting_place → application_push（property_check_result は顧客が物件URLを送ってきた時の割り込みアクションであり順序フローに含めない）
 `.trim();
@@ -2213,6 +2214,13 @@ ${history}`;
     if (promiseAix) {
       finalAix = promiseAix.action;
       decisionSource = `promise:${promiseAix.kind}`;
+    }
+    // 2026-09-12 竹内（愛乃事例）「AIX の内覧日調整をセット」: 内覧日調整を送った後にお客様が別の日程を尋ねた
+    //   （「それ以外だと何日になりますか？」「土日は可能ですか」）→ 候補日時は AIX【内覧日調整】で送る（候補日時の手打ち・AI 生成は禁止）。
+    //   判定は場面の証拠（aix-scene-evidence S4' viewing_date_alternative）と同じ。実データでスタッフの次の AIX も内覧日調整
+    if (!promiseAix && sceneEvidence?.reasonCode === "viewing_date_alternative") {
+      finalAix = "viewing_invite";
+      decisionSource = "signal:scene_S4_date_alt";
     }
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);
