@@ -192,11 +192,14 @@ export type NameIssue = {
   suggestion: string;
 };
 
-/** 確定名（resolveAddressName の結果）をそのまま使う。実名形でない生の表示名が渡された時だけ正規化する（再正規化でスタッフ由来の名前を壊さない） */
-function canonOf(raw: string | null | undefined): string {
+/** 確定名（resolveAddressName の結果）をそのまま使う。実名形でない生の表示名が渡された時だけ正規化する（再正規化でスタッフ由来の名前を壊さない）。
+ *  2026-09-12 竹内方針C: export して、生成（nameNote・greetingNote・初回挨拶・resolveGreeting・名前スロット）も同じ関数を使う。
+ *  旧実装はそこだけ normalizeCustomerName で「りおなちゃん」の「ちゃん」を剥がしていた（「〇〇ちゃんさん」は5会話・31通）。
+ *  区切り（空白・中黒）を含む生の値（「山田 太郎」）は従来どおり正規化する（「山田 太郎さん」と書かない） */
+export function canonOf(raw: string | null | undefined): string {
   const t = (raw ?? "").trim().replace(/(?:さん|様|さま)$/, "");
   if (!t) return "";
-  if (isPlausiblePersonName(t) && !PLACEHOLDER_NAME_CORE_RE.test(t) && !GENERIC_NICKNAMES.has(t)) return t;
+  if (!/[\s・]/.test(t) && isPlausiblePersonName(t) && !PLACEHOLDER_NAME_CORE_RE.test(t) && !GENERIC_NICKNAMES.has(t)) return t;
   return normalizeCustomerName(t);
 }
 /** 本文 index の候補が呼びかけ位置（行頭の挨拶・強いつながり）か */
@@ -299,9 +302,10 @@ export function normalizeDisplayName(raw?: string | null): string {
   return "";
 }
 
-export type AddressNameSource = "staff_greeting_head" | "staff_inline" | "customer_self_intro" | "pc_name" | "display" | "none";
+export type AddressNameSource = "staff_greeting_head" | "staff_inline" | "staff_original_locked" | "customer_self_intro" | "pc_name" | "display" | "none";
 export type AddressNameVerdict = { name: string; source: AddressNameSource; evidence: string; at: string | null; aliases: string[] };
-type AddrMsg = { sender: string; text?: string | null; createdAt?: string | null; created_at?: string | null };
+/** isAix / is_aix_generated: AIX 生成の送信（2026-09-12 竹内方針C: 人間スタッフの呼び名を優先するために使う。無ければ人間扱い） */
+export type AddrMsg = { sender: string; text?: string | null; createdAt?: string | null; created_at?: string | null; isAix?: boolean | null; is_aix_generated?: boolean | null };
 
 const ADDR_NAME_SRC = "([ぁ-んゝゞ]{2,8}|[ァ-ヴヽヾー]{2,8}|[一-鿿々]{1,4}|[A-Za-z]{2,12})";
 const ADDR_NON_NAME_RE = /(お客様|オーナー|大家|管理|業者|保証|担当|スタッフ|弊社|不動産|審査|通過|契約|入居|退去|申込|内覧|皆|各位|こちら|まずは|引き続き|何卒|改めて|よろし|宜し|もしよ|できれば|出来れば|ぜひ|是非|ご家族|お母|お父|旦那|奥様|婚約者|パートナー)/;
@@ -322,20 +326,142 @@ function staffAddressNames(text: string): Array<{ name: string; kind: "head" | "
   return out;
 }
 
+// ─── 2026-09-12 竹内方針C: 名前の開示（名乗り・申込フォーマット・本人確認書類）──────────────────────
+//   実測: 開示の直後にスタッフが一時的に開示名へ切り替えた会話が3つ・計15通あり、3会話とも元の名前に戻っている
+//   （yt→竹田×7→yt／まりあ→宮下×5→まりあ／Noriyuki→江籠×3→Noriyuki）。申込フォーマット受領後もスタッフの呼び名は 9/9 行が元のまま。
+//   開示名は「呼び名に採用しない」。スタッフが開示名へ一時的に切り替えたことを見分けるためだけに使う（清水さんの会話ではフォーマットの氏名は同居の別人）。
+//   「〇〇です」は使わない（一致33件のほぼ全部が「大丈夫です／了解です」の誤検出）
+/** 申込フォーマットの申込者欄（【お申込者様記入欄】〜次の【】まで）。緊急連絡先欄・連帯保証人欄・同居人欄は対象外 */
+const APPLICANT_SECTION_RE = /【?お?申込者様?記入欄】?([\s\S]*?)(?=【|$)/;
+/** 申込者欄の最初の「氏名」の値（同じ行・または次の行）。「・氏名、フリガナ 宮下 真尋 ミヤシタ マヒロ」「・氏名\n　タケダ　ヨリマサ」 */
+const FORM_NAME_RE = /氏名(?:[、,，]?[ \t　]*(?:フリガナ|ふりがな))?[ \t　]*[:：]?[ \t　]*(?:\n[ \t　]*)?([^\n]+)/;
+/** 本人確認書類の OCR（「[画像] 氏名：江龍　紀幸 … 運転免許証」「氏名 松尾 ひとみ … 個人番号カード」） */
+const ID_DOC_RE = /運転免許証|個人番号|マイナンバー|在留カード|保険証|被保険者/;
+const ID_NAME_RE = /(?:^|\n|\])[ \t　]*氏名[ \t　]*[:：]?[ \t　]*([^\n]+)/;
+const NON_PERSON_FORM_VALUE_RE = /株式会社|有限会社|合同会社|法人|会社|フリガナ|生年月日|なし|無し/;
+
+type Disclosure = { full: string; parts: string[]; idx: number; kind: "self_intro" | "form" | "id_doc" };
+
+/** 氏名欄の値から名前のトークン（漢字・かな・英字の連続）を取る。「江籠 紀幸(エゴ ノリユキ)」→ full=江籠紀幸 parts=[江籠, 紀幸] */
+function parseDisclosedName(raw: string): { full: string; parts: string[] } | null {
+  const v = (typeof raw.normalize === "function" ? raw.normalize("NFKC") : raw).replace(/[（(][^）)]*[）)]?/g, " ").trim();
+  if (!v || NON_PERSON_FORM_VALUE_RE.test(v)) return null;
+  const tokens = v.split(/[\s、,，・]+/).filter((t) => /^(?:[一-鿿々]+|[ぁ-んゝゞ]+|[ァ-ヴヽヾー]+|[A-Za-z]+|[一-鿿々]+[ぁ-んゝゞ]+)$/.test(t));
+  if (!tokens.length) return null;
+  // 先頭と同じ文字種のトークンを2つまで（漢字の氏名の後ろに続くフリガナは別の読みなので含めない）
+  const script = (t: string) => (/^[ァ-ヴヽヾー]+$/.test(t) ? "kata" : /^[A-Za-z]+$/.test(t) ? "latin" : "jp");
+  const head = tokens.filter((t, i) => i < 2 && script(t) === script(tokens[0]));
+  const full = head.join("");
+  if (full.length < 2 || full.length > 12) return null;
+  return { full, parts: head };
+}
+
+/** 顧客メッセージから名前の開示を集める（古い順・メッセージ index 付き） */
+function collectDisclosures(msgs: AddrMsg[]): Disclosure[] {
+  const out: Disclosure[] = [];
+  msgs.forEach((m, idx) => {
+    if (m.sender !== "customer" || !m.text) return;
+    const s = SELF_INTRO_RE.exec(m.text);
+    if (s) {
+      const n = s[1].replace(/^(?:私|わたし|僕|自分)/, "");
+      if (validAddrName(n)) out.push({ full: n, parts: [n], idx, kind: "self_intro" });
+    }
+    const sec = APPLICANT_SECTION_RE.exec(m.text);
+    if (sec) {
+      const f = FORM_NAME_RE.exec(sec[1]);
+      const p = f ? parseDisclosedName(f[1]) : null;
+      if (p) out.push({ ...p, idx, kind: "form" });
+    } else if (ID_DOC_RE.test(m.text)) {
+      const f = ID_NAME_RE.exec(m.text);
+      const p = f ? parseDisclosedName(f[1]) : null;
+      if (p) out.push({ ...p, idx, kind: "id_doc" });
+    }
+  });
+  return out;
+}
+const disclosureMatches = (name: string, d: Disclosure) => sameName(name, d.full) || d.parts.some((p) => sameName(name, p));
+
+// ローマ字表記と仮名表記の同一視（Hitomi＝ひとみ は「別の名前」ではない＝表記替えは元の名前の固定の対象外）
+const KANA_ROMA: Record<string, string> = {
+  あ: "a", い: "i", う: "u", え: "e", お: "o", か: "ka", き: "ki", く: "ku", け: "ke", こ: "ko", が: "ga", ぎ: "gi", ぐ: "gu", げ: "ge", ご: "go",
+  さ: "sa", し: "si", す: "su", せ: "se", そ: "so", ざ: "za", じ: "zi", ず: "zu", ぜ: "ze", ぞ: "zo", た: "ta", ち: "ti", つ: "tu", て: "te", と: "to",
+  だ: "da", ぢ: "zi", づ: "zu", で: "de", ど: "do", な: "na", に: "ni", ぬ: "nu", ね: "ne", の: "no", は: "ha", ひ: "hi", ふ: "hu", へ: "he", ほ: "ho",
+  ば: "ba", び: "bi", ぶ: "bu", べ: "be", ぼ: "bo", ぱ: "pa", ぴ: "pi", ぷ: "pu", ぺ: "pe", ぽ: "po", ま: "ma", み: "mi", む: "mu", め: "me", も: "mo",
+  や: "ya", ゆ: "yu", よ: "yo", ら: "ra", り: "ri", る: "ru", れ: "re", ろ: "ro", わ: "wa", を: "o", ん: "n", ぁ: "a", ぃ: "i", ぅ: "u", ぇ: "e", ぉ: "o",
+};
+/** 訓令式寄りに正規化したローマ字（ヘボン式・長音の揺れを畳む） */
+function normRoma(s: string): string {
+  return s.toLowerCase().replace(/shi/g, "si").replace(/chi/g, "ti").replace(/tsu/g, "tu").replace(/fu/g, "hu").replace(/ji/g, "zi")
+    .replace(/sh/g, "sy").replace(/ch/g, "ty").replace(/j/g, "zy").replace(/m(?=[bp])/g, "n")
+    .replace(/ou|oo|oh(?![aiueo])/g, "o").replace(/uu/g, "u").replace(/nn/g, "n");
+}
+function kanaToRoma(kana: string): string | null {
+  const h = toHira(kana);
+  let out = "";
+  let sokuon = false;
+  for (const c of h) {
+    if (c === "っ") { sokuon = true; continue; }
+    if (c === "ー") continue;
+    if (c === "ゃ" || c === "ゅ" || c === "ょ") {
+      const v = c === "ゃ" ? "a" : c === "ゅ" ? "u" : "o";
+      if (!out.endsWith("i")) return null;
+      out = out.slice(0, -1) + "y" + v; // き+ゃ=kya／し+ゃ=sya（sha を normRoma で sya に畳む）
+      continue;
+    }
+    const r = KANA_ROMA[c];
+    if (!r) return null;
+    out += sokuon ? r[0] + r : r;
+    sokuon = false;
+  }
+  return out;
+}
+/** 同じ名前の表記違い（ローマ字⇔仮名）か */
+export function sameReading(a: string, b: string): boolean {
+  const latin = /^[A-Za-z]+$/;
+  const kana = /^[ぁ-んゝゞァ-ヴヽヾー]+$/;
+  const [l, k] = latin.test(a) && kana.test(b) ? [a, b] : latin.test(b) && kana.test(a) ? [b, a] : [null, null];
+  if (!l || !k) return false;
+  const r = kanaToRoma(k);
+  return !!r && normRoma(r) === normRoma(l);
+}
+
 /** 呼び名の唯一の決定。messages は古い順（sender='staff'|'customer'）。優先: ①直近スタッフ送信の行頭呼びかけ ②強いつながり
- *  ③スタッフの呼び履歴が無い時だけ顧客の名乗り ④DB名（property_customers）⑤表示名 ⑥""（名前を出さない） */
+ *  ③スタッフの呼び履歴が無い時だけ顧客の名乗り ④DB名（property_customers）⑤表示名 ⑥""（名前を出さない）。
+ *  2026-09-12 竹内方針C: ①②は人間スタッフの呼びかけを AIX より優先する（AIX の呼びかけは人間の呼び履歴が無い時だけ）。
+ *  さらに「元の名前の固定」: 最新の呼び名が開示名（名乗り・申込フォーマット・本人確認書類）と同じで、スタッフがその名前を初めて使ったのが
+ *  開示より後で、開示の前は別の名前で呼んでいた → 開示の前に最後に使っていた名前を採る（source=staff_original_locked）。
+ *  開示名と一時的に使った名前は aliases に入る（unifyAddressAliases が元の名前に戻し、checkNameConsistency は block しない） */
 export function resolveAddressName(input: { messages: AddrMsg[]; displayName?: string | null; pcName?: string | null }): AddressNameVerdict {
   const msgs = input.messages ?? [];
   const aliases = new Set<string>();
-  let staffPick: { name: string; kind: "head" | "inline"; evidence: string; at: string | null } | null = null;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i];
-    if (m.sender !== "staff" || !m.text) continue;
+  type StaffAddr = { name: string; kind: "head" | "inline"; evidence: string; at: string | null; idx: number; isAix: boolean };
+  const staffAddrs: StaffAddr[] = [];
+  msgs.forEach((m, idx) => {
+    if (m.sender !== "staff" || !m.text) return;
     const found = staffAddressNames(m.text);
-    for (const f of found) aliases.add(f.name);
-    if (!staffPick && found.length) {
-      const f = found.find((x) => x.kind === "head") ?? found[0];
-      staffPick = { ...f, at: m.createdAt ?? m.created_at ?? null };
+    // 1通の中は行頭の呼びかけを先に（最新の1通から採る時に head が優先される）
+    const ordered = [...found.filter((x) => x.kind === "inline"), ...found.filter((x) => x.kind === "head")];
+    for (const f of ordered) {
+      aliases.add(f.name);
+      staffAddrs.push({ ...f, at: m.createdAt ?? m.created_at ?? null, idx, isAix: !!(m.isAix ?? m.is_aix_generated) });
+    }
+  });
+  const human = staffAddrs.filter((a) => !a.isAix);
+  const pool = human.length ? human : staffAddrs;
+  let staffPick: StaffAddr | null = pool.length ? pool[pool.length - 1] : null;
+  let locked = false;
+  if (staffPick) {
+    const pick = staffPick;
+    const disclosures = collectDisclosures(msgs);
+    const d = disclosures.find((x) => disclosureMatches(pick.name, x));
+    const firstUse = pool.find((a) => sameName(a.name, pick.name));
+    if (d && firstUse && firstUse.idx > d.idx) {
+      const prior = [...pool].reverse().find((a) => a.idx < d.idx);
+      if (prior && !sameName(prior.name, pick.name) && !sameReading(prior.name, pick.name)) {
+        staffPick = prior;
+        locked = true;
+        for (const x of disclosures) if (disclosureMatches(pick.name, x)) { aliases.add(x.full); for (const p of x.parts) if (validAddrName(p)) aliases.add(p); }
+      }
     }
   }
   let selfIntro: { name: string; evidence: string; at: string | null } | null = null;
@@ -360,7 +486,7 @@ export function resolveAddressName(input: { messages: AddrMsg[]; displayName?: s
   if (pc) aliases.add(pc);
   if (disp) aliases.add(disp);
   let v: AddressNameVerdict;
-  if (staffPick) v = { name: staffPick.name, source: staffPick.kind === "head" ? "staff_greeting_head" : "staff_inline", evidence: staffPick.evidence, at: staffPick.at, aliases: [] };
+  if (staffPick) v = { name: staffPick.name, source: locked ? "staff_original_locked" : staffPick.kind === "head" ? "staff_greeting_head" : "staff_inline", evidence: staffPick.evidence, at: staffPick.at, aliases: [] };
   else if (selfIntro) v = { name: selfIntro.name, source: "customer_self_intro", evidence: selfIntro.evidence, at: selfIntro.at, aliases: [] };
   else if (pc) v = { name: pc, source: "pc_name", evidence: input.pcName ?? "", at: null, aliases: [] };
   else if (disp) v = { name: disp, source: "display", evidence: input.displayName ?? "", at: null, aliases: [] };
@@ -847,7 +973,7 @@ export function validateAndClean(
   //   gen1・gen2 の両方を通る唯一の後処理なのでここに置く（旧実装は detectPlaceholders に任せて残し、BANNED_WORD〇〇＋NAME_PLACEHOLDER の
   //   二重 block を LLM 修正でしか消せなかった）。名前以外の 〇〇 スロットは埋めない。テンプレート最適化（aixGates=false）は対象外
   if (opts?.aixGates && /[〇○]{2,}\s*(?:さん|サン|様|さま)|\{name\}/.test(cleaned)) {
-    const filled = fillNameSlot(cleaned, normalizeCustomerName(opts.customerName));
+    const filled = fillNameSlot(cleaned, canonOf(opts.customerName)); // 2026-09-12 竹内方針C: 確定名を再正規化しない
     if (filled !== cleaned) { issues.push("NAME_SLOT_FILLED"); cleaned = filled; }
   }
   // （旧: さんさん → さん の畳み込みはここにあった。2026-09-11 末尾の applySurfaceFixes（誤字の自動修正）に統合＝ゲート由来の重複も消える）

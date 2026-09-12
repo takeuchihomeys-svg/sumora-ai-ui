@@ -9,8 +9,9 @@ import { buildActionLedger, type LedgerAixRow, type LedgerTask } from "@/app/lib
 import { resolveGreeting, toGreetingLite, normalizeGreetingLite, computeAlreadyGreetedToday, isProgressPushMessage, type GreetingDecisionLite } from "@/app/lib/greeting";
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair, type PairContext, type SubstanceVerdict } from "@/app/lib/reply-context";
 import { isConditionFormMessage } from "@/app/lib/line-reply-prompts";
-// 2026-09-11 竹内方針3: 呼び名の唯一の決定（generate-reply と同じ関数）
+// 2026-09-11 竹内方針3 / 2026-09-12 竹内方針C: 呼び名の唯一の決定（generate-reply と同じ resolveAddressNameForConversation）
 import { resolveAddressName } from "@/app/lib/validate-reply";
+import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
 
 // 2026-09-11 統合設計（経路G・T4）: 送信時チェック（2.3s）は Sonnet の context_check が時間内にほぼ返らない（24h で約76%タイムアウト）。
 //   context_check を Haiku で走らせる（生成時の3パス結果を未完走の結果で上書きしない）。モデル ID は final-check の MODEL_CHECK_FAST と同じ
@@ -66,18 +67,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
   if (!text) return NextResponse.json({ error: "text required" }, { status: 400 });
-  // 2026-09-11 竹内方針3: 呼び名は generate-reply と同じ resolveAddressName で決める（旧: body.customerName の生値をそのまま基準名にしていた）
-  const addressName = resolveAddressName({ messages: recentMessages, displayName: customerName ?? "" });
-  customerName = addressName.name || undefined;
+  // 2026-09-11 竹内方針3: 呼び名は generate-reply と同じ関数で決める（旧: body.customerName の生値をそのまま基準名にしていた）
+  // 2026-09-12 竹内方針C: 窓内だけでなく DB名・履歴150件（顧客発言・is_aix_generated 込み）も generate-reply と同じ resolveAddressNameForConversation で見る。
+  //   ルール取得と並列（送信時チェックの時間を延ばさない）。失敗したら窓内の resolveAddressName で続行（fail-open）
+  const bodyDisplayName = customerName ?? "";
+  const addressNamePromise = resolveAddressNameForConversation(conversationId, recentMessages, bodyDisplayName)
+    .catch(() => resolveAddressName({ messages: recentMessages, displayName: bodyDisplayName }));
 
   // ルール + 正解データを並列取得（fetchGroundTruth は throw せず1.5sで諦める fail-open）
   // ルールは共有キャッシュ（prompt-cache.ts: TTL60秒 + SWR + fail-open）経由で取得
-  const [dbRules, groundTruth, finalCheckRules] = await Promise.all([
+  const [dbRules, groundTruth, finalCheckRules, addressName] = await Promise.all([
     getCachedPromptRules("generate_reply", {}),
     fetchGroundTruth(conversationId),
     // includeGlobal=false: global共通ルールを除外し final_check 専用ルールのみ取得
     getCachedPromptRules("final_check", {}, false),
+    addressNamePromise,
   ]);
+  customerName = addressName.name || undefined;
   const lastCustomerMessage = [...recentMessages].reverse().find((m) => m.sender === "customer")?.text;
 
   // A-3（2026-09-08）: generate-reply が保存した tpo_label / phaseGuideKey を ai_draft_check.tpo_debug から引き、

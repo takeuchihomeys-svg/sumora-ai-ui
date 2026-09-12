@@ -8,7 +8,7 @@
 //   ・二層は standard→開口語 のみ（正解: お世話に→かしこまりました 54／→はい 9。お待たせ→開口語 0／はじめまして→開口語 0）。
 //   ・「お待たせ致しました／お待たせいたしました／お待たせしました」は禁止語: 後処理 stripWaited で文節ごと除去、final-check BANNED_WORD で block。
 //   ・生成（buildGreetingNote）・後処理（enforceOpening）・検査（final-check ⑦）・保存（toGreetingLite）が同じ GreetingDecision を参照する（四者同名）。
-import { normalizeCustomerName } from "./validate-reply";
+import { canonOf } from "./validate-reply";
 import { jstDayStartMs } from "./jst-date"; // 2026-09-12 竹内方針D: JST の日付計算は jst-date に一本化
 import type { CustomerResponseKind, SubstanceKind } from "./reply-context"; // type-only（実行時の循環 import なし）
 
@@ -108,7 +108,7 @@ export function isNightHourJST(jstHour: number): boolean {
 
 /** route.ts から移設（二重定義禁止・route.ts は import に置換） */
 export function buildFirstGreeting(customerName: string): string {
-  const n = normalizeCustomerName(customerName);
+  const n = canonOf(customerName); // 2026-09-12 竹内方針C: 確定名（resolveAddressName）を再正規化しない（「ちゃん」を剥がさない）
   return `${n ? `${n}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！`;
 }
 
@@ -234,7 +234,7 @@ export function resolveGreeting(opts: {
   isDeliverableReply?: boolean;
 }): GreetingDecision {
   const now = opts.now ?? Date.now();
-  const name = normalizeCustomerName(opts.customerName);
+  const name = canonOf(opts.customerName); // 2026-09-12 竹内方針C: 確定名を再正規化しない
   const call = name ? `${name}さん` : "";
   const origin = computeWaitedOrigin(opts.recentMessages, now, opts.isSubstantive);
   const sinceStaff = msSinceLastStaff(opts.recentMessages, now);

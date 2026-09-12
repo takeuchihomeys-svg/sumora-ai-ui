@@ -4,6 +4,16 @@
 
 ---
 
+## 呼び名は元の名前で固定（竹内方針C・2026-09-12）— 黄金ルール
+- **呼び名の決定は `resolveAddressName`（validate-reply.ts）1つ。サーバーでは `resolveAddressNameForConversation`（app/lib/address-name-server.ts）経由で generate-reply と check-reply が同じ入力（DB名・履歴150件＝顧客発言・is_aix_generated 込み・窓）で決める**。旧 check-reply は窓内の表示名だけだった
+- **元の名前の固定**: 最新の呼び名が名前の開示（名乗り「と申します」・申込フォーマットの申込者欄の最初の氏名・本人確認書類 OCR の「氏名」）と同じで、スタッフがその名前を初めて使ったのが開示より後、かつ開示の前は別の名前で呼んでいた → 開示前に最後に使った名前（source=staff_original_locked）。開示名・一時的に使った名前は aliases（unifyAddressAliases が元の名前へ戻す）。実測: yt・まりあ・Noriyuki の3会話で元に戻る時点の予測外れが解消（固定の発火11通）
+- 開示名は呼び名に採用しない（清水さんの会話はフォーマットの氏名が同居の別人）。緊急連絡先・連帯保証人・同居人欄は開示に数えない。「〇〇です」は使わない。ローマ字⇔仮名の表記替え（Hitomi→ひとみ）は同じ名前＝固定しない（sameReading）
+- **人間スタッフの呼び名を AIX より優先**（AIX の呼び名は人間の呼び履歴が無い時だけ。MATSUO YUYA 型）
+- **確定名は再正規化しない**: `canonOf`（export）を nameNote・greetingNote・staffPromise の名前スロット（route.ts sanitizeCustomerName）・buildFirstGreeting・resolveGreeting・validateAndClean の fillNameSlot で使う（「りおなちゃんさん」を崩さない）。空白区切りの生の値は従来どおり姓
+- 実測（messages 全体の呼びかけ2,004通）: 一致 1937（96.7%）。変更前 1943/2003 との差は、一時切替中のスタッフ送信が「方針Cには一致・スタッフ実績とは不一致」になった分。audit block 43/756 のまま
+- 未対応（竹内さん確認待ち）: page.tsx extractPreferredName の廃止（2通目の「さん」抜け 4534・9762 を含む）。AIX 側の呼び名一本化は aix_feature_suggestions 455e9fba（S3「[呼び名] AIX の呼び名を返信AIの呼び名決定と揃える」）で提案。コードは直接直していない
+- テスト: `npx tsx app/lib/__tests__/name.test.ts`（26: R6〜R9・N1〜N3・H1 を追加）
+
 ## 曜日は日付を正・日本時間で計算（竹内方針D・2026-09-12）— 黄金ルール
 - **日本時間の日付・曜日は `app/lib/jst-date.ts` の関数だけで計算する**（jstParts / jstYmd / jstMD / jstMDHm / jstDateLabel / jstYmdWeekday / jstDayStartMs / jstWeekMondayYmd / weekdayForMonthDay / weekdayTable / fixDateWeekdays）。書き方は「+9h→getUTC*」の1通り。+9h した Date にローカル getter（getMonth/getDay 等）は禁止（ローカル実行で +18h）
 - 根本原因: 下書きの曜日の食い違い 26/331件中24件が前年（2025年）の暦＝LLM が明日以降の曜日を自分で計算していた → generate-reply の dateNote と brain の【時間情報】に **14日分の曜日表** を渡し「表に無い日付には曜日を付けない」

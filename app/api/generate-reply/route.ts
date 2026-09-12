@@ -41,10 +41,13 @@ import {
   isPlausiblePersonName,
   stripNonNameChars,
   normalizeCustomerName,
+  canonOf,
   // 2026-09-11 竹内方針3: 呼び名の唯一の決定（生成・後処理・検査・check-reply が同じ verdict）
   resolveAddressName,
   type AddressNameVerdict,
 } from "@/app/lib/validate-reply";
+// 2026-09-12 竹内方針C: 呼び名のサーバー側決定（DB名・履歴・is_aix_generated）。check-reply と同じ関数
+import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, type MoveOutSubject } from "@/app/lib/move-out-context";
@@ -165,9 +168,10 @@ function createTemplateOptimizeModel() {
 // （実名「Hitomi」と食い違い、final-check が FABRICATED_NAME を出す原因になる）。
 // 判定は app/lib/validate-reply.ts の normalizeCustomerName に一元化する（二重定義禁止）。
 // G30（2026-09-08 Fable5）: buildFirstGreeting は app/lib/greeting.ts へ移設（resolveGreeting / enforceOpening と同一定義）。
-// sanitizeCustomerName は normalizeCustomerName（敬称除去・プレースホルダ派生の除外・姓抽出）に一本化
+// sanitizeCustomerName は validate-reply の canonOf に一本化（2026-09-12 竹内方針C: resolveAddressName が決めた呼び名を再正規化しない。
+//   旧: normalizeCustomerName で「りおなちゃん」→「りおな」になり、nameNote・greetingNote・名前スロットだけスタッフの呼び方から外れていた）
 function sanitizeCustomerName(name: string): string {
-  return normalizeCustomerName(name);
+  return canonOf(name);
 }
 
 // ─── 中身のないフレーズの禁止リスト（greetingNote と同じく常時注入・冒頭ルールは greetingNote が正）─────
@@ -2481,36 +2485,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
 // ─── 2026-09-11 竹内方針3: 旧 extractPreferredName（1行目の行頭しか見ない・カタカナ「サン」を敬称に含む）は廃止。
 //     呼び名は validate-reply.ts の resolveAddressName が唯一の決定（下の「顧客名の確定」）
 
-// ─── 顧客名をDBから解決（LINE表示名より customer_name を優先するための取得）────
-// conversations.customer_name は line-webhook が LINEプロフィールの displayName で
-// 上書きするため表示名そのもの。property_customers.customer_name はスタッフが
-// 顧客管理画面で実名に修正できるので、そちらを先に見る。
-async function fetchDbCustomerNames(
-  conversationId: string,
-): Promise<{ pcName: string; convName: string }> {
-  try {
-    const { data: conv } = await supabase
-      .from("conversations")
-      .select("customer_name, property_customer_id")
-      .eq("id", conversationId)
-      .maybeSingle();
-    const convRow = conv as { customer_name?: string | null; property_customer_id?: string | null } | null;
-    if (!convRow) return { pcName: "", convName: "" };
-    const convName = (convRow.customer_name ?? "").trim();
-    const pcId = convRow.property_customer_id;
-    if (!pcId) return { pcName: "", convName };
-    const { data: pc } = await supabase
-      .from("property_customers")
-      .select("customer_name")
-      .eq("id", pcId)
-      .maybeSingle();
-    const pcName = ((pc as { customer_name?: string | null } | null)?.customer_name ?? "").trim();
-    return { pcName, convName };
-  } catch (err) {
-    console.warn("[generate-reply] 顧客名のDB取得失敗 — 名前なしで続行:", err);
-    return { pcName: "", convName: "" };
-  }
-}
+// ─── 顧客名のDB取得（fetchDbCustomerNames）は 2026-09-12 竹内方針C で app/lib/address-name-server.ts へ移設（check-reply と共用）
 
 // ─── パターンA: 引用リプライの引用先メッセージ取得（quoted_message_id → line_message_id JOIN）──
 // お客様の最新メッセージに quoted_message_id があれば、引用先メッセージを特定して
@@ -2996,24 +2971,18 @@ export async function POST(req: NextRequest) {
   //   （〇〇さんにオススメ／ご希望）③スタッフの呼び履歴が無い時だけ顧客の名乗り ④DB property_customers ⑤表示名 ⑥""（名前を出さない）。
   //   旧実装は extractPreferredName（1行目しか見ない・カタカナ「サン」で AIX カードの「ネッサンス」から「ネッ」を抽出）→ 表示名 → DB の順で、
   //   page 経路と bg 経路で呼び名が変わっていた（見木: page=響夢／bg=見木）。page / bg どちらでも DB 名を常に引いて1回だけ決める
+  //   2026-09-12 竹内方針C: 人間スタッフの呼び名を AIX より優先し、名前の開示（名乗り・申込フォーマット・本人確認書類）の直後の一時切替に
+  //   追従しない（元の名前の固定）。DB名・履歴150件（顧客発言・is_aix_generated 込み）の取得は check-reply と同じ関数で行う
   let addressName: AddressNameVerdict = { name: "", source: "none", evidence: "", at: null, aliases: [] };
   {
-    const { pcName, convName } = conversationId ? await fetchDbCustomerNames(conversationId) : { pcName: "", convName: "" };
-    const displayName = lineDisplayName || convName;
-    addressName = resolveAddressName({ messages: recentMessages, displayName, pcName });
-    // 窓内にスタッフの呼びかけが無い時だけ、スタッフ送信を limit 100 で1回引いて決め直す
-    if (!addressName.source.startsWith("staff") && conversationId) {
-      try {
-        const { data: staffRows } = await supabase
-          .from("messages").select("sender, text, created_at")
-          .eq("conversation_id", conversationId).eq("sender", "staff")
-          .order("created_at", { ascending: false }).limit(100);
-        const older = ((staffRows ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).reverse()
-          .map((r) => ({ sender: r.sender, text: r.text, createdAt: r.created_at }));
-        if (older.length) addressName = resolveAddressName({ messages: [...older, ...recentMessages], displayName, pcName });
-      } catch (e) {
-        console.warn("[generate-reply] 呼び名の履歴取得に失敗（窓内の結果で続行）:", e instanceof Error ? e.message : e);
-      }
+    let pcName = "", convName = "";
+    try {
+      const r = await resolveAddressNameForConversation(conversationId, recentMessages, lineDisplayName);
+      ({ pcName, convName } = r);
+      addressName = { name: r.name, source: r.source, evidence: r.evidence, at: r.at, aliases: r.aliases };
+    } catch (e) {
+      console.warn("[generate-reply] 呼び名の決定に失敗（窓内の結果で続行）:", e instanceof Error ? e.message : e);
+      addressName = resolveAddressName({ messages: recentMessages, displayName: lineDisplayName });
     }
     customerName = addressName.name;
     if (!customerName) {
