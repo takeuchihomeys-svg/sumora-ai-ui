@@ -110,8 +110,18 @@ const AIX_AUTO_SEARCH_SITES = ["realnetpro"];
  */
 async function enqueueAixPropertySearch(conversationId: string, action: string): Promise<void> {
   const { data: conv } = await supabase
-    .from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
-  const customerId = (conv?.property_customer_id as string | null | undefined) ?? null;
+    .from("conversations").select("property_customer_id, line_user_id").eq("id", conversationId).maybeSingle();
+  let customerId = (conv?.property_customer_id as string | null | undefined) ?? null;
+  // 紐付け漏れ（同じ LINE ID の物件顧客がいるのに conversations.property_customer_id が空）を補う。
+  //   同じ LINE ID の物件顧客がちょうど1人の時だけ紐付ける（2人以上は誰か決められないので積まない）
+  if (!customerId && conv?.line_user_id) {
+    const { data: pcs } = await supabase
+      .from("property_customers").select("id").eq("line_user_id", conv.line_user_id as string).limit(2);
+    if (pcs && pcs.length === 1) {
+      customerId = pcs[0].id as string;
+      await supabase.from("conversations").update({ property_customer_id: customerId }).eq("id", conversationId).is("property_customer_id", null);
+    }
+  }
   if (!customerId) return;
   const { data: existing } = await supabase
     .from("automation_commands")
