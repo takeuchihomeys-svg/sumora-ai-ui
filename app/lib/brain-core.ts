@@ -214,9 +214,9 @@ const STATUS_MEANING: Record<string, string> = {
 // （例: proposing に viewing_invite を含める）。
 const PHASE_ACTION_CANDIDATES: Record<string, string[]> = {
   hearing:   ["condition_hearing", "property_search", "property_send", "followup_revive"],
-  proposing: ["property_send", "property_recommendation", "property_search", "acknowledge_check", "property_check_result", "estimate_sheet", "viewing_invite", "followup_revive"],
-  viewing:   ["viewing_invite", "meeting_place", "greeting_viewing", "estimate_sheet"],
-  applying:  ["application_push", "estimate_sheet", "acknowledge_check"],
+  proposing: ["property_send", "property_recommendation", "property_search", "acknowledge_check", "property_check_result", "estimate_sheet", "cost_explain", "viewing_invite", "followup_revive"],
+  viewing:   ["viewing_invite", "meeting_place", "greeting_viewing", "estimate_sheet", "cost_explain"],
+  applying:  ["application_push", "estimate_sheet", "cost_explain", "acknowledge_check"],
 };
 
 // convStatus → フェーズの粗い写像（前回フェーズが無い場合のフォールバック）。
@@ -242,6 +242,7 @@ const AIX_CAPABILITY_MAP = `
 【AIXボタン能力マップ】
 - viewing_invite: 内覧日程の候補をLINEで提案するメッセージを生成（顧客メッセージに内覧・内見・見学・見に行く等の希望表現があれば選ぶ）
 - property_send: 物件ピックアップのカバーメッセージを生成（物件URL送信時）→ 複数件ピックアップ後は必ず1〜2分以内（実測38秒／58秒）に「物件ピックアップ紹介（後続）」を、駅指定・条件外れ告知ありなら「駅周辺物件ピックアップ（後続）」（実測1分33秒）をAI最適化して自発送信する
+- cost_explain: 費用の安さの説明を生成（仕組み＝仲介手数料0円・オーナー様からの広告料をお客様に還元＋この物件の具体額＝貸主から〇〇円頂き〇〇円を還元。金額はスタッフ入力のみ）
 - estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成。見積書の後は申込へ進めない（2026-09-12 竹内）。スタッフの実際は見積送付に「お気に召されたお部屋ご都合よろしいお日にちにご案内させて頂きます」と内覧のご案内を添える形が中心で、見積書の次に申込へを押したのは185件中18件（10%）。次の一手はお客様の反応（内覧希望・検討・懸念・別物件）を見て決める
 - application_push: 申込クロージングメッセージ（①申込時フォーマット本体）を生成 → 送信直後（実測32秒〜4分48秒）に「②申込時フォーマット（続き）」を一字一句そのまま自発送信する（AI最適化禁止）
 - condition_hearing: 既知条件をスキップした条件ヒアリングを生成
@@ -259,6 +260,7 @@ const AIX_CAPABILITY_MAP = `
 - acknowledge_check: 顧客が物件URL・物件名を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと ※スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて結果をまだ報告していない時は acknowledge_check ではなく property_check_result（その後のお客様の返事が了承・スタンプだけでも同じ。2026-09-12 竹内・Sさん事例。確認の約束の後に押された AIX に acknowledge_check は0件）
 - 【AIX なし】顧客が「何件か気になる物件送ってもいいですか」「送りますね」等、これから自分で物件を送る予告をしただけの時は、どの AIX も選ばない（aix:null）。物件が届いてから募集状況確認・御見積書（acknowledge_check / estimate_sheet）。返信は「いつでもお送りください＋お送り頂き次第募集状況確認し御見積書とあわせてご連絡」（2026-09-12 竹内）
 - 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・あや事例）
+- cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・あや事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
 - property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
@@ -2276,6 +2278,14 @@ ${history}`;
       finalAix = "viewing_invite";
       decisionSource = "signal:scene_S4_date_alt";
     }
+    // 2026-09-12 竹内（あや事例）「費用の安さについて不審になられたり聞かれた場合は AIX 初期費用を説明から送る」:
+    //   「仲介手数料無しで大丈夫でしょうか？…安いのには何か理由があるのでしょうか？」は「初期費用」を含むため 見積書送る に倒れていた
+    //   （見積書は送付済み）。場面の証拠 S8（aix-scene-evidence・customerDoubtsCheapness）なら 見積書送る／確認します／AIX なし を 初期費用を説明 にする。
+    //   実データ（200日）: S8 の3件（あや・𝓡・みこと）全てでスタッフは仕組み（仲介手数料0円・広告料の還元）を説明した
+    if (!promiseAix && sceneEvidence?.scene === "S8_cost_doubt" && (finalAix === null || finalAix === "estimate_sheet" || finalAix === "acknowledge_check")) {
+      finalAix = "cost_explain";
+      decisionSource = "signal:scene_S8_cost_doubt";
+    }
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);
       if (rate) {
@@ -3477,6 +3487,7 @@ export const AIX_LABEL_JP: Record<string, string> = {
   acknowledge_check: "反応確認",
   followup_revive: "追客フォロー",
   condition_hearing: "条件ヒアリング",
+  cost_explain: "初期費用の説明",
 };
 
 /** generate-reply の fetchReplyModeGate 返却値と同形のスナップショット */

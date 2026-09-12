@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { fetchCalendarSlots } from "../lib/calendarSlots";
 import { detectPlaceholders } from "../lib/validate-reply";
+import {
+  buildCostExplainMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
+} from "../lib/cost-explain-text";
 
 export type AixActionType =
   | "condition_hearing"
@@ -17,7 +20,8 @@ export type AixActionType =
   | "acknowledge_check"
   | "followup_revive"
   | "property_search"
-  | "zenryoku_support";
+  | "zenryoku_support"
+  | "cost_explain";
 
 interface LinkedCustomer {
   id: string;
@@ -322,6 +326,10 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
     rules: ["査収お礼 → 全域ピックアップしたが条件を完全には満たせない旨 → 引き続き新着をお送りする約束", "丁寧・熱心・前向きなトーンで生成", "顧客名は〇〇さんと呼ぶ"],
     template: "ご査収頂きありがとうございます😊！！\n[エリア]全域を含めて[お客様名]さんのご条件に合った物件ピックアップさせて頂きましたところ…\n引き続き新着でオススメ出来るお部屋募集に出次第お送りさせて頂きます！！",
   },
+  cost_explain: {
+    rules: ["費用の安さを不審に思われた・聞かれた時に使う", "貸主からの報酬と還元額を入力 → 仕組みと具体額を1通で生成（AI不使用）", "お客様が仲介手数料に触れていれば「仲介手数料は0円で大丈夫です！！」から答える", "貸主から手数料が無いお部屋は「割引出来ないが一般的な不動産業者より〇〇円お得」"],
+    template: "仲介手数料は0円で大丈夫です！！オーナー様からの広告料をお客様に還元させて頂いている仕組みのため、初期費用を一般的な不動産業者様よりお安くご提案出来ております！！\n\n他社様との金額差はこの還元の有無によるものですので、ご安心ください😊！！\n\nこちらの物件は貸主から[家賃1ヶ月分の]手数料を弊社不動産仲介会社は頂く事が出来ます！！\n[報酬]円を貸主から頂き、そこから[還元額]円を[お客様名]さんの初期費用に還元させて頂きますので、弊社としましても利益残りますのでご安心頂けますと幸いです！！",
+  },
 };
 
 const CONFIG: Record<
@@ -435,6 +443,13 @@ const CONFIG: Record<
     requiresImage: false,
     imageLabel: "",
     description: "物件がない時に送る全力継続フォロー文をAIが生成します。",
+  },
+  cost_explain: {
+    title: "初期費用を説明",
+    emoji: "💴",
+    requiresImage: false,
+    imageLabel: "",
+    description: "費用の安さを不審に思われた・聞かれた時に、仕組み（仲介手数料0円・広告料の還元）とこの物件の具体額を1通で説明します。貸主からの報酬と還元額を入力してください。",
   },
 };
 
@@ -886,6 +901,13 @@ export default function AixModal({
   const [meetingTime, setMeetingTime] = useState<string>("");
   const [meetingOcrLoading, setMeetingOcrLoading] = useState(false);
 
+  // 初期費用を説明専用（2026-09-12 竹内・あや事例）: 貸主からの報酬・還元額は入力値だけで文を作る
+  const [costFeeLabel, setCostFeeLabel] = useState<string>("家賃1ヶ月分");
+  const [costFeeYen, setCostFeeYen] = useState("");
+  const [costRefundYen, setCostRefundYen] = useState("");
+  const [costSavingYen, setCostSavingYen] = useState("");
+  const [costNoFee, setCostNoFee] = useState(false);
+
   // 内覧へ！退去予定物件専用
   const [viewingIsVacancy, setViewingIsVacancy] = useState(!!initialViewingVacancy);
   const [viewingVacancyName, setViewingVacancyName] = useState("");
@@ -1273,6 +1295,19 @@ export default function AixModal({
         console.warn("[AixModal] 待ち合わせ日時の自動抽出失敗:", e);
       });
   // recentMessages を deps に含める（メッセージ読み込み後に再実行。meetingDate 設定後は早期リターンで冪等）
+  }, [actionType, recentMessages]);
+
+  // 初期費用を説明: 直近の AIX【見積書送る】の「🌟〇〇円割引」「より〇〇円節約」を還元額・節約額の初期値にする（書き換え可）
+  const costPrefilledRef = useRef(false);
+  useEffect(() => {
+    if (actionType !== "cost_explain" || costPrefilledRef.current) return;
+    const staffTexts = (recentMessages ?? []).filter((m) => m.sender === "staff" && m.text).map((m) => m.text);
+    if (!staffTexts.length) return;
+    costPrefilledRef.current = true;
+    const { refundYen, savingYen } = extractEstimateAmounts(staffTexts);
+    if (refundYen && !costRefundYen) setCostRefundYen(refundYen.toLocaleString("ja-JP"));
+    if (savingYen && !costSavingYen) setCostSavingYen(savingYen.toLocaleString("ja-JP"));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType, recentMessages]);
 
   // テンプレート画面を開いたときによく使われるフレーズを取得
@@ -1692,6 +1727,36 @@ export default function AixModal({
         conversation_id: conversationId,
         customer_name: customerName,
       };
+
+      // 初期費用を説明: 入力値だけで文を作る（AI不使用・金額の創作なし）
+      if (actionType === "cost_explain") {
+        const input = {
+          noLandlordFee: costNoFee,
+          landlordFeeYen: costNoFee ? null : parseYen(costFeeYen),
+          refundYen: costNoFee ? null : parseYen(costRefundYen),
+        };
+        const missing = costExplainMissing(input);
+        if (missing) throw new Error(missing);
+        // 最後のお客様の連投に「仲介手数料」があれば「仲介手数料は0円で大丈夫です！！」から答える
+        //   （スタッフが先に一言返した後に押しても、答える相手はその連投）
+        const msgs = recentMessages ?? [];
+        let end = msgs.length - 1;
+        while (end >= 0 && msgs[end].sender !== "customer") end--;
+        let start = end;
+        while (start > 0 && msgs[start - 1].sender === "customer") start--;
+        const customerTurn = end >= 0 ? msgs.slice(start, end + 1).map((m) => m.text ?? "").join("\n") : "";
+        const msg = buildCostExplainMessage({
+          ...input,
+          customerName,
+          askedBrokerFee: mentionsBrokerFee(customerTurn),
+          landlordFeeLabel: costNoFee ? null : costFeeLabel || null,
+          savingYen: parseYen(costSavingYen),
+        });
+        setAiDraft(msg);
+        setPreview(useEmoji ? msg : stripEmoji(msg));
+        setLoading(false);
+        return;
+      }
 
       if (actionType === "property_recommendation") {
         if (!imageFile) throw new Error("物件資料を選択してください");
@@ -2249,6 +2314,7 @@ export default function AixModal({
     greeting_viewing: "greeting_viewing",
     acknowledge_check: "acknowledge_check",
     followup_revive: "followup_revive",
+    cost_explain: "cost_explain",
   };
 
   // save-reply-example の保存ペイロードを構築（即時送信・予約送信で共通利用）
@@ -2889,6 +2955,8 @@ export default function AixModal({
     ? appSubMode === "confirm" ? true : appSubMode === "docs_request" ? true : appSubMode === "format" ? !!(appFormatLivingType && appFormatGuarantorType) : !!appPushType
     : actionType === "meeting_place"
     ? (!!meetingDate.trim() && !!meetingPropertyName.trim())
+    : actionType === "cost_explain"
+    ? costExplainMissing({ noLandlordFee: costNoFee, landlordFeeYen: parseYen(costFeeYen), refundYen: parseYen(costRefundYen) }) === null
     : actionType === "estimate_sheet" && estimateMultiMode
     ? estimateMultiFiles.some(Boolean)
     : !config.requiresImage || !!imageFile;
@@ -5993,6 +6061,58 @@ export default function AixModal({
               </div>
             </div>
           )}
+
+          {/* 初期費用を説明専用UI（2026-09-12 竹内・あや事例）: 貸主からの報酬・還元額を入力 → 仕組み＋具体額の1通 */}
+          {actionType === "cost_explain" && (() => {
+            const feeYen = parseYen(costFeeYen);
+            const refundYen = parseYen(costRefundYen);
+            const missing = costExplainMissing({ noLandlordFee: costNoFee, landlordFeeYen: feeYen, refundYen });
+            const inputCls = "w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3]";
+            const chip = (on: boolean) => `rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors ${on ? "border-[#2E7D32] bg-[#2E7D32] text-white" : "border-[#d1d7db] bg-white text-[#667781]"}`;
+            return (
+              <div className="mb-4">
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => { setCostNoFee(false); setPreview(""); }} className={chip(!costNoFee)}>貸主から報酬あり</button>
+                  <button type="button" onClick={() => { setCostNoFee(true); setPreview(""); }} className={chip(costNoFee)}>貸主から手数料なし</button>
+                </div>
+                {!costNoFee ? (
+                  <>
+                    <div className="mb-3">
+                      <label className="mb-1 block text-xs font-semibold text-[#54656f]">貸主からの報酬 <span className="text-red-400">*</span></label>
+                      <div className="mb-1.5 flex flex-wrap gap-1.5">
+                        {LANDLORD_FEE_MONTH_OPTIONS.map((opt) => (
+                          <button key={opt} type="button" onClick={() => { setCostFeeLabel(costFeeLabel === opt ? "" : opt); setPreview(""); }} className={chip(costFeeLabel === opt)}>
+                            {costFeeLabel === opt ? "✓ " : ""}{opt}
+                          </button>
+                        ))}
+                      </div>
+                      <input value={costFeeYen} onChange={(e) => { setCostFeeYen(e.target.value); setPreview(""); }} inputMode="numeric" placeholder="例：67,000" className={inputCls} />
+                      <p className="mt-1 text-[10px] text-[#8696a0]">
+                        {costFeeLabel ? `「こちらの物件は貸主から${costFeeLabel}の手数料を…」` : "「こちらの物件は貸主から手数料を…」"}{feeYen ? `／${feeYen.toLocaleString("ja-JP")}円を貸主から頂き` : ""}
+                      </p>
+                    </div>
+                    <div className="mb-3">
+                      <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                        初期費用への還元額 <span className="text-red-400">*</span>
+                        <span className="ml-1 font-normal text-[#90a4ae]">（直近の見積書の割引額が入ります・書き換え可）</span>
+                      </label>
+                      <input value={costRefundYen} onChange={(e) => { setCostRefundYen(e.target.value); setPreview(""); }} inputMode="numeric" placeholder="例：22,000" className={inputCls} />
+                    </div>
+                  </>
+                ) : (
+                  <div className="mb-3">
+                    <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                      一般的な不動産業者との差額<span className="ml-1 font-normal text-[#90a4ae]">（任意・直近の見積書の節約額が入ります）</span>
+                    </label>
+                    <input value={costSavingYen} onChange={(e) => { setCostSavingYen(e.target.value); setPreview(""); }} inputMode="numeric" placeholder="例：29,150" className={inputCls} />
+                  </div>
+                )}
+                <p className={`text-[11px] ${missing ? "text-[#e57373]" : "text-[#2E7D32]"}`}>
+                  {missing ?? "✅ 仕組み（仲介手数料0円・広告料の還元）とこの物件の具体額を1通で作ります"}
+                </p>
+              </div>
+            );
+          })()}
 
           {/* 確認します: 代表確認ピッカー */}
           {actionType === "acknowledge_check" && (

@@ -55,6 +55,8 @@ export const AIX_BUTTON_LABELS: Record<string, string> = {
   application_push:        "申込へ！",
   followup_revive:         "追客する",
   property_search:         "物件を探す",
+  // 2026-09-12 竹内（あや事例）: 費用の安さを不審に思われた・聞かれた時の説明（仕組み＋この物件の具体額）
+  cost_explain:            "初期費用を説明",
 };
 
 // ボタンキー → スタッフ向けアナウンス（「AIX【ボタン名】を押してください: 理由・タイミング」形式）。
@@ -72,6 +74,7 @@ export const AIX_STAFF_NOTES: Record<string, string> = {
   application_push:        "AIX【申込へ！】を押してください: 内覧後にお客様が前向きな場面、またはお客様が自分から申込の意思を示した場面です（退去予定/入居中物件の先押さえもこのボタン。見積書送付後の前向き反応だけでは内覧のご案内が先）。クロージングメッセージを生成して申込へ誘導します",
   followup_revive:         "AIX【追客する】を押してください: お客様からの返信が3日以上止まっています。再接触メッセージを生成します",
   property_search:         "Chrome拡張ツール（リアプロ/itandi/レインズ）で物件を検索してください: お客様の条件に合う物件を探す場面です（送付済み物件は候補から除外）。URLが揃ったらAIX【物件ピックアップした】で送付します",
+  cost_explain:            "AIX【初期費用を説明】を押してください: お客様が費用の安さを不審に思っている・安い理由を聞いています（「仲介手数料無しで大丈夫？」「安いのには理由が？」「他社は31万と言われた」）。貸主からの報酬と還元額を入力すると、仕組み（仲介手数料0円・広告料の還元）とこの物件の具体額を1通で説明します（金額の手打ち・AI生成はNG）",
 };
 
 // ─── brain action → 顧客向け返信方向性（A-7 / 2026-09-08 Fable5）──────────────────
@@ -92,6 +95,8 @@ export const AIX_ACTION_REPLY_DIRECTION: Record<string, AixActionReplyDirection>
   condition_hearing:       { direction: "未取得条件の確認（フォーム本体はAIXで送る）", weDo: "ご希望条件お聞かせ頂けますと幸いです！！", forbid: "①〜⑧フォーム全文の生成／確認済み条件の聞き返し" },
   application_push:        { direction: "お客様が前向きな場面での申込誘導（希少性煽り禁止・事実ベースの期限のみ）", weDo: "お気に召されましたらお申込みでお部屋押さえさせて頂きます！！", forbid: "「埋まってしまいます」「残り1部屋」等の煽り／書類リストの生成" },
   property_search:         { direction: "条件受領→ピックアップ宣言", weDo: "〇〇周辺全域から〇〇さんにオススメできるお部屋ピックアップしお送りさせて頂きます！！", forbid: "物件名・家賃の初出提示／条件の聞き返し" },
+  // 説明本体（仕組み＋貸主からの報酬・還元額）は AIX【初期費用を説明】で送る。本文で金額・報酬額を作らない
+  cost_explain:            { direction: "費用の安さへの不安・疑問への説明（仕組みと具体額はAIX初期費用を説明で送る）", weDo: "ご質問ありがとうございます😊！！", forbid: "貸主からの報酬額・還元額・割引額の生成／「見積書を作成しお送りします」の宣言（見積書は送付済み）" },
 };
 
 // ─── property_check_result の check_pattern 決定論判定 ─────────────────────────
@@ -172,6 +177,7 @@ export const AIX_LINE_LABELS: Record<string, string> = {
   application_push:        "申込クロージング",
   followup_revive:         "追客",
   property_search:         "物件ピックアップ",
+  cost_explain:            "初期費用の説明",
 };
 
 // 通知2行目: 「次にやること」を1行で
@@ -188,6 +194,7 @@ export const AIX_LINE_NOTES: Record<string, string> = {
   application_push:        "AIX【申込へ！】",
   followup_revive:         "AIX【追客する】で再接触",
   property_search:         "Chrome拡張で検索 → AIX【物件ピックアップした】",
+  cost_explain:            "貸主からの報酬を入力 → AIX【初期費用を説明】",
 };
 
 // check_pattern → topic の簡易マップ（brain の check_pattern から topic を引くため）
@@ -229,6 +236,8 @@ const AIX_ACTION_ALIASES: Record<string, string> = {
   followup:           "followup_revive",
   follow_up:          "followup_revive",
   greeting:           "greeting_viewing",
+  cost_explanation:   "cost_explain",
+  initial_cost_explain: "cost_explain",
 };
 
 export function normalizeAixActionKey(raw: string | null | undefined): string | null {

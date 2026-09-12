@@ -319,6 +319,8 @@ const AIX_ACTION_TO_STATES: Record<string, string[]> = {
     "property_check_result_available", "property_check_result_unavailable", "property_check_result_alternative",
   ],
   greeting_viewing: ["greeting_viewing", "viewing"],
+  // 2026-09-12 竹内（あや事例）: 初期費用を説明はクライアント側テンプレ（AI不使用）。保存 state を揃えるためだけに登録
+  cost_explain: ["cost_explain"],
   // ※ property_recommendation は getPropertyKnowledge() 内で同等の差分学習ルール取得済み（states: property_recommendation/proposing）
 };
 

@@ -162,5 +162,25 @@ describe("物件確認の依頼（2026-09-12 竹内: 物件確認したはお客
   });
 });
 
+describe("S8 費用の安さへの不安・疑問 → 初期費用を説明（2026-09-12 竹内・あや事例）", () => {
+  const AYA = "ありがとうございます🙇🏻‍♀️՞\n仲介手数料無しで大丈夫でしょうか？\n他の不動産屋さんに問い合わせると\n初期費用31万プラス日割り家賃と\n伺っているので、、、💦\n安いのには何か理由があるのでしょうか？\n申し訳ございません。\n少し不安になったのでご質問しました🙇‍♀️";
+  it("あや: 「初期費用31万」を含んでも見積（S6）ではなく S8 → cost_explain", () => {
+    const x = ev({ latestCustomerTurn: AYA, sentPropertyCount: 5, estimateVerdict: { mode: "declare", trigger: "cost_question" } as unknown as SceneEvidenceInput["estimateVerdict"] });
+    expect(x?.scene).toBe("S8_cost_doubt"); expect(x?.candidateAction).toBe("cost_explain");
+  });
+  it("𝓡「初期費用ここまでなぜ安くできるのですか？」→ S8", () => {
+    expect(ev({ latestCustomerTurn: "質問なのですが、\n初期費用ここまでなぜ安くできるのですか？" })?.scene).toBe("S8_cost_doubt");
+  });
+  it("値引きの相談「もう少し金額安くなりませんか？」は S8 にしない", () => {
+    expect(ev({ latestCustomerTurn: "ここの物件前向きに検討中なんですが、もう少し金額安くなりませんか？" })?.scene === "S8_cost_doubt").toBe(false);
+  });
+  it("説明の後の確認「高くなることはないのでしょうか？猫がいるのでプラス67000になりますか？」は S8 にしない", () => {
+    expect(ev({ latestCustomerTurn: "そうなんですね！ありがとうございます🙇🏻‍♀️՞\nでは先程の初期費用から日割り家賃抜きで\n高くなることはないのでしょうか？\n猫がいるのでプラス67000になりますか？" })?.scene === "S8_cost_doubt").toBe(false);
+  });
+  it("物件 URL つきの空室質問は S1 のまま（S8 より先）", () => {
+    expect(ev({ latestCustomerTurn: "https://suumo.jp/chintai/xx/ ここ空いてますか？安いのには理由があるんですか" })?.scene).toBe("S1_vacancy");
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

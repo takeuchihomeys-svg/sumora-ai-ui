@@ -3237,7 +3237,7 @@ export async function POST(req: NextRequest) {
     // T2（stale）／cached（enforcement_level=optional）／burst（bg-async 中に2通目到着）では前メッセージ向けの
     // 誤誘導になる（null より悪い）。stale 時は null に落として決定論 TPO ＋ STATE_FALLBACK_DIRECTION に委ねる。
     // followup_revive は「顧客返信への生成」では定義上常に stale（追客は無応答時のアクション）。
-    const MESSAGE_LOCAL_ACTIONS = new Set(["viewing_invite", "application_push", "meeting_place", "followup_revive", "acknowledge_check", "estimate_sheet", "property_recommendation", "greeting_viewing", "property_check_result"]);
+    const MESSAGE_LOCAL_ACTIONS = new Set(["viewing_invite", "application_push", "meeting_place", "followup_revive", "acknowledge_check", "estimate_sheet", "property_recommendation", "greeting_viewing", "property_check_result", "cost_explain"]);
     const isCachedMeta = brainMeta?.source === "cached" || brainMeta?.enforcement_level === "optional";
     const rawAction: string | null = normalizeAixActionKey(brainMeta?.action ?? null);
     const effectiveAction: string | null = (() => {

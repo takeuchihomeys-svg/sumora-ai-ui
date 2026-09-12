@@ -816,6 +816,7 @@ const AIX_ACTION_QUESTION_LABELS: Record<string, string> = {
   greeting_viewing: "内覧後の挨拶",
   acknowledge_check: "確認します",
   followup_revive: "追客する",
+  cost_explain: "初期費用を説明",
 };
 // サブキー付き（property_check_result_available / application_push_push 等）でも前方一致でラベルを引く
 function aixActionLabel(action: string): string {

@@ -419,6 +419,8 @@ const AIX_ACTION_LABELS: Record<string, string> = {
   acknowledge_check:      "確認します",
   followup_revive:        "追客する",
   greeting_viewing:       "内覧後の挨拶",
+  // 2026-09-12 竹内（あや事例）: テンプレ文（AI不使用）なのでフレーズ辞書（STATE_TO_PHRASE_CATEGORY）には入れない
+  cost_explain:           "初期費用を説明",
   // T02サブパターン（property_check_result）
   property_check_result_available:         "物件確認した（募集中）",
   property_check_result_unavailable:       "物件確認した（満室）",

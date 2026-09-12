@@ -26,6 +26,7 @@ const KNOWN_AIX_TYPES = new Set([
   "property_check_result", "estimate_sheet", "meeting_place",
   "acknowledge_check", "followup_revive", "application_push",
   "condition_hearing", "alternative_send",
+  "cost_explain",
 ]);
 
 // FEEDBACKルールの action_type スコープ用whitelist。

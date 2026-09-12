@@ -28,6 +28,7 @@ const AIX_TYPE_LABELS: Record<string, string> = {
   application_push:         "申込みを後押しした",
   condition_hearing:        "条件ヒアリングをした",
   greeting_viewing:         "内覧挨拶を送った",
+  cost_explain:             "初期費用の安さの仕組みと還元額を説明した",
 };
 
 // 一致判定（簡易ベースライン）
@@ -51,6 +52,7 @@ const MATCH_KEYWORDS: Record<string, string[]> = {
   followup_revive:         ["いかが", "その後", "近況"],
   application_push:        ["申込", "お申し込み"],
   greeting_viewing:        ["内覧", "挨拶", "案内", "当日"],
+  cost_explain:            ["仲介手数料", "還元", "広告料", "安い", "理由"],
 };
 
 // キーワード簡易判定（予測テキストに実アクションのキーワードが含まれるか）
@@ -473,6 +475,7 @@ JSONのみ返してください。説明文不要。`,
             meeting_place:            "待ち合わせ案内",
             acknowledge_check:        "確認フォロー",
             followup_revive:          "追客フォロー",
+            cost_explain:             "初期費用の説明",
             application:              "申込案内",
             document_request:         "書類案内",
             contract:                 "契約手続き",

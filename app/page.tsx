@@ -229,6 +229,8 @@ const AIX_ACTION_META: Record<string, { label: string; subtitle?: string; color:
   followup_revive:         { label: "\u8ffd\u5ba2\u3059\u308b",                 color: "#8E24AA", templateCategory: "\u8ffd\u5ba2\u3059\u308b\u3010AIX\u3011" },
   property_search:         { label: "\u7269\u4ef6\u3092\u63a2\u3059",           color: "#FF7043", templateCategory: "\u7269\u4ef6\u3092\u63a2\u3059\u3010AIX\u3011" },
   zenryoku_support:        { label: "\u5168\u529b\u30b5\u30dd\u30fc\u30c8",        color: "#F57C00", templateCategory: "\u5168\u529b\u30b5\u30dd\u30fc\u30c8\u3010AIX\u3011" },
+  // 2026-09-12 \u7af9\u5185\uff08\u3042\u3084\u4e8b\u4f8b\uff09: \u8cbb\u7528\u306e\u5b89\u3055\u3092\u4e0d\u5be9\u306b\u601d\u308f\u308c\u305f\u30fb\u805e\u304b\u308c\u305f\u6642\u306e\u8aac\u660e\uff08\u30c6\u30f3\u30d7\u30ec\u6587\u30fbAI\u4e0d\u4f7f\u7528\u306a\u306e\u3067\u30c6\u30f3\u30d7\u30ec\u30ab\u30c6\u30b4\u30ea\u306a\u3057\uff09
+  cost_explain:            { label: "\u521d\u671f\u8cbb\u7528\u3092\u8aac\u660e",        color: "#2E7D32", templateCategory: "" },
 };
 // \u8133\u99c6\u52d5\u30d2\u30f3\u30c8\uff08suggested_aix_meta.action\uff09\u2192 AIX\u30dc\u30bf\u30f3\u30e9\u30d9\u30eb\u3002
 // \u30e9\u30d9\u30eb\u304c\u5b58\u5728\u3059\u308b action \u306f\u300cAIX\u30a2\u30af\u30b7\u30e7\u30f3\u300d\u3068\u3057\u3066\u4e0b\u90e8AIX\u30ab\u30fc\u30c9\u306b\u7d71\u5408\u8868\u793a\u3059\u308b
@@ -249,6 +251,7 @@ const BRAIN_AIX_LABELS: Record<string, string> = {
   // AIX_ACTION_META\uff08\u7269\u4ef6\u3092\u63a2\u3059\uff09\u30fbaix-taxonomy \u306e AIX_BUTTON_LABELS \u3068\u8868\u8a18\u3092\u63c3\u3048\u308b\u3002
   // \u30af\u30ea\u30c3\u30af\u7d4c\u8def: runBrainAix \u2192 openAixDirect("property_search") \u2192 AixModal\uff08\u578bunion/\u8a2d\u5b9a\u306b\u5b9a\u7fa9\u6e08\u307f\u30fb\u914d\u7dda\u78ba\u8a8d\u6e08\u307f 2026-08\uff09
   property_search:         "AIX \u7269\u4ef6\u3092\u63a2\u3059",
+  cost_explain:            "AIX \u521d\u671f\u8cbb\u7528\u3092\u8aac\u660e",
 };
 
 // AIX \u304c\u5fc5\u8981\u304b\u3069\u3046\u304b\u306f\u30d6\u30ec\u30a4\u30f3\u3060\u3051\u304c\u5224\u65ad\u3059\u308b\uff082026-09-12 \u7af9\u5185\u65b9\u91dd\uff09\u3002
@@ -8309,6 +8312,7 @@ export default function Home() {
                   property_recommendation: "物件オススメ",
                   property_check_result: "物件確認した",
                   property_check: "物件確認した",
+                  cost_explain: "初期費用を説明",
                 };
 
                 // action あり → AIXボタン。ただしブレインが同じ AIX を判断している時だけ（2026-09-12 竹内方針）。
@@ -13364,6 +13368,11 @@ export default function Home() {
                     process: "Vision OCR で初期費用・割引額・仲介手数料を数値抽出 → 節約額を計算して固定フォーマット出力 + AIカバーレター生成（差分学習ループ対象）",
                     data: "固定テンプレート（計算値）+ AIカバーレター / ☆実例（estimate_sheet）",
                   },
+                  "初期費用を説明": {
+                    inputs: "貸主からの報酬（家賃1ヶ月分・半月分等＋金額）/ 初期費用への還元額（直近の見積書の割引額が入る）/ 手数料なしのお部屋は一般的な不動産業者との差額（任意）",
+                    process: "費用の安さを不審に思われた・聞かれた時に、仕組み（仲介手数料0円・オーナー様からの広告料を還元）とこの物件の具体額（〇〇円を貸主から頂き〇〇円を還元）を1通で組み立て。お客様が仲介手数料に触れていれば「仲介手数料は0円で大丈夫です！！」から答える",
+                    data: "AI不使用（クライアント側で生成・金額は入力値のみ）",
+                  },
                   "お部屋探し条件ヒアリング": {
                     inputs: "なし（会話履歴を自動取得）",
                     process: "条件フォーム①〜⑧をワンタップ送信。会話に合わせたAI導入メッセージを添える",
@@ -13431,6 +13440,7 @@ export default function Home() {
                     }
                     setShowEstimatePicker(true);
                   } },
+                  { color: "#2E7D32", label: "初期費用を説明", actionType: "cost_explain", sub: "安さを不審に思われた時に仕組み＋貸主からの報酬・還元額を1通で説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_explain"); openAixDirect("cost_explain"); } },
                   { color: "#0288D1", label: "お部屋探し条件ヒアリング", actionType: "condition_hearing", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
                   { color: "#9C27B0", label: "内覧日を調整する", actionType: "viewing_invite", sub: "日程をタップして選択→AI文生成→内覧案内LINEを送信。内覧率UPに直結！", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ場所", actionType: "meeting_place", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },

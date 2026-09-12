@@ -10,12 +10,13 @@
 import { isConditionFormMessage } from "./line-reply-prompts";
 import { CUST_WILL_SEND_SELF_PRED } from "./reply-context";
 import type { EstimateContextVerdict } from "./estimate-context";
+import { customerDoubtsCheapness } from "./cost-explain-text";
 import {
   allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
 } from "./scene-patterns";
 
 export type PropertyStatusLite = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
-export type SceneId = "S1_vacancy" | "S2_move_in" | "S3_screening" | "S4_viewing" | "S5_time_spec" | "S6_estimate" | "S7_condition_change" | "application";
+export type SceneId = "S1_vacancy" | "S2_move_in" | "S3_screening" | "S4_viewing" | "S5_time_spec" | "S6_estimate" | "S7_condition_change" | "S8_cost_doubt" | "application";
 
 export type SceneEvidenceInput = {
   /** 今回の顧客発言（スタッフ文は含めない。未返信の連投全体） */
@@ -138,6 +139,14 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   }
   if (!slotQuestion && specified && detectAvailabilityCheckContext(msg)) {
     return ev({ scene: "S1_vacancy", candidateAction: "property_check_result", checkPattern: null, timing: "after_confirm", chained: estimateDeclare ? "estimate_sheet" : null, reasonCode: "availability_question", propertySpecifiedBy: specBy });
+  }
+
+  // S8 費用の安さへの不安・疑問 → 初期費用を説明（2026-09-12 竹内・あや事例）
+  //   あや「仲介手数料無しで大丈夫でしょうか？…初期費用31万…安いのには何か理由があるのでしょうか？」は「初期費用」を含むため
+  //   見積の判定（S6・estimateVerdict=declare）に当たり、ブレインが 見積書送る を選んでいた。見積の判定より先に見る。
+  //   実データ（200日）: 検出3件（あや・𝓡・みこと）全てでスタッフは仕組み（仲介手数料0円・広告料の還元）を説明した。値引きの相談は含めない
+  if (customerDoubtsCheapness(msg)) {
+    return ev({ scene: "S8_cost_doubt", candidateAction: "cost_explain", checkPattern: null, timing: "now", chained: null, reasonCode: "cost_doubt" });
   }
 
   // S4' 内覧の別日程の問い合わせ（内覧日調整を送った後の「それ以外だと何日になりますか？」「土日は可能ですか」）→ 内覧日調整

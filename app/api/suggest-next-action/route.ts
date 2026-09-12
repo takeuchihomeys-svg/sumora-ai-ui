@@ -53,6 +53,8 @@ const KNOWN_AIX_TYPES = new Set([
   // ※ alternative_send もUI未実装の旧名。提案時は property_send + send_mode:"alternative" に
   //   変換して返す（下の available===false 分岐参照）。DBルール由来で残存する可能性があるため削除はしない
   "condition_hearing", "alternative_send",
+  // 2026-09-12 竹内（あや事例）: 費用の安さを不審に思われた時の説明
+  "cost_explain",
 ]);
 
 // 曖昧な物件参照（「前の物件」「あの部屋」「例の物件」「さっきの物件」「気になってた物件」等）の検知パターン。
