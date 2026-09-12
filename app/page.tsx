@@ -8184,24 +8184,9 @@ export default function Home() {
                 </div>
               );
 
-              // P6.5: 見積書送付後 → 申込へ！AIX誘導バナー
-              // ※このバナーがP7.5（AIX後の続きテンプレ誘導）より先にreturnして遮蔽するため、
-              //   見積書送る【AIX】テンプレ誘導ボタンをここに併設する（申込プッシュとテンプレ誘導の共存）
-              if (suggestApplicationPushMap[id] && !dismissedApplicationPushIds.has(id)) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-red-400 bg-red-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-red-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>見積書送付後 → AIX 申込へ！でクロージング</span>
-                  <button onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); openAixDirect("application_push"); setSuggestApplicationPushMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #c62828, #E53935)" }}>AIX 申込へ！</button>
-                  {postAixTemplateMap[id] ? (
-                    <button onClick={() => { setTemplateOpenContext("post_aix"); setShowTemplateModal(true); }}
-                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                      style={{ background: postAixTemplateMap[id].color }}>テンプレ</button>
-                  ) : null}
-                  <button onClick={() => setDismissedApplicationPushIds((prev) => new Set([...prev, id]))}
-                    className="shrink-0 text-red-400 text-[11px] font-bold">✕</button>
-                </div>
-              );
+              // P6.5（見積書送付後 → 申込へ！バナー）は 2026-09-12 に廃止。
+              //   竹内「見積書を送った後は申込へではない」。見積書の次の一手はお客様の反応を見てブレインが判断する
+              //   （旧 sessionStorage に残った suggestApplicationPushMap でも表示しないよう、表示ブロックごと削除）
 
               // P7: 2番手
               if (suggest2ndHandMap[id]) return (
@@ -9958,9 +9943,10 @@ export default function Home() {
                 setSuggestPropertySendMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
                 setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
               } else if (meta?.suggestApplicationPush) {
-                // estimate_sheet 完了後 → 申込へ！AIXバナーを表示
-                setSuggestApplicationPushMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
-                setDismissedApplicationPushIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
+                // estimate_sheet 送信直後は「顧客の反応待ち」。2026-09-12 竹内「見積書を送った後は申込へではない」:
+                // 旧: 申込へ！バナーを固定で表示 → 実データでは見積書の次に申込へを押したのは 185件中18件（10%）で、
+                //   スタッフの返信は「お気に召されたお部屋ご都合よろしいお日にちにご案内させて頂きます」等の内覧のご案内が中心。
+                //   次の一手はお客様の反応を見てブレインが判断する（バナーも出さない・次アクションの再フェッチもしない）
               } else if (aixModalType !== "property_recommendation" && aixModalType !== "property_send") {
                 // 診断修正(内覧バナー誤表示): 物件オススメ/ピックアップ送信直後は「顧客の反応待ち」。
                 // 次アクションを再フェッチすると viewing_invite 等の先走り提案が再表示されるため抑制する
