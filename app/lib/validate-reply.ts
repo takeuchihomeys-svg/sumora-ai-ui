@@ -4,6 +4,8 @@ import { fillNameSlot } from "./reply-context";
 // 2026-09-11 竹内方針1・4・5（統合設計 §1）: 後処理の決定論修正（承知→かしこまりました・すぐに除去・誤字）は依存ゼロの2モジュールが唯一の定義
 import { normalizeBannedPhrasing } from "./banned-phrasing";
 import { applyTypoAutoFix } from "./typo-check";
+// 2026-09-12 竹内方針A: 時間枠の「空いて」・断言置換文は AIX 場面判定（aix-reply-set）と同じ定数
+import { isScheduleSlotVacancy, ASSERTION_REPLACEMENT } from "./scene-patterns";
 export { fillNameSlot };
 
 // ─── 顧客名の妥当性判定（LINE表示名を実名として使わないためのゲート）───────────
@@ -591,7 +593,20 @@ export type AssertionBanRule = {
   replacement: string;
   msg: string;
   sug: string;
+  /** 2026-09-12 竹内方針A-3: 一致しても断言ではない形（時間枠の「空いて」・キャンセルの「トラブル」等）。true なら次の一致を探す */
+  exclude?: (text: string, m: RegExpMatchArray) => boolean;
 };
+
+/** ASSERTION_BAN_RULES の一致判定（後処理置換 AIX_GATE_RULES と final-check runAssertionBanChecks が同じ関数を使う）。
+ *  exclude に当たる一致は飛ばし、断言として扱う最初の一致を返す */
+export function findAssertionMatch(rule: AssertionBanRule, text: string): RegExpMatchArray | null {
+  const g = new RegExp(rule.re.source, rule.re.flags.includes("g") ? rule.re.flags : rule.re.flags + "g");
+  for (const m of text.matchAll(g)) {
+    if (rule.exclude?.(text, m)) continue;
+    return m;
+  }
+  return null;
+}
 
 // 管理会社への確認が「完了した」ことを示す文末（未来形「確認します」「確認でき次第」は含めない）
 const MGMT_CONFIRMED_TAIL =
@@ -605,9 +620,14 @@ export const ASSERTION_BAN_RULES: AssertionBanRule[] = [
     staffConfirmedRe: new RegExp(`(?:告知|心理的瑕疵|事故|トラブル|騒音)[^\\n]{0,30}${MGMT_CONFIRMED_TAIL}|${MGMT_CONFIRMED_TAIL}[^\\n]{0,30}(?:告知|心理的瑕疵|事故|トラブル|騒音)`),
     sourceRe: /告知|心理的瑕疵|事故|トラブル|騒音/,
     exemptOnAixVacancyDone: false,
-    replacement: "告知事項につきましては管理会社に確認の上お伝えさせて頂きます！！",
+    replacement: ASSERTION_REPLACEMENT.DISCLOSURE_ASSERTION,
     msg: "告知事項（事故・トラブル・心理的瑕疵・騒音）の「なし」断言は管理会社確認前は禁止（宅建業法47条 不告知リスク）",
     sug: "「告知事項につきましては管理会社に確認の上お伝えさせて頂きます」に変更",
+    // A-3（99482059）: 仮押さえのキャンセル手続きの「先方様とのトラブルは一切ございません」は告知事項ではない
+    exclude: (text, m) => {
+      const pre = text.slice(Math.max(0, (m.index ?? 0) - 25), m.index ?? 0);
+      return /先方|キャンセル|ご?契約/.test(pre) && !/告知|事故|心理的|騒音|近隣/.test(m[0]);
+    },
   },
   {
     // 「現在空室です」「募集中となっております」「空いております」「埋まってしまいました」「空室確認しました」「申込が入っています」
@@ -617,19 +637,22 @@ export const ASSERTION_BAN_RULES: AssertionBanRule[] = [
     staffConfirmedRe: new RegExp(`(?:空室|空き|募集|満室|埋まっ|申込|入居中|退去)[^\\n]{0,30}${MGMT_CONFIRMED_TAIL}|${MGMT_CONFIRMED_TAIL}[^\\n]{0,30}(?:空室|空き|募集|満室|埋まっ|入居中|退去)`),
     sourceRe: /空室|空き|募集|満室|入居中|退去|埋まっ/,
     exemptOnAixVacancyDone: true,
-    replacement: "最新の空き状況を確認しご連絡させて頂きます😊！！",
+    replacement: ASSERTION_REPLACEMENT.VACANCY_ASSERTION,
     msg: "空室・募集状況の断言は管理会社確認（AIX【物件確認した】）前は禁止",
     sug: "「最新の空き状況を確認しご連絡させて頂きます」に変更（確認結果はAIX【物件確認した】から送る）",
+    // A-3（82e2d5cf）: 「17:45～18:45のお時間のみ空いております」は内覧枠の話（空室の断言ではない）。判定は scene-patterns と共有
+    exclude: (text, m) => /^空いて/.test(m[0]) && isScheduleSlotVacancy(text, m.index ?? 0),
   },
   {
     // 「9月1日からご入居いただけます」「10月上旬より入居可能」「来月から入居できます」「退去日は9/30」「鍵のお渡しは10/1」
     // 「10月からご入居ご希望」「入居可能でしょうか」「入居可能な物件をピックアップ」「10月中にご入居いただけるお部屋」は lookahead で除外
     code: "MOVEIN_DATE_ASSERTION",
-    re: /(?:(?:[0-9０-９]{1,2}\s*[\/／月]\s*[0-9０-９]{1,2}\s*日?|[0-9０-９]{1,2}\s*月(?:上旬|中旬|下旬|末|初旬|頭)?|来月|今月|翌月|再来月|来週|今週|即日|即|明日|明後日|すぐに?)(?:から|より|以降|に|には|中に|末に|頃|ごろ)?[^\n。！!？?]{0,10}?(?:ご?入居(?:可能|いただけ|頂け|できます|出来ます|OK|オッケー|となります|になります)|お引(?:っ)?越し(?:いただけ|頂け|可能|できます|出来ます)|お住まい(?:いただけ|頂け)|(?:鍵|お鍵)(?:の)?お渡し|お渡し(?:可能|できます|出来ます))(?!でしょうか|ですか|か|る|よう|ますよう|ご希望|希望|な(?:お部屋|物件)|の物件)|退去(?:日|予定日|予定)(?:は|が)?\s*[0-9０-９]{1,2}\s*[\/／月])/,
+    re: /(?:(?:[0-9０-９]{1,2}\s*[\/／月]\s*[0-9０-９]{1,2}\s*日?|[0-9０-９]{1,2}\s*月(?:上旬|中旬|下旬|末|初旬|頭)?|来月|今月|翌月|再来月|来週|今週|即日|即|明日|明後日|すぐに?)(?:から|より|以降|に|には|中に|末に|頃|ごろ)?[^\n。！!？?]{0,10}?(?:ご?入居(?:可能|いただけ|頂け|できます|出来ます|OK|オッケー|となります|になります)|お引(?:っ)?越し(?:いただけ|頂け|可能|できます|出来ます)|お住まい(?:いただけ|頂け)|(?:鍵|お鍵)(?:の)?お渡し|お渡し(?:可能|できます|出来ます))(?!でしょうか|ですか|か|る|よう|ますよう|ご希望|希望|な(?:お部屋|物件)|の物件|[・、][^\n。！!]{0,40}(?:お部屋|物件)[^\n。！!]{0,15}(?:ピックアップ|お探し|探させ))|退去(?:日|予定日|予定)(?:は|が)?\s*[0-9０-９]{1,2}\s*[\/／月])/,
     staffConfirmedRe: new RegExp(`(?:入居|退去|引(?:っ)?越し|鍵)[^\\n]{0,30}${MGMT_CONFIRMED_TAIL}|${MGMT_CONFIRMED_TAIL}[^\\n]{0,30}(?:入居|退去|引(?:っ)?越し|鍵)|(?:[0-9０-９]{1,2}\\s*[\\/／月]\\s*[0-9０-９]{1,2}|[0-9０-９]{1,2}\\s*月)[^\\n]{0,12}(?:入居|退去|お渡し)`),
     sourceRe: /入居|退去|引(?:っ)?越し|鍵/,
     exemptOnAixVacancyDone: true,
-    replacement: "ご入居可能日につきましては管理会社に空き状況を確認しご連絡させて頂きます！！",
+    // A-3（c31f7082）: 「即入居可能・初期費用を…お部屋をピックアップ」（条件の並び）は re の lookahead で除外
+    replacement: ASSERTION_REPLACEMENT.MOVEIN_DATE_ASSERTION,
     msg: "入居可能日・退去日の具体日付の断言は管理会社確認前は禁止（AIX_BOUNDARY_MOVEIN の決定論版）",
     sug: "「ご入居可能日につきましては管理会社に空き状況を確認しご連絡させて頂きます」に変更",
   },
@@ -637,11 +660,12 @@ export const ASSERTION_BAN_RULES: AssertionBanRule[] = [
     // 「審査は問題ございません」「審査は大丈夫です」「審査は通るかと思います」「必ず審査に通ります」「審査についてはご安心ください」
     // 「審査に通りやすいよう最大限サポート」「審査面も全力でサポートしますのでご安心ください（12字超）」は不一致
     code: "SCREENING_ASSURANCE",
-    re: /審査[^\n。！!？?]{0,12}(?:問題(?:ございません|ありません|御座いません|ない(?:です|かと|と思))|大丈夫(?:です|かと|だと|でしょう)|通(?:ります|る(?:かと|と思|はず|でしょう)|りやすい(?:です|かと|と思)|過(?:します|する(?:かと|と思|はず)|できます|出来ます))|心配(?:ございません|ありません|いりません|不要|ご無用|ない)|(?:ご)?安心(?:ください|下さい|してください|頂け|いただけ))|(?:必ず|確実に|絶対(?:に)?|間違いなく|100[%％])[^\n。！!？?]{0,8}(?:審査|承認|通(?:り|し|過)|ご入居(?:いただけ|頂け|できます))/,
+    re: /審査[^\n。！!？?]{0,12}(?:問題(?:ございません|ありません|御座いません|ない(?:です|かと|と思))|大丈夫(?:です|かと|だと|でしょう)|通(?:ります|る(?:かと|と思|はず|でしょう)|りやすい(?:です|かと|と思)|過(?:します|する(?:かと|と思|はず)|できます|出来ます))(?!よう|様|と[、,]?)|心配(?:ございません|ありません|いりません|不要|ご無用|ない)|(?:ご)?安心(?:ください|下さい|してください|頂け|いただけ))|(?:必ず|確実に|絶対(?:に)?|間違いなく|100[%％])[^\n。！!？?]{0,8}(?:審査|承認|通(?:り|し|過)|ご入居(?:いただけ|頂け|できます))/,
     staffConfirmedRe: /審査[^\n]{0,20}(?:承認|通過|可決|OK|通りました|結果(?:が出|は|:|：))/,
     sourceRe: /審査/,
     exemptOnAixVacancyDone: false,
-    replacement: "審査結果につきましては保証会社の審査次第となりますが、お申込みは最大限サポートさせて頂きます！！",
+    // A-3（7c80b31b・7a7c74f5・24e89bc5）: 願望形「審査通りますようサポート」・条件形「〜通過しますと」は re の lookahead で除外
+    replacement: ASSERTION_REPLACEMENT.SCREENING_ASSURANCE,
     msg: "根拠のない審査安心断言は禁止（審査主体は保証会社・管理会社。結果は審査次第）",
     sug: "「審査結果につきましては保証会社の審査次第となります」に変更",
   },
@@ -728,7 +752,7 @@ const AIX_GATE_RULES: { name: string; test: (s: string, o?: GateOpts) => boolean
   // exemptOnAixVacancyDone=true（空室・入居日）は AIX 確認済みなら「かしこまりました」（旧 vacancyDoneReplacement と同じ挙動）。
   ...ASSERTION_BAN_RULES.map((r) => ({
     name: `断言禁止:${r.code}`,
-    test: (s: string) => r.re.test(s),
+    test: (s: string) => findAssertionMatch(r, s) !== null,
     replacement: r.replacement,
     vacancyDoneReplacement: r.exemptOnAixVacancyDone ? "かしこまりました😊！！" : undefined,
     assertion: r,

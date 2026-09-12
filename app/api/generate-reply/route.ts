@@ -50,8 +50,13 @@ import {
 import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
-import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, type MoveOutSubject } from "@/app/lib/move-out-context";
+import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
 import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
+// 2026-09-12 竹内方針A: 時間枠の「空いて」判定（断言検査・募集状況判定・AIX 場面判定が共有）
+import {
+  resolveReplyAix, detectReplyAixScene, detectAvailabilityCheckContext, isSceneMappedCode, toSuggestedAixPayload,
+  AIX_CONDITION_CHANGE_RE, type ReplyAix, type ReplyAixInput,
+} from "@/app/lib/aix-reply-set";
 import { resolveGreeting, enforceOpening, buildFirstGreeting, buildGreetingNote, computeAlreadyGreetedToday, toGreetingLite, isProgressPushMessage, type GreetingDecision } from "@/app/lib/greeting";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
@@ -393,21 +398,7 @@ function buildSensitiveGateNote(customerMessage: string): string {
 // 旧マップに無かった property_search もこれで語彙に入る（従来は SUGGESTED_AIX トレーラーで無言脱落していた）。
 const AIX_ACTION_NOTES: Record<string, string> = AIX_STAFF_NOTES;
 
-// ─── 優先度1(抜け穴対策): final-check AIX境界違反 → AIXボタン切替マップ ────────
-// final-check の AIX_BOUNDARY_* は「本来AIXで送るべき内容をドラフトが自分で書いてしまった」
-// 検出そのもの。各コードは推奨AIXボタンへほぼ1:1で写像できる。
-// 接地修正でも block が解消できなかった（revision_exhausted）場合、壊れたドラフトを
-// 保存する代わりに対応するAIXボタンへの切替を行う（ai_draft nullクリア + suggested_aix_button 強制セット）。
-// ※ AIX_BOUNDARY_DB は違反内容からボタンを特定できないため意図的にマップ外（従来どおりスタッフ確認モーダルへ）
-const AIX_BOUNDARY_TO_ACTION: Record<string, string> = {
-  AIX_BOUNDARY_VIEWING: "viewing_invite",
-  AIX_BOUNDARY_ESTIMATE: "estimate_sheet",
-  AIX_BOUNDARY_MEETING: "meeting_place",
-  AIX_BOUNDARY_PROPERTY: "property_send",
-  AIX_BOUNDARY_APPLICATION: "application_push",
-  AIX_BOUNDARY_MOVEIN: "property_check_result",
-  AIX_BOUNDARY_PROMISE: "acknowledge_check",
-};
+// 旧 AIX_BOUNDARY_TO_ACTION（AIX境界コード→ボタン）は 2026-09-12 竹内方針A で aix-reply-set.ts sceneForCode（場面表の行）に統合
 
 // ─── パターンB: 物件引用への返信判定（プロンプト常時注入・条件付きルール）─────────
 const QUOTE_REPLY_JUDGE_NOTE = `
@@ -439,8 +430,7 @@ type PropertyStatus = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
 
 // スタッフが内覧可能日を明示した場合は「退去前」判定を取り消す（誤ブロック防止）
 // 直近スタッフ発言で「8/24からご案内」「内覧可能」等が確認できれば退去前制限は解除済みとみなす
-const VIEWING_CONFIRMED_PATTERN =
-  /内覧(?:開始|可能|でき|いただけ)|からご案内|よりご案内|[0-9０-９]{1,2}[\/月][0-9０-９]{1,2}(?:日)?(?:から|より|以降|には?)?(?:ご案内|内覧|案内)|退去(?:済み?|後).*(?:ご?案内|内覧)/;
+// 2026-09-12 竹内方針A-3: 定義は move-out-context.ts isMoveOutReleased（final-check E6 と同じ関数）
 
 function detectPropertyStatus(history: string | null | undefined, customerMessage: string, explicit?: PropertyStatus): PropertyStatus {
   if (explicit && explicit !== "unknown") return explicit;
@@ -451,7 +441,7 @@ function detectPropertyStatus(history: string | null | undefined, customerMessag
       .filter(l => l.startsWith("スモラ:"))
       .slice(-5)
       .join("\n");
-    if (VIEWING_CONFIRMED_PATTERN.test(recentStaffText)) return "unknown";
+    if (isMoveOutReleased(recentStaffText)) return "unknown";
     return "move_out_scheduled";
   }
   return explicit ?? "unknown";
@@ -474,25 +464,7 @@ function buildPropertyStatusNote(status: PropertyStatus): string {
 // 空きが未確認のまま内覧誘導（「お気に召されましたら」「ご都合よろしいお日にちに」「ご案内させて頂きます」）
 // をするのは順番が逆。確認して初めて次（内覧・申込）の話になる。
 // ※ viewingFactNote が常時注入している「内覧に触れる場合は〜のみ許可」を、この文脈では無効化する。
-const AVAILABILITY_URL_RE = /https?:\/\/|suumo|homes\.co\.jp|athome|itandi|rea-?pro|リアプロ|レインズ|ietty|chintai/i;
-const AVAILABILITY_PROPERTY_RE = /マンション|ハイツ|コーポ|レジデンス|ハイム|メゾン|アパート|グランド|シャトー|[0-9０-９]{2,4}\s*号室|(?:この|こちらの|その|さっきの|先ほどの)(?:物件|お?部屋)|物件資料|物件/;
-// 「空き・募集状況」を明示的に尋ねている（物件名の有無を問わず募集状況確認と確定できる表現）
-const AVAILABILITY_EXPLICIT_RE = /空(?:き|いて|いている|室)|募集(?:中|状況|して|出て|され)|まだ(?:あり|空|募集|残|大丈夫)|埋ま(?:って|り)|申込(?:み)?(?:入って|は入|ありま)/;
-const AVAILABILITY_QUESTION_RE = /ありますか|あります？|ますか|ですか|でしょうか|いかが|どう(?:です|でしょう)|教えて|知りたい|[?？]/;
-// 見積・初期費用・内覧希望が主目的のメッセージは別ゲート（estimateGateNote / viewingIntentShortReplyNote）に任せる
-const AVAILABILITY_EXCLUDE_RE = /見積|初期費用|スモ割|総額|内覧|内見|見学/;
-
-function detectAvailabilityCheckContext(customerMessage: string): boolean {
-  const msg = (customerMessage || "").trim();
-  if (!msg) return false;
-  if (AVAILABILITY_EXCLUDE_RE.test(msg)) return false;
-  // ① 「空いてますか」「まだ募集中ですか」等 — 募集状況の問い合わせで確定
-  if (AVAILABILITY_EXPLICIT_RE.test(msg)) return true;
-  // ② 物件URLを送ってきた（URLのみ・コメントなしでも「この物件どうですか」の意図で確定）
-  if (AVAILABILITY_URL_RE.test(msg)) return true;
-  // ③ 物件名・物件指示語 ＋ 疑問形 →「この物件は？」型の募集状況確認
-  return AVAILABILITY_PROPERTY_RE.test(msg) && AVAILABILITY_QUESTION_RE.test(msg);
-}
+// 2026-09-12 竹内方針A: AVAILABILITY_* と detectAvailabilityCheckContext は app/lib/aix-reply-set.ts へ移設（AIX 場面判定 S1 と同じ定義）
 
 // 募集状況確認文脈で注入する強制ブロック（内覧誘導フレーズの完全禁止＋返信の型を4ステップに固定）
 function buildAvailabilityCheckNote(): string {
@@ -516,155 +488,17 @@ function buildAvailabilityCheckNote(): string {
 ※ 本ブロックは【🏢 管理会社確認が必要な物件固有情報】内の「確認と連絡をセットで約束する文の禁止」より上位。募集状況確認では②＋③（確認する→確認でき次第連絡する）が正しい型。`;
 }
 
-// ─── AIXタイミング判定（AIXタイミングマップ 2026-08 実装）─────────────────────
-// 顧客メッセージがAIXトリガー条件に該当する場合、プロンプトに「この場面ではAIXボタンを使う
-// 運用指示があり、テキストで物件情報/金額を生成してはいけない」の誘導指示を注入する。
-// aix 推薦の判定本体は brain-core（Haiku分析 + detectSignalBasedAixFallback）に一元化済みのため、
-// ここでは返信文の生成制約（橋渡し文言のみで完結）とボタン名の明示のみを決定論で確定させる。
-// 優先度は AIXタイミングマップ準拠: P0 物件指名 > P1 支払い意思つき金額質問 > P2 通常金額質問
-// > P3 条件変更 > P4 内覧意思。
-type AixTimingSuggestion = {
-  aix: string;
-  label: string;
-  /** property_check_result 完了後に連結予約するボタン（見積依頼が同時に含まれる場合） */
-  chained: string | null;
-  urgency: string;
-  highlight: boolean;
-  forbidden: string;
-  bridge: string;
-  extra: string;
-};
-
-// 物件指名語（空室・取り扱い確認。AIXタイミングマップ P0 の trigger_condition）
-const AIX_NOMINATION_RE = /空(?:室|き|いて)|取り扱い|募集|ありますか|この(?:物件|お?家|部屋)/;
-// 金額質問の判定は isMisumoriContextAppropriate() の verdict（estimate-context.ts）に一本化（旧 AIX_MONEY_QUESTION_RE は 2026-09-08 廃止）
-// 支払い意思（最ホットシグナル: 「金額によっては即日初期費用払えます」等）
-const AIX_PAYMENT_INTENT_RE = /払えま|払える|支払えま|即日[^\n]{0,10}(?:払|入金|振り?込)|用意でき|振り?込め|一括で払/;
-// 条件変更・緩和・追加（「もう少し広め」「賃料が上がっても構わない」「仕切れるような」等）
-const AIX_CONDITION_CHANGE_RE = /(?:もう少し|もっと|さらに)[^\n]{0,12}(?:広|安|大き|新し|駅近|きれい|綺麗|抑え)|(?:上がって|高くて|上げて)も(?:構い|大丈夫|OK|いい)|でも(?:大丈夫|構い|いいです|良いです)|のみで(?:調べ|探し|お願い)|仕切れる|条件[^\n]{0,8}(?:変更|追加|緩和|広げ)/;
-// 内覧意思
-const AIX_VIEWING_INTENT_RE = /見に行き|内覧|内見|見学|見てみたい/;
-
-function detectAixTiming(
-  customerMessage: string,
-  opts: {
-    hasCustomerImage: boolean;
-    estimatePromised: boolean;
-    propertyStatus: PropertyStatus;
-    /** isMisumoriContextAppropriate() の verdict（単一真実源）。null = 判定不能 → 見積提案しない */
-    estimateVerdict: EstimateContextVerdict | null;
-  },
-): AixTimingSuggestion | null {
-  const msg = (customerMessage || "").trim();
-  if (!msg && !opts.hasCustomerImage) return null;
-  const v = opts.estimateVerdict;
-  const estimateDeclare = !!v && v.mode === "declare";
-  const isFormOnly = isConditionFormMessage(msg) && !estimateDeclare;
-
-  // ── 旧 優先度-1（条件フォーム除外）は verdict 側に統合。フォームのみ（trigger=none）は金額・指名判定を行わない ──
-  if (isFormOnly) {
-    console.info("[aixTiming] condition form → skip (verdict.trigger=none)");
-    return null;
-  }
-
-  // ── 優先度0: 物件指名（画像 / URL）→ property_check_result。見積連結は verdict が declare の時のみ ──
-  const hasPropertyUrl = AVAILABILITY_URL_RE.test(msg);
-  if (opts.hasCustomerImage || hasPropertyUrl) {
-    // URLのみ・コメントほぼなし（「この物件どうですか」の意図で確定）／画像のみも物件指名として扱う
-    const urlOnly = hasPropertyUrl && msg.replace(/https?:\/\/\S+/g, "").trim().length <= 10;
-    const imageOnly = opts.hasCustomerImage && msg.length <= 10;
-    if (AIX_NOMINATION_RE.test(msg) || urlOnly || imageOnly) {
-      const chained = estimateDeclare ? "estimate_sheet" : null;
-      return {
-        aix: "property_check_result",
-        label: "物件確認した（募集状況）",
-        chained,
-        urgency: "15分以内に橋渡し→1〜3時間以内に結果報告",
-        highlight: false,
-        forbidden: "空室有無・退去日・入居可能日をテキストで断言すること（実会話では「募集終了」「申込有り2番手」「タッチの差で埋まった」が頻発。「空いています」の生成は即事実誤認）",
-        // G26（2026-09-08 Fable5）: 「すぐに」除去（HASTY_PROMISE）・確認対象「募集状況」を締めにも書く
-        bridge: chained
-          ? "お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させて頂き、最大限割引させて頂いた御見積書も合わせてお送りさせて頂きます！！募集状況確認出来次第ご連絡させて頂きます😌！！"
-          : "お部屋お送りいただきありがとうございます😊！！お部屋の募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます😌！！",
-        extra: "URL・物件が複数（連投）の場合は1件ずつ返さず橋渡し1通のみ（バッチ処理・結果は全件まとめて1回で報告）。" +
-          (chained
-            ? `見積トリガー（${v!.trigger}: ${v!.reason}）が同時に成立するため、確認完了後に estimate_sheet を連結する（募集状況+見積書をまとめて1回で報告。初回接触の物件指名型顧客に condition_hearing を挟むのは誤り）。`
-            : ""),
-      };
-    }
-  }
-
-  // ── 優先度1/2: 見積書（verdict が declare の時のみ。語出現では出さない） ──
-  if (estimateDeclare) {
-    const payment = AIX_PAYMENT_INTENT_RE.test(msg);
-    return {
-      aix: "estimate_sheet",
-      label: "見積書送る",
-      chained: null,
-      urgency: payment ? "10分以内（applying直前の最優先ホットシグナル）" : "2時間以内",
-      highlight: payment,
-      forbidden: "金額・割引額をAIが生成すること（見積書Vision OCRの実数値のみ送信可。割引額はスタッフの交渉結果でありAIが数字を作るとクレーム直結）",
-      bridge: "かしこまりました！！最大限割引させて頂いた初期費用の御見積書お送りさせて頂きます😊！！",
-      extra:
-        `見積トリガー: ${v!.trigger}（${v!.reason}）。` +
-        (payment ? "支払い意思+金額質問のため「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。" : ""),
-    };
-  }
-  // 見積約束済み（echo_only）で支払い意思あり → 受付文＋申込誘導（AIX提案は estimate_sheet のまま highlight）
-  if (v?.mode === "echo_only" && AIX_PAYMENT_INTENT_RE.test(msg)) {
-    return {
-      aix: "estimate_sheet",
-      label: "見積書送る",
-      chained: null,
-      urgency: "10分以内",
-      highlight: true,
-      forbidden: "金額・割引額をAIが生成すること／見積作成宣言の繰り返し",
-      // G26: 旧「確認しご連絡させて頂きます」（対象なし＝創作約束）→ 申込誘導の受付文へ
-      bridge: "かしこまりました！！お気に召されましたらお申込みでお部屋お押さえさせて頂きます😊！！",
-      extra: "見積書は既に約束/送付済みのため作成宣言・割引の約束を繰り返さない（二重宣言防止ルールと整合）。「お気に召されましたらお申込みでお部屋お押さえさせて頂きます」の申込誘導を必ず添える（この申込誘導はこの場面に限り許可）。",
-    };
-  }
-
-  // ── 優先度3: 条件変更・新条件 → property_send（widen/alternative） ──
-  if (AIX_CONDITION_CHANGE_RE.test(msg)) {
-    return {
-      aix: "property_send",
-      label: "物件ピックアップした",
-      chained: null,
-      urgency: "受付返信→半日以内にピックアップ送付",
-      highlight: false,
-      forbidden: "新条件に合う物件の有無を即答すること（在庫ハルシネーション）。「〇〇がいい感じ」等の気に入り表現と同一メッセージでも条件変更が主題のため estimate_sheet 系の見積・申込誘導も絶対NG",
-      // G26: 締めは「ピックアップ出来次第お送り」（この場面に確認対象は無い）
-      bridge: "かしこまりました！！〇〇（顧客の言った新条件を復唱）のご条件に合ったお部屋を△△周辺全域からピックアップしてお送りさせて頂きます😊！！ピックアップ出来次第お送りさせて頂きます！！",
-      extra: "顧客の言った新条件を必ず復唱すること（実例: 「リビングとベッドを仕切れる1LDK・1DKの間取りや広めの1Kのお部屋を堀江・桜川・大国町周辺全域からピックアップしてお送りさせて頂きます😊！！」）。エリア名自体（駅名・区名・地名）は顧客が使った表現をそのまま使うが、行動宣言では必ず末尾に「周辺全域から」を付ける（「周辺全域」は全フェーズで例外なし必須）。",
-    };
-  }
-
-  // ── 優先度4: 内覧意思 → viewing_invite（退去予定/入居中は現地内覧不可のため対象外） ──
-  if (
-    AIX_VIEWING_INTENT_RE.test(msg) &&
-    opts.propertyStatus !== "move_out_scheduled" &&
-    opts.propertyStatus !== "occupied"
-  ) {
-    return {
-      aix: "viewing_invite",
-      label: "内覧日調整",
-      chained: null,
-      urgency: "30分〜1時間以内",
-      highlight: false,
-      forbidden: "具体的な内覧候補日時・2択日程提示をAI返信で生成すること（日程はAIX【内覧日調整】専用）。募集状況が未確認の物件への内覧確約",
-      // G7（2026-09-08 Fable5）: 旧 bridge「ご都合よろしいお日にちをお伝えさせて頂きます」は主語逆転文を「確定・最優先」で注入していた再生産源。
-      // aix-taxonomy viewing_invite.weDo（条件節＋疑問形）を単一真実源にする
-      bridge: AIX_ACTION_REPLY_DIRECTION.viewing_invite.weDo,
-      extra: "",
-    };
-  }
-
-  return null;
-}
+// ─── AIXタイミング判定 → 2026-09-12 竹内方針A: app/lib/aix-reply-set.ts（resolveReplyAix / detectReplyAixScene）に一本化 ───
+// 旧 detectAixTiming（P0 物件指名／見積／条件変更／内覧）・AIX_BOUNDARY_TO_ACTION・AIX_* 正規表現は場面表（S1〜S7）へ移した。
 
 // AIXタイミング判定結果をプロンプト注入ブロックに変換する
-function buildAixTimingNote(s: AixTimingSuggestion): string {
+function buildAixTimingNote(r: ReplyAix): string {
+  // 2026-09-12 竹内方針A: 入力は resolveReplyAix の場面判定（bridge / forbiddenText / timing は場面表の定数）
+  const s = {
+    aix: r.action, label: r.label, chained: r.chained, urgency: r.urgency, highlight: r.highlight, extra: r.extra,
+    forbidden: r.forbiddenText,
+    bridge: r.bridge ?? AIX_ACTION_REPLY_DIRECTION[r.action]?.weDo ?? "かしこまりました！！",
+  };
   // G26/G7（2026-09-08 Fable5）: 旧固定型「→ 出来次第/確認出来次第ご連絡させて頂きます」は AIX 種別を問わず確認約束を注入していた
   // （創作約束の再生産源）。締めを AIX 種別で分岐し、viewing_invite は日程を尋ねる疑問形のみ（主語逆転の禁止を明記）
   const closer =
@@ -688,19 +522,6 @@ function buildAixTimingNote(s: AixTimingSuggestion): string {
   if (s.chained) lines.push(`・連結予約: ${s.aix} 完了後に ${s.chained} を続けて実行する運用（橋渡しでは「募集状況確認と最大限割引の御見積書作成」の両方の行動宣言を含めてよい）。`);
   if (s.extra) lines.push(`・${s.extra}`);
   return lines.join("\n");
-}
-
-// AIXタイミング判定結果をスタッフ向けUIアナウンス（suggested_aix / SUGGESTED_AIXトレーラー）に変換する。
-// 2026-08 AIXボタン種別アナウンス改善: detectAixTiming は従来プロンプト注入専用で、
-// brain(suggested_aix_meta) が沈黙している場合スタッフには何も表示されなかった。
-// 「AIX【ボタン名】を押してください: 理由」＋対応スピード目安＋連結予約を1つの note にまとめて返す。
-function buildAixTimingStaffNote(s: AixTimingSuggestion): string {
-  const parts = [AIX_STAFF_NOTES[s.aix] ?? `AIX【${s.label}】を押してください`];
-  parts.push(`対応目安: ${s.urgency}`);
-  if (s.chained) {
-    parts.push(`見積依頼も同時に来ています → 確認完了後にAIX【${AIX_BUTTON_LABELS[s.chained] ?? s.chained}】を連結して送付してください`);
-  }
-  return parts.join(" ／ ");
 }
 
 // ─── ai_summary_json の構造化サマリー（customer-summary/route.ts の SummaryJson と互換）──
@@ -875,6 +696,8 @@ function buildGenerationMessages(
   ledgerAnnotation: string = "",
   // 2026-09-11 統合設計（経路E5）: 台帳の「未履行のピックアップ約束」（ledgerActive 時のみ非 null）。本文 regex の約束検出と AND で使う
   ledgerPickupPromised: boolean | null = null,
+  // 2026-09-12 竹内方針A: 呼び出し側で1回だけ計算した場面判定（detectReplyAixScene）。プロンプト注入・メタ行・トレーラーが同じ結果を見る
+  aixScenePre: ReplyAix | null = null,
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -1312,18 +1135,12 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // AIXタイミング判定（AIXタイミングマップ 2026-08）: 顧客メッセージがAIXトリガー条件に該当する場合、
   // 「この場面ではAIXボタンを使う運用指示があり、テキストで物件情報/金額を生成してはいけない」を注入する。
   // テンプレート最適化モード・指定生成モードでは通常返信の文脈判定が成立しないため注入しない。
-  const aixTiming = (templateNote || replyHint)
-    ? null
-    : detectAixTiming(customerMessage ?? "", {
-        hasCustomerImage: hasRecentCustomerImage,
-        estimatePromised,
-        propertyStatus: resolvedPropertyStatus,
-        estimateVerdict,
-      });
+  // 2026-09-12 竹内方針A: 場面判定は aix-reply-set.ts の場面表（呼び出し側で計算済み）。プロンプトには決定論の場面（source=scene）だけを注入する
+  const aixTiming = (templateNote || replyHint) ? null : aixScenePre;
   const aixTimingNote = aixTiming ? buildAixTimingNote(aixTiming) : "";
 
   // G26（2026-09-08 Fable5）: 確認約束 verdict に AIX タイミング判定を合成（route.ts confirmCtxFinal と同じ pure 関数 → 三層で同値）
-  const confirmCtx = applyAixTiming(confirmCtxIn, aixTiming?.aix ?? null);
+  const confirmCtx = applyAixTiming(confirmCtxIn, aixTiming?.action ?? null);
 
   // G26: 管理会社ノートは verdict でゲート。確認対象が無い返信に「確認させて頂きます／確認出来次第ご連絡」を営業時間の説明付きで
   // 無条件注入していた（創作約束の再生産源）。allowed の時のみ、確認対象「${confirmCtx.object}」をリテラルで前置させる
@@ -4573,6 +4390,40 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
 
     // Sonnetでストリーミング生成
     // Step1廃止（2026-08）: 旧 analysis（Step1生JSON）の代わりに brainMeta + brainFreshForMessage を渡す
+    // ─── 2026-09-12 竹内方針A: 「AIX で送る場面」の判定（aix-reply-set.ts）を1回だけ計算 ───
+    //   aixScenePre   : 決定論の場面表（S1〜S7）。プロンプト注入（buildAixTimingNote）と確認約束 verdict に使う（初回返信でも注入する＝従来どおり）
+    //   replyAixPre   : resolveReplyAix（段階・初回除外・brain の推定を含む）。メタ行 suggested_aix に使う
+    //   生成後は assertionHits / unresolvedBlock を足して同じ関数を呼び直し、トレーラー・ai_draft_check.suggested_aix にする
+    const replyAixInput: ReplyAixInput | null = (isTemplateOptimize || templateNote || replyHint) ? null : (() => {
+      const historyLinesTm = (history || "").split("\n");
+      const lastStaffIdxTm = historyLinesTm
+        .map((l: string, i: number) => (l.startsWith("スモラ:") ? i : -1))
+        .filter((i: number) => i >= 0)
+        .at(-1) ?? -1;
+      const hasRecentCustomerImageTm = historyLinesTm
+        .slice(lastStaffIdxTm + 1)
+        .filter((l: string) => l.startsWith("お客様:"))
+        .some((l: string) => l.includes("【画像を送ってきた】"));
+      return {
+        latestCustomerTurn: message ?? "",
+        hasCustomerImage: hasRecentCustomerImageTm,
+        recentMessages: recentMessages.map((m) => ({ sender: m.sender, text: m.text ?? "", isAix: m.isAix ?? null })),
+        aixHistory: recentAixRows.map((r) => ({ aix_type: r.aix_type ?? null, check_pattern: r.check_pattern ?? null })),
+        sentPropertyCount: ledger.facts.propertiesSentCount,
+        conversationStatus: currentState ?? null,
+        isFirstReply: currentState === "first_reply",
+        propertyStatus: detectPropertyStatus(history, message ?? "", propertyStatus),
+        estimateVerdict,
+        brainCandidate: brainMeta?.action ? { action: brainMeta.action, check_pattern: (brainMeta as { check_pattern?: string | null }).check_pattern ?? null, note: brainMeta.note ?? null } : null,
+      };
+    })();
+    const aixTimingForMeta: ReplyAix | null = (() => {
+      if (!replyAixInput) return null;
+      const hit = detectReplyAixScene(replyAixInput);
+      return hit ? { ...hit, enforcement: "recommended" as const, source: "scene" as const, note: hit.note ?? "" } : null;
+    })();
+    const replyAixPre: ReplyAix | null = replyAixInput ? resolveReplyAix(replyAixInput) : null;
+
     const messages = buildGenerationMessages(
       message, customerName, aixSourceMessage ? historyForTemplate : history, currentState,
       brainMeta, brainFreshForMessage, knowledge, examples, phrases,
@@ -4596,6 +4447,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       actionLedgerNote,    // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】ブロック
       ledgerAnnotation,    // 2026-09-09 Fable5 行動台帳: 直前発言の宣言／実行注記
       ledgerActive ? ledger.facts.pickupPromisedUnfulfilled : null, // 2026-09-11 統合設計（経路E5）: 約束検出を台帳で絞る
+      aixTimingForMeta,    // 2026-09-12 竹内方針A: 場面判定（aix-reply-set.ts）
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -4648,36 +4500,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       auto_ok: false,          // 全チェックfalseなら送信OK候補（クライアントで確定）
     };
 
-    // AIXボタン種別アナウンス改善(2026-08): detectAixTiming（従来プロンプト注入専用）の結果を
-    // UIアナウンス（メタ行 suggested_aix / SUGGESTED_AIX トレーラーのフォールバック）にも反映する。
-    // brain(suggested_aix_meta) が沈黙しているホット会話（内覧希望・金額質問・物件指名等）でも
-    // 「どのボタンを押すべきか」の具体的指示がスタッフに届くようにする。
-    // buildGenerationMessages 内部の判定と同一条件・同一入力で再計算する（純regex・追加コスト無し）。
-    const aixTimingForMeta = (() => {
-      if (isTemplateOptimize || templateNote || replyHint) return null;
-      try {
-        const historyLinesTm = (history || "").split("\n");
-        const lastStaffIdxTm = historyLinesTm
-          .map((l: string, i: number) => (l.startsWith("スモラ:") ? i : -1))
-          .filter((i: number) => i >= 0)
-          .at(-1) ?? -1;
-        const hasRecentCustomerImageTm = historyLinesTm
-          .slice(lastStaffIdxTm + 1)
-          .filter((l: string) => l.startsWith("お客様:"))
-          .some((l: string) => l.includes("【画像を送ってきた】"));
-        return detectAixTiming(message ?? "", {
-          hasCustomerImage: hasRecentCustomerImageTm,
-          estimatePromised,
-          propertyStatus: detectPropertyStatus(history, message ?? "", propertyStatus),
-          estimateVerdict,
-        });
-      } catch {
-        return null;
-      }
-    })();
-    // G26（2026-09-08 Fable5）: AIX タイミング判定を確認約束 verdict に合成（buildGenerationMessages 内と同じ pure 関数 → 三層で同値）。
-    // これが無いと property_check_result の正しい bridge「募集状況確認出来次第ご連絡」が自分の final-check（CONFIRM_NO_OBJECT）で block される
-    const confirmCtxFinal: ConfirmationContextVerdict = applyAixTiming(confirmCtx, aixTimingForMeta?.aix ?? null);
+    // 2026-09-12 竹内方針A: 場面判定（aixScenePre / replyAixPre）は buildGenerationMessages の前で1回だけ計算済み。
+    // G26: AIX 場面判定を確認約束 verdict に合成（buildGenerationMessages 内と同じ pure 関数 → 三層で同値）
+    const confirmCtxFinal: ConfirmationContextVerdict = applyAixTiming(confirmCtx, aixTimingForMeta?.action ?? null);
 
     // スタッフ向けガイドメモ: brain(AIX-META) の closing_strategy / reply_direction をメタラインで返す。
     // Step1廃止（2026-08）: 両方 null なら過去のbrain実行がDBに残した ai_summary_json.winning_pattern に
@@ -4687,14 +4512,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // ※SUGGESTED_AIXトレーラーが後着で同等以上の情報に上書きするため互換性は保たれる
     //  （トレーラーが出ない場合はこのメタ行の値がそのまま表示され続ける＝従来は空白だった箇所）。
     const suggestedAixForMeta = (() => {
-      if (aixTimingForMeta && currentState !== "first_reply") {
-        return {
-          action: aixTimingForMeta.aix,
-          note: buildAixTimingStaffNote(aixTimingForMeta),
-          source: "aix_timing",
-          enforcement_level: "recommended" as const,
-        };
-      }
+      // 2026-09-12 竹内方針A: メタ行も resolveReplyAix の出力をそのまま使う（トレーラー・ai_draft_check と同じ形）
+      if (replyAixPre) return toSuggestedAixPayload(replyAixPre);
       const note = brainMeta?.closing_strategy
         || brainMeta?.reply_direction
         || resolvedSummaryJson?.winning_pattern
@@ -5214,17 +5033,20 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               });
               finalCheck.ok = false;
             }
+            // 2026-09-12 竹内方針A: 生成後の AIX セットは resolveReplyAix を「断言・AIX境界コード（assertionHits）」と
+            //   「final-check で直せなかった block（unresolvedBlock）」を足して呼び直した結果だけで決める（旧 required>brain>aix_timing>hint の優先順位は廃止）
+            let replyAixPost: ReplyAix | null = replyAixPre;
             let aixBoundaryRequired: { action: string; code: string } | null = null;
-            let aixBoundaryHint: { action: string; code: string } | null = null;
-            if (!isTemplateOptimize && finalCheck) {
-              const boundaryIssues = finalCheck.issues.filter(
-                (it) => it.code.startsWith("AIX_BOUNDARY") && AIX_BOUNDARY_TO_ACTION[it.code]
-              );
-              const blockIssue = boundaryIssues.find((it) => it.severity === "block");
-              if (finalCheck.revision_exhausted && blockIssue) {
-                aixBoundaryRequired = { action: AIX_BOUNDARY_TO_ACTION[blockIssue.code], code: blockIssue.code };
-              } else if (boundaryIssues.length > 0) {
-                aixBoundaryHint = { action: AIX_BOUNDARY_TO_ACTION[boundaryIssues[0].code], code: boundaryIssues[0].code };
+            if (!isTemplateOptimize && finalCheck && replyAixInput) {
+              const mapped = finalCheck.issues.filter((it) => isSceneMappedCode(it.code));
+              const unresolved = finalCheck.revision_exhausted ? mapped.find((it) => it.severity === "block") ?? null : null;
+              replyAixPost = resolveReplyAix({
+                ...replyAixInput,
+                assertionHits: mapped.map((it) => it.code),
+                unresolvedBlock: unresolved?.code ?? null,
+              });
+              if (replyAixPost?.enforcement === "required" && unresolved) {
+                aixBoundaryRequired = { action: replyAixPost.action, code: unresolved.code };
               }
             }
             // 同一絵文字の重複を決定的に除去（初出のみ残す・EMOJI_RULEの機械的最終防衛線）
@@ -5415,44 +5237,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // required 提案で override。hint は brain 無提案時のフォールバック。
               // ※ first_reply（初回対応）はAIX誘導不要（初回挨拶が主目的・旧 deriveSuggestedAix の例外を踏襲）
               // ※ AIX_ACTION_NOTES に無い action は語彙外（brain の新語彙等）→ hint フォールバックへ落とす
-              const suggestedAix = aixBoundaryRequired
-                ? {
-                    action: aixBoundaryRequired.action,
-                    note: `最終チェックでAIX境界違反（${aixBoundaryRequired.code}）が解消できませんでした。この内容はAIXから送ってください → ${AIX_ACTION_NOTES[aixBoundaryRequired.action] ?? "AIXボタンで対応してください"}`,
-                    source: "final_check_boundary",
-                    enforcement_level: "required" as const,
-                    closing_strategy: brainMeta?.closing_strategy || undefined,
-                  }
-                : (brainMeta?.action && AIX_ACTION_NOTES[brainMeta.action] && currentState !== "first_reply")
-                  ? {
-                      action: brainMeta.action,
-                      note: brainMeta.note || AIX_ACTION_NOTES[brainMeta.action],
-                      source: brainMeta.source || "brain",
-                      // "optional" は brain cached パス（stale meta）で設定される正規値（SuggestedAixMeta の union に定義済み）
-                      enforcement_level: (brainMeta.enforcement_level || "recommended") as "required" | "recommended" | "optional",
-                      closing_strategy: brainMeta.closing_strategy || undefined,
-                    }
-                  // AIXボタン種別アナウンス改善(2026-08): brain が無提案（沈黙）の場合、
-                  // detectAixTiming の決定論判定（物件指名/金額質問/条件変更/内覧意思）を
-                  // フォールバックとしてトレーラーに反映する。従来はプロンプト注入のみで
-                  // UIに何も出ず、ホット会話でスタッフが手打ち対応する原因になっていた。
-                  : (aixTimingForMeta && currentState !== "first_reply")
-                    ? {
-                        action: aixTimingForMeta.aix,
-                        note: buildAixTimingStaffNote(aixTimingForMeta),
-                        source: "aix_timing",
-                        enforcement_level: "recommended" as const,
-                        closing_strategy: brainMeta?.closing_strategy || undefined,
-                      }
-                    : (aixBoundaryHint
-                        ? {
-                            action: aixBoundaryHint.action,
-                            note: `最終チェックでAIX境界（${aixBoundaryHint.code}）の指摘がありました → ${AIX_ACTION_NOTES[aixBoundaryHint.action] ?? "AIXボタンでの対応を検討してください"}`,
-                            source: "final_check_boundary_hint",
-                            enforcement_level: "recommended" as const,
-                            closing_strategy: brainMeta?.closing_strategy || undefined,
-                          }
-                        : null);
+              // 2026-09-12 竹内方針A: トレーラーは resolveReplyAix（生成後）の出力そのもの。check_pattern・timing・bridge も載せる
+              //   ※ 初回返信・下書きを作らない段階は resolveReplyAix が null を返す（旧 first_reply 例外と同じ）
+              const suggestedAix = replyAixPost
+                ? toSuggestedAixPayload(replyAixPost, { closing_strategy: brainMeta?.closing_strategy ?? null })
+                : null;
               if (suggestedAix) {
                 controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
                 // fire-and-forget — closing_strategyが生成されたらログに保存
@@ -5492,37 +5281,22 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   "[generate-reply] AIX境界block解消不能 → ai_draftクリア+AIX切替:",
                   conversationId, aixBoundaryRequired.code, "→", aixBoundaryRequired.action
                 );
+                // 2026-09-12 竹内方針A: どこからも読まれていなかった conversation_direction.suggested_aix_button への書き込みをやめ、
+                //   ai_draft="[AIX誘導中]"（P5.1 の誘導が出る）＋ ai_draft_check.suggested_aix（画面のAIXボタン）を保存する。
+                //   bg-async は ai_draft IS NULL の時だけ保存するので、このセンチネルを上書きしない
                 const { error: gateErr } = await supabase
                   .from("conversations")
-                  .update({ ai_draft: null, draft_pending_at: null })
+                  .update({
+                    ai_draft: "[AIX誘導中]",
+                    draft_pending_at: null,
+                    ai_draft_check: {
+                      ...(finalCheck ?? {}),
+                      tpo_debug: finalCheck?.tpo_debug ?? null,
+                      suggested_aix: replyAixPost ? toSuggestedAixPayload(replyAixPost) : null,
+                    },
+                  })
                   .eq("id", conversationId);
-                if (gateErr) console.error("[generate-reply] AIX切替 ai_draftクリア失敗:", conversationId, gateErr.message);
-                // suggested_aix_button の強制セット（既存 conversation_direction JSONへのマージ。
-                // スタッフ手動修正中（manually_overridden）は尊重して触らない）
-                try {
-                  const { data: dirRow } = await supabase
-                    .from("conversations")
-                    .select("conversation_direction")
-                    .eq("id", conversationId)
-                    .maybeSingle();
-                  const dir = (dirRow?.conversation_direction ?? {}) as Record<string, unknown>;
-                  if (dir.manually_overridden !== true) {
-                    await supabase
-                      .from("conversations")
-                      .update({
-                        conversation_direction: {
-                          ...dir,
-                          suggested_aix_button: aixBoundaryRequired.action,
-                          aix_forced_by: `final_check:${aixBoundaryRequired.code}`,
-                          updated_at: new Date().toISOString(),
-                        },
-                      })
-                      .eq("id", conversationId);
-                  }
-                } catch (dirErr) {
-                  console.warn("[generate-reply] AIX切替 suggested_aix_button更新失敗:", conversationId,
-                    dirErr instanceof Error ? dirErr.message : dirErr);
-                }
+                if (gateErr) console.error("[generate-reply] AIX切替 ai_draft保存失敗:", conversationId, gateErr.message);
               } else {
               const { error: saveErr } = await supabase
                 .from("conversations")
@@ -5542,7 +5316,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   .from("conversations")
                   // tpo_debug: TPO誤発動率の定量化用（2026-09-08）。JSONBのため migrate-schema 更新不要
                   // 2026-09-09 Fable5: 中身はトレーラー送出前に組み立てた tpoDebug（substance / turnPair / finalCheckCodes / draftHead 等）と同一
-                  .update({ ai_draft_check: { ...finalCheck, tpo_debug: finalCheck.tpo_debug ?? null } })
+                  // 2026-09-12 竹内方針A: suggested_aix（resolveReplyAix の出力）を同梱 → 自動経路・手動経路とも画面で同じ AIX ボタンを出す（JSONB・migrate-schema 更新不要）
+                  .update({ ai_draft_check: { ...finalCheck, tpo_debug: finalCheck.tpo_debug ?? null, suggested_aix: replyAixPost ? toSuggestedAixPayload(replyAixPost) : null } })
                   .eq("id", conversationId)
                   .then(({ error: chkErr }) => {
                     if (chkErr) console.warn("[generate-reply] ai_draft_check save error:", conversationId, chkErr.message);

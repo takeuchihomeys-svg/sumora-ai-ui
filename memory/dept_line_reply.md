@@ -4,6 +4,13 @@
 
 ---
 
+## AIX で送る場面は resolveReplyAix 1関数（竹内方針A フェーズ1・2026-09-12）— 黄金ルール
+- **場面判定は `app/lib/aix-reply-set.ts` resolveReplyAix だけ**。旧 detectAixTiming・AIX_BOUNDARY_TO_ACTION・トレーラーの優先順位（required>brain>aix_timing>hint）は廃止。場面表 S1 空室／S2 入居日（mgmt_move_in・退去予定は vacate_date）／S3 審査（mgmt_guarantor）／S4 内覧／S5 日時指定→meeting_place（bridge=null）／S6 見積／S7 条件変更。場面 > 断言コード > brain の推定の順（1関数の中）
+- 生成後は assertionHits（断言・AIX境界コード）と unresolvedBlock（直せなかった block）を足して同じ関数を呼び直し、SUGGESTED_AIX トレーラーと **ai_draft_check.suggested_aix** に保存（check_pattern・timing・bridge 付き）。required は ai_draft="[AIX誘導中]"（suggested_aix_button への書き込みは廃止）
+- 時間枠の「空いて」・入居日/審査の質問・橋渡し文は `app/lib/scene-patterns.ts`（依存ゼロ）。後処理の断言置換文も同じ定数（ASSERTION_REPLACEMENT）
+- A-3 誤検出修正: SCREENING 願望形・VACANCY 時間枠・MOVEIN 条件の並び・DISCLOSURE キャンセル・E6（検索宣言／isMoveOutReleased を route と共有／号室違い）。audit block 33→25/758（3.3%）。a8aa132e も E6 が route と同じ解除判定になったため外れた
+- 未実施: page.tsx（hydrate で chk.suggested_aix を表示・runBrainAix に check_pattern）、フェーズ2（パターンCR・750・reply-context:166）、フェーズ3（brain reply_mode・suggest-next-action）、scripts/audit-aix-set-vs-staff.ts
+
 ## 「ご連絡お待ちしております」「承りました」は場面で使う・「次第すぐに」を塞ぐ（竹内方針B・E・2026-09-12）— 黄金ルール
 - **2語は禁止語（BANNED_WORDS_DETERMINISTIC）から外した**。根拠はプロンプトの文言だけで件数の根拠が無かった（9a452f16・d73b739f）。audit block 43→33/758（5.7%→4.4%）、baseline 更新済み
 - **「ご連絡お待ちしております」の唯一の判定は `resolveAwaitContact`（reply-context.ts）**。resolveTurnPair が1回計算して `pair.awaitContact` に入れ、締め（resolveCloser の await_contact）・検査（AWAIT_CONTACT_MISPLACED）・stance の closer_kind が同じ値を見る

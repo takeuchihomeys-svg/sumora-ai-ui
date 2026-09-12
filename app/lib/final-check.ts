@@ -15,14 +15,14 @@
 // - check-reply/route.ts    …… 送信時の再チェック用ルート。2026-09-11 以降、画面からは呼ばない
 //                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
-import { checkNameConsistency, ASSERTION_BAN_RULES, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
+import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 // 2026-09-11 竹内方針1・5: 誤字（warning のみ）・「すぐに」の唯一の定義（後処理と検査が同じ正規表現）
 import { detectTypos } from "./typo-check";
 import { HASTY_ADVERB_TEST_RE, findUnanchoredUketamawari } from "./banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する
 import { jstParts, WEEKDAYS_JA } from "./jst-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶（generate-reply / brain-core と四者同名）
-import { moveOutEvidenceText, type MoveOutSubject } from "./move-out-context";
+import { moveOutEvidenceText, isMoveOutReleased, moveOutRoomMismatch, type MoveOutSubject } from "./move-out-context";
 import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, SEARCH_CONFIRM_RE, type ConfirmationContextVerdict } from "./confirmation-context";
 import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, type GreetingKind, type GreetingDecisionLite } from "./greeting";
 import {
@@ -1945,7 +1945,8 @@ function runAssertionBanChecks(text: string, ctx: FinalCheckContext): CheckIssue
   const source = ctx.staffSourceText ?? "";
   const aixResultFlow = !!ctx.isAix || ctx.brainMeta?.action === "property_check_result";
   for (const r of ASSERTION_BAN_RULES) {
-    const m = text.match(r.re);
+    // 2026-09-12 竹内方針A-3: 一致判定は後処理置換と同じ findAssertionMatch（exclude＝時間枠の空いて・キャンセルのトラブル）
+    const m = findAssertionMatch(r, text);
     if (!m) continue;
     const exemptBy =
       r.exemptOnAixVacancyDone && ctx.aixVacancyDone ? "aixVacancyDone"
@@ -2077,9 +2078,15 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
   const moveOutHist = moveOutEvidenceText(
     `${staffHist}\n${custHist.split("\n").filter(Boolean).map((l) => `お客様:${l}`).join("\n")}`, cust,
   );
+  // 2026-09-12 竹内方針A-3（60b75de8）:
+  //   ・検索宣言「ご内覧可能なお部屋探させて頂きます」は内覧誘導ではない（な/る＋お部屋・物件 を除外）
+  //   ・直近スタッフ5件で内覧可が明示済みなら解除（route.ts detectPropertyStatus と同じ isMoveOutReleased）
+  //   ・退去予定の根拠の号室と本文の号室が別なら適用しない（会話単位の情報をメッセージ判定に使わない）
   if (/退去予定|[0-9０-９]{1,2}月退去|退去後|入居中|退去前/.test(moveOutHist) &&
-      /(?:ご都合よろしい|今週末|いつでも)[^\n。]{0,15}ご案内|内覧(?:でき|出来|可能)(?!ません|ない|次第)/.test(text) &&
-      !/以降(?:に|は)?(?:ご案内|ご内覧)|退去後(?:に)?ご案内|先に(?:抑|押さ)え/.test(text))
+      /(?:ご都合よろしい|今週末|いつでも)[^\n。]{0,15}ご案内|内覧(?:でき|出来|可能)(?!ません|ない|次第|な(?:お部屋|物件)|る(?:お部屋|物件))/.test(text) &&
+      !/以降(?:に|は)?(?:ご案内|ご内覧)|退去後(?:に)?ご案内|先に(?:抑|押さ)え/.test(text) &&
+      !isMoveOutReleased(lastStaffTexts(ctx, 5)) &&
+      !moveOutRoomMismatch(moveOutHist, text))
     push("context_check", "block", "VIEWING_BEFORE_VACANCY", "退去予定・入居中物件に対して現時点での内覧誘導をしています", firstSentenceAround(text, /ご案内|内覧/), "「[退去予定日]以降にご案内可能」または「お申込みで先に押さえてからご内覧」に変更");
   // E6' G10 現住居の退去・引越し報告（探索継続）に対する会話終了返信（離脱と誤読）
   if (ctx.moveOutSubject === "current_home" &&

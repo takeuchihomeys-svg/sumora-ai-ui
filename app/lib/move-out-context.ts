@@ -24,6 +24,42 @@ export const SEARCH_EXIT_RE =
 /** 物件募集状況（退去予定/入居中）: route.ts・brain-core.ts のローカル定義をここに集約（二重定義禁止） */
 export const MOVE_OUT_PATTERN = /退去予定|入居中|[0-9０-９]{1,2}\s*月末?\s*退去|退去[はが]?[0-9０-９]{1,2}\s*月/;
 
+/** スタッフが内覧可能日・内覧可を明示した（退去前の内覧制限は解除済み）。
+ *  2026-09-12 竹内方針A-3: route.ts detectPropertyStatus（旧 VIEWING_CONFIRMED_PATTERN）と final-check E6 VIEWING_BEFORE_VACANCY が同じ定義を使う */
+export const VIEWING_CONFIRMED_PATTERN =
+  /内覧(?:開始|可能|でき|いただけ)|からご案内|よりご案内|[0-9０-９]{1,2}[\/月][0-9０-９]{1,2}(?:日)?(?:から|より|以降|には?)?(?:ご案内|内覧|案内)|退去(?:済み?|後).*(?:ご?案内|内覧)/;
+
+/** 直近スタッフ発言（最大5件を改行で連結したもの）で退去前の内覧制限が解除されているか */
+export function isMoveOutReleased(recentStaffText: string): boolean {
+  return VIEWING_CONFIRMED_PATTERN.test(recentStaffText ?? "");
+}
+
+const ROOM_NO_RE = /([0-9０-９]{3,4})\s*号室?/g;
+const toHalf = (s: string) => s.replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
+/** 退去予定・入居中の根拠行に書かれた号室番号（無ければ空） */
+export function moveOutRoomNumbers(evidence: string): Set<string> {
+  const out = new Set<string>();
+  for (const line of (evidence ?? "").split("\n")) {
+    if (!MOVE_OUT_PATTERN.test(line)) continue;
+    for (const m of line.matchAll(ROOM_NO_RE)) out.add(toHalf(m[1]));
+  }
+  return out;
+}
+/** 本文に書かれた号室番号 */
+export function roomNumbersIn(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of (text ?? "").matchAll(ROOM_NO_RE)) out.add(toHalf(m[1]));
+  return out;
+}
+/** 退去予定の根拠の号室と本文の号室が両方あり、1つも重ならない（別の部屋の退去予定を当てはめない） */
+export function moveOutRoomMismatch(evidence: string, text: string): boolean {
+  const ev = moveOutRoomNumbers(evidence);
+  const tx = roomNumbersIn(text);
+  if (ev.size === 0 || tx.size === 0) return false;
+  for (const r of tx) if (ev.has(r)) return false;
+  return true;
+}
+
 /** 現住居の退去句「今の家は3月末退去予定」を丸ごと伏字化する（replace 専用・/g） */
 export const CURRENT_HOME_MOVEOUT_CLAUSE_RE = new RegExp(
   `(?:${CURRENT_HOME_RE.source})[^\\n。！!]{0,25}?(?:${MOVE_VERB_RE.source})[^\\n。！!、]{0,15}`, "g",

@@ -11,6 +11,7 @@
 import { CUSTOMER_PROPERTY_REF_RE, CUSTOMER_COST_QUESTION_RE } from "./line-reply-prompts";
 // 2026-09-11 竹内方針（統合設計 §5.2・E5-n）: スタッフの確認宣言は reply-context の STAFF_CONFIRM_DECL_RE が唯一の定義（同名で中身の違う2定義を解消）
 import { STAFF_CONFIRM_DECL_RE, CUST_VIEWING_INTENT_RE, propertyMatchKeys } from "./reply-context";
+import { allVacancyWordsAreSlots } from "./scene-patterns";
 
 export type ConfirmationSource =
   | "customer_fact_question"
@@ -69,7 +70,12 @@ export const CONFIRM_PROMISE_SENTENCE_RE = /(?<!ご)確認(?:でき|出来|し|�
 export const CONFIRM_NEXT_RE = /確認(?:でき|出来|し)次第/;
 
 export function findConfirmObject(text: string): string | null {
-  for (const [re, label] of CONFIRM_OBJECT_LABELS) if (re.test(text)) return label;
+  for (const [re, label] of CONFIRM_OBJECT_LABELS) {
+    if (!re.test(text)) continue;
+    // 2026-09-12 竹内方針A-3（82e2d5cf）: 「明日ってまだ空いてますか」の「空いて」は内覧枠（募集状況と誤読しない）。判定は scene-patterns と共有
+    if (label === "募集状況" && allVacancyWordsAreSlots(text) && !/空(?:き|室)|募集|埋ま|申込|番手/.test(text)) continue;
+    return label;
+  }
   return null;
 }
 

@@ -58,6 +58,8 @@ const CODE_CAPS: Record<string, number> = {
   NAME_MISMATCH: 0.005, CONFIRM_NO_OBJECT: 0.005,
   // 2026-09-12 竹内方針B: 目的語の無い/顧客発言に無い「承りました」の検査（正解6通で偽陽性0）
   UKETAMAWARI_OBJECT_UNANCHORED: 0.005,
+  // 2026-09-12 竹内方針A-3: 断言検査の誤検出（願望形・時間枠・条件の並び・キャンセルのトラブル）が戻ったら検知する
+  SCREENING_ASSURANCE: 0.005, MOVEIN_DATE_ASSERTION: 0.005, DISCLOSURE_ASSERTION: 0.005,
 };
 
 const norm = (s: string) => (s ?? "").replace(/\s+/g, "");
