@@ -77,6 +77,17 @@ it("じゅにあ事例（お客様が送る予告への受け口）→ 物件確
   const msgs = [C("何件か気になる物件送ってもいいですか？"), S(t)];
   expect(resolveStaffPromiseAix(facts(t), msgs, asked(msgs))?.action === "property_check_result").toBe(false);
 });
+// 2026-09-12 竹内（find-brain-gaps G4）: 確認＋見積書の宣言 → 先に物件確認した（実績 71%）
+it("URL＋初期費用の質問 →「募集状況確認させて頂きます！！確認出来次第、…お見積書お送り」→ AIX 物件確認した（見積書ではない）", () => {
+  const t = "かしこまりました！！\nお送り頂きました物件の募集状況確認させて頂きます😊！！確認出来次第、最大限割引させていただいた初期費用のお見積書お送りさせて頂きます！！";
+  const msgs = [C("ここは初期費用いくらですか？ 照ケ丘矢田１丁目賃貸戸建て https://suumo.jp/chintai/bc_100000000000/"), S(t)];
+  expect(resolveStaffPromiseAix(facts(t), msgs, asked(msgs))).toBe({ action: "property_check_result", kind: "check" });
+});
+it("物件名指しの見積依頼 →「初期費用確認出来次第…お見積書お送り」（募集状況の確認なし）→ AIX 見積書送る のまま", () => {
+  const t = "かしこまりました！！\nクレール元町203号室、初期費用確認出来次第、最大限割引させて頂いたお見積書お送りさせていただきます！！";
+  const msgs = [C("クレール元町の見積りお願いしたいです。"), S(t)];
+  expect(resolveStaffPromiseAix(facts(t), msgs, asked(msgs))?.action ?? null).toBe("estimate_sheet");
+});
 it("確認結果を報告済み（履行済み）→ AIX なし", () => {
   const msgs = [C("こちら空いてますか？\nhttps://example.com/room/1"), S(S_CONFIRM)];
   expect(resolveStaffPromiseAix(facts(S_CONFIRM, { conf: false }), msgs, asked(msgs))).toBe(null);

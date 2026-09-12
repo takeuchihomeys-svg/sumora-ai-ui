@@ -82,7 +82,8 @@ const isMedia = (s: string | null) => /^\[(?:画像|動画|スタンプ|ファ�
           const entry = classifyStaffTextForLedger(lastMsg.text ?? "", lastMsg.created_at);
           if (entry?.status === "promised" && brainAction !== p.aix_type) {
             const ledger = buildActionLedger({
-              recentAixRows: aix.filter((r) => ms(r.created_at) < pressAt - 1000) as LedgerAixRow[],
+              // 押した AIX 自身は除く（aix_usage_logs は生成時刻 created_at が送信時刻 sent_at より前なので、created_at で絞ると押下自身が「履行済み」に数えられる）
+              recentAixRows: aix.filter((r) => r !== p && ms(r.sent_at ?? r.created_at) < pressAt - 1000) as LedgerAixRow[],
               messages: prev.slice(-30).map((x) => ({ sender: x.sender, text: x.text ?? "", createdAt: x.created_at, isAix: !!x.is_aix_generated })),
               lineTasks: ((tk.data ?? []) as Array<{ task_type: string; status: string; created_at: string }>).filter((r) => ms(r.created_at) < pressAt),
               lastCustomerAt: lastCust?.created_at ?? null, now: pressAt,

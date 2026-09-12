@@ -41,6 +41,9 @@ export function taskTypesCompletedByAix(aixType: string | null | undefined): str
  *   （確認の「確認出来次第ご連絡」は届ける中身＝確認結果が決まっているので対象）
  *   宣言の判定は action-ledger（classifyStaffTextForLedger・buildActionLedger）と同じ結果を使う。
  */
+/** 募集状況（空室）を確認する宣言（未来形）。「確認させて頂きました」「募集ございませんでした」等の報告は含めない */
+const VACANCY_CHECK_DECL_RE = /(?:募集状況|空室状況|空き状況|空室|空き)[^\n。！!]{0,20}確認(?:させて(?:頂|いただ)きます|いたします|致します|して(?:参|まい)ります)/;
+
 export function resolveStaffPromiseAix(
   facts: {
     lastStaffEntry: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null } } | null;
@@ -58,6 +61,12 @@ export function resolveStaffPromiseAix(
   if (!last || last.sender !== "staff") return null;
   const e = facts.lastStaffEntry;
   if (!e || e.status !== "promised") return null;
+  // 2026-09-12 竹内（find-brain-gaps G4）: 「お送り頂きました物件の募集状況確認させて頂きます😊！！確認出来次第、最大限割引させていただいた初期費用の
+  //   お見積書お送りさせて頂きます」のような確認＋見積書の宣言は、台帳では見積書の宣言になるが、スタッフが先に押すのは物件確認した
+  //   （150日の実績: 最初に押された AIX 48件中 物件確認した 34件（71%）・見積書送る 11件。確認の後に見積書が続いたのは 34件中 11件）。
+  //   見積書は確認の結果（空いていたか）とお客様の反応を見てから（固定連鎖にしない）。お客様から物件確認の依頼があった時だけ
+  if (e.kind === "estimate_declared" && facts.estimatePromisedUnfulfilled && opts.customerRequestedCheck
+    && VACANCY_CHECK_DECL_RE.test(last.text ?? "")) return { action: "property_check_result", kind: "check" };
   if (e.kind === "estimate_declared" && facts.estimatePromisedUnfulfilled) return { action: "estimate_sheet", kind: "estimate" };
   if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && !/次第/.test(e.evidence ?? "")) return { action: "property_send", kind: "pickup" };
   if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled && opts.customerRequestedCheck
