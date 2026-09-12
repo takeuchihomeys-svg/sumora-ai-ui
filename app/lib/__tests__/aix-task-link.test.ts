@@ -106,6 +106,27 @@ it("フォーム記入の依頼（ご入力いただけましたら…ピック�
   const t = "かしこまりました！！ 上記お部屋探しフォーマットご入力いただけましたら私の方でオススメできるお部屋ピックアップさせていただきます😊！！";
   expect(classifyStaffTextForLedger(t, null)?.kind ?? null).toBe("condition_asked");
 });
+// 2026-09-12 竹内（響夢事例）: 条件フォームの直後の「条件お送り頂きますと…ピックアップしお送り…ご入力ください」は条件のお願い
+//   → ピックアップの約束ではない（条件が届いてからブレインが 物件ピックアップした をセットする）
+const KYOMU = "こちらに見木さん最新のお部屋探しの条件お送り頂きますと、見木さんご希望のご条件に合ったお部屋を私の方でピックアップしお送りさせて頂きます😊！！\nよろしければお手隙の際にご入力ください😌✨";
+it("響夢: 「条件お送り頂きますと…ピックアップしお送り…ご入力ください」→ 条件ヒアリング・AIX なし", () => {
+  expect(classifyStaffTextForLedger(KYOMU, null)?.kind ?? null).toBe("condition_asked");
+  expect(resolveStaffPromiseAix(facts(KYOMU), [C("ありがとうございます\n一旦検討してみます"), S("（ご希望のお部屋探しご条件）\n①【ご入居の時期】⇒"), S(KYOMU)])).toBe(null);
+});
+it("Aoi/みく型「こちらに〇〇さんご希望のご条件お送り頂きますと…ピックアップさせて頂きます」→ 条件ヒアリング", () => {
+  expect(classifyStaffTextForLedger("こちらにAoiさんご希望のご条件お送り頂きますと、Aoiさんのお探しの地域全域からご条件に合ったお部屋ピックアップさせて頂きます！！\nお手隙の際にご入力ください😌！！", null)?.kind ?? null).toBe("condition_asked");
+});
+it("「上記お部屋探しフォーマットお送り頂けましたら…ピックアップ」→ 条件ヒアリング", () => {
+  expect(classifyStaffTextForLedger("上記お部屋探しフォーマットお送り頂けましたら私の方でSawaさんにオススメできるお部屋ピックアップさせていただきます😊！！\n\nお手隙の際にご入力ください😌！！", null)?.kind ?? null).toBe("condition_asked");
+});
+it("条件が届いた後「ご条件お送り頂きありがとうございます…ピックアップしお送りさせて頂きます」→ ピックアップ宣言のまま", () => {
+  const t = "ご条件お送り頂きありがとうございます😊！！\n西中島南方駅周辺全域から、ほのかさんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！";
+  expect(classifyStaffTextForLedger(t, null)?.kind ?? null).toBe("pickup_declared");
+  expect(resolveStaffPromiseAix(facts(t), [C("①10月 ②8万 ③1K"), S(t)])?.action ?? null).toBe("property_send");
+});
+it("申込フォームの「ご入力ください」は条件ヒアリングにしない", () => {
+  expect(classifyStaffTextForLedger("かしこまりました！！\nお申込み用のフォーマットお送りさせていただきますので、お手隙のタイミングでご入力ください😊！！", null)?.kind === "condition_asked").toBe(false);
+});
 // 2026-09-12 竹内（YUYA 事例）: 確認の宣言 → お客様「お願いします！」→ 物件確認した を保つ（実績 26/35＝74%・確認します 0件）
 it("YUYA: 確認の宣言の後にお客様が「お願いします！」だけ → AIX 物件確認した のまま", () => {
   const t = "かしこまりました！！\nお送り頂きました物件の募集状況確認させて頂きます😊！！\n確認出来次第ご連絡させて頂きます！！";
