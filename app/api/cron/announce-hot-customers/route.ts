@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { PROPERTY_DELIVERY_AIX } from "@/app/lib/aix-task-link";
 
 export const maxDuration = 60;
 
@@ -13,7 +14,7 @@ function getTodayJSTStart(): Date {
   return new Date(jstNow.getTime() - 9 * 60 * 60 * 1000);
 }
 
-// ☑ (AIX約束あり・未送信) → ・(未対応) → ✅ (AIX済み) の優先度
+// ☑ (スタッフ対応あり・物件未送付) → ・(未対応) → ✅ (今日 AIX 物件ピックアップした／物件オススメで物件出し完了) の優先度
 function getMarkPriority(staffInfo: { hasAix: boolean; hasStaff: boolean } | undefined): number {
   if (!staffInfo) return 1;      // ・未対応
   if (staffInfo.hasAix) return 2; // ✅ AIX済み（後回しでOK）
@@ -102,21 +103,31 @@ export async function GET(req: NextRequest) {
   const todayStart = getTodayJSTStart();
   const convIds = convList.map((c) => c.id);
 
-  // 今日のスタッフメッセージ（✅/☑判定用）
-  const { data: todayStaffMsgs } = await supabase
-    .from("messages")
-    .select("conversation_id, is_aix_generated")
-    .eq("sender", "staff")
-    .gte("created_at", todayStart.toISOString())
-    .in("conversation_id", convIds);
+  // 今日のスタッフメッセージ（☑判定用）と、今日 物件を届けた AIX（✅判定用）
+  // 2026-09-12 竹内「AIX 物件オススメ・物件ピックアップで送ったときに物件出し完了」:
+  //   旧 ✅ は「今日 AIX で何か送った」（内覧へ！・見積書でも✅）だった → 物件を届けた AIX（aix-task-link）だけを✅にする
+  const [{ data: todayStaffMsgs }, { data: todayDeliveries }] = await Promise.all([
+    supabase
+      .from("messages")
+      .select("conversation_id")
+      .eq("sender", "staff")
+      .gte("created_at", todayStart.toISOString())
+      .in("conversation_id", convIds),
+    supabase
+      .from("aix_usage_logs")
+      .select("conversation_id")
+      .in("aix_type", [...PROPERTY_DELIVERY_AIX])
+      .gte("created_at", todayStart.toISOString())
+      .in("conversation_id", convIds),
+  ]);
+  const deliveredToday = new Set((todayDeliveries ?? []).map((r) => r.conversation_id as string));
 
   const staffMsgMap = new Map<string, { hasAix: boolean; hasStaff: boolean }>();
   for (const msg of todayStaffMsgs ?? []) {
-    const existing = staffMsgMap.get(msg.conversation_id) ?? { hasAix: false, hasStaff: false };
-    staffMsgMap.set(msg.conversation_id, {
-      hasAix: existing.hasAix || !!msg.is_aix_generated,
-      hasStaff: true,
-    });
+    staffMsgMap.set(msg.conversation_id, { hasAix: deliveredToday.has(msg.conversation_id), hasStaff: true });
+  }
+  for (const cid of deliveredToday) {
+    if (!staffMsgMap.has(cid)) staffMsgMap.set(cid, { hasAix: true, hasStaff: true });
   }
 
   // 今日「物件確認した」顧客の customer_name セット（property_customers.property_viewed_at が今日）

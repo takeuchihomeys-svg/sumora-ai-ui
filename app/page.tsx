@@ -11,6 +11,7 @@ import { detectPlaceholders } from "./lib/validate-reply";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
+import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
@@ -9998,10 +9999,12 @@ export default function Home() {
                 setDismissedPostAixTemplateIds((prev) => { const n = new Set(prev); n.delete(_b5ConvId); return n; });
               }
             }
-            // AIXボタンからLINE送信 → 全ての未完了タスクを即座に完了
+            // AIXボタンからLINE送信 → その AIX に対応する未完了タスクだけを完了（対応表は aix-task-link.ts）
+            // 2026-09-12 竹内: 旧は種類を問わず全部完了にしており、「内覧へ！」だけで「✅【物件出し 完了】」が流れていた
             {
               const _cid = selectedConversation.id;
-              const _tasks = activeTasks[_cid] ?? [];
+              const _doneTypes = taskTypesCompletedByAix(aixModalType);
+              const _tasks = (activeTasks[_cid] ?? []).filter((t) => _doneTypes.includes(t.task_type));
               for (const _t of _tasks) {
                 fetch("/api/line-tasks/complete", {
                   method: "POST",
@@ -10010,9 +10013,11 @@ export default function Home() {
                 }).catch(() => {});
               }
               if (_tasks.length > 0) {
+                const _doneIds = new Set(_tasks.map((t) => t.id));
                 setActiveTasks((prev) => {
+                  const rest = (prev[_cid] ?? []).filter((t) => !_doneIds.has(t.id));
                   const next = { ...prev };
-                  delete next[_cid];
+                  if (rest.length > 0) next[_cid] = rest; else delete next[_cid];
                   return next;
                 });
               }
