@@ -17,6 +17,7 @@ import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
+import { parseCheckpointOutput } from "@/app/lib/checkpoint-format";
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
@@ -2738,6 +2739,15 @@ const CHECKPOINT_STATIC_SYSTEM = `あなたは不動産賃貸仲介のLINE会話
 - 省略可（成約に無関係な細部）: 雑談・天気の話・「ありがとうございます」等の定型返答・すでに解決した細かい質問
 → 前回セーブデータが長くなった場合は、上記優先度に従って圧縮しつつ全量を引き継ぐこと。重要事実は絶対に落とさない。
 
+長さの上限（必ず守る。超えると保存できず、セーブデータが止まる）:
+- summary は全体で1,200字以内。前回セーブデータが長い時は圧縮して1,200字に収める
+- 物件は1物件1行: 「物件名 号室: 家賃/管理費・初期費用（見積額・割引額）・状態（募集中/申込あり/内覧済み/見送り 等）（日付・出所）」。
+  住所・築年・面積・更新料・設備は、顧客が質問・懸念・条件に挙げたものだけ書く（物件資料の写しは書かない）
+- 見送り・募集終了になった物件は「見送り・終了: 物件名（日付）」の1行にまとめる
+- 解決した未解決事項は【未解決事項】から消す（結果は【確認済み事実】に1行で）
+- key_facts は「次の返信・AIX の判断に効く今の事実」だけ最大10件・各60字以内。summary の全量を繰り返さない
+- JSON の文字列の中で改行するときは \\n と書く（生の改行を入れない）
+
 JSON形式のみで返答（説明・コードブロック不要）:
 {
   "summary": "【確認済み事実】家賃: 12〜15万（8/3顧客提示）/ エリア: 渋谷・恵比寿（8/3顧客）/ 入居希望: 9月上旬（8/3顧客）\\n【AIX使用済み】viewing_invite: 8/5送付 / property_send: 8/7 3件\\n【未解決事項】空室確認: ライオンズ渋谷401（問い合わせ中）/ 内覧日程: 調整中",
@@ -2761,7 +2771,13 @@ ${prevSummary ? prevSummary.slice(0, 3500) : "（なし・今回が最初のセ�
 ${historyText}`;
 }
 
+// 2026-09-13: 画像の連投では1リクエスト内でブレインが連続実行され、同じ会話のセーブデータ作成が同時に7回走っていた（7回とも LLM を呼ぶ）。
+//   同じプロセス内では1会話1本にする（別インスタンス同士の重複は従来どおり UNIQUE 違反＝正常で吸収）
+const checkpointInFlight = new Set<string>();
+
 export async function maybeCreateCheckpoint(conversationId: string, customerName?: string): Promise<void> {
+  if (checkpointInFlight.has(conversationId)) return;
+  checkpointInFlight.add(conversationId);
   try {
     // 1) 総メッセージ数 + 最新チェックポイントを並列取得
     const [countRes, cpRes] = await Promise.all([
@@ -2814,31 +2830,26 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
 
     // 3) Haiku（モジュール共有 client: timeout 60s（共有client） / maxRetries 0 — fire-and-forget なので失敗放置でOK）
     const userContent = buildCheckpointUserContent(last?.summary ?? null, historyText, total, msgs.length, startOffset);
+    // 2026-09-13: max_tokens 1500 では長い会話の出力が途中で切れ、JSON.parse 失敗で保存されずセーブデータが止まっていた
+    //   （エラー位置は毎回 1,500〜1,800 字目）。上限を広げ、長さはプロンプトの上限（summary 1,200字・key_facts 10件）で抑える。
+    //   途中で切れた出力（stop_reason=max_tokens）は保存しない（半端な事実を正解データにしない）
     const response = await client.messages.create({
       model: BRAIN_MODEL,
-      max_tokens: 1500,
+      max_tokens: 4000,
       thinking: { type: "disabled" },
       system: [{ type: "text", text: CHECKPOINT_STATIC_SYSTEM, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }],
       messages: [{ role: "user", content: maskPII(userContent, [customerName]) }],
     });
     // analyzeConversation と同じ content.find() で thinking ブロック対策
     const raw = response.content.find((c) => c.type === "text")?.text ?? "";
-    const fb = raw.indexOf("{");
-    const lb = raw.lastIndexOf("}");
-    if (fb === -1 || lb <= fb) {
-      if (raw === "") {
-        console.warn("[brain-core] maybeCreateCheckpoint: Claude returned empty text", conversationId);
-      }
+    const parsedResult = parseCheckpointOutput(raw, response.stop_reason);
+    if (!parsedResult.ok) {
+      console.warn(`[checkpoint] not saved (${parsedResult.reason}):`, conversationId, parsedResult.detail ?? "", `raw_len=${raw.length}`);
       return;
     }
-    const parsed = JSON.parse(raw.slice(fb, lb + 1)) as {
-      summary?: string;
-      key_facts?: Array<{ type: string; value: string }>;
-      stage?: string;
-    };
-    if (!parsed.summary || !parsed.summary.trim()) return;
-    const stage = ["hearing", "proposing", "applying", "contract"].includes(parsed.stage ?? "")
-      ? (parsed.stage as string) : null;
+    if (parsedResult.repaired) console.log("[checkpoint] repaired control chars:", conversationId);
+    const parsed = parsedResult.value;
+    const stage = parsed.stage;
 
     // 4) INSERT（並走時の UNIQUE 違反 23505 は「相手が先に書いた」= 正常）
     const { error: insErr } = await supabase.from("conversation_checkpoints").insert({
@@ -2848,7 +2859,7 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
       // 40件超のバックログや count 後に届いたメッセージは次回の窓で確実にカバーされる
       message_count_at_creation: startOffset + msgs.length,
       summary: parsed.summary.slice(0, 2000),
-      key_facts: Array.isArray(parsed.key_facts) ? parsed.key_facts.slice(0, 20) : [],
+      key_facts: parsed.key_facts,
       conversation_stage: stage,
     });
     if (insErr && insErr.code !== "23505") {
@@ -2867,6 +2878,8 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
   } catch (e) {
     console.warn("[checkpoint] failed (fire-and-forget):", conversationId,
       e instanceof Error ? e.message : e);
+  } finally {
+    checkpointInFlight.delete(conversationId);
   }
 }
 
