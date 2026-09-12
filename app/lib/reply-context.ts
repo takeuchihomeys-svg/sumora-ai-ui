@@ -519,7 +519,9 @@ export function classifyLastStaffTurn(
 // 4. 顧客返答の分類（CustomerResponse）
 // ─────────────────────────────────────────────────────────────
 export type CustomerResponseKind =
-  | "concern" | "positive" | "thinking" | "will_send_later" | "question" | "decline" | "condition_change" | "answer" | "ack_only" | "other";
+  | "concern" | "positive" | "thinking" | "will_send_later" | "question" | "decline" | "condition_change" | "answer" | "ack_only" | "other"
+  /** 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した（「フジパレスは無しで」）。探索は継続・残りの物件を選んだ意味ではない */
+  | "property_pass";
 export type CustomerResponseSource = "regex" | "flag" | "brain";
 type CustomerResponseBase = {
   secondary: CustomerResponseKind[];
@@ -542,8 +544,11 @@ export type CustomerResponseFlags = {
   negativeKind?: "withdrawal" | "staff_report" | null;
   /** fresh の message-local のみ。conversation-scope は型として渡せない */
   brain?: BrainMessageLocal | null;
+  /** 直近のスタッフ発言（物件送付文）。物件の見送り（detectPropertyPass）で漢字の建物名を照合する */
+  recentStaffText?: string | null;
 };
-const PRIORITY: CustomerResponseKind[] = ["decline", "condition_change", "question", "concern", "will_send_later", "thinking", "positive", "answer", "ack_only", "other"];
+// property_pass は質問・懸念より後（「フジパレスは無しで、住之江は内覧できますか？」は質問が主）、検討中・前向きより前
+const PRIORITY: CustomerResponseKind[] = ["decline", "condition_change", "question", "concern", "property_pass", "will_send_later", "thinking", "positive", "answer", "ack_only", "other"];
 const CUST_DECLINE_RE = /見送(?:らせて|ります|りたい|ろうと)|やめ(?:て|とき|とこ)|遠慮(?:し|させ)|今回は(?:結構|大丈夫|やめ|見送|なし)|お断り|他で(?:決め|契約)|キャンセル(?:で|し|お願い)/;
 // ─── 2026-09-11 統合設計（経路D）: 断りの語彙を一本化（旧 route.ts negativeDetail の WITHDRAWAL_SRC を移設）───
 //   route.ts negativeDetail・classifyCustomerResponse（route のフラグが無い check-reply 経路）・resolveClosing が同じ定数を参照する
@@ -572,6 +577,80 @@ export const CUST_WITHDRAWAL_SRC = [
 export const CUST_WITHDRAWAL_RE = new RegExp(CUST_WITHDRAWAL_SRC);
 /** 断り語と同居していても「日程変更・再開・依頼」なら断りではない（route isReschedule / 再開語と同趣旨の簡易版。フラグの無い経路のみで使う） */
 const CUST_NOT_WITHDRAWAL_RE = /別日|別の日|改めて|リスケ|日程|延期|また探し|再開|新し(?:い|く)条件|[?？]/;
+
+// ─── 送付物件の一部を外す（物件の見送り・探索は継続）───────────────────────────
+// 2026-09-12 竹内（KENYOU 事例）: 2件送付後「フジパレスは無しでお願いします」→ 正解（実送信）
+//   「かしこまりました！！ フジパレスは対象から外し、引き続き物件お探しさせて頂きます！！ 新着で…出次第お送りさせて頂きます！！」。
+//   旧: どの分類にも入らず（other・セルなし）、1通前の brain 戦略（もう1件の内覧日確定）が注入され「住之江…を中心に進めさせて頂きます」になった。
+//   1件を外した＝残りの物件を選んだ、ではない（残りに食いついていない）。
+//   実データ: 「こちらの物件は大丈夫です😭 また、違う物件探して見ます！」→「新着でオススメできるお部屋で次第随時お送り」（旧は断り＝お別れ扱い）。
+//   ブレインの再分析の引き金（brain-core）・返信の分類（classifyCustomerResponse）・断り判定の除外（generate-reply negativeDetail）がこの関数を共有する。
+/** お部屋探しそのものの終了（他で決めた・引越しが無くなった等）。これがある時は物件の見送りではなく断り */
+export const SEARCH_END_RE =
+  /他で(?:決め|契約)|他社|(?:他|別)の(?:会社|不動産|仲介)|(?:お?部屋探し|物件探し|お?家探し)(?:自体|は|を|も)?(?:やめ|辞め|中止|終了|終わ|見送|白紙)|探すの(?:を)?やめ|お世話になりました|引っ?越し(?:自体|が|は|の話)?(?:なくな|無くな|中止|白紙|延期)|転勤[^\n。]{0,6}(?:なくな|無くな)|(?:決まり|決め)ました|諦め/;
+/** 外す対象として扱わない語（申込・内覧等の手続きの取消は断り側、「今回」「全部」は物件ではない） */
+const PASS_NON_PROPERTY_OBJ_RE =
+  /^(?:今回|一旦|全部|全て|すべて|もう|やっぱり|やはり)$|お?部屋探し|物件探し|引っ?越し|お?申(?:し)?込|内覧|内見|見学|契約|審査|見積|キャンセル|電話|連絡|予約|日程/;
+/** 条件・設備・地名の語（「尼崎は無しで」「オートロックは無しで大丈夫」は条件の話であって送付物件の見送りではない） */
+const PASS_CONDITION_OBJ_RE =
+  /[区市町村府県]$|駅$|線$|エリア|周辺|方面|沿線|家賃|予算|敷金|礼金|初期費用|更新料|保証|ペット|駐車|駐輪|オートロック|バス|トイレ|洗面|キッチン|コンロ|ロフト|エレベーター|エアコン|ベランダ|バルコニー|クローゼット|収納|インターホン|モニター|洗濯|宅配|階|築|LDK|DK|ワンルーム|[0-9０-９]+K|和室|畳|帖|日当たり|角部屋|南向き/;
+const PASS_DEMONSTRATIVE_RE = /^(?:そちら|その|この|こちら|こっち|そっち|あちら|ここ|そこ|あそこ)(?:の)?(?:物件|お?部屋|マンション|アパート|戸建|お家|家)?$/;
+const PASS_ORDINAL_RE = /^(?:[0-9０-９一二三四五六七八九十]+(?:枚目|件目|つ目|番目|個目|号室)|最初|最後|上|下)(?:の(?:物件|お?部屋|マンション|戸建))?$/;
+const PASS_PROPERTY_NOUN_RE = /(?:物件|お?部屋|号室|戸建|マンション|ハイツ|コーポ|レジデンス|アパート|貸家|ビル|荘)$/;
+/** 建物名らしい語（カタカナ・英字が主）。条件語でなく3字以上 */
+const PASS_BUILDING_NAME_RE = /^[ァ-ヶー・A-Za-zＡ-Ｚａ-ｚ0-9０-９\s.\-]{3,}$/;
+/** 「〇〇は無しで」「〇〇はやめときます」「〇〇は大丈夫です」「〇〇を外して」。も＋大丈夫/結構は受諾（「中崎町でも大丈夫です」）なので除く */
+const PASS_LINE_RE = new RegExp(
+  String.raw`^(?:[^\n、,]{0,12}[、,]\s*)?(.{1,30}?)\s*(?:` +
+    String.raw`は\s*(?:一旦|今回は|ちょっと|やっぱり|やはり)?\s*(?:無し|なし|ナシ|NG|ＮＧ|パス|除外|外して|見送|やめ(?:とき|てお|ておき|ます|ました)|大丈夫(?:です)?|結構(?:です)?)` +
+    String.raw`|も\s*(?:無し|なし|ナシ|NG|ＮＧ|パス|除外|見送|やめ(?:とき|てお|ておき|ます))` +
+    String.raw`|を\s*(?:外して|除外|見送|やめ(?:とき|てお|ておき|ます))` +
+  String.raw`)`,
+);
+export type PropertyPass = { object: string; basis: "demonstrative" | "ordinal" | "property_noun" | "named"; line: string };
+/**
+ * お客様が送付物件の一部（特定の物件）を外したか。お部屋探しは続いている（断り・お別れではない）。
+ * - 対象は指示語（そちらの物件）・順番（1枚目）・物件名詞（〜の戸建・〜号室）・建物名（カタカナ主体／直近スタッフ文に出た名前）のいずれか
+ * - 条件・設備・地名（尼崎・オートロック・家賃）は外す（条件の話）。質問（？・ですか）は外す
+ * - お部屋探し自体の終了（SEARCH_END_RE）がある時は null（断り側）
+ * opts.recentStaffText: 直近のスタッフ発言（物件送付文）。漢字の建物名はここに出た時だけ物件として扱う
+ */
+export function detectPropertyPass(text: string, opts: { recentStaffText?: string } = {}): PropertyPass | null {
+  const raw = (text ?? "").trim();
+  if (!raw || SEARCH_END_RE.test(raw)) return null;
+  const staff = opts.recentStaffText ?? "";
+  // 漢字の名前は直近スタッフ文で「その名前＋建物の語／号室」として出た時だけ物件名とみなす（「尼崎全域から」の尼崎は地名）
+  const namedInStaff = (bare: string) => {
+    if (bare.length < 2 || !staff) return false;
+    const esc = bare.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`${esc}[^\\n！!。、]{0,20}?(?:号室|戸建|マンション|ハイツ|コーポ|レジデンス|アパート|貸家|ビル|荘|[0-9０-９]{3,4})`).test(staff);
+  };
+  for (const lineRaw of raw.split(/\n|。/)) {
+    const line = lineRaw.trim();
+    if (!line || /[?？]|ですか|ますか|でしょうか/.test(line)) continue;
+    const m = PASS_LINE_RE.exec(line);
+    if (!m) continue;
+    const obj = m[1].trim().replace(/^(?:あと|それと|すみません|すいません|ごめんなさい)[、,\s]*/, "");
+    if (!obj || PASS_NON_PROPERTY_OBJ_RE.test(obj)) continue;
+    const bare = obj.replace(/の(?:物件|お?部屋)$/, "");
+    if (PASS_DEMONSTRATIVE_RE.test(obj)) return { object: obj, basis: "demonstrative", line };
+    if (PASS_ORDINAL_RE.test(obj)) return { object: obj, basis: "ordinal", line };
+    if (PASS_PROPERTY_NOUN_RE.test(obj) && !PASS_CONDITION_OBJ_RE.test(bare)) return { object: obj, basis: "property_noun", line };
+    if (PASS_CONDITION_OBJ_RE.test(bare)) continue;
+    if (PASS_BUILDING_NAME_RE.test(bare) || namedInStaff(bare)) return { object: bare, basis: "named", line };
+  }
+  // 物件の指し示しと見送りの語が別の行にある形（「そちらの物件拝見しましたが\n今回はやめておきます」→ 実送信は次の物件を送った＝探索継続）
+  const ref = PASS_DEMONSTRATIVE_PHRASE_RE.exec(raw);
+  if (ref) {
+    const verbLine = raw.split(/\n|。/).map((s) => s.trim()).find((s) => s && !/[?？]|ですか|ますか|でしょうか/.test(s) && PASS_SPLIT_VERB_RE.test(s));
+    if (verbLine) return { object: ref[0], basis: "demonstrative", line: verbLine };
+  }
+  return null;
+}
+/** 送付物件の指し示し（そちらの物件・こちらのお部屋） */
+const PASS_DEMONSTRATIVE_PHRASE_RE = /(?:そちら|その|この|こちら)の?(?:物件|お部屋|部屋)/;
+/** 指し示しと別行の見送り語（今回は／一旦 付き、または言い切り） */
+const PASS_SPLIT_VERB_RE = /(?:今回は|一旦|ちょっと)?\s*(?:やめ(?:とき|てお|ておき)ます|見送(?:ります|らせて)|(?:なし|無し)で(?:お願い)?|結構です)/;
 /** 顧客自身が会話を締めるお礼（お世話になりました／今までありがとう／ご縁が無かった） */
 const CUST_FAREWELL_SELF_RE = /お世話になりました|今までありがとう|今まで有難う|ご縁が(?:なかった|無かった)/;
 
@@ -757,8 +836,15 @@ export function classifyCustomerResponse(
   }
   // 2026-09-10 Fable5 Sさん事例: 前向き反応の下位種別（T1 評価語は直前が資料送付系の時だけ／T2 内見明示は無条件）
   const positive = resolvePositive(sub, staff, flags.ledger ?? null);
+  // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した（探索継続）。物件を送った後だけ判定する。
+  //   その行は断り（お別れ）にも条件変更にもしない（「こちらの物件は大丈夫です」は断り語彙に当たるが、お部屋探しは続いている）
+  const sentAny = (flags.ledger?.facts.propertiesSentCount ?? 0) > 0 || staff.kind === "property_send" || staff.kind === "check_result";
+  const pass = sentAny ? detectPropertyPass(raw, { recentStaffText: flags.recentStaffText ?? "" }) : null;
+  const isPassLine = (p: string) => !!pass && (p.includes(pass.line) || pass.line.includes(p));
+  const rawForCond = pass ? raw.replace(pass.line, "") : raw;
+  if (pass) put("property_pass", `${pass.basis}:${pass.object}`);
   // ① 上位フラグ（route.ts 計算済み。同名述語を二重実装しない）
-  if (flags.negativeKind === "withdrawal") put("decline", "flag:withdrawal");
+  if (flags.negativeKind === "withdrawal" && !pass) put("decline", "flag:withdrawal");
   if (flags.isConditionChangeRequest || flags.isConditionPresented) put("condition_change", flags.isConditionPresented ? "flag:isConditionPresented" : "flag:isConditionChangeRequest");
   // 2026-09-12 竹内（あや事例）: お客様が条件フォーム（①〜⑧・スタッフのヒアリング定型に記入して返したもの）を送ってくれた＝条件の提示。
   //   旧: route のフラグが立たない形（「（〇〇さんご希望のお部屋探しご条件）①ご入居時期 …」）だと other／question になり、
@@ -767,7 +853,8 @@ export function classifyCustomerResponse(
   // ② 行ごとの決定論。「感謝1行＋懸念1行」は最も強い1行で決める（末尾優先／先頭優先を両方避ける）
   for (const p of lines) {
     if (PURE_ACK_SENT_RE.test(p)) { put("ack_only", p); continue; }
-    if (CUST_DECLINE_RE.test(p)) put("decline", p);
+    if (isPassLine(p)) { /* 物件の見送りの行は断りにしない */ }
+    else if (CUST_DECLINE_RE.test(p)) put("decline", p);
     // 2026-09-11 統合設計（経路D）: route のフラグ（negativeKind）が無い経路（check-reply / final-check 再計算）でも
     //   断り語彙（CUST_WITHDRAWAL_RE＝route と同一定数）で decline を立てる。フラグがある経路は route の判定（リスケ除外等）を尊重する
     else if (flags.negativeKind === undefined && CUST_WITHDRAWAL_RE.test(p) && !CUST_NOT_WITHDRAWAL_RE.test(p)) put("decline", p);
@@ -783,7 +870,7 @@ export function classifyCustomerResponse(
   // ②' 2026-09-09 Fable5: 条件の宣言形（「2LDKで探してまして」「阿波座・本町で2LDK 17万以内でお願いします」）は flag/brain が無い経路
   //    （check-reply / final-check 再計算）でも condition_change に寄せる。断り・質問・懸念・前向き・日程・決定が同居する時は付けない
   if (!found.has("condition_change") && !found.has("decline") && !found.has("question") && !found.has("concern") && !found.has("positive")
-    && sub.kinds.includes("condition") && !sub.kinds.includes("schedule") && !sub.kinds.includes("decision") && CUST_CONDITION_STATEMENT_RE.test(raw)) {
+    && sub.kinds.includes("condition") && !sub.kinds.includes("schedule") && !sub.kinds.includes("decision") && CUST_CONDITION_STATEMENT_RE.test(rawForCond)) {
     put("condition_change", "regex:condition_statement");
   }
   // ③ 往復文脈: スタッフが直前に質問していれば、了承以外の短文は「回答」（「ついてます」「今無事終わりました」）
@@ -797,7 +884,9 @@ export function classifyCustomerResponse(
     const anchoredConcern = anchorBrainConcern(b.customer_concern, raw);
     if (!found.has("concern") && anchoredConcern) put("concern", `brain:customer_concern=${anchoredConcern}`);
     if (!found.has("question") && (b.customer_questions?.length ?? 0) > 0) put("question", `brain:customer_questions[${b.customer_questions!.length}]`);
-    if (!found.has("condition_change") && b.condition_change_type && b.condition_change_type !== "none") put("condition_change", `brain:condition_change_type=${b.condition_change_type}`);
+    // 物件の見送りだけの発言を brain が条件変更と読んでも条件変更にしない（見送りの行を除いて条件の宣言が残る時だけ）
+    if (!found.has("condition_change") && b.condition_change_type && b.condition_change_type !== "none"
+      && !(pass && !CUST_CONDITION_STATEMENT_RE.test(rawForCond))) put("condition_change", `brain:condition_change_type=${b.condition_change_type}`);
     // ④-b 旧実装の `b.hesitancy_pattern === "concern"` は HESITANCY_PATTERNS に存在しない値で**永久に false**（死んだ条件）。
     //     正しい値 thinking / callback / undecided は一切使われていなかった。thinking 側に合流させる
     if (!found.has("thinking") && (b.hesitancy_pattern === "thinking" || b.hesitancy_pattern === "callback" || b.hesitancy_pattern === "undecided")) {
@@ -839,6 +928,8 @@ export function classifyCustomerResponse(
     // 型上 object: string が必須＝上の ⑤ で保証済み（non-null assertion は仕様の表明）
     return { kind: "concern", object: concernObject!, secondary, evidence: ev, source, positive: positiveOut, questionForm };
   }
+  // 物件の見送りは外した物件（お客様の語のまま）が対象
+  if (primary === "property_pass") return { kind: primary, secondary, object: pass!.object, evidence: ev, source, positive: positiveOut, questionForm };
   return { kind: primary, secondary, object: concernObject, evidence: ev, source, positive: positiveOut, questionForm };
 }
 
@@ -1466,6 +1557,22 @@ export const PAIR_MATRIX: PairRule[] = [
     example: "はい😊！！\n募集状況確認出来次第ご連絡させて頂きます！！",
     length: "40〜90字", closer: "none", nanisotsu: false },
 
+  // ── 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した（探索継続）。
+  //    実送信「かしこまりました！！\nフジパレスは対象から外し、引き続き物件お探しさせて頂きます！！\n新着でKENYOUさん達にオススメ出来るお部屋が募集に出次第お送りさせて頂きます！！\n何卒よろしくお願い致します！！」
+  //    ／「こちらの物件は大丈夫です😭 また、違う物件探して見ます！」→「かしこまりました！！\n新着でオススメできるお部屋で次第随時お送りさせていただきます😊！！」。
+  //    旧: セルなし → 1通前の brain 戦略（もう1件の内覧日確定）で「住之江…を中心に進めさせて頂きます」になった。1件を外した＝残りを選んだ、ではない ──
+  { id: "ANY_PROPERTY_PASS", staff: "*", customer: "property_pass", precedence: "override_wait",
+    tpoLabel: "送付物件の見送り（探索継続）",
+    direction: "お客様は我々が送った物件のうち「{object}」を外した。お部屋探しは続いている（断り・お別れではない）。①「かしこまりました！！」 ②外した物件をお客様の語のまま「{object}は対象から外し、引き続き物件お探しさせて頂きます！！」（指示語や順番で外された時は「引き続き物件お探しさせて頂きます！！」だけでよい） ③任意「新着で{name}にオススメ出来るお部屋が募集に出次第お送りさせて頂きます！！」 ④任意「何卒よろしくお願い致します！！」。お客様は残りの送付物件を選んだとは言っていないので、残りの物件を中心に進める・残りの物件で内覧日を調整する・申込へ進める文は書かない（残りの物件について質問されていればその質問にだけ答える）。60〜140字",
+    mustInclude: [
+      { label: "探索継続の宣言（引き続きお探し／新着が出次第お送り）", detect: /引き続き|新着|(?:出|で|出来|でき)次第|随時|お探し|ピックアップ|お調べ/,
+        fix: "「引き続き物件お探しさせて頂きます！！」または「新着で{name}にオススメ出来るお部屋が募集に出次第お送りさせて頂きます！！」を1文入れる" },
+    ],
+    mustNot: ["残りの送付物件をお客様が選んだ前提の文（〜を中心に進めさせて頂きます／〜で進めさせて頂きます／〜の内覧日の調整）", "申込誘導", "お別れ・扉の文（またお部屋探しの際は／この度はありがとうございました）", "外した物件の良さの再説明・引き留め", "謝罪", "条件の聞き返し"],
+    // 他のお客様の物件名は書かない（竹内方針2）。外した物件はこのお客様の語（{object}）で埋める
+    example: "かしこまりました！！\n{object}は対象から外し、引き続き物件お探しさせて頂きます！！\n新着で{name}にオススメ出来るお部屋が募集に出次第お送りさせて頂きます！！\n何卒よろしくお願い致します！！",
+    length: "60〜140字", closer: "none", nanisotsu: false },
+
   { id: "ANY_DECLINE", staff: "*", customer: "decline", precedence: "after_wait",
     tpoLabel: "ネガ文脈（顧客自身の断り）",
     direction: "既存 withdrawal direction をそのまま採用",
@@ -1557,6 +1664,7 @@ export const STAFF_KIND_JA: Record<StaffTurnKind, string> = {
 export const CUSTOMER_KIND_JA: Record<CustomerResponseKind, string> = {
   concern: "物件への懸念", positive: "前向き", thinking: "検討中", will_send_later: "後日物件を送る予告", question: "質問",
   decline: "断り", condition_change: "条件変更", answer: "質問への回答", ack_only: "了承のみ", other: "その他",
+  property_pass: "送付物件の見送り（探索継続）",
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -1620,7 +1728,9 @@ export function resolveClosing(
   const sf = (lastStaffText ?? "").match(STAFF_FAREWELL_RE);
   if (sf) return { kind: "farewell", source: "staff_farewell", evidence: sf[0] };
   const prior = normalizeCustomerText(priorCustomerText);
-  if (prior && (CUST_WITHDRAWAL_RE.test(prior) || CUST_DECLINE_RE.test(prior)) && !CUST_NOT_WITHDRAWAL_RE.test(prior))
+  // 1つ前が物件の見送り（「こちらの物件は大丈夫です」）なら断りではない＝その後のお礼は締めではない
+  if (prior && (CUST_WITHDRAWAL_RE.test(prior) || CUST_DECLINE_RE.test(prior)) && !CUST_NOT_WITHDRAWAL_RE.test(prior)
+    && !detectPropertyPass(prior))
     return { kind: "farewell", source: "prior_decline", evidence: "直前の顧客発言が断り" };
   return NO_CLOSING;
 }
@@ -1766,7 +1876,8 @@ export function selectPairExample(pair: PairContext, customerMessage: string): {
 /** トークン置換のみ（{object}/{fix}/{redo}/{ledger}/{sentNames}/{positiveEvidence}/{namedProperty}/{viewingOffer}/{pickupRoundNote}）。
  *  mustNot（禁止パターンの引用「〇〇さんご都合…」の意味を変えない）はこちらだけを通す。{name} は fillNameSlot が助詞ごと扱う */
 export function fillPairTokens(s: string, pair: PairContext): string {
-  const object = pair.customer.kind === "concern" ? pair.customer.object : (pair.substance.concerns[0]?.phrase ?? "");
+  const object = pair.customer.kind === "concern" || pair.customer.kind === "property_pass"
+    ? (pair.customer.object ?? "") : (pair.substance.concerns[0]?.phrase ?? "");
   // fix は「顧客が書いた対象語」から決定論で導く（成約データに無い文を作らないため、汎用フォールバックは持たない）
   const fixFromObject = (o: string): string =>
     CONCERN_RULES.find((r) => r.strongRe?.test(o) || r.topicRe?.test(o))?.fix ?? "";

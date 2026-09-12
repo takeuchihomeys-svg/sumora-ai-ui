@@ -97,6 +97,8 @@ import {
   type BrainConversationScope, type CellConflict,
   // 2026-09-11 統合設計（返信生成×最終チェックの衝突解消）: ピックアップ再宣言ゲートの解除判定・必須要素の保護・顧客名スロット・断り語彙の単一真実源
   resolvePickupGate, isCellRequiredSentence, fillNameSlot, CUST_WITHDRAWAL_SRC,
+  // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した（探索継続）の判定。断り判定の除外・分類・brain 戦略の抑止が同じ関数
+  detectPropertyPass,
 } from "@/app/lib/reply-context";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
@@ -3529,6 +3531,10 @@ export async function POST(req: NextRequest) {
       const msg = (message ?? "").trim();
       if (msg.length === 0) return none;
       if (isConditionPresented || isConditionChangeRequest) return none;
+      // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した（「こちらの物件は大丈夫です」「フジパレスは無しで」）はお部屋探しの継続＝断り（お別れ）ではない。
+      //   classifyCustomerResponse が property_pass を立て、ANY_PROPERTY_PASS セル（探索継続）で返す
+      if (((ledgerForCtx?.facts.propertiesSentCount ?? 0) > 0 || lastStaffTurn.kind === "property_send" || lastStaffTurn.kind === "check_result")
+        && detectPropertyPass(msg, { recentStaffText: lastStaffMsgForSearch || tpoLatestStaffText || "" })) return none;
       // 2026-09-11 統合設計（経路D）: 断りの語彙は reply-context の CUST_WITHDRAWAL_SRC に一本化（classifyCustomerResponse・resolveClosing と同一定数）
       //   G10（2026-09-08 Fable5）の「退去・解約・引越しは対象名詞必須」、内覧に行けなくなった（isReschedule が先に除外）の規則も同定数に移設済み
       const WITHDRAWAL_SRC = CUST_WITHDRAWAL_SRC;
@@ -3610,6 +3616,8 @@ export async function POST(req: NextRequest) {
       brain: brainLocalFresh ? brainLocal : null,       // conversation-scope は型として渡せない
       // 2026-09-10 Fable5 Sさん事例: 送付済み物件名との照合（物件名のみの短文を前向き反応に昇格させる一次証拠）
       ledger: ledgerForCtx,
+      // 2026-09-12 竹内（KENYOU 事例）: 物件の見送りで漢字の建物名を直近の物件送付文と照合する
+      recentStaffText: lastStaffMsgForSearch || tpoLatestStaffText || "",
     });
     // ── 2026-09-09 Fable5 みく事例: ヘッジ許容（探索済み証拠 > 顧客の疑問形質問 > 禁止）。pairContext より先に計算し PAIR_MATRIX の探索済みセル選択にも使う
     //   生成（latent_intent / winning_pattern / closing_strategy / customer_questions / conditionDirection / 【姿勢】）・検査（final-check runHedgeChecks）・tpo_debug が同一 verdict
@@ -3855,6 +3863,18 @@ export async function POST(req: NextRequest) {
     // フォールバック戦略）は注入されない（brainGuidanceNote 非空をシグナルとして抑制される）。
     const brainGuidanceNote = (() => {
       if (!brainMeta) return "";
+      // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した（探索継続）場面では、前回までの戦略（もう1件の内覧日確定・申込へ導く・
+      //   customer_intent=decision・next_steps の内覧日3枠・template_hint 内覧日アポ）を注入しない。
+      //   旧: 「フジパレスは無しで」が brain の再分析対象外で cached になり、1通前（住之江内覧可能でしょうか）の戦略が「最優先・返信末尾に1文」
+      //   として入り「住之江…を中心に進めさせて頂きます」になった。1件を外した＝残りを選んだ、ではない。
+      //   ヘッダーは「AIX-META戦略」のまま（補助メタにすると ai_summary 由来の closingNote／T3 フォールバック戦略が注入されるため）
+      if (pairContext.customer.kind === "property_pass") {
+        return [
+          "【🧠 AIX-META戦略 — この場面の指示（送付物件の見送り・探索継続）】",
+          `- お客様は送付物件のうち「${pairContext.customer.object ?? "1件"}」を外した。お部屋探しは続いている（断り・お別れではない）。お客様は残りの送付物件を選んだとは言っていない`,
+          "- ⛔ 前回までの分析の戦略（残りの物件の内覧日の調整・内覧の確定・申込へ導く・「〜を中心に進めさせて頂きます」）はこの返信に使わない。返信の方向性と必須要素は【往復文脈】の指示に従う",
+        ].join("\n");
+      }
       // S-3: action は鮮度ゲート済みの effectiveAction を基準にする（stale action を「必須」として注入しない）
       const hasAction = !!effectiveAction;
       const hasStrategy = !!(brainMeta.closing_strategy || brainMeta.next_steps?.length);

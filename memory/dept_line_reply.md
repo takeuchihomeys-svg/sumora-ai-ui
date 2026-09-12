@@ -4,6 +4,13 @@
 
 ---
 
+## 送付物件の一部の見送り＝探索継続（竹内・KENYOU 事例・2026-09-12）— 黄金ルール
+- **1件を外した＝残りの物件を選んだ、ではない**。2件送付後「フジパレスは無しでお願いします」の正解（実送信）は「かしこまりました！！ フジパレスは対象から外し、引き続き物件お探しさせて頂きます！！ 新着で…出次第お送りさせて頂きます！！ 何卒…」。下書きは「住之江区平林南2丁目戸建を中心に進めさせて頂きます」になっていた
+- **原因（3段）**: ①返信の分類がどれにも当たらず other・セルなし ②ブレインはこの発言を再分析せず cached（INCREMENTAL_BYPASS_RE に無い）→ 1通前（住之江内覧可能でしょうか）の reply_direction「住之江物件の内覧日を確定」・closing_strategy・customer_intent=decision・next_steps（内覧日3枠）が残った ③generate-reply の brainGuidanceNote が stale でも会話スコープの戦略を「最優先・返信末尾に1文」で注入。さらに「こちらの物件は大丈夫です😭 また違う物件探して見ます」は断り語彙に当たりお別れの型（ANY_DECLINE）になっていた（実送信は「新着出次第随時お送り」）
+- **判定は1関数** `detectPropertyPass`（reply-context.ts）: 指示語（そちらの物件・ここ）／順番（1枚目）／物件名詞（〜戸建・〜号室）／建物名（カタカナ主体、漢字は直近スタッフ文に建物として出た時だけ）＋「は無しで／はやめときます／は大丈夫です／を外して」。地名・設備・条件語（尼崎・オートロック・家賃）、申込・内覧の取消、質問、お部屋探し自体の終了（SEARCH_END_RE）は対象外。物件送付後だけ
+- **使う場所**: classifyCustomerResponse（新 kind `property_pass`・PRIORITY は質問・懸念の後）→ セル `ANY_PROPERTY_PASS`（override_wait）／generate-reply negativeDetail（断りから除外）／brainGuidanceNote（この場面は前回戦略を注入しない）／brain-core（isIncrementalBypass で必ず再分析・current_property をその発言に出ない物件なら null・customer_intent decision/positive→desire・プロンプト ルール⑩）／resolveClosing（1つ前が見送りなら締めにしない）
+- 過去全顧客発言 7,596 通で当たったのは5通、全て見送り（誤検出0）。テスト `property-pass.test.ts`（20件）。回帰 25/767=3.3% 変化なし
+
 ## AIX のセットはブレインが判断する（竹内方針・統合設計 段1・2026-09-12）— 黄金ルール（下の方針A を上書き）
 - **AIX をセットするか・どの AIX か・check_pattern・enforcement はブレイン（brain-core analyzeConversation）だけ**。`resolveReplyAixDecision`（aix-reply-set.ts）はブレインの判断（suggested_aix_meta ?? last_brain_meta）を読んで形を整えるだけ。fresh（analyzed_msg_ts ≥ 最新顧客発言・cached/optional でない）の時だけ AIX をセット。stale/cached/action='' は AIX なし。場面表・断言コードから AIX を足さない
 - 場面の検出は `app/lib/aix-scene-evidence.ts` detectAixSceneEvidence（**証拠**）。使い道は ①ブレインの分析モード格上げ（brain-analysis-mode.ts decideAnalysisMode: 新しい顧客発言に証拠 or 前回 action あり → cached→incremental。ログ `brain:mode` upgradeReason）②本文の安全（resolveBodySafety: 橋渡し・禁止・確認約束の根拠 S1/S2/S3）
