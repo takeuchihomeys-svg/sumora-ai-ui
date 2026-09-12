@@ -16,6 +16,8 @@ import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
+// 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
+import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "@/app/lib/move-out-context";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
@@ -2117,6 +2119,10 @@ ${history}`;
     // ※クオリティゲート（採択率<30%抑制）の前に置くこと。後に置くと矯正がゲートを素通りする。
     // 監査FIX(2026-08-20): messages.image_type（Vision分類）が物件系画像（物件写真/間取り図）を
     // 示す場合は矯正しない（acknowledge_check=空室確認が正解の局面。盲目仮定は未分類時のみ適用）
+    // 2026-09-12 竹内（Sさん事例）: 同じ連投に「空いているか確認お願いしたいです」等の物件確認の依頼（文字）がある時は矯正しない。
+    //   画像の種類（image_type）は webhook が画像を取得・読み取りしてから埋めるため、画像受信直後のブレイン実行では常に未設定＝
+    //   物件の画像8枚＋確認依頼でも、1回だけ「見積書送る」に矯正されていた（10:20:50 の実行）
+    const turnAsksPropertyCheck = unrepliedTurn.text.trim().length > 10 && !!sceneEvidence && /^S[123]_/.test(sceneEvidence.scene);
     if (
       (finalAix === "acknowledge_check" || finalAix === null) &&
       lastCustomerMsg?.text &&
@@ -2124,7 +2130,8 @@ ${history}`;
       daysSinceLastCustomerMsg !== null &&
       daysSinceLastCustomerMsg <= 3 &&
       lastCustomerMsg.image_type !== "property_photo" &&
-      lastCustomerMsg.image_type !== "floor_plan"
+      lastCustomerMsg.image_type !== "floor_plan" &&
+      !turnAsksPropertyCheck
     ) {
       finalAix = "estimate_sheet";
       decisionSource = "correction:image_only";
@@ -2214,7 +2221,15 @@ ${history}`;
     //   それを履行する AIX が次にやること（見積書の宣言→見積書送る／今ピックアップする宣言→物件ピックアップした）。
     //   規則は aix-task-link.resolveStaffPromiseAix（宣言の判定は行動台帳と同じ）。スタッフの宣言送信直後に send-line-message が
     //   このブレインを再実行する（forceIncremental）→ AIX要対応に登録され売上番長グループへ「〇〇さん → AIX【見積書送る】」
-    const promiseAix = resolveStaffPromiseAix(brainLedger.facts, [...typedMessages].reverse()); // typedMessages は新しい順 → 古い順で渡す
+    // 2026-09-12 竹内（Sさん事例）: 募集状況等の確認の宣言 → AIX【物件確認した】。お客様から物件確認の依頼があった時だけ
+    //   （判定は customerRequestedPropertyCheck＝line-tasks の物件確認タスクと同じ。スタッフの宣言より前の顧客の連投を見る）
+    const messagesOldestFirst = [...typedMessages].reverse(); // typedMessages は新しい順 → 古い順で渡す
+    const promiseAix = resolveStaffPromiseAix(brainLedger.facts, messagesOldestFirst, {
+      customerRequestedCheck: customerRequestedPropertyCheck({
+        recentMessages: messagesOldestFirst.map((m) => ({ sender: m.sender, text: m.text })),
+        sentPropertyCount: brainLedger.facts.propertiesSentCount,
+      }),
+    });
     if (promiseAix) {
       finalAix = promiseAix.action;
       decisionSource = `promise:${promiseAix.kind}`;

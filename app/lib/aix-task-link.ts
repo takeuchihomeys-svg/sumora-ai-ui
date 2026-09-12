@@ -32,17 +32,25 @@ export function taskTypesCompletedByAix(aixType: string | null | undefined): str
  *   会話の最後がスタッフの宣言（まだ履行していない）の時だけ:
  *     見積書の宣言（estimate_declared）            → estimate_sheet（見積書送る）
  *     今ピックアップする宣言（pickup_declared）      → property_send（物件ピックアップした）
+ *     募集状況等の確認の宣言（confirmation_promised）→ property_check_result（物件確認した）
+ *       ※お客様から物件確認の依頼があった時だけ（opts.customerRequestedCheck。「物件確認したもお客さんから依頼があった場合」）。
+ *         2026-09-12 竹内（Sさん事例）: 物件の画像8枚＋「空いているか確認お願いしたいです」→ スタッフ「お送り頂きました物件、募集状況確認させて頂きます😊！！
+ *         確認出来次第ご連絡させて頂きます！！」→ 旧: AIX が何もセットされなかった（約束の種類が見積書・ピックアップだけだった）。
+ *         初期費用の割引・交渉の確認は物件確認ではないので対象外
  *   「新着が出次第お送り」のような条件付き（次第）の宣言は、いつ届けるか決まっていないので対象外（毎回の締めに AIX が付くのを防ぐ）。
+ *   （確認の「確認出来次第ご連絡」は届ける中身＝確認結果が決まっているので対象）
  *   宣言の判定は action-ledger（classifyStaffTextForLedger・buildActionLedger）と同じ結果を使う。
  */
 export function resolveStaffPromiseAix(
   facts: {
-    lastStaffEntry: { kind: string; status: string; evidence?: string | null } | null;
+    lastStaffEntry: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null } } | null;
     estimatePromisedUnfulfilled: boolean;
     pickupPromisedUnfulfilled: boolean;
+    confirmationPromisedUnfulfilled?: boolean;
   },
   messages: ReadonlyArray<{ sender: string; text?: string | null }>,
-): { action: "estimate_sheet" | "property_send"; kind: "estimate" | "pickup" } | null {
+  opts: { customerRequestedCheck?: boolean } = {},
+): { action: "estimate_sheet" | "property_send" | "property_check_result"; kind: "estimate" | "pickup" | "check" } | null {
   const last = [...messages].reverse().find((m) => {
     const t = (m.text ?? "").trim();
     return t && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(t);
@@ -52,5 +60,7 @@ export function resolveStaffPromiseAix(
   if (!e || e.status !== "promised") return null;
   if (e.kind === "estimate_declared" && facts.estimatePromisedUnfulfilled) return { action: "estimate_sheet", kind: "estimate" };
   if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && !/次第/.test(e.evidence ?? "")) return { action: "property_send", kind: "pickup" };
+  if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled && opts.customerRequestedCheck
+    && !/割引|交渉/.test(e.detail?.object ?? "")) return { action: "property_check_result", kind: "check" };
   return null;
 }

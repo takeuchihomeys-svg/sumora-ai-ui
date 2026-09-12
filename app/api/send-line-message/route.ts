@@ -251,7 +251,9 @@ export async function POST(req: NextRequest) {
   //   売上番長グループへ「〇〇さん → AIX【見積書送る】」。宣言の判定は行動台帳と同じ classifyStaffTextForLedger
   if (message) {
     const promiseEntry = classifyStaffTextForLedger(message, null);
-    if (promiseEntry?.status === "promised" && (promiseEntry.kind === "estimate_declared" || promiseEntry.kind === "pickup_declared")) {
+    // 2026-09-12 竹内（Sさん事例）: 募集状況等の確認の宣言（「お送り頂きました物件、募集状況確認させて頂きます」）も対象
+    //   → ブレインが AIX【物件確認した】をセット（お客様から確認の依頼があった時だけ・aix-task-link.resolveStaffPromiseAix）
+    if (promiseEntry?.status === "promised" && (promiseEntry.kind === "estimate_declared" || promiseEntry.kind === "pickup_declared" || promiseEntry.kind === "confirmation_promised")) {
       const sentAtIso = new Date(Date.now() - 60_000).toISOString();
       after(async () => {
         try {
