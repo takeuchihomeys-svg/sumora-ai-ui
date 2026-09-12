@@ -163,3 +163,45 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
 export function isConfirmationScene(e: AixSceneEvidence | null | undefined): boolean {
   return !!e && (e.scene === "S1_vacancy" || e.scene === "S2_move_in" || e.scene === "S3_screening");
 }
+
+/**
+ * お客様から物件確認（募集状況・入居日・審査）の依頼があったか。
+ * 2026-09-12 竹内「物件確認したもお客さんから物件確認の依頼があった場合となる」:
+ *   物件確認タスク（→ AIX「物件確認した」）の自動作成はこの判定が true の時だけ。
+ *   旧: こちらが物件ピックアップ/物件オススメを送った直後に「次の工程」として自動作成 → 60日で 396件中 371件がこれ（依頼なし）。
+ * 見るのは「スタッフが今応えようとしている顧客の発言」＝末尾のスタッフ発言を除いた、最後の顧客発言のまとまりだけ（古い依頼で再作成しない）。
+ * 判定は本文の安全と同じ detectAixSceneEvidence / isConfirmationScene（S1 空室・S2 入居日・S3 審査）を使う（四者同名）。
+ */
+export function customerRequestedPropertyCheck(o: {
+  /** oldest-first */
+  recentMessages: ReadonlyArray<{ sender: string; text?: string | null }>;
+  /** 送付物件数（省略時は URL を含むスタッフ発言数で近似。「こちら」「2件目」等の指示語を物件の特定として認めるため） */
+  sentPropertyCount?: number;
+}): boolean {
+  const msgs = [...o.recentMessages];
+  while (msgs.length && msgs[msgs.length - 1].sender !== "customer") msgs.pop();
+  const turn: string[] = [];
+  let hasCustomerImage = false;
+  for (let i = msgs.length - 1; i >= 0 && msgs[i].sender === "customer"; i--) {
+    const t = (msgs[i].text ?? "").trim();
+    if (/^\[画像\]/.test(t)) hasCustomerImage = true;
+    else if (t) turn.unshift(t);
+  }
+  if (!turn.length && !hasCustomerImage) return false;
+  const text = turn.join("\n");
+  const sentPropertyCount = o.sentPropertyCount
+    ?? o.recentMessages.filter((m) => m.sender === "staff" && /https?:\/\//.test(m.text ?? "")).length;
+  // ① 募集状況・入居日・審査の質問（本文の安全と同じ判定）
+  if (isConfirmationScene(detectAixSceneEvidence({ latestCustomerTurn: text, hasCustomerImage, sentPropertyCount }))) return true;
+  if (isConditionFormMessage(text)) return false;
+  const specBy = propertySpecifiedBy(text, { hasCustomerImage, sentPropertyCount });
+  // ② お客様が物件そのもの（画像・URL・号室）を送ってきた → 募集状況の確認と御見積書が業務の流れ（竹内 2026-09-10）
+  if (specBy === "image" || specBy === "url" || specBy === "room_no") return true;
+  // ③ 物件を指して（この物件・こちら・2件目 等）初期費用・見積・内覧・確認を頼んだ
+  const pointsAtProperty = specBy === "which_room" || specBy === "demonstrative" || SPECIFIC_PROPERTY_RE.test(text);
+  return pointsAtProperty && PROPERTY_REQUEST_RE.test(text);
+}
+/** 特定の物件を指す語（「物件」「マンション」単独の探索依頼は含めない） */
+const SPECIFIC_PROPERTY_RE = /(?:この|こちらの|その|さっきの|先ほどの)(?:物件|お?部屋)|物件資料/;
+/** 物件についての依頼語 */
+const PROPERTY_REQUEST_RE = /確認(?:して|お願い|頂け|いただけ|でき|出来)|知りたい|教えて|いくら|初期費用|見積|内覧|内見|見学|住所|気にな/;

@@ -247,7 +247,7 @@ const AIX_CAPABILITY_MAP = `
 - estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が物件画像だけを送ってきた（テキストなし・スクショのみ）／顧客が特定物件を気に入った（かつ新条件指定なし）／初期費用・総額を質問してきた時点で迷わず選ぶ
   【重要例外】顧客が同時に路線・駅名・家賃上限・徒歩分数・間取り・広さ等の新しい検索条件を示している場合は、気に入り表現があっても estimate_sheet を選ばない → property_send が正しい（条件変更が主題のサイン）。「家賃は〜万まで」という家賃予算の表明は「初期費用・総額の話題」ではない（家賃予算 ≠ 初期費用）。「○○がいい感じ」+「環状線のみで調べてほしい」「9万以下で探してほしい」等の組み合わせは常に property_send。
 - acknowledge_check: 顧客が物件URL・物件名を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと
-- property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時
+- property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
 - property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
 - application_push: 内覧完了後に顧客が前向きな時、または顧客が自分から申込の意思を示した時。審査不安の「解消」を先回りする場面でも有効（申込確定の言質は不要）。見積送付後の「ありがとうございます」「いいですね」等の前向き反応だけでは選ばない（内覧のご案内が先＝viewing_invite。黄金フロー順）
@@ -624,15 +624,16 @@ async function detectSignalBasedAixFallback(
     }
 
     // 信号3（見積送付済み — 信号1より先に評価）: 最終スタッフメッセージが見積書送付
-    // （estimate_sheet 完了直後・顧客未返信）→ acknowledge_check
-    // 直近AIXが estimate_sheet で、最終メッセージがスタッフ側（AIX生成）＝見積送付済みで顧客返信待ちの局面。
+    // （estimate_sheet 完了直後・顧客未返信）→ AIX なし（お客様の反応待ち）
     // ※信号1より後に置くと、送付済みでも custText の「見積」部分一致で estimate_sheet を二重提案してしまう。
+    // 2026-09-12 竹内: 旧は acknowledge_check（確認します）を返していたが、物件確認はお客様から依頼があった時だけ・
+    //   見積書の後は申込へでもない。見積送付後はお客様の反応を待ち、反応を見て判断する
     if (
       lastStaff?.is_aix_generated &&
       usedAixTypes[0] === "estimate_sheet" &&
       (!lastCustomer || lastStaff.created_at > lastCustomer.created_at)
     ) {
-      return "acknowledge_check";
+      return null;
     }
 
     // 信号0.96（見積・初期費用の明示質問 — brain一本化: deriveSuggestedAix Step 0.6 を移植）:

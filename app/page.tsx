@@ -4766,7 +4766,7 @@ export default function Home() {
           fetch("/api/line-tasks", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName, silent: true }),
+            body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName, silent: true, source: "ai_draft" }),
           }).then(async (r) => {
             if (!r.ok) return;
             const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
@@ -5172,7 +5172,7 @@ export default function Home() {
         fetch("/api/line-tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: selectedConversation.customerName, silent: true }),
+          body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: selectedConversation.customerName, silent: true, source: "staff_promise" }),
         }).then((r) => r.json()).then((data: unknown) => {
           const d = data as { ok: boolean; id?: string; created_at?: string };
           if (d.ok && d.id && d.created_at) {
@@ -10026,28 +10026,8 @@ export default function Home() {
                     setDismissedPropertyRecommendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
                   }
                   // property_sendタスクの完了POSTは上の共通ブロックで実施済み（二重POST防止）
-                  // property_checkタスクを自動作成（次の工程）- 予約送信時はスキップ
-                  if (!meta?.scheduled) {
-                    // property_checkタスクを自動作成（即時送信時のみ）
-                    const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
-                    if (!alreadyHasCheck) {
-                      fetch("/api/line-tasks", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName, silent: true }),
-                      }).then(async (r) => {
-                        if (!r.ok) return;
-                        const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
-                        if (d.ok && d.id && d.created_at) {
-                          setActiveTasks((prev) => {
-                            const existing = prev[convId] ?? [];
-                            if (existing.some((x) => x.task_type === "property_check")) return prev;
-                            return { ...prev, [convId]: [...existing, { id: d.id!, task_type: "property_check", created_at: d.created_at!, customer_name: customerName }] };
-                          });
-                        }
-                      }).catch(() => {});
-                    }
-                  }
+                  // 物件確認タスクは作らない（2026-09-12 竹内「物件確認したもお客さんから物件確認の依頼があった場合となる」）。
+                  //   旧: こちらが物件を送った直後に「次の工程」として自動作成 → お客様の依頼が無いのに「物件確認した」誘導が出ていた
                   // 紐付き顧客を「物件送った」状態に更新（即時・予約送信ともに実行）
                   // customers/page.tsx の「物件送った」(markSent) と同一経路。
                   // PATCH /api/property-customers に last_property_sent_at のみ送り、
@@ -10112,25 +10092,7 @@ export default function Home() {
                     }).catch(() => {});
                   }
                   // property_sendタスクの完了POST・ローカル除去は上の共通ブロックで実施済み（二重POST防止）
-                  // property_checkタスクを自動作成（次の工程：物件確認）
-                  const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
-                  if (!alreadyHasCheck) {
-                    fetch("/api/line-tasks", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName, silent: true }),
-                    }).then(async (r) => {
-                      if (!r.ok) return;
-                      const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
-                      if (d.ok && d.id && d.created_at) {
-                        setActiveTasks((prev) => {
-                          const existing = prev[convId] ?? [];
-                          if (existing.some((x) => x.task_type === "property_check")) return prev;
-                          return { ...prev, [convId]: [...existing, { id: d.id!, task_type: "property_check", created_at: d.created_at!, customer_name: customerName }] };
-                        });
-                      }
-                    }).catch(() => {});
-                  }
+                  // 物件確認タスクは作らない（2026-09-12 竹内: 物件確認はお客様から依頼があった時だけ。物件オススメ送信は依頼ではない）
                 }
               // estimate_sheet のタスク完了POSTは上の共通ブロックで実施済み（二重POST防止のため個別処理なし）
               : aixModalType === "viewing_invite"

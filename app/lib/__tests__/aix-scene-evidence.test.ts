@@ -2,7 +2,7 @@
 // 本文の安全（resolveBodySafety）・分析モード判定（decideAnalysisMode）の回帰テスト。
 // S1〜S5 の検出11ケースは aix-reply-set.test.ts（2c86c209）から期待値を変えずに移した（場面の検出は判断ではなく証拠になった）。
 // 実行: npx tsx app/lib/__tests__/aix-scene-evidence.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { detectAixSceneEvidence, type SceneEvidenceInput } from "../aix-scene-evidence";
+import { detectAixSceneEvidence, customerRequestedPropertyCheck, type SceneEvidenceInput } from "../aix-scene-evidence";
 import { resolveBodySafety } from "../aix-reply-set";
 import { decideAnalysisMode, type AnalysisModeInput } from "../brain-analysis-mode";
 
@@ -91,6 +91,39 @@ describe("分析モード判定（decideAnalysisMode）", () => {
   it("既存の incremental 条件（10件以上）はそのまま（upgradeReason なし）", () => {
     const x = decideAnalysisMode(modeBase({ msgsSinceLastFull: 10 }));
     expect(x.mode).toBe("incremental"); expect(x.upgradeReason).toBe(null);
+  });
+});
+
+describe("物件確認の依頼（2026-09-12 竹内: 物件確認したはお客様から依頼があった時だけ）", () => {
+  const S = (text: string) => ({ sender: "staff", text });
+  const C = (text: string) => ({ sender: "customer", text });
+  const req = (msgs: { sender: string; text: string }[]) => customerRequestedPropertyCheck({ recentMessages: msgs });
+  it("こちらが物件を送っただけ（お客様の発言は条件の話）→ 依頼なし", () => {
+    expect(req([C("梅田周辺で1LDKを探しています"), S("かしこまりました！！ピックアップさせて頂きます！！"), S("https://suumo.jp/chintai/bc_1/ ご査収ください")])).toBe(false);
+  });
+  it("見積書を送っただけ → 依頼なし", () => {
+    expect(req([C("ありがとうございます"), S("[画像]"), S("最大限割引しました初期費用の御見積書となります！！")])).toBe(false);
+  });
+  it("お客様が物件URLを送った → 依頼あり（スタッフの受付文の後でも、応えている相手の発言で判定）", () => {
+    expect(req([C("https://suumo.jp/chintai/bc_100505635971/ こちら空いてますか？"), S("募集状況確認させて頂きます！！")])).toBe(true);
+  });
+  it("送付物件への指示語＋空き質問 → 依頼あり", () => {
+    expect(req([S("https://suumo.jp/chintai/bc_2/"), C("2件目のお部屋まだ募集してますか？")])).toBe(true);
+  });
+  it("物件画像だけ送ってきた → 依頼あり", () => {
+    expect(req([S("ご希望条件お聞かせください"), C("[画像]")])).toBe(true);
+  });
+  it("この物件の入居日の質問 → 依頼あり（S2）", () => {
+    expect(req([S("https://suumo.jp/chintai/bc_3/"), C("この物件はいつから入居できますか？")])).toBe(true);
+  });
+  it("前向きな返事だけ（ありがとうございます）→ 依頼なし", () => {
+    expect(req([S("https://suumo.jp/chintai/bc_4/"), C("ありがとうございます！")])).toBe(false);
+  });
+  it("この物件の初期費用の依頼 → 依頼あり（実例: こちらの物件も初期費用見て頂くことは可能でしょうか）", () => {
+    expect(req([S("https://suumo.jp/chintai/bc_5/"), C("こちらの物件も初期費用見て頂くことは可能でしょうか？？")])).toBe(true);
+  });
+  it("物件の探索依頼（特定の物件を指していない）→ 依頼なし", () => {
+    expect(req([S("はじめまして"), C("梅田周辺のマンションで初期費用安い物件教えてください")])).toBe(false);
   });
 });
 

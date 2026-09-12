@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 
 const TASK_LABEL: Record<string, string> = {
   property_check: "物件確認",
@@ -85,11 +86,30 @@ export async function POST(req: NextRequest) {
     task_type: "property_check" | "property_send" | "estimate_sheet";
     customer_name: string;
     silent?: boolean; // true: LINE グループへのアナウンスをスキップ（自動作成時）
+    /** 自動作成の出どころ。staff_promise = スタッフが自分で「募集状況確認させて頂きます」等と送った（スタッフの判断なので確認不要） */
+    source?: "staff_promise" | "ai_draft";
   };
 
-  const { conversation_id, task_type, customer_name, silent } = body;
+  const { conversation_id, task_type, customer_name, silent, source } = body;
   if (!conversation_id || !task_type) {
     return NextResponse.json({ ok: false, error: "missing fields" }, { status: 400 });
+  }
+
+  // 2026-09-12 竹内「物件確認したもお客さんから物件確認の依頼があった場合となる」:
+  //   自動作成（silent）の物件確認タスクは、お客様から確認の依頼（物件の送付・募集状況・入居日・審査・初期費用等）があった時だけ作る。
+  //   スタッフがメニューから手動で依頼した時（silent なし）と、スタッフが自分で確認を約束して送った時（source=staff_promise）は
+  //   スタッフの判断なのでそのまま作る。
+  if (task_type === "property_check" && silent && source !== "staff_promise") {
+    const { data: recent } = await supabase
+      .from("messages")
+      .select("sender, text, created_at")
+      .eq("conversation_id", conversation_id)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    const oldestFirst = [...(recent ?? [])].reverse() as { sender: string; text: string | null }[];
+    if (!customerRequestedPropertyCheck({ recentMessages: oldestFirst })) {
+      return NextResponse.json({ ok: false, skipped: "no_customer_request" });
+    }
   }
 
   // 同じ会話・タイプで既にpendingなら重複作成しない
