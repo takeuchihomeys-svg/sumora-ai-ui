@@ -489,7 +489,9 @@ CREATE INDEX IF NOT EXISTS ai_reply_knowledge_embedding_idx ON ai_reply_knowledg
 -- 戻り値の型変更は CREATE OR REPLACE では不可のため既存関数を先に DROP する
 -- match_reply_knowledge: 4引数版(boost_state付き)を正本とする。3引数overloadはPGRST203の原因になるため削除。
 -- boost_state=NULLで呼び出すと従来の3引数版と同じ動作（後方互換）。
+-- ※ 正本は末尾の「RAG の厳密化」節（2026-09-13: 加点方式・source 返却）。戻り値の型が違うので再実行時の型エラー防止に先に DROP する
 DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer);
+DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer, text);
 CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
 RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text, created_at timestamptz)
 LANGUAGE sql STABLE AS $$
@@ -1121,7 +1123,9 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS was_edited BOOLEAN;
 --    （line 479 での定義は hypothesis_status が存在しない新規環境で失敗するため、
 --      hypothesis_status ADD COLUMN（line 802）の後にも再実行する）
 --    4引数版(boost_state付き)を正本として再定義。3引数overloadはDROPして解消（PGRST203防止）。
+--    ※ 正本は末尾の「RAG の厳密化」節（2026-09-13）。戻り値の型が違うので先に DROP する
 DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer);
+DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer, text);
 CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
 RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text, created_at timestamptz)
 LANGUAGE sql STABLE AS $$
@@ -2944,6 +2948,25 @@ BEGIN
   LIMIT match_count;
 END;
 $$;
+-- match_reply_knowledge 正本（2026-09-13 改善5）: boost_state 一致を「必ず先頭」から距離への 0.03 の加点へ
+--   （本番の問い24件で類似度上位30件との重なり 平均約9 → 約27）。source を返す（成約分析 closed_won_analysis の仮説上限の免除に使う）
+DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer, text);
+CREATE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
+RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity double precision, hypothesis_status text, created_at timestamptz, source text)
+LANGUAGE sql STABLE AS $$
+  SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
+    (1 - (ak.embedding <=> query_embedding))::float AS similarity,
+    ak.hypothesis_status,
+    ak.created_at,
+    ak.source
+  FROM ai_reply_knowledge ak
+  WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
+    AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
+  ORDER BY (ak.embedding <=> query_embedding)
+    - CASE WHEN boost_state IS NOT NULL AND ak.conversation_state = boost_state THEN 0.03 ELSE 0 END
+  LIMIT match_count
+$$;
+GRANT EXECUTE ON FUNCTION match_reply_knowledge(vector, integer, integer, text) TO anon, authenticated, service_role;
 ALTER FUNCTION match_reply_knowledge(vector, integer, integer, text) SET ivfflat.probes = 100;
 ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET ivfflat.probes = 100;
 ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET ivfflat.probes = 100;

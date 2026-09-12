@@ -19,6 +19,7 @@ import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { parseCheckpointOutput } from "@/app/lib/checkpoint-format";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
+import { inferTpoHint } from "@/app/lib/tpo-hint";
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
@@ -1156,72 +1157,23 @@ export async function analyzeConversation(
       .join(" ");
     // TPOラベル推定: AIX-METAから場面を特定してRAGクエリに明示（成約TPOパターン命中精度向上）
     const lastCustomerMsg = typedMessages.find(m => m.sender === "customer" && Boolean(m.text))?.text ?? "";
-    const tpoHint = (() => {
-      const intent = opts?.prevMeta?.customer_intent ?? "";
-      const action = opts?.prevMeta?.action ?? "";
-      const emotion = opts?.prevMeta?.customer_emotion ?? "";
-      const msg = lastCustomerMsg ?? "";
-      const lastStaffMsg = typedMessages.find(m => m.sender === "staff" && Boolean(m.text))?.text ?? null;
-      // 1. 申込後説明（state確定・最優先）
-      if (convStatus === "applying") return "申込後説明";
-      // 2. 拒否対応（ネガティブ意図は他条件より優先）
-      if (intent === "negative" || /やめ(とき)?ます|キャンセル|他(で|の会社)|見送り/.test(msg)) {
-        return "拒否対応";
+    // 2026-09-13 RAG 監査 改善5: TPO（場面）の判定は今回のお客様の未返信の連投を中心に（根拠は tpo-hint.ts）
+    const unrepliedTurnForTpo = (() => {
+      const out: string[] = [];
+      for (const m of typedMessages) { // 新しい順
+        if (m.sender === "staff") break;
+        if (m.sender === "customer" && m.text) out.unshift(m.text);
       }
-      // 3. 不安対応（審査・費用・契約への不安）
-      if (/不安|心配|審査.*(通|落)|落ち(る|たら)|大丈夫でしょうか/.test(msg) || /不安|心配|anxious|worried/.test(emotion)) {
-        return "不安対応";
-      }
-      // 4. 内覧調整（実際のaction値: viewing_invite / meeting_place）
-      if (
-        action === "viewing_invite" ||
-        action === "meeting_place" ||
-        /内覧|内見|見学|現地|待ち合わせ/.test(msg)
-      ) {
-        return "内覧調整";
-      }
-      // 5. 申込前クロージング（顧客側から申込意思・決断の表明）
-      if (/申(し)?込(み)?(たい|します|お願い)|契約したい|決め(ます|ました)|ここにします/.test(msg)) {
-        return "申込前クロージング";
-      }
-      // 6. 申込打診（AI側から申込を打診するアクション）
-      if (action === "application_push") return "申込打診";
-      // 7. 費用説明（初期費用・見積に関する質問）
-      if (/初期費用|見積|敷金|礼金|仲介手数料|保証(会社|料)|家賃.*(いくら|交渉)|費用.*(いくら|どのくらい|教えて)|総額/.test(msg)) {
-        return "費用説明";
-      }
-      // 8. 物件送付後（actionで確実に検出＋従来のlastStaffMsgフォールバック）
-      if (
-        action === "property_send" ||
-        action === "property_recommendation" ||
-        action === "estimate_sheet" ||
-        (lastStaffMsg && /ピックアップ|お部屋.*送|物件.*(紹介|送付|お送り)/.test(lastStaffMsg))
-      ) {
-        return "物件送付後";
-      }
-      // 9. 初回対応（スタッフ発言がまだない＝会話冒頭）
-      if (!lastStaffMsg || convStatus === "initial" || convStatus === "new") {
-        return "初回対応";
-      }
-      // 10. 感謝返し（明示的な感謝表現のみ。「了解です」等の誤マッチを防止）
-      if (
-        intent === "positive" &&
-        msg.length < 40 &&
-        /ありがとう|ありがとございます|感謝|助かり(ます|ました)|嬉しい/.test(msg)
-      ) {
-        return "感謝返し";
-      }
-      // 11. 検討中フォロー（相談意図・迷い・フォロー系アクション）
-      if (
-        intent === "consultation" ||
-        action === "follow_up" ||
-        action === "followup_revive" ||
-        /検討|迷って|考え(て|させて)|悩んで/.test(msg)
-      ) {
-        return "検討中フォロー";
-      }
-      return null;
+      return out.length ? out.join("\n") : lastCustomerMsg;
     })();
+    const tpoHint = inferTpoHint({
+      customerTurn: unrepliedTurnForTpo ?? "",
+      lastStaffMsg: typedMessages.find(m => m.sender === "staff" && Boolean(m.text))?.text ?? null,
+      convStatus,
+      prevIntent: opts?.prevMeta?.customer_intent ?? null,
+      prevAction: opts?.prevMeta?.action ?? null,
+      prevEmotion: (opts?.prevMeta as { customer_emotion?: string | null } | undefined)?.customer_emotion ?? null,
+    });
     const ragQueryInput = [
       tpoHint ? `[TPO:${tpoHint}]` : null,           // TPO場面明示（成約パターン命中精度向上）
       pcForRag?.personality_profile,                   // 顧客の人間性（winning_patterns.situation と近い）
