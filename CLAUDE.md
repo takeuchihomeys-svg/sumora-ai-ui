@@ -105,6 +105,14 @@ WHERE is_current = true AND 'ブレイン診断' = ANY(tags);
 ```
 先回りの道具: `npx tsx --env-file=.env.local scripts/find-brain-gaps.ts --days=30`
 
+### RAG・プロンプトキャッシュ・LLM 呼び出しを作る／直す時（汎用の点検表）
+どの機能でも使える型は `汎用` タグで引く（RAG の精度の監査手順・キャッシュの設計と点検・静かに壊れる箇所の見つけ方・pgvector/Supabase の落とし穴・LLM 呼び出しの出口の型）。新しい汎用の型を覚えたら `汎用` タグ付きで登録する。
+```sql
+SELECT title, insight FROM system_design_thinking
+WHERE is_current = true AND '汎用' = ANY(tags);
+```
+※ 設計知見の embedding は付いておらず（match_design_thinking はアプリから未使用）、引き方はこの SQL とタグ
+
 ---
 
 ## ノウハウ参照
