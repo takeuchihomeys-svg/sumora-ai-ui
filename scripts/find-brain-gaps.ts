@@ -7,6 +7,8 @@
 //     G3 判断の穴        … ブレインは分析したが AIX なし／別の AIX と判断し、スタッフは AIX を押した
 //     G4 約束→AIX の抜け … 最後がスタッフの宣言（約束）で、スタッフが次に AIX を押したのに、約束→AIX の規則が何も返さない（Sさん「募集状況確認させて頂きます」）
 //     G5 矯正の誤発火    … ブレインの決定論の矯正（decision_source=correction:*）が出た後、スタッフが別の AIX を押した（画像のみ→見積書）
+//     G6 古い事実の注入  … 会話のセーブデータ（conversation_checkpoints）が止まっている＝ブレイン・最終チェックが古い事実で動く
+//                          （2026-09-13: 出力の上限で JSON が切れ、長い会話ほど止まっていた。total − 最新の message_count_at_creation ≥ 15 を数える）
 //   件数の多い順に「穴の種類 × 押された AIX／顧客の分類」で束ね、例を数件ずつ出す（本文は先頭60字だけ。個人情報を含むので出力を共有しない）。
 //
 // 実行: npx tsx --env-file=.env.local scripts/find-brain-gaps.ts [--days=30] [--top=4] [--only=G1,G4]
@@ -21,7 +23,7 @@ const args = new Map<string, string>();
 for (const a of process.argv.slice(2)) { const m = /^--([^=]+)(?:=(.*))?$/.exec(a); if (m) args.set(m[1], m[2] ?? "true"); }
 const DAYS = Number(args.get("days") ?? "30");
 const TOP = Number(args.get("top") ?? "4");
-const ONLY = new Set((args.get("only") ?? "G1,G2,G3,G4,G5").split(","));
+const ONLY = new Set((args.get("only") ?? "G1,G2,G3,G4,G5,G6").split(","));
 /** brain_decision_logs に analyzed_msg_ts・decision_source が入り始めた時刻（これより前の押下は G2/G3/G5 の判定に使えない＝ログが無いだけで穴に見える） */
 const BRAIN_LOG_SINCE = Date.parse(args.get("brain-since") ?? "2026-09-12T03:54:00Z");
 
@@ -49,7 +51,7 @@ const isMedia = (s: string | null) => /^\[(?:画像|動画|スタンプ|ファ�
     if (!data || data.length < 1000) break;
   }
   const findings: Finding[] = [];
-  let pressCount = 0, staffReplyCount = 0, brainJudgedPress = 0;
+  let pressCount = 0, staffReplyCount = 0, brainJudgedPress = 0, g6Checked = 0;
   const queue = [...convIds];
   const worker = async () => {
     for (let cid = queue.shift(); cid; cid = queue.shift()) {
@@ -60,6 +62,19 @@ const isMedia = (s: string | null) => /^\[(?:画像|動画|スタンプ|ファ�
         sb.from("line_tasks").select("task_type, status, created_at, completed_at, result").eq("conversation_id", cid).limit(300),
       ]);
       if (m.error || a.error || l.error || tk.error) { console.warn("skip", cid, (m.error ?? a.error ?? l.error ?? tk.error)?.message); continue; }
+      // ── G6: セーブデータが止まっていないか（11通以上で未作成、または最新から15通以上進んでいる）──
+      if (ONLY.has("G6")) {
+        const [cnt, cp] = await Promise.all([
+          sb.from("messages").select("id", { count: "exact", head: true }).eq("conversation_id", cid),
+          sb.from("conversation_checkpoints").select("message_count_at_creation, created_at").eq("conversation_id", cid).order("checkpoint_index", { ascending: false }).limit(1).maybeSingle(),
+        ]);
+        const total = cnt.count ?? 0;
+        const at = (cp.data as { message_count_at_creation: number } | null)?.message_count_at_creation ?? 0;
+        if (total > 10 && total - at >= 15) {
+          findings.push({ gap: "G6 古い事実の注入", key: total - at >= 40 ? "セーブデータが40通以上遅れ" : "セーブデータが15通以上遅れ", cust: `全${total}通`, staff: at ? `セーブ ${at}通目まで` : "セーブ未作成", note: cid.slice(0, 8) });
+        }
+        g6Checked++;
+      }
       const msgs = ((m.data ?? []) as Msg[]).reverse().filter((x) => typeof x.text === "string");
       const aix = (a.data ?? []) as Aix[];
       const logs = (l.data ?? []) as Log[];
@@ -147,10 +162,10 @@ const isMedia = (s: string | null) => /^\[(?:画像|動画|スタンプ|ファ�
 
   console.log(`期間 ${DAYS} 日・会話 ${convIds.size}・押された AIX ${pressCount}（うちブレインの判断ログが揃った後で不一致 ${brainJudgedPress}）・手打ち返信 ${staffReplyCount}`);
   console.log(`※ G2/G3/G5 は ${new Date(BRAIN_LOG_SINCE).toISOString().slice(0, 16)} 以降の押下だけ（それ以前はログが無く判定できない）。G1/G4 は全期間`);
-  const gaps = ["G1 分類の穴", "G2 再分析の引き金の穴", "G3 判断の穴", "G4 約束→AIX の抜け", "G5 矯正の誤発火"].filter((g) => ONLY.has(g.slice(0, 2)));
+  const gaps = ["G1 分類の穴", "G2 再分析の引き金の穴", "G3 判断の穴", "G4 約束→AIX の抜け", "G5 矯正の誤発火", "G6 古い事実の注入"].filter((g) => ONLY.has(g.slice(0, 2)));
   for (const g of gaps) {
     const rows = findings.filter((f) => f.gap === g);
-    const denom = g.startsWith("G1") ? staffReplyCount : g.startsWith("G4") ? pressCount : brainJudgedPress;
+    const denom = g.startsWith("G1") ? staffReplyCount : g.startsWith("G4") ? pressCount : g.startsWith("G6") ? g6Checked : brainJudgedPress;
     console.log(`\n■ ${g}: ${rows.length} 件（${denom ? ((100 * rows.length) / denom).toFixed(1) : "0"}%）`);
     const byKey = new Map<string, Finding[]>();
     for (const r of rows) byKey.set(r.key, [...(byKey.get(r.key) ?? []), r]);
