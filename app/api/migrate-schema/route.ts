@@ -2901,7 +2901,7 @@ ALTER TABLE brain_aix_feedback DISABLE ROW LEVEL SECURITY;
 -- 登録・1件通知は brain-core runBrainAndNotify、完了は log-aix-usage、定時一覧は cron/announce-aix-actions
 CREATE TABLE IF NOT EXISTS aix_action_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  conversation_id UUID NOT NULL,
+  conversation_id TEXT NOT NULL,
   customer_name TEXT,
   action TEXT NOT NULL,
   check_pattern TEXT,
@@ -2915,6 +2915,8 @@ CREATE TABLE IF NOT EXISTS aix_action_items (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- conversations.id は TEXT（初版で UUID にしていたため揃える）
+ALTER TABLE aix_action_items ALTER COLUMN conversation_id TYPE TEXT USING conversation_id::text;
 CREATE UNIQUE INDEX IF NOT EXISTS aix_action_items_one_pending ON aix_action_items (conversation_id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS aix_action_items_status_done_at ON aix_action_items (status, done_at);
 ALTER TABLE aix_action_items DISABLE ROW LEVEL SECURITY;
