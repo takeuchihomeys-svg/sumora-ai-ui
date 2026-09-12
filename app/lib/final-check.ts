@@ -1513,12 +1513,13 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
         message: "本日の会話で冒頭挨拶は既に使用済みなのに定型挨拶で始めています",
         evidence: head.slice(0, 30), suggestion: `挨拶行を削除し ${gdl.opener === "none" ? "本題" : OPENER_JA[gdl.opener]} から始める` });
     }
-    // 7-d 夜間接頭辞は決定論で付与するもの
-    if (hasNight && (!expectsNight || /夜分遅く/.test(head))) {
+    // 7-d 夜間挨拶はお客様への返信に入れない（2026-09-12 竹内。後処理 banned-phrasing.stripNightGreeting で除去済みのはず）
+    if (hasNight) {
       issues.push({ pass: "rule_check", severity: ctx.isAutoSend ? "block" : "warning", code: "OPENING_GREETING_UNEXPECTED",
-        message: expectsNight ? "夜間挨拶は「夜遅くに失礼します！！」の形のみ（「夜分遅くに」は不可）" : "深夜帯（22:00〜04:59・会話連続中を除く）ではないのに夜間挨拶を書いています",
-        evidence: head.slice(0, 30), suggestion: expectsNight ? `先頭行を「${NIGHT_PREFIX}」に変更` : "夜間挨拶を削除" });
+        message: "お客様への返信に「夜遅くに／夜分遅くに失礼」は入れません",
+        evidence: head.slice(0, 30), suggestion: "夜間挨拶の一文を削除" });
     }
+    void expectsNight; void NIGHT_PREFIX;
     // 7-e 開口語（挨拶行・名前行を剥がした先頭）が decision の許容集合の外（enforceOpener と同名。無い場合は指摘しない＝足さない）
     const op = detectOpener(openingHead);
     if (op && !gdl.openerAllowed.includes(op.opener)) {

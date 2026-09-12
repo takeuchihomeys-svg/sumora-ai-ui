@@ -87,5 +87,18 @@ describe("置換後は検査に出ない（後処理と検査が同じ定義）"
   });
 });
 
+describe("2026-09-12 竹内（Aoi 事例）: 返信に夜間挨拶を入れない", () => {
+  it("N1 「夜遅くに失礼します！！Aoiさんお世話になっております！！」→ 夜間挨拶だけ除去", () => {
+    const r = normalizeBannedPhrasing("夜遅くに失礼します！！Aoiさんお世話になっております！！\nかしこまりました！！");
+    expect(r.text).toBe("Aoiさんお世話になっております！！\nかしこまりました！！"); expect(r.night).toBe(1);
+  });
+  it("N2 行単独の「夜分遅くに失礼致します！！」→ 行ごと除去", () => {
+    expect(normalizeBannedPhrasing("夜分遅くに失礼致します！！\nこちら初期費用の御見積書となります！！").text).toBe("こちら初期費用の御見積書となります！！");
+  });
+  it("N3 本文中の無関係な「夜」は残す（夜間の内覧も可能です）", () => {
+    expect(normalizeBannedPhrasing("夜間のご内覧も可能です！！").text).toBe("夜間のご内覧も可能です！！");
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

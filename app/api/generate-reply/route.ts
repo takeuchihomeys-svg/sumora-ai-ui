@@ -383,7 +383,7 @@ function detectSensitiveCase(text: string): string | null {
   return null;
 }
 
-// 検知時にドラフト冒頭へ付与する警告メタ（スタッフ向け・送信前に削除する目印）
+// 検知の目印（空でなければセンシティブ案件）。2026-09-12 以降は本文に付けず、最終チェックの SENSITIVE_CASE（要修正）に入れる
 function buildSensitiveGateNote(customerMessage: string): string {
   const kind = detectSensitiveCase(customerMessage);
   return kind
@@ -733,7 +733,7 @@ function buildGenerationMessages(
 
   // G30（2026-09-08 Fable5）: 挨拶は route.ts resolveGreeting() で決定論確定済み（初回・催促・当日挨拶済み・深夜帯・会話連続中）。
   // LLM に候補から選ばせる旧方式は廃止し、確定した opening をリテラル埋め込みする（G32: お待たせ致しました は禁止語）。
-  // 旧「夜分遅くに失礼致します 絶対禁止」は撤廃（22:00〜04:59 は決定論で「夜遅くに失礼します！！」を付与。LLM 自身は書かない）。
+  // 2026-09-12 竹内（Aoi 事例）: 返信に「夜遅くに／夜分遅くに失礼」は入れない（決定論の付与も廃止・書いたら banned-phrasing が除去）。
   // greetingDecision 未渡し（想定外経路）のみ従来の履歴フォールバック
   const gd = greetingDecision;
   const alreadyGreetedFallback = alreadyGreetedToday !== undefined
@@ -5168,8 +5168,20 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 });
               }
             }
-            // f-8: センシティブ検知時は警告メタを冒頭に付与（空生成時は付与しない・テンプレ最適化は sensitiveGateNote="" ）
-            finalDraftText = draftBody && sensitiveGateNote ? sensitiveGateNote + draftBody : draftBody;
+            // f-8: センシティブ検知時の警告は下書き本文に入れず、最終チェックの「要修正」（block）に入れる（2026-09-12 竹内・Aoi 事例）。
+            //   旧: 【⚠️センシティブ案件: …】を本文の冒頭に付けていた → テキストボックスに警告文が入り、消し忘れるとお客様に送られる。
+            //   block なので、未編集の AI 下書きのまま送る時は送信確認が出る（手動確認必須は維持）
+            finalDraftText = draftBody;
+            if (draftBody && sensitiveGateNote && finalCheck) {
+              const sensitiveKind = detectSensitiveCase(message) ?? "センシティブ";
+              finalCheck.issues.unshift({
+                pass: "meta", severity: "block", code: "SENSITIVE_CASE",
+                message: `センシティブ案件（${sensitiveKind}検知）: この返信案は参考のみです。送信前に必ず手動で確認してください`,
+                evidence: (message ?? "").slice(0, 40),
+                suggestion: "お客様の意向（キャンセル・日程変更・クレーム・審査結果）に合っているかを確認し、必要なら編集してから送る",
+              });
+              finalCheck.ok = false;
+            }
             // 送信時の再利用判定キー: スタッフのテキストエリアに入る最終形（trim後）のハッシュに更新する
             // （自動修正・センシティブ警告付与でチェック時テキストと変わるため必ず上書き）
             if (finalCheck) finalCheck.checked_text_hash = await sha1(finalDraftText.trim());

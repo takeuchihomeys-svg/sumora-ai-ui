@@ -114,10 +114,24 @@ export function stripHastyAdverb(text: string): { text: string; count: number } 
   return { text: out, count };
 }
 
+/**
+ * 2026-09-12 竹内（Aoi 事例）: お客様への返信に「夜分遅くに失礼致します」「夜遅くに失礼します」を入れない
+ * （返信はお客様からの連絡への応答で、将来は自動返信になる。夜間の挨拶を重ねて入れない）。
+ * 挨拶の一文（文頭・行頭の「夜分遅くに／夜遅くに／夜分に＋失礼／すみません」）だけを除去し、続く本文はそのまま残す。
+ */
+export const NIGHT_GREETING_RE = /(^|\n)([ \t　]*)(?:[^\n！!。]{0,15}(?:さん|様)[、,]?[ \t　]*)?夜(?:分)?(?:遅く)?に?(?:大変)?(?:失礼(?:致|いた)?します|失礼(?:致|いた)?しております|すみません|申し訳(?:ございません|御座いません|ありません))[😊😌🙇]*[！!。]*[ \t　]*\n?/g;
+export function stripNightGreeting(text: string): { text: string; count: number } {
+  const count = (text.match(NIGHT_GREETING_RE) ?? []).length;
+  if (count === 0) return { text, count: 0 };
+  const out = text.replace(NIGHT_GREETING_RE, "$1$2").replace(/^\n+/, "");
+  return { text: out, count };
+}
+
 /** 方針4・5の決定論置換（生成・後処理・修正版・few-shot 注入の共通入口） */
-export function normalizeBannedPhrasing(text: string): { text: string; shochi: number; hasty: number; uketamawari: number } {
-  const u = normalizeBareUketamawari(text);
+export function normalizeBannedPhrasing(text: string): { text: string; shochi: number; hasty: number; uketamawari: number; night: number } {
+  const n = stripNightGreeting(text);
+  const u = normalizeBareUketamawari(n.text);
   const a = normalizeShochi(u.text);
   const b = stripHastyAdverb(a.text);
-  return { text: b.text, shochi: a.count, hasty: b.count, uketamawari: u.count };
+  return { text: b.text, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count };
 }

@@ -239,7 +239,10 @@ export function resolveGreeting(opts: {
   const origin = computeWaitedOrigin(opts.recentMessages, now, opts.isSubstantive);
   const sinceStaff = msSinceLastStaff(opts.recentMessages, now);
   const continuous = sinceStaff !== null && sinceStaff < CONTINUOUS_CHAT_MS;
-  const nightPrefix = isNightHourJST(opts.jstHour) && !continuous ? NIGHT_PREFIX : "";
+  // 2026-09-12 竹内（Aoi 事例）: お客様への返信に「夜遅くに失礼します／夜分遅くに失礼致します」を入れない。
+  //   旧: 22:00〜04:59（会話連続中を除く）は決定論で先頭に付与していた → 付与をやめる（AI が書いても banned-phrasing が除去）
+  void isNightHourJST; void continuous;
+  const nightPrefix = "";
   const audit: GreetingAudit = {
     waitedMs: origin?.waitedMs ?? null, originCreatedAt: origin?.createdAt ?? null, originTextHead: origin?.textHead ?? null,
     alreadyGreetedToday: opts.alreadyGreetedToday, customerKind: opts.customerKind, isDeliverableReply: !!opts.isDeliverableReply,
@@ -356,7 +359,7 @@ export function buildGreetingNote(d: GreetingDecision, jstHour: number): string 
     ? `開口語: なし。${where}は本題（回答・物件名・結果・「ご条件お送り頂きありがとうございます！！」のような目的語付きの受領お礼）から始める（${d.openerReason}）${d.openerAllowed.length > 1 ? `。${d.openerAllowed.filter((k) => k !== "none").map((k) => OPENER_JA[k]).join("／")}で始めても良い` : ""}`
     : `開口語: ${where}は ${OPENER_JA[d.opener]}（${d.openerReason}）。絵文字は「かしこまりました😊！！」「はい😊！！」の位置のみ`;
   const forbidLine = forbidden.length ? `開口語の禁止: ${forbidden.join("／")}で始めない。` : "";
-  const common = `「お待たせ致しました」「お待たせしました」は禁止語（返信を待たせた体裁を作らない。結果報告でも使わない）。「ありがとうございます」「ご連絡ありがとうございます」だけの書き出しは禁止（目的語付き「〇〇お送り頂きありがとうございます」は可）。自分で「夜遅くに」「夜分遅くに」を書かない（必要ならシステムが付与済み）。`;
+  const common = `「お待たせ致しました」「お待たせしました」は禁止語（返信を待たせた体裁を作らない。結果報告でも使わない）。「ありがとうございます」「ご連絡ありがとうございます」だけの書き出しは禁止（目的語付き「〇〇お送り頂きありがとうございます」は可）。「夜遅くに失礼します」「夜分遅くに失礼致します」は返信に書かない（時間帯を問わず）。`;
   switch (d.kind) {
     case "first":
       return `${head}これはお客様への【はじめての返信】。必ず「${d.openingLine}」で始める（一字一句変更・省略・追加禁止。この行の後に空行を挟んで本文）。この後に「かしこまりました」「はい」を続けない。${common}`;

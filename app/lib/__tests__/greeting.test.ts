@@ -109,10 +109,11 @@ describe("挨拶行の決定", () => {
     expect(d.kind).toBe("first"); expect(d.openingLine).toBe(buildFirstGreeting("じゅにあ")); expect(d.opener).toBe("none");
     expect(enforceOpening("かしこまりました！！\n難波周辺でピックアップさせて頂きます！！", d).cleaned).toStartWith(buildFirstGreeting("じゅにあ"));
   });
-  it("T9 深夜（JST 23 時・直前スタッフ発言 5h 前・当日挨拶済み）→ 夜間接頭辞のみ固定", () => {
+  // 2026-09-12 竹内（Aoi 事例）: 返信に「夜遅くに失礼します」は入れない → 深夜でも夜間接頭辞は付けない（旧 T9 は付与を期待していた）
+  it("T9 深夜（JST 23 時・直前スタッフ発言 5h 前・当日挨拶済み）→ 夜間接頭辞は付けない", () => {
     const d = decide([{ ...YESTERDAY_STAFF, createdAt: "2026-09-09T09:00:00Z" }, { sender: "customer", text: "2LDKでも探してもらえますか？", createdAt: "2026-09-09T13:50:00Z" }], Date.parse("2026-09-09T14:00:00Z"), 23);
-    expect(d.kind).toBe("none"); expect(d.openingLine).toBe("夜遅くに失礼します！！"); expect(d.enforce).toBe(true); expect(d.opener).toBe("kashikomari");
-    expect(enforceOpening("かしこまりました！！\n2LDKでもピックアップさせて頂きます！！", d).cleaned).toStartWith("夜遅くに失礼します！！\nかしこまりました！！");
+    expect(d.kind).toBe("none"); expect(d.openingLine).toBe(""); expect(d.opener).toBe("kashikomari");
+    expect(enforceOpening("かしこまりました！！\n2LDKでもピックアップさせて頂きます！！", d).cleaned).toStartWith("かしこまりました！！");
   });
   it("T10 当日挨拶済み＋依頼: LLM が「お世話になっております」を書いても剥がれて かしこまりました のみ", () => {
     const d = decide(JUNIA, NOW_1616, 16);
