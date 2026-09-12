@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { runBrainAndNotify, BRAIN_SKIP_STATUSES } from "@/app/lib/brain-core";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { AIX_NOTICE_FRESH_MS } from "@/app/lib/aix-action-text";
 
 // ── brain-sweep: 脳分析バックストップ（5分毎）─────────────────────────────
 // FIX(Fable5 #2): 分析の主経路は line-webhook のイベント駆動（顧客メッセージ受信 =
@@ -54,6 +55,7 @@ export async function GET(req: NextRequest) {
   try {
     const cutoff = new Date(Date.now() - IN_FLIGHT_GRACE_MS).toISOString();
     const backoffCutoff = new Date(Date.now() - RETRY_BACKOFF_MS).toISOString();
+    const freshCutoff = new Date(Date.now() - AIX_NOTICE_FRESH_MS).toISOString();
     const { data: conversations, error } = await supabase
       .from("conversations")
       .select("id")
@@ -74,6 +76,10 @@ export async function GET(req: NextRequest) {
       // H3(Fable5): 30分バックオフ（未試行 or 前回試行から30分経過した行のみ）
       .or(`brain_analyzed_at.is.null,brain_analyzed_at.lt.${backoffCutoff}`)
       .lt("updated_at", cutoff)
+      // 2026-09-12 竹内（Sky・AKANE 事例）: sweep は「webhook 分析の失敗の補填」＝今のお客様発言だけが対象。
+      //   何日も前に止まった会話（申込中の積み残し等）を今分析すると、今の要対応ではない会話に AIX 通知が飛んだ。
+      //   AIX要対応と同じ 48時間（AIX_NOTICE_FRESH_MS）より古い会話は拾わない（次のお客様発言で webhook が分析する）
+      .gt("updated_at", freshCutoff)
       // FIX: SQL の neq は NULL 行を除外する（NULL比較は常にFALSE）。brain失敗行は
       // ai_draft が NULL のことが多く、まさに sweep が拾うべき行が漏れていた
       .or("ai_draft.is.null,ai_draft.neq.__SHOWN__")

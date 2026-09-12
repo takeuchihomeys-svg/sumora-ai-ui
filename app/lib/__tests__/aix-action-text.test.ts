@@ -1,6 +1,6 @@
 // 2026-09-12 竹内方針: 売上番長グループの「AIX要対応」— お客さん名と AIX ボタンの種類の指示・一覧（✅=完了）の文面
 // 実行: npx tsx app/lib/__tests__/aix-action-text.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { aixButtonText, buildAixActionNotice, buildAixActionList, type AixActionItemRow } from "../aix-action-text";
+import { aixButtonText, buildAixActionNotice, buildAixActionList, isFreshAixTurn, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "../aix-action-text";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -56,6 +56,21 @@ it("一覧: ブレインの指示と違う AIX を送った完了は、実際に
   expect(t).toContain("✅cさん → AIX【物件ピックアップした】");
 });
 it("一覧: 対象が無ければ送らない（null）", () => expect(buildAixActionList([], NOW)).toBe(null));
+
+// 2026-09-12 竹内（Sky・AKANE・まさゆき事例）: 何日も前のお客様発言を今分析しても「今の要対応」ではない
+it("鮮度: Sky（9/1 の発言を 9/12 に分析）は要対応にしない", () => expect(isFreshAixTurn("2026-09-01T02:41:55.162+00:00", NOW)).toBe(false));
+it("鮮度: AKANE（8/28 の発言）は要対応にしない", () => expect(isFreshAixTurn("2026-08-28T08:13:30.251+00:00", NOW)).toBe(false));
+it("鮮度: まさゆき（9/4 の発言）は要対応にしない", () => expect(isFreshAixTurn("2026-09-04T03:43:56.084+00:00", NOW)).toBe(false));
+it("鮮度: 数時間前の発言は要対応", () => expect(isFreshAixTurn("2026-09-12T02:44:53.36+00:00", NOW)).toBe(true));
+it("鮮度: 夜の発言を翌日昼に返す（約12時間前）は要対応", () => expect(isFreshAixTurn("2026-09-11T17:46:41.291+00:00", NOW)).toBe(true));
+it("鮮度: ちょうど48時間は要対応・48時間1分は外す", () => {
+  expect(isFreshAixTurn(new Date(NOW - AIX_NOTICE_FRESH_MS).toISOString(), NOW)).toBe(true);
+  expect(isFreshAixTurn(new Date(NOW - AIX_NOTICE_FRESH_MS - 60_000).toISOString(), NOW)).toBe(false);
+});
+it("鮮度: 時刻不明は判断できないので通す", () => {
+  expect(isFreshAixTurn(null, NOW)).toBe(true);
+  expect(isFreshAixTurn("not-a-date", NOW)).toBe(true);
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

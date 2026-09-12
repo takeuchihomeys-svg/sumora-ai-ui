@@ -23,6 +23,20 @@ export function aixButtonText(action: string, checkPattern?: string | null): str
   return `AIX【${AIX_BUTTON_LABELS[action] ?? action}】`;
 }
 
+// 2026-09-12 竹内（Sky・AKANE・まさゆき事例「全然関係ないお客さんの名前が出て AIX の指示が入っている」）:
+//   AIX要対応は「今やり取りしているお客様の、まだ返していない発言」への指示。何日も前の発言を今日分析し直しても
+//   その会話は今の要対応ではない（申込中の積み残しを sweep が一斉に拾った／機能開始時に古い判断から登録した）。
+//   スタッフ返信までの時間（直近60日 1,978件）: 中央値39分・p95=21時間・48時間超は1.8% → 48時間を「今の要対応」の上限にする
+export const AIX_NOTICE_FRESH_MS = 48 * 60 * 60 * 1000;
+
+/** ブレインが見たお客様の発言（analyzed_msg_ts）が「今の要対応」にできる新しさか。時刻不明は判断できないので通す */
+export function isFreshAixTurn(analyzedMsgTs: string | null | undefined, nowMs: number = Date.now()): boolean {
+  if (!analyzedMsgTs) return true;
+  const t = new Date(analyzedMsgTs).getTime();
+  if (!Number.isFinite(t)) return true;
+  return nowMs - t <= AIX_NOTICE_FRESH_MS;
+}
+
 /** 1件通知の本文 */
 export function buildAixActionNotice(customerName: string, action: string, checkPattern?: string | null): string {
   return `🟣【AIX要対応】\n${customerName || "お客様"}さん → ${aixButtonText(action, checkPattern)}`;

@@ -6,7 +6,7 @@
 // 旧 flagged-reminder（毎時「要対応 1時間以上止まってる」）はこの一覧に置き換えて cron から外した。
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { buildAixActionList, pushToHanbancyoGroup, type AixActionItemRow } from "@/app/lib/aix-action-items";
+import { buildAixActionList, pushToHanbancyoGroup, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-items";
 import { jstDayStartMs } from "@/app/lib/jst-date";
 
 export const maxDuration = 60;
@@ -22,6 +22,13 @@ export async function GET(req: NextRequest) {
   if (last?.value && Date.now() - new Date(last.value as string).getTime() < 90 * 60 * 1000) {
     return NextResponse.json({ ok: true, skipped: true, reason: "cooldown (90min)" });
   }
+
+  // 2026-09-12 竹内（まさゆき事例）: 48時間より前のお客様発言への指示は今の要対応ではない → 一覧に載せる前に片付ける
+  //   （お客様がまた発言すればブレインが改めて判断・通知する。未返信のまま残っている会話は受信箱側で見える）
+  const staleCutoff = new Date(Date.now() - AIX_NOTICE_FRESH_MS).toISOString();
+  await supabase.from("aix_action_items")
+    .update({ status: "dismissed", dismissed_reason: "stale_customer_turn", updated_at: new Date().toISOString() })
+    .eq("status", "pending").lt("brain_analyzed_msg_ts", staleCutoff);
 
   const todayStart = new Date(jstDayStartMs()).toISOString();
   const [{ data: pending, error: e1 }, { data: doneToday, error: e2 }] = await Promise.all([

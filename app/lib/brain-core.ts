@@ -16,6 +16,7 @@ import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
+import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
@@ -3571,7 +3572,8 @@ export async function runBrainAndNotify(
   }
 
   // ブレインのaction判断時にカレンダーへ直接登録（テキスト解析不要・通知失敗の影響を受けない fire-and-forget）
-  if (conversationId && snapshot.meta.action) {
+  //   2026-09-12 竹内（Sky・AKANE 事例）: AIX要対応と同じく、48時間より古いお客様発言への判断では今日のタスクを作らない
+  if (conversationId && snapshot.meta.action && isFreshAixTurn(snapshot.meta.analyzed_msg_ts)) {
     void createCalendarEventFromBrainAction(conversationId, snapshot.meta.action, snapshot.customerName || null)
       .catch((e) => console.error("[brain-core] calendar from brain action failed:", e));
   }

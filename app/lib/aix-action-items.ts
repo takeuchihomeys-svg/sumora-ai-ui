@@ -4,14 +4,14 @@
 //    お客さん名と【AIX】ボタンの種類の指示がLINEで届く。物件出しのように一覧をつくって完了したら✅」
 //
 // 1会話につき未完了（pending）は1件。判断者はブレインだけ（[[feedback-brain-owns-aix]]）:
-//   登録・1件通知  … brain-core runBrainAndNotify（ブレインが今回の顧客発言を見て AIX 必要と判断した時）
+//   登録・1件通知  … brain-core runBrainAndNotify（ブレインが今回の顧客発言を見て AIX 必要と判断した時。発言が48時間より古ければしない）
 //   不要になった   … 同じく runBrainAndNotify（ブレインが AIX なしと判断し直した時 → dismissed。通知しない）
 //   完了（✅）     … log-aix-usage（その会話でスタッフが AIX を送った時）
 //   定時一覧       … cron/announce-aix-actions（10:30〜20:30 の2時間ごと）
 import { supabase } from "@/app/lib/supabase";
-import { buildAixActionNotice } from "@/app/lib/aix-action-text";
+import { buildAixActionNotice, isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
-export { aixButtonText, buildAixActionNotice, buildAixActionList, type AixActionItemRow } from "@/app/lib/aix-action-text";
+export { aixButtonText, buildAixActionNotice, buildAixActionList, isFreshAixTurn, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-text";
 
 /** 売上番長グループへ push（宛先・トークンの決め方は notify-group と同じ: env → hanbancyo_settings.group_id） */
 export async function pushToHanbancyoGroup(text: string): Promise<boolean> {
@@ -68,6 +68,12 @@ export async function syncAixActionItem(input: {
         .update({ status: "dismissed", dismissed_reason: "brain_no_aix", updated_at: now })
         .eq("id", open.id).eq("status", "pending");
     }
+    return;
+  }
+
+  // 古いお客様の発言（48時間超）を見た判断は、今の要対応として登録・通知しない（isFreshAixTurn の根拠参照）
+  if (!isFreshAixTurn(meta.analyzed_msg_ts)) {
+    console.log("[aix-action-items] stale customer turn — not registering:", conversationId, meta.analyzed_msg_ts);
     return;
   }
 
