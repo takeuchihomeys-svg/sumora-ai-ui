@@ -2047,6 +2047,45 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, conversations.length]);
 
+  // 受信直後でまだ取得中の画像（text が「[画像]…」で image_url 未設定）を3秒ごとに取り直す。
+  // 画像は webhook が LINE から取得→読み取り→Storage 保存してから image_url を埋める（数秒〜20秒）。
+  // messages は Realtime 配信の対象外で一覧の更新は30秒ごとのため、それまで空の枠だけが並んでいた（2026-09-12 Sさん事例）
+  const pendingImageIdsKey = useMemo(() => {
+    if (!selectedId) return "";
+    const conv = conversations.find((c) => c.id === selectedId);
+    const since = Date.now() - 10 * 60 * 1000;
+    return (conv?.messages || [])
+      .filter((m) => m.sender === "customer" && !m.imageUrl && (m.text || "").startsWith("[画像]")
+        && m.rawCreatedAt && new Date(m.rawCreatedAt).getTime() > since)
+      .map((m) => m.id)
+      .join(",");
+  }, [conversations, selectedId]);
+  useEffect(() => {
+    if (!selectedId || !pendingImageIdsKey) return;
+    const ids = pendingImageIdsKey.split(",");
+    const convId = selectedId;
+    const startedAt = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - startedAt > 3 * 60 * 1000) { clearInterval(timer); return; }
+      const { data } = await supabase
+        .from("messages")
+        .select("id, text, image_url, image_expires_at")
+        .in("id", ids)
+        .not("image_url", "is", null);
+      if (!data || data.length === 0) return;
+      const filled = new Map((data as { id: string; text: string; image_url: string; image_expires_at?: string | null }[])
+        .map((r) => [String(r.id), r]));
+      setConversations((prev) => prev.map((c) => c.id !== convId ? c : {
+        ...c,
+        messages: c.messages.map((m) => {
+          const r = filled.get(m.id);
+          return r ? { ...m, imageUrl: r.image_url, text: r.text || m.text, imageExpiresAt: r.image_expires_at || m.imageExpiresAt } : m;
+        }),
+      }));
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [selectedId, pendingImageIdsKey]);
+
   // 会話選択時にAI次アクション提案を取得（未取得の場合のみ）
   useEffect(() => {
     if (!selectedId) return;
@@ -7048,6 +7087,17 @@ export default function Home() {
                                 <span>保存期間が終了しました</span>
                               </div>
                             )}
+                            {/* 受信直後で画像を取得中（空の枠だけにしない。10分たっても無ければ取得失敗） */}
+                            {!message.imageUrl && (message.text || "").startsWith("[画像]")
+                              && !(message.imageExpiresAt && new Date(message.imageExpiresAt) < new Date()) && (() => {
+                              const recent = message.rawCreatedAt && Date.now() - new Date(message.rawCreatedAt).getTime() < 10 * 60 * 1000;
+                              return (
+                                <div className="flex items-center gap-1.5 px-3 py-2 text-[13px] text-gray-400">
+                                  <span>🖼️</span>
+                                  <span>{recent ? "画像を受信中…" : "画像を取得できませんでした"}</span>
+                                </div>
+                              );
+                            })()}
                             {message.imageUrl && (() => {
                               // 期限切れチェック
                               if (message.imageExpiresAt && new Date(message.imageExpiresAt) < new Date()) {
