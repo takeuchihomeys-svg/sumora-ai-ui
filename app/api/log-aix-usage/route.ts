@@ -358,12 +358,9 @@ ${JSON.stringify(prevMeta, null, 2)}
 【新たな事実】
 ${stageNote}
 
-以下のフィールドを新事実に合わせて更新してください。変更不要なフィールドは前回の値をそのまま返してください。
-- action: 次に取るべき推奨アクション（日本語・簡潔に）
+以下の2つのフィールドだけを新事実に合わせて更新し、この2つだけを JSON で返してください。変更不要なら前回の値をそのまま返してください。
 - next_steps: 次のステップの配列（string[]）
 - closing_strategy: クロージング戦略
-- template_hint: 次回使うテンプレートのヒント
-- reply_mode: 返信モード
 
 JSONのみ返してください。説明文不要。`,
               }],
@@ -376,7 +373,14 @@ JSONのみ返してください。説明文不要。`,
             if (!raw) return;
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
             if (!jsonMatch) return;
-            const patch = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+            const rawPatch = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+            // 2026-09-13 監査 抜け5: 旧はパッチの全キーをそのままマージしていた。action が「日本語・簡潔に」の自由文になり
+            //   （ブレインの AIX キーではなくなる → 分析モード判定の prevAction が壊れる）、template_hint は許可ラベルの検査を通らず、
+            //   分析の省略（cached）で {...last_brain_meta} として返信生成に流れていた。更新してよいのは次の手順と成約戦略だけ
+            const patch: Record<string, unknown> = {};
+            if (Array.isArray(rawPatch.next_steps) && rawPatch.next_steps.every((s) => typeof s === "string")) patch.next_steps = rawPatch.next_steps;
+            if (typeof rawPatch.closing_strategy === "string" && rawPatch.closing_strategy.trim()) patch.closing_strategy = rawPatch.closing_strategy.trim();
+            if (Object.keys(patch).length === 0) return;
 
             // 5. 前回 meta にパッチをマージして保存
             const patchedMeta = { ...prevMeta, ...patch, source: "aix_patch" };

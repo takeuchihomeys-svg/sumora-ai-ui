@@ -6,6 +6,7 @@
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
 import { STATE_SEARCH_ALIASES } from "@/app/lib/line-reply-prompts";
 import { STATE_TO_PHRASE_CATEGORIES } from "@/app/lib/prompt-cache";
+import { BRAIN_FRESHNESS_TOLERANCE_MS } from "@/app/lib/brain-meta-restore";
 
 // ── ティア定義 ──────────────────────────────────────────────────────────────
 // T1: brainが最新顧客メッセージを見た後の分析（fresh）→ 将来ここで選択的フェッチを有効化
@@ -52,8 +53,9 @@ export type BrainFetchSpec = {
   adaptRules: { enabled: boolean };                   // adaptation_improvement_rules（baseline: enabled）
 };
 
-// 鮮度許容誤差: generate-reply の brainFreshForMessage 判定と同値（同一秒書き込みの丸め誤差吸収）
-const FRESHNESS_TOLERANCE_MS = 5_000;
+// 鮮度許容誤差: generate-reply の brainFreshForMessage 判定と同値（同一秒書き込みの丸め誤差吸収）。
+// 値の正は brain-meta-restore.ts（表示後の判断の復元と同じ基準にする）
+const FRESHNESS_TOLERANCE_MS = BRAIN_FRESHNESS_TOLERANCE_MS;
 
 // analysisContext 用の文字数上限スライス（generate-reply の safeSlice と同義のローカル版）
 function sliceSafe(s: string, max: number): string {

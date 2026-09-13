@@ -3,6 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { detectPlaceholders } from "@/app/lib/validate-reply";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
+import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
+import { BRAIN_FRESHNESS_TOLERANCE_MS } from "@/app/lib/brain-meta-restore";
 import { DRAFT_SKIP_STATUSES, AIX_SKIP_TYPES } from "@/app/lib/conversation-status";
 
 function getDb() {
@@ -321,7 +323,18 @@ async function run() {
       let brainGateDirect: BrainGateSnapshot | null = null;
       const brainAnalyzedAtMs = conv.brain_analyzed_at ? Date.parse(conv.brain_analyzed_at as string) : NaN;
       const convUpdatedAtMs = conv.updated_at ? Date.parse(conv.updated_at as string) : NaN;
-      const brainStale = Number.isNaN(brainAnalyzedAtMs) || (!Number.isNaN(convUpdatedAtMs) && brainAnalyzedAtMs < convUpdatedAtMs);
+      let brainStale = Number.isNaN(brainAnalyzedAtMs) || (!Number.isNaN(convUpdatedAtMs) && brainAnalyzedAtMs < convUpdatedAtMs);
+      // 2026-09-13 監査: brain_analyzed_at は分析の失敗・見送り・書き込み見送りでも打刻されるため、それだけでは「分析済み」と言えない
+      //   （bg-async でブレインが失敗 → cron が取りこぼしを拾ってもブレインを動かさず、判断なし（T3）で生成していた）。
+      //   ブレインの判断が最新のお客様発言を見ているか（analyzed_msg_ts）でも確かめ、見ていなければ動かす
+      if (!brainStale) {
+        const latestCustAt = [...recentMsgs].reverse().find((m) => m.sender === "customer")?.created_at ?? null;
+        if (latestCustAt) {
+          const { data: metaRow } = await db.from("conversations").select("suggested_aix_meta").eq("id", convId).maybeSingle();
+          const analyzedTs = (metaRow?.suggested_aix_meta as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts ?? null;
+          brainStale = !analyzedTs || Date.parse(analyzedTs) < Date.parse(latestCustAt) - BRAIN_FRESHNESS_TOLERANCE_MS;
+        }
+      }
       if (brainStale) {
         try {
           brainGateDirect = await runBrainAndNotify(convId);
@@ -460,7 +473,15 @@ async function run() {
         continue;
       }
 
-      if (finalDraft) {
+      // 2026-09-13 監査 抜け2: 生成中にお客様の新しい発言が届いていたら、この（前の発言向けの）下書きは保存しない
+      //   （生成中の印だけ外す。webhook が立てた draft_pending_at で次の cron が新しい発言まで含めて作り直す。判定は draft-supersede.ts）
+      const answeredCustomerAt = unreplied.at(-1)?.created_at ?? null;
+      const supersededBy = finalDraft ? await newerCustomerMessageAfter(convId, answeredCustomerAt) : null;
+      if (supersededBy) {
+        console.log(JSON.stringify({ tag: "draft:superseded", conversationId: convId, answeredAt: answeredCustomerAt, newerAt: supersededBy, caller: "cron" }));
+        await db.from("conversations").update(SUPERSEDED_DRAFT_UPDATE).eq("id", convId);
+        skipped++;
+      } else if (finalDraft) {
         // 品質ゲート②: プレースホルダ（[日付] [物件名] 等）残存は警告ログのみ（保存はする）
         const leftover = detectPlaceholders(finalDraft);
         if (leftover.length > 0) {

@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { supabase } from "@/app/lib/supabase";
+import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
@@ -1266,7 +1267,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
       avoid_topics?: string[] | null;
       urgency_appropriate?: boolean | null;
       property_search_params?: {
-        ng_properties?: string[] | null;
+        // 2026-09-13 監査: brain-core は {property_name, room_no}[] で書く（旧型 string[] のまま join して「[object Object]」が入っていた）
+        ng_properties?: Array<string | { property_name?: string | null; room_no?: string | null }> | null;
         preferences?: string | null;
         ng_points?: string | null;
         search_urgency?: string | null;
@@ -1295,11 +1297,13 @@ async function handleAction(request: NextRequest): Promise<Response> {
       try {
         const { data } = await supabase
           .from("conversations")
-          .select("suggested_aix_meta, property_customer_id")
+          .select(`${BRAIN_META_RESTORE_COLUMNS}, property_customer_id`)
           .eq("id", conversationId)
           .single();
-        const row = data as { suggested_aix_meta?: AixLocalBrainMeta | null; property_customer_id?: string | null } | null;
-        const meta = row?.suggested_aix_meta ?? null;
+        const row = data as (BrainMetaRow & { property_customer_id?: string | null }) | null;
+        // 2026-09-13 監査 抜け1: 下書きを表示すると suggested_aix_meta が消えるため、AIX を押す時点ではほぼ常にブレインの判断なしだった。
+        //   表示で消えただけ（控えが最新のお客様発言を見た本分析）なら last_brain_meta から戻す
+        const meta = (await resolveBrainMetaForGeneration(conversationId, row, "aix-action")).meta as AixLocalBrainMeta | null;
         const pcid = row?.property_customer_id ?? null;
         if (!meta) return { brainContext: "", brainMeta: null, propertyCustomerId: pcid };
         // AIX-META全フィールドをRAGクエリ文脈に注入（P0-2: meta.action追加で4経路を対称化。
@@ -1409,8 +1413,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
       const psp = aixBrainMeta?.property_search_params;
       if (!psp) return "";
       const lines: string[] = [];
-      if (psp.ng_properties?.length) {
-        lines.push(`【🚫 提案禁止物件（既送付・拒否済み・絶対に含めない）】${psp.ng_properties.join("、")}`);
+      const ngNames = (psp.ng_properties ?? [])
+        .map((p) => typeof p === "string" ? p : [p?.property_name, p?.room_no].filter(Boolean).join(" "))
+        .map((s) => s.trim()).filter(Boolean);
+      if (ngNames.length) {
+        lines.push(`【🚫 提案禁止物件（既送付・拒否済み・絶対に含めない）】${ngNames.join("、")}`);
       }
       if (psp.preferences) lines.push(`【👍 お客様が刺さるポイント（積極的に訴求すること）】${psp.preferences}`);
       if (psp.ng_points) lines.push(`【⚠️ 地雷・NGポイント（言及禁止）】${psp.ng_points}`);

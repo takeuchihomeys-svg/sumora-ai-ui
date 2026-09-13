@@ -78,6 +78,8 @@ import {
 import { PROPERTY_CONDITION_INQUIRY_RE, runBrainAndNotify, type SuggestedAixMeta } from "@/app/lib/brain-core";
 import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
 import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
+import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
+import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 // AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
 // AIX_STAFF_NOTES を単一ソースとして brain-core の AIX_BRAIN_NOTES と共有する（文言乖離の構造的防止）
 import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS, AIX_LINE_LABELS, AIX_ACTION_REPLY_DIRECTION, buildAixLineNote, normalizeAixActionKey } from "@/app/lib/aix-taxonomy";
@@ -2407,13 +2409,13 @@ type AixGateMeta = SuggestedAixMeta;
 
 async function fetchReplyModeGate(
   convId: string
-): Promise<{ meta: AixGateMeta; lastMeta: Record<string, unknown> | null; customerName: string; conversationDirection: Record<string, unknown> | null; brainAnalyzedAt: string | null } | null> {
+): Promise<{ meta: AixGateMeta; lastMeta: Record<string, unknown> | null; customerName: string; conversationDirection: Record<string, unknown> | null; brainAnalyzedAt: string | null; restoredAfterShown: boolean } | null> {
   const { data, error: modeErr } = await supabase
     .from("conversations")
     // 2026-09-10 Fable5 Sさん事例: last_brain_meta を T3（suggested_aix_meta=null）の第2ソースにする。
     //   ⚠ 列名は実在するもののみ（status はあるが state は無い／last_brain_meta はあるが brain_meta は無い）。
     //   存在しない列を select するとエラーで全行が返らず静かに0件になる。
-    .select("suggested_aix_meta, last_brain_meta, customer_name, conversation_direction, brain_analyzed_at")
+    .select(`${BRAIN_META_RESTORE_COLUMNS}, customer_name, conversation_direction, brain_analyzed_at`)
     .eq("id", convId)
     .single();
   if (modeErr && modeErr.code !== "PGRST116") {
@@ -2425,8 +2427,12 @@ async function fetchReplyModeGate(
     throw new Error("gate_unavailable");
   }
   if (!data) return null;
+  // 2026-09-13 監査 抜け1: 画面が下書きを表示すると suggested_aix_meta を消すため、表示後の再生成・✨ は常に T3 だった。
+  //   表示で消えただけ（控えが最新のお客様発言を見た本分析）なら last_brain_meta から戻す（判定は brain-meta-restore.ts）
+  const restored = await resolveBrainMetaForGeneration(convId, data as BrainMetaRow, "generate-reply");
   return {
-    meta: (data.suggested_aix_meta ?? null) as AixGateMeta,
+    meta: (restored.meta ?? null) as AixGateMeta,
+    restoredAfterShown: restored.restored,
     lastMeta: (data.last_brain_meta ?? null) as Record<string, unknown> | null,
     customerName: (data.customer_name as string) || "",
     conversationDirection: (data.conversation_direction ?? null) as Record<string, unknown> | null,
@@ -2511,6 +2517,7 @@ export async function POST(req: NextRequest) {
     customerName: string;
     conversationDirection: Record<string, unknown> | null;
     brainAnalyzedAt: string | null;
+    restoredAfterShown: boolean;
   } | null = null;
   // アクティブタスク（body指定 or DB自動補完）。property_check中の返信ガード等に使用
   let activeTaskTypes: string[] = [];
@@ -2621,6 +2628,7 @@ export async function POST(req: NextRequest) {
           customerName: body.brainMetaDirect.customerName ?? "",
           conversationDirection: body.brainMetaDirect.conversationDirection ?? null,
           brainAnalyzedAt: body.brainMetaDirect.brainAnalyzedAt ?? null,
+          restoredAfterShown: false,
         }
       : null;
   } catch {
@@ -2628,6 +2636,10 @@ export async function POST(req: NextRequest) {
   }
 
   const isTemplateOptimize = templateText.length > 0;
+  // 2026-09-13 監査: どの経路の生成か（ティア率を経路別に測るため step2-tier・tpo_debug に残す）。
+  //   bg_async_direct=ブレイン直列の自動生成 / auto=自動（cron 等・DB から判断を読む）/ manual=画面の再生成 / manual_hint=返信ヒント付き・✨ / template_optimize
+  const generationCaller: "bg_async_direct" | "auto" | "template_optimize" | "manual_hint" | "manual" =
+    externalBrainGate ? "bg_async_direct" : enforceReplyModeGate ? "auto" : isTemplateOptimize ? "template_optimize" : replyHint ? "manual_hint" : "manual";
 
   // 空メッセージは Vision 呼び出しより前に弾く（無駄な API 課金・待ち時間の防止）
   // テンプレート最適化モードのみ例外: テンプレ送信はスタッフ発信の続きで行われることが多く、
@@ -3709,7 +3721,11 @@ export async function POST(req: NextRequest) {
       return freshTopics;
     })();
     const effectiveAvoidTopicsBase: string[] = (() => {
-      const base = brainMeta?.avoid_topics ?? [];
+      // 2026-09-13 監査 抜け3: avoid_topics の多くは「その分析時点の最新発言」で決まる（例: 費用の質問が無い時だけ「見積書・初期費用」）。
+      //   古い判断・省略の avoid_topics で今回の費用の質問を封じない（完全一致の除外では「おいくらですか」→「初期費用」を外せない）。
+      //   会話全体で変わらない「来阪」だけ残す
+      const rawBase = brainMeta?.avoid_topics ?? [];
+      const base = brainLocalFresh ? rawBase : rawBase.filter((t) => t === "来阪");
       if (isConditionPresented) return [...new Set([...base, "条件の再ヒアリング", "見積提案", "申込誘導", "内見誘導", "抽象的なサポート宣言"])];
       if (isViewingCancel) return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "謝罪"])];
       if (negativeDetail.kind === "withdrawal") return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "引き留め", "謝罪"])];
@@ -3855,7 +3871,12 @@ export async function POST(req: NextRequest) {
           ? `【🧠 AIX-META戦略 — 唯一の戦略指示・最優先で従うこと（AIX-METAが全情報を統合した唯一の戦略指示。フェーズ別パターン・ai_summaryより上位。ハードゲート（内覧日時・見積・物件事実制約）のみこれより上位。強制度: ${isRequired ? "必須（以下の指示に例外なく従う）" : "推奨（原則従うが、顧客の最新メッセージへの応答として不自然になる場合のみ自然さを優先してよい）"}）】`
           : `【🧠 AIX-META補助メタ（戦略指示は未生成。以下は顧客状態の参考情報。返信の方向性は「場面と返信方針」ブロックとAI要約に従うこと）】`,
       ];
-      if (brainMeta.note && brainMeta.reply_mode !== 'aix') {
+      // 2026-09-13 監査 抜け3: note は今回の発言への action（または LLM の自由文）から作る「今回の発言についての判定」。
+      //   古い判断（T2）・分析の省略（cached）では action を「採用しない」と明記しているのに、同じ action のメモを「必須の WE DO 宣言」として入れていた（矛盾）
+      //   AIX が無い時の note は「（参考）AIX【…】での対応が候補です。…」というスタッフ向けの操作メモ（brain-core の freeTextAixKey）。
+      //   これを「必須の WE DO 宣言」にすると操作語が本文に混ざるため入れない（返信の方向は TPO・往復文脈が決める）
+      const noteIsStaffReference = !effectiveAction && /^（参考）AIX【/.test(brainMeta.note ?? "");
+      if (brainMeta.note && brainMeta.reply_mode !== 'aix' && brainLocalFresh && !noteIsStaffReference) {
         lines.push(`- 📌 スモラスタイル②WE DO宣言（必須・返信末尾に1文として明示する）: ${brainMeta.note} → このスタッフアクションをお客様向けに「私が〇〇させて頂きます！！」の形に言い換えて返信の最後の1文に含めること（例: 「明日管理会社に交渉させて頂きます！！」「ご希望のお部屋をピックアップしてお送りさせて頂きます！！」「お申込みでお部屋押さえさせて頂きます！！」）。ただしZ/F3/Yパターン等の短い締め返信では追加しない`);
       }
       // winning_pattern + closing_strategy の両方がある場合は1文のWE DO宣言に統合（二重宣言防止）
@@ -3880,19 +3901,22 @@ export async function POST(req: NextRequest) {
       // 混入すると離脱率が上がる。押しの強さより局面判定を優先する（"push"/null は従来どおり）。
       // S-3: engagement_stance は message-local。fresh の時のみ「待ち」ゲートを効かせる（stale の wait が押すべき局面を封じない）
       const closingGatedByStance = brainFreshForMessage && !isCachedMeta && brainMeta.engagement_stance === "wait";
+      // 2026-09-13 監査 抜け3: 購買シグナルは customer_questions・最新発言の質で決まる（brain-core の定義）。古い判断の PEAK で
+      //   「申込期限・書類リストまで出す完全クロージング」を指示しない（新しくて省略でもない判断の時だけ使う）
+      const signalLevel = brainLocalFresh ? brainMeta.purchase_signal_level : null;
       if (closingGatedByStance) {
         lines.push(
           `- ⏸️ 押し引きスタンス: WAIT（待ちの局面）— 強推し直後の了承、またはネガ文脈（断り・キャンセル・否決・募集終了）の直後です。希少性訴求・申込期限の明示・CTA・新規物件提案は今回の返信に一切入れないこと。受け止めと見守りの姿勢で締めること`
         );
-      } else if (brainMeta.purchase_signal_level === "peak") {
+      } else if (signalLevel === "peak") {
         lines.push(
           `- 🔥 購買シグナル: PEAK（申込直前最強シグナル）— 入居日の具体日付確定・競合申込者の自発確認・3件以上の連続具体質問・申込許可伺い（「申し込んでもいいですか？」「抑えるだけ抑えててもいいんですか？」）・物件名指し確定（「ここがいいです」「○○に決めます」）・金額の復唱（「○○円ですか😭」）・手続き/審査プロセスの具体質問（保証会社・支払い方法・流れ）のいずれかを検出。今回の返信で完全クロージングフローを発動すること: ①申込期限を明示（顧客の入居希望日から審査2週間＋契約手続きを逆算した事実ベースの期限。例: 「審査・契約手続きに最短でも2週間程かかりますので、○/○ご入居希望の場合は今週中にお申込みいただく必要がございます！！」／入居希望日が不明なら期限文は書かない・日付の創作は禁止）②申込書類リストをセットで案内 ③WE DO宣言でお部屋確保を約束。【希少性煽り禁止】「埋まってしまいます」「人気物件です」「残り1部屋」「一番手確保」等の煽りは成約データ152件で出現0件＝効果なしのため使わない。urgency_appropriate フラグに関係なく発動（PERM-CLOSING-MOVEIN-DATE-001 と同等のクロージング強度）。※申込許可伺い・物件名指し確定を検出した場合は理由説明・追加提案を一切挟まず「かしこまりました！！○○号室お申込みさせていただきます😊！！」の確定宣言＋申込フォーマット＋本人確認書類（表裏）依頼を即返すこと`
         );
-      } else if (brainMeta.purchase_signal_level === "strong") {
+      } else if (signalLevel === "strong") {
         lines.push(
           `- 🌡️ 購買シグナル: STRONG（申込前の高熱シグナル）— 設備・入居日・費用等の異カテゴリ確認が2件以上重なっている。前の質問に誠実に回答した上で、CTAを返信末尾に入れること（WE DO宣言と重複しないよう統合すること）。【希少性煽り禁止】「埋まってしまいます」「人気物件です」「残り1部屋」「一番手確保」等の煽り表現は成約データ152件で出現0件＝効果なし。代わりに顧客の入居希望日から逆算した事実ベースの期限を1文添えること（例: 「審査・契約手続きに最短でも2週間程かかりますので、○/○ご入居希望の場合は今週中にお申込みいただく必要がございます！！」）。入居希望日が不明な場合は逆算期限を書かず、期限文なしのCTAのみにすること（日付の創作は禁止）`
         );
-      } else if (brainMeta.purchase_signal_level === "soft") {
+      } else if (signalLevel === "soft") {
         lines.push(
           `- 📶 購買シグナル: SOFT（本気検討始まりシグナル）— 具体的な物件・設備・費用の確認質問を1件検出。質問に誠実に答えた後、次への軽いCTA 1文（例: 「気になれば内覧もできますよ！」「お気軽にどうぞ！」）を返信末尾に自然に添えること（pressure ゼロ・押しつけ禁止）`
         );
@@ -3944,9 +3968,12 @@ export async function POST(req: NextRequest) {
       }
       // closing_strategy は winning_pattern との両方がある場合は統合済み（上記）・単独の場合のみ出力
       if (cs && !wp) lines.push(`- 成約戦略: ${cs} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること${relaxGuard}`);
-      if (brainMeta.next_steps?.length) {
+      if (brainMeta.next_steps?.length && brainLocalFresh) {
         lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
         lines.push(`  → 今回の返信で実行するのは Step1（${brainMeta.next_steps[0]}）のみ。Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を今回の本文に先取りして書かないこと（フェーズ先走り禁止）`);
+      } else if (brainMeta.next_steps?.length) {
+        // 2026-09-13 監査 抜け3: 古い判断・省略の Step1 は前の発言への次の一手。「今回実行する」とは指示しない（先走りの禁止だけ残す）
+        lines.push(`- 予定ステップ（前回の分析時点・参考）: ${brainMeta.next_steps.join(" / ")} → 今回の返信は最新メッセージへの応答を優先し、Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を先取りして書かないこと`);
       }
       // TPO判定・effective制御値は tpoGuidanceNote（IIFE外・brainMeta有無に依存しない独立ブロック）へ移動（2026-09-08）
       if (brainMeta.urgency_appropriate === false) {
@@ -3964,11 +3991,12 @@ export async function POST(req: NextRequest) {
         const guide = toneGuide[brainMeta.recommended_tone];
         lines.push(`- 推奨トーン: ${brainMeta.recommended_tone}${guide ? `（${guide}）` : ""}`);
       }
-      if (brainMeta.template_hint) {
+      // 2026-09-13 監査 抜け3: template_hint・reason は今回の action に紐づく（cached では前回の action のまま残る）→ 新しい判断の時だけ
+      if (brainMeta.template_hint && brainLocalFresh) {
         lines.push(`- 📋 テンプレートヒント: 「${brainMeta.template_hint}」スタイルの返信が最も効果的。このラベルに対応する文体・構成パターンを参考にしつつ、顧客の状況に合わせて自然に書くこと`);
       }
       // brain が今回この戦略を選んだ理由 — 返信方向性を理解して文案品質を上げるために注入
-      if (brainMeta.reason) {
+      if (brainMeta.reason && brainLocalFresh) {
         lines.push(`- 💬 戦略選択理由: ${brainMeta.reason}`);
       }
       // ── message-local戦術ブロック（Step1廃止に伴いbrainへ移植した分析・brainFreshForMessage時のみ）──
@@ -4046,8 +4074,9 @@ export async function POST(req: NextRequest) {
         }
       }
       // 顧客意図 (customer_intent): 問い合わせの根本意図に応じた返信モードを指示
-      // stale（T2/T3）でも渡す。前回分析でも方向性として有効なため。
-      if (brainMeta.customer_intent) {
+      // 2026-09-13 監査 抜け3: 旧「stale（T2/T3）でも渡す」を廃止。customer_intent は「このメッセージの意図」で、T2 では question モードの
+      //   「customer_questions の質問のみに答える」が、注入していない customer_questions を指す矛盾になっていた。場面は TPO・往復文脈が決める
+      if (brainMeta.customer_intent && brainLocalFresh) {
         const INTENT_GUIDE: Record<string, string> = {
           question:     "質問回答モード ― お客様の疑問に端的に答えるだけ。次アクション催促・送付案内・フォーム提出促しは一切書かない。さらに：customer_questionsに記載の質問のみに答え、無関係な物件名・別物件の空室確認状況・並行審査の言及はavoid_topicsの有無に関わらず一切書かない",
           consultation: "相談応対モード ― 選択肢・アドバイスを提示する。即決プッシュは控える",
@@ -4081,8 +4110,8 @@ export async function POST(req: NextRequest) {
       if (brainFreshForMessage && brainMeta.future_timeline && brainMeta.hesitancy_pattern !== "timeline") {
         lines.push(`- 📅 顧客の決断タイムライン: ${brainMeta.future_timeline} — 返信の提案・約束はこのタイムラインに整合させる（このタイムラインは会話に実際に出た表現。これに合わない前倒し・急かし提案をしない。日付・時期の創作は絶対禁止）`);
       }
-      if (tierResult?.tier === "T2") {
-        lines.push(`※ brain分析の鮮度が不足（最新メッセージ送信後に分析が追いついていない）。直近メッセージ固有の戦術（hesitancy・customer_questions等）は省略済み。最新メッセージの意図は会話履歴から直接読むこと`);
+      if (tierResult?.tier === "T2" || isCachedMeta) {
+        lines.push(`※ brain分析の鮮度が不足（最新メッセージ送信後に分析が追いついていない・または分析を省略した前回の判断）。直近メッセージ固有の判定（推奨アクション・質問・意図・購買シグナル・WE DO メモ等）は省略済み。上の戦略は会話全体の方針としてだけ使い、最新メッセージの意図は会話履歴から直接読むこと`);
       }
       // Fix③: checkpoint_stage（brain実態フェーズ）がDB上のstate（currentState）と乖離している場合に明示する
       // S-2: resolveState が guideKey に反映済み（viewing/applying/contract→closed_won の前進補正）なら乖離警告は出さない
@@ -4197,6 +4226,8 @@ export async function POST(req: NextRequest) {
         reason: tierResult.reason,
         staleAgeMs: tierResult.staleAgeMs,
         viaDirect: !!externalBrainGate,
+        restoredAfterShown: brainGate?.restoredAfterShown ?? false,
+        caller: generationCaller,
         brainSource: (brainMeta as Record<string, unknown> | null)?.["source"] as string | null ?? null,
         action: brainMeta?.action ?? null,
         conversationId,
@@ -4793,7 +4824,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                         avoid_topics: activeAvoidTopics,
                         recommended_tone: brainMeta.recommended_tone ?? null,
                         next_steps: brainMeta.next_steps ?? [],
-                        engagement_stance: brainMeta.engagement_stance ?? null,
+                        // 2026-09-13 監査 抜け3: 生成は fresh の時だけ WAIT を効かせるのに、検査には生の値を渡していた（古い wait で CTA を削らせない）
+                        engagement_stance: brainLocalFresh ? (brainMeta.engagement_stance ?? null) : null,
                         ...(brainFreshForMessage
                           ? {
                               customer_questions: brainMeta.customer_questions ?? [],
@@ -5160,6 +5192,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             const tpoDebug: Record<string, unknown> | null = finalCheck && !isTemplateOptimize ? {
               tpo_label: tpoNoteForLLM ?? null,
               tier: tierResult.tier,
+              // 2026-09-13 監査: 経路別にティア率を測るため（どの経路・なぜそのティアか・表示後の復元か）
+              tierReason: tierResult.reason, caller: generationCaller, viaDirect: !!externalBrainGate,
+              restoredAfterShown: brainGate?.restoredAfterShown ?? false, staleAgeMs: tierResult.staleAgeMs ?? null,
               phaseGuideKey, rawState: resolvedState.raw, stateKnown: resolvedState.known,
               rawAction, effectiveAction, isCachedMeta,
               isConditionPresented, isNegativeContext, isThinkingMsg, isTemporaryLeaveMsg, isGratitudeReplyTPO, isPostStrongRecommendation,
@@ -5307,7 +5342,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // 壊れたドラフト（AIX境界を越えた内容）をスタッフの送信テキストボックスに置かない。
               // 代わりに conversation_direction.suggested_aix_button を強制セットしてAIX側で対応させる。
               // draft_attempted_at は残す＝10分間は同じ境界違反ドラフトを再生成しない。
-              if (aixBoundaryRequired) {
+              // 2026-09-13 監査 抜け2: 生成中にお客様の新しい発言が届いていたら、この（前の発言向けの）下書きは保存しない。
+              //   生成中の印だけ外し、webhook が立てた draft_pending_at を残す → cron がブレイン→新しい発言まで含めた下書きを作り直す
+              const supersededBy = await newerCustomerMessageAfter(conversationId, lastCustomerMsgAt);
+              if (supersededBy) {
+                console.log(JSON.stringify({ tag: "draft:superseded", conversationId, answeredAt: lastCustomerMsgAt, newerAt: supersededBy, caller: generationCaller }));
+                const { error: supErr } = await supabase.from("conversations").update(SUPERSEDED_DRAFT_UPDATE).eq("id", conversationId);
+                if (supErr) console.error("[generate-reply] superseded update error:", conversationId, supErr.message);
+              } else if (aixBoundaryRequired) {
                 console.warn(
                   "[generate-reply] AIX境界block解消不能 → ai_draftクリア+AIX切替:",
                   conversationId, aixBoundaryRequired.code, "→", aixBoundaryRequired.action
@@ -5342,7 +5384,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // ai_draft_check は別UPDATEで保存（fail-open: カラム未追加環境でも ai_draft 保存を巻き込まない。
               // 監査ログ兼、事前生成ドラフト選択時のクライアント側ハッシュ照合用。
               // AIX切替時（aixBoundaryRequired）は ai_draft が無いためハッシュ照合対象も無く保存しない）
-              if (finalCheck && !isTruncated && !aixBoundaryRequired && finalDraftText.trim()) {
+              if (finalCheck && !isTruncated && !aixBoundaryRequired && !supersededBy && finalDraftText.trim()) {
                 void supabase
                   .from("conversations")
                   // tpo_debug: TPO誤発動率の定量化用（2026-09-08）。JSONBのため migrate-schema 更新不要

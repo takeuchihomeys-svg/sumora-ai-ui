@@ -12,6 +12,7 @@ import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
 import { taskTypesCompletedByAix } from "./lib/aix-task-link";
+import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./lib/brain-meta-restore";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
@@ -258,7 +259,8 @@ const BRAIN_AIX_LABELS: Record<string, string> = {
 // \u30d6\u30ec\u30a4\u30f3\u306e\u5224\u65ad\u304c\u300c\u6700\u65b0\u306e\u9867\u5ba2\u767a\u8a00\u300d\u3092\u898b\u305f\u5f8c\u306e\u3082\u306e\u304b\u3092\u8fd4\u3059\u3002\u753b\u9762\u306e AIX \u8a98\u5c0e\uff08P3\u301cP8 \u30d0\u30ca\u30fc\u30fbAIX \u30dc\u30bf\u30f3\u306e\u70b9\u6ec5\u30fb
 // \u300c\u78ba\u8a8d\u3057\u305f\u300d\u30b7\u30e7\u30fc\u30c8\u30ab\u30c3\u30c8\uff09\u306f\u3059\u3079\u3066\u3053\u306e\u5224\u5b9a\u3092\u901a\u3059\u3002\u30d6\u30ec\u30a4\u30f3\u304c\u5224\u65ad\u3057\u3066\u3044\u306a\u3044 AIX \u3092\u51fa\u3059\u3068\u3001\u8aa4\u308a\u3092\u5b66\u7fd2\u3067\u76f4\u305b\u305a\u7d1b\u3089\u308f\u3057\u3044\u305f\u3081\u3002
 // requireTs=false: analyzed_msg_ts \u3092\u6301\u305f\u306a\u3044\u5224\u65ad\uff08\u751f\u6210\u6642\u306e SUGGESTED_AIX \u30c8\u30ec\u30fc\u30e9\u30fc\u3002\u751f\u6210\u5074\u3067\u30d6\u30ec\u30a4\u30f3\u306e\u9bae\u5ea6\u3092\u78ba\u8a8d\u6e08\u307f\uff09\u3082\u8a8d\u3081\u308b
-const BRAIN_AIX_FRESHNESS_MS = 8000;
+// 2026-09-13 監査: 旧 8000ms。返信生成の鮮度判定（5秒）と食い違い、5〜8秒の間は画面が AIX を出すのに生成はそのアクションを落としていた → 同じ値を使う
+const BRAIN_AIX_FRESHNESS_MS = BRAIN_FRESHNESS_TOLERANCE_MS;
 function isBrainAixFresh(
   meta: { analyzed_msg_ts?: string | null } | null | undefined,
   msgs: Message[],

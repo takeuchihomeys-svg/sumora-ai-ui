@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { stripRoomLeadingZeros } from "@/app/lib/template-preprocess";
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
@@ -763,7 +764,7 @@ export async function POST(req: NextRequest) {
   // 各フェッチはエラーでも生成を止めない（資産なしで生成続行 — generate-reply と同方針）
   const [convResult, topPrinciples, lossPatterns, phraseList, dbRulesGeneric, dbRulesAction, actionBucketRes, aixTemplateExRes, aixUsageLogsRes] = await Promise.all([
     conversationId
-      ? supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).single()
+      ? supabase.from("conversations").select(BRAIN_META_RESTORE_COLUMNS).eq("id", conversationId).single()
       : Promise.resolve({ data: null }),
     getCachedTopPrinciples().catch((err) => { console.error("[aix-template-generate] topPrinciples失敗:", err); return []; }),
     getCachedLossPatterns().catch((err) => { console.error("[aix-template-generate] lossPatterns失敗:", err); return []; }),
@@ -820,7 +821,11 @@ export async function POST(req: NextRequest) {
           .limit(20)
       : Promise.resolve({ data: null }),
   ]);
-  const brainMeta = (convResult.data as { suggested_aix_meta?: BrainMeta } | null)?.suggested_aix_meta ?? null;
+  // 2026-09-13 監査 抜け1: 下書きを表示すると suggested_aix_meta が消えるため、✨ を押す時点ではほぼ常にブレインの判断なしだった。
+  //   表示で消えただけ（控えが最新のお客様発言を見た本分析）なら last_brain_meta から戻す
+  const brainMeta = conversationId
+    ? ((await resolveBrainMetaForGeneration(conversationId, (convResult.data ?? null) as BrainMetaRow | null, "aix-template-generate")).meta as BrainMeta | null)
+    : null;
 
   // 汎用ルール（generate_reply+global）とアクション別ルール（LEARN-AIX-*含む）を結合
   const dbRules = [dbRulesGeneric, dbRulesAction].filter(Boolean).join("\n");

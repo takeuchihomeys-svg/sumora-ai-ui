@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
+import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES } from "@/app/lib/conversation-status";
 // 2026-09-09 Fable5: 複数通の結合は "\n" ではなく MSG_SEP（1通内の改行を「N通」に分割しない）
 import { MSG_SEP } from "@/app/lib/reply-context";
@@ -384,16 +385,21 @@ export async function POST(req: NextRequest) {
       //   = bg-async で実行済みの会話では再実行せず required 通知の重複を防ぐ）。
       let brainGateDirect: BrainGateSnapshot | null = null;
       try {
-        brainGateDirect = await Promise.race([
+        // 2026-09-13 監査: 旧は null の理由に関係なく brain_race_timeout_90s と記録していた（分析の省略・分析中の新着・書き込み見送り・失敗も
+        //   「打ち切り」に数えられ、原因を分けられなかった）。打ち切りとブレインが判断を返さなかった場合を分けて記録する
+        const BRAIN_TIMEOUT = Symbol("brain_timeout");
+        const raced = await Promise.race([
           runBrainAndNotify(convId, targetMessage),
           // FIX(post-Fable5): 旧値 60_000ms は extended thinking の最悪ケース（最大60s）と同値の境界で、
           // brain 完了と同時にタイムアウトが勝つと T3 フォールバックに落ちていた。
           // 90s に延ばすことで境界衝突を解消（90+180+α < maxDuration=300s で収支は安全）。
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 90_000)),
+          new Promise<typeof BRAIN_TIMEOUT>((resolve) => setTimeout(() => resolve(BRAIN_TIMEOUT), 90_000)),
         ]);
+        brainGateDirect = raced === BRAIN_TIMEOUT ? null : raced;
         console.log("[bg-async] brain serial done, convId:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
         if (!brainGateDirect) {
-          console.log(JSON.stringify({tag:"degradation:T3",stage:"brain-gate-timeout",conversationId:convId,reason:"brain_race_timeout_90s",staleAgeMs:null}));
+          const timedOut = raced === BRAIN_TIMEOUT;
+          console.log(JSON.stringify({tag:"degradation:T3",stage:timedOut ? "brain-gate-timeout" : "brain-gate-null",conversationId:convId,reason:timedOut ? "brain_race_timeout_90s" : "brain_returned_null",staleAgeMs:null}));
         }
       } catch (brainErr) {
         console.warn("[bg-async] brain serial failed（従来フォールバックで続行）:", String(brainErr), "convId:", convId);
@@ -642,6 +648,8 @@ export async function POST(req: NextRequest) {
         recentMessagesForReply = [staffEntry, ...recentMessagesForReply];
       }
 
+      // この生成が答える最新のお客様発言の時刻（保存直前に「これより新しい発言が届いていないか」を確かめる）
+      const answeredCustomerAt = [...effectiveRecentMsgs].reverse().find((m) => m.sender === "customer")?.createdAt ?? null;
       let draftRes: Response;
       try {
         draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
@@ -749,7 +757,10 @@ export async function POST(req: NextRequest) {
           .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
           .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
           .trim();
-        if (partialDraft.length > 20) {
+        if (partialDraft.length > 20 && await newerCustomerMessageAfter(convId, answeredCustomerAt)) {
+          console.log(JSON.stringify({ tag: "draft:superseded", conversationId: convId, answeredAt: answeredCustomerAt, caller: "bg-async:partial" }));
+          await db.from("conversations").update(SUPERSEDED_DRAFT_UPDATE).eq("id", convId);
+        } else if (partialDraft.length > 20) {
           await db.from("conversations").update({ ai_draft: partialDraft, draft_pending_at: null, draft_attempted_at: null }).eq("id", convId).is("ai_draft", null);
           console.log("[bg-async] saved partial draft:", partialDraft.length, "chars, convId:", convId);
         }
@@ -763,7 +774,13 @@ export async function POST(req: NextRequest) {
         .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
         .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
         .trim();
-      if (finalDraft) {
+      // 2026-09-13 監査 抜け2: 生成中にお客様の新しい発言が届いていたら、この（前の発言向けの）下書きは保存しない
+      //   （生成中の印だけ外して draft_pending_at を残す → cron が新しい発言まで含めて作り直す。判定は draft-supersede.ts）
+      const supersededBy = finalDraft ? await newerCustomerMessageAfter(convId, answeredCustomerAt) : null;
+      if (supersededBy) {
+        console.log(JSON.stringify({ tag: "draft:superseded", conversationId: convId, answeredAt: answeredCustomerAt, newerAt: supersededBy, caller: "bg-async" }));
+        await db.from("conversations").update(SUPERSEDED_DRAFT_UPDATE).eq("id", convId);
+      } else if (finalDraft) {
         // ai_draft IS NULL ガード: 人間が編集中の場合は上書きしない
         const { error: saveErr } = await db.from("conversations")
           // draft_attempted_at: null でロック解放 → 次メッセージ到着時に after()B が即再claimできる
