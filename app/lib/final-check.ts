@@ -18,6 +18,8 @@
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 import { stripMetaNarration, isMetaNarrationLine } from "./meta-narration";
 import { logLlmUsage, type AnthropicUsageLike } from "./llm-usage-log";
+// 2026-09-13: 最終チェックに渡す会社ルールを「禁止」優先・ルールの切れ目で選ぶ（旧: 先頭から 20,000字で切断）
+import { selectRulesForCheckCached } from "./final-check-rules";
 // 2026-09-11 竹内方針1・5: 誤字（warning のみ）・「すぐに」の唯一の定義（後処理と検査が同じ正規表現）
 import { detectTypos } from "./typo-check";
 import { HASTY_ADVERB_TEST_RE, findUnanchoredUketamawari } from "./banned-phrasing";
@@ -203,7 +205,7 @@ const ADVERSARIAL_PREAMBLE = `返信文を以下の観点で確認してくだ�
 確信が持てない場合・問題がない場合は issues を空配列にしてください。`;
 
 // ─── 構造化出力スキーマ（全pass共通・保証付きJSON）────────────────────────────
-const ISSUE_SCHEMA = {
+export const ISSUE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["issues"],
@@ -315,16 +317,16 @@ function nowJstString(): string {
 // プロンプトキャッシュ: 安定部（チェック基準・code一覧・[RULES]・出力例 = 全顧客共通、
 // dbRules/finalCheckRules は DB 編集時のみ変化）を先頭ブロック + cache_control、
 // 動的部（brain判定・aixNote・draft）を後続ブロックに分離。
-function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
+export function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
   // FP-02: AIX非使用時は AIX_BOUNDARY_* コードを除外する旨を注記
   const aixNote = ctx.isAix === false
     ? "\n【重要】この会話ではAIX機能は使用されていません。AIX_BOUNDARY_* コード（AIX_BOUNDARY_VIEWING, AIX_BOUNDARY_PROMISE 等）は一切発行しないでください。\n"
     : "";
-  // FN-005: dbRules 20000字切り捨て警告（旧8000字上限を拡大。Sonnetのコンテキストウィンドウは十分大きい）
-  if (ctx.dbRules && ctx.dbRules.length > 20000) {
-    console.warn(`[final-check] dbRules truncated: ${ctx.dbRules.length} chars → 20000. Rules beyond 20000 chars are NOT checked.`);
-  }
-  const dbRulesSliced = (ctx.dbRules || "（DBルールなし — 上記の境界線・禁止語彙のみで照合）").slice(0, 20000);
+  // 2026-09-13: 先頭から 20,000字で切ると古い方の「禁止」ルールが落ちていた → 永久ルール・【線引き】→ 禁止 → その他 → 「足せ」型の順に
+  //   上限の中でルールの切れ目で選ぶ（final-check-rules.ts・落とした数は final-check:rules で出す）
+  const dbRulesSliced = ctx.dbRules
+    ? selectRulesForCheckCached(ctx.dbRules).text
+    : "（DBルールなし — 上記の境界線・禁止語彙のみで照合）";
   // FN-005: finalCheckRules 3000字切り捨て警告
   if (ctx.finalCheckRules && ctx.finalCheckRules.length > 3000) {
     console.warn(`[final-check] finalCheckRules truncated: ${ctx.finalCheckRules.length} chars → 3000. Rules beyond 3000 chars are NOT checked.`);
@@ -2679,7 +2681,7 @@ ${draft}
   //   自動修正のたびに満額で払っていた（下書きの38%で自動修正が走る）。固定の指示の直後に独立ブロックで置き 1h キャッシュ
   return [
     { type: "text" as const, text: SONNET_REVISION_STATIC, cache_control: { type: "ephemeral", ttl: "1h" } },
-    { type: "text" as const, text: `[RULES]（会社ルール）\n${(ctx.dbRules || "なし").slice(0, 20000)}\n[/RULES]`, cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text" as const, text: `[RULES]（会社ルール）\n${ctx.dbRules ? selectRulesForCheckCached(ctx.dbRules).text : "なし"}\n[/RULES]`, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamic },
   ];
 }
