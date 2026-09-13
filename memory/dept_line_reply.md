@@ -4,6 +4,18 @@
 
 ---
 
+## 2層ブレイン（竹内さんの設計・2026-09-13・コミット 9d667dd7）— 黄金ルール
+- 竹内「毎回の分析は鮮度の高い部分（お客さんの意向等）に限定、全体分析は前回のフル分析と最新の分析を整理して行う。静的な部分はプロンプトキャッシュ、動的な部分は AIX-META と RAG」
+- 実態（直前）: full と incremental の入力は完全に同じ 50,782 トークン（8/20 の軽量化が 8/20〜9/12 の品質修正で段階的に戻っていた・git 履歴で確認）。全体分析にも前回の判断が渡りアンカリング防止が効いていなかった
+- 今回の発言の層（毎回）: 前回の全体分析 JSON＋セーブポイント＋プロフィール（会話専用キャッシュ5分）＋未返信の連投・台帳・場面の証拠・AIX 履歴・アクション別ルール・ナレッジ12件。成約パターン RAG・成約例は渡さない。ai_summary・closing_strategy・next_steps は出力しない
+- 戦略の層（conversations.brain_strategy）: 前回の戦略＋毎回の分析の要点（brain_decision_logs.digest）＋セーブポイント＋新しいメッセージ＋成約パターン6件で作り直す。後ろで実行。10件・戦略が変わる発言・72時間、3回に1回はゼロから。ai_summary も戦略の層が書く
+- 組み合わせは brain-layers.ts（今回の発言が優先／戦略が持つ／購買シグナルは高い方）。戦略が無い会話は last_brain_meta から種まき
+- 検証: 実在24件 推奨 AIX 一致 22/24・毎回の分析 35%減（全体で約25〜30%減の見込み）。YUMA で本番の流れを確認
+- 検証で直した穴: 連投全体・繰り返しの依頼を優先／実行済みの手順は完了扱い＋log-aix-usage のパッチを brain_strategy にも／信号3（見積送付済み→反応待ち）が手で添えると外れていた既存の穴
+- ログ: brain:blocks（layer・部分ごとの文字数）・llm:usage mode=fresh / route=brain:strategy・brain:strategy-decision・brain:strategy・brain:strategy-seeded。戻す時は BRAIN_LAYER_MODE=off
+- 次の節約余地: 今回の発言の層のアクション別ルール（約3,400〜3,800字）を戦略の次の手順・場面の証拠の候補 AIX に絞る
+- 1週間後（9/20頃）: 本番の llm:usage で1メッセージあたりの費用、brain_aix_feedback の一致率（基準 51%）を比較
+
 ## 返信生成にブレインの判断が届かない・古い判断が混ざる抜けを解消（竹内・2026-09-13・コミット 9006d8bd）— 黄金ルール
 - 竹内「返信つくる際のブレインの部分はちゃんと分析されてるのか・抜けはあるか」→ 送信済み返信77件（14日）: T1 39%・T2 14%・**T3（判断なし）47%**。T3 の約半数は旧ウォーターマーク（6ef915f0 で修正済み）、残りは下の1
 - 抜け1（G2）: 画面は下書き表示時に suggested_aix_meta を消す → 表示後の再生成・✨・AIX 文面が常に T3。画面は変えず、サーバーの共通入口 resolveBrainMetaForGeneration（brain-meta-load.ts）で「__SHOWN__・控えが最新発言を見た本分析（aix_patch/cached 以外）」の時だけ last_brain_meta から戻す。generate-reply・aix/action・aix-template-generate
