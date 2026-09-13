@@ -15,6 +15,19 @@
 //   - 控えが最新のお客様発言を見ている（analyzed_msg_ts ≥ 最新のお客様発言 − 許容誤差。generate-reply の鮮度判定と同じ基準）
 
 /** ブレインの判断が「最新のお客様発言を見た」とみなす許容誤差（同じ秒の書き込みの丸め）。brain-fetch-spec の鮮度判定と共有 */
+/**
+ * ブレインの判断がまだ見ていないお客様の発言があるか（2026-09-13 名無しの権兵衛事例・bg-async の取りこぼし救済で使う）。
+ * @param latestCustomerAt 最新のお客様発言の時刻
+ * @param analyzedTs 保存済みの判断が見た最新のお客様発言の時刻（suggested_aix_meta / last_brain_meta の analyzed_msg_ts。新しい方を使う）
+ */
+export function brainMissedCustomerMessage(latestCustomerAt: string | null | undefined, analyzedTs: ReadonlyArray<string | null | undefined>): boolean {
+  const latest = latestCustomerAt ? Date.parse(latestCustomerAt) : NaN;
+  if (!Number.isFinite(latest)) return false;
+  const seen = analyzedTs.map((t) => (t ? Date.parse(t) : NaN)).filter((t) => Number.isFinite(t));
+  if (!seen.length) return true;
+  return latest > Math.max(...seen) + BRAIN_FRESHNESS_TOLERANCE_MS;
+}
+
 export const BRAIN_FRESHNESS_TOLERANCE_MS = 5_000;
 
 /** 画面が下書きを表示した印（page.tsx が ai_draft に書く） */

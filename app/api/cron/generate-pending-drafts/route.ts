@@ -280,6 +280,41 @@ async function run() {
         })(),
       ].filter(Boolean).join("\n");
 
+      // ── brain直列実行（bg-async と同じ入口の cron 版・2026-08直列アーキテクチャ）─────
+      // 本cronは webhook の直接 bg-async トリガーが失敗した会話の fallback。bg-async を経由しない
+      // ため、そのままでは brain（分析＋required通知）が走らずに draft が生成されてしまう。
+      // brain_analyzed_at が最新メッセージ（updated_at）より古い場合のみ実行する
+      // （bg-async が既に brain 実行済みの会話＝draft再試行では再実行しない → required通知の重複防止。
+      //   分析失敗時も brain_analyzed_at が更新される（H3）ため失敗ループでの通知連発も起きない）。
+      // 実行時間: brain 最大~50s + generate-reply 最大120s ≈ 170s/件 — ループ先頭の
+      // TIME_BUDGET_MS チェックで残りは次回cronに繰り越されるため maxDuration 300s 内で安全。
+      // 2026-09-13 竹内（名無しの権兵衛事例）: 下の「AIXタスク進行中なら下書きを作らない」より先に動かす。
+      //   旧: 古い判断で作られたやることがあると、新しいお客様発言を見たブレインを動かさずに飛ばしていた
+      //   （やることは下書きを止める理由であって、新しい発言の分析を止める理由ではない）
+      let brainGateDirect: BrainGateSnapshot | null = null;
+      const brainAnalyzedAtMs = conv.brain_analyzed_at ? Date.parse(conv.brain_analyzed_at as string) : NaN;
+      const convUpdatedAtMs = conv.updated_at ? Date.parse(conv.updated_at as string) : NaN;
+      let brainStale = Number.isNaN(brainAnalyzedAtMs) || (!Number.isNaN(convUpdatedAtMs) && brainAnalyzedAtMs < convUpdatedAtMs);
+      // 2026-09-13 監査: brain_analyzed_at は分析の失敗・見送り・書き込み見送りでも打刻されるため、それだけでは「分析済み」と言えない
+      //   （bg-async でブレインが失敗 → cron が取りこぼしを拾ってもブレインを動かさず、判断なし（T3）で生成していた）。
+      //   ブレインの判断が最新のお客様発言を見ているか（analyzed_msg_ts）でも確かめ、見ていなければ動かす
+      if (!brainStale) {
+        const latestCustAt = [...recentMsgs].reverse().find((m) => m.sender === "customer")?.created_at ?? null;
+        if (latestCustAt) {
+          const { data: metaRow } = await db.from("conversations").select("suggested_aix_meta").eq("id", convId).maybeSingle();
+          const analyzedTs = (metaRow?.suggested_aix_meta as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts ?? null;
+          brainStale = !analyzedTs || Date.parse(analyzedTs) < Date.parse(latestCustAt) - BRAIN_FRESHNESS_TOLERANCE_MS;
+        }
+      }
+      if (brainStale) {
+        try {
+          brainGateDirect = await runBrainAndNotify(convId);
+          console.log("[generate-pending-drafts] brain serial done:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
+        } catch (brainErr) {
+          console.warn("[generate-pending-drafts] brain serial failed（DBフェッチにフォールバック）:", convId, String(brainErr));
+        }
+      }
+
       const { data: cronPendingTasks } = await db.from("line_tasks")
         .select("task_type, created_at")
         .eq("conversation_id", convId)
@@ -310,38 +345,6 @@ async function run() {
           continue;
         }
         console.log("[generate-pending-drafts] AIXタスク2時間以上スタック・救済試行:", convId, activeTaskTypes);
-      }
-
-      // ── brain直列実行（bg-async と同じ入口の cron 版・2026-08直列アーキテクチャ）─────
-      // 本cronは webhook の直接 bg-async トリガーが失敗した会話の fallback。bg-async を経由しない
-      // ため、そのままでは brain（分析＋required通知）が走らずに draft が生成されてしまう。
-      // brain_analyzed_at が最新メッセージ（updated_at）より古い場合のみ実行する
-      // （bg-async が既に brain 実行済みの会話＝draft再試行では再実行しない → required通知の重複防止。
-      //   分析失敗時も brain_analyzed_at が更新される（H3）ため失敗ループでの通知連発も起きない）。
-      // 実行時間: brain 最大~50s + generate-reply 最大120s ≈ 170s/件 — ループ先頭の
-      // TIME_BUDGET_MS チェックで残りは次回cronに繰り越されるため maxDuration 300s 内で安全。
-      let brainGateDirect: BrainGateSnapshot | null = null;
-      const brainAnalyzedAtMs = conv.brain_analyzed_at ? Date.parse(conv.brain_analyzed_at as string) : NaN;
-      const convUpdatedAtMs = conv.updated_at ? Date.parse(conv.updated_at as string) : NaN;
-      let brainStale = Number.isNaN(brainAnalyzedAtMs) || (!Number.isNaN(convUpdatedAtMs) && brainAnalyzedAtMs < convUpdatedAtMs);
-      // 2026-09-13 監査: brain_analyzed_at は分析の失敗・見送り・書き込み見送りでも打刻されるため、それだけでは「分析済み」と言えない
-      //   （bg-async でブレインが失敗 → cron が取りこぼしを拾ってもブレインを動かさず、判断なし（T3）で生成していた）。
-      //   ブレインの判断が最新のお客様発言を見ているか（analyzed_msg_ts）でも確かめ、見ていなければ動かす
-      if (!brainStale) {
-        const latestCustAt = [...recentMsgs].reverse().find((m) => m.sender === "customer")?.created_at ?? null;
-        if (latestCustAt) {
-          const { data: metaRow } = await db.from("conversations").select("suggested_aix_meta").eq("id", convId).maybeSingle();
-          const analyzedTs = (metaRow?.suggested_aix_meta as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts ?? null;
-          brainStale = !analyzedTs || Date.parse(analyzedTs) < Date.parse(latestCustAt) - BRAIN_FRESHNESS_TOLERANCE_MS;
-        }
-      }
-      if (brainStale) {
-        try {
-          brainGateDirect = await runBrainAndNotify(convId);
-          console.log("[generate-pending-drafts] brain serial done:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
-        } catch (brainErr) {
-          console.warn("[generate-pending-drafts] brain serial failed（DBフェッチにフォールバック）:", convId, String(brainErr));
-        }
       }
 
       const draftRes = await fetch(`${baseUrl}/api/generate-reply`, {

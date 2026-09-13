@@ -1,6 +1,6 @@
 // 2026-09-13 監査 抜け1: 下書きを表示した後の生成（再生成・✨・AIX 文面）にブレインの判断を届ける（表示で消えただけの判断を控えから戻す）
 // 実行: npx tsx app/lib/__tests__/brain-meta-restore.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { restoreMetaAfterShown, BRAIN_FRESHNESS_TOLERANCE_MS } from "../brain-meta-restore";
+import { restoreMetaAfterShown, brainMissedCustomerMessage, BRAIN_FRESHNESS_TOLERANCE_MS } from "../brain-meta-restore";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -42,6 +42,19 @@ it("成約済み（closed_won）は戻さない", () => expect(restoreMetaAfterS
 it("控えに analyzed_msg_ts が無い → 戻さない", () => expect(restoreMetaAfterShown({ ...base, lastBrainMeta: { action: "x", source: "brain" } }).reason).toBe("no_ts"));
 it("最新のお客様発言が分からない → 戻さない（鮮度を確かめられない）", () => expect(restoreMetaAfterShown({ ...base, latestCustomerMsgAt: null }).reason).toBe("no_customer_msg"));
 it("控えが無い → null", () => expect(restoreMetaAfterShown({ ...base, lastBrainMeta: null }).meta).toBe(null));
+
+// 2026-09-13 名無しの権兵衛事例: 1通目だけを見た判断のまま、1分後の2通目を見たブレインが動かなかった（bg-async の取りこぼし救済）
+it("判断が1通目（01:37）だけを見ていて2通目（01:38）がある → 見ていない発言あり", () =>
+  expect(brainMissedCustomerMessage("2026-09-12T16:38:03Z", ["2026-09-12T16:37:10Z", null])).toBe(true));
+it("判断が最新の発言を見ている（同じ秒の丸め5秒以内も含む）→ なし", () => {
+  expect(brainMissedCustomerMessage("2026-09-12T16:38:03Z", ["2026-09-12T16:38:03Z"])).toBe(false);
+  expect(brainMissedCustomerMessage("2026-09-12T16:38:03Z", [null, "2026-09-12T16:38:00Z"])).toBe(false);
+});
+it("表示で消えた判断（suggested_aix_meta なし）でも控え（last_brain_meta）が見ていれば なし・どちらも無ければ あり", () => {
+  expect(brainMissedCustomerMessage("2026-09-12T16:38:03Z", [null, "2026-09-12T16:38:03Z"])).toBe(false);
+  expect(brainMissedCustomerMessage("2026-09-12T16:38:03Z", [null, null])).toBe(true);
+});
+it("お客様の発言が無い → なし", () => expect(brainMissedCustomerMessage(null, [null])).toBe(false));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

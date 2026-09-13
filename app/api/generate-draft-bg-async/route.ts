@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
 import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
+import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES } from "@/app/lib/conversation-status";
 // 2026-09-09 Fable5: 複数通の結合は "\n" ではなく MSG_SEP（1通内の改行を「N通」に分割しない）
 import { MSG_SEP } from "@/app/lib/reply-context";
@@ -283,8 +284,10 @@ export async function POST(req: NextRequest) {
   // OR (ai_draft='[AIX誘導中]' AND draft_attempted_at IS NULL)
   // OR (ai_draft='[AIX誘導中]' AND draft_attempted_at < 5min前)
   const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  // この実行が立てた印（AIX の判断で下書きを作らずに終える時、自分の印だけを外すために覚えておく）
+  const claimedAt = new Date().toISOString();
   const { data: claimed, error: claimErr } = await db.from("conversations")
-    .update({ draft_attempted_at: new Date().toISOString() })
+    .update({ draft_attempted_at: claimedAt })
     .eq("id", convId)
     .or(
       `and(ai_draft.is.null,draft_attempted_at.is.null),` +
@@ -441,7 +444,10 @@ export async function POST(req: NextRequest) {
               //      残予算が十分（generate-reply 180s + 再brain 45s を 300s 内に収める）なら brain を1回だけ再実行し、
               //      再実行できない／失敗した場合は brainGateDirect を渡さず generate-reply 側の DB フェッチ＋鮮度判定（T2）に委ねる
               const elapsedMs = Date.now() - bgStartedAt;
-              if (brainGateDirect && elapsedMs < 75_000) {
+              // 2026-09-13（名無しの権兵衛事例の YUMA 再現で判明）: 分析中に2通目が届くと、ブレインは「古い発言への判断」として
+              //   スナップショットを返さない（null・brain:stale-snapshot）。旧はスナップショットがある時だけ再実行していたため、
+              //   2通目を見たブレインが動かないまま生成に進んでいた → 新しい発言がある時はスナップショットの有無に関係なく1回だけ再実行する
+              if (elapsedMs < 75_000) {
                 try {
                   const rerun = await Promise.race([
                     runBrainAndNotify(convId, latestTarget),
@@ -585,6 +591,29 @@ export async function POST(req: NextRequest) {
       const baseUrl = getBaseUrl();
       console.log("[bg-async] calling generate-reply at:", baseUrl, "convId:", convId, "state:", effectiveState);
 
+      // 2026-09-13 竹内（名無しの権兵衛事例）: AIX の判断で下書きを作らずに終える時（下の2か所）も「生成中」の印を外す。
+      //   旧: 印（draft_attempted_at）が5分残り、その間に届いたお客様の2通目（「内見は9/14の12:00からでお願いしたいです！」）の
+      //   bg-async は「生成中」でスキップ → 2通目を見たブレインが一度も動かず、1通目（4件を内見したい）だけを見た 内覧日調整 のままだった
+      //   （スタッフは待ち合わせ場所を押した）。印を外した後、保存済みの判断がまだ見ていないお客様の発言があればブレインをもう一度動かす
+      //   （印で弾かれた2通目の救済）。2通目まで見れば今のブレインは 待ち合わせ場所 を選ぶ（01:38 で切った試し実行 4/4）
+      const finishWithoutDraft = async () => {
+        await db.from("conversations").update({ draft_attempted_at: null }).eq("id", convId).eq("draft_attempted_at", claimedAt);
+        try {
+          const [{ data: seen }, { data: lastCust }] = await Promise.all([
+            db.from("conversations").select("suggested_aix_meta, last_brain_meta").eq("id", convId).maybeSingle(),
+            db.from("messages").select("created_at").eq("conversation_id", convId).eq("sender", "customer")
+              .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+          ]);
+          const ts = (m: unknown) => (m as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts ?? null;
+          if (brainMissedCustomerMessage(lastCust?.created_at as string | undefined, [ts(seen?.suggested_aix_meta), ts(seen?.last_brain_meta)])) {
+            console.log(JSON.stringify({ tag: "brain:catch-up", conversationId: convId, latestCustomerAt: lastCust?.created_at ?? null }));
+            await runBrainAndNotify(convId);
+          }
+        } catch (catchUpErr) {
+          console.warn("[bg-async] catch-up brain failed:", convId, String(catchUpErr));
+        }
+      };
+
       const { data: pendingTasks } = await db.from("line_tasks")
         .select("task_type, created_at")
         .eq("conversation_id", convId)
@@ -613,6 +642,7 @@ export async function POST(req: NextRequest) {
             .eq("id", convId)
             .is("ai_draft", null);
           console.log("[bg-async] AIXタスク進行中のためdraft生成スキップ:", convId, activeTaskTypes);
+          await finishWithoutDraft();
           return;
         }
         console.log("[bg-async] AIXタスク2時間以上スタック・テキストドラフト生成試行:", convId, activeTaskTypes);
@@ -625,6 +655,7 @@ export async function POST(req: NextRequest) {
           .update({ ai_draft: "[AIX誘導中]", draft_pending_at: null })
           .eq("id", convId)
           .is("ai_draft", null);
+        await finishWithoutDraft();
         return;
       }
 
