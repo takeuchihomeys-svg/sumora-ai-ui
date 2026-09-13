@@ -1,8 +1,16 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-09-12
+最終更新: 2026-09-13
 
 ---
+
+## ブレインの判断が捨てられる（T3）・同じ会話の重複実行を解消（竹内・2026-09-13・コミット 6ef915f0）— 黄金ルール
+- 原因: 保存条件が「updated_at が分析開始時と同じ」。updated_at は下書き保存・フラグ・hot 昇格でも変わるので正しい判断まで捨てた（本番8時間で7回。連投時は bg-async と webhook のブレインが互いを捨て、返信生成13回中6回がブレインなし＝T3）。画像連投で同じ会話のブレインが1リクエスト内7本（入力費用の約2割が無駄）。JSON 読み取り失敗でも判断を失っていた
+- 修正（app/lib/brain-core.ts）: ①保存済みの判断の analyzed_msg_ts が自分より新しい時だけ書かない ②分析中にスタッフが送信した・成約等（BRAIN_SKIP_STATUSES）になった時は書かない（送信で消した判断を書き戻さない） ③同じプロセスの同じ会話は1本（analyzeAndSaveBrainMetaCoalesced）。実行開始後に新しいメッセージが来ていた時だけ終了後に1回再分析 ④分析中に新しい顧客発言が来た判断では AIX要対応・カレンダーを出さず null（T2 扱い） ⑤JSON は制御文字を直して読み、途中切れでなければ1回呼び直す
+- ログのタグ: brain:write-skip（reason: newer_analysis_exists / staff_sent_during_analysis / status=…）・brain:coalesced・brain:rerun-after-coalesce・brain:stale-snapshot・brain:json-retry
+- 未対応: aix-template-generate の競合ウィンドウ（分析中に✨を押すと meta なしで生成）
+- 1週間後（2026-09-20 頃）: brain_aix_feedback の一致率（基準 51%＝30/59）と T3 率を比べる
+- 設計知見: e9e55bb0（ブレインの判断を捨てない書き込み条件・穴:G2）・9c374e2a（汎用・「古い結果で上書きしない」は入力の時刻で比べる）。1b8702f2（ウォーターマーク競合を許容）は非現行
 
 ## AIX-META × RAG: 問いは「探す文書と同じ構成」に（竹内・2026-09-13）— 黄金ルール
 - 竹内「ブレインから RAG に AIX-META を渡して精度の高い RAG 検索にする部分はちゃんとできていたのか」→ 渡ってはいたが、渡し方で精度が下がっていた
