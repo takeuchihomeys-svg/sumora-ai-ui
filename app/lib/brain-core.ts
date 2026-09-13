@@ -1931,6 +1931,19 @@ ${PHASE_TEMPLATE_HINTS}
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
 
+  // 2026-09-13: ブレインの入力のどの部分に費用がかかっているかの見張り（分析モードごとに何を渡しているかを文字数で残す）
+  console.log(JSON.stringify({
+    tag: "brain:blocks", conversationId, mode: opts?.mode ?? "full",
+    chars: {
+      prevMeta: prevMetaText.length, winning: winningPatternsText.length, actionWinRate: actionWinRateText.length, templates: templatesText.length,
+      actionRules: actionRulesText.length, contractExamples: contractExamplesPhaseText.length, status: statusText.length, timing: timingText.length,
+      flags: flagsText.length, aixHistory: aixHistoryText.length, ledger: ledgerText.length, sceneEvidence: sceneEvidenceText.length,
+      cond: condText.length, profile: profileText.length, aiSummary: aiSummaryNote.length, scheduled: scheduledText.length, tasks: tasksText.length,
+      viewings: viewingsText.length, examples: examplesText.length, checkpoint: checkpointText.length, ragKnowledge: ragKnowledgeText.length,
+      sentProps: sentPropsText.length, propertySearch: propertySearchText.length, history: history.length,
+    },
+    userTotal: customerSpecificText.length, staticSystem: staticBrainSystem.length, dynamicSystem: dynamicBrainSystem?.length ?? 0,
+  }));
   const maskedStableText = maskPII(stableKnowledgeText, [opts?.customerName]);
   const userContent = [
     // 空のtextブロックはAPIエラーになるため、安定知識が空の場合はブロックごと省略
