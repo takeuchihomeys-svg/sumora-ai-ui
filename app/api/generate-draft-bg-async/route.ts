@@ -350,6 +350,26 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // ── 画像の読み取り待ち（2026-09-13）─────────────────────────────────
+      // 画像の連投の7割は文字も一緒に届き、その時のブレインはこの経路で動く。LINE の画像は webhook が取得して
+      // Vision で書き起こし（[画像] <内容>）と種類（見積書・間取り図…）を後から埋めるので、読み取り前にブレインを
+      // 動かすと中身を見ずに判断する。直近3分の未読み取りの画像（text='[画像]' かつ image_url なし）が無くなるまで待つ
+      // （上限 IMAGE_READ_WAIT_MS。予算: 8s + 12s + brain 90s + 生成 180s < 300s）。brain 後の DB 再取得で本文生成にも中身が入る
+      {
+        const IMAGE_READ_WAIT_MS = 12_000;
+        const waitStartedAt = Date.now();
+        let waited = false;
+        while (Date.now() - waitStartedAt < IMAGE_READ_WAIT_MS) {
+          const { data: pendingImgs } = await db.from("messages").select("id")
+            .eq("conversation_id", convId).eq("sender", "customer").eq("text", "[画像]").is("image_url", null)
+            .gt("created_at", new Date(Date.now() - 3 * 60 * 1000).toISOString()).limit(1);
+          if (!pendingImgs?.length) break;
+          waited = true;
+          await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+        }
+        if (waited) console.log(JSON.stringify({ tag: "brain:image-read-wait", conversationId: convId, waitedMs: Date.now() - waitStartedAt }));
+      }
+
       // ── brain直列実行（入り口・2026-08直列アーキテクチャ）─────────────────
       // 旧構成: webhookが brain を fire-and-forget 起動 + bg-async が draft 生成
       //   → 完了順序が保証されず suggested_aix_meta の書き込み競合が構造的に存在した。

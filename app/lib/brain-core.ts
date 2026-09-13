@@ -2121,6 +2121,8 @@ ${history}`;
     // 2026-09-12 竹内（Sさん事例）: 同じ連投に「空いているか確認お願いしたいです」等の物件確認の依頼（文字）がある時は矯正しない。
     //   画像の種類（image_type）は webhook が画像を取得・読み取りしてから埋めるため、画像受信直後のブレイン実行では常に未設定＝
     //   物件の画像8枚＋確認依頼でも、1回だけ「見積書送る」に矯正されていた（10:20:50 の実行）
+    // 2026-09-13: 画像のブレインは読み取り（Vision）の後に動かすようにした（line-webhook の画像後処理・bg-async の読み取り待ち）。
+    //   ここに来るのは読み取りに失敗した画像（image_type が無い）だけ＝決め打ちは保険
     const turnAsksPropertyCheck = unrepliedTurn.text.trim().length > 10 && !!sceneEvidence && /^S[123]_/.test(sceneEvidence.scene);
     if (
       (finalAix === "acknowledge_check" || finalAix === null) &&
@@ -3564,7 +3566,10 @@ export type BrainGateSnapshot = {
 //   ブレイン入力費用の約2割が無駄で、並走した結果が互いを捨てる T3 の原因にもなっていた。
 //   同じプロセス内では1会話1本にし、実行中に来た呼び出しはその結果を待つ。実行開始後に新しいメッセージ（顧客の発言・スタッフの宣言）が
 //   届いていた時だけ、終わった後に1回だけ分析し直す（同じメッセージへの重複呼び出しは1本で済ませる。別インスタンス同士は上の「古い判断で上書きしない」で守る）
-const brainRunsInFlight = new Map<string, { promise: Promise<boolean>; rerun: boolean; force: boolean; startedAt: number }>();
+const brainRunsInFlight = new Map<string, { promise: Promise<boolean>; rerun: boolean; force: boolean; mustRerun: boolean; startedAt: number }>();
+
+/** ブレインの実行オプション。inputUpdatedAt: メッセージの中身が書き換わった時刻（画像の読み取り完了）。それより前に始まった実行は中身を見ていないので、終わった後に分析し直す */
+export type BrainRunOpts = { forceIncremental?: boolean; inputUpdatedAt?: number };
 
 /** 実行中の分析が読み込んだ後に届いたメッセージ（顧客・スタッフとも）があるか（時計のずれを見込んで1秒手前から見る） */
 async function hasMessageSince(conversationId: string, sinceMs: number): Promise<boolean> {
@@ -3585,21 +3590,23 @@ async function hasNewerCustomerMessage(conversationId: string): Promise<boolean>
   return Date.parse(latest.created_at as string) > Date.parse(analyzedTs);
 }
 
-async function analyzeAndSaveBrainMetaCoalesced(conversationId: string, runOpts?: { forceIncremental?: boolean }): Promise<boolean> {
+async function analyzeAndSaveBrainMetaCoalesced(conversationId: string, runOpts?: BrainRunOpts): Promise<boolean> {
   const cur = brainRunsInFlight.get(conversationId);
   if (cur) {
     cur.rerun = true;
     if (runOpts?.forceIncremental) cur.force = true;
-    console.log(JSON.stringify({ tag: "brain:coalesced", conversationId, force: !!runOpts?.forceIncremental }));
+    // 画像の読み取りが終わる前に始まった実行は「[画像]」だけを見ている → 終わった後に必ず分析し直す
+    if (runOpts?.inputUpdatedAt && cur.startedAt < runOpts.inputUpdatedAt) cur.mustRerun = true;
+    console.log(JSON.stringify({ tag: "brain:coalesced", conversationId, force: !!runOpts?.forceIncremental, mustRerun: cur.mustRerun }));
     return cur.promise;
   }
-  const entry = { rerun: false, force: false, promise: Promise.resolve(false), startedAt: Date.now() };
+  const entry = { rerun: false, force: false, mustRerun: false, promise: Promise.resolve(false), startedAt: Date.now() };
   entry.promise = (async () => {
     let ok = await analyzeAndSaveBrainMeta(conversationId, runOpts);
-    // 実行中に来た呼び出しがあり、かつ実行開始後に新しいメッセージ（顧客の発言・スタッフの宣言）が届いていた時だけ分析し直す
-    //   （同じメッセージへの重複呼び出しなら、今の結果がそのまま最新）
-    if (entry.rerun && await hasMessageSince(conversationId, entry.startedAt)) {
-      console.log(JSON.stringify({ tag: "brain:rerun-after-coalesce", conversationId, force: entry.force }));
+    // 実行中に来た呼び出しがあり、かつ実行開始後に新しいメッセージ（顧客の発言・スタッフの宣言）が届いていた時・
+    //   画像の中身が読み取られた時だけ分析し直す（同じメッセージへの重複呼び出しなら、今の結果がそのまま最新）
+    if (entry.rerun && (entry.mustRerun || await hasMessageSince(conversationId, entry.startedAt))) {
+      console.log(JSON.stringify({ tag: "brain:rerun-after-coalesce", conversationId, force: entry.force, mustRerun: entry.mustRerun }));
       ok = (await analyzeAndSaveBrainMeta(conversationId, { forceIncremental: entry.force || runOpts?.forceIncremental })) || ok;
     }
     return ok;
@@ -3611,7 +3618,7 @@ async function analyzeAndSaveBrainMetaCoalesced(conversationId: string, runOpts?
 export async function runBrainAndNotify(
   conversationId: string,
   msgText?: string,
-  runOpts?: { forceIncremental?: boolean },
+  runOpts?: BrainRunOpts,
 ): Promise<BrainGateSnapshot | null> {
   let analyzed = false;
   try {

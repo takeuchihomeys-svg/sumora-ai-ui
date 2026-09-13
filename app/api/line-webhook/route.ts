@@ -11,7 +11,11 @@ import { recordConditionHistory } from "@/app/lib/condition-history";
 import { CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
-export const maxDuration = 120;
+// 2026-09-13: 画像は読み取り（最大 IMAGE_READ_WAIT_MS）→ ブレイン（最大約90s・実行中に読み取りが終わった分の再分析1回）を直列にしたので 300 に
+export const maxDuration = 300;
+
+// 画像の読み取り（LINE から取得 10s ＋ Vision 12s）を待つ上限。これを過ぎたらブレインは読み取りを待たずに動く
+const IMAGE_READ_WAIT_MS = 25_000;
 
 // ── LINE アカウント設定（スモラ・イエヤス・ギガ賃貸） ──────────────────
 type AccountConfig = {
@@ -1794,10 +1798,9 @@ async function handleImageMessageSave(
   // 「〇〇さんから画像きた」通知は 2026-09-12 廃止（竹内方針: 売上番長グループへの返信・AIX 系の通知は「AIX要対応」だけ。
   //   画像への対応が AIX ならブレインの判断 → AIX要対応で届く）
 
-  // FIX(Fable5 #2+ズレ5): 画像受信でも brain分析 + required通知（🔴）を実行
-  after(async () => {
-    await runBrainAndNotify(convId).catch((e) => console.warn("[line-webhook] brain notify (image):", e));
-  });
+  // 画像受信のブレイン分析は、画像の読み取り（Vision）が終わった後に会話ごとに1回だけ動かす（POST 末尾の画像後処理）。
+  //   旧: ここで1枚ごとに after(runBrainAndNotify) → 7枚の連投で同じ分析が7本・どれも読み取り前の「[画像]」だけを見て判断していた
+  //   （2026-09-12 Sさん: 間取り図8枚＋確認依頼に、1本が画像の種類を知らず「見積書送る」に決め打ち）
 
   // スタッフが申込書の記入を依頼した直後の顧客画像 → 記入済み申込書の可能性大 → applying自動昇格
   // （画像フォームはテキスト検知できないためヒューリスティックで補完）
@@ -2103,7 +2106,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const events = body.events ?? [];
 
   // 画像メッセージの後処理用（after()で非同期実行する分）
-  const imageJobs: Array<{ lineMessageId: string; msgId: string; account: typeof matchedAccount }> = [];
+  const imageJobs: Array<{ lineMessageId: string; msgId: string; convId: string; account: typeof matchedAccount }> = [];
   let anyFailed = false;
 
   // 同一POSTバッチ内で同一ユーザーに対してafter() Bが複数登録されるのを防ぐ
@@ -2219,7 +2222,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (saved === null) {
         anyFailed = true; // 失敗 → LINEにリトライさせる
       } else if (saved !== "duplicate") {
-        imageJobs.push({ lineMessageId, msgId: saved.msgId, account: matchedAccount });
+        imageJobs.push({ lineMessageId, msgId: saved.msgId, convId: saved.convId, account: matchedAccount });
       }
     } else if (msgType === "sticker") {
       // H4: スタンプは保存も通知もされず消えていた → テキスト経路で "[スタンプ]" として保存・通知
@@ -2256,9 +2259,23 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // after()はNext.js 14.1+の機能。レスポンス送信後もVercel functionを維持する
   if (imageJobs.length > 0) {
     after(async () => {
-      await Promise.allSettled(
-        imageJobs.map(({ lineMessageId, msgId, account }) => fetchAndUploadLineImage(lineMessageId, msgId, account))
-      );
+      // 画像の読み取り（Vision: 書き起こし＋種類）が終わってから、会話ごとにブレインを1回だけ動かす。
+      //   ブレインは messages.text（[画像] <書き起こし>）と image_type を読むので、読み取り前に動かすと中身を見ずに判断する。
+      //   読み取りが止まってもブレインは必ず動かす（上限 IMAGE_READ_WAIT_MS。読めなかった画像は従来どおり「[画像]」として判断）
+      const readStartedAt = Date.now();
+      await Promise.race([
+        Promise.allSettled(
+          imageJobs.map(({ lineMessageId, msgId, account }) => fetchAndUploadLineImage(lineMessageId, msgId, account))
+        ),
+        new Promise<void>((resolve) => setTimeout(resolve, IMAGE_READ_WAIT_MS)),
+      ]);
+      const inputUpdatedAt = Date.now();
+      const convIds = [...new Set(imageJobs.map((j) => j.convId))];
+      console.log(JSON.stringify({ tag: "brain:image-trigger", convIds, images: imageJobs.length, readMs: inputUpdatedAt - readStartedAt }));
+      await Promise.allSettled(convIds.map((cid) =>
+        runBrainAndNotify(cid, undefined, { inputUpdatedAt })
+          .catch((e) => console.warn("[line-webhook] brain notify (image):", cid, e))
+      ));
     });
   }
 
