@@ -97,6 +97,15 @@ WHERE is_current = true
 ORDER BY created_at DESC LIMIT 10;
 ```
 
+### 分析（ブレイン）を強化・変更する時：最初に「分析強化の原則」を引く（重要）
+ブレイン・返信生成・AIX の判断を直す前に**必ず**読む。材料やルールを足す前に、届き方・鮮度・費用を測って構造を直す順番（2026-09-13 竹内さん指示）。
+```sql
+SELECT title, insight, rationale FROM system_design_thinking
+WHERE is_current = true AND '分析強化の原則' = ANY(tags);
+```
+- 書き込みを伴う本番の確認はテスト用の会話「YUMA」（`dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7`・竹内さん本人）で行い、AIX要対応の通知などの副作用は片付ける
+- 仕組み: 2層ブレイン（`app/lib/brain-layers.ts`）。戻す時は `BRAIN_LAYER_MODE=off`
+
 ### 思った通りに行かない返信・AIX の原因を探す時（抜けの見つけ方）
 直近10件に埋もれないよう、診断の型はタグで引く。直したら `穴:G1`〜`穴:G6` のタグ付きで登録する（詳細は `memory/dept_line_reply.md`）。
 ```sql
