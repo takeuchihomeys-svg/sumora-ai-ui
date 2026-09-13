@@ -80,6 +80,7 @@ import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
 import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
+import { aixMetaKnowledgeBonus, extractMetaKeywords, type AixMetaRerankSignals } from "@/app/lib/knowledge-aixmeta-rerank";
 // AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
 // AIX_STAFF_NOTES を単一ソースとして brain-core の AIX_BRAIN_NOTES と共有する（文言乖離の構造的防止）
 import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS, AIX_LINE_LABELS, AIX_ACTION_REPLY_DIRECTION, buildAixLineNote, normalizeAixActionKey } from "@/app/lib/aix-taxonomy";
@@ -1475,7 +1476,11 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 
   // topPrinciplesNote（DB由来）と replyContentNote（テンプレモードで空文字化）は
   // staticBlock を汚染しないよう dynamicBlock 側に配置する
-  const dynamicBlock =`${topPrinciplesNote}${replyContentNote}
+  // 2026-09-13: topPrinciplesNote（全顧客共通の絶対原則・約4,900字）はキャッシュなしの dynamicBlock から、
+  //   同じ DB 由来の dbRules ブロック（system[1]・1時間キャッシュ）の末尾へ移した（下の systemBlocks）。
+  //   旧: 「行の増減で staticBlock のキャッシュが無効化される」のを避けて dynamicBlock に置いた結果、毎回割引なしで読んでいた。
+  //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
+  const dynamicBlock =`${replyContentNote}
 ${propertyStatusNote}
 ${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
@@ -1509,7 +1514,9 @@ ${examples}${examplesInstruction}
   const systemBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } }> = [
     { type: "text" as const, text: priorityOrderNote + baseSystem, cache_control: { type: "ephemeral", ttl: "1h" } },
   ];
-  if (dbRules) systemBlocks.push({ type: "text" as const, text: dbRules, cache_control: { type: "ephemeral", ttl: "1h" } });
+  // DB 由来の準静的な塊（dbRules＋全顧客共通の絶対原則）を1ブロックにしてキャッシュ（キャッシュの区切りは最大4つ＝system×2・human×2 のまま）
+  const dbSemiStatic = [dbRules, topPrinciplesNote].filter(Boolean).join("\n\n");
+  if (dbSemiStatic) systemBlocks.push({ type: "text" as const, text: dbSemiStatic, cache_control: { type: "ephemeral", ttl: "1h" } });
   // humanBlocks 3 分割（2026-08 phaseGuide 分離）:
   // [0] staticBlock（全顧客共通ルール・cache_control あり）
   // [1] phaseGuideBlock（state 5 種類の固定テキスト・cache_control あり・state 単位でキャッシュリード）
@@ -1519,6 +1526,19 @@ ${examples}${examplesInstruction}
     { type: "text" as const, text: phaseGuideBlock, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamicBlock },
   ];
+  // 2026-09-13: 返信生成の入力のどの部分に費用がかかっているかの見張り（キャッシュなしの dynamicBlock の中身を文字数で残す）
+  console.log(JSON.stringify({
+    tag: "gen:blocks",
+    cached: { system: (priorityOrderNote + baseSystem).length, dbRules: dbRules.length, topPrinciples: topPrinciplesNote.length, staticBlock: staticBlock.length, phaseGuide: phaseGuideBlock.length },
+    dynamicTotal: dynamicBlock.length,
+    dyn: {
+      knowledge: knowledgeNote.length, examples: examples.length + examplesInstruction.length, phrases: phrases.length,
+      history: (history || "").length, brainGuidance: brainGuidanceNote.length, tpo: tpoGuidanceNote.length, turnPair: turnPairNote.length, stance: stanceNote.length,
+      ledger: actionLedgerNote.length, staffContext: staffContextNote.length, summary: summaryNote.length + opinionsNote.length, conditions: conditionsNote.length + inlineConditionsFallback.length + missingConditionsNote.length,
+      propertyStatus: propertyStatusNote.length, aixProperty: aixPropertyRecommendationNote.length + aixPropertySendNote.length, greeting: greetingNote.length,
+      quoted: quotedContextNote.length, customerMsg: customerMsgBlock.length,
+    },
+  }));
   return [new SystemMessage({ content: systemBlocks }), new HumanMessage({ content: humanBlocks })];
 }
 
@@ -1684,7 +1704,9 @@ function logKnowledgeApply(ids: string[], conversationId: string): void {
 }
 
 // 戻り値: text=プロンプト注入用ナレッジ文字列 / phraseHits=category=phrase のヒット件数（fetchPhrases の二重注入削減判定に使用）
-async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, lastStaffMessage?: string | null, lastAixHistoryText?: string | null): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
+async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, lastStaffMessage?: string | null, lastAixHistoryText?: string | null,
+  // 2026-09-13: 最新のブレインの判断（推奨 AIX・質問・話題・返信の方向）による並べ替え。新しい判断の時だけ非 null（knowledge-aixmeta-rerank.ts）
+  aixMetaSignals: AixMetaRerankSignals | null = null): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // T1動的選択: spec未指定（後方互換）は全クエリ実行＝従来動作（T2/T3のspecも全enabled）
@@ -1823,7 +1845,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           const recencyFactor = Math.pow(0.5, daysSince / 180);
           // confirmed（検証済み）ナレッジは +0.05 加点して hypothesis より実質的に優先させる
           const confirmedBonus = r.hypothesis_status === "confirmed" ? 0.05 : 0;
-          return { ...r, score: (r.similarity ?? 0.5) * ((r.importance || 5) / 10) * (0.5 + 0.5 * recencyFactor) + confirmedBonus };
+          // 2026-09-13: 最新のブレインの判断に合うナレッジを上へ（推奨 AIX の話題 +0.08・質問/話題/返信の方向の語 +0.05。新しい判断の時だけ）
+          const metaBonus = aixMetaKnowledgeBonus(r.title, r.content, aixMetaSignals);
+          return { ...r, score: (r.similarity ?? 0.5) * ((r.importance || 5) / 10) * (0.5 + 0.5 * recencyFactor) + confirmedBonus + metaBonus };
         })
         .sort((a, b) => {
           if (b.score !== a.score) return b.score - a.score;
@@ -4185,7 +4209,11 @@ export async function POST(req: NextRequest) {
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
-      fetchKnowledge(searchState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixHistoryText)
+      fetchKnowledge(searchState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixHistoryText,
+        // 2026-09-13: 新しい判断（fresh かつ分析の省略でない）の時だけ、推奨 AIX・質問・話題・返信の方向で並べ替える
+        brainLocalFresh && brainMeta
+          ? { action: effectiveAction, words: extractMetaKeywords([...(brainMeta.customer_questions ?? []), ...(brainMeta.key_topics ?? []), brainMeta.reply_direction ?? null]) }
+          : null)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
       fetchExamples(searchState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta, lastStaffMsgForSearch ?? null, brainFreshForMessage && !isCachedMeta)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
