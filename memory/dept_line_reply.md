@@ -4,6 +4,18 @@
 
 ---
 
+## 返信生成にブレインの判断が届かない・古い判断が混ざる抜けを解消（竹内・2026-09-13・コミット 9006d8bd）— 黄金ルール
+- 竹内「返信つくる際のブレインの部分はちゃんと分析されてるのか・抜けはあるか」→ 送信済み返信77件（14日）: T1 39%・T2 14%・**T3（判断なし）47%**。T3 の約半数は旧ウォーターマーク（6ef915f0 で修正済み）、残りは下の1
+- 抜け1（G2）: 画面は下書き表示時に suggested_aix_meta を消す → 表示後の再生成・✨・AIX 文面が常に T3。画面は変えず、サーバーの共通入口 resolveBrainMetaForGeneration（brain-meta-load.ts）で「__SHOWN__・控えが最新発言を見た本分析（aix_patch/cached 以外）」の時だけ last_brain_meta から戻す。generate-reply・aix/action・aix-template-generate
+- 抜け2（G2）: 生成中に届いた2通目が取り残される（1通目の保存が draft_pending_at を消す）。保存する3か所（generate-reply・bg-async・cron）が newerCustomerMessageAfter（draft-supersede.ts）で確かめ、新しい発言があれば保存せず生成中の印だけ外す → cron が作り直す。cron はブレインの判断が最新発言を見ていなければブレインを動かす
+- 抜け3（G6）: 古い判断・省略から note（必須の WE DO）・購買シグナル・customer_intent・template_hint・reason・Step1 指示・avoid_topics・検査の engagement_stance が入っていた → brainLocalFresh の時だけ。「（参考）AIX【…】」メモは入れない
+- 抜け4: cached の書き込みの旧ウォーターマーク → brainWriteBlock（本分析と共通）。cached は note・reason・template_hint を持ち越さず、同じ発言を見た本分析を上書きしない
+- 抜け5: log-aix-usage のパッチは next_steps・closing_strategy だけ（旧: action を日本語の自由文に・template_hint を未検証で上書き）
+- 抜け6: aix/action の提案禁止物件「[object Object]」・avoid_topics 5件上限で決定論の項目が落ちる・reply_direction の字数指示 20→120字・画面の鮮度基準 8→5秒（BRAIN_FRESHNESS_TOLERANCE_MS に一本化）・bg-async の null 理由（brain-gate-timeout / brain-gate-null）
+- 見張り: step2-tier と tpo_debug に caller（bg_async_direct/auto/manual/manual_hint）・restoredAfterShown・tierReason。ログ brain:meta-restored / draft:superseded。**1週間後に reply_context_snapshot の tier 分布（T3 47% からの減少）を caller 別に見る**
+- テスト: **YUMA（dd34f5b0・竹内さんのテスト用）で書き込みを伴う確認を行う**。今回 T3→T1（restoredAfterShown）・保存見送り・cached 保存と本分析の保持を確認（テスト中の AIX要対応1件は dismissed(test_run_yuma)）
+- 設計知見: 591da344（抜け1・G2）・6a99e745（抜け2・G2）・96b555bd（抜け3・G6）・04ab31fd（汎用・消して使い切る状態／複数経路は1関数／派生フィールドの鮮度ゲート）
+
 ## 画像のブレインは読み取り（Vision）の後に会話ごと1回だけ（竹内・2026-09-13・コミット ea82346e）— 黄金ルール
 - 竹内「ブレインの分析はちゃんと7本で分析されてるのか」→ 7本は同じ入力の同じ分析の繰り返しで、どれも読み取り前の「[画像]」（中身・種類なし）で判断していた（9/12 Sさん: 判断記録7件・1本だけ「画像だけ＝見積書」の決め打ち）
 - 修正: line-webhook は画像の読み取り（最大25秒）が終わってから会話ごとに1回ブレイン（brain:image-trigger）。文字と一緒に届いた時（画像の連投の7割）は bg-async がブレインの前に未読み取りの画像を最大12秒待つ（brain:image-read-wait）。読み取り完了の呼び出しが実行中のブレインに合流したら終わった後に1回分析し直す（inputUpdatedAt）。webhook の maxDuration 300
