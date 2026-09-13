@@ -384,10 +384,15 @@ JSONのみ返してください。説明文不要。`,
 
             // 5. 前回 meta にパッチをマージして保存
             const patchedMeta = { ...prevMeta, ...patch, source: "aix_patch" };
+            // 2026-09-13 2層ブレイン: 会話全体の戦略の層（brain_strategy）の次の手順・成約戦略も同じく更新する。
+            //   旧: last_brain_meta だけ更新 → 毎回の分析が前提にする戦略の Step1（例: 見積書を送る）が送付後も残り、同じ AIX を再提案していた
+            const { data: bsRow } = await supabase.from("conversations").select("brain_strategy").eq("id", conversation_id).maybeSingle();
+            const bs = (bsRow?.brain_strategy ?? null) as Record<string, unknown> | null;
             await supabase
               .from("conversations")
               .update({
                 last_brain_meta: patchedMeta,
+                ...(bs ? { brain_strategy: { ...bs, ...patch, aix_patched_at: new Date().toISOString() } } : {}),
                 brain_analyzed_at: new Date().toISOString(),
                 // brain_full_analyzed_at はそのまま（10サイクル管理を崩さない）
               })

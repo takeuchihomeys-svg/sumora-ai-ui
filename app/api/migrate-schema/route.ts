@@ -2877,6 +2877,14 @@ ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS actual_aix_type TEXT;
 ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS actual_check_pattern TEXT;
 ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS actual_at TIMESTAMPTZ;
 ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS matched BOOLEAN;
+-- 2026-09-13 2層ブレイン: 毎回の分析（今回の発言の層）の要点。戦略の分析（整理）が「前回の戦略以降の分析」をまとめる材料にする
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS digest JSONB;
+
+-- ── conversations.brain_strategy: 2層ブレインの「会話全体の戦略」の層（2026-09-13）──
+-- 戦略の分析（全体分析の作り直し・整理）が書き、毎回の分析はこれを前提（JSON）に今回の発言だけを判断して suggested_aix_meta に合成する。
+-- 中身: closing_strategy / winning_pattern / next_steps / human_type_label / repeated_concern / future_timeline / checkpoint_stage /
+--       purchase_signal_level / strategy_msg_ts（見たお客様発言の時刻）/ strategy_analyzed_at / strategy_count / source
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brain_strategy JSONB;
 
 -- ── brain_aix_feedback: ブレインの AIX 判断の一致率と「代わりに押された AIX」（2026-09-12 統合設計 段2）──
 -- trigger_action_rules は使わない（trigger_rule_category が既定で keyword_rule に分類し、

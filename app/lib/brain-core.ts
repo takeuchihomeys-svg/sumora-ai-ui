@@ -20,6 +20,10 @@ import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { parseCheckpointOutput, escapeControlCharsInStrings } from "@/app/lib/checkpoint-format";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { inferTpoHint } from "@/app/lib/tpo-hint";
+import {
+  mergeBrainLayers, extractStrategy, strategyForPrompt, detectStrategyShift, decideStrategyRefresh, toFreshDigest, maxSignal,
+  type BrainStrategy,
+} from "@/app/lib/brain-layers";
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
@@ -53,6 +57,26 @@ import {
 //   - brain/list は純粋な read のみ（Haiku は一切呼ばない）
 
 const BRAIN_MODEL = "claude-sonnet-5";
+
+// ── 2層ブレイン（2026-09-13 竹内さんの設計・定義と組み合わせの規則は brain-layers.ts）──────────────
+// BRAIN_LAYER_MODE=off で従来（毎回ほぼ全部入りの分析）に戻せる
+const BRAIN_LAYER_MODE: "on" | "off" = process.env.BRAIN_LAYER_MODE === "off" ? "off" : "on";
+
+/** 今回の発言の層に渡す「前回の全体分析」 */
+function buildFreshStrategyBlock(s: BrainStrategy): string {
+  const at = s.strategy_msg_ts ? jstYmd(s.strategy_msg_ts) : "不明";
+  return `\n【前回の全体分析（会話全体の戦略・JSON。${at}までのお客様の発言を整理した結果）】\n${JSON.stringify(strategyForPrompt(s))}`;
+}
+
+/** 今回の発言の層の出力の指定（システムの「JSONは常に全フィールド完全出力」をこのモードでは上書きする） */
+const FRESH_LAYER_OUTPUT_RULES = `【今回の発言の分析モード（2層ブレイン）— 判断の仕方と出力の指定】
+- 上の【前回の全体分析】はこの会話の前提（会話全体の戦略）。今回のお客様の発言（最後のスタッフ発言より後の連投）で変わった点だけを判断する。
+- 組み合わせの規則: お客様の意向・質問・懸念・条件変更・迷い・感情・今話している物件・推奨 AIX（aix）・返信の方向は、今回の発言を最優先する。前回の全体分析と食い違ったら今回の発言が正しい（戦略はコード側で後から作り直す）。
+- 「今回の発言」は最後の1通ではなく、まだスタッフが応えていない連投の全体。連投の中に複数の依頼がある時は全体で判断し、同じ依頼を繰り返している（前にも聞いてまだ応えてもらっていない）時はその依頼を優先する。
+- 前回の全体分析の next_steps・closing_strategy は作成時点のもの。その後に会話履歴・直近AIXアクション・行動台帳で実行済みになった手順は完了扱いにする。スタッフがすでに送った AIX（例: 御見積書を送付済み）を、お客様の新しい依頼が無いのに再提案しない（送った直後でお客様の反応待ちなら aix は null）。
+- 出力しない項目: ai_summary / ai_summary_json / closing_strategy / next_steps（前回の全体分析の値をコード側で使う）。システムの「JSONは常に全フィールド完全出力」はこのモードでは適用しない。
+- 追加で出力する項目: "emotion"（前向き/不安/冷めかけ/普通 のいずれか。今回の発言の感情）、"purchase_signal_event"（今回の発言だけで見た購買シグナル none/soft/strong/peak。基準は ai_summary_json.purchase_signal_level の説明と同じ。会話全体の蓄積はコード側で前回と合わせる）。
+- それ以外の項目（aix・action・reason・template_hint・reply_mode・reply_direction・key_topics・avoid_topics・customer_questions・customer_concern・condition_change_type・hesitancy_pattern・customer_intent・latent_intent・current_property・repeated_concern・future_timeline・checkpoint_stage・engagement_stance・urgency_appropriate・recommended_tone・two_choice_mode・reply_direction_label）はいつも通り出力する。`;
 // B8(Fable5): maxRetries: 0 — sweep自体がリトライ機構のため、SDKの自動リトライ（デフォルト2回）は
 // 最悪 ~45秒/件 × 4件直列 = maxDuration 120秒超過 → cron_run_logs が "running" のまま残る事故の原因だった
 // claude-sonnet-5のextended thinking対応: タイムアウト30s→60s（長い会話で思考に時間がかかるため）
@@ -547,7 +571,7 @@ async function detectSignalBasedAixFallback(
         .limit(10),
       supabase
         .from("aix_usage_logs")
-        .select("aix_type, created_at")
+        .select("aix_type, created_at, sent_at")
         .eq("conversation_id", conversationId)
         .order("created_at", { ascending: false })
         .limit(5),
@@ -647,10 +671,15 @@ async function detectSignalBasedAixFallback(
     // ※信号1より後に置くと、送付済みでも custText の「見積」部分一致で estimate_sheet を二重提案してしまう。
     // 2026-09-12 竹内: 旧は acknowledge_check（確認します）を返していたが、物件確認はお客様から依頼があった時だけ・
     //   見積書の後は申込へでもない。見積送付後はお客様の反応を待ち、反応を見て判断する
+    // 2026-09-13: 旧は「最後のスタッフ発言が AIX 生成」を条件にしていたため、見積書の画像を AIX で送った後にスタッフが手で
+    //   「こちら初期費用の御見積書となります！」と添えると外れ、下の信号0.96（初期費用の質問→見積書送る）で送付直後に再提案していた
+    //   （749c5559・851c5a0d）。最後の見積書 AIX の送信（sent_at ?? created_at）がお客様の最後の発言より後なら反応待ち
+    const latestAixRow = ((aixRes.data ?? []) as Array<{ aix_type: string | null; created_at: string; sent_at: string | null }>)[0] ?? null;
+    const latestAixAt = latestAixRow ? (latestAixRow.sent_at ?? latestAixRow.created_at) : null;
     if (
-      lastStaff?.is_aix_generated &&
       usedAixTypes[0] === "estimate_sheet" &&
-      (!lastCustomer || lastStaff.created_at > lastCustomer.created_at)
+      lastStaff && (!lastCustomer || lastStaff.created_at > lastCustomer.created_at) &&
+      (lastStaff.is_aix_generated || (latestAixAt && (!lastCustomer || latestAixAt > lastCustomer.created_at)))
     ) {
       return null;
     }
@@ -846,7 +875,9 @@ export async function analyzeConversation(
   // フェーズ・AIX候補は Sonnet 実行後にしか確定しないため、ルール事前フィルタには前回値を事前シグナルとして使う
   // インクリメンタル分析 Phase1: mode=full/incremental の切替・prevMeta=前回フル分析結果（差分更新の起点）・
   // totalMsgCount=呼び出し元で取得済みの総メッセージ数（30件強制リフレッシュ判定用）
-  opts?: { autoSendEnabled?: boolean; isHot?: boolean; isFlagged?: boolean; prevPhase?: string | null; prevAix?: string | null; customerName?: string; mode?: "full" | "incremental"; prevMeta?: SuggestedAixMeta; totalMsgCount?: number },
+  opts?: { autoSendEnabled?: boolean; isHot?: boolean; isFlagged?: boolean; prevPhase?: string | null; prevAix?: string | null; customerName?: string; mode?: "full" | "incremental"; prevMeta?: SuggestedAixMeta; totalMsgCount?: number;
+    /** 2026-09-13 2層ブレイン: "fresh"＝今回の発言の層（strategy を前提に今回の発言だけ・軽く）/ "combined"＝全項目（従来） */
+    layer?: "combined" | "fresh"; strategy?: BrainStrategy | null },
 ): Promise<SuggestedAixMeta> {
   // RAG化 Phase1: 前回フェーズ（無ければ convStatus からの粗い推定）でアクション候補を絞る。
   // フェーズ不明・未知フェーズ時は全AIXアクションにフォールバック（フィルタ無効化 = 取りこぼしゼロ側）
@@ -856,6 +887,10 @@ export async function analyzeConversation(
     ...(opts?.prevAix && AIX_BRAIN_NOTES[opts.prevAix] ? [opts.prevAix] : []),
   ])];
   const isIncremental = opts?.mode === "incremental" && !!opts?.prevMeta;
+  // 2026-09-13 2層ブレイン（竹内さんの設計）: 今回の発言の層。前回の全体分析（strategy）を JSON で前提にし、今回の発言だけを判断する。
+  //   渡さない: 成約パターン RAG（毎回 約8,000字＝割引なし入力の約40%）・成約した会話の返信例・アクション別勝率（戦略の層の材料）。ナレッジは12件に絞る。
+  //   出力しない: ai_summary / ai_summary_json / closing_strategy / next_steps（戦略の層が持つ）→ 出力も約半分
+  const isFreshLayer = opts?.layer === "fresh" && !!opts?.strategy;
   // Fetch last 30 messages and customer conditions in parallel
   // limit 30→15: checkpoint（RAG検索含む）が古い会話をカバーするため、直近15件で十分。
   // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
@@ -956,7 +991,10 @@ export async function analyzeConversation(
     Promise.resolve({ data: [] }),
     // 成約・申込到達の会話の実際の優良返信（success × starred × line_reply）
     // FK: ai_reply_examples.conversation_id → conversations.id（migrate-schema L681）で inner join
-    supabase
+    // 2026-09-13 2層ブレイン: 今回の発言の層では取らない（戦略の材料）
+    isFreshLayer
+      ? Promise.resolve({ data: [] })
+      : supabase
       .from("ai_reply_examples")
       .select("sent_reply, conversation_state, conversations!inner(status)")
       .in("conversations.status", SUCCESS_EXAMPLE_STATUSES)
@@ -1211,12 +1249,15 @@ export async function analyzeConversation(
               // match_reply_knowledge: incremental でも実行（原則・知識は毎回必要）
               supabase.rpc("match_reply_knowledge", {
                 query_embedding: qEmb,
-                match_count: 30,
+                // 2026-09-13 2層ブレイン: 今回の発言の層は上位12件（今回の発言と戦略の場面に近いものだけ）
+                match_count: isFreshLayer ? 12 : 30,
                 min_importance: 8,
                 boost_state: tpoHint ?? null,
               }),
-              // winning_patterns RAG: incremental でも実行（人間性ベースのクロージング戦略は毎回必要）。人物像・戦略の問いで引く
-              supabase.rpc("match_winning_patterns", {
+              // winning_patterns RAG: 人物像・戦略の問いで引く。2026-09-13 2層ブレイン: 戦略の材料なので今回の発言の層では引かない
+              isFreshLayer
+                ? Promise.resolve({ data: [] as unknown[], error: null as { message: string } | null })
+                : supabase.rpc("match_winning_patterns", {
                 query_embedding: sEmb,
                 match_count: 9,
                 min_importance: 8,
@@ -1889,7 +1930,8 @@ ${PHASE_TEMPLATE_HINTS}
     .join("\n\n");
 
   // インクリメンタル分析: 前回の分析結論をコンテキストとして注入
-  const prevMetaText = opts?.prevMeta ? (() => {
+  // 2026-09-13 2層ブレイン: 今回の発言の層は前回の判断の代わりに「前回の全体分析（JSON）」を下の freshStableText で渡す
+  const prevMetaText = opts?.prevMeta && !isFreshLayer ? (() => {
     const pm = opts.prevMeta!;
     const parts: string[] = ["【前回の分析結論（差分更新の起点として参照）】"];
     if (pm.action) parts.push(`推奨アクション: ${pm.action}`);
@@ -1925,15 +1967,25 @@ ${PHASE_TEMPLATE_HINTS}
   //     ・winningPatterns → match_winning_patterns RAGに移行（会話コンテキスト最適化）
   //     ・templates → match_templates RAGに移行（会話フェーズ最適化・use_count/won_count更新でのキャッシュ破棄解消）
   //   user[1] customerSpecific（cache無し）= 上記DB動的データ + 顧客固有データ + 会話履歴
-  const stableKnowledgeText = ``;
-  const customerSpecificText = `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${sceneEvidenceText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+  // 2026-09-13 2層ブレイン: 今回の発言の層は「この会話の土台」（前回の全体分析 JSON・セーブポイント・お客様のプロフィール・出力の指定）を
+  //   別ブロックにして、この会話専用のキャッシュ（5分）に乗せる。戦略の分析をやり直すまで変わらないので、連投・再生成の時に割引で読める
+  const freshStableText = isFreshLayer && opts?.strategy
+    ? `${buildFreshStrategyBlock(opts.strategy)}${checkpointText}${profileText}${aiSummaryNote}\n\n${FRESH_LAYER_OUTPUT_RULES}`
+    : "";
+  const stableKnowledgeText = freshStableText;
+  const customerSpecificText = isFreshLayer
+    ? `${actionWinRateText}${templatesText}${actionRulesText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${sceneEvidenceText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+
+会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
+${history}`
+    : `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${sceneEvidenceText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
 
   // 2026-09-13: ブレインの入力のどの部分に費用がかかっているかの見張り（分析モードごとに何を渡しているかを文字数で残す）
   console.log(JSON.stringify({
-    tag: "brain:blocks", conversationId, mode: opts?.mode ?? "full",
+    tag: "brain:blocks", conversationId, mode: opts?.mode ?? "full", layer: isFreshLayer ? "fresh" : "combined", freshStable: freshStableText.length,
     chars: {
       prevMeta: prevMetaText.length, winning: winningPatternsText.length, actionWinRate: actionWinRateText.length, templates: templatesText.length,
       actionRules: actionRulesText.length, contractExamples: contractExamplesPhaseText.length, status: statusText.length, timing: timingText.length,
@@ -1948,7 +2000,11 @@ ${history}`;
   const userContent = [
     // 空のtextブロックはAPIエラーになるため、安定知識が空の場合はブロックごと省略
     ...(maskedStableText.trim()
-      ? [{ type: "text" as const, text: maskedStableText, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }]
+      ? [{
+          type: "text" as const, text: maskedStableText,
+          // 今回の発言の層の土台は会話ごとに違うので5分（書き込み1.25倍・1時間は2倍）。連投・再生成の数分以内の再利用を狙う
+          cache_control: isFreshLayer ? { type: "ephemeral" as const } : { type: "ephemeral" as const, ttl: "1h" as const },
+        }]
       : []),
     { type: "text" as const, text: maskPII(customerSpecificText, [opts?.customerName]) },
   ];
@@ -1993,7 +2049,7 @@ ${history}`;
     } else {
       console.log(`[brain-core] cache MISS conv=${conversationId} created=${cacheCreation} input=${inputTokens}`);
     }
-    logLlmUsage("brain", response.usage, { conversationId, mode: opts?.mode ?? "full" });
+    logLlmUsage("brain", response.usage, { conversationId, mode: isFreshLayer ? "fresh" : (opts?.mode ?? "full") });
 
     // claude-sonnet-5 はextended thinkingを使うためcontent[0]がthinking型になることがある
     // content.find()でtextブロックを確実に取得する
@@ -2063,7 +2119,8 @@ ${history}`;
     const brainSummaryJson = (typeof (parsed as Record<string, unknown>).ai_summary_json === "object" && (parsed as Record<string, unknown>).ai_summary_json !== null)
       ? (parsed as Record<string, unknown>).ai_summary_json
       : null;
-    if (propertyCustomerId && (brainSummaryText || brainSummaryJson)) {
+    // 2026-09-13 2層ブレイン: お客様の要約（ai_summary）は戦略の層が書く。今回の発言の層は（出力されても）保存しない
+    if (propertyCustomerId && !isFreshLayer && (brainSummaryText || brainSummaryJson)) {
       after(async () => {
         try {
           await supabase
@@ -2683,8 +2740,17 @@ ${history}`;
       scene_evidence: compactSceneEvidence(sceneEvidence),
       reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 30) : null,
       winning_pattern: winningPattern,
-      customer_emotion: ((brainSummaryJson as Record<string, unknown> | null)?.emotion as string) ?? null,
-      purchase_signal_level: ((brainSummaryJson as Record<string, unknown> | null)?.purchase_signal_level as "none" | "soft" | "strong" | "peak" | null) ?? null,
+      // 2026-09-13 2層ブレイン: 今回の発言の層は ai_summary_json を出さないので、今回の発言の感情（emotion）と購買シグナル（purchase_signal_event）を読む。
+      //   購買シグナルの蓄積は mergeBrainLayers が戦略の値と高い方を取る
+      customer_emotion: isFreshLayer
+        ? (typeof (parsed as Record<string, unknown>).emotion === "string" ? ((parsed as Record<string, unknown>).emotion as string).slice(0, 10) : null)
+        : ((brainSummaryJson as Record<string, unknown> | null)?.emotion as string) ?? null,
+      purchase_signal_level: isFreshLayer
+        ? ((): "none" | "soft" | "strong" | "peak" | null => {
+            const v = (parsed as Record<string, unknown>).purchase_signal_event;
+            return v === "none" || v === "soft" || v === "strong" || v === "peak" ? v : null;
+          })()
+        : ((brainSummaryJson as Record<string, unknown> | null)?.purchase_signal_level as "none" | "soft" | "strong" | "peak" | null) ?? null,
       // M4: 押す／待つの局面軸。generate-reply の purchase_signal_level ブロックのゲートに使う
       engagement_stance: engagementStance,
       human_type_label: humanTypeLabel,
@@ -2916,6 +2982,212 @@ async function stampSkipped(conversationId: string, reason: string): Promise<fal
   return false;
 }
 
+// ── 2層ブレイン: 会話全体の戦略の層（2026-09-13 竹内さんの設計）──────────────────────────────
+// 前回の戦略＋それ以降の毎回の分析の要点（brain_decision_logs.digest）＋セーブポイント＋それ以降のメッセージ＋成約パターンを整理して作り直す。
+// 返信を待たせず後ろで動かす（after）。同じ会話は1本。3回に1回は全項目の分析でゼロから作る（前回の判断に引きずられない）
+const strategyInFlight = new Set<string>();
+
+const STRATEGY_SYSTEM = `あなたは賃貸仲介（スモラ）の LINE 接客の「会話全体の戦略」を整理する担当です。
+毎回のメッセージごとの判断（今回の発言の分析）はすでに別の担当が行っています。あなたは、前回の戦略と、その後の毎回の分析の要点・新しいメッセージ・会話の要点（セーブポイント）を整理して、この会話の戦略を作り直します。
+
+【判断の仕方】
+- 前回の戦略は仮説。その後の毎回の分析の要点と新しいメッセージに書かれた事実と食い違う部分は、必ず新しい事実に合わせて更新する（条件変更・物件の見送り・申込の意思・他で決めた・内覧の確定・フェーズの変化）。
+- 事実は、会話・毎回の分析の要点・セーブポイント・お客様のプロフィールに書かれたものだけを使う。書かれていない日付・金額・物件名・予定を作らない。
+- 類似の成約・失注パターンは参考。この会話の事実に合うものだけを戦略に反映する。
+
+【出力（JSON のみ・説明文なし）】
+{"closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で。必ず「〜させて頂く」の行動宣言形で書く",
+ "winning_pattern": "成約につながる具体的な行動を50字以内。物件名・理由・タイミングを含め「〜する」「〜させて頂く」の行動宣言形",
+ "next_steps": ["Step1: 今すぐ行う具体的な対応", "Step2: …", "Step3: …"],
+ "repeated_concern": "会話全体で2回以上出たお客様の懸念のテーマ（無ければ null）",
+ "future_timeline": "会話に実際に出た決断・入居の時期の表現（無ければ null。作らない）",
+ "checkpoint_stage": "hearing / proposing / viewing / applying / contract のいずれか",
+ "purchase_signal_level": "none / soft / strong / peak。会話全体で積み上がる値。peak＝申込の許可を伺ってきた・特定の物件を名指しで選んだ・金額を復唱した・保証会社や支払い方法など手続きの具体質問・入居日の逆算や確定・他の申込者の有無の確認・3件以上の連続した具体質問 のいずれか。strong＝異なる種類の具体質問が2件以上・複数物件の比較。soft＝具体的な物件確認の質問が1件。判断できなければ none",
+ "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内。顧客を知らない人でも状況が分かる詳しさで",
+ "ai_summary_json": {"situation": "現在の状況を15字以内", "requirements": ["要望・こだわり（最大3件・各30字以内）"], "opinions": ["性格・傾向（最大2件・各30字以内）"], "winning_pattern": "上と同じ", "next_action": "今すぐスタッフが打つべき次の1手を40字以内", "emotion": "前向き/不安/冷めかけ/普通", "urgency": "今月中/3ヶ月以内/半年以上/未確認", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通", "personality_profile": "顧客の人間性・行動パターンを100字以内", "purchase_signal_level": "上と同じ"}}`;
+
+/** 戦略の層を保存する（古い戦略で新しい戦略を上書きしない）。patchMeta: 今の判断（suggested_aix_meta / last_brain_meta）の戦略部分も差し替える */
+async function saveBrainStrategy(conversationId: string, s: BrainStrategy, opts: { patchMeta: boolean }): Promise<boolean> {
+  const { data: row } = await supabase.from("conversations")
+    .select("brain_strategy, suggested_aix_meta, last_brain_meta").eq("id", conversationId).maybeSingle();
+  const existing = (row?.brain_strategy ?? null) as BrainStrategy | null;
+  const exTs = existing?.strategy_msg_ts ? Date.parse(existing.strategy_msg_ts) : NaN;
+  const ourTs = s.strategy_msg_ts ? Date.parse(s.strategy_msg_ts) : NaN;
+  if (Number.isFinite(exTs) && Number.isFinite(ourTs) && exTs > ourTs) {
+    console.log(JSON.stringify({ tag: "brain:strategy-skip", conversationId, reason: "newer_strategy_exists", ours: s.strategy_msg_ts, existing: existing?.strategy_msg_ts }));
+    return false;
+  }
+  const { error } = await supabase.from("conversations").update({ brain_strategy: s }).eq("id", conversationId);
+  if (error) { console.warn("[brain-core] brain_strategy save failed:", conversationId, error.message); return false; }
+  if (opts.patchMeta) {
+    // 今の判断の戦略部分だけ差し替える（今回の発言の層の項目はそのまま）。その間に新しい判断が書かれていたら触らない
+    for (const col of ["suggested_aix_meta", "last_brain_meta"] as const) {
+      const cur = row?.[col] as Record<string, unknown> | null | undefined;
+      if (!cur || typeof cur !== "object") continue;
+      const ts = typeof cur.analyzed_msg_ts === "string" ? cur.analyzed_msg_ts : null;
+      let q = supabase.from("conversations").update({ [col]: mergeBrainLayers(cur, s) }).eq("id", conversationId);
+      q = ts ? q.eq(`${col}->>analyzed_msg_ts`, ts) : q;
+      await q.then(() => {}, () => {});
+    }
+  }
+  return true;
+}
+
+function scheduleStrategyRefresh(conversationId: string, kind: "consolidate" | "scratch", reason: string): void {
+  const task = () => runStrategyRefresh(conversationId, kind, reason)
+    .then(() => {}, (e) => console.warn("[brain-core] strategy refresh failed:", conversationId, e instanceof Error ? e.message : String(e)));
+  try { after(task); } catch { void task(); }
+}
+
+export async function runStrategyRefresh(conversationId: string, kind: "consolidate" | "scratch", reason: string): Promise<BrainStrategy | null> {
+  if (strategyInFlight.has(conversationId)) {
+    console.log(JSON.stringify({ tag: "brain:strategy-coalesced", conversationId, kind }));
+    return null;
+  }
+  strategyInFlight.add(conversationId);
+  const t0 = Date.now();
+  try {
+    const { data: conv } = await supabase.from("conversations")
+      .select("status, property_customer_id, customer_name, brain_strategy, is_hot, is_flagged, auto_send_enabled")
+      .eq("id", conversationId).maybeSingle();
+    if (!conv) return null;
+    const prev = (conv.brain_strategy ?? null) as BrainStrategy | null;
+    const nowIso = new Date().toISOString();
+    let next: BrainStrategy | null = null;
+    if (kind === "scratch" || !prev) {
+      // ゼロから: 前回の判断を渡さない全項目の分析（従来の全体分析の材料すべて）→ 戦略の項目だけを取り出す
+      const meta = await analyzeConversation(conversationId, false, (conv.status as string | null) ?? null, (conv.property_customer_id as string | null) ?? null, "brain_strategy", {
+        mode: "full", layer: "combined", customerName: (conv.customer_name as string | null) ?? undefined,
+        isHot: (conv.is_hot as boolean | null) ?? false, isFlagged: (conv.is_flagged as boolean | null) ?? false,
+        autoSendEnabled: conv.auto_send_enabled === false ? false : undefined,
+      });
+      next = extractStrategy(meta as unknown as Record<string, unknown> | null, "scratch", prev?.strategy_count ?? 0, nowIso);
+    } else {
+      next = await consolidateStrategy(conversationId, conv as Record<string, unknown>, prev, nowIso);
+    }
+    const saved = next ? await saveBrainStrategy(conversationId, next, { patchMeta: true }) : false;
+    console.log(JSON.stringify({ tag: "brain:strategy", conversationId, kind, reason, saved, count: next?.strategy_count ?? null, ms: Date.now() - t0 }));
+    return saved ? next : null;
+  } finally {
+    strategyInFlight.delete(conversationId);
+  }
+}
+
+/** 戦略の整理（前回の戦略＋それ以降の毎回の分析の要点＋セーブポイント＋新しいメッセージ＋成約パターン → 新しい戦略） */
+async function consolidateStrategy(conversationId: string, conv: Record<string, unknown>, prev: BrainStrategy, nowIso: string): Promise<BrainStrategy | null> {
+  const customerName = (conv.customer_name as string | null) ?? undefined;
+  // セーブポイントを先に更新してから使う（同じ整理の仕事を二度読みしない。更新が不要なら即戻る）
+  await maybeCreateCheckpoint(conversationId, customerName).catch(() => {});
+  const pcid = (conv.property_customer_id as string | null) ?? null;
+  const sinceTs = prev.strategy_msg_ts ?? "1970-01-01T00:00:00Z";
+  const sinceAnalyzed = prev.strategy_analyzed_at ?? sinceTs;
+  const [newMsgsRes, recentMsgsRes, digestRes, cpRes, pcRes, sentRes] = await Promise.all([
+    supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId)
+      .gt("created_at", sinceTs).order("created_at", { ascending: true }).limit(30),
+    supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false }).limit(12),
+    supabase.from("brain_decision_logs").select("digest, created_at").eq("conversation_id", conversationId)
+      .gt("created_at", sinceAnalyzed).not("digest", "is", null).order("created_at", { ascending: true }).limit(20),
+    supabase.from("conversation_checkpoints").select("summary, key_facts, conversation_stage").eq("conversation_id", conversationId)
+      .order("checkpoint_index", { ascending: false }).limit(1).maybeSingle(),
+    pcid ? supabase.from("property_customers").select("personality_profile, preferences, ng_points, ai_summary, desired_area, floor_plan, rent_max, move_in_time").eq("id", pcid).maybeSingle() : Promise.resolve({ data: null }),
+    pcid ? supabase.from("sent_properties").select("id", { count: "exact", head: true }).eq("property_customer_id", pcid) : Promise.resolve({ count: 0 }),
+  ]);
+  type M = { sender: string; text: string | null; created_at: string };
+  const newMsgs = (newMsgsRes.data ?? []) as M[];
+  // 新しいメッセージが少ない時は直近12件で文脈を補う
+  const msgs = newMsgs.length >= 6 ? newMsgs : ((recentMsgsRes.data ?? []) as M[]).slice().reverse();
+  const latestCustomerTs = [...msgs].reverse().find((m) => m.sender === "customer")?.created_at ?? prev.strategy_msg_ts ?? null;
+  const digests = ((digestRes.data ?? []) as Array<{ digest: FreshDigestRow; created_at: string }>).map((r) => r.digest).filter(Boolean);
+  const cp = cpRes.data as { summary?: string | null; key_facts?: unknown; conversation_stage?: string | null } | null;
+  const pc = pcRes.data as { personality_profile?: string | null; preferences?: string | null; ng_points?: string | null; ai_summary?: string | null; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null } | null;
+
+  // 成約パターン RAG: 人物像＋前回の戦略＋毎回の分析の要点で引く（戦略の文書と同じ構成の問い）。1件の長さを制限して6件まで
+  let patternsText = "";
+  let topHumanType: string | null = null;
+  try {
+    const digestGist = digests.map((d) => [d.intent, d.concern, d.cond, d.dir].filter(Boolean).join(" ")).join(" ").slice(0, 400);
+    const q = [pc?.personality_profile, pc?.ai_summary?.slice(0, 200), pc?.preferences, prev.closing_strategy, prev.winning_pattern, digestGist, conv.status as string | null]
+      .filter(Boolean).join(" ").slice(0, 1500);
+    const emb = q.trim() ? await generateEmbedding(q) : null;
+    if (emb) {
+      const { data: wp, error: wpErr } = await supabase.rpc("match_winning_patterns", { query_embedding: emb, match_count: 6, min_importance: 8 });
+      if (wpErr) console.warn(JSON.stringify({ tag: "brain:strategy-rag", conversationId, error: wpErr.message }));
+      const rows = ((wp ?? []) as Array<{ pattern: string; closing_action: string | null; notes: string | null; human_type_label: string | null; outcome_type: string; similarity: number }>)
+        .filter((w) => w.similarity >= 0.5);
+      topHumanType = rows.find((w) => w.human_type_label)?.human_type_label ?? null;
+      patternsText = rows.map((w) => `- ${w.outcome_type === "closed_lost" ? "【失注】" : "【成約】"}${(w.pattern ?? "").slice(0, 140)}${w.closing_action ? ` → 有効: ${w.closing_action.slice(0, 60)}` : ""}${w.notes ? ` / 転換点: ${w.notes.slice(0, 80)}` : ""}`).join("\n");
+    }
+  } catch (e) {
+    console.warn(JSON.stringify({ tag: "brain:strategy-rag", conversationId, error: e instanceof Error ? e.message : String(e) }));
+  }
+
+  const digestText = digests.map((d) => {
+    const parts = [d.ts ? jstMD(d.ts) : "", d.intent ? `意図:${d.intent}` : "", d.q?.length ? `質問:${d.q.join("／")}` : "", d.concern ? `懸念:${d.concern}` : "",
+      d.cond ? `条件変更:${d.cond}` : "", d.hes ? `迷い:${d.hes}` : "", d.emo ? `感情:${d.emo}` : "", d.prop ? `物件:${d.prop}` : "", d.aix ? `AIX:${d.aix}` : "",
+      d.sig ? `熱量:${d.sig}` : "", d.timeline ? `時期:${d.timeline}` : "", d.shift ? `戦略が変わる発言:${d.shift}` : ""].filter(Boolean);
+    return `- ${parts.join(" ")}`;
+  }).join("\n");
+  const msgText = msgs.map((m) => `[${m.sender === "customer" ? "顧客" : "スタッフ"} ${jstMD(m.created_at)}] ${(m.text ?? "（画像/添付）").replace(/\n+/g, " ").slice(0, 200)}`).join("\n");
+  const keyFacts = Array.isArray(cp?.key_facts) ? (cp!.key_facts as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 10) : [];
+  const userText = [
+    `今日: ${jstYmdWeekday(nowIso)}／会話のステータス: ${(conv.status as string | null) ?? "不明"}／送付済み物件: ${(sentRes as { count?: number | null }).count ?? 0}件`,
+    `\n【前回の戦略（JSON・${prev.strategy_msg_ts ? jstYmd(prev.strategy_msg_ts) : "不明"}時点）】\n${JSON.stringify(strategyForPrompt(prev))}`,
+    digestText ? `\n【前回の戦略以降の毎回の分析の要点（古い→新しい）】\n${digestText}` : "",
+    cp?.summary ? `\n【会話の要点（セーブポイント・最新）】\n${cp.summary}${keyFacts.length ? `\n確定事実: ${keyFacts.join(" ／ ")}` : ""}` : "",
+    pc ? `\n【お客様のプロフィール】\n${[pc.personality_profile && `人間性: ${pc.personality_profile}`, pc.preferences && `こだわり: ${pc.preferences}`, pc.ng_points && `NG: ${pc.ng_points}`, pc.desired_area && `エリア: ${pc.desired_area}`, pc.floor_plan && `間取り: ${pc.floor_plan}`, pc.rent_max && `家賃上限: ${pc.rent_max}`, pc.move_in_time && `入居時期: ${pc.move_in_time}`].filter(Boolean).join(" ／ ")}` : "",
+    patternsText ? `\n【類似の成約・失注パターン（参考）】\n${patternsText}` : "",
+    `\n【${newMsgs.length >= 6 ? "前回の戦略以降のメッセージ" : "直近のメッセージ"}】\n${msgText}`,
+  ].filter(Boolean).join("\n");
+
+  const res = await client.messages.create({
+    model: BRAIN_MODEL, max_tokens: 2500, thinking: { type: "disabled" },
+    system: [{ type: "text" as const, text: STRATEGY_SYSTEM, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }],
+    messages: [{ role: "user", content: maskPII(userText, [customerName]) }],
+  });
+  logLlmUsage("brain:strategy", res.usage, { conversationId });
+  if (res.stop_reason === "max_tokens") { console.warn("[brain-core] strategy truncated (max_tokens):", conversationId); return null; }
+  const raw = res.content.find((c) => c.type === "text")?.text ?? "";
+  const fb = raw.indexOf("{"), lb = raw.lastIndexOf("}");
+  if (fb < 0 || lb <= fb) return null;
+  let p: Record<string, unknown> | null = null;
+  try { p = JSON.parse(raw.slice(fb, lb + 1)); } catch { try { p = JSON.parse(escapeControlCharsInStrings(raw.slice(fb, lb + 1))); } catch { p = null; } }
+  if (!p) { console.warn("[brain-core] strategy JSON parse failed:", conversationId, raw.slice(0, 200)); return null; }
+
+  const str = (v: unknown, n: number) => (typeof v === "string" && v.trim() && v.trim() !== "null" ? v.trim().slice(0, n) : null);
+  const STAGES = ["hearing", "proposing", "viewing", "applying", "contract"];
+  const SIG = ["none", "soft", "strong", "peak"];
+  const newSignal = typeof p.purchase_signal_level === "string" && SIG.includes(p.purchase_signal_level) ? p.purchase_signal_level : null;
+  const next: BrainStrategy = {
+    closing_strategy: str(p.closing_strategy, 300) ?? prev.closing_strategy ?? null,
+    winning_pattern: str(p.winning_pattern, 120) ?? prev.winning_pattern ?? null,
+    next_steps: Array.isArray(p.next_steps) ? (p.next_steps as unknown[]).filter((x): x is string => typeof x === "string" && !!x.trim()).slice(0, 3) : (prev.next_steps ?? null),
+    human_type_label: topHumanType ?? prev.human_type_label ?? null,
+    repeated_concern: str(p.repeated_concern, 60),
+    future_timeline: str(p.future_timeline, 60),
+    checkpoint_stage: typeof p.checkpoint_stage === "string" && STAGES.includes(p.checkpoint_stage) ? p.checkpoint_stage : (prev.checkpoint_stage ?? null),
+    // 蓄積はリセットしない（設計知見 ae0b17a2）。下げるのは3回に1回のゼロからの作り直しだけ
+    purchase_signal_level: maxSignal(prev.purchase_signal_level ?? null, newSignal),
+    strategy_msg_ts: latestCustomerTs,
+    strategy_analyzed_at: nowIso,
+    strategy_count: (prev.strategy_count ?? 1) + 1,
+    source: "consolidated",
+  };
+  // お客様の要約（ai_summary）は戦略の層が書く（今回の発言の層は書かない）
+  const summaryText = str(p.ai_summary, 2000);
+  const summaryJson = p.ai_summary_json && typeof p.ai_summary_json === "object" ? p.ai_summary_json : null;
+  if (pcid && (summaryText || summaryJson)) {
+    await supabase.from("property_customers").update({
+      ...(summaryText ? { ai_summary: summaryText } : {}),
+      ...(summaryJson ? { ai_summary_json: summaryJson } : {}),
+      ai_summary_at: nowIso,
+    }).eq("id", pcid).then(() => {}, () => {});
+  }
+  return next;
+}
+
+type FreshDigestRow = { ts?: string | null; intent?: string | null; q?: string[]; concern?: string | null; cond?: string | null; hes?: string | null; emo?: string | null; aix?: string | null; prop?: string | null; sig?: string | null; dir?: string | null; timeline?: string | null; shift?: string | null };
+
 /**
  * 2026-09-13: ブレインの判断を suggested_aix_meta に書く前の見送り判定（本分析・分析の省略の両方で使う。null＝書いてよい）。
  *   - 分析中にスタッフが返信した・成約等で分析対象外になった → 書かない（送信で消した判断を書き戻さない）。newer=false
@@ -2954,7 +3226,7 @@ export async function analyzeAndSaveBrainMeta(
 ): Promise<boolean> {
   const { data: conv, error: selectError } = await supabase
     .from("conversations")
-    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction, brain_full_analyzed_at, brain_full_msg_count, brain_deep_analyzed_at, brain_deep_msg_count, last_brain_meta, customer_name, is_post_apply")
+    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction, brain_full_analyzed_at, brain_full_msg_count, brain_deep_analyzed_at, brain_deep_msg_count, last_brain_meta, customer_name, is_post_apply, brain_strategy")
     .eq("id", conversationId)
     .maybeSingle();
   if (selectError) {
@@ -2988,6 +3260,17 @@ export async function analyzeAndSaveBrainMeta(
   const lastFullCount = (convData?.brain_full_msg_count as number | null) ?? 0;
   const cachedMeta = (convData?.last_brain_meta ?? null) as Record<string, unknown> | null;
   const customerName = (convData?.customer_name as string | null) ?? undefined;
+  // 2026-09-13 2層ブレイン: 会話全体の戦略の層。まだ無い会話は前回の判断（last_brain_meta）から取り出して使い始める
+  //   （LLM を呼ばない種まき。移行時に全会話で重い分析が1回ずつ走るのを避ける）。前回の判断も無ければ全項目の分析で作る
+  let brainStrategy = BRAIN_LAYER_MODE === "on" ? ((convData?.brain_strategy ?? null) as BrainStrategy | null) : null;
+  if (BRAIN_LAYER_MODE === "on" && !brainStrategy && cachedMeta) {
+    const seeded = extractStrategy(cachedMeta, "seed_last_meta", 0, new Date().toISOString());
+    if (seeded) {
+      brainStrategy = seeded;
+      void supabase.from("conversations").update({ brain_strategy: seeded }).eq("id", conversationId).is("brain_strategy", null).then(() => {}, () => {});
+      console.log(JSON.stringify({ tag: "brain:strategy-seeded", conversationId, from: "last_brain_meta" }));
+    }
+  }
 
   // メッセージ総数を取得
   const { count: totalMsgCount, error: countErr } = await supabase
@@ -3126,6 +3409,7 @@ export async function analyzeAndSaveBrainMeta(
   // 以前ここで aix_usage_logs を3件再取得して同フィールドを上書きしていたが、
   // 同一ソース・同一フォーマットの完全重複クエリだったため削除（2026-09-02）
 
+  const useFreshLayer = BRAIN_LAYER_MODE === "on" && !!brainStrategy;
   const meta = await analyzeConversation(
     conversationId,
     isUrgent,
@@ -3140,7 +3424,10 @@ export async function analyzeAndSaveBrainMeta(
       prevAix: typeof prevDir?.suggested_aix_button === "string" ? (prevDir.suggested_aix_button as string) : null,
       customerName,
       prevMeta: cachedMeta as SuggestedAixMeta ?? null,
-      mode: analysisMode,
+      // 2026-09-13 2層ブレイン: 戦略があれば今回の発言の層（軽い分析）。無ければ全項目の分析（その結果から戦略を作る）
+      mode: useFreshLayer ? "incremental" : analysisMode,
+      layer: useFreshLayer ? "fresh" : "combined",
+      strategy: useFreshLayer ? brainStrategy : null,
       totalMsgCount: totalMsgCount ?? 0,
     },
   );
@@ -3158,7 +3445,10 @@ export async function analyzeAndSaveBrainMeta(
 
   // incremental分析の結果は source を brain_incremental にする（full は analyzeConversation の source をそのまま使用）
   // last_aix_history は meta に含まれている（analyzeConversation L2467 で recentAixSeqText を格納済み）
-  const metaToWrite = { ...meta, ...(analysisMode === "incremental" ? { source: "brain_incremental" } : {}) };
+  // 2026-09-13 2層ブレイン: 今回の発言の層は戦略の層と合成して保存する（組み合わせの規則は brain-layers.ts mergeBrainLayers）
+  const metaToWrite = useFreshLayer
+    ? ({ ...(mergeBrainLayers(meta as unknown as Record<string, unknown>, brainStrategy) as unknown as NonNullable<SuggestedAixMeta>), source: "brain_fresh" } as NonNullable<SuggestedAixMeta>)
+    : { ...meta, ...(analysisMode === "incremental" ? { source: "brain_incremental" } : {}) };
 
   // 2026-09-13 監査 H-4（T3 の解消）: 書き込み条件を「updated_at が分析開始時と同じ」から「すでに保存されている判断より古くない」に変えた。
   //   旧: updated_at は下書き保存・フラグ・hot 昇格など分析と関係ない更新でも変わるため、正しい分析結果まで捨てていた
@@ -3215,6 +3505,10 @@ export async function analyzeAndSaveBrainMeta(
   }
   // 脳分析成功時のみチェックポイント作成を fire-and-forget 起動（レスポンスを遅らせない）
   if (actuallyWritten) {
+    // 2026-09-13 2層ブレイン: 今回の発言が前回の戦略とずれたか（ずれたら戦略の分析を後ろで起動・毎回の分析の要点にも残す）
+    const strategyShift = useFreshLayer
+      ? detectStrategyShift({ fresh: meta as unknown as Record<string, unknown>, strategy: brainStrategy, turnText: latestTurnText })
+      : null;
     // brain_decision_logs: Brain判断を記録（fail-open: エラーがあってもメイン処理を止めない）
     try {
       const metaObj = meta as Record<string, unknown>;
@@ -3232,9 +3526,11 @@ export async function analyzeAndSaveBrainMeta(
         ...baseRow,
         suggested_check_pattern: typeof metaObj.check_pattern === "string" ? metaObj.check_pattern : null,
         decision_source: typeof metaObj.decision_source === "string" ? metaObj.decision_source : null,
-        analysis_mode: analysisMode,
+        analysis_mode: useFreshLayer ? "fresh" : analysisMode,
         analyzed_msg_ts: typeof metaObj.analyzed_msg_ts === "string" ? metaObj.analyzed_msg_ts : null,
         scene_evidence: metaObj.scene_evidence ? JSON.stringify(metaObj.scene_evidence) : null,
+        // 2026-09-13 2層ブレイン: 毎回の分析の要点（戦略の分析が「前回の戦略以降に何があったか」を整理する材料）
+        digest: toFreshDigest(metaObj, strategyShift),
       });
       if (insErr) {
         // 列がまだ無い環境（migrate-schema 未実行）でも判断ログを失わない
@@ -3244,6 +3540,26 @@ export async function analyzeAndSaveBrainMeta(
     } catch (e) {
       console.warn("[brain-core] brain_decision_logs insert failed:", conversationId,
         e instanceof Error ? e.message : String(e));
+    }
+    // 2026-09-13 2層ブレイン: 戦略の層の更新
+    //   全項目の分析だった（戦略がまだ無かった）→ その結果から戦略を作る
+    //   今回の発言の層だった → 戦略が変わる発言・前回の戦略から10件・72時間なら戦略の分析を後ろで起動（返信は待たせない）
+    if (BRAIN_LAYER_MODE === "on") {
+      try {
+        if (!useFreshLayer) {
+          const seeded = extractStrategy(metaToWrite as unknown as Record<string, unknown>, "combined", brainStrategy?.strategy_count ?? 0, new Date().toISOString());
+          if (seeded) await saveBrainStrategy(conversationId, seeded, { patchMeta: false });
+        } else {
+          const { count: sinceCount } = await supabase.from("messages").select("id", { count: "exact", head: true })
+            .eq("conversation_id", conversationId).eq("sender", "customer")
+            .gt("created_at", brainStrategy?.strategy_msg_ts ?? "1970-01-01T00:00:00Z");
+          const refresh = decideStrategyRefresh({ strategy: brainStrategy, customerMsgsSinceStrategy: sinceCount ?? 0, nowMs: Date.now(), shift: strategyShift });
+          console.log(JSON.stringify({ tag: "brain:strategy-decision", conversationId, kind: refresh.kind, reason: refresh.reason, sinceCount: sinceCount ?? 0, shift: strategyShift }));
+          if (refresh.kind !== "none") scheduleStrategyRefresh(conversationId, refresh.kind, refresh.reason ?? "");
+        }
+      } catch (e) {
+        console.warn("[brain-core] strategy layer update failed:", conversationId, e instanceof Error ? e.message : String(e));
+      }
     }
     // ── brain_learning_queue: 学習キュレーター登録（fire-and-forget・awaitしない）──
     // enforcement_level → quality_score: required=8 / recommended=6、incremental分析は-2。
