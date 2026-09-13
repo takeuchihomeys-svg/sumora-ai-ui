@@ -3,7 +3,12 @@
 // 依存は aix-scene-evidence だけ（supabase を読み込まないので単体テストできる）。
 import { detectAixSceneEvidence } from "./aix-scene-evidence";
 
-// フル分析スキップ判定: 10メッセージに1回のフル分析（それ以外はキャッシュ返却）
+// 分析モードの3段階（2026-09-13 実態に合わせて説明を更新。旧「10メッセージに1回のフル分析・それ以外はキャッシュ」は段1以前の設計）:
+//   full（前回の判断を使わずゼロから）: 初回〜10件 / 申込・契約・審査・キャンセル語 / 前回の分析か最新発言から24時間 / 全体分析から30件
+//   incremental（前回の判断を起点に、直近15件・RAG・台帳は full と同じ）: 条件・URL・画像・見送り等 / 前回の分析から10件 /
+//     新しいお客様発言に場面の証拠がある・前回の action がある（段1の格上げ）
+//   cached（LLM なし・前回の判断を AIX なしで使い回す）: 上のどれにも当たらない時（本番 9/12 の12時間で0回）
+// FULL_ANALYSIS_EVERY_N_MESSAGES は名前に反して「前回の分析（full/incremental）から10件で incremental に上げる」閾値
 export const FULL_ANALYSIS_EVERY_N_MESSAGES = 10;
 export const FULL_REFRESH_EVERY_N_MESSAGES = 30;  // フル分析から30件で強制フルリフレッシュ（アンカリング防止）
 

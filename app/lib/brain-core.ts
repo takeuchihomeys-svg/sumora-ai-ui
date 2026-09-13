@@ -2699,7 +2699,7 @@ ${history}`;
 const MESSAGES_PER_CHECKPOINT = 15;  // 前回作成時から15件以上増えたら新規作成
 const CHECKPOINT_MIN_MESSAGES = 11;  // 総メッセージ数 > 10 で初回作成
 
-// フル分析スキップ判定: 10メッセージに1回のフル分析（それ以外はキャッシュ返却）
+// 分析モードの判定（full / incremental / cached）の条件は brain-analysis-mode.ts の先頭に説明あり
 // 2026-09-12 段1: FULL_ANALYSIS_EVERY_N_MESSAGES(10) / FULL_REFRESH_EVERY_N_MESSAGES(30) は brain-analysis-mode.ts（decideAnalysisMode）へ移設
 const INCREMENTAL_MIN_RECENT = 5;           // incremental差分窓の最低件数
 const INCREMENTAL_MAX_MESSAGES = 40;        // incremental差分窓の最大件数
@@ -2969,7 +2969,7 @@ export async function analyzeAndSaveBrainMeta(
   // 2026-09-13: 分析を始めた時刻（書き込み時に「分析中にスタッフが返信した・成約になった」を見分けるのに使う）
   const analysisStartedAt = new Date().toISOString();
 
-  // Skip判定: 10メッセージに1回のフル分析（それ以外はキャッシュ返却でSonnetコスト削減）
+  // 分析モードの判定（full / incremental / cached。条件の説明は brain-analysis-mode.ts の先頭。旧「10メッセージに1回のフル分析」ではない）
   const convData = conv as unknown as Record<string, unknown>;
   const lastFullAt = convData?.brain_full_analyzed_at ? new Date(convData.brain_full_analyzed_at as string) : null;
   const lastFullCount = (convData?.brain_full_msg_count as number | null) ?? 0;
