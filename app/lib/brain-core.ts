@@ -17,7 +17,7 @@ import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
-import { parseCheckpointOutput } from "@/app/lib/checkpoint-format";
+import { parseCheckpointOutput, escapeControlCharsInStrings } from "@/app/lib/checkpoint-format";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { inferTpoHint } from "@/app/lib/tpo-hint";
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
@@ -1941,7 +1941,7 @@ ${history}`;
   ];
 
   try {
-    const response = await client.messages.create({
+    const callBrain = () => client.messages.create({
       model: BRAIN_MODEL,
       max_tokens: 4000,
       thinking: { type: "disabled" },
@@ -1967,6 +1967,7 @@ ${history}`;
       ],
       messages: [{ role: "user", content: userContent }],
     });
+    let response = await callBrain();
 
     // キャッシュHIT/MISS ログ（Vercelログで確認可能・コスト診断用）
     const usageAny = response.usage as unknown as Record<string, number>;
@@ -1983,21 +1984,36 @@ ${history}`;
 
     // claude-sonnet-5 はextended thinkingを使うためcontent[0]がthinking型になることがある
     // content.find()でtextブロックを確実に取得する
-    const raw = response.content.find((c) => c.type === "text")?.text ?? "";
     // M2(Fable5): 最初の { 〜 最後の } を抽出（旧 non-greedy 正規表現は最初の } で切れる罠があった）
-    const firstBrace = raw.indexOf("{");
-    const lastBrace = raw.lastIndexOf("}");
-    if (firstBrace === -1 || lastBrace <= firstBrace) {
-      console.warn("[brain-core] analyzeConversation abort: Claude returned no JSON", conversationId,
+    // 2026-09-13 監査 H-4: 出力の JSON が読めずに判断を失っていた（「Expected ':' after property name」→ T3）。
+    //   文字列内の生の改行は直して読み、それでも読めず途中で切れていない（max_tokens でない）時は1回だけ呼び直す
+    const tryParseBrainJson = (text: string): Record<string, unknown> | null => {
+      const fb = text.indexOf("{");
+      const lb = text.lastIndexOf("}");
+      if (fb === -1 || lb <= fb) return null;
+      const body = text.slice(fb, lb + 1);
+      try { return JSON.parse(body) as Record<string, unknown>; } catch { /* 下で直して読む */ }
+      try { return JSON.parse(escapeControlCharsInStrings(body)) as Record<string, unknown>; } catch { return null; }
+    };
+    let raw = response.content.find((c) => c.type === "text")?.text ?? "";
+    let parsedAny = tryParseBrainJson(raw);
+    if (!parsedAny && response.stop_reason !== "max_tokens") {
+      console.warn(JSON.stringify({ tag: "brain:json-retry", conversationId, stop: response.stop_reason, raw_len: raw.length }));
+      response = await callBrain();
+      logLlmUsage("brain:retry", response.usage, { conversationId });
+      raw = response.content.find((c) => c.type === "text")?.text ?? "";
+      parsedAny = tryParseBrainJson(raw);
+    }
+    if (!parsedAny) {
+      console.warn("[brain-core] analyzeConversation abort: Claude returned no parsable JSON", conversationId,
         "stop_reason:", response.stop_reason,
         "content_len:", response.content.length,
         "content[0]_type:", response.content[0]?.type ?? "undefined",
         "raw:", raw.slice(0, 300));
       return null;
     }
-    const jsonMatch = [raw.slice(firstBrace, lastBrace + 1)];
 
-    const parsed = JSON.parse(jsonMatch[0]) as {
+    const parsed = parsedAny as {
       action?: string;
       reason?: string;
       aix?: string | null;
@@ -2914,6 +2930,8 @@ export async function analyzeAndSaveBrainMeta(
   // B5(Fable5): stale-write 対策のウォーターマーク。連続メッセージで分析A→Bが並走した場合、
   // 古い方（msg2を含まない解析）が後着で勝つのを防ぐ — 書き込み時に updated_at 一致を条件にする
   const watermark = conv.updated_at as string;
+  // 2026-09-13: 分析を始めた時刻（書き込み時に「分析中にスタッフが返信した・成約になった」を見分けるのに使う）
+  const analysisStartedAt = new Date().toISOString();
 
   // Skip判定: 10メッセージに1回のフル分析（それ以外はキャッシュ返却でSonnetコスト削減）
   const convData = conv as unknown as Record<string, unknown>;
@@ -3077,6 +3095,38 @@ export async function analyzeAndSaveBrainMeta(
   // incremental分析の結果は source を brain_incremental にする（full は analyzeConversation の source をそのまま使用）
   // last_aix_history は meta に含まれている（analyzeConversation L2467 で recentAixSeqText を格納済み）
   const metaToWrite = { ...meta, ...(analysisMode === "incremental" ? { source: "brain_incremental" } : {}) };
+
+  // 2026-09-13 監査 H-4（T3 の解消）: 書き込み条件を「updated_at が分析開始時と同じ」から「すでに保存されている判断より古くない」に変えた。
+  //   旧: updated_at は下書き保存・フラグ・hot 昇格など分析と関係ない更新でも変わるため、正しい分析結果まで捨てていた
+  //   （本番8時間で7回。お客様の連投で bg-async と webhook のブレインが並走すると両方捨てられ、返信生成の13回中6回がブレインの判断なし＝T3）。
+  //   新: 見た顧客発言の時刻（analyzed_msg_ts）で比べ、保存済みの判断の方が新しい発言を見ている時だけ書かない（古い分析が新しい分析を上書きしない＝B5 の本来の目的）。
+  //   分析中に新しい発言が来ても、この判断は analyzed_msg_ts 付きで保存し、鮮度（T1/T2）の判定は返信生成側に任せる（新しい発言のブレインが後から上書きする）
+  //   ただしスタッフが分析中に返信した時・成約等で分析対象外になった時は書かない（旧ウォーターマークが本来守っていたケース）。
+  //   送信時に suggested_aix_meta を消しているのに、送信前の判断を書き戻すと対応済みの AIX がまた出る（UI の鮮度判定は顧客発言基準なので通ってしまう）
+  const ourTs = typeof (metaToWrite as { analyzed_msg_ts?: unknown }).analyzed_msg_ts === "string"
+    ? Date.parse((metaToWrite as { analyzed_msg_ts: string }).analyzed_msg_ts) : NaN;
+  const [{ data: currentRow }, { data: staffSentDuring }] = await Promise.all([
+    supabase.from("conversations").select("suggested_aix_meta, status").eq("id", conversationId).maybeSingle(),
+    supabase.from("messages").select("id").eq("conversation_id", conversationId).eq("sender", "staff")
+      .gt("created_at", analysisStartedAt).limit(1),
+  ]);
+  const nowStatus = (currentRow?.status as string | null) ?? null;
+  const movedOn = (staffSentDuring?.length ?? 0) > 0 ? "staff_sent_during_analysis"
+    : nowStatus && BRAIN_SKIP_STATUSES.includes(nowStatus) ? `status=${nowStatus}` : null;
+  if (movedOn) {
+    console.log(JSON.stringify({ tag: "brain:write-skip", conversationId, reason: movedOn }));
+    await supabase.from("conversations").update({ brain_analyzed_at: new Date().toISOString() })
+      .eq("id", conversationId)
+      .or(`brain_analyzed_at.is.null,brain_analyzed_at.lt.${new Date(Date.now() - 25 * 60 * 1000).toISOString()}`);
+    return false; // 送信後の判断は sweep（meta が空の会話を分析）・スタッフ宣言のブレインが改めて出す
+  }
+  const existingTsRaw = ((currentRow?.suggested_aix_meta ?? null) as { analyzed_msg_ts?: string | null; source?: string } | null);
+  const existingTs = existingTsRaw?.analyzed_msg_ts ? Date.parse(existingTsRaw.analyzed_msg_ts) : NaN;
+  if (Number.isFinite(existingTs) && existingTsRaw?.source !== "cached" && (!Number.isFinite(ourTs) || existingTs > ourTs)) {
+    console.log(JSON.stringify({ tag: "brain:write-skip", conversationId, reason: "newer_analysis_exists", ours: metaToWrite.analyzed_msg_ts ?? null, existing: existingTsRaw?.analyzed_msg_ts ?? null }));
+    await supabase.from("conversations").update({ brain_analyzed_at: new Date().toISOString() }).eq("id", conversationId);
+    return true; // より新しい発言を見た判断がすでに保存済み（呼び出し元はそれを読めばよい）
+  }
   const { data: writtenRows, error } = await supabase
     .from("conversations")
     .update({
@@ -3093,7 +3143,6 @@ export async function analyzeAndSaveBrainMeta(
       last_brain_meta: metaToWrite,
     })
     .eq("id", conversationId)
-    .eq("updated_at", watermark) // B5: 会話が進んでいたら古い解析は静かに no-op（sweep が補填する）
     .select("id"); // no-op（0行マッチ）を偽陽性なく検知するために追加
   if (error) {
     // B10(Fable5): スキーマ変更後の型不一致等、恒常的なDB障害を診断可能にする
@@ -3103,10 +3152,8 @@ export async function analyzeAndSaveBrainMeta(
   // Supabase は 0行マッチでも error=null を返すため writtenRows?.length で判定する
   const actuallyWritten = !error && (writtenRows?.length ?? 0) > 0;
   if (!actuallyWritten && !error) {
-    // B5ウォーターマーク競合: autoUpgradeToHot 等が分析中に updated_at を更新したため no-op になった。
-    // suggested_aix_meta は書けなかったが sweep の30分バックオフ用に brain_analyzed_at のみ打刻。
-    // watermark 条件なし（会話が進んでいても打刻してよい）・25分以内の打刻は上書きしない。
-    console.warn("[brain-core] analyzeAndSaveBrainMeta: watermark mismatch (no-op), stamping brain_analyzed_at only:", conversationId);
+    // 会話の行が見つからなかった（削除等）。sweep の30分バックオフ用に brain_analyzed_at のみ打刻（25分以内の打刻は上書きしない）
+    console.warn("[brain-core] analyzeAndSaveBrainMeta: no row written, stamping brain_analyzed_at only:", conversationId);
     await supabase
       .from("conversations")
       .update({ brain_analyzed_at: new Date().toISOString() })
@@ -3513,6 +3560,54 @@ export type BrainGateSnapshot = {
  *     従来の generate-reply 側 DBフェッチにフォールバックすること
  *     （チェックポイントBの「Step1後の再確認」で brain-sweep の補填を拾える余地を残す）
  */
+// 2026-09-13 監査 M-9: 同じ会話のブレインが同時に何本も走っていた（画像の連投で1リクエスト内に7本・bg-async と webhook の並走）。
+//   ブレイン入力費用の約2割が無駄で、並走した結果が互いを捨てる T3 の原因にもなっていた。
+//   同じプロセス内では1会話1本にし、実行中に来た呼び出しはその結果を待つ。実行開始後に新しいメッセージ（顧客の発言・スタッフの宣言）が
+//   届いていた時だけ、終わった後に1回だけ分析し直す（同じメッセージへの重複呼び出しは1本で済ませる。別インスタンス同士は上の「古い判断で上書きしない」で守る）
+const brainRunsInFlight = new Map<string, { promise: Promise<boolean>; rerun: boolean; force: boolean; startedAt: number }>();
+
+/** 実行中の分析が読み込んだ後に届いたメッセージ（顧客・スタッフとも）があるか（時計のずれを見込んで1秒手前から見る） */
+async function hasMessageSince(conversationId: string, sinceMs: number): Promise<boolean> {
+  const { data } = await supabase.from("messages").select("id").eq("conversation_id", conversationId)
+    .gt("created_at", new Date(sinceMs - 1000).toISOString()).limit(1);
+  return (data?.length ?? 0) > 0;
+}
+
+async function hasNewerCustomerMessage(conversationId: string): Promise<boolean> {
+  const [{ data: conv }, { data: latest }] = await Promise.all([
+    supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).maybeSingle(),
+    supabase.from("messages").select("created_at").eq("conversation_id", conversationId).eq("sender", "customer")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const analyzedTs = ((conv?.suggested_aix_meta ?? null) as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts;
+  if (!latest?.created_at) return false;
+  if (!analyzedTs) return true;
+  return Date.parse(latest.created_at as string) > Date.parse(analyzedTs);
+}
+
+async function analyzeAndSaveBrainMetaCoalesced(conversationId: string, runOpts?: { forceIncremental?: boolean }): Promise<boolean> {
+  const cur = brainRunsInFlight.get(conversationId);
+  if (cur) {
+    cur.rerun = true;
+    if (runOpts?.forceIncremental) cur.force = true;
+    console.log(JSON.stringify({ tag: "brain:coalesced", conversationId, force: !!runOpts?.forceIncremental }));
+    return cur.promise;
+  }
+  const entry = { rerun: false, force: false, promise: Promise.resolve(false), startedAt: Date.now() };
+  entry.promise = (async () => {
+    let ok = await analyzeAndSaveBrainMeta(conversationId, runOpts);
+    // 実行中に来た呼び出しがあり、かつ実行開始後に新しいメッセージ（顧客の発言・スタッフの宣言）が届いていた時だけ分析し直す
+    //   （同じメッセージへの重複呼び出しなら、今の結果がそのまま最新）
+    if (entry.rerun && await hasMessageSince(conversationId, entry.startedAt)) {
+      console.log(JSON.stringify({ tag: "brain:rerun-after-coalesce", conversationId, force: entry.force }));
+      ok = (await analyzeAndSaveBrainMeta(conversationId, { forceIncremental: entry.force || runOpts?.forceIncremental })) || ok;
+    }
+    return ok;
+  })().finally(() => brainRunsInFlight.delete(conversationId));
+  brainRunsInFlight.set(conversationId, entry);
+  return entry.promise;
+}
+
 export async function runBrainAndNotify(
   conversationId: string,
   msgText?: string,
@@ -3520,7 +3615,7 @@ export async function runBrainAndNotify(
 ): Promise<BrainGateSnapshot | null> {
   let analyzed = false;
   try {
-    analyzed = await analyzeAndSaveBrainMeta(conversationId, runOpts);
+    analyzed = await analyzeAndSaveBrainMetaCoalesced(conversationId, runOpts);
   } catch (e) {
     console.warn("[brain-core] runBrainAndNotify analyze failed:", conversationId, e instanceof Error ? e.message : e);
   }
@@ -3549,6 +3644,14 @@ export async function runBrainAndNotify(
   // generate-reply のチェックポイントB再フェッチ（sweep補填を拾う余地）まで潰れるため null を返す
   // （契約どおり「有効な分析結果がある時のみスナップショット」に統一。notify も meta が無ければ不要）。
   if (!snapshot.meta) return null;
+
+  // 2026-09-13: 書き込み条件を「古い判断で上書きしない」に変えたので、分析中に新しい顧客発言が届いた時は、古い発言への判断が保存される。
+  //   その判断で AIX要対応・カレンダーなど外に出す処理はしない（新しい発言のブレインが後から判断する）。
+  //   呼び出し元へは null を返し、DB から取り直して鮮度（T2）で扱ってもらう（「自分で今書いた値＝鮮度保証あり」の契約を守る）
+  if (snapshot.meta.source !== "cached" && await hasNewerCustomerMessage(conversationId)) {
+    console.log(JSON.stringify({ tag: "brain:stale-snapshot", conversationId, analyzed_msg_ts: snapshot.meta.analyzed_msg_ts ?? null }));
+    return null;
+  }
 
   // 以下はスナップショット返却に不要 → fire-and-forget で 90s race budget を節約
   // 2026-09-12 竹内方針: 売上番長グループへの返信・AIX 系の通知は「AIX要対応」だけにする。
