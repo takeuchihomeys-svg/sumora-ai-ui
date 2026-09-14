@@ -1,8 +1,21 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-09-13
+最終更新: 2026-09-15
 
 ---
+
+## API の漏れ調査と修正 — 出口（fetch）で直す・測る／失敗した物に印／思考の明示（竹内・2026-09-14〜15・コミット 5686be5c・a0f2e957・7df5cb36・9e433958・4654782d）— 黄金ルール
+- 調査の結論: 9/14 の $19 はふだんの範囲で暴走なし。キャッシュは主要経路で効いている（返信生成 read 約12万・uncached 2〜3万／ブレイン read 約3.4万）。1時間以上空いた後の最初の返信生成は固定部分12万を書き直す（1回で当たりの約20倍）
+- **絵文字の片割れ**: `.slice` で絵文字の途中が切れると Anthropic が 400 `no low surrogate in string`。課金されないので費用では見えず、申込到達会話の学習（7日で29回実行・毎回失敗）・顧客サマリー・週次学習・テンプレおすすめが黙って止まっていた → `instrumentation.ts` で globalThis.fetch を包み、Anthropic/OpenAI 宛ての本文から片割れを取り除く（`app/lib/llm-request-sanitize.ts`・ログ `llm:surrogate-fixed`）
+- **使用量の記録**: 全 Anthropic リクエストを `llm_usage_logs` に1行ずつ（同じ出口で応答の usage を読む・`app/lib/llm-usage-recorder.ts`）。再試行・429/529・中断も1行。route＋sys_head（system の先頭80字）で呼び出しを見分ける。**費用・キャッシュの質問はまずここ**:
+  `SELECT * FROM llm_usage_daily WHERE day_jst = '2026-09-15' ORDER BY est_usd DESC;`（est_usd は目安。単価 Haiku $1・Sonnet $3・Opus $5／1M 入力で仮置き → コンソールの日次費用と照合して直す）
+- **修正で課金される失敗に変わる**: 片割れを直した直後の analyze-applying は 400 が消えた代わりに、思考未指定で思考 1727 トークン → max_tokens 3000 で JSON が切れた（5件とも・本番実測）。直した後は usage の stop_reason / thinking_tokens を必ず見る
+- **思考の明示**: Sonnet 5 / Opus 5 で thinking 未指定の約25か所に disabled（rule-organize の毎週の JSON 失敗・corpus2skill の parse_errors・condition-intent の max_tokens 10 も同じ型）。新しい呼び出しを作る時も必ず thinking を書く
+- **失敗した物に印（`llm_job_attempts`・`app/lib/llm-job-attempts.ts`）**: 3回失敗で諦める／保存する物が無かった物は done。適用: analyze-applying・analyze-closed-conversations・bulk-judge-knowledge・auto-analyze-losers・update-knowledge・analyze-diffs ⑧（日付の印）・auto-template-candidates（変換済みの後続文）
+- **ブレインの再分析**: 前回の分析からメッセージ総数が同じ（何も届いていない）・6時間以内なら分析も書き込みもしない（"unchanged"・`nothingNewSinceLastAnalysis`）。AIX 誘導中の会話を開くたびに同じ発言を分析し直していた（7日で27組）。cached（AIX を空にする省略）にはしない
+- その他: LangChain の既定の再試行6回 → 2回（4か所）／bg-async は5回失敗した会話を新しい発言（direct）以外で作り直さない（画面は再生成ボタン）／表示の印 __SHOWN__ で次アクション提案を再取得しない
+- **残り（竹内さんの判断待ち）**: ①動いていない cron 3本（update-template-suggest-quality＝POST だけで 405・learn-design-thinking＝?secret= だけ見て 401・aix-analyze-diffs＝廃止のスタブ）— 直すと費用が増える ②ログインなしで LLM を呼べる API（middleware 無し）— RLS 保留と同じ話 ③会話を開いた時の次アクション提案の残りの重複・生成途中で次の発言が来た時の捨てられる下書き
+- **確認待ち**: 9/15 11:23 JST の analyze-applying（思考なし・3回で諦める）で learned が付くか → `SELECT result_json FROM cron_run_logs WHERE cron_name='analyze-applying' ORDER BY started_at DESC LIMIT 1;` と llm_usage_logs の stop_reason
 
 ## 返信生成のキャッシュと AIX-META による RAG の並べ替え（竹内・2026-09-13・コミット 48ed89ec）
 - 測定（gen:blocks）: キャッシュなしの dynamicBlock 約3.6万字＝ナレッジ 11,792・絶対原則 4,900（全顧客共通なのに毎回割引なし）・戦略 2,377・実例 2,183・往復文脈/場面 3,726・履歴 1,730。固定部分は既に1時間キャッシュ
