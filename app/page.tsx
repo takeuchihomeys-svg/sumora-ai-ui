@@ -12,6 +12,7 @@ import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
 import { taskTypesCompletedByAix } from "./lib/aix-task-link";
+import { firstReplyStateOrNull, staffHasEngaged } from "./lib/conversation-status";
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./lib/brain-meta-restore";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
@@ -3370,11 +3371,9 @@ export default function Home() {
       const genAbortController = new AbortController();
       generateAbortRef.current = genAbortController;
 
-      // スタッフ返信ゼロ & 初回対応中 → first_reply としてAPIに渡す（初回挨拶文を生成するため）
-      // AIX自動返信はスタッフ返信としてカウントしない（brain-coreと同じ判定）
-      const hasAnyStaffMsg = selectedConversation.messages.some((m) => m.sender === "staff" && !m.isAix);
-      const normalizedStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-      const effectiveState = !hasAnyStaffMsg && normalizedStatus === "hearing" ? "first_reply" : selectedConversation.status;
+      // こちらがまだ何も送っていない（AIX も含む・画像だけは除く）→ first_reply としてAPIに渡す（初回挨拶文を生成するため）
+      //   status が proposing（条件フォームで自動で上がる）でも初回（2026-09-14 朱莉事例・conversation-status.firstReplyStateOrNull）
+      const effectiveState = firstReplyStateOrNull(selectedConversation.status, staffHasEngaged(selectedConversation.messages)) ?? selectedConversation.status;
 
       const linkedCustomerForGen = linkedCustomerMap[selectedConversation.id];
       // 紐付き条件 → なければメモをフォールバック（80%の非紐付き会話でも条件が渡る）
@@ -3755,10 +3754,8 @@ export default function Home() {
     try {
       setSparkleGenerating(true);
       const linkedCustomer = linkedCustomerMap[selectedConversation.id];
-      // AIX自動返信はスタッフ返信としてカウントしない（brain-coreと同じ判定）
-      const hasAnyStaff = msgs.some((m) => m.sender === "staff" && !m.isAix);
-      const normalizedStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-      const effectiveState = !hasAnyStaff && normalizedStatus === "hearing" ? "first_reply" : selectedConversation.status;
+      // 初回対応かどうか（conversation-status.firstReplyStateOrNull・bg-async/cron と同じ関数・2026-09-14 朱莉事例）
+      const effectiveState = firstReplyStateOrNull(selectedConversation.status, staffHasEngaged(msgs)) ?? selectedConversation.status;
 
       // 直近スタッフの見積書メッセージから物件名を検出してhintに注入
       const sparkleEstimateProperty = (() => {

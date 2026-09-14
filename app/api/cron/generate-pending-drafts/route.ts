@@ -5,7 +5,7 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
 import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "@/app/lib/brain-meta-restore";
-import { DRAFT_SKIP_STATUSES, AIX_SKIP_TYPES } from "@/app/lib/conversation-status";
+import { DRAFT_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
 import { MSG_SEP } from "@/app/lib/reply-context";
 
 function getDb() {
@@ -256,16 +256,18 @@ async function run() {
       type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string } | null;
       const pcData = pc as PC;
 
-      let hasStaffMsg = recentMsgs.some(m => m.sender === "staff");
+      // 初回対応かどうか（conversation-status.firstReplyStateOrNull・bg-async/画面と同じ関数。画像・動画だけのスタッフ送信は数えない）:
+      //   こちらが何も送っていないなら status が proposing（条件フォームで自動で上がる）でも初回（2026-09-14 朱莉事例）
+      let hasStaffMsg = staffHasEngaged(recentMsgs);
       // 直近20件にスタッフ返信が見つからない場合は全履歴を確認（長い会話でfirst_reply誤判定を防ぐ）
       if (!hasStaffMsg) {
         const { data: staffCheck } = await db.from("messages")
-          .select("id").eq("conversation_id", convId).eq("sender", "staff")
-          .limit(1).maybeSingle();
-        if (staffCheck) hasStaffMsg = true;
+          .select("text").eq("conversation_id", convId).eq("sender", "staff").not("text", "is", null)
+          .limit(20);
+        hasStaffMsg = staffHasEngaged(((staffCheck ?? []) as Array<{ text: string | null }>).map((m) => ({ sender: "staff", text: m.text })));
       }
       const normalizedStatus = STATUS_ALIAS[convStatus] ?? convStatus;
-      const effectiveState = !hasStaffMsg && normalizedStatus === "hearing" ? "first_reply" : normalizedStatus;
+      const effectiveState = firstReplyStateOrNull(convStatus, hasStaffMsg) ?? normalizedStatus;
 
       const customerConditions = [
         pcData?.desired_area && `エリア: ${pcData.desired_area}`,

@@ -38,6 +38,32 @@ export const DRAFT_SKIP_STATUSES = new Set([
 /** bg-async / line-webhook がスキップするステータス（DRAFT_SKIP_STATUSESと同値） */
 export const BG_ASYNC_SKIP_STATUSES = DRAFT_SKIP_STATUSES;
 
+// ─── 初回対応（初回の挨拶）かどうか ───
+// 2026-09-14 竹内（朱莉事例）「なんでこれ初回応対になっていないのか」: こちらがまだ何も送っていない会話は、状態（status）に関係なく初回対応。
+//   旧: bg-async・cron・画面（2か所）が「スタッフ未返信 かつ status=hearing の時だけ first_reply」を別々に持っていた。
+//   line-webhook は条件フォームを受けると status を proposing に自動で上げるため、フォームから始まるお客様（TikTok 経由に多い）は
+//   初回の挨拶（はじめまして・担当の名乗り）が付かず「ご条件お送り頂きありがとうございます」から始まった。
+//   実データ（45日）: 最初の返信の前に条件フォームで proposing に上がった51件のうち42件で、スタッフの最初の手打ち返信は「はじめまして」。
+//   AIX を先に送っていた会話（2件）はその後の手打ち返信に「はじめまして」なし → AIX も「こちらが送った」に数える（画像・動画だけは数えない）。
+//   内覧以降（viewing・申込・成約）は外で対応済みの可能性があるので status のまま
+const FIRST_REPLY_ELIGIBLE_STATUSES = new Set([
+  "", "first_reply", "new_inquiry", "initial", "new",
+  "hearing", "condition_hearing", "property_search", "searching",
+  "proposing", "property_recommendation", "availability_check", "estimate_request",
+]);
+const MEDIA_ONLY_STAFF_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/;
+
+/** こちら（スタッフ・AIX）が文字のメッセージを1通でも送ったか（画像・動画・スタンプだけは数えない） */
+export function staffHasEngaged(messages: ReadonlyArray<{ sender?: string | null; text?: string | null }>): boolean {
+  return messages.some((m) => m.sender === "staff" && !!(m.text ?? "").trim() && !MEDIA_ONLY_STAFF_RE.test(m.text ?? ""));
+}
+
+/** 返信を作る時の状態: こちらがまだ何も送っていない初期の会話なら "first_reply"（初回の挨拶を付ける）。それ以外は null（呼び出し側の status のまま） */
+export function firstReplyStateOrNull(status: string | null | undefined, staffEngaged: boolean): "first_reply" | null {
+  if (staffEngaged) return null;
+  return FIRST_REPLY_ELIGIBLE_STATUSES.has((status ?? "").trim()) ? "first_reply" : null;
+}
+
 /**
  * AIX誘導タスク（line_tasks.task_type）のうち、進行中ならドラフト自動生成を
  * スキップするもの（property_check は短い返しを生成するため含めない）

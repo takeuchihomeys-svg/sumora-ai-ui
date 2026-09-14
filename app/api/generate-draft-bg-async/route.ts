@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
 import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
-import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES } from "@/app/lib/conversation-status";
+import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
 // 2026-09-09 Fable5: 複数通の結合は "\n" ではなく MSG_SEP（1通内の改行を「N通」に分割しない）
 import { MSG_SEP } from "@/app/lib/reply-context";
 import { jstParts } from "@/app/lib/jst-date";
@@ -187,19 +187,6 @@ async function applyBrainConditionChange(
       .eq("id", pcId);
   }
 }
-
-const STATUS_ALIAS: Record<string, string> = {
-  first_reply:             "hearing",
-  condition_hearing:       "hearing",
-  property_search:         "hearing",
-  property_recommendation: "proposing",
-  viewing:                 "proposing",
-  estimate_request:        "proposing",
-  availability_check:      "proposing",
-  application:             "applying",
-  screening:               "applying",
-  contract:                "applying",
-};
 
 function getBaseUrl(): string {
   // 優先順位: 手動設定 > 本番URL > デプロイURL > ローカル
@@ -515,8 +502,15 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const normalizedStatus = STATUS_ALIAS[conv.status as string] ?? conv.status;
-      const effectiveState = !hasAnyStaffMsg && normalizedStatus === "hearing" ? "first_reply" : (conv.status as string);
+      // 初回対応かどうか（conversation-status.firstReplyStateOrNull・bg-async/cron/画面で同じ関数）:
+      //   こちらが何も送っていない（AIX も含む・画像だけは除く）なら status が proposing（条件フォームで自動で上がる）でも初回（朱莉事例）
+      let staffEngaged = hasAnyStaffMsg || staffHasEngaged(recentMsgs);
+      if (!staffEngaged) {
+        const { data: anyStaff } = await db.from("messages").select("text")
+          .eq("conversation_id", convId).eq("sender", "staff").not("text", "is", null).limit(20);
+        staffEngaged = staffHasEngaged(((anyStaff ?? []) as Array<{ text: string | null }>).map((m) => ({ sender: "staff", text: m.text })));
+      }
+      const effectiveState = firstReplyStateOrNull(conv.status as string, staffEngaged) ?? (conv.status as string);
 
       type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string; initial_cost_limit?: number } | null;
       const pcData = pc as PC;
