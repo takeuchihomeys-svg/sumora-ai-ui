@@ -336,6 +336,7 @@ async function synthesizeAixPatterns(
       const response = await anthropic.messages.create({
         model: "claude-sonnet-5",
         max_tokens: 1200,
+        thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が出力の枠を使い、JSON が途中で切れる
         // prompt cache: 静的な抽出指示（AIX_PATTERN_SYSTEM）をキャッシュし、アクション名・実例は user に分離
         system: [
           { type: "text", text: AIX_PATTERN_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
@@ -472,6 +473,7 @@ export async function POST(req: NextRequest) {
       const response = await anthropic.messages.create({
         model: "claude-opus-5",
         max_tokens: 1000,
+        thinking: { type: "disabled" },
         messages: [{
           role: "user",
           content: `対象AIXボタン: 「${actionType}」\n\n以下は過去7日間の「${actionType}」アクションでスタッフが修正した編集例です:\n\n${examplesText}\n\n繰り返しの修正パターンからルールを抽出してください。`

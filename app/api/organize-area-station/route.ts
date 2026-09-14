@@ -7,6 +7,9 @@ function getModel() {
     model: "claude-haiku-4-5-20251001",
     maxTokens: 512,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+    // 2026-09-14: LangChain の既定は再試行6回（7回送信）・タイムアウトは SDK 既定の10分 → 絞る
+    maxRetries: 2,
+    clientOptions: { timeout: 30_000 },
   });
 }
 

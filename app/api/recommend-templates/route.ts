@@ -194,6 +194,7 @@ ${templates.map((t, i) => {
     const response = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 1200,
+      thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が出力の枠を使い、おすすめの JSON が途中で切れる
       system: "あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。指定されたJSON形式のみで回答し、説明文は一切付けないでください。",
       messages: [{ role: "user", content: prompt }],
     });

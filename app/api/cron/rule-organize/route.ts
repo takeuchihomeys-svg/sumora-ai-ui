@@ -140,6 +140,8 @@ JSON配列のみ返してください:
         const response = await client.messages.create({
           model: "claude-opus-5",
           max_tokens: 4096,
+          // 2026-09-14: 省略すると思考が 4096 の枠を使い、30件分の判定 JSON が途中で切れていた（毎週「Opus JSON parse failed」）
+          thinking: { type: "disabled" },
           messages: [{ role: "user", content: prompt }],
         });
 

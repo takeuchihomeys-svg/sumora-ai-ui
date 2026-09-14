@@ -42,6 +42,7 @@ export async function POST(request: NextRequest) {
   const res = await client.messages.create({
     model: "claude-sonnet-5",
     max_tokens: 800,
+    thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が出力の枠を使う
     messages: [{
       role: "user",
       content: `以下はスモラ賃貸仲介スタッフが実際にLINEで送ったメッセージ50件です。

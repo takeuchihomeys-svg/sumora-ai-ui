@@ -167,6 +167,7 @@ ${exampleText}
       const res = await client.messages.create({
         model: "claude-opus-5",
         max_tokens: 1500,
+        thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が出力の枠を使い、分析文が途中で切れる
         messages: [{ role: "user", content: analysisPrompt }],
       });
       const message = extractText(res.content);
@@ -188,6 +189,7 @@ ${exampleText}
       const res = await client.messages.create({
         model: "claude-opus-5",
         max_tokens: 1500,
+        thinking: { type: "disabled" },
         system: buildMeetingSystem(candidate),
         messages: history,
       });
@@ -219,6 +221,7 @@ ${exampleText}
       const res = await client.messages.create({
         model: "claude-opus-5",
         max_tokens: 1200,
+        thinking: { type: "disabled" }, // 仕様の JSON が思考で途中で切れると下の呼び直し（2回目）が走る
         system: buildMeetingSystem(candidate),
         messages: history,
       });
@@ -234,6 +237,7 @@ ${exampleText}
         const retryRes = await client.messages.create({
           model: "claude-opus-5",
           max_tokens: 1200,
+          thinking: { type: "disabled" },
           system: buildMeetingSystem(candidate),
           messages: retryMessages,
         });

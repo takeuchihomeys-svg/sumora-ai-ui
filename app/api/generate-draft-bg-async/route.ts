@@ -18,6 +18,8 @@ function getDb() {
 }
 
 // スキップ対象ステータスは conversation-status.ts に集約（BG_ASYNC_SKIP_STATUSES を import）
+// 自動の作り直しを止める失敗回数（cron generate-pending-drafts の「5回で諦める」と同じ）
+const BG_ASYNC_FAIL_LIMIT = 5;
 
 // ── 脳-DBブリッジ: condition_change_type 検出後にHaikuで条件を抽出しDB更新 ──────────────
 // brain が suggested_aix_meta に condition_change_type を書き込んだ後、
@@ -222,6 +224,13 @@ export async function POST(req: NextRequest) {
   // "[AIX誘導中]" センチネルは初回バグで貼られた可能性があるため通過させて再生成を試みる
   if (conv.ai_draft && conv.ai_draft !== "[AIX誘導中]") return NextResponse.json({ ok: true, skipped: "already_has_draft" });
   if (BG_ASYNC_SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: "status" });
+  // 2026-09-14 API の漏れ調査: 下書きの生成に5回続けて失敗した会話は、新しいお客様の発言（line-webhook の direct）以外では自動で作り直さない。
+  //   旧: cron（generate-pending-drafts）は5回で諦めるが、画面の先回り生成・会話を開いた時の起動は失敗回数を見ず、
+  //   失敗の DB 書き込み → realtime → 先回り生成、の輪で開いている端末の数だけ5分ごとにブレイン＋返信生成を繰り返し得た。
+  //   スタッフの「再生成」ボタンは generate-reply を直接呼ぶのでここは通らない（画面は fail_limit で再生成の案内を出す）
+  if ((conv.draft_fail_count ?? 0) >= BG_ASYNC_FAIL_LIMIT && source !== "direct") {
+    return NextResponse.json({ ok: true, skipped: "fail_limit" });
+  }
 
   let { data: msgs, error: msgsErr } = await db.from("messages")
     .select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", convId)

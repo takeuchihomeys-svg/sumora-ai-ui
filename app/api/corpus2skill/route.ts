@@ -145,6 +145,8 @@ ${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返
   const res = await client.messages.create({
     model: "claude-opus-5",
     max_tokens: 2000,
+    // 2026-09-14: 思考を明示的に止める（省略すると思考が出力の枠を使い、JSON が途中で切れる。週1回の実行が parse_errors になる）
+    thinking: { type: "disabled" },
     // prompt cache: 静的な抽出指示（SYNTHESIZE_SKILLS_SYSTEM）をキャッシュし、動的データは user に分離
     system: [
       { type: "text", text: SYNTHESIZE_SKILLS_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
@@ -296,6 +298,7 @@ ${e.original_text ? `AI原文: ${(e.original_text as string).replace(/\n/g, " ")
   const res = await client.messages.create({
     model: "claude-opus-5",
     max_tokens: 4000,
+    thinking: { type: "disabled" },
     // prompt cache: 静的な提案指示を system 側でキャッシュし、動的な材料データは user に分離
     system: [
       {
@@ -513,6 +516,7 @@ async function analyzeAixMismatch(): Promise<{ pairsFound: number; suggestionsIn
   const resp = await client.messages.create({
     model: "claude-opus-5",
     max_tokens: 2000,
+    thinking: { type: "disabled" },
     system: [
       {
         type: "text",
@@ -731,6 +735,7 @@ AI案: ${((m.ai_draft as string) ?? "").replace(/\n/g, " ").slice(0, 400)}
   const res = await client.messages.create({
     model: "claude-opus-5",
     max_tokens: 3000,
+    thinking: { type: "disabled" },
     // prompt cache: 静的な質問生成指示を system 側でキャッシュし、動的な材料データは user に分離
     system: [
       {

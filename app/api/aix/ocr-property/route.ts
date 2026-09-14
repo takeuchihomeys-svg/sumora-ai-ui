@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
     const response = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 300,
+      thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が 300 の枠を使い、読み取り結果が空・途中で切れる
       system: [{ type: "text", text: OCR_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [
         {

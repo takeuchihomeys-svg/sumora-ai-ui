@@ -121,6 +121,7 @@ async function extractRules(
   const res = await client.messages.create({
     model: "claude-sonnet-5",
     max_tokens: 1500,
+    thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が出力の枠を使い、ルールの JSON が途中で切れる
     system: `あなたはLINE不動産接客AIの知識管理エージェントです。担当者からの回答を、AIが今後使える業務ルールに変換します。`,
     messages: [{
       role: "user",
@@ -187,6 +188,7 @@ async function extractAndUpsertTriggerKeywords(question: string, answer: string,
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 200,
+      thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が 200 の枠を使い、キーワードの配列が空になる
       messages: [{
         role: "user",
         content: `以下の質問と回答から、お客様がLINEで実際に打ちそうな短いキーワードを1〜3個抽出してください。\nキーワードは2〜5文字の短い語句で、顧客がLINEに打ち込む言葉そのものを選んでください。\nJSON配列のみ返してください: ["keyword1", "keyword2"]\n\n【AIの質問】${question}\n【竹内さんの回答】${answer}`,

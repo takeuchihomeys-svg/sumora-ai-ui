@@ -1737,7 +1737,9 @@ export default function Home() {
               setDraftPreparing(false);
             }
             // 新規顧客メッセージ → AI次アクション提案を再取得（dismiss もリセット）
-            if (upd.ai_draft) {
+            // 2026-09-14 API の漏れ調査: 画面が下書きを表示した印（__SHOWN__）の書き込みでも再取得（Haiku）していた
+            //   → 会話を開くたびに2回以上。表示の印は新しい状態ではないので除く
+            if (upd.ai_draft && upd.ai_draft !== "__SHOWN__") {
               const convId = String(upd.id);
               setNextActionMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
               setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
@@ -2868,6 +2870,8 @@ export default function Home() {
             );
           }
         }
+        // 2026-09-14: 5回続けて失敗した会話は自動で作り直さない → 再生成ボタン（generate-reply 直接）を出す
+        if (j.skipped === "fail_limit") setDraftRetryConvId(convIdForGen);
         // status / no_text_message（画像・動画のみ）/ not_customer_turn 等 → 生成対象外。エラー表示なしで解除
         setDraftPreparing(false);
       })

@@ -333,6 +333,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 4000,
+        thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が出力の枠を使う（構造化出力が途中で切れる）
         system: [
           // Block1: 選定ルール（byte-stable → prompt cache）
           { type: "text", text: SELECTION_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },

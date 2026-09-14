@@ -402,6 +402,7 @@ ${customerMessage}
     const res = await anthropic.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 2000,
+      thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が出力の枠を使い、パターンが途中で切れる
       system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [{ role: "user", content: userPrompt }],
     });

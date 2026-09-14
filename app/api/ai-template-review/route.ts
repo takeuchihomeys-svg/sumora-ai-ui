@@ -67,6 +67,7 @@ ${hasOriginal ? `【現在のテンプレート】\n${original}\n\n【提案テ�
   const res = await client.messages.create({
     model: "claude-opus-5",
     max_tokens: 800,
+    thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が 800 の枠を使い、提案文が途中で切れる
     system: systemPrompt,
     messages: conversationMessages,
   });

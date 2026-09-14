@@ -162,6 +162,7 @@ async function handleFinalize(body: DiscussBody, client: Anthropic): Promise<Nex
   const res = await client.messages.create({
     model: "claude-sonnet-5",
     max_tokens: 1000,
+    thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が 1000 の枠を使い、返答が途中で切れる
     system: [
       { type: "text", text: STATIC_KNOWLEDGE_DISCUSS_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
       { type: "text", text: buildDynamicKnowledgeSection({ title, content, category, conversationState: conversation_state, knowledgeSection }) },

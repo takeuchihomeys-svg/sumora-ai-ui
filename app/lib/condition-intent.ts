@@ -58,6 +58,8 @@ export async function classifyByAI(
     const res = await anthropic.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 10,
+      // 2026-09-14: 省略すると思考した時に 10 の枠を思考が使い、content[0] が思考ブロック＝空文字 → 常に REPLACE になる
+      thinking: { type: "disabled" },
       messages: [{ role: "user", content: prompt }],
     });
     const raw =

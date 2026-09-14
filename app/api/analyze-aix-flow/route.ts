@@ -249,6 +249,7 @@ export async function POST(req: NextRequest) {
       model: "claude-opus-5",
       // 改善15: 消費側 suggest-next-action の flowGuide.slice(0, 1000) と整合させる（800字指示+見出しでも切れない余裕）
       max_tokens: 1000,
+      thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が出力の枠を使い、文が途中で切れる（本番実測 analyze-applying 思考1727）
       system: [{ type: "text", text: STATIC_AIX_FLOW_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [{
         role: "user",

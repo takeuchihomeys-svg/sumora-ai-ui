@@ -12,6 +12,9 @@ function getModel() {
     // JSON本文が空になるリスクがあるため明示的に無効化する（generate-reply と同パターン）
     thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+    // 2026-09-14: LangChain の既定は再試行6回（7回送信）・タイムアウトは SDK 既定の10分。AIX 送信のたびに呼ばれるので絞る
+    maxRetries: 2,
+    clientOptions: { timeout: 45_000 },
   });
 }
 

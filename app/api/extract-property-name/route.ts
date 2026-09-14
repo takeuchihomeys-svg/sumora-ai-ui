@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 300,
+      thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が 300 の枠を使い、物件名が空になる
       system: systemPrompt,
       messages: [
         {

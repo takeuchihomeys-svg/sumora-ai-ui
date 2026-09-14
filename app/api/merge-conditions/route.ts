@@ -93,6 +93,7 @@ export async function POST(req: NextRequest) {
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 1024,
+      thinking: { type: "disabled" }, // 2026-09-14: 省略すると思考が出力の枠を使い、統合した条件の JSON が途中で切れる
       messages: [
         {
           role: "user",

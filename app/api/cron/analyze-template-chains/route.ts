@@ -69,6 +69,8 @@ async function callOpus(prompt: string): Promise<string> {
       body: JSON.stringify({
         model: "claude-opus-5",
         max_tokens: 2000,
+        // 2026-09-14: 省略すると思考が 2000 の枠を使い、分析 JSON が途中で切れていた（「分析JSONの解析に失敗」）
+        thinking: { type: "disabled" },
         messages: [{ role: "user", content: prompt }],
       }),
     });

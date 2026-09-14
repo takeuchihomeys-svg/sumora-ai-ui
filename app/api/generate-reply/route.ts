@@ -145,6 +145,8 @@ function createAnalysisModel() {
     maxTokens: 2048,
     thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+    // 2026-09-14: LangChain の既定は再試行6回（7回送信）→ 429/529 が続くと費用が最大7倍になるので絞る
+    maxRetries: 2,
     clientOptions: { timeout: 45_000 },
     betas: ["prompt-caching-2024-07-31"],
   });
@@ -180,6 +182,7 @@ function createTemplateOptimizeModel() {
     maxTokens: 4096,
     thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+    maxRetries: 2, // 2026-09-14: LangChain の既定（再試行6回）を絞る
     clientOptions: { timeout: 60_000 },
     betas: ["prompt-caching-2024-07-31"],
   });
