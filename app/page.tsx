@@ -4379,7 +4379,8 @@ export default function Home() {
           const lineRes = await fetch("/api/send-line-message", {
             method: "POST",
             headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account }),
+            // 送信時の記録（sent_facts・2026-09-14）: 何を送った・約束したかを送った時に1回だけ記録する
+            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account, conversation_id: convId, origin: "manual" }),
             signal: AbortSignal.timeout(30_000),
           });
           if (!lineRes.ok) {
@@ -5033,7 +5034,8 @@ export default function Home() {
         const txtRes = await fetch("/api/send-line-message", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim(), account: selectedConversation.account }),
+          // 送信時の記録（sent_facts）: AIX の本文は log-aix-usage が AIX の種類・画面入力で記録するので origin で分ける
+          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim(), account: selectedConversation.account, conversation_id: selectedConversation.id, origin: isAix ? "aix" : "manual" }),
         });
         if (!txtRes.ok) {
           const txtErr = await txtRes.json().catch(() => ({ error: `HTTP ${txtRes.status}` })) as { error?: string };
@@ -9864,7 +9866,7 @@ export default function Home() {
             return sendMessageText(text, imageUrl, isAix);
           }}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -9978,6 +9980,9 @@ export default function Home() {
                   // M3: 待ち合わせ場所（viewing_history に保存してbrainが把握するための橋渡し）
                   meeting_property_name: meta?.meetingPropertyName ?? null,
                   meeting_property_address: meta?.meetingPropertyAddress ?? null,
+                  // 2026-09-14: 待ち合わせの日付・時刻（送信時の記録 sent_facts と内覧の記録 viewing_history を作る）
+                  meeting_date: meta?.meetingDate ?? null,
+                  meeting_time: meta?.meetingTime ?? null,
                 }),
               }).catch(() => {});
               lastAixLogTextRef.current = null;

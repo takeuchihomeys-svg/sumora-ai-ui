@@ -201,9 +201,12 @@ export async function POST(req: NextRequest) {
       // M3: 待ち合わせ場所（meeting_place AIX）の物件名・住所
       meeting_property_name?: string | null;
       meeting_property_address?: string | null;
+      /** 2026-09-14: 画面で入力した待ち合わせの日付（「9/14（月）」）・時刻（「12:00」） */
+      meeting_date?: string | null;
+      meeting_time?: string | null;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -275,27 +278,22 @@ export async function POST(req: NextRequest) {
     // 旧実装は last_brain_meta / brain_full_analyzed_at をクリアして次回強制フル分析を誘発していたが、
     // 前回の分析結論にAIXイベントを Haiku で差分反映し、次の顧客メッセージを cached で処理できるようにする。
     // brain_full_analyzed_at はそのまま維持（10メッセージサイクルを崩さない）。
-    // M3: meeting_place 送信後に viewing_history の最新予定に property_name/address を保存
-    if (aix_type === "meeting_place" && meeting_property_name) {
-      waitUntil((async () => {
-        try {
-          const { data: latestV } = await supabase
-            .from("viewing_history")
-            .select("id")
-            .eq("conversation_id", conversation_id)
-            .neq("status", "done")
-            .order("scheduled_date", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (latestV?.id) {
-            await supabase
-              .from("viewing_history")
-              .update({ property_name: meeting_property_name, property_address: meeting_property_address ?? null })
-              .eq("id", latestV.id);
-          }
-        } catch (e) { console.error("[log-aix-usage] viewing_history meeting_place update failed:", e); }
-      })());
-    }
+    // 2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」: AIX の送信を送信時の記録（sent_facts）に書く。
+    //   待ち合わせ場所は画面で入力した日付・時刻・物件で内覧の記録（viewing_history）を作る／同じ日の記録を更新する。
+    //   旧 M3: 既存の最新の未完了行に物件名だけを上書き（日付が違う古い行に新しい物件が載り「9/10 15:00 メゾン加美北 予定」になった。
+    //   記録が無ければ何も作らず、30日の待ち合わせ場所29回中 内覧の記録ができたのは7回）
+    waitUntil((async () => {
+      try {
+        const { recordAixFacts } = await import("@/app/lib/sent-facts");
+        await recordAixFacts({
+          conversationId: conversation_id, aixType: aix_type, sentAt: sent_at ?? new Date().toISOString(), lineMessageId: line_message_id ?? null,
+          generatedText: generated_text ?? null, checkPattern: check_pattern ?? null,
+          propertyNames: Array.isArray(property_names) ? property_names.map((n) => String(n ?? "")).filter(Boolean) : null,
+          estimateSent: estimate_sent === true,
+          meeting: aix_type === "meeting_place" ? { date: meeting_date ?? null, time: meeting_time ?? null, propertyName: meeting_property_name ?? null, address: meeting_property_address ?? null } : null,
+        });
+      } catch (e) { console.error("[log-aix-usage] sent_facts record failed:", e); }
+    })());
 
     const STAGE_TRANSITION_AIX_TYPES = [
       "application",

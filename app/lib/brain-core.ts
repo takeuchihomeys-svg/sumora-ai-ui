@@ -29,7 +29,8 @@ import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "@/app/lib/move-out-context";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
-import { buildActionLedger } from "@/app/lib/action-ledger";
+import { buildActionLedger, buildLedgerLinesForBrain } from "@/app/lib/action-ledger";
+import { loadRecordedFacts } from "@/app/lib/sent-facts";
 // 2026-09-11 データ衛生: 正解例として使えるかの唯一の判定（生成失敗文・テスト送信を除外）
 import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
 // 2026-09-12 竹内方針E: 実例の注入前に生成と同じ決定論置換（すぐに除去・承知→かしこまりました・単独の承りました）を通す
@@ -904,7 +905,7 @@ export async function analyzeConversation(
   // limit 30→15: checkpoint（RAG検索含む）が古い会話をカバーするため、直近15件で十分。
   // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
   // count: "exact" は総メッセージ数のプロンプト注入用（B3）
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult, transitionStatsResult] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult, transitionStatsResult, recordedFacts] = await Promise.all([
     supabase
       .from("messages")
       // 監査FIX(2026-08-20): quoted_message_id（物件カード引用リプライの判別）と
@@ -1084,6 +1085,8 @@ export async function analyzeConversation(
     .from("aix_transition_stats")
     .select("from_aix_type, to_aix_type, count")
     .order("count", { ascending: false }),
+  // 2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」: 送信時の記録（sent_facts）＝行動台帳の一次証拠
+  loadRecordedFacts(conversationId),
   ]);
 
   const { data: messages, error, count: totalMessageCount } = msgResult;
@@ -1750,8 +1753,10 @@ export async function analyzeConversation(
     messages: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at, isAix: !!m.is_aix_generated, lineMessageId: m.line_message_id })),
     lineTasks: ((openTasksResult.data ?? []) as Array<{ task_type: string; status: string; created_at: string; resolved_at: string | null }>).map((t) => ({ task_type: t.task_type, status: t.status, created_at: t.created_at, completed_at: t.resolved_at })),
     lastCustomerAt: typedMessages.find((m) => m.sender === "customer")?.created_at ?? null,
+    recordedFacts,
   });
-  const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
+  // 2026-09-14: 要約1行だけでなく、何を・いつ・どの物件に送った／約束したか（台帳の行・中身つき）も毎回渡す（送った内容は鮮度が最も高い事実）
+  const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}${buildLedgerLinesForBrain(brainLedger)}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
   // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段2:
   //   今回の顧客発言（最後のスタッフ発言より後の未返信の連投全体）の場面を決定論で1回だけ出し、「証拠」としてプロンプトに渡す。
   //   あわせてスタッフが実際に押した AIX の実績（brain_aix_feedback・cron/brain-aix-eval が毎日集計）を事実として渡す。
@@ -1846,7 +1851,8 @@ export async function analyzeConversation(
   const viewings: Viewing[] = viewingHistoryRows.length > 0
     ? viewingHistoryRows.map(h => ({ viewing_date: h.scheduled_date, viewing_time: h.scheduled_time, status: h.status, property_name: h.property_name ?? null, property_address: h.property_address ?? null }))
     : (viewingsResult.data ?? []) as Viewing[];
-  const viewingStatusLabel: Record<string, string> = { scheduled: "予定", done: "完了", cancelled: "キャンセル" };
+  // lapsed = 日付が過ぎたが実施したかは記録が無い（viewing-status-update が閉じる・2026-09-14）。完了（対面済み）とは扱わない
+  const viewingStatusLabel: Record<string, string> = { scheduled: "予定", done: "完了", cancelled: "キャンセル", lapsed: "日付経過（実施は未確認）" };
   let viewingsText = viewings.length > 0
     ? `\n【内覧履歴・予定】${viewings.map((v) => {
         let s = `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`;

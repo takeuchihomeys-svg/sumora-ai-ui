@@ -32,7 +32,17 @@ export async function GET(req: NextRequest) {
     }
 
     const updated = (data ?? []).length;
-    const result = { updated, todayJst };
+    // 2026-09-14: 内覧の記録（viewing_history・ブレインが読む）も、日付が過ぎた「予定」を閉じる。
+    //   実施したかは分からないので done（ブレインは「対面済み」と扱う）ではなく lapsed（日付経過・実施は未確認）。
+    //   旧: 閉じる経路が無く「予定」24件中23件が日付を過ぎたまま残り、ブレインに古い予定が「予定」として渡っていた
+    const { data: lapsedRows, error: lapsedErr } = await supabase
+      .from("viewing_history")
+      .update({ status: "lapsed", updated_at: new Date().toISOString() })
+      .eq("status", "scheduled")
+      .lt("scheduled_date", todayJst)
+      .select("id");
+    if (lapsedErr) console.warn("[viewing-status-update] viewing_history lapse failed:", lapsedErr.message);
+    const result = { updated, lapsed: (lapsedRows ?? []).length, todayJst };
     await finishCronLog(runLogId, true, result);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { isGenerationFailureText } from "@/app/lib/example-hygiene";
-import { classifyStaffTextForLedger } from "@/app/lib/action-ledger";
+import { classifyStaffTextFacts } from "@/app/lib/action-ledger";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
 
 // 宣言直後のブレイン再分析（after 内で最大 ~20秒待ち＋分析）に余裕を持たせる
@@ -59,11 +59,15 @@ export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
 
-  const { line_user_id, message, image_url, account } = await req.json() as {
+  const { line_user_id, message, image_url, account, conversation_id, origin } = await req.json() as {
     line_user_id?: string;
     message?: string;
     image_url?: string;
     account?: string;
+    /** 送信時の記録（sent_facts）用。画面の手打ち送信が渡す（無い呼び出しは記録しない＝台帳は本文の読み直しで補う） */
+    conversation_id?: string;
+    /** "manual"＝手打ち（AI 下書きを含む）。"aix"＝AIX の本文（記録は log-aix-usage が AIX の種類・画面入力で書く） */
+    origin?: "manual" | "aix";
   };
 
   if (!line_user_id || (!message && !image_url)) {
@@ -138,6 +142,20 @@ export async function POST(req: NextRequest) {
     // レスポンスがJSONでなくても送信自体は成功しているので続行
   }
 
+  // 2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」: 手打ちの送信は送った時に1回だけ分類して記録する（sent_facts）。
+  //   行動台帳はこの記録を本文の読み直しより優先し、メッセージの取得範囲より古い送信も忘れない。待ち合わせの案内なら内覧の記録も書く
+  const sentAtIsoForFacts = new Date().toISOString();
+  if (message && conversation_id && origin !== "aix") {
+    after(async () => {
+      try {
+        const { recordStaffTextFacts } = await import("@/app/lib/sent-facts");
+        await recordStaffTextFacts({ conversationId: conversation_id, text: message, sentAt: sentAtIsoForFacts, lineMessageId: sentMessageIds[0] ?? null });
+      } catch (e) {
+        console.warn("[send-line-message] sent_facts record failed:", e instanceof Error ? e.message : e);
+      }
+    });
+  }
+
   // スタッフ送信メッセージに「物件ピックアップ・お送り」フレーズ → 物件出しタスク自動作成 + ステータス変更
   if (message) {
     // 「ご査収ください」はAIX物件ピックアップしたの完了文に含まれる→実際の送信であり予告ではないので除外
@@ -180,7 +198,8 @@ export async function POST(req: NextRequest) {
     //   でも「お部屋お送り」のキーワードに当たり物件ピックアップのやることが作られていた。キーワード検知を別判断にせず、
     //   ブレインの約束の判定（行動台帳 classifyStaffTextForLedger の pickup_declared）と同じ判定で作る（旧 STAFF_SEND_KEYWORDS は削除）
     //   「新着が出次第お送り」の条件付きの約束は、いつ届けるか決まっていないのでやることを作らない（ブレインの約束→AIX と同じ扱い）
-    const sendEntry = classifyStaffTextForLedger(message, null);
+    // 2026-09-14: 1通に複数の行為があっても拾う（「御見積書を作成しお送り＋お部屋ピックアップさせて頂きます」のピックアップの約束・ゆうこ事例）
+    const sendEntry = classifyStaffTextFacts(message, null).find((e) => e.kind === "pickup_declared") ?? null;
     const triggered = !isActualSend && sendEntry?.kind === "pickup_declared"
       && !/(?:新着|募集|出|見つかり)(?:が)?(?:出)?次第/.test(sendEntry.evidence ?? "");
     if (triggered) {
@@ -250,7 +269,7 @@ export async function POST(req: NextRequest) {
   //   ブレインが「未履行の宣言 → それを履行する AIX」（aix-task-link.resolveStaffPromiseAix）と判断 → AIX要対応に登録・
   //   売上番長グループへ「〇〇さん → AIX【見積書送る】」。宣言の判定は行動台帳と同じ classifyStaffTextForLedger
   if (message) {
-    const promiseEntry = classifyStaffTextForLedger(message, null);
+    const promiseEntry = classifyStaffTextFacts(message, null).find((e) => e.status === "promised" && (e.kind === "estimate_declared" || e.kind === "pickup_declared" || e.kind === "confirmation_promised")) ?? null;
     // 2026-09-12 竹内（Sさん事例）: 募集状況等の確認の宣言（「お送り頂きました物件、募集状況確認させて頂きます」）も対象
     //   → ブレインが AIX【物件確認した】をセット（お客様から確認の依頼があった時だけ・aix-task-link.resolveStaffPromiseAix）
     if (promiseEntry?.status === "promised" && (promiseEntry.kind === "estimate_declared" || promiseEntry.kind === "pickup_declared" || promiseEntry.kind === "confirmation_promised")) {

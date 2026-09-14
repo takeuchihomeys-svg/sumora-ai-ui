@@ -114,7 +114,8 @@ import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initia
 import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
-import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask } from "@/app/lib/action-ledger";
+import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask, type RecordedFact } from "@/app/lib/action-ledger";
+import { loadRecordedFacts } from "@/app/lib/sent-facts";
 // 2026-09-11 竹内方針1〜5（統合設計 §7）: 生成失敗文の文言と「正解例として使えるか」の唯一の判定
 import { GENERATION_FAILURE_TEXT, isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
 // 2026-09-11 竹内方針4・5: few-shot 注入前の「承知→かしこまりました」「すぐに除去」（後処理・検査と同じ定義）
@@ -3047,9 +3048,11 @@ export async function POST(req: NextRequest) {
     // 2026-09-09 Fable5 行動台帳: 台帳の一次証拠列（sent_at / line_message_id / generated_text / property_names / estimate_sent）まで取得
     type RecentAixRow = LedgerAixRow;
     let recentAixRows: RecentAixRow[] = [];
+    // 2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」: 送信時の記録（sent_facts）を行動台帳の一次証拠にする
+    let recordedFacts: RecordedFact[] = [];
     if (conversationId && !isTemplateOptimize) {
       try {
-        const [estLogsRes, recentAixRes] = await Promise.all([
+        const [estLogsRes, recentAixRes, recordedRes] = await Promise.all([
           supabase
             .from("aix_usage_logs")
             .select("id")
@@ -3062,9 +3065,11 @@ export async function POST(req: NextRequest) {
             .eq("conversation_id", conversationId)
             .order("created_at", { ascending: false })
             .limit(30),
+          loadRecordedFacts(conversationId),
         ]);
         estimateAlreadySent = (estLogsRes.data?.length ?? 0) > 0;
         recentAixRows = (recentAixRes.data ?? []) as RecentAixRow[];
+        recordedFacts = recordedRes;
       } catch { /* 判定不能時は従来動作（宣言許可）を維持する */ }
     }
     // 顧客の現在のメッセージが新規見積依頼なら「送付済み」フラグを解除する
@@ -3274,8 +3279,9 @@ export async function POST(req: NextRequest) {
       lineTasks: ledgerTasks,
       lastAixHistory: lastAixHistoryText,
       lastCustomerAt: lastCustomerMsgAt,
+      recordedFacts,
     });
-    console.info("[ledger]", JSON.stringify({ summary: ledger.summary, facts: { sent: ledger.facts.propertiesSentCount, est: ledger.facts.estimateSent, promised: ledger.facts.pickupPromisedUnfulfilled, redo: ledger.facts.redoAllowed, sinceCust: ledger.facts.propertiesSentSinceCustomerLatest, last: ledger.facts.lastStaffEntry?.kind ?? null }, mode: ACTION_LEDGER_MODE }));
+    console.info("[ledger]", JSON.stringify({ recorded: recordedFacts.length, summary: ledger.summary, facts: { sent: ledger.facts.propertiesSentCount, est: ledger.facts.estimateSent, promised: ledger.facts.pickupPromisedUnfulfilled, redo: ledger.facts.redoAllowed, sinceCust: ledger.facts.propertiesSentSinceCustomerLatest, last: ledger.facts.lastStaffEntry?.kind ?? null }, mode: ACTION_LEDGER_MODE }));
     const ledgerActive = ACTION_LEDGER_MODE !== "shadow" && !isTemplateOptimize;
     const ledgerForCtx: ActionLedger | null = ledgerActive ? ledger : null;
     // Phase2（enforce）: aixDone.propertySend を台帳 recentDone.propertySend（aix_log > line_task > 本文・72h）に統一（解除条件 asksNewPickup は従来通り）

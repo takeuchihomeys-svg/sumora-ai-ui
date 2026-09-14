@@ -2982,6 +2982,33 @@ ALTER FUNCTION match_winning_patterns(vector, integer, text, integer) SET ivffla
 ALTER FUNCTION match_design_thinking(vector, integer, text) SET ivfflat.probes = 100;
 ALTER FUNCTION match_conversation_checkpoints(uuid, vector, integer, double precision) SET ivfflat.probes = 100;
 
+-- ── sent_facts: こちらが送ったこと・約束したことの送信時の記録（2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」）──
+-- 送った時に1回だけ書く（AIX: log-aix-usage／手打ち: send-line-message）。行動台帳（action-ledger buildActionLedger）が
+-- 本文の読み直しより優先する一次証拠。メッセージの取得範囲より古い送信も台帳に入る。
+-- kind は LedgerKind（estimate_sent / estimate_declared / meeting_place_sent / pickup_declared 等）、status は done / promised。
+-- detail: appointment {dateMD,time,place}・propertyNames・estimateFor・checkPattern・object
+CREATE TABLE IF NOT EXISTS sent_facts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  sent_at TIMESTAMPTZ NOT NULL,
+  line_message_id TEXT,
+  origin TEXT NOT NULL,
+  aix_type TEXT,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+  evidence TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sent_facts_uniq ON sent_facts(conversation_id, sent_at, origin, kind);
+CREATE INDEX IF NOT EXISTS idx_sent_facts_conversation ON sent_facts(conversation_id, sent_at DESC);
+ALTER TABLE sent_facts DISABLE ROW LEVEL SECURITY;
+
+-- viewing_history.status に lapsed（日付が過ぎたが実施は未確認・viewing-status-update が閉じる）を追加（2026-09-14）
+--   done（ブレインは「対面済み」と扱う）と分ける。旧: 閉じる経路が無く「予定」24件中23件が日付を過ぎたまま残っていた
+ALTER TABLE viewing_history DROP CONSTRAINT IF EXISTS viewing_history_status_check;
+ALTER TABLE viewing_history ADD CONSTRAINT viewing_history_status_check CHECK (status = ANY (ARRAY['scheduled'::text, 'done'::text, 'cancelled'::text, 'rescheduled'::text, 'lapsed'::text]));
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

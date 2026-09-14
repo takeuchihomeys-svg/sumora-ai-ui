@@ -128,6 +128,8 @@ export interface LedgerInput {
   lastAixHistory?: string | null;
   lastCustomerAt?: string | null;
   now?: number;
+  /** 送信時の記録（sent_facts）。一次証拠として本文の読み直しより優先する。メッセージの取得範囲より古い記録も台帳に入る（範囲外でも忘れない） */
+  recordedFacts?: RecordedFact[];
 }
 
 // ─── 台帳固有の正規表現（往復文脈と共有する STAFF_* は reply-context.ts が定義・export する）──
@@ -210,7 +212,10 @@ export function extractViewingAppointment(text: string | null | undefined, sentA
   // 待ち合わせの行と、その直前の行（「9/14 12:00にメゾン加美北 305号室」＋「現地エントランスお待ち合わせ」）
   const near2 = [lines[mi - 1] ?? '', lines[mi] ?? ''].join(' ');
   const scope = MEETING_TIME_RE.test(near2) ? near2 : t;
-  const tm = scope.match(MEETING_TIME_RE)!;
+  // 時刻は待ち合わせの語の直前のもの（「9/9 15:00…リーダースパーク21から先にご案内…15:00にリーダースパーク21現地…」の2つ目）
+  const meetIdx = scope.search(MEETING_WORD_RE);
+  const allTimes = [...scope.matchAll(new RegExp(MEETING_TIME_RE.source, 'g'))];
+  const tm = (allTimes.filter((x) => (x.index ?? 0) < meetIdx).at(-1) ?? allTimes[0]) as RegExpMatchArray;
   const min = tm[1] ? tm[2] : tm[4] === '半' ? '30' : tm[4] ? String(Number(tm[4].replace('分', ''))).padStart(2, '0') : '00';
   const time = `${Number(tm[1] ?? tm[3])}:${min}`;
   // 日付は待ち合わせの行を先に、無ければ1通全体から（「6/22（月）15:00よりご案内…」→「15:00にクラウンハイム夕陽丘現地…」）
@@ -233,7 +238,7 @@ export function extractViewingAppointment(text: string | null | undefined, sentA
   // 場所: 時刻の後ろ「に〇〇」〜「現地／待ち合わせ／エントランス」の前（無ければ待ち合わせの行）
   const after = scope.slice((tm.index ?? 0) + tm[0].length).replace(/^\s*(?:分|半)?\s*(?:より|から|〜|~)?\s*に?\s*/, '');
   //   「11:50分に現地エントランス前」のように場所を書いていない時は null（行全体を場所にしない）
-  const place = (after.split(/現地|待ち合わせ|お待ち合わせ|エントランス|集合/)[0] ?? '').replace(/[、。！!\s]+$/g, '').trim().slice(0, 40) || null;
+  const place = (after.split(/現地|待ち合わせ|お待ち合わせ|エントランス|集合|住所|〒/)[0] ?? '').replace(/[、。！!\s]+$/g, '').trim().slice(0, 40) || null;
   return { dateMD, time, place };
 }
 
@@ -278,6 +283,110 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
   return null;
 }
 
+/**
+ * スタッフ本文1通 → 台帳エントリの配列（1通に複数の行為があれば全部）。先頭が主な行為（classifyStaffTextForLedger と同じ）。
+ * 2026-09-14 竹内（ゆうこ事例）: 1通に「お支払いの説明＋御見積書を作成しお送り（約束）＋お部屋ピックアップさせて頂きます（約束）」があっても
+ *   1つの種類しか記録されず、ピックアップの約束が消えていた。見積書の約束・待ち合わせ・ピックアップの約束・確認の約束は、主な行為と別でも記録する。
+ * 送信時の記録（sent_facts・send-line-message）と、記録の無い古いメッセージの読み直し（buildActionLedger ②）が同じ関数
+ */
+export function classifyStaffTextFacts(text: string, at: string | null): LedgerEntry[] {
+  const primary = classifyStaffTextForLedger(text, at);
+  if (!primary) return [];
+  const out: LedgerEntry[] = [primary];
+  if (primary.kind === 'media_sent') return out;
+  const t = (text ?? '').trim();
+  const has = (...ks: LedgerKind[]) => out.some((e) => ks.includes(e.kind));
+  const add = (kind: LedgerKind, status: LedgerStatus, evidence: string, detail: LedgerEntry['detail'] = {}) =>
+    out.push({ kind, status, at, source: 'staff_text', confidence: 1, evidence: evidence.slice(0, 40), detail });
+  const sentences = t.split(/\n|(?<=[。！!？?])(?![。！!？?])/);
+  if (!has('estimate_sent', 'estimate_declared')) {
+    const s = sentences.find((x) => STAFF_ESTIMATE_DECL_RE.test(x) && !/お気に召され|ございましたら|ございますれば|でしたら|あれば|(?:頂|いただ)けましたら/.test(x));
+    if (s) add('estimate_declared', 'promised', s.match(STAFF_ESTIMATE_DECL_RE)![0], { estimateFor: extractPropertyLabels(t) });
+  }
+  if (!has('meeting_place_sent') && !/ご都合|いかが|でしょうか|ございますか/.test(t)) {
+    const appt = extractViewingAppointment(t, at);
+    if (appt) add('meeting_place_sent', 'done', `${appt.dateMD ?? ''} ${appt.time ?? ''} ${appt.place ?? ''}`.trim(), { appointment: appt });
+  }
+  if (!has('pickup_declared', 'properties_sent', 'condition_asked') && STAFF_PICKUP_DECL_RE.test(t) && !STAFF_CONDITION_ASK_RE.test(t)) {
+    add('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0]);
+  }
+  if (!has('confirmation_promised', 'confirmation_reported') && STAFF_CONFIRM_DECL_RE.test(t) && !STAFF_PICKUP_DECL_RE.test(t)) {
+    add('confirmation_promised', 'promised', t.match(STAFF_CONFIRM_DECL_RE)![0], { object: t.match(CONFIRM_OBJECT_RE)?.[0] ?? null });
+  }
+  return out;
+}
+
+/** AIX 待ち合わせ場所の画面入力（「9/14（月）」「12:00〜14:00」）→ 待ち合わせ（送信時の記録 sent_facts・内覧の記録） */
+export function appointmentFromMeetingInput(m: { date?: string | null; time?: string | null; propertyName?: string | null } | null | undefined): ViewingAppointment | null {
+  if (!m?.date) return null;
+  const md = m.date.normalize('NFKC').match(/(\d{1,2})\s*[\/月]\s*(\d{1,2})/);
+  if (!md) return null;
+  const tm = (m.time ?? '').normalize('NFKC').match(/(\d{1,2})\s*[:：時]\s*(\d{2})?/);
+  return { dateMD: `${Number(md[1])}/${Number(md[2])}`, time: tm ? `${Number(tm[1])}:${tm[2] ?? '00'}` : null, place: (m.propertyName ?? '').trim() || null };
+}
+
+/** M/D → YYYY-MM-DD（日本時間。送った日から見て半年以上前の月なら翌年＝12月に 1/5 の案内） */
+export function appointmentYmd(dateMD: string, sentAt: string): string | null {
+  const [m, d] = dateMD.split('/').map(Number);
+  if (!m || !d) return null;
+  const p = jstParts(Number.isFinite(Date.parse(sentAt)) ? sentAt : Date.now());
+  const y = m < p.m - 6 ? p.y + 1 : m > p.m + 6 ? p.y - 1 : p.y;
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+/** AIX の種類 → 台帳の行為（log-aix-usage が送信時の記録 sent_facts を書く時と、台帳 ① が同じ対応表） */
+export function aixLedgerKind(aixType: string | null | undefined): { kind: LedgerKind; status: LedgerStatus } | null {
+  return aixType ? AIX_KIND[aixType] ?? null : null;
+}
+
+/**
+ * 送信時の記録（sent_facts）の1行。送った時に1回だけ書く（2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」）。
+ *   origin=aix: log-aix-usage（AIX の種類・画面入力の待ち合わせの日時・物件・見積の同封）／origin=staff_text: send-line-message（手打ちの本文を classifyStaffTextFacts で1回分類）
+ */
+export type RecordedFact = {
+  sent_at: string;
+  origin: 'aix' | 'staff_text';
+  aix_type?: string | null;
+  kind: string;
+  status: string;
+  line_message_id?: string | null;
+  detail?: LedgerEntry['detail'] | null;
+  evidence?: string | null;
+};
+const LEDGER_KINDS = new Set<string>(['pickup_declared', 'properties_sent', 'estimate_declared', 'estimate_sent', 'viewing_invited', 'meeting_place_sent', 'question_asked',
+  'confirmation_promised', 'confirmation_reported', 'condition_asked', 'application_guided', 'followup_sent', 'media_sent', 'cost_explained']);
+function entryFromRecorded(f: RecordedFact): LedgerEntry | null {
+  if (!LEDGER_KINDS.has(f.kind) || (f.status !== 'done' && f.status !== 'promised')) return null;
+  return {
+    kind: f.kind as LedgerKind, status: f.status as LedgerStatus, at: f.sent_at,
+    // 送信時の記録: AIX は aix_log（conf3）、手打ちは本文（送った時に1回分類して保存＝conf2）
+    source: f.origin === 'aix' ? 'aix_log' : 'staff_text', confidence: f.origin === 'aix' ? 3 : 2,
+    evidence: (f.evidence ?? `${f.origin}:${f.aix_type ?? f.kind}`).slice(0, 40), detail: { ...(f.detail ?? {}) },
+  };
+}
+
+/** ブレインに渡す台帳の行（中身つき・新しい順に最大 max 件）。ブレインには物件名も渡す（返信生成の台帳注記は物件名を書かない＝竹内方針2） */
+export function buildLedgerLinesForBrain(ledger: ActionLedger, max = 8): string {
+  const rows = ledger.entries.filter((e) => e.kind !== 'media_sent').slice(-max);
+  if (rows.length === 0) return '';
+  const src = (e: LedgerEntry) => e.source === 'aix_log' ? 'AIX' : e.source === 'staff_text' ? (e.confidence >= 2 ? '手打ち・送信時の記録' : '手打ち') : e.source === 'line_task' ? 'やること' : '履歴';
+  const det = (e: LedgerEntry) => {
+    const d = e.detail ?? {};
+    if (e.kind === 'meeting_place_sent' && d.appointment) return `${d.appointment.dateMD ?? '?'} ${d.appointment.time ?? ''} ${d.appointment.place ?? ''}`.trim();
+    if (e.kind === 'properties_sent') return `${d.propertyCount ?? 1}件${d.propertyNames?.length ? `: ${d.propertyNames.slice(0, 3).join('・')}` : ''}`;
+    if ((e.kind === 'estimate_sent' || e.kind === 'estimate_declared') && d.estimateFor?.length) return d.estimateFor.slice(0, 3).join('・');
+    if (d.checkPattern) return `結果=${d.checkPattern}`;
+    if (d.object) return `対象=${d.object}`;
+    return '';
+  };
+  const lines = rows.map((e) => {
+    const what = e.status === 'promised' ? `${LEDGER_KIND_JA[e.kind]}を宣言（${e.fulfilledBy == null ? 'まだ履行していない' : '履行済み'}）` : `${LEDGER_KIND_JA[e.kind]}を実行`;
+    const d = det(e);
+    return `・${fmtJst(e.at)} ${what}${d ? `（${d}）` : ''}［${src(e)}］`;
+  });
+  return `\n【こちらが送ったこと・約束したこと（行動台帳・古→新・確定事実）】\n${lines.join('\n')}`;
+}
+
 /** 直前スタッフ発言に対応する台帳エントリを選ぶ。
  *  2026-09-10 Fable5 Sさん事例: AIX 送信は page.tsx → line-tasks/complete により、その会話の全 pending タスクを
  *  直後に completed にするため `line_tasks.completed_at > aix.sent_at` が **構造上 常に成立**する
@@ -306,6 +415,9 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
   const msgs = input.messages ?? [];
   const aixRows = (input.recentAixRows ?? []).filter((r) => !!r.aix_type);
   const entries: LedgerEntry[] = [];
+  // 送信時の記録（sent_facts）: 使ったものに印を付け、最後に残りを足す（取得範囲より古い送信も忘れない）
+  const recorded = (input.recordedFacts ?? []).map((f) => ({ f, used: false }));
+  const recordedAixNear = (aixType: string, at: number) => recorded.filter((x) => x.f.origin === 'aix' && x.f.aix_type === aixType && near(ms(x.f.sent_at), at, AIX_ATTACH_WINDOW_MS));
 
   // ① aix_usage_logs（confidence 3）— 実行の一次証拠。sent_at > created_at
   for (const r of aixRows) {
@@ -321,6 +433,11 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     if (map.kind === 'properties_sent') { e.detail.propertyNames = names; e.detail.propertyCount = Math.max(1, names.length); }
     if (map.kind === 'estimate_sent') e.detail.estimateFor = names;
     if (map.kind === 'meeting_place_sent') e.detail.appointment = extractViewingAppointment(r.generated_text, at);
+    // 送信時の記録があれば中身（画面で入力した待ち合わせの日時・物件 等）はそちらを正にする
+    for (const x of recordedAixNear(r.aix_type as string, ms(at))) {
+      x.used = true;
+      if (x.f.kind === map.kind && x.f.detail) e.detail = { ...e.detail, ...x.f.detail };
+    }
     entries.push(e);
     // estimate_sent=true の別 aix_type（property_check_result 等に見積添付）→ estimate_sent も立てる
     if (map.kind !== 'estimate_sent' && r.estimate_sent === true) {
@@ -338,7 +455,23 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     const t = ms(m.createdAt);
     const coveredByAix = (m.lineMessageId && aixIds.has(m.lineMessageId)) || aixTimes.some((a) => near(a, t, AIX_ATTACH_WINDOW_MS));
     if (coveredByAix) return;
-    const e = classifyStaffTextForLedger(m.text ?? '', m.createdAt ?? null);
+    // 送信時の記録（この発言を送った時に1回分類して保存したもの）があればそれを使う。無ければ本文を読み直す（記録前の古いメッセージ）
+    //   画像だけの行（本文の1秒前に保存される）には当てない。line_message_id の一致を優先し、無ければ送信時刻 ±2分
+    const isMedia = MEDIA_ONLY_RE.test((m.text ?? '').trim());
+    const byId = m.lineMessageId ? recorded.filter((x) => x.f.origin === 'staff_text' && !x.used && x.f.line_message_id === m.lineMessageId) : [];
+    const rec = isMedia ? [] : byId.length > 0 ? byId
+      : recorded.filter((x) => x.f.origin === 'staff_text' && !x.used && !x.f.line_message_id && near(ms(x.f.sent_at), t, 2 * MIN));
+    if (rec.length > 0) {
+      const recEntries = rec.map((x) => { x.used = true; return entryFromRecorded(x.f); }).filter((e): e is LedgerEntry => !!e);
+      if (recEntries.length > 0) {
+        // 時刻は実際の発言の時刻に揃える（直前スタッフ発言の対応づけ ±3分）
+        for (const re of recEntries) { if (m.createdAt) re.at = m.createdAt; entries.push(re); }
+        staffEntryByMsgIdx.set(i, recEntries[0]);
+        return;
+      }
+    }
+    const facts = classifyStaffTextFacts(m.text ?? '', m.createdAt ?? null);
+    const e = facts[0];
     if (!e) return;
     if (!Number.isFinite(t) && aixRows.length > 0 && (e.kind === 'properties_sent' || e.kind === 'estimate_sent')) return;
     // [画像] 単独は隣接（±3分）のスタッフ本文エントリに吸収。孤立画像は media_sent（件数に数えない）
@@ -348,7 +481,16 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     }
     staffEntryByMsgIdx.set(i, e);
     entries.push(e);
+    // 1通に複数の行為（見積書の約束＋ピックアップの約束 等）があれば残りも記録する
+    for (const extra of facts.slice(1)) entries.push(extra);
   });
+
+  // ②' 送信時の記録で、上のメッセージに対応しなかったもの（取得範囲より古い送信・画面の保存に失敗した送信）も台帳に入れる
+  for (const x of recorded) {
+    if (x.used) continue;
+    const e = entryFromRecorded(x.f);
+    if (e) entries.push(e);
+  }
 
   // ③ line_tasks（confidence 2）— 宣言(pending)／履行(completed) の状態機械。completed property_send は「ご査収」キーワード由来なので見積送付 ±10分は除外
   for (const task of input.lineTasks ?? []) {
