@@ -185,9 +185,9 @@ describe("未返信の顧客発言・押す直前の顧客発言", () => {
     const old = customerTurnBeforePress([{ sender: "customer", text: "古い", created_at: at(0) }], T0 + 49 * 60 * 60_000);
     expect(old.text).toBe("");
   });
-  it("sceneEvidenceForTurn は退去予定なら S2 を vacate_date にする", () => {
+  it("sceneEvidenceForTurn は退去予定でも入居日の質問を mgmt_move_in にする（2026-09-14 あい事例）", () => {
     const e = sceneEvidenceForTurn({ text: "この物件いつから住めますか？", hasImage: false }, { sentPropertyCount: 0, moveOutScheduled: true });
-    expect(e?.checkPattern).toBe("vacate_date");
+    expect(e?.checkPattern).toBe("mgmt_move_in");
   });
 });
 

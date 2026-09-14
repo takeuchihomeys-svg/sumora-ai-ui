@@ -11,6 +11,7 @@ import { isConditionFormMessage } from "./line-reply-prompts";
 import { CUST_WILL_SEND_SELF_PRED } from "./reply-context";
 import type { EstimateContextVerdict } from "./estimate-context";
 import { customerDoubtsCheapness } from "./cost-explain-text";
+import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "./move-out-context";
 import {
   allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
 } from "./scene-patterns";
@@ -44,8 +45,8 @@ export type AixSceneEvidence = {
   /** 見積の連結（S1/S2 で見積 declare が同時に成立） */
   chained: string | null;
   reasonCode: string;
-  /** 物件を特定した根拠（S1〜S3） */
-  propertySpecifiedBy: "image" | "url" | "room_no" | "which_room" | "property_word" | "demonstrative" | null;
+  /** 物件を特定した根拠（S1〜S3）。context = 顧客の文に物件の語は無いが、直前のスタッフ発言が1つの物件の見積書・確認結果（S2 だけ） */
+  propertySpecifiedBy: "image" | "url" | "room_no" | "which_room" | "property_word" | "demonstrative" | "context" | null;
   /** S6: 見積は既に約束/送付済みで支払い意思だけが来た */
   echoPayment?: boolean;
   matchedText: string;
@@ -87,6 +88,34 @@ export function propertySpecifiedBy(msg: string, o: { hasCustomerImage: boolean;
   if (AVAILABILITY_PROPERTY_RE.test(msg)) return "property_word";
   if ((o.sentPropertyCount ?? 0) > 0 && DEMONSTRATIVE_RE.test(msg)) return "demonstrative";
   return null;
+}
+
+/**
+ * 直前のスタッフ発言（末尾の顧客の連投の直前のまとまり）が1つの物件についての見積書・確認結果・物件の紹介か。
+ * 2026-09-14 竹内（あい事例）: ル・クレール今福502 の御見積書を送った直後の「いちばん早くて10月末入居ですか？」は、
+ *   文に物件の語が無くてもその物件の入居日の質問。旧: 物件の特定が無く S2 に当たらず、ブレインは AIX なし（本文で答える）に倒れた。
+ * 物件が2件以上（URL・【】見出しが2つ以上）の送付は1つに決まらないので含めない。
+ * moveInTold = そのまとまりで入居時期を既に伝えている（即入居・〇月〇旬ご入居 等）＝確認せず本文で答えられる
+ *   （実データ: 即入居と伝えた物件の入居日の質問にはスタッフは本文で「お申込から最短2週間程」と答えた）
+ */
+const FOCUS_ESTIMATE_RE = /初期費用さらに|円割引させて頂き|(?:御|お)見積書|確認(?:しました|させて頂きました|させていただきました)ところ|募集中|ご紹介可能/;
+const MOVE_IN_TOLD_RE = /即(?:日)?(?:ご)?入居|入居可能日[^\n]{0,6}[0-9０-９]|[0-9０-９]{1,2}月(?:[上中下]旬|末|[0-9０-９]{1,2}日)[^\n。]{0,10}(?:ご)?入居(?:可能|出来|でき|頂け|いただけ)/;
+export function lastStaffTurnFocus(recentMessages: SceneEvidenceInput["recentMessages"]): { focus: boolean; moveInTold: boolean } {
+  const msgs = [...(recentMessages ?? [])];
+  while (msgs.length && msgs[msgs.length - 1].sender === "customer") msgs.pop();
+  const block: string[] = [];
+  for (let i = msgs.length - 1; i >= 0 && msgs[i].sender !== "customer"; i--) block.unshift(msgs[i].text ?? "");
+  const text = block.join("\n");
+  if (!text.trim()) return { focus: false, moveInTold: false };
+  const urls = (text.match(/https?:\/\//g) ?? []).length;
+  const heads = new Set((text.match(/【[^】\n]{2,40}】/g) ?? []).filter((h) => !/ご希望|ご条件|お部屋探し/.test(h)));
+  const focus = urls <= 1 && heads.size <= 1 && (FOCUS_ESTIMATE_RE.test(text) || heads.size === 1);
+  return { focus, moveInTold: focus && MOVE_IN_TOLD_RE.test(text) };
+}
+
+/** 入居日の語がある文そのものが質問の形か（「最短で8末入居 8/15入金みたいなのが理想です」は希望で質問ではない） */
+function moveInAsked(msg: string): boolean {
+  return msg.split(/(?<=[。！!？?\n])/).some((s) => MOVEIN_Q_RE.test(s) && /[？?]|ですか|ますか|でしょうか|いつ|何日|何月/.test(s));
 }
 
 /** 物件が特定できるか（S1/S2/S3 の前提） */
@@ -150,9 +179,16 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
     }
   }
   // S2 入居日（物件あり）/ S3 審査（物件あり）: 「この物件の〜ですか？」は募集状況の質問形にも当たるので、文字だけの S1 より先に見る
-  if (MOVEIN_Q_RE.test(msg) && specified) {
-    const cp = o.propertyStatus === "move_out_scheduled" ? "vacate_date" : "mgmt_move_in";
-    return ev({ scene: "S2_move_in", candidateAction: "property_check_result", checkPattern: cp, timing: "after_confirm", chained: estimateDeclare ? "estimate_sheet" : null, reasonCode: "move_in_question", propertySpecifiedBy: specBy });
+  //   check_pattern は退去予定の物件でも mgmt_move_in（入居可能日）。2026-09-14 竹内（あい事例）:
+  //   AIX の vacate_date は「退去予定日＋内覧解禁日」の案内、mgmt_move_in は「〇月退去予定の為 最短で〇〇にご入居出来る予定」＝入居日の答え。
+  //   実データ（120日）: 入居日の質問の後に押された確認したは mgmt_move_in 4件（退去予定の物件2件を含む）・vacate_date 0件
+  //   物件の語が無くても直前のスタッフ発言が1つの物件の見積書・確認結果ならその物件の質問（lastStaffTurnFocus。入居時期を伝え済みなら本文で答える）
+  //   context は退去予定の物件の時だけ（入居日が退去日とクリーニング次第で、管理会社に確認しないと分からない）。
+  //   実データ（120日）: 即入居・クリーニング中の物件の入居日の質問はスタッフが本文で答えた（context で拾える4件すべて本文／確認します）
+  if (MOVEIN_Q_RE.test(msg)) {
+    const focus = specified || o.propertyStatus !== "move_out_scheduled" || !moveInAsked(msg) ? null : lastStaffTurnFocus(o.recentMessages);
+    const by = specBy ?? (focus?.focus && !focus.moveInTold ? "context" : null);
+    if (by) return ev({ scene: "S2_move_in", candidateAction: "property_check_result", checkPattern: "mgmt_move_in", timing: "after_confirm", chained: estimateDeclare ? "estimate_sheet" : null, reasonCode: "move_in_question", propertySpecifiedBy: by });
   }
   if (SCREENING_Q_RE.test(msg) && specified) {
     return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_guarantor", timing: "after_confirm", chained: null, reasonCode: "screening_question", propertySpecifiedBy: specBy });
@@ -237,7 +273,8 @@ export function customerRequestedPropertyCheck(o: {
   const sentPropertyCount = o.sentPropertyCount
     ?? o.recentMessages.filter((m) => m.sender === "staff" && /https?:\/\//.test(m.text ?? "")).length;
   // ① 募集状況・入居日・審査の質問（本文の安全と同じ判定）
-  if (isConfirmationScene(detectAixSceneEvidence({ latestCustomerTurn: text, hasCustomerImage, sentPropertyCount }))) return true;
+  const propertyStatus = MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs(msgs)) ? "move_out_scheduled" as const : "unknown" as const;
+  if (isConfirmationScene(detectAixSceneEvidence({ latestCustomerTurn: text, hasCustomerImage, sentPropertyCount, recentMessages: msgs, propertyStatus }))) return true;
   if (isConditionFormMessage(text)) return false;
   // お客様が自分で送る予告（まだ物件は届いていない）は依頼ではない（届いた時に判定する）
   if (!hasCustomerImage && !AVAILABILITY_URL_RE.test(text) && CUST_WILL_SEND_SELF_PRED(text).yes) return false;

@@ -307,7 +307,8 @@ export function buildSceneEvidencePromptText(
   const lines: string[] = [];
   if (e) {
     const cp = e.checkPattern ? `（check_pattern 候補: ${e.checkPattern}）` : "";
-    const by = e.propertySpecifiedBy ? `／物件を特定した根拠: ${e.propertySpecifiedBy}` : "";
+    const by = e.propertySpecifiedBy === "context" ? "／物件を特定した根拠: 直前にこちらが送った1件の物件（見積書・確認結果）についての質問"
+      : e.propertySpecifiedBy ? `／物件を特定した根拠: ${e.propertySpecifiedBy}` : "";
     lines.push(`\n【今回の顧客発言の場面（決定論の証拠。AIX を決めるのはあなた）】${SCENE_LABEL[e.scene] ?? e.scene}／候補の AIX: ${e.candidateAction}${cp}${by}`);
     const sc = feedback.find((f) => f.kind === "scene_staff" && f.scene === e.scene);
     if (sc && sc.alt_top.length > 0) {

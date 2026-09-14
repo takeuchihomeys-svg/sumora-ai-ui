@@ -34,8 +34,8 @@ describe("場面の証拠 S1〜S5（2c86c209 の期待値のまま）", () => {
     const o = { latestCustomerTurn: "この物件の最短入居可能日はいつですか？" };
     expect(ev(o)?.checkPattern).toBe("mgmt_move_in"); expect(safety(o)?.forbidden.includes("MOVEIN_DATE_ASSERTION")).toBe(true);
   });
-  it("S2 退去予定の物件 → vacate_date", () => {
-    expect(ev({ latestCustomerTurn: "この物件いつから住めますか？", propertyStatus: "move_out_scheduled" })?.checkPattern).toBe("vacate_date");
+  it("S2 退去予定の物件でも入居日の質問は mgmt_move_in（2026-09-14 あい事例。vacate_date は内覧解禁日の案内）", () => {
+    expect(ev({ latestCustomerTurn: "この物件いつから住めますか？", propertyStatus: "move_out_scheduled" })?.checkPattern).toBe("mgmt_move_in");
   });
   it("S3 物件ありの審査質問 → mgmt_guarantor", () => {
     expect(ev({ latestCustomerTurn: "この物件って審査厳しいですか？" })?.checkPattern).toBe("mgmt_guarantor");

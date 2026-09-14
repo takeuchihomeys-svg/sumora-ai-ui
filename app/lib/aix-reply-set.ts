@@ -208,7 +208,8 @@ export function sceneForCode(code: string, o: SceneEvidenceInput): SceneHit | nu
       return { ...sceneS1(o, o.latestCustomerTurn ?? "", null, `code:${code}`), bridge: ASSERTION_REPLACEMENT.VACANCY_ASSERTION, chained: null };
     case "MOVEIN_DATE_ASSERTION":
     case "AIX_BOUNDARY_MOVEIN":
-      return { ...sceneS2(o.propertyStatus === "move_out_scheduled" ? "vacate_date" : "mgmt_move_in", estimateDeclare ? "estimate_sheet" : null, `code:${code}`), bridge: ASSERTION_REPLACEMENT.MOVEIN_DATE_ASSERTION };
+      // 入居日の答えは退去予定の物件でも mgmt_move_in（aix-scene-evidence S2 と同じ。vacate_date は内覧解禁日の案内）
+      return { ...sceneS2("mgmt_move_in", estimateDeclare ? "estimate_sheet" : null, `code:${code}`), bridge: ASSERTION_REPLACEMENT.MOVEIN_DATE_ASSERTION };
     case "SCREENING_ASSURANCE":
       return { ...sceneS3(`code:${code}`), bridge: ASSERTION_REPLACEMENT.SCREENING_ASSURANCE };
     case "AIX_BOUNDARY_VIEWING": return sceneS4(`code:${code}`);

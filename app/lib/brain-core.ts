@@ -2361,6 +2361,14 @@ ${history}`;
       finalAix = "estimate_sheet";
       decisionSource = "signal:scene_S6_amount_confirm";
     }
+    // 2026-09-14 竹内（あい事例）「確認しますを入れたらスムーズに進まない。実際に確認した内容を AIX の確認したから送る」:
+    //   特定の物件の入居日の質問（場面の証拠 S2）は、管理会社に入居可能日を確認して AIX【物件確認した→入居可能日】で答える。
+    //   確認します（acknowledge_check）を挟まない。実データ（120日）: 入居日の質問の後の確認しますは1件・物件確認した（mgmt_move_in）は4件。
+    //   AIX なし（本文で答える）は場面の信号（sceneSignalFallback）が既に property_check_result にしている
+    if (!promiseAix && sceneEvidence?.scene === "S2_move_in" && finalAix === "acknowledge_check") {
+      finalAix = "property_check_result";
+      decisionSource = "correction:scene_S2_check_result";
+    }
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);
       if (rate) {
