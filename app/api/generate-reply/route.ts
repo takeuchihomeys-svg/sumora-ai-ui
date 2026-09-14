@@ -104,7 +104,10 @@ import {
   resolvePickupGate, isCellRequiredSentence, fillNameSlot, CUST_WITHDRAWAL_SRC,
   // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した（探索継続）の判定。断り判定の除外・分類・brain 戦略の抑止が同じ関数
   detectPropertyPass,
+  // 2026-09-14 竹内（くれあ事例）: 初期費用を抑える一文が必須の場面か（セルの必須要素と同じ判定）
+  requiresInitialCostSave,
 } from "@/app/lib/reply-context";
+import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 // 2026-09-12 竹内（YUYA 事例）: お客様が送った物件の呼び方（生成の指示と後処理が同じ判定）
 import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
@@ -5156,6 +5159,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // AIが返信全体を「」で囲む場合がある → 先頭「末尾」ペアを除去（後処理再検査より前に行う）
             if (!isTemplateOptimize && draftBody.startsWith("「") && draftBody.endsWith("」")) {
               draftBody = draftBody.slice(1, -1).trim();
+            }
+            // 2026-09-14 竹内（くれあ事例）: 条件フォームの ⑦初期費用の限度額が家賃の3倍未満（「10〜20」・家賃15〜17万）等なら
+            //   「初期費用も最大限割引させて頂き…費用を出来る限り抑えさせて頂きます！！」を必ず入れる（判定は initial-cost-tight.ts・セルの必須要素と同じ）。
+            //   必須要素の指示だけでは YUMA 再現で 1/3 しか書かれなかったため、挨拶の固定と同じく決定論で差し込む（金額・物件を含まない自社方針の文）
+            if (!isTemplateOptimize && draftBody && requiresInitialCostSave(pairContext)) {
+              const ins = insertInitialCostSave(draftBody, customerName ?? "");
+              if (ins.inserted) {
+                console.log(JSON.stringify({ tag: "initial-cost-save:inserted", conversationId, evidence: resolveInitialCostTight(pairContext.substance.units.join("\n")).evidence }));
+                draftBody = ins.text;
+              }
             }
             // A-3（H-3/H-4）: 後処理（enforceCustomerName・絵文字重複除去・「」除去・マーカー除去）で本文が変わった後に
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）

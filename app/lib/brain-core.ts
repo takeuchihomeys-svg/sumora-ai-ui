@@ -45,6 +45,7 @@ import {
   unrepliedCustomerTurn, sceneEvidenceForTurn, sceneSignalFallback, compactSceneEvidence, buildSceneEvidencePromptText,
   resolveBrainCheckPattern, feedbackGateRate, type FeedbackRow,
 } from "@/app/lib/brain-aix-feedback";
+import { resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -2487,13 +2488,21 @@ ${history}`;
     const customerAskedCost = !!(lastCustomerMsg?.text &&
       COST_QUESTION_RE.test(lastCustomerMsg.text) &&
       !isStructuredIntakeForm);
+    const initialCostTight = resolveInitialCostTight(unrepliedTurn.text);
     if (customerAskedCost) {
       // 顧客が費用を明示的に質問 → LLMが誤って入れた費用系avoidを除去（質問に答えない方が致命的）
       ["見積書", "見積り", "初期費用", "総額", "費用"].forEach((t) => avoidSet.delete(t));
     } else if (finalAix !== "estimate_sheet" && !keyTopics.some((t) => /見積|費用/.test(t))) {
       // ルール②: 費用質問なし・見積送付アクションでもない → 自発的な費用話題を禁止
       avoidSet.add("見積書");
-      avoidSet.add("初期費用");
+      if (!initialCostTight.tight) avoidSet.add("初期費用");
+    }
+    // 2026-09-14 竹内（くれあ事例）: 条件フォームの ⑦初期費用の限度額が②家賃の3倍未満（「10〜20」＝10万〜20万・家賃15〜17万）・
+    //   家賃の3ヶ月以内・「なるべく安く」等のお客様には「初期費用も最大限割引させて頂き…費用を出来る限り抑えさせて頂きます」を入れる
+    //   （返信の必須要素 reply-context ANY_CONDITION_CHANGE と同じ判定 initial-cost-tight.ts）。
+    //   旧: ルール②の「初期費用」が一律に入り、実例の検索でも「初期費用」を含む返信が除外されて下書きに入らなかった。「見積書」は避けるまま
+    if (initialCostTight.tight) {
+      for (const t of Array.from(avoidSet)) if (/初期費用/.test(t) && !/見積/.test(t)) avoidSet.delete(t);
     }
     // 2026-09-13 監査: 決定論の項目（来阪・ルール②）は LLM の項目より先に並べる（旧: Set の末尾に足した「見積書・初期費用」が
     //   LLM が4件以上返すと下の5件上限で落ち、ルール②が静かに効かなかった）

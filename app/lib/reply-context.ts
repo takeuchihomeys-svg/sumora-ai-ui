@@ -8,6 +8,7 @@
 // 循環 import 禁止: このファイルは他の app/lib/* を runtime import しない（action-ledger は type-only）。
 // 2026-09-09 Fable5 行動台帳: action-ledger.ts → reply-context.ts の一方向 runtime 依存。ここは `import type` のみ（TDZ 回避）
 import type { ActionLedger } from "./action-ledger";
+import { resolveInitialCostTight, INITIAL_COST_SAVE_DECL_RE, INITIAL_COST_SAVE_LITERAL } from "./initial-cost-tight";
 
 // ─────────────────────────────────────────────────────────────
 // 0. メッセージ単位（page.tsx / bg-async が未返信メッセージを結合する専用区切り）
@@ -1198,6 +1199,25 @@ export function isCellRequiredSentence(s: string, pair: PairContext): boolean {
   return !!pair.ledger?.facts.pickupPromisedUnfulfilled && /(?:ピックアップ|見つかり)(?:出来|でき)?次第/.test(s);
 }
 
+// 2026-09-14 竹内（くれあ事例）: ⑦初期費用の限度額が②家賃の3倍未満（「10〜20」＝10万〜20万・家賃15〜17万）・家賃の3ヶ月以内・
+//   「なるべく安く」等 → 初期費用を抑える旨の一文を入れる（判定は initial-cost-tight.ts・ブレインの避ける話題と同じ関数）。
+//   実データ（条件フォームへのスタッフの返信）: この判定の45件で 32件（71%）がこの一文を入れた（判定外 39%）。
+//   リテラルは事実（金額・物件）を含まない自社方針の文なので、必須要素にしても創作の入口にならない。見積書の宣言とは別物（見積書は書かない）。
+//   条件を受ける全てのセル（CA_CONDITION・PD_CONDITION_CHANGE・ANY_CONDITION_CHANGE・PS_CONDITION_CHANGE）に同じ要素を置く
+//   （直前のスタッフ発言でセルが変わる: 最初の連絡でフォーム＝ANY、フォームを送った後＝CA）
+const INITIAL_COST_SAVE_ELEMENT: PairMustInclude = {
+  // ラベルがそのまま生成の「必須要素」に出る（fix は修正ループ用）。名前だけでは書かれなかったので文例をラベルに入れる（YUMA 再現 0/3）
+  label: `初期費用を抑える宣言「${INITIAL_COST_SAVE_LITERAL}」（お客様の⑦初期費用の限度額が家賃の3倍未満・抑えたいご希望のため。見積書・金額は書かない）`,
+  detect: INITIAL_COST_SAVE_DECL_RE,
+  when: (p) => resolveInitialCostTight(p.substance.units.join("\n")).tight,
+  fix: `「${INITIAL_COST_SAVE_LITERAL}」を1文入れる（見積書・金額は書かない。この1文は目安の字数に含めない）`,
+};
+
+/** この返信で「初期費用を抑える」一文が必須か（選ばれたセルがこの要素を持ち、判定が立つ時）。生成後の差し込み（generate-reply）が使う */
+export function requiresInitialCostSave(pair: PairContext | null | undefined): boolean {
+  return !!pair?.rule && pair.rule.mustInclude.includes(INITIAL_COST_SAVE_ELEMENT) && !!INITIAL_COST_SAVE_ELEMENT.when?.(pair);
+}
+
 export const PAIR_MATRIX: PairRule[] = [
   // ── 2026-09-09 Fable5 みく事例: 条件ヒアリング→条件フォーム／条件回答。旧実装は rule=null で汎用指示に落ち、
   //    latent_intent「代替案で応える」＋ conditionDirection「全力でサポート禁止」の穴を LLM が先回りヘッジで埋めていた ──
@@ -1209,6 +1229,7 @@ export const PAIR_MATRIX: PairRule[] = [
     mustInclude: [
       { label: "条件を復唱したピックアップ宣言（エリア／家賃／間取りのいずれかを含む）", detect: CONDITION_SEARCH_DECL_RE, detectFn: conditionEchoDeclared,
         fix: "お客様のメッセージにあるエリア・家賃・間取りをその語のまま（数字・語を変えない）並べ、「〜周辺全域から{name}にオススメできるお部屋ピックアップさせて頂きます！！」の1文にする（条件語を足さない・物件名は書かない）" },
+      INITIAL_COST_SAVE_ELEMENT,
     ],
     mustNot: ["未着手条件への「難しい可能性」「少ない状況」等の実現可能性の予測", "「条件を1つ変えた場合のご提案」「優先順位をお聞かせ」等の条件緩和の先回り提案", "お客様の自己ヘッジ（難しいと思う・あれば教えて）の復唱・同意", "条件を単体で確認する文", "見積書・募集状況確認・審査の先回り", "「新着あれば」等の受け身文", "物件名・号室の創作"],
     // 2026-09-12 竹内（あや事例）: フォームへの返信の実送信「ご条件お送り頂きありがとうございます😊！！ あやさんのご条件に合ったお部屋ピックアップしお送りさせて頂きます😌！！ 何卒よろしくお願い致します！！」の型
@@ -1230,6 +1251,7 @@ export const PAIR_MATRIX: PairRule[] = [
         fix: "お客様が追加した条件を「〜に絞らせて頂き」の肯定形で受け（NG名は復唱しない）、直前宣言の条件を一字も変えずに復唱した「〜で{name}にオススメできるお部屋をピックアップさせて頂きます！！」の1文にする" },
       { label: "前回条件の復唱（エリア／家賃／間取りのいずれか）", detect: /(?:周辺|全域|沿線|以内|万|LDK|DK|[0-9０-９]K|ワンルーム|築|徒歩)/,
         fix: "直前スタッフ宣言にあるエリア／家賃／間取りの語をそのまま1つ以上含める（直前宣言に無い条件語は足さない）" },
+      INITIAL_COST_SAVE_ELEMENT,
       // 2026-09-11 竹内方針1（§3.2）: 「履行約束（ピックアップ出来次第お送り）」はスタッフ実文 3/8 → 必須から削除（direction ③ は任意）
     ],
     mustNot: ["実行済みを含意する語（再度・改めて・もう一度・新たに・追加で・別の・こちらの・先ほどお送りした）— 直前の宣言は未履行（{pickupRoundNote}）", "送付済み物件への言及・「〇〇も選択肢に」", "「〜をお届けします」等の抽象締め（未来形宣言＋出来次第お送りで統一）", "NG語の羅列（京都・尼崎はNGで）の復唱", "実現可能性の予測（難しい・少ない・可能性）", "条件緩和・代替案の先回り提案", "条件の聞き返し", "直前宣言の条件の数字・語の改変", "全力サポート締めの二重化（直前発言で既に言っている）"],
@@ -1291,6 +1313,7 @@ export const PAIR_MATRIX: PairRule[] = [
       { label: "新条件を復唱した{redo}ピックアップ宣言", detect: CONDITION_SEARCH_DECL_RE,
         detectFn: (t, p) => conditionEchoDeclared(t, p) || (!p.lastStaffText.trim() && /全力で(?:お部屋探し)?サポート/.test(t)),
         fix: "お客様のメッセージの新条件をその語のまま復唱し「〜で{name}にオススメ出来るお部屋{redo}ピックアップしてお送りさせて頂きます！！」の1文にする（条件語を足さない・変えない・物件名は書かない）" },
+      INITIAL_COST_SAVE_ELEMENT,
     ],
     mustNot: ["実現可能性の予測（難しい・少ない・可能性）", "条件緩和・代替案の先回り提案", "「少ない状況でしたので広げました」の言い訳（探していない）", "聞き返し", "再送宣言", "台帳に送付実績が無いのに「再度」「改めて」「新たに」「追加で」「別の」を付ける"],
     example: "かしこまりました！！\n2LDKのご条件で、枚方・高槻・吹田・守口・門真・鶴見区周辺全域から瑞希さんにオススメ出来るお部屋新たにピックアップしてお送りさせて頂きます😌！！\n瑞希さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
@@ -1539,6 +1562,7 @@ export const PAIR_MATRIX: PairRule[] = [
         fix: "お客様のメッセージの新条件（区・駅・線・家賃・間取り等）をその語のまま1文に入れる" },
       { label: "{redo}ピックアップ宣言（送付済み前提なので再度／新たに／別の候補 可）", detect: new RegExp(`ピックアップ.{0,20}${DECL_TAIL}`),
         fix: "「〜のご条件で{name}にオススメ出来るお部屋{redo}ピックアップしてお送りさせて頂きます😌！！」の1文にする（条件語はお客様の語のまま）" },
+      INITIAL_COST_SAVE_ELEMENT,
     ],
     mustNot: ["条件の聞き返し", "送付済み物件の再送宣言", "実現可能性の予測（難しい・少ない・可能性）", "条件緩和・代替案の先回り提案", "「少ない状況でしたので広げました」の言い訳（探していない）"],
     example: "かしこまりました！！\n2LDKのご条件で、枚方・高槻・吹田・守口・門真・鶴見区周辺全域から瑞希さんにオススメ出来るお部屋新たにピックアップしてお送りさせて頂きます😌！！\n瑞希さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
@@ -2631,6 +2655,8 @@ const CONFLICT_CLASSES: Array<{ id: string; element: RegExp; avoid: RegExp }> = 
   { id: "new_pickup", element: /ピックアップ宣言|お調べ|お探し|探す宣言|新規[^。]{0,6}提案/,
     avoid: /新規.{0,6}ピックアップ|再ピックアップ|別物件|他物件|物件提案|別のお部屋/ },
   { id: "estimate", element: /見積/, avoid: /見積/ },
+  // 2026-09-14 くれあ事例: 初期費用を抑える宣言（必須）と、ブレインの避ける話題「初期費用」がぶつかる時は必須要素を優先する（見積書の避けるは残す）
+  { id: "initial_cost_save", element: /初期費用を抑える宣言/, avoid: /初期費用/ },
   { id: "viewing",  element: /内覧|ご案内/, avoid: /内見|内覧|ご案内/ },
   { id: "apply",    element: /申込/, avoid: /申込/ },
   { id: "vacancy",  element: /募集状況|空室/, avoid: /募集状況|空室/ },
