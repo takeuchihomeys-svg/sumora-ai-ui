@@ -596,17 +596,22 @@
               return;
             }
             var sn = stNames[_stIdx++];
+            var _clickedNow = false;
             if (!_selectedSt.has(norm(sn))) {
               if (tryClickStation(sn)) {
                 _selectedSt.add(norm(sn));
+                _clickedNow = true;
               } else {
                 var _diagDlg = document.querySelector('[role="dialog"]') || document;
                 var _diagLbls = [].slice.call(_diagDlg.querySelectorAll("label")).filter(function(l) { return l.querySelector("input[type='checkbox']"); });
                 console.log("[AX] 駅未発見: " + sn + " | route=" + _lineKey + " | label数=" + _diagLbls.length + " | サンプル:", _diagLbls.slice(0,6).map(function(l){return '"'+l.textContent.replace(/\s+/g,'').slice(0,20)+'"';}).join(', '));
               }
             }
-            // 次の駅まで 300〜800ms ランダム待機（人間らしい操作）
-            setTimeout(clickNextStation, 300 + Math.floor(Math.random() * 500));
+            // 実際に駅を押した時だけ 300〜800ms ランダム待機（人間らしい操作）。
+            // 2026-09-14 竹内（SATOKO♪ 事例）「途中で止まって、また動き出す」: 旧は選択済みの駅・この路線に無い駅でも毎回 300〜800ms 待ち、
+            //   路線ごとに全駅名を回すため「路線数×駅数×0.55秒」の空回り（何も押さない数十秒）で止まって見え、多い時は 150秒の見張りに掛かっていた。
+            //   押していない時は待たずに次へ（押す操作の間隔は変えない）
+            setTimeout(clickNextStation, _clickedNow ? 300 + Math.floor(Math.random() * 500) : 0);
           }
           clickNextStation();
         }, 900 + Math.floor(Math.random() * 1300));
@@ -848,13 +853,14 @@
   }
 
   function fill(cond) {
-    // 150秒ウォッチドッグ: フリーズ/例外時にbackground.jsを強制解放
-    // background.js の待ち上限（FILL_DONE_TIMEOUT_MS.itandi=155秒）より5秒短くする。
+    // 240秒ウォッチドッグ: フリーズ/例外時にbackground.jsを強制解放
+    // background.js の待ち上限（FILL_DONE_TIMEOUT_MS.itandi=245秒）より5秒短くする。
     // 2026-09-12 竹内: 85秒→150秒（路線ごとの駅選択・「電車1本」の沿線全駅選択で85秒に届くため）
+    // 2026-09-14 竹内「時間かかっても大丈夫なのでタイムアウトが原因なら時間をのばす」: 150秒→240秒（駅の多い広げて検索・電車1本の安全幅）
     var _watchdog = setTimeout(function () {
-      console.warn("[AX] watchdog: 150s timeout — fill-done強制送信");
+      console.warn("[AX] watchdog: 240s timeout — fill-done強制送信");
       window.postMessage({ from: "aixlinx-fill-done", error: "watchdog-timeout" }, "*");
-    }, 150000);
+    }, 240000);
     function _safeDone(errMsg) {
       clearTimeout(_watchdog);
       var msg = { from: "aixlinx-fill-done" };

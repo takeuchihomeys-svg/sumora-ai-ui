@@ -1930,7 +1930,8 @@ function _notifyFillDone(site, customerId, error) {
 
 // fill-done（自動入力完了の合図）を待つ上限。page-script 側のウォッチドッグより5秒長くする
 // itandi は路線ごとに駅リストが切り替わり、「電車1本」の沿線全駅選択（13路線）で時間がかかるため150秒＋5秒（2026-09-12 竹内）
-var FILL_DONE_TIMEOUT_MS = { itandi: 155000, realnetpro: 90000 };
+// 2026-09-14 竹内「時間かかっても大丈夫」: page-script のウォッチドッグ 240秒＋5秒
+var FILL_DONE_TIMEOUT_MS = { itandi: 245000, realnetpro: 90000 };
 function _fillDoneTimeoutMs(site) {
   return FILL_DONE_TIMEOUT_MS[site] || 90000;
 }
@@ -2414,7 +2415,7 @@ async function _runBatchSearch(command) {
           : customer;
         try {
           // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
-          // モーダル操作/ページロードで60秒を超えることがあるため リアプロ90秒・itandi155秒（FILL_DONE_TIMEOUT_MS）
+          // モーダル操作/ページロードで60秒を超えることがあるため リアプロ90秒・itandi245秒（FILL_DONE_TIMEOUT_MS）
           // customerId を渡して他顧客の遅延 fill-done が誤解決しないよう保護する
           var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
             ? _createFillDoneWaiter(batchSite, String(effectiveCustomer.id), _fillDoneTimeoutMs(batchSite))
