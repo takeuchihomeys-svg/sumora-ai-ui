@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
 import { generateEmbedding, upsertKnowledge, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { isUsableExampleText } from "@/app/lib/example-hygiene";
+import { loadBlockedItems, recordAttemptFailure, markAttemptDone } from "@/app/lib/llm-job-attempts";
 
 export const maxDuration = 60;
 
@@ -33,7 +34,18 @@ async function callHaiku(prompt: string): Promise<string> {
   }
 }
 
-async function analyzeOne(exampleId: string, conversationState: string, customerMessage: string, sentReply: string): Promise<number> {
+// 2026-09-14: 結果を「読めたか」も返す。読めたが全部が既存と統合・重複（inserted 0）の例文は source_example_id が付かず、
+//   毎日同じ例文を Haiku に送り直していた → 読めたら llm_job_attempts に処理済みの印、読めなければ失敗を数える（3回で外す）
+const UPDATE_KNOWLEDGE_JOB = "update-knowledge";
+
+async function analyzeOneTracked(exampleId: string, conversationState: string, customerMessage: string, sentReply: string): Promise<number> {
+  const r = await analyzeOne(exampleId, conversationState, customerMessage, sentReply);
+  if (r.ok) await markAttemptDone(UPDATE_KNOWLEDGE_JOB, exampleId);
+  else await recordAttemptFailure(UPDATE_KNOWLEDGE_JOB, exampleId, r.error ?? "failed");
+  return r.inserted;
+}
+
+async function analyzeOne(exampleId: string, conversationState: string, customerMessage: string, sentReply: string): Promise<{ inserted: number; ok: boolean; error?: string }> {
   const text = await callHaiku(`以下のLINE賃貸営業のやりとりを深く分析してください。
 
 【お客様のメッセージ】
@@ -51,9 +63,10 @@ ${sentReply}
   "principle": "この返信が優れている核心的な理由（1文）"
 }`);
 
+  if (!text) return { inserted: 0, ok: false, error: "empty response" };
   try {
     const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return 0;
+    if (!match) return { inserted: 0, ok: false, error: `no json: ${text.slice(0, 80)}` };
     const analysis = JSON.parse(match[0]) as {
       situation: string; pattern: string;
       style_elements: string[]; key_phrases: string[]; principle: string;
@@ -81,8 +94,8 @@ ${sentReply}
       });
       if (result.result === "inserted") inserted++;
     }
-    return inserted;
-  } catch { return 0; }
+    return { inserted, ok: true };
+  } catch (e) { return { inserted: 0, ok: false, error: e instanceof Error ? e.message : String(e) }; }
 }
 
 export async function GET(req: NextRequest) {
@@ -122,14 +135,17 @@ export async function GET(req: NextRequest) {
     }
 
     // 2026-09-11 データ衛生: 生成失敗文・テスト送信からナレッジを作らない（失敗文由来の差分学習11行の再発防止）
-    const unprocessed = examples.filter((ex) => !processedIds.has(ex.id as string) && isUsableExampleText(ex.sent_reply as string));
+    const notInKnowledge = examples.filter((ex) => !processedIds.has(ex.id as string) && isUsableExampleText(ex.sent_reply as string));
+    // 処理済みの印（統合・重複で新しい行が無かった物）と3回失敗した物を外す
+    const blocked = await loadBlockedItems(UPDATE_KNOWLEDGE_JOB, notInKnowledge.map((ex) => ex.id as string));
+    const unprocessed = notInKnowledge.filter((ex) => !blocked.has(ex.id as string));
     const toProcess = unprocessed.slice(0, 15);
 
     let totalAdded = 0;
     for (let i = 0; i < toProcess.length; i += 3) {
       const chunk = toProcess.slice(i, i + 3);
       const results = await Promise.all(
-        chunk.map((ex) => analyzeOne(
+        chunk.map((ex) => analyzeOneTracked(
           ex.id as string,
           (ex.conversation_state as string) || "first_reply",
           ex.customer_message as string,

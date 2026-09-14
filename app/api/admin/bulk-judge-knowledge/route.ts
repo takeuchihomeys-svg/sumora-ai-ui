@@ -1,8 +1,10 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { canInsertAiQuestion, buildRuleConflictQuestion } from "@/app/lib/ai-feedback-guard";
+import { loadBlockedItems, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
 
 export const maxDuration = 300; // Vercel Pro: 5分まで延長
+const JUDGE_JOB = "bulk-judge-knowledge";
 
 const BATCH_SIZE = 10; // parallel Haiku calls per batch
 const MAX_AI_QUESTIONS = 100; // AI質問登録の上限
@@ -23,7 +25,9 @@ export async function GET(req: NextRequest) {
 
   // 1. Fetch hypothesis items (importance>=8, not phrase, not judged in last 14 days) with paging
   const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: items } = await supabase
+  // 2026-09-14: 判定できなかった物（API エラー・中断・JSON が読めない）は last_judged_at が付かず、毎週同じ上位の物を送り直していた。
+  //   3回失敗した物は外し（llm_job_attempts）、外した分だけ後ろの物に回す（多めに取ってから外す）
+  const { data: fetched } = await supabase
     .from("ai_reply_knowledge")
     .select("id, title, content, category, conversation_state, importance, correct_count, wrong_count, apply_count")
     .eq("hypothesis_status", "hypothesis")
@@ -31,7 +35,10 @@ export async function GET(req: NextRequest) {
     .gte("importance", 8)
     .or(`last_judged_at.is.null,last_judged_at.lt.${cutoff}`)
     .order("importance", { ascending: false })
-    .range(offset, offset + limit - 1);
+    .order("id", { ascending: true })
+    .range(offset, offset + limit + 300 - 1);
+  const blockedIds = await loadBlockedItems(JUDGE_JOB, (fetched ?? []).map((r) => r.id as string));
+  const items = (fetched ?? []).filter((r) => !blockedIds.has(r.id as string)).slice(0, limit);
 
   if (!items || items.length === 0) {
     return NextResponse.json({ ok: true, message: "no items to process" });
@@ -81,13 +88,15 @@ export async function GET(req: NextRequest) {
       const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
       if (!apiKey) return { id: item.id as string, verdict: "skip" as const, reason: "no api key" };
 
+      // 2026-09-14: 10秒の中断は応答の途中で切れやすく（切れた分も課金され得る）、思考を省略すると 500 の枠を思考が使う → 思考を止めて25秒
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(25_000),
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
           model: "claude-sonnet-5",
           max_tokens: 500,
+          thinking: { type: "disabled" },
           messages: [{
             role: "user",
             content: `賃貸仲介AIのナレッジ品質審査員として判定してください。
@@ -122,7 +131,16 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何�
       };
     }));
 
-    for (const r of results) {
+    for (let ri = 0; ri < results.length; ri++) {
+      const r = results[ri];
+      // 判定できなかった物（中断・JSON 解析の例外＝rejected／API エラー・読めない＝skip）は失敗を数える（3回で外す）
+      if (r.status === "rejected") {
+        await recordAttemptFailure(JUDGE_JOB, batch[ri].id as string, String(r.reason).slice(0, 200));
+        continue;
+      }
+      if (r.value && r.value.verdict === "skip" && r.value.reason !== "no api key") {
+        await recordAttemptFailure(JUDGE_JOB, r.value.id, r.value.reason ?? "skip");
+      }
       if (r.status === "fulfilled" && r.value) {
         const v = r.value;
         if (v.verdict !== "skip") judgedIds.push(v.id);

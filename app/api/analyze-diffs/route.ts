@@ -4,6 +4,7 @@ import { upsertKnowledge, buildKnowledgeEmbeddingInput, generateEmbedding } from
 import { promoteToConfirmed } from "@/app/lib/knowledge-promote";
 import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app/lib/ai-feedback-guard";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { loadBlockedItems, markAttemptDone } from "@/app/lib/llm-job-attempts";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { EXCLUDE_FAILED_SENT_LIKE } from "@/app/lib/example-hygiene";
 import Anthropic from "@anthropic-ai/sdk";
@@ -2408,7 +2409,11 @@ export async function POST(req: NextRequest) {
       .from("ai_prompt_rules")
       .select("id", { count: "exact", head: true })
       .like("rule_key", `LEARN-AIX-daily-%-${aixDateKey}-%`);
-    if ((existingDailyCount ?? 0) === 0) {
+    // 2026-09-14: 「今日はもう実行した」の印がルールを保存できた日しか付かず、パターンが無い日は1日4回とも
+    //   11アクション分を Haiku で分析し直していた → 実行し終えたら llm_job_attempts に日付の印を付ける
+    const AIX_DAILY_JOB = "analyze-diffs:aix-daily";
+    const aixDailyDone = (await loadBlockedItems(AIX_DAILY_JOB, [aixDateKey])).has(aixDateKey);
+    if ((existingDailyCount ?? 0) === 0 && !aixDailyDone) {
       const aix24hAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const AIX_DAILY_ACTIONS = [
         "property_recommendation","property_send","viewing_invite","meeting_place",
@@ -2488,6 +2493,8 @@ export async function POST(req: NextRequest) {
           }
         }
       }
+      // 最後まで回った日だけ印（途中の例外なら同じ日の次の起動でやり直す）
+      await markAttemptDone(AIX_DAILY_JOB, aixDateKey);
     }
   } catch (e) {
     console.error("[analyze-diffs] ⑧AIX日次集約エラー:", e);

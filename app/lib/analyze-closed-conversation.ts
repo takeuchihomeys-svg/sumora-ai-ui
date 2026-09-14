@@ -50,6 +50,8 @@ async function callOpus(prompt: string): Promise<string> {
       body: JSON.stringify({
         model: "claude-opus-5",
         max_tokens: 1400,
+        // 思考を明示的に止める（省略すると思考が 1400 の枠を使い、JSON が途中で切れる → 翌日また Opus に送り直し）
+        thinking: { type: "disabled" },
         messages: [{ role: "user", content: prompt }],
       }),
     });

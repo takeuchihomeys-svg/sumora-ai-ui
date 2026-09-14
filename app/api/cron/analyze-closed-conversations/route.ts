@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { analyzeClosedConversation, type ClosedOutcome } from "@/app/lib/analyze-closed-conversation";
+import { loadBlockedItems, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
 
 export const maxDuration = 300;
 
@@ -49,7 +50,9 @@ export async function POST(req: NextRequest) {
     const doneKeys = new Set(((doneRows ?? []) as Array<{ key: string }>).map((r) => r.key));
 
     const pending = candidates.filter((c) => !doneKeys.has(`closed_analysis_${c.id}`));
-    const targets = pending.slice(0, MAX_PER_RUN);
+    // 2026-09-14: 3回失敗した会話はもう Opus に送らない（旧: JSON が読めないと重複防止キーを書かず、48時間の間毎日送り直していた）
+    const blocked = await loadBlockedItems("analyze-closed-conversations", pending.map((c) => c.id));
+    const targets = pending.filter((c) => !blocked.has(c.id)).slice(0, MAX_PER_RUN);
 
     let analyzed = 0;
     let failed = 0;
@@ -65,10 +68,12 @@ export async function POST(req: NextRequest) {
         if (!result.ok) {
           failed += 1;
           if (result.error) errors.push(`${c.id}: ${result.error}`);
+          await recordAttemptFailure("analyze-closed-conversations", c.id, result.error ?? result.reason ?? "failed");
         }
       } catch (e) {
         failed += 1;
         errors.push(`${c.id}: ${e instanceof Error ? e.message : String(e)}`);
+        await recordAttemptFailure("analyze-closed-conversations", c.id, e instanceof Error ? e.message : String(e));
       }
     }
 

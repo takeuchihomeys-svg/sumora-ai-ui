@@ -2,8 +2,10 @@
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { attemptKey, loadBlockedItems, markAttemptDone, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
 
 export const maxDuration = 60;
+const CONVERT_JOB = "auto-template-candidates:convert";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, timeout: 30_000 });
 const MODEL = "claude-haiku-4-5-20251001";
@@ -282,12 +284,17 @@ async function run() {
   for (const t of existingTemplates ?? []) seen.add(dedupeKey(t.category as string, (t.text as string) ?? ""));
 
   // F2: `seenPre` = 変換前テキストのバッチ内dedup。seen と混在させると pre/post キーが衝突する
+  // 2026-09-14: 変換前の文が以前に Haiku で変換済みなら送らない（旧: DB との照合は変換「後」だけで、14日の窓の同じ後続文を
+  //   毎日変換し直していた＝約35件/日のほぼ全部が重複）。変換を試みた文は llm_job_attempts に印（3回失敗でも外す）
+  const preKeyOf = (p: Pair) => attemptKey(dedupeKey(ACTION_TO_CATEGORY[p.aixType], p.followText));
+  const convertedBefore = await loadBlockedItems(CONVERT_JOB, [...new Set(pairs.map(preKeyOf))]);
   const seenPre = new Set<string>();
   const fresh: Pair[] = [];
   for (const p of pairs) {
     const preKey = dedupeKey(ACTION_TO_CATEGORY[p.aixType], p.followText);
     if (seenPre.has(preKey)) continue;
     seenPre.add(preKey);
+    if (convertedBefore.has(preKeyOf(p))) continue;
     // P3閾値: 同一アクション・類似パターン（bigram Dice >= 0.6）が2回以上ある場合のみ候補化
     //（自分自身を含むカウントのため、他に最低1件の類似後続が必要 = 単発の後続文は候補化しない）
     const similarCount = pairs.filter(
@@ -348,8 +355,10 @@ ${existing.length > 0 ? existing.map((t) => `- ${t}`).join("\n") : "（なし）
       const p = fresh[i];
       if (r.status !== "fulfilled") {
         console.error("[auto-template-candidates] convert error:", r.reason);
+        await recordAttemptFailure(CONVERT_JOB, preKeyOf(p), String(r.reason).slice(0, 200));
         continue;
       }
+      await markAttemptDone(CONVERT_JOB, preKeyOf(p));
       if (r.value.skip || !r.value.converted?.trim()) {
         skipped++;
         continue;

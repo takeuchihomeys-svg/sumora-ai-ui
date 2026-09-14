@@ -2,6 +2,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
+import { loadBlockedItems, recordAttemptFailure, markAttemptDone } from "@/app/lib/llm-job-attempts";
+
+const LOSERS_JOB = "auto-analyze-losers";
 
 // 失注パターン自動学習バッチ
 // closed_lost になった会話を Haiku で分析し「避けるべき対応パターン」を ai_reply_knowledge に記録
@@ -15,19 +18,22 @@ async function run() {
   // 過去14日以内に closed_lost になった会話（最大20件）
   const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: lostConvs, error: convErr } = await supabase
+  const { data: fetchedConvs, error: convErr } = await supabase
     .from("conversations")
     .select("id, customer_name, suggested_aix_meta")
     .eq("status", "closed_lost")
     .is("loss_analyzed_at", null)
     .gte("updated_at", since)
     .order("updated_at", { ascending: false })
-    .limit(20);
+    .limit(80);
 
   if (convErr) {
     console.error("[auto-analyze-losers] conv fetch error:", convErr.message);
     return NextResponse.json({ ok: false, error: convErr.message }, { status: 500 });
   }
+  // 2026-09-14: 3回失敗した会話・材料が足りない短い会話はもう扱わない（旧: 印を付けず、14日間毎日同じ会話を送り直し／20件の枠を占めていた）
+  const blocked = await loadBlockedItems(LOSERS_JOB, (fetchedConvs ?? []).map((c) => c.id as string));
+  const lostConvs = (fetchedConvs ?? []).filter((c) => !blocked.has(c.id as string)).slice(0, 20);
 
   if (!lostConvs?.length) {
     return NextResponse.json({ ok: true, analyzed: 0, message: "no closed_lost conversations in 14 days" });
@@ -67,6 +73,7 @@ async function run() {
       const totalChars = validMsgs.reduce((sum, m) => sum + (m.text as string).trim().length, 0);
       if (customerMsgs.length < 3 || totalChars < 200) {
         skipped++;
+        await markAttemptDone(LOSERS_JOB, convId);
         continue;
       }
 
@@ -140,6 +147,7 @@ ${transcript}
       if (!parsed) {
         console.warn("[auto-analyze-losers] JSON parse failed:", convId, analysisText.slice(0, 100));
         failed++;
+        await recordAttemptFailure(LOSERS_JOB, convId, `JSON parse failed: ${analysisText.slice(0, 100)}`);
         continue;
       }
 
@@ -183,6 +191,7 @@ ${transcript}
     } catch (e) {
       failed++;
       console.error("[auto-analyze-losers] analyze error:", convId, e);
+      await recordAttemptFailure(LOSERS_JOB, convId, e instanceof Error ? e.message : String(e));
     }
   }
 

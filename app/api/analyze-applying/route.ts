@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { loadBlockedItems, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
 import { extractSelfInitiatedSends } from "@/app/lib/brain-core";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -189,6 +190,8 @@ async function callSonnet(systemPrompt: string, userPrompt: string): Promise<App
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 3000,
+      // 思考を明示的に止める（省略すると思考が 3000 の枠を使い、JSON が途中で切れて毎回やり直しになる）
+      thinking: { type: "disabled" },
       system: [
         { type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } },
       ],
@@ -532,7 +535,10 @@ export async function POST(req: NextRequest) {
     }
 
     const pending = (convs ?? []) as Array<{ id: string; customer_name: string | null; status: string }>;
-    const targets = pending.slice(0, MAX_PER_RUN);
+    // 2026-09-14: 3回失敗した会話はもう送らない（旧: 失敗は learned_at を付けないので、analyze-diffs が1日4回起動するたびに
+    //   同じ会話を Sonnet に送り直していた。7日で29回実行し毎回同じ会話で失敗）
+    const blocked = await loadBlockedItems("analyze-applying", pending.map((c) => c.id));
+    const targets = pending.filter((c) => !blocked.has(c.id)).slice(0, MAX_PER_RUN);
 
     let learned = 0;
     let skipped = 0;
@@ -546,16 +552,19 @@ export async function POST(req: NextRequest) {
         else {
           failed += 1;
           if (result.error) errors.push(`${conv.id}: ${result.error}`);
+          await recordAttemptFailure("analyze-applying", conv.id, result.error ?? "failed");
         }
       } catch (e) {
-        // フェイルオープン: 1会話の失敗は他の会話の処理を止めない（learned_at 未更新 → 次回再試行）
+        // フェイルオープン: 1会話の失敗は他の会話の処理を止めない（learned_at 未更新 → 次回再試行・3回まで）
         failed += 1;
         errors.push(`${conv.id}: ${e instanceof Error ? e.message : String(e)}`);
+        await recordAttemptFailure("analyze-applying", conv.id, e instanceof Error ? e.message : String(e));
       }
     }
 
     const summary = {
       candidates: pending.length,
+      gaveUp: blocked.size, // 3回失敗して諦めた会話
       learned,
       skipped,
       failed,

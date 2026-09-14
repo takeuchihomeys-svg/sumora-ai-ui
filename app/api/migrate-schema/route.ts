@@ -3062,6 +3062,20 @@ SELECT
 FROM llm_usage_logs
 GROUP BY 1, 2, 3, 4;
 
+-- ── llm_job_attempts: cron の LLM 処理の物ごとの失敗回数・処理済みの印（2026-09-14 API の漏れ調査）──
+-- 失敗時に処理済みの印を付けない cron が同じ物を毎回送り直していた（申込到達会話の学習 7日で29回 等）。
+-- 上限（既定3回）の失敗で諦める。保存する物が無かった等は done_at で印（app/lib/llm-job-attempts.ts）
+CREATE TABLE IF NOT EXISTS llm_job_attempts (
+  job TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  attempts INT NOT NULL DEFAULT 0,
+  last_error TEXT,
+  last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  done_at TIMESTAMPTZ,
+  PRIMARY KEY (job, item_id)
+);
+ALTER TABLE llm_job_attempts DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
