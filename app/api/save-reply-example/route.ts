@@ -1493,9 +1493,12 @@ export async function POST(req: NextRequest) {
 
   // 埋め込みが取得できた場合のみ更新（fire-and-forget）
   if (data?.id && embedding) {
+    // 2026-09-14: supabase-js の問い合わせは then（await）されるまで送信されない。旧は then が無く、この保存は実行されていなかった
+    //   （埋め込みは後から補完処理が埋めていたので実害は小さい。保存直後の検索に間に合うよう、ここで確実に送る）
     void supabase.from("ai_reply_examples")
       .update({ embedding: JSON.stringify(embedding) })
-      .eq("id", data.id);
+      .eq("id", data.id)
+      .then(({ error: embErr }) => { if (embErr) console.warn("save-reply-example embedding update failed:", embErr.message); }, () => {});
   }
 
   if (error) {

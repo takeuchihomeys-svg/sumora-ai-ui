@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { resolveSyncedStatus } from "@/app/lib/conversation-status";
 import webpush from "web-push";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -244,9 +245,18 @@ export async function POST(req: NextRequest) {
 
     const { data: existingConv } = await supabase
       .from("conversations")
-      .select("account, updated_at")
+      .select("account, updated_at, status, is_post_apply")
       .eq("id", String(record.id))
       .maybeSingle();
+
+    // 2026-09-14 竹内（タクミ事例）「申込中にしているのに物件提案中に戻ってしまう」: 状態はこちら（AIXLINX）でスタッフが管理している。
+    //   審査管理も同じ LINE を受けて会話を更新するたびにここが呼ばれ、先方の状態（property_recommendation）で無条件に上書きしていた
+    //   （申込中にした後、お客様の「よろしくお願い致します！」の同期で物件提案中に戻った）。先の段階へ進める時だけ書く（conversation-status.ts）
+    if (existingConv) {
+      const next = resolveSyncedStatus(existingConv.status as string | null, upsertData.status as string | null, { isPostApply: !!existingConv.is_post_apply });
+      if (next === null) delete upsertData.status;
+      else upsertData.status = next;
+    }
 
     // 手動設定済みのアカウントを上書きしない
     // スモラ・イエヤス両方に問い合わせているお客さんで、
@@ -277,6 +287,15 @@ export async function POST(req: NextRequest) {
     // ※ onConflict: "line_user_id,account" は部分インデックスのため PostgREST の推論が効かず使えない
     if (error && error.code === "23505" && upsertData.line_user_id) {
       const { id: _dupId, account: _dupAccount, ...updateFields } = upsertData;
+      // 既存行（同じ LINE ユーザー×アカウント）への UPDATE でも、状態は先の段階へ進める時だけ書く
+      {
+        let curQuery = supabase.from("conversations").select("status, is_post_apply").eq("line_user_id", upsertData.line_user_id as string);
+        if (resolvedAccount) curQuery = curQuery.eq("account", resolvedAccount);
+        const { data: curRow } = await curQuery.limit(1).maybeSingle();
+        const next = curRow ? resolveSyncedStatus(curRow.status as string | null, record.status as string | null, { isPostApply: !!curRow.is_post_apply }) : (record.status as string | null) ?? null;
+        if (next === null) delete updateFields.status;
+        else updateFields.status = next;
+      }
       let updateQuery = supabase
         .from("conversations")
         .update(updateFields)

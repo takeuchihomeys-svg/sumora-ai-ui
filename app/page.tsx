@@ -3202,12 +3202,14 @@ export default function Home() {
       if (updateError) throw updateError;
 
       // H2: 手動ステータス変更を stage_history に記録（fire-and-forget）
+      // 2026-09-14: supabase-js の問い合わせは then（await）されるまで送信されない。旧 `void supabase...insert()` は一度も送られず、
+      //   手動の状態変更の記録が0件だった（タクミ事例で「誰が状態を戻したか」を追えなかった）→ then を付けて送る
       void supabase.from("conversation_stage_history").insert({
         conversation_id: selectedConversation.id,
         from_status: selectedConversation.status ?? null,
         to_status: nextStatus,
         trigger: "manual",
-      });
+      }).then(() => {}, () => {});
 
       // 申込以降・成約になったとき: バックグラウンドで決まるパターンを自動学習
       if (nextStatus === "applying" || nextStatus === "closed_won") {
@@ -4557,7 +4559,7 @@ export default function Home() {
           from_status: selectedConversation.status ?? null,
           to_status: newStatus,
           trigger: "staff_reply",
-        });
+        }).then(() => {}, () => {}); // then が無いと送信されない（上の手動記録と同じ）
       }
 
       setConversations((prev) =>
@@ -8815,7 +8817,8 @@ export default function Home() {
                   if (!wasRead) {
                     void supabase.from("conversations")
                       .update({ draft_pending_at: null, ai_draft: null })
-                      .eq("id", convId);
+                      .eq("id", convId)
+                      .then(() => {}, () => {}); // 2026-09-14: then が無いと送信されない（旧は一度も実行されていなかった）
                   }
                   // ③ 既読→未読に戻した時、プリ生成を即起動
                   if (wasRead) {

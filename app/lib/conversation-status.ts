@@ -43,3 +43,44 @@ export const BG_ASYNC_SKIP_STATUSES = DRAFT_SKIP_STATUSES;
  * スキップするもの（property_check は短い返しを生成するため含めない）
  */
 export const AIX_SKIP_TYPES = new Set(["property_send", "estimate_sheet"]);
+
+/**
+ * 状態の段階の順位（大きいほど先の段階）。審査管理（screening-admin）の状態名（property_recommendation 等）も含む。
+ * 2026-09-14 竹内（タクミ事例）: 同期で状態を後戻りさせない判定（resolveSyncedStatus）に使う
+ */
+export const STATUS_STAGE_RANK: Readonly<Record<string, number>> = {
+  new_inquiry: 0,
+  first_reply: 1, hearing: 1, condition_hearing: 1, property_search: 1,
+  proposing: 2, property_recommendation: 2, availability_check: 2, estimate_request: 2,
+  viewing: 3,
+  applying: 4, application: 4,
+  screening: 5, approved: 5,
+  contract: 6,
+  closed_won: 7,
+};
+/** スタッフが決める終わりの状態（同期では入れない・外さない） */
+const STAFF_OWNED_TERMINAL = new Set(["closed_won", "closed_lost", "lost", "contract"]);
+
+/**
+ * 審査管理からの同期で書いてよい状態（書かない時は null）。
+ * 2026-09-14 竹内（タクミ事例）「申込中にしているのに物件提案中に戻ってしまう」:
+ *   審査管理も同じ LINE を受けて自分の会話を更新するたびに sync-from-screening が呼ばれ、先方の状態（property_recommendation）で
+ *   こちらの状態を無条件に上書きしていた（申込中にした後、お客様の「よろしくお願い致します！」で物件提案中に戻った）。
+ *   状態はこちら（AIXLINX）でスタッフが管理しているので、同期は「まだ状態が無い会話に入れる」「先の段階へ進める」だけにし、後戻り・同じ段階の言い換え・
+ *   終わりの状態（成約・失注）の出し入れはしない。申込後（is_post_apply）の会話は申込より前に戻さない
+ */
+export function resolveSyncedStatus(
+  current: string | null | undefined,
+  incoming: string | null | undefined,
+  opts: { isPostApply?: boolean } = {},
+): string | null {
+  const inc = (incoming ?? "").trim();
+  if (!inc) return null;
+  const cur = (current ?? "").trim();
+  if (!cur) return inc;
+  if (STAFF_OWNED_TERMINAL.has(cur) || STAFF_OWNED_TERMINAL.has(inc)) return null;
+  const incRank = STATUS_STAGE_RANK[inc];
+  if (incRank === undefined) return null;
+  const curRank = Math.max(STATUS_STAGE_RANK[cur] ?? -1, opts.isPostApply ? STATUS_STAGE_RANK.applying : -1);
+  return incRank > curRank ? inc : null;
+}
