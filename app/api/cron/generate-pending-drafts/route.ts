@@ -6,6 +6,7 @@ import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core"
 import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "@/app/lib/brain-meta-restore";
 import { DRAFT_SKIP_STATUSES, AIX_SKIP_TYPES } from "@/app/lib/conversation-status";
+import { MSG_SEP } from "@/app/lib/reply-context";
 
 function getDb() {
   return createClient(
@@ -235,7 +236,9 @@ async function run() {
         .filter(m => m.sender === "customer" && m.text)
         .slice(-5);
 
-      const targetMessage = sanitizeSurrogates(unreplied.map(m => m.text).join("\n"));
+      // 2026-09-14 Hina 事例: 通は MSG_SEP でつなぐ（bg-async・画面と同じ）。"\n" だと画像の読み取り文の通と、お客様が書いた通の境目が分からず、
+      //   返信生成が「画像の文字を意図の判定から外す」時に書いた言葉まで一緒に外す／読み取り文を言葉として読む
+      const targetMessage = sanitizeSurrogates(unreplied.map(m => m.text).join(MSG_SEP));
       // 未読が画像/動画プレースホルダのみなら生成スキップ（文脈自体はrecentMessagesで保持される）
       // A-1（2026-09-08）: 「[スタンプ]」も画像/動画と同じ sentinel 扱い（スタンプ単独で条件全列挙ピックアップが生成されるのを防ぐ）
       const hasRealText = unreplied.some(m => m.text !== "[画像]" && m.text !== "[動画]" && m.text !== "[スタンプ]");

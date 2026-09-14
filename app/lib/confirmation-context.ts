@@ -10,7 +10,9 @@
 //   (5) detectAixTiming が property_check_result（applyAixTiming で後付け・route/final-check 双方で同じ pure 関数）
 import { CUSTOMER_PROPERTY_REF_RE, CUSTOMER_COST_QUESTION_RE } from "./line-reply-prompts";
 // 2026-09-11 竹内方針（統合設計 §5.2・E5-n）: スタッフの確認宣言は reply-context の STAFF_CONFIRM_DECL_RE が唯一の定義（同名で中身の違う2定義を解消）
-import { STAFF_CONFIRM_DECL_RE, CUST_VIEWING_INTENT_RE, propertyMatchKeys } from "./reply-context";
+import { STAFF_CONFIRM_DECL_RE, CUST_VIEWING_INTENT_RE, propertyMatchKeys, normalizeCustomerText, imageTextUnits } from "./reply-context";
+/** 物件のスクショ・間取り図の読み取り文に出る語（物件の指名の根拠。確認の対象はここから取らない） */
+const PROPERTY_IMAGE_RE = /[0-9０-９]\s*(?:LDK|DK|K|R)\b|[0-9０-９]LDK|ワンルーム|間取り|駅徒歩|徒歩[0-9０-９]+分|洋室|帖|賃料|家賃|号室|築[0-9０-９]/i;
 import { allVacancyWordsAreSlots } from "./scene-patterns";
 
 export type ConfirmationSource =
@@ -89,7 +91,11 @@ export function resolveConfirmationContext(input: {
   /** 2026-09-11 §5.2: 会話に実在する物件名（台帳の送付済み物件名など）。検査側の照合にだけ使う（生成の文面に物件名は出さない＝方針2） */
   conversationObjects?: { propertyNames: string[] } | null;
 }): ConfirmationContextVerdict {
-  const cust = (input.customerMessage || "").trim();
+  // 2026-09-14 竹内（Hina 事例）: 確認の対象（ペット・入居日・駐車場…）・質問形・依頼はお客様が書いた言葉だけで決める。
+  //   画像の読み取り文（SNS 広告の「ペット可」「ペットと住める！」）から対象を取ると、聞かれていない「ペット飼育の可否確認」を書いた。
+  //   物件の指名（URL・物件名・号室・スクショ）だけは画像の中身も根拠にしてよい（その時の対象は募集状況）
+  const full = (input.customerMessage || "").trim();
+  const cust = normalizeCustomerText(full);
   const staff = (input.lastStaffMessage || "").trim();
   const custObject = findConfirmObject(cust);
 
@@ -99,7 +105,7 @@ export function resolveConfirmationContext(input: {
   if (custObject && FACT_QUESTION_RE.test(cust)) {
     return { allowed: true, source: "customer_fact_question", object: custObject, reason: `顧客が「${custObject}」を質問` };
   }
-  if (PROPERTY_NOMINATION_RE.test(cust)) {
+  if (PROPERTY_NOMINATION_RE.test(cust) || imageTextUnits(full).some((u) => PROPERTY_NOMINATION_RE.test(u) || PROPERTY_IMAGE_RE.test(u))) {
     return { allowed: true, source: "customer_property_nomination", object: custObject ?? "募集状況", reason: "顧客が特定物件を指名（募集状況確認が次工程）" };
   }
   // 2026-09-11 §5.2（E5-m）: 見積・初期費用の依頼 → 募集状況・初期費用の確認は正しい次工程
@@ -108,7 +114,8 @@ export function resolveConfirmationContext(input: {
   }
   // 顧客の本文に送付済み物件名（照合キー）がある → その物件の募集状況確認（resolvePositive の T3 と同じ照合）
   const names = input.conversationObjects?.propertyNames ?? [];
-  if (names.some((n) => propertyMatchKeys(n).some((k) => k.length >= 2 && cust.includes(k)))) {
+  // 物件の特定なので画像の読み取り文（送付済み物件のスクショ）も見る
+  if (names.some((n) => propertyMatchKeys(n).some((k) => k.length >= 2 && full.includes(k)))) {
     return { allowed: true, source: "customer_named_known_property", object: custObject ?? "募集状況", reason: "顧客が送付済み物件を名指し" };
   }
   // 内覧の希望（明示・日付付き）→ ご内覧可否・募集状況の確認（VIEWING_BEFORE_VACANCY と同じ前提）

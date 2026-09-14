@@ -33,8 +33,28 @@ const DECOR_RE =
 const MEDIA_TOKEN_RE = /\[(?:画像|動画|スタンプ|ファイル|位置情報)\]/g;
 const SENT_SPLIT_RE = /(?<=[。！!？?])|\n/;
 
+// ─── 2026-09-14 竹内（Hina 事例）: 画像の読み取り文はお客様の発言ではない ───────────────────────
+//   お客様が SNS 広告のスクショ（「6万円ペット可」「ペットと住める！」）を2枚送っただけなのに、読み取り文（[画像] <書き起こし>）が
+//   お客様の言葉として判定され、条件変更（対象: ペット）・確認の対象「ペット飼育の可否」・日程（画面の時刻 0:14）になって、
+//   下書きが「ペット飼育の可否確認させて頂きます」と聞かれていないことに答えた。
+//   意図（質問・依頼・条件・懸念・日程）の判定はお客様が書いた言葉だけで行う。画像の中身は「どの物件か」の特定にだけ使う
+//   （物件の指名は画像が届いたこと自体・readImageUnits の文字で判定する）。
+/** 返信生成のプロンプトで画像の読み取り文に付ける見出し（生成・判定が同じ定数を見る） */
+export const IMAGE_TEXT_LABEL = "【お客様が送った画像に写っていた文字（お客様の発言・質問・希望条件ではない。物件の特定にだけ使う）】";
+const IMAGE_UNIT_RE = /^\s*(?:\[(?:画像|動画)\]|【スクショ内容】|【お客様が送った画像に写っていた文字)/;
+/** 1通が画像（または動画）の読み取り文か */
+export function isImageTextUnit(unit: string): boolean { return IMAGE_UNIT_RE.test(unit); }
+/** お客様が書いた言葉だけ（画像の読み取り文の通を「[画像]」に置き換える）。通は MSG_SEP 区切り（1通の読み取り文は複数行でも1通） */
+export function customerOwnWords(raw: string | null | undefined): string {
+  return (raw ?? "").split(MSG_SEP).map((u) => (isImageTextUnit(u) ? "[画像]" : u)).join(MSG_SEP);
+}
+/** 画像の読み取り文の通だけ（物件の特定用） */
+export function imageTextUnits(raw: string | null | undefined): string[] {
+  return (raw ?? "").split(MSG_SEP).filter(isImageTextUnit);
+}
+
 export function normalizeCustomerText(raw: string | null | undefined): string {
-  return (raw ?? "")
+  return customerOwnWords(raw)
     .split(MSG_SEP).join("\n")
     .replace(MEDIA_TOKEN_RE, " ")
     // 2026-09-11 統合設計（経路D）: ASCII 顔文字「m(*_ _)m」「m(_ _)m」を定型判定の前に剥がす
@@ -215,6 +235,15 @@ export function analyzeSubstance(
     has: false, kinds: [], concerns: [], isAckOnly: true, residue: "", residueLen: 0, normalized, units: unitList, evidence: [why],
     isPureBoilerplate: true, waitSignal: detectWaitSignal(normalized),
   });
+  // 2026-09-14 竹内（Hina 事例）: 画像（読み取り文）だけのターンはお礼・了承ではない（物件のスクショ・書類が「届いた」）。
+  //   旧: 読み取り前の「[画像]」だけは empty＝了承扱いで、ピックアップ宣言の後に物件のスクショが届くと PD_ACK（了承への返し）が選ばれた。
+  //   読み取り文はお客様の発言ではないので中身から意図は取らず（normalizeCustomerText）、「情報が届いた」だけにする
+  if (!normalized && /\[(?:画像|動画)\]|【スクショ内容】|【お客様が送った画像/.test(customerMessage ?? "")) {
+    return {
+      has: true, kinds: ["info"], concerns: [], isAckOnly: false, residue: "", residueLen: 0, normalized, units: unitList,
+      evidence: ["image_only"], isPureBoilerplate: false, waitSignal: detectWaitSignal(normalized),
+    };
+  }
   if (!normalized) return none("empty");
   if (/^(?:\[スタンプ\]\s*)+$/.test((customerMessage ?? "").trim())) return none("decor_only");
 
@@ -910,9 +939,13 @@ export function classifyCustomerResponse(
   }
   // ③ 往復文脈: スタッフが直前に質問していれば、了承以外の短文は「回答」（「ついてます」「今無事終わりました」）
   const nonAckFound = [...found.keys()].filter((k) => k !== "ack_only");
-  if (staff.kind === "question_to_customer" && nonAckFound.length === 0 && sub.residueLen >= 2) put("answer", "staffAsk:question");
+  // 2026-09-14 Hina 事例: 画像だけ（書類・物件のスクショ）で返した時も回答（お礼・了承ではない）
+  const imageOnly = sub.evidence.includes("image_only");
+  if (staff.kind === "question_to_customer" && nonAckFound.length === 0 && (sub.residueLen >= 2 || imageOnly)) put("answer", imageOnly ? "staffAsk:image" : "staffAsk:question");
   // ④ brain（fresh のみ）は補助証拠: regex が拾えなかった懸念・質問・条件変更を追加するだけで regex を上書きしない
-  const b = flags.brain;
+  // 2026-09-14 Hina 事例: 画像だけのターンでは brain の質問・懸念・条件変更を足さない（brain は画像の読み取り文を読むので、
+  //   広告の「ペット可」を条件変更と取りうる。お客様の言葉に根拠が無い）
+  const b = imageOnly ? undefined : flags.brain;
   if (b) {
     // ④-a 懸念は message-local な customer_concern のみ。かつ本文アンカー必須。
     //     repeated_concern（会話全体で2回以上のテーマ）と customer_intent==="negative"（定義=懸念・不安）は加算条件から全廃
@@ -955,7 +988,7 @@ export function classifyCustomerResponse(
     ordered = ["positive", ...ordered.filter((k) => k !== "positive")];
   }
   const primary: CustomerResponseKind =
-    ordered[0] ?? (sub.residueLen >= 2 ? "other" : sub.waitSignal.yes ? "thinking" : "ack_only");
+    ordered[0] ?? (sub.residueLen >= 2 || imageOnly ? "other" : sub.waitSignal.yes ? "thinking" : "ack_only");
   const secondary = ordered.slice(1);
   const ev = found.get(primary) ?? "";
   const source: CustomerResponseSource = ev.startsWith("brain:") ? "brain" : ev.startsWith("flag:") ? "flag" : "regex";

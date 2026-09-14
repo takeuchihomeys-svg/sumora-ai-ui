@@ -135,8 +135,12 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
   const asksCost = CUSTOMER_COST_QUESTION_RE.test(burst);
   // 条件フォーム画像は「物件送付」ではない。フォームでない時のみ画像・URL・号室を物件参照とみなす
   const hasPropertyRef = !isForm && (CUSTOMER_PROPERTY_REF_RE.test(msg) || !!input.hasCustomerImage);
+  // 2026-09-14 竹内（Hina 事例）: 画像だけのターン（お客様が何も書いていない）では brain の condition_change_type を使わない。
+  //   brain は画像の読み取り文（SNS 広告の「6万円ペット可 1ldk」）を読むので条件変更と取りうるが、お客様の言葉に根拠が無い。
+  //   その誤りで「物件のスクショが届いた → 見積書」（4.）が forbid に落ちた（YUMA 再現）。reply-context の classifyCustomerResponse と同じ規則
+  const hasOwnWords = msg.replace(/\[(?:画像|動画|スタンプ)\]/g, "").trim().length > 0;
   const isConditionChange =
-    CUSTOMER_CONDITION_CHANGE_RE.test(msg) || (!!bm && bm.condition_change_type != null);
+    CUSTOMER_CONDITION_CHANGE_RE.test(msg) || (!!bm && bm.condition_change_type != null && hasOwnWords);
   const rePositive = CUSTOMER_PROPERTY_POSITIVE_RE.test(msg);
   const staffPromisedNow = STAFF_ESTIMATE_PROMISE_RE.test(lastStaff);
   const estimatePromised = !!input.estimatePromised || staffPromisedNow;

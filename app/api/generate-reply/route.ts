@@ -106,6 +106,8 @@ import {
   detectPropertyPass,
   // 2026-09-14 竹内（くれあ事例）: 初期費用を抑える一文が必須の場面か（セルの必須要素と同じ判定）
   requiresInitialCostSave,
+  // 2026-09-14 竹内（Hina 事例）: 画像の読み取り文はお客様の発言ではない（意図の判定から外す・プロンプトで見出しを付ける）
+  IMAGE_TEXT_LABEL, isImageTextUnit, customerOwnWords,
 } from "@/app/lib/reply-context";
 import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 // 2026-09-12 竹内（YUYA 事例）: お客様が送った物件の呼び方（生成の指示と後処理が同じ判定）
@@ -1471,11 +1473,18 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // 複数メッセージ結合時は番号付きで全通への返信を明示し末尾優先バイアスを防ぐ
   // 2026-09-09 Fable5: 旧 split("\n") は1通内の改行を「2通」に分割し「[1通目]ありがとう／[2通目]懸念」→「はい😊！！＋かしこまりました！！」の
   //   分割相槌骨格を誘導していた。通単位（MSG_SEP / customerMessageUnits）でのみ分割する
-  const customerMsgLines = splitMessageUnits(customerMessage, customerMessageUnits);
-  const customerMsgBlock = !isFollowUp && customerMsgLines.length > 1
+  // 2026-09-14 竹内（Hina 事例）: 画像の読み取り文の通には「お客様の発言ではない」見出しを付け、写っている条件を質問・希望として扱わない注意を添える
+  //   （SNS 広告のスクショの「ペット可」から「ペット飼育の可否確認させて頂きます」と聞かれていないことに答えた）
+  const labelImageUnit = (u: string) => (/^\s*\[画像\] /.test(u) ? IMAGE_TEXT_LABEL + u.replace(/^\s*\[画像\] /, "") : u);
+  const customerMsgLines = splitMessageUnits(customerMessage, customerMessageUnits).map(labelImageUnit);
+  const hasImageTextUnit = customerMsgLines.some(isImageTextUnit);
+  const imageTextNote = hasImageTextUnit
+    ? `\n※${IMAGE_TEXT_LABEL.replace(/[【】]/g, "")}: 画像に写っている条件・設備・金額（ペット可・家賃・間取り・初期費用 等）をお客様の質問や希望条件として扱わない（「〇〇の可否確認」「〇〇のご条件で」と書かない）。物件の特定（物件名・駅名）にだけ使う`
+    : "";
+  const customerMsgBlock = (!isFollowUp && customerMsgLines.length > 1
     ? `【お客様の最新メッセージ（${customerMsgLines.length}通・1つの流れとして読み、1つの返信を生成すること。通ごとに相槌を打たない）】\n` +
       customerMsgLines.map((line, i) => `[${i + 1}通目] ${line}`).join("\n")
-    : `${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}\n${(customerMessage || "").split(MSG_SEP).join("\n")}`;
+    : `${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}\n${customerMsgLines.join("\n")}`) + imageTextNote;
 
   // topPrinciplesNote（DB由来）と replyContentNote（テンプレモードで空文字化）は
   // staticBlock を汚染しないよう dynamicBlock 側に配置する
@@ -2695,12 +2704,15 @@ export async function POST(req: NextRequest) {
     message = stripped || "😊";
   }
   // A-16: Vision抽出テキスト（「[画像] 」始まり）はスクショ内容としてラベル付け＋端末ステータス等のノイズ除去
-  if (!isTemplateOptimize && /^\[画像\] /.test(message)) {
-    message = "【スクショ内容】" + message
-      .replace(/^\[画像\] /, "")
-      .replace(/\d{1,2}:\d{2}\s*(?:5G|4G|LTE)?|1分で完了[^\n]*|お問い合わせ\(無料\)/g, "")
-      .trim();
+  // 2026-09-14 竹内（Hina 事例）: 先頭の1通だけでなく全ての画像の通に、「お客様の発言ではない」見出し（IMAGE_TEXT_LABEL・判定側と同じ定数）を付ける。
+  //   旧「【スクショ内容】」は発言でないことを伝えておらず、SNS 広告の「ペット可」を質問と読んで「ペット飼育の可否確認」を書いた
+  if (!isTemplateOptimize && /\[画像\] /.test(message)) {
+    message = message.split(MSG_SEP).map((u) => /^\s*\[画像\] /.test(u)
+      ? IMAGE_TEXT_LABEL + u.replace(/^\s*\[画像\] /, "").replace(/\d{1,2}:\d{2}\s*(?:5G|4G|LTE)?|1分で完了[^\n]*|お問い合わせ\(無料\)/g, "").trim()
+      : u).join(MSG_SEP);
   }
+  // お客様が書いた言葉だけ（意図の判定用。画像の読み取り文の通は除く）。物件の特定（URL・スクショ）には message を使う
+  const intentMessage = customerOwnWords(message).split(MSG_SEP).filter((u) => u.trim() !== "[画像]").join(MSG_SEP);
 
   // テンプレート最適化モード: 旧adaptルートで実績のある前処理をプロンプト組み立て前に適用
   // （退去予定日/内覧可能日の◯月◯日置換 + 挨拶差し替え。共有lib: app/lib/template-preprocess.ts）
@@ -3059,17 +3071,18 @@ export async function POST(req: NextRequest) {
     // 過去に送付済みでも、新たに「見積出して」と依頼されたら新規依頼として処理（恒久ブロック防止）
     // 顧客が金額について確認・反応している場合（「179,180円ですか！」「176,180円ですよね？」等の
     // 金額確認質問）も解除する。宣言ブロックより金額質問への回答を優先するため
-    const customerAskingAboutPrice = /[¥￥]?[0-9０-９][0-9０-９,，.．]{2,}[\s　]*円/.test(message);
+    // 2026-09-14 Hina 事例: 金額の確認・費用の質問・依頼・再確認・条件変更・日程はお客様の言葉（intentMessage）で見る（スクショの「2,980円」は質問ではない）
+    const customerAskingAboutPrice = /[¥￥]?[0-9０-９][0-9０-９,，.．]{2,}[\s　]*円/.test(intentMessage);
     // 物件URL/物件特定情報つきの費用質問は「新しい物件への新規見積依頼」→ 送付済み/約束済みフラグを解除する
     // （過去の別物件の見積送付・約束が新物件の見積作成宣言を恒久ブロックするのを防ぐ。
     //   例:「この物件の初期費用が知りたいです」＋URL → 会社の定型フローとして必ず見積作成宣言が必要）
     // 2026-09-08 Fable5: 共有 RE（CUSTOMER_PROPERTY_REF_RE / CUSTOMER_COST_QUESTION_RE / STAFF_ESTIMATE_PROMISE_RE）に統一
     const hasPropertyRef = CUSTOMER_PROPERTY_REF_RE.test(message);
-    const asksCost = CUSTOMER_COST_QUESTION_RE.test(message.replace(FORM_LABEL_RE, " "));
+    const asksCost = CUSTOMER_COST_QUESTION_RE.test(intentMessage.replace(FORM_LABEL_RE, " "));
     const isNewPropertyCostAsk = hasPropertyRef && asksCost;
     if (
       estimateAlreadySent &&
-      (CUSTOMER_ESTIMATE_REQUEST_RE.test(message) || customerAskingAboutPrice || isNewPropertyCostAsk)
+      (CUSTOMER_ESTIMATE_REQUEST_RE.test(intentMessage) || customerAskingAboutPrice || isNewPropertyCostAsk)
     ) {
       estimateAlreadySent = false;
     }
@@ -3096,19 +3109,19 @@ export async function POST(req: NextRequest) {
       // ① 新しい物件の提示（URL・画像）→ その物件は未確認なので空室確認宣言は正当
       const hasNewPropertyRef = /https?:\/\/|suumo|homes\.co|athome|chintai|goodrooms/i.test(message) || !!screenshotBase64;
       // ② 明示的な再確認依頼（「まだ空いてますか」「確認してもらえますか」）→ 再確認は正当
-      const asksRecheck = /(まだ|再度|改めて)[^\n]{0,8}(空い|募集|ある|残って)|空い(て|ており)ます(か|でしょうか)|(確認|問い合わせ)(して|し)[^\n]{0,6}(ください|下さい|もらえ|頂け|いただけ|ほしい|欲しい)/.test(message);
+      const asksRecheck = /(まだ|再度|改めて)[^\n]{0,8}(空い|募集|ある|残って)|空い(て|ており)ます(か|でしょうか)|(確認|問い合わせ)(して|し)[^\n]{0,6}(ください|下さい|もらえ|頂け|いただけ|ほしい|欲しい)/.test(intentMessage);
       // ③ 新規ピックアップ依頼・条件変更 → 新条件での物件送付宣言は正当
       const asksNewPickup =
-        AIX_CONDITION_CHANGE_RE.test(message) ||
-        /(他(に|の)|別の|違う|もっと|追加で|再度)[^\n]{0,10}(物件|お部屋|部屋|ピックアップ|探し)/.test(message) ||
-        /(探して|ピックアップして)[^\n]{0,6}(ください|下さい|もらえ|頂け|いただけ|ほしい|欲しい)/.test(message);
+        AIX_CONDITION_CHANGE_RE.test(intentMessage) ||
+        /(他(に|の)|別の|違う|もっと|追加で|再度)[^\n]{0,10}(物件|お部屋|部屋|ピックアップ|探し)/.test(intentMessage) ||
+        /(探して|ピックアップして)[^\n]{0,6}(ください|下さい|もらえ|頂け|いただけ|ほしい|欲しい)/.test(intentMessage);
       // ④ 内覧日程の再調整依頼 → 内覧調整宣言は正当
       // 内覧日程再調整 or 顧客が提案済み日時を受諾した場合（例: 「はい大丈夫です！」「その日でお願いします」）
       // 受諾時は viewingInvite=false にしてL944-945の内覧宣言禁止ノートを解除する（返信に日時を含めることが正当になるため）
-      const asksNewViewing = /(別の|他の|違う)[^\n]{0,6}(日|日程|候補|時間)|都合が(悪|つかな)/.test(message) ||
+      const asksNewViewing = /(別の|他の|違う)[^\n]{0,6}(日|日程|候補|時間)|都合が(悪|つかな)/.test(intentMessage) ||
         (!!lastStaffMsgForSearch &&
           /[0-9０-９]{1,2}\s*[\/月]\s*[0-9０-９]{1,2}/.test(lastStaffMsgForSearch) &&
-          /大丈夫|はい|OK|お願いします|その日で|で大丈夫|承知|かしこまり/.test(message));
+          /大丈夫|はい|OK|お願いします|その日で|で大丈夫|承知|かしこまり/.test(intentMessage));
 
       const VACANCY_RELEASE = hasNewPropertyRef || asksRecheck;
       const vacancyCheck = !VACANCY_RELEASE && fresh.some((l) => l.aix_type === "property_check_result");
@@ -3299,7 +3312,7 @@ export async function POST(req: NextRequest) {
 
     // G10（2026-09-08 Fable5）: 退去・引越し語の主語（現住居＝入居時期情報／提案物件／部屋探し終了）。
     //   negativeDetail（withdrawal 二重ガード）・isGratitudeReplyTPO・方向性・final-check（FAREWELL_ON_MOVEOUT_INFO）で共有
-    const moveOutSubject: MoveOutSubject = classifyMoveOutSubject(message ?? "");
+    const moveOutSubject: MoveOutSubject = classifyMoveOutSubject(intentMessage);
     // G26（2026-09-08 Fable5）: 確認約束 verdict（生成 managementNote/confirmationGateNote・bridge・final-check V5/V6 の三層で同一オブジェクト）。
     //   effectiveAction は鮮度ゲート済み。AIX タイミング判定は後段 applyAixTiming で合成（confirmCtxFinal）
     const confirmCtx: ConfirmationContextVerdict = resolveConfirmationContext({
@@ -3344,7 +3357,8 @@ export async function POST(req: NextRequest) {
       reason: string;
     };
     const conditionDetail: ConditionDetail = (() => {
-      const msg = (message ?? "").trim().slice(0, 800);
+      // 2026-09-14 Hina 事例: 条件の提示はお客様の言葉で見る（SNS 広告のスクショの「大阪 6万円」は条件の提示ではない）
+      const msg = intentMessage.trim().slice(0, 800);
       const none = (reason: string, extra: Partial<ConditionDetail> = {}): ConditionDetail =>
         ({ presented: false, areas: [], rent: null, hasRequest: false, changeRequest: false, reason, ...extra });
       if (msg.length === 0) return none("empty");
@@ -3396,12 +3410,13 @@ export async function POST(req: NextRequest) {
     const lastStaffIdxForEst =recentMessages.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0).at(-1) ?? -1;
     const unrepliedCustomerTexts = recentMessages.slice(lastStaffIdxForEst + 1).filter((m) => m.sender === "customer").map((m) => m.text ?? "");
     // 2026-09-10 Fable5 あみ事例: 持込予告は customerResponse 分類より前に必要なため決定論 regex で先に判定する（reply-context と同一定数）
-    const willSendObj = classifyWillSendObject(message ?? "");
-    const willSendSelf = CUST_WILL_SEND_SELF_PRED(message ?? "");
+    const willSendObj = classifyWillSendObject(intentMessage);
+    const willSendSelf = CUST_WILL_SEND_SELF_PRED(intentMessage);
+    // 2026-09-14 Hina 事例: 費用の質問・条件変更はお客様の言葉で見る。スクショが届いたこと（物件の指名）は hasCustomerImage で渡す
     const estimateVerdict: EstimateContextVerdict = isMisumoriContextAppropriate({
-      customerMessage: message,
+      customerMessage: intentMessage,
       sentPropertiesCount,
-      recentCustomerMessages: unrepliedCustomerTexts,
+      recentCustomerMessages: unrepliedCustomerTexts.map((t) => (isImageTextUnit(t) ? "[画像]" : t)),
       lastStaffMessage: lastStaffMsgForSearch,
       brainAction: brainMeta?.action ?? null,
       brainMeta,
@@ -3417,11 +3432,11 @@ export async function POST(req: NextRequest) {
     // A-1: 絵文字・記号のみ（スタンプ単独の sentinel 除去後を含む）
     const isDecorOnlyMsg = (message ?? "").trim().length > 0 && (DECOR_ONLY_RE.test((message ?? "").trim()) || /^(?:\[スタンプ\]\s*)+$/.test((message ?? "").trim()));
     // A-13: 不安・関西弁ネガ（isConditionPresented・isViewingCancel の直後・applying より先に評価）
-    const isAnxietyMsg = ANXIETY_RE.test(message ?? "") && (message ?? "").length < 200 && !isConditionPresented;
+    const isAnxietyMsg = ANXIETY_RE.test(intentMessage) && intentMessage.length < 200 && !isConditionPresented;
 
     // ── 感謝返し（2026-09-08 監査改修: ?なし疑問文・依頼形・柔らかい断り・情報提供を除外、実質文字数で判定）──
     const isGratitudeReplyTPO = (() => {
-      const raw = (message ?? "").trim();
+      const raw = intentMessage.trim();
       if (raw.length === 0) return false;
       // A-6（G-6）: スタッフ返信済みの follow-up 生成では「感謝を受け取る」方向を再注入しない（二重返信防止）
       if (isFollowUp) return false;
@@ -3464,7 +3479,7 @@ export async function POST(req: NextRequest) {
 
     // ── 一時保留（『今動けない状況語』or『後で見る・確認・返信する宣言』に限定。「検討」「考え」は isThinkingMsg に譲る）──
     const isTemporaryLeaveMsg = (() => {
-      const msg = (message ?? "").trim();
+      const msg = intentMessage.trim(); // 2026-09-14 Hina 事例: 意図の判定はお客様の言葉だけ（画像の読み取り文を除く）
       if (msg.length === 0 || msg.length >= 80) return false;
       // 2026-09-09 Fable5: 実質あり（予定語のみは可: 「帰ったら見ます」）は一時保留ではない
       if (substance.has && !substance.kinds.every((k) => k === "schedule")) return false;
@@ -3484,7 +3499,7 @@ export async function POST(req: NextRequest) {
 
     // ── 検討中（HARD/SOFT 分離＋時間要求型免除。旧 thinkExcl「検討して」は「検討してみます」を殺すデッドコードだった）──
     const isThinkingMsg = (() => {
-      const msg = (message ?? "").trim();
+      const msg = intentMessage.trim(); // 2026-09-14 Hina 事例: 意図の判定はお客様の言葉だけ（画像の読み取り文を除く）
       if (msg.length === 0 || msg.length >= 150) return false;
       // 2026-09-09 Fable5: 裸の「検討します」だけが検討中フォロー。懸念・持込予告・質問・条件を含むものは往復文脈（PAIR_MATRIX）へ
       if (substance.has) return false;
@@ -3507,7 +3522,7 @@ export async function POST(req: NextRequest) {
     type NegativeDetail = { kind: "withdrawal" | "staff_report" | null; viewingCancel: boolean };
     const negativeDetail: NegativeDetail = (() => {
       const none: NegativeDetail = { kind: null, viewingCancel: false };
-      const msg = (message ?? "").trim();
+      const msg = intentMessage.trim(); // 2026-09-14 Hina 事例: 意図の判定はお客様の言葉だけ（画像の読み取り文を除く）
       if (msg.length === 0) return none;
       if (isConditionPresented || isConditionChangeRequest) return none;
       // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した（「こちらの物件は大丈夫です」「フジパレスは無しで」）はお部屋探しの継続＝断り（お別れ）ではない。
@@ -3570,7 +3585,7 @@ export async function POST(req: NextRequest) {
     const isPostStrongRecommendation = (() => {
       // 2026-09-09 Fable5: 実質あり（懸念・質問・条件）は「了承」ではない
       if (isNegativeContext || isConditionPresented || substance.has) return false;
-      const msg = (message ?? "").trim();
+      const msg = intentMessage.trim(); // 2026-09-14 Hina 事例: 意図の判定はお客様の言葉だけ（画像の読み取り文を除く）
       // 了承の受け口: 感謝返し OR 「確認・閲覧系の短い了承」（強推し文脈でのみ採用）
       const isViewAck = msg.length > 0 && msg.length < 60 &&
         !TPO_REQUEST_RE.test(msg) &&
@@ -3775,7 +3790,7 @@ export async function POST(req: NextRequest) {
     // 2026-09-09 Fable5: 往復セルの必須要素と衝突する avoid（ES_WILL_SEND で brain avoid_topics「見積書」が必須要素「御見積書とあわせて」と衝突）も除外
     // 2026-09-10 Fable5 みく事例: 部分文字列一致 → 意味クラス一致（「新規物件ピックアップ」と「再ピックアップ宣言」を衝突と認識する）
     const activeAvoidTopics = effectiveAvoidTopics.filter(t =>
-      !(message ?? "").includes(t) && !avoidConflictsWithCell(pairContext, t)
+      !intentMessage.includes(t) && !avoidConflictsWithCell(pairContext, t)
     );
     // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
     const tpoNoteForLLM: string | null = (() => {
