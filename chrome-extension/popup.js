@@ -2935,6 +2935,7 @@ function preloadAdjForm(c) {
   document.getElementById("adj-area-station").value = _stStr;
   document.getElementById("adj-area-ward").value    = _wardStr;
   document.getElementById("adj-area").value          = _rawArea; // hidden: 内部互換用
+  document.getElementById("adj-rent-min").value  = c.rent_min || c.min_rent || "";
   document.getElementById("adj-rent-max").value  = c.rent_max || c.max_rent || "";
   document.getElementById("adj-area-min").value  = c.floor_area_min || c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || "";
   document.getElementById("adj-area-max").value  = c.floor_area_max || c.area_max || c.max_area || "";
@@ -3053,6 +3054,7 @@ async function applyAdjToCustomer(c) {
   }
   // どちらも空 → エリアは更新しない
 
+  const rentMin     = numVal("adj-rent-min");     if (rentMin !== null)     body.rent_min = rentMin;
   const rentMax     = numVal("adj-rent-max");     if (rentMax !== null)     body.rent_max = rentMax;
   const areaMin     = numVal("adj-area-min");     if (areaMin !== null)     body.floor_area_min = areaMin;
   const areaMax     = numVal("adj-area-max");     if (areaMax !== null)     body.floor_area_max = areaMax;
@@ -3134,6 +3136,19 @@ function syncFreshToCache(fresh) {
   if (selectedCustomer?.id === fresh.id) Object.assign(selectedCustomer, fresh);
 }
 
+// 一時調整の賃料下限（円）。preloadAdjForm が DB の rent_min を入れるので欄の値が正（空欄=下限なし）。
+// 上限以上の下限は検索が0件になるだけなので送らない。
+function readAdjRentMin(c, rentMax) {
+  const el = document.getElementById("adj-rent-min");
+  const v = el ? Number(el.value) : Number(c?.rent_min || c?.min_rent || 0);
+  if (!(v > 0)) return null;
+  if (rentMax && v >= Number(rentMax)) {
+    console.warn("[AX] 賃料下限が上限以上のため下限は使いません:", v, ">=", rentMax);
+    return null;
+  }
+  return v;
+}
+
 function buildAdjCustomer(c) {
   const adjWard    = document.getElementById("adj-area-ward")?.value.trim()    || "";
   const adjStation = document.getElementById("adj-area-station")?.value.trim() || "";
@@ -3146,6 +3161,7 @@ function buildAdjCustomer(c) {
     : (adjWard && adjStation)  ? "both"
     : (c.area_mode || "auto");
   const adjRentMax     = document.getElementById("adj-rent-max").value;
+  const adjRentMin     = readAdjRentMin(c, adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null));
   const adjWalk        = document.getElementById("adj-walk").value;
   const adjAge         = document.getElementById("adj-age").value;
   const adjFloor       = document.getElementById("adj-floor").value.trim();
@@ -3186,9 +3202,11 @@ function buildAdjCustomer(c) {
     area_ward:     adjWard    || null,
     area_station:  adjStation || null,
     area_mode:     _derivedMode,
+    rent_min:     adjRentMin,
+    min_rent:     adjRentMin,
     rent_max:     adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null),
     max_rent:     adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null),
-    walk_minutes: adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
+    walk_minutes: adjWalk   ? Number(adjWalk)    : (c.walk_minutes || null),
     building_age: adjAge     ? Number(adjAge)     : (c.building_age || null),
     floor_plan:         adjFloor       || c.floor_plan || c.layout || null,
     layout:             adjFloor       || c.floor_plan || c.layout || null,
@@ -3254,6 +3272,7 @@ function saveTempAdjSnapshot(cid) {
   const entry = {
     area:      document.getElementById("adj-area-ward")?.value.trim()    || "",
     station:   document.getElementById("adj-area-station")?.value.trim() || "",
+    rent_min:  document.getElementById("adj-rent-min")?.value || "",
     rent_max:  document.getElementById("adj-rent-max")?.value || "",
     area_min:  document.getElementById("adj-area-min")?.value || "",
     area_max:  document.getElementById("adj-area-max")?.value || "",
@@ -3261,6 +3280,7 @@ function saveTempAdjSnapshot(cid) {
     last_used: new Date().toISOString(),
   };
   const _same = (h) => h.area === entry.area && h.station === entry.station &&
+    String(h.rent_min || "") === String(entry.rent_min) &&
     String(h.rent_max) === String(entry.rent_max) &&
     String(h.area_min) === String(entry.area_min) &&
     String(h.area_max) === String(entry.area_max);
@@ -3287,7 +3307,9 @@ function renderTempAdjChips(cid) {
     const parts = [];
     if (e.area)     parts.push("🏙️" + e.area);
     if (e.station)  parts.push("🚉" + e.station);
-    if (e.rent_max) parts.push((Math.round(Number(e.rent_max) / 1000) / 10) + "万");
+    // 賃料は「6万〜11万」/「6万〜」/「11万」（下限なしは従来どおり上限のみ）
+    const _man = (v) => (Math.round(Number(v) / 1000) / 10) + "万";
+    if (e.rent_min || e.rent_max) parts.push((e.rent_min ? _man(e.rent_min) + "〜" : "") + (e.rent_max ? _man(e.rent_max) : ""));
     if (e.area_min) parts.push(e.area_min + "㎡~");
     if (e.area_max) parts.push("~" + e.area_max + "㎡");
     const label = parts.join(" ") || "(空)";
@@ -3314,6 +3336,9 @@ function applyTempAdjEntry(e) {
   if (stEl)   stEl.value   = e.station || "";
   const hid = document.getElementById("adj-area");
   if (hid && (e.area || e.station)) hid.value = [e.station, e.area].filter(Boolean).join("・");
+  // 下限導入前（v2.5.5以前）の履歴は rent_min を持たない → 触らず DB 値のまま
+  const rentMinEl = document.getElementById("adj-rent-min");
+  if (rentMinEl && e.rent_min !== undefined) rentMinEl.value = e.rent_min;
   const rentEl = document.getElementById("adj-rent-max");
   if (rentEl && e.rent_max !== undefined) rentEl.value = e.rent_max;
   const minEl = document.getElementById("adj-area-min");
@@ -3362,7 +3387,7 @@ function initTempAdjHandlers() {
     updateAdjModeIndicator();
     scheduleSave();
   });
-  ["adj-rent-max", "adj-area-min", "adj-area-max"].forEach((id) => {
+  ["adj-rent-min", "adj-rent-max", "adj-area-min", "adj-area-max"].forEach((id) => {
     document.getElementById(id)?.addEventListener("input", scheduleSave);
   });
 }
@@ -3809,6 +3834,7 @@ function openInstructions(siteKey) {
 
       const conditions = {
         rent_max:        itandiEffectiveRentMax,
+        rent_min:        readAdjRentMin(c, itandiEffectiveRentMax),
         area_mode:       _lockedMode_itandi || currentAreaMode,
         shikirei_free:   !!(document.getElementById("adj-shikirei-free")?.checked),
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
@@ -4017,7 +4043,7 @@ function openInstructions(siteKey) {
         area_ward:    _adjWard_rp    || null,
         area_station: _adjStation_rp || null,
         rent_max:     adjRentMax  ? Number(adjRentMax)  : (c.rent_max || c.max_rent || null),
-        rent_min:     c.rent_min  || null,
+        rent_min:     readAdjRentMin(c, adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null)),
         walk_minutes: adjWalk     ? Number(adjWalk)     : (c.walk_minutes || null),
         building_age: adjAge      ? Number(adjAge)      : (c.building_age || null),
         floor_plan:   adjFloor    || c.floor_plan || c.layout || null,
@@ -4364,7 +4390,7 @@ function openInstructions(siteKey) {
         source: isAutoSendAll ? "flagged_batch" : (isAutomated ? "automated" : "manual"),
         conditions: {
           area_mode:     _lockedMode || currentAreaMode,
-          rent_min:      adjC.rent_min,
+          rent_min:      readAdjRentMin(c, rpEffectiveRentMax),
           rent_max:      rpEffectiveRentMax,
           walk_minutes:  adjC.walk_minutes || apiData?.suggested_walk_minutes || null,
           floor_plan:    adjC.floor_plan,
@@ -4560,6 +4586,7 @@ function openInstructions(siteKey) {
       const adjRegDate = document.getElementById("adj-reg-date")?.value || "";
       const conditions = {
         rent_max:       adjC.rent_max || null,
+        rent_min:       adjC.rent_min || null,
         walk_minutes:   adjC.walk_minutes || apiData?.suggested_walk_minutes || null,
         floor_plan:     adjC.floor_plan || null,
         building_age:   adjC.building_age || null,

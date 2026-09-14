@@ -953,6 +953,13 @@
       var rentEl = document.querySelector('input[name="rent:lteq"]');
       if (rentEl) setReactVal(rentEl, rentVal);
     }
+    // 賃料下限（一時調整 v2.5.6）: 面積と同じ命名規則 name:gteq。欄が無ければ何もしない
+    if (cond.rent_min) {
+      var rentMinVal = cond.rent_min > 1000 ? cond.rent_min / 10000 : cond.rent_min;
+      var rentMinEl = document.querySelector('input[name="rent:gteq"]');
+      if (rentMinEl) { setReactVal(rentMinEl, rentMinVal); console.log('[AX] itandi 賃料下限:', rentMinVal + '万'); }
+      else console.warn('[AX] itandi 賃料下限の欄(rent:gteq)が見つかりません');
+    }
     tick(document.querySelector('input[name="totalRentCheck"]'));
 
     // ── STEP 2 & 3: 所在地 or 路線・駅モーダル → 完了後に残り条件 → 検索 ──

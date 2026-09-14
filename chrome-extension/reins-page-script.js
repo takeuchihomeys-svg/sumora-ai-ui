@@ -186,6 +186,28 @@
         : cond.rent_max;
       setVal(getField(76), rentVal);
     }
+    // ③' 賃料下限（一時調整 v2.5.6）: FROM は TO(76) の隣の idx 75 のはず（面積 87/88 と同じ並び）。
+    //     実機未確認のため「76 と同じ賃料の行にある入力欄」と確かめてから入れる（違えば入れない）
+    if (cond.rent_min) {
+      var rentFromEl = getField(75), rentToEl = getField(76);
+      var rentRowOk = false;
+      if (rentFromEl && rentToEl && rentFromEl.tagName === "INPUT") {
+        var rp = rentToEl.parentElement;
+        for (var ri = 0; rp && ri < 5; ri++, rp = rp.parentElement) {
+          if (rp.contains(rentFromEl)) {
+            rentRowOk = (rp.textContent || "").indexOf("賃料") >= 0 &&
+              rp.querySelectorAll('input[type="text"], input[type="number"], select').length <= 4;
+            break;
+          }
+        }
+      }
+      if (rentRowOk) {
+        setVal(rentFromEl, cond.rent_min > 1000 ? Math.floor(cond.rent_min / 10000) : cond.rent_min);
+        console.log("[AX] 賃料下限 FROM(idx75):", rentFromEl.value);
+      } else {
+        console.warn("[AX] 賃料下限: idx75 が賃料FROM欄と確認できないため入力しません");
+      }
+    }
 
     // ④ 建物使用部分面積 FROM (index 87, TO index 88)
     // 診断結果: [87]建物使用部分面積FROM / [88]建物使用部分面積TO / [89]間取部屋数FROM / [90]間取部屋数TO
