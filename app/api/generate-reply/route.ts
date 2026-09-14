@@ -4641,6 +4641,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 // 2026-09-11 竹内方針3: 呼びかけ位置の別名を確定名に統一（applySurfaceFixes ①）
                 nameAliases: addressName.aliases,
                 customerConditions: customerConditions || groundTruth.customerConditionsDb || "",
+                // 2026-09-14 ゆうこ事例: 見積書が不許可の文脈ではゲートの置換文で見積書の約束を作らない
+                estimateAllowed: estimateVerdict.mode !== "forbid",
                 protect: (s: string) => isCellRequiredSentence(s, pairContext),
                 aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend,
               };
@@ -5181,7 +5183,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             if (!isTemplateOptimize && draftBody && requiresInitialCostSave(pairContext)) {
               const ins = insertInitialCostSave(draftBody, customerName ?? "");
               if (ins.inserted) {
-                console.log(JSON.stringify({ tag: "initial-cost-save:inserted", conversationId, evidence: resolveInitialCostTight(pairContext.substance.units.join("\n")).evidence }));
+                console.log(JSON.stringify({ tag: "initial-cost-save:inserted", conversationId, evidence: resolveInitialCostTight(pairContext.substance.units.join("\n")).evidence || "cost_question_before_property" }));
                 draftBody = ins.text;
               }
             }

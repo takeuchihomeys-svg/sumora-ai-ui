@@ -691,15 +691,25 @@ type GateOpts = { customerMessage?: string; lastStaffMsg?: string; customerCondi
 //   旧実装は「家賃」「管理費」「共益費」と「N万円」が同じ文にあるだけで見積内訳とみなし、
 //   「家賃9万円〜13万円・2LDK…でピックアップ」を見積作成宣言／「確認しご連絡」に置換していた（PAIR_ELEMENT_MISSING・CONFIRM_NO_OBJECT を誘発）。
 //   条件＝範囲または上限の表記で、数字が顧客文・DB 条件・直前スタッフ文に実在し、費用内訳語（敷金・礼金・初期費用…）を含まない文
-const RANGE_OR_CAP_RE = /[0-9０-９.．]+\s*万?(?:円)?\s*[〜~～ー-]\s*[0-9０-９.．]+\s*万|[0-9０-９.．]+\s*万(?:円)?\s*(?:以内|以下|前後|まで|程度)/;
+//   2026-09-14 竹内（ゆうこ事例）: 「家賃13万円〜・1LDK…でオススメできるお部屋ピックアップ」（下限だけの条件）が範囲・上限の形に当たらず、
+//   見積金額内訳と判定されて「最大限割引させていただいた御見積書を作成しお送り」に置き換わった（物件が1件も無い最初の返信に見積書の約束）。
+//   下限だけ（13万円〜・13万以上）と、物件探しの宣言の文（周辺全域から／ピックアップ／お探し）の中の条件の数字も復唱として扱う
+const RANGE_OR_CAP_RE = /[0-9０-９.．]+\s*万?(?:円)?\s*[〜~～ー-]\s*[0-9０-９.．]+\s*万|[0-9０-９.．]+\s*万(?:円)?\s*(?:以内|以下|以上|前後|まで|程度|[〜~～])/;
+//   （「かなりオススメ出来るお部屋となります」は物件の紹介なので含めない）
+const SEARCH_DECL_RE = /周辺全域|ピックアップ|お探し|探させて/;
 const COST_WORD_RE = /初期費用|敷金|礼金|仲介手数料|保証料|鍵交換|火災保険|前家賃|日割|御見積|お見積|見積|合計|総額|内訳|割引|スモ割|節約/;
 const toHalfNum = (t: string) => t.replace(/[０-９．]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
 export function isCustomerConditionEcho(s: string, o?: GateOpts): boolean {
-  if (COST_WORD_RE.test(s) || !RANGE_OR_CAP_RE.test(s)) return false;
+  if (COST_WORD_RE.test(s) || !(RANGE_OR_CAP_RE.test(s) || SEARCH_DECL_RE.test(s))) return false;
   const src = toHalfNum(`${o?.customerMessage ?? ""}\n${o?.customerConditions ?? ""}\n${o?.lastStaffMsg ?? ""}`);
   const nums = [...toHalfNum(s).matchAll(/[0-9.]+(?=\s*(?:万|[〜~～ー-]))/g)].map((m) => m[0]);
+  // 「◯万円」等の数字以外の円表記（家賃72,000円）が混ざる文は復唱ではない（物件固有の金額の疑い）
+  if (/[0-9][0-9,]{3,}\s*円/.test(toHalfNum(s))) return false;
   return nums.length > 0 && nums.every((n) => src.includes(n));
 }
+
+/** 見積書の約束・案内を入れる置換文（見積の文脈が不許可の時は入れない） */
+const ESTIMATE_REPLACEMENT_RE = /見積/;
 
 const AIX_GATE_RULES: { name: string; test: (s: string, o?: GateOpts) => boolean; replacement: string; promisedReplacement?: string; vacancyDoneReplacement?: string; assertion?: AssertionBanRule }[] = [
   {
@@ -740,7 +750,9 @@ const AIX_GATE_RULES: { name: string; test: (s: string, o?: GateOpts) => boolean
         (/(?:数|[〜~～]|約\s*)万\s*円/.test(s) &&
           /(?:です|となります|になります|でございます|かかります|頂きます|いただきます)/.test(s) &&
           !/(?:目安|相場|一般的|通常|平均|多いです|ケースが|場合が)/.test(s))),
-    replacement: "物件の詳細な費用は、スタッフが資料を確認してAIX【見積書送る】からお送りします！！",
+    // 旧「物件の詳細な費用は、スタッフが資料を確認してAIX【見積書送る】からお送りします！！」は社内の操作名がお客様に届く文だった
+    replacement: "最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！",
+    promisedReplacement: "確認しご連絡させて頂きます😊！！",
   },
   {
     // 見積書カバー文（数字なしでも「御見積書となります」「ご査収ください」等で送付済みを装う文）
@@ -818,6 +830,9 @@ export function enforceAixGates(
     protect?: (sentence: string) => boolean;
     /** 顧客の DB 条件（見積金額内訳ゲートの「顧客条件の復唱」免除に使う） */
     customerConditions?: string;
+    /** 見積の文脈判定（estimate-context）が見積書を認めるか。false の時は見積系ゲートの置換文（御見積書を作成しお送り）を入れず文を落とす
+     *  （2026-09-14 ゆうこ事例: 物件が1件も無い最初の返信に置換文で見積書の約束が入った）。未指定は従来どおり */
+    estimateAllowed?: boolean;
   },
 ): { cleaned: string; violations: string[]; edits: GateEdit[] } {
   const violations: string[] = [];
@@ -904,6 +919,11 @@ export function enforceAixGates(
         }
       }
       violations.push(`${rule.name}: ${s.trim().slice(0, 40)}`);
+      // 見積書が不許可の文脈（物件が無い・見積の依頼が無い）では、見積書の約束を置換文で作らない（金額の文だけ落とす）
+      if (opts?.estimateAllowed === false && ESTIMATE_REPLACEMENT_RE.test(rule.replacement) && !(opts?.aixVacancyDone && rule.vacancyDoneReplacement)) {
+        edits.push({ rule: rule.name, before: s, after: null, reversible: false });
+        continue;
+      }
       // 同一ルールの違反が複数文ある場合、宣言テンプレは1回だけ挿入し残りは除去（内訳の複数行等）
       if (!usedReplacement.has(rule.name)) {
         usedReplacement.add(rule.name);
@@ -983,6 +1003,8 @@ export function validateAndClean(
     protect?: (sentence: string) => boolean;
     /** 顧客の DB 条件（見積金額内訳ゲートの顧客条件復唱免除） */
     customerConditions?: string;
+    /** 見積の文脈判定が見積書を認めるか（false = 見積系ゲートの置換文を入れない） */
+    estimateAllowed?: boolean;
     /** 2026-09-11 竹内方針3: resolveAddressName の aliases（呼びかけ位置の別名を確定名に統一する） */
     nameAliases?: string[];
     /** 曜日の自動修正の基準時刻（既定 Date.now()） */
@@ -1032,6 +1054,7 @@ export function validateAndClean(
       aixPickupDone: opts.aixPickupDone,
       protect: opts.protect,
       customerConditions: opts.customerConditions,
+      estimateAllowed: opts.estimateAllowed,
     });
     if (violations.length > 0) {
       issues.push(...violations.map(v => "AIXゲート違反(置換済): " + v));

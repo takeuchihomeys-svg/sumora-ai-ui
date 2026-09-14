@@ -46,6 +46,7 @@ import {
   resolveBrainCheckPattern, feedbackGateRate, type FeedbackRow,
 } from "@/app/lib/brain-aix-feedback";
 import { resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
+import { customerPointsAtProperty } from "@/app/lib/cost-question-scope";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -693,7 +694,14 @@ async function detectSignalBasedAixFallback(
     // ※ コスト懸念（信号0.9）・見積送付済み（信号3）を先に除外する並び順を変えないこと。
     // 2026-09-08 Fable5: 独自 regex（「予算」含み・「？」単独で依頼形扱い）を廃止し、共有 CUSTOMER_ESTIMATE_INTENT_RE に統一
     //   （route.ts detectAixTiming / final-check E5 / estimate-context.ts と四者同名）。条件フォームの項目ラベルは剥がしてから照合。
-    {
+    // 2026-09-14 竹内（ゆうこ事例）「見積書は物件が送られた時や物件の画像が送られた時等や見積依頼があった時」:
+    //   物件が1件も無い（こちらの送付・見積・確認なし／お客様の URL・画像・「ここの」・見積の語なし）費用の質問は 見積書送る にしない
+    //   （信号0.96・信号1 の両方。返信側 estimate-context の 3. と同じ規則 cost-question-scope）
+    const propertyInPlay = (pc?.property_send_count ?? 0) > 0
+      || usedAixTypes.some((t) => t === "property_send" || t === "property_recommendation" || t === "estimate_sheet" || t === "property_check_result" || t === "acknowledge_check")
+      || msgs.some((m) => m.sender !== "customer" && /🌟|https?:\/\/|[0-9０-９]{2,4}号室|ご査収/.test(m.text ?? ""))
+      || msgs.some((m) => m.sender === "customer" && customerPointsAtProperty(m.text ?? ""));
+    if (propertyInPlay) {
       const custBody = custText.replace(FORM_LABEL_RE, " ");
       const viewingReq = /(内覧|内見|見学).{0,4}(したい|希望|でき|いつ|日程|調整)/;
       const otherPropertyReq =
@@ -737,7 +745,7 @@ async function detectSignalBasedAixFallback(
     // （コスト懸念＝信号0.9・見積送付済み＝信号3 は上で先に除外済み）
     // 2026-09-08 Fable5: 語出現（/見積|初期費用/）ではなく、項目ラベル除去後の依頼・質問形（CUSTOMER_ESTIMATE_INTENT_RE）でのみ estimate_sheet
     //   （条件フォームの「⑦初期費用」ラベル・「初期費用を貯めてる途中」等の語出現では発火しない・四者同名）
-    if (!isConditionFormMessage(custText) && CUSTOMER_ESTIMATE_INTENT_RE.test(custText.replace(FORM_LABEL_RE, " "))) return "estimate_sheet";
+    if (propertyInPlay && !isConditionFormMessage(custText) && CUSTOMER_ESTIMATE_INTENT_RE.test(custText.replace(FORM_LABEL_RE, " "))) return "estimate_sheet";
 
     // 信号TikTok（弊社SNS動画流入 → property_search）:
     // 弊社TikTok/Instagramの動画で物件に興味を持って問い合わせてきた顧客。
@@ -2368,6 +2376,15 @@ ${history}`;
     if (!promiseAix && sceneEvidence?.scene === "S2_move_in" && finalAix === "acknowledge_check") {
       finalAix = "property_check_result";
       decisionSource = "correction:scene_S2_check_result";
+    }
+    // 2026-09-14 竹内（ゆうこ事例）「見積書は物件が送られた時や物件の画像が送られた時等や見積依頼があった時」:
+    //   物件が1件も無い（こちらの送付0・見積なし／会話のどこにもお客様の URL・画像・号室・「ここの」・見積の語なし）のに 見積書送る → 外す。
+    //   お客様が条件を送っていれば物件ピックアップ、それ以外は AIX なし（質問に答えて「初期費用を抑える」一文＝返信側）
+    if (!promiseAix && finalAix === "estimate_sheet" && brainLedger.facts.propertiesSentCount === 0 && !brainLedger.facts.estimateSent
+      && !unrepliedTurn.hasImage
+      && !messagesOldestFirst.some((m) => m.sender === "customer" && customerPointsAtProperty(m.text ?? ""))) {
+      finalAix = messagesOldestFirst.some((m) => m.sender === "customer" && isConditionFormMessage(m.text ?? "")) ? "property_send" : null;
+      decisionSource = "correction:estimate_no_property";
     }
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);

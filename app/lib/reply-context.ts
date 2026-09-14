@@ -9,6 +9,7 @@
 // 2026-09-09 Fable5 行動台帳: action-ledger.ts → reply-context.ts の一方向 runtime 依存。ここは `import type` のみ（TDZ 回避）
 import type { ActionLedger } from "./action-ledger";
 import { resolveInitialCostTight, INITIAL_COST_SAVE_DECL_RE, INITIAL_COST_SAVE_LITERAL } from "./initial-cost-tight";
+import { costQuestionBeforeProperty } from "./cost-question-scope";
 
 // ─────────────────────────────────────────────────────────────
 // 0. メッセージ単位（page.tsx / bg-async が未返信メッセージを結合する専用区切り）
@@ -1250,11 +1251,14 @@ export function isCellRequiredSentence(s: string, pair: PairContext): boolean {
 //   リテラルは事実（金額・物件）を含まない自社方針の文なので、必須要素にしても創作の入口にならない。見積書の宣言とは別物（見積書は書かない）。
 //   条件を受ける全てのセル（CA_CONDITION・PD_CONDITION_CHANGE・ANY_CONDITION_CHANGE・PS_CONDITION_CHANGE）に同じ要素を置く
 //   （直前のスタッフ発言でセルが変わる: 最初の連絡でフォーム＝ANY、フォームを送った後＝CA）
+// 2026-09-14 竹内（ゆうこ事例）: 物件がまだ無い時の費用の質問（「これは分割払いで初期費用ですか？」）も同じ一文で答える
+//   （見積書は物件が届いてから。costQuestionBeforeProperty・estimate-context の 3. と同じ規則）
 const INITIAL_COST_SAVE_ELEMENT: PairMustInclude = {
   // ラベルがそのまま生成の「必須要素」に出る（fix は修正ループ用）。名前だけでは書かれなかったので文例をラベルに入れる（YUMA 再現 0/3）
-  label: `初期費用を抑える宣言「${INITIAL_COST_SAVE_LITERAL}」（お客様の⑦初期費用の限度額が家賃の3倍未満・抑えたいご希望のため。見積書・金額は書かない）`,
+  label: `初期費用を抑える宣言「${INITIAL_COST_SAVE_LITERAL}」（お客様が初期費用を抑えたい／物件が決まる前に費用を聞いた。見積書・金額は書かない）`,
   detect: INITIAL_COST_SAVE_DECL_RE,
-  when: (p) => resolveInitialCostTight(p.substance.units.join("\n")).tight,
+  when: (p) => resolveInitialCostTight(p.substance.units.join("\n")).tight
+    || costQuestionBeforeProperty(p.substance.units.join("\n"), p.ledger?.facts.propertiesSentCount ?? 0),
   fix: `「${INITIAL_COST_SAVE_LITERAL}」を1文入れる（見積書・金額は書かない。この1文は目安の字数に含めない）`,
 };
 

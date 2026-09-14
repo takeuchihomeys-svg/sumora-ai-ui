@@ -11,7 +11,7 @@
 //   0. ハード禁止: closed_won ／ brain.avoid_topics に「見積」（顧客の明示依頼があれば依頼が勝つ）
 //   1. customer_estimate_request : 顧客が見積書そのものを依頼（送付済みでも再依頼なら再解禁）
 //   2. staff_promise_echo(既送付) : 見積が送付済み/約束済みで新規依頼が無い → 復唱・受付のみ
-//   3. customer_cost_question    : 顧客が費用・初期費用・総額・いくら・スモ割を質問
+//   3. customer_cost_question    : 顧客が費用・初期費用・総額・いくら・スモ割を質問（物件がある時だけ。物件が無い費用の質問は 7. none）
 //   4. customer_sent_property    : 顧客が URL・画像・号室付き物件名を送付（暗黙の見積依頼）
 //   5. after_property_sent       : スタッフ物件送付済み ∧ 顧客が特定物件に前向き反応（条件変更が主題なら不可）
 //   6. staff_promise_echo(直前約束): 直前スタッフが見積約束 → 復唱のみ
@@ -28,6 +28,7 @@ import {
   isConditionFormMessage,
 } from "./line-reply-prompts";
 import type { SuggestedAixMeta } from "./brain-core";
+import { customerPointsAtProperty } from "./cost-question-scope";
 
 export type HistoryMessage = { sender: string; text: string; createdAt?: string; isAix?: boolean };
 
@@ -189,11 +190,18 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
     return { ...base, appropriate: true, mode: "echo_only", trigger: "staff_promise_echo", severity: "warning", reason: "見積書は既に約束／送付済み（復唱・短い受付文のみ・再宣言不可）", evidence: firstMatch(STAFF_ESTIMATE_PROMISE_RE, lastStaff) };
   }
 
-  // 3. 費用質問
-  if (asksCost) {
-    return { ...base, appropriate: true, mode: "declare", trigger: "customer_cost_question", severity: "warning", reason: hasPropertyRef ? "特定物件（URL/画像）＋費用質問" : "お客様が費用・初期費用・総額を質問", evidence: firstMatch(CUSTOMER_COST_QUESTION_RE, burst) };
+  // 3. 費用質問（物件がある時だけ）
+  //   2026-09-14 竹内（ゆうこ事例）「見積書は物件が送られた時や物件の画像が送られた時等や見積依頼があった時」:
+  //   物件が1件も無い（こちらの送付0・お客様の URL/画像/号室なし）費用の質問（「これは分割払いで初期費用ですか？」）は見積書を約束しない。
+  //   実データ（120日）: 物件が無い時の費用の質問 15件でスタッフが見積書を約束したのは3件（物件を指す「ここ」・見積の依頼・スクショを送って頂けたら）だけ。
+  //   残りは質問に答え「初期費用も最大限割引させて頂き…費用を出来る限り抑えさせて頂きます」（initial-cost-tight・返信の必須要素）
+  //   物件・依頼の有無は連投全体で見る（URL が前の通・「ここの初期費用」・「お見積もり確認したい」＝cost-question-scope と同じ判定）
+  const hasPropertyContext = hasPropertyRef || sent > 0 || !!input.hasCustomerImage || (!isForm && customerPointsAtProperty(burst));
+  if ((asksCost || (brainCostQuestion && !isForm)) && !hasPropertyContext) signals.push("cost_question_no_property");
+  if (asksCost && hasPropertyContext) {
+    return { ...base, appropriate: true, mode: "declare", trigger: "customer_cost_question", severity: "warning", reason: hasPropertyRef ? "特定物件（URL/画像）＋費用質問" : "お客様が費用・初期費用・総額を質問（送付済みの物件あり）", evidence: firstMatch(CUSTOMER_COST_QUESTION_RE, burst) };
   }
-  if (brainCostQuestion && !isForm) {
+  if (brainCostQuestion && !isForm && hasPropertyContext) {
     return { ...base, appropriate: true, mode: "declare", trigger: "customer_cost_question", severity: "warning", reason: "brain.customer_questions が費用質問と判定", evidence: (bm!.customer_questions ?? []).find((q) => COST_WORD_RE.test(q)) ?? null };
   }
 
@@ -225,7 +233,9 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
   }
 
   // 7. 該当なし
-  const reason = isForm
+  const reason = signals.includes("cost_question_no_property")
+    ? "物件がまだ無い費用の質問（見積書は物件が届いてから）→ 質問に答え、初期費用を抑える宣言"
+    : isForm
     ? "条件フォーム受信（費用質問なし）→ ピックアップ宣言"
     : isConditionChange
       ? "条件変更依頼が主題（費用質問なし）→ 新条件復唱＋ピックアップ宣言"
@@ -247,7 +257,7 @@ export function buildEstimateGateNote(v: EstimateContextVerdict | null): string 
   }
   const facts =
     `\n・送付済み物件数: ${v.sentPropertiesCount}件` +
-    `\n・お客様の費用質問: ${v.trigger === "customer_cost_question" ? `あり『${v.evidence ?? ""}』` : "なし"}` +
+    `\n・お客様の費用質問: ${v.trigger === "customer_cost_question" ? `あり『${v.evidence ?? ""}』` : v.signals.includes("cost_question_no_property") ? "あり（物件はまだ無い＝見積書ではなく質問への回答と初期費用を抑える宣言）" : "なし"}` +
     `\n・お客様の見積依頼: ${v.trigger === "customer_estimate_request" ? `あり『${v.evidence ?? ""}』` : "なし"}` +
     `\n・お客様の特定物件提示（URL/画像/号室）: ${v.trigger === "customer_sent_property" ? `あり『${v.evidence ?? ""}』` : "なし"}` +
     `\n・お客様の物件持込予告（まだ届いていない）: ${v.trigger === "customer_will_send_property" ? `あり『${v.evidence ?? ""}』` : "なし"}` +
@@ -261,7 +271,7 @@ export function buildEstimateGateNote(v: EstimateContextVerdict | null): string 
       (v.trigger === "customer_will_send_property"
         ? "お客様はまだ物件を送っていない（予告）。「お送り頂きました物件の募集状況確認させて頂き、最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！」の未来形1文のみ。物件名・金額・「ご査収ください」等の添付前提カバー文は書かない。"
         : "") +
-      "\n【見積書作成宣言を使ってよい文脈はこの4つのみ】①お客様が費用・初期費用・総額・いくらを質問 ②お客様が見積を依頼 ③お客様が特定物件（URL・画像・号室）を送付 ④スタッフ送付物件にお客様が前向き反応"
+      "\n【見積書作成宣言を使ってよい文脈はこの4つのみ】①物件がある時のお客様の費用・初期費用・総額・いくらの質問 ②お客様が見積を依頼 ③お客様が特定物件（URL・画像・号室）を送付 ④スタッフ送付物件にお客様が前向き反応"
     );
   }
   if (v.mode === "echo_only") {
