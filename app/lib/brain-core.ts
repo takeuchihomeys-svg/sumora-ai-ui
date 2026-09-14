@@ -38,7 +38,8 @@ import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（timeZone 抜けの UTC 表示を防ぐ）
 import { jstMD, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
 // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 分析モード判定（決定論の場面の証拠で cached→incremental に格上げ）
-import { decideAnalysisMode } from "@/app/lib/brain-analysis-mode";
+import { decideAnalysisMode, nothingNewSinceLastAnalysis } from "@/app/lib/brain-analysis-mode";
+import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した発言は必ず分析し直す（cached で前回の「もう1件の内覧日確定」を持ち越さない）
 import { detectPropertyPass, CUST_WILL_SEND_SELF_PRED, analyzeSubstance } from "@/app/lib/reply-context";
 // 2026-09-12 同 段2: 場面の証拠（決定論）とスタッフが押した AIX の実績（brain_aix_feedback）をブレインの入力にする
@@ -3261,14 +3262,18 @@ async function brainWriteBlock(
   return null;
 }
 
+/** true: 分析して書いた / false: 書かなかった・失敗 / "unchanged": 前回の分析から何も届いていないので分析も書き込みもしなかった（保存済みの判断が最新） */
+export type BrainRunResult = boolean | "unchanged";
+
 export async function analyzeAndSaveBrainMeta(
   conversationId: string,
   // 2026-09-12: スタッフの宣言送信直後（send-line-message）は顧客の新着が無くても cached にせず分析し直す（宣言→AIX の判断のため）
-  runOpts?: { forceIncremental?: boolean },
-): Promise<boolean> {
+  // inputUpdatedAt: 画像の読み取り完了など、メッセージ数は同じでも中身が変わった時（分析し直す）
+  runOpts?: BrainRunOpts,
+): Promise<BrainRunResult> {
   const { data: conv, error: selectError } = await supabase
     .from("conversations")
-    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction, brain_full_analyzed_at, brain_full_msg_count, brain_deep_analyzed_at, brain_deep_msg_count, last_brain_meta, customer_name, is_post_apply, brain_strategy")
+    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction, brain_full_analyzed_at, brain_full_msg_count, brain_deep_analyzed_at, brain_deep_msg_count, last_brain_meta, suggested_aix_meta, customer_name, is_post_apply, brain_strategy")
     .eq("id", conversationId)
     .maybeSingle();
   if (selectError) {
@@ -3364,6 +3369,23 @@ export async function analyzeAndSaveBrainMeta(
     .limit(12);
   const latestTurn = unrepliedCustomerTurn((recentForTurn ?? []) as Array<{ sender: string; text: string | null }>);
   const latestTurnText = latestTurn.text || latestText;
+
+  // 2026-09-14 竹内（API の漏れ調査）: 前回の分析から会話に何も届いていなければ、分析も書き込みもしない（保存済みの判断が最新）。
+  //   AIX 誘導中の会話を開くたびに同じ発言を分析し直していた（brain-analysis-mode nothingNewSinceLastAnalysis）
+  const suggestedNow = (convData?.suggested_aix_meta ?? null) as { analyzed_msg_ts?: string | null } | null;
+  if (nothingNewSinceLastAnalysis({
+    totalMsgCount: totalMsgCount ?? 0,
+    lastAnalyzedMsgCount: (convData?.brain_full_msg_count as number | null) ?? null,
+    lastAnalyzedAt: (convData?.brain_full_analyzed_at as string | null) ?? null,
+    hasSuggestedMeta: !!suggestedNow,
+    suggestedSawLatestCustomer: !brainMissedCustomerMessage(latestMsg?.created_at as string | undefined, [suggestedNow?.analyzed_msg_ts ?? null]),
+    latestTurnHasImage: latestTurn.hasImage,
+    forced: !!runOpts?.forceIncremental || !!runOpts?.inputUpdatedAt,
+    nowMs: Date.now(),
+  })) {
+    console.log(JSON.stringify({ tag: "brain:mode", conversationId, mode: "unchanged", upgradeReason: null, msgCount: totalMsgCount ?? 0 }));
+    return "unchanged";
+  }
   const hoursSinceLastMsg = latestMsgAt && lastFullAt
     ? (latestMsgAt.getTime() - lastFullAt.getTime()) / (1000 * 60 * 60)
     : Infinity;
@@ -3975,7 +3997,14 @@ export type BrainGateSnapshot = {
 //   ブレイン入力費用の約2割が無駄で、並走した結果が互いを捨てる T3 の原因にもなっていた。
 //   同じプロセス内では1会話1本にし、実行中に来た呼び出しはその結果を待つ。実行開始後に新しいメッセージ（顧客の発言・スタッフの宣言）が
 //   届いていた時だけ、終わった後に1回だけ分析し直す（同じメッセージへの重複呼び出しは1本で済ませる。別インスタンス同士は上の「古い判断で上書きしない」で守る）
-const brainRunsInFlight = new Map<string, { promise: Promise<boolean>; rerun: boolean; force: boolean; mustRerun: boolean; startedAt: number }>();
+const brainRunsInFlight = new Map<string, { promise: Promise<BrainRunResult>; rerun: boolean; force: boolean; mustRerun: boolean; startedAt: number }>();
+
+/** 2回の実行結果をまとめる（書いた > 何も届いていない > 書かなかった） */
+function mergeBrainRunResults(a: BrainRunResult, b: BrainRunResult): BrainRunResult {
+  if (a === true || b === true) return true;
+  if (a === "unchanged" || b === "unchanged") return "unchanged";
+  return false;
+}
 
 /** ブレインの実行オプション。inputUpdatedAt: メッセージの中身が書き換わった時刻（画像の読み取り完了）。それより前に始まった実行は中身を見ていないので、終わった後に分析し直す */
 export type BrainRunOpts = { forceIncremental?: boolean; inputUpdatedAt?: number };
@@ -3999,7 +4028,7 @@ async function hasNewerCustomerMessage(conversationId: string): Promise<boolean>
   return Date.parse(latest.created_at as string) > Date.parse(analyzedTs);
 }
 
-async function analyzeAndSaveBrainMetaCoalesced(conversationId: string, runOpts?: BrainRunOpts): Promise<boolean> {
+async function analyzeAndSaveBrainMetaCoalesced(conversationId: string, runOpts?: BrainRunOpts): Promise<BrainRunResult> {
   const cur = brainRunsInFlight.get(conversationId);
   if (cur) {
     cur.rerun = true;
@@ -4009,14 +4038,15 @@ async function analyzeAndSaveBrainMetaCoalesced(conversationId: string, runOpts?
     console.log(JSON.stringify({ tag: "brain:coalesced", conversationId, force: !!runOpts?.forceIncremental, mustRerun: cur.mustRerun }));
     return cur.promise;
   }
-  const entry = { rerun: false, force: false, mustRerun: false, promise: Promise.resolve(false), startedAt: Date.now() };
+  const entry = { rerun: false, force: false, mustRerun: false, promise: Promise.resolve<BrainRunResult>(false), startedAt: Date.now() };
   entry.promise = (async () => {
-    let ok = await analyzeAndSaveBrainMeta(conversationId, runOpts);
+    let ok: BrainRunResult = await analyzeAndSaveBrainMeta(conversationId, runOpts);
     // 実行中に来た呼び出しがあり、かつ実行開始後に新しいメッセージ（顧客の発言・スタッフの宣言）が届いていた時・
     //   画像の中身が読み取られた時だけ分析し直す（同じメッセージへの重複呼び出しなら、今の結果がそのまま最新）
     if (entry.rerun && (entry.mustRerun || await hasMessageSince(conversationId, entry.startedAt))) {
       console.log(JSON.stringify({ tag: "brain:rerun-after-coalesce", conversationId, force: entry.force, mustRerun: entry.mustRerun }));
-      ok = (await analyzeAndSaveBrainMeta(conversationId, { forceIncremental: entry.force || runOpts?.forceIncremental })) || ok;
+      // やり直しは中身が変わった（新着・画像の読み取り）ことが前提なので「何も届いていない」で省かない（inputUpdatedAt を渡す）
+      ok = mergeBrainRunResults(await analyzeAndSaveBrainMeta(conversationId, { forceIncremental: entry.force || runOpts?.forceIncremental, inputUpdatedAt: entry.mustRerun ? Date.now() : undefined }), ok);
     }
     return ok;
   })().finally(() => brainRunsInFlight.delete(conversationId));
@@ -4029,13 +4059,16 @@ export async function runBrainAndNotify(
   msgText?: string,
   runOpts?: BrainRunOpts,
 ): Promise<BrainGateSnapshot | null> {
-  let analyzed = false;
+  let analyzed: BrainRunResult = false;
   try {
     analyzed = await analyzeAndSaveBrainMetaCoalesced(conversationId, runOpts);
   } catch (e) {
     console.warn("[brain-core] runBrainAndNotify analyze failed:", conversationId, e instanceof Error ? e.message : e);
   }
   if (!analyzed) return null;
+  // 前回の分析から何も届いていない: 保存済みの判断（最新のお客様の発言を見た判断）をそのまま返す。
+  //   通知・条件ブレイン・カレンダーは前回の分析の時に済んでいるので繰り返さない（条件ブレインは Haiku の呼び出し）
+  const unchanged = analyzed === "unchanged";
 
   const { data: row, error } = await supabase
     .from("conversations")
@@ -4068,6 +4101,7 @@ export async function runBrainAndNotify(
     console.log(JSON.stringify({ tag: "brain:stale-snapshot", conversationId, analyzed_msg_ts: snapshot.meta.analyzed_msg_ts ?? null }));
     return null;
   }
+  if (unchanged) return snapshot.meta.source === "cached" ? null : snapshot;
 
   // 以下はスナップショット返却に不要 → fire-and-forget で 90s race budget を節約
   // 2026-09-12 竹内方針: 売上番長グループへの返信・AIX 系の通知は「AIX要対応」だけにする。

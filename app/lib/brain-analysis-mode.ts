@@ -12,6 +12,44 @@ import { detectAixSceneEvidence } from "./aix-scene-evidence";
 export const FULL_ANALYSIS_EVERY_N_MESSAGES = 10;
 export const FULL_REFRESH_EVERY_N_MESSAGES = 30;  // フル分析から30件で強制フルリフレッシュ（アンカリング防止）
 
+/** 前回の分析から何も届いていない時に、保存済みの判断をそのまま使う時間（これより古ければ時間の経過を踏まえて分析し直す） */
+export const UNCHANGED_REUSE_HOURS = 6;
+
+export type UnchangedInput = {
+  /** 今の会話のメッセージ総数（お客様・スタッフ・AIX 全部） */
+  totalMsgCount: number;
+  /** 前回の実分析（full/incremental）の時のメッセージ総数（brain_full_msg_count） */
+  lastAnalyzedMsgCount: number | null;
+  /** 前回の実分析の時刻（brain_full_analyzed_at） */
+  lastAnalyzedAt: string | null;
+  /** 保存済みの判断（suggested_aix_meta）があるか */
+  hasSuggestedMeta: boolean;
+  /** 保存済みの判断が最新のお客様の発言を見ているか（brainMissedCustomerMessage の否定） */
+  suggestedSawLatestCustomer: boolean;
+  /** 未返信の連投に画像がある（読み取りが後から入る＝中身が変わりうる） */
+  latestTurnHasImage: boolean;
+  /** スタッフの宣言直後・画像の読み取り完了など、呼び出し側が分析し直しを求めている */
+  forced: boolean;
+  nowMs: number;
+};
+
+/**
+ * 2026-09-14 竹内（API の漏れ調査）: 前回の分析から会話に何も届いていない（メッセージ総数が同じ）なら、分析も書き込みもしない。
+ *   旧: 新しい発言が無くても、会話が10件以下・申込等の語・URL・画像・24時間経過のどれかで full/incremental になり、
+ *   AIX 誘導中の会話を開くたび（bg-async）に同じ発言を分析し直していた（9/14: 分析87件中12件が前回と同じ発言。34秒〜88分後）。
+ *   同じ入力への再分析は判断のくじ引きで（設計知見「分析強化の原則」③）、費用だけ増える。
+ *   cached（AIX を空にする省略）にしないのは、保存済みの判断は今回の発言を見た新しい判断だから（空にすると開くたびに AIX が消える）。
+ */
+export function nothingNewSinceLastAnalysis(i: UnchangedInput): boolean {
+  if (i.forced || i.latestTurnHasImage) return false;
+  if (!i.hasSuggestedMeta || !i.suggestedSawLatestCustomer) return false;
+  if (i.lastAnalyzedMsgCount == null || i.lastAnalyzedMsgCount <= 0 || !i.lastAnalyzedAt) return false;
+  if (i.totalMsgCount !== i.lastAnalyzedMsgCount) return false;
+  const at = Date.parse(i.lastAnalyzedAt);
+  if (!Number.isFinite(at)) return false;
+  return i.nowMs - at < UNCHANGED_REUSE_HOURS * 60 * 60 * 1000;
+}
+
 export type AnalysisModeInput = {
   hasCachedMeta: boolean;
   totalMsgCount: number;
