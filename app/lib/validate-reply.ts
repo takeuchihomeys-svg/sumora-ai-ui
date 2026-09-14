@@ -699,13 +699,26 @@ const RANGE_OR_CAP_RE = /[0-9０-９.．]+\s*万?(?:円)?\s*[〜~～ー-]\s*[0-9
 const SEARCH_DECL_RE = /周辺全域|ピックアップ|お探し|探させて/;
 const COST_WORD_RE = /初期費用|敷金|礼金|仲介手数料|保証料|鍵交換|火災保険|前家賃|日割|御見積|お見積|見積|合計|総額|内訳|割引|スモ割|節約/;
 const toHalfNum = (t: string) => t.replace(/[０-９．]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
+/** 物件探しの宣言の文でも復唱にしない語（見積書そのもの） */
+const ESTIMATE_DOC_RE = /見積|内訳/;
 export function isCustomerConditionEcho(s: string, o?: GateOpts): boolean {
-  if (COST_WORD_RE.test(s) || !(RANGE_OR_CAP_RE.test(s) || SEARCH_DECL_RE.test(s))) return false;
-  const src = toHalfNum(`${o?.customerMessage ?? ""}\n${o?.customerConditions ?? ""}\n${o?.lastStaffMsg ?? ""}`);
-  const nums = [...toHalfNum(s).matchAll(/[0-9.]+(?=\s*(?:万|[〜~～ー-]))/g)].map((m) => m[0]);
-  // 「◯万円」等の数字以外の円表記（家賃72,000円）が混ざる文は復唱ではない（物件固有の金額の疑い）
-  if (/[0-9][0-9,]{3,}\s*円/.test(toHalfNum(s))) return false;
-  return nums.length > 0 && nums.every((n) => src.includes(n));
+  // 2026-09-14 竹内（ゆうこ事例②）「ちゃんとした会話にして固める」: 「天王寺周辺・1LDK・初期費用23万円以内で…オススメできるお部屋ピックアップ」
+  //   （お客様の予算＝初期費用の上限の復唱）が「初期費用」の語だけで見積金額内訳になり、文ごと落ちて下書きが「ピックアップ出来次第お送り」だけになった。
+  //   スタッフの実送信でも物件探しの宣言の文30文（「初期費用30万円以内でご入居可能なお部屋ピックアップ出来次第」「家賃5万円・初期費用10万円以内のご条件に合う…」）が同じ誤り。
+  //   物件探しの宣言の文は、初期費用・家賃・敷金礼金0円 等の条件の語を許し、数字がお客様の条件（発言・DB の条件）に実在すれば復唱。見積書そのもの（見積・内訳）は対象外
+  const search = SEARCH_DECL_RE.test(s);
+  if (search) { if (ESTIMATE_DOC_RE.test(s)) return false; }
+  else if (COST_WORD_RE.test(s) || !RANGE_OR_CAP_RE.test(s)) return false;
+  const src = toHalfNum(`${o?.customerMessage ?? ""}\n${o?.customerConditions ?? ""}\n${o?.lastStaffMsg ?? ""}`).replace(/[,，]/g, "");
+  const h = toHalfNum(s);
+  const nums = [...h.matchAll(/[0-9.]+(?=\s*(?:万|[〜~～ー-]))/g)].map((m) => m[0]);
+  // 「家賃72,000円」等の円表記: 物件探しの宣言の文でお客様の条件にある金額なら復唱、それ以外（物件固有の金額の疑い）は復唱ではない
+  const yen = [...h.matchAll(/([0-9][0-9,]{3,})\s*円/g)].map((m) => m[1].replace(/,/g, ""));
+  if (yen.length > 0 && !(search && yen.every((y) => src.includes(y)))) return false;
+  const all = [...nums, ...yen].filter((n) => n !== "0");
+  // 数字の無い物件探しの宣言（「敷金礼金0円の…ピックアップ」）は金額を作っていないので復唱
+  if (all.length === 0) return search && /[0-9０-９]/.test(s) && !/[1-9][0-9,]*\s*(?:万|円)/.test(h);
+  return all.every((n) => src.includes(n));
 }
 
 /** 見積書の約束・案内を入れる置換文（見積の文脈が不許可の時は入れない） */

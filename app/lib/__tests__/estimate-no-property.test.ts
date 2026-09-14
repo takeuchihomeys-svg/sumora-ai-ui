@@ -23,6 +23,19 @@ it("ゆうこ: 条件の復唱（家賃13万円〜＝下限だけ）は見積金
   const r = enforceAixGates(ECHO, { customerMessage: TURN.join("\n") });
   expect(r.violations.length).toBe(0); expect(r.cleaned).toBe(ECHO);
 });
+it("ゆうこ②: 予算（初期費用23万円以内）の復唱のピックアップ宣言は落とさない（条件を固める文）", () => {
+  const s = "天王寺周辺・1LDK・初期費用23万円以内でゆうこさんにオススメできるお部屋ピックアップさせて頂きます！！";
+  const r = enforceAixGates(s, { customerMessage: "1LDKで 職場が天王寺なので\n近くで探してて\n初期費用23万くらいで探しです", customerConditions: "初期費用上限: 230000", estimateAllowed: false });
+  expect(r.violations.length).toBe(0); expect(r.cleaned).toBe(s);
+});
+it("物件探しの宣言でもお客様の条件に無い金額・見積の語は従来どおりゲートの対象", () => {
+  expect(enforceAixGates("初期費用15万円以内のお部屋ピックアップさせて頂きます！！", { customerMessage: "初期費用なるべく安く" }).violations.length > 0).toBe(true);
+  expect(enforceAixGates("初期費用23万円の御見積書と一緒にお部屋ピックアップさせて頂きます！！", { customerMessage: "初期費用23万くらい" }).violations.length > 0).toBe(true);
+});
+it("敷金礼金0円の条件のピックアップ宣言は落とさない", () => {
+  const s = "大阪駅難波駅周辺全域から敷金礼金0円でRさんのご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！";
+  expect(enforceAixGates(s, { customerMessage: "敷金礼金なしで探しています" }).violations.length).toBe(0);
+});
 it("物件の紹介の金額（家賃管理費込82,000円…オススメ出来るお部屋）は従来どおりゲートの対象", () => {
   const r = enforceAixGates("家賃管理費込82,000円の2LDK、駐車場付きでかなりオススメ出来るお部屋となります！！", { customerMessage: "家賃8万円以内で探しています" });
   expect(r.violations.some((v) => /見積金額内訳/.test(v))).toBe(true);
