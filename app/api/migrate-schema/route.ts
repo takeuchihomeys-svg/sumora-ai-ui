@@ -3009,6 +3009,59 @@ ALTER TABLE sent_facts DISABLE ROW LEVEL SECURITY;
 ALTER TABLE viewing_history DROP CONSTRAINT IF EXISTS viewing_history_status_check;
 ALTER TABLE viewing_history ADD CONSTRAINT viewing_history_status_check CHECK (status = ANY (ARRAY['scheduled'::text, 'done'::text, 'cancelled'::text, 'rescheduled'::text, 'lapsed'::text]));
 
+-- ── llm_usage_logs: Anthropic への全リクエストの使用量（2026-09-14 竹内「キャッシュはできているか・エラーで漏れ続けていないか」）──
+-- 出口（instrumentation.ts → app/lib/llm-usage-recorder.ts が globalThis.fetch を包む）で応答の usage を1行ずつ書く。
+-- 再試行・429/529/5xx・中断も1行（status / error_type）。route は Next のリクエストの経路、sys_head は system プロンプトの先頭80字
+-- （同じ route に複数の呼び出しがあるため）。お客様の発言は保存しない。
+CREATE TABLE IF NOT EXISTS llm_usage_logs (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  route TEXT,
+  model TEXT,
+  status INT,
+  error_type TEXT,
+  stream BOOLEAN,
+  stop_reason TEXT,
+  input_uncached INT DEFAULT 0,
+  cache_read INT DEFAULT 0,
+  cache_write INT DEFAULT 0,
+  cache_write_5m INT DEFAULT 0,
+  cache_write_1h INT DEFAULT 0,
+  output_tokens INT DEFAULT 0,
+  thinking_tokens INT DEFAULT 0,
+  max_tokens INT,
+  thinking_mode TEXT,
+  cache_breakpoints INT DEFAULT 0,
+  sys_key TEXT,
+  sys_head TEXT,
+  duration_ms INT,
+  request_id TEXT,
+  env TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_created ON llm_usage_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_route ON llm_usage_logs(route, created_at DESC);
+ALTER TABLE llm_usage_logs DISABLE ROW LEVEL SECURITY;
+
+-- 日次の集計（JST の日付）。input_equiv = 入力単価に換算したトークン（読み0.1・5分書き1.25・1時間書き2・出力5）
+-- est_usd は目安: 入力単価（1M トークンあたり）Haiku $1・Sonnet $3・Opus $5 で計算。コンソールの日次費用と照合して単価を直す
+CREATE OR REPLACE VIEW llm_usage_daily AS
+SELECT
+  (created_at AT TIME ZONE 'Asia/Tokyo')::date AS day_jst,
+  model, route, sys_key, MIN(sys_head) AS sys_head,
+  COUNT(*) AS calls,
+  COUNT(*) FILTER (WHERE status IS DISTINCT FROM 200) AS errors,
+  COUNT(*) FILTER (WHERE cache_read > 0) AS cache_hits,
+  SUM(input_uncached) AS uncached, SUM(cache_read) AS cache_read,
+  SUM(cache_write_5m) AS write_5m, SUM(cache_write_1h) AS write_1h,
+  SUM(output_tokens) AS output_tokens, SUM(thinking_tokens) AS thinking_tokens,
+  SUM(input_uncached + cache_read * 0.1 + cache_write_5m * 1.25 + cache_write_1h * 2.0
+      + GREATEST(cache_write - cache_write_5m - cache_write_1h, 0) * 1.25 + output_tokens * 5.0) AS input_equiv,
+  ROUND(SUM((input_uncached + cache_read * 0.1 + cache_write_5m * 1.25 + cache_write_1h * 2.0
+      + GREATEST(cache_write - cache_write_5m - cache_write_1h, 0) * 1.25 + output_tokens * 5.0)
+      * CASE WHEN model ILIKE '%haiku%' THEN 1.0 WHEN model ILIKE '%opus%' THEN 5.0 ELSE 3.0 END) / 1000000.0, 4) AS est_usd
+FROM llm_usage_logs
+GROUP BY 1, 2, 3, 4;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
