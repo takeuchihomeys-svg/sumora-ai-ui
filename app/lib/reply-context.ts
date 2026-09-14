@@ -31,6 +31,14 @@ export function splitMessageUnits(raw: string | null | undefined, units?: unknow
 const DECOR_RE =
   /m\(_ _\)m|\(\s*_\s*_\s*\)|[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}]|[♪♡★☆〜～]/gu;
 const MEDIA_TOKEN_RE = /\[(?:画像|動画|スタンプ|ファイル|位置情報)\]/g;
+// ─── 2026-09-14 竹内（S 事例）: LINE 絵文字の文字「(よろしく)」・顔文字「(T ^ T)」は飾り ───────────────────────
+//   「わかりました! よろしくお願いします(よろしく)」が「(よろしく)」のせいで了承だけ（ack_only）にならず other → 開口語が
+//   「分類不能: LLM の開口語を尊重」になり、待ち合わせ案内への了承に「かしこまりました！！」を書いた（正解は「はい😊！！」）。
+//   顧客発言の「(〇〇)」120日分: 絵文字の文字（(よろしく)15・(お願いします)23・(ぺこり)12・(emoji)14・(bow)・(tear)・(ぴえん)…）と
+//   顔文字（(_ _)28・(T ^ T)25・( .ˬ.)20…）の他に、意味のある補足（(無料)74・(株)19・(税込)・(管理費 1万円)・(今後飼育予定)・
+//   免許証の読み取りの (すい)(じん)）が混ざるので、決まった語と「日本語の文字・数字を含まない顔文字」だけを外す。「(?)」は疑問符として残す
+const LINE_EMOJI_WORD_RE = /\((?:よろしく(?:お願いします)?|お願いします|おねがい|ありがとう(?:ございます)?|すみません|ごめんなさい|ぺこり|ペコリ|ぴえん|涙|泣|笑|汗|うるうる|ハート|キラキラ|emoji|bow|tear|wow|smile|sweat|heart|love|happy|sad|cry|즐거움)\)/giu;
+const KAOMOJI_RE = /\((?=[^()\n]*[_^;；ˬᴗ\-><ﾟд・ω∀´｀])[^()\n\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}\p{N}]{1,14}\)/gu;
 const SENT_SPLIT_RE = /(?<=[。！!？?])|\n/;
 
 // ─── 2026-09-14 竹内（Hina 事例）: 画像の読み取り文はお客様の発言ではない ───────────────────────
@@ -59,6 +67,10 @@ export function normalizeCustomerText(raw: string | null | undefined): string {
     .replace(MEDIA_TOKEN_RE, " ")
     // 2026-09-11 統合設計（経路D）: ASCII 顔文字「m(*_ _)m」「m(_ _)m」を定型判定の前に剥がす
     .replace(/m\([^)\n]{0,6}\)m/g, "")
+    // 2026-09-14 S 事例: LINE 絵文字の文字・顔文字は飾り（上の LINE_EMOJI_WORD_RE の根拠参照）。「(?)」は疑問符
+    .replace(/\(\s*[?？]\s*\)/g, "？")
+    .replace(LINE_EMOJI_WORD_RE, "")
+    .replace(KAOMOJI_RE, "")
     .replace(DECOR_RE, "")
     .replace(/[ \t　]+/g, " ")
     .replace(/([！!？?。、，,．.…]|\s)+/g, "$1")
