@@ -216,6 +216,20 @@ function getAccountMeta(account?: string | null) {
 }
 
 // AIX\u30a2\u30af\u30b7\u30e7\u30f3\u3054\u3068\u306e\u30e1\u30bf\u60c5\u5831\uff08\u30dc\u30bf\u30f3\u30e9\u30d9\u30eb\u30fb\u8272\u30fb\u30c6\u30f3\u30d7\u30ec\u30fc\u30c8\u30ab\u30c6\u30b4\u30ea\uff09
+/** この会話で最後に送った AIX（72時間以内）→ テンプレート一覧で開くカテゴリ。物件確認したは確認先（管理会社 等）のカテゴリ */
+function templateCategoryForLatestAix(latest: { aixType: string; checkPattern: string | null; at: string } | undefined): string | undefined {
+  if (!latest) return undefined;
+  const t = Date.parse(latest.at);
+  if (!Number.isFinite(t) || Date.now() - t > 72 * 3600 * 1000) return undefined;
+  if (latest.aixType === "property_check_result") {
+    const cp = latest.checkPattern ?? "";
+    if (cp === "nearby_parking") return "近隣の月極駐車場を確認した【AIX】";
+    if (cp === "owner_other") return "オーナーに確認した【AIX】";
+    if (cp.startsWith("mgmt_") || cp === "vacate_date") return "管理会社に確認した【AIX】";
+  }
+  return AIX_ACTION_META[latest.aixType]?.templateCategory || undefined;
+}
+
 const AIX_ACTION_META: Record<string, { label: string; subtitle?: string; color: string; templateCategory: string }> = {
   condition_hearing:       { label: "\u30d2\u30a2\u30ea\u30f3\u30b0",           color: "#0288D1", templateCategory: "\u30d2\u30a2\u30ea\u30f3\u30b0\u3010AIX\u3011" },
   greeting_viewing:        { label: "\u5185\u89a7\u6328\u62f6",             color: "#00796B", templateCategory: "\u6328\u62f6\u3010AIX\u3011" },
@@ -900,6 +914,10 @@ export default function Home() {
   // actionType / sentMessage は「AIおすすめテンプレ」（recommend-templates API）のコンテキストとして使用
   const [postAixTemplateMap, setPostAixTemplateMap] = useState<Record<string, { category: string; color: string; actionType?: string; sentMessage?: string }>>({});
   const [dismissedPostAixTemplateIds, setDismissedPostAixTemplateIds] = useState<Set<string>>(new Set());
+  // 2026-09-14 竹内「申込の AIX 押したあとは AIX テンプレートも申込へのところにする」:
+  //   会話ごとの最後に送った AIX（DB の aix_usage_logs・72時間以内）。postAixTemplateMap は画面の一時的な状態で、
+  //   開き直し・別の端末からの送信では消えるため、テンプレート一覧の初期カテゴリの拠り所をこちらにも持つ
+  const [latestAixByConv, setLatestAixByConv] = useState<Record<string, { aixType: string; checkPattern: string | null; at: string }>>({});
   // CHAIN-2: テンプレ送信後、学習済みシーケンス（recommended_template_sequence）の次テンプレを誘導するバナー（会話ID → 次テンプレID）
   const [chainNextTemplateMap, setChainNextTemplateMap] = useState<Record<string, string>>({});
   const [dismissedChainNextIds, setDismissedChainNextIds] = useState<Set<string>>(new Set());
@@ -2676,6 +2694,22 @@ export default function Home() {
       filteredConversations[0]
     );
   }, [filteredConversations, conversations, selectedId]);
+
+  // 会話を開いた時に、その会話で最後に送った AIX を DB から読む（テンプレート一覧を送った AIX のカテゴリで開くため）
+  useEffect(() => {
+    const cid = selectedConversation.id;
+    if (!cid) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { data } = await supabase.from("aix_usage_logs").select("aix_type, check_pattern, created_at, sent_at")
+          .eq("conversation_id", cid).order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (cancelled || !data?.aix_type) return;
+        setLatestAixByConv((prev) => ({ ...prev, [cid]: { aixType: data.aix_type as string, checkPattern: (data.check_pattern as string | null) ?? null, at: (data.sent_at ?? data.created_at) as string } }));
+      } catch { /* 読めなければ従来どおり（前回見ていたカテゴリ） */ }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedConversation.id]);
 
   // 本文検索でヒットしたメッセージID（LINEと同じく、トークは全件表示してヒット位置へ飛ぶ・枠で強調する）。
   // 顧客名に一致する検索・AI検索中は対象外（それぞれ全件表示／AI検索のヒットを使う）
@@ -9716,11 +9750,16 @@ export default function Home() {
             templateOpenContext === "next_numbered" ? (pendingNextTemplateInfo?.category) :
             templateOpenContext === "post_aix" ? (postAixTemplateMap[selectedConversation.id]?.category) :
             templateOpenContext === "viewing_follow" ? "内覧" :
-            templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込・審査" :
+            // 2026-09-14: 申込のテンプレート（①申込・②申込時フォーマット（続き））は「申込へ！【AIX】」にある（旧「申込・審査」カテゴリは存在しない＝空の一覧で開いていた）
+            templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込へ！【AIX】" :
             activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory :
             // AIX送信直後の手動テンプレートボタン押下 → 送信したAIXと同じカテゴリで開く
             // （バナー経由の post_aix と同じ体験を手動ボタンでも提供）
             postAixTemplateMap[selectedConversation.id] ? postAixTemplateMap[selectedConversation.id]?.category :
+            // 2026-09-14 竹内「申込の AIX 押したあとは AIX テンプレートも申込へのところにする」:
+            //   開き直し・別の端末から送った後でも、この会話で最後に送った AIX（DB・72時間以内）のカテゴリで開く。
+            //   旧: 前回ほかの会話で見ていたカテゴリ（例: ヒアリング【AIX】）で開いていた
+            templateCategoryForLatestAix(latestAixByConv[selectedConversation.id]) ??
             undefined
           }
           highlightKeyword={
@@ -9912,6 +9951,11 @@ export default function Home() {
                 body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: summarizeForLearning(_lastCustomerMsg), previous_action_type: _prevAix, source: _learnSource, predicted_action: _predictedAction, suggestion_source: _suggSource, conversation_id: selectedConversation.id }),
               }).catch(() => {});
               lastAixByConvRef.current.set(selectedConversation.id, aixModalType);
+              // テンプレート一覧の初期カテゴリ用（送った AIX を正にする・予約送信はまだ送っていないので除く）
+              if (!meta?.scheduled) {
+                const _latestCid = selectedConversation.id;
+                setLatestAixByConv((prev) => ({ ...prev, [_latestCid]: { aixType: aixModalType, checkPattern: meta?.checkPattern ?? null, at: new Date().toISOString() } }));
+              }
               // 物件ピックアップ or 物件オススメ送信 → 「物件送った」を自動記録
               if ((aixModalType === "property_send" || aixModalType === "property_recommendation") && !meta?.scheduled) {
                 const _linkedPcId = linkedCustomerMap[selectedConversation.id]?.id;

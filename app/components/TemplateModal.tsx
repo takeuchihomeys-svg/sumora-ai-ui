@@ -2124,6 +2124,15 @@ export default function TemplateModal({
     ...rawAixCategories.filter(c => !AIX_CATEGORY_ORDER.includes(c)),
   ];
   const isAixCategoryActive = category.includes("AIX");
+  // 2026-09-14: 指定されたカテゴリが存在しない（旧「申込・審査」等）時は空の一覧で開かない。
+  //   AIX カテゴリの指定なら AIX の先頭、それ以外は「全般」へ（ユーザーがタブを選べばその選択が優先）
+  const categoriesKey = categories.join("|");
+  useEffect(() => {
+    if (loading || categories.length === 0 || !category || isCandidateTabActive) return;
+    if (categories.includes(category)) return;
+    setCategory(category.includes("AIX") && aixCategories.length > 0 ? aixCategories[0] : categories.includes("全般") ? "全般" : categories[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, categoriesKey, category, isCandidateTabActive]);
   const isSearching = searchQuery.trim().length > 0;
   // 複合スコア: use_count*0.4 + win_rate*100*0.4 + adoptionRate*100*0.2
   // 採用率 = おすすめとして提示→実際に選ばれた率。全テンプレがスコア0のうちは sort_order 順。
