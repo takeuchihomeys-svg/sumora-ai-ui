@@ -80,6 +80,8 @@ export type EstimateContextInput = {
   hasCustomerImage?: boolean;
   /** aix_usage_logs の estimate_sheet 送付済み or 直前スタッフ約束（route.ts estimatePromised） */
   estimatePromised?: boolean;
+  /** 見積書を実際に送った（行動台帳 facts.estimateSent＝AIX 見積書送る・本文の送付）。約束だけの時は false */
+  estimateActuallySent?: boolean;
   /** 顧客が「気になる物件を（後日）送る」と予告した（reply-context classifyWillSendObject === "property" ∧ (B)依頼形でない）。
    *  物件はまだ届いていないが、業務フロー上「届き次第 募集状況確認＋最大限割引の御見積書」を返すのが正解（成約 n=9 の④）。
    *  予告形（〜お送りさせて頂きます）のみ解禁され、見積本体のカバー文・金額は従来どおり AIX 専用。 */
@@ -184,9 +186,17 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
     return { ...base, appropriate: true, mode: "declare", trigger: "customer_estimate_request", severity: "warning", reason: "お客様が見積書を明示的に依頼", evidence: firstMatch(CUSTOMER_ESTIMATE_REQUEST_RE, burst) };
   }
 
+  //   物件・依頼の有無は連投全体で見る（URL が前の通・「ここの初期費用」・「お見積もり確認したい」＝cost-question-scope と同じ判定）
+  const hasPropertyContext = hasPropertyRef || sent > 0 || !!input.hasCustomerImage || (!isForm && customerPointsAtProperty(burst));
+  // 2026-09-14 竹内（ゆうこ事例）: 物件が1件も無いまま見積書を約束した（まだ送っていない・約束の文にも物件が無い）→ 約束の復唱もしない
+  //   （見積る物件が無い。旧: 約束済み＝echo_only で「御見積書を作成しお送りさせて頂きますので詳細はそちらで」を繰り返した）
+  const promiseWithoutProperty = estimatePromised && input.estimateActuallySent === false && !hasPropertyContext
+    && !/号室|【[^】\n]{2,40}】|お送り(?:頂|いただ)きました(?:物件|お部屋)|こちらの(?:物件|お部屋)/.test(lastStaff);
+  if (promiseWithoutProperty) signals.push("estimate_promise_no_property");
+
   // 2. 見積送付済み／約束済みで新規依頼なし → 復唱・受付のみ（二重宣言防止）。
   //    ただし「新しい物件 ＋ 費用質問」は別物件の新規依頼として 3./4. に流す
-  if (estimatePromised && !(hasPropertyRef && asksCost)) {
+  if (estimatePromised && !promiseWithoutProperty && !(hasPropertyRef && asksCost)) {
     return { ...base, appropriate: true, mode: "echo_only", trigger: "staff_promise_echo", severity: "warning", reason: "見積書は既に約束／送付済み（復唱・短い受付文のみ・再宣言不可）", evidence: firstMatch(STAFF_ESTIMATE_PROMISE_RE, lastStaff) };
   }
 
@@ -195,8 +205,6 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
   //   物件が1件も無い（こちらの送付0・お客様の URL/画像/号室なし）費用の質問（「これは分割払いで初期費用ですか？」）は見積書を約束しない。
   //   実データ（120日）: 物件が無い時の費用の質問 15件でスタッフが見積書を約束したのは3件（物件を指す「ここ」・見積の依頼・スクショを送って頂けたら）だけ。
   //   残りは質問に答え「初期費用も最大限割引させて頂き…費用を出来る限り抑えさせて頂きます」（initial-cost-tight・返信の必須要素）
-  //   物件・依頼の有無は連投全体で見る（URL が前の通・「ここの初期費用」・「お見積もり確認したい」＝cost-question-scope と同じ判定）
-  const hasPropertyContext = hasPropertyRef || sent > 0 || !!input.hasCustomerImage || (!isForm && customerPointsAtProperty(burst));
   if ((asksCost || (brainCostQuestion && !isForm)) && !hasPropertyContext) signals.push("cost_question_no_property");
   if (asksCost && hasPropertyContext) {
     return { ...base, appropriate: true, mode: "declare", trigger: "customer_cost_question", severity: "warning", reason: hasPropertyRef ? "特定物件（URL/画像）＋費用質問" : "お客様が費用・初期費用・総額を質問（送付済みの物件あり）", evidence: firstMatch(CUSTOMER_COST_QUESTION_RE, burst) };
@@ -228,13 +236,15 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
   if (brainSaysEstimate && sent === 0) signals.push("brain:estimate_sheet rejected (未送付・質問なし)");
 
   // 6. 直前スタッフ約束の復唱のみ（2. で estimatePromised=false のまま到達したケース）
-  if (staffPromisedNow) {
+  if (staffPromisedNow && !promiseWithoutProperty) {
     return { ...base, appropriate: true, mode: "echo_only", trigger: "staff_promise_echo", severity: "warning", reason: "直前スタッフが見積約束済み（復唱のみ・再宣言不可）", evidence: firstMatch(STAFF_ESTIMATE_PROMISE_RE, lastStaff) };
   }
 
   // 7. 該当なし
   const reason = signals.includes("cost_question_no_property")
     ? "物件がまだ無い費用の質問（見積書は物件が届いてから）→ 質問に答え、初期費用を抑える宣言"
+    : signals.includes("estimate_promise_no_property")
+    ? "物件がまだ無いまま見積書を約束済み（まだ送っていない・見積る物件が無い）→ 見積書の約束を繰り返さず、質問・懸念に答える"
     : isForm
     ? "条件フォーム受信（費用質問なし）→ ピックアップ宣言"
     : isConditionChange

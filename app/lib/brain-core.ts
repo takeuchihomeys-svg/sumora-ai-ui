@@ -2322,6 +2322,9 @@ ${history}`;
     })();
     const customerWillSendFirst = !!lastCustomerTurnText && !/https?:\/\/|\[画像\]/.test(lastCustomerTurnText)
       && CUST_WILL_SEND_SELF_PRED(lastCustomerTurnText).yes;
+    // 見積る物件があるか（こちらの送付・見積の送付・お客様の URL/画像/「ここの」/見積の語）。見積書送るの約束・補正の共通の前提（ゆうこ事例）
+    const estimatePropertyInPlay = brainLedger.facts.propertiesSentCount > 0 || brainLedger.facts.estimateSent || unrepliedTurn.hasImage
+      || messagesOldestFirst.some((m) => m.sender === "customer" && customerPointsAtProperty(m.text ?? ""));
     const promiseAix = resolveStaffPromiseAix(brainLedger.facts, messagesOldestFirst, {
       customerRequestedCheck: customerRequestedPropertyCheck({
         recentMessages: promiseBasis.map((m) => ({ sender: m.sender, text: m.text })),
@@ -2329,6 +2332,7 @@ ${history}`;
       }),
       customerWillSend: customerWillSendFirst,
       customerAckAfter,
+      propertyInPlay: estimatePropertyInPlay,
     });
     if (promiseAix) {
       finalAix = promiseAix.action;
@@ -2380,9 +2384,7 @@ ${history}`;
     // 2026-09-14 竹内（ゆうこ事例）「見積書は物件が送られた時や物件の画像が送られた時等や見積依頼があった時」:
     //   物件が1件も無い（こちらの送付0・見積なし／会話のどこにもお客様の URL・画像・号室・「ここの」・見積の語なし）のに 見積書送る → 外す。
     //   お客様が条件を送っていれば物件ピックアップ、それ以外は AIX なし（質問に答えて「初期費用を抑える」一文＝返信側）
-    if (!promiseAix && finalAix === "estimate_sheet" && brainLedger.facts.propertiesSentCount === 0 && !brainLedger.facts.estimateSent
-      && !unrepliedTurn.hasImage
-      && !messagesOldestFirst.some((m) => m.sender === "customer" && customerPointsAtProperty(m.text ?? ""))) {
+    if (!promiseAix && finalAix === "estimate_sheet" && !estimatePropertyInPlay) {
       finalAix = messagesOldestFirst.some((m) => m.sender === "customer" && isConditionFormMessage(m.text ?? "")) ? "property_send" : null;
       decisionSource = "correction:estimate_no_property";
     }

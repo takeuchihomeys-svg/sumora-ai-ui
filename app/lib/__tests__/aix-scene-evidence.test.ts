@@ -83,7 +83,10 @@ describe("分析モード判定（decideAnalysisMode）", () => {
     const x = decideAnalysisMode(modeBase({ prevAction: "viewing_invite" }));
     expect(x.mode).toBe("incremental"); expect(x.upgradeReason).toBe("prev_action:viewing_invite");
   });
-  it("証拠なし・前回 action なし → cached", () => expect(decideAnalysisMode(modeBase({})).mode).toBe("cached"));
+  it("証拠なし・前回 action なしでも新しい顧客発言は必ず分析（2026-09-14 名無しの権兵衛「着きました！」）", () => {
+    const x = decideAnalysisMode(modeBase({ latestCustomerText: "着きました！" }));
+    expect(x.mode).toBe("incremental"); expect(x.upgradeReason).toBe("unseen_customer_msg");
+  });
   it("前回の分析が今回の顧客発言を見ている → 格上げしない", () => {
     expect(decideAnalysisMode(modeBase({ prevAction: "viewing_invite", prevAnalyzedMsgTs: "2026-09-12T10:00:00Z" })).mode).toBe("cached");
   });

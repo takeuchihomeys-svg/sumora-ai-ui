@@ -447,6 +447,8 @@ export function anchorBrainConcern(
 // ─────────────────────────────────────────────────────────────
 export type StaffTurnKind =
   | "viewing_invite" | "property_send" | "pickup_declared" | "estimate_send" | "question_to_customer"
+  /** 2026-09-14 竹内（ゆうこ事例）: 「御見積書を作成しお送りさせて頂きます」＝約束だけ（まだ送っていない）。見積書送付（estimate_send）と分ける */
+  | "estimate_promised"
   | "confirmation_promise" | "condition_ask" | "check_result" | "apply_push"
   /** 2026-09-11 統合設計（経路D/E2）: 断り・探索終了を受けてスタッフが扉を開けた締め文（「またお部屋探しの際は…この度はありがとうございました」） */
   | "farewell_ack"
@@ -463,7 +465,23 @@ const AIX_TO_STAFF: Record<string, StaffTurnKind> = {
 // ── 共有正規表現（2026-09-09 Fable5 行動台帳: action-ledger.ts が import する。生成・検査・台帳が同じ定数を参照＝四者同名）──
 export const STAFF_ESTIMATE_RE = /御見積書|お見積書|お見積り|見積書|初期費用.{0,12}[0-9０-９,，]+円/;
 export const STAFF_ESTIMATE_WORD_RE = /(?:御|お)?見積(?:書|り|もり)/;
-export const STAFF_ESTIMATE_DECL_RE = /(?:御|お)?見積(?:書|り|もり)[^\n。]{0,40}?(?:作成|お送り|お出し)[^\n。]{0,16}(?:させて(?:頂|いただ)きます|いたします|致します|します)|(?:御|お)?見積(?:書|り|もり)[^\n。]{0,12}(?:出来|でき)次第/;
+/**
+ * スタッフ本文が見積書を「送った」か（約束だけではないか）。行動台帳（classifyStaffTextForLedger）と往復文脈（classifyLastStaffTurn）が同じ関数。
+ * 2026-09-14 竹内（ゆうこ事例）: 旧は1通のどこかに「となります」があれば送付にしていたため、
+ *   「お支払いは一括でのお振込のみとなりますが、最大限割引させて頂いた御見積書を作成しお送りさせて頂きます」（約束・物件0件）を送付済みにし、
+ *   次の下書きが「こちらは御見積書の金額に加えまして…」と送っていない見積書を前提にした。
+ * 送った＝①見積の語がある文そのものが成果物・過去形（となります・同封・添付・お送り…ました）で作成・これからお送りする形ではない
+ *        ②1通に成果物の印（ご査収・見積の金額「🌟〇円割引」「初期費用：〇円」）がある（「御見積書お送りさせて頂きます＋ご査収ください」の添付の文）
+ * 送ったかどうかの一次証拠は AIX 見積書送る（aix_usage_logs）。本文はその次の証拠
+ */
+export function staffEstimateDelivered(text: string): boolean {
+  const t = text ?? "";
+  if (/ご査収|🌟[^\n]{0,12}[0-9０-９,，]+円|初期費用[：:]\s*[0-9０-９,，]+円|[0-9０-９,，]+円割引させて(?:頂|いただ)き/.test(t)) return true;
+  return t.split(/\n|(?<=[。！!？?])(?![。！!？?])/).some((s) => /(?:御|お)?見積(?:書|り|もり)/.test(s)
+    && /となります|同封|添付|お送り(?:させて(?:頂|いただ)き|いたし|致し|し)ました/.test(s)
+    && !/作成|お送り(?:させて(?:頂|いただ)きます|いたします|致します|します)|お作り/.test(s));
+}
+export const STAFF_ESTIMATE_DECL_RE =/(?:御|お)?見積(?:書|り|もり)[^\n。]{0,40}?(?:作成|お送り|お出し)[^\n。]{0,16}(?:させて(?:頂|いただ)きます|いたします|致します|します)|(?:御|お)?見積(?:書|り|もり)[^\n。]{0,12}(?:出来|でき)次第/;
 export const STAFF_VIEWING_INVITE_RE = /(?:ご内覧|内覧|内見|ご案内).{0,25}(?:如何|いかが|ご都合)|ご都合(?:の)?よろしいお日にち|ご案内可能です|[0-9０-９]{1,2}[:：時][0-9０-９]{0,2}.{0,12}(?:ご案内|案内可能)/;
 export const STAFF_APPLY_PUSH_RE = /お申込み?(?:し|で)お部屋(?:を)?(?:抑え|押さえ)|お申込み?(?:頂け|いただけ)ます/;
 export const STAFF_QUESTION_RE = /(?:でしょうか|ますか|ですか|ございますか|御座いますか|お聞かせ(?:ください|頂け|いただけ)|教えて(?:頂け|いただけ|ください))[！!？?😊😌]*$/;
@@ -505,7 +523,7 @@ export const LEDGER_OUTBOUND_SOURCES: ReadonlySet<string> = new Set(["aix_log", 
 
 /** action-ledger の LedgerKind → StaffTurnKind（action-ledger 側 LEDGER_TO_STAFF と同値。type-only 依存を守るため文字列キーで持つ） */
 const LEDGER_KIND_TO_STAFF: Record<string, StaffTurnKind> = {
-  pickup_declared: "pickup_declared", properties_sent: "property_send", estimate_declared: "estimate_send", estimate_sent: "estimate_send",
+  pickup_declared: "pickup_declared", properties_sent: "property_send", estimate_declared: "estimate_promised", estimate_sent: "estimate_send",
   viewing_invited: "viewing_invite", meeting_place_sent: "viewing_invite", question_asked: "question_to_customer",
   confirmation_promised: "confirmation_promise", confirmation_reported: "check_result", condition_asked: "condition_ask", application_guided: "apply_push",
 };
@@ -544,7 +562,10 @@ export function classifyLastStaffTurn(
     const fw = text.match(STAFF_FAREWELL_RE);
     if (fw) return { kind: "farewell_ack", source: "regex", evidence: fw[0] };
     const lastLine = text.split("\n").filter(Boolean).slice(-1)[0] ?? "";
-    if (STAFF_ESTIMATE_RE.test(text) && /となります|ご査収|お送り|作成/.test(text)) return { kind: "estimate_send", source: "regex", evidence: text.match(STAFF_ESTIMATE_RE)![0] };
+    // 見積: 見積の語がある文そのものが成果物・過去形なら送付、作成・これからお送りする形なら約束（台帳 staffEstimateSentText と同じ見方。ゆうこ事例）
+    if (STAFF_ESTIMATE_RE.test(text) && /となります|ご査収|お送り|作成/.test(text)) {
+      return { kind: staffEstimateDelivered(text) || !STAFF_ESTIMATE_DECL_RE.test(text) ? "estimate_send" : "estimate_promised", source: "regex", evidence: text.match(STAFF_ESTIMATE_RE)![0] };
+    }
     if (STAFF_VIEWING_INVITE_RE.test(text)) return { kind: "viewing_invite", source: "regex", evidence: text.match(STAFF_VIEWING_INVITE_RE)![0] };
     if (STAFF_APPLY_PUSH_RE.test(text)) return { kind: "apply_push", source: "regex", evidence: text.match(STAFF_APPLY_PUSH_RE)![0] };
     if (STAFF_CONDITION_ASK_RE.test(text)) return { kind: "condition_ask", source: "regex", evidence: text.match(STAFF_CONDITION_ASK_RE)![0] };
@@ -1767,7 +1788,8 @@ export const PAIR_MATRIX: PairRule[] = [
 ];
 
 export const STAFF_KIND_JA: Record<StaffTurnKind, string> = {
-  viewing_invite: "内覧打診", property_send: "物件送付", pickup_declared: "ピックアップ約束（宣言のみ・未履行）", estimate_send: "見積書送付", question_to_customer: "お客様への質問",
+  viewing_invite: "内覧打診", property_send: "物件送付", pickup_declared: "ピックアップ約束（宣言のみ・未履行）", estimate_send: "見積書送付",
+  estimate_promised: "見積書の作成・送付の約束（宣言のみ・まだ送っていない）", question_to_customer: "お客様への質問",
   confirmation_promise: "確認の約束", condition_ask: "条件ヒアリング", check_result: "募集状況の確認結果報告", apply_push: "申込打診",
   farewell_ack: "締めの挨拶（扉を開けた）", other: "その他",
 };

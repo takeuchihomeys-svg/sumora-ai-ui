@@ -7,7 +7,7 @@ import { detectAixSceneEvidence } from "./aix-scene-evidence";
 //   full（前回の判断を使わずゼロから）: 初回〜10件 / 申込・契約・審査・キャンセル語 / 前回の分析か最新発言から24時間 / 全体分析から30件
 //   incremental（前回の判断を起点に、直近15件・RAG・台帳は full と同じ）: 条件・URL・画像・見送り等 / 前回の分析から10件 /
 //     新しいお客様発言に場面の証拠がある・前回の action がある（段1の格上げ）
-//   cached（LLM なし・前回の判断を AIX なしで使い回す）: 上のどれにも当たらない時（本番 9/12 の12時間で0回）
+//   cached（LLM なし・前回の判断を AIX なしで使い回す）: 新しいお客様の発言が無い時だけ（2026-09-14 から。新しい発言は必ず分析）
 // FULL_ANALYSIS_EVERY_N_MESSAGES は名前に反して「前回の分析（full/incremental）から10件で incremental に上げる」閾値
 export const FULL_ANALYSIS_EVERY_N_MESSAGES = 10;
 export const FULL_REFRESH_EVERY_N_MESSAGES = 30;  // フル分析から30件で強制フルリフレッシュ（アンカリング防止）
@@ -63,6 +63,11 @@ export function decideAnalysisMode(i: AnalysisModeInput): { mode: "full" | "incr
     });
     if (evidence) return { mode: "incremental", upgradeReason: `scene_evidence:${evidence.scene}` };
     if ((i.prevAction ?? "").trim()) return { mode: "incremental", upgradeReason: `prev_action:${i.prevAction}` };
+    // 2026-09-14 竹内（名無しの権兵衛事例）「送った内容や AIX ボタンのどこを送ったか等は鮮度の高い部分なので毎回の分析に入る」:
+    //   新しいお客様の発言は必ず分析する（今回の発言の層は軽い＝2層ブレイン）。旧: 場面の証拠が無く前回の action が空だと cached（分析なし）で、
+    //   内覧当日の「少し遅れます」「着きました！」・「駐車場必要情報は同居人の方がよろしいでしょうか」に判断が無いまま下書きが作られた（24時間で3回・全て T3）
+    return { mode: "incremental", upgradeReason: "unseen_customer_msg" };
   }
+  // cached は新しいお客様の発言が無い再実行（スタッフの送信直後の起動など）の時だけ
   return { mode: "cached", upgradeReason: null };
 }

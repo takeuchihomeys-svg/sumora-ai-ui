@@ -11,14 +11,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import {
   analyzeSubstance, classifyCustomerResponse,
-  STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, STAFF_ESTIMATE_WORD_RE, STAFF_ESTIMATE_DECL_RE,
+  STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, STAFF_ESTIMATE_WORD_RE, STAFF_ESTIMATE_DECL_RE, staffEstimateDelivered,
   STAFF_NON_PROPERTY_RE, STAFF_CONFIRM_DECL_RE, STAFF_CONFIRM_REPORT_RE, STAFF_VIEWING_INVITE_RE,
   STAFF_APPLY_PUSH_RE, STAFF_CONDITION_ASK_RE, STAFF_QUESTION_RE, REDO_CLAIM_RE,
   LEDGER_OUTBOUND_SOURCES, pickupRound, redoWord,
   type StaffTurn, type StaffTurnKind, type CustomerResponseKind,
 } from './reply-context';
 // 2026-09-12 竹内方針D: JST の日付表示は jst-date に一本化
-import { jstMDHm } from './jst-date';
+import { jstMDHm, jstParts, jstDayStartMs } from './jst-date';
 // 再 export（生成・検査が action-ledger 経由でも同じ定数を得る）
 export { STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, REDO_CLAIM_RE, LEDGER_OUTBOUND_SOURCES };
 
@@ -48,6 +48,8 @@ export interface LedgerEntry {
     checkPattern?: string | null;
     object?: string | null;
     taskStatus?: string | null;
+    /** meeting_place_sent: 案内した内覧の待ち合わせ（日付 M/D・時刻・場所）。AIX 待ち合わせ場所の本文・スタッフ本文から */
+    appointment?: ViewingAppointment | null;
   };
   /** done 直後（次のスタッフ発言より前）の顧客返答（往復文脈の一般化） */
   customerReactionAfter?: ReactionKind;
@@ -55,7 +57,13 @@ export interface LedgerEntry {
   fulfilledBy?: number | null;
 }
 
+/** 案内した内覧の待ち合わせ（M/D は日本時間。「本日」「明日」は案内した日から決める） */
+export type ViewingAppointment = { dateMD: string | null; time: string | null; place: string | null };
+
 export interface LedgerFacts {
+  /** 2026-09-14 竹内（名無しの権兵衛事例）: 最後に案内した内覧の待ち合わせ（今日以降の分だけ）。
+   *  「着きました」「遅れます」はこの内覧の当日連絡。旧: 台帳の要約に無く、当日の「着きました！」に新しい内覧日程を打診した */
+  viewingAppointment: (ViewingAppointment & { day: 'today' | 'tomorrow' | 'later' | 'unknown'; sentAt: string | null }) | null;
   propertiesSentCount: number;
   propertiesSentNames: string[];
   lastPropertiesSentAt: string | null;
@@ -161,13 +169,13 @@ export const LEDGER_KIND_JA: Record<LedgerKind, string> = {
 };
 /** ledger kind → 往復文脈 StaffTurnKind（'pickup_declared' は reply-context 側 union に追加済み。reply-context の LEDGER_KIND_TO_STAFF と同値） */
 const LEDGER_TO_STAFF: Record<LedgerKind, StaffTurnKind> = {
-  pickup_declared: 'pickup_declared', properties_sent: 'property_send', estimate_declared: 'estimate_send', estimate_sent: 'estimate_send',
+  pickup_declared: 'pickup_declared', properties_sent: 'property_send', estimate_declared: 'estimate_promised', estimate_sent: 'estimate_send',
   viewing_invited: 'viewing_invite', meeting_place_sent: 'viewing_invite', question_asked: 'question_to_customer',
   confirmation_promised: 'confirmation_promise', confirmation_reported: 'check_result', condition_asked: 'condition_ask',
   application_guided: 'apply_push', followup_sent: 'other', media_sent: 'other', cost_explained: 'other',
 };
 const STAFF_TO_LEDGER: Partial<Record<StaffTurnKind, LedgerKind>> = {
-  property_send: 'properties_sent', pickup_declared: 'pickup_declared', estimate_send: 'estimate_sent', viewing_invite: 'viewing_invited', check_result: 'confirmation_reported',
+  property_send: 'properties_sent', pickup_declared: 'pickup_declared', estimate_send: 'estimate_sent', estimate_promised: 'estimate_declared', viewing_invite: 'viewing_invited', check_result: 'confirmation_reported',
   confirmation_promise: 'confirmation_promised', condition_ask: 'condition_asked', apply_push: 'application_guided', question_to_customer: 'question_asked',
 };
 
@@ -188,6 +196,47 @@ export function extractPropertyLabels(text: string | null | undefined): string[]
   return uniq(out);
 }
 
+// ─── 内覧の待ち合わせ（AIX 待ち合わせ場所の本文・スタッフ本文）───
+//   AIX: 「9/14 12:00にメゾン加美北 305号室\n現地エントランスお待ち合わせで…」／スタッフ本文: 「本日12:00に昭和グランドハイツ恵美須現地エントランス前待ち合わせの程…」
+const MEETING_WORD_RE = /待ち合わせ|現地(?:エントランス|集合)|集合場所/;
+const MEETING_TIME_RE = /([0-9０-９]{1,2})\s*[:：]\s*([0-9０-９]{2})|([0-9０-９]{1,2})\s*時(?!間)(半|[0-9０-９]{1,2}分)?/;
+const toHalf = (s: string) => s.replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
+/** 本文から内覧の待ち合わせの日付・時刻・場所を取り出す（待ち合わせの語＋時刻が無ければ null） */
+export function extractViewingAppointment(text: string | null | undefined, sentAt: string | null): ViewingAppointment | null {
+  const t = toHalf(text ?? '');
+  if (!MEETING_WORD_RE.test(t) || !MEETING_TIME_RE.test(t)) return null;
+  const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
+  const mi = lines.findIndex((l) => MEETING_WORD_RE.test(l));
+  // 待ち合わせの行と、その直前の行（「9/14 12:00にメゾン加美北 305号室」＋「現地エントランスお待ち合わせ」）
+  const near2 = [lines[mi - 1] ?? '', lines[mi] ?? ''].join(' ');
+  const scope = MEETING_TIME_RE.test(near2) ? near2 : t;
+  const tm = scope.match(MEETING_TIME_RE)!;
+  const min = tm[1] ? tm[2] : tm[4] === '半' ? '30' : tm[4] ? String(Number(tm[4].replace('分', ''))).padStart(2, '0') : '00';
+  const time = `${Number(tm[1] ?? tm[3])}:${min}`;
+  // 日付は待ち合わせの行を先に、無ければ1通全体から（「6/22（月）15:00よりご案内…」→「15:00にクラウンハイム夕陽丘現地…」）
+  const dateScope = /([0-9]{1,2})\s*[\/月]\s*([0-9]{1,2})|本日|今日|明日|(?<![0-9\/月])[0-9]{1,2}\s*日(?!間)/.test(scope) ? scope : t;
+  const md = dateScope.match(/([0-9]{1,2})\s*[\/月]\s*([0-9]{1,2})/);
+  let dateMD: string | null = md ? `${Number(md[1])}/${Number(md[2])}` : null;
+  if (!dateMD && Number.isFinite(Date.parse(sentAt ?? ''))) {
+    const base = Date.parse(sentAt!);
+    const dOnly = dateScope.match(/(?<![0-9\/月])([0-9]{1,2})\s*日(?!間)/);
+    if (/本日|今日/.test(dateScope)) { const p = jstParts(base); dateMD = `${p.m}/${p.d}`; }
+    else if (/明後日/.test(dateScope)) { const p = jstParts(base + 2 * 86_400_000); dateMD = `${p.m}/${p.d}`; }
+    else if (/明日/.test(dateScope)) { const p = jstParts(base + 86_400_000); dateMD = `${p.m}/${p.d}`; }
+    else if (dOnly) {
+      // 「10日12時半に」: 月は案内した日から（案内日より前の日なら翌月）
+      const p = jstParts(base); const d = Number(dOnly[1]);
+      const m = d >= p.d ? p.m : p.m === 12 ? 1 : p.m + 1;
+      if (d >= 1 && d <= 31) dateMD = `${m}/${d}`;
+    }
+  }
+  // 場所: 時刻の後ろ「に〇〇」〜「現地／待ち合わせ／エントランス」の前（無ければ待ち合わせの行）
+  const after = scope.slice((tm.index ?? 0) + tm[0].length).replace(/^\s*(?:分|半)?\s*(?:より|から|〜|~)?\s*に?\s*/, '');
+  //   「11:50分に現地エントランス前」のように場所を書いていない時は null（行全体を場所にしない）
+  const place = (after.split(/現地|待ち合わせ|お待ち合わせ|エントランス|集合/)[0] ?? '').replace(/[、。！!\s]+$/g, '').trim().slice(0, 40) || null;
+  return { dateMD, time, place };
+}
+
 /** スタッフ本文1通 → 台帳エントリ（本文 regex＝confidence 1）。時制で promised / done を分ける */
 export function classifyStaffTextForLedger(text: string, at: string | null): LedgerEntry | null {
   const t = (text ?? '').trim();
@@ -197,12 +246,23 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
   if (MEDIA_ONLY_RE.test(t)) return base('media_sent', 'done', t);
   const lastLine = t.split('\n').filter(Boolean).slice(-1)[0] ?? '';
   const isEstimate = STAFF_ESTIMATE_WORD_RE.test(t);
-  // 実行（過去形・成果物）を先に判定。見積語があれば物件ではなく見積の送付
-  if (isEstimate && /となります|ご査収|お送り(?:させて(?:頂|いただ)き|いたし|致し|し)ました/.test(t)) {
+  // 実行（過去形・成果物）を先に判定。見積語があれば物件ではなく見積の送付（staffEstimateDelivered: 見積の文そのものの時制・成果物の印。ゆうこ事例）
+  if (isEstimate && staffEstimateDelivered(t)) {
     return base('estimate_sent', 'done', t.match(STAFF_ESTIMATE_WORD_RE)![0], { estimateFor: extractPropertyLabels(t) });
   }
-  if (STAFF_ESTIMATE_DECL_RE.test(t)) return base('estimate_declared', 'promised', t.match(STAFF_ESTIMATE_DECL_RE)![0], { estimateFor: extractPropertyLabels(t) });
-  if (!isEstimate && !STAFF_NON_PROPERTY_RE.test(t) && (STAFF_PROPERTIES_DONE_RE.test(t) || STAFF_URL_SEND_RE.test(t))) {
+  // 内覧の待ち合わせの案内（手打ちで場所・時刻を変えた時も AIX 待ち合わせ場所と同じ事実）。内覧打診より先に見る
+  //   日程の打診（「ご都合よろしいお日にち」「いかがでしょうか」＝まだ決まっていない）は含めない
+  const appt = /ご都合|いかが|でしょうか|ございますか/.test(t) ? null : extractViewingAppointment(t, at);
+  if (appt) return base('meeting_place_sent', 'done',`${appt.dateMD ?? ''} ${appt.time ?? ''} ${appt.place ?? ''}`.trim(), { appointment: appt });
+  // 2026-09-14: 文ごとに見る。物件を送った文（見積の語が無い文に完了形・URL）があれば物件送付。
+  //   見積書の約束は条件なしの文だけ（「お気に召されましたら…御見積書もお送りさせていただきます」は案内で約束ではない）
+  //   旧: 1通に見積の語があると物件送付に数えず、「お送りさせていただきました（物件）＋お気に召されましたら御見積書も」を見積書の送付にしていた
+  const sentences = t.split(/\n|(?<=[。！!？?])(?![。！!？?])/);
+  const propsDone = !STAFF_NON_PROPERTY_RE.test(t)
+    && sentences.some((s) => (STAFF_PROPERTIES_DONE_RE.test(s) || STAFF_URL_SEND_RE.test(s)) && !STAFF_ESTIMATE_WORD_RE.test(s));
+  const estDecl = sentences.find((s) => STAFF_ESTIMATE_DECL_RE.test(s) && !/お気に召され|ございましたら|ございますれば|でしたら|あれば|(?:頂|いただ)けましたら/.test(s));
+  if (estDecl && !propsDone) return base('estimate_declared', 'promised', estDecl.match(STAFF_ESTIMATE_DECL_RE)![0], { estimateFor: extractPropertyLabels(t) });
+  if (propsDone || (!isEstimate && !STAFF_NON_PROPERTY_RE.test(t) && (STAFF_PROPERTIES_DONE_RE.test(t) || STAFF_URL_SEND_RE.test(t)))) {
     const names = extractPropertyLabels(t);
     const ev = t.match(STAFF_PROPERTIES_DONE_RE)?.[0] ?? t.match(STAFF_URL_SEND_RE)![0];
     return base('properties_sent', 'done', ev, { propertyNames: names, propertyCount: Math.max(1, names.length) });
@@ -260,6 +320,7 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     };
     if (map.kind === 'properties_sent') { e.detail.propertyNames = names; e.detail.propertyCount = Math.max(1, names.length); }
     if (map.kind === 'estimate_sent') e.detail.estimateFor = names;
+    if (map.kind === 'meeting_place_sent') e.detail.appointment = extractViewingAppointment(r.generated_text, at);
     entries.push(e);
     // estimate_sent=true の別 aix_type（property_check_result 等に見積添付）→ estimate_sent も立てる
     if (map.kind !== 'estimate_sent' && r.estimate_sent === true) {
@@ -381,7 +442,25 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
   const recent = merged.filter((e) => e.status === 'done' && Number.isFinite(ms(e.at)) && now - ms(e.at) <= RECENT_DONE_WINDOW_MS);
   const lastDone = [...merged].reverse().find((e) => e.status === 'done' && e.kind !== 'media_sent') ?? null;
   const lastPromised = [...promises].reverse()[0] ?? null;
+  // 最後に案内した内覧の待ち合わせ（今日以降の分だけ。日付が読めない時は案内から48時間以内）
+  const lastMeeting = [...merged].reverse().find((e) => e.kind === 'meeting_place_sent' && e.detail.appointment) ?? null;
+  const viewingAppointment = ((): LedgerFacts['viewingAppointment'] => {
+    const a = lastMeeting?.detail.appointment;
+    if (!lastMeeting || !a) return null;
+    const today = jstDayStartMs(now);
+    if (a.dateMD) {
+      const [m, d] = a.dateMD.split('/').map(Number);
+      const p = jstParts(now);
+      // 年またぎ: 12月に 1/5 → 翌年
+      const y = m < p.m - 6 ? p.y + 1 : m > p.m + 6 ? p.y - 1 : p.y;
+      const day = Date.UTC(y, m - 1, d) - 9 * 3600 * 1000;
+      if (day < today) return null;
+      return { ...a, day: day === today ? 'today' : day === today + 86_400_000 ? 'tomorrow' : 'later', sentAt: lastMeeting.at };
+    }
+    return now - ms(lastMeeting.at) <= 48 * 3600 * 1000 ? { ...a, day: 'unknown', sentAt: lastMeeting.at } : null;
+  })();
   const facts: LedgerFacts = {
+    viewingAppointment,
     propertiesSentCount: sentDone.reduce((n, e) => n + (e.detail.propertyCount ?? 1), 0),
     propertiesSentNames: uniq(sentDone.flatMap((e) => e.detail.propertyNames ?? [])),
     lastPropertiesSentAt: sentDone.at(-1)?.at ?? null,
@@ -418,11 +497,19 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
   //   物件名（propertiesSentNames）は照合用の事実として facts に残す（前向き反応の指名照合・CONFIRM の対象照合）
   const summary =
     `物件送付${facts.propertiesSentCount}件` +
-    `／見積${facts.estimateSent ? '送付済' : '未'}` +
+    // 見積書を送ったかの一次証拠は AIX 見積書送る（aix_log）。本文だけの時は（本文）と分ける。約束だけで未送付も書く（ゆうこ事例）
+    `／見積${facts.estimateSent ? `送付済(${merged.some((e) => e.kind === 'estimate_sent' && e.source === 'aix_log') ? 'AIX' : '本文'})` : facts.estimatePromisedUnfulfilled ? '約束済み・未送付' : '未'}` +
     `／ピックアップ約束${facts.pickupPromisedUnfulfilled ? `未履行×${facts.pickupPromisedCount}` : 'なし'}` +
     `／確認約束${facts.confirmationPromisedUnfulfilled ? '未履行' : facts.confirmationReported ? '報告済' : 'なし'}` +
-    `／直前=${lastStaffEntry ? `${LEDGER_KIND_JA[lastStaffEntry.kind]}(${lastStaffEntry.status}/${lastStaffEntry.source})` : '不明'}`;
+    `／直前=${lastStaffEntry ? `${LEDGER_KIND_JA[lastStaffEntry.kind]}(${lastStaffEntry.status}/${lastStaffEntry.source})` : '不明'}` +
+    (viewingAppointment ? `／内覧の待ち合わせ=${appointmentLabel(viewingAppointment)}` : '');
   return { entries: merged, facts, summary };
+}
+
+/** 内覧の待ち合わせの表示（生成プロンプトに入るので物件名＝場所は書かない・竹内方針2。場所は facts にだけ持つ） */
+export function appointmentLabel(a: NonNullable<LedgerFacts['viewingAppointment']>): string {
+  const day = a.day === 'today' ? '（本日）' : a.day === 'tomorrow' ? '（明日）' : '';
+  return `${a.dateMD ?? ''} ${a.time ?? ''}${day} 現地待ち合わせ`.trim();
 }
 
 /** 直前スタッフ発言の往復文脈 kind（classifyLastStaffTurn の一次証拠。aix_log 行より先に見る） */
@@ -459,7 +546,7 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
       lines.push(`${['①', '②', '③', '④', '⑤', '⑥'][i] ?? i + 1} ${fmtJst(e.at)} ${what}${det ? `（${det}）` : ''}${ful}${react}`);
     });
   }
-  lines.push(`確定: 物件はこれまで${f.propertiesSentCount === 0 ? '1件も送っていない' : `${f.propertiesSentCount}件送付済み`}。見積書は${f.estimateSent ? '送付済み' : '未送付'}。${f.pickupPromisedUnfulfilled ? `ピックアップは${fmtJst(f.pickupPromisedAt)}に約束済みで未履行。` : ''}${f.confirmationPromisedUnfulfilled ? `「${f.confirmationPromisedObject ?? '確認'}」の確認を約束済みで未報告。` : ''}`);
+  lines.push(`確定: 物件はこれまで${f.propertiesSentCount === 0 ? '1件も送っていない' : `${f.propertiesSentCount}件送付済み`}。見積書は${f.estimateSent ? '送付済み' : f.estimatePromisedUnfulfilled ? '作成してお送りすると約束しただけで、まだ送っていない（AIX 見積書送るの記録なし）' : '未送付'}。${f.pickupPromisedUnfulfilled ? `ピックアップは${fmtJst(f.pickupPromisedAt)}に約束済みで未履行。` : ''}${f.confirmationPromisedUnfulfilled ? `「${f.confirmationPromisedObject ?? '確認'}」の確認を約束済みで未報告。` : ''}`);
   if (!f.redoAllowed) {
     lines.push('→ したがって「再度」「改めて」「もう一度」「追加で」「別の物件」「先ほどお送りした物件」「ご査収ください」は使えない（1件も送っていないため二度目は存在しない）。');
     lines.push(f.pickupPromisedUnfulfilled
@@ -472,6 +559,12 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
   if (f.estimateSent) lines.push('→ 御見積書は送付済み。「御見積書を作成しお送りします」の再宣言は禁止（金額変更依頼がある場合のみ「再作成」）。');
   else lines.push('→ 御見積書は未送付。「先ほどお送りした御見積書」「ご検討の程」は使えない。');
   if (f.recentDone.vacancyCheck || f.recentDone.mgmtCheck) lines.push(`→ 募集状況の確認は実行・報告済み（結果=${f.confirmationReportPattern ?? '報告済'}）。「確認します」の再宣言は禁止（新しい物件の提示がある場合のみ正当）。`);
+  // 2026-09-14 竹内（名無しの権兵衛事例）: 内覧の約束は送った内容の中でも鮮度が高い。当日の「着きました」に新しい内覧日程を打診しない
+  //   （文例はスタッフの実送信: 着いた→「まもなく到着いたします！！少々お待ちください」／遅れる→「かしこまりました！！お気をつけてお越しください」）
+  if (f.viewingAppointment) {
+    lines.push(`→ 内覧の待ち合わせを案内済み: ${appointmentLabel(f.viewingAppointment)}。この内覧は決まっている。新しい内覧日程の打診（「ご都合よろしいお日にち」「ご案内させて頂きます」）は書かない。` +
+      (f.viewingAppointment.day === 'today' ? 'お客様の「着きました」「遅れます」「向かってます」はこの内覧の当日の連絡（着いた→「まもなく到着いたします！！少々お待ちください」／遅れる→「かしこまりました！！お気をつけてお越しください」）。' : ''));
+  }
   return lines.join('\n') + '\n\n';
 }
 

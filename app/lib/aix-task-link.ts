@@ -61,6 +61,8 @@ export function resolveStaffPromiseAix(
      *  2026-09-12 竹内（YUYA 事例）: 確認の宣言 → お客様「お願いします！」→ ブレインが 確認します（acknowledge_check）に戻していた。
      *  実績（150日）: 確認の宣言＋お客様の了承の後に押された AIX 35件中 物件確認した 26件（74%）・確認します 0件 → 宣言の AIX を保つ */
     customerAckAfter?: boolean;
+    /** 見積る物件があるか（こちらの送付・お客様の URL/画像/「ここの」/見積の語）。false の時は見積書の宣言でも 見積書送る をセットしない（ゆうこ事例）。未指定は従来どおり */
+    propertyInPlay?: boolean;
   } = {},
 ): { action: "estimate_sheet" | "property_send" | "property_check_result"; kind: "estimate" | "pickup" | "check" } | null {
   const nonMedia = messages.filter((m) => {
@@ -81,6 +83,10 @@ export function resolveStaffPromiseAix(
   //   見積書は確認の結果（空いていたか）とお客様の反応を見てから（固定連鎖にしない）。お客様から物件確認の依頼があった時だけ
   if (e.kind === "estimate_declared" && facts.estimatePromisedUnfulfilled && opts.customerRequestedCheck
     && VACANCY_CHECK_DECL_RE.test(last.text ?? "")) return { action: "property_check_result", kind: "check" };
+  // 2026-09-14 竹内（ゆうこ事例）「見積書は物件が送られた時や物件の画像が送られた時等や見積依頼があった時」:
+  //   物件が1件も無い時の見積書の約束（物件0件の最初の返信に入った約束）では 見積書送る をセットしない（見積る物件が無い）
+  //   物件の有無は呼び出し側（brain-core）が cost-question-scope で判定して渡す（このファイルは画面からも読むので依存を持たない）
+  if (e.kind === "estimate_declared" && facts.estimatePromisedUnfulfilled && opts.propertyInPlay === false) return null;
   if (e.kind === "estimate_declared" && facts.estimatePromisedUnfulfilled) return { action: "estimate_sheet", kind: "estimate" };
   if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && !/次第/.test(e.evidence ?? "")) return { action: "property_send", kind: "pickup" };
   if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled && opts.customerRequestedCheck

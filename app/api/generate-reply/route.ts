@@ -3424,6 +3424,8 @@ export async function POST(req: NextRequest) {
       phaseKey: phaseGuideKey,
       hasCustomerImage: unrepliedCustomerTexts.some((t) => /【画像を送ってきた】|【画像】|\[画像\]/.test(t)),
       estimatePromised,
+      // 2026-09-14 ゆうこ事例: 見積書を実際に送ったか（約束だけか）は行動台帳（AIX 見積書送る・本文の送付）で見る
+      estimateActuallySent: ledger.facts.estimateSent,
       customerWillSendProperty: willSendSelf.yes && (willSendObj === "property" || willSendObj === "unknown"),
       customerWillSendEvidence: willSendSelf.evidence,
     });
