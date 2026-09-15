@@ -3948,7 +3948,8 @@ ${SMORA_COMMON_RULES}
           const t = text.normalize("NFKC");
           const out: string[] = [];
           if ((cmPattern === "available" || cmPattern === "alternative") && PCR_PROMISE_RE.test(text)) out.push("確認前の文（「確認させて頂きます」「確認出来次第」）になっている → 確認結果を報告する文にする");
-          if (cmHasEstimate && !/見積/.test(text)) out.push("御見積書を同封するのに触れていない →「初期費用の御見積書同封させて頂きました！！」を入れる");
+          // 同封する（済み）ので「作成しお送りさせて頂きます」（これからの約束）は不可。「同封させて頂きました」「お送りさせて頂きました」
+          if (cmHasEstimate && !/見積[^。！!\n]{0,16}(?:同封|添付|お送りさせて(?:頂|いただ)きました|お送りいたしました)/.test(text)) out.push("御見積書を同封するのに「同封させて頂きました」と書いていない（「作成しお送りさせて頂きます」は未来の約束で不可）→「初期費用の御見積書同封させて頂きました！！」を入れる");
           const lostNums = noteNumbers.filter((n) => !t.includes(n));
           if (cmStaffNote && lostNums.length > 0) out.push(`スタッフの補足（${cmStaffNote}）の内容が入っていない（${lostNums.join("・")}）→ 補足の内容を本文に入れる`);
           return out;
