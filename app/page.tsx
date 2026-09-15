@@ -2752,7 +2752,8 @@ export default function Home() {
   // Claude が呼ばれ続けるため、messages の参照が変わった時のみ再計算する
   const aixRecentMessages = useMemo(
     () => (selectedConversation.messages || []).slice(-20).map((m: Message) => ({
-      sender: m.sender, text: m.text || "", rawCreatedAt: m.rawCreatedAt, isAix: m.isAix,
+      // imageUrl: スタッフが送った画像を AIX の生成で物件名に直すため（sent_properties・2026-09-15 みく事例）
+      sender: m.sender, text: m.text || "", rawCreatedAt: m.rawCreatedAt, isAix: m.isAix, imageUrl: m.imageUrl,
     })),
     [selectedConversation.messages]
   );

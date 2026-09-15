@@ -28,6 +28,7 @@ import {
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing } from "@/app/lib/move-out-context";
+import { propertyLabelsForImages } from "@/app/lib/quoted-context";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
 import { buildActionLedger, buildLedgerLinesForBrain } from "@/app/lib/action-ledger";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
@@ -916,7 +917,7 @@ export async function analyzeConversation(
       .from("messages")
       // 監査FIX(2026-08-20): quoted_message_id（物件カード引用リプライの判別）と
       // image_type（Vision分類・「全画像=見積書」盲目仮定の解消）を追加取得
-      .select("sender, text, created_at, line_message_id, is_aix_generated, quoted_message_id, image_type", { count: "exact" })
+      .select("sender, text, created_at, line_message_id, is_aix_generated, quoted_message_id, image_type, image_url", { count: "exact" })
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(isIncremental ? 15 : 15),
@@ -1134,13 +1135,36 @@ export async function analyzeConversation(
   // Reverse so the history reads oldest → newest
   // B3(Fable5): 各行に日付（M/D）を付与 — 旧実装は created_at を取得しながらプロンプトから捨てており、
   // Haiku が「5分前の返信」と「12日間沈黙」を区別できず followup_revive 判断が原理的に不可能だった
-  const typedMessages = messages as Array<{ sender: string; text: string | null; created_at: string; line_message_id: string | null; is_aix_generated: boolean | null; quoted_message_id: string | null; image_type: string | null }>;
+  const typedMessages = messages as Array<{ sender: string; text: string | null; created_at: string; line_message_id: string | null; is_aix_generated: boolean | null; quoted_message_id: string | null; image_type: string | null; image_url?: string | null }>;
   // 監査FIX(2026-08-20): 画像種別ラベル（Vision分類済みの場合のみ）と引用リプライ注釈を履歴に付与。
   // 引用先が取得ウィンドウ内にあれば先頭30字を添える → 「物件カードへの引用=その物件が話題の中心」を事実化
   const IMAGE_TYPE_LABEL: Record<string, string> = { estimate: "見積書", floor_plan: "間取り図", property_photo: "物件写真", id_document: "本人確認書類", other: "その他画像" };
-  const msgByLmid = new Map<string, { text: string | null }>();
+  const msgByLmid = new Map<string, { text: string | null; sender?: string; image_url?: string | null }>();
   for (const m of typedMessages) {
-    if (m.line_message_id) msgByLmid.set(m.line_message_id, { text: m.text });
+    if (m.line_message_id) msgByLmid.set(m.line_message_id, { text: m.text, sender: m.sender, image_url: m.image_url ?? null });
+  }
+  // 2026-09-15 竹内（みく事例）: 引用先がスタッフの送った物件資料・見積書の画像なら、送った時の Vision 読み取り（sent_properties）で物件名に直す。
+  //   旧: 引用先の画像は「[画像]」としか渡らず、「こちら３階は空きありますか？」を別の物件（駒川中野）の話と取り違えた
+  const quotedPropertyLabel = new Map<string, string>();
+  try {
+    const quotedIds = [...new Set(typedMessages.map((m) => m.quoted_message_id).filter((x): x is string => !!x))];
+    const missing = quotedIds.filter((id) => !msgByLmid.has(id)).slice(0, 10);
+    if (missing.length > 0) {
+      const { data: qRows } = await supabase.from("messages").select("line_message_id, sender, text, image_url")
+        .eq("conversation_id", conversationId).in("line_message_id", missing);
+      for (const r of (qRows ?? []) as Array<{ line_message_id: string; sender: string; text: string | null; image_url: string | null }>) {
+        msgByLmid.set(r.line_message_id, { text: r.text, sender: r.sender, image_url: r.image_url });
+      }
+    }
+    const quotedImages = quotedIds
+      .map((id) => ({ id, q: msgByLmid.get(id) }))
+      .filter((x) => x.q?.sender === "staff" && !!x.q.image_url && (!x.q.text || /^\s*\[(?:画像|動画)\]\s*$/.test(x.q.text)));
+    if (quotedImages.length > 0) {
+      const labels = await propertyLabelsForImages(conversationId, quotedImages.map((x) => x.q!.image_url!));
+      for (const x of quotedImages) { const l = labels.get(x.q!.image_url!); if (l) quotedPropertyLabel.set(x.id, l); }
+    }
+  } catch (e) {
+    console.warn("[brain-core] quoted property resolve failed:", e instanceof Error ? e.message : e);
   }
   const history = [...typedMessages]
     .reverse()
@@ -1158,8 +1182,10 @@ export async function analyzeConversation(
       const imageTag = m.image_type && IMAGE_TYPE_LABEL[m.image_type] && /^\[画像\]/.test(m.text ?? "")
         ? `（画像種別: ${IMAGE_TYPE_LABEL[m.image_type]}）` : "";
       const quoted = m.quoted_message_id ? msgByLmid.get(m.quoted_message_id) : undefined;
-      const quoteTag = m.quoted_message_id
-        ? `（引用返信${quoted?.text ? `→「${quoted.text.replace(/\n/g, " ").slice(0, 30)}」` : ""}）` : "";
+      const quotedLabel = m.quoted_message_id ? quotedPropertyLabel.get(m.quoted_message_id) : undefined;
+      const quoteTag = !m.quoted_message_id ? ""
+        : quotedLabel ? `（引用返信→スタッフが送った物件資料「${quotedLabel}」。「こちら」「〇階」はこの物件（同じ建物）の話）`
+        : `（引用返信${quoted?.text ? `→「${quoted.text.replace(/\n/g, " ").slice(0, 30)}」` : ""}）`;
       return `[${senderLabel} ${dateLabel}] ${quoteTag}${m.text ?? "（画像/添付）"}${imageTag}`;
     })
     .join("\n");

@@ -3080,6 +3080,26 @@ ALTER TABLE llm_job_attempts DISABLE ROW LEVEL SECURITY;
 --   同期が状態を動かすのは審査管理の状態が前回から変わった時だけ（否決の後も screening のまま届き続けて、物件提案中に戻した会話を審査中へ戻していた）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS screening_last_status TEXT;
 
+-- sent_image_properties: スタッフが送った画像 → 物件名・号室（2026-09-15 竹内・みく事例）
+--   お客様の引用返信（「こちら３階は空きありますか？」）の引用先の画像を物件に直す。sent_properties は同じ物件の2回目以降の画像を
+--   重複として記録しないため（送った物件の数え方を守る）、画像ごとの対応はこちらに必ず書く（extract-property-info）
+CREATE TABLE IF NOT EXISTS sent_image_properties (
+  image_url TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  property_name TEXT NOT NULL,
+  room_no TEXT,
+  source TEXT DEFAULT 'vision',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sent_image_properties_conv ON sent_image_properties(conversation_id);
+ALTER TABLE sent_image_properties DISABLE ROW LEVEL SECURITY;
+INSERT INTO sent_image_properties (image_url, conversation_id, property_name, room_no, source, created_at)
+SELECT DISTINCT ON (image_url) image_url, conversation_id, property_name, room_no, 'sent_properties', sent_at
+FROM sent_properties
+WHERE image_url IS NOT NULL AND conversation_id IS NOT NULL AND property_name IS NOT NULL
+ORDER BY image_url, sent_at DESC
+ON CONFLICT (image_url) DO NOTHING;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END } from "../lib/calendarSlots";
 import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, latestCustomerTurnText, type RequestedViewingDate } from "../lib/viewing-date-request";
 import { customerRequestsPhoneCall, buildCallRequestText } from "../lib/phone-call";
+import { countCustomerSentProperties } from "../lib/customer-property-count";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 import { weekdayForMonthDay } from "../lib/jst-date";
@@ -747,6 +748,11 @@ export default function AixModal({
   // 複数物件対応: 件数 + per-property 画像・見積書・物件名・退去予定日
   const [sentPropertyCount, setSentPropertyCount] = useState<1|2|3|4|5|null>(null);
   const [checkPropertyCount, setCheckPropertyCount] = useState<1|2|3>(1);
+  // 2026-09-15 竹内（みく事例）: 送られた物件数は会話（お客様の最新の発言の物件 URL・画像）から自動で入れる（違えばスタッフが直す）
+  const [sentCountAuto, setSentCountAuto] = useState(false);
+  const sentCountAppliedRef = useRef(false);
+  // スタッフだけが知っている事実（「同じ間取りのお部屋は301号室と101号室のみ」等）。会話を合わせるでそのまま本文に入る
+  const [checkStaffNote, setCheckStaffNote] = useState("");
   const [checkPropImages, setCheckPropImages] = useState<File[][]>([[], [], []]);
   const [checkPropImagePreviews, setCheckPropImagePreviews] = useState<string[][]>([[], [], []]);
   const [checkPropEstimates, setCheckPropEstimates] = useState<(File|null)[]>([null, null, null]);
@@ -956,6 +962,32 @@ export default function AixModal({
       .catch((e) => { if (!cancelled) setCallUrlInfo({ loading: false, url: null, accountLabel: "", error: String(e) }); });
     return () => { cancelled = true; };
   }, [actionType, account]);
+  // 物件確認した（物件あった／物件なかった）: 送られた物件数を会話から自動で入れる（1回だけ・スタッフが選び直したらそのまま）
+  const sentPropertyAuto = useMemo(
+    () => (actionType === "property_check_result" ? countCustomerSentProperties(recentMessages ?? []) : { count: 0, basis: "none" as const }),
+    [actionType, recentMessages],
+  );
+  useEffect(() => {
+    if (actionType !== "property_check_result" || sentCountAppliedRef.current) return;
+    if (checkPattern !== "available" && checkPattern !== "unavailable") return;
+    sentCountAppliedRef.current = true;
+    if (sentPropertyAuto.basis === "none" || sentPropertyCount !== null) return; // 物件の URL・画像が無い質問（「こちら3階は？」）は空欄のまま
+    setSentPropertyCount(Math.min(5, Math.max(1, sentPropertyAuto.count)) as 1 | 2 | 3 | 4 | 5);
+    setSentCountAuto(true);
+    // 物件情報の欄も送られた数だけ出す（最大3）
+    if (checkPattern === "available") setCheckPropertyCount(Math.min(3, Math.max(1, sentPropertyAuto.count)) as 1 | 2 | 3);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType, checkPattern, sentPropertyAuto.count]);
+  // 確認できた物件数 = 物件情報に入れた欄の数（物件名・画像・見積書のどれかが入っている最後の欄まで）。何も入っていなければ欄の数
+  const checkFilledCount = (() => {
+    let last = 0;
+    for (let i = 0; i < 3; i++) {
+      if ((checkPropNames[i] ?? "").trim() || (checkPropImages[i]?.length ?? 0) > 0 || checkPropEstimates[i]) last = i + 1;
+    }
+    return last;
+  })();
+  const effectiveCheckCount = (checkFilledCount > 0 ? Math.min(checkFilledCount, checkPropertyCount) : checkPropertyCount) as 1 | 2 | 3;
+
   const saveCallUrl = async () => {
     setCallUrlSaving(true);
     setError("");
@@ -2026,10 +2058,14 @@ export default function AixModal({
         }
         if (checkPattern === "available") {
           // 全件数（1件含む）: 物件カードから画像・名前を取得
-          body.property_count = checkPropertyCount;
+          // 2026-09-15 竹内（みく事例）: 確認できた物件数は物件情報に入れた欄の数（effectiveCheckCount）。空の欄は送らない
+          const cpc = effectiveCheckCount;
+          if (cpc !== checkPropertyCount) setCheckPropertyCount(cpc);
+          body.property_count = cpc;
           if (sentPropertyCount !== null) body.sent_property_count = sentPropertyCount;
-          body.prop_statuses = checkPropStatuses.slice(0, checkPropertyCount);
-          body.prop_facilities = propFacilities.slice(0, checkPropertyCount).map(f => ({
+          if (checkStaffNote.trim()) body.staff_note = checkStaffNote.trim();
+          body.prop_statuses = checkPropStatuses.slice(0, cpc);
+          body.prop_facilities = propFacilities.slice(0, cpc).map(f => ({
             parkingAvail: f.parkingAvail,
             parkingFee: f.parkingFee || null,
             parkingVacancy: f.parkingVacancy,
@@ -2042,14 +2078,14 @@ export default function AixModal({
             internetDetail: f.internetDetail || null,
             guarantorType: f.guarantorType,
           }));
-          const extractedProps = await extractPropInfoFromImages(checkPropertyCount);
+          const extractedProps = await extractPropInfoFromImages(cpc);
           body.property_names = extractedProps.map(p => p.name);
           body.property_vacancy_dates = extractedProps.map(p => p.vacancyDate);
           // M1: 物件名×状態を onAfterSend 経由で aix_usage_logs に永続化（brain の確定事実ソース）
           lastCheckPropNamesRef.current = extractedProps.map(p => p.name);
-          lastCheckPropStatusesRef.current = checkPropStatuses.slice(0, checkPropertyCount);
+          lastCheckPropStatusesRef.current = checkPropStatuses.slice(0, cpc);
           const allImageUrls: string[] = [];
-          for (let pi = 0; pi < checkPropertyCount; pi++) {
+          for (let pi = 0; pi < cpc; pi++) {
             if (checkPropImages[pi].length > 0) {
               const urls = await Promise.all(checkPropImages[pi].map((f, j) => uploadImageCached(f, j)));
               allImageUrls.push(...urls);
@@ -2060,7 +2096,7 @@ export default function AixModal({
           // 旧実装は非nullのみpushしていたため「物件②だけ見積書あり」のとき
           // サーバ側の propNames[pi] とズレて物件①の名前で費用テキストが作られていた。
           const estimateUrls: (string | null)[] = [];
-          for (let pi = 0; pi < checkPropertyCount; pi++) {
+          for (let pi = 0; pi < cpc; pi++) {
             const ef = checkPropEstimates[pi];
             estimateUrls.push(ef ? await uploadImageCached(ef) : null);
           }
@@ -4993,12 +5029,15 @@ export default function AixModal({
               {/* 物件あった/物件なかった: 送られた物件数セレクター */}
               {(checkPattern === "available" || checkPattern === "unavailable") && (
                 <div className="mb-1">
-                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">送られた物件数</p>
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">
+                    送られた物件数
+                    {sentCountAuto && sentPropertyCount !== null && <span className="ml-1 font-normal text-[#2e7d32]">（会話から自動・違えば選び直し）</span>}
+                  </p>
                   <div className="flex gap-2">
                     {([1, 2, 3, 4, 5] as const).map((n) => (
                       <button
                         key={n}
-                        onClick={() => setSentPropertyCount(sentPropertyCount === n ? null : n)}
+                        onClick={() => { setSentCountAuto(false); setSentPropertyCount(sentPropertyCount === n ? null : n); }}
                         className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${sentPropertyCount === n ? "border-[#4CAF50] bg-[#e8f5e9] text-[#2e7d32]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
                       >{n}件</button>
                     ))}
@@ -5009,7 +5048,12 @@ export default function AixModal({
               {/* 物件あった: 件数セレクター */}
               {checkPattern === "available" && (
                 <div className="mb-1">
-                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">確認できた物件数</p>
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">
+                    確認できた物件数
+                    <span className="ml-1 font-normal text-[#2e7d32]">
+                      {checkFilledCount > 0 ? `${effectiveCheckCount}件（物件情報に入れた数から自動）` : "（物件情報に入れた数が自動で入ります・欄を増やす時は下で選ぶ）"}
+                    </span>
+                  </p>
                   <div className="flex gap-2">
                     {([1, 2, 3] as const).map((n) => (
                       <button
@@ -5019,6 +5063,23 @@ export default function AixModal({
                       >{n}件</button>
                     ))}
                   </div>
+                  {sentPropertyCount !== null && checkFilledCount > 0 && sentPropertyCount > effectiveCheckCount && (
+                    <p className="mt-1 text-[11px] text-[#e65100]">送られた{sentPropertyCount}件のうち{effectiveCheckCount}件が募集中 → 残り{sentPropertyCount - effectiveCheckCount}件は募集終了として伝えます</p>
+                  )}
+                </div>
+              )}
+
+              {/* 物件あった: 補足（スタッフだけが知っている事実）— 2026-09-15 竹内・みく事例 */}
+              {checkPattern === "available" && (
+                <div className="mb-1">
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">補足 <span className="font-normal text-[#90a4ae]">（任意・会話を合わせるでそのまま本文に入ります）</span></p>
+                  <textarea
+                    value={checkStaffNote}
+                    onChange={(e) => setCheckStaffNote(e.target.value)}
+                    rows={2}
+                    placeholder="例：3階が募集中・同じ間取り（29.62㎡）は301号室と101号室のみ"
+                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#4CAF50]"
+                  />
                 </div>
               )}
 

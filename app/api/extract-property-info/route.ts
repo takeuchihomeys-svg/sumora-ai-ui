@@ -149,6 +149,17 @@ JSONのみで返答してください：
       }
     }
 
+    // ── 3.5 画像 → 物件の対応は重複でも必ず残す（2026-09-15 竹内・みく事例）──────────
+    //   お客様が引用返信で「こちら３階は空きありますか？」と聞いた時に、引用先の画像がどの物件かを直すため（quoted-context）。
+    //   sent_properties は同じ物件の2回目以降の画像（御見積書・送り直し）を重複として書かないので、画像ごとの対応はこちら
+    if (propertyName) {
+      const { error: mapErr } = await supabase.from("sent_image_properties").upsert(
+        { image_url, conversation_id, property_name: propertyName, room_no: roomNo, source: "vision" },
+        { onConflict: "image_url" },
+      );
+      if (mapErr) console.warn("[extract-property-info] sent_image_properties upsert failed:", mapErr.message);
+    }
+
     // ── 4. Save to sent_properties ───────────────────────────────────────────
     let insertErrorMessage: string | null = null;
     if (propertyName && roomNo && !isDuplicate) {

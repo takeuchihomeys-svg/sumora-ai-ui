@@ -5,6 +5,8 @@ import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMe
 import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable } from "@/app/lib/jst-date";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
+import { resolveLatestQuotedContext, formatQuotedContextBlock, propertyLabelsForImages } from "@/app/lib/quoted-context";
+import { avoidTopicsForAix } from "@/app/lib/aix-staff-first";
 import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
@@ -1252,9 +1254,19 @@ async function handleAction(request: NextRequest): Promise<Response> {
       : `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。本日すでにこちらから送信済みのため挨拶行は書かない（「お世話になっております」「お待たせ致しました」「お待たせいたしました」は禁止）。名前行「〇〇さん」または本題から始めること。`;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
-    const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
+    // 2026-09-15 竹内（みく事例）: スタッフが送った画像（物件資料・御見積書）は履歴から丸ごと消えていて、どの物件の資料を送ったか見えなかった。
+    //   送った時の Vision 読み取り（sent_properties）で物件名が分かる画像は「[画像: 〇〇 101号室の資料・御見積書]」として残す（分からない画像は従来どおり落とす）
+    const recentMsgsForHistory = Array.isArray(recent_messages) ? (recent_messages as Array<{ sender: string; text: string; imageUrl?: string | null }>) : [];
+    const staffImageLabels = conversationId
+      ? await propertyLabelsForImages(conversationId, recentMsgsForHistory.filter((m) => m.sender === "staff" && m.imageUrl && (!m.text || m.text === "[画像]")).map((m) => m.imageUrl as string)).catch(() => new Map<string, string>())
+      : new Map<string, string>();
+    const recentHistory = recentMsgsForHistory.length > 0
       ? "\n\n【直近の会話履歴（この流れを踏まえて文を作ること）】\n" +
-        (recent_messages as Array<{ sender: string; text: string }>)
+        recentMsgsForHistory
+          .map((m) => {
+            const label = m.sender === "staff" && m.imageUrl ? staffImageLabels.get(m.imageUrl) : undefined;
+            return label ? { ...m, text: `[画像: ${label}の資料・御見積書]` } : m;
+          })
           .filter((m) => m.text && m.text !== "[画像]" && m.text !== "[動画]")
           .slice(-20)
           .map((m) => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`)
@@ -1348,8 +1360,9 @@ async function handleAction(request: NextRequest): Promise<Response> {
         );
       }
       // ── 戦略系（どう攻めるか）──────────────────────────
+      // 2026-09-15 竹内（みく事例）: 成約戦略・今の物件は会話全体の方針（ブレインの推定）。スタッフが AIX で入れた物件・結果と食い違う時は使わない
       if (aixBrainMeta.closing_strategy && !closingGatedByStance) {
-        lines.push(`【🎯 成約戦略】${aixBrainMeta.closing_strategy}`);
+        lines.push(`【🎯 成約戦略（会話全体の方針・参考。今回スタッフが入れた物件・確認結果と食い違う時は使わない）】${aixBrainMeta.closing_strategy}`);
       }
       if (aixBrainMeta.checkpoint_stage) {
         lines.push(`【📍 会話フェーズ】${aixBrainMeta.checkpoint_stage}`);
@@ -1374,7 +1387,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
         lines.push(`【🏅 この顧客に効く成功パターン】${aixBrainMeta.winning_pattern}`);
       }
       if (aixBrainMeta.current_property) {
-        lines.push(`【🏠 現在話している物件】${aixBrainMeta.current_property}`);
+        lines.push(`【🏠 現在話している物件（ブレインの推定。スタッフが入れた物件名・引用返信の物件と食い違う時はそちらが正）】${aixBrainMeta.current_property}`);
       }
       if (aixBrainMeta.recommended_tone) {
         const toneGuide: Record<string, string> = {
@@ -1391,8 +1404,15 @@ async function handleAction(request: NextRequest): Promise<Response> {
         lines.push(`【📋 テンプレートヒント】「${aixBrainMeta.template_hint}」スタイルが最も効果的`);
       }
       // ── 制約系（外してはいけないガードレール）────────────
-      if (aixBrainMeta.avoid_topics?.length) {
-        lines.push(`【🚫 絶対に言及しない語・話題（言い換え・同義語も禁止）】${aixBrainMeta.avoid_topics.join("・")}`);
+      // 2026-09-15 竹内（みく事例）: この AIX が送る事柄・スタッフが入れた事柄（御見積書の同封・内覧／申込誘導）は避ける話題から外す
+      //   （旧: 物件確認した＋御見積書同封に「見積書」「初期費用」を絶対に言及しない、で入れていた）
+      const aixAvoid = avoidTopicsForAix(action, aixBrainMeta.avoid_topics, {
+        estimateEnclosed: !!(body.estimate_image_url || (Array.isArray(body.estimate_image_urls) && (body.estimate_image_urls as unknown[]).some(Boolean))),
+        viewingInvite: body.show_viewing_invite === true,
+        applicationInvite: body.check_application_invite === true,
+      });
+      if (aixAvoid.length) {
+        lines.push(`【🚫 絶対に言及しない語・話題（言い換え・同義語も禁止）】${aixAvoid.join("・")}`);
       }
       if (aixBrainMeta.urgency_appropriate === false) {
         lines.push("【⛔ 緊急表現禁止】直近で緊急表現を多用済みのため「今なら」「残り〇室」「お早めに」「先着」等の緊急を煽る表現は使わないこと");
@@ -3658,12 +3678,15 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         const cmEstUrls: (string | null | undefined)[] = cmEstUrlsRaw.length > 0 ? cmEstUrlsRaw : (cmEstSingle ? [cmEstSingle] : []);
         const cmHasEstimate = cmEstUrls.some((u) => !!u);
         // 会話を合わせる改善ルール（このブロック内の adaptMessageToConversation 4呼び出しで共用）
-        const [adaptRulesNotePCR, cmEstimateFacts] = await Promise.all([
+        const [adaptRulesNotePCR, cmEstimateFacts, pcrQuoted] = await Promise.all([
           getAdaptImprovementRules(currentAction),
           cmHasEstimate
             ? buildEstimateCostFacts(cmEstUrls, (property_names as string[] | undefined) ?? [], currentAction)
             : Promise.resolve({ block: "", notes: [] } as EstimateCostFacts),
+          // 2026-09-15 竹内（みく事例）: お客様の引用返信の引用先（スタッフが送った物件資料の画像 → sent_properties で物件名）
+          conversationId ? resolveLatestQuotedContext(conversationId) : Promise.resolve(null),
         ]);
+        const pcrQuotedBlock = formatQuotedContextBlock(pcrQuoted);
         // 見積書送付の事実 + 費用メモを aix_usage_logs へ永続化させる（クライアント → log-aix-usage）
         const cmEstimateExtra = cmHasEstimate
           ? { estimate_sent: true, ...(cmEstimateFacts.notes.length > 0 ? { prop_cost_notes: cmEstimateFacts.notes } : {}) }
@@ -3671,9 +3694,9 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
         if (baseMessage) {
           // 適応モードは原則「金額の創作禁止」だが、OCR済みの費用情報は確定事実として明示的に使用許可する
-          const adaptEstNote = cmEstimateFacts.block
+          const adaptEstNote = (cmEstimateFacts.block
             ? `\n\n【追加で使ってよい確定事実（同封する御見積書のOCR結果・創作ではありません）】\n${cmEstimateFacts.block}\n※ベースメッセージの結果・構成・アクションは変えず、上記の費用情報を1〜2文で自然に補足すること。`
-            : "";
+            : "") + (pcrQuotedBlock ? `\n\n${pcrQuotedBlock}` : "");
           message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, adaptEstNote, adaptRulesNotePCR, aixBrainMeta);
           return finalizeResponse(message_text, cmEstimateExtra);
         }
@@ -3756,7 +3779,9 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         const cmFacilities = body.prop_facilities as PropFacilityData[] | undefined;
         const cmPerPropLines = cmPattern === "available" && cmPropCount > 0
           ? Array.from({ length: cmPropCount }, (_, i) => {
-              const nm = cmPropNamesRaw[i] || `物件${i + 1}`;
+              // 物件名が未入力（「物件①」は画面の仮の名前）なら本文に仮の名前を書かせない（2026-09-15 みく事例）
+              const rawNm = cmPropNamesRaw[i] ?? "";
+              const nm = rawNm && !/^物件[①②③\d]?$/.test(rawNm) ? rawNm : `物件${i + 1}（物件名は未入力。本文に「物件${i + 1}」と書かず、引用返信・会話から分かる階・お部屋として伝える）`;
               const rawVac = (cmVacancyDates[i] ?? "").trim();
               // 過去日付・年号は落とす（通常生成パスの propList と同じ正規化）
               const vac = rawVac && !isPastVacancyDate(rawVac) ? rawVac.replace(/^\d{4}年/, "") : "";
@@ -3778,9 +3803,12 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         const cmAvailableApp = body.available_application as "yes" | "no" | undefined;
         const cmShowViewingInvite = !!(show_viewing_invite as boolean | undefined);
         const cmShowAppInvite = !!(body.check_application_invite as boolean | undefined);
+        // 2026-09-15 竹内（みく事例）: スタッフだけが知っている事実（「同じ間取りのお部屋は301号室と101号室のみ」等）を補足で受け取り、そのまま使う
+        const cmStaffNote = typeof body.staff_note === "string" ? body.staff_note.trim().slice(0, 600) : "";
         const cmResultLines = [
           `・確認結果: ${CM_RESULT_DESC[cmPattern] ?? "会話履歴から読み取ること"}`,
           cmSinglePropName ? `・対象物件名: ${cmSinglePropName}` : "",
+          cmStaffNote ? `・スタッフからの補足（確定事実・必ず本文に入れる）: ${cmStaffNote}` : "",
           cmPerPropLines ? `・確認できた物件と状態:\n${cmPerPropLines}` : "",
           cmPattern === "alternative" && cmEndedFloor != null ? `・募集終了だったお部屋: ${cmEndedFloor}階${cmEndedUnit ? `${cmEndedUnit}号室` : ""}` : "",
           cmSentCount !== null ? `・お客様から送られた物件数: ${cmSentCount}件` : "",
@@ -3811,30 +3839,33 @@ ${cmResultLines}
           loadBrainTemplate("property_check_result"),
         ]);
 
+        // 2026-09-15 竹内（みく事例）: スタッフの入力（確認結果・物件情報・同封する御見積書・補足）が正。ブレインの AIX-META は参考に下げる。
+        //   旧: AIX-META を「必ず守る」で入れ、ブレインが物件を取り違えた key_topics（「駒川中野物件の空室確認結果報告」）・
+        //   会話全体の成約戦略（「リアライズ長居公園通313号室への反応を待ちつつ…」を返信末尾で WE DO 宣言）・
+        //   avoid_topics（「見積書」「初期費用」＝スタッフが御見積書を同封しているのに禁止）が、確認結果より強く効き、
+        //   別の物件（313号室）の「募集状況確認させて頂きます」という確認前の文になった（穴:G6 古い判断の注入）
         const pcrWaitStance = aixBrainMeta?.engagement_stance === "wait";
-        const pcrAvoidTopics = (aixBrainMeta?.avoid_topics ?? []).filter((t): t is string => typeof t === "string" && t.trim() !== "");
+        // スタッフが入れた事柄（御見積書の同封・内覧誘導・申込誘導）と食い違う禁止の話題は外す（aix-staff-first）
+        const pcrAvoidTopics = avoidTopicsForAix("property_check_result", aixBrainMeta?.avoid_topics, {
+          estimateEnclosed: cmHasEstimate, viewingInvite: cmShowViewingInvite, applicationInvite: cmShowAppInvite || cmAvailableApp === "yes",
+        });
         const pcrKeyTopics = (aixBrainMeta?.key_topics ?? []).filter((t): t is string => typeof t === "string" && t.trim() !== "");
         const pcrMetaLines = [
           pcrWaitStance
-            ? "- ⏸️ 押し引きスタンス: WAIT（待ちの局面）— 強推し直後の了承、またはネガ文脈（断り・キャンセル・否決・募集終了）の直後です。内覧日程の提示・お申込誘導・希少性訴求（「一番手確保」「残り1部屋」「お早めに」「今なら」等）・新規物件の提案は今回の返信に一切入れないこと。上記【スタッフの確認結果】内の「・締めの方向: お申込誘導 / 内覧誘導」の指示および内覧可能日時の提示指示は今回に限り無効とし、空室状況をお伝えした後は「ご検討ください！！」「ご都合に合わせてご連絡ください！！」等の柔らかい締めにすること。このWAIT指示は他のすべての締め・誘導指示に優先する"
-            : "",
-          aixBrainMeta?.closing_strategy
-            ? `- 成約戦略: ${aixBrainMeta.closing_strategy} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること（WE DO宣言は返信全体で1文・重複禁止）${pcrWaitStance ? "。ただしWAITスタンスが優先のため、押し・誘導を含む戦略はそのまま実行せず「お待ちしております」「ご検討頂ければと思います」等の待ちの1文に置き換えること" : ""}`
+            ? "- ⏸️ 押し引きスタンス: WAIT（待ちの局面）— 強推し直後の了承、またはネガ文脈（断り・キャンセル・否決・募集終了）の直後です。内覧日程の提示・希少性訴求（「一番手確保」「お早めに」「今なら」等）・新規物件の提案は入れない。ただしスタッフが【スタッフの確認結果】で締めの方向（お申込誘導／内覧誘導）や補足を指定している時はスタッフの指定に従う"
             : "",
           aixBrainMeta?.recommended_tone
             ? `- 推奨トーン: ${aixBrainMeta.recommended_tone}${RECOMMENDED_TONE_GUIDE[aixBrainMeta.recommended_tone] ? `（${RECOMMENDED_TONE_GUIDE[aixBrainMeta.recommended_tone]}）` : ""}`
             : "",
           pcrKeyTopics.length > 0
-            ? `- ✅ 必ず含める内容（${pcrKeyTopics.length}件すべて必須）: ${pcrKeyTopics.join(" / ")} → 各項目を本文で最低1文、会話の流れに自然に織り込むこと（箇条書きの丸写しは禁止）`
+            ? `- 参考: ブレインが見た話題: ${pcrKeyTopics.join(" / ")}（物件名・話題が【スタッフの確認結果】【引用返信】と食い違う時は使わない）`
             : "",
           pcrAvoidTopics.length > 0
-            ? `- ⛔ 絶対禁止の話題（1つでも含めたら不合格）: ${pcrAvoidTopics.join(" / ")}${pcrWaitStance ? " ／ さらにWAIT局面のため「他物件の募集状況確認」「新規物件のピックアップ」「別物件のご提案」「お申込のご案内」「ご検討のお願いの繰り返し」も禁止" : ""}`
-            : (pcrWaitStance
-              ? "- ⛔ 絶対禁止の話題（WAIT局面）: 他物件の募集状況確認 / 新規物件のピックアップ / 別物件のご提案 / お申込のご案内 / ご検討のお願いの繰り返し"
-              : ""),
+            ? `- 避ける話題: ${pcrAvoidTopics.join(" / ")}`
+            : "",
         ].filter(Boolean);
         const brainMetaBlockPCR = pcrMetaLines.length > 0
-          ? `\n【AIX-META（この局面の最適アプローチ・必ず守る）】\n${pcrMetaLines.join("\n")}\n`
+          ? `\n【AIX-META（ブレインの判断・参考。スタッフの確認結果・物件情報・御見積書・補足と食い違う時はスタッフの入力が正）】\n${pcrMetaLines.join("\n")}\n`
           : "";
 
         // キャッシュ最適化: 静的（GENERATION_SYSTEM/共通ルール/固定指示）と
@@ -3854,15 +3885,26 @@ ${SMORA_COMMON_RULES}
 ・見積書を同封する場合は「御見積書同封させて頂きました！！」と費用の実情（割引の大小・クリーニング費用・初期費用の高低）まで伝えてから内覧/申込に繋げる
 
 【重要：会話読解ルール（必ず守ること）】
-・お客様の直近メッセージから「どの物件・号室」の確認を求めているか読み取る
+・お客様の直近メッセージから「どの物件・号室」の確認を求めているか読み取る（【引用返信】があればそれが最優先の手がかり）
 ・物件名・号室が会話に登場する場合は必ず含める（創作禁止）
 ・テンプレ的な返信は絶対禁止。会話に直接応答する文から始める
+・お客様が具体的に聞いたこと（「3階は空きありますか？」等）には最初の1文で答える（例:「3階部分のお部屋募集しております！！」）
+・情報の優先順位: ①【スタッフの確認結果】（物件情報・補足）と同封する御見積書 ②【引用返信】とお客様の直近の発言 ③【AIX-META】（参考）。食い違う時は上を正とする
+
+【スタッフの実際の返信の例（2026-09-15 みく: 2階が募集終了で1階を送った後「こちら3階は空きありますか？」→ 3階が募集中・同じ間取りは残りわずか）】
+3階部分のお部屋募集しております！！
+初期費用の御見積書同封させて頂きました！！
+こちらの間取りのお部屋（29.62㎡）は現在
+301号室と101号室のみとなりますので
+お気に召されましたらお申込しお部屋抑えさせて頂きます！！
+お手隙の際にご査収ください😌！！
+（※中身は別のお客様の話。広さ・号室・残りの部屋数はスタッフの補足・物件情報にある時だけ書く）
 
 【絶対禁止】
 ・🙏 絵文字は絶対に使わない
 ・「申し訳ございません」等の謝罪表現
 ・物件名の創作
-・スタッフの確認結果があるのに「確認させて頂きます」等の確認前メッセージを生成すること
+・スタッフの確認結果があるのに「確認させて頂きます」「確認出来次第ご連絡」等の確認前メッセージを生成すること
 ・上記の見積書情報に無い金額・費用項目を創作すること
 ・確認済みの物件を「確認中」「引き続き確認します」と保留扱いにすること
 
@@ -3871,6 +3913,7 @@ ${SMORA_COMMON_RULES}
 
         // 動的（顧客・案件ごとに変わる）ブロック。キャッシュ対象外の第4引数で渡す
         const pcrDynamicSuffix = [
+          pcrQuotedBlock,
           cmResultBlock,
           cmEstimateFacts.block,
           pcrCalendarBlock,
@@ -3880,21 +3923,36 @@ ${SMORA_COMMON_RULES}
         ].filter(Boolean).join("\n\n");
 
         const pcrConvUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrDiffNote ? `\n\n${pcrDiffNote}` : "") + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
+        const parsePCR = (raw: string): string => {
+          try {
+            const mPCR = raw.match(/\{[\s\S]*\}/);
+            if (mPCR) return ((JSON.parse(mPCR[0]) as { message?: string }).message || raw).replace(/\\n/g, "\n");
+          } catch { /* JSON で無ければ本文そのもの */ }
+          return raw;
+        };
         const rawPCR = await callClaude(
           pcrStaticSystem,
           pcrConvUserFinal,
           currentAction,
           pcrDynamicSuffix || undefined
         );
-        try {
-          const mPCR = rawPCR.match(/\{[\s\S]*\}/);
-          if (mPCR) {
-            const dPCR = JSON.parse(mPCR[0]) as { message?: string };
-            message_text = (dPCR.message || rawPCR).replace(/\\n/g, "\n");
-          } else { message_text = rawPCR; }
-        } catch { message_text = rawPCR; }
+        message_text = parsePCR(rawPCR);
+        // 2026-09-15 竹内（みく事例）: 確認結果（物件あった・別の部屋）があるのに確認前の文（「募集状況確認させて頂きます」「確認出来次第ご連絡」）になった時は1回だけ作り直す
+        const PCR_PROMISE_RE = /確認(?:させて(?:頂|いただ)き|いたし|致し)ます|確認(?:出来|でき)次第|確認中/;
+        let pcrNotice: string | undefined;
+        if ((cmPattern === "available" || cmPattern === "alternative") && PCR_PROMISE_RE.test(message_text)) {
+          console.warn(JSON.stringify({ tag: "aix:pcr-promise-retry", conversationId, text: message_text.slice(0, 120) }));
+          const retryRaw = await callClaude(
+            pcrStaticSystem,
+            `${pcrConvUserFinal}\n\n【作り直し】前の案は「${message_text.replace(/\n/g, " ").slice(0, 160)}」で、確認前の文になっていました。スタッフは確認を完了しています。【スタッフの確認結果】を報告する文にしてください（「確認させて頂きます」「確認出来次第」は書かない）。`,
+            currentAction,
+            pcrDynamicSuffix || undefined,
+          );
+          message_text = parsePCR(retryRaw);
+          if (PCR_PROMISE_RE.test(message_text)) pcrNotice = "確認前の文（「確認させて頂きます」等）が残っています。確認結果を報告する文に書き換えてから送信してください";
+        }
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
-        return finalizeResponse(message_text, cmEstimateExtra);
+        return finalizeResponse(message_text, { ...(cmEstimateExtra ?? {}), ...(pcrNotice ? { notice: pcrNotice } : {}) });
       }
 
       // 「別の部屋について確認した」は会話を合わせる（conversation_match）専用（通常AIX生成は未対応）
