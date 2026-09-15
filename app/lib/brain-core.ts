@@ -45,6 +45,7 @@ import { decideAnalysisMode, nothingNewSinceLastAnalysis } from "@/app/lib/brain
 import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した発言は必ず分析し直す（cached で前回の「もう1件の内覧日確定」を持ち越さない）
 import { detectPropertyPass, CUST_WILL_SEND_SELF_PRED, analyzeSubstance } from "@/app/lib/reply-context";
+import { resolveClosedAck } from "@/app/lib/closed-ack";
 // 2026-09-12 同 段2: 場面の証拠（決定論）とスタッフが押した AIX の実績（brain_aix_feedback）をブレインの入力にする
 import {
   unrepliedCustomerTurn, sceneEvidenceForTurn, sceneSignalFallback, compactSceneEvidence, buildSceneEvidencePromptText,
@@ -114,6 +115,7 @@ export type SuggestedAixMeta = {
   reply_mode?: "aix" | "auto_reply";  // 'aix'=スタッフがAIXで手動対応 / 'auto_reply'=AI自動返信OK
   // 2択UIフラグ: proposing フェーズで条件トレードオフ質問が来た場合に「AIXで物件追加オススメ」か「テキスト返信」かをスタッフが選ぶ
   two_choice_mode?: boolean;           // 2択UI表示フラグ（物件提案中フェーズで条件トレードオフ質問検出時）
+  alt_actions?: string[];              // 2つ目以降の AIX（action の横に並べて出す。2026-09-15 朱莉事例: 連絡待ちの物件ピックアップ＋物件オススメ）
   reply_direction_label?: string;      // 返信方向の要約ラベル（10字以内・two_choice_mode=true時のみ設定。例: 「条件説明」「不安解消」「相場説明」）
   // Chrome拡張フィードバックループ用: 拡張が brain/list API 経由で取得し検索フォームに自動入力する
   property_search_params?: {
@@ -2463,6 +2465,22 @@ ${history}`;
       finalAix = messagesOldestFirst.some((m) => m.sender === "customer" && isConditionFormMessage(m.text ?? "")) ? "property_send" : null;
       decisionSource = "correction:estimate_no_property";
     }
+    // 2026-09-15 竹内（朱莉事例）「前に送ってる文と同じ内容を生成しない。ここは返信せずに、連絡を待つ形なので、物件ピックアップと物件オススメの AIX をセットしておく」:
+    //   こちらが締め（「気になる点出てきましたら何時でもお気軽にご連絡ください」）を送った後にお客様がお礼・了承だけ返した → 返信しない（連絡待ち）。
+    //   物件を送っている提案中なら、次の一手はこちらが次の物件を送ること → AIX【物件ピックアップした】（2つ目に物件オススメ）をセットし、
+    //   reply_mode=aix で自動の下書きを作らない。旧: ブレインは「感謝を受け取り待ちの姿勢で締める」・AIX なし → 下書きが直前の締めとほぼ同じ文になった。
+    //   実データ（8月〜・こちらの締めの後のお礼だけ 10件）: 返信しなかった 8（うち4件は後で物件を AIX で送った）・返信した 2（どちらも新しい内容）。
+    //   判定は closed-ack.resolveClosedAck。ブレインが他の AIX（見積書送る 等）を選んだ時はそのまま
+    const closedAck = resolveClosedAck(messagesOldestFirst.map((m) => ({ sender: m.sender, text: m.text })), customerAckAfter);
+    const phaseNow = convStatus ? STATUS_TO_PHASE[convStatus] ?? null : null;
+    let closedAckWait = false;
+    if (!promiseAix && closedAck.closed && brainLedger.facts.propertiesSentCount > 0
+      && (phaseNow === "proposing" || phaseNow === "hearing")
+      && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_send" || finalAix === "property_recommendation")) {
+      finalAix = "property_send";
+      decisionSource = "rule:closed_ack_wait";
+      closedAckWait = true;
+    }
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);
       if (rate) {
@@ -2780,7 +2798,9 @@ ${history}`;
     // 「ボタン特定不能なフリーテキスト」表示になっていた。既知ボタンへ写像できる場合は
     // 参考ボタン名を明示した具体的指示に整形する（actionは""のまま＝強制はしない）。
     const freeTextAixKey = !finalAix ? normalizeAixActionKey(parsed.action) : null;
-    const staffNote = finalAix
+    const staffNote = closedAckWait
+      ? "返信不要（こちらの締めの後のお礼・お客様からの連絡待ち）。次の物件が見つかったら AIX【物件ピックアップした】か【物件オススメ】で送る"
+      : finalAix
       ? buildAixStaffNote(finalAix, checkKind)
       : freeTextAixKey
         ? `（参考）AIX【${AIX_BUTTON_LABELS[freeTextAixKey] ?? freeTextAixKey}】での対応が候補です。${(parsed.action ?? "").trim()}`.trim()
@@ -2803,6 +2823,8 @@ ${history}`;
       reply_mode: replyMode,
       two_choice_mode: isTwoChoiceMode || undefined,
       reply_direction_label: replyDirectionLabel,
+      // 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（画面のブレインのカードに並べて出す）。連絡待ちの時は物件ピックアップ＋物件オススメ
+      alt_actions: closedAckWait ? ["property_recommendation"] : undefined,
       // Chrome拡張フィードバックループ: 検索フォーム自動入力用の構造化パラメータ（TODO(P2)対応）
       property_search_params: pc ? {
         area: pc.desired_area ?? null,

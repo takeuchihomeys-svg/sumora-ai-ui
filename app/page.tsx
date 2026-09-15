@@ -58,7 +58,7 @@ type Conversation = {
   isFlagged?: boolean;
   hasViewed?: boolean;
   aiDraft?: string | null;
-  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply"; two_choice_mode?: boolean; reply_direction_label?: string } | null;
+  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply"; two_choice_mode?: boolean; reply_direction_label?: string; alt_actions?: string[] } | null;
   suggestedNextAix?: string | null;
   messages: Message[];
 };
@@ -8357,6 +8357,22 @@ export default function Home() {
                         {brainAction !== "estimate_sheet" && (
                           <p className="mt-0.5 text-center" style={{ fontSize: "9px", opacity: 0.5, color: "#7C3AED" }}>テンプレ自動選択</p>
                         )}
+                        {/* 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（連絡待ちの時は 物件ピックアップ＋物件オススメ）。ブレインが alt_actions で渡した物だけ */}
+                        {(brainMeta.alt_actions ?? []).filter((a) => a !== brainAction && BRAIN_AIX_LABELS[a]).map((alt) => (
+                          <button key={alt}
+                            onClick={() => {
+                              setDismissedBrainHintIds((prev) => new Set([...prev, id]));
+                              setShowAixMenu(false);
+                              setAixInspectLabel(null);
+                              setActiveAixFlow(alt as AixActionType);
+                              if (alt === "property_recommendation") openPropertyRecommendationPicker("withImage");
+                              else openAixDirect(alt as AixActionType);
+                            }}
+                            className="mt-1.5 block w-full rounded-xl px-4 py-2 text-[13px] font-bold text-white text-center active:opacity-80"
+                            style={{ background: `linear-gradient(135deg, ${AIX_ACTION_META[alt]?.color ?? "#7C3AED"}, ${AIX_ACTION_META[alt]?.color ?? "#7C3AED"}cc)` }}>
+                            {BRAIN_AIX_LABELS[alt]}
+                          </button>
+                        ))}
                       </div>
                       <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
                         className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>

@@ -51,6 +51,7 @@ import {
 // 2026-09-12 竹内方針C: 呼び名のサーバー側決定（DB名・履歴・is_aix_generated）。check-reply と同じ関数
 import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+import { findNearDuplicateSent } from "@/app/lib/closed-ack";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
 import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
@@ -5287,6 +5288,28 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               });
               finalCheck.ok = false;
             }
+            // 2026-09-15 竹内（朱莉事例）「前に送ってる文と同じ内容を生成しない」: 下書きが直前にこちらが送った文字の発言（直近3件）とほぼ同じなら、
+            //   自動の下書きは出さない（ai_draft=__SHOWN__＝表示する下書きなし・bg-async の保存と再生成も止まる）。
+            //   手動（スタッフが AI文案を作成）は文を返すが block の指摘を付ける。判定は closed-ack.findNearDuplicateSent（正規化＋文字の2つ組・数字が全て同じ）。
+            //   朱莉: こちら「朱莉さん気になる点出てきましたら何時でもお気軽にご連絡ください😌！！」→ お客様「ありがとうございます！」→ 下書きがほぼ同じ文だった
+            let duplicateOfSentSuppressed = false;
+            if (!isTemplateOptimize && finalDraftText.trim() && finalCheck) {
+              const recentStaffTexts = recentMessages
+                .filter((m) => m.sender === "staff" && !!m.text && !/^\s*\[(?:画像|動画|スタンプ|ファイル)\]\s*$/.test(m.text))
+                .slice(-3).map((m) => m.text);
+              const dupOfSent = findNearDuplicateSent(finalDraftText, recentStaffTexts);
+              if (dupOfSent.dup) {
+                console.log(JSON.stringify({ tag: "draft:duplicate-of-sent", conversationId, score: dupOfSent.score, caller: generationCaller, auto: enforceReplyModeGate, matched: (dupOfSent.matched ?? "").slice(0, 60) }));
+                finalCheck.issues.unshift({
+                  pass: "meta", severity: "block", code: "DUPLICATE_OF_SENT",
+                  message: "直前にこちらが送った文とほぼ同じ内容です。返信せずにお客様からの連絡を待つ場面です（送る場合は新しい内容に変えてください）",
+                  evidence: (dupOfSent.matched ?? "").slice(0, 60),
+                  suggestion: "送らずにお客様からの連絡を待つ（次の物件は AIX で送る）か、新しい内容に書き換える",
+                });
+                finalCheck.ok = false;
+                if (enforceReplyModeGate) duplicateOfSentSuppressed = true;
+              }
+            }
             // 送信時の再利用判定キー: スタッフのテキストエリアに入る最終形（trim後）のハッシュに更新する
             // （自動修正・センシティブ警告付与でチェック時テキストと変わるため必ず上書き）
             if (finalCheck) finalCheck.checked_text_hash = await sha1(finalDraftText.trim());
@@ -5475,6 +5498,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   })
                   .eq("id", conversationId);
                 if (gateErr) console.error("[generate-reply] AIX切替 ai_draft保存失敗:", conversationId, gateErr.message);
+              } else if (duplicateOfSentSuppressed) {
+                // 直前に送った文とほぼ同じ下書き（朱莉事例）: 表示する下書きなし（__SHOWN__）。bg-async の保存（ai_draft IS NULL の時だけ）と
+                //   開いた時の再生成（bg-async の claim は ai_draft が空か [AIX誘導中] の時だけ）も止まる。お客様の次の発言で webhook が空に戻す
+                const { error: dupErr } = await supabase
+                  .from("conversations")
+                  .update({ ai_draft: "__SHOWN__", draft_pending_at: null, ai_draft_check: { ...(finalCheck ?? {}), tpo_debug: finalCheck?.tpo_debug ?? null } })
+                  .eq("id", conversationId);
+                if (dupErr) console.error("[generate-reply] duplicate-of-sent save error:", conversationId, dupErr.message);
               } else {
               const { error: saveErr } = await supabase
                 .from("conversations")
