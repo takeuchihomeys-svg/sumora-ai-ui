@@ -8,6 +8,7 @@ import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEN
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
+import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 
 export const maxDuration = 300;
 
@@ -323,6 +324,8 @@ const AIX_ACTION_TO_STATES: Record<string, string[]> = {
   greeting_viewing: ["greeting_viewing", "viewing"],
   // 2026-09-12 竹内（あや事例）: 初期費用を説明はクライアント側テンプレ（AI不使用）。保存 state を揃えるためだけに登録
   cost_explain: ["cost_explain"],
+  // 2026-09-15 竹内（ゆうこ事例）: 初期費用について（見積書の内訳で費用の中身の質問に答える）。見積書の学習も引く
+  cost_breakdown: ["cost_breakdown", "estimate_sheet", "estimate_request"],
   // ※ property_recommendation は getPropertyKnowledge() 内で同等の差分学習ルール取得済み（states: property_recommendation/proposing）
 };
 
@@ -659,6 +662,7 @@ const ACTION_MAX_TOKENS: Record<string, number> = {
   acknowledge_check: 400,        // 確認しますシンプル返信
   followup_revive: 600,          // 追客メッセージ
   zenryoku_support: 600,         // 2〜5行の短文生成
+  cost_breakdown: 1500,          // 初期費用について（見積書の内訳の読み取り JSON・説明文）
 };
 
 function maxTokensForAction(action: string): number {
@@ -5161,6 +5165,114 @@ ${SMORA_COMMON_RULES}
           greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
         );
       }
+
+    } else if (action === "cost_breakdown") {
+      // AIX【初期費用について】（2026-09-15 竹内・ゆうこ事例）: 会話を合わせる専用。
+      //   「家賃だけ払ったら住めるんですか？」等の初期費用の中身の質問に、スタッフが貼り付けた御見積書の画像の読み取り結果だけで答える。
+      //   旧: 本文の下書きが見積書を見ずに「家賃・管理費に加え敷金礼金等含む総額」と断言した（その物件の敷金・礼金が0円かもしれないのに）。
+      //   金額は読み取り結果とスタッフの入力（火災保険）にある物だけ → それ以外は〇〇円（checkAmountsAgainstBreakdown）→ 送信前チェックで止まる
+      const cbUrls = ((body.estimate_image_urls as (string | null)[] | undefined) ?? [])
+        .filter((u): u is string => typeof u === "string" && !!u.trim())
+        .slice(0, 3);
+      if (cbUrls.length === 0) throw new Error("御見積書の画像を貼り付けてください");
+      const cbInsRaw = Number(body.insurance_separate_yen);
+      const cbInsurance = Number.isFinite(cbInsRaw) && cbInsRaw > 0 ? Math.round(cbInsRaw) : null;
+      const cbParsed = await Promise.all(cbUrls.map(async (url) => {
+        try {
+          const key = `cost_breakdown:${url}`;
+          let raw = ocrCacheGet(key);
+          if (!raw) {
+            raw = await callClaudeVision(
+              COST_BREAKDOWN_OCR_SYSTEM,
+              [
+                { type: "text", text: "この御見積書の初期費用の内訳を読み取ってください。" },
+                { type: "image", source: { type: "url", url } },
+              ],
+              currentAction,
+            );
+            ocrCacheSet(key, raw);
+          }
+          return parseCostBreakdownJson(raw);
+        } catch (e) {
+          console.error("[aix/action] cost_breakdown OCR failed:", e);
+          return null;
+        }
+      }));
+      const cbBreakdowns = cbParsed.filter((b): b is CostBreakdown => b !== null);
+      if (cbBreakdowns.length === 0) throw new Error("御見積書の画像から金額を読み取れませんでした。画像を確認してもう一度お試しください");
+      const cbFacts = formatCostBreakdownFacts(cbBreakdowns, { insuranceSeparateYen: cbInsurance });
+
+      const [cbKnowledge, cbStarNote, cbDbRules, cbBrainAddendum] = await Promise.all([
+        getKnowledgeForState(AIX_ACTION_TO_STATES.cost_breakdown, currentAction, conversationId, latestCustomerMsg, brainContext),
+        getStarredExamplesForAction(AIX_ACTION_TO_STATES.cost_breakdown, latestCustomerMsg, aixBrainMeta),
+        fetchPromptRules("cost_breakdown", {}).catch(() => ""),
+        loadBrainTemplate("cost_breakdown"),
+      ]);
+
+      // キャッシュ最適化: 静的（GENERATION_SYSTEM/共通ルール/固定指示/スタッフの実文）と動的（見積書の内訳・ブレイン・DBルール）を分ける
+      const cbStaticSystem = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+【お客様名】ユーザーメッセージに記載のお客様名を使うこと
+
+【この返信の目的】
+・お客様の初期費用についての質問（家賃・管理費だけで入居できるか・初期費用に何が含まれるか・別途かかる費用はあるか 等）に、手元の御見積書の内訳を使って1通で答える
+
+【構成】
+①最初の文でお客様の質問に直接答える（家賃・管理費だけで入居できるかと聞かれたら、御見積書の初期費用の合計と、それに含まれる主な項目で答える）
+②御見積書に含まれる項目を御見積書の項目名のまま伝える（0円の項目は「敷金0円」のようにお得な点として触れてよい）
+③火災保険は【御見積書の内訳】の「・火災保険」の行のとおり（含まれている物を「別途」と書かない）
+④日割家賃を1文（ご入居日によって日割家賃が発生・1日のご入居ならかからない。金額は書かない）
+⑤締めは1文（ご不明点があればお気軽に 等）。内覧・お申込の押し・新しい物件の提案は入れない
+
+【言い回し】下の「スタッフの実際の返信」の口調・構成に合わせる（「〜となります！！」「〜含めさせて頂いております」）
+
+【絶対禁止】
+・【御見積書の内訳】に無い金額・費用項目を書くこと（足し算・引き算・日数計算で作った金額も禁止）
+・日割家賃の金額を書くこと
+・【御見積書の内訳】に火災保険の金額が無いのに火災保険の金額を書くこと
+・「確認させて頂きます」等の確認前の文（御見積書は手元にある）
+・謝罪表現（「申し訳ございません」等）・🙏 絵文字
+
+【スタッフの実際の返信（言い回しの手本。別の物件の話なので、金額と「火災保険は別途」等の中身は写さない。中身は必ず【御見積書の内訳】に従う）】
+${COST_BREAKDOWN_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")}
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
+
+      const cbDynamicSuffix = [
+        cbFacts.block,
+        brainGuidanceNote ? `【ブレインの判断（この局面の方針）】${brainGuidanceNote}` : "",
+        cbDbRules,
+        cbBrainAddendum ? `【ブレイン改善ルール】\n${cbBrainAddendum}` : "",
+      ].filter(Boolean).join("\n\n");
+      const cbUser = greetingTimeNote
+        + `${recentHistory}\n\n上記の会話を読み取り、${name}の初期費用についてのご質問に、御見積書の内訳を使って答える返信を生成してください。`
+        + (cbKnowledge ? `\n\n${cbKnowledge}` : "")
+        + (cbStarNote ? `\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n${cbStarNote}` : "");
+      const cbRaw = await callClaude(cbStaticSystem, cbUser, currentAction, cbDynamicSuffix || undefined);
+      let cbMessage = cbRaw;
+      try {
+        const m = cbRaw.match(/\{[\s\S]*\}/);
+        if (m) cbMessage = ((JSON.parse(m[0]) as { message?: string }).message || cbRaw).replace(/\\n/g, "\n");
+      } catch { /* JSON で無ければ本文そのもの */ }
+      const cbChecked = checkAmountsAgainstBreakdown(cbMessage, cbFacts.allowedAmounts);
+      if (cbChecked.unmatched.length > 0) {
+        console.warn("[aix/action] cost_breakdown: 御見積書に無い金額を伏せ字:", cbChecked.unmatched);
+      }
+      return finalizeResponse(cbChecked.cleaned, {
+        prop_cost_notes: cbFacts.notes,
+        cost_breakdown_items: cbBreakdowns.map((b) => ({
+          property: [b.propertyName, b.roomNumber].filter(Boolean).join(" "),
+          items: b.items,
+          total: b.total,
+          discount: b.discount,
+        })),
+        ...(cbChecked.unmatched.length > 0
+          ? { notice: `御見積書に無い金額（${cbChecked.unmatched.join("・")}）を〇〇円にしました。御見積書を見て書き換えてから送信してください` }
+          : {}),
+      });
 
     } else {
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });

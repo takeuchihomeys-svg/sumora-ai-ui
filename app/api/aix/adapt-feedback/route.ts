@@ -22,6 +22,7 @@ const VALID_ADAPT_ACTION_TYPES = new Set([
   "acknowledge_check",
   "followup_revive",
   "zenryoku_support",
+  "cost_breakdown", // 2026-09-15 初期費用について（会話を合わせる専用）
 ]);
 
 export async function POST(request: NextRequest) {

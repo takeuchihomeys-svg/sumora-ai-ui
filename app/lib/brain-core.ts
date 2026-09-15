@@ -245,9 +245,9 @@ const STATUS_MEANING: Record<string, string> = {
 // （例: proposing に viewing_invite を含める）。
 const PHASE_ACTION_CANDIDATES: Record<string, string[]> = {
   hearing:   ["condition_hearing", "property_search", "property_send", "followup_revive"],
-  proposing: ["property_send", "property_recommendation", "property_search", "acknowledge_check", "property_check_result", "estimate_sheet", "cost_explain", "viewing_invite", "followup_revive"],
-  viewing:   ["viewing_invite", "meeting_place", "greeting_viewing", "estimate_sheet", "cost_explain"],
-  applying:  ["application_push", "estimate_sheet", "cost_explain", "acknowledge_check"],
+  proposing: ["property_send", "property_recommendation", "property_search", "acknowledge_check", "property_check_result", "estimate_sheet", "cost_explain", "cost_breakdown", "viewing_invite", "followup_revive"],
+  viewing:   ["viewing_invite", "meeting_place", "greeting_viewing", "estimate_sheet", "cost_explain", "cost_breakdown"],
+  applying:  ["application_push", "estimate_sheet", "cost_explain", "cost_breakdown", "acknowledge_check"],
 };
 
 // convStatus → フェーズの粗い写像（前回フェーズが無い場合のフォールバック）。
@@ -274,6 +274,7 @@ const AIX_CAPABILITY_MAP = `
 - viewing_invite: 内覧日程の候補をLINEで提案するメッセージを生成（顧客メッセージに内覧・内見・見学・見に行く等の希望表現があれば選ぶ）
 - property_send: 物件ピックアップのカバーメッセージを生成（物件URL送信時）→ 複数件ピックアップ後は必ず1〜2分以内（実測38秒／58秒）に「物件ピックアップ紹介（後続）」を、駅指定・条件外れ告知ありなら「駅周辺物件ピックアップ（後続）」（実測1分33秒）をAI最適化して自発送信する
 - cost_explain: 費用の安さの説明を生成（仕組み＝仲介手数料0円・オーナー様からの広告料をお客様に還元＋この物件の具体額＝貸主から〇〇円頂き〇〇円を還元。金額はスタッフ入力のみ）
+- cost_breakdown: 初期費用の中身の説明を生成（スタッフが貼り付けた御見積書の画像を読み取り、含まれる項目・合計・家賃だけで入居できるか・日割家賃の扱いを1通で答える。金額は御見積書の数字のみ）
 - estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成。見積書の後は申込へ進めない（2026-09-12 竹内）。スタッフの実際は見積送付に「お気に召されたお部屋ご都合よろしいお日にちにご案内させて頂きます」と内覧のご案内を添える形が中心で、見積書の次に申込へを押したのは185件中18件（10%）。次の一手はお客様の反応（内覧希望・検討・懸念・別物件）を見て決める
 - application_push: 申込クロージングメッセージ（①申込時フォーマット本体）を生成 → 送信直後（実測32秒〜4分48秒）に「②申込時フォーマット（続き）」を一字一句そのまま自発送信する（AI最適化禁止）
 - condition_hearing: 既知条件をスキップした条件ヒアリングを生成
@@ -293,6 +294,7 @@ const AIX_CAPABILITY_MAP = `
 - 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・あや事例）
 - estimate_sheet（見積書を送った後の総額・追加分の確認）: 顧客が「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」「追加でかかる費用はありますか？」と総額や追加分（ペット敷金・火災保険等）を確かめた時は、追加分を反映した御見積書を送り直して見て確認して頂く（estimate_sheet）。見積書の再送を避けない。本文で総額を計算・断言しない（「〜円でお間違いございません」は書かない）（2026-09-12 竹内・あや事例）
 - cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・あや事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない
+- cost_breakdown: 物件を送った後・御見積書を送った後に、顧客が初期費用の中身を聞いた時（「家賃だけ払ったら住めるんですか？」「家賃と管理費を先に振り込んだら住めるってことですか？」「初期費用に何が含まれますか？」「火災保険は初期費用とは別ですか？」「鍵交換代とかも上乗せされますよね」）。本文で「敷金礼金等含む総額となり家賃のみでは入居出来ない」等と中身を説明しない（その物件の敷金・礼金は0円かもしれない＝御見積書を見て答える）（2026-09-15 竹内・ゆうこ事例）。境界: 金額だけの質問・見積の依頼（「いくらですか」「内訳を送ってください」）は estimate_sheet／見積書の後の総額・追加分の確認（「〜円になる感じですか？」）は estimate_sheet／安さへの不安は cost_explain／物件が1件も無い時の一般的な質問は AIX なし
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
 - property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
@@ -345,7 +347,7 @@ const REPLY_STYLE_RULES = `
 【AIX必須場面のテキスト回答禁止（ハルシネーション5大禁止領域・最優先）】
 以下の質問にはAIが返信文で「答え」を生成することを絶対禁止とする。橋渡し文言（受付宣言）のみで返信を完結させ、aix フィールドには対応ボタンを提案すること。AIがこれらをテキストで返そうとしている場面は必ず「ご確認させて頂きます」系の橋渡し文言に差し替える:
 ① 空室・募集状況（「空いてますか」「取り扱いありますか」）→ aix: property_check_result。実会話では「募集終了」「申込有り2番手」「タッチの差で埋まった」が頻発しており「空いています」の生成は即事実誤認
-② 初期費用・割引額・見積金額 → aix: estimate_sheet。金額は見積書Vision OCRの実数値のみ送信可。「🌟〇〇円割引」等の割引額はスタッフの交渉結果でありAIが数字を作るとクレーム直結
+② 初期費用・割引額・見積金額 → aix: estimate_sheet。金額は見積書Vision OCRの実数値のみ送信可。「🌟〇〇円割引」等の割引額はスタッフの交渉結果でありAIが数字を作るとクレーム直結。初期費用の中身（含まれる項目・家賃だけで入居できるか・別途かかる費用）の質問は aix: cost_breakdown（御見積書の内訳で答える。本文で中身を説明しない）
 ③ 退去予定日・入居可能日・最短入居日 → 橋渡しのみ（「最短のご入居日につきまして管理会社に確認させていただきます」）。審査3日〜10日+契約手続きの実データ回答が正でありAIの楽観約束は引越し手配等の実害
 ④ 審査進捗・審査通過可能性（「通りますか」「夜職だと厳しいですか」）→ 橋渡しのみ。スタッフ自身が「通過率は過去の滞納に左右されるので分からない」と明言している。「通りそうです」の生成は重大ハルシネーション
 ⑤ 家賃・管理費・礼金の値下げ交渉の可否と結果 → 橋渡しのみ（「管理会社に値下げ交渉させて頂きます」）。実会話で「家賃減額・礼金減額は考えていないとのこと」と否決された実績があり「安くなります」は期待値誤誘導
@@ -2373,6 +2375,14 @@ ${history}`;
       finalAix = "cost_explain";
       decisionSource = "signal:scene_S8_cost_doubt";
     }
+    // 2026-09-15 竹内（ゆうこ事例）「AIX から送る費用についての項目となるから適当なこと言わないため」:
+    //   物件を送った後・見積書の後の初期費用の中身の質問（「家賃だけ払ったら住めるんですか？」）は AIX【初期費用について】
+    //   （御見積書の内訳で答える）。旧: 信号0.96（家賃＋ですか）で 見積書送る、または AIX なしで本文が「敷金礼金等含む総額」と断言した。
+    //   場面の証拠 S9（aix-scene-evidence・customerAsksCostComposition）なら 見積書送る／確認します／AIX なし を 初期費用について にする
+    if (!promiseAix && sceneEvidence?.scene === "S9_cost_breakdown" && (finalAix === null || finalAix === "estimate_sheet" || finalAix === "acknowledge_check")) {
+      finalAix = "cost_breakdown";
+      decisionSource = "signal:scene_S9_cost_breakdown";
+    }
     // 2026-09-12 竹内（あや事例）「見積書を見てもらった方が分かりやすい為、見積書を送ってお客さんに確認してもらう」:
     //   見積書を送った後の総額・追加分の確認（「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」）
     //   → 追加分を反映した御見積書を送り直す。旧: LLM が AIX なし＋本文から「見積書の再送」を外し、本文で総額を「お間違いございません」と断言した
@@ -3972,6 +3982,7 @@ export const AIX_LABEL_JP: Record<string, string> = {
   followup_revive: "追客フォロー",
   condition_hearing: "条件ヒアリング",
   cost_explain: "初期費用の説明",
+  cost_breakdown: "初期費用について",
 };
 
 /** generate-reply の fetchReplyModeGate 返却値と同形のスナップショット */

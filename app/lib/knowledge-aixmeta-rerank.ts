@@ -13,6 +13,7 @@
 export const AIX_TOPIC_RE: Record<string, RegExp> = {
   estimate_sheet: /見積|初期費用|割引|総額/,
   cost_explain: /初期費用|安さ|仕組み|報酬|還元/,
+  cost_breakdown: /初期費用|敷金|礼金|日割|火災保険|内訳|見積/,
   viewing_invite: /内覧|内見|案内|見学/,
   meeting_place: /待ち合わせ|集合|現地|案内/,
   greeting_viewing: /内覧|内見|案内/,

@@ -55,6 +55,7 @@ const KNOWN_AIX_TYPES = new Set([
   "condition_hearing", "alternative_send",
   // 2026-09-12 竹内（あや事例）: 費用の安さを不審に思われた時の説明
   "cost_explain",
+  "cost_breakdown",
 ]);
 
 // 曖昧な物件参照（「前の物件」「あの部屋」「例の物件」「さっきの物件」「気になってた物件」等）の検知パターン。

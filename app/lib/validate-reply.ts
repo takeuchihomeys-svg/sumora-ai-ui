@@ -686,7 +686,17 @@ export const ASSERTION_BAN_RULES: AssertionBanRule[] = [
 ];
 
 /** ゲートの判定に使う文脈（顧客条件の復唱免除に使う） */
-type GateOpts = { customerMessage?: string; lastStaffMsg?: string; customerConditions?: string };
+type GateOpts = { customerMessage?: string; lastStaffMsg?: string; customerConditions?: string; costBreakdownAix?: boolean };
+
+// 2026-09-15 竹内（ゆうこ事例）「AIX から送る費用についての項目となるから適当なこと言わないため」:
+//   ブレインが AIX【初期費用について】を選んだ時、本文の「初期費用は家賃・管理費に加え敷金礼金等含む総額となり、家賃・管理費のみでのご入居は出来かねます」
+//   のような初期費用の中身の説明（金額が無くても）を受付の一文に置き換える（中身は御見積書の内訳で AIX から送る）
+const COST_ITEM_WORD_RE = /敷金|礼金|保証料|保証会社|火災保険|鍵交換|日割|前家賃|仲介手数料|クリーニング/g;
+export function isCostBreakdownExplanation(s: string): boolean {
+  if ((s.match(COST_ITEM_WORD_RE) ?? []).length >= 2) return true;
+  if (/(?:家賃|賃料|管理費|共益費)[^\n。！!？?]{0,10}(?:だけ|のみ)[^\n。！!？?]{0,20}(?:入居|住|お住まい)/.test(s)) return true;
+  return /初期費用[^\n。！!？?]{0,6}(?:は|には|に)[^\n。！!？?]{0,30}(?:総額|含ま|含め|加え|別途|込み)/.test(s);
+}
 // ─── 2026-09-11 統合設計（経路F2・楓馬/YUYA 事例）: 顧客条件の復唱は「見積金額内訳」ゲートの対象外 ───
 //   旧実装は「家賃」「管理費」「共益費」と「N万円」が同じ文にあるだけで見積内訳とみなし、
 //   「家賃9万円〜13万円・2LDK…でピックアップ」を見積作成宣言／「確認しご連絡」に置換していた（PAIR_ELEMENT_MISSING・CONFIRM_NO_OBJECT を誘発）。
@@ -725,6 +735,12 @@ export function isCustomerConditionEcho(s: string, o?: GateOpts): boolean {
 const ESTIMATE_REPLACEMENT_RE = /見積/;
 
 const AIX_GATE_RULES: { name: string; test: (s: string, o?: GateOpts) => boolean; replacement: string; promisedReplacement?: string; vacancyDoneReplacement?: string; assertion?: AssertionBanRule }[] = [
+  {
+    // ブレインが AIX【初期費用について】を選んだ時の初期費用の中身の説明（見積金額内訳より先に見る＝見積書の約束の置換文にしない）
+    name: "初期費用の中身の説明",
+    test: (s, o) => !!o?.costBreakdownAix && isCostBreakdownExplanation(s),
+    replacement: "ご質問ありがとうございます😊！！",
+  },
   {
     // 内覧候補日時の具体提示（「8/7（木）14:00〜」等）→ AIX「内覧へ」ボタン専用
     name: "内覧候補日時",
@@ -846,6 +862,8 @@ export function enforceAixGates(
     /** 見積の文脈判定（estimate-context）が見積書を認めるか。false の時は見積系ゲートの置換文（御見積書を作成しお送り）を入れず文を落とす
      *  （2026-09-14 ゆうこ事例: 物件が1件も無い最初の返信に置換文で見積書の約束が入った）。未指定は従来どおり */
     estimateAllowed?: boolean;
+    /** ブレインが AIX【初期費用について】を選んだ（本文で初期費用の中身を説明しない） */
+    costBreakdownAix?: boolean;
   },
 ): { cleaned: string; violations: string[]; edits: GateEdit[] } {
   const violations: string[] = [];
@@ -854,7 +872,7 @@ export function enforceAixGates(
   // 削除系ゲートの置換文「かしこまりました😊！！」は削除位置に入れず、ループ後に本文先頭（挨拶行の直後）へ1回だけ入れる
   //   （旧実装は削除位置＝末尾に入れて EMPTY_CLOSER の block をゲート自身が作っていた: it_0 事例）
   let needAck = false;
-  const gateOpts: GateOpts = { customerMessage: opts?.customerMessage, lastStaffMsg: opts?.lastStaffMsg, customerConditions: opts?.customerConditions };
+  const gateOpts: GateOpts = { customerMessage: opts?.customerMessage, lastStaffMsg: opts?.lastStaffMsg, customerConditions: opts?.customerConditions, costBreakdownAix: opts?.costBreakdownAix };
   // 履歴内金額の引用免除用: 直前スタッフメッセージに実在する金額（スタッフが提示済み＝AIが引用してよい金額）
   const staffPrices = opts?.lastStaffMsg ? extractYenAmounts(opts.lastStaffMsg) : [];
   // 分割払い提案ゲート: お客様が支払い方法を質問していない／「払えない」と言っていないのに
@@ -1018,6 +1036,8 @@ export function validateAndClean(
     customerConditions?: string;
     /** 見積の文脈判定が見積書を認めるか（false = 見積系ゲートの置換文を入れない） */
     estimateAllowed?: boolean;
+    /** ブレインが AIX【初期費用について】を選んだ（本文の初期費用の中身の説明を受付の一文に置き換える） */
+    costBreakdownAix?: boolean;
     /** 2026-09-11 竹内方針3: resolveAddressName の aliases（呼びかけ位置の別名を確定名に統一する） */
     nameAliases?: string[];
     /** 曜日の自動修正の基準時刻（既定 Date.now()） */
@@ -1068,6 +1088,7 @@ export function validateAndClean(
       protect: opts.protect,
       customerConditions: opts.customerConditions,
       estimateAllowed: opts.estimateAllowed,
+      costBreakdownAix: opts.costBreakdownAix,
     });
     if (violations.length > 0) {
       issues.push(...violations.map(v => "AIXゲート違反(置換済): " + v));

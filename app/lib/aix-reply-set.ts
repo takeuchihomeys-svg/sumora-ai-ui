@@ -25,7 +25,7 @@ import {
 
 export type { SceneId, PropertyStatusLite };
 /** 本文で書かない範囲（断言検査のコード） */
-export type ForbiddenCode = "VACANCY_ASSERTION" | "VIEWING_BEFORE_VACANCY" | "MOVEIN_DATE_ASSERTION" | "SCREENING_ASSURANCE" | "VIEWING_DATETIME" | "MEETING_DETAIL" | "ESTIMATE_AMOUNT" | "INVENTORY_ASSERTION";
+export type ForbiddenCode = "VACANCY_ASSERTION" | "VIEWING_BEFORE_VACANCY" | "MOVEIN_DATE_ASSERTION" | "SCREENING_ASSURANCE" | "VIEWING_DATETIME" | "MEETING_DETAIL" | "ESTIMATE_AMOUNT" | "INVENTORY_ASSERTION" | "COST_BREAKDOWN";
 
 export type ReplyAix = {
   action: string;
@@ -174,6 +174,19 @@ function sceneS7(): SceneHit {
   };
 }
 
+// 2026-09-15 竹内（ゆうこ事例）: 初期費用の中身の質問（S9）。中身は AIX【初期費用について】で御見積書の内訳を使って送る。
+//   ブレインが別の AIX（条件変更の物件ピックアップ 等）を選んでも、本文で費用の中身を説明しない（本文の安全は証拠から足す）
+function sceneS9(reason: string): SceneHit {
+  const d = AIX_ACTION_REPLY_DIRECTION.cost_breakdown;
+  return {
+    action: "cost_breakdown", check_pattern: null, label: labelFor("cost_breakdown", null), timing: "now",
+    bridge: d?.weDo ?? "ご質問ありがとうございます😊！！",
+    forbidden: ["COST_BREAKDOWN"], forbiddenText: d?.forbid ?? "初期費用に含まれる項目の説明・金額",
+    scene: "S9_cost_breakdown", reason_code: reason, chained: null, urgency: "30分以内（御見積書を貼って会話を合わせる）", highlight: false,
+    extra: "初期費用の中身（含まれる項目・家賃だけで入居できるか・別途かかる費用）は AIX【初期費用について】で御見積書の内訳を使って送る。本文では説明しない（その物件の敷金・礼金は0円かもしれない）。",
+  };
+}
+
 function genericRow(action: string, cp: string | null, reason: string): SceneHit {
   return {
     action, check_pattern: cp, label: labelFor(action, cp),
@@ -194,6 +207,7 @@ function rowForEvidence(e: AixSceneEvidence, o: SceneEvidenceInput): SceneHit {
     case "S5_time_spec": return sceneS5(e.reasonCode);
     case "S6_estimate": return sceneS6(o, msg, !!e.echoPayment, e.reasonCode);
     case "S7_condition_change": return sceneS7();
+    case "S9_cost_breakdown": return sceneS9(e.reasonCode);
     default: return genericRow(e.candidateAction, e.checkPattern, e.reasonCode);
   }
 }
@@ -250,6 +264,7 @@ export function sceneSafetyRow(action: string, checkPattern: string | null, o: S
   else if (action === "estimate_sheet") row = sceneS6(o, msg, o.estimateVerdict?.mode === "echo_only", `brain:${action}`);
   else if (action === "property_send") row = sceneS7();
   else if (action === "application_push") row = sceneForCode("AIX_BOUNDARY_APPLICATION", o)!;
+  else if (action === "cost_breakdown") row = sceneS9(`brain:${action}`);
   else row = genericRow(action, checkPattern, `brain:${action}`);
   return { ...row, action, check_pattern: checkPattern, label: labelFor(action, checkPattern) };
 }

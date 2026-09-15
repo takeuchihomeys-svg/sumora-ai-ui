@@ -29,6 +29,7 @@ const AIX_TYPE_LABELS: Record<string, string> = {
   condition_hearing:        "条件ヒアリングをした",
   greeting_viewing:         "内覧挨拶を送った",
   cost_explain:             "初期費用の安さの仕組みと還元額を説明した",
+  cost_breakdown:           "御見積書の内訳で初期費用の中身（含まれる項目・家賃だけで入居できるか）を説明した",
 };
 
 // 一致判定（簡易ベースライン）
@@ -53,6 +54,7 @@ const MATCH_KEYWORDS: Record<string, string[]> = {
   application_push:        ["申込", "お申し込み"],
   greeting_viewing:        ["内覧", "挨拶", "案内", "当日"],
   cost_explain:            ["仲介手数料", "還元", "広告料", "安い", "理由"],
+  cost_breakdown:          ["初期費用", "敷金", "礼金", "内訳", "家賃だけ", "日割"],
 };
 
 // キーワード簡易判定（予測テキストに実アクションのキーワードが含まれるか）
@@ -483,6 +485,7 @@ JSONのみ返してください。説明文不要。`,
             acknowledge_check:        "確認フォロー",
             followup_revive:          "追客フォロー",
             cost_explain:             "初期費用の説明",
+            cost_breakdown:           "初期費用について",
             application:              "申込案内",
             document_request:         "書類案内",
             contract:                 "契約手続き",

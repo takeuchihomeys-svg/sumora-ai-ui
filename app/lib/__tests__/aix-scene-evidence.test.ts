@@ -212,5 +212,29 @@ describe("S6' 見積書の後の総額・追加分の確認 → 見積書送る�
   });
 });
 
+describe("S9 初期費用の中身の質問 → 初期費用について（2026-09-15 竹内・ゆうこ事例）", () => {
+  it("ゆうこ（物件1件送付後）「家賃だけ払ったら住めるんですか？」→ S9 cost_breakdown", () => {
+    const x = ev({ latestCustomerTurn: "家賃だけ払ったら住めるんですか？", sentPropertyCount: 1 });
+    expect(x?.scene).toBe("S9_cost_breakdown"); expect(x?.candidateAction).toBe("cost_breakdown");
+  });
+  it("ゆうこ「例えばこの場合家賃と管理費を先振り込んだら住めるってことですか？」は S2 入居日・S1 空室より先に S9", () => {
+    expect(ev({ latestCustomerTurn: "例えばこの場合家賃と管理費を先振り込んだら住めるってことですか？", sentPropertyCount: 1 })?.scene).toBe("S9_cost_breakdown");
+    expect(ev({ latestCustomerTurn: "この物件って家賃だけで入居できますか？", sentPropertyCount: 1 })?.scene).toBe("S9_cost_breakdown");
+  });
+  it("見積書の後「SUUMOに書いてある鍵交換代とかももろもろかかってまた金額上乗せされていきますよね」→ S9", () => {
+    expect(ev({ latestCustomerTurn: "SUUMOに書いてある鍵交換代とかももろもろかかってまた金額上乗せされていきますよね", aixHistory: [{ aix_type: "estimate_sheet" }] })?.scene).toBe("S9_cost_breakdown");
+  });
+  it("物件が1件も無い一般的な質問は S9 にしない（本文で「初期費用を抑える」一文）", () => {
+    expect(ev({ latestCustomerTurn: "家賃だけ払ったら住めるんですか？" })?.scene === "S9_cost_breakdown").toBe(false);
+  });
+  it("見積書の後の総額の確認（S6'）・安さへの不安（S8）はそちらを優先", () => {
+    expect(ev({ latestCustomerTurn: "日割り家賃無しで284,500円になる感じですか？", aixHistory: [{ aix_type: "estimate_sheet" }] })?.reasonCode).toBe("estimate_amount_confirm");
+    expect(ev({ latestCustomerTurn: "仲介手数料無しで大丈夫でしょうか？安いのには何か理由があるのでしょうか？", sentPropertyCount: 3 })?.scene).toBe("S8_cost_doubt");
+  });
+  it("お客様が送った物件 URL つきの質問は S1（募集状況の確認が先）", () => {
+    expect(ev({ latestCustomerTurn: "https://suumo.jp/chintai/xx/ この物件家賃だけで住めますか？" })?.scene).toBe("S1_vacancy");
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

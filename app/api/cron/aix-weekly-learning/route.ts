@@ -23,7 +23,7 @@ function getSupabase(): any {
 const AIX_ACTIONS = [
   "property_recommendation","property_send","viewing_invite","meeting_place",
   "application_push","condition_hearing","estimate_sheet","property_check_result",
-  "greeting_viewing","followup_revive","acknowledge_check","cost_explain"
+  "greeting_viewing","followup_revive","acknowledge_check","cost_explain","cost_breakdown"
 ];
 
 const ACTION_LABELS: Record<string, string> = {
@@ -39,6 +39,7 @@ const ACTION_LABELS: Record<string, string> = {
   followup_revive: '追客する',
   acknowledge_check: '確認します',
   cost_explain: '初期費用を説明',
+  cost_breakdown: '初期費用について',
 };
 
 // property_check_result の check_pattern → UIボタン導線名（線引き質問にそのまま記載する）

@@ -537,6 +537,10 @@ function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null
       ? "日程を尋ねる疑問形（「ご都合よろしいお日にち御座いますでしょうか」／「ご内覧可能な日程をお知らせください」）→「ご案内させて頂きます」。日程はお客様が持っているので「お伝え／お知らせさせて頂きます」と書かない。「ご内覧させて頂きます」も禁止（内覧するのはお客様）"
     : s.aix === "estimate_sheet"
       ? "「お送りさせて頂きます」（見積は作成・送付宣言で締める）"
+    // 2026-09-15 竹内（ゆうこ事例）: 初期費用の中身・安さの仕組みは AIX（初期費用について／初期費用を説明）で送る。本文は受付の一文だけ
+    //   （旧: 既定の「ピックアップ出来次第お送り」が入り、費用の質問に物件探しの宣言で締めていた）
+    : s.aix === "cost_breakdown" || s.aix === "cost_explain"
+      ? "受付の一文で完結（「ご質問ありがとうございます😊！！」）。初期費用の中身・仕組み・金額は AIX で送るので本文に書かない。「確認出来次第ご連絡」「ピックアップ出来次第お送り」も書かない"
     : "「ピックアップ出来次第お送りさせて頂きます」（この場面に確認対象は無い。「確認出来次第ご連絡」は書かない）";
   const lines = [
     r
@@ -3230,7 +3234,7 @@ export async function POST(req: NextRequest) {
     // T2（stale）／cached（enforcement_level=optional）／burst（bg-async 中に2通目到着）では前メッセージ向けの
     // 誤誘導になる（null より悪い）。stale 時は null に落として決定論 TPO ＋ STATE_FALLBACK_DIRECTION に委ねる。
     // followup_revive は「顧客返信への生成」では定義上常に stale（追客は無応答時のアクション）。
-    const MESSAGE_LOCAL_ACTIONS = new Set(["viewing_invite", "application_push", "meeting_place", "followup_revive", "acknowledge_check", "estimate_sheet", "property_recommendation", "greeting_viewing", "property_check_result", "cost_explain"]);
+    const MESSAGE_LOCAL_ACTIONS = new Set(["viewing_invite", "application_push", "meeting_place", "followup_revive", "acknowledge_check", "estimate_sheet", "property_recommendation", "greeting_viewing", "property_check_result", "cost_explain", "cost_breakdown"]);
     const isCachedMeta = brainMeta?.source === "cached" || brainMeta?.enforcement_level === "optional";
     const rawAction: string | null = normalizeAixActionKey(brainMeta?.action ?? null);
     const effectiveAction: string | null = (() => {
@@ -3732,6 +3736,13 @@ export async function POST(req: NextRequest) {
       // G10（2026-09-08 Fable5）: 顧客の現住居の退去・引越し時期報告は離脱ではなく入居時期情報。復唱＋逆算した入居時期の確認→探索継続
       if (moveOutSubject === "current_home" && !isConditionPresented && !isConditionChangeRequest)
         return "入居時期情報（お客様ご自身の現住居の退去・引越し時期の報告。探索継続）。開口語「かしこまりました！！」（単独行）→退去時期を復唱して逆算した入居時期を1文で確認（例「〇月末ご退去との事ですので〇月ご入居に向けて」）→ピックアップ宣言 or 未取得条件のヒアリング1問。会話終了・お礼締め・「またお部屋探しの際は」・謝罪禁止。60〜120字";
+      // 2026-09-15 竹内（ゆうこ事例）「AIX から送る費用についての項目となるから適当なこと言わないため」:
+      //   ブレインが 初期費用について／初期費用を説明 を選んだ時は、往復文脈の「質問に事実で直接回答」（ANY_QUESTION 等）より AIX の方向性を先に採る
+      //   （旧: 往復文脈が先に決まり、本文が見積書を見ずに「家賃・管理費に加え敷金礼金等含む総額」と中身を説明した）
+      if (effectiveAction === "cost_breakdown" || effectiveAction === "cost_explain") {
+        const d = AIX_ACTION_REPLY_DIRECTION[effectiveAction];
+        if (d) return `${d.direction}。WE DO例:「${d.weDo}」。禁止: ${d.forbid}`;
+      }
       // 2026-09-09 Fable5 往復文脈: override_wait セル（懸念・持込予告・質問・条件変更）は待ち系TPO・AIX action より先に確定
       if (pairContext.rule?.precedence === "override_wait" && pairDirection) return pairDirection;
       if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」（単独行）一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。この場面では具体アクション宣言は不要（何も宣言しない）。物件追加・内見誘導・条件ヒアリング・長文説明は一切禁止";
@@ -3764,6 +3775,8 @@ export async function POST(req: NextRequest) {
       if (isConditionPresented) {
         return freshTopics.length > 0 ? freshTopics : ["エリア・家賃条件を受け取り即ピックアップ宣言"];
       }
+      // 初期費用について／初期費用を説明の時は、往復文脈の必須要素（質問への直接回答）を入れない（中身は AIX で送る）
+      if (effectiveAction === "cost_breakdown" || effectiveAction === "cost_explain") return [];
       // 2026-09-09 Fable5 往復文脈: セルの必須要素を「必ず含める内容」に（final-check PAIR_ELEMENT_MISSING と同名）
       if (pairContext.rule) return pairContext.rule.mustInclude.map((m) => m.label);
       if (isNegativeContext) return [];
@@ -4654,6 +4667,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 customerConditions: customerConditions || groundTruth.customerConditionsDb || "",
                 // 2026-09-14 ゆうこ事例: 見積書が不許可の文脈ではゲートの置換文で見積書の約束を作らない
                 estimateAllowed: estimateVerdict.mode !== "forbid",
+                // 2026-09-15 ゆうこ事例: ブレインが AIX【初期費用について】を選んだ時は本文で初期費用の中身を説明しない
+                //   ブレインが別の AIX（条件変更の物件ピックアップ 等）でも、今回の発言が初期費用の中身の質問（場面の証拠 S9）なら同じ
+                costBreakdownAix: effectiveAction === "cost_breakdown" || sceneEvidencePre?.scene === "S9_cost_breakdown",
                 protect: (s: string) => isCellRequiredSentence(s, pairContext),
                 aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend,
               };

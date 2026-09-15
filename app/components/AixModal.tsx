@@ -21,7 +21,8 @@ export type AixActionType =
   | "followup_revive"
   | "property_search"
   | "zenryoku_support"
-  | "cost_explain";
+  | "cost_explain"
+  | "cost_breakdown";
 
 interface LinkedCustomer {
   id: string;
@@ -330,6 +331,10 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
     rules: ["費用の安さを不審に思われた・聞かれた時に使う", "貸主からの報酬と還元額を入力 → 仕組みと具体額を1通で生成（AI不使用）", "お客様が仲介手数料に触れていれば「仲介手数料は0円で大丈夫です！！」から答える", "貸主から手数料が無いお部屋は「割引出来ないが一般的な不動産業者より〇〇円お得」"],
     template: "仲介手数料は0円で大丈夫です！！オーナー様からの広告料をお客様に還元させて頂いている仕組みのため、初期費用を一般的な不動産業者様よりお安くご提案出来ております！！\n\n他社様との金額差はこの還元の有無によるものですので、ご安心ください😊！！\n\nこちらの物件は貸主から[家賃1ヶ月分の]手数料を弊社不動産仲介会社は頂く事が出来ます！！\n[報酬]円を貸主から頂き、そこから[還元額]円を[お客様名]さんの初期費用に還元させて頂きますので、弊社としましても利益残りますのでご安心頂けますと幸いです！！",
   },
+  cost_breakdown: {
+    rules: ["お客様が初期費用の中身を聞いた時に使う（「家賃だけ払ったら住めるんですか？」「初期費用に何が含まれますか？」）", "御見積書の画像を貼り付けて「会話を合わせる」→ 読み取った項目と金額でご質問に答える1通", "金額は御見積書の数字だけ（無い金額は〇〇円になり送信前に止まる）", "日割家賃は「ご入居日によって発生・1日入居ならかからない」だけ（金額は書かない）"],
+    template: "こちら鍵交換費用や必要な初期費用は御見積書に含めさせて頂いております😊！！\n火災保険費用が別途必要な金額となります！！\n\n日割家賃につきましては、1日ご入居の場合はかかりませんので、初期費用を出来る限り抑える場合は1日でのご入居でご契約頂くのがオススメです！！",
+  },
 };
 
 const CONFIG: Record<
@@ -450,6 +455,13 @@ const CONFIG: Record<
     requiresImage: false,
     imageLabel: "",
     description: "費用の安さを不審に思われた・聞かれた時に、仕組み（仲介手数料0円・広告料の還元）とこの物件の具体額を1通で説明します。貸主からの報酬と還元額を入力してください。",
+  },
+  cost_breakdown: {
+    title: "初期費用について",
+    emoji: "🧾",
+    requiresImage: false,
+    imageLabel: "",
+    description: "初期費用の中身（含まれる項目・家賃だけで入居できるか・別途かかる費用）を聞かれた時に、御見積書の内訳でご質問に答えます。御見積書の画像を貼り付けて「会話を合わせる」を押してください。",
   },
 };
 
@@ -908,6 +920,16 @@ export default function AixModal({
   const [costSavingYen, setCostSavingYen] = useState("");
   const [costNoFee, setCostNoFee] = useState(false);
 
+  // 初期費用について専用（2026-09-15 竹内・ゆうこ事例）: 御見積書の画像（会話で最後に送った御見積書が自動で入る・貼り付け／選択で追加）
+  //   fromHistory = 会話で既に送った御見積書（お客様の手元にある）。新しく貼った画像だけ「画像も送る」の対象
+  type CbImage = { key: string; url?: string; file?: File; preview: string; fromHistory: boolean };
+  const [cbImages, setCbImages] = useState<CbImage[]>([]);
+  const [cbInsuranceYen, setCbInsuranceYen] = useState("");
+  const [cbSendNewImages, setCbSendNewImages] = useState(true);
+  const [cbItems, setCbItems] = useState<{ property: string; items: { label: string; amount: number }[]; total: number | null; discount: number | null }[]>([]);
+  const cbInputRef = useRef<HTMLInputElement>(null);
+  const cbPrefilledRef = useRef(false);
+
   // 内覧へ！退去予定物件専用
   const [viewingIsVacancy, setViewingIsVacancy] = useState(!!initialViewingVacancy);
   const [viewingVacancyName, setViewingVacancyName] = useState("");
@@ -1038,6 +1060,10 @@ export default function AixModal({
     setMgmtPetCondition("");
     setZenryokuImages([]);
     setZenryokuImagePreviews([]);
+    setCbImages([]);
+    setCbInsuranceYen("");
+    setCbItems([]);
+    cbPrefilledRef.current = false;
   }, [actionType, conversationId]);
 
   // condition_hearing: フォーム本体をマウント時にクライアント側で即組み立て
@@ -1309,6 +1335,39 @@ export default function AixModal({
     if (savingYen && !costSavingYen) setCostSavingYen(savingYen.toLocaleString("ja-JP"));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType, recentMessages]);
+
+  // 初期費用について: 会話で最後に送った御見積書（AIX【見積書送る】の前後に送った画像・最大3枚）を初期値に入れる（外せる・貼り付けで追加できる）
+  useEffect(() => {
+    if (actionType !== "cost_breakdown" || cbPrefilledRef.current || !conversationId) return;
+    cbPrefilledRef.current = true;
+    void (async () => {
+      try {
+        const { data: logs } = await supabase.from("aix_usage_logs").select("created_at")
+          .eq("conversation_id", conversationId).eq("aix_type", "estimate_sheet")
+          .order("created_at", { ascending: false }).limit(1);
+        const at = logs?.[0]?.created_at as string | undefined;
+        if (!at) return;
+        const t = Date.parse(at);
+        const { data: imgs } = await supabase.from("messages").select("id, image_url")
+          .eq("conversation_id", conversationId).eq("sender", "staff").not("image_url", "is", null)
+          .gte("created_at", new Date(t - 10 * 60_000).toISOString()).lte("created_at", new Date(t + 3 * 60_000).toISOString())
+          .order("created_at", { ascending: false }).limit(3);
+        const found = ((imgs ?? []) as { id: string; image_url: string | null }[]).filter((m) => !!m.image_url).reverse();
+        if (!found.length) return;
+        setCbImages((prev) => prev.length > 0 ? prev : found.map((m) => ({ key: `h_${m.id}`, url: m.image_url!, preview: m.image_url!, fromHistory: true })));
+      } catch (e) {
+        console.warn("[AixModal] 初期費用について: 直近の御見積書の取得失敗:", e);
+      }
+    })();
+  }, [actionType, conversationId]);
+
+  // 初期費用について: 貼り付け・選択した画像を追加（最大3枚）
+  const addCbFiles = (files: File[]) => {
+    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    if (!imgs.length) return;
+    setCbImages((prev) => [...prev, ...imgs.map((f, i) => ({ key: `f_${Date.now()}_${i}`, file: f, preview: URL.createObjectURL(f), fromHistory: false }))].slice(0, 3));
+    setPreview("");
+  };
 
   // テンプレート画面を開いたときによく使われるフレーズを取得
   useEffect(() => {
@@ -1727,6 +1786,17 @@ export default function AixModal({
         conversation_id: conversationId,
         customer_name: customerName,
       };
+
+      // 初期費用について: 御見積書の画像（会話で送った物は URL のまま・新しく貼った物はアップロード）をサーバで読み取って会話に合わせる
+      if (actionType === "cost_breakdown") {
+        if (cbImages.length === 0) throw new Error("御見積書の画像を貼り付けてください");
+        setGenLabel("御見積書を読み取っています");
+        body.estimate_image_urls = await Promise.all(cbImages.map((im, i) => im.url ? Promise.resolve(im.url) : uploadImageCached(im.file as File, i)));
+        const ins = parseYen(cbInsuranceYen);
+        if (ins) body.insurance_separate_yen = ins;
+        body.conversation_match = true;
+        setCbItems([]);
+      }
 
       // 初期費用を説明: 入力値だけで文を作る（AI不使用・金額の創作なし）
       if (actionType === "cost_explain") {
@@ -2280,6 +2350,10 @@ export default function AixModal({
       suggestTemplateCategoryRef.current = typeof data.suggest_template_category === "string" ? data.suggest_template_category : null;
       // M2: 御見積書の同封有無・OCR費用メモを保持 → onAfterSend 経由で aix_usage_logs に永続化し、
       // 以降の generate-reply が「見積書送付済み・その費用情報」を確定事実として使えるようにする
+      // 初期費用について: 読み取った内訳を下書きの下に出す（スタッフが金額を御見積書と見比べる）
+      if (actionType === "cost_breakdown") {
+        setCbItems(Array.isArray(data.cost_breakdown_items) ? (data.cost_breakdown_items as typeof cbItems) : []);
+      }
       lastEstimateSentRef.current = data.estimate_sent === true;
       lastPropCostNotesRef.current = Array.isArray(data.prop_cost_notes)
         ? (data.prop_cost_notes as unknown[]).map((n) => String(n ?? "")).filter(Boolean)
@@ -2315,6 +2389,7 @@ export default function AixModal({
     acknowledge_check: "acknowledge_check",
     followup_revive: "followup_revive",
     cost_explain: "cost_explain",
+    cost_breakdown: "cost_breakdown",
   };
 
   // save-reply-example の保存ペイロードを構築（即時送信・予約送信で共通利用）
@@ -2857,6 +2932,17 @@ export default function AixModal({
           }
           await sendAsAix(preview);
           sentImageIndexRef.current = -1;
+        } else if (actionType === "cost_breakdown" && cbSendNewImages && cbImages.some((im) => !im.fromHistory)) {
+          // 初期費用について: 新しく貼った御見積書（お客様にまだ送っていない物）だけ先に1枚ずつ送信 → 説明文（会話で送った御見積書は再送しない）
+          const news = cbImages.filter((im) => !im.fromHistory);
+          for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < news.length; imgIdx++) {
+            const url = news[imgIdx].url ?? await uploadImageCached(news[imgIdx].file as File, imgIdx);
+            await sendAsAix("", url);
+            sentImageIndexRef.current = imgIdx;
+          }
+          await sendAsAix(preview);
+          sentImageIndexRef.current = -1;
+          lastEstimateSentRef.current = true; // 御見積書を送った事実を送信時の記録（sent_facts）・台帳に残す
         } else {
           await sendAsAix(preview, uploadedImageUrl);
           // 申込催促系：2通目を1分後に送信
@@ -2963,6 +3049,8 @@ export default function AixModal({
     ? (!!meetingDate.trim() && !!meetingPropertyName.trim())
     : actionType === "cost_explain"
     ? costExplainMissing({ noLandlordFee: costNoFee, landlordFeeYen: parseYen(costFeeYen), refundYen: parseYen(costRefundYen) }) === null
+    : actionType === "cost_breakdown"
+    ? cbImages.length > 0
     : actionType === "estimate_sheet" && estimateMultiMode
     ? estimateMultiFiles.some(Boolean)
     : !config.requiresImage || !!imageFile;
@@ -6120,6 +6208,70 @@ export default function AixModal({
             );
           })()}
 
+          {/* 初期費用について専用UI（2026-09-15 竹内・ゆうこ事例）: 御見積書の画像 → 会話を合わせる（御見積書の内訳でご質問に答える） */}
+          {actionType === "cost_breakdown" && (() => {
+            const inputCls = "w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3]";
+            const hasNew = cbImages.some((im) => !im.fromHistory);
+            return (
+              <div className="mb-4 flex flex-col gap-3">
+                <div
+                  tabIndex={0}
+                  onPaste={(e) => {
+                    const files = Array.from(e.clipboardData.items).filter((it) => it.type.startsWith("image/")).map((it) => it.getAsFile()).filter((f): f is File => !!f);
+                    if (files.length) { e.preventDefault(); addCbFiles(files); }
+                  }}
+                  className="rounded-2xl border-2 border-dashed border-[#c5e1a5] bg-[#f9fbe7] p-3 outline-none focus:border-[#7cb342]"
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-xs font-bold text-[#54656f]">御見積書の画像 <span className="text-red-400">*</span> <span className="font-normal text-[#90a4ae]">（ここをクリックして Ctrl+V で貼り付け・最大3枚）</span></p>
+                    <button type="button" onClick={() => cbInputRef.current?.click()} className="shrink-0 rounded-full bg-white px-3 py-1.5 text-xs font-bold text-[#54656f] shadow-sm">📎 画像を選ぶ</button>
+                    <input ref={cbInputRef} type="file" accept="image/*" multiple className="hidden"
+                      onChange={(e) => { addCbFiles(Array.from(e.target.files ?? [])); if (cbInputRef.current) cbInputRef.current.value = ""; }} />
+                  </div>
+                  {cbImages.length === 0 ? (
+                    <p className="py-3 text-center text-[11px] text-[#8696a0]">御見積書の画像を貼り付けてください（見積書ツールで作った画像・会話で送った御見積書）</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {cbImages.map((im) => (
+                        <div key={im.key} className="relative">
+                          <img src={im.preview} alt="御見積書" className="h-24 rounded-lg border border-[#d1d7db] object-cover" />
+                          <span className={`absolute bottom-1 left-1 rounded px-1 text-[9px] font-bold text-white ${im.fromHistory ? "bg-[#78909c]" : "bg-[#7cb342]"}`}>{im.fromHistory ? "送付済み" : "新しく貼った"}</span>
+                          <button type="button" onClick={() => { setCbImages((prev) => prev.filter((x) => x.key !== im.key)); setPreview(""); }}
+                            className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-[#54656f] text-[11px] text-white">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {hasNew && (
+                  <label className="flex items-center gap-2 text-xs text-[#54656f]">
+                    <input type="checkbox" checked={cbSendNewImages} onChange={(e) => setCbSendNewImages(e.target.checked)} />
+                    新しく貼った御見積書も一緒に送る（お客様にまだ送っていない時）
+                  </label>
+                )}
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                    御見積書に含まれない火災保険<span className="ml-1 font-normal text-[#90a4ae]">（任意・入力した時だけ本文に金額が入ります）</span>
+                  </label>
+                  <input value={cbInsuranceYen} onChange={(e) => { setCbInsuranceYen(e.target.value); setPreview(""); }} inputMode="numeric" placeholder="例：18,000" className={inputCls} />
+                </div>
+                {cbItems.length > 0 && (
+                  <div className="rounded-xl bg-[#f0f2f5] p-2.5 text-[11px] text-[#54656f]">
+                    <p className="mb-1 font-bold">読み取った御見積書の内訳（金額は本文と見比べてください）</p>
+                    {cbItems.map((b, i) => (
+                      <div key={i} className="mb-1">
+                        {b.property && <p className="font-semibold">{b.property}</p>}
+                        <p>{b.items.map((it) => `${it.label} ${it.amount.toLocaleString("ja-JP")}円`).join("／")}</p>
+                        {b.total !== null && <p>初期費用の合計: {b.total.toLocaleString("ja-JP")}円{b.discount !== null ? `（割引 ${b.discount.toLocaleString("ja-JP")}円）` : ""}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[10px] text-[#8696a0]">※ 金額は御見積書の数字だけを使います（無い金額は〇〇円になり送信前に止まります）。日割家賃は「ご入居日によって発生・1日入居ならかからない」だけ書きます</p>
+              </div>
+            );
+          })()}
+
           {/* 確認します: 代表確認ピッカー */}
           {actionType === "acknowledge_check" && (
             <div className="mb-3">
@@ -6349,8 +6501,8 @@ export default function AixModal({
                 const regenerateBtn = (
                   <button
                     onClick={() => void generate(
-                      actionType === "property_check_result" && checkPattern === "other_room_check"
-                        ? { conversation_match: true } // 会話を合わせる専用パターン: 再生成もテンプレから会話適応し直す
+                      (actionType === "property_check_result" && checkPattern === "other_room_check") || actionType === "cost_breakdown"
+                        ? { conversation_match: true } // 会話を合わせる専用パターン: 再生成もテンプレから会話適応し直す（初期費用についても同じ）
                         : actionType === "condition_hearing" && hearingConvMatchMode
                           ? { conversation_match: true, base_message: aiDraft } // 会話を合わせるモード: 再生成も会話適応のまま
                           : undefined
@@ -6413,6 +6565,15 @@ export default function AixModal({
             ) : actionType === "property_check_result" && checkPattern === "other_room_check" ? (
               /* 別の部屋について確認した: 会話を合わせるボタンはサブUI内に表示（AIX生成ボタンなし） */
               null
+            ) : actionType === "cost_breakdown" ? (
+              /* 初期費用について: 会話を合わせる専用（御見積書の内訳でご質問に答える。AIX生成ボタンなし） */
+              <button
+                onClick={() => void generate({ conversation_match: true })}
+                disabled={loading || !canGenerate}
+                className="w-full rounded-2xl bg-[#546E7A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
+              >
+                {loading ? busyLabel : "💬 会話を合わせる"}
+              </button>
             ) : (
               actionType === "viewing_invite" ||
               actionType === "application_push" ||

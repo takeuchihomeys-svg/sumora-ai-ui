@@ -11,13 +11,14 @@ import { isConditionFormMessage } from "./line-reply-prompts";
 import { CUST_WILL_SEND_SELF_PRED } from "./reply-context";
 import type { EstimateContextVerdict } from "./estimate-context";
 import { customerDoubtsCheapness } from "./cost-explain-text";
+import { customerAsksCostComposition } from "./cost-breakdown";
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "./move-out-context";
 import {
   allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
 } from "./scene-patterns";
 
 export type PropertyStatusLite = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
-export type SceneId = "S1_vacancy" | "S2_move_in" | "S3_screening" | "S4_viewing" | "S5_time_spec" | "S6_estimate" | "S7_condition_change" | "S8_cost_doubt" | "application";
+export type SceneId = "S1_vacancy" | "S2_move_in" | "S3_screening" | "S4_viewing" | "S5_time_spec" | "S6_estimate" | "S7_condition_change" | "S8_cost_doubt" | "S9_cost_breakdown" | "application";
 
 export type SceneEvidenceInput = {
   /** 今回の顧客発言（スタッフ文は含めない。未返信の連投全体） */
@@ -177,6 +178,17 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
     if ((AIX_NOMINATION_RE.test(msg) && !slotQuestion) || urlOnly || imageOnly) {
       return ev({ scene: "S1_vacancy", candidateAction: "property_check_result", checkPattern: null, timing: "after_confirm", chained: estimateDeclare ? "estimate_sheet" : null, reasonCode: "property_nomination", propertySpecifiedBy: specBy });
     }
+  }
+  // S9 初期費用の中身の質問 → 初期費用について（2026-09-15 竹内・ゆうこ事例）
+  //   「家賃だけ払ったら住めるんですか？」「例えばこの場合家賃と管理費を先振り込んだら住めるってことですか？」は
+  //   「入居できますか」で S2 入居日・「この物件…ですか」で S1 空室に当たりうるので、それらより先に見る（URL・画像の S1 の後）。
+  //   前提は見積る物件があること（送付物件・見積書の後・物件の特定）。物件が1件も無い一般的な質問は本文（初期費用を抑える一文）。
+  //   安さへの不安（S8）・見積書の後の総額の確認（S6'）は、そちらの場面を優先する
+  //   実データ（240日・誤検出を除いた後）: スタッフは御見積書の項目（鍵交換は含む・火災保険は別途・日割家賃は入居日次第）で答えていた
+  if (customerAsksCostComposition(msg) && !customerDoubtsCheapness(msg)
+    && (hasEstimateBefore(o) || (o.sentPropertyCount ?? 0) > 0 || specified)
+    && !(hasEstimateBefore(o) && customerConfirmsEstimateTotal(msg))) {
+    return ev({ scene: "S9_cost_breakdown", candidateAction: "cost_breakdown", checkPattern: null, timing: "now", chained: null, reasonCode: "cost_breakdown_question", propertySpecifiedBy: specBy });
   }
   // S2 入居日（物件あり）/ S3 審査（物件あり）: 「この物件の〜ですか？」は募集状況の質問形にも当たるので、文字だけの S1 より先に見る
   //   check_pattern は退去予定の物件でも mgmt_move_in（入居可能日）。2026-09-14 竹内（あい事例）:
