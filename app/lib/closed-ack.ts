@@ -86,6 +86,18 @@ export function diceSimilarity(a: string, b: string): number {
   return (2 * inter) / (na + nb);
 }
 
+/**
+ * 末尾の決まり文句の行（何卒よろしくお願い致します／引き続きよろしくお願い致します／それでは一度失礼致します）を落とす。
+ * 本番確認（朱莉の会話・3回）: 下書きは直前の締めの繰り返し＋「何卒よろしくお願い致します！！」で、この1行だけで Dice が 0.83 に下がっていた。
+ * 中身の無い1行を足しただけの文は「同じ内容」として扱う
+ */
+const BOILERPLATE_TAIL_LINE_RE = /^(?:何卒|引き続き)?[^\n]{0,10}?(?:よろしく|宜しく)お願い(?:致します|いたします|します)[！!。\s]*$|^それでは一度失礼(?:致します|いたします)[！!。😌😊\s]*$/;
+export function stripBoilerplateTail(text: string): string {
+  const lines = (text ?? "").split("\n").map((l) => l.trim());
+  while (lines.length > 1 && (!lines[lines.length - 1] || BOILERPLATE_TAIL_LINE_RE.test(lines[lines.length - 1]))) lines.pop();
+  return lines.join("\n");
+}
+
 /** 文中の数字（全角→半角）。号室・金額・日付が違えば別の内容 */
 function numbersOf(text: string): string {
   return ((text ?? "").replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).match(/\d+/g) ?? []).join(",");
@@ -98,14 +110,16 @@ function numbersOf(text: string): string {
  */
 export const DUP_SIMILARITY_THRESHOLD = 0.85;
 export function findNearDuplicateSent(draft: string, sentTexts: readonly string[]): { dup: boolean; score: number; matched: string | null } {
-  const d = normalizeForDup(draft);
+  const dCore = stripBoilerplateTail(draft);
+  const d = normalizeForDup(dCore);
   if ([...d].length < 12) return { dup: false, score: 0, matched: null };
-  const dNums = numbersOf(draft);
+  const dNums = numbersOf(dCore);
   let best = 0, matched: string | null = null;
   for (const s of sentTexts) {
-    const n = normalizeForDup(s);
+    const sCore = stripBoilerplateTail(s);
+    const n = normalizeForDup(sCore);
     if ([...n].length < 12) continue;
-    if (numbersOf(s) !== dNums) continue;
+    if (numbersOf(sCore) !== dNums) continue;
     const score = diceSimilarity(d, n);
     if (score > best) { best = score; matched = s; }
   }
