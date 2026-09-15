@@ -108,6 +108,10 @@ describe("aggregateBrainAixFeedback", () => {
 });
 
 describe("sceneSignalFallback（LLM が null の時だけの場面の信号）", () => {
+  it("S3 保証会社そのものの質問 → guarantor_info（signal:scene_S3_guarantor・2026-09-15 YUYA 事例）", () => {
+    const s = sceneSignalFallback(detectAixSceneEvidence({ latestCustomerTurn: "この物件の保証会社はどこですか？", hasCustomerImage: false }));
+    expect(s?.action).toBe("guarantor_info"); expect(s?.checkPattern).toBe(null); expect(s?.decisionSource).toBe("signal:scene_S3_guarantor");
+  });
   it("S2 入居日 → property_check_result / mgmt_move_in", () => {
     const e = detectAixSceneEvidence({ latestCustomerTurn: "この物件いつから住めますか？", hasCustomerImage: false });
     const s = sceneSignalFallback(e);

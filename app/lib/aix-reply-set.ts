@@ -114,6 +114,18 @@ function sceneS2(cp: string, chained: string | null, reason: string): SceneHit {
 }
 
 function sceneS3(reason: string): SceneHit {
+  // 2026-09-15 竹内（YUYA 事例）: 保証会社そのものの質問 → AIX【保証会社について】（物件ごとの会社名・種類の一覧・並行審査）。本文は確認の受付だけ
+  if (reason === "guarantor_question" || reason === "brain:guarantor_info") {
+    const d = AIX_ACTION_REPLY_DIRECTION.guarantor_info;
+    return {
+      action: "guarantor_info", check_pattern: null, label: labelFor("guarantor_info", null), timing: "after_confirm",
+      bridge: d?.weDo ?? "保証会社確認させて頂きます😊！！",
+      forbidden: ["SCREENING_ASSURANCE"], forbiddenText: d?.forbid ?? "保証会社名の記載／審査の通りやすさ・通過の断言／並行審査の提案",
+      scene: "S3_screening", reason_code: reason, chained: null,
+      urgency: "15分以内に橋渡し→保証会社確認後に AIX【保証会社について】で一覧を案内", highlight: false,
+      extra: "物件ごとの保証会社名と種類（独立系＝審査基準が緩い／LICC系／信販系）はスタッフが確認して AIX【保証会社について】で送る。本文で会社名・通りやすさを書かない。",
+    };
+  }
   return {
     action: "property_check_result", check_pattern: "mgmt_guarantor", label: labelFor("property_check_result", "mgmt_guarantor"),
     timing: "after_confirm",
@@ -279,6 +291,7 @@ export function sceneSafetyRow(action: string, checkPattern: string | null, o: S
   else if (action === "property_send") row = sceneS7();
   else if (action === "application_push") row = sceneForCode("AIX_BOUNDARY_APPLICATION", o)!;
   else if (action === "cost_breakdown") row = sceneS9(`brain:${action}`);
+  else if (action === "guarantor_info") row = sceneS3(`brain:${action}`);
   else if (action === "phone_call") row = sceneS10(`brain:${action}`);
   else row = genericRow(action, checkPattern, `brain:${action}`);
   return { ...row, action, check_pattern: checkPattern, label: labelFor(action, checkPattern) };

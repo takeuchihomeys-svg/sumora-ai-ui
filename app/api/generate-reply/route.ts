@@ -546,6 +546,9 @@ function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null
     // 2026-09-15 竹内（H 事例）: 電話のご依頼は AIX【電話をかける】で「電話をかける」ボタンと案内文を送る。本文は受付の一文だけ
     : s.aix === "phone_call"
       ? "受付の一文で完結（「お電話大丈夫です😊！！」）。電話番号・「こちらからお電話します」「〇時にお電話します」は書かない（お客様が電話をかけるボタンから電話する）。「確認出来次第ご連絡」「ピックアップ出来次第お送り」も書かない"
+    // 2026-09-15 竹内（YUYA 事例）: 保証会社の質問は AIX【保証会社について】で物件ごとの会社名・種類を一覧で送る。本文は確認の受付だけ
+    : s.aix === "guarantor_info"
+      ? "受付の一文で完結（「保証会社確認させて頂きます😊！！」）。保証会社名・審査の通りやすさ・並行審査の提案は AIX で送るので本文に書かない。「ピックアップ出来次第お送り」も書かない"
     : "「ピックアップ出来次第お送りさせて頂きます」（この場面に確認対象は無い。「確認出来次第ご連絡」は書かない）";
   const lines = [
     r
@@ -3243,7 +3246,7 @@ export async function POST(req: NextRequest) {
     // T2（stale）／cached（enforcement_level=optional）／burst（bg-async 中に2通目到着）では前メッセージ向けの
     // 誤誘導になる（null より悪い）。stale 時は null に落として決定論 TPO ＋ STATE_FALLBACK_DIRECTION に委ねる。
     // followup_revive は「顧客返信への生成」では定義上常に stale（追客は無応答時のアクション）。
-    const MESSAGE_LOCAL_ACTIONS = new Set(["viewing_invite", "application_push", "meeting_place", "followup_revive", "acknowledge_check", "estimate_sheet", "property_recommendation", "greeting_viewing", "property_check_result", "cost_explain", "cost_breakdown", "phone_call"]);
+    const MESSAGE_LOCAL_ACTIONS = new Set(["viewing_invite", "application_push", "meeting_place", "followup_revive", "acknowledge_check", "estimate_sheet", "property_recommendation", "greeting_viewing", "property_check_result", "cost_explain", "cost_breakdown", "phone_call", "guarantor_info"]);
     const isCachedMeta = brainMeta?.source === "cached" || brainMeta?.enforcement_level === "optional";
     const rawAction: string | null = normalizeAixActionKey(brainMeta?.action ?? null);
     const effectiveAction: string | null = (() => {
@@ -3749,7 +3752,7 @@ export async function POST(req: NextRequest) {
       //   ブレインが 初期費用について／初期費用を説明 を選んだ時は、往復文脈の「質問に事実で直接回答」（ANY_QUESTION 等）より AIX の方向性を先に採る
       //   （旧: 往復文脈が先に決まり、本文が見積書を見ずに「家賃・管理費に加え敷金礼金等含む総額」と中身を説明した）
       // 2026-09-15 竹内（H 事例）: 電話をかける も同じ（「お電話では無理でしょうか？」に本文で電話番号・折り返しの時刻を作らない）
-      if (effectiveAction === "cost_breakdown" || effectiveAction === "cost_explain" || effectiveAction === "phone_call") {
+      if (effectiveAction === "cost_breakdown" || effectiveAction === "cost_explain" || effectiveAction === "phone_call" || effectiveAction === "guarantor_info") {
         const d = AIX_ACTION_REPLY_DIRECTION[effectiveAction];
         if (d) return `${d.direction}。WE DO例:「${d.weDo}」。禁止: ${d.forbid}`;
       }
@@ -3786,7 +3789,7 @@ export async function POST(req: NextRequest) {
         return freshTopics.length > 0 ? freshTopics : ["エリア・家賃条件を受け取り即ピックアップ宣言"];
       }
       // 初期費用について／初期費用を説明の時は、往復文脈の必須要素（質問への直接回答）を入れない（中身は AIX で送る）
-      if (effectiveAction === "cost_breakdown" || effectiveAction === "cost_explain" || effectiveAction === "phone_call") return [];
+      if (effectiveAction === "cost_breakdown" || effectiveAction === "cost_explain" || effectiveAction === "phone_call" || effectiveAction === "guarantor_info") return [];
       // 2026-09-09 Fable5 往復文脈: セルの必須要素を「必ず含める内容」に（final-check PAIR_ELEMENT_MISSING と同名）
       if (pairContext.rule) return pairContext.rule.mustInclude.map((m) => m.label);
       if (isNegativeContext) return [];

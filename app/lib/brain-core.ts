@@ -249,9 +249,9 @@ const STATUS_MEANING: Record<string, string> = {
 const PHASE_ACTION_CANDIDATES: Record<string, string[]> = {
   // phone_call（電話をかける）は全フェーズ: お客様が電話で話したいと言うのは段階に関係ない（2026-09-15 竹内・H 事例）
   hearing:   ["condition_hearing", "property_search", "property_send", "followup_revive", "phone_call"],
-  proposing: ["property_send", "property_recommendation", "property_search", "acknowledge_check", "property_check_result", "estimate_sheet", "cost_explain", "cost_breakdown", "viewing_invite", "followup_revive", "phone_call"],
-  viewing:   ["viewing_invite", "meeting_place", "greeting_viewing", "estimate_sheet", "cost_explain", "cost_breakdown", "phone_call"],
-  applying:  ["application_push", "estimate_sheet", "cost_explain", "cost_breakdown", "acknowledge_check", "phone_call"],
+  proposing: ["property_send", "property_recommendation", "property_search", "acknowledge_check", "property_check_result", "estimate_sheet", "cost_explain", "cost_breakdown", "viewing_invite", "followup_revive", "phone_call", "guarantor_info"],
+  viewing:   ["viewing_invite", "meeting_place", "greeting_viewing", "estimate_sheet", "cost_explain", "cost_breakdown", "phone_call", "guarantor_info"],
+  applying:  ["application_push", "estimate_sheet", "cost_explain", "cost_breakdown", "acknowledge_check", "phone_call", "guarantor_info"],
 };
 
 // convStatus → フェーズの粗い写像（前回フェーズが無い場合のフォールバック）。
@@ -280,7 +280,7 @@ const AIX_CAPABILITY_MAP = `
 - cost_explain: 費用の安さの説明を生成（仕組み＝仲介手数料0円・オーナー様からの広告料をお客様に還元＋この物件の具体額＝貸主から〇〇円頂き〇〇円を還元。金額はスタッフ入力のみ）
 - cost_breakdown: 初期費用の中身の説明を生成（スタッフが貼り付けた御見積書の画像を読み取り、含まれる項目・合計・家賃だけで入居できるか・日割家賃の扱いを1通で答える。金額は御見積書の数字のみ）
 - phone_call: 「電話をかける」ボタン（LINEコール・お客様がボタンから公式LINEに電話できる）と案内文を送る。電話の後のまとめはスタッフが AIX【電話終了後】で送る（ブレインは選ばない）
-- guarantor_info: 管理会社に保証会社を確認した後、物件ごとの保証会社名と種類（独立系＝審査基準が緩い／LICC系／信販系）を一覧で案内し、かぶっていない保証会社の並行審査を勧める（スタッフが AIX【保証会社について】で送る。会社名・種類はスタッフ入力のみ。ブレインは選ばない）
+- guarantor_info: 物件ごとの保証会社名と種類（独立系＝審査基準が緩い／LICC系／信販系）を一覧で案内し、かぶっていない保証会社の並行審査を勧める（会社名・種類はスタッフ入力のみ）。お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた時に選ぶ。本文は「保証会社確認させて頂きます」の受付だけで、会社名・通りやすさを本文に書かない
 - estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成。見積書の後は申込へ進めない（2026-09-12 竹内）。スタッフの実際は見積送付に「お気に召されたお部屋ご都合よろしいお日にちにご案内させて頂きます」と内覧のご案内を添える形が中心で、見積書の次に申込へを押したのは185件中18件（10%）。次の一手はお客様の反応（内覧希望・検討・懸念・別物件）を見て決める
 - application_push: 申込クロージングメッセージ（①申込時フォーマット本体）を生成 → 送信直後（実測32秒〜4分48秒）に「②申込時フォーマット（続き）」を一字一句そのまま自発送信する（AI最適化禁止）
 - condition_hearing: 既知条件をスキップした条件ヒアリングを生成
@@ -355,6 +355,7 @@ const REPLY_STYLE_RULES = `
 以下の質問にはAIが返信文で「答え」を生成することを絶対禁止とする。橋渡し文言（受付宣言）のみで返信を完結させ、aix フィールドには対応ボタンを提案すること。AIがこれらをテキストで返そうとしている場面は必ず「ご確認させて頂きます」系の橋渡し文言に差し替える:
 ① 空室・募集状況（「空いてますか」「取り扱いありますか」）→ aix: property_check_result。実会話では「募集終了」「申込有り2番手」「タッチの差で埋まった」が頻発しており「空いています」の生成は即事実誤認
 ② 初期費用・割引額・見積金額 → aix: estimate_sheet。金額は見積書Vision OCRの実数値のみ送信可。「🌟〇〇円割引」等の割引額はスタッフの交渉結果でありAIが数字を作るとクレーム直結。初期費用の中身（含まれる項目・家賃だけで入居できるか・別途かかる費用）の質問は aix: cost_breakdown（御見積書の内訳で答える。本文で中身を説明しない）
+②' 保証会社そのもの（「保証会社はどこですか」「保証会社は緩そうなところですか」「〇〇保証の物件はありますか」）→ aix: guarantor_info（物件ごとの会社名・種類を AIX【保証会社について】で一覧に。本文は「保証会社確認させて頂きます」の受付だけ・会社名や通りやすさを書かない）。審査の通りやすさだけの質問（「審査厳しいですか」）は property_check_result（保証会社・審査面）
 ③ 退去予定日・入居可能日・最短入居日 → 橋渡しのみ（「最短のご入居日につきまして管理会社に確認させていただきます」）。審査3日〜10日+契約手続きの実データ回答が正でありAIの楽観約束は引越し手配等の実害
 ④ 審査進捗・審査通過可能性（「通りますか」「夜職だと厳しいですか」）→ 橋渡しのみ。スタッフ自身が「通過率は過去の滞納に左右されるので分からない」と明言している。「通りそうです」の生成は重大ハルシネーション。管理会社に確認した保証会社名・種類（独立系＝審査基準が緩い 等）・並行審査の勧めはスタッフが AIX【保証会社について】で送る（本文で保証会社名・審査の緩さを書かない）
 ⑤ 家賃・管理費・礼金の値下げ交渉の可否と結果 → 橋渡しのみ（「管理会社に値下げ交渉させて頂きます」）。実会話で「家賃減額・礼金減額は考えていないとのこと」と否決された実績があり「安くなります」は期待値誤誘導
@@ -2433,6 +2434,13 @@ ${history}`;
       finalAix = "phone_call";
       decisionSource = "signal:scene_S10_phone_request";
     }
+    // 2026-09-15 竹内（YUYA 事例）: お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた（場面の証拠 S3・guarantor_question）→ AIX【保証会社について】。
+    //   実データ（240日）: 保証会社・審査の質問の後に 物件確認した→保証会社 が押されたのは1件だけ。「保証会社は緩そうなところでしょうか？」への実送信は保証会社の一覧。
+    //   AIX なし／確認します／物件確認した を 保証会社について にする（他の AIX を選んだ時はそのまま）
+    if (!promiseAix && sceneEvidence?.reasonCode === "guarantor_question" && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")) {
+      finalAix = "guarantor_info";
+      decisionSource = "signal:scene_S3_guarantor";
+    }
     // 2026-09-12 竹内（あや事例）「見積書を見てもらった方が分かりやすい為、見積書を送ってお客さんに確認してもらう」:
     //   見積書を送った後の総額・追加分の確認（「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」）
     //   → 追加分を反映した御見積書を送り直す。旧: LLM が AIX なし＋本文から「見積書の再送」を外し、本文で総額を「お間違いございません」と断言した
@@ -4042,6 +4050,7 @@ export const AIX_LABEL_JP: Record<string, string> = {
   cost_explain: "初期費用の説明",
   cost_breakdown: "初期費用について",
   phone_call: "電話をかける",
+  guarantor_info: "保証会社について",
 };
 
 /** generate-reply の fetchReplyModeGate 返却値と同形のスナップショット */

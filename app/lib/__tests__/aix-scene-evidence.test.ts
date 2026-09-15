@@ -40,6 +40,18 @@ describe("場面の証拠 S1〜S5（2c86c209 の期待値のまま）", () => {
   it("S3 物件ありの審査質問 → mgmt_guarantor", () => {
     expect(ev({ latestCustomerTurn: "この物件って審査厳しいですか？" })?.checkPattern).toBe("mgmt_guarantor");
   });
+  // 2026-09-15 竹内（YUYA 事例）: 保証会社そのものの質問 → AIX【保証会社について】
+  it("S3 YUYA「保証会社は緩そうなところでしょうか？」（物件送付後）→ guarantor_info（after_confirm）", () => {
+    const x = ev({ latestCustomerTurn: "保証会社は緩そうなところでしょうか？", sentPropertyCount: 5 });
+    expect(x?.scene).toBe("S3_screening"); expect(x?.candidateAction).toBe("guarantor_info"); expect(x?.reasonCode).toBe("guarantor_question"); expect(x?.timing).toBe("after_confirm");
+  });
+  it("S3「この物件の保証会社はどこですか？」→ guarantor_info", () => {
+    expect(ev({ latestCustomerTurn: "この物件の保証会社はどこですか？" })?.candidateAction).toBe("guarantor_info");
+  });
+  it("S3 保証会社の質問の本文の安全: bridge は確認の受付・会社名の断言は禁止", () => {
+    const s = safety({ latestCustomerTurn: "この物件の保証会社はどこですか？" });
+    expect(s?.bridge).toBe("保証会社確認させて頂きます😊！！"); expect(s?.forbidden.includes("SCREENING_ASSURANCE")).toBe(true);
+  });
   it("S3 物件が特定できない審査不安（096825c8 型の一般論）→ null", () => {
     expect(ev({ latestCustomerTurn: "現在大学4年生で内定があります。審査通りますか？" })).toBe(null);
   });

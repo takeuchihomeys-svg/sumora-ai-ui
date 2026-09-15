@@ -242,6 +242,8 @@ export function customerTurnBeforePress(newestFirstBeforePress: ReadonlyArray<Ms
 export function sceneSignalFallback(e: AixSceneEvidence | null | undefined): { action: string; checkPattern: string | null; decisionSource: string } | null {
   if (!e) return null;
   if (e.scene === "S2_move_in" || e.scene === "S3_screening") {
+    // 2026-09-15 竹内（YUYA 事例）: S3 で保証会社そのものの質問は AIX【保証会社について】（証拠の candidateAction をそのまま使う）
+    if (e.candidateAction === "guarantor_info") return { action: "guarantor_info", checkPattern: null, decisionSource: "signal:scene_S3_guarantor" };
     return { action: "property_check_result", checkPattern: e.checkPattern, decisionSource: `signal:scene_${e.scene.slice(0, 2)}` };
   }
   if (e.scene === "S5_time_spec") return { action: "meeting_place", checkPattern: null, decisionSource: "signal:scene_S5" };

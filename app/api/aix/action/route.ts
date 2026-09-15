@@ -340,7 +340,8 @@ const AIX_ACTION_TO_STATES: Record<string, string[]> = {
   phone_call: ["phone_call"],
   phone_followup: ["phone_followup"],
   // 2026-09-15 竹内（YUYA 事例）: 保証会社について。確認した→保証会社（mgmt_guarantor）の学習も引く
-  guarantor_info: ["guarantor_info", "property_check_result"],
+  // 2026-09-15: 保証会社の案内に物件確認した（募集状況・御見積書同封）の差分ルール・⭐実例が混じらないよう単独（学習が溜まるまではスタッフ実文の手本で足りる）
+  guarantor_info: ["guarantor_info"],
   // ※ property_recommendation は getPropertyKnowledge() 内で同等の差分学習ルール取得済み（states: property_recommendation/proposing）
 };
 

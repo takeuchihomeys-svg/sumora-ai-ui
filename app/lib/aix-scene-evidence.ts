@@ -15,7 +15,7 @@ import { customerAsksCostComposition } from "./cost-breakdown";
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, staffOffersViewing } from "./move-out-context";
 import { customerRequestsPhoneCall } from "./phone-call";
 import {
-  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
+  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE,
 } from "./scene-patterns";
 
@@ -214,6 +214,13 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
     const focus = specified || o.propertyStatus !== "move_out_scheduled" || !moveInAsked(msg) ? null : lastStaffTurnFocus(o.recentMessages);
     const by = specBy ?? (focus?.focus && !focus.moveInTold ? "context" : null);
     if (by) return ev({ scene: "S2_move_in", candidateAction: "property_check_result", checkPattern: "mgmt_move_in", timing: "after_confirm", chained: estimateDeclare ? "estimate_sheet" : null, reasonCode: "move_in_question", propertySpecifiedBy: by });
+  }
+  // 2026-09-15 竹内（YUYA 事例）: お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた時は AIX【保証会社について】（物件ごとの会社名・種類を一覧で）。
+  //   実データ（240日）: 保証会社・審査の質問の後に 物件確認した→保証会社 が押されたのは1件だけで、「保証会社は緩そうなところでしょうか？」（物件を指す語なし・
+  //   送付済み物件5件）への実送信は保証会社の一覧（YUYA 17:27/17:31）だった。物件を指していなくても、こちらが送った物件があればその物件の保証会社の質問。
+  //   審査の通りやすさだけの質問（「審査厳しいですか」）は従来どおり 物件確認した→保証会社
+  if (SCREENING_Q_RE.test(msg) && GUARANTOR_Q_RE.test(msg) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
+    return ev({ scene: "S3_screening", candidateAction: "guarantor_info", checkPattern: null, timing: "after_confirm", chained: null, reasonCode: "guarantor_question", propertySpecifiedBy: specBy ?? "context" });
   }
   if (SCREENING_Q_RE.test(msg) && specified) {
     return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_guarantor", timing: "after_confirm", chained: null, reasonCode: "screening_question", propertySpecifiedBy: specBy });
