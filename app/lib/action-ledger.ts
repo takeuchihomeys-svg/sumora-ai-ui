@@ -30,7 +30,11 @@ export type LedgerKind =
   /** 2026-09-12 竹内（あや事例）: AIX【初期費用を説明】で仕組み＋貸主からの報酬・還元額を説明した */
   | 'cost_explained'
   /** 2026-09-15 竹内（ゆうこ事例）: AIX【初期費用について】で御見積書の内訳（含まれる項目・家賃だけで入居できるか）を説明した */
-  | 'cost_breakdown_explained';
+  | 'cost_breakdown_explained'
+  /** 2026-09-15 竹内（H 事例）: AIX【電話をかける】で LINEコールの「電話をかける」ボタンと案内文を送った（お客様からの電話待ち） */
+  | 'call_requested'
+  /** 2026-09-15 竹内（H 事例）: AIX【電話終了後】で電話でお話しした内容のまとめを送った（電話は済み） */
+  | 'call_followup_sent';
 export type LedgerStatus = 'promised' | 'done';
 export type LedgerSource = 'aix_log' | 'line_task' | 'aix_history' | 'staff_text';
 export type ReactionKind = CustomerResponseKind | 'none';
@@ -158,6 +162,8 @@ const AIX_KIND: Record<string, { kind: LedgerKind; status: LedgerStatus }> = {
   zenryoku_support: { kind: 'followup_sent', status: 'done' },
   cost_explain: { kind: 'cost_explained', status: 'done' },
   cost_breakdown: { kind: 'cost_breakdown_explained', status: 'done' },
+  phone_call: { kind: 'call_requested', status: 'done' },
+  phone_followup: { kind: 'call_followup_sent', status: 'done' },
 };
 /** promised → それを履行する done */
 const FULFILLS: Partial<Record<LedgerKind, LedgerKind>> = {
@@ -172,6 +178,8 @@ export const LEDGER_KIND_JA: Record<LedgerKind, string> = {
   application_guided: '申込打診', followup_sent: 'フォロー', media_sent: '画像送付（内容不明）',
   cost_explained: '初期費用の説明（仕組み・還元額）',
   cost_breakdown_explained: '初期費用の内訳の説明（御見積書）',
+  call_requested: '電話をかけるボタンの送付（お客様からの電話待ち）',
+  call_followup_sent: '電話後のまとめの送付',
 };
 /** ledger kind → 往復文脈 StaffTurnKind（'pickup_declared' は reply-context 側 union に追加済み。reply-context の LEDGER_KIND_TO_STAFF と同値） */
 const LEDGER_TO_STAFF: Record<LedgerKind, StaffTurnKind> = {
@@ -179,6 +187,7 @@ const LEDGER_TO_STAFF: Record<LedgerKind, StaffTurnKind> = {
   viewing_invited: 'viewing_invite', meeting_place_sent: 'viewing_invite', question_asked: 'question_to_customer',
   confirmation_promised: 'confirmation_promise', confirmation_reported: 'check_result', condition_asked: 'condition_ask',
   application_guided: 'apply_push', followup_sent: 'other', media_sent: 'other', cost_explained: 'other', cost_breakdown_explained: 'other',
+  call_requested: 'other', call_followup_sent: 'other',
 };
 const STAFF_TO_LEDGER: Partial<Record<StaffTurnKind, LedgerKind>> = {
   property_send: 'properties_sent', pickup_declared: 'pickup_declared', estimate_send: 'estimate_sent', estimate_promised: 'estimate_declared', viewing_invite: 'viewing_invited', check_result: 'confirmation_reported',
@@ -358,7 +367,8 @@ export type RecordedFact = {
   evidence?: string | null;
 };
 const LEDGER_KINDS = new Set<string>(['pickup_declared', 'properties_sent', 'estimate_declared', 'estimate_sent', 'viewing_invited', 'meeting_place_sent', 'question_asked',
-  'confirmation_promised', 'confirmation_reported', 'condition_asked', 'application_guided', 'followup_sent', 'media_sent', 'cost_explained', 'cost_breakdown_explained']);
+  'confirmation_promised', 'confirmation_reported', 'condition_asked', 'application_guided', 'followup_sent', 'media_sent', 'cost_explained', 'cost_breakdown_explained',
+  'call_requested', 'call_followup_sent']);
 function entryFromRecorded(f: RecordedFact): LedgerEntry | null {
   if (!LEDGER_KINDS.has(f.kind) || (f.status !== 'done' && f.status !== 'promised')) return null;
   return {

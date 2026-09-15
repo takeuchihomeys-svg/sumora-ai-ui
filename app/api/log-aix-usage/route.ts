@@ -30,6 +30,8 @@ const AIX_TYPE_LABELS: Record<string, string> = {
   greeting_viewing:         "内覧挨拶を送った",
   cost_explain:             "初期費用の安さの仕組みと還元額を説明した",
   cost_breakdown:           "御見積書の内訳で初期費用の中身（含まれる項目・家賃だけで入居できるか）を説明した",
+  phone_call:               "「電話をかける」ボタン（LINEコール）と案内文を送った（お客様からの電話待ち）",
+  phone_followup:           "電話でお話しした内容のまとめを送った",
 };
 
 // 一致判定（簡易ベースライン）
@@ -55,6 +57,8 @@ const MATCH_KEYWORDS: Record<string, string[]> = {
   greeting_viewing:        ["内覧", "挨拶", "案内", "当日"],
   cost_explain:            ["仲介手数料", "還元", "広告料", "安い", "理由"],
   cost_breakdown:          ["初期費用", "敷金", "礼金", "内訳", "家賃だけ", "日割"],
+  phone_call:              ["電話", "通話", "相談"],
+  phone_followup:          ["電話", "お話し", "まとめ"],
 };
 
 // キーワード簡易判定（予測テキストに実アクションのキーワードが含まれるか）
@@ -486,6 +490,8 @@ JSONのみ返してください。説明文不要。`,
             followup_revive:          "追客フォロー",
             cost_explain:             "初期費用の説明",
             cost_breakdown:           "初期費用について",
+            phone_call:               "電話をかける",
+            phone_followup:           "電話終了後",
             application:              "申込案内",
             document_request:         "書類案内",
             contract:                 "契約手続き",

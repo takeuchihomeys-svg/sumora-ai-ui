@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END } from "../lib/calendarSlots";
-import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, type RequestedViewingDate } from "../lib/viewing-date-request";
+import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, latestCustomerTurnText, type RequestedViewingDate } from "../lib/viewing-date-request";
+import { customerRequestsPhoneCall, buildCallRequestText } from "../lib/phone-call";
+
+const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 import { weekdayForMonthDay } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
 import {
@@ -24,7 +27,10 @@ export type AixActionType =
   | "property_search"
   | "zenryoku_support"
   | "cost_explain"
-  | "cost_breakdown";
+  | "cost_breakdown"
+  // 2026-09-15 竹内（H 事例）: 電話をかける（LINEコールの「電話をかける」ボタン＋案内文）／電話終了後（電話でお話しした内容のまとめ）
+  | "phone_call"
+  | "phone_followup";
 
 interface LinkedCustomer {
   id: string;
@@ -65,6 +71,8 @@ interface AixModalProps {
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
+  /** AIX【電話をかける】: LINEコールの「電話をかける」ボタンのカードを送る（失敗時は例外）。本文はその後に onSend で送る */
+  onSendCallButton?: () => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
   // M2: estimateSent / propCostNotes = 御見積書の同封有無とOCRで読み取った物件別費用情報
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string }) => void;
@@ -271,6 +279,14 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
     rules: ["お客様が初期費用の中身を聞いた時に使う（「家賃だけ払ったら住めるんですか？」「初期費用に何が含まれますか？」）", "御見積書の画像を貼り付けて「会話を合わせる」→ 読み取った項目と金額でご質問に答える1通", "金額は御見積書の数字だけ（無い金額は〇〇円になり送信前に止まる）", "日割家賃は「ご入居日によって発生・1日入居ならかからない」だけ（金額は書かない）"],
     template: "こちら鍵交換費用や必要な初期費用は御見積書に含めさせて頂いております😊！！\n火災保険費用が別途必要な金額となります！！\n\n日割家賃につきましては、1日ご入居の場合はかかりませんので、初期費用を出来る限り抑える場合は1日でのご入居でご契約頂くのがオススメです！！",
   },
+  phone_call: {
+    rules: ["お客様が電話で話したい・相談したいと言った時、またはこちらから電話でご説明する時に使う", "LINEコールの「電話をかける」ボタンのカード → 案内文の順で送る（お客様がボタンを押すと公式LINEに電話がつながる）", "お客様から電話の依頼があれば「お電話大丈夫です😊！！」から答える（AI不使用）", "通話URLはアカウントごとに1回登録（LINE公式アカウント管理画面 → 設定 → チャット → 通話 → LINEコールを告知）"],
+    template: "お電話大丈夫です😊！！\nこちらの電話をかけるボタンよりお電話お願い致します！！",
+  },
+  phone_followup: {
+    rules: ["電話が終わった後に使う", "電話でお話しした内容のメモを入れる → お礼＋決まったこと＋こちらがすること／お客様にお願いすることの1通を作る", "メモに無い金額・日付・時刻・号室は作らない（〇〇になり送信前に止まる）"],
+    template: "お電話有難うございました😊！！\n[電話で決まったこと・こちらがすること]\n\n[お客様にお願いすること・補足]\n\n引き続き何卒よろしくお願い致します！！",
+  },
 };
 
 const CONFIG: Record<
@@ -398,6 +414,20 @@ const CONFIG: Record<
     requiresImage: false,
     imageLabel: "",
     description: "初期費用の中身（含まれる項目・家賃だけで入居できるか・別途かかる費用）を聞かれた時に、御見積書の内訳でご質問に答えます。御見積書の画像を貼り付けて「会話を合わせる」を押してください。",
+  },
+  phone_call: {
+    title: "電話をかける",
+    emoji: "📞",
+    requiresImage: false,
+    imageLabel: "",
+    description: "「電話をかける」ボタン（LINEコール）と案内文を送ります。お客様がボタンを押すと公式LINEに電話がつながります。",
+  },
+  phone_followup: {
+    title: "電話終了後",
+    emoji: "☎️",
+    requiresImage: false,
+    imageLabel: "",
+    description: "電話でお話しした内容を入れると、電話後のお礼とまとめの1通を作ります。",
   },
 };
 
@@ -532,6 +562,7 @@ export default function AixModal({
   autoConvMatch,
   onClose,
   onSend,
+  onSendCallButton,
   onAfterSend,
   onDelayedSend,
   onScheduled,
@@ -895,10 +926,56 @@ export default function AixModal({
   // お客様の最新の発言の内覧希望日（2026-09-15 隼斗事例: 断りの文を除く・「18日」も読む・日本時間）
   const viewingRequested = useMemo(
     () => (actionType === "viewing_invite" ? requestedViewingDatesFromMessages(recentMessages ?? []) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [actionType, recentMessages],
   );
   const viewingRequestedKey = viewingRequested.map((r) => r.ymd).join(",");
+
+  // 電話をかける／電話終了後（2026-09-15 竹内・H 事例）
+  const [phonePurpose, setPhonePurpose] = useState("");   // 電話をかける: 用件（任意）
+  const [phoneNotes, setPhoneNotes] = useState("");       // 電話終了後: 電話でお話しした内容
+  const [callUrlInfo, setCallUrlInfo] = useState<{ loading: boolean; url: string | null; accountLabel: string; error?: string }>({ loading: false, url: null, accountLabel: "" });
+  const [callUrlInput, setCallUrlInput] = useState("");
+  const [callUrlEditing, setCallUrlEditing] = useState(false);
+  const [callUrlSaving, setCallUrlSaving] = useState(false);
+  // お客様の最新の発言が電話の依頼か（「お電話では無理でしょうか？」→「お電話大丈夫です😊！！」から答える）
+  const phoneRequestedByCustomer = useMemo(
+    () => actionType === "phone_call" && customerRequestsPhoneCall(latestCustomerTurnText(recentMessages ?? [])),
+    [actionType, recentMessages],
+  );
+  useEffect(() => {
+    if (actionType !== "phone_call") return;
+    let cancelled = false;
+    setCallUrlInfo((p) => ({ ...p, loading: true }));
+    fetch(`/api/line-call-url?account=${encodeURIComponent(account ?? "sumora")}`, { headers: INTERNAL_AUTH_HEADER })
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; url?: string | null; accountLabel?: string; error?: string }) => {
+        if (cancelled) return;
+        setCallUrlInfo({ loading: false, url: d.url ?? null, accountLabel: d.accountLabel ?? "", error: d.ok === false ? d.error : undefined });
+        if (!d.url) setCallUrlEditing(true);
+      })
+      .catch((e) => { if (!cancelled) setCallUrlInfo({ loading: false, url: null, accountLabel: "", error: String(e) }); });
+    return () => { cancelled = true; };
+  }, [actionType, account]);
+  const saveCallUrl = async () => {
+    setCallUrlSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/line-call-url", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+        body: JSON.stringify({ account: account ?? "sumora", url: callUrlInput.trim() }),
+      });
+      const d = await res.json() as { ok?: boolean; url?: string; error?: string };
+      if (!res.ok || !d.ok) throw new Error(d.error || `HTTP ${res.status}`);
+      setCallUrlInfo((p) => ({ ...p, url: d.url ?? callUrlInput.trim(), error: undefined }));
+      setCallUrlEditing(false);
+      setCallUrlInput("");
+    } catch (e) {
+      setError(`通話URLを登録できませんでした: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setCallUrlSaving(false);
+    }
+  };
 
   // 物件オススメ専用: 見積書（任意）
   const [recommendEstimateFile, setRecommendEstimateFile] = useState<File | null>(null);
@@ -1759,6 +1836,21 @@ export default function AixModal({
         return;
       }
 
+      // 電話をかける: 案内文はテンプレ（AI不使用）。お客様から電話の依頼があれば「お電話大丈夫です😊！！」から答える（スタッフの実送信）
+      if (actionType === "phone_call") {
+        const msg = buildCallRequestText({ customerAsked: phoneRequestedByCustomer, customerName, purpose: phonePurpose });
+        setAiDraft(msg);
+        setPreview(useEmoji ? msg : stripEmoji(msg));
+        setLoading(false);
+        return;
+      }
+      // 電話終了後: 電話でお話しした内容のメモからサーバで1通を作る（メモに無い数字は〇〇）
+      if (actionType === "phone_followup") {
+        if (!phoneNotes.trim()) throw new Error("電話でお話しした内容を入力してください");
+        body.call_notes = phoneNotes.trim();
+        setGenLabel("電話の内容をまとめています");
+      }
+
       if (actionType === "property_recommendation") {
         if (!imageFile) throw new Error("物件資料を選択してください");
         if (linkedCustomer) {
@@ -2330,6 +2422,8 @@ export default function AixModal({
     followup_revive: "followup_revive",
     cost_explain: "cost_explain",
     cost_breakdown: "cost_breakdown",
+    phone_call: "phone_call",
+    phone_followup: "phone_followup",
   };
 
   // save-reply-example の保存ペイロードを構築（即時送信・予約送信で共通利用）
@@ -2460,6 +2554,8 @@ export default function AixModal({
 
   const openAixScheduleModal = () => {
     if (!preview.trim()) return;
+    // 電話をかける: 予約送信は本文だけになり「電話をかける」ボタンが送られないので使わない
+    if (actionType === "phone_call") { setError("電話をかけるは予約送信できません（ボタンと案内文をすぐ送ります）"); return; }
     const pad = (n: number) => String(n).padStart(2, "0");
     let baseTime: Date;
     if (lastScheduledAt) {
@@ -2872,6 +2968,16 @@ export default function AixModal({
           }
           await sendAsAix(preview);
           sentImageIndexRef.current = -1;
+        } else if (actionType === "phone_call") {
+          // 電話をかける: 「電話をかける」ボタンのカード（LINEコール）→ 案内文（スタッフの実送信 H 9/15 と同じ順）。カード送信済みなら再押下で二重に送らない
+          if (!onSendCallButton) throw new Error("この画面からは電話ボタンを送れません");
+          if (!callUrlInfo.url) throw new Error("LINEコールの通話URLを登録してから送信してください");
+          if (!stepDone(1)) {
+            await onSendCallButton();
+            markStep(1);
+          }
+          await sendAsAix(preview);
+          delete sentStepRef.current[actionType];
         } else if (actionType === "cost_breakdown" && cbSendNewImages && cbImages.some((im) => !im.fromHistory)) {
           // 初期費用について: 新しく貼った御見積書（お客様にまだ送っていない物）だけ先に1枚ずつ送信 → 説明文（会話で送った御見積書は再送しない）
           const news = cbImages.filter((im) => !im.fromHistory);
@@ -2991,6 +3097,8 @@ export default function AixModal({
     ? costExplainMissing({ noLandlordFee: costNoFee, landlordFeeYen: parseYen(costFeeYen), refundYen: parseYen(costRefundYen) }) === null
     : actionType === "cost_breakdown"
     ? cbImages.length > 0
+    : actionType === "phone_followup"
+    ? !!phoneNotes.trim()
     : actionType === "estimate_sheet" && estimateMultiMode
     ? estimateMultiFiles.some(Boolean)
     : !config.requiresImage || !!imageFile;
@@ -6087,6 +6195,64 @@ export default function AixModal({
                     : "💬 未選択 → AIがLINEの会話から待ち合わせ時間を自動読み取りして文を生成します"}
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* 電話をかける専用UI（2026-09-15 竹内・H 事例）: LINEコールの「電話をかける」ボタン＋案内文。通話URLはアカウントごとに1回登録 */}
+          {actionType === "phone_call" && (() => {
+            const inputCls = "w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#06C755]";
+            return (
+              <div className="mb-4">
+                <div className="mb-3 rounded-2xl border border-[#d1d7db] bg-white p-3">
+                  <p className="mb-2 text-center text-[20px]">📞</p>
+                  <p className="text-[14px] font-bold text-[#111b21]">通話リクエスト</p>
+                  <p className="mb-2 text-[11px] text-[#667781]">下のボタンをタップすると、このアカウントに電話をかけることができます。</p>
+                  <div className="rounded-lg bg-[#06C755] py-2 text-center text-[13px] font-bold text-white">電話をかける</div>
+                  <p className="mt-1.5 text-[10px] text-[#8696a0]">↑ このカードを先に送り、続けて下の案内文を送ります（お客様がボタンを押すと公式LINE{callUrlInfo.accountLabel ? `（${callUrlInfo.accountLabel}）` : ""}に電話がつながります）</p>
+                </div>
+                {callUrlInfo.loading ? (
+                  <p className="mb-3 text-[11px] text-[#8696a0]">通話URLを確認しています…</p>
+                ) : callUrlInfo.url && !callUrlEditing ? (
+                  <p className="mb-3 text-[11px] text-[#2E7D32]">
+                    ✅ 通話URL登録済み{callUrlInfo.accountLabel ? `（${callUrlInfo.accountLabel}）` : ""}
+                    <button type="button" onClick={() => { setCallUrlEditing(true); setCallUrlInput(callUrlInfo.url ?? ""); }} className="ml-2 text-[#2196F3] underline">変更</button>
+                  </p>
+                ) : (
+                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 p-3">
+                    <p className="mb-1 text-[12px] font-bold text-orange-700">LINEコールの通話URLを登録してください{callUrlInfo.accountLabel ? `（${callUrlInfo.accountLabel}）` : ""}</p>
+                    <p className="mb-2 text-[10px] leading-relaxed text-[#667781]">LINE公式アカウント管理画面 → 設定 → チャット → 通話 →「LINEコールを告知」のURLをコピーして貼り付け（アカウントごとに1回だけ）。通話リクエストの有効期限を設定しているとURLが使えません</p>
+                    <input value={callUrlInput} onChange={(e) => setCallUrlInput(e.target.value)} placeholder="https://line.me/… または https://lin.ee/…" className={inputCls} />
+                    <div className="mt-2 flex gap-2">
+                      <button type="button" onClick={() => void saveCallUrl()} disabled={callUrlSaving || !callUrlInput.trim()} className="flex-1 rounded-full bg-[#06C755] py-2 text-[12px] font-bold text-white disabled:opacity-40">{callUrlSaving ? "登録中…" : "登録する"}</button>
+                      {callUrlInfo.url && (
+                        <button type="button" onClick={() => { setCallUrlEditing(false); setCallUrlInput(""); }} className="rounded-full border border-[#d1d7db] px-4 py-2 text-[12px] text-[#54656f]">やめる</button>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                  用件 <span className="font-normal text-[#90a4ae]">（任意・こちらから電話でご説明する時。例：審査のお打ち合わせ）</span>
+                </label>
+                <input value={phonePurpose} onChange={(e) => { setPhonePurpose(e.target.value); setPreview(""); }} placeholder="空欄ならボタンのご案内だけ" className={inputCls} />
+                <p className="mt-1 text-[11px] text-[#8696a0]">
+                  {phoneRequestedByCustomer ? "お客様から電話のご依頼 →「お電話大丈夫です😊！！」から答えます" : "こちらから電話をご案内する文を作ります"}
+                </p>
+              </div>
+            );
+          })()}
+
+          {/* 電話終了後専用UI（2026-09-15 竹内・H 事例）: 電話でお話しした内容 → お礼＋まとめの1通 */}
+          {actionType === "phone_followup" && (
+            <div className="mb-4">
+              <label className="mb-1 block text-xs font-semibold text-[#54656f]">電話でお話しした内容 <span className="text-red-400">*</span></label>
+              <textarea
+                value={phoneNotes}
+                onChange={(e) => { setPhoneNotes(e.target.value); setPreview(""); }}
+                rows={5}
+                placeholder={"例：\n独立系の保証会社中心に探す\n家賃8万円以内・リビング12帖・洋室6帖\n気に入った部屋は審査→通過後に内覧を推奨\n保証会社通過まではキャンセル料不要"}
+                className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#06C755]"
+              />
+              <p className="mt-1 text-[11px] text-[#8696a0]">箇条書きでOK。書いた内容だけで「お電話有難うございました😊！！」から始まる1通を作ります（書いていない金額・日付は〇〇になります）</p>
             </div>
           )}
 

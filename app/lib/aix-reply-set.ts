@@ -187,6 +187,19 @@ function sceneS9(reason: string): SceneHit {
   };
 }
 
+// 2026-09-15 竹内（H 事例）: お客様が電話で話したい（S10）。「電話をかける」ボタン（LINEコール）と案内文は AIX【電話をかける】で送る。
+//   本文は受付の一文だけ（電話番号・「こちらからお電話します」「〇時にお電話します」を作らない）
+function sceneS10(reason: string): SceneHit {
+  const d = AIX_ACTION_REPLY_DIRECTION.phone_call;
+  return {
+    action: "phone_call", check_pattern: null, label: labelFor("phone_call", null), timing: "now",
+    bridge: d?.weDo ?? "お電話大丈夫です😊！！",
+    forbidden: [], forbiddenText: d?.forbid ?? "電話番号・折り返しの時刻の記載",
+    scene: "S10_phone_request", reason_code: reason, chained: null, urgency: "10分以内（お客様が電話を待っている）", highlight: true,
+    extra: "「電話をかける」ボタンと案内文は AIX【電話する → 電話をかける】で送る（お客様がボタンから公式LINEに電話できる）。本文で電話番号・折り返しの時刻を作らない。",
+  };
+}
+
 function genericRow(action: string, cp: string | null, reason: string): SceneHit {
   return {
     action, check_pattern: cp, label: labelFor(action, cp),
@@ -208,6 +221,7 @@ function rowForEvidence(e: AixSceneEvidence, o: SceneEvidenceInput): SceneHit {
     case "S6_estimate": return sceneS6(o, msg, !!e.echoPayment, e.reasonCode);
     case "S7_condition_change": return sceneS7();
     case "S9_cost_breakdown": return sceneS9(e.reasonCode);
+    case "S10_phone_request": return sceneS10(e.reasonCode);
     default: return genericRow(e.candidateAction, e.checkPattern, e.reasonCode);
   }
 }
@@ -265,6 +279,7 @@ export function sceneSafetyRow(action: string, checkPattern: string | null, o: S
   else if (action === "property_send") row = sceneS7();
   else if (action === "application_push") row = sceneForCode("AIX_BOUNDARY_APPLICATION", o)!;
   else if (action === "cost_breakdown") row = sceneS9(`brain:${action}`);
+  else if (action === "phone_call") row = sceneS10(`brain:${action}`);
   else row = genericRow(action, checkPattern, `brain:${action}`);
   return { ...row, action, check_pattern: checkPattern, label: labelFor(action, checkPattern) };
 }

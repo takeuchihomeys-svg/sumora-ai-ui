@@ -59,6 +59,9 @@ export const AIX_BUTTON_LABELS: Record<string, string> = {
   cost_explain:            "初期費用を説明",
   // 2026-09-15 竹内（ゆうこ事例）: 初期費用の中身の質問（家賃だけで入居できるか・何が含まれるか）に御見積書の内訳で答える
   cost_breakdown:          "初期費用について",
+  // 2026-09-15 竹内（H 事例）: お客様が電話で話したい → LINEコールの「電話をかける」ボタン＋案内文／電話の後のまとめ
+  phone_call:              "電話をかける",
+  phone_followup:          "電話終了後",
 };
 
 // ボタンキー → スタッフ向けアナウンス（「AIX【ボタン名】を押してください: 理由・タイミング」形式）。
@@ -78,6 +81,8 @@ export const AIX_STAFF_NOTES: Record<string, string> = {
   property_search:         "Chrome拡張ツール（リアプロ/itandi/レインズ）で物件を検索してください: お客様の条件に合う物件を探す場面です（送付済み物件は候補から除外）。URLが揃ったらAIX【物件ピックアップした】で送付します",
   cost_explain:            "AIX【初期費用を説明】を押してください: お客様が費用の安さを不審に思っている・安い理由を聞いています（「仲介手数料無しで大丈夫？」「安いのには理由が？」「他社は31万と言われた」）。貸主からの報酬と還元額を入力すると、仕組み（仲介手数料0円・広告料の還元）とこの物件の具体額を1通で説明します（金額の手打ち・AI生成はNG）",
   cost_breakdown:          "AIX【初期費用について】を押してください: お客様が初期費用の中身を聞いています（「家賃だけ払ったら住めるんですか？」「初期費用に何が含まれますか？」「火災保険は別ですか？」）。御見積書の画像を貼り付けて「会話を合わせる」を押すと、御見積書の内訳（項目と金額）でご質問に答える1通を作ります（見積書を見ずに本文で費用の中身を説明するのはNG）",
+  phone_call:              "AIX【電話する → 電話をかける】を押してください: お客様が電話で話したい・相談したいと言っています（「お電話では無理でしょうか？」「電話いける時間ありますか？」）。「電話をかける」ボタン（LINEコール）と案内文を送ると、お客様がボタンから公式LINEに電話できます。電話の後は AIX【電話する → 電話終了後】で話した内容をまとめて送ります",
+  phone_followup:          "AIX【電話する → 電話終了後】を押してください: お客様との電話が終わった場面です。電話でお話しした内容を入れると、お礼とまとめ（決まったこと・こちらがすること・お客様にお願いすること）の1通を作ります",
 };
 
 // ─── brain action → 顧客向け返信方向性（A-7 / 2026-09-08 Fable5）──────────────────
@@ -104,6 +109,9 @@ export const AIX_ACTION_REPLY_DIRECTION: Record<string, AixActionReplyDirection>
   // 2026-09-15 竹内（ゆうこ事例）「AIX から送る費用についての項目となるから適当なこと言わないため」:
   // 初期費用の中身（含まれる項目・家賃だけで入居できるか）は AIX【初期費用について】で御見積書の内訳を使って送る。本文では説明しない
   cost_breakdown:          { direction: "初期費用の中身のご質問への受付（内訳の説明はAIX初期費用についてで御見積書をもとに送る）", weDo: "ご質問ありがとうございます😊！！", forbid: "敷金・礼金・保証料・火災保険・鍵交換・日割家賃など初期費用に含まれる項目の説明／「家賃（・管理費）だけでは入居出来ない・出来る」の断言／金額" },
+  // 2026-09-15 竹内（H 事例）: 電話のご依頼には「電話をかける」ボタン（LINEコール）と案内文を AIX で送る。本文で電話番号・折り返しの時刻を作らない
+  phone_call:              { direction: "お電話のご依頼への受付（電話をかけるボタンと案内文はAIX電話をかけるで送る）", weDo: "お電話大丈夫です😊！！", forbid: "電話番号の記載／「こちらからお電話します」「〇時にお電話します」等の折り返しの約束・時刻／電話を断る文" },
+  phone_followup:          { direction: "電話でお話しした内容のまとめ（AIX電話終了後でスタッフのメモから送る）", weDo: "お電話有難うございました😊！！", forbid: "電話で話していない内容・金額・日付の創作" },
 };
 
 // ─── property_check_result の check_pattern 決定論判定 ─────────────────────────
@@ -186,6 +194,8 @@ export const AIX_LINE_LABELS: Record<string, string> = {
   property_search:         "物件ピックアップ",
   cost_explain:            "初期費用の説明",
   cost_breakdown:          "初期費用について",
+  phone_call:              "電話のご依頼",
+  phone_followup:          "電話後のまとめ",
 };
 
 // 通知2行目: 「次にやること」を1行で
@@ -204,6 +214,8 @@ export const AIX_LINE_NOTES: Record<string, string> = {
   property_search:         "Chrome拡張で検索 → AIX【物件ピックアップした】",
   cost_explain:            "貸主からの報酬を入力 → AIX【初期費用を説明】",
   cost_breakdown:          "御見積書の画像を貼り付け → AIX【初期費用について】",
+  phone_call:              "AIX【電話する → 電話をかける】でボタンと案内文を送る",
+  phone_followup:          "話した内容を入れて AIX【電話する → 電話終了後】",
 };
 
 // check_pattern → topic の簡易マップ（brain の check_pattern から topic を引くため）
@@ -250,6 +262,11 @@ const AIX_ACTION_ALIASES: Record<string, string> = {
   initial_cost_breakdown: "cost_breakdown",
   initial_cost_about: "cost_breakdown",
   cost_composition:   "cost_breakdown",
+  call_request:       "phone_call",
+  line_call:          "phone_call",
+  phone_request:      "phone_call",
+  call_followup:      "phone_followup",
+  phone_after:        "phone_followup",
 };
 
 export function normalizeAixActionKey(raw: string | null | undefined): string | null {

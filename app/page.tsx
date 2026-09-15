@@ -16,6 +16,7 @@ import { firstReplyStateOrNull, staffHasEngaged } from "./lib/conversation-statu
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./lib/brain-meta-restore";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
+import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 
@@ -250,6 +251,9 @@ const AIX_ACTION_META: Record<string, { label: string; subtitle?: string; color:
   cost_explain:            { label: "\u521d\u671f\u8cbb\u7528\u3092\u8aac\u660e",        color: "#2E7D32", templateCategory: "" },
   // 2026-09-15 \u7af9\u5185\uff08\u3086\u3046\u3053\u4e8b\u4f8b\uff09: \u521d\u671f\u8cbb\u7528\u306e\u4e2d\u8eab\u306e\u8cea\u554f\u306b\u5fa1\u898b\u7a4d\u66f8\u306e\u5185\u8a33\u3067\u7b54\u3048\u308b\uff08\u4f1a\u8a71\u3092\u5408\u308f\u305b\u308b\u5c02\u7528\uff09
   cost_breakdown:          { label: "\u521d\u671f\u8cbb\u7528\u306b\u3064\u3044\u3066",        color: "#558B2F", templateCategory: "" },
+  // 2026-09-15 \u7af9\u5185\uff08H \u4e8b\u4f8b\uff09: LINE\u30b3\u30fc\u30eb\u306e\u300c\u96fb\u8a71\u3092\u304b\u3051\u308b\u300d\u30dc\u30bf\u30f3\uff0b\u6848\u5185\u6587\uff0f\u96fb\u8a71\u3067\u304a\u8a71\u3057\u3057\u305f\u5185\u5bb9\u306e\u307e\u3068\u3081
+  phone_call:              { label: "\u96fb\u8a71\u3092\u304b\u3051\u308b",        color: "#06C755", templateCategory: "" },
+  phone_followup:          { label: "\u96fb\u8a71\u7d42\u4e86\u5f8c",          color: "#1B8A4B", templateCategory: "" },
 };
 // \u8133\u99c6\u52d5\u30d2\u30f3\u30c8\uff08suggested_aix_meta.action\uff09\u2192 AIX\u30dc\u30bf\u30f3\u30e9\u30d9\u30eb\u3002
 // \u30e9\u30d9\u30eb\u304c\u5b58\u5728\u3059\u308b action \u306f\u300cAIX\u30a2\u30af\u30b7\u30e7\u30f3\u300d\u3068\u3057\u3066\u4e0b\u90e8AIX\u30ab\u30fc\u30c9\u306b\u7d71\u5408\u8868\u793a\u3059\u308b
@@ -272,6 +276,7 @@ const BRAIN_AIX_LABELS: Record<string, string> = {
   property_search:         "AIX \u7269\u4ef6\u3092\u63a2\u3059",
   cost_explain:            "AIX \u521d\u671f\u8cbb\u7528\u3092\u8aac\u660e",
   cost_breakdown:          "AIX \u521d\u671f\u8cbb\u7528\u306b\u3064\u3044\u3066",
+  phone_call:              "AIX \u96fb\u8a71\u3092\u304b\u3051\u308b",
 };
 
 // AIX \u304c\u5fc5\u8981\u304b\u3069\u3046\u304b\u306f\u30d6\u30ec\u30a4\u30f3\u3060\u3051\u304c\u5224\u65ad\u3059\u308b\uff082026-09-12 \u7af9\u5185\u65b9\u91dd\uff09\u3002
@@ -822,6 +827,8 @@ export default function Home() {
   const [aixInitViewingSpecific, setAixInitViewingSpecific] = useState(false);
   const [aixInitViewingVacancy, setAixInitViewingVacancy] = useState(false);
   const [showViewingPicker, setShowViewingPicker] = useState(false);
+  // 電話するピッカー（電話をかける／電話終了後・2026-09-15 竹内・H 事例）
+  const [showPhonePicker, setShowPhonePicker] = useState(false);
   const [suggestedViewingMode, setSuggestedViewingMode] = useState<"通常" | "退去予定物件" | "内覧日指定あり" | "日程変更" | null>(null);
   // 追客ピッカー
   const [showFollowupPicker, setShowFollowupPicker] = useState(false);
@@ -5025,6 +5032,28 @@ export default function Home() {
     }, 1000);
   };
 
+  // 2026-09-15 竹内（H 事例）: AIX【電話をかける】の「電話をかける」ボタン（LINEコール）のカードを送り、会話に記録する。
+  //   失敗（通話URL 未登録・LINE エラー）は例外にして AIX 画面に出す（本文は送らない）
+  const sendCallButton = async (): Promise<void> => {
+    const cid = selectedConversation.id;
+    if (!cid) throw new Error("会話が選択されていません");
+    const res = await fetch("/api/send-line-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+      body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, account: selectedConversation.account, call_button: true, conversation_id: cid, origin: "aix" }),
+    });
+    const json = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; sentMessageIds?: string[] };
+    if (!res.ok || !json.ok) throw new Error(json.error || `電話ボタンを送れませんでした（HTTP ${res.status}）`);
+    const at = new Date();
+    const lineMsgId = json.sentMessageIds?.[0] ?? null;
+    const { data: row } = await supabase.from("messages").insert({
+      conversation_id: cid, sender: "staff", text: CALL_BUTTON_MESSAGE_TEXT, created_at: at.toISOString(), is_aix_generated: true,
+      ...(lineMsgId ? { line_message_id: lineMsgId } : {}),
+    }).select();
+    const newMsg: Message = { id: String(row?.[0]?.id || crypto.randomUUID()), sender: "staff", text: CALL_BUTTON_MESSAGE_TEXT, time: formatTime(at.toISOString()), rawCreatedAt: at.toISOString(), isAix: true };
+    setConversations((prev) => prev.map((c) => c.id !== cid || c.messages.some((m) => m.id === newMsg.id) ? c : { ...c, messages: [...c.messages, newMsg] }));
+  };
+
   const sendMessageText = async (
     text: string,
     imageUrl?: string,
@@ -8362,6 +8391,7 @@ export default function Home() {
                   property_check: "物件確認した",
                   cost_explain: "初期費用を説明",
                   cost_breakdown: "初期費用について",
+                  phone_call: "電話をかける",
                 };
 
                 // action あり → AIXボタン。ただしブレインが同じ AIX を判断している時だけ（2026-09-12 竹内方針）。
@@ -9913,6 +9943,7 @@ export default function Home() {
             lastAixLogTextRef.current = text || null;
             return sendMessageText(text, imageUrl, isAix);
           }}
+          onSendCallButton={sendCallButton}
           onDelayedSend={handleDelayedSend}
           onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
@@ -11212,6 +11243,55 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* 電話するピッカー（2026-09-15 竹内・H 事例）: 電話をかける（LINEコールのボタン＋案内文）／電話終了後（話した内容のまとめ） */}
+      {showPhonePicker && (() => {
+        // 直近に「電話をかける」ボタンを送っていれば電話終了後を勧める
+        const recent = (selectedConversation.messages ?? []).slice(-8);
+        const buttonIdx = recent.map((m) => m.text).lastIndexOf(CALL_BUTTON_MESSAGE_TEXT);
+        const suggested: "phone_call" | "phone_followup" = buttonIdx >= 0 && !recent.slice(buttonIdx + 1).some((m) => m.sender === "staff" && /お電話(?:有難う|ありがとう)/.test(m.text ?? ""))
+          ? "phone_followup" : "phone_call";
+        const options: Array<{ key: "phone_call" | "phone_followup"; label: string; desc: string; icon: string }> = [
+          { key: "phone_call", label: "電話をかける", desc: "「電話をかける」ボタン＋案内文を送る（お客様がボタンを押すと公式LINEに電話がつながる）", icon: "📞" },
+          { key: "phone_followup", label: "電話終了後", desc: "電話でお話しした内容を入れると、お礼とまとめの1通を作る", icon: "☎️" },
+        ];
+        return (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6" onClick={() => { setShowPhonePicker(false); setActiveAixFlow(null); }}>
+            <div className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-5 flex justify-center">
+                <div className="flex h-[72px] w-[72px] items-center justify-center rounded-full bg-[#E8F8EE] text-[34px]">📞</div>
+              </div>
+              <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">電話する</p>
+              <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">どちらを送りますか？</p>
+              <div className="flex flex-col gap-2.5">
+                {options.map((o) => {
+                  const isSuggested = suggested === o.key;
+                  return (
+                    <button
+                      key={o.key}
+                      type="button"
+                      onClick={() => {
+                        setShowPhonePicker(false);
+                        setActiveAixFlow(o.key);
+                        openAixDirect(o.key);
+                      }}
+                      className="flex items-center gap-3.5 rounded-2xl px-4 py-3.5 text-left transition active:bg-[#E8F8EE]"
+                      style={isSuggested ? { border: "2px solid #06C755", background: "#F0FBF4", boxShadow: "0 0 0 3px #06C75522" } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#E8F8EE] text-[18px]">{o.icon}</div>
+                      <div className="flex-1">
+                        <p className="text-[14px] font-bold text-[#111827]">{o.label}{isSuggested && <span className="ml-1.5 rounded-full bg-[#06C755] px-1.5 py-0.5 text-[10px] font-bold text-white">おすすめ</span>}</p>
+                        <p className="text-[11px] text-[#9CA3AF]">{o.desc}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <button type="button" onClick={() => { setShowPhonePicker(false); setActiveAixFlow(null); }} className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">キャンセル</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 内覧へ！種類選択ピッカー */}
       {showViewingPicker && (
@@ -13441,6 +13521,11 @@ export default function Home() {
                     process: "「家賃だけ払ったら住めるんですか？」「初期費用に何が含まれますか？」等の初期費用の中身の質問に、御見積書を読み取った項目と金額でご質問に答える1通を「会話を合わせる」で作成。日割家賃は「ご入居日によって発生・1日入居ならかからない」だけ（金額は書かない）",
                     data: "御見積書の画像の読み取り（Sonnet 5 Vision）→ 生成（Sonnet 5）。御見積書に無い金額は〇〇円に伏せ字になり送信前チェックで止まる",
                   },
+                  "電話する": {
+                    inputs: "電話をかける: 用件（任意）・通話URL（アカウントごとに1回登録）／電話終了後: 電話でお話しした内容（箇条書きでOK）",
+                    process: "電話をかける: LINEコールの「電話をかける」ボタンのカード → 案内文の順で送信（お客様がボタンを押すと公式LINEに電話がつながる。お客様から電話の依頼があれば「お電話大丈夫です😊！！」から）。電話終了後: 話した内容から「お電話有難うございました😊！！」で始まるお礼とまとめの1通を生成",
+                    data: "電話をかける: テンプレ（AI不使用）／電話終了後: 生成（Sonnet 5）。メモに無い金額・日付・時刻・号室は〇〇に伏せ字になり送信前チェックで止まる",
+                  },
                   "お部屋探し条件ヒアリング": {
                     inputs: "なし（会話履歴を自動取得）",
                     process: "条件フォーム①〜⑧をワンタップ送信。会話に合わせたAI導入メッセージを添える",
@@ -13510,6 +13595,7 @@ export default function Home() {
                   } },
                   { color: "#2E7D32", label: "初期費用を説明", actionType: "cost_explain", sub: "安さを不審に思われた時に仕組み＋貸主からの報酬・還元額を1通で説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_explain"); openAixDirect("cost_explain"); } },
                   { color: "#558B2F", label: "初期費用について", actionType: "cost_breakdown", sub: "御見積書の画像を貼り付け→会話を合わせるで初期費用の中身（含まれる項目・家賃だけで入居できるか）を説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_breakdown"); openAixDirect("cost_breakdown"); } },
+                  { color: "#06C755", label: "電話する", actionType: "phone_call", sub: "「電話をかける」ボタン＋案内文を送る／電話が終わったら話した内容からお礼とまとめを作る", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("phone_call"); setShowPhonePicker(true); } },
                   { color: "#0288D1", label: "お部屋探し条件ヒアリング", actionType: "condition_hearing", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
                   { color: "#9C27B0", label: "内覧日を調整する", actionType: "viewing_invite", sub: "日程をタップして選択→AI文生成→内覧案内LINEを送信。内覧率UPに直結！", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ場所", actionType: "meeting_place", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },

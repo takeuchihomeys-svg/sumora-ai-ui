@@ -293,7 +293,7 @@ export function compactSceneEvidence(e: AixSceneEvidence | null | undefined) {
 
 const SCENE_LABEL: Record<string, string> = {
   S1_vacancy: "空室・募集状況の質問", S2_move_in: "入居日の質問", S3_screening: "審査・保証の質問", S4_viewing: "内覧の希望",
-  S5_time_spec: "内覧日時の指定", S6_estimate: "見積・費用", S7_condition_change: "条件の変更", S8_cost_doubt: "費用の安さへの不安・疑問", S9_cost_breakdown: "初期費用の中身の質問（家賃だけで入居できるか・含まれる項目）", application: "申込",
+  S5_time_spec: "内覧日時の指定", S6_estimate: "見積・費用", S7_condition_change: "条件の変更", S8_cost_doubt: "費用の安さへの不安・疑問", S9_cost_breakdown: "初期費用の中身の質問（家賃だけで入居できるか・含まれる項目）", S10_phone_request: "電話で話したい（電話の可否・時間の問い合わせ・電話の依頼）", application: "申込",
 };
 
 /**

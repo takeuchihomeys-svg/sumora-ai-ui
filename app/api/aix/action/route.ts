@@ -4,6 +4,7 @@ import { supabase } from "@/app/lib/supabase";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable } from "@/app/lib/jst-date";
+import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
 import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
@@ -327,6 +328,9 @@ const AIX_ACTION_TO_STATES: Record<string, string[]> = {
   cost_explain: ["cost_explain"],
   // 2026-09-15 竹内（ゆうこ事例）: 初期費用について（見積書の内訳で費用の中身の質問に答える）。見積書の学習も引く
   cost_breakdown: ["cost_breakdown", "estimate_sheet", "estimate_request"],
+  // 2026-09-15 竹内（H 事例）: 電話をかける（クライアント側テンプレ・保存 state を揃えるためだけ）／電話終了後（メモから電話後のまとめ）
+  phone_call: ["phone_call"],
+  phone_followup: ["phone_followup"],
   // ※ property_recommendation は getPropertyKnowledge() 内で同等の差分学習ルール取得済み（states: property_recommendation/proposing）
 };
 
@@ -664,6 +668,7 @@ const ACTION_MAX_TOKENS: Record<string, number> = {
   followup_revive: 600,          // 追客メッセージ
   zenryoku_support: 600,         // 2〜5行の短文生成
   cost_breakdown: 1500,          // 初期費用について（見積書の内訳の読み取り JSON・説明文）
+  phone_followup: 1200,          // 電話終了後（電話でお話しした内容のまとめ・3〜8行）
 };
 
 function maxTokensForAction(action: string): number {
@@ -5289,6 +5294,66 @@ ${COST_BREAKDOWN_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
           ? { notice: `御見積書に無い金額（${cbChecked.unmatched.join("・")}）を〇〇円にしました。御見積書を見て書き換えてから送信してください` }
           : {}),
       });
+
+    } else if (action === "phone_followup") {
+      // 2026-09-15 竹内（H 事例）「電話終了後ピッカーのテキスト部分に内容をいれると文が生成される形」:
+      //   スタッフが電話で話した内容のメモから、お礼＋決まったこと＋こちらがすること／お客様にお願いすることの1通を作る。
+      //   メモに無い金額・日付・時刻・号室は作らない（maskNumbersNotInNotes で〇〇 → 送信前チェックで止まる）。
+      //   ブレインの方針・時間帯の挨拶は入れない（電話で話した内容が正・古い判断を混ぜない）
+      const pfNotes = String(body.call_notes ?? "").trim().slice(0, 2000);
+      if (!pfNotes) throw new Error("電話でお話しした内容を入力してください");
+      const [pfKnowledge, pfStarNote, pfDbRules] = await Promise.all([
+        getKnowledgeForState(AIX_ACTION_TO_STATES.phone_followup, currentAction, conversationId, latestCustomerMsg, brainContext),
+        getStarredExamplesForAction(AIX_ACTION_TO_STATES.phone_followup, latestCustomerMsg, aixBrainMeta),
+        fetchPromptRules("phone_followup", {}).catch(() => ""),
+      ]);
+      const pfStaticSystem = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+【お客様名】ユーザーメッセージに記載のお客様名を使うこと
+
+【この返信の目的】
+・お客様とのお電話の後に、電話でお話しした内容（スタッフのメモ）をLINEで1通にまとめて送る
+
+【構成】
+①1行目は「お電話有難うございました😊！！」（会話でスタッフが呼び名を使っていれば「〇〇さん\\n先ほどはお電話ありがとうございました😊！！」でもよい）
+②電話で決まったこと・こちらがすることを「〜させて頂きます！！」で書く（例:「〜のお部屋ピックアップしお送りさせて頂きます！！」「確認出来次第ご連絡させて頂きます！！」）
+③お客様にお願いすること（書類・写真・ご返事等）がメモにあれば「〜お送りの程よろしくお願い致します😌！！」
+④注意点・補足（キャンセル料・審査の流れ等）がメモにあれば「※〜」で1行
+⑤締めは「引き続き何卒よろしくお願い致します！！」
+・内容のまとまりごとに空行を入れる。メモの箇条書きは自然な文にする（条件は「・」の箇条書きのままでもよい）
+
+【絶対禁止】
+・メモに無いこと（物件名・金額・日付・時刻・号室・条件・約束・理由）を足すこと
+・メモの内容を落とすこと
+・「確認させて頂きます」等のメモに無い約束
+・謝罪表現（「申し訳ございません」等）・🙏 絵文字
+
+【スタッフの実際の電話後の返信（言い回しの手本。別のお客様の話なので中身は写さない。中身は必ず【電話でお話しした内容】に従う）】
+${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")}
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\n で）"}`;
+      const pfDynamicSuffix = [
+        `【電話でお話しした内容（スタッフのメモ・この内容だけで書く）】\n${pfNotes}`,
+        pfDbRules,
+      ].filter(Boolean).join("\n\n");
+      const pfUser = `${recentHistory}\n\n上記の会話の後、${name}とお電話でお話ししました。【電話でお話しした内容】だけを使って、電話後のお礼とまとめの1通を生成してください。`
+        + (pfKnowledge ? `\n\n${pfKnowledge}` : "")
+        + (pfStarNote ? `\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n${pfStarNote}` : "");
+      const pfRaw = await callClaude(pfStaticSystem, pfUser, currentAction, pfDynamicSuffix);
+      let pfMessage = pfRaw;
+      try {
+        const m = pfRaw.match(/\{[\s\S]*\}/);
+        if (m) pfMessage = ((JSON.parse(m[0]) as { message?: string }).message || pfRaw).replace(/\\n/g, "\n");
+      } catch { /* JSON で無ければ本文そのもの */ }
+      // 数字の照合: メモ（＋会話に出ていた物件・号室）に無い金額・日付・時刻・号室は〇〇（送信前チェックで止まる）
+      const pfChecked = maskNumbersNotInNotes(pfMessage, `${pfNotes}\n${recentHistory}`);
+      if (pfChecked.unmatched.length > 0) console.warn("[aix/action] phone_followup: メモに無い数字を伏せ字:", pfChecked.unmatched);
+      return finalizeResponse(pfChecked.text, pfChecked.unmatched.length > 0
+        ? { notice: `メモに無い数字（${pfChecked.unmatched.join("・")}）を〇〇にしました。電話でお話しした内容を見て書き換えてから送信してください` }
+        : undefined);
 
     } else {
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });

@@ -819,6 +819,8 @@ const AIX_ACTION_QUESTION_LABELS: Record<string, string> = {
   followup_revive: "追客する",
   cost_explain: "初期費用を説明",
   cost_breakdown: "初期費用について",
+  phone_call: "電話をかける",
+  phone_followup: "電話終了後",
 };
 // サブキー付き（property_check_result_available / application_push_push 等）でも前方一致でラベルを引く
 function aixActionLabel(action: string): string {

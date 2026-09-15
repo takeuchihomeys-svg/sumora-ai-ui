@@ -4,6 +4,7 @@ import { requireInternalAuth } from "@/app/lib/api-auth";
 import { isGenerationFailureText } from "@/app/lib/example-hygiene";
 import { classifyStaffTextFacts } from "@/app/lib/action-ledger";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
+import { buildCallRequestFlex, callUrlSettingKey, isValidLineCallUrl } from "@/app/lib/phone-call";
 
 // 宣言直後のブレイン再分析（after 内で最大 ~20秒待ち＋分析）に余裕を持たせる
 export const maxDuration = 120;
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
 
-  const { line_user_id, message, image_url, account, conversation_id, origin } = await req.json() as {
+  const { line_user_id, message, image_url, account, conversation_id, origin, call_button } = await req.json() as {
     line_user_id?: string;
     message?: string;
     image_url?: string;
@@ -68,9 +69,11 @@ export async function POST(req: NextRequest) {
     conversation_id?: string;
     /** "manual"＝手打ち（AI 下書きを含む）。"aix"＝AIX の本文（記録は log-aix-usage が AIX の種類・画面入力で書く） */
     origin?: "manual" | "aix";
+    /** 2026-09-15 AIX【電話をかける】: LINEコールの「電話をかける」ボタンのカードを送る（行き先はアカウントごとの通話URL・aix_settings） */
+    call_button?: boolean;
   };
 
-  if (!line_user_id || (!message && !image_url)) {
+  if (!line_user_id || (!message && !image_url && !call_button)) {
     return NextResponse.json({ ok: false, error: "line_user_id and message or image_url required" }, { status: 400 });
   }
   // 2026-09-11 データ衛生（統合設計 §7）: 生成失敗文（「AI返信の生成に失敗しました…」）はお客様に送らない
@@ -88,6 +91,15 @@ export async function POST(req: NextRequest) {
   }
 
   const messages: unknown[] = [];
+  // 「電話をかける」ボタン（通話リクエストと同じ見た目のカード）を先に送る。通話URL が未登録なら送らずに知らせる
+  if (call_button) {
+    const { data: urlRow } = await supabase.from("aix_settings").select("value").eq("key", callUrlSettingKey(accountKey)).maybeSingle();
+    const callUrl = (urlRow?.value as string | undefined) ?? "";
+    if (!isValidLineCallUrl(callUrl)) {
+      return NextResponse.json({ ok: false, errorCode: "call_url_not_set", error: `${accountKey} の LINEコールの通話URLが未登録です。AIX【電話をかける】の画面で通話URLを登録してください` }, { status: 400 });
+    }
+    messages.push(buildCallRequestFlex(callUrl));
+  }
   if (message) messages.push({ type: "text", text: message });
   if (image_url) messages.push({ type: "image", originalContentUrl: image_url, previewImageUrl: image_url });
 

@@ -13,13 +13,14 @@ import type { EstimateContextVerdict } from "./estimate-context";
 import { customerDoubtsCheapness } from "./cost-explain-text";
 import { customerAsksCostComposition } from "./cost-breakdown";
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, staffOffersViewing } from "./move-out-context";
+import { customerRequestsPhoneCall } from "./phone-call";
 import {
   allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE,
 } from "./scene-patterns";
 
 export type PropertyStatusLite = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
-export type SceneId = "S1_vacancy" | "S2_move_in" | "S3_screening" | "S4_viewing" | "S5_time_spec" | "S6_estimate" | "S7_condition_change" | "S8_cost_doubt" | "S9_cost_breakdown" | "application";
+export type SceneId = "S1_vacancy" | "S2_move_in" | "S3_screening" | "S4_viewing" | "S5_time_spec" | "S6_estimate" | "S7_condition_change" | "S8_cost_doubt" | "S9_cost_breakdown" | "S10_phone_request" | "application";
 
 export type SceneEvidenceInput = {
   /** 今回の顧客発言（スタッフ文は含めない。未返信の連投全体） */
@@ -173,6 +174,14 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   const slotQuestion = SLOT_AVAILABILITY_Q_RE.test(msg);
   const ev = (e: Omit<AixSceneEvidence, "matchedText" | "propertySpecifiedBy"> & { propertySpecifiedBy?: AixSceneEvidence["propertySpecifiedBy"] }): AixSceneEvidence =>
     ({ propertySpecifiedBy: null, ...e, matchedText: msg.slice(0, 120) });
+
+  // S10 電話で話したい → 電話をかける（2026-09-15 竹内・H 事例「ご相談があるのですがお電話では無理でしょうか？」）
+  //   お客様がはっきり電話を頼んでいるので他の場面より先に見る（「物件の事で聞きたい事がありますのでお手隙の際電話いけますか？」も電話）。
+  //   実データ（200日・お客様の「電話」を含む発言271件）: 検出30件でスタッフは「お手隙の際にお電話おかけください」等。
+  //   電話番号・管理会社から電話があった報告・他所への電話・「電話は大丈夫です」は外す（phone-call customerRequestsPhoneCall）
+  if (customerRequestsPhoneCall(msg)) {
+    return ev({ scene: "S10_phone_request", candidateAction: "phone_call", checkPattern: null, timing: "now", chained: null, reasonCode: "phone_request" });
+  }
 
   // S1 空室確認: 旧 P0（画像/URL＋指名語、URLのみ・画像のみ）＋ 文字だけの空室質問で物件が特定できる場合
   const hasPropertyUrl = AVAILABILITY_URL_RE.test(msg);
