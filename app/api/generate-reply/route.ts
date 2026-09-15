@@ -116,6 +116,8 @@ import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
 import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask, type RecordedFact } from "@/app/lib/action-ledger";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
+import { viewingReportNoteForReply, type ViewingReport } from "@/app/lib/viewing-report";
+import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-11 竹内方針1〜5（統合設計 §7）: 生成失敗文の文言と「正解例として使えるか」の唯一の判定
 import { GENERATION_FAILURE_TEXT, isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
 // 2026-09-11 竹内方針4・5: few-shot 注入前の「承知→かしこまりました」「すぐに除去」（後処理・検査と同じ定義）
@@ -3060,9 +3062,11 @@ export async function POST(req: NextRequest) {
     let recentAixRows: RecentAixRow[] = [];
     // 2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」: 送信時の記録（sent_facts）を行動台帳の一次証拠にする
     let recordedFacts: RecordedFact[] = [];
+    // 2026-09-15 竹内（yasuki 事例）: 内覧に行ったスタッフが分かったこと（誰が契約するか・誰と相談しているか等・会話に書かれない事情）
+    let viewingReports: ViewingReport[] = [];
     if (conversationId && !isTemplateOptimize) {
       try {
-        const [estLogsRes, recentAixRes, recordedRes] = await Promise.all([
+        const [estLogsRes, recentAixRes, recordedRes, viewingReportsRes] = await Promise.all([
           supabase
             .from("aix_usage_logs")
             .select("id")
@@ -3076,10 +3080,12 @@ export async function POST(req: NextRequest) {
             .order("created_at", { ascending: false })
             .limit(30),
           loadRecordedFacts(conversationId),
+          loadViewingReports(conversationId),
         ]);
         estimateAlreadySent = (estLogsRes.data?.length ?? 0) > 0;
         recentAixRows = (recentAixRes.data ?? []) as RecentAixRow[];
         recordedFacts = recordedRes;
+        viewingReports = viewingReportsRes;
       } catch { /* 判定不能時は従来動作（宣言許可）を維持する */ }
     }
     // 顧客の現在のメッセージが新規見積依頼なら「送付済み」フラグを解除する
@@ -4211,7 +4217,10 @@ export async function POST(req: NextRequest) {
       : buildVocabAnchorNote(`${message ?? ""}\n${unrepliedCustomerTexts.join("\n")}`, pairContext);
     const turnPairNote = (isFollowUp || isTemplateOptimize ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "", { strategy: brainStrategy, brainFresh: brainLocalFresh })) + vocabAnchorNote;
     // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】（往復文脈の直前）＋ 直前発言の宣言／実行注記（staffContextNote）。shadow では注入しない
-    const actionLedgerNote = isFollowUp || !ledgerActive ? "" : buildLedgerNote(ledger, { customerName: customerName ?? "" });
+    // 2026-09-15 竹内（yasuki 事例）: 内覧に行ったスタッフが分かったこと（台帳と同じ「こちらが知っている事実」の位置・往復文脈の前提）
+    const viewingReportNote = viewingReportNoteForReply(viewingReports);
+    if (viewingReportNote) console.info("[viewing-report]", JSON.stringify({ conversationId, reports: viewingReports.length, chars: viewingReportNote.length }));
+    const actionLedgerNote = (isFollowUp || !ledgerActive ? "" : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote;
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "" });

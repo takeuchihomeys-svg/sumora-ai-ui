@@ -3100,6 +3100,12 @@ WHERE image_url IS NOT NULL AND conversation_id IS NOT NULL AND property_name IS
 ORDER BY image_url, sent_at DESC
 ON CONFLICT (image_url) DO NOTHING;
 
+-- viewing_history 内覧の内容（2026-09-15 竹内・yasuki 事例）
+--   内覧後の挨拶の画面で、内覧に行ったスタッフが分かったこと（誰が契約するか・誰と相談しているか・物件の感想・気にしている点）を入れる。
+--   ブレイン・戦略・返信生成・AIX が前提として読む（会話に書かれない事情）。notes は待ち合わせの案内の記録に使っているので別の列
+ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS viewing_report TEXT;
+ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS viewing_report_at TIMESTAMPTZ;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

@@ -7,6 +7,8 @@ import { fixDateWeekdays, weekdayTable } from "@/app/lib/jst-date";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
 import { resolveLatestQuotedContext, formatQuotedContextBlock, propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { avoidTopicsForAix } from "@/app/lib/aix-staff-first";
+import { viewingReportNoteForReply } from "@/app/lib/viewing-report";
+import { loadViewingReports } from "@/app/lib/viewing-report-store";
 import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
@@ -1347,6 +1349,9 @@ async function handleAction(request: NextRequest): Promise<Response> {
       } catch { return { brainContext: "", brainMeta: null, propertyCustomerId: null }; }
     })();
 
+    // 2026-09-15 竹内（yasuki 事例）: 内覧に行ったスタッフが分かったこと（誰が契約するか・誰と相談しているか等・会話に書かれない事情）は
+    //   全 AIX の前提。ブレインの判断の有無に関係なく、各 AIX に渡る brainGuidanceNote の末尾に付ける
+    const aixViewingReportNote = conversationId ? viewingReportNoteForReply(await loadViewingReports(conversationId)) : "";
     // ブレインノートをプロンプトに注入（戦略系→制約系の順）
     const brainGuidanceNote = (() => {
       if (!aixBrainMeta) return "";
@@ -1436,7 +1441,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
         lines.push(`【⚠️ 顧客の質問（全て回答すること）】${aixBrainMeta.customer_questions.join("・")}`);
       }
       return lines.length > 0 ? "\n\n" + lines.join("\n") : "";
-    })();
+    })() + aixViewingReportNote;
 
     // 物件提案系（property_send / property_recommendation）専用: PSP注入ノート
     const pspGuidanceNote = (() => {

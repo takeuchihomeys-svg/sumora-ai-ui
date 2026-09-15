@@ -7,6 +7,7 @@ import { applyTypoAutoFix } from "./typo-check";
 // 2026-09-12 竹内（YUYA 事例）: お客様が送った物件は「お送り頂きました物件」（共有文の駅名・徒歩分で呼ばない）
 import { normalizeSharedPropertyReference } from "./shared-property-ref";
 import { stripMetaNarration } from "./meta-narration";
+import { fixThirdPartyContactWait } from "./contact-actor";
 // 2026-09-12 竹内方針A: 時間枠の「空いて」・断言置換文は AIX 場面判定（aix-reply-set）と同じ定数
 import { isScheduleSlotVacancy, ASSERTION_REPLACEMENT } from "./scene-patterns";
 export { fillNameSlot };
@@ -537,6 +538,9 @@ export function applySurfaceFixes(
   if (meta.removed.length) { out = meta.text; applied.push(`META_NARRATION_REMOVED×${meta.removed.length}`); }
   const sp = normalizeSharedPropertyReference(out, opts?.customerMessage);
   if (sp.count) { out = sp.text; applied.push(`SHARED_PROPERTY_REF×${sp.count}`); }
+  // 2026-09-15 竹内（yasuki 事例）: お客様が自分で折り返すと言っているのに「息子様からのご返答お待ちしております」→「ご返答お待ちしております」
+  const ca = fixThirdPartyContactWait(out, opts?.customerMessage);
+  if (ca.count) { out = ca.text; applied.push(`CONTACT_ACTOR_FIXED×${ca.count}`); }
   const u = unifyAddressAliases(out, opts?.customerName, opts?.aliases);
   if (u.fixes.length) { out = u.text; applied.push(...u.fixes); }
   const b = normalizeBannedPhrasing(out);

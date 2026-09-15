@@ -29,6 +29,8 @@ import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing } from "@/app/lib/move-out-context";
 import { propertyLabelsForImages } from "@/app/lib/quoted-context";
+import { viewingReportBlockForBrain } from "@/app/lib/viewing-report";
+import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
 import { buildActionLedger, buildLedgerLinesForBrain } from "@/app/lib/action-ledger";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
@@ -1061,7 +1063,7 @@ export async function analyzeConversation(
     // viewing_history（is_primary=true）を優先参照 — viewingsの後継テーブル
     supabase
       .from("viewing_history")
-      .select("scheduled_date, scheduled_time, status, property_name, property_address")
+      .select("scheduled_date, scheduled_time, status, property_name, property_address, actual_date, viewing_report, viewing_report_at")
       .eq("conversation_id", conversationId)
       .order("scheduled_date", { ascending: false })
       .limit(3),
@@ -1880,8 +1882,12 @@ export async function analyzeConversation(
 
   type Viewing = { viewing_date: string; viewing_time: string | null; status: string | null; property_name?: string | null; property_address?: string | null };
   // viewing_history（is_primaryを含む全件）を優先・存在しなければviewingsにフォールバック
-  type ViewingHistoryRow = { scheduled_date: string; scheduled_time: string | null; status: string | null; property_name?: string | null; property_address?: string | null };
+  type ViewingHistoryRow = { scheduled_date: string; scheduled_time: string | null; status: string | null; property_name?: string | null; property_address?: string | null; actual_date?: string | null; viewing_report?: string | null; viewing_report_at?: string | null };
   const viewingHistoryRows = (viewingHistoryResult.data ?? []) as ViewingHistoryRow[];
+  // 2026-09-15 竹内（yasuki 事例）: 内覧に行ったスタッフが分かったこと（内覧後の挨拶の画面で入力）。会話に書かれない事情の正
+  const viewingReportText = viewingReportBlockForBrain(viewingHistoryRows
+    .filter((h) => h.viewing_report && h.viewing_report_at)
+    .map((h) => ({ viewedOn: h.actual_date ?? h.scheduled_date, propertyName: h.property_name ?? null, report: h.viewing_report as string, reportedAt: h.viewing_report_at as string })));
   const viewings: Viewing[] = viewingHistoryRows.length > 0
     ? viewingHistoryRows.map(h => ({ viewing_date: h.scheduled_date, viewing_time: h.scheduled_time, status: h.status, property_name: h.property_name ?? null, property_address: h.property_address ?? null }))
     : (viewingsResult.data ?? []) as Viewing[];
@@ -1905,6 +1911,7 @@ export async function analyzeConversation(
     viewingsText += `対面経験により: ①他社への並行問い合わせが実質終了している ②信頼関係が形成済み ③申込への心理障壁が対面前より大幅に低下。\n`;
     viewingsText += `次の対応指針: 提案物件が条件に合えば viewing_invite より application_push を優先。物件への反応が薄い場合も「弊社で引き続き探す」前提で関係維持。`;
   }
+  viewingsText += viewingReportText;
 
   // H6(Fable5): ホット顧客・スタッフ要対応フラグ
   const flagParts: string[] = [];
@@ -3176,7 +3183,7 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
   const pcid = (conv.property_customer_id as string | null) ?? null;
   const sinceTs = prev.strategy_msg_ts ?? "1970-01-01T00:00:00Z";
   const sinceAnalyzed = prev.strategy_analyzed_at ?? sinceTs;
-  const [newMsgsRes, recentMsgsRes, digestRes, cpRes, pcRes, sentRes] = await Promise.all([
+  const [newMsgsRes, recentMsgsRes, digestRes, cpRes, pcRes, sentRes, viewingReports] = await Promise.all([
     supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId)
       .gt("created_at", sinceTs).order("created_at", { ascending: true }).limit(30),
     supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId)
@@ -3187,6 +3194,7 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
       .order("checkpoint_index", { ascending: false }).limit(1).maybeSingle(),
     pcid ? supabase.from("property_customers").select("personality_profile, preferences, ng_points, ai_summary, desired_area, floor_plan, rent_max, move_in_time").eq("id", pcid).maybeSingle() : Promise.resolve({ data: null }),
     pcid ? supabase.from("sent_properties").select("id", { count: "exact", head: true }).eq("property_customer_id", pcid) : Promise.resolve({ count: 0 }),
+    loadViewingReports(conversationId),
   ]);
   type M = { sender: string; text: string | null; created_at: string };
   const newMsgs = (newMsgsRes.data ?? []) as M[];
@@ -3230,6 +3238,7 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
     `\n【前回の戦略（JSON・${prev.strategy_msg_ts ? jstYmd(prev.strategy_msg_ts) : "不明"}時点）】\n${JSON.stringify(strategyForPrompt(prev))}`,
     digestText ? `\n【前回の戦略以降の毎回の分析の要点（古い→新しい）】\n${digestText}` : "",
     cp?.summary ? `\n【会話の要点（セーブポイント・最新）】\n${cp.summary}${keyFacts.length ? `\n確定事実: ${keyFacts.join(" ／ ")}` : ""}` : "",
+    viewingReportBlockForBrain(viewingReports),
     pc ? `\n【お客様のプロフィール】\n${[pc.personality_profile && `人間性: ${pc.personality_profile}`, pc.preferences && `こだわり: ${pc.preferences}`, pc.ng_points && `NG: ${pc.ng_points}`, pc.desired_area && `エリア: ${pc.desired_area}`, pc.floor_plan && `間取り: ${pc.floor_plan}`, pc.rent_max && `家賃上限: ${pc.rent_max}`, pc.move_in_time && `入居時期: ${pc.move_in_time}`].filter(Boolean).join(" ／ ")}` : "",
     patternsText ? `\n【類似の成約・失注パターン（参考）】\n${patternsText}` : "",
     `\n【${newMsgs.length >= 6 ? "前回の戦略以降のメッセージ" : "直近のメッセージ"}】\n${msgText}`,
@@ -3666,11 +3675,17 @@ export async function analyzeAndSaveBrainMeta(
           const seeded = extractStrategy(metaToWrite as unknown as Record<string, unknown>, "combined", brainStrategy?.strategy_count ?? 0, new Date().toISOString());
           if (seeded) await saveBrainStrategy(conversationId, seeded, { patchMeta: false });
         } else {
-          const { count: sinceCount } = await supabase.from("messages").select("id", { count: "exact", head: true })
-            .eq("conversation_id", conversationId).eq("sender", "customer")
-            .gt("created_at", brainStrategy?.strategy_msg_ts ?? "1970-01-01T00:00:00Z");
-          const refresh = decideStrategyRefresh({ strategy: brainStrategy, customerMsgsSinceStrategy: sinceCount ?? 0, nowMs: Date.now(), shift: strategyShift });
-          console.log(JSON.stringify({ tag: "brain:strategy-decision", conversationId, kind: refresh.kind, reason: refresh.reason, sinceCount: sinceCount ?? 0, shift: strategyShift }));
+          const [{ count: sinceCount }, { data: newerReport }] = await Promise.all([
+            supabase.from("messages").select("id", { count: "exact", head: true })
+              .eq("conversation_id", conversationId).eq("sender", "customer")
+              .gt("created_at", brainStrategy?.strategy_msg_ts ?? "1970-01-01T00:00:00Z"),
+            // 2026-09-15 竹内（yasuki 事例）: 内覧の内容が戦略より新しい＝対面で分かった事情が戦略に入っていない → 戦略を作り直す
+            supabase.from("viewing_history").select("id").eq("conversation_id", conversationId)
+              .gt("viewing_report_at", brainStrategy?.strategy_analyzed_at ?? "1970-01-01T00:00:00Z").limit(1),
+          ]);
+          const shiftOrReport = strategyShift ?? ((newerReport ?? []).length > 0 ? "viewing_report" : null);
+          const refresh = decideStrategyRefresh({ strategy: brainStrategy, customerMsgsSinceStrategy: sinceCount ?? 0, nowMs: Date.now(), shift: shiftOrReport });
+          console.log(JSON.stringify({ tag: "brain:strategy-decision", conversationId, kind: refresh.kind, reason: refresh.reason, sinceCount: sinceCount ?? 0, shift: shiftOrReport }));
           if (refresh.kind !== "none") scheduleStrategyRefresh(conversationId, refresh.kind, refresh.reason ?? "");
         }
       } catch (e) {

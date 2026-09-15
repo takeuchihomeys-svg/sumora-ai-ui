@@ -897,6 +897,9 @@ export default function Home() {
   const [greetingViewingSearchType, setGreetingViewingSearchType] = useState<"new" | "expand" | "change" | null>(null);
   const [greetingViewingPropertyInput, setGreetingViewingPropertyInput] = useState("");
   const [greetingViewingFreeword, setGreetingViewingFreeword] = useState("");
+  // 2026-09-15 竹内（yasuki 事例）: 内覧の内容（内覧に行ったスタッフが分かったこと）。お客様には送らず、この後の返信・AIX・ブレインの前提にする
+  const [greetingViewingReport, setGreetingViewingReport] = useState("");
+  const [greetingViewingReportSaved, setGreetingViewingReportSaved] = useState<string | null>(null);
   const [aixInitialSendImages, setAixInitialSendImages] = useState<File[]>([]);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
@@ -5753,6 +5756,21 @@ export default function Home() {
   };
 
   // 内覧前・後挨拶を生成してreplyDraftに反映
+  // 内覧後を選んだ時: 直近3日に入れた内覧の内容があれば入力欄に戻す（作り直しで入力が消えない・同じ内容を二重に保存しない）
+  const prefillGreetingViewingReport = async (conversationId: string) => {
+    setGreetingViewingReport("");
+    setGreetingViewingReportSaved(null);
+    try {
+      const r = await fetch(`/api/viewing-report?conversation_id=${encodeURIComponent(conversationId)}`, { headers: INTERNAL_AUTH_HEADER });
+      const d = await r.json() as { ok?: boolean; report?: { report: string; reportedAt: string } | null };
+      if (!d.ok || !d.report) return;
+      if (Date.now() - Date.parse(d.report.reportedAt) > 3 * 86_400_000) return;
+      if (selectedIdRef.current !== conversationId) return;
+      setGreetingViewingReport((cur) => cur || d.report!.report);
+      setGreetingViewingReportSaved(d.report.report);
+    } catch { /* 初期値が入らないだけ */ }
+  };
+
   const handleGreetingViewingGenerate = async () => {
     if (!selectedConversation || !greetingViewingMode) return;
     setGreetingViewingGenerating(true);
@@ -5774,6 +5792,24 @@ export default function Home() {
           }),
         }).catch(console.error);
       }
+
+      // 内覧後 → 内覧の内容をその日の内覧の記録に書く（実施済みにする）。生成とは別に保存する（下書きを消しても内覧の事実は残る）
+      const reportText = greetingViewingMode === "after" ? greetingViewingReport.trim() : "";
+      const reportSave = reportText && reportText !== greetingViewingReportSaved
+        ? fetch("/api/viewing-report", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+            body: JSON.stringify({
+              conversation_id: selectedConversation.id,
+              customer_name: selectedConversation.customerName,
+              report: reportText,
+              ...(greetingViewingPropertyInput.trim() ? { property_name: greetingViewingPropertyInput.trim() } : {}),
+            }),
+          }).then(async (r): Promise<string | null> => {
+            const d = await r.json().catch(() => ({})) as { ok?: boolean; error?: string };
+            return !r.ok || !d.ok ? (d.error ?? `HTTP ${r.status}`) : null;
+          }).catch((e: unknown) => (e instanceof Error ? e.message : String(e)))
+        : null;
 
       const afterTypeForApi = greetingViewingAfterType === "confirm"
         ? (greetingViewingConfirmType === "estimate" ? "confirm_estimate" : "confirm_freeword")
@@ -5803,6 +5839,11 @@ export default function Home() {
         setReplyDraft(data.message_text);
         aiDraftRef.current = data.message_text;
         setDisplaySource("ai_draft");
+      }
+      if (reportSave) {
+        const saveErr = await reportSave;
+        if (saveErr) window.alert(`内覧の内容を保存できませんでした（${saveErr}）。もう一度「内覧後」から保存してください`);
+        else setGreetingViewingReportSaved(reportText);
       }
 
       // 内覧前挨拶を生成した時点で inspection.done=true を直接セット（fire-and-forget）
@@ -5844,6 +5885,8 @@ export default function Home() {
       setGreetingViewingSearchType(null);
       setGreetingViewingPropertyInput("");
       setGreetingViewingFreeword("");
+      setGreetingViewingReport("");
+      setGreetingViewingReportSaved(null);
     } catch (err) {
       console.error("[greetingViewing]", err);
     } finally {
@@ -12344,7 +12387,7 @@ export default function Home() {
       {showGreetingViewingPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => { setShowGreetingViewingPicker(false); setActiveAixFlow(null); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setGreetingViewingAfterType(null); setGreetingViewingConfirmType(null); setGreetingViewingSearchType(null); setGreetingViewingPropertyInput(""); setGreetingViewingFreeword(""); }}
+          onClick={() => { setShowGreetingViewingPicker(false); setActiveAixFlow(null); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setGreetingViewingAfterType(null); setGreetingViewingConfirmType(null); setGreetingViewingSearchType(null); setGreetingViewingPropertyInput(""); setGreetingViewingFreeword(""); setGreetingViewingReport(""); setGreetingViewingReportSaved(null); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
@@ -12383,6 +12426,7 @@ export default function Home() {
                         }
                         setGreetingViewingMode(key);
                         if (key === "before") void autoFillGreetingDateTime();
+                        if (key === "after" && selectedConversation?.id) void prefillGreetingViewingReport(selectedConversation.id);
                       }}
                       className="flex-1 rounded-2xl px-3 py-4 text-center transition-all active:bg-teal-50"
                       style={isSuggested ? { border: "2px solid #00796B", background: "#E0F2F1", boxShadow: "0 0 0 3px #00796B22" } : { border: "2px solid #E5E7EB", background: "#FAFAFA" }}
@@ -12433,7 +12477,23 @@ export default function Home() {
             {greetingViewingMode === "after" && !greetingViewingAfterType && (
               <>
                 <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">内覧後の挨拶</p>
-                <p className="mb-4 text-center text-[12px] text-[#6B7280]">内覧後の状況を選んでください</p>
+                {/* 2026-09-15 竹内（yasuki 事例）: 内覧に行ったスタッフが分かったことを残す（お客様には送らない・この後の返信・AIX・ブレインの前提） */}
+                <div className="mt-3 mb-4 rounded-2xl border border-[#B2DFDB] bg-[#F3FBFA] px-3.5 py-3">
+                  <p className="text-[12px] font-bold text-[#00796B]">内覧の内容（内覧に行ったスタッフが分かったこと）</p>
+                  <p className="mt-0.5 mb-2 text-[10.5px] leading-snug text-[#4B6B67]">お客様には送られません。この後の返信・AIX・ブレインが前提として使います</p>
+                  <textarea
+                    value={greetingViewingReport}
+                    onChange={(e) => setGreetingViewingReport(e.target.value)}
+                    placeholder={"例: サウスゲート502を気に入っている。契約は息子様（代理契約・管理会社OK）。息子様に確認してから夕方にお客様から返事。駐車場の空きを気にしている"}
+                    rows={4}
+                    maxLength={600}
+                    className="w-full rounded-xl border border-[#D1D5DB] bg-white px-3 py-2.5 text-[13px] leading-relaxed focus:border-teal-400 focus:outline-none resize-none"
+                  />
+                  {greetingViewingReportSaved && greetingViewingReport.trim() === greetingViewingReportSaved && (
+                    <p className="mt-1 text-[10.5px] text-[#00796B]">✓ 保存済みの内容です（書き換えると保存し直します）</p>
+                  )}
+                </div>
+                <p className="mb-2 text-center text-[12px] text-[#6B7280]">内覧後の状況を選んでください</p>
                 <div className="flex flex-col gap-2 mb-4">
                   {([
                     { key: "apply" as const, label: "申込", desc: "お申込みでお部屋を抑える", color: "#1565C0" },
@@ -13680,7 +13740,7 @@ export default function Home() {
                   { color: "#9C27B0", label: "内覧日を調整する", actionType: "viewing_invite", sub: "日程をタップして選択→AI文生成→内覧案内LINEを送信。内覧率UPに直結！", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ場所", actionType: "meeting_place", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
                   { color: "#E53935", label: "申込（誘導・決定）", actionType: "application_push", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
-                  { color: "#00796B", label: "挨拶（内覧前・内覧後）", actionType: "greeting_viewing", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setShowGreetingViewingPicker(true); } },
+                  { color: "#00796B", label: "挨拶（内覧前・内覧後）", actionType: "greeting_viewing", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化・内覧後は内覧の内容を記録", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setGreetingViewingReport(""); setGreetingViewingReportSaved(null); setShowGreetingViewingPicker(true); } },
                   { color: "#546E7A", label: "確認した（条件・交渉）", actionType: "acknowledge_result", sub: "管理会社・代表・オーナー・近隣月極の確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setShowKoshoParentPicker(true); } },
                   { color: "#607D8B", label: "確認します", actionType: "acknowledge_check", sub: "ワンタップで確認する旨をAI生成して送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("acknowledge_check"); openAixDirect("acknowledge_check"); } },
                   { color: "#8E24AA", label: "追客する", actionType: "followup_revive", sub: "反応が途絶えたお客様への追客LINEをAI生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("followup_revive"); setShowFollowupPicker(true); } },
