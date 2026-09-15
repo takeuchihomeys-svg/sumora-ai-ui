@@ -37,10 +37,49 @@ export function isMetaNarrationLine(line: string): boolean {
   return META_LINE_RES.some((re) => re.test(l));
 }
 
+// ─── 形で見分ける（2026-09-15 竹内「こんなの絶対にいれない。文に変なデータが入ってしまう」・YUMA の下書き）───
+//   言い回しの一覧（上の META_LINE_RES）は新しい言い回しが出るたびに漏れる（あや・TikTok・YUMA）。AI 下書き180日 2,669件のうち先頭行が
+//   作業メモだったのは25件（「物件資料を確認します。」「いくつか確認してから出力します。」「〜のパターンで返信します。」「正確な回答が必要な質問です。」…）。
+//   お客様への文には必ずお客様への言葉の特徴（！・？・絵文字・呼びかけ・敬語・「お部屋／ご案内」のようなお・ご付きの語・報告の「となります／おります」）が
+//   あり、作業メモには無く「〜します。／〜です。」の地の文で終わる。
+//   実測: スタッフの実送信の先頭行 6,905件で該当1件（本物の作業メモ「…親切に対応する返信を作成します。」）＝誤削除0、AI の作業メモ25件中22件を捕まえる
+
+/** お客様への言葉の特徴。引用（「…」）の中とお客様の三人称（お客様）は見ない */
+const CUSTOMER_FACING_RE = /[！!？?]|さん|様|させて|ください|下さい|でしょうか|お願い|ございま|御座いま|致し|いたし|頂|いただ|でした|となりま|おりま|ご[一-龯]|お[一-龯]|\p{Extended_Pictographic}/u;
+/** 作業の宣言・判断の地の文の語尾（「かしこまりました。」「承知しました。」は含めない） */
+const PLAIN_NARRATION_END_RE = /(?:ます|です)。\s*$|(?:確認|特定|整理|判断|把握)しました。\s*$/;
+
+export function hasCustomerFacingMarker(line: string): boolean {
+  return CUSTOMER_FACING_RE.test(line.replace(/「[^」]*」/g, "").replace(/お客様/g, ""));
+}
+
+/** お客様への言葉の特徴が1つも無く、作業の地の文で終わる行（先頭の作業メモの判定に使う） */
+export function isPlainNarrationLine(line: string): boolean {
+  const l = line.trim();
+  return !!l && !hasCustomerFacingMarker(l) && PLAIN_NARRATION_END_RE.test(l);
+}
+
+/** 先頭に続く作業メモの行と区切り（空行・---）を落とす。後ろにお客様への文が残る時だけ（全部が地の文なら触らない） */
+function stripLeadingNarration(text: string): { text: string; removed: string[] } {
+  const lines = text.split("\n");
+  const lead: string[] = [];
+  let i = 0;
+  for (; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (!t || /^[-—―=＿_]{3,}$/.test(t)) continue;
+    if (isPlainNarrationLine(t) || isMetaNarrationLine(t)) { lead.push(t); continue; }
+    break;
+  }
+  if (lead.length === 0 || i >= lines.length || !lines.slice(i).some((l) => hasCustomerFacingMarker(l))) return { text, removed: [] };
+  return { text: lines.slice(i).join("\n"), removed: lead };
+}
+
 /** 作業メモの行を除き、見出しだけの前置きを外す。変わらなければ同じ文字列を返す */
 export function stripMetaNarration(text: string): { text: string; removed: string[] } {
   if (!text) return { text, removed: [] };
-  const removed: string[] = [];
+  const lead = stripLeadingNarration(text);
+  const removed: string[] = [...lead.removed];
+  text = lead.text;
   const lines = text.split("\n");
   const kept: string[] = [];
   for (const line of lines) {

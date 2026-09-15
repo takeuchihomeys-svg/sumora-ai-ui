@@ -4,6 +4,7 @@ import { supabase } from "@/app/lib/supabase";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable } from "@/app/lib/jst-date";
+import { stripMetaNarration } from "@/app/lib/meta-narration";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
 import { resolveLatestQuotedContext, formatQuotedContextBlock, propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { avoidTopicsForAix } from "@/app/lib/aix-staff-first";
@@ -1486,8 +1487,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
       // 2026-09-15 竹内（隼斗事例）「曜日は日本基準に、18日は金曜日」: 「9/18(木)」のような曜日の食い違いを日付を正として直す（日本時間の暦・jst-date）
       const { text: stripped, applied: weekdayFixed } = fixDateWeekdays(zeroStripped);
       if (weekdayFixed.length > 0) console.log(JSON.stringify({ tag: "aix:weekday-fixed", action: currentAction, conversationId, applied: weekdayFixed }));
+      // 2026-09-15 竹内「こんなの絶対にいれない」: AI の作業メモ（「物件資料を確認します。」「〜のパターンで返信します。」）を落とす（返信生成と同じ関数）
+      const meta = stripMetaNarration(stripped);
+      if (meta.removed.length > 0) console.log(JSON.stringify({ tag: "aix:meta-narration-removed", action: currentAction, conversationId, removed: meta.removed.map((r) => r.slice(0, 60)) }));
       // AIが内部メモを出力した場合、顧客向けメッセージと分離
-      return extractNotice(stripped, familyName || rawName);
+      return extractNotice(meta.text, familyName || rawName);
     };
     // 線引き学習用: property_check_result の check_pattern を aix_generate_log に残す
     // （aix-weekly-learning が discarded を check_pattern 粒度で集計し、境界質問を分割起票するため）

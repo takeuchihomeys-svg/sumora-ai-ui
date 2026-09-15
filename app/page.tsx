@@ -8,6 +8,7 @@ import TemplateModal, { type Template as CachedTemplate } from "./components/Tem
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage } from "./lib/application-form-detect";
 import { detectPlaceholders } from "./lib/validate-reply";
+import { stripMetaNarration } from "./lib/meta-narration";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
@@ -93,6 +94,9 @@ function stripInternalTags(text: string): string {
     .trim();
   // AIが返信全体を「」で囲んで出力することがある → 先頭「末尾」のペアのみ除去
   if (t.startsWith("「") && t.endsWith("」")) t = t.slice(1, -1).trim();
+  // 2026-09-15 竹内「こんなの絶対にいれない」: AI の作業メモ（「お客様がスタンプのみで返信されている状況ですね。…姿勢のみを示します。」）は
+  //   入力欄の入口でも落とす（サーバーの仕上げを通らなかった経路・保存済みの古い下書きも止める。スタッフが入力欄で書いた文には当てない）
+  t = stripMetaNarration(t).text;
   return t;
 }
 
