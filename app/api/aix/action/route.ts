@@ -3939,19 +3939,33 @@ ${SMORA_COMMON_RULES}
           pcrDynamicSuffix || undefined
         );
         message_text = parsePCR(rawPCR);
-        // 2026-09-15 竹内（みく事例）: 確認結果（物件あった・別の部屋）があるのに確認前の文（「募集状況確認させて頂きます」「確認出来次第ご連絡」）になった時は1回だけ作り直す
+        // 2026-09-15 竹内（みく事例）: スタッフの入力が本文に入っているかを決定論で確かめ、足りなければ1回だけ作り直す。
+        //   YUMA での再現（同じ入力で4回）: 3階の募集中は毎回出たが、同封する御見積書・補足（301号室と101号室のみ）のどちらかが落ちる回があった。
+        //   ①確認前の文（「募集状況確認させて頂きます」「確認出来次第ご連絡」）②御見積書を同封するのに触れていない ③補足の数字（号室・㎡）が無い
         const PCR_PROMISE_RE = /確認(?:させて(?:頂|いただ)き|いたし|致し)ます|確認(?:出来|でき)次第|確認中/;
+        const noteNumbers = [...new Set((cmStaffNote.normalize("NFKC").match(/\d+(?:\.\d+)?/g) ?? []))];
+        const pcrMissing = (text: string): string[] => {
+          const t = text.normalize("NFKC");
+          const out: string[] = [];
+          if ((cmPattern === "available" || cmPattern === "alternative") && PCR_PROMISE_RE.test(text)) out.push("確認前の文（「確認させて頂きます」「確認出来次第」）になっている → 確認結果を報告する文にする");
+          if (cmHasEstimate && !/見積/.test(text)) out.push("御見積書を同封するのに触れていない →「初期費用の御見積書同封させて頂きました！！」を入れる");
+          const lostNums = noteNumbers.filter((n) => !t.includes(n));
+          if (cmStaffNote && lostNums.length > 0) out.push(`スタッフの補足（${cmStaffNote}）の内容が入っていない（${lostNums.join("・")}）→ 補足の内容を本文に入れる`);
+          return out;
+        };
         let pcrNotice: string | undefined;
-        if ((cmPattern === "available" || cmPattern === "alternative") && PCR_PROMISE_RE.test(message_text)) {
-          console.warn(JSON.stringify({ tag: "aix:pcr-promise-retry", conversationId, text: message_text.slice(0, 120) }));
+        const firstMissing = pcrMissing(message_text);
+        if (firstMissing.length > 0) {
+          console.warn(JSON.stringify({ tag: "aix:pcr-retry", conversationId, missing: firstMissing, text: message_text.slice(0, 120) }));
           const retryRaw = await callClaude(
             pcrStaticSystem,
-            `${pcrConvUserFinal}\n\n【作り直し】前の案は「${message_text.replace(/\n/g, " ").slice(0, 160)}」で、確認前の文になっていました。スタッフは確認を完了しています。【スタッフの確認結果】を報告する文にしてください（「確認させて頂きます」「確認出来次第」は書かない）。`,
+            `${pcrConvUserFinal}\n\n【作り直し】前の案:「${message_text.replace(/\n/g, " ").slice(0, 200)}」\n足りない・違う点:\n${firstMissing.map((m) => `・${m}`).join("\n")}\n前の案の良い所（お客様の質問への答え・構成）は保ったまま直してください。`,
             currentAction,
             pcrDynamicSuffix || undefined,
           );
           message_text = parsePCR(retryRaw);
-          if (PCR_PROMISE_RE.test(message_text)) pcrNotice = "確認前の文（「確認させて頂きます」等）が残っています。確認結果を報告する文に書き換えてから送信してください";
+          const stillMissing = pcrMissing(message_text);
+          if (stillMissing.length > 0) pcrNotice = `確認してから送信してください: ${stillMissing.map((m) => m.split(" → ")[0]).join("／")}`;
         }
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         return finalizeResponse(message_text, { ...(cmEstimateExtra ?? {}), ...(pcrNotice ? { notice: pcrNotice } : {}) });
