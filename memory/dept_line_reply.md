@@ -135,6 +135,13 @@
 - 副次: 画面の `void supabase...` 4か所が then 無しで未送信（手動の状態変更の記録が0件だった）→ then を付けた
 - データ: タクミを申込中に戻した（stage_history repair:sync_overwrite）。申込後の印つきで申込前の状態が他26件 → 同期で戻ったか区別できないので未修正（竹内さん判断待ち）
 
+## 否決で物件提案中に戻したのに時間経過で申込・審査中に戻る — 同期の「先へ進める」の穴（竹内・2026-09-15・コミット 8d9ae71c）
+- 事例 隼斗: 申込 → 審査否決 → スタッフが物件提案中に戻す（stage_history manual screening→proposing ×4）→ そのたびに審査中へ戻る（戻す側の記録なし）
+- 原因: 審査管理の状態は否決後も screening のまま。審査管理が会話を更新するたびに sync-from-screening → 9/14 の resolveSyncedStatus が proposing(2)→screening(5) を「前進」とみなして書いていた（人の後戻りと相手の古い値の再送を区別できない）
+- 直し: resolveScreeningSync（conversation-status.ts）＝審査管理の状態が前回の同期（conversations.screening_last_status）から変わった時だけ従来の判定。前回値なし（導入前）は覚えるだけ＝一斉に戻さない。同期で状態を動かしたら stage_history trigger=sync_screening
+- 副次: 画面で申込前へ戻したら applying_text_received / applying_image_received も false（line-webhook tryPromoteToApplying の再昇格＝直近8件結合で古い申込フォームが再検知される経路を塞ぐ）。隼斗は両方 false で今回の原因ではない
+- テスト: synced-status.test.ts（11件）
+
 ## 画像の読み取り文はお客様の発言ではない（竹内・2026-09-14・コミット 4a6a87cb・穴:G1）
 - 事例 Hina: SNS 広告のスクショ2枚（6万円ペット可・ペットと住める！）だけ → 下書き「ペット飼育の可否確認」（聞かれていない）
 - 原因: [画像] <書き起こし> がお客様のメッセージに入り、分類（条件変更/ペット）・確認の対象・日程（0:14）・条件の提示（大阪6万円）が読み取り文から出た
