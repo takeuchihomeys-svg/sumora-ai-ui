@@ -4,7 +4,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { attemptKey, loadBlockedItems, markAttemptDone, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
 
-export const maxDuration = 60;
+// 2026-09-15: 実行時間 22〜49秒で 60秒の上限すれすれ（9/8・9/10・9/15 に時間切れ）→ 120秒
+export const maxDuration = 120;
 const CONVERT_JOB = "auto-template-candidates:convert";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, timeout: 30_000 });
@@ -350,15 +351,17 @@ ${existing.length > 0 ? existing.map((t) => `- ${t}`).join("\n") : "（なし）
       })
     );
 
+    // 変換を試みた後続文の印（成功＝done・失敗＝回数）はまとめて並列に書く（1件ずつ待つと上限時間に近づく）
+    await Promise.all(results.map((r, i) => r.status === "fulfilled"
+      ? markAttemptDone(CONVERT_JOB, preKeyOf(fresh[i]))
+      : recordAttemptFailure(CONVERT_JOB, preKeyOf(fresh[i]), String(r.reason).slice(0, 200))));
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
       const p = fresh[i];
       if (r.status !== "fulfilled") {
         console.error("[auto-template-candidates] convert error:", r.reason);
-        await recordAttemptFailure(CONVERT_JOB, preKeyOf(p), String(r.reason).slice(0, 200));
         continue;
       }
-      await markAttemptDone(CONVERT_JOB, preKeyOf(p));
       if (r.value.skip || !r.value.converted?.trim()) {
         skipped++;
         continue;
