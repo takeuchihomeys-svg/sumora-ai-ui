@@ -3,6 +3,7 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { supabase } from "@/app/lib/supabase";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { safeSlice } from "@/app/lib/safe-slice";
+import { fixDateWeekdays, weekdayTable } from "@/app/lib/jst-date";
 import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
@@ -1451,7 +1452,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
     //   メインパス末尾だけでなく conversation_match 系の早期returnパスでも必ず通すこと
     const finalize = (text: string): { message: string; notice: string | null } => {
       // 号室の先頭ゼロを除去（日本の号室は0始まりにならない: 0806→806。\b はASCII境界のみ機能するため (?<!\d) を使用）
-      const stripped = text.replace(/(?<!\d)0+(\d+)号室/g, "$1号室");
+      const zeroStripped = text.replace(/(?<!\d)0+(\d+)号室/g, "$1号室");
+      // 2026-09-15 竹内（隼斗事例）「曜日は日本基準に、18日は金曜日」: 「9/18(木)」のような曜日の食い違いを日付を正として直す（日本時間の暦・jst-date）
+      const { text: stripped, applied: weekdayFixed } = fixDateWeekdays(zeroStripped);
+      if (weekdayFixed.length > 0) console.log(JSON.stringify({ tag: "aix:weekday-fixed", action: currentAction, conversationId, applied: weekdayFixed }));
       // AIが内部メモを出力した場合、顧客向けメッセージと分離
       return extractNotice(stripped, familyName || rawName);
     };
@@ -2496,7 +2500,11 @@ ${SMORA_COMMON_RULES}
           loadBrainTemplate("viewing_invite"),
         ]);
 
-        const calendarBlock = calendarNoteForVI
+        // 2026-09-15 隼斗事例: 内覧日指定あり（お客様の希望日）の時は、その日と空き時間だけを渡す（AixModal が viewing_requested_dates・calendar_info を作る）
+        const requestedDatesVI = typeof body.viewing_requested_dates === "string" ? body.viewing_requested_dates.trim() : "";
+        const calendarBlock = requestedDatesVI
+          ? `【お客様が希望した日付（内覧日指定あり）】${requestedDatesVI}\n・この日の空き時間だけを伝える（他の日を足さない・「直近ですと」は使わない）\n・形式は「日にちを指定した場合」の形（かしこまりました！！／M/Dお部屋ご案内させて頂きます！！／M/D(曜) 時間／ご案内可能です😊！！／〇〇さんご都合よろしいお時間御座いますでしょうか！！）\n【その日の空き時間（カレンダー・この時間で案内すること）】\n${calendarNoteForVI || "（未入力: 時間は書かず「ご都合よろしいお時間」を伺う）"}`
+          : calendarNoteForVI
           ? `【内覧可能日時（カレンダー自動取得・この時間で案内すること）】\n${calendarNoteForVI}`
           : "";
 
@@ -2520,7 +2528,14 @@ ${SMORA_COMMON_RULES}
 
   〇〇さんご都合よろしいお日にち御座いますでしょうか😊！！
 ・最後の日付行にだけ「にてご案内可能です😊！！」を付ける（途中の行には付けない）
-・お客様が日程を具体的に指定した場合も同じフォーマットで答える
+・お客様が日にちを指定した（「18日はどうでしょうか？」）場合は、その日の空き時間だけを次の形で答える（他の日を足さない・「直近ですと」は使わない）:
+  かしこまりました！！
+  M/Dお部屋ご案内させて頂きます！！
+
+  M/D(曜) HH:MM〜HH:MM HH:MM〜HH:MM
+  ご案内可能です😊！！
+  〇〇さんご都合よろしいお時間御座いますでしょうか！！
+・曜日はユーザーメッセージの曜日表（日本時間）を見て書く（自分で計算しない）
 ・お客様が「早く進めたい」「審査まで進めたい」と自ら言っている場合のみ、内覧〜審査まで一気に進められることを伝える
 ・カレンダー未取得または空の場合は「〇〇さんご都合よろしいお日にち御座いますでしょうか😊！！」で締める
 
@@ -2528,7 +2543,7 @@ ${SMORA_COMMON_RULES}
 ・お客様の直近メッセージの意図・感情・urgencyを必ず読み取ってから返信を構成する
 ・お客様が「早く進めたい」「一気に手続きしたい」「今日行けますか」等と言っている → その意欲を真正面から受け止め、「もちろんです！！」「ぜひ！！」から始めて背中を押す
 ・お客様が不安・疑問を示している → その不安に直接答えてから日程案内に移る
-・お客様が具体的な日付を指定している → 「はい！！〇日ですと〜」とその日程に直接答える
+・お客様が具体的な日付を指定している → その日の空き時間を上の「日にちを指定した場合」の形で直接答える（他の日を足さない）
 ・お客様の語彙・テンションに合わせる（丁寧語 → 丁寧に、くだけた表現 → 少し柔らかく）
 ・テンプレ的な返信は絶対禁止。お客様のメッセージに直接応答する文から始める
 
@@ -2544,6 +2559,7 @@ ${SMORA_COMMON_RULES}
         const convMatchVIStaticSystem = convMatchVISystem + AIX_CURATED_AND_CRITICAL_RULES;
         const convMatchVIDynamicSuffix = [
           calendarBlock,
+          `【曜日表（日本時間）】${weekdayTable(Date.now(), 21)}`,
           brainAddendumViConv ? `【ブレイン改善ルール】\n${brainAddendumViConv}` : "",
           brainGuidanceNote || "",
         ].filter(Boolean).join("\n\n");

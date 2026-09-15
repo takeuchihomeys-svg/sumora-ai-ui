@@ -103,3 +103,70 @@ export function moveOutEvidenceFromMsgs(msgs: ReadonlyArray<{ sender?: string | 
     return PROPOSED_PROPERTY_REF_RE.test(masked) ? masked : "";
   }).join("\n");
 }
+
+// ─── スタッフが内覧を案内したか（退去予定の物件でも内覧の日程調整に進んでいるか） ───
+// 2026-09-15 竹内（隼斗事例）: 「10月30日退去予定」の物件をお送りした後、スタッフが「本日ご内覧如何でしょうか 17:30〜18:30お部屋ご案内出来ます」と
+//   内覧を案内し、お客様が「本日は厳しいので18日はどうでしょうか？」と日程を返した。ブレインは内覧へ（9/18の候補を提示）を選んだが、
+//   退去予定の補正（直近の履歴に「退去予定」があれば申込へ＝先押さえ）が上書きし、AIX 申込へ が出た。
+//   実データ（120日）: 直近のスタッフ発言に退去予定がある中でお客様が内覧を希望した回、スタッフの次の AIX は 内覧へ13・待ち合わせ11・申込へ6。
+//   申込へ の6件はスタッフが「退去前のため現地ご案内ができません」と伝えた場面。退去予定の語だけでは内覧できないとは言えない。
+//   → 退去予定の話の後にスタッフが内覧（日時・可否）を案内していれば、内覧の日程調整に進んでいる（補正しない）。
+//   「〜ができませんが」「退去前」の文、物件送付の定型の「お気に召されましたらご案内」は案内に数えない。
+const STAFF_VIEWING_OFFER_RE =
+  /(?:ご?内覧|内見|ご?案内)[^。！!？?\n]{0,12}?(?:如何|いかが|出来ます|できます|可能(?:です|でした|となります)|させて(?:頂|いただ)き(?:ます|たい)|させて(?:頂|いただ)けます)/;
+const STAFF_VIEWING_NEG_RE = /出来(?:ません|ない|かね)|でき(?:ません|ない|かね)|不可|退去前|入居中|難しい|お気に召され/;
+
+/** スタッフの1通が内覧（日時・可否）を案内しているか（文単位で見て、否定・条件付きの文は数えない） */
+export function staffOffersViewing(text: string | null | undefined): boolean {
+  return (text ?? "").split(/[。！!？?\n]/).some((s) => STAFF_VIEWING_OFFER_RE.test(s) && !STAFF_VIEWING_NEG_RE.test(s));
+}
+
+type SenderText = { sender?: string | null; text?: string | null };
+
+/**
+ * スタッフが先押さえ（申込で部屋を抑える）を勧めた・退去前は内覧できないと伝えた文。
+ * 実データ（120日）: 退去予定の話の後にお客様が内覧を希望し、スタッフが 申込へ を押した回は、全てその前にスタッフがこれを書いていた
+ * （「お気に召されましたら、先にお申込みしお部屋を抑えさせて」「退去前のため現在は現地ご案内ができません」）。書いていない回は内覧の案内（内覧へ・待ち合わせ）
+ */
+const STAFF_HOLD_ADVICE_RE =
+  /(?:お申し?込み?|申込)[^。！!？?\n]{0,14}(?:抑え|押さえ|おさえ)|先に?お申し?込|退去前[^。！!？?\n]{0,15}(?:ご?案内|ご?内覧|内見)[^。！!？?\n]{0,8}(?:でき|出来)(?:ません|ない|かね)|(?:内覧|内見)(?:は|が)?(?:退去後|出来ません|できません)/;
+
+/** スタッフの1通が先押さえを勧めた・退去前は内覧できないと伝えたか */
+export function staffAdvisesHold(text: string | null | undefined): boolean {
+  return STAFF_HOLD_ADVICE_RE.test(text ?? "");
+}
+
+/** 退去予定の話（最後に出た通）以降のスタッフの通（古い順）。退去予定の話が無ければ null */
+function staffSinceMoveOut(msgs: ReadonlyArray<SenderText>, order: "newest_first" | "oldest_first"): SenderText[] | null {
+  const oldestFirst = order === "newest_first" ? [...msgs].reverse() : [...msgs];
+  let last = -1;
+  oldestFirst.forEach((m, i) => { if (MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs([m]))) last = i; });
+  if (last < 0) return null;
+  return oldestFirst.slice(last).filter((m) => m.sender !== "customer");
+}
+
+/** 退去予定・入居中の話があり、その話以降のスタッフの最後の言及が「内覧の案内」＝内覧の日程調整に進んでいる */
+export function moveOutViewingReleased(msgs: ReadonlyArray<SenderText>, order: "newest_first" | "oldest_first"): boolean {
+  const staff = staffSinceMoveOut(msgs, order);
+  if (!staff) return false;
+  for (let i = staff.length - 1; i >= 0; i--) {
+    if (staffOffersViewing(staff[i].text)) return true;
+    if (staffAdvisesHold(staff[i].text)) return false;
+  }
+  return false;
+}
+
+/**
+ * 退去予定・入居中のため内覧へ進めず、申込（先押さえ）に回すべきか（brain-core の信号0.95・内覧誤提案ガード・次の AIX の3か所で共有）。
+ * 2026-09-15 竹内（隼斗事例）で「退去予定」の語だけで決めるのをやめた: 退去予定の話の後、スタッフの最後の言及が
+ * 先押さえの勧め・退去前は内覧できない（staffAdvisesHold）の時だけ true。内覧を案内した・何も言っていない時はブレイン（LLM）の判断のまま
+ */
+export function moveOutBlocksViewing(msgs: ReadonlyArray<SenderText>, order: "newest_first" | "oldest_first"): boolean {
+  const staff = staffSinceMoveOut(msgs, order);
+  if (!staff) return false;
+  for (let i = staff.length - 1; i >= 0; i--) {
+    if (staffOffersViewing(staff[i].text)) return false;
+    if (staffAdvisesHold(staff[i].text)) return true;
+  }
+  return false;
+}

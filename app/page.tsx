@@ -15,6 +15,7 @@ import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged } from "./lib/conversation-status";
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./lib/brain-meta-restore";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
+import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 
@@ -3099,14 +3100,13 @@ export default function Home() {
   useEffect(() => {
     if (!showViewingPicker) { setSuggestedViewingMode(null); return; }
     const msgs = (selectedConversation.messages ?? []).slice(-20);
-    const customerMsgs = msgs.filter((m) => m.sender === "customer").reverse();
     const allText = msgs.map((m) => m.text || "").join(" ");
-    if (/変更|キャンセル|別の日|日程.*変え|予定.*合わな|都合.*悪|厳しい.*日程|日程.*厳しい/.test(allText)) { setSuggestedViewingMode("日程変更"); return; }
-    for (const msg of customerMsgs) {
-      const t = msg.text || "";
-      if (/\d{1,2}月\d{1,2}日/.test(t) || /\d{1,2}\/\d{1,2}/.test(t)) { setSuggestedViewingMode("内覧日指定あり"); return; }
-      if (/[土日月火水木金]曜/.test(t) && /\d{1,2}時/.test(t)) { setSuggestedViewingMode("内覧日指定あり"); return; }
-    }
+    // 2026-09-15 竹内（隼斗事例）: お客様の最新の発言だけで見る。旧は直近20件（スタッフ文・古い発言込み）の「キャンセル」で日程変更を勧め、
+    //   「本日は厳しいので18日はどうでしょうか？」（月なしの 18日）を内覧日指定ありにできなかった（希望日の読み方は AixModal と同じ関数）
+    const latestTurn = latestCustomerTurnText(msgs.map((m) => ({ sender: m.sender, text: m.text })));
+    if (/変更|ずら|別の日|日程.*変え/.test(latestTurn)) { setSuggestedViewingMode("日程変更"); return; }
+    if (requestedViewingDatesFromMessages(msgs.map((m) => ({ sender: m.sender, text: m.text }))).length > 0) { setSuggestedViewingMode("内覧日指定あり"); return; }
+    if (/キャンセル|予定.*合わな|都合.*悪|厳しい.*日程|日程.*厳しい/.test(latestTurn)) { setSuggestedViewingMode("日程変更"); return; }
     if (/退去予定|退去日|退去後|退去済|退去月|月末退去/.test(allText)) { setSuggestedViewingMode("退去予定物件"); return; }
     setSuggestedViewingMode("通常");
   // eslint-disable-next-line react-hooks/exhaustive-deps

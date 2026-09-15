@@ -125,6 +125,30 @@ describe("内覧の別日程（2026-09-12 竹内・愛乃事例: 内覧日調整
   it("内覧日調整を送る前は「土日は可能ですか？」でも内覧の別日程にしない", () => expect(ev({ latestCustomerTurn: "土日は可能ですか？" })?.reasonCode === "viewing_date_alternative").toBe(false));
 });
 
+describe("内覧の日にちの提案（2026-09-15 竹内・隼斗事例: 内覧の案内の後「18日はどうでしょうか？」→ 内覧へ 内覧日指定あり）", () => {
+  // 隼斗: 退去予定の物件の後、スタッフが手打ちで内覧を案内（AIX の履歴には直前の内覧へは無い）
+  const hayato = {
+    recentMessages: [
+      { sender: "staff", text: "お送りいただきました物件の中で\nメゾンラトゥール 103号室現在募集中となります！！\n10月30日退去予定、11月末ごろご入居可能なお部屋となります！！" },
+      { sender: "customer", text: "こちら内覧希望です" },
+      { sender: "staff", text: "かしこまりました！！\n本日ご内覧如何でしょうか😊！！\n17:30〜18:30お部屋ご案内出来ます！！" },
+    ],
+    propertyStatus: "move_out_scheduled" as const,
+  };
+  it("隼斗「本日は厳しいので18日はどうでしょうか？」→ S4 viewing_date_proposal", () => {
+    const x = ev({ latestCustomerTurn: "本日は厳しいので18日はどうでしょうか？", ...hayato });
+    expect(x?.scene).toBe("S4_viewing"); expect(x?.reasonCode).toBe("viewing_date_proposal"); expect(x?.candidateAction).toBe("viewing_invite");
+  });
+  it("「9/20なら空いてますか？」→ 内覧の日にちの提案", () => expect(ev({ latestCustomerTurn: "9/20なら空いてますか？", ...hayato })?.reasonCode).toBe("viewing_date_proposal"));
+  it("時刻まで指定した依頼「18日の15時でお願いします」は待ち合わせ（S5）", () => expect(ev({ latestCustomerTurn: "18日の15時でお願いします", ...hayato })?.scene).toBe("S5_time_spec"));
+  it("入居の日にち「入居は18日でも大丈夫ですか？」は内覧の日にちにしない", () => expect(ev({ latestCustomerTurn: "入居は18日でも大丈夫ですか？", ...hayato })?.reasonCode === "viewing_date_proposal").toBe(false));
+  it("内覧の案内が無い会話の「18日はどうでしょうか？」は内覧の日にちにしない", () => expect(ev({ latestCustomerTurn: "18日はどうでしょうか？" })?.reasonCode === "viewing_date_proposal").toBe(false));
+  it("退去予定でも、その後スタッフが内覧を案内していれば（viewingReleased）「内覧したいです」は S4", () => {
+    expect(ev({ latestCustomerTurn: "内覧したいです", ...hayato, viewingReleased: true })?.scene).toBe("S4_viewing");
+    expect(ev({ latestCustomerTurn: "内覧したいです", ...hayato })?.scene === "S4_viewing").toBe(false); // 案内前は従来どおり対象外
+  });
+});
+
 describe("物件確認の依頼（2026-09-12 竹内: 物件確認したはお客様から依頼があった時だけ）", () => {
   const S = (text: string) => ({ sender: "staff", text });
   const C = (text: string) => ({ sender: "customer", text });

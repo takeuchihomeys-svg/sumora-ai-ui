@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { fetchCalendarSlots } from "../lib/calendarSlots";
+import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, type RequestedViewingDate } from "../lib/viewing-date-request";
+import { weekdayForMonthDay } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
 import {
   buildCostExplainMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
@@ -167,115 +169,49 @@ function stripEmoji(text: string): string {
     .trim();
 }
 
-// 会話テキストから複数日を抽出する（「明日」「明後日」両方あれば両方返す）
-// 入居・引越・退去文脈の日付は内覧日として抽出しない
-function extractMultipleDates(text: string): string[] {
-  const today = new Date();
-  const results: string[] = [];
-
-  // 「明日」「明後日」は常に内覧文脈 → 最優先で抽出（入居文脈の判定不要）
-  if (/明日|あした/.test(text)) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + 1);
-    results.push(`${d.getMonth() + 1}月${d.getDate()}日`);
-  }
-  if (/明後日|あさって/.test(text)) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + 2);
-    results.push(`${d.getMonth() + 1}月${d.getDate()}日`);
-  }
-
-  // 「今日」「本日」
-  if (results.length === 0 && /今日|本日/.test(text)) {
-    results.push(`${today.getMonth() + 1}月${today.getDate()}日`);
-  }
-
-  // 「〇月〇日」の直接記載 — 明日・明後日・今日が取れている場合はスキップ
-  // 入居・引越・退去を含む文節を丸ごと除去してから日付を抽出（入居希望日の誤抽出防止）
-  if (results.length === 0) {
-    const withoutMoveInContext = text
-      .replace(/[^。\n]*入居[^。\n]*/g, "")
-      .replace(/[^。\n]*引越[^。\n]*/g, "")
-      .replace(/[^。\n]*退去[^。\n]*/g, "");
-    const directMatches = withoutMoveInContext.match(/\d{1,2}月\d{1,2}日/g);
-    if (directMatches) {
-      for (const d of directMatches) {
-        if (!results.includes(d)) results.push(d);
-      }
-    }
-  }
-
-  // 「〇曜日」（今週・来週）
-  if (results.length === 0) {
-    const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
-    const dayMatches = text.match(/([月火水木金土日])曜/g);
-    if (dayMatches) {
-      for (const dm of dayMatches) {
-        const targetDay = dayNames.indexOf(dm[0]);
-        if (targetDay >= 0) {
-          const d = new Date(today);
-          let diff = targetDay - d.getDay();
-          if (diff <= 0) diff += 7;
-          d.setDate(d.getDate() + diff);
-          const ds = `${d.getMonth() + 1}月${d.getDate()}日`;
-          if (!results.includes(ds)) results.push(ds);
-        }
-      }
-    }
-  }
-
-  return results;
+// カレンダーの日（label「明日 9/16(水)」「9/18(金)」）が 月/日 と一致するか（「9/1」が「9/18」に一致しないよう数で比べる）
+function calendarDayIs(label: string, m: number, d: number): boolean {
+  const lm = label.match(/(\d{1,2})\/(\d{1,2})/);
+  return !!lm && Number(lm[1]) === m && Number(lm[2]) === d;
 }
 
-// 抽出した日付リストに一致するカレンダー日のみ true にする配列を返す
-function slotsMatchingDates(
-  days: Array<{ label: string }>,
-  extracted: string[],
-): boolean[] {
-  return days.map((day) =>
-    extracted.some((dateStr) => {
-      const mm = dateStr.match(/(\d+)月(\d+)日/);
-      if (!mm) return false;
-      return day.label.includes(`${parseInt(mm[1])}/${parseInt(mm[2])}`);
-    }),
-  );
+// 日程の欄（「9月18日」「9/18・9/19」）の月日
+function parseSpecificDates(text: string): Array<{ m: number; d: number }> {
+  const out: Array<{ m: number; d: number }> = [];
+  for (const mm of (text || "").replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).matchAll(/(\d{1,2})\s*[月\/／]\s*(\d{1,2})/g)) {
+    const m = Number(mm[1]);
+    const d = Number(mm[2]);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31 && !out.some((x) => x.m === m && x.d === d)) out.push({ m, d });
+  }
+  return out;
 }
 
-// 内覧日指定モードの「日程・開始・終了時間」デフォルト値をカレンダー空き枠から解決する
-// - 抽出日がカレンダーの「予定あり（使用不可）」日に該当する場合は除外する（本日不可なのに本日が入るバグ防止）
-// - 残った抽出日があればそれを採用し、時間はその日付に一致する空き枠の最初のスロットから取る
-//   （一致する空き枠がない＝カレンダー期間外の指定日は時間を空欄にして手動入力を促す）
-// - 抽出日が残らない場合は最初の空きカレンダー枠（本日不可なら翌日以降の最初の空き日）を採用
+// 採用した日付に一致するカレンダー日のみ true にする配列を返す
+function slotsMatchingDates(days: Array<{ label: string }>, dateText: string): boolean[] {
+  const dates = parseSpecificDates(dateText);
+  return days.map((day) => dates.some((x) => calendarDayIs(day.label, x.m, x.d)));
+}
+
+// 内覧日指定モードの「日程・時間」の初期値をカレンダー空き枠から解決する（2026-09-15 隼斗事例で作り直し）
+// - お客様の希望日（最新の発言・断りの文を除く）があれば、その日を必ず使う（別の日に置き換えない）。時間はその日の空き枠を全部（"11:00〜13:00 16:00〜18:00"）
+//   希望日が予定で埋まっている時は時間を空欄にする（スタッフが判断する）
+// - 希望日が無い時（手動で内覧日指定ありにした時）は最初の空きカレンダー枠（本日不可なら翌日以降の最初の空き日）
 // - 空き枠が全くない場合は null（日程・時間とも空欄のまま手動入力を促す）
 function resolveViewingSpecificDefaults(
   days: Array<{ label: string; slots: string[]; fullyBooked: boolean }>,
-  extracted: string[],
-): { date: string; start: string; end: string } | null {
-  const parseSlotTime = (slot: string): { start: string; end: string } | null => {
-    const m = (slot || "").match(/(\d{1,2}:\d{2})[〜~\-](\d{1,2}:\d{2})/);
-    return m ? { start: m[1].padStart(5, "0"), end: m[2].padStart(5, "0") } : null;
-  };
-  const dayMatchesDate = (label: string, dateStr: string): boolean => {
-    const mm = dateStr.match(/(\d+)月(\d+)日/);
-    return !!mm && label.includes(`${parseInt(mm[1])}/${parseInt(mm[2])}`);
-  };
-  // 「予定あり（使用不可）」のカレンダー日に該当する抽出日を除外
-  const usable = extracted.filter(
-    (dateStr) => !days.some((d) => d.fullyBooked && dayMatchesDate(d.label, dateStr)),
-  );
-  if (usable.length > 0) {
-    // 抽出日に一致する空きカレンダー日から時間を取得（期間外指定日は時間空欄）
-    const matched = days.find((d) => !d.fullyBooked && usable.some((ds) => dayMatchesDate(d.label, ds)));
-    const t = matched ? parseSlotTime(matched.slots[0] || "") : null;
-    return { date: usable.join("・"), start: t?.start ?? "", end: t?.end ?? "" };
+  requested: ReadonlyArray<RequestedViewingDate>,
+): { date: string; times: string } | null {
+  if (requested.length > 0) {
+    const date = requested.map((r) => `${r.m}月${r.d}日`).join("・");
+    const first = days.find((d) => calendarDayIs(d.label, requested[0].m, requested[0].d));
+    const times = first && !first.fullyBooked ? first.slots.join(" ") : "";
+    return { date, times };
   }
-  // 抽出日なし（または全て使用不可日）→ 最初の空きカレンダー枠（本日不可なら自動的に翌日以降）
   const firstAvail = days.find((d) => !d.fullyBooked);
   if (!firstAvail) return null;
   const lm = firstAvail.label.match(/(\d{1,2})\/(\d{1,2})/);
   if (!lm) return null;
-  const t = parseSlotTime(firstAvail.slots[0] || "");
-  return { date: `${parseInt(lm[1])}月${parseInt(lm[2])}日`, start: t?.start ?? "", end: t?.end ?? "" };
+  return { date: `${parseInt(lm[1])}月${parseInt(lm[2])}日`, times: firstAvail.slots.join(" ") };
 }
 
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
@@ -952,8 +888,17 @@ export default function AixModal({
   const [followupSubMode] = useState<"apply_supplement" | "search_continue" | null>(initialFollowupSubMode ?? null);
   const [followupPropertyName, setFollowupPropertyName] = useState("");
   const [extraInput, setExtraInput] = useState("");
-  const [viewingSpecificStart, setViewingSpecificStart] = useState("");
-  const [viewingSpecificEnd, setViewingSpecificEnd] = useState("");
+  // 内覧日指定あり: その日の空き時間（"10:30〜11:30 17:00〜18:30"。カレンダーの空き枠を初期値に・書き換え可）
+  const [viewingSpecificTimes, setViewingSpecificTimes] = useState("");
+  // 自動で入れた日程（スタッフが書き換えたら自動では上書きしない）
+  const viewingAutoDateRef = useRef("");
+  // お客様の最新の発言の内覧希望日（2026-09-15 隼斗事例: 断りの文を除く・「18日」も読む・日本時間）
+  const viewingRequested = useMemo(
+    () => (actionType === "viewing_invite" ? requestedViewingDatesFromMessages(recentMessages ?? []) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [actionType, recentMessages],
+  );
+  const viewingRequestedKey = viewingRequested.map((r) => r.ymd).join(",");
 
   // 物件オススメ専用: 見積書（任意）
   const [recommendEstimateFile, setRecommendEstimateFile] = useState<File | null>(null);
@@ -1208,7 +1153,8 @@ export default function AixModal({
     setViewingCalendarLoading(true);
     (async () => {
       try {
-        const { days } = await fetchCalendarSlots();
+        // お客様の希望日（3日より先でも）の空き時間も出す（2026-09-15 隼斗事例「18日はどうでしょうか？」）
+        const { days } = await fetchCalendarSlots(viewingRequested.map((r) => r.ymd));
         setViewingCalendarDays(days);
         // "11:00〜14:00" → start: "11:00", end: "14:00"
         const parseTime = (slot: string) => {
@@ -1219,13 +1165,14 @@ export default function AixModal({
         setViewingSlotEnds(days.map(d => parseTime(d.slots[0] || "").end));
         setViewingSlotOverride(days.map(() => false));
 
-        // デフォルトの有効スロット（お客様指定日のプリセットは recentMessages を deps に含む下の別effectで行う）
+        // デフォルトの有効スロット（お客様指定日のプリセットは下の別effectで行う）
+        const extraStart = 3; // 本日・明日・明後日の後ろが希望日の追加分
         if (viewingSpecificMode) {
           // 内覧日指定ありモード → 本日(index 0)はチェックしない
           setViewingSlotEnabled(days.map((d, i) => i > 0 && !d.fullyBooked));
         } else {
-          // 通常モード: 空きのある日を全てチェック
-          setViewingSlotEnabled(days.map(d => !d.fullyBooked));
+          // 通常モード: 直近3日のうち空きのある日をチェック（希望日の追加分は内覧日指定ありで使う）
+          setViewingSlotEnabled(days.map((d, i) => i < extraStart && !d.fullyBooked));
         }
       } catch {
         setViewingCalendarDays([]);
@@ -1237,55 +1184,39 @@ export default function AixModal({
         setViewingCalendarLoading(false);
       }
     })();
-  }, [actionType]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType, viewingRequestedKey]);
 
   // ⑤ ★ お客様が内覧日を指定していたら自動でトグルON + 日時プリセット（複数日対応）
   // recentMessages を deps に含める（マウント時にメッセージ未着でも、到着後に再実行される）
   // viewingSpecificDate 設定済みなら早期リターンで冪等
+  // 2026-09-15 隼斗事例: 希望日はお客様の最新の発言だけから読む（viewingRequested）。スタッフが日程を書き換えたら自動では上書きしない
+  const applyViewingSpecificDefaults = () => {
+    const defaults = resolveViewingSpecificDefaults(viewingCalendarDays, viewingRequested);
+    if (!defaults) return; // 空き枠なし → 日程・時間は空欄のまま（手動入力を促す）
+    viewingAutoDateRef.current = defaults.date;
+    setViewingSpecificDate(defaults.date);
+    setViewingSpecificTimes(defaults.times);
+    // 採用した日付に一致するカレンダー日のみチェック（本日は指定がなければチェックしない）
+    setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, defaults.date));
+  };
   useEffect(() => {
     if (actionType !== "viewing_invite") return;
     if (viewingCalendarDays.length === 0) return; // カレンダー取得完了後に実行
-    if (viewingSpecificDate) return; // 既にプリセット済み（手入力含む）なら何もしない
-    const allCustomerText = (recentMessages || [])
-      .filter(m => m.sender === "customer" && m.text)
-      .map(m => m.text)
-      .join(" ");
-    const extracted = extractMultipleDates(allCustomerText);
-    if (extracted.length === 0) return;
+    if (viewingSpecificDate && viewingSpecificDate !== viewingAutoDateRef.current) return; // スタッフが入力した日程は残す
+    if (viewingRequested.length === 0) return;
     setViewingSpecificMode(true);
-    // 使用不可日（予定あり）に該当する抽出日は除外し、空き枠に合わせた日付・時間をデフォルトにする
-    // （例: お客様が「今日」と言っていても本日が予定ありなら翌日以降の最初の空き日を採用）
-    const defaults = resolveViewingSpecificDefaults(viewingCalendarDays, extracted);
-    if (!defaults) return; // 空き枠なし → 日程・時間は空欄のまま（手動入力を促す）
-    setViewingSpecificDate(defaults.date);
-    setViewingSpecificStart(defaults.start);
-    setViewingSpecificEnd(defaults.end);
-    // 採用した日付に一致するカレンダー日のみチェック（本日は指定がなければチェックしない）
-    setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, defaults.date.split("・")));
+    applyViewingSpecificDefaults();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actionType, recentMessages, viewingCalendarDays]);
+  }, [actionType, viewingRequestedKey, viewingCalendarDays]);
 
-  // 内覧日指定あり: ONになったら会話からお客様指定日を自動抽出（複数日対応）
-  // 指定日が抽出できない場合も「最初の空きカレンダー枠」を日程・時間のデフォルトにする
+  // 内覧日指定あり: ONになったらお客様の希望日（無ければ最初の空き枠）を日程・時間のデフォルトにする
   // （viewingCalendarDays を deps に含める: ON時にカレンダー未取得でも取得完了後に再実行される）
   useEffect(() => {
     if (!viewingSpecificMode) return;
     if (viewingSpecificDate) return; // 既に入力済みならスキップ
     if (viewingCalendarDays.length === 0) return; // カレンダー取得完了後に実行
-    // お客様メッセージ全体から複数日を抽出（「明日・明後日」等を両方拾う）
-    const allCustomerText = (recentMessages || [])
-      .filter(m => m.sender === "customer" && m.text)
-      .map(m => m.text)
-      .join(" ");
-    const extracted = extractMultipleDates(allCustomerText);
-    // 使用不可日は除外・抽出なしなら最初の空き枠（本日不可なら翌日以降）をデフォルト採用
-    const defaults = resolveViewingSpecificDefaults(viewingCalendarDays, extracted);
-    if (!defaults) return; // 空き枠なし → 日程・時間は空欄のまま（手動入力を促す）
-    setViewingSpecificDate(defaults.date);
-    if (!viewingSpecificStart) setViewingSpecificStart(defaults.start);
-    if (!viewingSpecificEnd)   setViewingSpecificEnd(defaults.end);
-    // 採用した日付に一致するカレンダー日のみチェック
-    setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, defaults.date.split("・")));
+    applyViewingSpecificDefaults();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingSpecificMode, viewingCalendarDays]);
 
@@ -2118,13 +2049,17 @@ export default function AixModal({
 
       // 内覧へ！内覧日指定ありモード → テンプレで即生成（AI不要）
       // ただし「会話を合わせる」(conversation_match: true)のときはAI生成を優先するためスキップ
+      // 2026-09-15 竹内（隼斗事例）: スタッフの実送信の形「かしこまりました！！／9/18お部屋ご案内させて頂きます！！／9/18(金) 10:30〜11:30 17:00〜18:30／
+      //   ご案内可能です😊！！／〇〇さんご都合よろしいお時間御座いますでしょうか！！」。曜日は日本時間の暦で決める
+      const specificDates = viewingSpecificMode ? parseSpecificDates(viewingSpecificDate).map((x, i) => {
+        const day = viewingCalendarDays.find((d) => calendarDayIs(d.label, x.m, x.d));
+        // 1日だけなら時間の欄、複数日なら2日目以降はその日の空き枠
+        const times = i === 0 ? viewingSpecificTimes.trim() : (day && !day.fullyBooked ? day.slots.join(" ") : "");
+        return { md: `${x.m}/${x.d}`, label: `${x.m}/${x.d}(${weekdayForMonthDay(x.m, x.d) ?? ""})`.replace("()", ""), times };
+      }) : [];
       if (actionType === "viewing_invite" && viewingSpecificMode && !extraFlags?.conversation_match) {
-        if (!viewingSpecificDate.trim()) throw new Error("日程を入力してください");
-        const s = viewingSpecificStart.trim();
-        const e = viewingSpecificEnd.trim();
-        const timeText = s && e ? `${s}〜${e}` : s || "";
-        const propLine = viewingPropertyName.trim() ? `${viewingPropertyName.trim()}\n` : "";
-        const msg = `はい😊！！\n${propLine}${viewingSpecificDate.trim()}ですと${timeText}ご内覧可能です！！\n${customerName}さんご都合如何でしょうか😌！！`;
+        if (specificDates.length === 0) throw new Error("日程を入力してください（例：9月18日）");
+        const msg = buildViewingSpecificMessage({ dates: specificDates, customerName, propertyName: viewingPropertyName });
         setAiDraft(msg);
         setPreview(useEmoji ? msg : stripEmoji(msg));
         setLoading(false);
@@ -2217,7 +2152,12 @@ export default function AixModal({
         body.reschedule_mode = true;
       }
 
-      if (actionType === "viewing_invite" && viewingCalendarDays.length > 0) {
+      if (actionType === "viewing_invite" && viewingSpecificMode && specificDates.length > 0) {
+        // 会話を合わせる（内覧日指定あり）: お客様の希望日とその日の空き時間だけを渡す（他の日を足さない・曜日は日本時間の暦）
+        body.viewing_requested_dates = specificDates.map((d) => d.label).join("・");
+        const lines = specificDates.map((d) => `${d.label} ${d.times}`.trim());
+        body.calendar_info = lines.join("\n");
+      } else if (actionType === "viewing_invite" && viewingCalendarDays.length > 0) {
         const selectedSlots = viewingCalendarDays
           .map((d, i) => {
             const isEnabled = d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i];
@@ -5797,32 +5737,26 @@ export default function AixModal({
                   onClick={() => {
                     setViewingSpecificMode(prev => {
                       const next = !prev;
-                      setViewingSpecificStart("");
-                      setViewingSpecificEnd("");
+                      setViewingSpecificTimes("");
                       if (next) {
-                        // 内覧日指定あり ON: 会話から複数日を抽出してカレンダーに反映
-                        const allText = (recentMessages || [])
-                          .filter(m => m.sender === "customer" && m.text)
-                          .map(m => m.text)
-                          .join(" ");
-                        const extracted = extractMultipleDates(allText);
-                        // 使用不可日（予定あり）は除外・抽出なしなら最初の空き枠（本日不可なら翌日以降）をデフォルト採用
-                        const defaults = resolveViewingSpecificDefaults(viewingCalendarDays, extracted);
+                        // 内覧日指定あり ON: お客様の最新の発言の希望日（無ければ最初の空き枠）をカレンダーに反映
+                        const defaults = resolveViewingSpecificDefaults(viewingCalendarDays, viewingRequested);
                         if (defaults) {
+                          viewingAutoDateRef.current = defaults.date;
                           setViewingSpecificDate(defaults.date);
-                          setViewingSpecificStart(defaults.start);
-                          setViewingSpecificEnd(defaults.end);
+                          setViewingSpecificTimes(defaults.times);
                           // 採用した日付に一致する日のみチェック（本日は指定がなければチェックしない）
-                          setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, defaults.date.split("・")));
+                          setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, defaults.date));
                         } else {
                           // 空き枠なし → 日程・時間は空欄のまま（手動入力を促す）
                           setViewingSpecificDate("");
                           setViewingSlotEnabled(viewingCalendarDays.map((d, i) => i > 0 && !d.fullyBooked));
                         }
                       } else {
-                        // OFF: 通常モードに戻す
+                        // OFF: 通常モードに戻す（直近3日のうち空きのある日）
                         setViewingSpecificDate("");
-                        setViewingSlotEnabled(viewingCalendarDays.map(d => !d.fullyBooked));
+                        viewingAutoDateRef.current = "";
+                        setViewingSlotEnabled(viewingCalendarDays.map((d, i) => i < 3 && !d.fullyBooked));
                       }
                       return next;
                     });
@@ -5835,36 +5769,36 @@ export default function AixModal({
 
               {viewingSpecificMode && (
                 <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-3">
-                  <p className="mb-2 text-xs font-bold text-blue-700">お客様が希望した日付で「はい！！◯日ですと〜」を生成します</p>
+                  <p className="mb-2 text-xs font-bold text-blue-700">お客様が希望した日付の空き時間を「かしこまりました！！◯/◯お部屋ご案内させて頂きます」で返します</p>
                   <div className="mb-2">
                     <label className="mb-1 block text-xs font-semibold text-[#54656f]">日程 <span className="text-red-400">*</span></label>
                     <input
                       value={viewingSpecificDate}
                       onChange={(e) => setViewingSpecificDate(e.target.value)}
-                      placeholder="例：7月5日"
+                      placeholder="例：9月18日"
                       className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
                     />
+                    {(() => {
+                      // 曜日は日本時間の暦で決める（入力の確認用に表示）
+                      const ds = parseSpecificDates(viewingSpecificDate);
+                      if (ds.length === 0) return null;
+                      const labels = ds.map((x) => `${x.m}/${x.d}(${weekdayForMonthDay(x.m, x.d) ?? "?"})`).join("・");
+                      const booked = ds.some((x) => viewingCalendarDays.some((d) => d.fullyBooked && calendarDayIs(d.label, x.m, x.d)));
+                      return (
+                        <p className={`mt-1 text-[11px] ${booked ? "font-bold text-red-500" : "text-[#54656f]"}`}>
+                          {labels}{booked ? " は予定が入っています（時間を確かめて入力してください）" : ""}
+                        </p>
+                      );
+                    })()}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <label className="mb-1 block text-xs font-semibold text-[#54656f]">開始時間</label>
-                      <input
-                        value={viewingSpecificStart}
-                        onChange={(e) => setViewingSpecificStart(e.target.value)}
-                        placeholder="13:00"
-                        className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
-                      />
-                    </div>
-                    <span className="mt-4 text-sm text-[#54656f]">〜</span>
-                    <div className="flex-1">
-                      <label className="mb-1 block text-xs font-semibold text-[#54656f]">終了時間</label>
-                      <input
-                        value={viewingSpecificEnd}
-                        onChange={(e) => setViewingSpecificEnd(e.target.value)}
-                        placeholder="14:00"
-                        className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
-                      />
-                    </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-[#54656f]">時間 <span className="font-normal text-[#90a4ae]">（カレンダーの空き枠・複数はスペース区切り）</span></label>
+                    <input
+                      value={viewingSpecificTimes}
+                      onChange={(e) => setViewingSpecificTimes(e.target.value)}
+                      placeholder="例：10:30〜11:30 17:00〜18:30"
+                      className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    />
                   </div>
                 </div>
               )}

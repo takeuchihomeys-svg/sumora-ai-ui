@@ -27,7 +27,7 @@ import {
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
-import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "@/app/lib/move-out-context";
+import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing } from "@/app/lib/move-out-context";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
 import { buildActionLedger, buildLedgerLinesForBrain } from "@/app/lib/action-ledger";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
@@ -740,8 +740,8 @@ async function detectSignalBasedAixFallback(
       // 退去予定/入居中物件では現地内覧不可 → 申込誘導へ差し替え（旧 redirectMoveOut 相当）。
       // 「退去予定」情報は通常スタッフが物件情報として送るため、顧客だけでなく
       // スタッフ送信を含む直近10件（msgs）全体で検出する。
-      const moveOutDetected = MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs(msgs));
-      return moveOutDetected ? "application_push" : "viewing_invite";
+      // 2026-09-15 隼斗事例: 退去予定の話の後にスタッフが内覧を案内していれば内覧の日程調整（moveOutBlocksViewing）
+      return moveOutBlocksViewing(msgs, "newest_first") ? "application_push" : "viewing_invite";
     }
 
     // 信号1（成約実績最多ライン）: 最終顧客メッセージに見積・初期費用の話題 → estimate_sheet
@@ -1770,6 +1770,8 @@ export async function analyzeConversation(
     aixHistory: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null })),
     recentMessages: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text })),
     moveOutScheduled: MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs(typedMessages)),
+    // 退去予定でも、スタッフが先押さえを勧めた・退去前は内覧できないと伝えた後でなければ内覧の場面（2026-09-15 隼斗事例・move-out-context）
+    viewingReleased: !moveOutBlocksViewing(typedMessages, "newest_first"),
   });
   let brainAixFeedback: FeedbackRow[] = [];
   try {
@@ -2281,11 +2283,14 @@ ${history}`;
       if (!lastMsgIsCustomer || !customerRespondedAfterSend) {
         finalAix = null;
         decisionSource = "guard:viewing";
-      } else if (MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs(typedMessages))) {
+      } else if (moveOutBlocksViewing(typedMessages, "newest_first")) {
         // 退去予定/入居中物件では現地内覧不可（旧 redirectMoveOut 相当）:
         // Haiku 提案がガードを通過して viewing_invite に確定する場合でも、
         // 会話履歴（スタッフ送付の物件情報を含む直近15件）に退去予定/入居中の記述があれば
         // 申込で部屋を先押さえする application_push へ差し替える。
+        // 2026-09-15 竹内（隼斗事例）: 退去予定の話の後にスタッフが内覧を案内した（「本日ご内覧如何でしょうか 17:30〜18:30」）後の
+        //   お客様の日程の返事（「18日はどうでしょうか？」）まで申込へに差し替えていた。実データ（120日）では スタッフが 申込へ を押したのは
+        //   その前にスタッフが先押さえを勧めた・退去前は内覧できないと伝えた回だけ → その時だけ差し替える（move-out-context moveOutBlocksViewing）
         finalAix = "application_push";
         decisionSource = "guard:viewing";
       }
@@ -3842,7 +3847,7 @@ export async function analyzeAndSaveBrainMeta(
                 .order("created_at", { ascending: false })
                 .limit(10);
               // 退去予定/入居中物件では現地内覧不可 → 申込誘導へ差し替え
-              const schedMoveOut = MOVE_OUT_PATTERN.test(moveOutEvidenceFromMsgs(lastMsgRows ?? []));
+              const schedMoveOut = moveOutBlocksViewing(lastMsgRows ?? [], "newest_first");
               viewingPhaseDetail = "scheduling";
               suggAixButton = lastMsgRows?.[0]?.sender === "customer"
                 ? (schedMoveOut ? "application_push" : "viewing_invite")

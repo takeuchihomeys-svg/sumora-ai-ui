@@ -12,9 +12,10 @@ import { CUST_WILL_SEND_SELF_PRED } from "./reply-context";
 import type { EstimateContextVerdict } from "./estimate-context";
 import { customerDoubtsCheapness } from "./cost-explain-text";
 import { customerAsksCostComposition } from "./cost-breakdown";
-import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs } from "./move-out-context";
+import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, staffOffersViewing } from "./move-out-context";
 import {
   allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
+  VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE,
 } from "./scene-patterns";
 
 export type PropertyStatusLite = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
@@ -32,6 +33,8 @@ export type SceneEvidenceInput = {
   /** 行動台帳の送付物件数（ledger.facts.propertiesSentCount） */
   sentPropertyCount?: number;
   propertyStatus?: PropertyStatusLite;
+  /** 退去予定の話の後にスタッフが内覧（日時・可否）を案内した（move-out-context moveOutViewingReleased）。true なら退去予定でも内覧の場面 */
+  viewingReleased?: boolean;
   /** isMisumoriContextAppropriate() の verdict（見積判定の単一真実源） */
   estimateVerdict?: EstimateContextVerdict | null;
 };
@@ -127,7 +130,8 @@ export function isPropertySpecified(msg: string, o: { hasCustomerImage: boolean;
 export function hasViewingInviteBefore(o: Pick<SceneEvidenceInput, "aixHistory" | "recentMessages">): boolean {
   if ((o.aixHistory ?? []).some((a) => a.aix_type === "viewing_invite")) return true;
   const staff = (o.recentMessages ?? []).filter((m) => m.sender === "staff").slice(-5);
-  return staff.some((m) => /ご都合よろしいお日にち|ご内覧可能な日程|内覧日程|ご案内可能(?:な|です)|ご案内させて頂けます/.test(m.text ?? ""));
+  // 2026-09-15 隼斗事例: 手打ちの「本日ご内覧如何でしょうか 17:30〜18:30お部屋ご案内出来ます」も内覧の案内（staffOffersViewing と共有）
+  return staff.some((m) => /ご都合よろしいお日にち|ご内覧可能な日程|内覧日程|ご案内可能(?:な|です)|ご案内させて頂けます/.test(m.text ?? "") || staffOffersViewing(m.text));
 }
 
 /** 見積書を送った後か（aix_usage_logs の見積書送る、または直近スタッフ文の御見積書） */
@@ -226,6 +230,11 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   if (hasViewingInviteBefore(o) && VIEWING_DATE_ALT_RE.test(msg) && !(TIME_SPEC_RE.test(msg) && TIME_REQUEST_RE.test(msg)) && !VIEWING_DAY_COMMIT_RE.test(msg)) {
     return ev({ scene: "S4_viewing", candidateAction: "viewing_invite", checkPattern: null, timing: "now", chained: null, reasonCode: "viewing_date_alternative" });
   }
+  // S4'' 内覧の案内の後、お客様が日にちだけを提案・問い合わせ（「本日は厳しいので18日はどうでしょうか？」2026-09-15 隼斗事例）
+  //   → 内覧へ（内覧日指定あり: その日の空き時間を返す）。時刻まで指定した依頼（S5 待ち合わせ）・入居や契約の日にちは除く
+  if (hasViewingInviteBefore(o) && VIEWING_DATE_PROPOSAL_RE.test(msg) && !VIEWING_DATE_NON_VIEWING_RE.test(msg) && !TIME_SPEC_RE.test(msg) && !VIEWING_DAY_COMMIT_RE.test(msg)) {
+    return ev({ scene: "S4_viewing", candidateAction: "viewing_invite", checkPattern: null, timing: "now", chained: null, reasonCode: "viewing_date_proposal" });
+  }
 
   // S6 見積（verdict が declare の時のみ。語出現では出さない）
   if (estimateDeclare) {
@@ -245,8 +254,8 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
     return ev({ scene: "S5_time_spec", candidateAction: "meeting_place", checkPattern: null, timing: "now", chained: null, reasonCode: "time_spec_after_viewing_invite" });
   }
 
-  // S4 内覧希望（退去予定/入居中は現地内覧不可のため対象外）
-  if ((VIEWING_INTENT_RE.test(msg) || slotQuestion) && o.propertyStatus !== "move_out_scheduled" && o.propertyStatus !== "occupied") {
+  // S4 内覧希望（退去予定/入居中は現地内覧不可のため対象外。ただし退去予定の話の後にスタッフが内覧を案内していれば内覧の場面＝2026-09-15 隼斗事例）
+  if ((VIEWING_INTENT_RE.test(msg) || slotQuestion) && ((o.propertyStatus !== "move_out_scheduled" && o.propertyStatus !== "occupied") || o.viewingReleased)) {
     return ev({ scene: "S4_viewing", candidateAction: "viewing_invite", checkPattern: null, timing: "now", chained: null, reasonCode: slotQuestion ? "viewing_slot_question" : "viewing_intent" });
   }
   return null;
