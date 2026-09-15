@@ -141,6 +141,9 @@ export default function CalendarPage() {
   });
   const [viewingCount, setViewingCount] = useState(1);
   const [viewingProperties, setViewingProperties] = useState<ViewingProperty[]>([{ name: "", key_method: "現地" }]);
+  // 2026-09-15: 会話の画面（予定を入れる）で作った内覧の予定（「【物件】〇〇 / 現地(オートロック…)」「【1件目】…」）は、この画面の形式に作り直さずメモのまま編集する
+  //   （旧: 開いて保存すると「件数: 1件 / 物件: （未記入）（現地）」が先頭に足されていた）
+  const [viewingNotesRaw, setViewingNotesRaw] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
@@ -265,6 +268,7 @@ export default function CalendarPage() {
     setEditingEvent(null);
     setViewingCount(1);
     setViewingProperties([{ name: "", key_method: "現地" }]);
+    setViewingNotesRaw(false);
     setFormError("");
     setShowModal(true);
   };
@@ -273,7 +277,9 @@ export default function CalendarPage() {
     let notesForForm = ev.notes || "";
     let vCount = 1;
     let vProps: ViewingProperty[] = [{ name: "", key_method: "現地" }];
-    if (ev.event_type === "viewing") {
+    const rawViewing = ev.event_type === "viewing" && !!ev.notes && !/^件数:\s*\d+件/m.test(ev.notes);
+    setViewingNotesRaw(rawViewing);
+    if (ev.event_type === "viewing" && !rawViewing) {
       const parsed = parseViewingNotes(ev.notes || "");
       vCount = parsed.count;
       vProps = parsed.props;
@@ -307,7 +313,7 @@ export default function CalendarPage() {
     const dateStr = form.start_at.slice(0, 10);
     const timeStr = form.all_day ? "" : form.start_at.slice(11, 16);
 
-    const finalNotes = form.event_type === "viewing"
+    const finalNotes = form.event_type === "viewing" && !viewingNotesRaw
       ? buildViewingNotes(viewingCount, viewingProperties, form.notes)
       : form.notes.trim();
 
@@ -777,8 +783,14 @@ export default function CalendarPage() {
                 </div>
               </div>
 
+              {/* 内覧: 会話の画面で作った予定はメモ（物件・内覧方法・住所）をそのまま編集 */}
+              {form.event_type === "viewing" && viewingNotesRaw && (
+                <div className="mb-4 rounded-xl border-2 border-[#e3f2fd] bg-[#f0f8ff] px-4 py-3 text-xs leading-relaxed text-[#1565C0]">
+                  🔍 物件・内覧方法（鍵の開け方）・住所は下のメモ欄にあります。「内覧方法: 未入力」はオートロック・ダイヤル番号・管理会社の連絡先などに書き換えてください
+                </div>
+              )}
               {/* 内覧専用フィールド */}
-              {form.event_type === "viewing" && (
+              {form.event_type === "viewing" && !viewingNotesRaw && (
                 <div className="mb-4 rounded-xl border-2 border-[#e3f2fd] bg-[#f0f8ff] p-4">
                   <div className="mb-3 text-xs font-semibold text-[#1565C0]">🔍 内覧詳細</div>
 
