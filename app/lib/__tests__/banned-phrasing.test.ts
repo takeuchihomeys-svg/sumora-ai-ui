@@ -133,6 +133,14 @@ describe("2026-09-15 竹内（慶次事例）: 夜にこちらから届ける AI
     expect(normalizeBannedPhrasing("慶次さん夜分遅くに失礼致します！！\n夜分遅くに失礼致します！！\nお手隙の際にご査収ください😌！！", { keepNightGreeting: true }).text)
       .toBe("慶次さん夜分遅くに失礼致します！！\nお手隙の際にご査収ください😌！！");
   });
+  it("K5 夜分に決まっているのに LLM が「〇〇さんお世話になっております！！」で書いた → 先頭の挨拶を夜分に", () => {
+    expect(normalizeBannedPhrasing("慶次さんお世話になっております！！\n無事ご入居間に合いますようにサポートさせて頂きます！！", { keepNightGreeting: true }).text)
+      .toBe("慶次さん夜分遅くに失礼致します！！\n無事ご入居間に合いますようにサポートさせて頂きます！！");
+  });
+  it("K6 先頭が挨拶でなければ触らない（本文中のお世話になっておりますは対象外）", () => {
+    const t = "こちら初期費用の御見積書となります！！\nいつもお世話になっております";
+    expect(normalizeBannedPhrasing(t, { keepNightGreeting: true }).text).toBe(t);
+  });
   it("K4 オプション無し（返信）は従来どおり除去", () => {
     expect(normalizeBannedPhrasing("慶次さん夜分遅くに失礼致します！！\nお手隙の際にご査収ください😌！！").text).toBe("お手隙の際にご査収ください😌！！");
   });

@@ -1,6 +1,6 @@
 // 2026-09-15 竹内（カイナ事例）: 物件ピックアップの「会話を合わせる」— 会話の糸口の抽出と内覧誘導の除去
 // 実行: npx tsx app/lib/__tests__/property-send-match.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts } from "../property-send-match";
+import { extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "../property-send-match";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -147,6 +147,22 @@ it("古い話へのお礼（5日前の給与明細）を落とす・まだ応え
   expect(keep.removed.length).toBe(0);
   const cond = stripUnanchoredThanksLines("〇〇さん\nご条件お送り頂きありがとうございます！！\n梅田から…ピックアップさせて頂きました！！", ["①10月 ②家賃8万 ③1LDK"]);
   expect(cond.removed.length).toBe(0);
+});
+
+it("入力に無い保証会社・審査の話を落とす（本番で出た2つの形）・キーワードにあれば残す", () => {
+  const a = stripUngroundedClaims("慶次さん夜分遅くに失礼致します！！\n\n無事ご入居間に合いますようにサポートさせて頂きます！！\n\n北区・福島区周辺全域から独立系保証会社でご案内可能なお部屋を中心に慶次さんにオススメできるお部屋ピックアップさせて頂きました！！\n\nお手隙の際にご査収ください😌！！", "");
+  expect(a.text).toBe("慶次さん夜分遅くに失礼致します！！\n\n無事ご入居間に合いますようにサポートさせて頂きます！！\n\n北区・福島区周辺全域から慶次さんにオススメできるお部屋ピックアップさせて頂きました！！\n\nお手隙の際にご査収ください😌！！");
+  expect(a.unresolved).toBe(false);
+  const b = stripUngroundedClaims("慶次さんお世話になっております！！\n\n北区・福島区周辺全域から慶次さんにオススメできるお部屋ピックアップさせて頂きました！！\n\n独立系の保証会社が使えるお部屋を中心にお探しさせて頂いておりますので、10月末のご退去に間に合いますよう並行して進めさせて頂きます！！\n\n複数のお部屋で並行してお申込み・審査を進めさせて頂くことも可能ですので、お気に召されたお部屋ございましたらお知らせください😊！！\n\nお手隙の際にご査収ください😌！！", "");
+  expect(b.removed.length).toBe(2);
+  expect(b.text).toBe("慶次さんお世話になっております！！\n\n北区・福島区周辺全域から慶次さんにオススメできるお部屋ピックアップさせて頂きました！！\n\nお手隙の際にご査収ください😌！！");
+  const kw = "島之内から審査通過しやすい築浅の1LDKのお部屋ピックアップさせて頂きました😊！！";
+  expect(stripUngroundedClaims(kw, "審査通過しやすい").text).toBe(kw);
+});
+it("手本から写した代理契約の一文は事情が無ければ落とす・事情があれば残す", () => {
+  const t = "慶次さんお世話になっております！！\n\n北区からお部屋ピックアップさせて頂きました！！\n\nお気に召されたお部屋、代理契約可能か全て交渉させて頂きます！！\nお手隙の際にご査収ください😌！！";
+  expect(stripUngroundedClaims(t, "").text).toBe("慶次さんお世話になっております！！\n\n北区からお部屋ピックアップさせて頂きました！！\n\nお手隙の際にご査収ください😌！！");
+  expect(stripUngroundedClaims(t, "1度この2つで代理契約可能か確認していただけますでしょうか？").text).toBe(t);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

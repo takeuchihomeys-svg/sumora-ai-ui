@@ -164,9 +164,19 @@ export function dedupeGreetings(text: string): { text: string; count: number } {
 const OSEWA_UNIT_RE = /(?:[^\n！!。]{0,15}(?:さん|様)[、,]?[ \t　]*)?(?:いつも)?お世話になっております[😊😌🙇]*[！!。、]*[ \t　]*/g;
 /** 行頭の夜間挨拶（NIGHT_GREETING_RE と同じ形を1行ずつ見る版） */
 const NIGHT_HEAD_RE = /^([ \t　]*)(?:[^\n！!。]{0,15}(?:さん|様)[、,]?[ \t　]*)?夜(?:分)?(?:遅く)?に?(?:大変)?(?:失礼(?:致|いた)?します|失礼(?:致|いた)?しております|すみません|申し訳(?:ございません|御座いません|ありません))[😊😌🙇]*[！!。]*[ \t　]*/;
+/** 先頭の「〇〇さんお世話になっております！！」（夜分に決まっているのに LLM がこちらで書いた時に置き換える） */
+const HEAD_OSEWA_RE = /^([ \t　]*(?:[^\n！!。]{0,15}(?:さん|様)[、,]?[ \t　]*)?)(?:いつも)?お世話になっております[😊😌🙇]*[！!。]*/;
 export function keepOneNightGreeting(text: string): { text: string; count: number } {
   const lines = text.split("\n");
-  if (!lines.some((l) => NIGHT_HEAD_RE.test(l))) return { text, count: 0 };
+  if (!lines.some((l) => NIGHT_HEAD_RE.test(l))) {
+    // 本番確認（慶次・5回）: 挨拶の実値に夜分を渡しても LLM は手本どおり「お世話になっております」で書いた → 先頭の挨拶だけ決定論で置き換える
+    const i = lines.findIndex((l) => l.trim());
+    if (i >= 0 && HEAD_OSEWA_RE.test(lines[i])) {
+      lines[i] = lines[i].replace(HEAD_OSEWA_RE, "$1夜分遅くに失礼致します！！");
+      return { text: lines.join("\n"), count: 1 };
+    }
+    return { text, count: 0 };
+  }
   let count = 0;
   let seen = false;
   const out: string[] = [];

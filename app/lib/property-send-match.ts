@@ -80,6 +80,44 @@ export function ensureRequirementLine(text: string, requirements: readonly strin
 }
 
 /**
+ * 入力に無い「今回の物件の事実・こちらの提案」を落とす（2026-09-15 慶次事例・本番5回中1回ずつ）:
+ *  ①保証会社・審査の話（「独立系保証会社でご案内可能なお部屋を中心に」「並行してお申込み・審査を」）＝今回送る物件の保証会社は分かっていない
+ *  ②手本から写した続いている事情の一文（事情が無いのに「お気に召されたお部屋、代理契約可能か全て交渉させて頂きます」）
+ * grounding = スタッフのキーワード・希望条件・続いている事情・お客様の希望（ここにその話があれば残す）。
+ * ピックアップ行の中の句は句だけ、それ以外の行は行ごと落とす。落としきれない保証会社の話が残れば unresolved
+ */
+const SCREENING_CLAIM_RE = /独立系|信販系|LICC|審査(?:に)?(?:通過|通り)やす|並行して(?:お申込|お申し込み|審査)|保証会社/;
+const SCREENING_CLAUSE_RES: readonly RegExp[] = [
+  /(?:審査(?:に)?(?:通過|通り)やすい|(?:独立系|信販系|LICC系?)(?:の)?保証会社)[^\n、。！!]{0,24}?(?:を中心に|中心に)、?/g,
+  /審査(?:に)?(?:通過|通り)やすい(?:お部屋)?(?:で|の)?/g,
+];
+export function stripUngroundedClaims(text: string, grounding: string): { text: string; removed: string[]; unresolved: boolean } {
+  const removed: string[] = [];
+  const screeningGrounded = /保証会社|審査|独立系|保証人/.test(grounding);
+  const lines = text.split("\n").flatMap((line) => {
+    if (SCREENING_CLAIM_RE.test(line) && !screeningGrounded) {
+      if (/ピックアップ|募集/.test(line)) {
+        let l = line;
+        for (const re of SCREENING_CLAUSE_RES) l = l.replace(re, (m) => { removed.push(m); return ""; });
+        return [l];
+      }
+      removed.push(line.trim());
+      return [];
+    }
+    for (const rule of REQUIREMENT_LINES) {
+      if (/保証会社/.test(rule.line)) continue; // 保証会社・審査は上で扱う
+      if (rule.topic.test(line) && /お気に召された|交渉させて|確認させて/.test(line) && !/ピックアップ/.test(line) && !rule.re.test(grounding) && !rule.topic.test(grounding)) {
+        removed.push(line.trim());
+        return [];
+      }
+    }
+    return [line];
+  });
+  const out = removed.length ? lines.join("\n").replace(/\n{3,}/g, "\n\n").trim() : text;
+  return { text: out, removed, unresolved: !screeningGrounded && SCREENING_CLAIM_RE.test(out) };
+}
+
+/**
  * お客様の期限・困りごとがあるのに本文に「間に合う」の一文が無ければ、挨拶の行の次に差し込む（スタッフ実送信の文そのまま・日付は足さない）。
  * 慶次の実送信: 「慶次さん夜分遅くに失礼致します！！\n無事ご入居間に合いますようにサポートさせて頂きます！！\n現在募集が出ているお部屋で…ピックアップさせて頂きました！！」
  */

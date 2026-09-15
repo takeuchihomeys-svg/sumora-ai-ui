@@ -18,7 +18,7 @@ import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
-import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts } from "@/app/lib/property-send-match";
+import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 
 export const maxDuration = 300;
 
@@ -2338,6 +2338,11 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           if (m) psmText = ((JSON.parse(m[0]) as { message?: string }).message || psmRaw).replace(/\\n/g, "\n");
         } catch { /* JSON で無ければ本文そのもの */ }
         const notices: string[] = [];
+        // 入力に無い保証会社・審査の話・手本から写した事情の一文を落とす（慶次事例: 「独立系保証会社でご案内可能なお部屋を中心に」・事情が無いのに代理契約の交渉）
+        const psmGrounding = [sendKeyword ?? "", conditionsInfo ?? "", threads.requirements.join("\n"), threads.customer.join("\n"), expandedCondGuidanceLines.join("\n")].join("\n");
+        const claims = stripUngroundedClaims(psmText, psmGrounding);
+        if (claims.removed.length > 0) { psmText = claims.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, ungroundedRemoved: claims.removed.map((r) => r.slice(0, 40)) })); }
+        if (claims.unresolved) notices.push("今回の物件の保証会社・審査の話は入力に無いため確認して書き換えてから送信してください");
         // 続いている事情（代理契約 等）の一文が無ければ決定論で差し込む（本番確認: 候補にあっても LLM は 6回中0回しか書かなかった）
         const req = ensureRequirementLine(psmText, threads.requirements);
         if (req.added) { psmText = req.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, requirementLineAdded: req.added })); }
