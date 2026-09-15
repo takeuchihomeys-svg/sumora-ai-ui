@@ -17,6 +17,7 @@ import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./lib/brain-meta-restore";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
 import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
+import { meetingToJst, pendingViewingNotes, isReplaceableViewingNotes, VIEWING_METHOD_PENDING } from "./lib/meeting-calendar";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 
@@ -999,6 +1000,9 @@ export default function Home() {
   const [calendarEventType, setCalendarEventType] = useState<"viewing"|"contract"|"key_handover"|"other"|"application">("viewing");
   const [calendarCustomerName, setCalendarCustomerName] = useState("");
   const [calendarSaving, setCalendarSaving] = useState(false);
+  // 2026-09-15 竹内（隼斗事例）: AIX 待ち合わせの送信直後に作った内覧の予定を、予定を入れる画面で内覧方法を入れて更新する（null なら新規）
+  const [calendarEditingEventId, setCalendarEditingEventId] = useState<number | null>(null);
+  useEffect(() => { if (!calendarModalConvId) setCalendarEditingEventId(null); }, [calendarModalConvId]);
   const [viewingCount, setViewingCount] = useState(1);
   const [viewingProperties, setViewingProperties] = useState<Array<{
     name: string;
@@ -5031,6 +5035,59 @@ export default function Home() {
         return prev - 1;
       });
     }, 1000);
+  };
+
+  // 2026-09-15 竹内（隼斗事例）「AIX 待ち合わせ送ったらカレンダー画面開かれて登録する形。内覧方法をそこに入力すれば内覧担当はカレンダー見るだけで内覧が出来る」:
+  //   送信直後に、画面で入れた日付・時刻・物件・住所で内覧の予定を作り（同じ会話・同じ日の自動の予定・内覧方法が未入力の予定があればそれを使う）、
+  //   予定を入れる画面をその予定の編集で開く。閉じても予定は残る（「内覧方法: 未入力」）
+  const openViewingCalendarAfterMeeting = async (o: { convId: string; customerName: string; meetingDate?: string; meetingTime?: string; propertyName?: string; address?: string }) => {
+    const when = meetingToJst(o.meetingDate, o.meetingTime);
+    if (!when) return;
+    const startAt = new Date(`${when.ymd}T${when.start ?? "10:00"}:00+09:00`).toISOString();
+    const endAt = when.end ? new Date(`${when.ymd}T${when.end}:00+09:00`).toISOString() : null;
+    const title = o.customerName ? `${o.customerName} 内覧` : "内覧";
+    let eventId: number | null = null;
+    try {
+      const { data: sameDay } = await supabase.from("calendar_events")
+        .select("id, notes")
+        .eq("conversation_id", o.convId).eq("event_type", "viewing").eq("is_done", false)
+        .gte("start_at", new Date(`${when.ymd}T00:00:00+09:00`).toISOString())
+        .lte("start_at", new Date(`${when.ymd}T23:59:59+09:00`).toISOString())
+        .order("created_at", { ascending: false });
+      const reuse = ((sameDay ?? []) as Array<{ id: number; notes: string | null }>).find((e) => isReplaceableViewingNotes(e.notes));
+      const row = {
+        title, event_type: "viewing", customer_name: o.customerName || null, conversation_id: o.convId,
+        start_at: startAt, end_at: endAt, all_day: !when.start, notes: pendingViewingNotes(o.propertyName, o.address),
+      };
+      if (reuse) {
+        await supabase.from("calendar_events").update(row).eq("id", reuse.id);
+        eventId = reuse.id;
+      } else {
+        const { data: ins } = await supabase.from("calendar_events").insert(row).select("id").single();
+        eventId = (ins as { id: number } | null)?.id ?? null;
+      }
+      // 待ち合わせが決まったので、この会話のそれまでの自動の内覧の予定（ブレインの「内覧調整」・候補日時の提示から自動で作られた予定）は済みにする
+      //   （内覧担当がカレンダーで本当の内覧と見間違えない・空き枠を埋めない）。内覧方法を入れた予定・この日より後の予定は触らない
+      const { data: olderAuto } = await supabase.from("calendar_events")
+        .select("id, notes")
+        .eq("conversation_id", o.convId).eq("event_type", "viewing").eq("is_done", false)
+        .lt("start_at", new Date(`${when.ymd}T00:00:00+09:00`).toISOString());
+      const staleIds = ((olderAuto ?? []) as Array<{ id: number; notes: string | null }>).filter((e) => /^件数:\s*\d+件\n物件:\s*（未確定）/.test(e.notes ?? "")).map((e) => e.id);
+      if (staleIds.length > 0) await supabase.from("calendar_events").update({ is_done: true }).in("id", staleIds);
+    } catch (e) {
+      console.warn("[meeting-calendar] 予定の作成に失敗（画面は開く）:", e);
+    }
+    setCalendarEventType("viewing");
+    setCalendarCustomerName(o.customerName);
+    setCalendarTitle(title);
+    setCalendarDate(when.ymd);
+    setCalendarTime(when.start ?? "");
+    setCalendarEndTime(when.end ?? "");
+    setCalendarNote(o.address ? `住所: ${o.address}` : "");
+    setViewingCount(1);
+    setViewingProperties([{ name: o.propertyName ?? "", keyType: "", autolock: "", dial: "", kanriName: "", kanriPhone: "", kanriAddress: "" }]);
+    setCalendarModalConvId(o.convId);
+    setCalendarEditingEventId(eventId);
   };
 
   // 2026-09-15 竹内（H 事例）: AIX【電話をかける】の「電話をかける」ボタン（LINEコール）のカードを送り、会話に記録する。
@@ -9283,11 +9340,16 @@ export default function Home() {
                   <line x1="8" y1="2" x2="8" y2="6"/>
                   <line x1="3" y1="10" x2="21" y2="10"/>
                 </svg>
-                予定を入れる
+                {calendarEditingEventId ? "内覧の予定（内覧方法を入れて保存）" : "予定を入れる"}
               </div>
               <button onClick={() => setCalendarModalConvId(null)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white text-sm">✕</button>
             </div>
             <div className="p-4 flex flex-col gap-3 overflow-y-auto overflow-x-hidden flex-1 w-full min-w-0">
+              {calendarEditingEventId && (
+                <div className="rounded-xl border border-[#c8e6c9] bg-[#f1f8e9] px-3 py-2 text-[12px] leading-relaxed text-[#2E7D32]">
+                  ✅ 待ち合わせの日時・物件・住所でカレンダーに登録しました。<b>鍵の開け方（内覧方法）</b>を入れて保存すると、内覧担当はカレンダーを見るだけで内覧できます（閉じても予定は残り「内覧方法 未入力」になります）
+                </div>
+              )}
               {/* 種別 */}
               <div className="flex gap-1.5 flex-wrap">
                 {(["viewing","contract","key_handover","application","other"] as const).map((t) => {
@@ -9480,6 +9542,9 @@ export default function Home() {
                         parts.push(`管理会社(${sub.join(" / ")})`);
                       } else if (p.keyType === "itandi") {
                         parts.push("itandi: 内見予約日の前日から当日の間、閲覧可");
+                      } else {
+                        // 2026-09-15 隼斗事例: 内覧方法が未入力のまま保存した物件は印を残す（カレンダーの一覧で「内覧方法 未入力」）
+                        parts.push(VIEWING_METHOD_PENDING);
                       }
                       return `${label}${parts.join(" / ")}`;
                     }).join("\n");
@@ -9491,18 +9556,21 @@ export default function Home() {
                     // 以前は Promise.all で申込ツール同期(別プロジェクト)・LINE通知まで待っており、
                     // どれか1つでも応答が遅いと保存ボタンが「保存中...」のまま固まっていた。
                     // → 本体だけタイムアウト付きで確定し、付随処理は fire-and-forget にする。
-                    const { error: insertError } = await supabase
-                      .from("calendar_events")
-                      .insert({
-                        title: calendarTitle.trim(),
-                        event_type: calendarEventType,
-                        customer_name: calendarCustomerName,
-                        start_at: startAt,
-                        end_at: endAt,
-                        all_day: isAllDay,
-                        notes: builtNotes,
-                      })
-                      .abortSignal(AbortSignal.timeout(15_000));
+                    // 2026-09-15 隼斗事例: 会話の ID も残す（旧: 入れておらず、会話の内覧の予定と結び付かなかった）。
+                    //   待ち合わせの送信直後に作った予定（calendarEditingEventId）は更新する（二重に作らない）
+                    const eventRow = {
+                      title: calendarTitle.trim(),
+                      event_type: calendarEventType,
+                      customer_name: calendarCustomerName,
+                      conversation_id: convId,
+                      start_at: startAt,
+                      end_at: endAt,
+                      all_day: isAllDay,
+                      notes: builtNotes,
+                    };
+                    const { error: insertError } = calendarEditingEventId
+                      ? await supabase.from("calendar_events").update(eventRow).eq("id", calendarEditingEventId).abortSignal(AbortSignal.timeout(15_000))
+                      : await supabase.from("calendar_events").insert(eventRow).abortSignal(AbortSignal.timeout(15_000));
                     if (insertError) throw insertError;
 
                     // 会話フラグ更新（失敗してもカレンダー登録は成立しているのでUIは進める）
@@ -10071,6 +10139,17 @@ export default function Home() {
                 }),
               }).catch(() => {});
               lastAixLogTextRef.current = null;
+              // 2026-09-15 竹内（隼斗事例）: 待ち合わせを送ったら内覧の予定を作り、予定を入れる画面を開いて内覧方法を入れてもらう
+              if (aixModalType === "meeting_place" && !meta?.scheduled && meta?.meetingDate) {
+                void openViewingCalendarAfterMeeting({
+                  convId: selectedConversation.id,
+                  customerName: selectedConversation.customerName || preferredCustomerName || "",
+                  meetingDate: meta.meetingDate,
+                  meetingTime: meta.meetingTime,
+                  propertyName: meta.meetingPropertyName,
+                  address: meta.meetingPropertyAddress,
+                });
+              }
               // P1: AIX経由テンプレの使用回数をインクリメント（fire-and-forget）
               // ※通常テンプレ送信のselectedTemplateIdRef経路とは独立（AIX動線ではrefを使わないため二重加算なし）
               if (pendingTemplateSource?.id) {

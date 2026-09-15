@@ -855,7 +855,7 @@ ${sentReply}
 JSONのみ（コードブロック不要）:
 {"has_commitment":true,"date":"YYYY-MM-DD","time":"HH:MM or null","all_day":false,"title":"カレンダーイベントタイトル（例: 内覧 エルシオン201, 申込期限 22:00まで）","event_type":"viewing|application|phone|photo|property_send|estimate_sheet|follow_up|other"}
 event_typeの値:
-- "viewing": 内覧・案内・待ち合わせ・現地集合の約束
+- "viewing": 内覧・案内・待ち合わせ・現地集合の約束（日時が1つに決まった待ち合わせだけ。「9/18(金) 10:30〜11:30 17:00〜18:30 ご案内可能です」「本日ご内覧如何でしょうか」等の候補日時の提示・お伺いは約束ではない → has_commitment: false）
 - "application": 申込フォーム有効期限・書類締切・申込手続き
 - "phone": 電話・テレビ電話・ビデオ通話アポ
 - "photo": 室内撮影・写真撮影
@@ -1284,6 +1284,10 @@ export async function POST(req: NextRequest) {
           (aixActionStr.startsWith("property_send") || aixActionStr.startsWith("property_recommendation"))
         ? "property_send"
         : null;
+  // 2026-09-15 竹内（隼斗事例）: 待ち合わせは送信直後に画面が日付・時刻・物件・住所で内覧の予定を作り、内覧方法を入れてもらう（page.tsx）。
+  //   内覧日調整は候補日時の提示で約束ではない（「9/18(金) 10:30〜11:30 17:00〜18:30 ご案内可能です」で 10:30 の内覧の予定ができ、空き枠も埋めていた）。
+  //   → この2つは送信文からの自動登録をしない
+  const skipCalendarDetect = entry_source === "aix_action" && (aixActionStr.startsWith("meeting_place") || aixActionStr.startsWith("viewing_invite"));
 
   // ─── 分割送信マージ: 90秒以内に同じcustomerMessageで送ったものは1レコードに結合 ───
   // LINEでは1つの返信を複数メッセージに分けて送ることが多い。別レコードにすると
@@ -1355,7 +1359,7 @@ export async function POST(req: NextRequest) {
         after(() => markCalendarEventsDone(conversationId, fulfillmentEventType).catch((e) =>
           console.error("[save-reply-example] calendar mark-done failed:", e)));
         after(() => markRelatedDailyTasksDone(conversationId, fulfillmentEventType));
-      } else {
+      } else if (!skipCalendarDetect) {
         after(() => detectAndCreateCalendarEvent({
           sentReply,
           conversationId,
@@ -1576,7 +1580,7 @@ export async function POST(req: NextRequest) {
       after(() => markCalendarEventsDone(conversationId, fulfillmentEventType).catch((e) =>
         console.error("[save-reply-example] calendar mark-done failed:", e)));
       after(() => markRelatedDailyTasksDone(conversationId, fulfillmentEventType));
-    } else {
+    } else if (!skipCalendarDetect) {
       after(() => detectAndCreateCalendarEvent({
         sentReply,
         conversationId,

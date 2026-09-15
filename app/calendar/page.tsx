@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import BottomNav from "../components/BottomNav";
 import { registerSW, requestNotifPermission, showNotif } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
+import { VIEWING_METHOD_PENDING } from "../lib/meeting-calendar";
 
 type EventType = "viewing" | "contract" | "key_handover" | "other" | "application" | "phone" | "photo" | "property_send" | "estimate_sheet" | "follow_up";
 type KeyMethod = "現地" | "管理会社" | "itandi";
@@ -596,8 +597,26 @@ export default function CalendarPage() {
                       {localEv.title}
                       {localEv.customer_name ? `　${localEv.customer_name}` : ""}
                     </span>
+                    {/* 2026-09-15 竹内（隼斗事例）: 内覧は内覧担当がカレンダーを見るだけで動けるよう、物件・鍵の開け方（内覧方法）・住所を全部出す。未入力は印 */}
+                    {localEv.event_type === "viewing" && !isDone && localEv.notes?.includes(VIEWING_METHOD_PENDING) && (
+                      <span className="mt-0.5 inline-block rounded-full bg-[#fff3e0] px-2 py-0.5 text-[10px] font-bold text-[#e65100]">⚠ 内覧方法 未入力</span>
+                    )}
                     {localEv.notes && (
-                      <div className="truncate text-xs text-[#8696a0]">{localEv.notes}</div>
+                      localEv.event_type === "viewing" && !isDone ? (
+                        <div className="mt-0.5 whitespace-pre-line break-all text-xs leading-relaxed text-[#54656f]">
+                          {localEv.notes.split("\n").map((line, li) => {
+                            const addr = line.match(/^住所:\s*(.+)$/);
+                            // 行全体はボタン（タップで編集）なのでリンク要素は入れない。住所をタップすると地図を開く
+                            return addr ? (
+                              <span key={li} role="link"
+                                onClick={(e) => { e.stopPropagation(); window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr[1])}`, "_blank", "noopener"); }}
+                                className="block text-[#1565C0] underline">📍 {addr[1]}</span>
+                            ) : <div key={li}>{line}</div>;
+                          })}
+                        </div>
+                      ) : (
+                        <div className="truncate text-xs text-[#8696a0]">{localEv.notes}</div>
+                      )
                     )}
                   </div>
                 </button>
