@@ -5,6 +5,7 @@ import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMe
 import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable } from "@/app/lib/jst-date";
 import { stripMetaNarration } from "@/app/lib/meta-narration";
+import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
 import { resolveLatestQuotedContext, formatQuotedContextBlock, propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { avoidTopicsForAix } from "@/app/lib/aix-staff-first";
@@ -143,8 +144,8 @@ function buildFacilityLines(f: PropFacilityData): string[] {
 }
 
 // 挨拶時間ルール（全アクション共通ヘルパー・#19）
-// ・21時以降 または 早朝5時以前にスタッフからプロアクティブに連絡する場合は「夜分遅くに失礼致します」
-// ・お客様から連絡が来た返信場面（customerInitiated=true）では時間帯に関わらず通常挨拶
+// ・（旧）21時以降・早朝5時以前の「夜分遅くに失礼致します」は 2026-09-15 に廃止（お客様への文に入れない・Aoi 事例の方針）
+// ・時間帯に関わらず通常挨拶
 // ・初回（isFirstEverReply）→「ご連絡頂きありがとうございます😊！！」
 // ・今日すでにスタッフが送信済み（staffMessagedToday）→ 挨拶行なし（名前行のみ「〇〇さん」で開始＝正解 挨拶なし 412 件内の名前行パターン）
 //   G32（2026-09-09 Fable5 じゅにあ事例・竹内方針）: 「お待たせ致しました」は返信から全廃（final-check BANNED_WORD で block されるため生成側からも除去）
@@ -155,7 +156,8 @@ function buildGreeting(
   customerInitiated: boolean
 ): string {
   if (isFirstEverReply) return "ご連絡頂きありがとうございます😊！！";
-  if (!customerInitiated && (jstHour >= 21 || jstHour <= 5)) return "夜分遅くに失礼致します！！";
+  // 2026-09-15 竹内（Aoi 事例の方針を AIX にも）: 「夜分遅くに失礼致します」はお客様への文に入れない（返信生成と同じ。仕上げの normalizeBannedPhrasing でも落とす）
+  void jstHour; void customerInitiated;
   if (staffMessagedToday) return "";
   return "お世話になっております！！";
 }
@@ -1257,7 +1259,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // AI自由生成プロンプトに注入する挨拶時間ルール（挨拶を含みうるアクションで使用）
     // G32: 当日送信済み（greetingPhrase=""）は挨拶行なし。「お待たせ致しました」は禁止語
     const greetingTimeNote = greetingPhrase
-      ? `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は必ず「${greetingPhrase}」を使うこと（21時以降・早朝5時以前にこちらからプロアクティブに連絡する場合は「夜分遅くに失礼致します！！」）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。「お待たせ致しました」「お待たせいたしました」は禁止語。\n・名前と挨拶文は必ず同じ行につなげて書くこと（例：「〇〇さん${greetingPhrase}」）。名前だけを単独の行・単独の一文に置くのは絶対禁止。`
+      ? `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は必ず「${greetingPhrase}」を使うこと（時間帯に関わらず「夜分遅くに失礼致します」「夜遅くに失礼します」は書かない）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。「お待たせ致しました」「お待たせいたしました」は禁止語。\n・名前と挨拶文は必ず同じ行につなげて書くこと（例：「〇〇さん${greetingPhrase}」）。名前だけを単独の行・単独の一文に置くのは絶対禁止。`
       : `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。本日すでにこちらから送信済みのため挨拶行は書かない（「お世話になっております」「お待たせ致しました」「お待たせいたしました」は禁止）。名前行「〇〇さん」または本題から始めること。`;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
@@ -1494,8 +1496,14 @@ async function handleAction(request: NextRequest): Promise<Response> {
       // 2026-09-15 竹内「こんなの絶対にいれない」: AI の作業メモ（「物件資料を確認します。」「〜のパターンで返信します。」）を落とす（返信生成と同じ関数）
       const meta = stripMetaNarration(stripped);
       if (meta.removed.length > 0) console.log(JSON.stringify({ tag: "aix:meta-narration-removed", action: currentAction, conversationId, removed: meta.removed.map((r) => r.slice(0, 60)) }));
+      // 2026-09-15 竹内（YUYA 事例の本番確認で AIX 保証会社についてに「夜分遅くに失礼致します」が入った）: 返信生成・修正版・補助ボタンと同じ決定論置換を
+      //   AIX の仕上げにも通す（夜間挨拶の除去・承知→かしこまりました・約束の「すぐに」除去・単独の承りました・挨拶の重複。方針4・5・Aoi 事例）
+      const banned = normalizeBannedPhrasing(meta.text);
+      if (banned.night || banned.shochi || banned.hasty || banned.uketamawari || banned.greetDup) {
+        console.log(JSON.stringify({ tag: "aix:banned-phrasing-fixed", action: currentAction, conversationId, night: banned.night, shochi: banned.shochi, hasty: banned.hasty, uketamawari: banned.uketamawari, greetDup: banned.greetDup }));
+      }
       // AIが内部メモを出力した場合、顧客向けメッセージと分離
-      return extractNotice(meta.text, familyName || rawName);
+      return extractNotice(banned.text, familyName || rawName);
     };
     // 線引き学習用: property_check_result の check_pattern を aix_generate_log に残す
     // （aix-weekly-learning が discarded を check_pattern 粒度で集計し、境界質問を分割起票するため）
@@ -2144,7 +2152,7 @@ ${SMORA_COMMON_RULES}
         : `・「ご希望のご条件に合ったお部屋ピックアップさせて頂きました😊！！」で冒頭を続ける`;
 
       // 挨拶判定: buildGreeting（共通ヘルパー・#19）で一元決定
-      // 初回→ご連絡ありがとう / 夜間プロアクティブ→夜分遅くに / 今日挨拶済み→挨拶行なし（G32） / それ以外→お世話になっております
+      // 初回→ご連絡ありがとう / 今日挨拶済み→挨拶行なし（G32） / それ以外→お世話になっております（夜間の「夜分遅くに」は 2026-09-15 に廃止）
       // ★条件受領直後の例外: 直近のお客様メッセージが希望条件の送付（エリア・家賃・間取り等が並ぶ）なら、
       //   スタッフの実運用に合わせて定型挨拶ではなく条件送付への感謝から始める
       const CONDITION_SIGNAL_RE = /家賃|万円|万以内|万まで|間取り|1R|1K|1DK|1LDK|2K|2DK|2LDK|3LDK|ワンルーム|エリア|沿線|徒歩|駅|入居|オートロック|バス.?トイレ|セパレート|独立洗面|宅配ボックス|階以上|築/g;
