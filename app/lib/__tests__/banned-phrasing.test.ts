@@ -119,5 +119,24 @@ describe("2026-09-12 竹内: 挨拶を重ねない（1通に挨拶は1つ）", (
   });
 });
 
+describe("2026-09-15 竹内（慶次事例）: 夜にこちらから届ける AIX は夜間挨拶を残す（keepNightGreeting）", () => {
+  it("K1 「慶次さん夜分遅くに失礼致します！！」はそのまま残る", () => {
+    const t = "慶次さん夜分遅くに失礼致します！！\n\n無事ご入居間に合いますようにサポートさせて頂きます！！\nお手隙の際にご査収ください😌！！";
+    const r = normalizeBannedPhrasing(t, { keepNightGreeting: true });
+    expect(r.text).toBe(t); expect(r.night).toBe(0);
+  });
+  it("K2 夜間挨拶＋お世話になっております（重ね）→ お世話になっておりますを落とす", () => {
+    expect(normalizeBannedPhrasing("慶次さん夜分遅くに失礼致します！！\n慶次さんお世話になっております！！\nお手隙の際にご査収ください😌！！", { keepNightGreeting: true }).text)
+      .toBe("慶次さん夜分遅くに失礼致します！！\nお手隙の際にご査収ください😌！！");
+  });
+  it("K3 夜間挨拶が2つ → 1つ目だけ", () => {
+    expect(normalizeBannedPhrasing("慶次さん夜分遅くに失礼致します！！\n夜分遅くに失礼致します！！\nお手隙の際にご査収ください😌！！", { keepNightGreeting: true }).text)
+      .toBe("慶次さん夜分遅くに失礼致します！！\nお手隙の際にご査収ください😌！！");
+  });
+  it("K4 オプション無し（返信）は従来どおり除去", () => {
+    expect(normalizeBannedPhrasing("慶次さん夜分遅くに失礼致します！！\nお手隙の際にご査収ください😌！！").text).toBe("お手隙の際にご査収ください😌！！");
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

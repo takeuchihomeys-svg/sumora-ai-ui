@@ -18,7 +18,7 @@ import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
-import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine } from "@/app/lib/property-send-match";
+import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts } from "@/app/lib/property-send-match";
 
 export const maxDuration = 300;
 
@@ -145,21 +145,28 @@ function buildFacilityLines(f: PropFacilityData): string[] {
 }
 
 // 挨拶時間ルール（全アクション共通ヘルパー・#19）
-// ・（旧）21時以降・早朝5時以前の「夜分遅くに失礼致します」は 2026-09-15 に廃止（お客様への文に入れない・Aoi 事例の方針）
-// ・時間帯に関わらず通常挨拶
 // ・初回（isFirstEverReply）→「ご連絡頂きありがとうございます😊！！」
 // ・今日すでにスタッフが送信済み（staffMessagedToday）→ 挨拶行なし（名前行のみ「〇〇さん」で開始＝正解 挨拶なし 412 件内の名前行パターン）
 //   G32（2026-09-09 Fable5 じゅにあ事例・竹内方針）: 「お待たせ致しました」は返信から全廃（final-check BANNED_WORD で block されるため生成側からも除去）
+// ・夜 21:00〜4:59 に、こちらから届ける連絡（お客様の最後の発言から90分以上）→「夜分遅くに失礼致します！！」（お世話になっておりますの代わり・重ねない）
+//   2026-09-15 竹内（慶次事例）: スタッフ実送信「慶次さん夜分遅くに失礼致します！！」（お客様の発言から8.7時間後の物件送付）。90日の夜の送信で
+//   こちらからの連絡（その日初めて）は 夜分 6／お世話 2、お客様への返信（90分以内）は 夜分 1／お世話 13。
+//   返信に入れない（Aoi 事例 9/12「お客さんへの返信で入れない・重ねていれない」）は変えない＝90分以内の応答はお世話になっております
+const NIGHT_OUTBOUND_GAP_MIN = 90;
+function isNightOutbound(jstHour: number, minutesSinceLastCustomer: number | null): boolean {
+  const night = jstHour >= 21 || jstHour < 5;
+  // お客様の発言の時刻が分からない時は返信扱い（夜分にしない）
+  return night && minutesSinceLastCustomer !== null && minutesSinceLastCustomer >= NIGHT_OUTBOUND_GAP_MIN;
+}
 function buildGreeting(
   jstHour: number,
   isFirstEverReply: boolean,
   staffMessagedToday: boolean,
-  customerInitiated: boolean
+  minutesSinceLastCustomer: number | null,
 ): string {
   if (isFirstEverReply) return "ご連絡頂きありがとうございます😊！！";
-  // 2026-09-15 竹内（Aoi 事例の方針を AIX にも）: 「夜分遅くに失礼致します」はお客様への文に入れない（返信生成と同じ。仕上げの normalizeBannedPhrasing でも落とす）
-  void jstHour; void customerInitiated;
   if (staffMessagedToday) return "";
+  if (isNightOutbound(jstHour, minutesSinceLastCustomer)) return "夜分遅くに失礼致します！！";
   return "お世話になっております！！";
 }
 
@@ -1249,19 +1256,27 @@ async function handleAction(request: NextRequest): Promise<Response> {
       m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
     );
     // お客様が最後に送ったメッセージ（= スタッフが返信する場面）かどうか
-    // 向こうから連絡が来た場合は何時でも「お世話になっております」（「夜分遅くに」は使わない）
+    // 向こうから連絡が来てすぐ（90分以内）は何時でも「お世話になっております」（「夜分遅くに」は使わない）
     const lastMsgSender = [...recentMsgArray].reverse().find(m => m.sender === "customer" || m.sender === "staff")?.sender ?? "staff";
     const customerInitiated = lastMsgSender === "customer";
+    // お客様の最後の発言から何分か（夜の挨拶を「こちらからの連絡」か「返信」かで分ける。発言が無ければ こちらからの連絡）
+    const lastCustomerMsg = [...recentMsgArray].reverse().find(m => m.sender === "customer");
+    const minutesSinceLastCustomer: number | null = !lastCustomerMsg
+      ? Number.POSITIVE_INFINITY
+      : lastCustomerMsg.rawCreatedAt && !Number.isNaN(Date.parse(lastCustomerMsg.rawCreatedAt))
+        ? (Date.now() - Date.parse(lastCustomerMsg.rawCreatedAt)) / 60000
+        : null;
 
-    // 挨拶（全アクション共通・#19）: 時間帯・初回・当日挨拶済みから挨拶文を一元決定
+    // 挨拶（全アクション共通・#19）: 時間帯・初回・当日挨拶済み・お客様の最後の発言からの時間で挨拶文を一元決定
     const jstHourNow = (new Date().getUTCHours() + 9) % 24;
     // todayJST は既に line 439 で "YYYY-MM-DD" 形式で定義済み → 日本語表記に変換
     const todayJSTFmt = todayJST.replace(/(\d{4})-(\d{2})-(\d{2})/, (_, y, m, d) => `${y}年${parseInt(m)}月${parseInt(d)}日`);
-    const greetingPhrase = buildGreeting(jstHourNow, isFirstEverReply, staffMessagedToday, customerInitiated);
+    const greetingPhrase = buildGreeting(jstHourNow, isFirstEverReply, staffMessagedToday, minutesSinceLastCustomer);
+    const nightGreeting = greetingPhrase.startsWith("夜分遅くに");
     // AI自由生成プロンプトに注入する挨拶時間ルール（挨拶を含みうるアクションで使用）
     // G32: 当日送信済み（greetingPhrase=""）は挨拶行なし。「お待たせ致しました」は禁止語
     const greetingTimeNote = greetingPhrase
-      ? `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は必ず「${greetingPhrase}」を使うこと（時間帯に関わらず「夜分遅くに失礼致します」「夜遅くに失礼します」は書かない）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。「お待たせ致しました」「お待たせいたしました」は禁止語。\n・名前と挨拶文は必ず同じ行につなげて書くこと（例：「〇〇さん${greetingPhrase}」）。名前だけを単独の行・単独の一文に置くのは絶対禁止。`
+      ? `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は必ず「${greetingPhrase}」を使うこと（${nightGreeting ? "夜にこちらから届ける連絡のため。「お世話になっております」と重ねない" : "「夜分遅くに失礼致します」「夜遅くに失礼します」は書かない"}）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。「お待たせ致しました」「お待たせいたしました」は禁止語。\n・名前と挨拶文は必ず同じ行につなげて書くこと（例：「〇〇さん${greetingPhrase}」）。名前だけを単独の行・単独の一文に置くのは絶対禁止。`
       : `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。本日すでにこちらから送信済みのため挨拶行は書かない（「お世話になっております」「お待たせ致しました」「お待たせいたしました」は禁止）。名前行「〇〇さん」または本題から始めること。`;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
@@ -1500,7 +1515,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
       if (meta.removed.length > 0) console.log(JSON.stringify({ tag: "aix:meta-narration-removed", action: currentAction, conversationId, removed: meta.removed.map((r) => r.slice(0, 60)) }));
       // 2026-09-15 竹内（YUYA 事例の本番確認で AIX 保証会社についてに「夜分遅くに失礼致します」が入った）: 返信生成・修正版・補助ボタンと同じ決定論置換を
       //   AIX の仕上げにも通す（夜間挨拶の除去・承知→かしこまりました・約束の「すぐに」除去・単独の承りました・挨拶の重複。方針4・5・Aoi 事例）
-      const banned = normalizeBannedPhrasing(meta.text);
+      //   2026-09-15 竹内（慶次事例）: 夜にこちらから届ける連絡（挨拶の決定が夜分）は夜間挨拶を1つ残し、お世話になっておりますを重ねない
+      const banned = normalizeBannedPhrasing(meta.text, { keepNightGreeting: nightGreeting });
       if (banned.night || banned.shochi || banned.hasty || banned.uketamawari || banned.greetDup) {
         console.log(JSON.stringify({ tag: "aix:banned-phrasing-fixed", action: currentAction, conversationId, night: banned.night, shochi: banned.shochi, hasty: banned.hasty, uketamawari: banned.uketamawari, greetDup: banned.greetDup }));
       }
@@ -2154,7 +2170,7 @@ ${SMORA_COMMON_RULES}
         : `・「ご希望のご条件に合ったお部屋ピックアップさせて頂きました😊！！」で冒頭を続ける`;
 
       // 挨拶判定: buildGreeting（共通ヘルパー・#19）で一元決定
-      // 初回→ご連絡ありがとう / 今日挨拶済み→挨拶行なし（G32） / それ以外→お世話になっております（夜間の「夜分遅くに」は 2026-09-15 に廃止）
+      // 初回→ご連絡ありがとう / 今日挨拶済み→挨拶行なし（G32） / 夜にこちらから届ける→夜分遅くに失礼致します（慶次事例） / それ以外→お世話になっております
       // ★条件受領直後の例外: 直近のお客様メッセージが希望条件の送付（エリア・家賃・間取り等が並ぶ）なら、
       //   スタッフの実運用に合わせて定型挨拶ではなく条件送付への感謝から始める
       const CONDITION_SIGNAL_RE = /家賃|万円|万以内|万まで|間取り|1R|1K|1DK|1LDK|2K|2DK|2LDK|3LDK|ワンルーム|エリア|沿線|徒歩|駅|入居|オートロック|バス.?トイレ|セパレート|独立洗面|宅配ボックス|階以上|築/g;
@@ -2174,7 +2190,8 @@ ${SMORA_COMMON_RULES}
 
       // 新着物件モード: 希望条件がない場合のみ固定テンプレート（AI不要）
       // 希望条件がある場合は下のAI生成（sendMode === "new_arrival" 分岐）で具体条件を文中に織り込む
-      if (sendMode === "new_arrival" && !conditionsInfo) {
+      // 2026-09-15 竹内（慶次事例）: 「会話を合わせる」を押した時は固定テンプレに落とさない（新着＋希望条件なしで押しても「新着で…募集にでました」のままだった）
+      if (sendMode === "new_arrival" && !conditionsInfo && body.conversation_match !== true) {
         const greeting = greetingLine;
         const vacatingSection = vacatingInfo
           ? `\n\n${vacatingInfo}`
@@ -2229,15 +2246,16 @@ ${SMORA_COMMON_RULES}
         let psmReqSources: Array<{ sender: string; text: string }> | undefined;
         if (conversationId) {
           try {
-            const { data: older } = await supabase.from("messages").select("text, created_at").eq("conversation_id", conversationId).eq("sender", "customer")
-              .order("created_at", { ascending: false }).limit(80);
+            // 画面に出ている最後の発言より後は読まない（スタッフが見ている会話と同じ範囲。過去の場面の再現確認でも後の発言が混ざらない）
+            const psmUpper = [...recentMsgArray].reverse().find((m) => m.rawCreatedAt && !Number.isNaN(Date.parse(m.rawCreatedAt)))?.rawCreatedAt;
+            let q = supabase.from("messages").select("text, created_at").eq("conversation_id", conversationId).eq("sender", "customer");
+            if (psmUpper) q = q.lte("created_at", psmUpper);
+            const { data: older } = await q.order("created_at", { ascending: false }).limit(80);
             psmReqSources = ((older ?? []) as Array<{ text: string | null }>).reverse().map((r) => ({ sender: "customer", text: r.text ?? "" }));
           } catch { /* 読めなければ画面の分だけ */ }
         }
-        const threads = extractPropertySendThreads(
-          (Array.isArray(recent_messages) ? (recent_messages as Array<{ sender: string; text?: string | null }>) : []).map((m) => ({ sender: m.sender, text: m.text ?? "" })),
-          { requirementSources: psmReqSources },
-        );
+        const psmThreadMsgs = (Array.isArray(recent_messages) ? (recent_messages as Array<{ sender: string; text?: string | null }>) : []).map((m) => ({ sender: m.sender, text: m.text ?? "" }));
+        const threads = extractPropertySendThreads(psmThreadMsgs, { requirementSources: psmReqSources });
         const threadsBlock = buildPropertySendThreadsBlock(threads);
         const psmStaticSystem = `${GENERATION_SYSTEM}
 
@@ -2251,6 +2269,7 @@ ${aixPropertySendRules}
 
 【構成（この順・空行で区切る）】
 ①挨拶行（動的に渡す実値をそのまま。挨拶行なしの指示ならお客様名の行から）
+①'【会話の糸口】に＜お客様の期限・困りごと＞がある時だけ:「無事ご入居間に合いますようにサポートさせて頂きます！！」（スタッフ実送信の文そのまま。先に受け止めてから物件の行へ）
 ②ピックアップ行（1行）:「〇〇（エリア）から…お部屋ピックアップさせて頂きました！！」（物件と一緒に送る文なので必ず過去形「しました」。直前のこちらの「お送りさせていただきます」を写さない）。エリア・特徴の呼び方は会話でスタッフ・お客様が使った言葉をそのまま（例:「広めのお部屋」「大きめのお部屋」「審査通過しやすい」）。希望条件を全部並べない（入れるのは最大2つ）
 ③会話に合わせた1〜2文:【会話の糸口（候補）】にある事柄だけから、今のお客様に一番効く物を選んで書く（例:「お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！」「無事ご入居間に合いますようにサポートさせて頂きます！！」「ご希望の家賃ですと募集ございませんでしたので条件広げてお送りしております！！」「こちら2部屋となります！」）。候補が無ければ③は書かない
 ④退去予定の物件があれば「◎〇〇\n[退去日]退去予定となりますので[退去日の翌日]以降ご内覧可能です！」（渡された情報だけ）
@@ -2258,13 +2277,15 @@ ${aixPropertySendRules}
 
 【絶対禁止】
 ・会話・希望条件・渡された情報に無い物件名・金額・数字・日付・条件・約束を書くこと（糸口の候補に無い事柄は書かない）
-・「ご希望のご条件に合ったお部屋」のような抽象語だけのピックアップ行
+・物件の事実やこちらの新しい提案を足すこと（「独立系の保証会社のお部屋を中心に」「審査通過しやすい」「並行してお申込み・審査を進められます」等。今回送る物件の保証会社・審査は分かっていない。糸口・希望条件・キーワードにある時だけ）
+・お客様の前の発言（書類・申込・内覧）へのお礼やその話（「給与明細のご準備ありがとうございます」等）。物件ピックアップの文は今回の物件の話だけ
+・希望条件・会話にエリアや特徴があるのに「ご希望のご条件に合ったお部屋」だけで済ませるピックアップ行（エリア等が分からない時は「〇〇さんのご条件に近いお部屋」で可）
 ・手本の中身（別のお客様の物件・事情）を写すこと。手本は言い回しだけ
 ・謝罪・🙏・「お待たせ致しました」・見積書の話（見積書は別の AIX）
 ・「引き続き全力でサポート」等の大きな締め（⑤で締める）
 ・こちらの前の発言にある挨拶・お礼を繰り返すこと（「本日お時間頂きありがとうございました」は内覧後の挨拶で送信済み。①の挨拶行だけ）
 
-【③の選び方】お客様の続いている事情（代理契約・審査・ペット 等）が候補にあれば最優先で「今回の物件でこちらがどうするか」を1文（例:「お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！」）。次に今回のピックアップの経緯（条件を広げた・募集が無かった）。合計1〜2文
+【③の選び方】お客様の続いている事情（代理契約・審査・ペット 等）が候補にあれば最優先で「今回の物件でこちらがどうするか」を1文（例:「お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！」）。次に今回のピックアップの経緯（条件を広げた・募集が無かった）。合計1〜2文。①'を書いた時は③を足さなくてよい（スタッフ実送信は ①→①'→②→⑤ の4行）
 
 【スタッフが会話に合わせて送った実文（言い回しの手本）】
 ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")}
@@ -2274,8 +2295,17 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
         const inviteRule = skipViewingInvite
           ? "【内覧誘導】今回は内覧の誘い（「お気に召されましたらご案内」「ご都合よろしいお日にち」）・内覧日時を一切書かない（内覧は AIX【内覧日調整】で送る）"
           : `【内覧誘導】④の後に「${name}お気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！」を1文${calendarData ? `、続けて「直近ですと\n${calendarData}\nご案内可能です！！」` : ""}`;
+        // 送り方（モード）ごとの②の言い方。新着は「新着で…」か会話に合わせて「現在募集が出ているお部屋で…」（慶次の実送信）
+        const psmModeNote = sendMode === "new_arrival"
+          ? `【今回の送り方】新着（最近募集に出たお部屋${newArrivalImgCount > 0 ? `・${newArrivalCountStr}` : ""}）。②は「新着で${name}にオススメできるお部屋募集に出ましたのでピックアップさせて頂きました！！」か、会話に合わせて「現在募集が出ているお部屋で${name}のご条件に近いお部屋全てピックアップさせて頂きました！！」の言い方`
+          : sendMode === "widen"
+            ? "【今回の送り方】条件を広げてお探しした（広げた条件は下の説明の事柄だけ）"
+            : sendMode === "alternative"
+              ? "【今回の送り方】お客様が気にされた物件の代わりになるお部屋"
+              : "【今回の送り方】ご条件からピックアップしたお部屋";
         const psmDynamic = [
           greetingLine ? `【①挨拶行の実値】\n${greetingLine}` : "【①挨拶行】本日すでに送信済みのため挨拶行なし。お客様名の行から始める",
+          psmModeNote,
           nameNote.trim(),
           conditionsInfo ? `【お客様の希望条件（②で使うのは最大2つ・会話で使った言い方を優先）】\n${conditionsInfo}` : "",
           keywordRule.trim(),
@@ -2293,14 +2323,14 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           vacatingInfo ? `\n\n【退去予定・案内不可の物件情報（必ず全て伝えること）】\n${vacatingInfo}` : "",
           expandedCondNote,
           recentHistory,
-          situationNote,
-          summaryNote,
+          // situationNote・summaryNote（「訴求の軸として必ず反映」）は渡さない: 慶次事例で「独立系の保証会社のお部屋を中心に」「並行してお申込み・審査を」を
+          //   作らせた（今回の物件の保証会社は分かっていない）。会話を合わせるは糸口の事柄だけ＝固定の型の方には残す
           pspGuidanceNote,
         ].join("")
           + `\n\n上記の会話の流れに合わせて、${name}への物件ピックアップ送付メッセージを1通生成してください（③は【会話の糸口（候補）】の事柄だけ）。`
           + (sendDiffNote ? `\n\n${sendDiffNote}` : "")
           + (sendStarNote ? "\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n" + sendStarNote : "");
-        console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, threads: { customer: threads.customer.length, staff: threads.staff.length }, sendMode, skipViewingInvite }));
+        console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, threads: { customer: threads.customer.length, staff: threads.staff.length, requirements: threads.requirements.length, deadline: (threads.deadline ?? []).length }, sendMode, skipViewingInvite, greeting: nightGreeting ? "night" : greetingPhrase ? "standard" : "none" }));
         const psmRaw = await callClaude(psmStaticSystem, psmUser, currentAction, psmDynamic);
         let psmText = psmRaw;
         try {
@@ -2311,12 +2341,18 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
         // 続いている事情（代理契約 等）の一文が無ければ決定論で差し込む（本番確認: 候補にあっても LLM は 6回中0回しか書かなかった）
         const req = ensureRequirementLine(psmText, threads.requirements);
         if (req.added) { psmText = req.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, requirementLineAdded: req.added })); }
+        // お客様の期限・困りごと（退去を伝えてしまった 等）→ 挨拶の次に「無事ご入居間に合いますようにサポートさせて頂きます！！」（慶次のスタッフ実送信）
+        const dl = ensureDeadlineSupportLine(psmText, threads.deadline ?? []);
+        if (dl.added) { psmText = dl.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, deadlineLineAdded: true })); }
         // ピックアップ行は過去形（直前のこちらの「ピックアップしお送りさせていただきます」を写して未来形になる回があった）
         const tense = fixPickupTense(psmText);
         if (tense.fixed > 0) { psmText = tense.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, tenseFixed: tense.fixed })); }
         // こちらの前の発言のお礼（本日お時間頂きありがとうございました）の繰り返しは決定論で落とす（本番確認で3回中3回入った）
         const thanks = stripRepeatedThanksLines(psmText);
         if (thanks.removed > 0) { psmText = thanks.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, repeatedThanksRemoved: thanks.removed })); }
+        // 古い話へのお礼（「給与明細のご準備ありがとうございます」＝5日前の書類）を落とす。お礼の対象がまだ応えていないお客様の発言に無ければ古い話
+        const stale = stripUnanchoredThanksLines(psmText, freshCustomerTexts(psmThreadMsgs));
+        if (stale.removed.length > 0) { psmText = stale.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, staleThanksRemoved: stale.removed.map((r) => r.slice(0, 40)) })); }
         if (skipViewingInvite) {
           const s = stripViewingInviteLines(psmText);
           if (s.removed > 0) { psmText = s.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, inviteLinesRemoved: s.removed })); }

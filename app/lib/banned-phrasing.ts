@@ -156,9 +156,47 @@ export function dedupeGreetings(text: string): { text: string; count: number } {
   return { text: out, count: matches.length - 1 };
 }
 
+/**
+ * 2026-09-15 竹内（慶次事例）: こちらから夜に届ける AIX（物件・御見積書など）は「〇〇さん夜分遅くに失礼致します！！」が正
+ * （90日の実送信: 夜 21〜5時・お客様の最後の発言から90分以上・その日初めての送信 → 夜分 6／お世話 2。返信（90分以内）→ 夜分 1／お世話 13）。
+ * 挨拶の決定（AIX の buildGreeting）が夜分にした時だけ使う: 夜間挨拶は最初の1つを残し、重ねた「お世話になっております」を落とす（Aoi 事例「重ねていれない」）
+ */
+const OSEWA_UNIT_RE = /(?:[^\n！!。]{0,15}(?:さん|様)[、,]?[ \t　]*)?(?:いつも)?お世話になっております[😊😌🙇]*[！!。、]*[ \t　]*/g;
+/** 行頭の夜間挨拶（NIGHT_GREETING_RE と同じ形を1行ずつ見る版） */
+const NIGHT_HEAD_RE = /^([ \t　]*)(?:[^\n！!。]{0,15}(?:さん|様)[、,]?[ \t　]*)?夜(?:分)?(?:遅く)?に?(?:大変)?(?:失礼(?:致|いた)?します|失礼(?:致|いた)?しております|すみません|申し訳(?:ございません|御座いません|ありません))[😊😌🙇]*[！!。]*[ \t　]*/;
+export function keepOneNightGreeting(text: string): { text: string; count: number } {
+  const lines = text.split("\n");
+  if (!lines.some((l) => NIGHT_HEAD_RE.test(l))) return { text, count: 0 };
+  let count = 0;
+  let seen = false;
+  const out: string[] = [];
+  for (const line of lines) {
+    const m = NIGHT_HEAD_RE.exec(line);
+    let l = line;
+    if (m) {
+      if (!seen) { seen = true; }
+      else {
+        // 2つ目以降の夜間挨拶は挨拶の部分だけ落とし、残りが無ければ行ごと落とす
+        count++;
+        l = (m[1] ?? "") + line.slice(m[0].length);
+        if (!l.trim()) continue;
+      }
+    }
+    // 重ねた「お世話になっております」を落とす（同じ行でも別の行でも）。行が空になったら行ごと落とす
+    const osewa = (l.match(OSEWA_UNIT_RE) ?? []).length;
+    if (osewa > 0) {
+      count += osewa;
+      l = l.replace(OSEWA_UNIT_RE, "");
+      if (!l.trim()) continue;
+    }
+    out.push(l);
+  }
+  return { text: out.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, ""), count };
+}
+
 /** 方針4・5の決定論置換（生成・後処理・修正版・few-shot 注入の共通入口） */
-export function normalizeBannedPhrasing(text: string): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number } {
-  const n = stripNightGreeting(text);
+export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?: boolean } = {}): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number } {
+  const n = opts.keepNightGreeting ? keepOneNightGreeting(text) : stripNightGreeting(text);
   const g = dedupeGreetings(n.text);
   const u = normalizeBareUketamawari(g.text);
   const a = normalizeShochi(u.text);
