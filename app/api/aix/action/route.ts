@@ -18,7 +18,7 @@ import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
-import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense } from "@/app/lib/property-send-match";
+import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine } from "@/app/lib/property-send-match";
 
 export const maxDuration = 300;
 
@@ -2308,6 +2308,9 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           if (m) psmText = ((JSON.parse(m[0]) as { message?: string }).message || psmRaw).replace(/\\n/g, "\n");
         } catch { /* JSON で無ければ本文そのもの */ }
         const notices: string[] = [];
+        // 続いている事情（代理契約 等）の一文が無ければ決定論で差し込む（本番確認: 候補にあっても LLM は 6回中0回しか書かなかった）
+        const req = ensureRequirementLine(psmText, threads.requirements);
+        if (req.added) { psmText = req.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, requirementLineAdded: req.added })); }
         // ピックアップ行は過去形（直前のこちらの「ピックアップしお送りさせていただきます」を写して未来形になる回があった）
         const tense = fixPickupTense(psmText);
         if (tense.fixed > 0) { psmText = tense.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, tenseFixed: tense.fixed })); }

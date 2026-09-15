@@ -1,6 +1,6 @@
 // 2026-09-15 竹内（カイナ事例）: 物件ピックアップの「会話を合わせる」— 会話の糸口の抽出と内覧誘導の除去
 // 実行: npx tsx app/lib/__tests__/property-send-match.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense } from "../property-send-match";
+import { extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine } from "../property-send-match";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -80,6 +80,16 @@ it("ピックアップ行の未来形を過去形に（本番で写した「ピ�
   expect(r.fixed).toBe(1);
   expect(r.text).toContain("お部屋ピックアップさせていただきました😊！！");
   expect(fixPickupTense("お部屋ピックアップさせて頂きました！！").fixed).toBe(0);
+});
+
+it("代理契約の事情があるのに本文に無ければ、ご査収の前に交渉の一文を差し込む（カイナの実送信と同じ文）", () => {
+  const r = ensureRequirementLine("カイナさんお世話になっております！！\n\nエリア広げさせていただき、大きめのお部屋でカイナさんにオススメできるお部屋ピックアップさせて頂きました！！\n\nお手隙の際にご査収ください😌！！", ["1度この2つで代理契約可能か確認していただけますでしょうか？"]);
+  expect(r.added).toBe("お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！");
+  expect(r.text).toBe("カイナさんお世話になっております！！\n\nエリア広げさせていただき、大きめのお部屋でカイナさんにオススメできるお部屋ピックアップさせて頂きました！！\n\nお気に召されたお部屋代理契約可能か全て交渉させて頂きます！！\nお手隙の際にご査収ください😌！！");
+});
+it("本文に既に代理契約の話があれば足さない・事情が無ければ足さない", () => {
+  expect(ensureRequirementLine("お気に召されたお部屋代理契約可能か交渉させて頂きます！！\nお手隙の際にご査収ください😌！！", ["代理契約可能でしょうか？"]).added).toBe(null);
+  expect(ensureRequirementLine("お手隙の際にご査収ください😌！！", []).added).toBe(null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -42,6 +42,31 @@ export function fixPickupTense(text: string): { text: string; fixed: number } {
   return { text: fixed ? out : text, fixed };
 }
 
+/**
+ * 続いている事情への一文を決定論で差し込む（LLM が糸口の候補にあっても書かない時の保険。初期費用を抑える一文と同じ考え:
+ * 名前だけ 0/3 → 文例入り 1/3 → 差し込み 3/3）。本文に既にその話題があれば足さない。締めの行（ご査収）の前に置く
+ */
+const REQUIREMENT_LINES: ReadonlyArray<{ re: RegExp; topic: RegExp; line: string }> = [
+  { re: /代理契約|名義/, topic: /代理契約|名義/, line: "お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！" },
+  { re: /ペット|猫|犬/, topic: /ペット|猫|犬|飼育/, line: "お気に召されたお部屋ペット飼育可能か全て確認させて頂きます！！" },
+  { re: /駐車場|バイク/, topic: /駐車場|バイク|駐輪/, line: "お気に召されたお部屋駐車場の空き状況も確認させて頂きます！！" },
+  { re: /保証人|保証会社|審査/, topic: /保証人|保証会社|審査/, line: "お気に召されたお部屋の保証会社・審査面も確認させて頂きます！！" },
+];
+export function ensureRequirementLine(text: string, requirements: readonly string[]): { text: string; added: string | null } {
+  if (requirements.length === 0) return { text, added: null };
+  const joined = requirements.join("\n");
+  const rule = REQUIREMENT_LINES.find((r) => r.re.test(joined));
+  if (!rule || rule.topic.test(text)) return { text, added: null };
+  const lines = text.split("\n");
+  // 締め（ご査収）の行の前に、空行を挟んで置く
+  let idx = lines.length;
+  for (let i = lines.length - 1; i >= 0; i--) if (/ご査収|ご確認ください/.test(lines[i])) { idx = i; break; }
+  const before = lines.slice(0, idx).join("\n").trimEnd();
+  const after = lines.slice(idx).join("\n");
+  const out = after ? `${before}\n\n${rule.line}\n${after}` : `${before}\n\n${rule.line}`;
+  return { text: out, added: rule.line };
+}
+
 export function stripRepeatedThanksLines(text: string): { text: string; removed: number } {
   let removed = 0;
   const kept = text.split("\n").filter((l) => { if (REPEATED_THANKS_LINE_RE.test(l.trim())) { removed++; return false; } return true; });
