@@ -11,7 +11,7 @@
 - **中身**: `app/lib/guarantor-companies.ts`（純関数・テスト28件）: マスタ25社（名寄せ: 日本セーフティ(ー)／Casa・カーサ／エポス(カード)／オリコ→オリコフォレントインシュア／JID→日本賃貸保証 等・既定の種類）・planParallelScreening（同じ会社2物件以上＝かぶり・2社以上で並行）・buildGuarantorInfoText・checkGuarantorFacts（入力に無い会社名を〇〇・語境界・半角カナ）。`/api/guarantor-companies`（GET/POST・内部認証）・テーブル guarantor_companies（本番に作成済み）。aix/action `guarantor_info`（会話を合わせるは静的 system＋事実ブロック → 照合 NG で1回作り直し → notice）
 - **記録**: log-aix-usage → sent_facts detail{guarantors, parallel}（台帳 guarantor_explained・ブレインに「物件: 会社（独立系）／並行審査を勧めた」）
 - **ブレインは選ばない**（スタッフが管理会社に確認した後に開く AIX）。お客様の審査の質問は場面 S3 → 物件確認した/保証会社 のまま
-- 確認: YUYA の5物件で固定テンプレ（日本セーフティ(ー)の2物件がまとまり「どちらか1件」・オリコ→信販系・日本賃貸保証→LICC系）。会話を合わせるは本番で1回確認（下記）
+- 確認: YUYA の5物件で固定テンプレ（日本セーフティ(ー)の2物件がまとまり「どちらか1件」・オリコ→信販系・日本賃貸保証→LICC系）。会話を合わせるは本番（YUMA）で1回: 事実は全て正しく照合の指摘0。冒頭に「夜分遅くに失礼致します」が入った → AIX の挨拶ヘルパーの夜間分岐を廃止し、AIX の仕上げ（finalize）に normalizeBannedPhrasing を追加（AIX 全種・60日で6通に入っていた）
 - 設計知見: 事例＋汎用「新しい AIX を足す時の型（2026-09-15 版）」
 - 残: 初回の本番で募集状況・見積の文が混じったら AIX_ACTION_TO_STATES.guarantor_info を ["guarantor_info"] に絞る。スマホの画面での動作確認は未実施
 
