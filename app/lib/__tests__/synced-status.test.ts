@@ -1,6 +1,6 @@
 // 2026-09-14 タクミ事例: 審査管理からの同期で状態を後戻りさせない（先の段階へ進める時だけ書く）
 // 実行: npx tsx app/lib/__tests__/synced-status.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { resolveSyncedStatus } from "../conversation-status";
+import { resolveSyncedStatus, resolveScreeningSync } from "../conversation-status";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -26,6 +26,25 @@ it("成約・失注はスタッフが決める（同期で入れない・外さ�
 it("知らない状態名・空は書かない", () => {
   expect(resolveSyncedStatus("hearing", "unknown_status")).toBe(null);
   expect(resolveSyncedStatus("hearing", null)).toBe(null);
+});
+
+// 2026-09-15 隼斗事例: 否決で物件提案中に戻した後、審査管理の「screening」が届き続けても審査中に戻さない
+const S = (cur: string | null, inc: string | null, last: string | null, isPostApply = false) => resolveScreeningSync(cur, inc, last, { isPostApply });
+it("隼斗: 否決で物件提案中に戻した → 審査管理はずっと screening（前回と同じ値）→ 状態は動かさない", () => {
+  const r = S("proposing", "screening", "screening");
+  expect(r.status).toBe(null); expect(r.lastSeen).toBe("screening");
+});
+it("審査管理の状態が変わった時（新しい出来事）だけ、従来どおり先の段階へ進める", () => {
+  expect(S("proposing", "applying", "property_recommendation").status).toBe("applying");
+  expect(S("applying", "property_recommendation", "applying").status).toBe(null); // 後戻りはしない（タクミ）
+});
+it("前回の値を覚えていない会話（導入前）は今回の値を覚えるだけ（導入直後に一斉に審査中へ戻さない）", () => {
+  const r = S("proposing", "screening", null);
+  expect(r.status).toBe(null); expect(r.lastSeen).toBe("screening");
+});
+it("状態がまだ無い会話には入れる／空の値は覚えている値を保つ", () => {
+  expect(S(null, "new_inquiry", null).status).toBe("new_inquiry");
+  expect(S("proposing", null, "screening").lastSeen).toBe("screening");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

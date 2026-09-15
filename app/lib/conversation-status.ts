@@ -110,3 +110,26 @@ export function resolveSyncedStatus(
   const curRank = Math.max(STATUS_STAGE_RANK[cur] ?? -1, opts.isPostApply ? STATUS_STAGE_RANK.applying : -1);
   return incRank > curRank ? inc : null;
 }
+
+/**
+ * 審査管理からの同期（sync-from-screening）で状態を書くか。書かない時 status は null。lastSeen は次に覚えておく審査管理の状態。
+ * 2026-09-15 竹内（隼斗事例）「申込して審査が否決となって物件提案中に戻したお客さんが、時間経過したら申込・審査中に戻ってしまう」:
+ *   審査管理の状態は否決の後も「screening」のまま。審査管理も同じ LINE を受けて自分の会話を更新するたびに同期が呼ばれ、
+ *   「先の段階へ進める」（resolveSyncedStatus）で物件提案中（2）→ 審査中（5）に何度も戻していた（スタッフが手で4回戻した・同期の書き込みは履歴なし）。
+ *   同期が状態を動かすのは、審査管理の状態が前回の同期から変わった時（新しい出来事）だけにする。同じ値が届き続けるだけならスタッフの判断のまま。
+ *   前回の値を覚えていない（この仕組みの導入前の会話）時は、今回の値を覚えるだけで状態は動かさない（導入直後に一斉に審査中へ戻さない）
+ */
+export function resolveScreeningSync(
+  current: string | null | undefined,
+  incoming: string | null | undefined,
+  lastSeen: string | null | undefined,
+  opts: { isPostApply?: boolean } = {},
+): { status: string | null; lastSeen: string | null } {
+  const inc = (incoming ?? "").trim();
+  if (!inc) return { status: null, lastSeen: (lastSeen ?? "").trim() || null };
+  const cur = (current ?? "").trim();
+  if (!cur) return { status: inc, lastSeen: inc };               // 状態がまだ無い会話には入れる（従来どおり）
+  const prev = (lastSeen ?? "").trim();
+  if (!prev || prev === inc) return { status: null, lastSeen: inc }; // 審査管理の状態が変わっていない → スタッフの判断のまま
+  return { status: resolveSyncedStatus(cur, inc, opts), lastSeen: inc };
+}

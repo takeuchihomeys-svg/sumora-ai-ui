@@ -3232,12 +3232,16 @@ export default function Home() {
       // B6(Fable5): クローズ系ステータスへの変更時は suggested_aix_meta もクリア
       // （skip-status チェックは新規分析を防ぐだけで、古い「次アクション」メタは残り続けていた）
       const isClosingStatus = ["contract", "closed_won", "closed_lost", "lost"].includes(nextStatus);
+      // 2026-09-15 隼斗事例: 否決などで申込より前の状態に戻した時は、申込の受信印（申込フォーム・申込書画像）も外す。
+      //   印が残ると、物件を探し直す間のお客様の画像や直近8件の結合判定で、揃ったとみなされ申込中へ自動で戻る（line-webhook tryPromoteToApplying）
+      const isBackToPreApply = !isClosingStatus && !["applying", "application", "screening", "approved"].includes(nextStatus);
       const { error: updateError } = await supabase
         .from("conversations")
         .update({
           status: nextStatus,
           updated_at: new Date().toISOString(),
           ...(isClosingStatus ? { suggested_aix_meta: null } : {}),
+          ...(isBackToPreApply ? { applying_text_received: false, applying_image_received: false } : {}),
         })
         .eq("id", selectedConversation.id);
 

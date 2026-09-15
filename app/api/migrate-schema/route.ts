@@ -3076,6 +3076,10 @@ CREATE TABLE IF NOT EXISTS llm_job_attempts (
 );
 ALTER TABLE llm_job_attempts DISABLE ROW LEVEL SECURITY;
 
+-- conversations.screening_last_status: 審査管理（screening-admin）から前回の同期で届いた状態（2026-09-15 竹内・隼斗事例）
+--   同期が状態を動かすのは審査管理の状態が前回から変わった時だけ（否決の後も screening のまま届き続けて、物件提案中に戻した会話を審査中へ戻していた）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS screening_last_status TEXT;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

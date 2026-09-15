@@ -1,6 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { resolveSyncedStatus } from "@/app/lib/conversation-status";
+import { resolveScreeningSync } from "@/app/lib/conversation-status";
 import webpush from "web-push";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -198,6 +198,16 @@ async function sendWebPush(title: string, body: string) {
   }
 }
 
+/** 同期で状態を動かした時は履歴に残す（2026-09-15 隼斗事例: 同期の書き込みだけ履歴が無く「誰が審査中に戻したか」を追えなかった） */
+async function recordSyncStatusChange(c: { convId: string; from: string | null; to: string } | null): Promise<void> {
+  if (!c) return;
+  const { error } = await supabase.from("conversation_stage_history").insert({
+    conversation_id: c.convId, from_status: c.from, to_status: c.to, trigger: "sync_screening",
+  });
+  if (error) console.warn("[sync] stage_history insert failed:", error.message);
+  console.log(JSON.stringify({ tag: "sync:status-change", conversationId: c.convId, from: c.from, to: c.to }));
+}
+
 export async function POST(req: NextRequest) {
   const secret = req.headers.get("x-sync-secret");
   if (!process.env.SYNC_SECRET || secret !== process.env.SYNC_SECRET) {
@@ -245,17 +255,25 @@ export async function POST(req: NextRequest) {
 
     const { data: existingConv } = await supabase
       .from("conversations")
-      .select("account, updated_at, status, is_post_apply")
+      .select("account, updated_at, status, is_post_apply, screening_last_status")
       .eq("id", String(record.id))
       .maybeSingle();
 
     // 2026-09-14 竹内（タクミ事例）「申込中にしているのに物件提案中に戻ってしまう」: 状態はこちら（AIXLINX）でスタッフが管理している。
     //   審査管理も同じ LINE を受けて会話を更新するたびにここが呼ばれ、先方の状態（property_recommendation）で無条件に上書きしていた
     //   （申込中にした後、お客様の「よろしくお願い致します！」の同期で物件提案中に戻った）。先の段階へ進める時だけ書く（conversation-status.ts）
+    // 2026-09-15 竹内（隼斗事例）「否決で物件提案中に戻したのに、時間が経つと申込・審査中に戻る」: 審査管理の状態は否決の後も screening のまま届き続け、
+    //   「先へ進める」で何度も審査中に戻していた。審査管理の状態が前回の同期から変わった時だけ動かす（resolveScreeningSync・screening_last_status）
+    let statusChange: { convId: string; from: string | null; to: string } | null = null;
     if (existingConv) {
-      const next = resolveSyncedStatus(existingConv.status as string | null, upsertData.status as string | null, { isPostApply: !!existingConv.is_post_apply });
-      if (next === null) delete upsertData.status;
-      else upsertData.status = next;
+      const r = resolveScreeningSync(existingConv.status as string | null, upsertData.status as string | null,
+        (existingConv as { screening_last_status?: string | null }).screening_last_status ?? null, { isPostApply: !!existingConv.is_post_apply });
+      if (r.status === null) delete upsertData.status;
+      else upsertData.status = r.status;
+      upsertData.screening_last_status = r.lastSeen;
+      if (r.status !== null && r.status !== existingConv.status) statusChange = { convId: String(record.id), from: (existingConv.status as string | null) ?? null, to: r.status };
+    } else {
+      upsertData.screening_last_status = (upsertData.status as string | null) ?? null;
     }
 
     // 手動設定済みのアカウントを上書きしない
@@ -287,14 +305,20 @@ export async function POST(req: NextRequest) {
     // ※ onConflict: "line_user_id,account" は部分インデックスのため PostgREST の推論が効かず使えない
     if (error && error.code === "23505" && upsertData.line_user_id) {
       const { id: _dupId, account: _dupAccount, ...updateFields } = upsertData;
-      // 既存行（同じ LINE ユーザー×アカウント）への UPDATE でも、状態は先の段階へ進める時だけ書く
+      // 既存行（同じ LINE ユーザー×アカウント）への UPDATE でも、状態は審査管理の状態が変わった時に先の段階へ進める時だけ書く
+      let fallbackChange: { convId: string; from: string | null; to: string } | null = null;
       {
-        let curQuery = supabase.from("conversations").select("status, is_post_apply").eq("line_user_id", upsertData.line_user_id as string);
+        let curQuery = supabase.from("conversations").select("id, status, is_post_apply, screening_last_status").eq("line_user_id", upsertData.line_user_id as string);
         if (resolvedAccount) curQuery = curQuery.eq("account", resolvedAccount);
         const { data: curRow } = await curQuery.limit(1).maybeSingle();
-        const next = curRow ? resolveSyncedStatus(curRow.status as string | null, record.status as string | null, { isPostApply: !!curRow.is_post_apply }) : (record.status as string | null) ?? null;
-        if (next === null) delete updateFields.status;
-        else updateFields.status = next;
+        const incoming = (record.status as string | null) ?? null;
+        const r = curRow
+          ? resolveScreeningSync(curRow.status as string | null, incoming, (curRow as { screening_last_status?: string | null }).screening_last_status ?? null, { isPostApply: !!curRow.is_post_apply })
+          : { status: incoming, lastSeen: incoming };
+        if (r.status === null) delete updateFields.status;
+        else updateFields.status = r.status;
+        updateFields.screening_last_status = r.lastSeen;
+        if (curRow && r.status !== null && r.status !== curRow.status) fallbackChange = { convId: String(curRow.id), from: (curRow.status as string | null) ?? null, to: r.status };
       }
       let updateQuery = supabase
         .from("conversations")
@@ -307,6 +331,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: fallbackErr.message }, { status: 500 });
       }
       console.log("[sync] conversations duplicate (line_user_id, account) → 既存行にUPDATEフォールバック:", upsertData.line_user_id);
+      await recordSyncStatusChange(fallbackChange);
       return NextResponse.json({ ok: true, synced: "conversation", id: record.id, account: resolvedAccount, deduped: true });
     }
 
@@ -314,6 +339,7 @@ export async function POST(req: NextRequest) {
       console.error("sync conversations error:", error.code, error.message, error.details, error.hint);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    await recordSyncStatusChange(statusChange);
     return NextResponse.json({ ok: true, synced: "conversation", id: record.id, account: resolvedAccount });
   }
 
