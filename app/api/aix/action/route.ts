@@ -3809,6 +3809,8 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
           `・確認結果: ${CM_RESULT_DESC[cmPattern] ?? "会話履歴から読み取ること"}`,
           cmSinglePropName ? `・対象物件名: ${cmSinglePropName}` : "",
           cmStaffNote ? `・スタッフからの補足（確定事実・必ず本文に入れる）: ${cmStaffNote}` : "",
+          // 2026-09-15 みく事例: 御見積書を同封しているのに本文に書かれないことがあった（読み取りが間に合わない時も同封の事実は伝える）
+          cmHasEstimate ? "・御見積書: この返信と一緒に同封する →「初期費用の御見積書同封させて頂きました！！」を必ず入れる（金額は【御見積書】の読み取り結果がある時だけ）" : "",
           cmPerPropLines ? `・確認できた物件と状態:\n${cmPerPropLines}` : "",
           cmPattern === "alternative" && cmEndedFloor != null ? `・募集終了だったお部屋: ${cmEndedFloor}階${cmEndedUnit ? `${cmEndedUnit}号室` : ""}` : "",
           cmSentCount !== null ? `・お客様から送られた物件数: ${cmSentCount}件` : "",
