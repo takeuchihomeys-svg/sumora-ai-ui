@@ -3943,7 +3943,7 @@ ${SMORA_COMMON_RULES}
         //   YUMA での再現（同じ入力で4回）: 3階の募集中は毎回出たが、同封する御見積書・補足（301号室と101号室のみ）のどちらかが落ちる回があった。
         //   ①確認前の文（「募集状況確認させて頂きます」「確認出来次第ご連絡」）②御見積書を同封するのに触れていない ③補足の数字（号室・㎡）が無い
         const PCR_PROMISE_RE = /確認(?:させて(?:頂|いただ)き|いたし|致し)ます|確認(?:出来|でき)次第|確認中/;
-        const noteNumbers = [...new Set((cmStaffNote.normalize("NFKC").match(/\d+(?:\.\d+)?/g) ?? []))];
+        const noteNumbers: string[] = [...new Set<string>(cmStaffNote.normalize("NFKC").match(/\d+(?:\.\d+)?/g) ?? [])];
         const pcrMissing = (text: string): string[] => {
           const t = text.normalize("NFKC");
           const out: string[] = [];
