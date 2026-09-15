@@ -7,8 +7,14 @@
 
 /** 家族・同居人など（管理会社・保証会社は含めない＝「管理会社からのご連絡」は正しい使い方） */
 const THIRD_PARTY_SRC = "(?:ご|お)?(?:息子|娘|家族|旦那|主人|奥|嫁|妻|夫|父|母|両親|親御|連帯保証人|保証人|彼氏|彼女|パートナー|婚約者|友人|友達|同居人|兄|姉|弟|妹|祖父|祖母)(?:様|さん|さま)?";
+// 「息子様からのご返答」「息子様のご返答」→「ご返答」（本番の再現で「の」の形が12回中3回・「からの」は0回だった）
 const DRAFT_THIRD_PARTY_WAIT_RE = new RegExp(
-  `(?<![一-龯ァ-ヶ])${THIRD_PARTY_SRC}(?:から|より)の?(?=(?:ご返答|ご返事|ご連絡|お返事|ご回答|お電話)[^。\\n]{0,8}お待ち)`,
+  `(?<![一-龯ァ-ヶ])${THIRD_PARTY_SRC}(?:(?:から|より)の?|の)(?=(?:ご返答|ご返事|ご連絡|お返事|ご回答|お電話)[^。\\n]{0,8}お待ち)`,
+  "g",
+);
+// 「息子様のご確認お待ちしております」→「ご返答お待ちしております」（待っているのはお客様のお返事。スタッフの実送信の形）
+const DRAFT_THIRD_PARTY_CHECK_WAIT_RE = new RegExp(
+  `(?<![一-龯ァ-ヶ])${THIRD_PARTY_SRC}(?:(?:から|より)の?|の)(?:ご確認|ご相談|ご判断|ご検討)(?=[^。\\n]{0,8}お待ち)`,
   "g",
 );
 /** お客様が自分で連絡する（させて頂きます・します・致します） */
@@ -20,6 +26,8 @@ export function fixThirdPartyContactWait(draft: string, customerMessage: string 
   const c = customerMessage ?? "";
   if (!c || !CUSTOMER_SELF_CONTACT_RE.test(c) || THIRD_PARTY_WILL_CONTACT_RE.test(c)) return { text: draft, count: 0 };
   let count = 0;
-  const text = draft.replace(DRAFT_THIRD_PARTY_WAIT_RE, () => { count++; return ""; });
+  const text = draft
+    .replace(DRAFT_THIRD_PARTY_CHECK_WAIT_RE, () => { count++; return "ご返答"; })
+    .replace(DRAFT_THIRD_PARTY_WAIT_RE, () => { count++; return ""; });
   return { text, count };
 }

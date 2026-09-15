@@ -38,6 +38,14 @@ it("お客様への宣言「御見積書を作成しお送りさせて頂きま�
 it("「ご質問への回答をまとめさせて頂きます！！」（お客様への文）は消さない", () => {
   expect(isMetaNarrationLine("ご質問への回答をまとめさせて頂きます！！")).toBe(false);
 });
+it("YUMA 9/15「お客様がスタンプのみで返信されている状況ですね。…待つ姿勢のみを示します。」を消す", () => {
+  const t = "お客様がスタンプのみで返信されている状況ですね。電話をかけてほしいという依頼を既に伝えているため、追加の催促にならないよう、短く待つ姿勢のみを示します。\n\nはい😊！！\nお電話お待ちしております！！";
+  expect(stripMetaNarration(t).text).toBe("はい😊！！\nお電話お待ちしております！！");
+});
+it("方針の独り言「〜の方針で返信します。」だけの行を消す／お客様への文は消さない", () => {
+  expect(isMetaNarrationLine("前向きな反応のため、内覧のご案内を添える方針で返信します。")).toBe(true);
+  expect(isMetaNarrationLine("お客様のご都合に合わせてご案内させて頂きます！！")).toBe(false);
+});
 it("仕上げ処理（applySurfaceFixes）でも消える", () => {
   const r = applySurfaceFixes(AYA_DRAFT, { customerName: "あや" });
   expect(r.text.startsWith("かしこまりました！！")).toBe(true);

@@ -28,6 +28,9 @@ it("後処理（applySurfaceFixes）でも直る", () => {
   expect(r.text).toBe(SENT);
   expect(r.applied.join(",")).toContain("CONTACT_ACTOR_FIXED");
 });
+it("本番の再現の形「息子様のご返答お待ち」→「ご返答お待ち」", () => expect(fixThirdPartyContactWait("かしこまりました！！\n息子様のご返答お待ちしております😊！！", YASUKI).text).toBe("かしこまりました！！\nご返答お待ちしております😊！！"));
+it("本番の再現の形「息子様のご確認お待ち」→「ご返答お待ち」", () => expect(fixThirdPartyContactWait("息子様のご確認お待ちしております😊！！", YASUKI).text).toBe("ご返答お待ちしております😊！！"));
+it("お客様へのお願い「息子様へのご確認、よろしくお願いいたします」は触らない", () => expect(fixThirdPartyContactWait("息子様へのご確認、よろしくお願いいたします😊！！", YASUKI).count).toBe(0));
 it("家族から連絡させる時は触らない（息子から連絡させます）", () => expect(fixThirdPartyContactWait("息子様からのご連絡お待ちしております！！", "息子から連絡させますのでよろしくお願いします").count).toBe(0));
 it("家族から来る話の時は触らない（主人から電話がいくと思います）", () => expect(fixThirdPartyContactWait("ご主人様からのお電話お待ちしております！！", "主人から電話がいくと思います。私からもまた連絡します").count).toBe(0));
 it("管理会社からのご連絡は触らない", () => expect(fixThirdPartyContactWait("管理会社からのご連絡お待ちしております！！", "また連絡します").count).toBe(0));
