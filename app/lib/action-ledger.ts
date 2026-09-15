@@ -95,6 +95,8 @@ export interface LedgerFacts {
   lastPromisedAt: string | null;
   /** 直前スタッフ発言に対応するエントリ（classifyLastStaffTurn の一次証拠） */
   lastStaffEntry: LedgerEntry | null;
+  /** 直前スタッフ発言が AIX の時、その本文に書き足された約束（送信時の記録・aixTextPromises）。約束の履行の AIX の判定だけが使う（2026-09-15 ゆうこ事例） */
+  lastStaffAixTextPromise?: LedgerEntry | null;
   /** 72h 以内の done（route.ts aixDone 互換フラグ） */
   recentDone: { vacancyCheck: boolean; mgmtCheck: boolean; propertySend: boolean; viewingInvite: boolean; meetingPlace: boolean };
   /** 「再度／改めて／追加で／別の物件」が使えるか（= 物件送付実績あり） */
@@ -350,6 +352,23 @@ export function appointmentYmd(dateMD: string, sentAt: string): string | null {
 /** AIX の種類 → 台帳の行為（log-aix-usage が送信時の記録 sent_facts を書く時と、台帳 ① が同じ対応表） */
 export function aixLedgerKind(aixType: string | null | undefined): { kind: LedgerKind; status: LedgerStatus } | null {
   return aixType ? AIX_KIND[aixType] ?? null : null;
+}
+
+/**
+ * AIX の本文に書き足された「これからやる約束」（ピックアップ・見積書・確認）。その AIX 自身が届けた物の約束は除く。
+ * 2026-09-15 竹内（ゆうこ事例）: AIX【初期費用について】の末尾に「南向き・5階以上・御堂筋線沿線のご条件でも改めてオススメできるお部屋
+ *   ピックアップさせて頂きます！！」と書き足して送った → 送信時の記録は「初期費用の説明」だけで約束が残らず、ブレインは約束の履行
+ *   （AIX【物件ピックアップした】）と判定できなかった（一覧に AIX が出ない）。AIX の本文も手打ちと同じ分類で約束を読む
+ */
+export function aixTextPromises(aixType: string | null | undefined, text: string | null | undefined, at: string | null, opts: { estimateEnclosed?: boolean } = {}): LedgerEntry[] {
+  const t = (text ?? '').trim();
+  if (!t) return [];
+  const self = aixLedgerKind(aixType)?.kind ?? null;
+  return classifyStaffTextFacts(t, at).filter((e) => e.status === 'promised'
+    && (e.kind === 'pickup_declared' || e.kind === 'estimate_declared' || e.kind === 'confirmation_promised')
+    && !(e.kind === 'pickup_declared' && self === 'properties_sent')
+    && !(e.kind === 'estimate_declared' && (self === 'estimate_sent' || opts.estimateEnclosed === true))
+    && !(e.kind === 'confirmation_promised' && (self === 'confirmation_reported' || self === 'confirmation_promised')));
 }
 
 /**
@@ -640,6 +659,10 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     lastPromisedKind: lastPromised?.kind ?? null,
     lastPromisedAt: lastPromised?.at ?? null,
     lastStaffEntry,
+    // 同じ送信（AIX の行の直後 3分以内）に記録した AIX 本文の約束で、まだ履行していない物
+    lastStaffAixTextPromise: lastStaffEntry && lastStaffEntry.source === 'aix_log' && lastStaffEntry.status === 'done'
+      ? promises.find((p) => p.source === 'aix_log' && p.fulfilledBy == null && ms(p.at) > ms(lastStaffEntry.at) && ms(p.at) - ms(lastStaffEntry.at) <= AIX_ATTACH_WINDOW_MS) ?? null
+      : null,
     recentDone: {
       vacancyCheck: recent.some((e) => e.kind === 'confirmation_reported'),
       mgmtCheck: recent.some((e) => (e.detail.checkPattern ?? '').startsWith('mgmt_')),

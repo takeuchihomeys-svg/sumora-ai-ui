@@ -7,7 +7,7 @@
 //     既存の最新の未完了行に物件名を上書きし「9/10 15:00 メゾン加美北 予定」のような誤った記録を作っていた
 //   → 送った時（一番よく知っている所）に構造化して1回書く。行動台帳（action-ledger）は記録を一次証拠にし、本文の読み直しは記録前の古いメッセージだけ
 import { supabase } from "@/app/lib/supabase";
-import { classifyStaffTextFacts, aixLedgerKind, extractViewingAppointment, appointmentFromMeetingInput, appointmentYmd, type RecordedFact, type ViewingAppointment } from "@/app/lib/action-ledger";
+import { classifyStaffTextFacts, aixLedgerKind, aixTextPromises, extractViewingAppointment, appointmentFromMeetingInput, appointmentYmd, type RecordedFact, type ViewingAppointment } from "@/app/lib/action-ledger";
 
 type FactRow = RecordedFact & { conversation_id: string };
 
@@ -64,6 +64,15 @@ export async function recordAixFacts(o: {
     rows.push({ conversation_id: o.conversationId, sent_at: o.sentAt, origin: "aix", aix_type: o.aixType, kind: "estimate_sent", status: "done",
       line_message_id: o.lineMessageId ?? null, detail: o.propertyNames?.length ? { estimateFor: o.propertyNames } : {}, evidence: `estimate_sent@${o.aixType}` });
   }
+  // 2026-09-15 竹内（ゆうこ事例）: AIX の本文に書き足した約束（「改めてオススメできるお部屋ピックアップさせて頂きます」等）も記録する。
+  //   AIX の行より後（+1ms〜）に置き、台帳の「直前スタッフ発言」を約束にする → ブレインが約束の履行の AIX（promise:）と判定・一覧にも AIX が出る
+  const base = Date.parse(o.sentAt);
+  aixTextPromises(o.aixType, o.generatedText, o.sentAt, { estimateEnclosed: o.estimateSent === true }).forEach((p, i) => {
+    rows.push({
+      conversation_id: o.conversationId, sent_at: Number.isFinite(base) ? new Date(base + 1 + i).toISOString() : o.sentAt, origin: "aix", aix_type: o.aixType,
+      kind: p.kind, status: p.status, line_message_id: o.lineMessageId ?? null, detail: p.detail ?? {}, evidence: p.evidence,
+    });
+  });
   await upsertFacts(rows);
   if (appointment) await recordViewingFromAppointment({ conversationId: o.conversationId, appointment, address: o.meeting?.address ?? null, sentAt: o.sentAt, source: "aix", onlyFrom: o.viewingOnlyFrom });
 }

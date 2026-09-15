@@ -198,6 +198,26 @@ async function sendWebPush(title: string, body: string) {
   }
 }
 
+/** 審査管理から実際に送ったスタッフの発言が会話の最新なら、会話の最後の発言者・最後のメッセージをこの発言にする */
+async function markStaffMessageAsLatest(conversationId: string, messageId: string, text: string, createdAt: string): Promise<void> {
+  try {
+    const { data: newest } = await supabase.from("messages").select("id, created_at").eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (!newest || newest.id !== messageId) return;
+    const { data: conv } = await supabase.from("conversations").select("updated_at").eq("id", conversationId).maybeSingle();
+    // updated_at は進める時だけ（巻き戻さない）
+    const advance = !!createdAt && Date.parse(createdAt) > Date.parse(String(conv?.updated_at ?? "1970-01-01T00:00:00Z"));
+    const { error } = await supabase.from("conversations").update({
+      last_message: (text || "[画像]").slice(0, 500), last_sender: "staff", ai_draft: null, suggested_aix_meta: null,
+      ...(advance ? { updated_at: createdAt } : {}),
+    }).eq("id", conversationId);
+    if (error) console.warn("[sync] mark staff latest failed:", error.message);
+    else console.log(JSON.stringify({ tag: "sync:staff-latest", conversationId }));
+  } catch (e) {
+    console.warn("[sync] mark staff latest failed:", e instanceof Error ? e.message : e);
+  }
+}
+
 /** 同期で状態を動かした時は履歴に残す（2026-09-15 隼斗事例: 同期の書き込みだけ履歴が無く「誰が審査中に戻したか」を追えなかった） */
 async function recordSyncStatusChange(c: { convId: string; from: string | null; to: string } | null): Promise<void> {
   if (!c) return;
@@ -265,6 +285,15 @@ export async function POST(req: NextRequest) {
     // 2026-09-15 竹内（隼斗事例）「否決で物件提案中に戻したのに、時間が経つと申込・審査中に戻る」: 審査管理の状態は否決の後も screening のまま届き続け、
     //   「先へ進める」で何度も審査中に戻していた。審査管理の状態が前回の同期から変わった時だけ動かす（resolveScreeningSync・screening_last_status）
     let statusChange: { convId: string; from: string | null; to: string } | null = null;
+    // 2026-09-15 竹内（ゆうこ・S・YUYA 事例「AIX をセットしているのに一覧に AIX が出ない」）: 審査管理の会話の last_message / last_sender は、
+    //   LINE に送っていない審査管理の AI 自動生成文（スタッフ扱い）で更新される。それで既存の会話を上書きしていたため、お客様の発言が最新なのに
+    //   「最後の発言者＝スタッフ」「最後のメッセージ＝送っていない AI の文」になった（直近7日で会話80件中26件）。
+    //   → 一覧の AIX・要対応の印が消え、下書きの自動作成（bg-async・取りこぼし救済）・brain-sweep も「お客様の番ではない」で止まる。
+    //   既存の会話のこの2つは、こちらの受信（line-webhook）・送信（画面・予約送信）・審査管理から実際に送った発言の同期（下の messages）が書く
+    if (existingConv) {
+      delete upsertData.last_message;
+      delete upsertData.last_sender;
+    }
     if (existingConv) {
       const r = resolveScreeningSync(existingConv.status as string | null, upsertData.status as string | null,
         (existingConv as { screening_last_status?: string | null }).screening_last_status ?? null, { isPostApply: !!existingConv.is_post_apply });
@@ -318,6 +347,8 @@ export async function POST(req: NextRequest) {
         if (r.status === null) delete updateFields.status;
         else updateFields.status = r.status;
         updateFields.screening_last_status = r.lastSeen;
+        // 既存行の最後のメッセージ・最後の発言者は上書きしない（上の upsert と同じ理由）
+        if (curRow) { delete updateFields.last_message; delete updateFields.last_sender; }
         if (curRow && r.status !== null && r.status !== curRow.status) fallbackChange = { convId: String(curRow.id), from: (curRow.status as string | null) ?? null, to: r.status };
       }
       let updateQuery = supabase
@@ -418,6 +449,11 @@ export async function POST(req: NextRequest) {
           console.error("sync staff message error:", staffErr.code, staffErr.message);
           return NextResponse.json({ error: staffErr.message }, { status: 500 });
         }
+      } else {
+        // 2026-09-15: 審査管理から実際に送った発言（line_message_id あり）が会話の最新なら、最後の発言者・最後のメッセージをこの発言にする
+        //   （旧: 会話の同期が審査管理の last_message / last_sender で上書きしていた＝送っていない AI 文でも上書きされた）。
+        //   こちらの送信と同じく、下書きとブレインの判断は消す（送信後に古い AIX が残らないように・page.tsx の送信と同じ）
+        await markStaffMessageAsLatest(String(record.conversation_id), String(record.id), staffText, String(record.created_at ?? ""));
       }
       return NextResponse.json({ ok: true, synced: "staff_message", id: record.id });
     }

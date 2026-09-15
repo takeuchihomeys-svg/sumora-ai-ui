@@ -47,6 +47,8 @@ const VACANCY_CHECK_DECL_RE = /(?:募集状況|空室状況|空き状況|空室|
 export function resolveStaffPromiseAix(
   facts: {
     lastStaffEntry: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null } } | null;
+    /** 直前スタッフ発言が AIX の時、その本文に書き足した未履行の約束（2026-09-15 ゆうこ事例: 初期費用について＋「ピックアップさせて頂きます」） */
+    lastStaffAixTextPromise?: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null } } | null;
     estimatePromisedUnfulfilled: boolean;
     pickupPromisedUnfulfilled: boolean;
     confirmationPromisedUnfulfilled?: boolean;
@@ -73,7 +75,8 @@ export function resolveStaffPromiseAix(
   if (!lastAny || (lastAny.sender !== "staff" && !opts.customerAckAfter)) return null;
   const last = [...nonMedia].reverse().find((m) => m.sender === "staff");
   if (!last) return null;
-  const e = facts.lastStaffEntry;
+  // 直前が AIX（済み）で、その本文に約束を書き足していれば、その約束を直前の宣言として扱う
+  const e = facts.lastStaffEntry?.status === "promised" ? facts.lastStaffEntry : (facts.lastStaffAixTextPromise ?? facts.lastStaffEntry);
   if (!e || e.status !== "promised") return null;
   // 物件が届く前の「お送り頂き次第…御見積書」は、届いてからの約束（見積るものがまだ無い）
   if (opts.customerWillSend && (e.kind === "estimate_declared" || e.kind === "confirmation_promised")) return null;
