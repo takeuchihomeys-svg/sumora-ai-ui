@@ -2045,6 +2045,8 @@ export default function AixModal({
         if (sendKeyword.trim()) body.keyword = sendKeyword.trim();
         if (lastMessageAt) body.last_message_at = lastMessageAt;
         if (sendExpandedConds.size > 0) body.expanded_conditions = Array.from(sendExpandedConds);
+        // 2026-09-15 竹内（カイナ事例）: 「💬 会話を合わせる」= 会話の糸口（約束・経緯・お客様が気にしていること）から1〜2文を足した文を生成
+        if (extraFlags?.conversation_match === true) body.conversation_match = true;
       } else if (actionType === "application_push") {
         if (appSubMode === "format") {
           const parts = [APP_FORMAT_SECTIONS.applicant];
@@ -6919,8 +6921,8 @@ export default function AixModal({
                     onClick={() => void generate(
                       (actionType === "property_check_result" && checkPattern === "other_room_check") || actionType === "cost_breakdown"
                         ? { conversation_match: true } // 会話を合わせる専用パターン: 再生成もテンプレから会話適応し直す（初期費用についても同じ）
-                        : actionType === "guarantor_info"
-                          ? { conversation_match: lastGenConvMatchRef.current } // 保証会社について: 最後に押した方（固定／会話を合わせる）で作り直す
+                        : actionType === "guarantor_info" || actionType === "property_send"
+                          ? { conversation_match: lastGenConvMatchRef.current } // 保証会社について・物件ピックアップ: 最後に押した方（固定／会話を合わせる）で作り直す
                         : actionType === "condition_hearing" && hearingConvMatchMode
                           ? { conversation_match: true, base_message: aiDraft } // 会話を合わせるモード: 再生成も会話適応のまま
                           : undefined
@@ -7058,6 +7060,16 @@ export default function AixModal({
               </div>
             ) : (
               <div className="flex w-full flex-col gap-2">
+                {actionType === "property_send" && (
+                  /* 2026-09-15 竹内（カイナ事例）: 物件ピックアップにも「会話を合わせる」。会話の約束・経緯・お客様が気にしていることの1〜2文を足した文を生成 */
+                  <button
+                    onClick={() => void generate({ conversation_match: true })}
+                    disabled={loading || !canGenerate}
+                    className="w-full rounded-2xl bg-[#546E7A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
+                  >
+                    {loading ? busyLabel : "💬 会話を合わせる"}
+                  </button>
+                )}
                 <button
                   onClick={() => void generate()}
                   disabled={loading || !canGenerate}

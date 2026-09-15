@@ -18,6 +18,7 @@ import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
+import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines } from "@/app/lib/property-send-match";
 
 export const maxDuration = 300;
 
@@ -2216,6 +2217,98 @@ ${SMORA_COMMON_RULES}
         : "";
 
       const nameNote = `\n\n【お客様名 — 最重要】お客様名は「${name}」です。文中では必ず「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねて付けない）。「〇〇から${name}ご希望の」のように助詞の直後に名前が続く場合でも、名前を途中で切ったり省略したりしない（例：「梅田から」→「もえかさん」→ 「梅田から${name}」と正確につなぐ）。`;
+
+      // ── 2026-09-15 竹内（カイナ事例）「物件ピックアップに会話を合わせるボタンをつける。会話を合わせた状態で生成」──
+      //   固定の型（下の sendSystem）はそのまま残し、会話を合わせるは「②ピックアップ行を会話の言い方で短く」＋「③この会話で約束したこと・経緯・
+      //   お客様が気にしていることへの1〜2文」を、決定論で拾った糸口（property-send-match）だけから書く。
+      //   実データ（60日）: 物件ピックアップの AIX 送信 261通中 237通（91%）をスタッフが直していて、直し方がこの2点だった
+      //   （「お気に召されたお部屋代理契約可能か全て交渉させて頂きます」「無事ご入居間に合いますようにサポートさせて頂きます」「募集ございませんでしたので条件広げて」）。
+      //   内覧誘導・日時は内覧提案 OFF なら決定論で落とし、数字は入力（条件・会話・退去予定・キーワード）に無ければ〇〇（送信前チェックで止まる）
+      if (body.conversation_match === true) {
+        const threads = extractPropertySendThreads(
+          (Array.isArray(recent_messages) ? (recent_messages as Array<{ sender: string; text?: string | null }>) : []).map((m) => ({ sender: m.sender, text: m.text ?? "" })),
+        );
+        const threadsBlock = buildPropertySendThreadsBlock(threads);
+        const psmStaticSystem = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+${aixPropertySendRules}
+
+【この返信の目的】
+物件をピックアップしてお送りする時の導入文を、この会話の流れに合わせて1通作る（スタッフが「会話を合わせる」を押した）。
+固定の型ではなく、この会話でこちらが約束したこと・今回のピックアップの経緯・お客様が気にしていることに応える1〜2文を入れる。
+
+【構成（この順・空行で区切る）】
+①挨拶行（動的に渡す実値をそのまま。挨拶行なしの指示ならお客様名の行から）
+②ピックアップ行（1行）:「〇〇（エリア）から…お部屋ピックアップさせて頂きました！！」。エリア・特徴の呼び方は会話でスタッフ・お客様が使った言葉をそのまま（例:「広めのお部屋」「大きめのお部屋」「審査通過しやすい」）。希望条件を全部並べない（入れるのは最大2つ）
+③会話に合わせた1〜2文:【会話の糸口（候補）】にある事柄だけから、今のお客様に一番効く物を選んで書く（例:「お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！」「無事ご入居間に合いますようにサポートさせて頂きます！！」「ご希望の家賃ですと募集ございませんでしたので条件広げてお送りしております！！」「こちら2部屋となります！」）。候補が無ければ③は書かない
+④退去予定の物件があれば「◎〇〇\n[退去日]退去予定となりますので[退去日の翌日]以降ご内覧可能です！」（渡された情報だけ）
+⑤最終行「お手隙の際にご査収ください😌！！」
+
+【絶対禁止】
+・会話・希望条件・渡された情報に無い物件名・金額・数字・日付・条件・約束を書くこと（糸口の候補に無い事柄は書かない）
+・「ご希望のご条件に合ったお部屋」のような抽象語だけのピックアップ行
+・手本の中身（別のお客様の物件・事情）を写すこと。手本は言い回しだけ
+・謝罪・🙏・「お待たせ致しました」・見積書の話（見積書は別の AIX）
+・「引き続き全力でサポート」等の大きな締め（⑤で締める）
+
+【スタッフが会話に合わせて送った実文（言い回しの手本）】
+${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")}
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\n で）"}`;
+        const inviteRule = skipViewingInvite
+          ? "【内覧誘導】今回は内覧の誘い（「お気に召されましたらご案内」「ご都合よろしいお日にち」）・内覧日時を一切書かない（内覧は AIX【内覧日調整】で送る）"
+          : `【内覧誘導】④の後に「${name}お気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！」を1文${calendarData ? `、続けて「直近ですと\n${calendarData}\nご案内可能です！！」` : ""}`;
+        const psmDynamic = [
+          greetingLine ? `【①挨拶行の実値】\n${greetingLine}` : "【①挨拶行】本日すでに送信済みのため挨拶行なし。お客様名の行から始める",
+          nameNote.trim(),
+          conditionsInfo ? `【お客様の希望条件（②で使うのは最大2つ・会話で使った言い方を優先）】\n${conditionsInfo}` : "",
+          keywordRule.trim(),
+          threadsBlock,
+          inviteRule,
+          (sendDbRules ?? "").trim(),
+          sendBrainAddendum ? "【ブレイン改善ルール】\n" + sendBrainAddendum : "",
+          (brainGuidanceNote ?? "").trim(),
+        ].filter(Boolean).join("\n\n");
+        // 固定の型（下）の userParts と同じ材料（userParts はこの後で組み立てるのでここで同じ物を並べる）
+        const psmUser = [
+          `${name}への物件ピックアップ送付メッセージを作成してください。`,
+          conditionsInfo ? `\n\n【お客様の希望条件】\n${conditionsInfo}` : "",
+          calendarData && !skipViewingInvite ? `\n\n【直近3日の内覧可能時間帯（この情報をそのまま使うこと）】\n${calendarData}` : "",
+          vacatingInfo ? `\n\n【退去予定・案内不可の物件情報（必ず全て伝えること）】\n${vacatingInfo}` : "",
+          expandedCondNote,
+          recentHistory,
+          situationNote,
+          summaryNote,
+          pspGuidanceNote,
+        ].join("")
+          + `\n\n上記の会話の流れに合わせて、${name}への物件ピックアップ送付メッセージを1通生成してください（③は【会話の糸口（候補）】の事柄だけ）。`
+          + (sendDiffNote ? `\n\n${sendDiffNote}` : "")
+          + (sendStarNote ? "\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n" + sendStarNote : "");
+        console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, threads: { customer: threads.customer.length, staff: threads.staff.length }, sendMode, skipViewingInvite }));
+        const psmRaw = await callClaude(psmStaticSystem, psmUser, currentAction, psmDynamic);
+        let psmText = psmRaw;
+        try {
+          const m = psmRaw.match(/\{[\s\S]*\}/);
+          if (m) psmText = ((JSON.parse(m[0]) as { message?: string }).message || psmRaw).replace(/\\n/g, "\n");
+        } catch { /* JSON で無ければ本文そのもの */ }
+        const notices: string[] = [];
+        if (skipViewingInvite) {
+          const s = stripViewingInviteLines(psmText);
+          if (s.removed > 0) { psmText = s.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, inviteLinesRemoved: s.removed })); }
+        }
+        // 数字の照合: 条件・会話・退去予定・キーワードに無い金額・帖・年・件数は〇〇（送信前チェックで止まる）
+        const psmNotes = [conditionsInfo ?? "", recentHistory, vacatingInfo ?? "", sendKeyword ?? "", calendarData ?? "", expandedCondGuidanceLines.join("\n"), newArrivalCountStr].join("\n");
+        const masked = maskNumbersNotInNotes(psmText, psmNotes);
+        if (masked.unmatched.length > 0) {
+          psmText = masked.text;
+          notices.push(`会話・条件に無い数字（${masked.unmatched.join("・")}）を〇〇にしました。確認して書き換えてから送信してください`);
+          console.warn("[aix/action] property_send match: 入力に無い数字を伏せ字:", masked.unmatched);
+        }
+        return finalizeResponse(psmText, { conversation_match: true, ...(notices.length ? { notice: notices.join("\n") } : {}) });
+      }
 
       const sendSystem = sendMode === "short"
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
