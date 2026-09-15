@@ -18,7 +18,7 @@ import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
-import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines } from "@/app/lib/property-send-match";
+import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines } from "@/app/lib/property-send-match";
 
 export const maxDuration = 300;
 
@@ -2252,6 +2252,9 @@ ${aixPropertySendRules}
 ・手本の中身（別のお客様の物件・事情）を写すこと。手本は言い回しだけ
 ・謝罪・🙏・「お待たせ致しました」・見積書の話（見積書は別の AIX）
 ・「引き続き全力でサポート」等の大きな締め（⑤で締める）
+・こちらの前の発言にある挨拶・お礼を繰り返すこと（「本日お時間頂きありがとうございました」は内覧後の挨拶で送信済み。①の挨拶行だけ）
+
+【③の選び方】お客様の続いている事情（代理契約・審査・ペット 等）が候補にあれば最優先で「今回の物件でこちらがどうするか」を1文（例:「お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！」）。次に今回のピックアップの経緯（条件を広げた・募集が無かった）。合計1〜2文
 
 【スタッフが会話に合わせて送った実文（言い回しの手本）】
 ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")}
@@ -2295,6 +2298,9 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           if (m) psmText = ((JSON.parse(m[0]) as { message?: string }).message || psmRaw).replace(/\\n/g, "\n");
         } catch { /* JSON で無ければ本文そのもの */ }
         const notices: string[] = [];
+        // こちらの前の発言のお礼（本日お時間頂きありがとうございました）の繰り返しは決定論で落とす（本番確認で3回中3回入った）
+        const thanks = stripRepeatedThanksLines(psmText);
+        if (thanks.removed > 0) { psmText = thanks.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, repeatedThanksRemoved: thanks.removed })); }
         if (skipViewingInvite) {
           const s = stripViewingInviteLines(psmText);
           if (s.removed > 0) { psmText = s.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, inviteLinesRemoved: s.removed })); }

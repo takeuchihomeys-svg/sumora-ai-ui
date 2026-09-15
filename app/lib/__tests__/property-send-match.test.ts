@@ -1,6 +1,6 @@
 // 2026-09-15 竹内（カイナ事例）: 物件ピックアップの「会話を合わせる」— 会話の糸口の抽出と内覧誘導の除去
 // 実行: npx tsx app/lib/__tests__/property-send-match.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines } from "../property-send-match";
+import { extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines } from "../property-send-match";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -38,8 +38,20 @@ it("定型の「ピックアップしてお送りさせて頂きます」は約�
   const th = extractPropertySendThreads([{ sender: "staff", text: "かしこまりました！！\n梅田周辺からピックアップしてお送りさせて頂きます！！" }]);
   expect(th.staff.length).toBe(0);
 });
+it("カイナ: 続いている事情（代理契約）は前回の送付より前からも拾い、ブロックで「今回の物件でどうするか」を求める", () => {
+  const th = extractPropertySendThreads(KAINA);
+  expect(th.requirements.join(" | ")).toContain("代理契約");
+  const b = buildPropertySendThreadsBlock(th);
+  expect(b).toContain("続いている事情");
+  expect(b).toContain("交渉（確認）させて頂きます");
+});
 it("糸口が無ければブロックは「無し」", () => {
-  expect(buildPropertySendThreadsBlock({ customer: [], staff: [] })).toContain("無し");
+  expect(buildPropertySendThreadsBlock({ customer: [], requirements: [], staff: [] })).toContain("無し");
+});
+it("こちらの前の発言のお礼の繰り返し（本日はお時間頂きありがとうございました）を落とす", () => {
+  const r = stripRepeatedThanksLines("カイナさんお世話になっております！！\n\n本日はお時間頂きありがとうございました！！\n\nエリア広げさせていただき、大きめのお部屋でカイナさんにオススメできるお部屋ピックアップさせて頂きました！！\n\nお手隙の際にご査収ください😌！！");
+  expect(r.removed).toBe(1);
+  expect(r.text).toBe("カイナさんお世話になっております！！\n\nエリア広げさせていただき、大きめのお部屋でカイナさんにオススメできるお部屋ピックアップさせて頂きました！！\n\nお手隙の際にご査収ください😌！！");
 });
 it("画像だけの発言・関係ない雑談は拾わない", () => {
   const th = extractPropertySendThreads([{ sender: "customer", text: "[画像]" }, { sender: "customer", text: "ありがとうございます！" }]);
