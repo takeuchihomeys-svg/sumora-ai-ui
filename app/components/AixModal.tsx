@@ -6,6 +6,9 @@ import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END } from "../lib/c
 import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, latestCustomerTurnText, type RequestedViewingDate } from "../lib/viewing-date-request";
 import { customerRequestsPhoneCall, buildCallRequestText } from "../lib/phone-call";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
+// 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
+import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, buildGuarantorListText, type GuarantorType } from "../lib/guarantor-companies";
+import { PROPERTY_LABEL_RE } from "../lib/action-ledger";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 import { weekdayForMonthDay } from "../lib/jst-date";
@@ -31,7 +34,9 @@ export type AixActionType =
   | "cost_breakdown"
   // 2026-09-15 竹内（H 事例）: 電話をかける（LINEコールの「電話をかける」ボタン＋案内文）／電話終了後（電話でお話しした内容のまとめ）
   | "phone_call"
-  | "phone_followup";
+  | "phone_followup"
+  // 2026-09-15 竹内（YUYA 事例）: 保証会社について（物件ごとの保証会社名・種類を入れて一覧＋審査の通りやすさ＋並行審査の勧めを1通で送る）
+  | "guarantor_info";
 
 interface LinkedCustomer {
   id: string;
@@ -76,7 +81,7 @@ interface AixModalProps {
   onSendCallButton?: () => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
   // M2: estimateSent / propCostNotes = 御見積書の同封有無とOCRで読み取った物件別費用情報
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -288,6 +293,11 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
     rules: ["電話が終わった後に使う", "電話でお話しした内容のメモを入れる → お礼＋決まったこと＋こちらがすること／お客様にお願いすることの1通を作る", "メモに無い金額・日付・時刻・号室は作らない（〇〇になり送信前に止まる）"],
     template: "お電話有難うございました😊！！\n[電話で決まったこと・こちらがすること]\n\n[お客様にお願いすること・補足]\n\n引き続き何卒よろしくお願い致します！！",
   },
+  // 2026-09-15 竹内（YUYA 事例）: template は YUYA 9/15 17:31 の実送信の型
+  guarantor_info: {
+    rules: ["管理会社に保証会社を確認した後に使う", "物件ごとに物件名・保証会社名・種類を入れる（「＋物件を追加」で何件でも）", "「文面を作る（固定）」は決まった型・「会話を合わせる」は直近の会話に合わせた1通", "入力に無い保証会社名は〇〇になり送信前に止まる", "並行して審査かける ON → 保証会社が被っていないお部屋は並行して審査をかけられる旨が入る"],
+    template: "こちら保証会社一覧となります！！\n・[物件名]\nの保証会社は[保証会社名]と独立系の保証会社となりますので、審査基準が緩い保証会社となります😊！！\n\n審査無事通過する為、保証会社が異なるお部屋並行して審査かけさせて頂く事可能です！！\nよろしければお気に召されたお部屋一度審査かけさせて頂きます！！\n\n※保証会社審査通過後、オーナー審査移行するまでキャンセル料不要となります！！",
+  },
 };
 
 const CONFIG: Record<
@@ -430,7 +440,22 @@ const CONFIG: Record<
     imageLabel: "",
     description: "電話でお話しした内容を入れると、電話後のお礼とまとめの1通を作ります。",
   },
+  guarantor_info: {
+    title: "保証会社について",
+    emoji: "🏦",
+    requiresImage: false,
+    imageLabel: "",
+    description: "物件ごとの保証会社名と種類（独立系・LICC系・信販系）を入れると、保証会社の一覧と審査の通りやすさ、並行して審査をかけられる旨を1通で送ります。",
+  },
 };
+
+// 保証会社について（2026-09-15 竹内・YUYA 事例）: 物件ごとの入力カード。other = 「その他（テキストで登録）」を選んだ
+type GuarantorCard = { id: number; name: string; company: string; type: GuarantorType | ""; other: boolean };
+const newGuarantorCard = (id: number): GuarantorCard => ({ id, name: "", company: "", type: "", other: false });
+/** 竹内さんの要望「5物件まで入れられ、追加を押したら6件目以降も入れられる」＝初期表示は5枚 */
+const GI_INITIAL_CARDS = 5;
+const initialGuarantorCards = (): GuarantorCard[] => Array.from({ length: GI_INITIAL_CARDS }, (_, i) => newGuarantorCard(i + 1));
+type GuarantorCompanyOption = { name: string; type: GuarantorType; source: "master" | "custom" };
 
 const APP_FORMAT_SECTIONS = {
   applicant: `【お申込者様記入欄】
@@ -619,6 +644,9 @@ export default function AixModal({
   // brain-core が【同封済み御見積書の費用情報】として、generate-reply が estimatePromised 判定に使う。
   const lastEstimateSentRef = useRef(false);
   const lastPropCostNotesRef = useRef<string[]>([]);
+  // 保証会社について: 送った物件×保証会社×種類（onAfterSend → log-aix-usage → sent_facts）。generate() 冒頭でクリア
+  const lastGuarantorPropsRef = useRef<{ name: string; company: string; type: string }[]>([]);
+  const lastGuarantorParallelRef = useRef(false);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
@@ -1009,6 +1037,66 @@ export default function AixModal({
     }
   };
 
+  // 保証会社について（2026-09-15 竹内・YUYA 事例）: 物件ごとの保証会社（要望どおり初期5枚・「＋物件を追加」で6件目以降も入れられる・上限なし。空欄は giFilled で落ちる）
+  const [giCards, setGiCards] = useState<GuarantorCard[]>(initialGuarantorCards);
+  const giNextIdRef = useRef(GI_INITIAL_CARDS + 1);
+  const [giParallel, setGiParallel] = useState(false);   // 並行して審査かける（トグル）
+  // select の選択肢: マスタ（コード）＋スタッフが登録した会社（/api/guarantor-companies GET）。取得に失敗してもマスタだけで動く
+  const [giCompanies, setGiCompanies] = useState<GuarantorCompanyOption[]>(GUARANTOR_COMPANY_MASTER.map((c) => ({ name: c.name, type: c.type, source: "master" as const })));
+  const [giNewCompany, setGiNewCompany] = useState<Record<number, { name: string; type: GuarantorType }>>({});   // カード id → 「その他」登録フォームの入力
+  const [giSavingId, setGiSavingId] = useState<number | null>(null);
+  const [giPlan, setGiPlan] = useState<{ overlapping: Array<{ company: string; properties: string[] }>; canParallel: boolean } | null>(null);   // 生成の戻りの parallel_plan
+  // 入力済み = 物件名と会社名の両方があるカードだけ送る（片方だけの欄は送らない＝checkFilledCount と同じ考え）
+  const giFilled = giCards.filter((c) => c.name.trim() && c.company.trim());
+  const giCustomCompanies = giCompanies.filter((x) => x.source === "custom");
+  // 物件名の候補: 会話でスタッフが送った「🌟〇〇 305号室」「【〇〇 305号室】」（無ければ空）
+  const giPropertyNameOptions = useMemo(() => {
+    if (actionType !== "guarantor_info") return [] as string[];
+    const out = new Set<string>();
+    for (const m of (recentMessages ?? [])) {
+      if (m.sender === "customer") continue;
+      for (const hit of (m.text ?? "").matchAll(PROPERTY_LABEL_RE)) out.add(`${hit[1].trim()} ${hit[2]}号室`);
+    }
+    return [...out];
+  }, [actionType, recentMessages]);
+  useEffect(() => {
+    if (actionType !== "guarantor_info") return;
+    let cancelled = false;
+    fetch("/api/guarantor-companies", { headers: INTERNAL_AUTH_HEADER })
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; companies?: GuarantorCompanyOption[] }) => {
+        if (cancelled || !d.ok || !Array.isArray(d.companies)) return;
+        setGiCompanies(d.companies);
+      })
+      .catch((e) => console.warn("[AixModal] 保証会社一覧の取得失敗（マスタだけで続行）:", e));
+    return () => { cancelled = true; };
+  }, [actionType]);
+  // 「その他」で入れた保証会社を登録（マスタと同じ名前ならサーバが duplicate で返す → その正規名を選択状態にする）
+  const saveGuarantorCompany = async (cardId: number) => {
+    const f = giNewCompany[cardId];
+    if (!f?.name.trim()) return;
+    setGiSavingId(cardId);
+    setError("");
+    try {
+      const res = await fetch("/api/guarantor-companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+        body: JSON.stringify({ name: f.name.trim(), type: f.type }),
+      });
+      const d = await res.json() as { ok?: boolean; duplicate?: boolean; company?: GuarantorCompanyOption; error?: string };
+      if (!res.ok || !d.ok || !d.company) throw new Error(d.error || `HTTP ${res.status}`);
+      const saved = d.company;
+      if (!d.duplicate) setGiCompanies((prev) => prev.some((c) => c.name === saved.name) ? prev.map((c) => c.name === saved.name ? saved : c) : [...prev, saved]);
+      setGiCards((prev) => prev.map((c) => c.id === cardId ? { ...c, company: saved.name, type: saved.type, other: false } : c));
+      setGiNewCompany((prev) => { const n = { ...prev }; delete n[cardId]; return n; });
+      setPreview("");
+    } catch (e) {
+      setError(`保証会社を登録できませんでした: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setGiSavingId(null);
+    }
+  };
+
   // 物件オススメ専用: 見積書（任意）
   const [recommendEstimateFile, setRecommendEstimateFile] = useState<File | null>(null);
   const [recommendEstimatePreview, setRecommendEstimatePreview] = useState<string>("");
@@ -1118,6 +1206,12 @@ export default function AixModal({
     setCbInsuranceYen("");
     setCbItems([]);
     cbPrefilledRef.current = false;
+    // 保証会社について: 前の会話の入力を持ち越さない
+    setGiCards(initialGuarantorCards());
+    giNextIdRef.current = GI_INITIAL_CARDS + 1;
+    setGiParallel(false);
+    setGiNewCompany({});
+    setGiPlan(null);
   }, [actionType, conversationId]);
 
   // condition_hearing: フォーム本体をマウント時にクライアント側で即組み立て
@@ -1819,6 +1913,9 @@ export default function AixModal({
       // M2: 見積書同封フラグ・費用メモも毎回リセット（前回生成の見積書情報を持ち越さない）
       lastEstimateSentRef.current = false;
       lastPropCostNotesRef.current = [];
+      // 保証会社について: 送った物件×保証会社も毎回作り直す
+      lastGuarantorPropsRef.current = [];
+      lastGuarantorParallelRef.current = false;
 
       const body: Record<string, unknown> = {
         action: actionType,
@@ -1881,6 +1978,19 @@ export default function AixModal({
         if (!phoneNotes.trim()) throw new Error("電話でお話しした内容を入力してください");
         body.call_notes = phoneNotes.trim();
         setGenLabel("電話の内容をまとめています");
+      }
+      // 保証会社について（2026-09-15 竹内・YUYA 事例）: 物件ごとの保証会社名・種類と並行審査トグルをサーバへ。
+      //   conversation_match false = 固定テンプレ（LLM なし）／true = 会話を合わせる（ボタンの extraFlags で決まる）。
+      //   種類が未選択なら会社名から既定の種類（resolveGuarantor）を入れて送る
+      if (actionType === "guarantor_info") {
+        const props = giFilled.map((c) => ({ name: c.name.trim(), company: c.company.trim(), type: c.type || resolveGuarantor(c.company, giCustomCompanies).type }));
+        if (props.length === 0) throw new Error("物件名と保証会社名を1件以上入力してください");
+        body.properties = props;
+        body.parallel = giParallel;
+        const giMatch = extraFlags?.conversation_match === true;
+        body.conversation_match = giMatch;
+        setGiPlan(null);
+        setGenLabel(giMatch ? "会話に合わせて保証会社の案内を作っています" : "保証会社の案内を組み立てています");
       }
 
       if (actionType === "property_recommendation") {
@@ -2377,6 +2487,11 @@ export default function AixModal({
         // M2: 御見積書を同封したか / 見積書OCRから抽出した物件別の費用メモ
         estimate_sent?: boolean;
         prop_cost_notes?: string[];
+        // 保証会社について: 名寄せ済みの物件×保証会社×種類・並行審査ON・かぶっている組
+        fixed?: boolean;
+        guarantor_properties?: Array<{ name: string; company: string; type: string }>;
+        parallel_screening?: boolean;
+        parallel_plan?: { overlapping: Array<{ company: string; properties: string[] }>; canParallel: boolean };
       };
       if (!data.ok) throw new Error(data.error || "生成に失敗しました");
 
@@ -2422,6 +2537,13 @@ export default function AixModal({
       if (actionType === "cost_breakdown") {
         setCbItems(Array.isArray(data.cost_breakdown_items) ? (data.cost_breakdown_items as typeof cbItems) : []);
       }
+      // 保証会社について: サーバで名寄せした物件×保証会社×種類を送信時の記録に渡す（物件名は property_names にも）
+      if (actionType === "guarantor_info") {
+        lastGuarantorPropsRef.current = Array.isArray(data.guarantor_properties) ? data.guarantor_properties : [];
+        lastGuarantorParallelRef.current = data.parallel_screening === true;
+        lastCheckPropNamesRef.current = lastGuarantorPropsRef.current.map((g) => g.name);
+        setGiPlan(data.parallel_plan ?? null);
+      }
       lastEstimateSentRef.current = data.estimate_sent === true;
       lastPropCostNotesRef.current = Array.isArray(data.prop_cost_notes)
         ? (data.prop_cost_notes as unknown[]).map((n) => String(n ?? "")).filter(Boolean)
@@ -2460,6 +2582,7 @@ export default function AixModal({
     cost_breakdown: "cost_breakdown",
     phone_call: "phone_call",
     phone_followup: "phone_followup",
+    guarantor_info: "guarantor_info",
   };
 
   // save-reply-example の保存ペイロードを構築（即時送信・予約送信で共通利用）
@@ -2742,6 +2865,9 @@ export default function AixModal({
         // 2026-09-14: 画面で入力した待ち合わせの日付・時刻も送信時の記録（sent_facts・内覧の記録 viewing_history）へ渡す
         meetingDate: actionType === "meeting_place" && meetingDate.trim() ? meetingDate.trim() : undefined,
         meetingTime: actionType === "meeting_place" && meetingTime.trim() ? meetingTime.trim() : undefined,
+        // 2026-09-15 竹内（YUYA 事例）: 保証会社について の物件×保証会社×種類・並行審査ON（sent_facts の台帳でブレインが読む）
+        guarantorProperties: actionType === "guarantor_info" && lastGuarantorPropsRef.current.length > 0 ? lastGuarantorPropsRef.current : undefined,
+        parallelScreening: actionType === "guarantor_info" ? lastGuarantorParallelRef.current : undefined,
       });
       onScheduled?.();
       setShowAixScheduleModal(false);
@@ -3080,6 +3206,9 @@ export default function AixModal({
         // 2026-09-14: 画面で入力した待ち合わせの日付・時刻も送信時の記録（sent_facts・内覧の記録 viewing_history）へ渡す
         meetingDate: actionType === "meeting_place" && meetingDate.trim() ? meetingDate.trim() : undefined,
         meetingTime: actionType === "meeting_place" && meetingTime.trim() ? meetingTime.trim() : undefined,
+        // 2026-09-15 竹内（YUYA 事例）: 保証会社について の物件×保証会社×種類・並行審査ON（sent_facts の台帳でブレインが読む）
+        guarantorProperties: actionType === "guarantor_info" && lastGuarantorPropsRef.current.length > 0 ? lastGuarantorPropsRef.current : undefined,
+        parallelScreening: actionType === "guarantor_info" ? lastGuarantorParallelRef.current : undefined,
       });
       onClose();
     } catch (err) {
@@ -3135,6 +3264,8 @@ export default function AixModal({
     ? cbImages.length > 0
     : actionType === "phone_followup"
     ? !!phoneNotes.trim()
+    : actionType === "guarantor_info"
+    ? giFilled.length > 0
     : actionType === "estimate_sheet" && estimateMultiMode
     ? estimateMultiFiles.some(Boolean)
     : !config.requiresImage || !!imageFile;
@@ -6317,6 +6448,130 @@ export default function AixModal({
             </div>
           )}
 
+          {/* 保証会社について専用UI（2026-09-15 竹内・YUYA 事例）: 物件ごとに物件名・保証会社（選択 or 登録）・種類 → 一覧＋審査の通りやすさ＋並行審査の勧めの1通 */}
+          {actionType === "guarantor_info" && (() => {
+            const inputCls = "w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-xs outline-none focus:border-[#3949AB]";
+            const updateCard = (id: number, patch: Partial<GuarantorCard>) => { setGiCards((p) => p.map((x) => x.id === id ? { ...x, ...patch } : x)); setPreview(""); };
+            // 全部同じ会社か（決定論: 入力済みカードの会社を resolveGuarantor で名寄せして1社だけなら「1件ずつ審査」の文になる）
+            const allSameCompany = giFilled.length >= 2 && new Set(giFilled.map((c) => resolveGuarantor(c.company, giCustomCompanies).name)).size < 2;
+            return (
+              <div className="mb-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <label className="text-xs font-semibold text-[#54656f]">物件ごとの保証会社 <span className="text-red-400">*</span> <span className="ml-1 text-[11px] font-normal text-[#8696a0]">{giFilled.length}件</span></label>
+                  <button
+                    onClick={() => { setGiCards((p) => [...p, newGuarantorCard(giNextIdRef.current++)]); }}
+                    className="rounded-full border border-[#3949AB] px-3 py-1 text-xs font-semibold text-[#3949AB]"
+                  >
+                    ＋ 物件を追加
+                  </button>
+                </div>
+                <div className="flex flex-col gap-3">
+                  {giCards.map((c, i) => (
+                    <div key={c.id} className="rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <p className="text-xs font-bold text-[#54656f]">物件{"①②③④⑤⑥⑦⑧⑨⑩"[i] ?? `${i + 1}`}</p>
+                        {giCards.length > 1 && (
+                          <button onClick={() => { setGiCards((p) => p.filter((x) => x.id !== c.id)); setPreview(""); }} className="text-[11px] text-[#8696a0]">× 削除</button>
+                        )}
+                      </div>
+                      {/* 物件名 */}
+                      <input
+                        type="text"
+                        list="gi-property-names"
+                        placeholder="物件名（例: カーザSun I）"
+                        value={c.name}
+                        onChange={(e) => updateCard(c.id, { name: e.target.value })}
+                        className={`mb-2 ${inputCls}`}
+                      />
+                      {/* 保証会社（select: マスタ＋登録済み＋その他） */}
+                      <select
+                        value={c.other ? "__other__" : c.company}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === "__other__") { updateCard(c.id, { other: true, company: "", type: "" }); return; }
+                          // 会社を選んだら種類は既定（手で変えられる）
+                          updateCard(c.id, { other: false, company: v, type: v ? resolveGuarantor(v, giCustomCompanies).type : "" });
+                        }}
+                        className={`mb-2 ${inputCls}`}
+                      >
+                        <option value="">保証会社を選択</option>
+                        {giCompanies.map((g) => <option key={g.name} value={g.name}>{g.name}{g.source === "custom" ? "（登録）" : ""}</option>)}
+                        <option value="__other__">その他（テキストで登録）</option>
+                      </select>
+                      {/* その他: 名前＋種類を入れて「登録」（次回から選択肢に出る） */}
+                      {c.other && (
+                        <div className="mb-2 flex gap-1">
+                          <input
+                            type="text"
+                            placeholder="保証会社名"
+                            value={giNewCompany[c.id]?.name ?? ""}
+                            onChange={(e) => { const v = e.target.value; setGiNewCompany((p) => ({ ...p, [c.id]: { name: v, type: p[c.id]?.type ?? "unknown" } })); }}
+                            className={`flex-1 ${inputCls}`}
+                          />
+                          <select
+                            value={giNewCompany[c.id]?.type ?? "unknown"}
+                            onChange={(e) => { const v = e.target.value as GuarantorType; setGiNewCompany((p) => ({ ...p, [c.id]: { name: p[c.id]?.name ?? "", type: v } })); }}
+                            className="rounded-xl border border-[#d1d7db] bg-white px-2 py-2 text-xs"
+                          >
+                            {GUARANTOR_TYPES.map((t) => <option key={t} value={t}>{GUARANTOR_TYPE_LABELS[t]}</option>)}
+                          </select>
+                          <button
+                            onClick={() => void saveGuarantorCompany(c.id)}
+                            disabled={giSavingId === c.id || !(giNewCompany[c.id]?.name ?? "").trim()}
+                            className="rounded-xl bg-[#3949AB] px-3 py-2 text-xs font-bold text-white disabled:opacity-40"
+                          >
+                            {giSavingId === c.id ? "登録中…" : "登録"}
+                          </button>
+                        </div>
+                      )}
+                      {/* 種類（4択・会社を選ぶと既定が入る・手で変えられる） */}
+                      <select
+                        value={c.type}
+                        onChange={(e) => updateCard(c.id, { type: e.target.value as GuarantorType | "" })}
+                        className={inputCls}
+                      >
+                        <option value="">種類を選択（会社を選ぶと自動）</option>
+                        {GUARANTOR_TYPES.map((t) => <option key={t} value={t}>{GUARANTOR_TYPE_LABELS[t]}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+                <datalist id="gi-property-names">
+                  {giPropertyNameOptions.map((n) => <option key={n} value={n} />)}
+                </datalist>
+                {/* 並行して審査かける（トグル） */}
+                <div className="mt-3 flex items-center justify-between gap-2 rounded-2xl border border-[#d1d7db] bg-white px-3 py-2">
+                  <div>
+                    <p className="text-xs font-semibold text-[#54656f]">並行して審査かける</p>
+                    <p className="text-[11px] text-[#8696a0]">ONにすると、保証会社が被っていないお部屋は並行して審査をかけられる旨が入ります（決まりやすくなります）</p>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={giParallel}
+                    onClick={() => { setGiParallel((v) => !v); setPreview(""); }}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition ${giParallel ? "bg-[#3949AB]" : "bg-[#d1d7db]"}`}
+                  >
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${giParallel ? "left-[22px]" : "left-0.5"}`} />
+                  </button>
+                </div>
+                {giParallel && allSameCompany && (
+                  <p className="mt-1 text-[11px] text-[#E65100]">保証会社がすべて同じなので、並行審査ではなく「1件ずつ審査」の文になります</p>
+                )}
+                {/* 生成後: かぶっている組（サーバの parallel_plan） */}
+                {giPlan?.overlapping.length ? (
+                  <p className="mt-1 text-[11px] text-[#8696a0]">同じ保証会社: {giPlan.overlapping.map((o) => `${o.properties.join("・")}（${o.company}）`).join("／")}</p>
+                ) : null}
+                <p className="mt-2 text-[11px] text-[#8696a0]">入力した会社名・種類だけで文を作ります（入力に無い会社名は〇〇になり送信前に止まります）。審査通過の断言はしません</p>
+                {/* 入力の確認（YUYA 17:27 型の一覧・送信文には使わない） */}
+                {giFilled.length > 0 && (
+                  <pre className="mt-2 whitespace-pre-wrap rounded-xl bg-white p-2 text-[11px] text-[#54656f]">
+                    {buildGuarantorListText(giFilled.map((c) => ({ name: c.name.trim(), company: c.company.trim(), type: (c.type || "unknown") as GuarantorType })))}
+                  </pre>
+                )}
+              </div>
+            );
+          })()}
+
           {/* 初期費用を説明専用UI（2026-09-12 竹内・あや事例）: 貸主からの報酬・還元額を入力 → 仕組み＋具体額の1通 */}
           {actionType === "cost_explain" && (() => {
             const feeYen = parseYen(costFeeYen);
@@ -6664,6 +6919,8 @@ export default function AixModal({
                     onClick={() => void generate(
                       (actionType === "property_check_result" && checkPattern === "other_room_check") || actionType === "cost_breakdown"
                         ? { conversation_match: true } // 会話を合わせる専用パターン: 再生成もテンプレから会話適応し直す（初期費用についても同じ）
+                        : actionType === "guarantor_info"
+                          ? { conversation_match: lastGenConvMatchRef.current } // 保証会社について: 最後に押した方（固定／会話を合わせる）で作り直す
                         : actionType === "condition_hearing" && hearingConvMatchMode
                           ? { conversation_match: true, base_message: aiDraft } // 会話を合わせるモード: 再生成も会話適応のまま
                           : undefined
@@ -6735,6 +6992,24 @@ export default function AixModal({
               >
                 {loading ? busyLabel : "💬 会話を合わせる"}
               </button>
+            ) : actionType === "guarantor_info" ? (
+              /* 保証会社について: 文面を作る（固定・LLMなし）／会話を合わせる（AIX生成ボタンなし） */
+              <div className="flex w-full flex-col gap-2">
+                <button
+                  onClick={() => void generate({ conversation_match: false })}
+                  disabled={loading || !canGenerate}
+                  className="w-full rounded-2xl bg-[#3949AB] py-3.5 text-sm font-bold text-white disabled:opacity-40"
+                >
+                  {loading ? busyLabel : "📝 文面を作る（固定）"}
+                </button>
+                <button
+                  onClick={() => void generate({ conversation_match: true })}
+                  disabled={loading || !canGenerate}
+                  className="w-full rounded-2xl bg-[#546E7A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
+                >
+                  {loading ? busyLabel : "💬 会話を合わせる"}
+                </button>
+              </div>
             ) : (
               actionType === "viewing_invite" ||
               actionType === "application_push" ||

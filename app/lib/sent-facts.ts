@@ -39,6 +39,8 @@ export async function recordAixFacts(o: {
   conversationId: string; aixType: string; sentAt: string; lineMessageId?: string | null; generatedText?: string | null;
   checkPattern?: string | null; propertyNames?: string[] | null; estimateSent?: boolean | null;
   meeting?: { date?: string | null; time?: string | null; propertyName?: string | null; address?: string | null } | null;
+  /** 2026-09-15 竹内（YUYA 事例）: AIX 保証会社についての画面入力（物件ごとの保証会社名・種類・並行審査ON）。ブレインの台帳で読める */
+  guarantors?: { properties: Array<{ name: string; company: string; type: string }>; parallel: boolean } | null;
   /** 遡って記録する時だけ: この日（YYYY-MM-DD）より前の内覧の記録は作らない */
   viewingOnlyFrom?: string;
 }): Promise<void> {
@@ -48,6 +50,10 @@ export async function recordAixFacts(o: {
   if (o.checkPattern) detail.checkPattern = o.checkPattern;
   if (o.propertyNames?.length) { detail.propertyNames = o.propertyNames; detail.propertyCount = o.propertyNames.length; }
   if (map.kind === "estimate_sent" && o.propertyNames?.length) detail.estimateFor = o.propertyNames;
+  if (map.kind === "guarantor_explained" && o.guarantors?.properties.length) {
+    detail.guarantors = o.guarantors.properties; detail.parallel = o.guarantors.parallel;
+    detail.propertyNames = o.guarantors.properties.map((g) => g.name); detail.propertyCount = o.guarantors.properties.length;
+  }
   let appointment: ViewingAppointment | null = null;
   if (map.kind === "meeting_place_sent") {
     appointment = appointmentFromMeetingInput(o.meeting) ?? extractViewingAppointment(o.generatedText, o.sentAt);

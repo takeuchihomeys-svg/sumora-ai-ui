@@ -16,6 +16,7 @@ import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
+import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 
 export const maxDuration = 300;
 
@@ -336,6 +337,8 @@ const AIX_ACTION_TO_STATES: Record<string, string[]> = {
   // 2026-09-15 竹内（H 事例）: 電話をかける（クライアント側テンプレ・保存 state を揃えるためだけ）／電話終了後（メモから電話後のまとめ）
   phone_call: ["phone_call"],
   phone_followup: ["phone_followup"],
+  // 2026-09-15 竹内（YUYA 事例）: 保証会社について。確認した→保証会社（mgmt_guarantor）の学習も引く
+  guarantor_info: ["guarantor_info", "property_check_result"],
   // ※ property_recommendation は getPropertyKnowledge() 内で同等の差分学習ルール取得済み（states: property_recommendation/proposing）
 };
 
@@ -674,6 +677,7 @@ const ACTION_MAX_TOKENS: Record<string, number> = {
   zenryoku_support: 600,         // 2〜5行の短文生成
   cost_breakdown: 1500,          // 初期費用について（見積書の内訳の読み取り JSON・説明文）
   phone_followup: 1200,          // 電話終了後（電話でお話しした内容のまとめ・3〜8行）
+  guarantor_info: 4000,          // 保証会社について（物件ごとの一覧＋審査の緩さ＋並行審査の勧め）。1物件≈180トークン・最大20件でも JSON が尻切れしない余裕（上限なので未使用分は費用にならない）
 };
 
 function maxTokensForAction(action: string): number {
@@ -5438,6 +5442,105 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
       return finalizeResponse(pfChecked.text, pfChecked.unmatched.length > 0
         ? { notice: `メモに無い数字（${pfChecked.unmatched.join("・")}）を〇〇にしました。電話でお話しした内容を見て書き換えてから送信してください` }
         : undefined);
+
+    } else if (action === "guarantor_info") {
+      // AIX【保証会社について】（2026-09-15 竹内・YUYA 事例）: 管理会社に確認した物件ごとの保証会社名・種類（独立系／LICC系／信販系）を一覧で案内し、
+      //   審査の通りやすさを種類ごとの決まった言い回しで伝える。「並行して審査かける」ON で、かぶっていない保証会社の並行審査を勧める。
+      //   会社名・種類はスタッフの入力だけ（LLM に作らせない）。conversation_match=false は固定テンプレ（LLM 0回）、true は会話に合わせた1通
+      //   （入力に無い会社名・種類の表現は checkGuarantorFacts で〇〇→1回だけ作り直し→残れば notice＝送信前チェックで止まる。cost_breakdown の金額の照合と同じ考え）
+      const giRaw = Array.isArray(body.properties) ? (body.properties as Array<{ name?: unknown; company?: unknown; type?: unknown }>) : [];
+      // スタッフが登録した会社（guarantor_companies）: 名寄せの既定の種類と、会話から拾った別の登録会社名を伏せる走査に使う。読めなければマスタだけで動く
+      let giCustoms: Array<{ name: string; type: GuarantorType }> = [];
+      try {
+        const { data: giRows } = await supabase.from("guarantor_companies").select("name, type");
+        giCustoms = ((giRows ?? []) as Array<{ name?: string | null; type?: string | null }>)
+          .map((r) => ({ name: String(r.name ?? "").trim(), type: (isGuarantorType(r.type) ? r.type : "unknown") as GuarantorType }))
+          .filter((r) => r.name);
+      } catch { /* テーブル未作成・接続不可でもマスタだけで動く */ }
+      const giProps: GuarantorProperty[] = giRaw.map((p) => {
+        const nm = String(p?.name ?? "").trim().slice(0, 100);
+        const co = String(p?.company ?? "").trim().slice(0, 60);
+        const r = resolveGuarantor(co, giCustoms);   // 名寄せ（正規名）と既定の種類
+        const ty: GuarantorType = isGuarantorType(p?.type) ? p.type : r.type;   // 画面で選んだ種類が最優先。無ければ既定
+        return { name: nm, company: r.name, type: ty };
+      }).filter((p) => p.name && p.company).slice(0, 20);
+      if (giProps.length === 0) throw new Error("物件名と保証会社名を1件以上入力してください");
+      const giParallel = body.parallel === true;
+      const giMatch = body.conversation_match === true;
+      const giFacts = formatGuarantorFacts(giProps, { parallel: giParallel });
+      // UI が「入力の確認」と onAfterSend（→ log-aix-usage → sent_facts）に使う
+      const giExtra = { guarantor_properties: giProps, parallel_screening: giParallel, parallel_plan: giFacts.plan };
+
+      if (!giMatch) {
+        // 固定テンプレ（YUYA 9/15 17:31 の実送信の型・LLM を呼ばない）
+        const giFixed = buildGuarantorInfoText({ customerName: familyName || rawName || "", properties: giProps, parallel: giParallel });
+        return finalizeResponse(giFixed, { ...giExtra, fixed: true });
+      }
+
+      const [giKnowledge, giStarNote, giDbRules, giBrainAddendum] = await Promise.all([
+        getKnowledgeForState(AIX_ACTION_TO_STATES.guarantor_info, currentAction, conversationId, latestCustomerMsg, brainContext),
+        getStarredExamplesForAction(AIX_ACTION_TO_STATES.guarantor_info, latestCustomerMsg, aixBrainMeta),
+        fetchPromptRules("guarantor_info", {}).catch(() => ""),
+        loadBrainTemplate("guarantor_info"),
+      ]);
+      // キャッシュ最適化: 静的（GENERATION_SYSTEM/共通ルール/固定指示/スタッフの実文）と動的（物件ごとの保証会社・ブレイン・DBルール）を分ける
+      const giStaticSystem = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+【お客様名】ユーザーメッセージに記載のお客様名を使うこと
+
+【この返信の目的】
+・管理会社に確認した物件ごとの保証会社名と種類（独立系／LICC系／信販系）を一覧で伝え、審査の通りやすさを種類に応じた決まった言い回しで説明し、（指示がある時だけ）保証会社がかぶっていないお部屋の並行審査を勧める1通を作る
+
+【構成】
+①お客様の直近の発言に質問・不安（審査が心配・保証会社はどこか・保証人は要るか 等）があれば、最初の1文でそれに直接答える（無ければ「こちら保証会社一覧となります！！」から始める）
+②物件ごとの一覧: 「・物件名」を1行ずつ並べ、続けて「の保証会社は〇〇と独立系の保証会社となりますので、…」の形（同じ会社の物件は同じ段落にまとめる。会社が違えば段落を分ける）
+③種類ごとの説明は【種類ごとに使ってよい言い回し】の文だけを使う（種類が「不明・その他」の物件は審査の緩い・厳しいに触れない）
+④【並行審査】の指示どおり（指示が「書かない」なら並行審査に一切触れない。同じ会社の組があれば「どちらか1件の審査となります」）
+⑤「よろしければお気に召されたお部屋一度審査かけさせて頂きます！！」
+⑥最終行は「※保証会社審査通過後、オーナー審査移行するまでキャンセル料不要となります！！」
+
+【言い回し】下の「スタッフの実際の返信」の口調・構成に合わせる（「〜となります！！」「審査かけさせて頂きます！！」）。内容のまとまりごとに空行
+
+【絶対禁止】
+・【物件ごとの保証会社】に無い保証会社名・種類を書くこと（会話に別の保証会社名が出ていても書かない）
+・「審査通ります」「通りそうです」「必ず」等の審査通過の断言（許される言い回しは「審査通過する可能性十分に御座います」「審査無事通過する為」まで）
+・保証人・緊急連絡先・年収・勤務先など審査の中身に踏み込むこと（聞かれていても「保証会社の審査となります」までにとどめる）
+・内覧の候補日時・見積金額・他物件の提案・「確認させて頂きます」等の確認前の文（保証会社は確認済み）
+・謝罪表現（「申し訳ございません」等）・🙏 絵文字
+
+【スタッフの実際の返信（言い回しの手本。別のお客様・別の物件の話なので、物件名・保証会社名・種類は写さない。中身は必ず【物件ごとの保証会社】に従う）】
+${GUARANTOR_INFO_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")}
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
+      const giDynamicSuffix = [
+        giFacts.block,
+        brainGuidanceNote ? `【ブレインの判断（この局面の方針）】${brainGuidanceNote}` : "",
+        giDbRules,
+        giBrainAddendum ? `【ブレイン改善ルール】\n${giBrainAddendum}` : "",
+      ].filter(Boolean).join("\n\n");
+      const giUser = greetingTimeNote
+        + `${recentHistory}\n\n上記の会話を読み取り、${name}に物件ごとの保証会社の一覧と審査の通りやすさを案内する返信を生成してください。お客様の直近の質問・不安があれば最初の1文で答えてください。`
+        + (giKnowledge ? `\n\n${giKnowledge}` : "")
+        + (giStarNote ? `\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n${giStarNote}` : "");
+      const giParse = (raw: string): string => {
+        try { const m = raw.match(/\{[\s\S]*\}/); if (m) return ((JSON.parse(m[0]) as { message?: string }).message || raw).replace(/\\n/g, "\n"); } catch { /* JSON で無ければ本文そのもの */ }
+        return raw;
+      };
+      let giMessage = giParse(await callClaude(giStaticSystem, giUser, currentAction, giDynamicSuffix || undefined));
+      let giCheck = checkGuarantorFacts(giMessage, giProps, giCustoms);
+      if (!giCheck.ok) {
+        // 入力に無い会社名・種類の表現 → 1回だけ作り直す（同じ static system＝キャッシュ HIT）
+        console.warn("[aix/action] guarantor_info: 入力に無い保証会社名・種類 → 作り直し:", giCheck.unmatched, giCheck.typeWarnings);
+        const giRetrySuffix = `${giDynamicSuffix}\n\n【やり直し】前回の本文に【物件ごとの保証会社】に無い保証会社名（${giCheck.unmatched.join("・") || "なし"}）・種類の表現（${giCheck.typeWarnings.join("・") || "なし"}）が入りました。上の一覧にある会社名・種類だけで書き直してください`;
+        giMessage = giParse(await callClaude(giStaticSystem, giUser, currentAction, giRetrySuffix));
+        giCheck = checkGuarantorFacts(giMessage, giProps, giCustoms);
+      }
+      const giNotice = giCheck.ok ? null
+        : `入力に無い保証会社名（${giCheck.unmatched.join("・") || "なし"}）を〇〇にしました${giCheck.typeWarnings.length ? `／種類の表現に注意（${giCheck.typeWarnings.join("・")}）` : ""}。入力した保証会社を見て書き換えてから送信してください`;
+      return finalizeResponse(giCheck.cleaned, { ...giExtra, fixed: false, ...(giNotice ? { notice: giNotice } : {}) });
 
     } else {
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });

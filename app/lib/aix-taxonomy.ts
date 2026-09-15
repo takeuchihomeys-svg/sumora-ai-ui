@@ -62,6 +62,8 @@ export const AIX_BUTTON_LABELS: Record<string, string> = {
   // 2026-09-15 竹内（H 事例）: お客様が電話で話したい → LINEコールの「電話をかける」ボタン＋案内文／電話の後のまとめ
   phone_call:              "電話をかける",
   phone_followup:          "電話終了後",
+  // 2026-09-15 竹内（YUYA 事例）: 物件ごとの保証会社名と種類（独立系／LICC系／信販系）を一覧で案内し、かぶらない保証会社なら並行審査を勧める
+  guarantor_info:          "保証会社について",
 };
 
 // ボタンキー → スタッフ向けアナウンス（「AIX【ボタン名】を押してください: 理由・タイミング」形式）。
@@ -83,6 +85,7 @@ export const AIX_STAFF_NOTES: Record<string, string> = {
   cost_breakdown:          "AIX【初期費用について】を押してください: お客様が初期費用の中身を聞いています（「家賃だけ払ったら住めるんですか？」「初期費用に何が含まれますか？」「火災保険は別ですか？」）。御見積書の画像を貼り付けて「会話を合わせる」を押すと、御見積書の内訳（項目と金額）でご質問に答える1通を作ります（見積書を見ずに本文で費用の中身を説明するのはNG）",
   phone_call:              "AIX【電話する → 電話をかける】を押してください: お客様が電話で話したい・相談したいと言っています（「お電話では無理でしょうか？」「電話いける時間ありますか？」）。「電話をかける」ボタン（LINEコール）と案内文を送ると、お客様がボタンから公式LINEに電話できます。電話の後は AIX【電話する → 電話終了後】で話した内容をまとめて送ります",
   phone_followup:          "AIX【電話する → 電話終了後】を押してください: お客様との電話が終わった場面です。電話でお話しした内容を入れると、お礼とまとめ（決まったこと・こちらがすること・お客様にお願いすること）の1通を作ります",
+  guarantor_info:          "AIX【保証会社について】を押してください: お客様が審査・保証会社の不安を出した／保証会社を尋ねた／複数物件の保証会社を伝える場面で、管理会社に保証会社を確認した後に押します。物件ごとに①物件名②保証会社名③種類（独立系・LICC系・信販系）を入れて「文面を作る」か「会話を合わせる」を押すと、保証会社一覧と審査の通りやすさ（独立系＝審査基準が緩い）を1通で案内します。「並行して審査かける」ONで、保証会社がかぶっていない物件の並行審査を勧める文が入ります（会社名・種類は入力値のみ・審査通過の断言はしない）",
 };
 
 // ─── brain action → 顧客向け返信方向性（A-7 / 2026-09-08 Fable5）──────────────────
@@ -112,6 +115,8 @@ export const AIX_ACTION_REPLY_DIRECTION: Record<string, AixActionReplyDirection>
   // 2026-09-15 竹内（H 事例）: 電話のご依頼には「電話をかける」ボタン（LINEコール）と案内文を AIX で送る。本文で電話番号・折り返しの時刻を作らない
   phone_call:              { direction: "お電話のご依頼への受付（電話をかけるボタンと案内文はAIX電話をかけるで送る）", weDo: "お電話大丈夫です😊！！", forbid: "電話番号の記載／「こちらからお電話します」「〇時にお電話します」等の折り返しの約束・時刻／電話を断る文" },
   phone_followup:          { direction: "電話でお話しした内容のまとめ（AIX電話終了後でスタッフのメモから送る）", weDo: "お電話有難うございました😊！！", forbid: "電話で話していない内容・金額・日付の創作" },
+  // 2026-09-15 竹内（YUYA 事例）: 保証会社名・審査基準の緩さ・並行審査の勧めは AIX【保証会社について】で送る。本文で保証会社名・「審査緩い」を作らない
+  guarantor_info:          { direction: "審査・保証会社のご質問の受付（保証会社名・種類・並行審査の案内はAIX保証会社についてで送る）", weDo: "保証会社確認させて頂きます😊！！", forbid: "保証会社名の記載／審査の通りやすさ・通過の断言／並行審査の提案" },
 };
 
 // ─── property_check_result の check_pattern 決定論判定 ─────────────────────────
@@ -196,6 +201,7 @@ export const AIX_LINE_LABELS: Record<string, string> = {
   cost_breakdown:          "初期費用について",
   phone_call:              "電話のご依頼",
   phone_followup:          "電話後のまとめ",
+  guarantor_info:          "保証会社の案内",
 };
 
 // 通知2行目: 「次にやること」を1行で
@@ -216,6 +222,7 @@ export const AIX_LINE_NOTES: Record<string, string> = {
   cost_breakdown:          "御見積書の画像を貼り付け → AIX【初期費用について】",
   phone_call:              "AIX【電話する → 電話をかける】でボタンと案内文を送る",
   phone_followup:          "話した内容を入れて AIX【電話する → 電話終了後】",
+  guarantor_info:          "物件ごとの保証会社名・種類を入れて AIX【保証会社について】",
 };
 
 // check_pattern → topic の簡易マップ（brain の check_pattern から topic を引くため）
@@ -267,6 +274,10 @@ const AIX_ACTION_ALIASES: Record<string, string> = {
   phone_request:      "phone_call",
   call_followup:      "phone_followup",
   phone_after:        "phone_followup",
+  guarantor_company:  "guarantor_info",
+  guarantor_list:     "guarantor_info",
+  guarantor_about:    "guarantor_info",
+  guarantor_explain:  "guarantor_info",
 };
 
 export function normalizeAixActionKey(raw: string | null | undefined): string | null {

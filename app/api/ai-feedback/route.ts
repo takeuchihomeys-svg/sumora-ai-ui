@@ -30,6 +30,7 @@ const KNOWN_AIX_TYPES = new Set([
   "cost_breakdown",
   "phone_call",
   "phone_followup",
+  "guarantor_info",
 ]);
 
 // FEEDBACKルールの action_type スコープ用whitelist。

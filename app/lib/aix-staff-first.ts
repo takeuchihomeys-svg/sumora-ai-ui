@@ -18,6 +18,8 @@ const AIX_OWNED_TOPIC_RE: Record<string, RegExp> = {
   property_recommendation: /物件|お部屋|オススメ|おすすめ/,
   // property_check_result は結果の報告なので種類では外さない（「他物件の募集状況確認」を避けるのは正しい）。同封する御見積書等はスタッフの入力で外す
   phone_call: /電話|通話/,
+  // 2026-09-15 竹内（YUYA 事例）: 保証会社について は審査・保証会社の話そのものを送る（ブレインの avoid_topics「審査」で本題を禁止しない）
+  guarantor_info: /保証会社|審査|保証人|独立系|LICC|信販/,
 };
 const ESTIMATE_RE = /見積|初期費用|費用|割引|金額|総額/;
 const VIEWING_RE = /内覧|内見|ご案内|日程/;

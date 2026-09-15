@@ -259,6 +259,8 @@ const AIX_ACTION_META: Record<string, { label: string; subtitle?: string; color:
   // 2026-09-15 \u7af9\u5185\uff08H \u4e8b\u4f8b\uff09: LINE\u30b3\u30fc\u30eb\u306e\u300c\u96fb\u8a71\u3092\u304b\u3051\u308b\u300d\u30dc\u30bf\u30f3\uff0b\u6848\u5185\u6587\uff0f\u96fb\u8a71\u3067\u304a\u8a71\u3057\u3057\u305f\u5185\u5bb9\u306e\u307e\u3068\u3081
   phone_call:              { label: "\u96fb\u8a71\u3092\u304b\u3051\u308b",        color: "#06C755", templateCategory: "" },
   phone_followup:          { label: "\u96fb\u8a71\u7d42\u4e86\u5f8c",          color: "#1B8A4B", templateCategory: "" },
+  // 2026-09-15 \u7af9\u5185\uff08YUYA \u4e8b\u4f8b\uff09: \u7269\u4ef6\u3054\u3068\u306e\u4fdd\u8a3c\u4f1a\u793e\u540d\u30fb\u7a2e\u985e\u306e\u6848\u5185\uff08\u56fa\u5b9a\u6587\u9762\uff0f\u4f1a\u8a71\u3092\u5408\u308f\u305b\u308b\uff09
+  guarantor_info:          { label: "\u4fdd\u8a3c\u4f1a\u793e\u306b\u3064\u3044\u3066",        color: "#3949AB", templateCategory: "" },
 };
 // \u8133\u99c6\u52d5\u30d2\u30f3\u30c8\uff08suggested_aix_meta.action\uff09\u2192 AIX\u30dc\u30bf\u30f3\u30e9\u30d9\u30eb\u3002
 // \u30e9\u30d9\u30eb\u304c\u5b58\u5728\u3059\u308b action \u306f\u300cAIX\u30a2\u30af\u30b7\u30e7\u30f3\u300d\u3068\u3057\u3066\u4e0b\u90e8AIX\u30ab\u30fc\u30c9\u306b\u7d71\u5408\u8868\u793a\u3059\u308b
@@ -8497,6 +8499,7 @@ export default function Home() {
                   cost_explain: "初期費用を説明",
                   cost_breakdown: "初期費用について",
                   phone_call: "電話をかける",
+                  guarantor_info: "保証会社について",
                 };
 
                 // action あり → AIXボタン。ただしブレインが同じ AIX を判断している時だけ（2026-09-12 竹内方針）。
@@ -10061,7 +10064,7 @@ export default function Home() {
           }}
           onSendCallButton={sendCallButton}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -10183,6 +10186,9 @@ export default function Home() {
                   // 2026-09-14: 待ち合わせの日付・時刻（送信時の記録 sent_facts と内覧の記録 viewing_history を作る）
                   meeting_date: meta?.meetingDate ?? null,
                   meeting_time: meta?.meetingTime ?? null,
+                  // 2026-09-15 竹内（YUYA 事例）: 保証会社について の物件×保証会社×種類・並行審査ON（sent_facts の台帳でブレインが読む）
+                  guarantor_properties: meta?.guarantorProperties ?? null,
+                  parallel_screening: meta?.parallelScreening ?? null,
                 }),
               }).catch(() => {});
               lastAixLogTextRef.current = null;
@@ -13740,6 +13746,7 @@ export default function Home() {
                   { color: "#2E7D32", label: "初期費用を説明", actionType: "cost_explain", sub: "安さを不審に思われた時に仕組み＋貸主からの報酬・還元額を1通で説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_explain"); openAixDirect("cost_explain"); } },
                   { color: "#558B2F", label: "初期費用について", actionType: "cost_breakdown", sub: "御見積書の画像を貼り付け→会話を合わせるで初期費用の中身（含まれる項目・家賃だけで入居できるか）を説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_breakdown"); openAixDirect("cost_breakdown"); } },
                   { color: "#06C755", label: "電話する", actionType: "phone_call", sub: "「電話をかける」ボタン＋案内文を送る／電話が終わったら話した内容からお礼とまとめを作る", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("phone_call"); setShowPhonePicker(true); } },
+                  { color: "#3949AB", label: "保証会社について", actionType: "guarantor_info", sub: "物件ごとの保証会社名・種類を入れて一覧と審査の通りやすさ、かぶらない保証会社なら並行審査の勧めを1通で", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("guarantor_info"); openAixDirect("guarantor_info"); } },
                   { color: "#0288D1", label: "お部屋探し条件ヒアリング", actionType: "condition_hearing", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
                   { color: "#9C27B0", label: "内覧日を調整する", actionType: "viewing_invite", sub: "日程をタップして選択→AI文生成→内覧案内LINEを送信。内覧率UPに直結！", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ場所", actionType: "meeting_place", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },

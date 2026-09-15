@@ -19,6 +19,9 @@ import {
 } from './reply-context';
 // 2026-09-12 竹内方針D: JST の日付表示は jst-date に一本化
 import { jstMDHm, jstParts, jstDayStartMs } from './jst-date';
+// 2026-09-15 竹内（YUYA 事例）: 保証会社の種類の日本語は guarantor-companies の1表から（依存ゼロの純関数モジュールなので循環しない）
+import { GUARANTOR_TYPE_SHORT, GUARANTOR_TYPE_LABELS, isGuarantorType } from './guarantor-companies';
+const guarantorTypeJa = (t: string): string => isGuarantorType(t) ? (GUARANTOR_TYPE_SHORT[t] || GUARANTOR_TYPE_LABELS[t]) : t;
 // 再 export（生成・検査が action-ledger 経由でも同じ定数を得る）
 export { STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, REDO_CLAIM_RE, LEDGER_OUTBOUND_SOURCES };
 
@@ -34,7 +37,9 @@ export type LedgerKind =
   /** 2026-09-15 竹内（H 事例）: AIX【電話をかける】で LINEコールの「電話をかける」ボタンと案内文を送った（お客様からの電話待ち） */
   | 'call_requested'
   /** 2026-09-15 竹内（H 事例）: AIX【電話終了後】で電話でお話しした内容のまとめを送った（電話は済み） */
-  | 'call_followup_sent';
+  | 'call_followup_sent'
+  /** 2026-09-15 竹内（YUYA 事例）: AIX【保証会社について】で物件ごとの保証会社名・種類（と並行審査の勧め）を案内した */
+  | 'guarantor_explained';
 export type LedgerStatus = 'promised' | 'done';
 export type LedgerSource = 'aix_log' | 'line_task' | 'aix_history' | 'staff_text';
 export type ReactionKind = CustomerResponseKind | 'none';
@@ -56,6 +61,9 @@ export interface LedgerEntry {
     taskStatus?: string | null;
     /** meeting_place_sent: 案内した内覧の待ち合わせ（日付 M/D・時刻・場所）。AIX 待ち合わせ場所の本文・スタッフ本文から */
     appointment?: ViewingAppointment | null;
+    /** guarantor_explained: 案内した物件ごとの保証会社（AIX 保証会社についての画面入力）と並行審査を勧めたか */
+    guarantors?: Array<{ name: string; company: string; type: string }>;
+    parallel?: boolean;
   };
   /** done 直後（次のスタッフ発言より前）の顧客返答（往復文脈の一般化） */
   customerReactionAfter?: ReactionKind;
@@ -166,6 +174,7 @@ const AIX_KIND: Record<string, { kind: LedgerKind; status: LedgerStatus }> = {
   cost_breakdown: { kind: 'cost_breakdown_explained', status: 'done' },
   phone_call: { kind: 'call_requested', status: 'done' },
   phone_followup: { kind: 'call_followup_sent', status: 'done' },
+  guarantor_info: { kind: 'guarantor_explained', status: 'done' },
 };
 /** promised → それを履行する done */
 const FULFILLS: Partial<Record<LedgerKind, LedgerKind>> = {
@@ -182,6 +191,7 @@ export const LEDGER_KIND_JA: Record<LedgerKind, string> = {
   cost_breakdown_explained: '初期費用の内訳の説明（御見積書）',
   call_requested: '電話をかけるボタンの送付（お客様からの電話待ち）',
   call_followup_sent: '電話後のまとめの送付',
+  guarantor_explained: '保証会社の案内（物件ごとの保証会社・種類）',
 };
 /** ledger kind → 往復文脈 StaffTurnKind（'pickup_declared' は reply-context 側 union に追加済み。reply-context の LEDGER_KIND_TO_STAFF と同値） */
 const LEDGER_TO_STAFF: Record<LedgerKind, StaffTurnKind> = {
@@ -189,7 +199,7 @@ const LEDGER_TO_STAFF: Record<LedgerKind, StaffTurnKind> = {
   viewing_invited: 'viewing_invite', meeting_place_sent: 'viewing_invite', question_asked: 'question_to_customer',
   confirmation_promised: 'confirmation_promise', confirmation_reported: 'check_result', condition_asked: 'condition_ask',
   application_guided: 'apply_push', followup_sent: 'other', media_sent: 'other', cost_explained: 'other', cost_breakdown_explained: 'other',
-  call_requested: 'other', call_followup_sent: 'other',
+  call_requested: 'other', call_followup_sent: 'other', guarantor_explained: 'other',
 };
 const STAFF_TO_LEDGER: Partial<Record<StaffTurnKind, LedgerKind>> = {
   property_send: 'properties_sent', pickup_declared: 'pickup_declared', estimate_send: 'estimate_sent', estimate_promised: 'estimate_declared', viewing_invite: 'viewing_invited', check_result: 'confirmation_reported',
@@ -387,7 +397,7 @@ export type RecordedFact = {
 };
 const LEDGER_KINDS = new Set<string>(['pickup_declared', 'properties_sent', 'estimate_declared', 'estimate_sent', 'viewing_invited', 'meeting_place_sent', 'question_asked',
   'confirmation_promised', 'confirmation_reported', 'condition_asked', 'application_guided', 'followup_sent', 'media_sent', 'cost_explained', 'cost_breakdown_explained',
-  'call_requested', 'call_followup_sent']);
+  'call_requested', 'call_followup_sent', 'guarantor_explained']);
 function entryFromRecorded(f: RecordedFact): LedgerEntry | null {
   if (!LEDGER_KINDS.has(f.kind) || (f.status !== 'done' && f.status !== 'promised')) return null;
   return {
@@ -408,6 +418,9 @@ export function buildLedgerLinesForBrain(ledger: ActionLedger, max = 8): string 
     if (e.kind === 'meeting_place_sent' && d.appointment) return `${d.appointment.dateMD ?? '?'} ${d.appointment.time ?? ''} ${d.appointment.place ?? ''}`.trim();
     if (e.kind === 'properties_sent') return `${d.propertyCount ?? 1}件${d.propertyNames?.length ? `: ${d.propertyNames.slice(0, 3).join('・')}` : ''}`;
     if ((e.kind === 'estimate_sent' || e.kind === 'estimate_declared') && d.estimateFor?.length) return d.estimateFor.slice(0, 3).join('・');
+    // 2026-09-15 竹内（YUYA 事例）: 保証会社の案内はブレインに物件名と会社名・種類も渡す（次の一手＝どの物件の審査に進むかの前提）
+    //   種類は日本語（独立系／LICC系／信販系・不明は「不明・その他」）＝ラベルの1表は guarantor-companies に置く
+    if (e.kind === 'guarantor_explained' && d.guarantors?.length) return `${d.guarantors.slice(0, 5).map((g) => `${g.name}: ${g.company}（${guarantorTypeJa(g.type)}）`).join('／')}${d.parallel ? '／並行審査を勧めた' : ''}`;
     if (d.checkPattern) return `結果=${d.checkPattern}`;
     if (d.object) return `対象=${d.object}`;
     return '';
@@ -722,6 +735,7 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
       // 2026-09-11 竹内方針2: 物件名は列挙しない（生成に物件名を持ち込む経路を断つ）
       const det = e.kind === 'properties_sent' ? `${e.detail.propertyCount ?? 1}件`
         : e.kind === 'estimate_sent' && e.detail.estimateFor?.length ? `${e.detail.estimateFor.length}件分`
+        : e.kind === 'guarantor_explained' && e.detail.guarantors?.length ? `${e.detail.guarantors.length}件分`
         : e.detail.checkPattern ? `結果=${e.detail.checkPattern}` : e.detail.object ? `対象=${e.detail.object}` : '';
       const ful = e.status === 'promised' ? (e.fulfilledBy == null ? '→ まだ履行していない' : '→ 履行済み') : '';
       const react = e.customerReactionAfter && e.customerReactionAfter !== 'none' ? `／お客様の反応: ${e.customerReactionAfter}` : '';

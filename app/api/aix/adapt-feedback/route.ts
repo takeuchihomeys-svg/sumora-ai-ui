@@ -24,6 +24,7 @@ const VALID_ADAPT_ACTION_TYPES = new Set([
   "zenryoku_support",
   "cost_breakdown", // 2026-09-15 初期費用について（会話を合わせる専用）
   "phone_followup", // 2026-09-15 電話終了後（電話でお話しした内容のまとめ）
+  "guarantor_info", // 2026-09-15 保証会社について（会話を合わせるあり）
 ]);
 
 export async function POST(request: NextRequest) {

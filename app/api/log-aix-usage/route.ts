@@ -32,6 +32,7 @@ const AIX_TYPE_LABELS: Record<string, string> = {
   cost_breakdown:           "御見積書の内訳で初期費用の中身（含まれる項目・家賃だけで入居できるか）を説明した",
   phone_call:               "「電話をかける」ボタン（LINEコール）と案内文を送った（お客様からの電話待ち）",
   phone_followup:           "電話でお話しした内容のまとめを送った",
+  guarantor_info:           "物件ごとの保証会社名と種類（独立系・LICC系・信販系）を案内した（並行審査の勧めを含むことがある）",
 };
 
 // 一致判定（簡易ベースライン）
@@ -59,6 +60,7 @@ const MATCH_KEYWORDS: Record<string, string[]> = {
   cost_breakdown:          ["初期費用", "敷金", "礼金", "内訳", "家賃だけ", "日割"],
   phone_call:              ["電話", "通話", "相談"],
   phone_followup:          ["電話", "お話し", "まとめ"],
+  guarantor_info:          ["保証会社", "独立系", "LICC", "信販", "並行"],
 };
 
 // キーワード簡易判定（予測テキストに実アクションのキーワードが含まれるか）
@@ -210,9 +212,12 @@ export async function POST(req: NextRequest) {
       /** 2026-09-14: 画面で入力した待ち合わせの日付（「9/14（月）」）・時刻（「12:00」） */
       meeting_date?: string | null;
       meeting_time?: string | null;
+      /** 2026-09-15 竹内（YUYA 事例）: 保証会社について の物件×保証会社×種類・並行審査ON（sent_facts の台帳でブレインが読む） */
+      guarantor_properties?: Array<{ name?: string | null; company?: string | null; type?: string | null }> | null;
+      parallel_screening?: boolean | null;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -297,6 +302,14 @@ export async function POST(req: NextRequest) {
           propertyNames: Array.isArray(property_names) ? property_names.map((n) => String(n ?? "")).filter(Boolean) : null,
           estimateSent: estimate_sent === true,
           meeting: aix_type === "meeting_place" ? { date: meeting_date ?? null, time: meeting_time ?? null, propertyName: meeting_property_name ?? null, address: meeting_property_address ?? null } : null,
+          guarantors: aix_type === "guarantor_info" && Array.isArray(guarantor_properties)
+            ? {
+              properties: guarantor_properties
+                .map((g) => ({ name: String(g?.name ?? "").slice(0, 100), company: String(g?.company ?? "").slice(0, 60), type: String(g?.type ?? "unknown") }))
+                .filter((g) => g.name && g.company),
+              parallel: parallel_screening === true,
+            }
+            : null,
         });
       } catch (e) { console.error("[log-aix-usage] sent_facts record failed:", e); }
     })());
@@ -492,6 +505,7 @@ JSONのみ返してください。説明文不要。`,
             cost_breakdown:           "初期費用について",
             phone_call:               "電話をかける",
             phone_followup:           "電話終了後",
+            guarantor_info:           "保証会社について",
             application:              "申込案内",
             document_request:         "書類案内",
             contract:                 "契約手続き",

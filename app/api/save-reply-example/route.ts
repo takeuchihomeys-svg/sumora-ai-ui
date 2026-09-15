@@ -425,6 +425,8 @@ const AIX_ACTION_LABELS: Record<string, string> = {
   // 2026-09-15 竹内（H 事例）: 電話をかける（テンプレ文）／電話終了後（電話でお話しした内容のまとめ）
   phone_call:             "電話をかける",
   phone_followup:         "電話終了後",
+  // 2026-09-15 竹内（YUYA 事例）: 保証会社について（固定文面／会話を合わせる）
+  guarantor_info:         "保証会社について",
   // T02サブパターン（property_check_result）
   property_check_result_available:         "物件確認した（募集中）",
   property_check_result_unavailable:       "物件確認した（満室）",

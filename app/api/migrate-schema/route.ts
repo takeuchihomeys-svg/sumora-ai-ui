@@ -3106,6 +3106,19 @@ ON CONFLICT (image_url) DO NOTHING;
 ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS viewing_report TEXT;
 ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS viewing_report_at TIMESTAMPTZ;
 
+-- guarantor_companies: スタッフが AIX【保証会社について】で登録した保証会社（2026-09-15 竹内・YUYA 事例）
+--   静的な一覧（日本セーフティー・全保連・エポスカード 等の名寄せと種類）は app/lib/guarantor-companies.ts にハードコード。
+--   ここには選択肢に無くてスタッフがテキストで登録した会社だけ入る（マスタと同じ名前は /api/guarantor-companies が登録前に弾く）。
+--   type は independent / licc / credit / unknown（GuarantorType）。sent_facts.detail（JSONB）に guarantors / parallel が入るが列の追加は不要
+CREATE TABLE IF NOT EXISTS guarantor_companies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  type TEXT NOT NULL DEFAULT 'unknown',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE guarantor_companies DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
