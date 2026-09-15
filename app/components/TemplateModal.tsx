@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { fetchCalendarSlots, type CalendarDayResult } from "../lib/calendarSlots";
+import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
 
 // iOS風スクロールホイールピッカー
 function WheelPicker({ items, selectedIdx, onSelect }: {
@@ -163,8 +163,8 @@ function CalendarDatePicker({ templateText, customerName, onInsert }: CalendarDa
         if (cancelled) return;
         setDays(d);
         setEnabled(d.map(x => !x.fullyBooked));
-        setStarts(d.map(x => x.slots.length > 0 ? padCalTime(x.slots[0].split("〜")[0]) : "11:00"));
-        setEnds(d.map(x => x.slots.length > 0 ? padCalTime(x.slots[x.slots.length - 1].split("〜")[1] ?? "18:00") : "18:00"));
+        setStarts(d.map(x => x.slots.length > 0 ? padCalTime(x.slots[0].split("〜")[0]) : VIEWING_DAY_START));
+        setEnds(d.map(x => x.slots.length > 0 ? padCalTime(x.slots[x.slots.length - 1].split("〜")[1] ?? VIEWING_DAY_END) : VIEWING_DAY_END));
         setOverride(d.map(() => false));
       } catch {
         if (!cancelled) setDays([]);
@@ -182,7 +182,7 @@ function CalendarDatePicker({ templateText, customerName, onInsert }: CalendarDa
 
   const handleInsert = () => {
     const scheduleText = activeIdx
-      .map(i => `${calDateLabel(days[i].label)} ${padCalTime(starts[i] ?? "11:00")}〜${padCalTime(ends[i] ?? "18:00")}`)
+      .map(i => `${calDateLabel(days[i].label)} ${padCalTime(starts[i] ?? VIEWING_DAY_START)}〜${padCalTime(ends[i] ?? VIEWING_DAY_END)}`)
       .join("\n");
     let resolved = templateText.replace("[日程]", scheduleText);
     if (customerName) resolved = resolved.replace(/アカウント名/g, customerName);
@@ -237,14 +237,14 @@ function CalendarDatePicker({ templateText, customerName, onInsert }: CalendarDa
                     <div className="mt-2 flex items-center gap-1.5 pl-7">
                       <input
                         type="time"
-                        value={starts[i] ?? "11:00"}
+                        value={starts[i] ?? VIEWING_DAY_START}
                         onChange={(e) => setStarts(prev => { const n = [...prev]; n[i] = e.target.value; return n; })}
                         className="rounded-lg border border-[#b3d9f7] bg-white px-2 py-1 text-[12px] font-bold text-[#1565C0] outline-none"
                       />
                       <span className="text-[12px] font-bold text-[#8696a0]">〜</span>
                       <input
                         type="time"
-                        value={ends[i] ?? "18:00"}
+                        value={ends[i] ?? VIEWING_DAY_END}
                         onChange={(e) => setEnds(prev => { const n = [...prev]; n[i] = e.target.value; return n; })}
                         className="rounded-lg border border-[#b3d9f7] bg-white px-2 py-1 text-[12px] font-bold text-[#1565C0] outline-none"
                       />

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { fetchCalendarSlots } from "../lib/calendarSlots";
+import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END } from "../lib/calendarSlots";
 import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, type RequestedViewingDate } from "../lib/viewing-date-request";
 import { weekdayForMonthDay } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
@@ -817,8 +817,8 @@ export default function AixModal({
     const wd = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
     const newLabel = `${d.getMonth() + 1}/${d.getDate()}(${wd})`;
     // 新しい日の時刻は既存の最後の日の設定を引き継ぐ
-    const newStart = viewingSlotStarts[lastIdx] || "11:00";
-    const newEnd = viewingSlotEnds[lastIdx] || "18:00";
+    const newStart = viewingSlotStarts[lastIdx] || VIEWING_DAY_START;
+    const newEnd = viewingSlotEnds[lastIdx] || VIEWING_DAY_END;
     setViewingCalendarDays(prev => [...prev.filter((_, idx) => idx !== i), { label: newLabel, slots: [`${newStart}〜${newEnd}`], fullyBooked: false, noEvents: true }]);
     setViewingSlotEnabled(prev => [...prev.filter((_, idx) => idx !== i), true]);
     setViewingSlotStarts(prev => [...prev.filter((_, idx) => idx !== i), newStart]);
@@ -1159,7 +1159,7 @@ export default function AixModal({
         // "11:00〜14:00" → start: "11:00", end: "14:00"
         const parseTime = (slot: string) => {
           const m = slot.match(/(\d{1,2}:\d{2})[〜~\-](\d{1,2}:\d{2})/);
-          return m ? { start: m[1].padStart(5, "0"), end: m[2].padStart(5, "0") } : { start: "10:00", end: "18:00" };
+          return m ? { start: m[1].padStart(5, "0"), end: m[2].padStart(5, "0") } : { start: VIEWING_DAY_START, end: VIEWING_DAY_END };
         };
         setViewingSlotStarts(days.map(d => parseTime(d.slots[0] || "").start));
         setViewingSlotEnds(days.map(d => parseTime(d.slots[0] || "").end));
@@ -5907,8 +5907,8 @@ export default function AixModal({
                           onClick={() => {
                             if (d.fullyBooked) {
                               setViewingSlotOverride(prev => { const n = [...prev]; n[i] = !n[i]; return n; });
-                              if (!viewingSlotStarts[i]) setViewingSlotStarts(prev => { const n = [...prev]; n[i] = "11:00"; return n; });
-                              if (!viewingSlotEnds[i]) setViewingSlotEnds(prev => { const n = [...prev]; n[i] = "18:00"; return n; });
+                              if (!viewingSlotStarts[i]) setViewingSlotStarts(prev => { const n = [...prev]; n[i] = VIEWING_DAY_START; return n; });
+                              if (!viewingSlotEnds[i]) setViewingSlotEnds(prev => { const n = [...prev]; n[i] = VIEWING_DAY_END; return n; });
                             } else {
                               setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = !n[i]; return n; });
                             }
@@ -5938,7 +5938,7 @@ export default function AixModal({
                         <div className="mt-2 flex items-center gap-1.5 pl-7">
                           <input
                             type="time"
-                            value={viewingSlotStarts[i] ?? "11:00"}
+                            value={viewingSlotStarts[i] ?? VIEWING_DAY_START}
                             onChange={(e) => { setViewingSlotStarts(prev => { const n = [...prev]; n[i] = e.target.value; return n; }); }}
                             onFocus={() => { if (!d.fullyBooked) setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = true; return n; }); }}
                             className={`rounded-lg border px-2 py-1 text-xs font-bold outline-none ${
@@ -5948,7 +5948,7 @@ export default function AixModal({
                           <span className="text-[#8696a0] text-xs font-bold">〜</span>
                           <input
                             type="time"
-                            value={viewingSlotEnds[i] ?? "18:00"}
+                            value={viewingSlotEnds[i] ?? VIEWING_DAY_END}
                             onChange={(e) => { setViewingSlotEnds(prev => { const n = [...prev]; n[i] = e.target.value; return n; }); }}
                             onFocus={() => { if (!d.fullyBooked) setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = true; return n; }); }}
                             className={`rounded-lg border px-2 py-1 text-xs font-bold outline-none ${

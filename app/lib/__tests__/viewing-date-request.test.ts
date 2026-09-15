@@ -2,6 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/viewing-date-request.test.ts（自己完結ハーネス。全 PASS で exit 0）
 import { extractRequestedViewingDates, requestedViewingDatesFromMessages, latestCustomerTurnText, buildViewingSpecificMessage, viewingDateLabel } from "../viewing-date-request";
 import { staffOffersViewing, moveOutBlocksViewing, moveOutViewingReleased } from "../move-out-context";
+import { calcSlots, VIEWING_DAY_START, VIEWING_DAY_END } from "../calendarSlots";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -89,6 +90,13 @@ it("「退去前のため現在は現地ご案内ができませんが…」は�
 it("物件送付の定型「お気に召されましたらご案内させて頂きます」は案内に数えない", () => expect(staffOffersViewing("お気に召されましたらお部屋のご案内させていただきます😊！！")).toBe(false));
 it("「7/12日以降でお部屋ご案内可能です」は案内（日程調整に進む）", () => expect(staffOffersViewing("7/11日退去予定のお部屋で7/12日以降でお部屋ご案内可能です！！")).toBe(true));
 it("退去予定の話が無ければ補正しない", () => expect(moveOutBlocksViewing([{ sender: "customer", text: "内覧したいです" }], "newest_first")).toBe(false));
+
+// ─── 内覧可能な時間帯（2026-09-15 竹内: 10:30〜18:30・2時間以上の幅） ───
+const hm = (s: string) => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
+it("隼斗 9/18（予定 14:00〜15:30・14:00〜）→ 10:30〜13:00 と 16:30〜18:30", () => expect(calcSlots([[hm("14:00"), hm("15:30")], [hm("14:00"), hm("15:00")]]).join(" ")).toBe("10:30〜13:00 16:30〜18:30"));
+it("2時間に満たない空きは出さない（予定 12:00〜13:00 → 前は 10:30〜11:00 の30分で出さない）", () => expect(calcSlots([[hm("12:00"), hm("13:00")]]).join(" ")).toBe("14:00〜17:00"));
+it("予定が無い日の最初の枠は 10:30 から（1枠は最大3時間）", () => expect(calcSlots([]).join(" ")).toBe("10:30〜13:30"));
+it("案内時間の初期値は 10:30〜18:30", () => expect(`${VIEWING_DAY_START}〜${VIEWING_DAY_END}`).toBe("10:30〜18:30"));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

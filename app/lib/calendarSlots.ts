@@ -3,9 +3,14 @@ import { jstParts, jstYmd } from "./jst-date";
 
 const WEEKDAYS_JP = ["日", "月", "火", "水", "木", "金", "土"];
 const DAY_MS = 86_400_000;
-const WORK_START = 11 * 60; // 11:00
-const WORK_END   = 18 * 60; // 18:00
-const MIN_SLOT   = 2 * 60;
+// 2026-09-15 竹内「時間10:30〜18:30まで可能にする。物件の内覧の場所もあるので今まで通り2時間以上の幅にする」
+//   （旧 11:00〜18:00。隼斗事例: スタッフの実送信は 9/18「10:30〜11:30 17:00〜18:30」）
+const WORK_START = 10 * 60 + 30; // 10:30
+const WORK_END   = 18 * 60 + 30; // 18:30
+/** 内覧の案内時間の初期値（カレンダーの空き枠が無い日を手で ON にした時など） */
+export const VIEWING_DAY_START = "10:30";
+export const VIEWING_DAY_END   = "18:30";
+const MIN_SLOT   = 2 * 60;  // 物件間の移動があるので2時間以上の空きだけ
 const MAX_SLOT   = 3 * 60;
 const BUFFER     = 60;      // 予定の前後に確保する最低バッファ（1時間）
 
@@ -13,7 +18,8 @@ const minToStr = (m: number) =>
   `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
 
 
-function calcSlots(busy: Array<[number, number]>): string[] {
+/** 予定（分の区間）から内覧可能な時間帯を出す（10:30〜18:30・予定の前後1時間・2時間以上の空き・1枠は最大3時間） */
+export function calcSlots(busy: Array<[number, number]>): string[] {
   // 各予定の前後にBUFFER分の余裕を追加（内覧はその予定の1時間前後を空ける）
   const buffered: Array<[number, number]> = busy.map(([s, e]) => [
     Math.max(s - BUFFER, WORK_START),
@@ -155,7 +161,7 @@ export async function fetchCalendarSlots(extraYmds: ReadonlyArray<string> = []):
 
     const fullyBooked = !noEvents && slots.length === 0;
 
-    let defaultSlots = ["13:00〜16:00", "16:00〜18:00"];
+    let defaultSlots = ["13:00〜16:00", "16:00〜18:30"];
 
     // 今日のデフォルトスロットも現在時刻で絞り込む
     if (i === 0) {
