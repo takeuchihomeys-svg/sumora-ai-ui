@@ -18,7 +18,7 @@ import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
-import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines } from "@/app/lib/property-send-match";
+import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense } from "@/app/lib/property-send-match";
 
 export const maxDuration = 300;
 
@@ -2225,8 +2225,18 @@ ${SMORA_COMMON_RULES}
       //   （「お気に召されたお部屋代理契約可能か全て交渉させて頂きます」「無事ご入居間に合いますようにサポートさせて頂きます」「募集ございませんでしたので条件広げて」）。
       //   内覧誘導・日時は内覧提案 OFF なら決定論で落とし、数字は入力（条件・会話・退去予定・キーワード）に無ければ〇〇（送信前チェックで止まる）
       if (body.conversation_match === true) {
+        // 続いている事情（代理契約・審査・ペット 等）は会話の最初からの物なので、画面の直近の発言（御見積書・内覧の往復で埋まる）より長くお客様の発言を読む
+        let psmReqSources: Array<{ sender: string; text: string }> | undefined;
+        if (conversationId) {
+          try {
+            const { data: older } = await supabase.from("messages").select("text, created_at").eq("conversation_id", conversationId).eq("sender", "customer")
+              .order("created_at", { ascending: false }).limit(80);
+            psmReqSources = ((older ?? []) as Array<{ text: string | null }>).reverse().map((r) => ({ sender: "customer", text: r.text ?? "" }));
+          } catch { /* 読めなければ画面の分だけ */ }
+        }
         const threads = extractPropertySendThreads(
           (Array.isArray(recent_messages) ? (recent_messages as Array<{ sender: string; text?: string | null }>) : []).map((m) => ({ sender: m.sender, text: m.text ?? "" })),
+          { requirementSources: psmReqSources },
         );
         const threadsBlock = buildPropertySendThreadsBlock(threads);
         const psmStaticSystem = `${GENERATION_SYSTEM}
@@ -2241,7 +2251,7 @@ ${aixPropertySendRules}
 
 【構成（この順・空行で区切る）】
 ①挨拶行（動的に渡す実値をそのまま。挨拶行なしの指示ならお客様名の行から）
-②ピックアップ行（1行）:「〇〇（エリア）から…お部屋ピックアップさせて頂きました！！」。エリア・特徴の呼び方は会話でスタッフ・お客様が使った言葉をそのまま（例:「広めのお部屋」「大きめのお部屋」「審査通過しやすい」）。希望条件を全部並べない（入れるのは最大2つ）
+②ピックアップ行（1行）:「〇〇（エリア）から…お部屋ピックアップさせて頂きました！！」（物件と一緒に送る文なので必ず過去形「しました」。直前のこちらの「お送りさせていただきます」を写さない）。エリア・特徴の呼び方は会話でスタッフ・お客様が使った言葉をそのまま（例:「広めのお部屋」「大きめのお部屋」「審査通過しやすい」）。希望条件を全部並べない（入れるのは最大2つ）
 ③会話に合わせた1〜2文:【会話の糸口（候補）】にある事柄だけから、今のお客様に一番効く物を選んで書く（例:「お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！」「無事ご入居間に合いますようにサポートさせて頂きます！！」「ご希望の家賃ですと募集ございませんでしたので条件広げてお送りしております！！」「こちら2部屋となります！」）。候補が無ければ③は書かない
 ④退去予定の物件があれば「◎〇〇\n[退去日]退去予定となりますので[退去日の翌日]以降ご内覧可能です！」（渡された情報だけ）
 ⑤最終行「お手隙の際にご査収ください😌！！」
@@ -2298,6 +2308,9 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           if (m) psmText = ((JSON.parse(m[0]) as { message?: string }).message || psmRaw).replace(/\\n/g, "\n");
         } catch { /* JSON で無ければ本文そのもの */ }
         const notices: string[] = [];
+        // ピックアップ行は過去形（直前のこちらの「ピックアップしお送りさせていただきます」を写して未来形になる回があった）
+        const tense = fixPickupTense(psmText);
+        if (tense.fixed > 0) { psmText = tense.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, tenseFixed: tense.fixed })); }
         // こちらの前の発言のお礼（本日お時間頂きありがとうございました）の繰り返しは決定論で落とす（本番確認で3回中3回入った）
         const thanks = stripRepeatedThanksLines(psmText);
         if (thanks.removed > 0) { psmText = thanks.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, repeatedThanksRemoved: thanks.removed })); }

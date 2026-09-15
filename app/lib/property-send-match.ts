@@ -31,6 +31,17 @@ export type PropertySendThreads = {
 const REQUIREMENT_RE = /代理契約|名義|保証人|保証会社|審査|ペット|猫|犬|駐車場|バイク|生活保護|外国|楽器|障害|高齢|同棲|2人|二人|お子|子供|子ども/;
 /** こちらの前の発言にある挨拶・お礼（内覧のお礼は内覧後の挨拶で送信済み。ピックアップの文で繰り返さない） */
 const REPEATED_THANKS_LINE_RE = /^(?:[^\n]{0,12}さん[、,]?\s*)?(?:本日|昨日|先日)(?:は)?(?:お時間|ご来店|ご内覧)(?:を)?(?:頂|いただ)き(?:まして)?(?:誠に)?ありがとうございました[！!。]*\s*$/;
+/**
+ * ピックアップ行を過去形にそろえる（物件と一緒に送る文なので「ピックアップさせて頂きました」が正。
+ * 本番確認: 直前のこちらの「…ピックアップしお送りさせていただきます」を写して未来形になった回が3回中2回）
+ */
+export function fixPickupTense(text: string): { text: string; fixed: number } {
+  let fixed = 0;
+  const out = text.replace(/ピックアップ(?:し|して)?(?:お送り)?させて(頂|いただ)きます/g, (_m, k: string) => { fixed++; return `ピックアップさせて${k}きました`; })
+    .replace(/(お部屋|物件)(?:を)?お送りさせて(頂|いただ)きます(?=[！!😊😌]|$)/gm, (_m, o: string, k: string) => { fixed++; return `${o}お送りさせて${k}きました`; });
+  return { text: fixed ? out : text, fixed };
+}
+
 export function stripRepeatedThanksLines(text: string): { text: string; removed: number } {
   let removed = 0;
   const kept = text.split("\n").filter((l) => { if (REPEATED_THANKS_LINE_RE.test(l.trim())) { removed++; return false; } return true; });
@@ -53,7 +64,15 @@ const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s
  * 直近の会話から「会話を合わせる」の糸口を拾う（前回の物件送付より後・最大 maxEach 件ずつ・新しい順）。
  * 拾うだけで、使うかは生成側（候補に無い事柄は書かせない）
  */
-export function extractPropertySendThreads(messages: readonly ThreadMessage[], opts: { maxEach?: number; lookback?: number } = {}): PropertySendThreads {
+export function extractPropertySendThreads(
+  messages: readonly ThreadMessage[],
+  opts: {
+    maxEach?: number; lookback?: number;
+    /** 続いている事情を探す範囲（省略時は messages）。画面が渡す直近の発言は御見積書・内覧の往復で埋まりやすく、
+     *  代理契約のような会話の最初からの事情が窓の外に出る（カイナ: 直近16件に代理契約が1件も無かった）→ サーバはお客様の発言を長めに渡す */
+    requirementSources?: readonly ThreadMessage[];
+  } = {},
+): PropertySendThreads {
   const maxEach = opts.maxEach ?? 4;
   const lookback = opts.lookback ?? 16;
   const recent = messages.slice(-lookback);
@@ -82,7 +101,7 @@ export function extractPropertySendThreads(messages: readonly ThreadMessage[], o
   const uniq = (a: string[]) => [...new Set(a)];
   const cust = uniq(customer).slice(-maxEach).reverse();
   // 続いている事情は前回の送付より前の発言からも拾う（代理契約は会話の最初から続く事情）
-  const reqAll = uniq(recent.flatMap((m) => {
+  const reqAll = uniq((opts.requirementSources ?? recent).flatMap((m) => {
     if (m.sender !== "customer") return [];
     const t = (m.text ?? "").replace(/\r/g, "").trim();
     if (!t || MEDIA_RE.test(t)) return [];
@@ -98,7 +117,7 @@ export function buildPropertySendThreadsBlock(th: PropertySendThreads): string {
   }
   const lines: string[] = ["【会話の糸口（候補・新しい順）— ③はこの中の事柄だけから選ぶ（1〜2文・無関係なものは使わない）】"];
   if (th.requirements.length) {
-    lines.push("＜お客様の続いている事情（今回送る物件にも関わる）→ 該当すれば「お気に召されたお部屋〇〇可能か全て交渉（確認）させて頂きます！！」のように、今回の物件でこちらがどうするかを1文で＞");
+    lines.push("＜お客様の続いている事情（今回送る物件にも関わる。前回の物件で確認・解決済みでも、今回送る物件については未確認）→ 必ず「お気に召されたお部屋〇〇可能か全て交渉（確認）させて頂きます！！」のように、今回の物件でこちらがどうするかを1文で書く＞");
     lines.push(...th.requirements.map((s) => `・${s}`));
   }
   if (th.staff.length) { lines.push("＜こちらが約束したこと・経緯（言い方をそのまま活かす）＞"); lines.push(...th.staff.map((s) => `・${s}`)); }
