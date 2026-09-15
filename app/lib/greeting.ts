@@ -11,7 +11,7 @@
 import { canonOf } from "./validate-reply";
 import { jstDayStartMs } from "./jst-date"; // 2026-09-12 竹内方針D: JST の日付計算は jst-date に一本化
 import type { CustomerResponseKind, SubstanceKind } from "./reply-context"; // type-only（実行時の循環 import なし）
-import { isConditionFormMessage } from "./reply-context"; // reply-context は greeting を import しない（循環なし）
+import { isConditionFormMessage, isApplyGuideThinking } from "./reply-context"; // reply-context は greeting を import しない（循環なし）
 
 /** お客様が条件フォームを送ってくれた時の感謝の1文（竹内 2026-09-12・あや事例。スタッフ実送信の型） */
 export const CONDITION_FORM_THANKS = "ご条件お送り頂きありがとうございます😊！！";
@@ -187,6 +187,8 @@ export function resolveOpener(o: {
   isDeliverableReply?: boolean;
   /** 未返信の顧客発言に条件フォーム（①〜⑧）がある */
   customerSentConditionForm?: boolean;
+  /** 直前のこちらの発言に申込でお部屋を抑える案内があり、お客様が検討・迷いで返した（reply-context.isApplyGuideThinking） */
+  applyGuideThinking?: boolean;
 }): Pick<GreetingDecision, "opener" | "openerAllowed" | "openerReason"> {
   const r = (opener: OpenerKind, openerAllowed: OpenerKind[], openerReason: string) => ({ opener, openerAllowed, openerReason });
   if (o.greetingKind === "first" || o.greetingKind === "late_apology") {
@@ -196,6 +198,8 @@ export function resolveOpener(o: {
   // 2026-09-12 竹内（あや事例）「フォーマット送ってもらった事に対して感謝をする。感謝して物件ピックアップする事を伝える」
   //   → 開口語「かしこまりました」ではなく「ご条件お送り頂きありがとうございます😊！！」から（スタッフ実送信の型）
   if (o.customerSentConditionForm) return r("none", ["none"], "お客様が条件フォームを送ってくれた → 開口語ではなく「ご条件お送り頂きありがとうございます😊！！」の感謝から");
+  // 2026-09-15 竹内（みく事例）「申込誘導してからの返信なので、はいではなくて、かしこまりましたでお客さんの気持ちを受け入れる形」
+  if (o.applyGuideThinking) return r("kashikomari", ["kashikomari"], "申込の案内の後の検討・迷い → 「かしこまりました」でお客様の気持ちを受け止める（竹内 みく事例）");
   const kinds = new Set(o.substanceKinds ?? []);
   const asksAction = kinds.has("request") || kinds.has("condition") || kinds.has("schedule") || kinds.has("decision");
   switch (o.customerKind) {
@@ -264,11 +268,15 @@ export function resolveGreeting(opts: {
   const lastStaffIdx = opts.recentMessages.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0).at(-1) ?? -1;
   const customerSentConditionForm = opts.recentMessages.slice(lastStaffIdx + 1)
     .some((m) => m.sender === "customer" && isConditionFormMessage(m.text ?? ""));
+  // 直前のこちらの文（画像・動画だけの発言は飛ばす＝御見積書の画像の後に本文が来ない送り方もある）
+  const lastStaffText = [...opts.recentMessages].reverse()
+    .find((m) => m.sender === "staff" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test((m.text ?? "").trim()))?.text ?? "";
+  const applyGuideThinking = isApplyGuideThinking(opts.customerKind, lastStaffText);
 
   const mk = (kind: GreetingKind, openingLine: string, enforce: boolean, reason: string): GreetingDecision => {
     const op = resolveOpener({
       greetingKind: kind, customerKind: opts.customerKind, customerSecondary: opts.customerSecondary,
-      substanceKinds: opts.substanceKinds, isDeliverableReply: !!opts.isDeliverableReply, customerSentConditionForm,
+      substanceKinds: opts.substanceKinds, isDeliverableReply: !!opts.isDeliverableReply, customerSentConditionForm, applyGuideThinking,
     });
     const conditionFormThanks = customerSentConditionForm && kind !== "first" && kind !== "late_apology" && !opts.isDeliverableReply;
     return { kind, openingLine, opening: openingLine, nightPrefix, enforce, ...op, reason, audit, conditionFormThanks };

@@ -1706,6 +1706,19 @@ export const PAIR_MATRIX: PairRule[] = [
     example: "かしこまりました！！\n{object}は対象から外し、引き続き物件お探しさせて頂きます！！\n新着で{name}にオススメ出来るお部屋が募集に出次第お送りさせて頂きます！！\n何卒よろしくお願い致します！！",
     length: "60〜140字", closer: "none", nanisotsu: false },
 
+  // ── 2026-09-15 竹内（みく事例）「申込誘導してからの返信なので、はいではなく、かしこまりましたでお客さんの気持ちを受け入れる形。そして締める。
+  //    ここでふんわりさせずにちゃんと締める事によってメリハリがつく」。直前のこちらの発言に申込でお部屋を抑える案内（STAFF_APPLY_PUSH_RE）があり、
+  //    お客様が検討・迷いで返した時だけ選ぶ（closingOnly＝通常の staff×customer 探索から外し resolveTurnPair が明示的に選ぶ）。
+  //    みく実送信「かしこまりました😊！！\nみくさん気になる点出てきましたら何時でもお気軽にご連絡ください😌！！」（下書きは はい＋ごゆっくり…）
+  { id: "APPLY_THINKING", staff: "*", customer: "thinking", closingOnly: true, precedence: "after_wait",
+    tpoLabel: "申込誘導の後の検討（気持ちを受け止めて締める）",
+    direction: "直前にこちらが「お気に召されましたらお申込しお部屋抑えさせて頂きます」と申込の案内をした後、お客様が検討・迷い（検討します／悩んでいる）で返した。①開口語は「かしこまりました😊！！」でお客様の気持ち（今は決めない）を受け止める（「はい」ではない）②「{name}気になる点出てきましたら何時でもお気軽にご連絡ください😌！！」の1文で締める。「ごゆっくりご検討頂けますと幸いです」のようなふんわりした文・申込の再度の促し・煽り・別物件の提案・比較の説明は書かない。30〜70字",
+    mustInclude: [{ label: "扉を開ける締め", detect: /気になる点|いつでも|何時でも/,
+      fix: "「{name}気になる点出てきましたら何時でもお気軽にご連絡ください😌！！」で締める" }],
+    mustNot: ["「はい😊！！」開始", "「ごゆっくりご検討（ご確認）頂けますと幸いです」等のふんわりした文", "申込の再度の促し・希少性の煽り", "別物件の提案・物件の比較の説明", "何卒"],
+    example: "かしこまりました😊！！\n{name}気になる点出てきましたら何時でもお気軽にご連絡ください😌！！",
+    length: "30〜70字", closer: "open_door", nanisotsu: false },
+
   { id: "ANY_DECLINE", staff: "*", customer: "decline", precedence: "after_wait",
     tpoLabel: "ネガ文脈（顧客自身の断り）",
     direction: "既存 withdrawal direction をそのまま採用",
@@ -1880,6 +1893,11 @@ export type CellGuard = {
 /** {redo}: 台帳に物件送付実績がある時だけ「再度」。生成 direction／検査 label／final-check suggestion が同じ関数 */
 export function redoWord(ledger: ActionLedger | null | undefined): string { return ledger && ledger.facts.propertiesSentCount > 0 ? "再度" : ""; }
 
+/** 直前のこちらの発言に申込でお部屋を抑える案内があり、お客様が検討・迷いで返した（開口語・セル・締めが同じ判定を使う） */
+export function isApplyGuideThinking(customerKind: CustomerResponseKind | null | undefined, lastStaffText: string | null | undefined): boolean {
+  return customerKind === "thinking" && STAFF_APPLY_PUSH_RE.test(lastStaffText ?? "");
+}
+
 export function resolveTurnPair(
   staff: StaffTurn, customer: CustomerResponse, substance: SubstanceVerdict, lastStaffText: string,
   opts: { searched?: boolean; ledger?: ActionLedger | null; customerName?: string; brainCurrentProperty?: string | null;
@@ -1921,6 +1939,8 @@ export function resolveTurnPair(
   const rule =
     closing.kind === "farewell" ? (PAIR_MATRIX.find((r) => r.id === "ANY_FAREWELL") ?? null)
     : closing.kind === "decline" ? (PAIR_MATRIX.find((r) => r.id === "ANY_DECLINE") ?? null)
+    // 2026-09-15 竹内（みく事例）: 申込の案内の後の検討・迷い → かしこまりましたで受け止めて扉1文で締める
+    : isApplyGuideThinking(effectiveKind, lastStaffText) ? (PAIR_MATRIX.find((r) => r.id === "APPLY_THINKING") ?? null)
     : (searched ? exact.find((r) => r.hedgeAllowed) : exact.find((r) => !r.hedgeAllowed)) ??
       exact[0] ??
       pool.find((r) => r.staff === "*" && r.customer === effectiveKind) ??
@@ -2363,6 +2383,10 @@ export function resolveCloser(
   if (ac.allowed) return mk("await_contact", false, ac.reason, awaitContactCloserText(ac));
   if (ac.conditional)
     return mk("open_door", false, ac.reason, `${ac.conditionEcho ?? "気になる点出てきましたら"}いつでもお気軽にご連絡ください😌！！`);
+  // 2026-09-15 竹内（みく事例）: 申込の案内の後の検討は「ごゆっくり」でふんわりさせず、扉1文で締める（メリハリ）
+  if (c === "thinking" && pair.ruleId === "APPLY_THINKING")
+    return mk("open_door", false, "申込誘導の後の検討→扉1文で締める（ごゆっくりでふんわりさせない・竹内 みく事例）",
+      `${name ? name + "さん" : ""}気になる点出てきましたら何時でもお気軽にご連絡ください😌！！`);
   if (c === "thinking") return mk("wait_softly", false, "検討中→ごゆっくり＋扉。急かし禁止");
   if (c === "question" && s !== "condition_ask") return mk("none", false, "質問回答で終える（質問系988件中926件が何卒なし）");
   const ruleCloser = pair.rule?.closer;
