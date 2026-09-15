@@ -468,6 +468,8 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     if (map.kind === 'meeting_place_sent') e.detail.appointment = extractViewingAppointment(r.generated_text, at);
     // 送信時の記録があれば中身（画面で入力した待ち合わせの日時・物件 等）はそちらを正にする
     for (const x of recordedAixNear(r.aix_type as string, ms(at))) {
+      // AIX 本文に書き足した約束（aixTextPromises）はこの AIX の行とは別の行として ②' で入れる（2026-09-15 ゆうこ事例: ここで使用済みにして捨てていた）
+      if (x.f.kind !== map.kind && !(x.f.kind === 'estimate_sent' && r.estimate_sent === true)) continue;
       x.used = true;
       if (x.f.kind === map.kind && x.f.detail) e.detail = { ...e.detail, ...x.f.detail };
     }
@@ -659,9 +661,10 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     lastPromisedKind: lastPromised?.kind ?? null,
     lastPromisedAt: lastPromised?.at ?? null,
     lastStaffEntry,
-    // 同じ送信（AIX の行の直後 3分以内）に記録した AIX 本文の約束で、まだ履行していない物
-    lastStaffAixTextPromise: lastStaffEntry && lastStaffEntry.source === 'aix_log' && lastStaffEntry.status === 'done'
-      ? promises.find((p) => p.source === 'aix_log' && p.fulfilledBy == null && ms(p.at) > ms(lastStaffEntry.at) && ms(p.at) - ms(lastStaffEntry.at) <= AIX_ATTACH_WINDOW_MS) ?? null
+    // 同じ送信（最後のスタッフ発言の前後3分）に記録した AIX 本文の約束で、まだ履行していない物。
+    //   AIX の行の時刻は AIX 記録の作成時刻（送信の1〜2秒後）のこともあるので、行の前後ではなく発言の時刻で見る
+    lastStaffAixTextPromise: lastStaffEntry && lastStaffEntry.source === 'aix_log' && lastStaffEntry.status === 'done' && Number.isFinite(lastStaffAt)
+      ? promises.find((p) => p.source === 'aix_log' && p.fulfilledBy == null && near(ms(p.at), lastStaffAt, AIX_ATTACH_WINDOW_MS)) ?? null
       : null,
     recentDone: {
       vacancyCheck: recent.some((e) => e.kind === 'confirmation_reported'),

@@ -41,6 +41,13 @@ it("記録を台帳に入れると、ブレインの約束の判定が 物件ピ
   const ledger = buildActionLedger({ recentAixRows: [], messages, lineTasks: [], lastAixHistory: null, lastCustomerAt: "2026-09-15T04:06:46.096Z", recordedFacts: facts });
   const r = resolveStaffPromiseAix(ledger.facts, messages);
   expect(r ? `${r.action}/${r.kind}` : "null").toBe("property_send/pickup");
+  // ブレインは AIX 記録（aix_usage_logs）も渡す。その行の時刻は作成時刻（送信の約2秒後）で、約束の記録より後になる
+  const ledger2 = buildActionLedger({
+    recentAixRows: [{ aix_type: "cost_breakdown", check_pattern: null, created_at: "2026-09-15T07:32:32.939Z", sent_at: AT, line_message_id: null, generated_text: YUKO_AIX, property_names: null, estimate_sent: null, template_name: null }],
+    messages, lineTasks: [], lastAixHistory: null, lastCustomerAt: "2026-09-15T04:06:46.096Z", recordedFacts: facts,
+  });
+  const r2 = resolveStaffPromiseAix(ledger2.facts, messages);
+  expect(r2 ? `${r2.action}/${r2.kind}` : "null").toBe("property_send/pickup");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
