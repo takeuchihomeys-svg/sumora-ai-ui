@@ -5662,6 +5662,37 @@ export default function Home() {
     aixFileInputRef.current?.click();
   };
 
+  /**
+   * AIX【見積書送る】の入口（AIX メニュー・ブレインのカード・バナーで同じ道を通す）。
+   * 2026-09-16 竹内（H さん事例）「ここで出てくる見積書ボタンおしたら、テンプレートに飛んでしまうバグがおきる。
+   *   押したらAIXの見積書送るから、送る形とする」:
+   *   AIX メニューの「見積書送る」は見積書ピッカー（1件＝画像を読み取る／複数）を開くのに、
+   *   ブレインのカード（runBrainAix）と P4.5 バナーの2か所だけ setShowTemplateModal(true)＝テンプレート一覧を開いていた。
+   *   見積書は画像を読み取って自動計算する AIX なので、テンプレートの文面選択では送れない（金額の手打ち・AI 生成は NG）
+   */
+  const openEstimateFlow = () => {
+    if (!selectedConversation) return;
+    setShowAixMenu(false);
+    setAixInspectLabel(null);
+    setActiveAixFlow("estimate_sheet");
+    const cid = selectedConversation.id;
+    const cname = selectedConversation.customerName;
+    if (!(activeTasks[cid] ?? []).some((t) => t.task_type === "estimate_sheet")) {
+      fetch("/api/line-tasks", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: cid, task_type: "estimate_sheet", customer_name: cname }),
+      }).then(async (r) => {
+        const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
+        if (d.ok && d.id && d.created_at) setActiveTasks((prev) => {
+          const ex = prev[cid] ?? [];
+          if (ex.some((x) => x.task_type === "estimate_sheet")) return prev;
+          return { ...prev, [cid]: [...ex, { id: d.id!, task_type: "estimate_sheet", created_at: d.created_at!, customer_name: cname }] };
+        });
+      }).catch(() => {});
+    }
+    setShowEstimatePicker(true);
+  };
+
   const openAixDirect = async (type: AixActionType, skipAutoTemplate?: boolean) => {
     // AUTO-TEMPLATE: AIXボタン直押し時、win_rate順でキャッシュからベストテンプレートを自動選択
     if (!skipAutoTemplate) {
@@ -8298,13 +8329,8 @@ export default function Home() {
                     <span className="text-[12px] font-bold text-orange-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>見積書で費用をご案内しましょう！</span>
                     <button onClick={() => {
                       setDismissedEstimateSheetIds((prev) => new Set([...prev, id]));
-                      setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
-                      const convName = selectedConversation.customerName;
-                      if (!(activeTasks[id] ?? []).some((t) => t.task_type === "estimate_sheet")) {
-                        fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ conversation_id: id, task_type: "estimate_sheet", customer_name: convName, status: "pending" }) }).catch(() => {});
-                      }
-                      setShowTemplateModal(true);
+                      // 2026-09-16 竹内（H さん事例）: 旧はテンプレート一覧。AIX【見積書送る】の道に通す（やることタスクの作成も openEstimateFlow に集約）
+                      openEstimateFlow();
                     }}
                       className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                       style={{ background: "linear-gradient(135deg, #E65100, #F57C00)" }}>AIX 見積書</button>
@@ -8385,8 +8411,8 @@ export default function Home() {
                   setShowAixMenu(false);
                   setAixInspectLabel(null);
                   if (brainAction === "estimate_sheet") {
-                    setActiveAixFlow(brainAction);
-                    setShowTemplateModal(true);
+                    // 2026-09-16 竹内（H さん事例）: 旧はテンプレート一覧を開いていた。AIX【見積書送る】の道（見積書ピッカー→画像の読み取り）に通す
+                    openEstimateFlow();
                   } else if (brainMeta.action === "greeting_viewing") {
                     // 挨拶は AixModal 非対応（専用ピッカーで完結）。ブレインのカードからもピッカーを開く（YUYA 事例 2026-09-16）
                     setActiveAixFlow(brainAction);
@@ -13887,23 +13913,7 @@ export default function Home() {
                   { color: "#00897B", label: "物件ピックアップした", actionType: "property_send", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); } },
                   { color: "#2196F3", label: "1件特にオススメする", actionType: "property_recommendation", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
                   { color: "#4CAF50", label: "物件確認した（募集状況）", actionType: "property_check_result", sub: "確認結果を6パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
-                  { color: "#FF9800", label: "見積書送る", actionType: "estimate_sheet", sub: "費用の見積書を作成", action: () => {
-                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
-                    const cid = selectedConversation.id; const cname = selectedConversation.customerName;
-                    if (!(activeTasks[cid] ?? []).some((t) => t.task_type === "estimate_sheet")) {
-                      fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ conversation_id: cid, task_type: "estimate_sheet", customer_name: cname }),
-                      }).then(async (r) => {
-                        const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
-                        if (d.ok && d.id && d.created_at) setActiveTasks((prev) => {
-                          const ex = prev[cid] ?? [];
-                          if (ex.some((x) => x.task_type === "estimate_sheet")) return prev;
-                          return { ...prev, [cid]: [...ex, { id: d.id!, task_type: "estimate_sheet", created_at: d.created_at!, customer_name: cname }] };
-                        });
-                      }).catch(() => {});
-                    }
-                    setShowEstimatePicker(true);
-                  } },
+                  { color: "#FF9800", label: "見積書送る", actionType: "estimate_sheet", sub: "費用の見積書を作成", action: () => { openEstimateFlow(); } },
                   { color: "#2E7D32", label: "初期費用を説明", actionType: "cost_explain", sub: "安さを不審に思われた時に仕組み＋貸主からの報酬・還元額を1通で説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_explain"); openAixDirect("cost_explain"); } },
                   { color: "#558B2F", label: "初期費用について", actionType: "cost_breakdown", sub: "御見積書の画像を貼り付け→会話を合わせるで初期費用の中身（含まれる項目・家賃だけで入居できるか）を説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_breakdown"); openAixDirect("cost_breakdown"); } },
                   { color: "#06C755", label: "電話する", actionType: "phone_call", sub: "「電話をかける」ボタン＋案内文を送る／電話が終わったら話した内容からお礼とまとめを作る", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("phone_call"); setShowPhonePicker(true); } },
