@@ -3,7 +3,7 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { supabase } from "@/app/lib/supabase";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { safeSlice } from "@/app/lib/safe-slice";
-import { fixDateWeekdays, weekdayTable } from "@/app/lib/jst-date";
+import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date";
 import { stripMetaNarration } from "@/app/lib/meta-narration";
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
@@ -20,7 +20,7 @@ import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBrea
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
-import { buildConversationClockNote, fixStaleRecentReference } from "@/app/lib/relative-date";
+import { buildConversationClockNote, fixStaleRecentReference, absolutizeRelativeDays, jstDayLabel } from "@/app/lib/relative-date";
 // 2026-09-16 竹内（カイナ事例）: 物件確認した×会話を合わせる — 内覧の流れの判定・部屋数・出口の決定論
 import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLines, stripNewSlotLines, ensureViewingContinuationLine, resolveEnclosedRooms, buildEnclosedCountLines, ensureRoomCountPhrase, ESTIMATE_PROMISE_LINE_RE, NEW_SLOT_LINE_RE, VIEWING_CONTINUATION_LINE } from "@/app/lib/viewing-thread";
 
@@ -4853,10 +4853,23 @@ ${SMORA_COMMON_RULES}
 
     } else if (action === "extract_datetime") {
       // 会話履歴から内覧日時をAIで抽出（待ち合わせ場所の日程・時間フィールド自動補完用）
-      const msgs = (Array.isArray(recent_messages) ? (recent_messages as Array<{ sender?: string; text?: string }>) : [])
+      //
+      // 2026-09-16 竹内（YUYA 事例）: 前日 21:23 の AIX「明日10:30にカーザSunⅠ」を翌朝 9:50 に読み、
+      //   「明日＝本日（9/16）の翌日」＝9/17 と変換して viewings に登録していた（実際の内覧は 9/16）。
+      //   内覧が未来扱いになり、AIX の自動セットが greeting_viewing にならず、生成にも「内覧は明日」が流れて
+      //   下書きが「明日以降も気になる点等…」になった。
+      //   → 各発言の「明日」は**その発言の日**を起点に絶対の日へ直してから渡す（決定論・LLM に相対の語を見せない）。
+      //     行にも日付を付ける（この経路は行頭の形に依存する処理が無いので安全）
+      const msgs = (Array.isArray(recent_messages) ? (recent_messages as Array<{ sender?: string; text?: string; rawCreatedAt?: string; createdAt?: string }>) : [])
         .filter(m => m.text && m.text !== "[画像]" && m.text !== "[動画]")
         .slice(-20)
-        .map(m => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`)
+        .map(m => {
+          const atRaw = m.rawCreatedAt || m.createdAt || "";
+          const atMs = atRaw ? Date.parse(atRaw) : NaN;
+          if (Number.isNaN(atMs)) return `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`;
+          const head = `${jstDayLabel(jstDayStartMs(atMs))} ${m.sender === "customer" ? "お客様" : "スモラ"}`;
+          return `${head}: ${absolutizeRelativeDays(m.text ?? "", atMs)}`;
+        })
         .join("\n");
 
       if (!msgs) return NextResponse.json({ ok: true, date: "", time: "" });
@@ -4882,7 +4895,9 @@ ${SMORA_COMMON_RULES}
       // 本日の日付は日次で変わる動的コンテンツ → キャッシュ対象の system から分離
       const extractDatetimeDynamic = `【本日の日付（JST）】
 ${jstTodayStr}
-・「明日」「明後日」「来週」「今週土曜」などの相対的な日付表現は、本日の日付を基準に実際の日付へ変換すること`;
+・各行の先頭は「その発言をした日」（例: 9/15（火） スモラ: …）
+・「明日」「明後日」などの語は、発言の日を起点に既に実際の日付へ直してある。行に書かれている日付をそのまま使い、本日を基準に数え直さないこと
+・「今週土曜」など残っている相対表現だけは、その発言をした日を基準に変換すること`;
 
       // LLMが出力した曜日は信用せず、月/日から決定論的に曜日を再計算して上書きする
       // （例: 2026/7/21（火）をLLMが「（月）」と誤答するバグの恒久対策）

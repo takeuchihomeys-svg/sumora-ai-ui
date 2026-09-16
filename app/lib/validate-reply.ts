@@ -8,7 +8,7 @@ import { applyTypoAutoFix } from "./typo-check";
 import { normalizeSharedPropertyReference } from "./shared-property-ref";
 import { stripMetaNarration } from "./meta-narration";
 import { fixThirdPartyContactWait } from "./contact-actor";
-import { fixStaleRelativeDays, fixStaleRecentReference } from "./relative-date";
+import { fixStaleRelativeDays, fixStaleRecentReference, stripDateQualifierFromOpenDoor } from "./relative-date";
 // 2026-09-12 竹内方針A: 時間枠の「空いて」・断言置換文は AIX 場面判定（aix-reply-set）と同じ定数
 import { isScheduleSlotVacancy, ASSERTION_REPLACEMENT } from "./scene-patterns";
 export { fillNameSlot };
@@ -562,6 +562,10 @@ export function applySurfaceFixes(
       const rr = fixStaleRecentReference(out, staffAtMs, opts?.now ?? Date.now());
       if (rr.applied.length) { out = rr.text; applied.push(...rr.applied); }
     }
+    // 2026-09-16 竹内（YUYA 事例）: 内覧当日なのに「明日以降も気になる点等出てきましたら…」。
+    //   扉の一文に日付の語を付けた実送信は 365日で 0件（185件中）
+    const od = stripDateQualifierFromOpenDoor(out);
+    if (od.applied.length) { out = od.text; applied.push(...od.applied); }
   }
   const u = unifyAddressAliases(out, opts?.customerName, opts?.aliases);
   if (u.fixes.length) { out = u.text; applied.push(...u.fixes); }

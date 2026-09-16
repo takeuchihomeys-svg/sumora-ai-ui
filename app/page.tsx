@@ -61,7 +61,7 @@ type Conversation = {
   isFlagged?: boolean;
   hasViewed?: boolean;
   aiDraft?: string | null;
-  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply"; two_choice_mode?: boolean; reply_direction_label?: string; alt_actions?: string[] } | null;
+  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply"; two_choice_mode?: boolean; reply_direction_label?: string; alt_actions?: string[]; decision_source?: string | null } | null;
   suggestedNextAix?: string | null;
   messages: Message[];
 };
@@ -3219,6 +3219,9 @@ export default function Home() {
   // 挨拶（内覧前後）picker - Step1の前後判定
   useEffect(() => {
     if (!showGreetingViewingPicker) { setSuggestedGreetingMode(null); return; }
+    // 2026-09-16 竹内（YUYA 事例）: ブレインが「本日の内覧の送り出し済み・お客様のお礼だけ」で挨拶をセットした時は
+    //   次の一手が内覧後の挨拶（返信はしない）→ おすすめを「内覧後」にする
+    if (selectedConversation.suggestedAixMeta?.decision_source === "rule:viewing_day_ack") { setSuggestedGreetingMode("after"); return; }
     const msgs = (selectedConversation.messages ?? []).slice(-20);
     const allText = msgs.map((m) => m.text || "").join(" ");
     if (/ありがとうございました|いかがでしたか|お申込|申込.*ご検討|内覧.*終わ|終わりました|いかがでしょう.*内覧/.test(allText)) { setSuggestedGreetingMode("after"); return; }
@@ -5763,9 +5766,10 @@ export default function Home() {
         return;
       }
       // 2. 会話履歴からAIで日時抽出
+      // 発言の時刻を必ず渡す（前日の「明日10:30に」を翌日に読んで +1 日ずらさないため・YUYA 事例 2026-09-16）
       const recentMsgs = (selectedConversation.messages || [])
         .slice(-15)
-        .map((m) => ({ sender: m.sender, text: m.text || "" }));
+        .map((m) => ({ sender: m.sender, text: m.text || "", rawCreatedAt: (m as { rawCreatedAt?: string; created_at?: string }).rawCreatedAt || (m as { created_at?: string }).created_at || "" }));
       const res = await fetch("/api/aix/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -8326,6 +8330,13 @@ export default function Home() {
                   if (brainAction === "estimate_sheet") {
                     setActiveAixFlow(brainAction);
                     setShowTemplateModal(true);
+                  } else if (brainMeta.action === "greeting_viewing") {
+                    // 挨拶は AixModal 非対応（専用ピッカーで完結）。ブレインのカードからもピッカーを開く（YUYA 事例 2026-09-16）
+                    setActiveAixFlow(brainAction);
+                    setGreetingViewingMode(null);
+                    setGreetingViewingDate(""); setGreetingViewingTime("");
+                    setGreetingViewingReport(""); setGreetingViewingReportSaved(null);
+                    setShowGreetingViewingPicker(true);
                   } else if (Object.keys(AIX_ACTION_META).includes(brainAction)) {
                     setActiveAixFlow(brainAction);
                     // 2026-09-12 段1: ブレインが決めた check_pattern（mgmt_move_in 等）をそのままモーダルに渡す（判定し直さない）

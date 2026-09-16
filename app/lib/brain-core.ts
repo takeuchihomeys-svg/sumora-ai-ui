@@ -46,6 +46,8 @@ import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した発言は必ず分析し直す（cached で前回の「もう1件の内覧日確定」を持ち越さない）
 import { detectPropertyPass, CUST_WILL_SEND_SELF_PRED, analyzeSubstance } from "@/app/lib/reply-context";
 import { resolveClosedAck } from "@/app/lib/closed-ack";
+// 2026-09-16 竹内（YUYA 事例）: 内覧当日の送り出しの後のお礼は返信しない（次は内覧後の挨拶）
+import { resolveViewingDayAck } from "@/app/lib/viewing-day";
 import { absolutizeRelativeDays } from "@/app/lib/relative-date";
 // 2026-09-12 同 段2: 場面の証拠（決定論）とスタッフが押した AIX の実績（brain_aix_feedback）をブレインの入力にする
 import {
@@ -2482,6 +2484,22 @@ ${history}`;
       decisionSource = "rule:closed_ack_wait";
       closedAckWait = true;
     }
+    // 2026-09-16 竹内（YUYA 事例）「内覧が10:40〜なので、AIX の挨拶ボタン内覧後のピッカーでセットしている形とする」:
+    //   内覧当日にこちらが送り出した（お気をつけてお越しください）後のお客様のお礼だけ → 返信しないで内覧を待つ。
+    //   次の一手は内覧が終わってからの挨拶 → AIX【挨拶（内覧後）】をセットし reply_mode=aix で自動の下書きを作らない。
+    //   実データ（180日）: この場面でスタッフは返信せず、内覧後に「本日お時間頂きありがとうございました」（60件）を送っている
+    const viewingDayAck = resolveViewingDayAck(
+      messagesOldestFirst.map((m) => ({ sender: m.sender, text: m.text })),
+      customerAckAfter,
+      brainLedger.facts.viewingAppointment?.day === "today",
+    );
+    let viewingDayWait = false;
+    if (!promiseAix && !closedAckWait && viewingDayAck.hold
+      && (finalAix === null || finalAix === "meeting_place" || finalAix === "acknowledge_check" || finalAix === "greeting_viewing")) {
+      finalAix = "greeting_viewing";
+      decisionSource = "rule:viewing_day_ack";
+      viewingDayWait = true;
+    }
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);
       if (rate) {
@@ -2809,6 +2827,8 @@ ${history}`;
     const freeTextAixKey = !finalAix ? normalizeAixActionKey(parsed.action) : null;
     const staffNote = closedAckWait
       ? "返信不要（こちらの締めの後のお礼・お客様からの連絡待ち）。次の物件が見つかったら AIX【物件ピックアップした】か【物件オススメ】で送る"
+      : viewingDayWait
+      ? "返信不要（本日の内覧の送り出し済み・お客様のお礼だけ）。内覧が終わったら AIX【挨拶】→内覧後 で挨拶を送る（ピッカーで内覧の終了後に）"
       : finalAix
       ? buildAixStaffNote(finalAix, checkKind)
       : freeTextAixKey

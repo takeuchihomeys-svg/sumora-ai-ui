@@ -183,6 +183,33 @@ export function fixStaleRecentReference(draft: string, lastStaffAtMs: number | n
   return { text: applied.length ? out : draft, applied };
 }
 
+// ─────────────────────────────────────────────────────────────
+// 2026-09-16 竹内（YUYA 事例）「こんな明日以降ってなんで出たのか」:
+//   内覧当日（10:30〜）の朝、こちらが「お気をつけてお越し下さい」と送り出した後のお客様「ありがとうございます🙇‍♂️」への
+//   下書きが「はい😊！！／明日以降も気になる点等出てきましたらいつでもお気軽にご連絡ください！！」。
+//   実データ（365日）: スタッフの実送信で「気になる点…ご連絡ください」の扉の一文は 185件あり、
+//   その頭に日付の語（明日・本日・〇〇以降）が付いた例は **0件**。扉の一文に日付は付けない
+// ─────────────────────────────────────────────────────────────
+/** 扉の一文（いつでもご連絡ください系） */
+const OPEN_DOOR_SENTENCE_RE = /気になる点|ご不明(?:な)?点|お気軽に(?:ご連絡|ご相談|お申し付け|お知らせ)/;
+/** 文の頭に付いた日付の修飾（明日以降も・本日から・9/17以降も）。「今後も」「引き続き」は触らない */
+const DATE_QUALIFIER_HEAD_RE = /^(?:明日|明後日|明々後日|本日|今日|来週|再来週|\d{1,2}\/\d{1,2}(?:（.）)?)(?:以降|以後|から)?(?:も|は|に)?(?:、)?\s*/;
+
+/** 扉の一文の頭に付いた日付の修飾を落とす（「明日以降も気になる点…」→「気になる点…」） */
+export function stripDateQualifierFromOpenDoor(draft: string): { text: string; applied: string[] } {
+  const applied: string[] = [];
+  const out = draft.split(/(?<=[。！!\n])/).map((s) => {
+    if (!OPEN_DOOR_SENTENCE_RE.test(s)) return s;
+    const lead = s.match(/^\s*/)?.[0] ?? "";
+    const body = s.slice(lead.length);
+    const m = body.match(DATE_QUALIFIER_HEAD_RE);
+    if (!m || !m[0]) return s;
+    applied.push(`OPEN_DOOR_DATE_QUALIFIER_DROPPED:${m[0].trim()}`);
+    return lead + body.slice(m[0].length);
+  }).join("");
+  return { text: applied.length ? out : draft, applied };
+}
+
 /**
  * 文の中の相対の日を絶対の日（M/D（曜））に直す。ブレインの判断（返信の方向・お客様が示した時期）を保存する時に使う。
  * 判断は後（別の日）に読まれることがあるので、相対の語のまま残すと翌日の生成がそれを写す（yasuki 事例の元）
