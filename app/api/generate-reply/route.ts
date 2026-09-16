@@ -36,6 +36,8 @@ import {
   buildEstimateGateNote,
   type EstimateContextVerdict,
 } from "@/app/lib/estimate-context";
+// 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の道順は住所で答える・中身のない先送りは書かない
+import { isViewingAccessQuestion, buildViewingAccessNote, stripVagueDeferral } from "@/app/lib/viewing-access";
 import {
   validateAndClean,
   verifyAmountsAgainstSource,
@@ -1264,10 +1266,17 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   const propertyFactGateNote = `\n\n【🏢 管理会社確認が必要な物件固有情報の断言は絶対禁止（最優先）】「空室でした」「現在も募集中と確認できました」「埋まってしまいました」「退去日は〇月〇日です」「〇月〇日からご入居可能です」のような、管理会社に確認した体の結果報告や具体的な退去日・入居可能日の断言は絶対に出力しない。空室状況・退去予定日・入居可能日に加え、この物件の「保証会社名・保証料の金額・審査基準・ペット飼育可否・駐車場の空きと料金・設備の有無・礼金/家賃交渉の結果」も管理会社への確認が必要な確定事実であり、確認前にAIが「この物件の保証会社は〇〇です」「保証料は総賃料の〇%です」等と断言・推測してはいけない。保証会社の役割・審査の一般的な流れ・連帯保証人との違いなどの一般論は即答してよい。物件固有の質問には「〇〇（対象: 募集状況／ご入居可能日／ペット飼育の可否／駐車場の空き状況／保証会社・審査条件 等）確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」の宣言のみ（確認対象を必ず本文に書く。対象の無い「確認しご連絡」は禁止）。確認結果の報告はAIX【確認した（条件・交渉）】（物件確認した系ボタン）で別途生成・送信する。告知事項（事故・トラブル・騒音・心理的瑕疵）の有無、「審査は大丈夫です」等の根拠なし安心も同じく管理会社・保証会社の確認結果が無い限り断言しない。例外：会話履歴内でスタッフが既に伝えた確定情報（退去日・入居可能日・保証会社名等）をそのまま引用する場合のみ言及可。新たな日付・募集状況・保証条件をAIが推測して生成することは禁止。\n・【⚠️ 退去予定の断言禁止】「退去後すぐにご案内できます」「退去後すぐにご内覧いただけます」「〇月以降ご案内可能です」のような退去予定を前提とした案内文は、管理会社から退去予定が確認済みである事実が会話履歴にある場合のみ使用すること。確認していない場合は「空室状況を確認してご連絡させて頂きます😊！！」とし、退去予定を勝手に断定しない。\n・【⚠️ 対象の無い確認約束の禁止】お客様が物件固有の事実を聞いていない返信で「確認しご連絡させて頂きます」「確認出来次第ご連絡」を締めに使うことは禁止（創作約束。final-check CONFIRM_NO_OBJECT で block）。確認事項が実在する場合（【✅ 確認対象（決定論）】が出ている時）は上記の対象付き宣言1文のみ書き、同じ返信内で二重に確認宣言しない。水道代・インターネット・設備の有無など管理会社への確認事項も「設備・利用条件確認させて頂きます」のように対象を書く。\n・【⚠️ スタッフが送った物件画像への「内容確認します」禁止】お客様が画像（物件資料・見積書）を送り返してきた場合、その画像はスタッフが先に送った物件の資料であることが多い。「お送り頂きました画像の内容を確認させて頂きます」「画像を確認しご連絡します」のように、まるで初めて見る資料かのように「内容確認します」と書いてはいけない。お客様の具体的な質問（「ここは誰か住んでいましたか？」等）にはその質問に直接答えるか、分からない場合は「確認いたします！！」とのみ伝える。`;
 
   // 待ち合わせ確定文はAIXの「待ち合わせ」ボタン専用。generate-replyでは住所・集合場所・集合時間の出力を禁止（propertyFactGateNoteと同型の常時注入ゲート）
+  // 2026-09-16 竹内（𝒮 さん事例）: 禁止するのは「まだ決まっていない待ち合わせをこの返信で決めること」。
+  //   既に案内済みの内覧について場所・行き方を聞かれた時まで「改めてご連絡」で先送りさせていたのが誤りだった
+  //   （竹内「根本的な部分を、住所わかっている」「詳細明日等適当なことを俺は入れない」）。
+  //   答えてよい事実は【決まっている内覧】ブロック（viewing_history の住所）で材料として渡す
   const meetingPlaceGateNote = [
-    "🚫【待ち合わせ情報の生成禁止】物件の住所・集合場所・集合時間・待ち合わせ場所の確定文は通常返信に書いてはいけない。",
+    "🚫【待ち合わせを新しく決める文の生成禁止】まだ決まっていない内覧の待ち合わせ（日時・集合場所・住所）をこの返信で決めてはいけない。",
     "これらはAIX【待ち合わせ】(meeting_place)ボタン専用で生成・送信する。",
-    "通常返信では「内覧の詳細についてはご連絡させて頂きます」等の宣言のみ書くこと。",
+    "✅ ただし【決まっている内覧】ブロックがある時は、そこに書かれた住所・日時は既にお客様へ案内済みの事実なので、",
+    "　 場所・行き方・住所を聞かれたらそのまま答えてよい（新しく決めているのではなく、決まっている事を答えるだけ）。",
+    "　 この場合「内覧の詳細については改めてご連絡させて頂きます」のような先送りで済ませない。",
+    "　 ブロックが無い時だけ「内覧の詳細についてはご連絡させて頂きます」等の宣言にとどめる。",
   ].join("\n");
 
   const aixOperationNote = [
@@ -1486,7 +1495,9 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 
   // P0-1: viewingNote（クライアントが渡す内覧関連情報）をdynamicBlockに展開する。
   // viewingFactNote（物件退去予定/入居中判定）とセットでお客様メッセージ末尾に配置する。
-  const viewingNoteBlock = viewingNote ? `\n\n【内覧情報】${viewingNote}` : "";
+  // 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の住所（viewing_history）もここから渡す。
+  //   自前の見出し（【決まっている内覧…】）を持つ時は【内覧情報】を重ねない
+  const viewingNoteBlock = viewingNote ? `\n\n${viewingNote.trimStart().startsWith("【") ? viewingNote : `【内覧情報】${viewingNote}`}` : "";
 
   // 複数メッセージ結合時は番号付きで全通への返信を明示し末尾優先バイアスを防ぐ
   // 2026-09-09 Fable5: 旧 split("\n") は1通内の改行を「2通」に分割し「[1通目]ありがとう／[2通目]懸念」→「はい😊！！＋かしこまりました！！」の
@@ -3305,6 +3316,34 @@ export async function POST(req: NextRequest) {
     console.info("[ledger]", JSON.stringify({ recorded: recordedFacts.length, summary: ledger.summary, facts: { sent: ledger.facts.propertiesSentCount, est: ledger.facts.estimateSent, promised: ledger.facts.pickupPromisedUnfulfilled, redo: ledger.facts.redoAllowed, sinceCust: ledger.facts.propertiesSentSinceCustomerLatest, last: ledger.facts.lastStaffEntry?.kind ?? null }, mode: ACTION_LEDGER_MODE }));
     const ledgerActive = ACTION_LEDGER_MODE !== "shadow" && !isTemplateOptimize;
     const ledgerForCtx: ActionLedger | null = ledgerActive ? ledger : null;
+
+    // ── 2026-09-16 竹内（𝒮 さん事例）「根本的な部分を、住所わかっている」────────────────────
+    //   決まっている内覧の住所は viewing_history に構造化されて入っている（AIX【待ち合わせ】の送信時に記録）。
+    //   これまで返信生成は viewing 系テーブルを1つも読んでおらず（台帳の ViewingAppointment は日付・時刻だけ）、
+    //   住所を聞かれても答えられず「明日また詳細ご案内させて頂きます」と先送りしていた。
+    //   お客様が場所・行き方を聞いた時だけ材料として渡す（それ以外の場面で住所を書かせない）。
+    //   カレンダーの notes にはキーボックスの番号など社内情報が入るので、住所の列だけを使う
+    let viewingAccessNote = "";
+    if (conversationId && !isTemplateOptimize && ledger.facts.viewingAppointment) {
+      if (isViewingAccessQuestion(intentMessage, true)) {
+        const { data: vhRow } = await supabase
+          .from("viewing_history")
+          .select("property_name, property_address, scheduled_date, scheduled_time")
+          .eq("conversation_id", conversationId)
+          .eq("status", "scheduled")
+          .order("scheduled_date", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        const vh = vhRow as { property_name?: string | null; property_address?: string | null; scheduled_date?: string | null; scheduled_time?: string | null } | null;
+        if (vh?.property_address) {
+          const md = vh.scheduled_date ? `${Number(vh.scheduled_date.slice(5, 7))}/${Number(vh.scheduled_date.slice(8, 10))}` : null;
+          viewingAccessNote = buildViewingAccessNote({
+            propertyName: vh.property_name, address: vh.property_address, dateMD: md, time: vh.scheduled_time ?? null,
+          });
+          console.info("[viewing-access]", JSON.stringify({ conversationId, hasAddress: true }));
+        }
+      }
+    }
     // Phase2（enforce）: aixDone.propertySend を台帳 recentDone.propertySend（aix_log > line_task > 本文・72h）に統一（解除条件 asksNewPickup は従来通り）
     if (aixDone && ACTION_LEDGER_MODE === "enforce") aixDone.propertySend = !aixDone.asksNewPickup && ledger.facts.recentDone.propertySend;
 
@@ -3425,7 +3464,15 @@ export async function POST(req: NextRequest) {
     // 申込中・成約後は条件提示ガードを無効化（申込フォーム内の住所＋家賃で誤発動）。brain fresh で条件変更が立っている時のみ例外
     const isConditionPresented = conditionDetail.presented
       && !((phaseGuideKey === "applying" || phaseGuideKey === "closed_won") && !(brainFreshForMessage && brainMeta?.condition_change_type));
-    const isConditionChangeRequest = conditionDetail.changeRequest;
+    // 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の道順の質問を「エリア条件の変更」にしない。
+    //   「今の家から野田阪神までバス出てるから…」の『阪神』が路線名（AREA_SUFFIX_RE）、『まで』が条件語（CONDITION_MARKER_RE）に当たり、
+    //   疑問符が無いため hasRequest=false → changeRequest=true → 往復文脈が condition_change に化けていた。
+    //   その結果「新条件を復唱した再度ピックアップ宣言がありません」「見つかるまで全力サポートを追加」という場面違いの指摘が出ていた
+    const isViewingAccessTurn = !!ledger.facts.viewingAppointment && isViewingAccessQuestion(intentMessage, true);
+    const isConditionChangeRequest = conditionDetail.changeRequest && !isViewingAccessTurn;
+    if (conditionDetail.changeRequest && isViewingAccessTurn) {
+      console.info("[viewing-access] condition_change 抑止", JSON.stringify({ conversationId, areas: conditionDetail.areas }));
+    }
 
     // ── 2026-09-08 Fable5: 見積書の文脈判定（単一 verdict・1回だけ計算）──────────────────
     // 生成（estimateGateNote / estimatePromiseAckNote / phaseProhibition）・AIX（detectAixTiming）・
@@ -4566,7 +4613,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       customerConditions || groundTruth.customerConditionsDb || "",
       resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
-      isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
+      // 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の住所（viewing_history）を道順の質問の時だけ渡す
+      isFirstEverReplyFromMsgs, viewingAccessNote || viewingNote, customerStructured, dbRules,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
       tpoGuidanceNote + relativeDayNote + conversationClockNote, // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
@@ -4742,7 +4790,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               }
               lastGateEdits = vr.gateEdits;
               lastValidateIssues = vr.issues;
-              return { cleaned: vr.cleaned, issues: vr.issues };
+              // 2026-09-16 竹内（𝒮 さん事例）「詳細明日等適当なことを俺は入れない」:
+              //   何を届けるか決まっていない先送り（「当日迷われないよう明日また詳細ご案内させて頂きます」）を落とす。
+              //   何を・いつ・どうするかが決まっている約束（「明日午前中に初期費用詳細確認させて頂き御見積しお送りします」）は残る
+              const deferralStripped = stripVagueDeferral(vr.cleaned);
+              if (deferralStripped !== vr.cleaned) console.info("[viewing-access] 中身のない先送りを削除");
+              return { cleaned: deferralStripped, issues: vr.issues };
             };
             /** 行動台帳の決定論自動修正（gen1・gen2 共通。名前不明時は呼びかけごと省く＝「〇〇さん」を本文に書き込まない） */
             const applyLedgerFixToDraft = (body: string): string => {
