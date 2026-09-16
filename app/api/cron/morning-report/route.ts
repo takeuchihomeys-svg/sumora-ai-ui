@@ -599,23 +599,27 @@ export async function GET(req: NextRequest) {
   // ⓪ お客様との約束（【必ず】）で、まだ履行していないもの（2026-09-16 竹内「連絡漏れが多い」）
   //   送信時の記録から決定論で置いた行。時刻が過ぎても自動では消えず、物件送付・御見積書送付・確認結果の報告で完了になる
   try {
-    //   期限切れ 7日超は日報から落とす（カレンダーには残る）。line_tasks の放置40件のように先頭に固定されないため
+    //   7日以内は1件ずつ（line_tasks の放置40件のように先頭に固定されないため上限30）。
+    //   2026-09-16 竹内（𝒮❦ 事例）「絶対に逃さない」: 7日超も黙って落とさず件数だけ末尾に出す（カレンダーには残っている）
     const { data: mustRows } = await supabase
       .from("calendar_events")
       .select("id, title, start_at, notes")
       .eq("is_done", false)
       .like("notes", "【必ず】%")
       .neq("event_type", "viewing")
-      .gte("start_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
       .order("start_at", { ascending: true })
-      .limit(30);
-    const musts = (mustRows ?? []) as Array<{ id: number; title: string; start_at: string; notes: string | null }>;
-    if (musts.length > 0) {
+      .limit(80);
+    const all = (mustRows ?? []) as Array<{ id: number; title: string; start_at: string; notes: string | null }>;
+    const cutoff = Date.now() - 7 * 86_400_000;
+    const musts = all.filter((m) => new Date(m.start_at).getTime() >= cutoff).slice(0, 30);
+    const stale = all.filter((m) => new Date(m.start_at).getTime() < cutoff);
+    if (musts.length > 0 || stale.length > 0) {
       const lines = musts.map((m, i) => {
         const aix = (m.notes ?? "").split("\n").find((l) => l.startsWith("AIX: "))?.replace(/^AIX: /, "").replace(/を送ったら完了$/, "") ?? "";
         return `${i + 1}. ${m.title}（${relTime(m.start_at)}に約束）${aix ? `→ ${aix}` : ""}`;
       });
-      sections.push(`🔴 お客様との約束・未履行（${musts.length}件）\n\n${lines.join("\n")}`);
+      if (stale.length > 0) lines.push(`⚠ 7日超の約束 ${stale.length}件（カレンダーで確認: ${stale.slice(0, 3).map((m) => m.title).join("・")}${stale.length > 3 ? " 他" : ""}）`);
+      sections.push(`🔴 お客様との約束・未履行（${musts.length + stale.length}件）\n\n${lines.join("\n")}`);
     }
   } catch (e) {
     console.error("[morning-report] must-promise section:", e);

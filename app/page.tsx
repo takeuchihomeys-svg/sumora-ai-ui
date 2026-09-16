@@ -23,6 +23,8 @@ import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
 import { meetingToJst, pendingViewingNotes, isReplaceableViewingNotes, VIEWING_METHOD_PENDING } from "./lib/meeting-calendar";
 // 2026-09-16 竹内（カイナ事例）: 内覧の候補日時をカレンダーに「時間確保」で置き、決まったら残りを消す
 import { parseCandidateSlots, holdEventRow, isViewingHoldNotes, planHoldCleanup } from "./lib/viewing-hold";
+// 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
+import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf } from "./lib/promise-calendar";
 import { jstYmd } from "./lib/jst-date";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
@@ -1031,6 +1033,9 @@ export default function Home() {
   }>>([{name: "", keyType: "", autolock: "", dial: "", kanriName: "", kanriPhone: "", kanriAddress: ""}]);
   const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
   const [activeTasks, setActiveTasks] = useState<Record<string, Array<{ id: string; task_type: string; created_at: string; customer_name: string }>>>({});
+  // 2026-09-16 竹内（𝒮❦ 事例）「こんな約束絶対に逃してはいけないので【必ず】といれてカレンダーに入れる。そうすればスタッフの抜けがない」:
+  //   カレンダーの【必ず】（お客様への約束・未履行）を会話ごとに持ち、会話画面のバナーと一覧のバッジに出す（カレンダーを開かなくても届く）
+  const [openPromises, setOpenPromises] = useState<Record<string, Array<{ id: number; event_type: string | null; title: string; start_at: string; notes: string | null }>>>({});
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
   const [knowledgeRules, setKnowledgeRules] = useState<Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string; importance?: number }>>([]);
   const [knowledgeTotal, setKnowledgeTotal] = useState(0);
@@ -1721,8 +1726,21 @@ export default function Home() {
           setActiveTasks(map);
         })
         .catch(() => {});
+    // お客様への約束（【必ず】・未履行）も同じタイミングで取る（カレンダー画面・朝の報告と同じ条件）
+    const refreshOpenPromises = () =>
+      supabase.from("calendar_events").select("id, conversation_id, event_type, title, start_at, notes")
+        .eq("is_done", false).like("notes", `${PROMISE_MUST_MARK}%`).neq("event_type", "viewing").order("start_at", { ascending: true }).limit(200)
+        .then(({ data }) => {
+          const map: Record<string, Array<{ id: number; event_type: string | null; title: string; start_at: string; notes: string | null }>> = {};
+          for (const r of (data ?? []) as Array<{ id: number; conversation_id: string | null; event_type: string | null; title: string; start_at: string; notes: string | null }>) {
+            if (!r.conversation_id) continue;
+            (map[r.conversation_id] ??= []).push({ id: r.id, event_type: r.event_type, title: r.title, start_at: r.start_at, notes: r.notes });
+          }
+          setOpenPromises(map);
+        }, () => {});
 
     refreshActiveTasks();
+    refreshOpenPromises();
 
     // Supabase real-time: 新しいメッセージ・会話をリアルタイム反映
     const channel = supabase
@@ -1878,6 +1896,7 @@ export default function Home() {
     const pollInterval = setInterval(() => {
       fetchConversationsAndMessages(true);
       refreshActiveTasks();
+      refreshOpenPromises();
     }, 30_000); // Realtimeが差分を拾うため30秒で十分（6秒は入力中ラグの原因）
 
     // カレンダーアラーム（1分ごとに予定開始15分前・開始時刻を通知）
@@ -6595,6 +6614,11 @@ export default function Home() {
                           if (hasStaffToday) return <span key="today-reply-badge" className="shrink-0 leading-none text-sm" title="今日手動で返信済み">☑</span>;
                           return null;
                         })()}
+                        {(openPromises[conversation.id] ?? []).length > 0 && (() => {
+                          const oldest = Math.min(...(openPromises[conversation.id] ?? []).map((p) => new Date(p.start_at).getTime()));
+                          const days = Math.floor((Date.now() - oldest) / 86400000);
+                          return <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white" title="お客様への約束・未履行（カレンダーの【必ず】）">🔴必ず{days > 0 ? ` ${days}日` : ""}</span>;
+                        })()}
                         {(activeTasks[conversation.id] ?? []).map((task) => {
                           if (task.task_type === "property_check") {
                             const days = Math.floor((Date.now() - new Date(task.created_at).getTime()) / 86400000);
@@ -7123,6 +7147,30 @@ export default function Home() {
             );
           })()}
 
+          {/* お客様への約束（【必ず】・未履行）: この会話を開いた瞬間に見える。タップでその AIX を開く（2026-09-16 竹内・𝒮❦ 事例） */}
+          {!inputFocused && (openPromises[selectedConversation.id] ?? []).length > 0 && (
+            <div className="border-b border-[#ef9a9a] px-4 py-2" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}>
+              {(openPromises[selectedConversation.id] ?? []).map((p) => {
+                const lines = (p.notes ?? "").split("\n");
+                const head = (lines[0] ?? "").replace(PROMISE_MUST_MARK, "").replace(TODAY_MARK, "");
+                const promiseLine = lines.find((l) => l.startsWith("約束: "))?.replace(/^約束: /, "") ?? "";
+                const aixLine = lines.find((l) => l.startsWith("AIX: "))?.replace(/^AIX: /, "").replace(/を送ったら完了$/, "") ?? "";
+                const days = Math.floor((Date.now() - new Date(p.start_at).getTime()) / 86400000);
+                const action = promiseAixActionOf(p.event_type);
+                return (
+                  <button key={p.id} type="button" className="flex w-full items-start gap-2 text-left active:opacity-70"
+                    onClick={() => { if (action) { setActiveAixFlow(action as AixActionType); openAixDirect(action as AixActionType); } }}>
+                    <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white">必ず{days > 0 ? ` ${days}日` : ""}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[12px] font-bold text-[#b71c1c]">{head}{(lines[0] ?? "").includes(TODAY_MARK) ? "（今日中）" : ""}</span>
+                      {promiseLine && <span className="block truncate text-[11px] text-[#c62828]">{promiseLine}</span>}
+                      {aixLine && <span className="block text-[10px] text-[#8e24aa]">→ {aixLine}</span>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {!inputFocused && (() => {
             const tasks = activeTasks[selectedConversation.id] ?? [];
             const bannerAixMeta = selectedConversation.suggestedAixMeta;
@@ -14356,6 +14404,7 @@ export default function Home() {
                           <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">要対応</span>
                           {hotConvIds.has(conv.id) && <span className="shrink-0 leading-none text-sm">🔥</span>}
                           {isAixRequired && <span className="shrink-0 rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-white">AIX必須</span>}
+                          {(openPromises[conv.id] ?? []).length > 0 && <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white">🔴必ず</span>}
                           {(activeTasks[conv.id] ?? []).map((task) => {
                             if (task.task_type === "property_check") {
                               const days = Math.floor((Date.now() - new Date(task.created_at).getTime()) / 86400000);

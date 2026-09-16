@@ -1,7 +1,7 @@
 // 2026-09-16 竹内（慶次・𝒮 さん事例）: 今日約束した事をカレンダーに【必ず】＋お客様名＋要件で置き、履行したら完了にする
 // 実行: npx tsx app/lib/__tests__/promise-calendar.test.ts（自己完結ハーネス。全 PASS で exit 0）
 import { classifyStaffTextFacts } from "../action-ledger";
-import { promiseEventRows, planPromiseInsert, planPromiseCompletion, isPromiseMustNotes, promiseHeadline, PROMISE_MUST_MARK } from "../promise-calendar";
+import { promiseEventRows, planPromiseInsert, planPromiseCompletion, isPromiseMustNotes, promiseHeadline, promiseAixActionOf, PROMISE_MUST_MARK } from "../promise-calendar";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -29,16 +29,32 @@ it("慶次: 1通の2つの約束が2行になる（お客様名＋要件・【�
   expect(rows[0].notes).toContain("AIX: 【物件ピックアップした（または 物件オススメ）】を送ったら完了");
   expect(rows[1].title).toBe("慶次 保証会社の確認→ご連絡");
   expect(rows[1].event_type).toBe("follow_up");
-  expect(rows[1].notes).toContain("約束: 「確認させて頂きます」");
+  // 約束の文がそのまま入る（旧: 正規表現の一致部分「確認させて頂きます」だけ）・保証会社は条件・交渉の AIX
+  expect(rows[1].notes).toContain("約束: 「保証会社の件も確認させて頂きますので、何卒よろしくお願い致します」");
+  expect(rows[1].notes).toContain("AIX: 【確認した（条件・交渉）→保証会社】を送ったら完了");
   expect(rows[1].notes).toContain("（9/16 10:28 の送信から）");
   expect(rows[1].start_at).toBe(KEIJI_AT);
   expect(rows[1].customer_name).toBe("慶次");
 });
-it("𝒮: 管理会社の確認→ご連絡 が1行（お客様名付き）", () => {
+it("𝒮❦: 要件は「何を」（入居時期）・約束の文・条件交渉の AIX が入る（旧: 管理会社の確認→ご連絡／約束: 「確認出来次第」）", () => {
   const rows = promiseEventRows(classifyStaffTextFacts(S_TEXT, "2026-09-16T01:27:11Z"), { customerName: "𝒮❦", conversationId: "c2", sentAt: "2026-09-16T01:27:11Z" });
   expect(rows.length).toBe(1);
-  expect(rows[0].title).toBe("𝒮❦ 管理会社の確認→ご連絡");
+  expect(rows[0].title).toBe("𝒮❦ 入居時期の確認→ご連絡");
+  expect(rows[0].notes.split("\n")[0]).toBe("【必ず】入居時期の確認→ご連絡");
+  expect(rows[0].notes).toContain("約束: 「改めて管理会社に11月中旬でのご入居が可能か交渉頂きます」");
+  expect(rows[0].notes).toContain("AIX: 【確認した（条件・交渉）→入居時期】を送ったら完了");
   expect(isPromiseMustNotes(rows[0].notes)).toBe(true);
+});
+it("確認結果の報告文（〜とのご連絡がございました）は約束にしない・募集状況は従来どおり【物件確認した】", () => {
+  const rep = classifyStaffTextFacts("お世話になっております！！\n管理会社に確認させていただき、受理とのご連絡がございました！！", null);
+  expect(rep.some((e) => e.kind === "confirmation_promised")).toBe(false);
+  expect(rep[0]?.kind).toBe("confirmation_reported");
+  const r2 = promiseEventRows(classifyStaffTextFacts("かしこまりました！！\n募集状況確認させて頂きます！！", null), { customerName: "A", conversationId: "c", sentAt: "2026-09-16T02:00:00Z" });
+  expect(r2[0].notes).toContain("AIX: 【物件確認した（確認結果を送る）】");
+});
+it("「新着でオススメできるお部屋で次第お送り」（打ち間違い）も外の出来事待ち＝行にしない", () => {
+  const rows = promiseEventRows(classifyStaffTextFacts("かしこまりました！！\n新着でオススメできるお部屋で次第お送りさせて頂きます！！", null), { customerName: "隼斗", conversationId: "c", sentAt: "2026-09-16T02:00:00Z" });
+  expect(rows.length).toBe(0);
 });
 it("実行した送信（物件送付・見積書送付）は行を作らない・お客様名が無ければ要件だけ", () => {
   const rows = promiseEventRows(classifyStaffTextFacts("🌟エストレーラ 305号室\nお手隙の際にご査収ください😌！！", null), { customerName: null, conversationId: "c3", sentAt: "2026-09-16T02:00:00Z" });
@@ -77,6 +93,36 @@ it("確認結果の報告: 対象があれば一致する確認の約束だけ�
 });
 it("保証会社の案内（AIX 保証会社について）は保証会社の確認の約束だけ閉じる", () => {
   expect(planPromiseCompletion([D("guarantor_explained")], OPEN).join(",")).toBe("2");
+});
+// 2026-09-16 𝒮❦ 事例: 閉じ方は「何を」で照合する（相手の語は何にでも当たる・条件の確認は物件送付で閉じない）
+const OPEN2 = [
+  { id: 11, event_type: "follow_up", notes: "【必ず】入居時期の確認→ご連絡\n約束: 「…」", is_done: false },
+  { id: 12, event_type: "follow_up", notes: "【必ず】管理会社の確認→ご連絡", is_done: false }, // 旧形式（中身不明）
+  { id: 13, event_type: "estimate_sheet", notes: "【必ず】御見積書送付", is_done: false },
+  { id: 14, event_type: "estimate_sheet", notes: "【必ず】御見積書送付（エストレーラ 305号室）", is_done: false },
+];
+const DC = (kind: string, object: string | null, checkPattern: string | null = null) => ({ kind: kind as Parameters<typeof planPromiseCompletion>[0][number]["kind"], object, checkPattern });
+it("𝒮❦: AIX【確認した（条件・交渉）】入居時期（check_pattern）で入居時期の約束が閉じる。募集状況の報告では閉じない", () => {
+  expect(planPromiseCompletion([DC("confirmation_reported", "審査", "mgmt_move_in")], OPEN2).sort().join(",")).toBe("11,12");
+  expect(planPromiseCompletion([DC("confirmation_reported", "募集状況", "available")], OPEN2).join(",")).toBe("12");
+});
+it("手打ちの報告「オーナー様に確認したところ」（相手の語だけ）でも閉じる・「11月中旬のご入居で問題ない」でも閉じる", () => {
+  expect(planPromiseCompletion([DC("confirmation_reported", "オーナー")], OPEN2).sort().join(",")).toBe("11,12");
+  expect(planPromiseCompletion([DC("confirmation_reported", "入居時期")], OPEN2).sort().join(",")).toBe("11,12");
+  expect(planPromiseCompletion([DC("confirmation_reported", "保証会社")], OPEN2).join(",")).toBe("12");
+});
+it("入居時期の確認は別の物件・御見積書を送っただけでは閉じない（中身不明の行は従来どおり閉じる）", () => {
+  expect(planPromiseCompletion([DC("properties_sent", null)], OPEN2).join(",")).toBe("12");
+  expect(planPromiseCompletion([DC("estimate_sent", null)], OPEN2).sort().join(",")).toBe("12,13,14");
+});
+it("募集終了・別のお部屋の報告で、物件名の無い御見積書の約束は閉じる（対象の部屋が無くなった）", () => {
+  expect(planPromiseCompletion([DC("confirmation_reported", "募集状況", "unavailable")], OPEN2).sort().join(",")).toBe("12,13");
+});
+it("会話画面から開く AIX は行の種類で決まる", () => {
+  expect(promiseAixActionOf("follow_up")).toBe("property_check_result");
+  expect(promiseAixActionOf("property_send")).toBe("property_send");
+  expect(promiseAixActionOf("estimate_sheet")).toBe("estimate_sheet");
+  expect(promiseAixActionOf("viewing")).toBe(null);
 });
 it("見積書の約束は物件名付きの要件", () => {
   expect(promiseHeadline("estimate_declared", { estimateFor: ["エストレーラ 305号室"] })).toBe(`${PROMISE_MUST_MARK}御見積書送付（エストレーラ 305号室）`);

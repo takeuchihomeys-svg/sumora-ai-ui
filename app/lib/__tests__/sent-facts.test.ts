@@ -87,10 +87,14 @@ it("「ピックアップ出来次第お送り」だけの通は確認の約束�
   const f = classifyStaffTextFacts("かしこまりました！！\nオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！", null);
   expect(f.map((e) => e.kind).join(",")).toBe("pickup_declared");
 });
-it("𝒮: 「管理会社に…交渉頂きます／確認出来次第ご連絡」は確認の約束（対象=管理会社）", () => {
+it("𝒮❦: 「管理会社に…交渉頂きます／確認出来次第ご連絡」は確認の約束（要件=入居時期・約束の文あり。旧: 管理会社）", () => {
   const f = classifyStaffTextFacts("お世話になっております！！\n\n改めて管理会社に11月中旬でのご入居が可能か交渉頂きます！！\n確認出来次第ご連絡させて頂きます😊！", null);
   expect(f[0]?.kind).toBe("confirmation_promised");
-  expect(f[0]?.detail.object ?? null).toBe("管理会社");
+  expect(f[0]?.detail.object ?? null).toBe("入居時期");
+  expect(f[0]?.detail.sentence ?? null).toBe("改めて管理会社に11月中旬でのご入居が可能か交渉頂きます");
+  // 何をか書いていない時だけ相手（管理会社）
+  const g = classifyStaffTextFacts("かしこまりました！！\n管理会社に確認させて頂きます！！", null);
+  expect(g[0]?.detail.object ?? null).toBe("管理会社");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

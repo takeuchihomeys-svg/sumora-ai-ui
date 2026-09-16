@@ -7,7 +7,7 @@
 //     既存の最新の未完了行に物件名を上書きし「9/10 15:00 メゾン加美北 予定」のような誤った記録を作っていた
 //   → 送った時（一番よく知っている所）に構造化して1回書く。行動台帳（action-ledger）は記録を一次証拠にし、本文の読み直しは記録前の古いメッセージだけ
 import { supabase } from "@/app/lib/supabase";
-import { classifyStaffTextFacts, aixLedgerKind, aixTextPromises, extractViewingAppointment, appointmentFromMeetingInput, appointmentYmd, confirmObjectOf, type RecordedFact, type ViewingAppointment, type LedgerEntry } from "@/app/lib/action-ledger";
+import { classifyStaffTextFacts, aixLedgerKind, aixTextPromises, extractViewingAppointment, appointmentFromMeetingInput, appointmentYmd, confirmObjectOf, confirmTopicForCheckPattern, type RecordedFact, type ViewingAppointment, type LedgerEntry } from "@/app/lib/action-ledger";
 // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】と入れて、お客さん名と要件を入れる（AIX と合わせて）」
 import { promiseEventRows, planPromiseInsert, planPromiseCompletion, PROMISE_MUST_MARK } from "@/app/lib/promise-calendar";
 
@@ -22,7 +22,8 @@ type FactLike = Pick<LedgerEntry, "kind" | "status" | "evidence" | "detail">;
  */
 export async function syncPromiseCalendar(o: { conversationId: string; entries: ReadonlyArray<FactLike>; sentAt: string }): Promise<void> {
   try {
-    const done = o.entries.filter((e) => e.status === "done").map((e) => ({ kind: e.kind, object: e.detail?.object ?? null }));
+    // checkPattern: AIX【確認した（条件・交渉）】の種類（入居時期・保証会社…）。どの約束を閉じるかは本文の先頭語よりこちらが確か（𝒮❦ 事例）
+    const done = o.entries.filter((e) => e.status === "done").map((e) => ({ kind: e.kind, object: e.detail?.object ?? null, checkPattern: e.detail?.checkPattern ?? null }));
     const hasPromise = o.entries.some((e) => e.status === "promised");
     if (done.length === 0 && !hasPromise) return;
     const { data: open } = await supabase.from("calendar_events").select("id, event_type, notes, is_done")
@@ -57,7 +58,8 @@ export async function syncPromiseCalendar(o: { conversationId: string; entries: 
       console.log(JSON.stringify({ tag: "promise:calendar", conversationId: o.conversationId, closed: closeIds, inserted }));
     }
   } catch (e) {
-    console.warn("[sent-facts] syncPromiseCalendar failed:", e instanceof Error ? e.message : e);
+    // 約束がカレンダーに載らない＝連絡漏れの直接の原因なので、ログで拾える印を付ける（get_runtime_logs で promise:calendar:failed）
+    console.error(JSON.stringify({ tag: "promise:calendar:failed", conversationId: o.conversationId, error: e instanceof Error ? e.message : String(e) }));
   }
 }
 
@@ -116,7 +118,8 @@ export async function recordAixFacts(o: {
   if (o.checkPattern) detail.checkPattern = o.checkPattern;
   // AIX【確認します】等の確認の約束・確認結果の報告: 本文から確認の対象（保証会社・募集状況…）を取る（約束の行の要件・閉じる時の絞り込み）
   if (map.kind === "confirmation_promised" || map.kind === "confirmation_reported") {
-    const obj = confirmObjectOf(o.generatedText);
+    // check_pattern（mgmt_move_in 等）があれば要件はそこから（本文の先頭語「審査」「退去」で別の約束に化けない。実データ mgmt_move_in 4件中2件）
+    const obj = confirmTopicForCheckPattern(o.checkPattern) ?? confirmObjectOf(o.generatedText);
     if (obj) detail.object = obj;
   }
   if (o.propertyNames?.length) { detail.propertyNames = o.propertyNames; detail.propertyCount = o.propertyNames.length; }

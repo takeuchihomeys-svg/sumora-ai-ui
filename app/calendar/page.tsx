@@ -255,12 +255,14 @@ export default function CalendarPage() {
   }
 
   const selectedKey = formatDateKey(selectedDate);
-  // 未履行の約束（【必ず】・期限切れ）は今日の一覧の先頭に繰り越す（その日を開いた人にしか見えないと連絡漏れが見えない）
+  // 未履行の約束（【必ず】・期限切れ）はどの日を開いていても一覧の先頭に繰り越す
+  //   2026-09-16 竹内（𝒮❦ 事例）「こんな約束絶対に逃してはいけない」: 旧は「今日」を選んでいる時だけで、別の日をタップした瞬間に消えていた
   const todayKey = formatDateKey(new Date());
-  const overdueMust: AnyEvent[] = selectedKey === todayKey
-    ? events.filter((ev) => !ev.is_done && ev.event_type !== "viewing" && isPromiseMustNotes(ev.notes) && toJSTDateKey(new Date(ev.start_at)) < todayKey)
-    : [];
-  const selectedEvents = [...overdueMust, ...(eventsByDate[selectedKey] || [])];
+  const dayEvents = eventsByDate[selectedKey] || [];
+  const dayIds = new Set(dayEvents.map((e) => ("id" in e ? e.id : null)));
+  const overdueMust: AnyEvent[] = events.filter((ev) =>
+    !ev.is_done && ev.event_type !== "viewing" && isPromiseMustNotes(ev.notes) && toJSTDateKey(new Date(ev.start_at)) < todayKey && !dayIds.has(ev.id));
+  const selectedEvents = [...overdueMust, ...dayEvents];
 
   const prevMonth = () => {
     if (month === 0) { setYear(y => y - 1); setMonth(11); }

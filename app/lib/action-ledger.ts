@@ -58,6 +58,8 @@ export interface LedgerEntry {
     estimateFor?: string[];
     checkPattern?: string | null;
     object?: string | null;
+    /** confirmation_promised: 約束した文そのもの（カレンダーの【必ず】の行に「何を確認するか」を残す。2026-09-16 𝒮❦ 事例） */
+    sentence?: string | null;
     taskStatus?: string | null;
     /** meeting_place_sent: 案内した内覧の待ち合わせ（日付 M/D・時刻・場所）。AIX 待ち合わせ場所の本文・スタッフ本文から */
     appointment?: ViewingAppointment | null;
@@ -152,7 +154,50 @@ export interface LedgerInput {
 /** 物件ラベル: 「🌟エストレーラ 305号室」「【エストレーラ 305号室】」 */
 export const PROPERTY_LABEL_RE = /(?:🌟|【)\s*([^\n【】🌟]{2,40}?)\s*([0-9０-９]{1,4})\s*号室/g;
 const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/;
-const CONFIRM_OBJECT_RE = /募集状況|空室|空き|内覧可能|入居可能日|入居可否|初期費用|割引|番手|管理会社|オーナー|退去|審査|交渉|ペット|飼育可能|駐車場|保証会社/;
+// 2026-09-16 竹内（𝒮❦ 事例）「こんな約束絶対に逃してはいけないので【必ず】といれてカレンダーに入れる」:
+//   「改めて管理会社に11月中旬でのご入居が可能か交渉頂きます／確認出来次第ご連絡」の要件が「管理会社の確認」としか残らず、
+//   何を確認するのかがカレンダーで読めなかった。旧 CONFIRM_OBJECT_RE は「誰に（管理会社・オーナー）」と「何を（募集状況・入居時期…）」が
+//   1本の正規表現に混ざり、本文で先に出た語が勝っていた（実データ: object=管理会社 21件中 20件は本文に中身が書いてある）。
+//   → 「何を」を先に探し、無ければ「誰に」。言い回しの揺れは1つの要件名に揃える（「ご入居が可能か」「11月中旬でのご入居」→ 入居時期）
+const CONFIRM_TOPIC_RULES: ReadonlyArray<{ re: RegExp; label: string }> = [
+  { re: /募集状況/, label: '募集状況' },
+  { re: /空室|空き/, label: '空室' },
+  { re: /番手/, label: '番手' },
+  { re: /保証会社|保証人/, label: '保証会社' },
+  { re: /代理契約/, label: '代理契約' },
+  { re: /入居(?:可能)?(?:時期|日)|ご?入居が可能|入居可否|(?:上旬|中旬|下旬|[0-9０-９]{1,2}日)(?:での|から|の|まで)?ご?入居/, label: '入居時期' },
+  { re: /退去時費用|クリーニング代|クリーニング費/, label: '退去時費用' },
+  { re: /初期費用|割引|礼金|敷金|フリーレント/, label: '初期費用' },
+  { re: /退去/, label: '退去' },
+  { re: /審査/, label: '審査' },
+  { re: /ペット|飼育可能/, label: 'ペット' },
+  { re: /駐車場|駐輪|バイク置/, label: '駐車場' },
+  { re: /内覧可能|内覧可否|ご案内可能か/, label: '内覧可否' },
+  { re: /エアコン|宅配ボックス|コンロ|ウォシュレット|洗濯機置|インターネット|ネット無料|設備/, label: '設備' },
+];
+/** 確認の相手（何をか分からない時だけ要件にする）。閉じる時の照合ではワイルドカード扱い（promise-calendar） */
+export const CONFIRM_PARTY_RE = /管理会社|オーナー|交渉/;
+const CONFIRM_OBJECT_RE = new RegExp(`${CONFIRM_TOPIC_RULES.map((r) => r.re.source).join('|')}|${CONFIRM_PARTY_RE.source}`);
+/** 確認の要件が「相手」だけで中身が無い（管理会社・オーナー・確認事項…） */
+export function isConfirmPartyObject(object: string | null | undefined): boolean {
+  const o = (object ?? '').trim();
+  return !o || o === '確認事項' || CONFIRM_PARTY_RE.test(o);
+}
+/** AIX の check_pattern → 確認の要件名（AIX【確認した（条件・交渉）】の送信で、どの約束を閉じるか） */
+export function confirmTopicForCheckPattern(checkPattern: string | null | undefined): string | null {
+  switch (checkPattern) {
+    case 'mgmt_move_in': return '入居時期';
+    case 'mgmt_initial_cost': return '初期費用';
+    case 'mgmt_guarantor': return '保証会社';
+    case 'mgmt_pet': return 'ペット';
+    case 'vacate_date': return '退去';
+    case 'mgmt_parking': case 'nearby_parking': return '駐車場';
+    case 'mgmt_equipment': return '設備';
+    case 'mgmt_proxy': return '代理契約';
+    case 'available': case 'unavailable': case 'alternative': case 'mgmt_availability': return '募集状況';
+    default: return null;
+  }
+}
 // 2026-09-16 竹内（慶次事例）「今日約束した事はカレンダーに【必ず】と入れて…連絡漏れが多い」:
 //   「〇〇（募集状況・番手・保証会社…）確認させて頂きます」だけの文（「ご連絡」「出来次第」が続かない）は約束として記録されず、
 //   1通に「ピックアップ出来次第お送り」があると確認の約束が丸ごと落ちていた（通全体でピックアップの宣言を見て除外）。
@@ -161,14 +206,31 @@ const CONFIRM_OBJECT_RE = /募集状況|空室|空き|内覧可能|入居可能�
 const BARE_CONFIRM_DECL_RE = /(?:確認|お調べ|問い合わせ)(?:させて(?:頂|いただ)き|いたし|致し)ます/;
 /** お客様の行動が先に要る条件付き（「お送り頂き次第…確認させて頂きます」「ございましたら」）は約束ではない */
 const CONDITIONAL_PROMISE_RE = /(?:頂け|いただけ)(?:ましたら|たら|れば|次第)|(?:頂|いただ)き次第|お送り(?:頂|いただ)(?:き|け)|ございましたら|御座いましたら|でしたら|あれば|(?:頂|いただ)けると/;
-/** 本文の確認の対象（保証会社・募集状況・管理会社…）。AIX の本文からも同じ語彙で取る */
+/** 本文の確認の要件（何を: 入居時期・保証会社・募集状況…を先に、無ければ誰に: 管理会社）。AIX の本文からも同じ語彙で取る */
 export function confirmObjectOf(text: string | null | undefined): string | null {
-  return (text ?? '').match(CONFIRM_OBJECT_RE)?.[0] ?? null;
+  const t = text ?? '';
+  for (const r of CONFIRM_TOPIC_RULES) if (r.re.test(t)) return r.label;
+  return t.match(CONFIRM_PARTY_RE)?.[0] ?? null;
 }
-/** 文の中の確認の約束（ピックアップの宣言の文・条件付きの文は除く） */
+/**
+ * 確認結果の報告を約束に読まない（台帳専用・返信生成が共有する STAFF_CONFIRM_REPORT_RE は触らない）。
+ *   実データ: 「確認させていただき、〜とのご連絡がございました」の報告文が confirmation_promised に誤分類（21件中3件）
+ */
+const LEDGER_CONFIRM_REPORT_RE = /との(?:ご)?(?:連絡|返答|返事|回答)(?:が|を)?(?:ございました|御座いました|(?:頂|いただ)きました|ありました)|より(?:ご)?(?:返答|回答|連絡)(?:が)?(?:あり|ございました)/;
+/** 約束の文（カレンダーの「約束:」欄・80字）。末尾の記号・絵文字は落とす */
+function promiseSentenceText(s: string | null | undefined): string | null {
+  const t = (s ?? '').replace(/[！!。、\s]+$/g, '').replace(/[\p{Extended_Pictographic}️]/gu, '').trim();
+  return t ? t.slice(0, 80) : null;
+}
+/** 1通の中で「何を確認するか」が書かれた文（要件の語がある文）。無ければ約束の型に当たった文 */
+function confirmTopicSentence(sentences: string[], fallback: string | null | undefined): string | null {
+  const s = sentences.find((x) => CONFIRM_TOPIC_RULES.some((r) => r.re.test(x))) ?? sentences.find((x) => CONFIRM_PARTY_RE.test(x)) ?? fallback;
+  return promiseSentenceText(s);
+}
+/** 文の中の確認の約束（ピックアップの宣言の文・条件付きの文・報告の文は除く） */
 function findConfirmPromiseSentence(sentences: string[]): { sentence: string; evidence: string } | null {
   for (const s of sentences) {
-    if (STAFF_PICKUP_DECL_RE.test(s) || CONDITIONAL_PROMISE_RE.test(s)) continue;
+    if (STAFF_PICKUP_DECL_RE.test(s) || CONDITIONAL_PROMISE_RE.test(s) || LEDGER_CONFIRM_REPORT_RE.test(s)) continue;
     const m = s.match(STAFF_CONFIRM_DECL_RE) ?? s.match(BARE_CONFIRM_DECL_RE);
     if (m) return { sentence: s, evidence: m[0] };
   }
@@ -321,13 +383,19 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
   if (STAFF_VIEWING_INVITE_RE.test(t)) return base('viewing_invited', 'done', t.match(STAFF_VIEWING_INVITE_RE)![0]);
   if (STAFF_APPLY_PUSH_RE.test(t)) return base('application_guided', 'done', t.match(STAFF_APPLY_PUSH_RE)![0]);
   if (STAFF_CONDITION_ASK_RE.test(t)) return base('condition_asked', 'done', t.match(STAFF_CONDITION_ASK_RE)![0]);
-  if (STAFF_CONFIRM_REPORT_RE.test(t)) return base('confirmation_reported', 'done', t.match(STAFF_CONFIRM_REPORT_RE)![0], { object: t.match(CONFIRM_OBJECT_RE)?.[0] ?? null });
+  if (STAFF_CONFIRM_REPORT_RE.test(t) || LEDGER_CONFIRM_REPORT_RE.test(t)) {
+    const ev = t.match(STAFF_CONFIRM_REPORT_RE)?.[0] ?? t.match(LEDGER_CONFIRM_REPORT_RE)![0];
+    return base('confirmation_reported', 'done', ev, { object: confirmObjectOf(t) });
+  }
   // 宣言（未来形）。ピックアップ宣言は確認約束より先（「ピックアップ出来次第お送り」を確認約束にしない）
-  if (STAFF_PICKUP_DECL_RE.test(t)) return base('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0]);
-  if (STAFF_CONFIRM_DECL_RE.test(t)) return base('confirmation_promised', 'promised', t.match(STAFF_CONFIRM_DECL_RE)![0], { object: t.match(CONFIRM_OBJECT_RE)?.[0] ?? null });
+  if (STAFF_PICKUP_DECL_RE.test(t)) return base('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0], { sentence: promiseSentenceText(sentences.find((s) => STAFF_PICKUP_DECL_RE.test(s))) });
+  if (STAFF_CONFIRM_DECL_RE.test(t)) {
+    const declSentence = sentences.find((s) => STAFF_CONFIRM_DECL_RE.test(s)) ?? null;
+    return base('confirmation_promised', 'promised', t.match(STAFF_CONFIRM_DECL_RE)![0], { object: confirmObjectOf(t), sentence: confirmTopicSentence(sentences, declSentence) });
+  }
   // 「Nicher'a 加美の募集状況確認させていただきます！！」だけの通（ご連絡・出来次第が無い）も確認の約束（慶次事例 2026-09-16）
   const bare = findConfirmPromiseSentence(sentences);
-  if (bare) return base('confirmation_promised', 'promised', bare.evidence, { object: bare.sentence.match(CONFIRM_OBJECT_RE)?.[0] ?? t.match(CONFIRM_OBJECT_RE)?.[0] ?? null });
+  if (bare) return base('confirmation_promised', 'promised', bare.evidence, { object: confirmObjectOf(bare.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([bare.sentence, ...sentences], bare.sentence) });
   if (STAFF_QUESTION_RE.test(lastLine)) return base('question_asked', 'done', lastLine.slice(-30));
   return null;
 }
@@ -357,12 +425,12 @@ export function classifyStaffTextFacts(text: string, at: string | null): LedgerE
     if (appt) add('meeting_place_sent', 'done', `${appt.dateMD ?? ''} ${appt.time ?? ''} ${appt.place ?? ''}`.trim(), { appointment: appt });
   }
   if (!has('pickup_declared', 'properties_sent', 'condition_asked') && STAFF_PICKUP_DECL_RE.test(t) && !STAFF_CONDITION_ASK_RE.test(t)) {
-    add('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0]);
+    add('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0], { sentence: promiseSentenceText(sentences.find((s) => STAFF_PICKUP_DECL_RE.test(s))) });
   }
   // 文ごとに見る（旧: 通全体にピックアップの宣言があると確認の約束を捨てた → 慶次「ピックアップ出来次第お送り＋保証会社の件も確認させて頂きます」の確認が落ちた）
   if (!has('confirmation_promised', 'confirmation_reported')) {
     const c = findConfirmPromiseSentence(sentences);
-    if (c) add('confirmation_promised', 'promised', c.evidence, { object: c.sentence.match(CONFIRM_OBJECT_RE)?.[0] ?? t.match(CONFIRM_OBJECT_RE)?.[0] ?? null });
+    if (c) add('confirmation_promised', 'promised', c.evidence, { object: confirmObjectOf(c.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([c.sentence, ...sentences], c.sentence) });
   }
   return out;
 }
