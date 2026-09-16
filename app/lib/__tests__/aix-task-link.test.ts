@@ -151,5 +151,32 @@ it("確認結果を報告済み（履行済み）→ AIX なし", () => {
   expect(resolveStaffPromiseAix(facts(S_CONFIRM, { conf: false }), msgs, asked(msgs))).toBe(null);
 });
 
+// 2026-09-16 竹内（カイナ事例）「何故か物件確認したが間違ってアナウンスされる」:
+//   AIX【申込確定】の本文の「無事一番手でお部屋止め完了確認出来次第ご連絡させて頂きます」が
+//   物件確認した（募集状況）としてグループにアナウンスされていた。実データ120日でこの型13件は全て手打ちの報告
+const APPLY_CONFIRM = "かしこまりました！！\n1303号室お申込みさせて頂きます😊！！\n無事一番手でお部屋止め完了確認出来次第ご連絡させて頂きます！！\n何卒よろしくお願い致します！！";
+it("カイナ: 申込の番手・お部屋止めの確認は 物件確認した にしない（AIX なし）", () => {
+  const msgs = [C("こちら代理契約可能か聞いてみて欲しいです😖"), C("1303号室でお願いします！"), S(APPLY_CONFIRM)];
+  expect(resolveStaffPromiseAix(facts(APPLY_CONFIRM, { conf: true }), msgs, asked(msgs))).toBe(null);
+});
+it("申込完了・審査の進捗の確認も 物件確認した にしない", () => {
+  for (const t of [
+    "お送り頂きありがとうございます！！\nこちらでお申し込み完了させて頂きます！！\n無事1番手でのお申込完了を管理会社確認出来次第ご連絡させて頂きます！！",
+    "管理会社に無事お申込み完了しているかと申込み番手確認させていただきます！！",
+    "審査の進捗確認させて頂き、確認出来次第ご連絡させて頂きます！！",
+  ]) {
+    const msgs = [C("こちら空いてますか？\nhttps://example.com/room/1"), S(t)];
+    expect(resolveStaffPromiseAix(facts(t, { conf: true }), msgs, asked(msgs))).toBe(null);
+  }
+});
+it("募集状況・代理契約の確認は従来どおり 物件確認した（申込の語で巻き添えにしない）", () => {
+  const t1 = "かしこまりました！！\nお送り頂きました物件、募集状況確認させて頂きます😊！！\n確認出来次第ご連絡させて頂きます！！";
+  const m1 = [C("こちら空いてますか？\nhttps://example.com/room/1"), S(t1)];
+  expect(resolveStaffPromiseAix(facts(t1, { conf: true }), m1, asked(m1))?.action ?? null).toBe("property_check_result");
+  const t2 = "かしこまりました！！\n代理契約可能か明日管理会社に確認出来次第ご連絡させて頂きます😌！！";
+  const m2 = [C("1度この2つで代理契約可能か確認していただけますでしょうか？"), S(t2)];
+  expect(resolveStaffPromiseAix(facts(t2, { conf: true }), m2, asked(m2))?.action ?? null).toBe("property_check_result");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

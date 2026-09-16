@@ -44,6 +44,18 @@ export function taskTypesCompletedByAix(aixType: string | null | undefined): str
 /** 募集状況（空室）を確認する宣言（未来形）。「確認させて頂きました」「募集ございませんでした」等の報告は含めない */
 const VACANCY_CHECK_DECL_RE = /(?:募集状況|空室状況|空き状況|空室|空き)[^\n。！!]{0,20}確認(?:させて(?:頂|いただ)きます|いたします|致します|して(?:参|まい)ります)/;
 
+/**
+ * 申込の進捗の確認（番手・お部屋止め・お申込完了・審査の進捗）。AIX【物件確認した（募集状況）】ではない。
+ * 2026-09-16 竹内（カイナ事例）「何故か物件確認したが間違ってアナウンスされる」:
+ *   AIX【申込確定】の本文「無事一番手でお部屋止め完了確認出来次第ご連絡させて頂きます！！」（12:06）が
+ *   confirmation_promised（object=番手）として記録され、12:07 のブレインが decision_source=promise:check で
+ *   property_check_result をセット → 売上番長グループに「AIX【物件確認した（募集状況）】」と誤アナウンスされた。
+ *   実データ（120日）: この型の13件すべて、その後スタッフが送るのは手打ちの報告
+ *   （「無事一番手にてお申込み完了しております！！審査の進捗あり次第ご連絡させていただきます」）で、
+ *   AIX【物件確認した】は1件も使われていない。約束としては本物（カレンダーには残す）が、押すべき AIX は無い
+ */
+const APPLY_PROGRESS_CHECK_RE = /番手|お?部屋止め|お?申込(?:み)?(?:が)?完了|審査[^\n]{0,8}(?:進捗|結果|状況|通過)/;
+
 export function resolveStaffPromiseAix(
   facts: {
     lastStaffEntry: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null } } | null;
@@ -93,6 +105,9 @@ export function resolveStaffPromiseAix(
   if (e.kind === "estimate_declared" && facts.estimatePromisedUnfulfilled) return { action: "estimate_sheet", kind: "estimate" };
   if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && !/次第/.test(e.evidence ?? "")) return { action: "property_send", kind: "pickup" };
   if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled && opts.customerRequestedCheck
-    && !/割引|交渉/.test(e.detail?.object ?? "")) return { action: "property_check_result", kind: "check" };
+    && !/割引|交渉/.test(e.detail?.object ?? "")
+    // 申込の進捗（番手・お部屋止め・お申込完了・審査）の確認は 物件確認した ではない（カイナ事例の誤アナウンス）
+    && !APPLY_PROGRESS_CHECK_RE.test(e.detail?.object ?? "")
+    && !APPLY_PROGRESS_CHECK_RE.test(last.text ?? "")) return { action: "property_check_result", kind: "check" };
   return null;
 }
