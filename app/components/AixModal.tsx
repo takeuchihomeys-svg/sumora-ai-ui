@@ -10,12 +10,14 @@ import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, latestC
 import { pickDaySlots, limitSlotsPerDay } from "../lib/viewing-slots";
 import { customerRequestsPhoneCall, buildCallRequestText } from "../lib/phone-call";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
+// 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件の名前（SUUMO の共有文等）を候補に出す
+import { customerSharedPropertyNames } from "../lib/customer-property-names";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
 import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, buildGuarantorListText, type GuarantorType } from "../lib/guarantor-companies";
 import { PROPERTY_LABEL_RE } from "../lib/action-ledger";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
-import { weekdayForMonthDay } from "../lib/jst-date";
+import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
 import {
   buildCostExplainMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
@@ -771,6 +773,12 @@ export default function AixModal({
   // 物件なかった専用: 物件名OCR
   const [checkUnavailablePropName, setCheckUnavailablePropName] = useState("");
   const [checkUnavailableOcrLoading, setCheckUnavailableOcrLoading] = useState(false);
+  // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件（ポータルの共有文）の名前を候補に出し、1タップで物件名欄に入れる
+  const [showCustomerPropertyList, setShowCustomerPropertyList] = useState(false);
+  const customerPropertyOptions = useMemo(
+    () => customerSharedPropertyNames(recentMessages ?? []),
+    [recentMessages],
+  );
   // 別の部屋について確認した専用: 物件名 + 画像OCR + 有無ピッカー（会話を合わせる専用パターン）
   const [otherRoomPropertyName, setOtherRoomPropertyName] = useState<string>("");
   const [otherRoomImagePreview, setOtherRoomImagePreview] = useState<string>("");
@@ -5095,6 +5103,41 @@ export default function AixModal({
               {/* 物件なかった: 物件スクショOCR + 物件名入力 */}
               {checkPattern === "unavailable" && (
                 <div className="flex flex-col gap-3">
+                  {/* 2026-09-16 竹内（YUYA 事例）「物件名表示ボタンつくって、押したらお客さんが送ってくれた物件が表示されるようにする。
+                      それで会話を合わせるボタンおしたら物件名が入るようにする」:
+                      お客様は SUUMO の共有文で物件名を送ってきている（「プルス新北野 3階 / URL / by SUUMO」）。
+                      スクショを選んで AI に読ませなくても、会話から拾って1タップで物件名欄に入れる */}
+                  {customerPropertyOptions.length > 0 && (
+                    <div>
+                      <button
+                        onClick={() => setShowCustomerPropertyList((v) => !v)}
+                        className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-orange-300 bg-orange-50 px-3 py-2.5 text-[13px] font-bold text-orange-600 active:opacity-80"
+                      >
+                        🏠 物件名表示（お客様が送った物件 {customerPropertyOptions.length}件）
+                        <span className="text-[10px]">{showCustomerPropertyList ? "▲" : "▼"}</span>
+                      </button>
+                      {showCustomerPropertyList && (
+                        <div className="mt-2 flex flex-col gap-1.5">
+                          {customerPropertyOptions.map((c) => {
+                            const picked = checkUnavailablePropName.trim() === c.name;
+                            return (
+                              <button
+                                key={`${c.name}-${c.at ?? ""}`}
+                                onClick={() => { setCheckUnavailablePropName(c.name); setPreview(""); setShowCustomerPropertyList(false); }}
+                                className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left active:opacity-80 ${picked ? "border-orange-400 bg-orange-50" : "border-[#e9edef] bg-white"}`}
+                              >
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-[13px] font-bold text-[#111b21]">{c.label}</span>
+                                  {c.at && <span className="block text-[10px] text-[#8696a0]">お客様が {(() => { const p = jstParts(c.at!); return `${p.m}/${p.d} ${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`; })()} に送付</span>}
+                                </span>
+                                {picked && <span className="shrink-0 text-[11px] font-bold text-orange-600">選択中</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <p className="mb-1 text-xs font-bold text-[#54656f]">
                       物件スクショ <span className="font-normal text-[#90a4ae]">（任意・AIが物件名を読み取ります）</span>
