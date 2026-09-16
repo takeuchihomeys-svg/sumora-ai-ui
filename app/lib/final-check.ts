@@ -1066,6 +1066,12 @@ const GREETING_BLOCK_RE = /^(?:夜遅くに失礼します[！!]*\s*)?(?:[^\n]{0
 
 // ─── 2026-09-09 Fable5 往復文脈: ctx 解決（generate-reply 経路は同一オブジェクト、check-reply 経路は再計算）─────────
 /** 2026-09-09 行動台帳: generate-reply 経路は同一オブジェクト、check-reply 経路は recentMessages から再計算（aix_usage_logs 無し・保守的）。ctx 単位で1回だけ計算 */
+/** 2026-09-15 竹内（yasuki 事例）: お客様の最後の発言の時刻（相対の日「明日」を日本時間の暦で数える起点） */
+function lastCustomerMessageAtOf(ctx: FinalCheckContext): string | null {
+  const msgs = ctx.recentMessages ?? [];
+  for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].sender === "customer" && msgs[i].createdAt) return msgs[i].createdAt ?? null;
+  return null;
+}
 const ledgerCache = new WeakMap<FinalCheckContext, ActionLedger>();
 function resolveLedger(ctx: FinalCheckContext): ActionLedger {
   if (ctx.ledger) return ctx.ledger;
@@ -3151,7 +3157,7 @@ export async function runFinalCheckWithRevision(
     // 2026-09-11 統合設計（経路B/N3）: 修正版にも顧客名スロットを決定論で適用
     // 2026-09-11 竹内方針1・3・4・5: 生成の後処理と同じ applySurfaceFixes（別名の統一・承知→かしこまりました・すぐに除去・誤字・名前スロット）。
     //   下の禁止語プリスキャンで「承知」を含む修正版を丸ごと捨てていた（E4）のを、置換で救う
-    const revised = applySurfaceFixes(revisedRaw, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now, customerMessage: ctx.lastCustomerMessage }).text;
+    const revised = applySurfaceFixes(revisedRaw, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now, customerMessage: ctx.lastCustomerMessage, customerMessageAt: lastCustomerMessageAtOf(ctx) }).text;
 
     // (3) 決定的プリスキャン（約0ms）: 禁止語彙、および修正で新規挿入された
     //     「確認して…ご連絡」系の句（AIX_BOUNDARY_PROMISE と正面衝突）を検出したら即破棄
@@ -3235,7 +3241,7 @@ export async function runFinalCheckWithRevision(
     if (!revised) break; // 修正失敗/ガード違反 → give up gracefully
     // 2026-09-11 統合設計（経路B/N3）: 修正版にも顧客名スロットを決定論で適用（修正 LLM が「〇〇さん」を書いても BANNED_WORD にしない）
     // 2026-09-11 竹内方針1・3・4・5: 生成の後処理と同じ applySurfaceFixes（fillNameSlot を含む）
-    revised = applySurfaceFixes(revised, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now, customerMessage: ctx.lastCustomerMessage }).text;
+    revised = applySurfaceFixes(revised, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now, customerMessage: ctx.lastCustomerMessage, customerMessageAt: lastCustomerMessageAtOf(ctx) }).text;
     // CONFIRM_PROMISE_RE ガード（blockパス・warningパスと対称）。確認約束が verdict で許可されている／直前スタッフが確認約束の時は外す（M14）
     if (!confirmPromiseOk(ctx) && CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(currentDraft)) break;
 

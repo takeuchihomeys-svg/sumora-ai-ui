@@ -8,6 +8,7 @@ import { applyTypoAutoFix } from "./typo-check";
 import { normalizeSharedPropertyReference } from "./shared-property-ref";
 import { stripMetaNarration } from "./meta-narration";
 import { fixThirdPartyContactWait } from "./contact-actor";
+import { fixStaleRelativeDays } from "./relative-date";
 // 2026-09-12 竹内方針A: 時間枠の「空いて」・断言置換文は AIX 場面判定（aix-reply-set）と同じ定数
 import { isScheduleSlotVacancy, ASSERTION_REPLACEMENT } from "./scene-patterns";
 export { fillNameSlot };
@@ -529,6 +530,8 @@ export function applySurfaceFixes(
     customerName?: string | null; aliases?: string[]; now?: number; /** 〇〇さん／{name} を確定名で埋めるか（テンプレート最適化は false） */ fillName?: boolean;
     /** 返信するお客様の連投（物件の共有文・URL・画像があれば、共有文の駅名・徒歩分で物件を呼ばない。2026-09-12 竹内・YUYA 事例） */
     customerMessage?: string | null;
+    /** そのお客様の発言の時刻（相対の日「明日」を日本時間の暦で数える起点。2026-09-15 竹内・yasuki 事例） */
+    customerMessageAt?: string | number | null;
   },
 ): { text: string; applied: string[] } {
   const applied: string[] = [];
@@ -541,6 +544,16 @@ export function applySurfaceFixes(
   // 2026-09-15 竹内（yasuki 事例）: お客様が自分で折り返すと言っているのに「息子様からのご返答お待ちしております」→「ご返答お待ちしております」
   const ca = fixThirdPartyContactWait(out, opts?.customerMessage);
   if (ca.count) { out = ca.text; applied.push(`CONTACT_ACTOR_FIXED×${ca.count}`); }
+  // 2026-09-15 竹内（yasuki 事例）: お客様が昨日「明日午前中に連絡します」→ 今日の返信で「明日午前中のご連絡お待ちしております」と写していた。
+  //   日本時間の暦で数え直し、待つ文の中の相対の日を今から見た言い方に直す（過ぎていれば日付の語を落とす）
+  {
+    const atMs = typeof opts?.customerMessageAt === "number" ? opts.customerMessageAt
+      : opts?.customerMessageAt ? Date.parse(String(opts.customerMessageAt)) : NaN;
+    if (opts?.customerMessage && Number.isFinite(atMs)) {
+      const rd = fixStaleRelativeDays(out, opts.customerMessage, atMs, opts?.now ?? Date.now());
+      if (rd.applied.length) { out = rd.text; applied.push(...rd.applied); }
+    }
+  }
   const u = unifyAddressAliases(out, opts?.customerName, opts?.aliases);
   if (u.fixes.length) { out = u.text; applied.push(...u.fixes); }
   const b = normalizeBannedPhrasing(out);
@@ -1046,6 +1059,8 @@ export function validateAndClean(
     nameAliases?: string[];
     /** 曜日の自動修正の基準時刻（既定 Date.now()） */
     now?: number;
+    /** お客様の発言の時刻（相対の日「明日」を日本時間の暦で数える起点。2026-09-15 竹内・yasuki 事例） */
+    customerMessageAt?: string | number | null;
   },
 ): { cleaned: string; issues: string[]; gateEdits: GateEdit[] } {
   const issues: string[] = []
@@ -1103,7 +1118,7 @@ export function validateAndClean(
   // 2026-09-11 竹内方針1・3・4・5（統合設計 §1）: 末尾（ゲートの後）で決定論の表層修正（別名の統一・承知→かしこまりました・すぐに除去・誤字）。
   //   gen1・gen2 の両方を通る唯一の後処理。final-check の修正版も同じ applySurfaceFixes を通す
   {
-    const sf = applySurfaceFixes(cleaned, { customerName: opts?.customerName, aliases: opts?.nameAliases, now: opts?.now, fillName: !!opts?.aixGates, customerMessage: opts?.aixGates ? opts?.customerMessage : null });
+    const sf = applySurfaceFixes(cleaned, { customerName: opts?.customerName, aliases: opts?.nameAliases, now: opts?.now, fillName: !!opts?.aixGates, customerMessage: opts?.aixGates ? opts?.customerMessage : null, customerMessageAt: opts?.aixGates ? opts?.customerMessageAt : null });
     if (sf.applied.length > 0) {
       issues.push(...sf.applied.map((a) => "表層修正: " + a));
       cleaned = sf.text;

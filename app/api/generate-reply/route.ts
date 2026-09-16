@@ -52,6 +52,7 @@ import {
 import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 import { findNearDuplicateSent } from "@/app/lib/closed-ack";
+import { buildRelativeDayNote } from "@/app/lib/relative-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
 import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
@@ -231,7 +232,7 @@ const NG_PHRASE_NOTE = `\n【🚫 使用禁止フレーズ（文体NG・最優�
 ⑦ 形式的な了解フレーズ（具体アクションなし）
 　× 「承知いたしました」「承知しました」「承知致しました」は文中も含め使わない → 受け止めは「かしこまりました！！」か「〇〇の件かしこまりました！！」、感謝・了承は「はい！！」（2026-09-11 竹内方針4）
 　× 「ご連絡お待ちくださいませ」→ 使わない
-　△ 「ご連絡お待ちしております」はお客様が自分から連絡すると予告した時だけ（「明日また連絡します」→「明日のご連絡お待ちしております😊！！」）。依頼・質問への返信・こちらに未実行の約束がある時・条件付きの予告（〜次第・〜あれば）の時は使わない（2026-09-12 竹内方針B）
+　△ 「ご連絡お待ちしております」はお客様が自分から連絡すると予告した時だけ（同じ日に返す「明日また連絡します」→「明日のご連絡お待ちしております😊！！」／日をまたいで返す時はお客様の「明日」は今日なので「本日のご連絡お待ちしております😊！！」、過ぎていれば日付に触れず「ご連絡お待ちしております😊！！」＝2026-09-15 竹内・yasuki 事例）。依頼・質問への返信・こちらに未実行の約束がある時・条件付きの予告（〜次第・〜あれば）の時は使わない（2026-09-12 竹内方針B）
 　× 「かしこまりました！！」単独で終わる返信（具体アクションなし）→ 必ず後続に「〜させて頂きます！！」等の行動宣言を続けること。「かしこまりました！！何卒よろしくお願い致します！！」は不完全
 　→ 正（依頼・お願いへの返し）: 「かしこまりました！！〇〇エリアでピックアップさせて頂きます！！」「かしこまりました！！お風呂広めのお部屋を中心にお調べさせて頂きます！！」
 　→ 正（感謝・了承への返し）: 「はい😊！！ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！」
@@ -4245,6 +4246,13 @@ export async function POST(req: NextRequest) {
       if (lines.length === 0) return "";
       return `\n【📍 場面と返信方針 — ハードゲートの次に優先。AIX-META戦略・フェーズ別パターンより上位】\n${lines.join("\n")}\n`;
     })();
+    // 2026-09-15 竹内（yasuki 事例）「お客さん昨日の返信で明日と言っている。もう今日なので、明日入れない。日本時間基準に考える」:
+    //   お客様の言葉の「明日」はお客様が言った日から数えた日。返信が日をまたいだら「本日」（過ぎていれば日付に触れない）。
+    //   実データ（180日）: 同じ日の返信55件はスタッフも「明日」33件だが、日をまたいだ9件は「明日」0件（本日3・日付に触れない6）
+    const relativeDayNote = lastCustomerMsgAt
+      ? buildRelativeDayNote(message, Date.parse(lastCustomerMsgAt), Date.now())
+      : "";
+    if (relativeDayNote) console.log(JSON.stringify({ tag: "reply:relative-day-note", conversationId, customerAt: lastCustomerMsgAt }));
 
     // brain誘導型フェッチ仕様（v1: baseline = 従来動作と同一。T1動的選択は次フェーズ）
     // S-2: RAG（知識・実例・フレーズ）は searchState（viewing/closed_lost は proposing に畳んだ5段階）で引く
@@ -4546,7 +4554,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
-      tpoGuidanceNote,
+      tpoGuidanceNote + relativeDayNote, // 2026-09-15 yasuki 事例: お客様の言葉の「明日」は今から見た言い方に直す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）
@@ -4679,6 +4687,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             const runValidate = (openingFixed: string, aixGates: boolean): { cleaned: string; issues: string[] } => {
               const vOpts = {
                 aixGates, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch,
+                // 2026-09-15 竹内（yasuki 事例）: お客様の言葉の「明日」を日本時間の暦で数え直す起点
+                customerMessageAt: lastCustomerMsgAt,
                 // 2026-09-11 竹内方針3: 呼びかけ位置の別名を確定名に統一（applySurfaceFixes ①）
                 nameAliases: addressName.aliases,
                 customerConditions: customerConditions || groundTruth.customerConditionsDb || "",

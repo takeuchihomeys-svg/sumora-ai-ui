@@ -46,6 +46,7 @@ import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した発言は必ず分析し直す（cached で前回の「もう1件の内覧日確定」を持ち越さない）
 import { detectPropertyPass, CUST_WILL_SEND_SELF_PRED, analyzeSubstance } from "@/app/lib/reply-context";
 import { resolveClosedAck } from "@/app/lib/closed-ack";
+import { absolutizeRelativeDays } from "@/app/lib/relative-date";
 // 2026-09-12 同 段2: 場面の証拠（決定論）とスタッフが押した AIX の実績（brain_aix_feedback）をブレインの入力にする
 import {
   unrepliedCustomerTurn, sceneEvidenceForTurn, sceneSignalFallback, compactSceneEvidence, buildSceneEvidencePromptText,
@@ -2582,15 +2583,23 @@ ${history}`;
 
     // reply_direction: 120字上限（2026-09-08: 20字ラベルでは TPO由来の effectiveReplyDirection（100〜200字）に
     // 情報量で劣り「申込みを前に進める」程度に縮退していた。短いラベルは reply_direction_label が担う）
+    // 2026-09-15 竹内（yasuki 事例）「昨日の返信で明日と言っている。もう今日なので、明日入れない。日本時間基準に考える」:
+    //   判断は別の日に読まれることがある（yasuki は 9/15 18:15 の判断「明日午前の連絡を待つ」を翌朝 8:37 の生成が写した）。
+    //   相対の日（明日・明後日…）はお客様の発言の日を起点に日本時間の暦で絶対の日（M/D（曜））に直して残す
+    const relDayBaseMs = (() => {
+      const m = typedMessages.find((x) => x.sender === "customer"); // typedMessages は新しい順
+      const t = m ? Date.parse(m.created_at) : NaN;
+      return Number.isFinite(t) ? t : Date.now();
+    })();
     const replyDirection = typeof parsed.reply_direction === "string" && parsed.reply_direction.trim()
-      ? parsed.reply_direction.trim().slice(0, 120)
+      ? absolutizeRelativeDays(parsed.reply_direction.trim(), relDayBaseMs).slice(0, 120)
       : null;
 
     // key_topics: 文字列のみ・空要素/重複除去・最大3件・各40字
     const keyTopics = Array.from(new Set(
       (Array.isArray(parsed.key_topics) ? parsed.key_topics : [])
         .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
-        .map((t) => t.trim().slice(0, 40))
+        .map((t) => absolutizeRelativeDays(t.trim(), relDayBaseMs).slice(0, 40)) // 相対の日は絶対の日で残す（yasuki 事例）
     )).slice(0, 3);
 
     // avoid_topics: ルール⑤（来阪・常時）+ ルール②（費用質問なし）をコード側で決定論的に強制
@@ -2708,7 +2717,7 @@ ${history}`;
 
     // future_timeline: 30字上限（timeline分岐以外でも検索クエリに使うため単独保持）
     const futureTimeline = typeof parsed.future_timeline === "string" && parsed.future_timeline.trim()
-      ? parsed.future_timeline.trim().slice(0, 30)
+      ? absolutizeRelativeDays(parsed.future_timeline.trim(), relDayBaseMs).slice(0, 30)
       : null;
 
     // checkpoint_stage: enum ゲート（許可リスト不一致は null フェイルクローズ）
