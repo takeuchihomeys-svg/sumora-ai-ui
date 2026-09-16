@@ -1,6 +1,6 @@
 // 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
 // 実行: npx tsx app/lib/__tests__/room-choices.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote } from "../room-choices";
+import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "../room-choices";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -38,6 +38,25 @@ it("号室ではない文字列（物件名・階数の説明）は号室にし�
 it("候補が1つなら聞かない（決まっているのと同じ）", () => {
   expect(shouldAskRoomChoice(parseRoomChoices("1303"))).toBe(false);
   expect(shouldAskRoomChoice([])).toBe(false);
+});
+
+// 本番確認で見つけた穴: 候補の号室を渡さない申込確定で、会話に無い「1303号室」を2回とも書いた
+it("カイナ: 会話にもスタッフ入力にも無い号室を落とす（申込の号室の創作を止める）", () => {
+  const r = stripUngroundedRoomNo("かしこまりました！！\nアーバンフラッツ心斎橋 1303号室、お申込みさせて頂きます😊！！", "アーバンフラッツ心斎橋\nお客様: 内見は大丈夫なので進めて頂きたいです！");
+  expect(r.text).toBe("かしこまりました！！\nアーバンフラッツ心斎橋、お申込みさせて頂きます😊！！");
+  expect(r.removed.join(",")).toBe("1303号室");
+});
+it("会話にある号室・スタッフが入れた号室は残す", () => {
+  const t = "かしこまりました！！\nアーバンフラッツ心斎橋 1303号室、お申込みさせて頂きます😊！！";
+  expect(stripUngroundedRoomNo(t, "お客様: 1303号室でお願いします！").text).toBe(t);
+  expect(stripUngroundedRoomNo(t, "アーバンフラッツ心斎橋 1303号室").text).toBe(t);
+  // 全角で書かれていても同じ号室として残す
+  expect(stripUngroundedRoomNo(t, "お客様: １３０３号室でお願いします！").text).toBe(t);
+  expect(stripUngroundedRoomNo(t, "").removed.join(",")).toBe("1303号室");
+});
+it("候補の号室を聞く形（3部屋）は全部根拠があるので落とさない", () => {
+  const t = "かしこまりました！！\n代理契約でお申込みさせて頂きます！！\n現在募集の3部屋の中で(1303号室・906号室・506号室)\nお部屋は何号室で審査かけさせていただきましょうか！！";
+  expect(stripUngroundedRoomNo(t, "1303号室・906号室・506号室").text).toBe(t);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

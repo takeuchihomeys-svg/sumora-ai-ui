@@ -32,3 +32,24 @@ export function shouldAskRoomChoice(rooms: readonly string[]): boolean {
 export function roomChoiceNote(rooms: readonly string[]): string {
   return `件数: ${rooms.length}部屋\n号室: ${rooms.join("・")}`;
 }
+
+const toHalfNo = (s: string) => s.replace(/[０-９Ａ-Ｚａ-ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+const ROOM_NO_RE = /([0-9０-９A-Za-zＡ-Ｚａ-ｚ\-]{1,6})\s*号室/g;
+
+/**
+ * 会話にもスタッフの入力にも無い号室を落とす（申込の号室の創作を止める）。
+ * 2026-09-16 竹内（カイナ事例）の本番確認で発見: 候補の号室を渡さない申込確定で、会話に一度も出ていない「1303号室」を
+ *   LLM が2回とも書いた（プロンプトが「号室が分かる場合は必ず付ける」と促すため埋めてしまう）。
+ *   号室を間違えると別の部屋に審査がかかるので、根拠（会話＋スタッフ入力）に無い号室は書かせない。
+ */
+export function stripUngroundedRoomNo(text: string, grounded: string): { text: string; removed: string[] } {
+  const g = toHalfNo(grounded ?? "");
+  const removed: string[] = [];
+  const out = (text ?? "").replace(new RegExp(`[ \\t　]*${ROOM_NO_RE.source}`, "g"), (m, no: string) => {
+    const half = toHalfNo(String(no));
+    if (g.includes(half)) return m;
+    removed.push(`${half}号室`);
+    return "";
+  });
+  return removed.length ? { text: out.replace(/[ \t　]+([、。,])/g, "$1"), removed } : { text, removed };
+}

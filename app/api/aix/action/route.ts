@@ -7,7 +7,7 @@ import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date
 import { stripMetaNarration } from "@/app/lib/meta-narration";
 import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
 // 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
-import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote } from "@/app/lib/room-choices";
+import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "@/app/lib/room-choices";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
 import { resolveLatestQuotedContext, formatQuotedContextBlock, propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { avoidTopicsForAix } from "@/app/lib/aix-staff-first";
@@ -3088,6 +3088,16 @@ ${property_name ? `物件名は「${property_name}」を使う（指定済み）
         const confirmSystemFinal = confirmSystem + appDbRules + (brainAddendumAppConfirm ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppConfirm : "");
         const confirmUserFinal = `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}` + (appDiffNote ? `\n\n${appDiffNote}` : "") + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
         message_text = await callClaude(confirmSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, confirmUserFinal, currentAction, [confirmPropertyNameNote, brainGuidanceNote].filter(Boolean).join("\n\n") || undefined);
+        // 2026-09-16 本番確認（カイナ）: 会話に一度も出ていない「1303号室」を2回とも書いた（プロンプトが号室を促すため埋める）。
+        //   号室を間違えると別の部屋に審査がかかるので、根拠（会話＋スタッフ入力）に無い号室は落とす
+        {
+          const grounded = [property_name ?? "", roomList.join("・"), recentHistory].join("\n");
+          const sr = stripUngroundedRoomNo(message_text, grounded);
+          if (sr.removed.length) {
+            message_text = sr.text;
+            console.log(JSON.stringify({ tag: "aix:apply-ungrounded-room", conversationId, removed: sr.removed }));
+          }
+        }
 
       } else if (appSubMode === "docs_request") {
         // ── 書類依頼: 申込フォーム返送後の会話から不足書類を特定して追加依頼メッセージを生成
