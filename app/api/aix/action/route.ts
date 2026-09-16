@@ -3575,9 +3575,15 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
     // ── 🏢 管理会社に確認した（退去予定日・入居可能日・初期費用・駐車場・ペット飼育・設備・募集状況）＋ 近隣月極駐車場確認 ──────────
     } else if (
       action === "property_check_result" &&
-      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
+      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
     ) {
       let mgmtInfo = extra_input ? String(extra_input).trim() : "";
+      // 2026-09-16 竹内（カイナ事例）: 代理契約の可否。入れるのは物件名と可能／不可だけで、あとは会話に合わせる
+      const proxyResult = body.proxy_result as string | undefined;
+      if (check_pattern === "mgmt_proxy") {
+        if (proxyResult !== "可能" && proxyResult !== "不可") throw new Error("代理契約が可能か不可かが必要です");
+        mgmtInfo = [`代理契約：${proxyResult}`, property_name ? `物件名：${property_name}` : "物件名：入力なし（物件名に触れない）"].join("\n");
+      }
       // 駐車場・ペット飼育: 構造化入力（ピッカー選択+テキスト）からスタッフ入力情報を組み立てる
       if (check_pattern === "mgmt_parking") {
         const parkingAvailability = body.parking_availability as string | undefined;
@@ -3655,6 +3661,30 @@ ${guidanceClose ?? `[お客様名]お気に召されましたら[内覧解禁日
 ・3行目・4行目両方に同じ[内覧解禁日]を使う
 ・スタッフ入力に「未定」「確認中」等とある場合は3行目を「退去予定日確定次第すぐにご連絡させて頂きます！！」に差し替え、4行目は削除する
 ${guidanceRule}`,
+        },
+        // 2026-09-16 竹内（カイナ事例）「管理会社に確認したに代理契約についてのピッカーを作る。この場合 確認した（条件・交渉）から返信する形とする」
+        //   実送信の型: 可能「アーバンフラッツ心斎橋に代理契約可能か確認させて頂きましたところ／代理契約可能となります😊！！」（9/16 11:48）・
+        //   「管理会社に確認させていただき、息子様での代理契約可能とのご返事いただけました😊！！」（9/15 yasuki）・
+        //   不可「代理契約での審査が出来ないお部屋となります。」（9/11 タクミ）・
+        //   交渉中「代理契約につきまして交渉させて頂き、現在管理会社からの連絡待ちの状況となっております。進捗あり次第ご連絡させて頂きます！！」（9/11）
+        mgmt_proxy: {
+          label: "代理契約の可否",
+          format: proxyResult === "不可"
+            ? `[物件名]代理契約可能か管理会社に確認させて頂きましたところ
+代理契約での審査が出来ないお部屋となります。
+[次の一手]`
+            : `[物件名]代理契約可能か管理会社に確認させて頂きましたところ
+代理契約可能となります😊！！
+[次の一手]`,
+          rules: `・スタッフが入れたのは「代理契約：可能／不可」と「物件名」の2つだけ。これ以外の事実（年収・家賃帯・審査の見通し・保証会社・他の物件の可否）は絶対に書かない
+・[物件名]はスタッフ入力の物件名をそのまま使い「〇〇に」の形（複数は「〇〇・〇〇ともに」）。物件名が「入力なし」なら1行目は「代理契約可能か管理会社に確認させて頂きましたところ」から始める
+・1〜2行目はこの形のまま（実際にスタッフが送っている文）。挨拶は付けない（お客様の依頼への返答なので本題から入る）
+・[次の一手]は**会話の流れから決めて1行だけ**。この会話でまだ案内していない事だけを書く:
+  - 可能 × お客様がその物件を見たいと言っている／内覧の話が続いている → 「よろしければ一度お部屋ご内覧如何でしょうか😊！！」
+  - 可能 × 申込の話が進んでいる → 「よろしければ代理契約でお部屋お申込みさせて頂きます！！」
+  - 不可 → 代わりに出来る事が会話にある時だけ1行（無ければ次の一手の行ごと省く）
+  - 迷う時・会話に手がかりが無い時は次の一手の行を省いて2行で終える（作り話をしない）
+・「審査に通る」「大丈夫です」など確認していない断定はしない`,
         },
         mgmt_move_in: {
           label: "入居可能日",
@@ -3837,8 +3867,8 @@ ${SMORA_COMMON_RULES}
 ${mgmtDef.format}
 
 【置き換えルール】
-・[物件名]は会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・号室の先頭0は省略: 0806→806）。特定できない場合は「ご確認頂きましたお部屋」とする
-${mgmtDef.rules}
+${check_pattern === "mgmt_proxy" ? "" : `・[物件名]は会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・号室の先頭0は省略: 0806→806）。特定できない場合は「ご確認頂きましたお部屋」とする
+`}${mgmtDef.rules}
 
 【厳守ルール】
 ・フォーマット外の挨拶・説明・解説は一切追加しない

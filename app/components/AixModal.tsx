@@ -75,7 +75,7 @@ interface AixModalProps {
   initialFollowupSubMode?: "apply_supplement" | "search_continue" | null;
   initialInputText?: string;
   autoConvMatch?: boolean;
-  initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other";
+  initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other";
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
@@ -698,9 +698,11 @@ export default function AixModal({
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用（vacate_date / mgmt_move_in / mgmt_initial_cost は「管理会社に確認した」ピッカー経由の専用パターン）
-  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "other_room_check" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(initialCheckPattern ?? null);
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "other_room_check" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(initialCheckPattern ?? null);
   // 管理会社確認パターンかどうか（テキスト入力のみで生成できる簡易フロー）
-  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_guarantor" || checkPattern === "mgmt_parking" || checkPattern === "mgmt_pet" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_availability" || checkPattern === "nearby_parking" || checkPattern === "owner_other";
+  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_proxy" || checkPattern === "mgmt_guarantor" || checkPattern === "mgmt_parking" || checkPattern === "mgmt_pet" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_availability" || checkPattern === "nearby_parking" || checkPattern === "owner_other";
+  // 代理契約の確認結果（2026-09-16 竹内・カイナ事例）: 入れるのは可能／不可だけ。物件名は下の共通の入力（mgmtGuarantorPropertyName）を使う
+  const [proxyResult, setProxyResult] = useState<"可能" | "不可" | null>(null);
   // 募集状況確認専用: 募集している / 募集終了した
   const [mgmtAvailabilityStatus, setMgmtAvailabilityStatus] = useState<"available" | "ended" | null>(null);
   // 初期費用確認: サブパターン選択
@@ -2163,7 +2165,7 @@ export default function AixModal({
           body.pet_policy = mgmtPetPolicy;
           if (mgmtPetCondition.trim()) body.pet_condition = mgmtPetCondition.trim();
         }
-        if (isMgmtCheck && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_move_in" && mgmtGuidanceType) {
+        if (isMgmtCheck && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && mgmtGuidanceType) {
           body.guidance_type = mgmtGuidanceType;
         }
         if (checkPattern === "mgmt_availability") {
@@ -2195,7 +2197,14 @@ export default function AixModal({
           body.move_in_period = moveInPeriod;
           body.move_in_guidance_type = moveInGuidanceTypeRef.current;
         }
-        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
+        if (checkPattern === "mgmt_proxy") {
+          if (!proxyResult) throw new Error("代理契約が可能か不可かを選択してください");
+          body.proxy_result = proxyResult;
+          if (mgmtGuarantorPropertyName.trim()) body.property_name = mgmtGuarantorPropertyName.trim();
+          // 生成は必ず会話を合わせる（お客様の依頼の言い方に合わせた1通）
+          body.conversation_match = true;
+        }
+        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
         if (checkPattern === "move_in_date") {
           if (!moveInImageFile) throw new Error("物件資料を選択してください");
           body.image_url = await uploadImageCached(moveInImageFile);
@@ -3284,6 +3293,8 @@ export default function AixModal({
       : isMgmtCheck ? (
           checkPattern === "mgmt_initial_cost"
             ? !!mgmtCostType && (mgmtCostType === "estimate" || !!inputText.trim())
+            : checkPattern === "mgmt_proxy"
+            ? !!proxyResult
             : checkPattern === "mgmt_guarantor"
             ? mgmtGuarantorCompanyName.trim().length > 0
             : checkPattern === "mgmt_parking"
@@ -4112,7 +4123,7 @@ export default function AixModal({
                 </span>
                 <div>
                   <div className="text-[13px] font-bold text-[#111b21]">
-                    {checkPattern === "nearby_parking" ? "近隣の月極駐車場を確認した" : checkPattern === "owner_other" ? "オーナーに確認した（その他）" : <>管理会社に確認した：{checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : checkPattern === "mgmt_parking" ? "駐車場" : checkPattern === "mgmt_pet" ? "ペット飼育" : checkPattern === "mgmt_equipment" ? "設備" : checkPattern === "mgmt_availability" ? "募集状況" : "初期費用"}</>}
+                    {checkPattern === "nearby_parking" ? "近隣の月極駐車場を確認した" : checkPattern === "owner_other" ? "オーナーに確認した（その他）" : <>管理会社に確認した：{checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_proxy" ? "代理契約" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : checkPattern === "mgmt_parking" ? "駐車場" : checkPattern === "mgmt_pet" ? "ペット飼育" : checkPattern === "mgmt_equipment" ? "設備" : checkPattern === "mgmt_availability" ? "募集状況" : "初期費用"}</>}
                   </div>
                   <div className="text-[10px] text-[#8696a0]">確認内容を入力するだけでAIが報告文を作成します</div>
                 </div>
@@ -4533,7 +4544,7 @@ export default function AixModal({
               )}
 
               {/* テキスト入力（初期費用は見積書以外で表示、保証会社確認・駐車場・ペット・入居可能日・他パターンは条件付き表示） */}
-              {((checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in") || mgmtCostType === "negotiation") && (
+              {((checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy") || mgmtCostType === "negotiation") && (
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
                     {checkPattern === "vacate_date" ? "または直接入力・補足" : checkPattern === "mgmt_equipment" ? "確認した設備状況" : "確認した内容"}
@@ -4560,8 +4571,41 @@ export default function AixModal({
                 </div>
               )}
 
-              {/* mgmt共通: 申込誘導 / 内覧誘導ボタン（保証会社確認・入居可能日は専用UIがあるため除外） */}
-              {isMgmtCheck && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_move_in" && (
+              {/* 代理契約について（2026-09-16 竹内・カイナ事例）: 入れるのは物件名と可否だけ・生成は「会話を合わせる」 */}
+              {checkPattern === "mgmt_proxy" && (
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="font-normal text-[#90a4ae]">（複数は「・」で区切る）</span></p>
+                    <input
+                      type="text"
+                      value={mgmtGuarantorPropertyName}
+                      onChange={(e) => { setMgmtGuarantorPropertyName(e.target.value); setPreview(""); }}
+                      placeholder="例：アーバンフラッツ心斎橋"
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                    />
+                    <p className="mt-1 text-[10px] text-[#8696a0]">入力した物件名がそのまま文に入ります（未入力なら物件名に触れません）</p>
+                  </div>
+                  <div>
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">代理契約 <span className="text-red-400">*</span></p>
+                    <div className="flex gap-2">
+                      {([
+                        { key: "可能", label: "⭕️ 可能", color: "#2E7D32" },
+                        { key: "不可", label: "❌ 不可", color: "#C62828" },
+                      ] as const).map(({ key, label, color }) => (
+                        <button
+                          key={key}
+                          onClick={() => { setProxyResult(key); setPreview(""); }}
+                          className="flex-1 rounded-xl border py-3 text-sm font-bold transition"
+                          style={proxyResult === key ? { border: `2px solid ${color}`, background: color + "14", color } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                        >{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* mgmt共通: 申込誘導 / 内覧誘導ボタン（保証会社確認・入居可能日・代理契約は専用UIがあるため除外） */}
+              {isMgmtCheck && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && (
                 <div>
                   <p className="mb-1.5 text-xs font-bold text-[#54656f]">誘導（任意）</p>
                   <div className="flex gap-2">
@@ -7063,6 +7107,15 @@ export default function AixModal({
             ) : actionType === "property_check_result" && checkPattern === "other_room_check" ? (
               /* 別の部屋について確認した: 会話を合わせるボタンはサブUI内に表示（AIX生成ボタンなし） */
               null
+            ) : actionType === "property_check_result" && checkPattern === "mgmt_proxy" ? (
+              /* 代理契約について（2026-09-16 竹内・カイナ事例）: 物件名＋可否だけ入れて会話に合わせた1通を作る */
+              <button
+                onClick={() => void generate({ conversation_match: true })}
+                disabled={loading || !canGenerate}
+                className="w-full rounded-2xl bg-[#546E7A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
+              >
+                {loading ? busyLabel : "💬 会話を合わせる"}
+              </button>
             ) : actionType === "cost_breakdown" ? (
               /* 初期費用について: 会話を合わせる専用（御見積書の内訳でご質問に答える。AIX生成ボタンなし） */
               <button

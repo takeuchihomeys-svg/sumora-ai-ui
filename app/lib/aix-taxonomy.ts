@@ -9,6 +9,7 @@
 // prompt-management の aix_logic_property_check）では property_check_result を
 // 「物件確認した（募集状況）」と「確認した（条件・交渉）」の両方を包含するタイプとして説明すること。
 // 各ラベルマップの説明文は下の PROPERTY_CHECK_RESULT_LABEL / PROPERTY_CHECK_RESULT_DESCRIPTION に統一する。
+import { PROXY_CONTRACT_RE } from "./scene-patterns";
 
 export const AIX_BUTTON_TAXONOMY = {
   property_check_result: {
@@ -16,6 +17,7 @@ export const AIX_BUTTON_TAXONOMY = {
     // UI親ボタン「確認した（条件・交渉）」→ property_check_result + check_pattern で送信される
     sub_buttons: {
       "確認した（条件・交渉）": [
+        "mgmt_proxy",        // 管理会社: 代理契約の可否（2026-09-16 竹内・カイナ事例）
         "mgmt_guarantor",    // 管理会社: 保証会社・保証人
         "mgmt_initial_cost", // 管理会社: 初期費用交渉
         "mgmt_parking",      // 管理会社: 駐車場
@@ -34,7 +36,7 @@ export const PROPERTY_CHECK_RESULT_LABEL = "物件確認した／確認した（
 
 // 全ラベルマップ共通の property_check_result 統一説明文
 export const PROPERTY_CHECK_RESULT_DESCRIPTION =
-  "空室・退去日・入居可能日・保証会社・初期費用交渉・駐車場・ペット可否など、管理会社・代表・オーナー・近隣月極への確認結果を報告する（check_patternで切替）";
+  "空室・退去日・入居可能日・代理契約の可否・保証会社・初期費用交渉・駐車場・ペット可否など、管理会社・代表・オーナー・近隣月極への確認結果を報告する（check_patternで切替）";
 
 // ─── AIXボタン種別アナウンス統一マップ（2026-08）──────────────────────────────
 // 従来 generate-reply の AIX_ACTION_NOTES と brain-core の AIX_BRAIN_NOTES が二重管理され
@@ -134,6 +136,8 @@ export type PropertyCheckKind = {
 // mgmt_initial_cost（交渉）は汎用語より先に評価する。mgmt_equipment は最も広いため最後。
 const CHECK_PATTERN_DETECTORS: Array<{ pattern: string; topic: string; re: RegExp }> = [
   { pattern: "nearby_parking",    topic: "近隣月極駐車場",         re: /月極|近隣[^\n]{0,10}駐車場|周辺[^\n]{0,10}駐車場/ },
+  // 2026-09-16 竹内（カイナ事例）: 代理契約の可否は保証会社・審査より先に見る（「親御様連帯保証人…代理契約可能」は代理契約が主題）
+  { pattern: "mgmt_proxy",        topic: "代理契約の可否",         re: PROXY_CONTRACT_RE },
   { pattern: "mgmt_initial_cost", topic: "初期費用・礼金等の交渉", re: /(礼金|敷金|初期費用|フリーレント|家賃)[^\n]{0,12}(交渉|減額|値引|割引|下げ|無料)|(交渉|減額|値引)[^\n]{0,10}(礼金|敷金|初期費用)/ },
   { pattern: "mgmt_guarantor",    topic: "保証会社・保証人",       re: /保証会社|連帯保証|保証人/ },
   { pattern: "mgmt_pet",          topic: "ペット可否",             re: /ペット|猫[^\n]{0,6}(飼|可|OK)|犬[^\n]{0,6}(飼|可|OK)/ },
@@ -228,6 +232,7 @@ export const AIX_LINE_NOTES: Record<string, string> = {
 // check_pattern → topic の簡易マップ（brain の check_pattern から topic を引くため）
 const CHECK_PATTERN_TOPICS: Record<string, string> = {
   nearby_parking:    "近隣月極駐車場",
+  mgmt_proxy:        "代理契約の可否",
   mgmt_initial_cost: "初期費用・礼金等の交渉",
   mgmt_guarantor:    "保証会社・保証人",
   mgmt_pet:          "ペット可否",

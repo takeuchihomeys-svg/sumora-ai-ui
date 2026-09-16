@@ -15,7 +15,7 @@ import { customerAsksCostComposition } from "./cost-breakdown";
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, staffOffersViewing } from "./move-out-context";
 import { customerRequestsPhoneCall } from "./phone-call";
 import {
-  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
+  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, PROXY_CONTRACT_RE, PROXY_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE,
 } from "./scene-patterns";
 
@@ -214,6 +214,14 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
     const focus = specified || o.propertyStatus !== "move_out_scheduled" || !moveInAsked(msg) ? null : lastStaffTurnFocus(o.recentMessages);
     const by = specBy ?? (focus?.focus && !focus.moveInTold ? "context" : null);
     if (by) return ev({ scene: "S2_move_in", candidateAction: "property_check_result", checkPattern: "mgmt_move_in", timing: "after_confirm", chained: estimateDeclare ? "estimate_sheet" : null, reasonCode: "move_in_question", propertySpecifiedBy: by });
+  }
+  // 2026-09-16 竹内（カイナ事例）「管理会社に確認したに代理契約についてのピッカーを作る。この場合 確認した（条件・交渉）から返信する形とする」:
+  //   お客様が代理契約（ご本人以外が契約者になる契約）の可否を聞いた・確認を依頼した → 管理会社に確認して AIX【確認した（条件・交渉）→代理契約】で報告する。
+  //   保証会社・審査より先に見る（「親御様連帯保証人につけますと…代理契約可能です」は代理契約が主題）。
+  //   「代理契約できる物件ありますでしょうか？」は物件を探す依頼なので除く（物件ピックアップの場面）。
+  //   物件が特定できなくても、こちらが送った物件があればその物件の代理契約の質問（実データ: カイナ・タクミ・yasuki とも直前の送付物件について）
+  if (PROXY_CONTRACT_RE.test(msg) && !PROXY_SEARCH_RE.test(msg) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
+    return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_proxy", timing: "after_confirm", chained: null, reasonCode: "proxy_contract_question", propertySpecifiedBy: specBy ?? "context" });
   }
   // 2026-09-15 竹内（YUYA 事例）: お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた時は AIX【保証会社について】（物件ごとの会社名・種類を一覧で）。
   //   実データ（240日）: 保証会社・審査の質問の後に 物件確認した→保証会社 が押されたのは1件だけで、「保証会社は緩そうなところでしょうか？」（物件を指す語なし・

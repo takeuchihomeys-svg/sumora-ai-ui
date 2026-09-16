@@ -884,7 +884,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(null);
   // オーナーに確認した（その他）: 中間フォーム用state
   const [showOwnerOtherForm, setShowOwnerOtherForm] = useState(false);
   const [ownerOtherWhat, setOwnerOtherWhat] = useState("");
@@ -8341,7 +8341,7 @@ export default function Home() {
                     setActiveAixFlow(brainAction);
                     // 2026-09-12 段1: ブレインが決めた check_pattern（mgmt_move_in 等）をそのままモーダルに渡す（判定し直さない）
                     const brainCp = (brainMeta as { check_pattern?: string | null }).check_pattern ?? null;
-                    const BRAIN_CP_OK = ["available", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_guarantor", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
+                    const BRAIN_CP_OK = ["available", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_guarantor", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
                     if (brainAction === "property_check_result" && brainCp && (BRAIN_CP_OK as readonly string[]).includes(brainCp)) {
                       setAixInitCheckPattern(brainCp as (typeof BRAIN_CP_OK)[number]);
                     }
@@ -12872,6 +12872,19 @@ export default function Home() {
                   desc: "初期費用・礼金・敷金などを管理会社に確認した結果",
                   hint: "初期費用：",
                   icon: <><circle cx="36" cy="36" r="14" stroke="#546E7A" strokeWidth="1.8"/><path d="M36 28v16M31 32h7.5a2.5 2.5 0 010 5H31m0 0h7.5a2.5 2.5 0 010 5H31" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/></>
+                },
+                {
+                  // 2026-09-16 竹内（カイナ事例）: 代理契約（ご本人以外が契約者）の可否を管理会社に確認した結果
+                  key: "mgmt_proxy",
+                  label: "代理契約について",
+                  desc: "代理契約（親御様・お子様が契約者）が可能かを管理会社に確認した結果",
+                  hint: "",
+                  icon: <>
+                    <circle cx="28" cy="29" r="7" stroke="#546E7A" strokeWidth="1.6"/>
+                    <circle cx="45" cy="31" r="5.5" stroke="#546E7A" strokeWidth="1.6"/>
+                    <path d="M17 50c0-6.075 4.925-11 11-11s11 4.925 11 11" stroke="#546E7A" strokeWidth="1.7" strokeLinecap="round"/>
+                    <path d="M39 50c0-4.5 3-8 6-8s6 3.5 6 8" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/>
+                  </>
                 },
                 {
                   key: "mgmt_guarantor",

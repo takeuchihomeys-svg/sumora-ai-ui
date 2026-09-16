@@ -40,6 +40,27 @@ describe("場面の証拠 S1〜S5（2c86c209 の期待値のまま）", () => {
   it("S3 物件ありの審査質問 → mgmt_guarantor", () => {
     expect(ev({ latestCustomerTurn: "この物件って審査厳しいですか？" })?.checkPattern).toBe("mgmt_guarantor");
   });
+  // 2026-09-16 竹内（カイナ事例）: 代理契約の可否の確認の依頼 → AIX【確認した（条件・交渉）→代理契約】
+  it("S3 カイナ「こちら代理契約可能か聞いてみて欲しいです」（物件送付後）→ mgmt_proxy（after_confirm）", () => {
+    const x = ev({ latestCustomerTurn: "ありがとうございます！\nこちら代理契約可能か聞いてみて欲しいです😖", sentPropertyCount: 3 });
+    expect(x?.candidateAction).toBe("property_check_result");
+    expect(x?.checkPattern).toBe("mgmt_proxy");
+    expect(x?.timing).toBe("after_confirm");
+    expect(x?.reasonCode).toBe("proxy_contract_question");
+  });
+  it("S3「1度この2つで代理契約可能か確認していただけますでしょうか？」→ mgmt_proxy", () => {
+    expect(ev({ latestCustomerTurn: "ありがとうございます！1度この2つで代理契約可能か確認していただけますでしょうか？💭", sentPropertyCount: 2 })?.checkPattern).toBe("mgmt_proxy");
+    expect(ev({ latestCustomerTurn: "こちらの物件は代理契約可能でしょうか？", sentPropertyCount: 1 })?.checkPattern).toBe("mgmt_proxy");
+  });
+  it("S3 代理契約は保証会社・審査より先に見る（「親御様連帯保証人…代理契約可能ですか」）", () => {
+    expect(ev({ latestCustomerTurn: "親御様を連帯保証人につければ審査通りますか？それとも代理契約可能でしょうか？", sentPropertyCount: 2 })?.checkPattern).toBe("mgmt_proxy");
+  });
+  it("S3「代理契約できる物件ありますでしょうか？」は物件を探す依頼なので mgmt_proxy にしない", () => {
+    expect(ev({ latestCustomerTurn: "お世話になっております。代理契約できる物件ありますでしょうか？", sentPropertyCount: 3 })?.checkPattern === "mgmt_proxy").toBe(false);
+  });
+  it("代理契約の語があっても物件が1件も無ければ場面にしない（物件探しから）", () => {
+    expect(ev({ latestCustomerTurn: "代理契約可能でしょうか？", sentPropertyCount: 0 })?.checkPattern === "mgmt_proxy").toBe(false);
+  });
   // 2026-09-15 竹内（YUYA 事例）: 保証会社そのものの質問 → AIX【保証会社について】
   it("S3 YUYA「保証会社は緩そうなところでしょうか？」（物件送付後）→ guarantor_info（after_confirm）", () => {
     const x = ev({ latestCustomerTurn: "保証会社は緩そうなところでしょうか？", sentPropertyCount: 5 });
