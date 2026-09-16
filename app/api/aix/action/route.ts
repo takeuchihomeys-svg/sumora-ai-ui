@@ -19,6 +19,8 @@ import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx 
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
+// 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
+import { buildConversationClockNote, fixStaleRecentReference } from "@/app/lib/relative-date";
 // 2026-09-16 竹内（カイナ事例）: 物件確認した×会話を合わせる — 内覧の流れの判定・部屋数・出口の決定論
 import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLines, stripNewSlotLines, ensureViewingContinuationLine, resolveEnclosedRooms, buildEnclosedCountLines, ensureRoomCountPhrase, ESTIMATE_PROMISE_LINE_RE, NEW_SLOT_LINE_RE, VIEWING_CONTINUATION_LINE } from "@/app/lib/viewing-thread";
 
@@ -1288,8 +1290,20 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const staffImageLabels = conversationId
       ? await propertyLabelsForImages(conversationId, recentMsgsForHistory.filter((m) => m.sender === "staff" && m.imageUrl && (!m.text || m.text === "[画像]")).map((m) => m.imageUrl as string)).catch(() => new Map<string, string>())
       : new Map<string, string>();
+    // 2026-09-16 竹内（𝒮 さん事例）: 履歴の行に時刻が無いと8日前の自分の発言を「先程」と書いてしまう → 時刻を別ブロックで渡す
+    const aixLastStaffAt = [...recentMsgsForHistory].reverse()
+      .find((m) => m.sender === "staff" && !!m.text && !/^\s*\[(?:画像|動画|スタンプ|ファイル)\]\s*$/.test(m.text) && (m as { rawCreatedAt?: string }).rawCreatedAt)
+      ?.["rawCreatedAt" as keyof typeof recentMsgsForHistory[number]] as string | undefined;
+    const aixLastCustomerAt = [...recentMsgsForHistory].reverse()
+      .find((m) => m.sender === "customer" && (m as { rawCreatedAt?: string }).rawCreatedAt)
+      ?.["rawCreatedAt" as keyof typeof recentMsgsForHistory[number]] as string | undefined;
+    const aixClockNote = buildConversationClockNote(
+      aixLastStaffAt && !Number.isNaN(Date.parse(aixLastStaffAt)) ? Date.parse(aixLastStaffAt) : null,
+      aixLastCustomerAt && !Number.isNaN(Date.parse(aixLastCustomerAt)) ? Date.parse(aixLastCustomerAt) : null,
+      Date.now(),
+    );
     const recentHistory = recentMsgsForHistory.length > 0
-      ? "\n\n【直近の会話履歴（この流れを踏まえて文を作ること）】\n" +
+      ? aixClockNote + "\n\n【直近の会話履歴（この流れを踏まえて文を作ること）】\n" +
         recentMsgsForHistory
           .map((m) => {
             const label = m.sender === "staff" && m.imageUrl ? staffImageLabels.get(m.imageUrl) : undefined;
@@ -1519,6 +1533,12 @@ async function handleAction(request: NextRequest): Promise<Response> {
       //   AIX の仕上げにも通す（夜間挨拶の除去・承知→かしこまりました・約束の「すぐに」除去・単独の承りました・挨拶の重複。方針4・5・Aoi 事例）
       //   2026-09-15 竹内（慶次事例）: 夜にこちらから届ける連絡（挨拶の決定が夜分）は夜間挨拶を1つ残し、お世話になっておりますを重ねない
       const banned = normalizeBannedPhrasing(meta.text, { keepNightGreeting: nightGreeting });
+      // 2026-09-16 竹内（𝒮 さん事例）: こちらの前の発言が3時間より前なら「先程」を落とす（会話を合わせるでも同じ穴）
+      const recentRef = fixStaleRecentReference(banned.text, aixLastStaffAt && !Number.isNaN(Date.parse(aixLastStaffAt)) ? Date.parse(aixLastStaffAt) : null, Date.now());
+      if (recentRef.applied.length > 0) {
+        console.log(JSON.stringify({ tag: "aix:stale-recent-ref", action: currentAction, conversationId, applied: recentRef.applied }));
+        banned.text = recentRef.text;
+      }
       if (banned.night || banned.shochi || banned.hasty || banned.uketamawari || banned.greetDup) {
         console.log(JSON.stringify({ tag: "aix:banned-phrasing-fixed", action: currentAction, conversationId, night: banned.night, shochi: banned.shochi, hasty: banned.hasty, uketamawari: banned.uketamawari, greetDup: banned.greetDup }));
       }

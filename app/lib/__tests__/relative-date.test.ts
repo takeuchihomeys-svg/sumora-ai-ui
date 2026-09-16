@@ -1,6 +1,6 @@
 ﻿// 2026-09-15 竹内（yasuki 事例）: お客様の「明日」を日本時間の暦で絶対の日に直し、今から見た言い方に書き換える
 // 実行: npx tsx app/lib/__tests__/relative-date.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { resolveRelativeDays, expressionForNow, buildRelativeDayNote, fixStaleRelativeDays, absolutizeRelativeDays, jstDayLabel } from "../relative-date";
+import { resolveRelativeDays, expressionForNow, buildRelativeDayNote, fixStaleRelativeDays, absolutizeRelativeDays, jstDayLabel, buildConversationClockNote, fixStaleRecentReference, elapsedLabel } from "../relative-date";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -68,6 +68,41 @@ it("ブレインの判断は絶対の日で残す（翌日に読まれても写�
 it("日本時間の日境（UTC の前日夜は JST の翌日）", () => {
   // 9/15 23:37 UTC = 9/16 8:37 JST → 今日は 9/16
   expect(jstDayLabel(resolveRelativeDays("本日よろしくお願いします", NOW)[0].dayStartMs)).toBe("9/16（水）");
+});
+
+// 2026-09-16 竹内（𝒮 さん事例）: こちらの前の発言（9/8 10:44）を8日後に「先程」と書いていた
+const S_LAST_STAFF = Date.parse("2026-09-08T01:44:00Z"); // 9/8(月) 10:44 JST
+const S_NOW = Date.parse("2026-09-16T01:23:00Z");        // 9/16(水) 10:23 JST
+const S_DRAFT = "お世話になっております！！\n先程は10月23日ごろまでの延長が可能とご案内させて頂きましたが、11月中旬までとなりますとさらなる調整が必要になるかと存じます。\n\n改めて管理会社に確認させて頂きますので、確認出来次第ご連絡させて頂きます😊！！";
+
+it("𝒮 さん: 8日前のこちらの発言を指す「先程は」を落とす", () => {
+  const r = fixStaleRecentReference(S_DRAFT, S_LAST_STAFF, S_NOW);
+  expect(r.text).toBe("お世話になっております！！\n10月23日ごろまでの延長が可能とご案内させて頂きましたが、11月中旬までとなりますとさらなる調整が必要になるかと存じます。\n\n改めて管理会社に確認させて頂きますので、確認出来次第ご連絡させて頂きます😊！！");
+  expect(r.applied.join(",")).toBe("STALE_RECENT_REF_DROPPED:8日前");
+});
+it("3時間以内のこちらの発言なら「先程」はそのまま", () => {
+  expect(fixStaleRecentReference(S_DRAFT, S_NOW - 2 * 3600_000, S_NOW).applied.length).toBe(0);
+  expect(fixStaleRecentReference(S_DRAFT, null, S_NOW).applied.length).toBe(0);
+});
+it("電話・来店・内覧を指す「先ほど」は触らない（LINE の発言ではない）", () => {
+  const t = "Noriyukiさん\n先ほどはお電話ありがとうございました😊！！\nドゥーエなんば南506号室お部屋お申し込みさせていただきます😌！！";
+  expect(fixStaleRecentReference(t, S_LAST_STAFF, S_NOW).text).toBe(t);
+  const t2 = "先ほどはご来店頂きありがとうございました！！";
+  expect(fixStaleRecentReference(t2, S_LAST_STAFF, S_NOW).text).toBe(t2);
+});
+it("この会話の時刻のブロック（8日前なら「先程」と書かない注意付き）", () => {
+  const note = buildConversationClockNote(S_LAST_STAFF, Date.parse("2026-09-16T01:08:00Z"), S_NOW);
+  expect(note).toContain("こちらの最後の発言: 9/8（火） 10:44（8日前）");
+  expect(note).toContain("「先程」「先ほど」とは書かない");
+  expect(note).toContain("お客様の最新メッセージ: 9/16（水） 10:08（15分前）");
+  // 3時間以内なら注意は付かない
+  expect(buildConversationClockNote(S_NOW - 3600_000, null, S_NOW)).notToContain("とは書かない");
+  expect(buildConversationClockNote(null, null, S_NOW)).toBe("");
+});
+it("経過時間の言い方（分・時間・日）", () => {
+  expect(elapsedLabel(S_NOW - 15 * 60_000, S_NOW)).toBe("15分前");
+  expect(elapsedLabel(S_NOW - 5 * 3600_000, S_NOW)).toBe("5時間前");
+  expect(elapsedLabel(S_LAST_STAFF, S_NOW)).toBe("8日前");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

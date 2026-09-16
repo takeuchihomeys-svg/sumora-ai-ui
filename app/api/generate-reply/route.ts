@@ -52,7 +52,7 @@ import {
 import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 import { findNearDuplicateSent } from "@/app/lib/closed-ack";
-import { buildRelativeDayNote } from "@/app/lib/relative-date";
+import { buildRelativeDayNote, buildConversationClockNote } from "@/app/lib/relative-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
 import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
@@ -4253,6 +4253,16 @@ export async function POST(req: NextRequest) {
       ? buildRelativeDayNote(message, Date.parse(lastCustomerMsgAt), Date.now())
       : "";
     if (relativeDayNote) console.log(JSON.stringify({ tag: "reply:relative-day-note", conversationId, customerAt: lastCustomerMsgAt }));
+    // 2026-09-16 竹内（𝒮 さん事例）「先ほどって入ってるけど、そこは先ほどではない。日付の把握が出来ていない」:
+    //   会話履歴の行（「スモラ: …」）には時刻が無く、8日前の自分の発言を「先程」と書いていた。行の形は多くの処理が依存しているので変えず、
+    //   時刻だけを別ブロックで渡す（こちらの最後の発言・お客様の最新メッセージ・今）。出口の決定論（applySurfaceFixes）が保険
+    const lastStaffMsgAtForClock = [...recentMessages].reverse()
+      .find((m) => m.sender === "staff" && !!m.text && !/^\s*\[(?:画像|動画|スタンプ|ファイル)\]\s*$/.test(m.text) && m.createdAt && !Number.isNaN(Date.parse(m.createdAt)))?.createdAt ?? null;
+    const conversationClockNote = buildConversationClockNote(
+      lastStaffMsgAtForClock ? Date.parse(lastStaffMsgAtForClock) : null,
+      lastCustomerMsgAt && !Number.isNaN(Date.parse(lastCustomerMsgAt)) ? Date.parse(lastCustomerMsgAt) : null,
+      Date.now(),
+    );
 
     // brain誘導型フェッチ仕様（v1: baseline = 従来動作と同一。T1動的選択は次フェーズ）
     // S-2: RAG（知識・実例・フレーズ）は searchState（viewing/closed_lost は proposing に畳んだ5段階）で引く
@@ -4554,7 +4564,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
-      tpoGuidanceNote + relativeDayNote, // 2026-09-15 yasuki 事例: お客様の言葉の「明日」は今から見た言い方に直す
+      tpoGuidanceNote + relativeDayNote + conversationClockNote, // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）
@@ -4689,6 +4699,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 aixGates, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch,
                 // 2026-09-15 竹内（yasuki 事例）: お客様の言葉の「明日」を日本時間の暦で数え直す起点
                 customerMessageAt: lastCustomerMsgAt,
+                // 2026-09-16 竹内（𝒮 さん事例）: こちらの前の発言が3時間より前なら「先程」を落とす
+                lastStaffMessageAt: lastStaffMsgAtForClock,
                 // 2026-09-11 竹内方針3: 呼びかけ位置の別名を確定名に統一（applySurfaceFixes ①）
                 nameAliases: addressName.aliases,
                 customerConditions: customerConditions || groundTruth.customerConditionsDb || "",
