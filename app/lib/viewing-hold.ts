@@ -108,6 +108,11 @@ export function planHoldCleanup(
   const ymdOf = (iso: string) => { const p = jstParts(iso); return `${p.y}-${pad2(p.m)}-${pad2(p.d)}`; };
   const hmOf = (iso: string) => { const p = jstParts(iso); return `${pad2(p.hour)}:${pad2(p.minute)}`; };
   const sameDay = onlyHolds.filter((h) => ymdOf(h.start_at) === decidedYmd);
-  const keep = (decidedStart ? sameDay.find((h) => hmOf(h.start_at) === decidedStart) : undefined) ?? sameDay[0] ?? null;
+  // 2026-09-16（𝒮 さん事例）: 決まった時刻が分かっている時は、その時刻の確保だけを残す。
+  //   旧: 一致する確保が無いと同じ日の先頭（sameDay[0]）を残していたため、12:00 で決まったのに 16:00〜18:00 の確保が
+  //   カレンダーに残り、他のお客様への候補からその枠が消えたままになっていた（実データ: 𝒮 9/17 の ev 536）
+  const keep = decidedStart
+    ? (sameDay.find((h) => hmOf(h.start_at) === decidedStart) ?? null)
+    : (sameDay[0] ?? null);
   return { keepId: keep?.id ?? null, deleteIds: onlyHolds.filter((h) => h.id !== keep?.id).map((h) => h.id) };
 }

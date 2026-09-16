@@ -64,6 +64,12 @@ it("決まった日に確保が無ければ全部消す（keepId なし）・確
   expect(planHoldCleanup(holds, "2026-09-16", "15:30")).toEqual({ keepId: null, deleteIds: [2] });
   expect(planHoldCleanup([{ id: 9, start_at: "2026-09-18T01:30:00Z", notes: "【物件】〇〇" }], "2026-09-16", null)).toEqual({ keepId: null, deleteIds: [] });
 });
+it("𝒮: 決まった時刻（12:00）の確保が無ければ、同じ日の別の枠（16:00）も消す", () => {
+  // 実データ: 9/17 12:00 で決まったのに 16:00〜18:00 の確保が残っていた（ev 536）。
+  //   12:00 の確保は本当の内覧に書き換え済みで、呼び出し側が除外して渡す
+  const holds = [{ id: 536, start_at: "2026-09-17T07:00:00Z", notes: "【時間確保】\n候補: 9/17(木) 16:00〜18:00" }];
+  expect(planHoldCleanup(holds, "2026-09-17", "12:00")).toEqual({ keepId: null, deleteIds: [536] });
+});
 it("決まった時刻が分からない時は同じ日の確保を1つ残す", () => {
   const holds = [
     { id: 1, start_at: "2026-09-16T06:30:00Z", notes: "【時間確保】" },
