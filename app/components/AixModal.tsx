@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END } from "../lib/calendarSlots";
+// 2026-09-16 竹内（カイナ事例）: 物件確認した — 内覧の流れの判定（サーバと同じ純関数で「流れを続ける」の初期値を出す）
+import { resolveViewingThread } from "../lib/viewing-thread";
 import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, latestCustomerTurnText, type RequestedViewingDate } from "../lib/viewing-date-request";
 import { customerRequestsPhoneCall, buildCallRequestText } from "../lib/phone-call";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
@@ -779,6 +781,12 @@ export default function AixModal({
   // 2026-09-15 竹内（みく事例）: 送られた物件数は会話（お客様の最新の発言の物件 URL・画像）から自動で入れる（違えばスタッフが直す）
   const [sentCountAuto, setSentCountAuto] = useState(false);
   const sentCountAppliedRef = useRef(false);
+  // 2026-09-16 竹内（カイナ事例）: 内覧の流れが続いている時は「流れを続ける」（新しい日程は出さず「よろしければご案内させて頂きます」で締める）。
+  //   会話から自動で初期値を入れ（サーバと同じ純関数）、スタッフが押し直せる。資料が複数枚の物件は「何部屋分か」をチップで入れる（枚数から部屋数は推定しない）
+  const [checkViewingContinue, setCheckViewingContinue] = useState(false);
+  const [viewingContinueAuto, setViewingContinueAuto] = useState(false);
+  const viewingAutoAppliedRef = useRef(false);
+  const [checkPropRoomCounts, setCheckPropRoomCounts] = useState<(number | null)[]>([null, null, null]);
   // スタッフだけが知っている事実（「同じ間取りのお部屋は301号室と101号室のみ」等）。会話を合わせるでそのまま本文に入る
   const [checkStaffNote, setCheckStaffNote] = useState("");
   const [checkPropImages, setCheckPropImages] = useState<File[][]>([[], [], []]);
@@ -1006,6 +1014,34 @@ export default function AixModal({
     if (checkPattern === "available") setCheckPropertyCount(Math.min(3, Math.max(1, sentPropertyAuto.count)) as 1 | 2 | 3);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType, checkPattern, sentPropertyAuto.count]);
+  // 2026-09-16 竹内（カイナ事例）: 内覧の流れ（こちらが日時を提案して返事待ち／お客様が見たいと言っている）を会話から判定（サーバと同じ関数・同じ recentMessages）
+  const viewingThread = useMemo(
+    () => (actionType === "property_check_result" ? resolveViewingThread(recentMessages ?? []) : null),
+    [actionType, recentMessages],
+  );
+  useEffect(() => {
+    if (actionType !== "property_check_result" || checkPattern !== "available" || viewingAutoAppliedRef.current) return;
+    viewingAutoAppliedRef.current = true;
+    if (viewingThread?.pending) {
+      setCheckViewingContinue(true);
+      setViewingContinueAuto(true);
+      setShowCheckCalendar(false);
+      setCheckApplicationInvite(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType, checkPattern, viewingThread?.kind]);
+  // 資料が2枚以上入った物件は、部屋数の初期値を枚数にする（スタッフが直せる・送る値は部屋数チップ）
+  useEffect(() => {
+    setCheckPropRoomCounts((prev) => {
+      const next = [...prev];
+      let changed = false;
+      checkPropImages.forEach((imgs, i) => {
+        if (imgs.length >= 2 && next[i] === null) { next[i] = Math.min(imgs.length, 5); changed = true; }
+        if (imgs.length < 2 && next[i] !== null) { next[i] = null; changed = true; }
+      });
+      return changed ? next : prev;
+    });
+  }, [checkPropImages]);
   // 確認できた物件数 = 物件情報に入れた欄の数（物件名・画像・見積書のどれかが入っている最後の欄まで）。何も入っていなければ欄の数
   const checkFilledCount = (() => {
     let last = 0;
@@ -2256,6 +2292,8 @@ export default function AixModal({
         }
         if (checkPattern === "available") body.show_viewing_invite = showCheckCalendar;
         if (checkPattern === "available") body.check_application_invite = checkApplicationInvite;
+        // 2026-09-16 カイナ事例: 内覧の流れを続ける（スタッフの入力が正）・物件ごとの部屋数（資料の枚数から推定しない）
+        if (checkPattern === "available") { body.viewing_continuation = checkViewingContinue; body.prop_room_counts = checkPropRoomCounts.slice(0, effectiveCheckCount); }
         if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
         if (checkPattern === "available" && checkAvailableApp) body.available_application = checkAvailableApp;
         if (checkPattern === "available") body.all_properties_available = checkAllAvailable;
@@ -4731,6 +4769,7 @@ export default function AixModal({
                         setAiDraft("");
                         setCheckAvailableApp(null);
                         setShowCheckCalendar(false);
+                        setCheckViewingContinue(false); setViewingContinueAuto(false); viewingAutoAppliedRef.current = false; setCheckPropRoomCounts([null, null, null]);
                         if (p.key !== "exclusive") {
                           setExclusiveImageFile(null);
                           setExclusivePropName("");
@@ -4784,6 +4823,7 @@ export default function AixModal({
                         setPreview("");
                         setCheckAvailableApp(null);
                         setShowCheckCalendar(false);
+                        setCheckViewingContinue(false); setViewingContinueAuto(false); viewingAutoAppliedRef.current = false; setCheckPropRoomCounts([null, null, null]);
                         setExclusiveImageFile(null);
                         setExclusivePropName("");
                         setExclusiveRoomNo("");
@@ -5349,6 +5389,21 @@ export default function AixModal({
                         />
                       </div>
                       )}
+                      {/* 部屋数（資料が2枚以上の時だけ）。2026-09-16 カイナ事例: 実送信「こちらの3部屋現在募集中」。初期値は枚数・スタッフが直せる */}
+                      {(checkPropImages[pi]?.length ?? 0) >= 2 && (
+                        <div className="mb-2 flex items-center gap-2">
+                          <span className="text-[10px] text-[#90a4ae] shrink-0">この資料は何部屋分？</span>
+                          <div className="flex gap-1">
+                            {Array.from({ length: Math.min(checkPropImages[pi].length, 5) }, (_, k) => k + 1).map((n) => (
+                              <button key={n} type="button"
+                                onClick={() => { const arr = [...checkPropRoomCounts]; arr[pi] = arr[pi] === n ? null : n; setCheckPropRoomCounts(arr); }}
+                                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold border transition ${checkPropRoomCounts[pi] === n ? "border-[#4CAF50] bg-[#e8f5e9] text-[#2e7d32]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                              >{n}部屋</button>
+                            ))}
+                          </div>
+                          {checkPropRoomCounts[pi] === null && <span className="text-[10px] text-[#90a4ae]">（未選択なら数は書きません）</span>}
+                        </div>
+                      )}
                       {/* 設備情報展開 */}
                       <div className="mt-2 border-t border-gray-100 pt-2">
                         <button
@@ -5632,30 +5687,48 @@ export default function AixModal({
               {/* 空室あり: 内覧誘導ボタン + カレンダー折りたたみ */}
               {checkPattern === "available" && (
                 <div>
-                  {/* 内覧誘導 あり/なし */}
+                  {/* 内覧誘導: 流れを続ける（打診中の内覧の続き・日時は出さない）／日程を出す（カレンダー）／なし
+                      2026-09-16 竹内（カイナ事例）: 会話が内覧の流れなら「流れを続ける」が自動で入る（サーバと同じ判定・押し直せる） */}
                   <div className="flex items-center justify-between rounded-xl border border-[#d1d7db] bg-white px-3 py-2">
                     <span className="text-sm font-bold text-[#54656f]">内覧誘導</span>
                     <div className="flex gap-1">
                       <button
-                        onClick={() => { setShowCheckCalendar(true); setCheckApplicationInvite(false); }}
-                        className={`rounded-lg px-4 py-1 text-sm font-bold transition ${showCheckCalendar ? "bg-[#1565C0] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                        onClick={() => { setCheckViewingContinue(true); setShowCheckCalendar(false); setCheckApplicationInvite(false); setViewingContinueAuto(false); }}
+                        className={`rounded-lg px-3 py-1 text-sm font-bold transition ${checkViewingContinue ? "bg-[#1565C0] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
                       >
-                        あり
+                        流れを続ける
                       </button>
                       <button
-                        onClick={() => setShowCheckCalendar(false)}
-                        className={`rounded-lg px-4 py-1 text-sm font-bold transition ${!showCheckCalendar ? "bg-[#54656f] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                        onClick={() => { setShowCheckCalendar(true); setCheckViewingContinue(false); setCheckApplicationInvite(false); setViewingContinueAuto(false); }}
+                        className={`rounded-lg px-3 py-1 text-sm font-bold transition ${showCheckCalendar ? "bg-[#1565C0] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                      >
+                        日程を出す
+                      </button>
+                      <button
+                        onClick={() => { setShowCheckCalendar(false); setCheckViewingContinue(false); setViewingContinueAuto(false); }}
+                        className={`rounded-lg px-3 py-1 text-sm font-bold transition ${!showCheckCalendar && !checkViewingContinue ? "bg-[#54656f] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
                       >
                         なし
                       </button>
                     </div>
                   </div>
+                  {viewingThread?.pending && (
+                    <p className="mt-1 px-1 text-[11px] text-[#2e7d32]">
+                      {viewingContinueAuto ? "会話から自動: " : "会話: "}
+                      {viewingThread.kind === "proposed_waiting_reply"
+                        ? `内覧提案中（${viewingThread.slots.join(" / ") || "日時"}・返事待ち）→ 新しい日時は出さず「よろしければご案内させて頂きます」で締めます`
+                        : `お客様が「${viewingThread.customerWish ?? ""}」→「よろしければご案内させて頂きます」で締めます`}
+                    </p>
+                  )}
+                  {viewingThread?.kind === "scheduled" && (
+                    <p className="mt-1 px-1 text-[11px] text-[#90a4ae]">会話: 内覧の日時は決まっています（{viewingThread.slots.join(" / ") || "確定済み"}）→ 新しい日程は出しません</p>
+                  )}
                   {/* 申込誘導 あり/なし */}
                   <div className="mt-2 flex items-center justify-between rounded-xl border border-[#d1d7db] bg-white px-3 py-2">
                     <span className="text-sm font-bold text-[#54656f]">申込誘導</span>
                     <div className="flex gap-1">
                       <button
-                        onClick={() => { setCheckApplicationInvite(true); setShowCheckCalendar(false); }}
+                        onClick={() => { setCheckApplicationInvite(true); setShowCheckCalendar(false); setCheckViewingContinue(false); setViewingContinueAuto(false); }}
                         className={`rounded-lg px-4 py-1 text-sm font-bold transition ${checkApplicationInvite ? "bg-[#06c755] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
                       >
                         あり

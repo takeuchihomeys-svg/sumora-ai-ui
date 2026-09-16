@@ -22,9 +22,12 @@ export async function fetchPromptRules(
   includeGlobal = true, // false のとき globalフォールバック（action_type IS NULL）を除外する。
                         // final_check など「専用ルールのみ」を取りたい場合に使う。
                         // DB に専用ルールが0件なら空文字を返す（汚染なし）。
-  includeLearnAix = false  // true のとき LEARN-AIX-* ルール（aix-weekly-learning / analyze-diffs が
+  includeLearnAix = false,  // true のとき LEARN-AIX-* ルール（aix-weekly-learning / analyze-diffs が
                            // action_type=AIXアクション別に蓄積する編集差分学習ルール）を除外対象から外す。
                            // 旧世代の generate_reply 向け LEARN-*（廃止済み・数千件）は引き続き除外。
+  // 2026-09-16 竹内（カイナ事例）: 経路ごとに材料を分ける。会話を合わせる（物件確認した）には、通常返信用の「物件画像→見積書作成宣言」
+  //   「内覧案内を混ぜるな」（PROP-URL-REPLY-001・FEEDBACK-d6f30f25）や構成を足す DIFF-POLICY-* を渡さない
+  exclude: { keyPrefixes?: string[]; keys?: string[] } = {},
 ): Promise<string> {
   try {
     // ── 枠取り方式 ──
@@ -54,6 +57,8 @@ export async function fetchPromptRules(
       } else {
         q = q.not("rule_key", "like", "LEARN-%");
       }
+      for (const p of exclude.keyPrefixes ?? []) q = q.not("rule_key", "like", `${p}%`);
+      if (exclude.keys?.length) q = q.not("rule_key", "in", `(${exclude.keys.join(",")})`);
       return q;
     };
 

@@ -19,6 +19,8 @@ import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx 
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
+// 2026-09-16 竹内（カイナ事例）: 物件確認した×会話を合わせる — 内覧の流れの判定・部屋数・出口の決定論
+import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLines, stripNewSlotLines, ensureViewingContinuationLine, resolveEnclosedRooms, buildEnclosedCountLines, ensureRoomCountPhrase, ESTIMATE_PROMISE_LINE_RE, NEW_SLOT_LINE_RE, VIEWING_CONTINUATION_LINE } from "@/app/lib/viewing-thread";
 
 export const maxDuration = 300;
 
@@ -1530,7 +1532,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
         ? check_pattern
         : null;
     // 条件違反の事後検証用: 生成時に使った顧客条件＋PSPのスナップショット（aix_generate_log.conditions_snapshot）
-    const conditionsSnapshot = {
+    // 2026-09-16 カイナ事例: 物件確認した×会話を合わせる は判定（内覧の流れ・部屋数・出口の直し）もここに足す（JSONB・新カラム無し）
+    const conditionsSnapshot: Record<string, unknown> = {
       customer_conditions: customer_conditions ? String(customer_conditions).slice(0, 1000) : null,
       psp: aixBrainMeta?.property_search_params ?? null,
     };
@@ -3981,6 +3984,24 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         const cmAvailableApp = body.available_application as "yes" | "no" | undefined;
         const cmShowViewingInvite = !!(show_viewing_invite as boolean | undefined);
         const cmShowAppInvite = !!(body.check_application_invite as boolean | undefined);
+        // 2026-09-16 竹内（カイナ事例）「会話の内容と合わせた実際に送ったような内容（内覧の話しだったので内覧）で送る」:
+        //   内覧の流れ（こちらが日時を提案して返事待ち／お客様が見たいと言っている）を会話から決定論で判定し、締めを内覧の続きに縛る。
+        //   画面の3択（流れを続ける／日程を出す／なし）が来ていればスタッフの入力が正（旧画面は null＝会話の判定）。
+        //   新しい日程（内覧誘導あり）・申込誘導をスタッフが指定した時はそちらが正。判定は viewing-thread.ts（画面も同じ関数で初期値を出す）
+        const vt = resolveViewingThread(
+          recentMsgsForHistory.map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: (m as { rawCreatedAt?: string }).rawCreatedAt })),
+          { nowMs: Date.now() },
+        );
+        const cmViewingContinueBody = typeof body.viewing_continuation === "boolean" ? (body.viewing_continuation as boolean) : null;
+        const cmContinuationActive = (cmViewingContinueBody ?? vt.pending) && !cmShowViewingInvite && !cmShowAppInvite;
+        const cmStaffForcedContinue = cmViewingContinueBody === true && !vt.pending;
+        // 今回募集中と伝える部屋数（スタッフの入力＝正。資料の枚数から部屋数は推定しない・枚数は「資料N枚」の事実にだけ使う）
+        const cmRooms = resolveEnclosedRooms({
+          propertyCount: (property_count as number | undefined) ?? 0,
+          roomCounts: Array.isArray(body.prop_room_counts) ? (body.prop_room_counts as (number | null)[]) : null,
+          imageCount: Array.isArray(image_urls) ? (image_urls as string[]).length : (image_url ? 1 : 0),
+          staffNote: typeof body.staff_note === "string" ? body.staff_note : "",
+        });
         // 2026-09-15 竹内（みく事例）: スタッフだけが知っている事実（「同じ間取りのお部屋は301号室と101号室のみ」等）を補足で受け取り、そのまま使う
         const cmStaffNote = typeof body.staff_note === "string" ? body.staff_note.trim().slice(0, 600) : "";
         const cmResultLines = [
@@ -3988,8 +4009,11 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
           cmSinglePropName ? `・対象物件名: ${cmSinglePropName}` : "",
           cmStaffNote ? `・スタッフからの補足（確定事実・必ず本文に入れる）: ${cmStaffNote}` : "",
           // 2026-09-15 みく事例: 御見積書を同封しているのに本文に書かれないことがあった（読み取りが間に合わない時も同封の事実は伝える）
-          cmHasEstimate ? "・御見積書: この返信と一緒に同封する →「初期費用の御見積書同封させて頂きました！！」を必ず入れる（金額は【御見積書】の読み取り結果がある時だけ）" : "",
+          cmHasEstimate
+            ? "・御見積書: この返信と一緒に同封する →「初期費用の御見積書同封させて頂きました！！」を必ず入れる（金額は【御見積書】の読み取り結果がある時だけ）"
+            : "・御見積書: この返信には同封しない → 御見積書の作成・送付の約束（「作成しお送りさせて頂きます」「お見積書とあわせてご連絡」）は書かない（御見積書は別の AIX）",
           cmPerPropLines ? `・確認できた物件と状態:\n${cmPerPropLines}` : "",
+          ...buildEnclosedCountLines(cmRooms),
           cmPattern === "alternative" && cmEndedFloor != null ? `・募集終了だったお部屋: ${cmEndedFloor}階${cmEndedUnit ? `${cmEndedUnit}号室` : ""}` : "",
           cmSentCount !== null ? `・お客様から送られた物件数: ${cmSentCount}件` : "",
           cmEndedCount > 0
@@ -3998,6 +4022,7 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
           cmAvailableApp === "yes" ? "・お申込状況: 既に1番手のお申込あり → 2番手以降でのお申込となる旨を伝えること" : "",
           cmShowAppInvite ? "・締めの方向: お申込誘導（お気に召されましたらお申込みしお部屋を抑えさせて頂きます）" : "",
           !cmShowAppInvite && cmShowViewingInvite ? "・締めの方向: 内覧誘導（ご都合よろしいお日にちにご案内させて頂きます）" : "",
+          cmContinuationActive ? `・締めの方向: 内覧の続き（既に内覧の話が進んでいる → 「${VIEWING_CONTINUATION_LINE}」の1文。新しい日時は出さない）` : "",
         ].filter(Boolean).join("\n");
         const cmResultBlock = cmPattern
           ? `【スタッフの確認結果（確定事実・必ずこの結果を報告するメッセージにすること）】
@@ -4015,7 +4040,9 @@ ${cmResultLines}
           getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_check_result, latestCustomerMsg, aixBrainMeta),
           // 実際に選択された check_pattern を渡す（旧: "availability" ハードコードで unavailable 等のDBルールが引けていなかった）
-          fetchPromptRules("property_check_result", { check_pattern: cmPattern || "availability" }).catch(() => ""),
+          // 2026-09-16 カイナ事例: 会話を合わせる経路には、通常返信用の「物件画像→見積書作成宣言・内覧案内を混ぜるな」（PROP-URL-REPLY-001・
+          //   FEEDBACK-d6f30f25）と構成を足す DIFF-POLICY-* を渡さない（固定の型の AIX 生成側には残す）
+          fetchPromptRules("property_check_result", { check_pattern: cmPattern || "availability" }, true, false, { keyPrefixes: ["DIFF-POLICY-"], keys: ["PROP-URL-REPLY-001", "FEEDBACK-d6f30f25"] }).catch(() => ""),
           loadBrainTemplate("property_check_result"),
         ]);
 
@@ -4027,7 +4054,7 @@ ${cmResultLines}
         const pcrWaitStance = aixBrainMeta?.engagement_stance === "wait";
         // スタッフが入れた事柄（御見積書の同封・内覧誘導・申込誘導）と食い違う禁止の話題は外す（aix-staff-first）
         const pcrAvoidTopics = avoidTopicsForAix("property_check_result", aixBrainMeta?.avoid_topics, {
-          estimateEnclosed: cmHasEstimate, viewingInvite: cmShowViewingInvite, applicationInvite: cmShowAppInvite || cmAvailableApp === "yes",
+          estimateEnclosed: cmHasEstimate, viewingInvite: cmShowViewingInvite || cmContinuationActive, applicationInvite: cmShowAppInvite || cmAvailableApp === "yes",
         });
         const pcrKeyTopics = (aixBrainMeta?.key_topics ?? []).filter((t): t is string => typeof t === "string" && t.trim() !== "");
         const pcrMetaLines = [
@@ -4059,10 +4086,11 @@ ${SMORA_COMMON_RULES}
 
 【この返信の目的】
 ・お客様からリクエストされた物件の確認結果を伝える
-・空室あり → 内覧誘導（カレンダー日程を提示）
+・空室あり → 締めは【スタッフの確認結果】の「締めの方向」に従う（無ければ結果報告で締める。日程・御見積書を勝手に足さない）
 ・満室/募集終了 → 正直に伝えつつ「引き続き探します！！」で前向きに締める
 ・謝罪表現（「申し訳ございません」等）は使わない。「残念ながら」で自然に伝える
 ・見積書を同封する場合は「御見積書同封させて頂きました！！」と費用の実情（割引の大小・クリーニング費用・初期費用の高低）まで伝えてから内覧/申込に繋げる
+・見積書を同封しない時は御見積書の作成・送付の約束を書かない（御見積書は別の AIX で送る）
 
 【重要：会話読解ルール（必ず守ること）】
 ・お客様の直近メッセージから「どの物件・号室」の確認を求めているか読み取る（【引用返信】があればそれが最優先の手がかり）
@@ -4095,6 +4123,7 @@ ${SMORA_COMMON_RULES}
         const pcrDynamicSuffix = [
           pcrQuotedBlock,
           cmResultBlock,
+          buildViewingThreadBlock(vt, { customerName: name, estimateEnclosed: cmHasEstimate, active: cmContinuationActive, staffForced: cmStaffForcedContinue }),
           cmEstimateFacts.block,
           pcrCalendarBlock,
           brainMetaBlockPCR,
@@ -4130,6 +4159,9 @@ ${SMORA_COMMON_RULES}
           if (cmHasEstimate && !/見積[^。！!\n]{0,16}(?:同封|添付|お送りさせて(?:頂|いただ)きました|お送りいたしました)/.test(text)) out.push("御見積書を同封するのに「同封させて頂きました」と書いていない（「作成しお送りさせて頂きます」は未来の約束で不可）→「初期費用の御見積書同封させて頂きました！！」を入れる");
           const lostNums = noteNumbers.filter((n) => !t.includes(n));
           if (cmStaffNote && lostNums.length > 0) out.push(`スタッフの補足（${cmStaffNote}）の内容が入っていない（${lostNums.join("・")}）→ 補足の内容を本文に入れる`);
+          // 2026-09-16 カイナ事例: 御見積書なしの約束・内覧の続きなのに新しい日時
+          if (!cmHasEstimate && ESTIMATE_PROMISE_LINE_RE.test(t)) out.push("御見積書を同封しないのに作成・送付を約束している → その行を無くし、締めは内覧の続き／結果報告にする");
+          if (cmContinuationActive && NEW_SLOT_LINE_RE.test(t)) out.push(`新しい内覧日時を書いている → 日時は書かず「${VIEWING_CONTINUATION_LINE}」の1文にする`);
           return out;
         };
         let pcrNotice: string | undefined;
@@ -4146,6 +4178,17 @@ ${SMORA_COMMON_RULES}
           const stillMissing = pcrMissing(message_text);
           if (stillMissing.length > 0) pcrNotice = `確認してから送信してください: ${stillMissing.map((m) => m.split(" → ")[0]).join("／")}`;
         }
+        // 2026-09-16 竹内（カイナ事例）: 出口の決定論（指示だけでは落ちる＝設計知見 404389ab）。この順で通す:
+        //   ①御見積書なしなら約束の行を落とす ②内覧の続きなら新しい日時の行を落とす ③続きの1文が無ければ足す ④部屋数が無ければ「こちらのN部屋」
+        const exitLog: Record<string, unknown> = {};
+        if (!cmHasEstimate) { const r = stripEstimatePromiseLines(message_text, { estimateEnclosed: false }); if (r.removed.length) { message_text = r.text; exitLog.removedEstimate = r.removed; } }
+        if (cmContinuationActive) { const r = stripNewSlotLines(message_text); if (r.removed.length) { message_text = r.text; exitLog.removedSlots = r.removed; } }
+        { const r = ensureViewingContinuationLine(message_text, cmContinuationActive); if (r.added) { message_text = r.text; exitLog.added = r.added; } }
+        { const r = ensureRoomCountPhrase(message_text, cmRooms.rooms); if (r.fixed) { message_text = r.text; exitLog.roomFixed = true; } }
+        message_text = message_text.replace(/\n{3,}/g, "\n\n").trim();
+        // 御見積書の約束を落とした後に「お手隙の際にご査収ください」だけが締めで残る（資料は同封しているので可）。続きの1文がその前に入る
+        console.log(JSON.stringify({ tag: "aix:pcr-viewing-thread", conversationId, kind: vt.kind, reason: vt.reason, slots: vt.slots, active: cmContinuationActive, fromBody: cmViewingContinueBody, rooms: cmRooms, ...exitLog }));
+        Object.assign(conditionsSnapshot, { viewing_thread: { kind: vt.kind, reason: vt.reason, slots: vt.slots, active: cmContinuationActive, from_body: cmViewingContinueBody }, rooms: cmRooms, exit: exitLog });
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         return finalizeResponse(message_text, { ...(cmEstimateExtra ?? {}), ...(pcrNotice ? { notice: pcrNotice } : {}) });
       }
