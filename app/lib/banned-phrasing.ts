@@ -166,6 +166,22 @@ const OSEWA_UNIT_RE = /(?:[^\n！!。]{0,15}(?:さん|様)[、,]?[ \t　]*)?(?:�
 const NIGHT_HEAD_RE = /^([ \t　]*)(?:[^\n！!。]{0,15}(?:さん|様)[、,]?[ \t　]*)?夜(?:分)?(?:遅く)?に?(?:大変)?(?:失礼(?:致|いた)?します|失礼(?:致|いた)?しております|すみません|申し訳(?:ございません|御座いません|ありません))[😊😌🙇]*[！!。]*[ \t　]*/;
 /** 先頭の「〇〇さんお世話になっております！！」（夜分に決まっているのに LLM がこちらで書いた時に置き換える） */
 const HEAD_OSEWA_RE = /^([ \t　]*(?:[^\n！!。]{0,15}(?:さん|様)[、,]?[ \t　]*)?)(?:いつも)?お世話になっております[😊😌🙇]*[！!。]*/;
+/**
+ * 先頭の挨拶行（〇〇さんお世話になっております／夜分遅くに失礼致します）を落とす。
+ * 2026-09-16 竹内（カイナ事例・AIX 代理契約）: お客様の依頼への返答は本題から入る（実送信 11:48「アーバンフラッツ心斎橋に代理契約可能か
+ *   確認させて頂きましたところ／代理契約可能となります😊！！」）。挨拶フレーズを渡さなくても LLM が自分で書くので出口で落とす
+ */
+export function stripHeadGreeting(text: string): { text: string; count: number } {
+  const lines = text.split("\n");
+  const i = lines.findIndex((l) => l.trim());
+  if (i < 0) return { text, count: 0 };
+  const m = NIGHT_HEAD_RE.exec(lines[i]) ?? HEAD_OSEWA_RE.exec(lines[i]);
+  if (!m) return { text, count: 0 };
+  const rest = lines[i].slice(m[0].length).trim();
+  const out = rest ? [...lines.slice(0, i), rest, ...lines.slice(i + 1)] : lines.slice(i + 1);
+  return { text: out.join("\n").replace(/^\n+/, "").replace(/\n{3,}/g, "\n\n"), count: 1 };
+}
+
 export function keepOneNightGreeting(text: string): { text: string; count: number } {
   const lines = text.split("\n");
   if (!lines.some((l) => NIGHT_HEAD_RE.test(l))) {

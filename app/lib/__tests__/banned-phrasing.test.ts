@@ -1,6 +1,6 @@
 // 2026-09-11 竹内方針4・5: 「承知しました」系→「かしこまりました」・約束の「すぐに」除去（banned-phrasing.ts）の回帰テスト。
 // 実行: npx tsx app/lib/__tests__/banned-phrasing.test.ts（vitest 不要の自己完結ハーネス。全 PASS で exit 0）
-import { normalizeShochi, stripHastyAdverb, normalizeBannedPhrasing, HASTY_ADVERB_TEST_RE } from "../banned-phrasing";
+import { normalizeShochi, stripHastyAdverb, normalizeBannedPhrasing, stripHeadGreeting, HASTY_ADVERB_TEST_RE } from "../banned-phrasing";
 import { runDeterministicChecks } from "../final-check";
 
 // ── ミニハーネス ──
@@ -144,6 +144,19 @@ describe("2026-09-15 竹内（慶次事例）: 夜にこちらから届ける AI
   it("K4 オプション無し（返信）は従来どおり除去", () => {
     expect(normalizeBannedPhrasing("慶次さん夜分遅くに失礼致します！！\nお手隙の際にご査収ください😌！！").text).toBe("お手隙の際にご査収ください😌！！");
   });
+});
+
+// 2026-09-16 竹内（カイナ事例・AIX 代理契約）: お客様の依頼への返答は本題から入る
+it("先頭の挨拶行を落とす（お世話になっております・夜分遅くに）", () => {
+  expect(stripHeadGreeting("カイナさんお世話になっております！！\n\nアーバンフラッツ心斎橋に代理契約可能か管理会社に確認させて頂きましたところ\n代理契約可能となります😊！！").text)
+    .toBe("アーバンフラッツ心斎橋に代理契約可能か管理会社に確認させて頂きましたところ\n代理契約可能となります😊！！");
+  expect(stripHeadGreeting("慶次さん夜分遅くに失礼致します！！\n代理契約可能となります😊！！").text).toBe("代理契約可能となります😊！！");
+  // 同じ行に本題が続く時は挨拶だけ落とす
+  expect(stripHeadGreeting("お世話になっております！！代理契約可能となります😊！！").text).toBe("代理契約可能となります😊！！");
+  // 挨拶が無ければそのまま
+  const t = "アーバンフラッツ心斎橋に代理契約可能か管理会社に確認させて頂きましたところ\n代理契約可能となります😊！！";
+  expect(stripHeadGreeting(t).text).toBe(t);
+  expect(stripHeadGreeting(t).count).toBe(0);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

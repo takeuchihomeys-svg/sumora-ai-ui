@@ -5,7 +5,7 @@ import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMe
 import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date";
 import { stripMetaNarration } from "@/app/lib/meta-narration";
-import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
+import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
 import { resolveLatestQuotedContext, formatQuotedContextBlock, propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { avoidTopicsForAix } from "@/app/lib/aix-staff-first";
@@ -3896,6 +3896,14 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         // 代理契約はお客様の依頼への返答＝挨拶を付けない（実送信の形。カイナ 9/16 11:48）
         check_pattern !== "mgmt_proxy" && greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
       );
+      // 挨拶フレーズを渡さなくても LLM が「〇〇さんお世話になっております！！」を書くので出口で落とす（本番4回とも付いた）
+      if (check_pattern === "mgmt_proxy") {
+        const sg = stripHeadGreeting(message_text);
+        if (sg.count) {
+          message_text = sg.text;
+          console.log(JSON.stringify({ tag: "aix:proxy-head-greeting-stripped", conversationId }));
+        }
+      }
       // 号室の先頭ゼロ除去はメインパス末尾の finalize() で一括処理（⑦で共通化）
 
     } else if (action === "property_check_result") {
