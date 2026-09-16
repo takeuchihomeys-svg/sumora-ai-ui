@@ -339,12 +339,13 @@ export async function POST(req: NextRequest) {
       // 既存行（同じ LINE ユーザー×アカウント）への UPDATE でも、状態は審査管理の状態が変わった時に先の段階へ進める時だけ書く
       let fallbackChange: { convId: string; from: string | null; to: string } | null = null;
       {
-        let curQuery = supabase.from("conversations").select("id, status, is_post_apply, screening_last_status").eq("line_user_id", upsertData.line_user_id as string);
+        let curQuery = supabase.from("conversations").select("id, status, is_post_apply, screening_last_status, status_manual_back_at").eq("line_user_id", upsertData.line_user_id as string);
         if (resolvedAccount) curQuery = curQuery.eq("account", resolvedAccount);
         const { data: curRow } = await curQuery.limit(1).maybeSingle();
         const incoming = (record.status as string | null) ?? null;
         const r = curRow
-          ? resolveScreeningSync(curRow.status as string | null, incoming, (curRow as { screening_last_status?: string | null }).screening_last_status ?? null, { isPostApply: !!curRow.is_post_apply })
+          ? resolveScreeningSync(curRow.status as string | null, incoming, (curRow as { screening_last_status?: string | null }).screening_last_status ?? null,
+              { isPostApply: !!curRow.is_post_apply, manualBack: !!(curRow as { status_manual_back_at?: string | null }).status_manual_back_at })
           : { status: incoming, lastSeen: incoming };
         if (r.status === null) delete updateFields.status;
         else updateFields.status = r.status;
