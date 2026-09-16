@@ -28,6 +28,8 @@ import { jstParts, WEEKDAYS_JA } from "./jst-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶（generate-reply / brain-core と四者同名）
 import { moveOutEvidenceText, isMoveOutReleased, moveOutRoomMismatch, type MoveOutSubject } from "./move-out-context";
 import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, SEARCH_CONFIRM_RE, type ConfirmationContextVerdict } from "./confirmation-context";
+// 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の道順の質問（住所の再掲は AIX の越権ではない）
+import { isViewingAccessQuestion } from "./viewing-access";
 import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, type GreetingKind, type GreetingDecisionLite } from "./greeting";
 import {
   PHASE_PROHIBITIONS,
@@ -2510,6 +2512,19 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
     for (let i = issues.length - 1; i >= 0; i--) {
       if (issues[i].code !== "DOUBLE_DECLARATION") continue;
       if (promiseUpdate || isCellRequiredSentence(issues[i].evidence, p0)) issues.splice(i, 1);
+    }
+  }
+
+  // ── 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の住所・待ち合わせの**再掲**は AIX の越権ではない ──
+  //    「住所・集合場所・集合時間は AIX【待ち合わせ】専用」は**新しく決める時**の規則。既に案内済みの内覧について
+  //    お客様が場所・行き方を聞いた場面では、答えとして住所を書くのが正しい（竹内「根本的な部分を、住所わかっている」）。
+  //    実際この block が、材料として渡した住所を書いた下書き（「住所は大阪府大阪市福島区…」）を修正ループで消していた
+  if (ctx.lastCustomerMessage && issues.some((i) => i.code === "AIX_BOUNDARY_MEETING")) {
+    const { ledger: lgA } = resolveReplyContext(ctx);
+    if (lgA.facts.viewingAppointment && isViewingAccessQuestion(ctx.lastCustomerMessage, true)) {
+      for (let i = issues.length - 1; i >= 0; i--) {
+        if (issues[i].code === "AIX_BOUNDARY_MEETING") issues.splice(i, 1);
+      }
     }
   }
 
