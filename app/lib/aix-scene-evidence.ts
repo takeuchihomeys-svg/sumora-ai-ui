@@ -15,7 +15,7 @@ import { customerAsksCostComposition } from "./cost-breakdown";
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, staffOffersViewing } from "./move-out-context";
 import { customerRequestsPhoneCall } from "./phone-call";
 import {
-  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, PROXY_CONTRACT_RE, PROXY_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
+  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, PROXY_CHECK_REQUEST_RE, PROXY_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE,
 } from "./scene-patterns";
 
@@ -220,7 +220,7 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   //   保証会社・審査より先に見る（「親御様連帯保証人につけますと…代理契約可能です」は代理契約が主題）。
   //   「代理契約できる物件ありますでしょうか？」は物件を探す依頼なので除く（物件ピックアップの場面）。
   //   物件が特定できなくても、こちらが送った物件があればその物件の代理契約の質問（実データ: カイナ・タクミ・yasuki とも直前の送付物件について）
-  if (PROXY_CONTRACT_RE.test(msg) && !PROXY_SEARCH_RE.test(msg) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
+  if (PROXY_CHECK_REQUEST_RE.test(msg) && !PROXY_SEARCH_RE.test(msg) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
     return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_proxy", timing: "after_confirm", chained: null, reasonCode: "proxy_contract_question", propertySpecifiedBy: specBy ?? "context" });
   }
   // 2026-09-15 竹内（YUYA 事例）: お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた時は AIX【保証会社について】（物件ごとの会社名・種類を一覧で）。

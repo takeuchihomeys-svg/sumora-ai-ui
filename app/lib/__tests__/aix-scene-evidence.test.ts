@@ -57,6 +57,11 @@ describe("場面の証拠 S1〜S5（2c86c209 の期待値のまま）", () => {
   });
   it("S3「代理契約できる物件ありますでしょうか？」は物件を探す依頼なので mgmt_proxy にしない", () => {
     expect(ev({ latestCustomerTurn: "お世話になっております。代理契約できる物件ありますでしょうか？", sentPropertyCount: 3 })?.checkPattern === "mgmt_proxy").toBe(false);
+    expect(ev({ latestCustomerTurn: "南船場付近で審査が通りやすい物件や代理契約可能の物件はありますでしょうか？", sentPropertyCount: 3 })?.checkPattern === "mgmt_proxy").toBe(false);
+  });
+  it("S3「代理契約でお願いします！」（申込の意思）・申込の情報は mgmt_proxy にしない", () => {
+    expect(ev({ latestCustomerTurn: "代理契約でお願いします！", sentPropertyCount: 3 })?.checkPattern === "mgmt_proxy").toBe(false);
+    expect(ev({ latestCustomerTurn: "代理契約で、入居者は私一人になります！", sentPropertyCount: 3 })?.checkPattern === "mgmt_proxy").toBe(false);
   });
   it("代理契約の語があっても物件が1件も無ければ場面にしない（物件探しから）", () => {
     expect(ev({ latestCustomerTurn: "代理契約可能でしょうか？", sentPropertyCount: 0 })?.checkPattern === "mgmt_proxy").toBe(false);
