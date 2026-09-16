@@ -60,15 +60,28 @@ it("説明はスタッフの実送信そのまま（ポータル名だけ差し�
   expect(buildOtoriExplain(null)).toContain("ニフティ等のポータルサイトは");
 });
 
-it("出口: 生成文の後ろに足す・既に主旨があれば触らない・場面でなければ触らない", () => {
+it("出口: 生成文の後ろに足す・同じ説明が既にあれば触らない・場面でなければ触らない", () => {
   const draft = "お送り頂きました2件につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！";
   const v = resolvePortalQuestion({ customerText: MSGS[1].text, messages: MSGS });
   expect(ensurePortalNotice(draft, v)).toBe(`${draft}\n\n${buildOtoriExplain("ニフティ")}`);
-  const already = `${draft}\nニフティ等のポータルサイトはオトリ物件として掲載されている場合がございます`;
+  const already = `${draft}\n\n${buildOtoriExplain("ニフティ")}`;
   expect(ensurePortalNotice(already, v)).toBe(already);
   expect(ensurePortalNotice(draft, { kind: "none", portalLabel: null, reason: "x" })).toBe(draft);
   // どのサイトが良いかの回答は実送信そのまま
   expect(ensurePortalNotice("", { kind: "which_site", portalLabel: "ニフティ", reason: "x" })).toBe(WHICH_SITE_ANSWER);
+});
+it("本番検証で出た「LLM が書いた逆の説明」を落として、決まった説明に置き換える", () => {
+  // 実際に本番の生成が書いた文（2/2）。SUUMO・ホームズはオトリが少ない、が正しい
+  const llm = "YUYAさんお世話になっております！！\nSUUMOやホームズも当社と同じ物件情報を掲載している場合が多く、実際にはおとり物件かどうかはサイトによる差はあまりございません😌！！\nそれよりも私の方で日々新着物件を確認しておりますので、YUYAさんのご希望条件でオススメできるお部屋を継続してピックアップしお送りさせて頂きます！！";
+  const out = ensurePortalNotice(llm, { kind: "which_site", portalLabel: "ニフティ", reason: "x" });
+  expect(out).toBe([
+    "YUYAさんお世話になっております！！",
+    "それよりも私の方で日々新着物件を確認しておりますので、YUYAさんのご希望条件でオススメできるお部屋を継続してピックアップしお送りさせて頂きます！！",
+    "",
+    WHICH_SITE_ANSWER,
+  ].join("\n"));
+  // 「おとり」の行が全部落ちて本文が空になっても、説明だけは残る
+  expect(ensurePortalNotice("おとり物件は少ないです", { kind: "which_site", portalLabel: null, reason: "x" })).toBe(WHICH_SITE_ANSWER);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

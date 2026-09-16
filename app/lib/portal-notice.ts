@@ -108,18 +108,31 @@ export const WHICH_SITE_ANSWER = [
   "SUUMOが最もオトリ物件が少ないので、SUUMOでお部屋を見て頂くを推奨させて頂きます😊！！",
 ].join("\n");
 
-/** 既にその主旨が書かれているか（二重に足さない） */
-const NOTICE_PRESENT_RE = /オトリ|おとり物件|掲載のルール|ポータルサイト/;
+/**
+ * LLM が自分で書いたオトリ・ポータルの説明の行。
+ * 2026-09-16 本番検証: この場面で LLM は「SUUMOやホームズも…おとり物件かどうかはサイトによる差はあまりございません」
+ * 「おとり物件が絶対に無いとは言い切れません」と**逆の内容**を書いた（2/2）。事実関係の説明は言い回しが決まっていて
+ * 間違えると信用に関わるので、LLM の文は落として決まった説明に置き換える（「既に書いてあるから足さない」は危険だった）
+ */
+const LLM_PORTAL_CLAIM_RE = /オトリ|おとり|囮/;
+/** 既にこちらの決まった説明が入っているか（同じ文を二重に足さない） */
+const OUR_NOTICE_PRESENT_RE = /オトリ物件として掲載されている場合御座います|オトリ物件が少ないポータルサイト/;
 
 /**
- * 生成した返信にポータルの説明を足す（無ければ足す・あれば触らない）。
- * 説明はスタッフの実送信そのままなので、LLM に書かせず決定論で入れる。
+ * 生成した返信にポータルの説明を足す。
+ *   ①LLM が書いたオトリ・ポータルの説明の行は落とす（内容が逆になることがある）
+ *   ②スタッフの実送信そのままの説明を足す（既に同じ説明が入っていれば触らない）
  */
 export function ensurePortalNotice(text: string, verdict: PortalNoticeVerdict): string {
-  const t = (text ?? "").trim();
-  if (verdict.kind === "none") return text ?? "";
-  if (NOTICE_PRESENT_RE.test(t)) return text ?? "";
+  const src = text ?? "";
+  if (verdict.kind === "none") return src;
+  if (OUR_NOTICE_PRESENT_RE.test(src)) return src;
+  const kept = src
+    .split("\n")
+    .filter((line) => !LLM_PORTAL_CLAIM_RE.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   const notice = verdict.kind === "which_site" ? WHICH_SITE_ANSWER : buildOtoriExplain(verdict.portalLabel);
-  if (!t) return notice;
-  return `${t}\n\n${notice}`;
+  return kept ? `${kept}\n\n${notice}` : notice;
 }
