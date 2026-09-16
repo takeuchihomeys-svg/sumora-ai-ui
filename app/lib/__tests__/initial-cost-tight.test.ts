@@ -31,6 +31,32 @@ it("未定・空欄・⑦が無い → 判定しない", () => {
   expect(resolveInitialCostTight(form("7万", "")).tight).toBe(false);
   expect(resolveInitialCostTight("北新地で1LDK探してます").tight).toBe(false);
 });
+// 2026-09-16 竹内（M さん事例）「初期費用のところできれば0とお客さん言っているのだから、初期費用抑える旨の文言いれる」
+it("M さん: ⑦「出来れば0」（家賃6〜7万）→ 抑えたい（0 は一番抑えたい）", () => {
+  const v = resolveInitialCostTight(form("6-7万", "出来れば0"));
+  expect(v.tight).toBe(true);
+  expect(v.reason).toBe("zero_limit");
+  expect(v.limitMan).toBe(0);
+});
+it("0 の書き方（できれば0・0円・ゼロ・0万）→ 全部抑えたい", () => {
+  for (const c of ["できれば0", "0円", "ゼロ", "0万", "可能なら0円"]) expect(resolveInitialCostTight(form("8万", c)).reason).toBe("zero_limit");
+});
+it("「10万」「20万円」は金額として読む（0 の判定に落ちない）", () => {
+  expect(resolveInitialCostTight(form("6万、6.5 共益費込み", "10")).reason).toBe("ratio_under_3");       // 10万 < 18万
+  expect(resolveInitialCostTight(form("7-10万円（管理費込み）", "20万円")).reason).toBe("ratio_under_3"); // 20万 < 21万
+  expect(resolveInitialCostTight(form("12万〜14万円台", "30万")).reason).toBe("ratio_under_3");            // 30万 < 36万（実データ 8/11 もスタッフは一文あり）
+  expect(resolveInitialCostTight(form("3~5万 管理費込み", "10万")).tight).toBe(false);                    // 10万 >= 9万（3倍の境目・従来どおり）
+});
+it("「少ければ少ないほど」「安ければ助かります」も抑えたい（実データのスタッフ実送信は一文あり）", () => {
+  expect(resolveInitialCostTight(form("駐車場など諸々込みで月10万円以下", "少ければ少ないほどありがたいです")).reason).toBe("wants_low");
+  expect(resolveInitialCostTight(form("7〜8万", "安ければ助かります。")).reason).toBe("wants_low");
+  expect(resolveInitialCostTight(form("1LDK", "できる限り安くでお願いします")).reason).toBe("wants_low");
+});
+it("「特に無し」「こだわりなし」は指定なし → 判定しない（実データのスタッフ実送信も一文なし）", () => {
+  for (const c of ["特に無し", "こだわりなし", "なし", "未定", "不明", "-"]) expect(resolveInitialCostTight(form("〜13万", c)).tight).toBe(false);
+  // 「敷金礼金なし希望」は指定なしではない（抑えたい側）
+  expect(resolveInitialCostTight(form("8万", "敷金礼金なしが希望で安ければ")).tight).toBe(true);
+});
 it("金額の読み: 4万5000円・70,000〜120,000・10〜20", () => {
   expect(manAmounts("4万5000円以内").join(",")).toBe("4.5");
   expect(manAmounts("70,000〜120,000").join(",")).toBe("7,12");

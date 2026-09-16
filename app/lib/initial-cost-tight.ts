@@ -30,11 +30,18 @@ export function insertInitialCostSave(draft: string, customerName: string | null
   return { text: lines.join("\n"), inserted: true };
 }
 
-const WANTS_LOW_RE =/安く|安い|安ければ|抑え|なるべく|できるだけ|出来るだけ|少なく|低く|最低限|格安/;
+// 2026-09-16 竹内（M さん事例）「初期費用のところできれば0とお客さん言っているのだから、初期費用抑える旨の文言いれる」:
+//   ⑦【初期費用の限度額】⇒「出来れば0」。0 は単位なしの金額（1〜300 を万円）から外れて読まれず、「出来れば」も言葉の一覧に無く判定が落ちていた。
+//   実データ（180日・条件フォーム 178件）: ⑦に 0 だけを書いた2件（「出来れば0」9/16・「できれば0」8/14）はどちらもスタッフが一文を入れていた
+const WANTS_LOW_RE = /安く|安い|安け|安め|お安く|抑え|なるべく|できるだけ|出来るだけ|少な|少け|低く|最低限|格安|極力|かからな|掛からな/;
+/** 限度額が「0」「ゼロ」＝一番抑えたい（出来れば0・0円・ゼロ） */
+const ZERO_LIMIT_RE = /(?:^|[^0-9.])0\s*(?:円|万円?)?(?:$|[^0-9.])|ゼロ|零/;
+/** 指定なし（特に無し・こだわりなし・未定・不明）は判定しない。値の全体がこの形の時だけ（「敷金礼金なし希望」は指定なしではない） */
+const NOT_SPECIFIED_VALUE_RE = /^(?:特に)?(?:無|な)し[。.！!]?$|^こだわり(?:無|な)し[。.！!]?$|^(?:未定|不明|わからない|分からない|わかりません|分かりません)[。.！!]?$|^[-ー―−]$/;
 
 export type InitialCostTightVerdict = {
   tight: boolean;
-  reason: "ratio_under_3" | "months_3_or_less" | "wants_low" | null;
+  reason: "ratio_under_3" | "months_3_or_less" | "wants_low" | "zero_limit" | null;
   /** 限度額（万円） */
   limitMan: number | null;
   /** 家賃の下限（万円） */
@@ -73,6 +80,8 @@ export function resolveInitialCostTight(customerTurn: string | null | undefined)
   const cost = formValue(text, "⑦");
   if (!cost) return NONE;
   const evidence = `⑦${cost.slice(0, 30)}`;
+  // 指定なし（特に無し・未定）は抑えたい意思ではない（実データ: この形にスタッフは一文を入れていない）
+  if (NOT_SPECIFIED_VALUE_RE.test(cost.normalize("NFKC").trim())) return { ...NONE, evidence };
   const months = cost.normalize("NFKC").match(/(\d+(?:\.\d+)?)\s*(?:倍|ヶ月|ケ月|か月|カ月|ヵ月)/);
   if (months) {
     const n = Number(months[1]);
@@ -80,6 +89,8 @@ export function resolveInitialCostTight(customerTurn: string | null | undefined)
   }
   const limits = manAmounts(cost);
   const limitMan = limits.length ? Math.max(...limits) : null;
+  // 限度額が 0（出来れば0・0円・ゼロ）＝一番抑えたい。0 は manAmounts が読まないのでここで見る（M さん事例）
+  if ((limitMan === null || limitMan === 0) && ZERO_LIMIT_RE.test(cost.normalize("NFKC"))) return { tight: true, reason: "zero_limit", limitMan: 0, rentMinMan: null, evidence };
   const rentValue = formValue(text, "②");
   const rents = rentValue ? manAmounts(rentValue) : [];
   const rentMinMan = rents.length ? Math.min(...rents) : null;
