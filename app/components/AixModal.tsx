@@ -912,6 +912,9 @@ export default function AixModal({
   const [appFormatGuarantorType, setAppFormatGuarantorType] = useState<"emergency" | "guarantor" | null>(null);
   const [appConfirmImagePreview, setAppConfirmImagePreview] = useState("");
   const [appConfirmExtractLoading, setAppConfirmExtractLoading] = useState(false);
+  // 2026-09-16 竹内（カイナ事例）: お部屋がまだ決まっていない時の候補の号室（「1303・906・506」）。
+  //   入れると「現在募集の3部屋の中で(…)／お部屋は何号室で審査かけさせていただきましょうか！！」を聞く形になる
+  const [appRoomChoices, setAppRoomChoices] = useState("");
   // 物件オススメ専用: analyze-propertyで自動抽出した退去予定日
   const [propMoveOutDate, setPropMoveOutDate] = useState("");
 
@@ -2099,8 +2102,11 @@ export default function AixModal({
         } else if (appSubMode === "confirm") {
           body.app_sub_mode = "confirm";
           if (appPropertyName.trim()) body.property_name = appPropertyName.trim();
+          // 号室が決まっていない時: 候補の号室を渡すと「どのお部屋で審査をかけるか」を聞く形になる（カイナ事例）
+          if (appRoomChoices.trim()) body.room_choices = appRoomChoices.trim();
           if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
           if (customerSummary) body.customer_summary = customerSummary;
+          body.conversation_match = true;
         } else if (appSubMode === "docs_request") {
           body.app_sub_mode = "docs_request";
           if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
@@ -3897,6 +3903,24 @@ export default function AixModal({
                       placeholder="例：マルシェ九条 402号室"
                       className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-emerald-400 placeholder:text-[#8696a0]"
                     />
+                  </div>
+                  {/* 2026-09-16 竹内（カイナ事例）: お部屋がまだ決まっていない時は候補の号室を入れて聞く形にする */}
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                      候補の号室 <span className="font-normal text-[#90a4ae]">（お部屋がまだ決まっていない時だけ・「・」で区切る）</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={appRoomChoices}
+                      onChange={(e) => { setAppRoomChoices(e.target.value); setPreview(""); }}
+                      placeholder="例：1303・906・506"
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-emerald-400 placeholder:text-[#8696a0]"
+                    />
+                    <p className="mt-1 text-[10px] text-[#8696a0]">
+                      {appRoomChoices.trim()
+                        ? "「現在募集の〇部屋の中で(…)お部屋は何号室で審査かけさせていただきましょうか！！」と聞く形で作ります"
+                        : "空のままなら、決まったお部屋でお申込みする文を作ります"}
+                    </p>
                   </div>
                   {/* 物件資料から物件名を読み込む */}
                   <div>

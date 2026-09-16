@@ -6,6 +6,8 @@ import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date";
 import { stripMetaNarration } from "@/app/lib/meta-narration";
 import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
+// 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
+import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote } from "@/app/lib/room-choices";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
 import { resolveLatestQuotedContext, formatQuotedContextBlock, propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { avoidTopicsForAix } from "@/app/lib/aix-staff-first";
@@ -3026,8 +3028,33 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
       });
 
       if (appSubMode === "confirm") {
+        // 2026-09-16 竹内（カイナ事例）「AIX の申込誘導の文で部屋が決まっていなければ3部屋の中でどれが良いか」:
+        //   実送信 11:53「かしこまりました！！／代理契約でお申込みさせて頂きます！！／現在募集の3部屋の中で(1303号室・906号室・506号室)／
+        //   お部屋は何号室で審査かけさせていただきましょうか！！」。号室はスタッフが入れた物だけを使う（会話に無いので作らせない）
+        const roomList = parseRoomChoices(typeof body.room_choices === "string" ? body.room_choices : "");
+        const askRoom = shouldAskRoomChoice(roomList);
         // ── 申込確定: 会話を読んでお申込み確定メッセージを生成
-        const confirmSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
+        const confirmSystem = askRoom
+          ? `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
+お客様が「お申込みを進めてほしい」と言ったが、**どのお部屋にするかがまだ決まっていない**場面です。
+お申込みを承諾しつつ、募集中のお部屋のうちどれで審査をかけるかを尋ねる LINE メッセージを1つ作成してください。
+
+【メッセージ構成 — この4行のみ・厳守】
+①「かしこまりました！！」（この文言で固定・変更禁止）
+②「[この会話の申込の形]お申込みさせて頂きます！！」
+・会話で決まっている申込の形があればそれを付ける（例: 代理契約の話が続いていれば「代理契約でお申込みさせて頂きます！！」）。無ければ「お申込みさせて頂きます！！」だけ
+③「現在募集の[件数]部屋の中で([号室を「・」で並べる])」
+④「お部屋は何号室で審査かけさせていただきましょうか！！」（この文言で固定）
+・③の件数・号室は下の【スタッフが入れた候補の号室】をそのまま使う（1つも足さない・減らさない・並び順も変えない）
+・絵文字は使わないか😊を1個まで。語尾は「！！」
+
+【禁止】書類案内・審査の説明・初期費用・内覧の案内・物件のアピールは一切書かない。この4行以外を追加しない。
+・スタッフが入れた号室以外の号室・物件名・部屋数を書くことは絶対禁止
+・LINEでそのまま送れる完成文のみ出力
+
+【スモラLINE営業ルール（必ず守る・ただし上記の4行構成が最優先）】
+${SMORA_COMMON_RULES}`
+          : `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 お客様の申込みを快く承諾する2行のLINEメッセージを1つ作成してください。
 
 【メッセージ構成 — この2行のみ・厳守】
@@ -3044,7 +3071,12 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
 ${SMORA_COMMON_RULES}`;
 
         // 動的（顧客/物件ごとに変わる）ブロックはキャッシュ対象の system から分離する
-        const confirmPropertyNameNote = `【物件名+号室の特定 — 会話全体を読んで以下の優先順で探す】
+        const confirmPropertyNameNote = askRoom
+          ? `【スタッフが入れた候補の号室（この通りに書く・増やさない）】
+${roomChoiceNote(roomList)}
+${property_name ? `物件名: ${property_name}（③で物件名を書く必要はない。号室だけでよい）` : ""}
+【申込の形】会話に代理契約の話が続いていれば②を「代理契約でお申込みさせて頂きます！！」にする。会話に無ければ形は付けない（推測で書かない）`
+          : `【物件名+号室の特定 — 会話全体を読んで以下の優先順で探す】
 ${property_name ? `物件名は「${property_name}」を使う（指定済み）。会話履歴から号室が分かる場合（スタッフメッセージの「【物件名 号室】」表記や見積書送付時の記載など）は「${property_name} ○号室」のように号室も付ける。号室が不明なら物件名のみでよい。` : `1. お客様自身の発言を最優先（「〇〇にします！」「〇〇で申し込みます」「〇〇に決めました」等で名指しされた物件名）
 2. 会話履歴のスタッフメッセージ冒頭「【物件名 号室】」形式（例:「【ASK-6 201号室】」→「ASK-6 201号室」）
 3. 上記がなければ、会話の中で最後に話題になっていた物件名
