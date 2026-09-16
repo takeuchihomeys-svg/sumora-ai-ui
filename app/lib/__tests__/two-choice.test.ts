@@ -56,6 +56,35 @@ it("合図が無ければ2択にしない（ブレインが2択と言った時�
   expect(resolveTwoChoice({ ...base, customerText: "ありがとうございます！", llmTwoChoice: true }).reason).toBe("llm");
   expect(resolveTwoChoice({ ...base, customerText: "" }).reason).toBe("no_customer_text");
 });
+it("あや: 物件を受け取って「検討してみます」→ 2択（物件オススメか返信か）", () => {
+  const v = resolveTwoChoice({ ...base, customerText: "物件ありがとうございます🙇🏻‍♀️՞\n検討してみます。", customerIntent: "chat" });
+  expect(v.two).toBe(true);
+  expect(v.reason).toBe("considering");
+});
+it("実データの言い方も拾う（少し検討します／考えてみます／悩んでいます／迷っています）", () => {
+  for (const t of [
+    "ありがとうございます！\n少し検討します！",
+    "ありがとうございます🙇‍♀️\n検討させてください🙇‍♀️",
+    "一度考えてみます！",
+    "長居の方と悩んでいるので検討させていただきます",
+    "どちらにするか迷っています",
+  ]) expect(resolveTwoChoice({ ...base, customerText: t, customerIntent: "chat" }).two).toBe(true);
+});
+it("検討の語が本文に無くても、ブレインが「検討して持ち帰った」と読んだ時は2択", () => {
+  expect(resolveTwoChoice({ ...base, customerText: "ありがとうございます！", hesitancyPattern: "thinking" }).reason).toBe("considering");
+  expect(resolveTwoChoice({ ...base, customerText: "ありがとうございます！", hesitancyPattern: "undecided" }).reason).toBe("considering");
+  // 折り返しの連絡待ち・時期の話は2択にしない（返信の場面ではない）
+  expect(resolveTwoChoice({ ...base, customerText: "ありがとうございます！", hesitancyPattern: "callback" }).two).toBe(false);
+  expect(resolveTwoChoice({ ...base, customerText: "ありがとうございます！", hesitancyPattern: "timeline" }).two).toBe(false);
+});
+it("お礼だけ（検討の語なし）は2択にしない＝返信せず連絡を待つ場面（朱莉事例の closed-ack の担当）", () => {
+  expect(resolveTwoChoice({ ...base, customerText: "ありがとうございます！" }).two).toBe(false);
+  expect(resolveTwoChoice({ ...base, customerText: "物件ありがとうございます🙇‍♀️" }).two).toBe(false);
+});
+it("「一旦保留で検討します」は探すのを止める話なので2択にしない（検討の語より保留が先）", () => {
+  expect(resolveTwoChoice({ ...base, customerText: "一旦保留で検討させてください" }).reason).toBe("pause_search");
+});
+
 it("「他のお部屋探し保留でも大丈夫ですか」（探すのを止める話）は2択にしない", () => {
   // 語としては依頼の形に当たるが、保留・止めての時は2択にしない（実データ: かおる 7/19）
   expect(MORE_PROPERTY_REQUEST_RE.test("ちょっとまだわからないので他のお部屋探し保留でも大丈夫ですか？")).toBe(true);

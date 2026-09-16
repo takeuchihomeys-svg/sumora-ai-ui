@@ -2798,6 +2798,8 @@ ${history}`;
       finalAix,
       conditionChangeType,
       customerIntent: customerIntentFinal,
+      // 2026-09-16 竹内（あや事例）: 物件を受け取って「検討します」と持ち帰った場面も2択（物件オススメか返信か）
+      hesitancyPattern,
       llmTwoChoice: llmTwoChoiceMode,
     });
     const isTwoChoiceMode: boolean = twoChoiceVerdict.two;
@@ -2805,6 +2807,8 @@ ${history}`;
     const rawRdLabel = typeof parsed.reply_direction_label === "string" ? parsed.reply_direction_label.trim() : "";
     const replyDirectionLabel: string | undefined = isTwoChoiceMode
       ? (rawRdLabel.slice(0, 10) || ((): string => {
+          // 2026-09-16 竹内（あや事例）: 検討して持ち帰った場面の返信は「ごゆっくりご検討ください＋出次第また送る」（実データ13件）
+          if (twoChoiceVerdict.reason === "considering") return "検討見守り";
           if (customerIntentFinal === "question") return "条件説明";
           if (customerIntentFinal === "consultation") return "相場説明";
           if (customerIntentFinal === "negative") return "不安解消";

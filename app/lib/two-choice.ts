@@ -23,6 +23,18 @@ export const MORE_PROPERTY_REQUEST_RE =
 /** 探すのを止める・待ってほしい（依頼ではない）。「他のお部屋探し保留でも大丈夫ですか」を2択にしない */
 const PAUSE_SEARCH_RE = /保留|一旦(?:止|ストップ|やめ)|止めて|ストップ|見送/;
 
+/**
+ * お客様が物件を受け取って「検討します」と持ち帰った（お礼だけの朱莉事例とは違い、検討の語がある）。
+ * 2026-09-16 竹内（あや事例）「この場合物件オススメか返信するの2択にする形とする」:
+ *   新着物件の送付（15:16）→ お客様 15:52「物件ありがとうございます🙇‍♀️ 検討してみます。」→ 画面は AIX【物件オススメ】の1択だった。
+ *   実データ（120日・物件送付の後の「検討・考えて・悩んで・迷って」13件）: スタッフの次の一手は**13件すべて返信**
+ *   （「かしこまりました😊！！ごゆっくりご検討頂けますと幸いです！！新着で〇〇さんにオススメできるお部屋出次第、また随時お送りさせて頂きます！！」）で、
+ *   物件の追加送付は0件。ただし1件に絞って推すのも正解になりうるので選ばせる
+ */
+export const CONSIDERING_RE = /検討(?:し|さ|中|してみ)|考えて(?:み|おき)|悩(?:んで|みま)|迷(?:って|いま)/;
+/** ブレインの決断保留パターンのうち、検討して持ち帰っている物（材料が LLM 側にしか無い時の受け皿） */
+const CONSIDERING_HESITANCY = new Set(["thinking", "undecided"]);
+
 export type TwoChoiceVerdict = { two: boolean; reason: string };
 
 /**
@@ -38,6 +50,8 @@ export function resolveTwoChoice(o: {
   finalAix: string | null | undefined;
   conditionChangeType: string | null | undefined;
   customerIntent: string | null | undefined;
+  /** ブレインの決断保留パターン（thinking・undecided は検討して持ち帰った） */
+  hesitancyPattern?: string | null;
   llmTwoChoice?: boolean;
 }): TwoChoiceVerdict {
   const no = (reason: string): TwoChoiceVerdict => ({ two: false, reason });
@@ -53,6 +67,9 @@ export function resolveTwoChoice(o: {
   //   condition_change_type を立てており、旧の除外（新しい条件の追加は物件探しが正解）で2択が消えていた。
   //   今すぐ物件を出すか、返信して約束してからまとめて送るかはスタッフの状況次第（竹内さんの指摘）
   if (MORE_PROPERTY_REQUEST_RE.test(t)) return { two: true, reason: "more_property_request" };
+  // 物件を受け取って「検討します」と持ち帰った場面（あや事例）。返信して見守るか、1件に絞って推すかはスタッフが決める。
+  //   お礼だけ（「ありがとうございます！」）は closed-ack（返信せず連絡待ち）の担当なのでここには来ない＝検討の語があることを条件にする
+  if (CONSIDERING_RE.test(t) || CONSIDERING_HESITANCY.has((o.hesitancyPattern ?? "").trim())) return { two: true, reason: "considering" };
   if (o.conditionChangeType) return no("condition_change");
   if (TRADEOFF_QUESTION_RE.test(t)) return { two: true, reason: "tradeoff_question" };
   if (o.llmTwoChoice) return { two: true, reason: "llm" };
