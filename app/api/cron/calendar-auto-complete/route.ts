@@ -19,11 +19,15 @@ export async function GET(req: NextRequest) {
   try {
     const now = new Date().toISOString();
 
+    // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】…連絡漏れが多い」: お客様への約束の行（notes 先頭【必ず】）は時刻が過ぎても
+    //   自動で完了にしない。履行した送信（物件送付・御見積書送付・確認結果の報告）が完了にする（app/lib/sent-facts.ts syncPromiseCalendar）
     const { data, error } = await supabase
       .from("calendar_events")
       .update({ is_done: true })
       .eq("is_done", false)
       .lt("start_at", now)
+      //   内覧の行は手書きの【必ず】があっても従来どおり時刻で完了（内覧は終わる。批評（Fable5）の指摘）
+      .or("notes.is.null,notes.not.like.【必ず】%,event_type.eq.viewing")
       .select("id, title, event_type");
 
     if (error) {

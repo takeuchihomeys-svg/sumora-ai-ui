@@ -215,9 +215,11 @@ export async function POST(req: NextRequest) {
       /** 2026-09-15 竹内（YUYA 事例）: 保証会社について の物件×保証会社×種類・並行審査ON（sent_facts の台帳でブレインが読む） */
       guarantor_properties?: Array<{ name?: string | null; company?: string | null; type?: string | null }> | null;
       parallel_screening?: boolean | null;
+      /** 予約送信の予約時点（まだ送っていない）。約束のカレンダーは実送信で同期する */
+      scheduled?: boolean;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening, scheduled } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -297,6 +299,8 @@ export async function POST(req: NextRequest) {
       try {
         const { recordAixFacts } = await import("@/app/lib/sent-facts");
         await recordAixFacts({
+          // 2026-09-16（Fable5 批評）: 予約送信は予約時点で呼ばれる＝まだ送っていない。約束のカレンダーは実送信（send-scheduled-messages）で同期する
+          skipCalendar: scheduled === true,
           conversationId: conversation_id, aixType: aix_type, sentAt: sent_at ?? new Date().toISOString(), lineMessageId: line_message_id ?? null,
           generatedText: generated_text ?? null, checkPattern: check_pattern ?? null,
           propertyNames: Array.isArray(property_names) ? property_names.map((n) => String(n ?? "")).filter(Boolean) : null,

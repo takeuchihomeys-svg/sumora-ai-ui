@@ -4324,6 +4324,13 @@ async function createCalendarEventFromBrainAction(
       .eq("is_done", false)
       .limit(1);
     if (existing && existing.length > 0) return; // 既存あり → スキップ
+    // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】」: お客様に実際に約束した行（【必ず】・日付を問わず未完了）が同種であれば、
+    //   ブレインの推測の行を重ねない（慶次: 送付直後にブレインが翌日の「物件ピックアップ送付」を再登録していた）
+    const { data: promised } = await supabase
+      .from("calendar_events").select("id")
+      .eq("conversation_id", conversationId).eq("event_type", cfg.eventType).eq("is_done", false)
+      .like("notes", "【必ず】%").limit(1);
+    if (promised && promised.length > 0) return;
 
     // 内覧の場合は手動フォームと同じ構造化notes形式で保存（後で編集しやすくするため）
     const calNotes = cfg.eventType === "viewing"

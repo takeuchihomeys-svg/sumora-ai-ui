@@ -65,5 +65,33 @@ it("ブレインに渡す台帳の行: 何を・いつ・どの物件に（AIX�
   expect(/物件ピックアップを宣言/.test(txt)).toBe(true);
 });
 
+// 2026-09-16 竹内（慶次事例）「今日約束した事はカレンダーに【必ず】…連絡漏れが多い」: 確認の約束を文単位で拾う
+const KEIJI = "とんでもございません😊！！\n慶次さんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！\n保証会社の件も確認させて頂きますので、何卒よろしくお願い致します！！";
+it("慶次: ピックアップの約束＋保証会社の確認の約束を両方記録（旧は確認が丸ごと落ちていた）", () => {
+  const f = classifyStaffTextFacts(KEIJI, "2026-09-16T01:28:41Z");
+  expect(f.map((e) => e.kind).join(",")).toBe("pickup_declared,confirmation_promised");
+  expect(f[1].detail.object ?? null).toBe("保証会社");
+});
+it("「〇〇の募集状況確認させていただきます」だけの通（ご連絡・出来次第が無い）も確認の約束", () => {
+  const f = classifyStaffTextFacts("かしこまりました！！\nNicher’a 加美の募集状況確認させていただきます！！", null);
+  expect(f.map((e) => e.kind).join(",")).toBe("confirmation_promised");
+  expect(f[0].detail.object ?? null).toBe("募集状況");
+  const g = classifyStaffTextFacts("かしこまりました！！\n上記4件お申込みさせていただきます😊！！\n\nお申込み完了しましたら、それぞれの受付番手確認させていただきます！！", null);
+  expect(g.some((e) => e.kind === "confirmation_promised" && e.detail.object === "番手")).toBe(true);
+});
+it("お客様の行動が先に要る条件付きは約束にしない（お送りいただき次第…確認）", () => {
+  const f = classifyStaffTextFacts("はい😊！！\n気になる物件がございましたらいつでもお気軽にお送りください！！お送りいただき次第、募集状況を確認させて頂きます！！", null);
+  expect(f.some((e) => e.kind === "confirmation_promised")).toBe(false);
+});
+it("「ピックアップ出来次第お送り」だけの通は確認の約束にしない（従来どおり）", () => {
+  const f = classifyStaffTextFacts("かしこまりました！！\nオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！", null);
+  expect(f.map((e) => e.kind).join(",")).toBe("pickup_declared");
+});
+it("𝒮: 「管理会社に…交渉頂きます／確認出来次第ご連絡」は確認の約束（対象=管理会社）", () => {
+  const f = classifyStaffTextFacts("お世話になっております！！\n\n改めて管理会社に11月中旬でのご入居が可能か交渉頂きます！！\n確認出来次第ご連絡させて頂きます😊！", null);
+  expect(f[0]?.kind).toBe("confirmation_promised");
+  expect(f[0]?.detail.object ?? null).toBe("管理会社");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

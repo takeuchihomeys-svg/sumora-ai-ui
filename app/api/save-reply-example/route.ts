@@ -886,10 +886,11 @@ all_dayは時刻が特定できない場合のみtrue。時刻があればfalse�
 
   let customerName: string | null = null;
   try {
+    // 2026-09-16: 存在しない display_name 列を select していて毎回失敗 → 9/1 以降 199 件が全部お客様名なしだった
     const { data: conv } = await supabase.from("conversations")
-      .select("customer_name, display_name").eq("id", conversationId).single();
-    const c = conv as { customer_name?: string; display_name?: string } | null;
-    customerName = c?.customer_name || c?.display_name || null;
+      .select("customer_name").eq("id", conversationId).single();
+    const c = conv as { customer_name?: string | null } | null;
+    customerName = c?.customer_name || null;
   } catch { /* ignore */ }
 
   const title = customerName ? `${customerName} ${parsed.title}` : parsed.title;

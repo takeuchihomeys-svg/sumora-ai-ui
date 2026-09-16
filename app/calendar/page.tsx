@@ -5,6 +5,8 @@ import BottomNav from "../components/BottomNav";
 import { registerSW, requestNotifPermission, showNotif } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
 import { VIEWING_METHOD_PENDING } from "../lib/meeting-calendar";
+// 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】」: お客様への約束の行は印を出し、履行するまで残る
+import { isPromiseMustNotes } from "../lib/promise-calendar";
 
 type EventType = "viewing" | "contract" | "key_handover" | "other" | "application" | "phone" | "photo" | "property_send" | "estimate_sheet" | "follow_up";
 type KeyMethod = "現地" | "管理会社" | "itandi";
@@ -199,7 +201,7 @@ export default function CalendarPage() {
     const endOfMonth = new Date(`${toDate}T23:59:59+09:00`).toISOString();
 
     try {
-      const [localResult, screeningResult] = await Promise.all([
+      const [localResult, screeningResult, openMustResult] = await Promise.all([
         supabase
           .from("calendar_events")
           .select("*")
@@ -207,10 +209,22 @@ export default function CalendarPage() {
           .lte("start_at", endOfMonth)
           .order("start_at", { ascending: true }),
         fetch(`/api/daily-tasks?from=${fromDate}&to=${toDate}`, { signal: AbortSignal.timeout(15_000) }).then(r => r.ok ? r.json() : []).catch(() => []),
+        // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】」: 未履行の約束は月をまたいでも「今日」の一覧に繰り越して出す
+        supabase
+          .from("calendar_events")
+          .select("*")
+          .eq("is_done", false)
+          .like("notes", "【必ず】%")
+          .neq("event_type", "viewing")
+          .order("start_at", { ascending: true })
+          .limit(100),
       ]);
 
       if (!localResult.error && localResult.data) {
-        setEvents((localResult.data as Omit<CalendarEvent, "_source">[]).map(e => ({ ...e, _source: "local" as const })));
+        const rows = (localResult.data as Omit<CalendarEvent, "_source">[]);
+        const seen = new Set(rows.map((e) => e.id));
+        const extra = (!openMustResult.error && openMustResult.data ? (openMustResult.data as Omit<CalendarEvent, "_source">[]) : []).filter((e) => !seen.has(e.id));
+        setEvents([...rows, ...extra].map(e => ({ ...e, _source: "local" as const })));
       }
       if (Array.isArray(screeningResult)) {
         setDailyTasks(screeningResult.map((t: Omit<DailyTask, "_source">) => ({ ...t, _source: "screening_admin" as const })));
@@ -241,7 +255,12 @@ export default function CalendarPage() {
   }
 
   const selectedKey = formatDateKey(selectedDate);
-  const selectedEvents = eventsByDate[selectedKey] || [];
+  // 未履行の約束（【必ず】・期限切れ）は今日の一覧の先頭に繰り越す（その日を開いた人にしか見えないと連絡漏れが見えない）
+  const todayKey = formatDateKey(new Date());
+  const overdueMust: AnyEvent[] = selectedKey === todayKey
+    ? events.filter((ev) => !ev.is_done && ev.event_type !== "viewing" && isPromiseMustNotes(ev.notes) && toJSTDateKey(new Date(ev.start_at)) < todayKey)
+    : [];
+  const selectedEvents = [...overdueMust, ...(eventsByDate[selectedKey] || [])];
 
   const prevMonth = () => {
     if (month === 0) { setYear(y => y - 1); setMonth(11); }
@@ -313,9 +332,14 @@ export default function CalendarPage() {
     const dateStr = form.start_at.slice(0, 10);
     const timeStr = form.all_day ? "" : form.start_at.slice(11, 16);
 
-    const finalNotes = form.event_type === "viewing" && !viewingNotesRaw
+    let finalNotes = form.event_type === "viewing" && !viewingNotesRaw
       ? buildViewingNotes(viewingCount, viewingProperties, form.notes)
       : form.notes.trim();
+    // 約束の行（【必ず】）を編集しても印が消えないようにする（消えると時刻経過で自動完了され、約束が静かに消える）
+    if (editingEvent && isPromiseMustNotes(editingEvent.notes) && !isPromiseMustNotes(finalNotes)) {
+      const head = editingEvent.notes.trimStart().split("\n")[0];
+      finalNotes = finalNotes ? `${head}\n${finalNotes}` : head;
+    }
 
     const payload = {
       title: form.title.trim(),
@@ -589,6 +613,10 @@ export default function CalendarPage() {
                     <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold text-white bg-[#9aa3ad]">
                       ✓ 完了
                     </span>
+                  ) : isPromiseMustNotes(localEv.notes) && localEv.event_type !== "viewing" ? (
+                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold text-white bg-[#d32f2f]">
+                      {toJSTDateKey(new Date(localEv.start_at)) < formatDateKey(new Date()) ? "⚠ 期限切れ・約束" : "【必ず】約束"}
+                    </span>
                   ) : (
                     <span
                       className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold text-white"
@@ -619,6 +647,11 @@ export default function CalendarPage() {
                                 className="block text-[#1565C0] underline">📍 {addr[1]}</span>
                             ) : <div key={li}>{line}</div>;
                           })}
+                        </div>
+                      ) : isPromiseMustNotes(localEv.notes) && !isDone && localEv.event_type !== "viewing" ? (
+                        // 約束の行: 要件・約束した文・押す AIX を全部出す（履行するまで自動では消えない）
+                        <div className="mt-0.5 whitespace-pre-line break-all text-xs leading-relaxed text-[#b71c1c]">
+                          {localEv.notes.split("\n").slice(0, 4).join("\n")}
                         </div>
                       ) : (
                         <div className="truncate text-xs text-[#8696a0]">{localEv.notes}</div>

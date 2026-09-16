@@ -10221,6 +10221,8 @@ export default function Home() {
                   suggested_action: _predictedAction,
                   line_message_id: _lineSend?.messageId ?? null,
                   sent_at: _lineSend?.sentAt ?? null,
+                  // 予約送信（まだ送っていない）: 約束のカレンダーを予約時点で閉じない（実送信で同期）
+                  scheduled: meta?.scheduled === true,
                   // PA-1: aix_usage_logs にも前アクションを記録（未指定時はサーバー側でDB復元）
                   previous_action_type: _prevAix,
                   // SUB-1: ピッカー選択のサブパターン記録（成果集計・学習精度向上）

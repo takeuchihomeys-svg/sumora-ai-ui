@@ -142,6 +142,17 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】」: 予約で送った本文で約束のカレンダーを同期する
+      //   （AIX の予約は予約時点で閉じない → ここで閉じる。手打ちの予約に約束があれば行を作る）
+      if (text && msg.conversation_id) {
+        try {
+          const { syncPromiseCalendarFromText } = await import("@/app/lib/sent-facts");
+          await syncPromiseCalendarFromText({ conversationId: msg.conversation_id as string, text, sentAt: sentAt.toISOString() });
+        } catch (e) {
+          console.warn("[send-scheduled] promise calendar sync failed:", e instanceof Error ? e.message : e);
+        }
+      }
+
       // conversations 更新
       const lastText = text || (imageUrls.length > 0 ? "[画像]" : "");
       const { error: convUpdateErr } = await supabase

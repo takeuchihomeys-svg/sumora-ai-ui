@@ -7,9 +7,71 @@
 //     既存の最新の未完了行に物件名を上書きし「9/10 15:00 メゾン加美北 予定」のような誤った記録を作っていた
 //   → 送った時（一番よく知っている所）に構造化して1回書く。行動台帳（action-ledger）は記録を一次証拠にし、本文の読み直しは記録前の古いメッセージだけ
 import { supabase } from "@/app/lib/supabase";
-import { classifyStaffTextFacts, aixLedgerKind, aixTextPromises, extractViewingAppointment, appointmentFromMeetingInput, appointmentYmd, type RecordedFact, type ViewingAppointment } from "@/app/lib/action-ledger";
+import { classifyStaffTextFacts, aixLedgerKind, aixTextPromises, extractViewingAppointment, appointmentFromMeetingInput, appointmentYmd, confirmObjectOf, type RecordedFact, type ViewingAppointment, type LedgerEntry } from "@/app/lib/action-ledger";
+// 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】と入れて、お客さん名と要件を入れる（AIX と合わせて）」
+import { promiseEventRows, planPromiseInsert, planPromiseCompletion, PROMISE_MUST_MARK } from "@/app/lib/promise-calendar";
 
 type FactRow = RecordedFact & { conversation_id: string };
+type FactLike = Pick<LedgerEntry, "kind" | "status" | "evidence" | "detail">;
+
+/**
+ * 約束をカレンダーに【必ず】で置く／履行した送信で完了にする（送信時の記録と同じ一次証拠から・決定論）。
+ *   ・実行（物件送付・御見積書送付・確認結果の報告）→ その約束の未完了の【必ず】行を完了に
+ *   ・約束（ピックアップ・見積書・確認）→ 同じ要件の未完了が無ければ「お客様名 要件」の行を約束した日に置く
+ *   【必ず】の行は calendar-auto-complete（時刻経過の自動完了）の対象外＝履行するまで残る（連絡漏れが見える）
+ */
+export async function syncPromiseCalendar(o: { conversationId: string; entries: ReadonlyArray<FactLike>; sentAt: string }): Promise<void> {
+  try {
+    const done = o.entries.filter((e) => e.status === "done").map((e) => ({ kind: e.kind, object: e.detail?.object ?? null }));
+    const hasPromise = o.entries.some((e) => e.status === "promised");
+    if (done.length === 0 && !hasPromise) return;
+    const { data: open } = await supabase.from("calendar_events").select("id, event_type, notes, is_done")
+      .eq("conversation_id", o.conversationId).eq("is_done", false).like("notes", `${PROMISE_MUST_MARK}%`).limit(50);
+    const openRows = (open ?? []) as Array<{ id: number; event_type: string | null; notes: string | null; is_done: boolean | null }>;
+    const closeIds = planPromiseCompletion(done, openRows);
+    if (closeIds.length > 0) {
+      const { error } = await supabase.from("calendar_events").update({ is_done: true }).in("id", closeIds);
+      if (error) console.warn("[sent-facts] promise calendar close failed:", error.message);
+    }
+    let inserted: string[] = [];
+    if (hasPromise) {
+      const { data: conv } = await supabase.from("conversations").select("customer_name").eq("id", o.conversationId).maybeSingle();
+      const rows = planPromiseInsert(
+        promiseEventRows(o.entries, { customerName: (conv?.customer_name as string | null) ?? null, conversationId: o.conversationId, sentAt: o.sentAt }),
+        openRows.filter((r) => !closeIds.includes(r.id)),
+      );
+      if (rows.length > 0) {
+        const { error } = await supabase.from("calendar_events").insert(rows);
+        if (error) console.warn("[sent-facts] promise calendar insert failed:", error.message);
+        else {
+          inserted = rows.map((r) => r.title);
+          // 先に立っていたブレインの推測の行（[Brain AIX]・同種・未完了）は、お客様に実際に約束した行に置き換える（推測より事実）
+          const types = [...new Set(rows.map((r) => r.event_type))];
+          const { error: e2 } = await supabase.from("calendar_events").update({ is_done: true })
+            .eq("conversation_id", o.conversationId).eq("is_done", false).in("event_type", types).like("notes", "[Brain AIX]%");
+          if (e2) console.warn("[sent-facts] brain row supersede failed:", e2.message);
+        }
+      }
+    }
+    if (closeIds.length > 0 || inserted.length > 0) {
+      console.log(JSON.stringify({ tag: "promise:calendar", conversationId: o.conversationId, closed: closeIds, inserted }));
+    }
+  } catch (e) {
+    console.warn("[sent-facts] syncPromiseCalendar failed:", e instanceof Error ? e.message : e);
+  }
+}
+
+/**
+ * 本文だけから約束のカレンダーを同期する（予約送信の実送信・send-scheduled-messages）。
+ *   送信時の記録（sent_facts）は書かない（AIX の予約は予約時点で記録済み・手打ちの予約は記録の経路が無い）。
+ *   批評（Fable5・2026-09-16）: AIX の予約送信は予約時点で recordAixFacts が走るため、実送信前に約束が閉じてしまう
+ *   → 予約時点では閉じず（recordAixFacts の skipCalendar）、実送信のここで閉じる
+ */
+export async function syncPromiseCalendarFromText(o: { conversationId: string; text: string; sentAt: string }): Promise<void> {
+  const entries = classifyStaffTextFacts(o.text, o.sentAt).filter((e) => e.kind !== "media_sent");
+  if (entries.length === 0) return;
+  await syncPromiseCalendar({ conversationId: o.conversationId, entries, sentAt: o.sentAt });
+}
 
 async function upsertFacts(rows: FactRow[]): Promise<void> {
   if (rows.length === 0) return;
@@ -31,6 +93,8 @@ export async function recordStaffTextFacts(o: { conversationId: string; text: st
   })));
   const meeting = entries.find((e) => e.kind === "meeting_place_sent")?.detail.appointment;
   if (meeting) await recordViewingFromAppointment({ conversationId: o.conversationId, appointment: meeting, sentAt: o.sentAt, source: "staff_text", onlyFrom: o.viewingOnlyFrom });
+  // 遡って記録する時（viewingOnlyFrom あり）はカレンダーを触らない（過去の約束を今のやることにしない）
+  if (!o.viewingOnlyFrom) await syncPromiseCalendar({ conversationId: o.conversationId, entries, sentAt: o.sentAt });
   return entries.length;
 }
 
@@ -43,11 +107,18 @@ export async function recordAixFacts(o: {
   guarantors?: { properties: Array<{ name: string; company: string; type: string }>; parallel: boolean } | null;
   /** 遡って記録する時だけ: この日（YYYY-MM-DD）より前の内覧の記録は作らない */
   viewingOnlyFrom?: string;
+  /** 予約送信の予約時点（まだ送っていない）: 約束のカレンダーは触らない（実送信で send-scheduled-messages が同期する） */
+  skipCalendar?: boolean;
 }): Promise<void> {
   const map = aixLedgerKind(o.aixType);
   if (!map) return;
   const detail: Record<string, unknown> = {};
   if (o.checkPattern) detail.checkPattern = o.checkPattern;
+  // AIX【確認します】等の確認の約束・確認結果の報告: 本文から確認の対象（保証会社・募集状況…）を取る（約束の行の要件・閉じる時の絞り込み）
+  if (map.kind === "confirmation_promised" || map.kind === "confirmation_reported") {
+    const obj = confirmObjectOf(o.generatedText);
+    if (obj) detail.object = obj;
+  }
   if (o.propertyNames?.length) { detail.propertyNames = o.propertyNames; detail.propertyCount = o.propertyNames.length; }
   if (map.kind === "estimate_sent" && o.propertyNames?.length) detail.estimateFor = o.propertyNames;
   if (map.kind === "guarantor_explained" && o.guarantors?.properties.length) {
@@ -81,6 +152,13 @@ export async function recordAixFacts(o: {
   });
   await upsertFacts(rows);
   if (appointment) await recordViewingFromAppointment({ conversationId: o.conversationId, appointment, address: o.meeting?.address ?? null, sentAt: o.sentAt, source: "aix", onlyFrom: o.viewingOnlyFrom });
+  // AIX の送信で約束を履行（物件ピックアップした→ピックアップの約束・物件確認した→確認の約束）／AIX 本文に書き足した約束は【必ず】に
+  if (!o.viewingOnlyFrom && !o.skipCalendar) {
+    await syncPromiseCalendar({
+      conversationId: o.conversationId, sentAt: o.sentAt,
+      entries: rows.map((r) => ({ kind: r.kind as LedgerEntry["kind"], status: r.status as LedgerEntry["status"], evidence: r.evidence ?? "", detail: (r.detail ?? {}) as LedgerEntry["detail"] })),
+    });
+  }
 }
 
 /** 行動台帳に渡す送信時の記録（古→新）。取得範囲より古い送信も忘れないよう、メッセージの取得件数より多めに読む */

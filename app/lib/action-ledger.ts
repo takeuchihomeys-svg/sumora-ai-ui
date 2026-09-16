@@ -152,7 +152,28 @@ export interface LedgerInput {
 /** 物件ラベル: 「🌟エストレーラ 305号室」「【エストレーラ 305号室】」 */
 export const PROPERTY_LABEL_RE = /(?:🌟|【)\s*([^\n【】🌟]{2,40}?)\s*([0-9０-９]{1,4})\s*号室/g;
 const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/;
-const CONFIRM_OBJECT_RE = /募集状況|空室|空き|内覧可能|入居可能日|割引|番手|管理会社|オーナー|退去|審査|交渉|ペット|駐車場|保証会社/;
+const CONFIRM_OBJECT_RE = /募集状況|空室|空き|内覧可能|入居可能日|入居可否|初期費用|割引|番手|管理会社|オーナー|退去|審査|交渉|ペット|飼育可能|駐車場|保証会社/;
+// 2026-09-16 竹内（慶次事例）「今日約束した事はカレンダーに【必ず】と入れて…連絡漏れが多い」:
+//   「〇〇（募集状況・番手・保証会社…）確認させて頂きます」だけの文（「ご連絡」「出来次第」が続かない）は約束として記録されず、
+//   1通に「ピックアップ出来次第お送り」があると確認の約束が丸ごと落ちていた（通全体でピックアップの宣言を見て除外）。
+//   実データ（120日・手打ち340通）: STAFF_CONFIRM_DECL_RE に当たるのは105通。当たらない235通のうち123通は3日以内に確認結果を報告していた＝本物の約束。
+//   返信生成・最終チェックが共有する STAFF_CONFIRM_DECL_RE は変えず、送信時の記録（台帳）の分類だけ文単位で広げる
+const BARE_CONFIRM_DECL_RE = /(?:確認|お調べ|問い合わせ)(?:させて(?:頂|いただ)き|いたし|致し)ます/;
+/** お客様の行動が先に要る条件付き（「お送り頂き次第…確認させて頂きます」「ございましたら」）は約束ではない */
+const CONDITIONAL_PROMISE_RE = /(?:頂け|いただけ)(?:ましたら|たら|れば|次第)|(?:頂|いただ)き次第|お送り(?:頂|いただ)(?:き|け)|ございましたら|御座いましたら|でしたら|あれば|(?:頂|いただ)けると/;
+/** 本文の確認の対象（保証会社・募集状況・管理会社…）。AIX の本文からも同じ語彙で取る */
+export function confirmObjectOf(text: string | null | undefined): string | null {
+  return (text ?? '').match(CONFIRM_OBJECT_RE)?.[0] ?? null;
+}
+/** 文の中の確認の約束（ピックアップの宣言の文・条件付きの文は除く） */
+function findConfirmPromiseSentence(sentences: string[]): { sentence: string; evidence: string } | null {
+  for (const s of sentences) {
+    if (STAFF_PICKUP_DECL_RE.test(s) || CONDITIONAL_PROMISE_RE.test(s)) continue;
+    const m = s.match(STAFF_CONFIRM_DECL_RE) ?? s.match(BARE_CONFIRM_DECL_RE);
+    if (m) return { sentence: s, evidence: m[0] };
+  }
+  return null;
+}
 /** 手打ち送付の成果物マーカー（物件 URL・複数号室）。countSentProperties（estimate-context）と同じ一次証拠を採る */
 const STAFF_URL_SEND_RE = /https?:\/\//;
 
@@ -304,6 +325,9 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
   // 宣言（未来形）。ピックアップ宣言は確認約束より先（「ピックアップ出来次第お送り」を確認約束にしない）
   if (STAFF_PICKUP_DECL_RE.test(t)) return base('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0]);
   if (STAFF_CONFIRM_DECL_RE.test(t)) return base('confirmation_promised', 'promised', t.match(STAFF_CONFIRM_DECL_RE)![0], { object: t.match(CONFIRM_OBJECT_RE)?.[0] ?? null });
+  // 「Nicher'a 加美の募集状況確認させていただきます！！」だけの通（ご連絡・出来次第が無い）も確認の約束（慶次事例 2026-09-16）
+  const bare = findConfirmPromiseSentence(sentences);
+  if (bare) return base('confirmation_promised', 'promised', bare.evidence, { object: bare.sentence.match(CONFIRM_OBJECT_RE)?.[0] ?? t.match(CONFIRM_OBJECT_RE)?.[0] ?? null });
   if (STAFF_QUESTION_RE.test(lastLine)) return base('question_asked', 'done', lastLine.slice(-30));
   return null;
 }
@@ -335,8 +359,10 @@ export function classifyStaffTextFacts(text: string, at: string | null): LedgerE
   if (!has('pickup_declared', 'properties_sent', 'condition_asked') && STAFF_PICKUP_DECL_RE.test(t) && !STAFF_CONDITION_ASK_RE.test(t)) {
     add('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0]);
   }
-  if (!has('confirmation_promised', 'confirmation_reported') && STAFF_CONFIRM_DECL_RE.test(t) && !STAFF_PICKUP_DECL_RE.test(t)) {
-    add('confirmation_promised', 'promised', t.match(STAFF_CONFIRM_DECL_RE)![0], { object: t.match(CONFIRM_OBJECT_RE)?.[0] ?? null });
+  // 文ごとに見る（旧: 通全体にピックアップの宣言があると確認の約束を捨てた → 慶次「ピックアップ出来次第お送り＋保証会社の件も確認させて頂きます」の確認が落ちた）
+  if (!has('confirmation_promised', 'confirmation_reported')) {
+    const c = findConfirmPromiseSentence(sentences);
+    if (c) add('confirmation_promised', 'promised', c.evidence, { object: c.sentence.match(CONFIRM_OBJECT_RE)?.[0] ?? t.match(CONFIRM_OBJECT_RE)?.[0] ?? null });
   }
   return out;
 }
