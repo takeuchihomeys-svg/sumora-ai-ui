@@ -38,6 +38,8 @@ import {
 } from "@/app/lib/estimate-context";
 // 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の道順は住所で答える・中身のない先送りは書かない
 import { isViewingAccessQuestion, buildViewingAccessNote, stripVagueDeferral } from "@/app/lib/viewing-access";
+// 2026-09-16 竹内（YUYA 事例）: SUUMO 以外のポータルはオトリ広告があるので、聞かれたら決まった説明を出す
+import { resolvePortalQuestion, ensurePortalNotice } from "@/app/lib/portal-notice";
 import {
   validateAndClean,
   verifyAmountsAgainstSource,
@@ -3468,6 +3470,13 @@ export async function POST(req: NextRequest) {
     //   「今の家から野田阪神までバス出てるから…」の『阪神』が路線名（AREA_SUFFIX_RE）、『まで』が条件語（CONDITION_MARKER_RE）に当たり、
     //   疑問符が無いため hasRequest=false → changeRequest=true → 往復文脈が condition_change に化けていた。
     //   その結果「新条件を復唱した再度ピックアップ宣言がありません」「見つかるまで全力サポートを追加」という場面違いの指摘が出ていた
+    // 2026-09-16 竹内（YUYA 事例）: ポータル（SUUMO 以外はオトリ広告がある）について聞かれた場面か
+    const portalVerdict = resolvePortalQuestion({
+      customerText: intentMessage,
+      messages: recentMessages.map((m) => ({ sender: m.sender, text: m.text ?? "" })),
+      lastStaffText: tpoLatestStaffText,
+    });
+    if (portalVerdict.kind !== "none") console.info("[portal-notice] 場面", JSON.stringify({ conversationId, kind: portalVerdict.kind, portal: portalVerdict.portalLabel, reason: portalVerdict.reason }));
     const isViewingAccessTurn = !!ledger.facts.viewingAppointment && isViewingAccessQuestion(intentMessage, true);
     const isConditionChangeRequest = conditionDetail.changeRequest && !isViewingAccessTurn;
     if (conditionDetail.changeRequest && isViewingAccessTurn) {
@@ -4795,7 +4804,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               //   何を・いつ・どうするかが決まっている約束（「明日午前中に初期費用詳細確認させて頂き御見積しお送りします」）は残る
               const deferralStripped = stripVagueDeferral(vr.cleaned);
               if (deferralStripped !== vr.cleaned) console.info("[viewing-access] 中身のない先送りを削除");
-              return { cleaned: deferralStripped, issues: vr.issues };
+              // 2026-09-16 竹内（YUYA 事例）「SUUMO以外のポータルサイトはオトリ広告等があるので、このような文を生成する。聞かれた場合」:
+              //   ポータルの掲載について聞かれた時の説明はスタッフの実送信そのままなので、LLM に書かせず決定論で足す
+              const withPortal = ensurePortalNotice(deferralStripped, portalVerdict);
+              if (withPortal !== deferralStripped) console.info("[portal-notice]", JSON.stringify({ conversationId, kind: portalVerdict.kind, portal: portalVerdict.portalLabel }));
+              return { cleaned: withPortal, issues: vr.issues };
             };
             /** 行動台帳の決定論自動修正（gen1・gen2 共通。名前不明時は呼びかけごと省く＝「〇〇さん」を本文に書き込まない） */
             const applyLedgerFixToDraft = (body: string): string => {
