@@ -123,13 +123,33 @@ export function resolveScreeningSync(
   current: string | null | undefined,
   incoming: string | null | undefined,
   lastSeen: string | null | undefined,
-  opts: { isPostApply?: boolean } = {},
+  opts: { isPostApply?: boolean; manualBack?: boolean } = {},
 ): { status: string | null; lastSeen: string | null } {
   const inc = (incoming ?? "").trim();
   if (!inc) return { status: null, lastSeen: (lastSeen ?? "").trim() || null };
   const cur = (current ?? "").trim();
   if (!cur) return { status: inc, lastSeen: inc };               // 状態がまだ無い会話には入れる（従来どおり）
+  // 2026-09-16 竹内（𝒮 さん事例）「一度審査中にしても物件提案中に戻すとそのまま物件提案中にする。自動で審査中に戻ってしまうことがある」:
+  //   スタッフが手で前の段階に戻した会話は、その後に審査管理の状態が変わっても同期では動かさない（戻した判断が正）。
+  //   審査管理は否決・見送りの後も screening のまま持ち続け、別の値に変わった瞬間に「先へ進める」で審査中に戻していた。
+  //   また進めたい時はスタッフが手で進める（その時に印は消える）
+  if (opts.manualBack) return { status: null, lastSeen: inc };
   const prev = (lastSeen ?? "").trim();
   if (!prev || prev === inc) return { status: null, lastSeen: inc }; // 審査管理の状態が変わっていない → スタッフの判断のまま
   return { status: resolveSyncedStatus(cur, inc, opts), lastSeen: inc };
+}
+
+/**
+ * 手で状態を変えた時に「後戻りの印（status_manual_back_at）」を付けるか外すか。
+ *   後戻り（段階が下がる）→ 付ける（同期で自動で前に戻さない）／前に進める・同じ段階 → 外す（また同期に任せる）
+ * 2026-09-16 竹内（𝒮 さん事例）。終わりの状態（成約・失注・契約）へ動かした時は印を外す（同期はもともと触らない）
+ */
+export function resolveManualBackMark(from: string | null | undefined, to: string | null | undefined): "set" | "clear" {
+  const f = (from ?? "").trim();
+  const t = (to ?? "").trim();
+  if (!t || STAFF_OWNED_TERMINAL.has(t)) return "clear";
+  const fr = STATUS_STAGE_RANK[f];
+  const tr = STATUS_STAGE_RANK[t];
+  if (fr === undefined || tr === undefined) return "clear";
+  return tr < fr ? "set" : "clear";
 }

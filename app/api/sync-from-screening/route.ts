@@ -275,7 +275,7 @@ export async function POST(req: NextRequest) {
 
     const { data: existingConv } = await supabase
       .from("conversations")
-      .select("account, updated_at, status, is_post_apply, screening_last_status")
+      .select("account, updated_at, status, is_post_apply, screening_last_status, status_manual_back_at")
       .eq("id", String(record.id))
       .maybeSingle();
 
@@ -295,8 +295,10 @@ export async function POST(req: NextRequest) {
       delete upsertData.last_sender;
     }
     if (existingConv) {
+      // 2026-09-16 竹内（𝒮 さん事例）: スタッフが手で前の段階に戻した会話は、同期で自動で前に戻さない
       const r = resolveScreeningSync(existingConv.status as string | null, upsertData.status as string | null,
-        (existingConv as { screening_last_status?: string | null }).screening_last_status ?? null, { isPostApply: !!existingConv.is_post_apply });
+        (existingConv as { screening_last_status?: string | null }).screening_last_status ?? null,
+        { isPostApply: !!existingConv.is_post_apply, manualBack: !!(existingConv as { status_manual_back_at?: string | null }).status_manual_back_at });
       if (r.status === null) delete upsertData.status;
       else upsertData.status = r.status;
       upsertData.screening_last_status = r.lastSeen;

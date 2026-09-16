@@ -1,6 +1,6 @@
 // 2026-09-14 タクミ事例: 審査管理からの同期で状態を後戻りさせない（先の段階へ進める時だけ書く）
 // 実行: npx tsx app/lib/__tests__/synced-status.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { resolveSyncedStatus, resolveScreeningSync } from "../conversation-status";
+import { resolveSyncedStatus, resolveScreeningSync, resolveManualBackMark } from "../conversation-status";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -45,6 +45,28 @@ it("前回の値を覚えていない会話（導入前）は今回の値を覚�
 it("状態がまだ無い会話には入れる／空の値は覚えている値を保つ", () => {
   expect(S(null, "new_inquiry", null).status).toBe("new_inquiry");
   expect(S("proposing", null, "screening").lastSeen).toBe("screening");
+});
+
+// 2026-09-16 𝒮 さん事例: 手で物件提案中に戻した後、審査管理の状態が別の値に変わっても審査中に戻さない
+const B = (cur: string | null, inc: string | null, last: string | null) => resolveScreeningSync(cur, inc, last, { manualBack: true });
+it("𝒮: 手で戻した会話は、審査管理の状態が変わっても同期で動かさない（覚える値だけ更新）", () => {
+  // 旧: 前回 screening → 今回 contract のように変われば「先へ進める」で物件提案中から審査中・契約へ動いていた
+  const r = B("proposing", "contract", "screening");
+  expect(r.status).toBe(null); expect(r.lastSeen).toBe("contract");
+  expect(B("proposing", "screening", "property_recommendation").status).toBe(null);
+});
+it("印が無い会話は従来どおり（審査管理の状態が変われば先へ進める）", () =>
+  expect(S("proposing", "screening", "property_recommendation").status).toBe("screening"));
+
+it("手で戻した印は、後戻りで付けて・進める時と同じ段階で外す", () => {
+  expect(resolveManualBackMark("screening", "proposing")).toBe("set");   // 𝒮 さん（審査中 → 物件提案中）
+  expect(resolveManualBackMark("applying", "viewing")).toBe("set");
+  expect(resolveManualBackMark("proposing", "applying")).toBe("clear");  // 手で進めた → また同期に任せる
+  expect(resolveManualBackMark("proposing", "property_recommendation")).toBe("clear"); // 同じ段階の言い換え
+  expect(resolveManualBackMark("screening", "closed_won")).toBe("clear");  // 終わりの状態は同期がもともと触らない
+  expect(resolveManualBackMark("screening", "closed_lost")).toBe("clear");
+  expect(resolveManualBackMark(null, "proposing")).toBe("clear");
+  expect(resolveManualBackMark("proposing", "unknown_status")).toBe("clear"); // 知らない状態名は印を付けない
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

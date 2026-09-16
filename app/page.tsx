@@ -13,7 +13,7 @@ import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
 import { taskTypesCompletedByAix } from "./lib/aix-task-link";
-import { firstReplyStateOrNull, staffHasEngaged } from "./lib/conversation-status";
+import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./lib/brain-meta-restore";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
@@ -3264,11 +3264,15 @@ export default function Home() {
       // 2026-09-15 隼斗事例: 否決などで申込より前の状態に戻した時は、申込の受信印（申込フォーム・申込書画像）も外す。
       //   印が残ると、物件を探し直す間のお客様の画像や直近8件の結合判定で、揃ったとみなされ申込中へ自動で戻る（line-webhook tryPromoteToApplying）
       const isBackToPreApply = !isClosingStatus && !["applying", "application", "screening", "approved"].includes(nextStatus);
+      // 2026-09-16 竹内（𝒮 さん事例）「一度審査中にしても物件提案中に戻すとそのまま物件提案中にする」:
+      //   手で前の段階に戻した会話は、審査管理からの同期で自動的に前に進めない（印を付ける）。手で進め直したら印を外す
+      const manualBack = resolveManualBackMark(selectedConversation.status, nextStatus);
       const { error: updateError } = await supabase
         .from("conversations")
         .update({
           status: nextStatus,
           updated_at: new Date().toISOString(),
+          status_manual_back_at: manualBack === "set" ? new Date().toISOString() : null,
           ...(isClosingStatus ? { suggested_aix_meta: null } : {}),
           ...(isBackToPreApply ? { applying_text_received: false, applying_image_received: false } : {}),
         })

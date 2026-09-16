@@ -3080,6 +3080,12 @@ ALTER TABLE llm_job_attempts DISABLE ROW LEVEL SECURITY;
 --   同期が状態を動かすのは審査管理の状態が前回から変わった時だけ（否決の後も screening のまま届き続けて、物件提案中に戻した会話を審査中へ戻していた）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS screening_last_status TEXT;
 
+-- conversations.status_manual_back_at: スタッフが手で前の段階に戻した時刻（2026-09-16 竹内・𝒮 さん事例）
+--   「一度審査中にしても物件提案中に戻すとそのまま物件提案中にする」。印がある会話は審査管理からの同期で状態を動かさない
+--   （審査管理は否決・見送りの後も screening のまま持ち続け、別の値に変わった瞬間に「先へ進める」で審査中に戻していた）。
+--   手で前に進め直した時・成約/失注にした時は NULL に戻す（また同期に任せる）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS status_manual_back_at TIMESTAMPTZ;
+
 -- sent_image_properties: スタッフが送った画像 → 物件名・号室（2026-09-15 竹内・みく事例）
 --   お客様の引用返信（「こちら３階は空きありますか？」）の引用先の画像を物件に直す。sent_properties は同じ物件の2回目以降の画像を
 --   重複として記録しないため（送った物件の数え方を守る）、画像ごとの対応はこちらに必ず書く（extract-property-info）
