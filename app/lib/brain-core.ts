@@ -48,6 +48,8 @@ import { detectPropertyPass, CUST_WILL_SEND_SELF_PRED, analyzeSubstance } from "
 import { resolveClosedAck } from "@/app/lib/closed-ack";
 // 2026-09-16 竹内（YUYA 事例）: 内覧当日の送り出しの後のお礼は返信しない（次は内覧後の挨拶）
 import { resolveViewingDayAck } from "@/app/lib/viewing-day";
+// 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
+import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { absolutizeRelativeDays } from "@/app/lib/relative-date";
 // 2026-09-12 同 段2: 場面の証拠（決定論）とスタッフが押した AIX の実績（brain_aix_feedback）をブレインの入力にする
 import {
@@ -2785,25 +2787,20 @@ ${history}`;
     //   proposingフェーズで条件トレードオフ質問 → property_send/recommendation が最多成約（5件）
     //   vs テキスト返信（相場説明・比較説明）で成約（2件）
     // スタッフが「AIXで物件追加オススメ」か「テキスト返信（方向性ラベル付き）」の2択で判断する場面を検出する
-    // 条件トレードオフ質問の正規表現（現在提案中の物件の条件・価格・設備について納得・比較・トレードオフの判断を求める質問）
-    const TRADEOFF_QUESTION_RE =
-      /築年数.{0,15}(古|どう|気になる|問題|大丈夫|基準|影響)|古.{0,10}(どう|問題|大丈夫|気になる)|リノベ|ユニットバス|バスト(?:イレ|レ)一緒|設備.{0,15}(どう|どんな|どれ|変わ|なくな|難し)|[0-9０-９万]+(円)?(台|以下|だと|の部屋).{0,20}(難し|厳し|無理|ないです|ありませ)|家賃.{0,10}(安く|下げ|抑え).{0,15}(設備|広|築|駅)|狭く(なって|てもいい|ても)|間取り.{0,10}妥協|妥協.{0,10}(すると|したら|すれば)|なぜ.{0,5}(高い|安い|この値段)|なんで.{0,5}(高い|安い)|価格.{0,10}(違い|差|同じ|なぜ)|差は何|何が違う|この物件.{0,5}(高い|安い|妥当|なぜ)|相場.{0,15}(どう|いくら|教え|知りたい)|[0-9０-９\.]+万.{0,5}と.{0,5}[0-9０-９\.]+万.{0,10}(違い|差)/;
-    // 決定論ゲート: LLM出力も参考にするが、コード側で最終判定する
+    // 決定論ゲート: LLM出力も参考にするが、コード側で最終判定する（判定は two-choice.ts の純関数）
+    // 2026-09-16 竹内（慶次事例）: 「他にあれば送っておいてください」＋費用の質問 → 物件ピックアップか返信かをスタッフが選ぶ
+    //   （実データ120日: この型のスタッフの次の一手は「返信して約束」5件・AIX で即送付 0件。どちらも正解になりうる）
     const llmTwoChoiceMode = typeof parsed.two_choice_mode === "boolean" ? parsed.two_choice_mode : false;
-    const isTwoChoiceMode: boolean = (
-      // 必須条件1: proposingフェーズ（物件提案中）
-      checkpointStage === "proposing" &&
-      // 必須条件2: 送付済み物件が1件以上ある
-      sentProps.length > 0 &&
-      // 必須条件3: 条件トレードオフ質問パターン OR LLMがtrueと判定
-      !!lastCustomerMsg?.text && (TRADEOFF_QUESTION_RE.test(lastCustomerMsg.text) || llmTwoChoiceMode) &&
-      // 除外条件: 新条件追加はcondition_change_type経由で処理（2択ではなく物件探しが正解）
-      conditionChangeType === null &&
-      // 除外条件: 内覧確定・申込誘導等の確定アクションがある場合は2択不要
-      finalAix !== "viewing_invite" && finalAix !== "application_push" && finalAix !== "meeting_place" &&
-      // 除外条件: 顧客が明示的に離脱・拒否していない
-      customerIntentFinal !== "negative"
-    );
+    const twoChoiceVerdict = resolveTwoChoice({
+      customerText: unrepliedTurn.text || lastCustomerMsg?.text || "",
+      checkpointStage,
+      sentPropertyCount: sentProps.length,
+      finalAix,
+      conditionChangeType,
+      customerIntent: customerIntentFinal,
+      llmTwoChoice: llmTwoChoiceMode,
+    });
+    const isTwoChoiceMode: boolean = twoChoiceVerdict.two;
     // reply_direction_label: 10字以内。LLM出力を優先、なければ customer_intent から補完
     const rawRdLabel = typeof parsed.reply_direction_label === "string" ? parsed.reply_direction_label.trim() : "";
     const replyDirectionLabel: string | undefined = isTwoChoiceMode

@@ -8348,11 +8348,25 @@ export default function Home() {
                     openAixDirect(brainAction);
                   }
                 };
-                // P5-TC: 2択モード（proposingフェーズ + 条件トレードオフ質問検出時）
+                // P5-TC: 2択モード（物件提案中・条件のトレードオフの相談／他のお部屋の依頼）
                 // 成約データ分析(n=15): 条件トレードオフ質問 → property_send/recommendation が最多(5件) vs テキスト返信(2件)
-                // スタッフが「AIXで物件追加オススメ」か「テキスト返信（方向性ラベル付き）」を選ぶ
+                // 2026-09-16 竹内（慶次事例）: 左のボタンは**ブレインが選んだ AIX**にする（旧: 物件オススメ固定で、
+                //   ブレインが物件ピックアップを選んでいても「物件オススメ」と出ていた）。どちらを押したかは学習に記録する
                 if (brainMeta.two_choice_mode) {
                   const rdLabel = brainMeta.reply_direction_label;
+                  const tcLabel = brainBtnLabel ? `AIXで${brainBtnLabel.replace(/^AIX\s*/, "")}` : "AIXで物件オススメ";
+                  const logTwoChoice = (picked: "aix" | "reply") => {
+                    if (!selectedConversation?.status) return;
+                    void fetch("/api/learn-action-patterns", {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        action: "log", conversation_status: selectedConversation.status, action_type: "two_choice",
+                        predicted_action: `two_choice:${brainMeta.action || "property_recommendation"}`,
+                        source: picked === "aix" ? "prediction_accepted" : "prediction_bypassed",
+                        conversation_id: id, customer_msg_summary: picked,
+                      }),
+                    }).catch(() => {});
+                  };
                   return (
                     <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2.5">
                       <div className="flex items-center justify-between gap-1 mb-2">
@@ -8366,6 +8380,10 @@ export default function Home() {
                       <div className="flex gap-2">
                         <button
                           onClick={() => {
+                            logTwoChoice("aix");
+                            // ブレインが AIX を選んでいればそのボタンを開く（物件ピックアップ・見積書送る 等）。
+                            // 選んでいなければ従来どおり物件オススメ
+                            if (brainBtnLabel) { runBrainAix(); return; }
                             setDismissedBrainHintIds((prev) => new Set([...prev, id]));
                             setShowAixMenu(false);
                             setAixInspectLabel(null);
@@ -8374,10 +8392,11 @@ export default function Home() {
                           }}
                           className="flex-1 rounded-xl px-3 py-2 text-[12px] font-bold text-white text-center active:opacity-80 leading-tight"
                           style={{ background: "linear-gradient(135deg, #E65100, #FF9800)" }}>
-                          AIXで物件オススメ
+                          {tcLabel}
                         </button>
                         <button
                           onClick={() => {
+                            logTwoChoice("reply");
                             setDismissedBrainHintIds((prev) => new Set([...prev, id]));
                             generateReply();
                           }}
