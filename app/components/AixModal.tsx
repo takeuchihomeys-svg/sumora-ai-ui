@@ -6,6 +6,8 @@ import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END } from "../lib/c
 // 2026-09-16 竹内（カイナ事例）: 物件確認した — 内覧の流れの判定（サーバと同じ純関数で「流れを続ける」の初期値を出す）
 import { resolveViewingThread } from "../lib/viewing-thread";
 import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, latestCustomerTurnText, type RequestedViewingDate } from "../lib/viewing-date-request";
+// 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
+import { pickDaySlots, limitSlotsPerDay } from "../lib/viewing-slots";
 import { customerRequestsPhoneCall, buildCallRequestText } from "../lib/phone-call";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
@@ -212,6 +214,8 @@ function slotsMatchingDates(days: Array<{ label: string }>, dateText: string): b
 // - お客様の希望日（最新の発言・断りの文を除く）があれば、その日を必ず使う（別の日に置き換えない）。時間はその日の空き枠を全部（"11:00〜13:00 16:00〜18:00"）
 //   希望日が予定で埋まっている時は時間を空欄にする（スタッフが判断する）
 // - 希望日が無い時（手動で内覧日指定ありにした時）は最初の空きカレンダー枠（本日不可なら翌日以降の最初の空き日）
+//   2026-09-16 竹内（𝒮 さん事例）「時間が2つ出るのはお客さんからの日付指定があった場合のみ。こちらから日にち送る場合は1日1つ」
+//   → 希望日が無い＝こちらから出す日なので先頭の1枠だけ（pickDaySlots）
 // - 空き枠が全くない場合は null（日程・時間とも空欄のまま手動入力を促す）
 function resolveViewingSpecificDefaults(
   days: Array<{ label: string; slots: string[]; fullyBooked: boolean }>,
@@ -220,14 +224,15 @@ function resolveViewingSpecificDefaults(
   if (requested.length > 0) {
     const date = requested.map((r) => `${r.m}月${r.d}日`).join("・");
     const first = days.find((d) => calendarDayIs(d.label, requested[0].m, requested[0].d));
-    const times = first && !first.fullyBooked ? first.slots.join(" ") : "";
+    // 希望日が1日だけなら、その日の空き時間を全部（𝒮・隼斗の型）。複数日を並べる時は1日1つ（実送信の型は日付の数＝枠の数）
+    const times = first && !first.fullyBooked ? pickDaySlots(first.slots, requested.length === 1).join(" ") : "";
     return { date, times };
   }
   const firstAvail = days.find((d) => !d.fullyBooked);
   if (!firstAvail) return null;
   const lm = firstAvail.label.match(/(\d{1,2})\/(\d{1,2})/);
   if (!lm) return null;
-  return { date: `${parseInt(lm[1])}月${parseInt(lm[2])}日`, times: firstAvail.slots.join(" ") };
+  return { date: `${parseInt(lm[1])}月${parseInt(lm[2])}日`, times: pickDaySlots(firstAvail.slots, false).join(" ") };
 }
 
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
@@ -2125,7 +2130,8 @@ export default function AixModal({
           if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
           if (customerSummary) body.customer_summary = customerSummary;
           // カレンダー情報（hold_view: 空室の場合に具体的な内覧時間をAIに渡す）
-          if (appPushType === "hold_view" && calendarInfo) body.calendar_info = calendarInfo;
+          // 𝒮 さん事例: こちらから日にちを出す時は1日1つ（材料の段階で落とす）
+          if (appPushType === "hold_view" && calendarInfo) body.calendar_info = limitSlotsPerDay(calendarInfo);
         }
       } else if (actionType === "followup_revive") {
         if (followupSubMode === "apply_supplement" || followupSubMode === "search_continue") {
@@ -2309,7 +2315,8 @@ export default function AixModal({
         if (checkPattern === "available") body.check_application_invite = checkApplicationInvite;
         // 2026-09-16 カイナ事例: 内覧の流れを続ける（スタッフの入力が正）・物件ごとの部屋数（資料の枚数から推定しない）
         if (checkPattern === "available") { body.viewing_continuation = checkViewingContinue; body.prop_room_counts = checkPropRoomCounts.slice(0, effectiveCheckCount); }
-        if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
+        // 𝒮 さん事例: こちらから日にちを出す時は1日1つ（材料の段階で落とす）
+        if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = limitSlotsPerDay(checkCalendarInfo);
         if (checkPattern === "available" && checkAvailableApp) body.available_application = checkAvailableApp;
         if (checkPattern === "available") body.all_properties_available = checkAllAvailable;
         if (checkPattern === "available" && checkRecommendProp !== null) body.recommend_prop_index = checkRecommendProp;
@@ -2347,8 +2354,8 @@ export default function AixModal({
       //   ご案内可能です😊！！／〇〇さんご都合よろしいお時間御座いますでしょうか！！」。曜日は日本時間の暦で決める
       const specificDates = viewingSpecificMode ? parseSpecificDates(viewingSpecificDate).map((x, i) => {
         const day = viewingCalendarDays.find((d) => calendarDayIs(d.label, x.m, x.d));
-        // 1日だけなら時間の欄、複数日なら2日目以降はその日の空き枠
-        const times = i === 0 ? viewingSpecificTimes.trim() : (day && !day.fullyBooked ? day.slots.join(" ") : "");
+        // 1日だけなら時間の欄、複数日なら2日目以降はその日の空き枠（複数日を並べる時は1日1つ＝実送信の型）
+        const times = i === 0 ? viewingSpecificTimes.trim() : (day && !day.fullyBooked ? pickDaySlots(day.slots, false).join(" ") : "");
         return { md: `${x.m}/${x.d}`, label: `${x.m}/${x.d}(${weekdayForMonthDay(x.m, x.d) ?? ""})`.replace("()", ""), times };
       }) : [];
       if (actionType === "viewing_invite" && viewingSpecificMode && !extraFlags?.conversation_match) {

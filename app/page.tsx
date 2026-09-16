@@ -17,6 +17,8 @@ import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from ".
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./lib/brain-meta-restore";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
+// 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
+import { limitSlotsPerDay } from "./lib/viewing-slots";
 import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
 import { meetingToJst, pendingViewingNotes, isReplaceableViewingNotes, VIEWING_METHOD_PENDING } from "./lib/meeting-calendar";
 // 2026-09-16 竹内（カイナ事例）: 内覧の候補日時をカレンダーに「時間確保」で置き、決まったら残りを消す
@@ -5956,8 +5958,11 @@ export default function Home() {
       let calendarInfoStr: string | undefined;
       if (action === "viewing_invite") {
         try {
-          const { infoString } = await fetchCalendarSlots();
-          calendarInfoStr = infoString;
+          // 2026-09-16 竹内（𝒮 さん事例）: お客様が日にちを1日だけ指定していれば、その日の空き時間を全部。
+          //   こちらから日にちを出す日は1日1つ（旧: カレンダーの空き枠を全部そのまま渡していた）
+          const req = requestedViewingDatesFromMessages(recentMessages);
+          const { infoString } = await fetchCalendarSlots(req.map((r) => r.ymd));
+          calendarInfoStr = limitSlotsPerDay(infoString, req.length === 1 ? req.map((r) => r.md) : []);
         } catch {
           // カレンダー取得失敗は無視して続行
         }

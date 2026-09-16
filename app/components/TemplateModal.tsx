@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
+// 2026-09-16 竹内（𝒮 さん事例）: 1日に出す内覧の時間は1つ
+import { pickDaySlots } from "../lib/viewing-slots";
 
 // iOS風スクロールホイールピッカー
 function WheelPicker({ items, selectedIdx, onSelect }: {
@@ -163,8 +165,11 @@ function CalendarDatePicker({ templateText, customerName, onInsert }: CalendarDa
         if (cancelled) return;
         setDays(d);
         setEnabled(d.map(x => !x.fullyBooked));
-        setStarts(d.map(x => x.slots.length > 0 ? padCalTime(x.slots[0].split("〜")[0]) : VIEWING_DAY_START));
-        setEnds(d.map(x => x.slots.length > 0 ? padCalTime(x.slots[x.slots.length - 1].split("〜")[1] ?? VIEWING_DAY_END) : VIEWING_DAY_END));
+        // 2026-09-16 竹内（𝒮 さん事例）: こちらから日にちを出す時は1日1つ。
+        //   旧: 終了を「最終枠の終了」にしていたので、["12:00〜14:00","16:00〜18:00"] の日が 12:00〜18:00 になり、
+        //   予定で埋まっている 14:00〜16:00 まで案内可能として出していた
+        setStarts(d.map(x => x.slots.length > 0 ? padCalTime(pickDaySlots(x.slots, false)[0].split("〜")[0]) : VIEWING_DAY_START));
+        setEnds(d.map(x => x.slots.length > 0 ? padCalTime(pickDaySlots(x.slots, false)[0].split("〜")[1] ?? VIEWING_DAY_END) : VIEWING_DAY_END));
         setOverride(d.map(() => false));
       } catch {
         if (!cancelled) setDays([]);

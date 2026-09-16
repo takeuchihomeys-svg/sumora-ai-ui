@@ -23,6 +23,8 @@ import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, reso
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
 import { buildConversationClockNote, fixStaleRecentReference, absolutizeRelativeDays, jstDayLabel } from "@/app/lib/relative-date";
+// 2026-09-16 竹内（𝒮 さん事例）: 1日に出す内覧の時間は1つ（お客様が日にちを指定した日だけ空き時間を全部）
+import { limitViewingSlotsInReply } from "@/app/lib/viewing-slots";
 // 2026-09-16 竹内（カイナ事例）: 物件確認した×会話を合わせる — 内覧の流れの判定・部屋数・出口の決定論
 import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLines, stripNewSlotLines, ensureViewingContinuationLine, resolveEnclosedRooms, buildEnclosedCountLines, ensureRoomCountPhrase, ESTIMATE_PROMISE_LINE_RE, NEW_SLOT_LINE_RE, VIEWING_CONTINUATION_LINE } from "@/app/lib/viewing-thread";
 
@@ -2756,6 +2758,7 @@ ${SMORA_COMMON_RULES}
 
   〇〇さんご都合よろしいお日にち御座いますでしょうか😊！！
 ・最後の日付行にだけ「にてご案内可能です😊！！」を付ける（途中の行には付けない）
+・こちらから日にちを出す時は1日につき時間は1つだけ（「M/D(曜) 12:00〜14:00 16:00〜18:00」のように1日に2つ並べない）
 ・お客様が日にちを指定した（「18日はどうでしょうか？」）場合は、その日の空き時間だけを次の形で答える（他の日を足さない・「直近ですと」は使わない）:
   かしこまりました！！
   M/Dお部屋ご案内させて頂きます！！
@@ -2809,6 +2812,16 @@ ${SMORA_COMMON_RULES}
           }
         } catch {
           message_text = rawVI;
+        }
+
+        // 2026-09-16 竹内（𝒮 さん事例）: 1日に時間を2つ出すのはお客様が日にちを指定した時だけ（指示だけでは落ちるので出口でも落とす）
+        {
+          const limited = limitViewingSlotsInReply(message_text, {
+            requestedDatesText: requestedDatesVI,
+            messages: Array.isArray(body.recent_messages) ? body.recent_messages as Array<{ sender?: string | null; text?: string | null }> : [],
+          });
+          if (limited !== message_text) console.log("aix:viewing-slots-limited (conversation_match)");
+          message_text = limited;
         }
 
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
@@ -2893,6 +2906,7 @@ M/D（曜日）HH:MM〜HH:MMにてご案内可能です😊！！
 [お客様名]ご都合よろしいお日にち御座いますでしょうか😊！！
 
 ・最後の日付行にだけ「にてご案内可能です😊！！」を付ける（途中の行には付けない）
+・1日につき時間は1つだけ（「M/D（曜日）12:00〜14:00 16:00〜18:00」のように1日に2つ並べない）
 
 【実際に送られた内覧誘導メッセージの実例】
 例1（内覧希望あり・日程提案）:
@@ -2976,6 +2990,15 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
           message_text = rawViewingText;
         }
         if (vComps) aiComponents = vComps;
+      }
+      // 2026-09-16 竹内（𝒮 さん事例）: こちらから日にちを出す時は1日1つ（お客様が1日だけ指定した時はその日の時間をそのまま）
+      {
+        const limited = limitViewingSlotsInReply(message_text, {
+          requestedDatesText: typeof body.viewing_requested_dates === "string" ? body.viewing_requested_dates : "",
+          messages: Array.isArray(body.recent_messages) ? body.recent_messages as Array<{ sender?: string | null; text?: string | null }> : [],
+        });
+        if (limited !== message_text) console.log("aix:viewing-slots-limited");
+        message_text = limited;
       }
       // 差分学習ループ用にAIX生成ドラフトを記録（フロントが実際に送った文と比較して学習する）
       viewingInviteDraft = message_text;
