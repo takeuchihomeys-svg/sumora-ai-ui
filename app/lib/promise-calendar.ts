@@ -17,6 +17,14 @@ export const PROMISE_MUST_MARK = "【必ず】";
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
 export type PromiseKind = "pickup_declared" | "estimate_declared" | "confirmation_promised";
+/**
+ * その日のうちにやる約束（こちらの作業だけで完結し、送れば決まる）。
+ * 2026-09-16 竹内（Hina 事例）「このように物件送ったら決まる場合は今日中のタスクなので【今日中】とつけてカレンダーに予定を入れる」。
+ * 確認の約束は管理会社の回答待ちで当日とは限らないので付けない（実データ: 「明日管理会社に確認」の例が複数）
+ */
+const TODAY_KINDS: ReadonlySet<string> = new Set(["pickup_declared", "estimate_declared"]);
+/** 今日中の印（カレンダーの行の頭） */
+export const TODAY_MARK = "【今日中】";
 const PROMISE_SPEC: Record<PromiseKind, { eventType: string; label: (o: { object?: string | null; estimateFor?: string[] }) => string; aix: string; fulfilledBy: LedgerKind }> = {
   pickup_declared: { eventType: "property_send", label: () => "物件ピックアップ送付", aix: "物件ピックアップした（または 物件オススメ）", fulfilledBy: "properties_sent" },
   estimate_declared: { eventType: "estimate_sheet", label: (o) => o.estimateFor?.length ? `御見積書送付（${o.estimateFor.slice(0, 2).join("・")}${o.estimateFor.length > 2 ? " 他" : ""}）` : "御見積書送付", aix: "見積書送る", fulfilledBy: "estimate_sent" },
@@ -73,15 +81,17 @@ export function promiseEventRows(
     const head = promiseHeadline(e.kind, detail);
     if (out.some((r) => r.notes.split("\n")[0] === head)) continue;
     const label = head.slice(PROMISE_MUST_MARK.length);
+    // 物件を送れば決まる約束（ピックアップ・御見積書）は今日中のタスク。カレンダーで一目で分かるよう頭に印を付ける
+    const today = TODAY_KINDS.has(e.kind) ? TODAY_MARK : "";
     out.push({
-      title: name ? `${name} ${label}` : label,
+      title: `${today}${name ? `${name} ${label}` : label}`,
       event_type: PROMISE_SPEC[e.kind].eventType,
       customer_name: name || null,
       conversation_id: o.conversationId,
       start_at: o.sentAt,
       all_day: true,
       notes: [
-        head,
+        today ? `${head}${TODAY_MARK}` : head,
         `約束: 「${(e.evidence ?? "").trim()}」`,
         `AIX: 【${PROMISE_SPEC[e.kind].aix}】を送ったら完了`,
         `（${jstLabel(o.sentAt)} の送信から）`,
@@ -94,17 +104,22 @@ export function promiseEventRows(
 /**
  * 既にある未完了の約束の行と比べて、新しく作る行だけを返す（同じ会話・同じ要件の未完了があれば作らない）
  */
+/** 同じ約束かを比べるための見出し（【今日中】の印は比べない＝印を足す前に作った行と二重にならない） */
+function headlineOf(notes: string | null | undefined): string {
+  return ((notes ?? "").trimStart().split("\n")[0] ?? "").split(TODAY_MARK).join("");
+}
+
 export function planPromiseInsert(
   rows: PromiseEventRow[],
   existingOpen: ReadonlyArray<{ id: number; notes: string | null; is_done?: boolean | null }>,
 ): PromiseEventRow[] {
-  const openHeads = new Set(existingOpen.filter((r) => !r.is_done && isPromiseMustNotes(r.notes)).map((r) => (r.notes ?? "").trimStart().split("\n")[0]));
-  return rows.filter((r) => !openHeads.has(r.notes.split("\n")[0]));
+  const openHeads = new Set(existingOpen.filter((r) => !r.is_done && isPromiseMustNotes(r.notes)).map((r) => headlineOf(r.notes)));
+  return rows.filter((r) => !openHeads.has(headlineOf(r.notes)));
 }
 
 /** 確認の約束の要件（notes 1行目「【必ず】保証会社の確認→ご連絡」→「保証会社」） */
 function confirmObjectOfNotes(notes: string | null | undefined): string | null {
-  const head = (notes ?? "").trimStart().split("\n")[0] ?? "";
+  const head = headlineOf(notes);
   const m = head.match(new RegExp(`^${PROMISE_MUST_MARK}(.+?)の確認→ご連絡$`));
   return m ? m[1] : null;
 }

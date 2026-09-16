@@ -22,9 +22,10 @@ const S_TEXT = "お世話になっております！！\n\n改めて管理会社
 it("慶次: 1通の2つの約束が2行になる（お客様名＋要件・【必ず】・押す AIX）", () => {
   const rows = promiseEventRows(classifyStaffTextFacts(KEIJI, KEIJI_AT), { customerName: "慶次", conversationId: "c1", sentAt: KEIJI_AT });
   expect(rows.length).toBe(2);
-  expect(rows[0].title).toBe("慶次 物件ピックアップ送付");
+  // 2026-09-16 竹内（Hina 事例）: 物件を送れば決まる約束は今日中のタスク → 頭に【今日中】
+  expect(rows[0].title).toBe("【今日中】慶次 物件ピックアップ送付");
   expect(rows[0].event_type).toBe("property_send");
-  expect(rows[0].notes.split("\n")[0]).toBe("【必ず】物件ピックアップ送付");
+  expect(rows[0].notes.split("\n")[0]).toBe("【必ず】物件ピックアップ送付【今日中】");
   expect(rows[0].notes).toContain("AIX: 【物件ピックアップした（または 物件オススメ）】を送ったら完了");
   expect(rows[1].title).toBe("慶次 保証会社の確認→ご連絡");
   expect(rows[1].event_type).toBe("follow_up");

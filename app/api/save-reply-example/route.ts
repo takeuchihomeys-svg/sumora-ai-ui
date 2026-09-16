@@ -827,6 +827,21 @@ async function detectAndCreateCalendarEvent({
   sentAt?: string;
 }): Promise<void> {
   if (!COMMITMENT_RE.test(sentReply) || sentReply.length < 15) return;
+  // 2026-09-16 竹内（Hina 事例）「なんで見積書が入ってしまったのか」:
+  //   物件のオススメの本文「🌟Jino花園町（オススメポイント）家賃78,000円…」を Haiku が「御見積書送付」と読み、
+  //   カレンダーに「𝐻𝑖𝑛𝑎 御見積書送付 Jino花園町」が入っていた（14:54）。
+  //   送信時の記録（classifyStaffTextFacts）で「送った・約束した」が分かる通は、決定論の経路（【必ず】の行）が作るので
+  //   Haiku に読ませない（費用の数字を見て見積書と誤読する余地を残さない）。
+  //   分類できない通（内覧の待ち合わせ・申込・電話・写真 等）だけ従来どおり Haiku で拾う
+  try {
+    const { classifyStaffTextFacts } = await import("@/app/lib/action-ledger");
+    const known = classifyStaffTextFacts(sentReply, sentAt ?? null)
+      .filter((e) => ["pickup_declared", "estimate_declared", "confirmation_promised", "properties_sent", "estimate_sent"].includes(e.kind));
+    if (known.length > 0) {
+      console.log(JSON.stringify({ tag: "calendar:haiku-skipped", conversationId, kinds: known.map((e) => e.kind) }));
+      return;
+    }
+  } catch { /* 分類に失敗した時は従来どおり Haiku で拾う */ }
 
   // JST基準で今日/明日を算出（サーバーTZ非依存。brain-core と同じ方式）
   const baseMs = sentAt ? new Date(sentAt).getTime() : Date.now();
