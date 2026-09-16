@@ -75,6 +75,25 @@ function jstLabel(iso: string): string {
   return `${p.m}/${p.d} ${pad2(p.hour)}:${pad2(p.minute)}`;
 }
 
+/** 明日やる約束（「明日確認して連絡」「翌営業日」）。管理会社の営業時間外に約束した時の型 */
+const TOMORROW_PROMISE_RE = /明日|翌営業日|朝イチ|朝一/;
+/** 明日の約束をカレンダーに置く時刻（JST の午前中）。竹内「カレンダーには明日連絡午前中に必ず入れる」 */
+const TOMORROW_PROMISE_HOUR = 10;
+/**
+ * 約束の行をカレンダーのいつに置くか。
+ *   ふつうは約束した日（今日のうちにやること）。「明日確認してご連絡」と言った約束だけ翌日の午前中に置く
+ *   （2026-09-16 竹内・💜 さん事例。19:20 に「明日〜確認出来次第ご連絡」と約束した行が 19:20 に立ち、
+ *    その日の一覧の夜に埋もれていた＝翌朝やることが翌朝の場所に無かった）
+ */
+export function promiseStartAt(sentAt: string, sentence: string | null | undefined): string {
+  if (!TOMORROW_PROMISE_RE.test(sentence ?? "")) return sentAt;
+  const p = jstParts(sentAt);
+  if (!Number.isFinite(p.y)) return sentAt;
+  const next = new Date(Date.UTC(p.y, p.m - 1, p.d) + 86_400_000);
+  const ymd = `${next.getUTCFullYear()}-${pad2(next.getUTCMonth() + 1)}-${pad2(next.getUTCDate())}`;
+  return new Date(`${ymd}T${pad2(TOMORROW_PROMISE_HOUR)}:00:00+09:00`).toISOString();
+}
+
 export type PromiseEventRow = {
   title: string; event_type: string; customer_name: string | null; conversation_id: string;
   start_at: string; all_day: boolean; notes: string;
@@ -102,12 +121,14 @@ export function promiseEventRows(
     const label = head.slice(PROMISE_MUST_MARK.length);
     // 物件を送れば決まる約束（ピックアップ・御見積書）は今日中のタスク。カレンダーで一目で分かるよう頭に印を付ける
     const today = TODAY_KINDS.has(e.kind) ? TODAY_MARK : "";
+    // 「明日確認してご連絡」と約束した分は翌日の午前中に置く（営業時間外の約束が当日の夜に埋もれない）
+    const startAt = promiseStartAt(o.sentAt, e.detail?.sentence ?? e.evidence ?? "");
     out.push({
       title: `${today}${name ? `${name} ${label}` : label}`,
       event_type: PROMISE_SPEC[e.kind].eventType,
       customer_name: name || null,
       conversation_id: o.conversationId,
-      start_at: o.sentAt,
+      start_at: startAt,
       all_day: true,
       notes: [
         today ? `${head}${TODAY_MARK}` : head,

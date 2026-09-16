@@ -25,6 +25,8 @@ import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPr
 import { buildConversationClockNote, fixStaleRecentReference, absolutizeRelativeDays, jstDayLabel } from "@/app/lib/relative-date";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す内覧の時間は1つ（お客様が日にちを指定した日だけ空き時間を全部）
 import { limitViewingSlotsInReply } from "@/app/lib/viewing-slots";
+// 2026-09-16 竹内（💜 さん事例）: 申込の情報を受け取った時の開口語・管理会社の営業時間外の「明日確認してご連絡」
+import { isMgmtAfterHours, ensureAfterHoursApplyLine, stripLeadingBareAck, APPLY_INFO_SENT_RE } from "@/app/lib/after-hours";
 // 2026-09-16 竹内（カイナ事例）: 物件確認した×会話を合わせる — 内覧の流れの判定・部屋数・出口の決定論
 import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLines, stripNewSlotLines, ensureViewingContinuationLine, resolveEnclosedRooms, buildEnclosedCountLines, ensureRoomCountPhrase, ESTIMATE_PROMISE_LINE_RE, NEW_SLOT_LINE_RE, VIEWING_CONTINUATION_LINE } from "@/app/lib/viewing-thread";
 
@@ -1560,6 +1562,27 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const conditionsSnapshot: Record<string, unknown> = {
       customer_conditions: customer_conditions ? String(customer_conditions).slice(0, 1000) : null,
       psp: aixBrainMeta?.property_search_params ?? null,
+    };
+    /**
+     * AIX【申込へ】の返信の仕上げ（2026-09-16 竹内・💜 さん事例）。
+     *   ①お客様が申込の情報（緊急連絡先・勤務先 等）を送ってきた返信の先頭の「はい😊！！」を落とす
+     *     （実データ 120日・この場面の返信92件のうち「はい」始まりは2件）
+     *   ②管理会社の営業時間外（18:00〜翌9:00）に申込を進めた時は「管理会社営業時間外となりますので、明日〜確認出来次第ご連絡」を入れる
+     *     （実データ 180日「営業時間外」14件。生成は「審査結果分かり次第ご連絡」で、申込完了の確認より先に審査の話をしていた）
+     */
+    const applyReplyFinish = (text: string): string => {
+      const custText = (Array.isArray(body.recent_messages) ? body.recent_messages as Array<{ sender?: string | null; text?: string | null }> : [])
+        .filter((m) => m.sender === "customer").slice(-3).map((m) => m.text ?? "").join("\n");
+      let out = text ?? "";
+      if (APPLY_INFO_SENT_RE.test(custText)) {
+        const stripped = stripLeadingBareAck(out);
+        if (stripped !== out) console.log(JSON.stringify({ tag: "aix:apply-leading-ack-stripped", conversationId }));
+        out = stripped;
+      }
+      const afterHours = isMgmtAfterHours(new Date().toISOString());
+      const withLine = ensureAfterHoursApplyLine(out, afterHours);
+      if (withLine !== out) console.log(JSON.stringify({ tag: "aix:apply-after-hours-line", conversationId }));
+      return withLine;
     };
     // 早期return用: finalize結果をそのままレスポンスJSONにするショートハンド
     const finalizeResponse = (text: string, extra?: Record<string, unknown>) => {
@@ -3247,7 +3270,7 @@ ${SMORA_COMMON_RULES}`;
         if (baseMessage) {
           const adaptRulesNoteApp = await getAdaptImprovementRules(currentAction);
           message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "", adaptRulesNoteApp, aixBrainMeta);
-          return finalizeResponse(message_text);
+          return finalizeResponse(applyReplyFinish(message_text));
         }
         const calendarNoteForApp = calendar_info
           ? String(calendar_info)
@@ -3320,7 +3343,7 @@ ${SMORA_COMMON_RULES}
         }
 
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
-        return finalizeResponse(message_text);
+        return finalizeResponse(applyReplyFinish(message_text));
       }
 
       let system: string;
@@ -3458,6 +3481,8 @@ ${appealFocus}`;
         message_text = rawAppText;
       }
       } // end else (non-confirm)
+      // 2026-09-16 竹内（💜 さん事例）: 申込の情報を受け取った時の「はい😊！！」を落とし、営業時間外なら「明日確認してご連絡」を入れる
+      message_text = applyReplyFinish(message_text);
 
     // ── ✅ 物件確認した ──────────────────────────────────────────────
     } else if (action === "property_check_result" && check_pattern === "move_in_date") {
