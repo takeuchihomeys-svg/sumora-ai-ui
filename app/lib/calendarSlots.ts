@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { jstParts, jstYmd } from "./jst-date";
+import { isViewingHoldNotes } from "./viewing-hold";
 
 const WEEKDAYS_JP = ["日", "月", "火", "水", "木", "金", "土"];
 const DAY_MS = 86_400_000;
@@ -61,7 +62,12 @@ export type CalendarDayResult = {
  * 2026-09-15 竹内（隼斗事例）: お客様の希望日（「18日はどうでしょうか？」）が3日より先だと空き時間を出せず、最初の空き日（9/16）に置き換わっていた
  *   → 希望日（'YYYY-MM-DD'・最大5日）も同じ計算で出す（ラベルは「9/18(金)」）。日付・曜日・時刻は日本時間で計算する（端末の時間帯に左右されない・jst-date）
  */
-export async function fetchCalendarSlots(extraYmds: ReadonlyArray<string> = []): Promise<{
+export async function fetchCalendarSlots(
+  extraYmds: ReadonlyArray<string> = [],
+  // 2026-09-16 竹内（カイナ事例）: そのお客様自身の「時間確保」（前に送った候補）は、そのお客様への提案では空き扱いにする
+  //   （他のお客様に対しては確保として埋まったまま）。決まったら確保は消える
+  opts: { ignoreHoldsForConversationId?: string | null } = {},
+): Promise<{
   days: CalendarDayResult[];
   infoString: string; // AIに渡す文字列
 }> {
@@ -79,16 +85,20 @@ export async function fetchCalendarSlots(extraYmds: ReadonlyArray<string> = []):
   const [evResult, tasksRaw] = await Promise.all([
     supabase
       .from("calendar_events")
-      .select("start_at, end_at, event_type, title, all_day")
+      .select("start_at, end_at, event_type, title, all_day, notes, conversation_id")
       .gte("start_at", startISO)
       .lte("start_at", endISO)
       .order("start_at"),
     fetch(`/api/daily-tasks?from=${fromDate}&to=${toDate}`).then(r => r.ok ? r.json() : []),
   ]);
 
-  const events = (evResult.data || []) as Array<{
-    start_at: string; end_at: string | null; event_type: string; title: string; all_day: boolean;
+  const allEvents = (evResult.data || []) as Array<{
+    start_at: string; end_at: string | null; event_type: string; title: string; all_day: boolean; notes: string | null; conversation_id: string | null;
   }>;
+  // そのお客様自身の時間確保は、そのお客様への候補の計算では外す（同じ時間をもう一度出せる）
+  const events = opts.ignoreHoldsForConversationId
+    ? allEvents.filter((ev) => !(ev.conversation_id === opts.ignoreHoldsForConversationId && isViewingHoldNotes(ev.notes)))
+    : allEvents;
   const tasks = (Array.isArray(tasksRaw) ? tasksRaw : []) as Array<{
     content: string; date: string; time: string; end_time: string; done: boolean;
   }>;

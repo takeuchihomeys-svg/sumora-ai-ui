@@ -19,6 +19,9 @@ import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
 import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
 import { meetingToJst, pendingViewingNotes, isReplaceableViewingNotes, VIEWING_METHOD_PENDING } from "./lib/meeting-calendar";
+// 2026-09-16 竹内（カイナ事例）: 内覧の候補日時をカレンダーに「時間確保」で置き、決まったら残りを消す
+import { parseCandidateSlots, holdEventRow, isViewingHoldNotes, planHoldCleanup } from "./lib/viewing-hold";
+import { jstYmd } from "./lib/jst-date";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 
@@ -5051,6 +5054,26 @@ export default function Home() {
   // 2026-09-15 竹内（隼斗事例）「AIX 待ち合わせ送ったらカレンダー画面開かれて登録する形。内覧方法をそこに入力すれば内覧担当はカレンダー見るだけで内覧が出来る」:
   //   送信直後に、画面で入れた日付・時刻・物件・住所で内覧の予定を作り（同じ会話・同じ日の自動の予定・内覧方法が未入力の予定があればそれを使う）、
   //   予定を入れる画面をその予定の編集で開く。閉じても予定は残る（「内覧方法: 未入力」）
+  // 2026-09-16 竹内（カイナ事例）「内覧調整いれたらカレンダーで時間確保とする」:
+  //   AIX【内覧日調整】で送った候補日時を、送った文から読んでカレンダーに「時間確保」（notes 先頭【時間確保】＝スタッフの手入力と同じ形）で入れる。
+  //   確保した枠は空き時間の計算で埋まるので、他のお客様に同じ時間を出さない。同じ会話に送り直した時は前の確保を消してから入れ直す
+  const createViewingHoldsFromSentText = async (o: { convId: string; customerName: string; sentText: string }) => {
+    const slots = parseCandidateSlots(o.sentText);
+    if (slots.length === 0) return;
+    try {
+      const todayIso = new Date(`${jstYmd(Date.now())}T00:00:00+09:00`).toISOString();
+      const { data: prev } = await supabase.from("calendar_events")
+        .select("id, notes")
+        .eq("conversation_id", o.convId).eq("event_type", "viewing").eq("is_done", false)
+        .gte("start_at", todayIso);
+      const prevHoldIds = ((prev ?? []) as Array<{ id: number; notes: string | null }>).filter((e) => isViewingHoldNotes(e.notes)).map((e) => e.id);
+      if (prevHoldIds.length > 0) await supabase.from("calendar_events").delete().in("id", prevHoldIds);
+      await supabase.from("calendar_events").insert(slots.map((s) => holdEventRow(s, o.customerName, o.convId)));
+    } catch (e) {
+      console.warn("[viewing-hold] 時間確保の登録に失敗:", e);
+    }
+  };
+
   const openViewingCalendarAfterMeeting = async (o: { convId: string; customerName: string; meetingDate?: string; meetingTime?: string; propertyName?: string; address?: string }) => {
     const when = meetingToJst(o.meetingDate, o.meetingTime);
     if (!when) return;
@@ -5085,6 +5108,16 @@ export default function Home() {
         .lt("start_at", new Date(`${when.ymd}T00:00:00+09:00`).toISOString());
       const staleIds = ((olderAuto ?? []) as Array<{ id: number; notes: string | null }>).filter((e) => /^件数:\s*\d+件\n物件:\s*（未確定）/.test(e.notes ?? "")).map((e) => e.id);
       if (staleIds.length > 0) await supabase.from("calendar_events").update({ is_done: true }).in("id", staleIds);
+      // 2026-09-16 竹内（カイナ事例）「決定したら確保しているそのお客さんの候補時間他のは消える」:
+      //   内覧が決まった（待ち合わせを送った）ので、このお客様の残りの「時間確保」は消す。決まった日時の確保は上で本当の内覧に書き換え済み
+      const { data: holds } = await supabase.from("calendar_events")
+        .select("id, start_at, notes")
+        .eq("conversation_id", o.convId).eq("event_type", "viewing").eq("is_done", false);
+      const plan = planHoldCleanup(((holds ?? []) as Array<{ id: number; start_at: string; notes: string | null }>).filter((h) => h.id !== eventId), when.ymd, when.start);
+      if (plan.deleteIds.length > 0) {
+        await supabase.from("calendar_events").delete().in("id", plan.deleteIds);
+        console.log(JSON.stringify({ tag: "viewing-hold:cleared", conversationId: o.convId, deleted: plan.deleteIds.length }));
+      }
     } catch (e) {
       console.warn("[meeting-calendar] 予定の作成に失敗（画面は開く）:", e);
     }
@@ -10425,11 +10458,19 @@ export default function Home() {
                 }
               // estimate_sheet のタスク完了POSTは上の共通ブロックで実施済み（二重POST防止のため個別処理なし）
               : aixModalType === "viewing_invite"
-              ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean } | undefined) => {
+              ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean; viewingCandidateText?: string } | undefined) => {
                   if (meta?.suggestViewingTemplate) {
                     const convId = selectedConversation.id;
                     setSuggestViewingTemplateMap((prev) => ({ ...prev, [convId]: true }));
                     setDismissedViewingTemplateIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
+                  }
+                  // 2026-09-16 竹内（カイナ事例）: 送った候補日時をカレンダーに「時間確保」で入れる
+                  if (meta?.viewingCandidateText) {
+                    void createViewingHoldsFromSentText({
+                      convId: selectedConversation.id,
+                      customerName: selectedConversation.customerName || preferredCustomerName || "",
+                      sentText: meta.viewingCandidateText,
+                    });
                   }
                 }
               : undefined

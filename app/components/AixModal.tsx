@@ -81,7 +81,7 @@ interface AixModalProps {
   onSendCallButton?: () => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
   // M2: estimateSent / propCostNotes = 御見積書の同封有無とOCRで読み取った物件別費用情報
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; viewingCandidateText?: string }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -1357,7 +1357,8 @@ export default function AixModal({
     (async () => {
       try {
         // お客様の希望日（3日より先でも）の空き時間も出す（2026-09-15 隼斗事例「18日はどうでしょうか？」）
-        const { days } = await fetchCalendarSlots(viewingRequested.map((r) => r.ymd));
+        // 2026-09-16 竹内（カイナ事例）: このお客様自身の「時間確保」（前に送った候補）は空き扱いにする（同じ時間をもう一度出せる）
+        const { days } = await fetchCalendarSlots(viewingRequested.map((r) => r.ymd), { ignoreHoldsForConversationId: conversationId ?? null });
         setViewingCalendarDays(days);
         // "11:00〜14:00" → start: "11:00", end: "14:00"
         const parseTime = (slot: string) => {
@@ -2851,6 +2852,8 @@ export default function AixModal({
         sendMode: sendMode ?? undefined,
         scheduled: true,
         wasEdited: schedWasEdited,
+        // 2026-09-16 竹内（カイナ事例）: 内覧日調整で実際に送った文（この中の候補日時をカレンダーの「時間確保」にする。スタッフが直した時もその時間で確保）
+        viewingCandidateText: actionType === "viewing_invite" ? textToSend : undefined,
         suggestTemplateCategory: suggestTemplateCategoryRef.current ?? undefined,
         conversationMatch: lastGenConvMatchRef.current,
         // M1: 物件別空き状況（brain の確定事実ソース）
@@ -3192,6 +3195,8 @@ export default function AixModal({
         appSubMode: appSubMode ?? undefined,
         sendMode: sendMode ?? undefined,
         wasEdited: _sendWasEdited,
+        // 2026-09-16 竹内（カイナ事例）: 内覧日調整で実際に送った文（この中の候補日時をカレンダーの「時間確保」にする）
+        viewingCandidateText: actionType === "viewing_invite" ? preview : undefined,
         suggestTemplateCategory: suggestTemplateCategoryRef.current ?? undefined,
         conversationMatch: lastGenConvMatchRef.current,
         // M1: 物件別空き状況（brain の確定事実ソース）

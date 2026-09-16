@@ -5,6 +5,7 @@
 //   オートロック・ダイヤル・管理会社の連絡先・itandi）を入れてもらう。閉じても予定は残り、「内覧方法: 未入力」と分かる。
 //   依存: jst-date のみ（画面から使う）
 import { jstParts } from "./jst-date";
+import { isViewingHoldNotes } from "./viewing-hold";
 
 /** 内覧方法がまだ入っていない印（カレンダーの一覧で「内覧方法 未入力」を出す） */
 export const VIEWING_METHOD_PENDING = "内覧方法: 未入力";
@@ -50,8 +51,9 @@ export function pendingViewingNotes(propertyName: string | null | undefined, add
   return lines.join("\n");
 }
 
-/** 自動で作った・内覧方法が未入力の内覧の予定か（上書きしてよい予定） */
+/** 自動で作った・内覧方法が未入力・時間確保（まだ決まっていない候補）の内覧の予定か（上書きしてよい予定）
+ *  2026-09-16 竹内（カイナ事例）: 決まった日の「時間確保」は本当の内覧に書き換える（残りの確保は消す） */
 export function isReplaceableViewingNotes(notes: string | null | undefined): boolean {
   const n = notes ?? "";
-  return n.includes(VIEWING_METHOD_PENDING) || /^件数:\s*\d+件\n物件:\s*（未確定）/.test(n);
+  return n.includes(VIEWING_METHOD_PENDING) || /^件数:\s*\d+件\n物件:\s*（未確定）/.test(n) || isViewingHoldNotes(n);
 }
