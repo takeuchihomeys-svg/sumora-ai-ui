@@ -122,6 +122,25 @@ WHERE is_current = true AND '汎用' = ANY(tags);
 ```
 ※ 設計知見の embedding は付いておらず（match_design_thinking はアプリから未使用）、引き方はこの SQL とタグ
 
+### 直す機能で引く（型のタグが無い過去の知見に届く道）
+600件のうち軸タグ（汎用・ブレイン診断・穴:Gn）が付いているのは1/5で、残りは**機能タグ**でしか引けない。
+直す機能が決まっている時は、型のタグと併せて機能でも引く（直近順・20件）。
+```sql
+SELECT title, insight FROM system_design_thinking
+WHERE is_current = true AND tags && ARRAY['AIX']   -- ← 直す機能のタグ
+ORDER BY created_at DESC LIMIT 20;
+```
+機能タグの主な物（2026-09-17 の正規化後の件数）:
+`AIX` 140 ／ `ブレイン` 64 ／ `line-reply` 56（返信AI全体）／ `RAG` 55 ／ `TPO` 33 ／ `final-check` 32 ／
+`プロンプトキャッシュ` 29 ／ `generate-reply` 26 ／ `Chrome拡張` 18 ／ `見積書` 16 ／ `内覧` 14 ／ `AIX-META` 14
+
+### タグの書き方（2026-09-17 に 1,471→1,174 種類へ正規化。増やす時はこの形に合わせる）
+- **軸タグ**（引く入口・日本語）: `汎用` `点検表` `ブレイン診断` `分析強化の原則` `穴:G1`〜`穴:G6` `出口の決定論` `静かに壊れる` `鮮度` `プロンプトキャッシュ` `API費用`
+- **略語・モデル名は大文字**: `AIX` `RAG` `TPO` `OCR` `AIX-META` `Haiku` `Sonnet` `Vision`（`aix` `rag` `tpo` と書かない）
+- **概念は日本語**: `ブレイン` `内覧` `見積書` `物件確認` `約束` `画像` `監査` `費用`（英語と日本語で割れると引き漏らす）
+- **コード名・テーブル名は実名のまま**: `generate-reply` `final-check` `brain-core` `winning_patterns` `action-ledger`
+- 1行のタグは **軸1〜2＋機能1〜2＋事例1** の5個前後（8個を超えない）
+
 ---
 
 ## ノウハウ参照
