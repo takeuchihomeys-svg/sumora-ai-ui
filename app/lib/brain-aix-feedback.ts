@@ -247,6 +247,11 @@ export function sceneSignalFallback(e: AixSceneEvidence | null | undefined): { a
     return { action: "property_check_result", checkPattern: e.checkPattern, decisionSource: `signal:scene_${e.scene.slice(0, 2)}` };
   }
   if (e.scene === "S5_time_spec") return { action: "meeting_place", checkPattern: null, decisionSource: "signal:scene_S5" };
+  // 2026-09-17 竹内（a🤫 事例）: S11（送った物件の別の部屋・広い部屋・間取りの質問）は
+  //   管理会社への空室確認ではなく、手元の資料から間取り図・室内写真を送る場面
+  if (e.scene === "S11_other_room") {
+    return { action: "property_check_result", checkPattern: e.checkPattern, decisionSource: "signal:scene_S11" };
+  }
   return null;
 }
 
@@ -265,7 +270,7 @@ export function resolveBrainCheckPattern(
 ): PropertyCheckKind | null {
   if (finalAix !== "property_check_result") return null;
   if (sceneSignalCheckPattern) return propertyCheckKindFor(sceneSignalCheckPattern);
-  if (evidence && (evidence.scene === "S2_move_in" || evidence.scene === "S3_screening") && evidence.checkPattern) {
+  if (evidence && (evidence.scene === "S2_move_in" || evidence.scene === "S3_screening" || evidence.scene === "S11_other_room") && evidence.checkPattern) {
     return propertyCheckKindFor(evidence.checkPattern);
   }
   return detectPropertyCheckPattern(unrepliedCustomerText);

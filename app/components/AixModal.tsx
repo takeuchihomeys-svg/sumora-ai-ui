@@ -81,7 +81,8 @@ interface AixModalProps {
   initialFollowupSubMode?: "apply_supplement" | "search_continue" | null;
   initialInputText?: string;
   autoConvMatch?: boolean;
-  initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other";
+  // 2026-09-17 竹内（a🤫 事例）: interior_photo（室内写真を確認した）もブレインから初期値で渡る
+  initialCheckPattern?: "available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other";
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;

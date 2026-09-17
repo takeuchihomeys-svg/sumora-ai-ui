@@ -893,7 +893,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(null);
   // オーナーに確認した（その他）: 中間フォーム用state
   const [showOwnerOtherForm, setShowOwnerOtherForm] = useState(false);
   const [ownerOtherWhat, setOwnerOtherWhat] = useState("");
@@ -8514,7 +8514,7 @@ export default function Home() {
                     setActiveAixFlow(brainAction);
                     // 2026-09-12 段1: ブレインが決めた check_pattern（mgmt_move_in 等）をそのままモーダルに渡す（判定し直さない）
                     const brainCp = (brainMeta as { check_pattern?: string | null }).check_pattern ?? null;
-                    const BRAIN_CP_OK = ["available", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_guarantor", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
+                    const BRAIN_CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_guarantor", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
                     if (brainAction === "property_check_result" && brainCp && (BRAIN_CP_OK as readonly string[]).includes(brainCp)) {
                       setAixInitCheckPattern(brainCp as (typeof BRAIN_CP_OK)[number]);
                     }

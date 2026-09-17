@@ -164,7 +164,21 @@ export function detectPropertyCheckPattern(recentText: string): PropertyCheckKin
 
 // 2026-09-12 段2: check_pattern の値（場面の証拠 S2/S3 が出した mgmt_move_in / vacate_date / mgmt_guarantor 等）から
 // detectPropertyCheckPattern と同じ形の PropertyCheckKind を作る（ブレインの note を同じ文面にするため）
+// 2026-09-17 竹内（a🤫 事例）「この場合 AIX の物件確認したの室内写真を確認したのところから送る形となる」:
+//   「物件確認した（募集状況）」側のサブパターン。ui_button も note も条件・交渉系とは別なので表で持つ。
+//   9/17 18:17「この物件のいちばん広い部屋ありますか？」→ 実送信は [間取り図]＋「1番広いお部屋（65.02）の間取りとなります！！」
+const AVAILABILITY_CHECK_KINDS: Record<string, { topic: string; note: string }> = {
+  interior_photo: {
+    topic: "別の部屋・広い部屋の間取り／室内",
+    note: "AIX【物件確認した】→「室内写真を確認した」を押してください: お客様がこちらの送った物件について別の部屋・もっと広い部屋・間取りを聞いています。管理会社への空室確認ではなく、手元の資料から間取り図・室内写真を物件名とあわせて送る場面です",
+  },
+};
+
 export function propertyCheckKindFor(pattern: string | null | undefined): PropertyCheckKind | null {
+  const avail = pattern ? AVAILABILITY_CHECK_KINDS[pattern] : undefined;
+  if (avail) {
+    return { check_pattern: pattern as string, ui_button: "物件確認した（募集状況）", topic: avail.topic, note: avail.note };
+  }
   const d = CHECK_PATTERN_DETECTORS.find((x) => x.pattern === pattern);
   if (!d) return null;
   return {
