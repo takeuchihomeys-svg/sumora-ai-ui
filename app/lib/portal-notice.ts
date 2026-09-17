@@ -124,8 +124,17 @@ export const WHICH_SITE_ANSWER = [
  */
 const PORTAL_WORD_RE = new RegExp(PORTALS.map((p) => p.word.source).join("|"), "i");
 const LLM_PORTAL_CLAIM_RE = new RegExp(`オトリ|おとり|囮|ポータル|サイト|${PORTAL_WORD_RE.source}`, "i");
-/** 既にこちらの決まった説明が入っているか（同じ文を二重に足さない）。一文まるごとで判定する */
-const OUR_NOTICE_PRESENT_RE = /お客様ご来店頂く為のオトリ物件として掲載されている場合御座います|SUUMO、ホームズがオトリ物件が少ないポータルサイトとなります/;
+/**
+ * 既にこちらの決まった説明が**全行**入っているか（同じ文を二重に足さない）。
+ * 9/17 再検証: LLM が決まった文の1行目「SUUMO、ホームズがオトリ物件が少ないポータルサイトとなります！！」だけを書き、
+ * 一文の一致で「既にある」と見なして残り2行が入らなかった → 全行が揃っている時だけ「既にある」。
+ * 絵文字・記号は後段の出口で落ちることがあるので、比べる時は外す
+ */
+const normalizeForPresence = (s: string) => s.replace(/[！!。、，,\s]/g, "").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, "");
+function hasFullNotice(src: string, notice: string): boolean {
+  const n = normalizeForPresence(src);
+  return notice.split("\n").filter((l) => l.trim()).every((l) => n.includes(normalizeForPresence(l)));
+}
 
 /**
  * 指示層: この場面では LLM にポータルの説明を書かせない（出口で決まった文に置き換えるので、書かれると矛盾の元になる）。
@@ -144,13 +153,13 @@ export function buildPortalPromptNote(verdict: PortalNoticeVerdict): string {
 export function ensurePortalNotice(text: string, verdict: PortalNoticeVerdict): string {
   const src = text ?? "";
   if (verdict.kind === "none") return src;
-  if (OUR_NOTICE_PRESENT_RE.test(src)) return src;
+  const notice = verdict.kind === "which_site" ? WHICH_SITE_ANSWER : buildOtoriExplain(verdict.portalLabel);
+  if (hasFullNotice(src, notice)) return src;
   const kept = src
     .split("\n")
     .filter((line) => !LLM_PORTAL_CLAIM_RE.test(stripUrls(line)))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  const notice = verdict.kind === "which_site" ? WHICH_SITE_ANSWER : buildOtoriExplain(verdict.portalLabel);
   return kept ? `${kept}\n\n${notice}` : notice;
 }

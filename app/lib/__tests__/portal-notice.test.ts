@@ -91,6 +91,12 @@ it("再検証（9/17）で残った2つの抜け: 「オトリ」の語が無い
   // ②(2): 「比較的オトリ物件が少ないポータルサイトとなっております」は決まった文ではない → 落として置き換える
   const weak = "YUYAさんお世話になっております！！\n\nSUUMOとホームズは比較的オトリ物件が少ないポータルサイトとなっております！！\n\n気になる物件がございましたら、その都度URLをお送りいただければ募集状況確認させて頂きます！！";
   expect(ensurePortalNotice(weak, v)).toBe(`YUYAさんお世話になっております！！\n\n気になる物件がございましたら、その都度URLをお送りいただければ募集状況確認させて頂きます！！\n\n${WHICH_SITE_ANSWER}`);
+  // 再々検証 ②(2): LLM が決まった文の1行目だけを書いた → 「既にある」ではない。落として全文を足す
+  const lone = "YUYAさんお世話になっております！！\n\nSUUMO、ホームズがオトリ物件が少ないポータルサイトとなります！！";
+  expect(ensurePortalNotice(lone, v)).toBe(`YUYAさんお世話になっております！！\n\n${WHICH_SITE_ANSWER}`);
+  // 絵文字・記号が後段で落ちていても、全行あれば二重に足さない
+  const stripped = `本文\n\n${WHICH_SITE_ANSWER.replace(/😊/g, "")}`;
+  expect(ensurePortalNotice(stripped, v)).toBe(stripped);
   // 指示層の文はこの場面だけ
   expect(buildPortalPromptNote(v)).toContain("本文には書かないでください");
   expect(buildPortalPromptNote({ kind: "none", portalLabel: null, reason: "x" })).toBe("");
