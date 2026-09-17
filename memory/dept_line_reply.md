@@ -4,6 +4,26 @@
 
 ---
 
+## AIX のプロンプトキャッシュ／API 消費の点検（竹内・2026-09-17・Fable5 Workflow 23エージェント・調査のみ・未実装）
+- 竹内: 「AIXで送信する際プロンプトキャッシュできていない部分がある可能性がたかい。AIXの物件オススメ等で文送る際等に大量にAPI消費している可能性高い。また見積書送るときも多い」
+- 実測（llm_usage_logs 3日・status=200）: `/api/aix/action` 203回・uncached 平均 **16k**（generate-reply は 6.4k）・**cache 区切り 1.0**（generate-reply 1.6）・hit 55%・sys_key 20種
+- **無駄の場所は見積書でも物件オススメでもなく「会話を合わせる」系 11 経路**（物件確認した・ピックアップ会話合わせ・申込へ・内覧へ・初期費用説明 等＝sys_key e84584f5・98回・aix/action 入力費の **72%**）。原因3つ:
+  - A. 共通部（GENERATION_SYSTEM+SMORA_COMMON_RULES ≈41.7k tok）を 11 経路が「末尾に固有文を足した**1ブロック**」で別々にキャッシュ → 経路が変わる・デプロイのたびに 43k を 2.0x で書き直し（3日 write 25回・1.10M tok）
+  - B. DB ルール（fetchPromptRules global 113件 ≈12k＋action 別 3〜11k）が**キャッシュ外の dynamicSystemSuffix** に入り毎回 1.0x（hit 時でも uncached 24〜32k/回・3日 2.40M＝最大項目）
+  - C. 3日の uncached の **57〜65% は開発テストの連打**（同一入力±5 が2分内 116/182回。09-15 22:47〜22:55 JST の30秒間隔 17〜21回は生成ログなし・出所不明）
+- 竹内さんの体感との照合: **物件オススメ**（19回）は静的 34,704 が全回同値・miss は全て >1h＝構造は正常で 1h が最善（ただし 58% が DB ルール）。**見積書送る**は aix/action の**約2%**（OCR 5種は system <1,024 tok でキャッシュ対象外＝画像が本体・カバーレター Haiku 23k は 6回中4回 write で損だが 3日 $0.22）。「多い」の正体は同じ会話で走る「物件確認した×会話を合わせる（御見積書同封）」の 24〜31k uncached×作り直し
+- 1送信あたりの LLM 呼び出し（AIX 系全ルート・±3分）: 内覧へ 3.0回 $0.31／物件ピックアップ 12.6回 $0.27／物件確認した 8.0回 $0.25（作り直し率 3/5）／物件オススメ 9.6回 $0.22（extract-property-info 5.6回）／見積書送る 5.8回 $0.14／申込へ 2.7回 $0.12
+- **直す順番（費用対効果順・未着手）**
+  1. `callClaude`（route.ts:783-790）で `${GENERATION_SYSTEM}\n\n${SMORA_COMMON_RULES}\n\n` 始まりなら prefix を第1ブロック（1h）・残りを第2ブロックに**自動分割**（11 呼び出し元は触らない・出力不変）→ 確実分 ≈$1.7/3日＋デプロイで共通部を書き直さなくなる。1b: generate-reply の先頭（priorityOrderNote+GENERATION_SYSTEM）と1バイト同一にすれば 25回中 21回 read（≈$3.4/3日）だが promptOverrides.generationSystem で静かに壊れる恐れ → YUMA で比較してから
+  2. `fetchPromptRules` を {global, action} に分け、global を全 AIX 共有の準静的ブロック（1h）・action 別を 5m ブロックに（区切り 3）。対象 pcr/app/psm/mp/followup/cb/pf/gi/moveIn。対象外: property_send 固定型（hit 42% で 1h は損）→ ≈$0.6〜1.0/3日。順序変更あり（YUMA で比較）
+  3. 注入量を減らす: global 113件（08-12 から不変・generate_reply 世代の全文）を AIX 向けに絞る／getKnowledgeForState の component 3〜4回並列呼び出しの重複／recentHistory 20→必要分 → ≈$1.2/3日（品質判断は竹内さん）
+  4. 計測: llm_usage_logs に action / conversation_id 列（x-llm-action ヘッダ・**migrate-schema 同時更新**）、テスト連打の出所特定、line-reply-prompts.ts の編集は1日1回にまとめて本番へ
+  5. TTL 経路別: 1h 維持＝共通ブロック・物件オススメ／5m かなし＝Haiku 4経路（カバーレター・内覧前挨拶・待ち合わせ・日時抽出）・aix-template-generate（74k write・3日1回・read 0）→ ≈$1.1〜1.5/3日
+  6. 小: 物件確認した会話合わせの作り直しだけ user に 5m 区切り／カバーレターの accountName を dynamicSuffix へ（sys_key 統合）／mgmt 系・application_push の動的文（proxyResult・hasEst）が静的内
+- **直さなくてよい**: 見積書 OCR 5種の統一（元々キャッシュ対象外・保守目的のみ）／物件オススメの構造／property_send 固定型の DB ルール 1h 化／全 AIX の user 側 cache_control（純損）／extract-property-info・log-aix-usage・customer-summary（合わせて 2〜3%）
+- **効いたかの確認**: cache_breakpoints 1.0→2（手順2後 3）・cache_write 42〜47k→≤10k・別経路初回でも cache_read ≥41.7k・cache_write_1h=cache_write／pcr hit 時 uncached 24〜32k→7〜12k／基準値 SQL は LAG で同一入力±5・2分内を除いた base 換算（uncached×1＋write×2＋read×0.1）を sys_key 別に
+- 設計知見（汎用）3件 INSERT 済み: 「共通 prefix は最初の独立ブロック」「TTL は鍵を共有する呼び出しの間隔で決める（1h 損益分岐 hit 53%・5m 20%）」「費用の点検はテスト連打を除いてから・ログに action/conversation_id」
+
 ## SUUMO 以外のポータル（オトリ広告）について聞かれたら決まった説明を出す（竹内・2026-09-16・YUYA 事例・コミット acc8e95b）— 黄金ルール
 - 竹内: 「今回ニフティのことでお客さんから聞かれていた。SUUMO以外のポータルサイトはオトリ広告等があるので、このような文を生成する。聞かれた場合」
 - 事例 YUYA: 15:34「こちらの物件**ニフティ**で価格更新(9/13付)されてたのですが、募集終わってるか専任物件でしょうか？」→ 19:35 こちら「お送り頂きました2件…現在募集に出ていないお部屋となっております！！」→ 19:37 お客様「そうですか。。ありがとうございます！」→ **19:38 スタッフ（手打ち）**でオトリの説明。さらに 19:40「SUUMOかホームズで見るのがいちばんおとり物件がすくないですか？」→ 22:05 に別の型の回答
