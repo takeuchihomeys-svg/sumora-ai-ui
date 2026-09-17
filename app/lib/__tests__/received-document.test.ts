@@ -90,7 +90,9 @@ it("届いている書類と「もう一度お願いしない」が入る・実�
   const note = buildReceivedDocumentNote(detectReceivedDocuments(友哉));
   expect(note).toContain("労働条件通知書_中谷友哉.pdf（労働条件通知書） — 9/16 18:29 受信");
   expect(note).toContain("もう一度お願いしない");
-  expect(note).toContain("「在籍証明の作成をお願いします」等は書かない");
+  expect(note).toContain("「在籍証明の作成をお願いします」等の再依頼は書かない");
+  // 本番検証で「こちらの書類で在籍・収入面の確認は完了となります！！」と断言する下書きが出た
+  expect(note).toContain("確認・審査の結果は断言しない");
   expect(note).toContain("お送りいただきありがとうございます");
   expect(note).toContain("53件中44件");
   expect(buildReceivedDocumentNote([])).toBe("");
@@ -99,6 +101,7 @@ it("在籍・収入の証明でない書類では在籍証明の行を出さな�
   const note = buildReceivedDocumentNote(detectReceivedDocuments([{ sender: "customer", text: "[ファイル] 運転免許証.pdf" }]));
   expect(note).toContain("運転免許証");
   expect(note).notToContain("在籍証明の作成をお願いします");
+  expect(note).notToContain("確認・審査の結果は断言しない");
 });
 
 console.log("\n[ファイル名はお客様の言葉ではない（reply-context）]");
