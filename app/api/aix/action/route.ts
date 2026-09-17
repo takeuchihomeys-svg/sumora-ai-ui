@@ -23,6 +23,7 @@ import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
+import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, vacatingViewableSentence } from "@/app/lib/vacating-notice";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
@@ -1599,6 +1600,22 @@ async function handleAction(request: NextRequest): Promise<Response> {
         if (fixed !== sendCleaned) {
           console.log(JSON.stringify({ tag: "aix:reply-only-phrase-stripped", action: currentAction, conversationId }));
           sendCleaned = fixed;
+        }
+      }
+      // 2026-09-17 竹内（AIX 物件確認した）「変に割引できる金額少ないや、費用かかる等いれないし、退去予定ともっと
+      //   分かりやすくいれて、入居ちゃんと出来るようにする」: 退去予定のお部屋の通は「いつから見られるか」を伝える通。
+      //   実データ365日・退去予定を含む実送信277件のうち、費用のマイナスの説明（割引出来る金額が少ない・初期費用は
+      //   かなりかかってしまう・敷金もかかります）は0件。日付が具体的な通は例外なく「退去日の翌日以降ご内覧可能」。
+      //   複数物件は実送信が箇条書きの「※ 9月30日退去予定」なので、行を足すのは退去予定が1件の時だけ（掃除は常に行う）
+      if (currentAction === "property_check_result") {
+        const vacDatesForNotice = ((property_vacancy_dates as (string | null)[] | undefined) ?? [])
+          .map((d) => (d ?? "").trim())
+          .filter((d) => !!d && !isPastVacancyDate(d) && !!viewableFromVacancyDate(d));
+        const uniqueVacDates = Array.from(new Set(vacDatesForNotice));
+        const fixedVac = ensureVacatingNotice(sendCleaned, uniqueVacDates, { insertWhenMissing: uniqueVacDates.length === 1 });
+        if (fixedVac.applied.length > 0) {
+          console.log(JSON.stringify({ tag: "aix:vacating-notice", action: currentAction, conversationId, applied: fixedVac.applied }));
+          sendCleaned = fixedVac.text;
         }
       }
       // AIが内部メモを出力した場合、顧客向けメッセージと分離
@@ -4274,8 +4291,10 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
               // 過去日付・年号は落とす（通常生成パスの propList と同じ正規化）
               const vac = rawVac && !isPastVacancyDate(rawVac) ? rawVac.replace(/^\d{4}年/, "") : "";
               const facLines = cmFacilities?.[i] ? buildFacilityLines(cmFacilities[i]) : [];
+              // 2026-09-17 竹内: 退去予定は「いつから見られるか」まで材料に入れる（退去日の翌日＝内覧解禁日）
+              const vacView = vac ? viewableFromVacancyDate(vac) : null;
               return [
-                `　- ${nm}: ${CM_STATUS_LABEL[cmStatuses[i] ?? ""] ?? "募集中"}${vac ? `（${vac}退去予定）` : ""}`,
+                `　- ${nm}: ${CM_STATUS_LABEL[cmStatuses[i] ?? ""] ?? "募集中"}${vac ? `（${vac}退去予定${vacView ? ` → ${vacView}以降ご内覧可能` : ""}）` : ""}`,
                 ...facLines.map((l) => `　　・${l}`),
               ].join("\n");
             }).join("\n")
@@ -4331,12 +4350,22 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
           !cmShowAppInvite && cmShowViewingInvite ? "・締めの方向: 内覧誘導（ご都合よろしいお日にちにご案内させて頂きます）" : "",
           cmContinuationActive ? `・締めの方向: 内覧の続き（既に内覧の話が進んでいる → 「${VIEWING_CONTINUATION_LINE}」の1文。新しい日時は出さない）` : "",
         ].filter(Boolean).join("\n");
+        // 2026-09-17 竹内（AIX 物件確認した）: 退去予定のお部屋の伝え方を材料として渡す
+        //   （状態は「現在退去予定で募集中」／退去日の翌日以降ご内覧可能／費用のマイナスの説明は入れない）
+        const cmVacatingNote = buildVacatingPromptNote(
+          Array.from({ length: cmPropCount }, (_, i) => ({
+            name: cmPropNamesRaw[i] ?? "",
+            vacDate: (cmStatuses[i] === "vacating" || (cmVacancyDates[i] ?? "").trim())
+              ? ((cmVacancyDates[i] ?? "").trim() && !isPastVacancyDate((cmVacancyDates[i] ?? "").trim()) ? (cmVacancyDates[i] ?? "").trim() : "")
+              : "",
+          })),
+        );
         const cmResultBlock = cmPattern
           ? `【スタッフの確認結果（確定事実・必ずこの結果を報告するメッセージにすること）】
 ${cmResultLines}
 ・スタッフは既に募集状況の確認を完了しています。上記の結果を報告するメッセージを作成してください
 ・「確認させて頂きます」「確認いたします」等の確認前メッセージの生成は絶対禁止（確認は完了済み）
-・確認できた物件については「募集中です」で終わらせず、上記の状態・設備・費用情報まで伝えて次のアクション（内覧/申込）に繋げること`
+・確認できた物件については「募集中です」で終わらせず、上記の状態・設備・費用情報まで伝えて次のアクション（内覧/申込）に繋げること${cmVacatingNote ? `\n\n${cmVacatingNote}` : ""}`
           : "";
 
         const calendarNoteForPCR = calendar_info ? String(calendar_info) : "";
@@ -4730,7 +4759,9 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const greeting1 = greetingPhrase; // 挨拶時間ルール共通化（#19）
           // 保証会社はその物件の情報の一部なので、設備の箇条書きまで出し切った直後・締め（内覧/申込の誘導・他N件募集終了）の前に置く
           if (p.status === "vacating") {
-            const vacLine = p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！";
+            // 2026-09-17 竹内: 退去予定は「いつから見られるか」まで書く（退去日の翌日＝内覧解禁日・実送信51件の言い回し）
+            const vacLine = (p.vacDate ? vacatingViewableSentence(p.vacDate) : null)
+              ?? (p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！");
             const facSection = facilityText ? `\n\n${facilityText}` : "";
             message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}${facSection}${guarantorSection1}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
           } else if (showAppInvite1) {
@@ -4962,7 +4993,15 @@ ${templateText}`;
         const calendarPart = calendarNote
           ? `\n\n【内覧可能日時（1日1行で含めること・案内不可の日は除外）】\n${calendarNote}`
           : "";
-        const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${templateSampleNote}${templateStructureNote}${calendarPart}${summaryNote}${recentHistory}`;
+        // 2026-09-17 竹内: 退去予定のお部屋の伝え方（内覧解禁日・費用のマイナスの説明を入れない）を材料として渡す
+        const checkVacatingNote = buildVacatingPromptNote(
+          Array.from({ length: Math.max(propCount, propVacancyDates.length) }, (_, i) => {
+            const vd = ((propVacancyDates[i] as string | undefined) ?? "").trim();
+            return { name: ((propNames[i] as string | undefined) ?? "").trim(), vacDate: vd && !isPastVacancyDate(vd) ? vd : "" };
+          }),
+        );
+        const vacatingPart = checkVacatingNote ? `\n\n${checkVacatingNote}` : "";
+        const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${templateSampleNote}${templateStructureNote}${calendarPart}${vacatingPart}${summaryNote}${recentHistory}`;
 
         // ブロック: [global ルール 1h] → [固定文＋action 別ルール 5m] → [お手本・実例・ノウハウ・ブレイン（動的）]。Vision も同じ構成
         const checkSystemSpec: SystemSpecBlocks = {
