@@ -14,7 +14,7 @@ import { countCustomerSentProperties } from "../lib/customer-property-count";
 import { customerSharedPropertyNames } from "../lib/customer-property-names";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
 import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, buildGuarantorListText, detectGuarantorFromMessages, type GuarantorType } from "../lib/guarantor-companies";
-import { PROPERTY_LABEL_RE } from "../lib/action-ledger";
+import { extractPropertyLabels } from "../lib/action-ledger";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
@@ -1107,14 +1107,15 @@ export default function AixModal({
     return detectGuarantorFromMessages((recentMessages ?? []).map((m) => ({ text: m.text })));
   }, [actionType, recentMessages]);
   // 物件名の候補: 会話でスタッフが送った「🌟〇〇 305号室」「【〇〇 305号室】」（無ければ空）
-  const giPropertyNameOptions = useMemo(() => {
-    if (actionType !== "guarantor_info") return [] as string[];
+  // 2026-09-17 竹内（Hina 事例）: 室内写真（物件確認した）でも使う。抽出は action-ledger の extractPropertyLabels に1本化（新しい順）
+  const propertyNameOptions = useMemo(() => {
+    if (actionType !== "guarantor_info" && actionType !== "property_check_result") return [] as string[];
     const out = new Set<string>();
     for (const m of (recentMessages ?? [])) {
       if (m.sender === "customer") continue;
-      for (const hit of (m.text ?? "").matchAll(PROPERTY_LABEL_RE)) out.add(`${hit[1].trim()} ${hit[2]}号室`);
+      for (const n of extractPropertyLabels(m.text)) out.add(n);
     }
-    return [...out];
+    return [...out].reverse();
   }, [actionType, recentMessages]);
   // 2026-09-17 竹内（YUYA 事例）: 物件確認した（募集中）の保証会社欄でも、スタッフが登録した会社の種類を引けるようにする
   //   （会社一覧は数十行の軽いテーブル。取得に失敗してもマスタだけで動く）
@@ -2157,7 +2158,14 @@ export default function AixModal({
       } else if (actionType === "property_check_result" && checkPattern === "interior_photo") {
         // 室内写真確認: AIなしでプレビュー直接生成
         if (interiorPhotoUrl.trim()) {
-          const msg = `（室内イメージ）\n${interiorPhotoUrl.trim()}`;
+          // 2026-09-17 竹内（Hina 事例）「物件名をいれれるようにする。そうしたら物件名と（室内イメージ）が送られるようにする」:
+          //   URL だけだとどの物件の室内写真か分からない（会話に複数の物件が並ぶ）。入れた時だけ先頭に足す
+          const msg = `${interiorPropertyName.trim() ? `${interiorPropertyName.trim()}\n` : ""}（室内イメージ）\n${interiorPhotoUrl.trim()}`;
+          // 物件名を入れた時は「この物件の室内写真を送った」を送信時の記録に残す（ブレインが読む確定事実。既存の available と同じ ref）
+          if (interiorPropertyName.trim()) {
+            lastCheckPropNamesRef.current = [interiorPropertyName.trim()];
+            lastCheckPropStatusesRef.current = ["interior_photo"];
+          }
           setAiDraft(msg);
           setPreview(useEmoji ? msg : stripEmoji(msg));
           setLoading(false);
@@ -2168,6 +2176,10 @@ export default function AixModal({
           const msg = name
             ? `こちら${name}の室内写真となります😌！！`
             : "こちら室内写真となります😌！！";
+          if (name) {
+            lastCheckPropNamesRef.current = [name];
+            lastCheckPropStatusesRef.current = ["interior_photo"];
+          }
           setAiDraft(msg);
           setPreview(useEmoji ? msg : stripEmoji(msg));
           setLoading(false);
@@ -5203,6 +5215,29 @@ export default function AixModal({
               {/* 室内写真を確認した: URLまたは写真 */}
               {checkPattern === "interior_photo" && (
                 <div className="flex flex-col gap-3">
+                  {/* 物件名（2026-09-17 竹内・Hina 事例）: URL でも写真でも入れられる。
+                      会話でスタッフが送った物件名（🌟〇〇 305号室）があれば候補で出す＝打たせる前に会話にある事実から選ばせる */}
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="font-normal text-[#90a4ae]">（任意・入れると先頭に付きます）</span></p>
+                    {propertyNameOptions.length > 0 && (
+                      <div className="mb-1.5 flex flex-wrap gap-1">
+                        {propertyNameOptions.slice(0, 5).map((n) => (
+                          <button key={n} type="button"
+                            onClick={() => { setInteriorPropertyName(interiorPropertyName.trim() === n ? "" : n); setPreview(""); }}
+                            className={`rounded-full border px-2.5 py-1 text-[11px] ${interiorPropertyName.trim() === n ? "border-pink-500 bg-pink-500 text-white" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                          >{n}</button>
+                        ))}
+                      </div>
+                    )}
+                    <input
+                      type="text"
+                      value={interiorPropertyName}
+                      onChange={(e) => { setInteriorPropertyName(e.target.value); setPreview(""); }}
+                      placeholder="例: グリーンヒルズ 305号室"
+                      className="w-full rounded-xl border border-[#d1d7db] px-4 py-3 text-[14px] outline-none focus:border-[#2196F3]"
+                    />
+                  </div>
+
                   {/* URL入力 */}
                   <div>
                     <p className="mb-1 text-xs font-bold text-[#54656f]">室内イメージURL</p>
@@ -5220,7 +5255,7 @@ export default function AixModal({
                     />
                     {interiorPhotoUrl.trim() && (
                       <p className="mt-1 text-[11px] text-pink-600">
-                        送信文: 「（室内イメージ）<br />{interiorPhotoUrl.trim()}」
+                        送信文: 「{interiorPropertyName.trim() && <>{interiorPropertyName.trim()}<br /></>}（室内イメージ）<br />{interiorPhotoUrl.trim()}」
                       </p>
                     )}
                   </div>
@@ -5268,21 +5303,11 @@ export default function AixModal({
                         />
                       </div>
 
-                      {/* 物件名入力（写真の場合のみ） */}
+                      {/* 2026-09-17 竹内（Hina 事例）: 物件名の欄は上（URL でも写真でも共通）に移した。ここは送信文の確認だけ */}
                       {interiorPhotoFile && (
-                        <div>
-                          <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
-                          <input
-                            type="text"
-                            value={interiorPropertyName}
-                            onChange={(e) => { setInteriorPropertyName(e.target.value); setPreview(""); }}
-                            placeholder="例: ヴィーナス今里"
-                            className="w-full rounded-xl border border-[#d1d7db] px-4 py-3 text-[14px] outline-none focus:border-[#2196F3]"
-                          />
-                          <p className="mt-1 text-[11px] text-[#8696a0]">
-                            送信文: 「こちら{interiorPropertyName || "●●"}の室内写真となります😌！！」
-                          </p>
-                        </div>
+                        <p className="text-[11px] text-[#8696a0]">
+                          送信文: 「こちら{interiorPropertyName.trim() || "●●"}の室内写真となります😌！！」
+                        </p>
                       )}
                     </>
                   )}
@@ -6735,7 +6760,7 @@ export default function AixModal({
                   ))}
                 </div>
                 <datalist id="gi-property-names">
-                  {giPropertyNameOptions.map((n) => <option key={n} value={n} />)}
+                  {propertyNameOptions.map((n) => <option key={n} value={n} />)}
                 </datalist>
                 {/* 並行して審査かける（トグル） */}
                 <div className="mt-3 flex items-center justify-between gap-2 rounded-2xl border border-[#d1d7db] bg-white px-3 py-2">
