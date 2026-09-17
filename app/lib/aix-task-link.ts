@@ -58,9 +58,9 @@ const APPLY_PROGRESS_CHECK_RE = /番手|お?部屋止め|お?申込(?:み)?(?:�
 
 export function resolveStaffPromiseAix(
   facts: {
-    lastStaffEntry: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null } } | null;
+    lastStaffEntry: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null; watch?: boolean } } | null;
     /** 直前スタッフ発言が AIX の時、その本文に書き足した未履行の約束（2026-09-15 ゆうこ事例: 初期費用について＋「ピックアップさせて頂きます」） */
-    lastStaffAixTextPromise?: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null } } | null;
+    lastStaffAixTextPromise?: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null; watch?: boolean } } | null;
     estimatePromisedUnfulfilled: boolean;
     pickupPromisedUnfulfilled: boolean;
     confirmationPromisedUnfulfilled?: boolean;
@@ -78,7 +78,7 @@ export function resolveStaffPromiseAix(
     /** 見積る物件があるか（こちらの送付・お客様の URL/画像/「ここの」/見積の語）。false の時は見積書の宣言でも 見積書送る をセットしない（ゆうこ事例）。未指定は従来どおり */
     propertyInPlay?: boolean;
   } = {},
-): { action: "estimate_sheet" | "property_send" | "property_check_result"; kind: "estimate" | "pickup" | "check" } | null {
+): { action: "estimate_sheet" | "property_send" | "property_check_result"; kind: "estimate" | "pickup" | "check"; alt?: "property_recommendation" } | null {
   const nonMedia = messages.filter((m) => {
     const t = (m.text ?? "").trim();
     return t && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(t);
@@ -103,6 +103,13 @@ export function resolveStaffPromiseAix(
   //   物件の有無は呼び出し側（brain-core）が cost-question-scope で判定して渡す（このファイルは画面からも読むので依存を持たない）
   if (e.kind === "estimate_declared" && facts.estimatePromisedUnfulfilled && opts.propertyInPlay === false) return null;
   if (e.kind === "estimate_declared" && facts.estimatePromisedUnfulfilled) return { action: "estimate_sheet", kind: "estimate" };
+  // 2026-09-17 竹内（慶次事例）「物件募集見つかったら送る形なので、物件ピックアップ（複数）と物件オススメ（1件）がセットされる形となる」:
+  //   「〇〇さんにオススメできるお部屋（の募集）を随時確認し、出次第お送りします」は「次第」が入るが、
+  //   果たす手は決まっている（物件を送る）ので対象にする。どちらで送るかはスタッフが決める＝2つ目に物件オススメを並べる。
+  //   実データ（365日・この型8件）: その後スタッフが送るのは物件資料（[画像]）4件・ピックアップ宣言1件で、確認結果の報告は0件
+  if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && e.detail?.watch === true) {
+    return { action: "property_send", kind: "pickup", alt: "property_recommendation" };
+  }
   if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && !/次第/.test(e.evidence ?? "")) return { action: "property_send", kind: "pickup" };
   if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled && opts.customerRequestedCheck
     && !/割引|交渉/.test(e.detail?.object ?? "")

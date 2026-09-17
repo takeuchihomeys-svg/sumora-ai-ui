@@ -60,6 +60,12 @@ export interface LedgerEntry {
     object?: string | null;
     /** confirmation_promised: 約束した文そのもの（カレンダーの【必ず】の行に「何を確認するか」を残す。2026-09-16 𝒮❦ 事例） */
     sentence?: string | null;
+    /**
+     * pickup_declared: 「お客様に合うお部屋の募集を随時確認して出次第お送りします」型（探し続ける宣言）。
+     * 2026-09-17 竹内（慶次事例）: この約束を果たすのは 物件ピックアップ（複数）か 物件オススメ（1件）。
+     * 「今ピックアップします」の宣言と違い「次第」が入るが、押す AIX は決まっているので対象にする
+     */
+    watch?: boolean;
     taskStatus?: string | null;
     /** meeting_place_sent: 案内した内覧の待ち合わせ（日付 M/D・時刻・場所）。AIX 待ち合わせ場所の本文・スタッフ本文から */
     appointment?: ViewingAppointment | null;
@@ -227,10 +233,34 @@ function confirmTopicSentence(sentences: string[], fallback: string | null | und
   const s = sentences.find((x) => CONFIRM_TOPIC_RULES.some((r) => r.re.test(x))) ?? sentences.find((x) => CONFIRM_PARTY_RE.test(x)) ?? fallback;
   return promiseSentenceText(s);
 }
-/** 文の中の確認の約束（ピックアップの宣言の文・条件付きの文・報告の文は除く） */
+// 2026-09-17 竹内（慶次事例）「なんでこれ物件確認したがセットされているのか。物件募集見つかったら送る形なので、
+//   物件ピックアップ（複数）と物件オススメ（1件）がセットされる形となる」:
+//   「〇〇さんにオススメできるお部屋（の募集・新着状況）を随時／日々／引き続き確認させて頂きます」は
+//   **物件を探し続ける宣言**であって、管理会社に何かを確認して報告する約束ではない。
+//   慶次 9/17 21:31「ガスコンロ希望のご条件も含めて、慶次さんにオススメできるお部屋随時募集確認させて頂きます！！」
+//   → 旧: confirmation_promised（object=設備。「ガスコンロ」から）が余分に付き、赤帯【必ず】が
+//      「設備の確認→ご連絡 →【確認した（条件・交渉）→設備】」、ブレインが AIX【物件確認した】になっていた。
+//   実データ（365日）: この型は8件で、その後スタッフが送るのは物件資料（[画像]）4件・ピックアップ宣言1件。
+//   確認結果の報告は0件＝AIX【物件確認した】は使われない。
+/** 確認の目的語が「お客様に合うお部屋」＝まだ無い物件を探す話（特定の物件・条件の確認ではない） */
+const WATCH_TARGET_RE = /(?:オススメ|おすすめ|お勧め)(?:出来る|できる)?[^\n。！!？?]{0,12}お部屋|(?:ご?条件に合(?:った|う)|ご希望[^\n。！!？?]{0,6}(?:条件|お部屋))[^\n。！!？?]{0,10}お部屋/;
+/** 探し続ける印（これが無ければ特定の物件の確認かもしれないので触らない） */
+const WATCH_MARKER_RE = /新着|随時|日々|引き続き|募集/;
+/**
+ * 「お客様に合うお部屋の募集を確認し続ける」宣言か（＝物件探し。確認の約束にしない）。
+ * 「Nicher'a 加美の募集状況確認させていただきます」「保証会社確認させて頂きます」
+ * 「こちらのお部屋の駐車場の空き状況確認させて頂きます」は目的語が違うので当たらない。
+ */
+export function isPropertyWatchDeclaration(sentence: string | null | undefined): boolean {
+  const s = sentence ?? '';
+  if (!WATCH_TARGET_RE.test(s) || !WATCH_MARKER_RE.test(s)) return false;
+  return /(?:確認|お調べ|チェック)/.test(s);
+}
+
+/** 文の中の確認の約束（ピックアップの宣言の文・物件を探し続ける宣言・条件付きの文・報告の文は除く） */
 function findConfirmPromiseSentence(sentences: string[]): { sentence: string; evidence: string } | null {
   for (const s of sentences) {
-    if (STAFF_PICKUP_DECL_RE.test(s) || CONDITIONAL_PROMISE_RE.test(s) || LEDGER_CONFIRM_REPORT_RE.test(s)) continue;
+    if (STAFF_PICKUP_DECL_RE.test(s) || isPropertyWatchDeclaration(s) || CONDITIONAL_PROMISE_RE.test(s) || LEDGER_CONFIRM_REPORT_RE.test(s)) continue;
     const m = s.match(STAFF_CONFIRM_DECL_RE) ?? s.match(BARE_CONFIRM_DECL_RE);
     if (m) return { sentence: s, evidence: m[0] };
   }
@@ -388,7 +418,18 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
     return base('confirmation_reported', 'done', ev, { object: confirmObjectOf(t) });
   }
   // 宣言（未来形）。ピックアップ宣言は確認約束より先（「ピックアップ出来次第お送り」を確認約束にしない）
-  if (STAFF_PICKUP_DECL_RE.test(t)) return base('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0], { sentence: promiseSentenceText(sentences.find((s) => STAFF_PICKUP_DECL_RE.test(s))) });
+  const watchSentence = sentences.find((s) => isPropertyWatchDeclaration(s));
+  if (STAFF_PICKUP_DECL_RE.test(t)) {
+    const pickupSentence = sentences.find((s) => STAFF_PICKUP_DECL_RE.test(s));
+    return base('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0],
+      { sentence: promiseSentenceText(pickupSentence), ...(watchSentence ? { watch: true } : {}) });
+  }
+  // 2026-09-17 竹内（慶次事例）: 「引き続き新着で〇〇さんにオススメできるお部屋確認させていただきます」だけの通も
+  //   物件を探し続ける宣言＝ピックアップの約束（管理会社への確認ではない）。STAFF_PICKUP_DECL_RE に当たらない形を拾う
+  if (watchSentence) {
+    return base('pickup_declared', 'promised', watchSentence.match(/(?:確認|お調べ|チェック)[^\n。！!？?]{0,12}/)?.[0] ?? '確認',
+      { sentence: promiseSentenceText(watchSentence), watch: true });
+  }
   if (STAFF_CONFIRM_DECL_RE.test(t)) {
     const declSentence = sentences.find((s) => STAFF_CONFIRM_DECL_RE.test(s)) ?? null;
     return base('confirmation_promised', 'promised', t.match(STAFF_CONFIRM_DECL_RE)![0], { object: confirmObjectOf(t), sentence: confirmTopicSentence(sentences, declSentence) });

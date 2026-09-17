@@ -2393,9 +2393,13 @@ ${history}`;
       customerAckAfter,
       propertyInPlay: estimatePropertyInPlay,
     });
+    // 2026-09-17 竹内（慶次事例）: 探し続ける約束（オススメできるお部屋を随時確認→出次第お送り）は
+    //   物件ピックアップ（複数）と物件オススメ（1件）の2つを並べる（どちらで送るかはスタッフが決める）
+    let promiseAltAction: string | null = null;
     if (promiseAix) {
       finalAix = promiseAix.action;
       decisionSource = `promise:${promiseAix.kind}`;
+      promiseAltAction = promiseAix.alt ?? null;
     }
     // 2026-09-12 竹内（Sさん事例）: スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて、まだ結果を報告していない
     //   （台帳の確認の約束が未履行）のに、LLM が 確認します（acknowledge_check）を選んだ → 物件確認した（結果の報告）に直す。
@@ -2856,7 +2860,8 @@ ${history}`;
       two_choice_mode: isTwoChoiceMode || undefined,
       reply_direction_label: replyDirectionLabel,
       // 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（画面のブレインのカードに並べて出す）。連絡待ちの時は物件ピックアップ＋物件オススメ
-      alt_actions: closedAckWait ? ["property_recommendation"] : undefined,
+      // 2026-09-17 慶次事例: 探し続ける約束の後も同じ2つ（物件ピックアップ＋物件オススメ）を並べる
+      alt_actions: closedAckWait ? ["property_recommendation"] : (promiseAltAction ? [promiseAltAction] : undefined),
       // Chrome拡張フィードバックループ: 検索フォーム自動入力用の構造化パラメータ（TODO(P2)対応）
       property_search_params: pc ? {
         area: pc.desired_area ?? null,
