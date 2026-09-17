@@ -12,6 +12,8 @@ import { canonOf } from "./validate-reply";
 import { jstDayStartMs } from "./jst-date"; // 2026-09-12 竹内方針D: JST の日付計算は jst-date に一本化
 import type { CustomerResponseKind, SubstanceKind } from "./reply-context"; // type-only（実行時の循環 import なし）
 import { isConditionFormMessage, isApplyGuideThinking } from "./reply-context"; // reply-context は greeting を import しない（循環なし）
+// 2026-09-17 竹内（Hina 事例）: 了承＋こちらが既に言ったことの後押しは「はい」（依存ゼロの純関数モジュール）
+import { resolveAckPush } from "./opener-ack-push";
 
 /** お客様が条件フォームを送ってくれた時の感謝の1文（竹内 2026-09-12・あや事例。スタッフ実送信の型） */
 export const CONDITION_FORM_THANKS = "ご条件お送り頂きありがとうございます😊！！";
@@ -189,6 +191,8 @@ export function resolveOpener(o: {
   customerSentConditionForm?: boolean;
   /** 直前のこちらの発言に申込でお部屋を抑える案内があり、お客様が検討・迷いで返した（reply-context.isApplyGuideThinking） */
   applyGuideThinking?: boolean;
+  /** 了承＋こちらが既に言ったことの後押しだけ（新しい依頼ではない）＝「はい」（2026-09-17 竹内・Hina 事例） */
+  ackPush?: boolean;
 }): Pick<GreetingDecision, "opener" | "openerAllowed" | "openerReason"> {
   const r = (opener: OpenerKind, openerAllowed: OpenerKind[], openerReason: string) => ({ opener, openerAllowed, openerReason });
   if (o.greetingKind === "first" || o.greetingKind === "late_apology") {
@@ -200,6 +204,12 @@ export function resolveOpener(o: {
   if (o.customerSentConditionForm) return r("none", ["none"], "お客様が条件フォームを送ってくれた → 開口語ではなく「ご条件お送り頂きありがとうございます😊！！」の感謝から");
   // 2026-09-15 竹内（みく事例）「申込誘導してからの返信なので、はいではなくて、かしこまりましたでお客さんの気持ちを受け入れる形」
   if (o.applyGuideThinking) return r("kashikomari", ["kashikomari"], "申込の案内の後の検討・迷い → 「かしこまりました」でお客様の気持ちを受け止める（竹内 みく事例）");
+  // 2026-09-17 竹内（Hina 事例）「この場合は はい が答えとして正しい。かしこまりましただと違和感でる」:
+  //   了承（承知しました）＋こちらが既に言ったことの後押し（「写真またお願いします」）は**新しい依頼ではない**ので受け止めの「はい」。
+  //   実データ（365日・了承語で始まり「お願いします」を含む発言のうち開口語つきの返信19件）: 新しい中身が無い12件は「はい」、
+  //   日時・追加の依頼・条件つきの7件は「かしこまりました」＝89%がこの線で分かれる（opener-ack-push.resolveAckPush）。
+  //   旧: この通は kind=other・substance=[statement] で「分類不能: LLM の開口語を尊重」に落ち、LLM が かしこまりました を書いていた
+  if (o.ackPush) return r("hai", ["hai", "none"], "了承＋こちらが既に言ったことの後押し（新しい依頼ではない）→ 受け止めの「はい」（実データ 12/19。竹内 Hina 事例）");
   const kinds = new Set(o.substanceKinds ?? []);
   const asksAction = kinds.has("request") || kinds.has("condition") || kinds.has("schedule") || kinds.has("decision");
   switch (o.customerKind) {
@@ -272,11 +282,19 @@ export function resolveGreeting(opts: {
   const lastStaffText = [...opts.recentMessages].reverse()
     .find((m) => m.sender === "staff" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test((m.text ?? "").trim()))?.text ?? "";
   const applyGuideThinking = isApplyGuideThinking(opts.customerKind, lastStaffText);
+  // 2026-09-17 竹内（Hina 事例）: 未返信のお客様の連投が「了承＋こちらが既に言ったことの後押し」か。
+  //   対象（写真・見積書…）がこちらの直近の発言にあるかまで見るので、直近のこちらの発言を渡す
+  const unrepliedCustomerText = opts.recentMessages.slice(lastStaffIdx + 1)
+    .filter((m) => m.sender === "customer").map((m) => m.text ?? "").join("\n").trim();
+  const recentStaffTexts = opts.recentMessages
+    .filter((m) => m.sender === "staff" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test((m.text ?? "").trim()))
+    .map((m) => m.text ?? "");
+  const ackPush = resolveAckPush(unrepliedCustomerText, recentStaffTexts).push;
 
   const mk = (kind: GreetingKind, openingLine: string, enforce: boolean, reason: string): GreetingDecision => {
     const op = resolveOpener({
       greetingKind: kind, customerKind: opts.customerKind, customerSecondary: opts.customerSecondary,
-      substanceKinds: opts.substanceKinds, isDeliverableReply: !!opts.isDeliverableReply, customerSentConditionForm, applyGuideThinking,
+      substanceKinds: opts.substanceKinds, isDeliverableReply: !!opts.isDeliverableReply, customerSentConditionForm, applyGuideThinking, ackPush,
     });
     const conditionFormThanks = customerSentConditionForm && kind !== "first" && kind !== "late_apology" && !opts.isDeliverableReply;
     return { kind, openingLine, opening: openingLine, nightPrefix, enforce, ...op, reason, audit, conditionFormThanks };
