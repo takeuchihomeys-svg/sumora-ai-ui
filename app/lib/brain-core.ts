@@ -2809,6 +2809,8 @@ ${history}`;
       ? (rawRdLabel.slice(0, 10) || ((): string => {
           // 2026-09-16 竹内（あや事例）: 検討して持ち帰った場面の返信は「ごゆっくりご検討ください＋出次第また送る」（実データ13件）
           if (twoChoiceVerdict.reason === "considering") return "検討見守り";
+          // 2026-09-17 竹内（慶次事例）: 謝って預けた場面の返信は「受け止め＋ピックアップの約束」（実送信「とんでもございません！！…お送りさせて頂きます」）
+          if (twoChoiceVerdict.reason === "apology_entrust") return "受け止め";
           if (customerIntentFinal === "question") return "条件説明";
           if (customerIntentFinal === "consultation") return "相場説明";
           if (customerIntentFinal === "negative") return "不安解消";

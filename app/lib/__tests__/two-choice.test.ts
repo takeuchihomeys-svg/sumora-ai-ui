@@ -93,5 +93,20 @@ it("「他のお部屋探し保留でも大丈夫ですか」（探すのを止�
   expect(v.reason).toBe("pause_search");
 });
 
+// ─── 謝って預けた場面（2026-09-17 竹内・慶次事例）───
+it("慶次: 「本当にご無理を言いまして申し訳ありません。よろしくお願い致します。」は2択（物件ピックアップか返信か）", () => {
+  const r = resolveTwoChoice({ ...base, customerText: "本当にご無理を言いまして申し訳ありません。\nよろしくお願い致します。" });
+  expect(r.two).toBe(true);
+  expect(r.reason).toBe("apology_entrust");
+  // 条件の変更が一緒に立っていても2択にする（他のお部屋の依頼と同じ扱い）
+  expect(resolveTwoChoice({ ...base, customerText: "礼金がネックですみません。よろしくお願い致します。", conditionChangeType: "budget" }).two).toBe(true);
+});
+it("謝罪だけ・お願いだけでは2択にしない（両方そろって預けた形の時だけ）", () => {
+  expect(resolveTwoChoice({ ...base, customerText: "ありがとうございます！よろしくお願い致します。" }).reason).toBe("no_signal");
+  expect(resolveTwoChoice({ ...base, customerText: "遅くなってすみません。" }).reason).toBe("no_signal");
+  // 内覧・申込が決まっている時は従来どおり出さない
+  expect(resolveTwoChoice({ ...base, customerText: "ご無理を言って申し訳ありません。よろしくお願いします。", finalAix: "viewing_invite" }).two).toBe(false);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
