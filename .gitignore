@@ -49,3 +49,4 @@ next-env.d.ts
 
 .env*
 scripts/_tmp-*.ts
+scratchpad/
