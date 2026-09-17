@@ -26,6 +26,9 @@ import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
 import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, vacatingViewableSentence } from "@/app/lib/vacating-notice";
 // 2026-09-17 竹内（物件オススメ・現状伝えて1件）: 探した現状を🌟の前に1文で伝える
 import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensureSituationOpening } from "@/app/lib/recommendation-situation";
+// 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない
+import { stripPropertyNameFromPickupLine, PICKUP_LINE_NOTE } from "@/app/lib/pickup-line";
+import { extractPropertyLabels } from "@/app/lib/action-ledger";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
@@ -1604,6 +1607,20 @@ async function handleAction(request: NextRequest): Promise<Response> {
           sendCleaned = fixed;
         }
       }
+      // 2026-09-17 竹内（✩ さん事例）「生成された文で何故かへんな物件名が入ってしまった」:
+      //   ピックアップ行に入れてよいのはエリア・お客様名・条件だけ（実送信363件で号室0件・英大文字2語の物件名0件）。
+      //   条件の材料が空の時に LLM が会話の物件名（見積書を送った物件）を拾ってエリアの列挙に混ぜていた
+      if (currentAction === "property_send") {
+        const convNames = extractPropertyLabels(
+          (Array.isArray(body.recent_messages) ? body.recent_messages as Array<{ text?: string | null }> : [])
+            .map((m) => m.text ?? "").join("\n"),
+        );
+        const picked = stripPropertyNameFromPickupLine(sendCleaned, convNames);
+        if (picked.removed.length > 0) {
+          console.log(JSON.stringify({ tag: "aix:pickup-line-property-name", action: currentAction, conversationId, removed: picked.removed }));
+          sendCleaned = picked.text;
+        }
+      }
       // 2026-09-17 竹内（AIX 物件確認した）「変に割引できる金額少ないや、費用かかる等いれないし、退去予定ともっと
       //   分かりやすくいれて、入居ちゃんと出来るようにする」: 退去予定のお部屋の通は「いつから見られるか」を伝える通。
       //   実データ365日・退去予定を含む実送信277件のうち、費用のマイナスの説明（割引出来る金額が少ない・初期費用は
@@ -2544,6 +2561,12 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           const s = stripViewingInviteLines(psmText);
           if (s.removed > 0) { psmText = s.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, inviteLinesRemoved: s.removed })); }
         }
+        // 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない（会話を合わせる経路も同じ出口を通す）
+        const psmPicked = stripPropertyNameFromPickupLine(psmText, extractPropertyLabels(recentHistory));
+        if (psmPicked.removed.length > 0) {
+          psmText = psmPicked.text;
+          console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, pickupPropertyNameRemoved: psmPicked.removed }));
+        }
         // 数字の照合: 条件・会話・退去予定・キーワードに無い金額・帖・年・件数は〇〇（送信前チェックで止まる）
         const psmNotes = [conditionsInfo ?? "", recentHistory, vacatingInfo ?? "", sendKeyword ?? "", calendarData ?? "", expandedCondGuidanceLines.join("\n"), newArrivalCountStr].join("\n");
         const masked = maskNumbersNotInNotes(psmText, psmNotes);
@@ -2775,8 +2798,12 @@ ${aixPropertySendRules}
 {"intro":"挨拶行（1行のみ）","pickup":"ピックアップ行（条件説明・1行）","vacating":"退去予定文（複数あれば改行で連結・なければ空文字）","invite":"内覧誘導文（なければ空文字）","calendar":"内覧日時（⑤ルールに従い通常は空文字・過去ルールで日時記載傾向あり時のみ「直近ですと〜ご案内可能です！！」）","closing":"お手隙の際にご査収ください😌！！"}`;
 
       const userParts: string[] = [`${name}への物件ピックアップ送付メッセージを作成してください。`];
+      // 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない。
+      //   条件の材料が空の時ほど LLM が会話の物件名で埋めるので、条件の前に置く
+      userParts.push(`\n\n${PICKUP_LINE_NOTE}`);
       if (keywordRule) userParts.push(keywordRule); // 最優先ブロック（conditionsInfoより前）
       if (conditionsInfo) userParts.push(`\n\n【お客様の希望条件（冒頭に自然に組み込むこと）】\n${conditionsInfo}`);
+      else userParts.push("\n\n【お客様の希望条件】材料が無い（会話から読み取れるエリアだけを書き、条件・物件名は作らない）");
       if (calendarData) userParts.push(`\n\n【直近3日の内覧可能時間帯（calendar_events+daily_tasks合算済み・この情報をそのまま使うこと）】\n${calendarData}`);
       if (vacatingInfo) userParts.push(`\n\n【退去予定・案内不可の物件情報（必ず全て伝えること）】\n${vacatingInfo}`);
       if (expandedCondNote) userParts.push(expandedCondNote);
