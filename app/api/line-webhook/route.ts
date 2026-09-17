@@ -1882,7 +1882,9 @@ async function handleFileMessageSave(
 }
 
 // ── LINE Content API からファイル本体を取得して Storage に保存（after()で非同期実行）──
-//   画像と同じ line-images バケットの files/ 配下に置く（バケットの公開設定・権限を使い回す）
+//   専用バケット line-files に置く。line-images は allowed_mime_types が画像のみ・5MB 上限で
+//   PDF を弾く（本番検証で "mime type application/pdf is not supported" が出た）
+const LINE_FILE_BUCKET = "line-files";
 async function fetchAndUploadLineFile(
   lineMessageId: string,
   msgId: string,
@@ -1905,17 +1907,17 @@ async function fetchAndUploadLineFile(
     const extFromName = (fileName ?? "").match(/\.([A-Za-z0-9]{1,8})$/)?.[1]?.toLowerCase();
     const ext = extFromName || (contentType.includes("pdf") ? "pdf" : "bin");
     const arrayBuf = await contentRes.arrayBuffer();
-    const storagePath = `files/${lineMessageId}.${ext}`;
+    const storagePath = `${lineMessageId}.${ext}`;
     const uploadType = ext === "pdf" ? "application/pdf" : contentType;
 
     const { error: upErr } = await db.storage
-      .from("line-images")
+      .from(LINE_FILE_BUCKET)
       .upload(storagePath, new Blob([arrayBuf], { type: uploadType }), { contentType: uploadType, upsert: true });
     if (upErr) {
-      console.error("[line-webhook] Storage upload失敗(file):", upErr.message, "msgId:", lineMessageId);
+      console.error("[line-webhook] Storage upload失敗(file):", upErr.message, "msgId:", lineMessageId, "type:", uploadType);
       return;
     }
-    const { data: urlData } = db.storage.from("line-images").getPublicUrl(storagePath);
+    const { data: urlData } = db.storage.from(LINE_FILE_BUCKET).getPublicUrl(storagePath);
     const { error: updateErr } = await db
       .from("messages")
       .update({ file_url: urlData.publicUrl })
