@@ -137,6 +137,20 @@ function hasFullNotice(src: string, notice: string): boolean {
 }
 
 /**
+ * 検査層: 最終チェックの指摘（evidence）が、こちらの決まった説明の中の文か。
+ * 9/17 再々検証: 出口で足した決まった文を最終チェックが指摘し、修正ループ（final-check:revision）が
+ * 「SUUMOやホームズは比較的オトリ物件が少ない…」に書き換えていた（出口の後に LLM が走る経路）。
+ * 決まった文はスタッフの実送信そのものなので、指摘の対象から外す（AIX_BOUNDARY_MEETING の免除と同じ型）
+ */
+export function isPortalNoticeSentence(evidence: string, verdict: PortalNoticeVerdict): boolean {
+  if (verdict.kind === "none") return false;
+  const ev = normalizeForPresence(evidence ?? "");
+  if (ev.length < 6) return false;
+  const notice = normalizeForPresence(verdict.kind === "which_site" ? WHICH_SITE_ANSWER : buildOtoriExplain(verdict.portalLabel));
+  return notice.includes(ev);
+}
+
+/**
  * 指示層: この場面では LLM にポータルの説明を書かせない（出口で決まった文に置き換えるので、書かれると矛盾の元になる）。
  * 指示だけでは落ちるので出口（ensurePortalNotice）も必ず通す
  */

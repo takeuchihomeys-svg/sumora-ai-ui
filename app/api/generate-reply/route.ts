@@ -5185,6 +5185,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   finalCheck.issues = finalCheck.issues.filter((i) => !(i.code === "FABRICATED_NAME" && fixedNames.some((n) => i.evidence.includes(n))));
                   finalCheck.ok = !finalCheck.issues.some((i) => i.severity === "block");
                 }
+                // 2026-09-17 竹内（YUYA 事例）: ポータルの決まった説明も修正ループ（接地修正・再生成）の後に確定的に掛け直す。
+                //   出口（validate）で足した後に final-check:revision が走り、「比較的オトリ物件が少ない…」と書き換えられていた
+                const portalFixed = ensurePortalNotice(draftBody, portalVerdict);
+                if (portalFixed !== draftBody) {
+                  console.info("[portal-notice] 修正ループ後に再適用", JSON.stringify({ conversationId, kind: portalVerdict.kind }));
+                  draftBody = portalFixed;
+                }
               } catch (checkErr) {
                 // A-2: final-check の例外時も決定論チェック（純関数・LLM不要）だけは必ず実行する（fail-open with deterministic）
                 console.error("[generate-reply] final-check失敗（fail-open・決定論チェックのみで続行）:", checkErr);

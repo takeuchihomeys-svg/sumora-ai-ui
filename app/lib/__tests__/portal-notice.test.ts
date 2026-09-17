@@ -1,6 +1,6 @@
 // 2026-09-16 竹内（YUYA 事例）: SUUMO 以外のポータルはオトリ広告があるので、聞かれたらこの説明を出す
 // 実行: npx tsx app/lib/__tests__/portal-notice.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { resolvePortalQuestion, detectCustomerPortals, ensurePortalNotice, buildOtoriExplain, buildPortalPromptNote, WHICH_SITE_ANSWER } from "../portal-notice";
+import { resolvePortalQuestion, detectCustomerPortals, ensurePortalNotice, buildOtoriExplain, buildPortalPromptNote, isPortalNoticeSentence, WHICH_SITE_ANSWER } from "../portal-notice";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -97,6 +97,12 @@ it("再検証（9/17）で残った2つの抜け: 「オトリ」の語が無い
   // 絵文字・記号が後段で落ちていても、全行あれば二重に足さない
   const stripped = `本文\n\n${WHICH_SITE_ANSWER.replace(/😊/g, "")}`;
   expect(ensurePortalNotice(stripped, v)).toBe(stripped);
+  // 検査層: 決まった文の中の文を最終チェックが指摘しても免除。LLM の文や短すぎる evidence は免除しない
+  expect(isPortalNoticeSentence("SUUMOが最もオトリ物件が少ないので、SUUMOでお部屋を見て頂くを推奨させて頂きます😊！！", v)).toBe(true);
+  expect(isPortalNoticeSentence("それ以外のポータルサイトではオトリ物件や、募集終了しているお部屋がそのまま掲載されている可能性が高いです", v)).toBe(true);
+  expect(isPortalNoticeSentence("SUUMOやホームズは比較的オトリ物件が少ないポータルサイトとなっております", v)).toBe(false);
+  expect(isPortalNoticeSentence("SUUMO", v)).toBe(false);
+  expect(isPortalNoticeSentence("SUUMOが最もオトリ物件が少ない", { kind: "none", portalLabel: null, reason: "x" })).toBe(false);
   // 指示層の文はこの場面だけ
   expect(buildPortalPromptNote(v)).toContain("本文には書かないでください");
   expect(buildPortalPromptNote({ kind: "none", portalLabel: null, reason: "x" })).toBe("");

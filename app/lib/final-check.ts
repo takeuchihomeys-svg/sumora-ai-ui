@@ -30,6 +30,8 @@ import { moveOutEvidenceText, isMoveOutReleased, moveOutRoomMismatch, type MoveO
 import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, SEARCH_CONFIRM_RE, type ConfirmationContextVerdict } from "./confirmation-context";
 // 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の道順の質問（住所の再掲は AIX の越権ではない）
 import { isViewingAccessQuestion } from "./viewing-access";
+// 2026-09-17 竹内（YUYA 事例）: ポータルの決まった説明（スタッフの実送信そのまま）は指摘の対象から外す
+import { resolvePortalQuestion, isPortalNoticeSentence } from "./portal-notice";
 import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, type GreetingKind, type GreetingDecisionLite } from "./greeting";
 import {
   PHASE_PROHIBITIONS,
@@ -2524,6 +2526,23 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
     if (lgA.facts.viewingAppointment && isViewingAccessQuestion(ctx.lastCustomerMessage, true)) {
       for (let i = issues.length - 1; i >= 0; i--) {
         if (issues[i].code === "AIX_BOUNDARY_MEETING") issues.splice(i, 1);
+      }
+    }
+  }
+
+  // ── 2026-09-17 竹内（YUYA 事例）: ポータル（SUUMO 以外はオトリ広告）の決まった説明はスタッフの実送信そのもの ──
+  //    出口で足した決まった文を LLM の検査が指摘し、修正ループが「比較的オトリ物件が少ない…」と弱めて書き換えていた。
+  //    場面（resolvePortalQuestion）が立っている時、evidence が決まった文の中の文なら指摘を落とす（コードは問わない）
+  if (ctx.lastCustomerMessage && issues.length > 0) {
+    const msgs = ctx.recentMessages ?? [];
+    const lastStaff = [...msgs].reverse().find((m) => m.sender === "staff")?.text ?? null;
+    const pv = resolvePortalQuestion({ customerText: ctx.lastCustomerMessage, messages: msgs, lastStaffText: lastStaff });
+    if (pv.kind !== "none") {
+      for (let i = issues.length - 1; i >= 0; i--) {
+        if (isPortalNoticeSentence(issues[i].evidence, pv)) {
+          console.info("[portal-notice] 最終チェックの指摘を免除", JSON.stringify({ code: issues[i].code, evidence: issues[i].evidence.slice(0, 40) }));
+          issues.splice(i, 1);
+        }
       }
     }
   }
