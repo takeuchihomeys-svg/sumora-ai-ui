@@ -3135,6 +3135,33 @@ CREATE TABLE IF NOT EXISTS guarantor_companies (
 );
 ALTER TABLE guarantor_companies DISABLE ROW LEVEL SECURITY;
 
+-- ── llm_warm_prefixes: 返信生成が実際に送ったプロンプトキャッシュの prefix（2026-09-17 竹内・返信生成の keep-warm）──
+--   /api/generate-reply の本体（Sonnet 5）は cache_control（1h）の hit 93% だが、62〜643 分空くと失効して全書き直し（≈$0.7・週 ≈$22）。
+--   Anthropic のキャッシュは読むたびに TTL が延びるので、generate-reply が送った prefix（system 全ブロック＋human の cache_control 付き2ブロック・
+--   dynamicBlock は含めない）をそのまま残し（app/lib/reply-warm-prefix.ts）、cron（/api/cron/keep-warm・10分毎）が
+--   「直近5時間に使われ・2回以上使われ・40分以上読んでいない」行を最大4件、同じ ChatAnthropic の設定で読み直す（1回 ≈$0.03）。
+--   hash は model・型・text・cache_control を含む JSON の FNV（64bit 相当）。use_count / last_used_at は実リクエストだけが進める（読み直しは last_warmed_at / warm_count）
+--   retired_at: 読み直しが丸ごと冷えていた（cache_read 0・cache_write >0＝失効か、プロンプトが変わって死んだ行）時刻。last_used_at がこれより後になるまで候補から外す
+--   sys0_hash: system[0]（priorityOrderNote+GENERATION_SYSTEM）の text のハッシュ。最新の行と違う行（コードのデプロイで死んだ行）は候補から外す
+CREATE TABLE IF NOT EXISTS llm_warm_prefixes (
+  hash TEXT PRIMARY KEY,
+  model TEXT NOT NULL,
+  system_blocks JSONB NOT NULL,
+  human_blocks JSONB NOT NULL,
+  chars INT NOT NULL DEFAULT 0,
+  use_count INT NOT NULL DEFAULT 1,
+  first_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_warmed_at TIMESTAMPTZ,
+  warm_count INT NOT NULL DEFAULT 0,
+  retired_at TIMESTAMPTZ,
+  sys0_hash TEXT
+);
+ALTER TABLE llm_warm_prefixes ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
+ALTER TABLE llm_warm_prefixes ADD COLUMN IF NOT EXISTS sys0_hash TEXT;
+CREATE INDEX IF NOT EXISTS idx_llm_warm_prefixes_last_used ON llm_warm_prefixes(last_used_at DESC);
+ALTER TABLE llm_warm_prefixes DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

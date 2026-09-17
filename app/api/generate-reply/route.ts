@@ -3,6 +3,9 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
+// 2026-09-17 竹内（返信生成の keep-warm）: 生成モデルの設定は1か所（cron/keep-warm と共有）。実際に送った prefix を記録して cron が読み直す
+import { createGenerationModel } from "@/app/lib/reply-generation-model";
+import { extractWarmPrefix, recordWarmPrefix } from "@/app/lib/reply-warm-prefix";
 import { inferTpoHint } from "@/app/lib/tpo-hint";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import {
@@ -161,23 +164,8 @@ function createAnalysisModel() {
 }
 
 // 生成: Sonnet — 品質重視
-// - Sonnet 5 は temperature 等の非デフォルトサンプリングパラメータを受け付けないため渡さない
-//   （旧 emotionTemperature 可変化は Sonnet 5 移行後デッドパスだったため Step1 廃止と同時に削除済み）
-// - Sonnet 5 は thinking がデフォルト有効（adaptive）のため明示的に無効化する
-//   （有効だとストリーミングchunkのcontentがブロック配列になりテキスト取りこぼし・
-//    maxTokens=1500 を thinking が食い潰して本文が途切れるリスクがあるため）
-function createGenerationModel() {
-  return new ChatAnthropic({
-    model: "claude-sonnet-5",
-    maxTokens: 1500,
-    thinking: { type: "disabled" },
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
-    // A-14: SDK 既定の再試行（2回）× 45s で全体 deadline を食い潰すため 1 回に制限
-    maxRetries: 1,
-    clientOptions: { timeout: 45_000 },
-    betas: ["prompt-caching-2024-07-31"],
-  });
-}
+// 2026-09-17 竹内（返信生成の keep-warm）: createGenerationModel は app/lib/reply-generation-model.ts に移した
+//   （cron の keep-warm が同じ設定の ChatAnthropic で同じ prefix を読み直すため。設定は1か所・ドリフト禁止）。設定・挙動は従来と同じ
 
 // テンプレート最適化モード（templateText指定時）の生成モデル: Claude Sonnet 5
 // - Sonnet 5 は temperature 等のサンプリングパラメータ（非デフォルト値）を受け付けないため渡さない
@@ -4676,6 +4664,22 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       }
     }
 
+    // 2026-09-17 竹内（返信生成の keep-warm）: 実際に送る prefix（cache_control 付きのブロックまで・dynamicBlock は含めない）をそのまま取り出し、
+    //   cron（/api/cron/keep-warm）が 1h TTL の失効前に同じ経路で読み直す（7日実測: 62〜643分空いた後の全書き直し ≈$0.7 が3日で14回）。
+    //   どの変種（quickPatterns・state・送付済み物件数）が使われるかは予測できないので推測で組み立てず「送った物」を残す。
+    //   取り出しはここ（reply_mode ゲートの後・stream の直前）の1か所。記録（recordWarmPrefix）は consumeGeneration が usage（message_start）を受け取った時に
+    //   after で1回だけ登録する＝Anthropic に届かなかった（ゲートで中止・529・timeout）prefix を「使われた」と数えない（数えると cron の読み直しが
+    //   冷えた prefix への全書き込み ≈$0.7 になる）。失敗しても生成を止めない。テンプレ最適化モードは別モデル（鍵が違う）なので記録しない
+    let warmPrefix: ReturnType<typeof extractWarmPrefix> = null;
+    if (!isTemplateOptimize) {
+      try {
+        warmPrefix = extractWarmPrefix(messages);
+      } catch (e) {
+        console.warn("[generate-reply] warm prefix extract skipped:", e instanceof Error ? e.message : e);
+      }
+    }
+    let warmPrefixRecorded = false;
+
     // テンプレート最適化モードは maxTokens 広めの専用モデル（通常生成は createGenerationModel）
     const genStream = (isTemplateOptimize
       ? createTemplateOptimizeModel()
@@ -4875,6 +4879,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     input: rawUsage.input_tokens ?? 0,
                   };
                 }
+              }
+              // 2026-09-17 竹内（返信生成の keep-warm）: usage が届いた＝Anthropic がこの prefix を読んだ／書いた（キャッシュに実在する）ので、ここで初めて記録する。
+              //   gen1・gen2 で同じ prefix なので1回だけ。after は brain_decision_logs.body_block_code の記録と同じくストリームの中から登録できる
+              if (cacheUsage && warmPrefix && !warmPrefixRecorded) {
+                warmPrefixRecorded = true;
+                const wp = warmPrefix;
+                try { after(() => recordWarmPrefix(wp)); } catch (e) { console.warn("[generate-reply] warm prefix record skipped:", e instanceof Error ? e.message : e); }
               }
               // プロンプトキャッシュ効果の観測ログ（read>0 = キャッシュHIT / write>0 = キャッシュ書込 / どちらも0 = 無効）
               if (cacheUsage) {
