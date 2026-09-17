@@ -466,7 +466,12 @@ export async function POST(req: NextRequest) {
     // 画像メッセージ検出: より広い条件で判定
     const msgText = String(record.text ?? "");
     const msgType = String(record.message_type ?? record.type ?? "");
-    const isImageMsg = !imageUrl && record.sender === "customer" && (
+    // 2026-09-17 竹内（友哉事例）: ファイル（PDF 等）を画像として扱わない。
+    //   旧: 本文が空の顧客メッセージは無条件で画像とみなしていたので、file レコードが来ると
+    //   PDF を line-images（画像だけ許可のバケット）に上げようとして必ず失敗していた。
+    //   LINE の file は line-webhook が受け持つ（handleFileMessageSave）
+    const isFileMsg = msgType === "file" || msgText.startsWith("[ファイル]");
+    const isImageMsg = !imageUrl && record.sender === "customer" && !isFileMsg && (
       msgText === "[画像]" ||
       msgText === "[image]" ||
       msgText === "" ||
