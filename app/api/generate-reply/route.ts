@@ -59,6 +59,8 @@ import {
 import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 import { findNearDuplicateSent } from "@/app/lib/closed-ack";
+// 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きます」を落とす／この会話で既に送った文を繰り返さない
+import { stripPointlessGuidance, recentUsedSentences, findRepeatedSentences, buildAvoidRepeatNote } from "@/app/lib/reply-phrasing";
 import { buildRelativeDayNote, buildConversationClockNote } from "@/app/lib/relative-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
@@ -3458,6 +3460,13 @@ export async function POST(req: NextRequest) {
     //   「今の家から野田阪神までバス出てるから…」の『阪神』が路線名（AREA_SUFFIX_RE）、『まで』が条件語（CONDITION_MARKER_RE）に当たり、
     //   疑問符が無いため hasRequest=false → changeRequest=true → 往復文脈が condition_change に化けていた。
     //   その結果「新条件を復唱した再度ピックアップ宣言がありません」「見つかるまで全力サポートを追加」という場面違いの指摘が出ていた
+    // 2026-09-17 竹内（あや事例）「最後の文は前にも使ってるので、出来る限り全く同じ文を言わない（コピペと思われてしまう為）」:
+    //   この会話で最近こちらが送った文（相槌・挨拶・定型の締めは除く）を材料に渡し、同じ文を繰り返させない。
+    //   材料だけでは落ちるので、出口の後に検査（findRepeatedSentences）でも見る
+    const usedSentences = recentUsedSentences(
+      recentMessages.filter((m) => m.sender === "staff" && !!m.text && !/^\s*\[(?:画像|動画|スタンプ|ファイル)\]\s*$/.test(m.text)).map((m) => m.text as string)
+    );
+    if (usedSentences.length > 0) console.info("[reply-phrasing] 既に使った言い回し", JSON.stringify({ conversationId, count: usedSentences.length, head: usedSentences[0]?.slice(0, 30) }));
     // 2026-09-16 竹内（YUYA 事例）: ポータル（SUUMO 以外はオトリ広告がある）について聞かれた場面か
     const portalVerdict = resolvePortalQuestion({
       customerText: intentMessage,
@@ -4615,7 +4624,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
       // 2026-09-17 YUYA 事例: ポータルの場面では LLM にポータルの説明を書かせない（決まった文を出口で足す）
-      tpoGuidanceNote + relativeDayNote + conversationClockNote + buildPortalPromptNote(portalVerdict), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
+      // 2026-09-17 あや事例: この会話で既に送った言い回しを渡して同じ文を繰り返させない（コピペに見える）
+      tpoGuidanceNote + relativeDayNote + conversationClockNote + buildPortalPromptNote(portalVerdict) + buildAvoidRepeatNote(usedSentences), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）
@@ -4813,7 +4823,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               //   ポータルの掲載について聞かれた時の説明はスタッフの実送信そのままなので、LLM に書かせず決定論で足す
               const withPortal = ensurePortalNotice(deferralStripped, portalVerdict);
               if (withPortal !== deferralStripped) console.info("[portal-notice]", JSON.stringify({ conversationId, kind: portalVerdict.kind, portal: portalVerdict.portalLabel }));
-              return { cleaned: withPortal, issues: vr.issues };
+              // 2026-09-17 竹内（あや事例）「ご案内させて頂きますとは、意味がわからない文なので、いれない。無理やり入れない」:
+              //   案内する対象が無いまま「ご案内させて頂きますので、」が締めの文に混ざったら、その節だけ落とす（app/lib/reply-phrasing.ts）
+              const guidanceFixed = stripPointlessGuidance(withPortal);
+              if (guidanceFixed !== withPortal) console.info("[reply-phrasing] 対象の無いご案内を削除", JSON.stringify({ conversationId }));
+              return { cleaned: guidanceFixed, issues: vr.issues };
             };
             /** 行動台帳の決定論自動修正（gen1・gen2 共通。名前不明時は呼びかけごと省く＝「〇〇さん」を本文に書き込まない） */
             const applyLedgerFixToDraft = (body: string): string => {
@@ -5203,6 +5217,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   console.info("[portal-notice] 修正ループ後に再適用", JSON.stringify({ conversationId, kind: portalVerdict.kind }));
                   draftBody = portalFixed;
                 }
+                // 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きますので、」も修正ループの後に掛け直す
+                //   （最終チェックの「WE DO を入れる」指摘で再生成が戻すことがあるため。ポータルと同じ位置・同じ理由）
+                const guidanceFixedFinal = stripPointlessGuidance(draftBody);
+                if (guidanceFixedFinal !== draftBody) {
+                  console.info("[reply-phrasing] 修正ループ後に対象の無いご案内を削除", JSON.stringify({ conversationId }));
+                  draftBody = guidanceFixedFinal;
+                }
               } catch (checkErr) {
                 // A-2: final-check の例外時も決定論チェック（純関数・LLM不要）だけは必ず実行する（fail-open with deterministic）
                 console.error("[generate-reply] final-check失敗（fail-open・決定論チェックのみで続行）:", checkErr);
@@ -5420,6 +5441,21 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 });
                 finalCheck.ok = false;
                 if (enforceReplyModeGate) duplicateOfSentSuppressed = true;
+              }
+              // 2026-09-17 竹内（あや事例）「出来る限り全く同じ文を言わない（コピペと思われてしまう為）」:
+              //   全文は違っても**締めの1文だけ**が既出と同じ場面（あや: 「ごゆっくりご検討頂けますと幸いです！！」を3回）を出す。
+              //   送信は止めない（warning）＝材料で防ぎ切れなかった分をスタッフに見せて直してもらう
+              if (!dupOfSent.dup) {
+                const repeated = findRepeatedSentences(finalDraftText, usedSentences);
+                if (repeated.length > 0) {
+                  console.log(JSON.stringify({ tag: "draft:repeated-sentence", conversationId, count: repeated.length, score: repeated[0].score, head: repeated[0].sentence.slice(0, 40) }));
+                  finalCheck.issues.push({
+                    pass: "meta", severity: "warning", code: "REPEATED_SENTENCE",
+                    message: `この会話で既に送った文とほぼ同じ文が${repeated.length}つあります（コピペに見えるので言い方を変えてください）`,
+                    evidence: repeated[0].sentence.slice(0, 60),
+                    suggestion: `「${repeated[0].matched.slice(0, 40)}」は既に送っています。同じ用件でも別の言い回しにする`,
+                  });
+                }
               }
             }
             // 送信時の再利用判定キー: スタッフのテキストエリアに入る最終形（trim後）のハッシュに更新する
