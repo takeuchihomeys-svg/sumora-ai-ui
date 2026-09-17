@@ -22,7 +22,7 @@ import { fetchPromptRules, fetchPromptRulesSplit } from "@/app/lib/prompt-rules"
 import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
-import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
+import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
 import { buildConversationClockNote, fixStaleRecentReference, absolutizeRelativeDays, jstDayLabel } from "@/app/lib/relative-date";
@@ -120,8 +120,21 @@ type PropFacilityData = {
   petCondition: string | null;
   internet: string | null;
   internetDetail: string | null;
+  // 2026-09-17 竹内（YUYA 事例）: 保証会社は「名前＋種類」で1つの材料（画面では見積書の下の欄）。
+  //   種類は GuarantorType（independent/licc/credit/unknown）。旧クライアントの日本語（独立系・信用系）も読む
+  guarantorName?: string | null;
   guarantorType: string | null;
 };
+/** 物件ごとの保証会社（名前＋種類）を取り出す。種類が無ければ会社名から決める（画面と同じ resolveGuarantor） */
+function guarantorPropertyOf(name: string, f: PropFacilityData | undefined | null): GuarantorProperty | null {
+  const company = (f?.guarantorName ?? "").trim();
+  if (!company) return null;
+  const raw = (f?.guarantorType ?? "").trim();
+  // 旧クライアント（設備情報の「独立系／信用系」チップ）の日本語も受ける
+  const legacy: Record<string, GuarantorType> = { "独立系": "independent", "信用系": "licc", "LICC系": "licc", "信販系": "credit", "不明": "unknown" };
+  const type: GuarantorType = isGuarantorType(raw) ? raw : (legacy[raw] ?? resolveGuarantor(company).type);
+  return { name: (name ?? "").trim(), company, type };
+}
 function buildFacilityLines(f: PropFacilityData): string[] {
   const lines: string[] = [];
   if (f.parkingAvail === 'あり') {
@@ -152,8 +165,8 @@ function buildFacilityLines(f: PropFacilityData): string[] {
   } else if (f.internet === 'なし') {
     lines.push('インターネット：なし');
   }
-  if (f.guarantorType === '独立系') lines.push('保証会社：独立系（審査が通りやすいです！！）');
-  else if (f.guarantorType === '信用系') lines.push('保証会社：信用系');
+  // 2026-09-17 竹内（YUYA 事例）: 保証会社は設備の1行ではなく、御見積書の直後の説明文（buildGuarantorCheckNote）で出す。
+  //   同じ事を2か所に書かない（旧: ここに「保証会社：独立系（審査が通りやすいです！！）」の行があった）
   return lines;
 }
 
@@ -4694,21 +4707,25 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const facilityText = propFacilitiesData?.[0] ? buildFacilityLines(propFacilitiesData[0]).map(l => `・${l}`).join("\n") : "";
           const pName = p.name;
           const estimate1 = hasAnyEstimate ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
+          // 2026-09-17 竹内（YUYA 事例）: 画面の「見積書の下」に入れた保証会社名から説明を1行足す（実送信も御見積書の直後）。
+          //   文は種類ごとにスタッフの実送信そのまま（app/lib/guarantor-companies.ts）。入力が無ければ空＝何も足さない
+          const guarantorNote1 = buildGuarantorCheckNote([guarantorPropertyOf(p.name, propFacilitiesData?.[0])].filter((x): x is GuarantorProperty => !!x));
+          const guarantorSection1 = guarantorNote1 ? `\n\n${guarantorNote1}` : "";
           const showVI1 = !!(show_viewing_invite as boolean | undefined);
           const showAppInvite1 = !!(body.check_application_invite as boolean | undefined);
           const greeting1 = greetingPhrase; // 挨拶時間ルール共通化（#19）
           if (p.status === "vacating") {
             const vacLine = p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！";
             const facSection = facilityText ? `\n\n${facilityText}` : "";
-            message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}${facSection}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
+            message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}${guarantorSection1}${facSection}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
           } else if (showAppInvite1) {
             const estimateApp = hasAnyEstimate ? "\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！" : "";
             const facSection = facilityText ? `\n\n${facilityText}` : "";
-            message_text = `${pName}募集中となります！！\n現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateApp}${facSection}\n\n※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`;
+            message_text = `${pName}募集中となります！！\n現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateApp}${guarantorSection1}${facSection}\n\n※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`;
           } else {
             const inviteText = showVI1 ? `\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！` : "";
             const facSection = facilityText ? `\n\n${facilityText}` : "";
-            message_text = `${pName}現在募集中となります！！${estimate1}${facSection}${inviteText}`;
+            message_text = `${pName}現在募集中となります！！${estimate1}${guarantorSection1}${facSection}${inviteText}`;
           }
           // greeting1 を先頭に連結（1件モードで挨拶が抜けていたバグ修正）
           // 送られた物件数指定時: ケース1=「確認させていただきました」/ ケース2=「物件の中で」ヘッダー + 他N件募集終了
@@ -4743,6 +4760,12 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const estimateSection = hasAnyEstimate
             ? "\n最大限割引しました初期費用御見積書同封させて頂きました。\nお手隙の際にご査収ください！！"
             : "";
+          // 2026-09-17 竹内（YUYA 事例）: 保証会社の説明（御見積書の直後）。全部同じ会社なら「こちら2部屋とも〜」、
+          //   分かれていれば物件名を頭に付けて会社ごとに1行（app/lib/guarantor-companies.ts・入力が無ければ空）
+          const guarantorNoteMulti = buildGuarantorCheckNote(
+            propList.map((p, pi) => guarantorPropertyOf(p.name || fallbackNames[pi] || "", propFacilitiesData?.[pi])).filter((x): x is GuarantorProperty => !!x)
+          );
+          const guarantorSectionMulti = guarantorNoteMulti ? `\n\n${guarantorNoteMulti}` : "";
           const toureableList = propList.map((p, pi) => ({ ...p, pi })).filter(p => p.status === "available" || p.status === "alternative");
           const showViewingInvite = !!(show_viewing_invite as boolean | undefined);
           const showAppInviteMulti = !!(body.check_application_invite as boolean | undefined);
@@ -4773,7 +4796,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const header = (all_properties_available as boolean | undefined) && endedPropCount === 0
             ? `${name}お送り頂きました\n`
             : `${name}お送り頂きました物件の中で\n`;
-          message_text = `${greeting ? `${greeting}\n` : ""}${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${recommendNote}${estimateSection}${vacancySection}${endedSection}`; // G32: 当日送信済みは挨拶行なし
+          message_text = `${greeting ? `${greeting}\n` : ""}${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${recommendNote}${estimateSection}${guarantorSectionMulti}${vacancySection}${endedSection}`; // G32: 当日送信済みは挨拶行なし
         }
 
       // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）

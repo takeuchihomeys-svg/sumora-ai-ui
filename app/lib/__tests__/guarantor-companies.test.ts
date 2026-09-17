@@ -3,6 +3,7 @@
 import {
   normalizeGuarantorName, resolveGuarantor, isMasterGuarantor, guarantorAliasesOf, planParallelScreening, buildGuarantorInfoText,
   buildGuarantorListText, formatGuarantorFacts, checkGuarantorFacts, GUARANTOR_TYPE_LABELS, GUARANTOR_SCAN_WORDS, type GuarantorProperty,
+  buildGuarantorCheckNote, detectGuarantorInText, detectGuarantorFromMessages,
 } from "../guarantor-companies";
 import { normalizeAixActionKey, AIX_STAFF_NOTES, AIX_BUTTON_LABELS } from "../aix-taxonomy";
 import { aixLedgerKind, aixTextPromises, buildActionLedger, buildLedgerLinesForBrain, LEDGER_KIND_JA } from "../action-ledger";
@@ -235,6 +236,74 @@ it("送信時の記録 guarantor_explained が台帳に入り、ブレインの�
   const line = buildLedgerLinesForBrain(ledger);
   expect(line).toContain("保証会社の案内（物件ごとの保証会社・種類）を実行");
   expect(line).toContain("カーザSun I: 日本セーフティー（独立系）／並行審査を勧めた");   // 種類は日本語（GUARANTOR_TYPE_SHORT）
+});
+
+// ─── 8. 物件確認した（募集中）に添える説明（2026-09-17 竹内・YUYA 事例）───
+it("1件・信用系: 9/16 の実送信そのまま（クレディセゾン→信用系・クレジットカードの滞納歴）", () => {
+  const note = buildGuarantorCheckNote([{ name: "サンキャッスル田川 406号室", company: "クレディセゾン", type: "credit" }]);
+  expect(note).toBe("クレディセゾンという信用系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！");
+});
+it("1件・独立系: 審査が緩い側の文になる（旧実装は種類を見ず信販系の文を付けていた）", () => {
+  const note = buildGuarantorCheckNote([{ name: "テスト物件 101号室", company: "日本セーフティ", type: "independent" }]);
+  expect(note).toContain("独立系の保証会社を使用しており");
+  expect(note).toContain("審査通過しやすい");
+  expect(note).toContain("日本セーフティー");      // 名寄せ（入力は「日本セーフティ」）
+  expect(/クレジット|滞納/.test(note)).toBe(false);
+});
+it("1件・LICC系: 【保証会社について】と同じ言い回し（信用情報を重視した審査基準とはなりません）", () => {
+  const note = buildGuarantorCheckNote([{ name: "A 101号室", company: "全保連", type: "licc" }]);
+  expect(note).toContain("全保連というLICC系の保証会社を使用しており");
+  expect(note).toContain("信用情報を重視した審査基準とはなりませんので審査通過する可能性十分に御座います！！");
+});
+it("複数件で同じ会社: 「こちら2部屋とも〜」（実送信 7/21 の型）", () => {
+  const note = buildGuarantorCheckNote([
+    { name: "サニーハウス南楠江 303号室", company: "Casa", type: "independent" },
+    { name: "アバンティ南堀江ウエスト 601号室", company: "カーサ", type: "independent" },   // 別名も名寄せで同じ会社
+  ]);
+  expect(note.startsWith("こちら2部屋ともCasaという独立系の保証会社を使用しており")).toBe(true);
+  expect(note.split("\n").length).toBe(1);
+});
+it("会社が分かれる: どの部屋がどの会社か分かるよう物件名を頭に付けて1行ずつ", () => {
+  const note = buildGuarantorCheckNote([
+    { name: "A 101号室", company: "日本セーフティー", type: "independent" },
+    { name: "B 202号室", company: "クレディセゾン", type: "credit" },
+  ]);
+  const lines = note.split("\n");
+  expect(lines.length).toBe(2);
+  expect(lines[0].startsWith("A 101号室は日本セーフティーという独立系")).toBe(true);
+  expect(lines[1].startsWith("B 202号室はクレディセゾンという信用系")).toBe(true);
+});
+it("会社名を入れていない物件は無視・全部空なら何も足さない（欄が任意）", () => {
+  expect(buildGuarantorCheckNote([])).toBe("");
+  expect(buildGuarantorCheckNote([{ name: "A 101号室", company: "   ", type: "unknown" }])).toBe("");
+  const mixed = buildGuarantorCheckNote([
+    { name: "A 101号室", company: "", type: "unknown" },
+    { name: "B 202号室", company: "エポス", type: "credit" },
+  ]);
+  expect(mixed).toBe("エポスカードという信用系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！");
+});
+it("種類が不明の会社は審査の緩い・厳しいに触れない", () => {
+  const note = buildGuarantorCheckNote([{ name: "A 101号室", company: "オセロ・フィナンシャルサービス", type: "unknown" }]);
+  expect(note).toBe("オセロ・フィナンシャルサービスという保証会社を使用しております！！");
+  expect(/独立系|LICC|信用系|信販|審査/.test(note)).toBe(false);
+});
+
+// ─── 9. 会話から保証会社名を拾う（画面の候補ボタン・旧 AixModal の11社リストを置き換え）───
+it("会話の1通から拾う: 長い会社名が優先・別名も正規名で返る・種類も付く", () => {
+  expect(detectGuarantorInText("保証会社はオリコフォレントインシュアとなります")).toEqual({ name: "オリコフォレントインシュア", type: "credit" });
+  expect(detectGuarantorInText("セゾンで審査します")).toEqual({ name: "クレディセゾン", type: "credit" });
+  expect(detectGuarantorInText("保証会社の記載はありません")).toBe(null);
+  expect(detectGuarantorInText("")).toBe(null);
+});
+it("会話（古い順）からは一番新しい発言の保証会社を拾う", () => {
+  const msgs = [
+    { text: "保証会社は日本セーフティーです" },
+    { text: "こちらの物件どうですか？" },
+    { text: "管理会社より：保証会社 全保連" },
+  ];
+  expect(detectGuarantorFromMessages(msgs)).toEqual({ name: "全保連", type: "licc" });
+  expect(detectGuarantorFromMessages([{ text: "こんにちは" }])).toBe(null);
+  expect(detectGuarantorFromMessages([])).toBe(null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

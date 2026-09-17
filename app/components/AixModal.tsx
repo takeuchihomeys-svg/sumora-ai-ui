@@ -13,7 +13,7 @@ import { countCustomerSentProperties } from "../lib/customer-property-count";
 // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件の名前（SUUMO の共有文等）を候補に出す
 import { customerSharedPropertyNames } from "../lib/customer-property-names";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
-import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, buildGuarantorListText, type GuarantorType } from "../lib/guarantor-companies";
+import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, buildGuarantorListText, detectGuarantorFromMessages, type GuarantorType } from "../lib/guarantor-companies";
 import { PROPERTY_LABEL_RE } from "../lib/action-ledger";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
@@ -251,7 +251,7 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
     template: "○○から[お客様名]さんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！\n[物件情報]\n[カレンダー or 申込み誘導]\n[お客様名]さんお気に召されましたらお部屋ご都合よろしいお日にちにご案内させて頂きます！！",
   },
   property_check_result: {
-    rules: ["物件あった → カレンダー自動取得で内覧誘導", "別の部屋（同じ間取り）→ 固定テンプレ厳守", "別の部屋（違う間取り）→ 固定テンプレ厳守", "物件なかった → お詫び＋引き続き探す旨"],
+    rules: ["物件あった → カレンダー自動取得で内覧誘導", "見積書の下の「🏦 保証会社」に会社名を入れると、御見積書の直後に保証会社の説明が入る（種類は名前から自動・手で直せる）", "別の部屋（同じ間取り）→ 固定テンプレ厳守", "別の部屋（違う間取り）→ 固定テンプレ厳守", "物件なかった → お詫び＋引き続き探す旨"],
     template: "【同じ間取り】\nお送り頂きました[物件名]◯階部分ですが確認しましたところ募集終了しておりました！！\n別の階数となりますが、同じ間取りで\n[物件名]で現在募集中のお部屋御座いましたので、最大限割引しました御見積書と併せてお送りさせて頂きました！！\nお手隙の際にご査収ください！！\n\n【違う間取り】\nお送り頂きました[物件名]◯階部分ですが確認しましたところ募集終了しておりました！！\n別の階数となりますが\n同じ間取りのお部屋で現在募集中のお部屋が御座いますので、最大限割引しました御見積書と併せてお送りさせて頂きました！！\nお手隙の際にご査収ください！！",
   },
   estimate_sheet: {
@@ -529,12 +529,8 @@ const APP_FORMAT_SECTIONS = {
 ・勤務先電話番号`,
 };
 
-// 物件確認した「物件あった」: 保証会社説明ボタン用の既知保証会社リスト（会話履歴からの自動検出に使用）
-const GUARANTOR_COMPANIES = [
-  "ジェイリース", "全保連", "日本セーフティー", "フォーシーズンズ",
-  "ルームバンク", "Casa", "CASA", "GTN", "オリコフォレント",
-  "エポスカード", "アプラス",
-];
+// 2026-09-17 竹内（YUYA 事例）: 会話から保証会社名を拾う一覧は app/lib/guarantor-companies.ts に一本化した
+//   （旧: ここに11社だけの別の一覧があり、名寄せ・種類・語境界の判定が画面とサーバで食い違っていた）
 
 // condition_hearing「会話を合わせる」: AI導入文を送信してからフォーム本体を自動送信するまでの秒数
 // （見積書テキスト先送りフローの onDelayedSend?.(30, ...) と同じ親管理カウントダウン・キャンセル可能）
@@ -824,26 +820,27 @@ export default function AixModal({
     petCondition: string;
     internet: 'あり' | 'なし' | null;
     internetDetail: string;
-    guarantorType: '独立系' | '信用系' | null;
+    // 2026-09-17 竹内（YUYA 事例）: 保証会社は物件ごとに「名前＋種類」。欄は見積書の下（送信文でも御見積書の直後に説明が入る）。
+    //   種類は名前から自動で決まり（resolveGuarantor）、手で変えられる
+    guarantorName: string;
+    guarantorType: GuarantorType | null;
   };
-  const [propFacilities, setPropFacilities] = useState<PropFacility[]>(
-    Array.from({ length: 3 }, () => ({
-      parkingAvail: null, parkingFee: '', parkingVacancy: null,
-      bikeParking: null, bikeParkingFee: '', bikeParkingNote: '',
-      petPolicy: null, petCondition: '',
-      internet: null, internetDetail: '',
-      guarantorType: null,
-    }))
-  );
+  const emptyPropFacility = (): PropFacility => ({
+    parkingAvail: null, parkingFee: '', parkingVacancy: null,
+    bikeParking: null, bikeParkingFee: '', bikeParkingNote: '',
+    petPolicy: null, petCondition: '',
+    internet: null, internetDetail: '',
+    guarantorName: '', guarantorType: null,
+  });
+  const [propFacilities, setPropFacilities] = useState<PropFacility[]>(Array.from({ length: 3 }, emptyPropFacility));
   const [propFacilitiesExpanded, setPropFacilitiesExpanded] = useState<boolean[]>([false, false, false]);
   const [checkAllAvailable, setCheckAllAvailable] = useState(false);
   const [checkPropStatuses, setCheckPropStatuses] = useState<string[]>(["available", "available", "available"]);
   const [checkRecommendProp, setCheckRecommendProp] = useState<number | null>(null);
   const [checkIncludeEstimateText, setCheckIncludeEstimateText] = useState(false);
   const [checkApplicationInvite, setCheckApplicationInvite] = useState(false);
-  // 物件あった専用: 保証会社説明ボタンのON/OFF + 保証会社名（会話履歴から自動検出・手動編集可）
-  const [checkGuarantor, setCheckGuarantor] = useState(false);
-  const [checkGuarantorName, setCheckGuarantorName] = useState("");
+  // 2026-09-17 竹内（YUYA 事例）: 保証会社は物件ごと（propFacilities.guarantorName / guarantorType・見積書の下の欄）に移した。
+  //   旧 checkGuarantor / checkGuarantorName（カード共通のON/OFF＋1つの名前）は廃止
   // 物件あった専用: 申込有（2番手）ボタンのON/OFF
   const [checkApplicationOrder, setCheckApplicationOrder] = useState(false);
   const [estimateTextReady, setEstimateTextReady] = useState("");
@@ -1103,6 +1100,12 @@ export default function AixModal({
   // 入力済み = 物件名と会社名の両方があるカードだけ送る（片方だけの欄は送らない＝checkFilledCount と同じ考え）
   const giFilled = giCards.filter((c) => c.name.trim() && c.company.trim());
   const giCustomCompanies = giCompanies.filter((x) => x.source === "custom");
+  // 物件確認した（募集中）: 会話に出ている保証会社名の候補（見積書の下の欄の「会話から」ボタン）。
+  //   2026-09-17 竹内（YUYA 事例）: スタッフに打たせる前に、会話に既にある事実を候補で出す（設計知見・物件名表示ボタンと同じ型）
+  const guarantorHint = useMemo(() => {
+    if (actionType !== "property_check_result") return null;
+    return detectGuarantorFromMessages((recentMessages ?? []).map((m) => ({ text: m.text })));
+  }, [actionType, recentMessages]);
   // 物件名の候補: 会話でスタッフが送った「🌟〇〇 305号室」「【〇〇 305号室】」（無ければ空）
   const giPropertyNameOptions = useMemo(() => {
     if (actionType !== "guarantor_info") return [] as string[];
@@ -1113,8 +1116,10 @@ export default function AixModal({
     }
     return [...out];
   }, [actionType, recentMessages]);
+  // 2026-09-17 竹内（YUYA 事例）: 物件確認した（募集中）の保証会社欄でも、スタッフが登録した会社の種類を引けるようにする
+  //   （会社一覧は数十行の軽いテーブル。取得に失敗してもマスタだけで動く）
   useEffect(() => {
-    if (actionType !== "guarantor_info") return;
+    if (actionType !== "guarantor_info" && actionType !== "property_check_result") return;
     let cancelled = false;
     fetch("/api/guarantor-companies", { headers: INTERNAL_AUTH_HEADER })
       .then((r) => r.json())
@@ -2254,6 +2259,8 @@ export default function AixModal({
             petCondition: f.petCondition || null,
             internet: f.internet,
             internetDetail: f.internetDetail || null,
+            // 2026-09-17 竹内（YUYA 事例）: 保証会社は名前＋種類で渡す（サーバが御見積書の直後に説明文を足す）
+            guarantorName: f.guarantorName.trim() || null,
             guarantorType: f.guarantorType,
           }));
           const extractedProps = await extractPropInfoFromImages(cpc);
@@ -2571,11 +2578,9 @@ export default function AixModal({
       if (actionType === "property_check_result" && checkPattern === "available" && checkApplicationOrder && generatedMsg) {
         generatedMsg += `\n\n現在お申込みが入っており、2番手でのお申込みが可能となっております！！`;
       }
-      // 保証会社説明: 物件確認した「物件あった」でONのとき本文末尾に説明文を追加
-      // （available系は固定テンプレ組み立てのためプロンプト注入ではなく生成後テキストに追記する）
-      if (actionType === "property_check_result" && checkPattern === "available" && checkGuarantor && checkGuarantorName.trim() && generatedMsg) {
-        generatedMsg += `\n\n${checkGuarantorName.trim()}という保証会社使用しており、クレジットカードの滞納歴で審査する中級程の保証会社となります！！`;
-      }
+      // 2026-09-17 竹内（YUYA 事例）: 保証会社の説明はサーバの固定テンプレ組み立て（御見積書の直後）に移した。
+      //   旧実装はここで本文末尾に「〇〇という保証会社使用しており、クレジットカードの滞納歴で審査する中級程の保証会社となります！！」を
+      //   種類に関わらず足していたため、独立系（審査が緩い）の物件にも信販系の説明が付いていた
       setAiDraft(generatedMsg);
       setPreview(useEmoji ? generatedMsg : stripEmoji(generatedMsg));
       // 「会話を合わせる」生成かを記録（通常生成・再生成で上書きされるため常に最新の生成モードを反映）
@@ -5637,23 +5642,8 @@ export default function AixModal({
                               )}
                             </div>
 
-                            {/* 保証会社 */}
-                            <div>
-                              <p className="text-[11px] font-bold text-gray-400 mb-1">🏦 保証会社タイプ</p>
-                              <div className="flex gap-1 flex-wrap">
-                                {([
-                                  { k: null as null, l: '選択なし' },
-                                  { k: '独立系' as const, l: '独立系（審査通りやすい）' },
-                                  { k: '信用系' as const, l: '信用系' },
-                                ]).map(({ k, l }) => (
-                                  <button key={l} type="button"
-                                    className={`px-2 py-1 rounded-full text-xs border ${propFacilities[pi].guarantorType === k ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-600 border-gray-200'}`}
-                                    onClick={() => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, guarantorType: k } : f))}>
-                                    {l}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
+                            {/* 2026-09-17 竹内（YUYA 事例）: 保証会社は折りたたみの中の「タイプだけ」ではなく、
+                                見積書の下の欄（会社名＋種類）に一本化した。設備の1行ではなく本文の説明として出る */}
 
                           </div>
                         )}
@@ -5687,6 +5677,46 @@ export default function AixModal({
                         >📎 見積書を追加（スキップ可）</button>
                       )}
                       <input ref={checkPropEstRefs[pi]} type="file" accept="image/*" onChange={(e) => onSelectPropEstimate(pi, e)} className="hidden" />
+                      {/* 保証会社（2026-09-17 竹内・YUYA 事例）: 見積書の下に物件ごとの欄。名前を入れると種類が自動で決まり、
+                          送信文では御見積書の直後に種類ごとの説明が入る（実送信と同じ順序・文は app/lib/guarantor-companies.ts） */}
+                      {checkPattern === "available" && (
+                        <div className="mt-2 rounded-xl border border-[#e3f2fd] bg-[#f8fbff] px-2.5 py-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[11px] font-bold text-[#54656f]">🏦 保証会社 <span className="font-normal text-[#90a4ae]">（入れると説明文が入ります・任意）</span></p>
+                            {guarantorHint && guarantorHint.name !== propFacilities[pi].guarantorName && (
+                              <button type="button"
+                                onClick={() => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, guarantorName: guarantorHint.name, guarantorType: guarantorHint.type } : f))}
+                                className="shrink-0 rounded-full border border-[#2196F3] px-2 py-0.5 text-[10px] font-semibold text-[#2196F3]">
+                                会話から: {guarantorHint.name}
+                              </button>
+                            )}
+                          </div>
+                          <input type="text" value={propFacilities[pi].guarantorName}
+                            onChange={e => {
+                              const v = e.target.value;
+                              // 名前を入れたら種類を自動で決める（マスタ・スタッフ登録分。スタッフが種類を選び直した後は上書きしない）
+                              setPropFacilities(prev => prev.map((f, i) => {
+                                if (i !== pi) return f;
+                                const r = resolveGuarantor(v, giCustomCompanies);
+                                const keepType = f.guarantorType && f.guarantorName.trim() === v.trim();
+                                return { ...f, guarantorName: v, guarantorType: keepType ? f.guarantorType : (r.known ? r.type : null) };
+                              }));
+                            }}
+                            placeholder="保証会社名（例: クレディセゾン・日本セーフティー）"
+                            className="mt-1.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-blue-400" />
+                          {propFacilities[pi].guarantorName.trim() && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {GUARANTOR_TYPES.map(t => (
+                                <button key={t} type="button"
+                                  className={`px-2 py-1 rounded-full text-[10px] border ${propFacilities[pi].guarantorType === t ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-600 border-gray-200'}`}
+                                  onClick={() => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, guarantorType: t } : f))}>
+                                  {GUARANTOR_TYPE_LABELS[t]}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                   {/* 申込有（2番手）ボタン */}
@@ -5702,38 +5732,8 @@ export default function AixModal({
                       📋 申込有（2番手）
                     </button>
                   )}
-                  {/* 保証会社について説明（物件カード共通・ONで会話履歴から保証会社名を自動検出） */}
-                  <div className="mt-2">
-                    <button
-                      onClick={() => {
-                        const toggled = !checkGuarantor;
-                        setCheckGuarantor(toggled);
-                        if (toggled) {
-                          // 直近メッセージを新しい順にスキャンして最初に見つかった保証会社名をセット
-                          for (const msg of [...(recentMessages ?? [])].reverse()) {
-                            const found = GUARANTOR_COMPANIES.find(c => msg.text.includes(c));
-                            if (found) { setCheckGuarantorName(found); break; }
-                          }
-                        }
-                      }}
-                      className={`text-sm px-3 py-1.5 rounded-full border ${
-                        checkGuarantor
-                          ? "bg-blue-600 text-white border-blue-600"
-                          : "bg-white text-gray-600 border-gray-300"
-                      }`}
-                    >
-                      🏢 保証会社について説明
-                    </button>
-                    {checkGuarantor && (
-                      <input
-                        type="text"
-                        value={checkGuarantorName}
-                        onChange={e => setCheckGuarantorName(e.target.value)}
-                        placeholder="保証会社名（例：ジェイリース）"
-                        className="mt-2 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"
-                      />
-                    )}
-                  </div>
+                  {/* 2026-09-17 竹内（YUYA 事例）: 旧「🏢 保証会社について説明」ボタン（カード共通・種類を見ない固定文）は廃止。
+                      物件ごとの欄（各物件カードの見積書の下）に移した＝どの部屋の保証会社かが分かり、種類に合った説明が入る */}
                 </div>
               ) : checkPattern === "alternative" ? (
                 // 別の部屋あった: 1件画像UI

@@ -189,6 +189,47 @@ export function buildGuarantorInfoText(o: { customerName: string; properties: re
   return [head, ...paragraphs, closing.join("\n"), CANCEL_LINE].join("\n\n");
 }
 
+// ─── 物件確認した（募集中）に添える説明（YUYA 事例・2026-09-17）───
+// 竹内「保証会社名は見積書の下に項目いれて、そこに保証会社名入れれる形とする。ここで保証会社について説明された文が生成されるようになる」
+//
+// 【物件確認した】は「この1件（数件）の保証会社」を御見積書の直後に1〜2行で添える場面で、
+// 【保証会社について】（保証会社一覧を送る場面）とは文の型が違う。文はスタッフの実送信そのまま（種類ごとに1つ）:
+//   信用系 2026-09-16 YUYA「クレディセゾンという信用系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！」
+//     （🌟最大限割引しました御見積書同封させて頂きました！！ の直後に置かれている＝画面の入力欄も見積書の下に置く）
+//   独立系 2026-06-29「保証会社:オセロ・フィナンシャルサービス株式会社となり独立系の保証会社となりますのでかなり審査通過しやすいお部屋となります😊！！」
+//   複数件で同じ会社 2026-07-21「2部屋とも保証会社クレデンスという比較的審査通過しやすいもの採用しております！！」
+//   LICC系 の実送信はこの場面に無いので【保証会社について】と同じ言い回し（GUARANTOR_TYPE_SCREENING_NOTE.licc）を使う
+// ※ credit（クレディセゾン・エポス等）の呼び名は、この場面の実送信に合わせて「信用系」にする
+//   （一覧の AIX は「信販系」。同じ会社でも場面で呼び名が違うのは実データどおり）
+// ※ 旧実装（AixModal で generatedMsg に追記）は種類を見ずに「クレジットカードの滞納歴で審査する中級程の保証会社」固定で、
+//   独立系（審査が緩い）の物件にも信販系の説明が付いていた。事実関係の説明なので種類ごとに分ける
+export const GUARANTOR_CHECK_SENTENCE: Record<GuarantorType, (company: string) => string> = {
+  independent: (c) => `${c}という独立系の保証会社を使用しており、審査基準が緩くかなり審査通過しやすいお部屋となります😊！！`,
+  licc: (c) => `${c}というLICC系の保証会社を使用しており、${GUARANTOR_TYPE_SCREENING_NOTE.licc}`,
+  credit: (c) => `${c}という信用系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！`,
+  unknown: (c) => `${c}という保証会社を使用しております！！`,
+};
+
+/**
+ * 【物件確認した・募集中】の本文に添える保証会社の説明。会社名が入っている物件だけが対象（入れなければ空＝何も足さない）。
+ * ・全部同じ会社: 1件ならそのまま／複数件は「こちら2部屋とも〜」（実送信の型）
+ * ・会社が分かれる: 物件名を頭に付けて会社ごとに1行（どの部屋がどの会社か分かるように）
+ * 会社名は正規名（「日本セーフティ」と入れても「日本セーフティー」）。種類は入力値をそのまま使う（LLM に決めさせない）
+ */
+export function buildGuarantorCheckNote(properties: readonly GuarantorProperty[]): string {
+  const filled = properties.filter((p) => (p.company ?? "").trim());
+  if (filled.length === 0) return "";
+  const plan = planParallelScreening(filled);
+  if (plan.groups.length === 1) {
+    const g = plan.groups[0];
+    const sentence = GUARANTOR_CHECK_SENTENCE[g.type](g.company);
+    return filled.length >= 2 ? `こちら${filled.length}部屋とも${sentence}` : sentence;
+  }
+  return plan.groups
+    .map((g) => `${g.properties.filter(Boolean).join("・")}は${GUARANTOR_CHECK_SENTENCE[g.type](g.company)}`)
+    .join("\n");
+}
+
 // ─── 手打ちの一覧（YUYA 17:27 型・UI の「入力の確認」用。送信文には使わない）───
 export function buildGuarantorListText(properties: readonly GuarantorProperty[]): string {
   return properties.map((p) => `⚪︎${p.name}\n${normalizeGuarantorName(p.company)}`).join("\n");
@@ -309,6 +350,31 @@ export function checkGuarantorFacts(
   if (/信販系/.test(t) && !has("credit")) typeWarnings.push("種類:信販系");
   if (/審査基準が緩|審査ゆるめ|緩め|審査(?:が|は)?緩/.test(t) && !has("independent")) typeWarnings.push("種類:緩い");
   return { ok: unmatched.length === 0 && typeWarnings.length === 0, cleaned, unmatched, typeWarnings };
+}
+
+/**
+ * 会話の1通から保証会社名を拾う（UI の「会話から入れる」候補。長い会社名から当てるので「オリコフォレントインシュア」が「オリコ」に負けない）。
+ * 2026-09-17 竹内（YUYA 事例）: 画面側に別の短い一覧（11社）がコピーされていたのをここに寄せた（名寄せ・種類・語境界の判定が1か所）
+ */
+export function detectGuarantorInText(text: string): { name: string; type: GuarantorType } | null {
+  const t = text ?? "";
+  if (!t.trim()) return null;
+  for (const w of GUARANTOR_SCAN_WORDS) {
+    if (w.normalize("NFKC").length < 3 || SCAN_SKIP.has(w)) continue;
+    if (findWordRanges(t, w).length === 0) continue;
+    const r = resolveGuarantor(w);
+    return { name: r.name, type: r.type };
+  }
+  return null;
+}
+
+/** 会話（古い順の配列）から一番新しい保証会社名を拾う。スタッフ・お客様どちらの発言も見る（管理会社の回答をそのまま貼る運用があるため） */
+export function detectGuarantorFromMessages(messagesOldestFirst: ReadonlyArray<{ text?: string | null }>): { name: string; type: GuarantorType } | null {
+  for (let i = messagesOldestFirst.length - 1; i >= 0; i--) {
+    const hit = detectGuarantorInText(messagesOldestFirst[i]?.text ?? "");
+    if (hit) return hit;
+  }
+  return null;
 }
 
 // ─── スタッフの実文（会話を合わせるの手本・中身は写さない）───
