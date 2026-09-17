@@ -20,7 +20,9 @@ it("まりあ: 「かしこまりました！！」は落として本題を残�
   const out = stripReplyOnlyPhrases(draft);
   expect(out).notToContain("かしこまりました");
   expect(out).notToContain("全力でサポート");
-  expect(out).toContain("ペット可条件は外し、中央区・西区で西天満より南のエリアからWIC付き1LDKでまりあさんにオススメできるお部屋ピックアップさせて頂きました！！");
+  // 「ペット可条件は外し、」（外した条件の断り書き）も落ちて、実送信と同じ形になる
+  expect(out).toContain("中央区・西区で西天満より南のエリアからWIC付き1LDKでまりあさんにオススメできるお部屋ピックアップさせて頂きました！！");
+  expect(out).notToContain("ペット可条件は外し");
   expect(out).toContain("まりあさんお世話になっております！！");
   // 締めが無くなったので実送信80%の締めを足す
   expect(out.endsWith(SEND_CLOSER_LINE)).toBe(true);
@@ -51,6 +53,16 @@ it("言い回しのゆれ（承知いたしました・精一杯お探し・ご�
   expect(out).notToContain("承知いたしました");
   expect(out).notToContain("精一杯");
   expect(out).toContain("難波エリアでピックアップさせて頂きました！！");
+});
+it("外した条件の断り書き（ペット可条件無しの）は落とす・物件の属性（WICなしのお部屋）は残す", () => {
+  // 本番検証で出た形（3回中1回）
+  const draft = "中央区・西区（西天満より南）エリアからペット可条件無しの1LDK・WIC付きでYUMAさんにオススメできるお部屋ピックアップさせて頂きました！！\nお手隙の際にご査収ください😌！！";
+  const out = stripReplyOnlyPhrases(draft);
+  expect(out).notToContain("ペット可条件無し");
+  expect(out).toContain("1LDK・WIC付きでYUMAさんにオススメできるお部屋ピックアップさせて頂きました！！");
+  // 物件の属性は落とさない（実送信「アーバネックス東梅田WICなしのお部屋で現在募集が出ているお部屋お送りさせて頂きました」）
+  const attr = "アーバネックス東梅田WICなしのお部屋で現在募集が出ているお部屋ピックアップさせて頂きました！！\nお手隙の際にご査収ください😌！！";
+  expect(stripReplyOnlyPhrases(attr)).toBe(attr);
 });
 it("物件オススメ（🌟の物件カード）は締めを足さない（「お手隙の際にご査収ください」は使わない決まり）", () => {
   const rec = "🌟グランパシフィック難波元町 5C\n\n（オススメポイント）\n・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！\n\nかしこまりました！！";

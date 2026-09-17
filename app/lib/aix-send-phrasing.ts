@@ -23,6 +23,13 @@
 const RECEIPT_OPENER_RE = /^(?:かしこまりました|承知(?:いたし|し)ました|了解(?:いたし|し)ました)[！!。\s]*[😊😌✨💪]*[！!\s]*/;
 /** 「見つかるまで全力でサポート」系の宣言（返信の締め）。1行まるごと落とす */
 const FULL_SUPPORT_LINE_RE = /(?:見つかるまで|ご満足(?:頂|いただ)ける?(?:お部屋|物件)).{0,20}(?:全力|精一杯).{0,12}(?:サポート|お探し|探させ)|(?:全力|精一杯)で?(?:サポート|お探し)させて(?:頂|いただ)きます/;
+/**
+ * 外した条件の断り書き（「ペット可条件は外し」「駐車場条件無しで」）。
+ * 実データ: 送付文 362件のうち0件。**返信**（これから探す約束）では使われる（まりあさんへの実送信
+ * 「かしこまりました！！／ペット可条件は外し、…ピックアップしてお送りさせて頂きます」）＝送る通に持ち込まない。
+ * 「WICなしのお部屋」のような**物件の属性**は落とさない（「条件」の語がある時だけ）
+ */
+const EXCLUDED_CONDITION_RE = /[^\n、。！!]{0,12}条件(?:は|を|も)?(?:外し|外させて頂き|無し|なし|抜き|除いて|除き)(?:て|で|の|にして)?[、,]?\s*/g;
 /** 送る通の締め（実送信 80%）。返信専用の締めを落として締めが無くなった時だけ足す */
 export const SEND_CLOSER_LINE = "お手隙の際にご査収ください😌！！";
 /** 既に締めがあるか（ご査収・ご案内の申し出・申込の誘導） */
@@ -42,7 +49,7 @@ export function stripReplyOnlyPhrases(text: string, opts: { addCloser?: boolean 
   let changed = false;
   for (const line of src.split("\n")) {
     if (FULL_SUPPORT_LINE_RE.test(line)) { changed = true; continue; }   // 行ごと落とす
-    const stripped = line.replace(RECEIPT_OPENER_RE, "");
+    const stripped = line.replace(RECEIPT_OPENER_RE, "").replace(EXCLUDED_CONDITION_RE, "");
     if (stripped !== line) {
       changed = true;
       if (!stripped.trim()) continue;   // 「かしこまりました！！」だけの行は消す
