@@ -22,7 +22,7 @@ import { limitSlotsPerDay } from "./lib/viewing-slots";
 import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
 import { meetingToJst, pendingViewingNotes, isReplaceableViewingNotes, VIEWING_METHOD_PENDING } from "./lib/meeting-calendar";
 // 2026-09-16 竹内（カイナ事例）: 内覧の候補日時をカレンダーに「時間確保」で置き、決まったら残りを消す
-import { parseCandidateSlots, holdEventRow, isViewingHoldNotes, planHoldCleanup } from "./lib/viewing-hold";
+import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewingHoldNotes, planHoldCleanup, type HoldSlot } from "./lib/viewing-hold";
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
 import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf } from "./lib/promise-calendar";
 import { jstYmd } from "./lib/jst-date";
@@ -4976,6 +4976,17 @@ export default function Home() {
 
       // タスク自動完了はAIXボタン送信時のみ（onAfterSendで処理） → ここでは何もしない
 
+      // 2026-09-17 竹内（Hina 事例）「まだ決まっていない場合、このように【確保】と時間入れてカレンダーにいれる。
+      //   そうするとカレンダーで別の予定が入らないように確保する事が出来るから」:
+      //   AIX【内覧日調整】だけでなく、手打ち・AI 下書きの返信で内覧の時間を伝えた時も確保する（Hina 18:51「18:00からのお部屋ご案内ですと…」）
+      if (textSent && textToSend) {
+        void createViewingHoldsFromReplyText({
+          convId: selectedConversation.id,
+          customerName: selectedConversation.customerName || preferredCustomerName || "",
+          sentText: textToSend,
+        });
+      }
+
       // 送信完了後に1.5秒後フェッチ: 送信中に届いたお客様メッセージを確実に反映
       setTimeout(() => fetchConversationsAndMessages(true), 1500);
 
@@ -5085,8 +5096,8 @@ export default function Home() {
   // 2026-09-16 竹内（カイナ事例）「内覧調整いれたらカレンダーで時間確保とする」:
   //   AIX【内覧日調整】で送った候補日時を、送った文から読んでカレンダーに「時間確保」（notes 先頭【時間確保】＝スタッフの手入力と同じ形）で入れる。
   //   確保した枠は空き時間の計算で埋まるので、他のお客様に同じ時間を出さない。同じ会話に送り直した時は前の確保を消してから入れ直す
-  const createViewingHoldsFromSentText = async (o: { convId: string; customerName: string; sentText: string }) => {
-    const slots = parseCandidateSlots(o.sentText);
+  const createViewingHoldsFromSentText = async (o: { convId: string; customerName: string; sentText: string; slots?: HoldSlot[] }) => {
+    const slots = o.slots ?? parseCandidateSlots(o.sentText);
     if (slots.length === 0) return;
     try {
       const todayIso = new Date(`${jstYmd(Date.now())}T00:00:00+09:00`).toISOString();
@@ -5094,12 +5105,30 @@ export default function Home() {
         .select("id, notes")
         .eq("conversation_id", o.convId).eq("event_type", "viewing").eq("is_done", false)
         .gte("start_at", todayIso);
-      const prevHoldIds = ((prev ?? []) as Array<{ id: number; notes: string | null }>).filter((e) => isViewingHoldNotes(e.notes)).map((e) => e.id);
+      const prevRows = (prev ?? []) as Array<{ id: number; notes: string | null }>;
+      // 2026-09-17 竹内（Hina 事例）: 既に決まっている内覧（確保ではない予定）があれば確保は作らない＝「まだ決まっていない場合」だけ押さえる
+      if (prevRows.some((e) => !isViewingHoldNotes(e.notes))) {
+        console.info("[viewing-hold] 決まっている内覧があるので確保しない", JSON.stringify({ convId: o.convId }));
+        return;
+      }
+      const prevHoldIds = prevRows.filter((e) => isViewingHoldNotes(e.notes)).map((e) => e.id);
       if (prevHoldIds.length > 0) await supabase.from("calendar_events").delete().in("id", prevHoldIds);
       await supabase.from("calendar_events").insert(slots.map((s) => holdEventRow(s, o.customerName, o.convId)));
+      console.info("[viewing-hold] 時間確保を登録", JSON.stringify({ convId: o.convId, slots: slots.map((s) => `${s.ymd} ${s.start}`) }));
     } catch (e) {
       console.warn("[viewing-hold] 時間確保の登録に失敗:", e);
     }
+  };
+
+  /**
+   * 2026-09-17 竹内（Hina 事例）: 通常の返信（手打ち・AI 下書き）で内覧の時間を伝えた時も【確保】でカレンダーに入れる。
+   *   拾い方は AIX の候補リストと違う（日付が無い時刻・案内の申し出の文だけ）ので parseViewingHoldFromReply を使い、
+   *   登録・既存の確保の消し方は AIX と同じ関数（入口は違っても1つの道を通る）
+   */
+  const createViewingHoldsFromReplyText = async (o: { convId: string; customerName: string; sentText: string }) => {
+    const slots = parseViewingHoldFromReply(o.sentText);
+    if (slots.length === 0) return;
+    await createViewingHoldsFromSentText({ ...o, slots });
   };
 
   const openViewingCalendarAfterMeeting = async (o: { convId: string; customerName: string; meetingDate?: string; meetingTime?: string; propertyName?: string; address?: string }) => {

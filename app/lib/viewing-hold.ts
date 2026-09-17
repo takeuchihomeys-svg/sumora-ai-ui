@@ -23,10 +23,15 @@ export function isViewingHoldNotes(notes: string | null | undefined): boolean {
 export function holdNotes(label: string): string {
   return `${VIEWING_HOLD_MARK}\n候補: ${label}`;
 }
-/** 時間確保の予定の名前（手入力と同じ「〇〇 内覧」） */
+/**
+ * 時間確保の予定の名前。
+ * 2026-09-17 竹内（Hina 事例）「このように【確保】と時間入れてカレンダーにいれる」: 一覧で一目で分かるよう
+ * タイトルの先頭に【確保】を付ける（【今日中】と同じ形。判定に使うのは notes 先頭の【時間確保】のまま＝印を判定キーに混ぜない）
+ */
+export const HOLD_TITLE_MARK = "【確保】";
 export function holdTitle(customerName: string | null | undefined): string {
   const n = (customerName ?? "").trim();
-  return n ? `${n} 内覧` : "内覧";
+  return n ? `${HOLD_TITLE_MARK}${n} 内覧` : `${HOLD_TITLE_MARK}内覧`;
 }
 
 /**
@@ -71,6 +76,73 @@ export function parseCandidateSlots(calendarInfo: string | null | undefined, now
       }
       if (end <= start) continue;
       const wd = WEEKDAYS_JA[new Date(dayUtc).getUTCDay()];
+      const label = `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${wd}) ${start}〜${end}`;
+      if (!out.some((x) => x.ymd === ymd && x.start === start && x.end === end)) out.push({ ymd, start, end, label });
+    }
+  }
+  return out;
+}
+
+// ─── 通常の返信（手打ち・AI 下書き）から内覧の時間を拾う（2026-09-17 竹内・Hina 事例）───
+// 竹内「まだ決まっていない場合、このように【確保】と時間入れてカレンダーにいれる。
+//   そうするとカレンダーで別の予定が入らないように確保する事が出来るから」
+// Hina 9/16 18:51「…のお部屋即日ご案内可能なお部屋となります！！／18:00からのお部屋ご案内ですと2、3件程となりますので、
+//   特にお気に召されましたお部屋ご案内させていただきます😊！！／ご案内希望のお部屋はどちらになりますでしょうか！！」
+//   → 物件は未定だが 18:00 の枠は押さえておきたい。AIX【内覧日調整】を使わずに手で時間を伝えた時も確保する。
+// 実データ（180日・日付の無い時刻＋案内の文）: 「15:00からお部屋ご案内大丈夫です」「12:00〜15:00の間でしたらご案内可能です」
+//   「14:00〜ご案内させて頂きます」「16:00〜18:00ご案内可能です」「🌟15:00ご内覧如何でしょうか」など。
+/** 案内の申し出（この語が同じ文に無ければ時刻を拾わない＝「18:00以降は管理会社営業時間外」等を拾わない） */
+const VIEWING_OFFER_RE = /ご案内|内覧|お部屋を?(?:見|ご覧)/;
+/** 申し出ではない文（確認・連絡の時刻・営業時間・完了の話） */
+const NOT_OFFER_RE = /営業時間|完了|終了|締め切|まで(?:に)?(?:ご連絡|確認|お送り)|ご連絡(?:させて|いたし|致し)|確認(?:させて|いたし|致し)/;
+
+/**
+ * 通常の返信から「まだ決まっていない内覧の時間」を拾う。
+ * ・日付（9/18・明日・本日）があればその日。無ければ「送った時刻より後なら当日・前なら翌日」
+ *   （Hina: 18:51 に「18:00から」＝翌日の 18:00 の話）
+ * ・同じ文に案内の申し出（ご案内・内覧）があり、営業時間・連絡の時刻の話でない時だけ
+ */
+export function parseViewingHoldFromReply(text: string | null | undefined, nowMs: number = Date.now()): HoldSlot[] {
+  const now = jstParts(nowMs);
+  const nowMin = now.hour * 60 + now.minute;
+  const todayUtc = Date.UTC(now.y, now.m - 1, now.d);
+  const out: HoldSlot[] = [];
+  for (const rawSent of (text ?? "").split(/\n+|(?<=[。！!？?]+)(?=[^。！!？?\s])/)) {
+    const sent = toHalf(rawSent).trim();
+    if (!sent || !VIEWING_OFFER_RE.test(sent) || NOT_OFFER_RE.test(sent)) continue;
+    // 日付（無ければ null＝時刻から当日／翌日を決める）
+    let dayUtc: number | null = null;
+    const md = sent.match(/(\d{1,2})\s*[\/月]\s*(\d{1,2})/);
+    if (md) {
+      const mo = Number(md[1]); const da = Number(md[2]);
+      if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) {
+        dayUtc = Date.UTC(now.y, mo - 1, da);
+        if (dayUtc < todayUtc - 60 * DAY_MS) dayUtc = Date.UTC(now.y + 1, mo - 1, da);
+      }
+    } else if (/明後日/.test(sent)) dayUtc = todayUtc + 2 * DAY_MS;
+    else if (/明日/.test(sent)) dayUtc = todayUtc + DAY_MS;
+    else if (/本日|今日/.test(sent)) dayUtc = todayUtc;
+    // 時刻（「18:00から」「16:00〜18:00」「15時から」「18時半から」「14時〜16時」）。
+    //   コロンか「時」がある物だけ＝「2、3件程」のような裸の数字は時刻にしない
+    const ranges = [...sent.matchAll(/(\d{1,2})(?::(\d{2})|\s*時\s*(半)?)(?:\s*〜\s*(\d{1,2})(?::(\d{2})|\s*時\s*(半)?))?/g)];
+    for (const r of ranges) {
+      const sh = Number(r[1]); const sm = r[2] !== undefined ? Number(r[2]) : (r[3] ? 30 : 0);
+      if (sh > 23 || sm > 59) continue;
+      const start = `${pad2(sh)}:${pad2(sm)}`;
+      let end: string;
+      if (r[4] !== undefined) {
+        const eh = Number(r[4]); const em = r[5] !== undefined ? Number(r[5]) : (r[6] ? 30 : 0);
+        end = eh <= 23 && em <= 59 ? `${pad2(eh)}:${pad2(em)}` : start;
+      } else {
+        const tot = Math.min(sh * 60 + sm + 120, 23 * 60 + 59);
+        end = `${pad2(Math.floor(tot / 60))}:${pad2(tot % 60)}`;
+      }
+      if (end <= start) continue;
+      // 日付が書かれていない時: 送った時刻より後なら当日・過ぎていれば翌日
+      const day = dayUtc ?? (sh * 60 + sm > nowMin ? todayUtc : todayUtc + DAY_MS);
+      const d = new Date(day);
+      const ymd = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+      const wd = WEEKDAYS_JA[d.getUTCDay()];
       const label = `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${wd}) ${start}〜${end}`;
       if (!out.some((x) => x.ymd === ymd && x.start === start && x.end === end)) out.push({ ymd, start, end, label });
     }

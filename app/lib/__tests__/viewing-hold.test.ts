@@ -1,6 +1,6 @@
 // 2026-09-16 竹内（カイナ事例）: 内覧の候補日時を「時間確保」でカレンダーに置き、決まったら残りを消す
 // 実行: npx tsx app/lib/__tests__/viewing-hold.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { parseCandidateSlots, holdEventRow, planHoldCleanup, isViewingHoldNotes, holdNotes, holdTitle, VIEWING_HOLD_MARK } from "../viewing-hold";
+import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, planHoldCleanup, isViewingHoldNotes, holdNotes, holdTitle, VIEWING_HOLD_MARK } from "../viewing-hold";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -31,9 +31,9 @@ it("時刻が1つだけなら2時間の枠・日付が読めない行は落と�
   expect(parseCandidateSlots("ご都合よろしいお時間お聞かせください", NOW).length).toBe(0);
   expect(parseCandidateSlots("9/16(水) 15:30〜17:00\n明日 9/16(水) 15:30〜17:00", NOW).length).toBe(1);
 });
-it("カレンダーに入れる行は手入力と同じ形（title「〇〇 内覧」・notes 先頭【時間確保】・日本時間）", () => {
+it("カレンダーに入れる行は title「【確保】〇〇 内覧」・notes 先頭【時間確保】・日本時間", () => {
   const row = holdEventRow(parseCandidateSlots("明日 9/16(水) 15:30〜17:00", NOW)[0], "🐈‍⬛", "6fdadc8b-b3d7-4c71-a998-89866b92deb8");
-  expect(row.title).toBe("🐈‍⬛ 内覧");
+  expect(row.title).toBe("【確保】🐈‍⬛ 内覧");
   expect(row.event_type).toBe("viewing");
   expect(row.all_day).toBe(false);
   expect(row.start_at).toBe(new Date("2026-09-16T15:30:00+09:00").toISOString());
@@ -46,7 +46,41 @@ it("手入力の確保（notes が「【時間確保】」だけ）も確保と�
   expect(isViewingHoldNotes(holdNotes("9/16(水) 15:30〜17:00"))).toBe(true);
   expect(isViewingHoldNotes("【物件】カーザSunI 202号室 / 内覧方法: 未入力")).toBe(false);
   expect(isViewingHoldNotes(null)).toBe(false);
-  expect(holdTitle(null)).toBe("内覧");
+  expect(holdTitle(null)).toBe("【確保】内覧");
+});
+
+// ─── 通常の返信から拾う（2026-09-17 竹内・Hina 事例）───
+// 2026-09-16(水) 18:51 JST にスタッフが送った場面
+const NOW_HINA = Date.parse("2026-09-16T09:51:00Z");
+it("Hina: 日付の無い「18:00からのお部屋ご案内」は、送った時刻（18:51）を過ぎているので翌日 9/17 18:00 の確保", () => {
+  const text = "セレニテ南堀江エクラ\nグリーンヒルズ\n\nのお部屋即日ご案内可能なお部屋となります！！\n18:00からのお部屋ご案内ですと2、3件程となりますので、特にお気に召されましたお部屋ご案内させていただきます😊！！\n\nご案内希望のお部屋はどちらになりますでしょうか！！";
+  const slots = parseViewingHoldFromReply(text, NOW_HINA);
+  expect(slots.length).toBe(1);
+  expect(slots[0]).toEqual({ ymd: "2026-09-17", start: "18:00", end: "20:00", label: "9/17(木) 18:00〜20:00" });
+});
+it("まだ来ていない時刻は当日・日付が書いてあればその日（実送信の型）", () => {
+  // 18:51 に「20:00から」＝今日の 20:00
+  expect(parseViewingHoldFromReply("20:00からお部屋ご案内可能です！！", NOW_HINA)[0].ymd).toBe("2026-09-16");
+  // 範囲つき
+  expect(parseViewingHoldFromReply("16:00〜18:00ご案内可能です！！", NOW_HINA)[0]).toEqual({ ymd: "2026-09-17", start: "16:00", end: "18:00", label: "9/17(木) 16:00〜18:00" });
+  // 「〇時」表記
+  expect(parseViewingHoldFromReply("明日15時からお部屋ご案内させていただきます！！", NOW_HINA)[0]).toEqual({ ymd: "2026-09-17", start: "15:00", end: "17:00", label: "9/17(木) 15:00〜17:00" });
+  // 日付が書いてあればその日
+  expect(parseViewingHoldFromReply("9/18(金) 10:30〜11:30でご案内可能です！！", NOW_HINA)[0].ymd).toBe("2026-09-18");
+  // 「〇時半」（実送信「18時半からご案内可能です😊！！」）
+  expect(parseViewingHoldFromReply("18時半からご案内可能です😊！！", NOW_HINA)[0]).toEqual({ ymd: "2026-09-17", start: "18:30", end: "20:30", label: "9/17(木) 18:30〜20:30" });
+  // 「〇時〜〇時」
+  expect(parseViewingHoldFromReply("明日14時〜16時でお部屋ご案内出来ます！！", NOW_HINA)[0]).toEqual({ ymd: "2026-09-17", start: "14:00", end: "16:00", label: "9/17(木) 14:00〜16:00" });
+  // 実送信「本日14時お部屋ご案内させて頂きます！」
+  expect(parseViewingHoldFromReply("本日14時お部屋ご案内させて頂きます！", NOW_HINA)[0].ymd).toBe("2026-09-16");
+});
+it("案内の話でない時刻は拾わない（営業時間・連絡の約束・件数の数字）", () => {
+  expect(parseViewingHoldFromReply("18:00以降は管理会社営業時間外となりますので、明日確認してご連絡させて頂きます！！", NOW_HINA).length).toBe(0);
+  expect(parseViewingHoldFromReply("明日10:00までにご連絡させて頂きます！！", NOW_HINA).length).toBe(0);
+  expect(parseViewingHoldFromReply("15:00にはご内覧完了させて頂く形となります！！", NOW_HINA).length).toBe(0);
+  expect(parseViewingHoldFromReply("2、3件程のお部屋ご案内可能です！！", NOW_HINA).length).toBe(0);   // 裸の数字は時刻にしない
+  expect(parseViewingHoldFromReply("ご都合よろしいお日にちにご案内させて頂きます！！", NOW_HINA).length).toBe(0);
+  expect(parseViewingHoldFromReply("", NOW_HINA).length).toBe(0);
 });
 it("決まったら: 同じ日時の確保を残し（本当の内覧に書き換える）、そのお客さんの他の候補は消す", () => {
   const holds = [
