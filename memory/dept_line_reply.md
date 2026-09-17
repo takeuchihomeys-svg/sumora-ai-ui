@@ -4,7 +4,13 @@
 
 ---
 
-## AIX のプロンプトキャッシュ／API 消費の点検（竹内・2026-09-17・Fable5 Workflow 23エージェント・調査のみ・未実装）
+## AIX のプロンプトキャッシュ／API 消費の点検と改善（竹内・2026-09-17・Fable5 Workflow 23＋8エージェント・コミット 748b2df1）
+- **実装済み（748b2df1）**: 手順1（共通 prefix の自動分割）・2（DB ルールを global/action に分離）・4（計測列 action/conversation_id/sys_key_full・migrate-schema・本番 DB 適用済み）・5（Haiku 経路は cache なし・aix-template-generate の 1h を外す・物件オススメは 1h 維持）・6の一部（カバーレターの accountName を dynamic へ・mgmt/app のテンプレート変数を dynamic へ）。**未実装**: 手順3（global 113件の絞り込み＝品質判断は竹内さん）・1b（generate-reply と先頭を1バイト同一にする）
+- **仕組み**: `app/lib/aix-system-blocks.ts`（SystemSpec = shared 1h → semiStatic 1h → routeStatic 5m/none → dynamic。文字列で呼ばれたら `splitSharedPrefix` が共通 prefix を自動で shared に。1,500字未満は cache_control なし。結合すれば従来と同一文字列＝テストで固定）／`fetchPromptRulesSplit`（global は5分メモリキャッシュ・order に rule_key）／`llm-usage-recorder` が `x-sumora-llm-action` / `x-sumora-llm-conversation` を読んで Anthropic に送る前に取り除く
+- **本番実測（YUMA・5回・生成のみ）**: 物件確認した会話合わせ 初回 bp3・unc **8.3k**（旧 24〜32k）・w1h 53.6k・w5m 7.8k → 2回目 read 61.4k・write 0／物件ピックアップ会話合わせ 初回 **read 41.7k**（別経路でも共通部 hit）・w1h 12.1k（global）／追客 初回 read 53.8k・write 0。action/conversation_id 全行あり。副作用なし（line_tasks・aix_usage_logs 0・aix_generate_log は片付け済み）
+- **3日後に見る**: llm_usage_logs を action 別（テスト連打除外）で base_equiv 合計・w1h 合計。目標: 会話合わせ系 3.85M→2.5M 以下・1h write 1.14M→0.3M 以下
+- **判断の記録**: pcr 会話合わせは exclude keys に global のルール（PROP-URL-REPLY-001）があるので global が1行短い別鍵を許容（最も呼ばれる経路で自分で温まる）／Haiku 経路（カバーレター等）は hit 37% < 損益分岐 53% で cache なし／既存 fetchPromptRules は1クエリのまま（generate_reply は上限 200 に掛かり、2クエリに寄せると届くルールが変わる）
+- **Workflow の落とし穴**: スクリプトのテンプレート文字列内で `\${` と書くと展開されて ReferenceError（移行3件が落ちた）。変数名だけ書くか単引用符に逃がす。resume で土台はキャッシュ再利用できた
 - 竹内: 「AIXで送信する際プロンプトキャッシュできていない部分がある可能性がたかい。AIXの物件オススメ等で文送る際等に大量にAPI消費している可能性高い。また見積書送るときも多い」
 - 実測（llm_usage_logs 3日・status=200）: `/api/aix/action` 203回・uncached 平均 **16k**（generate-reply は 6.4k）・**cache 区切り 1.0**（generate-reply 1.6）・hit 55%・sys_key 20種
 - **無駄の場所は見積書でも物件オススメでもなく「会話を合わせる」系 11 経路**（物件確認した・ピックアップ会話合わせ・申込へ・内覧へ・初期費用説明 等＝sys_key e84584f5・98回・aix/action 入力費の **72%**）。原因3つ:
