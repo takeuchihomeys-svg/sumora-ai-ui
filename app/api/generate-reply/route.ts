@@ -63,6 +63,8 @@ import { findNearDuplicateSent } from "@/app/lib/closed-ack";
 import { stripPointlessGuidance, recentUsedSentences, findRepeatedClosing, buildAvoidRepeatNote } from "@/app/lib/reply-phrasing";
 // 2026-09-17 竹内（慶次事例）: お客様が謝っている場面は「かしこまりました」ではなく受け止めから入る
 import { resolveApologyOnly, ensureApologyOpener, buildApologyNote } from "@/app/lib/apology-ack";
+// 2026-09-17 竹内（友哉事例）: お客様が既に送ってきた書類（PDF・書類の画像）をもう一度お願いしない
+import { detectReceivedDocuments, buildReceivedDocumentNote } from "@/app/lib/received-document";
 import { buildRelativeDayNote, buildConversationClockNote } from "@/app/lib/relative-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
@@ -3480,6 +3482,14 @@ export async function POST(req: NextRequest) {
       lastStaffText: tpoLatestStaffText,
     });
     if (portalVerdict.kind !== "none") console.info("[portal-notice] 場面", JSON.stringify({ conversationId, kind: portalVerdict.kind, portal: portalVerdict.portalLabel, reason: portalVerdict.reason }));
+    // 2026-09-17 竹内（友哉事例）「PDFお客さんから送られているのに、判断できていない」:
+    //   お客様が既に送ってきた書類（PDF の [ファイル] メッセージ・書類の画像）を材料に渡し、同じ書類を作れと言わせない。
+    //   実データ365日: 書類が届いた直後のスタッフ実送信53件のうち44件（83%）が「お送りいただきありがとうございます」で始まり、
+    //   届いた書類の再依頼は0件（4件の依頼はいずれも別の書類の追加）
+    const receivedDocs = detectReceivedDocuments(
+      recentMessages.map((m) => ({ sender: m.sender, text: m.text ?? "", created_at: m.createdAt ?? null })),
+    );
+    if (receivedDocs.length > 0) console.info("[received-document] 届いている書類", JSON.stringify({ conversationId, docs: receivedDocs.map((d) => d.fileName ?? d.label) }));
     const isViewingAccessTurn = !!ledger.facts.viewingAppointment && isViewingAccessQuestion(intentMessage, true);
     const isConditionChangeRequest = conditionDetail.changeRequest && !isViewingAccessTurn;
     if (conditionDetail.changeRequest && isViewingAccessTurn) {
@@ -4632,7 +4642,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       // 2026-09-17 YUYA 事例: ポータルの場面では LLM にポータルの説明を書かせない（決まった文を出口で足す）
       // 2026-09-17 あや事例: この会話で既に送った言い回しを渡して同じ文を繰り返させない（コピペに見える）
       // 2026-09-17 慶次事例: 謝っている場面は受け止めから入る
-      tpoGuidanceNote + relativeDayNote + conversationClockNote + buildPortalPromptNote(portalVerdict) + buildAvoidRepeatNote(usedSentences) + buildApologyNote(apologyVerdict.apology), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
+      // 2026-09-17 友哉事例: 既に届いている書類（PDF・書類の画像）をもう一度お願いさせない
+      tpoGuidanceNote + relativeDayNote + conversationClockNote + buildPortalPromptNote(portalVerdict) + buildAvoidRepeatNote(usedSentences) + buildApologyNote(apologyVerdict.apology)
+        + (receivedDocs.length > 0 ? `\n\n${buildReceivedDocumentNote(receivedDocs)}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）

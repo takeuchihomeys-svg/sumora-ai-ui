@@ -42,6 +42,9 @@ type Message = {
   text: string;
   imageUrl?: string;
   imageExpiresAt?: string;
+  // 2026-09-17 竹内（友哉事例）: お客様が送った PDF 等のファイル（公式 LINE には出るのにアプリに出ていなかった）
+  fileUrl?: string;
+  fileName?: string;
   time: string;
   rawCreatedAt?: string;
   isAix?: boolean;
@@ -128,6 +131,8 @@ type SupabaseMessageRow = {
   text: string;
   image_url?: string | null;
   image_expires_at?: string | null;
+  file_url?: string | null;
+  file_name?: string | null;
   created_at: string;
   is_aix_generated?: boolean | null;
   quoted_message_id?: string | null;
@@ -1816,7 +1821,7 @@ export default function Home() {
             // 返信入力中でも選択中の会話に届いたなら強制スクロール
             if (cid === selectedIdRef.current) forceScrollForCustomerMsgRef.current = true;
           }
-          const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; created_at: string; quoted_message_id?: string | null };
+          const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; file_url?: string; file_name?: string; created_at: string; quoted_message_id?: string | null };
           if (!newMsg?.id) {
             fetchConversationsAndMessages(true);
             return;
@@ -1835,6 +1840,8 @@ export default function Home() {
             sender: newMsg.sender as "customer" | "staff",
             text: newMsg.text,
             imageUrl: newMsg.image_url || undefined,
+            fileUrl: newMsg.file_url || undefined,
+            fileName: newMsg.file_name || undefined,
             time: formatTime(newMsg.created_at),
             rawCreatedAt: newMsg.created_at,
             quotedMessageId: newMsg.quoted_message_id || undefined,
@@ -1869,16 +1876,23 @@ export default function Home() {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "messages" },
         (payload) => {
-          // image_url が後から埋まったとき（画像メッセージの非同期取得）に反映する
-          const upd = payload.new as { id: number; conversation_id: number; image_url?: string; image_expires_at?: string };
-          if (!upd?.id || !upd.image_url) return;
+          // image_url / file_url が後から埋まったとき（画像・ファイルの非同期取得）に反映する
+          const upd = payload.new as { id: number; conversation_id: number; image_url?: string; image_expires_at?: string; file_url?: string; file_name?: string };
+          if (!upd?.id || (!upd.image_url && !upd.file_url)) return;
           setConversations((prev) =>
             prev.map((c) => {
               if (c.id !== String(upd.conversation_id)) return c;
               return {
                 ...c,
                 messages: c.messages.map((m) =>
-                  m.id === String(upd.id) ? { ...m, imageUrl: upd.image_url, imageExpiresAt: upd.image_expires_at || undefined } : m
+                  m.id === String(upd.id)
+                    ? {
+                        ...m,
+                        ...(upd.image_url ? { imageUrl: upd.image_url } : {}),
+                        ...(upd.file_url ? { fileUrl: upd.file_url, fileName: upd.file_name || m.fileName } : {}),
+                        imageExpiresAt: upd.image_expires_at || m.imageExpiresAt,
+                      }
+                    : m
                 ),
               };
             })
@@ -2032,6 +2046,8 @@ export default function Home() {
                   text: m.text,
                   imageUrl: m.image_url || undefined,
                   imageExpiresAt: m.image_expires_at || undefined,
+          fileUrl: m.file_url || undefined,
+          fileName: m.file_name || undefined,
                   time: formatTime(m.created_at),
                   rawCreatedAt: m.created_at,
                   isAix: m.is_aix_generated || false,
@@ -2058,6 +2074,8 @@ export default function Home() {
           text: m.text,
           imageUrl: m.image_url || undefined,
           imageExpiresAt: m.image_expires_at || undefined,
+          fileUrl: m.file_url || undefined,
+          fileName: m.file_name || undefined,
           time: formatTime(m.created_at),
           rawCreatedAt: m.created_at,
           isAix: m.is_aix_generated || false,
@@ -2111,6 +2129,8 @@ export default function Home() {
         text: m.text,
         imageUrl: m.image_url || undefined,
         imageExpiresAt: m.image_expires_at || undefined,
+        fileUrl: m.file_url || undefined,
+        fileName: m.file_name || undefined,
         time: formatTime(m.created_at),
         rawCreatedAt: m.created_at,
         quotedMessageId: m.quoted_message_id || undefined,
@@ -2131,7 +2151,9 @@ export default function Home() {
     const conv = conversations.find((c) => c.id === selectedId);
     const since = Date.now() - 10 * 60 * 1000;
     return (conv?.messages || [])
-      .filter((m) => m.sender === "customer" && !m.imageUrl && (m.text || "").startsWith("[画像]")
+      // 2026-09-17 友哉事例: ファイル（[ファイル] 〜 で file_url 未設定）も同じ経路で埋め直す
+      .filter((m) => m.sender === "customer"
+        && ((!m.imageUrl && (m.text || "").startsWith("[画像]")) || (!m.fileUrl && (m.text || "").startsWith("[ファイル]")))
         && m.rawCreatedAt && new Date(m.rawCreatedAt).getTime() > since)
       .map((m) => m.id)
       .join(",");
@@ -2145,17 +2167,24 @@ export default function Home() {
       if (Date.now() - startedAt > 3 * 60 * 1000) { clearInterval(timer); return; }
       const { data } = await supabase
         .from("messages")
-        .select("id, text, image_url, image_expires_at")
+        .select("id, text, image_url, image_expires_at, file_url, file_name")
         .in("id", ids)
-        .not("image_url", "is", null);
+        .or("image_url.not.is.null,file_url.not.is.null");
       if (!data || data.length === 0) return;
-      const filled = new Map((data as { id: string; text: string; image_url: string; image_expires_at?: string | null }[])
+      const filled = new Map((data as { id: string; text: string; image_url: string | null; image_expires_at?: string | null; file_url?: string | null; file_name?: string | null }[])
         .map((r) => [String(r.id), r]));
       setConversations((prev) => prev.map((c) => c.id !== convId ? c : {
         ...c,
         messages: c.messages.map((m) => {
           const r = filled.get(m.id);
-          return r ? { ...m, imageUrl: r.image_url, text: r.text || m.text, imageExpiresAt: r.image_expires_at || m.imageExpiresAt } : m;
+          if (!r) return m;
+          return {
+            ...m,
+            ...(r.image_url ? { imageUrl: r.image_url } : {}),
+            ...(r.file_url ? { fileUrl: r.file_url, fileName: r.file_name || m.fileName } : {}),
+            text: r.text || m.text,
+            imageExpiresAt: r.image_expires_at || m.imageExpiresAt,
+          };
         }),
       }));
     }, 3000);
@@ -2397,6 +2426,8 @@ export default function Home() {
           text: message.text,
           imageUrl: message.image_url || undefined,
           imageExpiresAt: message.image_expires_at || undefined,
+          fileUrl: message.file_url || undefined,
+          fileName: message.file_name || undefined,
           time: formatTime(message.created_at),
           rawCreatedAt: message.created_at,
           quotedMessageId: message.quoted_message_id || undefined,
@@ -7423,6 +7454,35 @@ export default function Home() {
                             } ${flaggedIds.has(message.id) ? "ring-2 ring-orange-300" : ""}`}
                             style={!isCustomer ? { backgroundColor: "rgba(220,248,198,0.55)" } : undefined}
                           >
+                            {/* 2026-09-17 竹内（友哉事例）: お客様が送った PDF 等のファイル。
+                                公式 LINE には出るのにアプリには何も出ていなかった（webhook が file を捨てていた） */}
+                            {(message.text || "").startsWith("[ファイル]") && (() => {
+                              const name = message.fileName || (message.text || "").replace(/^\[ファイル\]\s*/, "") || "ファイル";
+                              const expired = !!message.imageExpiresAt && new Date(message.imageExpiresAt) < new Date();
+                              const recent = message.rawCreatedAt && Date.now() - new Date(message.rawCreatedAt).getTime() < 10 * 60 * 1000;
+                              return (
+                                <div className="flex items-center gap-2 px-3 py-2.5">
+                                  <span className="text-[20px] leading-none">📄</span>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate text-[13px] font-medium text-[#3d4a52]">{name}</div>
+                                    {message.fileUrl && !expired ? (
+                                      <a
+                                        href={message.fileUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[11px] text-blue-600 underline"
+                                      >
+                                        開く / ダウンロード
+                                      </a>
+                                    ) : (
+                                      <div className="text-[11px] text-gray-400">
+                                        {expired ? "保存期間が終了しました" : recent ? "ファイルを受信中…" : "ファイルを取得できませんでした"}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             {/* 保存期間終了 */}
                             {!message.imageUrl && message.text === "[画像]" && message.imageExpiresAt && new Date(message.imageExpiresAt) < new Date() && (
                               <div className="flex items-center gap-1.5 px-3 py-2 text-[13px] text-gray-400">
@@ -7523,7 +7583,8 @@ export default function Home() {
                                 </div>
                               );
                             })()}
-                            {message.text && message.text !== "[画像]" && message.text !== "[動画]" && (
+                            {message.text && message.text !== "[画像]" && message.text !== "[動画]"
+                              && !message.text.startsWith("[ファイル]") /* 2026-09-17 友哉事例: 上のファイルのカードで出しているので本文は二重に出さない */ && (
                               <div className="whitespace-pre-wrap break-words px-4 py-2.5">{renderTextWithLinks(message.text)}</div>
                             )}
                           </div>

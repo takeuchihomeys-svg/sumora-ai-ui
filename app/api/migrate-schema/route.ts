@@ -2259,6 +2259,12 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_type TEXT;
 -- sent_properties.id への参照（URL一致・quoted_message_id 経由で自動リンク）
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS referenced_property_id UUID;
 CREATE INDEX IF NOT EXISTS idx_messages_referenced_property ON messages(referenced_property_id);
+-- 2026-09-17 竹内（友哉事例）: お客様が送った PDF 等のファイル（LINE の file メッセージ）。
+--   旧: line-webhook が file タイプを保存せず捨てていたため、公式 LINE には出るのにアプリには出ず、
+--   ブレインも「書類が届いた」と分からなかった（365日で [ファイル] 0件）。
+--   image_url は <img> の描画に使われるので PDF は別の列に持つ
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_url TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name TEXT;
 
 -- ④ 条件変更履歴（condition_change_type の事実化・property_customers は最新値しか持たない）
 CREATE TABLE IF NOT EXISTS property_condition_history (

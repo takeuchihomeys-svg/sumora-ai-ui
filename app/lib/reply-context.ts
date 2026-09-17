@@ -50,12 +50,16 @@ const SENT_SPLIT_RE = /(?<=[。！!？?])|\n/;
 //   （物件の指名は画像が届いたこと自体・readImageUnits の文字で判定する）。
 /** 返信生成のプロンプトで画像の読み取り文に付ける見出し（生成・判定が同じ定数を見る） */
 export const IMAGE_TEXT_LABEL = "【お客様が送った画像に写っていた文字（お客様の発言・質問・希望条件ではない。物件の特定にだけ使う）】";
-const IMAGE_UNIT_RE = /^\s*(?:\[(?:画像|動画)\]|【スクショ内容】|【お客様が送った画像に写っていた文字)/;
-/** 1通が画像（または動画）の読み取り文か */
+// 2026-09-17 竹内（友哉事例）: ファイル（PDF 等）も同じ扱い。「労働条件通知書_中谷友哉.pdf」はファイル名であって
+//   お客様の発言ではないので、意図（質問・依頼・条件）の判定には使わない（届いた事実だけを見る）
+const IMAGE_UNIT_RE = /^\s*(?:\[(?:画像|動画|ファイル)\]|【スクショ内容】|【お客様が送った画像に写っていた文字)/;
+/** 1通が画像・動画・ファイルの通か（中身はお客様の言葉ではない） */
 export function isImageTextUnit(unit: string): boolean { return IMAGE_UNIT_RE.test(unit); }
-/** お客様が書いた言葉だけ（画像の読み取り文の通を「[画像]」に置き換える）。通は MSG_SEP 区切り（1通の読み取り文は複数行でも1通） */
+/** お客様が書いた言葉だけ（画像・ファイルの通を印だけに置き換える）。通は MSG_SEP 区切り（1通の読み取り文は複数行でも1通） */
 export function customerOwnWords(raw: string | null | undefined): string {
-  return (raw ?? "").split(MSG_SEP).map((u) => (isImageTextUnit(u) ? "[画像]" : u)).join(MSG_SEP);
+  return (raw ?? "").split(MSG_SEP)
+    .map((u) => (isImageTextUnit(u) ? (/^\s*\[ファイル\]/.test(u) ? "[ファイル]" : "[画像]") : u))
+    .join(MSG_SEP);
 }
 /** 画像の読み取り文の通だけ（物件の特定用） */
 export function imageTextUnits(raw: string | null | undefined): string[] {
@@ -251,7 +255,8 @@ export function analyzeSubstance(
   // 2026-09-14 竹内（Hina 事例）: 画像（読み取り文）だけのターンはお礼・了承ではない（物件のスクショ・書類が「届いた」）。
   //   旧: 読み取り前の「[画像]」だけは empty＝了承扱いで、ピックアップ宣言の後に物件のスクショが届くと PD_ACK（了承への返し）が選ばれた。
   //   読み取り文はお客様の発言ではないので中身から意図は取らず（normalizeCustomerText）、「情報が届いた」だけにする
-  if (!normalized && /\[(?:画像|動画)\]|【スクショ内容】|【お客様が送った画像/.test(customerMessage ?? "")) {
+  // 2026-09-17 友哉事例: ファイル（書類の PDF）だけのターンも「情報が届いた」（お礼・了承ではない）
+  if (!normalized && /\[(?:画像|動画|ファイル)\]|【スクショ内容】|【お客様が送った画像/.test(customerMessage ?? "")) {
     return {
       has: true, kinds: ["info"], concerns: [], isAckOnly: false, residue: "", residueLen: 0, normalized, units: unitList,
       evidence: ["image_only"], isPureBoilerplate: false, waitSignal: detectWaitSignal(normalized),

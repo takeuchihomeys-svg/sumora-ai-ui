@@ -9,6 +9,7 @@ import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { recordConditionHistory } from "@/app/lib/condition-history";
 import { CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
+import { fileMessageText } from "@/app/lib/received-document";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 // 2026-09-13: 画像は読み取り（最大 IMAGE_READ_WAIT_MS）→ ブレイン（最大約90s・実行中に読み取りが終わった分の再分析1回）を直列にしたので 300 に
@@ -1813,6 +1814,118 @@ async function handleImageMessageSave(
   return { convId, msgId: String(msgData.id) };
 }
 
+// ── LINE の file メッセージ（PDF 等）を保存（2026-09-17 竹内・友哉事例）──────────────
+//   画像経路（handleImageMessageSave）と同じ形。違いはテキストが "[ファイル] <ファイル名>" で、
+//   本体は file_url に入れる（image_url は画面が <img> で描くので PDF を入れてはいけない）
+async function handleFileMessageSave(
+  userId: string,
+  lineMessageId: string,
+  fileName: string | null,
+  account: AccountConfig,
+): Promise<{ convId: string; msgId: string } | "duplicate" | null> {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const convId = await ensureConversation(db, userId, account, now);
+  if (!convId) return null; // 失敗（LINEにリトライさせる）
+
+  const { data: existing } = await db
+    .from("messages")
+    .select("id")
+    .eq("line_message_id", lineMessageId)
+    .maybeSingle();
+  if (existing) return "duplicate";
+
+  const text = fileMessageText(fileName);
+  // 保存期限は画像と同じ30日（LINE の Content API 自体が期限つき）
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: msgData, error: msgErr } = await db.from("messages").insert({
+    conversation_id: convId,
+    sender: "customer",
+    text,
+    file_name: fileName,
+    file_url: null,
+    line_message_id: lineMessageId,
+    image_expires_at: expiresAt,
+    created_at: now,
+  }).select("id").maybeSingle();
+
+  if (msgErr || !msgData) {
+    console.error("[line-webhook] file message保存失敗:", msgErr?.message);
+    return null;
+  }
+
+  await db
+    .from("conversations")
+    .update({ last_message: text, last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
+    .eq("id", convId);
+  // stale __SHOWN__ 残留対策（画像経路と同一理由）
+  await db
+    .from("conversations")
+    .update({ ai_draft: null })
+    .eq("id", convId)
+    .eq("ai_draft", "__SHOWN__");
+  // 顧客返信 → pending property_check タスクを自動キャンセル（テキスト・画像経路と同一）
+  await db
+    .from("line_tasks")
+    .update({ status: "cancelled" })
+    .eq("conversation_id", convId)
+    .eq("task_type", "property_check")
+    .eq("status", "pending");
+
+  // 申込書類が PDF で届く場合があるので、画像と同じ applying 昇格の材料にする
+  await autoPromoteApplyingOnFormImage(db, convId, now);
+
+  updateProfileAsync(db, userId, convId, account, text, now);
+  return { convId, msgId: String(msgData.id) };
+}
+
+// ── LINE Content API からファイル本体を取得して Storage に保存（after()で非同期実行）──
+//   画像と同じ line-images バケットの files/ 配下に置く（バケットの公開設定・権限を使い回す）
+async function fetchAndUploadLineFile(
+  lineMessageId: string,
+  msgId: string,
+  fileName: string | null,
+  account: AccountConfig,
+): Promise<void> {
+  if (!account.token) return;
+  const db = getDb();
+  try {
+    const contentRes = await fetch(
+      `https://api-data.line.me/v2/bot/message/${lineMessageId}/content`,
+      { headers: { Authorization: `Bearer ${account.token}` }, signal: AbortSignal.timeout(15_000) },
+    );
+    if (!contentRes.ok) {
+      console.warn(`[line-webhook] Content API失敗(file) status=${contentRes.status} msgId=${lineMessageId}`);
+      return;
+    }
+    const contentType = contentRes.headers.get("content-type") || "application/octet-stream";
+    // 拡張子はファイル名を正とする（LINE の content-type は application/octet-stream のことがある）
+    const extFromName = (fileName ?? "").match(/\.([A-Za-z0-9]{1,8})$/)?.[1]?.toLowerCase();
+    const ext = extFromName || (contentType.includes("pdf") ? "pdf" : "bin");
+    const arrayBuf = await contentRes.arrayBuffer();
+    const storagePath = `files/${lineMessageId}.${ext}`;
+    const uploadType = ext === "pdf" ? "application/pdf" : contentType;
+
+    const { error: upErr } = await db.storage
+      .from("line-images")
+      .upload(storagePath, new Blob([arrayBuf], { type: uploadType }), { contentType: uploadType, upsert: true });
+    if (upErr) {
+      console.error("[line-webhook] Storage upload失敗(file):", upErr.message, "msgId:", lineMessageId);
+      return;
+    }
+    const { data: urlData } = db.storage.from("line-images").getPublicUrl(storagePath);
+    const { error: updateErr } = await db
+      .from("messages")
+      .update({ file_url: urlData.publicUrl })
+      .eq("id", msgId);
+    if (updateErr) console.error("[line-webhook] file_url更新失敗:", updateErr.message);
+  } catch (e) {
+    console.error("[line-webhook] ファイル処理エラー:", e);
+  }
+}
+
 // ── テキスト・画像の両方が揃ったら applying に昇格する共通ヘルパー ──────────
 // applying_text_received（申込フォームテキスト受信済み）と
 // applying_image_received（申込書依頼後の顧客画像受信済み）が両方 true のときのみ昇格する。
@@ -2107,6 +2220,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // 画像メッセージの後処理用（after()で非同期実行する分）
   const imageJobs: Array<{ lineMessageId: string; msgId: string; convId: string; account: typeof matchedAccount }> = [];
+  // ファイル（PDF 等）の後処理用（2026-09-17 友哉事例）
+  const fileJobs: Array<{ lineMessageId: string; msgId: string; convId: string; fileName: string | null; account: typeof matchedAccount }> = [];
   let anyFailed = false;
 
   // 同一POSTバッチ内で同一ユーザーに対してafter() Bが複数登録されるのを防ぐ
@@ -2117,7 +2232,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const event = ev as {
       type: string;
       source?: { type?: string; userId?: string };
-      message?: { type: string; id?: string; text?: string; quotedMessageId?: string };
+      // fileName / fileSize は LINE の file メッセージ（PDF 等）に付く
+      message?: { type: string; id?: string; text?: string; quotedMessageId?: string; fileName?: string; fileSize?: number };
       unsend?: { messageId?: string };
     };
 
@@ -2224,6 +2340,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       } else if (saved !== "duplicate") {
         imageJobs.push({ lineMessageId, msgId: saved.msgId, convId: saved.convId, account: matchedAccount });
       }
+    } else if (msgType === "file") {
+      // 2026-09-17 竹内（友哉事例）: PDF（LINE の file メッセージ）は保存されず捨てられていた
+      //   → 公式 LINE には出るのにアプリには出ず、ブレインも「書類が届いた」と分からなかった
+      //   （実データ365日で messages の "[ファイル]" は0件）。画像と同じ形で保存・取得・ブレインを動かす
+      const lineMessageId = event.message?.id;
+      if (!lineMessageId) continue;
+      const fileName = (event.message?.fileName ?? "").trim() || null;
+      const saved = await handleFileMessageSave(userId, lineMessageId, fileName, matchedAccount);
+      if (saved === null) {
+        anyFailed = true; // 失敗 → LINEにリトライさせる
+      } else if (saved !== "duplicate") {
+        fileJobs.push({ lineMessageId, msgId: saved.msgId, convId: saved.convId, fileName, account: matchedAccount });
+      }
     } else if (msgType === "sticker") {
       // H4: スタンプは保存も通知もされず消えていた → テキスト経路で "[スタンプ]" として保存・通知
       // skipDraftTrigger=true: スタンプでai_draft生成は不要（連打で多重生成が起きるのを防ぐ）
@@ -2232,7 +2361,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (!ok) anyFailed = true;
       continue;
     } else {
-      // 未対応msgType（video/audio/file等）: ブレイン誘導のみクリア（draft生成は不要）
+      // 未対応msgType（video/audio等）: ブレイン誘導のみクリア（draft生成は不要）
       const db = getDb();
       const { data: conv } = await db
         .from("conversations")
@@ -2275,6 +2404,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       await Promise.allSettled(convIds.map((cid) =>
         runBrainAndNotify(cid, undefined, { inputUpdatedAt })
           .catch((e) => console.warn("[line-webhook] brain notify (image):", cid, e))
+      ));
+    });
+  }
+
+  // 2026-09-17 竹内（友哉事例）: ファイル（PDF 等）も本体を取ってからブレインを会話ごとに1回動かす。
+  //   同じ POST に画像もあった時は画像側が同じ会話を回すので、ここでは画像に無い会話だけ動かす
+  if (fileJobs.length > 0) {
+    const imageConvIds = new Set(imageJobs.map((j) => j.convId));
+    after(async () => {
+      await Promise.race([
+        Promise.allSettled(
+          fileJobs.map(({ lineMessageId, msgId, fileName, account }) => fetchAndUploadLineFile(lineMessageId, msgId, fileName, account))
+        ),
+        new Promise<void>((resolve) => setTimeout(resolve, IMAGE_READ_WAIT_MS)),
+      ]);
+      const inputUpdatedAt = Date.now();
+      const convIds = [...new Set(fileJobs.map((j) => j.convId))].filter((cid) => !imageConvIds.has(cid));
+      console.log(JSON.stringify({ tag: "brain:file-trigger", convIds, files: fileJobs.length, names: fileJobs.map((j) => j.fileName) }));
+      await Promise.allSettled(convIds.map((cid) =>
+        runBrainAndNotify(cid, undefined, { inputUpdatedAt })
+          .catch((e) => console.warn("[line-webhook] brain notify (file):", cid, e))
       ));
     });
   }
