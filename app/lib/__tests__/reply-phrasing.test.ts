@@ -1,6 +1,6 @@
 // 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きます」を落とす／この会話で既に使った文を繰り返さない
 // 実行: npx tsx app/lib/__tests__/reply-phrasing.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { splitSentences, stripPointlessGuidance, recentUsedSentences, findRepeatedSentences, buildAvoidRepeatNote } from "../reply-phrasing";
+import { splitSentences, stripPointlessGuidance, recentUsedSentences, findRepeatedSentences, findRepeatedClosing, closingSentence, buildAvoidRepeatNote } from "../reply-phrasing";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -79,6 +79,28 @@ it("新しい内容の文は繰り返しにしない", () => {
   const used = recentUsedSentences(AYA_STAFF);
   const hits = findRepeatedSentences("あやさんのご条件に合うお部屋、新着で募集に出次第すぐにお送りさせて頂きます！！", used);
   expect(hits.length).toBe(0);
+});
+it("締めの文は末尾から（定型・箇条書き・相槌は飛ばす）", () => {
+  expect(closingSentence("はい😊！！\nごゆっくりご検討頂けますと幸いです！！\nあやさん気になる点等出てきましたらいつでもお気軽にご連絡ください😌！！"))
+    .toBe("あやさん気になる点等出てきましたらいつでもお気軽にご連絡ください😌！！");
+  // 末尾の定型（お手隙・何卒）は飛ばして、その前の文を締めとする
+  expect(closingSentence("グランパシフィック難波元町の御見積書となります！！\nお手隙の際にご査収ください😌！！\n何卒よろしくお願い致します！！"))
+    .toBe(null);   // 全部が定型＝比べない
+  expect(closingSentence("はい！！")).toBe(null);
+});
+it("送るたびに出る定型（お手隙の際にご査収ください・箇条書き・日割家賃）は繰り返しに数えない", () => {
+  // 実データで同じ会話に何度も出る文（180日: お手隙 145会話・日割家賃 69・箇条書き 38）
+  const used = recentUsedSentences([
+    "【LIVIAZ NAMBA KRASS 1201号室】\n初期費用：284,500円\n※ご入居日によって日割家賃が発生致します！！\nお手隙の際にご査収ください😌！！",
+    "・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！",
+  ]);
+  expect(used).toBe([]);
+  expect(findRepeatedClosing("こちら見積書となります！！\nお手隙の際にご査収ください😌！！", ["お手隙の際にご査収ください😌！！"])).toBe(null);
+});
+it("締めが既出と同じ時だけ拾う（本文の途中が同じでも締めが新しければ出さない）", () => {
+  const used = ["あやさん気になる点等出てきましたらいつでもお気軽にご連絡ください😌！！"];
+  expect((findRepeatedClosing("はい😊！！\nあやさん気になる点出てきましたら何時でもお気軽にご連絡ください！！", used)?.score ?? 0) >= 0.92).toBe(true);
+  expect(findRepeatedClosing("はい😊！！\nあやさん気になる点等出てきましたらいつでもお気軽にご連絡ください😌！！\n新着で募集に出次第すぐにお送りさせて頂きます！！", used)).toBe(null);
 });
 it("材料の文: 使った文が無ければ空・あれば箇条書きで渡す", () => {
   expect(buildAvoidRepeatNote([])).toBe("");

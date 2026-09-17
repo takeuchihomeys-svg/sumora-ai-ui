@@ -60,7 +60,7 @@ import { resolveAddressNameForConversation } from "@/app/lib/address-name-server
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 import { findNearDuplicateSent } from "@/app/lib/closed-ack";
 // 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きます」を落とす／この会話で既に送った文を繰り返さない
-import { stripPointlessGuidance, recentUsedSentences, findRepeatedSentences, buildAvoidRepeatNote } from "@/app/lib/reply-phrasing";
+import { stripPointlessGuidance, recentUsedSentences, findRepeatedClosing, buildAvoidRepeatNote } from "@/app/lib/reply-phrasing";
 import { buildRelativeDayNote, buildConversationClockNote } from "@/app/lib/relative-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
@@ -5445,15 +5445,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // 2026-09-17 竹内（あや事例）「出来る限り全く同じ文を言わない（コピペと思われてしまう為）」:
               //   全文は違っても**締めの1文だけ**が既出と同じ場面（あや: 「ごゆっくりご検討頂けますと幸いです！！」を3回）を出す。
               //   送信は止めない（warning）＝材料で防ぎ切れなかった分をスタッフに見せて直してもらう
+              //   見るのは締めの1文だけ（定型・箇条書き・相槌は対象外）＝送るたびに出る「お手隙の際にご査収ください」等で誤警告を出さない
               if (!dupOfSent.dup) {
-                const repeated = findRepeatedSentences(finalDraftText, usedSentences);
-                if (repeated.length > 0) {
-                  console.log(JSON.stringify({ tag: "draft:repeated-sentence", conversationId, count: repeated.length, score: repeated[0].score, head: repeated[0].sentence.slice(0, 40) }));
+                const repeated = findRepeatedClosing(finalDraftText, usedSentences);
+                if (repeated) {
+                  console.log(JSON.stringify({ tag: "draft:repeated-closing", conversationId, score: repeated.score, head: repeated.sentence.slice(0, 40) }));
                   finalCheck.issues.push({
                     pass: "meta", severity: "warning", code: "REPEATED_SENTENCE",
-                    message: `この会話で既に送った文とほぼ同じ文が${repeated.length}つあります（コピペに見えるので言い方を変えてください）`,
-                    evidence: repeated[0].sentence.slice(0, 60),
-                    suggestion: `「${repeated[0].matched.slice(0, 40)}」は既に送っています。同じ用件でも別の言い回しにする`,
+                    message: "締めの文がこの会話で既に送った文とほぼ同じです（コピペに見えるので言い方を変えてください）",
+                    evidence: repeated.sentence.slice(0, 60),
+                    suggestion: `「${repeated.matched.slice(0, 40)}」は既に送っています。同じ用件でも別の言い回しにする`,
                   });
                 }
               }

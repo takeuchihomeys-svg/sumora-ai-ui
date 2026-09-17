@@ -66,8 +66,15 @@ export function stripPointlessGuidance(text: string): string {
 // ─── ②この会話で既に使った文を繰り返さない ───
 /** ほぼ同じ文とみなす閾値（0.92＝言い回しの揺れだけの違い）。findNearDuplicateSent（全文 0.85）より厳しくする */
 export const REPEAT_SIMILARITY_THRESHOLD = 0.92;
-/** 繰り返しても構わない文（相槌・挨拶・定型の締め）。ここを変えさせると不自然になる */
-const REPEAT_SKIP_RE = /^(?:はい|かしこまりました|承知|お世話になっております|ありがとうございます|何卒|引き続き|それでは)/;
+/**
+ * 繰り返しても構わない文（相槌・挨拶・AIX や見積書の定型・箇条書き）。ここを「前に使った」と言うと、
+ * 送るたびに出る定型まで変えさせてしまう。
+ * 実データ（180日・同じ会話で2回以上使われた文）の上位はすべてこの型:
+ *   お手隙の際にご査収ください 145会話／※ご入居日によって日割家賃が発生致します 69／何卒よろしくお願い致します 49／
+ *   ・敷金礼金なしのため初期費用を…（物件カードの箇条書き）38／🌟最大限割引しました初期費用の御見積書同封させて頂きました 27／
+ *   現地エントランスお待ち合わせで… 15
+ */
+const REPEAT_SKIP_RE = /^(?:はい|かしこまりました|承知|お世話になっております|ありがとうございます|何卒|引き続き|それでは|[・※🌟【（(])|お手隙の際にご査収ください|御見積書同封させて頂きました|御見積書となります|日割家賃|現地エントランス|よろしくお願い(?:致します|いたします|します)|お待ちしております/;
 /** 比べる長さ（これ未満の文は型として短すぎる） */
 const REPEAT_MIN_CHARS = 14;
 
@@ -90,7 +97,31 @@ export function recentUsedSentences(staffTextsOldestFirst: readonly string[], op
   return out;
 }
 
-/** 下書きの中で、既に使った文とほぼ同じ文（材料で防ぎ切れなかった分を検査で出す） */
+/**
+ * 締めの文（末尾から、定型・相槌・短い文を飛ばして最初に見つかる文）。
+ * 竹内さんの指摘は「**最後の文**は前にも使ってる」なので、繰り返しを見るのはここだけにする
+ * （本文の途中の定型まで見ると、送るたびに出る文（お手隙の際にご査収ください等）が全部ひっかかる）
+ */
+export function closingSentence(text: string): string | null {
+  const sents = splitSentences(text);
+  for (let i = sents.length - 1; i >= 0; i--) {
+    const s = sents[i];
+    if (REPEAT_SKIP_RE.test(s)) continue;
+    if ([...normalizeForDup(s)].length < REPEAT_MIN_CHARS) continue;
+    return s;
+  }
+  return null;
+}
+
+/** 下書きの締めの文が、既に送った文とほぼ同じか（材料で防ぎ切れなかった分を検査で出す） */
+export function findRepeatedClosing(draft: string, used: readonly string[]): { sentence: string; matched: string; score: number } | null {
+  const closing = closingSentence(draft);
+  if (!closing) return null;
+  const hits = findRepeatedSentences(closing, used);
+  return hits[0] ?? null;
+}
+
+/** 下書きの中で、既に使った文とほぼ同じ文（締めだけを見る findRepeatedClosing が呼ぶ本体） */
 export function findRepeatedSentences(draft: string, used: readonly string[]): Array<{ sentence: string; matched: string; score: number }> {
   const hits: Array<{ sentence: string; matched: string; score: number }> = [];
   const usedNorm = used.map((u) => ({ raw: u, n: normalizeForDup(u) })).filter((u) => [...u.n].length >= REPEAT_MIN_CHARS);
