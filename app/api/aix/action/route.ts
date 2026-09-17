@@ -22,6 +22,7 @@ import { fetchPromptRules, fetchPromptRulesSplit } from "@/app/lib/prompt-rules"
 import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
+import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
@@ -1587,8 +1588,21 @@ async function handleAction(request: NextRequest): Promise<Response> {
       if (banned.night || banned.shochi || banned.hasty || banned.uketamawari || banned.greetDup) {
         console.log(JSON.stringify({ tag: "aix:banned-phrasing-fixed", action: currentAction, conversationId, night: banned.night, shochi: banned.shochi, hasty: banned.hasty, uketamawari: banned.uketamawari, greetDup: banned.greetDup }));
       }
+      // 2026-09-17 竹内（まりあ事例）「かしこまりました！って生成された文に入っているけど、文の構成としておかしいし、
+      //   全力でサポートさせて頂きます。もこれ返信の部分で使う部分なので、AIXの物件ピックアップや、物件オススメに入らない文となる」:
+      //   物件を送る通は「送りました」の報告なので、依頼の受諾（かしこまりました）と見つかるまでの宣言（全力サポート）を落とす。
+      //   実データ180日: ピックアップの実送信362件のうち「かしこまりました」1件・「全力でサポート」0件（どちらも返信で使う言葉）。
+      //   締めを足すのは物件ピックアップだけ（物件オススメは「お手隙の際にご査収ください」を使わない決まり）
+      let sendCleaned = banned.text;
+      if (currentAction === "property_send" || currentAction === "property_recommendation") {
+        const fixed = stripReplyOnlyPhrases(sendCleaned, { addCloser: currentAction === "property_send" });
+        if (fixed !== sendCleaned) {
+          console.log(JSON.stringify({ tag: "aix:reply-only-phrase-stripped", action: currentAction, conversationId }));
+          sendCleaned = fixed;
+        }
+      }
       // AIが内部メモを出力した場合、顧客向けメッセージと分離
-      return extractNotice(banned.text, familyName || rawName);
+      return extractNotice(sendCleaned, familyName || rawName);
     };
     // 線引き学習用: property_check_result の check_pattern を aix_generate_log に残す
     // （aix-weekly-learning が discarded を check_pattern 粒度で集計し、境界質問を分割起票するため）
