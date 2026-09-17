@@ -4714,18 +4714,19 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const showVI1 = !!(show_viewing_invite as boolean | undefined);
           const showAppInvite1 = !!(body.check_application_invite as boolean | undefined);
           const greeting1 = greetingPhrase; // 挨拶時間ルール共通化（#19）
+          // 保証会社はその物件の情報の一部なので、設備の箇条書きまで出し切った直後・締め（内覧/申込の誘導・他N件募集終了）の前に置く
           if (p.status === "vacating") {
             const vacLine = p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！";
             const facSection = facilityText ? `\n\n${facilityText}` : "";
-            message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}${guarantorSection1}${facSection}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
+            message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}${facSection}${guarantorSection1}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
           } else if (showAppInvite1) {
             const estimateApp = hasAnyEstimate ? "\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！" : "";
             const facSection = facilityText ? `\n\n${facilityText}` : "";
-            message_text = `${pName}募集中となります！！\n現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateApp}${guarantorSection1}${facSection}\n\n※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`;
+            message_text = `${pName}募集中となります！！\n現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateApp}${facSection}${guarantorSection1}\n\n※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`;
           } else {
             const inviteText = showVI1 ? `\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！` : "";
             const facSection = facilityText ? `\n\n${facilityText}` : "";
-            message_text = `${pName}現在募集中となります！！${estimate1}${guarantorSection1}${facSection}${inviteText}`;
+            message_text = `${pName}現在募集中となります！！${estimate1}${facSection}${guarantorSection1}${inviteText}`;
           }
           // greeting1 を先頭に連結（1件モードで挨拶が抜けていたバグ修正）
           // 送られた物件数指定時: ケース1=「確認させていただきました」/ ケース2=「物件の中で」ヘッダー + 他N件募集終了
@@ -4757,15 +4758,18 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const recommendNote = recommendIdx >= 0 && recommendIdx < propList.length
             ? `\n\n特に🌟の${propList[recommendIdx].name || fallbackNames[recommendIdx] || "こちら"}が${name}に特にオススメです！！`
             : "";
-          const estimateSection = hasAnyEstimate
-            ? "\n最大限割引しました初期費用御見積書同封させて頂きました。\nお手隙の際にご査収ください！！"
-            : "";
           // 2026-09-17 竹内（YUYA 事例）: 保証会社の説明（御見積書の直後）。全部同じ会社なら「こちら2部屋とも〜」、
           //   分かれていれば物件名を頭に付けて会社ごとに1行（app/lib/guarantor-companies.ts・入力が無ければ空）
           const guarantorNoteMulti = buildGuarantorCheckNote(
             propList.map((p, pi) => guarantorPropertyOf(p.name || fallbackNames[pi] || "", propFacilitiesData?.[pi])).filter((x): x is GuarantorProperty => !!x)
           );
           const guarantorSectionMulti = guarantorNoteMulti ? `\n\n${guarantorNoteMulti}` : "";
+          // 竹内「保証会社の説明の位置の場所は物件毎なので、位置を上にあげる」: 実送信は例外なく
+          //   「御見積書同封させて頂きました。→ 保証会社 → お手隙の際にご査収ください！！」の順（9/10・7/21・7/17・7/14 ほか）。
+          //   締めの「お手隙の際にご査収ください！！」を保証会社の後ろに回す（保証会社が無ければ従来と同じ2行）
+          const estimateSection = hasAnyEstimate
+            ? `\n最大限割引しました初期費用御見積書同封させて頂きました。${guarantorSectionMulti}${guarantorSectionMulti ? "\n\n" : "\n"}お手隙の際にご査収ください！！`
+            : guarantorSectionMulti;
           const toureableList = propList.map((p, pi) => ({ ...p, pi })).filter(p => p.status === "available" || p.status === "alternative");
           const showViewingInvite = !!(show_viewing_invite as boolean | undefined);
           const showAppInviteMulti = !!(body.check_application_invite as boolean | undefined);
