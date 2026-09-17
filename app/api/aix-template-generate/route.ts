@@ -1496,18 +1496,22 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // 2026-09-17 竹内（AIX キャッシュ点検）: この経路は3日に1回程度しか呼ばれず（llm_usage_logs: 3日で1件・
+    // cache_write_1h 74,644・cache_read 0）、1h TTL は書き込み料（×2）だけ払って一度も読まれない純損だった。
+    // 5m にして書き込み料を ×1.25 に下げる（同一リクエスト内の frame violation 再生成では読まれる）。
+    // 呼び出し頻度が上がったら cache_write_1h と cache_read の比で再判定する（1h の損益分岐は hit 率 53%）。
     const systemBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } }> = [
       {
         type: "text",
         text: `${PRIORITY_ORDER_NOTE}\n\n${STATIC_GEN_SYSTEM}\n\n${SHARED_RULES_SYSTEM}`,
-        cache_control: { type: "ephemeral", ttl: "1h" },
+        cache_control: { type: "ephemeral", ttl: "5m" },
       },
     ];
     if (dbKnowledgeBlock) {
       systemBlocks.push({
         type: "text",
         text: dbKnowledgeBlock,
-        cache_control: { type: "ephemeral", ttl: "1h" },
+        cache_control: { type: "ephemeral", ttl: "5m" },
       });
     }
 

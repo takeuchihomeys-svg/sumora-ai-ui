@@ -9,6 +9,14 @@
 //   SDK の再試行・429/529/5xx もそれぞれ1行になるので「エラーで漏れ続けていないか」も数えられる。
 //   どの呼び出しかは route（Next のリクエストの経路）と sys_head（system プロンプトの先頭80字）で見分ける（同じ route に複数の呼び出しがあるため）。
 //   集計は llm_usage_daily ビュー（migrate-schema）。
+// 2026-09-17 竹内（AIX キャッシュ点検）: sys_key は system 先頭400字のハッシュなので、AIX の共通 prefix を最初のブロックに分けると
+//   「会話を合わせる」系 11 経路が1つの sys_key に潰れ、AIX の種類ごと・会話ごとの費用が読めない。
+//   → 呼び出し側がリクエストの headers に x-sumora-llm-action / x-sumora-llm-conversation を付け、出口で読んで action / conversation_id に残す。
+//   この2つは Anthropic に送らない（送る前に取り除く）。sys_key_full は system 全ブロックを "\n\n" で結合した全文のハッシュ（プロンプト変更の検出用）。
+
+/** 呼び出し側が付ける印（Anthropic には送らない）。AIX の種類・LINE の会話 ID */
+export const LLM_ACTION_HEADER = "x-sumora-llm-action";
+export const LLM_CONVERSATION_HEADER = "x-sumora-llm-conversation";
 
 export type LlmUsageRow = {
   route: string | null;
@@ -32,9 +40,12 @@ export type LlmUsageRow = {
   duration_ms: number;
   request_id: string | null;
   env: string | null;
+  action: string | null;
+  conversation_id: string | null;
+  sys_key_full: string | null;
 };
 
-type ReqInfo = Pick<LlmUsageRow, "model" | "stream" | "max_tokens" | "thinking_mode" | "cache_breakpoints" | "sys_key" | "sys_head">;
+type ReqInfo = Pick<LlmUsageRow, "model" | "stream" | "max_tokens" | "thinking_mode" | "cache_breakpoints" | "sys_key" | "sys_head" | "sys_key_full">;
 type UsageInfo = Pick<LlmUsageRow, "error_type" | "stop_reason" | "input_uncached" | "cache_read" | "cache_write" | "cache_write_5m" | "cache_write_1h" | "output_tokens" | "thinking_tokens"> & { model: string | null };
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -55,9 +66,21 @@ function systemText(system: unknown): string | null {
   return null;
 }
 
+/** system の全ブロックを "\n\n" で結合した全文（ブロックの区切り位置を変えても、文面が同じなら同じ値になる） */
+function systemFullText(system: unknown): string | null {
+  if (typeof system === "string") return system;
+  if (Array.isArray(system)) {
+    const texts = system
+      .filter((b) => b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string")
+      .map((b) => (b as { text: string }).text);
+    return texts.length > 0 ? texts.join("\n\n") : null;
+  }
+  return null;
+}
+
 /** リクエスト本文から、どの呼び出しか・どう呼んだかを読む（お客様の発言は保存しない＝system の先頭だけ） */
 export function parseAnthropicRequest(body: string): ReqInfo {
-  const info: ReqInfo = { model: null, stream: false, max_tokens: null, thinking_mode: null, cache_breakpoints: 0, sys_key: null, sys_head: null };
+  const info: ReqInfo = { model: null, stream: false, max_tokens: null, thinking_mode: null, cache_breakpoints: 0, sys_key: null, sys_head: null, sys_key_full: null };
   info.cache_breakpoints = (body.match(/"cache_control"/g) ?? []).length;
   try {
     const j = JSON.parse(body) as { model?: unknown; stream?: unknown; max_tokens?: unknown; thinking?: { type?: unknown } | null; system?: unknown };
@@ -71,8 +94,65 @@ export function parseAnthropicRequest(body: string): ReqInfo {
       info.sys_head = flat.slice(0, 80);
       info.sys_key = shortHash(flat.slice(0, 400));
     }
+    // 2026-09-17 竹内（AIX キャッシュ点検）: 先頭400字だけでは経路を見分けられなくなるので、全文のハッシュも残す
+    const full = systemFullText(j.system);
+    if (full) info.sys_key_full = shortHash(full);
   } catch { /* JSON でない本文は数だけ */ }
   return info;
+}
+
+type SumoraMarks = { action: string | null; conversationId: string | null; init: RequestInit | undefined };
+
+/**
+ * 2026-09-17 竹内（AIX キャッシュ点検）: 呼び出し側が付けた印（x-sumora-llm-action / x-sumora-llm-conversation）を headers から読み、
+ * Anthropic に送る前に取り除く。headers は Headers / 配列 / Record のどの形でも動く。元の init は壊さず、印がある時だけ新しい headers を作る
+ */
+export function extractSumoraMarks(init: RequestInit | undefined): SumoraMarks {
+  const none: SumoraMarks = { action: null, conversationId: null, init };
+  const h = init?.headers;
+  if (!h) return none;
+  const isMark = (k: string) => { const l = k.toLowerCase(); return l === LLM_ACTION_HEADER || l === LLM_CONVERSATION_HEADER; };
+  const pick = (k: string, v: unknown, out: SumoraMarks) => {
+    let s = typeof v === "string" ? v.trim() : "";
+    if (!s) return;
+    // 2026-09-17 竹内（AIX キャッシュ点検）: 付ける側（aix-system-blocks の llmMetaHeaderValue）は非 ASCII を encodeURIComponent 済みで送るので戻す（失敗したらそのまま）
+    if (s.includes("%")) { try { s = decodeURIComponent(s); } catch { /* 素の値 */ } }
+    if (k.toLowerCase() === LLM_ACTION_HEADER) out.action = s; else out.conversationId = s;
+  };
+  const out: SumoraMarks = { action: null, conversationId: null, init };
+  if (typeof Headers !== "undefined" && h instanceof Headers) {
+    let found = false;
+    h.forEach((v, k) => { if (isMark(k)) { found = true; pick(k, v, out); } });
+    if (!found) return none;
+    const copy = new Headers(h);
+    copy.delete(LLM_ACTION_HEADER);
+    copy.delete(LLM_CONVERSATION_HEADER);
+    out.init = { ...init, headers: copy };
+    return out;
+  }
+  if (Array.isArray(h)) {
+    const rest: [string, string][] = [];
+    for (const pair of h as [string, string][]) {
+      if (Array.isArray(pair) && typeof pair[0] === "string" && isMark(pair[0])) pick(pair[0], pair[1], out);
+      else rest.push(pair);
+    }
+    if (rest.length === h.length) return none;
+    out.init = { ...init, headers: rest };
+    return out;
+  }
+  if (typeof h === "object") {
+    const rec = h as Record<string, unknown>;
+    const rest: Record<string, string> = {};
+    let found = false;
+    for (const k of Object.keys(rec)) {
+      if (isMark(k)) { found = true; pick(k, rec[k], out); }
+      else rest[k] = rec[k] as string;
+    }
+    if (!found) return none;
+    out.init = { ...init, headers: rest };
+    return out;
+  }
+  return none;
 }
 
 function emptyUsage(): UsageInfo {
@@ -149,21 +229,26 @@ export type RecorderDeps = {
 /** Anthropic の /v1/messages だけを記録する。記録の失敗・遅れで本来の応答を止めない（応答は元の Response をそのまま返す） */
 export function wrapFetchWithLlmUsageRecorder(original: FetchLike, deps: RecorderDeps): FetchLike {
   const now = deps.now ?? Date.now;
-  return async (input, init) => {
+  return async (input, initArg) => {
     const url = requestUrl(input);
-    const isMessages = !!url && url.hostname === "api.anthropic.com" && url.pathname === "/v1/messages" && (init?.method ?? "POST").toUpperCase() === "POST";
+    const isAnthropic = !!url && url.hostname === "api.anthropic.com";
+    // 2026-09-17 竹内（AIX キャッシュ点検）: 印のヘッダは Anthropic 宛の全リクエストから取り除く（count_tokens 等に SDK の既定ヘッダで付いても漏らさない）
+    const marks = isAnthropic ? extractSumoraMarks(initArg) : { action: null, conversationId: null, init: initArg };
+    const init = marks.init;
+    const isMessages = isAnthropic && url.pathname === "/v1/messages" && (init?.method ?? "POST").toUpperCase() === "POST";
     if (!isMessages) return original(input, init);
     const started = now();
     let route: string | null = null;
     try { route = deps.route(); } catch { route = null; }
     const req = typeof init?.body === "string" ? parseAnthropicRequest(init.body) : parseAnthropicRequest("");
+    const withMarks = (row: LlmUsageRow): LlmUsageRow => ({ ...row, action: marks.action, conversation_id: marks.conversationId });
     let res: Response;
     try {
       res = await original(input, init);
     } catch (e) {
       // 通信の失敗・中断（タイムアウトで abort 等）も1行にする（SDK の再試行の数が分かる）
       const name = e instanceof Error ? e.name : "fetch_error";
-      deps.keepAlive(deps.insert(buildRow(route, req, emptyUsage(), 0, name === "AbortError" ? "aborted" : "fetch_error", now() - started, null, deps.env ?? null)).catch(() => {}));
+      deps.keepAlive(deps.insert(withMarks(buildRow(route, req, emptyUsage(), 0, name === "AbortError" ? "aborted" : "fetch_error", now() - started, null, deps.env ?? null))).catch(() => {}));
       throw e;
     }
     try {
@@ -175,9 +260,9 @@ export function wrapFetchWithLlmUsageRecorder(original: FetchLike, deps: Recorde
         clone.text()
           .then((text) => {
             const usage = isSse ? parseUsageFromSse(text) : parseUsageFromJson(text);
-            return deps.insert(buildRow(route, req, usage, status, usage.error_type ?? (status >= 400 ? `http_${status}` : null), now() - started, requestId, deps.env ?? null));
+            return deps.insert(withMarks(buildRow(route, req, usage, status, usage.error_type ?? (status >= 400 ? `http_${status}` : null), now() - started, requestId, deps.env ?? null)));
           })
-          .catch(() => deps.insert(buildRow(route, req, emptyUsage(), status, "stream_aborted", now() - started, requestId, deps.env ?? null)).catch(() => {})),
+          .catch(() => deps.insert(withMarks(buildRow(route, req, emptyUsage(), status, "stream_aborted", now() - started, requestId, deps.env ?? null))).catch(() => {})),
       );
     } catch { /* clone できない応答は記録しない */ }
     return res;
@@ -191,19 +276,40 @@ function buildRow(route: string | null, req: ReqInfo, u: UsageInfo, status: numb
     output_tokens: u.output_tokens, thinking_tokens: u.thinking_tokens,
     max_tokens: req.max_tokens, thinking_mode: req.thinking_mode, cache_breakpoints: req.cache_breakpoints, sys_key: req.sys_key, sys_head: req.sys_head,
     duration_ms: Math.max(0, Math.round(durationMs)), request_id: requestId, env,
+    action: null, conversation_id: null, sys_key_full: req.sys_key_full,
   };
 }
 
 const INSTALLED = Symbol.for("sumora.llmUsageRecorder");
 
+/**
+ * 2026-09-17 竹内（AIX キャッシュ点検）: 記録を止めている時（LLM_USAGE_RECORD=off・Supabase の env なし）でも、
+ * 印のヘッダ（x-sumora-llm-*）だけは Anthropic 宛のリクエストから取り除く（呼び出し側は recorder の有無を知らずに付けるため）
+ */
+export function wrapFetchStripSumoraMarks(original: FetchLike): FetchLike {
+  return (input, init) => {
+    const url = requestUrl(input);
+    return original(input, url && url.hostname === "api.anthropic.com" ? extractSumoraMarks(init).init : init);
+  };
+}
+
+function installWrapped(g: { fetch: FetchLike & Record<PropertyKey, unknown> }, original: FetchLike & Record<PropertyKey, unknown>, wrapped: FetchLike): void {
+  const w = wrapped as FetchLike & Record<PropertyKey, unknown>;
+  Object.assign(w, original);
+  w[INSTALLED] = true;
+  g.fetch = w;
+}
+
 /** globalThis.fetch を1回だけ包む（instrumentation.ts から。Vercel ではレスポンス後も waitUntil で記録を書き終える） */
 export async function installLlmUsageRecorder(): Promise<boolean> {
   const g = globalThis as unknown as { fetch: FetchLike & Record<PropertyKey, unknown> };
   if (typeof g.fetch !== "function" || g.fetch[INSTALLED]) return false;
-  if (process.env.LLM_USAGE_RECORD === "off") return false;
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return false;
+  if (process.env.LLM_USAGE_RECORD === "off" || !url || !key) {
+    installWrapped(g, g.fetch, wrapFetchStripSumoraMarks(g.fetch.bind(globalThis)));
+    return false;
+  }
 
   const { createClient } = await import("@supabase/supabase-js");
   const { waitUntil } = await import("@vercel/functions");
@@ -226,9 +332,7 @@ export async function installLlmUsageRecorder(): Promise<boolean> {
     keepAlive: (p) => { try { waitUntil(p); } catch { /* Vercel 以外 */ } },
     route: () => workStore?.getStore()?.route ?? null,
     env: process.env.VERCEL_ENV ?? "local",
-  }) as FetchLike & Record<PropertyKey, unknown>;
-  Object.assign(wrapped, original);
-  wrapped[INSTALLED] = true;
-  g.fetch = wrapped;
+  });
+  installWrapped(g, original, wrapped);
   return true;
 }

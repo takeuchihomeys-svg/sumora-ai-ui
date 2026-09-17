@@ -1,5 +1,8 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
+// 2026-09-17 竹内（AIX キャッシュ点検）: system を「共通 prefix（1h）→ 準静的（1h）→ 経路固有（5m）→ 動的（なし）」のブロックに分ける
+import { buildSystemBlocks, systemStaticLength, splitSharedPrefix, llmMetaHeaderValue, LLM_META_HEADER_ACTION, LLM_META_HEADER_CONVERSATION, type SystemSpec, type SystemSpecBlocks, type SystemTtl } from "@/app/lib/aix-system-blocks";
 import { supabase } from "@/app/lib/supabase";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { safeSlice } from "@/app/lib/safe-slice";
@@ -15,7 +18,7 @@ import { viewingReportNoteForReply } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
 import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
-import { fetchPromptRules } from "@/app/lib/prompt-rules";
+import { fetchPromptRules, fetchPromptRulesSplit } from "@/app/lib/prompt-rules";
 import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
@@ -779,15 +782,30 @@ function buildMoveInDeadlineNote(sourceText: string, todayISO: string, todayFmt:
   return `${head}\n・お客様の入居希望時期「${wish}」＝${r.deadlineISO}（本日${todayFmt}から${r.daysLeft}日後）。\n・審査・契約・入金の最短期間は2週間。差し引き${margin}日の余裕があるため入居時期に言及してよい。\n・言及するときは「お申込みから審査・ご契約・入居まで通常2週間程度で対応できますので、${wish}のご入居にもしっかり対応可能です！！」のように審査期間を根拠として自然に添えること。\n・言及する場合の日付は「${wish}」の表現に沿わせ、勝手に別の日付へ書き換えないこと。`;
 }
 
+// ── 2026-09-17 竹内（AIX キャッシュ点検）: 計測用ヘッダ・会話 ID ──────────────────────────
+// llm_usage_logs（app/lib/llm-usage-recorder.ts・fetch の出口）が「どの AIX か・どの会話か」を読めるように、
+// Anthropic への fetch に x-sumora-llm-action / x-sumora-llm-conversation を付ける（recorder が読んで Anthropic に送る前に取り除く）。
+// 会話 ID は handleAction の body 解析後にしか分からず、callClaude 系は深い呼び出しの中にいるので AsyncLocalStorage で持つ
+// （並行リクエストで混ざらない。aixStream と同じ仕組み）。
+// ヘッダ名・値の整形は app/lib/aix-system-blocks.ts（LLM_META_HEADER_ACTION / LLM_META_HEADER_CONVERSATION / llmMetaHeaderValue）
+const aixRequestCtx = new AsyncLocalStorage<{ conversationId: string | null }>();
+
+function llmMetaHeaders(action: string): Record<string, string> {
+  const h: Record<string, string> = { [LLM_META_HEADER_ACTION]: llmMetaHeaderValue(action) };
+  const cid = aixRequestCtx.getStore()?.conversationId;
+  if (cid) h[LLM_META_HEADER_CONVERSATION] = llmMetaHeaderValue(cid);
+  return h;
+}
+
 // dynamicSystemSuffix: brainGuidanceNote など顧客別の動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
-async function callClaude(system: string, user: string, action: string, dynamicSystemSuffix?: string): Promise<string> {
+// 2026-09-17 竹内（AIX キャッシュ点検）: system は文字列（従来）でもブロック指定（SystemSpec）でも受ける。
+//   文字列なら共通 prefix（GENERATION_SYSTEM + SMORA_COMMON_RULES）を自動で shared（1h）に分け、残りを routeStatic（既定 5m）にする。
+//   LLM に届く文字列は変わらない（app/lib/aix-system-blocks.ts）。opts.ttl は routeStatic の ttl（"none" で cache なし）。
+async function callClaude(system: SystemSpec, user: string, action: string, dynamicSystemSuffix?: string, opts: { ttl?: SystemTtl } = {}): Promise<string> {
   // 1回あたり25秒タイムアウト＋タイムアウト時のみ1回リトライ（最大約50秒 < クライアント60秒abort）
   // 旧45秒×リトライ無しだと、一過性のAPI遅延・ネットワークハングで即エラーになっていた
   const attempt = async (timeoutMs: number): Promise<string> => {
-    const systemBlocks: { type: string; text: string; cache_control?: { type: string; ttl?: string } }[] = [
-      { type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } },
-    ];
-    if (dynamicSystemSuffix) systemBlocks.push({ type: "text", text: dynamicSystemSuffix });
+    const systemBlocks = buildSystemBlocks(system, { defaultTtl: opts.ttl ?? "5m", dynamicSuffix: dynamicSystemSuffix });
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -795,6 +813,7 @@ async function callClaude(system: string, user: string, action: string, dynamicS
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
         "anthropic-beta": "prompt-caching-2024-07-31",
+        ...llmMetaHeaders(action),
       },
       body: JSON.stringify({
         model: MODEL,
@@ -808,7 +827,7 @@ async function callClaude(system: string, user: string, action: string, dynamicS
     if (!res.ok) throw new Error(`Claude error: ${await res.text()}`);
     const data = await res.json();
     logLlmUsage("aix", data.usage, { action, model: MODEL });
-    warnIfTruncated(data, system.length + user.length, action);
+    warnIfTruncated(data, systemStaticLength(system) + user.length, action);
     return data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
   };
   try {
@@ -824,11 +843,11 @@ async function callClaude(system: string, user: string, action: string, dynamicS
 }
 
 // dynamicSystemSuffix: 呼び出しごとに変わる動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
-async function callClaudeHaiku(system: string, user: string, action: string, dynamicSystemSuffix?: string): Promise<string> {
-  const systemBlocks: { type: string; text: string; cache_control?: { type: string; ttl?: string } }[] = [
-    { type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } },
-  ];
-  if (dynamicSystemSuffix) systemBlocks.push({ type: "text", text: dynamicSystemSuffix });
+// 2026-09-17 竹内（AIX キャッシュ点検）: Haiku の既定は cache なし（ttl "none"）。カバーレター・内覧前挨拶・待ち合わせ・日時抽出は
+//   3日で数回しか呼ばれず 1h の書き込みが純損。Haiku 4.5 の最小キャッシュは 4,096 tokens で、これらの system は届かない。
+//   共通 prefix（shared）があれば従来どおり 1h（全経路共有の鍵）。必要なら opts.ttl で個別に付けられる
+async function callClaudeHaiku(system: SystemSpec, user: string, action: string, dynamicSystemSuffix?: string, opts: { ttl?: SystemTtl } = {}): Promise<string> {
+  const systemBlocks = buildSystemBlocks(system, { defaultTtl: opts.ttl ?? "none", dynamicSuffix: dynamicSystemSuffix });
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -836,6 +855,7 @@ async function callClaudeHaiku(system: string, user: string, action: string, dyn
       "x-api-key": ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
       "anthropic-beta": "prompt-caching-2024-07-31",
+      ...llmMetaHeaders(action),
     },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
@@ -848,17 +868,16 @@ async function callClaudeHaiku(system: string, user: string, action: string, dyn
   if (!res.ok) throw new Error(`Claude Haiku error: ${await res.text()}`);
   const data = await res.json();
   logLlmUsage("aix", data.usage, { action, model: "haiku" });
-  warnIfTruncated(data, system.length + user.length, action);
+  warnIfTruncated(data, systemStaticLength(system) + user.length, action);
   return data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
 }
 
 // ※ Sonnet5はtemperature等のサンプリングパラメータ非対応（400エラー）のため渡さない
 // dynamicSystemSuffix: 顧客固有/呼び出し固有の動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
-async function callClaudeVision(system: string, content: unknown[], action: string, dynamicSystemSuffix?: string): Promise<string> {
-  const systemBlocks: { type: string; text: string; cache_control?: { type: string; ttl?: string } }[] = [
-    { type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } },
-  ];
-  if (dynamicSystemSuffix) systemBlocks.push({ type: "text", text: dynamicSystemSuffix });
+// 2026-09-17 竹内（AIX キャッシュ点検）: 短い OCR の system（見積書 OCR 5種 ≈300〜500 tokens・1,500字未満）には自動で cache_control が付かない
+//   （buildSystemBlocks の閾値 AIX_CACHE_MIN_CHARS）。長い物件オススメ等の system は従来どおり共通 prefix 1h＋固有文 5m
+async function callClaudeVision(system: SystemSpec, content: unknown[], action: string, dynamicSystemSuffix?: string, opts: { ttl?: SystemTtl } = {}): Promise<string> {
+  const systemBlocks = buildSystemBlocks(system, { defaultTtl: opts.ttl ?? "5m", dynamicSuffix: dynamicSystemSuffix });
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -866,6 +885,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
       "x-api-key": ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
       "anthropic-beta": "prompt-caching-2024-07-31",
+      ...llmMetaHeaders(action),
     },
     body: JSON.stringify({
       model: MODEL,
@@ -883,7 +903,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
   if (!res.ok) throw new Error(`Claude Vision error: ${await res.text()}`);
   const data = await res.json();
   logLlmUsage("aix:vision", data.usage, { action, model: MODEL });
-  warnIfTruncated(data, system.length + JSON.stringify(content).length, action);
+  warnIfTruncated(data, systemStaticLength(system) + JSON.stringify(content).length, action);
   // Sonnet5はthinkingブロックが content[0] に入るため find() で最初のtextブロックを取得する
   const visionText = data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
   if (!visionText) throw new Error(`callClaudeVision: empty response for action=${action} (stop_reason=${data.stop_reason})`);
@@ -1049,6 +1069,9 @@ ${SMORA_COMMON_RULES}
     (diffNote ?? "").trim(),
   ].filter(Boolean).join("\n\n");
 
+  // 2026-09-17 竹内（AIX キャッシュ点検）: 文字列のまま渡して自動分割 → [shared（GENERATION_SYSTEM+SMORA_COMMON_RULES）1h][固有文 5m][adaptDynamic なし]。
+  //   固有文は全アクション共通なので鍵を共有する。改善ルール（adaptation_improvement_rules・actionType 別）と AIX-META は動的のまま
+  //   （固有文に混ぜるとアクションごとに鍵が割れる）
   const raw = await callClaude(
     adaptStaticSystem,
     `${conversationHistory}\n\n上記の会話を読み、確定済みのベースメッセージの内容・結果・アクションは一切変えずに、言い方だけを会話に馴染ませた最終メッセージを出力してください。`,
@@ -1210,6 +1233,9 @@ async function handleAction(request: NextRequest): Promise<Response> {
   try {
     const body = await request.json();
     const { action, account, customer_name, image_url, image_urls, condition_image_url, property_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points, other_room_status, conversation_id: conversationId } = body;
+    // 2026-09-17 竹内（AIX キャッシュ点検）: 会話 ID を計測用ヘッダ（x-sumora-llm-conversation）へ。POST で run() した箱に入れる
+    const reqCtx = aixRequestCtx.getStore();
+    if (reqCtx) reqCtx.conversationId = typeof conversationId === "string" && conversationId ? conversationId : null;
 
     // #30: max_tokens 尻切れ検知ログ・max_tokens決定用のアクション名（リクエストスコープ）
     const currentAction = String(action ?? "");
@@ -1743,11 +1769,12 @@ ${SMORA_COMMON_RULES}`;
       ].filter(Boolean).join(" ").trim() || undefined;
       const recStrategyContext = [recRagContext ?? "", brainContext].filter(Boolean).join(" ");
 
-      const [examples, knowledge, recStarNote, propDbRules, recBrainAddendum, recWinningNote, recPropertyExamples, recPatternHints] = await Promise.all([
+      const [examples, knowledge, recStarNote, propRules, recBrainAddendum, recWinningNote, recPropertyExamples, recPatternHints] = await Promise.all([
         getPropertyExamples(),
         getPropertyKnowledge(conversationId, recRagContext),
         getStarredExamplesForAction(["property_recommendation", "proposing"], latestCustomerMsg, aixBrainMeta),
-        fetchPromptRules("property_recommendation", {}).catch(() => ""),
+        // 2026-09-17 竹内（AIX キャッシュ点検）: global（準静的）と action 別（経路固有）に分けて受ける
+        fetchPromptRulesSplit("property_recommendation", {}).catch(() => ({ global: "", action: "" })),
         loadBrainTemplate("property_recommendation"),
         // 成約パターンRAG（AIX-META再ランキング）: 顧客条件+META+最新メッセージで「この顧客に効いた訴求」を引く
         getWinningPatternsForProperty(recStrategyContext, aixBrainMeta),
@@ -1802,9 +1829,19 @@ ${SMORA_COMMON_RULES}`;
         .replace("{{phrases}}", "");
       // greetingTimeNote は固定フォーマット（物件オススメ文）に注入しない
       // recStarNote は user 側に移動（system に入れると固定フォーマットと干渉するため）
-      // キャッシュ分離: system+propDbRules+共通ルール（全顧客共通・キャッシュHIT率HIGH）を静的ブロックに、
+      // キャッシュ分離: system+DB ルール+共通ルール（全顧客共通・キャッシュHIT率HIGH）を静的ブロックに、
       // 顧客固有の brainGuidanceNote + recBrainAddendum を動的ブロックに分ける
-      const recSystemStatic = system + propDbRules + AIX_CURATED_AND_CRITICAL_RULES;
+      // 2026-09-17 竹内（AIX キャッシュ点検）: 静的部分を2ブロックに分ける。この system は共通 prefix（GENERATION_SYSTEM）で始まらず
+      //   （役割文で始まり末尾に SMORA_COMMON_RULES）、global を先頭に出しても他経路と鍵を共有できないので、従来の並び
+      //   （system → DB ルール → 共通ルール）を保つ。semiStatic＝system＋global（ai_prompts の上書き込み・全顧客同じ・従来どおり 1h）、
+      //   routeStatic＝action 別ルール＋AIX_CURATED_AND_CRITICAL_RULES（5m）。global と action の混在順だけ従来（priority 順に混ぜる）と変わる。
+      //   AIX_CURATED_AND_CRITICAL_RULES・action は "\n\n" 始まりなので、ブロック結合の "\n\n" と二重にならないよう先頭を落とす
+      //   ttl は 1h のまま（点検: 物件オススメは miss が全て >1h 間隔・5〜60分の read が 8/19 回で、5m にすると write が 13/19 に増えて損）
+      const recSystemSpec: SystemSpec = {
+        semiStatic: system + propRules.global,
+        routeStatic: (propRules.action + AIX_CURATED_AND_CRITICAL_RULES).replace(/^\n\n/, ""),
+        ttl: "1h",
+      };
 
       const conditionsText = customer_conditions as string | undefined;
       const recCustomerSummary = body.customer_summary as string | undefined;
@@ -1860,7 +1897,7 @@ ${SMORA_COMMON_RULES}`;
         { type: "image", source: { type: "url", url: image_url } },
       ];
 
-      message_text = await callClaudeVision(recSystemStatic, content, currentAction, recSystemDynamic || undefined);
+      message_text = await callClaudeVision(recSystemSpec, content, currentAction, recSystemDynamic || undefined);
       // 🌟より前に出力されたシステム注記・確認メモを除去（物件オススメは必ず🌟始まり）
       {
         const _starIdx = message_text.indexOf("🌟");
@@ -1904,6 +1941,8 @@ ${SMORA_COMMON_RULES}`;
     } else if (action === "estimate_sheet") {
 
       // 複数件モード: 各見積書をOCRして①②③付きでまとめる（並列実行）
+      // 2026-09-17 竹内（AIX キャッシュ点検）: この OCR の system は ≈350字（1,500字未満）なので buildSystemBlocks が cache_control を付けない。
+      //   accountName（savings の説明）が入っているが cache 対象外なので鍵は割れない（文面は変えない）
       if (body.multi_estimate && Array.isArray(image_urls) && image_urls.length > 0) {
         const multiEstSystem = `この見積書画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文なし）：
 {"property_name":"物件名","room_number":"号室","discount":"34,000円","initial_cost":"146,000円","savings":"102,200円"}
@@ -1967,6 +2006,7 @@ ${SMORA_COMMON_RULES}`;
         const propImgUrl = property_image_url as string | undefined;
         // Sonnet5対応: JSON形式のみ返答を明示（前置き文・コードブロック出力を防止）
         // 「見積書」に限定せず「以下の画像から」と汎用表現にすることでマイソク等でも対応可
+        // 2026-09-17 竹内（AIX キャッシュ点検）: ≈600字（1,500字未満）なので cache_control は付かない（propImgUrl で1行変わるが cache 対象外）
         const ocrSystem = `以下の画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文・コードブロック・前置き・後置き一切不要）：
 {"property_name":"","room_number":"","rent":0,"management_fee":0,"total":0,"discount":0,"commission":0,"commission_tax":0}
 
@@ -2070,19 +2110,23 @@ ${SMORA_COMMON_RULES}`;
       // 差分学習ルール＋☆成功実例を注入して「修正→学習→改善」ループの対象にする。
       // 生成失敗しても見積書送信は正常に動く（coverLetterは空のまま）。
       try {
-        const [coverDiffNote, coverStarNote, coverDbRules, coverBrainAddendum] = await Promise.all([
+        const [coverDiffNote, coverStarNote, coverRules, coverBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.estimate_sheet, currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.estimate_sheet, latestCustomerMsg, aixBrainMeta),
-          fetchPromptRules("estimate_sheet", {}).catch(() => ""),
+          // 2026-09-17 竹内（AIX キャッシュ点検）: global（準静的）と action 別（経路固有）に分けて受ける
+          fetchPromptRulesSplit("estimate_sheet", {}).catch(() => ({ global: "", action: "" })),
           loadBrainTemplate("estimate_sheet"),
         ]);
 
-        const coverSystem = `あなたは賃貸仲介サービス「${accountName}」のLINE営業担当です。
+        // 2026-09-17 竹内（AIX キャッシュ点検）: accountName（スモラ／イエヤス／ギガ賃貸）が system の先頭に入っていてアカウントごとに
+        //   別キャッシュになっていた → system は「当社」の固定文にし、サービス名は動的ブロック【当社のサービス名】で渡す
+        //   （出力の他ブランド名は下の後処理で現アカウント名に置換される・従来どおり）
+        const coverSystem = `あなたは賃貸仲介サービスのLINE営業担当です。
 お客様への見積書送付時の添付メッセージ（カバーレター）を1つだけ作成してください。
 
 ${SMORA_COMMON_RULES}
 
-【${accountName}のLINEスタイル】
+【当社のLINEスタイル】
 ・絵文字は 😊 😌 ✨ のみ・1〜2個まで
 ・感嘆符は「！！」・「頂きます」を使う
 ・お客様の名前（ユーザーメッセージに記載）で始める
@@ -2091,15 +2135,26 @@ ${SMORA_COMMON_RULES}
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数・見積書の金額の繰り返しは禁止）
 
 【ブランド名ルール（絶対厳守）】
-・サービス名に言及する場合は「${accountName}」という名称のみ使用すること。他のサービス名（スモラ・ギガ賃貸・イエヤス・他社名）は絶対に出力しないこと。
+・サービス名に言及する場合は【当社のサービス名】で渡す名称のみ使用すること。それ以外のサービス名（他ブランド・他社名）は絶対に出力しないこと。
 
 【重複禁止ルール（絶対厳守）】
 ・節約金額・費用比較の文言（「〇〇円節約出来ます」「一般的な不動産業者より〜」等）はすでに見積書本文に別途表示済みのため、カバーレターには絶対に含めないこと。`;
 
-        const coverSystemFinal = coverSystem + coverDbRules + (coverBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + coverBrainAddendum : "");
+        // ブロック: [routeStatic＝global DB ルール＋固定文＋estimate_sheet 別ルール（Haiku 既定 cache なし）][dynamic＝サービス名＋ブレイン改善ルール]
+        //   従来は global＋action を priority 順に混ぜて固定文の後ろに置いていた → global が固定文の前に来る（順序変更）
+        //   2026-09-17 検査: global を semiStatic（1h）に置くと Haiku でも ≈12k tokens の 1h 書き込みが起きるが、llm_usage_logs（9/15〜17）では
+        //   カバーレターは 3日で 8 回・読めたのは 3 回（間隔 1・11・23 分・hit 率 37% < 1h の損益分岐 53%・5m でも 1/8 < 20%）で純損 →
+        //   他の Haiku 経路（内覧前挨拶・待ち合わせ）と同じく cache なしに揃える（global は routeStatic の先頭・文面と並びは同じ）
+        const coverSystemSpec: SystemSpec = {
+          routeStatic: [coverRules.global.replace(/^\n\n/, ""), coverSystem + coverRules.action].filter(Boolean).join("\n\n"),
+          dynamic: [
+            `【当社のサービス名】${accountName}`,
+            coverBrainAddendum ? "【ブレイン改善ルール】\n" + coverBrainAddendum : "",
+          ].filter(Boolean).join("\n\n"),
+        };
         const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}` + (coverDiffNote ? `\n\n${coverDiffNote}` : "") + (coverStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + coverStarNote : "");
         const coverResult = await callClaudeHaiku(
-          coverSystemFinal,
+          coverSystemSpec,
           coverUserFinal,
           currentAction
         );
@@ -2261,13 +2316,15 @@ ${SMORA_COMMON_RULES}
       // 2026-09-13 AIX-META × RAG 監査: 実例を引く問いには AIX-META を混ぜない。成功パターンを引く問いにだけ足す
       const enrichedRagQuery = [kwPrefix, sendModeLabel, conditionsInfo ?? "", latestCustomerMsg].filter(Boolean).join(" ");
       const enrichedStrategyQuery = [enrichedRagQuery, brainContext].filter(Boolean).join(" ");
-      const [sendDiffNote, sendStarNote, compPickupNote, compInviteNote, compCalendarNote, sendDbRules, sendBrainAddendum, sendWinningNote, sendPropertyExamples] = await Promise.all([
+      const [sendDiffNote, sendStarNote, compPickupNote, compInviteNote, compCalendarNote, sendRules, sendBrainAddendum, sendWinningNote, sendPropertyExamples] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.property_send, currentAction, conversationId, kwPrefix + latestCustomerMsg || latestCustomerMsg, brainContext),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_send, kwPrefix + latestCustomerMsg || latestCustomerMsg, aixBrainMeta),
         useCompKnowledge ? getKnowledgeForState(["property_send_pickup"], currentAction) : Promise.resolve(""),
         useCompKnowledge && !skipViewingInvite ? getKnowledgeForState(["property_send_invite"], currentAction) : Promise.resolve(""),
         useCompKnowledge && !skipViewingInvite ? getKnowledgeForState(["property_send_calendar"], currentAction) : Promise.resolve(""),
-        fetchPromptRules("property_send", { send_mode: sendMode }).catch(() => ""),
+        // 2026-09-17 竹内（AIX キャッシュ点検）: global（準静的ブロック 1h）と action 別（経路固有ブロックの末尾）に分けて受ける。
+        //   send_mode の条件は action 側だけに効く（global に condition_key 付きの行は無い）
+        fetchPromptRulesSplit("property_send", { send_mode: sendMode }).catch(() => ({ global: "", action: "" })),
         loadBrainTemplate("property_send"),
         // 成約パターンRAG: キーワード先頭クエリで「この顧客・このキーワードに効いた訴求」を引く
         getWinningPatternsForProperty(enrichedStrategyQuery, aixBrainMeta),
@@ -2361,10 +2418,18 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           keywordRule.trim(),
           threadsBlock,
           inviteRule,
-          (sendDbRules ?? "").trim(),
           sendBrainAddendum ? "【ブレイン改善ルール】\n" + sendBrainAddendum : "",
           (brainGuidanceNote ?? "").trim(),
         ].filter(Boolean).join("\n\n");
+        // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは動的ブロック（cache なし・内覧誘導の後）から静的側へ。
+        //   [shared＝GENERATION_SYSTEM+SMORA_COMMON_RULES 1h][semiStatic＝global 1h][routeStatic＝aixPropertySendRules＋固有文＋property_send 別ルール（send_mode 条件付き）5m][psmDynamic]
+        //   psmStaticSystem は文字列のまま残し（共通 prefix で始まることをテストが固定）、splitSharedPrefix で分ける
+        const psmSplit = splitSharedPrefix(psmStaticSystem);
+        const psmSystemSpec: SystemSpec = {
+          shared: psmSplit.shared,
+          semiStatic: sendRules.global.replace(/^\n\n/, ""),
+          routeStatic: psmSplit.routeStatic + sendRules.action,
+        };
         // 固定の型（下）の userParts と同じ材料（userParts はこの後で組み立てるのでここで同じ物を並べる）
         const psmUser = [
           `${name}への物件ピックアップ送付メッセージを作成してください。`,
@@ -2381,7 +2446,7 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           + (sendDiffNote ? `\n\n${sendDiffNote}` : "")
           + (sendStarNote ? "\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n" + sendStarNote : "");
         console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, threads: { customer: threads.customer.length, staff: threads.staff.length, requirements: threads.requirements.length, deadline: (threads.deadline ?? []).length }, sendMode, skipViewingInvite, greeting: nightGreeting ? "night" : greetingPhrase ? "standard" : "none" }));
-        const psmRaw = await callClaude(psmStaticSystem, psmUser, currentAction, psmDynamic);
+        const psmRaw = await callClaude(psmSystemSpec, psmUser, currentAction, psmDynamic);
         let psmText = psmRaw;
         try {
           const m = psmRaw.match(/\{[\s\S]*\}/);
@@ -2655,6 +2720,10 @@ ${aixPropertySendRules}
       if (summaryNote) userParts.push(summaryNote);
       if (pspGuidanceNote) userParts.push(pspGuidanceNote);
 
+      // 2026-09-17 竹内（AIX キャッシュ点検）: 固定の型は hit 42% で 1h は損。global ルール（全 AIX 共通・不変）は準静的ブロック（1h）、
+      //   経路固有文＋☆実例＋action 別ルールは経路固有ブロック（5m）、挨拶・条件ルール・お客様名・ブレインは動的（cache なし）に分ける。
+      //   DB ルールは上の Promise.all の sendRules（fetchPromptRulesSplit・会話を合わせると同じ物）をそのまま使う
+      //   （2026-09-17 検査: 以前はここで同じ引数の fetchPromptRulesSplit をもう1回 await していた＝action 別クエリが1回多く直列で 100〜200ms 損）
       const sendStaticSystem = sendSystem + areaWordingNote + skipViewingInviteNote;
       // キャッシュ対象の sendSystem からプレースホルダ化した動的値をここで実値として渡す
       // （[お客様への挨拶] / ①[挨拶行] / ②[条件ルール] / [新着件数] の実体）
@@ -2667,18 +2736,22 @@ ${aixPropertySendRules}
       const sendDynamic = [
         sendContextBlock,
         nameNote.trim(),
-        sendExamplesText.trim(),
-        (sendDbRules ?? "").trim(),
         sendBrainAddendum ? "【ブレイン改善ルール】\n" + sendBrainAddendum : "",
         (brainGuidanceNote ?? "").trim(),
       ].filter(Boolean).join("\n\n");
+      const sendSystemSpec: SystemSpecBlocks = {
+        semiStatic: sendRules.global.replace(/^\n\n/, ""),
+        // ☆実例と action 別ルールは従来どおり "\n\n" 結合（旧 sendDynamic と同じ trim → join）
+        routeStatic: [sendStaticSystem, sendExamplesText.trim(), sendRules.action.trim()].filter(Boolean).join("\n\n"),
+        dynamic: sendDynamic,
+      };
       const sendUserFinal = userParts.join("")
         + sendWinningNote
         + sendPropertyExamples
         + (sendDiffNote ? `\n\n${sendDiffNote}` : "")
         + (componentKnowledgeNote ? `\n\n${componentKnowledgeNote}` : "")
         + (sendStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + sendStarNote : "");
-      const rawSendText = await callClaude(sendStaticSystem, sendUserFinal, currentAction, sendDynamic || undefined);
+      const rawSendText = await callClaude(sendSystemSpec, sendUserFinal, currentAction);
       // normal / widen モードはJSON構成パーツで返す（コンポーネント学習ループ用）
       if (sendMode === "normal" || sendMode === "widen" || sendMode === "viewing") {
         let propertySendComponents: Record<string, string> | null = null;
@@ -2725,13 +2798,14 @@ ${SMORA_COMMON_RULES}
 ・2〜4行程度・完成したLINEメッセージのみ出力`;
         const brainAddendumViReschedule = await loadBrainTemplate("viewing_invite");
         const calendarPart = calendarNote ? `\n\n【変更後の内覧候補日時】\n${calendarNote}` : "";
-        const rescheduleSystemFinal = rescheduleSystem + (brainAddendumViReschedule ? "\n\n【ブレイン改善ルール】\n" + brainAddendumViReschedule : "");
+        // 2026-09-17 竹内（AIX キャッシュ点検）: ブレイン改善ルール（呼び出しごとに変わり得る）は静的ブロックから出して動的へ
+        const rescheduleSystemFinal = rescheduleSystem + AIX_CURATED_AND_CRITICAL_RULES;
         const rescheduleUserFinal = greetingTimeNote + `${name}への内覧日程変更メッセージを生成してください。${calendarPart}${recentHistory}` + (rescheduleDiffNote ? `\n\n${rescheduleDiffNote}` : "");
         message_text = await callClaude(
-          rescheduleSystemFinal + AIX_CURATED_AND_CRITICAL_RULES,
+          rescheduleSystemFinal,
           rescheduleUserFinal,
           currentAction,
-          brainGuidanceNote || undefined
+          [brainAddendumViReschedule ? "【ブレイン改善ルール】\n" + brainAddendumViReschedule : "", brainGuidanceNote || ""].filter(Boolean).join("\n\n") || undefined
         );
         // 早期リターン（以降の通常viewing_invite生成をスキップ）: 共通後処理は finalize() に統一（⑦）
         return finalizeResponse(message_text);
@@ -2868,13 +2942,14 @@ ${SMORA_COMMON_RULES}
 
       // 学習済み差分ルール（スタッフ修正から学習したパターン）＋☆成功返信パターンをプロンプト末尾に注入
       // HIGH-02修正: viewing_invite の全コンポーネント（greeting/situation/invite/closing）を個別に取得
-      const [viewingDiffNote, viewingStarNote, compViewingGreeting, compViewingInvite, compViewingClosing, viewingDbRules, viewingBrainAddendum] = await Promise.all([
+      // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的 1h）と action 別（経路固有 5m）に分けて取る（fetchPromptRulesSplit は投げない）
+      const [viewingDiffNote, viewingStarNote, compViewingGreeting, compViewingInvite, compViewingClosing, viewingRules, viewingBrainAddendum] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.viewing_invite, currentAction, conversationId, latestCustomerMsg, brainContext),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.viewing_invite, latestCustomerMsg, aixBrainMeta),
         getKnowledgeForState(["viewing_invite_greeting"], currentAction),
         getKnowledgeForState(["viewing_invite_invite"], currentAction),
         getKnowledgeForState(["viewing_invite_closing"], currentAction),
-        fetchPromptRules("viewing_invite", {}).catch(() => ""),
+        fetchPromptRulesSplit("viewing_invite", {}),
         loadBrainTemplate("viewing_invite"),
       ]);
       const viewingComponentNote = [
@@ -2990,10 +3065,16 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
         ? `\n【物件状況】空室（今すぐ内覧可能）`
         : "";
       const propNamePart = property_name ? `\n【物件名】${property_name}` : "";
-      const viewingSystemFinal = system + viewingDbRules + (viewingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + viewingBrainAddendum : "");
+      // 2026-09-17 竹内（AIX キャッシュ点検）: [global 1h] → [固有文＋action 別ルール＋確認済みルール 5m] → [ブレイン改善ルール・顧客ガイダンス cache なし]
+      //   （ブレイン改善ルールは従来 static 内にあったが呼び出しごとに変わり得るので動的へ）
+      const viewingSystemSpec: SystemSpecBlocks = {
+        semiStatic: viewingRules.global.replace(/^\n\n/, ""),
+        routeStatic: system + viewingRules.action + AIX_CURATED_AND_CRITICAL_RULES,
+        dynamic: [viewingBrainAddendum ? "【ブレイン改善ルール】\n" + viewingBrainAddendum : "", brainGuidanceNote || ""].filter(Boolean).join("\n\n"),
+      };
       const viewingUserBase = `${name}への内覧お誘いメッセージ。${propNamePart}${vacancyPart}${calendarPart}${templateStructureNote}${recentHistory}`;
       const viewingUserFinal = greetingTimeNote + viewingUserBase + (viewingDiffNote ? `\n\n${viewingDiffNote}` : "") + (viewingComponentNote ? `\n\n${viewingComponentNote}` : "") + (viewingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + viewingStarNote : "") + (phraseText ? `\n\n【スモラのよく使うフレーズ（参考）】\n${phraseText}` : "") + (viewingExamplesText ? viewingExamplesText : "");
-      const rawViewingText = await callClaude(viewingSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, viewingUserFinal, currentAction, brainGuidanceNote || undefined);
+      const rawViewingText = await callClaude(viewingSystemSpec, viewingUserFinal, currentAction);
       // JSON構成パーツを解析してコンポーネント学習ループに渡す
       {
         let vComps: Record<string, string> | null = null;
@@ -3068,10 +3149,12 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
       const appSubMode = body.app_sub_mode as string | undefined;
 
       // ai_prompt_rules からアクション別・条件別ルールを取得（プロンプト注入用）
-      const appDbRules = await fetchPromptRules("application_push", {
+      // 2026-09-17 竹内（AIX キャッシュ点検）: global（全 AIX 共通・不変）は準静的ブロック（1h）、action 別（条件付き）は経路固有ブロックの末尾（5m）に置く
+      const appRules = await fetchPromptRulesSplit("application_push", {
         has_estimate: String(has_estimate === true),
         app_sub_mode: appSubMode || "push",
       });
+      const appGlobalRules = appRules.global.replace(/^\n\n/, "");
 
       if (appSubMode === "confirm") {
         // 2026-09-16 竹内（カイナ事例）「AIX の申込誘導の文で部屋が決まっていなければ3部屋の中でどれが良いか」:
@@ -3131,9 +3214,14 @@ ${property_name ? `物件名は「${property_name}」を使う（指定済み）
 ・確実に特定できない場合は「こちらのお部屋」とする。誤った物件名を推測で書くことは絶対禁止`}`;
 
         const brainAddendumAppConfirm = await loadBrainTemplate("application_push");
-        const confirmSystemFinal = confirmSystem + appDbRules + (brainAddendumAppConfirm ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppConfirm : "");
+        // 2026-09-17 竹内（AIX キャッシュ点検）: ブレイン改善ルールは静的ブロックから出して動的へ（号室・物件名の注記の前）
+        const confirmSystemSpec: SystemSpecBlocks = {
+          semiStatic: appGlobalRules,
+          routeStatic: confirmSystem + appRules.action + AIX_CURATED_AND_CRITICAL_RULES,
+          dynamic: [brainAddendumAppConfirm ? "【ブレイン改善ルール】\n" + brainAddendumAppConfirm : "", confirmPropertyNameNote, brainGuidanceNote].filter(Boolean).join("\n\n"),
+        };
         const confirmUserFinal = `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}` + (appDiffNote ? `\n\n${appDiffNote}` : "") + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-        message_text = await callClaude(confirmSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, confirmUserFinal, currentAction, [confirmPropertyNameNote, brainGuidanceNote].filter(Boolean).join("\n\n") || undefined);
+        message_text = await callClaude(confirmSystemSpec, confirmUserFinal, currentAction);
         // 2026-09-16 本番確認（カイナ）: 会話に一度も出ていない「1303号室」を2回とも書いた（プロンプトが号室を促すため埋める）。
         //   号室を間違えると別の部屋に審査がかかるので、根拠（会話＋スタッフ入力）に無い号室は落とす
         {
@@ -3225,9 +3313,14 @@ ${SMORA_COMMON_RULES}`;
 
         // docs_request には不動産ルール（連帯保証人=実印+印鑑証明書・支払い義務あり vs 緊急連絡先=電話のみ・支払い義務なし 等）も注入
         const brainAddendumAppDocs = await loadBrainTemplate("application_push");
-        const docsSystemFinal = docsRequestSystem + appDbRules + (brainAddendumAppDocs ? "\n\n【ブレイン改善ルール】\n" + brainAddendumAppDocs : "") + "\n\n" + REAL_ESTATE_RULES;
+        // 2026-09-17 竹内（AIX キャッシュ点検）: ブレイン改善ルールは静的ブロック（不動産ルールの前にあった）から出して動的へ
+        const docsSystemSpec: SystemSpecBlocks = {
+          semiStatic: appGlobalRules,
+          routeStatic: docsRequestSystem + appRules.action + "\n\n" + REAL_ESTATE_RULES + AIX_CURATED_AND_CRITICAL_RULES,
+          dynamic: [brainAddendumAppDocs ? "【ブレイン改善ルール】\n" + brainAddendumAppDocs : "", brainGuidanceNote || ""].filter(Boolean).join("\n\n"),
+        };
         const docsUserFinal = `${name}への書類依頼メッセージ。${recentHistory}` + (appDiffNote ? `\n\n${appDiffNote}` : "") + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-        const rawDocsText = await callClaude(docsSystemFinal + AIX_CURATED_AND_CRITICAL_RULES, docsUserFinal, "docs_request", brainGuidanceNote || undefined);
+        const rawDocsText = await callClaude(docsSystemSpec, docsUserFinal, "docs_request");
         // JSONパース → コンポーネント結合
         // ※ docs_request は aiComponents を返さない（conversation_state が application_push と同じため
         //   STATE_LEARNABLEが一致せず component_diff 学習がゼロになるのを防ぐ）。
@@ -3317,17 +3410,23 @@ ${SMORA_COMMON_RULES}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const brainAddendumAppConv = await loadBrainTemplate("application_push");
-        const convMatchAppDynamicSuffix = [
-          calendarBlock,
-          appDbRules,
-          brainAddendumAppConv ? `【ブレイン改善ルール】\n${brainAddendumAppConv}` : "",
-        ].filter(Boolean).join("\n\n");
+        // 2026-09-17 竹内（AIX キャッシュ点検）: [共通 prefix 1h] → [global 1h] → [固有文＋action 別ルール 5m] → [カレンダー・ブレイン cache なし]
+        //   （DB ルールは従来キャッシュ外の動的接尾にあった。共通 prefix の分割は splitSharedPrefix・文面は不変）
+        const { shared: convMatchAppShared, routeStatic: convMatchAppBody } = splitSharedPrefix(convMatchSystem);
+        const convMatchAppSpec: SystemSpecBlocks = {
+          shared: convMatchAppShared,
+          semiStatic: appGlobalRules,
+          routeStatic: convMatchAppBody + appRules.action,
+          dynamic: [
+            calendarBlock,
+            brainAddendumAppConv ? `【ブレイン改善ルール】\n${brainAddendumAppConv}` : "",
+          ].filter(Boolean).join("\n\n"),
+        };
         const convMatchAppUserFinal = `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。` + (appDiffNote ? `\n\n${appDiffNote}` : "") + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
         const raw = await callClaude(
-          convMatchSystem,
+          convMatchAppSpec,
           convMatchAppUserFinal,
-          currentAction,
-          convMatchAppDynamicSuffix || undefined
+          currentAction
         );
 
         try {
@@ -3351,6 +3450,9 @@ ${SMORA_COMMON_RULES}
       let appGreetingForUser = "";
       // 動的（顧客/物件/日付ごとに変わる）ブロック。キャッシュ対象の system から分離して渡す
       let appDynamicSuffix = "";
+      // 2026-09-17 竹内（AIX キャッシュ点検）: system の中で呼び出しごとに変わる部分（構成＝isSimple・hasEst・calendar_info の有無で変わる／
+      //   30日入居ルール／見積書済みの注記／出力形式）。静的ブロックの鍵が変種で割れないよう動的ブロックの先頭に置く（文面は同じ・並びだけ後ろ）
+      let appSystemDynamic = "";
 
       if (isScheduled) {
         // ── 退去予定: 固定テンプレート方式（従来通り）
@@ -3396,20 +3498,12 @@ ${template}
 ③物件アピール（1行）：お客様の希望に合っている理由を具体的に + 「お申込みが入る可能性が高いお部屋となります！！」
 ④申込み推奨：「[お客様名]お気に召されましたら一度お申込みし抑えさせてご内覧いただくのがオススメです😌！！」`;
 
+        // 2026-09-17 竹内（AIX キャッシュ点検）: 静的部分（役割・共通ルール・アピールの書き方・不安解消・禁止・絵文字・☆実例）だけを system に残し、
+        //   isSimple・hasEst・calendar_info で変わる部分（構成・30日入居ルール・見積書済みの注記・出力形式）は appSystemDynamic（動的ブロックの先頭）へ
         system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 会話履歴を読み取り、お客様に申込みを後押しするLINEメッセージを1つだけ作成してください。
 
 ${SMORA_COMMON_RULES}
-
-${structureNote}
-
-${!isSimple ? `【入居希望日と30日入居ルール — 最重要】
-・不動産賃貸の一般的なルールとして「お申込み日から30日以内にご入居いただく形」となる。今日の日付（ユーザーメッセージ末尾に記載）の30日後が入居期限
-・お客様が入居希望日を述べている場合は、必ず次の計算をする：「今日の日付 ＋ 30日 ＝ 入居期限」→ 入居希望日が入居期限と同じ頃またはそれ以前なら期間に間に合うので問題なし
-　例：今日が7月9日・希望が8月7日〜10日 → 7月9日申込なら入居期限は8月8日 → ほぼぴったりなので問題なし
-・問題なしの場合：構成①で「〇月〇日のご入居で問題ございません！！」と冒頭で断言して安心させ、そのまま②内覧案内へ自然に繋げる
-・入居希望日が今日の日付＋30日より大きく先の場合のみ「〇月〇日頃にお申込み頂ければご希望日でご入居頂けます😊！！」と最適な申込時期を1行で案内する（急かさない）
-・【絶対禁止】審査期間の話（「審査に3〜10日かかる」「逆算して早めのお申込みを」等）は一切書かない。入居日の話はすべて30日入居ルールだけで説明する` : ""}
 
 【物件アピールの書き方 — 最重要】
 ・「かなりご条件の良い」「ご条件がよく」のような曖昧な表現は禁止 → 必ず会話から具体的な根拠を入れる
@@ -3419,7 +3513,6 @@ ${!isSimple ? `【入居希望日と30日入居ルール — 最重要】
 ・エリア・駅距離 → 「○○駅徒歩○分で○○さんご希望エリアのかなりオススメのお部屋となります！！」
 ・複数ポイントを組み合わせる場合は1〜2行に自然にまとめる
 ・会話に数字や特徴が見当たらない場合は「かなりオススメできるお部屋となります！！」でよい
-${hasEst ? "・見積書はすでに送信済み。①の物件アピールで費用・見積書への再言及は厳禁（お客様はすでに見積書を持っている）。②のCTAで「初期費用面もお気に召されましたら」と一言触れるだけでよい" : ""}
 
 【申込の流れ・不安解消（任意・最大1行）】
 ・まず会話履歴から申込経験の有無を判断する: 「審査」「申込完了」「1番手」「キャンセル」等の申込関連のやりとりが過去にあれば申込経験者 → 流れ・LINE完結の説明は一切書かない
@@ -3434,13 +3527,23 @@ ${hasEst ? "・見積書はすでに送信済み。①の物件アピールで�
 
 【絵文字ルール】
 ▼ 使ってよい絵文字：😊 😌 のみ・1〜2個まで
-
-【出力形式（必須）】
+${examplesText}`;
+        appSystemDynamic = [
+          structureNote,
+          !isSimple ? `【入居希望日と30日入居ルール — 最重要】
+・不動産賃貸の一般的なルールとして「お申込み日から30日以内にご入居いただく形」となる。今日の日付（ユーザーメッセージ末尾に記載）の30日後が入居期限
+・お客様が入居希望日を述べている場合は、必ず次の計算をする：「今日の日付 ＋ 30日 ＝ 入居期限」→ 入居希望日が入居期限と同じ頃またはそれ以前なら期間に間に合うので問題なし
+　例：今日が7月9日・希望が8月7日〜10日 → 7月9日申込なら入居期限は8月8日 → ほぼぴったりなので問題なし
+・問題なしの場合：構成①で「〇月〇日のご入居で問題ございません！！」と冒頭で断言して安心させ、そのまま②内覧案内へ自然に繋げる
+・入居希望日が今日の日付＋30日より大きく先の場合のみ「〇月〇日頃にお申込み頂ければご希望日でご入居頂けます😊！！」と最適な申込時期を1行で案内する（急かさない）
+・【絶対禁止】審査期間の話（「審査に3〜10日かかる」「逆算して早めのお申込みを」等）は一切書かない。入居日の話はすべて30日入居ルールだけで説明する` : "",
+          hasEst ? "・見積書はすでに送信済み。①の物件アピールで費用・見積書への再言及は厳禁（お客様はすでに見積書を持っている）。②のCTAで「初期費用面もお気に召されましたら」と一言触れるだけでよい" : "",
+          `【出力形式（必須）】
 以下のJSON形式のみで出力してください（説明不要）：
 ${isSimple
   ? `{"appeal":"物件アピール（①・物件名+希望理由）","cta":"申込み後押し（②）","reassurance":"不安解消行（任意・なければ空文字）","closing":"締め（③）"}`
-  : `{"movein_date":"入居日安心（①・任意・入居希望日の話が出ていなければ空文字）","invite":"内覧案内（②）カレンダーあり時は複数行で日程を含む全文、なければ1行","appeal":"物件アピール（③）","cta":"申込み推奨（④）","reassurance":"不安解消行（任意・なければ空文字）"}`}
-${examplesText}`;
+  : `{"movein_date":"入居日安心（①・任意・入居希望日の話が出ていなければ空文字）","invite":"内覧案内（②）カレンダーあり時は複数行で日程を含む全文、なければ1行","appeal":"物件アピール（③）","cta":"申込み推奨（④）","reassurance":"不安解消行（任意・なければ空文字）"}`}`,
+        ].filter(Boolean).join("\n\n");
         appDynamicSuffix = `【物件名の特定】
 ${property_name ? `「${property_name}」を使う（指定済み）` : '会話履歴の最新スタッフメッセージ冒頭「【物件名 号室】」から物件名のみを抽出（例:「【ASK-6 201号室】」→「ASK-6」）。見つからなければ会話全体から特定、それもなければ「こちらのお部屋」。'}
 
@@ -3452,12 +3555,18 @@ ${appealFocus}`;
       }
 
       const brainAddendumApp = await loadBrainTemplate("application_push");
-      const appSystemFinal = system + (brainAddendumApp ? "\n\n【ブレイン改善ルール】\n" + brainAddendumApp : "");
+      // 2026-09-17 竹内（AIX キャッシュ点検）: [global 1h] → [固有文（静的部分）＋action 別ルール＋確認済みルール 5m] →
+      //   [構成・30日ルール・出力形式（appSystemDynamic）→ ブレイン改善ルール → 物件名・訴求 → 顧客ガイダンス cache なし]
+      const appSystemSpec: SystemSpecBlocks = {
+        semiStatic: appGlobalRules,
+        routeStatic: system + appRules.action + AIX_CURATED_AND_CRITICAL_RULES,
+        dynamic: [appSystemDynamic, brainAddendumApp ? "【ブレイン改善ルール】\n" + brainAddendumApp : "", appDynamicSuffix, brainGuidanceNote].filter(Boolean).join("\n\n"),
+      };
       const appUserFinal = appGreetingForUser + userMsg
         + (appDiffNote ? `\n\n${appDiffNote}` : "")
         + (compAppealNote ? `\n\n${compAppealNote}` : "")
         + (appStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + appStarNote : "");
-      const rawAppText = await callClaude(appSystemFinal + appDbRules + AIX_CURATED_AND_CRITICAL_RULES, appUserFinal, currentAction, [appDynamicSuffix, brainGuidanceNote].filter(Boolean).join("\n\n") || undefined);
+      const rawAppText = await callClaude(appSystemSpec, appUserFinal, currentAction);
       if (!isScheduled) {
         // simple/hold_view: JSONパーツを解析してコンポーネント学習ループに渡す
         let appComps: Record<string, string> | null = null;
@@ -3515,16 +3624,21 @@ ${appealFocus}`;
 ${SMORA_COMMON_RULES}`;
 
       // 学習済み差分ルール（スタッフ修正から学習したパターン）＋DBルールをプロンプト末尾に注入
-      const [moveInDiffNote, moveInDbRules] = await Promise.all([
+      // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的 1h）と action 別（経路固有の末尾）に分けて静的ブロックへ（従来はキャッシュ外の動的接尾）
+      const [moveInDiffNote, moveInRules] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId, latestCustomerMsg, brainContext),
-        fetchPromptRules("property_check_result", { check_pattern: "move_in_date" }).catch(() => ""),
+        fetchPromptRulesSplit("property_check_result", { check_pattern: "move_in_date" }),
       ]);
 
       const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
         { type: "text", text: `${name}へ送る入居日確認メッセージを作成してください。` + (moveInDiffNote ? `\n\n${moveInDiffNote}` : "") },
         { type: "image", source: { type: "url", url: String(image_url) } },
       ];
-      message_text = await callClaudeVision(moveInSystem, content, currentAction, moveInDbRules || undefined);
+      message_text = await callClaudeVision(
+        { semiStatic: moveInRules.global.replace(/^\n\n/, ""), routeStatic: moveInSystem + moveInRules.action },
+        content,
+        currentAction
+      );
 
     // ── 🔒 保証会社審査確認 ──────────────────────────────────────────────────
     } else if (action === "property_check_result" && check_pattern === "mgmt_guarantor") {
@@ -3598,9 +3712,10 @@ ${GUARANTOR_COMPANY_LIST_OCR}
         ? `[物件名]の\n保証会社が${companyName}となり${guarantorType !== "不明" ? `${guarantorType}の保証` : "保証会社"}となります！！`
         : `[物件名]の保証会社について確認させて頂きました！！`;
 
-      const [guarantorDiffNote, guarantorDbRules] = await Promise.all([
+      // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的 1h）と action 別（経路固有の末尾 5m）に分けて取る
+      const [guarantorDiffNote, guarantorRules] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId, latestCustomerMsg, brainContext),
-        fetchPromptRules("property_check_result", { check_pattern: "mgmt_guarantor" }).catch(() => ""),
+        fetchPromptRulesSplit("property_check_result", { check_pattern: "mgmt_guarantor" }),
       ]);
 
       const guarantorSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
@@ -3631,11 +3746,15 @@ JSONのみ: {"greeting":"①","report":"②（[物件名]解決済み・改行�
 ③タイプ説明: 「${typeDesc}」（②の後に空行を1行入れてから書く）
 ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・ctaはnull）"}`;
 
+      // 2026-09-17 竹内（AIX キャッシュ点検）: [global 1h] → [固有文＋action 別ルール＋確認済みルール 5m] → [保証会社名・物件名・誘導・挨拶・顧客ガイダンス cache なし]
       const rawGuarantorText = await callClaude(
-        guarantorSystem + guarantorDbRules + AIX_CURATED_AND_CRITICAL_RULES,
+        {
+          semiStatic: guarantorRules.global.replace(/^\n\n/, ""),
+          routeStatic: guarantorSystem + guarantorRules.action + AIX_CURATED_AND_CRITICAL_RULES,
+          dynamic: guarantorDynamicNote + "\n\n" + (greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : "") + (brainGuidanceNote || ""),
+        },
         `${name}への保証会社確認報告メッセージ。${recentHistory}` + (guarantorDiffNote ? `\n\n${guarantorDiffNote}` : ""),
-        currentAction,
-        guarantorDynamicNote + "\n\n" + (greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : "") + (brainGuidanceNote || "")
+        currentAction
       );
 
       try {
@@ -3889,35 +4008,17 @@ ${guidanceRule}`,
       const isAvailability = check_pattern === "mgmt_availability";
       const availabilityStatus = body.mgmt_availability_status as string | undefined;
 
-      const mgmtSystem = isAvailability
+      // 2026-09-17 竹内（AIX キャッシュ点検）: 旧 mgmtSystem は1本の文字列（1h）に呼び出しごとに変わる値（proxyResult・guidanceClose・
+      //   availabilityStatus・mgmtDef.format/rules に埋め込まれる誘導文）が混ざり、鍵が揃わず毎回書き込みになっていた。
+      //   固定の頭（役割＋共通ルール＋呼び方＝mgmtSystemHead・5m の鍵）と、それ以降（フォーマット・置き換えルール・厳守ルール＝mgmtSystemTail・動的）に分ける。
+      //   "\n\n" で結合すれば従来の mgmtSystem と同じ文字列。交渉結果（isNegotiation）は全て固定文なので head に丸ごと入れ tail は空
+      const mgmtSystemHead = isAvailability
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 管理会社に物件の募集状況を確認した結果をお客様に報告するLINEメッセージを1つだけ作成してください。
 
 ${SMORA_COMMON_RULES}
 
-【お客様の呼び方】必ず「[お客様名]」で呼ぶこと
-
-【メッセージ構成】
-①挨拶：「（時候の挨拶）」
-②結果報告（この一文を軸にする・必ず入れる）：${availabilityStatus === "available" ? "「管理会社に確認しましたところ現在まだ募集しているとのことでした！！」" : "「管理会社に確認しましたところ募集が終了したとのことでした」"}
-③会話の文脈に合わせた続き（1〜2行）：会話履歴からお客様の質問・希望を読み取り、それに自然につながる内容にする
-
-【③ 続きの書き方】
-${availabilityStatus === "available"
-  ? `・会話履歴でお客様が内覧や申込を希望していればそれに誘導する（例:「[お客様名]お気に召されましたらご内覧・お申込みのご案内をさせて頂きます😊！！」）
-・スタッフ入力に補足があればその情報を必ず反映する（例: 申込がまだ入っていない→「まだお申込みも入っていない状況ですのでお早めのご検討がおすすめです！！」）
-・人気物件感を出しつつ押し付けにならないようにする`
-  : `・残念な結果だが謝罪表現（「申し訳ございません」等）は使用禁止。正直に伝えつつ前向きに締める
-・「ご希望の条件に合うお部屋を改めてピックアップさせて頂きます😊！！」のように次の提案につなげる
-・会話履歴からお客様の希望条件が分かればそれに触れてよい`}
-
-【物件名の特定】
-会話履歴からお客様が確認依頼した物件を特定し②の文頭に「[物件名]につきまして」のように付ける（号室があれば「マンション名 806号室」形式・先頭0省略）。特定できない場合は物件名なしで②をそのまま使う
-
-【厳守ルール】
-・感嘆符は「！！」（スモラスタイル）
-・絵文字は 😊 😌 のみ・1〜2個まで（他は全禁止）
-・完成したLINEメッセージのみ出力（候補複数・前置きは禁止）`
+【お客様の呼び方】必ず「[お客様名]」で呼ぶこと`
         : isNegotiation
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 管理会社への初期費用交渉結果をお客様に報告するLINEメッセージを1つだけ作成してください。
@@ -3950,9 +4051,33 @@ ${check_pattern === "nearby_parking" ? `物件近隣の月極駐車場を調べ�
 
 ${SMORA_COMMON_RULES}
 
-【お客様の呼び方】必ず「[お客様名]」で呼ぶこと（他の呼び方・〇〇さんの置き換えし忘れ禁止）
+【お客様の呼び方】必ず「[お客様名]」で呼ぶこと（他の呼び方・〇〇さんの置き換えし忘れ禁止）`;
 
-【出力フォーマット（この構成・行数を厳守。[ ]の部分のみ置き換える）】
+      const mgmtSystemTail = isAvailability
+        ? `【メッセージ構成】
+①挨拶：「（時候の挨拶）」
+②結果報告（この一文を軸にする・必ず入れる）：${availabilityStatus === "available" ? "「管理会社に確認しましたところ現在まだ募集しているとのことでした！！」" : "「管理会社に確認しましたところ募集が終了したとのことでした」"}
+③会話の文脈に合わせた続き（1〜2行）：会話履歴からお客様の質問・希望を読み取り、それに自然につながる内容にする
+
+【③ 続きの書き方】
+${availabilityStatus === "available"
+  ? `・会話履歴でお客様が内覧や申込を希望していればそれに誘導する（例:「[お客様名]お気に召されましたらご内覧・お申込みのご案内をさせて頂きます😊！！」）
+・スタッフ入力に補足があればその情報を必ず反映する（例: 申込がまだ入っていない→「まだお申込みも入っていない状況ですのでお早めのご検討がおすすめです！！」）
+・人気物件感を出しつつ押し付けにならないようにする`
+  : `・残念な結果だが謝罪表現（「申し訳ございません」等）は使用禁止。正直に伝えつつ前向きに締める
+・「ご希望の条件に合うお部屋を改めてピックアップさせて頂きます😊！！」のように次の提案につなげる
+・会話履歴からお客様の希望条件が分かればそれに触れてよい`}
+
+【物件名の特定】
+会話履歴からお客様が確認依頼した物件を特定し②の文頭に「[物件名]につきまして」のように付ける（号室があれば「マンション名 806号室」形式・先頭0省略）。特定できない場合は物件名なしで②をそのまま使う
+
+【厳守ルール】
+・感嘆符は「！！」（スモラスタイル）
+・絵文字は 😊 😌 のみ・1〜2個まで（他は全禁止）
+・完成したLINEメッセージのみ出力（候補複数・前置きは禁止）`
+        : isNegotiation
+        ? ""
+        : `【出力フォーマット（この構成・行数を厳守。[ ]の部分のみ置き換える）】
 ${mgmtDef.format}
 
 【置き換えルール】
@@ -3966,13 +4091,20 @@ ${check_pattern === "mgmt_proxy" ? "" : `・[物件名]は会話履歴からお�
 ・完成したLINEメッセージのみ出力（候補複数・前置きは禁止）`;
 
       // 学習済み差分ルール（スタッフ修正から学習したパターン）＋DBルールをプロンプト末尾に注入
-      const [mgmtDiffNote, mgmtDbRules] = await Promise.all([
+      // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ
+      const [mgmtDiffNote, mgmtRules] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId, latestCustomerMsg, brainContext),
-        fetchPromptRules("property_check_result", { check_pattern: String(check_pattern ?? "") }).catch(() => ""),
+        fetchPromptRulesSplit("property_check_result", { check_pattern: String(check_pattern ?? "") }).catch(() => ({ global: "", action: "" })),
       ]);
+      // ブロック: [global ルール 1h] → [固定の頭＋action 別ルール 5m] → [フォーマット・置き換えルール・厳守ルール（動的）→ 挨拶フレーズ]
+      const mgmtSystemSpec: SystemSpecBlocks = {
+        semiStatic: mgmtRules.global.replace(/^\n\n/, ""),
+        routeStatic: mgmtSystemHead + mgmtRules.action,
+        dynamic: mgmtSystemTail,
+      };
 
       message_text = await callClaude(
-        mgmtSystem + mgmtDbRules,
+        mgmtSystemSpec,
         isNegotiation
           ? `${name}への初期費用交渉結果報告メッセージを作成してください。
 
@@ -4184,13 +4316,16 @@ ${cmResultLines}
         const pcrCalendarBlock = calendarNoteForPCR
           ? `【内覧可能日時（カレンダー自動取得・空室時はこの日程で案内すること）】\n${calendarNoteForPCR}`
           : "";
-        const [pcrDiffNote, pcrStarNote, pcrDbRules, brainAddendumPcrConv] = await Promise.all([
+        const [pcrDiffNote, pcrStarNote, pcrRules, brainAddendumPcrConv] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_check_result, latestCustomerMsg, aixBrainMeta),
           // 実際に選択された check_pattern を渡す（旧: "availability" ハードコードで unavailable 等のDBルールが引けていなかった）
           // 2026-09-16 カイナ事例: 会話を合わせる経路には、通常返信用の「物件画像→見積書作成宣言・内覧案内を混ぜるな」（PROP-URL-REPLY-001・
           //   FEEDBACK-d6f30f25）と構成を足す DIFF-POLICY-* を渡さない（固定の型の AIX 生成側には残す）
-          fetchPromptRules("property_check_result", { check_pattern: cmPattern || "availability" }, true, false, { keyPrefixes: ["DIFF-POLICY-"], keys: ["PROP-URL-REPLY-001", "FEEDBACK-d6f30f25"] }).catch(() => ""),
+          // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ（旧: 動的接尾で毎回割引なし）。
+          //   exclude の PROP-URL-REPLY-001 は global 側の行なので、この経路の global は他の AIX より1行短く準静的ブロックの鍵が別になる。
+          //   この経路は AIX で最も呼び出しが多く 1h の鍵は自分で温まるので、別鍵を許容する（除外を外して文面を変えるより安全）
+          fetchPromptRulesSplit("property_check_result", { check_pattern: cmPattern || "availability" }, { exclude: { keyPrefixes: ["DIFF-POLICY-"], keys: ["PROP-URL-REPLY-001", "FEEDBACK-d6f30f25"] } }).catch(() => ({ global: "", action: "" })),
           loadBrainTemplate("property_check_result"),
         ]);
 
@@ -4224,8 +4359,8 @@ ${cmResultLines}
           : "";
 
         // キャッシュ最適化: 静的（GENERATION_SYSTEM/共通ルール/固定指示）と
-        // 動的（確認結果・見積OCR・カレンダー・META・DBルール・ブレイン）を分離し、
-        // 静的側だけを callClaude 第1引数（cache_control付き）に渡す
+        // 動的（確認結果・見積OCR・カレンダー・META・ブレイン）を分離し、静的側だけをキャッシュ対象のブロックに置く
+        // （2026-09-17 AIX キャッシュ点検: DB ルールは動的から準静的／経路固有ブロックへ移した。下の pcrSystemSpec）
         const pcrStaticSystem = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
@@ -4267,7 +4402,7 @@ ${SMORA_COMMON_RULES}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
-        // 動的（顧客・案件ごとに変わる）ブロック。キャッシュ対象外の第4引数で渡す
+        // 動的（顧客・案件ごとに変わる）ブロック。キャッシュ対象外
         const pcrDynamicSuffix = [
           pcrQuotedBlock,
           cmResultBlock,
@@ -4275,9 +4410,16 @@ ${SMORA_COMMON_RULES}
           cmEstimateFacts.block,
           pcrCalendarBlock,
           brainMetaBlockPCR,
-          pcrDbRules,
           brainAddendumPcrConv ? `【ブレイン改善ルール】\n${brainAddendumPcrConv}` : "",
         ].filter(Boolean).join("\n\n");
+        // ブロック: [shared 1h] → [global ルール（exclude 済み）1h] → [固有文＋action 別ルール 5m] → [動的]。作り直しも同じ構成（2回目は read）
+        const pcrShared = splitSharedPrefix(pcrStaticSystem);
+        const pcrSystemSpec: SystemSpecBlocks = {
+          shared: pcrShared.shared,
+          semiStatic: pcrRules.global.replace(/^\n\n/, ""),
+          routeStatic: pcrShared.routeStatic + pcrRules.action,
+          dynamic: pcrDynamicSuffix,
+        };
 
         const pcrConvUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrDiffNote ? `\n\n${pcrDiffNote}` : "") + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
         const parsePCR = (raw: string): string => {
@@ -4288,10 +4430,9 @@ ${SMORA_COMMON_RULES}
           return raw;
         };
         const rawPCR = await callClaude(
-          pcrStaticSystem,
+          pcrSystemSpec,
           pcrConvUserFinal,
-          currentAction,
-          pcrDynamicSuffix || undefined
+          currentAction
         );
         message_text = parsePCR(rawPCR);
         // 2026-09-15 竹内（みく事例）: スタッフの入力が本文に入っているかを決定論で確かめ、足りなければ1回だけ作り直す。
@@ -4317,10 +4458,9 @@ ${SMORA_COMMON_RULES}
         if (firstMissing.length > 0) {
           console.warn(JSON.stringify({ tag: "aix:pcr-retry", conversationId, missing: firstMissing, text: message_text.slice(0, 120) }));
           const retryRaw = await callClaude(
-            pcrStaticSystem,
+            pcrSystemSpec,
             `${pcrConvUserFinal}\n\n【作り直し】前の案:「${message_text.replace(/\n/g, " ").slice(0, 200)}」\n足りない・違う点:\n${firstMissing.map((m) => `・${m}`).join("\n")}\n前の案の良い所（お客様の質問への答え・構成）は保ったまま直してください。`,
             currentAction,
-            pcrDynamicSuffix || undefined,
           );
           message_text = parsePCR(retryRaw);
           const stillMissing = pcrMissing(message_text);
@@ -4498,9 +4638,10 @@ ${SMORA_COMMON_RULES}
 
 【絵文字ルール — 最重要・必ず守ること】
 ▼ 使ってよい絵文字：😊 😌 🙇‍♀️ 🌟 ✨ のみ（他は全禁止）
-▼ 絵文字は1〜2個まで
-
-【このパターンのお手本（スモラ実データ由来・文体・構成をこれに合わせる）】
+▼ 絵文字は1〜2個まで`;
+      // 2026-09-17 竹内（AIX キャッシュ点検）: お手本（greetingPhrase 入り＝呼び出しごとに変わる）と DB 由来の実例・ノウハウは
+      //   経路固有ブロック（5m の鍵）から出して動的ブロックへ。"\n\n" で結合すれば従来の checkSystem と同じ文字列
+      const checkSystemTail = `【このパターンのお手本（スモラ実データ由来・文体・構成をこれに合わせる）】
 ${patternExample}${knowledgeText}${examplesText}`;
 
       const available_application = body.available_application as "yes" | "no" | undefined;
@@ -4767,10 +4908,11 @@ ${templateText}`;
         if (patternStr && patternStr !== "interior_photo" && patternStr !== "move_in_date") {
           checkResultStates.push(`property_check_result_${patternStr}`);
         }
-        const [checkDiffNote, checkStarNote, checkDbRules, checkBrainAddendum] = await Promise.all([
+        // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ
+        const [checkDiffNote, checkStarNote, checkRules, checkBrainAddendum] = await Promise.all([
           getKnowledgeForState(checkResultStates, currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction(checkResultStates, latestCustomerMsg, aixBrainMeta),
-          fetchPromptRules("property_check_result", { check_pattern: patternStr }).catch(() => ""),
+          fetchPromptRulesSplit("property_check_result", { check_pattern: patternStr }).catch(() => ({ global: "", action: "" })),
           loadBrainTemplate("property_check_result"),
         ]);
 
@@ -4780,7 +4922,15 @@ ${templateText}`;
           : "";
         const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${templateSampleNote}${templateStructureNote}${calendarPart}${summaryNote}${recentHistory}`;
 
-        const checkSystemFinal = checkSystem + checkDbRules + (checkBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + checkBrainAddendum : "");
+        // ブロック: [global ルール 1h] → [固定文＋action 別ルール 5m] → [お手本・実例・ノウハウ・ブレイン（動的）]。Vision も同じ構成
+        const checkSystemSpec: SystemSpecBlocks = {
+          semiStatic: checkRules.global.replace(/^\n\n/, ""),
+          routeStatic: checkSystem + checkRules.action,
+          dynamic: [
+            checkSystemTail,
+            checkBrainAddendum ? `【ブレイン改善ルール】\n${checkBrainAddendum}` : "",
+          ].filter(Boolean).join("\n\n"),
+        };
         const checkUserFinal = greetingTimeNote + userText + (checkDiffNote ? `\n\n${checkDiffNote}` : "") + (checkStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + checkStarNote : "");
 
         if (image_url || estimate_image_url) {
@@ -4789,9 +4939,9 @@ ${templateText}`;
           ];
           if (image_url) content.push({ type: "image", source: { type: "url", url: image_url } });
           if (estimate_image_url) content.push({ type: "image", source: { type: "url", url: estimate_image_url } });
-          message_text = await callClaudeVision(checkSystemFinal, content, currentAction);
+          message_text = await callClaudeVision(checkSystemSpec, content, currentAction);
         } else {
-          message_text = await callClaude(checkSystemFinal, checkUserFinal, currentAction);
+          message_text = await callClaude(checkSystemSpec, checkUserFinal, currentAction);
         }
       }
 
@@ -4942,10 +5092,11 @@ ${SMORA_COMMON_RULES}
 
       // LL-09: フォームに添える導入メッセージをAI生成（学習ループ対象化）
       try {
-        const [hearingDiffNote, hearingStarNote, hearingDbRules, hearingBrainAddendum] = await Promise.all([
+        // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールを global（semiStatic・全 AIX 共有 1h）／action（routeStatic 5m）に分け、ブレイン改善ルールは dynamic へ
+        const [hearingDiffNote, hearingStarNote, hearingRules, hearingBrainAddendum] = await Promise.all([
           getKnowledgeForState([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], latestCustomerMsg || "", aixBrainMeta),
-          fetchPromptRules("condition_hearing", {}).catch(() => ""),
+          fetchPromptRulesSplit("condition_hearing", {}).catch(() => ({ global: "", action: "" })),
           loadBrainTemplate("condition_hearing"),
         ]);
 
@@ -4966,10 +5117,14 @@ ${SMORA_COMMON_RULES}
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
 ・条件項目の箇条書き自体はこのメッセージに含めない（フォームは別送するため）`;
 
-        const hearingSystemFinal = hearingSystem + hearingDbRules + (hearingBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + hearingBrainAddendum : "");
+        const hearingSystemSpec: SystemSpecBlocks = {
+          semiStatic: hearingRules.global.replace(/^\n\n/, ""),
+          routeStatic: hearingSystem + hearingRules.action,
+          dynamic: hearingBrainAddendum ? "【ブレイン改善ルール】\n" + hearingBrainAddendum : "",
+        };
         const hearingUserFinal = greetingTimeNote + `${name}へのヒアリング導入メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}` + (hearingDiffNote ? `\n\n${hearingDiffNote}` : "") + (hearingStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + hearingStarNote : "");
         const hearingResult = await callClaude(
-          hearingSystemFinal,
+          hearingSystemSpec,
           hearingUserFinal,
           currentAction
         );
@@ -5078,6 +5233,8 @@ ${jstTodayStr}
 ・3行以外の追加は一切しない。解説・絵文字・補足は不要`;
 
         // 学習済み差分ルール（スタッフ修正から学習したパターン）＋DBルールをプロンプト末尾に注入
+        // 2026-09-17 竹内（AIX キャッシュ点検）: Haiku の呼び出しは cache なし（ttl "none"）のまま。global ≈12k tokens を準静的ブロックに置くと
+        //   Haiku でも 1h の書き込みが起きる（数回/日の経路では純損）ので、ここは従来の fetchPromptRules（1本の文字列）を変えない
         const [beforeDiffNote, greetingViewingDbRules, greetingBeforeBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.greeting_viewing, currentAction, conversationId, latestCustomerMsg, brainContext),
           fetchPromptRules("greeting_viewing", { sub_mode: sub_mode ?? "" }).catch(() => ""),
@@ -5107,7 +5264,8 @@ ${jstTodayStr}
             : getKnowledgeForState(AIX_ACTION_TO_STATES.greeting_viewing, currentAction, conversationId, latestCustomerMsg, brainContext),
           loadBrainTemplate("greeting_viewing"),
         ]);
-        const greetingAfterBrain = greetingAfterBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + greetingAfterBrainAddendum : "";
+        // 2026-09-17 竹内（AIX キャッシュ点検）: ブレイン改善ルール（呼び出しごとに変わる）は静的 system から出して動的接尾へ（固定文だけが 5m の鍵）
+        const greetingAfterDynamic = greetingAfterBrainAddendum ? `【ブレイン改善ルール】\n${greetingAfterBrainAddendum}` : undefined;
 
         if (after_type === "apply") {
           // 申込
@@ -5138,7 +5296,7 @@ ${jstTodayStr}
 
 【スモラLINE営業ルール（必ず守る）】
 ${SMORA_COMMON_RULES}`;
-          message_text = await callClaude(sys + greetingAfterBrain, `確認事項: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction);
+          message_text = await callClaude(sys, `確認事項: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction, greetingAfterDynamic);
 
         } else if (after_type === "search_new") {
           // 引き続き物件探す / 新着探す
@@ -5154,7 +5312,7 @@ ${SMORA_COMMON_RULES}`;
 
 【スモラLINE営業ルール（必ず守る）】
 ${SMORA_COMMON_RULES}`;
-          message_text = await callClaude(sys + greetingAfterBrain, `条件: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction);
+          message_text = await callClaude(sys, `条件: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction, greetingAfterDynamic);
 
         } else if (after_type === "search_change") {
           // 引き続き物件探す / 条件変更 → AI生成
@@ -5166,7 +5324,7 @@ ${SMORA_COMMON_RULES}`;
 
 【スモラLINE営業ルール（必ず守る）】
 ${SMORA_COMMON_RULES}`;
-          message_text = await callClaude(sys + greetingAfterBrain, `変更条件: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction);
+          message_text = await callClaude(sys, `変更条件: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction, greetingAfterDynamic);
 
         } else {
           // フォールバック（after_type未指定 = 旧フロー）
@@ -5176,7 +5334,7 @@ ${SMORA_COMMON_RULES}`;
 ②「いかがでしたでしょうか？！」
 ③「気になる点ございましたらお気軽にお申し付けください！！」
 ・「！！」を文末に使う・3行のみ出力`;
-          message_text = await callClaude(system + greetingAfterBrain, `${name}への内覧後挨拶を生成してください。${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction);
+          message_text = await callClaude(system, `${name}への内覧後挨拶を生成してください。${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction, greetingAfterDynamic);
         }
       }
 
@@ -5184,10 +5342,11 @@ ${SMORA_COMMON_RULES}`;
       // conversation_match: テンプレ固定なし・会話から日時・物件を読んで自然な待ち合わせ文を生成
       if (body.conversation_match) {
         // base_messageがある場合もadaptMessageToConversationは使わず再生成（テンプレ冒頭が残るため）
-        const [mpDiffNote, mpStarNote, mpDbRules, mpCMBrainAddendum] = await Promise.all([
+        // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ（旧: 動的接尾で毎回割引なし）
+        const [mpDiffNote, mpStarNote, mpRules, mpCMBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.meeting_place, currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.meeting_place, latestCustomerMsg, aixBrainMeta),
-          fetchPromptRules("meeting_place", {}).catch(() => ""),
+          fetchPromptRulesSplit("meeting_place", {}).catch(() => ({ global: "", action: "" })),
           loadBrainTemplate("meeting_place"),
         ]);
         const mpPropertyName = body.meeting_property_name ? String(body.meeting_property_name) : "";
@@ -5222,15 +5381,21 @@ ${SMORA_COMMON_RULES}
           mpPropertyName ? `【物件名】${mpPropertyName}` : "",
           mpAddress ? `【住所】${mpAddress}` : "",
           mpDate ? `【内覧日】${mpDate}` : "",
-          mpDbRules,
           mpCMBrainAddendum ? `【ブレイン改善ルール】\n${mpCMBrainAddendum}` : "",
         ].filter(Boolean).join("\n\n");
+        // ブロック: [shared 1h] → [global ルール 1h] → [固有文＋action 別ルール 5m] → [物件名・住所・内覧日・ブレイン（動的）]
+        const mpShared = splitSharedPrefix(mpSystem);
+        const mpSystemSpec: SystemSpecBlocks = {
+          shared: mpShared.shared,
+          semiStatic: mpRules.global.replace(/^\n\n/, ""),
+          routeStatic: mpShared.routeStatic + mpRules.action,
+          dynamic: mpCMDynamicSuffix,
+        };
         const mpCMUserFinal = greetingTimeNote + `${recentHistory}${mpBaseHint}\n\n上記の会話を読み取り、${name}への待ち合わせ確定メッセージを生成してください。` + (mpDiffNote ? `\n\n${mpDiffNote}` : "") + (mpStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + mpStarNote : "");
         const rawMP = await callClaude(
-          mpSystem,
+          mpSystemSpec,
           mpCMUserFinal,
-          currentAction,
-          mpCMDynamicSuffix || undefined
+          currentAction
         );
         try {
           const mMP = rawMP.match(/\{[\s\S]*\}/);
@@ -5248,6 +5413,8 @@ ${SMORA_COMMON_RULES}
       const mAddr = body.meeting_property_address ? String(body.meeting_property_address) : "";
 
       // 学習済み差分ルール（スタッフ修正から学習したパターン）＋☆成功返信パターン＋DBルールをプロンプト末尾に注入
+      // 2026-09-17 竹内（AIX キャッシュ点検）: Haiku の呼び出しは cache なし（ttl "none"）のまま。global ≈12k tokens を準静的ブロックに置くと
+      //   Haiku でも 1h の書き込みが起きる（数回/日の経路では純損）ので、ここは従来の fetchPromptRules（1本の文字列）を変えない
       const [meetingDiffNote, meetingStarNote, meetingDbRules, meetingBrainAddendum] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.meeting_place, currentAction, conversationId, latestCustomerMsg, brainContext),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.meeting_place, latestCustomerMsg, aixBrainMeta),
@@ -5285,10 +5452,11 @@ ${mDate}[時間]に${mName}
       if (body.conversation_match) {
         // ⭐実例注入: 管理会社向けの文体は acknowledge_check の送信済み実例からのみ学ぶ
         //   （hearing/proposing はお客様向け文体のため混ぜない。states は必ず ["acknowledge_check"] のみ）
-        const [ackCMDiffNote, ackCMStarNote, ackCMDbRules, ackCMBrainAddendum] = await Promise.all([
+        // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ（旧: 動的接尾で毎回割引なし）
+        const [ackCMDiffNote, ackCMStarNote, ackCMRules, ackCMBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.acknowledge_check, currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction(["acknowledge_check"], latestCustomerMsg, aixBrainMeta),
-          fetchPromptRules("acknowledge_check", {}).catch(() => ""),
+          fetchPromptRulesSplit("acknowledge_check", {}).catch(() => ({ global: "", action: "" })),
           loadBrainTemplate("acknowledge_check"),
         ]);
         const ackCMLabel = familyName ? `${familyName}さん` : "お客様";
@@ -5343,27 +5511,30 @@ ${SMORA_COMMON_RULES}
         // ⑤修正: 管理会社向けメッセージは「お世話になっております禁止」のため、
         //   「必ず挨拶を使え」と指示する greetingTimeNote は連結しない（矛盾指示の排除）
 
-        const ackCMDynamicSuffix = [
-          "【お客様名】ユーザーメッセージに記載のお客様名を使うこと",
-          ackCMDbRules,
-          ackCMBrainAddendum ? `【ブレイン改善ルール】\n${ackCMBrainAddendum}` : "",
-          brainGuidanceNote,
-        ].filter(Boolean).join("\n\n");
+        // ブロック: [global ルール 1h] → [固有文＋【お客様名】の固定行＋action 別ルール 5m] → [ブレイン（動的）]。【お客様名】の行は固定文なので経路固有ブロックへ
+        const ackCMSystemSpec: SystemSpecBlocks = {
+          semiStatic: ackCMRules.global.replace(/^\n\n/, ""),
+          routeStatic: `${ackCMSystem}\n\n【お客様名】ユーザーメッセージに記載のお客様名を使うこと${ackCMRules.action}`,
+          dynamic: [
+            ackCMBrainAddendum ? `【ブレイン改善ルール】\n${ackCMBrainAddendum}` : "",
+            brainGuidanceNote,
+          ].filter(Boolean).join("\n\n"),
+        };
         const ackCMUserFinal = `${ackCMLabel}のご案内について、物件の管理会社へ送る確認メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (ackCMDiffNote ? `\n\n${ackCMDiffNote}` : "") + (ackCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + ackCMStarNote : "");
         const rawACM = await callClaude(
-          ackCMSystem,
+          ackCMSystemSpec,
           ackCMUserFinal,
-          currentAction,
-          ackCMDynamicSuffix || undefined
+          currentAction
         );
         message_text = rawACM;
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         return finalizeResponse(message_text);
       }
 
-      const [ackDiffNote, ackDbRules, ackBrainAddendum] = await Promise.all([
+      // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ（旧: 動的接尾で毎回割引なし）
+      const [ackDiffNote, ackRules, ackBrainAddendum] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.acknowledge_check, currentAction, conversationId, latestCustomerMsg, brainContext),
-        fetchPromptRules("acknowledge_check", {}).catch(() => ""),
+        fetchPromptRulesSplit("acknowledge_check", {}).catch(() => ({ global: "", action: "" })),
         loadBrainTemplate("acknowledge_check"),
       ]);
       // ★宛先はお客様ではなく物件の管理会社・オーナー。スモラは全LINEで「さん」表記のため familyName＋さん で組み立てる
@@ -5395,17 +5566,19 @@ ${SMORA_COMMON_RULES}
       // ⑤修正: 管理会社向けメッセージは「お世話になっております禁止」のため、
       //   「必ず挨拶を使え」と指示する greetingTimeNote は連結しない（矛盾指示の排除）
 
-      const ackDynamicSuffix = [
-        "【お客様名】ユーザーメッセージに記載のお客様名を使うこと",
-        ackDbRules,
-        ackBrainAddendum ? `【ブレイン改善ルール】\n${ackBrainAddendum}` : "",
-        brainGuidanceNote,
-      ].filter(Boolean).join("\n\n");
+      // ブロック: [global ルール 1h] → [固有文＋【お客様名】の固定行＋action 別ルール 5m] → [ブレイン（動的）]。【お客様名】の行は固定文なので経路固有ブロックへ
+      const ackSystemSpec: SystemSpecBlocks = {
+        semiStatic: ackRules.global.replace(/^\n\n/, ""),
+        routeStatic: `${ackSystem}\n\n【お客様名】ユーザーメッセージに記載のお客様名を使うこと${ackRules.action}`,
+        dynamic: [
+          ackBrainAddendum ? `【ブレイン改善ルール】\n${ackBrainAddendum}` : "",
+          brainGuidanceNote,
+        ].filter(Boolean).join("\n\n"),
+      };
       message_text = await callClaude(
-        ackSystem,
+        ackSystemSpec,
         `${ackCustomerLabel}のご案内について、物件の管理会社へ送る「募集状況確認 ＋ 最大限割引した初期費用の御見積もり依頼」メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (ackDiffNote ? `\n\n${ackDiffNote}` : ""),
-        currentAction,
-        ackDynamicSuffix || undefined
+        currentAction
       );
 
     // ── 📣 追客する ──────────────────────────────────────────────
@@ -5415,10 +5588,11 @@ ${SMORA_COMMON_RULES}
 
       // ── 申込補足情報催促 ────────────────────────────────────────────────────
       if (followSubMode === "apply_supplement") {
-        const [supDiffNote, supStarNote, supDbRules, supBrainAddendum] = await Promise.all([
+        // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ。ブレイン改善ルールは動的へ
+        const [supDiffNote, supStarNote, supRules, supBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg, aixBrainMeta),
-          fetchPromptRules("followup_revive", { follow_sub_mode: followSubMode }).catch(() => ""),
+          fetchPromptRulesSplit("followup_revive", { follow_sub_mode: followSubMode }).catch(() => ({ global: "", action: "" })),
           loadBrainTemplate("followup_revive"),
         ]);
 
@@ -5452,16 +5626,25 @@ ${SMORA_COMMON_RULES}
 【文字数】箇条書きを含めて2〜5行程度・完成したLINEメッセージのみを出力（JSONや説明文は不要）`;
 
         const supUser = `${name}への「お申込みに必要な書類・情報のご提出をお願いする」催促メッセージを生成してください。${extra_input ? `\n【まだ頂けていない書類・補足情報（最優先で使うこと）】${extra_input}` : ""}${recentHistory}`;
-        const supSystemFinal = supSystem + supDbRules + (supBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + supBrainAddendum : "");
+        // ブロック: [global ルール 1h] → [固有文＋action 別ルール 5m] → [ブレイン・挨拶（動的）]
+        const supSystemSpec: SystemSpecBlocks = {
+          semiStatic: supRules.global.replace(/^\n\n/, ""),
+          routeStatic: supSystem + supRules.action,
+          dynamic: [
+            supBrainAddendum ? `【ブレイン改善ルール】\n${supBrainAddendum}` : "",
+            greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : "",
+          ].filter(Boolean).join("\n\n"),
+        };
         const supUserFinal = greetingTimeNote + supUser + (supDiffNote ? `\n\n${supDiffNote}` : "") + (supStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + supStarNote : "");
-        message_text = await callClaude(supSystemFinal, supUserFinal, currentAction, greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined);
+        message_text = await callClaude(supSystemSpec, supUserFinal, currentAction);
 
       // ── 物件探し継続確認 ──────────────────────────────────────────────────
       } else if (followSubMode === "search_continue") {
-        const [scDiffNote, scStarNote, scDbRules, scBrainAddendum] = await Promise.all([
+        // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ。ブレイン改善ルールは動的へ
+        const [scDiffNote, scStarNote, scRules, scBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg, aixBrainMeta),
-          fetchPromptRules("followup_revive", { follow_sub_mode: followSubMode }).catch(() => ""),
+          fetchPromptRulesSplit("followup_revive", { follow_sub_mode: followSubMode }).catch(() => ({ global: "", action: "" })),
           loadBrainTemplate("followup_revive"),
         ]);
 
@@ -5494,16 +5677,26 @@ ${SMORA_COMMON_RULES}
 ・🙏絵文字は絶対禁止`;
 
         const scUser = `${name}への物件探し継続確認メッセージを生成してください。${followPropertyName ? `\n物件名: ${followPropertyName}` : ""}${extra_input ? `\n補足（物件の特徴など）: ${extra_input}` : ""}${recentHistory}`;
-        const scSystemFinal = scSystem + scDbRules + (scBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + scBrainAddendum : "");
+        // ブロック: [global ルール 1h] → [固有文＋action 別ルール 5m] → [ブレイン・物件名入りの構成ルール・挨拶（動的）]
+        const scSystemSpec: SystemSpecBlocks = {
+          semiStatic: scRules.global.replace(/^\n\n/, ""),
+          routeStatic: scSystem + scRules.action,
+          dynamic: [
+            scBrainAddendum ? `【ブレイン改善ルール】\n${scBrainAddendum}` : "",
+            scDynamicNote,
+            greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : "",
+          ].filter(Boolean).join("\n\n"),
+        };
         const scUserFinal = greetingTimeNote + scUser + (scDiffNote ? `\n\n${scDiffNote}` : "") + (scStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + scStarNote : "");
-        message_text = await callClaude(scSystemFinal, scUserFinal, currentAction, scDynamicNote + (greetingPhrase ? `\n\n【挨拶フレーズ】${greetingPhrase}\n` : ""));
+        message_text = await callClaude(scSystemSpec, scUserFinal, currentAction);
 
       // conversation_match: 過去の会話文脈を最大活用した自然な追客メッセージを生成
       } else if (body.conversation_match) {
-        const [followupCMDiffNote, followupCMStarNote, followupCMDbRules, followupCMBrainAddendum] = await Promise.all([
+        // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ（旧: 動的接尾で毎回割引なし）
+        const [followupCMDiffNote, followupCMStarNote, followupCMRules, followupCMBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg, aixBrainMeta),
-          fetchPromptRules("followup_revive", {}).catch(() => ""),
+          fetchPromptRulesSplit("followup_revive", {}).catch(() => ({ global: "", action: "" })),
           loadBrainTemplate("followup_revive"),
         ]);
 
@@ -5532,18 +5725,24 @@ ${SMORA_COMMON_RULES}
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
-        // キャッシュ最適化: followupCMSystem は全て静的。DBルール・ブレイン改善ルールのみ第4引数へ
+        // キャッシュ最適化: followupCMSystem は全て静的。ブレイン改善ルール・ブレインの判断のみ動的ブロックへ
         const followupCMDynamicSuffix = [
-          followupCMDbRules,
           followupCMBrainAddendum ? `【ブレイン改善ルール】\n${followupCMBrainAddendum}` : "",
           brainGuidanceNote,
         ].filter(Boolean).join("\n\n");
+        // ブロック: [shared 1h] → [global ルール 1h] → [固有文＋action 別ルール 5m] → [ブレイン（動的）]
+        const followupCMShared = splitSharedPrefix(followupCMSystem);
+        const followupCMSystemSpec: SystemSpecBlocks = {
+          shared: followupCMShared.shared,
+          semiStatic: followupCMRules.global.replace(/^\n\n/, ""),
+          routeStatic: followupCMShared.routeStatic + followupCMRules.action,
+          dynamic: followupCMDynamicSuffix,
+        };
         const followupCMUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への追客メッセージを生成してください。${extra_input ? `\n補足情報: ${extra_input}` : ""}` + (followupCMDiffNote ? `\n\n${followupCMDiffNote}` : "") + (followupCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + followupCMStarNote : "");
         const rawFCM = await callClaude(
-          followupCMSystem,
+          followupCMSystemSpec,
           followupCMUserFinal,
-          currentAction,
-          followupCMDynamicSuffix || undefined
+          currentAction
         );
         try {
           const mFCM = rawFCM.match(/\{[\s\S]*\}/);
@@ -5556,10 +5755,11 @@ ${SMORA_COMMON_RULES}
         return finalizeResponse(message_text);
       } else {
 
-      const [followupDiffNote, followupStarNote, followupDbRules, followupBrainAddendum] = await Promise.all([
+      // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ（旧: 動的接尾で毎回割引なし）
+      const [followupDiffNote, followupStarNote, followupRules, followupBrainAddendum] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg, brainContext),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg, aixBrainMeta),
-        fetchPromptRules("followup_revive", {}).catch(() => ""),
+        fetchPromptRulesSplit("followup_revive", {}).catch(() => ({ global: "", action: "" })),
         loadBrainTemplate("followup_revive"),
       ]);
       const followupSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
@@ -5576,16 +5776,20 @@ ${SMORA_COMMON_RULES}
 ・2〜4行程度・完成したLINEメッセージのみ出力`;
 
       const followupDynamic = [
-        followupDbRules,
         followupBrainAddendum ? `【ブレイン改善ルール】\n${followupBrainAddendum}` : "",
         brainGuidanceNote,
       ].filter(Boolean).join("\n\n");
+      // ブロック: [global ルール 1h] → [固有文＋action 別ルール 5m] → [ブレイン（動的）]
+      const followupSystemSpec: SystemSpecBlocks = {
+        semiStatic: followupRules.global.replace(/^\n\n/, ""),
+        routeStatic: followupSystem + followupRules.action,
+        dynamic: followupDynamic,
+      };
       const followupUserFinal = greetingTimeNote + `${name}への追客メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}` + (followupDiffNote ? `\n\n${followupDiffNote}` : "") + (followupStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + followupStarNote : "");
       message_text = await callClaude(
-        followupSystem,
+        followupSystemSpec,
         followupUserFinal,
-        currentAction,
-        followupDynamic || undefined
+        currentAction
       );
       }
 
@@ -5621,7 +5825,11 @@ ${SMORA_COMMON_RULES}
 ・2〜5行程度`;
 
       const zenryokuBrainAddendum = await loadBrainTemplate("zenryoku_support");
-      const zenryokuSystemFinal = zenryokuSystem + (zenryokuBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + zenryokuBrainAddendum : "");
+      // 2026-09-17 竹内（AIX キャッシュ点検）: ブレイン改善ルール（呼び出しごとに変わる）は静的 system から出して動的接尾へ（固定文だけが 5m の鍵）
+      const zenryokuDynamic = [
+        zenryokuBrainAddendum ? `【ブレイン改善ルール】\n${zenryokuBrainAddendum}` : "",
+        greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : "",
+      ].filter(Boolean).join("\n\n") || undefined;
       const zenryokuUser = `${name}への全力サポートメッセージを生成してください。
 探しているエリア: ${area || "（未指定）"}${memo ? `\n補足・特記事項: ${memo}` : ""}${recentHistory}`;
       const zenryokuUserFinal = greetingTimeNote + zenryokuUser;
@@ -5636,13 +5844,13 @@ ${SMORA_COMMON_RULES}
           { type: "text", text: zenryokuUserFinal },
           { type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } },
         ];
-        message_text = await callClaudeVision(zenryokuSystemFinal, visionContent, currentAction, greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined);
+        message_text = await callClaudeVision(zenryokuSystem, visionContent, currentAction, zenryokuDynamic);
       } else {
         message_text = await callClaude(
-          zenryokuSystemFinal,
+          zenryokuSystem,
           zenryokuUserFinal,
           currentAction,
-          greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
+          zenryokuDynamic
         );
       }
 
@@ -5682,10 +5890,11 @@ ${SMORA_COMMON_RULES}
       if (cbBreakdowns.length === 0) throw new Error("御見積書の画像から金額を読み取れませんでした。画像を確認してもう一度お試しください");
       const cbFacts = formatCostBreakdownFacts(cbBreakdowns, { insuranceSeparateYen: cbInsurance });
 
-      const [cbKnowledge, cbStarNote, cbDbRules, cbBrainAddendum] = await Promise.all([
+      // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ（旧: 動的接尾で毎回割引なし）
+      const [cbKnowledge, cbStarNote, cbRules, cbBrainAddendum] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.cost_breakdown, currentAction, conversationId, latestCustomerMsg, brainContext),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.cost_breakdown, latestCustomerMsg, aixBrainMeta),
-        fetchPromptRules("cost_breakdown", {}).catch(() => ""),
+        fetchPromptRulesSplit("cost_breakdown", {}).catch(() => ({ global: "", action: "" })),
         loadBrainTemplate("cost_breakdown"),
       ]);
 
@@ -5724,14 +5933,21 @@ ${COST_BREAKDOWN_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
       const cbDynamicSuffix = [
         cbFacts.block,
         brainGuidanceNote ? `【ブレインの判断（この局面の方針）】${brainGuidanceNote}` : "",
-        cbDbRules,
         cbBrainAddendum ? `【ブレイン改善ルール】\n${cbBrainAddendum}` : "",
       ].filter(Boolean).join("\n\n");
+      // ブロック: [shared 1h] → [global ルール 1h] → [固有文＋action 別ルール 5m] → [見積書の内訳・ブレイン（動的）]
+      const cbShared = splitSharedPrefix(cbStaticSystem);
+      const cbSystemSpec: SystemSpecBlocks = {
+        shared: cbShared.shared,
+        semiStatic: cbRules.global.replace(/^\n\n/, ""),
+        routeStatic: cbShared.routeStatic + cbRules.action,
+        dynamic: cbDynamicSuffix,
+      };
       const cbUser = greetingTimeNote
         + `${recentHistory}\n\n上記の会話を読み取り、${name}の初期費用についてのご質問に、御見積書の内訳を使って答える返信を生成してください。`
         + (cbKnowledge ? `\n\n${cbKnowledge}` : "")
         + (cbStarNote ? `\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n${cbStarNote}` : "");
-      const cbRaw = await callClaude(cbStaticSystem, cbUser, currentAction, cbDynamicSuffix || undefined);
+      const cbRaw = await callClaude(cbSystemSpec, cbUser, currentAction);
       let cbMessage = cbRaw;
       try {
         const m = cbRaw.match(/\{[\s\S]*\}/);
@@ -5761,10 +5977,11 @@ ${COST_BREAKDOWN_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
       //   ブレインの方針・時間帯の挨拶は入れない（電話で話した内容が正・古い判断を混ぜない）
       const pfNotes = String(body.call_notes ?? "").trim().slice(0, 2000);
       if (!pfNotes) throw new Error("電話でお話しした内容を入力してください");
-      const [pfKnowledge, pfStarNote, pfDbRules] = await Promise.all([
+      // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ（旧: 動的接尾で毎回割引なし）
+      const [pfKnowledge, pfStarNote, pfRules] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.phone_followup, currentAction, conversationId, latestCustomerMsg, brainContext),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.phone_followup, latestCustomerMsg, aixBrainMeta),
-        fetchPromptRules("phone_followup", {}).catch(() => ""),
+        fetchPromptRulesSplit("phone_followup", {}).catch(() => ({ global: "", action: "" })),
       ]);
       const pfStaticSystem = `${GENERATION_SYSTEM}
 
@@ -5794,14 +6011,19 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
 
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\n で）"}`;
-      const pfDynamicSuffix = [
-        `【電話でお話しした内容（スタッフのメモ・この内容だけで書く）】\n${pfNotes}`,
-        pfDbRules,
-      ].filter(Boolean).join("\n\n");
+      const pfDynamicSuffix = `【電話でお話しした内容（スタッフのメモ・この内容だけで書く）】\n${pfNotes}`;
+      // ブロック: [shared 1h] → [global ルール 1h] → [固有文＋action 別ルール 5m] → [メモ（動的）]
+      const pfShared = splitSharedPrefix(pfStaticSystem);
+      const pfSystemSpec: SystemSpecBlocks = {
+        shared: pfShared.shared,
+        semiStatic: pfRules.global.replace(/^\n\n/, ""),
+        routeStatic: pfShared.routeStatic + pfRules.action,
+        dynamic: pfDynamicSuffix,
+      };
       const pfUser = `${recentHistory}\n\n上記の会話の後、${name}とお電話でお話ししました。【電話でお話しした内容】だけを使って、電話後のお礼とまとめの1通を生成してください。`
         + (pfKnowledge ? `\n\n${pfKnowledge}` : "")
         + (pfStarNote ? `\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n${pfStarNote}` : "");
-      const pfRaw = await callClaude(pfStaticSystem, pfUser, currentAction, pfDynamicSuffix);
+      const pfRaw = await callClaude(pfSystemSpec, pfUser, currentAction);
       let pfMessage = pfRaw;
       try {
         const m = pfRaw.match(/\{[\s\S]*\}/);
@@ -5848,10 +6070,11 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         return finalizeResponse(giFixed, { ...giExtra, fixed: true });
       }
 
-      const [giKnowledge, giStarNote, giDbRules, giBrainAddendum] = await Promise.all([
+      // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ（旧: 動的接尾で毎回割引なし）
+      const [giKnowledge, giStarNote, giRules, giBrainAddendum] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.guarantor_info, currentAction, conversationId, latestCustomerMsg, brainContext),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.guarantor_info, latestCustomerMsg, aixBrainMeta),
-        fetchPromptRules("guarantor_info", {}).catch(() => ""),
+        fetchPromptRulesSplit("guarantor_info", {}).catch(() => ({ global: "", action: "" })),
         loadBrainTemplate("guarantor_info"),
       ]);
       // キャッシュ最適化: 静的（GENERATION_SYSTEM/共通ルール/固定指示/スタッフの実文）と動的（物件ごとの保証会社・ブレイン・DBルール）を分ける
@@ -5889,9 +6112,16 @@ ${GUARANTOR_INFO_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
       const giDynamicSuffix = [
         giFacts.block,
         brainGuidanceNote ? `【ブレインの判断（この局面の方針）】${brainGuidanceNote}` : "",
-        giDbRules,
         giBrainAddendum ? `【ブレイン改善ルール】\n${giBrainAddendum}` : "",
       ].filter(Boolean).join("\n\n");
+      // ブロック: [shared 1h] → [global ルール 1h] → [固有文＋action 別ルール 5m] → [動的]。作り直しも同じ構成（2回目は read）
+      const giShared = splitSharedPrefix(giStaticSystem);
+      const giSystemSpec = (dynamic: string): SystemSpecBlocks => ({
+        shared: giShared.shared,
+        semiStatic: giRules.global.replace(/^\n\n/, ""),
+        routeStatic: giShared.routeStatic + giRules.action,
+        dynamic,
+      });
       const giUser = greetingTimeNote
         + `${recentHistory}\n\n上記の会話を読み取り、${name}に物件ごとの保証会社の一覧と審査の通りやすさを案内する返信を生成してください。お客様の直近の質問・不安があれば最初の1文で答えてください。`
         + (giKnowledge ? `\n\n${giKnowledge}` : "")
@@ -5900,13 +6130,13 @@ ${GUARANTOR_INFO_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         try { const m = raw.match(/\{[\s\S]*\}/); if (m) return ((JSON.parse(m[0]) as { message?: string }).message || raw).replace(/\\n/g, "\n"); } catch { /* JSON で無ければ本文そのもの */ }
         return raw;
       };
-      let giMessage = giParse(await callClaude(giStaticSystem, giUser, currentAction, giDynamicSuffix || undefined));
+      let giMessage = giParse(await callClaude(giSystemSpec(giDynamicSuffix), giUser, currentAction));
       let giCheck = checkGuarantorFacts(giMessage, giProps, giCustoms);
       if (!giCheck.ok) {
         // 入力に無い会社名・種類の表現 → 1回だけ作り直す（同じ static system＝キャッシュ HIT）
         console.warn("[aix/action] guarantor_info: 入力に無い保証会社名・種類 → 作り直し:", giCheck.unmatched, giCheck.typeWarnings);
         const giRetrySuffix = `${giDynamicSuffix}\n\n【やり直し】前回の本文に【物件ごとの保証会社】に無い保証会社名（${giCheck.unmatched.join("・") || "なし"}）・種類の表現（${giCheck.typeWarnings.join("・") || "なし"}）が入りました。上の一覧にある会社名・種類だけで書き直してください`;
-        giMessage = giParse(await callClaude(giStaticSystem, giUser, currentAction, giRetrySuffix));
+        giMessage = giParse(await callClaude(giSystemSpec(giRetrySuffix), giUser, currentAction));
         giCheck = checkGuarantorFacts(giMessage, giProps, giCustoms);
       }
       const giNotice = giCheck.ok ? null
@@ -5977,7 +6207,7 @@ const SERVER_BUDGET_MS = 55_000;
 
 export async function POST(request: NextRequest) {
   if (!request.headers.get("accept")?.includes("application/x-ndjson")) {
-    return handleAction(request);
+    return aixRequestCtx.run({ conversationId: null }, () => handleAction(request));
   }
 
   const encoder = new TextEncoder();
@@ -5999,7 +6229,7 @@ export async function POST(request: NextRequest) {
 
       const ctx: AixStreamCtx = { emit, deadline, signal: ac.signal, seq: 0, busy: false };
       try {
-        const res = await aixStream.run(ctx, () => handleAction(request));
+        const res = await aixRequestCtx.run({ conversationId: null }, () => aixStream.run(ctx, () => handleAction(request)));
         const resData = await (res as Response).json().catch(() => ({}));
         emit({ t: "done", payload: resData });
       } catch (err) {

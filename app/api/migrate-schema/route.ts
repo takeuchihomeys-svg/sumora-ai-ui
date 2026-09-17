@@ -3036,11 +3036,21 @@ CREATE TABLE IF NOT EXISTS llm_usage_logs (
   sys_head TEXT,
   duration_ms INT,
   request_id TEXT,
-  env TEXT
+  env TEXT,
+  action TEXT,
+  conversation_id TEXT,
+  sys_key_full TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_created ON llm_usage_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_route ON llm_usage_logs(route, created_at DESC);
 ALTER TABLE llm_usage_logs DISABLE ROW LEVEL SECURITY;
+-- 2026-09-17 竹内（AIX キャッシュ点検）: sys_key は system 先頭400字のハッシュなので、AIX の共通 prefix を最初のブロックに分けると
+--   「会話を合わせる」系 11 経路が1つの sys_key に潰れる。呼び出し側が headers（x-sumora-llm-action / x-sumora-llm-conversation）で付けた印を
+--   出口（llm-usage-recorder）が action / conversation_id に残す。sys_key_full は system 全ブロック結合の全文ハッシュ（プロンプト変更の検出用）
+ALTER TABLE llm_usage_logs ADD COLUMN IF NOT EXISTS action TEXT;
+ALTER TABLE llm_usage_logs ADD COLUMN IF NOT EXISTS conversation_id TEXT;
+ALTER TABLE llm_usage_logs ADD COLUMN IF NOT EXISTS sys_key_full TEXT;
+CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_action ON llm_usage_logs(action, created_at DESC);
 
 -- 日次の集計（JST の日付）。input_equiv = 入力単価に換算したトークン（読み0.1・5分書き1.25・1時間書き2・出力5）
 -- est_usd は目安: 入力単価（1M トークンあたり）Haiku $1・Sonnet $3・Opus $5 で計算。コンソールの日次費用と照合して単価を直す
