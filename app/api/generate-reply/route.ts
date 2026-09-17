@@ -65,6 +65,8 @@ import { stripPointlessGuidance, recentUsedSentences, findRepeatedClosing, build
 import { resolveApologyOnly, ensureApologyOpener, buildApologyNote } from "@/app/lib/apology-ack";
 // 2026-09-17 竹内（友哉事例）: お客様が既に送ってきた書類（PDF・書類の画像）をもう一度お願いしない
 import { detectReceivedDocuments, buildReceivedDocumentNote } from "@/app/lib/received-document";
+// 2026-09-17 竹内（a🤫 事例）: 物件名を並べた直後の「複数の物件について」等の数のまとめ語を落とす
+import { stripVagueQuantifier, VAGUE_QUANTIFIER_NOTE } from "@/app/lib/vague-quantifier";
 import { buildRelativeDayNote, buildConversationClockNote } from "@/app/lib/relative-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
@@ -3490,6 +3492,15 @@ export async function POST(req: NextRequest) {
       recentMessages.map((m) => ({ sender: m.sender, text: m.text ?? "", created_at: m.createdAt ?? null })),
     );
     if (receivedDocs.length > 0) console.info("[received-document] 届いている書類", JSON.stringify({ conversationId, docs: receivedDocs.map((d) => d.fileName ?? d.label) }));
+    // 2026-09-17 竹内（a🤫 事例）「複数の 等いれない」: お客様が未返信の連投で物件を2件以上送ってきたか
+    //   （この場面でだけ「名前を並べたら数は書かない」を材料に渡す）
+    const customerSentMultipleProperties = (() => {
+      const lastStaffAt = recentMessages.map((m) => m.sender).lastIndexOf("staff");
+      const after = recentMessages.slice(lastStaffAt + 1).filter((m) => m.sender === "customer");
+      const urls = after.reduce((n, m) => n + ((m.text ?? "").match(/https?:\/\/\S+/g)?.length ?? 0), 0);
+      return urls >= 2;
+    })();
+    if (customerSentMultipleProperties) console.info("[vague-quantifier] お客様が物件を2件以上送った場面", JSON.stringify({ conversationId }));
     const isViewingAccessTurn = !!ledger.facts.viewingAppointment && isViewingAccessQuestion(intentMessage, true);
     const isConditionChangeRequest = conditionDetail.changeRequest && !isViewingAccessTurn;
     if (conditionDetail.changeRequest && isViewingAccessTurn) {
@@ -4644,7 +4655,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       // 2026-09-17 慶次事例: 謝っている場面は受け止めから入る
       // 2026-09-17 友哉事例: 既に届いている書類（PDF・書類の画像）をもう一度お願いさせない
       tpoGuidanceNote + relativeDayNote + conversationClockNote + buildPortalPromptNote(portalVerdict) + buildAvoidRepeatNote(usedSentences) + buildApologyNote(apologyVerdict.apology)
-        + (receivedDocs.length > 0 ? `\n\n${buildReceivedDocumentNote(receivedDocs)}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
+        + (receivedDocs.length > 0 ? `\n\n${buildReceivedDocumentNote(receivedDocs)}` : "")
+        // 2026-09-17 a🤫 事例: お客様が物件を2件以上送ってきた場面だけ「名前を並べたら数は書かない」を渡す
+        + (customerSentMultipleProperties ? `\n\n${VAGUE_QUANTIFIER_NOTE}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）
@@ -4849,7 +4862,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // 2026-09-17 竹内（慶次事例）: 謝っている場面の冒頭「かしこまりました！！」を受け止めの言葉に置き換える
               const apologyFixed = ensureApologyOpener(guidanceFixed, apologyVerdict.apology);
               if (apologyFixed !== guidanceFixed) console.info("[apology-ack] 冒頭を受け止めに置き換え", JSON.stringify({ conversationId }));
-              return { cleaned: apologyFixed, issues: vr.issues };
+              // 2026-09-17 竹内（a🤫 事例）「複数の 等いれない」: 物件名を並べた直後の数のまとめ語を落とす
+              //   （実データ365日・募集状況の確認を宣言した実送信208通のうち「複数の物件／複数のお部屋」は0件）
+              const quantFixed = stripVagueQuantifier(apologyFixed);
+              if (quantFixed.removed.length > 0) console.info("[vague-quantifier] 数のまとめ語を削除", JSON.stringify({ conversationId, removed: quantFixed.removed }));
+              return { cleaned: quantFixed.text, issues: vr.issues };
             };
             /** 行動台帳の決定論自動修正（gen1・gen2 共通。名前不明時は呼びかけごと省く＝「〇〇さん」を本文に書き込まない） */
             const applyLedgerFixToDraft = (body: string): string => {
@@ -5251,6 +5268,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (apologyFixedFinal !== draftBody) {
                   console.info("[apology-ack] 修正ループ後に冒頭を受け止めに置き換え", JSON.stringify({ conversationId }));
                   draftBody = apologyFixedFinal;
+                }
+                // 2026-09-17 竹内（a🤫 事例）: 数のまとめ語も修正ループの後に掛け直す（同じ理由）
+                const quantFinal = stripVagueQuantifier(draftBody);
+                if (quantFinal.removed.length > 0) {
+                  console.info("[vague-quantifier] 修正ループ後に数のまとめ語を削除", JSON.stringify({ conversationId, removed: quantFinal.removed }));
+                  draftBody = quantFinal.text;
                 }
               } catch (checkErr) {
                 // A-2: final-check の例外時も決定論チェック（純関数・LLM不要）だけは必ず実行する（fail-open with deterministic）
