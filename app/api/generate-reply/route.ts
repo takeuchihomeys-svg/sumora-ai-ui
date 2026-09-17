@@ -67,6 +67,8 @@ import { resolveApologyOnly, ensureApologyOpener, buildApologyNote } from "@/app
 import { detectReceivedDocuments, buildReceivedDocumentNote } from "@/app/lib/received-document";
 // 2026-09-17 竹内（a🤫 事例）: 物件名を並べた直後の「複数の物件について」等の数のまとめ語を落とす
 import { stripVagueQuantifier, VAGUE_QUANTIFIER_NOTE } from "@/app/lib/vague-quantifier";
+// 2026-09-18 竹内（ゆうこ事例）: 「全力でサポート」は同じ会話・同じ日に1回だけ（送りまくると言葉の重みが無くなる）
+import { sentFullSupportToday, stripRepeatedFullSupport, buildFullSupportNote } from "@/app/lib/full-support-line";
 import { buildRelativeDayNote, buildConversationClockNote } from "@/app/lib/relative-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
 import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
@@ -3501,6 +3503,12 @@ export async function POST(req: NextRequest) {
       return urls >= 2;
     })();
     if (customerSentMultipleProperties) console.info("[vague-quantifier] お客様が物件を2件以上送った場面", JSON.stringify({ conversationId }));
+    // 2026-09-18 竹内（ゆうこ事例）「全力でサポート送りまくったら言葉に説得力がでなくなる」:
+    //   この会話で今日すでに全力サポートを送っていれば、2回目は書かせない（実データ: 会話×日ごとに1回が231件＝90%）
+    const fullSupportSentToday = sentFullSupportToday(
+      recentMessages.map((m) => ({ sender: m.sender, text: m.text ?? "", created_at: m.createdAt ?? null })),
+    );
+    if (fullSupportSentToday) console.info("[full-support] 今日すでに全力サポートを送っている", JSON.stringify({ conversationId }));
     const isViewingAccessTurn = !!ledger.facts.viewingAppointment && isViewingAccessQuestion(intentMessage, true);
     const isConditionChangeRequest = conditionDetail.changeRequest && !isViewingAccessTurn;
     if (conditionDetail.changeRequest && isViewingAccessTurn) {
@@ -4657,7 +4665,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       tpoGuidanceNote + relativeDayNote + conversationClockNote + buildPortalPromptNote(portalVerdict) + buildAvoidRepeatNote(usedSentences) + buildApologyNote(apologyVerdict.apology)
         + (receivedDocs.length > 0 ? `\n\n${buildReceivedDocumentNote(receivedDocs)}` : "")
         // 2026-09-17 a🤫 事例: お客様が物件を2件以上送ってきた場面だけ「名前を並べたら数は書かない」を渡す
-        + (customerSentMultipleProperties ? `\n\n${VAGUE_QUANTIFIER_NOTE}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
+        + (customerSentMultipleProperties ? `\n\n${VAGUE_QUANTIFIER_NOTE}` : "")
+        // 2026-09-18 ゆうこ事例: 今日すでに全力サポートを送っている時だけ「もう書かない」を渡す
+        + (fullSupportSentToday ? `\n\n${buildFullSupportNote(true)}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）
@@ -4866,7 +4876,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               //   （実データ365日・募集状況の確認を宣言した実送信208通のうち「複数の物件／複数のお部屋」は0件）
               const quantFixed = stripVagueQuantifier(apologyFixed);
               if (quantFixed.removed.length > 0) console.info("[vague-quantifier] 数のまとめ語を削除", JSON.stringify({ conversationId, removed: quantFixed.removed }));
-              return { cleaned: quantFixed.text, issues: vr.issues };
+              // 2026-09-18 竹内（ゆうこ事例）: 今日2回目の「全力でサポート」は落とし、締めが無くなったら引き続き何卒〜を足す
+              const fsFixed = stripRepeatedFullSupport(quantFixed.text, fullSupportSentToday);
+              if (fsFixed.removed.length > 0) console.info("[full-support] 今日2回目の全力サポートを削除", JSON.stringify({ conversationId, removed: fsFixed.removed }));
+              return { cleaned: fsFixed.text, issues: vr.issues };
             };
             /** 行動台帳の決定論自動修正（gen1・gen2 共通。名前不明時は呼びかけごと省く＝「〇〇さん」を本文に書き込まない） */
             const applyLedgerFixToDraft = (body: string): string => {
@@ -5274,6 +5287,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (quantFinal.removed.length > 0) {
                   console.info("[vague-quantifier] 修正ループ後に数のまとめ語を削除", JSON.stringify({ conversationId, removed: quantFinal.removed }));
                   draftBody = quantFinal.text;
+                }
+                // 2026-09-18 ゆうこ事例: 今日2回目の全力サポートも修正ループの後に掛け直す（最終チェックが戻すことがある）
+                const fsFinal = stripRepeatedFullSupport(draftBody, fullSupportSentToday);
+                if (fsFinal.removed.length > 0) {
+                  console.info("[full-support] 修正ループ後に今日2回目の全力サポートを削除", JSON.stringify({ conversationId, removed: fsFinal.removed }));
+                  draftBody = fsFinal.text;
                 }
               } catch (checkErr) {
                 // A-2: final-check の例外時も決定論チェック（純関数・LLM不要）だけは必ず実行する（fail-open with deterministic）
