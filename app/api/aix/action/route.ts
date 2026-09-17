@@ -24,6 +24,8 @@ import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx 
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
 import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, vacatingViewableSentence } from "@/app/lib/vacating-notice";
+// 2026-09-17 竹内（物件オススメ・現状伝えて1件）: 探した現状を🌟の前に1文で伝える
+import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensureSituationOpening } from "@/app/lib/recommendation-situation";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
@@ -1896,7 +1898,12 @@ ${SMORA_COMMON_RULES}`;
         todayJST,
         todayJSTFmt
       );
-      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "") + moveInDeadlineNote;
+      // 2026-09-17 竹内（現状伝えて・1件訴求）: この型だけ「出力の最初の文字は必ず🌟」を外す。
+      //   キャッシュされる静的ブロック（全顧客共通）は触らず、動的ブロックで上書きする（鍵を割らない）
+      const situationSystemOverride = isSituationKind(body.situation_kind)
+        ? `\n\n【🔴 この通だけの上書き — 上の「出力の最初の文字は必ず🌟」より優先】\nこの通は「探した現状」を1文書いてから🌟の物件カードを出す。順序は 現状の1文 → 空行 → 🌟物件名 … 。\n現状の1文以外は🌟より前に書かない（システム注記・前置き・挨拶は従来どおり禁止）。`
+        : "";
+      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "") + moveInDeadlineNote + situationSystemOverride;
 
       const summaryNoteForRec = recCustomerSummary
         ? `\n\n【このお客さんのAI要約 — 人物像・今の状況・次の対応ヒントをオススメ訴求に反映すること】\n${recCustomerSummary}`
@@ -1925,7 +1932,17 @@ ${SMORA_COMMON_RULES}`;
       const patternHintsNote = recPatternHints.length > 0
         ? `\n\n【📊 類似条件のお客様にスタッフが選んで送った物件の特徴（実績データ由来）】\n同じ家賃帯・間取り希望のお客様に、スタッフが実際に選んで送った物件に多い特徴です。（オススメポイント）の選択時に優先的に訴求してください。\n${recPatternHints.join("・")}`
         : "";
-      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
+      // 2026-09-17 竹内（現状伝えて・1件訴求）: 探した現状を🌟の前に1文で伝える型。
+      //   実送信「大国町・本町・堺筋本町周辺全域からご条件に合った物件すべて探させて頂きましたところ空室のお部屋で
+      //   募集御座いませんでしたが、1件退去予定のお部屋でMさんご希望のご条件にピッタリなお部屋が募集に出ております😊！！」
+      const situationKind = isSituationKind(body.situation_kind) ? body.situation_kind : null;
+      const situationOpts = {
+        area: typeof body.situation_area === "string" ? body.situation_area : "",
+        customerName: name,
+        note: typeof body.situation_note === "string" ? body.situation_note : "",
+      };
+      const situationNote = situationKind ? `\n\n${buildSituationPromptNote(situationKind, situationOpts)}` : "";
+      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}${situationNote}`;
 
       const knowledgeSection = knowledge ? `\n\n【物件オススメ時のノウハウ】\n${knowledge}` : "";
       // aix_property実例（実送信文・⭐顧客反応あり優先）があれば☆手動実例より優先。両方ある場合は実送信文を先に置く
@@ -1943,11 +1960,17 @@ ${SMORA_COMMON_RULES}`;
 
       message_text = await callClaudeVision(recSystemSpec, content, currentAction, recSystemDynamic || undefined);
       // 🌟より前に出力されたシステム注記・確認メモを除去（物件オススメは必ず🌟始まり）
-      {
+      // 2026-09-17 竹内（現状伝えて・1件訴求）: この型だけ🌟より前に「探した現状」の1文が入るので切らない。
+      //   指示だけでは落ちる（設計知見）ので、無ければ実送信の骨組みの1文を出口で足す
+      if (!situationKind) {
         const _starIdx = message_text.indexOf("🌟");
         if (_starIdx > 0) {
           message_text = message_text.slice(_starIdx);
         }
+      } else {
+        const fixed = ensureSituationOpening(message_text, situationOpeningLine(situationKind, situationOpts));
+        if (fixed.added) console.log(JSON.stringify({ tag: "aix:situation-opening-added", action: currentAction, conversationId, kind: situationKind }));
+        message_text = fixed.text;
       }
       // 見積書同封時は締め文を追加
       if (has_estimate) {

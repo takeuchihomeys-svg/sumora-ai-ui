@@ -290,6 +290,9 @@ function resolveRecommendationScenario(args: {
   if (args.pickupType === "新着1件" || args.pickupType === "新着まとめ") return "new_listing";
   if (args.pickupType === "新規ピックアップ" || args.pickupType === "初回まとめ") return nonCompareFallback;
   if (args.pickupType === "条件広げピックアップ" || args.pickupType === "条件広げまとめ") return nonCompareFallback;
+  // 2026-09-17 竹内（現状伝えて・1件訴求）: 「探したが空室なし → 1件あった」＝比較型でも新着型でもない。
+  //   送付実績があれば追加提案型・無ければ初回提案型（「お送りした中でも」と言わせない）
+  if (args.pickupType === "現状伝えて1件") return nonCompareFallback;
   // 「継続ピックアップ」＝送付済みの中から1件を推す意図。比較できる実体がなければ降格する
   if (args.pickupType === "継続ピックアップ" || args.pickupType === "継続まとめ") {
     return canUseCompareFrame(f) ? "compare" : nonCompareFallback;

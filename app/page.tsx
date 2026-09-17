@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import AixModal, { type AixActionType } from "./components/AixModal";
@@ -758,7 +758,7 @@ export default function Home() {
   const [activeAixFlow, setActiveAixFlow] = useState<string | null>(null);
   const [showPropertyPicker, setShowPropertyPicker] = useState(false);
   const [aixInitialIsNewArrival, setAixInitialIsNewArrival] = useState(false);
-  const [aixInitialPickupType, setAixInitialPickupType] = useState<"新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ" | null>(null);
+  const [aixInitialPickupType, setAixInitialPickupType] = useState<"新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ" | "現状伝えて1件" | null>(null);
   const propertyPickerOpenFnRef = useRef<"direct" | "withImage">("direct");
   const [showGroupFilter, setShowGroupFilter] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>(() => {
@@ -5839,7 +5839,7 @@ export default function Home() {
     setShowPropertyPicker(true);
   };
 
-  const handlePropertyPickerSelect = (pickupType: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ") => {
+  const handlePropertyPickerSelect = (pickupType: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ" | "現状伝えて1件") => {
     setShowPropertyPicker(false);
     setAixInitialPickupType(pickupType);
     setAixInitialIsNewArrival(pickupType === "新着1件");
@@ -11614,6 +11614,11 @@ export default function Home() {
                   icon: <><rect x="22" y="28" width="28" height="18" rx="3" stroke="#6366F1" strokeWidth="1.8"/><path d="M28 28v-4h16v4" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M28 37h16M28 42h10" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 40l4-4 4 4" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></> },
                 { key: "代替ピックアップ" as const, label: "代替・1件訴求", desc: "元の物件が空室なし→代替物件の中から1件を特にオススメ",
                   icon: <><path d="M36 20L22 30v22h28V30z" stroke="#6366F1" strokeWidth="1.8" strokeLinejoin="round"/><path d="M30 36l4 4 8-8" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></> },
+                // 2026-09-17 竹内: 探した現状を1文で伝えてから1件オススメ（実送信「〇〇周辺全域からご条件に合った物件すべて
+                //   探させて頂きましたところ空室のお部屋で募集御座いませんでしたが、1件退去予定のお部屋で…」）。
+                //   この型だけ🌟より前に文が入る（app/lib/recommendation-situation.ts）
+                { key: "現状伝えて1件" as const, label: "現状伝えて・1件訴求", desc: "探した現状（空室なし等）を伝えてから1件オススメ",
+                  icon: <><circle cx="36" cy="36" r="13" stroke="#6366F1" strokeWidth="1.8"/><path d="M36 29v8" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><circle cx="36" cy="42" r="1.2" fill="#6366F1"/></> },
               ]).map(({ key, label, desc, icon }) => (
                 <button
                   key={key}

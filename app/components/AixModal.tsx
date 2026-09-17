@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
@@ -15,6 +15,8 @@ import { customerSharedPropertyNames } from "../lib/customer-property-names";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
 import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, buildGuarantorListText, detectGuarantorFromMessages, type GuarantorType } from "../lib/guarantor-companies";
 import { extractPropertyLabels } from "../lib/action-ledger";
+// 2026-09-17 竹内（現状伝えて・1件訴求）: 探した現状の1文（実送信の骨組み）
+import { SITUATION_PRESETS, type SituationKind } from "../lib/recommendation-situation";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
@@ -73,7 +75,7 @@ interface AixModalProps {
   initialViewingSpecificMode?: boolean;
   initialViewingVacancy?: boolean;
   initialIsNewArrival?: boolean;
-  initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ" | null;
+  initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ" | "現状伝えて1件" | null;
   initialEstimateMulti?: boolean;
   initialAppSubMode?: "push" | "confirm" | "format" | "docs_request" | null;
   initialFollowupSubMode?: "apply_supplement" | "search_continue" | null;
@@ -663,6 +665,12 @@ export default function AixModal({
   // 物件オススメ専用: お客さんの条件スクショ
   const [conditionImageFile, setConditionImageFile] = useState<File | null>(null);
   const [conditionImagePreview, setConditionImagePreview] = useState<string>("");
+  // 2026-09-17 竹内「現状伝えて1件オススメのピッカー」: 探した現状（🌟より前に置く1文の材料）
+  //   実送信にある2つだけをチップにし、それ以外はスタッフ自身の言葉（創作した言い回しを持たせない）
+  const isSituationMode = initialPickupType === "現状伝えて1件";
+  const [situationKind, setSituationKind] = useState<SituationKind>("vacancy_none");
+  const [situationArea, setSituationArea] = useState<string>("");
+  const [situationNote, setSituationNote] = useState<string>("");
   // 物件オススメ専用: 室内イメージURL（任意）
   const [propertyImageUrl, setPropertyImageUrl] = useState("");
   const [inputText, setInputText] = useState(initialInputText ?? "");
@@ -2076,6 +2084,12 @@ export default function AixModal({
         if (isNewArrival) body.is_new_arrival = true;
         // ピックアップ種別（継続ピックアップの場合に追客向けプロンプトを使用）
         if (initialPickupType && initialPickupType !== "新着1件") body.pickup_type = initialPickupType;
+        // 2026-09-17 竹内（現状伝えて・1件訴求）: 探した現状を材料として渡す（🌟より前に置く1文）
+        if (isSituationMode) {
+          body.situation_kind = situationKind;
+          if (situationArea.trim()) body.situation_area = situationArea.trim().slice(0, 120);
+          if (situationNote.trim()) body.situation_note = situationNote.trim().slice(0, 300);
+        }
         // 自動抽出した退去予定日を注入（OCR誤読防止）
         if (propMoveOutDate) body.move_out_date = propMoveOutDate;
         // 見積書同封フラグ（シンプルモードも含む）
@@ -3444,6 +3458,50 @@ export default function AixModal({
                 )}
                 <input ref={conditionFileInputRef} type="file" accept="image/*" onChange={onSelectConditionImage} className="hidden" />
               </div>
+
+              {/* 現状伝えて・1件訴求 専用: 探した現状（🌟より前に置く1文） */}
+              {isSituationMode && (
+                <div className="rounded-2xl border border-[#c5cae9] bg-[#f5f6ff] p-3">
+                  <p className="mb-1.5 text-xs font-bold text-[#3949ab]">📋 探した現状（物件カードの前に1文）</p>
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {SITUATION_PRESETS.map((p) => (
+                      <button
+                        key={p.kind}
+                        type="button"
+                        onClick={() => setSituationKind(p.kind)}
+                        className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition ${
+                          situationKind === p.kind
+                            ? "border-transparent bg-[#3949ab] text-white"
+                            : "border-[#c5cae9] bg-white text-[#5c6bc0]"
+                        }`}
+                      >{p.chip}</button>
+                    ))}
+                  </div>
+                  <p className="mb-2 text-[10px] leading-snug text-[#7986cb]">
+                    {SITUATION_PRESETS.find((p) => p.kind === situationKind)?.desc}
+                  </p>
+                  {situationKind === "custom" ? (
+                    <textarea
+                      value={situationNote}
+                      onChange={(e) => setSituationNote(e.target.value)}
+                      rows={2}
+                      placeholder="例: 新着で3件だけ出ましたが、その中で1件だけご条件に合いました"
+                      className="w-full resize-none rounded-xl border border-[#c5cae9] px-3 py-2 text-[13px] outline-none focus:border-[#3949ab] placeholder:text-[#9fa8da]"
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      value={situationArea}
+                      onChange={(e) => setSituationArea(e.target.value)}
+                      placeholder="探したエリア（任意）例: 大国町・本町・堺筋本町周辺全域"
+                      className="w-full rounded-xl border border-[#c5cae9] px-3 py-2 text-[13px] outline-none focus:border-[#3949ab] placeholder:text-[#9fa8da]"
+                    />
+                  )}
+                  {situationKind !== "custom" && !situationArea.trim() && (
+                    <p className="mt-1 text-[10px] text-[#9fa8da]">未入力なら会話の希望条件からエリアを書きます</p>
+                  )}
+                </div>
+              )}
 
               {/* ②物件資料 */}
               <div>
