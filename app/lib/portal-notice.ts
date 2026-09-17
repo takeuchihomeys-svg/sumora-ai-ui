@@ -113,10 +113,28 @@ export const WHICH_SITE_ANSWER = [
  * 2026-09-16 本番検証: この場面で LLM は「SUUMOやホームズも…おとり物件かどうかはサイトによる差はあまりございません」
  * 「おとり物件が絶対に無いとは言い切れません」と**逆の内容**を書いた（2/2）。事実関係の説明は言い回しが決まっていて
  * 間違えると信用に関わるので、LLM の文は落として決まった説明に置き換える（「既に書いてあるから足さない」は危険だった）
+ *
+ * 2026-09-17 再検証（直した後・2/2）で残った2つの抜け:
+ *   ・「SUUMOやHOMESに載っているお部屋も…サイトによる差はあまりございません」＝「オトリ」の語が無い逆の説明が残り、
+ *     後ろに決まった説明が付いて**矛盾した1通**になった
+ *   ・「SUUMOとホームズは比較的オトリ物件が少ないポータルサイトとなっております」＝部分一致で「既に説明あり」と見なされ、
+ *     決まった文が入らなかった（「比較的」と弱めた LLM の文がそのまま出た）
+ * → ポータルの名前・「ポータル/サイト」の語を含む行はすべて LLM の説明と見なして落とす（決まった文がその全部を担う）。
+ *   「既にある」の判定はこちらの文そのもの（一文まるごと）にしか当てない
  */
-const LLM_PORTAL_CLAIM_RE = /オトリ|おとり|囮/;
-/** 既にこちらの決まった説明が入っているか（同じ文を二重に足さない） */
-const OUR_NOTICE_PRESENT_RE = /オトリ物件として掲載されている場合御座います|オトリ物件が少ないポータルサイト/;
+const PORTAL_WORD_RE = new RegExp(PORTALS.map((p) => p.word.source).join("|"), "i");
+const LLM_PORTAL_CLAIM_RE = new RegExp(`オトリ|おとり|囮|ポータル|サイト|${PORTAL_WORD_RE.source}`, "i");
+/** 既にこちらの決まった説明が入っているか（同じ文を二重に足さない）。一文まるごとで判定する */
+const OUR_NOTICE_PRESENT_RE = /お客様ご来店頂く為のオトリ物件として掲載されている場合御座います|SUUMO、ホームズがオトリ物件が少ないポータルサイトとなります/;
+
+/**
+ * 指示層: この場面では LLM にポータルの説明を書かせない（出口で決まった文に置き換えるので、書かれると矛盾の元になる）。
+ * 指示だけでは落ちるので出口（ensurePortalNotice）も必ず通す
+ */
+export function buildPortalPromptNote(verdict: PortalNoticeVerdict): string {
+  if (verdict.kind === "none") return "";
+  return "\n\n【ポータルサイトの話】お客様がポータルサイト（SUUMO・ホームズ・ニフティ等）のオトリ物件・掲載について聞いています。ポータルサイトの比較・掲載ルール・オトリ物件の説明は決まった文をこちらで後ろに足すので、本文には書かないでください（受け止めと「お送り頂いた物件の募集状況を確認する」だけ）。";
+}
 
 /**
  * 生成した返信にポータルの説明を足す。
@@ -129,7 +147,7 @@ export function ensurePortalNotice(text: string, verdict: PortalNoticeVerdict): 
   if (OUR_NOTICE_PRESENT_RE.test(src)) return src;
   const kept = src
     .split("\n")
-    .filter((line) => !LLM_PORTAL_CLAIM_RE.test(line))
+    .filter((line) => !LLM_PORTAL_CLAIM_RE.test(stripUrls(line)))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();

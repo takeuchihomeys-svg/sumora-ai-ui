@@ -39,7 +39,7 @@ import {
 // 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の道順は住所で答える・中身のない先送りは書かない
 import { isViewingAccessQuestion, buildViewingAccessNote, stripVagueDeferral } from "@/app/lib/viewing-access";
 // 2026-09-16 竹内（YUYA 事例）: SUUMO 以外のポータルはオトリ広告があるので、聞かれたら決まった説明を出す
-import { resolvePortalQuestion, ensurePortalNotice } from "@/app/lib/portal-notice";
+import { resolvePortalQuestion, ensurePortalNotice, buildPortalPromptNote } from "@/app/lib/portal-notice";
 import {
   validateAndClean,
   verifyAmountsAgainstSource,
@@ -4626,7 +4626,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       isFirstEverReplyFromMsgs, viewingAccessNote || viewingNote, customerStructured, dbRules,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
-      tpoGuidanceNote + relativeDayNote + conversationClockNote, // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
+      // 2026-09-17 YUYA 事例: ポータルの場面では LLM にポータルの説明を書かせない（決まった文を出口で足す）
+      tpoGuidanceNote + relativeDayNote + conversationClockNote + buildPortalPromptNote(portalVerdict), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）

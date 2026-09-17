@@ -1,6 +1,6 @@
 // 2026-09-16 竹内（YUYA 事例）: SUUMO 以外のポータルはオトリ広告があるので、聞かれたらこの説明を出す
 // 実行: npx tsx app/lib/__tests__/portal-notice.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { resolvePortalQuestion, detectCustomerPortals, ensurePortalNotice, buildOtoriExplain, WHICH_SITE_ANSWER } from "../portal-notice";
+import { resolvePortalQuestion, detectCustomerPortals, ensurePortalNotice, buildOtoriExplain, buildPortalPromptNote, WHICH_SITE_ANSWER } from "../portal-notice";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -82,6 +82,18 @@ it("本番検証で出た「LLM が書いた逆の説明」を落として、決
   ].join("\n"));
   // 「おとり」の行が全部落ちて本文が空になっても、説明だけは残る
   expect(ensurePortalNotice("おとり物件は少ないです", { kind: "which_site", portalLabel: null, reason: "x" })).toBe(WHICH_SITE_ANSWER);
+});
+it("再検証（9/17）で残った2つの抜け: 「オトリ」の語が無い逆の説明・部分一致で「既にある」と見なした弱い文", () => {
+  const v = { kind: "which_site" as const, portalLabel: "ニフティ", reason: "x" };
+  // ②(1): 「オトリ」の語が無いのに逆の内容（サイトによる差はあまりございません）→ ポータル名を含む行として落ちる
+  const wrong = "YUYAさんお世話になっております！！\nSUUMOやHOMESに載っているお部屋も、既に募集終了・お申込みが入っている情報がそのまま掲載されているケースが多く、サイトによる差はあまりございません😊！！\n\n気になる物件がございましたらいつでもお気軽にお送りください！！";
+  expect(ensurePortalNotice(wrong, v)).toBe(`YUYAさんお世話になっております！！\n\n気になる物件がございましたらいつでもお気軽にお送りください！！\n\n${WHICH_SITE_ANSWER}`);
+  // ②(2): 「比較的オトリ物件が少ないポータルサイトとなっております」は決まった文ではない → 落として置き換える
+  const weak = "YUYAさんお世話になっております！！\n\nSUUMOとホームズは比較的オトリ物件が少ないポータルサイトとなっております！！\n\n気になる物件がございましたら、その都度URLをお送りいただければ募集状況確認させて頂きます！！";
+  expect(ensurePortalNotice(weak, v)).toBe(`YUYAさんお世話になっております！！\n\n気になる物件がございましたら、その都度URLをお送りいただければ募集状況確認させて頂きます！！\n\n${WHICH_SITE_ANSWER}`);
+  // 指示層の文はこの場面だけ
+  expect(buildPortalPromptNote(v)).toContain("本文には書かないでください");
+  expect(buildPortalPromptNote({ kind: "none", portalLabel: null, reason: "x" })).toBe("");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
