@@ -4800,7 +4800,8 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const header = (all_properties_available as boolean | undefined) && endedPropCount === 0
             ? `${name}お送り頂きました\n`
             : `${name}お送り頂きました物件の中で\n`;
-          message_text = `${greeting ? `${greeting}\n` : ""}${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${recommendNote}${estimateSection}${guarantorSectionMulti}${vacancySection}${endedSection}`; // G32: 当日送信済みは挨拶行なし
+          // 保証会社は estimateSection の中（御見積書の行の直後・お手隙の前）に入っているのでここでは足さない
+          message_text = `${greeting ? `${greeting}\n` : ""}${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${recommendNote}${estimateSection}${vacancySection}${endedSection}`; // G32: 当日送信済みは挨拶行なし
         }
 
       // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）
