@@ -31,6 +31,12 @@ import { fixRecommendClosing, buildRecommendClosingNote } from "@/app/lib/recomm
 import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
 // 2026-09-18 竹内「テンプレートよくわからん文生成される」: ブレインの判断の整形と渡し方を返信生成と揃える
 import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/brain-strategy-note";
+// 2026-09-18 出口の決定論を返信生成・AIX 本体と揃える（テンプレートには1つも通っていなかった）
+import { stripWaited } from "@/app/lib/greeting";
+import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
+import { stripPropertyNameFromPickupLine } from "@/app/lib/pickup-line";
+import { stripRepeatedThanksLines } from "@/app/lib/property-send-match";
+import { extractPropertyLabels } from "@/app/lib/action-ledger";
 // AIX-META（suggested_aix_meta）の型は brain-core を単一ソースとして参照（type-only importのためランタイム依存なし）
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
 
@@ -1597,6 +1603,47 @@ export async function POST(req: NextRequest) {
         // 再生成が違反を解消していれば採用。まだ違反していれば初回結果を維持する
         if (!detectFrameViolation(retryText)) text = retryText;
         else console.warn("[aix-template-generate] frame violation 再生成後も未解消 — 初回結果を返却");
+      }
+    }
+
+    // ── 出口の掃除（2026-09-18 竹内「テンプレートよくわからん文生成される」）──────────────
+    // 返信生成（generate-reply）と AIX 本体（aix/action）には、竹内さんとの積み重ねで作った出口の決定論が
+    // 通っているのに、**テンプレート生成には1つも通っていなかった**（入口だけ直しても生成後の癖が残る）。
+    // 本番検証で出た実例と実データ（365日・スタッフ実送信）:
+    //   ・「お待たせ致しました」… greeting.ts で**禁止語**として全廃済み（返信では stripWaited で除去・
+    //      final-check で block）なのに、テンプレートでは素通りして出ていた
+    //   ・「前回お送りしたお部屋と重複しないよう」… 実送信 0件
+    //   ・「ぜひ見比べてご検討ください」… 「見比べ」実送信 1件
+    // 既にある純関数をここにも配る（設計知見「同じ判定は同じ関数・入口は1つ」）。
+    {
+      const waited = stripWaited(text);
+      if (waited.removed > 0) {
+        console.log(JSON.stringify({ tag: "aix-template-generate:strip-waited", removed: waited.removed }));
+        text = waited.text;
+      }
+      // 「複数の物件について」等、物件名を並べた直後の数のまとめ語（a🤫 事例）
+      const vague = stripVagueQuantifier(text);
+      if (vague.removed.length > 0) {
+        console.log(JSON.stringify({ tag: "aix-template-generate:vague-quantifier", removed: vague.removed }));
+        text = vague.text;
+      }
+      // ピックアップの宣言行に物件名を入れない（✩ さん事例）。物件を送る系の文だけが対象
+      if (actionType === "property_send" || actionType === "property_recommendation") {
+        const convNames = extractPropertyLabels(
+          (Array.isArray(recentMessages) ? recentMessages : [])
+            .filter((m) => m.sender === "staff").map((m) => m.text ?? "").join("\n"),
+        );
+        const picked = stripPropertyNameFromPickupLine(text, convNames);
+        if (picked.removed.length > 0) {
+          console.log(JSON.stringify({ tag: "aix-template-generate:pickup-line", removed: picked.removed }));
+          text = picked.text;
+        }
+      }
+      // 根拠のないお礼の行（直近のお客様の発言に紐づかないお礼）
+      const thanks = stripRepeatedThanksLines(text);
+      if (thanks.removed > 0) {
+        console.log(JSON.stringify({ tag: "aix-template-generate:repeated-thanks", removed: thanks.removed }));
+        text = thanks.text;
       }
     }
 
