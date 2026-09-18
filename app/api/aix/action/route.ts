@@ -29,6 +29,8 @@ import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensure
 // 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない
 import { stripPropertyNameFromPickupLine, PICKUP_LINE_NOTE } from "@/app/lib/pickup-line";
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
+// 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
+import { fixRecommendClosing } from "@/app/lib/recommend-closing";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
@@ -1988,6 +1990,19 @@ ${SMORA_COMMON_RULES}`;
         const fixed = ensureSituationOpening(message_text, situationOpeningLine(situationKind, situationOpts));
         if (fixed.added) console.log(JSON.stringify({ tag: "aix:situation-opening-added", action: currentAction, conversationId, kind: situationKind }));
         message_text = fixed.text;
+      }
+      // 2026-09-18 竹内（𝒮 さん事例）「状況に合わせて、物件申込誘導するのと、物件1件しか送っていない場合は
+      //   お送りさせて頂いたお部屋の中でもの部分はいれない」:
+      //   ①送った物件が1件以下なら比較の言い方を落とす（実データ179件すべて2件以上送っている時だけ）
+      //   ②まだ内覧できないお部屋（退去予定・解禁日が明日以降）は内覧誘導ではなく申込誘導（実データ 34 vs 9）
+      {
+        const recSentCount = Number((aixBrainMeta as { sent_property_count?: number } | null)?.sent_property_count
+          ?? (body.prior_sent_property_count as number | undefined) ?? 0);
+        const closing = fixRecommendClosing(message_text, { sentPropertyCount: recSentCount });
+        if (closing.applied.length > 0) {
+          console.log(JSON.stringify({ tag: "aix:recommend-closing", action: currentAction, conversationId, applied: closing.applied, sentPropertyCount: recSentCount }));
+          message_text = closing.text;
+        }
       }
       // 見積書同封時は締め文を追加
       if (has_estimate) {

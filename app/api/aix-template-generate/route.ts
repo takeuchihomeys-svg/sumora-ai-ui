@@ -25,6 +25,8 @@ import {
 import { normalizeStatus } from "@/app/lib/status-normalize";
 // 顧客名の妥当性判定（generate-reply と同一ソース — LINE表示名を実名として使わないゲート）
 import { stripNonNameChars, isPlausiblePersonName } from "@/app/lib/validate-reply";
+// 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
+import { fixRecommendClosing, stillNotViewable, buildRecommendClosingNote } from "@/app/lib/recommend-closing";
 // AIX-META（suggested_aix_meta）の型は brain-core を単一ソースとして参照（type-only importのためランタイム依存なし）
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
 
@@ -1396,6 +1398,14 @@ export async function POST(req: NextRequest) {
     recommendationScenario
       ? `・🚫 このシナリオで絶対に使ってはいけない冒頭表現（1文字でも該当したらやり直し）: ${RECOMMENDATION_FORBIDDEN_OPENINGS[recommendationScenario].map((p) => `「${p}」`).join(" / ")}`
       : "",
+    // 2026-09-18 竹内（𝒮 さん事例）: ブレインが知っている状況（送付済み件数・まだ内覧できるか）を
+    //   そのまま文の指示にする。「物件1件しか送っていない場合は お送りした中でも の部分はいれない」
+    actionType === "property_recommendation"
+      ? buildRecommendClosingNote({
+          sentPropertyCount: priorSentPropertyCount,
+          notViewable: stillNotViewable((recentMessages ?? []).slice(-6).map((m) => m.text ?? "").join("\n")),
+        })
+      : "",
     // 「物件ピックアップした」の送付文脈（初回 / 継続 / 新着 / 条件広げ）
     actionType === "property_send"
       ? (() => {
@@ -1598,6 +1608,18 @@ export async function POST(req: NextRequest) {
         // 再生成が違反を解消していれば採用。まだ違反していれば初回結果を維持する
         if (!detectFrameViolation(retryText)) text = retryText;
         else console.warn("[aix-template-generate] frame violation 再生成後も未解消 — 初回結果を返却");
+      }
+    }
+
+    // 2026-09-18 竹内（𝒮 さん事例）「状況に合わせて、物件申込誘導するのと、物件1件しか送っていない場合は
+    //   お送りさせて頂いたお部屋の中でもの部分はいれない」:
+    //   ①送った物件が1件以下なら比較の言い方を落とす（実データ179件すべて2件以上送っている時だけ）
+    //   ②まだ内覧できないお部屋（退去予定・解禁日が明日以降）は内覧誘導ではなく申込誘導（実データ 34 vs 9）
+    {
+      const closing = fixRecommendClosing(text, { sentPropertyCount: priorSentPropertyCount });
+      if (closing.applied.length > 0) {
+        console.log(JSON.stringify({ tag: "aix-template-generate:recommend-closing", applied: closing.applied, priorSentPropertyCount }));
+        text = closing.text;
       }
     }
 
