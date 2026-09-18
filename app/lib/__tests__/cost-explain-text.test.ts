@@ -2,6 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/cost-explain-text.test.ts（自己完結ハーネス。全 PASS で exit 0）
 import {
   buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, customerDoubtsCheapness, extractEstimateAmounts, mentionsBrokerFee, parseYen,
+  checkCostFacts, fixBrokerFeeWording, buildCostExplainFactsNote,
 } from "../cost-explain-text";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -192,6 +193,60 @@ it("冒頭の言い方は1か所（brokerFeeOpening）— 仕組み説明と食�
   // どちらもスモラでは「0円」と言わない
   expect(explain).notToContain("仲介手数料0円");
   expect(mech).notToContain("仲介手数料0円");
+});
+
+// ── 会話を合わせるの出口（2026-09-19 竹内「会話を合わせるボタンをつける」）──
+it("★ 入力に無い金額は〇〇円に伏せる（送信前チェックで止まる）", () => {
+  const draft = "オーナー様からの広告料を還元しております！！\n67,000円を貸主から頂き、そこから22,000円を還元させて頂きます！！\n初期費用は総額198,000円となります！！";
+  const r = checkCostFacts(draft, [67000, 22000]);
+  expect(r.cleaned).toContain("67,000円を貸主から頂き");
+  expect(r.cleaned).toContain("22,000円を還元");
+  expect(r.cleaned).toContain("初期費用は総額〇〇円となります");  // 入力に無い総額は伏せる
+  expect(String(r.unmatched)).toBe("198000");
+});
+it("スモラの仲介手数料2,980円は常に許す（会社の仕組みの数字）", () => {
+  const r = checkCostFacts("スモラでは仲介手数料を2,980円に抑えております！！", []);
+  expect(r.cleaned).toContain("2,980円");
+  expect(String(r.unmatched.length)).toBe("0");
+});
+it("万円の書き方も拾う", () => {
+  const r = checkCostFacts("他社様では31万円とのことですが", [67000]);
+  expect(r.cleaned).toContain("〇〇円");
+  expect(String(r.unmatched)).toBe("310000");
+});
+it("金額が無い文は触らない", () => {
+  const t = "オーナー様からの広告料をお客様に還元させて頂いている仕組みのため、お安くご提案出来ております！！";
+  expect(checkCostFacts(t, []).cleaned).toBe(t);
+});
+it("★ スモラで「仲介手数料0円」と書いたら2,980円に直す（出口の決定論）", () => {
+  const r = fixBrokerFeeWording("仲介手数料は0円で大丈夫です！！ご安心ください😊！！", "sumora");
+  expect(r.text).toContain("仲介手数料は一律2,980円");
+  expect(r.text).notToContain("仲介手数料は0円");   // ※「2,980円」の中に "0円" が含まれるので、語ごと確かめる
+  expect(String(r.fixed)).toBe("1");
+});
+it("「仲介手数料無料」も直す", () => {
+  expect(fixBrokerFeeWording("こちらのお部屋は仲介手数料無料でご案内可能です！！", "sumora").text).toContain("仲介手数料2,980円");
+});
+it("イエヤス・ギガは直さない（0円が正しい）", () => {
+  const t = "仲介手数料は0円で大丈夫です！！";
+  expect(fixBrokerFeeWording(t, "ieyasu").text).toBe(t);
+  expect(fixBrokerFeeWording(t, "giga").text).toBe(t);
+});
+it("★ 材料には入力した金額と、アカウントの仕組みだけが入る", () => {
+  const note = buildCostExplainFactsNote({ account: "sumora", mode: "fee", landlordFeeYen: 67000, landlordFeeLabel: "家賃1ヶ月分", refundYen: 22000 });
+  expect(note).toContain("スモラは**一律2,980円**");
+  expect(note).toContain("家賃1ヶ月分の手数料 67,000円");
+  expect(note).toContain("22,000円 をお客様の初期費用に還元");
+  expect(note).toContain("他の金額は書かない");
+});
+it("材料: 手数料なしのお部屋", () => {
+  const note = buildCostExplainFactsNote({ account: "ieyasu", mode: "no_fee", savingYen: 29150 });
+  expect(note).toContain("貸主から手数料がない");
+  expect(note).toContain("29,150円 お得");
+  expect(note).toContain("イエヤス割");
+});
+it("材料: 仕組みだけの時は金額を書かないと明記する", () => {
+  expect(buildCostExplainFactsNote({ account: "sumora", mode: "mechanism" })).toContain("物件ごとの金額は書かない");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

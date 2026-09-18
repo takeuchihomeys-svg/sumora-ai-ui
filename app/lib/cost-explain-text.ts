@@ -172,6 +172,87 @@ export function buildCostExplainMessage(input: CostExplainInput): string {
   return `${mechanism}\n\n${detail}`;
 }
 
+// ── 会話を合わせる（2026-09-19 竹内「初期費用を説明のところ会話を合わせるボタンをつける」）──────────
+// 固定テンプレは画面で作り（AI不使用）、こちらは会話に合わせた1通をサーバーで作る。
+// 金額は**スタッフの入力値だけ**。見積書・保証会社と同じで、入力に無い金額は〇〇円に伏せて送信前チェックで止める。
+
+/** 本文に出てくる金額（「67,000円」「2,980円」「12万円」）を拾う */
+function scanYenTokens(text: string): Array<{ raw: string; yen: number; start: number; end: number }> {
+  const out: Array<{ raw: string; yen: number; start: number; end: number }> = [];
+  const re = /[¥￥]?\s*([0-9０-９][0-9０-９,，.．]*)\s*(万円|万|円)/g;
+  for (const m of (text ?? "").matchAll(re)) {
+    const yenVal = parseYen(m[2].startsWith("万") ? `${m[1]}万` : m[1]);
+    if (yenVal === null) continue;
+    out.push({ raw: m[0], yen: yenVal, start: m.index ?? 0, end: (m.index ?? 0) + m[0].length });
+  }
+  return out;
+}
+
+/**
+ * 入力に無い金額を〇〇円に伏せる。
+ * allowed に無い金額が本文にあれば置き換えて unmatched に返す（送信前チェックで止まる）。
+ * 家賃1ヶ月分などの「◯ヶ月」や帖数は金額ではないので当たらない。
+ */
+export function checkCostFacts(text: string, allowedYens: readonly (number | null | undefined)[]): { cleaned: string; unmatched: number[] } {
+  const allowed = new Set(allowedYens.filter((n): n is number => typeof n === "number" && n > 0));
+  // 会社の仕組みの数字（スモラの仲介手数料）は常に許す
+  allowed.add(SUMORA_BROKER_FEE_YEN);
+  const hits = scanYenTokens(text).filter((h) => !allowed.has(h.yen));
+  if (hits.length === 0) return { cleaned: text ?? "", unmatched: [] };
+  let cleaned = text ?? "";
+  for (const h of [...hits].reverse()) cleaned = cleaned.slice(0, h.start) + "〇〇円" + cleaned.slice(h.end);
+  const unmatched: number[] = [];
+  for (const h of hits) if (!unmatched.includes(h.yen)) unmatched.push(h.yen);
+  return { cleaned, unmatched };
+}
+
+/**
+ * 仲介手数料の言い方をアカウントに合わせて直す（出口の決定論）。
+ * スモラで「仲介手数料0円／無料」と書いてしまったら「仲介手数料2,980円」に直す。
+ * イエヤス・ギガはそのまま（0円が正しい）。
+ */
+export function fixBrokerFeeWording(text: string, account: CostAccount | string | null | undefined): { text: string; fixed: number } {
+  if (String(account ?? "").toLowerCase() !== "sumora") return { text: text ?? "", fixed: 0 };
+  let fixed = 0;
+  const out = (text ?? "")
+    .replace(/仲介手数料(?:は|も|が)?[^\n。！!、]{0,4}(?:0円|０円|無料|なし|無し)/g, (m) => {
+      fixed++;
+      return m.includes("は") ? "仲介手数料は一律2,980円" : "仲介手数料2,980円";
+    });
+  return { text: out, fixed };
+}
+
+/** 生成に渡す材料（会話を合わせる用・金額は入力値だけ） */
+export function buildCostExplainFactsNote(input: {
+  account?: CostAccount | string | null;
+  mode: "fee" | "no_fee" | "mechanism";
+  landlordFeeYen?: number | null;
+  landlordFeeLabel?: string | null;
+  refundYen?: number | null;
+  savingYen?: number | null;
+}): string {
+  const acct = String(input.account ?? "sumora").toLowerCase();
+  const lines: string[] = ["【確定事実（この金額・この仕組みだけを使う。他の金額は書かない）】"];
+  if (acct === "sumora") {
+    lines.push("・仲介手数料: スモラは**一律2,980円**（0円とは書かない。「割引」もしない＝割引するのは初期費用）");
+    lines.push("・スモ割が最大適用出来るお部屋なら初期費用は【前家賃＋2,980円】のみ（公式LINEの案内と同じ）");
+  } else {
+    lines.push(`・仲介手数料: ${acct === "giga" ? "ギガ" : "イエヤス"}はほとんどのお部屋を**0円**でご紹介可能（お部屋によっては頂く場合もある）`);
+    lines.push(`・お部屋によっては${acct === "giga" ? "ギガ割" : "イエヤス割"}も適用できる`);
+  }
+  lines.push("・安さの理由: オーナー様からの広告料をお客様に還元しているため。他社との金額差はこの還元の有無");
+  if (input.mode === "fee") {
+    if (input.landlordFeeYen) lines.push(`・このお部屋は貸主から${input.landlordFeeLabel ? `${input.landlordFeeLabel}の` : ""}手数料 ${input.landlordFeeYen.toLocaleString("ja-JP")}円 を頂ける`);
+    if (input.refundYen) lines.push(`・そのうち ${input.refundYen.toLocaleString("ja-JP")}円 をお客様の初期費用に還元する（弊社にも利益が残る）`);
+  } else if (input.mode === "no_fee") {
+    lines.push("・このお部屋は**貸主から手数料がない**ため割引が出来ない");
+    if (input.savingYen) lines.push(`・それでも一般的な不動産業者より ${input.savingYen.toLocaleString("ja-JP")}円 お得`);
+  } else {
+    lines.push("・今回は**物件ごとの金額は書かない**（仕組みだけを説明する）");
+  }
+  return lines.join("\n");
+}
+
 /**
  * 直近の AIX【見積書送る】の本文から金額を拾う（入力欄の初期値。スタッフが書き換えられる）
  *   「初期費用さらに\n🌟24,000円割引させて頂き」→ refund / 「一般的な不動産業者より97,700円節約出来ます」→ saving

@@ -26,6 +26,8 @@ import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
 import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, viewableFromVacancyYmd, vacancyDateLabel, vacatingViewableSentence } from "@/app/lib/vacating-notice";
 // 2026-09-19 竹内（内覧調整の会話を合わせる）: 退去前の候補の行を出口で落とす
 import { stripSlotLinesBeforeViewable } from "@/app/lib/viewing-window";
+// 2026-09-19 竹内（初期費用を説明の会話を合わせる）: 材料と出口（金額の照合・仲介手数料の言い方）
+import { buildCostExplainFactsNote, checkCostFacts, fixBrokerFeeWording } from "@/app/lib/cost-explain-text";
 // 2026-09-17 竹内（物件オススメ・現状伝えて1件）: 探した現状を🌟の前に1文で伝える
 import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensureSituationOpening } from "@/app/lib/recommendation-situation";
 // 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない
@@ -2937,6 +2939,74 @@ ${aixPropertySendRules}
         return finalizeResponse(message_text, propertySendComponents ? { ai_components: propertySendComponents } : undefined);
       }
       message_text = rawSendText;
+
+    // ── 💰 初期費用を説明（会話を合わせる）──────────────────────────
+    // 2026-09-19 竹内「初期費用を説明のところ会話を合わせるボタンをつける文もちゃんと会話合わせて生成されるように」
+    //   固定テンプレは今までどおり画面で作る（AI不使用）。ここに来るのは「会話を合わせる」だけ。
+    //   金額はスタッフの入力値だけを使い、入力に無い金額は〇〇円に伏せる（見積書・保証会社と同じ型）。
+    } else if (action === "cost_explain") {
+      const ceMode = (body.cost_mode === "no_fee" ? "no_fee" : body.cost_mode === "mechanism" ? "mechanism" : "fee") as "fee" | "no_fee" | "mechanism";
+      const ceAccount = typeof body.account_key === "string" ? body.account_key : (account ?? null);
+      const ceFeeYen = typeof body.landlord_fee_yen === "number" ? body.landlord_fee_yen : null;
+      const ceRefundYen = typeof body.refund_yen === "number" ? body.refund_yen : null;
+      const ceSavingYen = typeof body.saving_yen === "number" ? body.saving_yen : null;
+      const ceFeeLabel = typeof body.landlord_fee_label === "string" ? body.landlord_fee_label : null;
+      const ceFacts = buildCostExplainFactsNote({
+        account: ceAccount, mode: ceMode,
+        landlordFeeYen: ceFeeYen, landlordFeeLabel: ceFeeLabel, refundYen: ceRefundYen, savingYen: ceSavingYen,
+      });
+      const [ceDiffNote, ceStarNote, ceBrainAddendum] = await Promise.all([
+        getKnowledgeForState(AIX_ACTION_TO_STATES.cost_explain, currentAction, conversationId, latestCustomerMsg, brainContext),
+        getStarredExamplesForAction(AIX_ACTION_TO_STATES.cost_explain, latestCustomerMsg, aixBrainMeta),
+        loadBrainTemplate("cost_explain"),
+      ]);
+
+      const ceSystem = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+【この返信の目的】
+お客様が「費用の安さ」を不審に思っている・安い理由を聞いています。仕組みと（入力があれば）このお部屋の具体額で1通で答え、**安心して頂く**。
+
+【必ず守ること】
+・金額は【確定事実】に書かれた数字だけを使う。他の金額（家賃・初期費用の総額・他社の金額など）は**1円も書かない**
+・仲介手数料の書き方は【確定事実】のとおり（スモラは一律2,980円・0円とは書かない／イエヤスとギガは0円）
+・「仲介手数料を割引」とは書かない（割引するのは初期費用）
+・お客様が挙げた他社の金額を否定しない。金額差は「還元の有無」で説明する
+・値引きの約束・交渉の宣言はしない（それは別の場面）
+・2〜6行程度。お客様の言葉（不安・他社の金額・仲介手数料）に**直接**答えてから仕組みを説明する
+
+【スタッフの実文（言い回しの手本。中身の金額は写さない）】
+[例1]「仲介手数料は0円で大丈夫です！！オーナー様からの広告料をお客様に還元させて頂いている仕組みのため、初期費用を一般的な不動産業者様よりお安くご提案出来ております！！／他社様との金額差はこの還元の有無によるものですので、ご安心ください😊！！」
+[例2]「〇〇さんご質問ありがとうございます😊！！／お部屋によっては貸主（オーナー）様から広告費を頂いております！！／一般的な不動産会社はオーナー様から広告費を頂きながら、借主様からも仲介手数料として家賃1ヶ月分を頂く二重の収益構造となっておりますが、／スモラでは仲介手数料を2,980円に抑え、頂いた広告費を〇〇さんの初期費用削減に還元させて頂いております！！」
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
+
+      const ceStatic = ceSystem + AIX_CURATED_AND_CRITICAL_RULES;
+      const ceDynamic = [
+        ceFacts,
+        ceBrainAddendum ? `【ブレイン改善ルール】\n${ceBrainAddendum}` : "",
+        brainGuidanceNote || "",
+      ].filter(Boolean).join("\n\n");
+      const ceUser = greetingTimeNote + `${recentHistory}\n\n上記の会話を読み、${name}の不安に直接答える「初期費用の説明」を1通で生成してください。`
+        + (ceDiffNote ? `\n\n${ceDiffNote}` : "")
+        + (ceStarNote ? `\n\n【参考にすべき成功返信例】\n${ceStarNote}` : "");
+      const ceRaw = await callClaude(ceStatic, ceUser, currentAction, ceDynamic || undefined);
+      try {
+        const mCe = ceRaw.match(/\{[\s\S]*\}/);
+        message_text = mCe ? String((JSON.parse(mCe[0]) as { message?: string }).message ?? ceRaw).replace(/\\n/g, "\n") : ceRaw;
+      } catch { message_text = ceRaw; }
+
+      // 出口の決定論: ①スモラで「仲介手数料0円」と書いたら直す ②入力に無い金額は〇〇円（送信前チェックで止まる）
+      {
+        const fixed = fixBrokerFeeWording(message_text, ceAccount);
+        if (fixed.fixed > 0) console.log("aix:cost-explain-broker-fee-fixed", fixed.fixed);
+        const checked = checkCostFacts(fixed.text, [ceFeeYen, ceRefundYen, ceSavingYen]);
+        if (checked.unmatched.length > 0) console.log("aix:cost-explain-unmatched-yen", JSON.stringify(checked.unmatched));
+        message_text = checked.cleaned;
+      }
+      return finalizeResponse(message_text);
 
     // ── 🔍 内覧へ！ ──────────────────────────────────────────────
     } else if (action === "viewing_invite") {

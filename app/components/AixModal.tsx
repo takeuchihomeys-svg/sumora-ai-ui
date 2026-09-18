@@ -2026,7 +2026,25 @@ export default function AixModal({
       }
 
       // 初期費用を説明: 入力値だけで文を作る（AI不使用・金額の創作なし）
-      if (actionType === "cost_explain") {
+      // 2026-09-19 竹内「会話を合わせるボタンをつける文もちゃんと会話合わせて生成されるように」:
+      //   「会話を合わせる」の時はここで打ち切らず、材料を API に渡す（固定テンプレは今までどおりこの下で作る）
+      if (actionType === "cost_explain" && extraFlags?.conversation_match) {
+        body.cost_mode = costMechanism ? "mechanism" : costNoFee ? "no_fee" : "fee";
+        body.account_key = account ?? null;
+        if (!costMechanism && !costNoFee) {
+          const feeY = parseYen(costFeeYen);
+          const refundY = parseYen(costRefundYen);
+          if (!feeY || !refundY) throw new Error(costExplainMissing({ noLandlordFee: false, landlordFeeYen: feeY, refundYen: refundY }) ?? "金額を入力してください");
+          body.landlord_fee_yen = feeY;
+          body.refund_yen = refundY;
+          if (costFeeLabel) body.landlord_fee_label = costFeeLabel;
+        }
+        if (costNoFee) {
+          const savingY = parseYen(costSavingYen);
+          if (savingY) body.saving_yen = savingY;
+        }
+        // 以降は通常の API 呼び出しへ（早期 return しない）
+      } else if (actionType === "cost_explain") {
         const input = {
           noLandlordFee: costNoFee,
           landlordFeeYen: costNoFee ? null : parseYen(costFeeYen),
@@ -7387,6 +7405,24 @@ export default function AixModal({
               >
                 {loading ? busyLabel : "💬 会話を合わせる"}
               </button>
+            ) : actionType === "cost_explain" ? (
+              /* 2026-09-19 竹内: 初期費用を説明にも「会話を合わせる」。固定テンプレ（AIX 生成）は今までどおり残す */
+              <div className="flex w-full flex-col gap-2">
+                <button
+                  onClick={() => void generate({ conversation_match: true })}
+                  disabled={loading || !canGenerate}
+                  className="w-full rounded-2xl bg-[#546E7A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
+                >
+                  {loading ? busyLabel : "💬 会話を合わせる"}
+                </button>
+                <button
+                  onClick={() => void generate()}
+                  disabled={loading || !canGenerate}
+                  className="w-full rounded-full bg-[#111b21] py-3 text-sm font-bold text-white disabled:opacity-50"
+                >
+                  {loading ? busyLabel : "AIX 生成（固定の型）"}
+                </button>
+              </div>
             ) : actionType === "guarantor_info" ? (
               /* 保証会社について: 文面を作る（固定・LLMなし）／会話を合わせる（AIX生成ボタンなし） */
               <div className="flex w-full flex-col gap-2">
