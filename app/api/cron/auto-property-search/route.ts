@@ -35,7 +35,8 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase
     .from("property_customers")
-    .select("id, customer_name, status, last_property_sent_at, created_at, desired_area, area")
+    // 2026-09-19 竹内「物件出ししたお客さんっていうのは送信じゃなくて確認したお客さんも含む」→ property_viewed_at も取る
+    .select("id, customer_name, status, last_property_sent_at, property_viewed_at, created_at, desired_area, area")
     .limit(1000);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -97,7 +98,7 @@ export async function GET(req: NextRequest) {
     dry_run: dryRun,
     rule: mode === "pm"
       ? "本日の更新日付（更新日1日以内）・更新順・1ページだけ"
-      : `直近${RECENT_SENT_DAYS}日に物件出しした人＋登録${NEW_CUSTOMER_DAYS}日以内の新規・更新日は前回送った日から・AD高い順`,
+      : `直近${RECENT_SENT_DAYS}日に物件出しした人（送信 or 確認）＋登録${NEW_CUSTOMER_DAYS}日以内でまだ出していない人・更新日は前回出した日から・AD高い順`,
     customers: rows.length,
     targets: targets.length,
     queued: queued.length,

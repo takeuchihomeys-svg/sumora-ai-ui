@@ -3,8 +3,8 @@
 //   17:00（本日の更新日付・更新順・1ページ）の自動物件検索。
 // 実行: npx tsx app/lib/__tests__/auto-search-schedule.test.ts（全 PASS で exit 0）
 import {
-  rpUpdateDaysFor, selectAutoSearchTargets, buildAutoSearchPayload,
-  RECENT_SENT_DAYS, MAX_TARGETS_PER_RUN, PM_LATEST,
+  rpUpdateDaysFor, selectAutoSearchTargets, buildAutoSearchPayload, lastPropertyTouchAt,
+  RECENT_SENT_DAYS, NEW_CUSTOMER_DAYS, MAX_TARGETS_PER_RUN, PM_LATEST,
 } from "../auto-search-schedule";
 
 let pass = 0, fail = 0;
@@ -34,7 +34,7 @@ console.log("── 対象は「直近3日に送った人」と「まだ一度�
     { id: "a", status: "hot", last_property_sent_at: at("2026-09-18T20:00:00"), created_at: at("2026-08-01T10:00:00") },     // 昨日送った
     { id: "b", status: "property_search", last_property_sent_at: at("2026-09-16T10:00:00"), created_at: at("2026-08-01T10:00:00") }, // 3日前
     { id: "c", status: "new_inquiry", last_property_sent_at: null, created_at: at("2026-09-18T09:00:00") },   // 昨日きた新規
-    { id: "d", status: "property_search", last_property_sent_at: null, created_at: at("2026-09-10T09:00:00") }, // 9日前にきた新規
+    { id: "d", status: "property_search", last_property_sent_at: null, created_at: at("2026-09-17T09:00:00") }, // 2日前にきた新規
     { id: "e", status: "property_search", last_property_sent_at: at("2026-09-10T10:00:00"), created_at: at("2026-08-01T10:00:00") }, // 9日前に送った → 対象外
     { id: "f", status: "applying", last_property_sent_at: at("2026-09-18T10:00:00"), created_at: at("2026-08-01T10:00:00") }, // 申込中 → 対象外
     { id: "g", status: "pending", last_property_sent_at: null, created_at: at("2026-09-18T09:00:00") },        // 保留 → 対象外
@@ -52,6 +52,40 @@ console.log("── 対象は「直近3日に送った人」と「まだ一度�
   t("新規は絞らない（null）", got.find((x) => x.id === "c")?.rpUpdateDays === null);
   t("理由が付いている", got.find((x) => x.id === "a")?.reason === "recent_sent" && got.find((x) => x.id === "c")?.reason === "new_customer");
   t(`「3日以内」は ${RECENT_SENT_DAYS} 日`, RECENT_SENT_DAYS === 3);
+}
+
+console.log("── ★ 「物件出しした」は送信だけでなく**確認**も含む（2026-09-19 竹内）");
+{
+  // 一覧の「送:」＝ last_property_sent_at ／「確:」＝ property_viewed_at（拡張 popup.js）
+  const customers = [
+    // 送信は9日前だが、確認は昨日 → 対象（確認の方が新しい）
+    { id: "v1", status: "property_search", last_property_sent_at: at("2026-09-10T10:00:00"), property_viewed_at: at("2026-09-18T15:00:00"), created_at: at("2026-06-01T10:00:00") },
+    // 一度も送っていないが確認だけした（3日前）→ 対象
+    { id: "v2", status: "property_search", last_property_sent_at: null, property_viewed_at: at("2026-09-16T10:00:00"), created_at: at("2026-06-01T10:00:00") },
+    // 送信も確認も9日前 → 対象外
+    { id: "v3", status: "property_search", last_property_sent_at: at("2026-09-10T10:00:00"), property_viewed_at: at("2026-09-10T11:00:00"), created_at: at("2026-06-01T10:00:00") },
+  ];
+  const got = selectAutoSearchTargets(customers, { nowMs: NOW });
+  t("★ 送信は古いが確認が新しい人は対象", got.some((x) => x.id === "v1"), JSON.stringify(got.map((x) => x.id)));
+  t("★ 送信ゼロでも確認していれば対象", got.some((x) => x.id === "v2"));
+  t("どちらも古ければ対象外", !got.some((x) => x.id === "v3"));
+  t("★ 更新日は新しい方（確認=昨日）で計算する → 1日以内", got.find((x) => x.id === "v1")?.rpUpdateDays === 1, JSON.stringify(got));
+  t("確認3日前なら3日以内", got.find((x) => x.id === "v2")?.rpUpdateDays === 3);
+  t("新しい方を返す関数", lastPropertyTouchAt({ last_property_sent_at: at("2026-09-10T10:00:00"), property_viewed_at: at("2026-09-18T15:00:00") }) === at("2026-09-18T15:00:00"));
+  t("片方しか無ければそれを返す", lastPropertyTouchAt({ last_property_sent_at: null, property_viewed_at: at("2026-09-16T10:00:00") }) === at("2026-09-16T10:00:00"));
+  t("どちらも無ければ null", lastPropertyTouchAt({ last_property_sent_at: null, property_viewed_at: null }) === null);
+}
+
+console.log("── ★ 新規（まだ出していない人）も3日以内（2026-09-19 竹内）");
+{
+  t(`新規の窓は ${NEW_CUSTOMER_DAYS} 日`, NEW_CUSTOMER_DAYS === 3);
+  const customers = [
+    { id: "n1", status: "new_inquiry", last_property_sent_at: null, created_at: at("2026-09-17T09:00:00") }, // 2日前 → 対象
+    { id: "n2", status: "new_inquiry", last_property_sent_at: null, created_at: at("2026-09-16T09:00:00") }, // 3日前 → 対象
+    { id: "n3", status: "new_inquiry", last_property_sent_at: null, created_at: at("2026-09-14T09:00:00") }, // 5日前 → 対象外
+  ];
+  const got = selectAutoSearchTargets(customers, { nowMs: NOW }).map((x) => x.id);
+  t("★ 2日前・3日前は対象、5日前は対象外", eq(got.sort(), ["n1", "n2"]), JSON.stringify(got));
 }
 
 console.log("── 多すぎる時は優先順位の高い順に上限で切る（11:00〜17:00 で終わらせるため）");

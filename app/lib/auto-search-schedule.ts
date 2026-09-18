@@ -24,6 +24,11 @@ export type AutoSearchCustomer = {
   id: string;
   status?: string | null;
   last_property_sent_at?: string | null;
+  /**
+   * 物件を「確認した」日時（拡張・顧客画面の確認ボタン → 一覧の「確:」バッジ）。
+   * 2026-09-19 竹内「物件出ししたお客さんっていうのは送信じゃなくて確認したお客さんも含む」
+   */
+  property_viewed_at?: string | null;
   /** 物件顧客として登録された日時（「新規のお客さん」の判定に使う） */
   created_at?: string | null;
 };
@@ -43,14 +48,13 @@ const EXCLUDED_STATUS = new Set(["applying", "closed_won", "closed_lost", "close
 /** 「直近に物件出しした人」の範囲（竹内さんの「3日以内物件確認している人」） */
 export const RECENT_SENT_DAYS = 3;
 /**
- * 「新規のお客さん」＝登録からこの日数以内で、まだ一度も物件を送っていない人。
+ * 「新規のお客さん」＝登録からこの日数以内で、まだ一度も物件を出していない人。
  *
- * 2026-09-19 の実データで決めた。まだ送っていない人は 109 人いるが、
- *   2日以内に登録  3人 ／ 1週間以内 1人 ／ 1か月以内 7人 ／ **1か月より前 98人**（うち80人が property_search）
- * ＝ ほとんどが「古い放置客」で、毎日自動検索する相手ではない。
- * 竹内さんの言う「新規のお客さん」は最近来た人なので、登録からの日数で線を引く。
+ * 2026-09-19 竹内「**新規のお客さんで送っていない人も3日以内で**」← 直近3日にそろえる（初版は14日だった）。
+ * 実データ: まだ出していない人は109人いるが **1か月より前の登録が98人**（古い放置客）。
+ * 3日で切ると 5人前後で、直近3日に物件出しした人と同じ「今動いている人」だけが残る。
  */
-export const NEW_CUSTOMER_DAYS = 14;
+export const NEW_CUSTOMER_DAYS = 3;
 /** 1回に積む上限（多すぎると 11:00〜17:00 の間に終わらない）。優先順位の高い順に切る */
 export const MAX_TARGETS_PER_RUN = 40;
 const DAY_MS = 86_400_000;
@@ -75,9 +79,25 @@ export function jstDaysSince(lastSentAt: string | null | undefined, nowMs: numbe
 }
 
 /**
+ * 「最後に物件を出した日」＝ 送信（last_property_sent_at）と確認（property_viewed_at）の**新しい方**。
+ * 2026-09-19 竹内「物件出ししたお客さんっていうのは送信じゃなくて確認したお客さんも含む」。
+ * 一覧の「送:」「確:」の2つのバッジがそれぞれこの2列（拡張 popup.js）。
+ */
+export function lastPropertyTouchAt(c: Pick<AutoSearchCustomer, "last_property_sent_at" | "property_viewed_at">): string | null {
+  const sent = c.last_property_sent_at ? Date.parse(c.last_property_sent_at) : NaN;
+  const viewed = c.property_viewed_at ? Date.parse(c.property_viewed_at) : NaN;
+  const okSent = Number.isFinite(sent);
+  const okViewed = Number.isFinite(viewed);
+  if (!okSent && !okViewed) return null;
+  if (okSent && okViewed) return sent >= viewed ? c.last_property_sent_at! : c.property_viewed_at!;
+  return okSent ? c.last_property_sent_at! : c.property_viewed_at!;
+}
+
+/**
  * 前回の物件出しから何日経ったかで「更新日」を決める。
  * 拡張 popup.js の calcUpdateDays と**同じ線**（1 / 3 / 7 / 14・初回は絞らない）。
  * ここを直したら向こうも直す（四者同名）。
+ * ※ 渡すのは lastPropertyTouchAt（送信と確認の新しい方）＝「前回そのお客様に物件を出してから」の新着だけが出る。
  */
 export function rpUpdateDaysFor(lastSentAt: string | null | undefined, nowMs: number = Date.now()): number | null {
   const daysSince = jstDaysSince(lastSentAt, nowMs);
@@ -112,10 +132,12 @@ export function selectAutoSearchTargets(
   for (const c of customers) {
     if (!c?.id) continue;
     if (EXCLUDED_STATUS.has(String(c.status ?? ""))) continue;
-    // 「3日以内に送った」は JST の日付で数える（rpUpdateDaysFor と同じ数え方＝出る更新日と必ず揃う）
-    const daysSince = jstDaysSince(c.last_property_sent_at, nowMs);
+    // 「3日以内に物件を出した」は送信と確認の新しい方で、JST の日付で数える
+    //   （rpUpdateDaysFor と同じ数え方＝出る更新日と必ず揃う）
+    const touchedAt = lastPropertyTouchAt(c);
+    const daysSince = jstDaysSince(touchedAt, nowMs);
     const isRecent = daysSince !== null && daysSince <= RECENT_SENT_DAYS;
-    // まだ送っていない人は「最近登録された人」だけ（古い放置客を毎日回さない）。
+    // まだ一度も出していない人は「最近登録された人」だけ（古い放置客を毎日回さない）。
     // 登録日が無いデータは新規とみなさない（fail-closed）
     const sinceCreated = jstDaysSince(c.created_at, nowMs);
     const isNew = daysSince === null && sinceCreated !== null && sinceCreated <= NEW_CUSTOMER_DAYS;
@@ -124,7 +146,7 @@ export function selectAutoSearchTargets(
     picked.push({
       id: String(c.id),
       reason,
-      rpUpdateDays: rpUpdateDaysFor(c.last_property_sent_at, nowMs),
+      rpUpdateDays: rpUpdateDaysFor(touchedAt, nowMs),
       priority: priorityOf(c, reason),
     });
   }
