@@ -29,6 +29,8 @@ import { stripNonNameChars, isPlausiblePersonName } from "@/app/lib/validate-rep
 import { fixRecommendClosing, buildRecommendClosingNote } from "@/app/lib/recommend-closing";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（aix/action と同じ物）
 import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
+// 2026-09-18 竹内「テンプレートよくわからん文生成される」: ブレインの判断の整形と渡し方を返信生成と揃える
+import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/brain-strategy-note";
 // AIX-META（suggested_aix_meta）の型は brain-core を単一ソースとして参照（type-only importのためランタイム依存なし）
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
 
@@ -1345,61 +1347,22 @@ export async function POST(req: NextRequest) {
     .map((p) => typeof p === "string" ? p : `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)
     .filter((s) => s.trim().length > 0);
 
-  const brainMetaSection = brainMeta
-    ? `━━━━━━━━━━━━━━━━━━━━\n【🧠 Brain戦略 — 生成の方向性】\n━━━━━━━━━━━━━━━━━━━━\n` +
-      (isStaleMeta
-        ? `⚠️ この戦略は最新の顧客メッセージ到着前の分析。会話履歴と矛盾する場合は会話履歴を優先すること\n`
-        : "") +
-      (actionType && brainMeta.action && brainMeta.action !== actionType
-        ? `⚠️ Brainは別アクション（${AIX_BUTTON_LABELS[brainMeta.action] ?? brainMeta.action}）推奨時点の戦略。今回のボタン種別（${actionLabel}）と矛盾する指示は無視すること\n`
-        : "") +
-      `成約戦略: ${brainMeta.closing_strategy || "-"}\n` +
-      (brainMeta.winning_pattern
-        ? `・この顧客の成約に効く行動パターン: ${brainMeta.winning_pattern}\n  → 今回のメッセージにこのパターンを応用すること\n`
-        : "") +
-      (brainMeta.human_type_label
-        ? `・顧客タイプ: ${brainMeta.human_type_label}\n`
-        : "") +
-      `返信方向: ${brainMeta.reply_direction || "-"}\n` +
-      `チェックポイント: ${brainMeta.checkpoint_stage || "-"}\n` +
-      (brainMeta.reason ? `Brainの判断理由: ${brainMeta.reason}\n` : "") +
-      (brainMeta.template_hint ? `Brainのテンプレヒント（推奨カテゴリ）: ${brainMeta.template_hint}\n` : "") +
-      (brainMeta.customer_emotion ? `顧客感情: ${brainMeta.customer_emotion}\n` : "") +
-      (brainMeta.recommended_tone ? `推奨トーン: ${brainMeta.recommended_tone}\n` : "") +
-      (brainMeta.purchase_signal_level
-        ? `購買シグナル強度: ${brainMeta.purchase_signal_level}${SIGNAL_CTA_GUIDES[brainMeta.purchase_signal_level] ? `（${SIGNAL_CTA_GUIDES[brainMeta.purchase_signal_level]}）` : ""}\n`
-        : "") +
-      // M4: 押す／待つの局面軸。wait のときは購買シグナルによるCTA強化を打ち消す
-      (brainMeta.engagement_stance
-        ? `局面スタンス: ${brainMeta.engagement_stance}${brainMeta.engagement_stance === "wait" ? "（今は押してはいけない局面 — 申込・内覧の強いCTAは入れず、不安解消と情報提供にとどめる）" : "（押してよい局面 — 次の一歩を明確に促す）"}\n`
-        : "") +
-      (brainMeta.current_property ? `注目物件: ${brainMeta.current_property}\n` : "") +
-      (brainMeta.latent_intent ? `潜在動機（裏の不安）: ${brainMeta.latent_intent}\n  → この動機・不安を解消する訴求を最低1つ本文に含めること（例: 審査落ち不安→審査通りやすいお部屋と伝える / 費用不安→初期費用の安さを強調）\n` : "") +
-      (brainMeta.future_timeline ? `入居希望タイムライン: ${brainMeta.future_timeline}\n` : "") +
-      (brainMeta.key_topics?.length
-        ? `必ず含める主要トピック: ${brainMeta.key_topics.join("・")}\n`
-        : "") +
-      (brainMeta.repeated_concern
-        ? `繰り返し出ている懸念（橋渡し文で必ず拾う）: ${brainMeta.repeated_concern}\n`
-        : "") +
-      (brainMeta.urgency_appropriate === false
-        ? `緊急・煽り表現（「早い者勝ち」「お早めに」等）は使用禁止（この会話では不適切と判定済み）\n`
-        : "") +
-      (brainMeta.customer_questions?.length
-        ? `お客様が質問していること（橋渡し文で拾う）:\n${brainMeta.customer_questions.map(q => `  ・${q}`).join("\n")}\n`
-        : "") +
-      (brainMeta.avoid_topics?.length
-        ? `禁止話題（絶対に触れない）: ${brainMeta.avoid_topics.join("・")}\n`
-        : "") +
-      (brainMeta.last_aix_history && (Array.isArray(brainMeta.last_aix_history) ? brainMeta.last_aix_history.length > 0 : brainMeta.last_aix_history.length > 0)
-        ? `直前のAIX履歴: ${Array.isArray(brainMeta.last_aix_history) ? brainMeta.last_aix_history.join(" → ") : brainMeta.last_aix_history}\n`
-        : "") +
-      (ngPropLabels.length
-        ? `再提案禁止物件（既に送付済み・NG — 絶対に再度オススメしない）: ${ngPropLabels.join("、")}\n`
-        : "") +
-      `※Brain戦略の各項目（行動パターン・潜在動機等）は本文中でそのままラベル名を転記しない。訴求の判断根拠として使い、物件特徴と結びつけた言い方にする。\n` +
-      "\n"
-    : "";
+  // 2026-09-18 竹内「テンプレートよくわからん文生成される」:
+  //   旧実装は同じ brainMeta を**生で・「必ず入れろ」と強制**して渡していた（返信生成にある安全装置が1つも無かった）。
+  //   ・古い判断でも鮮度従属フィールドをそのまま注入 ・repeated_concern は「必ず拾う」
+  //   ・latent_intent は「最低1つ本文に含めること」 ・winning_pattern（＝スタッフの行動計画）を生で「応用しろ」
+  //   さらに repeated_concern は brain-core が20字で機械的に切っており、実データの20字ちょうど5件は全部
+  //   途中で切れていた（「契約書類・手続きの確認（引き落とし口座書」）。それを「必ず拾え」と渡していた。
+  //   → 整形と渡し方を brain-strategy-note.ts に1本化し、返信生成と同じ扱いに揃える（四者同名）
+  const brainMetaSection = buildBrainStrategyNote(brainMeta, {
+    fresh: !isStaleMeta,
+    otherActionLabel: actionType && brainMeta?.action && brainMeta.action !== actionType
+      ? (AIX_BUTTON_LABELS[brainMeta.action] ?? brainMeta.action)
+      : null,
+    actionLabel,
+    ngPropertyLabels: ngPropLabels,
+    signalGuides: SIGNAL_CTA_GUIDES,
+  });
 
   // preferences が string の場合は配列化、null/undefined の場合は空配列
   // （string を配列スプレッドすると1文字ずつ分解され「広 / め / ・ / 綺 / 麗」になるバグ防止 — ragQuery側と同処理）
@@ -1664,7 +1627,7 @@ export async function POST(req: NextRequest) {
       ` rag_wp=${winningSection ? "hit" : "miss"} rag_kn=${knowledgeSection ? "hit" : "miss"}` +
       ` rag_ex=${examplesSection ? "hit" : "miss"} phrases=${phraseList.length}` +
       ` principles=${topPrinciples.length} loss=${lossPatterns.length} dbRules=${dbRulesGeneric ? "ok" : "none"} dbRulesAction=${dbRulesAction ? "ok" : "none"}` +
-      ` brainMeta=${brainMeta ? "ok" : "none"} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}` +
+      ` ${describeBrainStrategyNote(brainMeta, { fresh: !isStaleMeta })} brainAction=${brainMeta?.action || "-"} ragQueryLen=${ragQueryLength}` +
       ` actionBucket=${actionBucketCategory ? `${actionBucketCategory}:${actionBucketRows.length}` : "-"}` +
       ` aix_ex=${unifiedAixExCount} unified_ex=${unifiedExCount} aixVec=${aixVecHitCount} starSeed=${aixStarSeedCount}` +
       ` knUsedIds=${knowledgeUsedIds.length}` +
@@ -1679,6 +1642,37 @@ export async function POST(req: NextRequest) {
 
     // M1: ナレッジ使用テレメトリ（レスポンス返却後に fire-and-forget — 生成成功時のみカウント）
     incrementKnowledgeUsage(knowledgeUsedIds);
+
+    // 2026-09-18 竹内「テンプレートよくわからん文生成される」:
+    //   テンプレート生成は **aix_generate_log に1行も残していなかった**（AIX 本体 aix/action は残している）。
+    //   そのため「何が生成されたか」を後から追えず、週次の学習も原因の調査もできなかった
+    //   （設計知見「未対応の分岐は静かにデータを消す — その形が DB に何件あるかで見つける」）。
+    //   status は 'generated' にして、既存の used/discarded の集計（aix-weekly-learning・morning-report）を汚さない。
+    //   材料（ブレインの鮮度・訴求シナリオ・物件の状況）も残して、後から原因を1行で追えるようにする。
+    if (conversationId) {
+      after(async () => {
+        try {
+          await supabase.from("aix_generate_log").insert({
+            action_type: actionType ?? actionCategory ?? null,
+            conversation_id: conversationId,
+            status: "generated",
+            generated_text: text.slice(0, 2000),
+            conditions_snapshot: {
+              source: "aix-template-generate",
+              brain: describeBrainStrategyNote(brainMeta, { fresh: !isStaleMeta }),
+              brain_action: brainMeta?.action ?? null,
+              scenario: recommendationScenario ?? null,
+              pickup_type: pickupType ?? null,
+              property_state: describePropertySendState(recommendState),
+              action_category: actionCategory ?? null,
+              conversation_state: conversationState ?? null,
+            },
+          });
+        } catch (e) {
+          console.error("[aix-template-generate] aix_generate_log insert failed:", e);
+        }
+      });
+    }
 
     return NextResponse.json({ ok: true, text });
   } catch (err) {

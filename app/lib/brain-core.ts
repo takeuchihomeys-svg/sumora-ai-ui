@@ -30,6 +30,8 @@ import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing, moveOutViewingReleased } from "@/app/lib/move-out-context";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）は1つの型・1つの関数に集約（AIX / テンプレート / 返信生成が同じ物を読む）
 import { resolveBrainPropertyState } from "@/app/lib/property-send-state";
+// 2026-09-18 ブレインが保存する短い語は「文の途中で切らない」（切れた語が AIX の指示に流れ込んでいた）
+import { truncateAtBoundary } from "@/app/lib/brain-strategy-note";
 import { propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { viewingReportBlockForBrain } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
@@ -2710,9 +2712,12 @@ ${history}`;
         .map((q) => q.trim().slice(0, 40))
     )).slice(0, 5);
 
-    // repeated_concern: 20字上限
-    const repeatedConcern = typeof parsed.repeated_concern === "string" && parsed.repeated_concern.trim()
-      ? parsed.repeated_concern.trim().slice(0, 20)
+    // repeated_concern: 20字上限。2026-09-18 竹内「テンプレートよくわからん文生成される」:
+    //   旧実装は slice(0,20) で**文の途中で機械的に切って**おり、本番 DB の20字ちょうど5件は全部途中で切れていた
+    //   （「契約書類・手続きの確認（引き落とし口座書」「在籍証明が用意できない（審査書類不備の不」）。
+    //   それを AIX テンプレートが「橋渡し文で必ず拾う」と渡していた。区切りで切る（全体分析側の str(...,60) と同じ扱い）
+    const repeatedConcern = typeof parsed.repeated_concern === "string"
+      ? truncateAtBoundary(parsed.repeated_concern, 20)
       : null;
 
     // 2026-09-09 Fable5 往復文脈: customer_concern（topic は許可リスト・object は40字上限。不完全なら null フェイルクローズ）
@@ -3349,7 +3354,8 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
     winning_pattern: str(p.winning_pattern, 120) ?? prev.winning_pattern ?? null,
     next_steps: Array.isArray(p.next_steps) ? (p.next_steps as unknown[]).filter((x): x is string => typeof x === "string" && !!x.trim()).slice(0, 3) : (prev.next_steps ?? null),
     human_type_label: topHumanType ?? prev.human_type_label ?? null,
-    repeated_concern: str(p.repeated_concern, 60),
+    // 2026-09-18: 増分分析（20字）と全体分析（60字）で上限が食い違っていた。どちらも区切りで切る形に揃える
+    repeated_concern: truncateAtBoundary(str(p.repeated_concern, 60), 60),
     future_timeline: str(p.future_timeline, 60),
     checkpoint_stage: typeof p.checkpoint_stage === "string" && STAGES.includes(p.checkpoint_stage) ? p.checkpoint_stage : (prev.checkpoint_stage ?? null),
     // 蓄積はリセットしない（設計知見 ae0b17a2）。下げるのは3回に1回のゼロからの作り直しだけ
