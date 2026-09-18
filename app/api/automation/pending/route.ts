@@ -36,13 +36,16 @@ export async function GET(req: NextRequest) {
   // 2026-09-12 竹内方針「AIXモード」: AIX 由来（payload.source="aix"）の自動検索コマンドは、
   //   拡張の AIX ボタンを ON にしている PC（?aix=1）だけに渡す。OFF の PC には渡さない（pending のまま残る）。
   //   どの PC も AIX モードにしないまま 3時間経ったものは error で閉じる（古い指示で後から検索しない）。
+  //   2026-09-19 竹内「拡張ツールAIXモードにしている場合、毎日11:00に…17:00に…」:
+  //   時刻起動の自動検索（payload.source="auto_schedule"・/api/cron/auto-property-search が積む）も同じ扱いにする。
+  //   AIX モードの PC だけが実行し、誰も AIX モードでなければ3時間で閉じる（古い指示で後から検索しない）。
   const aixMode = req.nextUrl.searchParams.get("aix") === "1";
   const aixExpireBefore = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
   const { error: aixExpErr } = await supabase
     .from("automation_commands")
     .update({ status: "error", error_message: "AIXモードのPCが3時間なかったため未実行で終了", completed_at: new Date().toISOString() })
     .eq("status", "pending")
-    .eq("payload->>source", "aix")
+    .in("payload->>source", ["aix", "auto_schedule"])
     .lt("created_at", aixExpireBefore);
   if (aixExpErr) console.warn("[automation/pending] aix expire error:", aixExpErr.message);
 
@@ -50,7 +53,11 @@ export async function GET(req: NextRequest) {
     .from("automation_commands")
     .select("*")
     .eq("status", "pending");
-  if (!aixMode) pendingQuery = pendingQuery.or("payload->>source.is.null,payload->>source.neq.aix");
+  if (!aixMode) {
+    pendingQuery = pendingQuery.or(
+      "payload->>source.is.null,and(payload->>source.neq.aix,payload->>source.neq.auto_schedule)"
+    );
+  }
   const { data: commands, error: selErr } = await pendingQuery
     .order("created_at", { ascending: true })
     .limit(1);

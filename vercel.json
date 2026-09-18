@@ -17,6 +17,14 @@
       "schedule": "0 1 * * *"
     },
     {
+      "path": "/api/cron/auto-property-search?mode=am",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/auto-property-search?mode=pm",
+      "schedule": "0 8 * * *"
+    },
+    {
       "path": "/api/cron/daily-brief?mode=evening",
       "schedule": "0 9 * * *"
     },

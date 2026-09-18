@@ -1090,6 +1090,43 @@
       }
     }
 
+    {
+      // 並び順（2026-09-19 竹内「17:00の便は AD順ではなくて更新順とする」）
+      // 自動便だけ cond.sort_order（"ad" | "updated"）が入る。手動検索では未指定＝今の並びのまま。
+      //
+      // ⚠ リアプロの並べ替えの DOM は**実機で未確認**。設計知見「実機未確認の DOM には、それだと確かめてから入れる。
+      //   確かめられなければ入れずに警告だけ出す」に従い、名前・ラベルで見つかった時だけ設定する。
+      //   見つからない時はコンソールに候補を出す（竹内さんの画面で1回見て、名前が分かれば SORT_SELECTORS に足す）。
+      if (cond.sort_order) {
+        var SORT_SELECTORS = ['select[name="sort"]', 'select[name="order"]', 'select[name="sort_order"]', 'select[name="disp_sort"]'];
+        var sortEl = null;
+        for (var _si = 0; _si < SORT_SELECTORS.length; _si++) {
+          sortEl = document.querySelector(SORT_SELECTORS[_si]);
+          if (sortEl) break;
+        }
+        if (sortEl) {
+          // 「更新」「新着」を含む選択肢＝更新順、「AD」「広告」を含む選択肢＝AD順
+          var wantRe = cond.sort_order === "updated" ? /更新|新着|登録/ : /AD|ＡＤ|広告/;
+          var hit = null;
+          for (var _oi = 0; _oi < sortEl.options.length; _oi++) {
+            if (wantRe.test(sortEl.options[_oi].textContent || "")) { hit = sortEl.options[_oi]; break; }
+          }
+          if (hit) {
+            queueSelVal(sortEl.getAttribute("name"), hit.value);
+            console.log("[AX] 並び順セット:", cond.sort_order, "→", (hit.textContent || "").trim());
+          } else {
+            console.warn("[AX] 並び順の選択肢が見つからない（今の並びのまま）:", Array.prototype.map.call(sortEl.options, function (o) { return (o.textContent || "").trim(); }).join(" / "));
+          }
+        } else {
+          // 実機で名前を確かめるための手がかりを出す（推測で別の select を触らない）
+          var _allSel = Array.prototype.map.call(document.querySelectorAll("select"), function (s) {
+            return (s.getAttribute("name") || "(name無し)") + "=[" + Array.prototype.map.call(s.options, function (o) { return (o.textContent || "").trim(); }).slice(0, 6).join("|") + "]";
+          });
+          console.warn("[AX] 並び順の select が見つからない（今の並びのまま・要確認）。画面の select 一覧:", _allSel.join("  "));
+        }
+      }
+    }
+
     // ── T=150ms: 所在地絞り込み（直接チェック — モーダルを使わない場合のみ）─────
     // detail_ward がある場合はモーダル経由で選択するのでスキップ
     // 駅・沿線指定がある場合は所在地をセットしない（リアプロはAND条件になり検索結果が出なくなる）

@@ -991,12 +991,15 @@
   // ── 全ページ自動送信: 共通の次ページ遷移 or 完了処理 ─────────────────────
   // autoSendOnePage の onDone コールバックと start() 内の再開処理で共通利用する。
   function tryNext(state) {
-    // ヒット多すぎ上限: 3ページまで送ったら4ページ目には進まず完了扱い（一括検索では次顧客へ）
-    if (state.currentPage >= 3 && hasNextPageBtn()) {
+    // ヒット多すぎ上限: 既定3ページまで送ったら4ページ目には進まず完了扱い（一括検索では次顧客へ）
+    // 2026-09-19 竹内「17:00の便は項目は１ページだけで本来のように３ページ迄いかなくて大丈夫」:
+    //   自動便は conditions.max_pages（サーバーの payload → background → conditions）で上限を変える
+    var _maxPages = (state.customerConditions && Number(state.customerConditions.max_pages)) || 3;
+    if (state.currentPage >= _maxPages && hasNextPageBtn()) {
       clearAutoSendState();
       var countElLimit = document.getElementById("axlx-count");
-      if (countElLimit) countElLimit.textContent = "3P上限 → 次へ";
-      console.log("[AXLX bulk-dl] 3ページ上限到達 → " + (state.sentCount || 0) + "件送信。次顧客へ切替。");
+      if (countElLimit) countElLimit.textContent = _maxPages + "P上限 → 次へ";
+      console.log("[AXLX bulk-dl] " + _maxPages + "ページ上限到達 → " + (state.sentCount || 0) + "件送信。次顧客へ切替。");
       try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: state.sentCount || 0 }, function() { void chrome.runtime.lastError; }); } catch (_) {}
       return;
     }

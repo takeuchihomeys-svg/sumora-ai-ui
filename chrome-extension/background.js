@@ -2405,6 +2405,13 @@ async function _runBatchSearch(command) {
   var sites = command.sites || ["reins"];
   // 修正5: is_wide をキュー経路（trigger API → payload.is_wide）から伝搬
   var batchIsWide = !!(command.is_wide || (command.payload && command.payload.is_wide));
+  // 2026-09-19 竹内「毎日11:00に…／17:00に今日出た新規物件を…（更新順・1ページだけ）」:
+  //   時刻起動の自動便（/api/cron/auto-property-search が積む payload.source="auto_schedule"）だけ、
+  //   更新日・並び順・ページ数を payload の指定で上書きする。手動の一括検索は今までどおり。
+  var autoSched = (command.payload && command.payload.source === "auto_schedule") ? command.payload : null;
+  if (autoSched) {
+    console.log("[batch] 自動便 mode=" + autoSched.mode + " 更新日=" + autoSched.rp_update_days + " 並び=" + autoSched.sort + " ページ上限=" + autoSched.max_pages);
+  }
   await _updateBatchCommand(command.id, {
     status: "running",
     total_customers: targets.length,
@@ -2458,7 +2465,7 @@ async function _runBatchSearch(command) {
             ? _createFillDoneWaiter(batchSite, String(effectiveCustomer.id), _fillDoneTimeoutMs(batchSite))
             : null;
           // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
-          var resolvedBatchConds = await _batchAutofill(effectiveCustomer, batchSite, batchIsWide);
+          var resolvedBatchConds = await _batchAutofill(effectiveCustomer, batchSite, batchIsWide, autoSched);
           var _passCount = 0;
           if (batchSite === "itandi") {
             // itandi の場合: リアプロと同じく fill-done + batch-customer-done を待つ形に統一
@@ -2467,7 +2474,7 @@ async function _runBatchSearch(command) {
               fillDoneP,
               String(effectiveCustomer.id),
               effectiveCustomer.customer_name || null,
-              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide),
+              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, autoSched),
               "itandi",
               _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
             );
@@ -2478,7 +2485,7 @@ async function _runBatchSearch(command) {
               fillDoneP,
               String(effectiveCustomer.id),
               effectiveCustomer.customer_name || null,
-              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide),
+              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, autoSched),
               null,         // siteLabel → "リアプロ" (default)
               _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
             );
@@ -2561,7 +2568,7 @@ function _recordBulkSearch(customer, site, isWide) {
     }, function (e) { console.warn("[manual-bulk-search] 検索日の記録に失敗:", e && e.message); });
 }
 
-async function _batchAutofill(customer, site, isWide) {
+async function _batchAutofill(customer, site, isWide, autoSched) {
   var siteUrlPrefixes = {
     reins: "https://system.reins.jp",
     itandi: "https://itandibb.com",
@@ -2584,7 +2591,7 @@ async function _batchAutofill(customer, site, isWide) {
     await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
   }
 
-  var conds = _buildBatchConditions(customer, isWide);
+  var conds = _buildBatchConditions(customer, isWide, autoSched);
 
   // ── itandi 専用: 路線名・エリア名を itandi-page-script.js が使うキー形式に変換 ──
   // itandi-page-script.js は cond.itandi_lines と cond.ward_names を参照する。
@@ -2739,7 +2746,7 @@ async function _batchAutofill(customer, site, isWide) {
   return conds;
 }
 
-function _buildBatchConditions(c, isWide) {
+function _buildBatchConditions(c, isWide, autoSched) {
   // desired_area (文字列) → areas (配列) 変換
   var areaArr = [];
   if (c.areas && c.areas.length) {
@@ -2759,7 +2766,12 @@ function _buildBatchConditions(c, isWide) {
     lines: c.lines || [],
     stations: c.stations || [],
     prefecture: c.prefecture || null,
-    city: c.city || null
+    city: c.city || null,
+    // 2026-09-19 竹内: 自動便だけ更新日・並び順・ページ数を指定する（手動の一括検索は null＝今までどおり）
+    //   更新日は page-script.js が select[name="update_date"] に入れる（個別検索と同じ欄）
+    rp_update_days: autoSched ? (autoSched.rp_update_days || null) : null,
+    sort_order: autoSched ? (autoSched.sort || null) : null,
+    max_pages: autoSched ? (autoSched.max_pages || null) : null
   };
 }
 
