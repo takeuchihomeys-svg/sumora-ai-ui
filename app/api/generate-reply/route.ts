@@ -132,6 +132,8 @@ import {
 } from "@/app/lib/reply-context";
 import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { ensureWaitingCommitment, contactDateLabel } from "@/app/lib/waiting-commitment";
+// 2026-09-18 竹内（ゆーた 事例）: 「10月中」は 10/31 まで。幅のある入居時期を前倒しして急かさない
+import { resolveApplyDeadlineNote } from "@/app/lib/move-in-deadline";
 // 2026-09-12 竹内（YUYA 事例）: お客様が送った物件の呼び方（生成の指示と後処理が同じ判定）
 import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
@@ -4087,11 +4089,11 @@ export async function POST(req: NextRequest) {
         );
       } else if (signalLevel === "peak") {
         lines.push(
-          `- 🔥 購買シグナル: PEAK（申込直前最強シグナル）— 入居日の具体日付確定・競合申込者の自発確認・3件以上の連続具体質問・申込許可伺い（「申し込んでもいいですか？」「抑えるだけ抑えててもいいんですか？」）・物件名指し確定（「ここがいいです」「○○に決めます」）・金額の復唱（「○○円ですか😭」）・手続き/審査プロセスの具体質問（保証会社・支払い方法・流れ）のいずれかを検出。今回の返信で完全クロージングフローを発動すること: ①申込期限を明示（顧客の入居希望日から審査2週間＋契約手続きを逆算した事実ベースの期限。例: 「審査・契約手続きに最短でも2週間程かかりますので、○/○ご入居希望の場合は今週中にお申込みいただく必要がございます！！」／入居希望日が不明なら期限文は書かない・日付の創作は禁止）②申込書類リストをセットで案内 ③WE DO宣言でお部屋確保を約束。【希少性煽り禁止】「埋まってしまいます」「人気物件です」「残り1部屋」「一番手確保」等の煽りは成約データ152件で出現0件＝効果なしのため使わない。urgency_appropriate フラグに関係なく発動（PERM-CLOSING-MOVEIN-DATE-001 と同等のクロージング強度）。※申込許可伺い・物件名指し確定を検出した場合は理由説明・追加提案を一切挟まず「かしこまりました！！○○号室お申込みさせていただきます😊！！」の確定宣言＋申込フォーマット＋本人確認書類（表裏）依頼を即返すこと`
+          `- 🔥 購買シグナル: PEAK（申込直前最強シグナル）— 入居日の具体日付確定・競合申込者の自発確認・3件以上の連続具体質問・申込許可伺い（「申し込んでもいいですか？」「抑えるだけ抑えててもいいんですか？」）・物件名指し確定（「ここがいいです」「○○に決めます」）・金額の復唱（「○○円ですか😭」）・手続き/審査プロセスの具体質問（保証会社・支払い方法・流れ）のいずれかを検出。今回の返信で完全クロージングフローを発動すること: ①申込の目安日を明示（**材料の【⚡ 申込の目安日】の行がある時だけ**・その行の日付をそのまま使う。材料が無ければ期限文は書かない。自分で逆算したり「今週中」「至急」と書いたりしない＝2026-09-18 竹内・ゆーた事例「10月中」を「今週中」と送ってしまった）②申込書類リストをセットで案内 ③WE DO宣言でお部屋確保を約束。【希少性煽り禁止】「埋まってしまいます」「人気物件です」「残り1部屋」「一番手確保」等の煽りは成約データ152件で出現0件＝効果なしのため使わない。urgency_appropriate フラグに関係なく発動（PERM-CLOSING-MOVEIN-DATE-001 と同等のクロージング強度）。※申込許可伺い・物件名指し確定を検出した場合は理由説明・追加提案を一切挟まず「かしこまりました！！○○号室お申込みさせていただきます😊！！」の確定宣言＋申込フォーマット＋本人確認書類（表裏）依頼を即返すこと`
         );
       } else if (signalLevel === "strong") {
         lines.push(
-          `- 🌡️ 購買シグナル: STRONG（申込前の高熱シグナル）— 設備・入居日・費用等の異カテゴリ確認が2件以上重なっている。前の質問に誠実に回答した上で、CTAを返信末尾に入れること（WE DO宣言と重複しないよう統合すること）。【希少性煽り禁止】「埋まってしまいます」「人気物件です」「残り1部屋」「一番手確保」等の煽り表現は成約データ152件で出現0件＝効果なし。代わりに顧客の入居希望日から逆算した事実ベースの期限を1文添えること（例: 「審査・契約手続きに最短でも2週間程かかりますので、○/○ご入居希望の場合は今週中にお申込みいただく必要がございます！！」）。入居希望日が不明な場合は逆算期限を書かず、期限文なしのCTAのみにすること（日付の創作は禁止）`
+          `- 🌡️ 購買シグナル: STRONG（申込前の高熱シグナル）— 設備・入居日・費用等の異カテゴリ確認が2件以上重なっている。前の質問に誠実に回答した上で、CTAを返信末尾に入れること（WE DO宣言と重複しないよう統合すること）。【希少性煽り禁止】「埋まってしまいます」「人気物件です」「残り1部屋」「一番手確保」等の煽り表現は成約データ152件で出現0件＝効果なし。代わりに**材料の【⚡ 申込の目安日】の行がある時だけ**その日付をそのまま使って1文添えること。材料が無い場合は期限文なしのCTAのみにする（自分で逆算しない・「今週中」「至急」と書かない・日付の創作は禁止）`
         );
       } else if (!brainLocalFresh && ["peak", "strong", "soft"].includes(brainMeta.purchase_signal_level ?? "")) {
         // 購買シグナルは会話全体で積み上がる値（設計知見 ae0b17a2: prevMetaText で引き継ぎ・リセット禁止）なので、古い判断でも熱量の参考としては残す。
@@ -4221,20 +4223,17 @@ export async function POST(req: NextRequest) {
       if (psp?.move_in_time && !brainMeta?.future_timeline) {
         lines.push(`- 📅 入居希望時期（brain抽出）: ${psp.move_in_time} — 提案・約束をこの時期に整合させること`);
       }
-      // 入居希望日が30日以内なら申込期限を決定論的に明示（成約パターン: 入居タイムライン緊急性付加）
+      // 2026-09-18 竹内（ゆーた 事例）「10月中の入居って10月末までなので、こんなに急がなくても大丈夫。
+      //   今まだ9月なのに、なぜかここの10月の部分を間違えて捉えてしまっている」:
+      //   旧は「日の指定が無い言い方＝その月の1日」として扱い（「10月中」→10/1・「9月」→9/1・「9月末」→9/28）、
+      //   さらに残り日数に関わらず文面が「今週中」で固定だった。そのまま送信され、お客様を無用に急かした。
+      //   →「一番遅い入居日」から申込の目安日を出し（move-in-deadline.ts）、**本当に近い時だけ**触れる。
+      //     文面も「今週中」固定をやめ、計算した日付をそのまま渡す（スタッフ実送信の「9/20日辺りでのお申込み」の形）。
       if (psp?.move_in_time && brainMeta?.urgency_appropriate !== false) {
-        const { y: curYear, m: curMonth, d: curDay } = jstParts();
-        const mText = psp.move_in_time;
-        const mMonthMatch = mText.match(/(\d{1,2})月/);
-        if (mMonthMatch) {
-          const tMonth = parseInt(mMonthMatch[1], 10);
-          const mDayMatch = mText.match(/(\d{1,2})日/);
-          const tDay = mDayMatch ? parseInt(mDayMatch[1], 10) : (mText.includes("末") ? 28 : 1);
-          const tYear = (tMonth < curMonth || (tMonth === curMonth && tDay < curDay)) ? curYear + 1 : curYear;
-          const daysUntil = Math.floor((Date.UTC(tYear, tMonth - 1, tDay) - Date.UTC(curYear, curMonth - 1, curDay)) / 86_400_000);
-          if (daysUntil >= 0 && daysUntil <= 30) {
-            lines.push(`- ⚡ 申込期限明示（必須・成約パターン）: 入居希望日 ${mText} から逆算すると今週中のお申込みが必要です。「${mText}ご入居希望の場合、今週中にお申込みいただく必要がございます！！審査・契約手続きに最短でも2週間程はかかりますので〜」の形で返信末尾に期限を必ず1文で明示すること`);
-          }
+        const dl = resolveApplyDeadlineNote(psp.move_in_time, new Date().toISOString());
+        if (dl) {
+          lines.push(`- ⚡ 申込の目安日: 入居希望「${psp.move_in_time}」（一番遅くて${dl.window.latest.m}月${dl.window.latest.d}日）から逆算すると、お申込みの目安は${dl.applyByLabel}ごろ（審査・契約手続きに最短でも2週間程かかるため）。触れる場合は「${psp.move_in_time}ご入居ですと${dl.applyByLabel}ごろまでにお申込みいただく形となります！！」の1文だけにし、これより前倒しした期限・「今週中」「至急」等の煽りは書かない`);
+          console.log(JSON.stringify({ tag: "apply-deadline:note", conversationId, moveIn: psp.move_in_time, latest: `${dl.window.latest.m}/${dl.window.latest.d}`, applyBy: dl.applyByLabel, daysUntilApply: dl.daysUntilApply }));
         }
       }
       if (psp?.search_urgency) {
