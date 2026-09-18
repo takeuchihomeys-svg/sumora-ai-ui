@@ -81,19 +81,36 @@ export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string 
 
 /**
  * 切り替えの単位になる名前を決める。
- *   ・x-sumora-llm-action があればそれ（AIX の種類）
- *   ・無ければ system の先頭で見分ける:
- *       brain          … 「あなたはスモラAI。…次にすべき1アクション」「会話全体の戦略」（ブレイン＝判断）
- *       reply_generate … 「【指示の優先順位…」（返信文の生成）
- *       classify       … それ以外（分類・小さい判定）
+ *   ・x-sumora-llm-action があればそれ（AIX の種類。AIX は名札を持っている）
+ *   ・無ければ system の先頭で見分ける（返信生成とブレインは名札を持たないため）
+ *
  * 2026-09-19 竹内の方針: 返信文 → 分類 → ブレイン の順に替える。名前を分けないと順番に替えられない。
+ *
+ * ⚠ 見分けの語は**実際のプロンプトの文面**に依存する。文面を変えると判定が外れて
+ *   「気づかないうちに対象が変わる」（設計知見「静かに壊れる」）。
+ *   → 語を定数にして、テストが実ファイル（line-reply-prompts.ts / brain-core.ts / route.ts）と
+ *     照合する。プロンプトの冒頭を変えたらテストが落ちる。
+ *
+ * 2026-09-19 実データで見つけた誤判定: AIX テンプレート生成（/api/aix-template-generate）も
+ *   「【指示の優先順位…」で始まるので、「指示の優先順位」だけで見ると**返信文と混ざる**。
+ *   返信文の方は続きが「ハードゲート」、テンプレ生成は「ハルシネーション絶対禁止」なのでそこで分ける。
  */
+export const ROUTE_MARKERS = {
+  /** 返信生成（/api/generate-reply）の system 先頭。priorityOrderNote の1行目 */
+  reply_generate: "ハードゲート",
+  /** ブレイン（次の1アクション／会話全体の戦略） */
+  brain: ["スモラAI", "会話全体の戦略"],
+  /** AIX テンプレート生成（返信文とは別物・当面は替えない） */
+  aix_template: "ハルシネーション絶対禁止",
+} as const;
+
 export function resolveRouteName(action: string | null, systemHead: string | null): string | null {
   if (action) return action;
-  const head = (systemHead ?? "").slice(0, 60);
+  const head = (systemHead ?? "").slice(0, 120);
   if (!head) return "classify";
-  if (head.includes("スモラAI") || head.includes("会話全体の戦略")) return "brain";
-  if (head.includes("指示の優先順位")) return "reply_generate";
+  if (ROUTE_MARKERS.brain.some((m) => head.includes(m))) return "brain";
+  if (head.includes(ROUTE_MARKERS.aix_template)) return "aix_template";
+  if (head.includes(ROUTE_MARKERS.reply_generate)) return "reply_generate";
   return "classify";
 }
 
