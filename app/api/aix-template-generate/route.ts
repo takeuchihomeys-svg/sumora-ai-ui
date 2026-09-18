@@ -259,6 +259,10 @@ type PropertySendFacts = {
   priorSingleSendCount: number;
   /** 直近の物件送付からの経過時間（時間）。送付実績なしは null */
   hoursSinceLastSend: number | null;
+  // 2026-09-18 竹内（𝒮 さん事例）: ブレインが知っている「この会話でお送りした**物件の件数**」。
+  //   上の priorSentPropertyCount は AIX の送付**回数**なので、まとめ送付1回で5件送っても 1 にしかならない。
+  //   比較の言い方（お送りした中でも）が使えるかは件数で決まるので、ブレインの件数があればそちらが正。
+  brainSentPropertyCount?: number | null;
 };
 
 // 「お送りした中でも」は“複数の中から選んだ”という事実の宣言。1週間以上前の送付を
@@ -272,7 +276,11 @@ const COMPARE_FRAME_STALE_HOURS = 24 * 7;
  *  - 1件送付（property_recommendation）だけの場合は2回以上でようやく「複数送った」と言える
  */
 function canUseCompareFrame(f: PropertySendFacts): boolean {
-  if (f.priorBulkSendCount === 0 && f.priorSingleSendCount < 2) return false;
+  // 2026-09-18: ブレインが物件の件数を知っていればそれで決める（実データ179件すべて2件以上送っている時）。
+  //   知らない時だけ AIX ログの種別から推定する（まとめ送付があれば複数・1件送付は2回以上）
+  if (typeof f.brainSentPropertyCount === "number") {
+    if (f.brainSentPropertyCount < 2) return false;
+  } else if (f.priorBulkSendCount === 0 && f.priorSingleSendCount < 2) return false;
   if (f.hoursSinceLastSend !== null && f.hoursSinceLastSend > COMPARE_FRAME_STALE_HOURS) return false;
   return true;
 }
@@ -285,7 +293,10 @@ function resolveRecommendationScenario(args: {
 }): RecommendationScenario | null {
   if (args.actionType !== "property_recommendation") return null;
   const f = args.facts;
-  const hasPrior = f.priorSentPropertyCount > 0;
+  // 送付実績の有無もブレインの件数が正（手打ちで送った物件は AIX ログに残らない）
+  const hasPrior = typeof f.brainSentPropertyCount === "number"
+    ? f.brainSentPropertyCount > 0
+    : f.priorSentPropertyCount > 0;
   // 比較フレームが使えないときの受け皿（送付実績があるなら「初回」も嘘になるため追加提案型へ）
   const nonCompareFallback: RecommendationScenario = hasPrior ? "followup_single" : "first";
   // ① フロントのピッカー選択が最優先（スタッフが明示的に選んだシナリオ）
@@ -867,21 +878,23 @@ export async function POST(req: NextRequest) {
   const hoursSinceLastSend = priorPropertyLogs.length > 0
     ? (Date.now() - new Date(priorPropertyLogs[0].created_at).getTime()) / 3600000
     : null;
-  const propertySendFacts: PropertySendFacts = {
-    priorSentPropertyCount,
-    priorBulkSendCount,
-    priorSingleSendCount,
-    hoursSinceLastSend,
-  };
   // 2026-09-18 竹内（𝒮 さん事例）「今の状況はブレインが分かっているんやから、それと AIX のところリンクさせて」:
-  //   締め（比較の言い方の可否・内覧誘導／申込誘導）はブレインの判断を1つの関数から読む＝AIX（aix/action）と同じ物。
-  //   ※上の priorSentPropertyCount は「AIX の送付**回数**」（シナリオ判定用）。ここで使うのは「送った**物件の件数**」で別物。
+  //   状況（送った物件の件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む＝AIX（aix/action）と同じ物。
+  //   ※上の priorSentPropertyCount は「AIX の送付**回数**」。ここで使うのは「送った**物件の件数**」で別物。
   //     まとめ送付1回で5件送っていても回数は1なので、回数で比較の言い方を落とすと事実と合わない。
   const recommendState = resolvePropertySendState({
     brainMeta,
     recentMessages: Array.isArray(recentMessages) ? recentMessages as Array<{ sender?: string | null; text?: string | null }> : [],
     fallbackSentCount: priorSentPropertyCount,
   });
+  const propertySendFacts: PropertySendFacts = {
+    priorSentPropertyCount,
+    priorBulkSendCount,
+    priorSingleSendCount,
+    hoursSinceLastSend,
+    // 訴求シナリオ（比較フレームが使えるか・送付実績があるか）もブレインの件数で決める
+    brainSentPropertyCount: recommendState.sentSource === "brain" ? recommendState.sentPropertyCount : null,
+  };
   // 直近の property_check_result の結果。ただし確認より後に物件送付AIXが2件以上ある場合は
   // 既に別の文脈へ進んでいるため無効化（古い「募集なし」で代替シナリオに誤爆しない）。
   // ※ 送付1件は許容: 代替フローでは「確認(募集なし)→代替物件AIX送信→橋渡し文生成」の順になるため
@@ -1433,6 +1446,7 @@ export async function POST(req: NextRequest) {
           pickupType ? `ピックアップ種別=${pickupType}` : "",
           effectiveCheckPattern ? `直前の物件確認結果=${CHECK_PATTERN_LABELS[effectiveCheckPattern] ?? effectiveCheckPattern}` : "",
           `今回より前にこの会話で物件を送付した回数=${priorSentPropertyCount}回（まとめ送付${priorBulkSendCount}回 / 1件送付${priorSingleSendCount}回）`,
+          recommendState.sentSource === "brain" ? `この会話でお送りした物件の件数=${recommendState.sentPropertyCount}件（ブレインの行動台帳）` : "",
           hoursSinceLastSend !== null ? `直近の物件送付から${Math.round(hoursSinceLastSend)}時間経過` : "",
           priorSentPropertyCount === 0
             ? "→ 今回が初めての物件送付。既送付を前提にした比較・絞り込み表現は事実と異なるため絶対禁止"
@@ -1657,6 +1671,7 @@ export async function POST(req: NextRequest) {
       ` scenario=${recommendationScenario ?? "-"} pickup=${pickupType ?? "-"}` +
       ` checkPat=${effectiveCheckPattern ?? "-"}${checkIsStale ? "(stale)" : ""}` +
       ` sentProps=${sentPropertyLogCount} priorProps=${priorSentPropertyCount}(bulk=${priorBulkSendCount},single=${priorSingleSendCount})${currentSendAlreadyLogged ? "(self-excluded)" : ""}` +
+      ` state=${describePropertySendState(recommendState)}` +
       ` lastSendH=${hoursSinceLastSend === null ? "-" : Math.round(hoursSinceLastSend)} compareOk=${recommendationScenario ? canUseCompareFrame(propertySendFacts) : "-"} frameRetry=${frameRetried ? "on" : "off"}` +
       ` signal=${brainMeta?.purchase_signal_level ?? "-"} stance=${brainMeta?.engagement_stance ?? "-"} ctaOverride=${signalCtaOverride ? "on" : "off"}` +
       ` name=${resolvedCustomerName ? "ok" : "none"} namePassed=${customerName ? "yes" : "no"} namePlaceholderFix=${nameFix.fixed ? "on" : "off"}`,
