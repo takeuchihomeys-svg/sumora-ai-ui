@@ -6605,7 +6605,12 @@ export default function Home() {
                       })()
                     }`}
                   >
-                    <div className="relative shrink-0">
+                    {/* 2026-09-19 竹内「自動返信に切り替えているお客さんは、このアカウントの下の部分に
+                        自動返信バッチつけてわかりやすいようにする」
+                        名前行はバッジで既に一杯（アカウント・要対応・🔥・必ず・出し中…）なので、アイコンの下に置く。
+                        色はヘッダーの自動ボタン（#06C755）と同じ＝画面のどこで見ても同じ意味 */}
+                    <div className="flex shrink-0 flex-col items-center gap-1">
+                    <div className="relative">
                       {conversation.profileImageUrl ? (
                         <img
                           src={conversation.profileImageUrl}
@@ -6634,6 +6639,15 @@ export default function Home() {
                           </svg>
                         </button>
                       )}
+                    </div>
+                    {autoSendIds.has(conversation.id) && (
+                      <span
+                        className="w-12 whitespace-nowrap rounded-full bg-[#06C755] text-center text-[8px] font-bold leading-[13px] text-white"
+                        title="自動返信オン（AIX以外・9:00〜21:00）"
+                      >
+                        自動返信
+                      </span>
+                    )}
                     </div>
 
                     <div className="relative min-w-0 flex-1 pr-10">
@@ -6901,7 +6915,8 @@ export default function Home() {
                       : "border-[#d1d7db] bg-white text-[#8696a0]"
                   }`}
                 >
-                  {autoSendSaving ? "..." : autoSendEnabled ? "🤖 自動" : "手動"}
+                  {/* 2026-09-19 竹内「自動返信のところ🤖の絵文字入っているの抜く」 */}
+                  {autoSendSaving ? "..." : autoSendEnabled ? "自動" : "手動"}
                 </button>
                 <div className="relative shrink-0">
                   <button

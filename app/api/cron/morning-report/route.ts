@@ -336,7 +336,8 @@ export async function GET(req: NextRequest) {
         ].filter(Boolean).join("・");
         return `  ・${label}${metrics ? `（${metrics}）` : ""}`;
       });
-      statsLines.push(`🤖 自動返信化候補:\n${lines.join("\n")}`);
+      // 2026-09-19 竹内「自動返信のところ🤖の絵文字入っているの抜く」
+      statsLines.push(`自動返信化候補:\n${lines.join("\n")}`);
     }
   } catch {
     // JSONパース失敗時はスキップ（レポート本体は送る）
