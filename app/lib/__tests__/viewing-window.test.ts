@@ -2,7 +2,7 @@
 // 2026-09-19 竹内（a🤫 事例）「退去予定日入れると、その退去予定日以降で内覧する形となるので、
 //   内覧可能日時は退去予定日以降のところから、順に空いている日付いれる形とする」
 // 実行: npx tsx app/lib/__tests__/viewing-window.test.ts（全 PASS で exit 0）
-import { viewableFromYmd, vacancyExtraYmds, isBeforeViewable, resolveVacancySlotEnabled } from "../viewing-window";
+import { viewableFromYmd, vacancyExtraYmds, isBeforeViewable, resolveVacancySlotEnabled, stripSlotLinesBeforeViewable } from "../viewing-window";
 import { viewableFromVacancyDate } from "../vacating-notice";
 
 let pass = 0, fail = 0;
@@ -88,6 +88,34 @@ console.log("── 解禁日以降が全部埋まっている時は1つも ON �
     { ymd: "2026-09-29", fullyBooked: true },
   ];
   t("全部 false", eq(resolveVacancySlotEnabled(days, "2026-09-28", 3), [false, false, false]));
+}
+
+console.log("── 出口: 生成文に紛れた「退去前の候補の行」を落とす（2026-09-19 会話を合わせる）");
+{
+  const draft = "かしこまりました！！\nジュネスニッコー1003号室\n9月27日退去予定のお部屋で9月28日以降でお部屋ご案内可能です！！\n\n直近ですと\n9/20(日) 13:00〜16:00\n9/28(月) 12:00〜14:00\n9/29(火) 15:00〜17:00\nご案内出来ます😊！！";
+  const r = stripSlotLinesBeforeViewable(draft, "2026-09-28");
+  t("★ 9/20 の行だけ消える", r.removed.length === 1 && r.removed[0].startsWith("9/20"), JSON.stringify(r.removed));
+  t("★ 解禁日以降の候補は残る", r.text.includes("9/28(月) 12:00〜14:00") && r.text.includes("9/29(火) 15:00〜17:00"));
+  t("★ 本文の日付（9月27日退去予定・9月28日以降）は触らない",
+    r.text.includes("9月27日退去予定のお部屋で9月28日以降でお部屋ご案内可能です！！"), r.text);
+  t("締めも残る", r.text.includes("ご案内出来ます😊！！"));
+}
+{
+  // 実データの表記ゆれ（6/28 yasuki「7/1日 11:00〜16:00」）
+  const draft = "6/30日退去予定のため7/1日以降でお部屋ご案内させていただきます！！\n\n直近ですと、\n6/29日 11:00〜16:00\n7/1日 11:00〜16:00\n7/2日 11:00〜12:00\nでしたらお部屋ご案内可能です！！";
+  const r = stripSlotLinesBeforeViewable(draft, "2026-07-01");
+  t("「6/29日 11:00〜16:00」の形も落ちる", r.removed.length === 1 && r.removed[0].startsWith("6/29"), JSON.stringify(r.removed));
+  t("7/1・7/2 は残る", r.text.includes("7/1日 11:00〜16:00") && r.text.includes("7/2日 11:00〜12:00"));
+}
+{
+  // 「7月1日（水）14:00〜17:00」（6/19 の形）
+  const draft = "はい！！\n6月30日退去予定のお部屋となりますので、7月1日以降にご内覧頂く形となります😊！！\n\n7月1日（水）14:00〜17:00\n7月2日（木）12:00〜15:00\nご案内出来ます！！";
+  const r = stripSlotLinesBeforeViewable(draft, "2026-07-01");
+  t("正しい候補は1行も落とさない（誤削除0）", r.removed.length === 0 && r.text === draft, JSON.stringify(r.removed));
+}
+{
+  t("解禁日が無ければ何もしない", stripSlotLinesBeforeViewable("9/20(日) 13:00〜16:00", null).removed.length === 0);
+  t("空文字でも落ちない", stripSlotLinesBeforeViewable("", "2026-09-28").text === "");
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`);

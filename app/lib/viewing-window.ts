@@ -40,6 +40,35 @@ export function vacancyExtraYmds(vacancyDateRaw: string, nowMs: number = Date.no
   return out;
 }
 
+/** 候補の行（「9/28(月) 12:00〜14:00」「7/1日 11:00〜16:00」）。日付＋時間だけの行を候補とみなす */
+const SLOT_LINE_RE = /^[\s・]*(\d{1,2})\s*[\/月]\s*(\d{1,2})\s*日?\s*(?:[（(][日月火水木金土][）)])?[\s、,]*\d{1,2}:\d{2}\s*[〜~\-]/;
+
+/**
+ * 生成文から「内覧できない日（退去前）の候補の行」を落とす。
+ * 2026-09-19 竹内「AIXの内覧調整のところ会話を合わせるボタンつくる」の出口。
+ * 落とすのは**日付＋時間だけの行**に限る（本文の中の日付には触らない＝誤削除を避ける）。
+ * 年は解禁日の年で解決する（候補は解禁日の近くにしか出ない）。
+ */
+export function stripSlotLinesBeforeViewable(text: string, fromYmd: string | null): { text: string; removed: string[] } {
+  const removed: string[] = [];
+  if (!fromYmd || !text) return { text: text ?? "", removed };
+  const fromYear = Number(fromYmd.slice(0, 4));
+  const p = (n: number) => String(n).padStart(2, "0");
+  const kept = text.split("\n").filter((line) => {
+    const m = SLOT_LINE_RE.exec(line);
+    if (!m) return true;
+    const month = Number(m[1]);
+    const day = Number(m[2]);
+    // 解禁日の月より小さい月は翌年（12月解禁 → 1月の候補）
+    const year = month < Number(fromYmd.slice(5, 7)) - 6 ? fromYear + 1 : fromYear;
+    if (!isBeforeViewable(`${year}-${p(month)}-${p(day)}`, fromYmd)) return true;
+    removed.push(line.trim());
+    return false;
+  });
+  if (removed.length === 0) return { text, removed };
+  return { text: kept.join("\n").replace(/\n{3,}/g, "\n\n").trim(), removed };
+}
+
 /** その日は内覧できない（退去前）か。解禁日が無い時は常に false（＝いつもどおり） */
 export function isBeforeViewable(dayYmd: string, fromYmd: string | null): boolean {
   if (!fromYmd || !dayYmd) return false;

@@ -23,7 +23,9 @@ import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
-import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, vacatingViewableSentence } from "@/app/lib/vacating-notice";
+import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, viewableFromVacancyYmd, vacancyDateLabel, vacatingViewableSentence } from "@/app/lib/vacating-notice";
+// 2026-09-19 竹内（内覧調整の会話を合わせる）: 退去前の候補の行を出口で落とす
+import { stripSlotLinesBeforeViewable } from "@/app/lib/viewing-window";
 // 2026-09-17 竹内（物件オススメ・現状伝えて1件）: 探した現状を🌟の前に1文で伝える
 import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensureSituationOpening } from "@/app/lib/recommendation-situation";
 // 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない
@@ -2988,6 +2990,24 @@ ${SMORA_COMMON_RULES}
 
         // 2026-09-15 隼斗事例: 内覧日指定あり（お客様の希望日）の時は、その日と空き時間だけを渡す（AixModal が viewing_requested_dates・calendar_info を作る）
         const requestedDatesVI = typeof body.viewing_requested_dates === "string" ? body.viewing_requested_dates.trim() : "";
+        // 2026-09-19 竹内「AIXの内覧調整のところ会話を合わせるボタンつくる。複雑な場合に対応するために」:
+        //   退去予定物件の材料（物件名・退去予定日・内覧解禁日）。日付は vacating-notice の1つの関数で出す（画面・生成文が同じ日を指す）
+        const vacancyNameVI = typeof body.vacancy_property_name === "string" ? body.vacancy_property_name.trim() : "";
+        const vacancyMoveOutVI = typeof body.vacancy_move_out === "string" ? body.vacancy_move_out.trim() : "";
+        const vacancyFromVI = vacancyMoveOutVI ? viewableFromVacancyDate(vacancyMoveOutVI) : null;
+        const vacancyBlockVI = vacancyFromVI
+          ? [
+              buildVacatingPromptNote([{ name: vacancyNameVI, vacDate: vacancyMoveOutVI }]),
+              "【この返信で必ず伝える2つ（実データ365日・退去予定のお部屋の内覧案内21通で例外なし）】",
+              `・${vacancyDateLabel(vacancyMoveOutVI)}退去予定であること`,
+              `・ご案内できるのは ${vacancyFromVI} 以降であること`,
+              `・${vacancyFromVI} より前の日付は候補に出さない（まだ見られないお部屋）`,
+              "【形は場面に合わせる（型に流し込まない）】",
+              "・実送信21通のうち「◯◯現在募集中となります！！」で始まる形は1通だけ。お客様が内覧を依頼した時は「かしこまりました！！」、",
+              "  質問に答える時は「はい！！」、御見積書と一緒なら「お手隙の際にご査収ください」で締める等、その場面の形にする",
+              "・候補の日時は【内覧可能日時】に入っている物だけを使う（他の日を作らない）",
+            ].filter(Boolean).join("\n")
+          : "";
         const calendarBlock = requestedDatesVI
           ? `【お客様が希望した日付（内覧日指定あり）】${requestedDatesVI}\n・この日の空き時間だけを伝える（他の日を足さない・「直近ですと」は使わない）\n・形式は「日にちを指定した場合」の形（かしこまりました！！／M/Dお部屋ご案内させて頂きます！！／M/D(曜) 時間／ご案内可能です😊！！／〇〇さんご都合よろしいお時間御座いますでしょうか！！）\n【その日の空き時間（カレンダー・この時間で案内すること）】\n${calendarNoteForVI || "（未入力: 時間は書かず「ご都合よろしいお時間」を伺う）"}`
           : calendarNoteForVI
@@ -3045,6 +3065,7 @@ ${SMORA_COMMON_RULES}
 
         const convMatchVIStaticSystem = convMatchVISystem + AIX_CURATED_AND_CRITICAL_RULES;
         const convMatchVIDynamicSuffix = [
+          vacancyBlockVI,
           calendarBlock,
           `【曜日表（日本時間）】${weekdayTable(Date.now(), 21)}`,
           brainAddendumViConv ? `【ブレイン改善ルール】\n${brainAddendumViConv}` : "",
@@ -3078,6 +3099,16 @@ ${SMORA_COMMON_RULES}
           });
           if (limited !== message_text) console.log("aix:viewing-slots-limited (conversation_match)");
           message_text = limited;
+        }
+
+        // 2026-09-19 竹内: 退去予定物件は「見られない日を出さない」「退去予定と解禁日を必ず伝える」を出口でも効かせる
+        //   （材料・指示だけでは落ちるので、無ければ足す・あれば消す。画面／材料／出口の三層）
+        if (vacancyFromVI) {
+          const cut = stripSlotLinesBeforeViewable(message_text, viewableFromVacancyYmd(vacancyMoveOutVI));
+          if (cut.removed.length > 0) console.log("aix:vacancy-slot-before-viewable-removed", JSON.stringify(cut.removed));
+          const ensured = ensureVacatingNotice(cut.text, [vacancyMoveOutVI]);
+          if (ensured.applied.length > 0) console.log("aix:vacancy-notice", JSON.stringify(ensured.applied));
+          message_text = ensured.text;
         }
 
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す

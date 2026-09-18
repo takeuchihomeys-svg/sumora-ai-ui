@@ -2427,7 +2427,12 @@ export default function AixModal({
       }
 
       // 内覧へ！退去予定物件モード → テンプレで即生成（AI不要）
-      if (actionType === "viewing_invite" && viewingIsVacancy) {
+      // 2026-09-19 竹内「AIXの内覧調整のところ会話を合わせるボタンつくる。複雑な場合に対応するために」:
+      //   「会話を合わせる」の時はここで打ち切らず、材料（物件名・退去予定日・解禁日以降の候補）を API に渡す。
+      //   旧: conversation_match を見ずに固定テンプレを返していたので、ボタンを押しても同じ文しか出なかった。
+      //   実データ（365日・退去予定×内覧案内 21通）でも固定テンプレの型（「◯◯現在募集中となります！！」）は 1通だけで、
+      //   残りは場面ごとに形が違う（内覧の依頼→かしこまりました／質問への回答→はい／見積書と一緒／申込を勧める）。
+      if (actionType === "viewing_invite" && viewingIsVacancy && !extraFlags?.conversation_match) {
         if (!viewingVacancyName.trim()) throw new Error("物件名を入力してください");
         if (!viewingVacancyMoveOut.trim()) throw new Error("退去予定日を入力してください");
 
@@ -2491,6 +2496,16 @@ export default function AixModal({
         body.reschedule_mode = true;
       }
 
+      // 2026-09-19 竹内: 退去予定物件の「会話を合わせる」に材料を渡す（物件名・退去予定日・解禁日以降の候補だけ）
+      if (actionType === "viewing_invite" && viewingIsVacancy) {
+        if (!viewingVacancyName.trim()) throw new Error("物件名を入力してください");
+        if (!viewingVacancyMoveOut.trim()) throw new Error("退去予定日を入力してください");
+        body.vacancy_property_name = viewingVacancyName.trim();
+        body.vacancy_move_out = viewingVacancyMoveOut.trim();
+        // 手本（固定テンプレ）は渡さない。渡すと「既存文の言い換え」になり、複雑な場面に合わせられない
+        delete body.base_message;
+      }
+
       if (actionType === "viewing_invite" && viewingSpecificMode && specificDates.length > 0) {
         // 会話を合わせる（内覧日指定あり）: お客様の希望日とその日の空き時間だけを渡す（他の日を足さない・曜日は日本時間の暦）
         body.viewing_requested_dates = specificDates.map((d) => d.label).join("・");
@@ -2504,6 +2519,8 @@ export default function AixModal({
             const start = viewingSlotStarts[i] || "";
             const end = viewingSlotEnds[i] || "";
             if (!start) return "";
+            // 2026-09-19 竹内: 退去前の日は材料にも入れない（見られない日を渡すと生成文に出る）
+            if (isBeforeViewable(d.ymd, viewingVacancyFromYmd)) return "";
             return `${d.label} ${start}${end ? "〜" + end : ""}`;
           })
           .filter(Boolean)
