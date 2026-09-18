@@ -343,10 +343,34 @@
     updateBar();
   }
 
+  // 2026-09-18: 「送れる行」の判定は send-pairing.js の1か所だけ。
+  //   旧: ここは「checked かつ http(s) の href」で絞るのに、送信側は「checked」だけで
+  //   説明文を作っていたため、href の無い行があるとその行以降の PDF と説明文が全部ズレた。
+  function getSelectedTargets() {
+    return AxlxSendPairing.selectSendableTargets(tracked);
+  }
+
   function getSelectedUrls() {
-    return tracked.filter(function (t) {
-      return t.cb.checked && t.btn.href && /^https?:\/\//.test(t.btn.href);
-    }).map(function (t) { return t.btn.href; });
+    return getSelectedTargets().map(function (t) { return t.btn.href; });
+  }
+
+  // 1件 = 1つの組（url・説明文・学習用データ）にしてから送る。
+  // 同じ組から作るので、PDF と説明文がズレようがない。
+  function buildSendItems() {
+    var prepared = AxlxSendPairing.prepareItems(
+      getSelectedTargets().map(function (t) { return { url: t.btn.href, btn: t.btn }; })
+    );
+    if (prepared.dropped > 0) {
+      console.warn("[AXLX bulk-dl] 印刷用PDFのリンクが取れない行を " + prepared.dropped + "件 送信から外しました");
+    }
+    return prepared.items.map(function (it) {
+      var card = extractCard(it.btn);
+      return {
+        url:     it.url,
+        summary: buildPropertySummary(card, it.rank - 1),
+        data:    buildPropertyData(card, it.rank - 1),
+      };
+    });
   }
 
   // ── 一括DL ────────────────────────────────────────
@@ -640,20 +664,15 @@
       lineBtn.disabled = true;
       lineBtn.textContent = "送信中... (0/" + urls.length + ")";
 
-      var selectedTargets = tracked.filter(function (t) { return t.cb.checked; });
-      var propertySummaries = selectedTargets.map(function (t, i) {
-        return buildPropertySummary(extractCard(t.btn), i);
-      });
-      var propertyPool = selectedTargets.map(function (t, i) {
-        return buildPropertyData(extractCard(t.btn), i);
-      });
+      // 2026-09-18: urls / 説明文 / 学習用データは必ず同じ組から作る（位置で対応づけない）
+      var sendItems = buildSendItems();
 
       chrome.runtime.sendMessage({
         type: "axlx-send-to-line",
-        urls: urls,
+        urls: AxlxSendPairing.pluck(sendItems, "url"),
         customer_name: customerName || null,
-        property_summaries: propertySummaries,
-        property_pool: propertyPool,
+        property_summaries: AxlxSendPairing.pluck(sendItems, "summary"),
+        property_pool: AxlxSendPairing.pluck(sendItems, "data"),
         customer_id: customerId || null,
         customer_conditions: customerConditions || null,
         site: "realpro",
@@ -1048,28 +1067,25 @@
     _doSend(urls);
 
     function _doSend(sendUrls) {
-      var selectedTargets = tracked.filter(function (t) { return t.cb.checked; });
-      var propertySummaries = selectedTargets.map(function (t, i) {
-        return buildPropertySummary(extractCard(t.btn), i);
-      });
-      var propertyPool = selectedTargets.map(function (t, i) {
-        return buildPropertyData(extractCard(t.btn), i);
-      });
-
-      // 20件ずつバッチに分割して順番に送信（一括送信はタイムアウトするため）
-      var batches = [];
-      for (var i = 0; i < sendUrls.length; i += BATCH_SIZE) {
-        batches.push({
-          urls: sendUrls.slice(i, i + BATCH_SIZE),
-          summaries: propertySummaries.slice(i, i + BATCH_SIZE),
-          pool: propertyPool.slice(i, i + BATCH_SIZE),
-        });
+      // 2026-09-18: urls / 説明文 / 学習用データを別々に作って slice で対応づけるのをやめ、
+      //   1件 = 1つの組にしてから分ける。組のまま切るので、バッチ境界でもズレない。
+      var sendItems = buildSendItems();
+      if (!sendItems.length) {
+        console.warn("[AXLX bulk-dl] autoSendOnePage: 送れる物件が0件（印刷用PDFのリンクなし）→ スキップ");
+        onDone(true, 0);
+        return;
       }
+      if (sendItems.length !== sendUrls.length) {
+        console.warn("[AXLX bulk-dl] 送信直前に件数が変化 " + sendUrls.length + "→" + sendItems.length + "（組で作り直した方を送る）");
+      }
+
+      // 10件ずつバッチに分割して順番に送信（一括送信はタイムアウトするため）
+      var batches = AxlxSendPairing.splitBatches(sendItems, BATCH_SIZE);
 
       var batchIndex = 0;
       function sendNextBatch() {
         if (batchIndex >= batches.length) {
-          onDone(true, sendUrls.length);
+          onDone(true, sendItems.length);
           return;
         }
         var batch = batches[batchIndex];
@@ -1078,10 +1094,10 @@
         }
         chrome.runtime.sendMessage({
           type: "axlx-send-to-line",
-          urls: batch.urls,
+          urls: AxlxSendPairing.pluck(batch, "url"),
           customer_name: state.customerName || null,
-          property_summaries: batch.summaries,
-          property_pool: batch.pool,
+          property_summaries: AxlxSendPairing.pluck(batch, "summary"),
+          property_pool: AxlxSendPairing.pluck(batch, "data"),
           customer_id: state.customerId || null,
           customer_conditions: state.customerConditions || null,
           site: "realpro",
@@ -1121,7 +1137,10 @@
 
   // ── 全ページ自動送信: エントリポイント ────────────────────────────────────
   // _manual=true で呼ぶとスタッフモードチェックをスキップ（手動ボタン押下用）
-  function autoSendAllPages(_manual) {
+  // _flagSnap: Case C（リロード後の再開）で渡される「誰の検索か」。
+  //   popup.js が axlx_pending_auto_send に載せた顧客をそのまま使う。
+  //   これが無い時だけ、従来どおり popup / storage の「今の顧客」に頼る。
+  function autoSendAllPages(_manual, _flagSnap) {
     if (getAutoSendState()) return; // 既に動作中
     // 自動呼び出し時のみスタッフモードをチェック
     if (!_manual && _staffModeOn) {
@@ -1133,6 +1152,11 @@
     try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
     var _snap = _pendingCustomerForAutoSend;
     _pendingCustomerForAutoSend = null;
+    // リロードでモジュール変数は消えるので、フラグに載っていた顧客を使う（一括検索はほぼ毎回この経路）
+    if (!_snap && _flagSnap && _flagSnap.customerName) {
+      _snap = { name: _flagSnap.customerName, conditions: _flagSnap.conditions || null, customerId: _flagSnap.customerId || null };
+      console.log("[AXLX bulk-dl] 再開フラグの顧客を使用: " + _snap.name + " (id=" + _snap.customerId + ")");
+    }
 
     function _doStart(name, conditions, customerId) {
       // AD高→低ソートが未適用ならソートURLへ遷移し、Case Bがリロード後に再開する
@@ -1316,10 +1340,17 @@
       try {
         chrome.storage.session.get(["axlx_pending_auto_send"], function (data) {
           if (data && data.axlx_pending_auto_send && !_pendingAutoSendDispatched) {
-            _pendingAutoSendDispatched = true;
+            var _flag = data.axlx_pending_auto_send;
             chrome.storage.session.remove("axlx_pending_auto_send");
+            // 古い再開フラグ（前のバッチの取り残し）で送ると、今の画面を別の顧客として送ってしまう
+            var _age = (_flag && typeof _flag === "object" && _flag.ts) ? (Date.now() - _flag.ts) : 0;
+            if (_age > 600000) {
+              console.warn("[AXLX bulk-dl] Case C: 再開フラグが古い（" + Math.round(_age / 1000) + "秒前・" + (_flag.customerName || "不明") + "）→ 送信しない");
+              return;
+            }
+            _pendingAutoSendDispatched = true;
             console.log("[AXLX bulk-dl] Case C: ページリロード初回起動");
-            autoSendAllPages();
+            autoSendAllPages(false, (_flag && typeof _flag === "object") ? _flag : null);
           }
         });
       } catch (_) {}

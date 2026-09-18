@@ -4405,7 +4405,19 @@ function openInstructions(siteKey) {
       //   フラグが立たず、残留フラグを消費した1人目だけ動いて2人目以降が無音で死ぬ。
       //   Case A（AJAX経路）が先に発火した場合は bulk-dl.js 側でフラグを remove するため
       //   二重送信にはならない。
-      try { chrome.storage.session.set({ axlx_pending_auto_send: true }); } catch (_) {}
+      //   2026-09-18 竹内「前のお客さんのデータのままLINEに共有された」:
+      //   旧はただの true で「誰の検索の再開か」を持っていなかった。リロード後の bulk-dl.js は
+      //   chrome.storage.local の current_customer_*（＝その時点で選ばれている顧客）を読み直すため、
+      //   background が次の顧客へ進んだ後にこのページが送ると、前の顧客の検索結果に
+      //   次の顧客の名前が付く。誰の検索かはフラグ自体に持たせる。
+      try {
+        chrome.storage.session.set({ axlx_pending_auto_send: {
+          customerId:   c.id || null,
+          customerName: c.customer_name || null,
+          conditions:   buildCustomerConditionsString(c),
+          ts:           Date.now(),
+        } });
+      } catch (_) {}
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
         chrome.storage.session.set({ axlx_score_data: {

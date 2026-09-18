@@ -659,8 +659,11 @@
     });
 
     lineBtn.textContent = "PDF取得中... (0/" + targets.length + ")";
-    var pdfBase64List   = [];
-    var capturedNames   = []; // captureOnePdf で取得した物件名（download属性）
+    // 2026-09-18 竹内「違う物件のPDFが出てくる」:
+    //   旧は PDF だけを pdfBase64List に push し、名前・AD は propertyInfos[j]（＝成功分の位置）で
+    //   引いていたため、途中で1件でも取得に失敗すると、それ以降の PDF に前の物件の名前・AD が付いた。
+    //   直し: 取れた PDF に「その行の情報」を組にして持たせる（誰の PDF かを取った側が持つ）。
+    var captured        = []; // [{ pdf, name, info }] ← 必ず組で push する（並行配列を作らない）
 
     // 送信中はMutationObserverを停止（DOM更新でtargetsのボタン参照が無効化されるのを防ぐ）
     mutObs.disconnect();
@@ -673,7 +676,7 @@
     function processNext(i) {
       if (i >= targets.length) {
         // 全件キャプチャ完了 → background.jsに渡す（Blobアップ→merge→LINE送信）
-        if (!pdfBase64List.length) {
+        if (!captured.length) {
           finalizeSend();
           alert("PDFが1件も取得できませんでした");
           lineBtn.disabled    = false;
@@ -682,27 +685,29 @@
           return;
         }
 
-        var propertySummaries = pdfBase64List.map(function (_, j) {
+        // 取れた組だけを残し、番号を 1 から詰め直す（PDF と説明文は必ず同じ組から作る）
+        var sendItems = AxlxSendPairing.prepareItems(captured).items;
+        var propertySummaries = sendItems.map(function (it) {
           // download属性の物件名 → extractPropertyInfo の名前 → "物件N" の優先順
-          var dlName   = capturedNames[j] || null;
-          var fallback = propertyInfos[j] || { name: null, ad: null };
-          var name     = dlName || fallback.name || ("物件" + (j + 1));
+          var fallback = it.info || { name: null, ad: null };
+          var name     = it.name || fallback.name || ("物件" + it.rank);
           var ad       = fallback.ad;
-          var lines    = ["【" + (j + 1) + "】" + name];
+          var lines    = ["【" + it.rank + "】" + name];
           if (ad) lines.push("AD: " + ad);
           return lines.join("\n");
         });
 
-        lineBtn.textContent = "Blobアップ中... (1/" + pdfBase64List.length + ")";
+        lineBtn.textContent = "Blobアップ中... (1/" + sendItems.length + ")";
         var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
         // itandi: propertyInfos から構造化候補データを生成（学習ループ用）
-        var propertyPool = pdfBase64List.map(function(_, j) {
-          var fi = propertyInfos[j] || {};
-          return { rank: j + 1, name: capturedNames[j] || fi.name || ("物件" + (j + 1)), ad_months: fi.ad ? parseInt((fi.ad.match(/\d+/) || [])[0]) || null : null };
+        var propertyPool = sendItems.map(function (it) {
+          var fi = it.info || {};
+          return { rank: it.rank, name: it.name || fi.name || ("物件" + it.rank), ad_months: fi.ad ? parseInt((fi.ad.match(/\d+/) || [])[0]) || null : null };
         });
         chrome.runtime.sendMessage({
           type:                "axlx-send-pdf-data-to-line",
-          pdf_data:            pdfBase64List,
+          // 説明文と同じ組から取り出す（pdfBase64List を直接渡すと、また位置で対応づけることになる）
+          pdf_data:            AxlxSendPairing.pluck(sendItems, "pdf"),
           file_name:           "物件まとめ_" + today + ".pdf",
           customer_name:       customerName || null,
           customer_id:         customerId || null,
@@ -726,7 +731,7 @@
             checkedKeys.delete(t.rowKey);
           });
           updateBar();
-          lineBtn.textContent = "✅ " + pdfBase64List.length + "件 LINE送信完了！";
+          lineBtn.textContent = "✅ " + sendItems.length + "件 LINE送信完了！";
           setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
           // 物件送った日付を自動更新（fire-and-forget）
           if (customerId) {
@@ -736,7 +741,7 @@
               body: JSON.stringify({ customer_id: customerId }),
             }).catch(function () {});
           }
-          if (onComplete) onComplete(true, pdfBase64List.length);
+          if (onComplete) onComplete(true, sendItems.length);
         });
         return;
       }
@@ -762,8 +767,8 @@
           var b64  = result.b64;
           var name = result.name;
           console.log("[AXLX] PDF取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB) 物件名:" + (name || "不明"));
-          pdfBase64List.push(b64);
-          capturedNames.push(name);
+          // PDF・物件名・その行の情報を「組」で持つ（位置で後から突き合わせない）
+          captured.push({ pdf: b64, name: name, info: propertyInfos[i] || null });
           closeModal();
           return sleep(500 + Math.floor(Math.random() * 1200)); // モーダルが完全に閉じるのを待つ（500ms→1000ms）
         })

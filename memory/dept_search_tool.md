@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-09-18 【重大】送った一覧と PDF の中身が食い違うバグ（竹内）— 3サイト共通の原因
+
+- 竹内「**SATOKOさんのURL開いたらMATSUOさんの物件が出てきた**。ズレて、前のお客さんのデータのままLINEに共有された可能性がたかい」（v2.5.7）
+- **実データで確かめたこと**（`property_candidate_pools`・JST）
+  - 16:38:12〜16:38:49 MATSUO YUYA（5バッチ）→ 16:39:35〜16:40:16 SATOKO♪（5バッチ）＝**隣り合う顧客**
+  - SATOKO のバッチ1の先頭2件は「ロハス江坂／ロハス江坂」で MATSUO のバッチ1の先頭2件と同じ。ただし江坂は御堂筋線で SATOKO の条件にも合うため、**これだけでは混線と断定できない**
+  - 一方、送った PDF は「ロハス江坂×3枚」なのに一覧は「ロハス江坂2件」＝**PDF と説明文の件数が食い違っていた**
+- **コード上の確定的な欠陥（3サイトとも同じ形）**
+  「**送る PDF の配列**」と「**説明文の配列**」を**別々に作って、位置（index）で対応**させていた。片方だけ1件落ちると、そこから後ろが全部1つずつズレる。
+
+  | サイト | ズレ方 |
+  |---|---|
+  | リアプロ `bulk-dl.js` | `getSelectedUrls()` は「checked かつ http(s) の href あり」で絞るのに、説明文は **`checked` だけ**で作っていた。**印刷用PDFのリンクが取れない行が1つあると、その行以降が全部ズレる**。さらに `slice(i, i+10)` のバッチ分割でズレたまま切られる（`mergePdfs` と `autoSendOnePage` の2か所） |
+  | itandi `itandi-bulk-dl.js` | PDF 取得に失敗した行は `pdfBase64List` に push されないのに、名前・AD は `propertyInfos[j]`（＝**成功分の位置**）で引いていた。**1件失敗すると以降の PDF に前の物件の名前・AD が付く** |
+  | レインズ `reins-bulk-dl.js`（逐次モード） | 説明文は `targets` 全件・PDF は成功分だけ＝**件数すら食い違う** |
+
+- **直し（1件 = 1つの組にしてから分ける）**
+  - `chrome-extension/send-pairing.js`（**新規・純関数・テスト15件**）
+    - `selectSendableTargets()` … 「**送れる行**」の判定を1か所に（一覧を作る側と送る側が別の条件で絞らない＝四者同名）
+    - `prepareItems()` … 中身（url / pdf）が欠けた組を落とし、**【1】【2】… を1から詰め直す**（ズレたまま送るより、その1件が出ない方が被害が小さい）
+    - `splitBatches()` / `pluck()` … **組のまま**分け、同じ組から urls / summaries / pool を取り出す
+  - `bulk-dl.js` … `buildSendItems()` で `{url, summary, data}` の組を作り、`mergePdfs` と `autoSendOnePage` の**両方**がこれを使う
+  - `itandi-bulk-dl.js` … 取れた PDF に「その行の情報」を**組で push**（`captured=[{pdf,name,info}]`）。**並行配列 `pdfBase64List` / `capturedNames` は削除**（残すとまた同じ事故が起きる）
+  - `reins-bulk-dl.js` … `buildReinsSummary` / `buildReinsData`（rank を引数に）を切り出し、一括モードと逐次モードが同じ関数を使う。逐次は `captured=[{pdf,target}]` の組から説明文を作り直す
+  - manifest … 3サイトの `content_scripts` の js 配列の**先頭**に `send-pairing.js` を追加（同じ拡張の content script は同じ isolated world を共有するので、先に読ませれば `AxlxSendPairing` が見える）
+- **同時に塞いだ穴（顧客の紐づけ）**: `axlx_pending_auto_send` が**ただの `true`** で「**誰の検索の再開か**」を持っていなかった。リアプロは検索でページがリロードされ bulk-dl.js のモジュール変数が消えるため、再開時は `chrome.storage.local.current_customer_*`（＝**その時点で選ばれている顧客**）を読み直していた。background が次の顧客へ進んだ後にこのページが送ると、**前の顧客の検索結果に次の顧客の名前が付く**。
+  - popup.js … フラグに `{customerId, customerName, conditions, ts}` を載せる
+  - bulk-dl.js … Case C はそのフラグの顧客を使う（`autoSendAllPages(_manual, _flagSnap)`）。**10分より古い再開フラグは送信しない**（前バッチの取り残しで今の画面を別の顧客として送らないため）
+- **テスト**: `app/lib/__tests__/send-pairing.test.ts` 15件（3サイトそれぞれの穴に回帰テスト）。`node --check` で変更5ファイル OK ／ manifest の JSON OK ／ tsc 0 ／ lib テスト96ファイル全 PASS
+- **実機での確かめ方**（**拡張の再読み込みが必要・version 2.5.7**）
+  - 一括検索を2人以上で回し、LINE の**一覧の件数と PDF の枚数が一致**しているか、【1】の説明文と PDF の1枚目が同じ物件か
+  - コンソール: `印刷用PDFのリンクが取れない行を N件 送信から外しました`／`図面が取れなかった N件は送信から外しました`／`再開フラグの顧客を使用: 〇〇 (id=…)`／`再開フラグが古い（…）→ 送信しない`
+- **未確認**: Chrome 拡張は実機でしか動かせないため、**本番検証は未実施**（竹内さんの実機確認待ち）
+
+---
+
 ## 2026-09-18 【重大】一括検索で違うお客さんの条件が送られるバグ（竹内）— 原因と直し
 
 - 竹内「一括検索する際に**情報ずれて、違うお客さんの条件で送られてしまっている**バグも発生している」

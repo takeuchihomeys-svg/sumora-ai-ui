@@ -371,7 +371,7 @@
         // PDF取得失敗 → 逐次モードへ
         console.warn("[AX-REINS] 一括PDF取得失敗 → 逐次モードへ");
         lineBtn.textContent = "図面取得中... (0/" + expectedCount + ")";
-        startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool);
+        startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig);
         return;
       }
       // レインズが結合した1枚のPDFをそのままLINE送信（merge-pdfs APIはスキップ）
@@ -402,7 +402,7 @@
         window.removeEventListener("message", batchHandler);
         console.warn("[AX-REINS] 一括0件（15s）→ 逐次モードへ切替");
         lineBtn.textContent = "図面取得中... (0/" + expectedCount + ")";
-        startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool);
+        startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig);
       }
     }, 15000);
 
@@ -420,7 +420,7 @@
             clearTimeout(batchTimer);
             if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
             window.removeEventListener("message", batchHandler);
-            startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool);
+            startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig);
             return;
           }
           lineBtn.textContent = "PDF取得中...";
@@ -447,28 +447,64 @@
     });
   }
 
+  // ── 1件分の説明文・学習用データ（一括モードと逐次モードで同じ関数を使う）──
+  function buildReinsSummary(t, rank) {
+    var info  = extractInfo(t.row);
+    var lines = ["【" + rank + "】" + (info.building || "物件" + rank)];
+    if (info.rent)   lines.push("賃料: " + info.rent);
+    if (info.madori) lines.push("間取: " + info.madori);
+    return lines.join("\n");
+  }
+
+  function buildReinsData(t, rank) {
+    var info = extractInfo(t.row);
+    var data = { rank: rank, name: info.building || ("物件" + rank) };
+    if (info.rent) {
+      var rm = info.rent.replace(/[,，]/g, "").match(/(\d+\.?\d*)万/);
+      data.rent = rm ? Math.round(parseFloat(rm[1]) * 10000) : null;
+    }
+    if (info.madori) data.floor_plan = info.madori;
+    return data;
+  }
+
   // ── 逐次取得モード（フォールバック：図面ボタンを1件ずつクリック）────────
-  function startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool) {
+  // 2026-09-18 竹内「違う物件のPDFが出てくる」:
+  //   旧は説明文が targets 全件・PDF は取得できた分だけで、件数すら食い違っていた。
+  //   1件でも取得に失敗すると、それ以降の図面に前の物件の説明文が付く。
+  //   直し: 取れた図面に「その行」を組にして持たせ、説明文は組から作り直す。
+  function startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig) {
     chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function () {
       lineBtn.textContent = "図面取得中... (0/" + targets.length + ")";
-      var pdfBase64List   = [];
+      var captured = []; // [{ pdf, target }] ← 必ず組で push する
 
       function processNext(i) {
         if (i >= targets.length) {
-          sendAllToLine(pdfBase64List, targets, customerName, customerId, propertySummaries, propertyPool, lineBtn, lineOrig);
+          var sendItems = AxlxSendPairing.prepareItems(captured).items;
+          if (sendItems.length !== targets.length) {
+            console.warn("[AX-REINS] 図面が取れなかった " + (targets.length - sendItems.length) + "件は送信から外しました");
+          }
+          sendAllToLine(
+            AxlxSendPairing.pluck(sendItems, "pdf"),
+            targets, customerName, customerId,
+            sendItems.map(function (it) { return buildReinsSummary(it.target, it.rank); }),
+            sendItems.map(function (it) { return buildReinsData(it.target, it.rank); }),
+            lineBtn, lineOrig
+          );
           return;
         }
         lineBtn.textContent = "図面取得中... (" + (i + 1) + "/" + targets.length + ")";
-        captureOnePdf(targets[i]).then(function (b64) {
-          console.log("[AX-REINS] 図面取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB)");
-          pdfBase64List.push(b64);
-          return sleep(1500);
-        }).then(function () {
-          processNext(i + 1);
-        }).catch(function (e) {
-          console.error("[AX-REINS] 図面取得失敗 " + (i + 1) + "件目:", e.message);
-          sleep(800).then(function () { processNext(i + 1); });
-        });
+        (function (target) {
+          captureOnePdf(target).then(function (b64) {
+            console.log("[AX-REINS] 図面取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB)");
+            captured.push({ pdf: b64, target: target });
+            return sleep(1500);
+          }).then(function () {
+            processNext(i + 1);
+          }).catch(function (e) {
+            console.error("[AX-REINS] 図面取得失敗 " + (i + 1) + "件目:", e.message);
+            sleep(800).then(function () { processNext(i + 1); });
+          });
+        })(targets[i]);
       }
 
       processNext(0);
@@ -479,23 +515,8 @@
   function startSend(targets, customerName, customerId, lineBtn, lineOrig) {
     isSending = true;
 
-    var propertySummaries = targets.map(function (t, i) {
-      var info  = extractInfo(t.row);
-      var lines = ["【" + (i + 1) + "】" + (info.building || "物件" + (i + 1))];
-      if (info.rent)   lines.push("賃料: " + info.rent);
-      if (info.madori) lines.push("間取: " + info.madori);
-      return lines.join("\n");
-    });
-    var propertyPool = targets.map(function (t, i) {
-      var info = extractInfo(t.row);
-      var data = { rank: i + 1, name: info.building || ("物件" + (i + 1)) };
-      if (info.rent) {
-        var rm = info.rent.replace(/[,，]/g, "").match(/(\d+\.?\d*)万/);
-        data.rent = rm ? Math.round(parseFloat(rm[1]) * 10000) : null;
-      }
-      if (info.madori) data.floor_plan = info.madori;
-      return data;
-    });
+    var propertySummaries = targets.map(function (t, i) { return buildReinsSummary(t, i + 1); });
+    var propertyPool = targets.map(function (t, i) { return buildReinsData(t, i + 1); });
 
     // 図面一括取得ボタンがあれば一括モード（高速・並列）
     var batchBtnEl = findBatchBtn();
@@ -503,7 +524,7 @@
     if (batchBtnEl) {
       startBatchSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool, batchBtnEl);
     } else {
-      startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig, propertySummaries, propertyPool);
+      startSequentialSend(targets, customerName, customerId, lineBtn, lineOrig);
     }
   }
 
