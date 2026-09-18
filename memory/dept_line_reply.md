@@ -40,7 +40,21 @@
 - **絶対に守ること**: `auto_send_enabled = true` にするのは**画面の最終確認を通る1か所だけ**。他のどこからも true にしない
 - **踏んだ罠**: `scheduled_messages.status` の綴りは **`cancelled`（l が2つ）**。`canceled` だと CHECK 制約違反で**黙って失敗**する
 - **確認**: `auto-reply-policy.test.ts` 40件／tsc 0／lib テスト102ファイル全 PASS／**本番の321会話すべて OFF（自動ONは0件）＝デプロイしても何も自動送信されない**
-- **未確認**: 実際に1件ONにして送られるか（竹内さんが試す時は、まずテスト会話「YUMA」で1往復を推奨）
+- **本番検証 済み（2026-09-18 22:46〜22:48・YUMA）**
+
+  | | 結果 |
+  |---|---|
+  | ① AIXの場面（`reply_mode=aix` / `action=phone_call`）で自動ONにする | **予約が積まれない**（`aix_mode` で止まる）✅ |
+  | ② `reply_mode=auto_reply` に変える | 22:46:49 に予約が積まれた ✅ |
+  | ③ 送る文 | **`ai_draft` と完全一致**（SQL で `text = btrim(ai_draft)` → true・84字）✅ |
+  | ④ 送る時刻 | 22:46 に積まれ、**翌 9/19(土) 09:07** に予約＝**21時以降は翌朝へずらす**が効いた ✅ |
+  | ⑤ 待ち時間 | **7分**（奇数・切りのいい数でない）✅ |
+  | ⑥ 実際の送信 | 予約を今に動かして本番の毎分ジョブが拾い、`pending → sending → sent`。LINE 送信・messages 記録・会話の更新まで通った ✅ |
+
+- **片付け済み**: 自動ON→false／`suggested_aix_meta` を元（aix/phone_call）に戻す／`ai_draft` を戻す／送信で作られた messages 行を削除／予約行を削除／`last_sender`・`updated_at` を元に。**確認後: 自動ONの会話0件・未送信の予約0件**
+- **テスト中に見つけて直した穴**
+  1. `auto_send_enabled_at` 列が本番に無かった（migrate-schema は深夜実行）→ **ボタンがエラーになるところだった**。その場で ALTER
+  2. 画面は `ai_draft` から内部タグを外して表示するのに、自動返信は生の `ai_draft` を送ろうとしていた → `app/lib/draft-text.ts` に実体を移し、**画面と自動返信が同じ関数**を使う形に（コミット 8b8e14c9）
 
 ---
 
