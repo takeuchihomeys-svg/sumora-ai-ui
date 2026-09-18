@@ -63,6 +63,28 @@ export function stripPointlessGuidance(text: string): string {
   return src.includes("\n") ? out.join("\n") : out.join("");
 }
 
+// ─── ③「〜情報はございません」→「〜点はございません」 ───
+// 2026-09-18 竹内（ゆうこ事例）「情報ではなくて、ここでは点と答える。その方がしっかりしているイメージ」
+//   AI 生成「治安面で特別懸念となる**情報**はございません！！」
+//   実送信 「治安面で特別懸念となる**点**はございません！！」
+// 実データ（365日・スタッフ実送信）:
+//   「情報は／がございません（ありません）」 **0件**（＝スタッフは書かない形）
+//   「点は／がございません」1件 ／ 一方「情報」という語自体は304通で使う（「最新の情報」「空室情報」等）
+//   → 直すのは**無い事を言う形**だけに絞る（「情報」を一律に置き換えない）。
+/** 「（何かが）情報はございません」の否定形。『情報』が"無い物"として使われている時だけ当たる */
+const ABSENCE_INFO_RE = /情報(は|が)(特に)?(ございません|ありません|御座いません|無いです|ないです)/g;
+/**
+ * 無い事を伝える文の「情報」を「点」に直す。
+ * 「最新の情報をお送りします」「空室情報が入り次第」等は当たらない（否定の結びが無いため）。
+ */
+export function fixAbsenceWording(text: string): string {
+  const src = text ?? "";
+  if (!src.includes("情報")) return src;
+  ABSENCE_INFO_RE.lastIndex = 0;
+  const out = src.replace(ABSENCE_INFO_RE, (_m, particle: string, toku: string | undefined, tail: string) => `点${particle}${toku ?? ""}${tail}`);
+  return out;
+}
+
 // ─── ②この会話で既に使った文を繰り返さない ───
 /** ほぼ同じ文とみなす閾値（0.92＝言い回しの揺れだけの違い）。findNearDuplicateSent（全文 0.85）より厳しくする */
 export const REPEAT_SIMILARITY_THRESHOLD = 0.92;

@@ -190,5 +190,68 @@ describe("2026-09-12 竹内（あや事例）: 条件フォームを送ってく
   });
 });
 
+describe("2026-09-18 竹内（ゆうこ事例）: かしこまりました と はい の使い分けは「返信の中身」で決まる", () => {
+  // 実データ（365日・お客様の質問への返信1,112件。依頼形の質問は除く）
+  //   その場で答える  … はい 76 ／ かしこまりました 29
+  //   これから動く    … はい 36 ／ かしこまりました 175
+  const STAFF: M = { sender: "staff", text: "🌟昭和町ハイツ 302号室\nお手隙の際にご査収ください😌！！", createdAt: "2026-09-18T02:00:00Z" };
+  const ASK: M = { sender: "customer", text: "昭和町駅周辺の治安はどうですか？", createdAt: "2026-09-18T05:00:00Z" };
+  const NOW = Date.parse("2026-09-18T06:00:00Z");
+  const ANSWER_BODY = "昭和町駅周辺は住宅街も多く、治安面で特別懸念となる点はございません！！\nご不安な点等ございましたら、いつでもお申し付けください！！";
+
+  it("Y1 治安の質問 → 返信の中身で決める線が立つ（openerBodyRule）", () => {
+    const d = decide([STAFF, ASK], NOW, 15, { greetedToday: true });
+    expect(d.openerBodyRule).toBe(true);
+    expect(buildGreetingNote(d, 15)).toContain("返信の中身");
+  });
+  it("★ Y2 生成「かしこまりました😊！！」＋その場で答える本文 → 実送信どおり「はい😊！！」になる", () => {
+    const d = decide([STAFF, ASK], NOW, 15, { greetedToday: true });
+    const out = enforceOpening(`かしこまりました😊！！\n${ANSWER_BODY}`, d);
+    expect(out.cleaned).toBe(`はい😊！！\n${ANSWER_BODY}`);
+  });
+  it("Y3 その場で答える本文に「はい」は触らない（絵文字もそのまま）", () => {
+    const d = decide([STAFF, ASK], NOW, 15, { greetedToday: true });
+    const t = `はい😊！！\n${ANSWER_BODY}`;
+    expect(enforceOpening(t, d).cleaned).toBe(t);
+  });
+  it("★ Y4 引き受け・承諾の側は触らない（実データ はい77／かしこまりました227 で割れるため）", () => {
+    const d = decide([STAFF, ASK], NOW, 15, { greetedToday: true });
+    // これから動く側に新ルールは関与しない（ここが かしこまりました になるのは従来どおり
+    //  「エリアの質問は substance に condition が付く → allowed=[かしこまりました/なし]」という既存の線）
+    const move = "昭和町駅周辺の治安について管理会社に確認させて頂きます！！";
+    expect(enforceOpening(`はい😊！！\n${move}`, d).cleaned).toBe(`かしこまりました😊！！\n${move}`);
+    // お客様のご希望を飲む（「13時は可能ですか？」の型。実送信29件がこれだった）
+    const accept = "かしこまりました😊！！\n8月9日13:00でご案内可能です😊！！";
+    expect(enforceOpening(accept, d).cleaned).toBe(accept);
+  });
+  it("Y5 どちらとも取れない本文は触らない（fail-closed）", () => {
+    const d = decide([STAFF, ASK], NOW, 15, { greetedToday: true });
+    const t = "かしこまりました😊！！\n引き続き何卒よろしくお願い致します";
+    expect(enforceOpening(t, d).cleaned).toBe(t);
+  });
+  it("Y6 依頼形の質問（探して頂けますか）＋引き受けの本文 → かしこまりました のまま", () => {
+    const d = decide(JUNIA, NOW_1616, 16);
+    expect(enforceOpening(`かしこまりました😊！！\n${BODY}`, d).cleaned).toStartWith("かしこまりました😊！！");
+  });
+  it("★ Y8 検査も同じ線を見る（四者同名）: 直した「はい😊！！」に OPENER_MISMATCH を出さない", () => {
+    const d = decide([STAFF, ASK], NOW, 15, { greetedToday: true });
+    const codes = runDeterministicChecks(`はい😊！！\n${ANSWER_BODY}`, {
+      recentMessages: [STAFF, ASK], lastCustomerMessage: ASK.text, customerName: "ゆうこ", greetingDecision: toGreetingLite(d),
+    }).map((i) => i.code);
+    expect(codes).not.toContain("OPENER_MISMATCH");
+    // 逆に「引き受け」の語で始めた文は、この場面の許容外として拾う
+    const codes2 = runDeterministicChecks(`かしこまりました😊！！\n${ANSWER_BODY}`, {
+      recentMessages: [STAFF, ASK], lastCustomerMessage: ASK.text, customerName: "ゆうこ", greetingDecision: toGreetingLite(d),
+    }).map((i) => i.code);
+    expect(codes2).toContain("OPENER_MISMATCH");
+  });
+  it("Y7 依頼ではない場面（了承のみ）には掛けない＝既存の T14 の線が生きる", () => {
+    const ack: M[] = [STAFF, { sender: "customer", text: "ありがとうございます！仕事終わりに見させて頂きます", createdAt: "2026-09-18T05:00:00Z" }];
+    const d = decide(ack, NOW, 15, { greetedToday: true });
+    expect(d.openerBodyRule).toBe(false);
+    expect(d.opener).toBe("hai");
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failures.length) { console.log(failures.join("\n")); process.exit(1); }

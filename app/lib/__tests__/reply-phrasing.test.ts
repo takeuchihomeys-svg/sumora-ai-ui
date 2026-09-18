@@ -1,6 +1,6 @@
 // 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きます」を落とす／この会話で既に使った文を繰り返さない
 // 実行: npx tsx app/lib/__tests__/reply-phrasing.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { splitSentences, stripPointlessGuidance, recentUsedSentences, findRepeatedSentences, findRepeatedClosing, closingSentence, buildAvoidRepeatNote } from "../reply-phrasing";
+import { splitSentences, stripPointlessGuidance, fixAbsenceWording, recentUsedSentences, findRepeatedSentences, findRepeatedClosing, closingSentence, buildAvoidRepeatNote } from "../reply-phrasing";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -53,6 +53,31 @@ it("「ご案内」が無い文・落とすと空になる文は触らない", (
 it("丁寧形のゆれ（させていただきます・いたします）も同じように落とす", () => {
   expect(stripPointlessGuidance("ご不明な点が出てきましたらご案内いたしますので、いつでもお気軽にお知らせください！！"))
     .toBe("ご不明な点が出てきましたらいつでもお気軽にお知らせください！！");
+});
+
+// ─── ③「情報」→「点」（2026-09-18 竹内・ゆうこ事例）───
+it("★ ゆうこ 9/18: AI「特別懸念となる情報はございません」→ 実送信の「特別懸念となる点はございません」になる", () => {
+  const draft = "昭和町駅周辺は住宅街も多く、治安面で特別懸念となる情報はございません！！\nご不安な点等ございましたら、いつでもお申し付けください！！";
+  expect(fixAbsenceWording(draft))
+    .toBe("昭和町駅周辺は住宅街も多く、治安面で特別懸念となる点はございません！！\nご不安な点等ございましたら、いつでもお申し付けください！！");
+});
+it("否定の言い方のゆれも直す（が・特に・ありません・御座いません）", () => {
+  expect(fixAbsenceWording("懸念となる情報がございません")).toBe("懸念となる点がございません");
+  expect(fixAbsenceWording("問題となる情報は特にございません！！")).toBe("問題となる点は特にございません！！");
+  expect(fixAbsenceWording("該当する情報はありません")).toBe("該当する点はありません");
+  expect(fixAbsenceWording("懸念となる情報は御座いません")).toBe("懸念となる点は御座いません");
+});
+it("★ 「情報」の正しい使い方（304通の実送信にある形）は1文字も触らない", () => {
+  const keep = [
+    "最新の情報お送りさせて頂きます！！",                       // 送る物としての情報
+    "空室情報が入り次第すぐにご連絡致します！！",                 // 入ってくる物としての情報
+    "管理会社より情報を頂き次第お伝え致します！！",
+    "お客様の情報はお預かり致しますのでご安心ください！！",
+    "現在募集中の情報となります！！",
+    "ご不安な点等ございましたら、いつでもお申し付けください！！", // 既に「点」
+    "",
+  ];
+  for (const t of keep) expect(fixAbsenceWording(t)).toBe(t);
 });
 
 // ─── ②繰り返しの検出 ───

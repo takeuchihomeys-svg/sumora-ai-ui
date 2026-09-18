@@ -60,7 +60,7 @@ import { resolveAddressNameForConversation } from "@/app/lib/address-name-server
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 import { findNearDuplicateSent } from "@/app/lib/closed-ack";
 // 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きます」を落とす／この会話で既に送った文を繰り返さない
-import { stripPointlessGuidance, recentUsedSentences, findRepeatedClosing, buildAvoidRepeatNote } from "@/app/lib/reply-phrasing";
+import { stripPointlessGuidance, fixAbsenceWording, recentUsedSentences, findRepeatedClosing, buildAvoidRepeatNote } from "@/app/lib/reply-phrasing";
 // 2026-09-17 竹内（慶次事例）: お客様が謝っている場面は「かしこまりました」ではなく受け止めから入る
 import { resolveApologyOnly, ensureApologyOpener, buildApologyNote } from "@/app/lib/apology-ack";
 // 2026-09-17 竹内（友哉事例）: お客様が既に送ってきた書類（PDF・書類の画像）をもう一度お願いしない
@@ -4873,9 +4873,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               //   案内する対象が無いまま「ご案内させて頂きますので、」が締めの文に混ざったら、その節だけ落とす（app/lib/reply-phrasing.ts）
               const guidanceFixed = stripPointlessGuidance(withPortal);
               if (guidanceFixed !== withPortal) console.info("[reply-phrasing] 対象の無いご案内を削除", JSON.stringify({ conversationId }));
+              // 2026-09-18 竹内（ゆうこ事例）「情報ではなくて、ここでは点と答える」:
+              //   「懸念となる情報はございません」→「懸念となる点はございません」（実送信0件の形だけ直す）
+              const wordingFixed = fixAbsenceWording(guidanceFixed);
+              if (wordingFixed !== guidanceFixed) console.info("[reply-phrasing] 無い事を言う「情報」を「点」に", JSON.stringify({ conversationId }));
               // 2026-09-17 竹内（慶次事例）: 謝っている場面の冒頭「かしこまりました！！」を受け止めの言葉に置き換える
-              const apologyFixed = ensureApologyOpener(guidanceFixed, apologyVerdict.apology);
-              if (apologyFixed !== guidanceFixed) console.info("[apology-ack] 冒頭を受け止めに置き換え", JSON.stringify({ conversationId }));
+              const apologyFixed = ensureApologyOpener(wordingFixed, apologyVerdict.apology);
+              if (apologyFixed !== wordingFixed) console.info("[apology-ack] 冒頭を受け止めに置き換え", JSON.stringify({ conversationId }));
               // 2026-09-17 竹内（a🤫 事例）「複数の 等いれない」: 物件名を並べた直後の数のまとめ語を落とす
               //   （実データ365日・募集状況の確認を宣言した実送信208通のうち「複数の物件／複数のお部屋」は0件）
               const quantFixed = stripVagueQuantifier(apologyFixed);
@@ -5279,6 +5283,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (guidanceFixedFinal !== draftBody) {
                   console.info("[reply-phrasing] 修正ループ後に対象の無いご案内を削除", JSON.stringify({ conversationId }));
                   draftBody = guidanceFixedFinal;
+                }
+                // 2026-09-18 竹内（ゆうこ事例）: 「情報はございません」→「点はございません」も修正ループの後に掛け直す
+                const wordingFixedFinal = fixAbsenceWording(draftBody);
+                if (wordingFixedFinal !== draftBody) {
+                  console.info("[reply-phrasing] 修正ループ後に「情報」を「点」に", JSON.stringify({ conversationId }));
+                  draftBody = wordingFixedFinal;
                 }
                 // 2026-09-17 竹内（慶次事例）: 冒頭の受け止めも修正ループの後に掛け直す（挨拶の強制置換が「かしこまりました」を戻すことがある）
                 const apologyFixedFinal = ensureApologyOpener(draftBody, apologyVerdict.apology);

@@ -32,7 +32,7 @@ import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMIS
 import { isViewingAccessQuestion } from "./viewing-access";
 // 2026-09-17 竹内（YUYA 事例）: ポータルの決まった説明（スタッフの実送信そのまま）は指摘の対象から外す
 import { resolvePortalQuestion, isPortalNoticeSentence } from "./portal-notice";
-import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, type GreetingKind, type GreetingDecisionLite } from "./greeting";
+import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, classifyReplyBody, type GreetingKind, type GreetingDecisionLite } from "./greeting";
 import {
   PHASE_PROHIBITIONS,
   FORM_LABEL_RE,
@@ -1537,10 +1537,18 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     void expectsNight; void NIGHT_PREFIX;
     // 7-e 開口語（挨拶行・名前行を剥がした先頭）が decision の許容集合の外（enforceOpener と同名。無い場合は指摘しない＝足さない）
     const op = detectOpener(openingHead);
-    if (op && !gdl.openerAllowed.includes(op.opener)) {
+    // 2026-09-18 竹内（ゆうこ事例）: お客様の質問に答える場面は、開口語を**返信の中身**で決める（enforceOpener と同名）。
+    //   後処理が「その場で答える→はい」に直した文を、この検査が許容外だと言わないようにする（四者同名）
+    //   直すのは「その場で答える返信」の側だけ（実データ はい28／かしこまりました1）。引き受け・承諾の側は触らない
+    const wantsHai = !!op && !!gdl.openerBodyRule
+      && classifyReplyBody(openingHead.trimStart().slice(op.match.length).trimStart()) === "answer";
+    if (op && (wantsHai ? op.opener !== "hai" : !gdl.openerAllowed.includes(op.opener))) {
       issues.push({ pass: "rule_check", severity: "warning", code: "OPENER_MISMATCH",
-        message: `開口語「${op.match.trim()}」はこの場面の許容（${gdl.openerAllowed.map((k) => OPENER_JA[k]).join("／")}）にありません（${gdl.openerReason}）`,
-        evidence: openingHead.slice(0, 20), suggestion: gdl.opener === "none" ? "開口語を削除して本題から始める" : `開口語を ${OPENER_JA[gdl.opener]} に変更` });
+        message: wantsHai
+          ? `開口語「${op.match.trim()}」はこの返信の中身に合いません（その場で答える返信なので「はい😊！！」。2026-09-18 竹内・ゆうこ事例）`
+          : `開口語「${op.match.trim()}」はこの場面の許容（${gdl.openerAllowed.map((k) => OPENER_JA[k]).join("／")}）にありません（${gdl.openerReason}）`,
+        evidence: openingHead.slice(0, 20),
+        suggestion: wantsHai ? `開口語を ${OPENER_JA.hai} に変更` : gdl.opener === "none" ? "開口語を削除して本題から始める" : `開口語を ${OPENER_JA[gdl.opener]} に変更` });
     }
   }
 
