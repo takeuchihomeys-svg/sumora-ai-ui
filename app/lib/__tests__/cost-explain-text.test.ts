@@ -97,23 +97,24 @@ it("金額の質問（見積書送る）は外す: 「初期費用がどれく�
 
 // ── 仕組みを説明（2026-09-19 竹内「報酬額いれなくても説明されるようにする」）──
 // 文はスタッフ実送信と公式LINEの挨拶メッセージの言い回しだけを使う（新しい言い方を作らない）
-it("★ スモラ: 金額の入力なしで作れる（公式LINEの挨拶と同じ「前家賃＋2,980円」）", () => {
+// 2026-09-19 竹内「説明このように、具体的に入れるようにする」＝ 竹内さんの実送信（9/19 03:02）の型
+it("★ スモラ: 金額の入力なしで**具体的に**作れる（竹内さんの実送信の型）", () => {
   const m = buildCostMechanismMessage({ customerName: "ゆうこ", account: "sumora", askedBrokerFee: false });
-  expect(m).toContain("スモ割が最大適用出来るお部屋でしたら、初期費用は【前家賃＋2,980円】のみでご入居頂けます！！");
-  expect(m).toContain("仲介手数料の2,980円は一律で発生し、お部屋によって割引出来る金額が変わります");
-  expect(m).toContain("オーナー様からの広告料をお客様に還元させて頂いている仕組みのため");
-  expect(m).toContain("ゆうこさんが気になっているお部屋のスクショをお送り頂くだけで");
+  expect(m).toContain("初期費用を抑えられる点についてですが");
+  expect(m).toContain("お部屋によっては貸主様から手数料（家賃1〜2ヶ月分）を頂いており、ここからゆうこさんの初期費用に還元させて頂くことで費用を抑えられる形となっております！！");
+  expect(m).toContain("仲介手数料2,980円のみとさせて頂いておりますので、最大限費用を抑えさせて頂く形となります！！");
+  expect(m).toContain("無事ご満足頂くお部屋が見つかるまでサポートさせて頂きます！！");
 });
 it("★ スモラでは「仲介手数料0円」と書かない（実態は2,980円が一律）", () => {
   const m = buildCostMechanismMessage({ customerName: "ゆうこ", account: "sumora", askedBrokerFee: true });
   expect(m).notToContain("仲介手数料は0円");
   expect(m).notToContain("仲介手数料0円");
 });
-it("★ イエヤス: 仲介手数料0円＋イエヤス割（実送信の言い方）", () => {
+it("★ イエヤス: 同じ型で仲介手数料0円＋イエヤス割", () => {
   const m = buildCostMechanismMessage({ customerName: "けんじ", account: "ieyasu", askedBrokerFee: false });
-  expect(m).toContain("ほとんどのお部屋を仲介手数料0円でご紹介可能となります！！");
+  expect(m).toContain("お部屋によっては貸主様から手数料（家賃1〜2ヶ月分）を頂いており");
+  expect(m).toContain("ほとんどのお部屋を仲介手数料0円でご紹介可能となります");
   expect(m).toContain("イエヤス割");
-  expect(m).toContain("中には仲介手数料を頂くお部屋もございます");
   expect(m).notToContain("2,980円");   // スモラの数字を混ぜない
   expect(m).notToContain("スモ割");
 });
@@ -123,7 +124,7 @@ it("ギガ: ギガ割になる", () => {
   expect(m).notToContain("イエヤス割");
 });
 it("アカウント未指定はスモラ扱い（件数最多・挨拶メッセージの型）", () => {
-  expect(buildCostMechanismMessage({ customerName: "A", account: null, askedBrokerFee: false })).toContain("スモ割");
+  expect(buildCostMechanismMessage({ customerName: "A", account: null, askedBrokerFee: false })).toContain("仲介手数料2,980円のみ");
 });
 it("物件ごとの金額は1つも書かない（入力が要らない＝創作もしない）", () => {
   const m = buildCostMechanismMessage({ customerName: "A", account: "sumora", askedBrokerFee: false });
@@ -131,11 +132,12 @@ it("物件ごとの金額は1つも書かない（入力が要らない＝創作
   expect(amounts.every((a) => a === "2,980円")).toBe(true);
 });
 it("名前が空でも壊れない", () => {
-  expect(buildCostMechanismMessage({ customerName: "", account: "ieyasu", askedBrokerFee: false })).toContain("お客様が気になっているお部屋");
+  expect(buildCostMechanismMessage({ customerName: "", account: "ieyasu", askedBrokerFee: false })).toContain("ここからお客様の初期費用に還元");
 });
-it("締めは既存と同じ（他社との差は還元の有無）", () => {
-  expect(buildCostMechanismMessage({ customerName: "A", account: "sumora", askedBrokerFee: false }))
-    .toContain("他社様との金額差はこの還元の有無によるものですので、ご安心ください😊！！");
+it("締めは竹内さんの実送信と同じ（サポート＋何卒）", () => {
+  const m = buildCostMechanismMessage({ customerName: "A", account: "sumora", askedBrokerFee: false });
+  expect(m).toContain("無事ご満足頂くお部屋が見つかるまでサポートさせて頂きます！！");
+  expect(m).toContain("何卒よろしくお願い致します😌！！");
 });
 
 // ── スモラの仲介手数料は 2,980円（2026-09-19 竹内「スモラだけ2,980円と変えておく」）──
@@ -268,9 +270,18 @@ it("片方だけでも本文にあれば足さない", () => {
   const draft = "貸主から頂く67,000円のうち一部を還元しております！！";
   expect(String(ensureCostDetail(draft, { customerName: "A", mode: "fee", landlordFeeYen: 67000, refundYen: 22000 }).added)).toBe("false");
 });
-it("仕組みだけのモードでは足さない（金額を書かないのが仕様）", () => {
-  const draft = "スモ割が最大適用出来るお部屋でしたら【前家賃＋2,980円】のみです！！";
-  expect(String(ensureCostDetail(draft, { customerName: "A", mode: "mechanism", landlordFeeYen: 67000, refundYen: 22000 }).added)).toBe("false");
+it("★ 仕組みだけのモードでも、還元の流れが無ければ具体を足す（物件ごとの金額は足さない）", () => {
+  // 「広告料を還元」だけで終わっている文
+  const draft = "ご質問ありがとうございます😊！！\n広告料をお客様に還元させて頂いております！！\nご安心ください😊！！";
+  const r = ensureCostDetail(draft, { customerName: "A", mode: "mechanism", landlordFeeYen: 67000, refundYen: 22000 });
+  expect(String(r.added)).toBe("true");
+  expect(r.text).toContain("お部屋によっては貸主様から手数料（家賃1〜2ヶ月分）を頂いており、ここからAさんの初期費用に還元");
+  expect(r.text).notToContain("67,000");   // 物件ごとの金額は足さない
+  expect(r.text).notToContain("22,000");
+});
+it("仕組みだけ: 既に具体（家賃1〜2ヶ月分）があれば足さない", () => {
+  const draft = "お部屋によっては貸主様から手数料（家賃1〜2ヶ月分）を頂いております！！\nご安心ください！！";
+  expect(String(ensureCostDetail(draft, { customerName: "A", mode: "mechanism" }).added)).toBe("false");
 });
 it("手数料なしのお部屋は差額を足す", () => {
   const r = ensureCostDetail("仕組みのご説明です！！\nご安心ください😊！！", { customerName: "A", mode: "no_fee", savingYen: 29150 });

@@ -36,6 +36,17 @@ export type CostAccount = "sumora" | "ieyasu" | "giga";
 /** スモラの仲介手数料（一律）。公式LINEの挨拶メッセージと同じ数字 */
 export const SUMORA_BROKER_FEE_YEN = 2980;
 
+/**
+ * 貸主からの手数料の「具体」。2026-09-19 竹内「説明このように、具体的に入れるようにする」。
+ * 竹内さんの実送信（9/19 03:02・スモラ）:
+ *   「初期費用を抑えられる点についてですが／お部屋によっては貸主様から手数料（家賃1〜2ヶ月分）を頂いており、
+ *     ここから❤︎さんの初期費用に還元させて頂くことで費用を抑えられる形となっております！！／
+ *     仲介手数料2,980円のみとさせて頂いておりますので、最大限費用を抑えさせて頂く形となります！！／
+ *     無事ご満足頂くお部屋が見つかるまでサポートさせて頂きます！！／何卒よろしくお願い致します😌！」
+ * 物件ごとの金額を出さなくても「家賃1〜2ヶ月分」「2,980円のみ」で**具体的**に説明できる、というのが型。
+ */
+export const LANDLORD_FEE_RANGE_PHRASE = "お部屋によっては貸主様から手数料（家賃1〜2ヶ月分）を頂いており";
+
 export type CostMechanismInput = {
   customerName: string;
   /** conversations.account。未指定は sumora 扱い（件数最多・挨拶メッセージの型） */
@@ -57,31 +68,31 @@ export function buildCostMechanismMessage(input: CostMechanismInput): string {
     "オーナー様からの広告料をお客様に還元させて頂いている仕組みのため、初期費用を一般的な不動産業者様よりお安くご提案出来ております！！";
   const closing = "他社様との金額差はこの還元の有無によるものですので、ご安心ください😊！！";
 
+  void refund; void closing;
   if (acct === "ieyasu" || acct === "giga") {
     const wari = acct === "giga" ? "ギガ割" : "イエヤス割";
     return [
       opening,
-      "ほとんどのお部屋を仲介手数料0円でご紹介可能となります！！",
       "",
-      refund,
-      `お部屋によっては${wari}も適用させて頂けますので、初期費用をかなり抑えてのご入居が可能です😊！！`,
+      "初期費用を抑えられる点についてですが",
+      `${LANDLORD_FEE_RANGE_PHRASE}、ここから${name}の初期費用に還元させて頂くことで費用を抑えられる形となっております！！`,
       "",
-      `仲介手数料はお部屋によって異なり、中には仲介手数料を頂くお部屋もございますので、${name}が気になっているお部屋をお送り頂けましたら最大限割引しました初期費用の御見積書お送りさせて頂きます😌！！`,
-      "",
-      closing,
+      `ほとんどのお部屋を仲介手数料0円でご紹介可能となりますので、最大限費用を抑えさせて頂く形となります！！`,
+      `お部屋によっては${wari}も適用させて頂けます😊！！`,
+      "無事ご満足頂くお部屋が見つかるまでサポートさせて頂きます！！",
+      "何卒よろしくお願い致します😌！！",
     ].join("\n");
   }
-  // スモラ（公式LINEの挨拶メッセージと同じ仕組み）
+  // スモラ（2026-09-19 竹内の実送信の型そのまま）
   return [
     opening,
-    `${name}が気になっているお部屋のスクショをお送り頂くだけで、初期費用を最大限割引させて頂いております！！`,
     "",
-    refund,
+    "初期費用を抑えられる点についてですが",
+    `${LANDLORD_FEE_RANGE_PHRASE}、ここから${name}の初期費用に還元させて頂くことで費用を抑えられる形となっております！！`,
     "",
-    "スモ割が最大適用出来るお部屋でしたら、初期費用は【前家賃＋2,980円】のみでご入居頂けます！！",
-    "仲介手数料の2,980円は一律で発生し、お部屋によって割引出来る金額が変わります😌！！",
-    "",
-    closing,
+    `仲介手数料${SUMORA_BROKER_FEE_YEN.toLocaleString("ja-JP")}円のみとさせて頂いておりますので、最大限費用を抑えさせて頂く形となります！！`,
+    "無事ご満足頂くお部屋が見つかるまでサポートさせて頂きます！！",
+    "何卒よろしくお願い致します😌！！",
   ].join("\n");
 }
 
@@ -237,8 +248,18 @@ export function ensureCostDetail(
 ): { text: string; added: boolean } {
   const src = (text ?? "").trim();
   if (!src) return { text: src, added: false };
-  if (input.mode === "mechanism") return { text: src, added: false };
   const name = input.customerName.trim() ? `${input.customerName.trim()}さん` : "お客様";
+  if (input.mode === "mechanism") {
+    // 2026-09-19 竹内「説明このように、具体的に入れるようにする」:
+    //   「広告料を還元」だけで終わっていたら、貸主様から頂く手数料（家賃1〜2ヶ月分）→ 還元 の具体を足す
+    if (/家賃[0-9０-９]{1,2}[〜~ー-][0-9０-９]{1,2}[ヶケか]?月分|貸主(様)?から.{0,12}手数料/.test(src)) return { text: src, added: false };
+    const sentence = `${LANDLORD_FEE_RANGE_PHRASE}、ここから${name}の初期費用に還元させて頂くことで費用を抑えられる形となっております！！`;
+    const lines = src.split("\n");
+    const closerIdx = lines.findIndex((l) => /ご安心ください|ご安心頂け|何卒よろしく|お気軽に|サポートさせて頂きます/.test(l));
+    if (closerIdx >= 0) lines.splice(closerIdx, 0, sentence);
+    else lines.push(sentence);
+    return { text: lines.join("\n").replace(/\n{3,}/g, "\n\n").trim(), added: true };
+  }
   let sentence: string | null = null;
   if (input.mode === "fee") {
     const fee = input.landlordFeeYen ?? 0;
@@ -283,7 +304,9 @@ export function buildCostExplainFactsNote(input: {
     lines.push(`・仲介手数料: ${acct === "giga" ? "ギガ" : "イエヤス"}はほとんどのお部屋を**0円**でご紹介可能（お部屋によっては頂く場合もある）`);
     lines.push(`・お部屋によっては${acct === "giga" ? "ギガ割" : "イエヤス割"}も適用できる`);
   }
-  lines.push("・安さの理由: オーナー様からの広告料をお客様に還元しているため。他社との金額差はこの還元の有無");
+  // 2026-09-19 竹内「説明このように、具体的に入れるようにする」＝ 金額が無くても具体で説明する
+  lines.push(`・安さの理由（**この具体で説明する**）: ${LANDLORD_FEE_RANGE_PHRASE}、ここからお客様の初期費用に還元している`);
+  lines.push("・「広告料を還元」とだけで終わらせず、**貸主様から頂く手数料（家賃1〜2ヶ月分）→ お客様へ還元**の流れを書く");
   if (input.mode === "fee") {
     if (input.landlordFeeYen) lines.push(`・このお部屋は貸主から${input.landlordFeeLabel ? `${input.landlordFeeLabel}の` : ""}手数料 ${input.landlordFeeYen.toLocaleString("ja-JP")}円 を頂ける`);
     if (input.refundYen) lines.push(`・そのうち ${input.refundYen.toLocaleString("ja-JP")}円 をお客様の初期費用に還元する（弊社にも利益が残る）`);
