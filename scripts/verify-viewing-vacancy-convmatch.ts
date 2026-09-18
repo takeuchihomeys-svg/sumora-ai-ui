@@ -12,10 +12,12 @@ const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 const N = Number(process.argv.find((a) => a.startsWith("--n="))?.split("=")[1] ?? 3);
 
 // a🤫 さん 9/18 の場面をそのまま（お客様は日付を言わず「内覧したい」とだけ）
+// 画面（page.tsx aixRecentMessages）と同じ形で渡す＝ sender / text / rawCreatedAt
+const iso = (jst: string) => new Date(`${jst}+09:00`).toISOString();
 const RECENT = [
-  { sender: "staff", text: "お送り頂きました物件の中で\n・ジュネスニッコー 1003号室\n・生野西一丁目戸建\nこちら2件現在募集中です！！" },
-  { sender: "customer", text: "そうなんですね😭" },
-  { sender: "customer", text: "ココの物件内覧したいんですが いけますか？" },
+  { sender: "staff", text: "お送り頂きました物件の中で\n・ジュネスニッコー 1003号室\n・生野西一丁目戸建\nこちら2件現在募集中です！！", rawCreatedAt: iso("2026-09-19T17:23:00") },
+  { sender: "customer", text: "そうなんですね😭", rawCreatedAt: iso("2026-09-19T17:24:00") },
+  { sender: "customer", text: "ココの物件内覧したいんですが いけますか？", rawCreatedAt: iso("2026-09-19T21:26:00") },
 ];
 
 const VACANCY = { name: "ジュネスニッコー1003号室", moveOut: "9月27日" };
@@ -39,7 +41,8 @@ async function gen(i: number): Promise<string> {
   });
   const data = await res.json().catch(() => ({} as Record<string, unknown>));
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
-  return String((data as { message?: string }).message ?? JSON.stringify(data).slice(0, 300));
+  const d = data as { message_text?: string; message?: string };
+  return String(d.message_text ?? d.message ?? JSON.stringify(data).slice(0, 300));
 }
 
 function check(text: string) {
@@ -53,6 +56,10 @@ function check(text: string) {
   (/割引[^\n]{0,10}少な|かかってしま/.test(text) ? bad : ok).push("費用のマイナスの説明なし");
   const cal = ["9/28", "9/29", "9/30"].filter((d) => text.includes(d));
   ok.push(`渡した候補のうち本文にある物: ${cal.join("・") || "なし"}`);
+  // 入力していない物件を持ち出していないか（会話に出てくるが、スタッフが入れたのは1件だけ）
+  (text.includes("生野西") ? bad : ok).push("入力していない物件を出していない");
+  // 当日やり取り中なので挨拶行は要らない（実送信は「かしこまりました！！」から）
+  (/^[^\n]{0,20}お世話になっております/.test(text) ? bad : ok).push("挨拶行なし（当日やり取り中）");
   return { ok, bad };
 }
 
