@@ -38,10 +38,11 @@ function resolveYear(month1: number, nowMs: number): number {
 }
 
 /**
- * 退去予定日 → 内覧解禁日（＝退去日の翌日）の表記。読めなければ null。
- * 「9月27日」→「9月28日」／「9月末」「9月下旬」→「10月1日」／「9月中旬」→「9月21日」／「9月上旬」→「9月11日」
+ * 退去予定日 → 内覧解禁日（＝退去日の翌日）の **YYYY-MM-DD**（JST）。読めなければ null。
+ * 2026-09-19 竹内（内覧へ！の内覧可能日時）: 画面のカレンダーと日付を比べるので、月日だけでなく年を持つ形が要る。
+ *   表記（「9月28日」）を返す viewableFromVacancyDate はこの関数の上に載せる＝**退去日を読む所は1つ**（四者同名）。
  */
-export function viewableFromVacancyDate(vacDateRaw: string, nowMs: number = Date.now()): string | null {
+export function viewableFromVacancyYmd(vacDateRaw: string, nowMs: number = Date.now()): string | null {
   const raw = toHalfWidth((vacDateRaw ?? "").trim());
   if (!raw) return null;
   const s = raw.replace(/^\d{4}年/, "");
@@ -68,7 +69,19 @@ export function viewableFromVacancyDate(vacDateRaw: string, nowMs: number = Date
     return null;
   }
   const next = new Date(base.getTime() + 24 * 60 * 60 * 1000);
-  return `${next.getUTCMonth() + 1}月${next.getUTCDate()}日`;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${next.getUTCFullYear()}-${p(next.getUTCMonth() + 1)}-${p(next.getUTCDate())}`;
+}
+
+/**
+ * 退去予定日 → 内覧解禁日（＝退去日の翌日）の表記。読めなければ null。
+ * 「9月27日」→「9月28日」／「9月末」「9月下旬」→「10月1日」／「9月中旬」→「9月21日」／「9月上旬」→「9月11日」
+ */
+export function viewableFromVacancyDate(vacDateRaw: string, nowMs: number = Date.now()): string | null {
+  const ymd = viewableFromVacancyYmd(vacDateRaw, nowMs);
+  if (!ymd) return null;
+  const [, m, d] = ymd.split("-");
+  return `${Number(m)}月${Number(d)}日`;
 }
 
 /** 表示用の退去日ラベル（年号を外して半角に揃える） */

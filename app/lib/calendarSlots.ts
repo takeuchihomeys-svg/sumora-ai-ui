@@ -11,6 +11,8 @@ const WORK_END   = 18 * 60 + 30; // 18:30
 /** 内覧の案内時間の初期値（カレンダーの空き枠が無い日を手で ON にした時など） */
 export const VIEWING_DAY_START = "10:30";
 export const VIEWING_DAY_END   = "18:30";
+/** 基準の3日（本日・明日・明後日）に足せる日の上限。お客様の希望日＋退去予定日以降の日が両方入るので 8 日 */
+const MAX_EXTRA_DAYS = 8;
 const MIN_SLOT   = 2 * 60;  // 物件間の移動があるので2時間以上の空きだけ
 const MAX_SLOT   = 3 * 60;
 const BUFFER     = 60;      // 予定の前後に確保する最低バッファ（1時間）
@@ -52,6 +54,8 @@ export function calcSlots(busy: Array<[number, number]>): string[] {
 
 export type CalendarDayResult = {
   label: string;       // "本日 6/14(土)"
+  /** その日（JST・"YYYY-MM-DD"）。ラベルの「6/14」は年を持たないので、日付の比較はこちらで行う（年跨ぎで狂わない） */
+  ymd: string;
   slots: string[];     // ["10:00〜13:00", "14:00〜17:00"]
   fullyBooked: boolean;
   noEvents: boolean;
@@ -74,7 +78,12 @@ export async function fetchCalendarSlots(
   const now = jstParts();
   const todayUtc = Date.UTC(now.y, now.m - 1, now.d);
   const baseYmds = [0, 1, 2].map((i) => jstYmd(todayUtc + i * DAY_MS - 9 * 3600 * 1000));
-  const extras = [...new Set(extraYmds.filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && s > baseYmds[2]))].sort().slice(0, 5);
+  // 2026-09-19 竹内（a🤫 事例・退去予定）: 追加日は**呼び出し側が並べた順**で先着を採る（お客様の希望日を先に渡す）。
+  //   以前は日付順に並べてから先頭5日を採っていたので、退去予定日以降の日を足すと希望日が押し出されていた。
+  //   採ってから日付順に並べ直す（画面の並びと「本日・明日・明後日」のラベルは index で決まるため）
+  const extras = [...new Set(extraYmds.filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && s > baseYmds[2]))]
+    .slice(0, MAX_EXTRA_DAYS)
+    .sort();
   const allYmds = [...baseYmds, ...extras];
   const fromDate = allYmds[0];
   const toDate   = allYmds[allYmds.length - 1];
@@ -180,16 +189,16 @@ export async function fetchCalendarSlots(
 
     if (noEvents && defaultSlots.length === 0) {
       // 今日・予定なし・全スロット時間切れ → 案内不可扱い
-      resultDays.push({ label, slots: [], fullyBooked: true, noEvents: true });
+      resultDays.push({ label, ymd: dateKey, slots: [], fullyBooked: true, noEvents: true });
     } else if (noEvents) {
       infoLines.push(`${shortLabel} ${defaultSlots.join(" / ")}`);
-      resultDays.push({ label, slots: defaultSlots, fullyBooked: false, noEvents: true });
+      resultDays.push({ label, ymd: dateKey, slots: defaultSlots, fullyBooked: false, noEvents: true });
     } else if (fullyBooked) {
       // 案内不可の日はinfoLinesに含めない（AIに渡さない）
-      resultDays.push({ label, slots: [], fullyBooked: true, noEvents: false });
+      resultDays.push({ label, ymd: dateKey, slots: [], fullyBooked: true, noEvents: false });
     } else {
       infoLines.push(`${shortLabel} ${slots.join(" / ")}`);
-      resultDays.push({ label, slots, fullyBooked: false, noEvents: false });
+      resultDays.push({ label, ymd: dateKey, slots, fullyBooked: false, noEvents: false });
     }
   }
 

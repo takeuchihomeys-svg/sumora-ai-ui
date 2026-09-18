@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END } from "../lib/calendarSlots";
+import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
+// 2026-09-19 竹内（a🤫 事例）: 退去予定物件の「内覧可能日時」は退去日の翌日から（純関数・テストあり）
+import { viewableFromYmd, vacancyExtraYmds, resolveVacancySlotEnabled, isBeforeViewable } from "../lib/viewing-window";
+import { viewableFromVacancyDate, vacancyDateLabel } from "../lib/vacating-notice";
 // 2026-09-16 竹内（カイナ事例）: 物件確認した — 内覧の流れの判定（サーバと同じ純関数で「流れを続ける」の初期値を出す）
 import { resolveViewingThread } from "../lib/viewing-thread";
 import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, latestCustomerTurnText, type RequestedViewingDate } from "../lib/viewing-date-request";
@@ -220,26 +223,22 @@ function slotsMatchingDates(days: Array<{ label: string }>, dateText: string): b
 // 内覧日指定モードの「日程・時間」の初期値をカレンダー空き枠から解決する（2026-09-15 隼斗事例で作り直し）
 // - お客様の希望日（最新の発言・断りの文を除く）があれば、その日を必ず使う（別の日に置き換えない）。時間はその日の空き枠を全部（"11:00〜13:00 16:00〜18:00"）
 //   希望日が予定で埋まっている時は時間を空欄にする（スタッフが判断する）
-// - 希望日が無い時（手動で内覧日指定ありにした時）は最初の空きカレンダー枠（本日不可なら翌日以降の最初の空き日）
-//   2026-09-16 竹内（𝒮 さん事例）「時間が2つ出るのはお客さんからの日付指定があった場合のみ。こちらから日にち送る場合は1日1つ」
-//   → 希望日が無い＝こちらから出す日なので先頭の1枠だけ（pickDaySlots）
-// - 空き枠が全くない場合は null（日程・時間とも空欄のまま手動入力を促す）
+// - 2026-09-19 竹内（a🤫 事例）「お客さんから9月20日内覧希望と言われていないのに、ここ9月20日と出てしまっている。
+//   ここは、お客さんからの日付指定が合った場合のみにする」
+//   → 希望日が無い時は **null**（日程・時間とも空欄）。この欄は「お客様が希望した日付」を返す欄なので、
+//     こちらが勝手に決めた日を入れると、言われていない日を「ご希望の日」として返してしまう。
+//     こちらから日にちを出すのは通常モード（内覧可能日時のカレンダー）の役目。
+// - 空き枠が全くない場合も null（日程・時間とも空欄のまま手動入力を促す）
 function resolveViewingSpecificDefaults(
   days: Array<{ label: string; slots: string[]; fullyBooked: boolean }>,
   requested: ReadonlyArray<RequestedViewingDate>,
 ): { date: string; times: string } | null {
-  if (requested.length > 0) {
-    const date = requested.map((r) => `${r.m}月${r.d}日`).join("・");
-    const first = days.find((d) => calendarDayIs(d.label, requested[0].m, requested[0].d));
-    // 希望日が1日だけなら、その日の空き時間を全部（𝒮・隼斗の型）。複数日を並べる時は1日1つ（実送信の型は日付の数＝枠の数）
-    const times = first && !first.fullyBooked ? pickDaySlots(first.slots, requested.length === 1).join(" ") : "";
-    return { date, times };
-  }
-  const firstAvail = days.find((d) => !d.fullyBooked);
-  if (!firstAvail) return null;
-  const lm = firstAvail.label.match(/(\d{1,2})\/(\d{1,2})/);
-  if (!lm) return null;
-  return { date: `${parseInt(lm[1])}月${parseInt(lm[2])}日`, times: pickDaySlots(firstAvail.slots, false).join(" ") };
+  if (requested.length === 0) return null;
+  const date = requested.map((r) => `${r.m}月${r.d}日`).join("・");
+  const first = days.find((d) => calendarDayIs(d.label, requested[0].m, requested[0].d));
+  // 希望日が1日だけなら、その日の空き時間を全部（𝒮・隼斗の型）。複数日を並べる時は1日1つ（実送信の型は日付の数＝枠の数）
+  const times = first && !first.fullyBooked ? pickDaySlots(first.slots, requested.length === 1).join(" ") : "";
+  return { date, times };
 }
 
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
@@ -857,9 +856,7 @@ export default function AixModal({
   const [estimateTextReady, setEstimateTextReady] = useState("");
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
-  const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
-    label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
-  }>>([]);
+  const [checkCalendarDays, setCheckCalendarDays] = useState<CalendarDayResult[]>([]);
   const [checkCalendarLoading, setCheckCalendarLoading] = useState(false);
   // 物件ピックアップした専用: 複数画像 + 退去予定メモ + カレンダー自動取得
   const [sendImageFiles, setSendImageFiles] = useState<File[]>(initialSendImages ?? []);
@@ -877,9 +874,7 @@ export default function AixModal({
   const [vacatingCheckLoading, setVacatingCheckLoading] = useState(false);
   const [vacatingCheckProgress, setVacatingCheckProgress] = useState("");
   const [calendarInfo, setCalendarInfo] = useState<string>("");
-  const [calendarDays, setCalendarDays] = useState<Array<{
-    label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
-  }>>([]);
+  const [calendarDays, setCalendarDays] = useState<CalendarDayResult[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   // 物件ピックアップ専用: 新規物件 / 新着物件 / 条件を広げた モード
   const [sendMode, setSendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(initialSendMode ?? null);
@@ -890,7 +885,7 @@ export default function AixModal({
   // 内覧提案はデフォルトOFF（内覧誘導は「内覧へ」ボタンで別途送る運用）。必要時のみスタッフがトグルON
   const [includeCalendar, setIncludeCalendar] = useState(false);
   // 内覧へ！専用: カレンダースロット選択
-  const [viewingCalendarDays, setViewingCalendarDays] = useState<Array<{label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean}>>([]);
+  const [viewingCalendarDays, setViewingCalendarDays] = useState<CalendarDayResult[]>([]);
   const [viewingCalendarLoading, setViewingCalendarLoading] = useState(false);
   const [viewingSlotEnabled, setViewingSlotEnabled] = useState<boolean[]>([]);
   const [viewingSlotStarts, setViewingSlotStarts] = useState<string[]>([]);
@@ -901,21 +896,19 @@ export default function AixModal({
   const shiftViewingDay = (i: number) => {
     if (viewingCalendarDays.length === 0) return;
     const lastIdx = viewingCalendarDays.length - 1;
-    const m = viewingCalendarDays[lastIdx].label.match(/(\d{1,2})\/(\d{1,2})/);
-    if (!m) return;
-    // 末尾日の翌日を計算（年またぎ対応: 半年以上過去なら翌年扱い）
-    const now = new Date();
-    let d = new Date(now.getFullYear(), parseInt(m[1]) - 1, parseInt(m[2]));
-    if (d.getTime() < now.getTime() - 1000 * 60 * 60 * 24 * 180) {
-      d = new Date(now.getFullYear() + 1, parseInt(m[1]) - 1, parseInt(m[2]));
-    }
-    d.setDate(d.getDate() + 1);
-    const wd = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
-    const newLabel = `${d.getMonth() + 1}/${d.getDate()}(${wd})`;
+    // 末尾日の翌日（ymd を持っているのでそのまま1日進める＝年跨ぎの推測が要らない）
+    const lastYmd = viewingCalendarDays[lastIdx].ymd;
+    const base = Date.parse(`${lastYmd}T00:00:00Z`);
+    if (!Number.isFinite(base)) return;
+    const d = new Date(base + 86_400_000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const newYmd = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+    const wd = ["日", "月", "火", "水", "木", "金", "土"][d.getUTCDay()];
+    const newLabel = `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${wd})`;
     // 新しい日の時刻は既存の最後の日の設定を引き継ぐ
     const newStart = viewingSlotStarts[lastIdx] || VIEWING_DAY_START;
     const newEnd = viewingSlotEnds[lastIdx] || VIEWING_DAY_END;
-    setViewingCalendarDays(prev => [...prev.filter((_, idx) => idx !== i), { label: newLabel, slots: [`${newStart}〜${newEnd}`], fullyBooked: false, noEvents: true }]);
+    setViewingCalendarDays(prev => [...prev.filter((_, idx) => idx !== i), { label: newLabel, ymd: newYmd, slots: [`${newStart}〜${newEnd}`], fullyBooked: false, noEvents: true }]);
     setViewingSlotEnabled(prev => [...prev.filter((_, idx) => idx !== i), true]);
     setViewingSlotStarts(prev => [...prev.filter((_, idx) => idx !== i), newStart]);
     setViewingSlotEnds(prev => [...prev.filter((_, idx) => idx !== i), newEnd]);
@@ -997,6 +990,13 @@ export default function AixModal({
     [actionType, recentMessages],
   );
   const viewingRequestedKey = viewingRequested.map((r) => r.ymd).join(",");
+  // 2026-09-19 竹内（a🤫 事例）「退去予定日入れると、その退去予定日以降で内覧する形となるので、
+  //   内覧可能日時は退去予定日以降のところから、順に空いている日付いれる形とする」
+  //   退去日を読むのは vacating-notice の1つの関数だけ（生成文の「◯月◯日以降ご内覧可能」と同じ日付になる）
+  const viewingVacancyFromYmd = useMemo(
+    () => (actionType === "viewing_invite" && viewingIsVacancy ? viewableFromYmd(viewingVacancyMoveOut) : null),
+    [actionType, viewingIsVacancy, viewingVacancyMoveOut],
+  );
 
   // 電話をかける／電話終了後（2026-09-15 竹内・H 事例）
   const [phonePurpose, setPhonePurpose] = useState("");   // 電話をかける: 用件（任意）
@@ -1431,7 +1431,10 @@ export default function AixModal({
       try {
         // お客様の希望日（3日より先でも）の空き時間も出す（2026-09-15 隼斗事例「18日はどうでしょうか？」）
         // 2026-09-16 竹内（カイナ事例）: このお客様自身の「時間確保」（前に送った候補）は空き扱いにする（同じ時間をもう一度出せる）
-        const { days } = await fetchCalendarSlots(viewingRequested.map((r) => r.ymd), { ignoreHoldsForConversationId: conversationId ?? null });
+        // 2026-09-19 竹内（a🤫 事例）: 退去予定物件は退去日の翌日から連続6日も取りに行く（直近3日は全部内覧できない日なので）
+        //   お客様の希望日を先に渡す（fetchCalendarSlots は渡された順に先着で採る）
+        const extraYmds = [...viewingRequested.map((r) => r.ymd), ...(viewingVacancyFromYmd ? vacancyExtraYmds(viewingVacancyMoveOut) : [])];
+        const { days } = await fetchCalendarSlots(extraYmds, { ignoreHoldsForConversationId: conversationId ?? null });
         setViewingCalendarDays(days);
         // "11:00〜14:00" → start: "11:00", end: "14:00"
         const parseTime = (slot: string) => {
@@ -1444,7 +1447,11 @@ export default function AixModal({
 
         // デフォルトの有効スロット（お客様指定日のプリセットは下の別effectで行う）
         const extraStart = 3; // 本日・明日・明後日の後ろが希望日の追加分
-        if (viewingSpecificMode) {
+        // 2026-09-19 竹内（a🤫 事例）: 退去予定物件は「退去日の翌日から順に空いている日」を3日ぶん
+        const vacancyEnabled = resolveVacancySlotEnabled(days, viewingVacancyFromYmd, 3);
+        if (vacancyEnabled) {
+          setViewingSlotEnabled(vacancyEnabled);
+        } else if (viewingSpecificMode) {
           // 内覧日指定ありモード → 本日(index 0)はチェックしない
           setViewingSlotEnabled(days.map((d, i) => i > 0 && !d.fullyBooked));
         } else {
@@ -1461,8 +1468,9 @@ export default function AixModal({
         setViewingCalendarLoading(false);
       }
     })();
+  // 退去予定日は画像の読み取りで後から入る（非同期）ので deps に入れて取り直す
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actionType, viewingRequestedKey]);
+  }, [actionType, viewingRequestedKey, viewingVacancyFromYmd]);
 
   // ⑤ ★ お客様が内覧日を指定していたら自動でトグルON + 日時プリセット（複数日対応）
   // recentMessages を deps に含める（マウント時にメッセージ未着でも、到着後に再実行される）
@@ -2423,27 +2431,13 @@ export default function AixModal({
         if (!viewingVacancyName.trim()) throw new Error("物件名を入力してください");
         if (!viewingVacancyMoveOut.trim()) throw new Error("退去予定日を入力してください");
 
-        // 月日から近傍の日付を解決（半年以上過去なら翌年とみなす＝年跨ぎ対応）
-        const resolveNearDate = (month: number, day: number): Date => {
-          const now = new Date();
-          const d = new Date(now.getFullYear(), month - 1, day);
-          if (d.getTime() < now.getTime() - 1000 * 60 * 60 * 24 * 180) {
-            return new Date(now.getFullYear() + 1, month - 1, day);
-          }
-          return d;
-        };
-
-        // 退去翌日を計算（◯月◯日 形式）※「7月20」（日なし）にも対応
+        // 2026-09-19 竹内（a🤫 事例）: 退去日の読み取りは vacating-notice の1つの関数に寄せた
+        //   （旧: ここだけ「月日＋1日」を自前で計算していて「9月30日」→「9月31日」や「9月末」を読めなかった）
         const moveOutText = viewingVacancyMoveOut.trim();
-        let viewingFromText = "";
-        let viewingFromDate: Date | null = null;
-        const jpMatch = moveOutText.match(/(\d{1,2})月(\d{1,2})日?/);
-        if (jpMatch) {
-          viewingFromDate = resolveNearDate(parseInt(jpMatch[1]), parseInt(jpMatch[2]) + 1);
-          viewingFromText = `${viewingFromDate.getMonth() + 1}月${viewingFromDate.getDate()}日`;
-        }
+        const viewingFromText = viewableFromVacancyDate(moveOutText) ?? "";
+        const viewingFromYmd = viewableFromYmd(moveOutText);
 
-        // カレンダースロット取得（退去翌日より前の日付は除外）
+        // カレンダースロット取得（退去翌日より前の日付は除外＝画面でも選べないが、出口でも落とす）
         const selectedSlots = viewingCalendarDays
           .map((d, i) => {
             const isEnabled = d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i];
@@ -2451,14 +2445,7 @@ export default function AixModal({
             const start = viewingSlotStarts[i] || "";
             const end = viewingSlotEnds[i] || "";
             if (!start) return "";
-            // 退去前の日付スロットを除外（label例: "7/3(金)" / "明日 7/3(金)"）
-            if (viewingFromDate) {
-              const slotMatch = d.label.match(/(\d{1,2})\/(\d{1,2})/);
-              if (slotMatch) {
-                const slotDate = resolveNearDate(parseInt(slotMatch[1]), parseInt(slotMatch[2]));
-                if (slotDate.getTime() < viewingFromDate.getTime()) return "";
-              }
-            }
+            if (isBeforeViewable(d.ymd, viewingFromYmd)) return "";
             return `${d.label} ${start}${end ? "〜" + end : ""}`;
           })
           .filter(Boolean);
@@ -6393,7 +6380,15 @@ export default function AixModal({
                     {(() => {
                       // 曜日は日本時間の暦で決める（入力の確認用に表示）
                       const ds = parseSpecificDates(viewingSpecificDate);
-                      if (ds.length === 0) return null;
+                      // 2026-09-19 竹内（a🤫 事例）: お客様が日付を言っていない時は自動で入れない。
+                      //   空欄の理由をその場に出す（スタッフが「入れ忘れ」と迷わないように）
+                      if (ds.length === 0) {
+                        return viewingRequested.length === 0 ? (
+                          <p className="mt-1 text-[11px] text-[#8696a0]">
+                            お客様からの日付のご指定はありません（こちらから日にちを出す場合は下の「内覧可能日時」を使ってください）
+                          </p>
+                        ) : null;
+                      }
                       const labels = ds.map((x) => `${x.m}/${x.d}(${weekdayForMonthDay(x.m, x.d) ?? "?"})`).join("・");
                       const booked = ds.some((x) => viewingCalendarDays.some((d) => d.fullyBooked && calendarDayIs(d.label, x.m, x.d)));
                       return (
@@ -6500,6 +6495,12 @@ export default function AixModal({
           {actionType === "viewing_invite" && (
             <div className="mb-4">
               <p className="mb-2 text-xs font-bold text-[#54656f]">内覧可能日時（カレンダーから自動取得）</p>
+              {/* 2026-09-19 竹内（a🤫 事例）: 退去予定物件は退去日の翌日から。退去前の日は出さない */}
+              {viewingVacancyFromYmd && (
+                <p className="mb-2 rounded-lg bg-orange-50 px-2.5 py-1.5 text-[11px] font-bold text-orange-700">
+                  🏚️ {vacancyDateLabel(viewingVacancyMoveOut)}退去予定 → {viewableFromVacancyDate(viewingVacancyMoveOut)}以降でご案内（退去前の日は選べません）
+                </p>
+              )}
               {viewingCalendarLoading ? (
                 <div className="flex items-center gap-2 rounded-xl bg-[#f0f2f5] px-3 py-2.5 text-sm text-[#8696a0]">
                   <span className="inline-block animate-spin">⏳</span>
@@ -6507,16 +6508,23 @@ export default function AixModal({
                 </div>
               ) : viewingCalendarDays.length > 0 ? (
                 <div className="flex flex-col gap-2">
-                  {viewingCalendarDays.map((d, i) => (
+                  {viewingCalendarDays.map((d, i) => {
+                    // 退去前（内覧できない日）は選べない・時間欄も出さない
+                    const beforeViewable = isBeforeViewable(d.ymd, viewingVacancyFromYmd);
+                    return (
                     <div key={i} className={`rounded-xl px-3 py-2.5 transition-all ${
-                      d.fullyBooked
+                      beforeViewable
+                        ? "bg-[#f0f2f5] opacity-60"
+                        : d.fullyBooked
                         ? viewingSlotOverride[i] ? "bg-emerald-50 border border-emerald-200" : "bg-red-50"
                         : viewingSlotEnabled[i] ? "bg-emerald-50 border border-emerald-200" : "bg-[#f0f2f5]"
                     }`}>
                       <div className="flex items-center gap-2">
                         {/* ON/OFF トグル */}
                         <button
+                          disabled={beforeViewable}
                           onClick={() => {
+                            if (beforeViewable) return;
                             if (d.fullyBooked) {
                               setViewingSlotOverride(prev => { const n = [...prev]; n[i] = !n[i]; return n; });
                               if (!viewingSlotStarts[i]) setViewingSlotStarts(prev => { const n = [...prev]; n[i] = VIEWING_DAY_START; return n; });
@@ -6526,27 +6534,35 @@ export default function AixModal({
                             }
                           }}
                           className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${
-                            d.fullyBooked
+                            beforeViewable
+                              ? "bg-[#e4e7ea] text-[#b0bec5]"
+                              : d.fullyBooked
                               ? viewingSlotOverride[i] ? "bg-emerald-500 text-white" : "bg-red-200 text-red-400"
                               : viewingSlotEnabled[i] ? "bg-emerald-500 text-white" : "bg-[#d1d7db] text-[#8696a0]"
                           }`}
-                        >{d.fullyBooked ? (viewingSlotOverride[i] ? "✓" : "×") : viewingSlotEnabled[i] ? "✓" : "○"}</button>
+                        >{beforeViewable ? "–" : d.fullyBooked ? (viewingSlotOverride[i] ? "✓" : "×") : viewingSlotEnabled[i] ? "✓" : "○"}</button>
                         {/* 日付チップ */}
                         <span className={`font-bold text-xs flex-shrink-0 ${
-                          d.fullyBooked
+                          beforeViewable
+                            ? "text-[#b0bec5]"
+                            : d.fullyBooked
                             ? viewingSlotOverride[i] ? "text-emerald-700" : "text-red-400"
                             : viewingSlotEnabled[i] ? "text-emerald-700" : "text-[#54656f]"
                         }`}>{d.label}</span>
-                        {d.fullyBooked && !viewingSlotOverride[i] && (
+                        {beforeViewable ? (
+                          <span className="text-[10px] text-[#b0bec5]">退去前（内覧できません）</span>
+                        ) : d.fullyBooked && !viewingSlotOverride[i] && (
                           <span className="text-red-400 text-[10px]">予定あり（タップで手動追加）</span>
                         )}
                         {/* 日程をずらす: この日を外して末尾日の翌日を追加 */}
-                        <button
-                          onClick={() => shiftViewingDay(i)}
-                          className="ml-auto flex-shrink-0 text-[10px] font-bold text-[#8696a0] hover:text-emerald-600 transition-colors"
-                        >→ 日程をずらす</button>
+                        {!beforeViewable && (
+                          <button
+                            onClick={() => shiftViewingDay(i)}
+                            className="ml-auto flex-shrink-0 text-[10px] font-bold text-[#8696a0] hover:text-emerald-600 transition-colors"
+                          >→ 日程をずらす</button>
+                        )}
                       </div>
-                      {(!d.fullyBooked || viewingSlotOverride[i]) && (
+                      {!beforeViewable && (!d.fullyBooked || viewingSlotOverride[i]) && (
                         <div className="mt-2 flex items-center gap-1.5 pl-7">
                           <input
                             type="time"
@@ -6570,7 +6586,8 @@ export default function AixModal({
                         </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#8696a0]">カレンダー情報を取得できませんでした</div>
