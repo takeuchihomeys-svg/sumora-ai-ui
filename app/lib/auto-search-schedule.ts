@@ -154,17 +154,21 @@ export function selectAutoSearchTargets(
   return picked.slice(0, Math.max(0, limit)).map(({ id, reason, rpUpdateDays }) => ({ id, reason, rpUpdateDays }));
 }
 
-/** 17時の「最新物件」便の条件（竹内さんの指定そのまま） */
+/**
+ * 17時の「最新物件」便の条件（竹内さんの指定そのまま）
+ * 2026-09-19 竹内「AD順じゃなくて、指定しなければ更新順になるから17時の時だけ並び替え順をAD順にしなければ大丈夫」
+ *   → リアプロの**既定が更新順**。拡張は sort="updated" の時だけ並び替えを**既定へ戻す**（前の検索の値が残る画面のため）。
+ */
 export const PM_LATEST = {
   /** 本日の更新日付＝更新日「1日以内」で絞る */
   rpUpdateDays: 1,
-  /** AD順ではなく更新順 */
+  /** 並び替えを既定（＝更新順）に戻す */
   sort: "updated" as const,
   /** 1ページだけ（3ページまで行かない） */
   maxPages: 1,
 };
 
-/** 11時の便（従来どおり AD 高い順・ページは今まで通り） */
+/** 11時の便（AD 高い順・ページは今まで通り）。sort="ad" は拡張では**何もしない**印＝今の並びのまま */
 export const AM_DAILY = {
   sort: "ad" as const,
   maxPages: 3,

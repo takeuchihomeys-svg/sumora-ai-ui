@@ -1091,38 +1091,41 @@
     }
 
     {
-      // 並び順（2026-09-19 竹内「17:00の便は AD順ではなくて更新順とする」）
-      // 自動便だけ cond.sort_order（"ad" | "updated"）が入る。手動検索では未指定＝今の並びのまま。
+      // 並び順（2026-09-19 竹内）
+      //   「AD順じゃなくて、指定しなければ更新順になるから17時の時だけ並び替え順をAD順にしなければ大丈夫」
       //
-      // ⚠ リアプロの並べ替えの DOM は**実機で未確認**。設計知見「実機未確認の DOM には、それだと確かめてから入れる。
-      //   確かめられなければ入れずに警告だけ出す」に従い、名前・ラベルで見つかった時だけ設定する。
-      //   見つからない時はコンソールに候補を出す（竹内さんの画面で1回見て、名前が分かれば SORT_SELECTORS に足す）。
-      if (cond.sort_order) {
-        var SORT_SELECTORS = ['select[name="sort"]', 'select[name="order"]', 'select[name="sort_order"]', 'select[name="disp_sort"]'];
+      // つまり**リアプロの既定が更新順**。やることは「17時便では並び替えを既定に戻す」だけ。
+      //   ・sort_order="updated"（17時便）→ 並び替えを**既定へ明示的に戻す**
+      //   ・sort_order="ad"（11時便）・未指定（手動）→ **何もしない**（今の並びのまま）
+      //
+      // 「指定しない」ではなく「戻す」なのは、リアプロが**前の検索の値を残す**画面だから。
+      // 同じ罠を更新日フィルターで踏んでいる（上の update_date も「前の顧客の選択値が残らないよう "" にリセット」）。
+      // 11時便が AD 順で走った後、17時便で何もしないと AD 順のままになる。
+      if (cond.sort_order === "updated") {
+        var SORT_SELECTORS = ['select[name="sort"]', 'select[name="order"]', 'select[name="sort_order"]', 'select[name="disp_sort"]', 'select[name="order_by"]'];
         var sortEl = null;
         for (var _si = 0; _si < SORT_SELECTORS.length; _si++) {
           sortEl = document.querySelector(SORT_SELECTORS[_si]);
           if (sortEl) break;
         }
         if (sortEl) {
-          // 「更新」「新着」を含む選択肢＝更新順、「AD」「広告」を含む選択肢＝AD順
-          var wantRe = cond.sort_order === "updated" ? /更新|新着|登録/ : /AD|ＡＤ|広告/;
-          var hit = null;
+          // 既定＝空の選択肢があればそれ、無ければ先頭（リアプロの既定は更新順）
+          var _def = null;
           for (var _oi = 0; _oi < sortEl.options.length; _oi++) {
-            if (wantRe.test(sortEl.options[_oi].textContent || "")) { hit = sortEl.options[_oi]; break; }
+            if ((sortEl.options[_oi].value || "") === "") { _def = sortEl.options[_oi]; break; }
           }
-          if (hit) {
-            queueSelVal(sortEl.getAttribute("name"), hit.value);
-            console.log("[AX] 並び順セット:", cond.sort_order, "→", (hit.textContent || "").trim());
-          } else {
-            console.warn("[AX] 並び順の選択肢が見つからない（今の並びのまま）:", Array.prototype.map.call(sortEl.options, function (o) { return (o.textContent || "").trim(); }).join(" / "));
+          if (!_def && sortEl.options.length > 0) _def = sortEl.options[0];
+          if (_def) {
+            queueSelVal(sortEl.getAttribute("name"), _def.value);
+            console.log("[AX] 並び順を既定（更新順）に戻す:", (_def.textContent || "").trim() || "(空)");
           }
         } else {
-          // 実機で名前を確かめるための手がかりを出す（推測で別の select を触らない）
+          // 見つからない時は触らない＝既定のまま。実機で名前を確かめる手がかりだけ出す
+          //   （11時便が AD 順を指定していない今の作りでは、そもそも AD 順が残らないので実害は出にくい）
           var _allSel = Array.prototype.map.call(document.querySelectorAll("select"), function (s) {
             return (s.getAttribute("name") || "(name無し)") + "=[" + Array.prototype.map.call(s.options, function (o) { return (o.textContent || "").trim(); }).slice(0, 6).join("|") + "]";
           });
-          console.warn("[AX] 並び順の select が見つからない（今の並びのまま・要確認）。画面の select 一覧:", _allSel.join("  "));
+          console.warn("[AX] 並び順の select が見つからない（既定のまま・要確認）。画面の select 一覧:", _allSel.join("  "));
         }
       }
     }
