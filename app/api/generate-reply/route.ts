@@ -5,6 +5,8 @@ import { supabase } from "@/app/lib/supabase";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（返信生成の keep-warm）: 生成モデルの設定は1か所（cron/keep-warm と共有）。実際に送った prefix を記録して cron が読み直す
 import { createGenerationModel } from "@/app/lib/reply-generation-model";
+// 2026-09-19 竹内: 自動返信オンの会話の下書きは Claude のまま（印を付けて llm-alt-provider が守る）
+import { LLM_AUTO_SEND_HEADER } from "@/app/lib/llm-usage-recorder";
 import { extractWarmPrefix, recordWarmPrefix } from "@/app/lib/reply-warm-prefix";
 import { inferTpoHint } from "@/app/lib/tpo-hint";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
@@ -2804,6 +2806,19 @@ export async function POST(req: NextRequest) {
   // AI生成を実行した場合、draft生成をスキップする。
   // brainMetaDirect 経由（bg-async の brain直列実行後）はすでに bg-async 側でチェック済みのため
   // externalBrainGate !== null の場合はスキップ不要。
+  // ─── 2026-09-19 竹内「自動返信モードのお客さんの返信はクロードのAPI使う形でいく」───────────────
+  //   自動返信オンの会話の下書きは**人の目を通さずに送る**ので、モデルを替えない（印を付けて llm-alt-provider が守る）。
+  //   下の post_apply ガードは手動呼び出しの時しか走らない（自動の下書きは bg-async 経由で通らない）ので、
+  //   ここで独立して読む。切り替えていない時は無駄なクエリになるが、**送ってしまってからでは戻せない**ので確実さを取る。
+  let autoSendConversation = false;
+  if (conversationId && !isTemplateOptimize) {
+    try {
+      const { data: autoRow } = await supabase
+        .from("conversations").select("auto_send_enabled").eq("id", conversationId).maybeSingle();
+      autoSendConversation = (autoRow as { auto_send_enabled?: boolean | null } | null)?.auto_send_enabled === true;
+    } catch { /* 読めなければ false（＝通常どおり。切り替えていなければ影響なし） */ }
+  }
+
   if (conversationId && externalBrainGate === null && !isTemplateOptimize) {
     const { data: convMeta } = await supabase
       .from("conversations")
@@ -4753,10 +4768,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     }
     let warmPrefixRecorded = false;
 
+    // 2026-09-19 竹内「自動返信モードのお客さんの返信はクロードのAPI使う形でいく」:
+    //   自動返信オンの会話の下書きには印を付ける。llm-alt-provider がこの印を見て、
+    //   LLM_ALT_ACTIONS に何を書いていても**別のクラウドに回さない**（人の目を通さずに送るため）。
+    //   印は出口（llm-usage-recorder）が取り除くので Anthropic には届かない。
+    const autoSendHeaders = autoSendConversation ? { [LLM_AUTO_SEND_HEADER]: "1" } : undefined;
+
     // テンプレート最適化モードは maxTokens 広めの専用モデル（通常生成は createGenerationModel）
     const genStream = (isTemplateOptimize
       ? createTemplateOptimizeModel()
-      : createGenerationModel()
+      : createGenerationModel({ defaultHeaders: autoSendHeaders })
     ).stream(messages);
 
     // B-2: 品質判定フラグ（自動返信ハードゲート用）
@@ -5256,7 +5277,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     const retryMessages = [...messages, new AIMessage(draftBody), new HumanMessage(feedback)];
                     genIndex = 2;
                     const gen2 = await consumeGeneration(
-                      createGenerationModel().stream(retryMessages)
+                      // 修正ループも同じ印を付ける（自動返信の会話は再生成も Claude のまま）
+                      createGenerationModel({ defaultHeaders: autoSendHeaders }).stream(retryMessages)
                     );
                     if (gen2.body.trim()) {
                       // 2026-09-11 統合設計: gen2 にも gen1 と同じ台帳の決定論自動修正を掛ける（旧実装は gen1 のみ＝非対称）

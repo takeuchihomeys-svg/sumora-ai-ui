@@ -19,7 +19,7 @@
 //   ・画像（Vision）と streaming は対象外＝そのまま Anthropic へ
 //   ・応答は Anthropic の形に戻すので、使用量の記録（llm_usage_logs）はそのまま動く（model 名で見分けられる）
 
-import { LLM_ACTION_HEADER } from "./llm-usage-recorder";
+import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER } from "./llm-usage-recorder";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 
@@ -103,6 +103,16 @@ export const ROUTE_MARKERS = {
   /** AIX テンプレート生成（返信文とは別物・当面は替えない） */
   aix_template: "ハルシネーション絶対禁止",
 } as const;
+
+/**
+ * 自動返信オンの会話の下書きか（呼び出し側が x-sumora-llm-auto-send: 1 を付ける）。
+ * 2026-09-19 竹内「自動返信モードのお客さんの返信はクロードのAPI使う形でいく」。
+ * **この印がある呼び出しは、LLM_ALT_ACTIONS に何を書いていても Claude のまま**（人の目を通さずに送るため）。
+ */
+export function isAutoSendCall(headers: Headers): boolean {
+  const v = (headers.get(LLM_AUTO_SEND_HEADER) ?? "").trim();
+  return v === "1" || v.toLowerCase() === "true";
+}
 
 export function resolveRouteName(action: string | null, systemHead: string | null): string | null {
   if (action) return action;
@@ -252,6 +262,9 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     if (!body) return original(input as RequestInfo, init);
 
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    // 2026-09-19 竹内「自動返信モードのお客さんの返信はクロードのAPI使う形でいく」:
+    //   人の目を通さずに送る文なので、**何を指定していても**別のクラウドに回さない（最優先の歯止め）
+    if (isAutoSendCall(headers)) return original(input as RequestInfo, init);
     const routeName = resolveRouteName(headers.get(LLM_ACTION_HEADER), flattenContent(body.system));
     if (!shouldRouteAlt(cfg, routeName)) return original(input as RequestInfo, init);
 

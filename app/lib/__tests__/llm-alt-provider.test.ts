@@ -3,8 +3,9 @@
 // 実行: npx tsx app/lib/__tests__/llm-alt-provider.test.ts（全 PASS で exit 0）
 import { readFileSync } from "node:fs";
 import {
-  readAltConfig, shouldRouteAlt, resolveRouteName, toOpenAIBody, fromOpenAIResponse, flattenContent, ROUTE_MARKERS,
+  readAltConfig, shouldRouteAlt, resolveRouteName, toOpenAIBody, fromOpenAIResponse, flattenContent, ROUTE_MARKERS, isAutoSendCall,
 } from "../llm-alt-provider";
+import { LLM_AUTO_SEND_HEADER } from "../llm-usage-recorder";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra = "") {
@@ -58,6 +59,21 @@ console.log("── ★ 順番に替えられる（返信文 → 分類 → ブ�
   t("設定が無ければ常に false", !shouldRouteAlt(null, "reply_generate"));
 }
 
+console.log("── ★ 自動返信オンの会話は、何を指定していても Claude のまま（2026-09-19 竹内）");
+{
+  // 人の目を通さずに送る文なので、LLM_ALT_ACTIONS に何を書いていても別のクラウドに回さない
+  const h = (v?: string) => { const x = new Headers(); if (v !== undefined) x.set(LLM_AUTO_SEND_HEADER, v); return x; };
+  t("★ 印があれば自動返信の下書き（切り替えない）", isAutoSendCall(h("1")));
+  t("true でも同じ", isAutoSendCall(h("true")));
+  t("印が無ければ通常の下書き", !isAutoSendCall(h()));
+  t("0 は自動返信ではない", !isAutoSendCall(h("0")));
+  t("空文字は自動返信ではない", !isAutoSendCall(h("")));
+  // 返信文を切り替える設定でも、自動返信の会話は守られる（実装では isAutoSendCall を先に見る）
+  const cfg = readAltConfig({ ...AZURE, LLM_ALT_ACTIONS: "reply_generate" })!;
+  t("★ 設定上は返信文を切り替える指定でも…", shouldRouteAlt(cfg, "reply_generate"));
+  t("★ …自動返信の印があれば回さない（印の判定が先）", isAutoSendCall(h("1")));
+}
+
 console.log("── ★ 見分けの語が実際のプロンプトと合っているか（静かに壊れるのを防ぐ）");
 {
   // プロンプトの冒頭を書き換えると判定が外れ、気づかないうちに切り替えの対象が変わる。
@@ -75,6 +91,18 @@ console.log("── ★ 見分けの語が実際のプロンプトと合って�
   const aixTemplate = readFileSync("app/api/aix-template-generate/route.ts", "utf8");
   t("★ AIX テンプレ生成に『ハルシネーション絶対禁止』がある（返信文と混ざらない）",
     aixTemplate.includes(ROUTE_MARKERS.aix_template));
+
+  // 自動返信の印が、返信生成の呼び出しに実際に付いているか（付け忘れると守れない）
+  t("★ 返信生成が自動返信の会話に印を付けている",
+    /auto_send_enabled/.test(replyRoute) && /\[LLM_AUTO_SEND_HEADER\]:\s*"1"/.test(replyRoute),
+    "app/api/generate-reply/route.ts で auto_send_enabled を読んで LLM_AUTO_SEND_HEADER を付けること");
+  t("★ 修正ループ（再生成）にも同じ印が付いている",
+    (replyRoute.match(/createGenerationModel\(\{ defaultHeaders: autoSendHeaders \}\)/g) ?? []).length >= 2,
+    "1回目の生成と修正ループの両方に付ける");
+
+  const recorder = readFileSync("app/lib/llm-usage-recorder.ts", "utf8");
+  t("★ 印は Anthropic に送る前に取り除かれる",
+    recorder.includes("LLM_AUTO_SEND_HEADER") && /copy\.delete\(LLM_AUTO_SEND_HEADER\)/.test(recorder));
 
   // 実データ（llm_usage_logs の sys_head）そのままで判定を確かめる
   t("★ 実データ: 返信生成 → reply_generate",

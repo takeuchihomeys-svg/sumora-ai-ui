@@ -17,6 +17,12 @@
 /** 呼び出し側が付ける印（Anthropic には送らない）。AIX の種類・LINE の会話 ID */
 export const LLM_ACTION_HEADER = "x-sumora-llm-action";
 export const LLM_CONVERSATION_HEADER = "x-sumora-llm-conversation";
+/**
+ * 2026-09-19 竹内「自動返信モードのお客さんの返信はクロードのAPI使う形でいく」:
+ * 自動返信オンの会話の下書きに付ける印。**この印がある呼び出しは別のクラウドに回さない**
+ * （人の目を通さずに送るので、モデルを替えて品質を賭けない）。llm-alt-provider が読む。
+ */
+export const LLM_AUTO_SEND_HEADER = "x-sumora-llm-auto-send";
 
 export type LlmUsageRow = {
   route: string | null;
@@ -111,13 +117,17 @@ export function extractSumoraMarks(init: RequestInit | undefined): SumoraMarks {
   const none: SumoraMarks = { action: null, conversationId: null, init };
   const h = init?.headers;
   if (!h) return none;
-  const isMark = (k: string) => { const l = k.toLowerCase(); return l === LLM_ACTION_HEADER || l === LLM_CONVERSATION_HEADER; };
+  // 2026-09-19 竹内: 自動返信の印（x-sumora-llm-auto-send）も Anthropic に送らずここで取り除く
+  const isMark = (k: string) => { const l = k.toLowerCase(); return l === LLM_ACTION_HEADER || l === LLM_CONVERSATION_HEADER || l === LLM_AUTO_SEND_HEADER; };
   const pick = (k: string, v: unknown, out: SumoraMarks) => {
     let s = typeof v === "string" ? v.trim() : "";
     if (!s) return;
     // 2026-09-17 竹内（AIX キャッシュ点検）: 付ける側（aix-system-blocks の llmMetaHeaderValue）は非 ASCII を encodeURIComponent 済みで送るので戻す（失敗したらそのまま）
     if (s.includes("%")) { try { s = decodeURIComponent(s); } catch { /* 素の値 */ } }
-    if (k.toLowerCase() === LLM_ACTION_HEADER) out.action = s; else out.conversationId = s;
+    const l = k.toLowerCase();
+    if (l === LLM_ACTION_HEADER) out.action = s;
+    else if (l === LLM_AUTO_SEND_HEADER) { /* 記録には使わない（llm-alt-provider が読む） */ }
+    else out.conversationId = s;
   };
   const out: SumoraMarks = { action: null, conversationId: null, init };
   if (typeof Headers !== "undefined" && h instanceof Headers) {
@@ -127,6 +137,7 @@ export function extractSumoraMarks(init: RequestInit | undefined): SumoraMarks {
     const copy = new Headers(h);
     copy.delete(LLM_ACTION_HEADER);
     copy.delete(LLM_CONVERSATION_HEADER);
+    copy.delete(LLM_AUTO_SEND_HEADER);
     out.init = { ...init, headers: copy };
     return out;
   }
