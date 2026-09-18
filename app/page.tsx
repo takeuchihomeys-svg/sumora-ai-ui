@@ -24,10 +24,10 @@ import { meetingToJst, pendingViewingNotes, isReplaceableViewingNotes, VIEWING_M
 // 2026-09-16 竹内（カイナ事例）: 内覧の候補日時をカレンダーに「時間確保」で置き、決まったら残りを消す
 import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewingHoldNotes, planHoldCleanup, type HoldSlot } from "./lib/viewing-hold";
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
-// 2026-09-18 竹内「必ずのお客さんはLINEの上に上がるようにする。忘れないようにする為」: 一覧の並びとバッジの日数を同じ関数で
-import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, oldestPromiseAtMs, promiseOverdueDays } from "./lib/promise-calendar";
-// 一覧の並び: ①メッセージが来ている（返事待ち）が上 ②その組の中で【必ず】が上 ③残りは直近やり取り順
-import { compareConversationOrder, hasIncomingMessage, sortMsOf } from "./lib/conversation-order";
+// 2026-09-18 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面の赤帯と一覧のバッジに出す
+import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseOverdueDays } from "./lib/promise-calendar";
+// 一覧の並び: 直近やり取り順（新しい方が上）だけ。2026-09-18 竹内「本来のLINEのように時間最新順に戻す」
+import { compareConversationOrder, sortMsOf } from "./lib/conversation-order";
 import { jstYmd } from "./lib/jst-date";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
@@ -2715,20 +2715,15 @@ export default function Home() {
           c.messages.some((m) => m.text?.toLowerCase().includes(q))
       );
     }
-    // 2026-09-18 竹内「メッセージがきているお客さんで時間最近の方が上に配置。この必ずは、メッセージが来ていない中なら
-    //   メッセージ来ていない中で上。メッセージ来ているならメッセージ来ている中で上にする」:
-    //   ① メッセージが来ている（返事待ち＝最後の発言がお客様）が上 ② その組の中で【必ず】が上
-    //   ③【必ず】どうしは約束が古い順 ④ 残りは従来どおり直近やり取り順。
-    //   旧は直近やり取り順だけで、約束は新しいやり取りに押し下げられて一番下に沈んでいた。
-    //   なお同日中の最初の実装は【必ず】を一覧全体の先頭に出していたが、それだと今まさに返事を
-    //   待っているお客様が約束だけの会話の下に来るため、竹内さんの指摘で「組の中で上」に直した。
-    const keyOf = (c: Conversation) => ({
-      hasIncoming: hasIncomingMessage(c),
-      promiseAt: oldestPromiseAtMs(openPromises[c.id]),
-      updatedAtMs: sortMsOf(c.updatedAt),
-    });
-    return [...result].sort((a, b) => compareConversationOrder(keyOf(a), keyOf(b)));
-  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds, manuallyReadAt, openPromises]); // eslint-disable-line react-hooks/exhaustive-deps
+    // 2026-09-18 竹内「LINE時間系列バラバラになっているので、読みにくい。本来のLINEのように時間最新順に戻す」:
+    //   同じ日に【必ず】を上に出す並べ替えを2段階で入れたが、画面では時刻が 19:37 → 17:37 → 20:19 → 18:08 と
+    //   行ったり来たりして読めなくなった。一覧は「上から順に新しい」という読み方そのものが情報なので、
+    //   並べ替えをやめて直近やり取り順だけに戻す。規則は conversation-order.ts の1か所（並びを2か所に書かない）。
+    //   【必ず】は 🔴必ず バッジ・会話画面の赤帯・カレンダー・翌朝の日報の4か所で届いているので消えない。
+    return [...result].sort((a, b) =>
+      compareConversationOrder({ updatedAtMs: sortMsOf(a.updatedAt) }, { updatedAtMs: sortMsOf(b.updatedAt) })
+    );
+  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds, manuallyReadAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // AIX送信対象（AIXバッジ かつ 要対応バッジ）の件数。AIXボタンの紫ドットに使う
   const aixTargetCount = useMemo(() => {
