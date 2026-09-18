@@ -36,6 +36,7 @@ import { stripWaited } from "@/app/lib/greeting";
 import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
 import { stripPropertyNameFromPickupLine } from "@/app/lib/pickup-line";
 import { stripRepeatedThanksLines } from "@/app/lib/property-send-match";
+import { stripUnfoundedSelectionClaim, SELECTION_CLAIM_NOTE } from "@/app/lib/selection-claim";
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
 // AIX-META（suggested_aix_meta）の型は brain-core を単一ソースとして参照（type-only importのためランタイム依存なし）
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
@@ -1391,6 +1392,8 @@ export async function POST(req: NextRequest) {
     recommendationScenario
       ? `・🚫 このシナリオで絶対に使ってはいけない冒頭表現（1文字でも該当したらやり直し）: ${RECOMMENDATION_FORBIDDEN_OPENINGS[recommendationScenario].map((p) => `「${p}」`).join(" / ")}`
       : "",
+    // 2026-09-18 竹内「実際生成された文のように質高いのかな？」: 出口で落とすだけでなく書かせない
+    SELECTION_CLAIM_NOTE,
     // 2026-09-18 竹内（𝒮 さん事例）: ブレインが知っている状況（送付済み件数・まだ内覧できるか）を
     //   そのまま文の指示にする。「物件1件しか送っていない場合は お送りした中でも の部分はいれない」
     actionType === "property_recommendation"
@@ -1638,6 +1641,13 @@ export async function POST(req: NextRequest) {
           console.log(JSON.stringify({ tag: "aix-template-generate:pickup-line", removed: picked.removed }));
           text = picked.text;
         }
+      }
+      // こちらが確かめていない選び方の主張（「重複しないよう選定しております」＝実送信0件・
+      //   スタッフが書くのは逆の「重複しますが」9件だけ）
+      const claim = stripUnfoundedSelectionClaim(text);
+      if (claim.removed.length > 0) {
+        console.log(JSON.stringify({ tag: "aix-template-generate:selection-claim", removed: claim.removed }));
+        text = claim.text;
       }
       // 根拠のないお礼の行（直近のお客様の発言に紐づかないお礼）
       const thanks = stripRepeatedThanksLines(text);
