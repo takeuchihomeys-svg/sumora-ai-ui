@@ -7,6 +7,8 @@
 import "./resolution-core.js";
 // 2026-09-18 竹内: 検索日の記録（サイト×モード）を popup.js と同じ1つの関数で行う（self.AxlxSearchHistory）
 import "./search-history.js";
+// 2026-09-18 竹内（一括検索の混線）: fill-done が誰の分かの判定（純関数・テストあり）
+import "./fill-done-match.js";
 
 const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
 
@@ -1909,32 +1911,52 @@ var _batchShouldStop = false;
 
 // resolve 値は { timedOut: boolean, error: string|null } に統一。
 // error は page-script.js が fill-done に載せたエラー内容（フォールバック検索は実行済み）。
+// 2026-09-18 竹内（一括検索で違うお客さんの条件が送られるバグ）:
+//   タイムアウトで捨てた待ちの顧客 ID を覚えておき、**遅れて届いたシグナル**を無視する。
+//   これが無いと「顧客Aの待ちがタイムアウト → 次へ → 顧客Aの fill-done が遅れて到着 →
+//   顧客Bの待ちを解決 → まだ検索中の画面を顧客Bとしてスクレイプ」が起きる
+var _abandonedFillDoneIds = new Map(); // customerId -> 捨てた時刻(ms)
+var ABANDONED_FILL_DONE_TTL_MS = 10 * 60 * 1000;
+
+function _sweepAbandonedFillDoneIds() {
+  var now = Date.now();
+  _abandonedFillDoneIds.forEach(function (at, id) {
+    if (now - at > ABANDONED_FILL_DONE_TTL_MS) _abandonedFillDoneIds.delete(id);
+  });
+}
+
+function _markFillDoneAbandoned(customerId) {
+  if (!customerId) return;
+  _abandonedFillDoneIds.set(String(customerId), Date.now());
+  _sweepAbandonedFillDoneIds(); // 無限に溜めない
+}
+
+/**
+ * 捨てた記録を消す（その顧客をもう一度検索し直す時に、遅延シグナル扱いのまま詰まらないように）。
+ * 一括検索は1人につき1回 _createFillDoneWaiter を作るので、作る時に必ず消す。
+ */
+function _clearFillDoneAbandoned(customerId) {
+  if (customerId) _abandonedFillDoneIds.delete(String(customerId));
+}
+
 function _notifyFillDone(site, customerId, error) {
-  if (!customerId) {
-    // null のときは最古の1件のみ解決（本来は content script 側で必ず送るべき）
-    var first = _fillDoneWaiters.find(function(w) { return !w.site || !site || w.site === site; });
-    if (first) {
-      clearTimeout(first.timer);
-      first.resolve({ timedOut: false, error: error || null });
-      _fillDoneWaiters = _fillDoneWaiters.filter(function(w) { return w !== first; });
-    }
+  _sweepAbandonedFillDoneIds(); // 期限切れの記録を落としてから判定に渡す
+  // 誰の分かの判定（捨てた顧客の遅延シグナルの無視も含む）は fill-done-match.js（純関数・テストあり）に1本化
+  var sel = self.AxlxFillDoneMatch.selectWaiters(
+    _fillDoneWaiters,
+    { site: site || null, customerId: customerId || null },
+    new Set(Array.from(_abandonedFillDoneIds.keys()))
+  );
+  if (!sel.resolve.length) {
+    console.warn("[fill-done] 解決しない（" + sel.reason + "） customerId=" + customerId + " site=" + site
+      + " 待ち=" + _fillDoneWaiters.map(function (w) { return w.customerId || "(id無)"; }).join(","));
     return;
   }
-  var remaining = [];
-  _fillDoneWaiters.forEach(function (w) {
-    var siteMatch = !w.site || !site || w.site === site;
-    // customerId が両方ある場合のみ厳密一致。片方でも null なら旧来どおり site のみで解決
-    var cidMatch = (w.customerId && customerId)
-      ? String(w.customerId) === String(customerId)
-      : true;
-    if (siteMatch && cidMatch) {
-      clearTimeout(w.timer);
-      w.resolve({ timedOut: false, error: error || null });
-    } else {
-      remaining.push(w);
-    }
+  sel.resolve.forEach(function (w) {
+    clearTimeout(w.timer);
+    w.resolve({ timedOut: false, error: error || null });
   });
-  _fillDoneWaiters = remaining;
+  _fillDoneWaiters = _fillDoneWaiters.filter(function (w) { return sel.resolve.indexOf(w) < 0; });
 }
 
 // fill-done（自動入力完了の合図）を待つ上限。page-script 側のウォッチドッグより5秒長くする
@@ -1946,6 +1968,8 @@ function _fillDoneTimeoutMs(site) {
 }
 
 function _createFillDoneWaiter(site, customerId, timeoutMs) {
+  // 2026-09-18: この顧客を新しく待ち始める＝前回「捨てた」記録は用済み（再検索が詰まらないように消す）
+  _clearFillDoneAbandoned(customerId);
   return new Promise(function (resolve) {
     var entry = { site: site || null, customerId: customerId || null, resolve: resolve, timer: null };
     // Fix 3: _batchShouldStop を 500ms ごとにポーリングし、true になったら即解決する。
@@ -1963,6 +1987,10 @@ function _createFillDoneWaiter(site, customerId, timeoutMs) {
       clearInterval(stopInterval);
       var idx = _fillDoneWaiters.indexOf(entry);
       if (idx >= 0) _fillDoneWaiters.splice(idx, 1);
+      // 2026-09-18: 捨てたことを覚えておく。後から届くこの顧客の fill-done で
+      //   次の顧客の待ちが解決される（＝違うお客さんの条件で送られる）のを防ぐ
+      _markFillDoneAbandoned(entry.customerId);
+      console.warn("[fill-done-waiter] タイムアウト customerId=" + entry.customerId + " site=" + entry.site);
       resolve({ timedOut: true, error: null });
     }, timeoutMs || 90000);
     _fillDoneWaiters.push(entry);

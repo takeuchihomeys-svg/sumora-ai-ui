@@ -318,6 +318,8 @@
   // フェイルセーフ watchdog: 何らかの理由で全経路が沈黙しても必ず送信される
   var _doneNotified = false;
   var _watchdogTimer = null;
+  // 2026-09-18 竹内（一括検索の混線）: この自動入力を始めた時の顧客 ID。notifyDone がそのまま返す
+  var _fillCustomerId = null;
 
   // errMsg を渡すと fill-done メッセージに error フィールドが付き、
   // content.js → background.js へ中継されてログ・デバッグ材料になる。
@@ -328,6 +330,8 @@
     _doneNotified = true;
     if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
     var msg = { from: 'aixlinx-fill-done' };
+    // 2026-09-18: この入力を始めた時の顧客 ID をそのまま返す（誰の完了かを送る側が持つ）
+    if (_fillCustomerId) msg.customerId = _fillCustomerId;
     if (errMsg) msg.error = String(errMsg).slice(0, 300);
     window.postMessage(msg, '*');
   }
@@ -1771,6 +1775,11 @@
 
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "aixlinx-fill") return;
+    // 2026-09-18 竹内（一括検索で違うお客さんの条件が送られるバグ）:
+    //   「誰の自動入力か」をここで覚え、notifyDone がそのまま fill-done に載せて返す。
+    //   中継側の「今の顧客」ではなく**この入力を始めた時の顧客**を返すので、遅れて届いた
+    //   シグナルが次の顧客の待ちを解決することがなくなる
+    _fillCustomerId = e.data.customerId || null;
     try {
       fillRealpro(e.data.conditions);
     } catch (err) {

@@ -852,18 +852,26 @@
     }
   }
 
+  // 2026-09-18 竹内（一括検索の混線）: 直前に受け取った「誰の自動入力か」。fill が開始時に取り込む
+  var _pendingFillCid = null;
+
   function fill(cond) {
     // 240秒ウォッチドッグ: フリーズ/例外時にbackground.jsを強制解放
     // background.js の待ち上限（FILL_DONE_TIMEOUT_MS.itandi=245秒）より5秒短くする。
     // 2026-09-12 竹内: 85秒→150秒（路線ごとの駅選択・「電車1本」の沿線全駅選択で85秒に届くため）
     // 2026-09-14 竹内「時間かかっても大丈夫なのでタイムアウトが原因なら時間をのばす」: 150秒→240秒（駅の多い広げて検索・電車1本の安全幅）
+    // 2026-09-18 竹内（一括検索の混線）: この入力を始めた時の顧客 ID を fill-done にそのまま載せて返す
+    var _fillCid = _pendingFillCid;
     var _watchdog = setTimeout(function () {
       console.warn("[AX] watchdog: 240s timeout — fill-done強制送信");
-      window.postMessage({ from: "aixlinx-fill-done", error: "watchdog-timeout" }, "*");
+      var wmsg = { from: "aixlinx-fill-done", error: "watchdog-timeout" };
+      if (_fillCid) wmsg.customerId = _fillCid;
+      window.postMessage(wmsg, "*");
     }, 240000);
     function _safeDone(errMsg) {
       clearTimeout(_watchdog);
       var msg = { from: "aixlinx-fill-done" };
+      if (_fillCid) msg.customerId = _fillCid;
       if (errMsg) msg.error = errMsg;
       window.postMessage(msg, "*");
     }
@@ -1029,6 +1037,8 @@
 
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "axlx-itandi-fill-exec") return;
+    // 2026-09-18: 誰の入力かを覚えてから実行する（fill が fill-done に載せて返す）
+    _pendingFillCid = e.data.customerId || null;
     fill(e.data.conditions);
   });
 })();

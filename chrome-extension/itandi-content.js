@@ -154,7 +154,12 @@
       // サイドパネルモード時はunderbar.jsを経由しないためここで直接発火する
       window.postMessage({ from: "axlx-itandi-autofill-initiated" }, "*");
       // itandi-page-script.js（world:MAIN）へpostMessageで転送（CustomEventよりも確実なクロスワールド通信）
-      window.postMessage({ from: "axlx-itandi-fill-exec", conditions: msg.conditions }, "*");
+      // 2026-09-18 竹内（一括検索の混線）: 「誰の自動入力か」を依頼と一緒に渡し、fill-done でそのまま返させる
+      window.postMessage({
+        from: "axlx-itandi-fill-exec",
+        conditions: msg.conditions,
+        customerId: msg.customerId || _pendingFillCustomerId || null,
+      }, "*");
       sendResponse({ ok: true });
       return true;
     });
@@ -168,7 +173,8 @@
       chrome.runtime.sendMessage({
         type: "axlx-fill-done",
         site: "itandi",
-        customerId: _pendingFillCustomerId || null,
+        // 2026-09-18: シグナルに載っている ID（その入力を始めた時の顧客）を最優先
+        customerId: e.data.customerId || _pendingFillCustomerId || null,
       }, function () {
         void chrome.runtime.lastError;
       });

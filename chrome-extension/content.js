@@ -202,9 +202,14 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
       return true;
     }
     if (msg.type !== "axlx-realnetpro-autofill") return;
+    // 2026-09-18 竹内（一括検索で違うお客さんの条件が送られるバグ）:
+    //   「誰の自動入力か」を依頼と一緒に page-script へ渡す。page-script はこの ID をそのまま
+    //   fill-done に載せて返すので、遅れて届いたシグナルに**次の顧客の ID が付く**ことがなくなる。
+    //   （旧: fill-done を中継する時に「その時点の _pendingFillCustomerId」を付けていた）
+    var _fillCid = msg.customerId || _pendingFillCustomerId || null;
     setTimeout(function () {
       window.postMessage({ from: "axlx-autofill-initiated" }, "*");
-      window.postMessage({ from: "aixlinx-fill", conditions: msg.conditions }, "*");
+      window.postMessage({ from: "aixlinx-fill", conditions: msg.conditions, customerId: _fillCid }, "*");
     }, 500);
     sendResponse({ ok: true });
   });
@@ -218,7 +223,9 @@ window.addEventListener("message", function (e) {
     chrome.runtime.sendMessage({
       type: "axlx-fill-done",
       site: "realnetpro",
-      customerId: _pendingFillCustomerId || null,
+      // 2026-09-18: シグナルに載っている ID（＝その入力を始めた時の顧客）を最優先。
+      //   「今の _pendingFillCustomerId」は、遅れて届いた時に次の顧客を指してしまう
+      customerId: e.data.customerId || _pendingFillCustomerId || null,
     }, function () {
       void chrome.runtime.lastError;
     });

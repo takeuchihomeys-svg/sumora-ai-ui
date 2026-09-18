@@ -34,7 +34,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["popup.html", "popup-maps.js", "transit_graph.js", "search-history.js", "popup.js", "styles.css", "page-script.js", "score-overlay.js"],
+      "resources": ["popup.html", "popup-maps.js", "transit_graph.js", "search-history.js", "fill-done-match.js", "popup.js", "styles.css", "page-script.js", "score-overlay.js"],
       "matches": ["https://www.realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]
     },
     {
