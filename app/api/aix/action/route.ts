@@ -1401,6 +1401,12 @@ async function handleAction(request: NextRequest): Promise<Response> {
       // 訴求品質向上用（brain-core SuggestedAixMeta と同期・型ドリフト注意: customer_intentはbrain-core側でunion型）
       customer_intent?: string | null;
       winning_pattern?: string | null;
+      // 2026-09-18 竹内（𝒮 さん事例）「今の状況はブレインが分かっているんやから、それと AIX のところリンクさせて」:
+      //   ブレインの行動台帳（この会話で何件送ったか）。1件オススメの比較の言い方の可否に使う
+      action_ledger?: {
+        summary?: string | null;
+        facts?: { propertiesSentCount?: number | null } | null;
+      } | null;
       repeated_concern?: string | null;
       human_type_label?: string | null;
       engagement_stance?: "push" | "wait" | null;
@@ -1996,8 +2002,16 @@ ${SMORA_COMMON_RULES}`;
       //   ①送った物件が1件以下なら比較の言い方を落とす（実データ179件すべて2件以上送っている時だけ）
       //   ②まだ内覧できないお部屋（退去予定・解禁日が明日以降）は内覧誘導ではなく申込誘導（実データ 34 vs 9）
       {
-        const recSentCount = Number((aixBrainMeta as { sent_property_count?: number } | null)?.sent_property_count
-          ?? (body.prior_sent_property_count as number | undefined) ?? 0);
+        // 件数はブレインの行動台帳（suggested_aix_meta.action_ledger.facts.propertiesSentCount）から取る＝
+        //   竹内さん「今の状況はブレインが分かっているんやから、それと AIX のところリンクさせて」。
+        //   ブレインの判断が無い時は会話の物件名から数える（0 に倒すと比較の言い方が常に落ちてしまうため）
+        const brainSent = aixBrainMeta?.action_ledger?.facts?.propertiesSentCount;
+        const recSentCount = typeof brainSent === "number"
+          ? brainSent
+          : extractPropertyLabels(
+              (Array.isArray(body.recent_messages) ? body.recent_messages as Array<{ sender?: string; text?: string | null }> : [])
+                .filter((m) => m.sender === "staff").map((m) => m.text ?? "").join("\n"),
+            ).length;
         const closing = fixRecommendClosing(message_text, { sentPropertyCount: recSentCount });
         if (closing.applied.length > 0) {
           console.log(JSON.stringify({ tag: "aix:recommend-closing", action: currentAction, conversationId, applied: closing.applied, sentPropertyCount: recSentCount }));
