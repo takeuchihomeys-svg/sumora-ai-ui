@@ -136,11 +136,19 @@ export function resolvePropertySendState(o: {
 }
 
 /**
+ * 「10月1日以降にご内覧可能です」＝**いつから見られるか**の説明。内覧の日程を案内したわけではない。
+ * 2026-09-18 本番検証: この1文が move-out-context の staffOffersViewing（ご内覧…可能です）に当たり、
+ *   「スタッフが内覧を案内済み＝今すぐ見られる」と読まれて notViewable が false に倒れていた。
+ */
+const RELEASE_DATE_NOTICE_RE = /[0-9０-９]{1,2}\s*月\s*[0-9０-９]{1,2}\s*日\s*(?:以降|より|から)[^。！!\n]{0,12}(?:ご)?(?:内覧|内見)/;
+
+/**
  * ブレインが保存する物件の状態を決める（analyzeConversation から呼ぶ）。
  *
  * ・退去予定の日付は**こちらが送った物件の話**だけを見る（お客様ご自身の「9月末退去予定」は今のお住まいの話）
- * ・退去予定でも**スタッフが既に内覧を案内していれば内覧できる扱い**（2026-09-15 隼斗事例・moveOutViewingReleased）。
- *   退去予定の語だけで「内覧できない」とはしない、という既存のブレインの判断をそのまま引き継ぐ。
+ * ・退去予定でも**スタッフが具体的に内覧を案内していれば内覧できる扱い**（2026-09-15 隼斗事例
+ *   「本日ご内覧如何でしょうか 17:30〜18:30お部屋ご案内出来ます」）。退去予定の語だけで塞がない。
+ *   ただし「◯月◯日以降にご内覧可能です」は解禁日の説明なので、案内には数えない（日付の事実が優先）。
  */
 export function resolveBrainPropertyState(o: {
   /** 会話（古い順・新しい順どちらでもよい） */
@@ -151,8 +159,9 @@ export function resolveBrainPropertyState(o: {
 }): BrainPropertyState {
   const staffText = o.messages.filter((m) => (m.sender ?? "") !== "customer").slice(-12).map((m) => m.text ?? "").join("\n");
   const read = readPropertyStateFromText(staffText, o.nowMs ?? Date.now());
+  const releasedByStaff = !!o.viewingReleased && !RELEASE_DATE_NOTICE_RE.test(staffText);
   return {
-    notViewable: o.viewingReleased ? false : read.notViewable,
+    notViewable: releasedByStaff ? false : read.notViewable,
     vacancyDate: read.vacancyDate,
     viewableFrom: read.viewableFrom,
   };

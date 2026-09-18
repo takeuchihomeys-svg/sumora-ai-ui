@@ -51,8 +51,18 @@ console.log("── resolveBrainPropertyState（ブレインが持つ判断）")
   const s2 = resolveBrainPropertyState({ messages: msgs2, nowMs: NOW });
   t("こちらが送った物件の退去予定は拾う", s2.notViewable && s2.viewableFrom === "10月1日", JSON.stringify(s2));
 
+  // 2026-09-18 本番検証で出た誤り: 「10月1日以降にご内覧可能です」は解禁日の説明であって内覧の案内ではない。
+  //   move-out-context の staffOffersViewing がこの1文を拾うため、そのまま渡すと notViewable が false に倒れていた
   const s3 = resolveBrainPropertyState({ messages: msgs2, viewingReleased: true, nowMs: NOW });
-  t("スタッフが既に内覧を案内済みなら内覧できる扱い（隼斗事例）", !s3.notViewable, JSON.stringify(s3));
+  t("「10月1日以降にご内覧可能」は内覧の案内に数えない（日付の事実が優先）", s3.notViewable, JSON.stringify(s3));
+
+  const msgs3 = [
+    { sender: "staff", text: "メロディハイム303号室\n10月30日退去予定のお部屋です" },
+    { sender: "customer", text: "内覧したいです！" },
+    { sender: "staff", text: "本日ご内覧如何でしょうか？17:30〜18:30お部屋ご案内出来ます！！" },
+  ];
+  const s4 = resolveBrainPropertyState({ messages: msgs3, viewingReleased: true, nowMs: NOW });
+  t("スタッフが具体的に内覧を案内していれば内覧できる扱い（隼斗事例）", !s4.notViewable, JSON.stringify(s4));
 }
 
 console.log("── resolvePropertySendState（件数の出どころ）");
