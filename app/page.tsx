@@ -166,12 +166,15 @@ function extractPreferredName(messages: Array<{ sender: string; text?: string | 
 }
 
 // ステータス（4段階）
+// 2026-09-19 竹内「上の部分名前が左に行きすぎて崩れている。手動、自動ボタンとステータスボタンの
+//   文字やボタンのサイズを小さくする等してデザインを整える」:
+//   short = 会話ヘッダーのバッジ用の短い名前（メニューの一覧は label のまま。意味は変えずに幅だけ詰める）
 const DETAIL_STATUSES = [
-  { key: "hearing",    label: "初回対応",     color: "bg-blue-100 text-blue-700",     dot: "bg-blue-400" },
-  { key: "proposing",  label: "物件提案中",   color: "bg-orange-100 text-orange-700", dot: "bg-orange-400" },
-  { key: "applying",   label: "申込・審査中", color: "bg-pink-100 text-pink-700",     dot: "bg-pink-500" },
-  { key: "closed_won", label: "ご成約",       color: "bg-yellow-100 text-yellow-700", dot: "bg-yellow-400" },
-  { key: "closed_lost", label: "失注", color: "bg-gray-200 text-gray-600", dot: "bg-gray-400" },
+  { key: "hearing",    label: "初回対応",     short: "初回",   color: "bg-blue-100 text-blue-700",     dot: "bg-blue-400" },
+  { key: "proposing",  label: "物件提案中",   short: "提案中", color: "bg-orange-100 text-orange-700", dot: "bg-orange-400" },
+  { key: "applying",   label: "申込・審査中", short: "審査中", color: "bg-pink-100 text-pink-700",     dot: "bg-pink-500" },
+  { key: "closed_won", label: "ご成約",       short: "成約",   color: "bg-yellow-100 text-yellow-700", dot: "bg-yellow-400" },
+  { key: "closed_lost", label: "失注",        short: "失注",   color: "bg-gray-200 text-gray-600",     dot: "bg-gray-400" },
 ];
 
 // 旧ステータスキーの後方互換マッピング
@@ -193,6 +196,7 @@ function getDetailStatusMeta(statusKey: string) {
   return DETAIL_STATUSES.find((s) => s.key === key) ?? {
     key: statusKey,
     label: statusKey,
+    short: statusKey,   // 未知のキーはそのまま（ヘッダーの短縮名も同じ）
     color: "bg-gray-100 text-gray-700",
     dot: "bg-gray-400",
   };
@@ -6819,12 +6823,18 @@ export default function Home() {
                 いまボタンとお客さん名被ってるから」:
                 旧は名前を absolute left-0 right-0 で画面いっぱいに広げて中央寄せしており、
                 右のボタン（手動／ステータス）と**重なっていた**（自動ボタンを足して右が広くなり表面化）。
-                → 左・中央・右の3列にし、中央だけが伸び縮みする形にする。どの幅でも重なりようがない。 */}
-            <div className="flex items-center gap-1.5">
+                → 左・中央・右の3列にし、中央だけが伸び縮みする形にする。どの幅でも重なりようがない。
+
+                2026-09-19 竹内「上の部分名前が左に行きすぎて崩れている」:
+                flex の3列だと左（戻る＋未返信バッジ ≒46px）と右（手動＋ステータス ≒130px）の**幅が違う**ので、
+                中央の flex-1 の真ん中が画面の中心から左へ40pxほどズレていた。
+                → grid の `1fr auto 1fr` にして中央列を内容幅にすると、**左右が同じだけ伸びる＝名前が画面の中心**に来る。
+                   左右は minmax(0,1fr) で、はみ出す時に潰れるようにする（中央の名前は max-w で頭打ち）。 */}
+            <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5">
               {/* 左: 戻るボタン + 未返信バッジ */}
               <button
                 onClick={() => setMobileView("list")}
-                className="flex items-center gap-1.5 shrink-0 md:hidden"
+                className="flex items-center gap-1.5 shrink-0 justify-self-start md:hidden"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#111b21" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="15 18 9 12 15 6" />
@@ -6836,8 +6846,9 @@ export default function Home() {
                 )}
               </button>
 
-              {/* 中央: 名前（紐付き客→条件パネル開閉 / 未紐付き→更新 / 長押し→カレンダー予定追加） */}
-              <div className="min-w-0 flex-1 flex justify-center">
+              {/* 中央: 名前（紐付き客→条件パネル開閉 / 未紐付き→更新 / 長押し→カレンダー予定追加）
+                  grid の中央列＝内容幅。長い名前で左右を潰さないよう max-w で頭打ちにする */}
+              <div className="flex min-w-0 max-w-[52vw] justify-center md:max-w-[420px]">
                 <button
                   onClick={() => {
                     if (linkedCustomerMap[selectedConversation.id]) {
@@ -6898,8 +6909,9 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* 右: 自動／ステータス（3列の右。名前の領域に食い込まない） */}
-              <div className="flex shrink-0 items-center gap-1">
+              {/* 右: 自動／ステータス（3列の右。名前の領域に食い込まない）
+                  2026-09-19 竹内「ボタンのサイズを小さくする等して」: gap-1→0.5・px-1.5→1・ラベルは短縮（提案中／審査中） */}
+              <div className="flex shrink-0 items-center justify-self-end gap-0.5">
                 {/* 2026-09-18 竹内「自動ボタンをつける。デフォルトは自動ではない。自動ボタンに切り替えたお客さんは
                     AIX以外自動で返信される（9:00〜21:00）。自動ボタンにする際は最終確認をいれる。
                     自動モードにしていないお客さんは絶対に勝手に自動モードにしない」 */}
@@ -6909,7 +6921,7 @@ export default function Home() {
                   title={autoSendEnabled
                     ? "自動返信オン（AIX以外・9:00〜21:00）。押すと手動に戻します"
                     : "手動（自動返信しません）。押すと自動返信に切り替えます"}
-                  className={`shrink-0 whitespace-nowrap rounded-full border px-1.5 py-[3px] text-[9px] font-bold leading-none ${
+                  className={`shrink-0 whitespace-nowrap rounded-full border px-1 py-[2px] text-[9px] font-bold leading-none ${
                     autoSendEnabled
                       ? "border-transparent bg-[#06C755] text-white"
                       : "border-[#d1d7db] bg-white text-[#8696a0]"
@@ -6925,9 +6937,10 @@ export default function Home() {
                       setShowAixMenu(false);
                     }}
                     disabled={!selectedConversation.id || statusSaving}
-                    className={`whitespace-nowrap rounded-full border px-1.5 py-[3px] text-[9px] font-bold leading-none shadow-none ${detailStatusMeta.color} border-transparent`}
+                    className={`whitespace-nowrap rounded-full border px-1 py-[2px] text-[9px] font-bold leading-none shadow-none ${detailStatusMeta.color} border-transparent`}
                   >
-                    {statusSaving ? "..." : detailStatusMeta.label}
+                    {/* ヘッダーは短縮名（提案中／審査中…）。開いたメニューの一覧は正式名のまま */}
+                    {statusSaving ? "..." : detailStatusMeta.short}
                   </button>
 
                   {showStatusMenu && (
