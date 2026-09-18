@@ -125,10 +125,13 @@ import {
   detectPropertyPass,
   // 2026-09-14 竹内（くれあ事例）: 初期費用を抑える一文が必須の場面か（セルの必須要素と同じ判定）
   requiresInitialCostSave,
+  // 2026-09-18 竹内（𝒮❦ 事例）: 待ちが生まれた場面は「次にこちらがいつ何をご連絡するか」を約束する
+  requiresWaitingCommitment,
   // 2026-09-14 竹内（Hina 事例）: 画像の読み取り文はお客様の発言ではない（意図の判定から外す・プロンプトで見出しを付ける）
   IMAGE_TEXT_LABEL, isImageTextUnit, customerOwnWords,
 } from "@/app/lib/reply-context";
 import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
+import { ensureWaitingCommitment, contactDateLabel } from "@/app/lib/waiting-commitment";
 // 2026-09-12 竹内（YUYA 事例）: お客様が送った物件の呼び方（生成の指示と後処理が同じ判定）
 import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
@@ -5432,6 +5435,22 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               if (ins.inserted) {
                 console.log(JSON.stringify({ tag: "initial-cost-save:inserted", conversationId, evidence: resolveInitialCostTight(pairContext.substance.units.join("\n")).evidence || "cost_question_before_property" }));
                 draftBody = ins.text;
+              }
+            }
+            // 2026-09-18 竹内（𝒮❦ 事例）「生成された文のように軽い文ではなくて、この状況だとお客さんと約束して
+            //   （状況が分かってるんやから）信頼関係を結ぶ形とする。そうしたら成約率も上がるから」:
+            //   入居時期の交渉結果で「いつ頃お申込みすればよいか」を報告 → お客様は了承だけ、の場面は
+            //   お礼で終わらせず「{申込の目安日}に一度その時点の募集状況をご連絡させて頂きます！！」を約束する。
+            //   日付は直前のスタッフ発言から取った値だけを使う（こちらで日を作らない）。
+            //   必須要素の指示だけでは書かれないことがあるので、初期費用の一文と同じく決定論でも差し込む。
+            if (!isTemplateOptimize && draftBody) {
+              const waiting = requiresWaitingCommitment(pairContext);
+              if (waiting) {
+                const withCommit = ensureWaitingCommitment(draftBody, waiting);
+                if (withCommit !== draftBody) {
+                  console.log(JSON.stringify({ tag: "waiting-commitment:inserted", conversationId, date: contactDateLabel(waiting), evidence: waiting.evidence }));
+                  draftBody = withCommit;
+                }
               }
             }
             // A-3（H-3/H-4）: 後処理（enforceCustomerName・絵文字重複除去・「」除去・マーカー除去）で本文が変わった後に

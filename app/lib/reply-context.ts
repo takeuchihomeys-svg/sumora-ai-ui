@@ -9,6 +9,8 @@
 // 2026-09-09 Fable5 行動台帳: action-ledger.ts → reply-context.ts の一方向 runtime 依存。ここは `import type` のみ（TDZ 回避）
 import type { ActionLedger } from "./action-ledger";
 import { resolveInitialCostTight, INITIAL_COST_SAVE_DECL_RE, INITIAL_COST_SAVE_LITERAL } from "./initial-cost-tight";
+// 2026-09-18 竹内（𝒮❦ 事例）: 待ちが生まれた場面は「次にいつ何をご連絡するか」を約束する
+import { resolveWaitingSituation, WAITING_COMMITMENT_RE } from "./waiting-commitment";
 import { costQuestionBeforeProperty } from "./cost-question-scope";
 
 // ─────────────────────────────────────────────────────────────
@@ -1295,6 +1297,32 @@ export function requiresInitialCostSave(pair: PairContext | null | undefined): b
   return !!pair?.rule && pair.rule.mustInclude.includes(INITIAL_COST_SAVE_ELEMENT) && !!INITIAL_COST_SAVE_ELEMENT.when?.(pair);
 }
 
+// 2026-09-18 竹内（𝒮❦ 事例）「生成された文のように軽い文ではなくて、この状況だとお客さんと約束して
+//   （状況が分かってるんやから）信頼関係を結ぶ形とする。そうしたら成約率も上がるから」:
+//   入居時期を交渉・確認して「いつ頃お申込みすればよいか」を報告した後、お客様が了承だけを返した場面は、
+//   お礼で終わらせず「その日に一度こちらからご連絡します」を約束する。日付は直前のスタッフ発言から取る
+//   （こちらで日を作らない）。判定・文・検出・差し込みは waiting-commitment.ts の1か所（四者同名）。
+//   実データ（365日）: 了承だけへの返し 522件のうち次の一手を約束したのは13%＝「毎回約束する」は実態ではないので、
+//   この場面（入居時期の交渉→申込の目安日を報告・22件/年）だけに絞る。
+const WAITING_COMMITMENT_ELEMENT: PairMustInclude = {
+  label: "次にこちらから連絡する日の約束（お客様は申込の目安日を聞いて了承しただけ。お礼で終わらせない）",
+  detect: WAITING_COMMITMENT_RE,
+  when: (p) => !!requiresWaitingCommitment(p),
+  fix: "直前のスタッフ発言にある申込の目安日をそのまま使い「{日付}に一度{日付}時点での募集状況をご連絡させて頂きます！！」を1文入れる（その日以外の日付・新しい約束・金額・物件名は書かない）",
+};
+
+/**
+ * この返信で「次にご連絡する日」の約束が要る場面か（要るなら待ちの中身を返す）。
+ * セルの必須要素・生成後の差し込み（generate-reply）が同じ関数を使う。
+ * **セルには依存しない**: 直前のスタッフ発言の分類が check_result 以外に倒れても効くようにする
+ *   （設計知見「出口の決定論は同じ関数で全経路に配る」）。
+ * お客様が了承だけを返した時に限る（質問・条件変更・断りには足さない）。
+ */
+export function requiresWaitingCommitment(pair: PairContext | null | undefined) {
+  if (!pair || pair.customer.kind !== "ack_only") return null;
+  return resolveWaitingSituation(pair.lastStaffText, new Date().toISOString());
+}
+
 export const PAIR_MATRIX: PairRule[] = [
   // ── 2026-09-09 Fable5 みく事例: 条件ヒアリング→条件フォーム／条件回答。旧実装は rule=null で汎用指示に落ち、
   //    latent_intent「代替案で応える」＋ conditionDirection「全力でサポート禁止」の穴を LLM が先回りヘッジで埋めていた ──
@@ -1675,8 +1703,10 @@ export const PAIR_MATRIX: PairRule[] = [
   // ── 孤児 StaffTurnKind の解消: check_result × 任意（ANY_QUESTION 等の `* × customer` より後に効く） ──
   { id: "CR_ANY", staff: "check_result", customer: "*", precedence: "after_wait",
     tpoLabel: "確認結果報告後の応答",
-    direction: "我々が募集状況の確認結果を報告した直後の返し。報告済みの内容を再宣言せず、お客様の返答の中身に直接答えてから次の一手を1つだけ宣言する。60〜130字",
-    mustInclude: [{ label: "次の一手 or 直接回答",
+    // 2026-09-18 竹内（𝒮❦ 事例）: 入居時期の交渉結果で「いつ頃お申込みすればよいか」を報告した後の了承は、
+    //   お礼で終わらせず「その日に一度こちらからご連絡します」を約束する（状況が分かっているのだから）。
+    direction: "我々が募集状況・確認の結果を報告した直後の返し。報告済みの内容を再宣言せず、お客様の返答の中身に直接答えてから次の一手を1つだけ宣言する。お客様が了承のお礼だけを返した時も、お礼だけで終えず、待ちが生まれているなら「次にこちらからいつ何をご連絡するか」を約束する（日付は直前のスタッフ発言にあるものだけ）。60〜130字",
+    mustInclude: [WAITING_COMMITMENT_ELEMENT, { label: "次の一手 or 直接回答",
       detect: new RegExp(`(?:となります|ございます|可能です|(?:出来|でき)ます)|${VIEWING_OFFER_SOFT_RE.source}|(?:ピックアップ|お調べ|ご案内|お送り)(?:させて(?:頂|いただ)き|いたし|致し)ます`), severity: "warning",
       // 2026-09-11 統合設計（経路C）: 回答部分は hasDirectAnswer にそろえる（提案・行動宣言は従来どおり）
       detectFn: (t, p) => hasDirectAnswer(t, p.customer.questionForm ?? null).yes || VIEWING_OFFER_SOFT_RE.test(t) ||
