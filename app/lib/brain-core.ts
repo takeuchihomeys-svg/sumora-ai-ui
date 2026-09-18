@@ -27,7 +27,9 @@ import {
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
-import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing } from "@/app/lib/move-out-context";
+import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing, moveOutViewingReleased } from "@/app/lib/move-out-context";
+// 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）は1つの型・1つの関数に集約（AIX / テンプレート / 返信生成が同じ物を読む）
+import { resolveBrainPropertyState } from "@/app/lib/property-send-state";
 import { propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { viewingReportBlockForBrain } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
@@ -167,6 +169,10 @@ export type SuggestedAixMeta = {
     summary: string;
     facts: { propertiesSentCount: number; estimateSent: boolean; pickupPromisedUnfulfilled: boolean; lastStaffEntry: { kind: string; status: string } | null };
   } | null;
+  // 2026-09-18 竹内（𝒮 さん事例）「今の状況はブレインが分かっているんやから、それと AIX のところリンクさせて…」
+  //   お送りした物件の退去予定・内覧可否をブレインの判断として持つ（JSONB のため migrate-schema 不要）。
+  //   AIX（物件オススメ）・テンプレート生成が property-send-state 経由でこれを読み、締めを内覧誘導／申込誘導に決める
+  property_state?: { notViewable: boolean; vacancyDate: string | null; viewableFrom: string | null } | null;
   // ── analyzeConversation → analyzeAndSaveBrainMeta 内部伝搬フィールド ──
   // SOURCE_ACCEPT_RATE 品質ゲートで finalAix が null 化された事実のフラグ。
   // conversation_direction 更新側で detectSignalBasedAixFallback の再実行をスキップし、
@@ -1813,6 +1819,12 @@ export async function analyzeConversation(
     // 退去予定でも、スタッフが先押さえを勧めた・退去前は内覧できないと伝えた後でなければ内覧の場面（2026-09-15 隼斗事例・move-out-context）
     viewingReleased: !moveOutBlocksViewing(typedMessages, "newest_first"),
   });
+  // 2026-09-18 お送りした物件の退去予定・内覧可否をブレインの判断として持つ（AIX・テンプレートが property-send-state で読む）。
+  //   スタッフが既に内覧を案内していれば「内覧できる」扱い（退去予定の語だけで塞がない・隼斗事例と同じ線）
+  const brainPropertyState = resolveBrainPropertyState({
+    messages: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text })),
+    viewingReleased: moveOutViewingReleased(typedMessages, "newest_first"),
+  });
   let brainAixFeedback: FeedbackRow[] = [];
   try {
     const { data: fbRows } = await supabase
@@ -2934,6 +2946,8 @@ ${history}`;
         summary: brainLedger.summary,
         facts: { propertiesSentCount: brainLedger.facts.propertiesSentCount, estimateSent: brainLedger.facts.estimateSent, pickupPromisedUnfulfilled: brainLedger.facts.pickupPromisedUnfulfilled, lastStaffEntry: brainLedger.facts.lastStaffEntry ? { kind: brainLedger.facts.lastStaffEntry.kind, status: brainLedger.facts.lastStaffEntry.status } : null },
       },
+      // 2026-09-18 お送りした物件が今ご内覧頂けるか（退去予定・解禁日）。AIX 物件オススメ／テンプレートの締めがこれを読む
+      property_state: brainPropertyState,
     };
   } catch (e) {
     console.warn(`[brain-core] Haiku analysis failed: conv=${conversationId}`, e instanceof Error ? e.message : e);

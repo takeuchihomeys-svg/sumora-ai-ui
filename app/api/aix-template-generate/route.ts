@@ -26,7 +26,9 @@ import { normalizeStatus } from "@/app/lib/status-normalize";
 // 顧客名の妥当性判定（generate-reply と同一ソース — LINE表示名を実名として使わないゲート）
 import { stripNonNameChars, isPlausiblePersonName } from "@/app/lib/validate-reply";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
-import { fixRecommendClosing, stillNotViewable, buildRecommendClosingNote } from "@/app/lib/recommend-closing";
+import { fixRecommendClosing, buildRecommendClosingNote } from "@/app/lib/recommend-closing";
+// 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（aix/action と同じ物）
+import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
 // AIX-META（suggested_aix_meta）の型は brain-core を単一ソースとして参照（type-only importのためランタイム依存なし）
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
 
@@ -871,6 +873,15 @@ export async function POST(req: NextRequest) {
     priorSingleSendCount,
     hoursSinceLastSend,
   };
+  // 2026-09-18 竹内（𝒮 さん事例）「今の状況はブレインが分かっているんやから、それと AIX のところリンクさせて」:
+  //   締め（比較の言い方の可否・内覧誘導／申込誘導）はブレインの判断を1つの関数から読む＝AIX（aix/action）と同じ物。
+  //   ※上の priorSentPropertyCount は「AIX の送付**回数**」（シナリオ判定用）。ここで使うのは「送った**物件の件数**」で別物。
+  //     まとめ送付1回で5件送っていても回数は1なので、回数で比較の言い方を落とすと事実と合わない。
+  const recommendState = resolvePropertySendState({
+    brainMeta,
+    recentMessages: Array.isArray(recentMessages) ? recentMessages as Array<{ sender?: string | null; text?: string | null }> : [],
+    fallbackSentCount: priorSentPropertyCount,
+  });
   // 直近の property_check_result の結果。ただし確認より後に物件送付AIXが2件以上ある場合は
   // 既に別の文脈へ進んでいるため無効化（古い「募集なし」で代替シナリオに誤爆しない）。
   // ※ 送付1件は許容: 代替フローでは「確認(募集なし)→代替物件AIX送信→橋渡し文生成」の順になるため
@@ -1402,8 +1413,9 @@ export async function POST(req: NextRequest) {
     //   そのまま文の指示にする。「物件1件しか送っていない場合は お送りした中でも の部分はいれない」
     actionType === "property_recommendation"
       ? buildRecommendClosingNote({
-          sentPropertyCount: priorSentPropertyCount,
-          notViewable: stillNotViewable((recentMessages ?? []).slice(-6).map((m) => m.text ?? "").join("\n")),
+          sentPropertyCount: recommendState.sentPropertyCount,
+          notViewable: recommendState.notViewable,
+          viewableFrom: recommendState.viewableFrom,
         })
       : "",
     // 「物件ピックアップした」の送付文脈（初回 / 継続 / 新着 / 条件広げ）
@@ -1616,9 +1628,19 @@ export async function POST(req: NextRequest) {
     //   ①送った物件が1件以下なら比較の言い方を落とす（実データ179件すべて2件以上送っている時だけ）
     //   ②まだ内覧できないお部屋（退去予定・解禁日が明日以降）は内覧誘導ではなく申込誘導（実データ 34 vs 9）
     {
-      const closing = fixRecommendClosing(text, { sentPropertyCount: priorSentPropertyCount });
+      // 生成後の本文に退去予定が書かれている場合もあるため、本文も材料に入れて状況を取り直す
+      const exitState = resolvePropertySendState({
+        brainMeta,
+        recentMessages: Array.isArray(recentMessages) ? recentMessages as Array<{ sender?: string | null; text?: string | null }> : [],
+        extraText: text,
+        fallbackSentCount: priorSentPropertyCount,
+      });
+      const closing = fixRecommendClosing(text, {
+        sentPropertyCount: exitState.sentPropertyCount,
+        notViewable: exitState.notViewable,
+      });
       if (closing.applied.length > 0) {
-        console.log(JSON.stringify({ tag: "aix-template-generate:recommend-closing", applied: closing.applied, priorSentPropertyCount }));
+        console.log(JSON.stringify({ tag: "aix-template-generate:recommend-closing", applied: closing.applied, state: describePropertySendState(exitState) }));
         text = closing.text;
       }
     }

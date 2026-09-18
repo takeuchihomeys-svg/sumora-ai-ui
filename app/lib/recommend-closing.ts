@@ -21,7 +21,7 @@
 //  ③その申込誘導の言い回しは「お気に召されましたらお申込しお部屋抑えさせて頂きます！！」が最多（6件）。
 //    煽り（「埋まってしまう前に」23件）は少数なので決定論では足さない（既存の煽り禁止とも整合）。
 
-import { viewableFromVacancyDate } from "./vacating-notice";
+import { readPropertyStateFromText } from "./property-send-state";
 
 /** 比較フレーム（送った中から1件を推す語）。2件以上送っている時だけ使える */
 const COMPARISON_FRAME_RE = /(?:お送り(?:させて(?:頂|いただ)き|)ました?|ご紹介(?:させて(?:頂|いただ)き|)ました?)(?:お部屋|物件)の中でも(?:特に)?|(?:お送り|ご紹介)(?:した|しました)(?:中|なか)でも(?:特に)?/;
@@ -34,22 +34,12 @@ const HAS_APPLY_RE = /お申込(?:み)?[^\n]{0,8}(?:抑え|押さえ)|申込(?:�
 
 export type RecommendClosingResult = { text: string; applied: string[] };
 
-/** 本文に書かれた退去予定日から「まだ内覧できない」か（内覧解禁日が明日以降） */
+/**
+ * 本文に書かれた退去予定日から「まだ内覧できない」か（内覧解禁日が明日以降）。
+ * 判定の中身は property-send-state に1本化してある（ブレイン・AIX・テンプレートが同じ関数を読む）。
+ */
 export function stillNotViewable(text: string, nowMs: number = Date.now()): boolean {
-  const m = (text ?? "").match(/([0-9０-９]{1,2}\s*月\s*[0-9０-９]{1,2}\s*日|[0-9０-９]{1,2}\s*月\s*(?:末|上旬|中旬|下旬))\s*(?:に)?退去予定/);
-  if (!m) return false;
-  const from = viewableFromVacancyDate(m[1], nowMs);
-  if (!from) return false;
-  const fm = from.match(/(\d{1,2})月(\d{1,2})日/);
-  if (!fm) return false;
-  const jst = new Date(nowMs + 9 * 60 * 60 * 1000);
-  const y = jst.getUTCFullYear();
-  const month = Number(fm[1]);
-  // 年跨ぎ: 今が12月で解禁が1月なら翌年
-  const year = month < jst.getUTCMonth() + 1 - 6 ? y + 1 : y;
-  const openMs = Date.UTC(year, month - 1, Number(fm[2]));
-  const todayMs = Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate());
-  return openMs > todayMs;
+  return readPropertyStateFromText(text ?? "", nowMs).notViewable;
 }
 
 /**
@@ -60,7 +50,12 @@ export function stillNotViewable(text: string, nowMs: number = Date.now()): bool
  */
 export function fixRecommendClosing(
   text: string,
-  o: { sentPropertyCount: number; nowMs?: number },
+  o: {
+    sentPropertyCount: number;
+    /** ブレインの判断（渡されればこちらが正。渡されなければ本文から読む） */
+    notViewable?: boolean | null;
+    nowMs?: number;
+  },
 ): RecommendClosingResult {
   const src = text ?? "";
   if (!src.trim()) return { text: src, applied: [] };
@@ -73,8 +68,9 @@ export function fixRecommendClosing(
     applied.push("comparison_frame");
   }
 
-  // ② まだ内覧できないお部屋は申込誘導
-  if (stillNotViewable(out, o.nowMs) && VIEWING_INVITE_RE.test(out)) {
+  // ② まだ内覧できないお部屋は申込誘導（ブレインの判断があればそれ、無ければ本文から読む）
+  const notViewable = typeof o.notViewable === "boolean" ? o.notViewable : stillNotViewable(out, o.nowMs);
+  if (notViewable && VIEWING_INVITE_RE.test(out)) {
     const hadApply = HAS_APPLY_RE.test(out);
     out = out.replace(VIEWING_INVITE_RE, hadApply ? "" : APPLY_CLOSING_LINE);
     applied.push(hadApply ? "viewing_invite_removed" : "apply_instead_of_viewing");
@@ -86,13 +82,18 @@ export function fixRecommendClosing(
 }
 
 /** 生成の指示（ブレインが知っている状況を文に反映させる） */
-export function buildRecommendClosingNote(o: { sentPropertyCount: number; notViewable: boolean }): string {
+export function buildRecommendClosingNote(o: {
+  sentPropertyCount: number;
+  notViewable: boolean;
+  /** 内覧解禁日（「10月1日」）。ブレインが持っていれば文に書かせる */
+  viewableFrom?: string | null;
+}): string {
   const lines = ["【この場面の状況（この通りに書く）】"];
   lines.push(o.sentPropertyCount <= 1
     ? `・これまでにお送りした物件は${o.sentPropertyCount}件 → 「お送りさせて頂きましたお部屋の中でも特に」等の**比較の言い方は書かない**（比べる相手がいない）。物件名から始める（実データ179件すべて2件以上送っている時だけ使われている）`
     : `・これまでにお送りした物件は${o.sentPropertyCount}件 → 「お送りさせて頂きましたお部屋の中でも特に〇〇が」の比較の言い方が使える`);
   lines.push(o.notViewable
-    ? `・このお部屋は退去予定で**まだご内覧頂けない** → 締めは内覧の誘導ではなく**申込の誘導**「${APPLY_CLOSING_LINE}」（実データ: 退去予定の締めは申込34件 vs 内覧9件）`
+    ? `・このお部屋は退去予定で**まだご内覧頂けない**${o.viewableFrom ? `（${o.viewableFrom}以降にご内覧可能）` : ""} → 締めは内覧の誘導ではなく**申込の誘導**「${APPLY_CLOSING_LINE}」（実データ: 退去予定の締めは申込34件 vs 内覧9件）`
     : "・このお部屋は今ご内覧頂ける → 締めは内覧の誘導（お気に召されましたらご都合よろしいお日にちにご案内させて頂きます）でよい");
   lines.push("・「埋まってしまう前に」「残り1部屋」等の煽りは書かない");
   return lines.join("\n");

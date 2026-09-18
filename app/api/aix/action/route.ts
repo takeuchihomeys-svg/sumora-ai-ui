@@ -31,6 +31,8 @@ import { stripPropertyNameFromPickupLine, PICKUP_LINE_NOTE } from "@/app/lib/pic
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
+// 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（AIX / テンプレート共通）
+import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
@@ -1407,6 +1409,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
         summary?: string | null;
         facts?: { propertiesSentCount?: number | null } | null;
       } | null;
+      // ブレインが判断した物件の状況（退去予定・今ご内覧頂けるか）。締めを内覧誘導／申込誘導に決める
+      property_state?: { notViewable?: boolean; vacancyDate?: string | null; viewableFrom?: string | null } | null;
       repeated_concern?: string | null;
       human_type_label?: string | null;
       engagement_stance?: "push" | "wait" | null;
@@ -2002,19 +2006,20 @@ ${SMORA_COMMON_RULES}`;
       //   ①送った物件が1件以下なら比較の言い方を落とす（実データ179件すべて2件以上送っている時だけ）
       //   ②まだ内覧できないお部屋（退去予定・解禁日が明日以降）は内覧誘導ではなく申込誘導（実データ 34 vs 9）
       {
-        // 件数はブレインの行動台帳（suggested_aix_meta.action_ledger.facts.propertiesSentCount）から取る＝
+        // 状況（何件送ったか・今ご内覧頂けるか）は property-send-state の1つの関数から取る＝
         //   竹内さん「今の状況はブレインが分かっているんやから、それと AIX のところリンクさせて」。
-        //   ブレインの判断が無い時は会話の物件名から数える（0 に倒すと比較の言い方が常に落ちてしまうため）
-        const brainSent = aixBrainMeta?.action_ledger?.facts?.propertiesSentCount;
-        const recSentCount = typeof brainSent === "number"
-          ? brainSent
-          : extractPropertyLabels(
-              (Array.isArray(body.recent_messages) ? body.recent_messages as Array<{ sender?: string; text?: string | null }> : [])
-                .filter((m) => m.sender === "staff").map((m) => m.text ?? "").join("\n"),
-            ).length;
-        const closing = fixRecommendClosing(message_text, { sentPropertyCount: recSentCount });
+        //   ブレインの判断が無い時だけ会話・本文から読む（0 に倒すと比較の言い方が常に落ちてしまうため）
+        const sendState = resolvePropertySendState({
+          brainMeta: aixBrainMeta,
+          recentMessages: Array.isArray(body.recent_messages) ? body.recent_messages as Array<{ sender?: string; text?: string | null }> : [],
+          extraText: message_text,
+        });
+        const closing = fixRecommendClosing(message_text, {
+          sentPropertyCount: sendState.sentPropertyCount,
+          notViewable: sendState.notViewable,
+        });
         if (closing.applied.length > 0) {
-          console.log(JSON.stringify({ tag: "aix:recommend-closing", action: currentAction, conversationId, applied: closing.applied, sentPropertyCount: recSentCount }));
+          console.log(JSON.stringify({ tag: "aix:recommend-closing", action: currentAction, conversationId, applied: closing.applied, state: describePropertySendState(sendState) }));
           message_text = closing.text;
         }
       }
