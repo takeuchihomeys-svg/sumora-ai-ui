@@ -2287,6 +2287,15 @@ ${SMORA_COMMON_RULES}
           currentAction
         );
         cover_letter = coverResult.trim();
+        // 2026-09-18 本番検証: Haiku が Markdown の見出し（「# YUMAさんへの見積書送付メッセージ」）を付けて返した。
+        //   作業メモ・見出しを落とす既存の決定論（meta-narration）をここにも通す（下書き欄に入れないのと同じ扱い）
+        {
+          const meta = stripMetaNarration(cover_letter);
+          if (meta.removed.length > 0) {
+            console.log(JSON.stringify({ tag: "aix:cover-meta-stripped", removed: meta.removed.slice(0, 3) }));
+            cover_letter = meta.text;
+          }
+        }
         // ブランド名混入防止（後処理）: 現在アカウント以外のブランド名がAI出力に混ざった場合は現アカウント名に置換
         for (const otherBrand of Object.values(ACCOUNT_NAMES)) {
           if (otherBrand !== accountName && cover_letter.includes(otherBrand)) {

@@ -92,5 +92,22 @@ it("仕上げ処理（applySurfaceFixes）でも消える", () => {
   expect(r.applied.some((a) => a.startsWith("META_NARRATION_REMOVED"))).toBe(true);
 });
 
+// 2026-09-18 本番検証: 見積書のカバーレター（Haiku）が Markdown の見出しを付けて返した
+it("Markdown の見出し行（# 〇〇さんへの見積書送付メッセージ）を落とす", () => {
+  const r = stripMetaNarration("# YUMAさんへの見積書送付メッセージ\n\nYUMAさんお世話になっております😊！！\n御見積書を作成させて頂きました！！");
+  expect(r.text).toBe("YUMAさんお世話になっております😊！！\n御見積書を作成させて頂きました！！");
+  expect(r.removed.length).toBe(1);
+});
+it("## でも ### でも落とす", () => {
+  expect(stripMetaNarration("## 返信文\n\nかしこまりました！！").text).toBe("かしこまりました！！");
+  expect(stripMetaNarration("### お客様への文面\n\nはい！！").text).toBe("はい！！");
+});
+it("本文の「#」は落とさない（見出しらしい語で終わらない行）", () => {
+  const body = "お部屋 # 302号室のご案内です！！";
+  expect(stripMetaNarration(body).text).toBe(body);
+  const hash = "#スモラ";
+  expect(stripMetaNarration(hash).text).toBe(hash);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

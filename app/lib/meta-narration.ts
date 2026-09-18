@@ -29,7 +29,20 @@ const META_LINE_RES: RegExp[] = [
 /** 行頭だけが見出しで、同じ行に本文が続く形（「修正後：〇〇さんお世話になっております」）→ 見出しだけ除く */
 const META_PREFIX_RE = /^\s*(?:[^\n]{0,30}(?:さん|様)への)?(?:返信案|回答案|修正版|修正案|修正後|返信文)\s*[：:]\s*/;
 
+/**
+ * Markdown の見出し行（「# YUMAさんへの見積書送付メッセージ」）。
+ * 2026-09-18 本番検証: 見積書のカバーレター（Haiku）が Markdown の見出しを付けて返した。
+ *   お客様に送る文に「#」は出ないので、行ごと落とす（本文が続く「# こんにちは」は見出しではないので、
+ *   「〜への〜メッセージ/文/案」で終わる見出しらしい行だけに限る）
+ */
+const MARKDOWN_HEADING_RE = /^\s{0,3}#{1,4}\s*[^\n]{0,40}(?:メッセージ|文|案|レター|返信|文面)\s*$/;
+
+export function isMarkdownHeadingLine(line: string): boolean {
+  return MARKDOWN_HEADING_RE.test(line ?? "");
+}
+
 export function isMetaNarrationLine(line: string): boolean {
+  if (isMarkdownHeadingLine(line)) return true;
   const l = line.trim();
   if (!l) return false;
   // お客様への文（敬語の宣言・感嘆の「！！」・絵文字で終わる行）は作業メモとみなさない
