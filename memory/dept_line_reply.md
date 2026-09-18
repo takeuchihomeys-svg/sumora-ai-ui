@@ -4,6 +4,38 @@
 
 ---
 
+## DB にあるのにプロンプトに届いていないルールを見つける（竹内・2026-09-18・コミット aac2983c）— 点検の型
+- きっかけ: 本番ログに毎回出ていた `[fetchPromptRules] unknown condition_key "vacancy_status" in rule — rule skipped`
+- **根本原因**: `ai_prompt_rules.action_type` という**1つの列に4種類の意味**が混ざっていた
+  ①AIX アクション名 ②`generate_reply` / `final_check` ③conversation_state（`applying` 等） ④`"all"`
+  書き込む側が「表に無い値でも黙って保存する」ため、**保存は成功して配信だけが静かに落ちる**
+- **届かない入口は4つ**（`scripts/audit-prompt-rules.ts` が全部数える）
+
+  | 入口 | 件数（2026-09-18） |
+  |---|---|
+  | ①誰も取りに行かない action_type | 7件（`applying` 4・`all` 3） |
+  | ②誰も渡さない condition_key | 1件（PROP-VCC-001・2026-07-09 から一度も効いていない） |
+  | ③priority が下限（4）未満 | 0件 |
+  | ④1回のフェッチの上限（200）で後ろが落ちる | **generate_reply 429件中 229件** |
+
+- **仕組み**（`app/lib/prompt-rule-registry.ts`・純関数・テスト27件）
+  - `PROMPT_RULE_ROUTES` … fetch する action_type と、その経路が渡す condition_key の表。**AIX アクションは `aix-template-generate` が actionType をそのまま渡すので全部到達可能**。`aix/action` が自前で引かない物（`zenryoku_support`・`property_search`・`acknowledge_result`）は「✨ 会話を合わせる」経由でだけ届く＝`templateOnly`
+  - `classifyPromptRuleReachability` … 届かない理由を6種類で返す／`normalizePromptRuleActionType` … 書き込む側の門
+  - 上限・下限（200 / 80 / priority 4）も `prompt-rules.ts` と同じ定数を共有（四者同名）
+  - 落ちた時の言葉を「この呼び出しは渡していない（他では届く）」と「**どの呼び出しも渡さない＝永久に届きません**」に分けた（後者が毎回のログに埋もれていた）
+  - 上限に達したら件数をログに出す（`prompt-rules:limit-hit`）
+- **入口の門**: `analyze-diffs` が `aixState`（conversation_state が入りうる）をそのまま action_type にしていた箇所を門に通す。`ai-feedback` の手書き一覧も表に1本化（`cost_breakdown` / `phone_followup` / `guarantor_info` が抜けており黙って global に落ちていた）
+- **処理した6件**
+  - `PROP-VCC-001` **無効化** … 指示文「現在入居中のため内覧はまだできないお部屋ですが」はスタッフ実送信365日で **0件の創作文**（実際の言い方「◯月◯日以降にご内覧可能」は74件）。内容は `recommend-closing` / `vacating-notice` の決定論が担当
+  - `CLOSEDWON-ALL-1/2/3` **無効化** … priority 80 のまま有効化すると全返信の最優先ルールになるが、内容が既存の絶対ルールと衝突（内見候補日時の提示＋「今週中のお申込みが必要です」＝煽り禁止／「必ず1つ以上添える」＝創作を誘発する強制指示）
+  - `DIFF-POLICY-AIX-0ef86954` **付け替え** … 「申込書類受領直後は『申込みさせていただきます』の一文で完結」＝禁止型で安全 → `generate_reply` + `conversation_state='applying'`
+  - `DIFF-POLICY-AIX-b97f05b0` **無効化** … 「保証会社名など具体的情報を提示して申込を勧める」は保証料・審査の見通しを断定しない既存ルールと衝突
+- **竹内さんの判断待ち（未対応・数字は上の表）**
+  1. **generate_reply の上限で229件が落ちている**。落ちているのは priority 7 の FEEDBACK-*（＝竹内さんが AI質問に答えて作ったルール）**214件中205件**で、中身は「内覧日程の調整は通常返信でやらず AIX で」「物件紹介文を作文せず AIX ボタンで」等の線引き。`fetchPromptRulesSplit`（global と action を別枠で取る）に寄せると約100件増えるが、トークンが ≈7.5k 増える
+  2. `decay`（90日超の FEEDBACK-* を priority 2 に落とす）は**竹内さんが AI質問に答えた時だけ**走る。priority 7 の214件は最古が71日前なので、10月上旬から一斉に落ち始める
+  3. 追加型の2件（`DIFF-POLICY-AIX-1179ced2`「確認質問を追加」・`fc54925b`「申込キャンセルの明示を追加」）を効かせるか（設計知見: 文の追加を促す指示は創作の入口）
+  4. `zenryoku_support` の3件は「✨ 会話を合わせる」では効くが AIX 本体の生成には効かない。本体でも効かせるか
+
 ## 物件の状況はブレインが持ち、AIX とテンプレートが同じ1つの材料を読む（竹内・2026-09-18・コミット fc76face / 35495df4 / d05dc52d）— 黄金ルール
 - 竹内「おねがい」＝前項（𝒮 さん事例）の続きで、私が出した3つをそのまま実装した: ①退去予定・内覧可否をブレインが判断として持つ ②テンプレート側も件数をブレインから取る ③材料を1か所にまとめ、AIX とテンプレートが同じ物を読む
 - **材料は1つ**（`app/lib/property-send-state.ts`・純関数・テスト19件）
