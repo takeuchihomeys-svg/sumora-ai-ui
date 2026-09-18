@@ -8,7 +8,8 @@ import TemplateModal, { type Template as CachedTemplate } from "./components/Tem
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage } from "./lib/application-form-detect";
 import { detectPlaceholders } from "./lib/validate-reply";
-import { stripMetaNarration } from "./lib/meta-narration";
+// 2026-09-18: 下書き→送る文の整形は画面と自動返信で同じ関数を使う（app/lib/draft-text.ts）
+import { stripInternalTags as stripInternalTagsLib, draftToSendableText } from "./lib/draft-text";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
@@ -97,21 +98,8 @@ type SupabaseConversationRow = {
 };
 
 // AI下書きから内部メタタグ（<<<STOP_REASON:...>>> / <<<SUGGESTED_AIX:{...}>>>）を除去する。
-// これらはスタッフ向け内部指示（品質ゲート・次のAIXボタン提案）であり、
-// 顧客向け返信文を入れるテキストボックスには絶対に混入させない。
-function stripInternalTags(text: string): string {
-  let t = text
-    .replace(/\n?<<<STOP_REASON:[^>]*>>>/g, "")
-    .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
-    .replace(/\n?<<<FINAL_CHECK:[\s\S]*?>>>/g, "")
-    .trim();
-  // AIが返信全体を「」で囲んで出力することがある → 先頭「末尾」のペアのみ除去
-  if (t.startsWith("「") && t.endsWith("」")) t = t.slice(1, -1).trim();
-  // 2026-09-15 竹内「こんなの絶対にいれない」: AI の作業メモ（「お客様がスタンプのみで返信されている状況ですね。…姿勢のみを示します。」）は
-  //   入力欄の入口でも落とす（サーバーの仕上げを通らなかった経路・保存済みの古い下書きも止める。スタッフが入力欄で書いた文には当てない）
-  t = stripMetaNarration(t).text;
-  return t;
-}
+// 2026-09-18: 実体は app/lib/draft-text.ts に移した（自動返信も同じ関数を使う＝画面に出ている文と送る文を必ず一致させる）
+const stripInternalTags = stripInternalTagsLib;
 
 // 最終チェックのハッシュ照合用 SHA-1（Web Crypto。secure context 以外では throw → 呼び出し側で fail-open）
 async function sha1Hex(text: string): Promise<string> {
@@ -119,13 +107,8 @@ async function sha1Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 // null許容版（DBから読んだ ai_draft の取り込み用）: 除去後に空文字なら null
-function stripInternalTagsOrNull(text: string | null | undefined): string | null {
-  if (!text) return null;
-  if (text === "[AIX誘導中]") return null; // sentinel: テキストボックスに絶対に表示しない
-  if (text === "__SHOWN__") return null; // sentinel: 表示済みドラフト（orphaned-rescue cronによる再生成防止）
-  if (text === "[画像のみ]") return null; // sentinel: 顧客が画像のみ送信（generate-pending-draftsが書き込む）
-  return stripInternalTags(text) || null;
-}
+// 2026-09-18: 実体は app/lib/draft-text.ts（自動返信の送信も同じ関数を通す）
+const stripInternalTagsOrNull = draftToSendableText;
 
 type SupabaseMessageRow = {
   id: string;

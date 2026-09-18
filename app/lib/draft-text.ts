@@ -1,0 +1,43 @@
+// app/lib/draft-text.ts
+// 保存されている下書き（conversations.ai_draft）を「お客様に送る文」に直す（純関数・DB 依存なし）。
+//
+// 2026-09-18 竹内「これ文の生成とかは返信の下書き通りになるよね、今までのセットされている」の確認中に見つけた穴:
+//   画面（page.tsx）は ai_draft を stripInternalTagsOrNull で内部タグを外してから入力欄に出しているのに、
+//   自動返信は**生の ai_draft** を送ろうとしていた。つまり
+//     ・内部タグ（<<<STOP_REASON:…>>> 等）が入った下書きは、自動返信では送られない（安全側だが黙って止まる）
+//     ・もし止め忘れれば、画面に出ていない社内向けの文字がお客様に飛ぶ
+//   → 画面と自動返信が**同じ関数**を使う（設計知見「同じ判定は同じ関数・四者同名」）。
+//
+// これを通した文は、**スタッフが入力欄で見ている文とまったく同じ**になる。
+import { stripMetaNarration } from "./meta-narration";
+
+/** 本文として使えない印（社内用の合図）。これが本文全体なら送る物は無い */
+const DRAFT_SENTINELS: ReadonlySet<string> = new Set(["[AIX誘導中]", "__SHOWN__", "[画像のみ]"]);
+
+/**
+ * 下書きから内部メタタグ（スタッフ向けの社内指示）を外す。
+ * 顧客向けの返信文に絶対に混ぜてはいけない物だけを落とす。
+ */
+export function stripInternalTags(text: string): string {
+  let t = text
+    .replace(/\n?<<<STOP_REASON:[^>]*>>>/g, "")
+    .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
+    .replace(/\n?<<<FINAL_CHECK:[\s\S]*?>>>/g, "")
+    .trim();
+  // AI が返信全体を「」で囲んで出力することがある → 先頭「末尾」のペアのみ除去
+  if (t.startsWith("「") && t.endsWith("」")) t = t.slice(1, -1).trim();
+  // 2026-09-15 竹内「こんなの絶対にいれない」: AI の作業メモは入力欄の入口でも落とす
+  t = stripMetaNarration(t).text;
+  return t;
+}
+
+/**
+ * DB から読んだ ai_draft を「送れる本文」に直す。送る物が無ければ null。
+ * 画面の入力欄に出す文と、自動返信で送る文は、必ずこの関数を通した物にする。
+ */
+export function draftToSendableText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const raw = text.trim();
+  if (DRAFT_SENTINELS.has(raw)) return null;
+  return stripInternalTags(raw) || null;
+}

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { canAutoReply, resolveAutoSendAt, type AutoReplyInput } from "@/app/lib/auto-reply-policy";
+// 2026-09-18 竹内「文の生成とかは返信の下書き通りになるよね」:
+//   画面の入力欄に出ているのと**まったく同じ文**を送るため、画面と同じ整形関数を通す
+import { draftToSendableText } from "@/app/lib/draft-text";
 
 export const maxDuration = 60;
 
@@ -85,12 +88,14 @@ export async function GET(req: NextRequest) {
 
   for (const c of convs) {
     const { replyMode, action } = metaOf(c.suggested_aix_meta);
+    // 画面の入力欄に出るのと同じ文にする（内部タグ・作業メモを外した後の文）
+    const sendable = draftToSendableText(c.ai_draft);
     const input: AutoReplyInput = {
       autoSendEnabled: c.auto_send_enabled,
       lastSender: c.last_sender,
       replyMode,
       suggestedAixAction: action,
-      draft: c.ai_draft,
+      draft: sendable,
       draftHasBlock: hasBlock(c.ai_draft_check),
       status: c.status,
       hasPendingScheduled: pendingIds.has(c.id),
@@ -110,7 +115,7 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
     const customerMsgAt = (lastMsg?.created_at as string | undefined) ?? c.updated_at ?? nowIso;
 
-    const draft = (c.ai_draft ?? "").trim();
+    const draft = (sendable ?? "").trim();
     const plan = resolveAutoSendAt({ customerMsgAt, draft, nowIso, seedKey: c.id });
 
     const { error: insErr } = await supabase.from("scheduled_messages").insert({
