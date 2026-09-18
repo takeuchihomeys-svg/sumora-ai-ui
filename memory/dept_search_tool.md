@@ -62,10 +62,28 @@ Vercel cron（JST 11:00 / 17:00）
 ### 点検
 
 ```
-npx tsx app/lib/__tests__/auto-search-schedule.test.ts            # 33件
+npx tsx app/lib/__tests__/auto-search-schedule.test.ts            # 43件
 npx tsx --env-file=.env.local scripts/audit-auto-search-targets.ts # 本番で何人が対象になるか
 curl "https://sumora-ai-ui.vercel.app/api/cron/auto-property-search?mode=am&dry_run=1"  # 積まずに中身だけ見る
+curl "https://sumora-ai-ui.vercel.app/api/cron/auto-property-search?mode=am&limit=2"    # 2人だけ積む（初回の試運転）
 ```
+
+### 使い始める手順（2026-09-19・拡張 v2.5.8）
+
+1. **拡張を再読み込み**（`chrome://extensions` → AIXLINX の 🔄）。バージョンが **2.5.8** になっていれば更新済み。
+2. その PC の拡張で **AIX モードを ON**（`auto_schedule` のコマンドは AIX モードの PC だけが受け取る）。
+   リアプロにログイン済みのタブを開いておく。
+3. **初回は `?mode=am&limit=2` で2人だけ積んで様子を見る**（いきなり31人を走らせない）。
+   途中で止めたい時は拡張のストップ（`batchStopRequested`）。
+4. 問題なければ翌日から自動（JST 11:00 / 17:00）。誰も AIX モードでなければ3時間で `error` に閉じる。
+
+### ⚠ まだ効かないもの（実機の確認待ち）
+
+**17時便の「更新順」**。リアプロの並べ替えの DOM が未確認のため、`page-script.js` は
+`select[name=sort|order|sort_order|disp_sort]` が見つかった時だけ設定し、見つからなければ
+**今の並びのまま**＋コンソールに画面の select 一覧を出す（推測で別の select を触らない）。
+→ リアプロのタブで F12 を開き `[AX] 並び順` の行を見て、名前が分かれば `SORT_SELECTORS` に足す。
+それまでも17時便は「**更新日1日以内＝今日出た物件だけ**」で効く（見落とし防止の主目的は満たす）。
 
 ---
 
