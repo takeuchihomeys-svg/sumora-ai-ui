@@ -6801,7 +6801,12 @@ export default function Home() {
           <header className="border-b border-[#e9edef] px-3 pb-3 pt-[max(14px,env(safe-area-inset-top))] backdrop-blur-md md:px-4"
             style={{ background: "rgba(218,238,253,0.88)" }}
           >
-            <div className="relative flex items-center">
+            {/* 2026-09-18 竹内「ステータスの部分の文字一回り小さくしてバランス整える綺麗に入るように。
+                いまボタンとお客さん名被ってるから」:
+                旧は名前を absolute left-0 right-0 で画面いっぱいに広げて中央寄せしており、
+                右のボタン（手動／ステータス）と**重なっていた**（自動ボタンを足して右が広くなり表面化）。
+                → 左・中央・右の3列にし、中央だけが伸び縮みする形にする。どの幅でも重なりようがない。 */}
+            <div className="flex items-center gap-1.5">
               {/* 左: 戻るボタン + 未返信バッジ */}
               <button
                 onClick={() => setMobileView("list")}
@@ -6818,7 +6823,7 @@ export default function Home() {
               </button>
 
               {/* 中央: 名前（紐付き客→条件パネル開閉 / 未紐付き→更新 / 長押し→カレンダー予定追加） */}
-              <div className="pointer-events-none absolute left-0 right-0 flex justify-center">
+              <div className="min-w-0 flex-1 flex justify-center">
                 <button
                   onClick={() => {
                     if (linkedCustomerMap[selectedConversation.id]) {
@@ -6862,10 +6867,10 @@ export default function Home() {
                   }}
                   onMouseUp={() => { if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; } }}
                   onMouseLeave={() => { if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; } }}
-                  className="pointer-events-auto flex flex-col items-center max-w-[60%] active:opacity-60 transition-opacity"
+                  className="flex min-w-0 max-w-full flex-col items-center active:opacity-60 transition-opacity"
                   title={linkedCustomerMap[selectedConversation.id] ? "タップして条件を表示 / 長押しで予定追加" : "タップして更新 / 長押しで予定追加"}
                 >
-                  <span className="truncate text-[15px] font-semibold text-[#111b21] text-center">
+                  <span className="block w-full truncate text-[15px] font-semibold text-[#111b21] text-center leading-tight">
                     {selectedConversation.id ? selectedConversation.customerName : "会話を選択"}
                   </span>
                   {selectedConversation.id && (
@@ -6879,8 +6884,8 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* 右: 自動／ステータス */}
-              <div className="ml-auto flex items-center gap-1.5">
+              {/* 右: 自動／ステータス（3列の右。名前の領域に食い込まない） */}
+              <div className="flex shrink-0 items-center gap-1">
                 {/* 2026-09-18 竹内「自動ボタンをつける。デフォルトは自動ではない。自動ボタンに切り替えたお客さんは
                     AIX以外自動で返信される（9:00〜21:00）。自動ボタンにする際は最終確認をいれる。
                     自動モードにしていないお客さんは絶対に勝手に自動モードにしない」 */}
@@ -6890,7 +6895,7 @@ export default function Home() {
                   title={autoSendEnabled
                     ? "自動返信オン（AIX以外・9:00〜21:00）。押すと手動に戻します"
                     : "手動（自動返信しません）。押すと自動返信に切り替えます"}
-                  className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                  className={`shrink-0 whitespace-nowrap rounded-full border px-1.5 py-[3px] text-[9px] font-bold leading-none ${
                     autoSendEnabled
                       ? "border-transparent bg-[#06C755] text-white"
                       : "border-[#d1d7db] bg-white text-[#8696a0]"
@@ -6905,7 +6910,7 @@ export default function Home() {
                       setShowAixMenu(false);
                     }}
                     disabled={!selectedConversation.id || statusSaving}
-                    className={`rounded-full border px-2 py-0.5 text-[10px] shadow-none ${detailStatusMeta.color} border-transparent`}
+                    className={`whitespace-nowrap rounded-full border px-1.5 py-[3px] text-[9px] font-bold leading-none shadow-none ${detailStatusMeta.color} border-transparent`}
                   >
                     {statusSaving ? "..." : detailStatusMeta.label}
                   </button>
