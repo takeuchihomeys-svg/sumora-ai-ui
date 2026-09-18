@@ -12,13 +12,13 @@ export async function register() {
     } catch (e) {
       console.warn("[instrumentation] llm usage recorder install failed:", String(e));
     }
-    // 2026-09-19 竹内「AWSのクラウド経由する」: 指定した経路だけ Bedrock（DeepSeek）へ回す。
+    // 2026-09-19 竹内「この方向性でいく」: 指定した経路だけ別のクラウド（Azure の DeepSeek V4 / Bedrock）へ回す。
     //   環境変数が揃っていない時は何もしない＝今までどおり Anthropic（fail-closed）
     try {
-      const { installBedrockRouter } = await import("./app/lib/bedrock-router");
-      installBedrockRouter();
+      const { installAltProvider } = await import("./app/lib/llm-alt-provider");
+      installAltProvider();
     } catch (e) {
-      console.warn("[instrumentation] bedrock router install failed:", String(e));
+      console.warn("[instrumentation] alt provider install failed:", String(e));
     }
   }
 }
