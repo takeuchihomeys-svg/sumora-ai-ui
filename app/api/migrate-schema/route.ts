@@ -801,6 +801,9 @@ ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS quality_auto_ok BOOLEAN;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_send_enabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_sent_at TIMESTAMPTZ;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_sent_draft TEXT;
+-- 2026-09-18 竹内「自動ボタンに切り替えたお客さんは AIX以外自動で返信される」:
+--   いつ自動に切り替えたか（本物のお客様に自動送信する機能なので、切替の時刻を残す）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_send_enabled_at TIMESTAMPTZ;
 
 -- AI テンプレート候補テーブル（AIXボタン送信後に候補として蓄積し、採用でtemplatesに昇格）
 CREATE TABLE IF NOT EXISTS ai_template_candidates (

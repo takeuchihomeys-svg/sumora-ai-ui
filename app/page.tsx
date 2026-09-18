@@ -1044,6 +1044,12 @@ export default function Home() {
   // 2026-09-16 竹内（𝒮❦ 事例）「こんな約束絶対に逃してはいけないので【必ず】といれてカレンダーに入れる。そうすればスタッフの抜けがない」:
   //   カレンダーの【必ず】（お客様への約束・未履行）を会話ごとに持ち、会話画面のバナーと一覧のバッジに出す（カレンダーを開かなくても届く）
   const [openPromises, setOpenPromises] = useState<Record<string, Array<{ id: number; event_type: string | null; title: string; start_at: string; notes: string | null }>>>({});
+  // 2026-09-18 竹内「自動ボタンをつける。デフォルトは自動ではない。自動モードにしていないお客さんは絶対に勝手に自動モードにしない」:
+  //   自動に切り替えた会話の ID だけを持つ（入っていない＝手動。既定は必ず手動）
+  const [autoSendIds, setAutoSendIds] = useState<Set<string>>(new Set());
+  const [autoSendSaving, setAutoSendSaving] = useState(false);
+  /** 最終確認のダイアログ（"on"＝自動にする / "off"＝手動に戻す / null＝出さない） */
+  const [autoSendConfirm, setAutoSendConfirm] = useState<"on" | "off" | null>(null);
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
   const [knowledgeRules, setKnowledgeRules] = useState<Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string; importance?: number }>>([]);
   const [knowledgeTotal, setKnowledgeTotal] = useState(0);
@@ -1747,8 +1753,14 @@ export default function Home() {
           setOpenPromises(map);
         }, () => {});
 
+    // 2026-09-18: 自動に切り替えた会話（切り替えた物だけが返る＝既定は手動）
+    const refreshAutoSend = () =>
+      supabase.from("conversations").select("id").eq("auto_send_enabled", true).limit(500)
+        .then(({ data }) => { setAutoSendIds(new Set((data ?? []).map((r) => String(r.id)))); }, () => {});
+
     refreshActiveTasks();
     refreshOpenPromises();
+    refreshAutoSend();
 
     // Supabase real-time: 新しいメッセージ・会話をリアルタイム反映
     const channel = supabase
@@ -3303,6 +3315,39 @@ export default function Home() {
   }, [selectedConversation]);
 
   const detailStatusMeta = getDetailStatusMeta(selectedConversation.status);
+
+  // 2026-09-18 竹内: 自動返信の切替。**この関数以外から auto_send_enabled を true にしない**
+  //   （勝手に自動モードにしないため、入口は最終確認つきのこの1か所だけ）
+  const autoSendEnabled = autoSendIds.has(selectedConversation.id);
+  const applyAutoSend = async (next: boolean) => {
+    if (!selectedConversation.id) return;
+    setAutoSendSaving(true);
+    try {
+      const { error } = await supabase
+        .from("conversations")
+        .update({ auto_send_enabled: next, auto_send_enabled_at: next ? new Date().toISOString() : null })
+        .eq("id", selectedConversation.id);
+      if (error) { alert(`切り替えに失敗しました: ${error.message}`); return; }
+      // 手動に戻した時は、まだ送っていない自動返信の予約を取り消す（止めると言った以上その場で止める）
+      if (!next) {
+        await supabase
+          .from("scheduled_messages")
+          // status の綴りは DB の CHECK 制約に合わせる（cancelled・l が2つ）。canceled だと制約違反で黙って失敗する
+          .update({ status: "cancelled", error: "自動返信を手動に戻したため取消" })
+          .eq("conversation_id", selectedConversation.id)
+          .eq("status", "pending")
+          .eq("is_aix", false);
+      }
+      setAutoSendIds((prev) => {
+        const s = new Set(prev);
+        if (next) s.add(selectedConversation.id); else s.delete(selectedConversation.id);
+        return s;
+      });
+    } finally {
+      setAutoSendSaving(false);
+      setAutoSendConfirm(null);
+    }
+  };
 
   const updateConversationStatus = async (nextStatus: string) => {
     if (!selectedConversation.id) return;
@@ -6851,8 +6896,25 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* 右: ステータス */}
+              {/* 右: 自動／ステータス */}
               <div className="ml-auto flex items-center gap-1.5">
+                {/* 2026-09-18 竹内「自動ボタンをつける。デフォルトは自動ではない。自動ボタンに切り替えたお客さんは
+                    AIX以外自動で返信される（9:00〜21:00）。自動ボタンにする際は最終確認をいれる。
+                    自動モードにしていないお客さんは絶対に勝手に自動モードにしない」 */}
+                <button
+                  onClick={() => setAutoSendConfirm(autoSendEnabled ? "off" : "on")}
+                  disabled={!selectedConversation.id || autoSendSaving}
+                  title={autoSendEnabled
+                    ? "自動返信オン（AIX以外・9:00〜21:00）。押すと手動に戻します"
+                    : "手動（自動返信しません）。押すと自動返信に切り替えます"}
+                  className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                    autoSendEnabled
+                      ? "border-transparent bg-[#06C755] text-white"
+                      : "border-[#d1d7db] bg-white text-[#8696a0]"
+                  }`}
+                >
+                  {autoSendSaving ? "..." : autoSendEnabled ? "🤖 自動" : "手動"}
+                </button>
                 <div className="relative shrink-0">
                   <button
                     onClick={() => {
@@ -9158,6 +9220,48 @@ export default function Home() {
       <div className={showChatOnMobile ? "hidden md:block" : "block"}>
         <BottomNav unreadCount={needsReplyCount} hidden={false} />
       </div>
+
+      {/* 2026-09-18 竹内「自動ボタンにする際は、最終確認をいれる。本当に切り替えますか？と」 */}
+      {autoSendConfirm && (
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center bg-black/40 px-6"
+          onClick={(e) => { if (e.target === e.currentTarget) setAutoSendConfirm(null); }}
+        >
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
+            <p className="text-[15px] font-bold text-[#111b21]">
+              {autoSendConfirm === "on" ? "本当に自動返信に切り替えますか？" : "手動に戻しますか？"}
+            </p>
+            <p className="mt-1 text-[13px] font-semibold text-[#111b21]">{selectedConversation.customerName}さん</p>
+            {autoSendConfirm === "on" ? (
+              <ul className="mt-3 space-y-1 text-[12px] leading-relaxed text-[#667781]">
+                <li>・このお客様には<b className="text-[#111b21]">セットされた返信がそのまま自動で送信</b>されます</li>
+                <li>・送るのは <b className="text-[#111b21]">9:00〜21:00</b> の間だけ（返信は3〜21分あけて送ります）</li>
+                <li>・<b className="text-[#111b21]">AIXが必要な場面は自動で送りません</b>。今までどおりAIXから送ってください</li>
+                <li>・申込・審査以降になったら自動で止まります</li>
+              </ul>
+            ) : (
+              <p className="mt-3 text-[12px] leading-relaxed text-[#667781]">
+                このお客様への自動返信を止めます。まだ送っていない予約があれば取り消します。
+              </p>
+            )}
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => setAutoSendConfirm(null)}
+                className="flex-1 rounded-full border border-[#d1d7db] bg-white px-4 py-2 text-[13px] font-bold text-[#667781]"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={() => applyAutoSend(autoSendConfirm === "on")}
+                disabled={autoSendSaving}
+                className={`flex-1 rounded-full px-4 py-2 text-[13px] font-bold text-white ${autoSendConfirm === "on" ? "bg-[#06C755]" : "bg-[#d32f2f]"}`}
+              >
+                {autoSendSaving ? "..." : autoSendConfirm === "on" ? "自動にする" : "手動に戻す"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* トーク一覧 長押しメニュー */}
       {convMenuConvId && (

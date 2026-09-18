@@ -29,6 +29,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/auto-reply-dispatch",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/send-scheduled-messages",
       "schedule": "* * * * *"
     },
