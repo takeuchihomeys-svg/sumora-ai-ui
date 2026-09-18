@@ -1,7 +1,7 @@
 // 2026-09-12 竹内方針（あや事例）: AIX【初期費用を説明】— 説明と仕組みを1通で・金額は入力値だけ
 // 実行: npx tsx app/lib/__tests__/cost-explain-text.test.ts（自己完結ハーネス。全 PASS で exit 0）
 import {
-  buildCostExplainMessage, costExplainMissing, customerDoubtsCheapness, extractEstimateAmounts, mentionsBrokerFee, parseYen,
+  buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, customerDoubtsCheapness, extractEstimateAmounts, mentionsBrokerFee, parseYen,
 } from "../cost-explain-text";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -92,6 +92,49 @@ it("値引きの相談は外す: さくら「他社で21万ぐらいの初期費
 it("値引きの相談は外す: 「もう少し金額安くなりませんか？」", () => expect(customerDoubtsCheapness("ここの物件前向きに検討中なんですが、もう少し金額安くなりませんか？")).toBe(false));
 it("金額の質問（見積書送る）は外す: 「初期費用がどれくらいになるか教えていただきたい」", () => {
   expect(customerDoubtsCheapness("初期費用がどれくらいになるか教えていただきたいのですが、可能でしょうか？")).toBe(false);
+});
+
+// ── 仕組みを説明（2026-09-19 竹内「報酬額いれなくても説明されるようにする」）──
+// 文はスタッフ実送信と公式LINEの挨拶メッセージの言い回しだけを使う（新しい言い方を作らない）
+it("★ スモラ: 金額の入力なしで作れる（公式LINEの挨拶と同じ「前家賃＋2,980円」）", () => {
+  const m = buildCostMechanismMessage({ customerName: "ゆうこ", account: "sumora", askedBrokerFee: false });
+  expect(m).toContain("スモ割が最大適用出来るお部屋でしたら、初期費用は【前家賃＋2,980円】のみでご入居頂けます！！");
+  expect(m).toContain("仲介手数料の2,980円は一律で発生し、お部屋によって割引出来る金額が変わります");
+  expect(m).toContain("オーナー様からの広告料をお客様に還元させて頂いている仕組みのため");
+  expect(m).toContain("ゆうこさんが気になっているお部屋のスクショをお送り頂くだけで");
+});
+it("★ スモラでは「仲介手数料0円」と書かない（実態は2,980円が一律）", () => {
+  const m = buildCostMechanismMessage({ customerName: "ゆうこ", account: "sumora", askedBrokerFee: true });
+  expect(m).notToContain("仲介手数料は0円");
+  expect(m).notToContain("仲介手数料0円");
+});
+it("★ イエヤス: 仲介手数料0円＋イエヤス割（実送信の言い方）", () => {
+  const m = buildCostMechanismMessage({ customerName: "けんじ", account: "ieyasu", askedBrokerFee: false });
+  expect(m).toContain("ほとんどのお部屋を仲介手数料0円でご紹介可能となります！！");
+  expect(m).toContain("イエヤス割");
+  expect(m).toContain("中には仲介手数料を頂くお部屋もございます");
+  expect(m).notToContain("2,980円");   // スモラの数字を混ぜない
+  expect(m).notToContain("スモ割");
+});
+it("ギガ: ギガ割になる", () => {
+  const m = buildCostMechanismMessage({ customerName: "けんじ", account: "giga", askedBrokerFee: false });
+  expect(m).toContain("ギガ割");
+  expect(m).notToContain("イエヤス割");
+});
+it("アカウント未指定はスモラ扱い（件数最多・挨拶メッセージの型）", () => {
+  expect(buildCostMechanismMessage({ customerName: "A", account: null, askedBrokerFee: false })).toContain("スモ割");
+});
+it("物件ごとの金額は1つも書かない（入力が要らない＝創作もしない）", () => {
+  const m = buildCostMechanismMessage({ customerName: "A", account: "sumora", askedBrokerFee: false });
+  const amounts = m.match(/[\d,]+円/g) ?? [];
+  expect(amounts.every((a) => a === "2,980円")).toBe(true);
+});
+it("名前が空でも壊れない", () => {
+  expect(buildCostMechanismMessage({ customerName: "", account: "ieyasu", askedBrokerFee: false })).toContain("お客様が気になっているお部屋");
+});
+it("締めは既存と同じ（他社との差は還元の有無）", () => {
+  expect(buildCostMechanismMessage({ customerName: "A", account: "sumora", askedBrokerFee: false }))
+    .toContain("他社様との金額差はこの還元の有無によるものですので、ご安心ください😊！！");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

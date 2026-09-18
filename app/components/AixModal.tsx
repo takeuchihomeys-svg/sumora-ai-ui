@@ -27,7 +27,7 @@ const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_
 import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
 import {
-  buildCostExplainMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
+  buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
 } from "../lib/cost-explain-text";
 
 export type AixActionType =
@@ -947,6 +947,8 @@ export default function AixModal({
   const [costRefundYen, setCostRefundYen] = useState("");
   const [costSavingYen, setCostSavingYen] = useState("");
   const [costNoFee, setCostNoFee] = useState(false);
+  // 2026-09-19 竹内: 「仕組みを説明」（報酬額を入れずに仕組みだけ1通）
+  const [costMechanism, setCostMechanism] = useState(false);
 
   // 初期費用について専用（2026-09-15 竹内・ゆうこ事例）: 御見積書の画像（会話で最後に送った御見積書が自動で入る・貼り付け／選択で追加）
   //   fromHistory = 会話で既に送った御見積書（お客様の手元にある）。新しく貼った画像だけ「画像も送る」の対象
@@ -2024,9 +2026,12 @@ export default function AixModal({
           landlordFeeYen: costNoFee ? null : parseYen(costFeeYen),
           refundYen: costNoFee ? null : parseYen(costRefundYen),
         };
-        const missing = costExplainMissing(input);
-        if (missing) throw new Error(missing);
-        // 最後のお客様の連投に「仲介手数料」があれば「仲介手数料は0円で大丈夫です！！」から答える
+        // 2026-09-19 竹内: 「仕組みを説明」は金額の入力が要らない
+        if (!costMechanism) {
+          const missing = costExplainMissing(input);
+          if (missing) throw new Error(missing);
+        }
+        // 最後のお客様の連投に「仲介手数料」があれば、その質問に合わせて答える
         //   （スタッフが先に一言返した後に押しても、答える相手はその連投）
         const msgs = recentMessages ?? [];
         let end = msgs.length - 1;
@@ -2034,6 +2039,18 @@ export default function AixModal({
         let start = end;
         while (start > 0 && msgs[start - 1].sender === "customer") start--;
         const customerTurn = end >= 0 ? msgs.slice(start, end + 1).map((m) => m.text ?? "").join("\n") : "";
+        if (costMechanism) {
+          // 仕組みだけ（金額なし）。アカウントで文が変わる（スモラ＝2,980円一律／イエヤス・ギガ＝仲介手数料0円）
+          const mech = buildCostMechanismMessage({
+            customerName,
+            account: account ?? null,
+            askedBrokerFee: mentionsBrokerFee(customerTurn),
+          });
+          setAiDraft(mech);
+          setPreview(useEmoji ? mech : stripEmoji(mech));
+          setLoading(false);
+          return;
+        }
         const msg = buildCostExplainMessage({
           ...input,
           customerName,
@@ -3381,7 +3398,8 @@ export default function AixModal({
     : actionType === "meeting_place"
     ? (!!meetingDate.trim() && !!meetingPropertyName.trim())
     : actionType === "cost_explain"
-    ? costExplainMissing({ noLandlordFee: costNoFee, landlordFeeYen: parseYen(costFeeYen), refundYen: parseYen(costRefundYen) }) === null
+    // 2026-09-19 竹内: 「仕組みを説明」は金額の入力なしで生成できる
+    ? costMechanism || costExplainMissing({ noLandlordFee: costNoFee, landlordFeeYen: parseYen(costFeeYen), refundYen: parseYen(costRefundYen) }) === null
     : actionType === "cost_breakdown"
     ? cbImages.length > 0
     : actionType === "phone_followup"
@@ -6927,11 +6945,23 @@ export default function AixModal({
             const chip = (on: boolean) => `rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors ${on ? "border-[#2E7D32] bg-[#2E7D32] text-white" : "border-[#d1d7db] bg-white text-[#667781]"}`;
             return (
               <div className="mb-4">
+                {/* 2026-09-19 竹内「初期費用について説明すること多いのでAIXの初期費用を説明のところに
+                    仕組みを説明のピッカーつけて、そこ押したら、報酬額いれなくても説明されるようにする」 */}
                 <div className="mb-3 flex flex-wrap gap-2">
-                  <button type="button" onClick={() => { setCostNoFee(false); setPreview(""); }} className={chip(!costNoFee)}>貸主から報酬あり</button>
-                  <button type="button" onClick={() => { setCostNoFee(true); setPreview(""); }} className={chip(costNoFee)}>貸主から手数料なし</button>
+                  <button type="button" onClick={() => { setCostMechanism(false); setCostNoFee(false); setPreview(""); }} className={chip(!costMechanism && !costNoFee)}>貸主から報酬あり</button>
+                  <button type="button" onClick={() => { setCostMechanism(false); setCostNoFee(true); setPreview(""); }} className={chip(!costMechanism && costNoFee)}>貸主から手数料なし</button>
+                  <button type="button" onClick={() => { setCostMechanism(true); setPreview(""); }} className={chip(costMechanism)}>💡 仕組みを説明（金額なし）</button>
                 </div>
-                {!costNoFee ? (
+                {costMechanism ? (
+                  <div className="mb-3 rounded-xl border border-[#c8e6c9] bg-[#f1f8e9] p-3">
+                    <p className="text-[11px] leading-relaxed text-[#33691e]">
+                      金額の入力なしで、仕組みだけを説明する1通を作ります（物件ごとの金額は書きません）。
+                      <br />
+                      文面は<b>アカウントで変わります</b>: スモラ＝スモ割・前家賃＋2,980円（仲介手数料2,980円は一律）／
+                      イエヤス・ギガ＝仲介手数料0円＋イエヤス割・ギガ割。
+                    </p>
+                  </div>
+                ) : !costNoFee ? (
                   <>
                     <div className="mb-3">
                       <label className="mb-1 block text-xs font-semibold text-[#54656f]">貸主からの報酬 <span className="text-red-400">*</span></label>
@@ -6963,8 +6993,10 @@ export default function AixModal({
                     <input value={costSavingYen} onChange={(e) => { setCostSavingYen(e.target.value); setPreview(""); }} inputMode="numeric" placeholder="例：29,150" className={inputCls} />
                   </div>
                 )}
-                <p className={`text-[11px] ${missing ? "text-[#e57373]" : "text-[#2E7D32]"}`}>
-                  {missing ?? "✅ 仕組み（仲介手数料0円・広告料の還元）とこの物件の具体額を1通で作ります"}
+                <p className={`text-[11px] ${!costMechanism && missing ? "text-[#e57373]" : "text-[#2E7D32]"}`}>
+                  {costMechanism
+                    ? "✅ 仕組みだけを1通で作ります（金額の入力は要りません）"
+                    : missing ?? "✅ 仕組み（広告料の還元）とこの物件の具体額を1通で作ります"}
                 </p>
               </div>
             );
