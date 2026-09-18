@@ -24,7 +24,8 @@ import { meetingToJst, pendingViewingNotes, isReplaceableViewingNotes, VIEWING_M
 // 2026-09-16 竹内（カイナ事例）: 内覧の候補日時をカレンダーに「時間確保」で置き、決まったら残りを消す
 import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewingHoldNotes, planHoldCleanup, type HoldSlot } from "./lib/viewing-hold";
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
-import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf } from "./lib/promise-calendar";
+// 2026-09-18 竹内「必ずのお客さんはLINEの上に上がるようにする。忘れないようにする為」: 一覧の並びとバッジの日数を同じ関数で
+import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, oldestPromiseAtMs, promiseOverdueDays, comparePromiseFirst, sortMsOf } from "./lib/promise-calendar";
 import { jstYmd } from "./lib/jst-date";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
@@ -2712,17 +2713,18 @@ export default function Home() {
           c.messages.some((m) => m.text?.toLowerCase().includes(q))
       );
     }
-    // 要対応モードは直近やり取り順（updatedAt DESC）
-    if (statusFilter === "flagged") {
-      return [...result].sort((a, b) =>
-        new Date(b.updatedAt ?? "").getTime() - new Date(a.updatedAt ?? "").getTime()
-      );
-    }
-    // updatedAt 順（最新やり取り優先）
+    // 2026-09-18 竹内「必ずのお客さんはLINEの上に上がるようにする。忘れないようにする為」:
+    //   お客様への約束（【必ず】・未履行）がある会話を先頭に、放置が長い（約束が古い）順。残りは従来どおり直近やり取り順。
+    //   旧は直近やり取り順だけだったため、返事が来ていない約束ほど新しいやり取りに押し下げられ、
+    //   一番忘れている人が一番下に沈んでいた（赤帯とバッジは出ていたが、その会話まで辿り着けない）。
+    //   並びとバッジの日数は同じ関数（promise-calendar.ts）から作る＝表示と並びが食い違わない。
     return [...result].sort((a, b) =>
-      new Date(b.updatedAt ?? "").getTime() - new Date(a.updatedAt ?? "").getTime()
+      comparePromiseFirst(
+        { promiseAt: oldestPromiseAtMs(openPromises[a.id]), updatedAtMs: sortMsOf(a.updatedAt) },
+        { promiseAt: oldestPromiseAtMs(openPromises[b.id]), updatedAtMs: sortMsOf(b.updatedAt) },
+      )
     );
-  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds, manuallyReadAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds, manuallyReadAt, openPromises]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // AIX送信対象（AIXバッジ かつ 要対応バッジ）の件数。AIXボタンの紫ドットに使う
   const aixTargetCount = useMemo(() => {
@@ -6705,10 +6707,11 @@ export default function Home() {
                           if (hasStaffToday) return <span key="today-reply-badge" className="shrink-0 leading-none text-sm" title="今日手動で返信済み">☑</span>;
                           return null;
                         })()}
-                        {(openPromises[conversation.id] ?? []).length > 0 && (() => {
-                          const oldest = Math.min(...(openPromises[conversation.id] ?? []).map((p) => new Date(p.start_at).getTime()));
-                          const days = Math.floor((Date.now() - oldest) / 86400000);
-                          return <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white" title="お客様への約束・未履行（カレンダーの【必ず】）">🔴必ず{days > 0 ? ` ${days}日` : ""}</span>;
+                        {(() => {
+                          // 並び（filteredConversations）と同じ関数で日数を出す。バッジの日数＝上に来る順番の根拠
+                          const days = promiseOverdueDays(openPromises[conversation.id], Date.now());
+                          if (days === null) return null;
+                          return <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white" title="お客様への約束・未履行（カレンダーの【必ず】）。一覧の一番上に出ます">🔴必ず{days > 0 ? ` ${days}日` : ""}</span>;
                         })()}
                         {(activeTasks[conversation.id] ?? []).map((task) => {
                           if (task.task_type === "property_check") {

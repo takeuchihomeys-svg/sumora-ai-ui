@@ -158,6 +158,58 @@ export function planPromiseInsert(
   return rows.filter((r) => !openHeads.has(headlineOf(r.notes)));
 }
 
+// ── 一覧の並び（2026-09-18 竹内「必ずのお客さんはLINEの上に上がるようにする。忘れないようにする為」）──
+// 【必ず】は会話画面の赤帯と一覧のバッジには出ていたが、一覧は直近やり取り順だったため、
+// 返事が来ていない約束ほど下に沈んでいた（新しいやり取りが上に積まれる＝放置が長いほど見えない）。
+// バッジの経過日数と並びは同じ関数から作る（表示と並びが食い違わない）。
+
+/** 一覧の並び・バッジが見る、その会話の未履行の約束（カレンダーの行の一部だけ） */
+export type OpenPromiseRef = { start_at: string };
+
+/** その会話の一番古い未履行の約束の時刻（ms）。約束が無ければ null */
+export function oldestPromiseAtMs(promises: ReadonlyArray<OpenPromiseRef> | null | undefined): number | null {
+  let oldest: number | null = null;
+  for (const p of promises ?? []) {
+    const t = Date.parse(p?.start_at ?? "");
+    if (!Number.isFinite(t)) continue;
+    if (oldest === null || t < oldest) oldest = t;
+  }
+  return oldest;
+}
+
+/** 一覧のバッジに出す経過日数（一番古い約束から）。約束が無ければ null */
+export function promiseOverdueDays(
+  promises: ReadonlyArray<OpenPromiseRef> | null | undefined,
+  nowMs: number,
+): number | null {
+  const oldest = oldestPromiseAtMs(promises);
+  if (oldest === null) return null;
+  return Math.max(0, Math.floor((nowMs - oldest) / 86_400_000));
+}
+
+/** 並べる時に見る1件分（約束の時刻と直近やり取りの時刻） */
+export type PromiseSortKey = { promiseAt: number | null; updatedAtMs: number };
+
+/** 時刻の文字列を ms に（読めない時は 0＝一番下）。並びで NaN を混ぜない */
+export function sortMsOf(iso: string | null | undefined): number {
+  const t = Date.parse(iso ?? "");
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * 一覧の並び。
+ *   ① お客様への約束（【必ず】・未履行）がある会話を先頭に
+ *   ② その中では約束が古い順（放置が長いほど上＝一番忘れているものが一番上）
+ *   ③ 残りは従来どおり直近やり取り順
+ */
+export function comparePromiseFirst(a: PromiseSortKey, b: PromiseSortKey): number {
+  const hasA = a.promiseAt !== null;
+  const hasB = b.promiseAt !== null;
+  if (hasA !== hasB) return hasA ? -1 : 1;
+  if (hasA && hasB && a.promiseAt !== b.promiseAt) return (a.promiseAt as number) - (b.promiseAt as number);
+  return b.updatedAtMs - a.updatedAtMs;
+}
+
 /** 確認の約束の要件（notes 1行目「【必ず】保証会社の確認→ご連絡」→「保証会社」） */
 function confirmObjectOfNotes(notes: string | null | undefined): string | null {
   const head = headlineOf(notes);

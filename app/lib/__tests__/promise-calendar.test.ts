@@ -1,7 +1,7 @@
 // 2026-09-16 竹内（慶次・𝒮 さん事例）: 今日約束した事をカレンダーに【必ず】＋お客様名＋要件で置き、履行したら完了にする
 // 実行: npx tsx app/lib/__tests__/promise-calendar.test.ts（自己完結ハーネス。全 PASS で exit 0）
 import { classifyStaffTextFacts } from "../action-ledger";
-import { promiseEventRows, planPromiseInsert, planPromiseCompletion, isPromiseMustNotes, promiseHeadline, promiseAixActionOf, PROMISE_MUST_MARK } from "../promise-calendar";
+import { promiseEventRows, planPromiseInsert, planPromiseCompletion, isPromiseMustNotes, promiseHeadline, promiseAixActionOf, PROMISE_MUST_MARK, oldestPromiseAtMs, promiseOverdueDays, comparePromiseFirst, sortMsOf } from "../promise-calendar";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -127,6 +127,58 @@ it("会話画面から開く AIX は行の種類で決まる", () => {
 it("見積書の約束は物件名付きの要件", () => {
   expect(promiseHeadline("estimate_declared", { estimateFor: ["エストレーラ 305号室"] })).toBe(`${PROMISE_MUST_MARK}御見積書送付（エストレーラ 305号室）`);
   expect(promiseHeadline("estimate_declared", {})).toBe(`${PROMISE_MUST_MARK}御見積書送付`);
+});
+
+// ── 2026-09-18 竹内「必ずのお客さんはLINEの上に上がるようにする。忘れないようにする為」──
+const NOW = Date.parse("2026-09-18T12:00:00+09:00");
+const d = (days: number) => ({ start_at: new Date(NOW - days * 86_400_000).toISOString() });
+
+it("一覧: 約束のある会話が、直近やり取りが新しい会話より上に来る", () => {
+  const withPromise = { promiseAt: oldestPromiseAtMs([d(1)]), updatedAtMs: sortMsOf("2026-09-15T10:00:00+09:00") };
+  const newestNoPromise = { promiseAt: oldestPromiseAtMs([]), updatedAtMs: sortMsOf("2026-09-18T11:59:00+09:00") };
+  expect(comparePromiseFirst(withPromise, newestNoPromise) < 0).toBe(true);
+  expect(comparePromiseFirst(newestNoPromise, withPromise) > 0).toBe(true);
+});
+
+it("一覧: 約束のある会話どうしは、放置が長い（約束が古い）方が上", () => {
+  const old3 = { promiseAt: oldestPromiseAtMs([d(3)]), updatedAtMs: sortMsOf("2026-09-18T11:00:00+09:00") };
+  const new1 = { promiseAt: oldestPromiseAtMs([d(1)]), updatedAtMs: sortMsOf("2026-09-18T11:59:00+09:00") };
+  expect(comparePromiseFirst(old3, new1) < 0).toBe(true);
+});
+
+it("一覧: 約束が複数ある会話は一番古い約束で並ぶ（新しい約束で上書きされない）", () => {
+  expect(oldestPromiseAtMs([d(1), d(5), d(2)])).toBe(oldestPromiseAtMs([d(5)]));
+});
+
+it("一覧: 約束が無い会話どうしは従来どおり直近やり取り順", () => {
+  const a = { promiseAt: null, updatedAtMs: sortMsOf("2026-09-18T11:00:00+09:00") };
+  const b = { promiseAt: null, updatedAtMs: sortMsOf("2026-09-17T11:00:00+09:00") };
+  expect(comparePromiseFirst(a, b) < 0).toBe(true);
+});
+
+it("バッジの日数は一番古い約束から（並びと同じ材料）", () => {
+  expect(promiseOverdueDays([d(3), d(1)], NOW)).toBe(3);
+  expect(promiseOverdueDays([d(0)], NOW)).toBe(0);
+  expect(promiseOverdueDays([], NOW)).toBe(null);
+  expect(promiseOverdueDays(undefined, NOW)).toBe(null);
+});
+
+it("読めない日付は並びを壊さない（NaN を混ぜない）", () => {
+  expect(oldestPromiseAtMs([{ start_at: "" }, { start_at: "not-a-date" }])).toBe(null);
+  expect(sortMsOf(null)).toBe(0);
+  const broken = { promiseAt: null, updatedAtMs: sortMsOf(undefined) };
+  const ok = { promiseAt: null, updatedAtMs: sortMsOf("2026-09-18T11:00:00+09:00") };
+  expect(comparePromiseFirst(ok, broken) < 0).toBe(true);
+});
+
+it("実データの並び（9/15・9/17 の約束あり ＋ 新着だけの会話）", () => {
+  const rows = [
+    { id: "新着", promiseAt: oldestPromiseAtMs([]), updatedAtMs: sortMsOf("2026-09-18T11:59:00+09:00") },
+    { id: "9/17約束", promiseAt: oldestPromiseAtMs([d(1)]), updatedAtMs: sortMsOf("2026-09-17T18:00:00+09:00") },
+    { id: "9/15約束", promiseAt: oldestPromiseAtMs([d(3)]), updatedAtMs: sortMsOf("2026-09-15T10:52:00+09:00") },
+    { id: "少し前", promiseAt: oldestPromiseAtMs([]), updatedAtMs: sortMsOf("2026-09-18T09:00:00+09:00") },
+  ];
+  expect([...rows].sort(comparePromiseFirst).map((r) => r.id).join(",")).toBe("9/15約束,9/17約束,新着,少し前");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
