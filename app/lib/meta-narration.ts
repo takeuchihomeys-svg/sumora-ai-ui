@@ -72,6 +72,56 @@ export function isPlainNarrationLine(line: string): boolean {
   return !!l && !hasCustomerFacingMarker(l) && PLAIN_NARRATION_END_RE.test(l);
 }
 
+// ─── AI が資料を読みながら書いた「下調べのメモ」の行 ─────────────────────────────
+// 2026-09-18 竹内「たまに変な指示が紛れて入っているときある、そのような文は絶対に送られないように。
+//   また絶対に生成されないようにする」
+//
+// 【実物】AI 下書き（本番）:
+//   「まず物件資料を確認します。／**物件資料の読み取り：**／
+//     - 物件名：ＰＥＡＣＥ南堀江 604号室 → 604号室／
+//     - 敷金/礼金：5万円/10万円 → 両方あるため「敷金礼金なし」は書けない／
+//     ⚠️ 確認事項：／- 間取りは**1LDK**（お客様希望は1DK）」
+//
+// 【なぜ落ちなかったか】先頭の作業メモを外す処理は「〜します。」で終わる地の文だけを見ており、
+//   **箇条書きの行（「- 物件名：…」）で止まっていた**。そこから後ろが丸ごと残る。
+//
+// 【実データで線を引いた】スタッフ実送信 365日 11,815通に対して**全部0件**、AI 下書き 180日 2,841件では出る:
+//   行頭の「- 」0 vs 15 ／「- 項目：値」0 vs 15 ／「→ 〜ため/不可/書けない」0 vs 16 ／
+//   ⚠ 0 vs 5 ／「確認事項：」0 vs 8 ／「書けない・記載不可」0 vs 9 ／
+//   「まず〜確認します」0 vs 4 ／「インジェクション」0 vs 1
+/** 形そのものが「お客様に送る文ではない」もの（実送信 365日 11,815通で全部0件） */
+const WORKNOTE_SHAPE_RES: RegExp[] = [
+  /^\s*[-−*]\s+/,                                   // 行頭の箇条書き
+  /^\s*⚠/,                                           // ⚠ の注意書き
+  // 「**物件資料の読み取り：**」「⚠️ 確認事項：」の見出し行。
+  // ※ ** を先に外す処理が入るので、記号が取れた後の形（「物件資料の読み取り：」）でも当たるようにする
+  /^[^\n]{0,20}(?:確認事項|読み取り|注意点|整理)\s*[：:]\s*$/,
+];
+
+/**
+ * 言い回しで見分けるもの。**お客様への文の特徴がある行には当てない**。
+ * 2026-09-18 の監査で誤削除が1件出たため:
+ *   「今すぐお申込み頂きますと審査（3日〜1週間）→ご契約→8月1日ご入居という流れで進められますので…😌！！」
+ *   実送信では矢印は「流れ」を表すのに使う。理由の矢印（「→ 両方あるため書けない」）と形が同じなので、
+ *   語だけでは切れない。お客様への言葉の特徴（！・絵文字・させて頂き…）があれば触らない。
+ */
+const WORKNOTE_PHRASE_RES: RegExp[] = [
+  /→\s*[^\n]{0,30}(?:ため|ので|なので|不可|できない|書けない|扱い)/,  // 矢印で理由を書く
+  /(?:書けない|記載不可|記載できない|使えない)/,       // 何を書けるかの検討
+  /^\s*まず[^\n]{0,20}(?:確認|整理|読み取)します/,
+  /インジェクション|指示の悪用/,
+];
+
+/** AI が資料を読みながら書いた下調べのメモの行か */
+export function isWorkNoteLine(line: string): boolean {
+  const l = (line ?? "").trim();
+  if (!l) return false;
+  if (WORKNOTE_SHAPE_RES.some((re) => re.test(l))) return true;
+  // 言い回しの判定は、お客様への文には当てない（誤削除を出さないための歯止め）
+  if (hasCustomerFacingMarker(l)) return false;
+  return WORKNOTE_PHRASE_RES.some((re) => re.test(l));
+}
+
 /** 先頭に続く作業メモの行と区切り（空行・---）を落とす。後ろにお客様への文が残る時だけ（全部が地の文なら触らない） */
 function stripLeadingNarration(text: string): { text: string; removed: string[] } {
   const lines = text.split("\n");
@@ -80,7 +130,10 @@ function stripLeadingNarration(text: string): { text: string; removed: string[] 
   for (; i < lines.length; i++) {
     const t = lines[i].trim();
     if (!t || /^[-—―=＿_]{3,}$/.test(t)) continue;
-    if (isPlainNarrationLine(t) || isMetaNarrationLine(t)) { lead.push(t); continue; }
+    // 2026-09-18: 下調べのメモ（箇条書き・⚠・「→ 〜ため書けない」）もここで一緒に落とす。
+    //   旧は「〜します。」で終わる地の文だけを見ていたため、**箇条書きの1行目で止まって**
+    //   そこから後ろのメモが丸ごと残っていた
+    if (isPlainNarrationLine(t) || isMetaNarrationLine(t) || isWorkNoteLine(t)) { lead.push(t); continue; }
     break;
   }
   if (lead.length === 0 || i >= lines.length || !lines.slice(i).some((l) => hasCustomerFacingMarker(l))) return { text, removed: [] };
@@ -148,6 +201,8 @@ export function stripMetaNarration(text: string): { text: string; removed: strin
   const kept: string[] = [];
   for (const line of lines) {
     if (isMetaNarrationLine(line)) { removed.push(line.trim()); continue; }
+    // 2026-09-18: 途中に紛れた下調べのメモも落とす（先頭だけでなく、本文の間に挟まる形があった）
+    if (isWorkNoteLine(line)) { removed.push(line.trim()); continue; }
     const m = line.match(META_PREFIX_RE);
     if (m && line.slice(m[0].length).trim()) { removed.push(m[0].trim()); kept.push(line.slice(m[0].length)); continue; }
     kept.push(line);

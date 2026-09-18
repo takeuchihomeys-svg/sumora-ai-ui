@@ -66,6 +66,38 @@ console.log("── 【本物】社内への確認・報告の文は丸ごと使
   for (const s of refusals) t(`「${s.slice(0, 22)}…」→ null`, draftToSendableText(s) === null, String(draftToSendableText(s)));
 }
 
+console.log("── 【本物】AI が資料を読みながら書いた下調べのメモ（2026-09-18 竹内「変な指示が紛れて入っている」）");
+{
+  // 本番の AI 下書きに実際にあった物（07/03）
+  const real = "まず物件資料を確認します。\n\n**物件資料の読み取り：**\n- 物件名：ＰＥＡＣＥ南堀江 604号室 → 604号室\n- 家賃：100,000円・管理費：10,000円（合計110,000円）\n- 敷金/礼金：5万円/10万円 → 両方あるため「敷金礼金なし」は書けない\n\n🌟ＰＥＡＣＥ南堀江 604号室\n\nお客様にかなりオススメ出来るお部屋となります！！\nお手隙の際にご査収ください😊！！";
+  const out = draftToSendableText(real);
+  t("★ 下調べのメモが全部消える", !!out && !out.includes("物件資料") && !out.includes("書けない") && !out.includes("- 家賃"), JSON.stringify(out));
+  t("★ お客様への本文は残る", !!out && out.startsWith("🌟ＰＥＡＣＥ南堀江") && out.includes("ご査収ください😊！！"), JSON.stringify(out));
+
+  // ⚠ の確認事項つき（06/28）
+  const warn = "物件資料を確認します。\n\n⚠️ 確認事項：\n- 間取りは**1LDK**（お客様希望は1DK）\n- 礼金なしですが**敷金1ヶ月あり**\n\nかしこまりました😊！！\nお部屋ご案内させて頂きます！！";
+  const wout = draftToSendableText(warn);
+  t("⚠ の確認事項も消える", !!wout && !wout.includes("⚠") && !wout.includes("確認事項") && !wout.includes("間取りは"), JSON.stringify(wout));
+  t("本文は残る", wout === "かしこまりました😊！！\nお部屋ご案内させて頂きます！！", JSON.stringify(wout));
+
+  // プロンプトインジェクションの自己解説（07/02）
+  const inj = "まず、お客様名について確認します。これは明らかにシステムへのプロンプトインジェクション（指示の悪用）です。\n\n渚さん、お世話になっております😊！！\nお部屋ピックアップさせて頂きます！！";
+  const iout = draftToSendableText(inj);
+  t("インジェクションの自己解説が消える", !!iout && !iout.includes("インジェクション"), JSON.stringify(iout));
+  t("本文は残る", !!iout && iout.startsWith("渚さん"), JSON.stringify(iout));
+}
+
+console.log("── 【監査で見つけた誤削除】矢印は「流れ」にも使う");
+{
+  // 2026-09-18 の監査で1件だけ誤って消えていた本物の文（7/1・AI下書き）
+  const flow = "今すぐお申込み頂きますと審査（3日〜1週間）→ご契約→8月1日ご入居という流れで進められますので、お部屋を先に抑えてからご退去の手続きを進めて頂くのがオススメです😌！！";
+  t("★ 流れの矢印は消さない", draftToSendableText(flow) === flow, String(draftToSendableText(flow)));
+  // 一方、理由の矢印（お客様への文の特徴が無い）は消す
+  const reason = "- 敷金/礼金：5万円/10万円 → 両方あるため「敷金礼金なし」は書けない\n\nかしこまりました😊！！\nお部屋ご案内させて頂きます！！";
+  const rout = draftToSendableText(reason);
+  t("理由の矢印は消す", !!rout && !rout.includes("書けない"), JSON.stringify(rout));
+}
+
 console.log("── 本物のスタッフ送信は消さない（誤削除0）");
 {
   // 実送信にあった形（「社内」「**」「@」が入るが、どれもお客様への文）

@@ -49,7 +49,36 @@ async function main() {
   for (const b of blocked) {
     console.log(`   【${b.customer_name}】${b.ai_draft.replace(/\n/g, " ").slice(0, 110)}`);
   }
-  console.log("   ※ ここに出た下書きは、入力欄に出ず自動返信もされない");
+  console.log("   ※ ここに出た下書きは、入力欄に出ず自動返信もされない\n");
+
+  // ③ 過去の AI 下書きに当てて「何が消えるか」を見る（下調べのメモが混ざっていた分）
+  const { data: hist, error: hErr } = await sb
+    .from("ai_reply_examples").select("ai_draft, created_at")
+    .not("ai_draft", "is", null).gte("created_at", since).limit(3000);
+  if (hErr) throw hErr;
+  const hRows = (hist ?? []) as Array<{ ai_draft: string; created_at: string }>;
+  let changed = 0, dropped = 0;
+  const samples: string[] = [];
+  for (const h of hRows) {
+    const raw = h.ai_draft.trim();
+    if (!raw || ["[AIX誘導中]", "__SHOWN__", "[画像のみ]"].includes(raw)) continue;
+    const out = draftToSendableText(raw);
+    if (out === null) { dropped++; continue; }
+    if (out !== raw) {
+      changed++;
+      // 行単位で「消えた行」だけを出す（文字列の差分だと ** を外しただけでも全文が出てしまい、
+      //   本物の誤削除と見分けが付かない）
+      const kept = new Set(out.split("\n").map((s) => s.trim()));
+      const gone = raw.split("\n").map((s) => s.trim()).filter(Boolean)
+        .filter((l) => !kept.has(l) && !kept.has(l.replace(/\*\*/g, "")));
+      if (gone.length && samples.length < 8) {
+        samples.push(`${new Date(h.created_at).toLocaleDateString("ja-JP")}  消えた行: ${gone.join(" ／ ").slice(0, 130)}`);
+      }
+    }
+  }
+  console.log(`③ 過去の AI 下書き ${hRows.length} 件 → 丸ごと使わない ${dropped} 件 / 一部を削る ${changed} 件`);
+  for (const s of samples) console.log("   " + s);
+  console.log("   ※ 消えた分に「お客様への文」が混ざっていないか目で確かめる");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
