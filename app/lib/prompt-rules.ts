@@ -5,6 +5,8 @@ import {
 } from "@/app/lib/prompt-rules-format";
 
 export type { PromptRuleRow, PromptRuleConditions } from "@/app/lib/prompt-rules-format";
+// 2026-09-18 上限・下限は prompt-rule-registry.ts の1つの表と同じ値を使う（点検スクリプトが同じ数で数える）
+import { PROMPT_RULE_LIMIT_HIGH, PROMPT_RULE_LIMIT_PERMANENT, PROMPT_RULE_MIN_PRIORITY } from "@/app/lib/prompt-rule-registry";
 
 // 2026-09-16 竹内（カイナ事例）: 経路ごとに材料を分ける。会話を合わせる（物件確認した）には、通常返信用の「物件画像→見積書作成宣言」
 //   「内覧案内を混ぜるな」（PROP-URL-REPLY-001・FEEDBACK-d6f30f25）や構成を足す DIFF-POLICY-* を渡さない
@@ -68,22 +70,35 @@ async function queryRuleRows(actionType: string | null, includeGlobal: boolean, 
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false })
       .order("rule_key", { ascending: true })
-      .limit(80)
+      .limit(PROMPT_RULE_LIMIT_PERMANENT)
       .abortSignal(AbortSignal.timeout(8_000)),
     buildBaseQuery(actionType, includeGlobal, includeLearnAix, exclude)
       .eq("is_permanent", false)
-      .gte("priority", 4)
+      .gte("priority", PROMPT_RULE_MIN_PRIORITY)
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false })
       .order("rule_key", { ascending: true })
-      .limit(200)
+      .limit(PROMPT_RULE_LIMIT_HIGH)
       .abortSignal(AbortSignal.timeout(8_000)),
   ]);
   if (highPrioRes.error || permanentRes.error) return { error: highPrioRes.error ?? permanentRes.error };
-  return {
-    permanent: (permanentRes.data ?? []) as PromptRuleRow[],
-    high: (highPrioRes.data ?? []) as PromptRuleRow[],
-  };
+  const permanent = (permanentRes.data ?? []) as PromptRuleRow[];
+  const high = (highPrioRes.data ?? []) as PromptRuleRow[];
+  // 2026-09-18 竹内「改善おねがい」: 上限に張り付いた時は「後ろが落ちている」ことを必ず出す。
+  //   generate_reply は該当 429 件に対して上限 200 で **229 件が黙って落ちていた**（priority 7 の境目で、
+  //   同じ priority の中は更新日の新しい順。古い方は永久に入らない）。件数が見えないと誰も気付けない。
+  if (high.length >= PROMPT_RULE_LIMIT_HIGH || permanent.length >= PROMPT_RULE_LIMIT_PERMANENT) {
+    console.warn(JSON.stringify({
+      tag: "prompt-rules:limit-hit",
+      actionType: actionType ?? "(global)",
+      includeGlobal,
+      high: high.length,
+      permanent: permanent.length,
+      lowestPriorityKept: high.length ? high[high.length - 1]?.priority ?? null : null,
+      note: "上限に達しました。これより priority の低い（同値なら更新の古い）ルールは注入されていません",
+    }));
+  }
+  return { permanent, high };
 }
 
 /**

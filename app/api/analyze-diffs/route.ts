@@ -7,6 +7,8 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { loadBlockedItems, markAttemptDone } from "@/app/lib/llm-job-attempts";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { EXCLUDE_FAILED_SENT_LIKE } from "@/app/lib/example-hygiene";
+// 2026-09-18 保存する action_type が「取りに行く呼び出しのある値」かを門で確かめる（届かない行を新しく作らない）
+import { normalizePromptRuleActionType } from "@/app/lib/prompt-rule-registry";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
@@ -2143,11 +2145,24 @@ export async function POST(req: NextRequest) {
         const baseAction = Object.keys(AIX_ACTION_QUESTION_LABELS)
           .sort((a, b) => b.length - a.length)
           .find((k) => aixState === k || aixState.startsWith(k + "_")) ?? aixState;
+        // 2026-09-18 竹内「改善おねがい」: aixState は AIX アクション名とは限らず conversation_state
+        //   （applying / zenryoku_support 等）が入る。そのまま action_type に保存すると**誰も取りに行かない値**
+        //   になり、保存は成功して配信だけが黙って落ちる（実際に7件が届いていなかった）。
+        //   表（prompt-rule-registry）に無い値は global（null）に倒し、場面は conversation_state の条件で残す。
+        const aixRoute = normalizePromptRuleActionType(baseAction);
+        if (aixRoute.fellBackToGlobal) {
+          console.warn(JSON.stringify({
+            tag: "analyze-diffs:rule-action-fallback",
+            ruleKey: `DIFF-POLICY-AIX-${id}`, original: aixRoute.original,
+            note: "取りに行く呼び出しが無い action_type のため generate_reply + conversation_state 条件で保存しました",
+          }));
+        }
         await supabase.from("ai_prompt_rules").upsert({
           rule_key: `DIFF-POLICY-AIX-${id}`,
-          action_type: baseAction,
-          condition_key: null,
-          condition_value: null,
+          // 表に無い値だった時は返信生成に寄せ、元の場面は conversation_state の条件として残す
+          action_type: aixRoute.fellBackToGlobal ? "generate_reply" : aixRoute.actionType,
+          condition_key: aixRoute.fellBackToGlobal ? "conversation_state" : null,
+          condition_value: aixRoute.fellBackToGlobal ? aixRoute.original : null,
           rule_text: aixResult.rule.slice(0, 500),
           reason: `analyze-diffs ⑥AIX差分 ポリシー検出: ${aixResult.title}`.slice(0, 500),
           priority: 8,

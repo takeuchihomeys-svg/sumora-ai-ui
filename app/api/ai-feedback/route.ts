@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
+// 2026-09-18 保存する action_type が「取りに行く呼び出しのある値」かを門で確かめる（届かない行を新しく作らない）
+import { normalizePromptRuleActionType } from "@/app/lib/prompt-rule-registry";
 import Anthropic from "@anthropic-ai/sdk";
 
 // AI盲点フィードバック（ai_feedback_items）
@@ -38,12 +40,9 @@ const KNOWN_AIX_TYPES = new Set([
 // Opusがこのいずれかを返した場合は ai_prompt_rules.action_type にスコープ付きで保存し、
 // それ以外（general / 未知 / null）はグローバル（null）として保存する。
 // ※ 全ルールをnull（グローバル）で保存すると全アクションのプロンプトに注入されノイズになるため
-const PROMPT_RULE_ACTION_TYPES = new Set([
-  "property_check_result", "property_send", "viewing_invite", "estimate_sheet",
-  "property_recommendation", "condition_hearing", "greeting_viewing",
-  "application_push", "meeting_place", "acknowledge_check", "followup_revive",
-  "generate_reply",
-]);
+// 2026-09-18 竹内「改善おねがい」: この一覧は prompt-rule-registry.ts の表に1本化した（四者同名）。
+//   ここに手で書いていた頃は cost_breakdown / phone_followup / guarantor_info が抜けており、
+//   それらのフィードバックは黙って global に落ちていた（＝全アクションに撒かれてノイズになる側）。
 
 type ExtractedRule = {
   rule_text: string;
@@ -342,7 +341,7 @@ export async function POST(req: NextRequest) {
       .slice(0, 3);
     const actionType = rule.action_type?.trim() ?? "";
     // ai_prompt_rules 保存時のスコープ: 既知AIXアクションならスコープ付き、それ以外はグローバル（null）
-    const scopedActionType = PROMPT_RULE_ACTION_TYPES.has(actionType) ? actionType : null;
+    const scopedActionType = normalizePromptRuleActionType(actionType).actionType;
 
     if (actionType && KNOWN_AIX_TYPES.has(actionType)) {
       triggerKeywordActionTypes.add(actionType);

@@ -5,6 +5,8 @@
 //   global（action_type IS NULL）と action 別を別々の文字列にする fetchPromptRulesSplit と、従来の連結版 fetchPromptRules が
 //   同じ整形を使う（見出し・接頭辞・並びを揃えないと、同じルールでもキャッシュの鍵が外れる）。
 
+import { PROMPT_RULE_CONDITION_KEYS } from "@/app/lib/prompt-rule-registry";
+
 export interface PromptRuleRow {
   rule_key: string;
   rule_text: string;
@@ -17,12 +19,24 @@ export interface PromptRuleRow {
 
 export type PromptRuleConditions = Record<string, string | boolean | null | undefined>;
 
-/** 条件フィルタ（永久ルールにも条件は適用する）。condition_key が conditions に無いルールは警告して落とす */
+/**
+ * 条件フィルタ（永久ルールにも条件は適用する）。condition_key が conditions に無いルールは落とす。
+ *
+ * 2026-09-18 竹内「改善おねがい」: 旧実装はどちらの場合も同じ warn を出していたので、
+ *   ①この呼び出しでは渡していないだけ（他の経路では届く）
+ *   ②**どの呼び出しも渡さない＝この行は永久に届かない**（設定ミス）
+ * が区別できず、②が毎回のログに埋もれていた（PROP-VCC-001 は2026-07-09 以来1度も効いていなかった）。
+ *   → ②は rule_key つきで「永久に届きません」と出し、点検スクリプトと同じ言葉にする。
+ */
 export function promptRuleMatchesConditions(r: PromptRuleRow, conditions: PromptRuleConditions, warn: (msg: string) => void = (m) => console.warn(m)): boolean {
   if (!r.condition_key || r.condition_value === null) return true;
   const actual = conditions[r.condition_key];
   if (actual === undefined) {
-    warn(`[fetchPromptRules] unknown condition_key "${r.condition_key}" in rule — rule skipped`);
+    warn(
+      PROMPT_RULE_CONDITION_KEYS.has(r.condition_key)
+        ? `[fetchPromptRules] この呼び出しは condition_key "${r.condition_key}" を渡していないため ${r.rule_key} は落ちました（他の経路では届きます）`
+        : `[fetchPromptRules] 設定ミス: condition_key "${r.condition_key}"（${r.rule_key}）を渡す呼び出しが1つもありません — この行は永久に届きません。prompt-rule-registry.ts の表に足すか、条件を外してください`,
+    );
     return false;
   }
   if (actual === null) return false;
