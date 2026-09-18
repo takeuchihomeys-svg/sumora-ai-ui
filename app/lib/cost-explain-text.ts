@@ -51,9 +51,7 @@ export type CostMechanismInput = {
 export function buildCostMechanismMessage(input: CostMechanismInput): string {
   const name = input.customerName.trim() ? `${input.customerName.trim()}さん` : "お客様";
   const acct = String(input.account ?? "sumora").toLowerCase();
-  const opening = input.askedBrokerFee
-    ? "ご質問ありがとうございます😊！！"
-    : "ご質問ありがとうございます😊！！";
+  const opening = "ご質問ありがとうございます😊！！";
   // 仕組みの中心（実送信そのまま・アカウント共通）
   const refund =
     "オーナー様からの広告料をお客様に還元させて頂いている仕組みのため、初期費用を一般的な不動産業者様よりお安くご提案出来ております！！";
@@ -89,8 +87,13 @@ export function buildCostMechanismMessage(input: CostMechanismInput): string {
 
 export type CostExplainInput = {
   customerName: string;
-  /** お客様が「仲介手数料」に触れている（「仲介手数料無しで大丈夫でしょうか？」）→「仲介手数料は0円で大丈夫です！！」で答える */
+  /** お客様が「仲介手数料」に触れている（「仲介手数料無しで大丈夫でしょうか？」）→ 冒頭でその点に答える */
   askedBrokerFee: boolean;
+  /**
+   * conversations.account。**スモラは仲介手数料 2,980円が一律**なので「0円」と書かない（2026-09-19 竹内）。
+   * 未指定は従来どおり（0円）＝既存の呼び出しの挙動を変えない
+   */
+  account?: CostAccount | string | null;
   /** 貸主から手数料が無いお部屋 */
   noLandlordFee: boolean;
   /** 貸主からの報酬（円） */
@@ -125,12 +128,30 @@ export function costExplainMissing(input: Pick<CostExplainInput, "noLandlordFee"
   return null;
 }
 
+/**
+ * 冒頭の仲介手数料の言い方。
+ * 2026-09-19 竹内「スモラの場合は仲介手数料2,980円なので、スモラだけ2,980円と変えておく」。
+ *   DB のルール（ai_prompt_rules 4f2474ee）にも「仲介手数料は一律2,980円（固定）であり割引するものではない」とある。
+ *   スモラの実送信でも既定は 2,980円（「仲介手数料2,980円のみでご案内させていただきます」7/12・7/15・7/21、
+ *   「仲介手数料の2,980円は一律で発生し」8/11）。0円は**代表の特別許可**という例外（8/19・8/28）なので既定にしない。
+ *   イエヤス・ギガは従来どおり 0円（実送信「仲介手数料0円と25,000円のイエヤス割」「仲介手数料0円でご案内させていただきます」）。
+ */
+export function brokerFeeOpening(account: CostAccount | string | null | undefined, askedBrokerFee: boolean): string {
+  const acct = String(account ?? "").toLowerCase();
+  if (acct === "sumora") {
+    return askedBrokerFee
+      ? "仲介手数料は一律2,980円のみとなります！！"
+      : "ご質問ありがとうございます😊！！\n弊社は仲介手数料2,980円のみでご案内させて頂いております！！";
+  }
+  return askedBrokerFee
+    ? "仲介手数料は0円で大丈夫です！！"
+    : "ご質問ありがとうございます😊！！\n弊社は仲介手数料0円となります！！";
+}
+
 /** AIX【初期費用を説明】の本文（説明＋仕組みを1通で） */
 export function buildCostExplainMessage(input: CostExplainInput): string {
   const name = input.customerName.trim() ? `${input.customerName.trim()}さん` : "お客様";
-  const opening = input.askedBrokerFee
-    ? "仲介手数料は0円で大丈夫です！！"
-    : "ご質問ありがとうございます😊！！\n弊社は仲介手数料0円となります！！";
+  const opening = brokerFeeOpening(input.account, input.askedBrokerFee);
   const mechanism =
     `${opening}オーナー様からの広告料をお客様に還元させて頂いている仕組みのため、初期費用を一般的な不動産業者様よりお安くご提案出来ております！！\n\n` +
     "他社様との金額差はこの還元の有無によるものですので、ご安心ください😊！！";

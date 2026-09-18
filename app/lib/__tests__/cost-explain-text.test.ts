@@ -137,5 +137,62 @@ it("締めは既存と同じ（他社との差は還元の有無）", () => {
     .toContain("他社様との金額差はこの還元の有無によるものですので、ご安心ください😊！！");
 });
 
+// ── スモラの仲介手数料は 2,980円（2026-09-19 竹内「スモラだけ2,980円と変えておく」）──
+// 根拠: DB ルール ai_prompt_rules 4f2474ee「仲介手数料は一律2,980円（固定）であり割引するものではない」
+//   スモラ実送信「仲介手数料2,980円のみでご案内させていただきます」（7/12・7/15・7/21）
+//   「仲介手数料の2,980円は一律で発生し」（8/11）。0円は代表の特別許可という例外（8/19・8/28）
+it("★ スモラ: 仲介手数料に触れられた時「一律2,980円のみ」と答える（0円と書かない）", () => {
+  const m = buildCostExplainMessage({
+    customerName: "あや", account: "sumora", askedBrokerFee: true,
+    noLandlordFee: false, landlordFeeYen: 67000, landlordFeeLabel: "家賃1ヶ月分", refundYen: 22000, savingYen: null,
+  });
+  expect(m).toContain("仲介手数料は一律2,980円のみとなります！！");
+  expect(m).notToContain("仲介手数料は0円");
+  expect(m).toContain("67,000円を貸主から頂き、そこから22,000円をあやさんの初期費用に還元");
+});
+it("★ スモラ: 仲介手数料に触れられていない時も0円と書かない", () => {
+  const m = buildCostExplainMessage({
+    customerName: "あや", account: "sumora", askedBrokerFee: false,
+    noLandlordFee: false, landlordFeeYen: 67000, landlordFeeLabel: null, refundYen: 22000, savingYen: null,
+  });
+  expect(m).toContain("弊社は仲介手数料2,980円のみでご案内させて頂いております！！");
+  expect(m).notToContain("仲介手数料0円");
+});
+it("★ イエヤス・ギガは今までどおり0円", () => {
+  for (const acct of ["ieyasu", "giga"]) {
+    const m = buildCostExplainMessage({
+      customerName: "あや", account: acct, askedBrokerFee: true,
+      noLandlordFee: false, landlordFeeYen: 67000, landlordFeeLabel: null, refundYen: 22000, savingYen: null,
+    });
+    expect(m).toContain("仲介手数料は0円で大丈夫です！！");
+    expect(m).notToContain("2,980円");
+  }
+});
+it("アカウント未指定は従来どおり（既存の呼び出しの挙動を変えない）", () => {
+  const m = buildCostExplainMessage({
+    customerName: "あや", askedBrokerFee: true,
+    noLandlordFee: false, landlordFeeYen: 67000, landlordFeeLabel: null, refundYen: 22000, savingYen: null,
+  });
+  expect(m).toContain("仲介手数料は0円で大丈夫です！！");
+});
+it("貸主から手数料なしのお部屋でも冒頭はアカウントで変わる", () => {
+  const m = buildCostExplainMessage({
+    customerName: "ﾓﾓｶ", account: "sumora", askedBrokerFee: false,
+    noLandlordFee: true, landlordFeeYen: null, landlordFeeLabel: null, refundYen: null, savingYen: 29150,
+  });
+  expect(m).toContain("弊社は仲介手数料2,980円のみで");
+  expect(m).toContain("一般的な不動産業者より29,150円お得となります！！");
+});
+it("冒頭の言い方は1か所（brokerFeeOpening）— 仕組み説明と食い違わない", () => {
+  const explain = buildCostExplainMessage({
+    customerName: "A", account: "sumora", askedBrokerFee: false,
+    noLandlordFee: false, landlordFeeYen: 67000, landlordFeeLabel: null, refundYen: 22000, savingYen: null,
+  });
+  const mech = buildCostMechanismMessage({ customerName: "A", account: "sumora", askedBrokerFee: false });
+  // どちらもスモラでは「0円」と言わない
+  expect(explain).notToContain("仲介手数料0円");
+  expect(mech).notToContain("仲介手数料0円");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
