@@ -17,6 +17,8 @@ import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resol
 import { extractPropertyLabels } from "../lib/action-ledger";
 // 2026-09-17 竹内（現状伝えて・1件訴求）: 探した現状の1文（実送信の骨組み）
 import { SITUATION_PRESETS, type SituationKind } from "../lib/recommendation-situation";
+// 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（骨組みは実送信の形・中身はスタッフの言葉）
+import { buildCampaignLine, CAMPAIGN_PLACEHOLDER } from "../lib/estimate-campaign";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
@@ -1174,6 +1176,8 @@ export default function AixModal({
   const [estimatePropertyPreview, setEstimatePropertyPreview] = useState<string>("");
   // 見積書送る専用: 申込誘導テンプレを追加送信するか（ON時は 画像→金額文→申込誘導文 の順で3通送る）
   const [estimateWithAppeal, setEstimateWithAppeal] = useState(false);
+  // 2026-09-18 竹内: 見積書送る専用「🎁 キャンペーン」（任意）。入れると2通目（カバーレター）に1文が入る
+  const [estimateCampaign, setEstimateCampaign] = useState<string>("");
   // 見積書送る複数件モード
   const [estimateMultiMode] = useState(initialEstimateMulti ?? false);
   // ⑥ 固定長3スロットで管理（filter(Boolean)で詰めるとpreviewsとindexがずれるため、詰めるのは送信直前のみ）
@@ -2388,6 +2392,11 @@ export default function AixModal({
         if (actionType === "estimate_sheet" && estimatePropertyFile) {
           body.property_image_url = await uploadImageCached(estimatePropertyFile);
         }
+      }
+      // 2026-09-18 竹内: 見積書送る「🎁 キャンペーン」に入れた内容を2通目（カバーレター）に入れる。
+      //   分岐の外に置く（単一モード・複数件モードのどちらでも通る）
+      if (actionType === "estimate_sheet" && estimateCampaign.trim()) {
+        body.estimate_campaign = estimateCampaign.trim().slice(0, 300);
       }
 
       // 内覧へ！内覧日指定ありモード → テンプレで即生成（AI不要）
@@ -6141,6 +6150,27 @@ export default function AixModal({
                 >📷 {config.imageLabel}</button>
               )}
               <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
+              {/* 🎁 キャンペーン（2026-09-18 竹内）: 見積書画像の下。入れると2通目（カバーレター）に1文が入る。
+                  中身はスタッフの言葉をそのまま使う（こちらで特典・期限・金額を作らない）。骨組みは実送信の形 */}
+              {actionType === "estimate_sheet" && (
+                <div className="mt-3 rounded-xl border border-[#ffe0b2] bg-[#fffaf3] px-2.5 py-2">
+                  <p className="text-[11px] font-bold text-[#8d6e63]">
+                    🎁 キャンペーン <span className="font-normal text-[#bcaaa4]">（入れると2通目に入ります・任意）</span>
+                  </p>
+                  <textarea
+                    value={estimateCampaign}
+                    onChange={(e) => setEstimateCampaign(e.target.value)}
+                    rows={2}
+                    placeholder={CAMPAIGN_PLACEHOLDER}
+                    className="mt-1.5 w-full resize-none rounded-lg border border-gray-200 px-2 py-1.5 text-xs leading-relaxed outline-none focus:border-orange-400"
+                  />
+                  {estimateCampaign.trim() && (
+                    <p className="mt-1 text-[10px] leading-relaxed text-[#a1887f]">
+                      2通目に入る文: {buildCampaignLine(estimateCampaign)?.line ?? ""}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           ) : null}
 

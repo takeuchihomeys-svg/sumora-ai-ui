@@ -33,6 +33,8 @@ import { extractPropertyLabels } from "@/app/lib/action-ledger";
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（AIX / テンプレート共通）
 import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
+// 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（スタッフの入力をそのまま・骨組みは実送信の形）
+import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
@@ -1257,6 +1259,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
   try {
     const body = await request.json();
     const { action, account, customer_name, image_url, image_urls, condition_image_url, property_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points, other_room_status, conversation_id: conversationId } = body;
+    // 2026-09-18 竹内: 見積書送る【AIX】の「🎁 キャンペーン」欄（任意）。入れると2通目（カバーレター）に1文が入る
+    const estimateCampaign = typeof body.estimate_campaign === "string" ? body.estimate_campaign : "";
     // 2026-09-17 竹内（AIX キャッシュ点検）: 会話 ID を計測用ヘッダ（x-sumora-llm-conversation）へ。POST で run() した箱に入れる
     const reqCtx = aixRequestCtx.getStore();
     if (reqCtx) reqCtx.conversationId = typeof conversationId === "string" && conversationId ? conversationId : null;
@@ -2270,7 +2274,13 @@ ${SMORA_COMMON_RULES}
             coverBrainAddendum ? "【ブレイン改善ルール】\n" + coverBrainAddendum : "",
           ].filter(Boolean).join("\n\n"),
         };
-        const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}` + (coverDiffNote ? `\n\n${coverDiffNote}` : "") + (coverStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + coverStarNote : "");
+        // 2026-09-18 竹内「見積書のところにキャンペーン内容の枠をいれる。キャンペーン内容入れると
+        //   2通目にキャンペーンの内容が入った文が送られるようにする」:
+        //   スタッフが入力した内容だけを使う（こちらで特典・期限・金額を作らない）
+        const campaignNote = buildCampaignNote(estimateCampaign);
+        const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}`
+          + (campaignNote ? `\n\n${campaignNote}` : "")
+          + (coverDiffNote ? `\n\n${coverDiffNote}` : "") + (coverStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + coverStarNote : "");
         const coverResult = await callClaudeHaiku(
           coverSystemSpec,
           coverUserFinal,
@@ -2290,8 +2300,20 @@ ${SMORA_COMMON_RULES}
           .join("\n")
           .replace(/\n{3,}/g, "\n\n")
           .trim();
+        // 2026-09-18 出口の保証: 指示だけでは落ちるので、キャンペーンの1文が無ければ締めの直前に足す
+        //   （設計知見「決定論で足した文は出口でも保証する」・実送信の並び＝御見積書の案内→キャンペーン→締め）
+        const campaignFix = ensureCampaignLine(cover_letter, estimateCampaign);
+        if (campaignFix.added) {
+          console.log(JSON.stringify({ tag: "aix:estimate-campaign", added: true, conversationId }));
+          cover_letter = campaignFix.text;
+        }
       } catch {
         // カバーレター生成失敗はサイレントに無視（見積書本体は送れる）
+      }
+      // 生成そのものが落ちた時でも、スタッフが入れたキャンペーンは伝える（カバーレターが空なら1文だけ送る）
+      if (!cover_letter.trim() && estimateCampaign.trim()) {
+        const only = ensureCampaignLine("こちら初期費用の御見積書となります！！", estimateCampaign);
+        if (only.added) cover_letter = only.text;
       }
 
     // ── 📤 物件ピックアップした ──────────────────────────────────────────────
