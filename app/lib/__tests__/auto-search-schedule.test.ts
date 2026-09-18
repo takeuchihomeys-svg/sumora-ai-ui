@@ -3,7 +3,7 @@
 //   17:00（本日の更新日付・更新順・1ページ）の自動物件検索。
 // 実行: npx tsx app/lib/__tests__/auto-search-schedule.test.ts（全 PASS で exit 0）
 import {
-  rpUpdateDaysFor, selectAutoSearchTargets, buildAutoSearchPayload, lastPropertyTouchAt,
+  rpUpdateDaysFor, selectAutoSearchTargets, buildAutoSearchPayload, lastPropertyTouchAt, isBatchedRun,
   RECENT_SENT_DAYS, NEW_CUSTOMER_DAYS, MAX_TARGETS_PER_RUN, PM_LATEST,
 } from "../auto-search-schedule";
 
@@ -110,7 +110,7 @@ console.log("── 11時の便（AD高い順・更新日は人ごと）");
   t("並びは AD 高い順", p.sort === "ad");
   t("★ 更新日は人ごとの値（3日以内）", p.rp_update_days === 3);
   t("ページは今まで通り（1ページに絞らない）", p.max_pages === 3);
-  t("広げて検索ではない", p.is_wide === false);
+  t("★ 11時は広げて検索（2026-09-19 竹内）", p.is_wide === true);
   t("日付が入る（同じ日に二重で積まないための鍵）", p.jst_date === "2026-09-19");
   t("source で見分けられる", p.source === "auto_schedule" && p.mode === "am");
 }
@@ -124,6 +124,9 @@ console.log("── 17時の便（本日の更新日付・更新順・1ページ
   t("★ 1ページだけ", p.max_pages === 1);
   t("新規の人も同じ（当日で絞る）", buildAutoSearchPayload("pm", { id: "c", reason: "new_customer", rpUpdateDays: null }, NOW).rp_update_days === 1);
   t("指定はまとめて定数にしてある", PM_LATEST.rpUpdateDays === 1 && PM_LATEST.sort === "updated" && PM_LATEST.maxPages === 1);
+  t("★ 17時はピンポイント検索（広げない）", p.is_wide === false);
+  t("★ 17時は1コマンドにまとめる／11時は1人1コマンド", isBatchedRun("pm") === true && isBatchedRun("am") === false);
+  t("17時は target が無くても作れる（全員同じ条件だから）", buildAutoSearchPayload("pm", null, NOW).rp_update_days === 1);
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`);

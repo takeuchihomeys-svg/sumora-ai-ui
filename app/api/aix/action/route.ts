@@ -27,7 +27,7 @@ import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate,
 // 2026-09-19 竹内（内覧調整の会話を合わせる）: 退去前の候補の行を出口で落とす
 import { stripSlotLinesBeforeViewable } from "@/app/lib/viewing-window";
 // 2026-09-19 竹内（初期費用を説明の会話を合わせる）: 材料と出口（金額の照合・仲介手数料の言い方）
-import { buildCostExplainFactsNote, checkCostFacts, fixBrokerFeeWording } from "@/app/lib/cost-explain-text";
+import { buildCostExplainFactsNote, checkCostFacts, fixBrokerFeeWording, ensureCostDetail } from "@/app/lib/cost-explain-text";
 // 2026-09-17 竹内（物件オススメ・現状伝えて1件）: 探した現状を🌟の前に1文で伝える
 import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensureSituationOpening } from "@/app/lib/recommendation-situation";
 // 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない
@@ -2970,6 +2970,8 @@ ${SMORA_COMMON_RULES}
 
 【必ず守ること】
 ・金額は【確定事実】に書かれた数字だけを使う。他の金額（家賃・初期費用の総額・他社の金額など）は**1円も書かない**
+・【確定事実】に「貸主から◯◯円」「◯◯円を還元」がある時は、**その2つの金額を必ず本文に入れる**
+  （スタッフが入力した具体額。仕組みの説明だけで終わらせない）
 ・仲介手数料の書き方は【確定事実】のとおり（スモラは一律2,980円・0円とは書かない／イエヤスとギガは0円）
 ・「仲介手数料を割引」とは書かない（割引するのは初期費用）
 ・お客様が挙げた他社の金額を否定しない。金額差は「還元の有無」で説明する
@@ -2998,11 +3000,17 @@ ${SMORA_COMMON_RULES}
         message_text = mCe ? String((JSON.parse(mCe[0]) as { message?: string }).message ?? ceRaw).replace(/\\n/g, "\n") : ceRaw;
       } catch { message_text = ceRaw; }
 
-      // 出口の決定論: ①スモラで「仲介手数料0円」と書いたら直す ②入力に無い金額は〇〇円（送信前チェックで止まる）
+      // 出口の決定論: ①スモラで「仲介手数料0円」と書いたら直す ②入力した金額が抜けていたら足す
+      //   ③入力に無い金額は〇〇円（送信前チェックで止まる）
       {
         const fixed = fixBrokerFeeWording(message_text, ceAccount);
         if (fixed.fixed > 0) console.log("aix:cost-explain-broker-fee-fixed", fixed.fixed);
-        const checked = checkCostFacts(fixed.text, [ceFeeYen, ceRefundYen, ceSavingYen]);
+        const detailed = ensureCostDetail(fixed.text, {
+          customerName: name, mode: ceMode,
+          landlordFeeYen: ceFeeYen, landlordFeeLabel: ceFeeLabel, refundYen: ceRefundYen, savingYen: ceSavingYen,
+        });
+        if (detailed.added) console.log("aix:cost-explain-detail-added");
+        const checked = checkCostFacts(detailed.text, [ceFeeYen, ceRefundYen, ceSavingYen]);
         if (checked.unmatched.length > 0) console.log("aix:cost-explain-unmatched-yen", JSON.stringify(checked.unmatched));
         message_text = checked.cleaned;
       }

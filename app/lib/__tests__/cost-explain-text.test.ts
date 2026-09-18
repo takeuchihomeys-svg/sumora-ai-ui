@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/cost-explain-text.test.ts（自己完結ハーネス。全 PASS で exit 0）
 import {
   buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, customerDoubtsCheapness, extractEstimateAmounts, mentionsBrokerFee, parseYen,
-  checkCostFacts, fixBrokerFeeWording, buildCostExplainFactsNote,
+  checkCostFacts, fixBrokerFeeWording, buildCostExplainFactsNote, ensureCostDetail,
 } from "../cost-explain-text";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -247,6 +247,48 @@ it("材料: 手数料なしのお部屋", () => {
 });
 it("材料: 仕組みだけの時は金額を書かないと明記する", () => {
   expect(buildCostExplainFactsNote({ account: "sumora", mode: "mechanism" })).toContain("物件ごとの金額は書かない");
+});
+
+// ── 入力した金額が本文に無ければ足す（2026-09-19 の本番検証で3/3 抜けていた）──
+it("★ 仕組みだけで終わっていたら、入力した具体額を締めの前に足す", () => {
+  // 本番（YUMA・9/19）の生成そのまま: 仕組みは説明しているが金額が無い
+  const draft = "YUMAさん、ご質問ありがとうございます😊！！\n仲介手数料は一律2,980円のみで大丈夫です！！\n弊社は頂いた広告料をYUMAさんの初期費用の割引に還元させて頂いております！！\n他社様との金額差はこの還元の有無によるものですのでご安心ください😌！！";
+  const r = ensureCostDetail(draft, { customerName: "YUMA", mode: "fee", landlordFeeYen: 67000, landlordFeeLabel: "家賃1ヶ月分", refundYen: 22000 });
+  expect(String(r.added)).toBe("true");
+  expect(r.text).toContain("67,000円を貸主から頂き、そこから22,000円をYUMAさんの初期費用に還元");
+  expect(r.text).toContain("家賃1ヶ月分の手数料");
+  // 締めの前に入る（最後の行は元の締めのまま）
+  expect(r.text.split("\n").slice(-1)[0]).toContain("ご安心ください");
+});
+it("金額が既に本文にあれば足さない（言い方はLLMに任せる）", () => {
+  const draft = "67,000円を貸主から頂いており、そこから22,000円を還元させて頂いております！！\nご安心ください😊！！";
+  expect(String(ensureCostDetail(draft, { customerName: "A", mode: "fee", landlordFeeYen: 67000, refundYen: 22000 }).added)).toBe("false");
+});
+it("片方だけでも本文にあれば足さない", () => {
+  const draft = "貸主から頂く67,000円のうち一部を還元しております！！";
+  expect(String(ensureCostDetail(draft, { customerName: "A", mode: "fee", landlordFeeYen: 67000, refundYen: 22000 }).added)).toBe("false");
+});
+it("仕組みだけのモードでは足さない（金額を書かないのが仕様）", () => {
+  const draft = "スモ割が最大適用出来るお部屋でしたら【前家賃＋2,980円】のみです！！";
+  expect(String(ensureCostDetail(draft, { customerName: "A", mode: "mechanism", landlordFeeYen: 67000, refundYen: 22000 }).added)).toBe("false");
+});
+it("手数料なしのお部屋は差額を足す", () => {
+  const r = ensureCostDetail("仕組みのご説明です！！\nご安心ください😊！！", { customerName: "A", mode: "no_fee", savingYen: 29150 });
+  expect(String(r.added)).toBe("true");
+  expect(r.text).toContain("一般的な不動産業者より29,150円お得となります！！");
+});
+it("金額の入力が無ければ足さない", () => {
+  expect(String(ensureCostDetail("説明です！！", { customerName: "A", mode: "fee", landlordFeeYen: null, refundYen: null }).added)).toBe("false");
+  expect(String(ensureCostDetail("説明です！！", { customerName: "A", mode: "no_fee", savingYen: null }).added)).toBe("false");
+});
+it("足す文は固定テンプレと同じ言い方（2つの経路で割れない）", () => {
+  const added = ensureCostDetail("説明です！！\nご安心ください！！", { customerName: "あや", mode: "fee", landlordFeeYen: 67000, landlordFeeLabel: "家賃1ヶ月分", refundYen: 22000 }).text;
+  const fixedTpl = buildCostExplainMessage({
+    customerName: "あや", account: "sumora", askedBrokerFee: true,
+    noLandlordFee: false, landlordFeeYen: 67000, landlordFeeLabel: "家賃1ヶ月分", refundYen: 22000, savingYen: null,
+  });
+  expect(added).toContain("67,000円を貸主から頂き、そこから22,000円をあやさんの初期費用に還元させて頂きますので、弊社としましても利益残りますのでご安心頂けますと幸いです！！");
+  expect(fixedTpl).toContain("67,000円を貸主から頂き、そこから22,000円をあやさんの初期費用に還元させて頂きますので、弊社としましても利益残りますのでご安心頂けますと幸いです！！");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

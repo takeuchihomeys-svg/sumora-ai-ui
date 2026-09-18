@@ -7,6 +7,8 @@
 // 会話はテスト用の YUMA。送信はしない（生成だけ）。
 //
 // 実行: npx tsx --env-file=.env.local scripts/verify-cost-explain-convmatch.ts [--n=3] [--mode=fee|no_fee|mechanism]
+export {}; // ← import が無いとスクリプト扱いになり、他の検証スクリプトと同名の const がぶつかる（tsc TS2451）
+
 const BASE = process.env.VERIFY_BASE_URL || "https://sumora-ai-ui.vercel.app";
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 const N = Number(process.argv.find((a) => a.startsWith("--n="))?.split("=")[1] ?? 3);
@@ -42,7 +44,8 @@ async function gen(): Promise<string> {
 
 function check(text: string) {
   const ok: string[] = [], bad: string[] = [];
-  (/仲介手数料[^。\n]{0,6}(0円|無料|なし)/.test(text) ? bad : ok).push("スモラで「仲介手数料0円」と書いていない");
+  // ※「2,980円」の中に "0円" が含まれるので、数字の頭から見る（\b が効かないので前の文字で判定）
+  (/仲介手数料[^。\n]{0,6}(?<![0-9０-９,，])(0円|０円|無料|なし|無し)/.test(text) ? bad : ok).push("スモラで「仲介手数料0円」と書いていない");
   (text.includes("〇〇円") ? bad : ok).push("伏せ字（入力に無い金額）が無い");
   (/31万|310,000|198,000/.test(text) ? bad : ok).push("他社の金額を書いていない");
   (/割引.{0,6}(させて|いたし|致し)/.test(text) && /仲介手数料.{0,10}割引/.test(text) ? bad : ok).push("「仲介手数料を割引」と書いていない");

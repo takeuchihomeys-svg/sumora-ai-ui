@@ -158,6 +158,7 @@ export function selectAutoSearchTargets(
  * 17時の「最新物件」便の条件（竹内さんの指定そのまま）
  * 2026-09-19 竹内「AD順じゃなくて、指定しなければ更新順になるから17時の時だけ並び替え順をAD順にしなければ大丈夫」
  *   → リアプロの**既定が更新順**。拡張は sort="updated" の時だけ並び替えを**既定へ戻す**（前の検索の値が残る画面のため）。
+ * 2026-09-19 竹内「17:00の検索はピンポイント検索で一括で行うようにする」→ is_wide=false・1コマンドにまとめる
  */
 export const PM_LATEST = {
   /** 本日の更新日付＝更新日「1日以内」で絞る */
@@ -166,18 +167,26 @@ export const PM_LATEST = {
   sort: "updated" as const,
   /** 1ページだけ（3ページまで行かない） */
   maxPages: 1,
+  /** ピンポイント検索（条件を広げない） */
+  isWide: false,
 };
 
-/** 11時の便（AD 高い順・ページは今まで通り）。sort="ad" は拡張では**何もしない**印＝今の並びのまま */
+/**
+ * 11時の便（AD 高い順・ページは今まで通り）。sort="ad" は拡張では**何もしない**印＝今の並びのまま。
+ * 2026-09-19 竹内「拡張ツールのAIXの11:00の検索は広げて検索」→ is_wide=true
+ *   （広げて検索のルール: 家賃 +5,000〜10,000円／隣の駅・同じ区／広さ −5〜10㎡。dept_search_tool.md）
+ */
 export const AM_DAILY = {
   sort: "ad" as const,
   maxPages: 3,
+  isWide: true,
 };
 
 export type AutoSearchPayload = {
   source: "auto_schedule";
   mode: AutoSearchMode;
-  is_wide: false;
+  /** 11時＝広げて検索（true）／17時＝ピンポイント（false）。2026-09-19 竹内 */
+  is_wide: boolean;
   /** 検索フォームの「更新日」。null は絞らない（初回の人） */
   rp_update_days: number | null;
   /** 並び順（拡張が対応していれば反映・未対応なら今の並びのまま警告ログ） */
@@ -190,22 +199,30 @@ export type AutoSearchPayload = {
 
 /**
  * 積むコマンドの payload を作る。
- * 11時は人ごとに更新日が変わる（前回送った日から計算）ので、顧客1人につき1コマンド。
- * 17時は全員「本日の更新日付」なので同じ値を入れる。
+ *
+ * 11時は**人ごとに更新日が変わる**（前回出した日から計算）ので、顧客1人につき1コマンド。広げて検索。
+ * 17時は**全員が同じ条件**（本日の更新日付・更新順・1ページ・ピンポイント）なので、
+ *   1コマンドに全員を入れて拡張の一括検索でまとめて回す（竹内「ピンポイント検索で一括で行う」）。
+ *   target は 17時では更新日の計算に使わない（全員 1日以内）。
  */
 export function buildAutoSearchPayload(
   mode: AutoSearchMode,
-  target: AutoSearchTarget,
+  target: AutoSearchTarget | null,
   nowMs: number = Date.now(),
 ): AutoSearchPayload {
   const pm = mode === "pm";
   return {
     source: "auto_schedule",
     mode,
-    is_wide: false,
-    rp_update_days: pm ? PM_LATEST.rpUpdateDays : target.rpUpdateDays,
+    is_wide: pm ? PM_LATEST.isWide : AM_DAILY.isWide,
+    rp_update_days: pm ? PM_LATEST.rpUpdateDays : (target?.rpUpdateDays ?? null),
     sort: pm ? PM_LATEST.sort : AM_DAILY.sort,
     max_pages: pm ? PM_LATEST.maxPages : AM_DAILY.maxPages,
     jst_date: jstDateStr(nowMs),
   };
+}
+
+/** 17時は1コマンドにまとめる（全員同じ条件）／11時は1人1コマンド（更新日が人ごとに違う） */
+export function isBatchedRun(mode: AutoSearchMode): boolean {
+  return mode === "pm";
 }

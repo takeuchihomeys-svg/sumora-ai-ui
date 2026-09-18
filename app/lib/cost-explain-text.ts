@@ -222,6 +222,49 @@ export function fixBrokerFeeWording(text: string, account: CostAccount | string 
   return { text: out, fixed };
 }
 
+/**
+ * スタッフが入力した金額が本文に入っていなければ、締めの前に1文足す（出口の決定論）。
+ *
+ * 2026-09-19 の本番検証（YUMA・3回）: 材料に「貸主から67,000円・還元22,000円」を渡したのに
+ * 3回とも本文に金額が入らず、仕組みだけを答えていた。金額を入力しているのに使われないと
+ * スタッフの入力の意味が無くなる（元の仕様 2026-09-12 竹内「貸主からの報酬を入力すると反映されて
+ * このような文が作られる」）。指示だけでは落ちるので、無ければ足す。
+ * 文は固定テンプレ（buildCostExplainMessage）と同じ言い方にする（2つの経路で言い方が割れない）。
+ */
+export function ensureCostDetail(
+  text: string,
+  input: { customerName: string; mode: "fee" | "no_fee" | "mechanism"; landlordFeeYen?: number | null; landlordFeeLabel?: string | null; refundYen?: number | null; savingYen?: number | null },
+): { text: string; added: boolean } {
+  const src = (text ?? "").trim();
+  if (!src) return { text: src, added: false };
+  if (input.mode === "mechanism") return { text: src, added: false };
+  const name = input.customerName.trim() ? `${input.customerName.trim()}さん` : "お客様";
+  let sentence: string | null = null;
+  if (input.mode === "fee") {
+    const fee = input.landlordFeeYen ?? 0;
+    const refund = input.refundYen ?? 0;
+    if (!fee || !refund) return { text: src, added: false };
+    // どちらかの金額が既に本文にあれば足さない（言い方はLLMに任せる）
+    if (src.includes(yen(fee)) || src.includes(yen(refund))) return { text: src, added: false };
+    const label = input.landlordFeeLabel?.trim() ? `${input.landlordFeeLabel.trim()}の` : "";
+    sentence =
+      `こちらの物件は貸主から${label}手数料を弊社不動産仲介会社は頂く事が出来ます！！\n` +
+      `${yen(fee)}を貸主から頂き、そこから${yen(refund)}を${name}の初期費用に還元させて頂きますので、弊社としましても利益残りますのでご安心頂けますと幸いです！！`;
+  } else {
+    // 手数料が無いお部屋: 差額が入力されていて本文に無ければ足す
+    const saving = input.savingYen ?? 0;
+    if (!saving || src.includes(yen(saving))) return { text: src, added: false };
+    sentence = `こちらの物件は貸主から手数料がないお部屋となりますので、割引出来ない形となりますが、一般的な不動産業者より${yen(saving)}お得となります！！`;
+  }
+  if (!sentence) return { text: src, added: false };
+  // 締め（ご安心ください等）の直前に入れる。見つからなければ末尾
+  const lines = src.split("\n");
+  const closerIdx = lines.findIndex((l) => /ご安心ください|ご安心頂け|何卒よろしく|お気軽に/.test(l));
+  if (closerIdx >= 0) lines.splice(closerIdx, 0, sentence);
+  else lines.push(sentence);
+  return { text: lines.join("\n").replace(/\n{3,}/g, "\n\n").trim(), added: true };
+}
+
 /** 生成に渡す材料（会話を合わせる用・金額は入力値だけ） */
 export function buildCostExplainFactsNote(input: {
   account?: CostAccount | string | null;

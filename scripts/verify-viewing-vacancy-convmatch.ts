@@ -7,6 +7,8 @@
 // 会話はテスト用の YUMA（竹内さん本人）。送信はしない（生成だけ）。
 //
 // 実行: npx tsx --env-file=.env.local scripts/verify-viewing-vacancy-convmatch.ts [--n=3]
+export {}; // ← import が無いとスクリプト扱いになり、他の検証スクリプトと同名の const がぶつかる（tsc TS2451）
+
 const BASE = process.env.VERIFY_BASE_URL || "https://sumora-ai-ui.vercel.app";
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 const N = Number(process.argv.find((a) => a.startsWith("--n="))?.split("=")[1] ?? 3);

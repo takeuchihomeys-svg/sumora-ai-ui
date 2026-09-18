@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import {
-  selectAutoSearchTargets, buildAutoSearchPayload,
+  selectAutoSearchTargets, buildAutoSearchPayload, isBatchedRun,
   MAX_TARGETS_PER_RUN, RECENT_SENT_DAYS, NEW_CUSTOMER_DAYS,
   type AutoSearchMode, type AutoSearchCustomer,
 } from "@/app/lib/auto-search-schedule";
@@ -74,21 +74,50 @@ export async function GET(req: NextRequest) {
   const skipped: Array<{ id: string; name: string | null; why: string }> = [];
   const byId = new Map(rows.map((r) => [String(r.id), r]));
 
-  for (const t of targets) {
+  // 積む相手（既に積んである人・実行中の人を除く）
+  const toQueue = targets.filter((t) => {
     const c = byId.get(t.id);
-    if (alreadyQueued.has(t.id)) { skipped.push({ id: t.id, name: c?.customer_name ?? null, why: "今日この便で積み済み" }); continue; }
-    if (openIds.has(t.id)) { skipped.push({ id: t.id, name: c?.customer_name ?? null, why: "未実行・実行中のコマンドあり" }); continue; }
-    const payload = buildAutoSearchPayload(mode, t, now);
-    if (dryRun) { queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days }); continue; }
-    const { error: insErr } = await supabase.from("automation_commands").insert({
-      command_type: "batch_property_search",
-      customer_ids: [t.id],
-      sites: ["realnetpro"],
-      payload,
-      status: "pending",
-    });
-    if (insErr) { skipped.push({ id: t.id, name: c?.customer_name ?? null, why: `積めなかった: ${insErr.message}` }); continue; }
-    queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days });
+    if (alreadyQueued.has(t.id)) { skipped.push({ id: t.id, name: c?.customer_name ?? null, why: "今日この便で積み済み" }); return false; }
+    if (openIds.has(t.id)) { skipped.push({ id: t.id, name: c?.customer_name ?? null, why: "未実行・実行中のコマンドあり" }); return false; }
+    return true;
+  });
+
+  if (isBatchedRun(mode)) {
+    // 17時（pm）: 全員が同じ条件なので**1コマンドにまとめて**拡張の一括検索で回す
+    //   （竹内 2026-09-19「17:00の検索はピンポイント検索で一括で行うようにする」）
+    const payload = buildAutoSearchPayload(mode, null, now);
+    if (toQueue.length > 0 && !dryRun) {
+      const { error: insErr } = await supabase.from("automation_commands").insert({
+        command_type: "batch_property_search",
+        customer_ids: toQueue.map((t) => t.id),
+        sites: ["realnetpro"],
+        payload,
+        status: "pending",
+      });
+      if (insErr) {
+        for (const t of toQueue) skipped.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, why: `積めなかった: ${insErr.message}` });
+      } else {
+        for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days });
+      }
+    } else {
+      for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days });
+    }
+  } else {
+    // 11時（am）: 更新日が人ごとに違うので1人1コマンド
+    for (const t of toQueue) {
+      const c = byId.get(t.id);
+      const payload = buildAutoSearchPayload(mode, t, now);
+      if (dryRun) { queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days }); continue; }
+      const { error: insErr } = await supabase.from("automation_commands").insert({
+        command_type: "batch_property_search",
+        customer_ids: [t.id],
+        sites: ["realnetpro"],
+        payload,
+        status: "pending",
+      });
+      if (insErr) { skipped.push({ id: t.id, name: c?.customer_name ?? null, why: `積めなかった: ${insErr.message}` }); continue; }
+      queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days });
+    }
   }
 
   const summary = {
@@ -97,8 +126,9 @@ export async function GET(req: NextRequest) {
     jst_date: jstDate,
     dry_run: dryRun,
     rule: mode === "pm"
-      ? "本日の更新日付（更新日1日以内）・更新順・1ページだけ"
-      : `直近${RECENT_SENT_DAYS}日に物件出しした人（送信 or 確認）＋登録${NEW_CUSTOMER_DAYS}日以内でまだ出していない人・更新日は前回出した日から・AD高い順`,
+      ? "本日の更新日付（更新日1日以内）・更新順・1ページだけ・ピンポイント検索・1コマンドで一括"
+      : `直近${RECENT_SENT_DAYS}日に物件出しした人（送信 or 確認）＋登録${NEW_CUSTOMER_DAYS}日以内でまだ出していない人・更新日は前回出した日から・AD高い順・広げて検索・1人1コマンド`,
+    batched: isBatchedRun(mode),
     customers: rows.length,
     targets: targets.length,
     queued: queued.length,
