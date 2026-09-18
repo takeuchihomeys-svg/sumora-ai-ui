@@ -1,7 +1,10 @@
 // 2026-09-14 API 漏れ調査: 前回の分析から会話に何も届いていなければブレインを動かさない（AIX 誘導中の会話を開くたびの再分析）
 //   直近7日: 同じ発言への再分析41組のうち、間にメッセージが1通も無かったのが27組（6時間以内26組）
 // 実行: npx tsx app/lib/__tests__/brain-unchanged.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { nothingNewSinceLastAnalysis, UNCHANGED_REUSE_HOURS, type UnchangedInput } from "../brain-analysis-mode";
+import {
+  nothingNewSinceLastAnalysis, UNCHANGED_REUSE_HOURS, type UnchangedInput,
+  isDuplicateRun, DUPLICATE_RUN_WINDOW_MS, type DuplicateRunInput,
+} from "../brain-analysis-mode";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -43,6 +46,37 @@ it("前回の件数・時刻が無い（移行前の会話）→ 分析する", 
   expect(nothingNewSinceLastAnalysis({ ...base, lastAnalyzedMsgCount: null })).toBe(false);
   expect(nothingNewSinceLastAnalysis({ ...base, lastAnalyzedMsgCount: 0 })).toBe(false);
   expect(nothingNewSinceLastAnalysis({ ...base, lastAnalyzedAt: null })).toBe(false);
+});
+
+// ── 二重起動の合流（2026-09-18 竹内「重複だけ直す」）────────────────────────────
+// 実測（brain_decision_logs・直近7日608回）: 同じ analyzed_msg_ts の再分析133回のうち
+//   1分以内30回／5分以内44回。これは同じ出来事で複数の入口が同時に走った競合。
+//   nothingNewSinceLastAnalysis は「前回が完了していれば」効くので、並走には効かない。
+const dupBase: DuplicateRunInput = {
+  brainAnalyzedAt: "2026-09-18T12:00:00Z", forced: false, hasSuggestedMeta: true,
+  nowMs: Date.parse("2026-09-18T12:00:20Z"), // 20秒後
+};
+
+it("20秒後の再実行（同じ出来事の二重起動）→ 走らせない", () => {
+  expect(isDuplicateRun(dupBase)).toBe(true);
+});
+it(`${DUPLICATE_RUN_WINDOW_MS / 1000}秒を超えたら走らせる（スタッフ送信後の再分析は仕様）`, () => {
+  expect(isDuplicateRun({ ...dupBase, nowMs: Date.parse("2026-09-18T12:00:44Z") })).toBe(true);
+  expect(isDuplicateRun({ ...dupBase, nowMs: Date.parse("2026-09-18T12:00:46Z") })).toBe(false);
+  expect(isDuplicateRun({ ...dupBase, nowMs: Date.parse("2026-09-18T12:31:00Z") })).toBe(false);
+});
+it("スタッフの宣言直後（forced）は必ず走らせる", () => {
+  expect(isDuplicateRun({ ...dupBase, forced: true })).toBe(false);
+});
+it("保存済みの判断が無い会話（初回・失敗直後）は必ず走らせる", () => {
+  expect(isDuplicateRun({ ...dupBase, hasSuggestedMeta: false })).toBe(false);
+});
+it("打刻が無い・読めない時は走らせる（fail-open）", () => {
+  expect(isDuplicateRun({ ...dupBase, brainAnalyzedAt: null })).toBe(false);
+  expect(isDuplicateRun({ ...dupBase, brainAnalyzedAt: "こわれた日付" })).toBe(false);
+});
+it("打刻が未来（時計のずれ）でも走らせる", () => {
+  expect(isDuplicateRun({ ...dupBase, nowMs: Date.parse("2026-09-18T11:59:50Z") })).toBe(false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

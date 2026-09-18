@@ -45,7 +45,7 @@ import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（timeZone 抜けの UTC 表示を防ぐ）
 import { jstMD, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
 // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 分析モード判定（決定論の場面の証拠で cached→incremental に格上げ）
-import { decideAnalysisMode, nothingNewSinceLastAnalysis } from "@/app/lib/brain-analysis-mode";
+import { decideAnalysisMode, nothingNewSinceLastAnalysis, isDuplicateRun, DUPLICATE_RUN_WINDOW_MS } from "@/app/lib/brain-analysis-mode";
 import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 // 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した発言は必ず分析し直す（cached で前回の「もう1件の内覧日確定」を持ち越さない）
 import { detectPropertyPass, CUST_WILL_SEND_SELF_PRED, analyzeSubstance } from "@/app/lib/reply-context";
@@ -3414,15 +3414,38 @@ async function brainWriteBlock(
 /** true: 分析して書いた / false: 書かなかった・失敗 / "unchanged": 前回の分析から何も届いていないので分析も書き込みもしなかった（保存済みの判断が最新） */
 export type BrainRunResult = boolean | "unchanged";
 
+// 2026-09-18 竹内「重複だけ直す」: 同じ会話の分析が走っている間は二重に走らせず、走っている方の結果を返す。
+//   戦略層の strategyInFlight と同じ形。同じ出来事で複数の入口（line-webhook / generate-draft-bg-async /
+//   send-line-message / brain-sweep）が同時に起動した時の競合を、同一インスタンス内で止める。
+const analysisInFlight = new Map<string, Promise<BrainRunResult>>();
+
 export async function analyzeAndSaveBrainMeta(
   conversationId: string,
   // 2026-09-12: スタッフの宣言送信直後（send-line-message）は顧客の新着が無くても cached にせず分析し直す（宣言→AIX の判断のため）
   // inputUpdatedAt: 画像の読み取り完了など、メッセージ数は同じでも中身が変わった時（分析し直す）
   runOpts?: BrainRunOpts,
 ): Promise<BrainRunResult> {
+  const running = analysisInFlight.get(conversationId);
+  if (running) {
+    console.log(JSON.stringify({ tag: "brain:run-coalesced", conversationId, forced: !!runOpts?.forceIncremental }));
+    return running;
+  }
+  const task = analyzeAndSaveBrainMetaInner(conversationId, runOpts);
+  analysisInFlight.set(conversationId, task);
+  try {
+    return await task;
+  } finally {
+    analysisInFlight.delete(conversationId);
+  }
+}
+
+async function analyzeAndSaveBrainMetaInner(
+  conversationId: string,
+  runOpts?: BrainRunOpts,
+): Promise<BrainRunResult> {
   const { data: conv, error: selectError } = await supabase
     .from("conversations")
-    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction, brain_full_analyzed_at, brain_full_msg_count, brain_deep_analyzed_at, brain_deep_msg_count, last_brain_meta, suggested_aix_meta, customer_name, is_post_apply, brain_strategy")
+    .select("id, status, updated_at, property_customer_id, auto_send_enabled, line_status, is_hot, is_flagged, conversation_direction, brain_full_analyzed_at, brain_full_msg_count, brain_deep_analyzed_at, brain_deep_msg_count, brain_analyzed_at, last_brain_meta, suggested_aix_meta, customer_name, is_post_apply, brain_strategy")
     .eq("id", conversationId)
     .maybeSingle();
   if (selectError) {
@@ -3443,6 +3466,22 @@ export async function analyzeAndSaveBrainMeta(
   // H6(Fable5): ブロック済み/フォロー解除の顧客は分析しない（Haiku浪費 + 無意味な提案の防止）
   const lineStatus = (conv.line_status as string | null) ?? null;
   if (lineStatus === "blocked" || lineStatus === "unfollowed") return stampSkipped(conversationId, `line_status=${lineStatus}`);
+
+  // 2026-09-18 竹内「重複だけ直す」: 同じ出来事の二重起動（別インスタンスで並走した分）を止める。
+  //   上の analysisInFlight は同一インスタンス内だけなので、DB の打刻でも見る。
+  //   スタッフの宣言直後（forced）と、保存済みの判断が無い会話は必ず走らせる（fail-open）
+  if (isDuplicateRun({
+    brainAnalyzedAt: (conv.brain_analyzed_at as string | null) ?? null,
+    forced: !!runOpts?.forceIncremental || !!runOpts?.inputUpdatedAt,
+    hasSuggestedMeta: !!conv.suggested_aix_meta,
+    nowMs: Date.now(),
+  })) {
+    console.log(JSON.stringify({
+      tag: "brain:duplicate-run-skipped", conversationId,
+      lastAnalyzedAt: conv.brain_analyzed_at, windowMs: DUPLICATE_RUN_WINDOW_MS,
+    }));
+    return "unchanged";
+  }
 
   // B5(Fable5): stale-write 対策のウォーターマーク。連続メッセージで分析A→Bが並走した場合、
   // 古い方（msg2を含まない解析）が後着で勝つのを防ぐ — 書き込み時に updated_at 一致を条件にする

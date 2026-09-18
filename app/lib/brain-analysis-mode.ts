@@ -50,6 +50,42 @@ export function nothingNewSinceLastAnalysis(i: UnchangedInput): boolean {
   return i.nowMs - at < UNCHANGED_REUSE_HOURS * 60 * 60 * 1000;
 }
 
+// ── 二重起動の合流（2026-09-18 竹内「重複だけ直す」）────────────────────────────
+// 実測（brain_decision_logs・直近7日608回）: 同じ analyzed_msg_ts の再分析が133回（22%）で、
+//   1分以内 30回／5分以内 44回／30分以内 72回／30分超 61回。
+// 30分超は「スタッフが送信した後の再分析」（feedback_sent_content_every_analysis の仕様）なので触らない。
+// 直すのは**数十秒以内の再分析**＝同じ出来事で複数の入口（line-webhook / generate-draft-bg-async /
+//   send-line-message / brain-sweep）が同時に走った競合。
+// nothingNewSinceLastAnalysis は「前回が**完了していれば**」効くが、同時に走ると両方とも
+//   「前回の分析時点」を見るのでどちらも素通りする（レースコンディション）。
+
+/** これより短い間隔での再実行は同じ出来事の二重起動とみなす */
+export const DUPLICATE_RUN_WINDOW_MS = 45_000;
+
+export type DuplicateRunInput = {
+  /** 直近の分析の打刻（conversations.brain_analyzed_at。成功・スキップとも打つ） */
+  brainAnalyzedAt: string | null;
+  /** 呼び出し側が分析し直しを求めている（スタッフの宣言送信直後・画像の読み取り完了） */
+  forced: boolean;
+  /** 保存済みの判断があるか（無ければ省略しない＝初回は必ず分析する） */
+  hasSuggestedMeta: boolean;
+  nowMs: number;
+};
+
+/**
+ * 同じ出来事の二重起動か（＝直近 DUPLICATE_RUN_WINDOW_MS 以内に分析が走っている）。
+ * ・forced（スタッフの宣言直後など）は必ず走らせる
+ * ・保存済みの判断が無ければ走らせる（初回・失敗直後を止めない）
+ * ・時刻が読めない時は走らせる（fail-open）
+ */
+export function isDuplicateRun(i: DuplicateRunInput): boolean {
+  if (i.forced || !i.hasSuggestedMeta || !i.brainAnalyzedAt) return false;
+  const at = Date.parse(i.brainAnalyzedAt);
+  if (!Number.isFinite(at)) return false;
+  const elapsed = i.nowMs - at;
+  return elapsed >= 0 && elapsed < DUPLICATE_RUN_WINDOW_MS;
+}
+
 export type AnalysisModeInput = {
   hasCachedMeta: boolean;
   totalMsgCount: number;
