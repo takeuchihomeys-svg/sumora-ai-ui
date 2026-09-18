@@ -488,7 +488,8 @@
 
     <!-- 実績ペア表記（KN-04）＋極小注記（KN-13） -->
     <div class="h-cta-block hr-3">
-      <p class="h-evidence-line"><span class="h-ev-tag">8月実績</span><span class="h-ev-weak">平均</span> <em class="h-ev-num">118,220円</em><span class="h-ev-weak"> 節約</span></p>
+      <!-- 2026-09-18 竹内: 月は今月・平均額は毎日変わる（lp-evidence.js）。ここに書いてある値は JS が動かない時の控え -->
+      <p class="h-evidence-line"><span class="h-ev-tag" data-lp="month">9月実績</span><span class="h-ev-weak">平均</span> <em class="h-ev-num" data-lp="amount">118,220円</em><span class="h-ev-weak"> 節約</span></p>
       <p class="h-ev-pair">家賃7万円の物件なら、初期費用36万円 → <strong>約18万円相当</strong></p>
     </div>
 
@@ -687,7 +688,7 @@
     <div class="num-card" role="listitem"><span class="num-v">¥110,400</span><span class="num-l">城東区・1DK</span></div>
     <div class="num-card" role="listitem"><span class="num-v">¥88,900</span><span class="num-l">西区・1K</span></div>
   </div>
-  <p class="micro-note r">※節約額の一例（2026年8月時点）。物件・条件により異なります</p>
+  <p class="micro-note r">※節約額の一例（<span data-lp="ym">2026年9月</span>時点）。物件・条件により異なります</p>
 
   <div class="voice-cards">
     <article class="voice-card r d1">
@@ -795,7 +796,7 @@
 
 <!-- ⑩ FOOTER -->
 <footer class="footer">
-  <p style="font-size:10px;color:rgba(255,255,255,.45);margin-bottom:10px;line-height:1.7;">※初期費用の最大0円は適用条件があります。物件・審査状況により異なります。<br>※当社利用者平均（2026年8月実績）。物件・条件により異なります。</p>
+  <p style="font-size:10px;color:rgba(255,255,255,.45);margin-bottom:10px;line-height:1.7;">※初期費用の最大0円は適用条件があります。物件・審査状況により異なります。<br>※当社利用者平均（<span data-lp="ym">2026年9月</span>実績）。物件・条件により異なります。</p>
   <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iNTIiIHZpZXdCb3g9IjAgMCAzMjAgNTIiPjx0ZXh0IHg9IjE2MCIgeT0iMTciIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJIaXJhZ2lubyBTYW5zLEhpcmFnaW5vIEtha3UgR290aGljIFByb04sc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjUyKSI+5aSn6Ziq5biC5Lit5aSu5Yy655Om55S6My00LTEwIOaXpeWuneW+oeWgguODk+ODqzXpmo48L3RleHQ+PHRleHQgeD0iMTYwIiB5PSIzOSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkhpcmFnaW5vIFNhbnMsSGlyYWdpbm8gS2FrdSBHb3RoaWMgUHJvTixzYW5zLXNlcmlmIiBmb250LXNpemU9IjE0IiBmb250LXdlaWdodD0iNjAwIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuNzIpIj7ok67nlKPmpa3moKrlvI/kvJrnpL48L3RleHQ+PC9zdmc+" alt="" aria-hidden="true" style="display:block;margin:0 auto 2px;max-width:100%;height:auto;">
 
 </footer>
@@ -866,5 +867,7 @@
 </script>
 
 <script>fetch('/api/track-view',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lp:'giga-chintai'})}).catch(function(){});</script>
+<!-- 実績の月（今月）と平均節約額（その日の数字）を入れる。イエヤスと同じファイルを使う -->
+<script src="/lp-evidence.js"></script>
 </body>
 </html>

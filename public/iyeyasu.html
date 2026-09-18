@@ -482,6 +482,8 @@
     .h-ev-num{font-style:normal;color:#FE2C55;font-size:19px;font-weight:900;-webkit-text-stroke:.3px #FE2C55;}
     .h-ev-note{font-size:9px;font-weight:600;vertical-align:super;}
     .h-ev-weak{font-size:11px;color:#999;font-weight:600;}
+    /* 設計知見「極小注記で誠実演出」: 実績の主張には必ず注記を添える（※が指す先が無かったので追加） */
+    .h-ev-footnote{font-size:10px;color:#8C8C8A;font-weight:500;line-height:1.5;margin-top:4px;}
 
     /* ── QRヒーローカード（大型・中央・ラベルなし） ── */
     #hero .qr-hero-card{
@@ -779,7 +781,9 @@
     <div class="h-cta-block">
       <p class="h-cta-simple">LINEで<em class="h-cta-em">かんたん</em>お部屋探し！</p>
       <p class="h-cta-sub-note">気になる物件がある方は、そのまま送るだけ！</p>
-      <p class="h-evidence-line"><span class="h-ev-tag">8月実績</span><span class="h-ev-weak">｜平均</span> <em class="h-ev-num">118,220円</em><span class="h-ev-weak"> 節約</span><sup class="h-ev-note">※</sup></p>
+      <!-- 2026-09-18 竹内: 月は今月・平均額は毎日変わる（lp-evidence.js）。ここに書いてある値は JS が動かない時の控え -->
+      <p class="h-evidence-line"><span class="h-ev-tag" data-lp="month">9月実績</span><span class="h-ev-weak">｜平均</span> <em class="h-ev-num" data-lp="amount">118,220円</em><span class="h-ev-weak"> 節約</span><sup class="h-ev-note">※</sup></p>
+      <p class="h-ev-footnote">※当社利用者平均（<span data-lp="ym">2026年9月</span>実績）。物件・条件により異なります</p>
     </div>
 
     <!-- QRコードセクション -->
@@ -1070,5 +1074,7 @@
 </script>
 
 <script>fetch('/api/track-view',{method:'POST'}).catch(()=>{});</script>
+<!-- 実績の月（今月）と平均節約額（その日の数字）を入れる。ギガ賃貸と同じファイルを使う -->
+<script src="/lp-evidence.js"></script>
 </body>
 </html>
