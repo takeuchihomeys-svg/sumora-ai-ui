@@ -61,6 +61,8 @@ import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1,
 import { findNearDuplicateSent } from "@/app/lib/closed-ack";
 // 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きます」を落とす／この会話で既に送った文を繰り返さない
 import { stripPointlessGuidance, fixAbsenceWording, recentUsedSentences, findRepeatedClosing, buildAvoidRepeatNote } from "@/app/lib/reply-phrasing";
+// 2026-09-19 竹内（ゆうこ事例）: 絞れていない物件名を書かせない（材料・指示・出口の三層で同じ線）
+import { guardPropertyNames, collectPropertyNames, hasFixedViewing, PROPERTY_NAME_NOTE } from "@/app/lib/property-name-guard";
 // 2026-09-17 竹内（慶次事例）: お客様が謝っている場面は「かしこまりました」ではなく受け止めから入る
 import { resolveApologyOnly, ensureApologyOpener, buildApologyNote } from "@/app/lib/apology-ack";
 // 2026-09-17 竹内（友哉事例）: お客様が既に送ってきた書類（PDF・書類の画像）をもう一度お願いしない
@@ -756,6 +758,9 @@ function buildGenerationMessages(
   aixScenePre: ReplyAix | null = null,
   // 同段1: 証拠から引いた本文の安全（AIX がセットされない時も断言しない・橋渡しを注入する）
   bodySafetyPre: BodySafety | null = null,
+  // 2026-09-19 竹内（ゆうこ事例）: こちらが複数のお部屋を送っていて、お客様がまだどれとも言っていない
+  //   （＝物件名を1つに絞って書くと内覧するお部屋を取り違える）。出口 guardPropertyNames と同じ線
+  propertyChoiceAmbiguous = false,
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -1312,6 +1317,9 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     ? `\n\n【🏠 お客様が送った物件の呼び方】お客様が送ってきた物件は「お送り頂きました物件（お部屋）」と呼ぶ（例:「お送り頂きました物件の募集状況確認させて頂きます😊！！」）。物件名・号室・駅名・徒歩分・家賃・間取りで呼ばない（×「十三徒歩7分の物件」×「4万円の1Rのお部屋」）。`
     : "";
 
+  // 2026-09-19 竹内（ゆうこ事例）「ここで物件名いれると内覧する物件名間違えてしまう可能性があるのでリスクがある」
+  const propertyChoiceNote = propertyChoiceAmbiguous ? `\n\n${PROPERTY_NAME_NOTE}` : "";
+
   // 共感フレーズ（全然大丈夫です／全然わがままじゃないですよ）の確定ゲート — 常時注入
   const empathyPhraseNote = buildEmpathyPhraseNote(customerMessage);
 
@@ -1540,7 +1548,7 @@ ${quotedContextNote}
 【直近の会話履歴（スモラ自身の返信も含む）】この履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない。
 ${history || "なし"}
 
-${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${sharedPropertyNote}${confirmationGateNote}${availabilityCheckNote}${budgetInventoryNote}${estimateGateNote}${aixTimingNote}
+${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${sharedPropertyNote}${propertyChoiceNote}${confirmationGateNote}${availabilityCheckNote}${budgetInventoryNote}${estimateGateNote}${aixTimingNote}
 
 ${examples}${examplesInstruction}
 
@@ -3306,6 +3314,14 @@ export async function POST(req: NextRequest) {
     const tpoLatestStaff = [...recentMessages].reverse().find((m) => m.sender === "staff") ?? null;
     const tpoLatestStaffText = tpoLatestStaff?.text ?? "";
 
+    // ── 2026-09-19 竹内（ゆうこ事例）: 物件名の取り違え防止の材料（生成の指示・出口の決定論が同じ物を見る）──
+    //   こちらが複数のお部屋を送っていて、お客様がまだどれとも言っていない時に物件名を1つ書くと、内覧するお部屋を取り違える
+    const propertyNameCandidates = collectPropertyNames(recentMessages.map((m) => m.text ?? ""));
+    const viewingAlreadyFixed = hasFixedViewing(recentMessages.filter((m) => m.sender === "staff").map((m) => m.text ?? ""));
+    /** 候補が2件以上あって、お客様がどれとも言っていない（＝物件名を1つに絞って書かない場面） */
+    const propertyChoiceAmbiguous =
+      propertyNameCandidates.length >= 2 && !/[0-9０-９]{2,4}[ 　]*号室|https?:\/\/|\[画像\]/.test(message) && !viewingAlreadyFixed;
+
     // ── 2026-09-09 Fable5 往復文脈: 直前スタッフ発話の分類 → 顧客メッセージの実質判定（1回だけ計算し四者が参照）──
     //   lastStaffTurn: aix_usage_logs（直前スタッフ発言 ±3分）> 本文 regex > brain last_aix_history
     //   substance   : 定型（感謝・了承・締め）と待ち句を剥がした残余に懸念・質問・依頼・条件・予定・決定・断り・情報を当てる。fresh brain は補助証拠
@@ -4685,6 +4701,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       ledgerActive ? ledger.facts.pickupPromisedUnfulfilled : null, // 2026-09-11 統合設計（経路E5）: 約束検出を台帳で絞る
       replyAixPre,         // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: ブレインが決めた AIX（fresh の時だけ）
       bodySafetyPre,       // 同段1: 証拠から引いた本文の安全
+      propertyChoiceAmbiguous, // 2026-09-19 竹内（ゆうこ事例）: 物件名を1つに絞って書かない場面か
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -4877,9 +4894,22 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               //   「懸念となる情報はございません」→「懸念となる点はございません」（実送信0件の形だけ直す）
               const wordingFixed = fixAbsenceWording(guidanceFixed);
               if (wordingFixed !== guidanceFixed) console.info("[reply-phrasing] 無い事を言う「情報」を「点」に", JSON.stringify({ conversationId }));
+              // 2026-09-19 竹内（ゆうこ事例）「ここで物件名いれると内覧する物件名間違えてしまう可能性があるのでリスクがある」:
+              //   こちらが複数のお部屋を送っていて、お客様がまだどれとも言っていない受け止めの文で、
+              //   1件だけ名指ししていたら物件名を落とす（実送信 11,830通で誤削除0）
+              const propNameGuard = guardPropertyNames({
+                text: wordingFixed,
+                knownNames: propertyNameCandidates,
+                customerTurn: message,
+                viewingFixed: viewingAlreadyFixed,
+              });
+              if (propNameGuard.removed.length > 0) {
+                console.info("[property-name-guard] 絞れていない物件名を削除", JSON.stringify({ conversationId, removed: propNameGuard.removed }));
+              }
+              const propNameFixed = propNameGuard.text;
               // 2026-09-17 竹内（慶次事例）: 謝っている場面の冒頭「かしこまりました！！」を受け止めの言葉に置き換える
-              const apologyFixed = ensureApologyOpener(wordingFixed, apologyVerdict.apology);
-              if (apologyFixed !== wordingFixed) console.info("[apology-ack] 冒頭を受け止めに置き換え", JSON.stringify({ conversationId }));
+              const apologyFixed = ensureApologyOpener(propNameFixed, apologyVerdict.apology);
+              if (apologyFixed !== propNameFixed) console.info("[apology-ack] 冒頭を受け止めに置き換え", JSON.stringify({ conversationId }));
               // 2026-09-17 竹内（a🤫 事例）「複数の 等いれない」: 物件名を並べた直後の数のまとめ語を落とす
               //   （実データ365日・募集状況の確認を宣言した実送信208通のうち「複数の物件／複数のお部屋」は0件）
               const quantFixed = stripVagueQuantifier(apologyFixed);
@@ -5289,6 +5319,17 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (wordingFixedFinal !== draftBody) {
                   console.info("[reply-phrasing] 修正ループ後に「情報」を「点」に", JSON.stringify({ conversationId }));
                   draftBody = wordingFixedFinal;
+                }
+                // 2026-09-19 竹内（ゆうこ事例）: 絞れていない物件名も修正ループの後に掛け直す（再生成が戻すため）
+                const propNameFinal = guardPropertyNames({
+                  text: draftBody,
+                  knownNames: propertyNameCandidates,
+                  customerTurn: message,
+                  viewingFixed: viewingAlreadyFixed,
+                });
+                if (propNameFinal.removed.length > 0) {
+                  console.info("[property-name-guard] 修正ループ後に絞れていない物件名を削除", JSON.stringify({ conversationId, removed: propNameFinal.removed }));
+                  draftBody = propNameFinal.text;
                 }
                 // 2026-09-17 竹内（慶次事例）: 冒頭の受け止めも修正ループの後に掛け直す（挨拶の強制置換が「かしこまりました」を戻すことがある）
                 const apologyFixedFinal = ensureApologyOpener(draftBody, apologyVerdict.apology);
