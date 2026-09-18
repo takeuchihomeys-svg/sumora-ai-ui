@@ -8,6 +8,8 @@ import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { recordConditionHistory } from "@/app/lib/condition-history";
+// 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
+import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
 import { CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
 import { fileMessageText } from "@/app/lib/received-document";
 
@@ -784,23 +786,9 @@ function buildConditionNote(parsed: Record<string, unknown>): string {
 }
 
 // ── スモラが使う希望条件フォーマット定義（AI分類・抽出プロンプトに埋め込む）──
-// スタッフがお客さんに送るテンプレートの形式。これを知ることで誤判定を防ぐ。
-const CONDITION_FORMAT_TEMPLATE = `
-【スモラの希望条件フォーマット（スタッフがお客さんに送るテンプレート）】
-お客さんがこの形式で送ってきたものが「正式フォーマット」です:
-①希望エリア：（例: 梅田・北摂エリア、塚本駅・梅田駅沿線）
-②希望間取り：（例: 1LDK、2K以上）
-③希望家賃（上限）：（例: 8万円以内）
-④入居時期：（例: 来月、9月）
-⑤初期費用（上限）：（例: 30万以内）
-⑥徒歩（駅から）：（例: 10分以内） ← 最寄り駅まで歩いて何分か
-⑦築年数（上限）：（例: 築20年）
-⑧こだわり条件：（例: オートロック、独立洗面台）
-⑨NG条件：（例: 1階NG、木造NG）
-⑩その他ご要望：（例: 駐車場あれば尚良し）
-⑪通勤先（任意）：（例: 難波駅まで電車で30分以内） ← 電車で通勤先まで何分か
-番号は多少前後・欠番があってもOK。項目名が多少違っても内容で判断。
-`;
+// 2026-09-18 竹内（💋chibi💋 事例）: ここに書いてあった「うちのフォーマット」が**実物と違う古い形**で、
+//   埋まったフォームが Haiku 分類で not_condition に落ちていた（120日で126人中26人・21%）。
+//   実物は app/lib/condition-format.ts が持つ（決定論の判定と同じ1か所＝四者同名）。
 
 // ── Haiku 分類プロンプト（条件メッセージかどうかを文脈付きで判定）──
 const CLASSIFY_CONDITION_SYSTEM_PROMPT = `あなたは日本の不動産業者のアシスタントです。
@@ -974,12 +962,23 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   const recentContext = (recentMsgs ?? [])
     .reverse()
     .filter((m): m is { sender: string; text: string } => typeof m.text === "string");
-  const classification = await classifyConditionMessage(anthropic, text, recentContext);
-  if (classification.type === "not_condition" || classification.confidence < 0.6) {
-    console.log(`[autoParseFormat] skip: type=${classification.type} confidence=${classification.confidence}`);
-    return;
+  // 2026-09-18 竹内（💋chibi💋 事例）「お客さんから物件の条件送られたのに条件として読みとってない／
+  //   物件検索の拡張ツールにも反映されていない」:
+  //   **自分が送ったテンプレートが埋まって返ってきたか**は語の一覧で確実に分かる。判断の要らない事を
+  //   LLM に聞くと、揺れる分だけ黙って落ちる（実データ 120日で126人中26人・21%が顧客データに入っていなかった）。
+  //   決定論で確定できる時は分類を飛ばす（Haiku 1回分の費用も減る）。
+  const deterministicForm = isFilledSumoraForm(text);
+  let isFormalFormat = true;
+  if (deterministicForm) {
+    console.log(`[autoParseFormat] 決定論でフォーマット確定（分類をスキップ）: conv=${convId}`);
+  } else {
+    const classification = await classifyConditionMessage(anthropic, text, recentContext);
+    if (classification.type === "not_condition" || classification.confidence < 0.6) {
+      console.log(`[autoParseFormat] skip: type=${classification.type} confidence=${classification.confidence}`);
+      return;
+    }
+    isFormalFormat = classification.type === "formal_format";
   }
-  const isFormalFormat = classification.type === "formal_format";
 
   // ── Step 2: Sonnet 5 でフィールド抽出 ──────────────────────────────
   // URLを除去してからClaudeに渡す（物件サイトURLパラメータの誤解釈防止）
