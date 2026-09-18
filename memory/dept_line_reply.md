@@ -4,6 +4,36 @@
 
 ---
 
+## 物件の状況はブレインが持ち、AIX とテンプレートが同じ1つの材料を読む（竹内・2026-09-18・コミット fc76face / 35495df4 / d05dc52d）— 黄金ルール
+- 竹内「おねがい」＝前項（𝒮 さん事例）の続きで、私が出した3つをそのまま実装した: ①退去予定・内覧可否をブレインが判断として持つ ②テンプレート側も件数をブレインから取る ③材料を1か所にまとめ、AIX とテンプレートが同じ物を読む
+- **材料は1つ**（`app/lib/property-send-state.ts`・純関数・テスト19件）
+  - `resolvePropertySendState({ brainMeta, recentMessages, extraText, fallbackSentCount })` → `{ sentPropertyCount, sentSource, notViewable, vacancyDate, viewableFrom, viewableSource, evidence }`
+  - 出どころの優先順位は **①ブレインの判断 ②会話・本文**。`sentSource` / `viewableSource` にどちらから来たかが残る（ログに `describePropertySendState`）
+  - **0 に倒さない**: 件数を 0 にすると「1件以下」＝比較の言い方が常に落ちる（b76f6e20 で踏んだ穴）。ブレインが持っていない時は受け皿の件数に落ちる
+  - 退去予定は**こちらが送った物件の話だけ**を見る（お客様ご自身の「9月末退去予定」は今のお住まいの話）
+- **ブレインが持つ**（`brain-core` の `SuggestedAixMeta.property_state`・JSONB なので migrate-schema 不要）
+  - `resolveBrainPropertyState({ messages, viewingReleased })` を `analyzeConversation` の保存部（`action_ledger` の隣）で呼ぶ
+  - 本番（YUMA）で確認: `{"notViewable":true,"vacancyDate":"9月30日","viewableFrom":"10月1日"}`
+- **読む側は同じ関数**（四者同名）: `aix/action`（property_recommendation の出口）と `aix-template-generate`（材料＋出口）が `resolvePropertySendState` だけを読む。`recommend-closing.stillNotViewable` も中身を property-send-state に1本化
+- **本番検証で出た罠（重要）**: 物件カードの「**10月1日以降にご内覧可能です！！**」が `move-out-context.staffOffersViewing`（ご内覧…可能です）に当たり、`moveOutViewingReleased`＝「スタッフが内覧を案内済み＝今すぐ見られる」と読まれて `notViewable` が false に倒れていた。これは**いつから見られるか**の説明であって内覧の案内ではない → 解禁日の説明文がある時は打ち消しを効かせない（日付の事実が優先）。隼斗事例（「本日ご内覧如何でしょうか 17:30〜18:30お部屋ご案内出来ます」）は解禁日の説明文が無いので従来どおり内覧できる扱い。`move-out-context` 自体は触っていない（AIX の申込へ差し替えは無傷）
+- **件数が2つ並存していた**（d05dc52d で統一）: `aix-template-generate` の `priorSentPropertyCount` は `aix_usage_logs` の送付**回数**、ブレインの `action_ledger.facts.propertiesSentCount` は送った**物件の件数**。まとめ送付1回で5件送っても回数は1、手打ち送付は AIX ログに残らないので、回数で比較の言い方を禁止すると事実と合わない → `canUseCompareFrame` と `resolveRecommendationScenario` の `hasPrior` もブレインの件数があればそれで決める（鮮度＝1週間以上前は比較しない、は従来どおり AIX ログから）
+- **実データ（365日・退去予定の物件を推したスタッフ実送信140通）で締めの分布を測った**
+
+  | 締め | 件数 |
+  |---|---|
+  | 申込誘導のみ | 31（22%） |
+  | 内覧誘導のみ | 3（2%） |
+  | 両方 | 1 |
+  | **どちらも無し**（お手隙の際にご査収ください で終わる） | **105（75%）** |
+
+  ＝「内覧誘導 vs 申込誘導」なら申込が正しいが、**締めが無い文に申込誘導を足すのは実データに反する**。決定論が保証するのは**差し替えだけ**（足さない）で正しい。全力サポートの時と同じで、実装ではなく検証の期待の方を直した
+- **本番検証 15/15**（YUMA・`scratchpad/verify-property-send-state.ts`）: ブレインが property_state を持つ（4/4）／履歴に退去予定を1文字も入れずに生成しても内覧誘導が出ない＝**ブレインの判断だけで締めが決まっている**（2回とも）／ブレインが「今見られる」と言っている時は内覧の誘導が残る（3回中3回）＝決定論が消していない
+- **本番ログが証拠**（`get_runtime_logs`・`aix-template-generate` の1行に `state=` を出すようにした）
+  - `{"tag":"aix-template-generate:recommend-closing","applied":["apply_instead_of_viewing"],"state":"sent=2(brain) notViewable=true(brain) vacancy=9月30日→10月1日"}` ＝差し替えが実際に起きた記録
+  - `state=sent=3(brain) notViewable=false(brain) … compareOk=false lastSendH=1080` ＝件数はブレインから来ているが、直近送付が45日前で**鮮度の線（1週間）**に落ちている＝正しい挙動。比較の言い方が出ないのは件数ではなく鮮度の話
+- **見つけた別件（未対応）**: 毎回 `[fetchPromptRules] unknown condition_key "vacancy_status" in rule — rule skipped` が出ている。`prompt_rules` に未知の条件キーを持つ行があり、そのルールは**ずっと効いていない**
+- 設計知見: 「**同じ事実に2つの数え方があると、後から足した方だけが新しくなる**。数え方の違い（回数 vs 件数）は名前で見分けられないので、1つの型に集めて出どころを持たせる」「**説明文と案内文は同じ語を使う**（『ご内覧可能です』）。語で判定すると、いつから見られるかの説明が『もう見られる』に化ける」
+
 ## まだ内覧できないお部屋は申込誘導・1件しか送っていないなら「中でも」を書かない（竹内・2026-09-18・𝒮 さん事例・コミット a26fb900）— 黄金ルール
 - 竹内「このように**状況に合わせて、物件申込誘導する**のと、**物件1件しか送っていない場合は『お送りさせて頂いたお部屋の中でも』の部分はいれない**。今の状況はブレインが分かっているんやから、それと AIX のところリンクさせて状況に応じた文をおくれば、さらに良くなる」
 - **生成**（テンプレート「1件特にオススメする」の AI 最適化）: 「**お送りさせて頂きましたお部屋の中でも特に**UMEDA ILAND REIDENCE 302号室が…／9月30日退去予定のため10月1日以降にご内覧可能です！！／**お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！**」
