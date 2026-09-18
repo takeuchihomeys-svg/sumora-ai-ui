@@ -132,6 +132,8 @@ import {
 } from "@/app/lib/reply-context";
 import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { ensureWaitingCommitment, contactDateLabel } from "@/app/lib/waiting-commitment";
+// 2026-09-18 竹内: 社内への確認・報告になっている文は下書きとして保存しない（入力欄にも自動返信にも出さない）
+import { isNotACustomerReply } from "@/app/lib/meta-narration";
 // 2026-09-18 竹内（ゆーた 事例）: 「10月中」は 10/31 まで。幅のある入居時期を前倒しして急かさない
 import { resolveApplyDeadlineNote } from "@/app/lib/move-in-deadline";
 // 2026-09-12 竹内（YUYA 事例）: お客様が送った物件の呼び方（生成の指示と後処理が同じ判定）
@@ -5744,12 +5746,19 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   .eq("id", conversationId);
                 if (dupErr) console.error("[generate-reply] duplicate-of-sent save error:", conversationId, dupErr.message);
               } else {
+              // 2026-09-18 竹内「社内への確認みたいな文は絶対に送らない・テキストボックスにも入らないように」:
+              //   お客様への返信になっていない文（この会話について述べる・生成の断り書き・上司に報告してください等）は
+              //   **保存しない**。入口で止めれば、入力欄にも自動返信にも二度と出ない（根本の所）
+              const notAReply = isNotACustomerReply(finalDraftText);
+              if (notAReply) {
+                console.log(JSON.stringify({ tag: "draft:not-a-customer-reply", conversationId, head: finalDraftText.trim().slice(0, 80) }));
+              }
               const { error: saveErr } = await supabase
                 .from("conversations")
                 .update(
-                  !isTruncated && finalDraftText.trim()
+                  !isTruncated && !notAReply && finalDraftText.trim()
                     ? { ai_draft: finalDraftText.trim(), draft_pending_at: null, draft_attempted_at: null }
-                    : { draft_pending_at: null } // 空生成・尻切れでも pending は解除（永続pending防止）。attempted_at は残す＝10分間リトライしない
+                    : { draft_pending_at: null } // 空生成・尻切れ・返信でない文でも pending は解除（永続pending防止）。attempted_at は残す＝10分間リトライしない
                 )
                 .eq("id", conversationId);
               if (saveErr) console.error("[generate-reply] ai_draft save error:", conversationId, saveErr.message);

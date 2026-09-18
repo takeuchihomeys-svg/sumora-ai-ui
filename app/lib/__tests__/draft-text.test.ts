@@ -48,6 +48,43 @@ console.log("── AI の作業メモは落とす（2026-09-15 竹内「こん�
   t("お客様への文は残る", !!out && out.includes("引き続き何卒よろしくお願い致します！！"));
 }
 
+console.log("── 【本物】社内への確認・報告の文は丸ごと使わない（2026-09-18 竹内）");
+{
+  // 本番の下書きに実際に残っていた物（Daiki さん・06/17）
+  const real = "この会話はお客様との賃貸仲介のやりとりではなく、社内スタッフ間（@鈴木/@スモラ/@YUMA）への業務指示・内部連絡の様相です。\n\nお客様向けのLINE返信を生成する状況ではないため、返信案の生成は行いません。\n\n**対応推奨：**\nこの内容は上司・管理者（@YUMA または責任者）に報告・確認してください。社内の業務指示（いい生活アカウント・ポスト投函・Googleリンク共有）に関するやりとりであり、お客様対応のLINE文面を当てはめる場面ではありません。";
+  t("★ 本物の「社内への確認」文は null（入力欄にも入らない・送らない）", draftToSendableText(real) === null, String(draftToSendableText(real)));
+
+  // 実際に送られてしまっていた物（messages に2件）
+  t("生成失敗の置き文は null", draftToSendableText("（AI返信の生成に失敗しました。再生成をお試しください）") === null);
+
+  const refusals = [
+    "お客様向けのLINE返信を生成する状況ではないため、返信案の生成は行いません。",
+    "**対応推奨：** 担当者へ確認してください。",
+    "この内容は上司に報告してください。",
+    "このやりとりは賃貸仲介の会話ではありません。",
+  ];
+  for (const s of refusals) t(`「${s.slice(0, 22)}…」→ null`, draftToSendableText(s) === null, String(draftToSendableText(s)));
+}
+
+console.log("── 本物のスタッフ送信は消さない（誤削除0）");
+{
+  // 実送信にあった形（「社内」「**」「@」が入るが、どれもお客様への文）
+  const keep: string[] = [
+    "石川さん\nお世話になっております！！\n管理会社社内稟議にて仮審査の承認完了となっております！！\n\n昨日退去確認をし現在最短入居日調整中とのことです！！",
+    "お世話になっております！！\n\nただ大切なのは、滞納してしまいそうな場合は**早めにご相談いただくこと**です。",
+    "お申込みに必要となりますので、〇〇@gmail.com 宛にお送りください！！",
+    "かしこまりました😊！！\nお送り頂きました物件の募集状況確認させて頂きます！！",
+  ];
+  for (const s of keep) {
+    const out = draftToSendableText(s);
+    t(`「${s.slice(0, 18)}…」→ 残る`, out !== null, String(out));
+  }
+  t("Markdown の強調は記号だけ外して中身は残す",
+    (draftToSendableText(keep[1]) ?? "").includes("早めにご相談いただくことです") &&
+    !(draftToSendableText(keep[1]) ?? "").includes("**"),
+    String(draftToSendableText(keep[1])));
+}
+
 console.log("── 画面と送信で同じ結果（四者同名）");
 {
   const sample = "はい😊！！\nご確認頂きありがとうございます！！\n<<<FINAL_CHECK:{\"ok\":true}>>>";

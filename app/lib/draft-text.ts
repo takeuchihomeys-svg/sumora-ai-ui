@@ -9,10 +9,12 @@
 //   → 画面と自動返信が**同じ関数**を使う（設計知見「同じ判定は同じ関数・四者同名」）。
 //
 // これを通した文は、**スタッフが入力欄で見ている文とまったく同じ**になる。
-import { stripMetaNarration } from "./meta-narration";
+import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "./meta-narration";
 
 /** 本文として使えない印（社内用の合図）。これが本文全体なら送る物は無い */
 const DRAFT_SENTINELS: ReadonlySet<string> = new Set(["[AIX誘導中]", "__SHOWN__", "[画像のみ]"]);
+/** 生成に失敗した時の画面向けの置き文（お客様への文ではない） */
+const FAILURE_PLACEHOLDER_RE = /^[（(]AI返信の生成に失敗/;
 
 /**
  * 下書きから内部メタタグ（スタッフ向けの社内指示）を外す。
@@ -26,6 +28,8 @@ export function stripInternalTags(text: string): string {
     .trim();
   // AI が返信全体を「」で囲んで出力することがある → 先頭「末尾」のペアのみ除去
   if (t.startsWith("「") && t.endsWith("」")) t = t.slice(1, -1).trim();
+  // 2026-09-18 竹内: Markdown の強調記号は LINE では記号のまま出る（中の文字は残す）
+  t = stripMarkdownEmphasis(t);
   // 2026-09-15 竹内「こんなの絶対にいれない」: AI の作業メモは入力欄の入口でも落とす
   t = stripMetaNarration(t).text;
   return t;
@@ -39,5 +43,14 @@ export function draftToSendableText(text: string | null | undefined): string | n
   if (!text) return null;
   const raw = text.trim();
   if (DRAFT_SENTINELS.has(raw)) return null;
-  return stripInternalTags(raw) || null;
+  if (FAILURE_PLACEHOLDER_RE.test(raw)) return null;
+  // 2026-09-18 竹内「社内への確認みたいな文は絶対に送らない・テキストボックスにも入らないように」:
+  //   文全体が「返信そのもの／この会話そのもの」について述べている＝お客様への返信ではない。
+  //   一部を削るのではなく**丸ごと使わない**（削ると残りが意味を成さず、かえって危ない）
+  if (isNotACustomerReply(raw)) return null;
+  const out = stripInternalTags(raw);
+  if (!out) return null;
+  // 整形した後に社内向けの文だけが残った場合も使わない（先頭だけ削れて後ろが残る形を塞ぐ）
+  if (isNotACustomerReply(out)) return null;
+  return out;
 }
