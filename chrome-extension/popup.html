@@ -62,6 +62,11 @@
       <div id="customer-list"></div>
       <div id="bulk-toolbar" style="display:none">
         <span class="bulk-toolbar-count" id="bulk-count-label">0人選択中</span>
+        <!-- 2026-09-18 竹内: 一括検索も「広げて検索」でできるようにする（個別検索と同じ2択） -->
+        <div class="bulk-mode-toggle" id="bulk-mode-toggle">
+          <button class="bulk-mode-btn active" data-bulk-mode="pinpoint">🎯 ピンポイント</button>
+          <button class="bulk-mode-btn" data-bulk-mode="wide">🔎 広げて</button>
+        </div>
         <button class="bulk-site-btn" data-bulk-site="realnetpro">🏠 リアプロ</button>
         <button class="bulk-site-btn" data-bulk-site="itandi">📋 itandi</button>
         <button class="bulk-site-btn" data-bulk-site="reins">🔍 レインズ</button>
@@ -330,6 +335,8 @@
   </div>
   <script src="popup-maps.js"></script>
   <script src="transit_graph.js"></script>
+  <!-- 2026-09-18 竹内: 検索日の記録（サイト×モード）。background.js と同じ物を使う（popup.js より先に読む） -->
+  <script src="search-history.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-09-18 一括検索を「広げて検索」でもできるようにし、検索日を記録する（竹内）
+
+- 竹内「物件検索と一括検索を**条件広げて検索でもできる**ようにする。また**一括検索したお客さんも項目のところに日付と一括検索した日にちをいれる**ようにする」
+- **調べて分かったこと（2つの依頼は同じ根だった）**
+  - 記録の仕組みは**既にあった**。`property_customers.search_history` に `realpro_p` / `realpro_w` / `itandi_p` / `itandi_w` / `reins_p` / `reins_w`（サイト×モードの検索日時）。顧客リストの **RP / IT / RE の ✓ と P・広 のグリッド**（`buildSshGrid`）がこれを描いている
+  - **書いていたのは popup.js の個別検索だけ**。`background.js` の一括検索は `search_history` を**1行も書いていなかった** → 一括検索しても行の日付が埋まらない
+  - 一括検索は `_batchAutofill(customer, site, isWide)` の **isWide を常に false** で呼んでいた（関数は元から受け取る作りだった）→ 広げて検索で一括できない
+- **直し**
+  - `chrome-extension/search-history.js`（新規）… キーの作り方（サイト名のゆれ吸収・p/w）と保存を1か所に。**popup.js（個別）と background.js（一括）が同じ関数を使う**（四者同名）。popup.html の `<script>`・manifest の web_accessible_resources・background の `import` の3つに登録
+  - popup.html / styles.css … 一括検索ツールバーに**モードの2択**（🎯 ピンポイント／🔎 広げて）。個別検索の `mode-toggle` と同じ考え方
+  - popup.js … `bulkSearchMode` を持ち、`executeBulkSearch` が `isWide` を送る。個別検索の記録2か所（itandi・リアプロ）も `recordSearchForSelected(site)` に寄せた（旧: 同じコードが別々に書かれ、キーも手で組み立てていた）
+  - background.js … `axlx-manual-bulk-search` が `msg.isWide` を受け、`_batchAutofill` に渡す。検索後に `_recordBulkSearch` で検索日を記録（記録の失敗で検索は止めない）
+- **テスト**: `app/lib/__tests__/search-history.test.ts` 16件（拡張にテストの置き場が無いので既存のハーネスに乗せた）。`node --check` で popup.js / background.js / search-history.js とも構文 OK
+- **見つけた別の穴（未対応）**: **レインズは個別検索でも `search_history` を書いていない**（`reins_p` / `reins_w` が常に空＝グリッドの RE 列がいつも未検索のまま）。一括検索の分は今回から記録される。個別のレインズも同じ関数を1行呼ぶだけで直る
+- 設計知見: 「**記録の仕組みがあるのに書いていない経路がある**＝『その形が DB に何件あるか』ではなく『どの経路が書いているか』で探す」「関数が引数（isWide）を受ける作りなのに、呼び出し側が固定値を渡している所は、機能が半分眠っている印」
+
 ## 📌 部署ミッション
 
 Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・記録。

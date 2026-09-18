@@ -3910,26 +3910,8 @@ function openInstructions(siteKey) {
           });
         });
       }
-      // 検索日時をサイト別に記録（fire-and-forget）
-      if (selectedCustomer?.id) {
-        const _mode = searchMode === "wide" ? "w" : "p";
-        const _sh = Object.assign({}, selectedCustomer.search_history || {});
-        _sh["itandi_" + _mode] = new Date().toISOString();
-        const _srchField = searchMode === "wide" ? "last_wide_search_at" : "last_pinpoint_search_at";
-        const _now = new Date().toISOString();
-        fetch(API_BASE + "/api/property-customers", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: selectedCustomer.id, search_history: _sh, [_srchField]: _now }),
-        }).then(() => {
-          const idx = allCustomers.findIndex((x) => x.id === selectedCustomer.id);
-          if (idx >= 0) {
-            allCustomers[idx].search_history = _sh; allCustomers[idx][_srchField] = _now;
-            selectedCustomer.search_history = _sh; selectedCustomer[_srchField] = _now;
-          }
-          sessionStorage.removeItem(CUSTOMER_CACHE_KEY);
-        }).catch(() => {});
-      }
+      // 検索日時をサイト別に記録（fire-and-forget）。2026-09-18: 一括検索と同じ関数に寄せた
+      recordSearchForSelected("itandi");
       autofillBtn.textContent = "✓ 自動検索中...";
       autofillBtn.classList.add("done");
       setTimeout(() => {
@@ -4457,26 +4439,8 @@ function openInstructions(siteKey) {
           console.warn("[AX] fill-done タイムアウト: 25秒以内に完了通知が来なかったためリセット");
         }
       }, 25000);
-      // 検索日時をサイト別に記録（fire-and-forget）
-      if (selectedCustomer?.id) {
-        const _mode = searchMode === "wide" ? "w" : "p";
-        const _sh = Object.assign({}, selectedCustomer.search_history || {});
-        _sh["realpro_" + _mode] = new Date().toISOString();
-        const _srchField = searchMode === "wide" ? "last_wide_search_at" : "last_pinpoint_search_at";
-        const _now = new Date().toISOString();
-        fetch(API_BASE + "/api/property-customers", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: selectedCustomer.id, search_history: _sh, [_srchField]: _now }),
-        }).then(() => {
-          const idx = allCustomers.findIndex((x) => x.id === selectedCustomer.id);
-          if (idx >= 0) {
-            allCustomers[idx].search_history = _sh; allCustomers[idx][_srchField] = _now;
-            selectedCustomer.search_history = _sh; selectedCustomer[_srchField] = _now;
-          }
-          sessionStorage.removeItem(CUSTOMER_CACHE_KEY);
-        }).catch(() => {});
-      }
+      // 検索日時をサイト別に記録（fire-and-forget）。2026-09-18: 一括検索と同じ関数に寄せた
+      recordSearchForSelected("realpro");
     };
   } else if (siteKey === "reins") {
     adjForm.style.display = "block";
@@ -4768,6 +4732,37 @@ function updateBulkToolbar() {
   }
 }
 
+/**
+ * 2026-09-18 竹内: 個別検索の検索日の記録。一括検索（background.js）と**同じ関数**（search-history.js）を使う。
+ *   旧: itandi / リアプロで同じコードが別々に書かれていて、キー（itandi_p / realpro_w）も手で組み立てていた
+ */
+function recordSearchForSelected(site) {
+  const H = window.AxlxSearchHistory;
+  if (!H || !selectedCustomer?.id) return;
+  H.recordSearch({
+    apiBase: API_BASE,
+    customer: selectedCustomer,
+    site,
+    isWide: searchMode === "wide",
+    onSaved(history, field, nowIso) {
+      const idx = allCustomers.findIndex((x) => x.id === selectedCustomer.id);
+      if (idx >= 0) { allCustomers[idx].search_history = history; allCustomers[idx][field] = nowIso; }
+      selectedCustomer.search_history = history; selectedCustomer[field] = nowIso;
+      sessionStorage.removeItem(CUSTOMER_CACHE_KEY);
+    },
+  }).catch(() => {});
+}
+
+// 2026-09-18 竹内「一括検索も条件広げて検索でできるようにする」: 一括検索のモード（個別検索と同じ2択）
+let bulkSearchMode = "pinpoint"; // "pinpoint" | "wide"
+
+function setBulkSearchMode(mode) {
+  bulkSearchMode = mode === "wide" ? "wide" : "pinpoint";
+  document.querySelectorAll(".bulk-mode-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.bulkMode === bulkSearchMode);
+  });
+}
+
 function executeBulkSearch(site) {
   const ids = Array.from(selectedCustomerIds);
   if (!ids.length) return;
@@ -4777,6 +4772,7 @@ function executeBulkSearch(site) {
     type: "axlx-manual-bulk-search",
     customerIds: ids,
     site, // "realnetpro" / "itandi" / "reins" そのまま渡す
+    isWide: bulkSearchMode === "wide", // 2026-09-18: 広げて検索でも一括できるようにする
   }, () => { void chrome.runtime.lastError; });
 
   // 即座にチェックをクリア（backgroundが連続処理する）
@@ -5397,6 +5393,12 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
 
 // ── 一括検索ツールバーボタン ──────────────────────────────────────
 (function() {
+  // 2026-09-18 竹内: モードの2択（ピンポイント／広げて）。サイトのボタンを押す前に選ぶ
+  document.querySelectorAll(".bulk-mode-btn").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      setBulkSearchMode(btn.dataset.bulkMode);
+    });
+  });
   document.querySelectorAll(".bulk-site-btn").forEach(function(btn) {
     btn.addEventListener("click", function() {
       executeBulkSearch(btn.dataset.bulkSite);

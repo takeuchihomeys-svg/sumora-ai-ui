@@ -5,6 +5,8 @@
 // 静的 import で読み込み、resolution-core.js が公開する globalThis.SUMORA_RESOLUTION
 // 経由で resolveConditionsLocal 等を参照する（_resolveLocalFirst 参照）。
 import "./resolution-core.js";
+// 2026-09-18 竹内: 検索日の記録（サイト×モード）を popup.js と同じ1つの関数で行う（self.AxlxSearchHistory）
+import "./search-history.js";
 
 const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
 
@@ -1006,6 +1008,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "axlx-manual-bulk-search") {
     var _bulkSite = msg.site;
     var _bulkIds  = Array.isArray(msg.customerIds) ? msg.customerIds : [];
+    // 2026-09-18 竹内「一括検索も条件広げて検索でできるようにする」:
+    //   _batchAutofill は元から isWide を受ける作りだったのに、ここが常に false を渡していた
+    var _bulkIsWide = !!msg.isWide;
     sendResponse({ ok: true, started: true });
     (async () => {
       try {
@@ -1018,7 +1023,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         var _bulkTargets = _bulkIds
           .map(function(id) { return _bulkAll.find(function(c) { return String(c.id) === String(id); }); })
           .filter(Boolean);
-        console.log("[manual-bulk-search] ▶ site=" + _bulkSite + " 対象=" + _bulkTargets.length + "人");
+        console.log("[manual-bulk-search] ▶ site=" + _bulkSite + " mode=" + (_bulkIsWide ? "wide" : "pinpoint") + " 対象=" + _bulkTargets.length + "人");
         for (var _bi = 0; _bi < _bulkTargets.length; _bi++) {
           var _bc = _bulkTargets[_bi];
           console.log("[manual-bulk-search] (" + (_bi+1) + "/" + _bulkTargets.length + ") " + _bc.customer_name);
@@ -1027,7 +1032,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             var _bulkFillDone = (_bulkSite === "realnetpro" || _bulkSite === "itandi")
               ? _createFillDoneWaiter(_bulkSite, String(_bc.id), _fillDoneTimeoutMs(_bulkSite))
               : null;
-            var _bulkConds = await _batchAutofill(_bc, _bulkSite, false);
+            var _bulkConds = await _batchAutofill(_bc, _bulkSite, _bulkIsWide);
+            // 2026-09-18 竹内「一括検索したお客さんも項目のところに日付と一括検索した日にちをいれる」:
+            //   個別検索（popup.js）は search_history を書いていたが、一括検索は1行も書いていなかった。
+            //   同じ関数（search-history.js）で記録し、顧客リストの RP/IT/RE グリッドが一括の分も埋まるようにする
+            _recordBulkSearch(_bc, _bulkSite, _bulkIsWide);
             // fill-done → axlx-batch-customer-done を待ってから次顧客へ（混線防止）
             // reins は bulk-dl.js 自動送信なし → ウェイターなしでスキップ
             if (_bulkFillDone) {
@@ -2504,6 +2513,24 @@ async function _runBatchSearch(command) {
     doneUpdates.error_message = "一部失敗: " + batchErrors.join(" | ").slice(0, 1800);
   }
   await _updateBatchCommand(command.id, doneUpdates);
+}
+
+/**
+ * 2026-09-18 竹内「一括検索したお客さんも項目のところに日付と一括検索した日にちをいれる」:
+ *   一括検索でも検索日を記録する（個別検索と同じ search-history.js を使う＝四者同名）。
+ *   検索そのものは止めない（記録の失敗はログだけ）。
+ */
+function _recordBulkSearch(customer, site, isWide) {
+  var H = self.AxlxSearchHistory;
+  if (!H || !customer || customer.id == null) return;
+  H.recordSearch({ customer: customer, site: site, isWide: !!isWide })
+    .then(function (r) {
+      if (r && r.ok) {
+        console.log("[manual-bulk-search] 検索日を記録: " + customer.customer_name + " " + H.historyKey(site, isWide));
+      } else {
+        console.warn("[manual-bulk-search] 検索日の記録に失敗:", r && r.reason);
+      }
+    }, function (e) { console.warn("[manual-bulk-search] 検索日の記録に失敗:", e && e.message); });
 }
 
 async function _batchAutofill(customer, site, isWide) {

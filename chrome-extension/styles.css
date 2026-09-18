@@ -675,7 +675,22 @@ body.mini-mode .view {
   background: #0d1b3e; border-top: 2px solid #1565C0;
   gap: 6px;
   align-items: center;
+  flex-wrap: wrap;            /* 2026-09-18: モードの2択を足したので折り返す */
 }
+/* 一括検索のモード（ピンポイント／広げて）。個別検索の mode-toggle と同じ考え方 */
+.bulk-mode-toggle {
+  display: flex; gap: 3px; flex-basis: 100%;
+  background: #14264f; border-radius: 8px; padding: 3px;
+}
+.bulk-mode-btn {
+  flex: 1; padding: 5px 2px;
+  border: none; border-radius: 6px;
+  background: transparent; color: #90caf9;
+  font-size: 11px; font-weight: 700; cursor: pointer;
+  white-space: nowrap; transition: background 0.15s, color 0.15s;
+}
+.bulk-mode-btn.active { background: #1565C0; color: #fff; }
+.bulk-mode-btn:active { transform: scale(0.97); }
 .bulk-toolbar-count {
   font-size: 12px; font-weight: 700; color: #90caf9;
   white-space: nowrap; flex-shrink: 0;
