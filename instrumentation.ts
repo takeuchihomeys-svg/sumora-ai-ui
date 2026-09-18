@@ -12,5 +12,13 @@ export async function register() {
     } catch (e) {
       console.warn("[instrumentation] llm usage recorder install failed:", String(e));
     }
+    // 2026-09-19 竹内「AWSのクラウド経由する」: 指定した経路だけ Bedrock（DeepSeek）へ回す。
+    //   環境変数が揃っていない時は何もしない＝今までどおり Anthropic（fail-closed）
+    try {
+      const { installBedrockRouter } = await import("./app/lib/bedrock-router");
+      installBedrockRouter();
+    } catch (e) {
+      console.warn("[instrumentation] bedrock router install failed:", String(e));
+    }
   }
 }
