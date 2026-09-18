@@ -187,28 +187,9 @@ export function promiseOverdueDays(
   return Math.max(0, Math.floor((nowMs - oldest) / 86_400_000));
 }
 
-/** 並べる時に見る1件分（約束の時刻と直近やり取りの時刻） */
-export type PromiseSortKey = { promiseAt: number | null; updatedAtMs: number };
-
-/** 時刻の文字列を ms に（読めない時は 0＝一番下）。並びで NaN を混ぜない */
-export function sortMsOf(iso: string | null | undefined): number {
-  const t = Date.parse(iso ?? "");
-  return Number.isFinite(t) ? t : 0;
-}
-
-/**
- * 一覧の並び。
- *   ① お客様への約束（【必ず】・未履行）がある会話を先頭に
- *   ② その中では約束が古い順（放置が長いほど上＝一番忘れているものが一番上）
- *   ③ 残りは従来どおり直近やり取り順
- */
-export function comparePromiseFirst(a: PromiseSortKey, b: PromiseSortKey): number {
-  const hasA = a.promiseAt !== null;
-  const hasB = b.promiseAt !== null;
-  if (hasA !== hasB) return hasA ? -1 : 1;
-  if (hasA && hasB && a.promiseAt !== b.promiseAt) return (a.promiseAt as number) - (b.promiseAt as number);
-  return b.updatedAtMs - a.updatedAtMs;
-}
+// 並び順そのものは conversation-order.ts（compareConversationOrder）。
+// 【必ず】は一覧全体の先頭ではなく「メッセージが来ている組／来ていない組のそれぞれの中」で上に来る
+// （2026-09-18 竹内の指摘。ここに並びの規則を2つ置かないよう、この節は約束の材料だけにする）
 
 /** 確認の約束の要件（notes 1行目「【必ず】保証会社の確認→ご連絡」→「保証会社」） */
 function confirmObjectOfNotes(notes: string | null | undefined): string | null {

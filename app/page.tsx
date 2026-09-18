@@ -25,7 +25,9 @@ import { meetingToJst, pendingViewingNotes, isReplaceableViewingNotes, VIEWING_M
 import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewingHoldNotes, planHoldCleanup, type HoldSlot } from "./lib/viewing-hold";
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
 // 2026-09-18 竹内「必ずのお客さんはLINEの上に上がるようにする。忘れないようにする為」: 一覧の並びとバッジの日数を同じ関数で
-import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, oldestPromiseAtMs, promiseOverdueDays, comparePromiseFirst, sortMsOf } from "./lib/promise-calendar";
+import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, oldestPromiseAtMs, promiseOverdueDays } from "./lib/promise-calendar";
+// 一覧の並び: ①メッセージが来ている（返事待ち）が上 ②その組の中で【必ず】が上 ③残りは直近やり取り順
+import { compareConversationOrder, hasIncomingMessage, sortMsOf } from "./lib/conversation-order";
 import { jstYmd } from "./lib/jst-date";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
@@ -2713,17 +2715,19 @@ export default function Home() {
           c.messages.some((m) => m.text?.toLowerCase().includes(q))
       );
     }
-    // 2026-09-18 竹内「必ずのお客さんはLINEの上に上がるようにする。忘れないようにする為」:
-    //   お客様への約束（【必ず】・未履行）がある会話を先頭に、放置が長い（約束が古い）順。残りは従来どおり直近やり取り順。
-    //   旧は直近やり取り順だけだったため、返事が来ていない約束ほど新しいやり取りに押し下げられ、
-    //   一番忘れている人が一番下に沈んでいた（赤帯とバッジは出ていたが、その会話まで辿り着けない）。
-    //   並びとバッジの日数は同じ関数（promise-calendar.ts）から作る＝表示と並びが食い違わない。
-    return [...result].sort((a, b) =>
-      comparePromiseFirst(
-        { promiseAt: oldestPromiseAtMs(openPromises[a.id]), updatedAtMs: sortMsOf(a.updatedAt) },
-        { promiseAt: oldestPromiseAtMs(openPromises[b.id]), updatedAtMs: sortMsOf(b.updatedAt) },
-      )
-    );
+    // 2026-09-18 竹内「メッセージがきているお客さんで時間最近の方が上に配置。この必ずは、メッセージが来ていない中なら
+    //   メッセージ来ていない中で上。メッセージ来ているならメッセージ来ている中で上にする」:
+    //   ① メッセージが来ている（返事待ち＝最後の発言がお客様）が上 ② その組の中で【必ず】が上
+    //   ③【必ず】どうしは約束が古い順 ④ 残りは従来どおり直近やり取り順。
+    //   旧は直近やり取り順だけで、約束は新しいやり取りに押し下げられて一番下に沈んでいた。
+    //   なお同日中の最初の実装は【必ず】を一覧全体の先頭に出していたが、それだと今まさに返事を
+    //   待っているお客様が約束だけの会話の下に来るため、竹内さんの指摘で「組の中で上」に直した。
+    const keyOf = (c: Conversation) => ({
+      hasIncoming: hasIncomingMessage(c),
+      promiseAt: oldestPromiseAtMs(openPromises[c.id]),
+      updatedAtMs: sortMsOf(c.updatedAt),
+    });
+    return [...result].sort((a, b) => compareConversationOrder(keyOf(a), keyOf(b)));
   }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds, manuallyReadAt, openPromises]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // AIX送信対象（AIXバッジ かつ 要対応バッジ）の件数。AIXボタンの紫ドットに使う
