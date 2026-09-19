@@ -325,8 +325,8 @@ it("#慶次 viewing_thanks: 内覧の話が一度も無い会話では「本日�
   const noViewing = buildActionLedger({
     recentAixRows: [{ aix_type: "property_recommendation", created_at: T("09-19T07:44"), sent_at: T("09-19T07:44") }] as LedgerAixRow[],
     messages: [
-      { sender: "staff", text: "慶次さんお世話になっております！！\n敷金礼金なしのご条件でオススメできるお部屋ピックアップさせて頂きました！！", created_at: T("09-19T07:45") },
-      { sender: "customer", text: "ありがとうございます。出来れば中央大通りより北側でお願いしたいです。本当にわがままばかり言いまして申し訳ありません。", created_at: T("09-19T08:40") },
+      { sender: "staff", text: "慶次さんお世話になっております！！\n敷金礼金なしのご条件でオススメできるお部屋ピックアップさせて頂きました！！", createdAt: T("09-19T07:45") },
+      { sender: "customer", text: "ありがとうございます。出来れば中央大通りより北側でお願いしたいです。本当にわがままばかり言いまして申し訳ありません。", createdAt: T("09-19T08:40") },
     ] as LedgerMessage[],
     lineTasks: [] as LedgerTask[], lastCustomerAt: T("09-19T08:40"), now: Date.parse(T("09-19T08:41")),
   });
@@ -345,8 +345,8 @@ it("#慶次 viewing_thanks: 内覧の打診がある会話では落とさない�
   const withViewing = buildActionLedger({
     recentAixRows: [{ aix_type: "viewing_invite", created_at: T("09-18T04:00"), sent_at: T("09-18T04:00") }] as LedgerAixRow[],
     messages: [
-      { sender: "staff", text: "直近ですと明日 9/18(金) 16:30〜18:30にてご案内可能です！！", created_at: T("09-18T04:01") },
-      { sender: "customer", text: "つきました！", created_at: T("09-19T08:00") },
+      { sender: "staff", text: "直近ですと明日 9/18(金) 16:30〜18:30にてご案内可能です！！", createdAt: T("09-18T04:01") },
+      { sender: "customer", text: "つきました！", createdAt: T("09-19T08:00") },
     ] as LedgerMessage[],
     lineTasks: [] as LedgerTask[], lastCustomerAt: T("09-19T08:00"), now: Date.parse(T("09-19T08:01")),
   });

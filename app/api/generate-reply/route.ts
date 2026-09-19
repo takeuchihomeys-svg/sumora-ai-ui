@@ -190,6 +190,8 @@ import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 import { jstParts, jstDateLabel, weekdayTable } from "@/app/lib/jst-date";
 // 2026-09-19 竹内（タマキ事例）: 「〜でも大丈夫」は条件の**追加**（変更ではない）。限定して復唱させない
 import { detectConditionExpansion, buildExpansionNote } from "@/app/lib/condition-expansion";
+// 2026-09-19 竹内（慶次事例）: 手本の前提フィルタ（場面＝行動台帳の事実で判定）
+import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, type PremiseFacts } from "@/app/lib/example-premise";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -2212,41 +2214,26 @@ const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C:
 // 「よろしくお願いします→撮影出来次第お送り」の無文脈マッピングが起きる。
 // 現在の会話（直前スタッフ発言＋顧客メッセージ）に前提が無い語彙を含む実例は注入前に落とす。
 // final-check.ts runVocabSemanticChecks（V7/V10/V9）と同名の前提条件（三者同名）。minKeep フェイルオープン維持。
-function buildPremiseExcludeRe(staffHist: string, customerMessage: string): RegExp | null {
-  const parts: string[] = [];
-  // 顧客テキストは条件フォームの項目ラベル（⑦初期費用 等）を剥がしてから照合する
-  const cust = (customerMessage ?? "").replace(FORM_LABEL_RE, "");
-  if (!/撮影|写真|動画|オンライン内見|オンライン内覧/.test(staffHist + "\n" + cust)) parts.push("撮影");
-  if (!/【画像】|お送りさせて頂きました|お送りしました|ピックアップしお送り|property_send|ご査収/.test(staffHist)) parts.push("ご査収");
-  if (!/[0-9０-９]{1,2}\s*[\/／月]\s*[0-9０-９]{1,2}.{0,10}[0-9０-９]{1,2}時/.test(staffHist)) parts.push("現地到着|到着しております|本日[0-9０-９]{1,2}時");
-  // 2026-09-08 見積前提: 顧客の費用質問・特定物件送付・前向き反応・直前スタッフ約束のいずれも無ければ見積語彙入りの実例を落とす
-  if (!CUSTOMER_ESTIMATE_INTENT_RE.test(cust) && !CUSTOMER_PROPERTY_REF_RE.test(cust) && !CUSTOMER_ROOM_POSITIVE_RE.test(cust) && !STAFF_ESTIMATE_PROMISE_RE.test(staffHist))
-    parts.push("(?:御|お)?見積(?:書|り|もり)?");
-  if (!CUSTOMER_SCREENING_CONCERN_RE.test(cust)) parts.push("審査面|保証会社|独立系");
-  if (!CUSTOMER_APPLY_OR_DOC_RE.test(cust)) parts.push("申込書類|入居申込書|必要書類|身分証(?:の)?(?:お写真|コピー)");
-  return parts.length ? new RegExp(parts.join("|")) : null;
-}
+// 2026-09-19 竹内（慶次事例）「場面を把握する場所が無いなら作成して強化する」:
+//   判定は app/lib/example-premise.ts（純関数・テスト8件）に出した。
+//   旧はここに直書きで、①テストが無い ②前提の有無を**直前スタッフ発言の語だけ**で見ていた
+//   ③「内覧が完了した前提のお礼」が一覧に無く、慶次さん（内覧の事実なし）に
+//     「本日はご内覧頂きありがとうございました！！」の手本が載って写された。
+//   新は**行動台帳の事実（場面）を先に見る**（viewingInvited / meetingPlaceSent / propertiesSentCount / estimateSent）。
 // 実例ヘッダー（pgvector経路・フォールバック経路で共通。文体のみ再現・業務内容は現在の会話に従う）
 const EXAMPLES_HEADER_NOTE = "— 文体・テンポ・感嘆符・絵文字・長さのみをこの例から再現すること。業務内容（撮影／確認／ご査収／ご案内日時／見積送付 等の約束）は例の丸写し禁止。各例の業務語彙はその会話固有の前提（直前のスタッフ約束・送付済み物件・確定日程）に依存しており、現在の会話履歴に同じ前提が無ければ真似しない（会話内容・文脈は当該顧客の履歴を最優先）。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n";
-// 前提ラベルは決定論で生成（LLMに選ばせない）。実例本文から「この語彙が成立する前提」を注記する
-function derivePremiseLabel(reply: string): string {
-  const labels: string[] = [];
-  if (/撮影|写真|動画/.test(reply)) labels.push("直前返信で室内撮影・写真送付を約束済み（現在の会話に同じ約束が無ければ真似しない）");
-  if (/ご査収|お送りした|お送りさせて頂きました/.test(reply)) labels.push("直前に物件・資料を送付済み");
-  if (/現地|到着|本日[0-9０-９]{1,2}時/.test(reply)) labels.push("内覧日時確定済み");
-  if (/確認(?:でき|出来)次第/.test(reply)) labels.push("管理会社への確認事項が発生している");
-  if (/ご都合よろしいお日にち/.test(reply)) labels.push("特定物件を推した直後");
-  if (/見積/.test(reply)) labels.push("お客様が費用・見積を質問／特定物件を送付／内覧後前向き反応のいずれかが会話にある（①〜⑧フォームの⑦初期費用は該当しない）");
-  if (/審査面|保証会社/.test(reply)) labels.push("お客様が審査・保証の不安を自ら発言済み");
-  if (/申込書類|必要書類|身分証/.test(reply)) labels.push("お客様が申込意思を表明済み");
-  return labels.join("・");
-}
+// 前提ラベルも example-premise.ts（同じルールの一覧）から作る＝四者同名（落とす語と注記が必ず揃う）
 
-async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, staffHistoryForPremise?: string | null, brainFresh = true): Promise<string> {
+async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, staffHistoryForPremise?: string | null, brainFresh = true, premiseFacts?: PremiseFacts | null): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
   // 前提フィルタ用のスタッフ履歴（follow-up でなくても直前スタッフ発言を使う）
   const premiseStaffHist = [staffHistoryForPremise ?? "", lastStaffMessage ?? "", brainMeta?.last_aix_history ?? ""].filter(Boolean).join("\n");
-  const premiseExcludeRe = buildPremiseExcludeRe(premiseStaffHist, customerMessage ?? "");
+  // 2026-09-19 竹内（慶次事例）: 場面（行動台帳の事実）を先に見る。台帳が無ければ従来どおり語で見る
+  const premiseExcludeRe = buildPremiseExcludeRe({ staffHist: premiseStaffHist, customerMessage: customerMessage ?? "", facts: premiseFacts ?? null });
+  {
+    const missing = missingPremiseKeys({ staffHist: premiseStaffHist, customerMessage: customerMessage ?? "", facts: premiseFacts ?? null });
+    if (missing.length) console.info("[examples] 前提が無く落とす語:", JSON.stringify({ missing, hasFacts: !!premiseFacts }));
+  }
 
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
@@ -4482,7 +4469,9 @@ export async function POST(req: NextRequest) {
           ? { action: effectiveAction, words: extractMetaKeywords([...(brainMeta.customer_questions ?? []), ...(brainMeta.key_topics ?? []), brainMeta.reply_direction ?? null]) }
           : null)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
-      fetchExamples(searchState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta, lastStaffMsgForSearch ?? null, brainFreshForMessage && !isCachedMeta)
+      // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタに**行動台帳の事実（場面）**を渡す
+      fetchExamples(searchState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta, lastStaffMsgForSearch ?? null, brainFreshForMessage && !isCachedMeta,
+        { viewingInvited: ledger.facts.viewingInvited, meetingPlaceSent: ledger.facts.meetingPlaceSent, propertiesSentCount: ledger.facts.propertiesSentCount, estimateSent: ledger.facts.estimateSent })
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
       getCachedPhrases(fetchSpec.phrases.categories)
         .catch((err) => { console.error("[generate-reply] getCachedPhrases失敗 — フレーズなしで生成続行:", err); return [] as string[]; }),
