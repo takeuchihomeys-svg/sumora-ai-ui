@@ -91,6 +91,39 @@ LLM_ALT_ACTIONS = reply_generate          ← ここを増やして段階的に�
 LLM_ALT_FALLBACK = on                     ← 失敗したら Anthropic に戻す（既定 on）
 LLM_ALT_AUTO_SEND = off                   ← 自動返信の会話も切り替えるか（既定 off・on の一語だけで開く）
 ```
+#### ★ 実際に作った Azure の中身（2026-09-19・竹内さんの画面で確認）
+
+| | 値 |
+|---|---|
+| アカウント | `takeuchi.homeys@gmail.com`（個人用 Microsoft アカウント） |
+| ディレクトリ | Default Directory (`takeuchihomeysgmail.onmicrosoft.com`) |
+| サブスクリプション | `Azure subscription 1` / `0aa98723-4968-44fd-a22d-45ce21113fcd` / プラン「Azure プラン」（従量課金・アップグレード済み） |
+| リソースグループ | `rg-takeuchi.homeys-6550` |
+| Foundry リソース | `takeuchihomeys-2140-resource`（プロジェクト `takeuchihomeys-2140`） |
+| 場所 | **eastus2** |
+| エンドポイント | `https://takeuchihomeys-2140-resource.services.ai.azure.com/openai/v1/chat/completions` |
+
+**→ `AZURE_AI_ENDPOINT` はこの値をそのまま入れる。`AZURE_AI_KEY` は Foundry の「管理 → プロジェクトの詳細」の API キー。**
+
+#### ★ 止まっている理由: クォータが 0（2026-09-19 時点の引き継ぎ）
+
+DeepSeek を**デプロイできていない**。Foundry の「管理 → クォータ」で `すべて表示` をオンにすると、
+**DeepSeek 系は全リージョン・全モデルが `0/0 TPM`**。作ったばかりのサブスクリプションには枠が付かない。
+※ 従量課金へのアップグレードでは解決しなかった（アップグレード後も 0 のまま）。
+
+- 2026-09-19 10:15 に**クォータ増加を申請**（無料フォーム `customervoice.microsoft.com`。Foundry のクォータ画面 右上「クォータの要求」から）
+  - Quota Type = `Model Deployment (PTU/RPM/TPM)` / Model Type = `Azure Direct Model (ADM)`
+  - Request Type = `Global Standard` / Model = `DeepSeek-V4-Pro` / **Quota = `100`**（1 unit = 1,000 TPM なので 100,000 TPM）
+  - Justification は英語で「月1,300件・人が必ず確認してから送る・他社から移行」と具体的に書いた
+- **回答は翌営業日〜2営業日**
+- ⚠ フォームに「**既存のクォータを消費しているトラフィックがある顧客が優先され、満たさない場合は却下される**」と明記。
+  使用実績ゼロなので**却下されうる**。通らなかった時の手:
+  1. **枠を小さく（10〜20 unit）して再申請**
+  2. **AWS Bedrock に替える**（コードは対応済み・`LLM_ALT_PROVIDER=bedrock`。ただし V3.2 まで、V4 は無い）
+- Flash はまだ申請していない（Pro が通ってから同じ手順でもう1回出す）
+
+**この間、本番は全部 Claude のまま動いている**（環境変数を入れていないので影響ゼロ）。急ぎではない。
+
 #### Azure AI Foundry の登録手順（2026-09-19 に Microsoft Learn で確認）
 
 1. **Azure アカウント** — portal.azure.com で作成。**支払い方法の登録が要る**（無料・試用のサブスクリプションでは
