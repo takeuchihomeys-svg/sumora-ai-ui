@@ -25,6 +25,7 @@ import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBrea
 import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
 // 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキング」「申込以降は渡さなくて大丈夫」
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
+import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 import { willRouteAlt, isPostApplyStatus } from "@/app/lib/llm-alt-provider";
 import { LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
 import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, viewableFromVacancyYmd, vacancyDateLabel, vacatingViewableSentence } from "@/app/lib/vacating-notice";
@@ -845,29 +846,6 @@ function llmMetaHeaders(action: string): Record<string, string> {
 }
 
 /**
- * 事例（ai_reply_examples）に出てくる**他のお客様の名前**を照合するための正解集合。
- * 1人の文を作るたびに他人8件が載るので、当事者だけ伏せても足りない。
- * 会話の数は300件台なので全部持っても軽い。5分だけ覚えておく（AIX の brain キャッシュと同じ考え方）。
- */
-let knownNamesCache: { at: number; names: string[] } | null = null;
-const KNOWN_NAMES_TTL_MS = 5 * 60_000;
-async function loadKnownNames(): Promise<string[]> {
-  if (knownNamesCache && Date.now() - knownNamesCache.at < KNOWN_NAMES_TTL_MS) return knownNamesCache.names;
-  try {
-    const { data } = await supabase.from("conversations").select("customer_name").limit(2000);
-    const names = [...new Set((data ?? [])
-      .map((r: { customer_name: string | null }) => (r.customer_name ?? "").trim())
-      .filter(Boolean))];
-    knownNamesCache = { at: Date.now(), names };
-    return names;
-  } catch (e) {
-    // 取れなくても当事者の名前は伏せられる。ここで止めない
-    console.warn("[aix/action] knownNames 取得失敗:", e);
-    return knownNamesCache?.names ?? [];
-  }
-}
-
-/**
  * 別クラウド（DeepSeek）へ回す時の歯止めを用意する。
  * 2026-09-19 竹内「申込以降は渡さなくて大丈夫、申込までのツールなので」
  *           「お客さんの本名や電話番号は絶対にマスキングするように」
@@ -888,7 +866,7 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
     ctx.masker = createMasker({
       conversationId: conversationId ?? action,
       customerName,
-      knownNames: await loadKnownNames(),
+      knownNames: await loadKnownCustomerNames(),
     });
     console.log("[aix/action] alt-provider へ回す（読み替えあり）:", JSON.stringify({ action, conversationId }));
   } catch (e) {

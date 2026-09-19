@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import {
   readAltConfig, shouldRouteAlt, resolveRouteName, toOpenAIBody, fromOpenAIResponse, flattenContent, ROUTE_MARKERS,
-  isAutoSendCall, isPostApplyCall, isPostApplyStatus, willRouteAlt,
+  isAutoSendCall, isPostApplyCall, isPostApplyStatus, willRouteAlt, createSseConverter,
   DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_FLASH_MODEL,
 } from "../llm-alt-provider";
 import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
@@ -331,6 +331,57 @@ console.log("── ★ 別クラウドの呼び出しも llm_usage_logs に残�
     /export function recordAltUsage/.test(recorder) && /altRecorder = deps/.test(recorder));
   t("★ キャッシュ一致を cache_read に入れている",
     /cache_read: num\(input\.usage\.cache_read_input_tokens\)/.test(recorder));
+}
+
+console.log("── ★ 1文字ずつの形（返信文の生成）を Anthropic の形に組み直す");
+{
+  // 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」
+  //   返信文は .stream() で呼ぶ。呼び出し側は LangChain の ChatAnthropic で Anthropic のイベント名しか読めない。
+  //   ここがズレると「生成が途中で止まる・空になる」という形で静かに壊れるのでテストで固定する。
+  const c = createSseConverter("deepseek-v4-pro");
+  const ev: string[] = [];
+  ev.push(...c.push(`data: ${JSON.stringify({ choices: [{ delta: { content: "かしこ" } }] })}`));
+  ev.push(...c.push(`data: ${JSON.stringify({ choices: [{ delta: { content: "まりました！！" } }] })}`));
+  ev.push(...c.push(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { completion_tokens: 12, prompt_cache_hit_tokens: 30000, prompt_cache_miss_tokens: 400 } })}`));
+  ev.push(...c.push("data: [DONE]"));
+  ev.push(...c.end());
+  const all = ev.join("");
+  t("★ message_start から始まる", all.startsWith("event: message_start\ndata: {"), all.slice(0, 40));
+  t("★ content_block_start が1回だけ出る", (all.match(/event: content_block_start/g) ?? []).length === 1);
+  t("★ 文字が text_delta で出る", /"type":"text_delta","text":"かしこ"/.test(all) && /"text":"まりました！！"/.test(all));
+  t("★ content_block_stop → message_delta → message_stop の順で閉じる",
+    all.indexOf("content_block_stop") < all.indexOf("message_delta") && all.indexOf("message_delta") < all.indexOf("message_stop"));
+  t("★ 終わり方（stop_reason）が入る", /"stop_reason":"end_turn"/.test(all));
+  t("★ 出力トークン数が message_delta に入る", /"usage":\{"output_tokens":12\}/.test(all));
+  t("★ [DONE] は何も出さない（Anthropic には無いイベント）", !all.includes("[DONE]"));
+  t("★ キャッシュ一致を拾える（記録に残すため）",
+    c.usage().cache_read_input_tokens === 30000 && c.usage().input_tokens === 400 && c.usage().output_tokens === 12);
+
+  const c2 = createSseConverter("m");
+  const empty = [...c2.push(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}`), ...c2.end()].join("");
+  t("★ 1文字も来なくても形を壊さない（message_start 〜 message_stop が揃う）",
+    empty.includes("message_start") && empty.includes("content_block_start") && empty.includes("message_stop"));
+
+  const c3 = createSseConverter("m");
+  t("data 以外の行（コメント・空行）は無視する", c3.push(": ping").length === 0 && c3.push("").length === 0);
+  t("壊れた JSON でも落ちない", c3.push("data: {壊れている").length === 0);
+  t("★ 長さで切れたら max_tokens にする",
+    [...c3.push(`data: ${JSON.stringify({ choices: [{ delta: { content: "あ" }, finish_reason: "length" }] })}`), ...c3.end()].join("").includes('"stop_reason":"max_tokens"'));
+  t("end() を2回呼んでも二重に閉じない", c3.end().length === 0);
+
+  // 本文の変換側: stream を通す時だけ stream:true を付ける
+  const src = { system: "s", messages: [{ role: "user", content: "u" }], stream: true, max_tokens: 500 };
+  t("★ 通してよい相手なら stream を付けて渡す",
+    (toOpenAIBody(src as Parameters<typeof toOpenAIBody>[0], "deepseek-v4-pro", { allowStream: true }) as Record<string, unknown>)?.stream === true);
+  t("★ usage を最後に返してもらう指定を付ける（記録のため）",
+    JSON.stringify((toOpenAIBody(src as Parameters<typeof toOpenAIBody>[0], "m", { allowStream: true }) as Record<string, unknown>)?.stream_options) === JSON.stringify({ include_usage: true }));
+  t("★ 変換を用意していない相手（Bedrock 等）は今までどおり対象外",
+    toOpenAIBody(src as Parameters<typeof toOpenAIBody>[0], "m") === null);
+
+  const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
+  t("★ 1文字ずつを通すのは DeepSeek だけ", /const allowStream = cfg\.provider === "deepseek"/.test(provider));
+  t("★ 途中で切れても形を閉じる（呼び出し側の parser を壊さない）",
+    /catch \(e\)[\s\S]{0,200}?conv\.end\(\)/.test(provider));
 }
 
 console.log("── ★ 対象外はそのまま Anthropic へ（null を返す）");

@@ -6,7 +6,41 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（返信生成の keep-warm）: 生成モデルの設定は1か所（cron/keep-warm と共有）。実際に送った prefix を記録して cron が読み直す
 import { createGenerationModel } from "@/app/lib/reply-generation-model";
 // 2026-09-19 竹内: 自動返信オンの会話の下書きは Claude のまま（印を付けて llm-alt-provider が守る）
-import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER } from "@/app/lib/llm-usage-recorder";
+import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
+import { isPostApplyStatus, willRouteAlt } from "@/app/lib/llm-alt-provider";
+import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
+import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
+
+/**
+ * キャッシュの印（cache_control）が付いていないブロックだけを読み替える。
+ * 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキングするように」
+ *   返信生成の system/human は [静的（1h キャッシュ）…][動的（キャッシュなし）] の順に並んでおり、
+ *   **個人情報は全部いちばん後ろの動的ブロックにある**（顧客名・会話履歴・事例・ブレインの判断）。
+ *   静的ブロックに触ると前置きが変わってキャッシュが丸ごと効かなくなるので、印の無い物だけに当てる。
+ */
+function maskUncachedBlocks<T>(messages: T[], masker: Masker): T[] {
+  return messages.map((m) => {
+    const msg = m as unknown as { content?: unknown; constructor: new (fields: unknown) => unknown; lc_kwargs?: Record<string, unknown> };
+    if (!Array.isArray(msg.content)) return m;
+    const blocks = msg.content as Array<Record<string, unknown>>;
+    let changed = false;
+    const next = blocks.map((b) => {
+      if (b.cache_control) return b;                      // キャッシュの印がある＝静的。触らない
+      if (typeof b.text !== "string") return b;
+      const masked = masker.mask(b.text);
+      if (masked === b.text) return b;
+      changed = true;
+      return { ...b, text: masked };
+    });
+    if (!changed) return m;
+    // LangChain のメッセージは content を差し替えた同型の物を作る（型は呼び出し側のまま）
+    const clone = Object.create(Object.getPrototypeOf(msg)) as typeof msg & { content: unknown };
+    Object.assign(clone, msg);
+    clone.content = next;
+    if (clone.lc_kwargs) clone.lc_kwargs = { ...clone.lc_kwargs, content: next };
+    return clone as unknown as T;
+  });
+}
 import { extractWarmPrefix, recordWarmPrefix } from "@/app/lib/reply-warm-prefix";
 import { inferTpoHint } from "@/app/lib/tpo-hint";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
@@ -2810,13 +2844,24 @@ export async function POST(req: NextRequest) {
   //   自動返信オンの会話の下書きは**人の目を通さずに送る**ので、モデルを替えない（印を付けて llm-alt-provider が守る）。
   //   下の post_apply ガードは手動呼び出しの時しか走らない（自動の下書きは bg-async 経由で通らない）ので、
   //   ここで独立して読む。切り替えていない時は無駄なクエリになるが、**送ってしまってからでは戻せない**ので確実さを取る。
+  // ─── 2026-09-19 竹内「申込以降はいれない」───────────────────────────────────────
+  //   申込フェーズ以降は個人情報（本人確認書類・申込書・勤務先・年収・保証人）が集中し、
+  //   かつこのツールの仕事は申込までなので、別クラウドに回さない。**開くスイッチは作らない**。
+  //   自動の下書きは DRAFT_SKIP_STATUSES でそもそも作られないが、**手動生成は通る**のでここで守る。
+  //   同じ1クエリで状態も読む（読めなければ「回さない」側へ倒す＝fail-closed）。
   let autoSendConversation = false;
+  let postApplyConversation = false;
   if (conversationId && !isTemplateOptimize) {
     try {
       const { data: autoRow } = await supabase
-        .from("conversations").select("auto_send_enabled").eq("id", conversationId).maybeSingle();
-      autoSendConversation = (autoRow as { auto_send_enabled?: boolean | null } | null)?.auto_send_enabled === true;
-    } catch { /* 読めなければ false（＝通常どおり。切り替えていなければ影響なし） */ }
+        .from("conversations").select("auto_send_enabled, status").eq("id", conversationId).maybeSingle();
+      const row = autoRow as { auto_send_enabled?: boolean | null; status?: string | null } | null;
+      autoSendConversation = row?.auto_send_enabled === true;
+      postApplyConversation = isPostApplyStatus(row?.status ?? null);
+    } catch {
+      // 読めなければ自動返信は false（通常どおり）だが、申込以降は true に倒す（個人情報を外に出さない）
+      postApplyConversation = true;
+    }
   }
 
   if (conversationId && externalBrainGate === null && !isTemplateOptimize) {
@@ -4776,16 +4821,35 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     //   竹内「慣れて問題なければ切り変えていく／性質理解して穴を防げるようになったら」:
     //   → その判断には「**どの会話の下書きを、どのモデルが作ったか**」の記録が要る。
     //     会話 ID の印も一緒に付けて llm_usage_logs に残す（今まで返信生成には付いていなかった）。
+    //   竹内「申込以降はいれない」: 申込フェーズ以降の会話にも印を付ける（開くスイッチは無い）
     const autoSendHeaders = {
       ...(conversationId ? { [LLM_CONVERSATION_HEADER]: conversationId } : {}),
       ...(autoSendConversation ? { [LLM_AUTO_SEND_HEADER]: "1" } : {}),
+      ...(postApplyConversation ? { [LLM_POST_APPLY_HEADER]: "1" } : {}),
     };
+
+    // ─── 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキングするように」────────────────
+    //   別クラウド（DeepSeek）へ回る時だけ読み替える。Claude へ行く時は null ＝ 送る文は1バイトも変わらない
+    //   （常にマスクすると、今まで積み上げた品質が全経路で一度に変わってしまう）。
+    //   **キャッシュの印が付いているブロックには触らない**：個人情報はそこに無いうえ、
+    //   前置きが変わるとプロンプトキャッシュが効かなくなる（DeepSeek は前置き一致で 1/30 の値段）。
+    const replyMasker = (!isTemplateOptimize && willRouteAlt("reply_generate", {
+      postApply: postApplyConversation, autoSend: autoSendConversation,
+    }))
+      ? createMasker({
+        conversationId: conversationId ?? "reply",
+        customerName: typeof customerName === "string" ? customerName : null,
+        knownNames: await loadKnownCustomerNames(),
+      })
+      : null;
+    const genMessages = replyMasker ? maskUncachedBlocks(messages, replyMasker) : messages;
+    if (replyMasker) console.log(JSON.stringify({ tag: "gen:masked", conversationId, entries: replyMasker.table().length }));
 
     // テンプレート最適化モードは maxTokens 広めの専用モデル（通常生成は createGenerationModel）
     const genStream = (isTemplateOptimize
       ? createTemplateOptimizeModel()
       : createGenerationModel({ defaultHeaders: autoSendHeaders })
-    ).stream(messages);
+    ).stream(genMessages);
 
     // B-2: 品質判定フラグ（自動返信ハードゲート用）
     // is_applying_docs は静的に判定可能なのでここで計算。
@@ -5035,6 +5099,18 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 }, { conversationId });
               }
               warnIfTruncated(stopReason, genInputLength);
+              // 2026-09-19 竹内: 読み替えた分をここで実名に戻す（後処理より先。挨拶の強制置換・検査は実名で動く）。
+              //   戻し切れなかったら**その下書きは使わない**（お客様に仮名で送る事故を防ぐ＝fail-closed）。
+              //   全文が揃ってから戻すので、仮名が chunk の境目で割れる心配はない。
+              if (replyMasker && fullText) {
+                const back = replyMasker.unmask(fullText);
+                const left = replyMasker.leftovers(back);
+                if (left.length > 0) {
+                  console.error(JSON.stringify({ tag: "gen:unmask-leftover", conversationId, count: left.length }));
+                  throw new Error("生成文の伏せ字を元に戻せませんでした。もう一度お試しください");
+                }
+                fullText = back;
+              }
               if (shouldPrependGreeting && !isTemplateOptimize) {
                 // 真の初回: 全バッファして冒頭挨拶を強制置換（AIが誤生成しても確実に正しい名前を出す）
                 // ※テンプレート最適化モードは常に下の通常バッファ経路（テンプレの構成を挨拶強制置換で壊さない）
@@ -5281,7 +5357,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       "[generate-reply] 最終チェック指摘あり→フィードバック再生成:",
                       retryIssues.map((it) => it.code).join(",")
                     );
-                    const retryMessages = [...messages, new AIMessage(draftBody), new HumanMessage(feedback)];
+                    // 2026-09-19 竹内: 修正ループも同じ読み替えを通す（1回目だけ伏せても2回目で実名が出る）。
+                    //   仮名は会話 ID から決まるので、1回目と同じ名前になり前置きのキャッシュも保たれる。
+                    const retryMessages = [
+                      ...genMessages,
+                      new AIMessage(replyMasker ? replyMasker.mask(draftBody) : draftBody),
+                      new HumanMessage(replyMasker ? replyMasker.mask(feedback) : feedback),
+                    ];
                     genIndex = 2;
                     const gen2 = await consumeGeneration(
                       // 修正ループも同じ印を付ける（自動返信の会話は再生成も Claude のまま）

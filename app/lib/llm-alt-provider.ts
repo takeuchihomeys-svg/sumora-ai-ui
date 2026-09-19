@@ -259,9 +259,11 @@ export function flattenContent(content: string | AnthropicBlock[] | undefined): 
 export function toOpenAIBody(
   body: AnthropicBody,
   model: string,
-  opts: { disableThinking?: boolean } = {},
+  opts: { disableThinking?: boolean; allowStream?: boolean } = {},
 ): Record<string, unknown> | null {
-  if (body.stream) return null;
+  // 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」: 変換（createSseConverter）を
+  //   用意した相手だけ 1文字ずつの形を通す。用意していない相手（Bedrock 等）は今までどおり対象外。
+  if (body.stream && !opts.allowStream) return null;
   const systemText = flattenContent(body.system);
   if (systemText === null) return null;
   const messages: Array<{ role: string; content: string }> = [];
@@ -283,6 +285,8 @@ export function toOpenAIBody(
     ...(typeof body.max_tokens === "number" ? { max_tokens: body.max_tokens } : {}),
     ...(typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
     ...(thinking ? { thinking } : {}),
+    // 1文字ずつの形。usage は最後の chunk で受け取る（include_usage）
+    ...(body.stream && opts.allowStream ? { stream: true, stream_options: { include_usage: true } } : {}),
   };
 }
 
@@ -327,12 +331,98 @@ export function fromOpenAIResponse(json: {
   };
 }
 
+// ── ストリーミングの変換（OpenAI 互換 → Anthropic）────────────────────────────
+// 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」:
+//   返信文の生成は .stream() で呼ぶので、今までは対象外にしていた（body.stream で null）。
+//   ここを通すには、DeepSeek が返す OpenAI 形式の SSE を **Anthropic 形式の SSE に組み直す**必要がある
+//   （呼び出し側は LangChain の ChatAnthropic で、Anthropic のイベント名しか読めない）。
+//   文字が1文字ずつ出てくる見た目はそのまま保たれる。
+//
+// 変換は純関数（createSseConverter）にしてテストで固定する。ここがズレると
+// 「生成が途中で止まる・空になる」という形で静かに壊れる。
+
+/** Anthropic の SSE 1件分を組み立てる */
+function sseEvent(type: string, payload: Record<string, unknown>): string {
+  return `event: ${type}\ndata: ${JSON.stringify({ type, ...payload })}\n\n`;
+}
+
+/**
+ * OpenAI 互換の SSE を Anthropic の SSE に変換する。
+ *   push(line) … 受け取った 1 行を渡すと、出すべき Anthropic の SSE を返す（無ければ空配列）
+ *   end()      … 終端のイベントを返す
+ * usage は DeepSeek が最後の chunk（stream_options.include_usage）で返すので、message_delta に載せる。
+ */
+export function createSseConverter(model: string) {
+  let started = false;
+  let finish = "end_turn";
+  let out = 0, inUncached = 0, inCached = 0;
+  let closed = false;
+  const startEvents = (): string[] => {
+    started = true;
+    return [
+      sseEvent("message_start", {
+        message: {
+          id: `alt_${Date.now().toString(36)}`, type: "message", role: "assistant", model,
+          content: [], stop_reason: null, stop_sequence: null,
+          usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      }),
+      sseEvent("content_block_start", { index: 0, content_block: { type: "text", text: "" } }),
+    ];
+  };
+  return {
+    push(line: string): string[] {
+      const t = line.trim();
+      if (!t.startsWith("data:")) return [];
+      const data = t.slice(5).trim();
+      if (!data || data === "[DONE]") return [];
+      let j: {
+        choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+        usage?: { completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number; prompt_tokens?: number };
+      };
+      try { j = JSON.parse(data); } catch { return []; }
+      const res: string[] = [];
+      if (j.usage) {
+        out = j.usage.completion_tokens ?? out;
+        inCached = j.usage.prompt_cache_hit_tokens ?? inCached;
+        inUncached = j.usage.prompt_cache_miss_tokens ?? j.usage.prompt_tokens ?? inUncached;
+      }
+      const c = j.choices?.[0];
+      if (c?.finish_reason) finish = c.finish_reason === "length" ? "max_tokens" : "end_turn";
+      const text = c?.delta?.content;
+      if (typeof text === "string" && text.length > 0) {
+        if (!started) res.push(...startEvents());
+        res.push(sseEvent("content_block_delta", { index: 0, delta: { type: "text_delta", text } }));
+      }
+      return res;
+    },
+    end(): string[] {
+      if (closed) return [];
+      closed = true;
+      const res: string[] = [];
+      if (!started) res.push(...startEvents()); // 1文字も来なかった時も形を壊さない
+      res.push(sseEvent("content_block_stop", { index: 0 }));
+      res.push(sseEvent("message_delta", { delta: { stop_reason: finish, stop_sequence: null }, usage: { output_tokens: out } }));
+      res.push(sseEvent("message_stop", {}));
+      return res;
+    },
+    usage: () => ({ input_tokens: inUncached, output_tokens: out, cache_read_input_tokens: inCached }),
+  };
+}
+
 /**
  * OpenAI 互換のエンドポイント（Azure AI Foundry / DeepSeek 本家）を呼ぶ。
  * 本文の形が同じなので、宛先と鍵の渡し方だけ変えれば同じ変換処理が使える。
  */
-async function callOpenAICompatible(cfg: AltProviderConfig, body: AnthropicBody, originalFetch: typeof fetch): Promise<Response | null> {
-  const payload = toOpenAIBody(body, cfg.model, { disableThinking: cfg.provider === "deepseek" });
+async function callOpenAICompatible(
+  cfg: AltProviderConfig,
+  body: AnthropicBody,
+  originalFetch: typeof fetch,
+  onUsage?: (u: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number }) => void,
+): Promise<Response | null> {
+  // 1文字ずつの形は DeepSeek だけ通す（Anthropic の SSE に組み直す変換を用意しているため）
+  const allowStream = cfg.provider === "deepseek";
+  const payload = toOpenAIBody(body, cfg.model, { disableThinking: cfg.provider === "deepseek", allowStream });
   if (!payload) return null;
   const res = await originalFetch(cfg.endpoint, {
     method: "POST",
@@ -341,9 +431,47 @@ async function callOpenAICompatible(cfg: AltProviderConfig, body: AnthropicBody,
       // Azure は api-key / Authorization のどちらでも通るので両方送る
       : { "Content-Type": "application/json", "api-key": cfg.apiKey, Authorization: `Bearer ${cfg.apiKey}` },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(50_000),
+    signal: AbortSignal.timeout(90_000),
   });
   if (!res.ok) throw new Error(`${cfg.provider} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+
+  // ── 1文字ずつの形: OpenAI の SSE を読みながら Anthropic の SSE を書き出す ──
+  if (body.stream && allowStream) {
+    if (!res.body) throw new Error(`${cfg.provider}: streaming の本文が無い`);
+    const conv = createSseConverter(cfg.model);
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+    const reader = res.body.getReader();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        let buf = "";
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            // 行が完成した分だけ処理する（chunk の途中で切れた行は次に持ち越す）
+            let nl: number;
+            while ((nl = buf.indexOf("\n")) >= 0) {
+              const line = buf.slice(0, nl);
+              buf = buf.slice(nl + 1);
+              for (const ev of conv.push(line)) controller.enqueue(enc.encode(ev));
+            }
+          }
+          for (const ev of conv.push(buf)) controller.enqueue(enc.encode(ev));
+          for (const ev of conv.end()) controller.enqueue(enc.encode(ev));
+          onUsage?.(conv.usage());
+        } catch (e) {
+          // 途中で切れた時も形は閉じる（呼び出し側の parser を壊さない）
+          try { for (const ev of conv.end()) controller.enqueue(enc.encode(ev)); } catch { /* 閉じ済み */ }
+          console.warn("[llm-alt] stream error:", String(e));
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream; charset=utf-8" } });
+  }
   const json = await res.json() as Parameters<typeof fromOpenAIResponse>[0];
   return new Response(JSON.stringify(fromOpenAIResponse(json, cfg.model)), {
     status: 200, headers: { "content-type": "application/json" },
@@ -417,24 +545,27 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     const sysHead = flattenContent(body.system);
     const conversationId = headers.get(LLM_CONVERSATION_HEADER);
     try {
+      const writeUsage = (usage: Record<string, number>, ms: number) => recordAltUsage({
+        model: cfg.model, action: routeName, conversationId,
+        usage, status: 200, errorType: null, durationMs: ms,
+        sysHead, sysKeyFull: sysHead, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
+      });
       const res = cfg.provider === "bedrock"
         ? await callBedrock(cfg, body)
-        : await callOpenAICompatible(cfg, body, original);
-      if (!res) return original(input as RequestInfo, init); // 画像・streaming 等は今までどおり
+        // 1文字ずつの形は応答を読み切ってから usage が分かるので、コールバックで受ける
+        : await callOpenAICompatible(cfg, body, original, (u) => writeUsage(u as unknown as Record<string, number>, Date.now() - started));
+      if (!res) return original(input as RequestInfo, init); // 画像等は今までどおり
       const ms = Date.now() - started;
-      console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: cfg.provider, model: cfg.model, ms }));
+      console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: cfg.provider, model: cfg.model, stream: !!body.stream, ms }));
       // 2026-09-19 本番の検証で見つけた穴: fetch の出口の記録は Anthropic 宛てだけを見るので、
       //   別クラウドに回った分は1行も残らなかった（費用も質も後から追えない）。ここで自分で書く。
-      try {
-        const clone = res.clone();
-        clone.json().then((j: { usage?: Record<string, number> }) => {
-          recordAltUsage({
-            model: cfg.model, action: routeName, conversationId,
-            usage: j.usage ?? {}, status: 200, errorType: null, durationMs: ms,
-            sysHead, sysKeyFull: sysHead, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
-          });
-        }).catch(() => { });
-      } catch { /* 記録の失敗で応答を止めない */ }
+      //   1文字ずつの形は上のコールバックで書くので、ここでは読み切りの形だけ
+      if (!body.stream) {
+        try {
+          const clone = res.clone();
+          clone.json().then((j: { usage?: Record<string, number> }) => writeUsage(j.usage ?? {}, ms)).catch(() => { });
+        } catch { /* 記録の失敗で応答を止めない */ }
+      }
       return res;
     } catch (e) {
       console.warn("[llm-alt] failed:", String(e));

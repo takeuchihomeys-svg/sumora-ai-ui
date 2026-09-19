@@ -231,9 +231,30 @@ console.log("── ★ AIX に実際に配線されているか（消えても�
   t("★ 判定に失敗したら回さない側へ倒す（fail-closed）",
     /ctx\.postApply = true;\s*\n\s*ctx\.masker = null;/.test(aix));
   t("★ 事例の他人の名前も照合対象にしている（当事者だけでは足りない）",
-    /knownNames:\s*await loadKnownNames\(\)/.test(aix));
+    /knownNames:\s*await loadKnownCustomerNames\(\)/.test(aix));
   t("★ 画像つきの呼び出しは素通し（対象外なので読み替えない）",
     /callClaudeVision[\s\S]{0,400}?dynamicSuffix: dynamicSystemSuffix/.test(aix));
+  t("★ 名前の正解集合は AIX と返信生成で同じ物を使う（同じ事実を2か所に置かない）",
+    /loadKnownCustomerNames\(\)/.test(aix));
+}
+
+console.log("── ★ 返信文の生成にも配線されているか（竹内「返信の部分も deepseek に切り替えよかな」）");
+{
+  const gen = readFileSync("app/api/generate-reply/route.ts", "utf8");
+  t("★ 回る時だけ読み替え器を作る（Claude へ行く時は素通し）",
+    /willRouteAlt\("reply_generate", \{[\s\S]{0,120}?postApply: postApplyConversation, autoSend: autoSendConversation/.test(gen));
+  t("★ キャッシュの印が無いブロックだけ読み替える（前置きを壊さない）",
+    /if \(b\.cache_control\) return b;/.test(gen) && /maskUncachedBlocks\(messages, replyMasker\)/.test(gen));
+  t("★ 生成文を実名に戻している（後処理より先）", /replyMasker\.unmask\(fullText\)/.test(gen));
+  t("★ 戻し切れなければその下書きを使わない（fail-closed）",
+    /gen:unmask-leftover/.test(gen) && /throw new Error\("生成文の伏せ字を元に戻せませんでした/.test(gen));
+  t("★ 修正ループ（再生成）にも同じ読み替えを通す（1回目だけ伏せても2回目で実名が出る）",
+    /\.\.\.genMessages,\s*\n\s*new AIMessage\(replyMasker \? replyMasker\.mask\(draftBody\)/.test(gen));
+  t("★ 申込以降は印を付けて回さない（竹内「申込以降はいれない」）",
+    /postApplyConversation \? \{ \[LLM_POST_APPLY_HEADER\]: "1" \}/.test(gen)
+    && /postApplyConversation = isPostApplyStatus\(row\?\.status \?\? null\)/.test(gen));
+  t("★ 状態が読めない時は「回さない」側へ倒す（fail-closed）",
+    /\/\/ 読めなければ自動返信は false[\s\S]{0,120}?postApplyConversation = true;/.test(gen));
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`);
