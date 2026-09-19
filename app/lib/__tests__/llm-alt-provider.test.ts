@@ -286,6 +286,28 @@ console.log("── Anthropic の形 → Azure（OpenAI 互換）の形");
   t("max_tokens / temperature が移る", o.max_tokens === 800 && o.temperature === 0.3);
 }
 
+console.log("── ★ 思考モードを切る（実際に叩いて分かった穴・2026-09-19）");
+{
+  // DeepSeek V4 は思考モードが既定でオン（effort=high）。思考は reasoning_content に入るが
+  // **max_tokens は思考ぶんも食う**。max_tokens=64 で試したら思考だけで使い切って本文が空だった。
+  // AIX の max_tokens は 256〜1500 なので、そのままだと空の下書きが返ることがある。
+  const src = { system: "s", messages: [{ role: "user", content: "u" }], max_tokens: 256, thinking: { type: "disabled" as const } };
+  const ds = toOpenAIBody(src as Parameters<typeof toOpenAIBody>[0], "deepseek-v4-pro", { disableThinking: true })!;
+  t("★ DeepSeek 宛ては thinking を切る", JSON.stringify(ds.thinking) === JSON.stringify({ type: "disabled" }));
+  const noSpec = toOpenAIBody({ system: "s", messages: [{ role: "user", content: "u" }] } as Parameters<typeof toOpenAIBody>[0], "deepseek-v4-pro", { disableThinking: true })!;
+  t("★ 呼び出し側が指定していなくても切る（既定オンなので黙って本文が空になる）",
+    JSON.stringify(noSpec.thinking) === JSON.stringify({ type: "disabled" }));
+  const enabled = toOpenAIBody({ system: "s", messages: [{ role: "user", content: "u" }], thinking: { type: "enabled" } } as Parameters<typeof toOpenAIBody>[0], "deepseek-v4-pro", { disableThinking: true })!;
+  t("呼び出し側が明示的に思考させたい時はその指定を尊重する",
+    JSON.stringify(enabled.thinking) === JSON.stringify({ type: "enabled" }));
+  const azure = toOpenAIBody(src as Parameters<typeof toOpenAIBody>[0], "DeepSeek-V4-Pro")!;
+  t("★ Azure には付けない（知らない項目で 400 を返す相手がいる）", !("thinking" in azure));
+
+  const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
+  t("★ DeepSeek の時だけ切る指定を渡している",
+    /disableThinking: cfg\.provider === "deepseek"/.test(provider));
+}
+
 console.log("── ★ 対象外はそのまま Anthropic へ（null を返す）");
 {
   t("ストリーミングは対象外", toOpenAIBody({ stream: true, messages: [{ role: "user", content: "x" }] }, "m") === null);

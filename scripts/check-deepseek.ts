@@ -24,8 +24,10 @@ async function call(userText: string) {
   const body = toOpenAIBody({
     system: [{ type: "text", text: `あなたは賃貸仲介のアシスタントです。\n${FIXED_PREFIX}` }],
     messages: [{ role: "user", content: [{ type: "text", text: userText }] }],
-    max_tokens: 64,
-  } as Parameters<typeof toOpenAIBody>[0], model);
+    max_tokens: Number(process.argv.find((a) => a.startsWith("--max="))?.slice(6) ?? 600),
+    // AIX の callClaude が Anthropic に送っているのと同じ指定
+    thinking: { type: "disabled" },
+  } as Parameters<typeof toOpenAIBody>[0], model, { disableThinking: true });
   if (!body) throw new Error("toOpenAIBody が null（変換の対象外）");
 
   const t0 = Date.now();
@@ -38,9 +40,13 @@ async function call(userText: string) {
   const ms = Date.now() - t0;
   const text = await res.text();
   if (!res.ok) throw new Error(`${res.status}: ${text.slice(0, 400)}`);
-  const json = JSON.parse(text) as Parameters<typeof fromOpenAIResponse>[0] & { model?: string };
+  const json = JSON.parse(text) as Parameters<typeof fromOpenAIResponse>[0] & {
+    model?: string;
+    choices?: Array<{ message?: Record<string, unknown>; finish_reason?: string }>;
+  };
   const conv = fromOpenAIResponse(json, model) as { content: Array<{ text: string }>; usage: Record<string, number> };
-  return { json, conv, ms };
+  const msg = json.choices?.[0]?.message ?? {};
+  return { json, conv, ms, msgKeys: Object.keys(msg), finish: json.choices?.[0]?.finish_reason, msg };
 }
 
 async function main() {
@@ -49,7 +55,12 @@ async function main() {
     const a = await call("内覧希望のお客様に返す一文を作ってください。");
     console.log(`\n① 1回目  ${a.ms}ms`);
     console.log(`  返ってきたモデル名: ${a.json.model ?? "(なし)"}`);
-    console.log(`  本文: ${a.conv.content[0]?.text?.slice(0, 60)}`);
+    console.log(`  本文: ${JSON.stringify(a.conv.content[0]?.text?.slice(0, 80) ?? "")}`);
+    console.log(`  message の項目: ${a.msgKeys.join(", ")}  finish_reason=${a.finish}`);
+    // V4 は「思考モード」があり、思考が reasoning_content に入って content が空になることがある。
+    // 本番の max_tokens は 256〜1500 程度なので、思考で使い切ると**空の下書き**が返る（要確認）
+    const rc = a.msg.reasoning_content;
+    if (typeof rc === "string") console.log(`  reasoning_content: ${rc.length}字 / ${JSON.stringify(rc.slice(0, 60))}`);
     console.log(`  usage: 一致=${a.json.usage?.prompt_cache_hit_tokens ?? "-"} 不一致=${a.json.usage?.prompt_cache_miss_tokens ?? "-"} 出力=${a.json.usage?.completion_tokens ?? "-"}`);
 
     const b = await call("内覧希望のお客様に返す一文を、別の言い方で作ってください。");

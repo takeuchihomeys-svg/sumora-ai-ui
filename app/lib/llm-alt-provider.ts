@@ -221,6 +221,8 @@ export type AnthropicBody = {
   max_tokens?: number;
   temperature?: number;
   stream?: boolean;
+  /** AIX の callClaude は {type:"disabled"} を送っている。DeepSeek も同じ形を受け取る */
+  thinking?: { type: "disabled" | "enabled" };
 };
 
 /** Anthropic の content（文字列 or ブロック配列）を平文にする。画像ブロックがあれば null（対象外） */
@@ -236,8 +238,24 @@ export function flattenContent(content: string | AnthropicBlock[] | undefined): 
   return parts.join("\n");
 }
 
-/** Anthropic の本文 → OpenAI 互換（Azure AI Foundry）の本文。対象外なら null */
-export function toOpenAIBody(body: AnthropicBody, model: string): Record<string, unknown> | null {
+/**
+ * Anthropic の本文 → OpenAI 互換（Azure AI Foundry / DeepSeek 本家）の本文。対象外なら null。
+ *
+ * 2026-09-19 実際に叩いて分かったこと（scripts/check-deepseek.ts）:
+ *   **DeepSeek V4 は思考モードが既定でオン**（effort は high）。思考は reasoning_content に入り、
+ *   本文（content）とは別だが、**max_tokens は思考ぶんも食う**。max_tokens=64 で試したら
+ *   思考だけで使い切って**本文が空**になった。AIX の max_tokens は 256〜1500 なので、
+ *   そのままだと空の下書きが返ることがある。
+ *   → DeepSeek 宛ては thinking:{type:"disabled"} を送る。
+ *     AIX の callClaude は元々 Anthropic に thinking:{type:"disabled"} を送っており、
+ *     変換でそれを捨てていた＝**元からある意図をそのまま通す**形にする。
+ *   ※ Azure には付けない（知らない項目で 400 を返す相手がいるため）。
+ */
+export function toOpenAIBody(
+  body: AnthropicBody,
+  model: string,
+  opts: { disableThinking?: boolean } = {},
+): Record<string, unknown> | null {
   if (body.stream) return null;
   const systemText = flattenContent(body.system);
   if (systemText === null) return null;
@@ -249,11 +267,17 @@ export function toOpenAIBody(body: AnthropicBody, model: string): Record<string,
     messages.push({ role: m.role === "assistant" ? "assistant" : "user", content: text });
   }
   if (messages.filter((m) => m.role !== "system").length === 0) return null;
+  // 呼び出し側（AIX の callClaude）が Anthropic に送っている thinking をそのまま尊重する。
+  // 指定が無い時も DeepSeek 宛ては切る（既定オンなので、黙って max_tokens を食われて本文が空になる）
+  const thinking = opts.disableThinking
+    ? (body.thinking?.type === "enabled" ? body.thinking : { type: "disabled" as const })
+    : undefined;
   return {
     model,
     messages,
     ...(typeof body.max_tokens === "number" ? { max_tokens: body.max_tokens } : {}),
     ...(typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
+    ...(thinking ? { thinking } : {}),
   };
 }
 
@@ -303,7 +327,7 @@ export function fromOpenAIResponse(json: {
  * 本文の形が同じなので、宛先と鍵の渡し方だけ変えれば同じ変換処理が使える。
  */
 async function callOpenAICompatible(cfg: AltProviderConfig, body: AnthropicBody, originalFetch: typeof fetch): Promise<Response | null> {
-  const payload = toOpenAIBody(body, cfg.model);
+  const payload = toOpenAIBody(body, cfg.model, { disableThinking: cfg.provider === "deepseek" });
   if (!payload) return null;
   const res = await originalFetch(cfg.endpoint, {
     method: "POST",
