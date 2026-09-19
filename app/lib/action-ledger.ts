@@ -988,6 +988,21 @@ export const DONE_PRESUPPOSING_VOCAB: DonePresupVocab[] = [
   { key: 'redo_viewing', re: new RegExp(`(?:再度|改めて|もう一度)${NX}{0,12}?(?:ご案内|ご内覧|内覧)`),
     requires: ['viewingInvited'], requiresLabel: '内覧打診 ≥1', code: 'DONE_PRESUPPOSED_WITHOUT_EVIDENCE', severity: 'block',
     label: '「再度ご案内」（内覧打診・案内が1度済んでいる前提）', fix: (m) => m.replace(REDO, '') },
+  // 2026-09-19 竹内（慶次事例）「なんでこんな意味分からん文が生成されているのか？」:
+  //   条件変更の場面（「中央大通りより北側で」「ミナミ方面は避けたい」）に
+  //   「本日はご内覧頂きありがとうございました！！」が生成された。この会話に内覧の事実は無い。
+  //   出所は**手本（ai_reply_examples）**で、proposing の手本4,292件のうち37件が内覧後のお礼。
+  //   その手本の顧客メッセージは「つきました！」「お願いします！」「かしこまりました！」＝
+  //   慶次さんの「ありがとうございます／よろしくお願いします」と埋め込みが近く、場面違いのまま引かれていた。
+  //   実行前提語ゲートに「内覧が完了した前提のお礼」が無かったので素通りした（redo_viewing は「再度ご案内」だけ）。
+  //   【線の引き方（実送信11,985通で測った）】当たる文は68通。
+  //     ・待ち合わせ案内（meetingPlaceSent）だけを要求 → **5通が誤削除**（電話や来店で決めた本物の内覧後のお礼）
+  //     ・待ち合わせ **または 内覧打診**（viewingInvited）に緩める → **誤削除0通**
+  //   ＝「その会話で内覧の話が一度でも出ているか」が正しい線。慶次さんの会話は内覧の話が一度も無い。
+  { key: 'viewing_thanks', re: /(?:本日|先日|昨日)[^\n。！!]{0,8}(?:ご内覧|内覧|ご見学|お時間)[^\n。！!]{0,10}(?:頂き|いただき|くださり|下さり)[^\n。！!]{0,8}(?:ありがとう|有難う)/,
+    requires: (f) => f.meetingPlaceSent || f.viewingInvited,
+    requiresLabel: '待ち合わせ案内 または 内覧打診 ≥1（その会話で内覧の話が一度でも出ている）', code: 'DONE_PRESUPPOSED_WITHOUT_EVIDENCE', severity: 'block',
+    label: '「本日はご内覧頂きありがとうございました」（内覧が完了している前提）', fix: () => '' },
   { key: 'redo_apply', re: new RegExp(`(?:再度|改めて|もう一度)${NX}{0,12}?お申込`),
     requires: ['applicationGuided'], requiresLabel: '申込打診 ≥1', code: 'DONE_PRESUPPOSED_WITHOUT_EVIDENCE', severity: 'block',
     label: '「再度お申込み」（申込が1度成立している前提）', fix: (m) => m.replace(REDO, '') },

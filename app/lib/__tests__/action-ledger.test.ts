@@ -316,5 +316,45 @@ describe("往復セル・台帳の細部", () => {
   });
 });
 
+// ── 2026-09-19 竹内（慶次事例）: 内覧が完了した前提のお礼 ─────────────────────
+//   条件変更の場面に「本日はご内覧頂きありがとうございました！！」が生成された（会話に内覧の事実なし）。
+//   出所は手本（proposing の手本4,292件中37件が内覧後のお礼で、顧客メッセージが「つきました！」等の
+//   短い相槌＝慶次さんの「ありがとうございます／よろしくお願いします」と埋め込みが近い）。
+//   線は実送信11,985通で測った: 待ち合わせだけを要求すると5通が誤削除・内覧打診まで含めると誤削除0。
+it("#慶次 viewing_thanks: 内覧の話が一度も無い会話では「本日はご内覧頂きありがとうございました」を落とす", () => {
+  const noViewing = buildActionLedger({
+    recentAixRows: [{ aix_type: "property_recommendation", created_at: T("09-19T07:44"), sent_at: T("09-19T07:44") }] as LedgerAixRow[],
+    messages: [
+      { sender: "staff", text: "慶次さんお世話になっております！！\n敷金礼金なしのご条件でオススメできるお部屋ピックアップさせて頂きました！！", created_at: T("09-19T07:45") },
+      { sender: "customer", text: "ありがとうございます。出来れば中央大通りより北側でお願いしたいです。本当にわがままばかり言いまして申し訳ありません。", created_at: T("09-19T08:40") },
+    ] as LedgerMessage[],
+    lineTasks: [] as LedgerTask[], lastCustomerAt: T("09-19T08:40"), now: Date.parse(T("09-19T08:41")),
+  });
+  const draft = "かしこまりました！！\n本日はご内覧頂きありがとうございました！！\nまた何か気になる点やご質問等ございましたら、いつでもお気軽にご連絡ください！！";
+  const hits = checkDonePresupposition(draft, noViewing, { customerMessage: "出来れば中央大通りより北側でお願いしたいです", name: "慶次さん" });
+  const h = hits.find((x) => x.key === "viewing_thanks");
+  expect(h?.severity).toBe("block");
+  expect(h?.exempt).toBe(null);
+  // 決定論の自動修正でその文だけ消える（他の行は残る）
+  const fx = applyLedgerAutoFix(draft, noViewing, { customerMessage: "出来れば中央大通りより北側でお願いしたいです", name: "慶次さん" });
+  expect(fx.text.includes("本日はご内覧頂きありがとうございました")).toBe(false);
+  expect(fx.text.includes("かしこまりました！！")).toBe(true);
+  expect(fx.text.includes("いつでもお気軽にご連絡ください")).toBe(true);
+});
+it("#慶次 viewing_thanks: 内覧の打診がある会話では落とさない（実送信68通が全部こちら）", () => {
+  const withViewing = buildActionLedger({
+    recentAixRows: [{ aix_type: "viewing_invite", created_at: T("09-18T04:00"), sent_at: T("09-18T04:00") }] as LedgerAixRow[],
+    messages: [
+      { sender: "staff", text: "直近ですと明日 9/18(金) 16:30〜18:30にてご案内可能です！！", created_at: T("09-18T04:01") },
+      { sender: "customer", text: "つきました！", created_at: T("09-19T08:00") },
+    ] as LedgerMessage[],
+    lineTasks: [] as LedgerTask[], lastCustomerAt: T("09-19T08:00"), now: Date.parse(T("09-19T08:01")),
+  });
+  const sent = "関さん\n本日お時間頂きありがとうございました😊！！\n引き続き全力でサポートさせて頂きます！！";
+  const h = checkDonePresupposition(sent, withViewing, { customerMessage: "つきました！", name: "関さん" }).find((x) => x.key === "viewing_thanks");
+  expect(h?.exempt).toBe("evidence");   // 証拠あり＝落とさない
+  expect(applyLedgerAutoFix(sent, withViewing, { customerMessage: "つきました！", name: "関さん" }).text).toBe(sent);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log(failures.map((f) => `- ${f}`).join("\n")); process.exit(1); }
