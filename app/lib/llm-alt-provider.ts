@@ -48,10 +48,16 @@ export type AltProviderConfig = {
 /**
  * 環境変数から設定を読む。欠けていたら null（＝何もしない）。
  *   LLM_ALT_PROVIDER=azure
- *   AZURE_AI_ENDPOINT=https://xxx.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview
+ *   AZURE_AI_ENDPOINT=https://<リソース名>.services.ai.azure.com/openai/v1/chat/completions
  *   AZURE_AI_KEY=...
- *   AZURE_AI_MODEL=DeepSeek-V4-Flash
- *   LLM_ALT_ACTIONS=property_send,condition_hearing   ← замена する経路だけを書く
+ *   AZURE_AI_MODEL=DeepSeek-V4-Flash   ← Foundry の「デプロイ名」（モデル名とは別物）
+ *   LLM_ALT_ACTIONS=property_send,condition_hearing   ← 切り替える経路だけを書く
+ *
+ * ⚠ エンドポイントは「openai/v1」の経路（api-version を付けない・暗黙のバージョン管理）。
+ *   2026-09-19 に Microsoft Learn で確認。古い「models/chat/completions?api-version=...」も
+ *   まだ動くが、api-version を書き間違えると 404 になるので v1 の方を使う。
+ *   .openai.azure.com と .services.ai.azure.com のどちらのホストでも同じものを指す。
+ *   鍵は Authorization: Bearer でも api-key でも通るので、下の callAzure は両方を送っている。
  */
 export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | null {
   const provider = (env.LLM_ALT_PROVIDER ?? "").trim().toLowerCase();

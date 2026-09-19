@@ -84,13 +84,30 @@
 
 ```
 LLM_ALT_PROVIDER = azure
-AZURE_AI_ENDPOINT = https://<resource>.services.ai.azure.com/models/chat/completions?api-version=...
+AZURE_AI_ENDPOINT = https://<リソース名>.services.ai.azure.com/openai/v1/chat/completions
 AZURE_AI_KEY = <キー>
-AZURE_AI_MODEL = DeepSeek-V4-Flash
+AZURE_AI_MODEL = <デプロイ名>                ← モデル名ではなく Foundry で付けた「デプロイ名」
 LLM_ALT_ACTIONS = reply_generate          ← ここを増やして段階的に広げる
 LLM_ALT_FALLBACK = on                     ← 失敗したら Anthropic に戻す（既定 on）
 LLM_ALT_AUTO_SEND = off                   ← 自動返信の会話も切り替えるか（既定 off・on の一語だけで開く）
 ```
+#### Azure AI Foundry の登録手順（2026-09-19 に Microsoft Learn で確認）
+
+1. **Azure アカウント** — portal.azure.com で作成。**支払い方法の登録が要る**（無料・試用のサブスクリプションでは
+   モデルをデプロイできない）
+2. **Foundry のプロジェクト** — ai.azure.com →「新しいプロジェクトの作成」。リソース名がそのままエンドポイントの
+   ホスト名になる（例 `sumora-ai`）。リージョンは **East US 2** が無難（DeepSeek が出るのが早い）
+3. **モデルをデプロイ** — 左の「モデルカタログ」→ `DeepSeek-V4-Flash` →「このモデルを使う / デプロイ」。
+   **デプロイ名をメモする**（これが `AZURE_AI_MODEL`。モデル名と同じにしておくと混乱しない）
+4. **キーとエンドポイント** — 左の「モデル + エンドポイント」→ そのデプロイを開く。「キー」をコピー
+5. **Vercel の環境変数**に入れる（下の表）。`LLM_ALT_ACTIONS` は **`reply_generate` から**
+
+- エンドポイントは **`/openai/v1/chat/completions`**（`api-version` を付けない新しい経路）。
+  ポータルが表示する URL が `/models` 止まりや `?api-version=...` 付きのことがあるが、**v1 の方を手で組む**
+- レート上限は1デプロイあたり 200,000 トークン/分・1,000 リクエスト/分（うちの量なら十分）
+- **コンテンツフィルターが既定でオン**。弾かれても `LLM_ALT_FALLBACK=on` なら Anthropic に戻るので送信は止まらない
+- 請求は従量（pay-per-token）。Azure Portal の「コスト分析」で見る
+
 - **環境変数が欠けていたら何もしない**（今までどおり Anthropic）＝ fail-closed
 - **「all」は用意していない**（全部いっぺんに替えない）
 - 画像（Vision）と streaming は対象外＝そのまま Anthropic
