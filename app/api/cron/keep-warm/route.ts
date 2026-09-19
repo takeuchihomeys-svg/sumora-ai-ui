@@ -14,7 +14,17 @@ import { selectWarmTargets, KEEP_WARM_DEFAULTS, KEEP_WARM_TAIL_TEXT, type WarmBl
 //   費用の暴走は型で防ぐ: 直近5時間に実際に使われ・2回以上使われた変種のうち最近の上位3変種だけ・1 prefix あたり40〜55分に1回・1回で最大4件・JST 7〜24時以外は何もしない。
 //   読み直し自体は「使われた」と数えない（use_count / last_used_at は generate-reply の実リクエストだけが進める）。
 //   効いたかは llm_usage_logs（action = 'keep-warm' の行: cache_read ≈105k・cache_write 0／その後の generate-reply の cache_read）で見る。
-//   止める時は環境変数 KEEP_WARM=off。時間帯は KEEP_WARM_HOURS_JST（既定 "7-24"）
+//
+// 2026-09-19 竹内「KEEP_WARM とめるようにおねがい」→ **既定オフ**にした（開くのは KEEP_WARM=on の一語だけ）。
+//   止めた理由は「返信文が DeepSeek に移ったから」ではない（自動返信・申込以降は Claude のままなので対象は残っている。
+//   9/19 実測で Claude 23件／DeepSeek 15件）。実測で割に合わなくなったため:
+//   ・払う額: 10分毎の読み直しで cache_read ≈11万/日 ＝ **$0.74/日（月$22相当）**。呼び出し件数に関係なく固定でかかる
+//   ・取り戻す額: 全書き直し（cache_write≥50k）の費用は 前2日 $0.0355/回 → 後3日 $0.0277/回 ＝ **$0.44/日**
+//   ・差し引きマイナス。さらに DeepSeek へ移すほど Claude の呼び出しが減り、固定費だけが残って不利になる
+//   ※ 上の「週≈$22 の節約」は導入時の見込みで、実測では出ていない。平均のキャッシュ一致率では測れない
+//     （一致率は keep-warm の前後で 73.8→72.4% と変わらない。測るのは全書き直しの件数と額の方）
+//   戻す時は環境変数 KEEP_WARM=on。時間帯は KEEP_WARM_HOURS_JST（既定 "7-24"）
+//   llm_warm_prefixes への記録（generate-reply 側）は止めていないので、on にすればその場で効く
 //   反証で見つかった穴の直し（同日）:
 //   - claim を先にする: last_warmed_at / warm_count を invoke の前に書き（前回の値と一致した時だけ）、書けなければ読まない。
 //     invoke の後に update すると、update の失敗・maxDuration 超過で同じ行が10分毎に due になり続ける（費用ゼロ側に倒す）
@@ -66,8 +76,9 @@ export async function GET(req: NextRequest) {
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  if (process.env.KEEP_WARM === "off") {
-    return NextResponse.json({ ok: true, warmed: [], skipped: 0, reason: "disabled(KEEP_WARM=off)" });
+  // 既定オフ。開くのは "on" の一語だけ（true / 1 では開かない＝他のフラグのコピペで意図せず動かない）
+  if ((process.env.KEEP_WARM ?? "").trim() !== "on") {
+    return NextResponse.json({ ok: true, warmed: [], skipped: 0, reason: "disabled(既定オフ・KEEP_WARM=on で開く)" });
   }
 
   const runLogId = await startCronLog("keep-warm");
