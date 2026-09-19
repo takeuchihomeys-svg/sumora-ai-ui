@@ -19,11 +19,15 @@
 //   ・画像（Vision）と streaming は対象外＝そのまま Anthropic へ
 //   ・応答は Anthropic の形に戻すので、使用量の記録（llm_usage_logs）はそのまま動く（model 名で見分けられる）
 
-import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER } from "./llm-usage-recorder";
+import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "./llm-usage-recorder";
+import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 
-export type AltProvider = "azure" | "bedrock";
+export type AltProvider = "azure" | "bedrock" | "deepseek";
+
+/** DeepSeek 本家 API（OpenAI 互換）。Azure と同じ変換処理がそのまま使える */
+export const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions";
 export type EnvLike = Record<string, string | undefined>;
 
 export type AltProviderConfig = {
@@ -81,6 +85,14 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
     if (!region || !model || !env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) return null;
     return { provider: "bedrock", endpoint: region, apiKey: "", model, actions, fallbackToAnthropic, allowAutoSend };
   }
+  // DeepSeek 本家。OpenAI 互換なので Azure と同じ変換（toOpenAIBody / fromOpenAIResponse）で通る。
+  // 既に DEEPSEEK_API_KEY が物件評価・駅名解決で使われているので、鍵はそれを流用する。
+  if (provider === "deepseek") {
+    const apiKey = (env.DEEPSEEK_API_KEY ?? "").trim();
+    const model = (env.DEEPSEEK_MODEL ?? "deepseek-chat").trim();
+    if (!apiKey || !model) return null;
+    return { provider: "deepseek", endpoint: DEEPSEEK_ENDPOINT, apiKey, model, actions, fallbackToAnthropic, allowAutoSend };
+  }
   return null;
 }
 
@@ -127,6 +139,26 @@ export const ROUTE_MARKERS = {
 export function isAutoSendCall(headers: Headers): boolean {
   const v = (headers.get(LLM_AUTO_SEND_HEADER) ?? "").trim();
   return v === "1" || v.toLowerCase() === "true";
+}
+
+/**
+ * 申込以降の会話か（呼び出し側が x-sumora-llm-post-apply: 1 を付ける）。
+ * 2026-09-19 竹内「申込以降は渡さなくて大丈夫、申込までのツールなので」
+ *   申込フェーズ以降は個人情報（本人確認書類・申込書・勤務先・年収・保証人）が集中するうえ、
+ *   このツールの仕事は申込までなので、別クラウドに回す必要がそもそも無い。
+ * **この印がある呼び出しは、LLM_ALT_ACTIONS に何を書いていても Claude のまま**（スイッチは用意しない）。
+ */
+export function isPostApplyCall(headers: Headers): boolean {
+  const v = (headers.get(LLM_POST_APPLY_HEADER) ?? "").trim();
+  return v === "1" || v.toLowerCase() === "true";
+}
+
+/**
+ * 状態が「申込以降」か。判定は conversation-status.DRAFT_SKIP_STATUSES を正とする
+ * （同じ事実を2か所に置かない。あちらは「自動下書きを作らない状態」で、集合は同じ）。
+ */
+export function isPostApplyStatus(status: string | null | undefined): boolean {
+  return DRAFT_SKIP_STATUSES.has((status ?? "").trim());
 }
 
 export function resolveRouteName(action: string | null, systemHead: string | null): string | null {
@@ -208,17 +240,23 @@ export function fromOpenAIResponse(json: {
   };
 }
 
-/** Azure AI Foundry（OpenAI 互換）を呼ぶ */
-async function callAzure(cfg: AltProviderConfig, body: AnthropicBody, originalFetch: typeof fetch): Promise<Response | null> {
+/**
+ * OpenAI 互換のエンドポイント（Azure AI Foundry / DeepSeek 本家）を呼ぶ。
+ * 本文の形が同じなので、宛先と鍵の渡し方だけ変えれば同じ変換処理が使える。
+ */
+async function callOpenAICompatible(cfg: AltProviderConfig, body: AnthropicBody, originalFetch: typeof fetch): Promise<Response | null> {
   const payload = toOpenAIBody(body, cfg.model);
   if (!payload) return null;
   const res = await originalFetch(cfg.endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "api-key": cfg.apiKey, Authorization: `Bearer ${cfg.apiKey}` },
+    headers: cfg.provider === "deepseek"
+      ? { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` }
+      // Azure は api-key / Authorization のどちらでも通るので両方送る
+      : { "Content-Type": "application/json", "api-key": cfg.apiKey, Authorization: `Bearer ${cfg.apiKey}` },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(50_000),
   });
-  if (!res.ok) throw new Error(`azure ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) throw new Error(`${cfg.provider} ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const json = await res.json() as Parameters<typeof fromOpenAIResponse>[0];
   return new Response(JSON.stringify(fromOpenAIResponse(json, cfg.model)), {
     status: 200, headers: { "content-type": "application/json" },
@@ -281,12 +319,18 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     //   人の目を通さずに送る文なので、既定では**何を指定していても**別のクラウドに回さない（最優先の歯止め）。
     //   竹内「慣れて問題なければ切り変えていく」→ LLM_ALT_AUTO_SEND=on にした時だけ開く
     if (isAutoSendCall(headers) && !cfg.allowAutoSend) return original(input as RequestInfo, init);
+    // 2026-09-19 竹内「申込以降は渡さなくて大丈夫、申込までのツールなので」:
+    //   申込フェーズ以降は個人情報（本人確認書類・申込書・勤務先・年収・保証人）が集中し、
+    //   かつこのツールの仕事は申込までなので、回す必要がそもそも無い。**スイッチは用意しない**
+    if (isPostApplyCall(headers)) return original(input as RequestInfo, init);
     const routeName = resolveRouteName(headers.get(LLM_ACTION_HEADER), flattenContent(body.system));
     if (!shouldRouteAlt(cfg, routeName)) return original(input as RequestInfo, init);
 
     const started = Date.now();
     try {
-      const res = cfg.provider === "azure" ? await callAzure(cfg, body, original) : await callBedrock(cfg, body);
+      const res = cfg.provider === "bedrock"
+        ? await callBedrock(cfg, body)
+        : await callOpenAICompatible(cfg, body, original);
       if (!res) return original(input as RequestInfo, init); // 画像・streaming 等は今までどおり
       console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: cfg.provider, model: cfg.model, ms: Date.now() - started }));
       return res;

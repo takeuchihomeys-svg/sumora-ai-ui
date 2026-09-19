@@ -3,9 +3,10 @@
 // 実行: npx tsx app/lib/__tests__/llm-alt-provider.test.ts（全 PASS で exit 0）
 import { readFileSync } from "node:fs";
 import {
-  readAltConfig, shouldRouteAlt, resolveRouteName, toOpenAIBody, fromOpenAIResponse, flattenContent, ROUTE_MARKERS, isAutoSendCall,
+  readAltConfig, shouldRouteAlt, resolveRouteName, toOpenAIBody, fromOpenAIResponse, flattenContent, ROUTE_MARKERS,
+  isAutoSendCall, isPostApplyCall, isPostApplyStatus, DEEPSEEK_ENDPOINT,
 } from "../llm-alt-provider";
-import { LLM_AUTO_SEND_HEADER } from "../llm-usage-recorder";
+import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra = "") {
@@ -72,6 +73,47 @@ console.log("── ★ 自動返信オンの会話は、何を指定してい�
   const cfg = readAltConfig({ ...AZURE, LLM_ALT_ACTIONS: "reply_generate" })!;
   t("★ 設定上は返信文を切り替える指定でも…", shouldRouteAlt(cfg, "reply_generate"));
   t("★ …自動返信の印があれば回さない（印の判定が先）", isAutoSendCall(h("1")));
+}
+
+console.log("── ★ 申込以降は渡さない（竹内「申込までのツールなので」・スイッチは用意しない）");
+{
+  const h = (v?: string) => { const x = new Headers(); if (v !== undefined) x.set(LLM_POST_APPLY_HEADER, v); return x; };
+  t("★ 印があれば申込以降（切り替えない）", isPostApplyCall(h("1")));
+  t("true でも同じ", isPostApplyCall(h("true")));
+  t("印が無ければ申込前", !isPostApplyCall(h()));
+  t("0 は申込以降ではない", !isPostApplyCall(h("0")));
+
+  // 状態の集合は conversation-status を正とする（同じ事実を2か所に置かない）
+  for (const s of ["applying", "application", "screening", "approved", "contract", "closed_won", "closed_lost", "lost"]) {
+    t(`★ ${s} は申込以降`, isPostApplyStatus(s));
+  }
+  for (const s of ["hearing", "condition_hearing", "property_search", "proposing", "property_recommendation", "availability_check", "estimate_request", "viewing", "first_reply", ""]) {
+    t(`${s || "(空)"} は申込前`, !isPostApplyStatus(s));
+  }
+  t("null / undefined は申込前（既定）", !isPostApplyStatus(null) && !isPostApplyStatus(undefined));
+
+  const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
+  t("★ fetch の入口で申込以降なら Anthropic へ戻している",
+    /isPostApplyCall\(headers\)\)\s*return original/.test(provider),
+    "この1行が消えると申込以降の会話が別クラウドに流れる");
+  t("★ 申込以降には「開くスイッチ」を作っていない",
+    !/LLM_ALT_POST_APPLY/.test(provider), "竹内『申込までのツールなので』＝開ける必要が無い");
+}
+
+console.log("── ★ DeepSeek 本家（OpenAI 互換・Azure と同じ変換で通る）");
+{
+  t("★ DEEPSEEK_API_KEY があれば有効",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "property_recommendation" })?.provider === "deepseek");
+  t("★ 宛先は api.deepseek.com の chat/completions",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.endpoint === DEEPSEEK_ENDPOINT);
+  t("★ モデルの既定は deepseek-chat",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.model === "deepseek-chat");
+  t("モデルは指定できる",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", DEEPSEEK_MODEL: "deepseek-v4-flash", LLM_ALT_ACTIONS: "a" })?.model === "deepseek-v4-flash");
+  t("★ 鍵が無ければ null（今までどおり Anthropic）",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", LLM_ALT_ACTIONS: "a" }) === null);
+  t("★ 自動返信・申込以降の歯止めは DeepSeek でも同じ",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.allowAutoSend === false);
 }
 
 console.log("── ★ 後で開けるスイッチ（竹内「慣れて問題なければ切り変えていく」）");

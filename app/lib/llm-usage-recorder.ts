@@ -24,6 +24,13 @@ export const LLM_CONVERSATION_HEADER = "x-sumora-llm-conversation";
  */
 export const LLM_AUTO_SEND_HEADER = "x-sumora-llm-auto-send";
 
+/**
+ * 2026-09-19 竹内「申込以降は渡さなくて大丈夫、申込までのツールなので」:
+ * 申込フェーズ以降の会話に付ける印。**この印がある呼び出しは別のクラウドに回さない**
+ * （個人情報が集中するうえ、このツールの仕事は申込まで）。llm-alt-provider が読む。
+ */
+export const LLM_POST_APPLY_HEADER = "x-sumora-llm-post-apply";
+
 export type LlmUsageRow = {
   route: string | null;
   model: string | null;
@@ -118,7 +125,7 @@ export function extractSumoraMarks(init: RequestInit | undefined): SumoraMarks {
   const h = init?.headers;
   if (!h) return none;
   // 2026-09-19 竹内: 自動返信の印（x-sumora-llm-auto-send）も Anthropic に送らずここで取り除く
-  const isMark = (k: string) => { const l = k.toLowerCase(); return l === LLM_ACTION_HEADER || l === LLM_CONVERSATION_HEADER || l === LLM_AUTO_SEND_HEADER; };
+  const isMark = (k: string) => { const l = k.toLowerCase(); return l === LLM_ACTION_HEADER || l === LLM_CONVERSATION_HEADER || l === LLM_AUTO_SEND_HEADER || l === LLM_POST_APPLY_HEADER; };
   const pick = (k: string, v: unknown, out: SumoraMarks) => {
     let s = typeof v === "string" ? v.trim() : "";
     if (!s) return;
@@ -126,7 +133,7 @@ export function extractSumoraMarks(init: RequestInit | undefined): SumoraMarks {
     if (s.includes("%")) { try { s = decodeURIComponent(s); } catch { /* 素の値 */ } }
     const l = k.toLowerCase();
     if (l === LLM_ACTION_HEADER) out.action = s;
-    else if (l === LLM_AUTO_SEND_HEADER) { /* 記録には使わない（llm-alt-provider が読む） */ }
+    else if (l === LLM_AUTO_SEND_HEADER || l === LLM_POST_APPLY_HEADER) { /* 記録には使わない（llm-alt-provider が読む） */ }
     else out.conversationId = s;
   };
   const out: SumoraMarks = { action: null, conversationId: null, init };
@@ -138,6 +145,7 @@ export function extractSumoraMarks(init: RequestInit | undefined): SumoraMarks {
     copy.delete(LLM_ACTION_HEADER);
     copy.delete(LLM_CONVERSATION_HEADER);
     copy.delete(LLM_AUTO_SEND_HEADER);
+    copy.delete(LLM_POST_APPLY_HEADER);
     out.init = { ...init, headers: copy };
     return out;
   }
