@@ -11,6 +11,8 @@ import { resolveViewingThread } from "../lib/viewing-thread";
 import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, latestCustomerTurnText, type RequestedViewingDate } from "../lib/viewing-date-request";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
 import { pickDaySlots, limitSlotsPerDay } from "../lib/viewing-slots";
+// 2026-09-19 竹内（あい事例）: 2通目は既定で付けない。ボタンを押した時だけセットする
+import { canOfferSecondMessage, buildSecondMessage } from "../lib/aix-second-message";
 import { customerRequestsPhoneCall, buildCallRequestText } from "../lib/phone-call";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
 // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件の名前（SUUMO の共有文等）を候補に出す
@@ -2669,13 +2671,11 @@ export default function AixModal({
       // 「会話を合わせる」生成かを記録（通常生成・再生成で上書きされるため常に最新の生成モードを反映）
       lastGenConvMatchRef.current = !!extraFlags?.conversation_match;
       // 申込催促系：2通目の締め文を自動生成（1分後送信）
-      if (actionType === "application_push" || (actionType === "followup_revive" && followupSubMode === "apply_supplement")) {
-        const _n = customerName ? (/(さん|様)$/.test(customerName) ? customerName : `${customerName}さん`) : "お客様";
-        const msg2 = `ご不明点等出てきましたら何時でもお気軽にご質問ください😊！！\n${_n}がご満足いくご入居が出来ますよう全力でサポートさせて頂きます！！`;
-        setPreview2(useEmoji ? msg2 : stripEmoji(msg2));
-      } else {
-        setPreview2("");
-      }
+      // 2026-09-19 竹内（あい事例）「通常時にセットされた状態にせず、2通目のボタン押したらセットされるようにする」:
+      //   ここで勝手にセットすると、そのまま送信した時に**1分後に自動で2通目が飛ぶ**。
+      //   実データ365日で 申込へ の AIX 68件に対し2通目の実送信は3件（4.4%）＝95.6%は要らない。
+      //   → 既定は空のまま。付けるのは下の「＋ 2通目を付ける」ボタンを押した時だけ。
+      setPreview2("");
       if (data.ai_components) setAiActionComponents(data.ai_components as Record<string, string>);
       setAixNotice(data.notice || "");
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
@@ -7227,7 +7227,7 @@ export default function AixModal({
                       >絵文字あり</button>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); setUseEmoji(false); setPreview(stripEmoji(preview)); }}
+                        onClick={(e) => { e.stopPropagation(); setUseEmoji(false); setPreview(stripEmoji(preview)); if (preview2) setPreview2(stripEmoji(preview2)); }}
                         className={`px-2.5 py-0.5 transition-colors ${!useEmoji ? "bg-[#667781] text-white" : "bg-white text-[#8696a0]"}`}
                       >なし</button>
                     </div>
@@ -7241,12 +7241,33 @@ export default function AixModal({
                   ⚠️ 物件名が特定できませんでした。送信前に直接編集してください。
                 </div>
               )}
+              {/* 2026-09-19 竹内（あい事例）「2通目ボタン押した時に表示されて送られるようにする。
+                    通常時にセットされた状態にせず、2通目のボタン押したらセットされるようにする」:
+                    既定は付けない（実データ365日で 申込へ 68件に対し2通目の実送信は3件＝4.4%）。
+                    押した時だけセットされ、外すボタンで取り消せる。 */}
+              {canOfferSecondMessage(actionType, followupSubMode) && !preview2 && preview.trim() && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const msg2 = buildSecondMessage(customerName);
+                    setPreview2(useEmoji ? msg2 : stripEmoji(msg2));
+                  }}
+                  className="mt-3 w-full rounded-2xl border-2 border-dashed border-orange-300 bg-orange-50/60 px-4 py-2.5 text-sm font-bold text-orange-600 transition hover:bg-orange-50"
+                >
+                  ＋ 2通目を付ける（1分後に自動送信）
+                </button>
+              )}
               {/* 2通目プレビュー（1分後送信） */}
               {preview2 && (
                 <div className="mt-3">
                   <div className="mb-1 flex items-center gap-1.5">
                     <span className="text-[11px] font-bold text-orange-600">⏱ 1分後に自動送信（2通目）</span>
                     <span className="text-[10px] text-[#8696a0]">タップして編集</span>
+                    <button
+                      type="button"
+                      onClick={() => setPreview2("")}
+                      className="ml-auto rounded-full border border-orange-200 bg-white px-2.5 py-0.5 text-[10px] font-bold text-orange-500"
+                    >外す</button>
                   </div>
                   <textarea
                     value={preview2}
