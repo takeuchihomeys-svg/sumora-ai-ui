@@ -21,6 +21,10 @@ import { createMasker } from "../app/lib/pii-pseudonym";
 const BASE = process.env.VERIFY_BASE_URL ?? "https://sumora-ai-ui.vercel.app";
 const CONV = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7"; // YUMA（竹内さん本人のテスト会話）
 const TIMES = Number(process.argv.find((a) => a.startsWith("--times="))?.slice(8) ?? 3);
+// 2026-09-19 竹内「静的なプロンプトキャッシュの部分と動的な部分は AIX-META と連携する点に注意して行う」:
+//   同じ本文で何度も叩くと**動的ブロックまで一致**してしまい、実務のキャッシュ率が測れない。
+//   お客様の発言を変えて叩くと「静的だけ一致・動的は毎回新規」という実務の形になる。
+const VARY = (process.argv.find((a) => a.startsWith("--messages="))?.slice(11) ?? "").split("|").filter(Boolean);
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -70,15 +74,17 @@ async function main() {
 
   const summary: Array<{ n: number; model: string; len: number; phrases: number; unseen: number; ms: number; hit: number; miss: number; blocked: boolean }> = [];
 
-  for (let i = 1; i <= TIMES; i++) {
-    console.log(`═══════ ${i} 回目 ═══════`);
+  const runs = VARY.length > 0 ? VARY.length : TIMES;
+  for (let i = 1; i <= runs; i++) {
+    const msg = VARY.length > 0 ? VARY[i - 1] : targetMessage;
+    console.log(`═══════ ${i} 回目 ═══════${VARY.length > 0 ? `  お客様: ${JSON.stringify(msg.slice(0, 40))}` : ""}`);
     const before = new Date(Date.now() - 5_000).toISOString();
     const t0 = Date.now();
     const res = await fetch(`${BASE}/api/generate-reply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        message: targetMessage,
+        message: msg,
         state: c?.status ?? "proposing",
         conversationId: CONV,
         customerName: c?.customer_name,
@@ -100,6 +106,7 @@ async function main() {
     // SSE（本文は data: の行に少しずつ届く）
     let text = "";
     let blocked = false;
+    let suggestedAix: { action?: string; scene?: string; source?: string } | null = null;
     for (const line of raw.split("\n")) {
       const t = line.trim();
       if (!t.startsWith("data:")) continue;
@@ -112,6 +119,40 @@ async function main() {
       } catch { /* 本文以外のイベント */ }
     }
     if (!text) text = raw.replace(/^data:\s*/gm, "").trim();   // 形が違っても中身は見る
+
+    // ── 本文だけを取り出す ────────────────────────────────────────────
+    // 応答には本文の前後に「画面用の情報」が付く。ここを混ぜて数えると、
+    // 検査結果の JSON の中の言葉まで「創作」として数えてしまう（1回目の測り方の誤り）。
+    //   先頭: {"ok":true,"quality":{...},"suggested_aix":{...}}  ← AIX の提案（画面のバナー用）
+    //   末尾: <<<FINAL_CHECK:{...}                                ← 最終チェックの結果
+    const finalCheckRaw = text.includes("<<<FINAL_CHECK") ? text.slice(text.indexOf("<<<FINAL_CHECK")) : "";
+    let body = text;
+    if (body.startsWith("{")) {
+      // 先頭の JSON を1つだけ外す（本文は改行のあとから始まる）
+      const nl = body.indexOf("\n");
+      if (nl > 0) {
+        try {
+          const head = JSON.parse(body.slice(0, nl)) as { suggested_aix?: { action?: string; scene?: string; source?: string } };
+          suggestedAix = head.suggested_aix ?? null;
+          body = body.slice(nl + 1);
+        } catch { /* JSON でなければ本文 */ }
+      }
+    }
+    if (finalCheckRaw) body = body.slice(0, body.indexOf("<<<FINAL_CHECK"));
+    text = body.trim();
+    // 最終チェックが差し戻した回数・block したかを読む（AIX には無い、返信文だけの関門）
+    let fcBlocked = false, fcRegen = 0, fcIssues: string[] = [];
+    if (finalCheckRaw) {
+      try {
+        const fc = JSON.parse(finalCheckRaw.replace(/^<<<FINAL_CHECK:/, "")) as
+          { ok?: boolean; regen_count?: number; first_pass_issues?: string[]; issues?: Array<{ code?: string; severity?: string }> };
+        fcRegen = fc.regen_count ?? 0;
+        fcIssues = fc.first_pass_issues ?? [];
+        fcBlocked = (fc.issues ?? []).some((i) => i.severity === "block");
+      } catch { /* 途中で切れていた */ }
+    }
+    blocked = fcBlocked;
+    console.log(`  最終チェック: ${fcBlocked ? "⚠ block あり" : "✅ 通過"}　差し戻し ${fcRegen} 回${fcIssues.length ? `　1回目の指摘: ${fcIssues.join(", ")}` : ""}`);
 
     console.log(`  ${ms}ms / ${text.length}字`);
     console.log("━━━━━━ 生成された文 ━━━━━━");
@@ -147,6 +188,14 @@ async function main() {
     const ds = gen.filter((r) => String(r.model).includes("deepseek"));
     const pick = ds[0] ?? gen[0];
     const hit = Number(pick?.cache_read ?? 0), miss = Number(pick?.input_uncached ?? 0);
+    // 2026-09-19 竹内「静的なプロンプトキャッシュの部分と動的な部分は AIX-META と連携する点に注意」:
+    //   ブレイン（Claude のまま）が出した判断が、読み替えを通しても生成に届いているかを見る。
+    //   AIX-META は**動的ブロック**（キャッシュされない側）にあるので、
+    //   一致＝静的部分・新規＝動的部分（AIX-META を含む）という切り分けになる。
+    const brainRows = rows.filter((r) => String(r.sys_head ?? "").includes("スモラAI") || String(r.sys_head ?? "").includes("会話全体の戦略"));
+    console.log(`  ブレイン（AIX-META）: ${brainRows.length > 0 ? `${brainRows.length}回 / ${brainRows.map((r) => r.model).join(", ")}` : "この生成では動いていない（既存の判断を使用）"}`);
+    console.log(`  AIX の提案: ${suggestedAix ? `${suggestedAix.action}（場面=${suggestedAix.scene} 出所=${suggestedAix.source}）` : "なし"}`);
+    console.log(`  静的/動的の切り分け: 静的（キャッシュ一致）${hit} / 動的（毎回新規・AIX-META 等）${miss}`);
     if (gen.length === 0) console.log("  ⚠ 返信生成の呼び出しが記録されていない");
     else if (ds.length > 0) console.log(`  ✅ DeepSeek で作られている（${ds[0].model}）キャッシュ ${hit + miss > 0 ? Math.round((100 * hit) / (hit + miss)) : 0}%`);
     else console.log(`  － まだ Claude（${gen[0].model}）`);
