@@ -129,6 +129,15 @@ it("★ AIX の出口にも配られている（返信生成だけに入れて�
   const aix = readFileSync("app/api/aix/action/route.ts", "utf8");
   expect(/isNotACustomerReply\(stripped\)/.test(aix)).toBe(true);
   expect(/tag: "aix:not-a-reply"/.test(aix)).toBe(true);
+  // 竹内「スタッフへの指示の部分はテキストボックス外に注意として入れる／テキストボックスにはいれない」
+  //   捨てる（エラー）のではなく、message は空・notice に載せて返す
+  expect(/return \{ message: "", notice: `⚠ お客様への返信になっていません/.test(aix)).toBe(true);
+  const ui = readFileSync("app/components/AixModal.tsx", "utf8");
+  // notice はテキストボックス（textarea）ではなく専用の枠に出る
+  expect(/\{aixNotice && \(/.test(ui)).toBe(true);
+  expect(/whitespace-pre-wrap break-words">\{aixNotice\}/.test(ui)).toBe(true);
+  // 本文が空なら送信ボタンは押せない（空のまま送られない）
+  expect(/disabled=\{loading \|\| !preview\.trim\(\)\}/.test(ui)).toBe(true);
   const gen = readFileSync("app/api/generate-reply/route.ts", "utf8");
   expect(/isNotACustomerReply/.test(gen)).toBe(true);
   const draft = readFileSync("app/lib/draft-text.ts", "utf8");

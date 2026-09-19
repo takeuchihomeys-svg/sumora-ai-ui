@@ -1710,9 +1710,15 @@ async function handleAction(request: NextRequest): Promise<Response> {
       //   返信生成（generate-reply）と下書き（draft-text）には isNotACustomerReply があったのに
       //   **AIX の出口には配られていなかった**（設計知見「出口の決定論も同じ関数で全経路に配る」）。
       //   行ごとに削る stripMetaNarration では、全部が返信でない時に何も落ちずに素通りする。
+      //   2026-09-19 竹内「このようなスタッフへの指示の部分はテキストボックス外に注意として入れるようにして
+      //     テキストボックスにはいれない」:
+      //   エラーにして捨てるのではなく、**注意（notice）として返す**。notice は画面でテキストボックスの
+      //   外に出る（AixModal の setAixNotice）ので、スタッフは「AI が何に困ったか」を読めるが、
+      //   お客様へ送る欄には1文字も入らない。
+      //   ＝ feedback_no_meta_in_draft「AI の作業メモは下書き欄に絶対入れない」を満たしつつ情報は捨てない。
       if (isNotACustomerReply(stripped)) {
         console.error(JSON.stringify({ tag: "aix:not-a-reply", action: currentAction, conversationId, head: stripped.slice(0, 80) }));
-        throw new Error("お客様への返信になっていない文が生成されました。もう一度お試しください");
+        return { message: "", notice: `⚠ お客様への返信になっていません（送信欄には入れていません）\n${stripped.trim()}` };
       }
       const meta = stripMetaNarration(stripped);
       if (meta.removed.length > 0) console.log(JSON.stringify({ tag: "aix:meta-narration-removed", action: currentAction, conversationId, removed: meta.removed.map((r) => r.slice(0, 60)) }));

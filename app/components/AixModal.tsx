@@ -7252,10 +7252,14 @@ export default function AixModal({
                   />
                 </div>
               )}
+              {/* 2026-09-19 竹内「このようなスタッフへの指示の部分はテキストボックス外に注意として入れる
+                    ようにして テキストボックスにはいれない」: AI がスタッフに向けて書いた文（材料が足りない等）は
+                    ここに出す。送信欄には1文字も入らない（本文が空なら送信ボタンは押せない）。
+                    whitespace-pre-wrap: 注意は複数行で返ることがあるので改行をそのまま見せる */}
               {aixNotice && (
                 <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700 flex items-start gap-1.5">
                   <span className="mt-0.5 shrink-0">ℹ️</span>
-                  <span>{aixNotice}</span>
+                  <span className="whitespace-pre-wrap break-words">{aixNotice}</span>
                 </div>
               )}
               {/* 物件オススメ: 強調ポイントを生成後にも選択できる */}
