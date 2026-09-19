@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
@@ -188,6 +188,8 @@ import { GENERATION_FAILURE_TEXT, isUsableExampleText, fixExampleWeekdays } from
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（曜日表をプロンプトに渡し LLM に曜日を計算させない）
 import { jstParts, jstDateLabel, weekdayTable } from "@/app/lib/jst-date";
+// 2026-09-19 竹内（タマキ事例）: 「〜でも大丈夫」は条件の**追加**（変更ではない）。限定して復唱させない
+import { detectConditionExpansion, buildExpansionNote } from "@/app/lib/condition-expansion";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -956,6 +958,11 @@ function buildGenerationMessages(
   // stale/null 時は newConditionRequestNote（決定論保険）が主防衛線になる。
   // typeLabel辞書・4ステップ返信の型・禁止CTA・noReproposeNote の文面は実運用で調整済みのため一切変更しない。
   let conditionChangeNote = "";
+  // 2026-09-19 竹内（タマキ事例）「その周辺でも大丈夫ですと伝えられているので、限定したら文がおかしくなる」:
+  //   「〜でも大丈夫」は今までの条件に**足す**言い方で、変更ではない。限定して復唱すると前の条件が消える。
+  //   ブレインの condition_change_type は area_change / condition_relax のどちらにも倒れるので、
+  //   追加かどうかは決定論（condition-expansion.ts）で決める（設計知見「決定論で算出できる値は LLM に選ばせない」）。
+  const expansionVerdict = detectConditionExpansion(customerMessage);
   const brainConditionChangeType = brainFreshForMessage ? (brainMeta?.condition_change_type ?? null) : null;
   if (brainConditionChangeType) {
         const changeType: string = brainConditionChangeType;
@@ -994,7 +1001,12 @@ function buildGenerationMessages(
 ・OK:「〇〇も含めて〇〇さんのご希望のご条件に合ったお部屋をピックアップしてお送りさせて頂きます」（承諾＋条件合致コミットメント）${noReproposeNote}`;
         // 拡大・緩和（condition_relax）の場合: ピックアップ宣言 + まだ聞けていない条件を1〜2点確認してよい
         if (changeType === "condition_relax") {
-          conditionChangeNote = `\n【🔄 ${label}検出】必ずピックアップ宣言を行うこと。正しい型:「かしこまりました！！[変更後の条件を具体的に反映]で[名前]さんのご希望のご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！」。条件拡大の効果・見通し（「選択肢が広がった」「見つけやすくなる」等）をお客様に解説する文は絶対禁止（行動宣言のみ）。さらに「まだ聞けていない重要条件（間取り・築年数など）」が1〜2点あれば追加確認してよい（すでに分かっている条件は聞き返さない）。${conditionChangeShapeNote}`;
+          // 2026-09-19 竹内（タマキ事例）: 「[変更後の条件を具体的に反映]で」が、足されただけのエリアを
+          //   「〇〇周辺エリアから」と**限定**させていた。追加の時は「〇〇も含めて」＝足す形にする。
+          const relaxShape = expansionVerdict.expanded
+            ? "「かしこまりました！！[足された条件]も含めて[名前]さんのご希望のご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！」（**今までの条件は消さない**。今回足されたエリアだけに絞った「〇〇周辺全域から」の形は禁止）"
+            : "「かしこまりました！！[変更後の条件を具体的に反映]で[名前]さんのご希望のご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！」";
+          conditionChangeNote = `\n【🔄 ${label}検出】必ずピックアップ宣言を行うこと。正しい型:${relaxShape}。条件拡大の効果・見通し（「選択肢が広がった」「見つけやすくなる」等）をお客様に解説する文は絶対禁止（行動宣言のみ）。さらに「まだ聞けていない重要条件（間取り・築年数など）」が1〜2点あれば追加確認してよい（すでに分かっている条件は聞き返さない）。${conditionChangeShapeNote}`;
         } else if (isConditionPresentedFlag) {
           // A-5（G-3）: 条件提示TPO（エリア＋家賃をメッセージで提示）と同時発火した場合、
           // 「ピックアップしてお送りは禁止」節は conditionDirection の必須宣言と正面衝突するため出さない。
@@ -1459,6 +1471,11 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 【🚫 絶対禁止CTA（フェーズ別パターンより上位）】申込フォーマット・申込書類の案内・申込誘導／見積書の作成宣言・送付宣言・初期費用の金額提示／条件ヒアリングフォーム（①〜⑧）等のフォーマット送付／内覧日程の提案。CTAは「お部屋をお送りすること」のみ。`
     : "";
 
+  // 2026-09-19 竹内（タマキ事例）: 「条件の追加・許容」は独立ブロックで注入する。
+  //   ブレインが condition_change_type を返さない時（T2/T3）や、area_change に倒れた時にも必ず届かせる
+  //   （設計知見「tpoGuidanceNote を独立ブロックで注入: brainMeta null でも届く設計」と同じ形）。
+  const conditionExpansionNote = buildExpansionNote(expansionVerdict, customerName);
+
   // templateNote 指定時は指定生成モード（2〜3行制限・物件詳細禁止）を適用しない
   // — テンプレは長文（物件ピックアップ等）が正であり、行数キャップが品質を壊すため
   const replyHintNote = (replyHint && !templateNote)
@@ -1574,7 +1591,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
   const dynamicBlock =`${replyContentNote}
 ${propertyStatusNote}
-${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${conditionExpansionNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
