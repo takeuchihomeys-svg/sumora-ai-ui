@@ -160,6 +160,18 @@ console.log("── ★ プロンプトキャッシュ: 前置きが変わらな
   const masked = bodyFor(m1.mask("【お客様】田中さん 090-1111-2222"));
   t("★ 読み替えても前置きは変わらない（触るのは動的な所だけ）",
     (masked.messages.find((m) => m.role === "system")!.content).startsWith(shared));
+
+  // 2026-09-19 竹内「AIX用と返信用分けた方が良いかな？プロンプトキャッシュ用などに」を調べて分かった罠:
+  //   DeepSeek のキャッシュは**アカウント単位**なので API キーを分けても共有される（分けて良い）。
+  //   ただし user_id を渡すと**わざとキャッシュを分離する**仕様があり、顧客ごとに渡すと
+  //   共通の前置き4万トークンが顧客ごとに別キャッシュになって効果が消える。
+  //   「顧客ごとに分けた方が安全では」と後から足されると静かに高くなるので、ここで塞ぐ。
+  const raw = bodyFor("x") as unknown as Record<string, unknown>;
+  t("★ user_id を渡していない（渡すとキャッシュが顧客ごとに割れる）",
+    !("user_id" in raw) && !("user" in raw), JSON.stringify(Object.keys(raw)));
+  const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
+  t("★ コードのどこでも user_id を送っていない",
+    !/user_id/.test(provider), "キャッシュを分離する指定なので足さない");
 }
 
 console.log("── ★ willRouteAlt: 呼び出し側が「マスクするか」を決める（歯止めと同じ条件を見る）");
