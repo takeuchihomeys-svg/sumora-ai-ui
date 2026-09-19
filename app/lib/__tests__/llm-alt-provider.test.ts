@@ -8,6 +8,8 @@ import {
   DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_FLASH_MODEL,
 } from "../llm-alt-provider";
 import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
+import { AIX_SHARED_SYSTEM_PREFIX, buildSystemBlocks } from "../aix-system-blocks";
+import { createMasker } from "../pii-pseudonym";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra = "") {
@@ -118,6 +120,46 @@ console.log("── ★ DeepSeek 本家（OpenAI 互換・Azure と同じ変換�
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", LLM_ALT_ACTIONS: "a" }) === null);
   t("★ 自動返信・申込以降の歯止めは DeepSeek でも同じ",
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.allowAutoSend === false);
+}
+
+console.log("── ★ プロンプトキャッシュ: 前置きが変わらないこと（竹内「今の仕組とおなじように」）");
+{
+  // DeepSeek のコンテキストキャッシュは「前置きの完全一致」で効く（一致は不一致の 1/30〜1/50 の値段）。
+  // Anthropic の cache_control は変換で捨てるが、**ブロックの順番はそのまま**なので
+  // 静的（shared → semiStatic → routeStatic）→ 動的、という今の構成がそのまま効く。
+  // ここが崩れると「効かなくなったことに誰も気付かない」ので、変換の前後で前置きを照合する。
+  const shared = AIX_SHARED_SYSTEM_PREFIX;
+  const blocksFor = (dyn: string) => buildSystemBlocks(
+    { shared, semiStatic: "【永久ルール】".padEnd(2000, "あ"), routeStatic: "【物件オススメ】".padEnd(2000, "い") },
+    { dynamicSuffix: dyn },
+  );
+  const bodyFor = (dyn: string) => toOpenAIBody(
+    { system: blocksFor(dyn), messages: [{ role: "user", content: [{ type: "text", text: dyn }] }], max_tokens: 500 } as Parameters<typeof toOpenAIBody>[0],
+    "deepseek-v4-pro",
+  ) as { messages: Array<{ role: string; content: string }> };
+
+  const a = bodyFor("【お客様】田中さん 090-1111-2222");
+  const b = bodyFor("【お客様】佐藤さん 080-3333-4444");
+  const sysA = a.messages.find((m) => m.role === "system")!.content;
+  const sysB = b.messages.find((m) => m.role === "system")!.content;
+
+  t("★ 変換後の system は全経路共通の前置きで始まる（ここが一致するとキャッシュが効く）",
+    sysA.startsWith(shared), sysA.slice(0, 40));
+  t("★ 顧客が違っても前置きは1バイトも変わらない",
+    sysA.slice(0, shared.length + 4000) === sysB.slice(0, shared.length + 4000));
+  t("★ 動的な所は system の**末尾**にある（前に来ると前置きが顧客ごとに割れる）",
+    sysA.endsWith("【お客様】田中さん 090-1111-2222"), sysA.slice(-40));
+  t("★ 静的な部分が入力の大半（AIX の共通前置きだけで 4万トークン規模）",
+    shared.length > 40_000, `${shared.length} 字`);
+
+  // 読み替えを掛けても前置きが変わらないこと（マスクは dynamic だけに当てる設計）
+  const m1 = createMasker({ conversationId: "conv-A", customerName: "田中", thisYear: 2026 });
+  const m2 = createMasker({ conversationId: "conv-A", customerName: "田中", thisYear: 2026 });
+  t("★ 同じ会話なら読み替えの結果も毎回同じ（違うとキャッシュが毎回割れる）",
+    m1.mask("田中さん 090-1111-2222") === m2.mask("田中さん 090-1111-2222"));
+  const masked = bodyFor(m1.mask("【お客様】田中さん 090-1111-2222"));
+  t("★ 読み替えても前置きは変わらない（触るのは動的な所だけ）",
+    (masked.messages.find((m) => m.role === "system")!.content).startsWith(shared));
 }
 
 console.log("── ★ willRouteAlt: 呼び出し側が「マスクするか」を決める（歯止めと同じ条件を見る）");
