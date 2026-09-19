@@ -36,6 +36,13 @@ export type AltProviderConfig = {
   /** 切り替える経路。空なら無効 */
   actions: Set<string>;
   fallbackToAnthropic: boolean;
+  /**
+   * 自動返信オンの会話も切り替えるか（既定 false）。
+   * 2026-09-19 竹内「ここの自動返信の部分も慣れて問題なければ切り変えていくから、
+   *   性質理解して穴を防げるようになったら切り替えていく方向性でいく形で」
+   * → 道は残すが**既定は必ず Claude**。LLM_ALT_AUTO_SEND=on にした時だけ開く。
+   */
+  allowAutoSend: boolean;
 };
 
 /**
@@ -53,18 +60,20 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   const actions = new Set(actionsRaw.split(",").map((s) => s.trim()).filter(Boolean));
   if (actions.size === 0) return null;
   const fallbackToAnthropic = (env.LLM_ALT_FALLBACK ?? "on") !== "off";
+  // 自動返信は既定で**必ず Claude**。明示的に on にした時だけ開く（人の目を通さずに送るため）
+  const allowAutoSend = (env.LLM_ALT_AUTO_SEND ?? "off").trim().toLowerCase() === "on";
   if (provider === "azure") {
     const endpoint = (env.AZURE_AI_ENDPOINT ?? "").trim();
     const apiKey = (env.AZURE_AI_KEY ?? "").trim();
     const model = (env.AZURE_AI_MODEL ?? "").trim();
     if (!endpoint || !apiKey || !model) return null;
-    return { provider: "azure", endpoint, apiKey, model, actions, fallbackToAnthropic };
+    return { provider: "azure", endpoint, apiKey, model, actions, fallbackToAnthropic, allowAutoSend };
   }
   if (provider === "bedrock") {
     const region = (env.BEDROCK_REGION ?? "").trim();
     const model = (env.BEDROCK_DEEPSEEK_MODEL_ID ?? "").trim();
     if (!region || !model || !env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) return null;
-    return { provider: "bedrock", endpoint: region, apiKey: "", model, actions, fallbackToAnthropic };
+    return { provider: "bedrock", endpoint: region, apiKey: "", model, actions, fallbackToAnthropic, allowAutoSend };
   }
   return null;
 }
@@ -263,8 +272,9 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
 
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     // 2026-09-19 竹内「自動返信モードのお客さんの返信はクロードのAPI使う形でいく」:
-    //   人の目を通さずに送る文なので、**何を指定していても**別のクラウドに回さない（最優先の歯止め）
-    if (isAutoSendCall(headers)) return original(input as RequestInfo, init);
+    //   人の目を通さずに送る文なので、既定では**何を指定していても**別のクラウドに回さない（最優先の歯止め）。
+    //   竹内「慣れて問題なければ切り変えていく」→ LLM_ALT_AUTO_SEND=on にした時だけ開く
+    if (isAutoSendCall(headers) && !cfg.allowAutoSend) return original(input as RequestInfo, init);
     const routeName = resolveRouteName(headers.get(LLM_ACTION_HEADER), flattenContent(body.system));
     if (!shouldRouteAlt(cfg, routeName)) return original(input as RequestInfo, init);
 

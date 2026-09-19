@@ -6,7 +6,7 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（返信生成の keep-warm）: 生成モデルの設定は1か所（cron/keep-warm と共有）。実際に送った prefix を記録して cron が読み直す
 import { createGenerationModel } from "@/app/lib/reply-generation-model";
 // 2026-09-19 竹内: 自動返信オンの会話の下書きは Claude のまま（印を付けて llm-alt-provider が守る）
-import { LLM_AUTO_SEND_HEADER } from "@/app/lib/llm-usage-recorder";
+import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER } from "@/app/lib/llm-usage-recorder";
 import { extractWarmPrefix, recordWarmPrefix } from "@/app/lib/reply-warm-prefix";
 import { inferTpoHint } from "@/app/lib/tpo-hint";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
@@ -4772,7 +4772,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     //   自動返信オンの会話の下書きには印を付ける。llm-alt-provider がこの印を見て、
     //   LLM_ALT_ACTIONS に何を書いていても**別のクラウドに回さない**（人の目を通さずに送るため）。
     //   印は出口（llm-usage-recorder）が取り除くので Anthropic には届かない。
-    const autoSendHeaders = autoSendConversation ? { [LLM_AUTO_SEND_HEADER]: "1" } : undefined;
+    //
+    //   竹内「慣れて問題なければ切り変えていく／性質理解して穴を防げるようになったら」:
+    //   → その判断には「**どの会話の下書きを、どのモデルが作ったか**」の記録が要る。
+    //     会話 ID の印も一緒に付けて llm_usage_logs に残す（今まで返信生成には付いていなかった）。
+    const autoSendHeaders = {
+      ...(conversationId ? { [LLM_CONVERSATION_HEADER]: conversationId } : {}),
+      ...(autoSendConversation ? { [LLM_AUTO_SEND_HEADER]: "1" } : {}),
+    };
 
     // テンプレート最適化モードは maxTokens 広めの専用モデル（通常生成は createGenerationModel）
     const genStream = (isTemplateOptimize

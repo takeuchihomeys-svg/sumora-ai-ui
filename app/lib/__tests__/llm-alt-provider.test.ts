@@ -74,6 +74,46 @@ console.log("── ★ 自動返信オンの会話は、何を指定してい�
   t("★ …自動返信の印があれば回さない（印の判定が先）", isAutoSendCall(h("1")));
 }
 
+console.log("── ★ 後で開けるスイッチ（竹内「慣れて問題なければ切り変えていく」）");
+{
+  // 2026-09-19 竹内「けどここの自動返信の部分も慣れて問題なければ切り変えていくから、
+  //   性質理解して穴を防げるようになったら切り替えていく方向性でいく形で」
+  //   → 扉を閉めたまま塞がず、環境変数1つで開けられるようにしておく（既定は閉）。
+  t("★ 既定は閉（LLM_ALT_AUTO_SEND を書かなければ自動返信は Claude のまま）",
+    readAltConfig(AZURE)!.allowAutoSend === false);
+  t("off と書いても閉",
+    readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: "off" })!.allowAutoSend === false);
+  t("★ on と書いた時だけ開く",
+    readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: "on" })!.allowAutoSend === true);
+  t("ON（大文字）・前後の空白も同じ",
+    readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: " ON " })!.allowAutoSend === true);
+  t("true・1 では開かない（うっかり開かないよう on の一語だけ）",
+    readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: "true" })!.allowAutoSend === false
+    && readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: "1" })!.allowAutoSend === false);
+  t("bedrock 側にも同じスイッチがある",
+    readAltConfig({ LLM_ALT_PROVIDER: "bedrock", BEDROCK_REGION: "us-east-1", BEDROCK_DEEPSEEK_MODEL_ID: "m", LLM_ALT_ACTIONS: "a", AWS_ACCESS_KEY_ID: "k", AWS_SECRET_ACCESS_KEY: "s", LLM_ALT_AUTO_SEND: "on" })!.allowAutoSend === true);
+
+  // 実装の順番（印を先に見て、開いていなければ即戻す）が残っているか実ファイルで確かめる
+  const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
+  t("★ fetch の入口で「印あり かつ 閉」なら Anthropic へ戻している",
+    /isAutoSendCall\(headers\)\s*&&\s*!cfg\.allowAutoSend/.test(provider),
+    "この1行が消えると自動返信が黙って別クラウドに流れる");
+}
+
+console.log("── ★ 切り替えの判断材料（どの会話の下書きを、どのモデルが作ったか）");
+{
+  // 竹内「性質理解して穴を防げるようになったら」を判断するには、後から会話ごとに追える必要がある。
+  // 自動返信はスタッフが下書きを直さないので ai_reply_examples の一致度では測れない。
+  // せめて llm_usage_logs に会話 ID を残し、「この会話の下書きはどのモデルか」を辿れるようにする。
+  const replyRoute = readFileSync("app/api/generate-reply/route.ts", "utf8");
+  t("★ 返信生成が会話 ID の印も付けている（今まで付いていなかった）",
+    /\[LLM_CONVERSATION_HEADER\]:\s*conversationId/.test(replyRoute),
+    "app/api/generate-reply/route.ts で LLM_CONVERSATION_HEADER を付けること");
+  const recorder = readFileSync("app/lib/llm-usage-recorder.ts", "utf8");
+  t("★ 会話 ID は llm_usage_logs に記録され、Anthropic には送られない",
+    /conversation_id/.test(recorder) && /copy\.delete\(LLM_CONVERSATION_HEADER\)/.test(recorder));
+}
+
 console.log("── ★ 見分けの語が実際のプロンプトと合っているか（静かに壊れるのを防ぐ）");
 {
   // プロンプトの冒頭を書き換えると判定が外れ、気づかないうちに切り替えの対象が変わる。
