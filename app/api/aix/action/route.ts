@@ -23,6 +23,10 @@ import { isPlausiblePersonName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
+// 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキング」「申込以降は渡さなくて大丈夫」
+import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
+import { willRouteAlt, isPostApplyStatus } from "@/app/lib/llm-alt-provider";
+import { LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
 import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, viewableFromVacancyYmd, vacancyDateLabel, vacatingViewableSentence } from "@/app/lib/vacating-notice";
 // 2026-09-19 竹内（内覧調整の会話を合わせる）: 退去前の候補の行を出口で落とす
 import { stripSlotLinesBeforeViewable } from "@/app/lib/viewing-window";
@@ -818,13 +822,102 @@ function buildMoveInDeadlineNote(sourceText: string, todayISO: string, todayFmt:
 // 会話 ID は handleAction の body 解析後にしか分からず、callClaude 系は深い呼び出しの中にいるので AsyncLocalStorage で持つ
 // （並行リクエストで混ざらない。aixStream と同じ仕組み）。
 // ヘッダ名・値の整形は app/lib/aix-system-blocks.ts（LLM_META_HEADER_ACTION / LLM_META_HEADER_CONVERSATION / llmMetaHeaderValue）
-const aixRequestCtx = new AsyncLocalStorage<{ conversationId: string | null }>();
+// 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキングするように」「申込以降は渡さなくて大丈夫」:
+//   masker は「この呼び出しが別クラウド（DeepSeek）に回る時だけ」入る。
+//   Claude に行く時は null で、送る文は1バイトも変わらない（今まで積み上げた品質を一度に変えないため）。
+type AixReqCtx = {
+  conversationId: string | null;
+  /** 申込フェーズ以降なら true（別クラウドに回さない） */
+  postApply: boolean;
+  /** 別クラウドに回す時だけ作る読み替え器。出口で実名に戻す */
+  masker: Masker | null;
+};
+const aixRequestCtx = new AsyncLocalStorage<AixReqCtx>();
 
 function llmMetaHeaders(action: string): Record<string, string> {
   const h: Record<string, string> = { [LLM_META_HEADER_ACTION]: llmMetaHeaderValue(action) };
-  const cid = aixRequestCtx.getStore()?.conversationId;
+  const store = aixRequestCtx.getStore();
+  const cid = store?.conversationId;
   if (cid) h[LLM_META_HEADER_CONVERSATION] = llmMetaHeaderValue(cid);
+  // 申込以降は llm-alt-provider が最初にこの印を見て Anthropic へ戻す（二重の歯止め）
+  if (store?.postApply) h[LLM_POST_APPLY_HEADER] = "1";
   return h;
+}
+
+/**
+ * 事例（ai_reply_examples）に出てくる**他のお客様の名前**を照合するための正解集合。
+ * 1人の文を作るたびに他人8件が載るので、当事者だけ伏せても足りない。
+ * 会話の数は300件台なので全部持っても軽い。5分だけ覚えておく（AIX の brain キャッシュと同じ考え方）。
+ */
+let knownNamesCache: { at: number; names: string[] } | null = null;
+const KNOWN_NAMES_TTL_MS = 5 * 60_000;
+async function loadKnownNames(): Promise<string[]> {
+  if (knownNamesCache && Date.now() - knownNamesCache.at < KNOWN_NAMES_TTL_MS) return knownNamesCache.names;
+  try {
+    const { data } = await supabase.from("conversations").select("customer_name").limit(2000);
+    const names = [...new Set((data ?? [])
+      .map((r: { customer_name: string | null }) => (r.customer_name ?? "").trim())
+      .filter(Boolean))];
+    knownNamesCache = { at: Date.now(), names };
+    return names;
+  } catch (e) {
+    // 取れなくても当事者の名前は伏せられる。ここで止めない
+    console.warn("[aix/action] knownNames 取得失敗:", e);
+    return knownNamesCache?.names ?? [];
+  }
+}
+
+/**
+ * 別クラウド（DeepSeek）へ回す時の歯止めを用意する。
+ * 2026-09-19 竹内「申込以降は渡さなくて大丈夫、申込までのツールなので」
+ *           「お客さんの本名や電話番号は絶対にマスキングするように」
+ *
+ * ・申込以降なら postApply=true（印を付けて Anthropic へ戻す。マスク以前に送らない）
+ * ・回る時だけ masker を作る（Claude へ行く時は null ＝ 送る文は1バイトも変わらない）
+ * ・判定に失敗したら「回さない」側へ倒す（fail-closed）
+ */
+async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | null, customerName: string | null, action: string): Promise<void> {
+  ctx.postApply = false;
+  ctx.masker = null;
+  try {
+    if (conversationId) {
+      const { data } = await supabase.from("conversations").select("status").eq("id", conversationId).maybeSingle();
+      ctx.postApply = isPostApplyStatus((data as { status?: string | null } | null)?.status ?? null);
+    }
+    if (!willRouteAlt(action, { postApply: ctx.postApply })) return;   // 回らないならマスクもしない
+    ctx.masker = createMasker({
+      conversationId: conversationId ?? action,
+      customerName,
+      knownNames: await loadKnownNames(),
+    });
+    console.log("[aix/action] alt-provider へ回す（読み替えあり）:", JSON.stringify({ action, conversationId }));
+  } catch (e) {
+    // 状態が読めない・名前が引けない時は**回さない**（個人情報を素のまま外に出さない）
+    console.warn("[aix/action] 歯止めの用意に失敗 → Anthropic のまま:", e);
+    ctx.postApply = true;
+    ctx.masker = null;
+  }
+}
+
+/**
+ * 別クラウドへ送る前に読み替え、返ってきた文で実名に戻す。
+ * **戻し切れなかったら例外**（お客様に仮名で送る事故を防ぐ＝fail-closed）。
+ * masker が無い＝Claude へ行く時は、入力も出力も素通り。
+ */
+function maskOut(text: string | undefined): string | undefined {
+  const m = aixRequestCtx.getStore()?.masker;
+  return m && text ? m.mask(text) : text;
+}
+function unmaskIn(text: string, action: string): string {
+  const m = aixRequestCtx.getStore()?.masker;
+  if (!m) return text;
+  const back = m.unmask(text);
+  const left = m.leftovers(back);
+  if (left.length > 0) {
+    console.error("[aix/action] 仮名が戻し切れていない:", JSON.stringify({ action, count: left.length }));
+    throw new Error("生成文の伏せ字を元に戻せませんでした。もう一度お試しください");
+  }
+  return back;
 }
 
 // dynamicSystemSuffix: brainGuidanceNote など顧客別の動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
@@ -835,7 +928,11 @@ async function callClaude(system: SystemSpec, user: string, action: string, dyna
   // 1回あたり25秒タイムアウト＋タイムアウト時のみ1回リトライ（最大約50秒 < クライアント60秒abort）
   // 旧45秒×リトライ無しだと、一過性のAPI遅延・ネットワークハングで即エラーになっていた
   const attempt = async (timeoutMs: number): Promise<string> => {
-    const systemBlocks = buildSystemBlocks(system, { defaultTtl: opts.ttl ?? "5m", dynamicSuffix: dynamicSystemSuffix });
+    // 別クラウドへ回る時だけ読み替える。**静的な system ブロックは触らない**
+    //   → 個人情報はそこに無いうえ、前置きが変わるとプロンプトキャッシュが効かなくなる
+    //     （DeepSeek は前置き一致で 1/50 の値段になる）。動的な所だけ読み替える。
+    const systemBlocks = buildSystemBlocks(system, { defaultTtl: opts.ttl ?? "5m", dynamicSuffix: maskOut(dynamicSystemSuffix) });
+    const userText = maskOut(user) ?? user;
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -850,15 +947,15 @@ async function callClaude(system: SystemSpec, user: string, action: string, dyna
         max_tokens: maxTokensForAction(action),
         thinking: { type: "disabled" },
         system: systemBlocks,
-        messages: [{ role: "user", content: user }],
+        messages: [{ role: "user", content: userText }],
       }),
       signal: budgetSignal(timeoutMs),
     });
     if (!res.ok) throw new Error(`Claude error: ${await res.text()}`);
     const data = await res.json();
     logLlmUsage("aix", data.usage, { action, model: MODEL });
-    warnIfTruncated(data, systemStaticLength(system) + user.length, action);
-    return data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
+    warnIfTruncated(data, systemStaticLength(system) + userText.length, action);
+    return unmaskIn(data.content?.find((b: any) => b.type === "text")?.text?.trim() || "", action);
   };
   try {
     return await attempt(25_000);
@@ -877,7 +974,8 @@ async function callClaude(system: SystemSpec, user: string, action: string, dyna
 //   3日で数回しか呼ばれず 1h の書き込みが純損。Haiku 4.5 の最小キャッシュは 4,096 tokens で、これらの system は届かない。
 //   共通 prefix（shared）があれば従来どおり 1h（全経路共有の鍵）。必要なら opts.ttl で個別に付けられる
 async function callClaudeHaiku(system: SystemSpec, user: string, action: string, dynamicSystemSuffix?: string, opts: { ttl?: SystemTtl } = {}): Promise<string> {
-  const systemBlocks = buildSystemBlocks(system, { defaultTtl: opts.ttl ?? "none", dynamicSuffix: dynamicSystemSuffix });
+  const systemBlocks = buildSystemBlocks(system, { defaultTtl: opts.ttl ?? "none", dynamicSuffix: maskOut(dynamicSystemSuffix) });
+  const userText = maskOut(user) ?? user;
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -891,21 +989,23 @@ async function callClaudeHaiku(system: SystemSpec, user: string, action: string,
       model: "claude-haiku-4-5-20251001",
       max_tokens: 256,
       system: systemBlocks,
-      messages: [{ role: "user", content: user }],
+      messages: [{ role: "user", content: userText }],
     }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) throw new Error(`Claude Haiku error: ${await res.text()}`);
   const data = await res.json();
   logLlmUsage("aix", data.usage, { action, model: "haiku" });
-  warnIfTruncated(data, systemStaticLength(system) + user.length, action);
-  return data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
+  warnIfTruncated(data, systemStaticLength(system) + userText.length, action);
+  return unmaskIn(data.content?.find((b: any) => b.type === "text")?.text?.trim() || "", action);
 }
 
 // ※ Sonnet5はtemperature等のサンプリングパラメータ非対応（400エラー）のため渡さない
 // dynamicSystemSuffix: 顧客固有/呼び出し固有の動的コンテンツ。静的ブロックと分離してキャッシュHIT率を上げる
 // 2026-09-17 竹内（AIX キャッシュ点検）: 短い OCR の system（見積書 OCR 5種 ≈300〜500 tokens・1,500字未満）には自動で cache_control が付かない
 //   （buildSystemBlocks の閾値 AIX_CACHE_MIN_CHARS）。長い物件オススメ等の system は従来どおり共通 prefix 1h＋固有文 5m
+// ※ 画像つきの呼び出しは llm-alt-provider が対象外にする（flattenContent が null を返す）ので必ず Claude へ行く。
+//   読み替えを掛けても外に出ないうえ、画像の中身は読み替えられないので、ここは素通しにしている。
 async function callClaudeVision(system: SystemSpec, content: unknown[], action: string, dynamicSystemSuffix?: string, opts: { ttl?: SystemTtl } = {}): Promise<string> {
   const systemBlocks = buildSystemBlocks(system, { defaultTtl: opts.ttl ?? "5m", dynamicSuffix: dynamicSystemSuffix });
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -1267,7 +1367,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const estimateCampaign = typeof body.estimate_campaign === "string" ? body.estimate_campaign : "";
     // 2026-09-17 竹内（AIX キャッシュ点検）: 会話 ID を計測用ヘッダ（x-sumora-llm-conversation）へ。POST で run() した箱に入れる
     const reqCtx = aixRequestCtx.getStore();
-    if (reqCtx) reqCtx.conversationId = typeof conversationId === "string" && conversationId ? conversationId : null;
+    const convId = typeof conversationId === "string" && conversationId ? conversationId : null;
+    if (reqCtx) {
+      reqCtx.conversationId = convId;
+      await setupAltProviderGuards(reqCtx, convId, typeof customer_name === "string" ? customer_name : null, String(action ?? ""));
+    }
 
     // #30: max_tokens 尻切れ検知ログ・max_tokens決定用のアクション名（リクエストスコープ）
     const currentAction = String(action ?? "");
@@ -6517,7 +6621,7 @@ const SERVER_BUDGET_MS = 55_000;
 
 export async function POST(request: NextRequest) {
   if (!request.headers.get("accept")?.includes("application/x-ndjson")) {
-    return aixRequestCtx.run({ conversationId: null }, () => handleAction(request));
+    return aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => handleAction(request));
   }
 
   const encoder = new TextEncoder();
@@ -6539,7 +6643,7 @@ export async function POST(request: NextRequest) {
 
       const ctx: AixStreamCtx = { emit, deadline, signal: ac.signal, seq: 0, busy: false };
       try {
-        const res = await aixRequestCtx.run({ conversationId: null }, () => aixStream.run(ctx, () => handleAction(request)));
+        const res = await aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => aixStream.run(ctx, () => handleAction(request)));
         const resData = await (res as Response).json().catch(() => ({}));
         emit({ t: "done", payload: resData });
       } catch (err) {

@@ -28,8 +28,21 @@ export type AltProvider = "azure" | "bedrock" | "deepseek";
 
 /** DeepSeek 本家 API（OpenAI 互換）。Azure と同じ変換処理がそのまま使える */
 export const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions";
-/** DeepSeek-V4.1-Flash（2026-09-19 竹内「モデルは V4.1 を使う」）。1M コンテキスト */
-export const DEEPSEEK_DEFAULT_MODEL = "deepseek-flash";
+/**
+ * 文生成の既定は **deepseek-v4-pro**（2026-09-19 竹内「deepseek-v4-proで文生成した方が良いね V4.1よりも」）。
+ *
+ * 【なぜ安い方（deepseek-flash = V4.1-Flash）にしないか】
+ *   AIX の文生成を実測（30日118回）で見積もると 今の Sonnet $8.46 → Pro $3.46 / Flash $0.78。
+ *   **差は月 $2.7 しかない**ので、お客様に送る文の質を優先する方が合理的。
+ *
+ * 【正直な但し書き】
+ *   deepseek-v4-pro は V4-Pro-0813 ＝ **V4 世代**で、deepseek-flash（V4.1）より半世代古い。
+ *   「新しい方が良い」とは限らず、接客文のような含みのある文はモデルが大きい方が有利なことが多い、
+ *   というのが Pro を選ぶ理由。実データで比べられるようになったら測り直す。
+ */
+export const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-pro";
+/** もう一方（安いが小さい）。DEEPSEEK_MODEL で切り替えられる */
+export const DEEPSEEK_FLASH_MODEL = "deepseek-flash";
 export type EnvLike = Record<string, string | undefined>;
 
 export type AltProviderConfig = {
@@ -90,9 +103,10 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   // DeepSeek 本家。OpenAI 互換なので Azure と同じ変換（toOpenAIBody / fromOpenAIResponse）で通る。
   // 既に DEEPSEEK_API_KEY が物件評価・駅名解決で使われているので、鍵はそれを流用する。
   //
-  // 2026-09-19 竹内「モデルは V4.1 を使う」→ 既定は deepseek-flash（= DeepSeek-V4.1-Flash・1M コンテキスト）。
-  //   料金（1M あたり・混雑時は倍）: キャッシュ一致 $0.003 / 不一致 $0.15 / 出力 $0.6
-  //   もう一方は deepseek-v4-pro（一致 $0.022 / 不一致 $0.66 / 出力 $1.98）
+  // 2026-09-19 竹内「deepseek-v4-proで文生成した方が良いね」→ 既定は deepseek-v4-pro。
+  //   料金（1M あたり・混雑時は倍）
+  //     deepseek-v4-pro : 一致 $0.022 / 不一致 $0.66 / 出力 $1.98
+  //     deepseek-flash  : 一致 $0.003 / 不一致 $0.15 / 出力 $0.6（V4.1・1M コンテキスト）
   //   ※ 旧称の deepseek-chat も通るが、どの版かが名前から分からないので既定にしない
   if (provider === "deepseek") {
     const apiKey = (env.DEEPSEEK_API_KEY ?? "").trim();
@@ -166,6 +180,26 @@ export function isPostApplyCall(headers: Headers): boolean {
  */
 export function isPostApplyStatus(status: string | null | undefined): boolean {
   return DRAFT_SKIP_STATUSES.has((status ?? "").trim());
+}
+
+/**
+ * この呼び出しは今の設定で別クラウドに回るか。**呼び出し側が「マスクするか」を決めるために使う**。
+ *
+ * 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキングするように」:
+ *   マスクは外に出す時だけ掛ける。Claude に行く時は1バイトも変えない
+ *   （常にマスクすると、今まで積み上げた品質が全経路で一度に変わってしまう）。
+ * fetch の出口（下の歯止め）と同じ条件をここでも見るので、判断がズレない。
+ */
+export function willRouteAlt(
+  action: string | null,
+  opts: { postApply?: boolean; autoSend?: boolean } = {},
+  env: EnvLike = process.env,
+): boolean {
+  if (opts.postApply) return false;
+  const cfg = readAltConfig(env);
+  if (!cfg) return false;
+  if (opts.autoSend && !cfg.allowAutoSend) return false;
+  return shouldRouteAlt(cfg, resolveRouteName(action, null));
 }
 
 export function resolveRouteName(action: string | null, systemHead: string | null): string | null {

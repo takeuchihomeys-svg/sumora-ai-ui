@@ -4,7 +4,8 @@
 import { readFileSync } from "node:fs";
 import {
   readAltConfig, shouldRouteAlt, resolveRouteName, toOpenAIBody, fromOpenAIResponse, flattenContent, ROUTE_MARKERS,
-  isAutoSendCall, isPostApplyCall, isPostApplyStatus, DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL,
+  isAutoSendCall, isPostApplyCall, isPostApplyStatus, willRouteAlt,
+  DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_FLASH_MODEL,
 } from "../llm-alt-provider";
 import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
 
@@ -106,15 +107,30 @@ console.log("── ★ DeepSeek 本家（OpenAI 互換・Azure と同じ変換�
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "property_recommendation" })?.provider === "deepseek");
   t("★ 宛先は api.deepseek.com の chat/completions",
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.endpoint === DEEPSEEK_ENDPOINT);
-  t("★ モデルの既定は deepseek-flash（= V4.1-Flash・竹内「モデルは V4.1 を使う」）",
+  // 竹内「deepseek-v4-proで文生成した方が良いね V4.1よりも」
+  //   実測（AIX 30日118回）: 今の Sonnet $8.46 → Pro $3.46 / Flash $0.78。差は月$2.7 なので質を取る
+  t("★ 文生成の既定は deepseek-v4-pro",
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.model === DEEPSEEK_DEFAULT_MODEL
-    && DEEPSEEK_DEFAULT_MODEL === "deepseek-flash");
-  t("モデルは指定できる（deepseek-v4-pro 等）",
-    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", DEEPSEEK_MODEL: "deepseek-v4-pro", LLM_ALT_ACTIONS: "a" })?.model === "deepseek-v4-pro");
+    && DEEPSEEK_DEFAULT_MODEL === "deepseek-v4-pro");
+  t("安い方（V4.1-Flash）にも切り替えられる",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", DEEPSEEK_MODEL: DEEPSEEK_FLASH_MODEL, LLM_ALT_ACTIONS: "a" })?.model === "deepseek-flash");
   t("★ 鍵が無ければ null（今までどおり Anthropic）",
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", LLM_ALT_ACTIONS: "a" }) === null);
   t("★ 自動返信・申込以降の歯止めは DeepSeek でも同じ",
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.allowAutoSend === false);
+}
+
+console.log("── ★ willRouteAlt: 呼び出し側が「マスクするか」を決める（歯止めと同じ条件を見る）");
+{
+  const env = { LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "property_recommendation,property_send" };
+  t("★ 指定した AIX は回る＝マスクする", willRouteAlt("property_recommendation", {}, env));
+  t("指定していない AIX は回らない＝マスクしない", !willRouteAlt("estimate_sheet", {}, env));
+  t("★ 申込以降は回らない（マスク以前に送らない）", !willRouteAlt("property_recommendation", { postApply: true }, env));
+  t("★ 自動返信は既定で回らない", !willRouteAlt("property_recommendation", { autoSend: true }, env));
+  t("LLM_ALT_AUTO_SEND=on なら自動返信も回る",
+    willRouteAlt("property_recommendation", { autoSend: true }, { ...env, LLM_ALT_AUTO_SEND: "on" }));
+  t("★ 設定が無ければ回らない＝今までどおり Claude・マスクもしない", !willRouteAlt("property_recommendation", {}, {}));
+  t("action が無ければ回らない", !willRouteAlt(null, {}, env));
 }
 
 console.log("── ★ 後で開けるスイッチ（竹内「慣れて問題なければ切り変えていく」）");

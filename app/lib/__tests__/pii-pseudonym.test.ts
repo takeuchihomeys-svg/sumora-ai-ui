@@ -2,6 +2,7 @@
 // 2026-09-19 竹内「マスキングする仕組みを作る、個人情報は渡さないようにする、しかし、
 //   どこに何がいるか山田太郎 大阪市○○などにすれば何が必要か分かる」
 // 実行: npx tsx app/lib/__tests__/pii-pseudonym.test.ts（全 PASS で exit 0）
+import { readFileSync } from "node:fs";
 import { createMasker, isApplicationPayload, APPLICATION_FORM_PLACEHOLDER } from "../pii-pseudonym";
 
 let pass = 0, fail = 0;
@@ -210,6 +211,29 @@ console.log("── ★ 壊れない（空・未設定・記号つきの名前�
   const m = mk({ customerName: "a🤫" });
   const src = "a🤫さん、ありがとうございます！！";
   t("★ 絵文字つきの LINE 名でも往復で戻る", m.unmask(m.mask(src)) === src, m.mask(src));
+}
+
+console.log("── ★ AIX に実際に配線されているか（消えても型が通る箇所なので実ファイルで照合）");
+{
+  const aix = readFileSync("app/api/aix/action/route.ts", "utf8");
+  t("★ 送る前に読み替えている（user と 動的 system の両方）",
+    (aix.match(/maskOut\(/g) ?? []).length >= 4,
+    "callClaude / callClaudeHaiku の user・dynamicSuffix の4か所");
+  t("★ 返ってきた文を実名に戻している",
+    (aix.match(/unmaskIn\(/g) ?? []).length >= 2);
+  t("★ 戻し切れなかったら例外にしている（お客様に仮名で送らない＝fail-closed）",
+    /leftovers\(back\)/.test(aix) && /throw new Error\("生成文の伏せ字を元に戻せませんでした/.test(aix));
+  t("★ 申込以降の印を付けている",
+    /store\?\.postApply\)\s*h\[LLM_POST_APPLY_HEADER\]\s*=\s*"1"/.test(aix));
+  t("★ 回る時だけ読み替え器を作る（Claude へ行く時は素通し）",
+    /if \(!willRouteAlt\(action, \{ postApply: ctx\.postApply \}\)\) return;/.test(aix),
+    "常にマスクすると今までの品質が全経路で一度に変わる");
+  t("★ 判定に失敗したら回さない側へ倒す（fail-closed）",
+    /ctx\.postApply = true;\s*\n\s*ctx\.masker = null;/.test(aix));
+  t("★ 事例の他人の名前も照合対象にしている（当事者だけでは足りない）",
+    /knownNames:\s*await loadKnownNames\(\)/.test(aix));
+  t("★ 画像つきの呼び出しは素通し（対象外なので読み替えない）",
+    /callClaudeVision[\s\S]{0,400}?dynamicSuffix: dynamicSystemSuffix/.test(aix));
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`);
