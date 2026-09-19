@@ -7,6 +7,7 @@ import { mergeConditions, type ConditionFields } from "@/app/lib/condition-merge
 import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
+import { imageTextForSave, imageTypeForSave } from "@/app/lib/id-document-guard";
 import { recordConditionHistory } from "@/app/lib/condition-history";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
@@ -2128,7 +2129,14 @@ async function fetchAndUploadLineImage(
     // Vision 抽出結果を "[画像] <内容>" 形式でテキストとして保存
     const extracted = visionResult.status === "fulfilled" ? visionResult.value.content : "";
     const extractedType = visionResult.status === "fulfilled" ? visionResult.value.imageType : "";
-    const newText = extracted ? `[画像] ${extracted}` : "[画像]";
+    // 2026-09-19 竹内「マイナンバーカードや運転免許証の個人情報は本人確認書類とだけ文字にして
+    //   情報が文字お越しされないようにする」
+    //   → 本人確認書類は書き起こしを保存しない（"[画像] 本人確認書類" だけ）。
+    //     会話本文に入ると、返信生成のプロンプト（直近25件）にも学習の事例にも載ってしまうため、
+    //     後段でマスクするのではなく**保存する前に捨てる**。
+    //     捨てても image_type が残るので「書類が届いた」事実は received-document / ブレインに伝わる。
+    const newText = imageTextForSave(extractedType, extracted);
+    const savedType = imageTypeForSave(extractedType, extracted);
 
     // image_type: Vision失敗時はNULLのまま（"other"を書かない — 後日バックフィル可能に）
     const { error: updateErr } = await db
@@ -2136,7 +2144,7 @@ async function fetchAndUploadLineImage(
       .update({
         image_url: urlData.publicUrl,
         text: newText,
-        ...(extractedType ? { image_type: extractedType } : {}),
+        ...(savedType ? { image_type: savedType } : {}),
       })
       .eq("id", msgId);
 
