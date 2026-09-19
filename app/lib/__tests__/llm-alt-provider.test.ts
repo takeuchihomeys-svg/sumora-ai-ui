@@ -118,6 +118,11 @@ console.log("── ★ DeepSeek 本家（OpenAI 互換・Azure と同じ変換�
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", DEEPSEEK_MODEL: DEEPSEEK_FLASH_MODEL, LLM_ALT_ACTIONS: "a" })?.model === "deepseek-flash");
   t("★ 鍵が無ければ null（今までどおり Anthropic）",
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", LLM_ALT_ACTIONS: "a" }) === null);
+  // 竹内「AIX用と返信用分けた方が良いかな？」: DEEPSEEK_API_KEY は既に物件評価・駅名解決が使っている
+  t("★ 専用の鍵（LLM_ALT_DEEPSEEK_KEY）があればそちらを使う＝費用が混ざらない",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "old", LLM_ALT_DEEPSEEK_KEY: "aix", LLM_ALT_ACTIONS: "a" })?.apiKey === "aix");
+  t("専用の鍵が無ければ既存の DEEPSEEK_API_KEY を使う",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "old", LLM_ALT_ACTIONS: "a" })?.apiKey === "old");
   t("★ 自動返信・申込以降の歯止めは DeepSeek でも同じ",
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.allowAutoSend === false);
 }

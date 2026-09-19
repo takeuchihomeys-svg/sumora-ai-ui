@@ -108,8 +108,13 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   //     deepseek-v4-pro : 一致 $0.022 / 不一致 $0.66 / 出力 $1.98
   //     deepseek-flash  : 一致 $0.003 / 不一致 $0.15 / 出力 $0.6（V4.1・1M コンテキスト）
   //   ※ 旧称の deepseek-chat も通るが、どの版かが名前から分からないので既定にしない
+  //
+  // 鍵は LLM_ALT_DEEPSEEK_KEY が優先、無ければ DEEPSEEK_API_KEY。
+  // 2026-09-19 竹内「AIX用と返信用分けた方が良いかな？」:
+  //   DEEPSEEK_API_KEY は既に物件評価・駅名解決が使っており、そのまま使うと費用が混ざる。
+  //   DeepSeek のキャッシュはアカウント単位なので**鍵を分けてもキャッシュは共有される**（分けて損がない）。
   if (provider === "deepseek") {
-    const apiKey = (env.DEEPSEEK_API_KEY ?? "").trim();
+    const apiKey = (env.LLM_ALT_DEEPSEEK_KEY ?? env.DEEPSEEK_API_KEY ?? "").trim();
     const model = (env.DEEPSEEK_MODEL ?? DEEPSEEK_DEFAULT_MODEL).trim();
     if (!apiKey || !model) return null;
     return { provider: "deepseek", endpoint: DEEPSEEK_ENDPOINT, apiKey, model, actions, fallbackToAnthropic, allowAutoSend };
