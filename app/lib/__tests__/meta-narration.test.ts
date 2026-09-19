@@ -1,6 +1,7 @@
 // 2026-09-12 竹内（あや事例）: AI の作業メモは下書き欄に絶対に入れない
 // 実行: npx tsx app/lib/__tests__/meta-narration.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { stripMetaNarration, isMetaNarrationLine } from "../meta-narration";
+import { readFileSync } from "node:fs";
+import { stripMetaNarration, isMetaNarrationLine, isNotACustomerReply } from "../meta-narration";
 import { applySurfaceFixes } from "../validate-reply";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -107,6 +108,31 @@ it("本文の「#」は落とさない（見出しらしい語で終わらない
   expect(stripMetaNarration(body).text).toBe(body);
   const hash = "#スモラ";
   expect(stripMetaNarration(hash).text).toBe(hash);
+});
+
+// 2026-09-19 竹内「本来でない文がなぜ出たのか原因見つけて根本的なところ改善する」
+//   AIX【内覧へ！】を DeepSeek に切り替えた本番の検証で出た実物
+it("★ AI がスタッフに材料を要求する文は返信ではない（丸ごと使わない）", () => {
+  expect(isNotACustomerReply("お客様のお名前が会話履歴から特定できませんでした。\nお手数ですが、お客様のお名前または会話履歴をご提示いただけますでしょうか？")).toBe(true);
+  expect(isNotACustomerReply("会話履歴から物件名が特定できませんでした")).toBe(true);
+  expect(isNotACustomerReply("情報が不足しており特定出来ません")).toBe(true);
+});
+it("★ 本物の送信文は落とさない（実送信365日で「特定できませ」「ご提示いただけ」は0件）", () => {
+  // 「会話履歴」「お名前」「ご提示」単体では落ちないこと（本物の文に出る語）
+  expect(isNotACustomerReply("YUMAさんお世話になっております！！\nご内覧のお日にちご提示いただけますと幸いです😊！！")).toBe(false);
+  expect(isNotACustomerReply("かしこまりました！！\nお名前をお伺いできますでしょうか😊！！")).toBe(false);
+  expect(isNotACustomerReply("物件名が確認できましたらお送りさせて頂きます！！")).toBe(false);
+  expect(isNotACustomerReply("空室状況を確認させて頂きます！！")).toBe(false);
+});
+it("★ AIX の出口にも配られている（返信生成だけに入れても AIX から漏れる）", () => {
+  // 設計知見「入口（材料・指示）だけ直しても生成後の癖は残る — 出口の決定論も同じ関数で全経路に配る」
+  const aix = readFileSync("app/api/aix/action/route.ts", "utf8");
+  expect(/isNotACustomerReply\(stripped\)/.test(aix)).toBe(true);
+  expect(/tag: "aix:not-a-reply"/.test(aix)).toBe(true);
+  const gen = readFileSync("app/api/generate-reply/route.ts", "utf8");
+  expect(/isNotACustomerReply/.test(gen)).toBe(true);
+  const draft = readFileSync("app/lib/draft-text.ts", "utf8");
+  expect(/isNotACustomerReply/.test(draft)).toBe(true);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

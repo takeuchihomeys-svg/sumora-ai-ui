@@ -7,7 +7,7 @@ import { supabase } from "@/app/lib/supabase";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date";
-import { stripMetaNarration } from "@/app/lib/meta-narration";
+import { stripMetaNarration, isNotACustomerReply } from "@/app/lib/meta-narration";
 import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
 // 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
 import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "@/app/lib/room-choices";
@@ -1703,6 +1703,17 @@ async function handleAction(request: NextRequest): Promise<Response> {
       const { text: stripped, applied: weekdayFixed } = fixDateWeekdays(zeroStripped);
       if (weekdayFixed.length > 0) console.log(JSON.stringify({ tag: "aix:weekday-fixed", action: currentAction, conversationId, applied: weekdayFixed }));
       // 2026-09-15 竹内「こんなの絶対にいれない」: AI の作業メモ（「物件資料を確認します。」「〜のパターンで返信します。」）を落とす（返信生成と同じ関数）
+      // 2026-09-19 竹内「本来でない文がなぜ出たのか原因見つけて根本的なところ改善する」:
+      //   DeepSeek に切り替えた本番の検証で、AIX【内覧へ！】が
+      //   「お客様のお名前が会話履歴から特定できませんでした。お手数ですが…ご提示いただけますでしょうか？」
+      //   を返した。**AI がスタッフに材料を要求している文**で、お客様への返信ではない。
+      //   返信生成（generate-reply）と下書き（draft-text）には isNotACustomerReply があったのに
+      //   **AIX の出口には配られていなかった**（設計知見「出口の決定論も同じ関数で全経路に配る」）。
+      //   行ごとに削る stripMetaNarration では、全部が返信でない時に何も落ちずに素通りする。
+      if (isNotACustomerReply(stripped)) {
+        console.error(JSON.stringify({ tag: "aix:not-a-reply", action: currentAction, conversationId, head: stripped.slice(0, 80) }));
+        throw new Error("お客様への返信になっていない文が生成されました。もう一度お試しください");
+      }
       const meta = stripMetaNarration(stripped);
       if (meta.removed.length > 0) console.log(JSON.stringify({ tag: "aix:meta-narration-removed", action: currentAction, conversationId, removed: meta.removed.map((r) => r.slice(0, 60)) }));
       // 2026-09-15 竹内（YUYA 事例の本番確認で AIX 保証会社についてに「夜分遅くに失礼致します」が入った）: 返信生成・修正版・補助ボタンと同じ決定論置換を
