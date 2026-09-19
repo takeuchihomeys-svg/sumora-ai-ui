@@ -74,11 +74,25 @@ it("打診が無くお客様の希望だけ → customer_wants_viewing。「ま�
 });
 it("糸口のブロック: 提案済みの日時・お客様の言葉・続きの1文・御見積書なしの注意", () => {
   const v = resolveViewingThread(KAINA, { nowMs: NOW });
-  const b = buildViewingThreadBlock(v, { customerName: "カイナさん", estimateEnclosed: false, active: true, staffForced: false });
+  const b = buildViewingThreadBlock(v, { customerName: "カイナさん", estimateEnclosed: false, active: true, staffForced: false, lineForced: true });
   expect(b).toContain("9/16(水) 15:30〜17:00"); expect(b).toContain(VIEWING_CONTINUATION_LINE); expect(b).toContain("御見積書");
-  expect(buildViewingThreadBlock(v, { customerName: "カイナさん", estimateEnclosed: true, active: true, staffForced: false })).notToContain("御見積書");
+  expect(buildViewingThreadBlock(v, { customerName: "カイナさん", estimateEnclosed: true, active: true, staffForced: false, lineForced: true })).notToContain("御見積書");
   expect(buildViewingThreadBlock(v, { customerName: "カイナさん", estimateEnclosed: false, active: false, staffForced: false })).toBe("");
   expect(buildViewingThreadBlock(resolveViewingThread([], { nowMs: NOW }), { customerName: "x", estimateEnclosed: false, active: true, staffForced: true })).toContain("スタッフの指定");
+});
+// 2026-09-19 竹内「実際の成約データや直近でスタッフが書き直したのも参考にして」:
+//   「よろしければご案内させて頂きます」は実送信365日 11,918通中1件。自動判定で毎回足していたため 49% で削られていた。
+//   → 自動判定（lineForced なし）では締めの1文を書かせない。日程を出さない縛りだけ残す。
+it("自動判定では締めの1文を書かせない（日程を出さない縛りだけ残す）", () => {
+  const v = resolveViewingThread(KAINA, { nowMs: NOW });
+  const auto = buildViewingThreadBlock(v, { customerName: "カイナさん", estimateEnclosed: true, active: true, staffForced: false });
+  expect(auto).toContain("9/16(水) 15:30〜17:00");        // 糸口は渡す
+  expect(auto).toContain("新しい日時");                    // 日程を出さない縛りは残る
+  expect(auto).notToContain(VIEWING_CONTINUATION_LINE);   // 締めの1文は書かせない
+  expect(auto).toContain("次の一手も書かない");
+  expect(auto).toContain("ご査収");
+  // スタッフが「流れを続ける」を押した時だけ1文が入る
+  expect(buildViewingThreadBlock(v, { customerName: "カイナさん", estimateEnclosed: true, active: true, staffForced: false, lineForced: true })).toContain(VIEWING_CONTINUATION_LINE);
 });
 it("御見積書を同封しない時は約束の行（と直後のご査収）を落とす。同封済みの過去形は落とさない", () => {
   const r = stripEstimatePromiseLines(GEN, { estimateEnclosed: false });

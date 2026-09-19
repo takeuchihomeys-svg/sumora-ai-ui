@@ -5973,10 +5973,15 @@ export default function AixModal({
                   </div>
                   {viewingThread?.pending && (
                     <p className="mt-1 px-1 text-[11px] text-[#2e7d32]">
+                      {/* 2026-09-19 実データ: 「よろしければご案内させて頂きます」は実送信11,918通中1件。
+                          自動判定では足さず、「流れを続ける」を押した時だけ入る（押していない時はそう書く） */}
                       {viewingContinueAuto ? "会話から自動: " : "会話: "}
                       {viewingThread.kind === "proposed_waiting_reply"
-                        ? `内覧提案中（${viewingThread.slots.join(" / ") || "日時"}・返事待ち）→ 新しい日時は出さず「よろしければご案内させて頂きます」で締めます`
-                        : `お客様が「${viewingThread.customerWish ?? ""}」→「よろしければご案内させて頂きます」で締めます`}
+                        ? `内覧提案中（${viewingThread.slots.join(" / ") || "日時"}・返事待ち）→ 新しい日時は出しません`
+                        : `お客様が「${viewingThread.customerWish ?? ""}」`}
+                      {checkViewingContinue
+                        ? "。「よろしければご案内させて頂きます」で締めます"
+                        : "。次の一手は書かず、ご査収で締めます（付けるなら「流れを続ける」）"}
                     </p>
                   )}
                   {viewingThread?.kind === "scheduled" && (

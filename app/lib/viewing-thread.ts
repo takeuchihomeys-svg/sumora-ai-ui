@@ -128,7 +128,12 @@ export function resolveViewingThread(
 /** LLM に渡す糸口のブロック（active=false なら空） */
 export function buildViewingThreadBlock(
   v: ViewingThreadVerdict,
-  opts: { customerName: string; estimateEnclosed: boolean; active: boolean; staffForced: boolean },
+  // 2026-09-19 竹内「実際の成約データや直近でスタッフが書き直したのも参考にして」:
+  //   lineForced = スタッフが画面で「流れを続ける」を選んだか。**自動判定では締めの1文を書かせない**。
+  //   実送信365日 11,918通中「よろしければご案内させて頂きます」は1件（この仕組みの元にしたカイナのその1通）で、
+  //   自動判定で毎回書かせた結果、会話を合わせる51件の49%でスタッフが削っていた。
+  //   日程を出さない縛りは自動判定のまま（提案中にもう一度日程を出すのは実害がある）。
+  opts: { customerName: string; estimateEnclosed: boolean; active: boolean; staffForced: boolean; lineForced?: boolean },
 ): string {
   if (!opts.active) return "";
   const lines: string[] = ["【会話の糸口: 内覧の流れが続いている（確定事実・締めはこれに合わせる）】"];
@@ -141,7 +146,12 @@ export function buildViewingThreadBlock(
   } else {
     return "";
   }
-  lines.push(`・今回確認した物件はこの内覧の続きとして扱う → 締めは「${VIEWING_CONTINUATION_LINE}」の1文だけ。新しい日時・「ご都合よろしいお日にち」「直近ですと」は書かない（日程は AIX【内覧日調整】で送る）`);
+  lines.push(
+    opts.lineForced
+      ? `・今回確認した物件はこの内覧の続きとして扱う → 締めは「${VIEWING_CONTINUATION_LINE}」の1文だけ。新しい日時・「ご都合よろしいお日にち」「直近ですと」は書かない（日程は AIX【内覧日調整】で送る）`
+      : "・今回確認した物件はこの内覧の続きとして扱う → **新しい日時・「ご都合よろしいお日にち」「直近ですと」は書かない**（日程は AIX【内覧日調整】で送る）。"
+        + "内覧のご案内・お申込み等の**次の一手も書かない**（結果の報告で終え、同封しているなら「お手隙の際にご査収ください😌！！」で締める）",
+  );
   if (!opts.estimateEnclosed) lines.push("・この返信に御見積書は同封しない → 「御見積書を作成しお送りします」「お見積書とあわせてご連絡」等の約束は書かない（御見積書は別の AIX）");
   return lines.join("\n");
 }

@@ -4649,6 +4649,14 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         const cmViewingContinueBody = typeof body.viewing_continuation === "boolean" ? (body.viewing_continuation as boolean) : null;
         const cmContinuationActive = (cmViewingContinueBody ?? vt.pending) && !cmShowViewingInvite && !cmShowAppInvite;
         const cmStaffForcedContinue = cmViewingContinueBody === true && !vt.pending;
+        // 2026-09-19 竹内「実際の成約データや直近でスタッフが書き直したのも参考にして」:
+        //   「よろしければご案内させて頂きます！！」は**実送信365日 11,918通中1件**（2026-09-16 カイナの、この仕組みを作る元にしたその1通）。
+        //   「現在募集中」の報告231通の締めも ご査収131通（57%）が主流で、この1文は1通（0.4%）。
+        //   それを自動判定（vt.pending）で毎回足していたため、会話を合わせる51件のうち**49%でスタッフが削っていた**
+        //   （aix_generate_log の exit に added として記録が残っていた）。
+        //   → **足すのはスタッフが画面で「流れを続ける」を選んだ時だけ**。自動判定では足さない（材料としても1文を強制しない）。
+        //   新しい日時を出さない縛り（stripNewSlotLines）は自動判定のままでよい＝「提案中にもう一度日程を出す」のは実害があるため。
+        const cmContinuationLineForced = cmViewingContinueBody === true && !cmShowViewingInvite && !cmShowAppInvite;
         // 今回募集中と伝える部屋数（スタッフの入力＝正。資料の枚数から部屋数は推定しない・枚数は「資料N枚」の事実にだけ使う）
         const cmRooms = resolveEnclosedRooms({
           propertyCount: (property_count as number | undefined) ?? 0,
@@ -4671,12 +4679,21 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
           cmPattern === "alternative" && cmEndedFloor != null ? `・募集終了だったお部屋: ${cmEndedFloor}階${cmEndedUnit ? `${cmEndedUnit}号室` : ""}` : "",
           cmSentCount !== null ? `・お客様から送られた物件数: ${cmSentCount}件` : "",
           cmEndedCount > 0
-            ? `・残り${cmEndedCount}件: 確認済みで「募集終了」（申込済み・募集に出ていない）。\n　※「残り${cmEndedCount}件は確認中」「引き続き確認します」等の保留表現は事実に反するため絶対禁止。募集終了として伝え「引き続き条件に合うお部屋を探させて頂きます！！」で締めること`
+            // 2026-09-19 実データ: 募集終了の報告178通のうち「引き続き」を付けたのは30通（17%）。83%は結果だけで終えている。
+            //   「で締めること」と必須にしていたため、会話を合わせるで毎回付いてスタッフに削られていた。禁止（保留表現）はそのまま残す。
+            ? `・残り${cmEndedCount}件: 確認済みで「募集終了」（申込済み・募集に出ていない）。\n　※「残り${cmEndedCount}件は確認中」「引き続き確認します」等の保留表現は事実に反するため絶対禁止（募集終了として言い切る）。\n　※「引き続き条件に合うお部屋を探させて頂きます！！」は**全件が募集終了で、次を探す約束をこの会話でまだしていない時だけ**（必須ではない。実送信では17%）`
             : "",
           cmAvailableApp === "yes" ? "・お申込状況: 既に1番手のお申込あり → 2番手以降でのお申込となる旨を伝えること" : "",
           cmShowAppInvite ? "・締めの方向: お申込誘導（お気に召されましたらお申込みしお部屋を抑えさせて頂きます）" : "",
           !cmShowAppInvite && cmShowViewingInvite ? "・締めの方向: 内覧誘導（ご都合よろしいお日にちにご案内させて頂きます）" : "",
-          cmContinuationActive ? `・締めの方向: 内覧の続き（既に内覧の話が進んでいる → 「${VIEWING_CONTINUATION_LINE}」の1文。新しい日時は出さない）` : "",
+          cmContinuationLineForced
+            ? `・締めの方向: 内覧の続き（スタッフが「流れを続ける」を選択 → 「${VIEWING_CONTINUATION_LINE}」の1文。新しい日時は出さない）`
+            : cmContinuationActive ? "・内覧の話が既に進んでいる → **新しい日時は出さない**（日程の提案は書かない）" : "",
+          // 2026-09-19 実データ: 「現在募集中」の報告231通の締めは ご査収131通（57%）。
+          //   締めの方向をスタッフが選んでいない時に次の一手（内覧・申込・ピックアップの約束）を書くと、実送信に無い形になり毎回削られる。
+          !cmShowAppInvite && !cmShowViewingInvite && !cmContinuationLineForced
+            ? "・締めの方向: 指定なし → **次の一手（内覧のご案内・お申込み・引き続きピックアップ等の約束）は書かない**。資料・御見積書を同封しているなら「お手隙の際にご査収ください😌！！」で締める"
+            : "",
         ].filter(Boolean).join("\n");
         // 2026-09-17 竹内（AIX 物件確認した）: 退去予定のお部屋の伝え方を材料として渡す
         //   （状態は「現在退去予定で募集中」／退去日の翌日以降ご内覧可能／費用のマイナスの説明は入れない）
@@ -4693,7 +4710,9 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
 ${cmResultLines}
 ・スタッフは既に募集状況の確認を完了しています。上記の結果を報告するメッセージを作成してください
 ・「確認させて頂きます」「確認いたします」等の確認前メッセージの生成は絶対禁止（確認は完了済み）
-・確認できた物件については「募集中です」で終わらせず、上記の状態・設備・費用情報まで伝えて次のアクション（内覧/申込）に繋げること${cmVacatingNote ? `\n\n${cmVacatingNote}` : ""}`
+・確認できた物件については「募集中です」で終わらせず、上記の状態・設備・費用情報まで伝えること
+・ただし**次のアクション（内覧/申込）は「締めの方向」で指定された時だけ**書く。指定が無ければ結果の報告とご査収で終える
+　（2026-09-19 実データ: 実送信231通の締めは ご査収57%。指定なしで次の一手を書くと毎回スタッフに削られていた）${cmVacatingNote ? `\n\n${cmVacatingNote}` : ""}`
           : "";
 
         const calendarNoteForPCR = calendar_info ? String(calendar_info) : "";
@@ -4790,7 +4809,7 @@ ${SMORA_COMMON_RULES}
         const pcrDynamicSuffix = [
           pcrQuotedBlock,
           cmResultBlock,
-          buildViewingThreadBlock(vt, { customerName: name, estimateEnclosed: cmHasEstimate, active: cmContinuationActive, staffForced: cmStaffForcedContinue }),
+          buildViewingThreadBlock(vt, { customerName: name, estimateEnclosed: cmHasEstimate, active: cmContinuationActive, staffForced: cmStaffForcedContinue, lineForced: cmContinuationLineForced }),
           cmEstimateFacts.block,
           pcrCalendarBlock,
           brainMetaBlockPCR,
@@ -4855,12 +4874,13 @@ ${SMORA_COMMON_RULES}
         const exitLog: Record<string, unknown> = {};
         if (!cmHasEstimate) { const r = stripEstimatePromiseLines(message_text, { estimateEnclosed: false }); if (r.removed.length) { message_text = r.text; exitLog.removedEstimate = r.removed; } }
         if (cmContinuationActive) { const r = stripNewSlotLines(message_text); if (r.removed.length) { message_text = r.text; exitLog.removedSlots = r.removed; } }
-        { const r = ensureViewingContinuationLine(message_text, cmContinuationActive); if (r.added) { message_text = r.text; exitLog.added = r.added; } }
+        // 2026-09-19: 足すのはスタッフが「流れを続ける」を選んだ時だけ（自動判定では足さない。上の cmContinuationLineForced のコメント参照）
+        { const r = ensureViewingContinuationLine(message_text, cmContinuationLineForced); if (r.added) { message_text = r.text; exitLog.added = r.added; } }
         { const r = ensureRoomCountPhrase(message_text, cmRooms.rooms); if (r.fixed) { message_text = r.text; exitLog.roomFixed = true; } }
         message_text = message_text.replace(/\n{3,}/g, "\n\n").trim();
         // 御見積書の約束を落とした後に「お手隙の際にご査収ください」だけが締めで残る（資料は同封しているので可）。続きの1文がその前に入る
         console.log(JSON.stringify({ tag: "aix:pcr-viewing-thread", conversationId, kind: vt.kind, reason: vt.reason, slots: vt.slots, active: cmContinuationActive, fromBody: cmViewingContinueBody, rooms: cmRooms, ...exitLog }));
-        Object.assign(conditionsSnapshot, { viewing_thread: { kind: vt.kind, reason: vt.reason, slots: vt.slots, active: cmContinuationActive, from_body: cmViewingContinueBody }, rooms: cmRooms, exit: exitLog });
+        Object.assign(conditionsSnapshot, { viewing_thread: { kind: vt.kind, reason: vt.reason, slots: vt.slots, active: cmContinuationActive, line_forced: cmContinuationLineForced, from_body: cmViewingContinueBody }, rooms: cmRooms, exit: exitLog });
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         return finalizeResponse(message_text, { ...(cmEstimateExtra ?? {}), ...(pcrNotice ? { notice: pcrNotice } : {}) });
       }
