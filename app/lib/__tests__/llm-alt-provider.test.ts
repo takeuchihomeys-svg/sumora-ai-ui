@@ -313,6 +313,26 @@ console.log("── ★ 思考モードを切る（実際に叩いて分かっ�
     /disableThinking: cfg\.provider === "deepseek"/.test(provider));
 }
 
+console.log("── ★ 別クラウドの呼び出しも llm_usage_logs に残す（本番の検証で見つけた穴）");
+{
+  // fetch の出口の記録は api.anthropic.com 宛てだけを見ている。llm-alt-provider は
+  // Anthropic 宛てを横取りして DeepSeek の URL を叩くので、切り替わった分は1行も残らなかった
+  // （費用も質も後から追えない＝静かに壊れる）。
+  const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
+  t("★ 成功した呼び出しを記録している", /recordAltUsage\(\{[\s\S]{0,300}?status: 200/.test(provider));
+  t("★ 失敗した呼び出しも記録している（フォールバックの回数が数えられる）",
+    /errorType: "alt_failed"/.test(provider));
+  t("★ action と会話 ID を残している（どの AIX・どの会話かを後から追える）",
+    /action: routeName, conversationId/.test(provider));
+  t("★ 応答を clone してから読む（本来の応答を壊さない）", /res\.clone\(\)/.test(provider));
+
+  const recorder = readFileSync("app/lib/llm-usage-recorder.ts", "utf8");
+  t("★ 書き込みの口は recorder 側に1つだけ置いている（記録の仕組みを2か所に分けない）",
+    /export function recordAltUsage/.test(recorder) && /altRecorder = deps/.test(recorder));
+  t("★ キャッシュ一致を cache_read に入れている",
+    /cache_read: num\(input\.usage\.cache_read_input_tokens\)/.test(recorder));
+}
+
 console.log("── ★ 対象外はそのまま Anthropic へ（null を返す）");
 {
   t("ストリーミングは対象外", toOpenAIBody({ stream: true, messages: [{ role: "user", content: "x" }] }, "m") === null);

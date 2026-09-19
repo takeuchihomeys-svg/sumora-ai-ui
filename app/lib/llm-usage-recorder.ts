@@ -319,6 +319,47 @@ function installWrapped(g: { fetch: FetchLike & Record<PropertyKey, unknown> }, 
   g.fetch = w;
 }
 
+// ── 別クラウド（DeepSeek 等）の記録 ──────────────────────────────────────────
+// 2026-09-19 本番の検証で見つけた穴:
+//   fetch の出口の記録は **api.anthropic.com 宛てだけ**を見ている。
+//   llm-alt-provider は Anthropic 宛てを横取りして DeepSeek の URL を叩くので、
+//   切り替わった呼び出しは1行も残らなかった（費用も質も後から追えない＝静かに壊れる）。
+//   記録の仕組みを2か所に分けないため、書き込みの口はここに置き、alt-provider から呼ぶ。
+type AltRecorder = { insert: (row: LlmUsageRow) => Promise<void>; keepAlive: (p: Promise<unknown>) => void; route: () => string | null; env: string | null };
+let altRecorder: AltRecorder | null = null;
+
+/** 別クラウドの呼び出しを llm_usage_logs に1行残す（記録が使えない時は何もしない） */
+export function recordAltUsage(input: {
+  model: string;
+  action: string | null;
+  conversationId: string | null;
+  /** Anthropic の形に変換済みの usage */
+  usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number };
+  status: number;
+  errorType: string | null;
+  durationMs: number;
+  /** 元の Anthropic リクエストの system 先頭（どの経路かを後から読むため） */
+  sysHead: string | null;
+  sysKeyFull: string | null;
+  maxTokens: number | null;
+}): void {
+  const r = altRecorder;
+  if (!r) return;
+  const row: LlmUsageRow = {
+    route: r.route(), model: input.model, status: input.status, error_type: input.errorType,
+    stream: false, stop_reason: null,
+    input_uncached: num(input.usage.input_tokens), cache_read: num(input.usage.cache_read_input_tokens),
+    cache_write: 0, cache_write_5m: 0, cache_write_1h: 0,
+    output_tokens: num(input.usage.output_tokens), thinking_tokens: 0,
+    max_tokens: input.maxTokens, thinking_mode: null, cache_breakpoints: 0,
+    sys_key: input.sysHead ? shortHash(input.sysHead.slice(0, 400)) : null,
+    sys_head: input.sysHead ? input.sysHead.slice(0, 200) : null,
+    duration_ms: Math.max(0, Math.round(input.durationMs)), request_id: null, env: r.env,
+    action: input.action, conversation_id: input.conversationId, sys_key_full: input.sysKeyFull,
+  };
+  try { r.keepAlive(r.insert(row).catch(() => {})); } catch { /* 記録の失敗で本来の応答を止めない */ }
+}
+
 /** globalThis.fetch を1回だけ包む（instrumentation.ts から。Vercel ではレスポンス後も waitUntil で記録を書き終える） */
 export async function installLlmUsageRecorder(): Promise<boolean> {
   const g = globalThis as unknown as { fetch: FetchLike & Record<PropertyKey, unknown> };
@@ -343,15 +384,18 @@ export async function installLlmUsageRecorder(): Promise<boolean> {
 
   let warned = false;
   const original = g.fetch;
-  const wrapped = wrapFetchWithLlmUsageRecorder(original.bind(globalThis), {
-    insert: async (row) => {
+  const deps = {
+    insert: async (row: LlmUsageRow) => {
       const { error } = await db.from("llm_usage_logs").insert(row);
       if (error && !warned) { warned = true; console.warn("[llm-usage-recorder] insert failed:", error.message); }
     },
-    keepAlive: (p) => { try { waitUntil(p); } catch { /* Vercel 以外 */ } },
+    keepAlive: (p: Promise<unknown>) => { try { waitUntil(p); } catch { /* Vercel 以外 */ } },
     route: () => workStore?.getStore()?.route ?? null,
     env: process.env.VERCEL_ENV ?? "local",
-  });
+  };
+  // 別クラウド（DeepSeek）に回った呼び出しも同じ口から書く（llm-alt-provider が recordAltUsage を呼ぶ）
+  altRecorder = deps;
+  const wrapped = wrapFetchWithLlmUsageRecorder(original.bind(globalThis), deps);
   installWrapped(g, original, wrapped);
   return true;
 }

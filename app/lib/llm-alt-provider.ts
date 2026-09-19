@@ -19,7 +19,7 @@
 //   ・画像（Vision）と streaming は対象外＝そのまま Anthropic へ
 //   ・応答は Anthropic の形に戻すので、使用量の記録（llm_usage_logs）はそのまま動く（model 名で見分けられる）
 
-import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "./llm-usage-recorder";
+import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CONVERSATION_HEADER, recordAltUsage } from "./llm-usage-recorder";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
@@ -414,15 +414,36 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     if (!shouldRouteAlt(cfg, routeName)) return original(input as RequestInfo, init);
 
     const started = Date.now();
+    const sysHead = flattenContent(body.system);
+    const conversationId = headers.get(LLM_CONVERSATION_HEADER);
     try {
       const res = cfg.provider === "bedrock"
         ? await callBedrock(cfg, body)
         : await callOpenAICompatible(cfg, body, original);
       if (!res) return original(input as RequestInfo, init); // 画像・streaming 等は今までどおり
-      console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: cfg.provider, model: cfg.model, ms: Date.now() - started }));
+      const ms = Date.now() - started;
+      console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: cfg.provider, model: cfg.model, ms }));
+      // 2026-09-19 本番の検証で見つけた穴: fetch の出口の記録は Anthropic 宛てだけを見るので、
+      //   別クラウドに回った分は1行も残らなかった（費用も質も後から追えない）。ここで自分で書く。
+      try {
+        const clone = res.clone();
+        clone.json().then((j: { usage?: Record<string, number> }) => {
+          recordAltUsage({
+            model: cfg.model, action: routeName, conversationId,
+            usage: j.usage ?? {}, status: 200, errorType: null, durationMs: ms,
+            sysHead, sysKeyFull: sysHead, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
+          });
+        }).catch(() => { });
+      } catch { /* 記録の失敗で応答を止めない */ }
       return res;
     } catch (e) {
       console.warn("[llm-alt] failed:", String(e));
+      // 失敗も1行残す（フォールバックの回数が後から数えられる）
+      recordAltUsage({
+        model: cfg.model, action: routeName, conversationId, usage: {},
+        status: 0, errorType: "alt_failed", durationMs: Date.now() - started,
+        sysHead, sysKeyFull: sysHead, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
+      });
       if (!cfg.fallbackToAnthropic) throw e;
       return original(input as RequestInfo, init); // 失敗したら今までどおり Anthropic で返す
     }
