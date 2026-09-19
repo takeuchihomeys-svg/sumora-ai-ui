@@ -28,6 +28,8 @@ export type AltProvider = "azure" | "bedrock" | "deepseek";
 
 /** DeepSeek 本家 API（OpenAI 互換）。Azure と同じ変換処理がそのまま使える */
 export const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions";
+/** DeepSeek-V4.1-Flash（2026-09-19 竹内「モデルは V4.1 を使う」）。1M コンテキスト */
+export const DEEPSEEK_DEFAULT_MODEL = "deepseek-flash";
 export type EnvLike = Record<string, string | undefined>;
 
 export type AltProviderConfig = {
@@ -87,9 +89,14 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   }
   // DeepSeek 本家。OpenAI 互換なので Azure と同じ変換（toOpenAIBody / fromOpenAIResponse）で通る。
   // 既に DEEPSEEK_API_KEY が物件評価・駅名解決で使われているので、鍵はそれを流用する。
+  //
+  // 2026-09-19 竹内「モデルは V4.1 を使う」→ 既定は deepseek-flash（= DeepSeek-V4.1-Flash・1M コンテキスト）。
+  //   料金（1M あたり・混雑時は倍）: キャッシュ一致 $0.003 / 不一致 $0.15 / 出力 $0.6
+  //   もう一方は deepseek-v4-pro（一致 $0.022 / 不一致 $0.66 / 出力 $1.98）
+  //   ※ 旧称の deepseek-chat も通るが、どの版かが名前から分からないので既定にしない
   if (provider === "deepseek") {
     const apiKey = (env.DEEPSEEK_API_KEY ?? "").trim();
-    const model = (env.DEEPSEEK_MODEL ?? "deepseek-chat").trim();
+    const model = (env.DEEPSEEK_MODEL ?? DEEPSEEK_DEFAULT_MODEL).trim();
     if (!apiKey || !model) return null;
     return { provider: "deepseek", endpoint: DEEPSEEK_ENDPOINT, apiKey, model, actions, fallbackToAnthropic, allowAutoSend };
   }
@@ -216,13 +223,29 @@ export function toOpenAIBody(body: AnthropicBody, model: string): Record<string,
   };
 }
 
-/** OpenAI 互換の応答 → Anthropic Messages API の応答（呼び出し側は違いに気付かない） */
+/**
+ * OpenAI 互換の応答 → Anthropic Messages API の応答（呼び出し側は違いに気付かない）。
+ *
+ * 2026-09-19 竹内「プロンプトキャッシュも使う」:
+ *   DeepSeek のコンテキストキャッシュは**既定でオン・コードの変更は不要**（api-docs.deepseek.com/guides/kv_cache）。
+ *   前置きが前回と一致した分だけ自動で安くなる（deepseek-flash: 一致 $0.003/M・不一致 $0.15/M ＝ **50倍差**）。
+ *   応答の usage に prompt_cache_hit_tokens / prompt_cache_miss_tokens が入るので、
+ *   Anthropic の cache_read_input_tokens に移して llm_usage_logs に残す。
+ *   → 移さないと「全部が新規入力」として記録され、**キャッシュが効いているか確かめられない**。
+ */
 export function fromOpenAIResponse(json: {
   choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: {
+    prompt_tokens?: number; completion_tokens?: number;
+    prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number;
+  };
 }, model: string): Record<string, unknown> {
   const text = json.choices?.[0]?.message?.content ?? "";
   const finish = json.choices?.[0]?.finish_reason ?? "stop";
+  const u = json.usage;
+  const cacheHit = u?.prompt_cache_hit_tokens ?? 0;
+  // DeepSeek は prompt_tokens = 一致 + 不一致。新規入力は「不一致」の方（無ければ従来どおり prompt_tokens）
+  const uncached = u?.prompt_cache_miss_tokens ?? u?.prompt_tokens ?? 0;
   return {
     id: `alt_${Date.now().toString(36)}`,
     type: "message",
@@ -232,10 +255,11 @@ export function fromOpenAIResponse(json: {
     stop_reason: finish === "length" ? "max_tokens" : "end_turn",
     stop_sequence: null,
     usage: {
-      input_tokens: json.usage?.prompt_tokens ?? 0,
-      output_tokens: json.usage?.completion_tokens ?? 0,
+      input_tokens: uncached,
+      output_tokens: u?.completion_tokens ?? 0,
+      // DeepSeek は「書き込み」を別課金しない（一致/不一致の2つだけ）
       cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
+      cache_read_input_tokens: cacheHit,
     },
   };
 }

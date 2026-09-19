@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import {
   readAltConfig, shouldRouteAlt, resolveRouteName, toOpenAIBody, fromOpenAIResponse, flattenContent, ROUTE_MARKERS,
-  isAutoSendCall, isPostApplyCall, isPostApplyStatus, DEEPSEEK_ENDPOINT,
+  isAutoSendCall, isPostApplyCall, isPostApplyStatus, DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL,
 } from "../llm-alt-provider";
 import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
 
@@ -106,10 +106,11 @@ console.log("── ★ DeepSeek 本家（OpenAI 互換・Azure と同じ変換�
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "property_recommendation" })?.provider === "deepseek");
   t("★ 宛先は api.deepseek.com の chat/completions",
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.endpoint === DEEPSEEK_ENDPOINT);
-  t("★ モデルの既定は deepseek-chat",
-    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.model === "deepseek-chat");
-  t("モデルは指定できる",
-    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", DEEPSEEK_MODEL: "deepseek-v4-flash", LLM_ALT_ACTIONS: "a" })?.model === "deepseek-v4-flash");
+  t("★ モデルの既定は deepseek-flash（= V4.1-Flash・竹内「モデルは V4.1 を使う」）",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.model === DEEPSEEK_DEFAULT_MODEL
+    && DEEPSEEK_DEFAULT_MODEL === "deepseek-flash");
+  t("モデルは指定できる（deepseek-v4-pro 等）",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", DEEPSEEK_MODEL: "deepseek-v4-pro", LLM_ALT_ACTIONS: "a" })?.model === "deepseek-v4-pro");
   t("★ 鍵が無ければ null（今までどおり Anthropic）",
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", LLM_ALT_ACTIONS: "a" }) === null);
   t("★ 自動返信・申込以降の歯止めは DeepSeek でも同じ",
@@ -233,6 +234,22 @@ console.log("── 応答は Anthropic の形に戻す（呼び出し側は違�
   }, "DeepSeek-V4-Flash");
   t("content[0].text に本文", eq((r.content as Array<{ text: string }>)[0].text, "かしこまりました！！"));
   t("type/role が Anthropic と同じ", r.type === "message" && r.role === "assistant");
+  // 2026-09-19 竹内「プロンプトキャッシュも使う」: DeepSeek は usage に一致/不一致を返す。
+  // ここで Anthropic の形（cache_read_input_tokens）に移さないと、全部が新規入力として記録され
+  // 「キャッシュが効いているか」を後から確かめられない（一致は不一致の50分の1の値段）
+  const ds = fromOpenAIResponse({
+    choices: [{ message: { content: "はい" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 12000, completion_tokens: 90, prompt_cache_hit_tokens: 11000, prompt_cache_miss_tokens: 1000 },
+  }, "deepseek-flash") as { usage: Record<string, number> };
+  t("★ キャッシュ一致が cache_read_input_tokens に入る", ds.usage.cache_read_input_tokens === 11000);
+  t("★ 新規入力は「不一致」の方（prompt_tokens ではない）", ds.usage.input_tokens === 1000);
+  t("★ DeepSeek はキャッシュ書き込みを別課金しない（0）", ds.usage.cache_creation_input_tokens === 0);
+  const noCache = fromOpenAIResponse({
+    choices: [{ message: { content: "はい" } }], usage: { prompt_tokens: 500, completion_tokens: 10 },
+  }, "x") as { usage: Record<string, number> };
+  t("キャッシュの情報が無い相手（Azure 等）は今までどおり prompt_tokens を使う",
+    noCache.usage.input_tokens === 500 && noCache.usage.cache_read_input_tokens === 0);
+
   t("★ usage が入る（llm_usage_logs がそのまま書ける）",
     eq(r.usage, { input_tokens: 1234, output_tokens: 56, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }));
   t("★ model が DeepSeek（あとで費用と品質を見分けられる）", r.model === "DeepSeek-V4-Flash");
