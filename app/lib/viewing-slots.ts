@@ -84,3 +84,25 @@ export function limitViewingSlotsInReply(
     : requestedViewingDatesFromMessages(o.messages ?? [], o.nowMs ?? Date.now()).map((r) => r.md);
   return limitSlotsPerDay(text, mds.length === 1 ? mds : []);
 }
+
+/**
+ * 2026-09-19 竹内（まりあ事例）「明後日じゃないのに明後日と出ている」の出口。
+ *
+ * 算数は合っていた（9/19(土)の2日後＝9/21(月)）。問題は**言い方**で、
+ * 実送信365日の内覧日程の案内188通のうち「明後日 M/D」は18通（9.6%）＝**90%は日付だけ**。
+ * このまりあさんの回も、スタッフは「明後日」だけを消して「本日」は残して送っている。
+ *
+ * 直すのは「明後日」が**日付のすぐ前にある時だけ**（「明後日 9/21(月)」→「9/21(月)」）。
+ * お客様の発言の復唱（「明後日でしたら空いております」等・日付を伴わない）は触らない＝情報を減らさない。
+ * 「本日」「明日」は実送信でも使っているのでそのまま残す。
+ */
+const DAYAFTER_BEFORE_DATE_RE = /明後日\s*(?=[0-9０-９]{1,2}\s*[\/／月])/g;
+
+export function stripDayAfterTomorrowLabel(text: string): { text: string; removed: number } {
+  if (!text) return { text, removed: 0 };
+  let removed = 0;
+  const out = text.replace(DAYAFTER_BEFORE_DATE_RE, () => { removed++; return ""; });
+  if (removed === 0) return { text, removed: 0 };
+  // 「直近ですと\n 9/21(月)」のように行頭に空白が残らないようにする
+  return { text: out.split("\n").map((l) => l.replace(/^[ 　]+/, "")).join("\n"), removed };
+}

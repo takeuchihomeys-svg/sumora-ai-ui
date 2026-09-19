@@ -1,6 +1,6 @@
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に時間を2つ出すのはお客様が日にちを指定した時だけ。こちらから日にちを出す時は1日1つ
 // 実行: npx tsx app/lib/__tests__/viewing-slots.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { pickDaySlots, limitSlotsPerDay, normalizeMd, limitViewingSlotsInReply } from "../viewing-slots";
+import { pickDaySlots, limitSlotsPerDay, normalizeMd, limitViewingSlotsInReply, stripDayAfterTomorrowLabel } from "../viewing-slots";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -112,6 +112,34 @@ it("断りの文の日付は指定日にしない（「本日は厳しいので�
   const text = "9/16(水) 12:00〜14:00 16:00〜18:00\nご案内可能です😊！！";
   const msgs = [{ sender: "customer", text: "本日は厳しいです" }];
   expect(limitViewingSlotsInReply(text, { messages: msgs, nowMs: NOW })).toBe("9/16(水) 12:00〜14:00\nご案内可能です😊！！");
+});
+
+// ── 2026-09-19 竹内（まりあ事例）: 日付の前の「明後日」は落とす ────────────────
+//   算数は合っていた（9/19(土)の2日後＝9/21(月)）。実送信188通で「明後日 M/D」は18通（9.6%）。
+//   このまりあさんの回も、スタッフは「明後日」だけを消して「本日」は残して送った。
+it("まりあ事例: 日付の前の「明後日」だけ落とす（本日・明日・日付・曜日は残す）", () => {
+  const draft = "直近ですと\n本日 9/19(土) 15:00〜16:30\n明後日 9/21(月) 15:00〜17:00\n9/22(火) 11:00〜13:00にてご案内可能です😌！！";
+  const r = stripDayAfterTomorrowLabel(draft);
+  expect(r.removed).toBe(1);
+  expect(r.text).toBe("直近ですと\n本日 9/19(土) 15:00〜16:30\n9/21(月) 15:00〜17:00\n9/22(火) 11:00〜13:00にてご案内可能です😌！！");
+});
+it("日付を伴わない「明後日」（お客様の発言の復唱）は触らない", () => {
+  const keep = "明後日でしたらご案内可能です！！";
+  expect(stripDayAfterTomorrowLabel(keep).text).toBe(keep);
+  expect(stripDayAfterTomorrowLabel(keep).removed).toBe(0);
+});
+it("「明日 M/D」「本日 M/D」は残す（実送信で使っている）", () => {
+  const t = "本日 9/17(木) 14:30〜16:00\n明日 9/18(金) 16:30〜18:30にてご案内可能です😊！！";
+  expect(stripDayAfterTomorrowLabel(t).text).toBe(t);
+});
+it("「明後日7/10(金)」のように間に空白が無い形・全角の日付も落とす", () => {
+  expect(stripDayAfterTomorrowLabel("明後日7/10(金)ですと13:00〜15:00").text).toBe("7/10(金)ですと13:00〜15:00");
+  expect(stripDayAfterTomorrowLabel("明後日 ９月２１日 15:00〜").text).toBe("９月２１日 15:00〜");
+});
+it("空文字・該当なしは1文字も触らない", () => {
+  expect(stripDayAfterTomorrowLabel("").text).toBe("");
+  const plain = "かしこまりました！！\n9/21(月) 15:00〜17:00";
+  expect(stripDayAfterTomorrowLabel(plain).text).toBe(plain);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（AIX キャッシュ点検）: system を「共通 prefix（1h）→ 準静的（1h）→ 経路固有（5m）→ 動的（なし）」のブロックに分ける
@@ -49,7 +49,7 @@ import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPr
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
 import { buildConversationClockNote, fixStaleRecentReference, absolutizeRelativeDays, jstDayLabel } from "@/app/lib/relative-date";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す内覧の時間は1つ（お客様が日にちを指定した日だけ空き時間を全部）
-import { limitViewingSlotsInReply } from "@/app/lib/viewing-slots";
+import { limitViewingSlotsInReply, stripDayAfterTomorrowLabel } from "@/app/lib/viewing-slots";
 // 2026-09-16 竹内（💜 さん事例）: 申込の情報を受け取った時の開口語・管理会社の営業時間外の「明日確認してご連絡」
 import { isMgmtAfterHours, ensureAfterHoursApplyLine, stripLeadingBareAck, APPLY_INFO_SENT_RE } from "@/app/lib/after-hours";
 // 2026-09-16 竹内（カイナ事例）: 物件確認した×会話を合わせる — 内覧の流れの判定・部屋数・出口の決定論
@@ -3281,6 +3281,8 @@ ${SMORA_COMMON_RULES}
           });
           if (limited !== message_text) console.log("aix:viewing-slots-limited (conversation_match)");
           message_text = limited;
+          // 2026-09-19 竹内（まりあ事例）: 日付の前の「明後日」は落とす（実送信188通中18通＝9.6%しか使っていない）
+          { const r = stripDayAfterTomorrowLabel(message_text); if (r.removed) { message_text = r.text; console.log("aix:dayafter-label-stripped", r.removed); } }
         }
 
         // 2026-09-19 竹内: 退去予定物件は「見られない日を出さない」「退去予定と解禁日を必ず伝える」を出口でも効かせる
@@ -3475,6 +3477,9 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
         });
         if (limited !== message_text) console.log("aix:viewing-slots-limited");
         message_text = limited;
+        // 2026-09-19 竹内（まりあ事例）: 日付の前の「明後日」は落とす（実送信188通中18通＝9.6%しか使っていない）
+        const r = stripDayAfterTomorrowLabel(message_text);
+        if (r.removed) { message_text = r.text; console.log("aix:dayafter-label-stripped", r.removed); }
       }
       // 差分学習ループ用にAIX生成ドラフトを記録（フロントが実際に送った文と比較して学習する）
       viewingInviteDraft = message_text;
@@ -3760,7 +3765,9 @@ ${SMORA_COMMON_RULES}
 
 【内覧日程を案内する際のルール（最優先）】
 ・カレンダーに複数日がある場合は全日を自然な文章で案内する（1日だけ案内して他の日を省略するのは絶対禁止）
-・フォーマット例：「明日7/9(木)ですと13:00〜16:00、明後日7/10(金)ですと13:00〜15:00にてご案内可能です！！」
+・フォーマット例：「明日7/9(木)ですと13:00〜16:00、7/10(金)ですと13:00〜15:00にてご案内可能です！！」
+・**「明後日」は使わない**（日付と曜日だけで書く）。使ってよい相対の語は「本日」「明日」だけ
+  （2026-09-19 竹内・まりあ事例。実送信188通で「明後日 M/D」は18通＝9.6%。候補日が飛んでいる時に相対の語が入ると連続した日程に見えて紛らわしい）
 ・お客様が日程を指定してきた場合は「はい！！〇日ですと〜」でその日程に直接答える
 ・お客様が「早く進めたい」「審査まで進めたい」「一気に手続きしたい」と自ら言っている場合のみ、内覧〜審査まで一気に進められることを伝える（単なる内覧希望には審査・申込の話をしない）
 ・カレンダー未取得または空の場合は「ご都合のよろしいお日にちをお知らせください😊！！」で締める

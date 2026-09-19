@@ -131,7 +131,14 @@ export async function fetchCalendarSlots(
     const month = mo;
     const date  = dd;
     const wd    = WEEKDAYS_JP[new Date(Date.UTC(yy, mo - 1, dd)).getUTCDay()];
-    const label_prefix = i === 0 ? "本日" : i === 1 ? "明日" : i === 2 ? "明後日" : "";
+    // 2026-09-19 竹内（まりあ事例）「明後日じゃないのに明後日と出ている」:
+    //   算数は合っている（9/19(土)の2日後は9/21(月)）が、**「明後日」はうちの言い方ではない**。
+    //   実送信365日の内覧日程の案内188通で「明後日 M/D」は18通（9.6%）＝90%は日付だけで書いている。
+    //   このまりあさんの回も、スタッフは「明後日」だけを消して「本日」は残して送っている。
+    //   さらに候補日が飛んでいる時（9/20 が満で 9/19・9/21・9/22 が並ぶ）は、
+    //   相対の語が入ると連続した日程に見えて紛らわしい。
+    //   → **本日・明日だけ残し、明後日は使わない**（日付と曜日は残るので情報は減らない）。
+    const label_prefix = i === 0 ? "本日" : i === 1 ? "明日" : "";
     const label = label_prefix ? `${label_prefix} ${month}/${date}(${wd})` : `${month}/${date}(${wd})`;
     const shortLabel = label_prefix ? `${label_prefix}(${month}/${date}${wd})` : `${month}/${date}(${wd})`;
 
