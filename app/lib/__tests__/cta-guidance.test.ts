@@ -47,6 +47,13 @@ describe("刺さっている時は誘導する（竹内さんの指示）", () =
     const g = resolveCtaGuidance({ customerKind: "positive", positiveKind: "viewing_explicit", action: "estimate_sheet" });
     expect(g.kind).toBe("apply");
   });
+  // 2026-09-21 YUMA 検証: 日時なしで日程だけ聞く形は実送信の2通目で0〜1通（AIX【内覧日調整】の担当）
+  it("★ P6 内覧に誘う時は「ご案内させて頂きます」— 日程を聞かせない", () => {
+    const n = resolveCtaGuidance({ customerKind: "positive", positiveKind: "viewing_explicit", action: "property_send" }).note;
+    expect(n).toContain("ご案内させて頂きます");
+    expect(n).toContain("日程を聞かない");
+    expect(n).toContain("AIX【内覧日調整】");
+  });
   it("P5 押し付けない言い方を指定する", () => {
     expect(resolveCtaGuidance({ customerKind: "positive", positiveKind: "appraisal", action: "property_recommendation" }).note).toContain("お気に召されましたら");
   });
@@ -87,14 +94,23 @@ describe("AIX の種類でも決まる", () => {
     expect(resolveCtaGuidance({ customerKind: "concern", action: "application_push" }).mode).toBe("none");
   });
   it("★ A3 内覧日調整（実測49.1%）→ 付けてよい・内覧中心", () => {
-    const g = resolveCtaGuidance({ customerKind: "ack_only", action: "viewing_invite" });
+    const g = resolveCtaGuidance({ customerKind: "other", action: "viewing_invite" });
     expect(g.mode).toBe("push");
     expect(g.kind).toBe("viewing");
   });
   it("★ A4 申込へ！（実測28.6%・申込27.0%）→ 付けてよい・申込中心", () => {
-    const g = resolveCtaGuidance({ customerKind: "ack_only", action: "application_push" });
+    const g = resolveCtaGuidance({ customerKind: "other", action: "application_push" });
     expect(g.mode).toBe("push");
     expect(g.kind).toBe("apply");
+  });
+  // 2026-09-21 YUMA 検証: 内覧日調整（49.1%）でも「よろしくお願いします」だけの相槌では誘う場面ではない
+  //   （1通目が「ご内覧可否確認させて頂きます」＝まだ結果が出ていない）。実測 ack_only は 8.4%
+  it("★ A8 誘う種類でも**相槌だけ**なら soft（実測 ack_only 8.4%）", () => {
+    expect(resolveCtaGuidance({ customerKind: "ack_only", action: "viewing_invite" }).mode).toBe("soft");
+    expect(resolveCtaGuidance({ customerKind: "ack_only", action: "application_push" }).mode).toBe("soft");
+  });
+  it("A9 相槌でも前向きな中身があれば positive 側で拾われる（②の分岐が先）", () => {
+    expect(resolveCtaGuidance({ customerKind: "positive", positiveKind: "viewing_explicit", action: "viewing_invite" }).mode).toBe("push");
   });
   it("A5 見積書送る（22.1%・申込15.8%）→ 申込中心", () => {
     expect(resolveCtaGuidance({ customerKind: "other", action: "estimate_sheet" }).kind).toBe("apply");

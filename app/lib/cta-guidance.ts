@@ -77,6 +77,20 @@ export const CTA_RATE_BY_POSITIVE: Record<string, number> = {
   viewing_explicit: 31.3,
 };
 
+/**
+ * 内覧に誘う時の**言い方**（2026-09-21 YUMA 検証）。
+ * 生成が「ご都合よろしいお日にちお伺いできましたら、内覧の日程調整させて頂きます」と書いたが、
+ * 実測（scripts/audit-empathy-2nd.ts・2通目1,424通）では
+ *   「ご都合よろしいお日にち」疑問形 13通（0.91%）… **どれも具体的な候補日時とセット**（AIX【内覧日調整】の形）
+ *   同・条件節 **1通（0.07%）** ／ 「内覧の日程調整させて頂きます」 **0通**
+ * ＝ 日時を出さずに日程だけ聞く形は実送信にほぼ無い。日程の確認・候補日時は AIX【内覧日調整】の担当。
+ * 2通目で内覧に誘う時の実送信の形は「ご案内させて頂きます」（内覧の誘導7.2%）。
+ */
+export const VIEWING_CTA_FORM =
+  "言い方は「お気に召されましたらご案内させて頂きます」の形にする。"
+  + "**日程を聞かない・候補日時を出さない**（「ご都合よろしいお日にちは」「日程調整させて頂きます」は"
+  + "実送信の2通目で0〜1通＝AIX【内覧日調整】でスタッフが送る担当）。";
+
 export type CtaGuidance = {
   mode: CtaMode;
   /** 付けるなら内覧か申込か（決められない時は null＝AI に選ばせる） */
@@ -127,7 +141,7 @@ export function resolveCtaGuidance(input: {
       note: `【CTA（誘い）を1文入れる】お客様は前向きな反応（${input.positiveKind ?? "前向き"}）を見せている。`
         + `実送信でこの場面の CTA は **${posRate ?? kindRate}%**（全体${CTA_RATE_OVERALL}%）、`
         + `**成約した会話では60%**が誘っている。`
-        + (kind === "viewing" ? `誘うのは**内覧**（この反応では内覧29.9% / 申込1.5%）。` : "")
+        + (kind === "viewing" ? `誘うのは**内覧**（この反応では内覧29.9% / 申込1.5%）。${VIEWING_CTA_FORM}` : "")
         + (kind === "apply" ? `誘うのは**申込**（この AIX では申込${actRow?.apply}% / 内覧${actRow?.viewing}%）。` : "")
         + `押し付けず「お気に召されましたら」の条件付きで1文だけ。`,
       reason: `positive/${input.positiveKind ?? "-"} (${posRate ?? kindRate}%) × action=${act} (${actRate}%)`,
@@ -144,7 +158,11 @@ export function resolveCtaGuidance(input: {
     };
   }
   // ④ AIX が誘う種類（内覧日調整・待ち合わせ・申込へ・見積書）→ 付けてよい
-  if (actRate >= 20) {
+  //   ⚠ ただし**お客様が相槌だけ**の時は push にしない（実測 ack_only は 8.4%）。
+  //     2026-09-21 YUMA 検証: 内覧日調整（49.1%）の2通目で「よろしくお願いします」だけの相槌に
+  //     push を出していたが、1通目が「ご内覧可否確認させて頂きます」なので**まだ誘う場面ではなかった**
+  //     （生成側は正しく「確認出来次第ご連絡させて頂きます」と書いていた）。
+  if (actRate >= 20 && input.customerKind !== "ack_only") {
     const kind: CtaKind = actRow ? (actRow.apply > actRow.viewing ? "apply" : "viewing") : null;
     return {
       mode: "push", kind,
