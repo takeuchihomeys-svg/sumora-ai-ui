@@ -768,6 +768,10 @@ export async function POST(req: NextRequest) {
                   if (meta.reason === "aix_required") {
                     // ゲート側で ai_draft="[AIX誘導中]" + draft_pending_at=null 保存・スタッフ通知済み
                     console.log("[bg-async] reply_mode=aix のため自動ドラフトスキップ, convId:", convId);
+                  } else if (meta.reason === "post_apply_status") {
+                    // 2026-09-20 竹内「ステータス申込以降は別の管理ツールで LINE しているので返信生成しなくて良い」
+                    //   失敗ではなく仕様どおりのスキップ（エラーログにしない）
+                    console.log("[bg-async] 申込以降のため自動ドラフトスキップ, convId:", convId);
                   } else {
                     console.error("[bg-async] generate-reply meta.ok=false, convId:", convId);
                   }

@@ -2784,6 +2784,21 @@ export async function POST(req: NextRequest) {
   const generationCaller: "bg_async_direct" | "auto" | "template_optimize" | "manual_hint" | "manual" =
     externalBrainGate ? "bg_async_direct" : enforceReplyModeGate ? "auto" : isTemplateOptimize ? "template_optimize" : replyHint ? "manual_hint" : "manual";
 
+  // ─── 2026-09-20 竹内「ステータス申込以降は別の管理ツールで LINE しているので返信生成しなくて良い」───
+  //   「審査落ちて物件提案中に戻るときあるからその時はまた生成するようにする」
+  //   → **ステータスだけで決まる**ので、戻れば次の生成から自動でまた作られる（復帰の仕組みは要らない）。
+  //   表は conversation-status.ts の DRAFT_SKIP_STATUSES 1か所（AIX の判断 resolveReplyAixDecision・
+  //   差分学習 analyze-diffs と同じ物を見る＝四者同名）。
+  //   テンプレート最適化はお客様への返信ではない（スタッフが送るテンプレの推敲）ので対象外。
+  //   実測（90日）: 申込以降の会話54件でこの経路の生成が238件あった。
+  if (!isTemplateOptimize && state && DRAFT_SKIP_STATUSES.has(state)) {
+    console.info("[generate-reply] skip:post_apply_status", JSON.stringify({ state, caller: generationCaller }));
+    return new Response(
+      JSON.stringify({ ok: false, reason: "post_apply_status", status: state }) + "\n",
+      { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } }
+    );
+  }
+
   // 空メッセージは Vision 呼び出しより前に弾く（無駄な API 課金・待ち時間の防止）
   // テンプレート最適化モードのみ例外: テンプレ送信はスタッフ発信の続きで行われることが多く、
   // お客様の新着メッセージが無いケースが正当。履歴の最後のお客様発言、無ければ合成文脈で代替する

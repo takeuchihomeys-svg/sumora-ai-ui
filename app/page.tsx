@@ -3616,6 +3616,12 @@ export default function Home() {
                 setSuggestedAix(meta.aix);
                 return;
               }
+              // 2026-09-20 竹内「ステータス申込以降は別の管理ツールで LINE しているので返信生成しなくて良い」
+              //   エラーではなく「この段階では作らない」。審査落ちで物件提案中に戻れば次からまた作られる
+              if (meta.reason === "post_apply_status") {
+                setError("申込以降のため下書きは作成しません（別の管理ツールでご対応ください）。物件提案中に戻すと再開します。");
+                return;
+              }
               throw new Error(meta.error || "返信案取得失敗");
             }
             qualityFromMeta = meta.quality;
