@@ -105,10 +105,16 @@ const NAME_PLACEHOLDER_RE = /[○〇◯]{2,}\s*(さん|様)/g;
 export function fixNamePlaceholder(text: string, customerName?: string | null): { text: string; fixed: number } {
   if (!text) return { text, fixed: 0 };
   let fixed = 0;
-  const name = (customerName ?? "").trim();
+  // ⚠ 渡ってくる名前は既に敬称付き（route.ts は `${familyName}さん` か「お客様」を渡す）。
+  //   2026-09-20 本番で「YUMAさん**さん**」「YUMAさん**様**」と二重になった（最初の実装の誤り）。
+  //   敬称を一度外してから、手本側の敬称（さん／様）を付け直す。
+  const raw = (customerName ?? "").trim();
+  const isGeneric = /^お客様$/.test(raw);           // 「お客様」はそれ自体が呼びかけ＝重ねない
+  const base = raw.replace(/\s*(さん|様|さま)\s*$/, "");
   const out = text.replace(NAME_PLACEHOLDER_RE, (_m, honorific: string) => {
     fixed++;
-    return name ? `${name}${honorific}` : "";
+    if (isGeneric) return "お客様";
+    return base ? `${base}${honorific}` : "";
   });
   return { text: fixed ? out.replace(/ {2,}/g, " ") : text, fixed };
 }

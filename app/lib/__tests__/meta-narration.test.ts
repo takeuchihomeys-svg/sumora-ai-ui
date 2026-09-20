@@ -117,6 +117,18 @@ it("★ AI がスタッフに材料を要求する文は返信ではない（丸
   expect(isNotACustomerReply("会話履歴から物件名が特定できませんでした")).toBe(true);
   expect(isNotACustomerReply("情報が不足しており特定出来ません")).toBe(true);
 });
+// 2026-09-20 本番検証（見積書のカバーレター）で出た実物
+it("★ AI がスタッフに指示を求める文は返信ではない（実送信365日で0件）", () => {
+  expect(isNotACustomerReply("どう対応すればよいか分かりません。お客様に直接お聞きしてもよろしいでしょうか？")).toBe(true);
+  expect(isNotACustomerReply("どう返信すればいいのか分かりかねます")).toBe(true);
+  expect(isNotACustomerReply("お客様に確認してもよろしいでしょうか")).toBe(true);
+});
+it("★ お客様への本物の問いかけは落とさない（「お客様に直接」単体では落とさない）", () => {
+  expect(isNotACustomerReply("YUMAさんご都合よろしいお日にちお聞かせください😊！！")).toBe(false);
+  expect(isNotACustomerReply("管理会社に確認させて頂きますのでよろしくお願い致します！！")).toBe(false);
+  expect(isNotACustomerReply("ご希望のお日にちお伺いしてもよろしいでしょうか😊！！")).toBe(false);
+});
+
 it("★ 本物の送信文は落とさない（実送信365日で「特定できませ」「ご提示いただけ」は0件）", () => {
   // 「会話履歴」「お名前」「ご提示」単体では落ちないこと（本物の文に出る語）
   expect(isNotACustomerReply("YUMAさんお世話になっております！！\nご内覧のお日にちご提示いただけますと幸いです😊！！")).toBe(false);

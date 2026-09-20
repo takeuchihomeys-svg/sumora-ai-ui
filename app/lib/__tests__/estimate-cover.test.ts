@@ -192,6 +192,19 @@ it("★ 名前が分かっていれば名前に置き換える", () => {
   expect(fixed).toBe(1);
 });
 
+// 2026-09-20 本番で「YUMAさんさん」「YUMAさん様」が出た（最初の実装の誤り）。
+//   route.ts が渡すのは `${familyName}さん` か「お客様」＝**既に敬称付き**。
+it("★ 敬称付きの名前を渡されても二重にしない（本番で出た誤り）", () => {
+  expect(fixNamePlaceholder("○○さんお世話になっております", "YUMAさん").text).toBe("YUMAさんお世話になっております");
+  expect(fixNamePlaceholder("○○様のご希望に合うお部屋", "YUMAさん").text).toBe("YUMA様のご希望に合うお部屋");
+  expect(fixNamePlaceholder("〇〇さんのご条件", "前田様").text).toBe("前田さんのご条件");
+});
+
+it("★「お客様」を渡されたら「お客様さん」にしない", () => {
+  expect(fixNamePlaceholder("○○さんお世話になっております", "お客様").text).toBe("お客様お世話になっております");
+  expect(fixNamePlaceholder("○○様のご希望", "お客様").text).toBe("お客様のご希望");
+});
+
 it("ナレッジに入っている手本の形（3種類の丸・様）も直す", () => {
   expect(fixNamePlaceholder("○○さんお気に召されましたらお部屋ご案内させて頂きます😊", "まりあ").text).toContain("まりあさんお気に召され");
   expect(fixNamePlaceholder("〇〇様のご希望条件で物件探させていただきます！", "前田").text).toContain("前田様のご希望条件");

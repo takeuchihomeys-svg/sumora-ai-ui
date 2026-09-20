@@ -2413,6 +2413,15 @@ ${SMORA_COMMON_RULES}
             cover_letter = ph.text;
           }
         }
+        // 2026-09-20 本番検証: カバーレターが「どう対応すればよいか分かりません。お客様に直接
+        //   お聞きしてもよろしいでしょうか？」になった＝**スタッフへの問い合わせ**でお客様への文ではない。
+        //   返信生成には既に同じ関門があるのに（isNotACustomerReply・実送信365日で誤削除0）、
+        //   カバーレターには通っていなかった（設計知見「安全装置は同じ材料を使う全経路に配る」）。
+        //   落として空にする＝2通目を送らない（1通目の見積書は正常に送れる）。
+        if (isNotACustomerReply(cover_letter)) {
+          console.log(JSON.stringify({ tag: "aix:cover-not-a-reply", dropped: cover_letter.slice(0, 80), conversationId }));
+          cover_letter = "";
+        }
         // 2026-09-18 出口の保証: 指示だけでは落ちるので、キャンペーンの1文が無ければ締めの直前に足す
         //   （設計知見「決定論で足した文は出口でも保証する」・実送信の並び＝御見積書の案内→キャンペーン→締め）
         const campaignFix = ensureCampaignLine(cover_letter, estimateCampaign);
