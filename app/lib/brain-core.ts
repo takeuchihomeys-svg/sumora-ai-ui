@@ -966,16 +966,24 @@ export async function analyzeConversation(
       .order("checkpoint_index", { ascending: false })
       .limit(1),
     // Sent properties for this customer (duplicate/history awareness)
-    propertyCustomerId
-      ? supabase
-          .from("sent_properties")
-          // 監査FIX(2026-08-20): 募集状況・番手・家賃・顧客反応を追加取得
-          // （current_property / urgency_appropriate をテキスト推測ではなくDB事実で接地させる）
-          .select("property_name, room_no, sent_at, rent, recruitment_status, applicant_rank, customer_reaction")
-          .eq("property_customer_id", propertyCustomerId)
-          .order("sent_at", { ascending: false })
-          .limit(20)
-      : Promise.resolve({ data: null }),
+    // 2026-09-20 竹内「ブレインに抜けがあるならそこを補うクエリをつくる」（物件把握の監査）:
+    //   旧は property_customer_id **だけ**で引いていたため、物件顧客に紐付いていない会話では
+    //   ブレインが物件を1件も見なかった。直近30日で物件を送っている会話127件を測ると:
+    //     property_customer_id に紐付いている      109件(86%)  ← 18件は紐付かず素通り
+    //     紐付き先に sent_properties がある          99件(78%)  ← ブレインが実際に見ていた数
+    //     **conversation_id で引けば               109件(86%)**
+    //   紐付いていない18件には慶次さん・前田さんなど実際に文のすれ違いが出た会話が入っていた。
+    //   → **両方で引いて混ぜる**（どちらか片方しか無い会話を落とさない）。
+    supabase
+      .from("sent_properties")
+      // 監査FIX(2026-08-20): 募集状況・番手・家賃・顧客反応を追加取得
+      // （current_property / urgency_appropriate をテキスト推測ではなくDB事実で接地させる）
+      .select("property_name, room_no, sent_at, rent, recruitment_status, applicant_rank, customer_reaction")
+      .or(propertyCustomerId
+        ? `property_customer_id.eq.${propertyCustomerId},conversation_id.eq.${conversationId}`
+        : `conversation_id.eq.${conversationId}`)
+      .order("sent_at", { ascending: false })
+      .limit(20),
     // Global permanent operator rules (apply to all conversations, no pgvector needed)
     // B4(Fable5): limit 10→20 — 本番で恒久ルールがちょうど10行に達しており、11個目から無言欠落する状態だった
     supabase
@@ -1525,7 +1533,19 @@ export async function analyzeConversation(
   type SentProp = { property_name: string; room_no: string; sent_at: string; rent: number | null; recruitment_status: string | null; applicant_rank: number | null; customer_reaction: string | null };
   const RECRUIT_LABEL: Record<string, string> = { open: "募集中", move_out_planned: "退去予定", occupied: "入居中", closed: "募集終了" };
   const REACTION_LABEL: Record<string, string> = { interested: "興味あり", rejected: "見送り", no_response: "反応なし" };
-  const sentProps = ((sentPropsResult.data ?? []) as SentProp[]);
+  // 2026-09-20: property_customer_id と conversation_id の両方で引くので、同じ物件が2行来ることがある。
+  //   物件名＋号室で1つにまとめる（新しい方＝先頭を残す。order は sent_at 降順）
+  const sentProps = (() => {
+    const seen = new Set<string>();
+    const out: SentProp[] = [];
+    for (const p of ((sentPropsResult.data ?? []) as SentProp[])) {
+      const key = `${(p.property_name ?? "").trim()}|${(p.room_no ?? "").trim()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(p);
+    }
+    return out;
+  })();
   let sentPropsText = sentProps.length > 0
     ? `\n【すでに送付済みの物件（${sentProps.length}件）】\n${sentProps.map((p) => {
         const facts = [
