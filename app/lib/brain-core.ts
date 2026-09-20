@@ -987,7 +987,7 @@ export async function analyzeConversation(
     // 2026-09-20 竹内: 画像だけで送った物件（送信時に DeepSeek で読み取って記録した分）
     supabase
       .from("sent_image_properties")
-      .select("property_name, room_no, created_at")
+      .select("property_name, room_no, created_at, source")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(20),
@@ -1537,7 +1537,8 @@ export async function analyzeConversation(
   // Sent properties — what has already been proposed to this customer
   // 監査FIX(2026-08-20): 募集状況・番手・家賃・顧客反応（構造化済みの行のみ）を注釈として付与。
   // urgency_appropriate（「残り1室」等の緊急表現の事実根拠）と current_property の接地に使う
-  type SentProp = { property_name: string; room_no: string; sent_at: string; rent: number | null; recruitment_status: string | null; applicant_rank: number | null; customer_reaction: string | null };
+  // sent_via: 画像から読み取って記録した物の経路（aix:property_recommendation 等）。sent_properties 由来は null
+  type SentProp = { property_name: string; room_no: string; sent_at: string; rent: number | null; recruitment_status: string | null; applicant_rank: number | null; customer_reaction: string | null; sent_via?: string | null };
   const RECRUIT_LABEL: Record<string, string> = { open: "募集中", move_out_planned: "退去予定", occupied: "入居中", closed: "募集終了" };
   const REACTION_LABEL: Record<string, string> = { interested: "興味あり", rejected: "見送り", no_response: "反応なし" };
   // 2026-09-20: property_customer_id と conversation_id の両方で引くので、同じ物件が2行来ることがある。
@@ -1555,16 +1556,20 @@ export async function analyzeConversation(
     //   スタッフが手で画像を送ると sent_properties には入らない（直近30日 1,624枚中 24枚＝1%しか
     //   物件に直せていなかった）。送信時に読み取って sent_image_properties に書くようにしたので、
     //   ブレインもそこを見る。既に sent_properties にある物件は重複させない。
-    for (const p of ((sentImagePropsResult.data ?? []) as Array<{ property_name: string | null; room_no: string | null; created_at: string | null }>)) {
+    for (const p of ((sentImagePropsResult.data ?? []) as Array<{ property_name: string | null; room_no: string | null; created_at: string | null; source: string | null }>)) {
       const name = (p.property_name ?? "").trim();
       if (!name) continue;
       const key = `${name}|${(p.room_no ?? "").trim()}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ property_name: name, room_no: (p.room_no ?? "").trim(), sent_at: p.created_at ?? "", rent: null, recruitment_status: null, applicant_rank: null, customer_reaction: null });
+      out.push({ property_name: name, room_no: (p.room_no ?? "").trim(), sent_at: p.created_at ?? "", rent: null, recruitment_status: null, applicant_rank: null, customer_reaction: null, sent_via: p.source ?? null });
     }
     return out;
   })();
+  // 2026-09-20 竹内「どの物件をお客さんにたいしてオススメしたのか分かるように」:
+  //   画像の source（aix:property_recommendation など）から「オススメで送った物件」を取り出す。
+  //   ブレインが「この物件は推した物」と分かれば、次の一手（内覧・見積）の相手を取り違えない。
+  const recommendedProps = sentProps.filter((p) => String((p as { sent_via?: string | null }).sent_via ?? "").startsWith("aix:property_recommendation"));
   let sentPropsText = sentProps.length > 0
     ? `\n【すでに送付済みの物件（${sentProps.length}件）】\n${sentProps.map((p) => {
         const facts = [
@@ -1573,8 +1578,10 @@ export async function analyzeConversation(
           p.applicant_rank != null ? `${p.applicant_rank}番手` : "",
           p.customer_reaction ? `顧客反応:${REACTION_LABEL[p.customer_reaction] ?? p.customer_reaction}` : "",
         ].filter(Boolean).join("・");
-        return `- ${p.property_name} ${p.room_no}（${jstMD(p.sent_at)}送付${facts ? `・${facts}` : ""}）`;
-      }).join("\n")}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`
+        // 2026-09-20: オススメで送った物件は印を付ける（次の一手の相手を取り違えないため）
+        const via = String(p.sent_via ?? "").startsWith("aix:property_recommendation") ? "・🌟オススメで送付" : "";
+        return `- ${p.property_name} ${p.room_no}（${jstMD(p.sent_at)}送付${facts ? `・${facts}` : ""}${via}）`;
+      }).join("\n")}${recommendedProps.length > 0 ? `\n※このうち **${recommendedProps.map((p) => `${p.property_name} ${p.room_no}`.trim()).join("・")}** は AIX【物件オススメ】で推した物件。内覧・見積・申込の話はこのお部屋が相手になる（別の物件にすり替えない）。` : ""}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`
     : "";
 
   // 申込経験者: ベンチマーク物件の注入

@@ -12,6 +12,8 @@ import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "
 import { buildEstimateItem, buildEstimateMessage, calcSavings, DAY_RENT_NOTE, NO_AMOUNT_FALLBACK } from "@/app/lib/estimate-body";
 // 同: 2通目（カバーレター）に別の物件の金額ブロックが写るのを落とす
 import { stripEstimateAmountBlock, sanitizeCoverLetter } from "@/app/lib/estimate-cover";
+// 2026-09-20 竹内「物件オススメ置き換える」: 画像つきの呼び出しを種類ごとに DeepSeek へ回す
+import { shouldRouteVisionAlt, callVisionAlt } from "@/app/lib/vision-alt-provider";
 import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
 // 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
 import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "@/app/lib/room-choices";
@@ -990,6 +992,36 @@ async function callClaudeHaiku(system: SystemSpec, user: string, action: string,
 //   読み替えを掛けても外に出ないうえ、画像の中身は読み替えられないので、ここは素通しにしている。
 async function callClaudeVision(system: SystemSpec, content: unknown[], action: string, dynamicSystemSuffix?: string, opts: { ttl?: SystemTtl } = {}): Promise<string> {
   const systemBlocks = buildSystemBlocks(system, { defaultTtl: opts.ttl ?? "5m", dynamicSuffix: dynamicSystemSuffix });
+
+  // ── 2026-09-20 竹内「物件オススメ置き換える」────────────────────────────────
+  //   指定した種類だけ DeepSeek-V4.1-Flash に回す（既定は property_recommendation だけ）。
+  //   同じ画像で比べた実測（scripts/audit-vision-recommend.ts / audit-vision-swap.ts）:
+  //     物件オススメ（文を作る）… 実送信に無い言い回し Claude 5件 / DeepSeek 2件・体裁の崩れ両方0・費用は1/4
+  //     見積書（数値を抜く）    … 一致 6/9(67%)・物件名と号室の誤読・5.6倍遅い ＝ **回さない**
+  //   失敗・空応答なら黙って Claude に倒す（fail-open）。VISION_ALT_ACTIONS を空にすれば全部戻る。
+  if (shouldRouteVisionAlt(action)) {
+    const alt = await callVisionAlt(systemBlocks, content);
+    if (alt) {
+      // DeepSeek は区切りの指定が要らない**自動の前置きキャッシュ**。
+      //   buildSystemBlocks が shared → semiStatic → routeStatic → dynamic の順で並べるので、
+      //   結合しても「静的が先・動的が後」が保たれてそのまま効く（設計知見・本番実測で80%）。
+      //   一致分は入力の 1/50 の価格なので、記録して効きを見られるようにする。
+      logLlmUsage("aix:vision", {
+        input_tokens: alt.usage.cacheMiss || alt.usage.input,
+        cache_read_input_tokens: alt.usage.cacheHit,
+        output_tokens: alt.usage.output,
+      }, { action, model: alt.model });
+      console.log(JSON.stringify({
+        tag: "aix:vision-alt", action, model: alt.model,
+        input: alt.usage.input, output: alt.usage.output,
+        cacheHit: alt.usage.cacheHit, cacheMiss: alt.usage.cacheMiss,
+        hitRate: alt.usage.input > 0 ? Math.round((100 * alt.usage.cacheHit) / alt.usage.input) : 0,
+      }));
+      return alt.text;
+    }
+    console.log(JSON.stringify({ tag: "aix:vision-alt-fallback", action }));   // Claude に倒した
+  }
+
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {

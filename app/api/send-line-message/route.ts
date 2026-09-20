@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
 
-  const { line_user_id, message, image_url, account, conversation_id, origin, call_button } = await req.json() as {
+  const { line_user_id, message, image_url, account, conversation_id, origin, call_button, aix_type } = await req.json() as {
     line_user_id?: string;
     message?: string;
     image_url?: string;
@@ -71,6 +71,12 @@ export async function POST(req: NextRequest) {
     origin?: "manual" | "aix";
     /** 2026-09-15 AIX【電話をかける】: LINEコールの「電話をかける」ボタンのカードを送る（行き先はアカウントごとの通話URL・aix_settings） */
     call_button?: boolean;
+    /**
+     * 2026-09-20 竹内「お客さんに送った画像の中でも物件オススメで送ったと区別できるようにする」:
+     * origin="aix" の時の AIX の種類（画面の activeAixFlow をそのまま渡す）。
+     * 画像から読み取った物件を sent_image_properties に source="aix:<種類>" で記録するのに使う。
+     */
+    aix_type?: string;
   };
 
   if (!line_user_id || (!message && !image_url && !call_button)) {
@@ -207,12 +213,22 @@ export async function POST(req: NextRequest) {
 
         // 画像1枚 → 物件1つ（image_url が主キー）。一覧の画像は最初の1件を代表にする
         const top = fixed[0];
+        // 2026-09-20 竹内「お客さんに送った画像の中でも物件オススメで送ったと区別できるようにする」:
+        //   source に**どの経路で送ったか**を入れる。後で「この物件はオススメで送った」と数えられる。
+        //     aix:property_recommendation … AIX【物件オススメ】で送った
+        //     aix:property_send           … AIX【物件ピックアップ】で送った
+        //     aix:estimate_sheet          … AIX【見積書送る】で送った
+        //     staff_image                 … スタッフが手で送った
+        //   （従来の "vision" は extract-property-info＝物件出しツール経由）
+        const src = origin === "aix" && typeof aix_type === "string" && aix_type.trim()
+          ? `aix:${aix_type.trim()}`
+          : "staff_image";
         const { error } = await supabase.from("sent_image_properties").upsert(
-          { image_url, conversation_id, property_name: top.propertyName, room_no: top.roomNumber, source: "staff_image_vision" },
+          { image_url, conversation_id, property_name: top.propertyName, room_no: top.roomNumber, source: src },
           { onConflict: "image_url" },
         );
         console.log(JSON.stringify({
-          tag: "send-line-message:image-property", conversationId: conversation_id,
+          tag: "send-line-message:image-property", conversationId: conversation_id, source: src,
           read: read.items.length, matched: fixed.length, saved: top.propertyName + (top.roomNumber ? ` ${top.roomNumber}` : ""),
           tokens: read.usage, error: error?.message ?? null,
         }));

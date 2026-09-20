@@ -4519,7 +4519,12 @@ export default function Home() {
           const lineRes = await fetch("/api/send-line-message", {
             method: "POST",
             headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrls[i], account: selectedConversation.account }),
+            // 2026-09-20 竹内「どの物件をオススメしたのか分かるように」:
+            //   conversation_id を渡さないとサーバ側の物件読み取り・記録が動かない（会話が分からないため）
+            body: JSON.stringify({
+              line_user_id: selectedConversation.lineUserId, image_url: imageUrls[i],
+              account: selectedConversation.account, conversation_id: convId, origin: "manual",
+            }),
             signal: AbortSignal.timeout(30_000),
           });
           if (!lineRes.ok) {
@@ -5312,7 +5317,20 @@ export default function Home() {
         const imgRes = await fetch("/api/send-line-message", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl, account: selectedConversation.account }),
+          // 2026-09-20 竹内「どの物件をお客さんにたいしてオススメしたのか分かるように。
+          //   お客さんに送った画像の中でも物件オススメで送ったと区別できるようにする」:
+          //   conversation_id と AIX の種類を渡す。サーバは画像を読んで
+          //   sent_image_properties に source="aix:<種類>" で記録する（区別できる）。
+          //   ⚠ これを渡さないと記録処理そのものが動かない（会話が分からないため）
+          body: JSON.stringify({
+            line_user_id: selectedConversation.lineUserId, image_url: imageUrl,
+            account: selectedConversation.account,
+            conversation_id: selectedConversation.id,
+            origin: isAix ? "aix" : "manual",
+            // 今開いている AIX の種類（"property_recommendation" など）。
+            // onSend の引数を増やさずに済むよう、画面が持っている activeAixFlow をそのまま渡す
+            ...(isAix && activeAixFlow ? { aix_type: activeAixFlow } : {}),
+          }),
         });
         if (!imgRes.ok) {
           const imgErr = await imgRes.json().catch(() => ({ error: `HTTP ${imgRes.status}` })) as { error?: string };
