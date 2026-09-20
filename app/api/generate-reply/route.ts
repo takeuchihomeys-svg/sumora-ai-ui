@@ -192,6 +192,8 @@ import { jstParts, jstDateLabel, weekdayTable } from "@/app/lib/jst-date";
 import { detectConditionExpansion, buildExpansionNote } from "@/app/lib/condition-expansion";
 // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタ（場面＝行動台帳の事実で判定）
 import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinceViewingMove, type PremiseFacts } from "@/app/lib/example-premise";
+// 2026-09-19 竹内（慶次事例）: 手本の言い回しに埋まっている他のお客様の条件を伏せる
+import { maskKnowledgeSpecifics, MASKED_NOTE } from "@/app/lib/knowledge-placeholder";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -2051,7 +2053,14 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           sections.push("【スモラの営業パターン・原則】\n" + patterns.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (phrases.length > 0) {
-          sections.push("【スモラのフレーズ】\n" + phrases.map(k => `「${k.content}」`).join("　"));
+          {
+      // 2026-09-19 竹内（慶次事例）: 手本の言い回しに埋まっている**他のお客様の条件**を伏せる。
+      //   顧客名は元から〇〇なのに条件は生のままで、「ペット可条件で」がそのまま写されていた。
+      const masked = phrases.map((k) => maskKnowledgeSpecifics(k.content, k.category));
+      const anyMasked = masked.some((m) => m.changed);
+      if (anyMasked) console.info("[knowledge] 手本の条件を伏せた:", masked.filter((m) => m.changed).length);
+      sections.push("【スモラのフレーズ】\n" + masked.map((m) => `「${m.text}」`).join("　") + (anyMasked ? `\n${MASKED_NOTE}` : ""));
+    }
         }
         if (lossBlock) {
           sections.push(lossBlock);
@@ -2181,7 +2190,12 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 5).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (phrases.length > 0) {
-    sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 6).map(k => `「${k.content}」`).join("　"));
+    {
+      // 2026-09-19 竹内（慶次事例）: 上と同じ（フォールバック経路にも同じ関数を通す＝四者同名）
+      const masked = phrases.slice(0, 6).map((k) => maskKnowledgeSpecifics(k.content, k.category));
+      const anyMasked = masked.some((m) => m.changed);
+      sections.push("【スモラのフレーズ】\n" + masked.map((m) => `「${m.text}」`).join("　") + (anyMasked ? `\n${MASKED_NOTE}` : ""));
+    }
   }
   if (lossBlock) {
     sections.push(lossBlock);
