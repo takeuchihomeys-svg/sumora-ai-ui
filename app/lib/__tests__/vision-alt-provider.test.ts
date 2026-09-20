@@ -4,7 +4,7 @@
 // 2026-09-20 竹内「物件オススメ置き換える」
 // 実測で「文を作る所は置き換えてよい・数値を抜く所は置き換えない」と決めたので、
 // **見積書が誤って回らないこと**を固定する（ここが崩れると金額の誤読がお客様に届く）。
-import { shouldRouteVisionAlt, visionAltActions, toOpenAiContent, flattenSystem, VISION_ALT_MAX_TOKENS, VISION_ALT_ACTIONS_DEFAULT } from "../vision-alt-provider";
+import { shouldRouteVisionAlt, visionAltActions, toOpenAiContent, flattenSystem, VISION_ALT_MAX_TOKENS, VISION_ALT_ACTIONS_DEFAULT, VISION_ALT_EFFORT_DEFAULT } from "../vision-alt-provider";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -101,6 +101,22 @@ it("文字列・空・想定外でも落ちない", () => {
   expect(flattenSystem("そのまま")).toBe("そのまま");
   expect(flattenSystem(undefined)).toBe("");
   expect(flattenSystem([])).toBe("");
+});
+
+console.log("\n── ★ 環境変数が無くても正しく動く（本番に入れられない事がある）──");
+
+// 2026-09-20: Vercel の環境変数を作る権限が無かった（403）。
+//   「環境変数を入れれば動く」ではなく、**既定値で正しく動く**形にしておく。
+it("★ 環境変数が1つも無くても物件オススメは DeepSeek に回る", () => {
+  expect(shouldRouteVisionAlt("property_recommendation", { DEEPSEEK_API_KEY: "dummy" })).toBe(true);
+});
+
+it("★ 環境変数が無い時の推論の重さが low（無いと29〜37秒かかる）", () => {
+  expect(VISION_ALT_EFFORT_DEFAULT).toBe("low");
+});
+
+it("★ 環境変数が無くても見積書は回らない", () => {
+  expect(shouldRouteVisionAlt("estimate_sheet", { DEEPSEEK_API_KEY: "dummy" })).toBe(false);
 });
 
 console.log("\n── 設定の歯止め ──");

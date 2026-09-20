@@ -36,8 +36,16 @@
 export const VISION_ALT_ENDPOINT = "https://api.deepseek.com/v1/chat/completions";
 /** DeepSeek-V4.1-Flash */
 export const VISION_ALT_MODEL_DEFAULT = "deepseek-flash";
-/** 既定で回す action（文を作る所だけ）。環境変数 VISION_ALT_ACTIONS で上書き */
+/** 既定で回す action（文を作る所だけ）。環境変数 VISION_ALT_ACTIONS で上書き・空にすれば全部 Claude */
 export const VISION_ALT_ACTIONS_DEFAULT = "property_recommendation";
+/**
+ * 推論の重さの既定。
+ * 2026-09-20: **既定を "low" にする**。空（モデル既定）だと出力 4,661〜5,998 がほぼ推論に使われ
+ *   29〜37秒かかり、AIX の待ち時間（Claude Vision は 38秒で切る）に迫る。
+ *   low にすると出力 1,517〜1,727・**13〜15秒**で、文の質は変わらなかった（実送信に無い言い回し 0〜1件）。
+ *   ⚠ 環境変数は本番に入れられない事がある（権限）。**既定値で正しく動く**ようにしておく。
+ */
+export const VISION_ALT_EFFORT_DEFAULT = "low";
 /** 推論モデルなので余裕を持つ（小さいと推論で使い切って答えが1文字も出ない） */
 export const VISION_ALT_MAX_TOKENS = 8000;
 
@@ -109,7 +117,7 @@ export async function callVisionAlt(
 ): Promise<VisionAltResult | null> {
   const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
   const model = (opts?.model ?? process.env.VISION_ALT_MODEL ?? VISION_ALT_MODEL_DEFAULT).trim();
-  const effort = (opts?.effort ?? process.env.VISION_ALT_EFFORT ?? "").trim();
+  const effort = (opts?.effort ?? process.env.VISION_ALT_EFFORT ?? VISION_ALT_EFFORT_DEFAULT).trim();
   if (!apiKey) return null;
   const oaContent = toOpenAiContent(content);
   if (!oaContent) return null;
