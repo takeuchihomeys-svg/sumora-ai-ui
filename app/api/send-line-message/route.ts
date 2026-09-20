@@ -227,9 +227,48 @@ export async function POST(req: NextRequest) {
           { image_url, conversation_id, property_name: top.propertyName, room_no: top.roomNumber, source: src },
           { onConflict: "image_url" },
         );
+
+        // ── 2026-09-20 竹内「物件ピックアップから送る物件もテーブルかクエリで保管したら、
+        //   どれが物件ピックアップで送った物件かも理解できる／一度送った物件が間違えって入ってしまうこと防げる」──
+        //   読めた物件は sent_image_properties（画像ごと）だけでなく **sent_properties にも入れる**。
+        //   sent_properties は「重複チェック（check-property-duplicate）」と「ブレインが見る送付物件」の両方が
+        //   読む唯一の表なのに、この経路は画像ごとの表にしか書いていなかった。
+        //   実測（scripts/audit-sent-properties.ts）: AIX の物件ピックアップ941件で物件名が構造化されて残る率は**0%**。
+        //   ⚠ 同じ物件の2回目は書かない（送った物件の数え方を守る）。判定は sent-property-record の純関数に一本化
+        //     （check-property-duplicate の独自 Levenshtein とは別に線を作らない）。
+        let spSaved: string | null = null;
+        try {
+          const { isSameProperty } = await import("@/app/lib/sent-property-record");
+          // 設計知見「conversation_id で引けば 86% 取れるのに property_customer_id だけで引いていたのが穴」
+          const { data: already } = await supabase.from("sent_properties")
+            .select("property_name, room_no").eq("conversation_id", conversation_id).limit(200);
+          const existing = ((already ?? []) as Array<{ property_name: string | null; room_no: string | null }>)
+            .map((r) => ({ property_name: r.property_name ?? "", room_no: r.room_no }));
+          const incoming = { property_name: top.propertyName, room_no: top.roomNumber ?? "" };
+          if (!existing.some((e) => isSameProperty(e, incoming))) {
+            // property_customer_id は会話から引く（無ければ null のまま＝会話 ID で辿れる）
+            const { data: convRow } = await supabase.from("conversations")
+              .select("property_customer_id").eq("id", conversation_id).maybeSingle();
+            const { error: spErr } = await supabase.from("sent_properties").insert({
+              conversation_id,
+              property_customer_id: (convRow as { property_customer_id?: string | null } | null)?.property_customer_id ?? null,
+              property_name: top.propertyName,
+              room_no: top.roomNumber ?? "",
+              image_url,
+              source: src,
+            });
+            spSaved = spErr ? `error:${spErr.message}` : "inserted";
+          } else {
+            spSaved = "duplicate_skipped";
+          }
+        } catch (e) {
+          spSaved = `failed:${e instanceof Error ? e.message : String(e)}`;
+        }
+
         console.log(JSON.stringify({
           tag: "send-line-message:image-property", conversationId: conversation_id, source: src,
           read: read.items.length, matched: fixed.length, saved: top.propertyName + (top.roomNumber ? ` ${top.roomNumber}` : ""),
+          sentProperties: spSaved,
           tokens: read.usage, error: error?.message ?? null,
         }));
       } catch (e) {

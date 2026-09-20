@@ -318,6 +318,50 @@ export async function POST(req: NextRequest) {
       } catch (e) { console.error("[log-aix-usage] sent_facts record failed:", e); }
     })());
 
+    // ── 2026-09-20 竹内「物件ピックアップから送る物件もテーブルかクエリで保管したら…
+    //   文生成される部分毎回直さなくて済む（退去予定物件の部分等）」────────────────────
+    //   AIX が持っている property_names / prop_statuses を sent_properties にも残す。
+    //   ・prop_statuses の "vacating"（退去予定あり）→ recruitment_status="move_out_planned"。
+    //     この列のコメントは元から「MOVE_OUT_PATTERN regex推測の代替」で、**退去予定をデータで持つ設計**だった。
+    //     実測（scripts/audit-sent-properties.ts・180日）では recruitment_status は **0%** で、
+    //     退去予定の判断は今も本文の regex 推測に頼っていた。
+    //   ・同じ物件の2回目は書かない（送った物件の数え方を守る）。判定は sent-property-record の純関数に一本化。
+    //   ・失敗しても AIX の記録には影響させない（waitUntil の中で握る）。
+    if (Array.isArray(property_names) && property_names.length > 0) {
+      waitUntil((async () => {
+        try {
+          const { buildSentPropertyRows, isSameProperty } = await import("@/app/lib/sent-property-record");
+          const { data: convRow } = await supabase.from("conversations")
+            .select("property_customer_id").eq("id", conversation_id).maybeSingle();
+          const rows = buildSentPropertyRows({
+            conversationId: conversation_id,
+            propertyCustomerId: (convRow as { property_customer_id?: string | null } | null)?.property_customer_id ?? null,
+            names: property_names,
+            statuses: Array.isArray(prop_statuses) ? prop_statuses : undefined,
+            source: `aix:${aix_type}`,
+          });
+          if (rows.length === 0) return;
+          const { data: already } = await supabase.from("sent_properties")
+            .select("property_name, room_no").eq("conversation_id", conversation_id).limit(200);
+          const existing = ((already ?? []) as Array<{ property_name: string | null; room_no: string | null }>)
+            .map((r) => ({ property_name: r.property_name ?? "", room_no: r.room_no }));
+          const fresh = rows.filter((r) =>
+            !existing.some((e) => isSameProperty(e, { property_name: r.property_name, room_no: r.room_no })));
+          if (fresh.length === 0) {
+            console.log(JSON.stringify({ tag: "log-aix-usage:sent-properties", conversation_id, aix_type, inserted: 0, skipped: rows.length }));
+            return;
+          }
+          const { error: spErr } = await supabase.from("sent_properties").insert(fresh);
+          console.log(JSON.stringify({
+            tag: "log-aix-usage:sent-properties", conversation_id, aix_type,
+            inserted: spErr ? 0 : fresh.length, skipped: rows.length - fresh.length,
+            moveOutPlanned: fresh.filter((r) => r.recruitment_status === "move_out_planned").length,
+            error: spErr?.message ?? null,
+          }));
+        } catch (e) { console.error("[log-aix-usage] sent_properties record failed:", e); }
+      })());
+    }
+
     const STAGE_TRANSITION_AIX_TYPES = [
       "application",
       "application_push",
