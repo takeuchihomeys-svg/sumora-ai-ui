@@ -59,10 +59,21 @@ describe("プロンプトに入れる指示", () => {
     expect(n).toContain("100〜140字で81.0%");
     expect(n).toContain("63.9%");
   });
-  it("★ N1c 返信が来ている締めの形を示す", () => {
+  it("★ N1c 成約データの実物（スタッフの見立て）を手本として見せる", () => {
     const n = buildLengthNote("property_send");
-    expect(n).toContain("お気軽に");
-    expect(n).toContain("お申し付けください");
+    expect(n).toContain("かなりオススメ出来るお部屋が募集に出ました");
+    expect(n).toContain("私個人的には");
+  });
+  it("★ N1d 毎回の申込誘導を止める（実送信8.8%・内覧6.1%）", () => {
+    const n = buildLengthNote("property_recommendation");
+    expect(n).toContain("毎回「お気に召されましたらお申込みでお部屋を抑えさせて頂きます」で終わらせない");
+    expect(n).toContain("8.8%");
+    expect(n).toContain("どちらも1割未満");
+  });
+  it("★ N1e 希少性の煽りを名指しで止める（YUMA で実際に出た）", () => {
+    const n = buildLengthNote("property_check_result");
+    expect(n).toContain("他のお客様からお申込みが入る可能性");
+    expect(n).toContain("埋まってしまう");
   });
   it("★ N2 上限を明示して「超えたら書き直す」と言う", () => {
     expect(buildLengthNote("property_send")).toContain("180字を超えたら**要点を削って**書き直す");
@@ -70,7 +81,7 @@ describe("プロンプトに入れる指示", () => {
   it("★ N3 長くなる原因（箇条書きの並べ直し）を名指しで止める", () => {
     const n = buildLengthNote("property_recommendation");
     expect(n).toContain("1通目で既に送っている");
-    expect(n).toContain("ここで並べ直さない");
+    expect(n).toContain("並べ直さない");
   });
 });
 

@@ -39,6 +39,8 @@ import { isWaitedAllowed } from "@/app/lib/waited-scope";
 import { buildAixChainNote } from "@/app/lib/aix-chain-note";
 // 2026-09-20 竹内「生成される文が長すぎる」: 長さの目安を実測から渡す＋生成後に記録する
 import { buildLengthNote, checkLength } from "@/app/lib/template-length";
+// 2026-09-20 竹内: 禁止語の整形（夜間挨拶・承知→かしこまりました・挨拶の重複）を返信生成・AIX 本体と同じ関数で
+import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
 import { stripPropertyNameFromPickupLine } from "@/app/lib/pickup-line";
 import { stripRepeatedThanksLines } from "@/app/lib/property-send-match";
@@ -1417,8 +1419,6 @@ export async function POST(req: NextRequest) {
     `━━━━━━━━━━━━━━━━━━━━\n【今回生成する橋渡し文】\n━━━━━━━━━━━━━━━━━━━━`,
     `・AIXボタン種別: ${actionLabel}`,
     lengthNote,
-    // 1通目との関係は最優先の文脈（これが無いと同じことを繰り返す）
-    aixChainNote,
     actionGuide ? `・この種別の書き方: ${actionGuide}` : "",
     // 「1件特にオススメ」の訴求シナリオ（冒頭・比較表現の可否・CTA強度を決定する最優先指示）
     recommendationScenario
@@ -1521,6 +1521,13 @@ export async function POST(req: NextRequest) {
         ? `訴求シナリオは「${RECOMMENDATION_SCENARIO_LABELS[recommendationScenario]}」。禁止制約（比較表現禁止等）とCTA強度は必ず守ること。冒頭の言い回しは⭐実例の文体を参考に毎回変化させること（固定フレーズを繰り返さない）。`
         : ""
     }出力は本文のみ。`,
+    // 2026-09-20 竹内「実際の成約データや直近の文のようになっているか確認」:
+    //   2通目（AIX の直後に送るテンプレ）の指示は**最後に置く**。
+    //   ここより前には「【文章構造の原則】5段落構成（5段落目=CTA）」「この種別の書き方（CTA は…）」
+    //   「CTA強度の上書き」「【必ず守る2点】①段落構成に従う」と、**1通目用の骨格が何重にも入っている**。
+    //   YUMA で測ると申込の誘導が 100%（実送信8.8%）になり、前に置いた上書きは効かなかった。
+    //   設計知見「同じ事実について書くなと書けを別の場所から渡さない」→ 最後に1回だけ明示して上書きする。
+    aixChainNote,
   ].filter(Boolean).join("\n");
 
   // ── DB学習資産の第2システムブロック（TTLキャッシュ内はbyte-stable → prompt cache対象）──
@@ -1666,6 +1673,23 @@ export async function POST(req: NextRequest) {
         if (waited.removed > 0) {
           console.log(JSON.stringify({ tag: "aix-template-generate:strip-waited", actionType, removed: waited.removed }));
           text = waited.text;
+        }
+      }
+      // 2026-09-20 竹内「実際の成約データや直近の文のようになっているか確認」:
+      //   YUMA の検証で「**夜分に失礼いたします！！**」「**承知いたしました！！**」が出た。どちらも禁止語で、
+      //   返信生成・AIX 本体（aix/action の finalize）には normalizeBannedPhrasing が通っているのに、
+      //   **テンプレート生成には配られていなかった**（設計知見「出口の決定論も同じ関数で全経路に配る」）。
+      //   中身: 夜間挨拶の除去／承知→かしこまりました／約束の「すぐに」除去／単独の承りました／挨拶の重複。
+      //   2通目はお客様への返信なので夜間挨拶は残さない（keepNightGreeting: false）。
+      {
+        const banned = normalizeBannedPhrasing(text, { keepNightGreeting: false });
+        if (banned.night || banned.shochi || banned.hasty || banned.uketamawari || banned.greetDup) {
+          console.log(JSON.stringify({
+            tag: "aix-template-generate:banned-phrasing-fixed", actionType,
+            night: banned.night, shochi: banned.shochi, hasty: banned.hasty,
+            uketamawari: banned.uketamawari, greetDup: banned.greetDup,
+          }));
+          text = banned.text;
         }
       }
       // 「複数の物件について」等、物件名を並べた直後の数のまとめ語（a🤫 事例）
