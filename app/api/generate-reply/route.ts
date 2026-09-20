@@ -183,7 +183,8 @@ import { loadRecordedFacts } from "@/app/lib/sent-facts";
 import { viewingReportNoteForReply, type ViewingReport } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-11 竹内方針1〜5（統合設計 §7）: 生成失敗文の文言と「正解例として使えるか」の唯一の判定
-import { GENERATION_FAILURE_TEXT, isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
+// 2026-09-20 竹内: isCustomerFacingExample — 管理会社・オーナー宛ての文を手本にしない（STATE_SEARCH_ALIASES.applying が acknowledge_check を含むため混ざっていた）
+import { GENERATION_FAILURE_TEXT, isUsableExampleText, isCustomerFacingExample, fixExampleWeekdays } from "@/app/lib/example-hygiene";
 // 2026-09-11 竹内方針4・5: few-shot 注入前の「承知→かしこまりました」「すぐに除去」（後処理・検査と同じ定義）
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（曜日表をプロンプトに渡し LLM に曜日を計算させない）
@@ -2279,7 +2280,9 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
 
       if (!rpcError && similar && similar.length > 0) {
         // 類似度0.5未満は低品質として除外。生成失敗文・テスト送信は正解例にしない（isUsableExampleText）
-        const aboveThreshold = similar.filter(ex => ex.similarity >= 0.5 && isUsableExampleText(ex.sent_reply));
+        // 2026-09-20 竹内: 管理会社・オーナー宛ての文（AIX【確認します】の出力）も手本にしない。
+        //   applying の alias に acknowledge_check が入っているので、申込中の会話にそのまま混ざっていた
+        const aboveThreshold = similar.filter(ex => ex.similarity >= 0.5 && isUsableExampleText(ex.sent_reply) && isCustomerFacingExample(ex.sent_reply));
         if (aboveThreshold.length > 0) {
         // ★+0.15 に加え、4案から選ばれた実例（reply_angle あり）は+0.1 追加ブースト
         // T1: spec.examples.boostStates（brainが重視するフェーズ）に一致する実例はさらに+0.1
@@ -2341,9 +2344,10 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   ]);
 
   // 2026-09-11 データ衛生: ☆付きの生成失敗文（hearing の最新☆）がフォールバックの先頭に来ていた → 読む側で除外
-  const sameStateList = (sameStateFull ?? []).filter((ex) => isUsableExampleText(ex.sent_reply));
+  // 2026-09-20 竹内: フォールバック経路でも管理会社・オーナー宛ての文は手本にしない（pgvector 経路と同じ関門＝四者同名）
+  const sameStateList = (sameStateFull ?? []).filter((ex) => isUsableExampleText(ex.sent_reply) && isCustomerFacingExample(ex.sent_reply));
   const allStateList = (allStateFull ?? []).filter(
-    (ex) => isUsableExampleText(ex.sent_reply) && !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
+    (ex) => isUsableExampleText(ex.sent_reply) && isCustomerFacingExample(ex.sent_reply) && !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
   );
 
   // T1: boostStates（brainが重視するフェーズ）一致を同priority・同☆内の優先基準に追加

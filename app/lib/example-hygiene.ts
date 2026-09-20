@@ -49,3 +49,28 @@ export function isUsableAiDraft(s: string | null | undefined): boolean {
   const t = (s ?? "").trim();
   return !!t && !GENERATION_FAILURE_RE.test(t);
 }
+
+// ─── 2026-09-20 竹内「他にも文生成の問題起きないか徹底的にテスト」──────────────────
+// AIX【確認します】(acknowledge_check) は **管理会社・オーナー宛て**のメッセージも作る
+// （aix/action/route.ts に「【メッセージの宛先】管理会社またはオーナー（お客様宛てではない）」と明記された正しい機能）。
+// その出力が手本 ai_reply_examples に入り、`STATE_SEARCH_ALIASES.applying` が "acknowledge_check" を
+// 含むため、**申込中のお客様への返信を作る時に管理会社宛ての文が手本として渡っていた**（手本8件・☆付きあり）。
+// 実物:「ゆそひさんのご案内をしております！！ プレアール都島Ⅲ103号室の募集状況を確認させていただきます！！
+//        あわせて入居可能日についてもご確認をお願いできますでしょうか！！」＝お客様に出したら宛先の取り違え。
+//
+// 線（scripts/audit-mgmt-phrase-line.ts）: お客様へのLINE 12,031通に **0通**・手本に8件 ＝ 誤削除0。
+// 判定は AIX 側のプロンプトが**必須にしている要素**で見分ける（route.ts の「冒頭1行目」と「見積もり依頼」）。
+//
+// isUsableExampleText とは**別の関数**にしてある。AIX【確認します】自身は
+// getStarredExamplesForAction(["acknowledge_check"]) で自分の実例（管理会社宛て）を手本にするので、
+// そこでこれを掛けると自分の手本が全部消える。お客様に見せる側の経路だけで使う。
+/** 管理会社・オーナー宛ての文の印（AIX【確認します】のプロンプトが必須にしている要素） */
+export const TO_MANAGEMENT_RE =
+  /のご案内をしております|(?:御)?見積(?:もり|り|書)?もお願い(?:でき|出来)ますでしょうか/;
+
+/** お客様に見せる返信の手本として使えるか（管理会社・オーナー宛ての文を除く） */
+export function isCustomerFacingExample(s: string | null | undefined): boolean {
+  const t = (s ?? "").trim();
+  if (!t) return false;
+  return !TO_MANAGEMENT_RE.test(t);
+}

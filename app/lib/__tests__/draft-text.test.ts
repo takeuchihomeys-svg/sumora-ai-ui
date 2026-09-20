@@ -117,6 +117,55 @@ console.log("── 本物のスタッフ送信は消さない（誤削除0）")
     String(draftToSendableText(keep[1])));
 }
 
+// ─────────────────────────────────────────────────────────────
+// 2026-09-20 竹内「他にも文生成の問題起きないか徹底的にテスト」
+//   下書き2,912件・実送信12,031通の全件監査（scripts/audit-internal-leak.ts・audit-warn-marker.ts）で
+//   見つけた2つの漏れ。どちらも**実送信は0通**なので落として安全（誤削除0）。
+// ─────────────────────────────────────────────────────────────
+console.log("── 【本物】途中で切れた内部トレーラー（閉じタグ >>> が無い）");
+{
+  // 本番の下書きにそのまま残っていた物（09/18・09/01）。生成のストリームが途中で終わり JSON が切れている。
+  //   旧実装は閉じタグを必須にしていたので剥がれず、お客様に見える入力欄まで届いていた。
+  const cut = 'かしこまりました😊！！\n\nご送付いただきましたお部屋、ご内覧可否確認させて頂きます！！確認出来次第ご連絡させて頂きます😌！！ <<<FINAL_CHECK:{"ok":true,"issu';
+  const out = draftToSendableText(cut);
+  t("★ 閉じタグが無くてもトレーラーが落ちる", !!out && !out.includes("<<<") && !out.includes("FINAL_CHECK"), JSON.stringify(out));
+  t("★ 本文は1文字も減らない",
+    out === "かしこまりました😊！！\n\nご送付いただきましたお部屋、ご内覧可否確認させて頂きます！！確認出来次第ご連絡させて頂きます😌！！", JSON.stringify(out));
+
+  const cut2 = '承知いたしました！！\n\n道中お気をつけてお越しください！！ <<<FINAL_CHECK:{"ok":true,"issues":[],"passes_completed":["rule_ch';
+  t("★ もう1件の本物も落ちる", draftToSendableText(cut2) === "承知いたしました！！\n\n道中お気をつけてお越しください！！", String(draftToSendableText(cut2)));
+
+  t("★ これから増える内部タグも落ちる（タグ名を並べない）",
+    draftToSendableText("はい😊！！\n<<<NEW_TRAILER:{\"a\":1}>>>") === "はい😊！！",
+    String(draftToSendableText("はい😊！！\n<<<NEW_TRAILER:{\"a\":1}>>>")));
+  t("★ 閉じタグの無い未知タグも落ちる",
+    draftToSendableText("はい😊！！\n<<<NEW_TRAILER:{\"a\":1") === "はい😊！！",
+    String(draftToSendableText("はい😊！！\n<<<NEW_TRAILER:{\"a\":1")));
+}
+
+console.log("── 【本物】スタッフ向けの注記を AI が本文の先頭に書き写した");
+{
+  // 本番の下書きにあった物（09/06・08/30）。この文言はコードのどこにも無く、プロンプトの注意書きを写したもの。
+  const note = "【⚠️センシティブ案件: この返信案は参考のみ。送信前に必ず手動確認（キャンセル・リスケ検知）】\n\nかしこまりました！！\nLuxe難波西2の内覧キャンセル承りました！！";
+  const out = draftToSendableText(note);
+  t("★ 注記の行だけ落ちる", !!out && !out.includes("⚠") && !out.includes("センシティブ") && !out.includes("手動確認"), JSON.stringify(out));
+  t("★ お客様への本文は残る", out === "かしこまりました！！\nLuxe難波西2の内覧キャンセル承りました！！", JSON.stringify(out));
+}
+
+console.log("── 誤削除0の確認（本物の【…】は消さない）");
+{
+  // 物件名・見出しの【…】は ⚠ を含まないので当たらない
+  const keeps: string[] = [
+    "【ハイツカトレア B 202号室】\n初期費用：178,090円\n※ご入居日によって日割家賃が発生致します。",
+    "【エストレーラ 305号室】\n初期費用の御見積書お送りさせて頂きます！！",
+    "④【希望築年数】\n⑤【その他ご希望】",
+    "お世話になっております！！\n【重要】本日中にご返信頂けますと幸いです！！",
+  ];
+  for (const s of keeps) t(`「${s.slice(0, 16)}…」→ 1文字も変わらない`, draftToSendableText(s) === s, String(draftToSendableText(s)));
+  // 矢印・記号を含む本物の送信文（既存の誤削除0の確認と同じ趣旨）
+  t("「<」単体は消さない", draftToSendableText("家賃は8万円 < 9万円でご案内可能です！！") === "家賃は8万円 < 9万円でご案内可能です！！");
+}
+
 console.log("── 画面と送信で同じ結果（四者同名）");
 {
   const sample = "はい😊！！\nご確認頂きありがとうございます！！\n<<<FINAL_CHECK:{\"ok\":true}>>>";

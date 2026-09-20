@@ -41,7 +41,8 @@ import { buildActionLedger, buildLedgerLinesForBrain } from "@/app/lib/action-le
 import { detectApplyReadiness, buildApplyReadinessBrainNote } from "@/app/lib/apply-readiness";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
 // 2026-09-11 データ衛生: 正解例として使えるかの唯一の判定（生成失敗文・テスト送信を除外）
-import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
+// 2026-09-20 竹内: isCustomerFacingExample — 管理会社・オーナー宛ての文（AIX【確認します】の出力）をブレインの材料にしない
+import { isUsableExampleText, isCustomerFacingExample, fixExampleWeekdays } from "@/app/lib/example-hygiene";
 // 2026-09-12 竹内方針E: 実例の注入前に生成と同じ決定論置換（すぐに除去・承知→かしこまりました・単独の承りました）を通す
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（timeZone 抜けの UTC 表示を防ぐ）
@@ -1509,7 +1510,7 @@ export async function analyzeConversation(
   // Recent starred examples (good replies) for this customer
   // 2026-09-11 データ衛生: 生成失敗文（☆付きで混入していた）・テスト送信は優良返信例にしない（読む側で除外）
   const examples = ((examplesResult.data ?? []) as Array<{ sent_reply: string | null; is_starred: boolean | null }>)
-    .filter((e) => isUsableExampleText(e.sent_reply));
+    .filter((e) => isUsableExampleText(e.sent_reply) && isCustomerFacingExample(e.sent_reply));
   const examplesText = examples.length > 0
     ? `\n過去のスタッフ優良返信例:\n${examples.map((e) => `- ${fixExampleWeekdays(normalizeBannedPhrasing(e.sent_reply ?? "").text)}`).join("\n")}`
     : "";
@@ -1724,7 +1725,8 @@ export async function analyzeConversation(
     const st = Array.isArray(e.conversations) ? e.conversations[0]?.status : e.conversations?.status;
     return st === "closed_won" ? "成約" : "申込到達";
   };
-  const rawContractExamples = ((contractExamplesResult.data ?? []) as ContractExample[]).filter((e) => isUsableExampleText(e.sent_reply));
+  const rawContractExamples = ((contractExamplesResult.data ?? []) as ContractExample[])
+    .filter((e) => isUsableExampleText(e.sent_reply) && isCustomerFacingExample(e.sent_reply));
   // 現在のステータスと同じ段階の返信例を優先し、最大3件・各100字に切り詰め
   const stateMatched = rawContractExamples.filter((e) => e.conversation_state === convStatus);
   const stateOthers = rawContractExamples.filter((e) => e.conversation_state !== convStatus);

@@ -4336,6 +4336,12 @@ export default function Home() {
       setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}`);
       return;
     }
+    // 2026-09-20: 予約送信も同じ関門（生成失敗の表示・社内向けの文を予約してしまうと後で止められない）
+    if (replyDraft.trim() && draftToSendableText(replyDraft) === null) {
+      setShowScheduleModal(false);
+      setError("この文はお客様への返信ではありません（生成失敗の表示・社内向けの文）。書き直してから予約してください。");
+      return;
+    }
     setScheduleSaving(true);
     try {
       const textToSend = replyDraft.trim();
@@ -4448,6 +4454,13 @@ export default function Home() {
       const leftover = detectPlaceholders(replyDraft);
       if (leftover.length > 0) {
         setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}。実際の内容に書き換えてから送信してください。`);
+        return;
+      }
+      // 2026-09-20 竹内「他にも文生成の問題起きないか徹底的にテスト」:
+      //   「（AI返信の生成に失敗しました。再生成をお試しください）」が実際にお客様へ送られていた（messages に2通）。
+      //   プレースホルダと同じ**決定論**の関門（AI の再チェックではないので「スタッフが編集した文は再チェックしない」と矛盾しない）。
+      if (draftToSendableText(replyDraft) === null) {
+        setError("この文はお客様への返信ではありません（生成失敗の表示・社内向けの文）。書き直してから送信してください。");
         return;
       }
     }
@@ -5294,6 +5307,11 @@ export default function Home() {
       const leftover = detectPlaceholders(text);
       if (leftover.length > 0) {
         setError(`未置換のプレースホルダーを検出したため送信を中止しました: ${leftover.join(" ")}`);
+        return;
+      }
+      // 2026-09-20: AIX・テンプレ経由の送信にも同じ関門（生成失敗の表示・社内向けの文を送らない）
+      if (draftToSendableText(text) === null) {
+        setError("この文はお客様への返信ではありません（生成失敗の表示・社内向けの文）。送信を中止しました。");
         return;
       }
     }
