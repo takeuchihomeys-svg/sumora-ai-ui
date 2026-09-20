@@ -14,7 +14,7 @@ import {
   STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, STAFF_ESTIMATE_WORD_RE, STAFF_ESTIMATE_DECL_RE, staffEstimateDelivered,
   STAFF_NON_PROPERTY_RE, STAFF_CONFIRM_DECL_RE, STAFF_CONFIRM_REPORT_RE, STAFF_VIEWING_INVITE_RE,
   STAFF_APPLY_PUSH_RE, STAFF_CONDITION_ASK_RE, STAFF_QUESTION_RE, REDO_CLAIM_RE,
-  LEDGER_OUTBOUND_SOURCES, pickupRound, redoWord,
+  LEDGER_OUTBOUND_SOURCES, pickupRound, redoWord, fixedViewingOfferLiteral,
   type StaffTurn, type StaffTurnKind, type CustomerResponseKind,
 } from './reply-context';
 // 2026-09-12 竹内方針D: JST の日付表示は jst-date に一本化
@@ -893,7 +893,12 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
   // 2026-09-14 竹内（名無しの権兵衛事例）: 内覧の約束は送った内容の中でも鮮度が高い。当日の「着きました」に新しい内覧日程を打診しない
   //   （文例はスタッフの実送信: 着いた→「まもなく到着いたします！！少々お待ちください」／遅れる→「かしこまりました！！お気をつけてお越しください」）
   if (f.viewingAppointment) {
-    lines.push(`→ 内覧の待ち合わせを案内済み: ${appointmentLabel(f.viewingAppointment)}。この内覧は決まっている。新しい内覧日程の打診（「ご都合よろしいお日にち」「ご案内させて頂きます」）は書かない。` +
+    // 2026-09-20 竹内（まりあさん事例）: 旧注記は「ご案内させて頂きます」ごと禁止していたが、
+    //   スタッフの実送信の正解はまさに「本日16時お部屋ご案内させて頂きます！」＝その語を使う。
+    //   禁止すべきは「日時を決めずに新しく打診すること」だけ。丸ごと禁止したため、
+    //   同時に「ご案内させて頂きますを1文入れよ」と必須を掛けるセル（ES_POSITIVE）と正面衝突し、
+    //   LLM がどちらも避けた第三の文（「お申込み情報受け取りました」＝受け取っていない申込の捏造）を作っていた。
+    lines.push(`→ 内覧の待ち合わせを案内済み: ${appointmentLabel(f.viewingAppointment)}。この内覧は決まっている。新しい日程の打診（「ご都合よろしいお日にちに」「ご都合よろしいお日にち御座いますでしょうか」）は書かない。ご案内の話をする時は決まっている日時をそのまま言う（「${fixedViewingOfferLiteral('', f.viewingAppointment)}」）。申込は受け取っていない（「お申込み情報受け取りました」等は書かない）。` +
       (f.viewingAppointment.day === 'today' ? 'お客様の「着きました」「遅れます」「向かってます」はこの内覧の当日の連絡（着いた→「まもなく到着いたします！！少々お待ちください」／遅れる→「かしこまりました！！お気をつけてお越しください」）。' : ''));
   }
   return lines.join('\n') + '\n\n';
