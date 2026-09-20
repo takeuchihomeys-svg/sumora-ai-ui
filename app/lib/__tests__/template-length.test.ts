@@ -48,18 +48,29 @@ describe("長さを縛らない種類（フォームの全文を送る）", () =
 });
 
 describe("プロンプトに入れる指示", () => {
-  it("★ N1 実測の数字を根拠として見せる（成約108字・3行）", () => {
+  it("★ N1 目的（返信・訴求）から書く — 長さの制限が主語ではない", () => {
     const n = buildLengthNote("property_recommendation");
+    expect(n).toContain("返信をもらうため");
+    expect(n).toContain("訴求のため");
     expect(n).toContain("108字");
-    expect(n).toContain("140字未満が69.5%");
+  });
+  it("★ N1b 返信率の実測を根拠として見せる", () => {
+    const n = buildLengthNote("property_recommendation");
+    expect(n).toContain("100〜140字で81.0%");
+    expect(n).toContain("63.9%");
+  });
+  it("★ N1c 返信が来ている締めの形を示す", () => {
+    const n = buildLengthNote("property_send");
+    expect(n).toContain("お気軽に");
+    expect(n).toContain("お申し付けください");
   });
   it("★ N2 上限を明示して「超えたら書き直す」と言う", () => {
-    expect(buildLengthNote("property_send")).toContain("180字を超えたら書き直す");
+    expect(buildLengthNote("property_send")).toContain("180字を超えたら**要点を削って**書き直す");
   });
   it("★ N3 長くなる原因（箇条書きの並べ直し）を名指しで止める", () => {
     const n = buildLengthNote("property_recommendation");
-    expect(n).toContain("次の一歩1つ");
-    expect(n).toContain("箇条書きで並べ直さない");
+    expect(n).toContain("1通目で既に送っている");
+    expect(n).toContain("ここで並べ直さない");
   });
 });
 
@@ -81,13 +92,29 @@ describe("長さの点検（実物で確かめる）", () => {
   it("★ C4 点検は本文を書き換えない（長さで切ると文が壊れる）", () => {
     const r = checkLength(REAL_2ND, "property_recommendation");
     // 返すのは測った値だけ。text を返さない設計であることを型で固定する
-    expect(Object.keys(r).sort().join(",")).toBe("len,lines,ok,over");
+    expect(Object.keys(r).sort().join(",")).toBe("bullets,len,lines,ok,over");
   });
   it("C5 成約データの中央値108字は基準の内側", () => {
     expect(checkLength("あ".repeat(108), "property_send").ok).toBe(true);
   });
   it("C6 実送信の75パーセンタイル140字も基準の内側", () => {
     expect(checkLength("あ".repeat(140), "property_send").ok).toBe(true);
+  });
+
+  // 2026-09-20 竹内「返信や訴求の為」: 箇条書きは返信率が13ポイント低い（63.9% vs 全体76.8%）
+  it("★ C7 オススメポイントの箇条書きは基準外として記録される（返信率63.9%）", () => {
+    const bulleted = "🌟パークモダン新大阪 503\n（オススメポイント）\n・家賃126,000円・管理費15,000円\n・間取り：1LDK\n・御堂筋線「新大阪」徒歩10分";
+    const r = checkLength(bulleted, "property_recommendation");
+    expect(r.bullets).toBe(3);
+    expect(r.ok).toBe(false);
+  });
+  it("C8 箇条書きが1行だけなら基準内（並べ直しではない）", () => {
+    const r = checkLength("和樹さんにオススメのお部屋となります！！\n・ペット2匹飼育可能となります😊！！\nお気軽にお申し付けください😌！！", "property_recommendation");
+    expect(r.bullets).toBe(1);
+    expect(r.ok).toBe(true);
+  });
+  it("★ C9 竹内さんの実物は箇条書き0（そのまま基準内）", () => {
+    expect(checkLength(REAL_2ND, "property_recommendation").bullets).toBe(0);
   });
 });
 
