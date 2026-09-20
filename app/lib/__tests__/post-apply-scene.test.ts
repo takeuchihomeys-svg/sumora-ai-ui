@@ -194,6 +194,27 @@ it("★ 進行中の審査は今までどおり拾う", () => {
   expect(kindOf("お父様に保証会社より本人確認のお電話がございます！！")).toBe("screening_wait");
 });
 
+console.log("\n── ★ 実送信と突き合わせて直した所（2026-09-20 竹内「実際送ったのと比べてまちがったのが出る可能性」）──");
+
+it("★ AD_ANY の必須は「質問への回答」でも満たせる（受け止めだけを必須にしない）", () => {
+  const r = PAIR_MATRIX.find((x) => x.id === "AD_ANY")!;
+  const m = r.mustInclude[0];
+  // 本物の実送信（申込完了の報告の後、お客様の番手の質問に答えた文）
+  const real = "1番手お申込み中の方がキャンセルもしくは審査否決の場合に2番手お申込み者の方が1番手に繰り上がり審査開始となります！！";
+  if (!m.detect.test(real)) throw new Error(`実送信が必須を満たさない: ${real.slice(0, 40)}`);
+  // 受け止めの形も今までどおり満たす
+  for (const s of ["はい😊！！", "かしこまりました！！", "承知いたしました"]) {
+    if (!m.detect.test(s)) throw new Error(`受け止めが満たせない: ${s}`);
+  }
+});
+
+it("★ AD_ANY と SW_ANY は同じ考え方（受け止め or 事実での回答）で揃っている", () => {
+  for (const id of ["AD_ANY", "SW_ANY"]) {
+    const r = PAIR_MATRIX.find((x) => x.id === id)!;
+    if (!/回答/.test(r.mustInclude[0].label)) throw new Error(`${id} が回答を認めていない`);
+  }
+});
+
 console.log("\n── regex の歯止め（広げすぎない）──");
 
 it("★ ふつうの物件紹介・内覧案内に当たらない", () => {
