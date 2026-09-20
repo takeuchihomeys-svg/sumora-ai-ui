@@ -1200,3 +1200,44 @@ var NON_RESULT_PAGES = ["GBK001310"];
 - 「大阪市内」が`area`として分類 → `currentAreaMode = "ward"`
 - `preloadAdjForm`が`adj-area-ward = "大阪市内"`, `adj-area-station = ""`に設定
 - page-scriptで`area_mode: "ward"`が渡され、地域モーダルで検索される
+
+---
+
+## 2026-09-20 送った物件が「誰に送ったか」記録されていなかった（background.js 2行修正・**拡張の再読み込み必須**）
+
+### 何が起きていたか
+`sent_properties`（送付物件の履歴）の実測（直近180日 15,599件・`scripts/audit-sent-prop-link.ts`）:
+
+| source | 件数 | 会話ID | 物件顧客ID | 号室 |
+|---|---|---|---|---|
+| `line_group`（物件出しツール→LINEグループ） | 14,129（**91%**） | **0%** | **0%** | **0%** |
+| `vision`（送信画像の読み取り） | 1,470 | 100% | 87% | 100% |
+
+→ **会話に辿れる物件は 1,470/15,599 = 9.4% だけ**。
+物件出しツールで送った物件は「誰に送ったか」も「どの部屋か」も残っておらず、
+ブレインも返信AIも**送った物件を読めない**状態だった。
+
+### 原因
+`background.js` の `callMergeApi` が `property_customer_id` を渡していなかった（2か所）。
+サーバー（`/api/merge-pdfs`）は受け取れば `sent_properties` に入れる作りになっていて、
+拡張は `customer_id` を手元に持っていた（`log-property-candidates` には渡していた）のに、
+**merge-pdfs にだけ渡していなかった**。
+
+### 直したもの
+1. `background.js` リアプロ経路（`axlx-send-to-line`）: `property_customer_id: customer_id || null`
+2. `background.js` itandi 経路（Blob アップ後の merge）: `property_customer_id: msg.customer_id || null`
+3. `/api/merge-pdfs`: 紐付けがどちらも無い時、重複チェックが**全顧客の履歴から**同名物件を探して
+   「重複」と判定し記録をスキップしていた副作用を塞いだ（`limit(0)` ＋ 警告ログ `merge-pdfs:sent-properties:no-link`）
+
+### 確認方法（次に物件を送った後）
+```
+npx tsx --env-file=.env.local scripts/audit-sent-prop-link.ts
+```
+`line_group` の「物件顧客ID」が 0% から上がっていれば効いている。
+上がらない場合は**拡張の再読み込み**（background.js の変更は再読み込みしないと反映されない）。
+
+### 号室が 0% なのは別の原因（未対応）
+`merge-pdfs` は `property_summaries` の1行目から `/[\s　]+(\d{1,4})(?:号室?)?$/` で号室を切り出す。
+`line_group` は号室 0% なので、**送っているサマリーの1行目に号室が無い**形になっている。
+号室が無いと重複判定が名前だけになる（`sent-property-record.isSameProperty` は号室が無ければ名前 0.95 で判定）。
+→ 次にやる: `property_summaries` の実物を見て、号室を含む形にするか、別の場所から号室を取る。

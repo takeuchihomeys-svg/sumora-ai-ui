@@ -681,6 +681,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           property_summaries: property_summaries || null,
           customer_conditions: customer_conditions || null,
           site: site || null,
+          // 2026-09-20 竹内「物件ピックアップから送る物件もテーブルかクエリで保管したら、
+          //   どれが物件ピックアップで送った物件かも理解できる」:
+          //   merge-pdfs は受け取った property_customer_id を sent_properties に入れるが、
+          //   ここが渡していなかったため **直近180日の 14,129件（全体の91%）が「誰に送ったか」不明**で記録されていた
+          //   （会話にも物件顧客にも紐付かず、ブレインも文生成も読めない）。customer_id は既にこの関数が
+          //   受け取っていて log-property-candidates には渡していたので、同じ値をそのまま渡す。
+          property_customer_id: customer_id || null,
         });
 
         sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
@@ -742,6 +749,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           property_summaries:  msg.property_summaries || null,
           customer_conditions: msg.customer_conditions || null,
           site:                msg.site || null,
+          // 2026-09-20: リアプロ経路と同じ（上のコメント参照）。msg.customer_id は進捗通知で既に使っている値
+          property_customer_id: msg.customer_id || null,
         });
         sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
       } catch (e) {

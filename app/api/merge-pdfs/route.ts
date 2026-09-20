@@ -354,6 +354,20 @@ export async function POST(req: NextRequest) {
           });
 
           if (propInfoList.length > 0) {
+            // ── 2026-09-20 竹内「どれが物件ピックアップで送った物件かも理解できる」──
+            //   実測（scripts/audit-sent-prop-link.ts・直近180日）: source="line_group" の 14,129件は
+            //   **会話ID 0% / 物件顧客ID 0% / 号室 0%** ＝「誰に送ったか」分からない行だった。
+            //   原因は Chrome 拡張（background.js）が property_customer_id を渡していなかったこと（2026-09-20 に修正）。
+            //   ここでは残る副作用を塞ぐ: 紐付けがどちらも無い時、下の重複チェックは
+            //   **全顧客の sent_properties から同名物件を探して**しまい、別のお客様に送った物件のせいで
+            //   記録がスキップされていた。紐付けが無い時は重複チェックをかけない（誤って落とさない）。
+            if (!propertyCustomerId && !conversation_id) {
+              console.warn(JSON.stringify({
+                tag: "merge-pdfs:sent-properties:no-link",
+                customer_name: customer_name ?? null, count: propInfoList.length,
+                note: "property_customer_id / conversation_id がどちらも無い。拡張が古い可能性（再読み込みが必要）",
+              }));
+            }
             // 1回の SELECT で全物件の重複チェック（N+1 → 1クエリに削減）
             const propertyNames = propInfoList.map((p) => p.propertyName);
             let dupQuery = supabase
@@ -364,6 +378,9 @@ export async function POST(req: NextRequest) {
               dupQuery = dupQuery.eq("property_customer_id", propertyCustomerId);
             } else if (conversation_id) {
               dupQuery = dupQuery.eq("conversation_id", conversation_id);
+            } else {
+              // 紐付けが無い＝誰の物件か分からないので、他人の送付履歴で弾かない
+              dupQuery = dupQuery.limit(0);
             }
             const { data: existingRows } = await dupQuery;
             const existingSet = new Set(
