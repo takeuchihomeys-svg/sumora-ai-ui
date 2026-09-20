@@ -4066,3 +4066,50 @@ BANNED 16（ご連絡お待ちしております6・承りました4・ご内覧
 
 ### 新しい監査（全て読み取りのみ）
 `audit-greeting-line` / `audit-aix-territory` / `audit-viewing-ask-origin` / `audit-yuma-suggested-aix`
+---
+
+## 物件ピックアップの保管（2026-09-20・竹内「送った物件をテーブルで保管して文生成に使う」）
+
+### 先に測った — 入れ物は全部あったが**埋まっていなかった**
+`scripts/audit-sent-properties.ts`（直近180日）:
+| 見た所 | 実測 |
+|---|---|
+| AIX 物件ピックアップ941件（オススメ557／ピックアップ384）の物件名 | **0%** が構造化されて残る |
+| property_check_result 282件 | 17%（49件）だけ property_names + prop_statuses あり |
+| sent_properties の rent / property_url / recruitment_status / applicant_rank / customer_reaction | **全部0%** |
+| sent_properties の room_no / conversation_id | 9.5% / 9.4%（91%は line_group＝物件出しツール経由） |
+| 同じ物件を2回以上送った会話 | **128件中29件（22.7%）**・42組 |
+| property_condition_history（条件を広げた履歴） | 127件あり |
+| sent_image_properties の `aix:*`（2026-09-20 に入った経路） | 7件（動き始めた） |
+
+→ **新しい表を作る仕事ではなく、既にある表に書く経路を繋ぐ仕事**だった。
+
+### 重複判定の線（`scripts/audit-property-dup-threshold.ts`）
+旧 check-property-duplicate は「**号室が完全一致したら名前を見ずに重複確定**」。
+同じ会話の物件名ペア684組のうち **号室が同じでも名前が違うペアが494組（72%）**（101・201はどの建物にもある）。
+「号室一致＋似ている度 ≥ T」で名前が違う物を巻き込む数: 0.70→48 / 0.85→6 / 0.90→2 / **0.95→0**。
+→ `DUP_MIN_SCORE = 0.95`。完全一致190組はそのまま拾う。
+※ 画像の誤読（生野東↔生**バ**野東 = 0.818）は別物件（↔梅南 = 0.762）と 0.06 しか離れず**線が引けない**。
+  誤読を直すのは `resolveReadProperty`（辞書照合・0.7）の担当。重複判定で兼ねない。
+
+### 入れたもの
+1. `app/lib/sent-property-record.ts`（純関数・テスト27件・四者同名）
+   `toRecruitmentStatus`（**vacating → move_out_planned** ＝退去予定をデータで持つ）／`normalizeRoomNo`（0403↔403）／
+   `isSameProperty`／`findAlreadySent`／`buildDuplicateNotice`／`buildSentPropertyRows`
+2. `send-line-message`: 画像から読めた物件を `sent_properties` にも入れる（今まで `sent_image_properties` だけだった）
+3. `log-aix-usage`: AIX の `property_names` / `prop_statuses` を `sent_properties` に残す（退去予定が残る）
+4. `check-property-duplicate`: 判定を純関数に一本化（独自 Levenshtein 削除）＋ `conversation_id` でも引ける
+
+### 「条件を広げた」の材料は**渡さない**と決めた（`scripts/audit-condition-widen.ts`）
+条件変更の直後24時間にスタッフ送信がある82件のうち、広げたことに触れているのは **4件（4.9%）**。
+実際に値が広がった変更自体が20件（rent_max 70000→80000・building_age 10→20 等）。
+触れている4件の実文が書いているのは履歴ではなく**送る物件と条件の関係**:
+「布施〜八戸の里ご希望のご条件に合ったお部屋が現在募集御座いませんでしたので、東花園駅のお部屋も含めて…」
+→ 要る材料は「いつ条件を変えたか」ではなく「**今回送る物件が今の条件に合っているか**」＝ 物件の家賃・エリア。
+  それが 0% なので、**先に溜める側を直した**。同じことを言うセル（PS_CONDITION_CHANGE_SEARCHED）は既にある。
+
+### 次にやる（材料が溜まってから）
+- [ ] `sent_properties.rent` / `recruitment_status` が溜まったか再測（`audit-sent-properties.ts`）
+- [ ] 溜まったら AIX 物件ピックアップの文生成へ「送った物件（家賃・エリア・退去予定）」を渡す
+- [ ] 物件ピックアップ系の画面は `property_names` を渡していない（0%）。画像読み取り経由で埋まるかを見る
+- [ ] 重複のアナウンスを画面に出す（`buildDuplicateNotice` は作ったが UI 未接続）
