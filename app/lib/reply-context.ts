@@ -459,6 +459,15 @@ export type StaffTurnKind =
   | "confirmation_promise" | "condition_ask" | "check_result" | "apply_push"
   /** 2026-09-11 統合設計（経路D/E2）: 断り・探索終了を受けてスタッフが扉を開けた締め文（「またお部屋探しの際は…この度はありがとうございました」） */
   | "farewell_ack"
+  // ─── 2026-09-20 竹内（ブレインの穴の調査）: 申込**後**の手続きの3場面 ───
+  //   apply_push（申込の打診）はあったが、申込を入れた後の場面が1つも無く other に落ちていた。
+  //   実測: 返信生成が起きる場面の 27.4% が other で、その中身がここに集中（直近180日でユニーク340件）。
+  /** 申込に必要な書類・情報をお願いした（身分証明書・フォーマット・連帯保証人の情報 等）。実データ155件で最多 */
+  | "docs_request"
+  /** 申込を入れ終えた報告（「無事1番手でお申込み完了しております」「申込番手確認させていただきます」） */
+  | "apply_done"
+  /** 審査の進捗を待っている・保証会社の動きを伝えた（「審査の進捗あり次第ご連絡させていただきます」） */
+  | "screening_wait"
   | "other";
 export type StaffTurn = { kind: StaffTurnKind; source: "ledger" | "aix_log" | "aix_history" | "regex" | "none"; evidence: string };
 export type AixRow = { aix_type: string | null; check_pattern?: string | null; created_at: string | null };
@@ -468,6 +477,9 @@ const AIX_TO_STAFF: Record<string, StaffTurnKind> = {
   property_send: "property_send", property_recommendation: "property_send",
   estimate_sheet: "estimate_send", property_check_result: "check_result",
   application_push: "apply_push", condition_hearing: "condition_ask", acknowledge_check: "confirmation_promise",
+  // 2026-09-20 竹内（ブレインの穴の調査）: 申込後の AIX。ここに無いと押した直後が other に落ちる
+  application_push_format: "docs_request", application_push_docs_request: "docs_request",
+  application_push_push: "apply_push", application_push_confirm: "apply_done",
 };
 // ── 共有正規表現（2026-09-09 Fable5 行動台帳: action-ledger.ts が import する。生成・検査・台帳が同じ定数を参照＝四者同名）──
 export const STAFF_ESTIMATE_RE = /御見積書|お見積書|お見積り|見積書|初期費用.{0,12}[0-9０-９,，]+円/;
@@ -493,6 +505,27 @@ export function staffEstimateDelivered(text: string): boolean {
 export const STAFF_ESTIMATE_DECL_RE =/(?:御|お)?見積(?:書|り|もり)[^\n。]{0,40}?(?:作成|お送り|お出し)[^\n。]{0,16}(?:させて(?:頂|いただ)きます|いたします|致します|します)|(?:御|お)?見積(?:書|り|もり)[^\n。]{0,12}(?:出来|でき)次第/;
 export const STAFF_VIEWING_INVITE_RE = /(?:ご内覧|内覧|内見|ご案内).{0,25}(?:如何|いかが|ご都合)|ご都合(?:の)?よろしいお日にち|ご案内可能です|[0-9０-９]{1,2}[:：時][0-9０-９]{0,2}.{0,12}(?:ご案内|案内可能)/;
 export const STAFF_APPLY_PUSH_RE = /お申込み?(?:し|で)お部屋(?:を)?(?:抑え|押さえ)|お申込み?(?:頂け|いただけ)ます/;
+// ─── 2026-09-20 竹内（ブレインの穴の調査）: 申込**後**の手続きの3場面 ───
+//   形は実データから採った（直近180日・ユニークな組 340件。docs_request 155 / apply_done / screening_wait）。
+//   classifyLastStaffTurn では**既存の全判定の後**に当てるので、これまで分類できていた物は1件も変わらない。
+/** 申込に必要な書類・情報をお願いした（実データ最多155件） */
+export const STAFF_DOCS_REQUEST_RE = new RegExp(
+  "(?:身分証明書|本人確認書類|顔つき?身分証|免許証|保険証|マイナンバー|在職証明|収入証明|源泉徴収|戸籍謄本|住民票)[^\\n]{0,24}(?:お写真|お送り|ご提出|ご準備|頂け|いただけ|必要)" +
+  "|(?:お写真|ご情報|ご記入)[^\\n]{0,14}(?:お送り|ご提出)(?:ください|頂け|いただけ|の程)" +
+  "|(?:フォーマット|申込書|お申込み?フォーム|お申込み?フォーマット)[^\\n]{0,20}(?:ご入力|ご記入|お送り|ご返送|届き)" +
+  "|(?:連帯保証人|緊急連絡先)[^\\n]{0,12}(?:ご情報|情報|様の|設定)"
+);
+/** 申込を入れ終えた報告 */
+export const STAFF_APPLY_DONE_RE =
+  /(?:お|ご)?申込(?:み)?[^\n]{0,12}完了(?:し|いたし|させて|して)|[０-９0-9一二]番手(?:にて|で|から)[^\n]{0,12}(?:お申込|申込|審査)|申込み?番手[^\n]{0,10}(?:確認|となり)/;
+/** 審査の進捗を待っている・保証会社の動きを伝えた */
+// 2026-09-20 全件監査で見つけた誤分類の修正:
+//   旧は `保証会社[^\n]{0,18}(?:審査|…)` で、**申込前の物件説明**まで拾っていた
+//   （実物「エスポワールの保証会社 株式会社Casaという独立系の保証会社となり比較的審査通過しやすいお部屋となります」）。
+//   「これから審査を受けられる」の説明と「今その審査が動いている」は別の場面なので、
+//   **進行中の印**（審査中・審査に進んだ・保証会社から連絡が来る）を要求する。
+export const STAFF_SCREENING_WAIT_RE =
+  /審査[^\n]{0,14}(?:進捗|結果|状況)[^\n]{0,14}(?:あり次第|出次第|分かり次第|判明次第|ご連絡)|審査[^\n]{0,10}(?:に移り|進め|開始|継続)(?:させて(?:頂|いただ)き|ます|いたし)|審査中|審査催促|保証会社(?:より|から)[^\n]{0,14}(?:お電話|ご連絡|確認の(?:お)?電話)/;
 export const STAFF_QUESTION_RE = /(?:でしょうか|ますか|ですか|ございますか|御座いますか|お聞かせ(?:ください|頂け|いただけ)|教えて(?:頂け|いただけ|ください))[！!？?😊😌]*$/;
 // 2026-09-12（あや事例）: 「お手隙の際にご入力頂きますと…ピックアップしお送りさせて頂きます」はフォーム記入の依頼＝条件ヒアリング（物件ピックアップ宣言ではない）
 // 2026-09-12（find-brain-gaps・あや事例の続き）: 旧は「ご希望(の)?条件」「ご希望のエリア」単独でも当たり、
@@ -586,6 +619,16 @@ export function classifyLastStaffTurn(
     if (STAFF_PROPERTIES_DONE_RE.test(text)) return { kind: "property_send", source: "regex", evidence: text.match(STAFF_PROPERTIES_DONE_RE)![0] };
     // 裸の「号室」「万円」は台帳が送付実績を持つ時のみ送付扱い（台帳なし＝従来互換）
     if (STAFF_BARE_PROPERTY_RE.test(text) && (!opts.ledger || opts.ledger.facts.propertiesSentCount > 0)) return { kind: "property_send", source: "regex", evidence: text.match(STAFF_BARE_PROPERTY_RE)![0] };
+    // ─── 2026-09-20 竹内「ブレインで足りていない部分はあるかな？実際スタッフが送る返信を生成する為にも」───
+    //   申込**後**の手続きの場面が StaffTurnKind に1つも無く、other に落ちていた（apply_push は「打診」であって申込後ではない）。
+    //   実測（本番と同じ条件＝行動台帳あり・30日・返信生成が起きる場面 2,459件）:
+    //     直前スタッフ発言が other ＝ 674件（27.4%）。その中身が申込後の手続きに集中していた。
+    //   セルの有無で質が変わることも実測した（reply_context_snapshot の ruleId × was_ai_used）:
+    //     セルあり 44.4% 対 セルなし 24.6%／直前=other なら **56.8% 対 8.3%**。
+    //   **既存の判定の後**に置くので、これまで分類できていた物の結果は1件も変わらない（other だけを拾う）。
+    if (STAFF_DOCS_REQUEST_RE.test(text)) return { kind: "docs_request", source: "regex", evidence: text.match(STAFF_DOCS_REQUEST_RE)![0].slice(0, 40) };
+    if (STAFF_APPLY_DONE_RE.test(text)) return { kind: "apply_done", source: "regex", evidence: text.match(STAFF_APPLY_DONE_RE)![0].slice(0, 40) };
+    if (STAFF_SCREENING_WAIT_RE.test(text)) return { kind: "screening_wait", source: "regex", evidence: text.match(STAFF_SCREENING_WAIT_RE)![0].slice(0, 40) };
   }
   // ③ 本文も時刻も無い時だけ → brain の last_aix_history「最新:xxx」。台帳が「送付0件」の時は property_send を採らない（前日 AIX の誤帰属防止）
   //   2026-09-11 統合設計（経路E2）: 旧実装は本文があって regex が外れた時にも時刻制限なしで発火し、7日前の AIX 種別を直前発言として確定させていた
@@ -1893,13 +1936,86 @@ export const PAIR_MATRIX: PairRule[] = [
     // 2026-09-20 竹内（まりあさん事例）: 例文のリテラルも {viewingOffer} に寄せる（決まっている内覧との衝突を消す）
     example: "かしこまりました😊！！\n{viewingOffer}",
     length: "60〜130字", closer: "none", nanisotsu: false },
+
+  // ─── 2026-09-20 竹内（ブレインの穴の調査）「直す」: 申込**後**の3場面 ───────────────────
+  //  【なぜ作るか】返信生成が起きる場面の 27.4%（674/2,459件・30日）は直前スタッフ発言が other で、
+  //   その中身が申込後の手続きに集中していた。セルの有無で質が変わることも実測済み
+  //   （reply_context_snapshot の ruleId × was_ai_used: セルあり 44.4% 対 なし 24.6%／
+  //    直前=other なら **56.8% 対 8.3%**）。
+  //  【なぜ customer: "*" か】設計知見「other は証拠ゼロの指紋。セルを与えると mustInclude が
+  //   全会話に流れ込む」は `staff: "*"` の ANY_OTHER の話。ここは**場面（staff）が具体的**なので
+  //   流れ込む範囲が申込後に限られる。さらにセル選択の優先順位は
+  //   ①exact ②staff:"*"×customer一致（ANY_*）③staff一致×customer:"*" なので、
+  //   **ANY_QUESTION 等の既存セルが勝つ**＝これまで拾えていた場面の挙動は変わらない。
+  //  【必須要素の作り方】実データ（直近180日・ユニークな組 340件）の正解で最も多い行だけを採る。
+  //   足す指示は「受け止め」1つに絞り、残りは全部 mustNot（＝削る指示）にした。
+
+  { id: "DR_ANY", staff: "docs_request", customer: "*", precedence: "after_wait",
+    tpoLabel: "申込書類・情報の依頼への返答",
+    // 実データ155件（other 72 / question 49 / ack_only 19 / answer 6）。正解の最多行は
+    //   「かしこまりました！！」30 ／「お送りいただきありがとうございます😊！！」13 ／
+    //   「ご情報お送りいただきありがとうございます😊！！」8 ／「お部屋のお申し込み完了させていただきます！！」4
+    direction: "我々は申込に必要な書類・情報をお願いしている。お客様がそれに応じた（送った／後で送ると言った／内容を尋ねた）。①届いた物があれば「お送りいただきありがとうございます😊！！」、まだなら「かしこまりました！！」で受け止める ②まだ届いていない物がある時だけ、**履歴で我々が挙げた物だけ**を挙げる（書類名を新しく作らない） ③全部揃っていれば「お申込み手続き進めさせて頂きます😊！！」。質問されていればそれに答える。60〜140字",
+    mustInclude: [
+      { label: "受け止め（届いた物への感謝、またはこれからの受領の承知）",
+        detect: /お送り(?:いただき|頂き)ありがとう|ご(?:情報|記入|返送|対応)(?:いただき|頂き)ありがとう|かしこまりました|承知(?:いた)?しました|はい[！!😊]/,
+        fix: "届いていれば「お送りいただきありがとうございます😊！！」、まだなら「かしこまりました！！」を置く" },
+    ],
+    mustNot: [
+      "履歴で我々が挙げていない書類名・情報の追加（創作禁止）",
+      "審査の結果・通過の可否・かかる日数の断言",
+      "新しい物件の提案・再ピックアップの宣言",
+      "内覧のご案内提案（申込の手続き中は新しい内覧を持ち出さない）",
+      "御見積書の新規作成の宣言",
+    ],
+    example: "お送りいただきありがとうございます😊！！\nお部屋のお申し込み完了させていただきます！！",
+    exampleFallback: "かしこまりました！！\nお手隙の際にお送りの程よろしくお願いいたします😊！！",
+    length: "60〜140字", closer: "none", nanisotsu: false },
+
+  { id: "AD_ANY", staff: "apply_done", customer: "*", precedence: "after_wait",
+    tpoLabel: "申込完了の報告への返答",
+    direction: "我々は申込を入れ終えた報告をしている。お客様がそれに応じた。①受け止め1文 ②この後の進みは「審査の進捗あり次第ご連絡させて頂きます😌！！」とだけ言う（結果・可否・日数は断言しない） ③質問されていれば履歴にある事実だけで答える。新しい物件の提案・内覧の提案はしない。40〜120字",
+    mustInclude: [
+      { label: "受け止め（はい／かしこまりました）",
+        detect: /はい[！!😊]|かしこまりました|承知(?:いた)?しました|ありがとうございます/,
+        fix: "「はい😊！！」または「かしこまりました！！」を置く" },
+    ],
+    mustNot: [
+      "審査の結果・通過の可否・かかる日数の断言",
+      "申込をもう一度入れる宣言（既に完了している）",
+      "新しい物件の提案・再ピックアップの宣言",
+      "内覧のご案内提案",
+    ],
+    example: "はい😊！！\n審査の進捗あり次第ご連絡させて頂きます😌！！",
+    length: "40〜120字", closer: "none", nanisotsu: false },
+
+  { id: "SW_ANY", staff: "screening_wait", customer: "*", precedence: "after_wait",
+    tpoLabel: "審査の進捗待ちへの返答",
+    direction: "審査の進捗を待っている場面。お客様が進み具合を尋ねた／了承した／不安を述べた。①質問には**履歴・確認済み事実にある事だけ**で答える（無ければ「確認しご連絡させて頂きます」） ②進捗は「分かり次第ご連絡させて頂きます😌！！」 ③不安には受け止め1文。審査の結果・通過の可否・残り日数は断言しない。新しい物件の提案・内覧の提案はしない。40〜120字",
+    mustInclude: [
+      { label: "受け止め、または履歴の事実での回答",
+        detect: /はい[！!😊]|かしこまりました|承知(?:いた)?しました|となります|ございます|確認(?:させて|し)(?:頂|いただ)き/,
+        fix: "質問があれば履歴にある事実で「〜となります！！」と答え、無ければ「かしこまりました！！」で受け止める" },
+    ],
+    mustNot: [
+      "審査の結果・通過の可否の断言",
+      "残り日数・完了予定日の断言（履歴に管理会社の回答がある時だけ言える）",
+      "新しい物件の提案・再ピックアップの宣言",
+      "内覧のご案内提案",
+      "申込をもう一度入れる宣言",
+    ],
+    example: "はい😊！！\n審査の進捗分かり次第ご連絡させて頂きます😌！！",
+    length: "40〜120字", closer: "none", nanisotsu: false },
 ];
 
 export const STAFF_KIND_JA: Record<StaffTurnKind, string> = {
   viewing_invite: "内覧打診", property_send: "物件送付", pickup_declared: "ピックアップ約束（宣言のみ・未履行）", estimate_send: "見積書送付",
   estimate_promised: "見積書の作成・送付の約束（宣言のみ・まだ送っていない）", question_to_customer: "お客様への質問",
   confirmation_promise: "確認の約束", condition_ask: "条件ヒアリング", check_result: "募集状況の確認結果報告", apply_push: "申込打診",
-  farewell_ack: "締めの挨拶（扉を開けた）", other: "その他",
+  farewell_ack: "締めの挨拶（扉を開けた）",
+  // 2026-09-20 竹内（ブレインの穴の調査）: 申込**後**の3場面
+  docs_request: "申込書類・情報の依頼", apply_done: "申込完了の報告", screening_wait: "審査の進捗待ち",
+  other: "その他",
 };
 export const CUSTOMER_KIND_JA: Record<CustomerResponseKind, string> = {
   concern: "物件への懸念", positive: "前向き", thinking: "検討中", will_send_later: "後日物件を送る予告", question: "質問",
