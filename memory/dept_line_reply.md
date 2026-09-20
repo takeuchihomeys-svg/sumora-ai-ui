@@ -4471,3 +4471,50 @@ YUMA で8通生成したら8通中7通が「お気に召されましたらお申
 懸念への2通目が「防犯面**気になりますよね**😌」と書いた。実測（`scripts/audit-empathy-2nd.ts`）で
 AIX の2通目 **1,424通中0通**・スタッフ送信全体でも0.01%。指示に追加 →
 「1階部分ですが、オートロック・防犯カメラ完備の建物となっておりますので、その点も含めて改めて確認させて頂きます」
+---
+
+## 2026-09-21 YUMA 本番検証（生成 8/8・判断 8/8・不具合 0件）
+
+竹内「実際に YUMA でテストしてちゃんと文生成されるか、ちゃんと判断できるのか調査」
+
+### 画面が渡す14項目を全部揃えた（`scripts/yuma-template-prod-test.ts`）
+設計知見「本番検証は画面が渡すのと同じ形で渡す」。`app/page.tsx:10306` → `TemplateModal:2374` → fetch を辿って:
+`actionType / actionCategory / conversationId / customerName / conversationState / recentMessages /`
+`customerConditions / customerSummary / noEmoji / pendingScheduledMessages / staffMessagedToday /`
+`pickupType / lastAixCheckPattern / sentMessage`
+- `recentMessages` は画面が `slice(-25)` → モーダルが `slice(-15)`。形は `sender / text / imageUrl / rawCreatedAt / isAix`
+- `customerSummary` は `property_customers.ai_summary` ／ `staffMessagedToday` は JST の当日判定 ／
+  `lastAixCheckPattern` は直近の `aix_usage_logs`
+
+### 結果（8場面＝1通目 × お客様の反応）
+```
+生成できた 8/8（失敗0） ／ 判断が合った 8/8 ／ あってはいけない形 0件
+```
+| 場面 | 判断 | 結果 |
+|---|---|---|
+| ① ピックアップ後・相槌 | ack_only → none | 誘わなかった ✅ |
+| ② ピックアップ後・内覧したい | positive/viewing_explicit → push(viewing) | 誘った ✅ |
+| ③ 物件オススメ後・気に入った | positive/appraisal → push(viewing) | 誘った ✅ |
+| ④ 物件オススメ後・懸念 | concern → none | 誘わなかった ✅ |
+| ⑤ 物件オススメ後・条件変更 | question → soft | 誘わなかった ✅ |
+| ⑥ 見積書後・申込したい | other → push(apply) | 誘った ✅ |
+| ⑦ 物件確認した後・質問 | question → soft | 誘わなかった ✅ |
+| ⑧ 内覧日調整後・相槌 | ack_only → soft | 誘わなかった ✅ |
+
+### 検証で見つけて直した2件
+1. **誘う種類でも相槌だけなら誘わない**
+   内覧日調整（49.1%）の2通目で「よろしくお願いします」だけの相槌に push が出ていた。
+   1通目が「ご内覧可否確認させて頂きます」＝まだ結果が出ていない（生成側は正しく書いていた）。
+   実測 ack_only は 8.4% → `resolveCtaGuidance` の分岐④に `customerKind !== "ack_only"` を追加。
+2. **内覧の誘い方**（`VIEWING_CTA_FORM`）
+   生成が「ご都合よろしいお日にちお伺いできましたら、内覧の日程調整させて頂きます」と書いた。
+   実測（2通目1,424通）: 「ご都合よろしいお日にち」疑問形 **13通(0.91%)＝どれも候補日時とセット**（AIX の形）／
+   条件節 **1通(0.07%)** ／「内覧の日程調整させて頂きます」**0通**。
+   → 「お気に召されましたらご案内させて頂きます」（内覧の誘導7.2%）に寄せ、
+     **日程を聞かない・候補日時を出さない**（AIX【内覧日調整】の担当）と明示。
+   → 直した後: 「かしこまりました！！お気に召されましたらご案内させて頂きます😊！！」
+
+### 測定側の誤検知も直した（教訓）
+❌ が3件出たが、**2件は測定の regex が狭かっただけ**（「内覧日程調整させて頂きます」「お申込みさせて頂きます」を
+CTA と認識できていなかった）。本物は1件。→ **❌ が出たらまず生成文を読む**。件数の表だけ見ると
+測定の穴を実装の不具合として直してしまう。
