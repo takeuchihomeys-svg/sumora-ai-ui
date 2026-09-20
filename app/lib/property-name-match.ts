@@ -105,12 +105,17 @@ export function matchKnownProperty(
  *   → 辞書は会話に限る。通らない15%は「その会話に物件名が無い」＝捨てるのが正しい。
  *   ※ DeepSeek も誤読する（同じ画像を2回読んで「カーサテラ」「カーサータ」）。照合はそれを止めている。
  */
-export function resolveReadProperty(
-  read: { propertyName?: string | null; roomNumber?: string | null },
+export function resolveReadProperty<
+  T extends { propertyName?: string | null; roomNumber?: string | null },
+>(
+  read: T,
   known: ReadonlyArray<string>,
-): { propertyName: string; roomNumber: string } | null {
+): (Omit<T, "propertyName" | "roomNumber"> & { propertyName: string; roomNumber: string }) | null {
   const m = matchKnownProperty(read.propertyName, known);
   if (!m) return null;
   const room = (read.roomNumber ?? "").trim().replace(/^0+(?=\d)/, "").replace(/号室\s*$/, "");
-  return { propertyName: m.name, roomNumber: room };
+  // 2026-09-21 竹内「退去予定のところも実装／条件（家賃や敷金礼金）」:
+  //   読み取りが返す他の項目（rent / deposit / keyMoney / status / vacancyDate）も**そのまま通す**。
+  //   物件名だけ既知の名前に寄せ、残りは読んだ値を保つ（照合で落とすのは名前だけ）。
+  return { ...read, propertyName: m.name, roomNumber: room };
 }

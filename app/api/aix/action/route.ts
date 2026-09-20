@@ -1857,6 +1857,55 @@ async function handleAction(request: NextRequest): Promise<Response> {
       if (withLine !== out) console.log(JSON.stringify({ tag: "aix:apply-after-hours-line", conversationId }));
       return withLine;
     };
+    /**
+     * 2026-09-21 竹内「拡張の読み込みではなくても物件ピックアップから送る際に、
+     *   前物件ピックアップから送った物件の可能性がないか、全く同じ物件が含まれていないか確認できるように」
+     *   生成文に出ている物件を sent_properties と照合し、既に送っていれば**注意**を返す。
+     *   ・Chrome 拡張（check-property-duplicate）に依存しない。AIX から送る時に必ず通る。
+     *   ・判定は sent-property-record.isSameProperty（誤って警告しない線 0.95）に一本化。
+     *   ・本文は**書き換えない**（注意は画面のテキストボックスの外に出る）。
+     */
+    const buildDuplicateNotice = async (text: string): Promise<string> => {
+      if (!conversationId || !text.trim()) return "";
+      try {
+        const [{ isSameProperty }, { extractPropertyLabels: extract }] = await Promise.all([
+          import("@/app/lib/sent-property-record"),
+          import("@/app/lib/action-ledger"),
+        ]);
+        // 生成文に出ている物件（「🌟〇〇 204号室」「【〇〇 204号室】」）
+        const labels = extract(text);
+        if (labels.length === 0) return "";
+        const incoming = labels.map((l) => {
+          const m = l.match(/^(.*?)[\s　]*([0-9０-９]{1,5})\s*号室?\s*$/);
+          return { property_name: (m?.[1] ?? l).trim(), room_no: m?.[2] ?? null };
+        }).filter((x) => x.property_name.length >= 2);
+        if (incoming.length === 0) return "";
+        // この会話で既に送った物件（会話 ID と物件顧客 ID の両方で引く＝設計知見の穴を塞いだ形）
+        const { data: convRow } = await supabase.from("conversations")
+          .select("property_customer_id").eq("id", conversationId).maybeSingle();
+        const pcId = (convRow as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+        let q = supabase.from("sent_properties").select("property_name, room_no, sent_at");
+        q = pcId
+          ? q.or(`conversation_id.eq.${conversationId},property_customer_id.eq.${pcId}`)
+          : q.eq("conversation_id", conversationId);
+        const { data: sent } = await q.order("sent_at", { ascending: false }).limit(300);
+        const existing = ((sent ?? []) as Array<{ property_name: string | null; room_no: string | null; sent_at: string }>)
+          .map((r) => ({ property_name: r.property_name ?? "", room_no: r.room_no, sent_at: r.sent_at }));
+        if (existing.length === 0) return "";
+        const hits: string[] = [];
+        for (const inc of incoming) {
+          const hit = existing.find((e) => isSameProperty(e, inc));
+          if (hit) hits.push(`${inc.property_name}${inc.room_no ? ` ${inc.room_no}号室` : ""}（${String(hit.sent_at).slice(0, 10)}に送付済み）`);
+        }
+        if (hits.length === 0) return "";
+        console.log(JSON.stringify({ tag: "aix:duplicate-property", action: currentAction, conversationId, hits }));
+        return `⚠ 以前にお送りした物件が含まれています: ${hits.join(" ／ ")}`;
+      } catch (e) {
+        console.warn("[aix/action] duplicate notice failed:", e instanceof Error ? e.message : e);
+        return "";
+      }
+    };
+
     // 早期return用: finalize結果をそのままレスポンスJSONにするショートハンド
     const finalizeResponse = (text: string, extra?: Record<string, unknown>) => {
       const { message, notice } = finalize(text);
@@ -1875,8 +1924,45 @@ async function handleAction(request: NextRequest): Promise<Response> {
           }
         });
       }
-      return NextResponse.json({ ok: true, message_text: message, ...(notice ? { notice } : {}), ...(suggestTemplateCategory ? { suggest_template_category: suggestTemplateCategory } : {}), ...(extra ?? {}) });
+      // 2026-09-21 竹内「前に送った物件が含まれていないか確認できるように」:
+      //   finalize の注意（お客様への返信になっていない等）と**両方**出す（片方で上書きしない）
+      const mergedNotice = [notice, duplicateNotice].filter(Boolean).join("\n");
+      return NextResponse.json({ ok: true, message_text: message, ...(mergedNotice ? { notice: mergedNotice } : {}), ...(suggestTemplateCategory ? { suggest_template_category: suggestTemplateCategory } : {}), ...(extra ?? {}) });
     };
+
+    /**
+     * 2026-09-21: 物件を送る AIX では、重複の注意を付けてから返す。
+     * finalize の注意（お客様への返信になっていない等）と**両方**出す（片方で上書きしない）。
+     */
+    //   ⚠ 照合の材料は**生成文ではなく入力**から取る。物件ピックアップの本文には
+    //     stripPropertyNameFromPickupLine が物件名を入れない（設計知見「ピックアップの宣言行に物件名を入れない」）ので、
+    //     生成文を見ても物件が1件も出てこない。入力（base_message / property_names / 画面の入力）を見る。
+    /**
+     * 重複の照合に使う材料。**入力側**（画面が選んだ物件）を必ず混ぜる。
+     * 物件ピックアップの本文には stripPropertyNameFromPickupLine が物件名を入れないので、
+     * 生成文だけ見ると物件が1件も出てこない（YUMA 検証で実際に見落とした）。
+     */
+    const dupSource = (generated: string): string => [
+      generated,
+      typeof baseMessage === "string" ? baseMessage : "",
+      Array.isArray(property_names) ? (property_names as string[]).join("\n") : "",
+      typeof property_name === "string" ? property_name : "",
+    ].filter(Boolean).join("\n");
+
+    /**
+     * 物件を送る AIX なら、**入口で1回だけ**重複を調べておく。
+     * finalizeResponse は同期（呼び出しが多数）なので、ここで await して変数に持つ。
+     * 生成文の前でも入力（base_message / property_names / property_name）に物件名があるので判定できる
+     * ＝ どの経路の early return を通っても注意が付く（YUMA 検証で、3か所に足しただけでは
+     *   通らない経路があり見落とした）。
+     */
+    const PROPERTY_SEND_ACTIONS = new Set([
+      "property_send", "property_recommendation", "property_search",
+      "property_send_new_arrival", "property_send_widen", "property_check_result",
+    ]);
+    const duplicateNotice = PROPERTY_SEND_ACTIONS.has(currentAction)
+      ? await buildDuplicateNotice(dupSource(""))
+      : "";
 
     // phrase_dictionary 取得（固定フォーマット出力でないアクションにのみフレーズ注入する）
     const phraseCategoryMap: Record<string, string> = {
@@ -2636,6 +2722,7 @@ ${SMORA_COMMON_RULES}
         const applyLine = body.new_arrival_apply ? "\nお気に召されましたらお申込みしお部屋抑えさせて頂きます！！" : "";
         message_text = `${greeting}\n\n新着で${name}にオススメできるお部屋が${newArrivalCountStr}募集にでました！！${vacatingSection}${applyLine}\n\nお手隙の際にご査収ください😌！！`;
         // ⑦修正: 早期returnでも共通後処理（号室ゼロ除去等）を通す（vacatingInfo に 0806号室 等が含まれうる）
+        // 2026-09-21 竹内: 物件を送る通は「前に送った物件が混ざっていないか」を必ず確認して注意を返す
         return finalizeResponse(message_text);
       }
 
@@ -2823,6 +2910,7 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           notices.push(`会話・条件に無い数字（${masked.unmatched.join("・")}）を〇〇にしました。確認して書き換えてから送信してください`);
           console.warn("[aix/action] property_send match: 入力に無い数字を伏せ字:", masked.unmatched);
         }
+        // 2026-09-21 竹内: 物件を送る通は重複の確認を通す
         return finalizeResponse(psmText, { conversation_match: true, ...(notices.length ? { notice: notices.join("\n") } : {}) });
       }
 
@@ -3115,6 +3203,7 @@ ${aixPropertySendRules}
           propertySendComponents = null;
         }
         // ⑦修正: 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
+        // 2026-09-21 竹内: 物件を送る通は重複の確認を通す
         return finalizeResponse(message_text, propertySendComponents ? { ai_components: propertySendComponents } : undefined);
       }
       message_text = rawSendText;
@@ -5005,7 +5094,10 @@ ${SMORA_COMMON_RULES}
             }
           });
         }
-        return NextResponse.json({ ok: true, message_text });
+        // 2026-09-21 竹内「前に送った物件が含まれていないか確認できるように」:
+        //   この経路は finalizeResponse を通らない早期 return なので、ここでも注意を付ける
+        //   （YUMA 検証で、判定は出ていたのに応答に載らず見落とした）
+        return NextResponse.json({ ok: true, message_text, ...(duplicateNotice ? { notice: duplicateNotice } : {}) });
       }
 
       const customerSummary = body.customer_summary as string | undefined;
@@ -6686,10 +6778,16 @@ ${GUARANTOR_INFO_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
       });
     }
 
+    // 2026-09-21 竹内「拡張の読み込みではなくても物件ピックアップから送る際に、
+    //   前物件ピックアップから送った物件の可能性がないか、全く同じ物件が含まれていないか確認できるように」:
+    //   **ここが物件を送る AIX の本命の出口**（finalizeResponse は早期 return 用で、
+    //   物件ピックアップは通らなかった。YUMA 検証でログには判定が出ているのに応答に載らず見つけた）。
+    //   finalize の注意と重複の注意は**両方**出す（片方で上書きしない）。
+    const finalNotice = [notice, duplicateNotice].filter(Boolean).join("\n");
     return NextResponse.json({
       ok: true,
       message_text: cleanedMessage,
-      ...(notice ? { notice } : {}),
+      ...(finalNotice ? { notice: finalNotice } : {}),
       ...(parsed_estimate_result ? { parsed_estimate: parsed_estimate_result } : {}),
       ...(estimate_text_result ? { estimate_text: estimate_text_result } : {}),
       // M2: 御見積書を同封したか（AixModal → onAfterSend → log-aix-usage → aix_usage_logs.estimate_sent）

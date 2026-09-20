@@ -249,6 +249,10 @@ export async function POST(req: NextRequest) {
             // property_customer_id は会話から引く（無ければ null のまま＝会話 ID で辿れる）
             const { data: convRow } = await supabase.from("conversations")
               .select("property_customer_id").eq("id", conversation_id).maybeSingle();
+            // 2026-09-21 竹内「退去予定のところも実装／条件（家賃や敷金礼金などのところ）」:
+            //   画像から読めた募集状況・家賃も一緒に残す。次に文を作る時は**画像を読み直さなくても**
+            //   退去予定・家賃が分かる（「文生成される部分毎回直さなくて済む」）。
+            //   ⚠ 読めなかった項目は null のまま入れる（0 や "open" に丸めない）。
             const { error: spErr } = await supabase.from("sent_properties").insert({
               conversation_id,
               property_customer_id: (convRow as { property_customer_id?: string | null } | null)?.property_customer_id ?? null,
@@ -256,8 +260,18 @@ export async function POST(req: NextRequest) {
               room_no: top.roomNumber ?? "",
               image_url,
               source: src,
+              ...(top.status ? { recruitment_status: top.status, recruitment_checked_at: new Date().toISOString() } : {}),
+              ...(typeof top.rent === "number" ? { rent: top.rent } : {}),
             });
             spSaved = spErr ? `error:${spErr.message}` : "inserted";
+            if (!spErr && (top.status || typeof top.rent === "number")) {
+              console.log(JSON.stringify({
+                tag: "send-line-message:property-facts", conversationId: conversation_id,
+                property: `${top.propertyName} ${top.roomNumber ?? ""}`.trim(),
+                status: top.status ?? null, rent: top.rent ?? null,
+                deposit: top.deposit ?? null, keyMoney: top.keyMoney ?? null, vacancyDate: top.vacancyDate ?? null,
+              }));
+            }
           } else {
             spSaved = "duplicate_skipped";
           }

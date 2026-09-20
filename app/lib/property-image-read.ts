@@ -29,15 +29,47 @@ export const PROPERTY_IMAGE_MODEL_DEFAULT = "deepseek-flash";
 /** 推論で使い切って答えが出ない事故を防ぐ余裕（実測は推論235〜442・答え46前後） */
 export const PROPERTY_IMAGE_MAX_TOKENS = 8000;
 
+// 2026-09-21 竹内「退去予定のところも実装／退去予定の物件を判断や、条件（家賃や敷金礼金などのところ）を
+//   広げているのか物件ピックアップで文生成する際に画像を読み取ってそこから文はつくられているか」
+//   物件名・号室だけでなく **募集状況（退去予定）と条件（家賃・敷金・礼金）** も読む。
+//   読めた分は sent_properties の recruitment_status / rent に入れるので、
+//   次に文を作る時は**画像を読み直さなくても**退去予定・家賃が分かる
+//   （竹内さん「文生成される部分毎回直さなくて済む（退去予定物件の部分等）」）。
+//   ⚠ 退去日の読み取りは AIX【物件オススメ】のプロンプト（aix/action:1938）と同じ線にする:
+//     備考欄の「解約予定／退去予定／解約日」の日付が退去予定日。
+//     「現況／入居時期」の欄は**退去後に入居できる日**であって退去予定日ではない。
 export const PROPERTY_IMAGE_PROMPT = `この画像から物件情報を読み取ってください。JSONのみ返答（説明文・コードブロック・前置き一切不要）：
-{"items":[{"property_name":"","room_number":""}],"is_property":true}
+{"items":[{"property_name":"","room_number":"","rent":null,"deposit":null,"key_money":null,"status":"","vacancy_date":""}],"is_property":true}
 - items: 画像に出ている物件を全部。1件だけなら1つ、一覧なら全部
 - property_name: マンション名のみ（号室は含めない）。読めなければ""
 - room_number: 号室番号のみ（例: 502）。号室が無い・読めなければ""
+- rent: 賃料（管理費・共益費を含めない月額の数字のみ。例 106000）。読めなければ null
+- deposit: 敷金の金額（0円・なしなら 0）。読めなければ null
+- key_money: 礼金の金額（0円・なしなら 0）。読めなければ null
+- status: 募集状況。次の4つのどれか。読めなければ""
+    "open"（空室・即入居可）／"move_out_planned"（退去予定・解約予定）／
+    "under_construction"（建築中・新築未完成・竣工予定）／"occupied"（申込あり・満室・募集終了）
+- vacancy_date: 退去予定日（"M月D日" の形式。例 "6月30日"）。次のルールで読む
+    ・備考欄に「解約予定」「退去予定」「解約日」と書かれた日付があればそれ
+    ・「現況」「入居時期」「入居可能日」の欄は**退去後に入居できる日**なので退去予定日にしない
+    ・読めなければ ""
 - is_property: 物件の資料・マイソク・室内写真なら true、それ以外（見積書・本人確認書類・スクショ）なら false
-- 画像に書かれていない物件名を作らないこと`;
+- 画像に書かれていない物件名・金額・日付を作らないこと（読めない項目は null か "" のまま）`;
 
-export type ReadItem = { propertyName: string; roomNumber: string };
+export type ReadItem = {
+  propertyName: string;
+  roomNumber: string;
+  /** 賃料（管理費を含まない月額）。読めなければ null */
+  rent?: number | null;
+  /** 敷金（0＝なし）。読めなければ null */
+  deposit?: number | null;
+  /** 礼金（0＝なし）。読めなければ null */
+  keyMoney?: number | null;
+  /** 募集状況（sent_properties.recruitment_status と同じ語彙）。読めなければ null */
+  status?: string | null;
+  /** 退去予定日（"6月30日"）。読めなければ null */
+  vacancyDate?: string | null;
+};
 export type ReadResult = { items: ReadItem[]; isProperty: boolean; raw: string; usage?: { input: number; output: number } };
 
 /** 応答から JSON を取り出す（```json で囲まれる事がある） */
@@ -60,9 +92,25 @@ export function parseReadResult(content: string): ReadResult {
       const name = String(o.property_name ?? o["物件名"] ?? "").trim();
       const roomRaw = o.room_number ?? o["号室"];
       if (!name) continue;
+      // 2026-09-21: 条件（家賃・敷金・礼金）と募集状況・退去予定日も読む。
+      //   ⚠ 読めなかった項目は **null のまま**にする（0 や "" に丸めると「敷金0円」と区別が付かない）
+      const num = (v: unknown): number | null => {
+        if (v === null || v === undefined || v === "") return null;
+        const n = Number(String(v).replace(/[^0-9.]/g, ""));
+        return Number.isFinite(n) ? n : null;
+      };
+      const rent = num(o.rent ?? o["賃料"] ?? o["家賃"]);
+      const deposit = num(o.deposit ?? o["敷金"]);
+      const keyMoney = num(o.key_money ?? o["礼金"]);
+      const STATUS_OK = new Set(["open", "move_out_planned", "under_construction", "occupied"]);
+      const rawStatus = String(o.status ?? o["募集状況"] ?? "").trim();
+      const status = STATUS_OK.has(rawStatus) ? rawStatus : null;
+      const vacancyRaw = String(o.vacancy_date ?? o["退去予定日"] ?? "").trim();
+      // 「6月30日」の形だけ受ける（西暦付き・曖昧な語は捨てる）
+      const vacancyDate = /^[0-9０-９]{1,2}月[0-9０-９]{1,2}日$/.test(vacancyRaw) ? vacancyRaw : null;
       // 号室が配列で返る事がある（物件一覧の画像）
       const rooms = Array.isArray(roomRaw) ? roomRaw.map((x) => String(x)) : [String(roomRaw ?? "")];
-      for (const r of rooms) items.push({ propertyName: name, roomNumber: r.trim() });
+      for (const r of rooms) items.push({ propertyName: name, roomNumber: r.trim(), rent, deposit, keyMoney, status, vacancyDate });
     }
     const isProp = typeof (parsed as { is_property?: unknown }).is_property === "boolean"
       ? Boolean((parsed as { is_property: boolean }).is_property) : items.length > 0;
