@@ -191,7 +191,7 @@ import { jstParts, jstDateLabel, weekdayTable } from "@/app/lib/jst-date";
 // 2026-09-19 竹内（タマキ事例）: 「〜でも大丈夫」は条件の**追加**（変更ではない）。限定して復唱させない
 import { detectConditionExpansion, buildExpansionNote } from "@/app/lib/condition-expansion";
 // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタ（場面＝行動台帳の事実で判定）
-import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, type PremiseFacts } from "@/app/lib/example-premise";
+import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinceViewingMove, type PremiseFacts } from "@/app/lib/example-premise";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -4469,9 +4469,17 @@ export async function POST(req: NextRequest) {
           ? { action: effectiveAction, words: extractMetaKeywords([...(brainMeta.customer_questions ?? []), ...(brainMeta.key_topics ?? []), brainMeta.reply_direction ?? null]) }
           : null)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
-      // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタに**行動台帳の事実（場面）**を渡す
+      // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタに**行動台帳の事実（場面）**と**内覧の鮮度**を渡す
+      //   「内覧挨拶は当日にAIXからおこなうなら分かるが、持ち越したことで変な文になっていた」
+      //   → 直近の内覧の動きからの経過日数を出して、14日より前なら内覧のお礼の手本を見せない
       fetchExamples(searchState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta, lastStaffMsgForSearch ?? null, brainFreshForMessage && !isCachedMeta,
-        { viewingInvited: ledger.facts.viewingInvited, meetingPlaceSent: ledger.facts.meetingPlaceSent, propertiesSentCount: ledger.facts.propertiesSentCount, estimateSent: ledger.facts.estimateSent })
+        {
+          viewingInvited: ledger.facts.viewingInvited,
+          meetingPlaceSent: ledger.facts.meetingPlaceSent,
+          propertiesSentCount: ledger.facts.propertiesSentCount,
+          estimateSent: ledger.facts.estimateSent,
+          daysSinceViewingMove: daysSinceViewingMove(recentMessages.map((m) => ({ text: m.text, createdAt: m.createdAt })), Date.now()),
+        })
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
       getCachedPhrases(fetchSpec.phrases.categories)
         .catch((err) => { console.error("[generate-reply] getCachedPhrases失敗 — フレーズなしで生成続行:", err); return [] as string[]; }),
@@ -5295,6 +5303,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳（生成側と同一オブジェクト・四者同名）
                   // 2026-09-11 統合設計（経路F1）: 後処理ゲートの判断（resolvePickupGate 整合後）。生成ノート・後処理・検査が同じ値
                   aixDone: aixDone ? { propertySend: aixDone.propertySend, vacancyCheck: aixDone.vacancyCheck, mgmtCheck: aixDone.mgmtCheck, pickupGateReason: aixDone.pickupGateReason } : null,
+        // 2026-09-19 竹内（慶次事例）: 宣言行の条件語の根拠に登録条件も使う
+        customerConditions,
                 };
                 // センシティブ案件（クレーム/審査否決/キャンセル）は「参考のみ・手動確認必須」の草稿のため
                 // チェックのみ実行し、接地修正・フィードバック再生成でドラフトを機械的に触らない
@@ -5752,6 +5762,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 validateIssues: lastValidateIssues.slice(0, 12),
                 gateEdits: lastGateEdits.map((e) => ({ rule: e.rule, before: e.before.trim().slice(0, 60), after: e.after, reversible: e.reversible })),
                 aixDone: aixDone ? { propertySend: aixDone.propertySend, vacancyCheck: aixDone.vacancyCheck, mgmtCheck: aixDone.mgmtCheck, pickupGateReason: aixDone.pickupGateReason ?? null } : null,
+        // 2026-09-19 竹内（慶次事例）: 宣言行の条件語の根拠に登録条件も使う
+        customerConditions,
                 reverted: postprocessLog.length ? postprocessLog : null,
               },
               // 2026-09-10 Fable5 みく事例: セル×brain方針の衝突・会話スコープ方針・修正前の指摘コード

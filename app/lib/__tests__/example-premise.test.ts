@@ -1,6 +1,6 @@
 // app/lib/__tests__/example-premise.test.ts
 // 実行: npx tsx app/lib/__tests__/example-premise.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, PREMISE_RULES, type PremiseFacts } from "../example-premise";
+import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinceViewingMove, PREMISE_RULES, VIEWING_THANKS_MAX_DAYS, type PremiseFacts } from "../example-premise";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -35,6 +35,32 @@ it("内覧を打診している会話では落とさない（実送信68通が�
   const facts: PremiseFacts = { ...NO_FACTS, viewingInvited: true, propertiesSentCount: 2 };
   const keys = missingPremiseKeys({ staffHist: "直近ですと明日 9/18(金) 16:30〜18:30にてご案内可能です！！", customerMessage: "つきました！", facts });
   expect(keys.includes("viewing_done")).toBe(false);
+});
+
+// ── 2026-09-19 竹内「内覧挨拶は当日にAIXからおこなうなら分かるが、持ち越したことで変な文になっていた」──
+//   鮮度の線は実送信68通で測った: 直前N日以内に内覧の動きがある通数
+//   0.5日 44 / 1日 51 / 2日 59 / 3日 62 / 5日 65 / 7日 67 / 14日 68（誤削除0）
+it("内覧が14日より前なら落とす（打診があっても持ち越さない）", () => {
+  const old: PremiseFacts = { ...NO_FACTS, viewingInvited: true, meetingPlaceSent: true, daysSinceViewingMove: 30 };
+  expect(missingPremiseKeys({ staffHist: "現地エントランスでお待ち合わせ", customerMessage: "はい", facts: old }).includes("viewing_done")).toBe(true);
+  const fresh: PremiseFacts = { ...NO_FACTS, viewingInvited: true, daysSinceViewingMove: 0.2 };
+  expect(missingPremiseKeys({ staffHist: "", customerMessage: "つきました！", facts: fresh }).includes("viewing_done")).toBe(false);
+  // 境界: 14日ちょうどは通す・14.1日は落とす（誤削除0の線）
+  expect(missingPremiseKeys({ staffHist: "", customerMessage: "", facts: { ...NO_FACTS, daysSinceViewingMove: VIEWING_THANKS_MAX_DAYS } }).includes("viewing_done")).toBe(false);
+  expect(missingPremiseKeys({ staffHist: "", customerMessage: "", facts: { ...NO_FACTS, daysSinceViewingMove: VIEWING_THANKS_MAX_DAYS + 0.1 } }).includes("viewing_done")).toBe(true);
+});
+
+it("daysSinceViewingMove: 直近の内覧の動きからの経過日数を出す（無ければ null）", () => {
+  const now = Date.parse("2026-09-19T12:00:00+09:00");
+  const d = daysSinceViewingMove([
+    { text: "お部屋ピックアップさせて頂きました", createdAt: "2026-09-18T12:00:00+09:00" },
+    { text: "直近ですと 9/7(日) 15:00〜にてご案内可能です", createdAt: "2026-09-07T12:00:00+09:00" },
+  ], now);
+  expect(d !== null && Math.round(d)).toBe(12);
+  expect(daysSinceViewingMove([{ text: "敷金礼金なしで探しています", createdAt: "2026-09-18T12:00:00+09:00" }], now)).toBe(null);
+  expect(daysSinceViewingMove([], now)).toBe(null);
+  // 時刻が無い発言は使わない（順不同でよい）
+  expect(daysSinceViewingMove([{ text: "現地エントランス" }], now)).toBe(null);
 });
 
 it("台帳が無い経路（check-reply 等）では語で判定する＝どちらでも動く", () => {
@@ -74,7 +100,7 @@ it("全部の前提が揃っていれば null（何も落とさない）", () =>
 
 it("注記は決定論で作る（手本の本文にある前提だけ並べる）", () => {
   const label = derivePremiseLabel(VIEWING_THANKS_EXAMPLE);
-  expect(label).toContain("内覧の話が出ている");
+  expect(label).toContain("日以内に内覧・来店がある");   // 鮮度つきの注記になっている
   expect(derivePremiseLabel("お部屋ピックアップさせて頂きます！！")).toBe("");
   expect(derivePremiseLabel("確認出来次第ご連絡させて頂きます")).toContain("管理会社への確認事項");
 });

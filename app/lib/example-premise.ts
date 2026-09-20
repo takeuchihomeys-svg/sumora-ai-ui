@@ -37,7 +37,41 @@ export type PremiseFacts = {
   meetingPlaceSent: boolean;
   propertiesSentCount: number;
   estimateSent: boolean;
+  /**
+   * 直近の内覧の動き（打診・確定・到着・待ち合わせ・来店）からの経過日数。無ければ null。
+   * 2026-09-19 竹内（慶次事例の続き）「内覧挨拶は当日にAIXからおこなうなら分かるが、
+   *   今回の場合持ち越したことで変な文になっていた」→ **鮮度**で判定する。
+   */
+  daysSinceViewingMove?: number | null;
 };
+
+/** 内覧・来店の動き（打診・確定・到着・待ち合わせ） */
+export const VIEWING_MOVE_RE =
+  /内覧|内見|ご案内可能|待ち合わせ|待合せ|現地|ご来店|来店|着きました|つきました|到着|ご都合よろしいお日にち|直近ですと/;
+
+/**
+ * 「内覧のお礼」を書いてよい鮮度の上限（日）。
+ * 実送信68通で測った: 直前N日以内に内覧の動きがある通数
+ *   0.5日 44通 / 1日 51 / 2日 59 / 3日 62 / 5日 65 / 7日 67 / **14日 68（誤削除0）**
+ * ＝ 14日を超えて内覧の動きが無い会話では、この型を手本に出さない。
+ * （66/68通が「本日」＝当日の文。持ち越すと必ず嘘になる）
+ */
+export const VIEWING_THANKS_MAX_DAYS = 14;
+
+/** 会話から「直近の内覧の動きからの経過日数」を出す（純関数。messages は順不同でよい） */
+export function daysSinceViewingMove(
+  messages: ReadonlyArray<{ text?: string | null; createdAt?: string | null }>,
+  nowMs: number = Date.now(),
+): number | null {
+  let newest = -Infinity;
+  for (const m of messages) {
+    if (!VIEWING_MOVE_RE.test(String(m.text ?? ""))) continue;
+    const t = m.createdAt ? Date.parse(m.createdAt) : NaN;
+    if (Number.isFinite(t) && t > newest) newest = t;
+  }
+  if (!Number.isFinite(newest)) return null;
+  return Math.max(0, (nowMs - newest) / 86_400_000);
+}
 
 export type PremiseInput = {
   /** 直前のスタッフ発言＋AIX 履歴（従来の判定材料） */
@@ -58,10 +92,18 @@ export type PremiseRule = {
   label: string;
 };
 
-/** 内覧の話がこの会話で一度でも出ているか（台帳を先に見て、無ければ語で見る） */
-function viewingInPlay(o: { staffHist: string; facts?: PremiseFacts | null }): boolean {
+/**
+ * 「内覧のお礼」を書いてよい場面か。
+ * 2026-09-19 竹内（慶次事例の続き）: 内覧が**かなり前**なら書かせない。
+ *   ①鮮度が分かるならそれが正（14日以内の内覧の動きがあるか）
+ *   ②鮮度が取れない時は「一度でも内覧の話が出ているか」（台帳）
+ *   ③台帳も無い経路（check-reply 等）は語で見る
+ */
+function viewingThanksOk(o: { staffHist: string; facts?: PremiseFacts | null }): boolean {
+  const d = o.facts?.daysSinceViewingMove;
+  if (d !== undefined && d !== null) return d <= VIEWING_THANKS_MAX_DAYS;
   if (o.facts) return o.facts.viewingInvited || o.facts.meetingPlaceSent;
-  return /内覧|内見|ご案内可能|待ち合わせ|待合せ|現地|ご来店|来店/.test(o.staffHist);
+  return VIEWING_MOVE_RE.test(o.staffHist);
 }
 
 export const PREMISE_RULES: PremiseRule[] = [
@@ -93,8 +135,8 @@ export const PREMISE_RULES: PremiseRule[] = [
   {
     key: "viewing_done",
     vocab: /(?:本日|先日|昨日)[^\n。！!]{0,8}(?:ご内覧|内覧|ご見学|お時間)[^\n。！!]{0,10}(?:頂き|いただき|くださり|下さり)[^\n。！!]{0,8}(?:ありがとう|有難う)/,
-    satisfied: ({ staffHist, facts }) => viewingInPlay({ staffHist, facts }),
-    label: "この会話で内覧の話が出ている（打診・待ち合わせ済み）。内覧していない会話では真似しない",
+    satisfied: ({ staffHist, facts }) => viewingThanksOk({ staffHist, facts }),
+    label: `直近${VIEWING_THANKS_MAX_DAYS}日以内に内覧・来店がある（実送信66/68通が「本日」＝当日の文）。内覧していない・かなり前の会話では真似しない`,
   },
   {
     key: "estimate",

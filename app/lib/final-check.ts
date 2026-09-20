@@ -68,6 +68,8 @@ import {
 import { buildActionLedger, checkDonePresupposition, applyLedgerAutoFix, COMPLETED_SEND_RE, ATTACHED_DELIVERABLE_RE, type ActionLedger } from "./action-ledger";
 // 2026-09-09 Fable5: check-reply 経路（isConditionPresented フラグ無し）でも条件フォームを condition_change に分類する（route.ts conditionDetail reason:'form' と同定義）
 import { isConditionFormMessage } from "./line-reply-prompts";
+// 2026-09-19 竹内（慶次事例）: ピックアップ宣言の条件に根拠があるか（落とさず warning）
+import { findUngroundedConditions } from "./pickup-condition-guard";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -195,6 +197,8 @@ export interface FinalCheckContext {
   cellConflicts?: CellConflict[];
   /** 2026-09-11 統合設計（経路F1）: 後処理ゲートの判断（resolvePickupGate 整合後の aixDone）。生成ノート・後処理・検査が同じ値を見る（監査・tpo_debug 用） */
   aixDone?: { propertySend: boolean; vacancyCheck: boolean; mgmtCheck: boolean; pickupGateReason?: string } | null;
+  /** 2026-09-19 竹内（慶次事例）: 登録条件（property_customers）。宣言行の条件語の根拠に使う */
+  customerConditions?: string | null;
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -1983,6 +1987,24 @@ function runAssertionBanChecks(text: string, ctx: FinalCheckContext): CheckIssue
       continue;
     }
     issues.push({ pass: "rule_check", severity: "block", code: r.code, message: r.msg, evidence: m[0], suggestion: r.sug });
+  }
+
+  // ── 2026-09-19 竹内（慶次事例）「ペット飼育等お客さんいうていないのにペット飼育とでてしまった」──
+  //   ピックアップ宣言の行に、お客様の発言にも登録条件にも根拠が無い設備条件が入っていないか。
+  //   実送信で測ると宣言行の条件語は 268件中252件（94%）が根拠あり＝線が引ける。
+  //   ただし**落とさない**（本文から消すと文が壊れる・条件フォーム画像の分を誤削除する。
+  //   実送信221通に当てて15通が破壊・誤削除だった）。warning として出し、スタッフが確かめる。
+  {
+    const custTexts = (ctx.recentMessages ?? []).filter((m) => m.sender === "customer").map((m) => m.text ?? "");
+    const sources = [...custTexts, ctx.customerConditions ?? ""];
+    for (const h of findUngroundedConditions(text, sources)) {
+      issues.push({
+        pass: "rule_check", severity: "warning", code: "UNGROUNDED_CONDITION",
+        message: `「${h.word}」はお客様の発言にも登録条件にもありません（ナレッジ・手本の例文から混ざった可能性）`,
+        evidence: h.line.slice(0, 40),
+        suggestion: `お客様が実際に出した条件に置き換えるか、「${h.word}」を外してください`,
+      });
+    }
   }
   return issues;
 }
