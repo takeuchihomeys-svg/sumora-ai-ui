@@ -2386,6 +2386,12 @@ export default function TemplateModal({
           // 「1件特にオススメ」の訴求シナリオ判定用（比較選択型/代替新規提案型/初回提案型）
           pickupType: pickupType ?? null,
           lastAixCheckPattern: lastAixCheckPattern ?? null,
+          // 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」:
+          //   直前に AIX で送った1通目。**推薦 API（recommend-templates）には渡していたのに
+          //   生成 API には渡していなかった**ので、AI は会話履歴だけを頼りに書いて1通目と噛み合わない
+          //   文を作れてしまっていた（見積書の2通目に物件名を渡していなかったのと同じ構造）。
+          //   実測（90日・1,419組）ではスタッフは1通目を見て書いており重複はほぼ0。
+          sentMessage: postAixContext?.sentMessage ?? null,
         }),
       });
       const data = await res.json() as { ok: boolean; text?: string; error?: string };

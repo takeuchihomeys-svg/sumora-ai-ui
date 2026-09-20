@@ -35,6 +35,8 @@ import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/bra
 import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定を一本化（四者同名）
 import { isWaitedAllowed } from "@/app/lib/waited-scope";
+// 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」: 直前の1通目を読んで2通目の材料にする
+import { buildAixChainNote } from "@/app/lib/aix-chain-note";
 import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
 import { stripPropertyNameFromPickupLine } from "@/app/lib/pickup-line";
 import { stripRepeatedThanksLines } from "@/app/lib/property-send-match";
@@ -466,6 +468,15 @@ type GenerateRequestBody = {
   lastAixCheckPattern?: string | null; // この会話の直近 property_check_result の結果生値（unavailable等）
   // お客様プロフィール（AI分析: 決まるパターン・人物像）— property_customers.ai_summary
   customerSummary?: string | null;
+  /**
+   * 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」:
+   * **直前に AIX で送った本文（1通目）**。画面の postAixContext.sentMessage をそのまま渡す。
+   * これが無いと AI は会話履歴だけを頼りに書き、1通目で既に言ったことを繰り返す
+   * （設計知見「AI が『材料が無い』と言い出したら、それは出口ではなく入口の問題」＝見積書の2通目と同じ構造）。
+   * 実測（scripts/audit-aix-chain-coherence.ts・90日・1,419組）では**スタッフはほぼ繰り返さない**:
+   *   1通目「ピックアップしました」33.3% → 2通目で未来形 0.2% ／ ご査収の重ね 3.1% ／ 挨拶の重ね 2.0%
+   */
+  sentMessage?: string | null;
 };
 
 const STATE_LABEL: Record<string, string> = {
@@ -653,6 +664,8 @@ export async function POST(req: NextRequest) {
     pickupType,
     lastAixCheckPattern,
     customerSummary,
+    // 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」: 直前に送った1通目
+    sentMessage,
   } = body;
 
   if (!actionType && !actionCategory) {
@@ -1382,9 +1395,20 @@ export async function POST(req: NextRequest) {
     ? [userPromptPrefsRaw]
     : [];
 
+  // 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」:
+  //   直前に AIX で送った1通目を材料として渡す。実測（scripts/audit-aix-chain-coherence.ts・90日・1,419組）で
+  //   スタッフは1通目を見て2通目を書いており、重複はほぼ0（未来形0.2%／ご査収の重ね3.1%／挨拶の重ね2.0%）。
+  //   渡していなかったので、AI は会話履歴だけを頼りに書いて1通目と噛み合わない文を作れてしまっていた。
+  const aixChainNote = buildAixChainNote(sentMessage);
+  if (aixChainNote) {
+    console.log(JSON.stringify({ tag: "aix-template-generate:chain-note", actionType, len: (sentMessage ?? "").length }));
+  }
+
   const userPrompt = [
     `━━━━━━━━━━━━━━━━━━━━\n【今回生成する橋渡し文】\n━━━━━━━━━━━━━━━━━━━━`,
     `・AIXボタン種別: ${actionLabel}`,
+    // 1通目との関係は最優先の文脈（これが無いと同じことを繰り返す）
+    aixChainNote,
     actionGuide ? `・この種別の書き方: ${actionGuide}` : "",
     // 「1件特にオススメ」の訴求シナリオ（冒頭・比較表現の可否・CTA強度を決定する最優先指示）
     recommendationScenario
