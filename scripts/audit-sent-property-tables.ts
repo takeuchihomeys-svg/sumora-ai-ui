@@ -54,18 +54,36 @@ async function main() {
     console.log(`\n  ⚠ sent_image_properties は直近${DAYS}日に0行`);
   }
 
-  // スタッフが送った画像のうち、物件に直せている割合
-  const { data: imgs } = await sb.from("messages").select("id, conversation_id, text")
-    .eq("sender", "staff").not("image_url", "is", null).gte("created_at", since).limit(1000);
-  const staffImgs = (imgs ?? []) as Array<{ id: string; conversation_id: string; text: string | null }>;
-  let mapped = 0;
-  for (let i = 0; i < staffImgs.length; i += 100) {
-    const ids = staffImgs.slice(i, i + 100).map((m) => m.id);
-    const { data } = await sb.from("sent_image_properties").select("message_id").in("message_id", ids);
-    mapped += (data ?? []).length;
+  // スタッフが送った画像のうち、物件に直せている割合（対応は **image_url** で持つ）
+  const imgsAll: Array<{ conversation_id: string; image_url: string; text: string | null }> = [];
+  for (let page = 0; ; page++) {
+    const { data } = await sb.from("messages").select("conversation_id, image_url, text")
+      .eq("sender", "staff").not("image_url", "is", null).gte("created_at", since)
+      .order("id", { ascending: true }).range(page * 1000, page * 1000 + 999);
+    const r = (data ?? []) as Array<{ conversation_id: string; image_url: string; text: string | null }>;
+    if (r.length === 0) break;
+    imgsAll.push(...r);
+    if (r.length < 1000) break;
   }
-  console.log(`\n--- スタッフが送った画像 ${staffImgs.length}件（直近${DAYS}日）---`);
-  console.log(`  sent_image_properties で物件に直せている: ${mapped}件 (${Math.round(100 * mapped / Math.max(staffImgs.length, 1))}%)`);
-  console.log(`  **物件に直せていない: ${staffImgs.length - mapped}件** ← ここが竹内さんの言う「読み取れていない画像」`);
+  const mappedUrls = new Set<string>();
+  const urls = [...new Set(imgsAll.map((m) => m.image_url))];
+  for (let i = 0; i < urls.length; i += 100) {
+    const { data } = await sb.from("sent_image_properties").select("image_url").in("image_url", urls.slice(i, i + 100));
+    for (const r of (data ?? []) as Array<{ image_url: string }>) mappedUrls.add(r.image_url);
+  }
+  const mapped = imgsAll.filter((m) => mappedUrls.has(m.image_url)).length;
+  console.log(`\n--- スタッフが送った画像 ${imgsAll.length}件（直近${DAYS}日・画像URL ${urls.length}種類）---`);
+  console.log(`  sent_image_properties で物件に直せている: ${mapped}件 (${Math.round(100 * mapped / Math.max(imgsAll.length, 1))}%)`);
+  console.log(`  **物件に直せていない: ${imgsAll.length - mapped}件** ← ここが竹内さんの言う「読み取れていない画像」`);
+
+  // 会話ごとに見て「画像は送っているが物件に直せた画像が1枚も無い」会話
+  const byConv = new Map<string, { total: number; ok: number }>();
+  for (const m of imgsAll) {
+    const e = byConv.get(m.conversation_id) ?? { total: 0, ok: 0 };
+    e.total++; if (mappedUrls.has(m.image_url)) e.ok++;
+    byConv.set(m.conversation_id, e);
+  }
+  const zero = [...byConv.values()].filter((e) => e.ok === 0).length;
+  console.log(`  画像を送った会話 ${byConv.size}件 のうち、1枚も物件に直せていない会話 ${zero}件 (${Math.round(100 * zero / Math.max(byConv.size, 1))}%)`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
