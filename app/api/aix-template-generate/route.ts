@@ -33,6 +33,8 @@ import { resolvePropertySendState, describePropertySendState } from "@/app/lib/p
 import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/brain-strategy-note";
 // 2026-09-18 出口の決定論を返信生成・AIX 本体と揃える（テンプレートには1つも通っていなかった）
 import { stripWaited } from "@/app/lib/greeting";
+// 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定を一本化（四者同名）
+import { isWaitedAllowed } from "@/app/lib/waited-scope";
 import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
 import { stripPropertyNameFromPickupLine } from "@/app/lib/pickup-line";
 import { stripRepeatedThanksLines } from "@/app/lib/property-send-match";
@@ -1619,10 +1621,18 @@ export async function POST(req: NextRequest) {
     //   ・「ぜひ見比べてご検討ください」… 「見比べ」実送信 1件
     // 既にある純関数をここにも配る（設計知見「同じ判定は同じ関数・入口は1つ」）。
     {
-      const waited = stripWaited(text);
-      if (waited.removed > 0) {
-        console.log(JSON.stringify({ tag: "aix-template-generate:strip-waited", removed: waited.removed }));
-        text = waited.text;
+      // 2026-09-20 竹内（差分調査・「結果を届ける AIX では許す」）:
+      //   この語は**場面によって正誤が正反対**だった。実測（60日・生成と実送信が両方ある1,805件）で
+      //   スタッフがどうしたかを経路別に数えると、見積書送る 残21/消0/**足16**・物件確認した（申込あり）
+      //   残0/消0/**足7**・物件ピックアップ 残66/消6/足6 に対し、内覧日調整は 残1/**消14**/足0。
+      //   ＝「待たせた作業の結果を届ける」場面では正しい文で、無条件に消すと**スタッフが手で足し直す**。
+      //   判定は waited-scope.isWaitedAllowed に一本化（AIX 本体・テスト・監査が同じ物を見る）。
+      if (!isWaitedAllowed(actionType)) {
+        const waited = stripWaited(text);
+        if (waited.removed > 0) {
+          console.log(JSON.stringify({ tag: "aix-template-generate:strip-waited", actionType, removed: waited.removed }));
+          text = waited.text;
+        }
       }
       // 「複数の物件について」等、物件名を並べた直後の数のまとめ語（a🤫 事例）
       const vague = stripVagueQuantifier(text);

@@ -45,6 +45,9 @@ import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensure
 // 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない
 import { stripPropertyNameFromPickupLine, PICKUP_LINE_NOTE } from "@/app/lib/pickup-line";
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
+// 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定と除去を返信生成・テンプレートと同じ関数で
+import { isWaitedAllowed } from "@/app/lib/waited-scope";
+import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（AIX / テンプレート共通）
@@ -1760,6 +1763,20 @@ async function handleAction(request: NextRequest): Promise<Response> {
       }
       if (banned.night || banned.shochi || banned.hasty || banned.uketamawari || banned.greetDup) {
         console.log(JSON.stringify({ tag: "aix:banned-phrasing-fixed", action: currentAction, conversationId, night: banned.night, shochi: banned.shochi, hasty: banned.hasty, uketamawari: banned.uketamawari, greetDup: banned.greetDup }));
+      }
+      // ── 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」──────────────
+      //   この語は**場面によって正誤が正反対**だった（scripts/audit-omatase-aix.ts・60日・1,805件）。
+      //   生成に出た時スタッフがどうしたか: 見積書送る 残21/消0/**足16** ／ 物件確認した（申込あり）残0/消0/**足7**
+      //   ／ 物件ピックアップ 残66/消6/足6 に対し、**内覧日調整は 残1/消14/足0**、通常返信は 残0/消5/足1。
+      //   ＝「待たせた作業の結果を届ける」場面では正しい文で、そこで消すとスタッフが手で足し直す。
+      //   AIX 本体にはこれまで stripWaited が1つも配られておらず、内覧日調整でも素通りしてスタッフが14件消していた。
+      //   許す場面（waited-scope.isWaitedAllowed）以外にだけ掛ける。判定は返信生成・テンプレートと同じ関数。
+      if (!isWaitedAllowed(currentAction)) {
+        const waited = stripWaited(banned.text);
+        if (waited.removed > 0) {
+          console.log(JSON.stringify({ tag: "aix:strip-waited", action: currentAction, conversationId, removed: waited.removed }));
+          banned.text = waited.text;
+        }
       }
       // 2026-09-17 竹内（まりあ事例）「かしこまりました！って生成された文に入っているけど、文の構成としておかしいし、
       //   全力でサポートさせて頂きます。もこれ返信の部分で使う部分なので、AIXの物件ピックアップや、物件オススメに入らない文となる」:
