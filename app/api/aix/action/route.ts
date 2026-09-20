@@ -33,7 +33,8 @@ import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 import { willRouteAlt, isPostApplyStatus } from "@/app/lib/llm-alt-provider";
-import { LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
+// recordAltUsage: DeepSeek など Anthropic 以外の呼び出しを llm_usage_logs に残す（fetch の出口は anthropic 宛しか見ない）
+import { LLM_POST_APPLY_HEADER, recordAltUsage } from "@/app/lib/llm-usage-recorder";
 import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, viewableFromVacancyYmd, vacancyDateLabel, vacatingViewableSentence } from "@/app/lib/vacating-notice";
 // 2026-09-19 竹内（内覧調整の会話を合わせる）: 退去前の候補の行を出口で落とす
 import { stripSlotLinesBeforeViewable } from "@/app/lib/viewing-window";
@@ -1000,17 +1001,28 @@ async function callClaudeVision(system: SystemSpec, content: unknown[], action: 
   //     見積書（数値を抜く）    … 一致 6/9(67%)・物件名と号室の誤読・5.6倍遅い ＝ **回さない**
   //   失敗・空応答なら黙って Claude に倒す（fail-open）。VISION_ALT_ACTIONS を空にすれば全部戻る。
   if (shouldRouteVisionAlt(action)) {
+    const altT0 = Date.now();
     const alt = await callVisionAlt(systemBlocks, content);
     if (alt) {
       // DeepSeek は区切りの指定が要らない**自動の前置きキャッシュ**。
       //   buildSystemBlocks が shared → semiStatic → routeStatic → dynamic の順で並べるので、
       //   結合しても「静的が先・動的が後」が保たれてそのまま効く（設計知見・本番実測で80%）。
       //   一致分は入力の 1/50 の価格なので、記録して効きを見られるようにする。
-      logLlmUsage("aix:vision", {
+      // ⚠ logLlmUsage は**コンソールに出すだけ**。DB（llm_usage_logs）に残すのは recordAltUsage。
+      //   2026-09-19 に同じ穴（DeepSeek の呼び出しが1行も残らない）が見つかって書き込み口が作られていたのに、
+      //   私が使っていなかった。記録が無いと費用も質も後から追えない（設計知見「静かに壊れる」）。
+      const altUsage = {
         input_tokens: alt.usage.cacheMiss || alt.usage.input,
         cache_read_input_tokens: alt.usage.cacheHit,
         output_tokens: alt.usage.output,
-      }, { action, model: alt.model });
+      };
+      logLlmUsage("aix:vision", altUsage, { action, model: alt.model });
+      recordAltUsage({
+        model: alt.model, action, conversationId: aixRequestCtx.getStore()?.conversationId ?? null,
+        usage: altUsage, status: 200, errorType: null, durationMs: Date.now() - altT0,
+        sysHead: systemStaticLength(system) > 0 ? String(systemBlocks[0]?.text ?? "").slice(0, 200) : null,
+        sysKeyFull: null, maxTokens: null,
+      });
       console.log(JSON.stringify({
         tag: "aix:vision-alt", action, model: alt.model,
         input: alt.usage.input, output: alt.usage.output,
