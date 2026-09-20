@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+﻿import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
@@ -37,6 +37,8 @@ import { viewingReportBlockForBrain } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
 import { buildActionLedger, buildLedgerLinesForBrain } from "@/app/lib/action-ledger";
+// 2026-09-20 竹内「ここなら申込になりそうなお客さんだと分析して、そこから申込の流れにいく形」
+import { detectApplyReadiness, buildApplyReadinessBrainNote } from "@/app/lib/apply-readiness";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
 // 2026-09-11 データ衛生: 正解例として使えるかの唯一の判定（生成失敗文・テスト送信を除外）
 import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
@@ -1808,6 +1810,17 @@ export async function analyzeConversation(
   });
   // 2026-09-14: 要約1行だけでなく、何を・いつ・どの物件に送った／約束したか（台帳の行・中身つき）も毎回渡す（送った内容は鮮度が最も高い事実）
   const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}${buildLedgerLinesForBrain(brainLedger)}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
+
+  // ─── 申込が近い合図（2026-09-20 竹内「ここなら申込になりそうなお客さんだと分析して、そこから申込の流れにいく形」）───
+  // 実データ（申込到達21件 vs 30日以上動いていない未到達105件）で線を引いた決定論の合図。
+  //   ※ **本文への指示ではなく AIX の判断材料**として渡す。
+  //     本文で内覧の候補日時を書くのは final-check が弾く（内覧の打診は AIX【内覧日調整】の仕事）ので、
+  //     「申込が近いのに内覧が抜けている」場面で流れを作れるのはブレインだけ（AIX の要否・種類はブレインが決める）。
+  const applyReadiness = detectApplyReadiness(
+    typedMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })),
+    Date.now(),
+  );
+  const applyReadinessText = buildApplyReadinessBrainNote(applyReadiness);
   // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段2:
   //   今回の顧客発言（最後のスタッフ発言より後の未返信の連投全体）の場面を決定論で1回だけ出し、「証拠」としてプロンプトに渡す。
   //   あわせてスタッフが実際に押した AIX の実績（brain_aix_feedback・cron/brain-aix-eval が毎日集計）を事実として渡す。
@@ -2053,11 +2066,11 @@ ${PHASE_TEMPLATE_HINTS}
     : "";
   const stableKnowledgeText = freshStableText;
   const customerSpecificText = isFreshLayer
-    ? `${actionWinRateText}${templatesText}${actionRulesText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${sceneEvidenceText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+    ? `${actionWinRateText}${templatesText}${actionRulesText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${applyReadinessText}${sceneEvidenceText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${sceneEvidenceText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+    : `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${applyReadinessText}${sceneEvidenceText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -4439,3 +4452,4 @@ async function createCalendarEventFromBrainAction(
     console.warn("[brain-core] createCalendarEventFromBrainAction failed:", conversationId, e instanceof Error ? e.message : e);
   }
 }
+

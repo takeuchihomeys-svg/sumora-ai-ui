@@ -10,12 +10,16 @@ const file = process.argv[2];
 if (!file) { console.error("使い方: npx tsx --env-file=.env.local scripts/kb-insert.ts <JSONファイル>"); process.exit(1); }
 
 async function main() {
-  const row = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
-  for (const k of ["title", "category", "insight", "rationale"]) {
-    if (!row[k]) { console.error(`必須の項目がありません: ${k}`); process.exit(1); }
+  // 2026-09-20: 1セッションで複数の知見が出る事が多いので配列も受ける（1件の時は今まで通りオブジェクト）
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown> | Array<Record<string, unknown>>;
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  for (const row of rows) {
+    for (const k of ["title", "category", "insight", "rationale"]) {
+      if (!row[k]) { console.error(`必須の項目がありません: ${k}（${String(row.title ?? "無題")}）`); process.exit(1); }
+    }
   }
-  const { error } = await sb.from("system_design_thinking").insert(row);
+  const { error } = await sb.from("system_design_thinking").insert(rows);
   if (error) { console.error("INSERT 失敗:", error.message); process.exit(1); }
-  console.log(`設計知見を INSERT しました: ${row.title}`);
+  for (const row of rows) console.log(`設計知見を INSERT しました: ${row.title}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

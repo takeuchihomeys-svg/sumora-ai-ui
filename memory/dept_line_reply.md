@@ -28,7 +28,43 @@ SELECT title, insight, rationale FROM system_design_thinking
 WHERE is_current = true AND title LIKE '%おかしな文を1通見つけたら%';
 ```
 
-Supabase MCP が落ちている時: `scripts/kb.ts`（引く）・`scripts/kb-insert.ts`（記録する）
+Supabase MCP が落ちている時: `scripts/kb.ts`（引く）・`scripts/kb-insert.ts`（記録する・配列も可）
+
+---
+
+## 申込が近いお客様を見つける（竹内・2026-09-20「ここなら申込になりそうなお客さんだと分析して、そこから申込の流れにいく形」）— 黄金ルール
+
+**仕組み**: `app/lib/apply-readiness.ts`（純関数・テスト27件）。直近7日の会話から8つの合図を数えて 0〜100点。
+`HOT_SCORE = 50` 以上で hot。**文は作らない**（度合いと根拠だけ）。
+
+**なぜ既存の `purchase_signal_level` と別に作ったか**: peak は**事後の追認**だった（peak が出た10件中8件は既に申込済み・中央値 -8.4日）。
+定義に「申込許可伺い・手続き/審査の具体質問は単独1件でも peak」とあり、もう申込の話をしている段階を peak と呼んでいる。
+
+**合図と重み**（実データ: 申込到達21件 vs 30日以上停滞105件の差）
+見積書を送った49 / お客様が内覧を希望した48 / 割引・還元を伝えた35 / お客様が手続き・審査を聞いた31 /
+お客様が前向きな反応29 / 内覧・待ち合わせをした29 / お客様が物件を名指しした28 / お客様が入居時期を言った25
+※ `applying_pattern` の key_success_factors（「1件に絞る」+13pt・「不安解消」+3pt）は**対照群でも同じくらい起きていた**ので使わない。
+
+**線**: 閾値50で 群A62% / 空振り3% / **当たり81%**。届き方は直近7日に動いた申込前58件中 **hot 11件（19%）**。
+
+**⚠ 対照群の作り方**（ここを間違えて1回測り直した）
+「申込に到達していない」を全部対照にすると、**その日に内覧日程を送ったばかりの進行中の会話**が空振りに数えられ、
+当たりが最大45%に見える。対照群は「**最後のやり取りから30日以上動いていない未申込**」に絞る。
+`npx tsx --env-file=.env.local scripts/audit-apply-threshold.ts --stale=30`
+
+**渡し方（本文とブレインで役割を分ける）**
+- 本文（`generate-reply` の動的ブロック）= `buildApplyReadinessNote` … 合図を知らせる＋**申込を迫らない**＋本文に書かない
+- ブレイン（`brain-core` の `applyReadinessText`）= `buildApplyReadinessBrainNote` … 事実と割合（AIX は選ばせない）
+- **本文で実行できない指示を本文に置かない**。内覧の打診は AIX【内覧日調整】の仕事で、本文に候補日時を書くと final-check が弾く。
+- 覚え書きは**全行「- 」で始める**（実送信365日で0件＝混ざっても `stripMetaNarration` が落とす）。**お客様の名前は入れない**。
+
+**⚠ やらなかった事（実データで取り消した）**
+前田さんの「申し込もうと思っており…いざとなると中を見ていない」を根拠に「内覧を先に埋める AIX を選べ」と書いたが、
+`scripts/audit-apply-viewing-need.ts` で測ると**申込到達21件の29%（6件）は内覧なしで申込**しており、停滞側との差は +5pt。
+1件の実例から規則を作らない。事実と割合だけ渡して判断はブレインに任せる。
+
+**道具**: `audit-apply-precursor.ts`（合図の差）/ `audit-apply-threshold.ts`（閾値）/ `audit-apply-live.ts`（届き方）/
+`audit-apply-viewing-need.ts`（内覧の要否）/ `verify-apply-readiness.ts`（本文・要ローカル起動）/ `verify-apply-readiness-brain.ts`（ブレイン・YUMA に入れて消す）
 
 ---
 

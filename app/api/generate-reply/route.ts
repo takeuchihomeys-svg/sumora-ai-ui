@@ -192,6 +192,7 @@ import { jstParts, jstDateLabel, weekdayTable } from "@/app/lib/jst-date";
 import { detectConditionExpansion, buildExpansionNote } from "@/app/lib/condition-expansion";
 // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタ（場面＝行動台帳の事実で判定）
 import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinceViewingMove, type PremiseFacts } from "@/app/lib/example-premise";
+import { detectApplyReadiness, buildApplyReadinessNote } from "@/app/lib/apply-readiness";
 // 2026-09-19 竹内（慶次事例）: 手本の言い回しに埋まっている他のお客様の条件を伏せる
 import { maskKnowledgeSpecifics, MASKED_NOTE } from "@/app/lib/knowledge-placeholder";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
@@ -803,6 +804,10 @@ function buildGenerationMessages(
   // 2026-09-19 竹内（ゆうこ事例）: こちらが複数のお部屋を送っていて、お客様がまだどれとも言っていない
   //   （＝物件名を1つに絞って書くと内覧するお部屋を取り違える）。出口 guardPropertyNames と同じ線
   propertyChoiceAmbiguous = false,
+  // 2026-09-20 竹内「ブレインがここの部分強化して、ここなら申込になりそうなお客さんだと分析して、
+  //   そこから申込の流れにいく形はどうか」: buildApplyReadinessNote（hot の時だけ非空）。
+  //   ※ 全行が「- 」で始まる＝万一本文に混ざっても stripMetaNarration が落とす（apply-readiness.test.ts で固定）
+  applyReadinessNote = "",
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -1595,7 +1600,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
   const dynamicBlock =`${replyContentNote}
 ${propertyStatusNote}
-${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${conditionExpansionNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${conditionExpansionNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
@@ -4754,6 +4759,19 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       }
     }
 
+    // ─── 申込が近い合図（2026-09-20 竹内「ここなら申込になりそうなお客さんだと分析して」）───
+    // 実データ（申込到達21件 vs 30日以上動いていない未到達105件）で線を引いた純関数。
+    // hot の時だけ非空。文面は作らず「合図と次の一手の向き」だけを渡す。
+    //   ※ 既存の purchase_signal_level は事後の追認だった（peak の8割が申込の後）ので、それとは別に持つ。
+    const applyReadiness = detectApplyReadiness(
+      recentMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt })),
+      Date.now(),
+    );
+    const applyReadinessNote = buildApplyReadinessNote(applyReadiness);
+    if (applyReadiness.level !== "low") {
+      console.log(`[generate-reply] 申込が近い合図: ${applyReadiness.level} ${applyReadiness.score}点 (${applyReadiness.reason}) 窓${applyReadiness.windowCount}通`);
+    }
+
     const messages = buildGenerationMessages(
       message, customerName, aixSourceMessage ? historyForTemplate : history, currentState,
       brainMeta, brainFreshForMessage, knowledge, examples, phrases,
@@ -4790,6 +4808,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       replyAixPre,         // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: ブレインが決めた AIX（fresh の時だけ）
       bodySafetyPre,       // 同段1: 証拠から引いた本文の安全
       propertyChoiceAmbiguous, // 2026-09-19 竹内（ゆうこ事例）: 物件名を1つに絞って書かない場面か
+      applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
