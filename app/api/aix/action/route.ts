@@ -7,7 +7,11 @@ import { supabase } from "@/app/lib/supabase";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date";
-import { stripMetaNarration, isNotACustomerReply } from "@/app/lib/meta-narration";
+import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "@/app/lib/meta-narration";
+// 2026-09-20 竹内（H さん事例）: 見積書の金額文は4経路で同じ純関数から作る（1か所だけ崩れていた）
+import { buildEstimateItem, buildEstimateMessage, calcSavings, DAY_RENT_NOTE, NO_AMOUNT_FALLBACK } from "@/app/lib/estimate-body";
+// 同: 2通目（カバーレター）に別の物件の金額ブロックが写るのを落とす
+import { stripEstimateAmountBlock } from "@/app/lib/estimate-cover";
 import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
 // 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
 import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "@/app/lib/room-choices";
@@ -2199,28 +2203,20 @@ ${SMORA_COMMON_RULES}`;
               if (!estJsonStr) return null;
               const estData = JSON.parse(estJsonStr) as { property_name?: string | null; room_number?: string | null; discount?: string | null; initial_cost?: string | null; savings?: string | null };
               const pName = estData.property_name?.trim() || `物件${multiEstBadges[pi] ?? String(pi + 1)}`;
-              const roomSuffix = estData.room_number?.trim() ? ` ${estData.room_number.trim()}号室` : "";
-              const prefix = (image_urls as string[]).length > 1 ? `${multiEstBadges[pi] ?? (pi + 1) + "."}【${pName}${roomSuffix}】` : `【${pName}${roomSuffix}】`;
-              const lines: string[] = [prefix, ""];
-              if (estData.discount) {
-                lines.push("初期費用さらに");
-                lines.push(`🌟${estData.discount}割引させて頂き`);
-              }
-              if (estData.initial_cost) lines.push(`初期費用：${estData.initial_cost}`);
-              if (estData.savings) {
-                lines.push("");
-                lines.push(`${accountName}なら一般的な不動産業者より${estData.savings}節約出来ます！！`);
-              }
-              return lines.join("\n");
+              // 2026-09-20: 組み立ては estimate-body.buildEstimateItem に1本化（4経路で同じ形にする）
+              return buildEstimateItem({
+                badge: (image_urls as string[]).length > 1 ? (multiEstBadges[pi] ?? `${pi + 1}.`) : null,
+                propertyName: pName, roomNumber: estData.room_number,
+                total: estData.initial_cost, discount: estData.discount, savings: estData.savings,
+                accountName,
+              });
             } catch { return null; }
           })
         );
-        const estParts = multiEstResults.filter((r): r is string => r !== null);
-        if (estParts.length === 0) {
-          message_text = "最大限割引した初期費用の御見積書をお送りさせて頂きます！！\n\n※ご入居日によって日割家賃が発生致します。";
-        } else {
-          message_text = estParts.join("\n\n") + "\n\n※ご入居日によって日割家賃が発生致します。";
-        }
+        const estItems = multiEstResults.filter((r): r is string => r !== null);
+        message_text = estItems.length === 0
+          ? `${NO_AMOUNT_FALLBACK}\n\n${DAY_RENT_NOTE}`
+          : `${estItems.join("\n\n")}\n\n${DAY_RENT_NOTE}`;
       } else {
 
       let estimate = parsed_estimate;
@@ -2290,42 +2286,20 @@ ${SMORA_COMMON_RULES}`;
       const commission    = isNaN(commRaw)    ? 0 : commRaw;
       const commTax       = isNaN(commTaxRaw) ? 0 : commTaxRaw;
 
-      const standardCommission = Math.round(rent * 1.1);
-      const actualCommission   = commission + commTax;
       // イエヤスのように仲介手数料0円が正当なアカウントでも節約額を正しく表示するため、
-      // page.tsx と同じロジック（ガードなし）に統一する
-      const savings = Math.max(0, standardCommission - actualCommission + discount);
+      // 見積書作成画面（estimate/page.tsx）と同じ式を estimate-body.calcSavings に1本化した
+      const savings = calcSavings({ rent, commission, commissionTax: commTax, discount });
 
-      const parts: string[] = [];
-
-      if (propertyName || roomNumber) {
-        const roomSuffix = roomNumber ? ` ${roomNumber}号室` : "";
-        parts.push(`【${propertyName}${roomSuffix}】`);
-        parts.push("");
-      }
-
-      if (discount > 0 && total > 0) {
-        // 割引額・合計額が両方読み取れた場合のみ数字を出す
-        parts.push("初期費用さらに");
-        parts.push(`🌟${discount.toLocaleString()}円割引させて頂き`);
-        parts.push(`初期費用：${total.toLocaleString()}円`);
-        parts.push("");
-        if (savings > 0) {
-          parts.push(`${accountName}なら一般的な不動産業者より${savings.toLocaleString()}円節約出来ます！！`);
-          parts.push("");
-        }
-      } else if (total > 0) {
-        parts.push(`初期費用：${total.toLocaleString()}円`);
-        parts.push("");
-      } else {
-        // 金額が読み取れない場合はシンプルな一文
-        parts.push("最大限割引した初期費用の御見積書をお送りさせて頂きます！！");
-        parts.push("");
-      }
-
-      parts.push("※ご入居日によって日割家賃が発生致します。");
-
-      message_text = parts.join("\n");
+      // 2026-09-20 竹内（H さん事例）: ここだけ割引と節約を抱き合わせにしていた。
+      //   旧: if (discount > 0 && total > 0) { 割引 + 初期費用 + 節約 } else if (total > 0) { 初期費用だけ }
+      //   → スモ割 0円の見積書（H さん・差引 178,090円・節約 61,910円）が「初期費用：178,090円」だけになり、
+      //     見積書の画像に印字されている節約額が本文から消えていた。
+      //   実送信365日 319通のうち「割引なし＋節約あり」は3通あり（ROCCO・グレイス ガーデン・
+      //   マンションサンパール）、どれも「初期費用：〇円／〇〇なら…節約出来ます！！」の形。
+      //   他の3経路（複数枚・物件確認・見積書作成画面）は元から独立していたので、4経路を同じ関数に寄せた。
+      message_text = buildEstimateMessage([{
+        propertyName, roomNumber, total, discount, savings, accountName,
+      }]);
       parsed_estimate_result = estimate;
 
       } // end single-mode
@@ -2335,13 +2309,21 @@ ${SMORA_COMMON_RULES}`;
       // 差分学習ルール＋☆成功実例を注入して「修正→学習→改善」ループの対象にする。
       // 生成失敗しても見積書送信は正常に動く（coverLetterは空のまま）。
       try {
-        const [coverDiffNote, coverStarNote, coverRules, coverBrainAddendum] = await Promise.all([
+        const [coverDiffNote, coverStarNoteRaw, coverRules, coverBrainAddendum] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.estimate_sheet, currentAction, conversationId, latestCustomerMsg, brainContext),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.estimate_sheet, latestCustomerMsg, aixBrainMeta),
           // 2026-09-17 竹内（AIX キャッシュ点検）: global（準静的）と action 別（経路固有）に分けて受ける
           fetchPromptRulesSplit("estimate_sheet", {}).catch(() => ({ global: "", action: "" })),
           loadBrainTemplate("estimate_sheet"),
         ]);
+
+        // ★ 入口を先に絞る（2026-09-20 竹内・H さん事例）
+        //   出口だけ直しても、手本に金額文が残っている限り AI は形を変えて写し続けた:
+        //     「・初期費用さらに🌟36,000円割引させて頂き」（箇条書きに合体）
+        //     「🌟〇〇〇,〇〇〇円割引させて頂き／初期費用：〇〇〇,〇〇〇円」（〇でマスクされた形）
+        //   どちらも**他のお客様の見積書の文**。手本の側から金額ブロックを落として写す元を無くす
+        //   （設計知見「入口は厳しく・出口は緩く」／慶次事例で手本の条件を伏せたのと同じ形）。
+        const coverStarNote = stripEstimateAmountBlock(coverStarNoteRaw ?? "").text;
 
         // 2026-09-17 竹内（AIX キャッシュ点検）: accountName（スモラ／イエヤス／ギガ賃貸）が system の先頭に入っていてアカウントごとに
         //   別キャッシュになっていた → system は「当社」の固定文にし、サービス名は動的ブロック【当社のサービス名】で渡す
@@ -2405,13 +2387,22 @@ ${SMORA_COMMON_RULES}
             cover_letter = cover_letter.split(otherBrand).join(accountName);
           }
         }
-        // 重複段落防止（後処理）: 見積書本文にすでに表示済みの節約・費用比較の行がカバーレターに混ざった場合は除去
-        cover_letter = cover_letter
-          .split("\n")
-          .filter(line => !(line.includes("一般的な不動産業者") || (line.includes("節約") && line.includes("円"))))
-          .join("\n")
-          .replace(/\n{3,}/g, "\n\n")
-          .trim();
+        // 2026-09-20 竹内（H さん事例の検証中に発見）: 旧は「一般的な不動産業者」「節約＋円」を含む行**だけ**
+        //   落としていたため、**別の物件の金額ブロックが丸ごと残っていた**。
+        //   ハイツカトレア B 202号室で通したら 2通目に
+        //     **【プレサンス阿倍野松崎805号室】**／初期費用さらに／🌟68,000円割引させて頂き／初期費用：152,000円
+        //   が入った（手本として渡した他のお客様の文を写している＝お客様に別物件の金額を送る形）。
+        //   実送信365日のカバーレター835通のうち金額を含むのは5通（1%）・【物件名】を含むのは6通（1%）。
+        //   誤削除0になる線（【物件名】は直後が金額行の時だけ・注記は金額行がある時だけ）を
+        //   estimate-cover.stripEstimateAmountBlock に純関数で出した。
+        cover_letter = stripMarkdownEmphasis(cover_letter);   // Haiku が **【…】** と囲むことがある
+        {
+          const amt = stripEstimateAmountBlock(cover_letter);
+          if (amt.removed.length > 0) {
+            console.log(JSON.stringify({ tag: "aix:cover-amount-stripped", removed: amt.removed.slice(0, 6), conversationId }));
+            cover_letter = amt.text;
+          }
+        }
         // 2026-09-18 出口の保証: 指示だけでは落ちるので、キャンペーンの1文が無ければ締めの直前に足す
         //   （設計知見「決定論で足した文は出口でも保証する」・実送信の並び＝御見積書の案内→キャンペーン→締め）
         const campaignFix = ensureCampaignLine(cover_letter, estimateCampaign);
@@ -5408,24 +5399,19 @@ ${templateText}`;
                 const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
                 if (!jsonMatch) return null;
                 const estData = JSON.parse(jsonMatch[0]) as { discount?: string | null; initial_cost?: string | null; savings?: string | null };
-                const prefix = estAttachedCount > 1 ? `${checkEstBadges[pi] ?? (pi + 1) + "."}【${pName}】` : `【${pName}】`;
-                const lines: string[] = [prefix, ""];
-                if (estData.discount) {
-                  lines.push("初期費用さらに");
-                  lines.push(`🌟${estData.discount}割引させて頂き`);
-                }
-                if (estData.initial_cost) lines.push(`初期費用：${estData.initial_cost}`);
-                if (estData.savings) {
-                  lines.push("");
-                  lines.push(`${accountName}なら一般的な不動産業者より${estData.savings}節約出来ます！！`);
-                }
-                return lines.join("\n");
+                // 2026-09-20: 組み立ては estimate-body.buildEstimateItem に1本化（4経路で同じ形にする）
+                return buildEstimateItem({
+                  badge: estAttachedCount > 1 ? (checkEstBadges[pi] ?? `${pi + 1}.`) : null,
+                  propertyName: pName,
+                  total: estData.initial_cost, discount: estData.discount, savings: estData.savings,
+                  accountName,
+                });
               } catch { return null; }
             })
           );
           const checkEstParts = checkEstResults.filter((r): r is string => r !== null);
           if (checkEstParts.length > 0) {
-            estimate_text_result = checkEstParts.join("\n\n") + "\n\n※ご入居日によって日割家賃が発生致します。";
+            estimate_text_result = `${checkEstParts.join("\n\n")}\n\n${DAY_RENT_NOTE}`;
           }
         }
       }

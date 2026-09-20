@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import html2canvas from "html2canvas";
 import BottomNav from "../components/BottomNav";
 import type { ExtractedEstimate } from "../api/extract-estimate-info/route";
+// 2026-09-20 竹内（H さん事例）: 見積書の金額文は AIX【見積書送る】と同じ純関数から作る
+import { buildEstimateMessage, buildSavingsLine, calcSavings } from "../lib/estimate-body";
 
 type Account = "sumora" | "ieyasu" | "giga";
 type Step = "input" | "review";
@@ -133,10 +135,8 @@ type PreviewRow = {
   isSeparator?: boolean; // 毎月かかる費用と初回のみ費用の区切り行
 };
 
-const ACCOUNT_SAVINGS_TEMPLATE: Record<Account, (n: number) => string> = {
-  sumora:  (n) => `スモラなら一般的な不動産業者より${n.toLocaleString()}円節約出来ます！！`,
-  ieyasu:  (n) => `イエヤスなら一般的な不動産業者より${n.toLocaleString()}円節約出来ます！！`,
-  giga:    (n) => `ギガ賃貸なら一般的な不動産業者より${n.toLocaleString()}円節約出来ます！！`,
+const ACCOUNT_DISPLAY_NAME: Record<Account, string> = {
+  sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ賃貸",
 };
 
 function generateLineText(
@@ -144,43 +144,23 @@ function generateLineText(
   grandTotal: number,
   account: Account,
 ): string {
-  const parts: string[] = [];
-
-  // 【物件名 号室】
-  const propName = items.propertyName || "";
-  const roomSuffix = items.roomNumber ? ` ${items.roomNumber}号室` : "";
-  if (propName || roomSuffix) {
-    parts.push(`【${propName}${roomSuffix}】`);
-    parts.push("");
-  }
-
-  // 割引あり → 強調フォーマット
+  // 2026-09-20 竹内（H さん事例）: 見積書の金額文は AIX【見積書送る】と同じ純関数から作る。
+  //   同じ物が4か所にコピーされていて、AIX の1枚の経路だけ割引と節約を抱き合わせにしており、
+  //   スモ割0円の見積書で節約額が本文から消えていた（estimate-body.ts の冒頭に経緯）。
   const discount = items.discountAmount || 0;
-  if (discount > 0) {
-    parts.push("初期費用さらに");
-    parts.push(`🌟${discount.toLocaleString()}円割引させて頂き`);
-    parts.push(`初期費用：${grandTotal.toLocaleString()}円`);
-  } else {
-    parts.push(`初期費用：${grandTotal.toLocaleString()}円`);
-  }
-
-  parts.push("");
-
-  // 節約額 = (業界標準手数料1ヶ月+税 - 実際の手数料) + 割引額
-  const standardCommission = Math.round((items.rent || 0) * 1.1);
-  const actualCommission = (items.commission || 0) + (items.commissionTax || 0);
-  const savings = Math.max(0, standardCommission - actualCommission + discount);
-  if (savings > 0) {
-    parts.push(ACCOUNT_SAVINGS_TEMPLATE[account](savings));
-    parts.push("");
-  }
-
-  // 日付未設定のときのみ注記を追加（設定済みなら日割りは既に計算済みなので不要）
-  if (!items.moveInDate) {
-    parts.push("※ご入居日によって日割家賃が発生致します。");
-  }
-
-  return parts.join("\n");
+  const body = buildEstimateMessage([{
+    propertyName: items.propertyName,
+    roomNumber: items.roomNumber,
+    total: grandTotal,
+    discount,
+    savings: calcSavings({ rent: items.rent, commission: items.commission, commissionTax: items.commissionTax, discount }),
+    accountName: ACCOUNT_DISPLAY_NAME[account],
+  }], {
+    // 入居日が設定済みなら日割りは計算済みなので注記は不要
+    dayRentNote: !items.moveInDate,
+  });
+  // 注記が無い時は末尾に空行が付くのが従来の形（入力欄にそのまま貼る）
+  return items.moveInDate ? `${body}\n` : body;
 }
 
 function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDate = ""): EditableItems {
@@ -1501,12 +1481,11 @@ function EstimatePageContent() {
 
           {/* 節約額 */}
           {(() => {
-            const standardCommission = Math.round((items.rent || 0) * 1.1);
-            const actualCommission = (items.commission || 0) + (items.commissionTax || 0);
-            const savings = Math.max(0, standardCommission - actualCommission + (items.discountAmount || 0));
+            // 2026-09-20: 式も言い回しも estimate-body に1本化（本文・画像・AIX で同じ数字になる）
+            const savings = calcSavings({ rent: items.rent, commission: items.commission, commissionTax: items.commissionTax, discount: items.discountAmount });
             return savings > 0 ? (
               <div style={{ margin: "0 20px 16px", background: "#fff9e6", border: "1px solid #ffe082", borderRadius: 12, padding: "10px 16px", fontSize: 13, color: "#7b5e00", fontWeight: 600, textAlign: "center" }}>
-                {ACCOUNT_SAVINGS_TEMPLATE[account](savings)}
+                {buildSavingsLine(ACCOUNT_DISPLAY_NAME[account], savings)}
               </div>
             ) : null;
           })()}
