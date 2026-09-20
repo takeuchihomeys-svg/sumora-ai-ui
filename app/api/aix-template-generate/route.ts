@@ -37,6 +37,8 @@ import { stripWaited } from "@/app/lib/greeting";
 import { isWaitedAllowed } from "@/app/lib/waited-scope";
 // 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」: 直前の1通目を読んで2通目の材料にする
 import { buildAixChainNote } from "@/app/lib/aix-chain-note";
+// 2026-09-20 竹内「生成される文が長すぎる」: 長さの目安を実測から渡す＋生成後に記録する
+import { buildLengthNote, checkLength } from "@/app/lib/template-length";
 import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
 import { stripPropertyNameFromPickupLine } from "@/app/lib/pickup-line";
 import { stripRepeatedThanksLines } from "@/app/lib/property-send-match";
@@ -1404,9 +1406,17 @@ export async function POST(req: NextRequest) {
     console.log(JSON.stringify({ tag: "aix-template-generate:chain-note", actionType, len: (sentMessage ?? "").length }));
   }
 
+  // 2026-09-20 竹内「生成される文が長すぎる。実際の成約データや直近の会話をみて改善する」:
+  //   このプロンプトには**長さの指示が1つも無かった**（設計知見「長さの上限をプロンプトに書く」）。
+  //   実測（scripts/audit-template-length.ts・120日）: property_recommendation は 生成257字 → 実送信234字、
+  //   property_send_widen は 生成170字 → 実送信112字。実送信2通目の中央値は120字・4行で、
+  //   **成約した会話では108字・3行**、140字未満が69.5%。
+  const lengthNote = buildLengthNote(actionType);
+
   const userPrompt = [
     `━━━━━━━━━━━━━━━━━━━━\n【今回生成する橋渡し文】\n━━━━━━━━━━━━━━━━━━━━`,
     `・AIXボタン種別: ${actionLabel}`,
+    lengthNote,
     // 1通目との関係は最優先の文脈（これが無いと同じことを繰り返す）
     aixChainNote,
     actionGuide ? `・この種別の書き方: ${actionGuide}` : "",
@@ -1763,6 +1773,18 @@ export async function POST(req: NextRequest) {
           console.error("[aix-template-generate] aix_generate_log insert failed:", e);
         }
       });
+    }
+
+    // 2026-09-20 竹内「生成される文が長すぎる」: 長さを**記録する**（切らない）。
+    //   出口で切ると文の途中で終わって壊れるので、ここでは測ってログに残すだけ。
+    //   指示（buildLengthNote）が効いているかを後から scripts/audit-template-length.ts で追える。
+    {
+      const lc = checkLength(text, actionType);
+      if (!lc.ok) {
+        console.warn(JSON.stringify({ tag: "aix-template-generate:too-long", actionType, len: lc.len, lines: lc.lines, over: lc.over }));
+      } else {
+        console.log(JSON.stringify({ tag: "aix-template-generate:length", actionType, len: lc.len, lines: lc.lines }));
+      }
     }
 
     return NextResponse.json({ ok: true, text });
