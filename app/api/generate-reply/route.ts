@@ -136,6 +136,13 @@ import { PROPERTY_CONDITION_INQUIRY_RE, runBrainAndNotify, type SuggestedAixMeta
 // 2026-09-20 竹内「AIX から返信する部分は AIX からスタッフが送るから大丈夫」:
 //   ブレインの戦略文に混ざった AIX の担当を、**戦略を渡すその行に**併記するための共有定数（四者同名）
 import { buildAixTerritoryGuard } from "@/app/lib/aix-territory";
+import { buildPreviousSendNote } from "@/app/lib/previous-send-note";
+/**
+ * 直前送信の材料を止めるスイッチ（A/B の比較と、効かなかった時の戻し道）。
+ * `PREV_SEND_NOTE=off` で無効。dev サーバーは起動時の環境変数を読むので、切り替えには再起動が要る。
+ * ※ 1回ずつの生成では効果が判定できないので、比べる時は scripts/yuma-repeat-test.ts を REPS=3 以上で回す。
+ */
+const AB_OFF = process.env.PREV_SEND_NOTE === "off";
 import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
 import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
@@ -1190,6 +1197,23 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
         ? `\n【⚠️ 直前のAIXアクション情報】${lastAixLine}`
         : "";
 
+  // ─── 2026-09-21 竹内（スクショ: ゆーたさん 13:39）───
+  //   「生成した文は送った内容と同じ内容を再度送っていた形となるので、これを防ぐ。
+  //     全く同じ内容いれたら文がおかしいので、ここの根本的な原因を見つける」
+  //
+  //   お客様が返信している側の枝（すぐ上）には「繰り返さない」材料が無かった
+  //   （isFollowUp の枝にはある）。実測も同じで、焼き直し（生成文の述部が全部 直前送信に有る）は
+  //     お客様の返信あり 18/1515=1.2% ＞ 返信なし 3/436=0.7%（scripts/audit-repeat-previous.ts）。
+  //
+  //   ⚠ **置き場所は dynamicBlock の最後**（staffContextNote の位置ではない）。
+  //     最初 staffContextNote に添えたら、届いてはいた（staffContext 246→601字）のに
+  //     YUMA ① の生成は直前と同じ締めのままだった。後続の骨格（PHASE_GUIDE・実例・長さの目安）に負ける。
+  //     設計知見「上書きの指示は最後に置く（前に置くと後続の骨格に負ける）」。
+  //
+  //   ⚠ 中身は app/lib/previous-send-note.ts を見ること。締めは**言い回しを渡さず種類の名前だけ**
+  //     （引用して渡したら YUMA ③ でモデルがそれを写し、改善前より悪くなった）。
+  const previousSendNote = (isFollowUp || AB_OFF) ? "" : buildPreviousSendNote(lastStaffMsg);
+
   // ⭐実例がある場合: 文体参考として使うが、ルール（禁止ワード・挨拶等）は常に最優先
   // A-10: 実例ゼロ時は「実例外パターン禁止」（ルール8）が充足不能になるため明示的に解除し、PHASE_GUIDE の例文を型として使わせる
   const examplesInstruction = examples
@@ -1627,7 +1651,7 @@ ${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${
 ${examples}${examplesInstruction}
 
 ↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : `スモラの直前返信の流れを踏まえ、${examples ? "⭐実例の文体・テンポ" : "PHASE_GUIDE の例文の文体・テンポ"}を参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。`}
-長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}`;
+長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}`;
 
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
   // 戦略の優先規定（AIX-META一元化）: 指示が競合した場合の解決順を最上位で1行宣言する
@@ -1664,7 +1688,7 @@ ${examples}${examplesInstruction}
     dyn: {
       knowledge: knowledgeNote.length, examples: examples.length + examplesInstruction.length, phrases: phrases.length,
       history: (history || "").length, brainGuidance: brainGuidanceNote.length, tpo: tpoGuidanceNote.length, turnPair: turnPairNote.length, stance: stanceNote.length,
-      ledger: actionLedgerNote.length, staffContext: staffContextNote.length, summary: summaryNote.length + opinionsNote.length, conditions: conditionsNote.length + inlineConditionsFallback.length + missingConditionsNote.length,
+      ledger: actionLedgerNote.length, staffContext: staffContextNote.length, prevSend: previousSendNote.length, summary: summaryNote.length + opinionsNote.length, conditions: conditionsNote.length + inlineConditionsFallback.length + missingConditionsNote.length,
       propertyStatus: propertyStatusNote.length, aixProperty: aixPropertyRecommendationNote.length + aixPropertySendNote.length, greeting: greetingNote.length,
       quoted: quotedContextNote.length, customerMsg: customerMsgBlock.length,
     },

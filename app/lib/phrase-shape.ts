@@ -125,3 +125,30 @@ export type PhraseVerdict = PhraseShape & {
 export function isUnseenPhrase(v: PhraseVerdict): boolean {
   return v.sentCount === 0;
 }
+
+/**
+ * 2通の「言っている事の近さ」0〜1（マスク後の2文字かたまりの Dice 係数）。
+ *
+ * 2026-09-21 竹内「生成した文は送った内容と同じ内容を再度送っていた形」:
+ *   述部の集合だけで見ると**言い換え**を見逃す。実物（YUMA ①）:
+ *     直前「気になる点出てきましたらお気軽に**ご質問**ください／何卒よろしくお願い致します」
+ *     生成「気になる点等出てきましたらいつでもお気軽に**ご連絡**ください／何卒よろしくお願い致します」
+ *   述部が8字だと「ご質問ください」と「ご連絡ください」が別物になり「新しい述部あり」と出る。
+ *   全文の近さも併せて見る。
+ *   ※ 線（何点以上を焼き直しとするか）は実送信の分布で引く（scripts/audit-repeat-previous.ts）。
+ */
+export function messageSimilarity(a: string, b: string): number {
+  const x = maskVariables(splitClauses(a).join("")), y = maskVariables(splitClauses(b).join(""));
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  const grams = (s: string) => {
+    const out = new Set<string>();
+    if (s.length === 1) { out.add(s); return out; }
+    for (let i = 0; i < s.length - 1; i++) out.add(s.slice(i, i + 2));
+    return out;
+  };
+  const A = grams(x), B = grams(y);
+  let inter = 0;
+  for (const g of A) if (B.has(g)) inter++;
+  return (2 * inter) / (A.size + B.size);
+}
