@@ -41,6 +41,8 @@ import { buildAixChainNote } from "@/app/lib/aix-chain-note";
 import { buildLengthNote, checkLength } from "@/app/lib/template-length";
 // 2026-09-20 竹内: 禁止語の整形（夜間挨拶・承知→かしこまりました・挨拶の重複）を返信生成・AIX 本体と同じ関数で
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
+// 2026-09-20 竹内「AI の作業メモは下書き欄に絶対入れない」: 返信生成・AIX 本体と同じ関数をテンプレートにも
+import { isNotACustomerReply, stripMetaNarration } from "@/app/lib/meta-narration";
 import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
 import { stripPropertyNameFromPickupLine } from "@/app/lib/pickup-line";
 import { stripRepeatedThanksLines } from "@/app/lib/property-send-match";
@@ -1514,7 +1516,13 @@ export async function POST(req: NextRequest) {
     examplesSection,
     phrasesSection,
     `この会話の流れ・お客様の状況に合った「${actionLabel}」の橋渡し文を1通生成してください。金額・空室状況・日程・物件名は上記の会話履歴/AIXメッセージに記載がある事実のみ使い、なければ言及しないこと。⭐実例の文体・テンポを忠実に再現すること。` +
-    `\n【必ず守る2点】①訴求は1文に詰め込まず、設備／立地／費用を空行で区切った段落に分けて書く（【文章構造の原則】の段落構成に従う）。②呼びかけは${
+    // 2026-09-20 竹内「残る差もテストして改善する」:
+    //   ②は「呼びかけるなら実名で」という意味だが、LLM は「毎回呼びかける」と読んでいた
+    //   （YUMA の2通目で名前呼びかけ100%・実送信の2通目は35.1%）。
+    //   2通目（sentMessage あり）の時だけ「入れる場合は」に変える。1通目の文言は変えない。
+    `\n【必ず守る2点】①訴求は1文に詰め込まず、設備／立地／費用を空行で区切った段落に分けて書く（【文章構造の原則】の段落構成に従う）。②呼びかけ${
+      sentMessage ? "を入れる場合は" : "は"
+    }${
       resolvedCustomerName ? `「${resolvedCustomerName}さん」の実名のみ` : "省略（名前を書かない）"
     }。「〇〇さん」等の伏せ字を本文に書いた時点でやり直し。\n${
       recommendationScenario
@@ -1681,6 +1689,34 @@ export async function POST(req: NextRequest) {
       //   **テンプレート生成には配られていなかった**（設計知見「出口の決定論も同じ関数で全経路に配る」）。
       //   中身: 夜間挨拶の除去／承知→かしこまりました／約束の「すぐに」除去／単独の承りました／挨拶の重複。
       //   2通目はお客様への返信なので夜間挨拶は残さない（keepNightGreeting: false）。
+      // ── 2026-09-20 竹内「生成される文に抜けやエラーがないかも合わせて確認」──────────────
+      //   16通の検証で **AI の思考過程がそのまま**出た:
+      //   「今回1番手申込中（203号室）で…2通目は、営業ではなく**申込・審査状況への配慮**を優先すべき場面です。
+      //     今回のブリッジ文（…」
+      //   竹内さんの絶対ルール「AI の作業メモは下書き欄に絶対入れない」に反する。
+      //   返信生成（applySurfaceFixes）と AIX 本体（finalize）には isNotACustomerReply / stripMetaNarration が
+      //   通っているのに、**テンプレート生成には配られていなかった**（normalizeBannedPhrasing と同じ漏れ）。
+      {
+        const meta = stripMetaNarration(text);
+        if (meta.removed.length > 0) {
+          console.log(JSON.stringify({ tag: "aix-template-generate:meta-narration-removed", actionType, removed: meta.removed.map((r) => r.slice(0, 60)) }));
+          text = meta.text;
+        }
+        // LINE はマークダウンを解釈しない（プロンプトでも禁止しているが守られない時がある）
+        const noBold = text.replace(/\*\*/g, "");
+        if (noBold !== text) {
+          console.log(JSON.stringify({ tag: "aix-template-generate:markdown-stripped", actionType }));
+          text = noBold;
+        }
+        // 全部が作業メモだった時は**本文として返さない**（画面のエラー表示に出す＝入力欄には入れない）
+        if (!text.trim() || isNotACustomerReply(text)) {
+          console.error(JSON.stringify({ tag: "aix-template-generate:not-a-reply", actionType, head: text.slice(0, 80) }));
+          return NextResponse.json({
+            ok: false,
+            error: `お客様への返信になっていません（送信欄には入れていません）。もう一度生成してください。\n${text.trim().slice(0, 200)}`,
+          }, { status: 200 });
+        }
+      }
       {
         const banned = normalizeBannedPhrasing(text, { keepNightGreeting: false });
         if (banned.night || banned.shochi || banned.hasty || banned.uketamawari || banned.greetDup) {

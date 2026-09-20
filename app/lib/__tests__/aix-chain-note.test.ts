@@ -101,6 +101,34 @@ describe("2通目への指示を作る", () => {
     expect(buildAixChainNote(PICKUP_1ST)).toContain("120字前後");
   });
 
+  // 2026-09-20 竹内「残る差もテストして改善する」: YUMA で 名前100%（実送信35.1%）・条件0%（30.7%）・物件名13%（36.0%）だった
+  it("★ N10 1通目用の指示5つを名指しで上書きする（呼びかけを含む）", () => {
+    const n = buildAixChainNote(PICKUP_1ST);
+    expect(n).toContain("文章構造の原則");
+    expect(n).toContain("この種別の書き方");
+    expect(n).toContain("CTA強度の上書き");
+    expect(n).toContain("呼びかけは実名のみ");
+    expect(n).toContain("毎回付ける意味ではない");
+  });
+  it("★ N11 呼びかけ・物件名・条件の実送信の割合を見せる（消えすぎを戻す）", () => {
+    const n = buildAixChainNote(PICKUP_1ST);
+    expect(n).toContain("呼びかけ「〇〇さん」… 35%");
+    expect(n).toContain("物件名・号室 … 36%");
+    expect(n).toContain("条件の復唱");
+    expect(n).toContain("31%");
+  });
+  it("★ N12 禁じているのは「並べ直し」だと明示する（1つ触れるのは可）", () => {
+    const n = buildAixChainNote(PICKUP_1ST);
+    expect(n).toContain("禁じているのは「・」で並べ直すこと");
+    expect(n).toContain("文の中で1つ触れるのは実送信どおり");
+  });
+  it("★ N13 CTA は「毎回は付けない」であって「付けるな」ではない（0%に振れないように）", () => {
+    const n = buildAixChainNote(PICKUP_1ST);
+    expect(n).toContain("付けてはいけない訳でもない");
+    expect(n).toContain("約7通に1通");
+    expect(n).toContain("前向きな反応");
+  });
+
   it("★ N7 1通目が無ければ空文字（無条件に指示を足さない）", () => {
     expect(buildAixChainNote("")).toBe("");
     expect(buildAixChainNote(null)).toBe("");
@@ -111,11 +139,15 @@ describe("2通目への指示を作る", () => {
     expect(buildAixChainNote("承知しました")).toBe("");
   });
 
-  it("N9 長い1通目は切り詰める（プロンプトを膨らませない）", () => {
+  it("N9 長い1通目は600字で切り詰める（プロンプトを膨らませない）", () => {
     const long = `${PICKUP_1ST}\n${"あ".repeat(900)}`;
     const note = buildAixChainNote(long);
     expect(note).toContain("…");
-    expect(note.length < 1400).toBe(true);
+    // 1通目そのものは600字までしか入らない（指示の分は別に数える）
+    expect(note.includes("あ".repeat(601))).toBe(false);
+    // 2026-09-20: 指示（1通目用の上書き・実送信の割合）を足した分ブロックは伸びた。
+    //   見るのは「1通目が青天井に入らないこと」なので、全体の上限は実測に合わせて緩める
+    expect(note.length < 2400).toBe(true);
   });
 });
 

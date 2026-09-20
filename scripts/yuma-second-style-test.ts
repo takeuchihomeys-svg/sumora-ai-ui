@@ -125,5 +125,56 @@ async function main() {
   }
   console.log(`\n   ※ 生成は ${ok.length}通なので率はざっくり（0/25/50/75/100% しか取れない）。`);
   console.log(`     見るのは「実送信に無い形が出ていないか」「多すぎる形が無いか」。`);
+
+  // ── 抜け・エラーの点検（竹内「生成される文に抜けやエラーがないかも合わせて確認」）──
+  console.log(`\n${"─".repeat(72)}`);
+  console.log(`=== 抜け・エラーの点検 ===`);
+  const failed = results.filter((r) => r.text.length <= 10 || r.text.startsWith("【エラー】") || /^\{"ok":false/.test(r.text));
+  console.log(`   生成に失敗した: ${failed.length}通 / ${results.length}通`);
+  for (const f of failed) console.log(`     [${f.scene}] ${f.text.slice(0, 120)}`);
+
+  /** あってはいけない形（実送信365日で0通と分かっている物＋設計知見で禁止した物） */
+  const DEFECTS: Array<[string, RegExp]> = [
+    ["プロンプトの見出しの写し（【お客様に送る文】等）", /【(?:お客様に送る文|お客様の現在の状況|お客様名|物件情報|今回生成する)/],
+    ["伏せ字のまま（〇〇さん／○○さん）", /[〇○]{1,2}さん/],
+    ["AI の作業メモ（確認します／出力します）", /^[^\n]{0,20}(?:確認します|出力します|作成します)[。\s]*$/m],
+    ["できない宣言", /出力(?:は|を)?行(?:い|え)ま?せん|情報が(?:不足|足りません)|特定できません/],
+    ["禁止語 お待たせ（2通目は返信なので不可）", /お待たせ(?:致|いた)?しました/],
+    ["禁止語 承知いたしました", /承知(?:いた|致)?しました/],
+    ["禁止語 夜分に失礼", /夜(?:分)?遅くに失礼|夜分に失礼/],
+    ["希少性の煽り", /埋まって(?:しまい|しまう)|残り\s*[0-9０-９]\s*(?:部屋|室)|他のお客様[^\n。！!]{0,12}(?:申込|お申込)/],
+    ["マークダウン太字（LINE非対応）", /\*\*/],
+    ["スタッフ名で呼びかけ", /^(?:鈴木|田中|佐藤|竹内)さん/m],
+    ["会社名の名乗り", /(?:スモラ|イエヤス|ギガ賃貸)です[。！!]/],
+    ["1文字〜3文字だけ", /^[\s\S]{1,3}$/],
+    ["同じ行の重複", /^(.{12,})\n[\s\S]*^\1$/m],
+  ];
+  let defectTotal = 0;
+  console.log(`\n   --- あってはいけない形（実送信0通の形）---`);
+  for (const [label, re] of DEFECTS) {
+    const hit = ok.filter((r) => re.test(r.text));
+    if (hit.length === 0) continue;
+    defectTotal += hit.length;
+    console.log(`     ⛔ ${label}: ${hit.length}通`);
+    for (const h of hit.slice(0, 2)) console.log(`        [${h.scene}] ${h.text.replace(/\n/g, " ／ ").slice(0, 110)}`);
+  }
+  if (defectTotal === 0) console.log(`     0件（どの形も出ていない）`);
+
+  // 文の途中で終わっていないか
+  //   ⚠ 末尾の閉じ記号（」）や絵文字を外してから見る（前は「！！」で終わる正常文を誤検知した）
+  const tail = (s: string) => s.trim().replace(/[」』）)】\s]+$/u, "").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+$/u, "");
+  const cut = ok.filter((r) => {
+    const t = tail(r.text);
+    return !/[。！!？?]$/.test(t) && !/(?:ください|ます|です|ました|幸いです)$/.test(t);
+  });
+  console.log(`\n   --- 文が途中で終わっている疑い: ${cut.length}通 ---`);
+  for (const c of cut.slice(0, 3)) console.log(`     [${c.scene}] …${c.text.trim().slice(-40)}`);
+
+  // 日本語として壊れた接続（「ので、！！」のような形。前に1件出た）
+  const broken = ok.filter((r) => /[ので|から|ため|が]、\s*[！!]/.test(r.text) || /[、。]\s*[、。]/.test(r.text) || /！！\s*！！/.test(r.text));
+  console.log(`\n   --- 壊れた接続・句読点: ${broken.length}通 ---`);
+  for (const b of broken.slice(0, 3)) console.log(`     [${b.scene}] ${b.text.replace(/\n/g, " ／ ").slice(0, 110)}`);
+
+  console.log(`\n   【まとめ】失敗 ${failed.length}通 ／ あってはいけない形 ${defectTotal}件 ／ 途中終わり ${cut.length}通 ／ 壊れた接続 ${broken.length}通`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
