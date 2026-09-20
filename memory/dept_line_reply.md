@@ -32,6 +32,40 @@ Supabase MCP が落ちている時: `scripts/kb.ts`（引く）・`scripts/kb-in
 
 ---
 
+## ブレインが物件を知る経路（竹内・2026-09-20「物件把握できていなかったら文にすれ違いが起きる」）— 黄金ルール
+
+**ブレインは本文を読んで物件を知るのではない。DBの2つのテーブルからしか知らない。**
+
+| 経路 | どこで書かれる | 直近30日の実態 |
+|---|---|---|
+| `sent_properties` | `extract-property-info`（物件出しツール・AIX） | 15,564行 |
+| `sent_image_properties` | 同上 ＋ **送信時の画像読み取り**（2026-09-20 追加） | 画像1,624枚中24枚(1%)しか直せていなかった |
+
+**⚠ 穴1: 引き方**　旧は `property_customer_id` **だけ**で引いており、紐付いていない会話では物件を1件も見なかった。
+→ `conversation_id` でも引いて混ぜる（**78% → 86%**）。新しく見えた10件に**慶次さん・前田さん**が入っていた。
+
+**⚠ 穴2: 画像**　スタッフが手で送った画像は1枚も記録されない（画像を送った会話118件中99件＝84%が1枚も直せず）。
+→ `send-line-message` の `after()` で DeepSeek に読ませ、**照合できた物だけ** upsert する。
+
+**⚠ 読み取りは必ず照合を通す**（`property-name-match.ts`）
+画像から読んだ名前は誤読する（「スプレンディッド堀江」「ハイムMKK」）。
+**その会話で既に分かっている名前**に寄せ、寄らなければ**捨てる**（fail-closed）。
+汚れた物件名を渡すと、本文から正規表現で取ろうとして失敗した時と同じでかえってすれ違いを生む。
+実測10枚で 10/10 読めて 10/10 照合を通過・誤読も正しい名前に直った。
+
+**⚠ 本文から正規表現で物件名を取るのは諦めた**（3案とも失敗）
+物件名にスペース・記号が入るので区切りで切ると壊れる:
+「エスリード中之島ザ・コア 607号室」→「コア 607号室」／「UMEDA ISLAND RESIDENCE 302号室」→「RESIDENCE 302号室」
+
+**道具**
+```
+npx tsx --env-file=.env.local scripts/audit-brain-property-link.ts   # 経路の切れ目
+npx tsx --env-file=.env.local scripts/audit-sent-property-tables.ts  # テーブルの埋まり方
+npx tsx --env-file=.env.local scripts/verify-property-image-read.ts --n=10  # 読み取り→照合
+```
+
+---
+
 ## AIX【見積書送る】の文は `estimate-body.ts` / `estimate-cover.ts`（竹内・2026-09-20・H さん事例）— 黄金ルール
 
 - **1通目（金額文）**: `buildEstimateMessage`。**割引行と節約行は独立**（割引0円でも節約額があれば節約行を書く）。

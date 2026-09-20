@@ -168,6 +168,60 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // ── 2026-09-20 竹内「お客さん毎に送った物件のテーブル作ってそこから読み取れるようにすれば良いのでは。
+  //   その画像の読み込みに限定して deepseek V4.1 Flash のモデルを使う」──────────────────
+  //   スタッフが手で送った画像は今まで1枚も物件に直せていなかった（直近30日 1,624枚中 24枚＝1%）。
+  //   ブレインは sent_properties / sent_image_properties からしか物件を知らないので、
+  //   画像だけで物件を送ると**ブレインが物件を1件も知らないまま文を書く**（文のすれ違いの元）。
+  //   → 送信が終わった後（after）に画像を読み、**既知の物件名と照合できた物だけ**記録する。
+  //     送信そのものは待たせない。失敗しても送信には影響しない。
+  //   実測（スタッフの実画像10枚）: 10/10 読めて 10/10 照合を通過・月$2.02。
+  //     誤読も照合で直った（「スプレンディッド堀江」→ スプランディッド堀江）
+  if (image_url && conversation_id) {
+    after(async () => {
+      try {
+        const [{ readPropertyImage }, { resolveReadProperty }, { extractPropertyLabels }] = await Promise.all([
+          import("@/app/lib/property-image-read"),
+          import("@/app/lib/property-name-match"),
+          import("@/app/lib/action-ledger"),
+        ]);
+        const read = await readPropertyImage(image_url);
+        if (read.items.length === 0) return;
+
+        // その会話で既に分かっている物件名（照合の辞書）。無ければ記録しない＝誤読を入れない
+        const known = new Set<string>();
+        const { data: sp } = await supabase.from("sent_properties").select("property_name")
+          .eq("conversation_id", conversation_id).limit(50);
+        for (const r of (sp ?? []) as Array<{ property_name: string | null }>) if (r.property_name) known.add(r.property_name.trim());
+        const { data: ms } = await supabase.from("messages").select("text")
+          .eq("conversation_id", conversation_id).order("created_at", { ascending: false }).limit(80);
+        const joined = ((ms ?? []) as Array<{ text: string | null }>).map((m) => m.text ?? "").join("\n");
+        for (const lbl of extractPropertyLabels(joined)) known.add(lbl.replace(/\s*[0-9０-９]{1,4}号室\s*$/, "").trim());
+        const dict = [...known].filter((s) => s.length >= 2);
+        if (dict.length === 0) return;
+
+        const fixed = read.items
+          .map((x) => resolveReadProperty(x, dict))
+          .filter((x): x is NonNullable<typeof x> => !!x);
+        if (fixed.length === 0) return;
+
+        // 画像1枚 → 物件1つ（image_url が主キー）。一覧の画像は最初の1件を代表にする
+        const top = fixed[0];
+        const { error } = await supabase.from("sent_image_properties").upsert(
+          { image_url, conversation_id, property_name: top.propertyName, room_no: top.roomNumber, source: "staff_image_vision" },
+          { onConflict: "image_url" },
+        );
+        console.log(JSON.stringify({
+          tag: "send-line-message:image-property", conversationId: conversation_id,
+          read: read.items.length, matched: fixed.length, saved: top.propertyName + (top.roomNumber ? ` ${top.roomNumber}` : ""),
+          tokens: read.usage, error: error?.message ?? null,
+        }));
+      } catch (e) {
+        console.warn("[send-line-message] 画像の物件読み取り失敗:", e instanceof Error ? e.message : e);
+      }
+    });
+  }
+
   // スタッフ送信メッセージに「物件ピックアップ・お送り」フレーズ → 物件出しタスク自動作成 + ステータス変更
   if (message) {
     // 「ご査収ください」はAIX物件ピックアップしたの完了文に含まれる→実際の送信であり予告ではないので除外

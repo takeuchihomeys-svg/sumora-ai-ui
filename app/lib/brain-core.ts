@@ -933,7 +933,7 @@ export async function analyzeConversation(
   // limit 30→15: checkpoint（RAG検索含む）が古い会話をカバーするため、直近15件で十分。
   // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
   // count: "exact" は総メッセージ数のプロンプト注入用（B3）
-  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult, transitionStatsResult, recordedFacts] = await Promise.all([
+  const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, sentImagePropsResult, promptRulesResult, knowledgePrinciplesResult, templatesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult, transitionStatsResult, recordedFacts] = await Promise.all([
     supabase
       .from("messages")
       // 監査FIX(2026-08-20): quoted_message_id（物件カード引用リプライの判別）と
@@ -983,6 +983,13 @@ export async function analyzeConversation(
         ? `property_customer_id.eq.${propertyCustomerId},conversation_id.eq.${conversationId}`
         : `conversation_id.eq.${conversationId}`)
       .order("sent_at", { ascending: false })
+      .limit(20),
+    // 2026-09-20 竹内: 画像だけで送った物件（送信時に DeepSeek で読み取って記録した分）
+    supabase
+      .from("sent_image_properties")
+      .select("property_name, room_no, created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
       .limit(20),
     // Global permanent operator rules (apply to all conversations, no pgvector needed)
     // B4(Fable5): limit 10→20 — 本番で恒久ルールがちょうど10行に達しており、11個目から無言欠落する状態だった
@@ -1543,6 +1550,18 @@ export async function analyzeConversation(
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(p);
+    }
+    // 2026-09-20 竹内（物件把握の監査）: **画像だけで送った物件**を足す。
+    //   スタッフが手で画像を送ると sent_properties には入らない（直近30日 1,624枚中 24枚＝1%しか
+    //   物件に直せていなかった）。送信時に読み取って sent_image_properties に書くようにしたので、
+    //   ブレインもそこを見る。既に sent_properties にある物件は重複させない。
+    for (const p of ((sentImagePropsResult.data ?? []) as Array<{ property_name: string | null; room_no: string | null; created_at: string | null }>)) {
+      const name = (p.property_name ?? "").trim();
+      if (!name) continue;
+      const key = `${name}|${(p.room_no ?? "").trim()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ property_name: name, room_no: (p.room_no ?? "").trim(), sent_at: p.created_at ?? "", rent: null, recruitment_status: null, applicant_rank: null, customer_reaction: null });
     }
     return out;
   })();
