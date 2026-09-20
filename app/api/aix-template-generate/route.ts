@@ -43,6 +43,10 @@ import { buildLengthNote, checkLength } from "@/app/lib/template-length";
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-20 竹内「AI の作業メモは下書き欄に絶対入れない」: 返信生成・AIX 本体と同じ関数をテンプレートにも
 import { isNotACustomerReply, stripMetaNarration } from "@/app/lib/meta-narration";
+// 2026-09-21 竹内「付けるかはブレインが判断する／お客さんの反応見て刺さっているなら誘導する」
+import { resolveCtaGuidance } from "@/app/lib/cta-guidance";
+// お客様の反応の分類は返信生成・往復文脈と同じ関数（四者同名）
+import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "@/app/lib/reply-context";
 import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
 import { stripPropertyNameFromPickupLine } from "@/app/lib/pickup-line";
 import { stripRepeatedThanksLines } from "@/app/lib/property-send-match";
@@ -1417,6 +1421,32 @@ export async function POST(req: NextRequest) {
   //   **成約した会話では108字・3行**、140字未満が69.5%。
   const lengthNote = buildLengthNote(actionType);
 
+  // ── 2026-09-21 竹内「付けるかはブレインが判断する。お客さんの反応見て刺さっているなら、誘導する」──
+  //   CTA の有無をプロンプトの言葉で釣ろうとすると振り子になる（0%→31%→38%）。
+  //   **お客様の直近の発言の分類**（返信生成と同じ classifyCustomerResponse）と AIX の種類で決める。
+  //   実測（scripts/audit-cta-trigger.ts・1,424組）: positive 30.6%（成約では60%）／concern 3.2%／
+  //   condition_change 1.1% ／ AIX 別は 待ち合わせ50% 内覧日調整49% 申込へ29% 見積書22% …
+  //   物件ピックアップ3% ヒアリング0%。
+  //   ⚠ purchase_signal_level は使わない（設計知見「peak は申込しそうではなく申込したを言っていた」）。
+  const ctaGuidance = (() => {
+    try {
+      const list = Array.isArray(recentMessages) ? recentMessages : [];
+      const lastCust = [...list].reverse().find((m) => m.sender === "customer" && (m.text ?? "").trim());
+      if (!lastCust) return null;
+      const idx = list.lastIndexOf(lastCust);
+      const prevStaff = [...list.slice(0, idx)].reverse().find((m) => m.sender === "staff" && (m.text ?? "").trim());
+      const staffTurn = classifyLastStaffTurn(prevStaff?.text ?? "", { lastStaffAt: prevStaff?.rawCreatedAt ?? null });
+      const sub = analyzeSubstance(lastCust.text ?? "", undefined, { staffAskedQuestion: staffTurn.kind === "question_to_customer" });
+      const cr = classifyCustomerResponse(sub, staffTurn);
+      const g = resolveCtaGuidance({ customerKind: cr.kind, positiveKind: cr.positive?.kind ?? null, action: actionType });
+      console.log(JSON.stringify({ tag: "aix-template-generate:cta", actionType, customerKind: cr.kind, positive: cr.positive?.kind ?? null, mode: g.mode, ctaKind: g.kind, reason: g.reason }));
+      return g;
+    } catch (e) {
+      console.warn("[aix-template-generate] cta guidance failed:", e instanceof Error ? e.message : e);
+      return null;
+    }
+  })();
+
   const userPrompt = [
     `━━━━━━━━━━━━━━━━━━━━\n【今回生成する橋渡し文】\n━━━━━━━━━━━━━━━━━━━━`,
     `・AIXボタン種別: ${actionLabel}`,
@@ -1536,6 +1566,8 @@ export async function POST(req: NextRequest) {
     //   YUMA で測ると申込の誘導が 100%（実送信8.8%）になり、前に置いた上書きは効かなかった。
     //   設計知見「同じ事実について書くなと書けを別の場所から渡さない」→ 最後に1回だけ明示して上書きする。
     aixChainNote,
+    // CTA の有無は**お客様の反応と AIX の種類**で決める（実測・cta-guidance）。最後に置くのは上と同じ理由
+    ctaGuidance?.note ?? "",
   ].filter(Boolean).join("\n");
 
   // ── DB学習資産の第2システムブロック（TTLキャッシュ内はbyte-stable → prompt cache対象）──

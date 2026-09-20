@@ -63,6 +63,19 @@ const SCENES: Array<{ id: string; action: string; category: string; first: strin
   },
 ];
 
+/**
+ * 2026-09-21 竹内「付けるかはブレインが判断する。お客さんの反応見て刺さっているなら、誘導する」
+ *   お客様の反応を差し替えて、CTA の有無が判断どおり変わるかを見る。
+ *   実測（scripts/audit-cta-trigger.ts）: positive 30.6%（成約60%）／concern 3.2%／condition_change 1.1%
+ */
+const REACTIONS: Array<{ id: string; text: string; expect: "誘う" | "誘わない" }> = [
+  { id: "A 内覧したい（positive/viewing_explicit・実測31.3%）", text: "この物件内覧したいです！", expect: "誘う" },
+  { id: "B 良いと思う（positive/appraisal・実測45.5%）", text: "すごく良さそうなお部屋ですね！気に入りました", expect: "誘う" },
+  { id: "C 懸念（concern・実測3.2%）", text: "1階だと防犯面が少し心配です…", expect: "誘わない" },
+  { id: "D 条件変更（condition_change・実測1.1%）", text: "もう少し駅近で探してもらえますか？", expect: "誘わない" },
+  { id: "E 相槌のみ（ack_only・実測8.4%）", text: "ありがとうございます", expect: "誘わない" },
+];
+
 async function main() {
   const rounds = Number(process.env.ROUNDS ?? 2);
   const { data: conv } = await sb.from("conversations").select("customer_name, status").eq("id", YUMA).maybeSingle();
@@ -176,5 +189,34 @@ async function main() {
   for (const b of broken.slice(0, 3)) console.log(`     [${b.scene}] ${b.text.replace(/\n/g, " ／ ").slice(0, 110)}`);
 
   console.log(`\n   【まとめ】失敗 ${failed.length}通 ／ あってはいけない形 ${defectTotal}件 ／ 途中終わり ${cut.length}通 ／ 壊れた接続 ${broken.length}通`);
+
+  // ── お客様の反応を変えて CTA の有無が変わるか（竹内「刺さっているなら誘導する」）──
+  console.log(`\n${"─".repeat(72)}`);
+  console.log(`=== お客様の反応ごとに CTA が変わるか（物件オススメの2通目で固定）===\n`);
+  const CTA_RE = /ご案内(?:させて(?:頂|いただ)き|いたし|致し)ます|ご内覧(?:頂|いただ)け|お?申(?:し)?込[^\n。！!]{0,14}(?:押さえ|抑え|完了|進め|手続)/;
+  const scene = SCENES[1]; // ② 物件オススメ の後
+  for (const r of REACTIONS) {
+    const msgs = [...recentMessages, { sender: "customer", text: r.text, rawCreatedAt: new Date().toISOString(), isAix: false }];
+    let text = "";
+    try {
+      const res = await fetch(`${BASE}/api/aix-template-generate`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionType: scene.action, actionCategory: scene.category, conversationId: YUMA,
+          customerName: String(c.customer_name ?? "YUMA"), conversationState: String(c.status ?? "proposing"),
+          recentMessages: msgs, customerConditions: "難波周辺・家賃10万円以内・1LDK・駅徒歩10分以内",
+          noEmoji: false, staffMessagedToday: true, sentMessage: scene.first,
+        }),
+      });
+      const raw = await res.text();
+      try { const j = JSON.parse(raw) as Record<string, unknown>; text = String(j.text ?? j.error ?? raw.slice(0, 200)); }
+      catch { text = raw.slice(0, 200); }
+    } catch (e) { text = `【エラー】${e instanceof Error ? e.message : String(e)}`; }
+    const hasCta = CTA_RE.test(text);
+    const ok2 = (r.expect === "誘う") === hasCta;
+    console.log(`   ${ok2 ? "✅" : "❌"} ${r.id}`);
+    console.log(`      客「${r.text}」 → 期待「${r.expect}」／実際「${hasCta ? "誘った" : "誘わなかった"}」(${text.length}字)`);
+    console.log(`      ${text.replace(/\n/g, " ／ ").slice(0, 110)}`);
+  }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -70,6 +70,12 @@ describe("プロンプトに入れる指示", () => {
     expect(n).toContain("8.8%");
     expect(n).toContain("どちらも1割未満");
   });
+  it("★ N1f 共感フレーズを止める（実送信の2通目1,424通で0通）", () => {
+    const n = buildLengthNote("property_recommendation");
+    expect(n).toContain("ますよね");
+    expect(n).toContain("気持ちの代弁・同調");
+    expect(n).toContain("1,424通で**0通**");
+  });
   it("★ N1e 希少性の煽りを名指しで止める（YUMA で実際に出た）", () => {
     const n = buildLengthNote("property_check_result");
     expect(n).toContain("他のお客様からお申込みが入る可能性");
