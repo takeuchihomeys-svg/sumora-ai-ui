@@ -122,6 +122,9 @@ it("★ AI がスタッフに指示を求める文は返信ではない（実送
   expect(isNotACustomerReply("どう対応すればよいか分かりません。お客様に直接お聞きしてもよろしいでしょうか？")).toBe(true);
   expect(isNotACustomerReply("どう返信すればいいのか分かりかねます")).toBe(true);
   expect(isNotACustomerReply("お客様に確認してもよろしいでしょうか")).toBe(true);
+  // 2026-09-20 本番14パターンの検証で出た形（実送信365日で0通）
+  expect(isNotACustomerReply("こちらのメッセージには返信できません。")).toBe(true);
+  expect(isNotACustomerReply("この内容には返信出来ません")).toBe(true);
 });
 it("★ お客様への本物の問いかけは落とさない（「お客様に直接」単体では落とさない）", () => {
   expect(isNotACustomerReply("YUMAさんご都合よろしいお日にちお聞かせください😊！！")).toBe(false);

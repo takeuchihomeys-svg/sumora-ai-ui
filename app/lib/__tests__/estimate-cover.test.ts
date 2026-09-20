@@ -1,9 +1,9 @@
-// app/lib/__tests__/estimate-cover.test.ts
+﻿// app/lib/__tests__/estimate-cover.test.ts
 // 実行: npx tsx app/lib/__tests__/estimate-cover.test.ts（自己完結ハーネス。全 PASS で exit 0）
 //
 // 2026-09-20 竹内（H さん事例）の検証中に見つけた2つ目の崩れ。
 // 材料は**本番の実物**（本番で出た混入と、実送信365日の835通から読んだ形）。
-import { stripEstimateAmountBlock, isEstimateAmountLine, fixNamePlaceholder } from "../estimate-cover";
+import { stripEstimateAmountBlock, isEstimateAmountLine, fixNamePlaceholder, sanitizeCoverLetter } from "../estimate-cover";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -242,3 +242,80 @@ it("空・空白・金額文だけの時に落ちない", () => {
 
 console.log(`\n${failed === 0 ? "✅ 全 PASS" : "❌ 失敗あり"}  ${passed} passed / ${failed} failed`);
 if (failed) { failures.forEach((f) => console.log(`  - ${f}`)); process.exit(1); }
+
+console.log("\n── ★ 本番14パターンで出た2通目の欠陥（実送信365日で全部0通）──");
+
+it("★【お客様に送る文】の見出しを外して本文は残す（本番 F）", () => {
+  const { text, removed } = sanitizeCoverLetter("【お客様に送る文】\nYUMAさんお世話になっております！！\n最大限割引しました初期費用御見積書をお送りさせて頂きました😊！！", "YUMAさん");
+  expect(text).toBe("YUMAさんお世話になっております！！\n最大限割引しました初期費用御見積書をお送りさせて頂きました😊！！");
+  expect(removed.length).toBe(1);
+});
+
+it("★ 同じ行に本文が続く見出しは、見出しだけ外す（本番 H）", () => {
+  const { text } = sanitizeCoverLetter("【お客様の現在の状況（状態）】お申込み情報を受け取りました", "YUMAさん");
+  expect(text).toBe("お申込み情報を受け取りました");
+});
+
+it("★【お客様名】さん は名前に置き換える（外すと文が壊れる・本番 N）", () => {
+  const { text } = sanitizeCoverLetter("【お客様名】さんお世話になっております！！", "YUMAさん");
+  expect(text).toBe("YUMAさんお世話になっております！！");
+});
+
+it("★ 会社名の名乗りだけ落として挨拶は残す（本番 L）", () => {
+  expect(sanitizeCoverLetter("お世話になっております。ギガ賃貸です。", "YUMAさん").text).toBe("お世話になっております。");
+  expect(sanitizeCoverLetter("スモラでございます😊\nご連絡ありがとうございます！！", "YUMAさん").text).toContain("ご連絡ありがとうございます！！");
+});
+
+it("★ 先頭がスタッフ名なら顧客名に直す（本番 J・K／実送信0通）", () => {
+  const { text, fixed } = sanitizeCoverLetter("鈴木さんお世話になっております😊\nお申込み情報受け取りました！", "YUMAさん");
+  expect(text).toContain("YUMAさんお世話になっております");
+  expect(text).notToContain("鈴木さん");
+  expect(fixed.length).toBe(1);
+});
+
+it("顧客名と同じなら触らない", () => {
+  expect(sanitizeCoverLetter("YUMAさんお世話になっております😊", "YUMAさん").fixed.length).toBe(0);
+  expect(sanitizeCoverLetter("前田様お世話になっております", "前田さん").text).toBe("前田様お世話になっております");
+});
+
+it("★「皆さん」「奥様」のような一般語は名前として扱わない", () => {
+  expect(sanitizeCoverLetter("皆さんお揃いでのご内覧も可能です！！", "YUMAさん").fixed.length).toBe(0);
+  expect(sanitizeCoverLetter("お客様お世話になっております", "YUMAさん").fixed.length).toBe(0);
+});
+
+it("★ 短すぎる壊れた出力は2通目を送らない（本番 D の「〈」）", () => {
+  expect(sanitizeCoverLetter("〈", "YUMAさん").text).toBe("");
+  expect(sanitizeCoverLetter("。", "YUMAさん").text).toBe("");
+  expect(sanitizeCoverLetter("", "YUMAさん").text).toBe("");
+  // 4文字以上は残す
+  expect(sanitizeCoverLetter("承知致しました", "YUMAさん").text).toBe("承知致しました");
+});
+
+it("★ 本物のカバーレター（実送信の形）は1文字も変えない", () => {
+  // 宛先の名前も実物に合わせる（route.ts が渡すのは `${familyName}さん`）
+  for (const [t, who] of [
+    ["YUMAさんお待たせ致しました！！\nスプランディッド大阪EAST 603号室最大限割引しました初期費用の御見積書となります！！\nお手隙の際にご査収ください😌！！", "YUMAさん"],
+    ["ゆーたさん確認させていただきました！！\nエイペックス神戸みなと元町CoastLine 704号室現在募集中となります！！\n初期費用御見積書同封させて頂きました！！", "ゆーたさん"],
+    ["こちらのお部屋スモ割が適用出来ないお部屋となっており、お送りさせていただきました初期費用お見積書がご案内できる最安値のお見積書となります😌！！", "Hinaさん"],
+  ] as const) {
+    const r = sanitizeCoverLetter(t, who);
+    if (r.removed.length || r.fixed.length) throw new Error(`触ってしまった: ${r.removed.join("/")} ${r.fixed.join("/")}`);
+    expect(r.text).toBe(t);
+  }
+});
+
+// ★ 呼び名が分からない時（route.ts は「お客様」を渡す）に正当な呼びかけを壊さない
+it("★「お客様」を渡された時は先頭の呼びかけを書き換えない（「お客さん」にしない）", () => {
+  const t = "ゆーたさん確認させていただきました！！\n初期費用御見積書同封させて頂きました！！";
+  const r = sanitizeCoverLetter(t, "お客様");
+  expect(r.fixed.length).toBe(0);
+  expect(r.text).toBe(t);
+  expect(r.text).notToContain("お客さん");
+});
+
+it("★ 金額ブロックと見出しが同時にあっても本文は残る（本番の混入の全部入り）", () => {
+  const t = "【お客様に送る文】\nYUMAさんご連絡頂きありがとうございます😊！！\n\n**【プレサンス阿倍野松崎805号室】**\n\n初期費用さらに\n🌟68,000円割引させて頂き\n初期費用：152,000円\n\n※ご入居日によって日割家賃が発生致します。\n\nご確認よろしくお願いします！！";
+  const { text } = sanitizeCoverLetter(t, "YUMAさん");
+  expect(text).toBe("YUMAさんご連絡頂きありがとうございます😊！！\n\nご確認よろしくお願いします！！");
+});
+

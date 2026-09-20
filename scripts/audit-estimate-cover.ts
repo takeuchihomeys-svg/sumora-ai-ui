@@ -8,7 +8,7 @@
 //   → カバーレターに金額・物件名を書いてよいのかを**実送信で線を引く**。
 // 読み取りのみ。
 import { createClient } from "@supabase/supabase-js";
-import { stripEstimateAmountBlock } from "../app/lib/estimate-cover";
+import { stripEstimateAmountBlock, sanitizeCoverLetter } from "../app/lib/estimate-cover";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 
 /** カバーレター相当＝見積書に添える案内文 */
@@ -45,6 +45,22 @@ async function main() {
     console.log(r.text.split("\n").map((l) => `    ${l}`).join("\n"));
   }
   if (withAmount.length > 25) console.log(`\n  …ほか ${withAmount.length - 25}通`);
+
+  // ── 2026-09-20: 2通目の出口をまとめた sanitizeCoverLetter を全件に当てる ──
+  //    呼び名は「お客様」で渡す＝先頭の呼びかけの書き換えは起きない（実運用でも名前が無い時はこれ）
+  {
+    const changed: Array<{ at: string; before: string; removed: string[]; fixed: string[] }> = [];
+    for (const r of pureCovers) {
+      const s = sanitizeCoverLetter(r.text, "お客様");
+      if (s.removed.length || s.fixed.length) changed.push({ at: String(r.created_at).slice(0, 16), before: r.text, removed: s.removed, fixed: s.fixed });
+    }
+    console.log(`\n=== sanitizeCoverLetter（2通目の出口まとめ）を ${pureCovers.length}通に当てる ===`);
+    console.log(`  変わらない ${pureCovers.length - changed.length}通 / **変わった ${changed.length}通**`);
+    for (const c of changed) {
+      console.log(`\n[${c.at}] 落とした: ${c.removed.map((x) => JSON.stringify(x)).join(" / ") || "なし"}  直した: ${c.fixed.join(" / ") || "なし"}`);
+      console.log(c.before.split("\n").map((l) => `      ${l}`).join("\n"));
+    }
+  }
 
   // ── 出口の決定論を全件に当てて、誤削除0かを確かめる ──
   console.log(`\n=== stripEstimateAmountBlock を実送信のカバーレター ${pureCovers.length}通に当てる ===`);

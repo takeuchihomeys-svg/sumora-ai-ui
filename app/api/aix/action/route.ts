@@ -11,7 +11,7 @@ import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "
 // 2026-09-20 竹内（H さん事例）: 見積書の金額文は4経路で同じ純関数から作る（1か所だけ崩れていた）
 import { buildEstimateItem, buildEstimateMessage, calcSavings, DAY_RENT_NOTE, NO_AMOUNT_FALLBACK } from "@/app/lib/estimate-body";
 // 同: 2通目（カバーレター）に別の物件の金額ブロックが写るのを落とす
-import { stripEstimateAmountBlock, fixNamePlaceholder } from "@/app/lib/estimate-cover";
+import { stripEstimateAmountBlock, sanitizeCoverLetter } from "@/app/lib/estimate-cover";
 import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
 // 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
 import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "@/app/lib/room-choices";
@@ -2396,22 +2396,17 @@ ${SMORA_COMMON_RULES}
         //   誤削除0になる線（【物件名】は直後が金額行の時だけ・注記は金額行がある時だけ）を
         //   estimate-cover.stripEstimateAmountBlock に純関数で出した。
         cover_letter = stripMarkdownEmphasis(cover_letter);   // Haiku が **【…】** と囲むことがある
+        // 2026-09-20 竹内「色んなパターンでバグや変な言い回しになっていないか確認」:
+        //   本番14パターンで通したら2通目に、別の物件の金額ブロック／プロンプトの見出し（【お客様に送る文】）／
+        //   プレースホルダ（【お客様名】さん・○○さん）／会社名の名乗り（ギガ賃貸です）／
+        //   スタッフ名の呼びかけ（鈴木さん）／壊れた出力（「〈」1文字）が出た。
+        //   どれも実送信365日 11,998通で0通なので、1つの出口（sanitizeCoverLetter）でまとめて直す。
         {
-          const amt = stripEstimateAmountBlock(cover_letter);
-          if (amt.removed.length > 0) {
-            console.log(JSON.stringify({ tag: "aix:cover-amount-stripped", removed: amt.removed.slice(0, 6), conversationId }));
-            cover_letter = amt.text;
+          const s = sanitizeCoverLetter(cover_letter, name);
+          if (s.removed.length > 0 || s.fixed.length > 0) {
+            console.log(JSON.stringify({ tag: "aix:cover-sanitized", removed: s.removed.slice(0, 8), fixed: s.fixed, conversationId }));
           }
-        }
-        // 2026-09-20 本番検証で「○○さんお世話になっております」が出た。
-        //   出所は ai_reply_knowledge の principle（「○○さんお気に召されましたら…」がプレースホルダのまま）。
-        //   実送信365日で「○○さん」は0件＝残っていたら必ず誤り。落とさず名前に置き換える。
-        {
-          const ph = fixNamePlaceholder(cover_letter, name);
-          if (ph.fixed > 0) {
-            console.log(JSON.stringify({ tag: "aix:cover-name-placeholder", fixed: ph.fixed, conversationId }));
-            cover_letter = ph.text;
-          }
+          cover_letter = s.text;
         }
         // 2026-09-20 本番検証: カバーレターが「どう対応すればよいか分かりません。お客様に直接
         //   お聞きしてもよろしいでしょうか？」になった＝**スタッフへの問い合わせ**でお客様への文ではない。

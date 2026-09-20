@@ -100,7 +100,10 @@ export function isAmountBlockHeading(lines: ReadonlyArray<string>, i: number): b
  *   名前が分かっていれば名前に、分からなければ呼びかけごと外す。
  * ※「○月○日（曜日）○○:○○」のような時刻のプレースホルダには当てない（さん・様が続く時だけ）。
  */
-const NAME_PLACEHOLDER_RE = /[○〇◯]{2,}\s*(さん|様)/g;
+//   2026-09-20 本番で【お客様名】という形も出た（「【お客様名】さんお世話になっております！！」）。
+//   見出しではなく**名前のプレースホルダ**なので、外すのではなく名前に置き換える
+//   （外すと「さんお世話になっております」と壊れる）。
+const NAME_PLACEHOLDER_RE = /(?:[○〇◯]{2,}|【(?:お客様名|顧客名|お名前|customer_?name)】)\s*(さん|様)/g;
 
 export function fixNamePlaceholder(text: string, customerName?: string | null): { text: string; fixed: number } {
   if (!text) return { text, fixed: 0 };
@@ -119,6 +122,28 @@ export function fixNamePlaceholder(text: string, customerName?: string | null): 
   return { text: fixed ? out.replace(/ {2,}/g, " ") : text, fixed };
 }
 
+// ─── 2026-09-20 竹内「色んなパターンでバグや変な言い回しになっていないか確認」──────────
+// 本番14パターンで【見積書送る】を通して2通目に出た実物と、実送信365日 11,998通での件数:
+//   「【お客様に送る文】」「【お客様名】さん」「【お客様の現在の状況（状態）】」 … 実送信 **0通**
+//   「お世話になっております。ギガ賃貸です。」「スモラでございます😊」        … 実送信 **0通**
+//   「こちらのメッセージには返信できません。」                              … 実送信 **0通**
+//   「〈」（1文字）                                                      … 1〜3文字の実送信は24通
+//                                                                        （中身は「あ」「たあ」＝誤送信）
+//   「鈴木さんお世話になっております」（**スタッフ名をお客様の呼称にしている**）… 先頭が「鈴木さん」等は 0通
+//     ※「鈴木と申します」「担当の鈴木」など**正当な形は181通**あるので、先頭の呼びかけだけに限る
+
+/** プロンプトの見出しをそのまま写した行（【お客様に送る文】など）。実送信0通 */
+const PROMPT_HEADING_RE = /^\s*【[^】]*お客様[^】]*】/;
+/** 会社名の名乗り。実送信0通（スモラは「スモラの鈴木と申します」の形でしか出ない） */
+const SELF_INTRO_RE = /(?:スモラ|ギガ賃貸|イエヤス)(?:です|でございます)[。．！!]?/g;
+/** 先頭の呼びかけに使われた名前 */
+const LEAD_HONORIFIC_RE = /^\s*([^\s、。，,！!？?「」【】]{1,12})(さん|様)/;
+/** 呼びかけに見えるが名前ではない語（置き換えない） */
+const NOT_A_NAME = new Set(["皆", "みな", "みなさ", "奥", "旦那", "親御", "お子", "お客", "担当", "管理会社"]);
+
+/** カバーレターとして送るには短すぎる（実送信の1〜3文字はスタッフの誤送信だけ） */
+export const COVER_MIN_LENGTH = 4;
+
 export function stripEstimateAmountBlock(cover: string): { text: string; removed: string[] } {
   if (!cover) return { text: cover, removed: [] };
   const lines = cover.split("\n");
@@ -135,4 +160,72 @@ export function stripEstimateAmountBlock(cover: string): { text: string; removed
   });
   if (removed.length === 0) return { text: cover, removed };
   return { text: kept.join("\n").replace(/\n{3,}/g, "\n\n").trim(), removed };
+}
+
+/**
+ * 2通目（カバーレター）の出口を1つにまとめる。
+ * 落とす／置き換える／空にするの3択で、**どれも実送信365日で誤削除0になる線**で引いている。
+ * 返す text が空文字なら「2通目を送らない」（1通目の見積書は正常に送れる）。
+ */
+export function sanitizeCoverLetter(
+  cover: string,
+  customerName?: string | null,
+): { text: string; removed: string[]; fixed: string[] } {
+  const removed: string[] = [];
+  const fixed: string[] = [];
+  let t = (cover ?? "").trim();
+  if (!t) return { text: "", removed, fixed };
+
+  // ① 他のお客様の金額ブロック
+  {
+    const r = stripEstimateAmountBlock(t);
+    if (r.removed.length) { removed.push(...r.removed); t = r.text; }
+  }
+  // ② 名前のプレースホルダ（○○さん／【お客様名】さん）→ 名前。**見出しを外す前にやる**
+  //    （【お客様名】は見出しではなく名前なので、外すと「さんお世話になっております」と壊れる）
+  {
+    const r = fixNamePlaceholder(t, customerName);
+    if (r.fixed > 0) { fixed.push(`名前のプレースホルダ ${r.fixed}件 → ${customerName ?? "（削除）"}`); t = r.text; }
+  }
+  // ③ プロンプトの見出しをそのまま写した形（【お客様に送る文】など・実送信0通）。
+  //    **見出しだけ外して後ろの本文は残す**（「【お客様の現在の状況（状態）】お申込み情報を受け取りました」）
+  {
+    const kept: string[] = [];
+    for (const l of t.split("\n")) {
+      const bare = l.replace(/\*\*/g, "");
+      const m = bare.match(PROMPT_HEADING_RE);
+      if (!m) { kept.push(l); continue; }
+      removed.push(m[0].trim());
+      const rest = bare.slice(m[0].length).trim();
+      if (rest) kept.push(rest);          // 後ろに本文が続くなら残す
+    }
+    t = kept.join("\n");
+  }
+  // ④ 会社名の名乗り（実送信0通）。行ごとではなく**その文だけ**落とす
+  {
+    const before = t;
+    t = t.replace(SELF_INTRO_RE, "");
+    if (t !== before) removed.push("会社名の名乗り");
+  }
+  t = t.replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();
+
+  // ⑤ 先頭の呼びかけがお客様の名前でない（スタッフ名を書いている・実送信0通）
+  //    ⚠ 呼び名が分からない時（route.ts が「お客様」を渡す）は**置き換えない**。
+  //       base が「お客」になり、正当な「ゆーたさん」を「お客さん」に書き換えてしまう（テストで捕まえた）。
+  {
+    const raw = (customerName ?? "").trim();
+    const base = raw.replace(/\s*(さん|様|さま)\s*$/, "");
+    const known = !!base && !/^お客$/.test(base) && !/^お客様$/.test(raw);
+    const m = t.match(LEAD_HONORIFIC_RE);
+    if (known && m && !NOT_A_NAME.has(m[1]) && m[1] !== base && m[1] !== raw) {
+      fixed.push(`先頭の呼びかけ ${m[1]}${m[2]} → ${base}${m[2]}`);
+      t = `${base}${m[2]}${t.slice(m[0].length)}`;
+    }
+  }
+  // ⑥ 短すぎる（壊れた出力）＝送らない
+  if (t.trim().length < COVER_MIN_LENGTH) {
+    if (t.trim()) removed.push(`短すぎる出力「${t.trim()}」`);
+    return { text: "", removed, fixed };
+  }
+  return { text: t, removed, fixed };
 }
