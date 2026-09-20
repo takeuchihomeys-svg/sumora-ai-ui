@@ -3,7 +3,7 @@
 //
 // 2026-09-20 竹内（H さん事例）の検証中に見つけた2つ目の崩れ。
 // 材料は**本番の実物**（本番で出た混入と、実送信365日の835通から読んだ形）。
-import { stripEstimateAmountBlock, isEstimateAmountLine } from "../estimate-cover";
+import { stripEstimateAmountBlock, isEstimateAmountLine, fixNamePlaceholder } from "../estimate-cover";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -182,6 +182,38 @@ it("金額行が続く【物件名】だけ落ちる（本番の混入）", () =
   const t = "ご案内です\n\n【プレサンス阿倍野松崎805号室】\n\n初期費用さらに\n🌟68,000円割引させて頂き\n初期費用：152,000円\n\nよろしくお願いします！！";
   const { text } = stripEstimateAmountBlock(t);
   expect(text).toBe("ご案内です\n\nよろしくお願いします！！");
+});
+
+console.log("\n── ★「○○さん」をそのまま送らない（実送信365日で0件・本番 2026-09-20 で出た）──");
+
+it("★ 名前が分かっていれば名前に置き換える", () => {
+  const { text, fixed } = fixNamePlaceholder("○○さんお世話になっております😊\nご連絡いただきありがとうございます！！", "YUMA");
+  expect(text).toBe("YUMAさんお世話になっております😊\nご連絡いただきありがとうございます！！");
+  expect(fixed).toBe(1);
+});
+
+it("ナレッジに入っている手本の形（3種類の丸・様）も直す", () => {
+  expect(fixNamePlaceholder("○○さんお気に召されましたらお部屋ご案内させて頂きます😊", "まりあ").text).toContain("まりあさんお気に召され");
+  expect(fixNamePlaceholder("〇〇様のご希望条件で物件探させていただきます！", "前田").text).toContain("前田様のご希望条件");
+  expect(fixNamePlaceholder("◯◯さんのご条件に合ったお部屋", "H").text).toContain("Hさんのご条件");
+});
+
+it("名前が分からない時は呼びかけごと外す（文は壊さない）", () => {
+  const { text } = fixNamePlaceholder("○○さんお気に召されましたらお部屋ご案内させて頂きます😊", "");
+  expect(text).toBe("お気に召されましたらお部屋ご案内させて頂きます😊");
+  expect(text).notToContain("○○");
+});
+
+it("★ 時刻のプレースホルダ（○月○日 ○○:○○）には当てない", () => {
+  const t = "○月○日（曜日）○○:○○、[物件名]にてお待ちしております";
+  expect(fixNamePlaceholder(t, "YUMA").fixed).toBe(0);
+  expect(fixNamePlaceholder(t, "YUMA").text).toBe(t);
+});
+
+it("○○が無い文は一切触らない", () => {
+  const t = "YUMAさんご連絡頂きありがとうございます😊！！\nお手隙の際にご査収ください😌！！";
+  expect(fixNamePlaceholder(t, "YUMA").fixed).toBe(0);
+  expect(fixNamePlaceholder(t, "YUMA").text).toBe(t);
 });
 
 console.log("\n── 壊れない ──");

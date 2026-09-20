@@ -11,7 +11,7 @@ import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "
 // 2026-09-20 竹内（H さん事例）: 見積書の金額文は4経路で同じ純関数から作る（1か所だけ崩れていた）
 import { buildEstimateItem, buildEstimateMessage, calcSavings, DAY_RENT_NOTE, NO_AMOUNT_FALLBACK } from "@/app/lib/estimate-body";
 // 同: 2通目（カバーレター）に別の物件の金額ブロックが写るのを落とす
-import { stripEstimateAmountBlock } from "@/app/lib/estimate-cover";
+import { stripEstimateAmountBlock, fixNamePlaceholder } from "@/app/lib/estimate-cover";
 import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
 // 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
 import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "@/app/lib/room-choices";
@@ -2401,6 +2401,16 @@ ${SMORA_COMMON_RULES}
           if (amt.removed.length > 0) {
             console.log(JSON.stringify({ tag: "aix:cover-amount-stripped", removed: amt.removed.slice(0, 6), conversationId }));
             cover_letter = amt.text;
+          }
+        }
+        // 2026-09-20 本番検証で「○○さんお世話になっております」が出た。
+        //   出所は ai_reply_knowledge の principle（「○○さんお気に召されましたら…」がプレースホルダのまま）。
+        //   実送信365日で「○○さん」は0件＝残っていたら必ず誤り。落とさず名前に置き換える。
+        {
+          const ph = fixNamePlaceholder(cover_letter, name);
+          if (ph.fixed > 0) {
+            console.log(JSON.stringify({ tag: "aix:cover-name-placeholder", fixed: ph.fixed, conversationId }));
+            cover_letter = ph.text;
           }
         }
         // 2026-09-18 出口の保証: 指示だけでは落ちるので、キャンペーンの1文が無ければ締めの直前に足す

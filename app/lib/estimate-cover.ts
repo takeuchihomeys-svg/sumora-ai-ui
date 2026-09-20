@@ -88,6 +88,31 @@ export function isAmountBlockHeading(lines: ReadonlyArray<string>, i: number): b
  * カバーレターから金額文のブロックを落とす。
  * 行単位でしか落とさない（文の中で金額に触れている形は実送信にあるので残す）。
  */
+/**
+ * 「○○さん」のままお客様に送らない（2026-09-20 本番検証で出た）。
+ *
+ * 【出所】ai_reply_knowledge の principle に、手本がプレースホルダのまま入っている:
+ *   「○○さんお気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊」
+ *   「案内文中の『○○さん』はお客様の名前を指すプレースホルダーである。実際の顧客名に置き換えて…」
+ *   ＝ ナレッジ自身が「○○を残すな」と書いているのに、AI はそのまま写すことがある。
+ * 【線】スタッフの実送信365日で「○○さん」は **0件**。残っていたら必ず誤り。
+ * 【直し方】落とすのではなく**置き換える**（落とすと文が壊れる）。
+ *   名前が分かっていれば名前に、分からなければ呼びかけごと外す。
+ * ※「○月○日（曜日）○○:○○」のような時刻のプレースホルダには当てない（さん・様が続く時だけ）。
+ */
+const NAME_PLACEHOLDER_RE = /[○〇◯]{2,}\s*(さん|様)/g;
+
+export function fixNamePlaceholder(text: string, customerName?: string | null): { text: string; fixed: number } {
+  if (!text) return { text, fixed: 0 };
+  let fixed = 0;
+  const name = (customerName ?? "").trim();
+  const out = text.replace(NAME_PLACEHOLDER_RE, (_m, honorific: string) => {
+    fixed++;
+    return name ? `${name}${honorific}` : "";
+  });
+  return { text: fixed ? out.replace(/ {2,}/g, " ") : text, fixed };
+}
+
 export function stripEstimateAmountBlock(cover: string): { text: string; removed: string[] } {
   if (!cover) return { text: cover, removed: [] };
   const lines = cover.split("\n");

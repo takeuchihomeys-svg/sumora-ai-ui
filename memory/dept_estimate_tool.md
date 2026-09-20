@@ -45,10 +45,18 @@ H さんの見積書は**スモ割 0円**だったので「初期費用：178,09
 誤削除0の線: 【物件名】の行は**直後が金額行の時だけ**／日割注記は**同じ文に金額行がある時だけ**落とす。
 （この線を外すと「④【希望築年数】」＝条件ヒアリングフォームの項目まで消える）
 
+**⚠「○○さん」をそのまま送らない**（`fixNamePlaceholder`）
+本番検証で「**○○さん**お世話になっております」が出た。出所は `ai_reply_knowledge` の principle 10件で、
+「○○さんお気に召されましたら…」がプレースホルダのまま入っている（ナレッジ自身が「○○を残すな」と書いているのに写す）。
+実送信365日で「○○さん」は**0件**＝残っていたら必ず誤り。落とさず**名前に置き換える**（落とすと文が壊れる）。
+「○月○日（曜日）○○:○○」のような時刻のプレースホルダには当てない（さん・様が続く時だけ）。
+🔜 **次にやる**: この置き換えは今カバーレターにしか通していない。ナレッジの「○○さん」は
+`viewing_invite` / `property_recommendation` の principle に多いので、内覧・物件オススメの AIX にも配る。
+
 **道具**
 ```
 npx tsx app/lib/__tests__/estimate-body.test.ts        # 22件
-npx tsx app/lib/__tests__/estimate-cover.test.ts       # 19件
+npx tsx app/lib/__tests__/estimate-cover.test.ts       # 24件
 npx tsx --env-file=.env.local scripts/audit-estimate-body.ts    # 実送信319通に当てて前後を読む
 npx tsx --env-file=.env.local scripts/audit-estimate-cover.ts   # カバーレター835通の誤削除
 VERIFY_BASE_URL=http://localhost:3000 npx tsx --env-file=.env.local scripts/verify-estimate-body.ts
