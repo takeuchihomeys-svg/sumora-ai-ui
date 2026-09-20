@@ -479,8 +479,26 @@ export function buildGreetingNote(d: GreetingDecision, jstHour: number): string 
       return `${head}これはお客様への【はじめての返信】。必ず「${d.openingLine}」で始める（一字一句変更・省略・追加禁止。この行の後に空行を挟んで本文）。この後に「かしこまりました」「はい」を続けない。${common}`;
     case "late_apology":
       return `${head}お客様が結果を催促している。必ず「${d.openingLine}」で始める（一字一句変更禁止。この行の後に改行して現状事実1文＋次アクション1文）。この行が開口語を兼ねるので「かしこまりました」「はい」を置かない。${common}`;
-    case "standard":
-      return `${head}現在${jstHour}時台（JST）・本日この方への送信はまだ（${d.reason}）。長い返信・重要な連絡・結果報告の先頭行は「${d.openingLine}」で固定（一字一句変更禁止）。短い受け止めだけの返信は挨拶行を省いて開口語から始めてよい。${openerLine}。${forbidLine}${common}`;
+    case "standard": {
+      // G33（2026-09-20 竹内「お客さんの名前入れる部分注意して」）: 挨拶行は**必須ではない**。
+      //   旧文言は「長い返信・重要な連絡・結果報告の先頭行は固定」だったが、実送信（直近120日・当日はじめて
+      //   の送信 1312通／はじめまして除く）は「お世話になっております」33%。長さ別でも 3.2%／26.0%／45.2%／
+      //   37.5%／9.6% と**どこも過半数に届かず**、300字以上ではむしろ 9.6% ＝ 旧文言と逆だった。
+      //   設計知見「必須にしてよいのは過半数が守っている形だけ」により、固定をやめて実測の比率を見せる。
+      //   下書き→実送信の差分でも「お世話→名前」92件・「お世話→なし」94件がこの付けすぎ由来（計186件）。
+      //   夜間接頭辞がある時だけは enforce=true（後処理が先頭を固定する）ので、従来どおり固定と伝える。
+      if (d.enforce) {
+        return `${head}現在${jstHour}時台（JST）・深夜帯のため先頭行は「${d.openingLine}」で固定（一字一句変更禁止。この行の後に改行して本文）。${openerLine}。${forbidLine}${common}`;
+      }
+      const callOnly = d.openingLine.replace(d.nightPrefix, "").replace(/お世話になっております！！$/, "");
+      const choices = [
+        "本題からすぐ入る（約30%）",
+        `「${d.openingLine}」を置く（約33%・置くなら一字一句変更禁止）`,
+        "開口語（かしこまりました／はい）から入る（約19%）",
+        callOnly ? `「${callOnly}」だけ置いて改行し本題（約8%）` : "",
+      ].filter(Boolean);
+      return `${head}現在${jstHour}時台（JST）・本日この方への送信はまだ（${d.reason}）。冒頭は次から場面で選ぶ（カッコ内は実際のスタッフの割合）: ${choices.join("／")}。「${d.openingLine}」は**必須ではない**（実送信の1/3）。短い返信・その場で答える返信・物件や資料をそのまま送る長文には置かず、本題か開口語から始める。${openerLine}。${forbidLine}${common}`;
+    }
     default:
       return `${head}本日の会話で冒頭挨拶は使用済み（${d.reason}）。「お世話になっております」「いつもありがとうございます」を書かない。${d.nightPrefix ? `ただし深夜帯のため先頭行は「${d.nightPrefix}」で固定（この行の後に改行して本文）。` : ""}${openerLine}。${forbidLine}${common}`;
   }

@@ -183,6 +183,30 @@ describe("E example 前提ラベル機構", () => {
     expect(/文はそのまま使わない/.test(note)).toBe(false);
   });
 
+  // 2026-09-20 竹内「AIX の機能も把握したうえで調査」（scripts/audit-aix-territory.ts の当たり⑤）:
+  //   PS_QUESTION の example は「すぐ埋まってしまう可能性が高い」＝ AIX【申込へ！】の forbid「希少性の煽り」。
+  //   実送信 12,000通中38通（0.3%）しかない語なので、前提（押さえ方の質問）以外では見せない。
+  it("E6 「内覧したいです」だけでは PS_QUESTION の煽り example を見せない", () => {
+    const cust = "この物件内覧したいです！";
+    const { pair } = build(cust, PROP_SENT);
+    const note = buildTurnPairNote(pair, cust, "あみ");
+    expect(/埋まってしまう/.test(note)).toBe(false);
+  });
+
+  it("E7 「すぐ埋まりますか」と聞かれた時は前提が立つので example を見せてよい", () => {
+    const cust = "こういうお部屋ってすぐ埋まってしまいますか？";
+    const { pair } = build(cust, PROP_SENT);
+    if (pair.ruleId === "PS_QUESTION") {
+      const note = buildTurnPairNote(pair, cust, "あみ");
+      expect(/文はそのまま使わない/.test(note)).toBe(false);
+    }
+  });
+
+  it("E8 「初期費用を抑えたい」では『押さえ』のゲートに当てない", () => {
+    expect(/埋ま|人気|(?:お部屋|物件|部屋)[^\n]{0,8}(?:押さえ|抑え)|押さえ(?:方|られ|たい|て)|キープ/
+      .test("初期費用を抑えたいです")).toBe(false);
+  });
+
   it("E3 PAIR_ELEMENT_MISSING の修正案は example ではなく要素ごとの fix リテラル", () => {
     const issues = runDeterministicChecks(AMI_NG, {
       lastCustomerMessage: AMI_CUST,

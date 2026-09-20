@@ -133,6 +133,9 @@ import {
 // Step1完全廃止（2026-08）: brain(suggested_aix_meta) が唯一の分析ソース。
 // SuggestedAixMeta 型と条件問い合わせ検出 regex は brain-core と共有する（二重定義禁止）
 import { PROPERTY_CONDITION_INQUIRY_RE, runBrainAndNotify, type SuggestedAixMeta } from "@/app/lib/brain-core";
+// 2026-09-20 竹内「AIX から返信する部分は AIX からスタッフが送るから大丈夫」:
+//   ブレインの戦略文に混ざった AIX の担当を、**戦略を渡すその行に**併記するための共有定数（四者同名）
+import { buildAixTerritoryGuard } from "@/app/lib/aix-territory";
 import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
 import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
@@ -1323,8 +1326,16 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
       customerMessage ?? "",
     );
   const viewingIntentShortReplyNote = hasViewingIntent && resolvedPropertyStatus !== "move_out_scheduled" && resolvedPropertyStatus !== "occupied"
-    // G7（2026-09-08 Fable5）: 旧例文「ご都合よろしいお日にちをお伝えさせて頂きます」は主語逆転（都合の持ち主はお客様）。aix-taxonomy viewing_invite.weDo を単一真実源にする
-    ? `\n\n【📅 内覧希望への返信は短く（最重要）】お客様が内覧希望を明示しています。返信は「${AIX_ACTION_REPLY_DIRECTION.viewing_invite.weDo}」程度の短い承認文のみにしてください。以下は絶対禁止：① 申込み提案（「先にお申込みでお部屋を押さえることも可能」等）② 内覧を促す誘導文（「お気に召されましたら〜」は不要）③ その他の追加情報 ④「ご都合よろしいお日にちをお伝えさせて頂きます」「お知らせさせて頂きます」（都合の持ち主はお客様。日程は尋ねる形のみ）。内覧日程の詳細はAIX【内覧日調整】から別途送るため、この返信には含めない。`
+    // G7（2026-09-08 Fable5）: 旧例文「ご都合よろしいお日にちをお伝えさせて頂きます」は主語逆転（都合の持ち主はお客様）。
+    // G34（2026-09-20 竹内「AIX から返信する部分は AIX からスタッフが送るから大丈夫／②や⑤の部分等は AIX から」）:
+    //   G7 は主語逆転を防ぐために「日程は尋ねる形のみ」と**疑問形を要求**していたが、日程を尋ねること自体が
+    //   AIX【内覧日調整】の担当だった。ここが weDo（「ご都合よろしいお日にち御座いますでしょうか」を含む）を
+    //   「最重要」の手本として見せていたので、セル（VI_POSITIVE）から外してもこちらから再発していた。
+    //   実送信で線を引く（scripts/audit-viewing-ask-origin.ts・直近180日 12,048通）:
+    //     この疑問形は48通。うち37通（77.1%）が AIX 由来。残り11通も「9/21 12:00〜16:00にてご案内可能です」
+    //     「13日は終日予定が入っております」等、**カレンダーを見た具体的なやり取り**で、日時なしの受付は0通。
+    //   → 本文は受付までにとどめ、日程は AIX に渡す。主語逆転の禁止（④）はそのまま残す。
+    ? `\n\n【📅 内覧希望への返信は短く（最重要）】お客様が内覧希望を明示しています。返信は「かしこまりました！！」＋「ご案内させて頂きます！！」または「ご内覧可否確認させて頂きます！！」程度の**受付だけ**の短文にしてください。以下は絶対禁止：① 申込み提案（「先にお申込みでお部屋を押さえることも可能」等）② 内覧を促す誘導文（「お気に召されましたら〜」は不要）③ その他の追加情報 ④「ご都合よろしいお日にちをお伝えさせて頂きます」「お知らせさせて頂きます」（都合の持ち主はお客様）⑤ **日程を尋ねる疑問形**（「ご都合よろしいお日にち御座いますでしょうか」「ご希望のお日にちはございますか」等）と具体的な候補日時。日程の確認も候補日時の提示もスタッフが AIX【内覧日調整】から送るので、この返信には一切含めない。`
     : "";
 
   // 見積書カバー文はAIXの「見積書送る」ボタン専用。generate-replyでは見積書を添付できないため添付済みを装う文面・金額内訳を出さない。
@@ -4183,10 +4194,18 @@ export async function POST(req: NextRequest) {
       const wp = hedge.allowance === "forbid_preemptive" ? stripPreemptiveRelax(brainMeta.winning_pattern) : (brainMeta.winning_pattern ?? "");
       const cs = hedge.allowance === "forbid_preemptive" ? stripPreemptiveRelax(brainMeta.closing_strategy) : (brainMeta.closing_strategy ?? "");
       const relaxGuard = hedge.allowance === "forbid_preemptive" ? "（未探索のため代替案・条件緩和は宣言しない。WE DO はご希望条件そのままのピックアップ宣言1文）" : "";
+      // 2026-09-20 竹内「AIX から返信する部分は AIX からスタッフが送るから大丈夫」（YUMA ③再発の根本原因）:
+      //   ブレインの戦略文には AIX の担当がそのまま入ってくる（実例: winning_pattern「直近の複数内覧候補日時を
+      //   提示し、当日確定後は…待ち合わせ場所・住所を復唱して」／closing_strategy「直近の複数候補日時を提示し」）。
+      //   同じブレインの note は「候補日時の手打ち・AI生成は禁止」と正しく言っているので、**同じ事実に逆の指示**を
+      //   別の場所から渡していた。禁止を別ブロックに足すと三つ目の指示になるため、**戦略を渡すこの行に添える**。
+      const territoryGuard = buildAixTerritoryGuard([wp, cs]);
       if (wp && cs) {
         lines.push(`- 🏆 勝ちパターン×成約戦略: 【勝ちパターン】${wp} ／ 【成約戦略】${cs} → 両者を統合した1アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信末尾に1文のみ含めること（WE DO宣言は返信全体で1文・重複禁止）${relaxGuard}`);
+        if (territoryGuard) lines.push(territoryGuard);
       } else if (wp) {
         lines.push("- 🏆 過去の勝ちパターン: " + wp + " → このパターンに沿った具体アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信に1文含めること" + relaxGuard);
+        if (territoryGuard) lines.push(territoryGuard);
       }
       // 2026-09-11: 旧「冒頭1文で感情を受け止めよ（例: ご心配なお気持ち、よくわかります）」は共感語全面禁止ルール
       //   （line-reply-prompts ■姿勢・正解返信125件中0件）と矛盾し、禁止語を避けた言い換え「〜気になりますよね」を生んでいた。
@@ -4270,13 +4289,22 @@ export async function POST(req: NextRequest) {
         }
       }
       // closing_strategy は winning_pattern との両方がある場合は統合済み（上記）・単独の場合のみ出力
-      if (cs && !wp) lines.push(`- 成約戦略: ${cs} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること${relaxGuard}`);
+      if (cs && !wp) {
+        lines.push(`- 成約戦略: ${cs} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること${relaxGuard}`);
+        if (territoryGuard) lines.push(territoryGuard);
+      }
+      // next_steps も同じ扱い。実測（198会話・全574ステップ）で 119件（20.7%）が AIX の操作手順で、
+      //   実送信12,000通に AIX 操作語は0通＝お客様向けの文には一切出ない物がそのまま素材に渡っていた。
+      const stepGuard = buildAixTerritoryGuard(brainMeta.next_steps ?? []);
       if (brainMeta.next_steps?.length && brainLocalFresh) {
         lines.push(`- 予定ステップ: ${brainMeta.next_steps.join(" / ")}`);
         lines.push(`  → 今回の返信で実行するのは Step1（${brainMeta.next_steps[0]}）のみ。Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を今回の本文に先取りして書かないこと（フェーズ先走り禁止）`);
+        lines.push(`  → ⛔ 予定ステップは**スタッフの作業手順**であって本文の素材ではない。「AIXボタンを押す」「カレンダーで確認する」等の社内・AIX の操作はお客様向けの文に一切書かない（実送信12,000通中0通）`);
+        if (stepGuard) lines.push(stepGuard);
       } else if (brainMeta.next_steps?.length) {
         // 2026-09-13 監査 抜け3: 古い判断・省略の Step1 は前の発言への次の一手。「今回実行する」とは指示しない（先走りの禁止だけ残す）
         lines.push(`- 予定ステップ（前回の分析時点・参考）: ${brainMeta.next_steps.join(" / ")} → 今回の返信は最新メッセージへの応答を優先し、Step2以降の内容（テンプレ送付・申込誘導・見積提示等）を先取りして書かないこと`);
+        if (stepGuard) lines.push(stepGuard);
       }
       // TPO判定・effective制御値は tpoGuidanceNote（IIFE外・brainMeta有無に依存しない独立ブロック）へ移動（2026-09-08）
       if (brainMeta.urgency_appropriate === false) {

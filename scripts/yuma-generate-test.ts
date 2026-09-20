@@ -87,7 +87,15 @@ async function main() {
     console.log(`${"─".repeat(72)}`);
     console.log(`【${s.id}】客「${s.msg.replace(/\n/g, " ")}」  (${sec}s)`);
     if (meta && meta.ok === false) console.log(`   meta: ok=false reason=${meta.reason}`);
-    else if (meta) console.log(`   meta: aix=${JSON.stringify(meta.suggested_aix ?? null)?.slice(0, 60)}`);
+    else if (meta) {
+      // 2026-09-20: ③で「ご都合よろしいお日にち」が再発した時、セルではなく **ブレインの note** が
+      //   「候補日時を提示し」と渡していた。どちらの経路が言っているかを見るため meta を省略せず出す。
+      console.log(`   meta.keys : ${Object.keys(meta).join(", ")}`);
+      console.log(`   suggested_aix: ${JSON.stringify(meta.suggested_aix ?? null)}`);
+      for (const k of ["brain_tier", "tier", "turn_pair", "turnPair", "rule_id", "reply_context_snapshot", "aix_meta"]) {
+        if (meta[k] !== undefined) console.log(`   ${k}: ${JSON.stringify(meta[k]).slice(0, 400)}`);
+      }
+    }
     console.log(`\n${body2 || "（本文なし）"}\n`);
   }
   console.log(`${"─".repeat(72)}`);
