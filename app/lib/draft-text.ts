@@ -10,6 +10,8 @@
 //
 // これを通した文は、**スタッフが入力欄で見ている文とまったく同じ**になる。
 import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "./meta-narration";
+// 2026-09-20 竹内（S さん事例）: 受け取っていない申込を「受け取りました」と書く捏造を落とす
+import { stripApplyReceivedClaim } from "./apply-claim";
 
 /** 本文として使えない印（社内用の合図）。これが本文全体なら送る物は無い */
 const DRAFT_SENTINELS: ReadonlySet<string> = new Set(["[AIX誘導中]", "__SHOWN__", "[画像のみ]"]);
@@ -40,6 +42,13 @@ export function stripInternalTags(text: string): string {
   t = stripMarkdownEmphasis(t);
   // 2026-09-15 竹内「こんなの絶対にいれない」: AI の作業メモは入力欄の入口でも落とす
   t = stripMetaNarration(t).text;
+  // 2026-09-20 竹内（S さん事例）「まだ申込情報の意味不明なのが出ている」:
+  //   受け取っていない申込を「お申込み情報を確かに受け取りました」と書く捏造を落とす。
+  //   竹内さんの言う「申込情報」＝ AIX【申込へ】が送る**申込フォーマット**で、
+  //   それが記入されて返ってきた時でもスタッフは「お送りいただきありがとうございます」と書き、
+  //   「受け取りました」とは**誰も書かない**（実送信365日 12,046通で 0通）。
+  //   全件監査: 実送信0件・手本0件が変わり、下書きで変わるのは捏造の1件だけ（scripts/audit-apply-claim.ts）。
+  t = stripApplyReceivedClaim(t).text;
   return t;
 }
 
