@@ -59,9 +59,10 @@ const PATTERNS: Pat[] = [
   { name: "I 高額（グレイス ガーデン 204号室・実送信 401,830円）",
     est: { property_name: "グレイス ガーデン", room_number: "204", rent: 120000, management_fee: 10000, total: 401830, discount: 0, commission: 2990, commission_tax: 299 },
     want: { discount: false, savings: true, head: true } },
-  { name: "J 家賃だけ読めて他が0（節約額は出るが初期費用は書けない）",
+  // 初期費用が読めない時は「節約額だけ」を送っても意味が無いので、受け皿の1文に倒れるのが正しい
+  { name: "J 家賃だけ読めて初期費用が0（受け皿の1文に倒れる）",
     est: { property_name: "テスト", room_number: "303", rent: 60000, management_fee: 0, total: 0, discount: 0, commission: 0, commission_tax: 0 },
-    want: { discount: false, savings: true, head: true } },
+    want: { discount: false, savings: false, head: false } },
   { name: "K イエヤス（仲介手数料0円・実送信のアカウント）", account: "ieyasu",
     est: { property_name: "ハイツカトレア B", room_number: "202", rent: 59000, management_fee: 0, total: 178090, discount: 0, commission: 0, commission_tax: 0 },
     want: { discount: false, savings: true, head: true } },

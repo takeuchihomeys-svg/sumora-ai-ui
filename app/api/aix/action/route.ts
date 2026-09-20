@@ -2363,7 +2363,21 @@ ${SMORA_COMMON_RULES}
         //   2通目にキャンペーンの内容が入った文が送られるようにする」:
         //   スタッフが入力した内容だけを使う（こちらで特典・期限・金額を作らない）
         const campaignNote = buildCampaignNote(estimateCampaign);
-        const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}`
+        // ★ 2026-09-20 竹内「色んなパターンで確認」の2回目の本番検証で分かった根本:
+        //   カバーレターのプロンプトに**今回の物件が1つも渡っていなかった**。
+        //   そのため AI は会話履歴だけを見て書き、「物件も特定できていないため送付内容の言及も不可能です」
+        //   と作業メモを返したり、直近の話題（申込書類）に引っ張られて
+        //   「お申込み情報を確かに受け取りました」と**見積書と無関係な文**を書いていた。
+        //   実送信の形は「〇〇 603号室最大限割引しました初期費用の御見積書となります！！」＝物件名が入る。
+        //   1通目（message_text）の【…】から物件名を取れば、1枚でも複数枚でも同じ材料になる（四者同名）。
+        //   ⚠ 金額は渡さない（1通目にあるので重複禁止・既存の【重複禁止ルール】と揃える）
+        const coverProps = [...message_text.matchAll(/【([^】]{1,40})】/g)]
+          .map((m) => m[1].trim())
+          .filter((s) => s && !/希望|ご入居|家賃|間取り|築年数|エリア|駅名|徒歩|初期費用|その他|広さ/.test(s));
+        const coverPropertyNote = coverProps.length > 0
+          ? `\n\n【今回お送りする御見積書のお部屋】${coverProps.join(" / ")}\n※このお部屋の御見積書をお送りする場面です。お部屋の名前は本文に入れてよい（金額は1通目に載るので書かない）。`
+          : "";
+        const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}${coverPropertyNote}`
           + (campaignNote ? `\n\n${campaignNote}` : "")
           + (coverDiffNote ? `\n\n${coverDiffNote}` : "") + (coverStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + coverStarNote : "");
         const coverResult = await callClaudeHaiku(
