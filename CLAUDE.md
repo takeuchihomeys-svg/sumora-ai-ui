@@ -106,6 +106,25 @@ WHERE is_current = true AND '分析強化の原則' = ANY(tags);
 - 書き込みを伴う本番の確認はテスト用の会話「YUMA」（`dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7`・竹内さん本人）で行い、AIX要対応の通知などの副作用は片付ける
 - 仕組み: 2層ブレイン（`app/lib/brain-layers.ts`）。戻す時は `BRAIN_LAYER_MODE=off`
 
+### 🔴 おかしな文を1通見つけた時（最初にこれを読む・2026-09-19 竹内さん指示）
+「文に問題があればテストで改善できるように」型にした。**指示を足す前にこの順番でやる**。
+
+1. **実物を1通持ってくる**（想像で始めない）
+2. **出所を追う** — 候補は5つ: ブレインの判断／手本 `ai_reply_examples`／ナレッジ `ai_reply_knowledge`／行動台帳／セーブデータ
+   ※「別の顧客の情報が混ざった」と感じてもキャッシュやDBの取り違えではなく、**設計上わざと他人の会話を載せている経路**をまず疑う
+3. **実送信で線を引く** — その言い回し・条件が実送信に何通あるか（必須にしてよいのは過半数が守っている形だけ）
+4. **誤削除0になる線を探す** — 段階を並べて0になる所を採る
+5. **入口か出口かを決める** — **入口**（手本を見せない）は厳しくてよい／**出口**（本文を書き換える）は**誤削除0でなければ入れない**
+6. **純関数＋テスト**（`app/lib` に置き、実物の本文をそのままテストに使う）
+7. **全件監査**（過去の実送信・下書きに当てて、変換の前後を**目で読む**。件数だけ見ない）
+8. **監査で止める**。止めた判断もコードにコメントで残す
+9. **記録**（設計知見＋`memory/dept_line_reply.md`＋監査スクリプトを `scripts/` に）
+
+```sql
+SELECT title, insight, rationale FROM system_design_thinking
+WHERE is_current = true AND title LIKE '%おかしな文を1通見つけたら%';
+```
+
 ### 思った通りに行かない返信・AIX の原因を探す時（抜けの見つけ方）
 直近10件に埋もれないよう、診断の型はタグで引く。直したら `穴:G1`〜`穴:G6` のタグ付きで登録する（詳細は `memory/dept_line_reply.md`）。
 ```sql
@@ -113,6 +132,13 @@ SELECT title, insight FROM system_design_thinking
 WHERE is_current = true AND 'ブレイン診断' = ANY(tags);
 ```
 先回りの道具: `npx tsx --env-file=.env.local scripts/find-brain-gaps.ts --days=30`
+
+### Supabase MCP が落ちている時（設計知見の読み書き）
+MCP が接続できなくても scripts 経由で全部できる。
+```
+npx tsx --env-file=.env.local scripts/kb.ts --tags=汎用 --limit=10     # 引く
+npx tsx --env-file=.env.local scripts/kb-insert.ts <JSONファイル>       # 記録する
+```
 
 ### RAG・プロンプトキャッシュ・LLM 呼び出しを作る／直す時（汎用の点検表）
 どの機能でも使える型は `汎用` タグで引く（RAG の精度の監査手順・キャッシュの設計と点検・静かに壊れる箇所の見つけ方・pgvector/Supabase の落とし穴・LLM 呼び出しの出口の型）。新しい汎用の型を覚えたら `汎用` タグ付きで登録する。
