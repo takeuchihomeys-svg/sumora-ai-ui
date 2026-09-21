@@ -10,7 +10,7 @@
 // 実行: npx tsx app/lib/__tests__/sent-property-filter.test.ts（全 PASS で exit 0）
 import {
   normalizePropertyUrl, canMatch, isSameOutgoing, filterOutAlreadySent, urlKeysAreDistinct,
-  renumberSummaries, parseSummaryHead, buildExcludedNotice,
+  renumberSummaries, parseSummaryHead, buildExcludedNotice, buildingWing, isSameBuilding,
   type OutgoingProperty, type SentProperty,
 } from "../sent-property-filter";
 
@@ -54,32 +54,99 @@ describe("URL を鍵にする", () => {
   });
 });
 
-describe("★ 判断できない物は外さない（誤除外0の線）", () => {
+describe("★ 建物ごとに外す（竹内さんの選択・既定）", () => {
+  it("★ B1 一度送ったマンションは、別の部屋でも外す", () => {
+    const sent: SentProperty[] = [{ property_name: "セレニテ梅田北グランデ", room_no: "805", property_url: null }];
+    const r = filterOutAlreadySent([out({ propertyName: "セレニテ梅田北グランデ", roomNo: "1203" })], sent);
+    expect(r.dropped.length).toBe(1);
+    expect(r.dropped[0].reason).toBe("building");
+  });
+  it("★ B2 号室が無くても外せる（実測で号室は 0.1% しか取れない）", () => {
+    const sent: SentProperty[] = [{ property_name: "スプランディッド本町グラン", room_no: "", property_url: null }];
+    const r = filterOutAlreadySent([out({ propertyName: "スプランディッド本町グラン" })], sent);
+    expect(r.dropped.length).toBe(1);
+    expect(r.keep).toEqual([]);
+  });
+  it("★★ B3 「〇〇Ⅱ」「〇〇Ⅲ」は**別の建物**なので外さない", () => {
+    // similarity は2文字の集合なので「ii」と「iii」が 1.000 になる。棟を分けないとここで別建物が消える
+    const sent: SentProperty[] = [{ property_name: "マスターズレジデンス道頓堀Ⅱ", room_no: "", property_url: null }];
+    const r = filterOutAlreadySent([out({ propertyName: "マスターズレジデンス道頓堀Ⅲ" })], sent);
+    expect(r.dropped.length).toBe(0);
+    expect(r.keep).toEqual([0]);
+  });
+  it("★★ B4 棟が付いた物と付かない物も別（〇〇west と 〇〇westⅡ）", () => {
+    const sent: SentProperty[] = [{ property_name: "スプランディッド上本町WEST", room_no: "", property_url: null }];
+    const r = filterOutAlreadySent([out({ propertyName: "スプランディッド上本町WESTⅡ" })], sent);
+    expect(r.dropped.length).toBe(0);
+  });
+  it("★★ B5 名前が似ているだけの別のマンションは外さない（0.97 の線）", () => {
+    // 実測: 「ブエナビスタ難波サウスタワー」↔「ブエナビスタ難波サウス」は 0.952
+    const sent: SentProperty[] = [{ property_name: "ブエナビスタ難波サウス", room_no: "", property_url: null }];
+    const r = filterOutAlreadySent([out({ propertyName: "ブエナビスタ難波サウスタワー" })], sent);
+    expect(r.dropped.length).toBe(0);
+  });
+  it("★★ B6 1回の送信の中の同じマンションは**全部残す**（竹内さんの選択）", () => {
+    const r = filterOutAlreadySent([
+      out({ propertyName: "セレニテ梅田北グランデ", roomNo: "1104" }),
+      out({ propertyName: "セレニテ梅田北グランデ", roomNo: "805" }),
+      out({ propertyName: "セレニテ梅田北グランデ", roomNo: "302" }),
+    ], []);
+    expect(r.keep).toEqual([0, 1, 2]);
+    expect(r.dropped.length).toBe(0);
+  });
+  it("★ B7 同じ回でも「同じ部屋」が2回入っていれば外す", () => {
+    const r = filterOutAlreadySent([
+      out({ propertyName: "セレニテ梅田北グランデ", roomNo: "1104" }),
+      out({ propertyName: "セレニテ梅田北グランデ", roomNo: "1104" }),
+    ], []);
+    expect(r.keep).toEqual([0]);
+    expect(r.dropped[0].reason).toBe("room");
+  });
+  it("★ B8 表記ゆれ（全角・記号・空白）は同じ建物として外す", () => {
+    const sent: SentProperty[] = [{ property_name: "porte bonheur(ポルトボヌール)", room_no: "", property_url: null }];
+    const r = filterOutAlreadySent([out({ propertyName: "porte bonheur ポルトボヌール" })], sent);
+    expect(r.dropped.length).toBe(1);
+  });
+  it("★ B9 まったく別のマンションは外さない", () => {
+    const sent: SentProperty[] = [{ property_name: "グランパシフィック梅南", room_no: "", property_url: null }];
+    const r = filterOutAlreadySent([out({ propertyName: "グランパシフィック生野東" })], sent);
+    expect(r.dropped.length).toBe(0);
+  });
+  it("B10 棟の取り出し", () => {
+    expect(buildingWing("マスターズレジデンス道頓堀ii")).toBe("ii");
+    expect(buildingWing("マスターズレジデンス道頓堀iii")).toBe("iii");
+    expect(buildingWing("スプランディッド難波2")).toBe("2");
+    expect(buildingWing("富田団地73号棟")).toBe("73号棟");
+    expect(buildingWing("フランセーヌi番館")).toBe("i番館");
+    expect(buildingWing("セレニテ梅田北グランデ")).toBe("");
+  });
+});
+
+describe("★ 部屋ごとに戻した時（SKIP_SENT_LEVEL=room）", () => {
   it("★ N1 号室も URL も無ければ突き合わせない", () => {
     expect(canMatch(out({ propertyName: "スプランディッド本町グラン" }))).toBe(false);
   });
-  it("★ N2 名前が完全に同じでも、号室が無ければ**外さない**（同じ建物の別部屋・実測74.2%）", () => {
+  it("★ N2 名前が完全に同じでも、号室が無ければ**外さない**", () => {
     const sent: SentProperty[] = [{ property_name: "スプランディッド本町グラン", room_no: "1003", property_url: null }];
-    const r = filterOutAlreadySent([out({ propertyName: "スプランディッド本町グラン" })], sent);
+    const r = filterOutAlreadySent([out({ propertyName: "スプランディッド本町グラン" })], sent, "room");
     expect(r.dropped.length).toBe(0);
     expect(r.keep).toEqual([0]);
     expect(r.unmatchable).toBe(1);
   });
   it("★ N3 前に送った側に号室が無ければ、こちらに号室があっても外さない", () => {
     const sent: SentProperty[] = [{ property_name: "エスリード新北野", room_no: "", property_url: null }];
-    const r = filterOutAlreadySent([out({ propertyName: "エスリード新北野", roomNo: "502" })], sent);
+    const r = filterOutAlreadySent([out({ propertyName: "エスリード新北野", roomNo: "502" })], sent, "room");
     expect(r.dropped.length).toBe(0);
   });
   it("★ N4 同じ建物の別の部屋は外さない", () => {
     const sent: SentProperty[] = [{ property_name: "セレニテ梅田北グランデ", room_no: "805", property_url: null }];
-    const r = filterOutAlreadySent([out({ propertyName: "セレニテ梅田北グランデ", roomNo: "1203" })], sent);
+    const r = filterOutAlreadySent([out({ propertyName: "セレニテ梅田北グランデ", roomNo: "1203" })], sent, "room");
     expect(r.dropped.length).toBe(0);
     expect(r.keep).toEqual([0]);
   });
   it("★ N5 名前が似ていても別物件なら外さない（0.95 の線）", () => {
-    // 実測の例: 「グランパシフィック生野東」と「グランパシフィック梅南」は 0.762
     const sent: SentProperty[] = [{ property_name: "グランパシフィック梅南", room_no: "501", property_url: null }];
-    const r = filterOutAlreadySent([out({ propertyName: "グランパシフィック生野東", roomNo: "501" })], sent);
+    const r = filterOutAlreadySent([out({ propertyName: "グランパシフィック生野東", roomNo: "501" })], sent, "room");
     expect(r.dropped.length).toBe(0);
   });
 });

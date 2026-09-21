@@ -309,9 +309,12 @@ export async function POST(req: NextRequest) {
         q = resolvedCustomerId ? q.eq("property_customer_id", resolvedCustomerId) : q.eq("conversation_id", conversation_id as string);
         const { data: sentRows } = await q.limit(2000);
         const sent = ((sentRows ?? []) as SentProperty[]);
-        const result = filterOutAlreadySent(outgoing, sent);
+        // 2026-09-21 竹内「一度グループに送った物件（マンションごと）は送られんように」＝ 既定は建物ごと。
+        //   部屋ごとに戻す時は SKIP_SENT_LEVEL=room
+        const level = process.env.SKIP_SENT_LEVEL === "room" ? "room" : "building";
+        const result = filterOutAlreadySent(outgoing, sent, level);
         console.log(JSON.stringify({
-          tag: "merge-pdfs:skip-sent",
+          tag: "merge-pdfs:skip-sent", level,
           customer: resolvedCustomerId ? "by_id" : "by_conversation",
           incoming: outgoing.length, known: sent.length,
           dropped: result.dropped.length, unmatchable: result.unmatchable,

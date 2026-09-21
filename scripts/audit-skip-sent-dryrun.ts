@@ -10,8 +10,12 @@
 //
 // 実行: npx tsx --env-file=.env.local scripts/audit-skip-sent-dryrun.ts
 import { createClient } from "@supabase/supabase-js";
-import { filterOutAlreadySent, type OutgoingProperty, type SentProperty } from "../app/lib/sent-property-filter";
+import { filterOutAlreadySent, type OutgoingProperty, type SentProperty, type SkipLevel } from "../app/lib/sent-property-filter";
 import { normalizeRoomNo } from "../app/lib/sent-property-record";
+import { isSameBuilding } from "../app/lib/sent-property-filter";
+
+/** 既定は建物ごと（2026-09-21 竹内さんの選択）。部屋ごとに見る時は LEVEL=room */
+const LEVEL: SkipLevel = process.env.LEVEL === "room" ? "room" : "building";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const DAYS = Number(process.env.DAYS ?? 60);
@@ -48,6 +52,7 @@ async function main() {
 
   let totalIncoming = 0, totalDropped = 0, totalUnmatchable = 0, sendsAllDropped = 0;
   const droppedEx: string[] = [];
+  const fuzzyEx: string[] = [];
   const reasonCount = new Map<string, number>();
 
   for (const list of byCust.values()) {
@@ -67,17 +72,25 @@ async function main() {
         }];
       });
       if (outgoing.length === 0) continue;
-      const r = filterOutAlreadySent(outgoing, known);
+      const r = filterOutAlreadySent(outgoing, known, LEVEL);
       totalIncoming += outgoing.length;
       totalDropped += r.dropped.length;
       totalUnmatchable += r.unmatchable;
       if (r.keep.length === 0 && outgoing.length > 0) sendsAllDropped++;
       for (const d of r.dropped) {
         reasonCount.set(d.reason, (reasonCount.get(d.reason) ?? 0) + 1);
+        // 「名前が完全には同じでないのに外した」＝ 巻き込みの可能性がある分だけを別に集める
+        if (d.reason === "building") {
+          const exact = known.some((k) => k.property_name === d.property.propertyName);
+          if (!exact) {
+            const near = known.find((k) => isSameBuilding(d.property.propertyName, k.property_name));
+            fuzzyEx.push(`     「${d.property.propertyName}」 ← 前に送った「${near?.property_name ?? "?"}」`);
+          }
+        }
         if (droppedEx.length < 25) {
           const hit = known.find((k) => k.property_name === d.property.propertyName);
-          droppedEx.push(`     外す: 「${d.property.propertyName}」${normalizeRoomNo(d.property.roomNo)}号室`
-            + `  ← 前に送った「${hit?.property_name ?? "?"}」${hit?.room_no ?? "?"}号室（${d.reason}）`);
+          droppedEx.push(`     外す: 「${d.property.propertyName}」${normalizeRoomNo(d.property.roomNo) || "(号室なし)"}`
+            + `  ← 前に送った「${hit?.property_name ?? "(名前の違う同じ建物)"}」（${d.reason}）`);
         }
       }
       for (const i of r.keep) {
@@ -98,9 +111,22 @@ async function main() {
   if (droppedEx.length === 0) console.log(`   外した物が無い`);
   for (const e of droppedEx) console.log(e);
 
-  console.log(`\n=== ③ 判定 ===`);
-  console.log(`   ・外したのは全て「名前が 0.95 以上で近く、**号室も一致**」した物だけ（isSameProperty の線）`);
-  console.log(`   ・号室が取れない物件（実測 99.9%）は 1件も外していない ＝ 誤って外す道が無い`);
-  console.log(`   ・URL を鍵にした分はこれから溜まる（候補プールに URL が無いのでここでは測れない）`);
+  console.log(`\n=== ③ 「名前が違うのに同じ建物と判定した」分を全部出す（巻き込みの実体）===`);
+  if (fuzzyEx.length === 0) {
+    console.log(`   **0件** — 外したのは全て**名前が完全に同じ**物だった（表記ゆれで寄せた物すら無い）`);
+  } else {
+    console.log(`   ${fuzzyEx.length}件（目で読む）`);
+    for (const e of fuzzyEx.slice(0, 40)) console.log(e);
+  }
+
+  console.log(`\n=== ④ 判定（単位: ${LEVEL}）===`);
+  if (LEVEL === "building") {
+    console.log(`   ・一度送ったマンションは、別の部屋でも外す（竹内さん 2026-09-21 の選択）`);
+    console.log(`   ・「〇〇Ⅱ」「〇〇Ⅲ」は棟が違うので別の建物（buildingWing で分けている）`);
+    console.log(`   ・名前の線は 0.97（実測で巻き込み0になる 0.96 より内側）`);
+    console.log(`   ・1回の送信の中の同じマンションは全部残す`);
+  } else {
+    console.log(`   ・同じ部屋だけ外す。号室が取れない物件（実測 99.9%）は1件も外さない`);
+  }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

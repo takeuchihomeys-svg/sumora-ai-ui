@@ -28,6 +28,7 @@
 //   物件名の突き合わせは sent-property-record.isSameProperty（実測で 0.95 と決めた線）をそのまま使う。
 //   ここで別の線を作らない。
 import { isSameProperty, normalizeRoomNo, type ExistingProperty } from "./sent-property-record";
+import { normalizePropertyName, similarity } from "./property-name-match";
 
 /** これから送る1件（並びは pdf_urls / property_summaries と同じ index） */
 export type OutgoingProperty = {
@@ -102,11 +103,64 @@ export function urlKeysAreDistinct(outgoing: OutgoingProperty[]): boolean {
   return new Set(keys).size > 1;
 }
 
+// ─────────────────────────────────────────────────────────────
+// 建物（マンション）ごとに外す（2026-09-21 竹内さんの選択）
+//
+// 竹内「これで一度グループに送った物件（マンションごと）は送られんようになってるかな？」
+//   → 単位は**マンションごと**／1回の送信の中の同じマンションは**全部残す**、と決まった。
+//
+// ■ ⚠ 名前だけで比べる時にいちばん危ないのは「〇〇Ⅱ」「〇〇Ⅲ」＝**別の建物**
+//   similarity は2文字のかたまりの**集合**で測るので、繰り返しの長さの違いが消える:
+//     「マスタズレジデンス道頓堀ii」 ↔ 「マスタズレジデンス道頓堀iii」 = **1.000**
+//   （どちらも "ii" という組を1つ持つだけなので集合が同じになる）
+//   実測（scripts/audit-building-name-threshold.ts・建物名3,409種類）で 0.95 以上のペア9組のうち
+//   **7組がこの形**だった（〜i ↔ 〜ii ／ 〜west ↔ 〜westⅱ など）。
+//   → 末尾の棟・号館の表記を**別に取り出して、違えば別の建物**にする。
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 建物名の末尾にある「棟・号館」の表記。無ければ ""。
+ *
+ * ⚠ ここは**多めに拾ってよい**。拾いすぎると「別の建物」と見なして外さなくなるだけで、
+ *   誤って外す側には倒れない（安全側）。
+ */
+export function buildingWing(normalizedName: string): string {
+  const m = normalizedName.match(/(?:[ⅰ-ⅻ]+|i{1,3}|iv|vi{0,3}|ix|xi{0,2}|[vx]|\d+)(?:番館|号棟|号館|棟|館)?$/);
+  return m ? m[0] : "";
+}
+
+/** 建物として同じか。棟の表記が違えば別の建物。名前の近さは BUILDING_MIN_SCORE で見る */
+export function isSameBuilding(a: string, b: string): boolean {
+  const an = normalizePropertyName(a), bn = normalizePropertyName(b);
+  if (!an || !bn) return false;
+  if (buildingWing(an) !== buildingWing(bn)) return false;
+  return similarity(an, bn) >= BUILDING_MIN_SCORE;
+}
+
+/**
+ * 建物として同じと言ってよい名前の近さ。
+ *
+ * 実測（scripts/audit-building-name-threshold.ts・直近60日に送った建物名 3,409種類）。
+ * 棟の表記を分けた後、「別名なのに似ているペア」を線ごとに数えた:
+ *   0.90 → 11組 ／ 0.95 → 1組 ／ **0.96 → 0組** ／ 0.97 → 0組
+ *   0.95 で残る1組は「ブエナビスタ難波サウスタワー」↔「ブエナビスタ難波サウス」＝ 別の建物。
+ * 巻き込みが0になる 0.96 より1つ内側の **0.97** を採る（余裕を持たせる）。
+ * ⚠ 号室と組で使う DUP_MIN_SCORE（0.95）とは別の線。名前だけで判断する分、こちらは厳しくする。
+ */
+export const BUILDING_MIN_SCORE = 0.97;
+
+/**
+ * 外す単位。
+ *  building … 一度送ったマンションは、別の部屋でも送らない（2026-09-21 竹内さんの選択）
+ *  room     … 同じ部屋だけ外す（建物が同じでも部屋が違えば送る）
+ */
+export type SkipLevel = "building" | "room";
+
 export type FilterResult = {
   /** 送る物の index（元の並びのまま） */
   keep: number[];
   /** 外した物 */
-  dropped: Array<{ index: number; property: OutgoingProperty; reason: "url" | "room" }>;
+  dropped: Array<{ index: number; property: OutgoingProperty; reason: "url" | "room" | "building" }>;
   /** 鍵が無くて判断できなかった数（外していない） */
   unmatchable: number;
   /** URL が物件を区別できていなかったので URL を鍵にしなかった（号室だけで判断した） */
@@ -115,25 +169,48 @@ export type FilterResult = {
 
 /**
  * これから送る物から、既に送ってある物を外す。
- * ⚠ 同じ送信の中の重複も外す（実測では再送の37.5%が1日以内＝同じ回の重複が多い）。
+ *
+ * ⚠ **過去の送信**と**同じ回の中**で線を変える（2026-09-21 竹内さんの選択）:
+ *   ・過去に送った分 … building なら**マンションごと**に外す（別の部屋でも送らない）
+ *   ・同じ回の中     … **部屋単位でしか外さない**。1回の提案で同じマンションの複数の部屋を
+ *                      見せるのは普通の運用（実測で送信の17.2%）なので、ここで消すと提案が痩せる。
  */
-export function filterOutAlreadySent(outgoing: OutgoingProperty[], sent: SentProperty[]): FilterResult {
+export function filterOutAlreadySent(
+  outgoing: OutgoingProperty[],
+  sent: SentProperty[],
+  level: SkipLevel = "building",
+): FilterResult {
   const keep: number[] = [];
   const dropped: FilterResult["dropped"] = [];
   let unmatchable = 0;
-  // URL が物件を区別できていない形だったら、URL は使わず号室だけで判断する
+  // URL が物件を区別できていない形だったら、URL は使わず号室・建物名で判断する
   const urlUnusable = !urlKeysAreDistinct(outgoing);
   const items = urlUnusable ? outgoing.map((p) => ({ ...p, url: null })) : outgoing;
-  // 同じ送信の中で既に採った物も「送ったこと」にする（1回の送信に同じ部屋が2回入るのを防ぐ）
+  // 同じ送信の中で既に採った物（ここは部屋単位でしか見ない）
   const takenInThisRun: SentProperty[] = [];
   items.forEach((p, i) => {
     if (!p.propertyName.trim()) { keep.push(i); return; }
-    if (!canMatch(p)) { unmatchable++; keep.push(i); return; }
-    const hit = [...sent, ...takenInThisRun].find((s) => isSameOutgoing(p, s));
-    if (hit) {
-      dropped.push({ index: i, property: p, reason: normalizePropertyUrl(p.url) && normalizePropertyUrl(hit.property_url) ? "url" : "room" });
+    // 同じ回の中の重複（同じ部屋が2回入っている）は外す
+    const runHit = takenInThisRun.find((s) => isSameOutgoing(p, s));
+    if (runHit) {
+      dropped.push({ index: i, property: p, reason: normalizePropertyUrl(p.url) ? "url" : "room" });
       return;
     }
+    // 過去に送った分
+    const pastHit = sent.find((s) => isSameOutgoing(p, s));
+    const buildingHit = level === "building" && !pastHit
+      ? sent.find((s) => isSameBuilding(p.propertyName, s.property_name))
+      : undefined;
+    if (pastHit) {
+      dropped.push({ index: i, property: p, reason: normalizePropertyUrl(p.url) && normalizePropertyUrl(pastHit.property_url) ? "url" : "room" });
+      return;
+    }
+    if (buildingHit) {
+      dropped.push({ index: i, property: p, reason: "building" });
+      return;
+    }
+    // room モードでは、鍵が無い物は判断できないので数えておく（building では名前で判断できる）
+    if (level === "room" && !canMatch(p)) unmatchable++;
     keep.push(i);
     takenInThisRun.push({ property_name: p.propertyName, room_no: normalizeRoomNo(p.roomNo), property_url: p.url ?? null });
   });
@@ -179,10 +256,12 @@ export function parseSummaryHead(summary: string): { propertyName: string; roomN
 /** スタッフに見せる一文（LINE の末尾に添える）。外した物が無ければ空文字 */
 export function buildExcludedNotice(dropped: FilterResult["dropped"]): string {
   if (dropped.length === 0) return "";
-  const names = dropped.map((d) => {
+  const names = [...new Set(dropped.map((d) => {
+    // 建物ごとに外した物は建物名だけで出す（号室を出すと「その部屋だけ」に見える）
+    if (d.reason === "building") return d.property.propertyName;
     const r = normalizeRoomNo(d.property.roomNo);
     return `${d.property.propertyName}${r ? ` ${r}号室` : ""}`;
-  });
+  }))];
   const head = `（送付済みのため ${dropped.length}件を除きました）`;
   // 多い時は名前を全部は出さない（LINE が長くなる）
   return names.length <= 5 ? `${head}\n${names.join("・")}` : head;
