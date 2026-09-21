@@ -19,6 +19,8 @@ import {
 } from './reply-context';
 // 2026-09-12 竹内方針D: JST の日付表示は jst-date に一本化
 import { jstMDHm, jstParts, jstDayStartMs } from './jst-date';
+// 2026-09-21 竹内（まりあさん事例）: 「内覧が終わった」の判定は viewing-thread と同じ1か所
+import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
 // 2026-09-15 竹内（YUYA 事例）: 保証会社の種類の日本語は guarantor-companies の1表から（依存ゼロの純関数モジュールなので循環しない）
 import { GUARANTOR_TYPE_SHORT, GUARANTOR_TYPE_LABELS, isGuarantorType } from './guarantor-companies';
 const guarantorTypeJa = (t: string): string => isGuarantorType(t) ? (GUARANTOR_TYPE_SHORT[t] || GUARANTOR_TYPE_LABELS[t]) : t;
@@ -86,6 +88,12 @@ export interface LedgerFacts {
   /** 2026-09-14 竹内（名無しの権兵衛事例）: 最後に案内した内覧の待ち合わせ（今日以降の分だけ）。
    *  「着きました」「遅れます」はこの内覧の当日連絡。旧: 台帳の要約に無く、当日の「着きました！」に新しい内覧日程を打診した */
   viewingAppointment: (ViewingAppointment & { day: 'today' | 'tomorrow' | 'later' | 'unknown'; sentAt: string | null }) | null;
+  /**
+   * 2026-09-21 竹内（まりあさん事例）: 最後に案内した内覧が**もう済んでいる**（済んだ内覧は viewingAppointment に入れない）。
+   *   印は待ち合わせの案内の後のこちらの「内覧後のお礼」（viewing-thread の STAFF_VIEWING_DONE_RE と同じ判定）。
+   *   旧: 待ち合わせを日付だけで見ていて、内覧が終わりお礼を送った後も当日中は「この内覧は決まっている」と渡していた
+   */
+  viewingDone: { appointment: ViewingAppointment; thankedAt: string } | null;
   propertiesSentCount: number;
   propertiesSentNames: string[];
   lastPropertiesSentAt: string | null;
@@ -769,9 +777,17 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
   const lastPromised = [...promises].reverse()[0] ?? null;
   // 最後に案内した内覧の待ち合わせ（今日以降の分だけ。日付が読めない時は案内から48時間以内）
   const lastMeeting = [...merged].reverse().find((e) => e.kind === 'meeting_place_sent' && e.detail.appointment) ?? null;
+  // 待ち合わせの案内の後に、こちらが「内覧後のお礼」を送っていれば、その内覧は済んでいる
+  const viewingThanks = lastMeeting && Number.isFinite(ms(lastMeeting.at))
+    ? msgs.find((m) => m.sender === 'staff' && ms(m.createdAt) > ms(lastMeeting.at) && STAFF_VIEWING_DONE_RE.test((m.text ?? '').normalize('NFKC')))
+    : undefined;
+  const viewingDone: LedgerFacts['viewingDone'] = lastMeeting?.detail.appointment && viewingThanks
+    ? { appointment: lastMeeting.detail.appointment, thankedAt: viewingThanks.createdAt ?? '' }
+    : null;
   const viewingAppointment = ((): LedgerFacts['viewingAppointment'] => {
     const a = lastMeeting?.detail.appointment;
     if (!lastMeeting || !a) return null;
+    if (viewingDone) return null;   // 済んだ内覧を「これからの内覧」として渡さない
     const today = jstDayStartMs(now);
     if (a.dateMD) {
       const [m, d] = a.dateMD.split('/').map(Number);
@@ -786,6 +802,7 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
   })();
   const facts: LedgerFacts = {
     viewingAppointment,
+    viewingDone,
     propertiesSentCount: sentDone.reduce((n, e) => n + (e.detail.propertyCount ?? 1), 0),
     propertiesSentNames: uniq(sentDone.flatMap((e) => e.detail.propertyNames ?? [])),
     lastPropertiesSentAt: sentDone.at(-1)?.at ?? null,
@@ -832,7 +849,8 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     `／ピックアップ約束${facts.pickupPromisedUnfulfilled ? `未履行×${facts.pickupPromisedCount}` : 'なし'}` +
     `／確認約束${facts.confirmationPromisedUnfulfilled ? '未履行' : facts.confirmationReported ? '報告済' : 'なし'}` +
     `／直前=${lastStaffEntry ? `${LEDGER_KIND_JA[lastStaffEntry.kind]}(${lastStaffEntry.status}/${lastStaffEntry.source})` : '不明'}` +
-    (viewingAppointment ? `／内覧の待ち合わせ=${appointmentLabel(viewingAppointment)}` : '');
+    (viewingAppointment ? `／内覧の待ち合わせ=${appointmentLabel(viewingAppointment)}` : '') +
+    (viewingDone ? `／内覧=実施済み(${viewingDone.appointment.dateMD ?? ''} ${viewingDone.appointment.time ?? ''})` : '');
   return { entries: merged, facts, summary };
 }
 
@@ -892,6 +910,12 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
   if (f.recentDone.vacancyCheck || f.recentDone.mgmtCheck) lines.push(`→ 募集状況の確認は実行・報告済み（結果=${f.confirmationReportPattern ?? '報告済'}）。「確認します」の再宣言は禁止（新しい物件の提示がある場合のみ正当）。`);
   // 2026-09-14 竹内（名無しの権兵衛事例）: 内覧の約束は送った内容の中でも鮮度が高い。当日の「着きました」に新しい内覧日程を打診しない
   //   （文例はスタッフの実送信: 着いた→「まもなく到着いたします！！少々お待ちください」／遅れる→「かしこまりました！！お気をつけてお越しください」）
+  // 2026-09-21 竹内（まりあさん事例）「なんでここ明日会えるの楽しみ等今の分からない文がでているのか」:
+  //   済んだ内覧を「決まっている内覧」として渡していた（上の viewingDone）。済んだ事をはっきり書き、
+  //   内覧前・当日の段取りの言葉は**種類の名前だけ**で止める（設計知見「本文を引用して渡すと写す」）
+  if (f.viewingDone) {
+    lines.push(`→ 内覧は**実施済み**（${`${f.viewingDone.appointment.dateMD ?? ''} ${f.viewingDone.appointment.time ?? ''}`.trim()}・${fmtJst(f.viewingDone.thankedAt)} に内覧後のお礼も送付済み）。今は内覧後（お客様の検討・申込を待つ段階）。内覧前・当日の段取りの言葉（これから会う予定・楽しみにしている・道中の気遣い・ご案内の予告）は書かない。`);
+  }
   if (f.viewingAppointment) {
     // 2026-09-20 竹内（まりあさん事例）: 旧注記は「ご案内させて頂きます」ごと禁止していたが、
     //   スタッフの実送信の正解はまさに「本日16時お部屋ご案内させて頂きます！」＝その語を使う。

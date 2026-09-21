@@ -90,6 +90,38 @@ it("名無しの権兵衛: 当日の台帳に「内覧の待ち合わせ=9/14 12
   expect(/着きました/.test(note) && /少々お待ちください/.test(note)).toBe(true);
   expect(/昭和グランドハイツ/.test(note) || /昭和グランドハイツ/.test(l.summary)).toBe(false);
 });
+// ─── 2026-09-21 竹内（まりあさん事例）「なんでここ明日会えるの楽しみ等今の分からない文がでているのか」───
+//   内覧が終わり「本日お時間頂きありがとうございました」を送った後も、当日中は「この内覧は決まっている」と渡していた
+//   → 下書き「明日お会い出来るのを楽しみにしております！！お気をつけてお越しください😌！！」
+const MARIA = [
+  { sender: "staff", text: "明日16:00にRISING Maison 本町橋 \n現地エントランスお待ち合わせで何卒よろしくお願い致します😌！！\n住所: 大阪府大阪市中央区本町橋8-1", createdAt: "2026-09-20T13:33:07Z" },
+  { sender: "customer", text: "わかりました！", createdAt: "2026-09-20T13:38:00Z" },
+  { sender: "staff", text: "まりあさんお世話になっております！！\n本日16時よりお部屋ご案内させて頂きます！\n本日は何卒よろしくお願い致します！！", createdAt: "2026-09-21T04:40:00Z" },
+  { sender: "staff", text: "かしこまりました！！\nお気をつけてお越しください😌！！", createdAt: "2026-09-21T07:04:00Z" },
+  { sender: "staff", text: "まりあさん\n本日お時間頂きありがとうございました！！\nスプランディッド堀江お気に召されましたらお申込みさせていただきます😊！！", createdAt: "2026-09-21T11:13:00Z" },
+  { sender: "customer", text: "母に聞いてみます！", createdAt: "2026-09-21T12:15:00Z" },
+];
+it("★★ まりあ: 内覧後のお礼を送った後は、その内覧を「これからの内覧」として渡さない（実施済みにする）", () => {
+  const l = buildActionLedger({ messages: MARIA, now: Date.parse("2026-09-21T12:16:00Z") });
+  expect(l.facts.viewingAppointment).toBe(null);
+  expect(l.facts.viewingDone?.appointment.time).toBe("16:00");
+  const note = buildActionLedgerNote(l);
+  expect(/実施済み/.test(note)).toBe(true);
+  expect(/この内覧は決まっている/.test(note)).toBe(false);
+  // 禁止の言葉を本文ごと渡さない（設計知見「本文を引用して渡すと写す」）
+  expect(/お会い出来るのを楽しみ|お気をつけてお越し/.test(note)).toBe(false);
+});
+it("★ まりあ: お礼の前（内覧の直前・当日の「遅れます」の頃）は従来どおり「本日の内覧」", () => {
+  const l = buildActionLedger({ messages: MARIA.slice(0, 4), now: Date.parse("2026-09-21T07:05:00Z") });
+  expect(l.facts.viewingAppointment?.day).toBe("today");
+  expect(l.facts.viewingDone).toBe(null);
+});
+it("★ 内覧後のお礼の後に**次の内覧**の待ち合わせを案内したら、次の内覧は「これからの内覧」（止めない）", () => {
+  const next = { sender: "staff", text: "明日12:00にアーバネックス東梅田現地エントランス前お待ち合わせ何卒よろしくお願い致します！！", createdAt: "2026-09-21T11:30:00Z" };
+  const l = buildActionLedger({ messages: [...MARIA.slice(0, 5), next], now: Date.parse("2026-09-21T11:31:00Z") });
+  expect(l.facts.viewingAppointment?.day).toBe("tomorrow");
+  expect(l.facts.viewingDone).toBe(null);
+});
 it("過ぎた内覧の待ち合わせは載せない（翌日以降）", () => {
   const l = buildActionLedger({ recentAixRows: [{ aix_type: "meeting_place", created_at: "2026-09-13T02:24:05Z", sent_at: "2026-09-13T02:24:03Z", generated_text: MEET_AIX }], messages: [], now: Date.parse("2026-09-15T03:00:00Z") });
   expect(l.facts.viewingAppointment).toBe(null);
