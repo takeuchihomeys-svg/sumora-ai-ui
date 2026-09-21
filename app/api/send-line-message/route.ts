@@ -88,6 +88,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "generation_failure_text", message: "AI返信の生成に失敗した文は送信できません。再生成するか本文を入力してください" }, { status: 400 });
   }
 
+  // ── 2026-09-21 竹内「LINEのグループにおくるはずが個人のLINEにおくらないように。グループに送るときはグループに送る」──
+  //   送る直前に「会話の宛先」と「送ろうとしている宛先」を突き合わせる（判定は line-target.ts の1か所）。
+  //   ・グループの会話から個人へ／個人の会話からグループへ → 送らない
+  //   ・グループの発言から誤って個人の会話として作られた会話（send_blocked_reason）→ 送らない
+  //   実例: 9/21 黒明様お部屋探し。グループへの返信のつもりが黒明さん個人の会話から送られていた。
+  {
+    const { checkSendTarget } = await import("@/app/lib/line-target");
+    const { data: convRows } = conversation_id
+      ? await supabase.from("conversations").select("line_user_id, send_blocked_reason").eq("id", conversation_id).limit(1)
+      : await supabase.from("conversations").select("line_user_id, send_blocked_reason").eq("line_user_id", line_user_id).limit(1);
+    const convForCheck = ((convRows ?? [])[0] as { line_user_id: string | null; send_blocked_reason: string | null } | undefined) ?? null;
+    const check = checkSendTarget(line_user_id, convForCheck);
+    if (!check.ok) {
+      console.warn(JSON.stringify({ tag: "send-line-message:blocked", reason: check.reason, conversationId: conversation_id ?? null, to: line_user_id.slice(0, 5) }));
+      return NextResponse.json({ ok: false, errorCode: check.reason, error: check.message }, { status: 409 });
+    }
+  }
+
   // conversations.account が null/wrong でも line_contacts から正しいアカウントを解決
   const accountKey = await resolveAccountKey(line_user_id, account);
   const token = getToken(accountKey);

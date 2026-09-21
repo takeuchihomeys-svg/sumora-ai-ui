@@ -151,6 +151,8 @@ import { resolveNegativeReport } from "@/app/lib/negative-context";
 import { resolveApplicationStage, buildApplicationStageNote } from "@/app/lib/application-stage";
 // 2026-09-21 竹内「引用とあれば引用先の画像を読み取れるように」: 引用の読み方を AIX・ブレインと同じ関数に揃える
 import { resolveLatestQuotedContext, buildQuotedReplyNote } from "@/app/lib/quoted-context";
+// 2026-09-21 竹内「個人とLINEのグループ分けて認識」: グループの会話は初回の挨拶・表示名の呼びかけをしない
+import { isMultiPersonTarget, isGroupConversationName } from "@/app/lib/line-target";
 /**
  * 直前送信の材料を止めるスイッチ（A/B の比較と、効かなかった時の戻し道）。
  * `PREV_SEND_NOTE=off` で無効。dev サーバーは起動時の環境変数を読むので、切り替えには再起動が要る。
@@ -3006,6 +3008,25 @@ export async function POST(req: NextRequest) {
       });
       return NextResponse.json({ skipped: true, reason: "post_apply_or_skip_status" });
     }
+  }
+
+  // ─── LINE グループの会話（2026-09-21 竹内・黒明様お部屋探し）────────────────────────────
+  //   グループはスタッフがお客様とのやり取りのために作る（招かれる）もので、関係は既にある。
+  //   しかもグループでのスタッフの発言は LINE アプリから直接送る事が多く、こちらの記録に残らないので
+  //   「こちらはまだ何も送っていない＝初回」と誤読して「はじめまして…鈴木と申します」を付けていた（9/21 実物）。
+  //   → グループでは初回の挨拶を付けない。表示名（【グループ】…）は人の名前ではないので呼び名にも使わない。
+  let isGroupConversation = false;
+  if (conversationId) {
+    try {
+      const { data: tgt } = await supabase.from("conversations").select("line_user_id").eq("id", conversationId).maybeSingle();
+      isGroupConversation = isMultiPersonTarget((tgt as { line_user_id?: string | null } | null)?.line_user_id ?? null);
+    } catch { /* 読めなければ従来どおり */ }
+  }
+  if (isGroupConversation) {
+    hasStaffRepliedFromBody = true;
+    if (state === "first_reply") state = "proposing";
+    if (isGroupConversationName(lineDisplayName)) lineDisplayName = "";
+    console.log(JSON.stringify({ tag: "reply:group-conversation", conversationId }));
   }
 
   // ─── 顧客名の確定（2026-09-11 竹内方針3: 実際に呼んでいる名前のまま・途中で変えない）────────────────

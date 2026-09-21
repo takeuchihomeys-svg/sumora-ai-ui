@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import AixModal, { type AixActionType } from "./components/AixModal";
@@ -15,6 +15,8 @@ import type { CheckIssue, CheckResult } from "./lib/final-check";
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
 import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
+// 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
+import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./lib/brain-meta-restore";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
@@ -54,6 +56,8 @@ type Message = {
   isAix?: boolean;
   quotedMessageId?: string | null;
   lineMessageId?: string | null;
+  // 2026-09-21 竹内（黒明様お部屋探し）: LINE グループの発言者（グループは複数人が話す）。個人の会話では空
+  speakerName?: string | null;
 };
 
 type Conversation = {
@@ -74,6 +78,8 @@ type Conversation = {
   aiDraft?: string | null;
   suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string; next_steps?: string[]; reply_mode?: "aix" | "auto_reply"; two_choice_mode?: boolean; reply_direction_label?: string; alt_actions?: string[]; decision_source?: string | null } | null;
   suggestedNextAix?: string | null;
+  // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信を止めている理由（グループから誤って個人として作られた会話）
+  sendBlockedReason?: string | null;
   messages: Message[];
 };
 
@@ -95,6 +101,7 @@ type SupabaseConversationRow = {
   ai_draft?: string | null;
   suggested_aix_meta?: { action: string; note: string; closing_strategy?: string; template_hint?: string; next_steps?: string[]; enforcement_level?: "required" | "recommended" | "optional"; reply_mode?: "aix" | "auto_reply" } | null;
   suggested_next_aix?: string | null;
+  send_blocked_reason?: string | null;
 };
 
 // AI下書きから内部メタタグ（<<<STOP_REASON:...>>> / <<<SUGGESTED_AIX:{...}>>>）を除去する。
@@ -123,6 +130,7 @@ type SupabaseMessageRow = {
   is_aix_generated?: boolean | null;
   quoted_message_id?: string | null;
   line_message_id?: string | null;
+  speaker_name?: string | null;
 };
 
 // JST基準で今日の日付を YYYY-MM-DD で返す
@@ -2055,6 +2063,7 @@ export default function Home() {
                   rawCreatedAt: m.created_at,
                   isAix: m.is_aix_generated || false,
                   quotedMessageId: m.quoted_message_id || undefined,
+          speakerName: (m as { speaker_name?: string | null }).speaker_name || undefined,
                   lineMessageId: m.line_message_id || undefined,
                 }));
                 setConversations((prev) =>
@@ -2083,6 +2092,7 @@ export default function Home() {
           rawCreatedAt: m.created_at,
           isAix: m.is_aix_generated || false,
           quotedMessageId: m.quoted_message_id || undefined,
+          speakerName: (m as { speaker_name?: string | null }).speaker_name || undefined,
           lineMessageId: m.line_message_id || undefined,
         }));
         scrollAfterFetchRef.current = selectedId;
@@ -2137,6 +2147,7 @@ export default function Home() {
         time: formatTime(m.created_at),
         rawCreatedAt: m.created_at,
         quotedMessageId: m.quoted_message_id || undefined,
+          speakerName: (m as { speaker_name?: string | null }).speaker_name || undefined,
         lineMessageId: m.line_message_id || undefined,
       }));
       setConversations(prev => prev.map(c =>
@@ -2434,6 +2445,7 @@ export default function Home() {
           time: formatTime(message.created_at),
           rawCreatedAt: message.created_at,
           quotedMessageId: message.quoted_message_id || undefined,
+          speakerName: (message as { speaker_name?: string | null }).speaker_name || undefined,
           lineMessageId: message.line_message_id || undefined,
         }))
         .sort((a, b) => (a.rawCreatedAt || "").localeCompare(b.rawCreatedAt || ""));
@@ -2466,6 +2478,7 @@ export default function Home() {
         lastSender,
         status: autoStatus,
         lineUserId: conversation.line_user_id,
+        sendBlockedReason: (conversation as SupabaseConversationRow).send_blocked_reason ?? null,
         profileImageUrl: conversation.profile_image_url || undefined,
         updatedAt: effectiveUpdatedAt,
         account: conversation.account || undefined,
@@ -2635,6 +2648,7 @@ export default function Home() {
           lastSender: (c.last_sender as "customer" | "staff" | undefined) ?? undefined,
           status: autoStatus,
           lineUserId: c.line_user_id || "",
+          sendBlockedReason: c.send_blocked_reason ?? null,
           updatedAt: c.updated_at || "",
           messages: [],
           account: c.account ?? "sumora",
@@ -3504,7 +3518,7 @@ export default function Home() {
 
       // こちらがまだ何も送っていない（AIX も含む・画像だけは除く）→ first_reply としてAPIに渡す（初回挨拶文を生成するため）
       //   status が proposing（条件フォームで自動で上がる）でも初回（2026-09-14 朱莉事例・conversation-status.firstReplyStateOrNull）
-      const effectiveState = firstReplyStateOrNull(selectedConversation.status, staffHasEngaged(selectedConversation.messages)) ?? selectedConversation.status;
+      const effectiveState = firstReplyStateOrNull(selectedConversation.status, staffHasEngaged(selectedConversation.messages) || isMultiPersonTarget(selectedConversation.lineUserId)) ?? selectedConversation.status;
 
       const linkedCustomerForGen = linkedCustomerMap[selectedConversation.id];
       // 紐付き条件 → なければメモをフォールバック（80%の非紐付き会話でも条件が渡る）
@@ -3892,7 +3906,7 @@ export default function Home() {
       setSparkleGenerating(true);
       const linkedCustomer = linkedCustomerMap[selectedConversation.id];
       // 初回対応かどうか（conversation-status.firstReplyStateOrNull・bg-async/cron と同じ関数・2026-09-14 朱莉事例）
-      const effectiveState = firstReplyStateOrNull(selectedConversation.status, staffHasEngaged(msgs)) ?? selectedConversation.status;
+      const effectiveState = firstReplyStateOrNull(selectedConversation.status, staffHasEngaged(msgs) || isMultiPersonTarget(selectedConversation.lineUserId)) ?? selectedConversation.status;
 
       // 直近スタッフの見積書メッセージから物件名を検出してhintに注入
       const sparkleEstimateProperty = (() => {
@@ -7533,6 +7547,10 @@ export default function Home() {
                           onTouchMove={cancelLongPress}
                           onContextMenu={(e) => { e.preventDefault(); setContextMenu({ messageId: message.id, x: e.clientX, y: e.clientY, text: message.text, sender: message.sender }); }}
                         >
+                          {/* 2026-09-21 竹内（黒明様お部屋探し）: LINE グループでは誰の発言かを出す */}
+                          {isCustomer && message.speakerName && (
+                            <div className="mb-1 text-[11px] font-semibold text-slate-500">{message.speakerName}</div>
+                          )}
                           {/* 引用（リプライ）元メッセージの表示 */}
                           {isCustomer && message.quotedMessageId && (() => {
                             const quoted = quotedMessageMap.get(message.quotedMessageId!);
@@ -8984,6 +9002,13 @@ export default function Home() {
               return null;
             })()}
 
+            {/* 2026-09-21 竹内「LINEのグループにおくるはずが個人のLINEにおくらないように」:
+                グループの発言から誤って個人として作られた会話は送信を止めている（サーバー側 send-line-message でも止まる） */}
+            {selectedConversation.sendBlockedReason && (
+              <div className="mx-1 mb-1 rounded-2xl border border-red-300 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">
+                ⛔ {sendBlockedMessage(selectedConversation.sendBlockedReason)}
+              </div>
+            )}
             {/* AI文案生成失敗時の再生成バナー */}
             {draftRetryConvId === selectedConversation.id && !replyDraft && (
               <div className="mx-1 mb-1 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 flex items-center gap-2">

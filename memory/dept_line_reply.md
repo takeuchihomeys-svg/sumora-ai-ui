@@ -4,6 +4,32 @@
 
 ---
 
+## LINE グループは「宛先＝グループID」・個人と取り違えたら送らない（竹内・2026-09-21 黒明様お部屋探し）— 黄金ルール
+
+**起きた事故**: webhook が `source.userId`（発言者）しか見ておらず `source.groupId` を捨てていた。
+グループ「黒明様お部屋探し」の発言が**黒明さん個人の会話（名称未設定）**として作られ、
+スタッフがそこから送った画像4枚＋報告は**個人の LINE へ**（グループには届かず）。会話335件は全て個人（U…）だった。
+
+**決め方は `app/lib/line-target.ts` の1か所**（ID の先頭1文字: U＝個人／C＝グループ／R＝トークルーム）
+- `resolveEventTarget` … 会話のキー（＝返信の宛先）は**グループなら groupId**。発言者は別に持つ（`messages.speaker_user_id / speaker_name`）
+- `checkSendTarget` … 送る直前の関門。**会話の宛先と違う宛先・送信停止の会話には送らない**（send-line-message＝409 / 予約送信＝failed）
+- 表示名は `【グループ】グループ名`（竹内「グループなら分かりやすくグループと入れる」）。取れない間は `【グループ】グループ名取得中`
+- グループでは**表示名を呼び名にしない**（「黒明様お部屋探しさん」防止）・**初回の挨拶を付けない**（グループでのスタッフ発言は LINE アプリから直接で記録に残らず「初回」と誤読していた）
+  → generate-reply / address-name-server / aix/action / aix-template-generate の4か所
+- join（招待）でグループの会話を作る・leave で `line_status='left'`・社内グループ（売上番長・物件ピックアップ）は除外
+- `conversations.send_blocked_reason='created_from_group'` … グループから誤って個人として作られた会話。**本人から個人トークで届いたら自動で外れる**
+  （黒明さん個人の会話 `a144d73e…` に付与済み）
+
+**グループ名の取り方**: 個人のプロフィール API はグループのメンバーに使えない。`/v2/bot/group/{id}/summary`（グループ名）・`/v2/bot/group/{id}/member/{userId}`（発言者名・友だちでなくても可）
+
+```
+npx tsx app/lib/__tests__/line-target.test.ts                          # 純関数（19件）
+npx tsx --env-file=.env.local scripts/yuma-send-target-test.ts         # 送信の関門（YUMA・要 INTERNAL_API_SECRET）
+npx tsx --env-file=.env.local scripts/peek-group-conversations.ts      # 個人／グループの内訳
+```
+
+---
+
 ## 引用先の画像は「どの物件か」だけでなく**中身**を読む（竹内・2026-09-21「引用とあれば引用先の画像を読み取れるように」）— 黄金ルール
 
 **お客様が引用した画像が、こちらが送った物件資料なら、資料に書いてある条件を材料に渡す。**

@@ -91,6 +91,18 @@ export async function GET(req: NextRequest) {
       }
       if (!claimed?.length) continue;
 
+      // 2026-09-21 竹内「LINEのグループにおくるはずが個人のLINEにおくらないように」:
+      //   予約送信も即時送信と同じ関門を通す（会話の宛先と違う・送信停止の会話 → 送らずに失敗にする）
+      {
+        const { checkSendTarget } = await import("@/app/lib/line-target");
+        const { data: convRows } = msg.conversation_id
+          ? await supabase.from("conversations").select("line_user_id, send_blocked_reason").eq("id", msg.conversation_id as string).limit(1)
+          : { data: [] as unknown[] };
+        const conv = ((convRows ?? [])[0] as { line_user_id: string | null; send_blocked_reason: string | null } | undefined) ?? null;
+        const check = checkSendTarget(msg.line_user_id as string, conv);
+        if (!check.ok) throw new Error(`送信を止めました: ${check.message}`);
+      }
+
       const accountKey = resolveAccountKey(msg.account as string | undefined);
       const token = getToken(accountKey);
       if (!token) throw new Error(`LINE token not configured: ${accountKey}`);

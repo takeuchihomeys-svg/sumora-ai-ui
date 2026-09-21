@@ -5,6 +5,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { resolveAddressName, type AddrMsg, type AddressNameVerdict } from "@/app/lib/validate-reply";
 import { mergeHistoryForAddress, type AddressWindowMsg, type AddressDbMsg } from "@/app/lib/address-history";
+import { isGroupConversationName } from "@/app/lib/line-target";
 
 const HISTORY_LIMIT = 150;
 
@@ -46,7 +47,8 @@ export async function resolveAddressNameForConversation(
   displayName?: string | null,
 ): Promise<AddressNameVerdict & { pcName: string; convName: string }> {
   if (!conversationId) {
-    return { ...resolveAddressName({ messages: recentMessages, displayName: displayName ?? "" }), pcName: "", convName: "" };
+    const d = isGroupConversationName(displayName) ? "" : (displayName ?? "");
+    return { ...resolveAddressName({ messages: recentMessages, displayName: d }), pcName: "", convName: "" };
   }
   const [names, hist] = await Promise.all([
     fetchDbCustomerNames(conversationId),
@@ -55,7 +57,11 @@ export async function resolveAddressNameForConversation(
       .order("created_at", { ascending: false }).limit(HISTORY_LIMIT)
       .then((r) => r, (e: unknown) => ({ data: null, error: e })),
   ]);
-  const disp = (displayName ?? "").trim() || names.convName;
+  // 2026-09-21 竹内（黒明様お部屋探し）: グループの会話の表示名は「【グループ】黒明様お部屋探し」＝人の名前ではない。
+  //   これを呼び名の元にすると「黒明様お部屋探しさん」になる。グループでは表示名を使わず、
+  //   スタッフが実際に呼んだ名前（履歴）と顧客管理の実名だけで決める
+  const isGroup = isGroupConversationName(names.convName) || isGroupConversationName(displayName);
+  const disp = isGroup ? "" : ((displayName ?? "").trim() || names.convName);
   let messages: AddrMsg[] = recentMessages.map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.createdAt ?? null, isAix: m.isAix ?? null }));
   const rows = (hist as { data: DbMsg[] | null }).data;
   if (rows && rows.length) messages = mergeHistoryForAddress(recentMessages, rows);

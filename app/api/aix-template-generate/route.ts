@@ -51,6 +51,7 @@ import { buildLengthNote, checkLength } from "@/app/lib/template-length";
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-20 竹内「AI の作業メモは下書き欄に絶対入れない」: 返信生成・AIX 本体と同じ関数をテンプレートにも
 import { isNotACustomerReply, stripMetaNarration } from "@/app/lib/meta-narration";
+import { isGroupConversationName } from "@/app/lib/line-target";
 // 2026-09-21 竹内「付けるかはブレインが判断する／お客さんの反応見て刺さっているなら誘導する」
 import { resolveCtaGuidance } from "@/app/lib/cta-guidance";
 // お客様の反応の分類は返信生成・往復文脈と同じ関数（四者同名）
@@ -565,7 +566,10 @@ export async function POST(req: NextRequest) {
   // 「〇〇さんにかなりオススメ出来る」と伏せ字のまま出力されていた。
   // generate-reply と同じく property_customers.customer_name → conversations.customer_name を
   // 辿って実名を復元し、いずれも実名の形でなければ「名前なし」で生成する（誤名で呼ぶより安全）。
-  let resolvedCustomerName = isPlausiblePersonName(customerName)
+  // 2026-09-21 竹内（黒明様お部屋探し）: LINE グループの表示名（【グループ】…）は人の名前ではないので呼び名に使わない
+  let resolvedCustomerName = isGroupConversationName(customerName)
+    ? ""
+    : isPlausiblePersonName(customerName)
     ? (customerName ?? "").trim()
     : (() => {
         const stripped = stripNonNameChars(customerName ?? "");
@@ -609,7 +613,7 @@ export async function POST(req: NextRequest) {
     if (!resolvedCustomerName) {
       // property_customers（スタッフが実名に修正できる列）→ conversations（LINE表示名由来）の順
       resolvedCustomerName =
-        [pcName, convName].map((n) => stripNonNameChars(n)).find((n) => isPlausiblePersonName(n)) ?? "";
+        [pcName, isGroupConversationName(convName) ? "" : convName].map((n) => stripNonNameChars(n)).find((n) => isPlausiblePersonName(n)) ?? "";
       if (!resolvedCustomerName) {
         console.warn("[aix-template-generate] 実名として使える顧客名なし（名前なしで生成）:", {
           conversationId, passed: customerName ?? "", pcName, convName,

@@ -3143,6 +3143,17 @@ CREATE TABLE IF NOT EXISTS image_details (
 CREATE INDEX IF NOT EXISTS idx_image_details_conv ON image_details(conversation_id);
 ALTER TABLE image_details DISABLE ROW LEVEL SECURITY;
 
+-- LINE グループ対応（2026-09-21 竹内「LINEのグループでも送れるように。個人とLINEのグループ分けて認識」）
+--   line_user_id は「宛先」。グループならグループID（C…）・トークルームなら R…・個人なら U…。
+--   line_source_type は表示・検索用の写し（判定の正は app/lib/line-target.ts の lineTargetKind＝IDの先頭1文字）。
+--   send_blocked_reason: 送信を止める印（'created_from_group' ＝ グループの発言から誤って個人の会話として作られた）。
+--     個人のトークで本人から直接メッセージが来たら webhook が印を外す（本物の個人の会話だったと分かるので）。
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS line_source_type TEXT DEFAULT 'user';
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS send_blocked_reason TEXT;
+--   グループでは発言者が複数いる。誰が言ったかを残す（個人の会話では空のまま）
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS speaker_user_id TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS speaker_name TEXT;
+
 -- viewing_history 内覧の内容（2026-09-15 竹内・yasuki 事例）
 --   内覧後の挨拶の画面で、内覧に行ったスタッフが分かったこと（誰が契約するか・誰と相談しているか・物件の感想・気にしている点）を入れる。
 --   ブレイン・戦略・返信生成・AIX が前提として読む（会話に書かれない事情）。notes は待ち合わせの案内の記録に使っているので別の列

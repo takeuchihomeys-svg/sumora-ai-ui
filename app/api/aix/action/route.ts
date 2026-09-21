@@ -19,6 +19,7 @@ import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phr
 import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "@/app/lib/room-choices";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
 import { resolveLatestQuotedContext, formatQuotedContextBlock, propertyLabelsForImages } from "@/app/lib/quoted-context";
+import { isGroupConversationName } from "@/app/lib/line-target";
 import { avoidTopicsForAix } from "@/app/lib/aix-staff-first";
 import { viewingReportNoteForReply } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
@@ -1731,7 +1732,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // 全AIXアクション共通ルール（静的ルール + 動的ブレイン制約）
     const aixBrainRules = AIX_CURATED_AND_CRITICAL_RULES + brainGuidanceNote;
 
-    const rawName = customer_name ? String(customer_name).trim() : "";
+    // 2026-09-21 竹内（黒明様お部屋探し）: LINE グループの会話の表示名は「【グループ】黒明様お部屋探し」＝人の名前ではない。
+    //   そのまま使うと「【グループ】黒明様お部屋探しさん」と呼びかける。グループでは表示名を使わず、
+    //   スタッフが実際に呼んだ名前（下の extractPreferredName）だけで決める
+    const rawName = customer_name && !isGroupConversationName(String(customer_name)) ? String(customer_name).trim() : "";
     // スタッフが会話内で実際に使っていた呼び名を優先（LINE表示名より正確）
     const preferredRawName = extractPreferredName(
       Array.isArray(recent_messages) ? (recent_messages as Array<{ sender: string; text?: string | null }>) : [],
