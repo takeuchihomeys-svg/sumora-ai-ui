@@ -32,7 +32,7 @@ import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMIS
 import { isViewingAccessQuestion } from "./viewing-access";
 // 2026-09-17 竹内（YUYA 事例）: ポータルの決まった説明（スタッフの実送信そのまま）は指摘の対象から外す
 import { resolvePortalQuestion, isPortalNoticeSentence } from "./portal-notice";
-import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, classifyReplyBody, type GreetingKind, type GreetingDecisionLite } from "./greeting";
+import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, classifyReplyBody, isConditionFormThanksOpening, type GreetingKind, type GreetingDecisionLite } from "./greeting";
 import {
   PHASE_PROHIBITIONS,
   FORM_LABEL_RE,
@@ -1562,7 +1562,15 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     if (/感謝返し|短い了承|強推し直後|一時保留|検討中フォロー/.test(tpo) && !/^はい/.test(head)) {
       issues.push({ pass: "rule_check", severity: "warning", code: "GRATITUDE_OPENING", message: "感謝・了承・保留の場面の開口語は「はい😊！！」一択です（「かしこまりました」「承知いたしました」「ありがとうございます」で始めない）", evidence: text.trimStart().slice(0, 20), suggestion: "冒頭を「はい😊！！」（単独行）に変更" });
     }
-    if (/条件提示|内覧キャンセル|顧客自身の断り/.test(tpo) && !/^かしこまりました/.test(head)) {
+    // 2026-09-21 竹内「かしこまりましたで文送る指摘あるのに改善されていない。これなら最終チェックの意味がない」:
+    //   お客様が条件フォームを送った時、enforceOpening（greeting.ts）が先頭に
+    //   「ご条件お送り頂きありがとうございます😊！！」を**必ず足す**（竹内 2026-09-12 あや事例）。
+    //   そこへこの検査が「かしこまりました一択」と言うと、後処理が必ず勝つので**永久に直らない指摘**になる。
+    //   自分の仕組みが足した行は免除する（設計知見「同じ事実について書くなと書けを別の場所から渡さない」）。
+    //   ※ 実送信（条件フォーム直後137件）は 初回62.0%／お礼系20%前後／かしこまりました8.8% で、
+    //     そもそも「一択」にできる形ではない（scripts/audit-opening-closing-newline.ts）。
+    if (/条件提示|内覧キャンセル|顧客自身の断り/.test(tpo) && !/^かしこまりました/.test(head)
+      && !isConditionFormThanksOpening(openingHead)) {
       issues.push({ pass: "rule_check", severity: "warning", code: "CONDITION_OPENING", message: "条件提示・断り受け止めの場面の開口語は「かしこまりました！！」一択です", evidence: text.trimStart().slice(0, 20), suggestion: "冒頭を「かしこまりました！！」（単独行）に変更" });
     }
   }

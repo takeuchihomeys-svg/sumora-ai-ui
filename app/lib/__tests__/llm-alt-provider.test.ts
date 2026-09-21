@@ -123,8 +123,10 @@ console.log("── ★ DeepSeek 本家（OpenAI 互換・Azure と同じ変換�
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "old", LLM_ALT_DEEPSEEK_KEY: "aix", LLM_ALT_ACTIONS: "a" })?.apiKey === "aix");
   t("専用の鍵が無ければ既存の DEEPSEEK_API_KEY を使う",
     readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "old", LLM_ALT_ACTIONS: "a" })?.apiKey === "old");
-  t("★ 自動返信・申込以降の歯止めは DeepSeek でも同じ",
-    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.allowAutoSend === false);
+  // 2026-09-21 竹内「自動返信の部分もDeepsheekに切り替える」→ 自動返信の歯止めは外した（既定 開）。
+  //   申込以降の歯止めは残っている（別のテストで確かめる）。
+  t("★ 自動返信は DeepSeek でも回る（竹内 2026-09-21 の判断・既定 開）",
+    readAltConfig({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "a" })?.allowAutoSend === true);
 }
 
 console.log("── ★ プロンプトキャッシュ: 前置きが変わらないこと（竹内「今の仕組とおなじように」）");
@@ -185,31 +187,35 @@ console.log("── ★ willRouteAlt: 呼び出し側が「マスクするか」
   t("★ 指定した AIX は回る＝マスクする", willRouteAlt("property_recommendation", {}, env));
   t("指定していない AIX は回らない＝マスクしない", !willRouteAlt("estimate_sheet", {}, env));
   t("★ 申込以降は回らない（マスク以前に送らない）", !willRouteAlt("property_recommendation", { postApply: true }, env));
-  t("★ 自動返信は既定で回らない", !willRouteAlt("property_recommendation", { autoSend: true }, env));
-  t("LLM_ALT_AUTO_SEND=on なら自動返信も回る",
-    willRouteAlt("property_recommendation", { autoSend: true }, { ...env, LLM_ALT_AUTO_SEND: "on" }));
+  // 2026-09-21 竹内「自動返信の部分もDeepsheekに切り替える」→ 既定で回る
+  t("★ 自動返信も既定で回る", willRouteAlt("property_recommendation", { autoSend: true }, env));
+  t("LLM_ALT_AUTO_SEND=off なら自動返信は Claude のまま（戻し道）",
+    !willRouteAlt("property_recommendation", { autoSend: true }, { ...env, LLM_ALT_AUTO_SEND: "off" }));
   t("★ 設定が無ければ回らない＝今までどおり Claude・マスクもしない", !willRouteAlt("property_recommendation", {}, {}));
   t("action が無ければ回らない", !willRouteAlt(null, {}, env));
 }
 
-console.log("── ★ 後で開けるスイッチ（竹内「慣れて問題なければ切り変えていく」）");
+console.log("── ★ 自動返信も DeepSeek に回す（竹内 2026-09-21「自動返信の部分もDeepsheekに切り替える」）");
 {
-  // 2026-09-19 竹内「けどここの自動返信の部分も慣れて問題なければ切り変えていくから、
-  //   性質理解して穴を防げるようになったら切り替えていく方向性でいく形で」
-  //   → 扉を閉めたまま塞がず、環境変数1つで開けられるようにしておく（既定は閉）。
-  t("★ 既定は閉（LLM_ALT_AUTO_SEND を書かなければ自動返信は Claude のまま）",
-    readAltConfig(AZURE)!.allowAutoSend === false);
-  t("off と書いても閉",
+  // 2026-09-19 竹内「慣れて問題なければ切り変えていく」→ 既定は閉で作った。
+  // 2026-09-21 竹内「自動返信の部分もDeepsheekに切り替える。そうすれば変にAPI消費することもないので」
+  //   → **既定を開に反転**。Vercel の環境変数は権限が無くて設定できない（403）ので、
+  //     設計知見「環境変数を入れなくても正しく動く既定値にする」に従いコードの既定を変えた。
+  t("★ 既定は開（環境変数を書かなくても自動返信が DeepSeek に回る）",
+    readAltConfig(AZURE)!.allowAutoSend === true);
+  t("★ off と書けば閉まる（戻し道）",
     readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: "off" })!.allowAutoSend === false);
-  t("★ on と書いた時だけ開く",
+  t("OFF（大文字）・前後の空白でも閉まる",
+    readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: " OFF " })!.allowAutoSend === false);
+  t("on と書けば開く（今までどおり）",
     readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: "on" })!.allowAutoSend === true);
-  t("ON（大文字）・前後の空白も同じ",
-    readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: " ON " })!.allowAutoSend === true);
-  t("true・1 では開かない（うっかり開かないよう on の一語だけ）",
-    readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: "true" })!.allowAutoSend === false
-    && readAltConfig({ ...AZURE, LLM_ALT_AUTO_SEND: "1" })!.allowAutoSend === false);
   t("bedrock 側にも同じスイッチがある",
-    readAltConfig({ LLM_ALT_PROVIDER: "bedrock", BEDROCK_REGION: "us-east-1", BEDROCK_DEEPSEEK_MODEL_ID: "m", LLM_ALT_ACTIONS: "a", AWS_ACCESS_KEY_ID: "k", AWS_SECRET_ACCESS_KEY: "s", LLM_ALT_AUTO_SEND: "on" })!.allowAutoSend === true);
+    readAltConfig({ LLM_ALT_PROVIDER: "bedrock", BEDROCK_REGION: "us-east-1", BEDROCK_DEEPSEEK_MODEL_ID: "m", LLM_ALT_ACTIONS: "a", AWS_ACCESS_KEY_ID: "k", AWS_SECRET_ACCESS_KEY: "s" })!.allowAutoSend === true);
+  // ⚠ 歯止めは残っている: 申込以降は回らない／対象は LLM_ALT_ACTIONS に書いた経路だけ
+  t("★ 申込以降は自動返信でも回らない（歯止めは外していない）",
+    !willRouteAlt("property_recommendation", { postApply: true, autoSend: true }, { LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "property_recommendation" }));
+  t("★ LLM_ALT_ACTIONS に無い経路は自動返信でも回らない",
+    !willRouteAlt("estimate_sheet", { autoSend: true }, { LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "property_recommendation" }));
 
   // 実装の順番（印を先に見て、開いていなければ即戻す）が残っているか実ファイルで確かめる
   const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");

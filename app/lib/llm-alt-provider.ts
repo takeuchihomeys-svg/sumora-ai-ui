@@ -56,10 +56,19 @@ export type AltProviderConfig = {
   actions: Set<string>;
   fallbackToAnthropic: boolean;
   /**
-   * 自動返信オンの会話も切り替えるか（既定 false）。
+   * 自動返信オンの会話も切り替えるか。
+   *
    * 2026-09-19 竹内「ここの自動返信の部分も慣れて問題なければ切り変えていくから、
-   *   性質理解して穴を防げるようになったら切り替えていく方向性でいく形で」
-   * → 道は残すが**既定は必ず Claude**。LLM_ALT_AUTO_SEND=on にした時だけ開く。
+   *   性質理解して穴を防げるようになったら切り替えていく方向性でいく形で」→ 既定 false で作った。
+   *
+   * 2026-09-21 竹内「自動返信の部分もDeepsheekに切り替える。そうすれば変にAPI消費することもないので」
+   *   → **既定を true に反転**（竹内さんの判断）。
+   *   ⚠ 環境変数では開けない（Vercel の環境変数は権限が無くて読み書きできない・403）。
+   *     設計知見「環境変数は『入れれば動く』ではなく『入れなくても正しく動く』既定値にする」に従い、
+   *     コードの既定を変える。戻す時は LLM_ALT_AUTO_SEND=off。
+   *   ⚠ 切り替わるのは LLM_ALT_ACTIONS に書いてある経路だけ。ここは「自動返信だからという理由で
+   *     止めるかどうか」の歯止めであって、対象を増やすものではない。
+   *   ⚠ 申込以降（DRAFT_SKIP_STATUSES）の歯止めと、失敗時の Anthropic フォールバックはそのまま。
    */
   allowAutoSend: boolean;
 };
@@ -85,8 +94,8 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   const actions = new Set(actionsRaw.split(",").map((s) => s.trim()).filter(Boolean));
   if (actions.size === 0) return null;
   const fallbackToAnthropic = (env.LLM_ALT_FALLBACK ?? "on") !== "off";
-  // 自動返信は既定で**必ず Claude**。明示的に on にした時だけ開く（人の目を通さずに送るため）
-  const allowAutoSend = (env.LLM_ALT_AUTO_SEND ?? "off").trim().toLowerCase() === "on";
+  // 2026-09-21 竹内「自動返信の部分もDeepsheekに切り替える」→ 既定 on。戻す時は LLM_ALT_AUTO_SEND=off
+  const allowAutoSend = (env.LLM_ALT_AUTO_SEND ?? "on").trim().toLowerCase() !== "off";
   if (provider === "azure") {
     const endpoint = (env.AZURE_AI_ENDPOINT ?? "").trim();
     const apiKey = (env.AZURE_AI_KEY ?? "").trim();

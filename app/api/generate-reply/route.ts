@@ -137,6 +137,8 @@ import { PROPERTY_CONDITION_INQUIRY_RE, runBrainAndNotify, type SuggestedAixMeta
 //   ブレインの戦略文に混ざった AIX の担当を、**戦略を渡すその行に**併記するための共有定数（四者同名）
 import { buildAixTerritoryGuard } from "@/app/lib/aix-territory";
 import { buildPreviousSendNote } from "@/app/lib/previous-send-note";
+// 2026-09-21 竹内「何卒で終わる場面と入れない場面の違い」「改行を実送信の特徴から」
+import { buildSentShapeNoteAll } from "@/app/lib/sent-shape";
 /**
  * 直前送信の材料を止めるスイッチ（A/B の比較と、効かなかった時の戻し道）。
  * `PREV_SEND_NOTE=off` で無効。dev サーバーは起動時の環境変数を読むので、切り替えには再起動が要る。
@@ -1214,6 +1216,16 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //     （引用して渡したら YUMA ③ でモデルがそれを写し、改善前より悪くなった）。
   const previousSendNote = (isFollowUp || AB_OFF) ? "" : buildPreviousSendNote(lastStaffMsg);
 
+  // ─── 2026-09-21 竹内 ───
+  //   「何卒よろしくお願い致します！！ で文終わる場面と、いれない場面あるからそこの違いもちゃんと学習する」
+  //   「文の改行している場所を実際の送っている文から特徴把握して改善する」
+  //   実測（scripts/audit-opening-closing-newline.ts・実送信12,095通）をそのまま渡す。
+  //   ⚠ 書く前に「どの種類の返信になるか」を当てにいかない（外れた時に間違った数字を渡すことになる）。
+  //     表を渡してモデルに選ばせる（app/lib/sent-shape.ts）。
+  //   ⚠ ここも previousSendNote と同じく userPrompt の**一番最後**（前に置くと骨格に負ける）。
+  //   テンプレート最適化（AIX の文を整える経路）は AIX 側の型があるので渡さない。
+  const sentShapeNote = templateNote ? "" : buildSentShapeNoteAll();
+
   // ⭐実例がある場合: 文体参考として使うが、ルール（禁止ワード・挨拶等）は常に最優先
   // A-10: 実例ゼロ時は「実例外パターン禁止」（ルール8）が充足不能になるため明示的に解除し、PHASE_GUIDE の例文を型として使わせる
   const examplesInstruction = examples
@@ -1651,7 +1663,7 @@ ${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${
 ${examples}${examplesInstruction}
 
 ↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : `スモラの直前返信の流れを踏まえ、${examples ? "⭐実例の文体・テンポ" : "PHASE_GUIDE の例文の文体・テンポ"}を参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。`}
-長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}`;
+長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}${sentShapeNote}`;
 
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
   // 戦略の優先規定（AIX-META一元化）: 指示が競合した場合の解決順を最上位で1行宣言する

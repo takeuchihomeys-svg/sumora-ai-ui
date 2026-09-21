@@ -18,6 +18,24 @@ import { resolveAckPush } from "./opener-ack-push";
 /** お客様が条件フォームを送ってくれた時の感謝の1文（竹内 2026-09-12・あや事例。スタッフ実送信の型） */
 export const CONDITION_FORM_THANKS = "ご条件お送り頂きありがとうございます😊！！";
 const CONDITION_FORM_THANKS_RE = /ご?条件[^\n。！!]{0,8}お送り(?:頂|いただ)き[^\n。！!]{0,4}ありがとう|ご(?:入力|記入)(?:頂|いただ)き[^\n。！!]{0,4}ありがとう/;
+/**
+ * その書き出しが「条件フォームへの感謝」か（**この仕組みが自分で足した行**か）。
+ *
+ * 2026-09-21 竹内「最終チェックの部分でかしこまりましたで文送る指摘あるのに改善されていない。
+ *   これなら最終チェックの意味がない。なぜかしこまりましたにへんこうできていなかったのか」
+ *   → final-check が間に合わなかったのではない。**2つの仕組みが正面衝突**していた:
+ *       enforceOpening（下）… 条件フォームを受けたら先頭に必ずこの1文を足す（竹内 2026-09-12 あや事例）
+ *       final-check の CONDITION_OPENING … 条件提示の場面は「かしこまりました！！」一択と指摘する
+ *     後処理が必ず勝つので、指摘は**永久に直らない**（毎回出る雑音になる）。
+ *   → 検査の側で「自分が足した行」を免除する（設計知見「同じ事実について書くなと書けを別の場所から渡さない」）。
+ *
+ * 実送信（直近180日・条件フォーム直後の返信137件・scripts/audit-opening-closing-newline.ts）:
+ *   はじめまして（初回）62.0% ／ 〇〇お送り頂きありがとうございます系 20%前後 ／ かしこまりました 8.8%
+ *   ＝ **どちらも「一択」にできる形ではない**。だから片方を消すのではなく、衝突だけを外す。
+ */
+export function isConditionFormThanksOpening(head: string | null | undefined): boolean {
+  return CONDITION_FORM_THANKS_RE.test((head ?? "").split("\n")[0] ?? "");
+}
 
 export type GreetingKind = "first" | "late_apology" | "standard" | "none";
 export type OpenerKind = "kashikomari" | "hai" | "none";
