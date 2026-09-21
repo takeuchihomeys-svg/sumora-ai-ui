@@ -5393,6 +5393,60 @@ export default function Home() {
     setConversations((prev) => prev.map((c) => c.id !== cid || c.messages.some((m) => m.id === newMsg.id) ? c : { ...c, messages: [...c.messages, newMsg] }));
   };
 
+  /**
+   * 複数の画像を1回の送信にまとめて送る（2026-09-22 竹内「公式LINEから送るような形で横並びに／
+   * 物件ピックアップも10枚までまとめて」）。旧は1枚ごとに送っていたので LINE で1枚ずつ大きく出ていた。
+   * 届いた画像だけを1枚ずつ会話に記録する（sendMessageText の画像の記録と同じ形）。本文はこの後に sendMessageText で送る。
+   * @returns 届いた画像の URL（途中で失敗したら届いた分だけ。1枚も届かなければ例外）
+   */
+  const sendImagesBatch = async (imageUrls: string[], isAix: boolean): Promise<string[]> => {
+    const urls = imageUrls.filter(Boolean);
+    if (!selectedConversation.id || urls.length === 0) return [];
+    const res = await fetch("/api/send-line-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+      body: JSON.stringify({
+        line_user_id: selectedConversation.lineUserId, image_urls: urls,
+        account: selectedConversation.account, conversation_id: selectedConversation.id,
+        origin: isAix ? "aix" : "manual",
+        ...(isAix && activeAixFlow ? { aix_type: activeAixFlow } : {}),
+      }),
+    });
+    const json = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; sentMessageIds?: string[] };
+    const ids = json.sentMessageIds ?? [];
+    // 画像は送った順に1通ずつ id が返る。途中で失敗した時は返ってきた数だけ届いている
+    const delivered = res.ok && json.ok ? urls : urls.slice(0, ids.length);
+    if (delivered.length === 0) throw new Error(json.error || `画像を送れませんでした（HTTP ${res.status}）`);
+    const cid = selectedConversation.id;
+    const newMessages: Message[] = [];
+    for (let i = 0; i < delivered.length; i++) {
+      const at = new Date(Date.now() + i).toISOString();   // 送った順に並ぶよう1msずつずらす
+      const { data: row } = await supabase.from("messages").insert({
+        conversation_id: cid, sender: "staff", text: "[画像]", image_url: delivered[i], created_at: at,
+        is_aix_generated: isAix, ...(ids[i] ? { line_message_id: ids[i] } : {}),
+      }).select();
+      fetch("/api/extract-property-info", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_url: delivered[i], conversation_id: cid, property_customer_id: selectedConversation.propertyCustomerId ?? null }),
+      }).catch(() => {});
+      newMessages.push({ id: String(row?.[0]?.id || crypto.randomUUID()), sender: "staff", text: "[画像]", imageUrl: delivered[i], time: formatTime(at), rawCreatedAt: at, isAix });
+    }
+    const upgrade = (STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status) === "hearing";
+    const nowIso = new Date().toISOString();
+    await supabase.from("conversations").update({
+      last_message: "[画像]", last_sender: "staff", updated_at: nowIso, ai_draft: null, suggested_aix_meta: null,
+      ...(upgrade ? { status: "proposing" } : {}),
+    }).eq("id", cid);
+    setConversations((prev) => prev.map((c) => {
+      if (c.id !== cid) return c;
+      const have = new Set(c.messages.map((m) => m.id));
+      return { ...c, lastMessage: "[画像]", lastSender: "staff", aiDraft: null, suggestedAixMeta: null, updatedAt: nowIso,
+        ...(upgrade ? { status: "proposing" } : {}), messages: [...c.messages, ...newMessages.filter((m) => !have.has(m.id))] };
+    }));
+    if (!(res.ok && json.ok)) setError(`⚠️ 画像は${delivered.length}/${urls.length}枚まで送りました（${json.error ?? "LINE送信エラー"}）`);
+    return delivered;
+  };
+
   const sendMessageText = async (
     text: string,
     imageUrl?: string,
@@ -10592,6 +10646,7 @@ export default function Home() {
             setTemplateInitialSearch(search);
             setShowTemplateModal(true);
           }}
+          onSendImages={(urls) => sendImagesBatch(urls, true)}
           onSend={(text, imageUrl, isAix) => {
             lastAixLogTextRef.current = text || null;
             return sendMessageText(text, imageUrl, isAix);

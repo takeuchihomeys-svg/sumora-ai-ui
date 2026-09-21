@@ -60,10 +60,16 @@ export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
 
-  const { line_user_id, message, image_url, account, conversation_id, origin, call_button, aix_type } = await req.json() as {
+  const { line_user_id, message, image_url, image_urls, account, conversation_id, origin, call_button, aix_type } = await req.json() as {
     line_user_id?: string;
     message?: string;
     image_url?: string;
+    /**
+     * 2026-09-22 竹内「公式LINEから送るような形で物件資料と見積書を横並びに／物件ピックアップも10枚までまとめて」:
+     * 複数の画像を**1回の送信にまとめて**送る（最大10枚・LINE の push は1回5通までなので 5 ずつ区切る）。
+     * これがある時は image_url は使わない。本文（message）は画像の後に送る。
+     */
+    image_urls?: string[];
     account?: string;
     /** 送信時の記録（sent_facts）用。画面の手打ち送信が渡す（無い呼び出しは記録しない＝台帳は本文の読み直しで補う） */
     conversation_id?: string;
@@ -79,7 +85,8 @@ export async function POST(req: NextRequest) {
     aix_type?: string;
   };
 
-  if (!line_user_id || (!message && !image_url && !call_button)) {
+  const batchImages = Array.isArray(image_urls) ? image_urls.filter((u) => typeof u === "string" && u.trim()) : [];
+  if (!line_user_id || (!message && !image_url && !call_button && batchImages.length === 0)) {
     return NextResponse.json({ ok: false, error: "line_user_id and message or image_url required" }, { status: 400 });
   }
   // 2026-09-11 データ衛生（統合設計 §7）: 生成失敗文（「AI返信の生成に失敗しました…」）はお客様に送らない
@@ -124,18 +131,41 @@ export async function POST(req: NextRequest) {
     }
     messages.push(buildCallRequestFlex(callUrl));
   }
-  if (message) messages.push({ type: "text", text: message });
-  if (image_url) messages.push({ type: "image", originalContentUrl: image_url, previewImageUrl: image_url });
+  // 送る塊（push 1回分ずつ）。従来は1回。まとめて送る画像がある時は 5通ずつに区切った複数回
+  let pushes: unknown[][];
+  if (batchImages.length > 0) {
+    const { buildImageBatchPushes } = await import("@/app/lib/line-image-batch");
+    const built = buildImageBatchPushes(batchImages, message ?? null);
+    if (!built.ok) return NextResponse.json({ ok: false, errorCode: "invalid_images", error: built.error }, { status: 400 });
+    pushes = built.pushes;
+    if (messages.length > 0) pushes.unshift(messages);   // 電話ボタンが同時に来た時だけ先に送る
+  } else {
+    if (message) messages.push({ type: "text", text: message });
+    if (image_url) messages.push({ type: "image", originalContentUrl: image_url, previewImageUrl: image_url });
+    pushes = [messages];
+  }
 
-  const res = await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ to: line_user_id, messages }),
-    // LINE APIハング時に関数がタイムアウト上限まで滞留するのを防ぐ
-    signal: AbortSignal.timeout(10_000),
-  });
+  let res: Response | null = null;
+  let sentMessageIds: string[] = [];
+  for (let pi = 0; pi < pushes.length; pi++) {
+    res = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: line_user_id, messages: pushes[pi] }),
+      // LINE APIハング時に関数がタイムアウト上限まで滞留するのを防ぐ
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) break;
+    // P4: LINE push レスポンスの sentMessages から message id を取得（送った順）
+    try {
+      const lineJson = await res.json() as { sentMessages?: Array<{ id?: string }> };
+      sentMessageIds.push(...(lineJson.sentMessages ?? []).map((m) => m.id).filter((x): x is string => Boolean(x)));
+    } catch {
+      // レスポンスがJSONでなくても送信自体は成功しているので続行
+    }
+  }
 
-  if (!res.ok) {
+  if (res && !res.ok) {
     const text = await res.text();
     console.error(`LINE push error [${accountKey}] status=${res.status}:`, text);
 
@@ -160,22 +190,11 @@ export async function POST(req: NextRequest) {
       }
       friendlyError = `LINE送信に失敗しました: ${detail}`;
     }
+    // まとめて送った時、途中の塊まで届いていれば何通届いたかも返す（画面は届いた分だけ記録する）
     return NextResponse.json(
-      { ok: false, error: friendlyError, errorCode, lineStatus: res.status },
+      { ok: false, error: friendlyError, errorCode, lineStatus: res.status, sentMessageIds, partialSent: sentMessageIds.length > 0 },
       { status: 500 }
     );
-  }
-
-  // P4: LINE push レスポンスの sentMessages から message id を取得
-  // （aix_usage_logs.line_message_id に記録し、AIX送信メッセージの厳密特定に使う）
-  let sentMessageIds: string[] = [];
-  try {
-    const lineJson = await res.json() as { sentMessages?: Array<{ id?: string }> };
-    sentMessageIds = (lineJson.sentMessages ?? [])
-      .map((m) => m.id)
-      .filter((x): x is string => Boolean(x));
-  } catch {
-    // レスポンスがJSONでなくても送信自体は成功しているので続行
   }
 
   // 2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」: 手打ちの送信は送った時に1回だけ分類して記録する（sent_facts）。
@@ -201,7 +220,9 @@ export async function POST(req: NextRequest) {
   //     送信そのものは待たせない。失敗しても送信には影響しない。
   //   実測（スタッフの実画像10枚）: 10/10 読めて 10/10 照合を通過・月$2.02。
   //     誤読も照合で直った（「スプレンディッド堀江」→ スプランディッド堀江）
-  if (image_url && conversation_id) {
+  // 2026-09-22: まとめて送った時は1枚ずつ同じ処理をする（物件名の読み取り・資料の中身の読み取り）
+  const sentImageList = batchImages.length > 0 ? batchImages : image_url ? [image_url] : [];
+  if (sentImageList.length > 0 && conversation_id) for (const image_url of sentImageList) {
     after(async () => {
       try {
         const [{ readPropertyImage }, { resolveReadProperty }, { extractPropertyLabels }, { ensureImageDetail }] = await Promise.all([

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { IMAGE_BATCH_MAX } from "../lib/line-image-batch";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
 // 2026-09-19 竹内（a🤫 事例）: 退去予定物件の「内覧可能日時」は退去日の翌日から（純関数・テストあり）
 import { viewableFromYmd, vacancyExtraYmds, resolveVacancySlotEnabled, isBeforeViewable } from "../lib/viewing-window";
@@ -93,6 +94,12 @@ interface AixModalProps {
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
+  /**
+   * 2026-09-22 竹内「公式LINEから送るような形で物件資料と見積書を横並びに」:
+   * 複数の画像を1回の送信にまとめて送る。戻り値は届いた画像（途中で失敗したら届いた分だけ）。
+   * 無ければ従来どおり1枚ずつ onSend で送る
+   */
+  onSendImages?: (imageUrls: string[]) => Promise<string[]>;
   /** AIX【電話をかける】: LINEコールの「電話をかける」ボタンのカードを送る（失敗時は例外）。本文はその後に onSend で送る */
   onSendCallButton?: () => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
@@ -614,6 +621,7 @@ export default function AixModal({
   autoConvMatch,
   onClose,
   onSend,
+  onSendImages,
   onSendCallButton,
   onAfterSend,
   onDelayedSend,
@@ -624,6 +632,33 @@ export default function AixModal({
   const config = CONFIG[actionType];
   // AIX経由の全送信に isAix=true フラグを付与（挨拶判定から除外するため）
   const sendAsAix = (text: string, imageUrl?: string) => onSend(text, imageUrl, true);
+
+  // ── 2026-09-22 竹内「公式LINEから送るような形で。物件資料と見積書を横並びに／物件ピックアップも10枚までまとめて」──
+  //   旧: 画像を1枚ずつ別々に送っていたので、LINE で1枚ずつ大きく表示されていた。
+  //   → まとめて1回で送る（onSendImages）。無い時は従来どおり1枚ずつ。戻り値は届いた枚数。
+  const sendImageUrlsGrouped = async (urls: string[]): Promise<number> => {
+    if (urls.length === 0) return 0;
+    if (onSendImages) return (await onSendImages(urls)).length;
+    for (const u of urls) await sendAsAix("", u);
+    return urls.length;
+  };
+  const PARTIAL_IMAGE_ERROR = "画像の一部を送れませんでした。もう一度「送信する」を押すと、届いていない画像から続けて送ります";
+  /**
+   * 画像の並び（files）を、送信済みの位置（sentImageIndexRef）の続きから、最大10枚ずつまとめて送る。
+   * 途中で届かなかったら位置を届いた所までにして止める（押し直すと続きから・二重送信しない）
+   */
+  const sendRemainingImagesGrouped = async (total: number, urlAt: (i: number) => Promise<string>): Promise<void> => {
+    let i = sentImageIndexRef.current + 1;
+    while (i < total) {
+      const end = Math.min(total, i + IMAGE_BATCH_MAX);
+      const urls: string[] = [];
+      for (let k = i; k < end; k++) urls.push(await urlAt(k));
+      const delivered = await sendImageUrlsGrouped(urls);
+      sentImageIndexRef.current = i + delivered - 1;
+      if (delivered < urls.length) throw new Error(PARTIAL_IMAGE_ERROR);
+      i = end;
+    }
+  };
 
   // 見積書送る「申込誘導」バッジON時の追加テンプレ文を組み立てる
   // 物件名・号室は parsedEstimate（OCR結果: property_name / room_number）から取得
@@ -3083,11 +3118,8 @@ export default function AixModal({
 
       if (actionType === "property_send") {
         // 物件画像を先に送信 → テキストを後で送信（送信済みindexはスキップ＝再押下時の重複送信防止）
-        for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < sendImageFiles.length; imgIdx++) {
-          const url = await uploadImageCached(sendImageFiles[imgIdx]);
-          await sendAsAix("", url);
-          sentImageIndexRef.current = imgIdx;
-        }
+        // 2026-09-22: 10枚までまとめて1回で送る（公式LINEと同じく横並び）
+        await sendRemainingImagesGrouped(sendImageFiles.length, (i) => uploadImageCached(sendImageFiles[i]));
         await sendAsAix(preview);
         sentImageIndexRef.current = -1;
       } else if (actionType === "property_check_result") {
@@ -3114,23 +3146,25 @@ export default function AixModal({
             }
           }
           // 物件ごとに: 資料画像 → 見積書画像 の順で送信（送信済みindexはスキップ＝再押下時の重複送信防止）
+          // 2026-09-22 竹内「物件資料と見積書おしたら開く形で横並びに（公式LINEから送る形）」:
+          //   **物件ごとに**「資料＋見積書」を1回でまとめて送る（物件Aで1束・物件Bで1束。公式LINEのスクショと同じ）
           let flatImgIdx = -1;
           for (let pi = 0; pi < checkPropertyCount; pi++) {
-            for (const file of (checkPropImages[pi] ?? [])) {
-              flatImgIdx++;
-              if (flatImgIdx <= sentImageIndexRef.current) continue;
-              const url = await uploadImageCached(file, pi);
-              await sendAsAix("", url);
-              sentImageIndexRef.current = flatImgIdx;
-            }
-            const ef = checkPropEstimates[pi];
-            if (ef) {
-              flatImgIdx++;
-              if (flatImgIdx > sentImageIndexRef.current) {
-                const estUrl = await uploadImageCached(ef);
-                await sendAsAix("", estUrl);
-                sentImageIndexRef.current = flatImgIdx;
-              }
+            const group: Array<{ file: File; pi?: number }> = [
+              ...(checkPropImages[pi] ?? []).map((file) => ({ file, pi })),
+              ...(checkPropEstimates[pi] ? [{ file: checkPropEstimates[pi] as File }] : []),
+            ];
+            const groupStart = flatImgIdx + 1;
+            flatImgIdx += group.length;
+            const pending = group.map((g, k) => ({ ...g, flat: groupStart + k })).filter((g) => g.flat > sentImageIndexRef.current);
+            if (pending.length === 0) continue;
+            for (let c = 0; c < pending.length; c += IMAGE_BATCH_MAX) {
+              const chunk = pending.slice(c, c + IMAGE_BATCH_MAX);
+              const urls: string[] = [];
+              for (const g of chunk) urls.push(await uploadImageCached(g.file, g.pi));
+              const delivered = await sendImageUrlsGrouped(urls);
+              if (delivered > 0) sentImageIndexRef.current = chunk[delivered - 1].flat;
+              if (delivered < urls.length) throw new Error(PARTIAL_IMAGE_ERROR);
             }
           }
           // 見積書テキスト先送り → モーダルを閉じてバックグラウンドで30秒後に本文送信
@@ -3204,16 +3238,9 @@ export default function AixModal({
           sentImageIndexRef.current = -1;
         } else {
           // alternative / その他: 物件資料画像 → 見積書 → 本文（送信済みindexはスキップ＝再押下時の重複送信防止）
-          for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < checkImageFiles.length; imgIdx++) {
-            const url = await uploadImageCached(checkImageFiles[imgIdx]);
-            await sendAsAix("", url);
-            sentImageIndexRef.current = imgIdx;
-          }
-          if (checkEstimateFile && sentImageIndexRef.current < checkImageFiles.length) {
-            const estUrl = await uploadImageCached(checkEstimateFile);
-            await sendAsAix("", estUrl);
-            sentImageIndexRef.current = checkImageFiles.length;
-          }
+          // 2026-09-22: 資料と見積書をまとめて1回で送る（横並び）
+          const altFiles: File[] = [...checkImageFiles, ...(checkEstimateFile ? [checkEstimateFile] : [])];
+          await sendRemainingImagesGrouped(altFiles.length, (i) => uploadImageCached(altFiles[i]));
           await sendAsAix(preview);
           sentImageIndexRef.current = -1;
         }
@@ -3227,15 +3254,19 @@ export default function AixModal({
         }
         // 物件オススメ送信順: 物件資料画像 → 見積書 → 室内URL → テキスト（送信済みステップはスキップ＝再押下時の重複送信防止）
         if (actionType === "property_recommendation") {
-          if (uploadedImageUrl && !stepDone(1)) {
-            await sendAsAix("", uploadedImageUrl);
-            markStep(1);
+          // 2026-09-22: 物件資料と見積書をまとめて1回で送る（公式LINEと同じく横並び）
+          const recUrls: string[] = [];
+          if (uploadedImageUrl && !stepDone(1)) recUrls.push(uploadedImageUrl);
+          if (recommendEstimateFile && !stepDone(2)) recUrls.push(await uploadImageCached(recommendEstimateFile));
+          if (recUrls.length > 0) {
+            const delivered = await sendImageUrlsGrouped(recUrls);
+            if (delivered < recUrls.length) {
+              // 先頭（資料）だけ届いた時は資料を送信済みにして、押し直すと見積書から続ける
+              if (delivered > 0 && uploadedImageUrl && !stepDone(1)) markStep(1);
+              throw new Error(PARTIAL_IMAGE_ERROR);
+            }
           }
-          if (recommendEstimateFile && !stepDone(2)) {
-            const estUrl = await uploadImageCached(recommendEstimateFile);
-            await sendAsAix("", estUrl);
-            markStep(2);
-          }
+          if (!stepDone(2)) markStep(2);   // 画像（資料・見積書）は送信済み
           if (propertyImageUrl.trim() && !stepDone(3)) {
             await sendAsAix(`（室内イメージ）\n${propertyImageUrl.trim()}`);
             markStep(3);
@@ -3245,11 +3276,8 @@ export default function AixModal({
         } else if (actionType === "estimate_sheet" && estimateMultiMode) {
           // 複数件: 見積書を順に送ってから合算テキスト（送信済みindexはスキップ＝再押下時の重複送信防止）
           const multiFiles = estimateMultiFiles.filter((f): f is File => !!f);
-          for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < multiFiles.length; imgIdx++) {
-            const url = await uploadImageCached(multiFiles[imgIdx]);
-            await sendAsAix("", url);
-            sentImageIndexRef.current = imgIdx;
-          }
+          // 2026-09-22: 見積書をまとめて1回で送る（横並び）
+          await sendRemainingImagesGrouped(multiFiles.length, (i) => uploadImageCached(multiFiles[i]));
           await sendAsAix(preview);
           // 申込誘導バッジON: 合算金額文の後に申込誘導テンプレを送る
           if (estimateWithAppeal) {
@@ -3258,15 +3286,18 @@ export default function AixModal({
           sentImageIndexRef.current = -1;
         } else if (actionType === "estimate_sheet") {
           // 送信順: ①物件資料（任意）→ ②見積書 → ③テキスト（送信済みステップはスキップ＝再押下時の重複送信防止）
-          if (estimatePropertyFile && !stepDone(1)) {
-            const propUrl = await uploadImageCached(estimatePropertyFile);
-            await sendAsAix("", propUrl);
-            markStep(1);
+          // 2026-09-22: 物件資料と見積書をまとめて1回で送る（公式LINEと同じく横並び）
+          const estUrls: string[] = [];
+          if (estimatePropertyFile && !stepDone(1)) estUrls.push(await uploadImageCached(estimatePropertyFile));
+          if (uploadedImageUrl && !stepDone(2)) estUrls.push(uploadedImageUrl);
+          if (estUrls.length > 0) {
+            const delivered = await sendImageUrlsGrouped(estUrls);
+            if (delivered < estUrls.length) {
+              if (delivered > 0 && estimatePropertyFile && !stepDone(1)) markStep(1);
+              throw new Error(PARTIAL_IMAGE_ERROR);
+            }
           }
-          if (uploadedImageUrl && !stepDone(2)) {
-            await sendAsAix("", uploadedImageUrl);
-            markStep(2);
-          }
+          if (!stepDone(2)) markStep(2);   // 画像（資料・見積書）は送信済み
           await sendAsAix(preview);
           // 申込誘導バッジON: 金額文の後に申込誘導テンプレを3通目として送る
           if (estimateWithAppeal && !stepDone(3)) {
@@ -3293,12 +3324,9 @@ export default function AixModal({
           onClose();
           return;
         } else if (actionType === "zenryoku_support" && zenryokuImages.length > 0) {
-          // 全力サポート: 画像を先に1枚ずつ送信 → 生成テキストを後送り
-          for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < zenryokuImages.length; imgIdx++) {
-            const url = await uploadImageCached(zenryokuImages[imgIdx], imgIdx);
-            await sendAsAix("", url);
-            sentImageIndexRef.current = imgIdx;
-          }
+          // 全力サポート: 画像を先に送信 → 生成テキストを後送り
+          // 2026-09-22: 画像はまとめて1回で送る（横並び）
+          await sendRemainingImagesGrouped(zenryokuImages.length, (i) => uploadImageCached(zenryokuImages[i], i));
           await sendAsAix(preview);
           sentImageIndexRef.current = -1;
         } else if (actionType === "phone_call") {
@@ -3314,11 +3342,8 @@ export default function AixModal({
         } else if (actionType === "cost_breakdown" && cbSendNewImages && cbImages.some((im) => !im.fromHistory)) {
           // 初期費用について: 新しく貼った御見積書（お客様にまだ送っていない物）だけ先に1枚ずつ送信 → 説明文（会話で送った御見積書は再送しない）
           const news = cbImages.filter((im) => !im.fromHistory);
-          for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < news.length; imgIdx++) {
-            const url = news[imgIdx].url ?? await uploadImageCached(news[imgIdx].file as File, imgIdx);
-            await sendAsAix("", url);
-            sentImageIndexRef.current = imgIdx;
-          }
+          // 2026-09-22: 御見積書はまとめて1回で送る（横並び）
+          await sendRemainingImagesGrouped(news.length, async (i) => news[i].url ?? await uploadImageCached(news[i].file as File, i));
           await sendAsAix(preview);
           sentImageIndexRef.current = -1;
           lastEstimateSentRef.current = true; // 御見積書を送った事実を送信時の記録（sent_facts）・台帳に残す
