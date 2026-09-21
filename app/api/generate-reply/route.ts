@@ -141,6 +141,8 @@ import { buildPreviousSendNote } from "@/app/lib/previous-send-note";
 import { buildSentShapeNoteAll } from "@/app/lib/sent-shape";
 // 2026-09-21 竹内「一択と指摘するんじゃなくて実際の成約データや直近の会話から学習して、場面でいれるかどうかはブレインに判断させる」
 import { buildOpenerRateNote, sceneFromTpo, type OpenerLabel } from "@/app/lib/opener-rates";
+// 2026-09-21 竹内「ファイナルチェックはハルシネーションがないようにする部分。逆に足を引っ張るようなことはしない」
+import { splitFinalCheckIssues } from "@/app/lib/final-check-scope";
 /**
  * 直前送信の材料を止めるスイッチ（A/B の比較と、効かなかった時の戻し道）。
  * `PREV_SEND_NOTE=off` で無効。dev サーバーは起動時の環境変数を読むので、切り替えには再起動が要る。
@@ -5468,6 +5470,20 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 // ・2回目でも問題が残れば2回目の結果をそのまま返す（無限ループ防止・最大1リトライ）
                 // ・再生成の失敗・空生成時は1回目の結果で続行（fail-open）
                 // ・regen_count がトレーラー/ai_draft_check に載る（監査用）
+                // ─── 2026-09-21 竹内 ───
+                //   「ファイナルチェックはハルシネーションがないようにする部分となる。逆に足を引っ張るようなことはしない。
+                //     ブレインで判断されて文生成されてるのだから、ブレインの部分は生成の際に完了できている」
+                //   文体・構成の指摘（開口語・締め・言い回しの数・骨格）は**見せない・作り直させない**。
+                //   数えるのは続ける（学習と監査のため）。分類は app/lib/final-check-scope.ts の1か所。
+                const scoped = splitFinalCheckIssues(finalCheck.issues);
+                if (scoped.styleOnly.length > 0) {
+                  console.log(JSON.stringify({
+                    tag: "final-check:style-only",
+                    conversationId,
+                    codes: scoped.styleOnly.map((i) => `${i.code}:${i.severity}`),
+                  }));
+                }
+                finalCheck.issues = scoped.shown;
                 const retryIssues = finalCheck.issues.filter(
                   (it) => it.severity === "block" && it.code !== "UNCHECKED_AUTO_SEND"
                 );
@@ -5524,7 +5540,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     ];
                     genIndex = 2;
                     const gen2 = await consumeGeneration(
-                      // 修正ループも同じ印を付ける（自動返信の会話は再生成も Claude のまま）
+                      // 修正ループも1回目とまったく同じ印を付ける＝**同じ相手に回る**。
+                      // 2026-09-21 竹内「ファイナルチェックしたあとでの生成される文のところはdeepsheekとなっているのか」:
+                      //   自動返信の歯止め（allowAutoSend）を既定 on にしたので、作り直しも DeepSeek に回る。
+                      //   （以前は「自動返信の会話は再生成も Claude のまま」だった）
                       createGenerationModel({ defaultHeaders: autoSendHeaders }).stream(retryMessages)
                     );
                     if (gen2.body.trim()) {
@@ -5537,6 +5556,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       const loop2 = await runFinalCheckWithRevision(gen2Body, finalCheckCtx, Math.min(60000, loop2Budget));
                       draftBody = loop2.finalDraft;
                       finalCheck = loop2.finalCheck;
+                      // 2026-09-21 竹内: 2回目のチェックでも文体・構成は見せない（1回目と同じ絞り込み）
+                      finalCheck.issues = splitFinalCheckIssues(finalCheck.issues).shown;
+                      finalCheck.ok = !finalCheck.issues.some((i) => i.severity === "block");
                       finalCheck.regen_count = 1;
                       finalCheck.first_pass_issues = firstPass.issues;
                       finalCheck.first_pass_draft_head = firstPass.head;

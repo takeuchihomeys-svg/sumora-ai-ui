@@ -5072,3 +5072,76 @@ final-check の CONDITION_OPENING
 ```
 `CELL_AVOID_CONFLICT` が最多なのは、**セル（必須要素）とブレイン（避ける話題）が正面衝突**している証拠。
 ブレインの判断を検査に渡した今、次はセル側をブレインに合わせる番（要観察）。
+
+---
+
+## 2026-09-21 ⑥ 最終チェックをハルシネーション防止に絞る／返信が DeepSeek 一択か確かめた
+
+竹内「ファイナルチェックはハルシネーションがないようにする部分となる。逆に足を引っ張るようなことはしない。
+　　ブレインで判断されて文生成されてるのだから、ブレインの部分は生成の際に完了できている。
+　　返信生成を一択などにしたらボトルネックになる可能性が高い」
+竹内「返信の部分でクロード紛れ込んでて２重で生成されていないか／返信の部分はdeepsheek一択になっているか」
+竹内「ファイナルチェックしたあとでの生成される文のところはdeepsheekとなっているのか」
+
+### A. 最終チェックの役割を絞った（`app/lib/final-check-scope.ts`・テスト11件）
+
+final-check が出す code は **74種類**あり、多くが文体・構成だった。3つに分けた:
+
+| 種類 | 例 | 扱い |
+|---|---|---|
+| **fact**（事実・ハルシネーション） | FABRICATED_*, UNSENT_CLAIM, COST_ASSERTION_NO_ESTIMATE, SCHEDULE_ASSERT_UNCONFIRMED, MISSED_QUESTION, DOUBLE_DECLARATION | **出す** |
+| **safety**（送信の歯止め） | UNCHECKED_AUTO_SEND, SENSITIVE_CASE, DUPLICATE_OF_SENT, NG_PROPERTY_MENTION | **出す** |
+| **style**（文体・構成） | OPENER_*, CLOSER_*, NANISOTSU_MISPLACED, EXCLAMATION_OVERUSE, SASETE_OVERUSE, REPLY_SKELETON_MISSING, PAIR_ELEMENT_MISSING, CELL_AVOID_CONFLICT | **出さない**（数えるだけ） |
+
+- style は消さずに残して `[final-check:style-only]` でログに数える（学習と監査のため）
+- **style が block でも作り直しを起こさない**（`hasBlockingIssue`）
+- ⚠ 分類に無い code は **fact 扱い**（＝出す）。知らない物を黙って捨てない
+- 1回目・2回目（再生成後）の両方で同じ絞り込みをかける
+
+直近30日で一番多かった `CELL_AVOID_CONFLICT`（23回）＝セルの必須要素とブレインの avoid_topics の正面衝突も、
+これで画面から消える（根本はセル側をブレインに合わせること。要観察）。
+
+### B. 返信本文は DeepSeek 一択になっていた（Claude の紛れ込み無し）
+
+⚠ **route 名だけで見ると誤読する**。`/api/generate-reply` の呼び出しは1種類ではない。
+`sys_head`（system の先頭）で切り分ける:
+
+| 呼び出し | 見分け方 | 7日の回数 / Claude費用 |
+|---|---|---|
+| 返信の本文を作る | 「ハードゲート／指示の優先順位」で始まる | 403回 / **$55.57** |
+| 最終チェックの検査 | system をブロック配列で渡すので **sys_head が空** | 1,663回 / **$22.57** |
+| ブレイン | 「スモラAI／会話全体の戦略」 | 5回 |
+
+**本文生成だけを取り出し、テスト会話（YUMA）と env=local を除いた本番のお客様の会話:**
+```
+2026-09-19  DeepSeek 26 / Claude 15  → 63.4%   ← 切り替え当日（ストリーミング対応前の分）
+2026-09-20  DeepSeek 27 / Claude  0  → 100.0%
+2026-09-21  DeepSeek  1 / Claude  0  → 100.0%
+```
+**9/20以降は100% DeepSeek。Claude の紛れ込みは無い。**
+
+二重生成: 2分以内に本文を2回作った組 185組（同じモデル181／違うモデル4）。
+サンプルはすべて YUMA（テスト）で、本番の分は最終チェックの block 指摘による正常な作り直し。
+
+### C. 最終チェックの後の作り直しも DeepSeek
+
+`createGenerationModel({ defaultHeaders: autoSendHeaders })` で**1回目とまったく同じ印**を付けているので、
+同じ相手（DeepSeek）に回る。以前は「自動返信の会話は再生成も Claude のまま」だったが、
+`allowAutoSend` の既定を on にした（2026-09-21）ので作り直しも DeepSeek。
+
+### D. 費用は増えていない（むしろ減っている）
+
+`/api/generate-reply` の Claude 費用（日別・JST）:
+```
+9/15 $15.09 → 9/16 $18.34 → 9/17 $17.22 → 9/18 $13.74
+→ 9/19 $7.95 → 9/20 $4.34 → 9/21 $1.74
+```
+入力トークンも 13.0M → 2.9M。今回の改善で増えた分は無い。
+
+⚠ 残る塊は**最終チェック自身**（$22.57/7日＝1日$3.2）。
+JSON スキーマ強制が要るので Claude のままが正しい（別クラウドに回すと守りが黙って外れる）。
+減らすなら「検査の数を減らす」しかない → A で style を外したのはその一歩。
+
+### 道具
+- `scripts/audit-reply-llm-calls.ts` … 返信経路の呼び出しを sys_head × モデルで割る
+- `scripts/peek-reply-model-gap.ts` … 本番のお客様の会話だけで DeepSeek 率を見る
