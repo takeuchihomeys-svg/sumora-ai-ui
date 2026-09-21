@@ -56,6 +56,120 @@ export const PROPERTY_IMAGE_PROMPT = `この画像から物件情報を読み取
 - is_property: 物件の資料・マイソク・室内写真なら true、それ以外（見積書・本人確認書類・スクショ）なら false
 - 画像に書かれていない物件名・金額・日付を作らないこと（読めない項目は null か "" のまま）`;
 
+// ─── 2026-09-21 竹内「引用とあれば引用先の画像を読み取れるように。こっちが送った画像なら
+//   deepseek で読み取れるようになってるはずなので、そこで読み取ってちゃんとした文を生成できるようにする」──
+//
+// 【何が足りなかったか】引用先の画像は「どの物件か」（物件名・号室）までしか分からず、
+//   **資料に書いてある中身**（駐車場・洗濯機置場・設備・階・向き・入居時期・フリーレント）は
+//   生成に1文字も渡っていなかった。
+//   実測（直近120日・こちらが送った画像への引用返信133件）:
+//     資料を読まないと答えられない質問 … 44件（33.1%）
+//     そのうちスタッフが「確認します」で受けずに**その場で答えた** … 33件（75.0%）
+//   ＝ スタッフは手元の資料を見て即答している。AI にはその資料が渡っていなかった。
+//
+// ⚠ 読むのは**物件の資料だけ**。見積書・本人確認書類は中身を書き出さない（kind だけ返す）。
+//   見積書の金額は本文に書かない決まり（AIX【見積書送る】が画像で送る）だし、
+//   設計知見「画像は伏せようがない」の線をここでも守る。
+// ⚠ **金額・住所・駅徒歩・面積は読まない**（実測で決めた線）。
+//   同じ資料を読ませたら誤読が出た: 所在地「藤井寺市野中」→「堺市中区土佐屋」／
+//   開口部方位の欄を「所有面積: 西」／号室 103 →「1階」／礼金「1ヶ月」→「108,000円」。
+//   数字や住所をそのまま本文に書くと**そのまま事故になる**（金額は元々 AI に書かせない決まり）。
+//   賃料・敷金・礼金・退去予定日は既に readPropertyImage が構造化して sent_properties に入れている。
+//   ここで足したいのは「駐車場はあるか」「ペットは可か」「保証人は要るか」のような
+//   **有無・可否**＝誤読しても文が壊れにくく、実際にお客様が聞いてくる事だけ。
+export const PROPERTY_IMAGE_DETAIL_PROMPT = `この画像が何かを判定し、物件の資料なら**書いてある条件だけ**を書き出してください。JSONのみ返答（説明文・コードブロック一切不要）：
+{"kind":"property","lines":["駐車場: 敷地内 空有","ペット: 不可"]}
+- kind: "property"（物件の資料・マイソク・間取り図）／"estimate"（見積書・初期費用の明細）／"document"（本人確認書類・申込書）／"other"
+- kind が "property" 以外なら lines は必ず空配列（中身は書き出さない）
+- lines に入れてよいのは次の項目だけ。**画像に書いてある物だけ**（書いていない項目は行ごと作らない）:
+  間取り／所在階／向き／築年／構造／現況／入居可能日／退去予定／駐車場／駐輪場／バイク置場／
+  ペット／楽器／保証会社／連帯保証人／洗濯機置場／設備／フリーレント／入居条件
+- **金額・住所・駅徒歩・専有面積は書かない**（別の所で扱う）
+- 値は画像の文字をそのまま短く写す。推測しない。「不明」「記載なし」という行も作らない`;
+
+/**
+ * 詳細の読み取りの上限。
+ * 実測: 項目を絞る前は 8000 を推論で使い切って **8枚中5枚が答え0文字**だった（out=7999/8000）。
+ *   項目を絞ったら 3/4 が通り、残り1枚はやはり上限に当たった → 12000 にして救う。
+ *   1枚あたりの実測は入力1,000／出力3,000前後（$0.003）。
+ */
+export const PROPERTY_IMAGE_DETAIL_MAX_TOKENS = 12000;
+
+/** 画像の種類（物件の資料以外は中身を書き出さない） */
+export type ImageKind = "property" | "estimate" | "document" | "other";
+export type DetailResult = { kind: ImageKind; lines: string[]; raw: string; usage?: { input: number; output: number } };
+
+const KIND_OK = new Set<ImageKind>(["property", "estimate", "document", "other"]);
+/** 中身が無い事を言っているだけの行（「不明」「記載なし」）。材料に入れると AI が「記載なし」と答えてしまう */
+const EMPTY_VALUE_RE = /[:：]\s*(?:不明|記載なし|なし|-|—|―|不詳|未記載|読み取れ(?:ない|ません)|空欄)\s*$/;
+
+/** 読み取り結果から「項目: 値」の行だけを取り出す（純関数・テストはここに当てる） */
+export function parseDetailResult(content: string): DetailResult {
+  const raw = (content ?? "").trim();
+  const block = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  const body = (block ? block[1] : raw).trim();
+  const jsonStr = body.startsWith("{") ? body : (body.match(/\{[\s\S]*\}/)?.[0] ?? "");
+  if (!jsonStr) return { kind: "other", lines: [], raw };
+  try {
+    const parsed = JSON.parse(jsonStr) as { kind?: unknown; lines?: unknown };
+    const kindRaw = String(parsed.kind ?? "").trim() as ImageKind;
+    const kind: ImageKind = KIND_OK.has(kindRaw) ? kindRaw : "other";
+    if (kind !== "property") return { kind, lines: [], raw };
+    const lines = (Array.isArray(parsed.lines) ? parsed.lines : [])
+      .map((x) => String(x ?? "").replace(/\s+/g, " ").trim())
+      .filter((s) => s.length >= 2 && s.length <= 120)
+      .filter((s) => /[:：]/.test(s))          // 「項目: 値」の形だけ（地の文・感想を入れない）
+      .filter((s) => !EMPTY_VALUE_RE.test(s))  // 「不明」「記載なし」は材料にしない
+      .slice(0, 20);
+    return { kind, lines, raw };
+  } catch { return { kind: "other", lines: [], raw }; }
+}
+
+/**
+ * 画像1枚の中身を読む（物件の資料だけ書き出す）。失敗しても投げない（lines が空になるだけ）。
+ * ⚠ 推論モデルなので max_tokens は大きく（小さいと答えが1文字も出ない・上の【踏んだ罠】と同じ）
+ */
+export async function readPropertyImageDetail(
+  imageUrl: string,
+  opts?: { apiKey?: string; model?: string; timeoutMs?: number },
+): Promise<DetailResult> {
+  const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
+  const model = (opts?.model ?? process.env.PROPERTY_IMAGE_MODEL ?? PROPERTY_IMAGE_MODEL_DEFAULT).trim();
+  if (!apiKey || !imageUrl) return { kind: "other", lines: [], raw: "" };
+  try {
+    const res = await fetch(PROPERTY_IMAGE_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        max_tokens: PROPERTY_IMAGE_DETAIL_MAX_TOKENS,
+        // 推論を軽くしないと更に時間がかかる
+        // （dept_line_reply「VISION_ALT_EFFORT=low ← 推論を軽く（無いと29〜37秒かかる）」と同じ線）
+        reasoning_effort: (process.env.PROPERTY_IMAGE_EFFORT ?? "low").trim(),
+        messages: [{ role: "user", content: [
+          { type: "text", text: PROPERTY_IMAGE_DETAIL_PROMPT },
+          { type: "image_url", image_url: { url: imageUrl } },
+        ] }],
+      }),
+      signal: AbortSignal.timeout(opts?.timeoutMs ?? 25_000),
+    });
+    if (!res.ok) {
+      // 400 の中身まで残す（画像URLが取れない・大きすぎる等を後で数える。設計知見「error を握り潰さない」）
+      const body = await res.text().catch(() => "");
+      return { kind: "other", lines: [], raw: `HTTP ${res.status} ${body.slice(0, 200)}` };
+    }
+    const j = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    const out = parseDetailResult(String(j.choices?.[0]?.message?.content ?? ""));
+    out.usage = { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0 };
+    return out;
+  } catch {
+    return { kind: "other", lines: [], raw: "" };
+  }
+}
+
 export type ReadItem = {
   propertyName: string;
   roomNumber: string;

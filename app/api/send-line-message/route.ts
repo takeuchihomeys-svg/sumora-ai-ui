@@ -186,12 +186,23 @@ export async function POST(req: NextRequest) {
   if (image_url && conversation_id) {
     after(async () => {
       try {
-        const [{ readPropertyImage }, { resolveReadProperty }, { extractPropertyLabels }] = await Promise.all([
+        const [{ readPropertyImage }, { resolveReadProperty }, { extractPropertyLabels }, { ensureImageDetail }] = await Promise.all([
           import("@/app/lib/property-image-read"),
           import("@/app/lib/property-name-match"),
           import("@/app/lib/action-ledger"),
+          import("@/app/lib/image-detail-store"),
         ]);
-        const read = await readPropertyImage(image_url);
+        // 2026-09-21 竹内「引用とあれば引用先の画像を読み取れるように」:
+        //   **送った時に**資料の中身（駐車場・ペット・保証会社・洗濯機置場・設備）も読んで残す。
+        //   引用された時に読むと下書きを20〜30秒待たせるので、ここで済ませておく（after なので送信は待たない）。
+        //   物件名の読み取り（下）とは別の呼び出し。どちらかが失敗してももう一方は残る。
+        const [read] = await Promise.all([
+          readPropertyImage(image_url),
+          ensureImageDetail(image_url, conversation_id).catch((e) => {
+            console.warn("[send-line-message] 資料の中身の読み取り失敗:", e instanceof Error ? e.message : e);
+            return null;
+          }),
+        ]);
         if (read.items.length === 0) return;
 
         // その会話で既に分かっている物件名（照合の辞書）。無ければ記録しない＝誤読を入れない

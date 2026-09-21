@@ -3125,6 +3125,24 @@ WHERE image_url IS NOT NULL AND conversation_id IS NOT NULL AND property_name IS
 ORDER BY image_url, sent_at DESC
 ON CONFLICT (image_url) DO NOTHING;
 
+-- image_details: こちらが送った画像の「中身の読み取り」（2026-09-21 竹内「引用先の画像を読み取れるように」）
+--   sent_image_properties は「どの物件か」（名前・号室）だけで、資料に書いてある条件
+--   （駐車場・ペット・保証会社・洗濯機置場・設備・退去予定）は生成に1文字も渡っていなかった。
+--   実測: こちらが送った画像への引用返信133件のうち **44件（33.1%）が資料を読まないと答えられない質問**で、
+--        そのうち75%はスタッフが「確認します」で受けずにその場で答えていた（手元の資料を見て即答している）。
+--   ⚠ 中身を書き出すのは kind='property'（物件資料）だけ。見積書・本人確認書類は kind だけ残して lines は空。
+--   ⚠ 読み取りが失敗した画像は**行を作らない**（次の機会に読み直せるようにする）
+CREATE TABLE IF NOT EXISTS image_details (
+  image_url TEXT PRIMARY KEY,
+  conversation_id TEXT,
+  kind TEXT NOT NULL DEFAULT 'other',
+  lines JSONB NOT NULL DEFAULT '[]'::jsonb,
+  model TEXT,
+  read_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_image_details_conv ON image_details(conversation_id);
+ALTER TABLE image_details DISABLE ROW LEVEL SECURITY;
+
 -- viewing_history 内覧の内容（2026-09-15 竹内・yasuki 事例）
 --   内覧後の挨拶の画面で、内覧に行ったスタッフが分かったこと（誰が契約するか・誰と相談しているか・物件の感想・気にしている点）を入れる。
 --   ブレイン・戦略・返信生成・AIX が前提として読む（会話に書かれない事情）。notes は待ち合わせの案内の記録に使っているので別の列

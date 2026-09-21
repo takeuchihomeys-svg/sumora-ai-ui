@@ -4,18 +4,22 @@
 //   AIX 物件確認した（会話を合わせる）は 9/10 に紹介した別の物件（リアライズ長居公園通313号室）の3階と読んで確認前の文を作った。
 //   スタッフが送った画像は送った時に Vision で物件名・号室を読んで sent_properties に残っている（extract-property-info）。
 //   → 引用先の画像を sent_properties の image_url で物件に直す（推測ではなく記録）。引用先が文ならその文。
+//
+// 2026-09-21 竹内「引用とあれば引用先の画像を読み取れるように。こっちが送った画像なら deepseek で読み取れる
+//   ようになってるはずなので、そこで読み取ってちゃんとした文を生成できるようにする」
+//   ＝ 「どの物件か」だけでなく、**資料に書いてある条件**（駐車場・ペット・保証会社・洗濯機置場・設備）も渡す。
+//   実測（直近120日・こちらが送った画像への引用返信133件）:
+//     資料を読まないと答えられない質問 44件（33.1%）／うち75%はスタッフが確認を挟まず**その場で答えていた**。
+//   読み取りは image_details（送った時・引用が来た時に読んで残す）。ここでは**表を見るだけ**なので待ち時間は増えない。
+//
+// ※ プロンプトに入れる文（純関数）は quoted-note.ts。ここは DB から引用先を引く所だけ。
 import { supabase } from "@/app/lib/supabase";
+import { getImageDetails } from "@/app/lib/image-detail-store";
+import type { ImageKind } from "@/app/lib/property-image-read";
+import type { QuotedContext } from "@/app/lib/quoted-note";
 
-export type QuotedContext = {
-  /** 引用したお客様の発言 */
-  customerText: string;
-  quotedSender: "staff" | "customer";
-  /** 引用先の本文（画像なら null） */
-  quotedText: string | null;
-  isImage: boolean;
-  /** 引用先の画像がスタッフの送った物件資料・見積書なら、その物件（「robot home 太子橋 101号室」）。分からなければ null */
-  propertyLabel: string | null;
-};
+export type { QuotedContext } from "@/app/lib/quoted-note";
+export { formatQuotedDetailBlock, describeQuotedTarget, buildQuotedReplyNote, formatQuotedContextBlock } from "@/app/lib/quoted-note";
 
 function propertyLabelOf(name: string | null | undefined, roomNo: string | null | undefined): string | null {
   const n = (name ?? "").trim();
@@ -45,54 +49,94 @@ export async function propertyLabelsForImages(conversationId: string, imageUrls:
   return out;
 }
 
+type QuotedPair = {
+  customerText: string;
+  quoted: { sender: string; text: string | null; image_url: string | null };
+};
+
+/** お客様の最新の発言（最後のスタッフ発言より後）のうち、引用返信の最後の1通と、その引用先 */
+async function findLatestQuotedPair(conversationId: string): Promise<QuotedPair | null> {
+  const { data: rows } = await supabase.from("messages")
+    .select("sender, text, quoted_message_id, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(8);
+  const recent = (rows ?? []) as Array<{ sender: string; text: string | null; quoted_message_id: string | null }>;
+  let target: (typeof recent)[number] | null = null;
+  for (const m of recent) {
+    if (m.sender !== "customer") { if (target) break; continue; }
+    if (m.quoted_message_id) { target = m; break; }
+  }
+  if (!target?.quoted_message_id) return null;
+  const { data: q } = await supabase.from("messages")
+    .select("sender, text, image_url")
+    .eq("conversation_id", conversationId)
+    .eq("line_message_id", target.quoted_message_id)
+    .maybeSingle();
+  if (!q) return null;
+  return { customerText: target.text ?? "", quoted: q as QuotedPair["quoted"] };
+}
+
+/** 「[画像]」「[動画]」だけ＝中身がまだ分かっていない画像 */
+function isImagePlaceholder(text: string | null): boolean {
+  return !text || /^\s*\[(?:画像|動画)\]\s*$/.test(text);
+}
+
+/**
+ * 引用先が**こちらが送った画像**で、まだ中身を読んでいなければ読んで残す。
+ * 2026-09-21: 下書きを作る手前（bg-async）でブレインと**並べて**動かす。
+ *   送った時（send-line-message）に読めている画像なら表を見るだけで終わる。
+ * @returns 読めた／既にあった＝true
+ */
+export async function ensureQuotedImageDetail(conversationId: string): Promise<boolean> {
+  try {
+    const pair = await findLatestQuotedPair(conversationId);
+    if (!pair) return false;
+    const { quoted } = pair;
+    if (quoted.sender !== "staff" || !quoted.image_url || !isImagePlaceholder(quoted.text)) return false;
+    const { ensureImageDetail } = await import("@/app/lib/image-detail-store");
+    const d = await ensureImageDetail(quoted.image_url, conversationId);
+    return !!d;
+  } catch (e) {
+    console.warn("[quoted-context] ensure detail failed:", e instanceof Error ? e.message : e);
+    return false;
+  }
+}
+
 /** お客様の最新の発言（最後のスタッフ発言より後）のうち、引用返信の最後の1通の引用先 */
 export async function resolveLatestQuotedContext(conversationId: string): Promise<QuotedContext | null> {
   try {
-    const { data: rows } = await supabase.from("messages")
-      .select("sender, text, quoted_message_id, created_at")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: false })
-      .limit(8);
-    const recent = (rows ?? []) as Array<{ sender: string; text: string | null; quoted_message_id: string | null }>;
-    let target: (typeof recent)[number] | null = null;
-    for (const m of recent) {
-      if (m.sender !== "customer") { if (target) break; continue; }
-      if (m.quoted_message_id) { target = m; break; }
-    }
-    if (!target?.quoted_message_id) return null;
-    const { data: q } = await supabase.from("messages")
-      .select("sender, text, image_url")
-      .eq("conversation_id", conversationId)
-      .eq("line_message_id", target.quoted_message_id)
-      .maybeSingle();
-    if (!q) return null;
-    const quoted = q as { sender: string; text: string | null; image_url: string | null };
-    const isImage = !quoted.text || /^\s*\[(?:画像|動画)\]\s*$/.test(quoted.text);
+    const pair = await findLatestQuotedPair(conversationId);
+    if (!pair) return null;
+    const quoted = pair.quoted;
+    const isImage = isImagePlaceholder(quoted.text);
     let propertyLabel: string | null = null;
+    let detailLines: string[] = [];
+    let detailKind: ImageKind | null = null;
     if (isImage && quoted.image_url && quoted.sender === "staff") {
-      propertyLabel = (await propertyLabelsForImages(conversationId, [quoted.image_url])).get(quoted.image_url) ?? null;
+      const [labels, details] = await Promise.all([
+        propertyLabelsForImages(conversationId, [quoted.image_url]),
+        // 読み取りは**表を見るだけ**（無ければ空。ここで読みに行くと下書きを20〜30秒待たせる）
+        getImageDetails([quoted.image_url]),
+      ]);
+      propertyLabel = labels.get(quoted.image_url) ?? null;
+      const d = details.get(quoted.image_url);
+      // 見積書・本人確認書類は中身を渡さない（読み取りの時点で lines は空だが、ここでも念のため）
+      if (d) { detailKind = d.kind; detailLines = d.kind === "property" ? d.lines : []; }
     }
     return {
-      customerText: target.text ?? "",
+      customerText: pair.customerText,
       quotedSender: quoted.sender === "staff" ? "staff" : "customer",
+      // お客様が送った画像は line-webhook が Vision で書き起こしている（"[画像] <書き起こし>"）。
+      //   「[画像]」だけの時は中身が無いので null のまま
       quotedText: isImage ? null : (quoted.text ?? "").slice(0, 400),
       isImage,
       propertyLabel,
+      detailLines,
+      detailKind,
     };
   } catch (e) {
     console.warn("[quoted-context] resolve failed:", e instanceof Error ? e.message : e);
     return null;
   }
-}
-
-/** 生成のプロンプトに入れる引用の説明（どの物件の話か） */
-export function formatQuotedContextBlock(q: QuotedContext | null): string {
-  if (!q) return "";
-  const who = q.quotedSender === "staff" ? "スタッフ（こちら）" : "お客様自身";
-  const what = q.isImage
-    ? q.propertyLabel ? `物件資料・見積書の画像（${q.propertyLabel}）` : "画像"
-    : `「${q.quotedText}」`;
-  return `【💬 引用返信（確定事実・どの物件の話かの最優先の手がかり）】
-お客様の発言「${q.customerText.replace(/\n/g, " ").slice(0, 120)}」は、${who}が送った${what}への引用返信です。
-${q.propertyLabel ? `「こちら」「この物件」「〇階」は ${q.propertyLabel}（と同じ建物）を指す。会話の他の物件（以前に紹介した物件・号室）と取り違えないこと。` : "「こちら」「この物件」は引用先の内容を指す。会話の他の物件と取り違えないこと。"}`;
 }

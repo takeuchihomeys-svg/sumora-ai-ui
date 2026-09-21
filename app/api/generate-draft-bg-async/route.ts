@@ -379,6 +379,21 @@ export async function POST(req: NextRequest) {
         if (waited) console.log(JSON.stringify({ tag: "brain:image-read-wait", conversationId: convId, waitedMs: Date.now() - waitStartedAt }));
       }
 
+      // ── 引用先の画像の読み取り（2026-09-21 竹内「引用とあれば引用先の画像を読み取れるように」）──
+      // こちらが送った画像への引用返信なら、その資料に書いてある条件（駐車場・ペット・保証会社・設備）を
+      // 生成の材料にする。読み取りは 20〜30秒かかるので **ブレインと並べて**動かし、
+      // ブレインが終わった所で短く待つだけにする（送った時に読めていれば表を見るだけで即終わる）。
+      // 失敗しても生成は止めない（材料が無いだけ＝今までと同じ文になる）。
+      const quotedDetailPromise = (async () => {
+        try {
+          const { ensureQuotedImageDetail } = await import("@/app/lib/quoted-context");
+          return await ensureQuotedImageDetail(convId);
+        } catch (e) {
+          console.warn("[bg-async] 引用画像の読み取り失敗:", e instanceof Error ? e.message : e);
+          return false;
+        }
+      })();
+
       // ── brain直列実行（入り口・2026-08直列アーキテクチャ）─────────────────
       // 旧構成: webhookが brain を fire-and-forget 起動 + bg-async が draft 生成
       //   → 完了順序が保証されず suggested_aix_meta の書き込み競合が構造的に存在した。
@@ -412,6 +427,18 @@ export async function POST(req: NextRequest) {
       } catch (brainErr) {
         console.warn("[bg-async] brain serial failed（従来フォールバックで続行）:", String(brainErr), "convId:", convId);
         console.log(JSON.stringify({tag:"degradation:T3",stage:"brain-gate-error",conversationId:convId,reason:"brain_exception",staleAgeMs:null,error:String(brainErr).slice(0,200)}));
+      }
+
+      // 引用先の画像の読み取りを短く待つ（ブレインの間に終わっている事が多い。残っていても15秒で諦める）
+      {
+        const waitStartedAt = Date.now();
+        const done = await Promise.race([
+          quotedDetailPromise,
+          new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 15_000)),
+        ]);
+        if (done !== false) {
+          console.log(JSON.stringify({ tag: "quoted:image-detail-wait", conversationId: convId, waitedMs: Date.now() - waitStartedAt, result: String(done) }));
+        }
       }
 
       // ── brain完了後: 短時間複数メッセージ対策（DB再取得でtargetMessageを更新）──

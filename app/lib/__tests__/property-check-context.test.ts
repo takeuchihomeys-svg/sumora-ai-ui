@@ -2,7 +2,8 @@
 // 実行: npx tsx app/lib/__tests__/property-check-context.test.ts（自己完結ハーネス。全 PASS で exit 0）
 import { countCustomerSentProperties } from "../customer-property-count";
 import { avoidTopicsForAix } from "../aix-staff-first";
-import { formatQuotedContextBlock } from "../quoted-context";
+// 2026-09-21: 文を作る純関数は quoted-note.ts に分けた（quoted-context.ts は DB を読むのでテストから外す）
+import { formatQuotedContextBlock } from "../quoted-note";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -54,7 +55,7 @@ it("物件確認した（同封なし）は「他物件の募集状況確認」�
 
 // ─── 引用返信の物件 ───
 it("引用先がスタッフの物件資料 → 物件名と「こちら」の指す先を書く", () => {
-  const b = formatQuotedContextBlock({ customerText: "すみません💦\nこちら３階は空きありますか？", quotedSender: "staff", quotedText: null, isImage: true, propertyLabel: "robot home 太子橋(旧robot) 101号室" });
+  const b = formatQuotedContextBlock({ customerText: "すみません💦\nこちら３階は空きありますか？", quotedSender: "staff", quotedText: null, isImage: true, propertyLabel: "robot home 太子橋(旧robot) 101号室", detailLines: [], detailKind: null });
   expect(b.includes("robot home 太子橋(旧robot) 101号室")).toBe(true);
   expect(b.includes("取り違えない")).toBe(true);
 });

@@ -149,6 +149,8 @@ import { resolveNegativeReport } from "@/app/lib/negative-context";
 // 2026-09-21 竹内「先ほどの実際に申し込んだかのところ判断できるようにする」:
 //   「申込を案内した」と「実際に申し込んだ」を分け、材料として渡す（他人の申込は数えない）
 import { resolveApplicationStage, buildApplicationStageNote } from "@/app/lib/application-stage";
+// 2026-09-21 竹内「引用とあれば引用先の画像を読み取れるように」: 引用の読み方を AIX・ブレインと同じ関数に揃える
+import { resolveLatestQuotedContext, buildQuotedReplyNote } from "@/app/lib/quoted-context";
 /**
  * 直前送信の材料を止めるスイッチ（A/B の比較と、効かなかった時の戻し道）。
  * `PREV_SEND_NOTE=off` で無効。dev サーバーは起動時の環境変数を読むので、切り替えには再起動が要る。
@@ -2529,59 +2531,31 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
 // 「このメッセージは○○への返信です」というコンテキストをプロンプトに注入する。
 // ※ 現在はデータが貯まり始めた段階（webhook保存 + page.tsx line_message_id 書き戻しは実装済み）。
 //   引用先が見つからない場合は空文字を返して通常生成にフォールバックする。
+// 2026-09-21 竹内「引用とあれば引用先の画像を読み取れるように」:
+//   ここにあった独自の引用の読み方を **app/lib/quoted-context.ts に一本化**した
+//   （旧: 生成だけが別の関数を持っていて、AIX・ブレインが使っている「引用先の画像 → 物件名」を
+//    見ておらず、「どの物件かはスタッフにしか分からない」という**もう本当でない理由**で名前を伏せていた）。
+//   併せて、引用先がこちらの物件資料なら**資料に書いてある条件**（駐車場・ペット・保証会社・設備）も渡る。
 async function fetchQuotedContext(conversationId: string): Promise<string> {
   try {
-    const { data: lastCustomerMsg } = await supabase
-      .from("messages")
-      .select("quoted_message_id, text")
-      .eq("conversation_id", conversationId)
-      .eq("sender", "customer")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const quotedId = (lastCustomerMsg as { quoted_message_id?: string | null } | null)?.quoted_message_id;
-    if (!quotedId) return "";
-
-    const { data: quoted } = await supabase
-      .from("messages")
-      .select("sender, text, image_url")
-      .eq("line_message_id", quotedId)
-      .maybeSingle();
-    if (!quoted) return "";
-
-    const q = quoted as { sender?: string; text?: string | null; image_url?: string | null };
-    const senderLabel = q.sender === "staff" ? "スモラ（スタッフ）" : "お客様自身";
-    const isImage = !q.text || q.text === "[画像]" || q.text === "[動画]";
-    const contentDesc = isImage
-      ? "【画像（スタッフ送付なら物件カード・物件資料の可能性が高い）】"
-      : `「${safeSlice(String(q.text), 600)}」`;
+    const q = await resolveLatestQuotedContext(conversationId);
+    if (!q) return "";
+    const custText = q.customerText;
     // お客様がリンク（URL）そのものを求めているか判定
-    const custText = String((lastCustomerMsg as { text?: string | null } | null)?.text ?? "");
     const isLinkRequest = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送|ちょーだい)?/i.test(custText)
       || /(この|こちらの|その|これの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(custText);
     // 写真・画像・動画要求（「URL」という語を含まない要求）も同じゲートで検出する
     const isPhotoRequest = /((室内|内装|間取り|物件)?(写真|画像|動画|フォト))\s*(を|が|は)?\s*(送って|見たい|ありますか|ください|欲しい|URL|url|リンク|見せて|もらえ|拝見)/.test(custText);
-    const linkRequestNote = ((isLinkRequest || isPhotoRequest) && q.sender === "staff")
-      ? `
-【🔗 リンク（URL）要求検出（最優先）】お客様はURLを求めていますが、URLの送付はAIXツール（物件ピックアップした）がスタッフ操作で行います。
-【絶対禁止】返信文に「〜のURLとなります」「URLをお送りします」「リンクをご案内します」等、URLを送る・案内するような文言を一切書かない。
-→ 返信文は受付・確認の一言のみ：「確認させて頂きます😊！！」「しばらくお待ちください！！」程度にとどめる（「少々お待ちください」はfinal-check禁止語のため絶対に使わない）。
-→ 物件名・号室は書かない（「お送り頂きました物件」で受ける。URLも書かない。2026-09-11 竹内方針2）。
-→ 「気になる物件のURLをお送りください」の聞き返しは絶対禁止。`
-      : "";
-    // 2026-09-08: 見積例文は顧客が費用を質問／特定物件を参照している時のみ出す（引用画像だけで見積宣言を誘導しない）
-    const quoteEstimateAllowed = CUSTOMER_ESTIMATE_INTENT_RE.test(custText) || CUSTOMER_PROPERTY_REF_RE.test(custText);
-    const imageNameSuppressNote = isImage
-      ? `
-引用した画像がどの物件かはスタッフにしか判断できないため、返信文に物件名・マンション名は絶対に含めないこと（${quoteEstimateAllowed ? "「最大限割引した初期費用の御見積書をご用意します！！」" : "「お送り頂きましたお部屋の募集状況確認させて頂きます！！」"}のように物件名なしで返す${quoteEstimateAllowed ? "" : "。お客様が費用を質問していないため見積書の宣言は書かない"}）。`
-      : "";
-    return `
-【💬 引用リプライ検出（確定事実・最優先文脈）】
-お客様の最新メッセージは、${senderLabel}が送ったメッセージ ${contentDesc} への引用（リプライ）です。
-お客様は引用先の内容について話している。引用先が物件画像・物件名・物件URLの場合、
-その物件への興味として扱い、「気になる物件のURLをお送りください」等の聞き返しは絶対にせず、その物件を前提に返信を生成すること。
-ただし内覧日程調整・空室確認の方向で返信するのは、当該物件が退去予定・入居中でない場合に限る。
-退去予定・入居中の物件の場合は、現地内覧日程は提案せず「退去日以降のご案内」または「お申込みでお部屋を先に押さえてからのご内覧」を案内すること。${linkRequestNote}${imageNameSuppressNote}`;
+    const note = buildQuotedReplyNote(q, {
+      linkOrPhotoRequest: (isLinkRequest || isPhotoRequest) && q.quotedSender === "staff",
+      // 2026-09-08: 見積例文は顧客が費用を質問／特定物件を参照している時のみ出す（引用画像だけで見積宣言を誘導しない）
+      estimateAllowed: CUSTOMER_ESTIMATE_INTENT_RE.test(custText) || CUSTOMER_PROPERTY_REF_RE.test(custText),
+    });
+    console.log(JSON.stringify({
+      tag: "reply:quoted", conversationId, sender: q.quotedSender, isImage: q.isImage,
+      property: q.propertyLabel ?? null, detailKind: q.detailKind, detailLines: q.detailLines.length,
+    }));
+    return note;
   } catch (err) {
     // quoted_message_id カラム未作成環境・クエリ失敗時は通常生成にフォールバック
     console.warn("[generate-reply] 引用コンテキスト取得失敗 — 通常生成で続行:", err);
