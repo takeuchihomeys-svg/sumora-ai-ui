@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
@@ -107,6 +107,12 @@ interface AixModalProps {
 // 有効な物件ステータス（先頭 count 件）に退去予定("vacating")が含まれるか判定
 function isVacating(propStatuses: string[], count: number): boolean {
   return propStatuses.slice(0, count).includes("vacating");
+}
+
+// 2026-09-21 竹内「申込ありボタンは物件毎につける」: 申込あり("unavailable")が1件でもあるか。
+//   全体の「申込状況」を外したので、送信後の次アクションの判定もここから決める
+function hasApplied(propStatuses: string[], count: number): boolean {
+  return propStatuses.slice(0, count).includes("unavailable");
 }
 
 // 「7/21（月）」等の日付文字列の曜日を月/日から決定論的に再計算して正す
@@ -771,8 +777,8 @@ export default function AixModal({
   const [moveInMonth, setMoveInMonth] = useState<string>("");
   const [moveInPeriod, setMoveInPeriod] = useState<"上旬" | "中旬" | "下旬" | null>(null);
   const [moveInOcrLoading, setMoveInOcrLoading] = useState(false);
-  // 物件あった専用: 申込状況
-  const [checkAvailableApp, setCheckAvailableApp] = useState<"yes" | "no" | null>(null);
+  // 2026-09-21 竹内「申込ありボタンは物件毎につける」: 全体の「申込状況」は廃止（物件カードの「申込あり」に一本化）。
+  //   state だけ残すと消し忘れの元なので消す。リセット処理も checkPropStatuses 側で足りる。
   // 物件あった専用: 内覧誘導モード（折りたたみ）
   const [showCheckCalendar, setShowCheckCalendar] = useState(false);
   // 物件確認した「別の部屋」専用
@@ -2416,7 +2422,6 @@ export default function AixModal({
         if (checkPattern === "available") { body.viewing_continuation = checkViewingContinue; body.prop_room_counts = checkPropRoomCounts.slice(0, effectiveCheckCount); }
         // 𝒮 さん事例: こちらから日にちを出す時は1日1つ（材料の段階で落とす）
         if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = limitSlotsPerDay(checkCalendarInfo);
-        if (checkPattern === "available" && checkAvailableApp) body.available_application = checkAvailableApp;
         if (checkPattern === "available") body.all_properties_available = checkAllAvailable;
         if (checkPattern === "available" && checkRecommendProp !== null) body.recommend_prop_index = checkRecommendProp;
         if (checkPattern === "available" && checkIncludeEstimateText) body.include_estimate_text = true;
@@ -2995,10 +3000,10 @@ export default function AixModal({
       // }
 
       onAfterSend?.({
-        suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
+        suggest2ndHand: actionType === "property_check_result" && hasApplied(checkPropStatuses, checkPropertyCount),
         suggestViewingTemplate: actionType === "viewing_invite",
-        suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes" && !isVacating(checkPropStatuses, checkPropertyCount),
-        suggestApplicationPushVacating: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes" && isVacating(checkPropStatuses, checkPropertyCount),
+        suggestViewing: actionType === "property_check_result" && checkPattern === "available" && !hasApplied(checkPropStatuses, checkPropertyCount) && !isVacating(checkPropStatuses, checkPropertyCount),
+        suggestApplicationPushVacating: actionType === "property_check_result" && checkPattern === "available" && !hasApplied(checkPropStatuses, checkPropertyCount) && isVacating(checkPropStatuses, checkPropertyCount),
         suggestInitialCostTemplate: actionType === "property_recommendation" && recommendFocusPoints.includes("初期費用"),
         suggestAlternativeSend: actionType === "property_check_result" && checkPattern === "unavailable",
         suggestPropertySend: actionType === "condition_hearing",
@@ -3133,7 +3138,7 @@ export default function AixModal({
             const capturedPreview = preview;
             const capturedOnAfterSend = onAfterSend;
             const capturedActionType: string = actionType;
-            const capturedCheckAvailableApp: string | null = checkAvailableApp;
+            const capturedHasApplied: boolean = hasApplied(checkPropStatuses, checkPropertyCount);
             const capturedCheckPattern: string | null = checkPattern;
             const capturedHasVacating: boolean = isVacating(checkPropStatuses, checkPropertyCount);
             const capturedRecommendFocusPoints: string[] = recommendFocusPoints;
@@ -3162,10 +3167,10 @@ export default function AixModal({
               // （旧実装はカウントダウン開始時点で学習しており、スタッフがキャンセルしても学習データに残っていた）
               capturedRunLearning(capturedPreview);
               capturedOnAfterSend?.({
-                suggest2ndHand: capturedActionType === "property_check_result" && capturedCheckAvailableApp === "yes",
+                suggest2ndHand: capturedActionType === "property_check_result" && capturedHasApplied,
                 suggestViewingTemplate: capturedActionType === "viewing_invite",
-                suggestViewing: capturedActionType === "property_check_result" && capturedCheckPattern === "available" && capturedCheckAvailableApp !== "yes" && !capturedHasVacating,
-                suggestApplicationPushVacating: capturedActionType === "property_check_result" && capturedCheckPattern === "available" && capturedCheckAvailableApp !== "yes" && capturedHasVacating,
+                suggestViewing: capturedActionType === "property_check_result" && capturedCheckPattern === "available" && !capturedHasApplied && !capturedHasVacating,
+                suggestApplicationPushVacating: capturedActionType === "property_check_result" && capturedCheckPattern === "available" && !capturedHasApplied && capturedHasVacating,
                 suggestInitialCostTemplate: capturedActionType === "property_recommendation" && capturedRecommendFocusPoints.includes("初期費用"),
                 suggestAlternativeSend: capturedActionType === "property_check_result" && capturedCheckPattern === "unavailable",
                 suggestPropertySend: capturedActionType === "condition_hearing",
@@ -3339,10 +3344,10 @@ export default function AixModal({
       runLearning(preview);
 
       onAfterSend?.({
-        suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
+        suggest2ndHand: actionType === "property_check_result" && hasApplied(checkPropStatuses, checkPropertyCount),
         suggestViewingTemplate: actionType === "viewing_invite",
-        suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes" && !isVacating(checkPropStatuses, checkPropertyCount),
-        suggestApplicationPushVacating: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes" && isVacating(checkPropStatuses, checkPropertyCount),
+        suggestViewing: actionType === "property_check_result" && checkPattern === "available" && !hasApplied(checkPropStatuses, checkPropertyCount) && !isVacating(checkPropStatuses, checkPropertyCount),
+        suggestApplicationPushVacating: actionType === "property_check_result" && checkPattern === "available" && !hasApplied(checkPropStatuses, checkPropertyCount) && isVacating(checkPropStatuses, checkPropertyCount),
         suggestInitialCostTemplate: actionType === "property_recommendation" && recommendFocusPoints.includes("初期費用"),
         suggestAlternativeSend: actionType === "property_check_result" && checkPattern === "unavailable",
         suggestPropertySend: actionType === "condition_hearing",
@@ -4983,7 +4988,6 @@ export default function AixModal({
                         setPreview("");
                         // パターン切替時に旧パターンの下書きを破棄（「会話を合わせる」で古い base_message が使われるバグ防止）
                         setAiDraft("");
-                        setCheckAvailableApp(null);
                         setShowCheckCalendar(false);
                         setCheckViewingContinue(false); setViewingContinueAuto(false); viewingAutoAppliedRef.current = false; setCheckPropRoomCounts([null, null, null]);
                         if (p.key !== "exclusive") {
@@ -5037,7 +5041,6 @@ export default function AixModal({
                       onClick={() => {
                         setCheckPattern(null);
                         setPreview("");
-                        setCheckAvailableApp(null);
                         setShowCheckCalendar(false);
                         setCheckViewingContinue(false); setViewingContinueAuto(false); viewingAutoAppliedRef.current = false; setCheckPropRoomCounts([null, null, null]);
                         setExclusiveImageFile(null);
@@ -5525,22 +5528,13 @@ export default function AixModal({
                 </div>
               )}
 
-              {/* 物件あった: 申込状況 */}
-              {checkPattern === "available" && (
-                <div className="mb-1">
-                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">申込状況 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setCheckAvailableApp(checkAvailableApp === "yes" ? null : "yes")}
-                      className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${checkAvailableApp === "yes" ? "border-red-400 bg-red-50 text-red-600" : "border-[#d1d7db] bg-white text-red-400"}`}
-                    >申込あり</button>
-                    <button
-                      onClick={() => setCheckAvailableApp(checkAvailableApp === "no" ? null : "no")}
-                      className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${checkAvailableApp === "no" ? "border-blue-400 bg-blue-50 text-blue-600" : "border-[#d1d7db] bg-white text-blue-400"}`}
-                    >申込なし</button>
-                  </div>
-                </div>
-              )}
+              {/* 2026-09-21 竹内「申込ありボタンは物件毎につける。そうすれば、どの物件が申込ありなのか判断できるから」
+                  ここにあった全体の「申込状況（申込あり／申込なし）」を外した。理由:
+                   ・同じ事実の入力が2か所（ここと、下の物件カードの「申込あり」）にあった
+                   ・物件名を入れると aix/action は**物件ごとのステータスを使い、ここを無視**していた
+                     ＝ 画面に出ているのに効かないボタンだった
+                   ・全体で1つだと、複数物件を確認した時に「どの物件が申込ありか」が伝わらない
+                  → 物件カードの「申込あり」に一本化（下の物件①②③の募集状況ボタン）。 */}
 
               {/* 別の部屋が募集してた: 階数・号室・間取り */}
               {checkPattern === "alternative" && (

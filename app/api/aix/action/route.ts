@@ -56,6 +56,8 @@ import { resolvePropertySendState, describePropertySendState } from "@/app/lib/p
 // 2026-09-21 竹内「複数物件送った中では『お送りさせて頂きましたお部屋の中でも〜』／新着物件なら新着物件の言い回し」
 //   訴求シナリオの判定・ガイド・検査（aix-template-generate と同じ物を見る）
 import { resolveRecommendationScenario, buildScenarioNote, detectFrameViolation } from "@/app/lib/recommendation-frame";
+// 2026-09-21 竹内「申込ありボタンは物件毎につける。そうすれば、どの物件が申込ありなのか判断できるから」
+import { buildApplicationNote, applicationBulletNote } from "@/app/lib/application-status-note";
 // 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（スタッフの入力をそのまま・骨組みは実送信の形）
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
@@ -1853,9 +1855,25 @@ async function handleAction(request: NextRequest): Promise<Response> {
         : null;
     // 条件違反の事後検証用: 生成時に使った顧客条件＋PSPのスナップショット（aix_generate_log.conditions_snapshot）
     // 2026-09-16 カイナ事例: 物件確認した×会話を合わせる は判定（内覧の流れ・部屋数・出口の直し）もここに足す（JSONB・新カラム無し）
+    // 2026-09-21 竹内「申込ありボタンは物件毎につける」の調査で分かったこと:
+    //   scripts/audit-check-application.ts で直近180日の物件確認の生成ログ305件を見たら、
+    //   **prop_statuses / available_application / property_count が1件も残っていなかった（0/305）**。
+    //   ＝ 後から「スタッフが何を選んだか」を追えず、直した効果も測れない。
+    //   スタッフの入力は JSONB に足すだけなので新カラムは要らない（migrate-schema 不要）。
     const conditionsSnapshot: Record<string, unknown> = {
       customer_conditions: customer_conditions ? String(customer_conditions).slice(0, 1000) : null,
       psp: aixBrainMeta?.property_search_params ?? null,
+      // ここから下は「スタッフが画面で何を選んだか」（測れるようにするための記録）
+      prop_statuses: Array.isArray(prop_statuses) ? (prop_statuses as string[]).slice(0, 10) : null,
+      property_count: typeof property_count === "number" ? property_count : null,
+      sent_property_count: typeof body.sent_property_count === "number" ? body.sent_property_count : null,
+      check_application_invite: body.check_application_invite === true ? true : null,
+      show_viewing_invite: show_viewing_invite === true ? true : null,
+      is_new_arrival: body.is_new_arrival === true ? true : null,
+      recommend_prop_index: typeof body.recommend_prop_index === "number" ? body.recommend_prop_index : null,
+      // 訴求シナリオ（物件オススメ）は決まった所で代入する（aix-template-generate と同じキー名）。
+      // ⚠ ここで参照すると「まだ決まっていない時点の値」が固定されるので、値は入れない
+      scenario: null as string | null,
     };
     /**
      * AIX【申込へ】の返信の仕上げ（2026-09-16 竹内・💜 さん事例）。
@@ -2294,6 +2312,8 @@ ${SMORA_COMMON_RULES}`;
         scenario: recScenario, sent: recSendState.sentPropertyCount, source: recSendState.sentSource,
         newArrival: !!body.is_new_arrival, checkPattern: typeof check_pattern === "string" ? check_pattern : null,
       }));
+      // 生成ログに残す（後から「何に決まったか」を測れるように）
+      conditionsSnapshot.scenario = recScenario;
       const scenarioNote = buildScenarioNote(recScenario);
 
       const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}${situationNote}${scenarioNote}`;
@@ -4917,7 +4937,11 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         const cmEndedCount = cmSentCount !== null && cmPropCount > 0 && cmSentCount > cmPropCount
           ? cmSentCount - cmPropCount
           : 0;
-        const cmAvailableApp = body.available_application as "yes" | "no" | undefined;
+        // 2026-09-21 竹内「申込ありボタンは物件毎につける」:
+        //   画面の全体の「申込状況」は廃止したので、**物件ごとのステータス**から申込ありを見る。
+        //   body.available_application は古い画面からの後方互換（新しい画面は送らない）。
+        const cmHasApplied = ((prop_statuses as string[] | undefined) ?? []).slice(0, Math.max(1, cmPropCount)).includes("unavailable")
+          || (body.available_application as "yes" | "no" | undefined) === "yes";
         const cmShowViewingInvite = !!(show_viewing_invite as boolean | undefined);
         const cmShowAppInvite = !!(body.check_application_invite as boolean | undefined);
         // 2026-09-16 竹内（カイナ事例）「会話の内容と合わせた実際に送ったような内容（内覧の話しだったので内覧）で送る」:
@@ -4965,7 +4989,7 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
             //   「で締めること」と必須にしていたため、会話を合わせるで毎回付いてスタッフに削られていた。禁止（保留表現）はそのまま残す。
             ? `・残り${cmEndedCount}件: 確認済みで「募集終了」（申込済み・募集に出ていない）。\n　※「残り${cmEndedCount}件は確認中」「引き続き確認します」等の保留表現は事実に反するため絶対禁止（募集終了として言い切る）。\n　※「引き続き条件に合うお部屋を探させて頂きます！！」は**全件が募集終了で、次を探す約束をこの会話でまだしていない時だけ**（必須ではない。実送信では17%）`
             : "",
-          cmAvailableApp === "yes" ? "・お申込状況: 既に1番手のお申込あり → 2番手以降でのお申込となる旨を伝えること" : "",
+          cmHasApplied ? "・お申込状況: 既に1番手のお申込あり → 2番手以降でのお申込となる旨を伝えること（どのお部屋が申込ありかを**物件名で名指しして**書く）" : "",
           cmShowAppInvite ? "・締めの方向: お申込誘導（お気に召されましたらお申込みしお部屋を抑えさせて頂きます）" : "",
           !cmShowAppInvite && cmShowViewingInvite ? "・締めの方向: 内覧誘導（ご都合よろしいお日にちにご案内させて頂きます）" : "",
           cmContinuationLineForced
@@ -5022,7 +5046,7 @@ ${cmResultLines}
         const pcrWaitStance = aixBrainMeta?.engagement_stance === "wait";
         // スタッフが入れた事柄（御見積書の同封・内覧誘導・申込誘導）と食い違う禁止の話題は外す（aix-staff-first）
         const pcrAvoidTopics = avoidTopicsForAix("property_check_result", aixBrainMeta?.avoid_topics, {
-          estimateEnclosed: cmHasEstimate, viewingInvite: cmShowViewingInvite || cmContinuationActive, applicationInvite: cmShowAppInvite || cmAvailableApp === "yes",
+          estimateEnclosed: cmHasEstimate, viewingInvite: cmShowViewingInvite || cmContinuationActive, applicationInvite: cmShowAppInvite || cmHasApplied,
         });
         const pcrKeyTopics = (aixBrainMeta?.key_topics ?? []).filter((t): t is string => typeof t === "string" && t.trim() !== "");
         const pcrMetaLines = [
@@ -5381,6 +5405,19 @@ ${patternExample}${knowledgeText}${examplesText}`;
         const hasAnyEstimate = ((body.estimate_image_urls as (string | null)[] | undefined) ?? []).some((u) => !!u) || !!(estimate_image_url as string | undefined);
         if (hasAnyEstimate) estimate_sent_result = true;
 
+        // ─── 2026-09-21 竹内「他に必要な改善あれば教えて。実際の文使いやすいように」───
+        //   scripts/audit-check-result-quality.ts（直近180日・下書きと実送信が揃う108件）:
+        //     そのまま送れたのは **11.1%** だけ。
+        //     スタッフが**足した**行の1〜4位が全部「お待たせ致しました」系（計17回）で、
+        //     **消した**行の1位が「〇〇さんお世話になっております！！」（16回）。
+        //     ＝ 挨拶を「お待たせ致しました」に**置き換えて**いる。
+        //   物件確認は「管理会社に確認した結果を届ける」場面なので waited-scope で許している側だが、
+        //   この固定テンプレは AI を通らないため今日入れた2択（buildWaitedOpeningChoice）が効かない。
+        //   コード側で決める。分かれる軸は実測で1つだけ（その会話で前回もそう書き出したか・55.8% 対 22.6%）。
+        const checkGreeting = waitedPrevUsed === true && isWaitedAllowed(currentAction)
+          ? `${name}お待たせ致しました！！`
+          : greetingPhrase;
+
         if (propCount === 1) {
           // 1件モード: 物件名があれば直接テンプレ生成（④ 改善）
           const p = propList[0];
@@ -5394,7 +5431,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const guarantorSection1 = guarantorNote1 ? `\n\n${guarantorNote1}` : "";
           const showVI1 = !!(show_viewing_invite as boolean | undefined);
           const showAppInvite1 = !!(body.check_application_invite as boolean | undefined);
-          const greeting1 = greetingPhrase; // 挨拶時間ルール共通化（#19）
+          const greeting1 = checkGreeting; // 挨拶時間ルール共通化（#19）＋2026-09-21「お待たせ致しました」の置き換え
           // 保証会社はその物件の情報の一部なので、設備の箇条書きまで出し切った直後・締め（内覧/申込の誘導・他N件募集終了）の前に置く
           if (p.status === "vacating") {
             // 2026-09-17 竹内: 退去予定は「いつから見られるか」まで書く（退去日の翌日＝内覧解禁日・実送信51件の言い回し）
@@ -5402,7 +5439,12 @@ ${patternExample}${knowledgeText}${examplesText}`;
               ?? (p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！");
             const facSection = facilityText ? `\n\n${facilityText}` : "";
             message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}${facSection}${guarantorSection1}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
-          } else if (showAppInvite1) {
+          // ─── 2026-09-21 竹内「申込ありボタンは物件毎につける。そうすれば、どの物件が申込ありなのか判断できるから」───
+          //   ⚠ ここには **p.status === "unavailable"（物件ごとの「申込あり」）の分岐が無かった**。
+          //     1件の時に物件ごとの「申込あり」を押しても下の else に落ちて
+          //     「〇〇 現在募集中となります！！」＝ **申込ありなのに募集中と言ってしまう**形だった。
+          //     （画面の上にある全体の「申込状況」は、物件名が入っているとこの経路に来るので無視されていた）
+          } else if (p.status === "unavailable" || showAppInvite1) {
             const estimateApp = hasAnyEstimate ? "\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！" : "";
             const facSection = facilityText ? `\n\n${facilityText}` : "";
             message_text = `${pName}募集中となります！！\n現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateApp}${facSection}${guarantorSection1}\n\n※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`;
@@ -5428,7 +5470,9 @@ ${patternExample}${knowledgeText}${examplesText}`;
             const prefix = pi === recommendIdx ? "🌟" : "・";
             let line: string;
             if (p.status === "vacating") line = p.vacDate ? `${prefix}${n}　※ ${p.vacDate}退去予定` : `${prefix}${n}`;
-            else if (p.status === "unavailable") line = `${prefix}${n}　※ 申込あり`;
+            // 2026-09-21: 「※ 申込あり」は**実送信365日で0件**だったので、実送信にある言い方に寄せる。
+            //   どの物件が申込ありかは、この注記に加えて下の buildApplicationNote が本文で名指しする
+            else if (p.status === "unavailable") line = `${prefix}${n}${applicationBulletNote(p.status)}`;
             else if (p.status === "alternative") line = `${prefix}${n}　※ 別のお部屋が募集中`;
             else line = `${prefix}${n}`;
             const fac = propFacilitiesData?.[pi];
@@ -5453,6 +5497,16 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const estimateSection = hasAnyEstimate
             ? `\n最大限割引しました初期費用御見積書同封させて頂きました。${guarantorSectionMulti}${guarantorSectionMulti ? "\n\n" : "\n"}お手隙の際にご査収ください！！`
             : guarantorSectionMulti;
+          // ─── 2026-09-21 竹内「どの物件が申込ありなのか判断できるから」───
+          //   実送信365日で「※ 申込あり」の箇条書きは 0件。スタッフは**名指しして2番手の説明を書く**:
+          //     「1枚目の栄美グランドハイツはお申込がはいっておりますので、
+          //      1番手の方がキャンセルになった際に繰り上がる2番手以降でのお申込となります！！」
+          //   骨組みは app/lib/application-status-note.ts（実送信の文そのまま・テスト13件）
+          const applicationNote = buildApplicationNote(
+            propList.map((p, pi) => ({ name: p.name || fallbackNames[pi] || "", status: p.status })),
+            { total: sentPropCount ?? propCount },
+          );
+          const applicationSection = applicationNote ? `\n\n${applicationNote}` : "";
           const toureableList = propList.map((p, pi) => ({ ...p, pi })).filter(p => p.status === "available" || p.status === "alternative");
           const showViewingInvite = !!(show_viewing_invite as boolean | undefined);
           const showAppInviteMulti = !!(body.check_application_invite as boolean | undefined);
@@ -5479,12 +5533,21 @@ ${patternExample}${knowledgeText}${examplesText}`;
             }
           }
           // 内覧誘導OFF → vacancySection = "" (内覧テキストなし)
-          const greeting = greetingPhrase; // 挨拶時間ルール共通化（#19）
+          const greeting = checkGreeting; // 挨拶時間ルール共通化（#19）＋2026-09-21「お待たせ致しました」の置き換え
           const header = (all_properties_available as boolean | undefined) && endedPropCount === 0
             ? `${name}お送り頂きました\n`
             : `${name}お送り頂きました物件の中で\n`;
           // 保証会社は estimateSection の中（御見積書の行の直後・お手隙の前）に入っているのでここでは足さない
-          message_text = `${greeting ? `${greeting}\n` : ""}${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${recommendNote}${estimateSection}${vacancySection}${endedSection}`; // G32: 当日送信済みは挨拶行なし
+          // 2026-09-21: 申込ありの物件がある時は「こちら〇件現在募集中となります！！」と言い切らない
+          //   （申込ありの部屋まで「募集中」に含めると事実と食い違う）。実送信も分けて書いている
+          const appliedCount = propList.filter((p) => p.status === "unavailable").length;
+          const availableCount = propCount - appliedCount;
+          const availableLine = appliedCount === 0
+            ? `\nこちら${propCount}件現在募集中となります！！`
+            : availableCount > 0
+              ? `\nこちら${availableCount}件現在募集中となります！！`
+              : "";
+          message_text = `${greeting ? `${greeting}\n` : ""}${header}${bulletLines}${availableLine}${applicationSection}${recommendNote}${estimateSection}${vacancySection}${endedSection}`; // G32: 当日送信済みは挨拶行なし
         }
 
       // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）
