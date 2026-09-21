@@ -65,6 +65,8 @@ import {
   // 2026-09-11 統合設計（返信生成×最終チェックの衝突解消）: 回答検出・必須要素判定・免除・例文選択・顧客名スロットの単一真実源
   hasDirectAnswer, PROPOSAL_FORM_RE, mustIncludeSatisfied, isCellRequiredSentence, selectPairExample, fillPairTokens, fillNameSlot, CONFIRM_DECL_WITH_OBJECT_RE,
   type PairMustInclude,
+  // 2026-09-21 竹内「ブレインが勝つようにする」: 必須要素は生成と同じ関数で決める（四者同名）
+  resolveMustInclude,
 } from "./reply-context";
 // 2026-09-09 Fable5 行動台帳: generate-reply と同一オブジェクト（省略時は recentMessages から再計算）。実行前提語ゲート・自動修正は action-ledger の同じ関数
 import { buildActionLedger, checkDonePresupposition, applyLedgerAutoFix, COMPLETED_SEND_RE, ATTACHED_DELIVERABLE_RE, type ActionLedger } from "./action-ledger";
@@ -699,7 +701,8 @@ function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): PromptB
     const closingLine = `\n締め: ${cl.kind === "farewell" ? "探索終了・お別れのお礼への返し" : cl.kind === "decline" ? "お客様の断りへの返し" : "なし"}${cl.kind ? `（${cl.evidence}）。この場面では行動宣言（ピックアップ・内覧・見積）を足す指摘をしない。直前スタッフ文の再掲や前進提案を削る指摘だけを出す` : ""}`;
     if (!pair.rule) return closingLine;
     // when が false の要素（この場面に無い要素）は出さない＋プレースホルダを実値に置換（生成と同じ）
-    const must = pair.rule.mustInclude.filter((m) => !m.when || m.when(pair)).map((m) => fillPairPlaceholders(m.label, pair));
+    // 2026-09-21 竹内「ブレインが勝つようにする」: ブレインが避けろと言った要素は必須から外す（生成と同じ関数＝四者同名）
+    const must = resolveMustInclude(pair, { strategy: ctx.brainStrategy, brainFresh: true }).active.map((m) => fillPairPlaceholders(m.label, pair));
     // 2026-09-11 竹内方針1: 必須要素は「生成の参考情報」。スタッフの実際の返信を優先するため、欠落を LLM に指摘させない
     //   （旧文言「欠けていれば WE_DO_MISSING として指摘すること」は決定論で info に下げた要求の裏口になっていた・V-2）
     return `\n往復文脈: 我々=${STAFF_KIND_JA[pair.staff.kind]}→お客様=${CUSTOMER_KIND_JA[pair.customer.kind]}。必須要素（生成の参考情報）: ${must.join(" / ") || "なし"}（欠落を指摘しない。スタッフの実際の返信はこの要素を含まないことが多い）${closingLine}`;
@@ -2773,8 +2776,9 @@ function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: Fin
       : mode === "answer" ? "[REVISION_MODE] 質問への回答: 骨格系ルールの③行動宣言と自己検証(b)は任意。回答文（〜となります／〜でございます／〜しております／〜ございません）があれば合格。\n"
       : "";
     if (sub.isAckOnly && !pair.rule) return modeNote;
+    // 2026-09-21 竹内「ブレインが勝つようにする」: 接地修正でも同じ関数で必須要素を決める（四者同名）
     const must = pair.rule
-      ? pair.rule.mustInclude.filter((m) => !m.when || m.when(pair)).map((m, i) => `${i + 1}.${fillPairPlaceholders(m.label, pair)}`).join(" ") || "（この場面で必須の要素なし）"
+      ? resolveMustInclude(pair, { strategy: ctx.brainStrategy, brainFresh: true }).active.map((m, i) => `${i + 1}.${fillPairPlaceholders(m.label, pair)}`).join(" ") || "（この場面で必須の要素なし）"
       : "（該当セルなし: 受け止め→回答/代替→行動宣言→締め）";
     const ex = pair.rule ? selectPairExample(pair, ctx.lastCustomerMessage) : null;
     const exLine = ex?.text ? `型（成約実例・前提${ex.premiseOk ? "成立" : "不成立＝骨格のみ参照し文は使わない"}）: 「${ex.text}」\n` : "";

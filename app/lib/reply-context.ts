@@ -2347,9 +2347,10 @@ export function buildPairDirection(
   const dir = fillPairPlaceholders(pair.rule.direction, pair);
   // 2026-09-10 Fable5: when が false の要素（この場面に無い要素）は direction にも出さない
   const avoids = opts.brainFresh ? (opts.strategy?.avoid_topics ?? []) : [];
-  const must = pair.rule.mustInclude.filter((m) => !m.when || m.when(pair)).map((m, i) => {
+  // 2026-09-21 竹内「ブレインが勝つようにする」（buildTurnPairNote と同じ関数を見る＝四者同名）
+  const must = resolveMustInclude(pair, { strategy: opts.strategy, brainFresh: opts.brainFresh }).active.map((m, i) => {
     const pick = m.preferWhenAvoid?.find((p) => avoids.some((t) => p.avoid.test(t)));
-    return `${i + 1}.${fillPairPlaceholders(m.label, pair)}${pick ? `【この場面では必ず → ${pick.use}】` : ""}`;
+    return `${i + 1}.${fillPairPlaceholders(m.label, pair)}${pick ? `【この場面では必ず → ${pick.use}】` : ""}${m.avoidNote ?? ""}`;
   }).join(" ");
   const ref = opts.brainFresh && opts.brainReplyDirection ? ` brain方向性（参考）:「${opts.brainReplyDirection}」` : "";
   return `${dir}。必須要素: ${must}。禁止: ${pair.rule.mustNot.map((x) => fillPairTokens(x, pair)).join("／")}${ref}`;
@@ -2374,12 +2375,18 @@ export function buildTurnPairNote(
   lines.push(`- お客様の返答（${custJa}${pair.customer.secondary.length ? " ＋ " + pair.customer.secondary.map((k) => CUSTOMER_KIND_JA[k]).join("・") : ""}）: 「${customerMessage.split(MSG_SEP).join(" ／ ").replace(/\s+/g, " ").slice(0, 200)}」`);
   if (pair.rule) {
     lines.push(`- → この返信の役割: ${fillPairPlaceholders(pair.rule.direction, pair)}`);
-    lines.push("- 必須要素（それぞれ本文で1文以上・欠けたら不合格）:");
-    const actives = pair.rule.mustInclude.filter((m) => !m.when || m.when(pair));
+    // 2026-09-21 竹内「ブレインが勝つようにする」: ブレインが避けろと言った話題にぶつかる必須要素は落とす
+    const { active: actives, dropped } = resolveMustInclude(pair, { strategy: opts.strategy, brainFresh: opts.brainFresh });
+    if (actives.length > 0) lines.push("- 必須要素（それぞれ本文で1文以上・欠けたら不合格）:");
     actives.forEach((m, i) => {
       const pick = m.preferWhenAvoid?.find((p) => avoids.some((t) => p.avoid.test(t)));
-      lines.push(`  ${["①", "②", "③", "④", "⑤"][i] ?? i + 1} ${fillPairPlaceholders(m.label, pair)}${pick ? `【この場面では必ず → ${pick.use}】` : ""}`);
+      lines.push(`  ${["①", "②", "③", "④", "⑤"][i] ?? i + 1} ${fillPairPlaceholders(m.label, pair)}${pick ? `【この場面では必ず → ${pick.use}】` : ""}${m.avoidNote ?? ""}`);
     });
+    // 落とした事実は隠さない（黙って消すと、なぜ書かれていないのか後から追えない）。
+    // ⚠ 既定（annotate）では落とさないのでここは空。BRAIN_WINS_CELL=drop の時だけ出る。
+    if (dropped.length > 0) {
+      lines.push(`- この場面では書かない（ブレインが「${dropped.map((d) => d.avoid).join("・")}」を避けると判断したため）: ${dropped.map((d) => fillPairPlaceholders(d.label, pair)).join(" ／ ")}`);
+    }
     lines.push(`- 禁止: ${pair.rule.mustNot.map((x) => fillPairTokens(x, pair)).join(" / ")}`);
     // 2026-09-11 統合設計（経路C/Q3）: 質問セルでは回答の形の語彙を生成にも渡す（生成と検査が同じ語彙を見る）
     if (pair.customer.kind === "question") {
@@ -3050,11 +3057,106 @@ export function detectCellConflicts(
   return out;
 }
 
-/** avoid を除外すべきか（旧 route.ts の `m.label.includes(t)` の置換。意味クラスで判定する） */
+/**
+ * avoid を除外すべきか（旧 route.ts の `m.label.includes(t)` の置換。意味クラスで判定する）。
+ *
+ * ⚠ 2026-09-21 竹内「ブレインが勝つようにする」で**使わなくなった**。
+ *   残してあるのは、戻す時（BRAIN_WINS_CELL=off）に同じ判定が要るため。
+ */
 export function avoidConflictsWithCell(pair: PairContext, topic: string): boolean {
   if (!pair.rule) return false;
   return pair.rule.mustInclude.filter((m) => !m.when || m.when(pair)).some((m) => {
     const cls = CONFLICT_CLASSES.find((c) => c.element.test(m.label));
     return !!cls && cls.avoid.test(topic);
   });
+}
+
+// ─────────────────────────────────────────────────────────────
+// ブレインが勝つ（2026-09-21 竹内「ブレインが勝つようにする」）
+//
+// ■ それまでの形（セルが勝つ）
+//   セルの必須要素と brain の avoid_topics がぶつかると、`avoidConflictsWithCell` で
+//   **brain の avoid を削って**セルの必須要素を通していた。
+//   ＝ ブレインが「今回は費用の話をしない」と決めても、表（セル）が押し通す。
+//   実物（会話 d99ab7e6）:
+//     ブレイン: 返信方向「家賃4万円の新条件で物件を再検索し全力ピックアップして送付する」
+//               避ける話題「見積書 / 初期費用 / 初期費用の具体額 / 内覧日の調整」
+//     セル PD_CONDITION_CHANGE の必須: 「初期費用も最大限割引させて頂き…抑えさせて頂きます！！」
+//
+// ■ 実測（scripts/audit-brain-avoid-vs-sent.ts・直近60日）
+//   ブレインが「避ける」と言った話題を、直後にスタッフが実際に書いたか:
+//     estimate 0/8(0%) ／ apply 0/3(0%) ／ viewing 1/6(16.7%) ／ initial_cost 2/9(22.2%)
+//     合計 3/26 = **11.5%**
+//   ＝ ブレインの判断は実送信と合っている。**ブレインを勝たせてよい**。
+//   ⚠ 標本は小さい（avoid_topics は会話ごとに最新の1つしか残らないため 10会話・26話題）。
+//
+// ■ 直した形
+//   avoid を削るのをやめ、**ぶつかった必須要素の方を落とす**。
+//   落とした事実は記録して検査にも渡す（黙って消さない）。
+//   戻す時は BRAIN_WINS_CELL=off（セルが勝つ旧動作）。
+// ─────────────────────────────────────────────────────────────
+
+export type DroppedElement = { label: string; avoid: string; cls: string; reason: string };
+/** 必須要素に添える「この場面ではこう書く」の注記（要素と同じ行に出す） */
+export type ActiveElement = PairMustInclude & { avoidNote?: string };
+
+/**
+ * ブレインの勝たせ方。
+ *   "annotate"（既定） … avoid を消さない。ぶつかった要素は**落とさず**、その要素の行に
+ *                        「この話題には触れない形で書く」を添える
+ *   "drop"             … ぶつかった要素を落とす
+ *   "off"              … 今までどおり（avoid を削ってセルを通す）
+ *
+ * ■ なぜ既定が "drop" ではないか（2026-09-21 の全件監査で分かった）
+ *   scripts/audit-brain-wins-cell.ts（直近60日・スナップショット912件）:
+ *     落とした必須要素 23個のうち **22個（95.7%）はスタッフが実送信で書いていた**
+ *       estimate 11/11(100%) ／ new_pickup 10/10(100%) ／ viewing 1/2(50%)
+ *   ＝ 要素ごと落とすのは**落としすぎ**。理由は2つ:
+ *     ① estimate（「初期費用を抑える宣言」）は 2026-09-14 くれあ事例で
+ *        竹内さんが「必須要素を優先する」と決めた物で、実送信でも 11/11 書かれている
+ *     ② new_pickup の要素は「随時ピックアップ宣言 **or** 扉を開ける1文」の形で、
+ *        ブレインの avoid とぶつからない**逃げ道が要素の中にある**。丸ごと落とすとその枝まで消える
+ *
+ * ■ それでも直す価値があること（ここが本当の穴だった）
+ *   旧実装は avoid_topics を**削って**いたので、ブレインが「今回は費用の話をしない」と決めても
+ *   その判断が**プロンプトから消えていた**。要素を落とさなくても、avoid を残して
+ *   「この要素は書くが、〇〇には触れない形で」と1か所で解決すれば、ブレインの判断は効く。
+ *   設計知見「禁止と必須が同じ語を扱う時は、禁止を並べ合うのではなくトークン1つに寄せる」。
+ */
+export type BrainWinsMode = "annotate" | "drop" | "off";
+export function brainWinsCell(env: Record<string, string | undefined> = process.env): BrainWinsMode {
+  const v = (env.BRAIN_WINS_CELL ?? "annotate").trim().toLowerCase();
+  return v === "off" ? "off" : v === "drop" ? "drop" : "annotate";
+}
+
+/**
+ * この場面で実際に書かせる必須要素を決める。
+ * @returns active 必須要素（annotate では avoidNote 付き）／ dropped 落とした物（drop の時だけ）
+ */
+export function resolveMustInclude(
+  pair: PairContext,
+  opts: { strategy?: BrainConversationScope | null; brainFresh?: boolean; mode?: BrainWinsMode } = {},
+): { active: ActiveElement[]; dropped: DroppedElement[] } {
+  if (!pair.rule) return { active: [], dropped: [] };
+  const actives = pair.rule.mustInclude.filter((m) => !m.when || m.when(pair));
+  const brainFresh = opts.brainFresh !== false;
+  const mode = opts.mode ?? brainWinsCell();
+  const avoids = brainFresh ? (opts.strategy?.avoid_topics ?? []) : [];
+  if (mode === "off" || avoids.length === 0) return { active: actives, dropped: [] };
+
+  const active: ActiveElement[] = [], dropped: DroppedElement[] = [];
+  for (const m of actives) {
+    const cls = CONFLICT_CLASSES.find((c) => c.element.test(m.label));
+    // preferWhenAvoid が用意されている要素は「避ける時の言い換え」が既に決まっている（セルがブレインに合わせてある）
+    const hasAlternative = !!m.preferWhenAvoid?.some((p) => avoids.some((t) => p.avoid.test(t)));
+    const hit = cls && !hasAlternative ? avoids.find((t) => cls.avoid.test(t)) : undefined;
+    if (!hit) { active.push(m); continue; }
+    if (mode === "drop") {
+      dropped.push({ label: m.label, avoid: hit, cls: cls!.id, reason: "brain の avoid_topics とぶつかるので落とした（ブレインが勝つ・drop）" });
+    } else {
+      // annotate: 要素は残し、**その行に**解決を書く（別の場所から禁止を渡さない）
+      active.push({ ...m, avoidNote: `【ブレインの判断: この返信では「${hit}」に触れない。この要素は、${hit}そのものを持ち出さない形で1文にする（要素に「or」の逃げ道があればそちらを使う）】` });
+    }
+  }
+  return { active, dropped };
 }

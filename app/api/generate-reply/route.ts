@@ -172,6 +172,8 @@ import {
   // 2026-09-10 Fable5 みく事例: brain フィールドの意味スコープ分離（message-local / conversation）と
   //   セル必須要素 × brain 方針の衝突検出（avoid を削る前にセル選択を疑うための記録）
   toBrainMessageLocal, toBrainConversationScope, detectCellConflicts, avoidConflictsWithCell,
+  // 2026-09-21 竹内「ブレインが勝つようにする」
+  resolveMustInclude, brainWinsCell,
   type BrainConversationScope, type CellConflict,
   // 2026-09-11 統合設計（返信生成×最終チェックの衝突解消）: ピックアップ再宣言ゲートの解除判定・必須要素の保護・顧客名スロット・断り語彙の単一真実源
   resolvePickupGate, isCellRequiredSentence, fillNameSlot, CUST_WITHDRAWAL_SRC,
@@ -3966,6 +3968,19 @@ export async function POST(req: NextRequest) {
     const cellConflicts: CellConflict[] = detectCellConflicts(pairContext, brainStrategy, brainLocalFresh);
     pairContext.conflicts = cellConflicts;
     if (cellConflicts.length) console.warn("[cell-conflict]", JSON.stringify(cellConflicts));
+    // 2026-09-21 竹内「ブレインが勝つようにする」: 衝突をどう解決したかを必ず残す
+    //   （黙って解決すると、なぜその文になったのか後から追えない。監査 scripts/audit-brain-wins-cell.ts と同じ材料）
+    if (cellConflicts.length) {
+      const resolved = resolveMustInclude(pairContext, { strategy: brainStrategy, brainFresh: brainLocalFresh });
+      console.log(JSON.stringify({
+        tag: "brain-wins-cell",
+        mode: brainWinsCell(),
+        conversationId,
+        annotated: resolved.active.filter((m) => m.avoidNote).map((m) => m.label.slice(0, 40)),
+        dropped: resolved.dropped.map((d) => `${d.cls}:${d.avoid}`),
+        avoidKept: (brainStrategy?.avoid_topics ?? []).length,
+      }));
+    }
     if (pairContext.cellGuard.concernDemoted) console.warn("[cell-guard]", pairContext.cellGuard.reason);
     const pairDirection = buildPairDirection(pairContext, {
       brainReplyDirection: brainStrategy?.reply_direction ?? null, brainFresh: brainLocalFresh, strategy: brainStrategy,
@@ -4074,7 +4089,8 @@ export async function POST(req: NextRequest) {
       // 初期費用について／初期費用を説明の時は、往復文脈の必須要素（質問への直接回答）を入れない（中身は AIX で送る）
       if (effectiveAction === "cost_breakdown" || effectiveAction === "cost_explain" || effectiveAction === "phone_call" || effectiveAction === "guarantor_info") return [];
       // 2026-09-09 Fable5 往復文脈: セルの必須要素を「必ず含める内容」に（final-check PAIR_ELEMENT_MISSING と同名）
-      if (pairContext.rule) return pairContext.rule.mustInclude.map((m) => m.label);
+      // 2026-09-21 竹内「ブレインが勝つようにする」: ブレインが避けろと言った要素は必須から外す
+      if (pairContext.rule) return resolveMustInclude(pairContext, { strategy: brainStrategy, brainFresh: brainLocalFresh }).active.map((m) => m.label);
       if (isNegativeContext) return [];
       if (isTemporaryLeaveMsg) return [];
       if (isThinkingMsg) return [];
@@ -4109,8 +4125,17 @@ export async function POST(req: NextRequest) {
     // （stale brain_meta の avoid_topics が現在の質問を封じる逆転を防ぐ）
     // 2026-09-09 Fable5: 往復セルの必須要素と衝突する avoid（ES_WILL_SEND で brain avoid_topics「見積書」が必須要素「御見積書とあわせて」と衝突）も除外
     // 2026-09-10 Fable5 みく事例: 部分文字列一致 → 意味クラス一致（「新規物件ピックアップ」と「再ピックアップ宣言」を衝突と認識する）
+    // ─── 2026-09-21 竹内「ブレインが勝つようにする」───
+    //   旧: セルの必須要素とぶつかる avoid を**削って**いた（セルが勝つ）。
+    //       ブレインが「今回は費用の話をしない」と決めても、表が押し通していた。
+    //   新: avoid は削らない。ぶつかった**必須要素の方を落とす**（resolveMustInclude）。
+    //   実測（scripts/audit-brain-avoid-vs-sent.ts・直近60日）: ブレインが避けろと言った話題を
+    //     スタッフが実際に書いたのは 3/26 = 11.5%（estimate 0% / apply 0% / viewing 16.7% / initial_cost 22.2%）
+    //     ＝ ブレインの判断は実送信と合っている。
+    //   戻す時は BRAIN_WINS_CELL=off
+    const brainWins = brainWinsCell();
     const activeAvoidTopics = effectiveAvoidTopics.filter(t =>
-      !intentMessage.includes(t) && !avoidConflictsWithCell(pairContext, t)
+      !intentMessage.includes(t) && (brainWins !== "off" || !avoidConflictsWithCell(pairContext, t))
     );
     // TPO場面をLLMに明示（fetchKnowledge内のtpoLabelはRAGのみに使われLLMには届かないため、ここで場面を伝える）
     const tpoNoteForLLM: string | null = (() => {
@@ -5519,8 +5544,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       //   「何を書けばよいか」の材料を1つも受け取れなかった（修正ループが枯れる第3の経路）。
                       //   null でも WE DO の**選択肢**は渡す（「〇〇の1文を添えろ」型の強制はしない）。
                       //   when が false の要素（この場面に無い要素）は出さない＋{viewingOffer} 等は実値に置換する
+                      // 2026-09-21 竹内「ブレインが勝つようにする」: 作り直しでも同じ関数で必須要素を決める（四者同名）
                       ...(pairContext.rule
-                        ? [`- 【必須要素】${pairContext.rule.mustInclude.filter((m) => !m.when || m.when(pairContext)).map((m, i) => `${i + 1}.${fillPairPlaceholders(m.label, pairContext)}`).join(" ")}（各1文以上。「かしこまりました！！」で終えず行動宣言またはサポート継続宣言で終える）`]
+                        ? [`- 【必須要素】${resolveMustInclude(pairContext, { strategy: brainStrategy, brainFresh: brainLocalFresh }).active.map((m, i) => `${i + 1}.${fillPairPlaceholders(m.label, pairContext)}`).join(" ")}（各1文以上。「かしこまりました！！」で終えず行動宣言またはサポート継続宣言で終える）`]
                         // 2026-09-11 統合設計（経路B）: 内覧提案リテラルは {viewingOffer}（顧客名スロット済み・名前不明なら呼びかけなし）
                         : [`- 【WE DO の選択肢】次のいずれか1つだけを文脈から選ぶ（複数並べない）: ①内覧のご案内提案（「${fillPairPlaceholders("{viewingOffer}", pairContext)}」・具体的な候補日時は書かない）②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤条件・家賃の交渉`]),
                       "- 指摘箇所だけを直すのではなく、返信全体を自然な文章として書き直すこと",
