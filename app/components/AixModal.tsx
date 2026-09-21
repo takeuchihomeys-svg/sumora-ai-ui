@@ -104,6 +104,9 @@ interface AixModalProps {
   onOpenTemplateFiltered?: (search: string) => void;
 }
 
+/** お客様が送った物件を畳まずに出す件数（これを超えた分だけ「他N件を見る」で畳む） */
+const CUSTOMER_PROPERTY_VISIBLE = 5;
+
 // 有効な物件ステータス（先頭 count 件）に退去予定("vacating")が含まれるか判定
 function isVacating(propStatuses: string[], count: number): boolean {
   return propStatuses.slice(0, count).includes("vacating");
@@ -794,6 +797,8 @@ export default function AixModal({
   const [checkUnavailablePropName, setCheckUnavailablePropName] = useState("");
   const [checkUnavailableOcrLoading, setCheckUnavailableOcrLoading] = useState(false);
   // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件（ポータルの共有文）の名前を候補に出し、1タップで物件名欄に入れる
+  // 2026-09-21 竹内「反映ボタンあれば、送られた物件名表示されるようにしたら分かりやすい」:
+  //   折りたたみをやめて最初から出す。この state は「6件以上ある時に全部出すか」だけに使う
   const [showCustomerPropertyList, setShowCustomerPropertyList] = useState(false);
   const customerPropertyOptions = useMemo(
     () => customerSharedPropertyNames(recentMessages ?? []),
@@ -5243,35 +5248,44 @@ export default function AixModal({
                       それで会話を合わせるボタンおしたら物件名が入るようにする」:
                       お客様は SUUMO の共有文で物件名を送ってきている（「プルス新北野 3階 / URL / by SUUMO」）。
                       スクショを選んで AI に読ませなくても、会話から拾って1タップで物件名欄に入れる */}
+                  {/* 2026-09-21 竹内「ここでお客さんが送った物件名把握できるようにする。
+                      反映ボタンあれば、送られた物件名表示されるようにしたら分かりやすい」:
+                      旧: ボタンを押す→開く→選ぶ の3タップで、**開くまで物件名が見えなかった**。
+                      → 折りたたみをやめて**最初から物件名を出す**（押すのは反映の1タップだけ）。
+                      6件以上ある時だけ「もっと見る」で畳む（画面が長くなりすぎないように）。 */}
                   {customerPropertyOptions.length > 0 && (
                     <div>
-                      <button
-                        onClick={() => setShowCustomerPropertyList((v) => !v)}
-                        className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-orange-300 bg-orange-50 px-3 py-2.5 text-[13px] font-bold text-orange-600 active:opacity-80"
-                      >
-                        🏠 物件名表示（お客様が送った物件 {customerPropertyOptions.length}件）
-                        <span className="text-[10px]">{showCustomerPropertyList ? "▲" : "▼"}</span>
-                      </button>
-                      {showCustomerPropertyList && (
-                        <div className="mt-2 flex flex-col gap-1.5">
-                          {customerPropertyOptions.map((c) => {
-                            const picked = checkUnavailablePropName.trim() === c.name;
-                            return (
-                              <button
-                                key={`${c.name}-${c.at ?? ""}`}
-                                onClick={() => { setCheckUnavailablePropName(c.name); setPreview(""); setShowCustomerPropertyList(false); }}
-                                className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left active:opacity-80 ${picked ? "border-orange-400 bg-orange-50" : "border-[#e9edef] bg-white"}`}
-                              >
-                                <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-[13px] font-bold text-[#111b21]">{c.label}</span>
-                                  {c.at && <span className="block text-[10px] text-[#8696a0]">お客様が {(() => { const p = jstParts(c.at!); return `${p.m}/${p.d} ${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`; })()} に送付</span>}
-                                </span>
-                                {picked && <span className="shrink-0 text-[11px] font-bold text-orange-600">選択中</span>}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <p className="text-xs font-bold text-[#54656f]">
+                          🏠 お客様が送った物件 <span className="font-normal text-[#90a4ae]">（{customerPropertyOptions.length}件・押すと物件名に入ります）</span>
+                        </p>
+                        {customerPropertyOptions.length > CUSTOMER_PROPERTY_VISIBLE && (
+                          <button
+                            onClick={() => setShowCustomerPropertyList((v) => !v)}
+                            className="text-[11px] font-bold text-orange-600 active:opacity-70"
+                          >{showCustomerPropertyList ? "少なく表示" : `他${customerPropertyOptions.length - CUSTOMER_PROPERTY_VISIBLE}件を見る`}</button>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        {(showCustomerPropertyList ? customerPropertyOptions : customerPropertyOptions.slice(0, CUSTOMER_PROPERTY_VISIBLE)).map((c) => {
+                          const picked = checkUnavailablePropName.trim() === c.name;
+                          return (
+                            <button
+                              key={`${c.name}-${c.at ?? ""}`}
+                              onClick={() => { setCheckUnavailablePropName(c.name); setPreview(""); }}
+                              className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left active:opacity-80 ${picked ? "border-orange-400 bg-orange-50" : "border-[#e9edef] bg-white"}`}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] font-bold text-[#111b21]">{c.label}</span>
+                                {c.at && <span className="block text-[10px] text-[#8696a0]">お客様が {(() => { const p = jstParts(c.at!); return `${p.m}/${p.d} ${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`; })()} に送付</span>}
+                              </span>
+                              <span className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-bold ${picked ? "bg-orange-500 text-white" : "border border-orange-300 text-orange-600"}`}>
+                                {picked ? "反映済み" : "反映"}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                   <div>
@@ -5608,6 +5622,21 @@ export default function AixModal({
                       />
                       {checkPropOcrLoading[pi] && (
                         <p className="-mt-1 mb-2 text-[10px] text-blue-500">📷 画像からマンション名・号室を読取中...</p>
+                      )}
+                      {/* 2026-09-21 竹内「ここでお客さんが送った物件名把握できるようにする」:
+                          「物件なかった」にしか無かった候補を、「物件あった」の物件カードにも出す。
+                          お客様が送った物件を確認した結果を報告する場面なので、名前は同じ所にある */}
+                      {customerPropertyOptions.length > 0 && !checkPropNames[pi].trim() && (
+                        <div className="mb-2 flex flex-wrap gap-1.5">
+                          <span className="w-full text-[10px] text-[#8696a0]">🏠 お客様が送った物件（押すと入ります）</span>
+                          {customerPropertyOptions.slice(0, CUSTOMER_PROPERTY_VISIBLE).map((c) => (
+                            <button
+                              key={`${pi}-${c.name}-${c.at ?? ""}`}
+                              onClick={() => { const arr = [...checkPropNames]; arr[pi] = c.label; setCheckPropNames(arr); setPreview(""); }}
+                              className="max-w-full truncate rounded-lg border border-orange-300 bg-orange-50 px-2 py-1 text-[11px] font-bold text-orange-600 active:opacity-70"
+                            >{c.label}</button>
+                          ))}
+                        </div>
                       )}
                       {/* 募集状況 */}
                       <div className="mb-2 flex gap-1">

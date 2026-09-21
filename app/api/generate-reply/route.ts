@@ -122,7 +122,7 @@ import { detectAixSceneEvidence, detectAvailabilityCheckContext, AIX_CONDITION_C
 import { resolveGreeting, enforceOpening, buildFirstGreeting, buildGreetingNote, computeAlreadyGreetedToday, toGreetingLite, isProgressPushMessage, type GreetingDecision } from "@/app/lib/greeting";
 import { fetchGroundTruth } from "@/app/lib/ground-truth";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
-import { safeSlice } from "@/app/lib/safe-slice";
+import { safeSlice, hasBrokenSurrogate, stripBrokenSurrogates } from "@/app/lib/safe-slice";
 import { classifyReplyMode } from "@/app/lib/reply-mode-classifier";
 import {
   applyVacatingDateToTemplate,
@@ -146,6 +146,9 @@ import { splitFinalCheckIssues } from "@/app/lib/final-check-scope";
 // 2026-09-21 竹内「状況を読み取れていない。ブレインのどこかに弱い部分がある」:
 //   ネガ文脈（否決・募集終了の報告）は**報告の事実だけ**で立てる（ブレインの推測では立てない）
 import { resolveNegativeReport } from "@/app/lib/negative-context";
+// 2026-09-21 竹内「先ほどの実際に申し込んだかのところ判断できるようにする」:
+//   「申込を案内した」と「実際に申し込んだ」を分け、材料として渡す（他人の申込は数えない）
+import { resolveApplicationStage, buildApplicationStageNote } from "@/app/lib/application-stage";
 /**
  * 直前送信の材料を止めるスイッチ（A/B の比較と、効かなかった時の戻し道）。
  * `PREV_SEND_NOTE=off` で無効。dev サーバーは起動時の環境変数を読むので、切り替えには再起動が要る。
@@ -1241,6 +1244,17 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //   → 一度ここに率の材料（buildNotationNote）を入れたが、**監査で止めて外した**。理由は
   //     app/lib/notation-mix.ts のヘッダ（1通ごとに決める手がかりが無く、AI の選択は既に多数派）。
   //     残した checkNotationMix は測るだけ（scripts/audit-notation-signal.ts）。
+  // ─── 2026-09-21 竹内「先ほどの実際に申し込んだかのところ判断できるようにする」───
+  //   台帳には applicationGuided（申込を**案内した**）しか無く、「実際に申し込んだか」が材料に無かった。
+  //   材料が空だと LLM が埋める（実物: 検討中の返信に「お申込みいただきありがとうございます」）。
+  //   ⚠ 他人の申込（「2番手以降」「お申込みが入っており」＝物件確認の結果）は数えない（application-stage.ts）。
+  const applicationStageVerdict = resolveApplicationStage(allPastStaffMsgs.slice(-12));
+  const applicationStageNote = buildApplicationStageNote(applicationStageVerdict);
+  console.log(JSON.stringify({
+    tag: "reply:application-stage", stage: applicationStageVerdict.stage,
+    submitted: applicationStageVerdict.submitted, evidence: applicationStageVerdict.evidence,
+  }));
+
   // ─── 2026-09-21 竹内「一択と指摘するんじゃなくて実際の成約データや直近の会話から学習して、
   //     場面でいれるかどうかはブレインに判断させる」───
   //   ブレインが reply_opener を決めていればそれを渡す。決めていない時は**実測の分布**を渡す
@@ -1690,7 +1704,7 @@ ${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${
 ${examples}${examplesInstruction}
 
 ↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : `スモラの直前返信の流れを踏まえ、${examples ? "⭐実例の文体・テンポ" : "PHASE_GUIDE の例文の文体・テンポ"}を参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。`}
-長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}${sentShapeNote}${openerNote}`;
+長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}${sentShapeNote}${openerNote}${applicationStageNote}`;
 
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
   // 戦略の優先規定（AIX-META一元化）: 指示が競合した場合の解決順を最上位で1行宣言する
@@ -1732,7 +1746,31 @@ ${examples}${examplesInstruction}
       quoted: quotedContextNote.length, customerMsg: customerMsgBlock.length,
     },
   }));
-  return [new SystemMessage({ content: systemBlocks }), new HumanMessage({ content: humanBlocks })];
+  // ─── 2026-09-21: 壊れた絵文字を送る直前に落とす ────────────────────────────
+  //   YUMA の本番経路テストで3回とも 400 になった:
+  //     "The request body is not valid JSON: no low surrogate in string: line 1 column 55656"
+  //   ＝ プロンプトのどこかに絵文字の片割れが入っていて、API が JSON として受け取れない。
+  //     下書きは丸ごと「生成に失敗しました」になる（1文字のせいで1通が消える）。
+  //   DB 側は無傷（scripts/audit-broken-surrogate.ts で18,032行を見て0件）なので、
+  //   safeSlice を使っていない `slice(0, N)` がどこかにある。1か所ずつ潰す前に、まずここで止める。
+  //   ⚠ 落とすのは片割れだけ。正しい絵文字は1文字も消えない。
+  //   ⚠ systemBlocks / humanBlocks は**配列**（プロンプトキャッシュのブロック）なので、
+  //     各ブロックの text を1つずつ見る。壊れたブロックの番号と先頭をログに出す（原因を追えるように）。
+  type PromptBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } };
+  const cleanBlocks = (blocks: PromptBlock[], where: string): PromptBlock[] =>
+    blocks.map((b, i) => {
+      if (!b?.text || !hasBrokenSurrogate(b.text)) return b;
+      console.warn(JSON.stringify({
+        tag: "prompt:broken-surrogate", where, blockIndex: i, length: b.text.length,
+        head: b.text.slice(0, 40).replace(/\n/g, " "),
+        note: "壊れた絵文字を落として送る（落とさないと 400 で生成が丸ごと失敗する）",
+      }));
+      return { ...b, text: stripBrokenSurrogates(b.text) };
+    });
+  return [
+    new SystemMessage({ content: cleanBlocks(systemBlocks as PromptBlock[], "system") }),
+    new HumanMessage({ content: cleanBlocks(humanBlocks as PromptBlock[], "human") }),
+  ];
 }
 
 // ─── 状態解決（S-2 / 2026-09-08 Fable5）────────────────────────────────────────────
