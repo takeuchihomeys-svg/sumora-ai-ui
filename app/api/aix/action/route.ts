@@ -53,6 +53,9 @@ import { stripWaited } from "@/app/lib/greeting";
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（AIX / テンプレート共通）
 import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
+// 2026-09-21 竹内「複数物件送った中では『お送りさせて頂きましたお部屋の中でも〜』／新着物件なら新着物件の言い回し」
+//   訴求シナリオの判定・ガイド・検査（aix-template-generate と同じ物を見る）
+import { resolveRecommendationScenario, buildScenarioNote, detectFrameViolation } from "@/app/lib/recommendation-frame";
 // 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（スタッフの入力をそのまま・骨組みは実送信の形）
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
@@ -2230,7 +2233,19 @@ ${SMORA_COMMON_RULES}`;
         ? `\n\n【冒頭ポイント指定 — 最優先・必ず守ること】冒頭の「[ポイント]、${name}にかなりオススメ出来るお部屋となります！！」の[ポイント]部分は必ず「${manualOpeningText}」をそのまま使う。AIで独自のポイントを考えず、指定された文言をそのまま使うこと。`
         : "";
       const newArrivalNote = body.is_new_arrival
-        ? `\n\n【🆕 新着物件 — 必ず守ること】この物件は新着物件です。物件名の直後の冒頭一文（「〜さんにかなりオススメ出来るお部屋となります！！」の前）に「新着でかなり条件のいいお部屋となります！！」を自然に盛り込むこと。`
+        // ─── 2026-09-21 竹内「新着物件なら新着物件の言い回しを使う。別のスタッフが送ってる質の悪い言い回しもある」───
+        //   直す前はここが「『〜さんにかなりオススメ出来るお部屋となります！！』の**前**に
+        //   『新着でかなり条件のいいお部屋となります！！』を盛り込む」と指示していて、**設計上2文が並んでいた**:
+        //     「新着でかなり条件のいいお部屋となります！！敷金礼金なしで、〇〇さんにかなりオススメ出来るお部屋となります！！」
+        //   実測（scripts/audit-recommendation-dup-appeal.ts・直近120日1,462件）:
+        //     AI が2つ並べた 94件 → スタッフが片方を消した **48.9%**
+        //     AI が1つだった383件 → スタッフが2つに足した **0件（0.0%）** ＝ 自分からは絶対に並べない形
+        //     消す時に残すのは必ず「かなりオススメ出来る」側（22件中22件・「かなり条件のいい」を残したのは0件）
+        //   → 新着であることは**1文に織り込む**（並べない）。
+        //   ⚠ 出口では消さない。実送信にも 87件（6.0%）あり、誤削除0にできないため（入口だけ直す）。
+        ? `\n\n【🆕 新着物件 — 必ず守ること】この物件は新着物件です。物件名の直後の冒頭一文で「新着で募集に出たお部屋であること」を伝えること。\n`
+          + `⚠ ただし「新着でかなり条件のいいお部屋となります！！」と「〜さんにかなりオススメ出来るお部屋となります！！」を**2文に分けて並べない**（同じ意味の訴求が2回続くため）。\n`
+          + `1文に織り込む。例:「新着で募集に出た、${name}にかなりオススメ出来るお部屋となります！！」`
         : "";
       // 類似条件顧客の実績から「刺さりやすいポイント」をプロンプトに注入
       // データが溜まるほど精度UP。データなし（初期）は空文字でスキップ。
@@ -2247,7 +2262,41 @@ ${SMORA_COMMON_RULES}`;
         note: typeof body.situation_note === "string" ? body.situation_note : "",
       };
       const situationNote = situationKind ? `\n\n${buildSituationPromptNote(situationKind, situationOpts)}` : "";
-      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}${situationNote}`;
+
+      // ─── 2026-09-21 竹内「複数物件送った中では『お送りさせて頂きましたお部屋の中でも〜』の言い回しを使ったり、
+      //     新着物件なら新着物件の言い回しを使う」───────────────────────────────
+      //   この判定（訴求シナリオ）は aix-template-generate の中にしか無く、**AIX ボタン本体では効いていなかった**。
+      //   実測（scripts/audit-recommendation-frame.ts・直近90日）: 物件オススメの生成693件のうち
+      //   シナリオが決まっていたのは **74件（10.7%）**。残る89.3%は「複数送ったか」「新着か」を見ずに書いていた。
+      //   ⚠ 件数が分からない時（sentSource="none"）は**決めない**。0 に倒すと「1件も送っていない＝初回」になり、
+      //     複数送っている会話でも比較の言い方が使えなくなる（設計知見「0 に倒さない」）。
+      const recSendState = resolvePropertySendState({
+        brainMeta: aixBrainMeta,
+        recentMessages: Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string; text?: string | null }> : [],
+      });
+      const recScenario = recSendState.sentSource === "none" ? null : resolveRecommendationScenario({
+        actionType: "property_recommendation",
+        // AIX 本体にはピッカーが無いので、画面の「新着物件」チェックを新着1件として扱う
+        pickupType: body.is_new_arrival ? "新着1件" : null,
+        checkPattern: typeof check_pattern === "string" ? check_pattern : null,
+        facts: {
+          priorSentPropertyCount: recSendState.sentPropertyCount,
+          // AIX ログの種別（まとめ/1件）はここでは取れない。件数はブレイン側が正なので下で渡す
+          priorBulkSendCount: 0,
+          priorSingleSendCount: 0,
+          // 直近の送付からの経過時間も取れないので鮮度は見ない（null＝古さで落とさない）
+          hoursSinceLastSend: null,
+          brainSentPropertyCount: recSendState.sentPropertyCount,
+        },
+      });
+      console.log(JSON.stringify({
+        tag: "aix:recommendation-scenario", conversationId,
+        scenario: recScenario, sent: recSendState.sentPropertyCount, source: recSendState.sentSource,
+        newArrival: !!body.is_new_arrival, checkPattern: typeof check_pattern === "string" ? check_pattern : null,
+      }));
+      const scenarioNote = buildScenarioNote(recScenario);
+
+      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}${situationNote}${scenarioNote}`;
 
       const knowledgeSection = knowledge ? `\n\n【物件オススメ時のノウハウ】\n${knowledge}` : "";
       // aix_property実例（実送信文・⭐顧客反応あり優先）があれば☆手動実例より優先。両方ある場合は実送信文を先に置く
@@ -2297,6 +2346,17 @@ ${SMORA_COMMON_RULES}`;
         if (closing.applied.length > 0) {
           console.log(JSON.stringify({ tag: "aix:recommend-closing", action: currentAction, conversationId, applied: closing.applied, state: describePropertySendState(sendState) }));
           message_text = closing.text;
+        }
+        // 2026-09-21: 冒頭フレームが事実と食い違っていないかを**測る**（テンプレート側と同じ関数）。
+        //   ⚠ ここでは本文を書き換えない。比較表現を落とすのは上の fixRecommendClosing の担当で、
+        //     二重に落とすと誤削除の道が増える（設計知見「出口は誤削除0でなければ入れない」）。
+        //     まずログで「どれだけ食い違っているか」を測り、効き具合を見てから強める。
+        const frameViolation = detectFrameViolation(message_text, recScenario);
+        if (frameViolation) {
+          console.warn(JSON.stringify({
+            tag: "aix:frame-violation", action: currentAction, conversationId,
+            scenario: recScenario, reason: frameViolation,
+          }));
         }
       }
       // 見積書同封時は締め文を追加
