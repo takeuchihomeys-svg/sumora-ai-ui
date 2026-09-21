@@ -186,6 +186,77 @@ export function extractConcreteFacts(text: string | null | undefined): ConcreteF
 export const AFTER_ACK_MEDIAN_CHARS = 54;
 export const AFTER_ACK_MEDIAN_LINES = 3;
 
+// ─────────────────────────────────────────────────────────────────────────
+// 「完全に締まっていたら返信しない」（2026-09-21 竹内さんの判断）
+//
+//   竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」
+//
+//   実測（scripts/audit-after-ack.ts・直近180日）では、この場面のスタッフは
+//     返信した 52.1% / 返信しない 47.9% で**過半数の線が引けなかった**。
+//   ステータス別・時刻別・直前送信の具体の有無でも割れなかった（52.6% / 51.7%）。
+//   → 機械では決められないので竹内さんが決めた。「作らない」に倒す。
+//
+//   ⚠ 止めるのは**下書きを作ること**だけ。スタッフは今まで通り自分で書いて送れる。
+//     だから外し方を誤っても、お客様に変な文が飛ぶことはない（入口を閉じるだけ・fail-safe）。
+// ─────────────────────────────────────────────────────────────────────────
+
+/** 直前送信に残っている「次にこちらがする事」の宣言。あれば会話は締まっていない */
+const PENDING_PROMISE_RE =
+  /(?:ピックアップ|お探し|探させて|確認(?:して|させて|致します|いたします)|お調べ|ご連絡させて(?:頂|いただ)き|お送りさせて(?:頂|いただ)き|作成(?:して|させて)|ご案内させて(?:頂|いただ)き|お待ち合わせ|出来次第|次第ご連絡)/;
+
+/**
+ * 「お礼・了承」の語（1つ分）。実送信でお客様から実際に来ている形だけを並べる。
+ * ⚠ 1つの正規表現で全文を見ると「はい！ありがとうございます」のように**2つ並んだ形**を取りこぼす。
+ *   区切って1語ずつ当てる。
+ */
+const ACK_TOKEN_RE =
+  /^(?:[はハ]い|うん|りょ|了解(?:です|でした|しました)?|承知(?:です|しました|(?:致|いた)しました)?|わかりました|分かりました|かしこまりました|ありがとう(?:ございます|ございました)?|あざす|OK|ok|Ok|オッケー|おっけー|(?:よろしく|宜しく)?お願い(?:します|(?:致|いた)します)|大丈夫(?:です)?|助かります|感謝です)$/;
+/** 絵文字・記号・句読点（区切りに使う） */
+const ACK_SPLIT_RE = /[\s　、,。．.！!？?…♪♡❤〜~ー\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2B00}-\u{2BFF}]+/gu;
+
+export type SkipDraftInput = {
+  /** 直前のスタッフ送信（スプリット送信は結合した全文） */
+  prevStaffText: string | null | undefined;
+  /** お客様の未返信メッセージ（複数なら結合した物） */
+  customerText: string | null | undefined;
+};
+export type SkipDraftVerdict = { skip: boolean; reason: string };
+
+/** お客様のメッセージが「短いお礼・了承だけ」か */
+export function isShortAckOnly(text: string | null | undefined): boolean {
+  const s = (text ?? "").trim();
+  if (!s) return false;
+  if (s.length > 30) return false;                       // 長ければ中身がある
+  if (/[?？]/.test(s)) return false;                      // 質問は必ず返す
+  if (/[\[［【]/.test(s)) return false;                    // [スタンプ][画像] は別の経路で止まる
+  const tokens = s.split(ACK_SPLIT_RE).filter(Boolean);
+  if (tokens.length === 0 || tokens.length > 3) return false;
+  return tokens.every((t) => ACK_TOKEN_RE.test(t));
+}
+
+/**
+ * 「直前の送信で完全に締まっていて、お客様も短い了承だけ」＝下書きを作らない。
+ *
+ * 4つ全部そろった時だけ止める（1つでも欠けたら作る＝**迷ったら作る側**に倒す）:
+ *   ① 直前のスタッフ送信が締めの文で終わっている
+ *   ② 直前の送信に「次にこちらがする事」の宣言が無い（約束が残っていれば会話は続いている）
+ *   ③ 直前の送信に足せる具体（確定した日程・時刻・物件名）が無い
+ *   ④ お客様の返事が短いお礼・了承だけ（質問・依頼・条件が無い）
+ */
+export function shouldSkipDraftAfterClosing(i: SkipDraftInput): SkipDraftVerdict {
+  const prev = (i.prevStaffText ?? "").trim();
+  const cust = (i.customerText ?? "").trim();
+  if (!prev) return { skip: false, reason: "直前のスタッフ送信が無い" };
+  if (!isShortAckOnly(cust)) return { skip: false, reason: "お客様の返事に中身がある" };
+  if (PENDING_PROMISE_RE.test(prev)) return { skip: false, reason: "直前の送信に未履行の約束がある" };
+  if (classifyClosings(prev).length === 0) return { skip: false, reason: "直前の送信が締めで終わっていない" };
+  // ⚠ 日付だけ（「本日お時間頂きありがとうございました」の「本日」）は**済んだ事**なので数えない。
+  //   確定した予定は実データでは必ず時刻か場所が付く（「9/8 15:00にウェルスクエア…」「明日16:00にJ's Garden」）。
+  const pending = extractConcreteFacts(prev).filter((f) => f.kind !== "日程");
+  if (pending.length > 0) return { skip: false, reason: `直前の送信に足せる具体がある（${pending.map((f) => f.value).join("・")}）` };
+  return { skip: true, reason: "締めで終わっていて、お客様も短い了承だけ" };
+}
+
 /**
  * 直前送信から作る、**userPrompt の一番最後に置く**材料。
  * 何も添えるものが無ければ空文字（余計な指示を増やさない）。

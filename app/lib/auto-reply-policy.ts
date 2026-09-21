@@ -113,7 +113,8 @@ export const AUTO_REPLY_SKIP_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /** 下書きが本文として使えない印（社内用の合図・作りかけ） */
-const SENTINEL_RE = /\[AIX誘導中\]|__SHOWN__|<<<|>>>/;
+// 2026-09-21 竹内「完全にしまってたら返信しなくて大丈夫」: [返信不要] も本文ではない印
+const SENTINEL_RE = /\[AIX誘導中\]|\[返信不要\]|__SHOWN__|<<<|>>>/;
 
 export type AutoReplyInput = {
   /** 会話が「自動」に切り替えられているか（NULL/false は自動ではない） */

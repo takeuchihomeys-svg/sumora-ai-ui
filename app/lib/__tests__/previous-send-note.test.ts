@@ -9,6 +9,7 @@
 // 実行: npx tsx app/lib/__tests__/previous-send-note.test.ts（全 PASS で exit 0）
 import {
   buildPreviousSendNote, extractClosingClauses, extractConcreteFacts, classifyClosings,
+  shouldSkipDraftAfterClosing, isShortAckOnly,
   AFTER_ACK_MEDIAN_CHARS,
 } from "../previous-send-note";
 
@@ -202,6 +203,69 @@ describe("渡す材料の文", () => {
   });
   it("★ N7 上書きの見出しで始まる（呼び出し側は userPrompt の一番最後に置く）", () => {
     expect(buildPreviousSendNote(SCREENSHOT).startsWith("\n\n【最後に確認：")).toBe(true);
+  });
+});
+
+describe("完全に締まっていたら下書きを作らない（竹内 2026-09-21）", () => {
+  // 竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」
+  const PICKUP_PROMISE = "かしこまりました！！\n塚本・大国町エリアでもオススメ出来るお部屋ピックアップさせて頂きます！！\nピックアップ出来次第ご連絡させて頂きます😌！！";
+
+  it("★ S1 竹内さんのスクショの場面は止める（締めだけ＋短い了承）", () => {
+    const v = shouldSkipDraftAfterClosing({ prevStaffText: SCREENSHOT, customerText: "はい！ありがとうございます" });
+    expect(v.skip).toBe(true);
+  });
+  it("★ S2 内覧後の締め→お礼も止める（9/07 実例）", () => {
+    expect(shouldSkipDraftAfterClosing({ prevStaffText: AFTER_VIEWING, customerText: "ありがとうございます" }).skip).toBe(true);
+  });
+  it("★ S3 ピックアップの約束が残っていれば作る（返事を待っている場面）", () => {
+    const v = shouldSkipDraftAfterClosing({ prevStaffText: PICKUP_PROMISE, customerText: "はい、よろしくお願いします" });
+    expect(v.skip).toBe(false);
+    expect(v.reason).toContain("未履行の約束");
+  });
+  it("★ S4 内覧日が確定していれば作る（9/02 実例・約束も具体も残っている）", () => {
+    const v = shouldSkipDraftAfterClosing({ prevStaffText: VIEWING_FIXED, customerText: "はい！" });
+    expect(v.skip).toBe(false);
+  });
+  it("★ S5 見積書を送った直後は作る（ご査収＝こちらの動きが残っている）", () => {
+    // 「ご査収ください」は締めだが、直前に見積書という物が届いている。
+    // ESTIMATE には具体が無く約束も無いので**止まる**。これは竹内さんの判断どおり。
+    expect(shouldSkipDraftAfterClosing({ prevStaffText: ESTIMATE, customerText: "ありがとうございます！" }).skip).toBe(true);
+  });
+  it("★ S6 お客様が質問していたら必ず作る", () => {
+    expect(shouldSkipDraftAfterClosing({ prevStaffText: SCREENSHOT, customerText: "ありがとうございます！内覧っていつできますか？" }).skip).toBe(false);
+  });
+  it("★ S7 お客様が条件を足していたら作る", () => {
+    expect(shouldSkipDraftAfterClosing({ prevStaffText: SCREENSHOT, customerText: "ありがとうございます。あとペット可でお願いします" }).skip).toBe(false);
+  });
+  it("★ S8 直前が締めで終わっていなければ作る（物件カードだけの送信）", () => {
+    expect(shouldSkipDraftAfterClosing({ prevStaffText: ESTIMATE_BODY, customerText: "ありがとうございます" }).skip).toBe(false);
+  });
+  it("S9 直前のスタッフ送信が無ければ作る", () => {
+    expect(shouldSkipDraftAfterClosing({ prevStaffText: "", customerText: "ありがとうございます" }).skip).toBe(false);
+    expect(shouldSkipDraftAfterClosing({ prevStaffText: null, customerText: "ありがとうございます" }).skip).toBe(false);
+  });
+  it("S10 お客様が何も送っていなければ作る（判定の材料が無い）", () => {
+    expect(shouldSkipDraftAfterClosing({ prevStaffText: SCREENSHOT, customerText: "" }).skip).toBe(false);
+  });
+});
+
+describe("短いお礼・了承だけかを見る", () => {
+  it("★ A1 止めてよい形（実送信で実際に来ている返事）", () => {
+    for (const s of ["はい", "はい！", "ありがとうございます", "ありがとうございます😊", "よろしくお願いします。",
+      "かしこまりました", "了解です", "わかりました", "はい！ありがとうございます", "大丈夫です！！"]) {
+      if (!isShortAckOnly(s)) throw new Error(`短い了承と判定されなかった: ${s}`);
+    }
+  });
+  it("★ A2 止めてはいけない形（中身がある）", () => {
+    for (const s of ["ありがとうございます！内覧お願いします", "はい、9/8で大丈夫ですか？", "もう少し駅近ないですか",
+      "ありがとうございます。あと駐車場も必要です", "やっぱり今回は見送ります",
+      "ありがとうございます！これめちゃくちゃ良いですね、申し込みしたいです"]) {
+      if (isShortAckOnly(s)) throw new Error(`短い了承と誤判定した: ${s}`);
+    }
+  });
+  it("A3 スタンプ・画像だけは対象外（別の経路で止まる）", () => {
+    expect(isShortAckOnly("[スタンプ]")).toBe(false);
+    expect(isShortAckOnly("[画像]")).toBe(false);
   });
 });
 

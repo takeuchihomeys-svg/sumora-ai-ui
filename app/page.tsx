@@ -9,7 +9,7 @@ import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage } from "./lib/application-form-detect";
 import { detectPlaceholders } from "./lib/validate-reply";
 // 2026-09-18: 下書き→送る文の整形は画面と自動返信で同じ関数を使う（app/lib/draft-text.ts）
-import { stripInternalTags as stripInternalTagsLib, draftToSendableText } from "./lib/draft-text";
+import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraftSentinel } from "./lib/draft-text";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
@@ -1782,13 +1782,14 @@ export default function Home() {
               })
             );
             // async プリ生成完了 → preGenInProgress をクリア（sentinelは実下書きではないため除外）
-            if (upd.ai_draft && upd.ai_draft !== '[AIX誘導中]' && upd.ai_draft !== '__SHOWN__') preGenInProgress.current.delete(String(upd.id));
-            // 新しいAIドラフトが届いたら旧表示済みキャッシュは陳腐化 → 破棄（__SHOWN__/[AIX誘導中] sentinelは除外）
-            if (upd.ai_draft && upd.ai_draft !== "__SHOWN__" && upd.ai_draft !== "[AIX誘導中]") {
+            // 2026-09-21 竹内「完全にしまってたら返信しなくて大丈夫」: [返信不要] も sentinel（実下書きではない）
+            if (upd.ai_draft && !isDraftSentinel(upd.ai_draft)) preGenInProgress.current.delete(String(upd.id));
+            // 新しいAIドラフトが届いたら旧表示済みキャッシュは陳腐化 → 破棄（sentinel は除外）
+            if (upd.ai_draft && !isDraftSentinel(upd.ai_draft)) {
               delete shownDraftCacheRef.current[String(upd.id)];
             }
-            // [AIX誘導中] sentinel が届いたら即座に draftPreparing をリセット（60秒待ち防止）
-            if (upd.ai_draft === "[AIX誘導中]" && selectedIdRef.current === String(upd.id)) {
+            // sentinel が届いたら即座に draftPreparing をリセット（60秒待ち防止）
+            if (upd.ai_draft && isDraftSentinel(upd.ai_draft) && upd.ai_draft !== "__SHOWN__" && selectedIdRef.current === String(upd.id)) {
               if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
               setDraftPreparing(false);
             }
@@ -2900,8 +2901,9 @@ export default function Home() {
         setDraftPreparing(false);
         return;
       }
-      if (convRow?.ai_draft === "[AIX誘導中]") {
+      if (convRow?.ai_draft === "[AIX誘導中]" || convRow?.ai_draft === "[返信不要]") {
         // AIX誘導中 → 返信案は生成されない（AIXカード側で誘導表示）。エラー扱いにしない
+        // 2026-09-21 竹内「完全にしまってたら返信しなくて大丈夫」: [返信不要] も同じ（失敗ではない）
         setDraftPreparing(false);
         return;
       }

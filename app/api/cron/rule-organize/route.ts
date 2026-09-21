@@ -2,6 +2,8 @@
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-21 竹内「なにかエラー起きている部分あるのか調査」: 途中で切れた JSON から完結分だけ拾う
+import { parseJsonArrayLoose } from "@/app/lib/json-array-salvage";
 
 export const maxDuration = 300;
 
@@ -91,10 +93,26 @@ async function POST(req: NextRequest) {
     }
 
     // Step 3: Batch classify with Opus (up to 30 rules at a time)
+    // ─── 2026-09-21 竹内「なにかエラー起きている部分あるのか調査」で直した3点 ───
+    //   本番ログ 2026-09-20T21:00〜21:05 の実測:
+    //     ・Opus 7回中 6回が stop_reason=max_tokens（出力 4096/4096 ちょうど）で途中で切れていた
+    //     ・受け側が閉じ括弧 `]` を要求していたので、切れた回は**バッチ丸ごと捨てて**いた（判定0件）
+    //     ・そのうえ 300秒でタイムアウトし、Step5（反映）に到達せず**その週の整理が全部無効**だった
+    //   ① 枠を広げる: max_tokens 4096 → 8192（30件×判定JSONは 4096 では足りない）
+    //   ② 切れても拾う: parseJsonArrayLoose で完結している要素だけ取る（全部か無か をやめる）
+    //   ③ 時間を残す: 締め切りを過ぎたらバッチを止めて Step5 に進む（読めた分は必ず反映する）
     const BATCH_SIZE = 30;
+    const BATCH_DEADLINE_MS = 230_000;   // maxDuration=300s の内側（Step5 と後片付けに約70秒残す）
+    const startedAt = Date.now();
     const allOpusResults: OpusResult[] = [];
+    let truncatedBatches = 0, salvagedFromTruncated = 0, unprocessedRules = 0;
 
     for (let i = 0; i < rules.length; i += BATCH_SIZE) {
+      if (Date.now() - startedAt > BATCH_DEADLINE_MS) {
+        unprocessedRules = rules.length - i;
+        console.warn(`[rule-organize] 締め切り到達のため判定を打ち切り。未処理 ${unprocessedRules}件（次回に回す）`);
+        break;
+      }
       const batch = rules.slice(i, i + BATCH_SIZE);
 
       const rulesList = batch
@@ -139,8 +157,9 @@ JSON配列のみ返してください:
       try {
         const response = await client.messages.create({
           model: "claude-opus-5",
-          max_tokens: 4096,
-          // 2026-09-14: 省略すると思考が 4096 の枠を使い、30件分の判定 JSON が途中で切れていた（毎週「Opus JSON parse failed」）
+          // 2026-09-21: 4096 では 30件分の判定 JSON が入らず、本番で 7回中6回が max_tokens で切れていた（8192 へ）
+          max_tokens: 8192,
+          // 2026-09-14: 省略すると思考が枠を使い、30件分の判定 JSON が途中で切れていた（毎週「Opus JSON parse failed」）
           thinking: { type: "disabled" },
           messages: [{ role: "user", content: prompt }],
         });
@@ -148,17 +167,22 @@ JSON配列のみ返してください:
         const rawText =
           response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
 
-        // Step 4: Parse Opus response
-        const jsonMatch = rawText.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) {
-          console.error("[rule-organize] Opus JSON parse failed, batch starting at index:", i, "raw:", rawText.slice(0, 200));
+        // Step 4: Parse Opus response（切れていても完結している要素だけ拾う）
+        const loose = parseJsonArrayLoose<OpusResult>(rawText);
+        if (loose.noArray) {
+          console.error("[rule-organize] Opus の返事に JSON 配列が無い。batch index:", i,
+            "stop_reason:", response.stop_reason, "raw:", rawText.slice(0, 200));
           continue;
         }
-
-        const parsed = JSON.parse(jsonMatch[0]) as OpusResult[];
+        if (loose.truncated || response.stop_reason === "max_tokens") {
+          truncatedBatches++;
+          salvagedFromTruncated += loose.items.length;
+          console.warn(`[rule-organize] 出力が途中で切れた（batch index:${i} stop_reason:${response.stop_reason}）。`
+            + `完結していた ${loose.items.length}/${batch.length}件だけ使う`);
+        }
         // Filter to only rules in our fetched list
-        for (const result of parsed) {
-          if (ruleMap.has(result.rule_key)) {
+        for (const result of loose.items) {
+          if (result && ruleMap.has(result.rule_key)) {
             allOpusResults.push(result);
           }
         }
@@ -273,6 +297,13 @@ JSON配列のみ返してください:
     kept += unprocessed;
 
     // Step 6: Return summary
+    // 2026-09-21: 「何件を判定できなかったか」を必ず残す（黙って0件で終わっていた事が分からなかったため）
+    console.log(JSON.stringify({
+      tag: "rule-organize:summary",
+      total: rules.length, judged: allOpusResults.length,
+      truncatedBatches, salvagedFromTruncated, unprocessedRules,
+      elapsedMs: Date.now() - startedAt,
+    }));
     const summary = {
       ok: true,
       total: rules.length,
@@ -280,6 +311,10 @@ JSON配列のみ返してください:
       elevated,
       merged,
       kept,
+      judged: allOpusResults.length,
+      truncated_batches: truncatedBatches,
+      salvaged_from_truncated: salvagedFromTruncated,
+      unprocessed_rules: unprocessedRules,
     };
 
     // === Phase 2: LEARN-AIX-* / IMPLEMENT-* メンテナンス ===

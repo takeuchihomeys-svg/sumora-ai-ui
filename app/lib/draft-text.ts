@@ -13,8 +13,19 @@ import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "
 // 2026-09-20 竹内（S さん事例）: 受け取っていない申込を「受け取りました」と書く捏造を落とす
 import { stripApplyReceivedClaim } from "./apply-claim";
 
+/**
+ * 「この会話は締まっているので返信しない」の印（2026-09-21 竹内さんの判断）。
+ * 竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」
+ * 判定は app/lib/previous-send-note.ts の shouldSkipDraftAfterClosing。
+ */
+export const DRAFT_SENTINEL_NO_REPLY = "[返信不要]";
 /** 本文として使えない印（社内用の合図）。これが本文全体なら送る物は無い */
-const DRAFT_SENTINELS: ReadonlySet<string> = new Set(["[AIX誘導中]", "__SHOWN__", "[画像のみ]"]);
+const DRAFT_SENTINELS: ReadonlySet<string> = new Set(["[AIX誘導中]", "__SHOWN__", "[画像のみ]", DRAFT_SENTINEL_NO_REPLY]);
+
+/** その文字列が「本文ではない印」か（画面・自動返信・生成の3者が同じ判定を見る） */
+export function isDraftSentinel(text: string | null | undefined): boolean {
+  return DRAFT_SENTINELS.has((text ?? "").trim());
+}
 /** 生成に失敗した時の画面向けの置き文（お客様への文ではない） */
 const FAILURE_PLACEHOLDER_RE = /^[（(]AI返信の生成に失敗/;
 

@@ -6,6 +6,9 @@ import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
 // 2026-09-09 Fable5: 複数通の結合は "\n" ではなく MSG_SEP（1通内の改行を「N通」に分割しない）
 import { MSG_SEP } from "@/app/lib/reply-context";
+// 2026-09-21 竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」
+import { shouldSkipDraftAfterClosing } from "@/app/lib/previous-send-note";
+import { DRAFT_SENTINEL_NO_REPLY } from "@/app/lib/draft-text";
 import { jstParts } from "@/app/lib/jst-date";
 
 export const maxDuration = 300;
@@ -222,7 +225,10 @@ export async function POST(req: NextRequest) {
   }
   if (conv.last_sender !== "customer") return NextResponse.json({ ok: true, skipped: "not_customer_turn" });
   // "[AIX誘導中]" センチネルは初回バグで貼られた可能性があるため通過させて再生成を試みる
-  if (conv.ai_draft && conv.ai_draft !== "[AIX誘導中]") return NextResponse.json({ ok: true, skipped: "already_has_draft" });
+  // 2026-09-21: "[返信不要]" も同じ扱い（新しいお客様の発言が来たら作り直せるようにする。貼ったまま固まらせない）
+  if (conv.ai_draft && conv.ai_draft !== "[AIX誘導中]" && conv.ai_draft !== DRAFT_SENTINEL_NO_REPLY) {
+    return NextResponse.json({ ok: true, skipped: "already_has_draft" });
+  }
   if (BG_ASYNC_SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: "status" });
   // 2026-09-14 API の漏れ調査: 下書きの生成に5回続けて失敗した会話は、新しいお客様の発言（line-webhook の direct）以外では自動で作り直さない。
   //   旧: cron（generate-pending-drafts）は5回で諦めるが、画面の先回り生成・会話を開いた時の起動は失敗回数を見ず、
@@ -279,6 +285,7 @@ export async function POST(req: NextRequest) {
   // OR (ai_draft IS NULL AND draft_attempted_at < 5min前)
   // OR (ai_draft='[AIX誘導中]' AND draft_attempted_at IS NULL)
   // OR (ai_draft='[AIX誘導中]' AND draft_attempted_at < 5min前)
+  // 2026-09-21: '[返信不要]' も同じ4通りを足す（貼ったまま作り直せなくならないように）
   const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   // この実行が立てた印（AIX の判断で下書きを作らずに終える時、自分の印だけを外すために覚えておく）
   const claimedAt = new Date().toISOString();
@@ -289,7 +296,9 @@ export async function POST(req: NextRequest) {
       `and(ai_draft.is.null,draft_attempted_at.is.null),` +
       `and(ai_draft.is.null,draft_attempted_at.lt.${fiveMinAgo}),` +
       `and(ai_draft.eq."[AIX誘導中]",draft_attempted_at.is.null),` +
-      `and(ai_draft.eq."[AIX誘導中]",draft_attempted_at.lt.${fiveMinAgo})`
+      `and(ai_draft.eq."[AIX誘導中]",draft_attempted_at.lt.${fiveMinAgo}),` +
+      `and(ai_draft.eq."${DRAFT_SENTINEL_NO_REPLY}",draft_attempted_at.is.null),` +
+      `and(ai_draft.eq."${DRAFT_SENTINEL_NO_REPLY}",draft_attempted_at.lt.${fiveMinAgo})`
     )
     .select("id");
   if (claimErr) {
@@ -660,6 +669,44 @@ export async function POST(req: NextRequest) {
           .is("ai_draft", null);
         await finishWithoutDraft();
         return;
+      }
+
+      // ─── 2026-09-21 竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」───
+      //   直前の送信が締めで終わっていて、お客様も短いお礼・了承だけなら**下書きを作らない**。
+      //   作ると、書く材料が無いので直前と同じ締めをなぞる（竹内さんのスクショの形）。
+      //
+      //   ⚠ ここはブレインの後に置く。ブレインが AIX を選ぶ場面は上の reply_mode=aix で先に抜けるので、
+      //     AIX の提案を落とさずに「下書きだけ作らない」にできる。
+      //   実測（scripts/audit-skip-draft.ts・直近180日・申込以降を除く）:
+      //     止まるのは お客様の発言 3,017回中 32回（1.1%）。
+      //     そのうち3時間以内にスタッフが実際に返信していたのは 20回（62.5%）＝その分は手で書くことになる。
+      //     返信していなかったのは 12回（37.5%）。過半数の線は引けないので、竹内さんの判断で「作らない」に倒した。
+      //   止めるのは**下書きを作ること**だけなので、外してもお客様に変な文は飛ばない（入口を閉じるだけ）。
+      //   戻す時は SKIP_CLOSED_DRAFT=off
+      if (process.env.SKIP_CLOSED_DRAFT !== "off") {
+        const staffIdx = recentMsgs.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0);
+        const lastIdx = staffIdx.at(-1);
+        const prevStaffText = lastIdx === undefined ? "" : (() => {
+          // スプリット送信（3分以内の連投）は1通として結合する
+          const parts: string[] = [];
+          for (let i = lastIdx; i >= 0 && recentMsgs[i].sender === "staff"; i--) {
+            const cur = recentMsgs[i].createdAt ? Date.parse(recentMsgs[i].createdAt as string) : NaN;
+            const nxt = recentMsgs[i + 1]?.createdAt ? Date.parse(recentMsgs[i + 1].createdAt as string) : NaN;
+            if (parts.length > 0 && Number.isFinite(cur) && Number.isFinite(nxt) && nxt - cur >= 180_000) break;
+            parts.unshift(recentMsgs[i].text ?? "");
+          }
+          return parts.join("\n");
+        })();
+        const verdict = shouldSkipDraftAfterClosing({ prevStaffText, customerText: targetMessage });
+        if (verdict.skip) {
+          console.log(JSON.stringify({ tag: "bg-async:no-reply-needed", conversationId: convId, reason: verdict.reason }));
+          await db.from("conversations")
+            .update({ ai_draft: DRAFT_SENTINEL_NO_REPLY, draft_pending_at: null })
+            .eq("id", convId)
+            .is("ai_draft", null);
+          await finishWithoutDraft();
+          return;
+        }
       }
 
       // 180秒タイムアウト: generate-replyはStep1(最大45s)+Step2(最大45s)+余裕=最大90s超。
