@@ -70,6 +70,23 @@ describe("★ 文体・構成は出さない（数えるだけ）", () => {
       if (classifyIssueScope(c) !== "style") throw new Error(`${c} が style ではない`);
     }
   });
+  it("★ T5 実データ45日の全 code を読んで移した4つ（scripts/audit-finalcheck-after.ts）", () => {
+    // PROMISE_ECHO_MISSING「直前スタッフ約束の復唱WE DO文がありません」＝骨格
+    // COMMIT_AFTER_DELIVERABLE「成果物送付時に全力サポート締めを重ねている」＝締めの重ね
+    // GENERIC_ONLY_REPLY 中身が定型だけ＝構成
+    // REPEATED_SENTENCE「既に送った文とほぼ同じ（言い方を変えて）」＝言い回し（生成側で材料として扱う）
+    for (const c of ["PROMISE_ECHO_MISSING", "COMMIT_AFTER_DELIVERABLE", "GENERIC_ONLY_REPLY", "REPEATED_SENTENCE"]) {
+      if (classifyIssueScope(c) !== "style") throw new Error(`${c} が style ではない`);
+    }
+  });
+  it("★ T6 似ているが fact に残す物（嘘・取りこぼしに関わる）", () => {
+    // UNANCHORED_VOCAB「お客様が依頼していない事を前提にした宣言」＝事実のズレ
+    // CONCERN_UNADDRESSED「お客様の懸念に答えていない」＝取りこぼし（MISSED_QUESTION と同種）
+    // DUPLICATE_OF_SENT「同じ本文をもう一度送ろうとしている」＝二重送信の歯止め（safety）
+    expect(classifyIssueScope("UNANCHORED_VOCAB")).toBe("fact");
+    expect(classifyIssueScope("CONCERN_UNADDRESSED")).toBe("fact");
+    expect(classifyIssueScope("DUPLICATE_OF_SENT")).toBe("safety");
+  });
 });
 
 describe("分ける", () => {

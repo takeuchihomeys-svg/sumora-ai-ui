@@ -45,6 +45,14 @@ const STYLE_CODES: ReadonlySet<string> = new Set([
   // 共感・言葉づかい
   "FEELING_TEMPLATE", "SYMPATHY_ECHO", "VOCAB_MIRROR_MISMATCH", "NEGATIVE_APOLOGY",
   "CONDITION_ECHO_MISSING", "ECHO_CONFIRM", "PROMISE_ECHO_MISMATCH",
+  // 2026-09-21 実データ45日の全 code を目で読んで足した分（scripts/audit-finalcheck-after.ts）。
+  //   どれも「嘘が届く」話ではなく、書き方・構成の話だった:
+  //   PROMISE_ECHO_MISSING     「短い了承の場面ですが直前スタッフ約束の復唱WE DO文がありません」＝骨格
+  //   COMMIT_AFTER_DELIVERABLE 「成果物送付時に全力サポート締めを重ねている」＝締めの重ね
+  //   GENERIC_ONLY_REPLY       中身が定型だけ＝構成
+  //   REPEATED_SENTENCE        「締めの文がこの会話で既に送った文とほぼ同じ（言い方を変えて）」＝言い回し
+  //     ※ 繰り返しは 2026-09-21 に生成側（previous-send-note）で材料として扱うようにした。検査では出さない
+  "PROMISE_ECHO_MISSING", "COMMIT_AFTER_DELIVERABLE", "GENERIC_ONLY_REPLY", "REPEATED_SENTENCE",
   "GOCHOUGO_AFTER_DATE", "GOCHOUGO_NO_CONDITION", "GOCHOUGO_REVERSED", "GOCHOUGO_STAFF_TASK",
   "UKETAMAWARI_OBJECT_UNANCHORED", "CONFIRM_NO_OBJECT", "CONFIRM_OBJECT_UNSTATED", "CONFIRM_SUBJECT_THEFT",
   // 言い過ぎ・押し方（売り方の話。嘘ではない）
@@ -57,7 +65,9 @@ const STYLE_CODES: ReadonlySet<string> = new Set([
 const SAFETY_CODES: ReadonlySet<string> = new Set([
   "UNCHECKED_AUTO_SEND", "PARTIALLY_UNCHECKED", "REVISION_EXHAUSTED_AUTO_SEND",
   "SENSITIVE_CASE", "DUPLICATE_OF_SENT", "BANNED_WORD", "NG_PROPERTY_MENTION",
-  "REPEATED_SENTENCE", "GATE_PAIR_CONFLICT",
+  "GATE_PAIR_CONFLICT",
+  // ※ REPEATED_SENTENCE は 2026-09-21 に style へ移した（「言い方を変えて」＝文体の話）。
+  //   DUPLICATE_OF_SENT（同じ本文をもう一度送ろうとしている）は safety のまま＝二重送信の歯止め。
 ]);
 
 /**

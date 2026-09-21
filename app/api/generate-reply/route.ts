@@ -5690,7 +5690,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   };
                   const nameRes = enforceCustomerName(draftBody, { customerName, lineDisplayName });
                   draftBody = nameRes.cleaned;
-                  const det = runDeterministicChecks(draftBody, detCtx);
+                  // 2026-09-21 竹内「ファイナルチェックはハルシネーションがないようにする部分」:
+                  //   LLM の検査が落ちた時の縮退経路でも文体は見せない（絞り込みは全経路で同じ）
+                  const det = splitFinalCheckIssues(runDeterministicChecks(draftBody, detCtx)).shown;
                   const degraded: CheckResult = {
                     ok: !det.some((i) => i.severity === "block"),
                     issues: det,
@@ -5848,7 +5850,18 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     : undefined,
                 };
                 const postDet = runDeterministicChecks(draftBody, postDetCtx);
-                finalCheck.issues = [...finalCheck.issues.filter((i) => !DET_CODES_RE.test(i.code)), ...postDet];
+                // 2026-09-21 竹内「ファイナルチェックはハルシネーションがないようにする部分」:
+                //   ⚠ ここは**絞り込みの後**に決定論チェックを回し直すので、文体の指摘が戻ってくる。
+                //     YUMA の検証で NANISOTSU_MISPLACED（文体）が1件だけ画面に残っていたのがこれだった。
+                //     差し替えるこの場所でも同じ絞り込みをかける（絞り込みは3か所: 1回目・再生成後・ここ）。
+                const postScoped = splitFinalCheckIssues(postDet);
+                if (postScoped.styleOnly.length > 0) {
+                  console.log(JSON.stringify({
+                    tag: "final-check:style-only", phase: "post-det", conversationId,
+                    codes: postScoped.styleOnly.map((i) => `${i.code}:${i.severity}`),
+                  }));
+                }
+                finalCheck.issues = [...finalCheck.issues.filter((i) => !DET_CODES_RE.test(i.code)), ...postScoped.shown];
                 finalCheck.ok = !finalCheck.issues.some((i) => i.severity === "block");
               } catch (postErr) {
                 console.warn("[generate-reply] 後処理後の決定論再検査に失敗（元の結果を維持）:", postErr);
