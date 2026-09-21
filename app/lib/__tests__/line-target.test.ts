@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/line-target.test.ts（全 PASS で exit 0）
 import {
   lineTargetKind, isMultiPersonTarget, resolveEventTarget, groupConversationName, isGroupConversationName,
-  checkSendTarget, GROUP_NAME_PREFIX,
+  checkSendTarget, GROUP_NAME_PREFIX, displayMemberCount, parseStaffUserIds,
 } from "../line-target";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
@@ -80,6 +80,15 @@ describe("★★ グループと分かる名前", () => {
   });
   it("N5 人数が取れない時は名前だけ", () => {
     expect(groupConversationName("黒明様お部屋探し", "group", null)).toBe(`${GROUP_NAME_PREFIX}黒明様お部屋探し`);
+  });
+  it("★★ N6 人数の API はスモラ自身を数えないので1足して LINE の表示に合わせる（API 3 → 画面 4）", () => {
+    expect(displayMemberCount(3)).toBe(4);
+    expect(displayMemberCount(null)).toBe(null);
+  });
+  it("★★ N7 スタッフの ID 一覧を読む（カンマ区切り・形の違う物は捨てる）", () => {
+    const s = parseStaffUserIds(`${USER}, U3d8d9`, "abc", GROUP, null);
+    expect(s.has(USER)).toBe(true);
+    expect(s.size).toBe(1);   // 短い ID・グループ ID は捨てる（スタッフは個人だけ）
   });
   it("N3 印付きの名前はグループと判定（呼び名に使わない入口）", () => {
     expect(isGroupConversationName(groupConversationName("黒明様お部屋探し"))).toBe(true);

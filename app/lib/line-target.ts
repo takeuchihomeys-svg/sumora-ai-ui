@@ -57,6 +57,27 @@ export function resolveEventTarget(source: EventSource | null | undefined): { ta
   return speaker ? { targetId: speaker, kind: "user", speakerUserId: speaker } : null;
 }
 
+/**
+ * LINE の人数 API（/members/count）は**公式アカウント自身を数えない**。
+ * LINE の画面の「黒明様お部屋探し(4)」はスモラを含む人数なので、1を足して合わせる（2026-09-21 実測: API 3 ／ 画面 4）
+ */
+export function displayMemberCount(apiCount: number | null | undefined): number | null {
+  return typeof apiCount === "number" && apiCount >= 0 ? apiCount + 1 : null;
+}
+
+/**
+ * グループの発言者がこちらのスタッフか。
+ * 2026-09-21 竹内さん（YUMA）がグループで「弊社スタッフと私でサポートさせて頂きます」と送ったら、
+ *   お客様の発言として保存され、AI が「お申込み内容を確認させて頂きます」の下書きを作った。
+ *   グループではスタッフも**個人の LINE で**話すので、発言者の ID でこちら側の発言を見分ける。
+ * @param staffIds hanbancyo_settings の staff_line_user_ids（カンマ区切り）と suzuki_line_user_id
+ */
+export function parseStaffUserIds(...values: Array<string | null | undefined>): Set<string> {
+  const out = new Set<string>();
+  for (const v of values) for (const s of (v ?? "").split(/[,\s]+/)) if (lineTargetKind(s) === "user") out.add(s);
+  return out;
+}
+
 /** 一覧・画面で分かるように付ける印（竹内「グループなら分かりやすくグループと入れる」） */
 export const GROUP_NAME_PREFIX = "【グループ】";
 

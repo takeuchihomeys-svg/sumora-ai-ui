@@ -14,7 +14,7 @@ import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/conditi
 import { CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
 import { fileMessageText } from "@/app/lib/received-document";
 // 2026-09-21 竹内「LINEのグループでも送れるように。個人とLINEのグループ分けて認識」: 宛先と発言者を分ける
-import { resolveEventTarget, lineTargetKind, groupConversationName, type LineTargetKind } from "@/app/lib/line-target";
+import { resolveEventTarget, lineTargetKind, groupConversationName, displayMemberCount, parseStaffUserIds, type LineTargetKind } from "@/app/lib/line-target";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 // 2026-09-13: 画像は読み取り（最大 IMAGE_READ_WAIT_MS）→ ブレイン（最大約90s・実行中に読み取りが終わった分の再分析1回）を直列にしたので 300 に
@@ -307,6 +307,7 @@ async function updateGroupInfo(
   speakerUserId: string | null,
   lineMessageId: string | null,
   now: string,
+  isStaffSpeaker = false,
 ): Promise<void> {
   if (kind === "user" || !account.token) return;
   try {
@@ -316,7 +317,7 @@ async function updateGroupInfo(
       fetchMemberCount(kind, targetId, account.token),
     ]);
     // 竹内「グループ名もLINE側と同じにできるか」: LINE の表示「黒明様お部屋探し(4)」と同じく人数も付ける
-    const name = groupConversationName(summary?.groupName ?? null, kind, memberCount);
+    const name = groupConversationName(summary?.groupName ?? null, kind, displayMemberCount(memberCount));
     const patch: Record<string, string> = { line_source_type: kind };
     // 名前が取れた時だけ上書きする（取れなかった時に「グループ名取得中」へ戻さない）
     if (summary?.groupName || kind === "room") patch.customer_name = name;
@@ -330,10 +331,23 @@ async function updateGroupInfo(
     }
     if (lineMessageId && speakerUserId) {
       await db.from("messages")
-        .update({ speaker_user_id: speakerUserId, ...(member?.displayName ? { speaker_name: member.displayName } : {}) })
+        .update({
+          speaker_user_id: speakerUserId,
+          ...(member?.displayName ? { speaker_name: member.displayName } : {}),
+          // スタッフが個人の LINE から送った画像・ファイルも「こちらの送信」に揃える（文字はもう staff で保存済み）
+          ...(isStaffSpeaker ? { sender: "staff" } : {}),
+        })
         .eq("line_message_id", lineMessageId);
     }
-    if (speakerUserId) await mergeMisroutedPersonalConversation(db, targetId, speakerUserId, account);
+    // 2026-09-21: 引き継ぎは「発言者」ではなく「グループのメンバーか」で決める。
+    //   最初の実物では竹内さん（YUMA）が発言し、誤って作られたのは黒明さんの会話だったので、発言者で探すと見つからなかった。
+    //   送信停止中の会話の個人 ID がこのグループのメンバーなら（member API が 200）引き継ぐ
+    const { data: blocked } = await db.from("conversations").select("line_user_id")
+      .eq("account", account.key).eq("send_blocked_reason", "created_from_group").limit(20);
+    for (const b of (blocked ?? []) as Array<{ line_user_id: string }>) {
+      const isMember = b.line_user_id === speakerUserId || !!(await fetchMemberProfile(kind, targetId, b.line_user_id, account.token));
+      if (isMember) await mergeMisroutedPersonalConversation(db, targetId, b.line_user_id, account);
+    }
     console.log(JSON.stringify({
       tag: "line-webhook:group", kind, account: account.key, groupNameFound: !!summary?.groupName,
       speakerFound: !!member?.displayName,
@@ -341,6 +355,37 @@ async function updateGroupInfo(
   } catch (e) {
     console.warn("[line-webhook] グループ情報の取得失敗:", e instanceof Error ? e.message : e);
   }
+}
+
+/** こちらのスタッフの LINE 個人 ID（hanbancyo_settings の staff_line_user_ids ＋ 鈴木） */
+async function getStaffLineUserIds(db: ReturnType<typeof getDb>): Promise<Set<string>> {
+  const { data } = await db.from("hanbancyo_settings").select("key, value").in("key", ["staff_line_user_ids", "suzuki_line_user_id"]);
+  return parseStaffUserIds(...((data ?? []) as Array<{ value: string | null }>).map((r) => r.value));
+}
+
+/** グループでスタッフが個人の LINE から話した発言を「こちらの送信」として残す（下書き・ブレインは動かさない） */
+async function saveGroupStaffMessage(
+  db: ReturnType<typeof getDb>,
+  targetId: string,
+  account: AccountConfig,
+  text: string,
+  lineMessageId: string | null,
+  now: string,
+): Promise<boolean> {
+  const convId = await ensureConversation(db, targetId, account, now);
+  if (!convId) return false;
+  if (lineMessageId) {
+    const { data: dup } = await db.from("messages").select("id").eq("line_message_id", lineMessageId).maybeSingle();
+    if (dup) return true;
+  }
+  const { error } = await db.from("messages").insert({
+    conversation_id: convId, sender: "staff", text,
+    ...(lineMessageId ? { line_message_id: lineMessageId } : {}),
+    created_at: now,
+  });
+  if (error && error.code !== "23505") { console.error("[line-webhook] スタッフ発言の保存失敗:", error.message); return false; }
+  await db.from("conversations").update({ last_message: text, last_sender: "staff", updated_at: now }).eq("id", convId);
+  return true;
 }
 
 /** 社内の LINE グループ（売上番長・物件ピックアップ）なら true。お客様の会話にしない安全網 */
@@ -2477,8 +2522,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (target.kind === "group" && await isInternalStaffGroup(db0, userId)) continue;
       const nowG = new Date().toISOString();
       const lmidG = event.message?.id ?? null;
+      // 2026-09-21: グループではスタッフも個人の LINE で話す（竹内さん＝YUMA が「弊社スタッフと私でサポート」と送った）。
+      //   お客様の発言として保存すると AI がスタッフの発言に返信を作る（実物:「お申込み内容を確認させて頂きます」）。
+      //   スタッフの発言は「こちらの送信」として残し、下書き・ブレインは動かさない
+      const staffIds = await getStaffLineUserIds(db0);
+      const isStaffSpeaker = !!speakerUserId && staffIds.has(speakerUserId);
       // メッセージの保存が終わった後に、グループ名と発言者を入れる
-      after(() => updateGroupInfo(db0, userId, target.kind, matchedAccount, speakerUserId, lmidG, nowG));
+      after(() => updateGroupInfo(db0, userId, target.kind, matchedAccount, speakerUserId, lmidG, nowG, isStaffSpeaker));
+      if (isStaffSpeaker && (msgType === "text" || msgType === "sticker")) {
+        const text = msgType === "text" ? String((event.message as { text?: string })?.text ?? "") : "[スタンプ]";
+        if (text) {
+          const ok = await saveGroupStaffMessage(db0, userId, matchedAccount, text, lmidG, nowG);
+          if (!ok) anyFailed = true;
+        }
+        console.log(JSON.stringify({ tag: "line-webhook:group-staff-speaker", account: matchedAccount.key, msgType }));
+        continue;
+      }
     } else {
       // 個人のトークで本人から直接届いた＝本物の個人の会話。グループから誤って作られた印を外す
       const db0 = getDb();

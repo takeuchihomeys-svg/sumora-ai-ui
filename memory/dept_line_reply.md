@@ -25,7 +25,13 @@
 → 次の発言で判明した瞬間に、グループから誤って作られた個人の会話（`created_from_group`）の履歴
 （messages・sent_properties・sent_image_properties・image_details・段階・顧客の紐付け）をグループの会話へ自動で引き継ぐ
 （`mergeMisroutedPersonalConversation`・古い会話は `merged_to_group`）。
-表示名は LINE と同じく人数付き `【グループ】黒明様お部屋探し(4)`（`/members/count`）。
+表示名は LINE と同じく人数付き `【グループ】黒明様お部屋探し(4)`（`/members/count` は**スモラ自身を数えない**ので +1）。
+引き継ぎは「発言者」ではなく**グループのメンバーか**（member API が 200）で決める（最初の判明は竹内さんの発言だった）。
+
+**🔴 グループではスタッフも個人の LINE で話す**。9/21 竹内さん（YUMA）の発言がお客様扱いになり、
+AI が「お申込み内容を確認させて頂きます」の下書きを作った。→ `hanbancyo_settings.staff_line_user_ids`（カンマ区切り）＋
+`suzuki_line_user_id` に入っている ID の発言は `sender='staff'` で保存し、下書き・ブレインは動かさない。
+**スタッフが増えたら staff_line_user_ids に個人 ID を足す**（未登録のスタッフはお客様扱いになる）。
 公式LINEから直接送った分はアプリに記録されないので、AI はその送信を知らない（見積書を送った等）。
 
 **グループ名の取り方**: 個人のプロフィール API はグループのメンバーに使えない。`/v2/bot/group/{id}/summary`（グループ名）・`/v2/bot/group/{id}/member/{userId}`（発言者名・友だちでなくても可）
