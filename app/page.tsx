@@ -7714,7 +7714,8 @@ export default function Home() {
                               );
                             })()}
                             {/* 保存期間終了 */}
-                            {!message.imageUrl && message.text === "[画像]" && message.imageExpiresAt && new Date(message.imageExpiresAt) < new Date() && (
+                            {/* 2026-09-22: 読み取り文付き（「[画像] 物件名…」）の画像も期限が切れたら同じ表示にする（旧は「[画像]」ちょうどの時だけ） */}
+                            {!message.imageUrl && (message.text || "").startsWith("[画像]") && message.imageExpiresAt && new Date(message.imageExpiresAt) < new Date() && (
                               <div className="flex items-center gap-1.5 px-3 py-2 text-[13px] text-gray-400">
                                 <span>🔒</span>
                                 <span>保存期間が終了しました</span>

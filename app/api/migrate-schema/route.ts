@@ -3143,6 +3143,34 @@ CREATE TABLE IF NOT EXISTS image_details (
 CREATE INDEX IF NOT EXISTS idx_image_details_conv ON image_details(conversation_id);
 ALTER TABLE image_details DISABLE ROW LEVEL SECURITY;
 
+-- expired_line_upload_objects: こちらが LINE で送るためにアップロードした画像の保存期間（2026-09-22 竹内「保存期間を3ヶ月に。公式LINEのように」）
+--   property-images は消す仕組みが無く 6.1GB・毎月1.5〜2GB 増えていた（お客様の画像 line-images は30日で消えている）。
+--   対象: aix/・messages/・会話ID のフォルダ（送信用のアップロード）で p_days 日より古い物。
+--   残す: p_days 日以内のメッセージが同じ画像を使っている／予約送信（pending・sending）で送る予定。
+--   customer/・estimate-preview/ など送信用でないフォルダは触らない。削除は /api/cleanup-images（Storage API）が行う
+CREATE OR REPLACE FUNCTION expired_line_upload_objects(p_days int DEFAULT 90, p_limit int DEFAULT 500)
+RETURNS TABLE(name text, size bigint, created_at timestamptz)
+LANGUAGE sql SECURITY DEFINER SET search_path = public, storage AS $$
+  WITH recent_refs AS (
+    SELECT DISTINCT (regexp_matches(m.image_url, '/property-images/([^"\\],\\s]+)', 'g'))[1] AS name
+    FROM public.messages m
+    WHERE m.image_url LIKE '%/property-images/%' AND m.created_at >= now() - make_interval(days => p_days)
+  ), pending_refs AS (
+    SELECT DISTINCT (regexp_matches(s.image_urls::text, '/property-images/([^"\\],\\s]+)', 'g'))[1] AS name
+    FROM public.scheduled_messages s WHERE s.status IN ('pending', 'sending')
+  )
+  SELECT o.name, (o.metadata->>'size')::bigint, o.created_at
+  FROM storage.objects o
+  WHERE o.bucket_id = 'property-images'
+    AND o.created_at < now() - make_interval(days => p_days)
+    AND (split_part(o.name, '/', 1) IN ('aix', 'messages')
+         OR split_part(o.name, '/', 1) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+    AND NOT EXISTS (SELECT 1 FROM recent_refs r WHERE r.name = o.name)
+    AND NOT EXISTS (SELECT 1 FROM pending_refs p WHERE p.name = o.name)
+  ORDER BY o.created_at
+  LIMIT p_limit;
+$$;
+
 -- LINE グループ対応（2026-09-21 竹内「LINEのグループでも送れるように。個人とLINEのグループ分けて認識」）
 --   line_user_id は「宛先」。グループならグループID（C…）・トークルームなら R…・個人なら U…。
 --   line_source_type は表示・検索用の写し（判定の正は app/lib/line-target.ts の lineTargetKind＝IDの先頭1文字）。

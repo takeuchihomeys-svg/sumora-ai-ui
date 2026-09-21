@@ -4,6 +4,25 @@
 
 ---
 
+## 画像の保存期間（竹内・2026-09-22「公式LINEのように3ヶ月」）— 黄金ルール
+
+| | 保存 | 消す所 |
+|---|---|---|
+| お客様から届いた画像（line-images） | **30日**（身分証が写る事があるので長くしない） | /api/cleanup-images（毎晩3:23・既存） |
+| こちらが送るためにアップロードした画像（property-images の aix/・messages/・会話ID） | **90日**（2026-09-22〜） | 同じ処理に足した（1晩500件） |
+
+- 対象の選び方は DB の `expired_line_upload_objects(p_days, p_limit)` の1か所。90日以内のメッセージが同じ画像を使っている物・予約送信の物は残す。customer/・estimate-preview/ などは触らない。
+- ⚠ property-images には**公開キーの削除権限が無い**（付けない：アプリの公開キーで誰でも消せてしまう）。
+  削除は `SUPABASE_SERVICE_ROLE_KEY` がある時だけ。無ければ消さずに応答の uploads.skipped に理由を出す。
+  Storage の remove は権限が無いと**エラーにならず0件**で返るので、実際に消えた物だけを messages に反映する。
+- 消した画像のメッセージは image_url=null・image_expires_at=今 → 画面は「🔒 保存期間が終了しました」。読み取った文字は DB に残る。
+- 確かめ方: `/api/cleanup-images?dry=1`（消さずに予定だけ）／ `npx tsx --env-file=.env.local scripts/peek-image-retention.ts`
+- 実測（9/22）: property-images 6,699ファイル・6.1GB（毎月1.5〜2GB 増）・1枚平均0.9MB。最初の対象 1,139ファイル・908MB。
+- 重さの本当の原因は「量」より「1枚が大きい」事（会話を開くと画像を原寸で読む）。Supabase の縮小表示
+  （/storage/v1/render/image/…?width=400）で 518KB → 35KB を確認済み。料金が掛かるので竹内さんの判断待ち。
+
+---
+
 ## 済んだ内覧を「これからの内覧」として渡さない（竹内・2026-09-21 まりあさん事例）— 黄金ルール
 
 **実物**: 16:00 内覧 → 20:13 こちら「本日お時間頂きありがとうございました」→ 21:15 お客様「母に聞いてみます！」
