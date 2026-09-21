@@ -7,6 +7,8 @@ import {
   filterOutAlreadySent, renumberSummaries, parseSummaryHead, buildExcludedNotice,
   normalizePropertyUrl, urlKeysAreDistinct, type OutgoingProperty, type SentProperty,
 } from "@/app/lib/sent-property-filter";
+// 2026-09-21 竹内「ちゃんと物件を読み取ることできてるんかな？」: 家賃は説明文から読み直す
+import { parseRentFromSummary } from "@/app/lib/property-summary-parse";
 
 export const maxDuration = 90;
 
@@ -456,11 +458,15 @@ export async function POST(req: NextRequest) {
           // ⚠ URL も入れる。号室は実測で 0.1% しか取れておらず（scripts/audit-summary-room.ts）、
           //   名前だけでは同じ建物の別部屋と区別できない（1回の送信の74.2%に別部屋が入っている）。
           //   リアプロの印刷用PDFの URL は物件ごとに違うので、これが号室の代わりの鍵になる。
-          type PropInfo = { propertyName: string; roomNo: string; url: string };
+          // ⚠ 家賃も説明文から読み直す（2026-09-21 竹内「ちゃんと物件を読み取ることできてるんかな？」）。
+          //   拡張は同じセルの文字を説明文にはそのまま入れているのに、数値にする側は `/(\d+)万/` しか
+          //   見ておらず「58,000円」に当たらないため、sent_properties.rent が **リアプロ20,854件中 0件**だった。
+          //   説明文はここに届いているので、サーバー側で読めば拡張の再読み込みが要らない。
+          type PropInfo = { propertyName: string; roomNo: string; url: string; rent: number | null };
           const rawInfo: PropInfo[] = summariesToRecord.flatMap((summary, i) => {
             const head = parseSummaryHead(summary);
             if (!head) return [];
-            return [{ ...head, url: normalizePropertyUrl(pdf_urls?.[i] ?? null) }];
+            return [{ ...head, url: normalizePropertyUrl(pdf_urls?.[i] ?? null), rent: parseRentFromSummary(summary) }];
           });
           // ⚠ URL が物件を1件ずつ指していない形（path が同じでクエリで分ける等）だったら**記録しない**。
           //   そのまま入れると、次の送信で全部「送付済み」と判定されて消える。外す時と同じ確認（四者同名）。
@@ -522,8 +528,18 @@ export async function POST(req: NextRequest) {
                 room_no: p.roomNo,
                 // 号室が 0.1% しか取れないので、次に外す時の鍵になるよう URL を残す
                 property_url: p.url || null,
+                // ブレイン・文生成が「送った物件の家賃」を読めるようにする（今まで 0% だった）
+                rent: p.rent,
                 source: "line_group",
               }));
+            const gotRent = toInsert.filter((r) => r.rent !== null).length;
+            if (toInsert.length > 0) {
+              console.log(JSON.stringify({
+                tag: "merge-pdfs:sent-properties:write",
+                rows: toInsert.length, with_rent: gotRent, with_url: toInsert.filter((r) => r.property_url).length,
+                with_room: toInsert.filter((r) => r.room_no).length,
+              }));
+            }
             if (toInsert.length > 0) {
               const { error: insertError } = await supabase
                 .from("sent_properties")

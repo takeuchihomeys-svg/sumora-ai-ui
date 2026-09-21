@@ -79,6 +79,8 @@ export function isSameOutgoing(out: OutgoingProperty, sent: SentProperty): boole
   const or = normalizeRoomNo(out.roomNo);
   const sr = normalizeRoomNo(sent.room_no);
   if (!or || !sr) return false;   // 号室が片方でも無ければ判断しない（別部屋を消さない）
+  // ⚠ 名前が「物件」等（読み取れなかった既定値）の時は、号室が一致しても別の建物の同じ号室かもしれない
+  if (!isUsablePropertyName(out.propertyName) || !isUsablePropertyName(sent.property_name)) return false;
   return isSameProperty({ property_name: out.propertyName, room_no: or }, { property_name: sent.property_name, room_no: sr });
 }
 
@@ -129,8 +131,31 @@ export function buildingWing(normalizedName: string): string {
   return m ? m[0] : "";
 }
 
+/**
+ * 物件を指していない名前。**建物の判定に使ってはいけない**。
+ *
+ * ⚠ 2026-09-21 竹内「ちゃんと物件を読み取ることできてるんかな？」で見つけた:
+ *   拡張は検索結果から名前を取れなかった時に既定値「物件」を入れる。実測で **239件（1.1%）**。
+ *   建物ごとに外す作りでは、この「物件」同士が名前一致で**同じマンション扱い**になり、
+ *   名前を読めなかった物件が互いを消し合う（読み取りに失敗しただけの物件が送られなくなる）。
+ *   画面の文字が混ざった名前（「設備・詳細」など 18件）も同じ。
+ */
+const UNUSABLE_NAMES: ReadonlySet<string> = new Set(["物件", "設備・詳細", "詳細", "お気に入り", "印刷用pdf", "図面", "-", "ー", "―"]);
+
+/** その名前を建物の判定に使ってよいか。使えない名前は**外さない側**に倒す */
+export function isUsablePropertyName(name: string | null | undefined): boolean {
+  const t = (name ?? "").trim();
+  if (!t) return false;
+  if (UNUSABLE_NAMES.has(t.toLowerCase())) return false;
+  // 数字・金額だけ（「58,000円」が名前になってしまった行）
+  if (/^[\d\s,，.円万¥]+$/.test(t)) return false;
+  // 正規化して1文字以下になる物は名前として短すぎる
+  return normalizePropertyName(t).length >= 2;
+}
+
 /** 建物として同じか。棟の表記が違えば別の建物。名前の近さは BUILDING_MIN_SCORE で見る */
 export function isSameBuilding(a: string, b: string): boolean {
+  if (!isUsablePropertyName(a) || !isUsablePropertyName(b)) return false;
   const an = normalizePropertyName(a), bn = normalizePropertyName(b);
   if (!an || !bn) return false;
   if (buildingWing(an) !== buildingWing(bn)) return false;

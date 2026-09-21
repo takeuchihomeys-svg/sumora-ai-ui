@@ -10,7 +10,7 @@
 // 実行: npx tsx app/lib/__tests__/sent-property-filter.test.ts（全 PASS で exit 0）
 import {
   normalizePropertyUrl, canMatch, isSameOutgoing, filterOutAlreadySent, urlKeysAreDistinct,
-  renumberSummaries, parseSummaryHead, buildExcludedNotice, buildingWing, isSameBuilding,
+  renumberSummaries, parseSummaryHead, buildExcludedNotice, buildingWing, isSameBuilding, isUsablePropertyName,
   type OutgoingProperty, type SentProperty,
 } from "../sent-property-filter";
 
@@ -112,6 +112,43 @@ describe("★ 建物ごとに外す（竹内さんの選択・既定）", () => 
     const r = filterOutAlreadySent([out({ propertyName: "グランパシフィック生野東" })], sent);
     expect(r.dropped.length).toBe(0);
   });
+  it("★★ B11 名前を読み取れなかった物件（既定値「物件」）同士を消し合わせない", () => {
+    // 拡張は名前を取れないと "物件" を入れる（実測 239件・1.1%）。
+    // 建物ごとに外す作りでは、この同士が名前一致して**読めなかっただけの物件が全部消える**。
+    const sent: SentProperty[] = [{ property_name: "物件", room_no: "", property_url: null }];
+    const r = filterOutAlreadySent([out({ propertyName: "物件" })], sent);
+    expect(r.dropped.length).toBe(0);
+    expect(r.keep).toEqual([0]);
+  });
+  it("★★ B12 号室が一致しても、名前が既定値なら外さない", () => {
+    const sent: SentProperty[] = [{ property_name: "物件", room_no: "301", property_url: null }];
+    const r = filterOutAlreadySent([out({ propertyName: "物件", roomNo: "301" })], sent, "room");
+    expect(r.dropped.length).toBe(0);
+  });
+  it("★ B13 画面の文字が混ざった名前も判定に使わない", () => {
+    const sent: SentProperty[] = [{ property_name: "設備・詳細", room_no: "", property_url: null }];
+    const r = filterOutAlreadySent([out({ propertyName: "設備・詳細" })], sent);
+    expect(r.dropped.length).toBe(0);
+  });
+  it("★ B14 URL が一致していれば、名前が読めなくても外す（URL は確実）", () => {
+    const u = "https://www.realnetpro.com/print/9.pdf";
+    const sent: SentProperty[] = [{ property_name: "物件", room_no: "", property_url: u }];
+    const r = filterOutAlreadySent([
+      out({ propertyName: "物件", url: `${u}?t=2` }),
+      out({ propertyName: "別物件", url: "https://www.realnetpro.com/print/10.pdf" }),
+    ], sent);
+    expect(r.dropped.length).toBe(1);
+    expect(r.dropped[0].reason).toBe("url");
+  });
+  it("B15 使える名前かの判定", () => {
+    expect(isUsablePropertyName("セレニテ梅田北グランデ")).toBe(true);
+    expect(isUsablePropertyName("雅苑")).toBe(true);
+    expect(isUsablePropertyName("物件")).toBe(false);
+    expect(isUsablePropertyName("設備・詳細")).toBe(false);
+    expect(isUsablePropertyName("58,000円")).toBe(false);
+    expect(isUsablePropertyName("")).toBe(false);
+    expect(isUsablePropertyName(null)).toBe(false);
+  });
   it("B10 棟の取り出し", () => {
     expect(buildingWing("マスターズレジデンス道頓堀ii")).toBe("ii");
     expect(buildingWing("マスターズレジデンス道頓堀iii")).toBe("iii");
@@ -182,11 +219,12 @@ describe("外してよい物は外す", () => {
     expect(r.dropped.length).toBe(1);
   });
   it("★ D5 並びは元のまま返す（PDF と説明文の対応が崩れない）", () => {
-    const sent: SentProperty[] = [{ property_name: "B", room_no: "202", property_url: null }];
+    // ⚠ 名前は2文字以上にする（1文字だと isUsablePropertyName で判定に使われない＝外さない側に倒れる）
+    const sent: SentProperty[] = [{ property_name: "ベータ荘", room_no: "202", property_url: null }];
     const r = filterOutAlreadySent([
-      out({ propertyName: "A", roomNo: "101" }),
-      out({ propertyName: "B", roomNo: "202" }),
-      out({ propertyName: "C", roomNo: "303" }),
+      out({ propertyName: "アルファ荘", roomNo: "101" }),
+      out({ propertyName: "ベータ荘", roomNo: "202" }),
+      out({ propertyName: "ガンマ荘", roomNo: "303" }),
     ], sent);
     expect(r.keep).toEqual([0, 2]);
   });
@@ -221,10 +259,10 @@ describe("★ URL が物件を区別できていない時は URL を使わない
   });
   it("★ G2 その時は号室での判定だけが残る（号室があれば外せる）", () => {
     const same = "https://www.realnetpro.com/print.pdf";
-    const sent: SentProperty[] = [{ property_name: "A", room_no: "101", property_url: null }];
+    const sent: SentProperty[] = [{ property_name: "アルファ荘", room_no: "101", property_url: null }];
     const r = filterOutAlreadySent([
-      out({ propertyName: "A", roomNo: "101", url: `${same}?id=1` }),
-      out({ propertyName: "B", roomNo: "202", url: `${same}?id=2` }),
+      out({ propertyName: "アルファ荘", roomNo: "101", url: `${same}?id=1` }),
+      out({ propertyName: "ベータ荘", roomNo: "202", url: `${same}?id=2` }),
     ], sent);
     expect(r.urlUnusable).toBe(true);
     expect(r.keep).toEqual([1]);
