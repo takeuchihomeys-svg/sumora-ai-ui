@@ -139,6 +139,8 @@ import { buildAixTerritoryGuard } from "@/app/lib/aix-territory";
 import { buildPreviousSendNote } from "@/app/lib/previous-send-note";
 // 2026-09-21 竹内「何卒で終わる場面と入れない場面の違い」「改行を実送信の特徴から」
 import { buildSentShapeNoteAll } from "@/app/lib/sent-shape";
+// 2026-09-21 竹内「一択と指摘するんじゃなくて実際の成約データや直近の会話から学習して、場面でいれるかどうかはブレインに判断させる」
+import { buildOpenerRateNote, sceneFromTpo, type OpenerLabel } from "@/app/lib/opener-rates";
 /**
  * 直前送信の材料を止めるスイッチ（A/B の比較と、効かなかった時の戻し道）。
  * `PREV_SEND_NOTE=off` で無効。dev サーバーは起動時の環境変数を読むので、切り替えには再起動が要る。
@@ -1226,6 +1228,18 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //   テンプレート最適化（AIX の文を整える経路）は AIX 側の型があるので渡さない。
   const sentShapeNote = templateNote ? "" : buildSentShapeNoteAll();
 
+  // ─── 2026-09-21 竹内「一択と指摘するんじゃなくて実際の成約データや直近の会話から学習して、
+  //     場面でいれるかどうかはブレインに判断させる」───
+  //   ブレインが reply_opener を決めていればそれを渡す。決めていない時は**実測の分布**を渡す
+  //   （「一択」とは言わない。どの場面でも一番多い書き出しが過半数に届かないため）。
+  //   検査（final-check の judgeOpener）も同じ opener-rates.ts を見る＝四者同名。
+  const brainOpener = (brainMeta as { reply_opener?: string | null } | null)?.reply_opener ?? null;
+  const openerNote = templateNote ? "" : (() => {
+    if (brainOpener) return `\n\n【最後に確認：書き出し】ブレインはこの場面の書き出しを「${brainOpener}」と判断した。これに合わせる。`;
+    const rates = buildOpenerRateNote(sceneFromTpo(tpoGuidanceNote || null));
+    return rates ? `\n\n【最後に確認：書き出し】${rates}` : "";
+  })();
+
   // ⭐実例がある場合: 文体参考として使うが、ルール（禁止ワード・挨拶等）は常に最優先
   // A-10: 実例ゼロ時は「実例外パターン禁止」（ルール8）が充足不能になるため明示的に解除し、PHASE_GUIDE の例文を型として使わせる
   const examplesInstruction = examples
@@ -1663,7 +1677,7 @@ ${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${
 ${examples}${examplesInstruction}
 
 ↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : `スモラの直前返信の流れを踏まえ、${examples ? "⭐実例の文体・テンポ" : "PHASE_GUIDE の例文の文体・テンポ"}を参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。`}
-長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}${sentShapeNote}`;
+長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}${sentShapeNote}${openerNote}`;
 
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
   // 戦略の優先規定（AIX-META一元化）: 指示が競合した場合の解決順を最上位で1行宣言する
@@ -5397,12 +5411,24 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   allowNames: allowNamesForCheck.length ? allowNamesForCheck : undefined,
                   // 2026-09-11 竹内方針3: スタッフが過去に呼んだ名前・顧客の名乗りは block しない（resolveAddressName の aliases）
                   nameAliases: addressName.aliases,
+                  // 2026-09-21 竹内「ファイナルチェックのところはちゃんとブレインやAIX-METAと連携されてるんかな？」:
+                  //   旧は action と enforcement_level（＋stance）だけだった。ブレインが出している
+                  //   返信の方向性・必ず触れる内容・触れない内容・トーン・締め方を**全部渡す**。
+                  //   検査はこれに沿って見る（自前の物差しで別のことを言わない）。
                   brainMeta: brainMeta
                     ? {
                         // S-3: チェック側にも鮮度ゲート済み action を渡す（stale action で STAGE_SKIP 抑制・Brain判定済み免除が効かないように）
                         action: effectiveAction,
                         enforcement_level: (brainMeta.enforcement_level ?? "recommended") as "required" | "recommended",
                         engagement_stance: (brainMeta.engagement_stance ?? null) as "push" | "wait" | null,
+                        reply_direction: brainMeta.reply_direction ?? null,
+                        key_topics: brainMeta.key_topics ?? null,
+                        avoid_topics: brainMeta.avoid_topics ?? null,
+                        recommended_tone: brainMeta.recommended_tone ?? null,
+                        closing_strategy: brainMeta.closing_strategy ?? null,
+                        reply_mode: brainMeta.reply_mode ?? null,
+                        // 2026-09-21 竹内「場面でいれるかどうかはブレインに判断させる」
+                        reply_opener: (brainMeta as { reply_opener?: OpenerLabel | null }).reply_opener ?? null,
                       }
                     : null,
                   checkpointStage: brainMeta?.checkpoint_stage ?? null, // Fix③: brain実態フェーズ（DB stateと乖離検出用）

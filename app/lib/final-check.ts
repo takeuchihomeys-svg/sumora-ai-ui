@@ -33,6 +33,8 @@ import { isViewingAccessQuestion } from "./viewing-access";
 // 2026-09-17 竹内（YUYA 事例）: ポータルの決まった説明（スタッフの実送信そのまま）は指摘の対象から外す
 import { resolvePortalQuestion, isPortalNoticeSentence } from "./portal-notice";
 import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, classifyReplyBody, isConditionFormThanksOpening, type GreetingKind, type GreetingDecisionLite } from "./greeting";
+// 2026-09-21 竹内「一択と指摘するんじゃなくて実際の成約データや直近の会話から学習して、場面でいれるかどうかはブレインに判断させる」
+import { judgeOpener, sceneFromTpo, type OpenerLabel } from "./opener-rates";
 import {
   PHASE_PROHIBITIONS,
   FORM_LABEL_RE,
@@ -139,10 +141,33 @@ export interface FinalCheckContext {
   estimateContext?: EstimateContextVerdict | null;
   isAix?: boolean;               // FP-02: AIX機能使用フラグ。false の場合 AIX_BOUNDARY_* コードを除外
   isEarlyConversation?: boolean; // FP-04: 会話初期（情報源が薄い）フラグ。FABRICATED系を warning に格下げ
-  /** Brain（suggested_aix_meta）の判定結果。context_check のSTAGE_SKIP抑制に使用 */
+  /**
+   * Brain（suggested_aix_meta）の判定結果。
+   *
+   * 2026-09-21 竹内「ファイナルチェックのところはちゃんとブレインやAIX-METAと連携されてるんかな？」
+   *   → 調べたら **action と enforcement_level の2つしか渡っていなかった**。
+   *     ブレインは reply_direction / key_topics / avoid_topics / recommended_tone /
+   *     closing_strategy / reply_mode まで出しているのに、検査は何も見ていなかった。
+   *     ＝ ブレインが「この場面はこう返す」と決めても、検査は別の物差しで見ていた。
+   *   → 下の項目を足して、**検査がブレインの判断に沿って見る**ようにした。
+   */
   brainMeta?: {
     action: string | null;
     enforcement_level: "required" | "recommended";
+    /** 返信の方向性（1文）。検査はこれに沿っているかで見る */
+    reply_direction?: string | null;
+    /** 返信に必ず含める内容（最大3件） */
+    key_topics?: string[] | null;
+    /** 返信で絶対に言及しない内容（最大5件） */
+    avoid_topics?: string[] | null;
+    /** 推奨トーン */
+    recommended_tone?: string | null;
+    /** 会話全体の締めの戦略 */
+    closing_strategy?: string | null;
+    /** 'aix'=スタッフがAIXで送る / 'auto_reply'=AI自動返信OK */
+    reply_mode?: string | null;
+    /** 2026-09-21 竹内「場面でいれるかどうかはブレインに判断させる」: ブレインが決めた開口語 */
+    reply_opener?: OpenerLabel | null;
   } | null;
   /** 1回目チェック後の照合で「根拠あり」と確認済みの evidence 文字列リスト。2回目チェックで再指摘しない */
   clearedFacts?: string[];
@@ -340,9 +365,8 @@ export function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): Pro
     console.warn(`[final-check] finalCheckRules truncated: ${ctx.finalCheckRules.length} chars → 3000. Rules beyond 3000 chars are NOT checked.`);
   }
   const finalCheckRulesSliced = ctx.finalCheckRules ? ctx.finalCheckRules.slice(0, 3000) : null;
-  const brainBaselineNote = ctx.brainMeta?.action
-    ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。\n\n`
-    : "";
+  const brainBaselineNote = buildBrainBaselineNote(ctx);
+
   const stable = `${ADVERSARIAL_PREAMBLE}
 
 以下はこの会社の絶対ルール一覧です。返信文が各ルールに違反していないか、1つずつ照合してください。
@@ -485,12 +509,37 @@ ${draft}
 }
 
 // ─── Pass 2: 前帯状回（異常検知 / anomaly_scan）────────────────────────────────
+/**
+ * ブレインの判断を検査に渡す1行（2026-09-21 竹内「ファイナルチェックのところはちゃんとブレインやAIX-METAと連携されてるんかな？」）。
+ *
+ * 旧: action と enforcement_level だけ。ブレインが reply_direction / key_topics / avoid_topics /
+ *     recommended_tone / closing_strategy まで出しているのに検査は見ていなかった。
+ * 新: 出している物を全部渡す。**検査はブレインの判断に沿って見る**（自前の物差しで別のことを言わない）。
+ */
+function buildBrainBaselineNote(ctx: FinalCheckContext): string {
+  const b = ctx.brainMeta;
+  if (!b) return "";
+  const parts: string[] = [];
+  if (b.action) parts.push(`action="${b.action}"（enforcement="${b.enforcement_level}"）`);
+  if (b.reply_mode) parts.push(`返信の担当=${b.reply_mode === "aix" ? "AIX（スタッフが送る）" : "AI の下書き"}`);
+  if (b.reply_direction) parts.push(`返信の方向性「${b.reply_direction}」`);
+  if (b.key_topics?.length) parts.push(`必ず触れる内容: ${b.key_topics.join(" / ")}`);
+  if (b.avoid_topics?.length) parts.push(`触れない内容: ${b.avoid_topics.join(" / ")}`);
+  if (b.recommended_tone) parts.push(`トーン=${b.recommended_tone}`);
+  if (b.reply_opener) parts.push(`書き出し=${b.reply_opener}`);
+  if (b.closing_strategy) parts.push(`会話全体の締め方「${String(b.closing_strategy).slice(0, 120)}」`);
+  if (parts.length === 0) return "";
+  return `【Brain判定済み】Brain（Sonnet）が次のように判断しています: ${parts.join(" ／ ")}。\n`
+    + `この判断に沿った返信かどうかで見ること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、`
+    + `Brain の判断と整合している内容にはフラグを立てないこと`
+    + `（Brain の判断そのものが誤っていると思う時は、返信ではなく Brain を直す話なので指摘しない）。\n\n`;
+}
+
 // プロンプトキャッシュ: 安定部（検査指示・情報源優先順位・code一覧・finalCheckRules・出力例）を
 // 先頭ブロック + cache_control、動的部（brain判定・clearedFacts・情報源・draft）を後続に分離。
 function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
-  const brainBaselineNote = ctx.brainMeta?.action
-    ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。\n\n`
-    : "";
+  const brainBaselineNote = buildBrainBaselineNote(ctx);
+
   const clearedFactsNote = ctx.clearedFacts?.length
     ? `【照合済み確認済み】以下の記述はすでに情報源との照合で根拠ありと確認されています。ハルシネーションとして指摘しないこと：\n${ctx.clearedFacts.map(f => `・「${f}」`).join("\n")}\n\n`
     : "";
@@ -666,9 +715,9 @@ function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): PromptB
   const stageBlock = (ctx.conversationStage || ctx.tpoLabel || pairPart)
     ? `[STAGE]\n現在段階: ${ctx.conversationStage ?? "（不明）"}${ctx.sentPropertiesCount !== undefined ? `\n送付済み物件数: ${sentCountOf(ctx)}件` : ""}${ctx.checkpointStage && ctx.checkpointStage !== ctx.conversationStage ? `\nフェーズ乖離: brain実態=${ctx.checkpointStage} DB=${ctx.conversationStage}。実態フェーズで判定すること` : ""}${ledgerPart}${tpoPart}${pairPart}\n[/STAGE]\n`
     : "";
-  const brainBaselineNote = ctx.brainMeta?.action
-    ? `【Brain判定済み】Brain（Sonnet）がaction="${ctx.brainMeta.action}"（enforcement="${ctx.brainMeta.enforcement_level}"）と判定済みです。この判断に沿った返信かどうかを確認すること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、Brain判定と整合している内容にはフラグを立てないこと。このアクションと矛盾しない返信内容であればSTAGE_SKIPは発行しないこと。\n\n`
-    : "";
+  const brainBaselineNote = buildBrainBaselineNote(ctx)
+    + (ctx.brainMeta?.action ? "このアクションと矛盾しない返信内容であればSTAGE_SKIPは発行しないこと。\`n\`n" : "");
+
   const stable = `${ADVERSARIAL_PREAMBLE}
 
 顧客の最新メッセージと返信文を突き合わせ、以下を検査してください。
@@ -1556,22 +1605,29 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     }
   }
 
-  // ③' 開口語の決定論チェック（場面ラベルごとに開口語を1択に固定。修正版 recheck でも同一関数で走る。初回返信は免除）
-  if (!isFirstReply) {
-    const head = openingHead.slice(0, 12);
-    if (/感謝返し|短い了承|強推し直後|一時保留|検討中フォロー/.test(tpo) && !/^はい/.test(head)) {
-      issues.push({ pass: "rule_check", severity: "warning", code: "GRATITUDE_OPENING", message: "感謝・了承・保留の場面の開口語は「はい😊！！」一択です（「かしこまりました」「承知いたしました」「ありがとうございます」で始めない）", evidence: text.trimStart().slice(0, 20), suggestion: "冒頭を「はい😊！！」（単独行）に変更" });
-    }
-    // 2026-09-21 竹内「かしこまりましたで文送る指摘あるのに改善されていない。これなら最終チェックの意味がない」:
-    //   お客様が条件フォームを送った時、enforceOpening（greeting.ts）が先頭に
-    //   「ご条件お送り頂きありがとうございます😊！！」を**必ず足す**（竹内 2026-09-12 あや事例）。
-    //   そこへこの検査が「かしこまりました一択」と言うと、後処理が必ず勝つので**永久に直らない指摘**になる。
-    //   自分の仕組みが足した行は免除する（設計知見「同じ事実について書くなと書けを別の場所から渡さない」）。
-    //   ※ 実送信（条件フォーム直後137件）は 初回62.0%／お礼系20%前後／かしこまりました8.8% で、
-    //     そもそも「一択」にできる形ではない（scripts/audit-opening-closing-newline.ts）。
-    if (/条件提示|内覧キャンセル|顧客自身の断り/.test(tpo) && !/^かしこまりました/.test(head)
-      && !isConditionFormThanksOpening(openingHead)) {
-      issues.push({ pass: "rule_check", severity: "warning", code: "CONDITION_OPENING", message: "条件提示・断り受け止めの場面の開口語は「かしこまりました！！」一択です", evidence: text.trimStart().slice(0, 20), suggestion: "冒頭を「かしこまりました！！」（単独行）に変更" });
+  // ─── ③' 開口語（2026-09-21 竹内の指示で「一択」をやめた）───────────────
+  //   竹内「一択と指摘するんじゃなくて実際の成約データや直近の会話から学習して、
+  //     場面でいれるかどうかはブレインに判断させる。そのためにもブレインはあるのだから（文の構成等）」
+  //
+  //   旧: 感謝返し等 →「はい」一択／条件提示等 →「かしこまりました」一択（直書き）
+  //   実測で検算したら**どの場面でも一択にできなかった**（scripts/audit-opener-by-scene.ts・180日）:
+  //     短い了承・お礼(343) 開口語なし49.3% / はい32.9% / かしこまりました8.7%
+  //     条件提示(129)       かしこまりました43.4% / 開口語なし27.1%
+  //     条件フォーム受領(176) はじめまして55.1% / 〇〇頂きありがとう14.8% / かしこまりました10.8%
+  //   成約データだけ・直近30日だけで見ても向きは同じ。
+  //
+  //   新: ①ブレインが開口語を決めていればそれに従う ②決めていなければ実送信でほぼ0（3%未満）の時だけ言う
+  //       ③言う時も率と母数を添える（app/lib/opener-rates.ts）
+  //   ⚠ 条件フォームへの感謝は enforceOpening が自分で足す行なので、引き続き免除する
+  //     （設計知見「同じ事実について書くなと書けを別の場所から渡さない」）。
+  if (!isFirstReply && !isConditionFormThanksOpening(openingHead)) {
+    const scene = sceneFromTpo(tpo);
+    const v = judgeOpener(scene, openingHead, ctx.brainMeta?.reply_opener ?? null);
+    if (!v.ok) {
+      issues.push({
+        pass: "rule_check", severity: "info", code: "OPENER_UNUSUAL",
+        message: v.message, evidence: text.trimStart().slice(0, 20), suggestion: v.suggestion,
+      });
     }
   }
 
