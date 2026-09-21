@@ -355,12 +355,34 @@ async function uploadWithRetry(b64, fileName) {
   }
 }
 
+// ── ヘルパー: スタッフモードか（popup.js が chrome.storage.local に持つ・TTL 2時間）──
+//
+// 2026-09-21 竹内「スタッフモードで送るときはちゃんとLINEに共有できるように。これを省く（スタッフモード）の時」
+//   サーバー（/api/merge-pdfs）は一度送った物件をマンションごとに外すが、
+//   **スタッフが自分で選んで送る時は外さない**（意図して選んだ物が減ると困る）。
+//   ⚠ 判定はここ1か所だけ。リアプロ・itandi・レインズの3つのファイルに書くと、
+//     1つ足し忘れた経路だけ動きが違う（設計知見「出口の配線は経路ごとに確かめる」）。
+//   TTL の 2時間は bulk-dl.js / itandi-bulk-dl.js と同じ（popup.js が staffModeAt を入れる）。
+function isStaffModeOn() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get(["staffMode", "staffModeAt"], (res) => {
+        const on = !!(res && res.staffMode);
+        const at = (res && res.staffModeAt) || 0;
+        resolve(on && (!at || Date.now() - at <= 2 * 60 * 60 * 1000));
+      });
+    } catch (_) { resolve(false); }
+  });
+}
+
 // ── ヘルパー: /api/merge-pdfs を background から呼ぶ（CSP/CORS 完全回避）──
 async function callMergeApi(payload) {
+  // 送信の3経路（リアプロ・itandi・レインズ）は全部ここを通るので、スタッフモードの判定もここで付ける
+  const staffMode = await isStaffModeOn();
   const resp = await fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, staff_mode: staffMode }),
     signal: AbortSignal.timeout(85000), // Vercel maxDuration=90s より5s短く設定（旧60sだと多PDF時にクライアント側が先にタイムアウト）
   });
   if (!resp.ok) {

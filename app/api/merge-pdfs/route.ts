@@ -275,9 +275,11 @@ export async function POST(req: NextRequest) {
       site?: string | null;
       property_customer_id?: string | null;
       conversation_id?: string | null;
+      /** 2026-09-21 竹内「スタッフモードで送るときはちゃんとLINEに共有できるように。これを省く（スタッフモード）の時」 */
+      staff_mode?: boolean | null;
     };
 
-    const { pdf_data, cookie_str, file_name, send_to_line, customer_name, customer_conditions, site, property_customer_id, conversation_id } = body;
+    const { pdf_data, cookie_str, file_name, send_to_line, customer_name, customer_conditions, site, property_customer_id, conversation_id, staff_mode } = body;
     let { pdf_urls, property_summaries } = body;
 
     // ─── 2026-09-21 竹内「一度共有した物件を除いてLINEに送る」──────────────────
@@ -294,7 +296,15 @@ export async function POST(req: NextRequest) {
     // 拡張が古くて property_customer_id を渡してこない時は名前から引き直す（同名が複数なら引かない）
     if (!resolvedCustomerId && !conversation_id) resolvedCustomerId = await lookupCustomerByName(customer_name);
 
-    if (process.env.SKIP_SENT_PROPERTIES !== "off"
+    // 2026-09-21 竹内「スタッフモードで送るときはちゃんとLINEに共有できるように。これを省く（スタッフモード）の時」
+    //   スタッフが自分で選んで送る時は、意図して選んだ物なので1件も減らさない。
+    //   ⚠ 記録（sent_properties への書き込み）は**止めない**。次に自動で送る時に外すための材料なので。
+    const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== true;
+    if (staff_mode === true) {
+      console.log(JSON.stringify({ tag: "merge-pdfs:staff-mode", note: "スタッフモードなので送付済みの除外をしない" }));
+    }
+
+    if (skipSent
         && send_to_line
         && property_summaries && property_summaries.length > 0
         && (resolvedCustomerId || conversation_id)) {

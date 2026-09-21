@@ -1447,3 +1447,50 @@ URL が一致した時だけは名前に関係なく外す（URL は確実）。
 
 徒歩は説明文から読めるので、家賃と同じくサーバー側で足せる（`parseWalkMinutesFromSummary` は作ってある。
 `sent_properties` に列が無いので配線はしていない）。
+
+## 2026-09-21 スタッフモードの時は「送付済みの除外」を省く（**拡張の再読み込み必須**）
+
+竹内さん「スタッフモードで送るときはちゃんとLINEに共有できるように／これを省く（スタッフモード）の時」
+
+スタッフが自分で選んで送る時は、意図して選んだ物なので**1件も減らさない**。
+自動（AIXモード・11:00/17:00）の時だけマンションごとに外す。
+
+### 直した場所は1つだけ（`background.js`）
+
+判定を3つのサイトのファイル（bulk-dl / itandi-bulk-dl / reins-bulk-dl）に書くと、
+1つ足し忘れた経路だけ動きが変わる（設計知見「出口の配線は経路ごとに確かめる」）。
+**送信の3経路は全部 `callMergeApi` を通る**ので、そこで判定を付ける。
+
+```js
+function isStaffModeOn() {   // chrome.storage.local の staffMode / staffModeAt（TTL 2時間）
+  ...
+}
+async function callMergeApi(payload) {
+  const staffMode = await isStaffModeOn();
+  ... body: JSON.stringify({ ...payload, staff_mode: staffMode })
+}
+```
+※ レインズ（`reins-bulk-dl.js`）は `_staffModeOn` のキャッシュを持っていないが、
+  background で判定するのでそのまま効く。
+
+### サーバー側（`/api/merge-pdfs`）
+
+```ts
+const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== true;
+```
+- `staff_mode === true` … 除外しない（全部LINEに送る）
+- それ以外 … 今までどおりマンションごとに外す
+- ⚠ **記録（`sent_properties` への書き込み）は止めない**。
+  スタッフが送った物も「次に自動で送る時に外す材料」なので残す。
+- ログ `merge-pdfs:staff-mode` が出る。
+
+### ⚠ 拡張の再読み込みが要る変更が**2つ**たまっている
+
+| 日付 | 変更 | 再読み込みしないとどうなるか |
+|---|---|---|
+| 2026-09-20 | `background.js` が `property_customer_id` を渡す | 「誰に送ったか」が残らない（9/21 実測 **0.1%**）<br>※ ただしサーバー側で `customer_name` から引き直す保険を入れたので 91.4% は紐付く |
+| 2026-09-21 | `background.js` が `staff_mode` を渡す | **スタッフモードでも除外される**（古い拡張は `staff_mode` を送らないので「自動」と同じ扱い） |
+
+→ 拡張を**再読み込み**すれば2つとも効く。
+   確認は Vercel のログで `merge-pdfs:staff-mode` が出るか、
+   `npx tsx --env-file=.env.local scripts/audit-sent-prop-recent.ts` の紐付きが上がるか。
