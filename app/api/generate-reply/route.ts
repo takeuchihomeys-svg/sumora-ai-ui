@@ -143,6 +143,9 @@ import { buildSentShapeNoteAll } from "@/app/lib/sent-shape";
 import { buildOpenerRateNote, sceneFromTpo, type OpenerLabel } from "@/app/lib/opener-rates";
 // 2026-09-21 竹内「ファイナルチェックはハルシネーションがないようにする部分。逆に足を引っ張るようなことはしない」
 import { splitFinalCheckIssues } from "@/app/lib/final-check-scope";
+// 2026-09-21 竹内「状況を読み取れていない。ブレインのどこかに弱い部分がある」:
+//   ネガ文脈（否決・募集終了の報告）は**報告の事実だけ**で立てる（ブレインの推測では立てない）
+import { resolveNegativeReport } from "@/app/lib/negative-context";
 /**
  * 直前送信の材料を止めるスイッチ（A/B の比較と、効かなかった時の戻し道）。
  * `PREV_SEND_NOTE=off` で無効。dev サーバーは起動時の環境変数を読むので、切り替えには再起動が要る。
@@ -3872,24 +3875,37 @@ export async function POST(req: NextRequest) {
       // スタッフ側走査: 顧客が短い了承のみを返した場合に限定（除外は上流の TPO_REQUEST_RE／再開語で担保済み）
       const isShortAckOnly = msg.length <= 80 && /ありがとう|承知|かしこまり|わかりました|分かりました|了解|残念|そうでしたか|そうですか|仕方|しょうがない|ご縁/.test(msg);
       if (!isShortAckOnly) return none;
-      // AIX履歴の最新が「募集終了報告」なら決定論で確定（brain-core L1656: 「最新:<aix_type>(...)(結果:<check_pattern>)」）
-      const aixSaysUnavailable = /最新:property_check_result[^\s→]*結果:unavailable/.test(lastAixHistoryText ?? "");
-      // 72時間より前のスタッフ発言は固着させない（createdAt 欠落時は従来通り走査）
+      // ─── 2026-09-21 竹内「状況を読み取れていない。ブレインのどこかに弱い部分がある」───
+      //   旧コードはここで
+      //     const brainCorroborates = brainFresh && stance==="wait" && customer_intent==="negative";
+      //     return (aixSaysUnavailable || staffSaysNeg || brainCorroborates) ? staff_report : none;
+      //   と書いていて、**コメントに「ブレイン由来は補助証拠のみ」とあるのに `||` で単独で確定**していた。
+      //   「検討します」に対して stance=wait は**正しい**判断なので、ブレインが正しく働くほど誤発動する。
+      //   実物（ギガ賃貸 9/21）: 物件の詳細＋見積書を送った直後の「ありがとうございます🙇 検討します」が
+      //   「ネガ文脈（否決・募集終了報告への短い了承）」になり、本文の指示を乗っ取って
+      //   「お申込みいただきありがとうございます😊」（実送信 0通/6,816通）が生まれた。
+      //   実測（scripts/audit-negative-context.ts・120日）: ブレイン単独で立った1件は誤り・正しく立った例 0件。
+      //   → 判定は app/lib/negative-context.ts（純関数・テスト14件）に出し、**報告の事実だけ**で立てる。
       const staffAgeMs = tpoLatestStaff?.createdAt ? Date.now() - new Date(tpoLatestStaff.createdAt).getTime() : null;
-      if (staffAgeMs !== null && staffAgeMs > 72 * 60 * 60 * 1000) return none;
-      // スタッフが同時に代替提案をしている場合はネガではない（顧客は提案への感謝を返している）
-      if (/https?:\/\/|代わり|かわり|こちら(?:は|も|など)?(?:いかが|おすすめ|オススメ)|ピックアップ|ご紹介|おすすめ|オススメ/.test(tpoLatestStaffText)) return none;
-      // 結果報告形に限定（事前確認宣言・仮定説明・安心材料説明を除外）
-      const staffHypothetical = /確認(?:し|いた|させ)|場合|たら|もし|ご安心|ほとんど/.test(tpoLatestStaffText);
-      const staffNegResultRe = /否決|不承認|募集終了(?:でした|となって|しており|していました|とのこと|です)|埋まって(?:しまい|おり|いました|しまって)|満室(?:でした|となって|とのこと)|先約|他の方で決まり|申込が入って(?:しまい|おり)|審査.{0,8}(?:通らな|通りません|落ち|NG|見送り|承認が(?:下り|おり)ません|難しい)(?:かった|でした|ました|となり|とのこと|になり|と)/;
-      const staffSaysNeg = !staffHypothetical && staffNegResultRe.test(tpoLatestStaffText);
-      // ブレイン由来は補助証拠のみ（customer_intent=negative は「懸念・不安」定義であり断りではない）
-      const brainCorroborates =
-        brainFreshForMessage &&
-        lastCustomerMsgAt != null &&
-        brainMeta?.engagement_stance === "wait" &&
-        brainMeta?.customer_intent === "negative";
-      return (aixSaysUnavailable || staffSaysNeg || brainCorroborates) ? { kind: "staff_report", viewingCancel: false } : none;
+      const negReport = resolveNegativeReport({
+        staffText: tpoLatestStaffText,
+        aixHistory: lastAixHistoryText ?? null,
+        staffAgeMs,
+        brain: {
+          fresh: !!brainFreshForMessage && lastCustomerMsgAt != null,
+          stance: brainMeta?.engagement_stance ?? null,
+          customerIntent: brainMeta?.customer_intent ?? null,
+        },
+      });
+      if (!negReport.yes) {
+        // ブレインだけが「待ち＋懸念」と言っている時はログに残す（次に誤ったら追える）
+        if (negReport.brainAgrees) {
+          console.log(JSON.stringify({ tag: "tpo:negative-blocked", reason: negReport.reason, conversationId }));
+        }
+        return none;
+      }
+      console.log(JSON.stringify({ tag: "tpo:negative-report", basis: negReport.basis, brainAgrees: negReport.brainAgrees, conversationId }));
+      return { kind: "staff_report", viewingCancel: false };
     })();
     const isNegativeContext = negativeDetail.kind !== null;
     const isViewingCancel = negativeDetail.viewingCancel;
