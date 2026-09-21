@@ -104,6 +104,15 @@ type SupabaseConversationRow = {
   send_blocked_reason?: string | null;
 };
 
+/**
+ * 一覧で読む会話の列（2026-09-21 竹内「読み込み中が重い原因はなにかな？」）。
+ * 旧: select("*") で、一覧では使わない大きな列まで毎回運んでいた（会話336件で 2.9MB のうち 1.9MB がこの4列）:
+ *   ai_draft_check（最終チェックの結果・開いた会話だけ別に読む）／last_brain_meta／conversation_direction／brain_strategy
+ *   （ブレインの内部の記録・画面では使わない）。
+ * ⚠ 一覧で新しい列を使う時は**ここに足す**（足さないと undefined になる）。
+ */
+const CONVERSATION_LIST_COLUMNS = "id,customer_name,status,line_user_id,last_message,last_sender,profile_image_url,updated_at,created_at,account,property_customer_id,is_post_apply,is_hot,is_flagged,ai_draft,draft_pending_at,has_viewed,auto_send_enabled,auto_sent_at,auto_sent_draft,success_pattern_at,loss_analyzed_at,draft_attempted_at,line_status,suggested_next_aix,draft_fail_count,draft_last_error,reply_mode_decision,suggested_aix_meta,brain_analyzed_at,learned_at,brain_full_analyzed_at,brain_full_msg_count,brain_deep_analyzed_at,brain_deep_msg_count,acquisition_source,applying_text_received,applying_image_received,screening_last_status,status_manual_back_at,auto_send_enabled_at,line_source_type,send_blocked_reason";
+
 // AI下書きから内部メタタグ（<<<STOP_REASON:...>>> / <<<SUGGESTED_AIX:{...}>>>）を除去する。
 // 2026-09-18: 実体は app/lib/draft-text.ts に移した（自動返信も同じ関数を使う＝画面に出ている文と送る文を必ず一致させる）
 const stripInternalTags = stripInternalTagsLib;
@@ -1757,6 +1766,18 @@ export default function Home() {
     refreshOpenPromises();
     refreshAutoSend();
 
+    // 2026-09-21 竹内「読み込み中が重い原因はなにかな？」:
+    //   下の購読は会話の UPDATE が1件届くたびに全件（会話＋直近90日のメッセージ・数MB）を読み直す作り。
+    //   ⚠ 調べた時点（9/21）では conversations / messages は Realtime の publication（supabase_realtime）に
+    //     入っておらず、この購読には何も届いていない（一覧の更新は30秒ごとの再取得だけで動いている）。
+    //     publication に入れた瞬間に書き込みのたび数MBの読み直しが連発するので、先に束ねておく。
+    //   → 2.5秒の間に来た再取得の依頼は1回にまとめる
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleFullRefresh = () => {
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(() => { refreshTimer = null; void fetchConversationsAndMessages(true); }, 2500);
+    };
+
     // Supabase real-time: 新しいメッセージ・会話をリアルタイム反映
     const channel = supabase
       .channel("realtime-messages")
@@ -1765,7 +1786,7 @@ export default function Home() {
         { event: "INSERT", schema: "public", table: "conversations" },
         () => {
           // 新規会話が届いたらサイレントで全件再取得
-          fetchConversationsAndMessages(true);
+          scheduleFullRefresh();
         }
       )
       .on(
@@ -1815,7 +1836,7 @@ export default function Home() {
               }
             }
           }
-          fetchConversationsAndMessages(true);
+          scheduleFullRefresh();
         }
       )
       .on(
@@ -1834,7 +1855,7 @@ export default function Home() {
           }
           const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; file_url?: string; file_name?: string; created_at: string; quoted_message_id?: string | null };
           if (!newMsg?.id) {
-            fetchConversationsAndMessages(true);
+            scheduleFullRefresh();
             return;
           }
 
@@ -1842,7 +1863,7 @@ export default function Home() {
           const found = conversationsRef.current.some((c) => c.id === String(newMsg.conversation_id));
           if (!found) {
             // 新規会話のメッセージ → サイレントで全件再取得
-            fetchConversationsAndMessages(true);
+            scheduleFullRefresh();
             return;
           }
 
@@ -1912,7 +1933,7 @@ export default function Home() {
       )
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          fetchConversationsAndMessages(true);
+          scheduleFullRefresh();
         }
       });
 
@@ -1993,6 +2014,7 @@ export default function Home() {
       supabase.removeChannel(taskChannel);
       clearInterval(calendarAlarm);
       clearInterval(pollInterval);
+      if (refreshTimer) clearTimeout(refreshTimer);
     };
   }, []);
 
@@ -2393,7 +2415,7 @@ export default function Home() {
     const CONV_LIMIT = 1000;
     const { data: conversationRows, error: conversationError } = await supabase
       .from("conversations")
-      .select("*")
+      .select(CONVERSATION_LIST_COLUMNS)
       .order("updated_at", { ascending: false })
       .limit(CONV_LIMIT);
 
@@ -2624,7 +2646,11 @@ export default function Home() {
       }
     }
 
-    if (!silent) setPageLoading(false);
+    // 2026-09-21 竹内「読み込み中が重い原因はなにかな？」:
+    //   旧は `if (!silent)` の時だけ消していた。最初の読み込みが失敗（Supabase の 520・回線の途切れ）すると
+    //   3秒後に**静かに**再試行し、成功しても「読み込み中」を消さないので、画面が読み込み中のまま止まっていた
+    //   （30秒ごとの再取得も静かなので消えない）。読み込めたら必ず消す（既に消えていれば何も起きない）
+    setPageLoading(false);
   };
 
   const loadMoreConversations = async () => {
@@ -2634,7 +2660,7 @@ export default function Home() {
       const oldest = conversations[conversations.length - 1]?.updatedAt ?? "";
       const { data } = await supabase
         .from("conversations")
-        .select("*")
+        .select(CONVERSATION_LIST_COLUMNS)
         .order("updated_at", { ascending: false })
         .lt("updated_at", oldest)
         .limit(500);
