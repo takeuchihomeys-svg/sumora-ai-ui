@@ -46,7 +46,8 @@ import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensure
 import { stripPropertyNameFromPickupLine, PICKUP_LINE_NOTE } from "@/app/lib/pickup-line";
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定と除去を返信生成・テンプレートと同じ関数で
-import { isWaitedAllowed } from "@/app/lib/waited-scope";
+import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentRate, waitedUsedLastTime } from "@/app/lib/waited-scope";
+// 2026-09-21 竹内「実際のスタッフが送るような文が生成されていない可能性があるってこと？」: 漢字/ひらがなの混ぜ方
 import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
@@ -1475,10 +1476,27 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const greetingPhrase = buildGreeting(jstHourNow, isFirstEverReply, staffMessagedToday, minutesSinceLastCustomer);
     const nightGreeting = greetingPhrase.startsWith("夜分遅くに");
     // AI自由生成プロンプトに注入する挨拶時間ルール（挨拶を含みうるアクションで使用）
-    // G32: 当日送信済み（greetingPhrase=""）は挨拶行なし。「お待たせ致しました」は禁止語
+    // G32: 当日送信済み（greetingPhrase=""）は挨拶行なし。
+    //
+    // 2026-09-21: ここに全AIX共通で「『お待たせ致しました』は禁止語」と書いてあったのが、
+    //   結果を届ける AIX で1通も書けていなかった原因（YUMA で 0/2）。
+    //   許す場面（waited-scope）では禁止と書かず、2択（率つき）に差し替える。
+    //   実測: property_send 45.7%（668件）／ property_recommendation 0.2%（559件）＝ 場面だけが分ける。
+    // 2026-09-21: 2択のどちらに寄せるかを決める唯一の軸（実測で分かれたのはこれだけ）。
+    //   前回「お待たせ」で書き出していた → 今回も 55.8% ／ いなかった → 22.6%
+    const waitedPrevUsed = waitedUsedLastTime(
+      recentMsgArray.filter((m) => m.sender === "staff").map((m) => String((m as { text?: string }).text ?? "")),
+    );
+    const waitedRateHere = waitedSentRate(currentAction);
+    const waitedAllowedHere = waitedRateHere !== null;
+    const waitedBanNote = waitedAllowedHere
+      ? `「お待たせ致しました！！」はこの場面の実送信 **${(waitedRateHere as number).toFixed(1)}%** で使われている（探した・作った・確認した結果を届ける通なら正しい）。挨拶と重ねず、どちらか一方だけを書くこと。`
+      : "「お待たせ致しました」「お待たせいたしました」は禁止語。";
+    // ⚠ 許さない場面では従来どおり「必ず」で固定する（2択を渡すのは許す場面だけ）
+    const mustUse = waitedAllowedHere ? "" : "必ず";
     const greetingTimeNote = greetingPhrase
-      ? `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は必ず「${greetingPhrase}」を使うこと（${nightGreeting ? "夜にこちらから届ける連絡のため。「お世話になっております」と重ねない" : "「夜分遅くに失礼致します」「夜遅くに失礼します」は書かない"}）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。「お待たせ致しました」「お待たせいたしました」は禁止語。\n・名前と挨拶文は必ず同じ行につなげて書くこと（例：「〇〇さん${greetingPhrase}」）。名前だけを単独の行・単独の一文に置くのは絶対禁止。`
-      : `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。本日すでにこちらから送信済みのため挨拶行は書かない（「お世話になっております」「お待たせ致しました」「お待たせいたしました」は禁止）。名前行「〇〇さん」または本題から始めること。`;
+      ? `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は${mustUse}「${greetingPhrase}」を使うこと（${nightGreeting ? "夜にこちらから届ける連絡のため。「お世話になっております」と重ねない" : "「夜分遅くに失礼致します」「夜遅くに失礼します」は書かない"}）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。${waitedBanNote}\n・名前と挨拶文は必ず同じ行につなげて書くこと（例：「〇〇さん${greetingPhrase}」）。名前だけを単独の行・単独の一文に置くのは絶対禁止。`
+      : `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。本日すでにこちらから送信済みのため「お世話になっております」は書かない。名前行「〇〇さん」または本題から始めること。${waitedBanNote}`;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     // 2026-09-15 竹内（みく事例）: スタッフが送った画像（物件資料・御見積書）は履歴から丸ごと消えていて、どの物件の資料を送ったか見えなかった。
@@ -2700,7 +2718,18 @@ ${SMORA_COMMON_RULES}
       const conditionSignalHits = (latestCustomerMsg.match(CONDITION_SIGNAL_RE) ?? []).length;
       const conditionsJustReceived = customerInitiated && conditionSignalHits >= 3;
       const psGreetingPhrase = conditionsJustReceived ? "ご条件お送り頂きありがとう御座います😊！！" : greetingPhrase;
-      const openingLine: string = `①「[お客様名]${psGreetingPhrase}」で始める`;
+      // 2026-09-21: 挨拶行の実値を1つに固定していたため、この場面の実送信 45.7% を占める
+      //   「お待たせ致しました！！」が1度も出せなかった（userPrompt 末尾に率を置いても骨格に勝てない）。
+      //   許す場面では2択（率つき）を渡し、どちらにするかは生成側に判断させる。
+      //   ⚠ 条件受領直後の「ご条件お送り頂きありがとう御座います」は、お客様の送付への応答で
+      //     待たせた結果ではないので2択にしない（実値のまま）。
+      const waitedChoice = conditionsJustReceived ? "" : buildWaitedOpeningChoice(currentAction, psGreetingPhrase, waitedPrevUsed);
+      // 届き方を本番ログで確かめる（設計知見「材料を足したら届いているかを測る」）
+      console.log(JSON.stringify({
+        tag: "aix:waited-choice", action: currentAction, rate: waitedSentRate(currentAction),
+        prevUsed: waitedPrevUsed, on: !!waitedChoice, conditionsJustReceived,
+      }));
+      const openingLine: string = waitedChoice || `①「[お客様名]${psGreetingPhrase}」で始める`;
       // 例文・テンプレ用の挨拶文
       const greetingLine = `${name}${psGreetingPhrase}`;
       // エリア表現ルール: 会話で使われた呼び方をそのまま使い、「全域」等の修飾語を勝手に付け足さない
@@ -2807,7 +2836,7 @@ ${aixPropertySendRules}
 ・お客様の前の発言（書類・申込・内覧）へのお礼やその話（「給与明細のご準備ありがとうございます」等）。物件ピックアップの文は今回の物件の話だけ
 ・希望条件・会話にエリアや特徴があるのに「ご希望のご条件に合ったお部屋」だけで済ませるピックアップ行（エリア等が分からない時は「〇〇さんのご条件に近いお部屋」で可）
 ・手本の中身（別のお客様の物件・事情）を写すこと。手本は言い回しだけ
-・謝罪・🙏・「お待たせ致しました」・見積書の話（見積書は別の AIX）
+・謝罪・🙏・見積書の話（見積書は別の AIX）${waitedChoice ? "" : "\n・「お待たせ致しました」"}
 ・「引き続き全力でサポート」等の大きな締め（⑤で締める）
 ・こちらの前の発言にある挨拶・お礼を繰り返すこと（「本日お時間頂きありがとうございました」は内覧後の挨拶で送信済み。①の挨拶行だけ）
 
@@ -2830,7 +2859,10 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
               ? "【今回の送り方】お客様が気にされた物件の代わりになるお部屋"
               : "【今回の送り方】ご条件からピックアップしたお部屋";
         const psmDynamic = [
-          greetingLine ? `【①挨拶行の実値】\n${greetingLine}` : "【①挨拶行】本日すでに送信済みのため挨拶行なし。お客様名の行から始める",
+          // 2026-09-21: 許す場面では挨拶行を1つに固定せず2択（率つき）にする（openingLine と同じ理由）
+          waitedChoice
+            ? `【①挨拶行の選び方】${waitedChoice}`
+            : greetingLine ? `【①挨拶行の実値】\n${greetingLine}` : "【①挨拶行】本日すでに送信済みのため挨拶行なし。お客様名の行から始める",
           psmModeNote,
           nameNote.trim(),
           conditionsInfo ? `【お客様の希望条件（②で使うのは最大2つ・会話で使った言い方を優先）】\n${conditionsInfo}` : "",
@@ -3158,7 +3190,11 @@ ${aixPropertySendRules}
       // キャッシュ対象の sendSystem からプレースホルダ化した動的値をここで実値として渡す
       // （[お客様への挨拶] / ①[挨拶行] / ②[条件ルール] / [新着件数] の実体）
       const sendContextBlock = [
-        greetingLine ? `【挨拶文（出力例中の「[お客様への挨拶]」は必ずこの形式に置き換えること）】\n${greetingLine}` : "",
+        // 2026-09-21: 「必ずこの形式に置き換える」が骨格として効くので、許す場面では2択に差し替える
+        //   （ここを固定したまま userPrompt の最後に率を置いても勝てなかった＝YUMA 0/2 の原因）
+        waitedChoice
+          ? `【挨拶文（出力例中の「[お客様への挨拶]」はこの選び方で書くこと）】\n${waitedChoice}`
+          : greetingLine ? `【挨拶文（出力例中の「[お客様への挨拶]」は必ずこの形式に置き換えること）】\n${greetingLine}` : "",
         openingLine ? `【①挨拶行の実値（構成①「[挨拶行]」に使うこと）】\n${openingLine}` : "",
         conditionsRule ? `【条件ルール（構成②「[条件ルール]」に使うこと）】\n${conditionsRule.replace(/^・/, "")}` : "",
         newArrivalCountStr ? `【新着件数（「[新着件数]」に使うこと）】${newArrivalCountStr}` : "",
@@ -3180,7 +3216,17 @@ ${aixPropertySendRules}
         + sendPropertyExamples
         + (sendDiffNote ? `\n\n${sendDiffNote}` : "")
         + (componentKnowledgeNote ? `\n\n${componentKnowledgeNote}` : "")
-        + (sendStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + sendStarNote : "");
+        + (sendStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + sendStarNote : "")
+        // ─── 2026-09-21 竹内「お待たせ致しましたが下書きに残る経路を塞ぐ」→ 測ったら**逆**だった ───
+        //   この場面の実送信は 50.3%（property_send）が「お待たせ致しました」で書き出しているのに、
+        //   AI は 47.5%。もっと開いている場面もある（property_check_result_unavailable 46.7% 対 0%）。
+        //   直近14日で スタッフが手で**足した34回** > 消した11回。＝ 漏れではなく「書けていない」。
+        //   率を材料として渡す（必ず書けとは言わない・待たせていない時は書かない線を添える）。
+        //   ⚠ 挨拶行そのものは openingLine の2択で決める（buildWaitedOpeningChoice）。
+        //     ここは「書いてよい」を最後にもう一度言うだけで、骨格を上書きするものではない。
+        + buildWaitedNote(currentAction);
+        // ※ 表記（させて頂く/させていただく）の材料はここに入れていたが監査で外した
+        //   → app/lib/notation-mix.ts のヘッダ（1通ごとに決める手がかりが無い）
       const rawSendText = await callClaude(sendSystemSpec, sendUserFinal, currentAction);
       // normal / widen モードはJSON構成パーツで返す（コンポーネント学習ループ用）
       if (sendMode === "normal" || sendMode === "widen" || sendMode === "viewing") {
@@ -5213,7 +5259,12 @@ ${SMORA_COMMON_RULES}
 【お客様の呼び方】必ず「[お客様名]」で呼ぶこと（他の呼び方・〇〇さんの置き換えし忘れ禁止）
 
 【作成ルール】
-・冒頭は【挨拶の時間ルール】の挨拶フレーズで始める（当日送信済みで挨拶フレーズが無い場合は挨拶行なしで結果報告から始める）。「お待たせいたしました」「お待たせ致しました」は禁止語
+・冒頭は【挨拶の時間ルール】の挨拶フレーズで始める（当日送信済みで挨拶フレーズが無い場合は挨拶行なしで結果報告から始める）。${
+        // 2026-09-21: ここが property_check_result 系で「お待たせ致しました」が 0% だった直接の原因。
+        //   管理会社に確認した結果を届ける場面の実送信は 31.8〜37.1%。場面で分ける（waited-scope）。
+        buildWaitedOpeningChoice(currentAction, greetingPhrase, waitedPrevUsed)
+          || "「お待たせいたしました」「お待たせ致しました」は禁止語"
+      }
 ・画像（物件資料）が添付されている場合は物件名・間取りなどを読み取って言及する
 ・会話履歴がある場合はその流れを踏まえた自然な報告文にする
 ・感嘆符は「！！」（スモラスタイル）

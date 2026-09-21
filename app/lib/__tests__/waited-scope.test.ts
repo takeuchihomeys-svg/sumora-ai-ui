@@ -41,7 +41,8 @@ describe("待たせた作業の結果を届ける場面 → 許す", () => {
     ["property_check_result", "物件確認した"],
     ["property_check_result_available", "物件確認した・空室あり（残22/消3/足6）"],
     ["property_check_result_unavailable", "物件確認した・申込あり（残0/消0/足7）"],
-    ["property_recommendation", "物件オススメ"],
+    // ⚠ property_recommendation は 2026-09-21 にここから外した（実送信559件中1件・0.2%）。
+    //   下は「外したことを固定する」側で見る（NG 一覧）
     ["zenryoku_support", "全力サポート（残7/消1/足0）"],
   ];
   for (const [action, why] of ALLOW) {
@@ -109,8 +110,20 @@ describe("定数の自己整合", () => {
       expect(WAITED_ALLOWED_ACTIONS.has(ng)).toBe(false);
     }
   });
+  it("★ C1' 実測で外した場面を戻さない（2026-09-21・scripts/audit-waited-when.ts）", () => {
+    // property_recommendation 559件中1件（0.2%）／ acknowledge_check 13件中0件（0.0%）
+    // property_search・phone_followup は実測が1件も無かった（推測で入れていた）
+    for (const [ng, why] of [
+      ["property_recommendation", "実送信 0.2%（559件）"],
+      ["acknowledge_check", "実送信 0.0%（13件）・「確認します」と言う通でまだ結果が無い"],
+      ["property_search", "実測 0件（推測で入れていた）"],
+      ["phone_followup", "実測 0件（推測で入れていた）"],
+    ] as Array<[string, string]>) {
+      if (WAITED_ALLOWED_ACTIONS.has(ng)) throw new Error(`${ng} を戻している: ${why}`);
+    }
+  });
   it("C2 許す一覧は空でない（配線の事故で全部消えていないこと）", () => {
-    expect(WAITED_ALLOWED_ACTIONS.size >= 10).toBe(true);
+    expect(WAITED_ALLOWED_ACTIONS.size >= 8).toBe(true);
   });
 });
 
