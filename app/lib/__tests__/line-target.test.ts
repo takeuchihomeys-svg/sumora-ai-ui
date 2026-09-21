@@ -75,6 +75,12 @@ describe("★★ グループと分かる名前", () => {
     expect(groupConversationName("")).toContain(GROUP_NAME_PREFIX);
     expect(groupConversationName(null)).toContain("グループ");
   });
+  it("★★ N4 LINE と同じく人数を名前の後ろに付ける（黒明様お部屋探し(4)）", () => {
+    expect(groupConversationName("黒明様お部屋探し", "group", 4)).toBe(`${GROUP_NAME_PREFIX}黒明様お部屋探し(4)`);
+  });
+  it("N5 人数が取れない時は名前だけ", () => {
+    expect(groupConversationName("黒明様お部屋探し", "group", null)).toBe(`${GROUP_NAME_PREFIX}黒明様お部屋探し`);
+  });
   it("N3 印付きの名前はグループと判定（呼び名に使わない入口）", () => {
     expect(isGroupConversationName(groupConversationName("黒明様お部屋探し"))).toBe(true);
     expect(isGroupConversationName("黒明 基揮")).toBe(false);

@@ -242,6 +242,57 @@ async function fetchMemberProfile(kind: LineTargetKind, targetId: string, userId
   } catch { return null; }
 }
 
+async function fetchMemberCount(kind: LineTargetKind, targetId: string, token: string): Promise<number | null> {
+  try {
+    const path = kind === "room" ? `room/${targetId}/members/count` : `group/${targetId}/members/count`;
+    const res = await fetch(`https://api.line.me/v2/bot/${path}`, {
+      headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { count?: number };
+    return typeof j.count === "number" ? j.count : null;
+  } catch { return null; }
+}
+
+/**
+ * グループの発言者に「グループから誤って作られた個人の会話」があれば、その履歴をグループの会話へ引き継ぐ。
+ * 2026-09-21 竹内「ここからグループ判明出来ないか」: 公式LINEの管理画面から送った分は webhook に届かないので
+ *   グループID は分からない。**次にグループで発言があった瞬間**に、黒明さん個人の会話（名称未設定・送信停止中）の
+ *   履歴（お客様の発言・アプリから送った画像と報告）をグループの会話へ移し、話の続きとして読めるようにする。
+ *   移すのは会話IDで紐づく記録（messages・送った物件・画像の読み取り）。古い会話は送信停止のまま「引継ぎ済み」にする。
+ */
+async function mergeMisroutedPersonalConversation(
+  db: ReturnType<typeof getDb>,
+  targetId: string,
+  speakerUserId: string,
+  account: AccountConfig,
+): Promise<void> {
+  const [{ data: grp }, { data: old }] = await Promise.all([
+    db.from("conversations").select("id, status, property_customer_id").eq("line_user_id", targetId).eq("account", account.key).limit(1),
+    db.from("conversations").select("id, status, property_customer_id").eq("line_user_id", speakerUserId).eq("account", account.key)
+      .eq("send_blocked_reason", "created_from_group").limit(1),
+  ]);
+  const g = (grp ?? [])[0] as { id: string; status: string | null; property_customer_id: string | null } | undefined;
+  const o = (old ?? [])[0] as { id: string; status: string | null; property_customer_id: string | null } | undefined;
+  if (!g || !o || g.id === o.id) return;
+  const moved: Record<string, string> = {};
+  for (const table of ["messages", "sent_properties", "sent_image_properties", "image_details"] as const) {
+    const { error } = await db.from(table).update({ conversation_id: g.id }).eq("conversation_id", o.id);
+    moved[table] = error ? `error:${error.message}` : "ok";
+  }
+  // 段階・顧客の紐付けも引き継ぐ（グループの会話は作られたばかりで hearing・未紐付けのため）
+  const patch: Record<string, string> = {};
+  if (o.status && (!g.status || g.status === "hearing")) patch.status = o.status;
+  if (o.property_customer_id && !g.property_customer_id) patch.property_customer_id = o.property_customer_id;
+  if (Object.keys(patch).length) await db.from("conversations").update(patch).eq("id", g.id);
+  await db.from("conversations").update({
+    send_blocked_reason: "merged_to_group",
+    customer_name: "（【グループ】へ引継ぎ済み）",
+    last_message: "履歴はグループの会話へ引き継ぎました",
+  }).eq("id", o.id);
+  console.log(JSON.stringify({ tag: "line-webhook:group-merge", account: account.key, from: o.id, to: g.id, moved }));
+}
+
 /**
  * グループ・トークルームの会話に、グループ名（【グループ】付き）と発言者を入れる。
  * ・会話名: 【グループ】黒明様お部屋探し（竹内「グループなら分かりやすくグループと入れる」）
@@ -259,11 +310,13 @@ async function updateGroupInfo(
 ): Promise<void> {
   if (kind === "user" || !account.token) return;
   try {
-    const [summary, member] = await Promise.all([
+    const [summary, member, memberCount] = await Promise.all([
       kind === "group" ? fetchGroupSummary(targetId, account.token) : Promise.resolve(null),
       speakerUserId ? fetchMemberProfile(kind, targetId, speakerUserId, account.token) : Promise.resolve(null),
+      fetchMemberCount(kind, targetId, account.token),
     ]);
-    const name = groupConversationName(summary?.groupName ?? null, kind);
+    // 竹内「グループ名もLINE側と同じにできるか」: LINE の表示「黒明様お部屋探し(4)」と同じく人数も付ける
+    const name = groupConversationName(summary?.groupName ?? null, kind, memberCount);
     const patch: Record<string, string> = { line_source_type: kind };
     // 名前が取れた時だけ上書きする（取れなかった時に「グループ名取得中」へ戻さない）
     if (summary?.groupName || kind === "room") patch.customer_name = name;
@@ -280,6 +333,7 @@ async function updateGroupInfo(
         .update({ speaker_user_id: speakerUserId, ...(member?.displayName ? { speaker_name: member.displayName } : {}) })
         .eq("line_message_id", lineMessageId);
     }
+    if (speakerUserId) await mergeMisroutedPersonalConversation(db, targetId, speakerUserId, account);
     console.log(JSON.stringify({
       tag: "line-webhook:group", kind, account: account.key, groupNameFound: !!summary?.groupName,
       speakerFound: !!member?.displayName,

@@ -60,11 +60,16 @@ export function resolveEventTarget(source: EventSource | null | undefined): { ta
 /** 一覧・画面で分かるように付ける印（竹内「グループなら分かりやすくグループと入れる」） */
 export const GROUP_NAME_PREFIX = "【グループ】";
 
-/** グループ名 → 会話の表示名。名前が取れない時も「グループ」だと分かるようにする */
-export function groupConversationName(groupName: string | null | undefined, kind: LineTargetKind = "group"): string {
+/**
+ * グループ名 → 会話の表示名。名前が取れない時も「グループ」だと分かるようにする。
+ * 2026-09-21 竹内「グループ名もLINE側と同じにできるか」: LINE の表示と同じく、名前の後ろに人数を付ける
+ *   （LINE 画面の「黒明様お部屋探し(4)」の (4) はグループ名ではなく人数。members/count で取る）
+ */
+export function groupConversationName(groupName: string | null | undefined, kind: LineTargetKind = "group", memberCount?: number | null): string {
   const n = (groupName ?? "").trim();
-  if (kind === "room") return `${GROUP_NAME_PREFIX}トークルーム${n ? ` ${n}` : ""}`;
-  return `${GROUP_NAME_PREFIX}${n || "グループ名取得中"}`;
+  const count = typeof memberCount === "number" && memberCount > 0 ? `(${memberCount})` : "";
+  if (kind === "room") return `${GROUP_NAME_PREFIX}トークルーム${n ? ` ${n}` : ""}${count}`;
+  return `${GROUP_NAME_PREFIX}${n ? `${n}${count}` : "グループ名取得中"}`;
 }
 
 /** 表示名がグループの印付きか（呼び名に使わない判定の入口） */
@@ -108,6 +113,9 @@ export function checkSendTarget(
 export function sendBlockedMessage(reason: string): string {
   if (reason === "created_from_group") {
     return "この会話は LINE グループのメッセージから誤って個人として作られたため、送信を止めています。グループの会話（【グループ】…）から送ってください";
+  }
+  if (reason === "merged_to_group") {
+    return "この会話の履歴はグループの会話（【グループ】…）へ引き継ぎました。グループの会話から送ってください";
   }
   return `この会話は送信を止めています（${reason}）`;
 }

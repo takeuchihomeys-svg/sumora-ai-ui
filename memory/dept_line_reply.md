@@ -20,6 +20,14 @@
 - `conversations.send_blocked_reason='created_from_group'` … グループから誤って個人として作られた会話。**本人から個人トークで届いたら自動で外れる**
   （黒明さん個人の会話 `a144d73e…` に付与済み）
 
+**⚠ 公式LINEの管理画面から送ったメッセージは webhook に届かない**（LINE の仕様）。そこからグループID は分からない。
+グループID が分かるのは「メンバーの発言」「スモラの招待（join）」の時だけ。LINE に参加中グループの一覧 API は無い。
+→ 次の発言で判明した瞬間に、グループから誤って作られた個人の会話（`created_from_group`）の履歴
+（messages・sent_properties・sent_image_properties・image_details・段階・顧客の紐付け）をグループの会話へ自動で引き継ぐ
+（`mergeMisroutedPersonalConversation`・古い会話は `merged_to_group`）。
+表示名は LINE と同じく人数付き `【グループ】黒明様お部屋探し(4)`（`/members/count`）。
+公式LINEから直接送った分はアプリに記録されないので、AI はその送信を知らない（見積書を送った等）。
+
 **グループ名の取り方**: 個人のプロフィール API はグループのメンバーに使えない。`/v2/bot/group/{id}/summary`（グループ名）・`/v2/bot/group/{id}/member/{userId}`（発言者名・友だちでなくても可）
 
 ```
