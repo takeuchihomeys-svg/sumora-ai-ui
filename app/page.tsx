@@ -667,6 +667,45 @@ function renderTextWithLinks(text: string) {
   });
 }
 
+/** 最初に一覧を出す件数・スクロールで足す件数（2026-09-21 竹内「公式LINEのように下までいかな読み取らん形に」） */
+const FIRST_PAGE_CONVERSATIONS = 40;
+const LIST_RENDER_STEP = 40;
+
+/**
+ * DB の会話の行 → 一覧の1件（一覧の最初の40件と全件の読み込みで同じ関数を使う＝表示が食い違わない）。
+ * relatedMessages が空の時（最初の40件はメッセージを読まない）は DB の last_message / last_sender をそのまま使う。
+ */
+function conversationRowToItem(conversation: SupabaseConversationRow, relatedMessages: Message[]): Conversation {
+  const latestMsg = relatedMessages.length > 0 ? relatedMessages[relatedMessages.length - 1] : null;
+  const lastMessage = latestMsg?.text || conversation.last_message || "メッセージなし";
+  const lastSender = latestMsg?.sender || conversation.last_sender || undefined;
+  const latestMsgTime = latestMsg?.rawCreatedAt || null;
+  const dbUpdatedAt = conversation.updated_at || null;
+  const effectiveUpdatedAt =
+    latestMsgTime && (!dbUpdatedAt || latestMsgTime > dbUpdatedAt) ? latestMsgTime : (dbUpdatedAt || undefined);
+  return {
+    id: String(conversation.id),
+    customerName: conversation.customer_name || "名称未設定",
+    lastMessage,
+    lastSender,
+    status: conversation.status || "hearing",
+    lineUserId: conversation.line_user_id,
+    sendBlockedReason: conversation.send_blocked_reason ?? null,
+    profileImageUrl: conversation.profile_image_url || undefined,
+    updatedAt: effectiveUpdatedAt,
+    account: conversation.account || undefined,
+    propertyCustomerId: conversation.property_customer_id || undefined,
+    isPostApply: conversation.is_post_apply ?? false,
+    isHot: conversation.is_hot ?? false,
+    isFlagged: conversation.is_flagged ?? false,
+    hasViewed: conversation.has_viewed ?? false,
+    aiDraft: stripInternalTagsOrNull(conversation.ai_draft ?? null),
+    suggestedAixMeta: conversation.suggested_aix_meta ?? null,
+    suggestedNextAix: conversation.suggested_next_aix ?? null,
+    messages: relatedMessages,
+  };
+}
+
 function formatTime(dateString: string) {
   const date = new Date(dateString);
   const hours = String(date.getHours()).padStart(2, "0");
@@ -747,6 +786,19 @@ export default function Home() {
   const [generating, setGenerating] = useState(false);
   const [hasMoreConversations, setHasMoreConversations] = useState(false);
   const [loadingMoreConv, setLoadingMoreConv] = useState(false);
+  // 2026-09-21 竹内「公式LINEのように下までスクロールしたときに読み取られる形に」:
+  //   一覧は336行を一度に全部描いていた（1行ごとにバッジ・画像があるのでスマホで重い）。
+  //   最初は40行だけ描き、一番下が見えたら40行ずつ足す（データは全件持っているので件数・検索・絞り込みは変わらない）
+  const [listRenderCount, setListRenderCount] = useState(LIST_RENDER_STEP);
+  const listSentinelObserver = useRef<IntersectionObserver | null>(null);
+  const listSentinelRef = useCallback((el: HTMLDivElement | null) => {
+    listSentinelObserver.current?.disconnect();
+    if (!el) return;
+    listSentinelObserver.current = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setListRenderCount((n) => n + LIST_RENDER_STEP);
+    }, { rootMargin: "400px" });
+    listSentinelObserver.current.observe(el);
+  }, []);
   const [patternLoading, setPatternLoading] = useState(false);
   const [patternDrafts, setPatternDrafts] = useState<{ angle: string; label: string; text: string }[]>([]);
   const [showPatternSheet, setShowPatternSheet] = useState(false);
@@ -2412,6 +2464,33 @@ export default function Home() {
     if (!silent) setPageLoading(true);
     if (!silent) setError("");
 
+    // ── 2026-09-21 竹内「公式LINEは開くとき軽い。連絡来てないお客さんは下までいかな読み取らんようになっているのでは」──
+    //   旧: 会話を全件＋直近90日のメッセージを読み終わるまで「読み込み中」だった。
+    //   → 最初は**直近の会話40件だけ**（メッセージなし・一覧の行は DB の last_message で出せる）を読んで、すぐ一覧を出す。
+    //     残り（全件の会話・メッセージ）はこの後に続けて読む（要対応・AIX の件数、検索、未読数が正しくなるように）。
+    if (!silent) {
+      const { data: firstRows, error: firstErr } = await supabase
+        .from("conversations")
+        .select(CONVERSATION_LIST_COLUMNS)
+        .order("updated_at", { ascending: false })
+        .limit(FIRST_PAGE_CONVERSATIONS);
+      if (!firstErr && firstRows && firstRows.length > 0) {
+        const rows = firstRows as unknown as SupabaseConversationRow[];
+        setConversations((prev) => {
+          const prevMap = new Map(prev.map((c) => [c.id, c]));
+          const firstIds = new Set(rows.map((r) => String(r.id)));
+          const first = rows.map((r) => conversationRowToItem(r, prevMap.get(String(r.id))?.messages ?? []));
+          const next = [...first, ...prev.filter((c) => !firstIds.has(c.id))]
+            .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+          conversationsRef.current = next;
+          return next;
+        });
+        setSelectedId((prev) => prev || String(rows[0].id));
+        setPageLoading(false);
+        console.log(JSON.stringify({ tag: "list:first-page", rows: rows.length }));
+      }
+    }
+
     const CONV_LIMIT = 1000;
     const { data: conversationRows, error: conversationError } = await supabase
       .from("conversations")
@@ -2453,9 +2532,16 @@ export default function Home() {
     const conversationsData = (conversationRows || []) as SupabaseConversationRow[];
     const messagesData = (messageRows || []) as SupabaseMessageRow[];
 
+    // 2026-09-21: 会話ごとに全メッセージを走査していた（336件×1000件）→ 先に会話ごとに分けてから使う
+    const messagesByConv = new Map<string, SupabaseMessageRow[]>();
+    for (const m of messagesData) {
+      const k = String(m.conversation_id);
+      const arr = messagesByConv.get(k);
+      if (arr) arr.push(m); else messagesByConv.set(k, [m]);
+    }
+
     const formatted: Conversation[] = conversationsData.map((conversation) => {
-      const relatedMessages = messagesData
-        .filter((message) => String(message.conversation_id) === String(conversation.id))
+      const relatedMessages = (messagesByConv.get(String(conversation.id)) ?? [])
         .map((message) => ({
           id: String(message.id),
           sender: message.sender,
@@ -2466,54 +2552,15 @@ export default function Home() {
           fileName: message.file_name || undefined,
           time: formatTime(message.created_at),
           rawCreatedAt: message.created_at,
+          isAix: message.is_aix_generated || false,
           quotedMessageId: message.quoted_message_id || undefined,
           speakerName: (message as { speaker_name?: string | null }).speaker_name || undefined,
           lineMessageId: message.line_message_id || undefined,
         }))
         .sort((a, b) => (a.rawCreatedAt || "").localeCompare(b.rawCreatedAt || ""));
 
-      // 最新メッセージを使って lastMessage/lastSender/updatedAt を決定
-      // DB の last_message は screening-admin 側の更新タイミングに依存するためズレが生じる
-      // relatedMessages（直接取得）を優先し、DB値はフォールバックとして使う
-      const latestMsg = relatedMessages.length > 0 ? relatedMessages[relatedMessages.length - 1] : null;
-      const lastMessage = latestMsg?.text || conversation.last_message || "メッセージなし";
-      const lastSender = latestMsg?.sender || conversation.last_sender || undefined;
-
-      // effectiveUpdatedAt = max(DB updated_at, 最新メッセージ created_at)
-      const latestMsgTime = latestMsg?.rawCreatedAt || null;
-      const dbUpdatedAt = conversation.updated_at || null;
-      const effectiveUpdatedAt =
-        latestMsgTime && (!dbUpdatedAt || latestMsgTime > dbUpdatedAt)
-          ? latestMsgTime
-          : (dbUpdatedAt || undefined);
-
-      // DBステータスを正とする（未設定時のみ hearing にフォールバック）
-      // ※旧実装の「スタッフ返信なし→強制hearing」はシステム導入前の顧客
-      //   （messagesにスタッフ返信が無い）の手動ステータス変更を6秒ポーリングで
-      //   毎回上書きしてしまうため撤廃
-      const autoStatus = conversation.status || "hearing";
-
-      return {
-        id: String(conversation.id),
-        customerName: conversation.customer_name || "名称未設定",
-        lastMessage,
-        lastSender,
-        status: autoStatus,
-        lineUserId: conversation.line_user_id,
-        sendBlockedReason: (conversation as SupabaseConversationRow).send_blocked_reason ?? null,
-        profileImageUrl: conversation.profile_image_url || undefined,
-        updatedAt: effectiveUpdatedAt,
-        account: conversation.account || undefined,
-        propertyCustomerId: conversation.property_customer_id || undefined,
-        isPostApply: conversation.is_post_apply ?? false,
-        isHot: conversation.is_hot ?? false,
-        isFlagged: conversation.is_flagged ?? false,
-        hasViewed: conversation.has_viewed ?? false,
-        aiDraft: stripInternalTagsOrNull(conversation.ai_draft),
-        suggestedAixMeta: conversation.suggested_aix_meta ?? null,
-        suggestedNextAix: conversation.suggested_next_aix ?? null,
-        messages: relatedMessages,
-      };
+      // lastMessage / lastSender / updatedAt の決め方は conversationRowToItem（最初の40件と同じ関数）
+      return conversationRowToItem(conversation, relatedMessages);
     });
 
     // 既存のメッセージ配列の方が長い場合は保持（ポーリングによる縮退を防ぐ）
@@ -2764,6 +2811,9 @@ export default function Home() {
       compareConversationOrder({ updatedAtMs: sortMsOf(a.updatedAt) }, { updatedAtMs: sortMsOf(b.updatedAt) })
     );
   }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds, manuallyReadAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 絞り込み・検索を変えたら一覧の描画は先頭40行からやり直す（LINE と同じく上から）
+  useEffect(() => { setListRenderCount(LIST_RENDER_STEP); }, [statusFilter, deferredSearchQuery, aiSearchIds, accountFilter]);
 
   // AIX送信対象（AIXバッジ かつ 要対応バッジ）の件数。AIXボタンの紫ドットに使う
   const aixTargetCount = useMemo(() => {
@@ -6624,7 +6674,13 @@ export default function Home() {
                   }
                   return null;
                 })();
-                return filteredConversations.map((conversation) => {
+                // 描くのは先頭から listRenderCount 行だけ（下の番兵が見えたら足す）。開いている会話は範囲外でも描く
+                const visibleConversations = filteredConversations.slice(0, listRenderCount);
+                if (selectedConversation.id && !visibleConversations.some((c) => c.id === selectedConversation.id)) {
+                  const sel = filteredConversations.find((c) => c.id === selectedConversation.id);
+                  if (sel) visibleConversations.push(sel);
+                }
+                return visibleConversations.map((conversation) => {
                 const isActive = conversation.id === selectedConversation.id;
                 const isNextReply = conversation.id === nextReplyConvId && !isActive;
                 const groupMeta = getGroupMeta(conversation.status);
@@ -6874,7 +6930,13 @@ export default function Home() {
               });
               })()
             )}
-            {hasMoreConversations && !pageLoading && (
+            {/* 番兵: ここが見えたら次の40行を描く（2026-09-21 公式LINE と同じく下までスクロールした時に出す） */}
+            {!pageLoading && filteredConversations.length > listRenderCount && (
+              <div ref={listSentinelRef} className="py-3 text-center text-[11px] text-[#aab4ba]">
+                さらに表示中…（残り {filteredConversations.length - listRenderCount} 件）
+              </div>
+            )}
+            {hasMoreConversations && !pageLoading && filteredConversations.length <= listRenderCount && (
               <button
                 onClick={() => void loadMoreConversations()}
                 disabled={loadingMoreConv}
