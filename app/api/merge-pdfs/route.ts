@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-21 竹内「一度共有した物件を除いてLINEに送ることが出来ればかなり質高くなる」
+import {
+  filterOutAlreadySent, renumberSummaries, parseSummaryHead, buildExcludedNotice,
+  normalizePropertyUrl, urlKeysAreDistinct, type OutgoingProperty, type SentProperty,
+} from "@/app/lib/sent-property-filter";
 
 export const maxDuration = 90;
 
@@ -56,6 +61,40 @@ async function getGroupId(): Promise<string | null> {
     .eq("key", "group_id")
     .maybeSingle();
   return data?.value ?? null;
+}
+
+/**
+ * お客様の名前から物件顧客を引く（拡張が property_customer_id を渡してこない時の回復）。
+ *
+ * 2026-09-21 竹内「一度共有した物件を除いてLINEに送る」:
+ *   除外するには「この人に何を送ったか」が引けないといけないが、実測（scripts/audit-sent-prop-recent.ts）で
+ *   line_group の紐付きは 9/20 に 79.2% まで直った翌日 **9/21 は 0.1%** に戻っていた。
+ *   ＝ background.js の修正が**再読み込みされていない端末**で動いている。
+ *   customer_name は LINE の見出しに使うため**必ず届いている**ので、ここで引き直せば拡張を待たずに紐付く。
+ *
+ * ⚠ 同姓同名は引かない。実測（scripts/audit-name-to-customer.ts・293人）で
+ *   **1人に決まる名前は 91.4%**、残り 23種類・50人（17.1%）は同名が複数いる。
+ *   別人の履歴で物件を外すと「送るべき物件が送られない」＝いちばん重い失敗なので、
+ *   曖昧な時は**何もしない**（設計知見「入口は厳しく」）。
+ */
+async function lookupCustomerByName(customerName: string | null | undefined): Promise<string | null> {
+  const name = (customerName ?? "").replace(/さん\s*$/, "").replace(/[\s　]+/g, "").trim();
+  if (!name) return null;
+  const { data, error } = await supabase
+    .from("property_customers")
+    .select("id, customer_name")
+    .limit(1000);
+  if (error || !data) return null;
+  const norm = (s: string | null) => (s ?? "").replace(/さん\s*$/, "").replace(/[\s　]+/g, "").trim();
+  const hits = (data as Array<{ id: string; customer_name: string | null }>).filter((c) => norm(c.customer_name) === name);
+  if (hits.length !== 1) {
+    console.log(JSON.stringify({
+      tag: "merge-pdfs:name-lookup", matched: hits.length,
+      note: hits.length === 0 ? "名前が一致する物件顧客が無い" : "同じ名前が複数いるので引かない",
+    }));
+    return null;
+  }
+  return hits[0].id;
 }
 
 async function rankAndAnnotateSummaries(summaries: string[], customerConditions?: string | null): Promise<string[]> {
@@ -120,6 +159,8 @@ function buildLineMessage(
   customerName: string | null | undefined,
   propertySummaries: string[] | null | undefined,
   sourceLabel?: string,
+  /** 2026-09-21: 送付済みで外した物の知らせ（無ければ空文字） */
+  excludedNotice?: string,
 ): string {
   const lines: string[] = [];
   const src = sourceLabel || "リアプロ";
@@ -161,6 +202,12 @@ function buildLineMessage(
   // PDFリンク
   lines.push("📄 物件PDF");
   lines.push(fileUrl);
+
+  // 送付済みで外した物（スタッフが「候補より少ない」と気づけるように最後に1行）
+  if (excludedNotice) {
+    lines.push("");
+    lines.push(excludedNotice);
+  }
 
   return lines.join("\n");
 }
@@ -228,7 +275,72 @@ export async function POST(req: NextRequest) {
       conversation_id?: string | null;
     };
 
-    const { pdf_data, pdf_urls, cookie_str, file_name, send_to_line, customer_name, property_summaries, customer_conditions, site, property_customer_id, conversation_id } = body;
+    const { pdf_data, cookie_str, file_name, send_to_line, customer_name, customer_conditions, site, property_customer_id, conversation_id } = body;
+    let { pdf_urls, property_summaries } = body;
+
+    // ─── 2026-09-21 竹内「一度共有した物件を除いてLINEに送る」──────────────────
+    //   ここで外すのは **PDF を取りに行く前**。外した物の PDF をダウンロードしても捨てるだけなので。
+    //   ⚠ pdf_urls[i] と property_summaries[i] は拡張側の send-pairing.js が**同じ組から**作っていて、
+    //     構造的に対応が保証されている（2026-09-18 の修正）。だから index を揃えて両方から落とせる。
+    //   戻す時は環境変数 SKIP_SENT_PROPERTIES=off。
+    let excludedNotice = "";
+    let resolvedCustomerId: string | null = property_customer_id ?? null;
+    if (!resolvedCustomerId && conversation_id) {
+      const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", conversation_id).maybeSingle();
+      resolvedCustomerId = (conv as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+    }
+    // 拡張が古くて property_customer_id を渡してこない時は名前から引き直す（同名が複数なら引かない）
+    if (!resolvedCustomerId && !conversation_id) resolvedCustomerId = await lookupCustomerByName(customer_name);
+
+    if (process.env.SKIP_SENT_PROPERTIES !== "off"
+        && send_to_line
+        && property_summaries && property_summaries.length > 0
+        && (resolvedCustomerId || conversation_id)) {
+      try {
+        const outgoing: OutgoingProperty[] = property_summaries.map((s, i) => {
+          const head = parseSummaryHead(s);
+          return {
+            url: pdf_urls?.[i] ?? null,
+            propertyName: head?.propertyName ?? "",
+            roomNo: head?.roomNo ?? "",
+          };
+        });
+        let q = supabase.from("sent_properties").select("property_name, room_no, property_url");
+        q = resolvedCustomerId ? q.eq("property_customer_id", resolvedCustomerId) : q.eq("conversation_id", conversation_id as string);
+        const { data: sentRows } = await q.limit(2000);
+        const sent = ((sentRows ?? []) as SentProperty[]);
+        const result = filterOutAlreadySent(outgoing, sent);
+        console.log(JSON.stringify({
+          tag: "merge-pdfs:skip-sent",
+          customer: resolvedCustomerId ? "by_id" : "by_conversation",
+          incoming: outgoing.length, known: sent.length,
+          dropped: result.dropped.length, unmatchable: result.unmatchable,
+          url_unusable: result.urlUnusable,
+          reasons: result.dropped.map((d) => d.reason),
+        }));
+        if (result.dropped.length > 0) {
+          excludedNotice = buildExcludedNotice(result.dropped);
+          const keep = new Set(result.keep);
+          if (pdf_urls) pdf_urls = pdf_urls.filter((_, i) => keep.has(i));
+          property_summaries = renumberSummaries(property_summaries.filter((_, i) => keep.has(i)));
+        }
+      } catch (e) {
+        // 外せなくても送信は止めない（外すのは付け足しの機能）
+        console.warn("[merge-pdfs] 送付済みの除外に失敗（そのまま送る）:", e instanceof Error ? e.message : String(e));
+      }
+    }
+
+    // 候補が全部「送付済み」だった時は、PDF を作らずスタッフに知らせるだけにする
+    //   （何も言わずに終わると「送ったつもり」になるので、必ず1通は出す）
+    if (send_to_line && excludedNotice && pdf_urls && pdf_urls.length === 0) {
+      const groupId = await getGroupId();
+      if (groupId && HANBANCYO_TOKEN) {
+        const nameWithSan = customer_name ? (customer_name.endsWith("さん") ? customer_name : `${customer_name}さん`) : "";
+        await pushLineMessage(groupId, `${nameWithSan} 物件（${site === "itandi" ? "itandi" : "リアプロ"}）\n今回の候補はすべて送付済みでした。\n${excludedNotice}`)
+          .catch((e) => console.warn("[merge-pdfs] 全件送付済みの通知に失敗:", e));
+      }
+      return NextResponse.json({ ok: true, line_sent: true, all_already_sent: true, excluded: excludedNotice });
+    }
 
     // PDF データを収集
     let pdfBase64List: string[] = [];
@@ -315,43 +427,48 @@ export async function POST(req: NextRequest) {
           rankedSummaries,
           site === "itandi" ? "itandi" : site === "realpro" ? "リアプロ" :
             (pdf_urls && pdf_urls.some(u => !u.includes("realnetpro"))) ? "itandi" : "リアプロ",
+          excludedNotice,
         );
         await pushLineMessage(groupId, lineText);
 
         // 送付物件を sent_properties に記録（source: "line_group" でVision OCR経由と区別）
         // insert失敗してもLINE送信自体は成功として扱う（レスポンスは変えない）
         try {
-          // property_customer_id はbody優先。無ければ conversation_id から lookup
-          let propertyCustomerId: string | null = property_customer_id ?? null;
-          if (!propertyCustomerId && conversation_id) {
-            const { data: conv } = await supabase
-              .from("conversations")
-              .select("property_customer_id")
-              .eq("id", conversation_id)
-              .single();
-            propertyCustomerId = conv?.property_customer_id ?? null;
-          }
+          // property_customer_id は上で解決済み（body → conversation → 名前から引き直し の順）
+          const propertyCustomerId: string | null = resolvedCustomerId;
 
           const summariesToRecord =
             rankedSummaries && rankedSummaries.length > 0
               ? rankedSummaries
               : property_summaries ?? [];
 
-          // 物件名・号室を全件抽出
-          type PropInfo = { propertyName: string; roomNo: string };
-          const propInfoList: PropInfo[] = summariesToRecord.flatMap((summary) => {
-            const firstLine = (summary.split("\n")[0] ?? "")
-              .replace(/^【\d+🌟?★?】\s*/, "")
-              .trim();
-            if (!firstLine) return [];
-            const roomMatch = firstLine.match(/[\s　]+(\d{1,4})(?:号室?)?$/);
-            const roomNo = roomMatch ? roomMatch[1] : "";
-            const propertyName = roomMatch
-              ? firstLine.slice(0, (roomMatch.index ?? 0)).trim()
-              : firstLine;
-            if (!propertyName) return [];
-            return [{ propertyName, roomNo }];
+          // 物件名・号室・URL を全件抽出
+          //
+          // ⚠ 2026-09-21: ここは `/^【\d+🌟?★?】\s*/` で番号を剥がしていたが、**🌟 はサロゲートペア**なので
+          //   u フラグの無い `🌟?` は「前半は必須・後半は任意」になり、**🌟 の付かない「【1】」に当たらなかった**。
+          //   実測（scripts/audit-summary-no-bug.ts）で sent_properties の **81.2%（14,746件）** の物件名が
+          //   「【5】エスリード新北野」のように番号付きで保存されていた。名前が違えば突き合わせは当たらないので、
+          //   重複の警告も除外も効かない。parseSummaryHead（u フラグ付き・テスト済み）に統一する。
+          //
+          // ⚠ URL も入れる。号室は実測で 0.1% しか取れておらず（scripts/audit-summary-room.ts）、
+          //   名前だけでは同じ建物の別部屋と区別できない（1回の送信の74.2%に別部屋が入っている）。
+          //   リアプロの印刷用PDFの URL は物件ごとに違うので、これが号室の代わりの鍵になる。
+          type PropInfo = { propertyName: string; roomNo: string; url: string };
+          const rawInfo: PropInfo[] = summariesToRecord.flatMap((summary, i) => {
+            const head = parseSummaryHead(summary);
+            if (!head) return [];
+            return [{ ...head, url: normalizePropertyUrl(pdf_urls?.[i] ?? null) }];
           });
+          // ⚠ URL が物件を1件ずつ指していない形（path が同じでクエリで分ける等）だったら**記録しない**。
+          //   そのまま入れると、次の送信で全部「送付済み」と判定されて消える。外す時と同じ確認（四者同名）。
+          const urlUsable = urlKeysAreDistinct(rawInfo.map((p) => ({ url: p.url, propertyName: p.propertyName, roomNo: p.roomNo })));
+          if (!urlUsable && rawInfo.some((p) => p.url)) {
+            console.warn(JSON.stringify({
+              tag: "merge-pdfs:url-not-distinct", count: rawInfo.length,
+              note: "PDF の URL が物件ごとに違わないので鍵にしない（号室での判定だけ残る）",
+            }));
+          }
+          const propInfoList: PropInfo[] = rawInfo.map((p) => ({ ...p, url: urlUsable ? p.url : "" }));
 
           if (propInfoList.length > 0) {
             // ── 2026-09-20 竹内「どれが物件ピックアップで送った物件かも理解できる」──
@@ -372,7 +489,7 @@ export async function POST(req: NextRequest) {
             const propertyNames = propInfoList.map((p) => p.propertyName);
             let dupQuery = supabase
               .from("sent_properties")
-              .select("property_name, room_no")
+              .select("property_name, room_no, property_url")
               .in("property_name", propertyNames);
             if (propertyCustomerId) {
               dupQuery = dupQuery.eq("property_customer_id", propertyCustomerId);
@@ -383,18 +500,25 @@ export async function POST(req: NextRequest) {
               dupQuery = dupQuery.limit(0);
             }
             const { data: existingRows } = await dupQuery;
+            // ⚠ 記録の重複判定は「同じ行をもう一度入れない」ためだけの物なので、
+            //   URL か（名前＋号室）が完全に同じ時だけ弾く（外す判断とは別物・こちらは緩くてよい）。
             const existingSet = new Set(
               (existingRows ?? []).map((r) => `${r.property_name}__${r.room_no}`)
+            );
+            const existingUrls = new Set(
+              (existingRows ?? []).map((r) => normalizePropertyUrl((r as { property_url?: string | null }).property_url)).filter(Boolean)
             );
 
             // 未登録の物件を一括 INSERT（N回 → 1クエリに削減）
             const toInsert = propInfoList
-              .filter((p) => !existingSet.has(`${p.propertyName}__${p.roomNo}`))
+              .filter((p) => !(p.url ? existingUrls.has(p.url) : existingSet.has(`${p.propertyName}__${p.roomNo}`)))
               .map((p) => ({
                 property_customer_id: propertyCustomerId,
                 conversation_id: conversation_id ?? null,
                 property_name: p.propertyName,
                 room_no: p.roomNo,
+                // 号室が 0.1% しか取れないので、次に外す時の鍵になるよう URL を残す
+                property_url: p.url || null,
                 source: "line_group",
               }));
             if (toInsert.length > 0) {

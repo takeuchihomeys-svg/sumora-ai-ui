@@ -1241,3 +1241,92 @@ npx tsx --env-file=.env.local scripts/audit-sent-prop-link.ts
 `line_group` は号室 0% なので、**送っているサマリーの1行目に号室が無い**形になっている。
 号室が無いと重複判定が名前だけになる（`sent-property-record.isSameProperty` は号室が無ければ名前 0.95 で判定）。
 → 次にやる: `property_summaries` の実物を見て、号室を含む形にするか、別の場所から号室を取る。
+
+## 2026-09-21 一度送った物件を次から外す（サーバー側だけで完結・**拡張の変更なし**）
+
+竹内さん「拡張ツールで物件出した事あるのは出さないようにできるか？／物件一括で検索して送るAIXボタン押した／
+11:00と17:00の部分も／一度共有した物件を除いてLINEに送ることが出来ればかなり質高くなる。
+何度も同じ物件がLINEグループに送られると、一度見た物件をまたみる必要があったりするので効率が悪い」
+
+### 3つの経路は全部 merge-pdfs に集まる
+
+| 経路 | 実体 |
+|---|---|
+| 拡張の一括検索・全ページ送る | `bulk-dl.js` → `axlx-send-to-line` → `/api/merge-pdfs` |
+| AIXモードの自動（11:00 / 17:00） | `vercel.json` の `auto-property-search?mode=am/pm`（UTC 2時/8時）→ `automation_commands` を積むだけ → 拡張が claim して同じ経路 |
+| itandi・レインズ | `axlx-send-pdf-data-to-line` → Blob → `/api/merge-pdfs` |
+
+→ **除外は `/api/merge-pdfs` 1か所で効く**（拡張を触らない＝再読み込み不要）。
+
+### 困りごとは実測できた
+
+`scripts/audit-room-identity.ts`（直近60日・物件19,209件）:
+**一度送った物件をまた送っているのは 6,863件（35.7%）**。
+間隔は 1〜3日 25.8% ／ 3〜7日 13.9% ／ **1〜2週 18.9%** ＝ 日をまたいで繰り返している。
+
+### 邪魔をしていた3つ（全部サーバー側だった）
+
+**① 物件名に【N】が残っていた（81.2%・14,746件）**
+`merge-pdfs` が `/^【\d+🌟?★?】\s*/` で番号を剥がしていたが、**🌟 はサロゲートペア**なので
+`u` フラグ無しの `🌟?` は「前半は必須・後半は任意」になり、**🌟 が付かない「【1】」に当たらない**。
+＝ オススメに選ばれなかった大多数の名前が「【5】エスリード新北野」のまま保存されていた。
+名前が違えば突き合わせは当たらないので、重複の警告も除外も効かない。
+→ `parseSummaryHead`（`u` フラグ付き・テスト済み）に統一。既存データも
+`scripts/fix-sent-property-names.ts --apply` で 14,743件を修復（14,746 → 11件）。
+
+**② 「誰に送ったか」が 9/21 に 0.1% へ戻っていた**
+9/20 に `background.js` を直して 79.2% になったが、**翌日 0.1%**。
+＝ 修正が**再読み込みされていない端末**で動いている（`scripts/audit-sent-prop-recent.ts` の日別表）。
+→ `merge-pdfs` が `customer_name` から `property_customers` を引き直す（`lookupCustomerByName`）。
+名前は LINE の見出しに使うため必ず届いているので、**拡張を待たずに紐付く**。
+⚠ 同姓同名は引かない。実測（`scripts/audit-name-to-customer.ts`・293人）で
+1人に決まる名前は **91.4%**、残り 23種類・50人（17.1%）は同名が複数いる。
+別人の履歴で外すのがいちばん重い失敗なので、曖昧なら何もしない。
+
+**③ 号室が 0.1% しか取れない**
+`scripts/audit-summary-room.ts`（物件20,716件）: 名前の末尾に号室があるのは **12件（0.1%）**。
+しかも **1回の送信の 74.2%** に「同じ建物名が2件以上」入っている（＝別の部屋を同時に送っている）。
+同じ建物名のまとまりの **98.0%** は家賃・間取りでも見分けられない（家賃は 0.1% しか無い）。
+→ **名前だけで外すと、74.2% の送信で別の部屋まで消える**。
+代わりに **リアプロの印刷用PDFの URL** を鍵にする（`pdf_urls[i]` は既にサーバーに届いている）。
+リアプロは直近60日の物件の **98.6%**（itandi 1.2% / レインズ 0.1%）。
+
+### 入れたもの
+
+`app/lib/sent-property-filter.ts`（純関数・テスト35件）
+- `normalizePropertyUrl` … クエリを落として `host + path` にする。Vercel Blob は毎回変わるので鍵にしない
+- `isSameOutgoing` … ① URL 一致 ② 号室が両方あって名前0.95以上＋号室一致 ③ それ以外は**外さない**
+- `filterOutAlreadySent` … 並びは元のまま返す（PDF と説明文の対応が崩れない）
+- `urlKeysAreDistinct` … ⚠ **自分を守る確認**。URL の鍵がユニーク1つだけなら「URL は物件を指していない」と見なして使わない
+  （リアプロの URL が `path は同じでクエリで物件を指す` 形だった場合に**全件消える**のを防ぐ）
+- `renumberSummaries` … 外した後に【1】から詰め直す
+- `buildExcludedNotice` … LINE の末尾に「（送付済みのため N件を除きました）」
+
+`app/api/merge-pdfs/route.ts`
+- PDF を**取りに行く前**に外す（外した物をDLしても捨てるだけ）
+- 全部外れたら PDF を作らず「今回の候補はすべて送付済みでした」を1通だけ送る（黙って終わらない）
+- `sent_properties.property_url` に URL を残す（次に外す時の鍵）
+- 戻す時は環境変数 `SKIP_SENT_PROPERTIES=off`
+- ログ: `{"tag":"merge-pdfs:skip-sent", incoming, known, dropped, unmatchable, url_unusable}`
+  ／ `merge-pdfs:name-lookup` ／ `merge-pdfs:url-not-distinct`
+
+### 全件監査（誤除外0）
+
+`scripts/audit-skip-sent-dryrun.ts`（過去60日の送信2,824回を時系列で再生）:
+```
+これから送る物件 19,209件
+外す              2件（0.0%）  ← どちらも名前・号室が完全一致（目で読んで確認）
+判断できず残す  19,197件（99.9%）← 号室も URL も無いので触らない
+全部外れて送る物が無くなった送信: 0回
+```
+＝ **誤って外す道が無い**。今の効き目が 0.0% なのは号室が無いからで、
+**URL は今回から溜まる**ので次の送信から効く。
+
+### 次に確かめること（次に物件を送った後）
+
+```
+npx tsx --env-file=.env.local scripts/audit-sent-prop-recent.ts   # 紐付きが戻ったか（日別）
+npx tsx --env-file=.env.local scripts/audit-skip-sent-dryrun.ts   # 外れる数
+```
+Vercel のログで `merge-pdfs:skip-sent` の `url_unusable` を見る。
+**`true` なら URL が物件を指していない形**なので、号室を取る方（拡張側）に切り替える必要がある。
