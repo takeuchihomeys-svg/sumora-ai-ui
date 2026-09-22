@@ -1324,6 +1324,11 @@ export async function analyzeConversation(
     //     旧: 前回の AIX-META（action・closing_strategy・reply_direction・意図・温度感 等12項目）・プロファイルを混ぜた1本の問い
     //     → 本番の問いで「実際にスタッフが送った返信」への近さ 0.485 → 文書と同じ構成で 0.525。前回の判断が自分の検索を引っぱる自己強化も解消
     //   ② 成功パターン（personality_profile＋winning_pattern で埋め込み）・テンプレート（カテゴリ＋ラベル）→ 人物像と戦略の問い（文書側にも戦略語がある）
+    // 2026-09-23 竹内「セットされる文の質を上げる」で、問いから定型の挨拶を落とす案を試したが**入れなかった**。
+    //   自然実験（SQL・同じ主旨の質問を比べる）では「宜しくお願い致します×2＋本題」で正解が 2位→11〜14位 に落ちていたが、
+    //   実データ14件で前後の順位を比べると **上がった1／下がった4／変わらず7**、枠（12件）に入った数は 3→2 と減った。
+    //   対象の多くは申込フォームの記入内容で、定型を落としてもベクトルの向きが変わるだけだった。
+    //   測り直す時は scripts/audit-rag-query-strip.ts（設計知見「監査で止める」）
     const lastStaffForRag = typedMessages.find(m => m.sender === "staff" && Boolean(m.text))?.text ?? "";
     const ragQueryInput = [
       tpoHint ? `[TPO:${tpoHint}]` : null,
