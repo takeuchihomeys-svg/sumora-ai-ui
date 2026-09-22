@@ -872,14 +872,68 @@ function fmtJst(iso: string | null): string {
   return jstMDHm(t);
 }
 
+/**
+ * 窓（直近 maxEntries 件）から落ちた種類の「最後の1回」を拾う。
+ *
+ * 2026-09-23 竹内「こちらから送っている文の部分等…同じことを何度も言うことも防げる」:
+ *   実測（scripts/audit-ledger-window.ts・直近60日・245会話）で台帳の **59.7%（1,381件）が窓から落ち**、
+ *   しかも **その種類の最後の1回まで落ちた**のが 御見積書の宣言40会話・ピックアップ宣言35・
+ *   見積書送付31・確認の約束31・内覧の案内26・申込の案内25。＝「もう言った」がブレインに届いていなかった。
+ *
+ * 設計知見「繰り返しは禁止にできない — 既に言った締めと、まだ言っていない具体を材料として渡す」に従い、
+ *   禁止は増やさず**事実を1行ずつ**足す。種類は LedgerKind の有限集合なので行数に上限がある（最大20行）。
+ *   同じ種類が窓に1つでも残っていれば足さない（二重に見せない）。
+ */
+/**
+ * 未履行の宣言を「まだ履行していない」と書いてよい上限（時間）。これを超えたら「その後の記録なし」に変える。
+ *
+ * 2026-09-23 全件監査（scripts/audit-ledger-digest-apply.ts）で止めた:
+ *   足した行に「8/3 募集状況等の確認を**宣言**（まだ履行していない）」＝**50日前**の約束が出ていた。
+ *   これを渡すと、今さら結果報告として蒸し返しかねない。
+ * 線の根拠は promise-tracker.PROMISE_STATS の実測（果たすまでの時間の90%値）:
+ *   見積書 48.1h ／ 物件探し 65.7h ／ 交渉 88.0h ／ 確認 116.5h ／ 資料の送付 185.4h ／ ご連絡 196.4h（＝8.2日）。
+ *   一番遅いご連絡でも 8.2日なので、14日を超えた未履行は「流れた」とみなしてよい。
+ *   14日は内覧の鮮度で既に使っている線と同じ（同じ事実に2つの線を作らない）。
+ */
+export const STALE_PROMISE_HOURS = 14 * 24;
+
+export function droppedKindDigest(entries: LedgerEntry[], shown: LedgerEntry[]): LedgerEntry[] {
+  const shownKinds = new Set(shown.map((e) => e.kind));
+  const lastByKind = new Map<LedgerKind, LedgerEntry>();
+  const cut = entries.length - shown.length;
+  for (let i = 0; i < cut; i++) {
+    const e = entries[i];
+    if (!shownKinds.has(e.kind)) lastByKind.set(e.kind, e);   // 後勝ち＝その種類の最後の1回
+  }
+  return [...lastByKind.values()].sort((a, b) => ms(a.at) - ms(b.at));
+}
+
 /** dynamicBlock 注入用【📒 我々の行動台帳】（往復文脈ブロックの直前）。禁止語と代替表現をリテラルで渡す */
-export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName?: string; maxEntries?: number } = {}): string {
+export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName?: string; maxEntries?: number; now?: number } = {}): string {
   // 2026-09-11 統合設計（経路B）: 名前不明時に「〇〇さん」を書かない（呼びかけごと省く）
   const name = opts.customerName ? `${opts.customerName}さん` : '';
   const nameNi = name ? `${name}に` : '';
   const f = ledger.facts;
-  const shown = ledger.entries.filter((e) => e.kind !== 'media_sent').slice(-(opts.maxEntries ?? 6));
+  const nonMedia = ledger.entries.filter((e) => e.kind !== 'media_sent');
+  const shown = nonMedia.slice(-(opts.maxEntries ?? 6));
   const lines: string[] = ['【📒 我々の行動台帳 — 確定事実（履歴の推測より上位・往復文脈の前提）】'];
+  // 窓から落ちた種類の最後の1回（＝「もう言った」が消えるのを防ぐ。droppedKindDigest の説明を見る）
+  const digest = droppedKindDigest(nonMedia, shown);
+  if (digest.length) {
+    lines.push('これより前にお伝えしたこと（種類ごとに最後の1回だけ・古→新）:');
+    const now = opts.now ?? Date.now();
+    for (const e of digest) {
+      const ageH = (now - ms(e.at)) / 3600_000;
+      // 古い未履行は「まだ履行していない」と書かない（STALE_PROMISE_HOURS の説明を見る）
+      const stale = e.status === 'promised' && e.fulfilledBy == null && Number.isFinite(ageH) && ageH > STALE_PROMISE_HOURS;
+      const done = e.status === 'promised'
+        ? `を**宣言**${e.fulfilledBy != null ? '（履行済み）' : stale ? '（14日以上前・その後の記録なし）' : '（まだ履行していない）'}`
+        : 'を**実行**';
+      lines.push(`・${fmtJst(e.at)} ${LEDGER_KIND_JA[e.kind]}${done}`);
+    }
+    // 設計知見「繰り返しは禁止にできない」: 禁止ではなく、繰り返す時の条件と逃げ道を渡す
+    lines.push('→ 同じ内容をもう一度伝える時は、前回から新しくなった具体（日程・時刻・物件の件数・金額・条件）を1つ足す。足せる物が無ければ短く受けるだけでよい。');
+  }
   if (shown.length === 0) lines.push('これまでに我々がしたこと: 記録なし（物件0件・見積書未送付・約束なし）');
   else {
     lines.push('これまでに我々がしたこと（古→新）:');
@@ -1108,7 +1162,7 @@ export function gatedVocabKeys(ledger: ActionLedger): string[] {
 }
 
 /** dynamicBlock 注入用【📒 我々の行動台帳】＝ buildActionLedgerNote ＋ 語彙ゲート行。turnPairNote の直前に置く */
-export function buildLedgerNote(ledger: ActionLedger, opts: { customerName?: string; maxEntries?: number } = {}): string {
+export function buildLedgerNote(ledger: ActionLedger, opts: { customerName?: string; maxEntries?: number; now?: number } = {}): string {
   const base = buildActionLedgerNote(ledger, opts).replace(/\n\n$/, '');
   const gated = gatedVocabKeys(ledger);
   const lines = [base];

@@ -1844,6 +1844,18 @@ export async function analyzeConversation(
 
   // この会話で使用済みのAIXアクション一覧（重複提案の抑止・次段階の推奨材料）
   const usedAixTypes = [...new Set(aixLogs.map((l) => l.aix_type).filter((t): t is string => Boolean(t)))];
+  // 2026-09-23 竹内「AIXで何を押して送っているかも記憶にかけあわせたら更に質が上がる」:
+  //   旧: 種類の名前だけ（「property_send / estimate_sheet」）＝**何回・いつ押したかが無い**。
+  //   実測（scripts/audit-ledger-window.ts・直近60日・AIX 1,356件）: 同じ AIX を同じ会話で2回以上押しているのは
+  //   物件オススメ110会話・物件送付74・見積書50・物件確認した43・内覧の案内17。
+  //   回数と最後の時刻を足して、行動台帳（何を伝えたか）と突き合わせられるようにする。
+  const aixUsageDigest = usedAixTypes.map((t) => {
+    const rows = aixLogs.filter((l) => l.aix_type === t);
+    // aixLogs は新→旧順（brain-core の読み出し順）なので先頭が最後に押した行
+    const lastAt = rows[0]?.created_at ?? null;
+    const when = lastAt ? jstMD(lastAt) : "時刻不明";
+    return `${t}${rows.length > 1 ? `×${rows.length}回` : ""}（最後 ${when}）`;
+  });
   // 直近3件の押下順序（新→旧）＋テンプレート名をBrainプロンプトに注入する
   // → usedAixTypesは「この会話で使ったことがある種類」だが、順序・直近性が欠落しているため方向性判断に不十分。
   //   「直前に property_check_result → 次は viewing_invite が定石」等の流れを Brain が正確に判断できるようにする。
@@ -1870,7 +1882,7 @@ export async function analyzeConversation(
     ? `\n【成約実績・次打ちマップ】直近AIXが ${lastAixType} の場合、成約会話では${transitions.slice(0, 3).map(t => `${t.to}が${t.count}回`).join("・")}。※推奨候補。会話の実態（顧客の返信内容・フェーズ制約・募集状況未確認での内覧誘導禁止）と「物件送付直後で顧客の反応待ちなら aix:null」ルールが常に優先。`
     : "";
   const aixHistoryText = (usedAixTypes.length > 0 || pcrLoopWarning)
-    ? `${recentAixSeqText}${nextActionMapText}${pcrLoopWarning}\n【会話全体で使用済みのAIXアクション】${usedAixTypes.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
+    ? `${recentAixSeqText}${nextActionMapText}${pcrLoopWarning}\n【会話全体で使用済みのAIXアクション（回数と最後に押した時刻）】${aixUsageDigest.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
     : pcrLoopWarning;
   // 2026-09-09 Fable5 行動台帳: last_aix_history（AIX 3件・時刻なし・宣言/実行の区別なし）を補強。手打ち送付・宣言も含む確定事実を brain に渡す
   const brainLedger = buildActionLedger({

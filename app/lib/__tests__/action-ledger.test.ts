@@ -2,7 +2,8 @@
 // 実行: npx tsx app/lib/__tests__/action-ledger.test.ts（vitest 不要の自己完結ハーネス。全 PASS で exit 0）
 import {
   buildActionLedger, checkDonePresupposition, applyLedgerAutoFix, buildLedgerNote, gatedVocabKeys, staffKindOf,
-  type LedgerAixRow, type LedgerMessage, type LedgerTask,
+  droppedKindDigest,
+  type LedgerAixRow, type LedgerMessage, type LedgerTask, type LedgerEntry, type ActionLedger,
 } from "../action-ledger";
 import {
   analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse, resolveTurnPair, resolveHedgeAllowance, resolveCloser, buildPairDirection, buildTurnPairNote,
@@ -354,6 +355,66 @@ it("#慶次 viewing_thanks: 内覧の打診がある会話では落とさない�
   const h = checkDonePresupposition(sent, withViewing, { customerMessage: "つきました！", name: "関さん" }).find((x) => x.key === "viewing_thanks");
   expect(h?.exempt).toBe("evidence");   // 証拠あり＝落とさない
   expect(applyLedgerAutoFix(sent, withViewing, { customerMessage: "つきました！", name: "関さん" }).text).toBe(sent);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 2026-09-23 竹内「こちらから送っている文の部分等…同じことを何度も言うことも防げる」
+//   窓（直近6件）から落ちた種類の「最後の1回」を足す。実測で台帳の 59.7% が窓から落ち、
+//   その種類の最後の1回まで落ちたのが 御見積書の宣言40会話・ピックアップ宣言35・確認の約束31。
+// ─────────────────────────────────────────────────────────────
+const LE = (kind: string, at: string, status: "promised" | "done" = "done", fulfilledBy: number | null = null) =>
+  ({ kind, status, at, source: "staff_text", confidence: 1, evidence: "", detail: {}, fulfilledBy } as unknown as LedgerEntry);
+
+describe("droppedKindDigest（窓から落ちた種類の最後の1回）", () => {
+  const all = [
+    LE("estimate_declared", T("09-10T01:00")),
+    LE("pickup_declared", T("09-11T01:00")),
+    LE("estimate_declared", T("09-12T01:00")),     // ← これが最後の1回
+    LE("properties_sent", T("09-13T01:00")),
+    LE("properties_sent", T("09-14T01:00")),
+    LE("viewing_invited", T("09-15T01:00")),
+  ];
+  const shown = all.slice(-3);
+  it("落ちた種類だけを返す", () => expect(droppedKindDigest(all, shown).map((x) => x.kind)).toEqual(["pickup_declared", "estimate_declared"]));
+  it("同じ種類は最後の1回（9/12）を採る", () => expect(droppedKindDigest(all, shown).find((x) => x.kind === "estimate_declared")?.at).toBe(T("09-12T01:00")));
+  it("窓に残っている種類は足さない（二重に見せない）", () => expect(droppedKindDigest(all, shown).some((x) => x.kind === "properties_sent")).toBe(false));
+  it("落ちる物が無ければ空", () => expect(droppedKindDigest(all, all).length).toBe(0));
+  it("空でも落ちない", () => expect(droppedKindDigest([], []).length).toBe(0));
+});
+
+describe("台帳の文（これより前にお伝えしたこと）", () => {
+  const withDrop = (promiseAt: string, now: string) => {
+    const entries = [
+      LE("confirmation_promised", promiseAt, "promised", null),
+      LE("properties_sent", T("09-20T01:00")), LE("properties_sent", T("09-21T01:00")),
+      LE("properties_sent", T("09-22T01:00")), LE("properties_sent", T("09-23T01:00")),
+      LE("properties_sent", T("09-23T02:00")), LE("properties_sent", T("09-23T03:00")),
+    ];
+    const ledger = {
+      entries,
+      facts: {
+        propertiesSentCount: 6, estimateSent: false, estimatePromisedUnfulfilled: false,
+        pickupPromisedUnfulfilled: false, pickupPromisedAt: null,
+        confirmationPromisedUnfulfilled: false, confirmationPromisedObject: null,
+        redoAllowed: true, recentDone: {}, confirmationReportPattern: null,
+        viewingDone: false, viewingAppointment: null, lastStaffEntry: null,
+      },
+      summary: "",
+    } as unknown as ActionLedger;
+    return buildLedgerNote(ledger, { now: Date.parse(now) });
+  };
+  it("落ちた種類の行が足される", () => expect(withDrop(T("09-16T01:00"), T("09-23T04:00"))).toContain("これより前にお伝えしたこと"));
+  it("繰り返しを禁止せず、逃げ道を渡す（設計知見「繰り返しは禁止にできない」）", () =>
+    expect(withDrop(T("09-16T01:00"), T("09-23T04:00"))).toContain("足せる物が無ければ短く受けるだけでよい"));
+  it("7日前の未履行は「まだ履行していない」", () => expect(withDrop(T("09-16T01:00"), T("09-23T04:00"))).toContain("まだ履行していない"));
+  // 全件監査（2026-09-23）で止めた実物: 50日前の「募集状況等の確認を宣言（まだ履行していない）」が渡っていた。
+  //   線の根拠は promise-tracker.PROMISE_STATS の90%値（一番遅い「ご連絡」でも 196.4h＝8.2日）
+  it("14日を超えた未履行は「その後の記録なし」に変える", () => expect(withDrop(T("08-03T09:00"), T("09-23T04:00"))).toContain("14日以上前・その後の記録なし"));
+  it("14日を超えても行自体は消さない（「もう言った」は届ける）", () => {
+    const note = withDrop(T("08-03T09:00"), T("09-23T04:00"));
+    expect(note.includes("まだ履行していない")).toBe(false);
+    expect(note.split("→ 同じ内容を")[0]).toContain("8/3");
+  });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
