@@ -16,6 +16,7 @@ import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
 import { isPostApplyStatus, willRouteAlt } from "@/app/lib/llm-alt-provider";
 import { buildSendReplyTimingNote } from "@/app/lib/send-reply-timing";
+import { buildAixSceneNote } from "@/app/lib/aix-scene-stats";
 import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_SENT_PLACEHOLDER } from "@/app/lib/pii-pseudonym";
 import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
@@ -2107,6 +2108,8 @@ export async function analyzeConversation(
   const staticBrainSystem = `あなたはスモラAI。与えられた会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
 
 ${AIX_CAPABILITY_MAP}
+
+${buildAixSceneNote()}
 
 ${REPLY_STYLE_RULES}
 
