@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
+import { readPropertyImage } from "@/app/lib/property-image-read";
 
-export const maxDuration = 30;
-
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
-  timeout: 25_000,
-  maxRetries: 1,
-});
+// 2026-09-22 竹内「画像から物件名などを読み取る処理 deepseek に置き換える」:
+//   旧は Claude Haiku Vision。送信時の読み取り（send-line-message）と同じ DeepSeek-V4.1-Flash・同じ聞き方
+//   （PROPERTY_IMAGE_PROMPT）に揃えた。推論モデルなので数秒〜20秒かかる → 上限を延ばす。
+//   呼び出し元（画面の送信・AIX 物件オススメ）はどちらも結果を待たない（裏で動く）ので、送信は遅くならない
+export const maxDuration = 90;
 
 // ─── Levenshtein distance ────────────────────────────────────────────────────
 function levenshtein(a: string, b: string): number {
@@ -69,54 +67,38 @@ export async function POST(req: NextRequest) {
       propertyCustomerId = conv?.property_customer_id ?? null;
     }
 
-    // ── 2. OCR via Claude Haiku Vision ───────────────────────────────────────
-    const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 256,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: { type: "url", url: image_url },
-            },
-            {
-              type: "text",
-              text: `この物件資料の画像から物件名と号室（部屋番号）を読み取ってください。
-
-【書式パターン】
-- ITANDIフォーマット: 上部に大きく「物件名 ○○○号室」と記載
-- リアプロフォーマット: 左側の表に「物件名」「号室名」が別行で記載
-
-JSONのみで返答してください：
-{"property_name": "物件名（マンション名）", "room_no": "号室番号のみ（例：803、0902）"}
-物件名が読み取れない場合はnullを返してください。`,
-            },
-          ],
-        },
-      ],
-    });
-
-    const raw =
-      response.content.find((b): b is Anthropic.TextBlock => b.type === "text")
-        ?.text ?? "{}";
-    const jsonMatch = raw.match(/\{[\s\S]*?\}/);
-
-    let propertyName: string | null = null;
-    let roomNo: string | null = null;
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]) as {
-          property_name?: string | null;
-          room_no?: string | null;
-        };
-        propertyName = parsed.property_name?.trim() || null;
-        roomNo = parsed.room_no?.trim() || null;
-      } catch {
-        // OCR parse failure — return nulls
+    // ── 2. 画像の読み取り（DeepSeek・送信時の読み取りと同じ関数） ─────────────────
+    //   見積書・本人確認書類など物件資料でない画像は is_property=false で返る → 物件として記録しない
+    //   （旧 Haiku は見積書からも物件名を拾って sent_properties に入れていた）
+    const read = await readPropertyImage(image_url, { timeoutMs: 80_000 });
+    const top = read.isProperty ? read.items[0] : undefined;
+    // 2026-09-22 実測: カタカナの物件名はモデルを問わず読み違える（DeepSeek「ワールドアイ」→「ワールドワイド」／
+    //   旧 Haiku「グランエクラ今宮戎 601」→「グランエクラ合成 001」）。送信時の読み取りと同じく、
+    //   **この会話に出ている物件名と照合して**寄せる。照合できなければ読んだ名前のまま（今までどおり記録はする）
+    let matched = false;
+    let named = top;
+    if (top) {
+      const [{ resolveReadProperty }, { extractPropertyLabels }] = await Promise.all([
+        import("@/app/lib/property-name-match"),
+        import("@/app/lib/action-ledger"),
+      ]);
+      const known = new Set<string>();
+      const { data: sp } = await supabase.from("sent_properties").select("property_name").eq("conversation_id", conversation_id).limit(50);
+      for (const r of (sp ?? []) as Array<{ property_name: string | null }>) if (r.property_name) known.add(r.property_name.trim());
+      const { data: ms } = await supabase.from("messages").select("text").eq("conversation_id", conversation_id).order("created_at", { ascending: false }).limit(80);
+      for (const lbl of extractPropertyLabels(((ms ?? []) as Array<{ text: string | null }>).map((m) => m.text ?? "").join("\n"))) {
+        known.add(lbl.replace(/\s*[0-9０-９]{1,4}号室\s*$/, "").trim());
       }
+      const fixed = resolveReadProperty(top, [...known].filter((s) => s.length >= 2));
+      if (fixed) { named = fixed; matched = true; }
     }
+    const propertyName: string | null = named?.propertyName?.trim() || null;
+    const roomNo: string | null = named?.roomNumber?.trim() || null;
+    console.log(JSON.stringify({
+      tag: "extract-property-info:read", model: "deepseek", conversationId: conversation_id,
+      isProperty: read.isProperty, items: read.items.length, found: !!propertyName, matched, tokens: read.usage ?? null,
+      raw: propertyName ? undefined : read.raw.slice(0, 80),
+    }));
 
     // ── 3. Duplicate check ───────────────────────────────────────────────────
     let isDuplicate = false;
@@ -152,10 +134,12 @@ JSONのみで返答してください：
     // ── 3.5 画像 → 物件の対応は重複でも必ず残す（2026-09-15 竹内・みく事例）──────────
     //   お客様が引用返信で「こちら３階は空きありますか？」と聞いた時に、引用先の画像がどの物件かを直すため（quoted-context）。
     //   sent_properties は同じ物件の2回目以降の画像（御見積書・送り直し）を重複として書かないので、画像ごとの対応はこちら
+    // 2026-09-22: 送信時の読み取り（send-line-message）は会話に出ている物件名と**照合してから**書く。
+    //   こちらは照合しないので、既に記録がある時は上書きしない（旧は後から書いた方が残り、照合済みの名前が消える事があった）
     if (propertyName) {
       const { error: mapErr } = await supabase.from("sent_image_properties").upsert(
         { image_url, conversation_id, property_name: propertyName, room_no: roomNo, source: "vision" },
-        { onConflict: "image_url" },
+        { onConflict: "image_url", ignoreDuplicates: true },
       );
       if (mapErr) console.warn("[extract-property-info] sent_image_properties upsert failed:", mapErr.message);
     }
