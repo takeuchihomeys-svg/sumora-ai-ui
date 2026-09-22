@@ -30,7 +30,7 @@
 //
 // 【使い方】
 //   const m = createMasker({ conversationId, customerName, knownNames });
-//   const safe = m.mask(会話履歴);           // 何度呼んでも同じ実物は同じ仮名になる
+//   const safe = m.maskBlock(材料の塊);       // 何度呼んでも同じ実物は同じ仮名になる（1通の発言だけなら m.mask）
 //   const 本文 = m.unmask(LLMの返答);
 //   if (m.leftovers(本文).length > 0) → 戻し切れていないので**その下書きは使わない**（fail-closed）
 
@@ -48,21 +48,22 @@ export type MaskEntry = { fake: string; real: string; kind: MaskKind };
 // → 丸ごと落として「受け取った」という事実だけ残す。判定は既にある
 //   application-form-detect.isApplicationFormMessage を使う（新しい線を引かない）。
 /** 申込フォームの代わりに残す文字列 */
-export const APPLICATION_FORM_PLACEHOLDER = "[お申込み情報を受け取りました（個人情報のため非表示）]";
+// 2026-09-22 竹内（みなみさん事例）「また申込ととってしまっている。言葉だけの上っ面で判断していないか」:
+//   旧「[お申込み情報を受け取りました（個人情報のため非表示）]」は、こちらが受け取ったと述べる文そのもので、
+//   LLM がそのまま「お申込み情報のご連絡ありがとうございます」「お申込み情報受け取りました」と返していた。
+//   誰が何をしたかだけを書く（お客様が記入して送った）
+export const APPLICATION_FORM_PLACEHOLDER = "[お客様が申込フォームに記入して送信（個人情報のため非表示）]";
 
-/**
- * 申込の項目。**中身があるか**を測るために使う（「申込フォーム」という語だけでは落とさない）。
- * 2026-09-19 実データ365日の監査で、「203号室で大丈夫なら申込みフォームお送りします！！」という
- * 普通の返信15件が落ちていた（isApplicationFormMessage は語1つで確定するため）。
- * 会話の文脈が「申込情報を受け取った」に化けて歪むので、項目が2つ以上ある時だけ落とす。
- */
-const APPLY_FIELD_RE = /氏名|フリガナ|生年月日|現住所|緊急連絡先|勤務先|続柄|住居年数|保証人|年収|職業|登記住所|代表者|本社所在地|資本金/g;
+// 2026-09-19: 「申込フォーム」の語だけでは落とさない（普通の返信15件が落ちていた）。
+// 2026-09-22: 材料の塊（maskBlock）では、会話の発言1通ずつに当て、さらに「項目に値が書かれた行が2行以上」の時だけ置き換える（filledFormLineCount）
 
 /**
  * この文は「丸ごと落とす申込の個人情報」か。
  * ⚠ 物件検索のフォーマット（うちが送る条件テンプレート）は**必ず残す**ので先に見る。
  *   竹内「物件検索のフォーマットはちゃんと全部のこして、お申込みに関係する個人情報は渡らないように」
  */
+const APPLY_FIELD_RE = /氏名|フリガナ|生年月日|現住所|緊急連絡先|勤務先|続柄|住居年数|保証人|年収|職業|登記住所|代表者|本社所在地|資本金/g;
+
 export function isApplicationPayload(text: string | null | undefined): boolean {
   const t = (text ?? "").trim();
   if (!t) return false;
@@ -72,6 +73,55 @@ export function isApplicationPayload(text: string | null | undefined): boolean {
   return new Set(t.match(APPLY_FIELD_RE) ?? []).size >= 2;
 }
 
+/** こちらが送った申込フォーマット（記入欄）の代わりに残す文字列 */
+export const APPLICATION_FORMAT_SENT_PLACEHOLDER = "[こちらが申込フォーマット（記入欄）を送付]";
+
+/**
+ * 値が書かれた申込の項目の行（「・氏名、フリガナ 中村七海 ヤマナカアオイ」「勤務先：株式会社〇〇」）。
+ * 項目名を1行に並べただけの文（ルール・手本の「氏名・生年月日・現住所・緊急連絡先・勤務先…」）は数えない
+ */
+function filledFormLineCount(seg: string): number {
+  let n = 0;
+  for (const line of seg.split("\n")) {
+    const labels = line.match(APPLY_FIELD_RE) ?? [];
+    if (labels.length === 0 || labels.length >= 3) continue;            // 項目名の並び（ルールの文）は数えない
+    const rest = line.replace(APPLY_FIELD_RE, "").replace(/^[\s・\-－ー•●◆■]+/, "").replace(/^[、,・\s：:（）()]+/, "").trim();
+    if (rest.length >= 2 && !/^(?:の|を|は|が|と|や|に)/.test(rest)) n++;
+  }
+  return n;
+}
+
+/** 塊を1通ずつに分ける境目（会話履歴の「お客様: / スモラ:」・見出し「【」・空行） */
+const SEG_HEAD_RE = /^(?:お客様|スモラ|顧客|スタッフ|\[(?:顧客|スタッフ|AIX)[^\]]*\])\s*[:：]?/;
+
+/**
+ * 材料の塊の中の申込フォームの記入だけを置き換える（塊そのものは落とさない）。
+ * 2026-09-22 みなみさん事例: 塊に丸ごとの判定を当てると、ルールや手本の文に項目名が並んでいるだけで
+ *   塊全体が「[お申込み情報を受け取りました]」の1行に差し替わり、LLM に会話もブレインの判断も届いていなかった。
+ */
+function dropApplicationSegments(block: string): { text: string; dropped: number } {
+  const lines = block.split("\n");
+  const segs: string[][] = [];
+  for (const line of lines) {
+    if (segs.length === 0 || SEG_HEAD_RE.test(line) || /^【/.test(line) || !line.trim()) segs.push([line]);
+    else segs[segs.length - 1].push(line);
+  }
+  let dropped = 0;
+  const out = segs.map((seg) => {
+    const text = seg.join("\n");
+    // 置き換えるのは会話の発言（お客様: / スモラ:）とお客様の最新メッセージの欄だけ。
+    //   手本・ナレッジ（「💡 類似ケース（申込に至った実例パターン）」277行など）は申込の流れを説明するので項目と値の形を含むが、
+    //   置き換えると「お客様が申込フォームを送った」という偽の事実を渡すことになる（書き出した実物で確認）。
+    //   そこに出る名前・電話・生年月日・住所・勤務先は下の読み替えで伏せる
+    const isTurn = SEG_HEAD_RE.test(seg[0]) || /^【(?:参考[：:])?お客様の(?:最新|直近)メッセージ/.test(seg[0]);
+    if (!isTurn || !isApplicationPayload(text) || filledFormLineCount(text) < 2) return text;
+    dropped++;
+    const head = seg[0].match(SEG_HEAD_RE)?.[0] ?? (seg[0].startsWith("【") ? seg[0] : "");
+    const staff = /スモラ|スタッフ|AIX/.test(head);
+    return `${head}${head ? " " : ""}${staff ? APPLICATION_FORMAT_SENT_PLACEHOLDER : APPLICATION_FORM_PLACEHOLDER}`;
+  });
+  return { text: dropped ? out.join("\n") : block, dropped };
+}
 export type MaskerOptions = {
   /** 仮名を決定論的に選ぶ種。同じ会話なら毎回同じ仮名になる（キャッシュが効く・ログで追える） */
   conversationId: string;
@@ -126,8 +176,15 @@ const MARK_CLOSE = "";
 const RE_MARK = /(\d+)/g;
 
 export type Masker = {
-  /** 文の中の個人情報を仮名に置き換える（同じ実物は必ず同じ仮名） */
+  /** 文の中の個人情報を仮名に置き換える（同じ実物は必ず同じ仮名）。**1通の発言**用: 申込フォームの記入は丸ごと置き換える */
   mask(text: string | null | undefined): string;
+  /**
+   * 材料の塊（会話履歴・手本・ルール・ブレインの判断がまとめて入った文字列）用。**塊を丸ごと置き換えない**。
+   * 2026-09-22 みなみさん事例: 塊に mask を当てると、ルールや手本の文に項目名が並んでいるだけで塊全体が
+   *   「[お申込み情報を受け取りました]」の1行に差し替わり、LLM に会話もブレインの判断も届いていなかった
+   *   （DeepSeek の入力が会話を問わず同じ・動的部分32トークン）。申込の項目の値だけを伏せる
+   */
+  maskBlock(text: string | null | undefined): string;
   /** 仮名を実物に戻す */
   unmask(text: string | null | undefined): string;
   /** 戻し切れていない仮名（1つでもあれば、その文は使ってはいけない） */
@@ -173,9 +230,15 @@ export function createMasker(opts: MaskerOptions): Masker {
 
   let dropped = 0;
 
-  function mask(input: string | null | undefined): string {
+  function mask(input: string | null | undefined, block = false): string {
     let t = input ?? "";
     if (!t) return "";
+    if (block) {
+      // 塊は落とさない。塊の中の申込フォームの記入（1通ずつ）だけを置き換える
+      const d = dropApplicationSegments(t);
+      dropped += d.dropped;
+      t = d.text;
+    } else
 
     // ⓪ 申込に関わる個人情報は丸ごと落とす（読み替えでは項目が多すぎて守れない）。
     //    物件検索のフォーマットは isApplicationPayload の中で先に除外している。
@@ -239,7 +302,7 @@ export function createMasker(opts: MaskerOptions): Masker {
     return [...new Set(out)];
   }
 
-  return { mask, unmask, leftovers, table: () => entries.slice(), droppedCount: () => dropped };
+  return { mask: (s) => mask(s), maskBlock: (s) => mask(s, true), unmask, leftovers, table: () => entries.slice(), droppedCount: () => dropped };
 }
 
 function escapeRe(s: string): string {

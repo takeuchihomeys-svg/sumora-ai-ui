@@ -145,5 +145,11 @@ it("★ ふつうの物件紹介・内覧案内を申込の流れと間違えな
   }
 });
 
+it("みなみさん事例（9/22）「お申込み情報のご連絡ありがとうございます！！」も落とす（実送信0通）", () => {
+  const { text, removed } = stripApplyReceivedClaim("はい！！\nお申込み情報のご連絡ありがとうございます！！\n\n確認出来次第ご連絡させて頂きます😊！！");
+  expect(removed.length).toBe(1);
+  expect(text).toBe("はい！！\n\n確認出来次第ご連絡させて頂きます😊！！");
+});
+
 console.log(`\n${failed === 0 ? "✅ 全 PASS" : "❌ 失敗あり"}  ${passed} passed / ${failed} failed`);
 if (failed) { failures.forEach((f) => console.log(`  - ${f}`)); process.exit(1); }

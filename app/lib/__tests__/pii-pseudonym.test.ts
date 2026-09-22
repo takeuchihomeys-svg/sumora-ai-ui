@@ -249,7 +249,7 @@ console.log("── ★ 返信文の生成にも配線されているか（竹�
   t("★ 戻し切れなければその下書きを使わない（fail-closed）",
     /gen:unmask-leftover/.test(gen) && /throw new Error\("生成文の伏せ字を元に戻せませんでした/.test(gen));
   t("★ 修正ループ（再生成）にも同じ読み替えを通す（1回目だけ伏せても2回目で実名が出る）",
-    /\.\.\.genMessages,\s*\n\s*new AIMessage\(replyMasker \? replyMasker\.mask\(draftBody\)/.test(gen));
+    /\.\.\.genMessages,\s*\n\s*new AIMessage\(replyMasker \? replyMasker\.maskBlock\(draftBody\)/.test(gen));
   t("★ 申込以降は印を付けて回さない（竹内「申込以降はいれない」）",
     /postApplyConversation \? \{ \[LLM_POST_APPLY_HEADER\]: "1" \}/.test(gen)
     && /postApplyConversation = isPostApplyStatus\(row\?\.status \?\? null\)/.test(gen));
@@ -257,5 +257,30 @@ console.log("── ★ 返信文の生成にも配線されているか（竹�
     /\/\/ 読めなければ自動返信は false[\s\S]{0,120}?postApplyConversation = true;/.test(gen));
 }
 
+// ─── 2026-09-22 みなみさん事例: 材料の塊を丸ごと差し替えない（maskBlock）───────────────
+{
+  console.log("\n--- 材料の塊（maskBlock）---");
+  const m = createMasker({ conversationId: "minami", customerName: "みなみ" });
+  // ルール・手本の文に項目名が並んでいる塊（旧: mask だとこの塊全体が「申込情報を受け取りました」の1行に差し替わった）
+  const rulesBlock = [
+    "【申込の流れ】申込書の記入項目（氏名・生年月日・現住所・緊急連絡先・勤務先・保証人）はAIX【申込へ】で送る",
+    "【🔁 往復文脈】直前: こちらの確認の約束 ／ お客様: 了承だけ",
+    "スモラ: かしこまりました！！\n確認させて頂きます😊！！",
+    "お客様: お願いします🤭",
+  ].join("\n");
+  const outRules = m.maskBlock(rulesBlock);
+  t("★ 旧処理（mask）なら塊ごと差し替わる形（再現）", m.mask(rulesBlock) === APPLICATION_FORM_PLACEHOLDER);
+  t("★ maskBlock は塊を残す（会話・往復文脈・ルールが LLM に届く）", outRules.includes("お客様: お願いします🤭") && outRules.includes("【🔁 往復文脈】") && !outRules.includes(APPLICATION_FORM_PLACEHOLDER), outRules.slice(0, 120));
+  // 会話履歴の中のお客様の記入済み申込フォームは、その1通だけ置き換える
+  const histBlock = [
+    "スモラ: こちらお申込に必要なご情報となります😊！！\n【お申込者様記入欄】\n・氏名、フリガナ\n・生年月日\n・現住所\n・勤務先",
+    "お客様: 【お申込者様記入欄】\n・氏名、フリガナ 中村七海 ナカムラナナミ\n・生年月日 1995年5月5日\n・現住所 大阪市西区北堀江1-2-3\n・勤務先 株式会社サンプル",
+    "スモラ: お送り頂きありがとうございます😊！！",
+  ].join("\n");
+  const outHist = m.maskBlock(histBlock);
+  t("★ お客様の記入済みフォームの1通だけ置き換わる", outHist.includes(`お客様: ${APPLICATION_FORM_PLACEHOLDER}`) && !outHist.includes("中村七海") && !outHist.includes("北堀江1-2-3"), outHist);
+  t("★ こちらが送った空欄のフォーマットと、その後のこちらの発言は残る", outHist.includes("スモラ: こちらお申込に必要なご情報となります") && outHist.includes("スモラ: お送り頂きありがとうございます"), outHist);
+  t("★ 置き換えの文は「こちらが受け取りました」と述べない（LLM が写して『お申込み情報のご連絡ありがとうございます』と書いた）", !/受け取りました|ありがとう/.test(APPLICATION_FORM_PLACEHOLDER));
+}
 console.log(`\n合計: ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

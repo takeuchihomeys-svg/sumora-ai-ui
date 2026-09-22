@@ -903,7 +903,8 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
  */
 function maskOut(text: string | undefined): string | undefined {
   const m = aixRequestCtx.getStore()?.masker;
-  return m && text ? m.mask(text) : text;
+  // 2026-09-22 みなみさん事例: プロンプトの塊には maskBlock（mask は1通の発言用。塊だと丸ごと差し替わる）
+  return m && text ? m.maskBlock(text) : text;
 }
 function unmaskIn(text: string, action: string): string {
   const m = aixRequestCtx.getStore()?.masker;

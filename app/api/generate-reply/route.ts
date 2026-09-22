@@ -27,7 +27,8 @@ function maskUncachedBlocks<T>(messages: T[], masker: Masker): T[] {
     const next = blocks.map((b) => {
       if (b.cache_control) return b;                      // キャッシュの印がある＝静的。触らない
       if (typeof b.text !== "string") return b;
-      const masked = masker.mask(b.text);
+      // 2026-09-22 みなみさん事例: 塊には maskBlock（mask だと塊ごと「申込情報を受け取りました」の1行に差し替わっていた）
+      const masked = masker.maskBlock(b.text);
       if (masked === b.text) return b;
       changed = true;
       return { ...b, text: masked };
@@ -5661,8 +5662,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     //   仮名は会話 ID から決まるので、1回目と同じ名前になり前置きのキャッシュも保たれる。
                     const retryMessages = [
                       ...genMessages,
-                      new AIMessage(replyMasker ? replyMasker.mask(draftBody) : draftBody),
-                      new HumanMessage(replyMasker ? replyMasker.mask(feedback) : feedback),
+                      new AIMessage(replyMasker ? replyMasker.maskBlock(draftBody) : draftBody),
+                      new HumanMessage(replyMasker ? replyMasker.maskBlock(feedback) : feedback),
                     ];
                     genIndex = 2;
                     const gen2 = await consumeGeneration(
