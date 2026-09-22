@@ -1,6 +1,6 @@
 // 2026-09-11 竹内方針4・5: 「承知しました」系→「かしこまりました」・約束の「すぐに」除去（banned-phrasing.ts）の回帰テスト。
 // 実行: npx tsx app/lib/__tests__/banned-phrasing.test.ts（vitest 不要の自己完結ハーネス。全 PASS で exit 0）
-import { normalizeShochi, stripHastyAdverb, normalizeBannedPhrasing, stripHeadGreeting, HASTY_ADVERB_TEST_RE } from "../banned-phrasing";
+import { normalizeShochi, stripHastyAdverb, normalizeBannedPhrasing, stripHeadGreeting, HASTY_ADVERB_TEST_RE, normalizeKurai } from "../banned-phrasing";
 import { runDeterministicChecks } from "../final-check";
 
 // ── ミニハーネス ──
@@ -159,5 +159,23 @@ it("先頭の挨拶行を落とす（お世話になっております・夜分�
   expect(stripHeadGreeting(t).count).toBe(0);
 });
 
+// 2026-09-22 竹内「くらいって等使わない」（実送信365日で数量＋くらい 2通・程 92通）
+it("実物「浪速区・西区周辺から7万円くらい・1K以上」→「7万円程」", () => {
+  expect(normalizeKurai("浪速区・西区周辺から7万円くらい・1K以上・6帖以上・浴室乾燥機とコンロ付きのお部屋をピックアップしてお送りさせて頂きます😊！！").text)
+    .toBe("浪速区・西区周辺から7万円程・1K以上・6帖以上・浴室乾燥機とコンロ付きのお部屋をピックアップしてお送りさせて頂きます😊！！");
+});
+it("10万円ぐらいの1LDK → 10万円程の1LDK ／ 徒歩10分くらい → 10分程 ／ 16時くらい → 16時頃", () => {
+  expect(normalizeKurai("10万円ぐらいの1LDK").text).toBe("10万円程の1LDK");
+  expect(normalizeKurai("駅徒歩10分くらいのお部屋").text).toBe("駅徒歩10分程のお部屋");
+  expect(normalizeKurai("16時くらいにお伺いします").text).toBe("16時頃にお伺いします");
+});
+it("数量の無い「どのくらい」「何時くらい」「同じくらい」は触らない（実送信で普通に使う）", () => {
+  for (const t of ["冷蔵庫のサイズはどのくらいでしたら大丈夫そうですか？", "31日は何時くらいのお受け取りをご希望されていますか？", "同じくらい駅に近くて"]) expect(normalizeKurai(t).text).toBe(t);
+});
+it("共通の後処理（normalizeBannedPhrasing）でも置き換わる", () => {
+  const r = normalizeBannedPhrasing("家賃7万くらいでピックアップさせて頂きます！！");
+  expect(r.text).toBe("家賃7万程でピックアップさせて頂きます！！");
+  expect(r.kurai).toBe(1);
+});
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

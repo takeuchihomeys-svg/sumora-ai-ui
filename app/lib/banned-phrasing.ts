@@ -220,12 +220,31 @@ export function keepOneNightGreeting(text: string): { text: string; count: numbe
   return { text: out.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, ""), count };
 }
 
+/**
+ * 「7万円くらい」→「7万円程」（数量の後ろの「くらい／ぐらい」は口語。時刻だけは「16時頃」）。
+ * 2026-09-22 竹内「くらいって等使わない。このような部分のいいまわし改善する」:
+ *   お客様の条件フォーム「7万くらい」を AI がそのまま「7万円くらい」と復唱し、スタッフが「7万円程」に直して送った。
+ *   実送信365日 12,313通で「数量＋くらい／ぐらい」は2通（うち1通は AI の下書きがそのまま送られた物）。
+ *   スタッフの言い方は 以内427・程92・前後45・まで30・程度20（scripts/audit-kurai.ts）。
+ *   数量の無い「どのくらい」「何時くらい」「同じくらい」（質問の中で普通に使う）は触らない。
+ */
+const KURAI_QTY_RE = /([0-9０-９一二三四五六七八九十.．,，]+\s*(?:万円|万|円|千円|帖|畳|分|㎡|平米|件|日|ヶ月|か月|カ月|年|部屋|室))\s*(?:くらい|ぐらい)/g;
+const KURAI_TIME_RE = /([0-9０-９]{1,2}\s*時(?:[0-9０-９]{1,2}分|半)?)\s*(?:くらい|ぐらい)/g;
+export function normalizeKurai(text: string): { text: string; count: number } {
+  let count = 0;
+  const out = text
+    .replace(KURAI_TIME_RE, (_m, q: string) => { count++; return `${q}頃`; })
+    .replace(KURAI_QTY_RE, (_m, q: string) => { count++; return `${q}程`; });
+  return { text: count ? out : text, count };
+}
+
 /** 方針4・5の決定論置換（生成・後処理・修正版・few-shot 注入の共通入口） */
-export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?: boolean } = {}): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number } {
+export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?: boolean } = {}): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number; kurai: number } {
   const n = opts.keepNightGreeting ? keepOneNightGreeting(text) : stripNightGreeting(text);
   const g = dedupeGreetings(n.text);
   const u = normalizeBareUketamawari(g.text);
   const a = normalizeShochi(u.text);
   const b = stripHastyAdverb(a.text);
-  return { text: b.text, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count, greetDup: g.count };
+  const k = normalizeKurai(b.text);
+  return { text: k.text, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count, greetDup: g.count, kurai: k.count };
 }
