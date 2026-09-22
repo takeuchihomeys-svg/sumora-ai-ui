@@ -51,9 +51,11 @@ async function pickConversations(): Promise<Array<{ id: string; status: string |
 }
 
 async function run() {
+  // ⚠ 差し替え（fetch を包む）は **brain-core を読み込む前**に入れる。
+  //   Anthropic SDK は作られた時点の fetch を握るので、後から包んでも効かない（2026-09-23 に空振りで気づいた）
   const { installAltProvider } = await import("../app/lib/llm-alt-provider");
-  const { analyzeConversation } = await import("../app/lib/brain-core");
   const installed = PROVIDER === "deepseek" ? installAltProvider() : false;
+  const { analyzeConversation } = await import("../app/lib/brain-core");
   console.log(`=== ${PROVIDER}${PROVIDER === "deepseek" ? `（${MODEL}・差し替え ${installed ? "有効" : "⚠無効"}）` : ""} で ${N}会話 ===`);
   if (PROVIDER === "deepseek" && !installed) { console.error("差し替えが有効になっていません（DEEPSEEK_API_KEY / LLM_ALT_DEEPSEEK_KEY を確認）"); process.exit(1); }
   const pool = await pickConversations();

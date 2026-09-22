@@ -14,7 +14,7 @@ import {
 } from "@/app/lib/aix-taxonomy";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
-import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";
+import { isPostApplyStatus, willRouteAlt } from "@/app/lib/llm-alt-provider";
 import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_SENT_PLACEHOLDER } from "@/app/lib/pii-pseudonym";
 import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
@@ -2130,7 +2130,9 @@ ${PHASE_TEMPLATE_HINTS}
   // DB由来の動的system部分（promptRules / knowledgePrinciples / boundaryRules）。
   // 各テキストは非空時に先頭 \n 付きで生成されるため trim してから結合する。
   // 学習cronによる日次更新でここだけキャッシュが破棄される（5m TTL）。
-  const dynamicBrainSystem = [promptRulesText, knowledgeText, boundaryText]
+  // 2026-09-23 竹内「プロンプトキャッシュ効くからもっと節約できるのでは？」:
+  //   勝率表（アクション別の成約率）は全会話で同じなのに、毎回の側（キャッシュの外）に置いていた。キャッシュ側へ移す
+  const dynamicBrainSystem = [promptRulesText, knowledgeText, boundaryText, actionWinRateText]
     .map((t) => t.trim())
     .filter(Boolean)
     .join("\n\n");
@@ -2180,11 +2182,13 @@ ${PHASE_TEMPLATE_HINTS}
     : "";
   const stableKnowledgeText = freshStableText;
   const customerSpecificText = isFreshLayer
-    ? `${actionWinRateText}${templatesText}${actionRulesText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+    // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
+    //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
+    ? `${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+    : `${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -2233,7 +2237,7 @@ ${history}`;
     ...(isPostApplyStatus(convStatus) ? { [LLM_POST_APPLY_HEADER]: "1" } : {}),
   };
   try {
-    const callBrain = () => client.messages.create({
+    const callBrain = (headers: Record<string, string> = brainHeaders) => client.messages.create({
       model: BRAIN_MODEL,
       max_tokens: 4000,
       thinking: { type: "disabled" },
@@ -2258,7 +2262,7 @@ ${history}`;
           : []),
       ],
       messages: [{ role: "user", content: userContent }],
-    }, { headers: brainHeaders });
+    }, { headers });
     let response = await callBrain();
 
     // キャッシュHIT/MISS ログ（Vercelログで確認可能・コスト診断用）
@@ -2303,6 +2307,23 @@ ${history}`;
         "content[0]_type:", response.content[0]?.type ?? "undefined",
         "raw:", raw.slice(0, 300));
       return null;
+    }
+
+    // 2026-09-23 影の比較（10会話・同じ入力で Claude と DeepSeek を走らせた）で、DeepSeek が1件だけ
+    //   reply_direction を空で返した（お客様が気に入った物件を送ってきた＝御見積書の場面）。
+    //   返信の方向が空だと下書きの芯が無くなるので、**別クラウドに回した時だけ** Claude で取り直す。
+    //   名札を brain_fresh 以外にすると差し替えの対象から外れる（llm-alt-provider.shouldRouteAlt）。
+    //   歯止めは出口の1か所だけ・条件は「空かどうか」の一本（設計知見「出口の決定論」）。
+    if (
+      isFreshLayer &&
+      !String((parsedAny as Record<string, unknown>).reply_direction ?? "").trim() &&
+      willRouteAlt("brain_fresh", { postApply: isPostApplyStatus(convStatus) })
+    ) {
+      console.warn(JSON.stringify({ tag: "brain:alt-empty-direction", conversationId }));
+      const retry = await callBrain({ ...brainHeaders, [LLM_ACTION_HEADER]: "brain_fresh_claude" });
+      logLlmUsage("brain:alt-empty-direction", retry.usage, { conversationId });
+      const retryParsed = tryParseBrainJson(retry.content.find((c) => c.type === "text")?.text ?? "");
+      if (retryParsed && String(retryParsed.reply_direction ?? "").trim()) parsedAny = retryParsed;
     }
 
     const parsed = parsedAny as {

@@ -6188,3 +6188,64 @@ API が JSON として受け取れず、**その1通が丸ごと消えていた*
 - **プロンプト本文に実在のお客様の呼び名が45行**入っていた（例文・事例名）→「〇〇さん」「この事例」に置き換え
 - 確認: 本名0 ／ 申込フォームの値0 ／ 携帯・メール・郵便番号0 ／ 他のお客様の名前0
 - 残る前提: 会話の中身（物件・条件・お客様の発言）は DeepSeek に渡る（返信生成は既にそうなっている）。申込以降は回さない
+---
+
+## 毎回の分析（fresh）を DeepSeek に回す（竹内「①と②両方行う」2026-09-23）
+
+**何をしたか**
+- ① 毎回の分析だけ DeepSeek へ。`llm-alt-provider.readAltConfig` の**コード既定**で `brain_fresh` を対象にした
+  （Vercel の環境変数は権限が無くて編集できないため）。**止める時は `LLM_ALT_BRAIN=off`**。
+  フル分析（`brain_full`）は Claude のまま。申込以降（DRAFT_SKIP_STATUSES）は今まで通り回さない。
+- ② プロンプトの並べ替え。勝率表をキャッシュ側（`dynamicBrainSystem`）へ移し、会話ごとの材料を
+  「フェーズで決まる物（アクションのルール・テンプレ・状態）→ 会話で当分変わらない物（条件・送付済み物件・内覧・タスク）
+  → 毎回変わる物（時間・AIX履歴・行動台帳・約束・RAG）→ 会話履歴」の順に置いた。
+  ステータス条件つきのルールと「現局面候補」の見出しは毎回の側に残す（ステータスで変わるため）。
+
+**実測（10会話・同じ入力で両方を走らせた）**
+| | action | customer_intent | checkpoint_stage | reply_mode | check_pattern | 所要(中央値) |
+|---|---|---|---|---|---|---|
+| Claude vs DeepSeek v4-pro | 9/10 | 6/10 | 10/10 | 9/10 | 10/10 | 9.9秒 → 6.7秒 |
+| Claude vs DeepSeek flash | 9/10 | 3/10 | 10/10 | 9/10 | 10/10 | 9.9秒 → 4.1秒 |
+
+**ただし「揺れ」の方が大きい**（同じモデルをもう一度走らせた時の自分同士の一致）
+| | action | customer_intent |
+|---|---|---|
+| Claude 1回目 vs 2回目 | 9/10 | 8/10 |
+| DeepSeek v4-pro 1回目 vs 2回目 | 7/10 | 4/10 |
+
+→ Claude との一致率 90% は実力差というより**揺れの幅の中**。DeepSeek は速くて安いが、毎回の判断が安定しない。
+
+**費用（キャッシュが温まった実測: read≈26,500 ／ キャッシュ外≈7,800 ／ 出力≈450）**
+| | 1回 | 月（毎回の分析 約2,800回） |
+|---|---|---|
+| Claude Sonnet | $0.0542 | 約 $151 |
+| DeepSeek v4-pro | $0.0066 | 約 $19 |
+| DeepSeek flash | $0.0015 | 約 $4 |
+
+**目で読んで分かった品質の差（10会話）**
+- 良い: DeepSeek の「返信の方向」は具体的（エリア・家賃・間取り・約束の遅れまで書く）。Claude は抽象的。
+- 悪い1: **言っていない約束を作る**。「家賃交渉・割引余地を管理会社に確認する」「コバルト心斎橋EAST を仮押さえ」など、
+  こちらがしていない約束を方向に書いた（flash・v4-pro とも）。創作の入口になる。
+- 悪い2: **場面の取り違え**。お客様が気に入った物件を送ってきた回（3db9db75）で、Claude は「募集状況を確認し御見積書」
+  （＝竹内さんのルール通り）だが、flash は「重複しない物件をピックアップして送付」と読み違えた。
+- 悪い3: **返信の方向が空で返る**ことがある（v4-pro・10件中1件）。下書きの芯が無くなる。
+  → 歯止めを入れた: 別クラウドに回した時だけ、方向が空なら名札を `brain_fresh_claude` に変えて **Claude で1回取り直す**
+  （`app/lib/brain-core.ts`・ログ `brain:alt-empty-direction`）。名札が `brain_fresh` でなくなるので差し替えの対象から外れる。
+
+**⚠ 比較でやらかした罠（同じ失敗を繰り返さない）**
+最初の比較は**まるごと無効**だった。`installAltProvider()` を `brain-core` の import **後**に呼んでいたため、
+Anthropic SDK が元の `fetch` を握ったままで、DeepSeek に1回も行かずに Claude 同士を比べていた（一致率85〜90%が出て信じかけた）。
+→ **差し替えは SDK を読み込む前に入れる**。確かめ方は「`installed` が出たか」ではなく
+**呼び出しごとの `[llm-alt] {"route":"brain_fresh","provider":"deepseek"}` が出たか**で見る。
+
+**道具**
+- `npx tsx --env-file=.env.local scripts/shadow-brain-deepseek.ts --provider=claude   --n=10`
+- `npx tsx --env-file=.env.local scripts/shadow-brain-deepseek.ts --provider=deepseek --n=10 [--model=deepseek-flash]`
+- `npx tsx --env-file=.env.local scripts/shadow-brain-deepseek.ts --compare`（結果は `.shadow-brain/`・倉庫には上げない）
+- `npx tsx --env-file=.env.local scripts/audit-brain-layer-pii-diff.ts`（層ごとに渡る個人情報の違い）
+
+**個人情報（竹内さんの質問「毎回の分析とフル分析で渡る部分が違う？」への答え）**
+違わない。**どちらの層にも同じ種類が入る**（会話履歴・ご希望条件・お客様の要約・顧客タイプ・セーブポイント・前回の分析）。
+フル分析の方が約7,000字大きいだけ。だから「毎回の分析は限定的だから個人情報が渡らない」は成り立たない。
+渡らないようにしているのは層ではなく**マスク**（`pii-mask`・本名/電話/申込フォームの値/他のお客様の名前）と、
+**申込以降は回さない**歯止めの2つ。

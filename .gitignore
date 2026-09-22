@@ -52,3 +52,6 @@ scripts/_tmp-*.ts
 scratchpad/
 
 scripts/.yuma-backup.json
+
+# 影の比較の実行結果（お客様の会話が入るので倉庫に上げない）
+.shadow-brain/
