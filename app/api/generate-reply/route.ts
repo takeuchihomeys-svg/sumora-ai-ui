@@ -4400,7 +4400,7 @@ export async function POST(req: NextRequest) {
         );
       } else if (signalLevel === "peak") {
         lines.push(
-          `- 🔥 購買シグナル: PEAK（申込直前最強シグナル）— 入居日の具体日付確定・競合申込者の自発確認・3件以上の連続具体質問・申込許可伺い（「申し込んでもいいですか？」「抑えるだけ抑えててもいいんですか？」）・物件名指し確定（「ここがいいです」「○○に決めます」）・金額の復唱（「○○円ですか😭」）・手続き/審査プロセスの具体質問（保証会社・支払い方法・流れ）のいずれかを検出。今回の返信で完全クロージングフローを発動すること: ①申込の目安日を明示（**材料の【⚡ 申込の目安日】の行がある時だけ**・その行の日付をそのまま使う。材料が無ければ期限文は書かない。自分で逆算したり「今週中」「至急」と書いたりしない＝2026-09-18 竹内・ゆーた事例「10月中」を「今週中」と送ってしまった）②申込書類リストをセットで案内 ③WE DO宣言でお部屋確保を約束。【希少性煽り禁止】「埋まってしまいます」「人気物件です」「残り1部屋」「一番手確保」等の煽りは成約データ152件で出現0件＝効果なしのため使わない。urgency_appropriate フラグに関係なく発動（PERM-CLOSING-MOVEIN-DATE-001 と同等のクロージング強度）。※申込許可伺い・物件名指し確定を検出した場合は理由説明・追加提案を一切挟まず「かしこまりました！！○○号室お申込みさせていただきます😊！！」の確定宣言＋申込フォーマット＋本人確認書類（表裏）依頼を即返すこと`
+          `- 🔥 購買シグナル: PEAK（申込直前最強シグナル）— 入居日の具体日付確定・競合申込者の自発確認・3件以上の連続具体質問・申込許可伺い（「申し込んでもいいですか？」「抑えるだけ抑えててもいいんですか？」）・物件名指し確定（「ここがいいです」「○○に決めます」）・金額の復唱（「○○円ですか😭」）・手続き/審査プロセスの具体質問（保証会社・支払い方法・流れ）のいずれかを検出。今回の返信で完全クロージングフローを発動すること: ①申込の目安日を明示（**材料の【⚡ 申込の目安日】の行がある時だけ**・その行の日付をそのまま使う。材料が無ければ期限文は書かない。自分で逆算したり「今週中」「至急」と書いたりしない＝2026-09-18 竹内・この事例「10月中」を「今週中」と送ってしまった）②申込書類リストをセットで案内 ③WE DO宣言でお部屋確保を約束。【希少性煽り禁止】「埋まってしまいます」「人気物件です」「残り1部屋」「一番手確保」等の煽りは成約データ152件で出現0件＝効果なしのため使わない。urgency_appropriate フラグに関係なく発動（PERM-CLOSING-MOVEIN-DATE-001 と同等のクロージング強度）。※申込許可伺い・物件名指し確定を検出した場合は理由説明・追加提案を一切挟まず「かしこまりました！！○○号室お申込みさせていただきます😊！！」の確定宣言＋申込フォーマット＋本人確認書類（表裏）依頼を即返すこと`
         );
       } else if (signalLevel === "strong") {
         lines.push(
@@ -5023,14 +5023,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       greetingDecision,    // G30: 冒頭挨拶の決定論結果（リテラル埋め込み）
       turnPairNote,        // 2026-09-09 Fable5: 往復文脈ブロック
       customerMsgUnits,    // 2026-09-09 Fable5: 通単位の配列（[N通目] 表示は通単位のみ）
-      stanceNote,          // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック
-      hedge,               // 2026-09-09 Fable5 みく事例: budgetInventoryNote の発火ゲート
+      stanceNote,          // 2026-09-09 Fable5 この事例: 【🧭 姿勢】ブロック
+      hedge,               // 2026-09-09 Fable5 この事例: budgetInventoryNote の発火ゲート
       actionLedgerNote,    // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】ブロック
       ledgerAnnotation,    // 2026-09-09 Fable5 行動台帳: 直前発言の宣言／実行注記
       ledgerActive ? ledger.facts.pickupPromisedUnfulfilled : null, // 2026-09-11 統合設計（経路E5）: 約束検出を台帳で絞る
       replyAixPre,         // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: ブレインが決めた AIX（fresh の時だけ）
       bodySafetyPre,       // 同段1: 証拠から引いた本文の安全
-      propertyChoiceAmbiguous, // 2026-09-19 竹内（ゆうこ事例）: 物件名を1つに絞って書かない場面か
+      propertyChoiceAmbiguous, // 2026-09-19 竹内（この事例）: 物件名を1つに絞って書かない場面か
       applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
       ownProperty && ownProperty.ours > 0 ? { note: ownProperty.note, all: ownProperty.all } : null, // 2026-09-22 こちらが送った物件の送り返し
     );
@@ -5568,8 +5568,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
-                  hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
-                  brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 みく事例: 会話スコープ方針・セル衝突（四者同名）
+                  hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
+                  brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突（四者同名）
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳（生成側と同一オブジェクト・四者同名）
                   // 2026-09-11 統合設計（経路F1）: 後処理ゲートの判断（resolvePickupGate 整合後）。生成ノート・後処理・検査が同じ値
                   aixDone: aixDone ? { propertySend: aixDone.propertySend, vacancyCheck: aixDone.vacancyCheck, mgmtCheck: aixDone.mgmtCheck, pickupGateReason: aixDone.pickupGateReason } : null,
@@ -5785,8 +5785,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                     greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                     substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
-                    hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
-                    brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 みく事例: 会話スコープ方針・セル衝突
+                    hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
+                    brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突
                     ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   };
                   const nameRes = enforceCustomerName(draftBody, { customerName, lineDisplayName });
@@ -5943,8 +5943,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
-                  hedge, closerVerdict,                                            // 2026-09-09 みく事例: ヘッジゲート・締めポリシー（四者同名）
-                  brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 みく事例: 会話スコープ方針・セル衝突
+                  hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
+                  brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   ngProperties: brainFreshForMessage
                     ? (brainMeta?.property_search_params?.ng_properties ?? []).filter((p) => p?.property_name).map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)

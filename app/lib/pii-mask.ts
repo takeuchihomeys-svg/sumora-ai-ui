@@ -61,6 +61,12 @@ const APP_LABELS: string[] = [
  * ラベル + コロン + 値 のパターン。
  * 値は改行・読点・句点・区切り記号の手前まで。
  */
+/** ラベル + 空白 + 値（申込フォームの実物。コロンが無い形） */
+export const APP_LABEL_SPACE_REGEX = new RegExp(
+  `(${APP_LABELS.join('|')})((?:[、,][^\\n：:]{0,8})?[ 　]+)(?![（(])([^\\s、。｜|】\\]\\n][^\\n、。｜|】\\]]*)`,
+  'g'
+);
+
 const APP_LABEL_REGEX = new RegExp(
   `(${APP_LABELS.join('|')})([:：]\\s*)([^\\n、。｜|】\\]]+)`,
   'g'
@@ -162,6 +168,9 @@ export function maskPII(text: string, knownNames?: (string | null | undefined)[]
 
   // --- 2. 申込情報ラベルの値をマスク（ラベルは残す） ---
   result = result.replace(APP_LABEL_REGEX, '$1$2[回答済み・非表示]');
+  // 2026-09-23 竹内「個人情報を deepseek 側が読み取ること」: 申込フォームの実物はコロンが無い（「・氏名、フリガナ 中村七海」「生年月日 2001.07.23」）。
+  //   ラベルの後ろが空白区切りの時も値を伏せる（ラベルだけの行＝空欄のフォーマットは触らない）
+  result = result.replace(APP_LABEL_SPACE_REGEX, '$1$2[回答済み・非表示]');
 
   // --- 3. メールアドレス ---
   result = result.replace(EMAIL_REGEX, '[メールアドレス非表示]');

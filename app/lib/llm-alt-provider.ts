@@ -138,7 +138,10 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
  */
 export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string | null): boolean {
   if (!cfg || !routeName) return false;
-  return cfg.actions.has(routeName);
+  if (cfg.actions.has(routeName)) return true;
+  // 2026-09-23: ブレインは層で名札を分けた（brain_fresh / brain_full）。設定に古い "brain" と書いてあれば両方を指す
+  if (routeName.startsWith("brain_") && cfg.actions.has("brain")) return true;
+  return false;
 }
 
 /**

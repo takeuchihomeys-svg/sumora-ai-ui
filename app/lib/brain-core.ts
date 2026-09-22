@@ -13,6 +13,10 @@ import {
   normalizeAixActionKey,
 } from "@/app/lib/aix-taxonomy";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
+import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
+import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";
+import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_SENT_PLACEHOLDER } from "@/app/lib/pii-pseudonym";
+import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
@@ -132,7 +136,7 @@ export type SuggestedAixMeta = {
   reply_mode?: "aix" | "auto_reply";  // 'aix'=スタッフがAIXで手動対応 / 'auto_reply'=AI自動返信OK
   // 2択UIフラグ: proposing フェーズで条件トレードオフ質問が来た場合に「AIXで物件追加オススメ」か「テキスト返信」かをスタッフが選ぶ
   two_choice_mode?: boolean;           // 2択UI表示フラグ（物件提案中フェーズで条件トレードオフ質問検出時）
-  alt_actions?: string[];              // 2つ目以降の AIX（action の横に並べて出す。2026-09-15 朱莉事例: 連絡待ちの物件ピックアップ＋物件オススメ）
+  alt_actions?: string[];              // 2つ目以降の AIX（action の横に並べて出す。2026-09-15 この事例: 連絡待ちの物件ピックアップ＋物件オススメ）
   reply_direction_label?: string;      // 返信方向の要約ラベル（10字以内・two_choice_mode=true時のみ設定。例: 「条件説明」「不安解消」「相場説明」）
   // Chrome拡張フィードバックループ用: 拡張が brain/list API 経由で取得し検索フォームに自動入力する
   property_search_params?: {
@@ -327,10 +331,10 @@ const AIX_CAPABILITY_MAP = `
   【重要例外】顧客が同時に路線・駅名・家賃上限・徒歩分数・間取り・広さ等の新しい検索条件を示している場合は、気に入り表現があっても estimate_sheet を選ばない → property_send が正しい（条件変更が主題のサイン）。「家賃は〜万まで」という家賃予算の表明は「初期費用・総額の話題」ではない（家賃予算 ≠ 初期費用）。「○○がいい感じ」+「環状線のみで調べてほしい」「9万以下で探してほしい」等の組み合わせは常に property_send。
 - acknowledge_check: 顧客が物件URL・物件名を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと ※スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて結果をまだ報告していない時は acknowledge_check ではなく property_check_result（その後のお客様の返事が了承・スタンプだけでも同じ。2026-09-12 竹内・Sさん事例。確認の約束の後に押された AIX に acknowledge_check は0件）
 - 【AIX なし】顧客が「何件か気になる物件送ってもいいですか」「送りますね」等、これから自分で物件を送る予告をしただけの時は、どの AIX も選ばない（aix:null）。物件が届いてから募集状況確認・御見積書（acknowledge_check / estimate_sheet）。返信は「いつでもお送りください＋お送り頂き次第募集状況確認し御見積書とあわせてご連絡」（2026-09-12 竹内）
-- 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・あや事例）
-- estimate_sheet（見積書を送った後の総額・追加分の確認）: 顧客が「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」「追加でかかる費用はありますか？」と総額や追加分（ペット敷金・火災保険等）を確かめた時は、追加分を反映した御見積書を送り直して見て確認して頂く（estimate_sheet）。見積書の再送を避けない。本文で総額を計算・断言しない（「〜円でお間違いございません」は書かない）（2026-09-12 竹内・あや事例）
-- cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・あや事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない
-- cost_breakdown: 物件を送った後・御見積書を送った後に、顧客が初期費用の中身を聞いた時（「家賃だけ払ったら住めるんですか？」「家賃と管理費を先に振り込んだら住めるってことですか？」「初期費用に何が含まれますか？」「火災保険は初期費用とは別ですか？」「鍵交換代とかも上乗せされますよね」）。本文で「敷金礼金等含む総額となり家賃のみでは入居出来ない」等と中身を説明しない（その物件の敷金・礼金は0円かもしれない＝御見積書を見て答える）（2026-09-15 竹内・ゆうこ事例）。境界: 金額だけの質問・見積の依頼（「いくらですか」「内訳を送ってください」）は estimate_sheet／見積書の後の総額・追加分の確認（「〜円になる感じですか？」）は estimate_sheet／安さへの不安は cost_explain／物件が1件も無い時の一般的な質問は AIX なし
+- 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・この事例）
+- estimate_sheet（見積書を送った後の総額・追加分の確認）: 顧客が「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」「追加でかかる費用はありますか？」と総額や追加分（ペット敷金・火災保険等）を確かめた時は、追加分を反映した御見積書を送り直して見て確認して頂く（estimate_sheet）。見積書の再送を避けない。本文で総額を計算・断言しない（「〜円でお間違いございません」は書かない）（2026-09-12 竹内・この事例）
+- cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・この事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない
+- cost_breakdown: 物件を送った後・御見積書を送った後に、顧客が初期費用の中身を聞いた時（「家賃だけ払ったら住めるんですか？」「家賃と管理費を先に振り込んだら住めるってことですか？」「初期費用に何が含まれますか？」「火災保険は初期費用とは別ですか？」「鍵交換代とかも上乗せされますよね」）。本文で「敷金礼金等含む総額となり家賃のみでは入居出来ない」等と中身を説明しない（その物件の敷金・礼金は0円かもしれない＝御見積書を見て答える）（2026-09-15 竹内・この事例）。境界: 金額だけの質問・見積の依頼（「いくらですか」「内訳を送ってください」）は estimate_sheet／見積書の後の総額・追加分の確認（「〜円になる感じですか？」）は estimate_sheet／安さへの不安は cost_explain／物件が1件も無い時の一般的な質問は AIX なし
 - phone_call: 顧客がこちらと電話で話したい時（「ご相談があるのですがお電話では無理でしょうか？」「電話いける時間ありますか？」「1度お電話いただけませんか？」「物件の事で聞きたい事がありますのでお手隙の際電話いけますか？」）。他の話題が同じ発言にあっても電話の依頼を先に受ける。本文で電話番号・「こちらからお電話します」「〇時にお電話します」を作らない（2026-09-15 竹内・H 事例）。境界: 電話番号の質問・管理会社等から電話があった報告・他所への電話の相談・「電話は大丈夫です」は phone_call ではない
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
@@ -463,8 +467,10 @@ const PHASE_TEMPLATE_HINTS = `
     このテンプレの中核（本人確認書類の写真依頼）が削除される。文体の好みではなくコード上必須の回避策。
 
 【template_hint に選んではいけないテンプレート】
-- 本文に顧客実名・物件名が焼き込まれている10件（他顧客への誤送信事故になるためDBクリーンアップ完了まで禁止）:
-  「【新着】」（🐈‍⬛さん）/ YUMAさん / mai.tさん / Mさん / 𝚂𝚊𝚗𝚊.さん / ニアさん / 夏奈さん（レジュールアッシュ梅田AXIA）/ サムティ町合能越寺803号室 / コーポまえだ303号室 / アドバンス難波ラシュレ を含むもの
+- 本文に**特定のお客様の呼び名（「〇〇さん」の〇〇が固有名）や、特定の物件名・号室**が焼き込まれているテンプレート
+  （他のお客様への誤送信事故になるため、DB のクリーンアップが済むまで選ばない。上のテンプレート一覧の本文を見て判断する）
+  ※ 2026-09-23 竹内「個人情報を deepseek 側が読み取ること」: ここに実在のお客様の表示名を10件並べていたが、
+  　 プロンプトに個人情報を置かない形（見分け方だけを書く）に変えた
 - 文体が別人格のもの（✅🙏を多用する箇条書き調）
 ※ テンプレート選択の最優先指標は won_count（成約会話で実際に使われた回数。analyze-applying が closed_won 会話の自発送信とテンプレ本文を突き合わせて自動集計）。won_count が高いものを最優先する。
 ※ use_count が 0 であることは除外理由にならない。use_count はモーダル利用率であって成約寄与ではない。成約会話で実際に使われた「物件ピックアップ紹介（後続）」「駅周辺物件ピックアップ（後続）」「（2番手・申込）」はいずれも use_count 0（モーダルを通さず手打ちで送られたため計上されていないだけ）。逆に use_count 96 の「1件特にオススメ」は成約会話の自発送信で一度も原文送信されていない。
@@ -1235,7 +1241,13 @@ export async function analyzeConversation(
       const quoteTag = !m.quoted_message_id ? ""
         : quotedLabel ? `（引用返信→スタッフが送った物件資料「${quotedLabel}」。「こちら」「〇階」はこの物件（同じ建物）の話）`
         : `（引用返信${quoted?.text ? `→「${quoted.text.replace(/\n/g, " ").slice(0, 30)}」` : ""}）`;
-      return `[${senderLabel} ${dateLabel}] ${quoteTag}${m.text ?? "（画像/添付）"}${imageTag}`;
+      // 2026-09-23 竹内「問題は個人情報を deepseek 側が読み取ること」: 申込フォームの記入は中身を渡さない（分析に要るのは「届いた」事実だけ）。
+      //   実測: DeepSeek に回りうる会話の4.4%（137件中6件）で直近15通に記入済みフォームが入っていた（scripts/audit-form-in-window.ts）。
+      //   Claude に送る分も同じにする（個人情報は少ないほど良い）
+      const bodyText = isApplicationPayload(m.text ?? "")
+        ? (m.sender === "staff" ? APPLICATION_FORMAT_SENT_PLACEHOLDER : APPLICATION_FORM_PLACEHOLDER)
+        : (m.text ?? "（画像/添付）");
+      return `[${senderLabel} ${dateLabel}] ${quoteTag}${bodyText}${imageTag}`;
     })
     .join("\n");
 
@@ -2190,7 +2202,15 @@ ${history}`;
     },
     userTotal: customerSpecificText.length, staticSystem: staticBrainSystem.length, dynamicSystem: dynamicBrainSystem?.length ?? 0,
   }));
-  const maskedStableText = maskPII(stableKnowledgeText, [opts?.customerName]);
+  // 2026-09-23 竹内「問題は個人情報を deepseek 側が読み取ること」:
+  //   ブレインの材料には**他のお客様の会話（手本）**が入る。旧: この会話のお客様の名前しか伏せていなかったので、
+  //   実測で8会話すべてに他のお客様の表示名（mai.t・じゅにあ 等）が残っていた（scripts/audit-brain-pii-leak.ts）。
+  //   返信生成と同じ「全顧客の名前」で伏せる。短い名前・記号だけの表示名は本文を壊すので外す（3文字以上・文字を含む物だけ）
+  const knownNamesForMask = (await loadKnownCustomerNames().catch(() => [] as string[]))
+    .map((s) => (s ?? "").trim())
+    .filter((s) => s.length >= 3 && /[一-龯ぁ-んァ-ヶA-Za-z]/.test(s));
+  const maskNames = [opts?.customerName, ...knownNamesForMask];
+  const maskedStableText = maskPII(stableKnowledgeText, maskNames);
   const userContent = [
     // 空のtextブロックはAPIエラーになるため、安定知識が空の場合はブロックごと省略
     ...(maskedStableText.trim()
@@ -2200,9 +2220,18 @@ ${history}`;
           cache_control: isFreshLayer ? { type: "ephemeral" as const } : { type: "ephemeral" as const, ttl: "1h" as const },
         }]
       : []),
-    { type: "text" as const, text: maskPII(customerSpecificText, [opts?.customerName]) },
+    { type: "text" as const, text: maskPII(customerSpecificText, maskNames) },
   ];
 
+  // 2026-09-23 竹内「ブレインのフル分析はクロードやけど、毎回の限定的な分析の部分は DeepSeek が行う形は出来るのか？」:
+  //   経路の名札を層で分ける（brain_fresh＝毎回の分析 ／ brain_full＝会話全体の分析）。
+  //   これで LLM_ALT_ACTIONS に brain_fresh だけ書けば、毎回の分析だけを別クラウドに回せる（全体の分析は Claude のまま）。
+  //   申込以降の会話は回さない（竹内「申込以降はいれない」）。会話 ID も残して、どちらのモデルが判断したか後から追えるようにする
+  const brainHeaders: Record<string, string> = {
+    [LLM_ACTION_HEADER]: isFreshLayer ? "brain_fresh" : "brain_full",
+    ...(conversationId ? { [LLM_CONVERSATION_HEADER]: conversationId } : {}),
+    ...(isPostApplyStatus(convStatus) ? { [LLM_POST_APPLY_HEADER]: "1" } : {}),
+  };
   try {
     const callBrain = () => client.messages.create({
       model: BRAIN_MODEL,
@@ -2229,7 +2258,7 @@ ${history}`;
           : []),
       ],
       messages: [{ role: "user", content: userContent }],
-    });
+    }, { headers: brainHeaders });
     let response = await callBrain();
 
     // キャッシュHIT/MISS ログ（Vercelログで確認可能・コスト診断用）
