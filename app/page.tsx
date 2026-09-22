@@ -13,6 +13,7 @@ import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraft
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
+import { sentByStaffToday } from "./lib/daily-greeting";
 import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
@@ -10465,17 +10466,9 @@ export default function Home() {
           recentMessages={(selectedConversation.messages || []).slice(-25).map((m: Message) => ({
             sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, rawCreatedAt: m.rawCreatedAt, isAix: m.isAix || false,
           }))}
-          staffMessagedToday={(() => {
-            const msgs = selectedConversation.messages || [];
-            // AIX生成メッセージ（案A）と画像のみメッセージ（案B）は除外して判定
-            const lastStaff = [...msgs].reverse().find((m: Message) =>
-              m.sender === "staff" && !m.isAix && m.text !== "[画像]"
-            );
-            if (!lastStaff?.rawCreatedAt) return false;
-            const d = new Date(new Date(lastStaff.rawCreatedAt).getTime() + 9 * 3600 * 1000);
-            const t = new Date(Date.now() + 9 * 3600 * 1000);
-            return d.getUTCFullYear() === t.getUTCFullYear() && d.getUTCMonth() === t.getUTCMonth() && d.getUTCDate() === t.getUTCDate();
-          })()}
+          // 2026-09-22 竹内「今日お客さんとやりとりしているのに AIX でお世話になっておりますが出る」: 旧は AIX の送信と画像を数えず、
+          //   今日のやり取りが AIX だけだと「今日まだ送っていない」になっていた。AIX 本体・テンプレート生成と同じ関数で見る
+          staffMessagedToday={sentByStaffToday((selectedConversation.messages || []).map((m: Message) => ({ sender: m.sender, rawCreatedAt: m.rawCreatedAt ?? null })))}
           pendingScheduledMessages={scheduledMsgsList.filter(m => m.text)}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
           memo={memos[selectedConversation.id] || ""}

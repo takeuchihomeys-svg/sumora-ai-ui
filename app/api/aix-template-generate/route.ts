@@ -63,6 +63,8 @@ import { stripUnfoundedSelectionClaim, SELECTION_CLAIM_NOTE } from "@/app/lib/se
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
 // AIX-META（suggested_aix_meta）の型は brain-core を単一ソースとして参照（type-only importのためランタイム依存なし）
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
+import { applyDailyGreeting } from "@/app/lib/daily-greeting";
+import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
 
 export const maxDuration = 60;
 
@@ -553,6 +555,9 @@ export async function POST(req: NextRequest) {
     // 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」: 直前に送った1通目
     sentMessage,
   } = body;
+
+  // 2026-09-22 竹内「今日初めてじゃないときはお世話になっておりますはつかわない」: 画面の判定（AIX テンプレートは false 固定だった）に頼らず DB でも見る
+  const staffSentToday = !!staffMessagedToday || await staffSentTodayFromDb(conversationId as string | undefined);
 
   if (!actionType && !actionCategory) {
     return NextResponse.json({ ok: false, error: "actionType or actionCategory is required" }, { status: 400 });
@@ -1409,7 +1414,7 @@ export async function POST(req: NextRequest) {
     resolvedCustomerConditions || brainMeta?.property_search_params
       ? `※顧客希望条件に合致するポイントを訴求する際は「（物件の具体的特徴）なので条件に合います」という形で物件のデータを根拠として示すこと。条件名だけを羅列しない。\n※訴求は【文章構造の原則】の段落構成に沿って、設備・立地・費用を別々の段落に分けて書くこと（1文に詰め込まない）。特に費用制約（家賃上限・初期費用を抑えたい）がある場合、礼金0円・フリーレント等の費用面メリットが会話/AIXメッセージに記載されていれば必ず1つ言及すること。`
       : "",
-    staffMessagedToday ? `・本日すでにスタッフが送信済み（挨拶行なし。名前行のみ「〇〇さん」または本題から始める。「お世話になっております」の再使用・「お待たせ致しました」は禁止）` : "",
+    staffSentToday ? `・本日すでにスタッフが送信済み（挨拶行なし。名前行のみ「〇〇さん」または本題から始める。「お世話になっております」の再使用・「お待たせ致しました」は禁止）` : "",
     noEmoji ? `・絵文字禁止モード: 絵文字を一切使わないこと` : "",
     "",
     pendingSection
@@ -1732,6 +1737,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // 2026-09-22 竹内: 今日すでにこちらが送っていれば、冒頭の「お世話になっております」を落とす（AIX 本体の finalize と同じ関数）
+    if (staffSentToday) {
+      const daily = applyDailyGreeting(text, { staffSentToday: true, greetingPhrase: "", name: "" });
+      if (daily.action === "removed") {
+        console.log(JSON.stringify({ tag: "aix-template-generate:daily-greeting-removed", actionType, conversationId }));
+        text = daily.text;
+      }
+    }
     // 2026-09-20 竹内「生成される文が長すぎる」: 長さを**記録する**（切らない）。
     //   出口で切ると文の途中で終わって壊れるので、ここでは測ってログに残すだけ。
     //   指示（buildLengthNote）が効いているかを後から scripts/audit-template-length.ts で追える。

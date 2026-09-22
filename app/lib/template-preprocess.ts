@@ -65,9 +65,10 @@ export function applyVacatingDateToTemplate(templateText: string, vacatingDate: 
  * G32（2026-09-09 Fable5 じゅにあ事例・竹内方針）: 「お待たせ致しました」は返信から全廃（final-check BANNED_WORD）。
  */
 export function selectGreeting(staffMessagedToday: boolean, jstHour: number): string {
-  return staffMessagedToday
-    ? (jstHour >= 21 ? "夜分遅くに失礼致します！！" : "")
-    : "お世話になっております！！";
+  // 2026-09-22 竹内「今日初めてじゃないときはお世話になっておりますはつかわない」: 2通目以降は夜でも挨拶を付けない
+  //   （夜分遅くには「夜にこちらから届ける、その日はじめての連絡」だけ＝AIX の buildGreeting と同じ。旧: 21時以降の2通目以降に夜分を付けていた）
+  void jstHour;
+  return staffMessagedToday ? "" : "お世話になっております！！";
 }
 
 /**

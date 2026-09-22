@@ -15,6 +15,8 @@ import { stripEstimateAmountBlock, sanitizeCoverLetter } from "@/app/lib/estimat
 // 2026-09-20 竹内「物件オススメ置き換える」: 画像つきの呼び出しを種類ごとに DeepSeek へ回す
 import { shouldRouteVisionAlt, callVisionAlt } from "@/app/lib/vision-alt-provider";
 import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
+import { sentByStaffToday, applyDailyGreeting } from "@/app/lib/daily-greeting";
+import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
 // 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
 import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "@/app/lib/room-choices";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
@@ -1456,9 +1458,12 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // ④修正: AIXで返信する運用ではAIX送信もスタッフ送信として扱う（is_aix_generated の除外を削除）。
     //   除外すると「今日AIXで挨拶済みなのに再度お世話になっております」「AIX返信済みなのに初回挨拶」になるため
     const lastStaffMsg = [...recentMsgArray].reverse().find(m => m.sender === "staff");
-    const staffMessagedToday = !!lastStaffMsg &&
-      !!lastStaffMsg.rawCreatedAt &&
-      toJSTDate(lastStaffMsg.rawCreatedAt) === todayJST;
+    // 2026-09-22 竹内「今日お客さんとやりとりしているのに AIX で出てしまう。今日初めてじゃないときはお世話になっておりますはつかわない」:
+    //   画面から渡された一覧だけでは、1分前に手打ちで送った通がまだ入っていないことがある（08:35 手打ち → 08:36 AIX で付いた実例）。
+    //   一覧（sentByStaffToday・画面と同じ関数）と DB の両方で見て、どちらかで送っていれば「今日すでに送った」
+    const staffMessagedToday = (!!lastStaffMsg && !!lastStaffMsg.rawCreatedAt && toJSTDate(lastStaffMsg.rawCreatedAt) === todayJST)
+      || sentByStaffToday(recentMsgArray)
+      || await staffSentTodayFromDb(conversationId);
     // 真の初回判定: スタッフ返信（AIX送信含む）が一度もない = 初めてのスタッフ返信
     const isFirstEverReply = !(recentMsgArray as Array<{ sender?: string; text?: string }>).some(
       m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
@@ -1847,6 +1852,16 @@ async function handleAction(request: NextRequest): Promise<Response> {
           console.log(JSON.stringify({ tag: "aix:vacating-notice", action: currentAction, conversationId, applied: fixedVac.applied }));
           sendCleaned = fixedVac.text;
         }
+      }
+      // 2026-09-22 竹内「今日初めてのLINEだったらお世話になっておりますをつける／今日初めてじゃないときは使わない」:
+      //   AIX の全経路（LLM が書く通・固定文・物件なかったの固定文）がここを通るので、その日の挨拶は1か所で決める（daily-greeting）。
+      //   消す方は全アクション。付ける方はお客様に物件・確認結果を届ける通だけ（代理契約の返答は実送信で挨拶なし・管理会社宛ては付けない）
+      const addGreetingHere = (currentAction === "property_send" || currentAction === "property_recommendation" || currentAction === "property_check_result")
+        && check_pattern !== "mgmt_proxy";
+      const daily = applyDailyGreeting(sendCleaned, { staffSentToday: staffMessagedToday, greetingPhrase: addGreetingHere ? greetingPhrase : "", name: familyName ? name : "" });
+      if (daily.action !== "none") {
+        console.log(JSON.stringify({ tag: "aix:daily-greeting", action: currentAction, conversationId, result: daily.action, staffMessagedToday }));
+        sendCleaned = daily.text;
       }
       // AIが内部メモを出力した場合、顧客向けメッセージと分離
       return extractNotice(sendCleaned, familyName || rawName);
