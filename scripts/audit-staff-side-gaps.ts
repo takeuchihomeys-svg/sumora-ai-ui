@@ -18,15 +18,30 @@ const sb = createClient(
 type Msg = { conversation_id: string; sender: string | null; text: string | null; created_at: string };
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
-/** 繰り返しを数える対象の宣言（お客様に「します」と言った物だけ。相槌は数えない） */
+/**
+ * 繰り返しを数える対象の「これからする」の宣言。
+ *
+ * ⚠ 2026-09-23 に一度雑に測って 639件と出したが、**連投の2通目**（同じ話を続けて送っただけ）と
+ *   **物件送付の本文**まで数えていた。実物を読んで作り直した線:
+ *   ①こちらの発言どうしの間が30分以上（連投を外す）
+ *   ②間にお客様の発言が1通以上あり、それが依頼・質問でない（催促されていない）
+ *   ③どちらも未来形の宣言（「〜させて頂きます」「〜いたします」）
+ *   ④2通目に新しい具体（日付・時刻・物件名・金額）が足されていない
+ *     （設計知見「良い言い直しは固有の1つを足している」）
+ */
 const DECLARATIONS: Array<[string, RegExp]> = [
-  ["ピックアップ宣言", /(ピックアップ|お探し|探させて|お送りさせて|ご紹介させて)(させて)?(頂き|いただき)/],
-  ["募集状況の確認", /(募集状況|空き状況|お部屋の状況)(を)?(含め)?.{0,6}(確認|お調べ)/],
-  ["御見積書を作る", /(見積書|御見積)(を)?.{0,8}(作成|お作り|お送り)/],
-  ["内覧のご案内", /(ご案内|内覧|内見).{0,10}(させて(頂き|いただき)|可能)/],
+  ["ピックアップ宣言", /(ピックアップ|お探し|探させて)[^。\n]{0,12}(させて(頂き|いただき)ます|いたします|します)/],
+  ["募集状況の確認", /(募集状況|空き状況|お部屋の状況)[^。\n]{0,8}(確認|お調べ)[^。\n]{0,8}(させて(頂き|いただき)ます|いたします|します)/],
+  ["御見積書を作る", /(見積書|御見積)[^。\n]{0,8}(作成|お作り|お送り)[^。\n]{0,8}(させて(頂き|いただき)ます|いたします|します)/],
+  ["内覧のご案内", /(ご案内|内覧|内見)[^。\n]{0,8}(させて(頂き|いただき)ます|いたします)/],
   ["ご連絡します", /(ご連絡|お知らせ)(させて)?(頂き|いただき)ます/],
-  ["いつでもご連絡ください", /(いつでも|何時でも|お気軽に)(お気軽に)?(ご連絡|お知らせ)(ください|下さい)/],
 ];
+/** お客様が催促・依頼・質問をした（＝言い直して当然の場面。数えない） */
+const CUSTOMER_ASKED = /(お願い|ください|下さい|探して|送って|見たい|見れ|希望|どう|ですか|ますか|でしょうか|\?|？)/;
+/** 2通目に足された「固有の1つ」（これがあれば正しい言い直し） */
+const FRESH_BIT = /\d{1,2}\s*[\/月]\s*\d{1,2}|\d{1,2}\s*[:：]\s*\d{2}|\d{1,2}時|[０-９\d,]{3,}\s*円|[万]円|[ァ-ヶA-Za-z][ァ-ヶーA-Za-z・]{3,}\s*\d{2,4}号室/;
+/** 連投とみなす間隔 */
+const BURST_MS = 30 * 60_000;
 
 async function main() {
   const days = Number(process.env.DAYS ?? 60);
@@ -77,35 +92,40 @@ async function main() {
 
   // ③ 同じことを何度も言っているか（お客様の新しい依頼が無いのに、同じ宣言を繰り返した回）
   console.log(`\n③ 同じ宣言の繰り返し（こちらの発言の間にお客様の依頼が無い＝催促されていないのに言い直した）`);
-  const repeats = new Map<string, Array<{ conv: string; a: string; b: string }>>();
+  const repeats = new Map<string, Array<{ conv: string; a: string; b: string; fresh: boolean }>>();
   for (const [conv, list] of byConv) {
-    const staffSeq = list.filter((m) => (m.text ?? "").trim() && m.text !== "[画像]");
-    for (let i = 0; i < staffSeq.length; i++) {
-      if (staffSeq[i].sender === "customer") continue;
+    const seq = list.filter((m) => (m.text ?? "").trim() && m.text !== "[画像]");
+    for (let i = 0; i < seq.length; i++) {
+      if (seq[i].sender === "customer") continue;
       for (const [label, re] of DECLARATIONS) {
-        if (!re.test(staffSeq[i].text ?? "")) continue;
-        // 次に同じ宣言を出すまでに、お客様が「お願い・依頼」をしていないか見る
-        for (let j = i + 1; j < staffSeq.length; j++) {
-          const t = staffSeq[j].text ?? "";
-          if (staffSeq[j].sender === "customer") {
-            if (/(お願い|ください|下さい|探して|送って|見たい|希望|どう|ですか|\?|？)/.test(t)) { j = staffSeq.length; break; }
-            continue;
+        if (!re.test(seq[i].text ?? "")) continue;
+        let sawCustomer = false;
+        for (let j = i + 1; j < seq.length; j++) {
+          const t = seq[j].text ?? "";
+          if (seq[j].sender === "customer") {
+            if (CUSTOMER_ASKED.test(t)) { j = seq.length; break; }   // 催促された＝言い直して当然
+            sawCustomer = true; continue;
           }
-          if (re.test(t)) {
-            if (!repeats.has(label)) repeats.set(label, []);
-            repeats.get(label)!.push({ conv: conv.slice(0, 8), a: norm(staffSeq[i].text ?? "").slice(0, 46), b: norm(t).slice(0, 46) });
-            break;
-          }
+          if (!re.test(t)) continue;
+          // ①連投を外す ②間にお客様の発言がある ③2通目に新しい具体が無い、の3つが揃った物だけ数える
+          const gap = Date.parse(seq[j].created_at) - Date.parse(seq[i].created_at);
+          if (!sawCustomer || gap < BURST_MS) { break; }
+          const fresh = FRESH_BIT.test(t);
+          if (!repeats.has(label)) repeats.set(label, []);
+          repeats.get(label)!.push({ conv: conv.slice(0, 8), a: norm(seq[i].text ?? "").slice(0, 46), b: norm(t).slice(0, 46), fresh });
+          break;
         }
       }
     }
   }
-  const totalRepeat = [...repeats.values()].reduce((a, b) => a + b.length, 0);
-  console.log(`   合計 ${totalRepeat}件`);
-  for (const [label, v] of [...repeats].sort((a, b) => b[1].length - a[1].length)) {
-    console.log(`   - ${label}: ${v.length}件`);
-    for (const s of v.slice(0, 2)) console.log(`       ${s.conv}  1回目「${s.a}」\n                 2回目「${s.b}」`);
+  const all = [...repeats.values()].flat();
+  const bad = all.filter((x) => !x.fresh);
+  console.log(`   合計 ${all.length}件（うち新しい具体が足されている ${all.length - bad.length}件＝正しい言い直し ／ **具体なしの言い直し ${bad.length}件**）`);
+  for (const [label, v] of [...repeats].sort((a, b) => b[1].filter((x) => !x.fresh).length - a[1].filter((x) => !x.fresh).length)) {
+    const b = v.filter((x) => !x.fresh);
+    console.log(`   - ${label}: 具体なし ${b.length}件 ／ 具体あり ${v.length - b.length}件`);
+    for (const s of b.slice(0, 2)) console.log(`       ${s.conv}  1回目「${s.a}」\n                 2回目「${s.b}」`);
   }
-  console.log(`\n※ ③は「催促されていないのに言い直した」の数。全部が悪いわけではない（間が空けば言い直すのは自然）`);
+  console.log(`\n※ 数えたのは「30分以上あいて・間にお客様の発言があり・催促されておらず・新しい具体も足していない」言い直しだけ`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

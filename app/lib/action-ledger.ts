@@ -918,7 +918,9 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
   const shown = nonMedia.slice(-(opts.maxEntries ?? 6));
   const lines: string[] = ['【📒 我々の行動台帳 — 確定事実（履歴の推測より上位・往復文脈の前提）】'];
   // 窓から落ちた種類の最後の1回（＝「もう言った」が消えるのを防ぐ。droppedKindDigest の説明を見る）
-  const digest = droppedKindDigest(nonMedia, shown);
+  // A/B と巻き戻しのため環境変数で切れるようにする（既定 on。止める時は LEDGER_DIGEST=off）
+  const digestOff = (process.env.LEDGER_DIGEST ?? 'on').trim().toLowerCase() === 'off';
+  const digest = digestOff ? [] : droppedKindDigest(nonMedia, shown);
   if (digest.length) {
     lines.push('これより前にお伝えしたこと（種類ごとに最後の1回だけ・古→新）:');
     const now = opts.now ?? Date.now();
