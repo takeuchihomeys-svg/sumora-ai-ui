@@ -197,7 +197,7 @@ import {
   requiresWaitingCommitment,
   // 2026-09-14 竹内（Hina 事例）: 画像の読み取り文はお客様の発言ではない（意図の判定から外す・プロンプトで見出しを付ける）
   IMAGE_TEXT_LABEL, isImageTextUnit, customerOwnWords,
-  SEE_MORE_LISTINGS_PREFIX,
+  SEE_MORE_LISTINGS_PREFIX, customerAsksMoreListings,
 } from "@/app/lib/reply-context";
 import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { ensureWaitingCommitment, contactDateLabel } from "@/app/lib/waiting-commitment";
@@ -1479,9 +1479,11 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     ? ownPropertyHead
     : ownPropertyHead + (customerSharedProperty(customerMessage)
     ? `\n\n【🏠 お客様が送った物件の呼び方${ownPropertyHead ? "（こちらの記録に無い物件）" : ""}】お客様が送ってきた物件は「お送り頂きました物件（お部屋）」と呼ぶ（例:「お送り頂きました物件の募集状況確認させて頂きます😊！！」）。物件名・号室・駅名・徒歩分・家賃・間取りで呼ばない（×「十三徒歩7分の物件」×「4万円の1Rのお部屋」）。`
-    : ""));
-  // 2026-09-22 𝓡さん事例: 「もう少し見てみたい」→ 引き続きのご紹介の材料も試したが、ブレインが見積書（1点に収束）を選ぶ回と逆の指示になるので入れない
-  //   （同じ返信に逆の指示を出さない。見積か引き続きのご紹介かはブレインの判断）
+    : "")) + (customerAsksMoreListings(customerMessage)
+    // 2026-09-22 竹内（𝓡さん事例）「引き続き新着物件が優先」: 実送信 6/6 が引き続きのご紹介・見積書 0/6。
+    //   見積（estimateVerdict）・ブレイン（見積書・確認の AIX をセットしない）にも同じ判定を渡しているので逆の指示にならない
+    ? `\n\n【🔎 お客様は他のお部屋も見たいと言っている】行動宣言は引き続きの新着物件のご紹介にする（実送信 6/6回・見積書 0/6回）。型:「引き続き新着物件を随時確認させて頂き〇〇さんご希望のご条件に合ったお部屋募集に出次第お送りさせて頂きます！！」`
+    : "");
 
   // 2026-09-19 竹内（ゆうこ事例）「ここで物件名いれると内覧する物件名間違えてしまう可能性があるのでリスクがある」
   const propertyChoiceNote = propertyChoiceAmbiguous ? `\n\n${PROPERTY_NAME_NOTE}` : "";
@@ -3810,6 +3812,7 @@ export async function POST(req: NextRequest) {
       customerWillSendProperty: willSendSelf.yes && (willSendObj === "property" || willSendObj === "unknown"),
       customerWillSendEvidence: willSendSelf.evidence,
       ownPropertyReturnedAll,
+      customerAsksMoreListings: customerAsksMoreListings(message),
     });
     console.info("[estimate-ctx]", estimateVerdict.trigger, estimateVerdict.mode, estimateVerdict.signals.join(","));
 
@@ -4353,7 +4356,11 @@ export async function POST(req: NextRequest) {
       //   AIX が無い時の note は「（参考）AIX【…】での対応が候補です。…」というスタッフ向けの操作メモ（brain-core の freeTextAixKey）。
       //   これを「必須の WE DO 宣言」にすると操作語が本文に混ざるため入れない（返信の方向は TPO・往復文脈が決める）
       const noteIsStaffReference = !effectiveAction && /^（参考）AIX【/.test(brainMeta.note ?? "");
-      if (brainMeta.note && brainMeta.reply_mode !== 'aix' && brainLocalFresh && !noteIsStaffReference) {
+      // 2026-09-22 竹内（𝓡さん事例）「引き続き新着物件が優先」: お客様が他のお部屋も見たいと言った回は、ブレインの note・戦略の WE DO を入れない
+      //   （YUMA: 戦略の「詳細資料と割引済み初期費用見積を即送付」「募集状況も併せて回答」がそのまま本文に入った。行動宣言は 🔎 の引き続きのご紹介）
+      const seeMoreTurn = customerAsksMoreListings(message);
+      if (seeMoreTurn && (brainMeta.note || brainMeta.winning_pattern || brainMeta.closing_strategy)) lines.push("- 🏆 今回はお客様が他のお部屋も見たいと言っているので、戦略の WE DO 宣言は入れない（行動宣言は引き続きの新着物件のご紹介1文）");
+      if (!seeMoreTurn && brainMeta.note && brainMeta.reply_mode !== 'aix' && brainLocalFresh && !noteIsStaffReference) {
         lines.push(`- 📌 スモラスタイル②WE DO宣言（必須・返信末尾に1文として明示する）: ${brainMeta.note} → このスタッフアクションをお客様向けに「私が〇〇させて頂きます！！」の形に言い換えて返信の最後の1文に含めること（例: 「明日管理会社に交渉させて頂きます！！」「ご希望のお部屋をピックアップしてお送りさせて頂きます！！」「お申込みでお部屋押さえさせて頂きます！！」）。ただしZ/F3/Yパターン等の短い締め返信では追加しない`);
       }
       // winning_pattern + closing_strategy の両方がある場合は1文のWE DO宣言に統合（二重宣言防止）
@@ -4367,7 +4374,9 @@ export async function POST(req: NextRequest) {
       //   同じブレインの note は「候補日時の手打ち・AI生成は禁止」と正しく言っているので、**同じ事実に逆の指示**を
       //   別の場所から渡していた。禁止を別ブロックに足すと三つ目の指示になるため、**戦略を渡すこの行に添える**。
       const territoryGuard = buildAixTerritoryGuard([wp, cs]);
-      if (wp && cs) {
+      if (seeMoreTurn) {
+        // 上で「戦略の WE DO は入れない」と書いた
+      } else if (wp && cs) {
         lines.push(`- 🏆 勝ちパターン×成約戦略: 【勝ちパターン】${wp} ／ 【成約戦略】${cs} → 両者を統合した1アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信末尾に1文のみ含めること（WE DO宣言は返信全体で1文・重複禁止）${relaxGuard}`);
         if (territoryGuard) lines.push(territoryGuard);
       } else if (wp) {

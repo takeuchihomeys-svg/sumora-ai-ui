@@ -31,5 +31,9 @@ async function main() {
   const b = await scan(["%【%】%"], (t) => t.split("\n").some((l) => META_BLOCK_HEADING_RE.test(l)));
   console.log(`② 判定の見出し「【今回の判定】」等: スタッフ送信（【】を含む）${b.n}件 ／ 当たる ${b.hit.length}件`);
   for (const h of b.hit) console.log("  ", h);
+  const SCENE_RE = /^\s*【[^】\n]{0,80}(?:場面|状況)(?:での|の|への|に対する)?(?:返信|返答|回答)(?:案|文)?】\s*$/;
+  const c = await scan(["%【%】%"], (t) => t.split("\n").some((l) => SCENE_RE.test(l)));
+  console.log(`③ 場面の見出し「【〜場面での返信】」: スタッフ送信（【】を含む）${c.n}件 ／ 当たる ${c.hit.length}件`);
+  for (const h of c.hit) console.log("  ", h);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

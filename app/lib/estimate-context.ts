@@ -90,6 +90,9 @@ export type EstimateContextInput = {
   /** 2026-09-22 竹内（𝓡さん事例）: お客様が送ってきた物件（スクショ）が全部こちらの送った物件（own-property-server の照合・all）。
    *  新しい物件の送付（4.）ではなく、送付済み物件への反応（5.）として見る */
   ownPropertyReturnedAll?: boolean;
+  /** 2026-09-22 竹内（𝓡さん事例）「引き続き新着物件が優先」: お客様が言葉で他のお部屋も見たいと言った（reply-context customerAsksMoreListings）。
+   *  実送信 6/6 が引き続きのご紹介・見積書 0/6 → 前向きな反応（5.）でも見積書を宣言しない（費用の質問・見積の依頼は従来どおり） */
+  customerAsksMoreListings?: boolean;
 };
 
 // ─── 送付済み物件数（route.ts 3箇所のインライン式・check-reply を統合）──────────────
@@ -220,7 +223,10 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
   }
 
   // 4. 顧客の特定物件送付（暗黙の見積依頼。成約データ: hearing/first_reply の早期正例は全てこれ）
-  if (hasPropertyRef && !isConditionChange) {
+  //   2026-09-22 𝓡さん事例: 「この物件良さそうですが、もう少し見てみたい」の「この物件」は送付済みの物件（新しい物件の送付ではない）。
+  //   他のお部屋も見たい時は URL・画像が届いた時だけ物件の送付とみなす
+  const seeMoreWithoutNewProperty = !!input.customerAsksMoreListings && !input.hasCustomerImage && !/https?:\/\//.test(msg);
+  if (hasPropertyRef && !isConditionChange && !seeMoreWithoutNewProperty) {
     return { ...base, appropriate: true, mode: "declare", trigger: "customer_sent_property", severity: "warning", reason: "お客様が特定物件（URL・画像・号室）を送付", evidence: firstMatch(CUSTOMER_PROPERTY_REF_RE, msg) ?? "【画像】" };
   }
 
@@ -234,7 +240,8 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
   }
 
   // 5. スタッフ物件送付後の前向き反応（条件変更が主題・条件フォームは除外）
-  if (sent > 0 && !isConditionChange && !isForm) {
+  if (input.customerAsksMoreListings) signals.push("re:asks_more_listings");
+  if (sent > 0 && !isConditionChange && !isForm && !input.customerAsksMoreListings) {
     if (rePositive || brainPositive || brainSaysEstimate) {
       return { ...base, appropriate: true, mode: "declare", trigger: "after_property_sent", severity: "warning", reason: rePositive || brainPositive ? "送付済み物件にお客様が前向き反応" : "brain action=estimate_sheet（送付済み物件あり）", evidence: firstMatch(CUSTOMER_PROPERTY_POSITIVE_RE, msg) ?? bm?.current_property ?? null };
     }
@@ -257,7 +264,9 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
       ? "条件変更依頼が主題（費用質問なし）→ 新条件復唱＋ピックアップ宣言"
       : sent === 0
         ? "物件未送付・費用質問なし → ピックアップ宣言"
-        : "送付済みだが前向き反応・費用質問なし → 短い受付文";
+        : input.customerAsksMoreListings
+          ? "他のお部屋も見たい（実送信 6/6 が引き続きのご紹介・見積書 0/6）→ 引き続きの新着物件のご紹介"
+          : "送付済みだが前向き反応・費用質問なし → 短い受付文";
   return { ...base, appropriate: false, mode: "forbid", trigger: "none", severity: isForm || sent === 0 ? "block" : "warning", reason, evidence: null };
 }
 

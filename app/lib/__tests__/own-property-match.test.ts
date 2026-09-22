@@ -7,7 +7,7 @@ import { detectAixSceneEvidence } from "../aix-scene-evidence";
 import { VIEWING_INTENT_RE } from "../scene-patterns";
 import { CUSTOMER_FOUND_PROPERTY_VOCAB } from "../example-premise";
 import { normalizeSharedPropertyReference } from "../shared-property-ref";
-import { CUSTOMER_ASKS_CONTINUOUS_PICKUP_RE, MSG_SEP, CUST_VIEWING_INTENT_RE } from "../reply-context";
+import { CUSTOMER_ASKS_CONTINUOUS_PICKUP_RE, MSG_SEP, CUST_VIEWING_INTENT_RE, customerAsksMoreListings } from "../reply-context";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -138,6 +138,18 @@ it("出口: 送り返しの時は「〇〇の物件」を「お送り頂きま�
   const draft = "エスリードレジデンス大阪天王寺の物件ですね😊！！";
   expect(normalizeSharedPropertyReference(draft, TURN).count > 0).toBe(true);
   expect(normalizeSharedPropertyReference(draft, TURN, { ownPropertyReturnedAll: true }).text).toBe(draft);
+});
+// 2026-09-22 竹内「引き続き新着物件が優先。実際の LINE 見てもそうなってると思う」（実送信 6/6・見積書 0/6）
+it("他のお部屋も見たい（実物6件）はお客様の言葉だけで判定する", () => {
+  for (const m of ["とても魅力的ですが、他の物件も見てみたいです。", "ほかもあれば見てみたいです🙇🏻‍♀️", "もう少し見てみたいのでまたあれは紹介して欲しいです。", "この三つの物件良さそうですが、\nもう少し見てみたいので、送っていただきたいです🙇‍♀️", "あと一応ほかも見れたら見たいのですが、物件出していただくこと可能ですか？", "その日に他の物件も見たいのでまた出していただけると助かります"]) expect(customerAsksMoreListings(m)).toBe(true);
+  expect(customerAsksMoreListings(TURN)).toBe(true);
+  expect(customerAsksMoreListings(`${A}${MSG_SEP}ありがとうございます`)).toBe(false);
+  expect(customerAsksMoreListings("一度お部屋見てみたいです")).toBe(false);
+});
+it("見積: 他のお部屋も見たい時は前向きな反応でも見積書を宣言しない（費用の質問は従来どおり）", () => {
+  const base = { customerMessage: "この物件良さそうですが、もう少し見てみたいので、送っていただきたいです", sentPropertiesCount: 3, recentCustomerMessages: [] };
+  expect(isMisumoriContextAppropriate({ ...base, customerAsksMoreListings: true }).mode).toBe("forbid");
+  expect(isMisumoriContextAppropriate({ ...base, customerMessage: "他の物件も見てみたいです。ここの初期費用いくらですか？", customerAsksMoreListings: true }).mode).toBe("declare");
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

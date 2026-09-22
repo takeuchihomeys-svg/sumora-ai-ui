@@ -38,6 +38,7 @@ import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
 import { buildActionLedger, buildLedgerLinesForBrain } from "@/app/lib/action-ledger";
 import { resolveOwnPropertyForTurn } from "@/app/lib/own-property-server";
+import { customerAsksMoreListings } from "@/app/lib/reply-context";
 // 2026-09-20 竹内「ここなら申込になりそうなお客さんだと分析して、そこから申込の流れにいく形」
 import { detectApplyReadiness, buildApplyReadinessBrainNote } from "@/app/lib/apply-readiness";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
@@ -1890,6 +1891,13 @@ export async function analyzeConversation(
   //   あわせてスタッフが実際に押した AIX の実績（brain_aix_feedback・cron/brain-aix-eval が毎日集計）を事実として渡す。
   //   AIX を決めるのはブレイン（場面を規則として書かない・場面ヒットで finalAix を上書きしない）。
   const unrepliedTurn = unrepliedCustomerTurn(typedMessages);
+  // 2026-09-22 竹内（𝓡さん事例）「引き続き新着物件が優先。実際の LINE 見てもそうなってると思う」:
+  //   お客様が言葉で「もう少し／ほかも…見てみたい」＝他のお部屋も見たい。実送信 6/6 が引き続きのご紹介・見積書 0/6（scripts/audit-see-more-intent.ts）
+  const asksMoreListings = customerAsksMoreListings(unrepliedTurn.text);
+  const asksMoreListingsAsksCost = /見積|初期費用|費用|いくら/.test(unrepliedTurn.text);
+  const seeMoreBrainText = asksMoreListings
+    ? "\n【お客様の言葉（確定）】お客様は他のお部屋も見たいと言っている（「もう少し見てみたい」等）。実送信 6/6 がこちらの引き続きの新着物件のご紹介・見積書 0/6。今回の返信の中心は引き続きのご紹介（見積書・募集状況の確認にしない）。"
+    : "";
   const sceneEvidence = sceneEvidenceForTurn(unrepliedTurn, {
     sentPropertyCount: brainLedger.facts.propertiesSentCount,
     aixHistory: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null })),
@@ -2146,11 +2154,11 @@ ${PHASE_TEMPLATE_HINTS}
     : "";
   const stableKnowledgeText = freshStableText;
   const customerSpecificText = isFreshLayer
-    ? `${actionWinRateText}${templatesText}${actionRulesText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${applyReadinessText}${sceneEvidenceText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+    ? `${actionWinRateText}${templatesText}${actionRulesText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${applyReadinessText}${sceneEvidenceText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+    : `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -2520,6 +2528,12 @@ ${history}`;
     if (!promiseAix && finalAix && messagesOldestFirst[messagesOldestFirst.length - 1]?.sender === "customer" && customerWillSendFirst) {
       finalAix = null;
       decisionSource = "rule:customer_will_send";
+    }
+    // 2026-09-22 竹内（𝓡さん事例）「引き続き新着物件が優先」: 他のお部屋も見たいと言われた時は、見積書・確認の AIX をセットしない
+    //   （実送信 6/6 が文の返信で引き続きのご紹介・見積書 0/6。新着が見つかったら物件の AIX で送る）。費用も聞かれた時は従来どおり
+    if (!promiseAix && asksMoreListings && !asksMoreListingsAsksCost && (finalAix === "estimate_sheet" || finalAix === "property_check_result" || finalAix === "acknowledge_check")) {
+      finalAix = null;
+      decisionSource = "rule:customer_asks_more_listings";
     }
     // 2026-09-12 竹内（愛乃事例）「AIX の内覧日調整をセット」: 内覧日調整を送った後にお客様が別の日程を尋ねた
     //   （「それ以外だと何日になりますか？」「土日は可能ですか」）→ 候補日時は AIX【内覧日調整】で送る（候補日時の手打ち・AI 生成は禁止）。

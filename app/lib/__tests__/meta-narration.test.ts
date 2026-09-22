@@ -190,5 +190,9 @@ it("判定の塊「【今回の判定】＋・箇条書き」を空行まで消�
   const card = "🌟ラクラス阿倍野元町 507号室\n・家賃6.4万円\n・敷金礼金なし\n\nお手隙の際にご査収ください😌！！";
   expect(stripMetaNarration(card).text).toBe(card);
 });
+it("場面の見出し「【〜場面での返信】」を消す（YUMA 2026-09-22 実物・実送信506通で誤削除0）", () => {
+  const real = "【画像を2枚送付済み・エスリードレジデンス大阪天王寺1006号室にご興味を示された場面での返信】\n\nYUMAさん、この2部屋気になって頂き嬉しいです😊！！";
+  expect(stripMetaNarration(real).text).toBe("YUMAさん、この2部屋気になって頂き嬉しいです😊！！");
+});
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

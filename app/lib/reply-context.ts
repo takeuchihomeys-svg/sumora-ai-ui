@@ -58,6 +58,11 @@ const IMAGE_UNIT_RE = /^\s*(?:\[(?:画像|動画|ファイル)\]|【スクショ
 /** 1通が画像・動画・ファイルの通か（中身はお客様の言葉ではない） */
 export function isImageTextUnit(unit: string): boolean { return IMAGE_UNIT_RE.test(unit); }
 /** お客様が書いた言葉だけ（画像・ファイルの通を印だけに置き換える）。通は MSG_SEP 区切り（1通の読み取り文は複数行でも1通） */
+/** 2026-09-22 竹内（𝓡さん事例）「引き続き新着物件が優先」: お客様が言葉で「もう少し／ほかも…見てみたい」＝他のお部屋も見たい。
+ *  画像の読み取り文は見ない。実送信で線を引いた数は scripts/audit-see-more-intent.ts */
+export function customerAsksMoreListings(raw: string | null | undefined): boolean {
+  return new RegExp(`${SEE_MORE_LISTINGS_PREFIX}見(?:てみ|れ)?たい|他の(?:物件|お部屋)も(?:見|送|紹介|教え)|(?:もっと|他にも|ほかにも)(?:物件|お部屋)(?:を)?(?:見|送|紹介|教え)`).test(normalizeCustomerText(raw));
+}
 export function customerOwnWords(raw: string | null | undefined): string {
   return (raw ?? "").split(MSG_SEP)
     .map((u) => (isImageTextUnit(u) ? (/^\s*\[ファイル\]/.test(u) ? "[ファイル]" : "[画像]") : u))
