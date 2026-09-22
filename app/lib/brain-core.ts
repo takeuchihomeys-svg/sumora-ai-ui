@@ -15,6 +15,7 @@ import {
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
 import { isPostApplyStatus, willRouteAlt } from "@/app/lib/llm-alt-provider";
+import { buildSendReplyTimingNote } from "@/app/lib/send-reply-timing";
 import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_SENT_PLACEHOLDER } from "@/app/lib/pii-pseudonym";
 import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
@@ -1469,6 +1470,26 @@ export async function analyzeConversation(
   const todayStr = jstYmdWeekday();
   const timingText = `\n【時間情報】今日: ${todayStr}（曜日表: ${weekdayTable(Date.now(), 14)}。日付に曜日を付ける時はこの表を使い、表に無い日付には曜日を付けない） /最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）`;
 
+  // 2026-09-23 竹内「送信の時間にたいしてどのように返信しているかも学べば…返信したのとAIXも掛け合わせたらより鮮明になる」:
+  //   上の【時間情報】は日単位の1行しか無く、「何を送って何時間経ったか」「その種類は普通どれくらいで返るか」が無かった。
+  //   実測（scripts/audit-reply-timing.ts）で種類ごとに返り方が全く違うと分かったので、種類と経過時間を掛け合わせて渡す。
+  //   詳細と数字は app/lib/send-reply-timing.ts
+  const lastStaffMsg = typedMessages.find((m) => m.sender !== "customer");   // messages は新しい順
+  const lastStaffAtIso = lastStaffMsg?.created_at ?? null;
+  const lastStaffAixType = lastStaffAtIso
+    ? (aixLogs.find((l) => Math.abs(Date.parse(l.created_at) - Date.parse(lastStaffAtIso)) <= 3 * 60_000)?.aix_type ?? null)
+    : null;
+  const sendReplyTimingText = buildSendReplyTimingNote({
+    lastStaffAt: lastStaffAtIso,
+    lastStaffAixType,
+    // 最新のメッセージがお客様なら、直前のこちらの送信には返事が来ている
+    customerRepliedAfter: typedMessages[0]?.sender === "customer",
+    // ブレインが走るのはほとんどお客様が返信した瞬間なので、「何時間で返してきたか」を渡す
+    customerRepliedAt: lastCustomerMsg?.created_at ?? null,
+    staffCount: typedMessages.filter((m) => m.sender !== "customer").length,
+    customerCount: typedMessages.filter((m) => m.sender === "customer").length,
+  });
+
   // Build customer conditions context
   type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null; ai_summary?: string | null; ai_summary_json?: Record<string, unknown> | null; personality_profile?: string | null; pet?: boolean | null; floor_area_min?: number | null; floor_area_max?: number | null; commute_station?: string | null; commute_minutes?: number | null; area_mode?: string | null; initial_cost_limit?: number | null; building_age?: number | null; other_requests?: string | null } | null;
   const pc = (pcResult.data ?? null) as PC;
@@ -2207,11 +2228,11 @@ ${PHASE_TEMPLATE_HINTS}
   const customerSpecificText = isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
+    ? `${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
+    : `${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
