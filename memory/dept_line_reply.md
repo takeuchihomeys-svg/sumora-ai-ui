@@ -4,6 +4,20 @@
 
 ---
 
+## 送った画像の読み取りは全部 DeepSeek（竹内・2026-09-22「deepseek に置き換える」）
+
+送った画像1枚ごとに読み取りは3つ。**3つとも DeepSeek-V4.1-Flash**（Claude は使わない）。
+| 読み取り | どこ | 記録 |
+|---|---|---|
+| 物件名・号室（照合なしでも記録） | `/api/extract-property-info`（画面の送信・AIX 物件オススメが裏で呼ぶ） | sent_image_properties（**既存の記録は上書きしない**）・sent_properties |
+| 物件名・号室・家賃・募集状況（照合できた物だけ） | send-line-message の after | sent_image_properties（上書き）・sent_properties |
+| 資料の中身（駐車場・ペット等） | send-line-message の after | image_details |
+- 見積書・本人確認書類は物件として記録しない（is_property=false）。
+- ⚠ カタカナの物件名はモデルを問わず読み違える。会話に物件名が無い時は照合が効かない（画像だけで送った物件）。
+- 次の候補: 物件名・号室の読み取りが①②で2回走っている（同じ画像）。1回にまとめれば DeepSeek の費用が半分。
+
+---
+
 ## AIX の画像は「まとめて1回」で送る（竹内・2026-09-22「公式LINEから送るような形で横並びに」）
 
 - 旧: AIX は画像1枚ごとに /api/send-line-message を呼んでいた → LINE で1枚ずつ大きく表示。
