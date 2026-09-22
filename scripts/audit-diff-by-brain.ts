@@ -125,7 +125,23 @@ async function main() {
   const acts = [...new Set(cases.map((x) => x.action))].sort((a, b) => cases.filter((x) => x.action === b).length - cases.filter((x) => x.action === a).length);
   for (const a of acts.slice(0, 8)) { const s = line(`action=${a}`, cases.filter((x) => x.action === a)); if (s) console.log(s); }
 
-  console.log(`\n⑤ 一番直されている組み合わせで、何を足し・何を消しているか`);
+  // ⑤ 「そのまま送信率が低い＝質が悪い」とは限らない。直しの**大きさ**と下書きの長さで見分ける。
+  //   質が悪いなら「大きく書き直し・別の文」が多いはず。個別調整なら「少し直した」が多いはず。
+  console.log(`\n⑤ 直しの大きさの分布（そのまま送信率が低い理由が「質」か「個別調整」かを見分ける）`);
+  const band = (sim: number | null) =>
+    sim === null ? "不明" : sim >= 0.95 ? "ほぼ同じ" : sim >= 0.80 ? "少し直した" : sim >= 0.60 ? "半分書き直し" : sim >= 0.35 ? "大きく書き直し" : "別の文";
+  const BANDS = ["ほぼ同じ", "少し直した", "半分書き直し", "大きく書き直し", "別の文"];
+  const dist = (name: string, xs: Case[]) => {
+    if (xs.length < 30) return;
+    const withSim = xs.filter((x) => typeof x.sim === "number");
+    const cells = BANDS.map((b) => `${b} ${pct(withSim.filter((x) => band(x.sim) === b).length, withSim.length).padStart(6)}`);
+    const lens = xs.map((x) => x.draft.length);
+    console.log(`   ${name.padEnd(22)} ${String(withSim.length).padStart(4)}件 ／ ${cells.join(" ／ ")} ／ 下書きの長さ中央値 ${lens.sort((a, b) => a - b)[Math.floor(lens.length / 2)]}字`);
+  };
+  dist("通常返信（AIXなし）", cases.filter((x) => x.action === "—"));
+  for (const a of acts.filter((x) => x !== "—").slice(0, 6)) dist(a, cases.filter((x) => x.action === a));
+
+  console.log(`\n⑥ 一番直されている組み合わせで、何を足し・何を消しているか`);
   // 直し率が高い群を選ぶ（件数が足りる物のうち そのまま送信率が最低）
   const groups: Array<{ name: string; xs: Case[] }> = [
     ...["応える", "こちらから", "手打ち"].map((m) => ({ name: `${m}型`, xs: cases.filter((x) => x.mode === m) })),
