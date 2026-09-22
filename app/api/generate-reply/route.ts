@@ -138,7 +138,8 @@ import { PROPERTY_CONDITION_INQUIRY_RE, runBrainAndNotify, type SuggestedAixMeta
 import { buildAixTerritoryGuard } from "@/app/lib/aix-territory";
 import { buildPreviousSendNote } from "@/app/lib/previous-send-note";
 // 2026-09-21 竹内「何卒で終わる場面と入れない場面の違い」「改行を実送信の特徴から」
-import { buildSentShapeNoteAll } from "@/app/lib/sent-shape";
+import { buildSentShapeNoteAll, customerSceneOf } from "@/app/lib/sent-shape";
+import { isShortAckOnly as isShortAckReply } from "@/app/lib/previous-send-note";
 // 2026-09-21 竹内「一択と指摘するんじゃなくて実際の成約データや直近の会話から学習して、場面でいれるかどうかはブレインに判断させる」
 import { buildOpenerRateNote, sceneFromTpo, type OpenerLabel } from "@/app/lib/opener-rates";
 // 2026-09-21 竹内「ファイナルチェックはハルシネーションがないようにする部分。逆に足を引っ張るようなことはしない」
@@ -356,7 +357,6 @@ const SEPARATE_APPOINTMENT_NOTE = `\n【🚫 別件予定の混入禁止（最�
 // ─── 絵文字位置の決定論的ゲート ─────────────────────────────────────────────
 // お客様が絵文字を文頭・1行目に使っていた場合、返信も1行目の開き言葉直後に絵文字を配置させる。
 // Extended_Pictographic（U+1F300〜）でLINE絵文字を拾う。
-const EMOJI_RE = /\p{Extended_Pictographic}/u;
 
 // ── TPO判定 共通ヘルパ（2026-09-08 監査）─────────────────────────────────────
 // buildGenerationMessages の isShortAckMsg と route handler の TPO 判定で同一集合を共有する。
@@ -430,14 +430,9 @@ const STATE_FALLBACK_DIRECTION: Record<string, string> = {
   closed_lost: "失注後の再接触。「お世話になっております」→再連絡への感謝1文→以前のご条件を基にしたピックアップ宣言（「改めて」は【📒 行動台帳】に送付実績がある時のみ）→サポート継続宣言。初回挨拶・謝罪・フォーム再送禁止。80〜140字",
 };
 
-function buildEmojiPositionNote(customerMessage: string): string {
-  if (!customerMessage) return "";
-  const firstLine = customerMessage.split(/\n/)[0] ?? "";
-  if (EMOJI_RE.test(firstLine)) {
-    return `\n【😊 絵文字位置ルール（確定）】お客様のメッセージ1行目に絵文字が使われています。返信の1行目（開き言葉の直後）に絵文字を1つ入れること（例:「はい😊！！」「かしこまりました😊！！」）。絵文字を末尾のみに置くことは禁止。`;
-  }
-  return "";
-}
+// 2026-09-22 竹内「絵文字を使うタイミング／使わないタイミング」: 旧 buildEmojiPositionNote（お客様の1行目に絵文字 → 返信の1行目に絵文字を1つ・確定・末尾のみ禁止）は外した。
+//   実送信で検算すると返信の1行目に付けたのは 42.2%（絵文字が無い時は 30.4%）＝過半数に届かない（scripts/audit-emoji-first-line.ts）。
+//   絵文字の置き場所は sent-shape の行の役割の率（buildEmojiLineNote）で渡す
 
 // ─── 共感フレーズ（「全然大丈夫です」/「全然わがままじゃないですよ」）の決定論的ゲート ─────
 // AIが最も間違えるのが「お客様が言っていない言葉（＝わがまま）を勝手に使う」パターン。
@@ -1247,7 +1242,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //     表を渡してモデルに選ばせる（app/lib/sent-shape.ts）。
   //   ⚠ ここも previousSendNote と同じく userPrompt の**一番最後**（前に置くと骨格に負ける）。
   //   テンプレート最適化（AIX の文を整える経路）は AIX 側の型があるので渡さない。
-  const sentShapeNote = templateNote ? "" : buildSentShapeNoteAll();
+  // 2026-09-22 竹内（何卒・絵文字・約束の場面）: お客様の発言の場面は書く前に決まっているので、その場面の実測（何卒・絵文字の率）も渡す
+  const sentShapeNote = templateNote ? "" : buildSentShapeNoteAll(customerSceneOf(customerOwnWords(customerMessage), { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }));
 
   // ─── 2026-09-21 竹内「実際のスタッフが送るような文が生成されていない可能性があるってこと？」───
   //   下書きと実送信の差分で、スタッフが消す1位・足す1位が**同じ意味で表記だけ違う**と分かった
@@ -1492,7 +1488,6 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   const empathyPhraseNote = buildEmpathyPhraseNote(customerMessage);
 
   // 絵文字位置の確定ゲート — お客様1行目に絵文字 → 返信も1行目に配置を強制
-  const emojiPositionNote = buildEmojiPositionNote(customerMessage);
 
   // ─── 2回目締め検出（直前スタッフが締めの文 + 今回お客様がシンプル承認）─────────────
   // 前回の大きな締めフレーズを繰り返すのを防ぐ。短い承認返し+次アクション1行に収める。
@@ -1711,7 +1706,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
   const dynamicBlock =`${replyContentNote}
 ${propertyStatusNote}
-${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${emojiPositionNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${conditionExpansionNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${conditionExpansionNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}

@@ -43,7 +43,9 @@ it("カイナ: 続いている事情（代理契約）は前回の送付より�
   expect(th.requirements.join(" | ")).toContain("代理契約");
   const b = buildPropertySendThreadsBlock(th);
   expect(b).toContain("続いている事情");
-  expect(b).toContain("交渉（確認）させて頂きます");
+  expect(b).toContain("代理契約可能か全て交渉させて頂きます");
+  // 2026-09-22: 代理契約以外の「全て確認させて頂きます」は実送信0通なので求めない
+  expect(b.includes("交渉（確認）させて頂きます")).toBe(false);
 });
 it("続いている事情は requirementSources（お客様の発言を長めに）から拾える（直近の窓に無くても）", () => {
   const th = extractPropertySendThreads(
@@ -165,5 +167,11 @@ it("手本から写した代理契約の一文は事情が無ければ落とす�
   expect(stripUngroundedClaims(t, "1度この2つで代理契約可能か確認していただけますでしょうか？").text).toBe(t);
 });
 
+it("2026-09-22: ペットの事情だけなら「全て確認させて頂きます」を差し込まない（実送信0通・下書き12回とも削除）", () => {
+  const r = ensureRequirementLine("〇〇さんお世話になっております！！\nペット可のお部屋ピックアップさせて頂きました！！\nお手隙の際にご査収ください😌！！", ["猫を1匹飼っています"]);
+  expect(r.added === null).toBe(true);
+  const p = ensureRequirementLine("〇〇さんお世話になっております！！\nピックアップさせて頂きました！！\nお手隙の際にご査収ください😌！！", ["代理契約でお願いしたいです"]);
+  expect(p.added ?? "").toContain("代理契約可能か全て交渉させて頂きます");
+});
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

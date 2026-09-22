@@ -39,6 +39,9 @@ import { loadViewingReports } from "@/app/lib/viewing-report-store";
 import { buildActionLedger, buildLedgerLinesForBrain } from "@/app/lib/action-ledger";
 import { resolveOwnPropertyForTurn } from "@/app/lib/own-property-server";
 import { customerAsksMoreListings } from "@/app/lib/reply-context";
+import { trackPromises, buildPromiseBrainNote } from "@/app/lib/promise-tracker";
+import { customerSceneOf } from "@/app/lib/sent-shape";
+import { isShortAckOnly as isShortAckReply } from "@/app/lib/previous-send-note";
 // 2026-09-20 竹内「ここなら申込になりそうなお客さんだと分析して、そこから申込の流れにいく形」
 import { detectApplyReadiness, buildApplyReadinessBrainNote } from "@/app/lib/apply-readiness";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
@@ -1895,6 +1898,17 @@ export async function analyzeConversation(
   //   お客様が言葉で「もう少し／ほかも…見てみたい」＝他のお部屋も見たい。実送信 6/6 が引き続きのご紹介・見積書 0/6（scripts/audit-see-more-intent.ts）
   const asksMoreListings = customerAsksMoreListings(unrepliedTurn.text);
   const asksMoreListingsAsksCost = /見積|初期費用|費用|いくら/.test(unrepliedTurn.text);
+  // 2026-09-22 竹内「約束を大切に、どれだけ約束しているか…約束する場面なら約束するようにブレインを強化」:
+  //   この会話の約束（直近14日・果たしたか・遅れているか）と、今回の場面で約束を入れる率を事実として渡す（promise-tracker）。
+  //   成約した会話は約束が約2倍（16.2件対7.7件）で、果たした率も高い（88.9%対78.9%）。どう返すかはブレインが決める
+  //   ブレインが読む会話は直近15通だけで、数日前の約束（遅れている約束ほど古い）が範囲の外になる → 直近14日を別に1回読む
+  const promiseRows = await supabase.from("messages").select("sender, text, created_at, is_aix_generated")
+    .eq("conversation_id", conversationId).gte("created_at", new Date(Date.now() - 14 * 86400_000).toISOString())
+    .order("created_at", { ascending: true }).limit(400)
+    .then((r) => (r.data ?? []) as Array<{ sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null }>, () => []);
+  const promiseTrack = trackPromises((promiseRows.length ? promiseRows : [...typedMessages].reverse()).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at, isAix: !!m.is_aix_generated })));
+  const promiseBrainText = buildPromiseBrainNote(promiseTrack, customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }));
+  if (promiseTrack.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) console.log(JSON.stringify({ tag: "brain:promise-overdue", conversationId, open: promiseTrack.open.map((p) => ({ kind: p.kind, status: p.status, h: Math.round(p.elapsedH) })) }));
   const seeMoreBrainText = asksMoreListings
     ? "\n【お客様の言葉（確定）】お客様は他のお部屋も見たいと言っている（「もう少し見てみたい」等）。実送信 6/6 がこちらの引き続きの新着物件のご紹介・見積書 0/6。今回の返信の中心は引き続きのご紹介（見積書・募集状況の確認にしない）。"
     : "";
@@ -2154,11 +2168,11 @@ ${PHASE_TEMPLATE_HINTS}
     : "";
   const stableKnowledgeText = freshStableText;
   const customerSpecificText = isFreshLayer
-    ? `${actionWinRateText}${templatesText}${actionRulesText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+    ? `${actionWinRateText}${templatesText}${actionRulesText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${condText}${scheduledText}${tasksText}${viewingsText}${examplesText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
+    : `${prevMetaText}${winningPatternsText}${actionWinRateText}${templatesText}${actionRulesText}${contractExamplesPhaseText}${statusText}${timingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${condText}${profileText}${aiSummaryNote}${scheduledText}${tasksText}${viewingsText}${examplesText}${checkpointText}${ragKnowledgeText}${sentPropsText}${propertySearchText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;

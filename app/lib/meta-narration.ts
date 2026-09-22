@@ -129,6 +129,12 @@ const WORKNOTE_PHRASE_RES: RegExp[] = [
   /フォーマット(?:ルール|の通り|どおり)/,                // 0 vs 1
   /定義が不明|不明確です|判断できません/,                // 0 vs 1（生成を断る言い回し）
   /（[^）]{0,20}(?:すること|しない|禁止)[^）]{0,10}）/,   // 0 vs 1（括弧書きの指示）
+  // 2026-09-22 YUMA の下書き1行目「9/22（火）14:20時点、直前に物件送付済み・見積は未送付、お客様は特定物件（…）について更新料の質問。
+  //   これは事実確認質問だが、管理会社確認前の断言は禁止（契約条件の詳細は個別物件情報）。」
+  //   実送信でお客様への言葉の特徴が無い行に当たる件数 0（scripts/audit-worknote-judgement.ts）
+  /(?:断言|記載|言及|生成|提示|約束)(?:は|を)?禁止/,
+  /これは[^\n。]{0,20}(?:質問|依頼|場面|返信|問い合わせ)(?:だが|です|である|であり)/,
+  /時点[、,][^\n]{0,40}(?:送付済み|未送付)/,
 ];
 
 /** AI が資料を読みながら書いた下調べのメモの行か */
@@ -153,6 +159,9 @@ function stripLeadingNarration(text: string): { text: string; removed: string[] 
     //   旧は「〜します。」で終わる地の文だけを見ていたため、**箇条書きの1行目で止まって**
     //   そこから後ろのメモが丸ごと残っていた
     if (isPlainNarrationLine(t) || isMetaNarrationLine(t) || isWorkNoteLine(t)) { lead.push(t); continue; }
+    // 2026-09-22 YUMA の下書き1行目「「その後どうなりましたか？」」＝お客様の発言を引用しただけの見出し。
+    //   「で始まるスタッフの実送信は全期間0通（scripts/audit-quote-only-line.ts）。先頭の1行だけ落とす（本文の途中の引用は触らない）
+    if (lead.length === 0 && /^「[^」\n]{1,80}」$/.test(t)) { lead.push(t); continue; }
     break;
   }
   if (lead.length === 0 || i >= lines.length || !lines.slice(i).some((l) => hasCustomerFacingMarker(l))) return { text, removed: [] };

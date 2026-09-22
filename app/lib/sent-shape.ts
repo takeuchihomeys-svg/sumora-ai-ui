@@ -126,6 +126,75 @@ export function buildSentShapeNote(kind: SentKind): string {
     + `1文ずつ改行し、話題が変わる所で空行を入れる（2行以上の文の${BLANK_LINE_RATE}%が空行で段落を分けている）。`;
 }
 
+// ─── お客様の発言の場面（2026-09-22 竹内「かしこまりましたや何卒を入れる場面／絵文字を使うタイミング／約束している場面」）───
+//   返信の種類（上）は書いた後でないと決まらないが、お客様の発言の場面は**書く前に決まっている**ので、その場面の実測を渡せる。
+//   実測: scripts/audit-style-promise.ts（直近180日・スタッフの手打ちの返信 3,158組・AIX は除く）。
+//   ⚠ 監査スクリプトはこの関数を import して数える（四者同名）。順番を変えたら測り直す。
+
+export type CustomerScene =
+  | "条件フォーム受領" | "物件の画像・URLだけ" | "断り・キャンセル" | "内覧の話" | "申込・審査・書類"
+  | "質問" | "条件提示" | "短い了承・お礼" | "検討中・一時保留" | "その他" | "（不明）";
+
+/** 短い了承・お礼（previous-send-note isShortAckOnly と同じ考え。依存を増やさないため形だけ持つ） */
+export type ShortAckFn = (t: string) => boolean;
+
+export function customerSceneOf(customerText: string | null | undefined, deps: { isConditionForm: (t: string) => boolean; isShortAck: ShortAckFn }): CustomerScene {
+  const t = (customerText ?? "").trim();
+  if (!t) return "（不明）";
+  if (deps.isConditionForm(t)) return "条件フォーム受領";
+  if (/^\s*\[画像\]|https?:\/\//.test(t) && t.replace(/https?:\/\/\S+|\[画像\][^\n]*/g, "").trim().length <= 15) return "物件の画像・URLだけ";
+  if (/見送|やめ|キャンセル|他で決め|白紙|辞退/.test(t)) return "断り・キャンセル";
+  if (/内覧|内見|見学/.test(t)) return "内覧の話";
+  if (/申込|申し込|審査|契約|書類|身分証/.test(t)) return "申込・審査・書類";
+  if (/[?？]|ですか|でしょうか|いくら|どれくらい|どのくらい/.test(t)) return "質問";
+  if (/(?:^|\n)[^\n]{0,40}(?:万|円|LDK|DK|駅|徒歩|ペット|駐車場|築|階)/.test(t) && t.length <= 120) return "条件提示";
+  if (deps.isShortAck(t)) return "短い了承・お礼";
+  if (/検討|考え|相談し|持ち帰|後で|出先|仕事中/.test(t)) return "検討中・一時保留";
+  return "その他";
+}
+
+/** 場面ごとの実測（%）。n=組数・won=成約した会話だけ（母数が少ない場面は null） */
+export const SCENE_STYLE: Partial<Record<CustomerScene, { n: number; nanitozo: number; nanitozoWon: number | null; emoji: number }>> = {
+  "条件フォーム受領": { n: 153, nanitozo: 47.7, nanitozoWon: null, emoji: 97.4 },
+  "条件提示": { n: 97, nanitozo: 26.8, nanitozoWon: null, emoji: 79.4 },
+  "短い了承・お礼": { n: 354, nanitozo: 22.6, nanitozoWon: 19.6, emoji: 85.3 },
+  "その他": { n: 895, nanitozo: 16.0, nanitozoWon: 11.3, emoji: 81.7 },
+  "内覧の話": { n: 214, nanitozo: 14.0, nanitozoWon: 7.7, emoji: 79.0 },
+  "検討中・一時保留": { n: 61, nanitozo: 11.5, nanitozoWon: null, emoji: 93.4 },
+  "断り・キャンセル": { n: 54, nanitozo: 11.1, nanitozoWon: null, emoji: 66.7 },
+  "物件の画像・URLだけ": { n: 63, nanitozo: 11.1, nanitozoWon: null, emoji: 85.7 },
+  "申込・審査・書類": { n: 316, nanitozo: 10.1, nanitozoWon: 6.8, emoji: 70.3 },
+  "質問": { n: 951, nanitozo: 5.6, nanitozoWon: 2.8, emoji: 71.3 },
+};
+
+/**
+ * 絵文字が付く行（行の役割ごと・スタッフの手打ち 直近180日・scripts/audit-style-promise-detail.ts）。
+ *   お客様の絵文字に合わせる習慣は無い（お客様が絵文字あり 80.3% ／ なし 77.6%。1行目どうしでも 42.2% ／ 30.4%＝過半数に届かない）
+ */
+export const EMOJI_LINE_RATE = {
+  "締め（ご査収・お気軽に）": 64.2, "お礼": 61.5, "約束・行動宣言": 44.9, "何卒の締め": 42.4, "お詫び": 36.0,
+  "日時": 26.5, "1行目の開口語": 20.8, "金額": 20.4, "住所・待ち合わせ": 10.6, "説明・報告（〜となります／〜です）": 1.7, "URL": 0.0,
+} as const;
+
+/** その場面の材料（何卒・絵文字）。場面の母数が少なすぎる・不明の時は空 */
+export function buildCustomerSceneStyleNote(scene: CustomerScene): string {
+  const s = SCENE_STYLE[scene];
+  if (!s) return "";
+  const nani = s.nanitozo < NANITOZO_NEAR_ZERO ? "付けない" : s.nanitozo >= 50 ? "付ける方が普通" : s.nanitozo >= 30 ? "半々" : "付けない方が普通";
+  return `\n③ お客様の発言の場面は「${scene}」（実送信${s.n}組）: 「何卒よろしくお願い致します」を付けたのは **${s.nanitozo}%**`
+    + `${s.nanitozoWon != null ? `（成約した会話では ${s.nanitozoWon}%）` : ""}＝${nani}。`
+    + `絵文字を使った返信は ${s.emoji}%${s.emoji < 80 ? `（絵文字なしの返信も ${Math.round(100 - s.emoji)}% ある）` : ""}。`;
+}
+
+/** 絵文字の置き場所（行の役割の率）。実送信ほぼ0の行だけ「付けない」と言い切る */
+export function buildEmojiLineNote(): string {
+  const r = EMOJI_LINE_RATE;
+  return `\n④ 絵文字を付ける行（実送信の率）: 締め（ご査収・お気軽に）${r["締め（ご査収・お気軽に）"]}%・お礼${r["お礼"]}%・約束の行${r["約束・行動宣言"]}%・何卒の行${r["何卒の締め"]}%`
+    + `・1行目の開口語${r["1行目の開口語"]}%・金額の行${r["金額"]}%・住所/待ち合わせの行${r["住所・待ち合わせ"]}%。`
+    + `**説明・報告の行（〜となります／〜です）は${r["説明・報告（〜となります／〜です）"]}%・URL の行は0%＝付けない**。`
+    + `お客様の絵文字に合わせる必要はない（お客様が絵文字を使った時もこちらの率はほぼ同じ 80%対78%）。`;
+}
+
 /**
  * 書く前（＝どの種類になるかまだ決まっていない時）に渡す材料。
  *
@@ -133,7 +202,7 @@ export function buildSentShapeNote(kind: SentKind): string {
  *   （書く前に種類を当てる関数を作ると、外れた時に間違った数字を渡すことになる。
  *     設計知見「汚れた材料は渡さない方がまし」）
  */
-export function buildSentShapeNoteAll(): string {
+export function buildSentShapeNoteAll(customerScene: CustomerScene | null = null): string {
   const order: SentKind[] = ["内覧の待ち合わせ", "ピックアップの約束", "短い返し", "内覧の案内", "確認の約束", "申込", "見積書", "物件・書類の送付（ご査収）", "物件カード"];
   const table = order.map((k) => `${k} ${NANITOZO_RATE[k]}%`).join(" ／ ");
   return `\n\n【最後に確認：実送信の形】`
@@ -143,7 +212,9 @@ export function buildSentShapeNoteAll(): string {
     + `② 改行: 1行は **17字前後**（長くても${LINE_CHARS_P90}字）。1文ごとに改行する。`
     + `${LINE_CHARS_P90}字を超える行は意味の切れ目（「〜となります」「〜ので」「〜ため」の後）で分ける。`
     + `話題が変わる所は**空行**で段落を分ける（2行以上の実送信の${BLANK_LINE_RATE}%が空行を使っている）。`
-    + `全体の行数は中央値2行・上位25%で4行（短い返しは2行・約束や案内は3行・見積書6行・物件カード11行）。`;
+    + `全体の行数は中央値2行・上位25%で4行（短い返しは2行・約束や案内は3行・見積書6行・物件カード11行）。`
+    + (customerScene ? buildCustomerSceneStyleNote(customerScene) : "")
+    + buildEmojiLineNote();
 }
 
 /** 出来上がった文が実測の形から外れていないか（検査だけ・本文は書き換えない） */

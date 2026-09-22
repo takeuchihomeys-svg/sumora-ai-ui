@@ -58,16 +58,19 @@ export function fixPickupTense(text: string): { text: string; fixed: number } {
  * 続いている事情への一文を決定論で差し込む（LLM が糸口の候補にあっても書かない時の保険。初期費用を抑える一文と同じ考え:
  * 名前だけ 0/3 → 文例入り 1/3 → 差し込み 3/3）。本文に既にその話題があれば足さない。締めの行（ご査収）の前に置く
  */
-const REQUIREMENT_LINES: ReadonlyArray<{ re: RegExp; topic: RegExp; line: string }> = [
-  { re: /代理契約|契約(?:者)?名義|名義人|名義変更|名義で(?:の)?契約/, topic: /代理契約|名義/, line: "お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！" },
-  { re: /ペット|猫|犬/, topic: /ペット|猫|犬|飼育/, line: "お気に召されたお部屋ペット飼育可能か全て確認させて頂きます！！" },
-  { re: /駐車場|バイク/, topic: /駐車場|バイク|駐輪/, line: "お気に召されたお部屋駐車場の空き状況も確認させて頂きます！！" },
-  { re: /保証人|保証会社|審査/, topic: /保証人|保証会社|審査/, line: "お気に召されたお部屋の保証会社・審査面も確認させて頂きます！！" },
+// 2026-09-22 竹内「約束を大切に」: insert=false の3つ（ペット・駐車場・保証会社の「全て確認させて頂きます」）は差し込まない。
+//   実送信（全期間）でこの形は0通、AI 下書きに12回入って12回ともスタッフが消した（scripts/audit-subete-kakunin.ts）＝果たす予定の無い約束。
+//   スタッフの実文が元になっている代理契約の「全て交渉させて頂きます」だけ差し込む。話題の判定（落とす側）には全部使う
+const REQUIREMENT_LINES: ReadonlyArray<{ re: RegExp; topic: RegExp; line: string; insert: boolean }> = [
+  { re: /代理契約|契約(?:者)?名義|名義人|名義変更|名義で(?:の)?契約/, topic: /代理契約|名義/, line: "お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！", insert: true },
+  { re: /ペット|猫|犬/, topic: /ペット|猫|犬|飼育/, line: "お気に召されたお部屋ペット飼育可能か全て確認させて頂きます！！", insert: false },
+  { re: /駐車場|バイク/, topic: /駐車場|バイク|駐輪/, line: "お気に召されたお部屋駐車場の空き状況も確認させて頂きます！！", insert: false },
+  { re: /保証人|保証会社|審査/, topic: /保証人|保証会社|審査/, line: "お気に召されたお部屋の保証会社・審査面も確認させて頂きます！！", insert: false },
 ];
 export function ensureRequirementLine(text: string, requirements: readonly string[]): { text: string; added: string | null } {
   if (requirements.length === 0) return { text, added: null };
   const joined = requirements.join("\n");
-  const rule = REQUIREMENT_LINES.find((r) => r.re.test(joined));
+  const rule = REQUIREMENT_LINES.find((r) => r.insert && r.re.test(joined));
   if (!rule || rule.topic.test(text)) return { text, added: null };
   const lines = text.split("\n");
   // 締め（ご査収）の行の前に、空行を挟んで置く
@@ -255,7 +258,12 @@ export function buildPropertySendThreadsBlock(th: PropertySendThreads): string {
     lines.push(...deadline.map((s) => `・${s}`));
   }
   if (th.requirements.length) {
-    lines.push("＜お客様の続いている事情（今回送る物件にも関わる。前回の物件で確認・解決済みでも、今回送る物件については未確認）→ 必ず「お気に召されたお部屋〇〇可能か全て交渉（確認）させて頂きます！！」のように、今回の物件でこちらがどうするかを1文で書く＞");
+    // 2026-09-22 竹内「約束を大切に」: 事情ごとの「全て確認させて頂きます」は実送信0通（AI 下書き12回・12回ともスタッフが消した）。
+    //   実文があるのは代理契約の「全て交渉させて頂きます」だけ。果たす予定の無い約束を書かせない
+    const proxy = th.requirements.some((s) => /代理契約|名義/.test(s));
+    lines.push(proxy
+      ? "＜お客様の続いている事情（今回送る物件にも関わる）→ 代理契約の事情は「お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！」の1文を書く（スタッフ実送信の文）。代理契約以外の事情（ペット・駐車場・審査 等）について、こちらがこれから確認する約束は足さない（実送信0通）＞"
+      : "＜お客様の続いている事情（今回送る物件にも関わる）→ ②の言い方に活かす（例: その条件に合うお部屋をピックアップした）。こちらがこれから確認する約束（「〇〇可能か全て確認させて頂きます」）は足さない（実送信0通・スタッフが毎回消している）＞");
     lines.push(...th.requirements.map((s) => `・${s}`));
   }
   if (th.staff.length) { lines.push("＜こちらが約束したこと・お伝えした経緯（言い方をそのまま活かす。審査否決・募集終了は「だから今回この物件を送る」理由として受け止めるだけで、理由の推測や新しい提案はしない）＞"); lines.push(...th.staff.map((s) => `・${s}`)); }
