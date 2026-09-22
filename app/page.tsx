@@ -5425,10 +5425,7 @@ export default function Home() {
         conversation_id: cid, sender: "staff", text: "[画像]", image_url: delivered[i], created_at: at,
         is_aix_generated: isAix, ...(ids[i] ? { line_message_id: ids[i] } : {}),
       }).select();
-      fetch("/api/extract-property-info", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_url: delivered[i], conversation_id: cid, property_customer_id: selectedConversation.propertyCustomerId ?? null }),
-      }).catch(() => {});
+      // 物件名の読み取りは送信API（send-line-message）が1枚ずつ1回だけ行う（2026-09-22 二重読みをやめた）
       newMessages.push({ id: String(row?.[0]?.id || crypto.randomUUID()), sender: "staff", text: "[画像]", imageUrl: delivered[i], time: formatTime(at), rawCreatedAt: at, isAix });
     }
     const upgrade = (STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status) === "hearing";
@@ -5558,16 +5555,8 @@ export default function Home() {
         })
         .select();
       if (imgError) throw imgError;
-      // Fire-and-forget: extract property info from staff-sent images
-      fetch("/api/extract-property-info", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_url: imageUrl,
-          conversation_id: selectedConversation.id,
-          property_customer_id: selectedConversation.propertyCustomerId ?? null,
-        }),
-      }).catch(() => {});
+      // 2026-09-22 竹内「やる」: 物件名の読み取りは送信API（send-line-message の after）が1回だけ行う。
+      //   旧はここでも /api/extract-property-info を呼び、同じ画像を2回読んでいた
       newMessages.push({
         id: String(imgRow?.[0]?.id || crypto.randomUUID()),
         sender: "staff",

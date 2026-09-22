@@ -225,44 +225,10 @@ export async function POST(req: NextRequest) {
   if (sentImageList.length > 0 && conversation_id) for (const image_url of sentImageList) {
     after(async () => {
       try {
-        const [{ readPropertyImage }, { resolveReadProperty }, { extractPropertyLabels }, { ensureImageDetail }] = await Promise.all([
-          import("@/app/lib/property-image-read"),
-          import("@/app/lib/property-name-match"),
-          import("@/app/lib/action-ledger"),
+        const [{ recordSentImageProperty }, { ensureImageDetail }] = await Promise.all([
+          import("@/app/lib/sent-image-record"),
           import("@/app/lib/image-detail-store"),
         ]);
-        // 2026-09-21 竹内「引用とあれば引用先の画像を読み取れるように」:
-        //   **送った時に**資料の中身（駐車場・ペット・保証会社・洗濯機置場・設備）も読んで残す。
-        //   引用された時に読むと下書きを20〜30秒待たせるので、ここで済ませておく（after なので送信は待たない）。
-        //   物件名の読み取り（下）とは別の呼び出し。どちらかが失敗してももう一方は残る。
-        const [read] = await Promise.all([
-          readPropertyImage(image_url),
-          ensureImageDetail(image_url, conversation_id).catch((e) => {
-            console.warn("[send-line-message] 資料の中身の読み取り失敗:", e instanceof Error ? e.message : e);
-            return null;
-          }),
-        ]);
-        if (read.items.length === 0) return;
-
-        // その会話で既に分かっている物件名（照合の辞書）。無ければ記録しない＝誤読を入れない
-        const known = new Set<string>();
-        const { data: sp } = await supabase.from("sent_properties").select("property_name")
-          .eq("conversation_id", conversation_id).limit(50);
-        for (const r of (sp ?? []) as Array<{ property_name: string | null }>) if (r.property_name) known.add(r.property_name.trim());
-        const { data: ms } = await supabase.from("messages").select("text")
-          .eq("conversation_id", conversation_id).order("created_at", { ascending: false }).limit(80);
-        const joined = ((ms ?? []) as Array<{ text: string | null }>).map((m) => m.text ?? "").join("\n");
-        for (const lbl of extractPropertyLabels(joined)) known.add(lbl.replace(/\s*[0-9０-９]{1,4}号室\s*$/, "").trim());
-        const dict = [...known].filter((s) => s.length >= 2);
-        if (dict.length === 0) return;
-
-        const fixed = read.items
-          .map((x) => resolveReadProperty(x, dict))
-          .filter((x): x is NonNullable<typeof x> => !!x);
-        if (fixed.length === 0) return;
-
-        // 画像1枚 → 物件1つ（image_url が主キー）。一覧の画像は最初の1件を代表にする
-        const top = fixed[0];
         // 2026-09-20 竹内「お客さんに送った画像の中でも物件オススメで送ったと区別できるようにする」:
         //   source に**どの経路で送ったか**を入れる。後で「この物件はオススメで送った」と数えられる。
         //     aix:property_recommendation … AIX【物件オススメ】で送った
@@ -273,68 +239,16 @@ export async function POST(req: NextRequest) {
         const src = origin === "aix" && typeof aix_type === "string" && aix_type.trim()
           ? `aix:${aix_type.trim()}`
           : "staff_image";
-        const { error } = await supabase.from("sent_image_properties").upsert(
-          { image_url, conversation_id, property_name: top.propertyName, room_no: top.roomNumber, source: src },
-          { onConflict: "image_url" },
-        );
-
-        // ── 2026-09-20 竹内「物件ピックアップから送る物件もテーブルかクエリで保管したら、
-        //   どれが物件ピックアップで送った物件かも理解できる／一度送った物件が間違えって入ってしまうこと防げる」──
-        //   読めた物件は sent_image_properties（画像ごと）だけでなく **sent_properties にも入れる**。
-        //   sent_properties は「重複チェック（check-property-duplicate）」と「ブレインが見る送付物件」の両方が
-        //   読む唯一の表なのに、この経路は画像ごとの表にしか書いていなかった。
-        //   実測（scripts/audit-sent-properties.ts）: AIX の物件ピックアップ941件で物件名が構造化されて残る率は**0%**。
-        //   ⚠ 同じ物件の2回目は書かない（送った物件の数え方を守る）。判定は sent-property-record の純関数に一本化
-        //     （check-property-duplicate の独自 Levenshtein とは別に線を作らない）。
-        let spSaved: string | null = null;
-        try {
-          const { isSameProperty } = await import("@/app/lib/sent-property-record");
-          // 設計知見「conversation_id で引けば 86% 取れるのに property_customer_id だけで引いていたのが穴」
-          const { data: already } = await supabase.from("sent_properties")
-            .select("property_name, room_no").eq("conversation_id", conversation_id).limit(200);
-          const existing = ((already ?? []) as Array<{ property_name: string | null; room_no: string | null }>)
-            .map((r) => ({ property_name: r.property_name ?? "", room_no: r.room_no }));
-          const incoming = { property_name: top.propertyName, room_no: top.roomNumber ?? "" };
-          if (!existing.some((e) => isSameProperty(e, incoming))) {
-            // property_customer_id は会話から引く（無ければ null のまま＝会話 ID で辿れる）
-            const { data: convRow } = await supabase.from("conversations")
-              .select("property_customer_id").eq("id", conversation_id).maybeSingle();
-            // 2026-09-21 竹内「退去予定のところも実装／条件（家賃や敷金礼金などのところ）」:
-            //   画像から読めた募集状況・家賃も一緒に残す。次に文を作る時は**画像を読み直さなくても**
-            //   退去予定・家賃が分かる（「文生成される部分毎回直さなくて済む」）。
-            //   ⚠ 読めなかった項目は null のまま入れる（0 や "open" に丸めない）。
-            const { error: spErr } = await supabase.from("sent_properties").insert({
-              conversation_id,
-              property_customer_id: (convRow as { property_customer_id?: string | null } | null)?.property_customer_id ?? null,
-              property_name: top.propertyName,
-              room_no: top.roomNumber ?? "",
-              image_url,
-              source: src,
-              ...(top.status ? { recruitment_status: top.status, recruitment_checked_at: new Date().toISOString() } : {}),
-              ...(typeof top.rent === "number" ? { rent: top.rent } : {}),
-            });
-            spSaved = spErr ? `error:${spErr.message}` : "inserted";
-            if (!spErr && (top.status || typeof top.rent === "number")) {
-              console.log(JSON.stringify({
-                tag: "send-line-message:property-facts", conversationId: conversation_id,
-                property: `${top.propertyName} ${top.roomNumber ?? ""}`.trim(),
-                status: top.status ?? null, rent: top.rent ?? null,
-                deposit: top.deposit ?? null, keyMoney: top.keyMoney ?? null, vacancyDate: top.vacancyDate ?? null,
-              }));
-            }
-          } else {
-            spSaved = "duplicate_skipped";
-          }
-        } catch (e) {
-          spSaved = `failed:${e instanceof Error ? e.message : String(e)}`;
-        }
-
-        console.log(JSON.stringify({
-          tag: "send-line-message:image-property", conversationId: conversation_id, source: src,
-          read: read.items.length, matched: fixed.length, saved: top.propertyName + (top.roomNumber ? ` ${top.roomNumber}` : ""),
-          sentProperties: spSaved,
-          tokens: read.usage, error: error?.message ?? null,
-        }));
+        // 2026-09-22 竹内「やる」: 物件名・号室の読み取りは recordSentImageProperty の1回だけ
+        //   （旧は extract-property-info と ここの2か所で同じ画像を DeepSeek で読んでいた）。
+        //   資料の中身の読み取り（ensureImageDetail）とは並べて動かす。どちらかが失敗してももう一方は残る
+        await Promise.all([
+          recordSentImageProperty({ imageUrl: image_url, conversationId: conversation_id, source: src }),
+          ensureImageDetail(image_url, conversation_id).catch((e) => {
+            console.warn("[send-line-message] 資料の中身の読み取り失敗:", e instanceof Error ? e.message : e);
+            return null;
+          }),
+        ]);
       } catch (e) {
         console.warn("[send-line-message] 画像の物件読み取り失敗:", e instanceof Error ? e.message : e);
       }
