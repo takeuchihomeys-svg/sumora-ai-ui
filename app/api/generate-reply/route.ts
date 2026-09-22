@@ -9,6 +9,7 @@ import { createGenerationModel } from "@/app/lib/reply-generation-model";
 import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
 import { isPostApplyStatus, willRouteAlt } from "@/app/lib/llm-alt-provider";
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
+import { buildBrainSpecificNote } from "@/app/lib/brain-specific-note";
 import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 
 /**
@@ -4651,6 +4652,19 @@ export async function POST(req: NextRequest) {
       // 2026-09-10 Fable5 Sさん事例: WE DO の選択肢に内覧のご案内提案を第1候補として含める（四者同名）
       const fallbackDirection = "顧客の最新メッセージ内の質問・条件・依頼にそれぞれ直接回答し、具体名詞（エリア・条件。物件名・号室・日付は書かない）を含む WE DO 宣言を1つだけ添える（次のいずれか1つ: ①内覧のご案内提案「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」＝具体的な候補日時は書かない ②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤家賃・条件の交渉）";
       lines.push(`- 🎯 返信の方向性: ${effectiveReplyDirection ?? fallbackDirection}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
+      // 2026-09-23 竹内「スタッフの文の生成との間でブレインの部分にギャップがある」:
+      //   上の方向性は早い者勝ちの型で決まり、ブレインの reply_direction は採用されなければ
+      //   **生成プロンプトに1文字も入らない**（実測で56.3%が差し替わっていた）。
+      //   型（どう書くか）はそのまま、ブレインの中身（何について書くか）を1行足す。詳細は brain-specific-note.ts
+      const brainSpecific = buildBrainSpecificNote({
+        brainDirection: brainMeta?.reply_direction ?? null,
+        effectiveDirection: effectiveReplyDirection,
+        fresh: brainFreshForMessage && !isCachedMeta,
+        // 型が「新しい提案をしない」と言っている場面（ここで足すと書けと書くなの衝突になる）
+        noNewProposalScene: isViewingCancel || !!negativeDetail.kind || isPostStrongRecommendation
+          || isGratitudeReplyTPO || isTemporaryLeaveMsg || isThinkingMsg,
+      });
+      if (brainSpecific) lines.push(brainSpecific);
       if (effectiveKeyTopics.length) {
         lines.push(`- ✅ 必ず含める内容（${effectiveKeyTopics.length}件すべて必須）: ${effectiveKeyTopics.join(" / ")}`);
         lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
