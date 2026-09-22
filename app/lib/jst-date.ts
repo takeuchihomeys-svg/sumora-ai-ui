@@ -9,6 +9,26 @@
 
 export const JST_OFFSET_MS = 9 * 3600 * 1000;
 const DAY_MS = 86_400_000;
+
+/**
+ * 「どれだけ前か」を1語で返す（30分前 / 3時間前 / 5日前）。読めない時は空文字。
+ *
+ * 2026-09-23 竹内「送信の履歴 日にちで分かるようにしたと思うんやけど 時間でもしたらどうかな？」:
+ *   AIX の履歴を日にちだけで渡していたため「送った直後で反応待ちか」が判断できなかった。
+ *   実測（scripts/peek-aix-time-granularity.ts・直近60日・AIX 1,356件）: お客様が返すまで
+ *   **中央値1.1時間・1時間以内が49.1%**・同じ日のうちが73.9%。同じ日に同じ AIX を複数回押す組が16.1%。
+ *   ＝ AIX の動きは分・時間の単位なので、日にちの粒度では足りない。
+ * 境目は 60分（分→時間）と 48時間（時間→日）。48時間にするのは
+ *   「昨日の朝」を『1日前』と丸めると当日か前日かが消えるため（promise-tracker の hStr と同じ境目に揃える）。
+ */
+export function jstAgo(input: string | number | Date | null | undefined, nowMs: number = Date.now()): string {
+  const t = input instanceof Date ? input.getTime() : typeof input === "number" ? input : Date.parse(input ?? "");
+  if (!Number.isFinite(t)) return "";
+  const m = Math.max(0, Math.round((nowMs - t) / 60_000));
+  if (m < 60) return `${m}分前`;
+  if (m < 60 * 48) return `${Math.round(m / 60)}時間前`;
+  return `${Math.round(m / 1440)}日前`;
+}
 export const WEEKDAYS_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;
 
 export type JstParts = { y: number; m: number; d: number; hour: number; minute: number; /** 0=日 … 6=土 */ dow: number };

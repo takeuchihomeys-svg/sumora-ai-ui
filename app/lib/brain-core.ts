@@ -55,7 +55,7 @@ import { isUsableExampleText, isCustomerFacingExample, fixExampleWeekdays } from
 // 2026-09-12 竹内方針E: 実例の注入前に生成と同じ決定論置換（すぐに除去・承知→かしこまりました・単独の承りました）を通す
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（timeZone 抜けの UTC 表示を防ぐ）
-import { jstMD, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
+import { jstAgo, jstMD, jstMDHm, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
 // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 分析モード判定（決定論の場面の証拠で cached→incremental に格上げ）
 import { decideAnalysisMode, nothingNewSinceLastAnalysis, isDuplicateRun, DUPLICATE_RUN_WINDOW_MS } from "@/app/lib/brain-analysis-mode";
 import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
@@ -1849,11 +1849,20 @@ export async function analyzeConversation(
   //   実測（scripts/audit-ledger-window.ts・直近60日・AIX 1,356件）: 同じ AIX を同じ会話で2回以上押しているのは
   //   物件オススメ110会話・物件送付74・見積書50・物件確認した43・内覧の案内17。
   //   回数と最後の時刻を足して、行動台帳（何を伝えたか）と突き合わせられるようにする。
+  // 2026-09-23 竹内「送信の履歴 日にちで分かるようにしたと思うんやけど 時間でもしたらどうかな？」:
+  //   実測（scripts/peek-aix-time-granularity.ts・直近60日・AIX 1,356件）で、日にちでは足りないと分かった。
+  //   ・お客様が返すまで **中央値1.1時間・1時間以内が49.1%**・同じ日のうちが73.9%
+  //   ・同じ日に同じ AIX を複数回押している組が16.1%（日にちだけだと区別できない）
+  //   ・同じ日に続けて押す間隔は中央値0.1時間・1時間以内が69.1%
+  //   ブレインのルールに「物件送付直後で顧客の反応がまだ無い場合は aix:null」があるのに、
+  //   「直後」かどうかを判断する材料が無かった。行動台帳が M/D HH:MM なので同じ形に揃える。
+  //   「どれだけ前か」の言い方は jst-date.jstAgo に集める（日時の計算はあのファイルの関数だけで行う決まり）
+  const agoText = (iso: string | null | undefined): string => jstAgo(iso);
   const aixUsageDigest = usedAixTypes.map((t) => {
     const rows = aixLogs.filter((l) => l.aix_type === t);
     // aixLogs は新→旧順（brain-core の読み出し順）なので先頭が最後に押した行
     const lastAt = rows[0]?.created_at ?? null;
-    const when = lastAt ? jstMD(lastAt) : "時刻不明";
+    const when = lastAt ? `${jstMDHm(lastAt)}・${agoText(lastAt)}` : "時刻不明";
     return `${t}${rows.length > 1 ? `×${rows.length}回` : ""}（最後 ${when}）`;
   });
   // 直近3件の押下順序（新→旧）＋テンプレート名をBrainプロンプトに注入する
@@ -1862,7 +1871,9 @@ export async function analyzeConversation(
   // check_pattern（確認結果: unavailable=募集なし等）も併記 → 「物件確認した」だけでなく
   // 「確認して募集がなかった」まで伝わり、代替提案シナリオの読み取りが可能になる
   const recentAixSeqText = aixLogs.slice(0, 3).length > 0
-    ? `\n【直近AIXアクション（新→旧順）】${aixLogs.slice(0, 3).map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}${l.check_pattern ? `(結果:${l.check_pattern})` : ""}`).join(" → ")}`
+    // 2026-09-23 竹内「時間でもしたらどうかな？」: ここは時刻が1つも無かった。
+    //   「送った直後で反応待ちか」は分単位で決まる（実測: お客様の返信は1時間以内が49.1%）ので経過時間を添える
+    ? `\n【直近AIXアクション（新→旧順）】${aixLogs.slice(0, 3).map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}${l.check_pattern ? `(結果:${l.check_pattern})` : ""}${l.created_at ? `[${jstMDHm(l.created_at)}・${agoText(l.created_at)}]` : ""}`).join(" → ")}`
     : "";
   // 成約実績・次打ちマップ（DB動的）: aix_transition_stats から取得した遷移確率を推奨候補として注入する。
   // あくまで「推奨候補」であり、REPLY_STYLE_RULES のフェーズ制約（募集状況未確認での内覧誘導禁止等）と

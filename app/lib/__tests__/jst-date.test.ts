@@ -3,7 +3,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import {
-  jstParts, jstYmd, jstMD, jstMDHm, jstDateLabel, jstYmdWeekday, jstDayStartMs, jstWeekMondayYmd,
+  jstAgo, jstParts, jstYmd, jstMD, jstMDHm, jstDateLabel, jstYmdWeekday, jstDayStartMs, jstWeekMondayYmd,
   weekdayForMonthDay, weekdayTable, fixDateWeekdays,
 } from "../jst-date";
 import { weekdayFor } from "../typo-check";
@@ -112,6 +112,28 @@ describe("置き換え先（同じ事実を1関数で）", () => {
   it("R3 +9h した Date にローカル getter を使う書き方が残っていない（bg-async・daily-brief）", () => {
     expect(/jst\.getMonth\(\)|jst\.getDate\(\)|jst\.getHours\(\)/.test(src("api/generate-draft-bg-async/route.ts"))).toBe(false);
     expect(/new Date\(jstMs\)\.getDay\(\)/.test(src("api/cron/daily-brief/route.ts"))).toBe(false);
+  });
+});
+
+// 2026-09-23 竹内「送信の履歴 日にちで分かるようにしたと思うんやけど 時間でもしたらどうかな？」
+//   AIX の履歴を日にち→時刻＋「どれだけ前か」にした（実測: お客様の返信は1時間以内が49.1%）
+describe("jstAgo（どれだけ前か）", () => {
+  const now = Date.parse("2026-09-23T12:00:00+09:00");
+  const at = (jst: string) => new Date(jst).toISOString();
+  it("1時間未満は分", () => expect(jstAgo(at("2026-09-23T11:30:00+09:00"), now)).toBe("30分前"));
+  it("ちょうど60分は時間に切り替わる", () => expect(jstAgo(at("2026-09-23T11:00:00+09:00"), now)).toBe("1時間前"));
+  it("同じ日の朝は時間で出る（当日か前日かが消えない）", () => expect(jstAgo(at("2026-09-23T08:00:00+09:00"), now)).toBe("4時間前"));
+  it("昨日の朝も時間のまま（48時間までは時間）", () => expect(jstAgo(at("2026-09-22T08:00:00+09:00"), now)).toBe("28時間前"));
+  it("48時間を超えたら日", () => expect(jstAgo(at("2026-09-18T12:00:00+09:00"), now)).toBe("5日前"));
+  it("未来は0分前に丸める（時計のずれで負にしない）", () => expect(jstAgo(at("2026-09-23T12:30:00+09:00"), now)).toBe("0分前"));
+  it("読めない値は空文字", () => {
+    expect(jstAgo(null, now)).toBe("");
+    expect(jstAgo("", now)).toBe("");
+    expect(jstAgo("なんでもない文字", now)).toBe("");
+  });
+  it("Date も数値も受ける", () => {
+    expect(jstAgo(new Date(now - 90 * 60_000), now)).toBe("2時間前");
+    expect(jstAgo(now - 30 * 60_000, now)).toBe("30分前");
   });
 });
 
