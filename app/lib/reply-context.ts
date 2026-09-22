@@ -907,9 +907,15 @@ export type PositiveVerdict = {
 };
 
 /** T2: 内見意思の明示（成約プール n=169 / ★56）。単独で positive 確定・question より上位。
- *  成約実文「条件など含め好条件で気になるのですが内見などはできますか？？」を取るため 6字までの介在を許す */
-export const CUST_VIEWING_INTENT_RE =
-  /(?:内見|内覧|見学|下見)[^\n]{0,6}?(?:し?たい|希望|お願い|(?:出来|でき)(?:ます|る|れ|ば)?|可能|させて(?:頂|いただ)き)|見てみたい|見たいです|拝見したい|オンライン(?:内覧|内見)|見に行き/;
+ *  成約実文「条件など含め好条件で気になるのですが内見などはできますか？？」を取るため 6字までの介在を許す
+ *  2026-09-22 竹内（𝓡さん事例）: 「もう少し見てみたいので、送っていただきたいです」「ほかもあれば見てみたいです」は他の物件も見たい（内覧ではない）。
+ *    実データ365日・お客様の言葉で「もう少し／もっと／ほかも…見てみたい」4件: 実送信は4件とも物件のご紹介・内覧の案内0件（scripts/audit-see-more-intent.ts） */
+import { SEE_MORE_LISTINGS_PREFIX } from "./scene-patterns";
+export { SEE_MORE_LISTINGS_PREFIX };
+export const CUST_VIEWING_INTENT_RE = new RegExp(
+  "(?:内見|内覧|見学|下見)[^\\n]{0,6}?(?:し?たい|希望|お願い|(?:出来|でき)(?:ます|る|れ|ば)?|可能|させて(?:頂|いただ)き)" +
+  `|(?<!${SEE_MORE_LISTINGS_PREFIX})見(?:てみたい|たいです)|拝見したい|オンライン(?:内覧|内見)|見に行き`,
+);
 
 /** T1: 我々が送った物件・見積への評価（成約プール 気になる88 / 良さそう26 / いい感じ27 / 興味17 / これがいい11 / 一番7 / あり3）。
  *  ⚠ 単独では positive にしない。直前スタッフ発言が資料送付系（MATERIALS_SENT_STAFF_KINDS）の時だけ発火する。
@@ -2943,6 +2949,9 @@ export type VocabAnchor = {
   why: string;
   /** 必ずリテラルの代替を渡す（禁止だけを足すと同義語に逃げる） */
   replace: string;
+  /** 2026-09-22 竹内（𝓡さん事例）: replace が「お客様が自分で物件を送る」場面の文（募集状況確認＋御見積書）の時、それ以外の場面で渡す代替。
+   *  どの場面でも「お送り頂きました物件の募集状況確認」を渡していたので、こちらが送った物件の送り返しにも募集状況確認を書かせていた */
+  replaceOther?: string;
   /** 生成側 note で「書かない語」として提示する見出し */
   label: string;
 };
@@ -2951,8 +2960,9 @@ export const CUSTOMER_SOUDAN_SIGNAL_RE =
   /相談|話し合|打ち合わせ|家族|ご家族|旦那|主人|奥さん|妻|嫁|夫|親|両親|母|父|同居|友人|友達|彼氏|彼女|二人で|2人で|皆で|みんなで/;
 export const CUSTOMER_KENTOU_SIGNAL_RE = /検討|考え|悩|迷|持ち帰|決めかね|決められ/;
 export const CUSTOMER_KAKUNIN_SIGNAL_RE = /確認|チェック|見て(?:み|から|おき)|拝見|目を通/;
+// 2026-09-22 竹内（𝓡さん事例）: 「もう少し見てみたいので、送っていただきたいです」も引き続きのご紹介の依頼（実送信:「引き続き新着物件を随時確認させ…お送りさせて頂きます」）
 export const CUSTOMER_ASKS_CONTINUOUS_PICKUP_RE =
-  /(?:また|引き続き|今後|次|新着|出たら|出てきたら|あれば|ありましたら)[^\n]{0,16}(?:ご紹介|紹介|ピックアップ|探し|お願い|送っ|教えて)|条件のあう物件|新しい(?:物件|お部屋)/;
+  /(?:また|引き続き|今後|次|新着|出たら|出てきたら|あれば|ありましたら|もう少し|もっと|他の|ほかの|他にも|ほかにも)[^\n]{0,16}(?:ご紹介|紹介|ピックアップ|探し|お願い|送っ|教えて)|条件のあう物件|新しい(?:物件|お部屋)/;
 
 export const CUSTOMER_ANCHORED_VOCAB: VocabAnchor[] = [
   { key: "goyukkuri_soudan", label: "ごゆっくりご相談", re: /ごゆっくりご相談/, requires: CUSTOMER_SOUDAN_SIGNAL_RE, severity: "block",
@@ -2968,7 +2978,8 @@ export const CUSTOMER_ANCHORED_VOCAB: VocabAnchor[] = [
     requires: CUSTOMER_ASKS_CONTINUOUS_PICKUP_RE, severity: "block",
     forbidWhen: (c) => c.pair?.customer.kind === "will_send_later" || (c.pair?.customer.secondary.includes("will_send_later") ?? false),
     why: "「随時ピックアップしてお送りします」は『我々が探して送る』宣言で、(B)『我々に送って』と依頼された場面の語彙（9/203）。お客様が『自分で物件を送る』と言った場面の正解 246件中 0件。直前にピックアップ宣言済みなら重複でもある",
-    replace: "この1文を削除し、「お送り頂きました物件の募集状況確認させて頂き、最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！」に置き換える" },
+    replace: "この1文を削除し、「お送り頂きました物件の募集状況確認させて頂き、最大限割引しました初期費用の御見積書とあわせてご連絡させて頂きます！！」に置き換える",
+    replaceOther: "この1文を削除し、お客様の発言への答えと行動宣言に置き換える" },
 
   { key: "gokazoku", label: "ご家族", re: /ご家族(?:様)?/, requires: /家族|旦那|主人|妻|嫁|夫|子供|子ども|お子|同居|両親|親|息子|娘/, severity: "warning",
     why: "お客様が家族構成に言及していないのに「ご家族」を出すと事実の創作になる",
@@ -2976,7 +2987,8 @@ export const CUSTOMER_ANCHORED_VOCAB: VocabAnchor[] = [
 
   { key: "gokentou", label: "ご検討頂けますと／ごゆっくりご検討", re: /ご検討(?:頂|いただ)け(?:ます|れば)|ごゆっくりご検討/, requires: CUSTOMER_KENTOU_SIGNAL_RE, severity: "warning",
     why: "「ご検討」はお客様が『検討します／考えます／悩んでいます』と言った時のミラー（ごゆっくりご検討 正解 21件中 20件=95%が顧客の該当語あり）",
-    replace: "お客様が『送ります』と言っているだけなら検討促しは不要。行を削除し受け宣言（募集状況確認＋御見積書）に置き換える" },
+    replace: "お客様が『送ります』と言っているだけなら検討促しは不要。行を削除し受け宣言（募集状況確認＋御見積書）に置き換える",
+    replaceOther: "検討促しの行を削除し、お客様の発言への答えと行動宣言に置き換える" },
 ];
 
 /** 「ごゆっくり」の後続語は顧客の動詞の鏡写し（正解 33件中 31件=94%・例外2件のみ） */
@@ -3008,7 +3020,8 @@ export function buildVocabAnchorNote(customerAll: string, pair: PairContext | nu
     const anchored = v.requires.test(customerAll);
     const forbidden = v.forbidWhen ? v.forbidWhen({ reply: "", customerText: customerAll, lastCustomerTexts: "", lastStaffText: "", pair }) : false;
     if (anchored && !forbidden) continue;
-    lines.push(`・「${v.label}」系は書かない — ${v.why}\n  → 代わりに: ${v.replace}`);
+    const willSend = pair?.customer.kind === "will_send_later" || (pair?.customer.secondary.includes("will_send_later") ?? false);
+    lines.push(`・「${v.label}」系は書かない — ${v.why}\n  → 代わりに: ${!willSend && v.replaceOther ? v.replaceOther : v.replace}`);
   }
   const hit = GOYUKKURI_MIRROR.find((r) => r.verb.test(customerAll));
   lines.push(hit

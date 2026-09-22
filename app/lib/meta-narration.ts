@@ -20,6 +20,9 @@ const META_LINE_RES: RegExp[] = [
   // 見出し: 「〇〇さんへの返信案：」「返信案：」「修正版：」「【返信案】」
   /^\s*(?:[^\n]{0,30}(?:さん|様)への)?(?:返信案|回答案|修正版|修正案|返信文|下書き)\s*[：:]\s*$/,
   /^\s*【(?:返信案|回答案|修正版|修正案|返信文|下書き)[^】]*】\s*$/,
+  // 2026-09-22 YUMA の下書き「かしこまりました！！\n以下、返信案です。\n\n〜」（2行目に入った見出し）。
+  //   お客様への文は返信そのものを「返信案」「修正版」と呼ばない（「以下」「こちらが」で始まる地の文の見出し）
+  /^\s*(?:以下|下記|こちら)(?:、|が|は)?(?:の)?(?:返信案|回答案|修正版|修正案|返信文|下書き)(?:です|となります|になります)?[。．：:]?\s*$/,
   // 2026-09-15 YUMA の下書き「お客様がスタンプのみで返信されている状況ですね。…追加の催促にならないよう、短く待つ姿勢のみを示します。」
   //   お客様への文はお客様を「〇〇さん」と呼び、「お客様が〜状況ですね」と三人称で状況を述べない／返し方の方針を「〜を示します」と書かない
   /^お客様(?:が|は)[^\n]{0,80}(?:状況|様子)(?:です|ですね|のようです)[。．]/,
@@ -243,11 +246,36 @@ export function stripMarkdownEmphasis(text: string): string {
   return text.replace(/\*\*([^\n*]+)\*\*/g, "$1").replace(/(?<!\S)__([^\n_]+)__(?!\S)/g, "$1");
 }
 
+/**
+ * 判定・分析の見出し（「【今回の判定】」「【分析】」）。見出しから空行までの塊が AI の作業メモ。
+ * 2026-09-22 YUMA の下書き（こちらの物件の送り返しの場面）:
+ *   「【今回の判定】／・直前スタッフ送信＝物件送付済み（3件）＋ご査収依頼で終了済み。／
+ *     ・見積書解禁条件（送付済み物件への前向き反応）を満たすので、見積作成宣言を1回だけ書く。…／（空行）／はい😊！！…」
+ *   「・」の箇条書きはスタッフの物件紹介でも使うので行ごとには落とせない（WORKNOTE_SHAPE_RES は「- 」だけ）。
+ *   見出しで塊ごと見分ける。実送信で当たる件数は scripts/audit-meta-heading.ts（0件で入れた）
+ */
+export const META_BLOCK_HEADING_RE = /^\s*【(?:今回の|この返信の|返信の)?(?:判定|分析|判断|思考|方針|前提|整理|検討|作業メモ)(?:結果|内容|メモ)?】\s*$/;
+
+function stripMetaBlocks(text: string): { text: string; removed: string[] } {
+  const lines = text.split("\n");
+  const kept: string[] = [];
+  const removed: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!META_BLOCK_HEADING_RE.test(lines[i])) { kept.push(lines[i]); continue; }
+    const block = [lines[i].trim()];
+    while (i + 1 < lines.length && lines[i + 1].trim() !== "") block.push(lines[++i].trim());
+    removed.push(block.join(" ／ "));
+  }
+  return removed.length ? { text: kept.join("\n"), removed } : { text, removed };
+}
+
 /** 作業メモの行を除き、見出しだけの前置きを外す。変わらなければ同じ文字列を返す */
 export function stripMetaNarration(text: string): { text: string; removed: string[] } {
   if (!text) return { text, removed: [] };
+  const blocks = stripMetaBlocks(text);
+  text = blocks.text;
   const lead = stripLeadingNarration(text);
-  const removed: string[] = [...lead.removed];
+  const removed: string[] = [...blocks.removed, ...lead.removed];
   text = lead.text;
   const lines = text.split("\n");
   const kept: string[] = [];

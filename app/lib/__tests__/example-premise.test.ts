@@ -106,7 +106,7 @@ it("注記は決定論で作る（手本の本文にある前提だけ並べる�
 });
 
 it("ルールの vocab と label は1対1で揃っている（四者同名の崩れを止める）", () => {
-  expect(PREMISE_RULES.length).toBe(7);
+  expect(PREMISE_RULES.length).toBe(8); // 2026-09-22 customer_found_property（こちらの物件の送り返し）を追加
   for (const r of PREMISE_RULES) {
     expect(r.key.length > 0).toBe(true);
     expect(r.label.length > 0).toBe(true);

@@ -87,6 +87,9 @@ export type EstimateContextInput = {
    *  予告形（〜お送りさせて頂きます）のみ解禁され、見積本体のカバー文・金額は従来どおり AIX 専用。 */
   customerWillSendProperty?: boolean;
   customerWillSendEvidence?: string | null;
+  /** 2026-09-22 竹内（𝓡さん事例）: お客様が送ってきた物件（スクショ）が全部こちらの送った物件（own-property-server の照合・all）。
+   *  新しい物件の送付（4.）ではなく、送付済み物件への反応（5.）として見る */
+  ownPropertyReturnedAll?: boolean;
 };
 
 // ─── 送付済み物件数（route.ts 3箇所のインライン式・check-reply を統合）──────────────
@@ -137,7 +140,10 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
   const asksEstimate = CUSTOMER_ESTIMATE_REQUEST_RE.test(burst);
   const asksCost = CUSTOMER_COST_QUESTION_RE.test(burst);
   // 条件フォーム画像は「物件送付」ではない。フォームでない時のみ画像・URL・号室を物件参照とみなす
-  const hasPropertyRef = !isForm && (CUSTOMER_PROPERTY_REF_RE.test(msg) || !!input.hasCustomerImage);
+  //   2026-09-22 𝓡さん事例: こちらが送った物件のスクショの送り返しは「新しい物件の送付」ではない
+  //   （実送信・送り返し9回: 見積書の約束は2回＝お客様が「2部屋」等と言った時だけ。物件の送付を理由にした一律の見積宣言は誤り）
+  const hasPropertyRef = !isForm && !input.ownPropertyReturnedAll && (CUSTOMER_PROPERTY_REF_RE.test(msg) || !!input.hasCustomerImage);
+  if (input.ownPropertyReturnedAll) signals.push("own_property_returned");
   // 2026-09-14 竹内（Hina 事例）: 画像だけのターン（お客様が何も書いていない）では brain の condition_change_type を使わない。
   //   brain は画像の読み取り文（SNS 広告の「6万円ペット可 1ldk」）を読むので条件変更と取りうるが、お客様の言葉に根拠が無い。
   //   その誤りで「物件のスクショが届いた → 見積書」（4.）が forbid に落ちた（YUMA 再現）。reply-context の classifyCustomerResponse と同じ規則

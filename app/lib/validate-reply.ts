@@ -534,6 +534,8 @@ export function applySurfaceFixes(
     customerMessageAt?: string | number | null;
     /** こちらの前の発言の時刻（3時間より前なら「先程」を落とす。2026-09-16 竹内・𝒮 さん事例） */
     lastStaffMessageAt?: string | number | null;
+    /** 2026-09-22 𝓡さん事例: お客様が送ってきた物件が全部こちらの送った物件（own-property-server の照合） */
+    ownPropertyReturnedAll?: boolean;
   },
 ): { text: string; applied: string[] } {
   const applied: string[] = [];
@@ -541,7 +543,7 @@ export function applySurfaceFixes(
   // 2026-09-12 竹内（あや事例）: AI の作業メモ（「〜という質問への直接回答を組み立てます。」「〇〇さんへの返信案：」）は下書き欄に絶対に入れない
   const meta = stripMetaNarration(out);
   if (meta.removed.length) { out = meta.text; applied.push(`META_NARRATION_REMOVED×${meta.removed.length}`); }
-  const sp = normalizeSharedPropertyReference(out, opts?.customerMessage);
+  const sp = normalizeSharedPropertyReference(out, opts?.customerMessage, { ownPropertyReturnedAll: opts?.ownPropertyReturnedAll });
   if (sp.count) { out = sp.text; applied.push(`SHARED_PROPERTY_REF×${sp.count}`); }
   // 2026-09-15 竹内（yasuki 事例）: お客様が自分で折り返すと言っているのに「息子様からのご返答お待ちしております」→「ご返答お待ちしております」
   const ca = fixThirdPartyContactWait(out, opts?.customerMessage);
@@ -1076,6 +1078,8 @@ export function validateAndClean(
     customerMessageAt?: string | number | null;
     /** こちらの前の発言の時刻（「先程」の判定。2026-09-16 竹内・𝒮 さん事例） */
     lastStaffMessageAt?: string | number | null;
+    /** 2026-09-22 𝓡さん事例: お客様が送ってきた物件が全部こちらの送った物件（applySurfaceFixes に渡す） */
+    ownPropertyReturnedAll?: boolean;
   },
 ): { cleaned: string; issues: string[]; gateEdits: GateEdit[] } {
   const issues: string[] = []
@@ -1133,7 +1137,7 @@ export function validateAndClean(
   // 2026-09-11 竹内方針1・3・4・5（統合設計 §1）: 末尾（ゲートの後）で決定論の表層修正（別名の統一・承知→かしこまりました・すぐに除去・誤字）。
   //   gen1・gen2 の両方を通る唯一の後処理。final-check の修正版も同じ applySurfaceFixes を通す
   {
-    const sf = applySurfaceFixes(cleaned, { customerName: opts?.customerName, aliases: opts?.nameAliases, now: opts?.now, fillName: !!opts?.aixGates, customerMessage: opts?.aixGates ? opts?.customerMessage : null, customerMessageAt: opts?.aixGates ? opts?.customerMessageAt : null, lastStaffMessageAt: opts?.aixGates ? opts?.lastStaffMessageAt : null });
+    const sf = applySurfaceFixes(cleaned, { customerName: opts?.customerName, aliases: opts?.nameAliases, now: opts?.now, fillName: !!opts?.aixGates, customerMessage: opts?.aixGates ? opts?.customerMessage : null, customerMessageAt: opts?.aixGates ? opts?.customerMessageAt : null, lastStaffMessageAt: opts?.aixGates ? opts?.lastStaffMessageAt : null, ownPropertyReturnedAll: opts?.ownPropertyReturnedAll });
     if (sf.applied.length > 0) {
       issues.push(...sf.applied.map((a) => "表層修正: " + a));
       cleaned = sf.text;

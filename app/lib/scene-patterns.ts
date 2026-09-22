@@ -90,8 +90,12 @@ export const OTHER_ROOM_LAYOUT_Q_RE = new RegExp([
  */
 export const OTHER_ROOM_SEARCH_RE = /(?:探し|さがし|ピックアップ|見つけ|物件出し)|(?:他|ほか)(?:に|にも)[^\n。！!？?]{0,10}(?:あれ|あり)[^\n。！!？?]{0,6}(?:お願い|送っ|教え)/;
 
+/** 2026-09-22 竹内（𝓡さん事例）: 「もう少し見てみたい／ほかもあれば見てみたい」は他の物件も見たい（内覧ではない）。
+ *  実データ365日のお客様の言葉4件: 実送信は4件とも物件のご紹介・内覧の案内0件（scripts/audit-see-more-intent.ts）。
+ *  reply-context の CUST_VIEWING_INTENT_RE・generate-reply の内覧希望の判定も同じ接頭で外す（四者同名） */
+export const SEE_MORE_LISTINGS_PREFIX = "(?:もう少し|もっと|他(?:に|の)?も|ほか(?:に|の)?も|色々|いろいろ|たくさん)[^\\n。]{0,8}";
 /** 内覧希望（S4）。旧 AIX_VIEWING_INTENT_RE ＋「拝見・見に行け・行けます・いけるみたい」 */
-export const VIEWING_INTENT_RE = /見に行き|見に行け|内覧|内見|見学|見てみたい|拝見|行けます|いけ(?:る|ます)みたい/;
+export const VIEWING_INTENT_RE = new RegExp(`見に行き|見に行け|内覧|内見|見学|(?<!${SEE_MORE_LISTINGS_PREFIX})見てみたい|拝見|行けます|いけ(?:る|ます)みたい`);
 
 /** 日時の指定（S5）: 時刻表現 */
 export const TIME_SPEC_RE = /[0-9０-９]{1,2}\s*(?:時|[:：][0-9０-９]{2})/;

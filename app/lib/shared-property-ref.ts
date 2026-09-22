@@ -41,8 +41,10 @@ const GENERIC_DESCRIPTOR_RE = /徒歩\s*[0-9０-９]+\s*分|[0-9０-９.．]+\s*
  * 例: 「十三徒歩7分の物件、募集状況確認させて頂きます」→「お送り頂きました物件、募集状況確認させて頂きます」
  * 置き換えない: 「お送り頂きました物件」「新着の物件」「ご希望条件のお部屋」など共有文の語を含まない呼び方
  */
-export function normalizeSharedPropertyReference(text: string, customerTurn: string | null | undefined): { text: string; count: number } {
-  if (!text || !customerSharedProperty(customerTurn)) return { text, count: 0 };
+export function normalizeSharedPropertyReference(text: string, customerTurn: string | null | undefined, opts?: { ownPropertyReturnedAll?: boolean }): { text: string; count: number } {
+  // 2026-09-22 竹内（𝓡さん事例）: お客様が送ってきた物件が全部こちらの送った物件なら置き換えない
+  //   （こちらの物件を「お送り頂きました物件」と呼ぶことになる。実送信の送り返し9回でこの呼び方は0回）
+  if (!text || opts?.ownPropertyReturnedAll || !customerSharedProperty(customerTurn)) return { text, count: 0 };
   const tokens = listingTokens(customerTurn ?? "");
   let count = 0;
   // 置き換える範囲は描写の文字（漢字・カタカナ・英数字・記号・「の」「から」）だけ。ひらがなの語（かしこまりました 等）は巻き込まない

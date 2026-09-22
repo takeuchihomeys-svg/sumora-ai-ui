@@ -331,7 +331,7 @@ export function buildSceneEvidencePromptText(
 }
 
 /** 押す直前の顧客発言から場面の証拠を出す（cron で scene_staff を作る時と brain-core で同じ関数） */
-export function sceneEvidenceForTurn(turn: { text: string; hasImage: boolean }, o: { sentPropertyCount: number; aixHistory?: ReadonlyArray<{ aix_type?: string | null; check_pattern?: string | null }>; recentMessages?: ReadonlyArray<{ sender: string; text?: string | null }>; moveOutScheduled?: boolean; viewingReleased?: boolean }): AixSceneEvidence | null {
+export function sceneEvidenceForTurn(turn: { text: string; hasImage: boolean }, o: { sentPropertyCount: number; aixHistory?: ReadonlyArray<{ aix_type?: string | null; check_pattern?: string | null }>; recentMessages?: ReadonlyArray<{ sender: string; text?: string | null }>; moveOutScheduled?: boolean; viewingReleased?: boolean; ownPropertyReturnedAll?: boolean }): AixSceneEvidence | null {
   return detectAixSceneEvidence({
     latestCustomerTurn: turn.text,
     hasCustomerImage: turn.hasImage,
@@ -340,5 +340,6 @@ export function sceneEvidenceForTurn(turn: { text: string; hasImage: boolean }, 
     recentMessages: o.recentMessages,
     propertyStatus: o.moveOutScheduled ? "move_out_scheduled" : "unknown",
     viewingReleased: o.viewingReleased,
+    ownPropertyReturnedAll: o.ownPropertyReturnedAll,
   });
 }

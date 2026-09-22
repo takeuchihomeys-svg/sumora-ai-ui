@@ -153,6 +153,8 @@ import { resolveApplicationStage, buildApplicationStageNote } from "@/app/lib/ap
 import { resolveLatestQuotedContext, buildQuotedReplyNote } from "@/app/lib/quoted-context";
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: グループの会話は初回の挨拶・表示名の呼びかけをしない
 import { isMultiPersonTarget, isGroupConversationName } from "@/app/lib/line-target";
+// 2026-09-22 竹内（𝓡さん事例）: お客様が送ってきた物件がこちらの送った物件か
+import { resolveOwnPropertyForTurn } from "@/app/lib/own-property-server";
 /**
  * 直前送信の材料を止めるスイッチ（A/B の比較と、効かなかった時の戻し道）。
  * `PREV_SEND_NOTE=off` で無効。dev サーバーは起動時の環境変数を読むので、切り替えには再起動が要る。
@@ -195,6 +197,7 @@ import {
   requiresWaitingCommitment,
   // 2026-09-14 竹内（Hina 事例）: 画像の読み取り文はお客様の発言ではない（意図の判定から外す・プロンプトで見出しを付ける）
   IMAGE_TEXT_LABEL, isImageTextUnit, customerOwnWords,
+  SEE_MORE_LISTINGS_PREFIX,
 } from "@/app/lib/reply-context";
 import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { ensureWaitingCommitment, contactDateLabel } from "@/app/lib/waiting-commitment";
@@ -220,7 +223,7 @@ import { jstParts, jstDateLabel, weekdayTable } from "@/app/lib/jst-date";
 // 2026-09-19 竹内（タマキ事例）: 「〜でも大丈夫」は条件の**追加**（変更ではない）。限定して復唱させない
 import { detectConditionExpansion, buildExpansionNote } from "@/app/lib/condition-expansion";
 // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタ（場面＝行動台帳の事実で判定）
-import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinceViewingMove, type PremiseFacts } from "@/app/lib/example-premise";
+import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinceViewingMove, CUSTOMER_FOUND_PROPERTY_VOCAB, type PremiseFacts } from "@/app/lib/example-premise";
 import { detectApplyReadiness, buildApplyReadinessNote } from "@/app/lib/apply-readiness";
 // 2026-09-19 竹内（慶次事例）: 手本の言い回しに埋まっている他のお客様の条件を伏せる
 import { maskKnowledgeSpecifics, MASKED_NOTE } from "@/app/lib/knowledge-placeholder";
@@ -837,6 +840,10 @@ function buildGenerationMessages(
   //   そこから申込の流れにいく形はどうか」: buildApplyReadinessNote（hot の時だけ非空）。
   //   ※ 全行が「- 」で始まる＝万一本文に混ざっても stripMetaNarration が落とす（apply-readiness.test.ts で固定）
   applyReadinessNote = "",
+  // 2026-09-22 竹内（𝓡さん事例）「こっちが送った物件をお客さんが送ってくることもある。判断できるようにする」:
+  //   お客様が送ってきた物件のうち、こちらが前に送った物件（own-property-match・記録で照合）。
+  //   all=true（全部こちらの物件）の時は「お送り頂きました物件」の呼び方・募集状況確認の指示を出さない（逆向きの指示をぶつけない）
+  ownProperty: { note: string; all: boolean } | null = null,
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -1334,7 +1341,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 
   // 募集状況確認文脈（お客様が物件URL・物件名を送ってきた／「空きありますか？」等）の決定論的検出。
   // この文脈では内覧誘導フレーズを完全禁止し、「確認する→確認でき次第連絡する」で完結させる。
-  const isAvailabilityCheckContext = detectAvailabilityCheckContext(customerMessage ?? "");
+  // 2026-09-22: お客様が送ってきた物件が全部こちらの送った物件なら、募集状況確認の文脈にしない（実送信 0/9回）
+  const isAvailabilityCheckContext = !ownProperty?.all && detectAvailabilityCheckContext(customerMessage ?? "");
   const availabilityCheckNote = isAvailabilityCheckContext ? buildAvailabilityCheckNote() : "";
 
   // AIXタイミング判定（AIXタイミングマップ 2026-08）: 顧客メッセージがAIXトリガー条件に該当する場合、
@@ -1403,7 +1411,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 
   // お客様が「内覧したい」を明示した場合: 返信は短い承認文のみ。日程・申込み提案は含めない
   const hasViewingIntent =
-    /(内覧|内見|見学).{0,8}(したい|希望|お願い|可能|行き?たい|行ってみ|させてください|でき(ます|そう)|いつ(頃)?)|一度.*見てみ|実際に見てみ|見てみたい/.test(
+    // 2026-09-22 𝓡さん事例: 「もう少し見てみたいので、送って」は他の物件も見たい（内覧ではない）。除外は CUST_VIEWING_INTENT_RE と同じ SEE_MORE_LISTINGS_PREFIX
+    new RegExp(`(内覧|内見|見学).{0,8}(したい|希望|お願い|可能|行き?たい|行ってみ|させてください|でき(ます|そう)|いつ(頃)?)|一度.*見てみ|実際に見てみ|(?<!${SEE_MORE_LISTINGS_PREFIX})見てみたい`).test(
       customerMessage ?? "",
     );
   const viewingIntentShortReplyNote = hasViewingIntent && resolvedPropertyStatus !== "move_out_scheduled" && resolvedPropertyStatus !== "occupied"
@@ -1463,9 +1472,16 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     : "";
   // 2026-09-12 竹内（YUYA 事例）: お客様が物件そのもの（URL・画像・ポータルの共有文）を送ってきた時の呼び方。
   //   後処理（applySurfaceFixes → normalizeSharedPropertyReference）でも置き換えるが、最初から正しく書かせる
-  const sharedPropertyNote = customerSharedProperty(customerMessage)
-    ? `\n\n【🏠 お客様が送った物件の呼び方】お客様が送ってきた物件は「お送り頂きました物件（お部屋）」と呼ぶ（例:「お送り頂きました物件の募集状況確認させて頂きます😊！！」）。物件名・号室・駅名・徒歩分・家賃・間取りで呼ばない（×「十三徒歩7分の物件」×「4万円の1Rのお部屋」）。`
-    : "";
+  // 2026-09-22: 全部こちらの物件なら、この呼び方の指示の代わりに ownProperty.note だけを出す（同じ事実に逆の指示を出さない）。
+  //   一部だけなら ownProperty.note（こちらの物件の分）＋ 下の呼び方（記録に無い物件の分）
+  const ownPropertyHead = ownProperty?.note ? `\n\n${ownProperty.note}` : "";
+  const sharedPropertyNote = (ownProperty?.all
+    ? ownPropertyHead
+    : ownPropertyHead + (customerSharedProperty(customerMessage)
+    ? `\n\n【🏠 お客様が送った物件の呼び方${ownPropertyHead ? "（こちらの記録に無い物件）" : ""}】お客様が送ってきた物件は「お送り頂きました物件（お部屋）」と呼ぶ（例:「お送り頂きました物件の募集状況確認させて頂きます😊！！」）。物件名・号室・駅名・徒歩分・家賃・間取りで呼ばない（×「十三徒歩7分の物件」×「4万円の1Rのお部屋」）。`
+    : ""));
+  // 2026-09-22 𝓡さん事例: 「もう少し見てみたい」→ 引き続きのご紹介の材料も試したが、ブレインが見積書（1点に収束）を選ぶ回と逆の指示になるので入れない
+  //   （同じ返信に逆の指示を出さない。見積か引き続きのご紹介かはブレインの判断）
 
   // 2026-09-19 竹内（ゆうこ事例）「ここで物件名いれると内覧する物件名間違えてしまう可能性があるのでリスクがある」
   const propertyChoiceNote = propertyChoiceAmbiguous ? `\n\n${PROPERTY_NAME_NOTE}` : "";
@@ -1737,6 +1753,13 @@ ${examples}${examplesInstruction}
     { type: "text" as const, text: phaseGuideBlock, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamicBlock },
   ];
+  // 2026-09-22: 出所を追う時だけ、渡している材料（dynamicBlock）の全文をファイルに書き出す。
+  //   **開発環境だけ**（本番では VERCEL_ENV が付くので動かない）・環境変数 DEBUG_PROMPT_DIR を指定した時だけ
+  if (process.env.DEBUG_PROMPT_DIR && !process.env.VERCEL_ENV) {
+    void import("fs").then((fs) => {
+      try { fs.writeFileSync(`${process.env.DEBUG_PROMPT_DIR}/dynamic-${Date.now()}.txt`, dynamicBlock, "utf8"); } catch { /* 書けなくても生成は止めない */ }
+    });
+  }
   // 2026-09-13: 返信生成の入力のどの部分に費用がかかっているかの見張り（キャッシュなしの dynamicBlock の中身を文字数で残す）
   console.log(JSON.stringify({
     tag: "gen:blocks",
@@ -1941,7 +1964,11 @@ function logKnowledgeApply(ids: string[], conversationId: string): void {
 // 戻り値: text=プロンプト注入用ナレッジ文字列 / phraseHits=category=phrase のヒット件数（fetchPhrases の二重注入削減判定に使用）
 async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, lastStaffMessage?: string | null, lastAixHistoryText?: string | null,
   // 2026-09-13: 最新のブレインの判断（推奨 AIX・質問・話題・返信の方向）による並べ替え。新しい判断の時だけ非 null（knowledge-aixmeta-rerank.ts）
-  aixMetaSignals: AixMetaRerankSignals | null = null): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
+  aixMetaSignals: AixMetaRerankSignals | null = null,
+  // 2026-09-22 竹内（𝓡さん事例）: 前提が無い語を含む営業パターン・フレーズを出さない（手本の前提フィルタと同じ語・今は送り返しの時の CUSTOMER_FOUND_PROPERTY_VOCAB だけ）
+  knowledgePremiseExclude: RegExp | null = null): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
+  const premiseDrop = (k: { category?: string | null; content?: string | null }) =>
+    !!knowledgePremiseExclude && (k.category === "pattern" || k.category === "phrase") && knowledgePremiseExclude.test(k.content ?? "");
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // T1動的選択: spec未指定（後方互換）は全クエリ実行＝従来動作（T2/T3のspecも全enabled）
@@ -2070,7 +2097,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       // （RPCの similarity 順のままだと importance の低い近似ルールが各バケットの枠を食うため）
       // BUG-01: pgvector経路にも rejected フィルタを追加（フォールバック経路は .neq('hypothesis_status','rejected') 済みだが pgvector 経路だけ欠落していた）
       const filteredResults = (vectorResults ?? [])
-        .filter(r => (r.similarity ?? 0) >= 0.5 && r.hypothesis_status !== "rejected")
+        .filter(r => (r.similarity ?? 0) >= 0.5 && r.hypothesis_status !== "rejected" && !premiseDrop(r))
         .map(r => {
           // 鮮度ファクター（半減期180日）: 古い誤傾向ナレッジより新しい修正ナレッジを優先する
           // created_at 不明時は 180日相当（recencyFactor=0.5）として扱う
@@ -2273,9 +2300,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // T1: トピック一致ナレッジを先頭にマージ（idで重複排除・topic-matched first・非一致は捨てない）
   const topicList = sortConfirmedFirst(topicMatched ?? []);
   const baseAll = [...stateSpecificList, ...globalList];
-  const all = topicList.length > 0
+  const all = (topicList.length > 0
     ? [...topicList, ...baseAll.filter(k => !topicList.some(t => t.id === k.id))]
-    : baseAll;
+    : baseAll).filter((k) => !premiseDrop(k));
   const principlesList = topPrinciples ?? [];
   if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock && !applyingBlock && !viewingBlock) return { text: "", phraseHits: 0, topPrinciples: (topPrinciples ?? []) as KnowledgeRow[] };
 
@@ -3613,6 +3640,12 @@ export async function POST(req: NextRequest) {
     const moveOutSubject: MoveOutSubject = classifyMoveOutSubject(intentMessage);
     // G26（2026-09-08 Fable5）: 確認約束 verdict（生成 managementNote/confirmationGateNote・bridge・final-check V5/V6 の三層で同一オブジェクト）。
     //   effectiveAction は鮮度ゲート済み。AIX タイミング判定は後段 applyAixTiming で合成（confirmCtxFinal）
+    // 2026-09-22 竹内（𝓡さん事例）: お客様が送ってきた物件がこちらの送った物件か（記録で照合）。
+    //   確認対象（confirmCtx）・見積（estimateVerdict）・AIX の場面（replyAixInput）・手本の前提（fetchExamples）・生成の材料（ownProperty）が同じ結果を見る
+    const ownProperty = !isTemplateOptimize
+      ? await resolveOwnPropertyForTurn(conversationId, recentMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt })))
+      : null;
+    const ownPropertyReturnedAll = ownProperty?.all ?? false;
     const confirmCtx: ConfirmationContextVerdict = resolveConfirmationContext({
       customerMessage: message ?? "",
       lastStaffMessage: lastStaffMsgForSearch,
@@ -3620,6 +3653,7 @@ export async function POST(req: NextRequest) {
       activeTaskTypes,
       // 2026-09-11 §5.2: 会話に実在する物件名（照合専用。生成の文面には出さない＝竹内方針2）
       conversationObjects: { propertyNames: ledger.facts.propertiesSentNames },
+      ownPropertyReturnedAll,
     });
     console.info("[confirmCtx]", JSON.stringify({ allowed: confirmCtx.allowed, source: confirmCtx.source, object: confirmCtx.object, moveOutSubject }));
 
@@ -3775,6 +3809,7 @@ export async function POST(req: NextRequest) {
       estimateActuallySent: ledger.facts.estimateSent,
       customerWillSendProperty: willSendSelf.yes && (willSendObj === "property" || willSendObj === "unknown"),
       customerWillSendEvidence: willSendSelf.evidence,
+      ownPropertyReturnedAll,
     });
     console.info("[estimate-ctx]", estimateVerdict.trigger, estimateVerdict.mode, estimateVerdict.signals.join(","));
 
@@ -4665,7 +4700,9 @@ export async function POST(req: NextRequest) {
         // 2026-09-13: 新しい判断（fresh かつ分析の省略でない）の時だけ、推奨 AIX・質問・話題・返信の方向で並べ替える
         brainLocalFresh && brainMeta
           ? { action: effectiveAction, words: extractMetaKeywords([...(brainMeta.customer_questions ?? []), ...(brainMeta.key_topics ?? []), brainMeta.reply_direction ?? null]) }
-          : null)
+          : null,
+        // 2026-09-22 𝓡さん事例: こちらの物件の送り返しの時は「お客様が見つけた物件」前提のナレッジを見せない（手本と同じ語）
+        ownPropertyReturnedAll ? CUSTOMER_FOUND_PROPERTY_VOCAB : null)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
       // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタに**行動台帳の事実（場面）**と**内覧の鮮度**を渡す
       //   「内覧挨拶は当日にAIXからおこなうなら分かるが、持ち越したことで変な文になっていた」
@@ -4677,6 +4714,7 @@ export async function POST(req: NextRequest) {
           propertiesSentCount: ledger.facts.propertiesSentCount,
           estimateSent: ledger.facts.estimateSent,
           daysSinceViewingMove: daysSinceViewingMove(recentMessages.map((m) => ({ text: m.text, createdAt: m.createdAt })), Date.now()),
+          ownPropertyReturnedAll,
         })
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
       getCachedPhrases(fetchSpec.phrases.categories)
@@ -4914,6 +4952,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         propertyStatus: detectPropertyStatus(history, message ?? "", propertyStatus),
         estimateVerdict,
         brainDecision,
+        ownPropertyReturnedAll,
       };
     })();
     const replyAixPreDecision = replyAixInput ? resolveReplyAixDecision(replyAixInput) : null;
@@ -4988,6 +5027,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       bodySafetyPre,       // 同段1: 証拠から引いた本文の安全
       propertyChoiceAmbiguous, // 2026-09-19 竹内（ゆうこ事例）: 物件名を1つに絞って書かない場面か
       applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
+      ownProperty && ownProperty.ours > 0 ? { note: ownProperty.note, all: ownProperty.all } : null, // 2026-09-22 こちらが送った物件の送り返し
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -5147,7 +5187,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               recentMessages, lastCustomerMessage: message, customerName: customerName || undefined,
               tpoLabel: tpoNoteForLLM ?? undefined, isEarlyConversation: isFirstEverReplyFromMsgs,
               substance, pairContext, hedge, closerVerdict,
-              confirmationContext: confirmCtxFinal, activeTaskTypes,
+              confirmationContext: confirmCtxFinal, activeTaskTypes, ownPropertyReturnedAll,
               estimateContext: estimateVerdict, sentPropertiesCount: estimateVerdict.sentPropertiesCount,
               ledger: ledgerForCtx ?? undefined, ledgerStrict: ledgerActive, isDeliverableReply: isAixPropertySendMode,
               nameAliases: addressName.aliases,
@@ -5157,6 +5197,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 aixGates, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch,
                 // 2026-09-15 竹内（yasuki 事例）: お客様の言葉の「明日」を日本時間の暦で数え直す起点
                 customerMessageAt: lastCustomerMsgAt,
+                ownPropertyReturnedAll, // 2026-09-22 𝓡さん事例: 送り返しの時は「お送り頂きました物件」への置き換えをしない
                 // 2026-09-16 竹内（𝒮 さん事例）: こちらの前の発言が3時間より前なら「先程」を落とす
                 lastStaffMessageAt: lastStaffMsgAtForClock,
                 // 2026-09-11 竹内方針3: 呼びかけ位置の別名を確定名に統一（applySurfaceFixes ①）
@@ -5518,7 +5559,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   ngProperties: ngPropertiesForCheck.length ? ngPropertiesForCheck : undefined,
                   // 2026-09-08 Fable5 G10/G26/G6/G30: 生成側と同一オブジェクトを検査側に渡す（三者同名）。detCtx / postDetCtx にも同じ行を置く
                   moveOutSubject,                                                  // G10
-                  confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
+                  confirmationContext: confirmCtxFinal, activeTaskTypes, ownPropertyReturnedAll, // G26
                   aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
@@ -5735,7 +5776,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     sentPropertiesCount: estimateVerdict.sentPropertiesCount,
                     estimateContext: estimateVerdict,
                     moveOutSubject,                                                  // G10
-                    confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
+                    confirmationContext: confirmCtxFinal, activeTaskTypes, ownPropertyReturnedAll, // G26
                     aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                     greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                     substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
@@ -5893,7 +5934,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   sentPropertiesCount: estimateVerdict.sentPropertiesCount,
                   estimateContext: estimateVerdict,
                   moveOutSubject,                                                  // G10
-                  confirmationContext: confirmCtxFinal, activeTaskTypes,           // G26
+                  confirmationContext: confirmCtxFinal, activeTaskTypes, ownPropertyReturnedAll, // G26
                   aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）

@@ -8,7 +8,7 @@
 // 検出の中身は 2c86c209 の aix-reply-set.ts detectReplyAixScene から変えずに移設した（期待値も同じ）。
 // 依存は scene-patterns / line-reply-prompts の定数 / estimate-context の型だけ（brain-core から import しても循環しない）。
 import { isConditionFormMessage } from "./line-reply-prompts";
-import { CUST_WILL_SEND_SELF_PRED } from "./reply-context";
+import { CUST_WILL_SEND_SELF_PRED, normalizeCustomerText } from "./reply-context";
 import type { EstimateContextVerdict } from "./estimate-context";
 import { customerDoubtsCheapness } from "./cost-explain-text";
 import { customerAsksCostComposition } from "./cost-breakdown";
@@ -39,6 +39,8 @@ export type SceneEvidenceInput = {
   viewingReleased?: boolean;
   /** isMisumoriContextAppropriate() の verdict（見積判定の単一真実源） */
   estimateVerdict?: EstimateContextVerdict | null;
+  /** 2026-09-22 竹内（𝓡さん事例）: お客様が送ってきた物件（スクショ）が全部こちらの送った物件（own-property-server の照合・all） */
+  ownPropertyReturnedAll?: boolean;
 };
 
 /** 決定論の場面の証拠（判断ではない） */
@@ -199,7 +201,10 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
 
   // S1 空室確認: 旧 P0（画像/URL＋指名語、URLのみ・画像のみ）＋ 文字だけの空室質問で物件が特定できる場合
   const hasPropertyUrl = AVAILABILITY_URL_RE.test(msg);
-  if (o.hasCustomerImage || hasPropertyUrl) {
+  // 2026-09-22 竹内（𝓡さん事例）: こちらが送った物件のスクショの送り返しは物件の指名（空室確認）ではない。
+  //   実送信（送り返し9回）で募集状況確認は0回。空室を言葉で聞かれた時だけ下の availability_question（お客様の言葉だけで見る）
+  const ownReturned = !!o.ownPropertyReturnedAll;
+  if (!ownReturned && (o.hasCustomerImage || hasPropertyUrl)) {
     const urlOnly = hasPropertyUrl && msg.replace(/https?:\/\/\S+/g, "").trim().length <= 10;
     const imageOnly = o.hasCustomerImage && msg.length <= 10;
     if ((AIX_NOMINATION_RE.test(msg) && !slotQuestion) || urlOnly || imageOnly) {
@@ -247,7 +252,7 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   if (SCREENING_Q_RE.test(msg) && specified) {
     return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_guarantor", timing: "after_confirm", chained: null, reasonCode: "screening_question", propertySpecifiedBy: specBy });
   }
-  if (!slotQuestion && specified && detectAvailabilityCheckContext(msg)) {
+  if (!slotQuestion && specified && detectAvailabilityCheckContext(ownReturned ? normalizeCustomerText(msg) : msg)) {
     return ev({ scene: "S1_vacancy", candidateAction: "property_check_result", checkPattern: null, timing: "after_confirm", chained: estimateDeclare ? "estimate_sheet" : null, reasonCode: "availability_question", propertySpecifiedBy: specBy });
   }
 

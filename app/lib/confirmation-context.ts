@@ -90,6 +90,8 @@ export function resolveConfirmationContext(input: {
   activeTaskTypes?: readonly string[] | null;
   /** 2026-09-11 §5.2: 会話に実在する物件名（台帳の送付済み物件名など）。検査側の照合にだけ使う（生成の文面に物件名は出さない＝方針2） */
   conversationObjects?: { propertyNames: string[] } | null;
+  /** 2026-09-22 竹内（𝓡さん事例）: お客様が送ってきた物件（スクショ）が全部こちらの送った物件（own-property-server の照合・all） */
+  ownPropertyReturnedAll?: boolean;
 }): ConfirmationContextVerdict {
   // 2026-09-14 竹内（Hina 事例）: 確認の対象（ペット・入居日・駐車場…）・質問形・依頼はお客様が書いた言葉だけで決める。
   //   画像の読み取り文（SNS 広告の「ペット可」「ペットと住める！」）から対象を取ると、聞かれていない「ペット飼育の可否確認」を書いた。
@@ -105,7 +107,12 @@ export function resolveConfirmationContext(input: {
   if (custObject && FACT_QUESTION_RE.test(cust)) {
     return { allowed: true, source: "customer_fact_question", object: custObject, reason: `顧客が「${custObject}」を質問` };
   }
-  if (PROPERTY_NOMINATION_RE.test(cust) || imageTextUnits(full).some((u) => PROPERTY_NOMINATION_RE.test(u) || PROPERTY_IMAGE_RE.test(u))) {
+  // 2026-09-22 竹内（𝓡さん事例）「こっちが送った物件をお客さんが送ってくることもある」:
+  //   こちらが送った物件のスクショが送り返された時は「物件の指名」も「送付済み物件の名指し」も確認の根拠にしない。
+  //   実送信（直近90日・送り返し9回）: 募集状況確認を宣言したのは 0回（scripts/audit-own-property-returned.ts）。
+  //   お客様が空室・条件を質問した時（上の customer_fact_question）と内覧の希望は従来どおり
+  const own = !!input.ownPropertyReturnedAll;
+  if (!own && (PROPERTY_NOMINATION_RE.test(cust) || imageTextUnits(full).some((u) => PROPERTY_NOMINATION_RE.test(u) || PROPERTY_IMAGE_RE.test(u)))) {
     return { allowed: true, source: "customer_property_nomination", object: custObject ?? "募集状況", reason: "顧客が特定物件を指名（募集状況確認が次工程）" };
   }
   // 2026-09-11 §5.2（E5-m）: 見積・初期費用の依頼 → 募集状況・初期費用の確認は正しい次工程
@@ -115,7 +122,7 @@ export function resolveConfirmationContext(input: {
   // 顧客の本文に送付済み物件名（照合キー）がある → その物件の募集状況確認（resolvePositive の T3 と同じ照合）
   const names = input.conversationObjects?.propertyNames ?? [];
   // 物件の特定なので画像の読み取り文（送付済み物件のスクショ）も見る
-  if (names.some((n) => propertyMatchKeys(n).some((k) => k.length >= 2 && full.includes(k)))) {
+  if (!own && names.some((n) => propertyMatchKeys(n).some((k) => k.length >= 2 && full.includes(k)))) {
     return { allowed: true, source: "customer_named_known_property", object: custObject ?? "募集状況", reason: "顧客が送付済み物件を名指し" };
   }
   // 内覧の希望（明示・日付付き）→ ご内覧可否・募集状況の確認（VIEWING_BEFORE_VACANCY と同じ前提）

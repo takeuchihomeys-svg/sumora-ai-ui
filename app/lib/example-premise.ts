@@ -43,6 +43,11 @@ export type PremiseFacts = {
    *   今回の場合持ち越したことで変な文になっていた」→ **鮮度**で判定する。
    */
   daysSinceViewingMove?: number | null;
+  /**
+   * 2026-09-22 竹内（𝓡さん事例）: お客様が送ってきた物件が**全部こちらが前に送った物件**（own-property-match で照合済み）。
+   *   この時「お送り頂きました物件の募集状況確認させて頂きます」の手本を見せると写す（YUMA で 3回中1回写した）。
+   */
+  ownPropertyReturnedAll?: boolean;
 };
 
 /** 内覧・来店の動き（打診・確定・到着・待ち合わせ） */
@@ -106,6 +111,9 @@ function viewingThanksOk(o: { staffHist: string; facts?: PremiseFacts | null }):
   return VIEWING_MOVE_RE.test(o.staffHist);
 }
 
+/** お客様が自分で見つけた物件を送ってきた時だけの語（手本・ナレッジの両方の入口で同じ語を落とす＝四者同名） */
+export const CUSTOMER_FOUND_PROPERTY_VOCAB = /お送り(?:頂|いただ)きました(?:物件|お部屋|[0-9０-９一二三四五六七八九十]件)|(?:募集状況|空室|空き状況)(?:を)?確認させて/;
+
 export const PREMISE_RULES: PremiseRule[] = [
   {
     key: "shooting",
@@ -160,6 +168,15 @@ export const PREMISE_RULES: PremiseRule[] = [
     vocab: /申込書類|入居申込書|必要書類|身分証(?:の)?(?:お写真|コピー)/,
     satisfied: ({ cust }) => CUSTOMER_APPLY_OR_DOC_RE.test(cust),
     label: "お客様が申込意思を表明済み",
+  },
+  {
+    // 2026-09-22 竹内（𝓡さん事例）: お客様が送ってきた物件が全部こちらの送った物件の時は、
+    //   「お客様が見つけた物件」前提の手本（お送り頂きました物件の募集状況確認）を見せない。
+    //   実送信: この場面でスタッフが募集状況確認を宣言したのは 0/9回（scripts/audit-own-property-returned.ts）
+    key: "customer_found_property",
+    vocab: CUSTOMER_FOUND_PROPERTY_VOCAB,
+    satisfied: ({ facts }) => !(facts?.ownPropertyReturnedAll ?? false),
+    label: "お客様が自分で見つけた物件を送ってきた（こちらが前に送った物件の送り返しではない）",
   },
 ];
 
