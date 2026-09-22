@@ -6031,3 +6031,38 @@ API が JSON として受け取れず、**その1通が丸ごと消えていた*
    → 新しい物件の提案なし
 ```
 段階の判定 3/3 ／ 下書き 3/3 が場面に合っていた。
+## 2026-09-22 お客様が送ってきた物件が「こちらが前に送った物件」かの判断（𝓡さん事例）
+
+### 実物
+- 𝓡さん（3db9db75…）: こちらが送った物件のスクショ3件＋「この三つの物件良さそうですが、もう少し見てみたいので、送っていただきたいです」
+- 下書き:「お送り頂きました3件の募集状況確認させて頂きます！！」／実送信:「ご査収いただきありがとうございます😌！！かしこまりました！！引き続き新着物件を随時確認させて頂き…お送りさせて頂きます！！」
+
+### 実送信で引いた線（scripts/audit-own-property-returned.ts・直近90日）
+- お客様の画像で物件名が取れた37件のうち、こちらの物件と同じ部屋12件。送り返しの場面は10回、スタッフの返信は9回
+- 募集状況確認の宣言 **0/9回** ／ 冒頭のお礼（ご査収頂きありがとう）1/9回（必須にしない）／ 見積書の約束 2/9回（必須にも禁止にもしない）
+
+### 仕組み（四者同名: 1回照合して全員に同じ結果を渡す）
+- `app/lib/own-property-match.ts`（純関数）: スクショの読み取り文から物件名・号室を取り、送付記録と照合する（`matchKnownProperty` 0.7。シリーズ番号 VI/VIII が違えば別物件）
+- `app/lib/own-property-server.ts` `resolveOwnPropertyForTurn`: 最後のこちらの発言より後のスクショを、sent_properties・sent_image_properties（**お客様が送るより前に送った物**だけ）と照合する。ログのタグは `reply:own-property`
+- 全部こちらの物件（all）の時に同じ結果を見る所:
+  - 確認対象（`resolveConfirmationContext` の ownPropertyReturnedAll）
+  - 見積（`isMisumoriContextAppropriate`: customer_sent_property にしない）
+  - AIX の場面（`detectAixSceneEvidence`: S1 にしない。空室の質問は、お客様の言葉だけで判定する）
+  - 手本（example-premise の `customer_found_property`）とナレッジ（`fetchKnowledge` の `CUSTOMER_FOUND_PROPERTY_VOCAB`）
+  - 出口（`normalizeSharedPropertyReference`: 「お送り頂きました物件」に置き換えない）
+  - ブレイン（`brain-core` の行動台帳に1行＋場面の証拠）
+- ついでに見つけた穴:
+  - 「もう少し／ほかも…見てみたい」が内覧の希望と判定されていた。実データ4/4が物件のご紹介だったので、`SEE_MORE_LISTINGS_PREFIX`（scene-patterns）で外した（`CUST_VIEWING_INTENT_RE`・`VIEWING_INTENT_RE`・route の内覧判定）
+  - 「お客様が言っていない語」の代わりの文（募集状況確認＋御見積書）がどの場面にも出ていた。今は物件の持込予告の時だけ（`replaceOther`）
+  - 作業メモ「以下、返信案です。」と「【今回の判定】＋・箇条書き（空行まで）」を `stripMetaNarration` で落とす。実送信で誤削除0（scripts/audit-meta-heading.ts）
+
+### 記録の埋め戻し
+- こちらが送った画像のうち、記録の無かった1,867枚（90日）を DeepSeek で読み直した（scripts/backfill-sent-image-properties.ts・約$1.23）
+- 書いたのは1,409枚で、うち428枚は照合済み。書き込み先は sent_image_properties だけ（sent_properties は物件出しの判定に使うので触らない）
+
+### YUMA（scripts/yuma-own-property-test.ts・**本番と同じ MSG_SEP でつなぐ**。"\n" だと全部が画像の読み取り文の1通になり、判定がずれる）
+- 本文での募集状況確認・「お送り頂きました物件」: 直前 2/3 → 出所6つを直した後 **0/14回**（1回は作業メモの塊にこの語が入っていただけ。出口で落とすように直した）
+
+### 残した課題
+- 「もう少し見てみたい」に対して、実送信は引き続きのご紹介（4/4）。一方ブレインは見積書を選ぶ回がある。生成に「ご紹介を書け」を入れると、ブレインの「見積書の1点に収束」と逆向きになるので入れていない（ブレインの判断の範囲）
+- 1件だけこちらの物件（all でない）の時は、照合のメモと従来の呼び方の両方を出している
