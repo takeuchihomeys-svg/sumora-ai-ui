@@ -97,7 +97,7 @@ export const PROPERTY_IMAGE_DETAIL_MAX_TOKENS = 12000;
 
 /** 画像の種類（物件の資料以外は中身を書き出さない） */
 export type ImageKind = "property" | "estimate" | "document" | "other";
-export type DetailResult = { kind: ImageKind; lines: string[]; raw: string; usage?: { input: number; output: number } };
+export type DetailResult = { kind: ImageKind; lines: string[]; raw: string; usage?: { input: number; output: number; cacheHit?: number } };
 
 const KIND_OK = new Set<ImageKind>(["property", "estimate", "document", "other"]);
 /** 中身が無い事を言っているだけの行（「不明」「記載なし」）。材料に入れると AI が「記載なし」と答えてしまう */
@@ -136,6 +136,7 @@ export async function readPropertyImageDetail(
   const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
   const model = (opts?.model ?? process.env.PROPERTY_IMAGE_MODEL ?? PROPERTY_IMAGE_MODEL_DEFAULT).trim();
   if (!apiKey || !imageUrl) return { kind: "other", lines: [], raw: "" };
+  const startedAt = Date.now();
   try {
     const res = await fetch(PROPERTY_IMAGE_ENDPOINT, {
       method: "POST",
@@ -156,18 +157,41 @@ export async function readPropertyImageDetail(
     if (!res.ok) {
       // 400 の中身まで残す（画像URLが取れない・大きすぎる等を後で数える。設計知見「error を握り潰さない」）
       const body = await res.text().catch(() => "");
+      recordImageReadUsage("property_image_detail", model, undefined, res.status, startedAt, "http_error", PROPERTY_IMAGE_DETAIL_MAX_TOKENS);
       return { kind: "other", lines: [], raw: `HTTP ${res.status} ${body.slice(0, 200)}` };
     }
-    const j = await res.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
+    const j = await res.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: DeepSeekUsage };
     const out = parseDetailResult(String(j.choices?.[0]?.message?.content ?? ""));
-    out.usage = { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0 };
+    out.usage = { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0, cacheHit: j.usage?.prompt_cache_hit_tokens ?? 0 };
+    recordImageReadUsage("property_image_detail", model, j.usage, 200, startedAt, null, PROPERTY_IMAGE_DETAIL_MAX_TOKENS);
     return out;
-  } catch {
+  } catch (e) {
+    recordImageReadUsage("property_image_detail", model, undefined, 0, startedAt, e instanceof Error ? e.name : "error", PROPERTY_IMAGE_DETAIL_MAX_TOKENS);
     return { kind: "other", lines: [], raw: "" };
   }
+}
+
+/** DeepSeek の usage（キャッシュに当たった分・外れた分も返る） */
+type DeepSeekUsage = { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
+
+/**
+ * 2026-09-22 竹内「プロンプトキャッシュもちゃんとできているのか」:
+ *   画像の読み取り（DeepSeek を直接呼ぶ）は費用の記録 llm_usage_logs に**1件も残っていなかった**（費用もキャッシュも後から追えない）。
+ *   他の DeepSeek の呼び出しと同じ口（recordAltUsage）で1行残す。キャッシュに当たった分は cache_read に入れる。
+ *   記録の失敗で読み取りを止めない。
+ */
+function recordImageReadUsage(action: string, model: string, u: DeepSeekUsage | undefined, status: number, startedAt: number, errorType: string | null, maxTokens: number): void {
+  void import("./llm-usage-recorder").then(({ recordAltUsage }) => {
+    const hit = u?.prompt_cache_hit_tokens ?? 0;
+    const miss = u?.prompt_cache_miss_tokens ?? Math.max(0, (u?.prompt_tokens ?? 0) - hit);
+    recordAltUsage({
+      model, action, conversationId: null,
+      usage: { input_tokens: miss, output_tokens: u?.completion_tokens ?? 0, cache_read_input_tokens: hit },
+      status, errorType, durationMs: Date.now() - startedAt,
+      sysHead: action === "property_image_detail" ? PROPERTY_IMAGE_DETAIL_PROMPT.slice(0, 200) : PROPERTY_IMAGE_PROMPT.slice(0, 200),
+      sysKeyFull: null, maxTokens,
+    });
+  }).catch(() => {});
 }
 
 export type ReadItem = {
@@ -184,7 +208,7 @@ export type ReadItem = {
   /** 退去予定日（"6月30日"）。読めなければ null */
   vacancyDate?: string | null;
 };
-export type ReadResult = { items: ReadItem[]; isProperty: boolean; raw: string; usage?: { input: number; output: number } };
+export type ReadResult = { items: ReadItem[]; isProperty: boolean; raw: string; usage?: { input: number; output: number; cacheHit?: number } };
 
 /** 応答から JSON を取り出す（```json で囲まれる事がある） */
 export function parseReadResult(content: string): ReadResult {
@@ -243,6 +267,7 @@ export async function readPropertyImage(
   const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
   const model = (opts?.model ?? process.env.PROPERTY_IMAGE_MODEL ?? PROPERTY_IMAGE_MODEL_DEFAULT).trim();
   if (!apiKey || !imageUrl) return { items: [], isProperty: false, raw: "" };
+  const startedAt = Date.now();
   try {
     const res = await fetch(PROPERTY_IMAGE_ENDPOINT, {
       method: "POST",
@@ -257,15 +282,17 @@ export async function readPropertyImage(
       }),
       signal: AbortSignal.timeout(opts?.timeoutMs ?? 60_000),
     });
-    if (!res.ok) return { items: [], isProperty: false, raw: `HTTP ${res.status}` };
-    const j = await res.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
+    if (!res.ok) {
+      recordImageReadUsage("property_image_read", model, undefined, res.status, startedAt, "http_error", PROPERTY_IMAGE_MAX_TOKENS);
+      return { items: [], isProperty: false, raw: `HTTP ${res.status}` };
+    }
+    const j = await res.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: DeepSeekUsage };
     const out = parseReadResult(String(j.choices?.[0]?.message?.content ?? ""));
-    out.usage = { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0 };
+    out.usage = { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0, cacheHit: j.usage?.prompt_cache_hit_tokens ?? 0 };
+    recordImageReadUsage("property_image_read", model, j.usage, 200, startedAt, null, PROPERTY_IMAGE_MAX_TOKENS);
     return out;
-  } catch {
+  } catch (e) {
+    recordImageReadUsage("property_image_read", model, undefined, 0, startedAt, e instanceof Error ? e.name : "error", PROPERTY_IMAGE_MAX_TOKENS);
     return { items: [], isProperty: false, raw: "" };
   }
 }
