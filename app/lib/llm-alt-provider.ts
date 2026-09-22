@@ -93,13 +93,17 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   if (!actionsRaw) return null;
   const actions = new Set(actionsRaw.split(",").map((s) => s.trim()).filter(Boolean));
   if (actions.size === 0) return null;
-  // 2026-09-23 竹内「①（毎回の限定的な分析を DeepSeek）と②（キャッシュの並べ替え）両方行う」:
-  //   ブレインの**毎回の分析だけ**を別クラウドに回す（会話全体の分析 brain_full は Claude のまま）。
-  //   影の比較（scripts/shadow-brain-deepseek.ts・20会話）: AIX の選択85%・段階95%・確認の種類100%一致・失敗0・所要は同等。
-  //   費用（実測）: Claude $0.0542/回 → DeepSeek v4-pro $0.0089/回（毎回の分析は月およそ3,000回＝月 $159 → $25）。
-  //   ⚠ Vercel の環境変数は権限が無くて編集できないので、設計知見「環境変数は入れなくても正しく動く既定値にする」に従い
-  //     **コードの既定**で入れる。戻す時は LLM_ALT_BRAIN=off。申込以降は回さない歯止め（isPostApplyCall）はそのまま
-  if ((env.LLM_ALT_BRAIN ?? "on").trim().toLowerCase() !== "off") actions.add("brain_fresh");
+  // 2026-09-23 竹内「これなら質落ちるから毎回の分析もクロードの方が良いね」:
+  //   ブレインは**毎回の分析（brain_fresh）も会話全体の分析（brain_full）も Claude のまま**。既定では回さない。
+  //   一度 DeepSeek に回して実測した結果（scripts/shadow-brain-deepseek.ts・10会話・同じ入力で両方を走らせた）:
+  //     ・Claude との一致は action 9/10・段階 10/10・返信モード 9/10。費用は 1回 $0.054 → $0.007。
+  //     ・しかし **DeepSeek 自身の揺れの方が大きい**（同じ入力の2回目との自分同士の一致 action 7/10・intent 4/10。
+  //       Claude は 9/10・8/10）。一致率90%は実力差ではなく揺れの幅の中だった。
+  //     ・返信の方向に **していない約束を書く**（家賃交渉を確認する／物件を仮押さえ 等）。竹内さんの
+  //       「成約データにない創作文を入れない」に反する。一致率はこの壊れ方を一切捕まえない。
+  //     ・返信の方向が空で返る回があった（10件中1件）。
+  //   → 質を優先して Claude に戻す。試す時だけ LLM_ALT_ACTIONS に brain_fresh を書く（影の比較スクリプトはこれを使う）。
+  //   詳しい数字は memory/dept_line_reply.md、判断の型は設計知見「モデルを替える前に『揺れ』を測る」
   const fallbackToAnthropic = (env.LLM_ALT_FALLBACK ?? "on") !== "off";
   // 2026-09-21 竹内「自動返信の部分もDeepsheekに切り替える」→ 既定 on。戻す時は LLM_ALT_AUTO_SEND=off
   const allowAutoSend = (env.LLM_ALT_AUTO_SEND ?? "on").trim().toLowerCase() !== "off";
