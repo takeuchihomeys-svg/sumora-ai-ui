@@ -27,6 +27,8 @@ import {
   type Judgment, type PropertyDataLike, type CustomerLike, type SentRowLike, type PatternRowLike,
 } from "@/app/lib/property-brain";
 import { readFloorPlanFacts, PROPERTY_BRAIN_IMAGE_MAX_PER_BATCH } from "@/app/lib/property-brain-image";
+// 2026-09-24 竹内「AD − 見積書の割引金額が利益。連動する」: 見積書の記録（estimate_records）から割引・利益の中央値
+import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
 
 export const maxDuration = 30;
 
@@ -92,11 +94,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "customer not found" }, { status: 404, headers: CORS });
     }
 
-    // 見積書の割引額（このお客様の会話の AIX【見積書送る】本文・最新から3通の最初に読めた物）
+    // 見積書の割引額。2026-09-24 竹内「AD − 見積書の割引金額が利益…連動する」:
+    //   ① estimate_records（見積書を物件ごとに残した記録・AD と結び付き済み）の中央値を最優先
+    //   ② 無ければ AIX【見積書送る】本文・最新3通の最初に読めた物（旧）
     let discountYen: number | null = null;
     let discountSource = "default";
     const convIds = ((convsRes.data ?? []) as Array<{ id: string }>).map((c) => c.id);
-    if (convIds.length > 0) {
+    const profit = await loadCustomerProfit({ propertyCustomerId: customerId, conversationIds: convIds });
+    if (profit.discountMedianYen != null) { discountYen = profit.discountMedianYen; discountSource = "estimate_records"; }
+    if (discountYen == null && convIds.length > 0) {
       const { data: est } = await supabase.from("aix_usage_logs").select("generated_text")
         .in("conversation_id", convIds).eq("aix_type", "estimate_sheet").order("created_at", { ascending: false }).limit(3);
       for (const r of (est ?? []) as Array<{ generated_text?: string | null }>) {
@@ -147,6 +153,8 @@ export async function POST(req: NextRequest) {
       wants_low_initial_cost: profile.wantsLowInitialCost, low_initial_cost_source: profile.lowInitialCostSource,
       image_wants: profile.imageWants, sent_count: profile.history.sentCount,
       rent_ratio_median: profile.history.rentRatioMedian, discount_yen: profile.discountYen, discount_source: discountSource,
+      // 見積書の記録（このお客様）: 件数・AD と結び付いた件数・利益の中央値・利益が出ていない件数
+      estimate_records: profit.n > 0 ? { n: profit.n, linked: profit.linked, ad_yen_median: profit.adYenMedian, profit_median_yen: profit.profitMedianYen, negative: profit.negative } : null,
       confidence: profile.confidence,
     };
 

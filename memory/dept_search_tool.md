@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-09-24 利益（AD − 見積書の割引）を物件ごとに残し、物件検索ブレインと連動（竹内）
+
+竹内「物件ピックアップ・物件オススメで送った物件は分かっている。見積書送るの本文から割引も分かる。その物件が送った物件なら AD も理解しているはず。連動する」
+
+### 仕組み
+```
+AIX【見積書送る】（log-aix-usage）
+  → 本文「【物件名 号室】…🌟N円割引…初期費用：N円」を物件ごとに分ける（app/lib/estimate-profit.ts parseEstimateItems）
+  → 候補プール（property_candidate_pools・検索時の表）→ 送付記録（sent_properties）の順に名前0.7＋シリーズ番号＋号室で結び付け
+  → AD円 = ad_months × 家賃、利益 = AD円 − 割引 → estimate_records に upsert（waitUntil・失敗しても本処理は変えない）
+merge-pdfs（物件ピックアップの送信）→ 説明文の「AD 2ヶ月」を sent_properties.ad_months / ad_yen に残す（parsePropertyFacts と同じ読み方）
+/api/property-brain/judge → 割引の既定値は estimate_records の中央値を最優先（無ければ本文・無ければ 42,000円）
+```
+| ファイル | 役 |
+|---|---|
+| `app/lib/estimate-profit.ts`（＋テスト17） | 純関数: 本文の分解・AD の結び付け・利益・中央値 |
+| `app/lib/estimate-profit-server.ts` | 記録を引いて書く（loadAdSources・recordEstimateFromAix・loadCustomerProfit） |
+| `estimate_records`（migrate-schema・`scripts/apply-estimate-records-table.ts` で適用済み） | 物件ごとの割引・AD・利益 |
+| `scripts/backfill-estimate-records.ts` / `backfill-sent-properties-ad.ts` | 埋め戻し（365日） |
+
+### 実測（2026-09-24・365日）
+- 見積書の AIX 291通 → 物件の行 256（本文から読めない 72）。**AD と結び付いた 14（5.5%）・AD円まで出た 1**
+- 送付記録 2,073件（line_group・AD 未設定）→ 同じ顧客の候補プールに同名 **99.9%**・そのうち **ad_months あり 30%**（627件に埋め戻し）
+- 割引の中央値 44,000円。見積書の物件が sent_properties に同名で存在 64/120、AD あり 2
+- ⚠ property_candidate_pools の時刻の列は **sent_at**（created_at は無い）。最初の実装は created_at で絞って0件だった
+
+### 率を上げる所（連動の上流）
+1. **拡張の AD の列読み**: bulk-dl.js buildPropertyData の ad_months は「間取りの後ろの Nヶ月 セル」だけで 37%。score-overlay.js は th「AD」列から取っている（実機で列位置を確かめて bulk-dl に移す）
+2. **家賃**: 候補プール 0%・送付記録 17.8%（9/21〜 merge-pdfs が説明文から読むので上がる）。AD円＝ad_months×家賃なので家賃が無いと利益が出ない
+3. 利益の線（AD<割引 で hold）は estimate_records が溜まってから引く（今は既定の割引で PROFIT_NEGATIVE を出すだけ）
+
 ## 2026-09-23 物件検索ブレイン＋拡張の「ブレインモード」（竹内・Fable）— v2.5.9
 
 - 竹内「**Deepsheekで物件検索のブレインをつくる**。敷金礼金0円や初期費用抑えたいひとは敷金礼金0でADも高くて割引が出来るお部屋で。…AD−見積書の割引金額が利益となるから利益面も理解できるようにする。**物件検索の拡張ツールでもブレインモードつくる。スタッフモードのところダウンドロップで切り替えれるようにする**」

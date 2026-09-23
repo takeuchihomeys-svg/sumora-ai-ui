@@ -9,6 +9,8 @@ import {
 } from "@/app/lib/sent-property-filter";
 // 2026-09-21 竹内「ちゃんと物件を読み取ることできてるんかな？」: 家賃は説明文から読み直す
 import { parseRentFromSummary } from "@/app/lib/property-summary-parse";
+// 2026-09-24: 送った時の AD を送付記録に残す（見積書の割引と結び付けて利益を出す材料）
+import { parsePropertyFacts } from "@/app/lib/property-brain";
 
 export const maxDuration = 90;
 
@@ -472,11 +474,16 @@ export async function POST(req: NextRequest) {
           //   拡張は同じセルの文字を説明文にはそのまま入れているのに、数値にする側は `/(\d+)万/` しか
           //   見ておらず「58,000円」に当たらないため、sent_properties.rent が **リアプロ20,854件中 0件**だった。
           //   説明文はここに届いているので、サーバー側で読めば拡張の再読み込みが要らない。
-          type PropInfo = { propertyName: string; roomNo: string; url: string; rent: number | null };
+          type PropInfo = { propertyName: string; roomNo: string; url: string; rent: number | null; adMonths: number | null; adYen: number | null };
           const rawInfo: PropInfo[] = summariesToRecord.flatMap((summary, i) => {
             const head = parseSummaryHead(summary);
             if (!head) return [];
-            return [{ ...head, url: normalizePropertyUrl(pdf_urls?.[i] ?? null), rent: parseRentFromSummary(summary) }];
+            // 2026-09-24 竹内「物件オススメ・ピックアップで送った物件なら AD も分かっているはず」: 説明文の「AD 2ヶ月」を送付記録に残す
+            //   （見積書の割引と結び付けて利益を出す材料。判定は app/lib/property-brain.ts parsePropertyFacts と同じ読み方）
+            const facts = parsePropertyFacts(summary);
+            const rent = parseRentFromSummary(summary);
+            const adYen = facts.adYen ?? (facts.adMonths != null && rent != null ? Math.round(facts.adMonths * rent) : null);
+            return [{ ...head, url: normalizePropertyUrl(pdf_urls?.[i] ?? null), rent, adMonths: facts.adMonths, adYen }];
           });
           // ⚠ URL が物件を1件ずつ指していない形（path が同じでクエリで分ける等）だったら**記録しない**。
           //   そのまま入れると、次の送信で全部「送付済み」と判定されて消える。外す時と同じ確認（四者同名）。
@@ -540,6 +547,9 @@ export async function POST(req: NextRequest) {
                 property_url: p.url || null,
                 // ブレイン・文生成が「送った物件の家賃」を読めるようにする（今まで 0% だった）
                 rent: p.rent,
+                // 送った時の AD（見積書の割引と結び付けて利益を出す材料）
+                ad_months: p.adMonths,
+                ad_yen: p.adYen,
                 source: "line_group",
               }));
             const gotRent = toInsert.filter((r) => r.rent !== null).length;
@@ -547,7 +557,7 @@ export async function POST(req: NextRequest) {
               console.log(JSON.stringify({
                 tag: "merge-pdfs:sent-properties:write",
                 rows: toInsert.length, with_rent: gotRent, with_url: toInsert.filter((r) => r.property_url).length,
-                with_room: toInsert.filter((r) => r.room_no).length,
+                with_room: toInsert.filter((r) => r.room_no).length, with_ad: toInsert.filter((r) => r.ad_months !== null || r.ad_yen !== null).length,
               }));
             }
             if (toInsert.length > 0) {

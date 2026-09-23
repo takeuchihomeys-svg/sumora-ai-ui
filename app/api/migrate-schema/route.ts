@@ -2254,6 +2254,38 @@ ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS recruitment_checked_at TIME
 ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS applicant_rank INTEGER;
 -- 'interested' | 'rejected' | 'no_response'（quoted_message_id 引用リプライから自動更新予定）
 ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS customer_reaction TEXT;
+-- 2026-09-24 竹内「物件オススメ・ピックアップで送った物件なら AD も分かっているはず」: 送った時の AD を残す（merge-pdfs が説明文から読む）
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS ad_months NUMERIC;
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS ad_yen INTEGER;
+
+-- ── estimate_records: 見積書（AIX【見積書送る】）の物件ごとの割引と、AD と結び付けた利益（2026-09-24）──
+-- 竹内「AD − 見積書の割引金額が利益。その物件が物件オススメやピックアップで送った物件なら AD も理解しているはず。連動する」
+-- 割引額は今まで aix_usage_logs.generated_text の本文にしか無かった（estimates 0行）。ここに物件ごとに残す。
+-- AD の出所: property_candidate_pools（検索時の表）→ sent_properties。判定は app/lib/estimate-profit.ts（純関数）。
+CREATE TABLE IF NOT EXISTS estimate_records (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  aix_usage_log_id UUID,
+  item_index INT NOT NULL DEFAULT 0,
+  conversation_id TEXT,
+  property_customer_id UUID,
+  property_name TEXT,
+  room_no TEXT,
+  discount_yen INTEGER,
+  initial_cost_yen INTEGER,
+  rent INTEGER,
+  ad_months NUMERIC,
+  ad_yen INTEGER,
+  ad_source TEXT,
+  ad_matched_name TEXT,
+  profit_yen INTEGER,
+  source TEXT NOT NULL DEFAULT 'aix_text',
+  estimated_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_estimate_records_log_item ON estimate_records(aix_usage_log_id, item_index);
+CREATE INDEX IF NOT EXISTS idx_estimate_records_customer ON estimate_records(property_customer_id, estimated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_estimate_records_conv ON estimate_records(conversation_id, estimated_at DESC);
+ALTER TABLE estimate_records DISABLE ROW LEVEL SECURITY;
 
 -- ③ messages 拡張（画像分類・物件紐付け）
 -- 'estimate' | 'floor_plan' | 'property_photo' | 'id_document' | 'other'

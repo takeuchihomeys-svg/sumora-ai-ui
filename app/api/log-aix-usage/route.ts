@@ -237,7 +237,7 @@ export async function POST(req: NextRequest) {
       previousAction = (prevRow?.aix_type as string) ?? null;
     }
 
-    const { error } = await supabase.from("aix_usage_logs").insert({
+    const { data: insertedLog, error } = await supabase.from("aix_usage_logs").insert({
       conversation_id,
       aix_type,
       template_id: template_id ?? null,
@@ -275,9 +275,24 @@ export async function POST(req: NextRequest) {
         : null,
       // 改善3-c: スタッフが入力したフリーワードキーワード（aix-template-generate の続き文ragQuery に注入する）
       send_keyword: typeof send_keyword === "string" && send_keyword.trim() ? send_keyword.trim().slice(0, 200) : null,
-    });
+    }).select("id, created_at").maybeSingle();
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+
+    // 2026-09-24 竹内「AD − 見積書の割引金額が利益。物件オススメ・ピックアップで送った物件なら AD も分かっているはず。連動する」:
+    //   見積書の本文（【物件名 号室】＋「N円割引」）を物件ごとに estimate_records に残し、候補プール・送付記録の AD と結び付ける。
+    //   応答は待たせない（waitUntil）。失敗しても本処理は変えない。
+    const logRow = insertedLog as { id?: string; created_at?: string } | null;
+    if (logRow?.id && (aix_type === "estimate_sheet" || estimate_sent === true) && typeof generated_text === "string" && generated_text.trim()) {
+      waitUntil((async () => {
+        try {
+          const { recordEstimateFromAix } = await import("@/app/lib/estimate-profit-server");
+          await recordEstimateFromAix({ aixUsageLogId: logRow.id as string, conversationId: conversation_id, generatedText: generated_text, createdAt: logRow.created_at ?? new Date().toISOString() });
+        } catch (e) {
+          console.warn("[log-aix-usage] estimate_records failed:", e instanceof Error ? e.message : e);
+        }
+      })());
+    }
 
     // 売上番長グループの「AIX要対応」: この会話の未完了を完了（一覧で✅）にする（2026-09-12 竹内方針）
     try {
