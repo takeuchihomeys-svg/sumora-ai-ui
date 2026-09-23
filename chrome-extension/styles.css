@@ -85,6 +85,28 @@ body {
   flex-shrink: 0;
 }
 
+/* ── 動作モードのドロップダウン（2026-09-23: AIX／スタッフの2ボタンを1つの select に） ── */
+.mode-select {
+  background: rgba(255,255,255,0.15);
+  border: none; border-radius: 14px;
+  margin-left: auto; margin-right: 8px;
+  padding: 5px 10px;
+  color: #fff; font-size: 11px; font-weight: bold;
+  cursor: pointer; white-space: nowrap;
+  -webkit-appearance: none; appearance: none;
+}
+.mode-select:hover { background: rgba(255,255,255,0.28); }
+.mode-select option { color: #111; background: #fff; }
+.mode-select.on-staff { background: #16a34a; box-shadow: inset 0 0 0 2px rgba(255,255,255,0.45); }
+.mode-select.on-aix   { background: #7c3aed; box-shadow: inset 0 0 0 2px rgba(255,255,255,0.45); }
+.mode-select.on-brain { background: #0ea5e9; box-shadow: inset 0 0 0 2px rgba(255,255,255,0.45); }
+.brain-banner {
+  background: #0ea5e9; color: #fff;
+  font-size: 12px; font-weight: bold;
+  text-align: center; padding: 6px 10px;
+  flex-shrink: 0;
+}
+
 /* ── View system ── */
 .view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
 .view.active { display: flex; }
@@ -628,7 +650,9 @@ body.mini-mode #refresh-btn,
 body.mini-mode #staff-mode-btn,
 body.mini-mode #staff-mode-banner,
 body.mini-mode #aix-mode-btn,
-body.mini-mode #aix-mode-banner {
+body.mini-mode #aix-mode-banner,
+body.mini-mode #mode-select,
+body.mini-mode #brain-mode-banner {
   display: none !important;
 }
 body.mini-mode .header-left {

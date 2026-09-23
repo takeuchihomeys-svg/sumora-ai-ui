@@ -48,6 +48,23 @@
     });
   } catch (_e) {}
 
+  // ── ブレインモードキャッシュ（2026-09-23 竹内「物件検索の拡張ツールでもブレインモードつくる」）──
+  // ブレイン ＝ AIX連動（aixMode）＋ 判定（brainMode）。両方 true の時だけ、送信前に /api/property-brain/judge を呼ぶ。
+  // スタッフモード中は呼ばない（人が選んだ物は減らさない）。判定の失敗・タイムアウトは今までどおり全件送る（fail-open）。
+  var _brainModeOn = false;
+  try {
+    chrome.storage.local.get(["aixMode", "brainMode"], function(res) {
+      _brainModeOn = !!(res && res.aixMode && res.brainMode);
+    });
+    chrome.storage.local.onChanged.addListener(function(changes) {
+      if ("aixMode" in changes || "brainMode" in changes) {
+        chrome.storage.local.get(["aixMode", "brainMode"], function(res) {
+          _brainModeOn = !!(res && res.aixMode && res.brainMode);
+        });
+      }
+    });
+  } catch (_e) {}
+
   function getAutoSendState() {
     try {
       var raw = sessionStorage.getItem(AUTO_SEND_KEY);
@@ -369,8 +386,65 @@
         url:     it.url,
         summary: buildPropertySummary(card, it.rank - 1),
         data:    buildPropertyData(card, it.rank - 1),
+        card:    card,                 // ブレインで外した後に番号を振り直すため（送信の payload には入れない＝pluck で取らない）
+        image_url: card.imageUrl || null,
       };
     });
+  }
+
+  // ── ブレインモード: 送信前に判定して、外す物を外す（2026-09-23）─────────────
+  // 流れ: 組（url・説明文・data）を作る → background 経由で /api/property-brain/judge → 返ってきた判定で
+  //   drop（apply_drop=true の時だけ）を外す → 【1】【2】… を1から詰め直す → 末尾の説明文に判定の1ブロックを足す。
+  // ⚠ 影の運用（サーバーの PROPERTY_BRAIN_DROP 未設定）では apply_drop=false ＝ 1件も外さず、印（末尾のブロック）だけ付く。
+  // ⚠ 失敗・タイムアウト・顧客IDなし・スタッフモード・ブレインOFF → そのまま全件（fail-open）。
+  function buildSendItemsBrain(customerId, cb) {
+    var items = buildSendItems();
+    if (!_brainModeOn || _staffModeOn || !customerId || !items.length) { cb(items, null); return; }
+    var done = false;
+    var finish = function (kept, brain) { if (done) return; done = true; cb(kept, brain); };
+    var watchdog = setTimeout(function () {
+      console.warn("[AXLX bulk-dl][brain] 判定の応答が 35秒 無い → 全件送る（fail-open）");
+      finish(items, null);
+    }, 35000);
+    try {
+      chrome.runtime.sendMessage({
+        type: "axlx-brain-judge",
+        property_customer_id: customerId,
+        site: "realpro",
+        items: items.map(function (it) { return { summary: it.summary, data: it.data, url: it.url, image_url: it.image_url || null }; }),
+      }, function (resp) {
+        clearTimeout(watchdog);
+        if (chrome.runtime.lastError || !resp || !resp.ok || !resp.data || !Array.isArray(resp.data.judgments)) {
+          var why = chrome.runtime.lastError ? chrome.runtime.lastError.message : (resp && resp.error) || "応答なし";
+          console.warn("[AXLX bulk-dl][brain] 判定できず → 全件送る（fail-open）:", why);
+          finish(items, null);
+          return;
+        }
+        var d = resp.data;
+        var dropIdx = {};
+        if (d.apply_drop) d.judgments.forEach(function (j) { if (j.verdict === "drop") dropIdx[j.index] = true; });
+        var kept = items.filter(function (_, i) { return !dropIdx[i]; });
+        // 外した後は【N】を1から詰め直す（send-pairing.prepareItems と同じ考え・ズレたまま送らない）
+        if (kept.length !== items.length) {
+          kept = kept.map(function (it, i) {
+            return { url: it.url, summary: buildPropertySummary(it.card, i), data: buildPropertyData(it.card, i), card: it.card, image_url: it.image_url };
+          });
+        }
+        // 判定のまとめ（外した物・保留の物と理由）を末尾の説明文に1ブロック
+        if (d.note_line && kept.length) kept[kept.length - 1].summary += "\n\n" + d.note_line;
+        var c = d.counts || {};
+        console.log("[AXLX bulk-dl][brain] 判定 " + items.length + "件: 通す" + (c.pass || 0) + "・保留" + (c.hold || 0) + "・外す候補" + (c.drop || 0) +
+          (d.apply_drop ? "（外した " + (items.length - kept.length) + "件）" : "（影の運用・外さない）") + " " + (d.ms || 0) + "ms");
+        d.judgments.forEach(function (j) {
+          if (j.verdict !== "pass") console.log("[AXLX bulk-dl][brain] " + (j.verdict === "drop" ? "見送り候補" : "保留") + ": " + j.name + "（" + (j.reasons_ja || []).slice(0, 3).join("・") + "）" + (j.profit_yen != null ? " 利益目安 " + j.profit_yen + "円" : ""));
+        });
+        finish(kept, d);
+      });
+    } catch (e) {
+      clearTimeout(watchdog);
+      console.warn("[AXLX bulk-dl][brain] 判定の呼び出しに失敗 → 全件送る:", e && e.message);
+      finish(items, null);
+    }
   }
 
   // ── 一括DL ────────────────────────────────────────
@@ -522,7 +596,29 @@
     }).filter(function (t) { return t && t.length > 0 && t.length < 60; });
 
     // AD列はリアプロで10〜12列目あたりのため15まで取得
-    return { name: name || "物件", texts: texts.slice(0, 15) };
+    // 2026-09-23 ブレインの画像フェーズ用: 行の中の間取り図らしい <img>（アイコン・ボタン画像は除く）。無ければ null。
+    //   ⚠ リアプロの一覧に間取り図があるかは実機未確認。無ければ null のまま＝画像の読み取りはしない（判定は表の文字だけ）。
+    return { name: name || "物件", texts: texts.slice(0, 15), imageUrl: findFloorPlanImage(row) };
+  }
+
+  function findFloorPlanImage(row) {
+    if (!row) return null;
+    try {
+      var imgs = Array.from(row.querySelectorAll("img"));
+      for (var i = 0; i < imgs.length; i++) {
+        var src = imgs[i].currentSrc || imgs[i].src || imgs[i].getAttribute("src") || "";
+        if (!src) continue;
+        var abs;
+        try { abs = new URL(src, location.href).href; } catch (_) { continue; }
+        if (!/^https?:\/\//.test(abs)) continue;
+        if (/icon|btn|button|arrow|spacer|blank|logo|\.gif(\?|$)/i.test(abs)) continue;
+        var w = imgs[i].naturalWidth || imgs[i].width || 0;
+        var h = imgs[i].naturalHeight || imgs[i].height || 0;
+        if (w && h && (w < 40 || h < 40)) continue;   // 小さい画像はアイコン
+        return abs;
+      }
+    } catch (_) {}
+    return null;
   }
 
   // ── 物件サマリーテキスト生成（LINE送信用）──────────
@@ -592,8 +688,13 @@
     var data = { rank: index + 1, name: card.name };
     var rentText = card.texts.find(function(t) { return /[0-9,，]+[\s]*[万円]/.test(t) || /¥/.test(t); });
     if (rentText) {
-      var rm = rentText.replace(/[,，]/g, "").match(/(\d+)万/);
-      data.rent = rm ? parseInt(rm[1]) * 10000 : null;
+      // 2026-09-23: 旧 `/(\d+)万/` はリアプロの「58,000円」「¥58,000」に当たらず、30,681件中 2件しか rent が入っていなかった
+      //   （実測 2026-09-21・設計知見「表示は正しく、記録だけが空」）。万・円・¥ の3形式を円で保存する。
+      var _rt = rentText.replace(/[,，]/g, "").replace(/[０-９．]/g, function(c) { return c === "．" ? "." : String.fromCharCode(c.charCodeAt(0) - 0xfee0); });
+      var rm = _rt.match(/(\d+(?:\.\d+)?)\s*万/);
+      var ry = _rt.match(/¥\s*(\d+)|(\d+)\s*円/);
+      var rv = rm ? Math.round(parseFloat(rm[1]) * 10000) : (ry ? parseInt(ry[1] || ry[2]) : null);
+      data.rent = (rv && rv >= 20000 && rv <= 500000) ? rv : null;
     }
     var madoriText = card.texts.find(function(t) { return /[1-9](R\b|K\b|DK\b|LDK|SLDK|SDK)/.test(t); });
     if (madoriText) {
@@ -601,15 +702,34 @@
       data.floor_plan = mm ? mm[0] : null;
     }
     var madoriIdx = madoriText ? card.texts.indexOf(madoriText) : -1;
-    var accessText = card.texts.find(function(t) { return /徒歩/.test(t); });
+    // 徒歩: 「徒歩」が無い時は「駅」を含むセル（説明文と同じ探し方）
+    var accessText = card.texts.find(function(t) { return /徒歩/.test(t); }) || card.texts.find(function(t) { return /駅/.test(t); });
     if (accessText) {
       var wm = accessText.match(/徒歩\s*(\d+)\s*分/);
       if (wm) data.walk_minutes = parseInt(wm[1]);
     }
+    // 敷金・礼金（説明文と同じ: 間取りの直前2セル。なし/－ = 0）。2026-09-23 追加（それまで data には入れていなかった）
+    if (madoriIdx >= 2) {
+      var _toM = function(t) {
+        if (!t) return null;
+        t = t.trim();
+        var m = t.match(/^(\d+(?:\.\d+)?)[ヶか]月$/);
+        if (m) return parseFloat(m[1]);
+        if (t === "なし" || t === "－" || t === "-") return 0;
+        return null;
+      };
+      var _dm = _toM(card.texts[madoriIdx - 2]);
+      var _km = _toM(card.texts[madoriIdx - 1]);
+      if (_dm !== null && _km !== null) { data.deposit_months = _dm; data.key_money_months = _km; }
+    }
     if (madoriIdx >= 0) {
       for (var _ai2 = madoriIdx + 1; _ai2 < card.texts.length; _ai2++) {
-        var _am2 = card.texts[_ai2].trim().match(/^(\d+)[ヶか]月$/);
-        if (_am2) { data.ad_months = parseInt(_am2[1]); break; }
+        var _at2 = card.texts[_ai2].trim();
+        // 2026-09-23: 小数（0.5ヶ月・1.5ヶ月）も取る。円形式は ad_yen に分ける（itandi 側の「AD 30,000円→30ヶ月」の変換ミスを繰り返さない）
+        var _am2 = _at2.match(/^(\d+(?:\.\d+)?)[ヶか]月$/);
+        if (_am2) { data.ad_months = parseFloat(_am2[1]); break; }
+        var _ay2 = /^(AD|広告料)/.test(_at2) ? _at2.replace(/[,，]/g, "").match(/(\d+)\s*円/) : null;
+        if (_ay2) { data.ad_yen = parseInt(_ay2[1]); break; }
       }
     }
     return data;
@@ -665,7 +785,15 @@
       lineBtn.textContent = "送信中... (0/" + urls.length + ")";
 
       // 2026-09-18: urls / 説明文 / 学習用データは必ず同じ組から作る（位置で対応づけない）
-      var sendItems = buildSendItems();
+      // 2026-09-23: ブレインモードなら送信前に判定（外す物を外す・失敗なら全件）
+      buildSendItemsBrain(customerId, function (sendItems, brain) {
+      if (!sendItems.length) {
+        lineBtn.disabled = false;
+        lineBtn.textContent = lineOrig;
+        alert("ブレインが全件を見送りました（送信なし）。コンソールに理由を出しています。");
+        return;
+      }
+      if (brain && sendItems.length !== urls.length) lineBtn.textContent = "送信中... (0/" + sendItems.length + "・ブレインが" + (urls.length - sendItems.length) + "件見送り)";
 
       chrome.runtime.sendMessage({
         type: "axlx-send-to-line",
@@ -688,8 +816,9 @@
           lineBtn.textContent = lineOrig;
           return;
         }
-        lineBtn.textContent = "✅ " + urls.length + "件 LINE送信完了！";
+        lineBtn.textContent = "✅ " + sendItems.length + "件 LINE送信完了！";
         setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
+      });
       });
 
     } else {
@@ -1072,13 +1201,14 @@
     function _doSend(sendUrls) {
       // 2026-09-18: urls / 説明文 / 学習用データを別々に作って slice で対応づけるのをやめ、
       //   1件 = 1つの組にしてから分ける。組のまま切るので、バッチ境界でもズレない。
-      var sendItems = buildSendItems();
+      // 2026-09-23: ブレインモードなら送信前に判定（外す物を外す・失敗なら全件）。判定はページ単位（最大4秒＋API 30秒）。
+      buildSendItemsBrain(state.customerId || null, function (sendItems, brain) {
       if (!sendItems.length) {
-        console.warn("[AXLX bulk-dl] autoSendOnePage: 送れる物件が0件（印刷用PDFのリンクなし）→ スキップ");
+        console.warn("[AXLX bulk-dl] autoSendOnePage: 送れる物件が0件（" + (brain ? "ブレインが全件を見送り" : "印刷用PDFのリンクなし") + "）→ スキップ");
         onDone(true, 0);
         return;
       }
-      if (sendItems.length !== sendUrls.length) {
+      if (!brain && sendItems.length !== sendUrls.length) {
         console.warn("[AXLX bulk-dl] 送信直前に件数が変化 " + sendUrls.length + "→" + sendItems.length + "（組で作り直した方を送る）");
       }
 
@@ -1135,6 +1265,7 @@
       }
 
       sendNextBatch();
+      });
     }
   }
 

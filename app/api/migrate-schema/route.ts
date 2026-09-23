@@ -2653,6 +2653,36 @@ CREATE TABLE IF NOT EXISTS property_candidate_pools (
 CREATE INDEX IF NOT EXISTS idx_pcp_customer_id ON property_candidate_pools(property_customer_id);
 CREATE INDEX IF NOT EXISTS idx_pcp_sent_at ON property_candidate_pools(sent_at DESC);
 
+-- ── property_brain_judgments: 物件検索ブレインの判定記録（2026-09-23追加）──
+-- 拡張のブレインモードが /api/property-brain/judge に送った物件1件ごとの pass/hold/drop・点数・理由コード・
+-- 読んだ事実（facts）と説明文（summary_text）。影の運用の間に「外す候補をスタッフが実際に送ったか」（誤削除）を
+-- sent_properties と物件名＋URLで結んで数える材料。説明文はここに初めて保存される（今まで DB に無かった）。
+CREATE TABLE IF NOT EXISTS property_brain_judgments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  property_customer_id UUID REFERENCES property_customers(id) ON DELETE SET NULL,
+  site TEXT,
+  batch_key TEXT,
+  rank INTEGER,
+  property_name TEXT,
+  property_url TEXT,
+  verdict TEXT NOT NULL CHECK (verdict IN ('pass','hold','drop')),
+  score INTEGER,
+  reason_codes TEXT[] DEFAULT '{}',
+  facts JSONB,
+  summary_text TEXT,
+  profile_snapshot JSONB,
+  ad_yen INTEGER,
+  profit_yen INTEGER,
+  apply_drop BOOLEAN DEFAULT false,
+  staff_mode BOOLEAN DEFAULT false,
+  image_used BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE property_brain_judgments DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_pbj_customer_id ON property_brain_judgments(property_customer_id);
+CREATE INDEX IF NOT EXISTS idx_pbj_created_at ON property_brain_judgments(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pbj_verdict ON property_brain_judgments(verdict);
+
 -- aix_transition_stats: 成約会話のAIXボタン遷移カウント（2026-08-27追加）
 -- analyze-closed-conversation.ts が成約時に increment_aix_transition() で自動upsert
 -- brain-core.ts が動的に読み込み（AIX_NEXT_ACTION_MAP ハードコードの代替）

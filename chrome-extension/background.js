@@ -375,14 +375,30 @@ function isStaffModeOn() {
   });
 }
 
+// ── ヘルパー: ブレインモードか（popup.js が chrome.storage.local に持つ・TTL なし）──
+// 2026-09-23 竹内「物件検索の拡張ツールでもブレインモードつくる」
+//   ブレイン ＝ AIX連動（aixMode）＋ 判定（brainMode）。両方 true の時だけ ON。
+//   自動便（11:00/17:00・AIX）の claim は _isAixModeActive がそのまま見るので、ここは判定の有無だけ。
+function isBrainModeOn() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get(["aixMode", "brainMode"], (res) => {
+        resolve(!!(res && res.aixMode && res.brainMode));
+      });
+    } catch (_) { resolve(false); }
+  });
+}
+
 // ── ヘルパー: /api/merge-pdfs を background から呼ぶ（CSP/CORS 完全回避）──
 async function callMergeApi(payload) {
   // 送信の3経路（リアプロ・itandi・レインズ）は全部ここを通るので、スタッフモードの判定もここで付ける
   const staffMode = await isStaffModeOn();
+  // brain_mode はサーバーの記録用（判定そのものは bulk-dl.js が送信前に /api/property-brain/judge で行う）。スタッフモード中は false
+  const brainMode = staffMode ? false : await isBrainModeOn();
   const resp = await fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...payload, staff_mode: staffMode }),
+    body: JSON.stringify({ ...payload, staff_mode: staffMode, brain_mode: brainMode }),
     signal: AbortSignal.timeout(85000), // Vercel maxDuration=90s より5s短く設定（旧60sだと多PDF時にクライアント側が先にタイムアウト）
   });
   if (!resp.ok) {
@@ -394,8 +410,46 @@ async function callMergeApi(payload) {
   return data;
 }
 
+// ── 物件検索ブレインの判定（2026-09-23）──────────────────────────────────────
+// bulk-dl.js（ブレインモード）が送信前に呼ぶ。content script からは CSP で直接 fetch できないので background 経由。
+// 失敗・タイムアウトは { ok:false } を返し、呼び出し側は今までどおり全件送る（fail-open）。
+async function callBrainJudgeApi(payload) {
+  const resp = await fetch("https://sumora-ai-ui.vercel.app/api/property-brain/judge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30000), // 判定 API の maxDuration=30s（画像の読み取り込み）
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`ブレイン判定 HTTP ${resp.status}: ${text.slice(0, 120)}`);
+  }
+  const data = await resp.json();
+  if (!data.ok) throw new Error(data.error || "ブレイン判定エラー");
+  return data;
+}
+
 // ── メッセージハンドラ ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+
+  // ── 物件検索ブレインの判定（bulk-dl.js → background → /api/property-brain/judge）──
+  if (msg.type === "axlx-brain-judge") {
+    (async () => {
+      try {
+        const staffMode = await isStaffModeOn();
+        const data = await callBrainJudgeApi({
+          property_customer_id: msg.property_customer_id || null,
+          items: msg.items || [],
+          site: msg.site || "realpro",
+          staff_mode: staffMode, // スタッフモード中はサーバーが apply_drop=false（人が選んだ物は減らさない）
+        });
+        sendResponse({ ok: true, data });
+      } catch (e) {
+        sendResponse({ ok: false, error: e && e.message ? e.message : String(e) });
+      }
+    })();
+    return true;
+  }
 
   // ── レインズ新タブ監視開始 ───────────────────────────────────────────────
   if (msg.type === "axlx-reins-watch-tab") {
@@ -2244,8 +2298,16 @@ function _updateStaffModeBadge(on) {
     }
     _isAixModeActive().then(function(aixOn) {
       if (aixOn) {
-        chrome.action.setBadgeText({ text: "AIX" });
-        chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
+        // ブレイン（AIX連動＋判定）は「脳」、AIX連動だけなら「AIX」（優先: 手動 > 脳 > AIX）
+        isBrainModeOn().then(function(brainOn) {
+          if (brainOn) {
+            chrome.action.setBadgeText({ text: "脳" });
+            chrome.action.setBadgeBackgroundColor({ color: "#0ea5e9" });
+          } else {
+            chrome.action.setBadgeText({ text: "AIX" });
+            chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
+          }
+        });
       } else {
         chrome.action.setBadgeText({ text: "" });
       }
@@ -2255,7 +2317,7 @@ function _updateStaffModeBadge(on) {
 
 // popup のトグル操作・TTL自動解除をバッジに即時反映
 chrome.storage.onChanged.addListener(function(changes, area) {
-  if (area === "local" && (changes.staffMode || changes.aixMode)) {
+  if (area === "local" && (changes.staffMode || changes.aixMode || changes.brainMode)) {
     _isStaffModeActive().then(_updateStaffModeBadge);
   }
 });

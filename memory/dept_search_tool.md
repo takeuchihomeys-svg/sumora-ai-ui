@@ -4,6 +4,81 @@
 
 ---
 
+## 2026-09-23 物件検索ブレイン＋拡張の「ブレインモード」（竹内・Fable）— v2.5.9
+
+- 竹内「**Deepsheekで物件検索のブレインをつくる**。敷金礼金0円や初期費用抑えたいひとは敷金礼金0でADも高くて割引が出来るお部屋で。…AD−見積書の割引金額が利益となるから利益面も理解できるようにする。**物件検索の拡張ツールでもブレインモードつくる。スタッフモードのところダウンドロップで切り替えれるようにする**」
+
+### 仕組み（判定はサーバー・拡張は「呼んで、外して、番号を詰める」だけ）
+
+```
+拡張（ブレインモード）bulk-dl.js buildSendItemsBrain
+  → background「axlx-brain-judge」→ POST /api/property-brain/judge {property_customer_id, items:[{summary,data,url,image_url}]}
+  → サーバー: 条件（property_customers）＋過去に送った物件（sent_properties 180日）＋選定パターン（selected の selling_points）
+              ＋見積書の割引額（aix_usage_logs estimate_sheet 本文「N円割引」・無ければ 42,000）
+  → 純関数 app/lib/property-brain.ts で1件ずつ pass / hold / drop（点数・理由コード・利益 = AD円 − 割引）
+  → 画像でしか分からない希望（バストイレ別・独立洗面・収納・南向き・2階以上）がある時だけ DeepSeek で有無を読む（5枚まで・失敗は無視）
+  → 返事 {apply_drop, judgments, note_line}。拡張は apply_drop=true の時だけ drop を外し、【N】を1から詰め直し、
+     最後の説明文の末尾に「🧠 ブレイン判定 N件（通す a・保留 b・外す候補 c）／外す候補: 〇〇（理由）／保留: …」を1ブロック
+  → 記録 property_brain_judgments（facts・説明文・判定・利益。誤削除を後で数える材料）
+```
+
+| ファイル | 何を足したか |
+|---|---|
+| `app/lib/property-brain.ts`（新・純関数） | 説明文→事実（家賃 万/円/¥・管理費・敷礼（小数可）・AD ヶ月/円・徒歩・間取り・築年）／間取りの希望文の正規化（以上・〜・列挙・平米・ワンルーム）／「初期費用を抑えたい」の検出（否定文は除く）／割引額の読み取り／プロフィール／判定／末尾の1ブロック |
+| `app/lib/property-brain-image.ts`（新） | DeepSeek（vision-alt-provider・reasoning low）で間取り図から**有無だけ**。費用は llm_usage_logs（action=property_brain_image） |
+| `app/api/property-brain/judge/route.ts`（新） | HTTP の包み。maxDuration 30。dry_run=true で記録も画像もしない |
+| `app/lib/__tests__/property-brain.test.ts`（新・82件） | 実データの実物（希望文の上位40種・見積書本文・フォームの自由文）で回帰 |
+| `scripts/audit-property-brain.ts`（新） | 直近の property_candidate_pools（送った物件）に判定を当て、実送信の drop 率（誤削除の上限）を出す |
+| `app/api/migrate-schema/route.ts` | `property_brain_judgments`（本番にも作成済み） |
+| 拡張 `popup.html` / `popup.js` | AIX／スタッフの2ボタン → `<select id="mode-select">`（通常／スタッフモード／AIX連動／ブレイン）。`_applyMode(mode)` の1か所だけが storage を書く |
+| 拡張 `background.js` | `isBrainModeOn()`（aixMode && brainMode）／`axlx-brain-judge`（30秒）／バッジ「脳」（手動 > 脳 > AIX）／callMergeApi に `brain_mode`（記録用） |
+| 拡張 `bulk-dl.js` | `_brainModeOn` キャッシュ／`buildSendItemsBrain`（mergePdfs・autoSendOnePage の両方が通る）／`extractCard` に間取り図の `imageUrl`／`buildPropertyData` に rent（万・円・¥）・敷礼・ad_yen・小数 AD |
+| 拡張 `styles.css` / `manifest.json` | `.mode-select`・`.brain-banner`・mini-mode の非表示。**version 2.5.9** |
+
+### storage の互換（壊しやすい所）
+
+- キーは今まで通り `staffMode` / `staffModeAt` / `aixMode`。**`brainMode` を足しただけ**。
+- **ブレイン ＝ `aixMode:true` ＋ `brainMode:true`**。自動便（11:00/17:00・AIX）の claim（`_isAixModeActive`・`pending?aix=1`）は無変更。
+  ⚠ ブレインを選んで aixMode が false になる実装ミス＝自動便が止まる。`_applyMode` 以外で書かない。
+- 表示値は storage から導く: staffMode→staff／aixMode&&brainMode→brain／aixMode→aix／それ以外 normal。TTL で background が `staffMode:false` を書けば select も通常に戻る。
+- スタッフモード中は判定を呼ばない（bulk-dl）＋サーバーも `staff_mode=true` なら `apply_drop=false`（二重の歯止め）。
+
+### 落とすかどうか（今は「影の運用」＝1件も外さない）
+
+- サーバーの `PROPERTY_BRAIN_DROP` が未設定 → `apply_drop=false`。判定と末尾の1ブロックだけ付き、**全件送る**。
+- `PROPERTY_BRAIN_DROP=on` で drop を実際に外す。**外す前に** `npx tsx --env-file=.env.local scripts/audit-property-brain.ts --days=30` と
+  `property_brain_judgments` × `sent_properties` で「外す候補をスタッフが実際に送った数」（誤削除）が 0 であることを確かめる。
+- drop にする形は**実送信でほぼ0の形だけ**: 送付済みの建物（ALREADY_SENT）・家賃比 1.30 超（上限が正しい時だけ RENT_OVER_130）。
+  hold（送るが印）: 家賃比 1.10 超・敷礼あり（抑えたい人）・間取り不一致・徒歩 1.5 倍超・築年超過・AD より割引が大きい・画像で希望が無い。
+- 線が引けなかった物（今の DB に材料が無い）: 敷礼・徒歩・管理費・利益の閾値。`property_candidate_pools` は rent 2件・敷礼 0件・徒歩 0件。
+  影の運用で `property_brain_judgments.facts` に溜まってから決める。
+
+### 実機での確かめ方（**拡張の再読み込みが必要・version 2.5.9**）
+
+1. `chrome://extensions` → AIXLINX の 🔄。ヘッダー右のボタン2つが**ドロップダウン**になっていれば更新済み。
+2. ドロップダウンで「ブレイン」→ バッジが「脳」・水色バナー。`chrome.storage.local.get(["staffMode","aixMode","brainMode"])` が `{staffMode:false, aixMode:true, brainMode:true}`。
+   「AIX連動」に戻すと `brainMode:false, aixMode:true`、「スタッフモード」で `staffMode:true, aixMode:false`。
+3. リアプロで検索 → 「売上番長に送る」。コンソールに `[AXLX bulk-dl][brain] 判定 N件: 通す a・保留 b・外す候補 c（影の運用・外さない）` と、保留・見送り候補の1行ずつ。
+   LINE の最後の物件の説明文の下に「🧠 ブレイン判定 …」の1ブロック。件数は減っていない（影の運用）。
+4. `[AXLX bulk-dl][brain] 判定できず → 全件送る（fail-open）` が出たら API 側のエラー（Vercel ログ tag `property-brain:judge-failed`）。送信自体は止まらない。
+5. 間取り図の画像: コンソールの判定に `IMAGE_*` が出るか。出なければ `extractCard` の `findFloorPlanImage` が一覧の <img> を拾えていない（実機未確認）。
+6. DB: `select verdict, count(*) from property_brain_judgments where created_at > now() - interval '1 day' group by 1`。
+
+### 費用（2026-09-23 時点の見積もり）
+
+- 判定（家賃比・敷礼・間取り・徒歩・築年・AD・利益）は純関数 ＝ **$0**。DB の読み取りだけ。
+- 画像（間取り図）は DeepSeek（deepseek-flash・reasoning low）で **1枚 ≈ $0.002（オフピーク）〜0.004（ピーク）**。読むのは「希望に画像でしか分からない語がある × 行に間取り図の画像がある」物だけ・1検索5枚まで。
+- 1検索は平均7.6件・p90 10件・最大38件。全件読んだ場合の上限は 1日 ≈1,033件 → **月 ≈$71〜130**。ゲートで半分以下。実額は `llm_usage_logs where action='property_brain_image'` で見る。
+- 監査（2026-09-23・30日 pools 1,000件・4,343件）: drop 0・hold 24（0.6%・FLOOR_PLAN_MISMATCH のみ）。
+
+### 戻し方
+
+- 判定を止める: ドロップダウンを「AIX連動」に戻す（自動便はそのまま動く）。サーバーは触らなくてよい。
+- 落とすのを止める: Vercel の `PROPERTY_BRAIN_DROP` を消す（影の運用に戻る）。
+- 旧 UI に戻す必要は無い（storage のキーは互換）。
+
+---
+
 ## 2026-09-19 毎日11:00・17:00の自動物件検索（竹内）— AIXモードのPCが実行
 
 - 竹内「**拡張ツールAIXモードにしている場合、毎日11:00になったら3日以内物件確認している人や新規のお客さんの物件検索自動ですることできるか（AD高い順）。ルールは昨日のお客さんなら更新日昨日で3日前物件出しした人なら3日内等本来の通り。そして17:00に今日出た新規物件をおくる為本日の更新日付で検索したの送る形出来るか（最新物件・この場合AD順ではなくて更新順とする・そして項目は１ページだけで本来のように３ページ迄いかなくて大丈夫）こうしたら最新でオススメ出来る物件出た際に見落とさなくて良いから**」

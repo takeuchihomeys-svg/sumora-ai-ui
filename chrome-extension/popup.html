@@ -16,10 +16,17 @@
         <span class="header-sep">|</span>
         <span class="header-sub">物件検索サポート</span>
       </div>
-      <!-- AIXモード切替（ONの間、AIXで物件ピックアップ・物件オススメの指示が出たお客さんをこのPCで自動検索し売上番長グループへ送る。スタッフモードとは排他） -->
-      <button class="aix-btn" id="aix-mode-btn" title="AIXモード：ONの間、AIXで「物件ピックアップした」「物件オススメ」の指示が出たお客さんを、このPCで自動で物件検索して売上番長グループへ送ります">AIX</button>
-      <!-- スタッフモード切替（ONの間このPCは自動化コマンドを無視・手動操作専用になる） -->
-      <button class="staff-btn" id="staff-mode-btn" title="スタッフモード：ONの間、このPCは自動化コマンドを無視します（2時間で自動OFF）">スタッフモード</button>
+      <!-- 動作モード（2026-09-23: AIX／スタッフの2ボタンをドロップダウンに。storage のキーは今まで通り staffMode/staffModeAt/aixMode ＋ brainMode）
+           通常      … 自動化コマンドを普通に受ける
+           スタッフ  … 自動化コマンドを無視（手動専用・2時間で自動OFF）
+           AIX連動   … AIXの指示（物件ピックアップ・物件オススメ）に連動して自動検索→売上番長へ
+           ブレイン  … AIX連動＋お客様の条件・過去の物件出し・利益（AD−割引）で物件を判定してから送る -->
+      <select id="mode-select" class="mode-select" title="動作モード：通常／スタッフモード（自動化を無視・2時間で自動OFF）／AIX連動（AIXの指示で自動検索）／ブレイン（AIX連動＋物件を判定してから送る）">
+        <option value="normal">通常</option>
+        <option value="staff">スタッフモード</option>
+        <option value="aix">AIX連動</option>
+        <option value="brain">ブレイン</option>
+      </select>
       <!-- アンダーバーモード時のみ表示：展開/折りたたみトグル -->
       <button class="icon-btn" id="collapse-btn" title="折りたたむ">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -38,6 +45,8 @@
     <div id="staff-mode-banner" class="staff-banner" style="display:none">スタッフモード中 — 自動化は停止しています（手動操作のみ・2時間で自動OFF）</div>
     <!-- AIXモード中バナー -->
     <div id="aix-mode-banner" class="aix-banner" style="display:none">AIXモード中 — AIXの指示（物件ピックアップ・物件オススメ）に連動して自動で物件検索し、売上番長グループへ送ります</div>
+    <!-- ブレインモード中バナー（AIX連動＋判定） -->
+    <div id="brain-mode-banner" class="brain-banner" style="display:none">🧠 ブレインモード中 — AIX連動＋お客様の条件・過去の物件出し・利益（AD−割引）で物件を判定してから売上番長グループへ送ります</div>
 
     <!-- ▼ VIEW 1: お客さん一覧 -->
     <div id="view-list" class="view active">

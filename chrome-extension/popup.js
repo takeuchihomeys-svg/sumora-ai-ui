@@ -4793,105 +4793,95 @@ function executeBulkSearch(site) {
   document.querySelectorAll(".bulk-check").forEach((cb) => { cb.checked = false; });
 }
 
-// ── スタッフモード ──────────────────────────────────────────────────
-// ONの間このPCの拡張は自動化コマンド（DBポーリングclaim・Realtimeコマンド）を無視する。
-// 実際の抑止判定は background.js（_isStaffModeActive）が行う。ここはUI表示と切替のみ。
-// 状態は chrome.storage.local { staffMode, staffModeAt }。2時間TTLで自動OFF（background側で判定）。
+// ── 動作モード（通常／スタッフ／AIX連動／ブレイン）────────────────────────
+// 2026-09-23 竹内「物件検索の拡張ツールでもブレインモードつくる。スタッフモードのところダウンドロップで切り替えれるようにする」
+//   旧: AIX ボタンとスタッフモードボタンの2つ（排他）。新: <select id="mode-select"> 1つ。
+//
+// storage のキーは**今まで通り**（background.js・bulk-dl.js・itandi/reins の bulk-dl が読んでいるので変えない）:
+//   staffMode / staffModeAt … スタッフモード。ONの間このPCは自動化コマンドを無視（background._isStaffModeActive・2時間TTL）
+//   aixMode                … AIX連動。AIX の指示（物件ピックアップ・物件オススメ）の自動検索コマンドを claim（background._isAixModeActive）
+//   brainMode（新）        … ブレイン。**aixMode:true を伴う**（ブレイン＝AIX連動＋判定）。bulk-dl.js が送信前に /api/property-brain/judge を呼ぶ
+// 表示値は storage から導く: staffMode→staff ／ aixMode&&brainMode→brain ／ aixMode→aix ／ それ以外→normal
+// ⚠ ブレインを選んだ時に aixMode を false にすると自動便（11:00/17:00・AIX）が止まる。_applyMode 以外で書かない。
 var _staffModeOn = false;
+var _aixModeOn = false;
+var _brainModeOn = false;
 
-function _renderStaffMode(on) {
-  _staffModeOn = !!on;
-  var btn = document.getElementById("staff-mode-btn");
-  var banner = document.getElementById("staff-mode-banner");
-  if (btn) {
-    btn.classList.toggle("on", _staffModeOn);
-    btn.textContent = _staffModeOn ? "スタッフモード中" : "スタッフモード";
-  }
-  if (banner) banner.style.display = _staffModeOn ? "block" : "none";
+function _modeFromFlags(staff, aix, brain) {
+  if (staff) return "staff";
+  if (aix && brain) return "brain";
+  if (aix) return "aix";
+  return "normal";
 }
 
-function _initStaffModeUI() {
+function _renderModeUI() {
+  var sel = document.getElementById("mode-select");
+  var mode = _modeFromFlags(_staffModeOn, _aixModeOn, _brainModeOn);
+  if (sel && sel.value !== mode) sel.value = mode;
+  if (sel) {
+    sel.classList.toggle("on-staff", mode === "staff");
+    sel.classList.toggle("on-aix", mode === "aix");
+    sel.classList.toggle("on-brain", mode === "brain");
+  }
+  var sb = document.getElementById("staff-mode-banner");
+  var ab = document.getElementById("aix-mode-banner");
+  var bb = document.getElementById("brain-mode-banner");
+  if (sb) sb.style.display = mode === "staff" ? "block" : "none";
+  if (ab) ab.style.display = mode === "aix" ? "block" : "none";
+  if (bb) bb.style.display = mode === "brain" ? "block" : "none";
+}
+
+// storage への書き込みはここ1か所（排他を1つの表で持つ）
+function _applyMode(mode) {
+  var upd;
+  if (mode === "staff")      upd = { staffMode: true,  staffModeAt: Date.now(), aixMode: false, brainMode: false };
+  else if (mode === "aix")   upd = { staffMode: false, staffModeAt: null,       aixMode: true,  brainMode: false };
+  else if (mode === "brain") upd = { staffMode: false, staffModeAt: null,       aixMode: true,  brainMode: true  };
+  else                       upd = { staffMode: false, staffModeAt: null,       aixMode: false, brainMode: false };
+  _staffModeOn = upd.staffMode; _aixModeOn = upd.aixMode; _brainModeOn = upd.brainMode;
+  _renderModeUI(); // 即時反映（storage.onChanged でも同期される）
+  try { chrome.storage.local.set(upd); } catch (_) { /* ignore */ }
+  // スタッフモードON → 要対応へ自動切替（旧ボタンと同じ挙動）
+  if (mode === "staff") {
+    currentAccount = "__needs_action__";
+    var _acctSel1 = document.getElementById("acct-select");
+    if (_acctSel1) _acctSel1.value = "__needs_action__";
+    filterCustomers(document.getElementById("search-input").value);
+  }
+}
+
+function _initModeSelect() {
   try {
-    chrome.storage.local.get(["staffMode"], function(res) {
-      var on = !!(res && res.staffMode);
-      _renderStaffMode(on);
+    chrome.storage.local.get(["staffMode", "aixMode", "brainMode"], function(res) {
+      _staffModeOn = !!(res && res.staffMode);
+      _aixModeOn = !!(res && res.aixMode);
+      _brainModeOn = !!(res && res.brainMode);
+      _renderModeUI();
       // ポップアップ起動時にスタッフモードONなら要対応をデフォルトに
-      if (on) {
+      if (_staffModeOn) {
         currentAccount = "__needs_action__";
         var _acctSel0 = document.getElementById("acct-select");
         if (_acctSel0) _acctSel0.value = "__needs_action__";
       }
     });
-    // 他のpopupインスタンス（サイドパネル/各タブのアンダーバー）での切替・TTL自動OFFを同期
+    // 他のpopupインスタンス（サイドパネル/各タブのアンダーバー）での切替・TTL自動OFF（background が staffMode:false を書く）を同期
     chrome.storage.local.onChanged.addListener(function(changes) {
-      if (changes.staffMode) _renderStaffMode(!!changes.staffMode.newValue);
+      if (!changes.staffMode && !changes.aixMode && !changes.brainMode) return;
+      if (changes.staffMode) _staffModeOn = !!changes.staffMode.newValue;
+      if (changes.aixMode) _aixModeOn = !!changes.aixMode.newValue;
+      if (changes.brainMode) _brainModeOn = !!changes.brainMode.newValue;
+      _renderModeUI();
     });
   } catch (_) { /* ignore */ }
-  var btn = document.getElementById("staff-mode-btn");
-  if (btn) {
-    btn.addEventListener("click", function() {
-      var next = !_staffModeOn;
-      _renderStaffMode(next); // 即時反映（storage.onChanged でも同期される）
-      try {
-        // スタッフモード（自動で動かない）と AIX モード（AIX に連動して自動で動く）は排他
-        var upd = { staffMode: next, staffModeAt: next ? Date.now() : null };
-        if (next) upd.aixMode = false;
-        chrome.storage.local.set(upd);
-      } catch (_) { /* ignore */ }
-      // スタッフモードON → 要対応へ自動切替
-      if (next) {
-        currentAccount = "__needs_action__";
-        var _acctSel1 = document.getElementById("acct-select");
-        if (_acctSel1) _acctSel1.value = "__needs_action__";
-        filterCustomers(document.getElementById("search-input").value);
-      }
-    });
-  }
-}
-
-// ── AIXモード（2026-09-12 竹内方針）────────────────────────────────
-// ONの間このPCは、AIXで「物件ピックアップした／物件オススメ／物件を探す」の指示が出たお客さんの自動検索コマンド
-// （サーバーが aix_action_items 登録時に automation_commands へ source=aix で積む）を拾い、既存の一括検索で
-// 検索→売上番長グループへ送信する。実際の判定は background.js（_isAixModeActive → pending API に ?aix=1）。
-// 状態は chrome.storage.local { aixMode }（PCごと・TTLなし）。スタッフモードとは排他。
-var _aixModeOn = false;
-
-function _renderAixMode(on) {
-  _aixModeOn = !!on;
-  var btn = document.getElementById("aix-mode-btn");
-  var banner = document.getElementById("aix-mode-banner");
-  if (btn) {
-    btn.classList.toggle("on", _aixModeOn);
-    btn.textContent = _aixModeOn ? "AIX連動中" : "AIX";
-  }
-  if (banner) banner.style.display = _aixModeOn ? "block" : "none";
-}
-
-function _initAixModeUI() {
-  try {
-    chrome.storage.local.get(["aixMode"], function(res) { _renderAixMode(!!(res && res.aixMode)); });
-    chrome.storage.local.onChanged.addListener(function(changes) {
-      if (changes.aixMode) _renderAixMode(!!changes.aixMode.newValue);
-    });
-  } catch (_) { /* ignore */ }
-  var btn = document.getElementById("aix-mode-btn");
-  if (btn) {
-    btn.addEventListener("click", function() {
-      var next = !_aixModeOn;
-      _renderAixMode(next);
-      try {
-        var upd = { aixMode: next };
-        if (next) { upd.staffMode = false; upd.staffModeAt = null; }
-        chrome.storage.local.set(upd);
-      } catch (_) { /* ignore */ }
-    });
+  var sel = document.getElementById("mode-select");
+  if (sel) {
+    sel.addEventListener("change", function() { _applyMode(sel.value); });
   }
 }
 
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  _initStaffModeUI();
-  _initAixModeUI();
+  _initModeSelect();
   // DBが空なら既存ハードコードデータをシード → 学習済みマップをロード
   seedMapsIfEmpty().then(() => fetchLearnedMaps());
   // DBの駅→路線キャッシュをロード（24hローカルキャッシュ・失敗時はhardcodedマップで動作継続）
@@ -4904,7 +4894,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!cmd) return;
       chrome.storage.session.remove("pendingPopupCmd");
       // openPopup() 失敗時に background.js が立てた赤バッジを消す（スタッフモード中はバッジ「手動」を維持）
-      try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : (_aixModeOn ? 'AIX' : '') }); } catch (_) {}
+      try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : (_brainModeOn && _aixModeOn ? '脳' : (_aixModeOn ? 'AIX' : '')) }); } catch (_) {}
       var c = allCustomers.find(function(x) {
         return String(x.id) === String(cmd.customerId);
       });
@@ -4956,7 +4946,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // allCustomers 未ロードなら DOMContentLoaded の then() 側で処理されるので無視
     if (!allCustomers || allCustomers.length === 0) return;
     chrome.storage.session.remove("pendingPopupCmd");
-    try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : (_aixModeOn ? 'AIX' : '') }); } catch (_) {}
+    try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : (_brainModeOn && _aixModeOn ? '脳' : (_aixModeOn ? 'AIX' : '')) }); } catch (_) {}
     var c = allCustomers.find(function(x) {
       return String(x.id) === String(cmd.customerId);
     });
