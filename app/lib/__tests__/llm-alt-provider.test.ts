@@ -332,7 +332,14 @@ console.log("── ★ 別クラウドの呼び出しも llm_usage_logs に残�
     /action: routeName, conversationId/.test(provider));
   t("★ 応答を clone してから読む（本来の応答を壊さない）", /res\.clone\(\)/.test(provider));
 
+  // 2026-09-23 竹内「おこなう」: 1文字ずつの形は読み切った時だけ記録していた → 途中で切れた・受け手が閉じた時も1行残す
+  t("★ 1文字ずつの形は読み切れなくても1行残す（途中で切れた: stream_error）", /report\("stream_error"\)/.test(provider));
+  t("★ 受け手が先に閉じた時も1行残す（cancel: stream_cancelled）", /cancel\(\) \{[\s\S]{0,300}?report\("stream_cancelled"\)/.test(provider));
+  t("★ 記録は1回だけ（読み切り・切れた・閉じたのどれか1つ）", /if \(reported\) return;\s*reported = true;/.test(provider));
+  t("★ 1文字ずつの形かどうか（stream）を行に残す", /stream: !!body\.stream/.test(provider));
+
   const recorder = readFileSync("app/lib/llm-usage-recorder.ts", "utf8");
+  t("★ recorder は stream の印を受け取って行に入れる", /stream: input\.stream \?\? false/.test(recorder));
   t("★ 書き込みの口は recorder 側に1つだけ置いている（記録の仕組みを2か所に分けない）",
     /export function recordAltUsage/.test(recorder) && /altRecorder = deps/.test(recorder));
   t("★ キャッシュ一致を cache_read に入れている",

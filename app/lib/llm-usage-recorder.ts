@@ -342,12 +342,14 @@ export function recordAltUsage(input: {
   sysHead: string | null;
   sysKeyFull: string | null;
   maxTokens: number | null;
+  /** 1文字ずつの形（DeepSeek の streaming）か。2026-09-23 から記録（旧は常に false） */
+  stream?: boolean;
 }): void {
   const r = altRecorder;
   if (!r) return;
   const row: LlmUsageRow = {
     route: r.route(), model: input.model, status: input.status, error_type: input.errorType,
-    stream: false, stop_reason: null,
+    stream: input.stream ?? false, stop_reason: null,
     input_uncached: num(input.usage.input_tokens), cache_read: num(input.usage.cache_read_input_tokens),
     cache_write: 0, cache_write_5m: 0, cache_write_1h: 0,
     output_tokens: num(input.usage.output_tokens), thinking_tokens: 0,

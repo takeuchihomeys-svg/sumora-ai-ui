@@ -6995,4 +6995,4 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - `DEBUG_PROMPT_DIR` の出力（`.debug-prompt/`・未マスク）は削除済み。開発サーバーも停止
 
 確認: `REPS=2 scripts/yuma-company-facts-direct.ts` → 混入0（DeepSeek 4/4）。テスト pii-pseudonym 90／meta-narration 47／apply-readiness 27／draft-text 51・`tsc` 通過。設計知見4件（kb-insert: 仮名化2件・DeepSeek の質・作業メモの印）。
-既知の未対応: DeepSeek の streaming 呼び出しが llm_usage_logs に半分程度しか記録されない（8回→4行）。費用の検算時は注意
+- **記録の抜け（訂正）**: 「8回→4行」は古い開発サーバーで測った数字で、立て直して測ると 4回→4行（1対1）。本番5日分も DeepSeek 行数 ≧ 最終チェック行数で抜けの形跡なし。ただし仕組み上、streaming は読み切った時だけ行を書いていたので、**切れた・受け手が閉じた時も errorType（stream_error／stream_cancelled）付きで1行残す**形にし、`stream` の印も行に入れた（`llm-alt-provider.ts` report／`llm-usage-recorder.ts` recordAltUsage.stream）

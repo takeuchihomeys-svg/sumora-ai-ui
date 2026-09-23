@@ -441,7 +441,9 @@ async function callOpenAICompatible(
   cfg: AltProviderConfig,
   body: AnthropicBody,
   originalFetch: typeof fetch,
-  onUsage?: (u: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number }) => void,
+  // 2026-09-23 竹内「おこなう」: 1文字ずつの形は**読み切れなくても必ず1行残す**（errorType に切れ方を入れる）。
+  //   旧: 最後まで読み切った時だけ書いていたので、途中で切れる・受け手が閉じると行が無く、費用の検算で数が合わなかった
+  onUsage?: (u: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number }, errorType: string | null) => void,
 ): Promise<Response | null> {
   // 1文字ずつの形は DeepSeek だけ通す（Anthropic の SSE に組み直す変換を用意しているため）
   const allowStream = cfg.provider === "deepseek";
@@ -465,6 +467,13 @@ async function callOpenAICompatible(
     const enc = new TextEncoder();
     const dec = new TextDecoder();
     const reader = res.body.getReader();
+    // 記録は1回だけ（読み切り・途中で切れた・受け手が閉じた、のどれか1つ）
+    let reported = false;
+    const report = (errorType: string | null) => {
+      if (reported) return;
+      reported = true;
+      try { onUsage?.(conv.usage(), errorType); } catch { /* 記録の失敗で応答を止めない */ }
+    };
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         let buf = "";
@@ -483,14 +492,20 @@ async function callOpenAICompatible(
           }
           for (const ev of conv.push(buf)) controller.enqueue(enc.encode(ev));
           for (const ev of conv.end()) controller.enqueue(enc.encode(ev));
-          onUsage?.(conv.usage());
+          report(null);
         } catch (e) {
-          // 途中で切れた時も形は閉じる（呼び出し側の parser を壊さない）
+          // 途中で切れた時も形は閉じる（呼び出し側の parser を壊さない）。行も残す（読めた分の usage＋切れ方）
           try { for (const ev of conv.end()) controller.enqueue(enc.encode(ev)); } catch { /* 閉じ済み */ }
           console.warn("[llm-alt] stream error:", String(e));
+          report("stream_error");
         } finally {
-          controller.close();
+          try { controller.close(); } catch { /* 受け手が先に閉じた */ }
         }
+      },
+      cancel() {
+        // 受け手（SDK・タイムアウト）が先に閉じた時。DeepSeek 側の読み込みも止め、行は残す
+        reader.cancel().catch(() => { /* 既に終わっている */ });
+        report("stream_cancelled");
       },
     });
     return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream; charset=utf-8" } });
@@ -568,15 +583,15 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     const sysHead = flattenContent(body.system);
     const conversationId = headers.get(LLM_CONVERSATION_HEADER);
     try {
-      const writeUsage = (usage: Record<string, number>, ms: number) => recordAltUsage({
+      const writeUsage = (usage: Record<string, number>, ms: number, errorType: string | null = null) => recordAltUsage({
         model: cfg.model, action: routeName, conversationId,
-        usage, status: 200, errorType: null, durationMs: ms,
+        usage, status: 200, errorType, durationMs: ms, stream: !!body.stream,
         sysHead, sysKeyFull: sysHead, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
       });
       const res = cfg.provider === "bedrock"
         ? await callBedrock(cfg, body)
-        // 1文字ずつの形は応答を読み切ってから usage が分かるので、コールバックで受ける
-        : await callOpenAICompatible(cfg, body, original, (u) => writeUsage(u as unknown as Record<string, number>, Date.now() - started));
+        // 1文字ずつの形は応答を読み切ってから usage が分かるので、コールバックで受ける（切れた時も errorType 付きで1行）
+        : await callOpenAICompatible(cfg, body, original, (u, errorType) => writeUsage(u as unknown as Record<string, number>, Date.now() - started, errorType));
       if (!res) return original(input as RequestInfo, init); // 画像等は今までどおり
       const ms = Date.now() - started;
       console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: cfg.provider, model: cfg.model, stream: !!body.stream, ms }));
