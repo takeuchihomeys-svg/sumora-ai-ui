@@ -29,6 +29,46 @@ const IMAGE_HEAD_RE = /^\s*\[画像\]\s*/;
 /** 画像の種類のラベル（Vision が先頭に付ける事がある） */
 const TYPE_LABEL_RE = /^(?:floor_plan|property_photo|estimate|id_document|other|screenshot)\s*$/i;
 
+// ─── 2026-09-23 竹内「お客さんが送ってきた画像が、こちらから送った画像かどうかの判定」──────────
+// 全件監査（scripts/audit-own-property-image.ts・180日 222通）で、物件名を取り出せたのは 25通（11.3%）だけだった。
+// 取り出せなかった実物を全部目で読むと、**こちらが送った物件資料そのもの**が次の形で落ちていた:
+//   ・「【物件名】スプランディッド本町グラン」「【号室名】1003（10階部分）」 … 見出しが【】で、区切りの「：」が無い
+//   ・「物件名 ジーメゾン石津町東プリシエ」「号室名 0102」        … 区切りが空白だけ
+//   ・「名称 GOTTS大今里 502号室」「名称：Kanon神椿川 102号室」   … 見出しが「名称」で、値に号室が入る
+//   ・「- 物件名: ノルデンタワー天神橋アネックス（2階/1 LDK/41.26m²）」 … 箇条書き＋括弧の付録
+//   ・「フォーリアライズ難波リアン 10階」                          … 号室が無く階だけ
+// ⚠ 取り出しは広くてよい（ここは「名前らしき物」を拾うだけ）。**同じ物件かを決めるのは matchOwnProperty**で、
+//   こちらが送った物件と名前が近く（0.7以上）シリーズ番号も同じ時だけ「こちらの物件」と言う。
+//   お客様が自分で見つけた物件（持込）は取り出せても照合が none になり、今までどおり扱われる。
+/** 行頭の飾り（箇条書き・引用記号）を外す */
+function stripBullet(line: string): string {
+  return line.replace(/^[\s\-–—・*●○▼▶>＞]+/, "").trim();
+}
+/** 物件名の見出し（物件種目・物件種別には当てない）。区切りは「：」「:」または空白 */
+const NAME_LABEL_RE = /^[【[]?\s*(?:物件名称|物件名|建物名称|建物名|マンション名|名称)\s*[】\]]?\s*[:：]?\s*(.+)$/;
+/** 号室の見出し */
+const ROOM_LABEL_RE = /^[【[]?\s*(?:号室名|号室|部屋番号)\s*[】\]]?\s*[:：]?\s*(.+)$/;
+
+/** 見出しの値から物件名（と、値の中に混ざっている号室）を取り出す */
+function cleanNameValue(raw: string): ScreenshotProperty | null {
+  let v = raw.replace(/\*+/g, "").trim();
+  // 「〇〇 の賃貸情報」「〇〇の物件情報」（ポータルの見出し）
+  v = v.replace(/\s*の\s*(?:賃貸情報|物件情報|詳細情報|詳細)\s*$/, "").trim();
+  // 末尾の括弧の付録（「（2階/1 LDK/41.26m²）」「（10階部分）」）
+  const paren = v.match(/[（(][^）)]*[）)]\s*$/);
+  if (paren && paren.index !== undefined && paren.index >= 2) v = v.slice(0, paren.index).trim();
+  let room: string | null = null;
+  // 値の中の号室（「GOTTS大今里 502号室」「Kanon神椿川 102号室」）
+  const inline = v.match(/^(.{2,40}?)\s+([0-9]{2,4}[A-Za-z]?)\s*(?:号室|号)?$/);
+  if (inline) { room = normalizeRoom(inline[2]); v = inline[1].trim(); }
+  v = v.replace(/[:：]\s*$/, "").trim();
+  if (v.length < 2 || v.length > 40) return null;
+  // 住所・金額・種別だけの値は物件名ではない
+  if (/^(?:大阪|東京|京都|兵庫|奈良|滋賀|和歌山|神奈川|〒|賃料|家賃|所在地|交通|マンション|アパート|戸建|住居用|住宅用)/.test(v)) return null;
+  if (/[0-9.]+万円|円$/.test(v)) return null;
+  return { name: v, room };
+}
+
 /**
  * お客様が送ったスクショの読み取り文（"[画像] …"）から物件名・号室を取り出す。
  * 実物の形（9/22 𝓡さん）:
@@ -40,23 +80,36 @@ const TYPE_LABEL_RE = /^(?:floor_plan|property_photo|estimate|id_document|other|
 export function extractScreenshotProperty(text: string | null | undefined): ScreenshotProperty | null {
   const t = (text ?? "").normalize("NFKC");
   if (!IMAGE_HEAD_RE.test(t)) return null;
-  const lines = t.replace(IMAGE_HEAD_RE, "").split(/\n|\s\/\s/).map((l) => l.replace(/\*+/g, "").trim()).filter(Boolean);
-  // B: 「物件名：」「号室：」
-  const nameLine = lines.find((l) => /^物件名\s*[:：]/.test(l));
-  if (nameLine) {
-    const name = nameLine.replace(/^物件名\s*[:：]\s*/, "").trim();
-    const roomLine = lines.find((l) => /^(?:号室|部屋番号|号室名)\s*[:：]/.test(l));
-    const room = roomLine ? normalizeRoom((roomLine.replace(/^[^:：]+[:：]\s*/, "").match(/[0-9]{2,4}[A-Za-z]?/) ?? [])[0]) : null;
-    return name.length >= 2 ? { name, room } : null;
+  const lines = t.replace(IMAGE_HEAD_RE, "").split(/\n|\s\/\s/).map((l) => stripBullet(l.replace(/\*+/g, ""))).filter(Boolean);
+  // B: 見出しの形（「物件名：」「【物件名】」「物件名 」「名称：」「- 物件名: 」）
+  for (const l of lines) {
+    const nm = l.match(NAME_LABEL_RE);
+    if (!nm) continue;
+    const got = cleanNameValue(nm[1]);
+    if (!got) continue;
+    if (got.room) return got;
+    // 号室は別の行（「【号室名】1003（10階部分）」「号室名 0102」）
+    for (const r of lines) {
+      const rm = r.match(ROOM_LABEL_RE);
+      if (!rm) continue;
+      const room = normalizeRoom((rm[1].match(/[0-9]{2,4}[A-Za-z]?/) ?? [])[0]);
+      if (room) return { name: got.name, room };
+    }
+    return got;
   }
   // A / C: 1行目（種類のラベルは飛ばす）の「名前 号室」
   const first = lines.find((l) => !TYPE_LABEL_RE.test(l)) ?? "";
   const m = first.match(/^(.{2,40}?)\s+([0-9]{2,4}[A-Za-z]?)\s*(?:号室|号)?(?:\s|$|[0-9.]+万)/);
-  if (!m) return null;
-  const name = m[1].trim();
-  // 住所・駅・金額から始まる行は物件名ではない
-  if (/^(?:大阪|東京|京都|兵庫|〒|【|賃料|家賃|所在地|交通)/.test(name) || /[0-9.]+万円/.test(name)) return null;
-  return { name, room: normalizeRoom(m[2]) };
+  if (m) {
+    const name = m[1].trim();
+    // 住所・駅・金額から始まる行は物件名ではない
+    if (/^(?:大阪|東京|京都|兵庫|〒|【|賃料|家賃|所在地|交通)/.test(name) || /[0-9.]+万円/.test(name)) return null;
+    return { name, room: normalizeRoom(m[2]) };
+  }
+  // D: 号室が無く階だけ（「フォーリアライズ難波リアン 10階」）。号室は分からないので null
+  const f = first.match(/^(.{2,40}?)\s+[0-9]{1,3}\s*階\s*$/);
+  if (f) return cleanNameValue(f[1]);
+  return null;
 }
 
 const ROMAN_FULL: Record<string, string> = { "Ⅰ": "i", "Ⅱ": "ii", "Ⅲ": "iii", "Ⅳ": "iv", "Ⅴ": "v", "Ⅵ": "vi", "Ⅶ": "vii", "Ⅷ": "viii", "Ⅸ": "ix", "Ⅹ": "x", "Ⅺ": "xi", "Ⅻ": "xii" };
@@ -68,7 +121,9 @@ const ROMAN_FULL: Record<string, string> = { "Ⅰ": "i", "Ⅱ": "ii", "Ⅲ": "ii
  *   **末尾**の番号しか見ないので、途中の番号の違いが素通りした。
  */
 export function seriesTokens(name: string): string {
-  const t = name.normalize("NFKC").replace(/[Ⅰ-Ⅻ]/g, (c) => ROMAN_FULL[c] ?? c).toLowerCase();
+  // 2026-09-23: 空白を先に外す。「FORESTA VIII」と「FORESTAVIII」は同じ建物なのに、空白の有無で
+  //   ローマ数字の拾い方が変わり（前が英字だと拾わない規則）別の建物と判定していた（実物 1191b1eb）
+  const t = name.normalize("NFKC").replace(/\s+/g, "").replace(/[Ⅰ-Ⅻ]/g, (c) => ROMAN_FULL[c] ?? c).toLowerCase();
   const romans = t.match(/(?<![a-z])(?:x{0,3})(?:ix|iv|v?i{1,3}|v)(?![a-z])/g) ?? [];
   const digits = t.match(/\d+/g) ?? [];
   return [...romans, ...digits].join(",");
@@ -87,7 +142,13 @@ export function matchOwnProperty(item: ScreenshotProperty, sent: ReadonlyArray<S
   if (seriesTokens(item.name) !== seriesTokens(hit.name)) return { kind: "none", sent: null, score: hit.score };
   const cands = byName.get(hit.name) ?? [];
   const room = normalizeRoom(item.room);
-  const sameRoom = cands.find((c) => !room || !normalizeRoom(c.room) || normalizeRoom(c.room) === room);
+  // 2026-09-23 全件監査で見つけた誤り: お客様の側に号室が無い（「10階」だけ・ポータルの画面）時に
+  //   「同じ部屋」と言い切っていた。実物 9280fa49 08-27「フォーリアライズ難波リアン 10階」は
+  //   こちらが送った建物だが、スタッフは「お部屋の募集状況確認させていただきます」と**確認していた**＝別の部屋。
+  //   号室が分からない時に「こちらが送った物件（確認不要）」と言うと、本当に要る確認を止めてしまう。
+  //   建物としては同じ（same_building）に倒し、断定はしない（この判定の元からの方針「違うとは言わない・分からないと言う」）。
+  if (!room) return { kind: "same_building", sent: cands[cands.length - 1] ?? null, score: hit.score };
+  const sameRoom = cands.find((c) => !normalizeRoom(c.room) || normalizeRoom(c.room) === room);
   if (sameRoom) return { kind: "same_room", sent: sameRoom, score: hit.score };
   return { kind: "same_building", sent: cands[cands.length - 1] ?? null, score: hit.score };
 }

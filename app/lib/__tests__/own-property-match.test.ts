@@ -33,6 +33,69 @@ const SENT: SentProperty[] = [
   { name: "SUMMIT（サミット）", room: "406", sentAt: "2026-09-20T12:51:00Z" },
 ];
 
+// ── 2026-09-23 竹内「お客さんが送ってきた画像が、こちらから送った画像かどうかの判定」──────────
+// 全件監査（180日 222通）で取り出せなかった**実物の本文**をそのまま使う。
+const D = "[画像] 【物件種目】[住居用] マンション\n【物件名】スプランディッド本町グラン\n【号室名】1003（10階部分）\n【所在地】〒540-0017 大阪府大阪市中央区松屋町住吉4丁目3";
+const E = "[画像] スモラ 2026/09/16 16:37＞\n物件種目 【住居用】アパート\n物件名 ジーメゾン石津町東プリシエ\n号室名 0102\n所在地 〒592-8335 大阪府堺市西区浜寺石津町東5丁7-40";
+const F = "[画像] 名称 GOTTS大今里 502号室\n【物件情報】\n種別：マンション\n交通：\n- 地下鉄千日前線「今里」駅 徒歩2分";
+const G = "[画像] 102号室 ～2号室タイプ/北向き～\n【賃貸バイツ】\n名称：Kanon神椿川 102号室\n賃料：78,000円";
+const H = "[画像] 【ページ情報】\n- サイト: homes.co.jp - LIFULL HOME'S\n- 物件種別: 賃貸マンション\n- 物件名: ノルデンタワー天神橋アネックス（2階/1 LDK/41.26m²）\n- 賃料: 8.7万円/月";
+const I = "[画像] フォーリアライズ難波リアン 10階\n【間取り図】\n- 洋6（6畳）\n【物件情報】\n- 賃料：6.45万円/管理費 10000円";
+
+it("★★ D 見出しが【】・区切り無し「【物件名】〇〇／【号室名】1003（10階部分）」", () => {
+  const r = extractScreenshotProperty(D);
+  expect(r?.name).toBe("スプランディッド本町グラン"); expect(r?.room).toBe("1003");
+});
+it("★★ E 区切りが空白だけ「物件名 〇〇／号室名 0102」（物件種目は名前にしない）", () => {
+  const r = extractScreenshotProperty(E);
+  expect(r?.name).toBe("ジーメゾン石津町東プリシエ"); expect(r?.room).toBe("102");
+});
+it("★★ F 見出し「名称」＋値に号室「名称 GOTTS大今里 502号室」", () => {
+  const r = extractScreenshotProperty(F);
+  expect(r?.name).toBe("GOTTS大今里"); expect(r?.room).toBe("502");
+});
+it("★★ G「名称：Kanon神椿川 102号室」", () => {
+  const r = extractScreenshotProperty(G);
+  expect(r?.name).toBe("Kanon神椿川"); expect(r?.room).toBe("102");
+});
+it("★★ H 箇条書き＋括弧の付録「- 物件名: 〇〇（2階/1 LDK/41.26m²）」→ 括弧は外す", () => {
+  const r = extractScreenshotProperty(H);
+  expect(r?.name).toBe("ノルデンタワー天神橋アネックス"); expect(r?.room).toBe(null);
+});
+it("★★ I 号室が無く階だけ「フォーリアライズ難波リアン 10階」→ 号室は分からない（null）", () => {
+  const r = extractScreenshotProperty(I);
+  expect(r?.name).toBe("フォーリアライズ難波リアン"); expect(r?.room).toBe(null);
+});
+it("★ 名前が無い実物（間取り図の説明だけ）は取り出さない", () => {
+  expect(extractScreenshotProperty("[画像] 【物件情報】\n間取り図と物件詳細情報が記載されたページ\n【間取り図エリア】\n左側：2つの間取り図が並んでいる")).toBe(null);
+  expect(extractScreenshotProperty("[画像] 【物件情報】\n所在地：神奈川県横浜市\n構造：木造2階建\n建築年月日：平成30年8月")).toBe(null);
+});
+it("★ 物件種目の値（OCR の取り違え）を物件名にしない", () => {
+  expect(extractScreenshotProperty("[画像] 【物件概要】\n物件種目：ハイム・MK\n所在地：大阪市中央区")).toBe(null);
+});
+it("★★ 空白の有無で建物を取り違えない（FORESTA VIII ↔ FORESTAVIII）", () => {
+  const sent: SentProperty[] = [{ name: "FORESTAVIII", room: "302", sentAt: "2026-09-01T00:00:00Z" }];
+  // 建物としては同じと分かる（号室が無いので「同じ部屋」とまでは言わない＝下のテスト）
+  expect(matchOwnProperty({ name: "FORESTA VIII", room: null }, sent).kind).toBe("same_building");
+  expect(matchOwnProperty({ name: "FORESTA VIII", room: "302" }, sent).kind).toBe("same_room");
+});
+it("★★ お客様の側に号室が無い時は「同じ部屋」と言い切らない（実物 フォーリアライズ難波リアン 10階）", () => {
+  // 実物: こちらが送った建物だが、スタッフは「お部屋の募集状況確認させていただきます」と確認していた＝別の部屋
+  const sent: SentProperty[] = [{ name: "フォーリアライズ難波リアン", room: "705", sentAt: "2026-08-20T00:00:00Z" }];
+  const r = matchOwnProperty({ name: "フォーリアライズ難波リアン", room: null }, sent);
+  expect(r.kind).toBe("same_building");
+  // 「こちらが送った物件」として本文の材料には出さない（出すのは same_room だけ）
+  expect(buildOwnPropertyNote([{ item: { name: "フォーリアライズ難波リアン", room: null }, match: r }])).toBe("");
+});
+it("★ こちらの記録に号室が無い時は今までどおり同じ部屋とみなす（記録の抜け）", () => {
+  const sent: SentProperty[] = [{ name: "ラクラス阿倍野元町", room: null, sentAt: "2026-09-19T00:00:00Z" }];
+  expect(matchOwnProperty({ name: "ラクラス阿倍野元町", room: "507" }, sent).kind).toBe("same_room");
+});
+it("★★ シリーズ番号が違う建物は今までどおり別（サウスプレイスVI ↔ VIII）", () => {
+  const sent: SentProperty[] = [{ name: "エステムコート難波サウスプレイスVIIIハイド", room: "201", sentAt: "2026-09-01T00:00:00Z" }];
+  expect(matchOwnProperty({ name: "エステムコート難波サウスプレイスVIリリアン", room: "201" }, sent).kind).toBe("none");
+});
+
 it("号室の表記ゆれ（0507 と 507・号室付き）を揃える", () => {
   expect(normalizeRoom("0507")).toBe("507");
   expect(normalizeRoom("201 号室")).toBe("201");
