@@ -15,6 +15,9 @@
 // 下流（generate-reply の reply-context.ts toBrainMessageLocal / toBrainConversationScope）は「返信生成でどう使うか」の分類で、
 // ここは「どちらの層が作るか」の分類。両者が食い違っても下流の挙動は変えない（作り手だけを分ける）。
 
+// 2026-09-23: 戦略の項目にも家賃交渉の守りを通す（純関数同士なので依存なしのまま）
+import { stripRentNegotiation, stripRentNegotiationFromList } from "./rent-negotiation-guard";
+
 export type BrainStrategy = {
   closing_strategy?: string | null;
   winning_pattern?: string | null;
@@ -64,14 +67,30 @@ export function mergeBrainLayers<T extends Record<string, unknown>>(fresh: T, st
   return { ...(out as T), strategy_msg_ts: strategy?.strategy_msg_ts ?? null, strategy_source: strategy?.source ?? null };
 }
 
+/**
+ * 戦略の項目から「家賃・賃料の値下げ交渉をこれからする」節を落とす（rent-negotiation-guard と同じ純関数）。
+ * consolidateStrategy（普段の整理）と extractStrategy（ゼロから・種まき）の両方がこれを通す（四者同名）
+ */
+export function sanitizeStrategyFields(s: { closing_strategy?: string | null; winning_pattern?: string | null; next_steps?: string[] | null }, opts: { customerAsked?: boolean } = {}): { closing_strategy: string | null; winning_pattern: string | null; next_steps: string[] | null } {
+  const cs = stripRentNegotiation(s.closing_strategy ?? null, opts);
+  const wp = stripRentNegotiation(s.winning_pattern ?? null, opts);
+  const ns = s.next_steps ? stripRentNegotiationFromList(s.next_steps, opts).items : null;
+  return { closing_strategy: cs.text, winning_pattern: wp.text, next_steps: ns && ns.length ? ns : (s.next_steps ? [] : null) };
+}
+
 /** 全項目の判断（本分析・ゼロからの分析・前回の判断）から戦略の層を取り出す */
 export function extractStrategy(meta: Record<string, unknown> | null | undefined, src: NonNullable<BrainStrategy["source"]>, prevCount: number, nowIso: string): BrainStrategy | null {
   if (!meta) return null;
   const pick = (k: string) => (nonEmpty(meta[k]) ? meta[k] : null);
-  const s: BrainStrategy = {
+  // 2026-09-23 反証者の指摘: 戦略の層（closing_strategy / winning_pattern / next_steps）は家賃交渉の守り（rent-negotiation-guard）を通っておらず、
+  //   毎ターン fresh 側を上書きする一番長く居座る層だった。同じ純関数を通す（お客様が頼んだ場合は brain-core 側で方向に残るのでここは一律）
+  const guardedStrategy = sanitizeStrategyFields({
     closing_strategy: pick("closing_strategy") as string | null,
     winning_pattern: pick("winning_pattern") as string | null,
     next_steps: (Array.isArray(meta.next_steps) ? (meta.next_steps as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 3) : null),
+  });
+  const s: BrainStrategy = {
+    ...guardedStrategy,
     human_type_label: pick("human_type_label") as string | null,
     repeated_concern: pick("repeated_concern") as string | null,
     future_timeline: pick("future_timeline") as string | null,
@@ -98,6 +117,8 @@ export type FreshDigest = {
   ts: string | null;
   intent?: string | null; q?: string[]; concern?: string | null; cond?: string | null; hes?: string | null;
   emo?: string | null; aix?: string | null; prop?: string | null; sig?: string | null; dir?: string | null; timeline?: string | null; shift?: string | null;
+  /** 2026-09-23: 入口で落とした していない約束（家賃交渉）。「何を落としたか」を次の回でも追えるように残す（dir には入れない） */
+  drop?: string | null;
 };
 export function toFreshDigest(meta: Record<string, unknown>, shift: string | null): FreshDigest {
   const str = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
@@ -117,6 +138,9 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     dir: str(meta.reply_direction, 60),
     timeline: str(meta.future_timeline, 40),
     shift,
+    // 2026-09-23 竹内「家賃交渉は基本できないものだからいれない」: 落とした約束は dir と分けて残す。
+    //   ここに入れても次の回の方向の材料にはならない（【前回の戦略以降の…要点】は intent/concern/cond/dir を読む）
+    drop: str(meta.dropped_direction, 60),
   };
 }
 

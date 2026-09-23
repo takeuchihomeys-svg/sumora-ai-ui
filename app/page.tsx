@@ -2754,7 +2754,9 @@ export default function Home() {
     const m = c.suggestedAixMeta as { action?: string | null; reply_mode?: string | null; source?: string | null; first_contact_pickup?: string | null; decision_source?: string | null } | null | undefined;
     if (!m || m.source === "cached") return false;
     // スタッフの宣言（見積書・物件ピックアップ）を履行する AIX は、最後の発言がスタッフでも AIX要対応（竹内 2026-09-12）
-    const byStaffPromise = (m.decision_source ?? "").startsWith("promise:");
+    // 2026-09-23 竹内（あっぴ事例）: 未履行のピックアップ宣言が残っている会話（signal:pending_pickup）も同じ扱い
+    //   （宣言した時点でボールはこちら側。最後の発言がスタッフでも AIX要対応）
+    const byStaffPromise = /^(promise:|signal:pending_pickup)/.test(m.decision_source ?? "");
     if (c.lastSender !== "customer" && !byStaffPromise) return false;
     // 初回にお客様が条件を送ってきた会話（挨拶の下書きを出しつつ、次は AIX【物件ピックアップした】）も AIX要対応
     if (m.first_contact_pickup) return true;

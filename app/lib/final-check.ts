@@ -74,6 +74,8 @@ import { buildActionLedger, checkDonePresupposition, applyLedgerAutoFix, COMPLET
 import { isConditionFormMessage } from "./line-reply-prompts";
 // 2026-09-19 竹内（慶次事例）: ピックアップ宣言の条件に根拠があるか（落とさず warning）
 import { findUngroundedConditions } from "./pickup-condition-guard";
+// 2026-09-23 竹内「家賃交渉は基本できないものだからいれない」: 本文は書き換えず warning で指摘だけ出す（V15）
+import { isRentNegotiationPromise, customerAskedRentNegotiation } from "./rent-negotiation-guard";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -2513,6 +2515,21 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
     issues.push({ pass: "context_check", severity: "warning", code: "APPLY_PUSH_NO_INTENT",
       message: "お客様が内覧済み・申込意思を示した履歴が無いのに「お申込みで押さえ」を提案しています",
       evidence: firstSentenceAround(text, APPLY_PUSH_RE), suggestion: "直前のお客様アクションに対応するWE DO（ピックアップ／内覧日程調整／募集状況確認）に変更" });
+  }
+  // V15 家賃・賃料の値下げをこれから交渉するという していない約束（2026-09-23 竹内「家賃交渉は基本できないものだからいれない」）
+  //   実送信（365日・12,417通）で家賃の値下げの**予告形は0通**。下書きに出た3件は3件ともスタッフが削除している。
+  //   2026-09-23 竹内「この言い回しいれないようにする」→ **block**（修正ループで LLM に書き直させる。決定論で本文を削らない）。
+  //     誤削除0は2人が別々の正規表現で再現した（実送信 12,419通で当たり0。守るべき過去形の結果報告3通は
+  //     rent-negotiation-guard の ALREADY_RE で残る）。warning のままだと「指摘は出るが本文は残る」＝同じ日の「同じ約束を繰り返しています」と同じ構図。
+  //   お客様が自分から家賃の交渉を頼んだ時は指摘しない（実送信1通あり）。
+  {
+    const rentSentence = text.split(/[\n。！!？?]/).map((s) => s.trim()).find((s) => isRentNegotiationPromise(s));
+    if (rentSentence && !customerAskedRentNegotiation([cust, custHist])) {
+      issues.push({ pass: "context_check", severity: "block", code: "RENT_NEGOTIATION_PROMISE",
+        message: "家賃・賃料の値下げをこれから交渉・確認するという約束を書いています（実送信12,417通中0通・会社として家賃交渉は基本できない）",
+        evidence: rentSentence.slice(0, 60),
+        suggestion: "この文を削除し「初期費用を最大限割引させて頂きます」またはご条件に合うお部屋のピックアップ宣言に置き換える" });
+    }
   }
   return issues;
 }

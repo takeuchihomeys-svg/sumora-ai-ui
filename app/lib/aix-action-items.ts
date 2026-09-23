@@ -43,6 +43,8 @@ export async function syncAixActionItem(input: {
   meta: {
     action?: string | null; check_pattern?: string | null; reply_mode?: string | null; source?: string | null; analyzed_msg_ts?: string | null;
     condition_change_type?: string | null; first_contact_pickup?: string | null;
+    /** 2026-09-23 竹内（あっぴ事例）: 台帳に未履行の物件ピックアップ宣言が残っている（brain-core が pending-pickup で判定して渡す） */
+    pending_pickup?: boolean | null;
   } | null;
 }): Promise<void> {
   const { conversationId, customerName, meta } = input;
@@ -63,6 +65,17 @@ export async function syncAixActionItem(input: {
   const now = new Date().toISOString();
 
   if (!needsAix) {
+    // 2026-09-23 竹内（あっぴ事例）「こんな同じようなことなんかいもいれない成約率のためにも」:
+    //   「今回の発言に AIX は要らない」と「残っている仕事が無くなった」を同じ扱いにしない。
+    //   台帳に未履行の物件ピックアップ宣言が残っている間は、物件を送る要対応を取り下げずに pending のまま残す。
+    //   実測（brain_no_aix で取り下げた property_send 11件・YUMAテスト6件除く）:
+    //     14日以内にスタッフが実際に物件を送った 6/11（55%）＝取り下げが過半数で間違い。
+    //     送らなかった5件はいずれも取り下げ直後に会話が停止＝失注そのもの。逆方向の誤り（取り下げないと困る例）は0件。
+    //   再通知はしない（下の「同じ指示は再通知しない」早期 return と同じく、ここでは push しない）ので売上番長グループは荒れない。
+    if (open && meta.pending_pickup === true && (open.action === "property_send" || open.action === "property_recommendation")) {
+      console.log("[aix-action-items] keep pending (未履行のピックアップ宣言あり):", conversationId, open.action);
+      return;
+    }
     if (open) {
       await supabase.from("aix_action_items")
         .update({ status: "dismissed", dismissed_reason: "brain_no_aix", updated_at: now })
