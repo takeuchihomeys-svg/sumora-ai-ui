@@ -591,14 +591,91 @@
     }
 
     var cells = row ? Array.from(row.querySelectorAll("td")) : [];
-    var texts = cells.map(function (td) {
-      return td.textContent.replace(/\s+/g, " ").trim();
-    }).filter(function (t) { return t && t.length > 0 && t.length < 60; });
+    // 2026-09-24 竹内「拡張ツールの方もこれで反映」: 列の見出し（th）から読むために、**間引かない**セル配列も持つ
+    //   （texts は空セル・60字超を落とすので見出しの列番号と合わない）
+    var allCells = cells.map(function (td) { return td.textContent.replace(/\s+/g, " ").trim(); });
+    var texts = allCells.filter(function (t) { return t && t.length > 0 && t.length < 60; });
 
     // AD列はリアプロで10〜12列目あたりのため15まで取得
     // 2026-09-23 ブレインの画像フェーズ用: 行の中の間取り図らしい <img>（アイコン・ボタン画像は除く）。無ければ null。
     //   ⚠ リアプロの一覧に間取り図があるかは実機未確認。無ければ null のまま＝画像の読み取りはしない（判定は表の文字だけ）。
-    return { name: name || "物件", texts: texts.slice(0, 15), imageUrl: findFloorPlanImage(row) };
+    return { name: name || "物件", texts: texts.slice(0, 15), cells: allCells, headerIdx: findHeaderIndex(row), imageUrl: findFloorPlanImage(row) };
+  }
+
+  // ── 列の見出し（th）→ 列番号 ─────────────────────────────
+  // 2026-09-24 竹内「AD − 見積書の割引が利益。拡張ツールの方もこれで反映」:
+  //   AD は「間取りの後ろの Nヶ月 セル」で探していたため候補の 37% しか取れず、家賃は 0%・敷礼は説明文だけだった
+  //   （実測 property_candidate_pools 30,681件・設計知見 2026-09-23）。score-overlay.js は th「AD」の列番号から取れている
+  //   （extractAdMonthsFromRealproDom）ので、同じ考え方で AD・賃料・管理費・敷金・礼金・間取り・徒歩・築年を**見出しの列から**読む。
+  //   ⚠ 見出しの文言・列の並びは実機で確かめていない。見出しが見つからない項目は**今までの読み方に戻る**（推測で別の列を触らない）。
+  //   使った読み方は data.read_mode（header / heuristic）に残し、候補プールで率を数えられるようにする。
+  var _headerLogged = false;
+  function findHeaderIndex(row) {
+    try {
+      var table = row && row.closest("table");
+      if (!table) return null;
+      var ths = Array.from(table.querySelectorAll("th"));
+      if (!ths.length) return null;
+      // AD の th がある行を見出し行とみなす（score-overlay と同じ）。無ければ th が一番多い行
+      var headRow = null;
+      for (var i = 0; i < ths.length; i++) {
+        if (ths[i].textContent.replace(/\s+/g, "").toUpperCase() === "AD") { headRow = ths[i].parentElement; break; }
+      }
+      if (!headRow) {
+        var bestN = 0;
+        Array.from(table.querySelectorAll("tr")).forEach(function (tr) {
+          var n = tr.querySelectorAll("th").length;
+          if (n > bestN) { bestN = n; headRow = tr; }
+        });
+      }
+      if (!headRow) return null;
+      var labels = Array.from(headRow.children).map(function (c) { return c.textContent.replace(/\s+/g, "").toUpperCase(); });
+      var find = function (re) { for (var k = 0; k < labels.length; k++) if (re.test(labels[k])) return k; return -1; };
+      var idx = {
+        ad: find(/^AD$|^ＡＤ$|広告/),
+        rent: find(/賃料|家賃/),
+        adminFee: find(/管理費|共益費/),
+        deposit: find(/^敷金?$|^敷/),
+        keyMoney: find(/^礼金?$|^礼/),
+        floorPlan: find(/間取/),
+        walk: find(/徒歩|交通|最寄/),
+        age: find(/築年|築/),
+      };
+      var any = Object.keys(idx).some(function (k) { return idx[k] >= 0; });
+      if (!_headerLogged) {
+        _headerLogged = true;
+        console.log("[AXLX bulk-dl] 列見出し: " + (any ? JSON.stringify(idx) + " 見出し=" + JSON.stringify(labels) : "見つからない → 今までの読み方"));
+      }
+      return any ? idx : null;
+    } catch (_) { return null; }
+  }
+  /** 見出しの列のセル文字（無ければ null） */
+  function cellByHeader(card, key) {
+    var i = card && card.headerIdx ? card.headerIdx[key] : -1;
+    if (i == null || i < 0 || !card.cells || card.cells.length <= i) return null;
+    var t = String(card.cells[i] || "").trim();
+    return t.length ? t : null;
+  }
+  /** 「2ヶ月」「0.5ヶ月」「100%」「なし」「－」→ ヶ月（なし=0・読めなければ null） */
+  function parseMonthsText(t) {
+    if (t == null) return null;
+    t = String(t).replace(/[０-９．]/g, function (c) { return c === "．" ? "." : String.fromCharCode(c.charCodeAt(0) - 0xfee0); }).trim();
+    var m = t.match(/(\d+(?:\.\d+)?)\s*(?:ヶ月|ヵ月|カ月|か月|ケ月|月)/);
+    if (m) return parseFloat(m[1]);
+    var p = t.match(/(\d+(?:\.\d+)?)\s*[%％]/);
+    if (p) return parseFloat(p[1]) / 100;
+    if (/^(なし|無し|無|－|-|0)$/.test(t)) return 0;
+    return null;
+  }
+  /** 「58,000円」「5.8万円」「¥58,000」→ 円（読めなければ null） */
+  function parseYenText(t) {
+    if (t == null) return null;
+    var s = String(t).replace(/[,，]/g, "").replace(/[０-９．]/g, function (c) { return c === "．" ? "." : String.fromCharCode(c.charCodeAt(0) - 0xfee0); });
+    var rm = s.match(/(\d+(?:\.\d+)?)\s*万/);
+    if (rm) return Math.round(parseFloat(rm[1]) * 10000);
+    var ry = s.match(/¥\s*(\d+)|(\d+)\s*円/);
+    if (ry) return parseInt(ry[1] || ry[2]);
+    return null;
   }
 
   function findFloorPlanImage(row) {
@@ -640,9 +717,13 @@
     // 間取りのインデックスをAD/敷金礼金抽出の境界として使う
     var madoriIdx = madoriText ? card.texts.indexOf(madoriText) : -1;
 
-    // 敷金・礼金: 間取りの直前2セルが Nヶ月 or なし/－ 形式なら採用
+    // 敷金・礼金: 2026-09-24 まず見出しの列（敷金・礼金）から。無ければ間取りの直前2セルが Nヶ月 or なし/－ 形式なら採用
     // 列順: ...管理費 | 敷金 | 礼金 | 間取り...
-    if (madoriIdx >= 2) {
+    var _hDep = cellByHeader(card, "deposit"), _hKey = cellByHeader(card, "keyMoney");
+    if (_hDep !== null && _hKey !== null && parseMonthsText(_hDep) !== null && parseMonthsText(_hKey) !== null) {
+      var _fmt = function (t) { var m = parseMonthsText(t); return m === 0 ? "なし" : (String(m).replace(/\.0$/, "") + "ヶ月"); };
+      lines.push("敷" + _fmt(_hDep) + " 礼" + _fmt(_hKey));
+    } else if (madoriIdx >= 2) {
       var _toMonth = function(t) {
         if (!t) return null;
         t = t.trim();
@@ -660,9 +741,17 @@
     if (!accessText) accessText = card.texts.find(function (t) { return /駅/.test(t); });
     if (accessText) lines.push(accessText.trim());
 
-    // AD（間取りより後のセルだけを検索して敷金礼金との混同を防ぐ）
+    // AD: 2026-09-24 まず見出しの列（AD）から。無ければ間取りより後のセルだけを検索して敷金礼金との混同を防ぐ
     var adLine = null;
+    var _hAd = cellByHeader(card, "ad");
+    if (_hAd !== null) {
+      var _hAdM = parseMonthsText(_hAd);
+      var _hAdY = /円|¥/.test(_hAd) ? parseYenText(_hAd) : null;
+      if (_hAdM !== null && _hAdM > 0) adLine = "AD " + String(_hAdM).replace(/\.0$/, "") + "ヶ月";
+      else if (_hAdY) adLine = "AD " + _hAdY.toLocaleString() + "円";
+    }
     var _adStart = madoriIdx >= 0 ? madoriIdx + 1 : 0;
+    if (adLine) _adStart = card.texts.length;   // 見出しから取れた時は下の探索をしない
     for (var _ai = _adStart; _ai < card.texts.length; _ai++) {
       var _at = card.texts[_ai].trim();
       var _am = _at.match(/^(\d+)[ヶか]月$/);
@@ -686,7 +775,12 @@
   // ── 物件候補データ構造化（学習ループAPI送信用）──────
   function buildPropertyData(card, index) {
     var data = { rank: index + 1, name: card.name };
-    var rentText = card.texts.find(function(t) { return /[0-9,，]+[\s]*[万円]/.test(t) || /¥/.test(t); });
+    // 2026-09-24: 見出しの列から読めた項目は header、無ければ今までの読み方（heuristic）。候補プールで率を数える
+    data.read_mode = card.headerIdx ? "header" : "heuristic";
+    var _hRent = cellByHeader(card, "rent");
+    var _hAdmin = cellByHeader(card, "adminFee");
+    if (_hAdmin !== null) { var _av = parseYenText(_hAdmin); if (_av !== null && _av >= 0 && _av <= 100000) data.admin_fee_yen = _av; }
+    var rentText = _hRent !== null ? _hRent : card.texts.find(function(t) { return /[0-9,，]+[\s]*[万円]/.test(t) || /¥/.test(t); });
     if (rentText) {
       // 2026-09-23: 旧 `/(\d+)万/` はリアプロの「58,000円」「¥58,000」に当たらず、30,681件中 2件しか rent が入っていなかった
       //   （実測 2026-09-21・設計知見「表示は正しく、記録だけが空」）。万・円・¥ の3形式を円で保存する。
@@ -696,20 +790,34 @@
       var rv = rm ? Math.round(parseFloat(rm[1]) * 10000) : (ry ? parseInt(ry[1] || ry[2]) : null);
       data.rent = (rv && rv >= 20000 && rv <= 500000) ? rv : null;
     }
-    var madoriText = card.texts.find(function(t) { return /[1-9](R\b|K\b|DK\b|LDK|SLDK|SDK)/.test(t); });
+    var _hPlan = cellByHeader(card, "floorPlan");
+    var madoriText = (_hPlan !== null && /[1-9](R|K|DK|LDK|SLDK|SDK)/.test(_hPlan)) ? _hPlan : card.texts.find(function(t) { return /[1-9](R\b|K\b|DK\b|LDK|SLDK|SDK)/.test(t); });
     if (madoriText) {
       var mm = madoriText.trim().match(/[1-9][A-Z]+/i);
       data.floor_plan = mm ? mm[0] : null;
     }
     var madoriIdx = madoriText ? card.texts.indexOf(madoriText) : -1;
-    // 徒歩: 「徒歩」が無い時は「駅」を含むセル（説明文と同じ探し方）
-    var accessText = card.texts.find(function(t) { return /徒歩/.test(t); }) || card.texts.find(function(t) { return /駅/.test(t); });
+    // 徒歩: 見出しの列（徒歩・交通）→「徒歩」を含むセル →「駅」を含むセル（説明文と同じ探し方）
+    var _hWalk = cellByHeader(card, "walk");
+    var accessText = _hWalk || card.texts.find(function(t) { return /徒歩/.test(t); }) || card.texts.find(function(t) { return /駅/.test(t); });
     if (accessText) {
-      var wm = accessText.match(/徒歩\s*(\d+)\s*分/);
-      if (wm) data.walk_minutes = parseInt(wm[1]);
+      var wm = accessText.replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xfee0); }).match(/徒歩\s*(\d+)\s*分|(\d+)\s*分/);
+      if (wm) data.walk_minutes = parseInt(wm[1] || wm[2]);
     }
-    // 敷金・礼金（説明文と同じ: 間取りの直前2セル。なし/－ = 0）。2026-09-23 追加（それまで data には入れていなかった）
-    if (madoriIdx >= 2) {
+    var _hAge = cellByHeader(card, "age");
+    if (_hAge !== null) {
+      var _ag = _hAge.replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xfee0); }).match(/(\d+)\s*年/);
+      if (_ag) data.building_age = parseInt(_ag[1]); else if (/新築/.test(_hAge)) data.building_age = 0;
+    }
+    // 敷金・礼金: 2026-09-24 まず見出しの列（敷金・礼金）。円で書かれていれば deposit_yen / key_money_yen にも残す
+    var _hDep2 = cellByHeader(card, "deposit"), _hKey2 = cellByHeader(card, "keyMoney");
+    var _dmH = parseMonthsText(_hDep2), _kmH = parseMonthsText(_hKey2);
+    if (_dmH !== null && _kmH !== null) {
+      data.deposit_months = _dmH; data.key_money_months = _kmH;
+      if (/円|¥/.test(_hDep2)) data.deposit_yen = parseYenText(_hDep2);
+      if (/円|¥/.test(_hKey2)) data.key_money_yen = parseYenText(_hKey2);
+    } else if (madoriIdx >= 2) {
+      // 無ければ今まで通り（説明文と同じ: 間取りの直前2セル。なし/－ = 0）。2026-09-23 追加（それまで data には入れていなかった）
       var _toM = function(t) {
         if (!t) return null;
         t = t.trim();
@@ -722,7 +830,15 @@
       var _km = _toM(card.texts[madoriIdx - 1]);
       if (_dm !== null && _km !== null) { data.deposit_months = _dm; data.key_money_months = _km; }
     }
-    if (madoriIdx >= 0) {
+    // AD: 2026-09-24 まず見出しの列（AD）。「2ヶ月」「0.5ヶ月」「100%」は ad_months、「30,000円」は ad_yen
+    var _hAd2 = cellByHeader(card, "ad");
+    var _gotAd = false;
+    if (_hAd2 !== null) {
+      var _hm = parseMonthsText(_hAd2);
+      if (_hm !== null && _hm > 0 && _hm <= 12) { data.ad_months = _hm; _gotAd = true; }
+      else if (/円|¥/.test(_hAd2)) { var _hy = parseYenText(_hAd2); if (_hy) { data.ad_yen = _hy; _gotAd = true; } }
+    }
+    if (!_gotAd && madoriIdx >= 0) {
       for (var _ai2 = madoriIdx + 1; _ai2 < card.texts.length; _ai2++) {
         var _at2 = card.texts[_ai2].trim();
         // 2026-09-23: 小数（0.5ヶ月・1.5ヶ月）も取る。円形式は ad_yen に分ける（itandi 側の「AD 30,000円→30ヶ月」の変換ミスを繰り返さない）

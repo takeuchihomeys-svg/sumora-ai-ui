@@ -30,8 +30,19 @@ merge-pdfs（物件ピックアップの送信）→ 説明文の「AD 2ヶ月�
 - 割引の中央値 44,000円。見積書の物件が sent_properties に同名で存在 64/120、AD あり 2
 - ⚠ property_candidate_pools の時刻の列は **sent_at**（created_at は無い）。最初の実装は created_at で絞って0件だった
 
+### 拡張側の反映（2026-09-24・v2.5.10）竹内「拡張ツールの方もこれで反映」
+- `bulk-dl.js` に **列の見出し（th）から読む** `findHeaderIndex` / `cellByHeader` / `parseMonthsText` / `parseYenText` を追加。
+  AD の th がある行を見出し行とみなし（score-overlay と同じ）、AD・賃料・管理費・敷金・礼金・間取り・徒歩・築年の列番号を取る
+- `buildPropertyData`: 見出しから取れた項目は見出し優先（ad_months／ad_yen・rent・admin_fee_yen・deposit_months／key_money_months（円なら _yen も）・floor_plan・walk_minutes・building_age）。
+  **無ければ今までの読み方**（間取りの後ろの Nヶ月 セル等）。`data.read_mode`（header／heuristic）を候補プールに残す＝率を数えられる
+- `buildPropertySummary`: 説明文の「AD Nヶ月」「敷X 礼Y」も見出し優先（merge-pdfs が説明文から sent_properties.ad_months を書くので、ここが AD の出所）
+- ⚠ **見出しの文言・列の並びは実機未確認**。見つからなければ従来どおり動く（推測で別の列を触らない）
+- 実機での確かめ方: 拡張を再読み込み（v2.5.10）→ リアプロで検索 → 一括DL のバーが出た後、コンソールに
+  `[AXLX bulk-dl] 列見出し: {"ad":11,...} 見出し=[...]` が1回出る。「見つからない → 今までの読み方」なら th の文言をこの行から読んで `findHeaderIndex` の正規表現に足す。
+  送った後 `property_candidate_pools.candidates[].read_mode` が header になっていれば効いている
+
 ### 率を上げる所（連動の上流）
-1. **拡張の AD の列読み**: bulk-dl.js buildPropertyData の ad_months は「間取りの後ろの Nヶ月 セル」だけで 37%。score-overlay.js は th「AD」列から取っている（実機で列位置を確かめて bulk-dl に移す）
+1. **拡張の AD の列読み**: ↑で見出し読みを入れた（v2.5.10）。実機で「列見出し」のログを確かめるまでは 37% のまま
 2. **家賃**: 候補プール 0%・送付記録 17.8%（9/21〜 merge-pdfs が説明文から読むので上がる）。AD円＝ad_months×家賃なので家賃が無いと利益が出ない
 3. 利益の線（AD<割引 で hold）は estimate_records が溜まってから引く（今は既定の割引で PROFIT_NEGATIVE を出すだけ）
 
