@@ -204,10 +204,11 @@ export type JevShadowRow = {
   customer_msg_at: string | null;
   brain_action: string | null;
   brain_check_pattern: string | null;
-  jev_action: string;
-  jev_action_prob: number;
-  jev_check_topic: string;
-  jev_check_topic_prob: number;
+  /** 全ボタンから選ぶ問い（比較用・聞いていなければ null。竹内「AIX ボタンを選ぶのは今まで通り」なので既定では聞かない） */
+  jev_action: string | null;
+  jev_action_prob: number | null;
+  jev_check_topic: string | null;
+  jev_check_topic_prob: number | null;
   jev_check_pattern: string | null;
   jev_photo_request_prob: number | null;
   jev_confidence: number | null;
@@ -237,6 +238,26 @@ export function toShadowRow(
     jev_model: ev.raw.model, jev_ms: ev.raw.ms, answers: ev.raw.answers as Record<string, unknown>,
     jev_picker_field: picker?.decision.field ?? null, jev_picker: picker?.decision.picker ?? null,
     jev_picker_value: picker?.decision.pickerValue ?? null, jev_picker_prob: picker?.decision.prob ?? null,
+  };
+}
+
+/**
+ * 影の運用の1行（ピッカーだけ）。2026-09-23 竹内「決まったボタンからピッカーを選ぶ部分を Jev が担当して、
+ * AIX ボタンを選ぶのは今まで通りで良い。AIX ボタンさえ分かればピッカーの種類を Jev が分かっていれば判定できる」
+ */
+export function toPickerShadowRow(
+  conversationId: string, customerMsgAt: string | null,
+  brain: { action: string; check_pattern?: string | null; send_mode?: string | null },
+  picker: { decision: PickerJevDecision; raw: JevResult },
+): JevShadowRow {
+  return {
+    conversation_id: conversationId, customer_msg_at: customerMsgAt,
+    brain_action: brain.action, brain_check_pattern: brain.check_pattern ?? null, brain_send_mode: brain.send_mode ?? null,
+    jev_action: null, jev_action_prob: null, jev_check_topic: null, jev_check_topic_prob: null, jev_check_pattern: null,
+    jev_photo_request_prob: null, jev_confidence: picker.decision.confidence,
+    jev_model: picker.raw.model, jev_ms: picker.raw.ms, answers: picker.raw.answers as Record<string, unknown>,
+    jev_picker_field: picker.decision.field, jev_picker: picker.decision.picker,
+    jev_picker_value: picker.decision.pickerValue, jev_picker_prob: picker.decision.prob,
   };
 }
 

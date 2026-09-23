@@ -7077,7 +7077,8 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - Jev は文章を書かず、状態＋質問 → 型の決まった答え（選択肢・確率）。70〜500ms・入力 $0.042/M・出力無料
 - `app/lib/jev-client.ts`（鍵 `TYPESAFE_API_KEY`・無ければ何もしない・fail-open・llm_usage_logs に model=jev:* で1行）
 - `app/lib/aix-jev.ts`: ①全ボタンから選ぶ（next_aix／check_topic／photo_request）②**ボタン決定後にそのボタンのピッカーだけ選ぶ**（`AIX_PICKER_CATALOG`: 物件確認した=何を確認したか／物件ピックアップした・物件オススメ=send_mode／申込へ！=app_sub_mode）。結果のピッカー（あった／なかった）は会話から分からないので値を返さない
-- 影の運用: brain-core analyzeConversation の return 直前で Jev を呼び `jev_shadow_logs` に並べて記録（判断は変えない・申込以降は呼ばない・maskPII で伏せる・3秒で諦める）
+- **役割分担（竹内さん決定）**: AIX ボタンを選ぶのは今まで通りブレイン。Jev は**決まったボタンの中のピッカーだけ**（ボタンさえ分かればピッカーの種類を Jev が分かっていれば判定できる）
+- 影の運用: brain-core analyzeConversation の return 直前、ブレインが決めたボタンにピッカーがあれば Jev に1問聞いて `jev_shadow_logs` に並べて記録（判断は変えない・申込以降は呼ばない・maskPII で伏せる・**waitUntil で応答の後ろ＝ブレインを待たせない**）
 - 答え合わせ: `scripts/eval-jev-aix.ts`（aix_usage_logs 365日・種類ごと最大40件・仮名化・申込以降除く。AIX の正答率・確率0.8以上の正答率・ボタン既知のピッカー正答率）
 - **未着手（鍵待ち）**: 鍵を入れて eval を回し、上回った判定だけ決定論に繋ぐ線（確率の閾値）を決める。次の候補は「複数案から選ぶ」（DeepSeek 2〜3案を Jev が点数化）と最終チェックの rule_check の置き換え
 

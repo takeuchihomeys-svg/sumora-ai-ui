@@ -3270,6 +3270,8 @@ ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS jev_picker_prob DOUBLE PREC
 ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS brain_send_mode TEXT;
 ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS actual_send_mode TEXT;
 ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS actual_app_sub_mode TEXT;
+-- 竹内「AIX ボタンを選ぶのは今まで通り」: 既定ではピッカーだけ聞くので、全ボタンの問い（jev_action）は null でよい
+ALTER TABLE jev_shadow_logs ALTER COLUMN jev_action DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_jev_shadow_logs_conv_created ON jev_shadow_logs(conversation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jev_shadow_logs_created_at ON jev_shadow_logs(created_at DESC);
 ALTER TABLE jev_shadow_logs DISABLE ROW LEVEL SECURITY;

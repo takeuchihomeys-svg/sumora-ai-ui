@@ -7,8 +7,10 @@
 // 正解の作り方: aix_usage_logs の各行（押した AIX・check_pattern）について、押した時刻より前の会話（直近8通）を state にする。
 //   ・お客様の発言は pii-pseudonym で仮名化してから渡す（別クラウド）。申込以降（applying/screening 等）の会話は除く。
 //   ・ピッカーの答え合わせは「何を確認したか」の check_pattern（interior_photo・mgmt_* 等）だけ。結果のピッカー（available 等）は会話から分からない。
-// 実行: npx tsx --env-file=.env.local scripts/eval-jev-aix.ts [--days=365] [--per-type=40] [--show=20]
+// 実行: npx tsx --env-file=.env.local scripts/eval-jev-aix.ts [--days=365] [--per-type=40] [--show=20] [--with-aix]
 //   TYPESAFE_API_KEY が無ければ何もしない。
+//   既定は**ピッカーだけ**（竹内「AIX ボタンを選ぶのは今まで通り。決まったボタンからピッカーを選ぶ部分を Jev が担当」）。
+//   --with-aix を付けた時だけ「全ボタンからどれか」も聞いて比較する。
 import { createClient } from "@supabase/supabase-js";
 import { createMasker } from "../app/lib/pii-pseudonym";
 import { evaluateAixWithJev, evaluatePickerWithJev, hasPickerQuestion, CHECK_PATTERN_TO_TOPIC, TOPIC_CHECK_PATTERNS, JEV_AIX_OPTIONS } from "../app/lib/aix-jev";
@@ -21,6 +23,7 @@ const arg = (k: string, d: string) => (process.argv.find((a) => a.startsWith(`--
 const DAYS = Number(arg("days", "365"));
 const PER_TYPE = Number(arg("per-type", "40"));
 const SHOW = Number(arg("show", "20"));
+const WITH_AIX = process.argv.includes("--with-aix");
 
 type Log = { id: string; conversation_id: string; aix_type: string; check_pattern: string | null; send_mode: string | null; app_sub_mode: string | null; created_at: string; conversation_status: string | null };
 
@@ -78,28 +81,30 @@ async function main() {
     const masked = rows.map((m) => ({ sender: m.sender, text: masker.maskBlock(m.text ?? ""), createdAt: m.created_at, isAix: !!m.is_aix_generated }));
     const { count: sentCount } = await sb.from("sent_properties").select("id", { count: "exact", head: true })
       .eq("conversation_id", l.conversation_id).lt("sent_at", l.created_at);
-    const ev = await evaluateAixWithJev({ messages: masked, status: l.conversation_status, sentPropertyCount: sentCount ?? null, conversationId: l.conversation_id, timeoutMs: 15_000 });
-    if (!ev) { failed++; continue; }
-    const d = ev.decision;
-    aixN++;
-    const ok = d.aix === l.aix_type;
-    if (ok) aixOk++;
-    const pt = perType.get(l.aix_type) ?? { n: 0, ok: 0, probSum: 0 };
-    pt.n++; if (ok) pt.ok++; pt.probSum += d.aixProb; perType.set(l.aix_type, pt);
-    if (d.aixProb >= 0.8) { highConf.n++; if (ok) highConf.ok++; }
-    if (!ok) {
-      const k = `${l.aix_type} → ${d.aix}`;
-      confusion.set(k, (confusion.get(k) ?? 0) + 1);
-      if (examplesWrong.length < SHOW) {
-        const last = masked.filter((m) => m.sender === "customer").slice(-1)[0]?.text ?? "";
-        examplesWrong.push(`  ${l.conversation_id.slice(0, 8)} 正解=${l.aix_type}${l.check_pattern ? `(${l.check_pattern})` : ""} Jev=${d.aix}(${d.aixProb.toFixed(2)}) 客:「${last.replace(/\n/g, " ").slice(0, 60)}」`);
+    if (WITH_AIX) {
+      const ev = await evaluateAixWithJev({ messages: masked, status: l.conversation_status, sentPropertyCount: sentCount ?? null, conversationId: l.conversation_id, timeoutMs: 15_000 });
+      if (!ev) { failed++; continue; }
+      const d = ev.decision;
+      aixN++;
+      const ok = d.aix === l.aix_type;
+      if (ok) aixOk++;
+      const pt = perType.get(l.aix_type) ?? { n: 0, ok: 0, probSum: 0 };
+      pt.n++; if (ok) pt.ok++; pt.probSum += d.aixProb; perType.set(l.aix_type, pt);
+      if (d.aixProb >= 0.8) { highConf.n++; if (ok) highConf.ok++; }
+      if (!ok) {
+        const k = `${l.aix_type} → ${d.aix}`;
+        confusion.set(k, (confusion.get(k) ?? 0) + 1);
+        if (examplesWrong.length < SHOW) {
+          const last = masked.filter((m) => m.sender === "customer").slice(-1)[0]?.text ?? "";
+          examplesWrong.push(`  ${l.conversation_id.slice(0, 8)} 正解=${l.aix_type}${l.check_pattern ? `(${l.check_pattern})` : ""} Jev=${d.aix}(${d.aixProb.toFixed(2)}) 客:「${last.replace(/\n/g, " ").slice(0, 60)}」`);
+        }
       }
-    }
-    // ピッカー（何を確認したか）の答え合わせ（AIX と同時に聞いた答え）
-    if (l.aix_type === "property_check_result" && l.check_pattern && TOPIC_CHECK_PATTERNS.has(l.check_pattern)) {
-      topicN++;
-      if (CHECK_PATTERN_TO_TOPIC[l.check_pattern] === d.checkTopic) topicOk++;
-      else examplesWrong.push(`  ${l.conversation_id.slice(0, 8)} ピッカー 正解=${l.check_pattern} Jev=${d.checkTopic}(${d.checkTopicProb.toFixed(2)})`);
+      // ピッカー（何を確認したか）の答え合わせ（AIX と同時に聞いた答え）
+      if (l.aix_type === "property_check_result" && l.check_pattern && TOPIC_CHECK_PATTERNS.has(l.check_pattern)) {
+        topicN++;
+        if (CHECK_PATTERN_TO_TOPIC[l.check_pattern] === d.checkTopic) topicOk++;
+        else examplesWrong.push(`  ${l.conversation_id.slice(0, 8)} ピッカー 正解=${l.check_pattern} Jev=${d.checkTopic}(${d.checkTopicProb.toFixed(2)})`);
+      }
     }
     // 竹内「ボタンは決まっている → そのボタンのピッカーを Jev が選ぶ」: ボタンを渡してピッカーだけ聞く（狭い質問）
     const truth = l.aix_type === "property_check_result" ? (l.check_pattern && TOPIC_CHECK_PATTERNS.has(l.check_pattern) ? CHECK_PATTERN_TO_TOPIC[l.check_pattern] : null)
@@ -120,16 +125,19 @@ async function main() {
   }
 
   const pct = (a: number, b: number) => (b ? `${((a / b) * 100).toFixed(1)}%` : "-");
-  console.log(`AIX の正答率: ${aixOk}/${aixN} = ${pct(aixOk, aixN)}（失敗 ${failed}）`);
-  console.log(`  確率 0.8 以上だけ: ${highConf.ok}/${highConf.n} = ${pct(highConf.ok, highConf.n)}（決定論に使える線の候補）`);
-  console.log(`ピッカー（何を確認したか）の正答率: ${topicOk}/${topicN} = ${pct(topicOk, topicN)}`);
-  console.log(`\n種類ごと:`);
-  for (const [k, v] of [...perType.entries()].sort((a, b) => b[1].n - a[1].n)) console.log(`  ${k.padEnd(24)} ${String(v.ok).padStart(3)}/${String(v.n).padStart(3)} = ${pct(v.ok, v.n).padStart(6)}  平均確率 ${(v.probSum / v.n).toFixed(2)}`);
-  console.log(`\n間違いの上位（正解 → Jev）:`);
-  for (const [k, n] of [...confusion.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) console.log(`  ${String(n).padStart(3)}  ${k}`);
-  console.log(`\n間違いの実物（本名は仮名化済み）:`);
-  for (const e of examplesWrong) console.log(e);
-  console.log(`\n=== ボタンが決まった後のピッカー（ボタンを渡して1問だけ聞く）===`);
+  if (WITH_AIX) {
+    console.log(`AIX の正答率: ${aixOk}/${aixN} = ${pct(aixOk, aixN)}（失敗 ${failed}）`);
+    console.log(`  確率 0.8 以上だけ: ${highConf.ok}/${highConf.n} = ${pct(highConf.ok, highConf.n)}（決定論に使える線の候補）`);
+    console.log(`ピッカー（何を確認したか・AIX と同時に聞いた答え）の正答率: ${topicOk}/${topicN} = ${pct(topicOk, topicN)}`);
+    console.log(`\n種類ごと:`);
+    for (const [k, v] of [...perType.entries()].sort((a, b) => b[1].n - a[1].n)) console.log(`  ${k.padEnd(24)} ${String(v.ok).padStart(3)}/${String(v.n).padStart(3)} = ${pct(v.ok, v.n).padStart(6)}  平均確率 ${(v.probSum / v.n).toFixed(2)}`);
+    console.log(`\n間違いの上位（正解 → Jev）:`);
+    for (const [k, n] of [...confusion.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) console.log(`  ${String(n).padStart(3)}  ${k}`);
+    console.log(`\n間違いの実物（本名は仮名化済み）:`);
+    for (const e of examplesWrong) console.log(e);
+  }
+  console.log(`\n=== ボタンが決まった後のピッカー（ボタンを渡して1問だけ聞く・本番の影の運用と同じ形）===`);
+  console.log(`  正解=スタッフが実際に選んだ send_mode／app_sub_mode／check_pattern（何を確認したかの物だけ）`);
   for (const [k, s] of [...pickerStats.entries()].sort((a, b) => b[1].n - a[1].n)) {
     console.log(`  ${k.padEnd(24)} ${String(s.ok).padStart(3)}/${String(s.n).padStart(3)} = ${pct(s.ok, s.n).padStart(6)}   確率0.8以上: ${s.hiOk}/${s.hiN} = ${pct(s.hiOk, s.hiN)}`);
   }

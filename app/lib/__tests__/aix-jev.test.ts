@@ -4,7 +4,7 @@ import { AIX_BUTTON_LABELS } from "../aix-taxonomy";
 import {
   JEV_AIX_OPTIONS, JEV_CHECK_TOPIC_OPTIONS, CHECK_PATTERN_TO_TOPIC, TOPIC_TO_CHECK_PATTERN, TOPIC_CHECK_PATTERNS,
   buildJevState, buildAixJevQuestions, parseAixJevAnswers, evaluateAixWithJev, toShadowRow,
-  AIX_PICKER_CATALOG, hasPickerQuestion, buildPickerQuestion, parsePickerJevAnswer, evaluatePickerWithJev,
+  AIX_PICKER_CATALOG, hasPickerQuestion, buildPickerQuestion, parsePickerJevAnswer, evaluatePickerWithJev, toPickerShadowRow,
 } from "../aix-jev";
 import { readJevConfig, jevSystemOne } from "../jev-client";
 
@@ -155,6 +155,9 @@ console.log("── ★ 鍵が無ければ何もしない（今までどおり�
   const pkState = (sentBox.v?.body.state ?? {}) as Record<string, unknown>;
   t("★ ボタン決定後のピッカー: state に押すボタンが入り、質問は picker 1つ", pkState.chosen_aix_button === "物件ピックアップした" && Object.keys((sentBox.v?.body.questions ?? {}) as object).join() === "picker");
   t("★ 答え: 物件ピックアップした → 条件を広げた", pk?.decision.pickerValue === "widen" && pk.decision.prob === 0.8 && pk.decision.field === "send_mode");
+  // 竹内「決まったボタンからピッカーを選ぶ部分を Jev が担当。AIX ボタンを選ぶのは今まで通り」= 本番の影の運用はこの行だけ
+  const rowOnly = toPickerShadowRow("c1", null, { action: "property_send", check_pattern: null }, pk!);
+  t("★ ピッカーだけの行: 全ボタンの問いは null・ボタンはブレインの物・ピッカーは Jev の物", rowOnly.jev_action === null && rowOnly.brain_action === "property_send" && rowOnly.jev_picker === "widen" && rowOnly.jev_picker_prob === 0.8 && rowOnly.jev_model === "jev-1.13.0");
   const pkNone = await evaluatePickerWithJev({ aixType: "estimate_sheet", messages: [{ sender: "customer", text: "x" }], env: { TYPESAFE_API_KEY: "k" }, fetchImpl: pickerFetch });
   t("★ ピッカーの無いボタンは呼ばずに null", pkNone === null);
 
