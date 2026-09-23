@@ -59,6 +59,8 @@ import { isUsableExampleText, isCustomerFacingExample, fixExampleWeekdays } from
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（timeZone 抜けの UTC 表示を防ぐ）
 import { jstAgo, jstMD, jstMDHm, jstYmd, jstYmdWeekday, weekdayTable } from "@/app/lib/jst-date";
+// 2026-09-23 竹内「フル分析はどのAIXをつかったのか、どのような流れなのかも分析して…」: 押した AIX と流れの文を毎回の分析と戦略の層で同じ関数から
+import { buildAixFlowNote, buildAixTransitionMap, STRATEGY_FLOW_LINE, type AixTransitionMap } from "@/app/lib/aix-flow-note";
 // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 分析モード判定（決定論の場面の証拠で cached→incremental に格上げ）
 import { decideAnalysisMode, nothingNewSinceLastAnalysis, isDuplicateRun, DUPLICATE_RUN_WINDOW_MS } from "@/app/lib/brain-analysis-mode";
 import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
@@ -1181,12 +1183,8 @@ export async function analyzeConversation(
   // 2) 旧ログ fallback: is_aix_generated=true × sent_at ±3分
   type AixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null; check_pattern?: string | null; property_names?: string[] | null; prop_statuses?: string[] | null; estimate_sent?: boolean | null; prop_cost_notes?: string[] | null };
   const aixLogs = (aixLogsResult.data ?? []) as AixLog[];
-  // AIX遷移マップ（DB動的）: from_aix_type → [{to, count}] 降順
-  const aixTransitionMap: Record<string, Array<{ to: string; count: number }>> = {};
-  for (const row of (transitionStatsResult.data ?? []) as { from_aix_type: string; to_aix_type: string; count: number }[]) {
-    if (!aixTransitionMap[row.from_aix_type]) aixTransitionMap[row.from_aix_type] = [];
-    aixTransitionMap[row.from_aix_type].push({ to: row.to_aix_type, count: row.count });
-  }
+  // AIX遷移マップ（DB動的）: from_aix_type → [{to, count}] 降順（aix-flow-note.ts の同じ関数で組む）
+  const aixTransitionMap: AixTransitionMap = buildAixTransitionMap((transitionStatsResult.data ?? []) as { from_aix_type: string; to_aix_type: string; count: number }[]);
   const aixTypeByLmid = new Map<string, string>();
   for (const l of aixLogs) {
     if (l.line_message_id && l.aix_type) aixTypeByLmid.set(l.line_message_id, l.aix_type);
@@ -1896,44 +1894,14 @@ export async function analyzeConversation(
   //   ブレインのルールに「物件送付直後で顧客の反応がまだ無い場合は aix:null」があるのに、
   //   「直後」かどうかを判断する材料が無かった。行動台帳が M/D HH:MM なので同じ形に揃える。
   //   「どれだけ前か」の言い方は jst-date.jstAgo に集める（日時の計算はあのファイルの関数だけで行う決まり）
-  const agoText = (iso: string | null | undefined): string => jstAgo(iso);
-  const aixUsageDigest = usedAixTypes.map((t) => {
-    const rows = aixLogs.filter((l) => l.aix_type === t);
-    // aixLogs は新→旧順（brain-core の読み出し順）なので先頭が最後に押した行
-    const lastAt = rows[0]?.created_at ?? null;
-    const when = lastAt ? `${jstMDHm(lastAt)}・${agoText(lastAt)}` : "時刻不明";
-    return `${t}${rows.length > 1 ? `×${rows.length}回` : ""}（最後 ${when}）`;
-  });
-  // 直近3件の押下順序（新→旧）＋テンプレート名をBrainプロンプトに注入する
-  // → usedAixTypesは「この会話で使ったことがある種類」だが、順序・直近性が欠落しているため方向性判断に不十分。
-  //   「直前に property_check_result → 次は viewing_invite が定石」等の流れを Brain が正確に判断できるようにする。
-  // check_pattern（確認結果: unavailable=募集なし等）も併記 → 「物件確認した」だけでなく
-  // 「確認して募集がなかった」まで伝わり、代替提案シナリオの読み取りが可能になる
-  const recentAixSeqText = aixLogs.slice(0, 3).length > 0
-    // 2026-09-23 竹内「時間でもしたらどうかな？」: ここは時刻が1つも無かった。
-    //   「送った直後で反応待ちか」は分単位で決まる（実測: お客様の返信は1時間以内が49.1%）ので経過時間を添える
-    ? `\n【直近AIXアクション（新→旧順）】${aixLogs.slice(0, 3).map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}${l.check_pattern ? `(結果:${l.check_pattern})` : ""}${l.created_at ? `[${jstMDHm(l.created_at)}・${agoText(l.created_at)}]` : ""}`).join(" → ")}`
-    : "";
-  // 成約実績・次打ちマップ（DB動的）: aix_transition_stats から取得した遷移確率を推奨候補として注入する。
-  // あくまで「推奨候補」であり、REPLY_STYLE_RULES のフェーズ制約（募集状況未確認での内覧誘導禁止等）と
-  // 「物件送付直後で顧客の反応待ちなら aix:null」ルールが常に優先（actionWinRateText と同じ緊張関係を作らないため明記）。
-  // 連続 property_check_result 検出（自己ループ防止: 3回連続で escalation 強制）
-  let consecutivePcr = 0;
-  for (const l of aixLogs) {
-    if (l.aix_type === "property_check_result") consecutivePcr++;
-    else break;
-  }
-  const pcrLoopWarning = consecutivePcr >= 2
-    ? "\n【⚠️ 自己ループ警告（最重要）】property_check_result が直近" + consecutivePcr + "回連続しています。同じ物件の確認を繰り返しても会話が前進しません。次のアクションは必ず viewing_invite（内覧誘導）または estimate_sheet（見積書）にエスカレーションしてください。property_check_result の再選択は絶対禁止です。"
-    : "";
-  const lastAixType = aixLogs[0]?.aix_type ?? null;
-  const transitions = lastAixType ? (aixTransitionMap[lastAixType] ?? []) : [];
-  const nextActionMapText = lastAixType && transitions.length > 0
-    ? `\n【成約実績・次打ちマップ】直近AIXが ${lastAixType} の場合、成約会話では${transitions.slice(0, 3).map(t => `${t.to}が${t.count}回`).join("・")}。※推奨候補。会話の実態（顧客の返信内容・フェーズ制約・募集状況未確認での内覧誘導禁止）と「物件送付直後で顧客の反応待ちなら aix:null」ルールが常に優先。`
-    : "";
-  const aixHistoryText = (usedAixTypes.length > 0 || pcrLoopWarning)
-    ? `${recentAixSeqText}${nextActionMapText}${pcrLoopWarning}\n【会話全体で使用済みのAIXアクション（回数と最後に押した時刻）】${aixUsageDigest.join(" / ")}\n※既に使用済みのアクションを再提案する場合は理由が必要。原則は次の段階のアクションを提案すること。ただし物件送付直後で顧客の反応がまだ無い場合は aix:null（何も提案しない）が正解。顧客の反応を待たずに viewing_invite 等へ先走らないこと。`
-    : pcrLoopWarning;
+  // 2026-09-23 竹内「10回に一回のフル分析はどのAIXをつかったのか、どのような流れなのかも分析して…方向性を考えるようになっているのか」:
+  //   直近3件の並び（時刻・何時間前）・成約実績の次打ちマップ（aix_transition_stats）・自己ループ警告・使用済みの回数と最後の時刻は
+  //   app/lib/aix-flow-note.ts の1つの関数で組む（四者同名）。戦略の層の普段の整理（consolidateStrategy）も同じ関数を読む
+  //   （旧: ここにしか無く、普段の整理は「ブレインが提案した AIX」しか知らなかった）。文面は移しただけで変えていない
+  const aixFlow = buildAixFlowNote(aixLogs, aixTransitionMap);
+  const recentAixSeqText = aixFlow.recentAixSeqText;
+  const pcrLoopWarning = aixFlow.pcrLoopWarning;
+  const aixHistoryText = aixFlow.text;
   // 2026-09-09 Fable5 行動台帳: last_aix_history（AIX 3件・時刻なし・宣言/実行の区別なし）を補強。手打ち送付・宣言も含む確定事実を brain に渡す
   const brainLedger = buildActionLedger({
     recentAixRows: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at ?? null, line_message_id: l.line_message_id, property_names: l.property_names ?? null, estimate_sent: l.estimate_sent ?? null, template_name: l.template_name ?? null, generated_text: (l as { generated_text?: string | null }).generated_text ?? null })),
@@ -3423,6 +3391,7 @@ const STRATEGY_SYSTEM = `あなたは賃貸仲介（スモラ）の LINE 接客�
 - 前回の戦略は仮説。その後の毎回の分析の要点と新しいメッセージに書かれた事実と食い違う部分は、必ず新しい事実に合わせて更新する（条件変更・物件の見送り・申込の意思・他で決めた・内覧の確定・フェーズの変化）。
 - 事実は、会話・毎回の分析の要点・セーブポイント・お客様のプロフィールに書かれたものだけを使う。書かれていない日付・金額・物件名・予定を作らない。
 - 類似の成約・失注パターンは参考。この会話の事実に合うものだけを戦略に反映する。
+${STRATEGY_FLOW_LINE}
 
 【出力（JSON のみ・説明文なし）】
 {"closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で。必ず「〜させて頂く」の行動宣言形で書く",
@@ -3510,7 +3479,10 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
   const pcid = (conv.property_customer_id as string | null) ?? null;
   const sinceTs = prev.strategy_msg_ts ?? "1970-01-01T00:00:00Z";
   const sinceAnalyzed = prev.strategy_analyzed_at ?? sinceTs;
-  const [newMsgsRes, recentMsgsRes, digestRes, cpRes, pcRes, sentRes, viewingReports] = await Promise.all([
+  // 2026-09-23 竹内「フル分析はどのAIXをつかったのか、どのような流れなのかも分析して…」:
+  //   普段の整理は「押した AIX」を知らなかった（要点の AIX: はブレインの提案）。押した AIX・流れ・成約の次打ちマップ・行動台帳を
+  //   毎回の分析と同じ関数（aix-flow-note / action-ledger）で組んで渡す。台帳用に直近40通と送信時の記録も読む
+  const [newMsgsRes, recentMsgsRes, digestRes, cpRes, pcRes, sentRes, viewingReports, aixLogsRes, transitionRes, ledgerMsgsRes, recordedFacts] = await Promise.all([
     supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId)
       .gt("created_at", sinceTs).order("created_at", { ascending: true }).limit(30),
     supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId)
@@ -3522,9 +3494,30 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
     pcid ? supabase.from("property_customers").select("personality_profile, preferences, ng_points, ai_summary, desired_area, floor_plan, rent_max, move_in_time").eq("id", pcid).maybeSingle() : Promise.resolve({ data: null }),
     pcid ? supabase.from("sent_properties").select("id", { count: "exact", head: true }).eq("property_customer_id", pcid) : Promise.resolve({ count: 0 }),
     loadViewingReports(conversationId),
+    supabase.from("aix_usage_logs")
+      .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern, property_names, prop_statuses, estimate_sent, prop_cost_notes, generated_text")
+      .eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(30),
+    supabase.from("aix_transition_stats").select("from_aix_type, to_aix_type, count").order("count", { ascending: false }),
+    supabase.from("messages").select("sender, text, created_at, line_message_id, is_aix_generated").eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false }).limit(40),
+    loadRecordedFacts(conversationId),
   ]);
   type M = { sender: string; text: string | null; created_at: string };
   const newMsgs = (newMsgsRes.data ?? []) as M[];
+  // 押した AIX と流れ（毎回の分析と同じ関数）
+  type StrategyAixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null; check_pattern?: string | null; property_names?: string[] | null; estimate_sent?: boolean | null; generated_text?: string | null };
+  const strategyAixLogs = (aixLogsRes.data ?? []) as StrategyAixLog[];
+  const strategyTransitionMap: AixTransitionMap = buildAixTransitionMap((transitionRes.data ?? []) as Array<{ from_aix_type: string; to_aix_type: string; count: number }>);
+  const aixFlowText = buildAixFlowNote(strategyAixLogs, strategyTransitionMap).text;
+  // 行動台帳（確定事実・伝えた事／宣言しただけの事）— 毎回の分析と同じ buildActionLedger
+  type LM = { sender: string; text: string | null; created_at: string; line_message_id: string | null; is_aix_generated: boolean | null };
+  const ledgerMsgs = ((ledgerMsgsRes.data ?? []) as LM[]).slice().reverse();
+  const strategyLedger = buildActionLedger({
+    recentAixRows: strategyAixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at ?? null, line_message_id: l.line_message_id, property_names: l.property_names ?? null, estimate_sent: l.estimate_sent ?? null, template_name: l.template_name ?? null, generated_text: l.generated_text ?? null })),
+    messages: ledgerMsgs.map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at, isAix: !!m.is_aix_generated, lineMessageId: m.line_message_id })),
+    recordedFacts,
+  });
+  const strategyLedgerText = `${strategyLedger.summary}${buildLedgerLinesForBrain(strategyLedger)}`;
   // 新しいメッセージが少ない時は直近12件で文脈を補う
   const msgs = newMsgs.length >= 6 ? newMsgs : ((recentMsgsRes.data ?? []) as M[]).slice().reverse();
   const latestCustomerTs = [...msgs].reverse().find((m) => m.sender === "customer")?.created_at ?? prev.strategy_msg_ts ?? null;
@@ -3563,7 +3556,9 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
   const userText = [
     `今日: ${jstYmdWeekday(nowIso)}／会話のステータス: ${(conv.status as string | null) ?? "不明"}／送付済み物件: ${(sentRes as { count?: number | null }).count ?? 0}件`,
     `\n【前回の戦略（JSON・${prev.strategy_msg_ts ? jstYmd(prev.strategy_msg_ts) : "不明"}時点）】\n${JSON.stringify(strategyForPrompt(prev))}`,
-    digestText ? `\n【前回の戦略以降の毎回の分析の要点（古い→新しい）】\n${digestText}` : "",
+    digestText ? `\n【前回の戦略以降の毎回の分析の要点（古い→新しい）】\n${digestText}\n※要点の「AIX:」はブレインが提案した物。実際に押した AIX は次の【この会話で押した AIX】を見る` : "",
+    aixFlowText ? `\n【この会話で押した AIX（実際の記録・新→旧）】${aixFlowText}` : "",
+    strategyLedgerText.trim() ? `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${strategyLedgerText}` : "",
     cp?.summary ? `\n【会話の要点（セーブポイント・最新）】\n${cp.summary}${keyFacts.length ? `\n確定事実: ${keyFacts.join(" ／ ")}` : ""}` : "",
     viewingReportBlockForBrain(viewingReports),
     pc ? `\n【お客様のプロフィール】\n${[pc.personality_profile && `人間性: ${pc.personality_profile}`, pc.preferences && `こだわり: ${pc.preferences}`, pc.ng_points && `NG: ${pc.ng_points}`, pc.desired_area && `エリア: ${pc.desired_area}`, pc.floor_plan && `間取り: ${pc.floor_plan}`, pc.rent_max && `家賃上限: ${pc.rent_max}`, pc.move_in_time && `入居時期: ${pc.move_in_time}`].filter(Boolean).join(" ／ ")}` : "",

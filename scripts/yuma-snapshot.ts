@@ -6,7 +6,8 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 const FILE = "scripts/.yuma-backup.json";
-const COLS = "id, customer_name, status, ai_draft, ai_draft_check, suggested_aix_meta, last_brain_meta, brain_analyzed_at, draft_pending_at, draft_attempted_at, last_message, last_sender, updated_at";
+// 2026-09-23: brain_strategy（会話全体の戦略）も控える（戦略の作り直しのテストで書くため）
+const COLS = "id, customer_name, status, ai_draft, ai_draft_check, suggested_aix_meta, last_brain_meta, brain_analyzed_at, brain_strategy, draft_pending_at, draft_attempted_at, last_message, last_sender, updated_at";
 
 async function main() {
   const cmd = process.argv[2] ?? "show";
