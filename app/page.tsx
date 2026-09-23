@@ -9706,7 +9706,11 @@ export default function Home() {
                   const isNowPostApply = !postApplyConvIds.has(id);
                   const updatePayload: Record<string, unknown> = { is_post_apply: isNowPostApply };
                   // 解除時はステータスをproposingに戻す（applyingのままだと一覧から消えるため）
-                  if (!isNowPostApply) updatePayload.status = "proposing";
+                  // 2026-09-23 竹内「否決となって再度物件提案中にもどる場合は（DeepSeek に）渡してよい」:
+                  //   解除＝段階を戻した合図なので、戻した時刻も付ける（app/lib/post-apply.ts が申込へ押下・本人確認書類より後の戻しを見る）。
+                  //   マークする時は外す（状態変更の resolveManualBackMark と同じ向き）
+                  if (!isNowPostApply) { updatePayload.status = "proposing"; updatePayload.status_manual_back_at = new Date().toISOString(); }
+                  else updatePayload.status_manual_back_at = null;
                   await supabase.from("conversations").update(updatePayload).eq("id", id);
                   setPostApplyConvIds(prev => {
                     const next = new Set(prev);
