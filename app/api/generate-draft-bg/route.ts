@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
+import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
 import { MSG_SEP } from "@/app/lib/reply-context";
 
 export const maxDuration = 60;
@@ -47,6 +48,12 @@ export async function POST(req: NextRequest) {
     if (conv.last_sender !== "customer") return NextResponse.json({ ok: true, skipped: true });
     if (conv.ai_draft) return NextResponse.json({ ok: true, skipped: true, draft: conv.ai_draft as string });
     if (DRAFT_SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: true });
+    // 2026-09-23 竹内「申込中は…ここ文生成しなくて大丈夫」: status の遅れに強い判定（app/lib/post-apply.ts）。読めなければ status のまま続行
+    try {
+      if (resolvePostApply(await loadPostApplyFacts(db, convId)).postApply) return NextResponse.json({ ok: true, skipped: true, reason: "post_apply" });
+    } catch (e) {
+      console.warn("[generate-draft-bg] post-apply の記録が読めない → status の判定のまま続行:", e instanceof Error ? e.message : String(e));
+    }
 
     const [{ data: msgs }, { data: pc }] = await Promise.all([
       db.from("messages").select("sender, text, created_at").eq("conversation_id", convId)

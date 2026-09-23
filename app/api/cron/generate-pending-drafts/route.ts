@@ -6,6 +6,7 @@ import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core"
 import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "@/app/lib/brain-meta-restore";
 import { DRAFT_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
+import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
 import { MSG_SEP } from "@/app/lib/reply-context";
 
 function getDb() {
@@ -181,6 +182,12 @@ async function run() {
     if (DRAFT_SKIP_STATUSES.has(convStatus) || conv.last_sender !== "customer") {
       skipped++;
       continue;
+    }
+    // 2026-09-23 竹内「申込中は…ここ文生成しなくて大丈夫」: status の遅れに強い判定（app/lib/post-apply.ts）。読めなければ status のまま続行
+    try {
+      if (resolvePostApply(await loadPostApplyFacts(db, convId)).postApply) { skipped++; continue; }
+    } catch (e) {
+      console.warn("[generate-pending-drafts] post-apply の記録が読めない → status の判定のまま続行:", e instanceof Error ? e.message : String(e));
     }
 
     // 先にpendingをクリアして重複処理を防ぐ ＋ 生成試行時刻をDBに記録

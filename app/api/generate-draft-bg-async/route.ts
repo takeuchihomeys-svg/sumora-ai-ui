@@ -4,6 +4,8 @@ import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core"
 import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
+// 2026-09-23 竹内「申込中は…ここ文生成しなくて大丈夫」: 申込以降の判定は status だけでなく記録（申込へ押下・本人確認書類・戻し）で
+import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
 // 2026-09-09 Fable5: 複数通の結合は "\n" ではなく MSG_SEP（1通内の改行を「N通」に分割しない）
 import { MSG_SEP } from "@/app/lib/reply-context";
 // 2026-09-21 竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」
@@ -230,6 +232,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: "already_has_draft" });
   }
   if (BG_ASYNC_SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: "status" });
+  // 2026-09-23 竹内「申込中は別のツールで文生成しているので、ここ文生成しなくて大丈夫なところとなる」:
+  //   status は27.4%の会話で遅れるので、申込へ押下・本人確認書類・スタッフの印も見る（否決で戻したら時間順で解く。app/lib/post-apply.ts）。
+  //   記録が読めなければ止めない（status の判定は上で済んでいる）
+  try {
+    const pa = resolvePostApply(await loadPostApplyFacts(db, convId));
+    if (pa.postApply) return NextResponse.json({ ok: true, skipped: "post_apply", reason: pa.reason });
+  } catch (e) {
+    console.warn("[bg-async] post-apply の記録が読めない → status の判定のまま続行:", e instanceof Error ? e.message : String(e));
+  }
   // 2026-09-14 API の漏れ調査: 下書きの生成に5回続けて失敗した会話は、新しいお客様の発言（line-webhook の direct）以外では自動で作り直さない。
   //   旧: cron（generate-pending-drafts）は5回で諦めるが、画面の先回り生成・会話を開いた時の起動は失敗回数を見ず、
   //   失敗の DB 書き込み → realtime → 先回り生成、の輪で開いている端末の数だけ5分ごとにブレイン＋返信生成を繰り返し得た。

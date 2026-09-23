@@ -3010,6 +3010,8 @@ export async function POST(req: NextRequest) {
   //   同じ1クエリで状態も読む（読めなければ「回さない」側へ倒す＝fail-closed）。
   let autoSendConversation = false;
   let postApplyConversation = false;
+  // 記録が読めた時の判定（下書きを止める側はこちらを見る。読めない時は止めない）
+  let postApplyResolved: ReturnType<typeof resolvePostApply> | null = null;
   if (conversationId && !isTemplateOptimize) {
     try {
       // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: status は27.4%の会話で遅れていて、
@@ -3023,6 +3025,7 @@ export async function POST(req: NextRequest) {
       const row = autoRow as { auto_send_enabled?: boolean | null } | null;
       autoSendConversation = row?.auto_send_enabled === true;
       const r = resolvePostApply(facts);
+      postApplyResolved = r;
       postApplyConversation = r.postApply;
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "generate-reply:post-apply", conversationId, reason: r.reason }));
     } catch {
@@ -3031,20 +3034,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (conversationId && externalBrainGate === null && !isTemplateOptimize) {
-    const { data: convMeta } = await supabase
-      .from("conversations")
-      .select("is_post_apply, status")
-      .eq("id", conversationId)
-      .single();
-    if (convMeta && (convMeta.is_post_apply || DRAFT_SKIP_STATUSES.has((convMeta.status as string) ?? ""))) {
-      console.log("[generate-reply] post_apply or skip_status → ドラフト生成スキップ:", {
-        conversationId,
-        is_post_apply: convMeta.is_post_apply,
-        status: convMeta.status,
-      });
-      return NextResponse.json({ skipped: true, reason: "post_apply_or_skip_status" });
-    }
+  // 2026-09-23 竹内「申込中は別のツールで文生成しているので、ここ文生成しなくて大丈夫なところとなる」:
+  //   旧は is_post_apply と status だけを見ていた（status は27.4%の会話で遅れる）。上で読んだ同じ記録（post-apply.ts:
+  //   status ∪ 印 ∪ 申込へ押下 ∪ 本人確認書類、否決で戻したら時間順で解く）で止める。読めなかった時は止めない（下書きが黙って消えないように）
+  if (conversationId && externalBrainGate === null && !isTemplateOptimize && postApplyResolved?.postApply) {
+    console.log("[generate-reply] post_apply → ドラフト生成スキップ:", JSON.stringify({ conversationId, reason: postApplyResolved.reason }));
+    return NextResponse.json({ skipped: true, reason: "post_apply_or_skip_status", post_apply_reason: postApplyResolved.reason });
   }
 
   // ─── LINE グループの会話（2026-09-21 竹内・黒明様お部屋探し）────────────────────────────
