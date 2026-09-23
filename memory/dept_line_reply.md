@@ -6844,3 +6844,7 @@ available は per-property の固定テンプレなので元から揃ってい�
 - ① `scripts/repair-applying-status.ts --apply` 実行: **25/25件を applying へ**（印あり 9280fa49 は触らず・updated_at は書かず・stage_history trigger=repair:post_apply_flag）
 - ② page.tsx「申込以降」マーク: マークした時、status が申込前なら **applying へ進める**（成約・失注などは触らない）。解除は従来どおり proposing＋戻しの印。両方 stage_history に manual:post_apply_mark／unmark で記録
 - ⚠ 見え方: マークした瞬間に一覧の段階が「申込・審査中」になる（旧コメント「applyingのままだと一覧から消える」＝一覧の絞り込みに注意）
+### （同日追記）ブレインのモデル: Sonnet 5 のまま（竹内「sonnetのままでいく」）
+- Opus への切り替えは検討して不採用。普段の整理 +$110/月・ゼロから +$100前後・質の差は未測定・材料を足した直後で切り分け不能
+- 「10回に1回のフル分析」は旧設計。今は 戦略の作り直し＝発言10件／戦略が変わる発言／72h、3回に1回ゼロから（設計知見に登録）
+- 再検討の条件: 2週間後に材料の効果を測ってから、影の比較（20会話・書き込みなし）で差が揺れの幅より大きい時だけ「普段の整理」だけ
