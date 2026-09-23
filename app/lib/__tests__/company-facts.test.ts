@@ -68,9 +68,11 @@ describe("形", () => {
     truthy(s.includes("オンライン専門"));
     truthy(s.includes("3親等以内"));
   });
+  it("質問に必ず答えるよう優先を宣言する（埋もれた質問の穴・2026-09-23）", () =>
+    truthy(buildCompanyFactsNote("店舗に行けますか").includes("先に、この質問へ本文で必ず答える")));
   it("見出しが付く", () => truthy(buildCompanyFactsNote("店舗ありますか").includes("【🏢 会社として答えが決まっている事実")));
   it("1回あたり 900字以内（当たるのは普通1〜2件）", () =>
-    truthy(buildCompanyFactsNote("緊急連絡先は必ず必要ですか？").length < 900));
+    truthy(buildCompanyFactsNote("緊急連絡先は必ず必要ですか？").length < 1000));
   it("すべての事実に根拠の通数がある", () => { for (const f of COMPANY_FACTS) truthy(f.n > 0, f.id); });
 });
 

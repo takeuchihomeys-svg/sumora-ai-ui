@@ -4672,8 +4672,19 @@ export async function POST(req: NextRequest) {
       //   ⚠ 物件・保証会社によって変わる事は入れない（竹内「物件によって保証会社に違いあるから適当に答えない」）
       const companyFacts = buildCompanyFactsNote(message);
       if (companyFacts) lines.push(companyFacts.trim());
-      if (effectiveKeyTopics.length) {
-        lines.push(`- ✅ 必ず含める内容（${effectiveKeyTopics.length}件すべて必須）: ${effectiveKeyTopics.join(" / ")}`);
+      // 2026-09-23 生成プロンプトを書き出して分かった穴:
+      //   お客様の発言が「承知いたしました」等で始まると場面が【検討中フォロー】と読まれ、
+      //   必ず含める内容が「急かさない受け止め＋ピックアップ宣言」になって、事実はプロンプトに
+      //   入っているのに質問に答えない（『ご来店の際に…』と店舗訪問を受け入れた回もあった）。
+      //   ブロックの中で「必ず答える」と書くだけでは弱く、3回中1回しか直らなかった。
+      //   → **必ず含める内容そのものに足す**（同じ強さにする。受け止めとは両立するので打ち消し合わない）。
+      //   実データでは 2.0%（120日で48件）と少ないが、自動返信では事故になる場面。
+      const factTopics = buildCompanyFactsNote(message)
+        ? [`お客様が聞いている会社の事実（上の【🏢】の内容）への直接の回答`]
+        : [];
+      const mustInclude = [...factTopics, ...effectiveKeyTopics];
+      if (mustInclude.length) {
+        lines.push(`- ✅ 必ず含める内容（${mustInclude.length}件すべて必須）: ${mustInclude.join(" / ")}`);
         lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
       }
       if (activeAvoidTopics.length) {

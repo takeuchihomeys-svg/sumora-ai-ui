@@ -55,3 +55,6 @@ scripts/.yuma-backup.json
 
 # 影の比較の実行結果（お客様の会話が入るので倉庫に上げない）
 .shadow-brain/
+
+# プロンプトの書き出し（検証用・お客様の会話が入る）
+.debug-prompt/
