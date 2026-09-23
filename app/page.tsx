@@ -6,7 +6,7 @@ import AixManualModal from "./components/AixManualModal";
 import BottomNav from "./components/BottomNav";
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
-import { isApplicationFormMessage } from "./lib/application-form-detect";
+import { isApplicationFormMessage, PRE_APPLY_STATUSES } from "./lib/application-form-detect";
 import { detectPlaceholders } from "./lib/validate-reply";
 // 2026-09-18: 下書き→送る文の整形は画面と自動返信で同じ関数を使う（app/lib/draft-text.ts）
 import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraftSentinel } from "./lib/draft-text";
@@ -9704,22 +9704,35 @@ export default function Home() {
                 onClick={async () => {
                   const id = convMenuConvId!;
                   const isNowPostApply = !postApplyConvIds.has(id);
+                  const currentStatus = conversations.find(c => c.id === id)?.status ?? null;
                   const updatePayload: Record<string, unknown> = { is_post_apply: isNowPostApply };
                   // 解除時はステータスをproposingに戻す（applyingのままだと一覧から消えるため）
                   // 2026-09-23 竹内「否決となって再度物件提案中にもどる場合は（DeepSeek に）渡してよい」:
                   //   解除＝段階を戻した合図なので、戻した時刻も付ける（app/lib/post-apply.ts が申込へ押下・本人確認書類より後の戻しを見る）。
                   //   マークする時は外す（状態変更の resolveManualBackMark と同じ向き）
-                  if (!isNowPostApply) { updatePayload.status = "proposing"; updatePayload.status_manual_back_at = new Date().toISOString(); }
-                  else updatePayload.status_manual_back_at = null;
+                  // 2026-09-23 竹内「①②おこなう」: マークした時は status も「申込・審査中」へ進める（段階を2か所で持って片方だけ進む根を断つ。
+                  //   実物: マーク済み51件のうち status が申込前のまま 26件＝51%）。申込前の status の時だけ進め、成約・失注などは触らない
+                  let nextStatus: string | null = null;
+                  if (!isNowPostApply) { nextStatus = "proposing"; updatePayload.status_manual_back_at = new Date().toISOString(); }
+                  else { updatePayload.status_manual_back_at = null; if (PRE_APPLY_STATUSES.includes(currentStatus ?? "")) nextStatus = "applying"; }
+                  if (nextStatus) updatePayload.status = nextStatus;
                   await supabase.from("conversations").update(updatePayload).eq("id", id);
+                  // 状態を動かした時は履歴に残す（手動の状態変更と同じ表・trigger で経路を分ける）
+                  if (nextStatus && nextStatus !== currentStatus) {
+                    void supabase.from("conversation_stage_history").insert({
+                      conversation_id: id, from_status: currentStatus, to_status: nextStatus,
+                      trigger: isNowPostApply ? "manual:post_apply_mark" : "manual:post_apply_unmark",
+                    }).then(() => {}, () => {});
+                  }
                   setPostApplyConvIds(prev => {
                     const next = new Set(prev);
                     if (next.has(id)) { next.delete(id); } else { next.add(id); }
                     return next;
                   });
-                  if (!isNowPostApply) {
+                  if (nextStatus) {
+                    const ns = nextStatus;
                     setConversations(prev => prev.map(c =>
-                      c.id === id ? { ...c, status: "proposing" } : c
+                      c.id === id ? { ...c, status: ns } : c
                     ));
                   }
                   setConvMenuConvId(null);

@@ -6840,3 +6840,7 @@ available は per-property の固定テンプレなので元から揃ってい�
 - 直し: `app/lib/aix-flow-note.ts`（流れの文を1関数に・毎回の分析と共用）／`consolidateStrategy` に【この会話で押した AIX】【行動台帳】／`STRATEGY_SYSTEM` に成約の典型順と「押した物を Step に書かない」
 - YUMA 1回: Step1「募集状況を確認し回答」→ 9/22 物件送付を踏まえて 追加情報→見積の比較→内覧の打診 に進んだ（n=1・`scripts/yuma-strategy-refresh.ts`・控えて戻した）
 - 費用: 入力 +700 tokens／回・1日7〜19回
+### （同日追記）竹内「①②おこなう」
+- ① `scripts/repair-applying-status.ts --apply` 実行: **25/25件を applying へ**（印あり 9280fa49 は触らず・updated_at は書かず・stage_history trigger=repair:post_apply_flag）
+- ② page.tsx「申込以降」マーク: マークした時、status が申込前なら **applying へ進める**（成約・失注などは触らない）。解除は従来どおり proposing＋戻しの印。両方 stage_history に manual:post_apply_mark／unmark で記録
+- ⚠ 見え方: マークした瞬間に一覧の段階が「申込・審査中」になる（旧コメント「applyingのままだと一覧から消える」＝一覧の絞り込みに注意）
