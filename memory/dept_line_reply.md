@@ -6996,3 +6996,43 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 
 確認: `REPS=2 scripts/yuma-company-facts-direct.ts` → 混入0（DeepSeek 4/4）。テスト pii-pseudonym 90／meta-narration 47／apply-readiness 27／draft-text 51・`tsc` 通過。設計知見4件（kb-insert: 仮名化2件・DeepSeek の質・作業メモの印）。
 - **記録の抜け（訂正）**: 「8回→4行」は古い開発サーバーで測った数字で、立て直して測ると 4回→4行（1対1）。本番5日分も DeepSeek 行数 ≧ 最終チェック行数で抜けの形跡なし。ただし仕組み上、streaming は読み切った時だけ行を書いていたので、**切れた・受け手が閉じた時も errorType（stream_error／stream_cancelled）付きで1行残す**形にし、`stream` の印も行に入れた（`llm-alt-provider.ts` report／`llm-usage-recorder.ts` recordAltUsage.stream）
+
+## 2026-09-23（追記）最終チェックは会社の事実に反する断定を止めているか
+
+竹内さん「会社の事実に反する断定を出口で止める規則の部分、ファイナルチェックがあるからそこで予防できている。ファイナルチェックが問題なく機能しているか確認する。機能していない場合もあるので」→ Fable5（把握・実測・反証・修正・記録）。
+
+### 結論
+- **止めていなかった。** 最終チェック自体は正常（直近14日 105会話で3パス完走 105/105・pass_failures 0・検査は Claude Haiku/Sonnet で DeepSeek に回っていない）だが、**会社の事実 company-facts を一度も受け取っておらず**（import・FinalCheckContext・finalCheckCtx のどこにも無い）、決定論・rule_check・anomaly_scan・context_check のどの段にも「店舗は無い／室内写真はスタッフが撮影して送れる／クレカ可」を照合する根拠が無かった。DB の final_check ルールも 0 行。
+- 「壊れて素通り」ではなく「**その種類の誤りを見る目が最初から無い**」。今日の実物「室内写真は現在ご用意出来ていない為…」「店舗にご来店頂いてのご相談も承っております」は純関数（本番と同じ ctx・決定論＋LLM3パス＋修正ループ）で **ok=true・本文そのまま**（付いた指摘は「少々お時間」の文体 warning と info だけ）。
+- 対照実験（会社の事実を anomaly_scan に渡した場合）: ①店舗は FABRICATED_POLICY:**warning 止まり**（block は AMOUNT/AVAILABILITY/PROPERTY/DATE のみ）で本文は変わらず送信も自動返信も止まらない。③写真は Haiku が無視して **0件**。→ LLM の段では止められない＝出口は決定論で持つ。
+- 「事実が抜ける」（場面①でオンライン専門が入らない）は検査対象外（factTopics は生成の必ず含める内容にだけ足され final-check には渡らない）。
+- 出所候補: 生成プロンプト GENERATION_SYSTEM（`line-reply-prompts.ts:1351-1357`）に「○ 建築中のため…室内写真はまだご用意出来ておりません（理由あり）」が手本として残り、`company-facts.ts:61` の「ご用意できていないと断定しない」と同じプロンプト内で正面衝突（因果は推測・手本の書き換えは未実施）。
+
+### 生きた経路の実測（YUMA・DeepSeek 14/14・4場面×2回＋①③追加2回＝12回・restore 済み）
+- 「反する断定」は **0/12**（今日の実物は再現しなかった）。事実が抜けた 1回（①）には会社の事実の指摘は付かず STAGE_MISMATCH:warning だけ。
+- ①「事実が抜ける」判定 4回中3回は `scripts/yuma-company-facts-direct.ts` の want 正規表現の取りこぼし（「店舗へのご来店は承っておりません」「店舗でのご相談は承っておらず」に当たらない）。実際に抜けたのは 4回中1回。前段の「3回中0〜2回」は過小評価 → **want の修正が要る（未実施）**。
+- 逆向き: 正しい「店舗へのご来店は承っておりません」に STAGE_MISMATCH:warning（ブレインの古い action「物件情報送付」が根拠）。④キャンセル料の正しい回答に TIMING_VOCAB_MISMATCH:block → regen/revision が走り費用倍（本文は正しいまま）。
+- `conversations.ai_draft_check` はストリーム終了直後に読むとトレーラーと食い違う（`route.ts:6321` の update が void）。4秒待つと一致 4/4。
+
+### 入れた物
+- **`app/lib/company-fact-guard.ts`（新規・純関数）**: 会社の事実5件（room_photo／store／credit_card／emergency_contact／viewing_method）に反する断定の形＋除外（建築中・完成・退去前・入居中・エリア外の理由付き／条件形「ない場合」／保証会社の審査）。`findCompanyFactContradiction(body, customerTexts)` は生成・ブレインと同じ `matchCompanyFacts` が当たる事実だけ見る（お客様が聞いている時だけ）。`buildCompanyFactsForCheck` は検査に渡す事実の行。
+- **`final-check.ts` 決定論の段に V16 `COMPANY_FACT_CONTRADICTION`**（severity block・evidence は本文の1文・suggestion は実送信の正解の形・修正ループで書き直させる。本文は削らない）。`assignSeverity` で LLM recheck でも block 維持。route.ts の ctx は変えず final-check 内で lastCustomerMessage と recentMessages から計算（渡し忘れの4か所目を作らない）。
+- **anomaly_scan（Haiku）と verifyFabricatedIssues の動的部に [COMPANY_FACTS]**（聞かれていなければ空）。FABRICATED_POLICY の定義に「[COMPANY_FACTS] に反する断定」を追加。
+- **`route.ts:5999` DET_CODES_RE に `COMPANY_FACT_`**（post-det でも差し替わる）。
+- **全件監査 `scripts/audit-final-check-company-facts.ts`**（読み取りのみ）: 実送信365日 7,997通でゲート無し当たり **0通**（5規則すべて）。近い形41文（写真16・店舗20・緊急連絡先5）を全部目で読んだ: 理由付き「建築中のため…写真はまだご用意出来ておりません」4文・条件形「写真がない場合は」1文・お客様の画像が「確認できていない」9文・内覧の「ご来店お待ちしております」12文・「ご来社でのご相談が出来ない形」（会社の事実そのもの）4通 → 全部残る。AI下書き 6,971件で当たり **1件**（09-05 クレカ「対応しておらず」→スタッフは「対応しております」に直していた＝規則の向きが正しい）。`conversations.ai_draft` 100件で 0。
+- テスト `app/lib/__tests__/company-fact-guard.test.ts` 43件（落とす12・落とさない18＝監査で残ると確かめた実送信そのまま・ゲート6・[COMPANY_FACTS] 2・runDeterministicChecks 連携5）＋関係する既存17本（company-facts 38・rent-negotiation 55・assertion-ban 27・action-ledger 35・greeting 31 等）全部通過。tsc: プロジェクトのコードは0エラー（`.next/dev/types/routes.d.ts` は dev サーバーの生成物が壊れており素の `npx tsc --noEmit` で105件出る。生成物を除いた一時 tsconfig で0件を確認。`.next` を消して再実行すれば消える）。
+
+### 止めた物（理由）
+- 裸の「来店」「ご用意できていない」の block（実送信にある: 内覧の待ち合わせ12文・建築中の理由付き4文）
+- キャンセル料・日割・申込書類・対応エリアの断定（物件や状況で変わる言い方が多く線が引けない → anomaly_scan の [COMPANY_FACTS] で見るだけ）
+- 「事実が抜ける」を出口で足す（本文に無い物を書き足す出口は入れない。入口の届き方の問題）
+- `.next` の壊れた生成物の削除（dev サーバーの所有物・親に委ねる）
+
+### 次にやる物
+1. `line-reply-prompts.ts:1351-1357` の手本「建築中のため…室内写真はまだご用意出来ておりません」を書き換える（company-facts と正面衝突・入口が先）
+2. `scripts/yuma-company-facts-direct.ts` の want 正規表現を実送信の言い回し（「ご来店は承っておりません」「店舗でのご相談は承っておらず」）に広げる
+3. 正しい文に付く STAGE_MISMATCH（ブレインの古い action が根拠）・TIMING_VOCAB_MISMATCH（キャンセル料の回答）の線引き（費用倍・修正ループの無駄）
+4. 2〜3日後に実送信で `COMPANY_FACT_CONTRADICTION` の発火を監査（block が出た本文を目で読む・誤削除0の再確認）
+5. 07-15 の実送信「弊社店舗では無く事務作業用の事務所となりますがご来社可能です」（会社の事実と逆・規則には当たらず止めない側）は会社の事実の再確認が要る
+
+設計知見3件（kb-insert: 「最終チェックで予防できている」は確かめるまで信じない／会社の事実は出口の決定論 V16 で・実送信7,997通当たり0／実測の測り方の落とし穴）。コミットは親。

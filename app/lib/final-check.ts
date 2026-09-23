@@ -76,6 +76,10 @@ import { isConditionFormMessage } from "./line-reply-prompts";
 import { findUngroundedConditions } from "./pickup-condition-guard";
 // 2026-09-23 竹内「家賃交渉は基本できないものだからいれない」: 本文は書き換えず warning で指摘だけ出す（V15）
 import { isRentNegotiationPromise, isMgmtDiscountNegotiationPromise, customerAskedRentNegotiation } from "./rent-negotiation-guard";
+// 2026-09-23 竹内「会社の事実に反する断定を出口で止める規則…ファイナルチェックが問題なく機能しているか確認する」:
+//   調べたら最終チェックは会社の事実（company-facts）を**一度も受け取っていなかった**（生成プロンプトとブレインにしか渡っていない）。
+//   決定論の段（V16 COMPANY_FACT_CONTRADICTION・実送信365日 7,997通で当たり0＝block）と anomaly_scan の [COMPANY_FACTS] の2か所に繋ぐ
+import { findCompanyFactContradiction, buildCompanyFactsForCheck } from "./company-fact-guard";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -565,6 +569,10 @@ function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBl
    （オーナーから頂く広告料ADを初期費用に還元）なので捏造として指摘しないこと。
    日割家賃: 入居日〜月末の日数分が発生。1日入居は日割家賃なし＝最も安い。2日以降入居は
    日割家賃＋翌月分家賃で約2ヶ月分の支払い。「月末入居が安い」「1日入居は高い」は誤り）
+6. [COMPANY_FACTS] がある時: そこに書かれた会社の事実（オンライン専門で来社相談は受けていない・室内の写真や動画は
+   スタッフが撮影して送れる・クレジットカード払いに対応・緊急連絡先は必須・キャンセル料は審査通過まで無し 等）に
+   **反する断定**（例:「写真はご用意出来ていない」「店舗でのご相談も承っております」「クレジットカードは対応しておりません」
+   「緊急連絡先は不要」）は FABRICATED_POLICY。理由付きで物件固有の事情を説明している文（「建築中のため写真はまだ無い」）は指摘しない
 
 情報源の優先順位（上ほど権威が高い。矛盾したら上を正とする）:
 1位 [CHECKPOINTS] — 過去の会話全体から抽出済みの確認済み事実（日付付き・最高権威）
@@ -650,7 +658,7 @@ FABRICATED_AVAILABILITY: 空室確認結果（「空室でした」「すでに�
 FABRICATED_PROPERTY: 物件名・号室・駅名・路線名の誤りや写し間違い
 FABRICATED_DATE: 日付・曜日・時刻の誤り（日付と曜日の不一致含む）
 FABRICATED_NAME: 顧客名・担当者名の誤り（「名称未設定」が顧客名として使われている場合を含む）
-FABRICATED_POLICY: 仲介手数料・日割家賃・AD還元など会社固有の制度・ルールの誤説明
+FABRICATED_POLICY: 仲介手数料・日割家賃・AD還元など会社固有の制度・ルールの誤説明（[COMPANY_FACTS] に反する断定を含む）
 
 【よくある誤検知パターン（issues: []にすべきケース）】
 - 「最大限割引」「初期費用を割引」→ 正しい制度説明（AD還元による初期費用還元）のため捏造でない
@@ -664,13 +672,15 @@ FABRICATED_POLICY: 仲介手数料・日割家賃・AD還元など会社固有�
   ・「保証会社の審査が通過するまでキャンセル料は一切かからない」/「審査に落ちても費用は発生しない」
   ・「保証会社の費用は一般的に総賃料の50%前後（一般論として・物件により異なる旨を添えた説明）」
   ※ただし特定物件の保証料実額・特定物件の入居可能日を断定している場合は従来どおり指摘対象`;
+  // 2026-09-23 竹内: 会社の事実（company-facts）を検査にも渡す。お客様が今それを聞いている時だけ載る（生成と同じ matchCompanyFacts）
+  const companyFactsNote = companyFactsForCheck(ctx);
   const dynamic = `${brainBaselineNote}${clearedFactsNote}[CHECKPOINTS]
 ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [/CHECKPOINTS]
 [CUSTOMER_CONDITIONS]
 ${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
 [/CUSTOMER_CONDITIONS]
-[HISTORY]
+${companyFactsNote}[HISTORY]
 ${formatHistory(ctx.recentMessages, 10)}
 [/HISTORY]
 [SOURCE]
@@ -683,6 +693,13 @@ ${draft}
     { type: "text" as const, text: stable, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamic },
   ];
+}
+
+/** 会社の事実のブロック（anomaly_scan・verify の動的部）。お客様が聞いていなければ空文字（関係ない会話には出さない） */
+function companyFactsForCheck(ctx: FinalCheckContext): string {
+  const custRecent = (ctx.recentMessages ?? []).filter((m) => m.sender !== "staff").slice(-3).map((m) => m.text ?? "");
+  const lines = buildCompanyFactsForCheck([ctx.lastCustomerMessage ?? "", ...custRecent]);
+  return lines ? `[COMPANY_FACTS]（会社として答えが決まっている事実。お客様が今これを聞いている。これに反する断定は捏造）\n${lines}\n[/COMPANY_FACTS]\n` : "";
 }
 
 // ─── Pass 3: バグ探し思考（文脈・網羅性 / context_check）──────────────────────
@@ -1035,6 +1052,8 @@ function assignSeverity(pass: CheckPass, code: string, isAutoSend = false, isEar
     // 2026-09-10 Fable5 あみ事例: 顧客が言っていない語（LLM recheck でも block を維持）
     code === "VOCAB_MIRROR_MISMATCH" ||
     code === "CONFIRM_NO_OBJECT" || code === "FAREWELL_ON_MOVEOUT_INFO" ||
+    // 2026-09-23 竹内: 会社の事実に反する断定（決定論 V16・実送信0通）。LLM recheck が同名を返しても block を維持
+    code === "COMPANY_FACT_CONTRADICTION" ||
     // 2026-09-10 Fable5 Sさん事例: [X]型（AIX【内覧日調整】専用の候補日時確認）の通常返信混入は決定論 block
     code === "VIEWING_DATE_ASK_WITHOUT_AIX"
   ) return "block";
@@ -2543,6 +2562,24 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
         suggestion: "この文を削除し「初期費用は最大限割引させて頂いた金額です」または家賃を抑えられるお部屋のピックアップ宣言に置き換える（管理会社への交渉は書かない）" });
     }
   }
+  // V16 会社の事実（company-facts）に反する断定（2026-09-23 竹内「会社の事実に反する断定を出口で止める規則…機能しているか確認する」）
+  //   実物（DeepSeek 経路・YUMA）: 「室内写真は現在ご用意出来ていない為、私の方で撮影しお送りさせて頂きます」がそのまま画面に出た。
+  //   出所: 最終チェックは動いていた（3パス完走）が、会社の事実を判定の根拠として持っていなかった（company-facts を import していない・
+  //     anomaly_scan の会社制度は仲介手数料と日割だけ・V7 はお客様が写真を望んでいる時は免除）。
+  //   線（scripts/audit-final-check-company-facts.ts・実送信365日 7,997通・ゲート無しで当たり **0通**）: 理由付きの
+  //     「建築中のため…写真はまだご用意出来ておりません」（1通）・条件形「写真がない場合は」（1通）・内覧の「ご来店お待ちしております」・
+  //     申込テンプレ「ご来店頂けますと」は純関数側の除外で残る。AI 下書き 6,971件では1件（クレカ不可・スタッフが「対応しております」に直していた）。
+  //   → 誤削除0が取れたので **block**（修正ループで書き直させる。本文は決定論で削らない）。お客様がその事実を聞いている時だけ（matchCompanyFacts＝生成と同じ関数）。
+  {
+    const custRecent = (ctx.recentMessages ?? []).filter((m) => m.sender !== "staff").slice(-3).map((m) => m.text ?? "");
+    const hit = findCompanyFactContradiction(text, [cust, ...custRecent]);
+    if (hit) {
+      issues.push({ pass: "anomaly_scan", severity: "block", code: "COMPANY_FACT_CONTRADICTION",
+        message: `${hit.label}（会社の事実: ${hit.factId}・実送信365日で0通）`,
+        evidence: hit.sentence.slice(0, 60),
+        suggestion: hit.suggestion });
+    }
+  }
   return issues;
 }
 
@@ -3042,6 +3079,7 @@ async function verifyFabricatedIssues(
   // プロンプトキャッシュ（2026-08）:
   // 静的指示（VERIFY_INSTRUCTIONS）を system ブロックに分離し cache_control を付与。
   // 動的な情報源テキスト・targets は user メッセージに残す（cache_control なし）。
+  // 2026-09-23 竹内: 会社の事実に反する記述は「一般知識」として has_basis=true にしない（[COMPANY_FACTS] を情報源に足す）
   const dynamicPrompt = `情報源:
 [CHECKPOINTS]
 ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
@@ -3049,7 +3087,7 @@ ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [CUSTOMER_CONDITIONS]
 ${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
 [/CUSTOMER_CONDITIONS]
-[HISTORY]
+${companyFactsForCheck(ctx).replace("これに反する断定は捏造", "これに反する記述は has_basis=false")}[HISTORY]
 ${formatHistory(ctx.recentMessages, 10)}
 [/HISTORY]
 [SOURCE]

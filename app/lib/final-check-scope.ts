@@ -24,6 +24,8 @@
 //
 // ⚠ 新しい code を足す時は必ずここに分類を書く。書き忘れた code は fact 扱い（＝出す）にする。
 //   知らない物を黙って捨てない（設計知見「迷ったら安全側」）。
+//   fact（一覧は持たない＝既定）に入る物の例: FABRICATED_*・*_ASSERTION・UNSENT_CLAIM・RENT_NEGOTIATION_PROMISE・
+//   MGMT_DISCOUNT_NEGOTIATION_PROMISE・COMPANY_FACT_CONTRADICTION（2026-09-23 会社の事実に反する断定・block）
 
 export type IssueScope = "fact" | "safety" | "style";
 
