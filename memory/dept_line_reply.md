@@ -6825,3 +6825,12 @@ available は per-property の固定テンプレなので元から揃ってい�
 ### 残っている物
 - デプロイ後 `audit-brain-funnel` ②の「提案なし 8.2%」が「初回の要対応あり」と分かれるか（guard:first_contact の行に suggested_action が入る）
 - 初回ガードがスタッフ送信のある古い会話で発火する件（1db7b08d・dc35a540）: hasStaffEngagement の窓を確かめる
+
+### （同日追記）Workflow ①②③ の反証で直した5点・竹内さん判断待ち
+コミット済み（①②③＋反証の反映＋aix/action の申込以降の歯止め）。テスト 29+37+32+9+15・tsc 通過。
+- ① 即入居1/61の行を外す（出所違い）／2週間の行は率の形／優先の1行（スタッフ指定＞peak＞率＞一般CTA指示）
+- ② 手戻しの印は post-apply.ts と同じ**時間順**（印より後の申込へ押下＝再申込は通す）／`repair-applying-status.ts` は updated_at を書かない
+- ③ image_type が id_document・estimate の画像は初回の募集状況の確認にしない（other は除外しない）
+**判断待ち**: (1) `scripts/repair-applying-status.ts --apply`（25件を applying へ・印あり1件は触らない）を走らせるか (2) page.tsx「申込以降」トグルで status も進めるか
+**残る穴（記録のみ）**: fresh 層が初回ガードを通らず、同じ画像の初回で要対応が1分で最大3回更新・通知されうる／初回ガードがスタッフ送信のある古い会話で発火（1db7b08d・dc35a540）／戦略の層（普段の整理）に押した AIX・行動台帳・次打ちマップが渡っていない（別件・提案済み）
+**2週間後に測る**: `audit-recommend-apply-line`（DAYS=14）・`audit-applying-promotion`・`audit-brain-funnel`／Vercel ログ tag=aix:recommend-apply-line
