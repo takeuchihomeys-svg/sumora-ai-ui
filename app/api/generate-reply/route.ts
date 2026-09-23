@@ -7,7 +7,9 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { createGenerationModel } from "@/app/lib/reply-generation-model";
 // 2026-09-19 竹内: 自動返信オンの会話の下書きは Claude のまま（印を付けて llm-alt-provider が守る）
 import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
-import { isPostApplyStatus, willRouteAlt } from "@/app/lib/llm-alt-provider";
+import { willRouteAlt } from "@/app/lib/llm-alt-provider";
+// 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
+import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { buildBrainSpecificNote } from "@/app/lib/brain-specific-note";
 import { buildCompanyFactsNote } from "@/app/lib/company-facts";
@@ -3010,11 +3012,19 @@ export async function POST(req: NextRequest) {
   let postApplyConversation = false;
   if (conversationId && !isTemplateOptimize) {
     try {
-      const { data: autoRow } = await supabase
-        .from("conversations").select("auto_send_enabled, status").eq("id", conversationId).maybeSingle();
-      const row = autoRow as { auto_send_enabled?: boolean | null; status?: string | null } | null;
+      // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: status は27.4%の会話で遅れていて、
+      //   DeepSeek での返信生成 157回のうち 37回（6会話）が申込へ押下・本人確認書類の後だった（scripts/audit-post-apply-gate.ts）。
+      //   status ∪ スタッフの印 ∪ 申込へ押下 ∪ 本人確認書類の受信 を1つの純関数で見る（app/lib/post-apply.ts）
+      const [{ data: autoRow, error: autoErr }, facts] = await Promise.all([
+        supabase.from("conversations").select("auto_send_enabled").eq("id", conversationId).maybeSingle(),
+        loadPostApplyFacts(supabase, conversationId),
+      ]);
+      if (autoErr) throw new Error(autoErr.message);
+      const row = autoRow as { auto_send_enabled?: boolean | null } | null;
       autoSendConversation = row?.auto_send_enabled === true;
-      postApplyConversation = isPostApplyStatus(row?.status ?? null);
+      const r = resolvePostApply(facts);
+      postApplyConversation = r.postApply;
+      if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "generate-reply:post-apply", conversationId, reason: r.reason }));
     } catch {
       // 読めなければ自動返信は false（通常どおり）だが、申込以降は true に倒す（個人情報を外に出さない）
       postApplyConversation = true;
