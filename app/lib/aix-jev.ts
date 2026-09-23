@@ -214,16 +214,29 @@ export type JevShadowRow = {
   jev_model: string;
   jev_ms: number;
   answers: Record<string, unknown>;
+  /** ボタン決定後のピッカー（ブレインが決めたボタンに対して Jev が選んだピッカー）。ピッカーの無いボタンは null */
+  jev_picker_field: string | null;
+  jev_picker: string | null;
+  jev_picker_value: string | null;
+  jev_picker_prob: number | null;
+  brain_send_mode: string | null;
 };
 
-export function toShadowRow(conversationId: string, customerMsgAt: string | null, brain: { action?: string | null; check_pattern?: string | null } | null, ev: AixJevEvaluation): JevShadowRow {
+export function toShadowRow(
+  conversationId: string, customerMsgAt: string | null,
+  brain: { action?: string | null; check_pattern?: string | null; send_mode?: string | null } | null,
+  ev: AixJevEvaluation,
+  picker?: { decision: PickerJevDecision } | null,
+): JevShadowRow {
   const d = ev.decision;
   return {
     conversation_id: conversationId, customer_msg_at: customerMsgAt,
-    brain_action: brain?.action ?? null, brain_check_pattern: brain?.check_pattern ?? null,
+    brain_action: brain?.action ?? null, brain_check_pattern: brain?.check_pattern ?? null, brain_send_mode: brain?.send_mode ?? null,
     jev_action: d.aix, jev_action_prob: d.aixProb, jev_check_topic: d.checkTopic, jev_check_topic_prob: d.checkTopicProb,
     jev_check_pattern: d.checkPattern, jev_photo_request_prob: d.photoRequestProb, jev_confidence: d.aixConfidence,
     jev_model: ev.raw.model, jev_ms: ev.raw.ms, answers: ev.raw.answers as Record<string, unknown>,
+    jev_picker_field: picker?.decision.field ?? null, jev_picker: picker?.decision.picker ?? null,
+    jev_picker_value: picker?.decision.pickerValue ?? null, jev_picker_prob: picker?.decision.prob ?? null,
   };
 }
 

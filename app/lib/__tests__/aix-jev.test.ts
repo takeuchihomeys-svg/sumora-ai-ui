@@ -142,6 +142,9 @@ console.log("── ★ 鍵が無ければ何もしない（今までどおり�
   t("★ usage と model を持つ（llm_usage_logs 用）", ev?.raw.usage.input_tokens === 300 && ev.raw.model === "jev-1.13.0");
   const row = toShadowRow("c1", "2026-09-23T00:00:00Z", { action: "", check_pattern: null }, ev!);
   t("★ 影の運用の行: ブレインの判断と Jev の答えを並べる", row.jev_action === "property_check_result" && row.jev_check_pattern === "interior_photo" && row.brain_action === "" && row.jev_model === "jev-1.13.0");
+  t("★ ピッカーを聞いていない時は picker の列は null", row.jev_picker === null && row.jev_picker_field === null && row.jev_picker_prob === null);
+  const rowP = toShadowRow("c1", null, { action: "property_send", check_pattern: null }, ev!, { decision: { aixType: "property_send", field: "send_mode", picker: "widen", pickerValue: "widen", prob: 0.8, confidence: 0.7, probabilities: { widen: 0.8 } } });
+  t("★ ボタン決定後のピッカーも同じ行に並ぶ（field・picker・値・確率）", rowP.jev_picker_field === "send_mode" && rowP.jev_picker === "widen" && rowP.jev_picker_value === "widen" && rowP.jev_picker_prob === 0.8 && rowP.brain_action === "property_send");
 
   const pickerFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as { state: Record<string, unknown>; questions: Record<string, unknown> };

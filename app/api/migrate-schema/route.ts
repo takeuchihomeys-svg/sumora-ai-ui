@@ -3253,8 +3253,23 @@ CREATE TABLE IF NOT EXISTS jev_shadow_logs (
   -- 後から aix_usage_logs と突き合わせた結果（スタッフが実際に押した物）
   actual_aix_type TEXT,
   actual_check_pattern TEXT,
-  matched_at TIMESTAMPTZ
+  matched_at TIMESTAMPTZ,
+  -- ボタン決定後のピッカー（ブレインが決めたボタンに対して Jev が選んだピッカー。竹内「ボタンは既存で選択されているのでピッカーを」）
+  jev_picker_field TEXT,
+  jev_picker TEXT,
+  jev_picker_value TEXT,
+  jev_picker_prob DOUBLE PRECISION,
+  brain_send_mode TEXT,
+  actual_send_mode TEXT,
+  actual_app_sub_mode TEXT
 );
+ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS jev_picker_field TEXT;
+ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS jev_picker TEXT;
+ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS jev_picker_value TEXT;
+ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS jev_picker_prob DOUBLE PRECISION;
+ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS brain_send_mode TEXT;
+ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS actual_send_mode TEXT;
+ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS actual_app_sub_mode TEXT;
 CREATE INDEX IF NOT EXISTS idx_jev_shadow_logs_conv_created ON jev_shadow_logs(conversation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jev_shadow_logs_created_at ON jev_shadow_logs(created_at DESC);
 ALTER TABLE jev_shadow_logs DISABLE ROW LEVEL SECURITY;

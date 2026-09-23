@@ -5,7 +5,7 @@ import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
-import { evaluateAixWithJev, recordJevShadow, toShadowRow } from "@/app/lib/aix-jev";
+import { evaluateAixWithJev, evaluatePickerWithJev, hasPickerQuestion, recordJevShadow, toShadowRow } from "@/app/lib/aix-jev";
 import { waitUntil } from "@vercel/functions";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import {
@@ -3178,9 +3178,16 @@ ${history}`;
             lastAixType: aixLogs[0]?.aix_type ?? null, conversationId, timeoutMs: 5_000,
           });
           if (!ev) return;
+          // 竹内「ボタンは既に決まっている → そのボタンのピッカーを Jev が選ぶ」: ブレインが決めたボタンにピッカーがあれば、それだけを聞く
+          const picker = brainActionForShadow && hasPickerQuestion(brainActionForShadow)
+            ? await evaluatePickerWithJev({
+                aixType: brainActionForShadow, messages: msgsForJev, status: convStatus, sentPropertyCount: brainLedger.facts.propertiesSentCount,
+                lastAixType: aixLogs[0]?.aix_type ?? null, conversationId, timeoutMs: 5_000,
+              })
+            : null;
           const lastCust = typedMessages.find((m) => m.sender === "customer");
-          await recordJevShadow(supabase, toShadowRow(conversationId, lastCust?.created_at ?? null, { action: brainActionForShadow, check_pattern: brainCpForShadow }, ev));
-          console.log(JSON.stringify({ tag: "jev:shadow", conversationId, brain: brainActionForShadow, brainCp: brainCpForShadow, jev: ev.decision.aix, p: Number(ev.decision.aixProb.toFixed(2)), jevCp: ev.decision.checkPattern, ms: ev.raw.ms }));
+          await recordJevShadow(supabase, toShadowRow(conversationId, lastCust?.created_at ?? null, { action: brainActionForShadow, check_pattern: brainCpForShadow }, ev, picker));
+          console.log(JSON.stringify({ tag: "jev:shadow", conversationId, brain: brainActionForShadow, brainCp: brainCpForShadow, jev: ev.decision.aix, p: Number(ev.decision.aixProb.toFixed(2)), jevCp: ev.decision.checkPattern, picker: picker?.decision.picker ?? null, pickerP: picker ? Number(picker.decision.prob.toFixed(2)) : null, ms: ev.raw.ms }));
         } catch (e) {
           console.warn("[jev-shadow] skipped:", e instanceof Error ? e.message : String(e));
         }
