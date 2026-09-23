@@ -269,7 +269,10 @@ export const PROPERTY_CONDITION_INQUIRY_RE =
 // recommended_tone の許可値ホワイトリスト（template_hint の TEMPLATE_HINT_ALLOWED_LABELS と同型のフェイルクローズ）
 const TONE_ALLOWED = ["共感的", "テキパキ", "慎重", "明るく前向き", "普通"] as const;
 // ルール②: 顧客の最終メッセージに費用質問が含まれるかの判定
-const COST_QUESTION_RE = /見積|初期費用|総額|いくら|幾ら|費用|金額/;
+// 2026-09-23 S7 の実測（A2「予算オーバー…割引頑張って」）: 費用の不満・割引の依頼を費用の質問と見ず avoid_topics に「初期費用」が入り、
+//   本当の答え「初期費用は最大限割引済み」が書けず「管理会社に交渉」の創作に逃げた。実送信の同場面は「初期費用を最大限割引・抑える」が 50%。
+//   割引の依頼形・予算オーバー・安くなったら を足す（費用の話をしているのに費用を禁止しない）。
+const COST_QUESTION_RE = /見積|初期費用|総額|いくら|幾ら|費用|金額|割引(?:頑張|お願い|でき|出来|して)|予算オーバー|安くな(?:ったら|れば|りま)|安く(?:でき|出来|して)/;
 // ルール③: 顧客を急かす危機感・緊急表現の判定。
 // 「すぐ」は「すぐお調べします」等スタッフ自身の行動表現で誤検知するため含めない
 export const URGENCY_EXPRESSION_RE = /今なら|今しか|お早め|早い者勝ち|先着|残り\s*[0-9０-９一二三四五]+\s*[件室部戸]|あと\s*[0-9０-９一二三四五]+\s*[件室戸]|埋まって(?:しま|る|い)|なくなる前/;
@@ -1506,8 +1509,9 @@ export async function analyzeConversation(
   //   ナレッジには正解があったが検索の当たり外れで届かないので、**聞かれた時だけ確実に渡す**。
   //   ⚠ 物件・保証会社によって変わる事は入れない（竹内「物件によって保証会社に違いあるから適当に答えない」）
   //   お客様の直近の発言（連投を拾うため3通まで）で当てる
+  //   2026-09-23 S6 の実測: 結合すると [画像] の書き起こし（TikTok/SUUMO の画面文字）が当たりの50%を占めた → 1通ずつ渡す（画像の通は外れる）
   const companyFactsText = buildCompanyFactsNote(
-    typedMessages.filter((m) => m.sender === "customer").slice(0, 3).map((m) => m.text ?? "").join("\n"),
+    typedMessages.filter((m) => m.sender === "customer").slice(0, 3).map((m) => m.text ?? ""),
   );
   const sendReplyTimingText = buildSendReplyTimingNote({
     lastStaffAt: lastStaffAtIso,

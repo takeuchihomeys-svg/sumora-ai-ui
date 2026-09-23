@@ -2,7 +2,7 @@
 // 2026-09-18 竹内「これ文の生成とかは返信の下書き通りになるよね、今までのセットされている」
 //   → 画面の入力欄に出る文と、自動返信で送る文が**同じ関数**（draft-text.ts）を通ることを固定する。
 // 実行: npx tsx app/lib/__tests__/draft-text.test.ts
-import { stripInternalTags, draftToSendableText } from "../draft-text";
+import { stripInternalTags, draftToSendableText, stripOrphanClosingQuote } from "../draft-text";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra = "") {
@@ -164,6 +164,20 @@ console.log("── 誤削除0の確認（本物の【…】は消さない）")
   for (const s of keeps) t(`「${s.slice(0, 16)}…」→ 1文字も変わらない`, draftToSendableText(s) === s, String(draftToSendableText(s)));
   // 矢印・記号を含む本物の送信文（既存の誤削除0の確認と同じ趣旨）
   t("「<」単体は消さない", draftToSendableText("家賃は8万円 < 9万円でご案内可能です！！") === "家賃は8万円 < 9万円でご案内可能です！！");
+}
+
+console.log("── 2026-09-23 末尾の孤立した「」」（手本の引用符の写し・実送信365日で変わる通0）");
+{
+  const orphan = "かしこまりました！！\nお送り頂きました4件、募集状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます😌！！」";
+  t("末尾の孤立「」」は落ちる", draftToSendableText(orphan) === orphan.slice(0, -1), String(draftToSendableText(orphan)));
+  const twice = "はい😊！！\n初期費用確認させて頂きます！！」」";
+  t("「」」が2つ残っても落ちる", draftToSendableText(twice) === "はい😊！！\n初期費用確認させて頂きます！！", String(draftToSendableText(twice)));
+  const paired = "物件名は「メゾン加美北」\n募集状況確認させて頂きます！！物件は「メゾン加美北」";
+  t("対になっている「」」は触らない（末尾が」でも数が釣り合えば残す）", draftToSendableText(paired) === paired, String(draftToSendableText(paired)));
+  const inner = "「メゾン加美北」の募集状況確認させて頂きます！！";
+  t("文中の対はそのまま", draftToSendableText(inner) === inner);
+  t("純関数: 変わらない時は同じ文字列を返す", stripOrphanClosingQuote(inner) === inner);
+  t("純関数: 末尾の空白ごと落とす", stripOrphanClosingQuote("はい！！」 \n") === "はい！！");
 }
 
 console.log("── 画面と送信で同じ結果（四者同名）");

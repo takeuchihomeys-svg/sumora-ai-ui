@@ -75,7 +75,7 @@ import { isConditionFormMessage } from "./line-reply-prompts";
 // 2026-09-19 竹内（慶次事例）: ピックアップ宣言の条件に根拠があるか（落とさず warning）
 import { findUngroundedConditions } from "./pickup-condition-guard";
 // 2026-09-23 竹内「家賃交渉は基本できないものだからいれない」: 本文は書き換えず warning で指摘だけ出す（V15）
-import { isRentNegotiationPromise, customerAskedRentNegotiation } from "./rent-negotiation-guard";
+import { isRentNegotiationPromise, isMgmtDiscountNegotiationPromise, customerAskedRentNegotiation } from "./rent-negotiation-guard";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -2529,6 +2529,18 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
         message: "家賃・賃料の値下げをこれから交渉・確認するという約束を書いています（実送信12,417通中0通・会社として家賃交渉は基本できない）",
         evidence: rentSentence.slice(0, 60),
         suggestion: "この文を削除し「初期費用を最大限割引させて頂きます」またはご条件に合うお部屋のピックアップ宣言に置き換える" });
+    }
+    // 2026-09-23 S7 の実測: 「家賃」の語を避けた交渉の創作（「割引出来ないか、明日管理会社に交渉させて頂きます」「割引につきましても
+    //   管理会社に再度相談」「費用・条件交渉の可否確認させて頂きます」）が生成の 41.7% に出た。
+    //   実送信 365日（12,437通・候補99通を全部読んだ scripts/audit-s9-gap-lines.ts B）で 0通＝誤削除0 → block。
+    //   守る物（管理費の値下げ・支払時期・敷金礼金の減額・弊社代表への割引確認 0.1%）は rent-negotiation-guard 側で除外済み。
+    const mgmtSentence = text.split(/[\n。！!？?]/).map((s) => s.trim()).find((s) => isMgmtDiscountNegotiationPromise(s));
+    // 反証（2026-09-23）: お客様が自分から家賃の交渉を頼んだ時は、家賃・賃料の節に限り管理会社側の指摘も出さない（RENT 側と同じ免除）
+    if (mgmtSentence && !(customerAskedRentNegotiation([cust, custHist]) && /家賃|賃料/.test(mgmtSentence))) {
+      issues.push({ pass: "context_check", severity: "block", code: "MGMT_DISCOUNT_NEGOTIATION_PROMISE",
+        message: "管理会社・オーナーに割引・値引き・条件の交渉をこれからするという約束を書いています（実送信12,437通中0通。割引の相手は弊社代表だけ）",
+        evidence: mgmtSentence.slice(0, 60),
+        suggestion: "この文を削除し「初期費用は最大限割引させて頂いた金額です」または家賃を抑えられるお部屋のピックアップ宣言に置き換える（管理会社への交渉は書かない）" });
     }
   }
   return issues;

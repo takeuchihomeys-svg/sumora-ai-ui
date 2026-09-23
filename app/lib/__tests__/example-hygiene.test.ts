@@ -10,7 +10,7 @@
 //   **申込中のお客様への返信を作る時に管理会社宛ての文が手本として渡っていた**（手本8件・☆付きあり）。
 //
 // 線（scripts/audit-mgmt-phrase-line.ts）: お客様へのLINE 12,031通に **0通** ／ 手本に8件 ＝ 誤削除0。
-import { isUsableExampleText, isUsableAiDraft, isCustomerFacingExample, isGenerationFailureText } from "../example-hygiene";
+import { isUsableExampleText, isUsableAiDraft, isCustomerFacingExample, isGenerationFailureText, maskExampleAmounts } from "../example-hygiene";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -93,6 +93,23 @@ it("空・null は手本にしない", () => {
 
 it("ふつうの返信は手本にできる", () => {
   expect(isUsableExampleText("かしこまりました😊！！\nお部屋ご案内させて頂きます！！")).toBe(true);
+});
+
+// 2026-09-23 S4 の実測: 手本の金額（¥44,000／¥27,500）を一字一句写した → 注入の直前で伏せ字
+console.log("\n── 手本の金額は伏せ字にして渡す（S4） ──");
+it("¥44,000 と 27,500円 が伏せ字になる", () => {
+  expect(maskExampleAmounts("礼金は¥44,000、鍵交換代は27,500円となります！！")).toBe("礼金は¥〇〇、鍵交換代は〇〇円となります！！");
+});
+it("8.5万円・8万5千円も伏せる", () => {
+  expect(maskExampleAmounts("家賃8.5万円・管理費5,000円")).toBe("家賃〇〇円・管理費〇〇円");
+});
+it("号室・日付・時刻・徒歩分は触らない", () => {
+  const s = "303号室、9/22（火）14:00にご案内可能です！！駅徒歩7分・築5年";
+  expect(maskExampleAmounts(s)).toBe(s);
+});
+it("金額の無い文は1文字も変わらない", () => {
+  const s = "かしこまりました😊！！\nお部屋ご案内させて頂きます！！";
+  expect(maskExampleAmounts(s)).toBe(s);
 });
 
 console.log(`\n${failed === 0 ? "✅ 全 PASS" : "❌ 失敗あり"}  ${passed} passed / ${failed} failed`);

@@ -58,3 +58,10 @@ scripts/.yuma-backup.json
 
 # プロンプトの書き出し（検証用・お客様の会話が入る）
 .debug-prompt/
+
+# 2026-09-23 Workflow の一時ファイル（監査の中間出力・YUMA の控え・探りスクリプト）
+scripts/.out/
+scripts/.s*
+scripts/.yuma-backup-*.json
+scripts/.yuma-scene-gap-*
+scripts/_*.ts

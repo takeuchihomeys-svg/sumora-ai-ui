@@ -6,7 +6,7 @@
 // ⚠ テストに使う本文は実送信の形をそのまま使う。
 // 実行: npx tsx app/lib/__tests__/sent-shape.test.ts（全 PASS で exit 0）
 import {
-  classifySentKind, buildSentShapeNote, buildSentShapeNoteAll, checkSentShape,
+  classifySentKind, buildSentShapeNote, buildSentShapeNoteAll, checkSentShape, buildCustomerSceneStyleNote,
   NANITOZO_RATE, SHAPE, LINE_CHARS_P90,
 } from "../sent-shape";
 
@@ -142,6 +142,48 @@ describe("出来た文を検査する（本文は書き換えない）", () => {
   it("C5 空文字でも落ちない", () => {
     expect(checkSentShape("").lines).toBe(0);
     expect(checkSentShape(null).hasNanitozo).toBe(false);
+  });
+});
+
+// 2026-09-23 S1 の実測: 真の初回×条件フォームの何卒は 68.6%（180日 n=86）。場面表の 47.7% とは母集団が違う
+describe("D 真の初回の条件フォームには 68.6% を渡す（S1）", () => {
+  it("D1 firstContact=true → 68.6%・付ける方が普通", () => {
+    const n = buildCustomerSceneStyleNote("条件フォーム受領", { firstContact: true });
+    expect(n).toContain("68.6%");
+    expect(n).toContain("付ける方が普通");
+    expect(n).toContain("真の初回");
+  });
+  it("D2 firstContact=false → 従来の 47.7%（半々）", () => {
+    const n = buildCustomerSceneStyleNote("条件フォーム受領");
+    expect(n).toContain("47.7%");
+    expect(n).toContain("半々");
+  });
+  it("D3 firstContact=true でも他の場面は変わらない", () => {
+    expect(buildCustomerSceneStyleNote("質問", { firstContact: true })).toContain("5.6%");
+  });
+  it("D4 buildSentShapeNoteAll にも通る", () => {
+    expect(buildSentShapeNoteAll("条件フォーム受領", { firstContact: true })).toContain("68.6%");
+  });
+});
+
+// 2026-09-23 S2/S3/S7/S8 の実測: 言い回しの率（禁止・必須にせず率だけ渡す）
+describe("E 場面ごとの言い回しの率", () => {
+  it("E1 物件の画像・URLだけ → 確認出来次第 39%・全力サポート 7.6%・御見積書 30%", () => {
+    const n = buildCustomerSceneStyleNote("物件の画像・URLだけ");
+    expect(n).toContain("39%");
+    expect(n).toContain("7.6%");
+    expect(n).toContain("30%");
+  });
+  it("E2 短い了承・お礼 → 再宣言 5%・全力サポート 0.5%", () => {
+    const n = buildCustomerSceneStyleNote("短い了承・お礼");
+    expect(n).toContain("再宣言 5%");
+    expect(n).toContain("0.5%");
+  });
+  it("E3 条件提示 → 全力サポート 45%", () => {
+    expect(buildCustomerSceneStyleNote("条件提示")).toContain("45%");
+  });
+  it("E4 率の無い場面には言い回しの行が出ない", () => {
+    expect(buildCustomerSceneStyleNote("内覧の話")).notToContain("言い回しの率");
   });
 });
 

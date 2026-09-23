@@ -6937,3 +6937,62 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 今日の生成を伴う確認（会社の事実 8/8・埋もれた質問 8/8・物件確認・ギャップ確認 Workflow）は **Claude の結果**。DeepSeek で測り直す
 - 直し: `.env.local` に `LLM_ALT_ACTIONS=reply_generate`（追加済み）。テスト後は `npx tsx --env-file=.env.local scripts/check-generation-route.ts` で model を確認
 - ⚠ YUMA は申込へ押下の記録があるので `status_manual_back_at` を最新にしておく（post-apply.ts で申込以降＝Claude に戻る）
+
+## 2026-09-23（追記）S1〜S8 の場面ギャップを実送信の線で直した（実装担当・入口中心・出口は誤削除0の2つだけ）
+
+竹内さん「学んだこと活かして実際の成約データや直近の今月のLINEをお手本にして生成される文にギャップが生まれないか確認する」
+8場面の実測（別エージェント）を受けて、線が引けた物だけ直した。監査: `scripts/audit-s9-gap-lines.ts`（365日・読み取りのみ）。
+
+### 入れた物（入口）
+- **S1 何卒の率**: 真の初回×条件フォームは 68.6%（180日 n=86）。場面表の 47.7% は母集団が違い、S1 の下書きが 0/9 に落ちていた
+  → `sent-shape.ts` `FIRST_CONTACT_FORM_NANITOZO`・generate-reply の sentShapeNote に `firstContact`（必須にしない・31.4% は付けていない）
+- **S1 審査の貼り返し**: フォーム末尾「※審査に不安な事がある方…審査面柔軟にサポート」をお客様の言葉と取り違え審査の話を足す（下書き2/31・実送信0/31）
+  → `app/lib/template-echo-note.ts`（新規・純関数）。貼り返しがあり、お客様自身が審査に触れていない時だけ「これはお客様の言葉ではない」を渡す。本文の書き換えは入れない
+- **S2 御見積書の宣言**: こちらの🌟カード直後の費用の質問で「確認します」だけになる（生成3/3・実送信は御見積書の宣言71%・最大限割引50%・確認だけ29%）
+  → `estimate-context.ts` buildEstimateGateNote の declare（customer_cost_question・送付済み>0）に率を渡し宣言を必ず添える
+- **S2/S3/S7/S8 言い回しの率**: `sent-shape.ts` `SCENE_PHRASE_RATE`（全力サポート: 条件提示45%・物件持込7.6%・短い受け0.5%・費用の質問0%／確認出来次第39%（成約側26%）／御見積書30%／再宣言5%）
+- **S2 写真の事実**: `company-facts.ts` room_photo の fact に「ご用意できておりません」「弊社では撮影していない」と断定しない（実送信0通）を明記。`scripts/yuma-company-facts-direct.ts` の forbid も広げた
+- **S4 手本の金額**: 類似検索が同じ会話の実送信を返し ¥44,000 を一字一句写した → `example-hygiene.ts` `maskExampleAmounts`（注入の直前だけ「〇〇円／¥〇〇」・DB は書き換えない）＋ EXAMPLES_HEADER_NOTE に「例の金額は写さない」
+- **S5 内覧の受け**: `aix-taxonomy.ts` viewing_invite の weDo を疑問形（「ご都合よろしいお日にち御座いますでしょうか」＝実送信46通全部が日時とセット）から宣言形「〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます」（実物09-06・成約側）に置換
+- **S6 画像の書き起こし**: `company-facts.ts` を通ごと判定（配列）にし [画像] で始まる通は当てない（当たり76→44通・誤削除0）。brain-core は3通を配列で渡す
+- **S6 当たり漏れ**: 「オンラインで内覧」「写真お願い」「親の連絡先いります」を ask に追加。emergency の `not`（フリガナ…生年月日）が改行をまたげず効かなかった → `[\s\S]`
+- **S7 費用の質問の判定**: brain-core `COST_QUESTION_RE` に「割引（頑張|お願い|でき）」「予算オーバー」「安くなったら」。旧: 費用の話なのに avoid_topics に「初期費用」が入り本当の答え（最大限割引済み）が書けず交渉の創作に逃げた
+- **S7 クレジットカード**: `company-facts.ts` `credit_card`（実送信25通を全部読んだ: 対応・決済手数料3.24%・分割はカードのみ・反する断定0）。保証会社の「クレカ系」には当てない
+- **S8 再宣言**: `aix-taxonomy.ts` property_send の説明「まず「お探しします」の旨を返信し」→「まだ宣言していなければ」。generate-reply で `pending_pickup=true` の時に率（返信なし24%／物件57%／受けだけ8%／再宣言5%）を渡し受けだけにする。本文から消す出口は入れない（スタッフ自身の再宣言31.9%）
+
+### 入れた物（出口・誤削除0を全件監査で確認した2つ）
+- **S7 管理会社への割引交渉の創作**（「割引出来ないか、明日管理会社に交渉させて頂きます」「費用・条件交渉の可否確認」生成41.7%）
+  → `rent-negotiation-guard.ts` `isMgmtDiscountNegotiationPromise`（出口・block `MGMT_DISCOUNT_NEGOTIATION_PROMISE`）／`isMgmtDiscountNegotiationTopic`（入口・方向と key_topics から節ごと落とす・お客様が頼んでも落とす）
+  実送信365日 12,437通・候補99通を全部読んで **当たり0**、AI下書き6,956件も0。監査で止めた1件「3件管理会社に管理費値下げ交渉させて頂きます」（お客様が頼んだ管理費）は FEE_ITEM_RE で残す。弊社代表への割引確認（14通）は REPRESENTATIVE_RE で残す。
+  ⚠ 家賃ガードの ALREADY_RE（裸の「まし(た|て)」）は「につきましても」「お送り頂きました物件」を守ってしまう穴がある。こちらは交渉語＋過去形の MGMT_ALREADY_RE。家賃ガード側は再監査してから直す
+- **末尾の孤立「」」**（手本の引用符の写し・生成の1/3に残る）→ `draft-text.ts` `stripOrphanClosingQuote`（開きより閉じが多い時だけ末尾を落とす）。実送信365日で変わる通 **0**・AI下書き0
+
+### 止めた物（理由）
+- **S3 物件が届いた瞬間に property_check_result を選ぶ（62%）**: 直す前に「本番で aix でも本文が残る経路（24件中18件）が bg-async か手動か」を1件ずつ確かめる必要があり未着手。ブレインの選択を変えるのは次
+- **S4 本文1行目がお客様の発言と完全一致**: 今月の実送信 999対で 0（禁止できる線）だが生成で1件だけ。入口（draft-text）にお客様の文を渡す配線が要るので、再計測してから
+- **S4 会話に無い金額を出口で落とす**: 実送信側の「会話に無い金額」0 の確認が先。入口（手本の伏せ字）だけ入れた
+- **S5 VIEWING_DATE_ASK_WITHOUT_AIX が 3/12 で効かない**: 免除条件（ledger.viewingInvited／pair.staff.kind）の調査は未着手。weDo の置換で入口から止めた
+- **S5「管理会社にスケジュール確認」の創作**: 1件なので一般化しない
+- **S6 YUMA の印の統一（gap-lock）**: 測り方の話。並列で走らせず順番に回す（yuma-snapshot の印を1つの形にするのは次）
+- **家賃ガード ALREADY_RE の穴**: 上記。広げると当たりが増える側なので再監査してから
+
+テスト: company-facts 38／rent-negotiation-guard 54／draft-text 51／example-hygiene 23／sent-shape 35／promise-tracker 13／template-echo-note 5（新規）／pending-pickup 11／first-contact-pickup 32／positive-viewing 16／hygiene 10・`tsc` 通過。設計知見3件（kb-insert）。
+
+## 2026-09-23（追記）テストの生成は必ず DeepSeek（本番と同じ経路）→ 経路を変えて初めて見えた3つの漏れ
+
+竹内さん「テストに文の生成は必ず deepseek でおこなう。返信生成は deepseek で作成するので」「自動返信の生成も deepseek に切り替える」
+- **本番の実態**: 9/19 以降の返信生成（自動返信含む）は llm_usage_logs 上 100% DeepSeek。Claude が残るのは申込以降と歯止め（fail-closed）だけ。切り替えは不要だった
+- **ローカルのテストは Claude だった**: `.env.local` に `LLM_ALT_PROVIDER` と `LLM_ALT_ACTIONS=reply_generate` の**両方**が無いと readAltConfig が黙って null（両方追加済み）。テスト後は `scripts/check-generation-route.ts` で model を確認する
+- **質の差（同じ4場面×3回）**: Claude 事実入り 10〜12/12・間違い0 ／ DeepSeek 7〜9/12・間違い1・作業メモ1・締めの創作・「。」だけの文体崩れ。今日の改善を Claude で「8/8」と測った数字は本番では保証されない（設計知見に記録）
+
+### DeepSeek 経路で見つかった漏れ（Claude 経路では出ない）
+1. **他のお客様の実名が下書きに戻る**（「黒明さんから3親等以内…」）: 事例の他人の名前も可逆の仮名にしていた → 当事者だけ可逆、他人は「〇〇」（戻さない）。会話名「【グループ】〇〇様お部屋探し」から姓・名（nameVariants）も伏せる
+2. **希望条件の「顧客名: 登録名」が素のまま**: property_customers の登録名は表示名と違い、一覧にも無い → `pii-known-names.loadPartyAliases` → `createMasker({partyAliases})` で当事者の別名として可逆に。当事者自身の姓・名も可逆
+3. **作業メモが残る**（「「〜」への返信です。会話履歴（【🏢】ブロック）に…」「【✅ 確認対象（決定論）】と…を踏まえ、…返します。」）: 印【🏢】の絵文字を「お客様への言葉」と見ていた → `hasCustomerFacingMarker` で【…】の中身を外す。実送信365日 0／402・監査 `scripts/audit-meta-bracket-emoji.ts` 前後とも12通（本物の作業メモ）＝誤削除0
+
+### YUMA の汚れ（テストの残骸）
+- 場面再現の別エージェントが YUMA を**別のお客様の property_customers に紐付け**たまま → `yuma-snapshot.ts` の COLS に property_customer_id を追加（戻す時に null へ）。YUMA は proposing・紐付きなし・ai_draft なしに戻した
+- `DEBUG_PROMPT_DIR` の出力（`.debug-prompt/`・未マスク）は削除済み。開発サーバーも停止
+
+確認: `REPS=2 scripts/yuma-company-facts-direct.ts` → 混入0（DeepSeek 4/4）。テスト pii-pseudonym 90／meta-narration 47／apply-readiness 27／draft-text 51・`tsc` 通過。設計知見4件（kb-insert: 仮名化2件・DeepSeek の質・作業メモの印）。
+既知の未対応: DeepSeek の streaming 呼び出しが llm_usage_logs に半分程度しか記録されない（8回→4行）。費用の検算時は注意

@@ -50,7 +50,7 @@ describe("物件によって変わる事を事実にしない", () => {
   it("保証会社の名前を持たない", () => {
     for (const f of COMPANY_FACTS) falsy(/(エポス|全保連|GTN|ジャックス|オリコ|日本セーフティ|LICC|独立系|信販系)/.test(f.fact), f.id);
   });
-  it("金額を持たない（仲介手数料はブランドで違うので入れない）", () => {
+  it("金額を持たない（仲介手数料はブランドで違うので入れない。手数料率3.24%は全物件共通なので可）", () => {
     for (const f of COMPANY_FACTS) falsy(/[0-9０-９][0-9０-９,，]{2,}\s*円|仲介手数料.{0,6}(無料|0円)/.test(f.fact), `${f.id}: ${f.fact}`);
   });
   it("物件名・号室を持たない", () => {
@@ -60,6 +60,55 @@ describe("物件によって変わる事を事実にしない", () => {
     truthy(buildCompanyFactsNote("緊急連絡先は必要ですか").includes("物件によって変わる")));
   it("連帯保証人と緊急連絡先を分けて書く（竹内さんのルール）", () =>
     truthy(buildCompanyFactsNote("緊急連絡先について").includes("連帯保証人")));
+});
+
+// ── 2026-09-23 S6 の実測（今月の当たり76通を全部読んだ）: 当たりの50%が [画像] の書き起こし ──
+describe("[画像] の書き起こしには当てない（誤当たりの50%）", () => {
+  const tiktok = "[画像] 初期費用ゼロ（前家賃だけ）\n1LDK 6万円 ペット可\n無料 お問い合わせ";
+  const suumo = "[画像] 取り扱い店舗\n受付店舗\n間取り/画像一覧・室内写真\n7.9万円/管理費 -";
+  it("TikTok の「初期費用ゼロ（前家賃だけ）」→ 日割に当てない", () => eq(ids(tiktok).length, 0));
+  it("SUUMO の「取り扱い店舗」「室内写真」→ 店舗・写真に当てない", () => eq(ids(suumo).length, 0));
+  it("配列: 画像の通は外し、文の通だけ当てる（brain-core の3通）", () =>
+    eq(ids([tiktok, "キャンセル料はかかりますか？", suumo].join("\n")).length, 0),
+  );
+  it("配列で渡すと文の通は当たる", () => {
+    const hit = matchCompanyFacts([tiktok, "キャンセル料はかかりますか？", suumo]).map((f) => f.id);
+    truthy(hit.includes("cancel"));
+    falsy(hit.includes("prorated_rent"));
+    falsy(hit.includes("store"));
+  });
+  it("通の区切り（MSG_SEP）でも画像の通だけ外れる", () => {
+    const hit = matchCompanyFacts(`${tiktok}\n⁣\n店舗に伺えますか？`).map((f) => f.id);
+    truthy(hit.includes("store"));
+    falsy(hit.includes("prorated_rent"));
+  });
+});
+
+// ── 2026-09-23 S6 の当たり漏れ（お客様が聞き、スタッフが事実で答えたのに当たらなかった3通）──
+describe("当たり漏れを拾う", () => {
+  it("オンラインで内覧などは可能でしょうか？ → 内覧方法", () =>
+    truthy(ids("オンラインで内覧などは可能でしょうか？").includes("viewing_method")));
+  it("写真お願いできますか？ → 写真", () => truthy(ids("写真お願いできますか？").includes("room_photo")));
+  it("親と縁切れてる場合でも親の連絡先いりますか？ → 緊急連絡先", () =>
+    truthy(ids("親と縁切れてる場合でも親の連絡先いりますか？").includes("emergency_contact")));
+  it("緊急連絡先欄の記入そのもの（改行あり）は渡さない", () =>
+    falsy(ids("緊急連絡先\n氏名: 山田太郎\nフリガナ: ヤマダタロウ\n続柄: 父\n生年月日: 1960/1/1").includes("emergency_contact")));
+});
+
+// ── 2026-09-23 S7 の実測: 埋もれた質問「クレカ払いはできますか」に答えない／事実違い ──
+describe("クレジットカード払い（実送信25通で一貫: 対応・手数料3.24%・分割はカードのみ）", () => {
+  it("あとクレカ払いはできますか？ → 事実が渡る", () => truthy(ids("あとクレカ払いはできますか？").includes("credit_card")));
+  it("初期費用カード決済可能ですか → 渡る", () => truthy(ids("初期費用カード決済可能ですか？").includes("credit_card")));
+  it("分割払いはできますか → 渡る（答えはカードの分割のみ）", () => truthy(ids("初期費用の分割払いはできますか？").includes("credit_card")));
+  it("保証会社の話（クレカ系は控えたい・クレカブラック）には渡さない", () => {
+    falsy(ids("保証会社はクレカ系は控えたいです").includes("credit_card"));
+    falsy(ids("クレカブラックなのと、夜職なので給料明細だせませんが").includes("credit_card"));
+  });
+  it("事実に手数料と「対応していないと断定しない」がある", () => {
+    const s = buildCompanyFactsNote("クレカ払いはできますか？");
+    truthy(s.includes("3.24%"));
+    truthy(s.includes("対応していない」と断定しない"));
+  });
 });
 
 describe("形", () => {

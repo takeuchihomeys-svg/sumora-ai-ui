@@ -34,7 +34,7 @@ import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBrea
 import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
 // 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキング」「申込以降は渡さなくて大丈夫」
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
-import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
+import { loadKnownCustomerNames, loadPartyAliases } from "@/app/lib/pii-known-names";
 import { willRouteAlt } from "@/app/lib/llm-alt-provider";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
 import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
@@ -910,6 +910,8 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
       conversationId: conversationId ?? action,
       customerName,
       knownNames: await loadKnownCustomerNames(),
+      // 2026-09-23: 希望条件の「顧客名: 登録名」（property_customers）は表示名と違うので当事者の別名として可逆に伏せる
+      partyAliases: await loadPartyAliases(conversationId),
     });
     console.log("[aix/action] alt-provider へ回す（読み替えあり）:", JSON.stringify({ action, conversationId }));
   } catch (e) {

@@ -13,7 +13,8 @@ import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { buildBrainSpecificNote } from "@/app/lib/brain-specific-note";
 import { buildCompanyFactsNote } from "@/app/lib/company-facts";
-import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
+import { buildTemplateEchoNote } from "@/app/lib/template-echo-note";
+import { loadKnownCustomerNames, loadPartyAliases } from "@/app/lib/pii-known-names";
 
 /**
  * キャッシュの印（cache_control）が付いていないブロックだけを読み替える。
@@ -221,7 +222,7 @@ import { viewingReportNoteForReply, type ViewingReport } from "@/app/lib/viewing
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-11 竹内方針1〜5（統合設計 §7）: 生成失敗文の文言と「正解例として使えるか」の唯一の判定
 // 2026-09-20 竹内: isCustomerFacingExample — 管理会社・オーナー宛ての文を手本にしない（STATE_SEARCH_ALIASES.applying が acknowledge_check を含むため混ざっていた）
-import { GENERATION_FAILURE_TEXT, isUsableExampleText, isCustomerFacingExample, fixExampleWeekdays } from "@/app/lib/example-hygiene";
+import { GENERATION_FAILURE_TEXT, isUsableExampleText, isCustomerFacingExample, fixExampleWeekdays, maskExampleAmounts } from "@/app/lib/example-hygiene";
 // 2026-09-11 竹内方針4・5: few-shot 注入前の「承知→かしこまりました」「すぐに除去」（後処理・検査と同じ定義）
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（曜日表をプロンプトに渡し LLM に曜日を計算させない）
@@ -1155,7 +1156,8 @@ function buildGenerationMessages(
     ? `\n【🚫 ピックアップ宣言の繰り返し禁止（最優先・フェーズ別パターン/条件変更検出より上位）】
 スタッフは直前の返信で既に「物件をピックアップしてお送りします」と約束済み。今回のお客様のメッセージはその約束に対する感謝・承諾のみ。
 → 「ピックアップしてお送りさせて頂きます」宣言・エリアや家賃等の条件列挙・「初期費用も最大限割引」文を絶対にもう一度生成しない（二重宣言になる）
-→ 返信は短い確認文のみ（2行以内・挨拶ルールに従う）。例:「はい😊！！ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！」
+→ 返信は短い確認文のみ（2行以内・挨拶ルールに従う）。例:「はい😊！！何卒よろしくお願い致します😌！！」
+　（2026-09-23 反証: 旧の例文「ピックアップ出来次第お送りさせて頂きますので」は再宣言そのもので、生成の50%がこれを写していた。実送信の再宣言は5.4%・受けだけ8.1%・返信なし24%・次は物件カード57%）
 → 実際の物件送付はこの後AIX「物件ピックアップした」で行うため、AI返信で物件・条件の話を展開しない`
     : "";
 
@@ -1255,7 +1257,11 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //   ⚠ ここも previousSendNote と同じく userPrompt の**一番最後**（前に置くと骨格に負ける）。
   //   テンプレート最適化（AIX の文を整える経路）は AIX 側の型があるので渡さない。
   // 2026-09-22 竹内（何卒・絵文字・約束の場面）: お客様の発言の場面は書く前に決まっているので、その場面の実測（何卒・絵文字の率）も渡す
-  const sentShapeNote = templateNote ? "" : buildSentShapeNoteAll(customerSceneOf(customerOwnWords(customerMessage), { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }));
+  // 2026-09-23 S1 の実測: 真の初回×条件フォームの何卒率は 68.6%（180日 n=86）で、場面表の 47.7% とは母集団が違う → 真の初回はその率を渡す
+  const sentShapeNote = templateNote ? "" : buildSentShapeNoteAll(
+    customerSceneOf(customerOwnWords(customerMessage), { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }),
+    { firstContact: isFirstEverReply },
+  );
 
   // ─── 2026-09-21 竹内「実際のスタッフが送るような文が生成されていない可能性があるってこと？」───
   //   下書きと実送信の差分で、スタッフが消す1位・足す1位が**同じ意味で表記だけ違う**と分かった
@@ -2393,7 +2399,7 @@ const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C:
 //     「本日はご内覧頂きありがとうございました！！」の手本が載って写された。
 //   新は**行動台帳の事実（場面）を先に見る**（viewingInvited / meetingPlaceSent / propertiesSentCount / estimateSent）。
 // 実例ヘッダー（pgvector経路・フォールバック経路で共通。文体のみ再現・業務内容は現在の会話に従う）
-const EXAMPLES_HEADER_NOTE = "— 文体・テンポ・感嘆符・絵文字・長さのみをこの例から再現すること。業務内容（撮影／確認／ご査収／ご案内日時／見積送付 等の約束）は例の丸写し禁止。各例の業務語彙はその会話固有の前提（直前のスタッフ約束・送付済み物件・確定日程）に依存しており、現在の会話履歴に同じ前提が無ければ真似しない（会話内容・文脈は当該顧客の履歴を最優先）。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n";
+const EXAMPLES_HEADER_NOTE = "— 文体・テンポ・感嘆符・絵文字・長さのみをこの例から再現すること。例の金額は伏せ字（〇〇）にしてある＝金額はこの会話の履歴・御見積書にある数字だけを書き、例から写さない。業務内容（撮影／確認／ご査収／ご案内日時／見積送付 等の約束）は例の丸写し禁止。各例の業務語彙はその会話固有の前提（直前のスタッフ約束・送付済み物件・確定日程）に依存しており、現在の会話履歴に同じ前提が無ければ真似しない（会話内容・文脈は当該顧客の履歴を最優先）。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n";
 // 前提ラベルも example-premise.ts（同じルールの一覧）から作る＝四者同名（落とす語と注記が必ず揃う）
 
 async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, staffHistoryForPremise?: string | null, brainFresh = true, premiseFacts?: PremiseFacts | null): Promise<string> {
@@ -2468,7 +2474,8 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
             const premise = derivePremiseLabel(ex.sent_reply ?? "");
             // 2026-09-11 竹内方針4・5（E4-f）: 実例の「承知しました」「すぐに」は注入前に決定論で正規化（DB の本文は書き換えない）
             // 2026-09-12 竹内方針D: 曜日の誤りは日付を正として直す（RPC の戻りに created_at が無いので、食い違う曜日だけ外す）
-            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${fixExampleWeekdays(normalizeBannedPhrasing(ex.sent_reply ?? "").text)}」`;
+            // 2026-09-23 S4: 手本の金額は伏せ字（同じ会話の実送信が類似検索で戻り ¥44,000 等を一字一句写していた。他の会話なら他人の金額の創作）
+            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${maskExampleAmounts(fixExampleWeekdays(normalizeBannedPhrasing(ex.sent_reply ?? "").text))}」`;
           }).join("\n\n");
         }
       }
@@ -2555,7 +2562,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
       const premise = derivePremiseLabel(ex.sent_reply ?? "");
       // 2026-09-11 竹内方針4・5: 注入前に承知→かしこまりました・すぐに除去（DB の本文は書き換えない）
       // 2026-09-12 竹内方針D: 曜日の誤りは書いた日（created_at）の暦で、日付を正として直す
-      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${fixExampleWeekdays(normalizeBannedPhrasing(ex.sent_reply ?? "").text, ex.created_at)}」`;
+      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${maskExampleAmounts(fixExampleWeekdays(normalizeBannedPhrasing(ex.sent_reply ?? "").text, ex.created_at))}」`;
     }).join("\n\n");
 }
 
@@ -3007,7 +3014,9 @@ export async function POST(req: NextRequest) {
   // brainMetaDirect 経由（bg-async の brain直列実行後）はすでに bg-async 側でチェック済みのため
   // externalBrainGate !== null の場合はスキップ不要。
   // ─── 2026-09-19 竹内「自動返信モードのお客さんの返信はクロードのAPI使う形でいく」───────────────
-  //   自動返信オンの会話の下書きは**人の目を通さずに送る**ので、モデルを替えない（印を付けて llm-alt-provider が守る）。
+  //   → 2026-09-21 竹内「自動返信の部分もDeepsheekに切り替える」で llm-alt-provider の allowAutoSend 既定 on。
+  //     2026-09-23 竹内「自動返信の生成もdeepseekに切り替える」: 実測（llm_usage_logs）で 9/19 の切替以降、本番の返信本文の生成は
+  //     自動返信オンの会話を含めて 100% DeepSeek（Claude に残るのは申込以降と失敗時の戻りだけ）。印はその判断の記録として残す。
   //   下の post_apply ガードは手動呼び出しの時しか走らない（自動の下書きは bg-async 経由で通らない）ので、
   //   ここで独立して読む。切り替えていない時は無駄なクエリになるが、**送ってしまってからでは戻せない**ので確実さを取る。
   // ─── 2026-09-19 竹内「申込以降はいれない」───────────────────────────────────────
@@ -4468,6 +4477,12 @@ export async function POST(req: NextRequest) {
           lines.push(dir
             ? `- 推奨アクション（${AIX_BUTTON_LABELS[effectiveAction] ?? effectiveAction}）: ${dir.direction}。WE DO例:「${dir.weDo}」。禁止: ${dir.forbid}`
             : `- 推奨アクション: ${AIX_BUTTON_LABELS[effectiveAction] ?? effectiveAction}（この場面に合った受付・宣言文のみ。AIX操作語はお客様向け本文に書かない）`);
+          // 2026-09-23 S8 の実測（未履行のピックアップ宣言の後の短い了承・生成12通）: 同じ約束の3通目（「ピックアップ出来次第お送りさせて頂きます」の再宣言）を
+          //   50% で書いた。実送信の同場面は 返信なし24.3%／物件カード56.8%／「はい！！」＋何卒だけ8.1%／再宣言5.4%。
+          //   本文から消す出口は入れない（スタッフ自身の再宣言も 31.9% あり誤削除になる）。率を渡して受けだけにする（入口）。
+          if (effectiveAction === "property_send" && brainMeta?.pending_pickup === true) {
+            lines.push(`- ⚠ 直前のピックアップ宣言がまだ果たされていない（物件は AIX で送る）。この場面の実送信: 返信なし24%／物件そのものを送る57%／「はい！！」＋何卒の受けだけ8%／同じ宣言の再宣言5%。**再宣言（「ピックアップ出来次第お送りします」「募集出次第お送りします」）は書かず、受けだけ（「はい！！」＋締め）の2行以内**にする`);
+          }
           // property_check_result 時は propertyFactGateNote の保証会社名断言禁止を解除して明示を強制
           if (effectiveAction === "property_check_result") {
             lines.push(`- ✅ 保証会社名・審査難度の明示（必須・propertyFactGateNote例外）: 管理会社確認済みの結果報告として、保証会社名と審査難度（「審査通過しやすい」または「審査厳し目」）を必ず1文付加すること。例: 「こちらのお部屋の保証会社は〇〇という比較的審査通過しやすい保証会社となっております！！」または「〇〇という審査やや厳し目の保証会社となります！！」。key_topicsに保証会社名がある場合は必ずその名前を使う。propertyFactGateNoteの「保証会社名断言禁止」はこのアクション時は適用されない`);
@@ -4684,6 +4699,9 @@ export async function POST(req: NextRequest) {
       //   ⚠ 物件・保証会社によって変わる事は入れない（竹内「物件によって保証会社に違いあるから適当に答えない」）
       const companyFacts = buildCompanyFactsNote(message);
       if (companyFacts) lines.push(companyFacts.trim());
+      // 2026-09-23 S1 の実測: フォームの貼り返し（審査面柔軟にサポート）をお客様の言葉と取り違え、審査の話を足す下書き 2/31（実送信 0/31）
+      const templateEcho = buildTemplateEchoNote(message);
+      if (templateEcho) lines.push(templateEcho);
       // 2026-09-23 生成プロンプトを書き出して分かった穴:
       //   お客様の発言が「承知いたしました」等で始まると場面が【検討中フォロー】と読まれ、
       //   必ず含める内容が「急かさない受け止め＋ピックアップ宣言」になって、事実はプロンプトに
@@ -5155,6 +5173,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         conversationId: conversationId ?? "reply",
         customerName: typeof customerName === "string" ? customerName : null,
         knownNames: await loadKnownCustomerNames(),
+        // 2026-09-23: 希望条件の「顧客名: 登録名」（property_customers）は表示名と違うので当事者の別名として可逆に伏せる
+        partyAliases: await loadPartyAliases(conversationId),
       })
       : null;
     const genMessages = replyMasker ? maskUncachedBlocks(messages, replyMasker) : messages;

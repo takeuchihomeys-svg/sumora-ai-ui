@@ -7,7 +7,9 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 const FILE = "scripts/.yuma-backup.json";
 // 2026-09-23: brain_strategy（会話全体の戦略）も控える（戦略の作り直しのテストで書くため）
-const COLS = "id, customer_name, status, ai_draft, ai_draft_check, suggested_aix_meta, last_brain_meta, brain_analyzed_at, brain_strategy, draft_pending_at, draft_attempted_at, last_message, last_sender, updated_at";
+// 2026-09-23: property_customer_id も控える。場面再現のテストで YUMA が**別のお客様の登録（property_customers）**に紐付き、
+//   希望条件の「顧客名: 〇〇」として本名が DeepSeek 経路の下書きに出た。戻す時に紐付きも元（null）へ戻す
+const COLS = "id, customer_name, status, ai_draft, ai_draft_check, suggested_aix_meta, last_brain_meta, brain_analyzed_at, brain_strategy, draft_pending_at, draft_attempted_at, last_message, last_sender, property_customer_id, updated_at";
 
 async function main() {
   const cmd = process.argv[2] ?? "show";

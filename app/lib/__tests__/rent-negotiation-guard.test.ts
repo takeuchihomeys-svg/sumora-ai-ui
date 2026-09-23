@@ -8,6 +8,8 @@ import {
   customerAskedRentNegotiation,
   stripRentNegotiation,
   stripRentNegotiationFromList,
+  isMgmtDiscountNegotiationPromise,
+  isMgmtDiscountNegotiationTopic,
 } from "../rent-negotiation-guard";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
@@ -140,6 +142,65 @@ describe("key_topics から落とす", () => {
     const r = stripRentNegotiationFromList(["家賃交渉の確認", "新着物件のピックアップ宣言", "初期費用の割引の案内"]);
     eq(r.items.length, 2);
     eq(r.dropped.length, 1);
+    eq(r.items[0], "新着物件のピックアップ宣言");
+  });
+});
+
+// ── 2026-09-23 S7 の実測: 「家賃」の語を避けた交渉の創作（管理会社への割引交渉）──
+//   実送信 365日（12,437通・候補99通を全部読んだ）で当たり 0 ＝ 誤削除0。監査で止めた1件（管理費の値下げ）は残す。
+describe("管理会社への割引・条件交渉の予告（S7 の生成に出た実物）→ 落とす", () => {
+  it("A2: 割引出来ないか、明日管理会社に交渉させて頂きます", () =>
+    truthy(isMgmtDiscountNegotiationPromise("こちらのお部屋の初期費用につきましても、割引出来ないか、明日管理会社に交渉させて頂きます")));
+  it("A2: 割引につきましても管理会社に再度相談させて頂きます", () =>
+    truthy(isMgmtDiscountNegotiationPromise("割引につきましても管理会社に再度相談させて頂きます")));
+  it("D: 費用・条件交渉の可否確認させて頂きます", () =>
+    truthy(isMgmtDiscountNegotiationPromise("お送り頂きました物件の募集状況と費用・条件交渉の可否確認させて頂きます")));
+  it("オーナーに値引きを打診（言い換え）", () =>
+    truthy(isMgmtDiscountNegotiationPromise("オーナーに値引きが可能か打診させて頂きます")));
+  it("入口: 名詞句「管理会社への割引交渉」も落とす", () =>
+    truthy(isMgmtDiscountNegotiationTopic("管理会社への割引交渉の可否を確認して回答する")));
+});
+
+describe("管理会社への交渉で落とさない物（実送信に実在する形）", () => {
+  it("監査で止めた1件: 管理費の値下げ交渉（お客様が頼んだ後・実送信）", () =>
+    falsy(isMgmtDiscountNegotiationPromise("3件管理会社に管理費値下げ交渉させて頂きます😊")));
+  it("弊社代表への割引確認（実送信 14通・許される相手は代表だけ）", () =>
+    falsy(isMgmtDiscountNegotiationPromise("弊社代表に更に初期費用割引可能か確認させていただき、追加で割引額増やすことが出来ました")));
+  it("過去形の結果報告", () =>
+    falsy(isMgmtDiscountNegotiationPromise("管理会社に交渉させていただきましたが初期費用の減額等は考えていないとのことです")));
+  it("敷金礼金の減額交渉（減額は当てない・実送信3通）", () =>
+    falsy(isMgmtDiscountNegotiationPromise("管理会社、オーナーさんに敷金礼金の減額交渉させていただきます😊")));
+  it("設備・ペットの「条件を確認」（条件交渉ではない）", () =>
+    falsy(isMgmtDiscountNegotiationPromise("管理会社にペット飼育の詳細条件と別途料金の有無について確認させていただきます")));
+  it("入居日の交渉（割引ではない）", () =>
+    falsy(isMgmtDiscountNegotiationPromise("明日管理会社に10月1日ご入居可能か交渉させて頂きます")));
+  it("支払方法の交渉（振込）", () =>
+    falsy(isMgmtDiscountNegotiationPromise("審査時に管理会社・オーナーさんに口座振り込みでの家賃支払いが問題ないか交渉させていただきます")));
+  it("初期費用は最大限割引済み（会社の本当の答え）", () =>
+    falsy(isMgmtDiscountNegotiationPromise("現在の金額が最大限割引させて頂いた金額となります")));
+});
+
+describe("方向から落とす（管理会社への割引交渉はお客様が頼んでいても落とす）", () => {
+  it("節ごとに落として残りを返す", () => {
+    const r = stripRentNegotiation("追加割引可否を管理会社に確認して回答し、条件に合う新着のお部屋もピックアップする");
+    eq(r.text, "条件に合う新着のお部屋もピックアップする");
+    truthy(r.dropped);
+  });
+  it("customerAsked=true でも管理会社への割引交渉の節は落ちる（家賃の節は通る）", () => {
+    const r = stripRentNegotiation("家賃の減額交渉が可能か確認し、割引についても管理会社に相談する", { customerAsked: true });
+    eq(r.text, "家賃の減額交渉が可能か確認し");
+    truthy(r.dropped);
+  });
+  // 反証（2026-09-23）: お客様が家賃の交渉を頼んだ時の正当な返し「管理会社に家賃の値下げが可能か確認」は管理会社側でも落とさない
+  it("customerAsked=true なら「管理会社に家賃の値下げが可能か確認」は落とさない（家賃の節）", () => {
+    const d = "管理会社に家賃の値下げが可能か確認し、結果をご連絡する";
+    const r = stripRentNegotiation(d, { customerAsked: true });
+    eq(r.text, d);
+    eq(r.dropped, null);
+  });
+  it("key_topics でも同じ", () => {
+    const r = stripRentNegotiationFromList(["管理会社への割引交渉", "新着物件のピックアップ宣言"], { customerAsked: true });
+    eq(r.items.length, 1);
     eq(r.items[0], "新着物件のピックアップ宣言");
   });
 });

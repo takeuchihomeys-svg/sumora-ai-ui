@@ -74,3 +74,16 @@ export function isCustomerFacingExample(s: string | null | undefined): boolean {
   if (!t) return false;
   return !TO_MANAGEMENT_RE.test(t);
 }
+
+// ─── 2026-09-23 S4 の実測（見積書後の反応・生成30通）───
+// 手本（ai_reply_examples）の金額・物件名をそのまま写す: J で ¥44,000／¥27,500 が実送信と一字一句同じ
+// （pgvector の類似検索が同じ会話の sent_reply を返していた）。他の会話に当たれば**他人の金額の創作**になる。
+// 出口（本文から会話に無い金額を落とす）は実送信側の「会話に無い金額」が 0 かを先に測る必要があるので入れない。
+// 入口は今すぐ可: 手本の金額を伏せ字にして渡す（DB の本文は書き換えない・注入の直前だけ）。
+//   金額の形: ¥44,000／44,000円／4.4万円／8万5千円。伏せ字は他の weDo と同じ「〇〇」（final-check は本文の 〇〇 を落とすので写しても出ない）。
+/** 円・¥ の金額（数字が2桁以上の物だけ。号室・日付・時刻・人数・㎡・徒歩分は当てない） */
+const AMOUNT_RE = /[¥￥]\s*[0-9０-９][0-9０-９,，.．]*(?:円)?|[0-9０-９][0-9０-９,，.．]*(?:万|千)?[0-9０-９,，]*円/g;
+export function maskExampleAmounts(text: string): string {
+  if (!text) return text;
+  return text.replace(AMOUNT_RE, (m) => (/[¥￥]/.test(m) ? "¥〇〇" : "〇〇円"));
+}

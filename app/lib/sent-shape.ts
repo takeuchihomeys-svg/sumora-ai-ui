@@ -176,14 +176,42 @@ export const EMOJI_LINE_RATE = {
   "日時": 26.5, "1行目の開口語": 20.8, "金額": 20.4, "住所・待ち合わせ": 10.6, "説明・報告（〜となります／〜です）": 1.7, "URL": 0.0,
 } as const;
 
+/**
+ * 真の初回（スタッフの送信が1件も無い会話）× 条件フォーム の何卒率。
+ * 2026-09-23 S1 の実測（scripts/audit-s1-first-contact-gap.ts・180日・真の初回×条件フォーム n=86）: 68.6%（今月 n=31 は 64.5%）。
+ *   上の SCENE_STYLE「条件フォーム受領」47.7% は2回目以降のフォーム受領も混ざった母集団で、S1 の下書きは 09-19 以降 0/9 に落ちていた
+ *   （率を渡し始めた 09-21〜22 と時期が一致）。母集団が違う数字を渡していたので、真の初回にはこちらの率を渡す。必須にはしない（31.4% は付けていない）。
+ */
+export const FIRST_CONTACT_FORM_NANITOZO = { n: 86, nanitozo: 68.6, emoji: 100 } as const;
+
+/**
+ * 場面ごとの言い回しの率（2026-09-23 S2/S3/S7/S8 の実測。禁止・必須にせず率だけ渡す）。
+ *   全力サポート＝「〇〇さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます」の締め。
+ *   実送信の母集団: 条件提示（条件変更）45%／物件の画像・URLだけ 7.6%／短い了承・お礼（未履行の宣言後）0.5%／質問（費用）0%・全体 18.8%。
+ *   「確認出来次第ご連絡させて頂きます」: 物件を持ってきた場面の実送信 39%（成約側 26%）。生成は 92% で書いていた。
+ *   御見積書の宣言: 物件を持ってきた場面 30%（費用の質問つきはそれ以上）。
+ */
+export const SCENE_PHRASE_RATE: Partial<Record<CustomerScene, string>> = {
+  "条件提示": "「見つかるまで全力でサポート」の締めは実送信 45%（半々。費用の質問への返事では 0%＝付けない）",
+  "物件の画像・URLだけ": "「確認出来次第ご連絡させて頂きます」は実送信 39%（成約した会話 26%）＝毎回は書かない。受領＋確認宣言の2行で終える形が多い。「見つかるまで全力でサポート」は 7.6%＝付けない方が普通。「最大限割引した御見積書」の宣言は 30%",
+  "短い了承・お礼": "直前のこちらの宣言（ピックアップ・確認）がまだ果たされていない時、実送信は 返信なし 24%／物件そのものを送る 57%／「はい！！」＋何卒だけ 8%／同じ宣言の再宣言 5%。「見つかるまで全力でサポート」は短い受けでは 0.5%＝付けない",
+  "質問": "費用の質問への返事で「見つかるまで全力でサポート」は実送信 0%＝付けない",
+};
+
 /** その場面の材料（何卒・絵文字）。場面の母数が少なすぎる・不明の時は空 */
-export function buildCustomerSceneStyleNote(scene: CustomerScene): string {
-  const s = SCENE_STYLE[scene];
-  if (!s) return "";
+export function buildCustomerSceneStyleNote(scene: CustomerScene, opts: { firstContact?: boolean } = {}): string {
+  const base = SCENE_STYLE[scene];
+  if (!base) return "";
+  const s = opts.firstContact && scene === "条件フォーム受領"
+    ? { n: FIRST_CONTACT_FORM_NANITOZO.n, nanitozo: FIRST_CONTACT_FORM_NANITOZO.nanitozo, nanitozoWon: null, emoji: FIRST_CONTACT_FORM_NANITOZO.emoji }
+    : base;
+  const label = opts.firstContact && scene === "条件フォーム受領" ? "条件フォーム受領（真の初回・こちらの送信がまだ無い）" : scene;
   const nani = s.nanitozo < NANITOZO_NEAR_ZERO ? "付けない" : s.nanitozo >= 50 ? "付ける方が普通" : s.nanitozo >= 30 ? "半々" : "付けない方が普通";
-  return `\n③ お客様の発言の場面は「${scene}」（実送信${s.n}組）: 「何卒よろしくお願い致します」を付けたのは **${s.nanitozo}%**`
+  const phrase = SCENE_PHRASE_RATE[scene];
+  return `\n③ お客様の発言の場面は「${label}」（実送信${s.n}組）: 「何卒よろしくお願い致します」を付けたのは **${s.nanitozo}%**`
     + `${s.nanitozoWon != null ? `（成約した会話では ${s.nanitozoWon}%）` : ""}＝${nani}。`
-    + `絵文字を使った返信は ${s.emoji}%${s.emoji < 80 ? `（絵文字なしの返信も ${Math.round(100 - s.emoji)}% ある）` : ""}。`;
+    + `絵文字を使った返信は ${s.emoji}%${s.emoji < 80 ? `（絵文字なしの返信も ${Math.round(100 - s.emoji)}% ある）` : ""}。`
+    + (phrase ? `言い回しの率: ${phrase}。` : "");
 }
 
 /** 絵文字の置き場所（行の役割の率）。実送信ほぼ0の行だけ「付けない」と言い切る */
@@ -202,7 +230,7 @@ export function buildEmojiLineNote(): string {
  *   （書く前に種類を当てる関数を作ると、外れた時に間違った数字を渡すことになる。
  *     設計知見「汚れた材料は渡さない方がまし」）
  */
-export function buildSentShapeNoteAll(customerScene: CustomerScene | null = null): string {
+export function buildSentShapeNoteAll(customerScene: CustomerScene | null = null, opts: { firstContact?: boolean } = {}): string {
   const order: SentKind[] = ["内覧の待ち合わせ", "ピックアップの約束", "短い返し", "内覧の案内", "確認の約束", "申込", "見積書", "物件・書類の送付（ご査収）", "物件カード"];
   const table = order.map((k) => `${k} ${NANITOZO_RATE[k]}%`).join(" ／ ");
   return `\n\n【最後に確認：実送信の形】`
@@ -213,7 +241,7 @@ export function buildSentShapeNoteAll(customerScene: CustomerScene | null = null
     + `${LINE_CHARS_P90}字を超える行は意味の切れ目（「〜となります」「〜ので」「〜ため」の後）で分ける。`
     + `話題が変わる所は**空行**で段落を分ける（2行以上の実送信の${BLANK_LINE_RATE}%が空行を使っている）。`
     + `全体の行数は中央値2行・上位25%で4行（短い返しは2行・約束や案内は3行・見積書6行・物件カード11行）。`
-    + (customerScene ? buildCustomerSceneStyleNote(customerScene) : "")
+    + (customerScene ? buildCustomerSceneStyleNote(customerScene, opts) : "")
     + buildEmojiLineNote();
 }
 

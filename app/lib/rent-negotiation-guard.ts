@@ -125,11 +125,11 @@ export function stripRentNegotiation(
 ): RentGuardResult {
   const src = (direction ?? "").trim();
   if (!src) return { text: src || null, dropped: null };
-  if (opts.customerAsked) return { text: src, dropped: null };
   const parts = clausesOf(src);
   const kept: string[] = [];
   const dropped: string[] = [];
-  for (const p of parts) (isRentNegotiationTopic(p) ? dropped : kept).push(p);
+  // 家賃の節はお客様が自分から頼んだ時だけ通す。管理会社への割引交渉の節はお客様が頼んでも実送信0なので常に落とす
+  for (const p of parts) (shouldDropTopic(p, !!opts.customerAsked) ? dropped : kept).push(p);
   if (dropped.length === 0) return { text: src, dropped: null };
   const rest = kept.join("").replace(/^[、，,\s]+/, "").replace(/[、，,\s]+$/, "").trim();
   return { text: rest.length >= 8 ? rest : null, dropped: dropped.join("").trim().slice(0, 60) };
@@ -140,11 +140,85 @@ export function stripRentNegotiationFromList(
   items: ReadonlyArray<string>,
   opts: { customerAsked?: boolean } = {},
 ): { items: string[]; dropped: string[] } {
-  if (opts.customerAsked) return { items: [...items], dropped: [] };
   const kept: string[] = []; const dropped: string[] = [];
-  for (const t of items) (isRentNegotiationTopic(t) ? dropped : kept).push(t);
+  for (const t of items) (shouldDropTopic(t, !!opts.customerAsked) ? dropped : kept).push(t);
   return { items: kept, dropped };
+}
+
+/** 入口で落とす節か（家賃の交渉＝お客様が頼んだ時は通す／管理会社への割引交渉＝常に落とす） */
+function shouldDropTopic(text: string, customerAskedRent: boolean): boolean {
+  // 反証（2026-09-23）: お客様が自分から家賃の交渉を頼んだ時（実送信1通）は「管理会社に家賃の値下げが可能か確認」も正当な返しなので、
+  //   管理会社側の判定でも **家賃・賃料の節** は落とさない。家賃以外（「割引についても管理会社に相談」）はお客様が頼んでいないので落とす
+  if (customerAskedRent) return isMgmtDiscountNegotiationTopic(text) && !/家賃|賃料/.test(text);
+  if (isRentNegotiationTopic(text)) return true;
+  return isMgmtDiscountNegotiationTopic(text);
 }
 
 /** 落とした時に返信生成へ渡す禁止語（出口で消さない代わりに、入口で本文に書かせない） */
 export const RENT_NEGOTIATION_AVOID_TOPICS = ["家賃交渉", "家賃の値下げ"] as const;
+
+// ─── 2026-09-23 S7 の実測（scripts/yuma-scene-gap-s7.ts・生成12通）で見つかった「家賃の語を避けた交渉の創作」───
+//   「割引出来ないか、明日管理会社に交渉させて頂きます」「割引につきましても管理会社に再度相談」
+//   「費用・条件交渉の可否確認させて頂きます」（A2 3/3・D 2/3 ＝ 生成の 41.7%）。
+//   上の家賃ガードは「家賃・賃料」の語が要るので通り抜けていた。
+//
+// ── 実送信で引いた線（365日・scripts/audit-s9-gap-lines.ts で候補を全部目で読んだ）──
+//   「管理会社・オーナー・貸主に（割引|値引き|値下げ|条件交渉）を交渉/相談/確認します」… 0通
+//   「費用・条件交渉の可否」… 0通
+//   「弊社代表に割引可能か交渉/確認」… 14/12,448（0.1%）＝許される相手は代表だけ → ここでは落とさない（率を渡す側）
+//   守る物: 費用の支払時期・敷金礼金の減額（3通）・ペット可否や設備の「条件を確認」→ 語を 割引/値引き/値下げ/条件交渉 に絞る
+//   （「条件を確認」は当てない。「条件交渉」だけ）。過去形の結果報告・断り文は家賃ガードと同じ除外。
+//
+// 入口（方向・key_topics）は isRentNegotiationTopic と同じ経路で落ち、出口（final-check）は誤削除0が取れたので block。
+/** 交渉先（相手が「弊社代表」の時は当てない） */
+const MGMT_RE = "(?:管理会社|オーナー|貸主|家主|先方|管理側)";
+/** 割引側の語。「条件」は「条件交渉」の形だけ（「ペット可の条件を確認」を巻き込まない） */
+const DISCOUNT_RE = "(?:割引|値引き|値下げ|条件(?:の|面の)?交渉)";
+const NEGOTIATE_RE = "(?:交渉|相談|打診|掛け合|確認)";
+// 読点は区切りにしない（実物「割引出来ないか、明日管理会社に交渉させて頂きます」は読点をまたぐ）
+const SEG = "[^。！!？?\\n]";
+const MGMT_DISCOUNT_RE = new RegExp(
+  `${MGMT_RE}${SEG}{0,20}${DISCOUNT_RE}${SEG}{0,16}${NEGOTIATE_RE}` +
+  `|${DISCOUNT_RE}${SEG}{0,24}${MGMT_RE}${SEG}{0,12}${NEGOTIATE_RE}` +
+  `|(?:費用|条件)[・･、]?(?:条件)?交渉の可否`,
+);
+const REPRESENTATIVE_RE = /代表|社長|上司/;
+// 済んだ話（過去形の結果報告）。⚠ 家賃ガードの ALREADY_RE（裸の「まし(た|て)」）は「につきましても」「お送り頂きました物件」にも当たり、
+//   実物「割引につきましても管理会社に再度相談」「お送り頂きました物件の…費用・条件交渉の可否確認」を守ってしまったので、
+//   ここでは交渉語＋過去形（「交渉させていただきましたが」「確認しましたところ」）だけを済んだ話にする
+const MGMT_ALREADY_RE = /(?:交渉|相談|確認|打診|掛け合(?:い|っ))(?:を|も)?(?:させて(?:頂|いただ)き|して|し|いたし|致し|頂き|いただき)?まし(?:た|て)|済(?:み|ま|ませ)|とのこと|とのご(?:返事|返答|回答)|ご(?:返事|返答|回答)(?:でした|を?(?:頂|いただ))|結果|出来ません(?:でした)?|不可(?:でした)?/;
+// ⑦全件監査（365日・候補99通）で止めた1件: 「3件管理会社に管理費値下げ交渉させて頂きます」（お客様が管理費の値下げを頼んだ後の実送信）。
+//   管理費・共益費の値下げは実在する交渉なので当てない（家賃ガードの「管理費の値下げ3通」と同じ扱い）
+const FEE_ITEM_RE = /管理費|共益費/;
+
+/**
+ * 1文が「管理会社・オーナーに割引・値引き・条件の交渉をこれからする」予告か。
+ * 落とさない物: 弊社代表への交渉（実送信にある）／支払方法・時期／管理費・共益費の値下げ／過去形の結果報告／断り文／「条件を確認」（設備・ペット等）。
+ */
+export function isMgmtDiscountNegotiationPromise(sentence: string | null | undefined): boolean {
+  const s = (sentence ?? "").trim();
+  if (!s) return false;
+  if (!MGMT_DISCOUNT_RE.test(s)) return false;
+  if (!ACTION_COMMIT_RE.test(s)) return false;
+  if (REPRESENTATIVE_RE.test(s)) return false;
+  if (FEE_ITEM_RE.test(s)) return false;
+  if (PAYMENT_NEGOTIATION_RE.test(s)) return false;
+  if (MGMT_ALREADY_RE.test(s)) return false;
+  if (DECLINE_RE.test(s)) return false;
+  return true;
+}
+
+/** 入口（方向・key_topics）用のゆるい判定（実行の言い切りは要らない） */
+export function isMgmtDiscountNegotiationTopic(text: string | null | undefined): boolean {
+  const s = (text ?? "").trim();
+  if (!s) return false;
+  if (!MGMT_DISCOUNT_RE.test(s)) return false;
+  if (REPRESENTATIVE_RE.test(s)) return false;
+  if (FEE_ITEM_RE.test(s)) return false;
+  if (PAYMENT_NEGOTIATION_RE.test(s)) return false;
+  if (MGMT_ALREADY_RE.test(s)) return false;
+  return true;
+}
+
+/** 管理会社への割引交渉を落とした時に足す禁止語（本文に書かせない） */
+export const MGMT_DISCOUNT_AVOID_TOPICS = ["管理会社への割引交渉"] as const;

@@ -176,8 +176,40 @@ console.log("── ★ 事例（他のお客様の会話）の名前も照合�
   const m = mk({ customerName: "田中", knownNames: ["佐々木", "𝒮❦", "ゆうこ"] });
   const out = m.mask("【実例】佐々木さん: 内覧希望です → スモラ: かしこまりました！！\n【実例】ゆうこさん: ありがとうございます");
   t("★ 他のお客様の名前も消えている", !out.includes("佐々木") && !out.includes("ゆうこ"), out);
-  t("★ 別の人には別の仮名が割り当たる（戻す時に混ざらない）",
-    new Set(m.table().filter((e) => e.kind === "name").map((e) => e.fake)).size === m.table().filter((e) => e.kind === "name").length);
+  // 2026-09-23 YUMA の DeepSeek 実測: 事例の他のお客様を可逆の仮名にすると、モデルが手本の「佐藤花子さんから3親等以内」を写し、
+  //   出口で「黒明さん」（別のお客様の実名）に戻った。他のお客様は「〇〇」（戻さない）にする
+  t("★ 他のお客様の名前は「〇〇」で、戻さない", out.includes("〇〇さん") && m.table().filter((e) => e.kind === "name" && e.real !== "田中").every((e) => !e.reversible), out);
+  const copied = m.unmask("〇〇さんから3親等以内の方で設定をお願い致します");
+  t("★ モデルが手本の「〇〇さん」を写しても別のお客様の実名に戻らない", !/佐々木|ゆうこ|𝒮❦/.test(copied), copied);
+  t("★ 「〇〇」は戻し漏れに数えない", m.leftovers(copied).length === 0);
+}
+
+console.log("── ★ 実物の漏れ（YUMA 2026-09-23・2件目）: 会話名は「【グループ】〇〇様お部屋探し」の形で、手本には姓・名が短く出る");
+{
+  const m = mk({ customerName: "YUMA", knownNames: ["【グループ】黒明拓也様お部屋探し", "田中 花子"] });
+  const out = m.maskBlock("スモラ: 黒明さんから3親等以内の方で設定ください！！\nスモラ: 拓也さん、お世話になっております！！\nスモラ: 花子さんありがとうございます\nスモラ: 黒明拓也様のご契約");
+  t("★ 姓だけ・名だけ・空白区切りの名も伏せる", !/黒明|拓也|花子/.test(out), out);
+  t("★ 伏せた物は「〇〇」で戻さない", out.includes("〇〇さん") && m.unmask(out) === out, m.unmask(out));
+  t("★ 装飾は名前として登録しない（グループ・お部屋探し）", !m.table().some((e) => /グループ|お部屋探し/.test(e.real)));
+}
+
+console.log("── ★ 実物の漏れ（YUMA 2026-09-23・3件目）: 希望条件の「顧客名: 登録名さん」は表示名と違い、一覧にも無い");
+{
+  const m = mk({ customerName: "YUMA", knownNames: ["【グループ】黒明拓也様お部屋探し"], partyAliases: ["田中 花子"] });
+  const out = m.maskBlock("【お客様の希望条件（DB登録済み）】\n顧客名: 田中 花子さん\n家賃: 〜55000\nスモラ: 黒明さん、お世話になっております");
+  t("★ 登録名（当事者の別名）は仮名になり、素のまま外に出ない", !out.includes("田中 花子") && !out.includes("黒明"), out);
+  const fake = m.table().find((e) => e.real === "田中 花子")!;
+  t("★ 登録名は可逆（当事者なので戻る）・他人は戻らない", fake.reversible === true && m.unmask(`${fake.fake}さん、〇〇さん`) === "田中 花子さん、〇〇さん");
+}
+
+console.log("── ★ 実物の漏れ（YUMA 2026-09-23）: 事例に黒明さん・当事者は YUMA");
+{
+  const m = mk({ customerName: "YUMA", knownNames: ["黒明", "あっぴ"] });
+  const prompt = m.maskBlock("お客様: YUMAさん\n【実例】黒明さん: 緊急連絡先は必要ですか → スモラ: 黒明さんから3親等以内の方で設定ください😌！！");
+  t("★ 当事者は仮名・他人は〇〇", !prompt.includes("黒明") && !prompt.includes("YUMA") && prompt.includes("〇〇さんから3親等以内"), prompt);
+  const yumaFake = m.table().find((e) => e.real === "YUMA")!.fake;
+  const reply = m.unmask(`${yumaFake}さんお世話になっております！！\n緊急連絡先は必須となります！！\n〇〇さんから3親等以内の方で設定をお願い致します`);
+  t("★ 戻した本文に黒明が入らない（当事者だけ戻る）", reply.startsWith("YUMAさん") && !reply.includes("黒明"), reply);
 }
 
 console.log("── ★ 仮名は一意・決定論（同じ会話なら毎回同じ＝キャッシュが効く・ログで追える）");
@@ -187,8 +219,8 @@ console.log("── ★ 仮名は一意・決定論（同じ会話なら毎回�
   t("★ 同じ会話なら毎回同じ仮名", a === b, `${a} / ${b}`);
   const m = mk({ customerName: "田中", knownNames: ["佐藤", "鈴木", "高橋"] });
   m.mask("田中さん 佐藤さん 鈴木さん 高橋さん");
-  const fakes = m.table().map((e) => e.fake);
-  t("★ 仮名は重複しない（重複すると戻せない）", new Set(fakes).size === fakes.length, fakes.join(","));
+  const fakes = m.table().filter((e) => e.reversible).map((e) => e.fake);
+  t("★ 可逆の仮名は重複しない（重複すると戻せない）", new Set(fakes).size === fakes.length, fakes.join(","));
 }
 
 console.log("── ★ 戻し漏れを見つける（fail-closed の材料）");
@@ -252,7 +284,8 @@ console.log("── ★ 返信文の生成にも配線されているか（竹�
     /\.\.\.genMessages,\s*\n\s*new AIMessage\(replyMasker \? replyMasker\.maskBlock\(draftBody\)/.test(gen));
   t("★ 申込以降は印を付けて回さない（竹内「申込以降はいれない」）",
     /postApplyConversation \? \{ \[LLM_POST_APPLY_HEADER\]: "1" \}/.test(gen)
-    && /postApplyConversation = isPostApplyStatus\(row\?\.status \?\? null\)/.test(gen));
+    // 2026-09-23: 判定は status だけでなく記録（申込へ押下・本人確認書類・戻し）を見る post-apply.ts に移した
+    && /loadPostApplyFacts\(supabase, conversationId\)/.test(gen) && /postApplyConversation = r\.postApply/.test(gen));
   t("★ 状態が読めない時は「回さない」側へ倒す（fail-closed）",
     /\/\/ 読めなければ自動返信は false[\s\S]{0,120}?postApplyConversation = true;/.test(gen));
 }

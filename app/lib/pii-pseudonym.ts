@@ -38,7 +38,35 @@ import { isApplicationFormMessage } from "./application-form-detect";
 import { isFilledSumoraForm } from "./condition-format";
 
 export type MaskKind = "name" | "mobile" | "email" | "birthday" | "address" | "employer";
-export type MaskEntry = { fake: string; real: string; kind: MaskKind };
+/**
+ * reversible=false は「伏せるだけで戻さない」項目（事例に出る**他のお客様**の名前）。
+ * 2026-09-23 YUMA の DeepSeek 実測で見つけた漏れ: 事例の「黒明さん」を仮名「佐藤花子さん」にして渡す → モデルが手本の
+ *   「佐藤花子さんから3親等以内の方で」を写す → 出口で「黒明さん」に戻る＝**別のお客様の実名が下書きに入る**（2/3回）。
+ *   当事者の名前だけを可逆にし、他のお客様は「〇〇」（戻さない）にする。
+ */
+export type MaskEntry = { fake: string; real: string; kind: MaskKind; reversible: boolean };
+/** 他のお客様の名前の伏せ字（戻さない・重複してよい） */
+export const OTHER_NAME_PLACEHOLDER = "〇〇";
+
+/** 会話名に付く飾り（名前ではない） */
+const NAME_STOP = new Set(["グループ", "お部屋探し", "お部屋", "探し", "様", "御中", "株式会社", "有限会社", "合同会社", "LINE", "line", "公式"]);
+/**
+ * 会話名から「手本の本文に出る形」の名前を作る。
+ * 2026-09-23 YUMA の DeepSeek 実測: 会話名は「【グループ】黒明拓也様お部屋探し」の形なのに、手本の本文は「黒明さん」「拓也さん」と
+ *   短く書かれるため完全一致では伏せられず、そのまま DeepSeek へ渡り下書きに写っていた（2/3回）。
+ *   装飾（【…】・様・お部屋探し）を外し、空白で分け、漢字4字以上は前2字（姓）と後2字（名）も候補にする。
+ *   2字の候補は敬称つきの時だけ置換される（mask の規則）ので誤爆は小さい。
+ */
+export function nameVariants(raw: string | null | undefined): string[] {
+  let s = (raw ?? "").replace(/【[^】]*】/g, " ").replace(/[（(][^）)]*[）)]/g, " ").trim();
+  s = s.replace(/(?:お部屋探し|の会話|のお部屋探し)$/g, "").replace(/(?:様|さん|さま|ちゃん|くん)$/g, "").trim();
+  const parts = s.split(/[\s　・／/｜|,、]+/).map((p) => p.replace(/(?:様|さん|さま)$/g, "").trim()).filter((p) => p.length >= 2 && !NAME_STOP.has(p));
+  const out = new Set<string>(parts);
+  for (const p of parts) {
+    if (p.length >= 4 && /^[一-龥々]+$/.test(p)) { out.add(p.slice(0, 2)); out.add(p.slice(-2)); }
+  }
+  return [...out];
+}
 
 // 2026-09-19 竹内「物件の情報やお客さんが探している物件の情報や要望物件検索のフォーマットは
 //   ちゃんと全部のこして、お申込みに関係するお客さんの個人情報は渡らないようにする形」
@@ -129,6 +157,12 @@ export type MaskerOptions = {
   customerName?: string | null;
   /** 事例（他のお客様の会話）に出てくる名前。正解集合を明示して照合する */
   knownNames?: ReadonlyArray<string>;
+  /**
+   * 当事者の別名（可逆）。2026-09-23 YUMA の DeepSeek 実測: 【お客様の希望条件（DB登録済み）】の「顧客名: 〇〇さん」は
+   * property_customers の登録名（本名のことがある）で、LINE の表示名（customerName）と違うと一覧に無く、素のまま外に出ていた。
+   * 登録名は当事者の名前なので可逆の仮名にする（他のお客様の「〇〇」とは違う）
+   */
+  partyAliases?: ReadonlyArray<string>;
   /** 「裸の西暦が生年月日か」を決める基準の年（既定は今年）。テストを固定するために外から渡せる */
   thisYear?: number;
 };
@@ -200,12 +234,24 @@ export function createMasker(opts: MaskerOptions): Masker {
   const byReal = new Map<string, number>();   // kind\0real → entries の添字
   const counters: Record<MaskKind, number> = { name: 0, mobile: 0, email: 0, birthday: 0, address: 0, employer: 0 };
   const nameOffset = seedFrom(opts.conversationId || "x");
+  /** この会話のお客様（可逆にするのはこの人だけ）。登録名などの別名も当事者として扱う */
+  const partyName = (opts.customerName ?? "").trim();
+  // 当事者も会話名（【グループ】黒明拓也様お部屋探し）と本文の呼び方（黒明さん・拓也さん）が違うので、姓・名の形も可逆の仮名にする
+  const partyRaw = [partyName, ...(opts.partyAliases ?? []).map((s) => (s ?? "").trim())].filter((s) => s.length >= 1);
+  const partySet = new Set(partyRaw.flatMap((s) => [s, ...nameVariants(s)]).filter((s) => s.length >= 1));
+  const isParty = (real: string): boolean => partySet.has(real);
 
   /** 実物に印を割り当てる（初めて見た物には新しい仮名を用意する） */
   function markFor(real: string, kind: MaskKind, cityPrefix = ""): string {
     const key = `${kind} ${real}`;
     const hit = byReal.get(key);
     if (hit !== undefined) return `${MARK_OPEN}${hit}${MARK_CLOSE}`;
+    // 他のお客様の名前は戻さない伏せ字（可逆の仮名にすると、手本を写した時に別人の実名へ戻る）
+    if (kind === "name" && !isParty(real)) {
+      const idx = entries.push({ fake: OTHER_NAME_PLACEHOLDER, real, kind, reversible: false }) - 1;
+      byReal.set(key, idx);
+      return `${MARK_OPEN}${idx}${MARK_CLOSE}`;
+    }
     const n = counters[kind]++;
     let fake: string;
     switch (kind) {
@@ -217,14 +263,17 @@ export function createMasker(opts: MaskerOptions): Masker {
       case "address":  fake = `${cityPrefix}○○${n > 0 ? n : ""}`; break;
       case "employer": fake = `○○${n > 0 ? n : ""}（勤務先）`; break;
     }
-    while (entries.some((e) => e.fake === fake)) fake += "・"; // 万一の衝突（候補が一周した等）
-    const idx = entries.push({ fake, real, kind }) - 1;
+    while (entries.some((e) => e.reversible && e.fake === fake)) fake += "・"; // 万一の衝突（候補が一周した等）
+    const idx = entries.push({ fake, real, kind, reversible: true }) - 1;
     byReal.set(key, idx);
     return `${MARK_OPEN}${idx}${MARK_CLOSE}`;
   }
 
   /** この会話の呼び名＋事例に出る他のお客様の名前。長い順に当てる（短い名前が先に食わないように） */
-  const names = [...new Set([opts.customerName ?? "", ...(opts.knownNames ?? [])]
+  // 他のお客様は会話名そのものに加えて、手本に出る形（姓・名・装飾を外した形）も伏せる。当事者は呼び名そのまま（可逆）
+  const others = (opts.knownNames ?? []).map((s) => (s ?? "").trim()).filter((s) => s.length >= 1 && !isParty(s));
+  const otherVariants = others.flatMap((s) => [s, ...nameVariants(s)]).filter((s) => !isParty(s));
+  const names = [...new Set([...partySet, ...otherVariants]
     .map((s) => (s ?? "").trim()).filter((s) => s.length >= 1))]
     .sort((a, b) => b.length - a.length);
 
@@ -280,8 +329,8 @@ export function createMasker(opts: MaskerOptions): Masker {
   function unmask(input: string | null | undefined): string {
     let t = input ?? "";
     if (!t) return "";
-    // 長い仮名から戻す（短い仮名が長い仮名の一部を食わないように）
-    for (const e of [...entries].sort((a, b) => b.fake.length - a.fake.length)) {
+    // 長い仮名から戻す（短い仮名が長い仮名の一部を食わないように）。戻すのは可逆の項目（当事者の名前・連絡先）だけ
+    for (const e of [...entries].filter((e) => e.reversible).sort((a, b) => b.fake.length - a.fake.length)) {
       t = t.split(e.fake).join(e.real);
     }
     return t;
@@ -292,6 +341,7 @@ export function createMasker(opts: MaskerOptions): Masker {
     if (!t) return [];
     const out: string[] = [];
     for (const e of entries) {
+      if (!e.reversible) continue;   // 「〇〇」は戻さない前提なので残っていてよい
       if (t.includes(e.fake)) { out.push(e.fake); continue; }
       // LLM は「山田太郎さん」を「山田さん」と姓だけで書くことがある。戻せていないので拾う
       if (e.kind === "name" && e.fake.length >= 4) {

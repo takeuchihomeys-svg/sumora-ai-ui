@@ -30,6 +30,27 @@ export function isDraftSentinel(text: string | null | undefined): boolean {
 const FAILURE_PLACEHOLDER_RE = /^[（(]AI返信の生成に失敗/;
 
 /**
+ * 末尾に残った孤立の「」」を落とす（開きの「」より閉じの「」」が多い時だけ・末尾だけ）。
+ *
+ * 2026-09-23 S2／S4 の実測: 生成の末尾に「」」が残る回が 1/3（手本の「スモラ: 「…」」の引用符を写す型）。
+ *   最終チェックは warning 止まりで本文に残っていた。
+ *   実送信 365日で「変わる通」は scripts/audit-s9-gap-lines.ts C で 0 通＝誤削除0 なので出口で落とす。
+ *   ⚠ 対になっている「」」（「〇〇」と物件名を囲む形）は数が釣り合うので触らない。
+ */
+export function stripOrphanClosingQuote(text: string): string {
+  let t = text.replace(/\s+$/, "");
+  let changed = false;
+  while (t.endsWith("」")) {
+    const open = (t.match(/「/g) ?? []).length;
+    const close = (t.match(/」/g) ?? []).length;
+    if (close <= open) break;
+    t = t.slice(0, -1).replace(/\s+$/, "");
+    changed = true;
+  }
+  return changed ? t : text;
+}
+
+/**
  * 下書きから内部メタタグ（スタッフ向けの社内指示）を外す。
  * 顧客向けの返信文に絶対に混ぜてはいけない物だけを落とす。
  */
@@ -49,6 +70,8 @@ export function stripInternalTags(text: string): string {
     .trim();
   // AI が返信全体を「」で囲んで出力することがある → 先頭「末尾」のペアのみ除去
   if (t.startsWith("「") && t.endsWith("」")) t = t.slice(1, -1).trim();
+  // 2026-09-23: 末尾に孤立した「」」だけが残る回（手本の引用符の写し）。実送信365日で変わる通は0＝誤削除0
+  t = stripOrphanClosingQuote(t);
   // 2026-09-18 竹内: Markdown の強調記号は LINE では記号のまま出る（中の文字は残す）
   t = stripMarkdownEmphasis(t);
   // 2026-09-15 竹内「こんなの絶対にいれない」: AI の作業メモは入力欄の入口でも落とす

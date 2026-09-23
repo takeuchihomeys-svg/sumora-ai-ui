@@ -14,6 +14,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/yuma-company-facts-direct.ts [REPS=2]
 import { createClient } from "@supabase/supabase-js";
 import { matchCompanyFacts } from "../app/lib/company-facts";
+import { nameVariants } from "../app/lib/pii-pseudonym";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
@@ -44,7 +45,8 @@ const SCENES: Scene[] = [
     msg: "これ室内写真欲しいです",
     want: /(撮影|お送りさせて|送らせて|ご用意させて|添付)/,
     wantNote: "室内の写真・動画はスタッフが撮影して送れる",
-    forbid: /(ご用意出来ていない|ご用意できていない|写真が(無|な)い|写真はございません)/,
+    // 2026-09-23 S2 の実測で見逃した形「ご用意できておりません」「弊社での室内撮影は行えておらず」を足す
+    forbid: /(ご用意(?:出来|でき)て(?:いない|おりません|いません)|写真が(無|な)い|写真はございません|撮影(?:は|を)?(?:行|して)(?:え|い)?て(?:おりません|いません|おらず))/,
     forbidNote: "「貸主側で室内写真がまだご用意出来ていない」と無い事実を断定（前の AI はこれを書いた）",
     actual: "室内イメージ添付させていただきました！！／お手隙の際にご確認ください！！",
   },
@@ -75,6 +77,15 @@ async function main() {
   for (const s of SCENES) console.log(`   ${matchCompanyFacts(s.msg).length ? "✓" : "✗"} ${s.id} → ${matchCompanyFacts(s.msg).map((f) => f.id).join(",") || "当たらない"}`);
   console.log("");
 
+  // 2026-09-23 DeepSeek 経路の実測で「黒明さん」（別のお客様の実名）が下書きに混入した（仮名化の戻しの不具合）。
+  //   全会話のお客様名を持って、当事者以外の名前が出たら ⚠ を出す（本名は出力しない・件数だけ）
+  const { data: nameRows } = await sb.from("conversations").select("customer_name").limit(2000);
+  const party = String(c.customer_name ?? "YUMA").trim();
+  // 会話名そのものと、手本に出る形（姓・名・装飾を外した形）の両方で見る（pii-pseudonym と同じ nameVariants）
+  const otherNames = [...new Set(((nameRows ?? []) as Array<{ customer_name: string | null }>).map((r) => (r.customer_name ?? "").trim())
+    .filter((n) => n.length >= 2 && n !== party).flatMap((n) => [n, ...nameVariants(n)]).filter((n) => n.length >= 2 && n !== party))];
+  let foreign = 0;
+
   let ok = 0, ngWant = 0, ngForbid = 0, empty = 0;
   for (const s of SCENES) {
     for (let k = 0; k < reps; k++) {
@@ -97,6 +108,8 @@ async function main() {
       const draft = text.replace(/\n?<<<[A-Z_]{3,}:[\s\S]*?(?:>>>|$)/g, "").trim();
       const head = `【${s.id}】[${k + 1}]`;
       if (!draft || /^【エラー】/.test(draft)) { empty++; console.log(`${head} 出なかった: ${draft.slice(0, 80)}`); continue; }
+      const leaked = otherNames.filter((n) => draft.includes(`${n}さん`) || draft.includes(`${n}様`));
+      if (leaked.length) { foreign++; console.log(`${head} ⚠ 別のお客様の名前が混入（${leaked.length}件・本名は出力しない: ${leaked.map((n) => `${n[0]}*×${n.length}字`).join(",")}）`); }
       const got = s.want.test(draft);
       const bad = s.forbid.test(draft);
       if (got && !bad) { ok++; console.log(`${head} ✓ 事実が入り、間違いも書いていない`); }
@@ -109,5 +122,6 @@ async function main() {
   console.log(`   ✓ 事実が入り間違いなし   ${ok}`);
   console.log(`   ✗ 事実が入らなかった     ${ngWant}`);
   console.log(`   ⚠ 間違いを書いた         ${ngForbid}`);
+  console.log(`   ⚠ 別のお客様の名前が混入 ${foreign}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
