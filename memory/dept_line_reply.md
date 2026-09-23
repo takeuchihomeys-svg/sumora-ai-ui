@@ -6932,3 +6932,8 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 方向が丸ごと落ちた時の受け皿＝「ご条件に合うお部屋を引き続きピックアップ」（ナレッジ 8381c035 の正解）
 - pending-pickup: 宣言の時刻が無ければ立てない（fail-closed）
 - **未着手（記録のみ）**: WE DO の列挙が route.ts 5か所に散っている（定数化）／「お客様が家賃交渉を頼んだか」の窓 6件 vs 4件／aix_action_items の期限切れ掃除が無い（pending が無期限に残りうる）／ナレッジ 95638500（家賃交渉を依頼された段階の返し方）は「お客様が頼んだ時」の話なので残す
+### （同日追記）🔴 テストで返信本文を生成する時は必ず DeepSeek（竹内「テストに文の生成は必ずdeepseekでおこなう」）
+- 実測: 本番の返信本文の生成は DeepSeek 170／Claude 205（7日）。ローカルの YUMA テストは **143回すべて Claude** だった（.env.local に `LLM_ALT_ACTIONS` が無かった）
+- 今日の生成を伴う確認（会社の事実 8/8・埋もれた質問 8/8・物件確認・ギャップ確認 Workflow）は **Claude の結果**。DeepSeek で測り直す
+- 直し: `.env.local` に `LLM_ALT_ACTIONS=reply_generate`（追加済み）。テスト後は `npx tsx --env-file=.env.local scripts/check-generation-route.ts` で model を確認
+- ⚠ YUMA は申込へ押下の記録があるので `status_manual_back_at` を最新にしておく（post-apply.ts で申込以降＝Claude に戻る）
