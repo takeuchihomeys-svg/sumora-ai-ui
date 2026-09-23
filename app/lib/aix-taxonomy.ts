@@ -176,12 +176,25 @@ export function detectPropertyCheckPattern(recentText: string): PropertyCheckKin
 // 2026-09-17 竹内（a🤫 事例）「この場合 AIX の物件確認したの室内写真を確認したのところから送る形となる」:
 //   「物件確認した（募集状況）」側のサブパターン。ui_button も note も条件・交渉系とは別なので表で持つ。
 //   9/17 18:17「この物件のいちばん広い部屋ありますか？」→ 実送信は [間取り図]＋「1番広いお部屋（65.02）の間取りとなります！！」
+// 2026-09-23 竹内「室内の写真が欲しいといわれたら AIX の物件確認したの室内写真確認したのピッカーから送る形」: 「別の部屋」限定から
+//   室内の写真・動画・URL の依頼まで一般化（実データ365日・検出28通: スタッフは室内イメージURL／画像 13・撮影 2・理由付き 2）
 const AVAILABILITY_CHECK_KINDS: Record<string, { topic: string; note: string }> = {
   interior_photo: {
-    topic: "別の部屋・広い部屋の間取り／室内",
-    note: "AIX【物件確認した】→「室内写真を確認した」を押してください: お客様がこちらの送った物件について別の部屋・もっと広い部屋・間取りを聞いています。管理会社への空室確認ではなく、手元の資料から間取り図・室内写真を物件名とあわせて送る場面です",
+    topic: "室内の写真・動画・URL／別の部屋・間取り",
+    note: "AIX【物件確認した】→「室内写真を確認した」を押してください: お客様が室内の写真・動画・室内イメージURL を頼んだ、またはこちらの送った物件の別の部屋・間取りを聞いています。管理会社への空室確認ではなく、手元の写真・室内イメージURL・間取り図を物件名とあわせてピッカーから送る場面です（手元に無い時に撮影して送るか・建築中等の理由を返すかはスタッフが決める。本文で写真の有無を断定しない）",
   },
 };
+
+/** 「物件確認した（募集状況）」側のサブパターン（ピッカー）の表示名。AIX要対応・ブレインのカード・流れの文で同じ語にする（四者同名） */
+export const AVAILABILITY_CHECK_PICKER_LABELS: Record<string, string> = {
+  interior_photo: "室内写真を確認した",
+};
+
+/** 押すボタンの表記の中身（例: 物件確認した→室内写真を確認した）。条件・交渉系は null（呼び出し側が従来の表記にする） */
+export function availabilityCheckButtonLabel(checkPattern: string | null | undefined): string | null {
+  const l = checkPattern ? AVAILABILITY_CHECK_PICKER_LABELS[checkPattern] : undefined;
+  return l ? `物件確認した→${l}` : null;
+}
 
 export function propertyCheckKindFor(pattern: string | null | undefined): PropertyCheckKind | null {
   const avail = pattern ? AVAILABILITY_CHECK_KINDS[pattern] : undefined;
@@ -267,6 +280,10 @@ const CHECK_PATTERN_TOPICS: Record<string, string> = {
 
 /** LINE通知用の短縮アクションノート（最大1行）を生成する。 */
 export function buildAixLineNote(action: string, checkPattern?: string | null): string {
+  // 2026-09-23: 室内写真は「確認した（条件・交渉）」ではなく「物件確認した→室内写真を確認した」（誤表記で売上番長グループに出ていた）
+  if (action === "property_check_result" && availabilityCheckButtonLabel(checkPattern)) {
+    return `手元の写真・室内イメージURL を AIX【${availabilityCheckButtonLabel(checkPattern)}】で送る`;
+  }
   if (action === "property_check_result" && checkPattern) {
     const topic = CHECK_PATTERN_TOPICS[checkPattern] ?? checkPattern;
     return `回答を AIX【確認した（条件・交渉）】で送る（${topic}）`;

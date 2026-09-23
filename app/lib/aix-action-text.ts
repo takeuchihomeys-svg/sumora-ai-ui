@@ -1,6 +1,6 @@
 // app/lib/aix-action-text.ts
 // 売上番長グループの「AIX要対応」の文面（純関数・DB 依存なし）。登録・完了・送信は aix-action-items.ts
-import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
+import { AIX_BUTTON_LABELS, availabilityCheckButtonLabel } from "@/app/lib/aix-taxonomy";
 import { jstDayStartMs, jstMDHm } from "@/app/lib/jst-date";
 
 // check_pattern → 「確認した（条件・交渉）」の確認対象（aix-taxonomy の CHECK_PATTERN_TOPICS と同じ語）
@@ -17,6 +17,9 @@ const CHECK_PATTERN_TOPIC: Record<string, string> = {
 
 /** 押すべき AIX ボタンの表記（例: AIX【物件確認した（募集状況）】／AIX【確認した（条件・交渉）→入居可能日】） */
 export function aixButtonText(action: string, checkPattern?: string | null): string {
+  // 2026-09-23 竹内: 室内写真のピッカーは「物件確認した」側（旧: 「確認した（条件・交渉）」（interior_photo）と誤表記）
+  const avail = action === "property_check_result" ? availabilityCheckButtonLabel(checkPattern) : null;
+  if (avail) return `AIX【${avail}】`;
   if (action === "property_check_result" && checkPattern && CHECK_PATTERN_TOPIC[checkPattern]) {
     return `AIX【確認した（条件・交渉）→${CHECK_PATTERN_TOPIC[checkPattern]}】`;
   }

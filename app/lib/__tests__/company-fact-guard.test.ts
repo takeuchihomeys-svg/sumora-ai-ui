@@ -100,9 +100,15 @@ describe("ゲート（matchCompanyFacts＝生成と同じ関数）", () => {
 
 describe("検査に渡す会社の事実（anomaly_scan の [COMPANY_FACTS]）", () => {
   it("聞かれていなければ空文字", () => eq(buildCompanyFactsForCheck(["ありがとうございます"]), ""));
-  it("写真を聞かれたら写真の事実（強調記号は外す）", () => {
+  it("写真を聞かれたら写真の事実（強調記号は外す）— 2026-09-23 竹内: 写真は AIX【物件確認した→室内写真を確認した】から送る流れ", () => {
     const s = buildCompanyFactsForCheck(["これ室内写真欲しいです"]);
-    truthy(s.includes("撮影して送ることができる")); falsy(s.includes("**"));
+    truthy(s.includes("AIX【物件確認した→室内写真を確認した】")); truthy(s.includes("撮影して送るとも約束しない")); falsy(s.includes("**"));
+  });
+  it("直し方（suggestion）は受付の一文にとどめる形（「撮影してお送り」を促さない）", () => {
+    const h = findCompanyFactContradiction("室内写真は現在ご用意出来ていない為、私の方で撮影しお送りさせて頂きます😊！！", ["これ室内写真欲しいです"]);
+    truthy(h?.suggestion.includes("室内のお写真お送りさせて頂きます"));
+    truthy(h?.suggestion.includes("AIX【物件確認した→室内写真を確認した】"));
+    falsy(/断定の文を削除し「室内の写真・動画を撮影して/.test(h?.suggestion ?? ""));
   });
 });
 

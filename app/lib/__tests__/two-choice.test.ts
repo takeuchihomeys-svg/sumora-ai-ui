@@ -108,5 +108,25 @@ it("謝罪だけ・お願いだけでは2択にしない（両方そろって預
   expect(resolveTwoChoice({ ...base, customerText: "ご無理を言って申し訳ありません。よろしくお願いします。", finalAix: "viewing_invite" }).two).toBe(false);
 });
 
+// ─── 室内の写真の依頼（2026-09-23 竹内「室内の写真が欲しいといわれたら AIX の物件確認したの室内写真確認したのピッカーから送る形」）───
+it("ブレインが写真の AIX を決めた（roomPhotoRequest）→ 2択（AIX 室内写真 か 返信 か）", () => {
+  const v = resolveTwoChoice({ ...base, customerText: "これ室内写真欲しいです", finalAix: "property_check_result", roomPhotoRequest: true });
+  expect(v.two).toBe(true);
+  expect(v.reason).toBe("room_photo_request");
+});
+it("写真の依頼は内覧の段階（viewing）でも2択・申込以降は出さない", () => {
+  expect(resolveTwoChoice({ ...base, customerText: "室内の写真ありますか？", finalAix: "property_check_result", roomPhotoRequest: true, checkpointStage: "viewing" }).two).toBe(true);
+  expect(resolveTwoChoice({ ...base, customerText: "室内の写真ありますか？", finalAix: "property_check_result", roomPhotoRequest: true, checkpointStage: "applying" }).reason).toBe("not_proposing");
+  expect(resolveTwoChoice({ ...base, customerText: "室内の写真ありますか？", finalAix: "property_check_result", roomPhotoRequest: true, checkpointStage: "hearing" }).reason).toBe("not_proposing");
+});
+it("送付済み物件なし・確定アクション・お客様が断っている時は従来どおり出さない", () => {
+  expect(resolveTwoChoice({ ...base, customerText: "室内の写真ありますか？", roomPhotoRequest: true, sentPropertyCount: 0 }).reason).toBe("no_sent_property");
+  expect(resolveTwoChoice({ ...base, customerText: "室内の写真ありますか？", roomPhotoRequest: true, finalAix: "viewing_invite" }).reason).toBe("decided_action");
+  expect(resolveTwoChoice({ ...base, customerText: "室内の写真ありますか？", roomPhotoRequest: true, customerIntent: "negative" }).reason).toBe("customer_negative");
+});
+it("ブレインが決めていない（証拠だけ）なら写真の理由では立てない（所有権はブレイン）", () => {
+  expect(resolveTwoChoice({ ...base, customerText: "室内の写真ありますか？", finalAix: "property_send" }).reason).toBe("no_signal");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

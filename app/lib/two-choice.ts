@@ -65,10 +65,25 @@ export function resolveTwoChoice(o: {
   /** ブレインの決断保留パターン（thinking・undecided は検討して持ち帰った） */
   hesitancyPattern?: string | null;
   llmTwoChoice?: boolean;
+  /**
+   * 2026-09-23 竹内: ブレインが「室内の写真の依頼 → AIX【物件確認した→室内写真を確認した】」と**決めた**（decision_source=signal:scene_S11_room_photo）。
+   *   手元に写真・室内イメージURL があるか（ピッカーから送る）／無くて撮影・理由を返信するか はスタッフしか知らないので2択。
+   *   実データ（365日・検出28通）: URL／画像 13・撮影 2・理由付き 2＝どちらも正解になりうる。
+   *   写真の依頼は内覧の段階にも来る（2/17 会話）ので、この理由だけ proposing|viewing を許す。申込以降は出さない
+   */
+  roomPhotoRequest?: boolean;
 }): TwoChoiceVerdict {
   const no = (reason: string): TwoChoiceVerdict => ({ two: false, reason });
   const t = (o.customerText ?? "").trim();
   if (!t) return no("no_customer_text");
+  if (o.roomPhotoRequest) {
+    if (o.checkpointStage !== "proposing" && o.checkpointStage !== "viewing") return no("not_proposing");
+    if (o.sentPropertyCount <= 0) return no("no_sent_property");
+    // 確定アクション・お客様が断っている時は従来どおり先に効く（ブレインが写真の AIX を決めた時は finalAix は物件確認したなので decided_action には当たらない）
+    if (o.finalAix === "viewing_invite" || o.finalAix === "application_push" || o.finalAix === "meeting_place") return no("decided_action");
+    if (o.customerIntent === "negative") return no("customer_negative");
+    return { two: true, reason: "room_photo_request" };
+  }
   if (o.checkpointStage !== "proposing") return no("not_proposing");
   if (o.sentPropertyCount <= 0) return no("no_sent_property");
   if (o.finalAix === "viewing_invite" || o.finalAix === "application_push" || o.finalAix === "meeting_place") return no("decided_action");

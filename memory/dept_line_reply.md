@@ -4,6 +4,40 @@
 
 ---
 
+## 室内の写真の依頼は「返信で答える場面ではない」— ブレインが AIX【物件確認した→室内写真を確認した】をセットし2択（竹内・2026-09-23）— 黄金ルール
+
+竹内「室内の写真が欲しいといわれたら AIX の物件確認したの室内写真確認したのピッカーから送る形。ちゃんとここはブレインで判断できるように。根拠のないことなど AIX 回答できるから、そこの仕組に着眼して」
+
+**実物**: DeepSeek 経路の下書き「室内写真は現在ご用意出来ていない為、私の方で撮影しお送りさせて頂きます」（YUMA）。出口（final-check V16）は入れてあったが、そもそもブレインがこの場面で AIX をセットしていなかった（brain_decision_logs 365日: 写真の依頼への interior_photo の提案 **0回**）。
+
+**実送信の線**（`scripts/audit-photo-request-aix.ts`・365日・広い候補149通を全部目で読んだ・検出29通・誤当たり0）
+| スタッフの返し（72h以内の最初） | 通 |
+|---|---|
+| 室内イメージURL／画像を送る（AIX ピッカー5＋手書き9） | 14 |
+| 返信なし（後で送った・別経路） | 7 |
+| その他 | 4 |
+| 撮影して送る | 2 |
+| 建築中等の理由付き | 2 |
+| 根拠なしの「ご用意出来ていない」断定 | **0** |
+
+**入れた物**
+- `app/lib/room-photo-request.ts` — 純関数 `isRoomPhotoRequest`（四者同名: 場面 S11／会社の事実 `room_photo.ask`／生成プロンプト `linkRequestNote`／出口 company-fact-guard のゲート）。主語（室内・お部屋・物件・ここ・外観・建物名）必須・裸の「写真お願いします」は24字以内の短文だけ・除外は文単位（申込書類・明細書・内定通知・「写真の物件」「写真のような物件」・URL が開けない苦情）・お礼は同じ文から除いて見る
+- `aix-scene-evidence.ts` S11 に `reason=room_photo_request`（内見の動画は内覧希望ではない／URL・画像同送は S1／入居日の質問は S2 優先／送付0でも物件名らしい語があれば通す）
+- `brain-core.ts` 決定論 `signal:scene_S11_room_photo`（上書きは AIX なし／確認します／物件確認した／物件オススメ／物件ピックアップ だけ。**見積書送るは外す**＝写真と見積を両方出す実物あり）。能力マップ・ハルシネーション禁止⑥
+- `two-choice.ts` `roomPhotoRequest`（**ブレインの決定**で立てる。proposing|viewing。申込以降は出さない）→ 画面は「AIXで物件確認した か 返信（写真の受付）か」
+- `aix-reply-set.ts` `sceneS11`: timing **now**・bridge「かしこまりました😊！！室内のお写真お送りさせて頂きます！！」（例）・禁止: 有無の断定／撮影の約束の創作／URL・物件名／「確認出来次第ご連絡」
+- 表記統一「物件確認した→室内写真を確認した」（`aix-taxonomy.availabilityCheckButtonLabel`・aix-action-text・aix-reply-set・aix-flow-note。旧: AIX要対応に「確認した（条件・交渉）」（interior_photo）と誤表記）
+- `company-facts.ts` room_photo: ask を関数に・fact を「手元の物を AIX から送る／有無を断定しない／撮影も約束しない／受付まで」に。`company-fact-guard.ts` は suggestion だけ（re／exclude は変えない）
+- `generate-reply/route.ts`: `isPhotoRequestMsg` を同じ関数に・誘導先を「物件ピックアップした」→ AIX【物件確認した】→「室内写真を確認した」・締めの分岐（interior_photo は「お送りさせて頂きます」）
+
+**止めた物**: 「また内見の動画」「部屋の写真もまだですよね」（依頼語なし・2通）は当てない／間取り図の依頼は既存 S11 の語彙のまま／final-check V7 `CUSTOMER_PHOTO_WANT_RE` は触らない（免除を広げると出口が変わる）
+
+**本番確認（YUMA・DeepSeek 2/2）**: ブレイン property_check_result + interior_photo（signal:scene_S11_room_photo）・2択・reply_mode=aix で自動の下書きなし。手動の下書き「かしこまりました😊！！／室内のお写真お送りさせて頂きます！！」（断定・撮影の約束・URL なし）。`scripts/yuma-room-photo-test.ts`
+
+**テスト**: `room-photo-request.test.ts`（実物29通＋当てない32通）・other-room-scene・two-choice・aix-reply-set・aix-action-text・company-facts・company-fact-guard
+
+---
+
 ## 送った画像の読み取りは全部 DeepSeek（竹内・2026-09-22「deepseek に置き換える」）
 
 送った画像1枚ごとに読み取りは3つ。**3つとも DeepSeek-V4.1-Flash**（Claude は使わない）。
@@ -7036,3 +7070,57 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 5. 07-15 の実送信「弊社店舗では無く事務作業用の事務所となりますがご来社可能です」（会社の事実と逆・規則には当たらず止めない側）は会社の事実の再確認が要る
 
 設計知見3件（kb-insert: 「最終チェックで予防できている」は確かめるまで信じない／会社の事実は出口の決定論 V16 で・実送信7,997通当たり0／実測の測り方の落とし穴）。コミットは親。
+
+## 2026-09-23（追記）Jev（TypeSafe AI・System One）をブレインの判定部品に — 影の運用から
+
+竹内さん「AIX でどのピッカーを選択するかの部分は Jev で強化」「Jev がブレインの一部にいてそこから選択するのが一番質上がる」「AIX ボタンはもう既存で選択されているので、ピッカーの種類・内容を Jev が分かっていれば判断できる」
+- Jev は文章を書かず、状態＋質問 → 型の決まった答え（選択肢・確率）。70〜500ms・入力 $0.042/M・出力無料
+- `app/lib/jev-client.ts`（鍵 `TYPESAFE_API_KEY`・無ければ何もしない・fail-open・llm_usage_logs に model=jev:* で1行）
+- `app/lib/aix-jev.ts`: ①全ボタンから選ぶ（next_aix／check_topic／photo_request）②**ボタン決定後にそのボタンのピッカーだけ選ぶ**（`AIX_PICKER_CATALOG`: 物件確認した=何を確認したか／物件ピックアップした・物件オススメ=send_mode／申込へ！=app_sub_mode）。結果のピッカー（あった／なかった）は会話から分からないので値を返さない
+- 影の運用: brain-core analyzeConversation の return 直前で Jev を呼び `jev_shadow_logs` に並べて記録（判断は変えない・申込以降は呼ばない・maskPII で伏せる・3秒で諦める）
+- 答え合わせ: `scripts/eval-jev-aix.ts`（aix_usage_logs 365日・種類ごと最大40件・仮名化・申込以降除く。AIX の正答率・確率0.8以上の正答率・ボタン既知のピッカー正答率）
+- **未着手（鍵待ち）**: 鍵を入れて eval を回し、上回った判定だけ決定論に繋ぐ線（確率の閾値）を決める。次の候補は「複数案から選ぶ」（DeepSeek 2〜3案を Jev が点数化）と最終チェックの rule_check の置き換え
+
+## 2026-09-23（追記）室内写真の依頼は AIX【物件確認した】（室内写真確認した）に振る
+
+竹内さん「室内の写真が欲しいといいわれたらAIXの物件確認したの室内写真確認したのピッカーから送る形。ちゃんとここはブレインで判断できるように。根拠のないことなどAIX回答できるから、そこの仕組に着眼して。AIXボタンのそれぞれのボタンやピッカーの意味を理解すればわかる」→ Fable5（把握・実測・反証・修正・記録）。
+
+### 結論
+- **送る仕組みは既にあった。届いていなかったのはブレイン。** AIX【物件確認した（募集状況）】→ピッカー「室内写真を確認した」（check_pattern=interior_photo）は AI を通さず、スタッフが入れた写真ファイルか室内イメージURL＋物件名だけから固定文（「〇〇\n（室内イメージ）\nURL」）を作って写真→本文の順で送る＝**根拠（実物の写真・URL）を持った人しか押せない**。この形は実送信の多数派（下表）なのに、ブレインが写真依頼の直後に interior_photo をセットしたのは **0/9 回**（brain_decision_logs 9/5〜1,482行で suggested_check_pattern=interior_photo 0・S11 の発火 0）。
+- 原因3層: ①場面の証拠 S11（9/17 a🤫 事例）が「別の部屋・間取り」の語彙で、実物の写真依頼に当たるのは 5/30。しかも LLM が aix=null の時だけの fallback で、property_recommendation 等を返した実物には効かない ②ブレインのプロンプト（AIX 能力マップ・ハルシネーション禁止①〜⑤）に「写真の依頼→室内写真ピッカー」の説明が1行も無い ③ブレインが AIX を出さないと reply_mode=auto_reply で下書きが作られ、DeepSeek がプロンプトの「確認させて頂きます程度」を無視した回に「ご用意出来ていない為、私の方で撮影し…」が出る。出口 V16（COMPANY_FACT_CONTRADICTION）はそれを止めるが、suggestion「撮影してお送りさせて頂きますの形」は本文で答えさせる方向＝竹内さんの指摘とずれていた。
+- generate-reply の isPhotoRequestMsg（1479）は誘導先を「物件ピックアップした」と書き、同じファイルの URL_BAN_NOTE（1661）は「室内写真を確認した」と書く＝同じプロンプト内で不一致だった。
+
+### 実送信で引いた線（365日・お客様の写真依頼 30通／17会話・スタッフの返信がある 23通）
+| スタッフの返し | 通数 | 割合 |
+|---|---|---|
+| 室内イメージURL（AIX ピッカー3＋手書きで同じ形8）／画像添付3 | 14 | 60.9% |
+| 撮影して後日送る 4／建築中等の理由付き 3 | 7 | 30.4% |
+| その他（旧AI・別担当誘導） | 2 | 8.7% |
+| 根拠なしの「ご用意出来ていない」断定 | 0 | 0% |
+
+→ ピッカーが出す形そのものが多数派。「無い」と言うのは理由がある時だけ。押された interior_photo 6回は全てブレインの提案と不一致（matched 0/6）・property_names 全件 null（物件名を入れずに押している）。
+
+### 入れた物（入口＝ブレインの決定論・出口の re/exclude は変えない）
+- **`app/lib/room-photo-request.ts`（新規・依存ゼロ・純関数 `isRoomPhotoRequest`）**: 写真・画像・動画・URL・内装の依頼語＋同じ文に 室内・お部屋・物件・ここ/これ・外観・建物名 のどれかを必須（裸の「写真お願いできますか」は24字以内の短文だけ）。除外は文単位（身分証・申込書類・明細・「写真の物件／写真のような物件」・お客様が送る側・URL が開けない苦情・内覧に行く話）。四者同名: 場面判定・ブレイン・生成プロンプト（旧 isPhotoRequestMsg）・company-facts room_photo.ask が同じ関数を import。
+- **`aix-scene-evidence.ts` S11 に reason=room_photo_request**: `isRoomPhotoRequest && !hasCustomerImage && !AVAILABILITY_URL_RE && !内覧希望（写真・動画の語を除いてから判定＝「内見の動画欲しい」は内覧希望でない） && !入居日質問 && (送付物件あり || 物件名らしい語)` → property_check_result / interior_photo / now。URL・画像同送は従来どおり S1（募集状況が先）。isConfirmationScene は S11 で false（物件確認タスク・「確認します」を起こさない）。
+- **`brain-core.ts` 決定論 `signal:scene_S11_room_photo`**: promise の AIX が無く finalAix∈{null, acknowledge_check, property_check_result, property_recommendation, property_send} の時だけ上書き（estimate_sheet は反証どおり外す: 1191b1eb は室内イメージURL→見積書）。viewing_invite／meeting_place／application_push は確定アクション優先で触らない。AIX 能力マップに interior_photo の説明・ハルシネーション禁止に⑥「写真の有無を断定しない・撮影の約束を作らない」。
+- **2択（`two-choice.ts` roomPhotoRequest）**: ブレインの decision_source で立てる（証拠だけで立てると promise:pickup 等で左ボタンが写真と無関係になる）。proposing|viewing も許す。reply_direction_label「写真の受付」。自動経路は reply_mode=aix＝自動の下書きなし。
+- **下書きの行 `aix-reply-set.ts` sceneS11**: timing now・受付の一文（例「かしこまりました😊！！室内のお写真お送りさせて頂きます！！」）・forbiddenText: 有無の断定（物件固有の理由が会話にある時だけ可）／撮影の約束の創作／URL・物件名／「確認出来次第ご連絡」。generate-reply の linkRequestNote を isRoomPhotoRequest に統一・誘導先を AIX【物件確認した】→「室内写真を確認した」に修正。
+- **表記の統一**: aix-action-text.aixButtonText／aix-taxonomy.buildAixLineNote が interior_photo の時に「AIX【確認した（条件・交渉）】」と誤表記（CHECK_PATTERN_TOPIC に無かった）→「物件確認した→室内写真を確認した」（AVAILABILITY_CHECK_PICKER_LABELS・availabilityCheckButtonLabel）。brain-aix-feedback SCENE_LABEL に S11 のラベル追加。aix-flow-note「(結果:室内写真を確認した)」。
+- **company-facts room_photo・company-fact-guard suggestion** をこの流れ（本文は受付だけ・写真は AIX ピッカーから）に揃えた。
+- **全件監査 `scripts/audit-photo-request-aix.ts`**（SHOW=all|hit|miss）: 広い候補149通（79会話）を全部目で読み、検出29通（22会話）に誤当たり0。反証の誤当たり10通・「この写真のような物件」「申請URLの再発行」は外れ、取りこぼし2通（67fda056・ae3ffecb）は当たる。
+- テスト: room-photo-request 67（実物29通 true・32通 false）／other-room-scene 22／two-choice 18／aix-reply-set 22／aix-action-text 17／company-facts 40／company-fact-guard 44 ほか13本 PASS。tsc 0。
+- YUMA・DeepSeek 2/2: ブレイン property_check_result+interior_photo・2択・reply_mode=aix（自動の下書きなし）・手動の下書き「かしこまりました😊！！／室内のお写真お送りさせて頂きます！！」。控えを戻し副作用（メッセージ・aix_action_items・brain_decision_logs）を片付け済み。
+
+### 止めた物（理由）
+- 「また内見の動画」「部屋の写真もまだですよね」（依頼語なし・2通）は当てない（催促の形は別の線）
+- 間取り図の依頼は新しい語彙に入れない（既存 S11 の1本目・3本目が受ける）
+- estimate_sheet の上書き（室内イメージURL→見積書の流れが実送信にある）
+- 出口 V16 の re/exclude の変更（誤削除0の確認済みの線を動かさない）
+
+### 次にやる物
+1. 2〜3日後に brain_decision_logs で `signal:scene_S11_room_photo` の発火と、押された interior_photo の matched を監査（0/6 → 上がるか）
+2. interior_photo の property_names が全件 null＝AixModal で物件名を入れずに押せる。ブレインが「どの物件の写真を送ったか」を読めないので、ピッカーの物件名を必須か既定値にする
+3. 写真が無い時（撮影に行く／建築中の理由）の線は AIX が無く文＋手動添付。「撮影して送る」を AIX（約束）に乗せるかは実送信 4通では線が引けず保留
+
+設計知見4件（kb-insert: 「返信で答える場面ではない→入口でAIX・2択（穴:G2）」／「検出の語彙は主語必須・除外は文単位（汎用）」／「出口の suggestion を入口の流れに揃える・同じプロンプト内の誘導先の不一致（汎用・出口の決定論）」／「AIX の表記と押した記録の穴（静かに壊れる・穴:G1）」）。コミットは親。

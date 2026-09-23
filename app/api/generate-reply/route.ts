@@ -13,6 +13,7 @@ import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { buildBrainSpecificNote } from "@/app/lib/brain-specific-note";
 import { buildCompanyFactsNote } from "@/app/lib/company-facts";
+import { isRoomPhotoRequest } from "@/app/lib/room-photo-request";
 import { buildTemplateEchoNote } from "@/app/lib/template-echo-note";
 import { loadKnownCustomerNames, loadPartyAliases } from "@/app/lib/pii-known-names";
 
@@ -628,8 +629,12 @@ function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null
   };
   // G26/G7（2026-09-08 Fable5）: 旧固定型「→ 出来次第/確認出来次第ご連絡させて頂きます」は AIX 種別を問わず確認約束を注入していた
   // （創作約束の再生産源）。締めを AIX 種別で分岐し、viewing_invite は日程を尋ねる疑問形のみ（主語逆転の禁止を明記）
+  // 2026-09-23 竹内: 室内写真（S11・interior_photo）は確認する物が無い（手元の写真・URL をピッカーから送る）。「お送りさせて頂きます」で締める
+  const interiorPhoto = r ? r.check_pattern === "interior_photo" : safety?.scene === "S11_other_room";
   const closer =
-    s.aix === "property_check_result" || s.aix === "acknowledge_check"
+    interiorPhoto
+      ? "受付の一文で完結（「室内のお写真お送りさせて頂きます😊！！」）。写真・URL は AIX【物件確認した→室内写真を確認した】でスタッフが送るので、写真の有無・撮影の約束・URL・物件名を本文に書かない。「確認出来次第ご連絡」「確認させて頂きます」「ピックアップ出来次第お送り」も書かない"
+    : s.aix === "property_check_result" || s.aix === "acknowledge_check"
       ? "「〇〇（確認対象: 募集状況 等）確認出来次第ご連絡させて頂きます」"
     : s.aix === "viewing_invite"
       ? "日程を尋ねる疑問形（「ご都合よろしいお日にち御座いますでしょうか」／「ご内覧可能な日程をお知らせください」）→「ご案内させて頂きます」。日程はお客様が持っているので「お伝え／お知らせさせて頂きます」と書かない。「ご内覧させて頂きます」も禁止（内覧するのはお客様）"
@@ -1476,12 +1481,20 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     || /(url|ＵＲＬ|リンク).{0,12}(ありますか|ありますでしょうか|ありませんか|はありますか|もらえ)/i.test(customerMessage)
     || /(この|こちらの|その|これの|さっきの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(customerMessage);
   // 写真・画像・動画要求（「URL」という語を含まない要求）も同じゲートで検出する
-  const isPhotoRequestMsg = /((室内|内装|間取り|物件)?(写真|画像|動画|フォト))\s*(を|が|は)?\s*(送って|見たい|ありますか|ください|欲しい|URL|url|リンク|見せて|もらえ|拝見)/.test(customerMessage ?? "");
-  const linkRequestNote = (isLinkRequestMsg || isPhotoRequestMsg)
-    ? `\n\n【🔗 写真/URL要求検出（最優先）】お客様は物件の写真・画像・URLを求めていますが、これらの送付はAIXツール（物件ピックアップした）またはスタッフ操作で行います。
-【絶対禁止】返信文に「写真をお送りします」「URLをご案内します」「リンクをお送りします」「〜のURLとなります」等、写真・URLを今すぐ送る・案内するような文言を一切書かない。
-・写真・URL・物件リンクが「今から届く」かのような表現も禁止。
-・返信文は受付・確認の一言のみ：「確認させて頂きます😊！！」「しばらくお待ちください！！」程度にとどめる（「少々お待ちください」はfinal-check禁止語のため絶対に使わない）。
+  // 2026-09-23 竹内「室内の写真が欲しいといわれたら AIX の物件確認したの室内写真確認したのピッカーから送る形」:
+  //   判定はブレイン・会社の事実・出口と同じ isRoomPhotoRequest（四者同名）。誘導先も「物件ピックアップした」ではなく
+  //   AIX【物件確認した】→「室内写真を確認した」ピッカー。本文の規則は aix-reply-set sceneS11 と同じ（受付の一文まで・有無の断定と撮影の約束を作らない）。
+  //   旧: 「写真をお送りします」を絶対禁止にしつつ S11 の橋渡し例が「室内のお写真お送りさせて頂きます」で、同じプロンプトの中で逆の指示になっていた
+  const isPhotoRequestMsg = isRoomPhotoRequest(customerMessage ?? "");
+  const linkRequestNote = isPhotoRequestMsg
+    ? `\n\n【📷 室内の写真・動画・URL の依頼（最優先）】お客様は室内の写真・動画・室内イメージURL を求めています。写真・URL はスタッフが AIX【物件確認した】→「室内写真を確認した」ピッカーから手元の物を物件名とあわせて送ります（AI は使わない）。
+・返信文は受付の一文まで（例: 「かしこまりました😊！！室内のお写真お送りさせて頂きます！！」）。
+【絶対禁止】写真・動画の有無の断定（「ご用意出来ていない」「ございません」「撮影は行っていない」）／撮影の約束の創作（「私の方で撮影しお送りします」）／URL・物件名・号室の記載／「確認させて頂きます」「確認出来次第ご連絡」（確認する物は無い）。
+・実送信（365日）: 写真の有無を根拠なく断定した通は 0通。建築中・退去前など物件固有の理由が会話履歴にある時だけ、その理由を書いてよい。`
+    : isLinkRequestMsg
+    ? `\n\n【🔗 URL要求検出（最優先）】お客様は物件の URL・リンクを求めていますが、URL の送付はスタッフが AIX【物件確認した】→「室内写真を確認した」ピッカーまたは手動で行います。
+【絶対禁止】返信文に「URLをご案内します」「リンクをお送りします」「〜のURLとなります」等、URL を今すぐ送る・案内するような文言・URL そのものを一切書かない。
+・返信文は受付の一言のみ：「かしこまりました😊！！」程度にとどめる（「少々お待ちください」はfinal-check禁止語のため絶対に使わない）。
 ・物件名・号室は書かない（「お送り頂きました物件」で受ける。写真・URLも書かない。2026-09-11 竹内方針2）。`
     : "";
   // 2026-09-12 竹内（YUYA 事例）: お客様が物件そのもの（URL・画像・ポータルの共有文）を送ってきた時の呼び方。

@@ -26,6 +26,10 @@ it("ボタン表記: 物件確認した（募集状況）", () => expect(aixButt
 it("ボタン表記: 入居可能日の確認は「確認した（条件・交渉）→入居可能日」", () => {
   expect(aixButtonText("property_check_result", "mgmt_move_in")).toBe("AIX【確認した（条件・交渉）→入居可能日】");
 });
+it("2026-09-23: 室内写真は「物件確認した→室内写真を確認した」（旧は「確認した（条件・交渉）」の誤表記）", () => {
+  expect(aixButtonText("property_check_result", "interior_photo")).toBe("AIX【物件確認した→室内写真を確認した】");
+  expect(buildAixActionNotice("あ", "property_check_result", "interior_photo")).toContain("あさん → AIX【物件確認した→室内写真を確認した】");
+});
 it("1件通知: お客さん名と AIX ボタンの種類", () => {
   const t = buildAixActionNotice("じゅにあ", "viewing_invite");
   expect(t).toContain("【AIX要対応】"); expect(t).toContain("じゅにあさん → AIX【内覧日調整】");

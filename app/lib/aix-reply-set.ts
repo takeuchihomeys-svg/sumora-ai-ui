@@ -15,7 +15,7 @@
 //   4. fresh で action='' → null（場面表が AIX を足さない）
 //   5. unresolvedBlock（final-check で直せなかった断言）は AIX を選ばない。ブレインに action があれば required に上げ、
 //      無ければ stopAutoSend だけを返す（自動送信を止めるのは安全のため）
-import { AIX_ACTION_REPLY_DIRECTION, AIX_BUTTON_LABELS, AIX_STAFF_NOTES } from "./aix-taxonomy";
+import { AIX_ACTION_REPLY_DIRECTION, AIX_BUTTON_LABELS, AIX_STAFF_NOTES, availabilityCheckButtonLabel } from "./aix-taxonomy";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { BRIDGE_VACANCY_CHECK, BRIDGE_MOVEIN_CHECK, BRIDGE_SCREENING_CHECK, ASSERTION_REPLACEMENT } from "./scene-patterns";
 import {
@@ -79,6 +79,9 @@ const VACANCY_FORBID = "空室有無・退去日・入居可能日をテキス�
 type SceneHit = Omit<ReplyAix, "enforcement" | "source" | "note">;
 
 function labelFor(action: string, checkPattern: string | null): string {
+  // 2026-09-23: interior_photo → 「物件確認した→室内写真を確認した」（aix-taxonomy と同じ語）
+  const avail = action === "property_check_result" ? availabilityCheckButtonLabel(checkPattern) : null;
+  if (avail) return avail;
   if (checkPattern === "mgmt_move_in") return "確認した（条件・交渉）→入居可能日";
   if (checkPattern === "vacate_date") return "確認した（条件・交渉）→退去予定日";
   if (checkPattern === "mgmt_guarantor") return "確認した（条件・交渉）→保証会社（審査面）";
@@ -212,6 +215,24 @@ function sceneS10(reason: string): SceneHit {
   };
 }
 
+// 2026-09-23 竹内「室内の写真が欲しいといわれたら AIX の物件確認したの室内写真確認したのピッカーから送る形」:
+//   S11（室内の写真・動画・URL の依頼／送った物件の別の部屋・間取り）。写真・室内イメージURL・間取り図はスタッフが AIX【物件確認した→室内写真を確認した】
+//   のピッカーから手元の物を送る。timing は now（旧 genericRow は property_check_result を一律 after_confirm にしていたため
+//   「室内写真確認させて頂きます！！確認出来次第ご連絡」の矛盾文が出ていた）。
+//   bridge は受付の一文の**例**（固定文ではない）。実送信365日（検出28通）: 室内イメージURL／画像 13・撮影して送る 2・建築中等の理由付き 2・
+//   根拠なしの「ご用意出来ていない」断定 0 → 本文で写真の有無・撮影の約束を作らない。物件固有の理由が会話にある時はそれを優先してよい
+function sceneS11(reason: string): SceneHit {
+  return {
+    action: "property_check_result", check_pattern: "interior_photo", label: labelFor("property_check_result", "interior_photo"), timing: "now",
+    bridge: "かしこまりました😊！！室内のお写真お送りさせて頂きます！！",
+    forbidden: [],
+    forbiddenText: "写真・動画の有無の断定（「ご用意出来ていない」「ございません」。建築中・退去前など物件固有の理由が会話にある時だけ可）／撮影の約束の創作（「私の方で撮影し」「撮影してお送り」）／URL・物件名・号室の記載／「確認出来次第ご連絡」「確認させて頂きます」（確認する物は無い）",
+    scene: "S11_other_room", reason_code: reason, chained: null,
+    urgency: "受付返信→手元の写真・室内イメージURL をすぐピッカーから送る", highlight: false,
+    extra: "写真・室内イメージURL・間取り図は AIX【物件確認した→室内写真を確認した】でスタッフが手元の物を物件名とあわせて送る。本文は受付の一文（例: 「室内のお写真お送りさせて頂きます」）で完結し、写真の有無・撮影に行くか・URL を本文で決めない（手元に無い時の撮影・理由の説明はスタッフが決める）。",
+  };
+}
+
 function genericRow(action: string, cp: string | null, reason: string): SceneHit {
   return {
     action, check_pattern: cp, label: labelFor(action, cp),
@@ -234,6 +255,7 @@ function rowForEvidence(e: AixSceneEvidence, o: SceneEvidenceInput): SceneHit {
     case "S7_condition_change": return sceneS7();
     case "S9_cost_breakdown": return sceneS9(e.reasonCode);
     case "S10_phone_request": return sceneS10(e.reasonCode);
+    case "S11_other_room": return sceneS11(e.reasonCode);
     default: return genericRow(e.candidateAction, e.checkPattern, e.reasonCode);
   }
 }
@@ -284,6 +306,7 @@ export function sceneSafetyRow(action: string, checkPattern: string | null, o: S
   } else if (action === "property_check_result") {
     row = checkPattern === "mgmt_move_in" || checkPattern === "vacate_date" ? sceneS2(checkPattern, null, `brain:${action}`)
       : checkPattern === "mgmt_guarantor" ? sceneS3(`brain:${action}`)
+      : checkPattern === "interior_photo" ? sceneS11(`brain:${action}`)
       : genericRow(action, checkPattern, `brain:${action}`);
   } else if (action === "viewing_invite") row = sceneS4(`brain:${action}`);
   else if (action === "meeting_place") row = sceneS5(`brain:${action}`);

@@ -3,6 +3,9 @@ import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
+// 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
+import { isJevEnabled } from "@/app/lib/jev-client";
+import { evaluateAixWithJev, recordJevShadow, toShadowRow } from "@/app/lib/aix-jev";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import {
   AIX_STAFF_NOTES,
@@ -340,7 +343,7 @@ const AIX_CAPABILITY_MAP = `
 - condition_hearing: 既知条件をスキップした条件ヒアリングを生成
 - acknowledge_check: 管理会社への空室確認+見積書依頼を生成
 - followup_revive: 追客・再接触メッセージを生成
-- property_check_result: 空室確認結果の報告文を生成（「物件確認した」）→ 2番手での申込が可能と判明した場合は+1分30秒で「（2番手・申込）」を顧客名の置換のみで自発送信する。【重要】フリーレント可否・礼金/初期費用の交渉結果・ペット可否・駐車場有無・設備有無など管理会社に確認した結果はすべてこのボタンの「管理会社に確認した」サブパターンで報告する。acknowledge_check で確認を依頼した後に管理会社から回答が届いたら必ず property_check_result を選ぶこと。confirm前に結果を捏造してはいけない。【誤選択防止】顧客が「駐車場付きのお部屋がないか」「駐車場付きで探してほしい」等と言っている場合は property_check_result ではなく property_send を選ぶ（これは現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 = equip_add）
+- property_check_result: 空室確認結果の報告文を生成（「物件確認した」）→ 2番手での申込が可能と判明した場合は+1分30秒で「（2番手・申込）」を顧客名の置換のみで自発送信する。【室内写真】お客様が室内の写真・動画・室内イメージURL を頼んだ（「室内の写真ありますか」「これ室内写真欲しいです」「お部屋の画像ありますでしょうか」「内見の動画欲しいです」「URLとかありますでしょうか」）→ check_pattern=interior_photo（AIX【物件確認した】→「室内写真を確認した」ピッカー。スタッフが手元の写真・室内イメージURL を物件名とあわせて送る。AI は使わない・本文は受付の一文だけ）。【重要】フリーレント可否・礼金/初期費用の交渉結果・ペット可否・駐車場有無・設備有無など管理会社に確認した結果はすべてこのボタンの「管理会社に確認した」サブパターンで報告する。acknowledge_check で確認を依頼した後に管理会社から回答が届いたら必ず property_check_result を選ぶこと。confirm前に結果を捏造してはいけない。【誤選択防止】顧客が「駐車場付きのお部屋がないか」「駐車場付きで探してほしい」等と言っている場合は property_check_result ではなく property_send を選ぶ（これは現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 = equip_add）
 - property_recommendation: Vision読み取りで物件紹介文を生成（1件詳細）→ 押下後は「1件特にオススメ」で感情的フォローを追加する（実測1分22秒。原文そのままの送信実績はゼロなので"1件に絞って推す"思想のみ流用し全面リライトする）
 - meeting_place: 内覧の待ち合わせ場所案内を生成
 - greeting_viewing: 内覧前後の挨拶メッセージを生成
@@ -418,6 +421,7 @@ const REPLY_STYLE_RULES = `
 　　お客様が「家賃が安いと嬉しい」「もう少し安くなりませんか」と言った時の会社の本当の答えは**初期費用を最大限割引する**（実送信818通）＋条件に合う新着のピックアップ。
 　　残す物（実在するので禁止しない）: 敷金・礼金の交渉（15通）／管理費の値下げ（顧客が依頼した後・3通）／支払方法・スライドの交渉（4通）／既に交渉した**結果の報告**（過去形・3通）。
 　　※前回の自分の reply_direction に家賃交渉があっても「継続する」と書かない（していない約束の既成事実化。9/23 あっぴ事例）
+⑥ 室内の写真・動画・室内イメージURL の依頼 → aix: property_check_result（check_pattern=interior_photo・AIX【物件確認した】→「室内写真を確認した」ピッカー）。本文は受付の一文だけ（「かしこまりました😊！！室内のお写真お送りさせて頂きます！！」）。写真の有無（「ご用意出来ていない」「ございません」）・撮影の約束（「私の方で撮影し」）・URL・物件名を本文で作らない（実送信365日: 有無の断定 0通・スタッフは手元の室内イメージURL／画像をピッカーから送る）。建築中・退去前など物件固有の理由が会話にある時だけ、その理由を書いてよい（2026-09-23 竹内）
 
 ■ 物件個別条件・オペレーション情報の断定禁止
 - 短期違約金・契約条件（「数ヶ月でも違約金発生しない事ありますか？」）は物件の契約書次第。一般論で答えられそうに見えても断定禁止。回答する場合は「契約書次第ではありますが」の留保を必須とする
@@ -2695,6 +2699,21 @@ ${history}`;
       finalAix = "estimate_sheet";
       decisionSource = "signal:scene_S6_amount_confirm";
     }
+    // 2026-09-23 竹内「室内の写真が欲しいといわれたら AIX の物件確認したの室内写真確認したのピッカーから送る形。ちゃんとここはブレインで判断できるように。
+    //   根拠のないことなど AIX 回答できるから、そこの仕組に着眼して」:
+    //   室内の写真・動画・URL の依頼（場面の証拠 S11・room_photo_request）→ AIX【物件確認した】→「室内写真を確認した」（check_pattern=interior_photo）。
+    //   スタッフが手元の写真・室内イメージURL を物件名とあわせてピッカーから送る。本文では写真の有無・撮影の約束を作らない。
+    //   実データ（365日・検出28通）: スタッフの返しは URL／画像 13・撮影 2・理由付き 2・根拠なし断定 0。ブレインの interior_photo の提案は 0回
+    //   （9回の判断は recommendation／send／null）。上書き対象は AIX なし／確認します／物件確認した（cp なし）／物件オススメ／物件ピックアップ だけ。
+    //   見積書送る は外す（反証: 1191b1eb は室内イメージURL→見積書、c1d57c97 は撮影→申込・費用案内 と写真と見積の両方を出しており、潰すと S6 の見積が落ちる）。
+    //   内覧のご案内／待ち合わせ／申込へ は確定アクション優先でそのまま
+    if (!promiseAix && sceneEvidence?.reasonCode === "room_photo_request"
+      && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result"
+        || finalAix === "property_recommendation" || finalAix === "property_send")) {
+      finalAix = "property_check_result";
+      sceneSignalCheckPattern = "interior_photo";
+      decisionSource = "signal:scene_S11_room_photo";
+    }
     // 2026-09-14 竹内（あい事例）「確認しますを入れたらスムーズに進まない。実際に確認した内容を AIX の確認したから送る」:
     //   特定の物件の入居日の質問（場面の証拠 S2）は、管理会社に入居可能日を確認して AIX【物件確認した→入居可能日】で答える。
     //   確認します（acknowledge_check）を挟まない。実データ（120日）: 入居日の質問の後の確認しますは1件・物件確認した（mgmt_move_in）は4件。
@@ -3092,6 +3111,9 @@ ${history}`;
       // 2026-09-16 竹内（あや事例）: 物件を受け取って「検討します」と持ち帰った場面も2択（物件オススメか返信か）
       hesitancyPattern,
       llmTwoChoice: llmTwoChoiceMode,
+      // 2026-09-23 竹内: 室内の写真の依頼は「AIX【物件確認した→室内写真を確認した】か返信か」の2択（手元に写真があるかはスタッフしか知らない）。
+      //   合図は**ブレインの決定**（decision_source）＝証拠だけで立てると、promise:pickup 等で別の AIX になった回に写真と無関係な左ボタンが出る
+      roomPhotoRequest: decisionSource === "signal:scene_S11_room_photo",
     });
     const isTwoChoiceMode: boolean = twoChoiceVerdict.two;
     // reply_direction_label: 10字以内。LLM出力を優先、なければ customer_intent から補完
@@ -3102,6 +3124,8 @@ ${history}`;
           if (twoChoiceVerdict.reason === "considering") return "検討見守り";
           // 2026-09-17 竹内（慶次事例）: 謝って預けた場面の返信は「受け止め＋ピックアップの約束」（実送信「とんでもございません！！…お送りさせて頂きます」）
           if (twoChoiceVerdict.reason === "apology_entrust") return "受け止め";
+          // 2026-09-23: 写真の依頼の返信側は受付の一文（写真の有無・撮影の約束は書かない）
+          if (twoChoiceVerdict.reason === "room_photo_request") return "写真の受付";
           if (customerIntentFinal === "question") return "条件説明";
           if (customerIntentFinal === "consultation") return "相場説明";
           if (customerIntentFinal === "negative") return "不安解消";
@@ -3133,6 +3157,29 @@ ${history}`;
     // action="" のまま reply_mode="aix" にすると generate-reply のゲートで自動ドラフトが
     // 中止され（ai_draft="[AIX誘導中]"）、押すべきAIXボタンも無いためスタッフが手詰まりになる。
     if (!finalAix) replyMode = "auto_reply";
+
+    // 2026-09-23 竹内「Jev がブレインの一部にいてそこから選択するのが一番質上がる」: 影の運用。
+    //   ブレインの判断（finalAix・check_pattern）と Jev の答え（AIX・何を確認するピッカー・写真依頼の確率）を並べて
+    //   jev_shadow_logs に記録するだけで、判断は変えない。scripts/eval-jev-aix.ts と突き合わせて正答率を測り、
+    //   上回った判定だけ決定論に繋ぐ（確率の線を実測で決める）。鍵（TYPESAFE_API_KEY）が無ければ何もしない。
+    //   個人情報: 返信生成と同じ名前一覧で伏せる（maskPII・maskNames）。申込以降の会話は渡さない。
+    if (isJevEnabled() && !isPostApplyStatus(convStatus)) {
+      try {
+        const msgsForJev = [...typedMessages].reverse().slice(-8)
+          .map((m) => ({ sender: m.sender, text: maskPII(m.text ?? "", maskNames), createdAt: m.created_at, isAix: !!m.is_aix_generated }));
+        const ev = await evaluateAixWithJev({
+          messages: msgsForJev, status: convStatus, sentPropertyCount: brainLedger.facts.propertiesSentCount,
+          lastAixType: aixLogs[0]?.aix_type ?? null, conversationId, timeoutMs: 3_000,
+        });
+        if (ev) {
+          const lastCust = typedMessages.find((m) => m.sender === "customer");
+          await recordJevShadow(supabase, toShadowRow(conversationId, lastCust?.created_at ?? null, { action: finalAix ?? "", check_pattern: checkKind?.check_pattern ?? null }, ev));
+          console.log(JSON.stringify({ tag: "jev:shadow", conversationId, brain: finalAix ?? "", brainCp: checkKind?.check_pattern ?? null, jev: ev.decision.aix, p: Number(ev.decision.aixProb.toFixed(2)), jevCp: ev.decision.checkPattern, ms: ev.raw.ms }));
+        }
+      } catch (e) {
+        console.warn("[jev-shadow] skipped:", e instanceof Error ? e.message : String(e));
+      }
+    }
 
     return {
       action: finalAix ?? "",

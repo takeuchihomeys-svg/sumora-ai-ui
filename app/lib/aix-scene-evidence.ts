@@ -14,6 +14,7 @@ import { customerDoubtsCheapness } from "./cost-explain-text";
 import { customerAsksCostComposition } from "./cost-breakdown";
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, staffOffersViewing } from "./move-out-context";
 import { customerRequestsPhoneCall } from "./phone-call";
+import { isRoomPhotoRequest, stripPhotoWordsForViewing, PROPERTY_NAME_LIKE_RE } from "./room-photo-request";
 import {
   allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, PROXY_CHECK_REQUEST_RE, PROXY_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE, OTHER_ROOM_LAYOUT_Q_RE, OTHER_ROOM_SEARCH_RE,
@@ -193,6 +194,18 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   //   旧: 「この物件」＋「ありますか」で S1 に当たり、AIX【確認します】（宛先が管理会社の空室確認依頼）が出ていた。
   //   「もっと広い部屋で探してほしい」は物件探しなので除く。こちらが物件を送っている会話だけ（新しい物件の URL・画像が同時に来た時は S1）
   //   内覧希望（「メロディハイムの別の部屋も拝見したいです」）は S4 内覧のまま＝資料ではなく実際に見たい話なので除く
+  // 2026-09-23 竹内「室内の写真が欲しいといわれたら AIX の物件確認したの室内写真確認したのピッカーから送る形。ちゃんとここはブレインで判断できるように」:
+  //   S11 の語彙を「室内の写真・動画・室内イメージURL の依頼」まで広げる（room-photo-request.isRoomPhotoRequest・四者同名）。
+  //   実データ（365日・広い候補149通を全部読んだ・検出28通）: スタッフの返しの多数派は室内イメージURL／画像を送る（AIX ピッカー＋手書きで同じ形）、
+  //   次が撮影して後日送る、建築中等の理由付き。根拠なしの「ご用意出来ていない」断定は 0通。ブレインの interior_photo の提案は 0回だった。
+  //   「内見の動画欲しい」は内覧希望ではなく写真の依頼（内見・内覧＋動画・写真 の語を外してから内覧希望を見る）。
+  //   新しい物件の URL・画像が一緒に来た時は従来どおり S1（募集状況の確認が先）。入居日の質問が一緒なら S2 を優先（管理会社への確認が要る）。
+  //   こちらが物件を送っている会話、またはお客様が物件を特定している時だけ（持込物件「〇〇の部屋の写真ありますか」は specified で通る）
+  if (isRoomPhotoRequest(msg) && !o.hasCustomerImage && !AVAILABILITY_URL_RE.test(msg)
+    && !VIEWING_INTENT_RE.test(stripPhotoWordsForViewing(msg)) && !(MOVEIN_Q_RE.test(msg) && moveInAsked(msg))
+    && ((o.sentPropertyCount ?? 0) > 0 || specified || PROPERTY_NAME_LIKE_RE.test(msg))) {
+    return ev({ scene: "S11_other_room", candidateAction: "property_check_result", checkPattern: "interior_photo", timing: "now", chained: null, reasonCode: "room_photo_request", propertySpecifiedBy: specBy ?? (PROPERTY_NAME_LIKE_RE.test(msg) ? "property_word" : "context") });
+  }
   if (OTHER_ROOM_LAYOUT_Q_RE.test(msg) && !OTHER_ROOM_SEARCH_RE.test(msg) && !VIEWING_INTENT_RE.test(msg)
     && !AVAILABILITY_URL_RE.test(msg) && !o.hasCustomerImage
     && ((o.sentPropertyCount ?? 0) > 0 || specified)) {

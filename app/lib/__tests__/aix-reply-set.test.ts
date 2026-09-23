@@ -40,6 +40,33 @@ describe("① fresh＋action → ブレインの判断を採る", () => {
   });
 });
 
+// 2026-09-23 竹内「室内の写真が欲しいといわれたら AIX の物件確認したの室内写真確認したのピッカーから送る形」
+describe("①' 室内写真（S11・interior_photo）の行", () => {
+  it("ブレインが property_check_result + interior_photo → timing now・ラベル「物件確認した→室内写真を確認した」・受付の一文の橋渡し", () => {
+    const x = r({ latestCustomerTurn: "これ室内写真欲しいです", sentPropertyCount: 3, brainDecision: brain("property_check_result", { check_pattern: "interior_photo" }) });
+    expect(x?.action).toBe("property_check_result"); expect(x?.check_pattern).toBe("interior_photo");
+    expect(x?.timing).toBe("now"); expect(x?.scene).toBe("S11_other_room");
+    expect(x?.label).toBe("物件確認した→室内写真を確認した");
+    expect(x?.bridge).toBe("かしこまりました😊！！室内のお写真お送りさせて頂きます！！");
+    expect(/ご用意出来ていない/.test(x?.forbiddenText ?? "")).toBe(true);
+    expect(/確認出来次第ご連絡/.test(x?.forbiddenText ?? "")).toBe(true);
+    expect(/私の方で撮影し/.test(x?.forbiddenText ?? "")).toBe(true);
+  });
+  it("証拠が無い時（ブレインだけが interior_photo）でも同じ行（旧 genericRow は after_confirm で矛盾文が出ていた）", () => {
+    const x = r({ latestCustomerTurn: "ありがとうございます", brainDecision: brain("property_check_result", { check_pattern: "interior_photo" }) });
+    expect(x?.timing).toBe("now"); expect(x?.scene).toBe("S11_other_room");
+  });
+  it("本文の安全（ブレインが AIX なし）でも S11 の禁止が効く", () => {
+    const o = base({ latestCustomerTurn: "室内の写真ありますか？", sentPropertyCount: 2 });
+    const s = resolveBodySafety(detectAixSceneEvidence(o), o);
+    expect(s?.scene).toBe("S11_other_room"); expect(s?.confirmationBasis).toBe(null);
+    expect(/ご用意出来ていない/.test(s?.forbiddenText ?? "")).toBe(true);
+  });
+  it("従来の入居日（mgmt_move_in）は after_confirm のまま", () => {
+    expect(r({ latestCustomerTurn: "ありがとうございます", brainDecision: brain("property_check_result", { check_pattern: "mgmt_move_in" }) })?.timing).toBe("after_confirm");
+  });
+});
+
 describe("② fresh＋action='' → 場面ヒットがあっても AIX なし", () => {
   it("S1 空室質問でもブレインが '' なら null", () => {
     expect(r({ latestCustomerTurn: "この物件まだ空いてますか？", brainDecision: brain("") })).toBe(null);

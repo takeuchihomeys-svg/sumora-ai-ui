@@ -18,6 +18,7 @@
 //   ※ 文面は 2026-09-23 までの brain-core 内の組み立てをそのまま移した（動的ブロックなので変えてもキャッシュは割れないが、意味を変えない）
 
 import { jstAgo, jstMDHm } from "./jst-date";
+import { AVAILABILITY_CHECK_PICKER_LABELS } from "./aix-taxonomy";
 
 export type AixFlowLog = {
   aix_type: string | null;
@@ -63,7 +64,7 @@ export function buildAixFlowNote(aixLogs: ReadonlyArray<AixFlowLog>, aixTransiti
     return `${t}${rows.length > 1 ? `×${rows.length}回` : ""}（最後 ${when}）`;
   });
   const recentAixSeqText = aixLogs.slice(0, 3).length > 0
-    ? `\n【直近AIXアクション（新→旧順）】${aixLogs.slice(0, 3).map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}${l.check_pattern ? `(結果:${l.check_pattern})` : ""}${l.created_at ? `[${jstMDHm(l.created_at)}・${agoText(l.created_at)}]` : ""}`).join(" → ")}`
+    ? `\n【直近AIXアクション（新→旧順）】${aixLogs.slice(0, 3).map((l, i) => `${i === 0 ? "最新" : `${i + 1}回前`}:${l.aix_type ?? "?"}${l.template_name ? `(${l.template_name})` : ""}${l.check_pattern ? `(結果:${AVAILABILITY_CHECK_PICKER_LABELS[l.check_pattern] ?? l.check_pattern})` : ""}${l.created_at ? `[${jstMDHm(l.created_at)}・${agoText(l.created_at)}]` : ""}`).join(" → ")}`
     : "";
   let consecutivePcr = 0;
   for (const l of aixLogs) {

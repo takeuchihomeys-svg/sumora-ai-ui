@@ -89,6 +89,17 @@ describe("当たり漏れを拾う", () => {
   it("オンラインで内覧などは可能でしょうか？ → 内覧方法", () =>
     truthy(ids("オンラインで内覧などは可能でしょうか？").includes("viewing_method")));
   it("写真お願いできますか？ → 写真", () => truthy(ids("写真お願いできますか？").includes("room_photo")));
+  // 2026-09-23 竹内: 写真の判定はブレインの場面と同じ isRoomPhotoRequest（反証で見つかった書類の写真の誤当たりを外す）
+  it("申込書類の記入箇所の写真・明細書の画像・内定通知の画像 → 写真の事実を渡さない", () => {
+    falsy(ids("記入が必要な箇所の写真もう一度送っていただけないでしょうか").includes("room_photo"));
+    falsy(ids("初期費用の明細書を\nこのよう形で画像でもお送りいただくことは可能でしょうか…？").includes("room_photo"));
+    falsy(ids("内定通知の画像をテンプしないといけないみたいなんですが、もらえますか？").includes("room_photo"));
+    falsy(ids("この写真のような、物件があれば幸いです").includes("room_photo"));
+  });
+  it("写真の事実は AIX【物件確認した→室内写真を確認した】から送る流れ・撮影の約束もしない", () => {
+    const s = buildCompanyFactsNote("お部屋の画像ありますでしょうか？");
+    truthy(s.includes("AIX【物件確認した→室内写真を確認した】")); truthy(s.includes("撮影して送るとも約束しない"));
+  });
   it("親と縁切れてる場合でも親の連絡先いりますか？ → 緊急連絡先", () =>
     truthy(ids("親と縁切れてる場合でも親の連絡先いりますか？").includes("emergency_contact")));
   it("緊急連絡先欄の記入そのもの（改行あり）は渡さない", () =>
