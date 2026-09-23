@@ -6,6 +6,7 @@ import { maskPII } from "@/app/lib/pii-mask";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
 import { evaluateAixWithJev, recordJevShadow, toShadowRow } from "@/app/lib/aix-jev";
+import { waitUntil } from "@vercel/functions";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import {
   AIX_STAFF_NOTES,
@@ -3163,22 +3164,29 @@ ${history}`;
     //   jev_shadow_logs に記録するだけで、判断は変えない。scripts/eval-jev-aix.ts と突き合わせて正答率を測り、
     //   上回った判定だけ決定論に繋ぐ（確率の線を実測で決める）。鍵（TYPESAFE_API_KEY）が無ければ何もしない。
     //   個人情報: 返信生成と同じ名前一覧で伏せる（maskPII・maskNames）。申込以降の会話は渡さない。
+    //   ⚠ ボトルネックにしない: ブレインの返しを待たせない（影の運用は結果を使わないので、応答の後ろで走らせる＝waitUntil）。
+    //     Jev が遅い・落ちている時も、ブレインの所要時間と判断は1ミリ秒も変わらない。
     if (isJevEnabled() && !isPostApplyStatus(convStatus)) {
-      try {
-        const msgsForJev = [...typedMessages].reverse().slice(-8)
-          .map((m) => ({ sender: m.sender, text: maskPII(m.text ?? "", maskNames), createdAt: m.created_at, isAix: !!m.is_aix_generated }));
-        const ev = await evaluateAixWithJev({
-          messages: msgsForJev, status: convStatus, sentPropertyCount: brainLedger.facts.propertiesSentCount,
-          lastAixType: aixLogs[0]?.aix_type ?? null, conversationId, timeoutMs: 3_000,
-        });
-        if (ev) {
+      const brainActionForShadow = finalAix ?? "";
+      const brainCpForShadow = checkKind?.check_pattern ?? null;
+      const shadow = (async () => {
+        try {
+          const msgsForJev = [...typedMessages].reverse().slice(-8)
+            .map((m) => ({ sender: m.sender, text: maskPII(m.text ?? "", maskNames), createdAt: m.created_at, isAix: !!m.is_aix_generated }));
+          const ev = await evaluateAixWithJev({
+            messages: msgsForJev, status: convStatus, sentPropertyCount: brainLedger.facts.propertiesSentCount,
+            lastAixType: aixLogs[0]?.aix_type ?? null, conversationId, timeoutMs: 5_000,
+          });
+          if (!ev) return;
           const lastCust = typedMessages.find((m) => m.sender === "customer");
-          await recordJevShadow(supabase, toShadowRow(conversationId, lastCust?.created_at ?? null, { action: finalAix ?? "", check_pattern: checkKind?.check_pattern ?? null }, ev));
-          console.log(JSON.stringify({ tag: "jev:shadow", conversationId, brain: finalAix ?? "", brainCp: checkKind?.check_pattern ?? null, jev: ev.decision.aix, p: Number(ev.decision.aixProb.toFixed(2)), jevCp: ev.decision.checkPattern, ms: ev.raw.ms }));
+          await recordJevShadow(supabase, toShadowRow(conversationId, lastCust?.created_at ?? null, { action: brainActionForShadow, check_pattern: brainCpForShadow }, ev));
+          console.log(JSON.stringify({ tag: "jev:shadow", conversationId, brain: brainActionForShadow, brainCp: brainCpForShadow, jev: ev.decision.aix, p: Number(ev.decision.aixProb.toFixed(2)), jevCp: ev.decision.checkPattern, ms: ev.raw.ms }));
+        } catch (e) {
+          console.warn("[jev-shadow] skipped:", e instanceof Error ? e.message : String(e));
         }
-      } catch (e) {
-        console.warn("[jev-shadow] skipped:", e instanceof Error ? e.message : String(e));
-      }
+      })();
+      // Vercel では応答を返した後も waitUntil で書き終える。ローカル・cron では普通の非同期として流す
+      try { waitUntil(shadow); } catch { /* Vercel 以外 */ }
     }
 
     return {
