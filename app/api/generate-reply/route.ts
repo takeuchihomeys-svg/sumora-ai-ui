@@ -10,6 +10,7 @@ import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER } 
 import { isPostApplyStatus, willRouteAlt } from "@/app/lib/llm-alt-provider";
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { buildBrainSpecificNote } from "@/app/lib/brain-specific-note";
+import { buildCompanyFactsNote } from "@/app/lib/company-facts";
 import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 
 /**
@@ -4665,6 +4666,12 @@ export async function POST(req: NextRequest) {
           || isGratitudeReplyTPO || isTemporaryLeaveMsg || isThinkingMsg,
       });
       if (brainSpecific) lines.push(brainSpecific);
+      // 2026-09-23 竹内「行う（固定の事実を別枠で必ず渡す）」:
+      //   会社として答えが決まっている事（店舗の有無・緊急連絡先のルール・キャンセルできる時期）を
+      //   AI が知らずに作文していた。聞かれた時だけ確実に渡す。詳細は app/lib/company-facts.ts
+      //   ⚠ 物件・保証会社によって変わる事は入れない（竹内「物件によって保証会社に違いあるから適当に答えない」）
+      const companyFacts = buildCompanyFactsNote(message);
+      if (companyFacts) lines.push(companyFacts.trim());
       if (effectiveKeyTopics.length) {
         lines.push(`- ✅ 必ず含める内容（${effectiveKeyTopics.length}件すべて必須）: ${effectiveKeyTopics.join(" / ")}`);
         lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");

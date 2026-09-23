@@ -17,6 +17,7 @@ import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER } fro
 import { isPostApplyStatus, willRouteAlt } from "@/app/lib/llm-alt-provider";
 import { buildSendReplyTimingNote } from "@/app/lib/send-reply-timing";
 import { buildAixSceneNote } from "@/app/lib/aix-scene-stats";
+import { buildCompanyFactsNote } from "@/app/lib/company-facts";
 import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_SENT_PLACEHOLDER } from "@/app/lib/pii-pseudonym";
 import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
@@ -1485,6 +1486,14 @@ export async function analyzeConversation(
   const lastStaffAixType = lastStaffAtIso
     ? (aixLogs.find((l) => Math.abs(Date.parse(l.created_at) - Date.parse(lastStaffAtIso)) <= 3 * 60_000)?.aix_type ?? null)
     : null;
+  // 2026-09-23 竹内「行う（固定の事実を別枠で必ず渡す）」:
+  //   AI が会社の事実（店舗の有無・緊急連絡先のルール・キャンセルできる時期）を知らずに作文していた。
+  //   ナレッジには正解があったが検索の当たり外れで届かないので、**聞かれた時だけ確実に渡す**。
+  //   ⚠ 物件・保証会社によって変わる事は入れない（竹内「物件によって保証会社に違いあるから適当に答えない」）
+  //   お客様の直近の発言（連投を拾うため3通まで）で当てる
+  const companyFactsText = buildCompanyFactsNote(
+    typedMessages.filter((m) => m.sender === "customer").slice(0, 3).map((m) => m.text ?? "").join("\n"),
+  );
   const sendReplyTimingText = buildSendReplyTimingNote({
     lastStaffAt: lastStaffAtIso,
     lastStaffAixType,
@@ -2236,11 +2245,11 @@ ${PHASE_TEMPLATE_HINTS}
   const customerSpecificText = isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
+    ? `${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
+    : `${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
