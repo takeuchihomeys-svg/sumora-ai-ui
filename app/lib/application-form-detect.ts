@@ -40,6 +40,20 @@ const INDIVIDUAL_FIELDS = [
 ];
 const INDIVIDUAL_THRESHOLD = 3;
 
+// ── 即時語だけの文は「フォームでない」（2026-09-23 課題②・fail-closed）──────────
+// 実物（365日・お客様テキスト）: 個人／項目8+ の59会話は86.4%が申込に至った（至っていない8件は記録なし期）＝本物。
+//   一方 法人の即時語（法人契約 等）1語だけ・項目0 の文は 3会話中 2会話が誤検知（「法人契約は可能ですか」型の普通の文・135〜243字）。
+//   即時語は「フォームそのものを指す語」だが、質問文にも出る。項目ラベルが1つも無い文はフォームではない。
+//   ※ 即時語そのもの（入居申込書 ⊃ 申込書）を項目に数えないため、即時語を消してから数える。
+//   ※ 分割送信の結合フォールバック（hasApplyHintKeyword → 直近8件を結合）は変えない。結合後に項目が1つでも付けば通る。
+const IMMEDIATE_MIN_FIELDS = 1;
+function countFormFieldsExcludingImmediate(t: string, immediate: RegExp): number {
+  const stripped = t.replace(new RegExp(immediate.source, "g"), "");
+  const corp = CORPORATE_FIELDS.filter((kw) => stripped.includes(kw));
+  const ind = INDIVIDUAL_FIELDS.filter((kw) => stripped.includes(kw) && !corp.some((ck) => ck.includes(kw)));
+  return corp.length + ind.length;
+}
+
 // ── 分割送信フォールバック用（webhookで直近メッセージを結合して再判定するトリガー）──
 const APPLY_HINT = /氏名|フリガナ|緊急連絡先|勤務先|法人名|代表者|登記住所|保証人/;
 
@@ -52,7 +66,7 @@ export function isApplicationFormMessage(text: string): ApplicationFormDetection
   if (!t.trim()) return { detected: false, formType: null, matchedKeywords: [] };
 
   // ① 法人フォーム
-  if (CORPORATE_IMMEDIATE.test(t)) {
+  if (CORPORATE_IMMEDIATE.test(t) && countFormFieldsExcludingImmediate(t, CORPORATE_IMMEDIATE) >= IMMEDIATE_MIN_FIELDS) {
     return { detected: true, formType: "corporate", matchedKeywords: [t.match(CORPORATE_IMMEDIATE)![0]] };
   }
   const corpMatched = CORPORATE_FIELDS.filter((kw) => t.includes(kw));
@@ -61,7 +75,7 @@ export function isApplicationFormMessage(text: string): ApplicationFormDetection
   }
 
   // ② 個人フォーム
-  if (INDIVIDUAL_IMMEDIATE.test(t)) {
+  if (INDIVIDUAL_IMMEDIATE.test(t) && countFormFieldsExcludingImmediate(t, INDIVIDUAL_IMMEDIATE) >= IMMEDIATE_MIN_FIELDS) {
     return { detected: true, formType: "individual", matchedKeywords: [t.match(INDIVIDUAL_IMMEDIATE)![0]] };
   }
   const indMatched = INDIVIDUAL_FIELDS.filter((kw) => t.includes(kw) && !corpMatched.some((ck) => ck.includes(kw)));

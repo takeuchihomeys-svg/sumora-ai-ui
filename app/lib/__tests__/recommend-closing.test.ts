@@ -78,6 +78,15 @@ it("ブレインが知っている状況（件数・内覧可否）がそのま�
   expect(b).toContain("比較の言い方が使える");
   expect(b).toContain("締めは内覧の誘導");
 });
+// 2026-09-23: 退去予定の通の締めは誘導なし79%（申込34 vs 内覧9 は誘導がある時だけ）→ 締め自体を必須に読ませない
+it("退去予定でも締めの誘導は必須ではない・空室では申込の一文を書かない", () => {
+  const a = buildRecommendClosingNote({ sentPropertyCount: 1, notViewable: true });
+  expect(a).toContain("必須ではない");
+  expect(a).toContain("誘導を入れるなら");
+  const b = buildRecommendClosingNote({ sentPropertyCount: 4, notViewable: false });
+  expect(b).toContain("申込の一文は書かない");
+  expect(b).toContain("4.7%");
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

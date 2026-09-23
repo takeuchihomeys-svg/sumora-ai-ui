@@ -77,6 +77,8 @@ import {
 } from "@/app/lib/brain-aix-feedback";
 import { resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { customerPointsAtProperty } from "@/app/lib/cost-question-scope";
+// 2026-09-23 課題③: 真の初回の「最初の一手」（first_contact_pickup）の許可リスト（純関数）
+import { resolveFirstContactPickup, firstContactSuggestedAction, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -213,7 +215,8 @@ export type SuggestedAixMeta = {
   // 2026-09-12 竹内方針「条件がきたら AIX に連動して自動で物件検索」: 真の初回（スタッフ未返信）でお客様が条件を送ってきた時、
   //   初回例外で action/reply_mode は出さない（初回の挨拶下書きを優先）が、物件ピックアップが必要という判断はここに残す。
   //   aix-action-items.syncAixActionItem が読み、AIX要対応（物件ピックアップした）と AIX モードの自動検索を起こす
-  first_contact_pickup?: "property_send" | null;
+  // 2026-09-23 課題③: 物件の画像／URL の指名（S1 property_nomination）は property_check_result（募集状況の確認）。app/lib/first-contact-pickup.ts
+  first_contact_pickup?: FirstContactPickup;
   scene_evidence?: { scene: string; candidate: string; check_pattern: string | null; reason: string; property_by: string | null } | null;
   // LLMの行動選択理由（≤30字）
   reason?: string | null;
@@ -2784,13 +2787,18 @@ ${history}`;
     );
     // 2026-09-12 竹内方針: 初回でもお客様が条件（条件フォーム・物件探しの依頼）を送ってきたら、物件ピックアップが必要な判断は残す
     //   （action は出さず初回の挨拶下書きを優先するが、AIX要対応と AIX モードの自動検索は起こす）
-    let firstContactPickup: "property_send" | null = null;
+    // 2026-09-23 課題③: 最初の一手の許可リストを純関数（first-contact-pickup.ts）に出し、物件の画像／URL の指名（S1 property_nomination）
+    //   → property_check_result（募集状況の確認）を足した。実送信: 返信した会話の最初の返信は募集状況確認の宣言 3/4・押した AIX は
+    //   estimate_sheet／property_check_result のみ。ガードの行には scene_evidence が入っているのに捨てていた（監査: scripts/audit-first-move.ts F）。
+    //   condition_hearing は実送信 4.6%／最初の AIX 8.6% で線が引けないので足さない（挨拶下書きが受け持つ）。
+    //   ※ fresh 層（mode=incremental）がこのガードを通らない不整合は今回触らない（今それが画像の初回を救っている。別途1本で決める）
+    let firstContactPickup: FirstContactPickup = null;
     if (!hasStaffEngagement && !isIncremental) {
       // typedMessages は新しい順。初回の顧客発言のどれかが条件フォームなら条件受領
       const custSentConditionForm = typedMessages.some((m) => m.sender === "customer" && isConditionFormMessage(m.text ?? ""));
-      if (finalAix === "property_send" || finalAix === "property_search" || custSentConditionForm) {
-        firstContactPickup = "property_send";
-      }
+      // 画像の種類（Vision の分類）: 本人確認書類・見積書の画像なら募集状況の確認にしない（typedMessages は新しい順）
+      const firstContactImageType = typedMessages.find((m) => m.sender === "customer" && m.image_type)?.image_type ?? null;
+      firstContactPickup = resolveFirstContactPickup({ finalAix, custSentConditionForm, sceneEvidence: compactSceneEvidence(sceneEvidence), imageType: firstContactImageType });
       finalAix = null;
       replyMode = undefined;
       decisionSource = "guard:first_contact";
@@ -3998,7 +4006,9 @@ async function analyzeAndSaveBrainMetaInner(
       const metaObj = meta as Record<string, unknown>;
       const baseRow = {
         conversation_id: conversationId,
-        suggested_action: typeof metaObj.action === "string" ? metaObj.action : null,
+        // 2026-09-23 課題③: 初回ガード（action=null）の行は first_contact_pickup を suggested_action に残す（測り方の穴。
+        //   これが無く「提案なし」に数えられていた）。decision_source=guard:first_contact のままなので cron/brain-aix-eval の対付けはそのまま効く
+        suggested_action: firstContactSuggestedAction(metaObj.action as string | null | undefined, metaObj.first_contact_pickup as string | null | undefined),
         suggested_reply_mode: typeof metaObj.reply_mode === "string" ? metaObj.reply_mode : null,
         suggested_next_steps: Array.isArray(metaObj.next_steps) ? metaObj.next_steps : null,
         enforcement_level: typeof metaObj.enforcement_level === "string" ? metaObj.enforcement_level : null,

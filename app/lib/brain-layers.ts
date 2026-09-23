@@ -110,7 +110,8 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     cond: str(meta.condition_change_type, 20),
     hes: str(meta.hesitancy_pattern, 20),
     emo: str(meta.customer_emotion, 10),
-    aix: str(meta.action, 30),
+    // 2026-09-23 課題③: 初回ガードの行（action=null）は first_contact_pickup（要対応に出した最初の一手）を残す
+    aix: str(meta.action, 30) ?? str(meta.first_contact_pickup, 30),
     prop: str(meta.current_property, 40),
     sig: str(meta.purchase_signal_level, 10),
     dir: str(meta.reply_direction, 60),

@@ -2,6 +2,7 @@
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 import { isApplicationFormMessage, hasApplyHintKeyword, PRE_APPLY_STATUSES } from "@/app/lib/application-form-detect";
+import { resolveApplyingPromotion, shouldSetApplyingImageFlag } from "@/app/lib/applying-promotion";
 import { classifyByKeywords, classifyByAI, type ConditionIntent } from "@/app/lib/condition-intent";
 import { mergeConditions, type ConditionFields } from "@/app/lib/condition-merge";
 import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
@@ -614,8 +615,8 @@ async function handleTextMessage(
     }
 
     if (applyFormDetected) {
-      // applying_text_received=true をセット → 画像も揃ったら tryPromoteToApplying で applying に昇格
-      // （テキスト単体では applying にしない。本人確認画像との両方が必要）
+      // applying_text_received=true をセット → もう1つの根拠（画像の旗 or 14日以内に先行する AIX【申込へ】）が揃えば
+      //   tryPromoteToApplying で applying に昇格（判定は app/lib/applying-promotion.ts）。テキスト単体では applying にしない
       // .in(PRE_APPLY_STATUSES)ガードで冪等（既にapplying以降なら何もしない）
       const { data: updated, error: applyErr } = await db
         .from("conversations")
@@ -2112,25 +2113,48 @@ async function fetchAndUploadLineFile(
   }
 }
 
-// ── テキスト・画像の両方が揃ったら applying に昇格する共通ヘルパー ──────────
-// applying_text_received（申込フォームテキスト受信済み）と
-// applying_image_received（申込書依頼後の顧客画像受信済み）が両方 true のときのみ昇格する。
-// どちらか片方だけでは applying にならない（誤昇格バグ修正 2026-08-20）。
+// ── 申込フォーム＋もう1つの根拠が揃ったら applying に昇格する共通ヘルパー ──────────
+// 判定は app/lib/applying-promotion.ts resolveApplyingPromotion（純関数）。ここは記録を引いて呼ぶだけ。
+//   従来（2026-08-20）: applying_text_received と applying_image_received の両方が要る。
+//   2026-09-23 課題②: 画像の旗が全会話で0件（申込の案内が AIX【申込へ】で行われ、旗の語が出ない）ため
+//   status が27.4%の会話でブレインより後ろだった → 「14日以内に先行する AIX【申込へ】」を OR で足し、
+//   画像の旗は本人確認書類（image_type=id_document）でも立てる。手で戻した会話（status_manual_back_at）は進めない。
 async function tryPromoteToApplying(
   db: ReturnType<typeof getDb>,
   convId: string,
   now: string,
   trigger: string,
 ): Promise<void> {
-  const { data: conv } = await db
-    .from("conversations")
-    .select("status, applying_text_received, applying_image_received")
-    .eq("id", convId)
-    .maybeSingle();
+  const [{ data: conv }, { data: pushRows, error: pushErr }] = await Promise.all([
+    db
+      .from("conversations")
+      .select("status, applying_text_received, applying_image_received, status_manual_back_at")
+      .eq("id", convId)
+      .maybeSingle(),
+    db
+      .from("aix_usage_logs")
+      .select("created_at")
+      .eq("conversation_id", convId)
+      .eq("aix_type", "application_push")
+      .order("created_at", { ascending: false })
+      .limit(1),
+  ]);
   if (!conv) return;
+  // AIX の記録が読めなかった時はその根拠を使わない（従来の両旗だけで判定＝進めない側に倒す）
+  if (pushErr) console.warn(`[line-webhook] aix_usage_logs 読取失敗（申込へ押下を根拠に使わない）: conv=${convId}`, pushErr.message);
   const status = (conv.status as string) ?? "";
-  if (!PRE_APPLY_STATUSES.includes(status)) return; // 既にapplying以降
-  if (!conv.applying_text_received || !conv.applying_image_received) return; // 片方未受信
+  const decision = resolveApplyingPromotion({
+    status,
+    textReceived: conv.applying_text_received as boolean | null,
+    imageReceived: conv.applying_image_received as boolean | null,
+    statusManualBackAt: conv.status_manual_back_at as string | null,
+    lastApplicationPushAt: pushErr ? null : ((pushRows?.[0]?.created_at as string | undefined) ?? null),
+    now,
+  });
+  if (!decision.promote) {
+    if (decision.blocked !== "not_pre_apply") console.log(`[line-webhook] applying昇格せず: conv=${convId} trigger=${trigger} blocked=${decision.blocked}`);
+    return;
+  }
 
   const { data: updated, error } = await db
     .from("conversations")
@@ -2141,27 +2165,27 @@ async function tryPromoteToApplying(
   if (error) {
     console.error(`[line-webhook] applying昇格失敗: conv=${convId}`, error.message);
   } else if ((updated ?? []).length > 0) {
-    console.log(`[line-webhook] テキスト+画像両方揃い → applying自動昇格: conv=${convId} trigger=${trigger}`);
-    void (async () => {
-      const { error: stageErr } = await db.from("conversation_stage_history").insert({
-        conversation_id: convId,
-        from_status: status,
-        to_status: "applying",
-        trigger: "customer_message",
-      });
-      if (stageErr) console.warn("[stage_history] applying:", stageErr.message);
-    })();
+    console.log(`[line-webhook] applying自動昇格: conv=${convId} trigger=${trigger} reason=${decision.reason}`);
+    // trigger に経路（text:individual / image:id_document / …）を残す。読む側で "customer_message" に絞る所は無い（2026-09-23 確認）
+    void db.from("conversation_stage_history").insert({
+      conversation_id: convId,
+      from_status: status,
+      to_status: "applying",
+      trigger: `customer_message:${trigger}`,
+    }).then(({ error: stageErr }) => { if (stageErr) console.warn("[stage_history] applying:", stageErr.message); }, () => {});
   }
 }
 
-// ── 申込書依頼直後の顧客画像 → applying_image_received=true に更新 ──────────
-// 条件: (1) 現ステータスが申込前 (2) 直近のスタッフメッセージに申込書依頼の文言がある
-// テキストで検知できない画像フォーム（写真で送られた記入済み申込書）の遷移漏れを塞ぐ。
+// ── 顧客の画像・ファイル → applying_image_received=true に更新 ──────────
+// 判定は app/lib/applying-promotion.ts shouldSetApplyingImageFlag（純関数）:
+//   ① image_type が本人確認書類（id_document）— Vision の分類が終わった後（fetchAndUploadLineImage）から呼ぶ
+//   ② 従来: 直近72h以内のスタッフ発言に申込書依頼の語 — 保存時（handleImageMessageSave / handleFileMessageSave）から呼ぶ
 // applying_text_received も true なら tryPromoteToApplying で applying に昇格する。
 async function autoPromoteApplyingOnFormImage(
   db: ReturnType<typeof getDb>,
   convId: string,
   now: string,
+  imageType: string | null = null,
 ): Promise<void> {
   try {
     const { data: conv } = await db
@@ -2182,7 +2206,8 @@ async function autoPromoteApplyingOnFormImage(
       .order("created_at", { ascending: false })
       .limit(1);
     const lastStaffText = (staffMsgs?.[0]?.text as string) ?? "";
-    if (!/申込書|申込用紙|ご記入|入居申込/.test(lastStaffText)) return;
+    const flag = shouldSetApplyingImageFlag({ imageType, lastStaffTextWithin72h: lastStaffText });
+    if (!flag.set) return;
 
     const { data: updated, error } = await db
       .from("conversations")
@@ -2193,8 +2218,8 @@ async function autoPromoteApplyingOnFormImage(
     if (error) {
       console.error(`[line-webhook] applying_image_received更新失敗: conv=${convId}`, error.message);
     } else if ((updated ?? []).length > 0) {
-      console.log(`[line-webhook] 申込書依頼後の画像受信 → applying_image_received=true: conv=${convId}`);
-      await tryPromoteToApplying(db, convId, now, "image_form");
+      console.log(`[line-webhook] 画像受信 → applying_image_received=true: conv=${convId} reason=${flag.reason}`);
+      await tryPromoteToApplying(db, convId, now, `image:${flag.reason}`);
     }
   } catch (e) {
     console.warn("[line-webhook] autoPromoteApplyingOnFormImage:", e);
@@ -2271,6 +2296,7 @@ async function fetchAndUploadLineImage(
   lineMessageId: string,
   msgId: string,
   account: AccountConfig,
+  convId: string | null = null,
 ): Promise<void> {
   if (!account.token) return;
   const db = getDb();
@@ -2334,6 +2360,11 @@ async function fetchAndUploadLineImage(
 
     if (updateErr) {
       console.error("[line-webhook] image_url/text更新失敗:", updateErr.message);
+    } else if (savedType === "id_document" && convId) {
+      // 2026-09-23 課題②: 本人確認書類が届いた＝申込の画像の旗（applying_image_received）。
+      //   保存時の判定（autoPromoteApplyingOnFormImage・スタッフの語）は Vision の前に走るので image_type を見られない。
+      //   分類が付いた**後**にここから同じ関数を呼ぶ。ブレイン（runBrainAndNotify）はこの後に動くので、進んだ status を見る
+      await autoPromoteApplyingOnFormImage(db, convId, new Date().toISOString(), savedType);
     }
   } catch (e) {
     console.error("[line-webhook] 画像処理エラー:", e);
@@ -2642,7 +2673,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const readStartedAt = Date.now();
       await Promise.race([
         Promise.allSettled(
-          imageJobs.map(({ lineMessageId, msgId, account }) => fetchAndUploadLineImage(lineMessageId, msgId, account))
+          imageJobs.map(({ lineMessageId, msgId, account, convId }) => fetchAndUploadLineImage(lineMessageId, msgId, account, convId))
         ),
         new Promise<void>((resolve) => setTimeout(resolve, IMAGE_READ_WAIT_MS)),
       ]);

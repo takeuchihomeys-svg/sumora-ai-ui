@@ -6687,3 +6687,141 @@ available は per-property の固定テンプレなので元から揃ってい�
 - `buildMoveInDeadlineNote` の「添えること」→ 実送信率を渡して選ばせる形（入口・4.8%なので必須にしない）
 - status の昇格: 画像の旗の立て方（`applying_image_received`）か、読む側を `checkpoint_stage` に寄せるか。**両方を別々に直さない**
 - 最初の段階でブレインが AIX を出さない43.5%（ヒアリング直後の最初の一手）
+---
+
+## 2026-09-23（追記）課題①: 物件オススメの「申込の一文」を率で渡して選ばせる形に直した（入口だけ・出口は入れない）
+
+竹内「順に改善する。実際の成約データや直近のLINEを参考にずれをなくすように」→ 上の「次に直せる物」の1つ目を実装。
+監査: `scripts/audit-recommend-apply-line.ts`（読み取りのみ・⑧に直す前後の指示文を出す）／テスト: `app/lib/__tests__/apply-line-rates.test.ts`（28件・実物の文）
+
+### 実測（AIX【物件オススメ】・ai_draft と sent_reply が両方ある267件・2026-08〜09）
+- 申込の語: 実送信 **6.0%**／AI 18.0%。AI が書いた48件の **35件（72.9%）をスタッフが消す**。AI が書かない219件でスタッフが自分から足したのは **3件（1.4%）**＝人が自分から選ばない形
+- 「お申込みから審査・ご契約・入居まで通常2週間…」の行（旧 `buildMoveInDeadlineNote`「添えること」）: AI 15→消11・実送信1.5%・**スタッフ自筆0通**＝創作文（feedback_no_invented_phrases）
+- 状況で割った線: 退去予定 9.3%（4/43）／即入居 **1.6%（1/61）**／見積書同封 **1.4%（1/69）**／成約側 13.2%（5/38）／空室かつ入居希望日あり 7.3%。**過半数に届く状況は一つもない**
+- 退去予定の通の締め（実送信）: 申込誘導9.3%／内覧誘導11.6%／**誘導なし79.1%**。recommend-closing の「申込34 vs 内覧9」は「締めに誘導がある時」の条件付きの率だった
+- 月別: 8月 実送信9.7%／AI12.9% → 9月 5.5%／18.6%（消34/44）＝9月に AI の書きすぎが増えていた
+
+### 入れた物
+1. `app/lib/apply-line-rates.ts`（純関数・率の出所を1か所に）: `RECOMMEND_APPLY_LINE_STATS`／`buildRecommendApplyLineNote`（動的ノート・既定は「基本は書かない」・見積書同封1/69・即入居1/61は「書かない」・退去予定は「誘導を入れるなら申込誘導、締め自体は必須ではない」・入居希望日の余裕は事実と率だけ渡し「断言してよいが必須ではない」）／`buildApplyLineStageRateNote`（見積書20.0%・物件確認した31.8%の率だけ。**今回は呼んでいない**）／`detectRecommendApplyLine`（ログ・監査用の分類器。出口では使わない）
+2. `app/api/aix/action/route.ts`: `buildMoveInDeadlineNote` の末尾2行（「…添えること」）を余裕日数の**事実だけ**に。`recSystemDynamic` に動的ノートを追加（静的ブロックのキャッシュを割らない）。`recSendState` を上に移して同じ判断を共有。生成後に `tag=aix:recommend-apply-line` で kind（two_weeks／apply_cta／apply_status／null）を**測る**（本文は変えない）
+3. `app/lib/recommend-closing.ts` `buildRecommendClosingNote`: 退去予定側「締めに誘導を入れるなら申込誘導・締め自体は必須ではない（誘導なし79%）」／空室側に「申込の一文は書かない（実送信4.7%）」を1行
+
+### 入れなかった物（コードのコメントにも残した）
+- **出口**（申込の一文を落とす）: 実送信に16件（6.0%）正当な用例があり誤削除0にできない
+- 静的 `MOVE_IN_TIMING_RULE`「ご希望の〇月入居に対応可能」と記載する（実送信4.5%）／`recommendation-frame` の「CTAは内覧誘導または申込誘導（中〜強）」: 静的ブロック（キャッシュを割る）と両経路の冒頭フレームに絡む → 動的ノートの効きを2週間測ってから第2段
+- 空室側の「締めは内覧の誘導でよい」（実送信は誘導なし59.9%／ご査収のみ28.8%／内覧誘導6.6%）も強すぎるが第2段
+
+### 2週間後にやること
+- `DAYS=14 npx tsx --env-file=.env.local scripts/audit-recommend-apply-line.ts` → AI率が実送信率（6%前後）に近づき「消された」が減り「スタッフが足した」が1〜2%のままか。AI率が0%まで落ちて退去予定の通で足されるようになれば振り子（2択の強さを揃える）
+- Vercel ログ `tag=aix:recommend-apply-line` で kind 別の件数（two_weeks が0になっているか）
+- YUMA（dd34f5b0…）で3通（11月入居希望・見積書同封・退去予定）を生成して目で読む（デプロイ後）
+
+---
+
+## 2026-09-23（追記）「申込以降は DeepSeek に回さない」の根拠を status 以外にも広げた
+
+竹内「お客さんから送られた画像の読み込みも申込まで deepseek で行えばよいのでは／本人確認書類はマスキング／AIXの申込へボタンがトリガーにする」
+
+### 画像は Claude のまま（変えない）
+- お客様の画像を読むのは `line-webhook extractImageContent` 1か所（Haiku・分類＋書き起こし1回）。**1日6.4回・月 $0.66**。DeepSeek にしても月 $0.6 の節約
+- 「本人確認書類だけマスク」は不可能（分類が同じ呼び出しの中で決まる）。申込へ押下をトリガーにしても本人確認書類の **17.6%（13/74）は押下前に届く** → ゼロにできないので替えない
+
+### 文と AIX の経路の歯止めが**実際に漏れていた**（ここを直した）
+- 従来の判定は `conversations.status` だけ。status は27.4%の会話で遅れる
+- llm_usage_logs（9/19〜）: DeepSeek へ回った **返信生成 157回中 37回（6会話）**、**AIX 物件オススメ（画像経路）171回中 114回（5会話）** が申込へ押下・本人確認書類の後
+- 画像経路（vision-alt）には申込以降の歯止めが**そもそも無かった**
+- 直し: `app/lib/post-apply.ts` `resolvePostApply`（status ∪ 印 is_post_apply ∪ 申込へ押下 ∪ 本人確認書類受信）を3か所が同じ物として読む
+  - `generate-reply/route.ts` postApplyConversation
+  - `aix/action/route.ts` setupAltProviderGuards（ctx.postApply）
+  - `aix/action/route.ts` callClaudeVision の vision-alt 分岐（`!ctx.postApply` を追加）
+- 読めなければ例外 → 呼び出し側が「外に出さない」側へ倒す（fail-closed）
+- ⚠ 下書きを作る／作らない（DRAFT_SKIP_STATUSES）は**別の事実**なので同じ集合にしていない
+- 監査: `scripts/audit-post-apply-gate.ts`／テスト `app/lib/__tests__/post-apply.test.ts` 9件
+### （同日追記）否決で段階を戻したら、また渡してよい（時間順の判定に変更）
+竹内「一度申込にした人でも審査が否決となって再度物件提案中にもどる場合もあるから、その場合は渡してよい／申込からの審査中は渡らないようにする」
+- ③申込へ押下・④本人確認書類は**永続にしない**。スタッフが段階を戻した時刻 `conversations.status_manual_back_at`（状態変更 page.tsx:3453 と「申込以降」解除ボタンで付く）が③④の最後より**後**なら申込前に戻る
+- 戻した後にまた申込へを押せば③が新しくなるので、また申込以降。status が申込・審査中なら常に Claude
+- 実物: 戻しの印がある9会話中8会話が申込へ押下の後の戻し。今の339会話では 押下14・書類5 が新たに申込以降、**5会話は戻したので申込前**
+- ⚠ YUMA には 8/3 の申込への記録があるので、テスト用に戻しの印を付けた（DeepSeek を試す時は印を新しくする）
+- テスト15件・`scripts/audit-post-apply-gate.ts`（本番クライアントの実確認つき）
+---
+
+## 2026-09-23（追記）課題②: 申込（applying）への自動昇格を「AIX【申込へ】＋フォーム文」「本人確認書類」でも通るようにした（入口だけ・読む側は触らない）
+
+竹内「順に改善する。実際の成約データや直近のLINEを参考にずれをなくすように」→「次に直せる物」の2つ目（status の昇格）。
+監査: `scripts/audit-applying-promotion.ts`（読み取りのみ・本番と同じ純関数を import＝四者同名）／テスト: `app/lib/__tests__/applying-promotion.test.ts`（35件・実物の並び）／修復: `scripts/repair-applying-status.ts`（既定 dry-run）
+
+### 実物（DB status がブレインより後ろ 32件）
+- 画像の旗（applying_image_received）が0件の理由は**語のずれ**: 旗は直近72h以内のスタッフ発言に /申込書|申込用紙|ご記入|入居申込/ が要るが、後ろの32件でこの語を含むスタッフ発言は1通だけ。申込の案内は AIX【申込へ】で行われ、押した直後2h以内のスタッフ発言の語は 申込=22/22・フォーマット=21・本人確認=21・免許=21・マイナンバー=21・書類=21、**旗の4語は0件**。さらに従来の画像判定は保存時（Vision 前）に走るので image_type も見られない
+- お客様の実際の順番（フォーム文あり17件）: AIX【申込へ】→ 10分〜3h（最大2.4日）でフォーム文 → 0.1〜3h で本人確認書類（image_type=id_document）。時間の線は問題でない（フォーム前後3日の画像の「直前スタッフ発言からの間隔」中央値2.9h・72h超 2/70）
+- 段階を持つ場所が DB に3つ（status／is_post_apply／brain_strategy.checkpoint_stage）。**is_post_apply=true 51件のうち status が申込前のまま 26件（51.0%）**（page.tsx のトグルは status を進めない）
+- 32件の内訳: (a) 6〜8月の古いフォーム（旗の仕組み前）6件 (b) 審査管理の同期で戻された疑い 3件 (c) 8/20以降で text=1・image=0 の7件 (d) 会話に申込の証拠が無いのにブレインが申込以降 12件（9件は9/15の一括分析の「契約済み・入居済み」＝ブレインが正しく status 放置／d3a56a97 は「9月末に申込へ進める」で stage=applying＝ブレインの先走り）
+
+### 線（誤昇格0・監査②③）
+| 候補 | 拾う(31) | 誤って true（申込前73／手戻し7） |
+|---|---|---|
+| 旧の本番（両旗） | 0 | 0／0 |
+| A1 フォーム文だけ | 17 | 6／3 |
+| **直した後（フォーム文＋[画像の旗(語 or 本人確認書類) or 14日以内に先行する AIX申込へ]）** | **12** | **5／3** |
+- 「誤って true」の8件（重複除き6会話）を目で読んだ: **全部が本物のフォーム（460〜609字・項目15〜20）の後で否決・再検索・手戻しになった会話**。届いた時点の昇格は正しく、手戻しの3件は status_manual_back_at で本番では必ず止まる（残り3件は履歴の無い7月か、status が applying に達しなかったので印が無い）
+- 本当の誤検知は「法人契約」1語・項目0 の普通の文（corporate/即時語/項目0 は3会話中2件が誤検知）→ `application-form-detect` で**即時語だけ・項目0の文はフォームでない**（fail-closed）。直した後の⑤で corporate/即時語/項目0 は **0文**。個人/項目8+ の59会話は86.4%が申込に至った（本物）
+- 拾えない19件: フォーム文なし（お客様の意思の記録が無い・(d)の12件）／古いフォームで押下が後（74f823d3）／申込へ→本人確認書類だけ（cb1a46e3・フォーム文なし）。これは修復スクリプト側
+
+### 入れた物
+1. `app/lib/applying-promotion.ts`（純関数）: `resolveApplyingPromotion`（申込前 ∧ 印なし ∧ フォーム文 ∧ [画像の旗 ∨ 14日以内に先行する AIX申込へ]）／`shouldSetApplyingImageFlag`（image_type=id_document ∨ 従来の語）／`STAFF_FORM_REQUEST_RE`／14日は内覧・約束の鮮度と同じ線
+2. `app/lib/application-form-detect.ts`: 即時語（法人契約・入居申込書 等）1語だけで項目0 → 非検知。即時語そのもの（入居申込書⊃申込書）は項目に数えない。結合フォールバックは変えない
+3. `app/api/line-webhook/route.ts`: `tryPromoteToApplying` は status_manual_back_at と直近の application_push を引いて純関数に委ねる（aix_usage_logs が読めなければその根拠を使わない＝進めない側）。stage_history の trigger を `customer_message:text:individual` / `customer_message:image:id_document` の形に。`fetchAndUploadLineImage` に convId を渡し、**Vision の分類後**に savedType===id_document なら `autoPromoteApplyingOnFormImage(..., "id_document")`（ブレインはその後に動くので進んだ status を見る）。保存時の語の経路・PDF（file）は従来どおり
+
+### 入れなかった物（コードのコメントにも）
+- フォーム文だけ（A1）／本人確認書類だけ／AIX申込へだけ: お客様の意思（フォーム）なしの昇格は作らない
+- 読む側を checkpoint_stage で補正する案B: ブレインの stage=applying は「申込へ向かう」を指すことがある（d3a56a97）・31件全部が14日以内で鮮度では弾けない・昇格（DB 1か所）なら STATUS_MEANING／成約実例の段階一致／DRAFT_SKIP の3か所が同時に直る
+- 手戻しの印がある会話で AIX申込へを押し直した時の例外: 印は「手で前に進めた時」に外れる設計なのでそのまま（進めたい時はスタッフが手で進める）
+- page.tsx の「申込以降」トグルで status を applying へ前進させる（段階を2か所で持つ根）: 画面の動きが変わるので竹内さんの判断待ち
+
+### 残っている物（親・竹内さんの判断）
+- **データ修復**: `npx tsx --env-file=.env.local scripts/repair-applying-status.ts`（dry-run）→ is_post_apply=true ∧ 申込前 ∧ 印なし **25件**（印あり 9280fa49 は触らない）。`--apply` で applying へ前進・stage_history trigger=repair:post_apply_flag
+- 新しい線の効き: デプロイ後、`conversation_stage_history` の trigger LIKE 'customer_message:%' で経路別の件数を見る。2週間後に監査を再実行して「DB status がブレインより後ろ」が 27.4% から下がっているか
+- 申込へ→本人確認書類（フォーム文なし）の形（cb1a46e3）を拾うか（次の線の候補・今回は入れない）
+
+---
+
+## 2026-09-23（追記）課題③: 最初の段階で「ブレインが AIX を出していない 43.5%」の正体は初回ガード＋記録の欠落（入口だけ・挨拶下書き優先は変えない）
+
+竹内「順に改善する。実際の成約データや直近のLINEを参考にずれをなくすように」→「次に直せる物」の3つ目。
+監査: `scripts/audit-first-move.ts`（読み取りのみ・A〜G＋F に「直す前後の見込み」列）／テスト: `app/lib/__tests__/first-contact-pickup.test.ts`（27件・実物の本文）
+
+### 実物（brain_decision_logs 120日・最初の段階 136件のうち suggested_action が空 61件＝44.9%）
+- 61件を目で分けると **LLM の判断違いは0件**。YUMA 6／DB の status が遅れているだけで実際は申込・内覧後 11（課題②の範囲）／業者DM 5／お客様本文なし 2／09-12 より前で拡張列が無い行 35
+- 正体は**コードの初回ガード**（`brain-core` decision_source=guard:first_contact）: スタッフ送信が1件も無い会話の mode=full で LLM の AIX を捨て、`first_contact_pickup` を「条件フォーム」の時にしか残していなかった。しかも `first_contact_pickup` は brain_decision_logs.suggested_action に書かれない（metaObj.action だけ）ので、**AIX要対応は立っているのに「提案なし」に数えられていた**（測り方の穴）
+- fresh 層（mode=incremental）はガードを通らないので、同じ初回でも1分後の行には LLM の AIX が付く（ad97cd40: 15:16 full=空 → 15:17 fresh=property_check_result）。今はこれが画像の初回を救っている
+- 09-12 以降の初回ガード 44会話（F）: 条件フォーム 17（要対応 property_send 15/17・最初の返信ピックアップ宣言 14/14・押した property_send 10/12）／物件画像 6（要対応 4/6 は全部 fresh 層の LLM 経由・最初の返信は募集状況確認の宣言 3/4・押した estimate_sheet 3/3。ガードの行に scene_evidence={S1_vacancy, property_nomination, image} が入っているのに捨てていた）／文だけ 19（未返信 12＝業者DM・既存入居者・入金相談）／URL 2＝業者DM
+- 実送信の初回返信 87件（G）: 文だけ→挨拶＋回答 54.0%／文だけ→ピックアップ宣言 23.0%／条件フォーム→ピックアップ宣言 9.2%／条件のお願い 4.6%／募集状況確認 4.6%
+
+### 線
+| 場面 | 最初の一手 | 根拠 |
+|---|---|---|
+| 条件フォーム（or LLM が property_send/property_search） | property_send | 14/14・過半数 → 原則（現行のまま） |
+| 物件の画像／URL の指名（S1 property_nomination・image/url） | **property_check_result（新規・check_pattern null）** | 返信した会話でほぼ100%・押したのも estimate_sheet／property_check_result のみ |
+| 文だけ・業者DM・scene 無し | null（挨拶下書きだけ） | 要対応を立てない |
+| 初回に condition_hearing | **入れない** | 条件のお願い 4.6%／最初の AIX 8.6% → 線なし。挨拶下書き（first_reply ガイド）が受け持つ |
+| 画像＋費用の質問（scene S6） | null のまま | 初回で見積を先に出す線は実物に無い（ガード後の fresh 層に委ねる） |
+
+### 入れた物
+1. `app/lib/first-contact-pickup.ts`（純関数）: `resolveFirstContactPickup({ finalAix, custSentConditionForm, sceneEvidence })` → property_send／property_check_result／null。`firstContactSuggestedAction`（action が無ければ pickup）。監査で止めた判断（condition_hearing・property_word/room_no は材料にしない・業者DM）をコメントに
+2. `app/lib/brain-core.ts`: 初回ガードを純関数呼び出しに置換（`compactSceneEvidence(sceneEvidence)` を渡す）。`SuggestedAixMeta.first_contact_pickup` の型を広げた。brain_decision_logs insert の suggested_action は action が無ければ first_contact_pickup（decision_source は guard:first_contact のまま＝cron/brain-aix-eval の対付けはそのまま）
+3. `app/lib/brain-layers.ts` toFreshDigest: digest.aix も同じ（action ?? first_contact_pickup）
+4. `aix-action-items.syncAixActionItem` は first_contact_pickup をそのまま action に使う作りなので変更なし（property_check_result は AIX_AUTO_SEARCH_ACTIONS に無いので自動検索は走らない＝正しい）。page.tsx isAixBadge は truthy 判定で変更なし
+
+### 監査（直す前後・純関数を実物の scene_evidence に当てた見込み）
+- 初回ガード 44会話: 「なし」 **27 → 23件**・変わる 4件（全部 物件画像・本物のお客様: ad97cd40／35280559／ae18c038／58ae93f3。最初の返信は募集状況確認の宣言 3/4・押した estimate_sheet 3/3）
+- 変わらない: 条件フォーム 17/17（property_send のまま）・文だけ 19/19・業者DM の URL 2/2（新しい要対応は立たない）
+- 物件画像で「なし」のままの2件は初回の場面ではない: 1db7b08d は 7/10 にスタッフが返信済みで 09-12 の行は条件変更（S7）、dc35a540 は 5月の既存申込者の審査の質問（S3）。**初回ガードがスタッフ送信のある古い会話で発火している**（hasStaffEngagement の見ている窓の外にスタッフ送信がある疑い）＝別の穴・今回は触らない
+- YUMA はスタッフ送信があり初回ガードを再現できないので、本番の書き込み検証はせず純関数テスト＋監査で確認。tsc exit 0
+
+### 入れなかった物（コードのコメントにも）
+- 初回に AIX【条件ヒアリング】（線なし）／画像＋費用の質問で見積を先に（実物に無い）／文の物件名・号室だけの指名（画像／URL の実物しか線が無い）
+- fresh 層がガードを通らない不整合（L3912）: 今それが画像の初回を救っているので同時に触らない。ガードを fresh にも掛けるか・ガードを外すかは別途1本で決める
+
+### 残っている物
+- デプロイ後 `audit-brain-funnel` ②の「提案なし 8.2%」が「初回の要対応あり」と分かれるか（guard:first_contact の行に suggested_action が入る）
+- 初回ガードがスタッフ送信のある古い会話で発火する件（1db7b08d・dc35a540）: hasStaffEngagement の窓を確かめる

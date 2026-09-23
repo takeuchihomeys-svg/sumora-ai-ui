@@ -35,7 +35,9 @@ import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
 // 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキング」「申込以降は渡さなくて大丈夫」
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
-import { willRouteAlt, isPostApplyStatus } from "@/app/lib/llm-alt-provider";
+import { willRouteAlt } from "@/app/lib/llm-alt-provider";
+// 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
+import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
 // recordAltUsage: DeepSeek など Anthropic 以外の呼び出しを llm_usage_logs に残す（fetch の出口は anthropic 宛しか見ない）
 import { LLM_POST_APPLY_HEADER, recordAltUsage } from "@/app/lib/llm-usage-recorder";
 import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, viewableFromVacancyYmd, vacancyDateLabel, vacatingViewableSentence } from "@/app/lib/vacating-notice";
@@ -54,6 +56,7 @@ import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentR
 import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
+import { buildRecommendApplyLineNote, detectRecommendApplyLine, detectImmediateMoveInWish } from "@/app/lib/apply-line-rates";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（AIX / テンプレート共通）
 import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
 // 2026-09-21 竹内「複数物件送った中では『お送りさせて頂きましたお部屋の中でも〜』／新着物件なら新着物件の言い回し」
@@ -833,7 +836,23 @@ function buildMoveInDeadlineNote(sourceText: string, todayISO: string, todayFmt:
     return `${head}\n・お客様の入居希望時期「${wish}」＝${r.deadlineISO} は${reason}。${forbid}`;
   }
   const margin = r.daysLeft - MOVE_IN_LEAD_DAYS; // 審査期間（14日）を引いた余裕日数
-  return `${head}\n・お客様の入居希望時期「${wish}」＝${r.deadlineISO}（本日${todayFmt}から${r.daysLeft}日後）。\n・審査・契約・入金の最短期間は2週間。差し引き${margin}日の余裕があるため入居時期に言及してよい。\n・言及するときは「お申込みから審査・ご契約・入居まで通常2週間程度で対応できますので、${wish}のご入居にもしっかり対応可能です！！」のように審査期間を根拠として自然に添えること。\n・言及する場合の日付は「${wish}」の表現に沿わせ、勝手に別の日付へ書き換えないこと。`;
+  // 2026-09-23 竹内「実際の成約データや直近のLINEを参考にずれをなくす」:
+  //   直す前はここが「言及するときは『お申込みから審査・ご契約・入居まで通常2週間程度で対応できますので、〇〇のご入居にも
+  //   しっかり対応可能です！！』のように審査期間を根拠として自然に添えること」と**必須**にしていた。
+  //   実測（scripts/audit-recommend-apply-line.ts・267件）: この行は AI 15件→スタッフが11件消す（73.3%）・実送信1.5%・
+  //   **スタッフが自分の言葉で書いたのは0通**（創作文）。申込の一文そのものも実送信6.0%で、必須にできる状況は無かった。
+  //   → ここは余裕日数の**事実だけ**返し、添えるかどうかの材料は buildRecommendApplyLineNote（app/lib/apply-line-rates.ts）が
+  //     実送信の率で渡す（入口だけ・出口は入れない）。14日未満の禁止ブロック（forbid）はそのまま。
+  return `${head}\n・お客様の入居希望時期「${wish}」＝${r.deadlineISO}（本日${todayFmt}から${r.daysLeft}日後）。\n・審査・契約・入金の最短期間は2週間。差し引き${margin}日の余裕があるため、入居時期に触れても事実と食い違わない。\n・触れる場合の日付は「${wish}」の表現に沿わせ、勝手に別の日付へ書き換えないこと。触れるかどうか・申込の一文を添えるかは下の【申込の一文と入居時期 — 実送信の率】に従う。`;
+}
+
+/** buildRecommendApplyLineNote に渡す余裕日数（審査期間14日を引いた値）。間に合わない・分からない時は null */
+function moveInMarginDays(sourceText: string, todayISO: string): { wish: string | null; marginDays: number | null } {
+  const wish = extractMoveInWish(sourceText);
+  if (!wish) return { wish: null, marginDays: null };
+  const r = resolveMoveInDeadline(wish, todayISO);
+  if (!r || r.daysLeft < MOVE_IN_LEAD_DAYS) return { wish, marginDays: null };
+  return { wish, marginDays: r.daysLeft - MOVE_IN_LEAD_DAYS };
 }
 
 // ── 2026-09-17 竹内（AIX キャッシュ点検）: 計測用ヘッダ・会話 ID ──────────────────────────
@@ -878,8 +897,13 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
   ctx.masker = null;
   try {
     if (conversationId) {
-      const { data } = await supabase.from("conversations").select("status").eq("id", conversationId).maybeSingle();
-      ctx.postApply = isPostApplyStatus((data as { status?: string | null } | null)?.status ?? null);
+      // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: status は27.4%の会話で遅れていて、
+      //   DeepSeek へ回った AIX 171回のうち 114回（5会話）が申込へ押下の後だった（scripts/audit-post-apply-gate.ts）。
+      //   status ∪ スタッフの印 ∪ 申込へ押下 ∪ 本人確認書類の受信 を1つの純関数で見る（app/lib/post-apply.ts）
+      const facts = await loadPostApplyFacts(supabase, conversationId);
+      const r = resolvePostApply(facts);
+      ctx.postApply = r.postApply;
+      if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "aix:post-apply", conversationId, reason: r.reason, action }));
     }
     if (!willRouteAlt(action, { postApply: ctx.postApply })) return;   // 回らないならマスクもしない
     ctx.masker = createMasker({
@@ -1013,7 +1037,12 @@ async function callClaudeVision(system: SystemSpec, content: unknown[], action: 
   //     物件オススメ（文を作る）… 実送信に無い言い回し Claude 5件 / DeepSeek 2件・体裁の崩れ両方0・費用は1/4
   //     見積書（数値を抜く）    … 一致 6/9(67%)・物件名と号室の誤読・5.6倍遅い ＝ **回さない**
   //   失敗・空応答なら黙って Claude に倒す（fail-open）。VISION_ALT_ACTIONS を空にすれば全部戻る。
-  if (shouldRouteVisionAlt(action)) {
+  // ── 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」──────────────────────────
+  //   ⚠ この経路には申込以降の歯止めが**無かった**（文の経路の isPostApplyCall は画像を対象外にしていたため素通し）。
+  //     llm_usage_logs: DeepSeek へ回った AIX 171回のうち 114回（5会話）が申込へ押下の後（scripts/audit-post-apply-gate.ts）。
+  //     system には会話の履歴が入るので、申込以降（status ∪ 印 ∪ 申込へ押下 ∪ 本人確認書類）は Claude のまま。
+  //     判定は setupAltProviderGuards が同じ純関数（post-apply.ts）で決めた ctx.postApply を読む（四者同名）。
+  if (shouldRouteVisionAlt(action) && !aixRequestCtx.getStore()?.postApply) {
     const altT0 = Date.now();
     const alt = await callVisionAlt(systemBlocks, content);
     if (alt) {
@@ -2239,17 +2268,33 @@ ${SMORA_COMMON_RULES}`;
       const recCustomerSummary = body.customer_summary as string | undefined;
       // 入居希望日ガード: 今日（JST）と比較して「ご希望日までのご入居に対応可能」と書いてよいか判定
       // 動的systemブロック側に入れる（日付は毎日変わるため静的ブロックのキャッシュを壊さない）
-      const moveInDeadlineNote = buildMoveInDeadlineNote(
-        [conditionsText ?? "", recCustomerSummary ?? "", extra_input ? String(extra_input) : ""].join("\n"),
-        todayJST,
-        todayJSTFmt
-      );
+      const recWishSource = [conditionsText ?? "", recCustomerSummary ?? "", extra_input ? String(extra_input) : ""].join("\n");
+      const moveInDeadlineNote = buildMoveInDeadlineNote(recWishSource, todayJST, todayJSTFmt);
+      // 状況（何件送ったか・今ご内覧頂けるか）はブレインの判断が正。下の訴求シナリオと申込の一文の材料で同じ物を読む
+      //   （⚠ 件数が分からない時は 0 に倒さない・設計知見「0 に倒さない」）
+      const recSendState = resolvePropertySendState({
+        brainMeta: aixBrainMeta,
+        recentMessages: Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string; text?: string | null }> : [],
+      });
+      // 2026-09-23 竹内「実際の成約データや直近のLINEを参考にずれをなくす」: 申込の一文を添えるかは**率を渡して選ばせる**
+      //   （物件オススメで申込の一文は実送信6.0%・AIが書いた48件の73%をスタッフが消す。必須にできる状況が無い＝入口で率を渡す。
+      //    出口で落とさない: 実送信に16件の正当な用例があり誤削除0にできない）。動的ブロックに入れて静的ブロックのキャッシュを割らない
+      const recMoveIn = moveInMarginDays(recWishSource, todayJST);
+      const recApplyLineInput = {
+        notViewable: recSendState.notViewable,
+        viewableFrom: recSendState.viewableFrom,
+        hasEstimate: has_estimate === true,
+        immediateMoveIn: detectImmediateMoveInWish(`${conditionsText ?? ""}\n${extra_input ? String(extra_input) : ""}`),
+        moveInWish: recMoveIn.wish,
+        marginDays: recMoveIn.marginDays,
+      };
+      const recApplyLineNote = "\n\n" + buildRecommendApplyLineNote(recApplyLineInput);
       // 2026-09-17 竹内（現状伝えて・1件訴求）: この型だけ「出力の最初の文字は必ず🌟」を外す。
       //   キャッシュされる静的ブロック（全顧客共通）は触らず、動的ブロックで上書きする（鍵を割らない）
       const situationSystemOverride = isSituationKind(body.situation_kind)
         ? `\n\n【🔴 この通だけの上書き — 上の「出力の最初の文字は必ず🌟」より優先】\nこの通は「探した現状」を1文書いてから🌟の物件カードを出す。順序は 現状の1文 → 空行 → 🌟物件名 … 。\n現状の1文以外は🌟より前に書かない（システム注記・前置き・挨拶は従来どおり禁止）。`
         : "";
-      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "") + moveInDeadlineNote + situationSystemOverride;
+      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "") + moveInDeadlineNote + recApplyLineNote + situationSystemOverride;
 
       const summaryNoteForRec = recCustomerSummary
         ? `\n\n【このお客さんのAI要約 — 人物像・今の状況・次の対応ヒントをオススメ訴求に反映すること】\n${recCustomerSummary}`
@@ -2308,10 +2353,7 @@ ${SMORA_COMMON_RULES}`;
       //   シナリオが決まっていたのは **74件（10.7%）**。残る89.3%は「複数送ったか」「新着か」を見ずに書いていた。
       //   ⚠ 件数が分からない時（sentSource="none"）は**決めない**。0 に倒すと「1件も送っていない＝初回」になり、
       //     複数送っている会話でも比較の言い方が使えなくなる（設計知見「0 に倒さない」）。
-      const recSendState = resolvePropertySendState({
-        brainMeta: aixBrainMeta,
-        recentMessages: Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string; text?: string | null }> : [],
-      });
+      //   recSendState は上（申込の一文の材料）で同じ関数から取ってある
       const recScenario = recSendState.sentSource === "none" ? null : resolveRecommendationScenario({
         actionType: "property_recommendation",
         // AIX 本体にはピッカーが無いので、画面の「新着物件」チェックを新着1件として扱う
@@ -2353,6 +2395,15 @@ ${SMORA_COMMON_RULES}`;
       ];
 
       message_text = await callClaudeVision(recSystemSpec, content, currentAction, recSystemDynamic || undefined);
+      // 2026-09-23: 申込の一文の効き具合を**測る**（本文は変えない）。2週間後に audit-recommend-apply-line.ts と併せて見る
+      {
+        const applyLine = detectRecommendApplyLine(message_text);
+        console.log(JSON.stringify({
+          tag: "aix:recommend-apply-line", action: currentAction, conversationId,
+          kind: applyLine.kind, notViewable: recApplyLineInput.notViewable, hasEstimate: recApplyLineInput.hasEstimate,
+          immediateMoveIn: recApplyLineInput.immediateMoveIn, marginDays: recApplyLineInput.marginDays,
+        }));
+      }
       // 🌟より前に出力されたシステム注記・確認メモを除去（物件オススメは必ず🌟始まり）
       // 2026-09-17 竹内（現状伝えて・1件訴求）: この型だけ🌟より前に「探した現状」の1文が入るので切らない。
       //   指示だけでは落ちる（設計知見）ので、無ければ実送信の骨組みの1文を出口で足す
