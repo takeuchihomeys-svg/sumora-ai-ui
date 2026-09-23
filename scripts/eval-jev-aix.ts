@@ -11,7 +11,7 @@
 //   TYPESAFE_API_KEY が無ければ何もしない。
 import { createClient } from "@supabase/supabase-js";
 import { createMasker } from "../app/lib/pii-pseudonym";
-import { evaluateAixWithJev, CHECK_PATTERN_TO_TOPIC, TOPIC_CHECK_PATTERNS, JEV_AIX_OPTIONS } from "../app/lib/aix-jev";
+import { evaluateAixWithJev, evaluatePickerWithJev, hasPickerQuestion, CHECK_PATTERN_TO_TOPIC, TOPIC_CHECK_PATTERNS, JEV_AIX_OPTIONS } from "../app/lib/aix-jev";
 import { isJevEnabled } from "../app/lib/jev-client";
 import { isPostApplyStatus } from "../app/lib/llm-alt-provider";
 
@@ -22,7 +22,7 @@ const DAYS = Number(arg("days", "365"));
 const PER_TYPE = Number(arg("per-type", "40"));
 const SHOW = Number(arg("show", "20"));
 
-type Log = { id: string; conversation_id: string; aix_type: string; check_pattern: string | null; created_at: string; conversation_status: string | null };
+type Log = { id: string; conversation_id: string; aix_type: string; check_pattern: string | null; send_mode: string | null; app_sub_mode: string | null; created_at: string; conversation_status: string | null };
 
 async function main() {
   if (!isJevEnabled()) {
@@ -31,7 +31,7 @@ async function main() {
   }
   const since = new Date(Date.now() - DAYS * 86400_000).toISOString();
   const { data: logsRaw, error } = await sb.from("aix_usage_logs")
-    .select("id, conversation_id, aix_type, check_pattern, created_at, conversation_status")
+    .select("id, conversation_id, aix_type, check_pattern, send_mode, app_sub_mode, created_at, conversation_status")
     .gte("created_at", since).neq("conversation_id", YUMA).order("created_at", { ascending: false }).limit(5000);
   if (error) throw error;
   const logs = (logsRaw ?? []) as Log[];
@@ -65,6 +65,8 @@ async function main() {
   const perType = new Map<string, { n: number; ok: number; probSum: number }>();
   const highConf: { n: number; ok: number } = { n: 0, ok: 0 }; // aixProb >= 0.8 の時
   const examplesWrong: string[] = [];
+  const pickerStats = new Map<string, { n: number; ok: number; hiN: number; hiOk: number }>();
+  const pickerWrong: string[] = [];
 
   for (const l of sample) {
     const { data: msgs } = await sb.from("messages").select("sender, text, created_at, is_aix_generated")
@@ -93,11 +95,27 @@ async function main() {
         examplesWrong.push(`  ${l.conversation_id.slice(0, 8)} 正解=${l.aix_type}${l.check_pattern ? `(${l.check_pattern})` : ""} Jev=${d.aix}(${d.aixProb.toFixed(2)}) 客:「${last.replace(/\n/g, " ").slice(0, 60)}」`);
       }
     }
-    // ピッカー（何を確認したか）の答え合わせ
+    // ピッカー（何を確認したか）の答え合わせ（AIX と同時に聞いた答え）
     if (l.aix_type === "property_check_result" && l.check_pattern && TOPIC_CHECK_PATTERNS.has(l.check_pattern)) {
       topicN++;
       if (CHECK_PATTERN_TO_TOPIC[l.check_pattern] === d.checkTopic) topicOk++;
       else examplesWrong.push(`  ${l.conversation_id.slice(0, 8)} ピッカー 正解=${l.check_pattern} Jev=${d.checkTopic}(${d.checkTopicProb.toFixed(2)})`);
+    }
+    // 竹内「ボタンは決まっている → そのボタンのピッカーを Jev が選ぶ」: ボタンを渡してピッカーだけ聞く（狭い質問）
+    const truth = l.aix_type === "property_check_result" ? (l.check_pattern && TOPIC_CHECK_PATTERNS.has(l.check_pattern) ? CHECK_PATTERN_TO_TOPIC[l.check_pattern] : null)
+      : l.aix_type === "application_push" ? l.app_sub_mode
+      : (l.aix_type === "property_send" || l.aix_type === "property_recommendation") ? l.send_mode : null;
+    if (truth && hasPickerQuestion(l.aix_type)) {
+      const pk = await evaluatePickerWithJev({ aixType: l.aix_type, messages: masked, status: l.conversation_status, sentPropertyCount: sentCount ?? null, conversationId: l.conversation_id, timeoutMs: 15_000 });
+      if (pk) {
+        const s = pickerStats.get(l.aix_type) ?? { n: 0, ok: 0, hiN: 0, hiOk: 0 };
+        s.n++;
+        const ok = pk.decision.picker === truth;
+        if (ok) s.ok++;
+        if (pk.decision.prob >= 0.8) { s.hiN++; if (ok) s.hiOk++; }
+        pickerStats.set(l.aix_type, s);
+        if (!ok && pickerWrong.length < SHOW) pickerWrong.push(`  ${l.conversation_id.slice(0, 8)} ${l.aix_type} 正解=${truth} Jev=${pk.decision.picker}(${pk.decision.prob.toFixed(2)})`);
+      }
     }
   }
 
@@ -111,5 +129,10 @@ async function main() {
   for (const [k, n] of [...confusion.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) console.log(`  ${String(n).padStart(3)}  ${k}`);
   console.log(`\n間違いの実物（本名は仮名化済み）:`);
   for (const e of examplesWrong) console.log(e);
+  console.log(`\n=== ボタンが決まった後のピッカー（ボタンを渡して1問だけ聞く）===`);
+  for (const [k, s] of [...pickerStats.entries()].sort((a, b) => b[1].n - a[1].n)) {
+    console.log(`  ${k.padEnd(24)} ${String(s.ok).padStart(3)}/${String(s.n).padStart(3)} = ${pct(s.ok, s.n).padStart(6)}   確率0.8以上: ${s.hiOk}/${s.hiN} = ${pct(s.hiOk, s.hiN)}`);
+  }
+  for (const e of pickerWrong) console.log(e);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

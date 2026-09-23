@@ -237,6 +237,103 @@ export async function recordJevShadow(sb: { from: (t: string) => any }, row: Jev
   }
 }
 
+// ─── ボタンが決まった後: そのボタンのピッカーを Jev が選ぶ ──────────────────────
+// 2026-09-23 竹内「AIX のボタンの中でどのピッカーを選ぶのか判断する形。AIX ボタンのところはもう既存で選択されているので、
+//   そこから AIX ボタンのそれぞれのピッカーの種類・内容を Jev が分かっていればどのボタンを押すべきか判断できる」
+//
+// ボタンごとのピッカー（AixModal.tsx の実物・aix_usage_logs の列名で持つ）:
+//   ・物件確認した   check_pattern … 「何を確認したか」（JEV_CHECK_TOPIC_OPTIONS）。結果（あった／なかった）は会話から分からないのでスタッフ
+//   ・物件ピックアップした send_mode … 新規／新着／条件を広げた／代替
+//   ・申込へ！       app_sub_mode … 申込誘導／申込確定／フォーマット／書類依頼
+//   ・物件オススメ   send_mode … 新着／条件を広げた（物件ピックアップしたと同じ語）
+// 質問はボタンごとに1つ（選択肢が狭いほど当たる）。state に「押すボタン」を入れて、その中から選ばせる。
+export type PickerField = "check_pattern" | "send_mode" | "app_sub_mode";
+
+export const AIX_PICKER_CATALOG: Record<string, { field: PickerField; question: string; options: Record<string, string> }> = {
+  property_check_result: {
+    field: "check_pattern",
+    question: "AIX【物件確認した】を押す。お客様が求めている確認は何か（結果のあった／なかったは聞かない）",
+    options: JEV_CHECK_TOPIC_OPTIONS,
+  },
+  property_send: {
+    field: "send_mode",
+    question: "AIX【物件ピックアップした】を押す。今回送る物件はどのモードか",
+    options: {
+      normal:      "新規物件: 希望条件に合う物件を（初めて、または通常どおり）ピックアップして送る",
+      new_arrival: "新着物件: 以前に物件を送った後、新しく出た物件を追加で送る（継続の追客）",
+      widen:       "条件を広げた: 希望どおりの物件が無く、エリア・家賃・間取りなどを広げて探した物件を送る",
+      alternative: "代替: 気に入っていた物件が満室・紹介不可だったので、代わりの物件を送る",
+    },
+  },
+  property_recommendation: {
+    field: "send_mode",
+    question: "AIX【物件オススメ】を押す。今回勧める物件はどのモードか",
+    options: {
+      normal:      "通常: 希望条件に合う物件を勧める",
+      new_arrival: "新着物件: 以前に物件を送った後、新しく出た物件を勧める",
+      widen:       "条件を広げた: 希望どおりの物件が無く、条件を広げて探した物件を勧める",
+    },
+  },
+  application_push: {
+    field: "app_sub_mode",
+    question: "AIX【申込へ！】を押す。今の場面はどれか",
+    options: {
+      push:         "申込誘導: 内覧の後などに、申込を後押しするメッセージを送る（まだ申込を決めていない）",
+      confirm:      "申込確定: お客様が申込を決めたので、確定のご連絡と次の手順を送る",
+      format:       "フォーマット: 申込書（記入フォーマット）を送る（申込に進む・記入項目を案内する）",
+      docs_request: "書類依頼: 申込に不足している書類（本人確認書類・収入証明など）を確認・依頼する",
+    },
+  },
+};
+
+/** そのボタンにピッカーがあるか */
+export function hasPickerQuestion(aixType: string | null | undefined): boolean {
+  return !!aixType && aixType in AIX_PICKER_CATALOG;
+}
+
+export function buildPickerQuestion(aixType: string): JevQuestion | null {
+  const c = AIX_PICKER_CATALOG[aixType];
+  if (!c) return null;
+  return { type: "choice", instructions: c.question, criteria: c.options };
+}
+
+export type PickerJevDecision = {
+  aixType: string;
+  field: PickerField;
+  picker: string;                 // 選択肢のキー（check_pattern の時は topic。suggested の値は pickerValue）
+  pickerValue: string | null;     // aix_usage_logs／suggested_aix_meta に入れる値（availability は null＝スタッフが結果を選ぶ）
+  prob: number;
+  confidence: number | null;
+  probabilities: Record<string, number>;
+};
+
+export function parsePickerJevAnswer(aixType: string, answer: JevAnswer | undefined): PickerJevDecision | null {
+  const c = AIX_PICKER_CATALOG[aixType];
+  const a = choiceOf(answer);
+  if (!c || !a || !(a.choice in c.options)) return null;
+  const pickerValue = c.field === "check_pattern" ? (TOPIC_TO_CHECK_PATTERN[a.choice] ?? null) : a.choice;
+  return { aixType, field: c.field, picker: a.choice, pickerValue, prob: a.prob, confidence: a.confidence, probabilities: a.probabilities };
+}
+
+/**
+ * ボタンが決まっている時、そのピッカーを Jev に選ばせる。ピッカーの無いボタン・鍵なし・失敗は null。
+ * ⚠ state の文は仮名化済みで渡す。
+ */
+export async function evaluatePickerWithJev(
+  input: JevStateInput & { aixType: string; conversationId?: string | null; timeoutMs?: number; env?: Record<string, string | undefined>; fetchImpl?: typeof fetch },
+): Promise<{ decision: PickerJevDecision; raw: JevResult } | null> {
+  const q = buildPickerQuestion(input.aixType);
+  if (!q) return null;
+  const state = { ...buildJevState(input), chosen_aix_button: AIX_BUTTON_LABELS[input.aixType] ?? input.aixType };
+  const raw = await jevSystemOne({
+    state, questions: { picker: q },
+    action: `picker:${input.aixType}`, conversationId: input.conversationId ?? null, timeoutMs: input.timeoutMs, env: input.env, fetchImpl: input.fetchImpl,
+  });
+  if (!raw) return null;
+  const decision = parsePickerJevAnswer(input.aixType, raw.answers.picker);
+  return decision ? { decision, raw } : null;
+}
+
 // 設計知見「同じ事実を2か所に置かない」: 選択肢が AIX_BUTTON_LABELS とずれたら起動時に気付く
 for (const k of Object.keys(AIX_BUTTON_LABELS)) {
   if (!(k in JEV_AIX_OPTIONS)) throw new Error(`aix-jev: AIX_BUTTON_LABELS の「${k}」が JEV_AIX_OPTIONS に無い`);

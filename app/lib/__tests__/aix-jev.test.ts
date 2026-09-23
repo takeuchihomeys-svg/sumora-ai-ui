@@ -4,6 +4,7 @@ import { AIX_BUTTON_LABELS } from "../aix-taxonomy";
 import {
   JEV_AIX_OPTIONS, JEV_CHECK_TOPIC_OPTIONS, CHECK_PATTERN_TO_TOPIC, TOPIC_TO_CHECK_PATTERN, TOPIC_CHECK_PATTERNS,
   buildJevState, buildAixJevQuestions, parseAixJevAnswers, evaluateAixWithJev, toShadowRow,
+  AIX_PICKER_CATALOG, hasPickerQuestion, buildPickerQuestion, parsePickerJevAnswer, evaluatePickerWithJev,
 } from "../aix-jev";
 import { readJevConfig, jevSystemOne } from "../jev-client";
 
@@ -90,6 +91,25 @@ console.log("── ★ answers → ブレインが使う形");
   t("★ probabilities 無しでも choice は通る（確率は 1）", d4?.aix === "none" && d4.aixProb === 1 && d4.checkTopic === "none");
 }
 
+console.log("── ★ ボタンが決まった後: そのボタンのピッカーを選ぶ（2026-09-23 竹内）");
+{
+  t("★ ピッカーのあるボタン: 物件確認した・物件ピックアップした・物件オススメ・申込へ！", ["property_check_result", "property_send", "property_recommendation", "application_push"].every(hasPickerQuestion));
+  t("★ ピッカーの無いボタンは null（見積書送る・内覧日調整 等）", !hasPickerQuestion("estimate_sheet") && !hasPickerQuestion("viewing_invite") && buildPickerQuestion("estimate_sheet") === null);
+  t("★ 選択肢は aix_usage_logs の実物の語（send_mode: normal/new_arrival/widen/alternative）", ["normal", "new_arrival", "widen", "alternative"].every((k) => k in AIX_PICKER_CATALOG.property_send.options));
+  t("★ 選択肢は aix_usage_logs の実物の語（app_sub_mode: push/confirm/format/docs_request）", ["push", "confirm", "format", "docs_request"].every((k) => k in AIX_PICKER_CATALOG.application_push.options));
+  const q = buildPickerQuestion("application_push")!;
+  t("★ ピッカーの質問は choice でそのボタンの選択肢だけ", q.type === "choice" && Object.keys(q.criteria).length === 4);
+
+  const p1 = parsePickerJevAnswer("property_send", { type: "choice", choice: "new_arrival", probabilities: { new_arrival: 0.7, normal: 0.3 }, confidence: 0.6 });
+  t("★ 物件ピックアップした → send_mode=new_arrival", p1?.field === "send_mode" && p1.pickerValue === "new_arrival" && p1.prob === 0.7);
+  const p2 = parsePickerJevAnswer("property_check_result", { type: "choice", choice: "interior_photo", probabilities: { interior_photo: 0.9 } });
+  t("★ 物件確認した → check_pattern=interior_photo", p2?.field === "check_pattern" && p2.pickerValue === "interior_photo");
+  const p3 = parsePickerJevAnswer("property_check_result", { type: "choice", choice: "availability", probabilities: { availability: 0.9 } });
+  t("★ 募集状況 → 値は null（あった／なかったはスタッフが選ぶ）", p3?.picker === "availability" && p3.pickerValue === null);
+  t("★ そのボタンに無い選択肢が返ったら null", parsePickerJevAnswer("application_push", { type: "choice", choice: "new_arrival" }) === null);
+  t("★ ピッカーの無いボタンは null", parsePickerJevAnswer("estimate_sheet", { type: "choice", choice: "x" }) === null);
+}
+
 console.log("── ★ 鍵が無ければ何もしない（今までどおり）・失敗は null（fail-open）");
 {
   t("★ 鍵なし → 設定 null", readJevConfig({}) === null);
@@ -122,6 +142,18 @@ console.log("── ★ 鍵が無ければ何もしない（今までどおり�
   t("★ usage と model を持つ（llm_usage_logs 用）", ev?.raw.usage.input_tokens === 300 && ev.raw.model === "jev-1.13.0");
   const row = toShadowRow("c1", "2026-09-23T00:00:00Z", { action: "", check_pattern: null }, ev!);
   t("★ 影の運用の行: ブレインの判断と Jev の答えを並べる", row.jev_action === "property_check_result" && row.jev_check_pattern === "interior_photo" && row.brain_action === "" && row.jev_model === "jev-1.13.0");
+
+  const pickerFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { state: Record<string, unknown>; questions: Record<string, unknown> };
+    sentBox.v = { url: "", body, auth: null };
+    return new Response(JSON.stringify({ model: "jev-1.13.0", answers: { picker: { type: "choice", choice: "widen", probabilities: { widen: 0.8, normal: 0.2 }, confidence: 0.7 } }, usage: { input_tokens: 100, output_tokens: 5 } }), { status: 200 });
+  }) as typeof fetch;
+  const pk = await evaluatePickerWithJev({ aixType: "property_send", messages: [{ sender: "customer", text: "家賃もう少し上げても大丈夫です" }], env: { TYPESAFE_API_KEY: "k" }, fetchImpl: pickerFetch });
+  const pkState = (sentBox.v?.body.state ?? {}) as Record<string, unknown>;
+  t("★ ボタン決定後のピッカー: state に押すボタンが入り、質問は picker 1つ", pkState.chosen_aix_button === "物件ピックアップした" && Object.keys((sentBox.v?.body.questions ?? {}) as object).join() === "picker");
+  t("★ 答え: 物件ピックアップした → 条件を広げた", pk?.decision.pickerValue === "widen" && pk.decision.prob === 0.8 && pk.decision.field === "send_mode");
+  const pkNone = await evaluatePickerWithJev({ aixType: "estimate_sheet", messages: [{ sender: "customer", text: "x" }], env: { TYPESAFE_API_KEY: "k" }, fetchImpl: pickerFetch });
+  t("★ ピッカーの無いボタンは呼ばずに null", pkNone === null);
 
   const failFetch = (async () => new Response("boom", { status: 500 })) as typeof fetch;
   const bad = await evaluateAixWithJev({ messages: [{ sender: "customer", text: "x" }], env: { TYPESAFE_API_KEY: "k" }, fetchImpl: failFetch });
