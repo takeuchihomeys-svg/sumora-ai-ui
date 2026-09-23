@@ -6922,3 +6922,13 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 `app/lib/__tests__/pending-pickup.test.ts`（9件・実物の会話を台帳に通す）
 実行: `npx tsx app/lib/__tests__/xxx.test.ts` ／ `npx tsc --noEmit` 通過。
 
+
+### （同日追記）あっぴ事例の反証で直した点・判断
+- 出口 final-check `RENT_NEGOTIATION_PROMISE` を **warning → block**（竹内「この言い回しいれないようにする」。誤削除0を2人が別々の正規表現で再現・実送信 12,426通で当たり0）
+- avoid_topics の家賃2語を deterministicAvoid（先頭固定）に。旧は末尾で5件上限に落ちていた（90会話の57%で少なくとも1語消える・2026-09-13 と同じ再発）
+- 取り下げの経路は2本: brain_no_aix（aix-action-items）と stale_customer_turn（cron/announce-aix-actions・40%）。両方で pending_pickup を見る
+- guard の連体形「交渉させて頂くなど」「交渉をさせて頂き、」を拾う／断りは交渉の語の直後だけ（裸の「難し」は「エアコン新設が難しい場合でも…交渉」を守ってしまう）
+- 戦略の項目（closing_strategy・winning_pattern・next_steps）も `sanitizeStrategyFields` を通す（整理・ゼロから両方）
+- 方向が丸ごと落ちた時の受け皿＝「ご条件に合うお部屋を引き続きピックアップ」（ナレッジ 8381c035 の正解）
+- pending-pickup: 宣言の時刻が無ければ立てない（fail-closed）
+- **未着手（記録のみ）**: WE DO の列挙が route.ts 5か所に散っている（定数化）／「お客様が家賃交渉を頼んだか」の窓 6件 vs 4件／aix_action_items の期限切れ掃除が無い（pending が無期限に残りうる）／ナレッジ 95638500（家賃交渉を依頼された段階の返し方）は「お客様が頼んだ時」の話なので残す
