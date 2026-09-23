@@ -3228,6 +3228,37 @@ ALTER TABLE llm_warm_prefixes ADD COLUMN IF NOT EXISTS sys0_hash TEXT;
 CREATE INDEX IF NOT EXISTS idx_llm_warm_prefixes_last_used ON llm_warm_prefixes(last_used_at DESC);
 ALTER TABLE llm_warm_prefixes DISABLE ROW LEVEL SECURITY;
 
+-- ── jev_shadow_logs: Jev（TypeSafe AI・System One）の影の運用ログ（2026-09-23）──
+-- 竹内「AIX でどのピッカーを選択するかの部分は Jev で強化」「Jev がブレインの一部にいてそこから選択」。
+-- ブレインが AIX を決めた時に、Jev の答え（AIX・何を確認するピッカー・写真依頼の確率）を並べて記録するだけ（挙動は変えない）。
+-- 正解は aix_usage_logs（スタッフが実際に押した AIX・check_pattern）。scripts/eval-jev-aix.ts で答え合わせしてから本番の判断に使う。
+-- お客様の発言は保存しない（answers は Jev の答えだけ）。
+CREATE TABLE IF NOT EXISTS jev_shadow_logs (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  conversation_id TEXT NOT NULL,
+  customer_msg_at TIMESTAMPTZ,
+  brain_action TEXT,
+  brain_check_pattern TEXT,
+  jev_action TEXT NOT NULL,
+  jev_action_prob DOUBLE PRECISION,
+  jev_check_topic TEXT,
+  jev_check_topic_prob DOUBLE PRECISION,
+  jev_check_pattern TEXT,
+  jev_photo_request_prob DOUBLE PRECISION,
+  jev_confidence DOUBLE PRECISION,
+  jev_model TEXT,
+  jev_ms INT,
+  answers JSONB,
+  -- 後から aix_usage_logs と突き合わせた結果（スタッフが実際に押した物）
+  actual_aix_type TEXT,
+  actual_check_pattern TEXT,
+  matched_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_jev_shadow_logs_conv_created ON jev_shadow_logs(conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jev_shadow_logs_created_at ON jev_shadow_logs(created_at DESC);
+ALTER TABLE jev_shadow_logs DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
