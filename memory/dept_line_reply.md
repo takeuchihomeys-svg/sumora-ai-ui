@@ -6834,3 +6834,9 @@ available は per-property の固定テンプレなので元から揃ってい�
 **判断待ち**: (1) `scripts/repair-applying-status.ts --apply`（25件を applying へ・印あり1件は触らない）を走らせるか (2) page.tsx「申込以降」トグルで status も進めるか
 **残る穴（記録のみ）**: fresh 層が初回ガードを通らず、同じ画像の初回で要対応が1分で最大3回更新・通知されうる／初回ガードがスタッフ送信のある古い会話で発火（1db7b08d・dc35a540）／戦略の層（普段の整理）に押した AIX・行動台帳・次打ちマップが渡っていない（別件・提案済み）
 **2週間後に測る**: `audit-recommend-apply-line`（DAYS=14）・`audit-applying-promotion`・`audit-brain-funnel`／Vercel ログ tag=aix:recommend-apply-line
+### （同日追記）戦略の層（普段の整理）にも押したAIX・流れ・次打ちマップ・行動台帳を渡した
+竹内「フル分析はどのAIXをつかったのか、どのような流れなのかも分析して…方向性を考えるようになっているのか」→「３はおこなう」
+- 実態: 戦略の作り直しは「10回に1回」ではなく、戦略が変わる発言／発言10件ごと／72h空き。3回に1回ゼロから（押したAIX等を読む）、残り2回は普段の整理（**押したAIXを知らず**、要点の AIX: は提案）
+- 直し: `app/lib/aix-flow-note.ts`（流れの文を1関数に・毎回の分析と共用）／`consolidateStrategy` に【この会話で押した AIX】【行動台帳】／`STRATEGY_SYSTEM` に成約の典型順と「押した物を Step に書かない」
+- YUMA 1回: Step1「募集状況を確認し回答」→ 9/22 物件送付を踏まえて 追加情報→見積の比較→内覧の打診 に進んだ（n=1・`scripts/yuma-strategy-refresh.ts`・控えて戻した）
+- 費用: 入力 +700 tokens／回・1日7〜19回
