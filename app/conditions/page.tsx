@@ -219,7 +219,8 @@ export default function ConditionsPage() {
   const [pickupFocus, setPickupFocus] = useState<string | null>(null);
   const loadPickupPending = useCallback(async () => {
     try {
-      const res = await fetch("/api/property-pickups?days=30", { cache: "no-store" });
+      // 件数だけ要るので軽い一覧（画像・本文を読まない）
+      const res = await fetch("/api/property-pickups?view=list&days=30", { cache: "no-store" });
       const json = await res.json() as { ok: boolean; customers?: Array<{ property_customer_id: string | null; pending: number }> };
       if (!json.ok) return;
       const m = new Map<string, number>();
@@ -644,8 +645,8 @@ export default function ConditionsPage() {
         ))}
       </div>
 
-      {/* ── 検索バー（両タブ共通） ── */}
-      <div className="px-4 pt-3 pb-2 bg-white border-b border-[#e9edef]">
+      {/* ── 検索バー（アナウンス・一覧。ピックアップはタブの中に LINE と同じ検索がある＝2段にしない） ── */}
+      <div className={`px-4 pt-3 pb-2 bg-white border-b border-[#e9edef] ${tab === "pickup" ? "hidden" : ""}`}>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
@@ -856,12 +857,17 @@ export default function ConditionsPage() {
         </div>
       )}
 
-      {loading ? (
+      {/* ── ピックアップタブ（拡張が送った1回分を確認してお客様に送る）──
+          2026-09-24: 売上サポ全体の顧客（299件）の読み込みを待たずに出す（ピックアップは自分で軽い一覧を読む） */}
+      {tab === "pickup" && (
+        <div className="flex-1 pb-16">
+          <PickupReview focusKey={pickupFocus} onChange={() => void loadPickupPending()} />
+        </div>
+      )}
+      {tab !== "pickup" && (loading ? (
         <p className="text-center text-slate-400 py-16 text-sm">読み込み中...</p>
       ) : (
         <div className="flex-1 pb-28">
-          {/* ── ピックアップタブ（拡張が送った1回分を確認してお客様に送る） ── */}
-          {tab === "pickup" && <PickupReview focusKey={pickupFocus} onChange={() => void loadPickupPending()} />}
           {/* ── アナウンスタブ ── */}
           {tab === "announce" && (
             <div className="mt-2">
@@ -1142,7 +1148,7 @@ export default function ConditionsPage() {
             </div>
           )}
         </div>
-      )}
+      ))}
 
       {/* ── クイックアクションシート（アナウンスタップ時） ── */}
       {quickTarget && (

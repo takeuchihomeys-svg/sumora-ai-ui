@@ -3,7 +3,7 @@
 //   左＝ブレイン（拡張が送った1回分の物件と判断・🌟オススメ）／右＝スタッフ（送った・見送り・メモ）
 // 2026-09-24 竹内「紐づいているお客さんで LINE のチャット一覧のような UI。判断したのが LINE の会話風に送られる形。
 //   DeepSeek 側は左・スタッフの会話は右。スタッフは確認してお客さんに送るだけ」
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -17,7 +17,26 @@ type Item = {
 type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
 type LineLite = { profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null };
-type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string };
+type SentHist = { id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null };
+type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string; sent_history?: SentHist[]; has_more_batches?: boolean };
+/** 一覧の行（軽い要約だけ。画像・本文は開いた時に読む） */
+type ListCustomer = {
+  key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null;
+  pending: number; last_pickup_at: string | null; batch_count: number; last_batch: { batch_id: string; count: number; rec_name: string | null } | null;
+  sent: { pickup: number; recommendation: number; other: number; last_at: string | null }; line: LineLite | null; last_at: string; order_at: string;
+};
+/** 送った経路の表示（sent_properties.channel・無ければ source から） */
+function channelLabel(h: { channel: string | null; delivery: string | null; source: string | null }): { label: string; color: string; bg: string } {
+  const shared = h.delivery === "shared" || (h.delivery == null && h.source === "line_group");
+  if (shared) return { label: "⚪ グループ共有のみ", color: "#607d8b", bg: "#eceff1" };
+  const ch = h.channel ?? (h.source === "aix:property_send" ? "pickup" : h.source === "aix:property_recommendation" ? "recommendation" : h.source === "aix:property_check_result" ? "check" : h.source === "aix:estimate_sheet" ? "estimate" : h.source === "staff_image" ? "staff_image" : null);
+  if (ch === "pickup") return { label: "🟢 ピックアップで送信", color: "#1b5e20", bg: "#e8f5e9" };
+  if (ch === "recommendation") return { label: "🔵 オススメで送信", color: "#0d47a1", bg: "#e3f2fd" };
+  if (ch === "check") return { label: "物件確認で送信", color: "#4a148c", bg: "#f3e5f5" };
+  if (ch === "estimate") return { label: "見積書で送信", color: "#e65100", bg: "#fff3e0" };
+  if (ch === "staff_image") return { label: "手で送信", color: "#37474f", bg: "#eceff1" };
+  return { label: "送信（経路不明）", color: "#546e7a", bg: "#f5f5f5" };
+}
 
 /** LINE の一覧と同じアカウントの札（app/page.tsx の ACCOUNT_LIST と同じ表示名） */
 const ACCOUNT_LABEL: Record<string, string> = { sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ賃貸", hasu: "ハス" };
@@ -97,51 +116,110 @@ function buildBubbles(c: Customer): Bubble[] {
 
 /** focusKey: 一覧の「🧠 物件 N件」から来た時に、そのお客様（property_customer_id）の会話風画面を最初から開く。onChange: 送った・見送りの後に親の件数を更新 */
 export default function PickupReview({ focusKey = null, onChange }: { focusKey?: string | null; onChange?: () => void } = {}) {
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  // 2026-09-24 竹内「開くとき重いのは画像を全部読み取っているから。お客さんの詳細を開いた時に読み込まれるように。
+  //   全て読み込むと重いから限定して読み込む。並びは LINE の一覧と連動して変わる。UI の幅も LINE の一覧と同じ」:
+  //   一覧は要約だけ（view=list・30秒ごと＋画面に戻った時に取り直す＝LINE の並びに追従）。
+  //   開いたお客様だけ詳細（view=detail・直近3回分＋送った履歴）。画像は loading=lazy・小さく出し、押すと原寸
+  const [list, setList] = useState<ListCustomer[]>([]);
+  const [detail, setDetail] = useState<Customer | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(focusKey);
+  const [nBatches, setNBatches] = useState(3);
   const [checked, setChecked] = useState<Record<number, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>("");
   const [note, setNote] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [q, setQ] = useState("");
+  const openRef = useRef<{ key: string; pcid: string | null; conv: string | null } | null>(null);
+  const nBatchesRef = useRef(3);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const loadList = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
-      const res = await fetch(`/api/property-pickups?days=30`, { cache: "no-store" });
-      const json = await res.json() as { ok: boolean; customers?: Customer[]; error?: string };
+      const res = await fetch(`/api/property-pickups?view=list&days=30`, { cache: "no-store" });
+      const json = await res.json() as { ok: boolean; customers?: ListCustomer[]; error?: string };
       if (!json.ok) throw new Error(json.error || "取得に失敗");
-      setCustomers(json.customers ?? []);
+      setList(json.customers ?? []);
+    } catch (e) {
+      if (!quiet) setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+  }, []);
+
+  const loadDetail = useCallback(async (target: { key: string; pcid: string | null; conv: string | null }, n: number, resetChecks: boolean) => {
+    setDetailLoading(true);
+    try {
+      const qs = target.pcid ? `pcid=${encodeURIComponent(target.pcid)}` : `conv=${encodeURIComponent(target.conv ?? "")}`;
+      const res = await fetch(`/api/property-pickups?view=detail&${qs}&batches=${n}`, { cache: "no-store" });
+      const json = await res.json() as { ok: boolean; customer?: Customer; error?: string };
+      if (!json.ok || !json.customer) throw new Error(json.error || "取得に失敗");
+      if (openRef.current?.key !== target.key) return;   // 読み込み中に別のお客様を開いた
+      setDetail({ ...json.customer, key: target.key });
+      if (resetChecks) {
+        // 既定のチェック: 未確認のうち「外す候補」以外
+        const next: Record<number, boolean> = {};
+        for (const b of json.customer.batches) for (const it of b.items) next[it.id] = it.status === "pending" && it.verdict !== "drop";
+        setChecked(next);
+      }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      setDetailLoading(false);
     }
   }, []);
-  useEffect(() => { void load(); }, [load]);
-  // 一覧から来た時: 読み込めたらそのお客様を開き、未確認の物件に既定のチェックを入れる
+
+  /** 操作の後に一覧と開いている詳細を取り直す（旧 load と同じ呼び方） */
+  const load = useCallback(async () => {
+    await Promise.all([
+      loadList(true),
+      openRef.current ? loadDetail(openRef.current, nBatchesRef.current, false) : Promise.resolve(),
+    ]);
+  }, [loadList, loadDetail]);
+
+  useEffect(() => { void loadList(); }, [loadList]);
+  // LINE の一覧の並びに追従（30秒ごと・画面に戻った時）
   useEffect(() => {
-    if (!focusKey) return;
-    const c = customers.find((x) => x.key === focusKey);
-    if (!c) return;
-    setOpenKey(focusKey);
-    const next: Record<number, boolean> = {};
-    for (const b of c.batches) for (const it of b.items) next[it.id] = it.status === "pending" && it.verdict !== "drop";
-    setChecked(next);
-  }, [focusKey, customers]);
+    const tick = () => { if (document.visibilityState === "visible") void loadList(true); };
+    const id = window.setInterval(tick, 30_000);
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
+    return () => { window.clearInterval(id); window.removeEventListener("focus", tick); document.removeEventListener("visibilitychange", tick); };
+  }, [loadList]);
 
-  const open = useMemo(() => customers.find((c) => c.key === openKey) ?? null, [customers, openKey]);
-  const filtered = useMemo(() => customers.filter((c) => !q || (c.customer_name ?? "").includes(q)), [customers, q]);
-
-  const openCustomer = (c: Customer) => {
+  const openCustomer = (c: { key: string; property_customer_id: string | null; conversation_id: string | null }) => {
+    const target = { key: c.key, pcid: c.property_customer_id, conv: c.conversation_id };
+    openRef.current = target;
+    nBatchesRef.current = 3;
+    setNBatches(3);
     setOpenKey(c.key);
-    // 既定のチェック: 未確認のうち「外す候補」以外
-    const next: Record<number, boolean> = {};
-    for (const b of c.batches) for (const it of b.items) next[it.id] = it.status === "pending" && it.verdict !== "drop";
-    setChecked(next);
+    setDetail(null);
+    setChecked({});
     setMsg("");
+    void loadDetail(target, 3, true);
   };
+  const closeDetail = () => { openRef.current = null; setOpenKey(null); setDetail(null); };
+  const loadMoreBatches = () => {
+    if (!openRef.current) return;
+    const n = nBatchesRef.current + 5;
+    nBatchesRef.current = n;
+    setNBatches(n);
+    void loadDetail(openRef.current, n, false);
+  };
+
+  // 一覧から来た時（アナウンス／一覧の「🧠 物件 N件」）: 一覧が読めたらそのお客様を開く
+  const focusDone = useRef(false);
+  useEffect(() => {
+    if (!focusKey || focusDone.current) return;
+    const c = list.find((x) => x.key === focusKey || x.property_customer_id === focusKey);
+    if (!c) return;
+    focusDone.current = true;
+    openCustomer(c);
+  }, [focusKey, list]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const open = detail;
+  const filtered = useMemo(() => list.filter((c) => !q || (c.customer_name ?? "").includes(q)), [list, q]);
 
   const act = async (c: Customer, b: Batch, action: "send" | "skip") => {
     const ids = b.items.filter((it) => checked[it.id] && it.status === "pending").map((it) => it.id);
@@ -273,21 +351,52 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     }
   };
 
-  // ── 会話画面 ──
-  if (open) {
+  // ── 会話画面（右の列。開いたお客様1人分だけ） ──
+  const detailView = open ? (() => {
     const bubbles = buildBubbles(open);
+    const hist = open.sent_history ?? [];
+    const histCustomer = hist.filter((h) => !(h.delivery === "shared" || (h.delivery == null && h.source === "line_group")));
+    const histShared = hist.length - histCustomer.length;
     return (
-      <div className="flex flex-col" style={{ minHeight: "60vh", background: "#eef3f7" }}>
-        <div className="flex items-center gap-2 px-3 py-2 bg-white" style={{ borderBottom: "1px solid #e0e0e0" }}>
-          <button onClick={() => setOpenKey(null)} className="text-[#1565C0] font-bold text-sm">‹ 戻る</button>
+      <div className="flex flex-col h-full" style={{ background: "#eef3f7" }}>
+        <div className="flex items-center gap-2 px-3 py-2 bg-white shrink-0" style={{ borderBottom: "1px solid #e0e0e0" }}>
+          <button onClick={closeDetail} className="text-[#1565C0] font-bold text-sm md:hidden">‹ 戻る</button>
+          {open.line?.profile_image_url
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img src={open.line.profile_image_url} alt="" loading="lazy" className="h-9 w-9 rounded-full object-cover shrink-0" />
+            : <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#d9fdd3] text-sm font-bold text-[#0f8f44] shrink-0">{getInitial(open.customer_name)}</div>}
           <div className="flex-1 min-w-0">
             <div className="font-bold text-sm truncate">{open.customer_name ?? "（名前なし）"}さん</div>
             <div className="text-[10px] text-[#78909c]">{open.conversation_id ? "LINE 紐付け済み" : "LINE 未紐付け（送れません）"}</div>
           </div>
-          <button onClick={() => void load()} className="text-xs text-[#1565C0] font-bold">{loading ? "…" : "更新"}</button>
+          {open.conversation_id && <a href={`/?conv=${encodeURIComponent(open.conversation_id)}`} className="text-xs text-[#06C755] font-bold">LINE を開く</a>}
+          <button onClick={() => void load()} className="text-xs text-[#1565C0] font-bold">{detailLoading ? "…" : "更新"}</button>
         </div>
-        {msg && <div className="mx-3 mt-2 text-xs px-3 py-2 rounded-lg" style={{ background: "#e3f2fd", color: "#0d47a1" }}>{msg}</div>}
-        <div className="flex-1 px-3 py-3 flex flex-col gap-3">
+        {msg && <div className="mx-3 mt-2 text-xs px-3 py-2 rounded-lg shrink-0" style={{ background: "#e3f2fd", color: "#0d47a1" }}>{msg}</div>}
+        <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3">
+          {/* 2026-09-24 竹内「開くと履歴が見れる」: このお客様に送った物件（物件送った表・経路つき） */}
+          {hist.length > 0 && (
+            <details className="rounded-2xl bg-white px-3 py-2" style={{ boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
+              <summary className="text-xs font-bold cursor-pointer">📦 送った物件の履歴　お客様に送付 {histCustomer.length}件{histShared ? `・グループ共有のみ ${histShared}件` : ""}（直近40件）</summary>
+              <div className="mt-2 flex flex-col gap-1">
+                {hist.map((h) => {
+                  const ch = channelLabel(h);
+                  return (
+                    <div key={h.id} className="flex items-center gap-2 text-[11px]">
+                      <span className="text-[#90a4ae] shrink-0 tabular-nums">{fmtDateTime(h.sent_at)}</span>
+                      <span className="truncate flex-1">{h.property_name}{h.room_no ? ` ${h.room_no}` : ""}</span>
+                      <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: ch.bg, color: ch.color }}>{ch.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          )}
+          {open.has_more_batches && (
+            <button onClick={loadMoreBatches} disabled={detailLoading} className="self-center text-[11px] font-bold px-3 py-1 rounded-full bg-white" style={{ color: "#1565C0", border: "1px solid #cfd8dc" }}>
+              {detailLoading ? "読み込み中…" : "▲ もっと前のピックアップを見る"}
+            </button>
+          )}
           {bubbles.map((bb, i) => bb.kind === "brain" ? (
             <div key={`b${i}`} className="flex items-end gap-2">
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: "#1565C0", color: "#fff" }}>🧠</div>
@@ -306,7 +415,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                         {(it.trim_image_url || it.page_image_url) && (
                           <a href={it.trim_image_url ?? it.page_image_url ?? undefined} target="_blank" rel="noreferrer" className="shrink-0 relative" onClick={(e) => e.stopPropagation()}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={it.trim_image_url ?? it.page_image_url ?? undefined} alt="" className="rounded-md object-cover" style={{ width: 88, height: it.trim_image_url ? 62 : 64, border: "1px solid #e0e0e0", background: "#fff" }} />
+                            <img src={it.trim_image_url ?? it.page_image_url ?? undefined} alt="" loading="lazy" decoding="async" className="rounded-md object-cover" style={{ width: 88, height: 62, border: "1px solid #e0e0e0", background: "#fff" }} />
                             {it.trim_image_url && <span className="absolute -top-1 -left-1 text-[9px] font-bold px-1 rounded" style={{ background: "#6a1b9a", color: "#fff" }}>✂️ 送る形</span>}
                           </a>
                         )}
@@ -368,12 +477,13 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: "#6a1b9a", color: "#fff" }}>✂️</div>
               <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-white px-3 py-2.5" style={{ boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
                 <div className="text-xs font-bold mb-1">✂️ お客様に送る物件資料の画像 {bb.items.length}枚（PDF 1ページ目・弊社帯替え）</div>
-                <div className="flex flex-col gap-2">
+                {/* 重くならないよう小さく並べ、押すと原寸（新しいタブ）。画像は見えた時だけ読む（lazy） */}
+                <div className="grid grid-cols-2 gap-2" style={{ maxWidth: 520 }}>
                   {bb.items.map((it) => (
                     <div key={`ti${it.id}`} className="rounded-xl overflow-hidden" style={{ border: "1px solid #e0e0e0" }}>
                       <a href={it.trim_image_url ?? undefined} target="_blank" rel="noreferrer">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={it.trim_image_url ?? undefined} alt={it.property_name} className="w-full block" style={{ maxWidth: 560, background: "#fff" }} />
+                        <img src={it.trim_image_url ?? undefined} alt={it.property_name} loading="lazy" decoding="async" className="w-full block" style={{ aspectRatio: "1.41", objectFit: "cover", objectPosition: "top", background: "#fff" }} />
                       </a>
                       <div className="flex items-center justify-between px-2 py-1.5" style={{ background: "#f7f9fb" }}>
                         <span className="text-[11px] font-bold truncate">【{it.rank}】{it.property_name}{it.room_no ? ` ${it.room_no}号室` : ""}</span>
@@ -453,43 +563,45 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
         </div>
       </div>
     );
-  }
+  })() : null;
 
-  // ── 一覧（LINE の一覧と同じ形） ──
-  return (
-    <div>
-      <div className="px-4 pt-3 pb-2 bg-white flex items-center gap-2" style={{ borderBottom: "1px solid #e9edef" }}>
+  // ── 一覧（左の列・LINE の一覧と同じ形と幅 390px） ──
+  const listView = (
+    <div className="flex flex-col h-full bg-white">
+      <div className="px-4 pt-3 pb-2 bg-white flex items-center gap-2 shrink-0" style={{ borderBottom: "1px solid #e9edef" }}>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="名前で検索..." className="flex-1 text-sm px-3 py-2 rounded-lg" style={{ background: "#f0f2f5", border: "none" }} />
-        <button onClick={() => void load()} className="text-xs text-[#1565C0] font-bold">{loading ? "…" : "更新"}</button>
+        <button onClick={() => void loadList()} className="text-xs text-[#1565C0] font-bold">{loading ? "…" : "更新"}</button>
       </div>
-      {msg && <div className="mx-4 mt-2 text-xs px-3 py-2 rounded-lg" style={{ background: "#e3f2fd", color: "#0d47a1" }}>{msg}</div>}
+      {!open && msg && <div className="mx-4 mt-2 text-xs px-3 py-2 rounded-lg" style={{ background: "#e3f2fd", color: "#0d47a1" }}>{msg}</div>}
+      <div className="flex-1 overflow-y-auto">
       {filtered.length === 0 && !loading && (
-        <div className="text-sm text-[#90a4ae] py-10 text-center">ピックアップはまだありません（拡張ツールで「売上番長に送る」をすると、ここに並びます）</div>
+        <div className="text-sm text-[#90a4ae] py-10 text-center px-4">まだありません（拡張ツールのブレインモードで「売上番長に送る」をするか、AIX で物件を送ると並びます）</div>
       )}
       {/* 2026-09-24 竹内「ピックアップの一覧は LINE と同じ UI にする（アイコンも付ける）。順番も LINE と同じに連動」:
           行の形は app/page.tsx の LINE 一覧（アイコン・名前＋アカウント札・1行目のプレビュー・右に時刻と緑の件数）と同じ。並びは API が LINE の updated_at 順で返す */}
       {filtered.map((c) => {
-        const last = c.batches.slice(-1)[0];
-        const rec = last?.items.find((it) => it.recommended === 2) ?? last?.items.find((it) => it.recommended === 1);
-        const preview = last ? `🧠 ${last.items.length}件${rec ? `・🌟${rec.property_name}` : ""}` : "";
-        const pickupAt = c.last_pickup_at ?? last?.created_at ?? c.last_at;
+        const lb = c.last_batch;
+        const sentParts = [c.sent.pickup ? `🟢${c.sent.pickup}` : "", c.sent.recommendation ? `🔵${c.sent.recommendation}` : "", c.sent.other ? `送${c.sent.other}` : ""].filter(Boolean).join(" ");
+        const preview = lb ? `🧠 ${lb.count}件${lb.rec_name ? `・🌟${lb.rec_name}` : ""}` : sentParts ? `📦 送った物件 ${sentParts}` : "";
+        const at = c.line?.updated_at ?? c.last_at;
         const img = c.line?.profile_image_url ?? null;
+        const active = c.key === openKey;
         return (
           <button key={c.key} onClick={() => openCustomer(c)}
-            className={`flex w-full items-center gap-3 px-4 py-[18px] text-left transition border-l-[3px] ${c.pending > 0 ? "border-orange-400 bg-orange-50 hover:bg-orange-100" : "border-transparent bg-white hover:bg-[#f5f6f6]"}`}
+            className={`flex w-full items-center gap-3 px-4 py-[16px] text-left transition border-l-[3px] ${active ? "border-[#1565C0] bg-[#f0f2f5]" : c.pending > 0 ? "border-orange-400 bg-orange-50 hover:bg-orange-100" : "border-transparent bg-white hover:bg-[#f5f6f6]"}`}
             style={{ borderBottom: "1px solid #f0f2f5" }}>
             <div className="relative shrink-0">
               {img ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={img} alt="" className="h-12 w-12 rounded-full object-cover" />
+                <img src={img} alt="" loading="lazy" decoding="async" className="h-12 w-12 rounded-full object-cover" />
               ) : (
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">{getInitial(c.customer_name)}</div>
               )}
-              <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[11px]" style={{ background: "#1565C0" }}>🧠</span>
+              {c.batch_count > 0 && <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[11px]" style={{ background: "#1565C0" }}>🧠</span>}
             </div>
             <div className="relative min-w-0 flex-1 pr-12">
               <div className="absolute right-0 top-0 flex flex-col items-end gap-1">
-                <span className="text-[11px] text-[#667781]" title={`売上サポに届いた日時 ${fmtDateTime(pickupAt)}`}>{fmtWhen(pickupAt)}</span>
+                <span className="text-[11px] text-[#667781]" title="LINE の最終更新（並び順）">{at ? fmtWhen(at) : ""}</span>
                 {c.pending > 0 && (
                   <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#06C755] px-1 text-[11px] font-bold text-white leading-none">{c.pending}</span>
                 )}
@@ -500,11 +612,32 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 {c.pending > 0 && <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">未確認</span>}
                 {!c.conversation_id && <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "#ffebee", color: "#b71c1c" }}>LINE未紐付け</span>}
               </div>
-              <div className="truncate text-[13px] text-[#667781]">{preview}<span className="ml-1 text-[11px] text-[#b0bec5]">（{fmtDateTime(pickupAt)} ブレインモード）</span></div>
+              <div className="truncate text-[13px] text-[#667781]">
+                {preview}
+                {lb && sentParts && <span className="ml-1 text-[11px]">📦{sentParts}</span>}
+                {c.last_pickup_at && <span className="ml-1 text-[11px] text-[#b0bec5]">（{fmtDateTime(c.last_pickup_at)} ブレインモード）</span>}
+              </div>
             </div>
           </button>
         );
       })}
+      </div>
+    </div>
+  );
+
+  // LINE と同じ形: パソコンは左に一覧（390px）・右に会話。スマホは一覧 → 開くと会話だけ
+  return (
+    <div className="md:flex bg-white" style={{ height: "calc(100vh - 230px)", minHeight: 480 }}>
+      <div className={`${openKey ? "hidden md:flex" : "flex"} h-full w-full flex-col md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}>
+        {listView}
+      </div>
+      <div className={`${openKey ? "flex" : "hidden md:flex"} h-full flex-1 min-w-0 flex-col`}>
+        {detailView ?? (
+          <div className="flex h-full items-center justify-center text-sm text-[#90a4ae]" style={{ background: "#eef3f7" }}>
+            {openKey && detailLoading ? "読み込み中…" : "左の一覧からお客様を選んでください"}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -33,6 +33,19 @@ export async function GET(req: NextRequest) {
   }
   const days = Math.min(90, Math.max(1, Number(req.nextUrl.searchParams.get("days") ?? "30")));
   const since = new Date(Date.now() - days * 86400_000).toISOString();
+
+  // 2026-09-24 竹内「開くとき重いのは画像を全部読み取っているから。お客さんの詳細を開いた時に読み込まれるように。全て読み込むと重い」:
+  //   一覧（view=list）は行の要約だけ（画像・本文・分析は返さない）。詳細（view=detail）は開いたお客様1人分・直近 N 回分だけ
+  const view = req.nextUrl.searchParams.get("view");
+  if (view === "list") return NextResponse.json(await buildList(since));
+  if (view === "detail") {
+    const pcid = req.nextUrl.searchParams.get("pcid");
+    const conv = req.nextUrl.searchParams.get("conv");
+    const nBatches = Math.min(30, Math.max(1, Number(req.nextUrl.searchParams.get("batches") ?? "3")));
+    if (!pcid && !conv) return NextResponse.json({ ok: false, error: "pcid か conv が要ります" }, { status: 400 });
+    return NextResponse.json(await buildDetail(pcid, conv, nBatches));
+  }
+
   const [{ data, error }, notesRes] = await Promise.all([
     supabase.from("property_pickups")
       .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis")
@@ -89,4 +102,121 @@ export async function GET(req: NextRequest) {
     })
     .sort((a, z) => z.order_at.localeCompare(a.order_at));
   return NextResponse.json({ ok: true, customers: list });
+}
+
+// ── 一覧（軽い要約） ─────────────────────────────────────────────────────────────
+// 2026-09-24 竹内「ここに一覧が出るように、開くと履歴が見れる。並びは LINE の一覧と連動」:
+//   ピックアップのあるお客様に加えて、直近にお客様へ物件を送った（sent_properties・delivery=customer）お客様も並べる。
+//   並びは LINE の一覧と同じ＝会話の updated_at 降順
+type SentLite = { conversation_id: string | null; property_customer_id: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string | null };
+async function buildList(since: string) {
+  const [pk, sp] = await Promise.all([
+    supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, recommended, status, sent_at")
+      .gte("created_at", since).order("created_at", { ascending: false }).limit(3000),
+    supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at")
+      .gte("sent_at", since).not("conversation_id", "is", null).or("delivery.eq.customer,and(delivery.is.null,source.neq.line_group)").order("sent_at", { ascending: false }).limit(3000),
+  ]);
+  if (pk.error) return { ok: false, error: pk.error.message };
+  type L = {
+    key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null;
+    pending: number; last_pickup_at: string | null; batch_count: number; last_batch: { batch_id: string; count: number; rec_name: string | null } | null;
+    sent: { pickup: number; recommendation: number; other: number; last_at: string | null };
+  };
+  const byKey = new Map<string, L>();
+  const convToKey = new Map<string, string>();
+  const batchesSeen = new Map<string, Set<string>>();
+  for (const r of (pk.data ?? []) as Array<{ created_at: string; batch_id: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; rank: number; property_name: string; recommended: number; status: string }>) {
+    const key = r.property_customer_id ?? `conv:${r.conversation_id ?? r.batch_id}`;
+    const c = byKey.get(key) ?? { key, property_customer_id: r.property_customer_id, conversation_id: r.conversation_id, customer_name: r.customer_name, pending: 0, last_pickup_at: null, batch_count: 0, last_batch: null, sent: { pickup: 0, recommendation: 0, other: 0, last_at: null } };
+    if (!c.conversation_id && r.conversation_id) c.conversation_id = r.conversation_id;
+    if (r.status === "pending") c.pending++;
+    if (!c.last_pickup_at || r.created_at > c.last_pickup_at) c.last_pickup_at = r.created_at;
+    const seen = batchesSeen.get(key) ?? new Set<string>();
+    if (!seen.has(r.batch_id)) { seen.add(r.batch_id); c.batch_count++; }
+    batchesSeen.set(key, seen);
+    // 行は新しい順に来るので、最初に見た batch が最新
+    if (!c.last_batch) c.last_batch = { batch_id: r.batch_id, count: 0, rec_name: null };
+    if (c.last_batch.batch_id === r.batch_id) {
+      c.last_batch.count++;
+      if (r.recommended === 2 || (r.recommended === 1 && !c.last_batch.rec_name)) c.last_batch.rec_name = r.property_name;
+    }
+    byKey.set(key, c);
+    if (c.conversation_id) convToKey.set(c.conversation_id, key);
+  }
+  for (const s of (sp.data ?? []) as SentLite[]) {
+    if (!s.conversation_id) continue;
+    const key = convToKey.get(s.conversation_id) ?? (s.property_customer_id && byKey.has(s.property_customer_id) ? s.property_customer_id : null) ?? s.property_customer_id ?? `conv:${s.conversation_id}`;
+    const c = byKey.get(key) ?? { key, property_customer_id: s.property_customer_id, conversation_id: s.conversation_id, customer_name: null, pending: 0, last_pickup_at: null, batch_count: 0, last_batch: null, sent: { pickup: 0, recommendation: 0, other: 0, last_at: null } };
+    if (!c.conversation_id) c.conversation_id = s.conversation_id;
+    if (!c.property_customer_id && s.property_customer_id) c.property_customer_id = s.property_customer_id;
+    const ch = s.channel ?? (s.source === "aix:property_send" ? "pickup" : s.source === "aix:property_recommendation" ? "recommendation" : null);
+    if (ch === "pickup") c.sent.pickup++; else if (ch === "recommendation") c.sent.recommendation++; else c.sent.other++;
+    if (s.sent_at && (!c.sent.last_at || s.sent_at > c.sent.last_at)) c.sent.last_at = s.sent_at;
+    byKey.set(key, c);
+    convToKey.set(s.conversation_id, key);
+  }
+  const convIds = [...new Set([...byKey.values()].map((c) => c.conversation_id).filter((v): v is string => !!v))];
+  type ConvLite = { id: string; customer_name: string | null; profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null };
+  const convMap = new Map<string, ConvLite>();
+  for (let i = 0; i < convIds.length; i += 200) {
+    const { data: convs } = await supabase.from("conversations").select("id, customer_name, profile_image_url, updated_at, account, status, last_sender").in("id", convIds.slice(i, i + 200));
+    for (const cv of (convs ?? []) as ConvLite[]) convMap.set(cv.id, cv);
+  }
+  const customers = [...byKey.values()].map((c) => {
+    const cv = c.conversation_id ? convMap.get(c.conversation_id) ?? null : null;
+    const last = [c.last_pickup_at, c.sent.last_at].filter((v): v is string => !!v).sort().slice(-1)[0] ?? "";
+    return {
+      ...c,
+      customer_name: c.customer_name ?? cv?.customer_name ?? null,
+      line: cv ? { profile_image_url: cv.profile_image_url, updated_at: cv.updated_at, account: cv.account, status: cv.status, last_sender: cv.last_sender } : null,
+      last_at: last,
+      order_at: cv?.updated_at ?? last,
+    };
+  }).sort((a, z) => (z.order_at ?? "").localeCompare(a.order_at ?? "")).slice(0, 200);
+  return { ok: true, customers };
+}
+
+// ── 詳細（開いたお客様1人分・直近 N 回分＋送った履歴） ─────────────────────────────
+async function buildDetail(pcid: string | null, conv: string | null, nBatches: number) {
+  let q = supabase.from("property_pickups")
+    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis")
+    .order("created_at", { ascending: false }).limit(300);
+  q = pcid ? q.eq("property_customer_id", pcid) : q.eq("conversation_id", conv as string);
+  let sq = supabase.from("sent_properties").select("id, property_name, room_no, channel, delivery, source, sent_at, image_url, pickup_id").order("sent_at", { ascending: false }).limit(40);
+  sq = conv ? sq.eq("conversation_id", conv) : sq.eq("property_customer_id", pcid as string);
+  const [pk, notesRes, sentRes] = await Promise.all([
+    q,
+    pcid ? supabase.from("property_pickup_notes").select("id, created_at, property_customer_id, batch_id, text, author").eq("property_customer_id", pcid).order("created_at", { ascending: true }).limit(200) : Promise.resolve({ data: [] }),
+    sq,
+  ]);
+  if (pk.error) return { ok: false, error: pk.error.message };
+  const rows = (pk.data ?? []) as Row[];
+  const order: string[] = [];
+  const byBatch = new Map<string, { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Row[] }>();
+  for (const r of rows) {
+    let b = byBatch.get(r.batch_id);
+    if (!b) { b = { batch_id: r.batch_id, created_at: r.created_at, site: r.site, conversation_id: r.conversation_id, items: [] }; byBatch.set(r.batch_id, b); order.push(r.batch_id); }
+    b.items.push(r);
+  }
+  const batches = order.slice(0, nBatches).map((id) => byBatch.get(id)!).map((b) => ({ ...b, items: b.items.sort((a, z) => a.rank - z.rank) })).sort((a, z) => a.created_at.localeCompare(z.created_at));
+  const first = rows[0] ?? null;
+  const convId = conv ?? first?.conversation_id ?? null;
+  const { data: cv } = convId ? await supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : { data: null };
+  const c = cv as { customer_name: string | null; profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null } | null;
+  return {
+    ok: true,
+    customer: {
+      key: pcid ?? `conv:${convId}`,
+      property_customer_id: pcid ?? first?.property_customer_id ?? null,
+      conversation_id: convId,
+      customer_name: first?.customer_name ?? c?.customer_name ?? null,
+      batches,
+      notes: (notesRes.data ?? []) as Note[],
+      pending: rows.filter((r) => r.status === "pending").length,
+      last_at: rows[0]?.created_at ?? "",
+      line: c ? { profile_image_url: c.profile_image_url, updated_at: c.updated_at, account: c.account, status: c.status, last_sender: c.last_sender } : null,
+      sent_history: (sentRes.data ?? []) as Array<{ id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null }>,
+      has_more_batches: order.length > nBatches,
+    },
+  };
 }
