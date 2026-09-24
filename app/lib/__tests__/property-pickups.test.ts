@@ -1,6 +1,9 @@
 // 2026-09-24 竹内「ピックアップを売上サポに飛ばして確認→送るだけ」— 純関数のテスト
 // 実行: npx tsx app/lib/__tests__/property-pickups.test.ts
-import { parseRecommendMark, buildPickupRows, buildCustomerPickupMessage, parseAdFromText, CUSTOMER_PAGE, AGENT_PAGE } from "../property-pickups";
+import { parseRecommendMark, buildPickupRows, parseAdFromText, CUSTOMER_PAGE, AGENT_PAGE, classifyPickupSendAction, PICKUP_DIRECT_SEND_GONE_MESSAGE, toPickupHandoffItem } from "../property-pickups";
+import * as pickupsModule from "../property-pickups";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { extractPdfText } from "../pdf-text";
 import { renderPdfPageToPng, rewriteFontFamily, japaneseFontPath } from "../pdf-render";
 import { PDFDocument, StandardFonts } from "pdf-lib";
@@ -32,8 +35,39 @@ console.log("── ★ 行の組み立て");
   t("★ 物件名と号室は見出しから", rows[0].property_name === "アコード中之島" && rows[0].room_no === "1402" && rows[1].property_name === "ドリームネオポリス桜ノ宮");
   t("★ PDF の文字層の有無", rows[0].pdf_has_text === true && rows[1].pdf_has_text === false);
   t("★ 状態は未確認から", rows.every((r) => r.status === "pending"));
-  const msg = buildCustomerPickupMessage(rows);
-  t("★ お客様への本文: 番号を振り直し・🌟を残し・PDF のリンクを添える", msg.startsWith("【1🌟★】アコード中之島") && msg.includes("📄 https://blob/1.pdf") && msg.includes("【2】ドリームネオポリス桜ノ宮"), msg);
+}
+
+// 2026-09-24 夜 竹内「お客さんに送る時これ送られてないようにする（2枚目）」:
+//   お客様の LINE に「【1🌟★】ダイレ・エヌ／80,000円 10,500円／1LDK 39.23㎡／AD 1ヶ月／【2🌟】Abelia…」が画像の後に届いた。
+//   出どころ＝旧 UI の action:"send" が説明文（summary_text）を本文にして送っていた → 直接の送信を止め、AIX に一本化
+console.log("── ★ 説明文（AD・🌟）がお客様に出ない（出口の決定論）");
+{
+  // 実物の説明文（2枚目のスクショの形。名前は物件名のみ）
+  const realSummary = "【1🌟★】ダイレ・エヌ\n80,000円 10,500円\n1LDK 39.23㎡\nAD 1ヶ月";
+  const FORBIDDEN = /AD|ＡＤ|広告料|利益|🌟|★|summary/u;
+  t("★ 説明文を本文に変える関数（buildCustomerPickupMessage）は export されていない",
+    typeof (pickupsModule as Record<string, unknown>).buildCustomerPickupMessage === "undefined");
+  t("★ action:send は止める（gone）", classifyPickupSendAction("send") === "gone");
+  t("★ action 無し・知らない値も止める（旧 API は未指定を send 扱いにしていた）", classifyPickupSendAction(undefined) === "gone" && classifyPickupSendAction("") === "gone" && classifyPickupSendAction("SEND") === "gone" && classifyPickupSendAction(null) === "gone");
+  t("★ skip・mark_sent は残る（LINE には送らない操作）", classifyPickupSendAction("skip") === "skip" && classifyPickupSendAction("mark_sent") === "mark_sent");
+  t("★ 止めた時の文は AIX に案内し、AD 等を含まない", PICKUP_DIRECT_SEND_GONE_MESSAGE.includes("AIX【物件ピックアップした】") && !/広告料|利益|🌟/u.test(PICKUP_DIRECT_SEND_GONE_MESSAGE));
+  // AIX【物件ピックアップした】への受け渡し（GET ?ids=）: 説明文・元付の画像を拾わない
+  const dbRow = { id: 7, rank: 1, property_name: "ダイレ・エヌ", room_no: "302", conversation_id: "c1", trim_image_url: "https://blob/t.jpg", page_image_url: "https://blob/p.png",
+    summary_text: realSummary, agent_image_url: "https://blob/agent.png", ad_yen: 80000, profit_yen: 50000, recommended: 2 };
+  const h = toPickupHandoffItem(dbRow);
+  t("★ 受け渡しの鍵は6つだけ（id・rank・物件名・号室・会話・画像）", JSON.stringify(Object.keys(h).sort()) === JSON.stringify(["conversation_id", "id", "image_url", "property_name", "rank", "room_no"]), Object.keys(h));
+  t("★ 受け渡しの中身に AD・🌟・広告料・利益・説明文が無い", !FORBIDDEN.test(JSON.stringify(h)) && !JSON.stringify(h).includes("80,000円"), h);
+  t("★ 画像はトリミング優先・元付の画像は渡さない", h.image_url === "https://blob/t.jpg" && !JSON.stringify(h).includes("agent"));
+  t("★ トリミングが無ければ1ページ目", toPickupHandoffItem({ ...dbRow, trim_image_url: null }).image_url === "https://blob/p.png");
+  // 経路そのものの確認（ソースの静的検査）: send の API から LINE への送信が無い・GET ?ids= が説明文を読まない
+  const root = join(__dirname, "..", "..", "..");
+  const sendSrc = readFileSync(join(root, "app", "api", "property-pickups", "send", "route.ts"), "utf8").replace(/^\s*\/\/.*$/gmu, "");
+  t("★ send の API は /api/send-line-message を呼ばない", !sendSrc.includes("send-line-message") && !sendSrc.includes("fetch("));
+  t("★ send の API は説明文（summary_text）を読まない", !sendSrc.includes("summary_text"));
+  t("★ send の API は gone を 410 で返す", /status:\s*410/.test(sendSrc));
+  const getSrc = readFileSync(join(root, "app", "api", "property-pickups", "route.ts"), "utf8");
+  const idsBlock = getSrc.slice(getSrc.indexOf("if (idsParam)"), getSrc.indexOf("const days"));
+  t("★ GET ?ids= は summary_text を select しない", idsBlock.length > 0 && !/select\([^)]*summary_text/.test(idsBlock), idsBlock.slice(0, 200));
 }
 
 console.log("── ★ 元付資料の文字から AD を読む（2026-09-24 竹内「偶数ページ＝元付業者の資料に AD の記載」）");

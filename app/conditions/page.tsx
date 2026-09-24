@@ -860,7 +860,11 @@ export default function ConditionsPage() {
       {/* ── ピックアップタブ（拡張が送った1回分を確認してお客様に送る）──
           2026-09-24: 売上サポ全体の顧客（299件）の読み込みを待たずに出す（ピックアップは自分で軽い一覧を読む） */}
       {tab === "pickup" && (
-        <div className="flex-1 pb-16">
+        // 2026-09-24 夜: スマホは外側（581行目）の pb-16 が下ナビの分を取るので内側は付けない（二重で 128px の空白が出ていた）。PC は今のまま
+        //   スマホは flex-1 min-h-0 で「100svh −（ヘッダーの実際の高さ＋タブ）− 外の pb-16」を丸ごと PickupReview に渡す（数字を決め打ちしない）。
+        //   下ナビは 37px＋max(8px, safe-area) で、ノッチの iPhone では 71px と外の pb-16（64px）より 7px 高い → その差だけ内側で足す。
+        //   PC（md 以上）は今のまま（min-h は auto に戻し、pb-16）
+        <div className="flex-1 min-h-0 pb-[max(0px,calc(env(safe-area-inset-bottom)_-_27px))] md:min-h-[auto] md:pb-16">
           <PickupReview focusKey={pickupFocus} onChange={() => void loadPickupPending()} />
         </div>
       )}

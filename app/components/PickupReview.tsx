@@ -4,6 +4,7 @@
 // 2026-09-24 竹内「紐づいているお客さんで LINE のチャット一覧のような UI。判断したのが LINE の会話風に送られる形。
 //   DeepSeek 側は左・スタッフの会話は右。スタッフは確認してお客さんに送るだけ」
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type React from "react";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -54,6 +55,21 @@ const VERDICT_JA: Record<string, { label: string; color: string; bg: string }> =
   drop: { label: "外す候補", color: "#b71c1c", bg: "#ffebee" },
 };
 
+/** 左の吹き出しの横の丸いアイコン（起きた事の種類） */
+function Icon({ bg, children }: { bg: string; children: React.ReactNode }) {
+  return <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: bg, color: "#fff" }}>{children}</div>;
+}
+/** パソコン幅（md 以上）か。画像の開き方（新しいタブ／ライトボックス）と全画面の切替に使う */
+function isDesktop(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
+}
+/** 吹き出しの時刻（buildBubbles は並びのために末尾へ「~」を付けるので外す） */
+function bubbleDate(at: string): Date { return new Date(at.replace(/~+$/u, "")); }
+/** 日付の区切り（LINE のトーク画面と同じ ja-JP の年月日） */
+function dayLabel(at: string): string { return bubbleDate(at).toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" }); }
+/** 吹き出しの外に出す時刻（HH:MM。日付は区切りで出す） */
+function hm(at: string): string { const d = bubbleDate(at); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; }
+
 function fmtWhen(iso: string): string {
   const d = new Date(iso);
   const today = new Date();
@@ -67,7 +83,8 @@ type Bubble =
   | { kind: "brain"; at: string; batch: Batch }
   | { kind: "trim"; at: string; batch: Batch; items: Item[] }
   | { kind: "analysis"; at: string; batch: Batch; items: Item[]; bestId: number | null }
-  | { kind: "staff"; at: string; text: string; sub?: string };
+  | { kind: "staff"; at: string; text: string; sub?: string }
+  | { kind: "history"; at: string; items: SentHist[] };
 
 /** 画像を手元に保存（別ドメインの画像は download 属性が効かないので、取ってきて Blob の URL で落とす。取れなければ新しいタブで開く） */
 async function saveImage(url: string, name: string) {
@@ -111,6 +128,9 @@ function buildBubbles(c: Customer): Bubble[] {
     if (skipped.length) out.push({ kind: "staff", at: b.created_at, text: `${skipped.length}件を見送り`, sub: skipped.map((it) => `【${it.rank}】${it.property_name}`).join("・") });
   }
   for (const n of c.notes) out.push({ kind: "staff", at: n.created_at, text: n.text });
+  // 2026-09-24 夜: 送った物件の履歴は上のカードではなく、起きた事として左の吹き出しに（一番新しく送った時刻の位置）
+  const hist = c.sent_history ?? [];
+  if (hist.length > 0) out.push({ kind: "history", at: hist.map((h) => h.sent_at).sort().slice(-1)[0] + "~~~", items: hist });
   return out.sort((a, z) => a.at.localeCompare(z.at));
 }
 
@@ -133,6 +153,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   const [q, setQ] = useState("");
   const openRef = useRef<{ key: string; pcid: string | null; conv: string | null } | null>(null);
   const nBatchesRef = useRef(3);
+  const historyPushedRef = useRef(false);
 
   const loadList = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -198,8 +219,102 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     setChecked({});
     setMsg("");
     void loadDetail(target, 3, true);
+    // スマホ: 端末の「戻る」で一覧に戻れるよう履歴を1つ積む（LINE のトーク画面と同じ操作）。Next の状態は引き継ぐ
+    if (!isDesktop() && !historyPushedRef.current) {
+      try { window.history.pushState({ ...(window.history.state ?? {}), pickupDetail: true }, ""); historyPushedRef.current = true; } catch { /* 積めなくても閉じるボタンで戻れる */ }
+    }
   };
-  const closeDetail = () => { openRef.current = null; setOpenKey(null); setDetail(null); };
+  const clearDetail = () => { openRef.current = null; setOpenKey(null); setDetail(null); setLightbox(null); };
+  const closeDetail = () => {
+    if (historyPushedRef.current) {
+      // 積んだ履歴を戻す → popstate で clearDetail（二重に戻らない）
+      historyPushedRef.current = false;
+      clearDetail();
+      try { window.history.back(); } catch { /* noop */ }
+      return;
+    }
+    clearDetail();
+  };
+  useEffect(() => {
+    const onPop = () => { if (historyPushedRef.current) { historyPushedRef.current = false; clearDetail(); } };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 2026-09-24 夜 竹内「スマホの場合下側に資料一枚分の余白が出る」: スマホで開いた会話は LINE のトーク画面と同じく全画面（fixed）。
+  //   高さは visualViewport（キーボード・アドレスバーに追従）、取れなければ 100dvh（app/page.tsx 3213 と同じ型）
+  const [desk, setDesk] = useState(false);
+  // kb: キーボードが出ているか（LINE の page.tsx 3218 と同じ求め方: innerHeight − visualViewport.height > 100）
+  const [vp, setVp] = useState<{ h: number | null; top: number; kb: boolean }>({ h: null, top: 0, kb: false });
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const onMq = () => setDesk(mq.matches);
+    onMq();
+    mq.addEventListener?.("change", onMq);
+    return () => mq.removeEventListener?.("change", onMq);
+  }, []);
+  useEffect(() => {
+    if (desk || !openKey) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const h = () => setVp({ h: vv.height, top: vv.offsetTop, kb: window.innerHeight - vv.height > 100 });
+    h();
+    vv.addEventListener("resize", h);
+    vv.addEventListener("scroll", h);
+    return () => { vv.removeEventListener("resize", h); vv.removeEventListener("scroll", h); };
+  }, [desk, openKey]);
+
+  // 右スワイプで一覧へ戻る（LINE の page.tsx 6416-6447 と同じ: 90px 超・入力欄の上から始めたタッチは追わない）
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const swipeRef = useRef<{ x: number; y: number; dx: number; on: boolean } | null>(null);
+  const onSwipeStart = (e: React.TouchEvent) => {
+    if (desk) return;
+    const tg = e.target as HTMLElement;
+    // label は除かない（物件カードが丸ごと <label> で、画面の大半でスワイプが効かなくなる）。
+    //   代わりにスワイプと認めた後の合成クリックを 500ms 止め、チェックが切り替わらないようにする（page.tsx の swipeBlockClickRef と同じ）
+    if (tg.closest("input, textarea, button, a")) { swipeRef.current = null; return; }
+    const t0 = e.touches[0];
+    swipeRef.current = { x: t0.clientX, y: t0.clientY, dx: 0, on: false };
+  };
+  const onSwipeMove = (e: React.TouchEvent) => {
+    const s = swipeRef.current;
+    if (!s) return;
+    const t0 = e.touches[0];
+    const dx = t0.clientX - s.x, dy = t0.clientY - s.y;
+    if (!s.on) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      if (dx <= 0 || Math.abs(dy) > Math.abs(dx)) { swipeRef.current = null; return; }
+      s.on = true;
+    }
+    s.dx = Math.max(0, dx);
+    if (detailRef.current) { detailRef.current.style.transition = "none"; detailRef.current.style.transform = `translateX(${Math.min(s.dx * 0.7, 200)}px)`; }
+  };
+  const onSwipeEnd = () => {
+    const s = swipeRef.current;
+    swipeRef.current = null;
+    const el = detailRef.current;
+    if (el) { el.style.transition = "transform 0.25s cubic-bezier(0.25,0.46,0.45,0.94)"; el.style.transform = ""; }
+    if (s?.on) {
+      swipeBlockClickRef.current = true;
+      window.setTimeout(() => { swipeBlockClickRef.current = false; }, 500);
+    }
+    if (s?.on && s.dx > 90) closeDetail();
+  };
+  const swipeBlockClickRef = useRef(false);
+  const onDetailClickCapture = (e: React.MouseEvent) => {
+    if (!swipeBlockClickRef.current) return;
+    e.preventDefault();   // label の既定動作（チェックの切り替え）も止まる
+    e.stopPropagation();
+  };
+
+  // 画像を開く: パソコンは今のまま新しいタブ（余白が出ない）。スマホは LINE と同じライトボックス（縦持ちで A4 横の資料の下に空きが出ない）
+  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  const openImage = (e: React.MouseEvent, url: string | null | undefined, name: string) => {
+    e.stopPropagation();
+    if (!url || isDesktop()) return;   // パソコンは <a target=_blank> のまま
+    e.preventDefault();
+    setLightbox({ url, name });
+  };
   const loadMoreBatches = () => {
     if (!openRef.current) return;
     const n = nBatchesRef.current + 5;
@@ -221,20 +336,19 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   const open = detail;
   const filtered = useMemo(() => list.filter((c) => !q || (c.customer_name ?? "").includes(q)), [list, q]);
 
-  const act = async (c: Customer, b: Batch, action: "send" | "skip") => {
+  // 2026-09-24 夜: お客様への送信は「📤 AIXで送る」だけ（/send の直接送信はサーバーで止めた・説明文の AD・🌟 が届いたため）。ここは見送りだけ
+  const act = async (b: Batch, action: "skip") => {
     const ids = b.items.filter((it) => checked[it.id] && it.status === "pending").map((it) => it.id);
-    if (ids.length === 0) { setMsg("送る物件にチェックを入れてください"); return; }
-    if (action === "send" && !c.conversation_id) { setMsg("このお客様は LINE の会話に紐付いていません（お客さん画面で紐付けてから）"); return; }
-    if (action === "send" && !confirm(`${c.customer_name ?? "お客様"}さんに ${ids.length}件 送ります。よろしいですか？`)) return;
+    if (ids.length === 0) { setMsg("見送る物件にチェックを入れてください"); return; }
     setBusy(b.batch_id);
     try {
       const res = await fetch("/api/property-pickups/send", {
         method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
         body: JSON.stringify({ batch_id: b.batch_id, item_ids: ids, action }),
       });
-      const json = await res.json() as { ok: boolean; error?: string; sent?: number; skipped?: number };
+      const json = await res.json() as { ok: boolean; error?: string; skipped?: number };
       if (!json.ok) throw new Error(json.error || "失敗");
-      setMsg(action === "send" ? `✅ ${json.sent}件 送りました` : `${json.skipped}件 見送りにしました`);
+      setMsg(`${json.skipped}件 見送りにしました`);
       await load();
       onChange?.();
     } catch (e) {
@@ -328,7 +442,12 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     const noImage = targets.filter((it) => !it.trim_image_url);
     if (noImage.length > 0 && !(await trim(b, noImage))) return;
     const ids = targets.map((it) => it.id).join(",");
-    window.location.href = `/?conv=${encodeURIComponent(convId)}&aix=property_send&pickup=${encodeURIComponent(ids)}&batch=${encodeURIComponent(b.batch_id)}`;
+    leaveTo(`/?conv=${encodeURIComponent(convId)}&aix=property_send&pickup=${encodeURIComponent(ids)}&batch=${encodeURIComponent(b.batch_id)}`);
+  };
+  /** 別のページへ移る。スマホで開いた時に積んだ履歴があれば、それを置き換えて移る（戻った時に中身の無い履歴が1つ残り「戻る」が空振りしない） */
+  const leaveTo = (href: string) => {
+    if (historyPushedRef.current) { historyPushedRef.current = false; window.location.replace(href); return; }
+    window.location.href = href;
   };
 
   const addNote = async (c: Customer) => {
@@ -352,15 +471,37 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   };
 
   // ── 会話画面（右の列。開いたお客様1人分だけ） ──
+  // 2026-09-24 夜 竹内「スマホ用で使えるように。見た目は LINE トーク詳細と同じ UI。左が起きた事項、右はこちらからの指示」:
+  //   スマホ（md 未満）は LINE のトーク画面（app/page.tsx 7050〜9491）と同じ形: 全画面・‹ 戻る／名前のヘッダー・水色の背景・
+  //   左の白い吹き出し＝起きた事（🧠ピックアップ・✂️画像・🔍分析・📦送った履歴）／右の緑の吹き出し＝こちら（メモ・送った・見送り）・時刻は吹き出しの外・下に入力欄。
+  //   パソコン（md 以上）はヘッダーと背景だけ今のまま（2列はそのまま）
+  const LEFT_BUBBLE = "min-w-0 max-w-[86%] md:max-w-[92%] rounded-2xl rounded-bl-md bg-white text-[#3d4a52] shadow-sm px-3 py-2.5";
+  const TIME = "mb-0.5 shrink-0 text-[10px] leading-none text-[#667781]";
   const detailView = open ? (() => {
     const bubbles = buildBubbles(open);
-    const hist = open.sent_history ?? [];
-    const histCustomer = hist.filter((h) => !(h.delivery === "shared" || (h.delivery == null && h.source === "line_group")));
-    const histShared = hist.length - histCustomer.length;
+    const lineHref = open.conversation_id ? `/?conv=${encodeURIComponent(open.conversation_id)}` : null;
+    let lastDay = "";
     return (
-      <div className="flex flex-col h-full" style={{ background: "#eef3f7" }}>
-        <div className="flex items-center gap-2 px-3 py-2 bg-white shrink-0" style={{ borderBottom: "1px solid #e0e0e0" }}>
-          <button onClick={closeDetail} className="text-[#1565C0] font-bold text-sm md:hidden">‹ 戻る</button>
+      <div className="flex flex-col h-full min-h-0 bg-[linear-gradient(180deg,#e8f4fd_0%,#f0f8ff_50%,#f8fbff_100%)] md:bg-none md:bg-[#eef3f7]">
+        {/* スマホのヘッダー（LINE と同じ: 左 ‹・中央に名前とアカウント・右に札） */}
+        <div className="md:hidden shrink-0 border-b border-[#e9edef] px-3 pb-3 pt-[max(14px,env(safe-area-inset-top))] backdrop-blur-md" style={{ background: "rgba(218,238,253,0.88)" }}>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5">
+            <button onClick={closeDetail} aria-label="一覧に戻る" className="flex items-center gap-1.5 shrink-0 justify-self-start">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#111b21" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+              {open.pending > 0 && <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#06C755] px-1 text-[11px] font-bold text-white leading-none">{open.pending}</span>}
+            </button>
+            <div className="flex min-w-0 max-w-[52vw] flex-col items-center justify-center">
+              <span className="block w-full truncate text-[15px] font-semibold text-[#111b21] text-center leading-tight">{open.customer_name ?? "（名前なし）"}</span>
+              <span className="text-[8px] text-[#999] leading-none mt-0.5">{accountLabel(open.line?.account)}{open.conversation_id ? "" : "・LINE 未紐付け"}</span>
+            </div>
+            <div className="flex shrink-0 items-center justify-self-end gap-0.5">
+              {lineHref && <a href={lineHref} onClick={(e) => { if (historyPushedRef.current) { e.preventDefault(); leaveTo(lineHref); } }} className="whitespace-nowrap rounded-full border px-1 py-[2px] text-[9px] font-bold leading-none bg-[#06C755] border-[#06C755] text-white">LINE</a>}
+              <button onClick={() => void load()} className="whitespace-nowrap rounded-full border px-1 py-[2px] text-[9px] font-bold leading-none border-[#d1d7db] bg-white text-[#8696a0]">{detailLoading ? "…" : "更新"}</button>
+            </div>
+          </div>
+        </div>
+        {/* パソコンのヘッダー（今のまま） */}
+        <div className="hidden md:flex items-center gap-2 px-3 py-2 bg-white shrink-0" style={{ borderBottom: "1px solid #e0e0e0" }}>
           {open.line?.profile_image_url
             // eslint-disable-next-line @next/next/no-img-element
             ? <img src={open.line.profile_image_url} alt="" loading="lazy" className="h-9 w-9 rounded-full object-cover shrink-0" />
@@ -369,38 +510,32 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
             <div className="font-bold text-sm truncate">{open.customer_name ?? "（名前なし）"}さん</div>
             <div className="text-[10px] text-[#78909c]">{open.conversation_id ? "LINE 紐付け済み" : "LINE 未紐付け（送れません）"}</div>
           </div>
-          {open.conversation_id && <a href={`/?conv=${encodeURIComponent(open.conversation_id)}`} className="text-xs text-[#06C755] font-bold">LINE を開く</a>}
+          {lineHref && <a href={lineHref} className="text-xs text-[#06C755] font-bold">LINE を開く</a>}
           <button onClick={() => void load()} className="text-xs text-[#1565C0] font-bold">{detailLoading ? "…" : "更新"}</button>
         </div>
         {msg && <div className="mx-3 mt-2 text-xs px-3 py-2 rounded-lg shrink-0" style={{ background: "#e3f2fd", color: "#0d47a1" }}>{msg}</div>}
-        <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3">
-          {/* 2026-09-24 竹内「開くと履歴が見れる」: このお客様に送った物件（物件送った表・経路つき） */}
-          {hist.length > 0 && (
-            <details className="rounded-2xl bg-white px-3 py-2" style={{ boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
-              <summary className="text-xs font-bold cursor-pointer">📦 送った物件の履歴　お客様に送付 {histCustomer.length}件{histShared ? `・グループ共有のみ ${histShared}件` : ""}（直近40件）</summary>
-              <div className="mt-2 flex flex-col gap-1">
-                {hist.map((h) => {
-                  const ch = channelLabel(h);
-                  return (
-                    <div key={h.id} className="flex items-center gap-2 text-[11px]">
-                      <span className="text-[#90a4ae] shrink-0 tabular-nums">{fmtDateTime(h.sent_at)}</span>
-                      <span className="truncate flex-1">{h.property_name}{h.room_no ? ` ${h.room_no}` : ""}</span>
-                      <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: ch.bg, color: ch.color }}>{ch.label}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </details>
-          )}
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-4 md:py-3">
+          <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
           {open.has_more_batches && (
             <button onClick={loadMoreBatches} disabled={detailLoading} className="self-center text-[11px] font-bold px-3 py-1 rounded-full bg-white" style={{ color: "#1565C0", border: "1px solid #cfd8dc" }}>
               {detailLoading ? "読み込み中…" : "▲ もっと前のピックアップを見る"}
             </button>
           )}
-          {bubbles.map((bb, i) => bb.kind === "brain" ? (
-            <div key={`b${i}`} className="flex items-end gap-2">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: "#1565C0", color: "#fff" }}>🧠</div>
-              <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-white px-3 py-2.5" style={{ boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
+          {bubbles.map((bb, i) => {
+            const day = dayLabel(bb.at);
+            const divider = day !== lastDay ? (
+              <div key={`d${i}`} className="flex items-center gap-3 py-2">
+                <div className="h-px flex-1 bg-[#e9edef]" />
+                <span className="rounded-full bg-[#e9edef] px-3 py-1 text-[11px] text-[#8696a0]">{day}</span>
+                <div className="h-px flex-1 bg-[#e9edef]" />
+              </div>
+            ) : null;
+            lastDay = day;
+            let row: React.ReactNode;
+            if (bb.kind === "brain") row = (
+            <div key={`b${i}`} className="flex items-end gap-1.5">
+              <Icon bg="#1565C0">🧠</Icon>
+              <div className={LEFT_BUBBLE}>
                 {/* 2026-09-24 竹内「ブレインモードで売上サポに送った日時も出るようにする」 */}
                 <div className="text-xs font-bold mb-0.5">ピックアップ {bb.batch.items.length}件（{bb.batch.site === "realpro" ? "リアプロ" : bb.batch.site ?? "-"}）を確認しました</div>
                 <div className="text-[10px] text-[#78909c] mb-1">🧠 ブレインモードで {fmtDateTime(bb.batch.created_at)} に届きました</div>
@@ -409,13 +544,14 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                     const v = it.verdict ? VERDICT_JA[it.verdict] : null;
                     const body = it.summary_text.replace(/^【\d+[^】]*】\s*/u, "").split("\n").filter(Boolean);
                     const pending = it.status === "pending";
+                    const img = it.trim_image_url ?? it.page_image_url ?? null;
                     return (
                       <label key={it.id} className="flex gap-2 items-start rounded-xl px-2 py-2" style={{ background: it.recommended > 0 ? "#fff8e1" : "#f7f9fb", opacity: pending ? 1 : 0.6 }}>
                         <input type="checkbox" className="mt-1" disabled={!pending} checked={!!checked[it.id]} onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
-                        {(it.trim_image_url || it.page_image_url) && (
-                          <a href={it.trim_image_url ?? it.page_image_url ?? undefined} target="_blank" rel="noreferrer" className="shrink-0 relative" onClick={(e) => e.stopPropagation()}>
+                        {img && (
+                          <a href={img} target="_blank" rel="noreferrer" className="shrink-0 relative" onClick={(e) => openImage(e, img, `${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`)}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={it.trim_image_url ?? it.page_image_url ?? undefined} alt="" loading="lazy" decoding="async" className="rounded-md object-cover" style={{ width: 88, height: 62, border: "1px solid #e0e0e0", background: "#fff" }} />
+                            <img src={img} alt="" loading="lazy" decoding="async" className="rounded-md object-cover" style={{ width: 88, height: 62, border: "1px solid #e0e0e0", background: "#fff" }} />
                             {it.trim_image_url && <span className="absolute -top-1 -left-1 text-[9px] font-bold px-1 rounded" style={{ background: "#6a1b9a", color: "#fff" }}>✂️ 送る形</span>}
                           </a>
                         )}
@@ -427,7 +563,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                             {v && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: v.bg, color: v.color }}>{v.label}{it.score != null ? ` ${it.score}` : ""}</span>}
                             {!pending && <span className="text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}
                           </div>
-                          <div className="text-[11px] text-[#455a64] mt-0.5">{body.slice(0, 4).join(" / ")}</div>
+                          <div className="text-[11px] text-[#455a64] mt-0.5 break-words">{body.slice(0, 4).join(" / ")}</div>
                           {it.reasons_ja && it.reasons_ja.length > 0 && (
                             <div className="text-[10px] text-[#78909c] mt-0.5">{it.reasons_ja.slice(0, 3).join("・")}{it.profit_yen != null ? `・利益目安 ${it.profit_yen.toLocaleString()}円` : ""}</div>
                           )}
@@ -437,7 +573,8 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                           <div className="flex gap-2 flex-wrap">
                             {it.pdf_blob_url && <a href={it.pdf_blob_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#1565C0" }}>📄 資料を見る{!it.pdf_has_text ? "（文字層なし）" : ""}</a>}
                             {/* 偶数ページ＝元付業者の資料（AD の記載・ブレインが読んだ側）。お客様には送らない */}
-                            {it.agent_image_url && <a href={it.agent_image_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#6a1b9a" }}>🏢 元付の資料</a>}
+                            {it.agent_image_url && <a href={it.agent_image_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#6a1b9a" }}
+                              onClick={(e) => openImage(e, it.agent_image_url, `${it.property_name}_元付.png`)}>🏢 元付の資料</a>}
                           </div>
                         </div>
                       </label>
@@ -464,42 +601,48 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                         className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy ? 0.6 : 1 }}>
                         📤 AIXで送る（物件ピックアップした）
                       </button>
-                      <button disabled={!!busy} onClick={() => void act(open, bb.batch, "skip")}
+                      <button disabled={!!busy} onClick={() => void act(bb.batch, "skip")}
                         className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#eceff1", color: "#546e7a" }}>見送り</button>
                     </div>
                   </div>
                 )}
-                <div className="text-[10px] text-[#b0bec5] mt-1 text-right">{fmtDateTime(bb.at)}</div>
               </div>
+              <span className={TIME}>{hm(bb.at)}</span>
             </div>
-          ) : bb.kind === "trim" ? (
-            <div key={`t${i}`} className="flex items-end gap-2">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: "#6a1b9a", color: "#fff" }}>✂️</div>
-              <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-white px-3 py-2.5" style={{ boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
+            );
+            else if (bb.kind === "trim") row = (
+            <div key={`t${i}`} className="flex items-end gap-1.5">
+              <Icon bg="#6a1b9a">✂️</Icon>
+              <div className={LEFT_BUBBLE}>
                 <div className="text-xs font-bold mb-1">✂️ お客様に送る物件資料の画像 {bb.items.length}枚（PDF 1ページ目・弊社帯替え）</div>
-                {/* 重くならないよう小さく並べ、押すと原寸（新しいタブ）。画像は見えた時だけ読む（lazy） */}
+                {/* 重くならないよう小さく並べ、押すと原寸（パソコンは新しいタブ・スマホはライトボックス）。画像は見えた時だけ読む（lazy） */}
                 <div className="grid grid-cols-2 gap-2" style={{ maxWidth: 520 }}>
-                  {bb.items.map((it) => (
+                  {bb.items.map((it) => {
+                    const name = `${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`;
+                    return (
                     <div key={`ti${it.id}`} className="rounded-xl overflow-hidden" style={{ border: "1px solid #e0e0e0" }}>
-                      <a href={it.trim_image_url ?? undefined} target="_blank" rel="noreferrer">
+                      <a href={it.trim_image_url ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => openImage(e, it.trim_image_url, name)}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={it.trim_image_url ?? undefined} alt={it.property_name} loading="lazy" decoding="async" className="w-full block" style={{ aspectRatio: "1.41", objectFit: "cover", objectPosition: "top", background: "#fff" }} />
                       </a>
-                      <div className="flex items-center justify-between px-2 py-1.5" style={{ background: "#f7f9fb" }}>
-                        <span className="text-[11px] font-bold truncate">【{it.rank}】{it.property_name}{it.room_no ? ` ${it.room_no}号室` : ""}</span>
-                        <button onClick={() => void saveImage(it.trim_image_url as string, `${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`)}
+                      <div className="flex items-center justify-between gap-1 px-2 py-1.5" style={{ background: "#f7f9fb" }}>
+                        <span className="text-[11px] font-bold truncate min-w-0">【{it.rank}】{it.property_name}{it.room_no ? ` ${it.room_no}号室` : ""}</span>
+                        <button onClick={() => void saveImage(it.trim_image_url as string, name)}
                           className="text-[11px] font-bold px-2 py-1 rounded-lg shrink-0" style={{ background: "#6a1b9a", color: "#fff" }}>💾 保存</button>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="text-[10px] text-[#b0bec5] mt-1 text-right">「📤 AIXで送る」はこの画像をセットします</div>
               </div>
+              <span className={TIME}>{hm(bb.at)}</span>
             </div>
-          ) : bb.kind === "analysis" ? (
-            <div key={`a${i}`} className="flex items-end gap-2">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: "#00695c", color: "#fff" }}>🔍</div>
-              <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-white px-3 py-2.5" style={{ boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
+            );
+            else if (bb.kind === "analysis") row = (
+            <div key={`a${i}`} className="flex items-end gap-1.5">
+              <Icon bg="#00695c">🔍</Icon>
+              <div className={LEFT_BUBBLE}>
                 <div className="text-xs font-bold mb-1">🔍 画像で分析しました（水回り・キッチン・リビングと洋室・収納）</div>
                 {bb.bestId != null && (() => {
                   const best = bb.items.find((it) => it.id === bb.bestId);
@@ -544,22 +687,68 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                   })}
                 </div>
               </div>
+              <span className={TIME}>{hm(bb.at)}</span>
             </div>
-          ) : (
-            <div key={`s${i}`} className="flex items-end justify-end gap-2">
-              <div className="max-w-[80%] rounded-2xl rounded-br-sm px-3 py-2" style={{ background: "#c8e6c9" }}>
-                <div className="text-xs font-bold">{bb.text}</div>
-                {bb.sub && <div className="text-[10px] text-[#455a64] mt-0.5">{bb.sub}</div>}
-                <div className="text-[10px] text-[#78909c] mt-1 text-right">{fmtWhen(bb.at)}</div>
+            );
+            else if (bb.kind === "history") {
+              // 2026-09-24 竹内「開くと履歴が見れる」: このお客様に送った物件（物件送った表・経路つき）。吹き出しの中で開閉
+              const histCustomer = bb.items.filter((h) => !(h.delivery === "shared" || (h.delivery == null && h.source === "line_group")));
+              const histShared = bb.items.length - histCustomer.length;
+              row = (
+            <div key={`h${i}`} className="flex items-end gap-1.5">
+              <Icon bg="#455a64">📦</Icon>
+              <div className={LEFT_BUBBLE}>
+                <details>
+                  <summary className="text-xs font-bold cursor-pointer">📦 送った物件の履歴　お客様に送付 {histCustomer.length}件{histShared ? `・グループ共有のみ ${histShared}件` : ""}（直近40件）</summary>
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {bb.items.map((h) => {
+                      const ch = channelLabel(h);
+                      return (
+                        <div key={h.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+                          <span className="text-[#90a4ae] shrink-0 tabular-nums">{fmtDateTime(h.sent_at)}</span>
+                          <span className="truncate flex-1 min-w-[40%]">{h.property_name}{h.room_no ? ` ${h.room_no}` : ""}</span>
+                          <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: ch.bg, color: ch.color }}>{ch.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              </div>
+              <span className={TIME}>{hm(bb.at)}</span>
+            </div>
+              );
+            } else row = (
+            <div key={`s${i}`} className="flex items-end justify-end gap-1">
+              <span className={TIME}>{hm(bb.at)}</span>
+              <div className="min-w-0 max-w-[86%] md:max-w-[80%] rounded-2xl rounded-br-md px-4 py-2.5 text-[#3d4a52] shadow-sm" style={{ backgroundColor: "rgba(220,248,198,0.55)" }}>
+                <div className="whitespace-pre-wrap break-words text-[14px] leading-6">{bb.text}</div>
+                {bb.sub && <div className="text-[11px] text-[#667781] mt-0.5 break-words">{bb.sub}</div>}
               </div>
             </div>
-          ))}
+            );
+            return <div key={`r${i}`} className="contents">{divider}{row}</div>;
+          })}
           {bubbles.length === 0 && <div className="text-sm text-[#90a4ae] text-center py-10">まだ何もありません</div>}
+          </div>
         </div>
-        <div className="flex gap-2 px-3 py-2 bg-white sticky bottom-0" style={{ borderTop: "1px solid #e0e0e0" }}>
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="メモ（右側に残ります）" className="flex-1 text-sm px-3 py-2 rounded-full" style={{ border: "1px solid #cfd8dc" }}
-            onKeyDown={(e) => { if (e.key === "Enter") void addNote(open); }} />
-          <button disabled={busy === "note" || !note.trim()} onClick={() => void addNote(open)} className="px-4 py-2 rounded-full text-sm font-bold text-white" style={{ background: "#1565C0", opacity: note.trim() ? 1 : 0.5 }}>送信</button>
+        {/* 下の入力欄（LINE と同じ形）。メモは右の吹き出しに残る（社内の記録だけ・お客様には届かない） */}
+        <div className="shrink-0 border-t border-[#e9edef] bg-white px-2 pt-1.5 md:px-3" style={{ paddingBottom: !desk && vp.kb ? "4px" : "max(10px, env(safe-area-inset-bottom))" }}>
+          <div className="flex items-center gap-2">
+            <div className="flex flex-1 min-w-0 items-center rounded-[24px] bg-[#f0f2f5] px-4 py-2">
+              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="メモ（右側に残ります・お客様には届きません）"
+                className="min-h-[22px] w-full bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
+                // 日本語の変換を確定しただけの Enter ではメモを送らない
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); void addNote(open); } }} />
+            </div>
+            <button disabled={busy === "note" || !note.trim()} onClick={() => void addNote(open)} aria-label="メモを残す"
+              className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#29B6F6] text-white shadow-sm disabled:opacity-50">
+              {busy === "note" ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -625,19 +814,61 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     </div>
   );
 
-  // LINE と同じ形: パソコンは左に一覧（390px）・右に会話。スマホは一覧 → 開くと会話だけ
+  // LINE と同じ形: パソコンは左に一覧（390px）・右に会話。スマホは一覧 → 開くと会話が全画面（LINE のトーク画面と同じ）
+  // 2026-09-24 夜 竹内「スマホの場合下側に資料一枚分の余白が出る」— 原因（実物のコード）:
+  //   ①外枠が height: calc(100vh - 230px)・minHeight 480 の PC 向けの決め打ち（iOS の 100vh はアドレスバーが隠れた時の大きい高さ・親は 100svh）
+  //   ②親（conditions/page.tsx）の pb-16 が内外で二重（128px の空白）③スマホで開いた会話がページの流れの中（ヘッダー＋タブの下）
+  //   ④画像を <a target=_blank> で直接開き、縦持ちで A4 横の資料の下が空く
+  //   → スマホの一覧は親（conditions/page.tsx の 100svh の flex-col）の残りを h-full で取る（ヘッダーの高さを決め打ちしない＝ノッチの PWA でもずれない）。
+  //     開いた会話は fixed の全画面（visualViewport か 100dvh・下ナビより上の z-[60]）、画像はライトボックス
+  const mobileOpen = !!openKey && !desk;
   return (
-    <div className="md:flex bg-white" style={{ height: "calc(100vh - 230px)", minHeight: 480 }}>
-      <div className={`${openKey ? "hidden md:flex" : "flex"} h-full w-full flex-col md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}>
+    <>
+    <div className="bg-white h-full md:flex md:h-[calc(100vh-230px)] md:min-h-[480px]">
+      {/* 一覧はスマホで会話を開いている間も下に残す（戻った時にスクロール位置が変わらない） */}
+      <div className="flex h-full w-full flex-col md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]">
         {listView}
       </div>
-      <div className={`${openKey ? "flex" : "hidden md:flex"} h-full flex-1 min-w-0 flex-col`}>
+      <div ref={detailRef}
+        className={`${openKey ? "fixed inset-0 z-[60] flex" : "hidden"} md:static md:inset-auto md:z-auto md:flex md:h-full flex-1 min-w-0 flex-col`}
+        style={mobileOpen ? { top: vp.top, bottom: "auto", height: vp.h != null ? `${vp.h}px` : "100dvh", touchAction: "pan-y" } : undefined}
+        onTouchStart={onSwipeStart} onTouchMove={onSwipeMove} onTouchEnd={onSwipeEnd} onTouchCancel={onSwipeEnd} onClickCapture={onDetailClickCapture}>
         {detailView ?? (
-          <div className="flex h-full items-center justify-center text-sm text-[#90a4ae]" style={{ background: "#eef3f7" }}>
-            {openKey && detailLoading ? "読み込み中…" : "左の一覧からお客様を選んでください"}
+          <div className="flex h-full flex-col bg-[linear-gradient(180deg,#e8f4fd_0%,#f0f8ff_50%,#f8fbff_100%)] md:bg-none md:bg-[#eef3f7]">
+            {openKey && (
+              <div className="md:hidden shrink-0 border-b border-[#e9edef] px-3 pb-3 pt-[max(14px,env(safe-area-inset-top))]" style={{ background: "rgba(218,238,253,0.88)" }}>
+                <button onClick={closeDetail} aria-label="一覧に戻る" className="flex items-center">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#111b21" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+                </button>
+              </div>
+            )}
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-sm text-[#90a4ae]">
+              {openKey && detailLoading ? "読み込み中…" : openKey ? (
+                // 読み込みに失敗した時（スマホでは一覧が全画面の下に隠れて msg が見えない）→ ここに理由と再読み込みを出す
+                msg ? (
+                  <>
+                    <div className="text-xs px-3 py-2 rounded-lg text-center break-words" style={{ background: "#e3f2fd", color: "#0d47a1" }}>{msg}</div>
+                    <button onClick={() => { if (openRef.current) { setMsg(""); void loadDetail(openRef.current, nBatchesRef.current, true); } }}
+                      className="text-xs font-bold px-4 py-1.5 rounded-full bg-white" style={{ color: "#1565C0", border: "1px solid #cfd8dc" }}>再読み込み</button>
+                  </>
+                ) : ""
+              ) : "左の一覧からお客様を選んでください"}
+            </div>
           </div>
         )}
       </div>
     </div>
+    {/* 画像のライトボックス（スマホ・LINE の page.tsx 14701 と同じ形: 黒い背景・中央・object-contain） */}
+    {lightbox && (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90" onClick={() => setLightbox(null)}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={lightbox.url} alt="" className="max-h-[90svh] max-w-[96vw] rounded-xl object-contain shadow-2xl" onClick={(e) => e.stopPropagation()} />
+        <button onClick={() => setLightbox(null)} aria-label="閉じる"
+          className="absolute right-4 top-[max(16px,env(safe-area-inset-top))] flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-lg text-white">✕</button>
+        <button onClick={(e) => { e.stopPropagation(); void saveImage(lightbox.url, lightbox.name); }}
+          className="absolute bottom-[max(20px,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full bg-white/20 px-4 py-2 text-sm font-bold text-white">💾 保存</button>
+      </div>
+    )}
+    </>
   );
 }

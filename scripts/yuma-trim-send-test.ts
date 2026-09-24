@@ -1,6 +1,8 @@
 // YUMA（テスト用会話）で「✂️ 画像トリミング → 確認してお客様に送る」を本番 API で通す（LLM は呼ばない）
 // 手順: 既存のピックアップ行から PDF を借りて YUMA 宛の行を作る → /trim → /send → 結果を出す → テスト行を消す
 // 実行: npx tsx --env-file=.env.local scripts/yuma-trim-send-test.ts [--base=https://sumora-ai-ui.vercel.app] [--keep=1]
+// ⚠️ 2026-09-24 夜: /send の action:"send"（直接の送信）は止めた（410）。説明文（AD・🌟）がお客様に届いたため。
+//   送信の確認は売上サポの「📤 AIXで送る」から YUMA で行う。このスクリプトの /send は 410 が返れば正しい
 import { createClient } from "@supabase/supabase-js";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? "").split("=").slice(1).join("=") || null;

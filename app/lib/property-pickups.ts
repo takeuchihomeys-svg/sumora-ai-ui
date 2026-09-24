@@ -128,14 +128,21 @@ export function parseAdFromText(text: string | null | undefined): { adMonths: nu
   return { adMonths: null, adYen: null };
 }
 
-/** お客様に送る本文（選んだ物件の説明文を番号を振り直して並べ、PDF のリンクを添える） */
-export function buildCustomerPickupMessage(rows: ReadonlyArray<Pick<PickupRow, "summary_text" | "pdf_blob_url" | "recommended">>): string {
-  const lines: string[] = [];
-  rows.forEach((r, i) => {
-    const body = r.summary_text.replace(/^【\d+[^】]*】\s*/u, "");
-    lines.push(`【${i + 1}${r.recommended === 2 ? "🌟★" : r.recommended === 1 ? "🌟" : ""}】${body}`);
-    if (r.pdf_blob_url) lines.push(`📄 ${r.pdf_blob_url}`);
-    lines.push("");
-  });
-  return lines.join("\n").trim();
+// 2026-09-24 夜 竹内「お客さんに送る時これ送られてないようにする」: 説明文（summary_text＝AD・🌟★・家賃の生の文）を
+//   お客様向けの本文に変える関数（旧 buildCustomerPickupMessage）は消した。説明文は社内用。お客様への本文は AIX【物件ピックアップした】が作る。
+
+/** POST /api/property-pickups/send の action の扱い。LINE に送る分岐は無い（send・未指定・知らない値は gone＝410） */
+export type PickupSendActionKind = "skip" | "mark_sent" | "gone";
+export function classifyPickupSendAction(action: unknown): PickupSendActionKind {
+  if (action === "skip") return "skip";
+  if (action === "mark_sent") return "mark_sent";
+  return "gone";
+}
+export const PICKUP_DIRECT_SEND_GONE_MESSAGE = "お客様への送信は AIX【物件ピックアップした】から行います（直接の送信は止めました）";
+
+/** AIX【物件ピックアップした】に渡す1件（GET /api/property-pickups?ids=）。画像の URL と見出しだけ。説明文（AD・🌟）・元付の資料は渡さない */
+export type PickupHandoffItem = { id: number; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; image_url: string | null };
+export function toPickupHandoffItem(r: { id: number; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }): PickupHandoffItem {
+  // 余分な列（summary_text・agent_image_url 等）が来ても拾わないよう、返す鍵を列挙する
+  return { id: r.id, rank: r.rank, property_name: r.property_name, room_no: r.room_no, conversation_id: r.conversation_id, image_url: r.trim_image_url ?? r.page_image_url };
 }

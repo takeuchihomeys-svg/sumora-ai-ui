@@ -4,6 +4,7 @@
 // 2026-09-24 竹内「紐づいているお客さんで LINE のチャット一覧のような UI。判断したのが会話風に送られる形。DeepSeek 側は左・スタッフは右」
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { toPickupHandoffItem } from "@/app/lib/property-pickups";
 
 export const dynamic = "force-dynamic";
 
@@ -24,11 +25,12 @@ export async function GET(req: NextRequest) {
   const idsParam = req.nextUrl.searchParams.get("ids");
   if (idsParam) {
     const ids = idsParam.split(",").map((s) => Number(s)).filter((n) => Number.isFinite(n)).slice(0, 10);
-    const { data, error } = await supabase.from("property_pickups").select("id, rank, property_name, room_no, conversation_id, trim_image_url, page_image_url, summary_text").in("id", ids);
+    //   2026-09-24 夜: 説明文（summary_text＝AD・🌟 入り）は返さない（AIX の入力欄に流れる入口を作らない・お客様に届く道を塞ぐ）
+    const { data, error } = await supabase.from("property_pickups").select("id, rank, property_name, room_no, conversation_id, trim_image_url, page_image_url").in("id", ids);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    const items = ((data ?? []) as Array<{ id: number; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null; summary_text: string }>)
+    const items = ((data ?? []) as Array<{ id: number; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }>)
       .sort((a, z) => a.rank - z.rank)
-      .map((r) => ({ id: r.id, rank: r.rank, property_name: r.property_name, room_no: r.room_no, conversation_id: r.conversation_id, image_url: r.trim_image_url ?? r.page_image_url, summary_text: r.summary_text }));
+      .map(toPickupHandoffItem);
     return NextResponse.json({ ok: true, items });
   }
   const days = Math.min(90, Math.max(1, Number(req.nextUrl.searchParams.get("days") ?? "30")));

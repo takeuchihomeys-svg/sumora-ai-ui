@@ -6,7 +6,7 @@
 // 違う所（ローカルにはブラウザも Blob の鍵も無い）:
 //   - 1ページ目は「このパソコンのフォント」で描く（画面の ✂️ と同じ見た目）
 //   - 画像の置き場は AIX の物件画像と同じ Supabase の property-images/aix/<会話>/（LINE に送れる公開 URL）
-// LINE への送信は本番の「確認してお客様に送る」（/api/property-pickups/send → send-line-message の image_urls）を画面から押す
+// LINE への送信は売上サポの「📤 AIXで送る」→ AIX【物件ピックアップした】（直接の送信＝/api/property-pickups/send の action:"send" は 2026-09-24 に廃止・410）
 // 実行: npx tsx --env-file=.env.local scripts/yuma-pickup-deepseek-test.ts --out=<dir> [--n=3] | --cleanup=1
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync, mkdirSync } from "node:fs";

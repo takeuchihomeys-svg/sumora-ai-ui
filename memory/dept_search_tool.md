@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-09-24 夜 スマホの LINE トーク UI・余白・説明文が送られた件（竹内・スクショ2枚）
+
+**① 説明文がお客様に届いた（2枚目）— 送信の出口をサーバーで断った**
+- 実物: お客様の LINE に画像の後で「【1🌟★】ダイレ・エヌ／80,000円 10,500円／1LDK 39.23㎡／AD 1ヶ月／【2🌟】Abelia…」が届いた
+- 出どころ: 旧 UI の「確認してお客様に送る」→ `/api/property-pickups/send` の action:"send" が `buildCustomerPickupMessage`（summary_text＝拡張の説明文。AD・🌟 入り）を本文にして `/api/send-line-message` へ送っていた。本番ビルドが a135f0de〜a4254e3c の間落ちていたので、画面は旧版（直接送るボタン）のままだった
+- 直し:
+  - `send/route.ts`: 直接の送信の分岐を削除。send・action 無し・知らない値は **410**（「お客様への送信は AIX【物件ピックアップした】から行います」）。残る操作は skip と mark_sent だけ（どちらも LINE に送らない）。旧画面・開いたままのタブ・PWA のキャッシュから押されても届かない
+  - `app/lib/property-pickups.ts`: `buildCustomerPickupMessage` を削除（説明文をお客様向けの本文に変える関数を残さない）。`classifyPickupSendAction`・`toPickupHandoffItem`（AIX への受け渡しは id・順位・物件名・号室・会話・画像の6つだけ）を追加
+  - `GET /api/property-pickups?ids=`（AIX への受け渡し）が summary_text を返すのをやめた
+  - `page.tsx` の pickupHandoffRef は画像（setAixInitialSendImages）と openAixDirect だけで、入力欄に文を入れない（確認のみ・変更なし）
+  - テスト: `app/lib/__tests__/property-pickups.test.ts`（実物の説明文を使い「AD・🌟・広告料・利益・説明文が受け渡しに無い」「send の API が send-line-message を呼ばない・summary_text を読まない・410」を固定）
+  - `scripts/yuma-trim-send-test.ts` の /send は 410 が返れば正しい（冒頭に注記）
+
+**② スマホで LINE のトーク画面と同じ UI（`app/components/PickupReview.tsx`）**
+- スマホ（md 未満）で開いた会話は `fixed inset-0 z-[60]` の全画面（下ナビ z-40・売上サポのヘッダー z-20 より上）。高さは visualViewport（height・offsetTop）、無ければ 100dvh
+- ヘッダーは LINE と同じ（‹ 戻る＋未確認数／中央に名前とアカウント／右に「LINE」「更新」の札・rgba(218,238,253,0.88)＋blur）。背景は LINE と同じ水色のグラデーション。日付の区切りも同じ
+- 左＝起きた事（🧠ピックアップ・✂️画像・🔍分析・📦送った物件の履歴）は白い吹き出し＋32px のアイコン・時刻は吹き出しの外の右下。送った物件の履歴は上のカードをやめて左の吹き出しの中で開閉
+- 右＝こちら（メモ・送った・見送り）は緑の吹き出し rgba(220,248,198,0.55)・時刻は外の左下
+- 下の入力欄は LINE と同じ形（丸い灰色の欄＋水色の紙飛行機ボタン・safe-area）。日本語の変換確定の Enter でメモが送られていた不具合を直した（isComposing）
+- 右スワイプ 90px 超・端末の「戻る」で一覧に戻る（履歴を1つ積む）
+- PC（md 以上）の左390px＋右会話の2列とヘッダー・背景はそのまま
+
+**③ スマホで下に資料1枚分の余白が出た — 原因と直し**
+- 原因: 外枠が `calc(100vh - 230px)`・minHeight 480 の PC 向け決め打ち（iOS の 100vh は大きい方・親は 100svh）／`conditions/page.tsx` の pb-16 が内外で二重（128px）／開いた会話がページの流れの中／画像を `<a target=_blank>` で直接開き、縦持ちで A4 横の資料の下が空く
+- 直し: スマホの一覧は `h-[calc(100svh-160px)]`（PC は `md:h-[calc(100vh-230px)] md:min-h-[480px]` のまま）・内側の pb-16 を `md:pb-16` に・会話は fixed 全画面・画像はスマホだけ LINE と同じライトボックス（黒背景・中央・object-contain・max-h-[90svh]・✕・💾 保存）。PC は今のまま新しいタブ
+
+**確認**: `npx tsc --noEmit` 0 件・`npx next build` 成功・`npx tsx app/lib/__tests__/property-pickups.test.ts` 44/44
+
+---
+
 ## 2026-09-24 送済みバッジの名前の照合を「行・セルの先頭から・名前の終わりまで」に（反証・v2.5.15）
 
 - v2.5.14 はカード本文**全体**に `name_key` が部分一致するかで当てていた → 名前が別の名前に含まれると別の建物に出る（60日の名前キー5,063種類のうち195種類・435組。例「スプランディッド新大阪vi」⊂「…viii」、「グランツ」⊂「エスリード弁天町グランツ」「グランツ上新庄」、「axia」⊂「modernpalazzo江坂axia」）。スタッフが未送付の物件を送った物と見て外してしまう
@@ -108,6 +138,7 @@
   → **LINE の一覧と同じ形**でお客様が並ぶ（🏠・名前・「🧠 N件・🌟物件名」・時刻・未確認の数）→ タップで**会話風**
      左＝🧠 ブレイン（1回分の物件・🌟・判定・資料リンク・チェック）／右＝スタッフ（送った・見送り・メモ）。下にメモ欄（property_pickup_notes）
   → チェック（既定: 外す候補以外）→「確認してお客様に送る」→ /api/property-pickups/send → /api/send-line-message（本文＋PDF のリンク）
+  ※ 2026-09-24 夜に廃止（説明文の AD・🌟 がお客様に届いた）。今は「📤 AIXで送る」→ AIX【物件ピックアップした】に画像だけをセット。/send の action:"send" は 410
   → status=sent・messages に記録・property_customers.last_property_sent_at 更新。「見送り」= skipped
 ```
 - ⚠ LINE は PDF を画像として送れないので、今は**説明文＋物件ごとの PDF のリンク**を本文で送る。画像で送る（PDF の画像化）は次の段
