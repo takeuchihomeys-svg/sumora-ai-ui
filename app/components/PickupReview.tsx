@@ -77,7 +77,10 @@ function buildBubbles(c: Customer): Bubble[] {
     const analyzed = b.items.filter((it) => it.image_analysis);
     if (analyzed.length) {
       const scored = analyzed.filter((it) => typeof (it.image_analysis as { match?: unknown })?.match === "number");
-      const best = scored.slice().sort((a, z) => (((z.image_analysis as { match: number }).match) - ((a.image_analysis as { match: number }).match)) || (a.rank - z.rank))[0];
+      const m = (x: Item) => (x.image_analysis as { match: number }).match;
+      const raw = (x: Item) => Number((x.image_analysis as { match_raw?: number | null }).match_raw ?? 0);
+      // 同点（全件が必須 NG で 20 点など）は上限前の点で並べる（pickup-image-analysis.pickBest と同じ）
+      const best = scored.slice().sort((a, z) => (m(z) - m(a)) || (raw(z) - raw(a)) || (a.rank - z.rank))[0];
       out.push({ kind: "analysis", at: b.created_at + "~~", batch: b, items: analyzed, bestId: best?.id ?? null });
     }
     const sent = b.items.filter((it) => it.status === "sent");
@@ -394,8 +397,11 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 })()}
                 <div className="flex flex-col gap-2">
                   {bb.items.map((it) => {
-                    const a = it.image_analysis as unknown as { water?: string; kitchen?: string; layout?: string; storage?: string; match?: number | null; good?: string[]; concern?: string[] } | null;
+                    const a = it.image_analysis as unknown as { water?: string; kitchen?: string; layout?: string; storage?: string; match?: number | null; good?: string[]; concern?: string[];
+                      checks?: Array<{ id: string; result: string; why: string }>; wants?: Array<{ id: string; source: string; text: string; ng: boolean; must: boolean }> | string } | null;
                     if (!a) return null;
+                    const wantList = Array.isArray(a.wants) ? a.wants : [];
+                    const MARK: Record<string, string> = { ok: "◎", ng: "×", unknown: "？" };
                     return (
                       <div key={`ai${it.id}`} className="rounded-xl px-2 py-1.5" style={{ background: it.id === bb.bestId ? "#f1f8e9" : "#f7f9fb" }}>
                         <div className="text-[11px] font-bold">【{it.rank}】{it.property_name}{a.match != null ? `　${a.match}点` : ""}</div>
@@ -407,6 +413,22 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                           {a.good && a.good.length > 0 && <div style={{ color: "#2e7d32" }}>◎ {a.good.join("／")}</div>}
                           {a.concern && a.concern.length > 0 && <div style={{ color: "#c62828" }}>△ {a.concern.join("／")}</div>}
                         </div>
+                        {/* 2026-09-24 竹内「希望条件や NG 条件の細かい部分も画像から判断できているか」: 希望1つずつの判定（出どころ＝条件欄・会話・訴求） */}
+                        {wantList.length > 0 && a.checks && a.checks.length > 0 && (
+                          <div className="mt-1 pt-1 flex flex-col gap-0.5" style={{ borderTop: "1px dashed #cfd8dc" }}>
+                            {wantList.map((w) => {
+                              const c = a.checks!.find((x) => x.id === w.id);
+                              const r = c?.result ?? "unknown";
+                              return (
+                                <div key={w.id} className="text-[10px] leading-snug" style={{ color: r === "ok" ? "#2e7d32" : r === "ng" ? "#c62828" : "#90a4ae" }}>
+                                  {MARK[r] ?? "？"} <span className="font-bold">{w.text}</span>
+                                  <span className="ml-1 text-[9px]" style={{ color: "#90a4ae" }}>（{w.source}{w.ng ? "・NG" : ""}{w.must ? "・必須" : ""}）</span>
+                                  {c?.why && r !== "unknown" && <span className="ml-1" style={{ color: "#607d8b" }}>— {c.why}</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

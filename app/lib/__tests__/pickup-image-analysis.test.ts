@@ -16,13 +16,19 @@ function t(name: string, ok: boolean, extra?: unknown) {
 }
 {
   const rows = [
-    { id: 1, rank: 1, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 60, good: [], concern: [] } },
-    { id: 2, rank: 2, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 80, good: [], concern: [] } },
-    { id: 3, rank: 3, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 80, good: [], concern: [] } },
+    { id: 1, rank: 1, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 60, good: [], concern: [], checks: [] } },
+    { id: 2, rank: 2, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 80, good: [], concern: [], checks: [] } },
+    { id: 3, rank: 3, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 80, good: [], concern: [], checks: [] } },
     { id: 4, rank: 4, analysis: null },
   ];
   t("★ 一番合う＝点が最大・同点は順位が上", pickBest(rows)?.id === 2);
   t("★ 点が1件も無ければ null", pickBest([{ id: 1, rank: 1, analysis: null }]) === null);
+  // YUMA: 全件が必須 NG で 20 点に並んだ時、順位でなく上限前の点で選ぶ（一番合わない物件が「一番」にならない）
+  const tie = [
+    { id: 1, rank: 1, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 20, match_raw: 30, good: [], concern: [], checks: [] } },
+    { id: 3, rank: 3, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 20, match_raw: 70, good: [], concern: [], checks: [] } },
+  ];
+  t("★ 同点（必須 NG で 20 点）は上限前の点で選ぶ", pickBest(tie)?.id === 3);
 }
 {
   const w = buildWantsText({ customer_name: "山田太郎", phone: "090", floor_plan: "1LDK", preferences: "独立洗面台", ng_points: "1階NG" }, "WIC が欲しい");

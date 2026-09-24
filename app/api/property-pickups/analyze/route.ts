@@ -5,7 +5,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
-import { analyzePickupImage, buildWantsText, pickBest, ANALYSIS_MAX_TOKENS } from "@/app/lib/pickup-image-analysis";
+import { analyzePickupImage, pickBest, ANALYSIS_MAX_TOKENS } from "@/app/lib/pickup-image-analysis";
+import { loadImageWants } from "@/app/lib/image-wants-server";
 
 export const maxDuration = 120;
 const MAX_ITEMS = 10;
@@ -18,18 +19,16 @@ export async function POST(req: NextRequest) {
   if (ids.length === 0) return NextResponse.json({ ok: false, error: "item_ids が要ります" }, { status: 400 });
 
   const { data, error } = await supabase.from("property_pickups")
-    .select("id, rank, property_name, property_customer_id, trim_image_url, page_image_url").in("id", ids);
+    .select("id, rank, property_name, property_customer_id, conversation_id, trim_image_url, page_image_url").in("id", ids);
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  const rows = (data ?? []) as Array<{ id: number; rank: number; property_name: string; property_customer_id: string | null; trim_image_url: string | null; page_image_url: string | null }>;
+  const rows = (data ?? []) as Array<{ id: number; rank: number; property_name: string; property_customer_id: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }>;
 
-  // お客様の希望（条件の欄だけ・名前や電話は入れない）
-  const pcId = rows.find((r) => r.property_customer_id)?.property_customer_id ?? null;
-  let customer: Record<string, unknown> | null = null;
-  if (pcId) {
-    const { data: c } = await supabase.from("property_customers").select("floor_plan, layout, preferences, ng_points, other_requests, additional_conditions").eq("id", pcId).maybeSingle();
-    customer = (c ?? null) as Record<string, unknown> | null;
-  }
-  const wants = buildWantsText(customer, body.note ?? null);
+  // お客様の希望: 条件欄・会話（120日）・物件オススメの訴求点から「画像で確かめられる物」だけ（名前・電話は伏せる）
+  const wants = await loadImageWants({
+    conversationId: rows.find((r) => r.conversation_id)?.conversation_id ?? null,
+    propertyCustomerId: rows.find((r) => r.property_customer_id)?.property_customer_id ?? null,
+    staffNote: body.note ?? null,
+  });
 
   const startedAt = Date.now();
   const results = await Promise.all(rows.map(async (r) => {
@@ -50,6 +49,6 @@ export async function POST(req: NextRequest) {
     return { id: r.id, rank: r.rank, property_name: r.property_name, analysis: out.analysis, error: out.analysis ? undefined : "読めなかった" };
   }));
   const best = pickBest(results);
-  console.log(JSON.stringify({ tag: "property-pickups:analyze", items: rows.length, ok: results.filter((x) => x.analysis).length, ms: Date.now() - startedAt, best: best?.id ?? null, hasWants: !!wants }));
+  console.log(JSON.stringify({ tag: "property-pickups:analyze", items: rows.length, ok: results.filter((x) => x.analysis).length, ms: Date.now() - startedAt, best: best?.id ?? null, wants: wants.length, fromChat: wants.filter((w) => w.source === "会話").length, fromAppeal: wants.filter((w) => w.source === "訴求").length }));
   return NextResponse.json({ ok: results.some((x) => x.analysis), items: results, best_id: best?.id ?? null, wants });
 }
