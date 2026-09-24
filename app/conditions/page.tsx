@@ -176,7 +176,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export default function ConditionsPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"announce" | "list" | "pickup">("announce");
+  // 2026-09-24 竹内「ピックアップとアナウンスの位置を変えてピックアップを一番左にする（使いやすくするため）」→ 既定もピックアップ
+  const [tab, setTab] = useState<"announce" | "list" | "pickup">("pickup");
   const [listFilter, setListFilter] = useState<Status | "all">("all");
   const [showModal, setShowModal] = useState(false);
   const [editTarget, setEditTarget] = useState<Customer | null>(null);
@@ -607,7 +608,7 @@ export default function ConditionsPage() {
         className="flex sticky z-10 bg-white"
         style={{ top: 53, borderBottom: "1px solid #e9edef" }}
       >
-        {(["announce", "list", "pickup"] as const).map((t) => (
+        {(["pickup", "announce", "list"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}

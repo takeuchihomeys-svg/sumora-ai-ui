@@ -52,8 +52,28 @@ export async function GET(req: NextRequest) {
     c.notes.push(n);
     if (n.created_at > c.last_at) c.last_at = n.created_at;
   }
+  // 2026-09-24 竹内「順番も LINE と同じに連動させる。一覧は LINE と同じ UI（アイコンも付ける）」:
+  //   紐付いている LINE の会話（アイコン・アカウント・最終更新）を付けて、LINE の一覧と同じ順（updated_at 降順）に並べる
+  const convIds = [...new Set([...customers.values()].map((c) => c.conversation_id).filter((v): v is string => !!v))];
+  type ConvLite = { id: string; profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null };
+  const convMap = new Map<string, ConvLite>();
+  if (convIds.length > 0) {
+    const { data: convs } = await supabase.from("conversations").select("id, profile_image_url, updated_at, account, status, last_sender").in("id", convIds);
+    for (const cv of (convs ?? []) as ConvLite[]) convMap.set(cv.id, cv);
+  }
   const list = [...customers.values()]
-    .map((c) => ({ ...c, batches: c.batches.map((b) => ({ ...b, items: b.items.sort((a, z) => a.rank - z.rank) })).sort((a, z) => a.created_at.localeCompare(z.created_at)) }))
-    .sort((a, z) => z.last_at.localeCompare(a.last_at));
+    .map((c) => {
+      const cv = c.conversation_id ? convMap.get(c.conversation_id) ?? null : null;
+      const lastPickupAt = c.batches.map((b) => b.created_at).sort().slice(-1)[0] ?? c.last_at;
+      return {
+        ...c,
+        batches: c.batches.map((b) => ({ ...b, items: b.items.sort((a, z) => a.rank - z.rank) })).sort((a, z) => a.created_at.localeCompare(z.created_at)),
+        line: cv ? { profile_image_url: cv.profile_image_url, updated_at: cv.updated_at, account: cv.account, status: cv.status, last_sender: cv.last_sender } : null,
+        last_pickup_at: lastPickupAt,
+        // LINE の一覧の並び＝会話の updated_at。紐付いていなければピックアップの時刻
+        order_at: cv?.updated_at ?? c.last_at,
+      };
+    })
+    .sort((a, z) => z.order_at.localeCompare(a.order_at));
   return NextResponse.json({ ok: true, customers: list });
 }

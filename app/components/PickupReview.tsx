@@ -15,7 +15,18 @@ type Item = {
 };
 type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
-type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string };
+type LineLite = { profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null };
+type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string };
+
+/** LINE の一覧と同じアカウントの札（app/page.tsx の ACCOUNT_LIST と同じ表示名） */
+const ACCOUNT_LABEL: Record<string, string> = { sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ賃貸", hasu: "ハス" };
+function accountLabel(account: string | null | undefined): string { return ACCOUNT_LABEL[account ?? ""] ?? "スモラ"; }
+function getInitial(name: string | null | undefined): string { const s = (name ?? "").trim(); return s ? Array.from(s)[0] : "？"; }
+/** 日時（届いた日時をいつでも分かるように。今日は HH:MM・それ以外は M/D HH:MM） */
+function fmtDateTime(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
 
 const VERDICT_JA: Record<string, { label: string; color: string; bg: string }> = {
   pass: { label: "通す", color: "#1b5e20", bg: "#e8f5e9" },
@@ -162,7 +173,9 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
             <div key={`b${i}`} className="flex items-end gap-2">
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: "#1565C0", color: "#fff" }}>🧠</div>
               <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-white px-3 py-2.5" style={{ boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
-                <div className="text-xs font-bold mb-1">ピックアップ {bb.batch.items.length}件（{bb.batch.site ?? "-"}）を確認しました</div>
+                {/* 2026-09-24 竹内「ブレインモードで売上サポに送った日時も出るようにする」 */}
+                <div className="text-xs font-bold mb-0.5">ピックアップ {bb.batch.items.length}件（{bb.batch.site === "realpro" ? "リアプロ" : bb.batch.site ?? "-"}）を確認しました</div>
+                <div className="text-[10px] text-[#78909c] mb-1">🧠 ブレインモードで {fmtDateTime(bb.batch.created_at)} に届きました</div>
                 <div className="flex flex-col gap-2">
                   {bb.batch.items.map((it) => {
                     const v = it.verdict ? VERDICT_JA[it.verdict] : null;
@@ -212,7 +225,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                       className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#eceff1", color: "#546e7a" }}>見送り</button>
                   </div>
                 )}
-                <div className="text-[10px] text-[#b0bec5] mt-1 text-right">{fmtWhen(bb.at)}</div>
+                <div className="text-[10px] text-[#b0bec5] mt-1 text-right">{fmtDateTime(bb.at)}</div>
               </div>
             </div>
           ) : (
@@ -246,23 +259,41 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
       {filtered.length === 0 && !loading && (
         <div className="text-sm text-[#90a4ae] py-10 text-center">ピックアップはまだありません（拡張ツールで「売上番長に送る」をすると、ここに並びます）</div>
       )}
+      {/* 2026-09-24 竹内「ピックアップの一覧は LINE と同じ UI にする（アイコンも付ける）。順番も LINE と同じに連動」:
+          行の形は app/page.tsx の LINE 一覧（アイコン・名前＋アカウント札・1行目のプレビュー・右に時刻と緑の件数）と同じ。並びは API が LINE の updated_at 順で返す */}
       {filtered.map((c) => {
         const last = c.batches.slice(-1)[0];
         const rec = last?.items.find((it) => it.recommended === 2) ?? last?.items.find((it) => it.recommended === 1);
         const preview = last ? `🧠 ${last.items.length}件${rec ? `・🌟${rec.property_name}` : ""}` : "";
+        const pickupAt = c.last_pickup_at ?? last?.created_at ?? c.last_at;
+        const img = c.line?.profile_image_url ?? null;
         return (
-          <button key={c.key} onClick={() => openCustomer(c)} className="w-full text-left flex items-center gap-3 px-4 py-3 bg-white" style={{ borderBottom: "1px solid #f0f2f5" }}>
-            <div className="w-11 h-11 rounded-full flex items-center justify-center text-lg shrink-0" style={{ background: "#e3f2fd" }}>🏠</div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-sm truncate">{c.customer_name ?? "（名前なし）"}</span>
-                {!c.conversation_id && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "#ffebee", color: "#b71c1c" }}>LINE未紐付け</span>}
-              </div>
-              <div className="text-xs text-[#607d8b] truncate mt-0.5">{preview}</div>
+          <button key={c.key} onClick={() => openCustomer(c)}
+            className={`flex w-full items-center gap-3 px-4 py-[18px] text-left transition border-l-[3px] ${c.pending > 0 ? "border-orange-400 bg-orange-50 hover:bg-orange-100" : "border-transparent bg-white hover:bg-[#f5f6f6]"}`}
+            style={{ borderBottom: "1px solid #f0f2f5" }}>
+            <div className="relative shrink-0">
+              {img ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={img} alt="" className="h-12 w-12 rounded-full object-cover" />
+              ) : (
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">{getInitial(c.customer_name)}</div>
+              )}
+              <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[11px]" style={{ background: "#1565C0" }}>🧠</span>
             </div>
-            <div className="flex flex-col items-end gap-1 shrink-0">
-              <span className="text-[11px] text-[#90a4ae]">{fmtWhen(c.last_at)}</span>
-              {c.pending > 0 && <span className="text-[10px] font-bold text-white px-1.5 py-0.5 rounded-full" style={{ background: "#1565C0" }}>{c.pending}</span>}
+            <div className="relative min-w-0 flex-1 pr-12">
+              <div className="absolute right-0 top-0 flex flex-col items-end gap-1">
+                <span className="text-[11px] text-[#667781]" title={`売上サポに届いた日時 ${fmtDateTime(pickupAt)}`}>{fmtWhen(pickupAt)}</span>
+                {c.pending > 0 && (
+                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#06C755] px-1 text-[11px] font-bold text-white leading-none">{c.pending}</span>
+                )}
+              </div>
+              <div className="mb-0.5 flex h-5 min-w-0 items-center gap-1.5 overflow-hidden">
+                <span className="truncate text-[14px] font-medium text-[#111b21]">{c.customer_name ?? "（名前なし）"}</span>
+                <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold text-gray-400">{accountLabel(c.line?.account)}</span>
+                {c.pending > 0 && <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">未確認</span>}
+                {!c.conversation_id && <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "#ffebee", color: "#b71c1c" }}>LINE未紐付け</span>}
+              </div>
+              <div className="truncate text-[13px] text-[#667781]">{preview}<span className="ml-1 text-[11px] text-[#b0bec5]">（{fmtDateTime(pickupAt)} ブレインモード）</span></div>
             </div>
           </button>
         );

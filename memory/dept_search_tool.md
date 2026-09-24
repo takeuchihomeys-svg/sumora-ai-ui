@@ -55,6 +55,7 @@
   - `pdf-render.ts` は無いページを丸めず null（1ページしか無い PDF の「2ページ目」を弊社の1ページ目と取り違えない）
 
 ### ③ 売上サポ「ピックアップ」タブ
+- 2026-09-24 13:05 竹内「ピックアップを一番左にする・順番も LINE と同じに連動・一覧は LINE と同じ UI（アイコン付き）・ブレインモードで送った日時も出す」→ タブ順 ピックアップ／アナウンス／一覧・既定はピックアップ。GET API が conversations（profile_image_url・updated_at・account）を付け **LINE の updated_at 順**で返す（`order_at`）。行は LINE 一覧と同じ形（アイコン＋🧠・名前＋アカウント札・未確認・プレビュー・右に時刻と緑の件数）。届いた日時（`last_pickup_at`＝batch の created_at）を行と会話風の吹き出し「🧠 ブレインモードで M/D HH:MM に届きました」に出す
 ```
 拡張「売上番長に送る」→ merge-pdfs（今まで通りグループへ）→ **ブレインモードの時だけ**（brain_mode=true・通常／スタッフモードは記録しない・竹内 2026-09-24「ブレインモード限定機能」）waitUntil で property_pickups に1回分を記録
   行＝物件: 説明文・🌟（Haiku の順位）・判定（property-brain 純関数）・PDF の文字層・物件ごとの PDF（Blob）
