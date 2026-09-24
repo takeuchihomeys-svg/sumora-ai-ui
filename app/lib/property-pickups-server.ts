@@ -6,9 +6,16 @@
 //   スタッフは確認してお客さんに送るだけ」
 import { supabase } from "@/app/lib/supabase";
 import { extractPdfText } from "@/app/lib/pdf-text";
+import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { buildPickupRows, type PickupItemInput } from "@/app/lib/property-pickups";
-import { buildCustomerProfile, judgeProperty, parsePropertyFacts, type CustomerLike, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
+import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, type CustomerLike, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
 import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
+import { readPropertyImageDetail } from "@/app/lib/property-image-read";
+import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
+
+/** 画像を読む上限（1回分）。DeepSeek は1枚 約$0.002〜0.004・15〜25秒。10件を並列で読み、merge-pdfs の 90秒に収める */
+const IMAGE_READ_MAX_PER_BATCH = 10;
+const IMAGE_READ_TIMEOUT_MS = 25_000;
 
 export type RecordPickupInput = {
   batchId: string;
@@ -49,33 +56,61 @@ async function loadProfile(propertyCustomerId: string | null) {
   return buildCustomerProfile(customer, (sentRes.data ?? []) as SentRowLike[], (patRes.data ?? []) as PatternRowLike[], profit.discountMedianYen);
 }
 
-export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; error: string | null }> {
-  const out = { rows: 0, withText: 0, withBlob: 0, error: null as string | null };
+export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; error: string | null }> {
+  const out = { rows: 0, withText: 0, withBlob: 0, withImage: 0, imageRead: 0, error: null as string | null };
   try {
     if (input.summaries.length === 0) return out;
     const conversationId = await resolveConversationId(input.propertyCustomerId, input.conversationId);
     const profile = await loadProfile(input.propertyCustomerId);
     const { put } = await import("@vercel/blob");
     const stamp = Date.now();
+    const base = `pickups/${input.batchId.replace(/\.pdf$/i, "")}`;
     const items: PickupItemInput[] = await Promise.all(input.summaries.map(async (summary, i) => {
       const b64 = input.pdfBase64List[i] ?? null;
       let pdfText: string | null = null;
       let pdfBlobUrl: string | null = null;
+      let pageImageUrl: string | null = null;
       if (b64) {
-        const t = await extractPdfText(b64, { maxPages: 2, maxChars: 6000 });
+        // 文字層と画像は独立なので並列。画像は1ページ目（物件資料の表紙＝間取り図・写真・条件）
+        const [t, png] = await Promise.all([
+          extractPdfText(b64, { maxPages: 2, maxChars: 6000 }),
+          renderPdfPageToPng(b64, { page: 1, scale: 1.5 }),
+        ]);
         pdfText = t.text || null;
-        try {
-          const blob = await put(`pickups/${input.batchId.replace(/\.pdf$/i, "")}_${i + 1}_${stamp}.pdf`, Buffer.from(b64, "base64"), { access: "public", contentType: "application/pdf" });
-          pdfBlobUrl = blob.url;
-        } catch (e) {
-          console.warn("[property-pickups] 物件ごとの PDF を置けない:", e instanceof Error ? e.message : String(e));
-        }
+        const [pdfPut, pngPut] = await Promise.allSettled([
+          put(`${base}_${i + 1}_${stamp}.pdf`, Buffer.from(b64, "base64"), { access: "public", contentType: "application/pdf" }),
+          png ? put(`${base}_${i + 1}_${stamp}.png`, png.png, { access: "public", contentType: "image/png" }) : Promise.reject(new Error("no png")),
+        ]);
+        if (pdfPut.status === "fulfilled") pdfBlobUrl = pdfPut.value.url; else console.warn("[property-pickups] 物件ごとの PDF を置けない:", String(pdfPut.reason?.message ?? pdfPut.reason));
+        if (pngPut.status === "fulfilled") pageImageUrl = pngPut.value.url; else if (png) console.warn("[property-pickups] 画像を置けない:", String(pngPut.reason?.message ?? pngPut.reason));
       }
       let judgment: Judgment | null = null;
       if (profile) {
         try { judgment = judgeProperty(parsePropertyFacts(summary), profile, i); } catch { judgment = null; }
       }
-      return { summary, pdfUrl: input.pdfUrls[i] ?? null, pdfBlobUrl, pdfText, judgment };
+      return { summary, pdfUrl: input.pdfUrls[i] ?? null, pdfBlobUrl, pdfText, judgment, pageImageUrl, imageLines: null, imageFacts: null };
+    }));
+
+    // 2026-09-24 竹内「PDF の文字だけではよくない。資料を読み取れる形にしたい」:
+    //   画像になった資料を DeepSeek が読む。①資料に書いてある条件（駐車場・ペット・保証会社・設備… 有無・可否だけ）
+    //   ②お客様の希望に画像でしか分からない語（バストイレ別・独立洗面・収納・南向き・2階以上）があれば、その有無で判定を更新
+    //   失敗は判定を変えない（設計知見: 推論モデルは答え0文字で失敗する・失敗は記録に残さない）
+    const targets = items.map((it, i) => ({ it, i })).filter((x) => x.it.pageImageUrl).slice(0, IMAGE_READ_MAX_PER_BATCH);
+    out.withImage = items.filter((it) => it.pageImageUrl).length;
+    await Promise.allSettled(targets.map(async ({ it, i }) => {
+      const url = it.pageImageUrl as string;
+      const wants = profile?.imageWants ?? [];
+      const [detail, facts] = await Promise.all([
+        readPropertyImageDetail(url, { timeoutMs: IMAGE_READ_TIMEOUT_MS }),
+        wants.length > 0 ? readFloorPlanFacts(url, wants, { timeoutMs: Math.min(IMAGE_READ_TIMEOUT_MS, 20_000) }) : Promise.resolve(null),
+      ]);
+      if (detail.kind === "property" && detail.lines.length > 0) { it.imageLines = detail.lines; out.imageRead++; }
+      if (facts?.facts) {
+        it.imageFacts = facts.facts;
+        if (it.judgment) it.judgment = applyImageFacts(it.judgment, facts.facts);
+        if (!it.imageLines) out.imageRead++;
+      }
+      void i;
     }));
     const rows = buildPickupRows({
       batchId: input.batchId, propertyCustomerId: input.propertyCustomerId, conversationId,
@@ -86,6 +121,13 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     out.rows = rows.length;
     out.withText = rows.filter((r) => r.pdf_has_text).length;
     out.withBlob = rows.filter((r) => r.pdf_blob_url).length;
+    // 画像から読んだ条件は、引用返信・ブレインが同じ表（image_details）から引けるように残す（既存の仕組みと同じ鍵＝画像の URL）
+    const detailRows = rows.filter((r) => r.page_image_url && r.image_lines && r.image_lines.length > 0)
+      .map((r) => ({ image_url: r.page_image_url as string, conversation_id: conversationId, kind: "property", lines: r.image_lines, model: "deepseek-flash", read_at: new Date().toISOString() }));
+    if (detailRows.length > 0) {
+      const { error: dErr } = await supabase.from("image_details").upsert(detailRows, { onConflict: "image_url" });
+      if (dErr) console.warn("[property-pickups] image_details に残せない:", dErr.message);
+    }
     return out;
   } catch (e) {
     out.error = e instanceof Error ? e.message : String(e);

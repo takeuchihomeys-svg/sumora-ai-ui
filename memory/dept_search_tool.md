@@ -22,7 +22,12 @@
 ### ② PDF
 - DeepSeek の API は**画像だけ**（JPEG/PNG/GIF/WebP・公式仕様 2026-09-24 確認）。PDF は受けない。チャット画面が PDF を読めるのは文字を取り出しているから
 - 今までリアプロの印刷用 PDF は**どの AI にも渡していなかった**（merge-pdfs で結合→Blob→LINE のリンクだけ）
-- `app/lib/pdf-text.ts`（pdfjs-dist・純 JS・文字層を取り出す）。⚠ 印刷用 PDF に文字層があるかは**実物で未確認**（`property_pickups.pdf_has_text` で率を見る）。無ければ画像化（ネイティブ canvas）が次の手
+- `app/lib/pdf-text.ts`（pdfjs-dist・純 JS・文字層を取り出す）
+- **画像化**（竹内「文字だけではよくない。資料を読み取れる形に」）: `app/lib/pdf-render.ts`（pdfjs-dist ＋ `@napi-rs/canvas`・1ページ目を PNG・約200万画素・ローカル 0.6秒）→ Blob に置き `property_pickups.page_image_url`
+  → DeepSeek が画像を読む: `readPropertyImageDetail`（資料の条件＝有無・可否 → `image_lines`・`image_details` にも残す）＋ `readFloorPlanFacts`（希望に画像でしか分からない語がある時 → `image_facts`・判定を更新）。1回分10枚まで・25秒/枚・並列
+  → お客様へは **画像→本文** の順で送る（LINE に PDF は送れないが画像は送れる）
+- ⚠ Vercel: `next.config.ts` の `outputFileTracingIncludes["/api/merge-pdfs"]` に pdfjs の cmaps・standard_fonts と `@napi-rs/canvas*` を同梱、`serverExternalPackages` に両方。**本番でネイティブが動くかは初回デプロイのログで確認**（落ちれば `[pdf-render] 画像にできない` が出て文字層だけで進む＝止まらない）
+- ⚠ 日本語フォントが PDF に埋め込まれていない時は文字が抜けた画像になる（cmaps/standard_fonts で大半は出る想定・実物で確認）
 
 ### ③ 売上サポ「ピックアップ」タブ
 ```

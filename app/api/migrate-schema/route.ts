@@ -2322,6 +2322,10 @@ CREATE INDEX IF NOT EXISTS idx_property_pickups_batch ON property_pickups(batch_
 CREATE INDEX IF NOT EXISTS idx_property_pickups_status ON property_pickups(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_property_pickups_customer ON property_pickups(property_customer_id, created_at DESC);
 ALTER TABLE property_pickups DISABLE ROW LEVEL SECURITY;
+-- 2026-09-24 竹内「PDF の文字だけではよくない。資料を読み取れる形に」: 1ページ目の画像（Blob）と DeepSeek が画像から読んだ中身
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS page_image_url TEXT;
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_lines JSONB;
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_facts JSONB;
 -- スタッフのメモ（売上サポの会話風画面の右側）。2026-09-24 竹内「DeepSeek 側は左・スタッフの会話は右」
 CREATE TABLE IF NOT EXISTS property_pickup_notes (
   id BIGSERIAL PRIMARY KEY,

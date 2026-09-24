@@ -4,7 +4,10 @@ const nextConfig: NextConfig = {
   // テンプレートXLSファイルをサーバーレス関数バンドルに含める（Vercel対応）
   outputFileTracingIncludes: {
     "/api/fill-estimate": ["./public/templates/**/*"],
+    // 2026-09-24 物件資料の PDF を画像にして DeepSeek に読ませる（pdfjs の CMap・標準フォント＋ @napi-rs/canvas のネイティブ）
+    "/api/merge-pdfs": ["./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/standard_fonts/**/*", "./node_modules/@napi-rs/canvas*/**/*"],
   },
+  serverExternalPackages: ["@napi-rs/canvas", "pdfjs-dist"],
 
   // public/ 以下の静的HTMLファイルをCDNキャッシュさせない
   // （デプロイ後すぐに最新版が反映されるようにするため）

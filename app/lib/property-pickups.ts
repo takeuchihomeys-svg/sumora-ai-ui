@@ -21,6 +21,10 @@ export type PickupItemInput = {
   /** PDF の文字層（先頭 maxChars） */
   pdfText: string | null;
   judgment: Judgment | null;
+  /** 2026-09-24 竹内「資料を読み取れる形に」: 1ページ目を画像にした Blob の URL と、DeepSeek が画像から読んだ中身 */
+  pageImageUrl?: string | null;
+  imageLines?: string[] | null;
+  imageFacts?: Record<string, boolean | null> | null;
 };
 
 export type PickupRow = {
@@ -46,6 +50,9 @@ export type PickupRow = {
   /** 0=印なし・1=🌟・2=🌟★（一番オススメ） */
   recommended: number;
   status: "pending";
+  page_image_url: string | null;
+  image_lines: string[] | null;
+  image_facts: Record<string, boolean | null> | null;
 };
 
 /** 説明文の先頭「【1🌟★】」から順位と印を読む */
@@ -87,6 +94,9 @@ export function buildPickupRows(
       profit_yen: j?.profitYen ?? null,
       recommended: mark.recommended,
       status: "pending",
+      page_image_url: it.pageImageUrl ?? null,
+      image_lines: it.imageLines && it.imageLines.length ? it.imageLines : null,
+      image_facts: it.imageFacts ?? null,
     };
   });
 }

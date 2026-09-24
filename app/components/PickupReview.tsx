@@ -11,6 +11,7 @@ type Item = {
   id: number; rank: number; property_name: string; room_no: string | null; summary_text: string;
   pdf_blob_url: string | null; pdf_has_text: boolean; verdict: string | null; score: number | null;
   reasons_ja: string[] | null; ad_yen: number | null; profit_yen: number | null; recommended: number; status: string; sent_at: string | null;
+  page_image_url: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
 };
 type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
@@ -158,6 +159,12 @@ export default function PickupReview() {
                     return (
                       <label key={it.id} className="flex gap-2 items-start rounded-xl px-2 py-2" style={{ background: it.recommended > 0 ? "#fff8e1" : "#f7f9fb", opacity: pending ? 1 : 0.6 }}>
                         <input type="checkbox" className="mt-1" disabled={!pending} checked={!!checked[it.id]} onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
+                        {it.page_image_url && (
+                          <a href={it.page_image_url} target="_blank" rel="noreferrer" className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={it.page_image_url} alt="" className="rounded-md object-cover" style={{ width: 64, height: 88, border: "1px solid #e0e0e0", background: "#fff" }} />
+                          </a>
+                        )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-xs font-bold">【{it.rank}】{it.property_name}{it.room_no ? ` ${it.room_no}号室` : ""}</span>
@@ -169,6 +176,9 @@ export default function PickupReview() {
                           <div className="text-[11px] text-[#455a64] mt-0.5">{body.slice(0, 4).join(" / ")}</div>
                           {it.reasons_ja && it.reasons_ja.length > 0 && (
                             <div className="text-[10px] text-[#78909c] mt-0.5">{it.reasons_ja.slice(0, 3).join("・")}{it.profit_yen != null ? `・利益目安 ${it.profit_yen.toLocaleString()}円` : ""}</div>
+                          )}
+                          {it.image_lines && it.image_lines.length > 0 && (
+                            <div className="text-[10px] mt-0.5" style={{ color: "#37474f" }}>📷 {it.image_lines.slice(0, 5).join("／")}</div>
                           )}
                           {it.pdf_blob_url && <a href={it.pdf_blob_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#1565C0" }}>📄 資料を見る{!it.pdf_has_text ? "（文字層なし）" : ""}</a>}
                         </div>

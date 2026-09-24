@@ -36,6 +36,9 @@ const STMTS = [
   `CREATE INDEX IF NOT EXISTS idx_property_pickups_status ON property_pickups(status, created_at DESC);`,
   `CREATE INDEX IF NOT EXISTS idx_property_pickups_customer ON property_pickups(property_customer_id, created_at DESC);`,
   `ALTER TABLE property_pickups DISABLE ROW LEVEL SECURITY;`,
+  `ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS page_image_url TEXT;`,
+  `ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_lines JSONB;`,
+  `ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_facts JSONB;`,
   `CREATE TABLE IF NOT EXISTS property_pickup_notes (
      id BIGSERIAL PRIMARY KEY,
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

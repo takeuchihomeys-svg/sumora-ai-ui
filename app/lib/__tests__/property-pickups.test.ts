@@ -2,6 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/property-pickups.test.ts
 import { parseRecommendMark, buildPickupRows, buildCustomerPickupMessage } from "../property-pickups";
 import { extractPdfText } from "../pdf-text";
+import { renderPdfPageToPng } from "../pdf-render";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 
 let passed = 0, failed = 0;
@@ -47,6 +48,12 @@ console.log("── ★ PDF の文字層（pdf-lib で作った PDF）");
   t("★ 文字が取れる・行が分かれる", r.hasText && r.text.includes("Rent 58,000") && r.text.includes("\n") && r.pages === 1, r);
   const bad = await extractPdfText("not-a-pdf");
   t("★ 壊れた入力は投げずに空", bad.text === "" && bad.hasText === false);
+  // 2026-09-24 竹内「PDF の文字だけではよくない。資料を読み取れる形に」: 1ページ目を PNG にする
+  const png = await renderPdfPageToPng(b64, { page: 1, scale: 1.5 });
+  t("★ 1ページ目が PNG になる（PNG の印・幅高さ）", !!png && png.png.length > 1000 && png.png[0] === 0x89 && png.png[1] === 0x50 && png.width > 500 && png.height > 300, png ? { bytes: png.png.length, w: png.width, h: png.height, ms: png.ms } : null);
+  const bigPng = await renderPdfPageToPng(b64, { page: 1, scale: 8 });
+  t("★ 大きすぎる指定でも画素数の上限に収める（約200万画素）", !!bigPng && bigPng.width * bigPng.height <= 2_100_000, bigPng ? { w: bigPng.width, h: bigPng.height } : null);
+  t("★ 壊れた入力は null（判定は文字層だけで進む）", (await renderPdfPageToPng("not-a-pdf")) === null);
   console.log(`\n合計: ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);
 })();

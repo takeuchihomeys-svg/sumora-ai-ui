@@ -2,8 +2,9 @@
 // 「売上サポ」で確認した物件をお客様の LINE に送る（既存の /api/send-line-message を内部から呼ぶ）。
 // 2026-09-24 竹内「スタッフは確認してお客さんに送るだけ」
 //
-// ⚠ LINE は PDF を画像として送れないので、今は「説明文＋物件ごとの PDF のリンク」を本文で送る。
-//   画像で送る形（PDF の画像化）は次の段。送った物は property_pickups.status='sent'・property_customers.last_property_sent_at を更新。
+// 2026-09-24 竹内「資料を読み取れる形に」: 物件資料の1ページ目を画像（page_image_url）にしてあるので、
+//   **画像→本文** の順で送る（AIX【物件ピックアップした】と同じ形・10枚まで）。画像が無い物件は本文の PDF のリンクで補う。
+//   送った物は property_pickups.status='sent'・property_customers.last_property_sent_at を更新。
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
@@ -17,10 +18,10 @@ export async function POST(req: NextRequest) {
   if (!body.batch_id || ids.length === 0) return NextResponse.json({ ok: false, error: "batch_id と item_ids が要ります" }, { status: 400 });
 
   const { data: rowsRaw, error } = await supabase.from("property_pickups")
-    .select("id, batch_id, property_customer_id, conversation_id, summary_text, pdf_blob_url, recommended, status")
-    .eq("batch_id", body.batch_id).in("id", ids);
+    .select("id, batch_id, property_customer_id, conversation_id, summary_text, pdf_blob_url, page_image_url, recommended, status, rank")
+    .eq("batch_id", body.batch_id).in("id", ids).order("rank", { ascending: true });
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  const rows = (rowsRaw ?? []) as Array<{ id: number; property_customer_id: string | null; conversation_id: string | null; summary_text: string; pdf_blob_url: string | null; recommended: number; status: string }>;
+  const rows = (rowsRaw ?? []) as Array<{ id: number; property_customer_id: string | null; conversation_id: string | null; summary_text: string; pdf_blob_url: string | null; page_image_url: string | null; recommended: number; status: string; rank: number }>;
   if (rows.length === 0) return NextResponse.json({ ok: false, error: "対象の行が無い" }, { status: 404 });
 
   const now = new Date().toISOString();
@@ -35,19 +36,26 @@ export async function POST(req: NextRequest) {
   const c = conv as { id: string; line_user_id: string | null; account: string | null } | null;
   if (!c?.line_user_id) return NextResponse.json({ ok: false, error: "会話に LINE の宛先が無い" }, { status: 409 });
 
-  const message = (body.message ?? "").trim() || buildCustomerPickupMessage(rows.filter((r) => r.status === "pending"));
+  const pending = rows.filter((r) => r.status === "pending");
+  const imageUrls = pending.map((r) => r.page_image_url).filter((u): u is string => !!u).slice(0, 10);
+  // 画像がある物件は画像で届くので、本文の PDF リンクは画像が無い物件だけに付ける
+  const message = (body.message ?? "").trim() || buildCustomerPickupMessage(pending.map((r) => ({ ...r, pdf_blob_url: r.page_image_url ? null : r.pdf_blob_url })));
   const secret = process.env.INTERNAL_API_SECRET ?? "";
   const res = await fetch(new URL("/api/send-line-message", req.url), {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
-    body: JSON.stringify({ line_user_id: c.line_user_id, message, account: c.account ?? undefined, conversation_id: c.id, origin: "aix", aix_type: "property_send" }),
+    body: JSON.stringify({
+      line_user_id: c.line_user_id, message, account: c.account ?? undefined, conversation_id: c.id, origin: "aix", aix_type: "property_send",
+      ...(imageUrls.length > 0 ? { image_urls: imageUrls } : {}),
+    }),
   });
   const json = await res.json().catch(() => ({})) as { ok?: boolean; error?: string };
   if (!res.ok || !json.ok) return NextResponse.json({ ok: false, error: json.error ?? `送信に失敗（HTTP ${res.status}）` }, { status: 502 });
 
-  // 会話の記録（画面の手打ち送信と同じ形）と、送った印
+  // 会話の記録（画面の手打ち送信と同じ形: 画像は1枚ずつ「[画像]」・本文は最後）と、送った印
+  const imageRows = imageUrls.map((u, i) => ({ conversation_id: c.id, sender: "staff", text: "[画像]", image_url: u, created_at: new Date(Date.parse(now) + i).toISOString(), is_aix_generated: true }));
   await Promise.all([
-    supabase.from("messages").insert({ conversation_id: c.id, sender: "staff", text: message, created_at: now, is_aix_generated: true }),
+    supabase.from("messages").insert([...imageRows, { conversation_id: c.id, sender: "staff", text: message, created_at: new Date(Date.parse(now) + imageUrls.length).toISOString(), is_aix_generated: true }]),
     supabase.from("conversations").update({ last_message: message.slice(0, 200), last_sender: "staff", updated_at: now, ai_draft: null, suggested_aix_meta: null }).eq("id", c.id),
     supabase.from("property_pickups").update({ status: "sent", sent_at: now, sent_by: body.sent_by ?? null }).in("id", rows.map((r) => r.id)),
     rows[0].property_customer_id
