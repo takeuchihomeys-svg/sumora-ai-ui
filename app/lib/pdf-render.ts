@@ -34,7 +34,9 @@ export async function renderPdfPageToPng(input: string | Uint8Array, opts?: { pa
       ...(standardFontDataUrl ? { standardFontDataUrl } : {}),
     } as Parameters<typeof pdfjs.getDocument>[0]);
     const pdf = await task.promise;
-    const pageNo = Math.min(Math.max(1, opts?.page ?? 1), pdf.numPages);
+    // 無いページは null（丸めて別のページを返さない）。2026-09-24: 1ページしか無い PDF の「元付（2ページ目）」を弊社の1ページ目と取り違えないため
+    const pageNo = Math.max(1, opts?.page ?? 1);
+    if (pageNo > pdf.numPages) { try { await pdf.cleanup(); await task.destroy(); } catch { /* 無視 */ } return null; }
     const page = await pdf.getPage(pageNo);
     let scale = opts?.scale ?? 1.5;
     let viewport = page.getViewport({ scale });

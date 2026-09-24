@@ -23,6 +23,8 @@ export type PickupItemInput = {
   judgment: Judgment | null;
   /** 2026-09-24 竹内「資料を読み取れる形に」: 1ページ目を画像にした Blob の URL と、DeepSeek が画像から読んだ中身 */
   pageImageUrl?: string | null;
+  /** 元付業者の資料（偶数ページ）の画像。AD・条件を読む用（お客様には送らない） */
+  agentImageUrl?: string | null;
   imageLines?: string[] | null;
   imageFacts?: Record<string, boolean | null> | null;
 };
@@ -51,6 +53,7 @@ export type PickupRow = {
   recommended: number;
   status: "pending";
   page_image_url: string | null;
+  agent_image_url: string | null;
   image_lines: string[] | null;
   image_facts: Record<string, boolean | null> | null;
 };
@@ -95,10 +98,34 @@ export function buildPickupRows(
       recommended: mark.recommended,
       status: "pending",
       page_image_url: it.pageImageUrl ?? null,
+      agent_image_url: it.agentImageUrl ?? null,
       image_lines: it.imageLines && it.imageLines.length ? it.imageLines : null,
       image_facts: it.imageFacts ?? null,
     };
   });
+}
+
+/**
+ * 2026-09-24 竹内「1ページ目は弊社に帯替えされた資料、2ページ目が元付業者の資料でそこに AD の記載がある。
+ *   奇数＝弊社・偶数＝元付 の組。偶数ページを画像として判断すればより正確」
+ * → 印刷用 PDF は物件ごとに「1: 弊社（お客様に送る）／2: 元付（AD・条件を読む）」の2ページ組。
+ */
+export const CUSTOMER_PAGE = 1;
+export const AGENT_PAGE = 2;
+
+/** 元付資料の文字から AD を読む（「AD 2ヶ月」「AD100%」「広告料 1ヶ月」「AD 50,000円」）。数値は表の文字が正だが、AD は元付の資料にしか無い事が多い */
+export function parseAdFromText(text: string | null | undefined): { adMonths: number | null; adYen: number | null } {
+  const t = String(text ?? "").replace(/[０-９．，]/g, (c) => c === "．" ? "." : c === "，" ? "," : String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/,/g, "");
+  const m = t.match(/(?:AD|ＡＤ|広告料|広告費)\s*[:：]?\s*(?:家賃|賃料)?\s*(\d+(?:\.\d+)?)\s*(?:ヶ月|ヵ月|カ月|か月|ケ月|ヶ|%|％)/i);
+  if (m) {
+    const v = parseFloat(m[1]);
+    const isPct = /[%％]\s*$/.test(m[0]);
+    const months = isPct ? v / 100 : v;
+    return months > 0 && months <= 12 ? { adMonths: months, adYen: null } : { adMonths: null, adYen: null };
+  }
+  const y = t.match(/(?:AD|ＡＤ|広告料|広告費)\s*[:：]?\s*(\d{4,7})\s*円/i);
+  if (y) return { adMonths: null, adYen: parseInt(y[1], 10) };
+  return { adMonths: null, adYen: null };
 }
 
 /** お客様に送る本文（選んだ物件の説明文を番号を振り直して並べ、PDF のリンクを添える） */

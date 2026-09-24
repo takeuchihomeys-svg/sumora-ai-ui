@@ -28,6 +28,10 @@
   → お客様へは **画像→本文** の順で送る（LINE に PDF は送れないが画像は送れる）
 - ⚠ Vercel: `next.config.ts` の `outputFileTracingIncludes["/api/merge-pdfs"]` に pdfjs の cmaps・standard_fonts と `@napi-rs/canvas*` を同梱、`serverExternalPackages` に両方。**本番でネイティブが動くかは初回デプロイのログで確認**（落ちれば `[pdf-render] 画像にできない` が出て文字層だけで進む＝止まらない）
 - ⚠ 日本語フォントが PDF に埋め込まれていない時は文字が抜けた画像になる（cmaps/standard_fonts で大半は出る想定・実物で確認）
+- **印刷用 PDF は物件ごとに2ページ組**（竹内 2026-09-24「奇数ページ＝弊社に帯替えされた資料・偶数ページ＝元付業者の資料で AD の記載がある。1&2・3&4 がセット」）
+  - `property-pickups.ts` の `CUSTOMER_PAGE=1`（お客様に送る画像 `page_image_url`）／`AGENT_PAGE=2`（元付の資料 `agent_image_url`・**DeepSeek はこちらを読む**・お客様には送らない・画面では「🏢 元付の資料」）
+  - AD は表の文字に無ければ **PDF の文字層（元付側）から `parseAdFromText`** で補って判定し、`sent_properties.ad_months/ad_yen`（同じ印刷用 URL・未記入の行）にも入れる
+  - `pdf-render.ts` は無いページを丸めず null（1ページしか無い PDF の「2ページ目」を弊社の1ページ目と取り違えない）
 
 ### ③ 売上サポ「ピックアップ」タブ
 ```

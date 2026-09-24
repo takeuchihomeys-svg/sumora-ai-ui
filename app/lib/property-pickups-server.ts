@@ -7,7 +7,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { extractPdfText } from "@/app/lib/pdf-text";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
-import { buildPickupRows, type PickupItemInput } from "@/app/lib/property-pickups";
+import { buildPickupRows, parseAdFromText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
 import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, type CustomerLike, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
 import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
 import { readPropertyImageDetail } from "@/app/lib/property-image-read";
@@ -70,35 +70,59 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       let pdfText: string | null = null;
       let pdfBlobUrl: string | null = null;
       let pageImageUrl: string | null = null;
+      let agentImageUrl: string | null = null;
       if (b64) {
-        // 文字層と画像は独立なので並列。画像は1ページ目（物件資料の表紙＝間取り図・写真・条件）
-        const [t, png] = await Promise.all([
-          extractPdfText(b64, { maxPages: 2, maxChars: 6000 }),
-          renderPdfPageToPng(b64, { page: 1, scale: 1.5 }),
+        // 2026-09-24 竹内「1ページ目は弊社に帯替えされた資料、2ページ目が元付業者の資料でそこに AD が載る。偶数ページを判断すれば正確」
+        //   文字層（両ページ）・1ページ目（弊社＝お客様に送る画像）・2ページ目（元付＝AD・条件を読む画像）を並列で作る
+        const [t, pngCustomer, pngAgent] = await Promise.all([
+          extractPdfText(b64, { maxPages: 2, maxChars: 8000 }),
+          renderPdfPageToPng(b64, { page: CUSTOMER_PAGE, scale: 1.5 }),
+          renderPdfPageToPng(b64, { page: AGENT_PAGE, scale: 1.5 }),
         ]);
         pdfText = t.text || null;
-        const [pdfPut, pngPut] = await Promise.allSettled([
+        const puts = await Promise.allSettled([
           put(`${base}_${i + 1}_${stamp}.pdf`, Buffer.from(b64, "base64"), { access: "public", contentType: "application/pdf" }),
-          png ? put(`${base}_${i + 1}_${stamp}.png`, png.png, { access: "public", contentType: "image/png" }) : Promise.reject(new Error("no png")),
+          pngCustomer ? put(`${base}_${i + 1}_${stamp}_p1.png`, pngCustomer.png, { access: "public", contentType: "image/png" }) : Promise.reject(new Error("no png p1")),
+          // 1ページしか無い PDF は pngAgent が null（pdf-render は無いページを丸めない）
+          pngAgent ? put(`${base}_${i + 1}_${stamp}_p2.png`, pngAgent.png, { access: "public", contentType: "image/png" }) : Promise.reject(new Error("no png p2")),
         ]);
+        const [pdfPut, p1Put, p2Put] = puts;
         if (pdfPut.status === "fulfilled") pdfBlobUrl = pdfPut.value.url; else console.warn("[property-pickups] 物件ごとの PDF を置けない:", String(pdfPut.reason?.message ?? pdfPut.reason));
-        if (pngPut.status === "fulfilled") pageImageUrl = pngPut.value.url; else if (png) console.warn("[property-pickups] 画像を置けない:", String(pngPut.reason?.message ?? pngPut.reason));
+        if (p1Put.status === "fulfilled") pageImageUrl = p1Put.value.url; else if (pngCustomer) console.warn("[property-pickups] 画像(p1)を置けない:", String(p1Put.reason?.message ?? p1Put.reason));
+        if (p2Put.status === "fulfilled") agentImageUrl = p2Put.value.url;
+      }
+      // 判定の材料: 表の文字（説明文）が正。AD だけは元付の資料（PDF の文字層）にしか無い事が多いので、無ければそこから補う
+      const facts = parsePropertyFacts(summary);
+      if (facts.adMonths == null && facts.adYen == null && pdfText) {
+        const ad = parseAdFromText(pdfText);
+        if (ad.adMonths != null) facts.adMonths = ad.adMonths;
+        else if (ad.adYen != null) facts.adYen = ad.adYen;
       }
       let judgment: Judgment | null = null;
       if (profile) {
-        try { judgment = judgeProperty(parsePropertyFacts(summary), profile, i); } catch { judgment = null; }
+        try { judgment = judgeProperty(facts, profile, i); } catch { judgment = null; }
       }
-      return { summary, pdfUrl: input.pdfUrls[i] ?? null, pdfBlobUrl, pdfText, judgment, pageImageUrl, imageLines: null, imageFacts: null };
+      return { summary, pdfUrl: input.pdfUrls[i] ?? null, pdfBlobUrl, pdfText, judgment, pageImageUrl, agentImageUrl, imageLines: null, imageFacts: null };
+    }));
+
+    // AD が PDF の文字層から取れたら、送付記録（sent_properties・同じ印刷用 URL の行）にも入れる（見積書の割引と結び付ける材料）
+    await Promise.allSettled(items.map(async (it) => {
+      const j = it.judgment;
+      if (!it.pdfUrl || !j || (j.facts.adMonths == null && j.facts.adYen == null)) return;
+      await supabase.from("sent_properties")
+        .update({ ad_months: j.facts.adMonths ?? null, ad_yen: j.adYen ?? j.facts.adYen ?? null })
+        .eq("property_url", it.pdfUrl).is("ad_months", null);
     }));
 
     // 2026-09-24 竹内「PDF の文字だけではよくない。資料を読み取れる形にしたい」:
     //   画像になった資料を DeepSeek が読む。①資料に書いてある条件（駐車場・ペット・保証会社・設備… 有無・可否だけ）
     //   ②お客様の希望に画像でしか分からない語（バストイレ別・独立洗面・収納・南向き・2階以上）があれば、その有無で判定を更新
     //   失敗は判定を変えない（設計知見: 推論モデルは答え0文字で失敗する・失敗は記録に残さない）
-    const targets = items.map((it, i) => ({ it, i })).filter((x) => x.it.pageImageUrl).slice(0, IMAGE_READ_MAX_PER_BATCH);
-    out.withImage = items.filter((it) => it.pageImageUrl).length;
+    //   読むのは**元付業者の資料（2ページ目）**。無ければ1ページ目（竹内「偶数ページを画像として判断すればより正確」）
+    const targets = items.map((it, i) => ({ it, i })).filter((x) => x.it.agentImageUrl || x.it.pageImageUrl).slice(0, IMAGE_READ_MAX_PER_BATCH);
+    out.withImage = items.filter((it) => it.pageImageUrl || it.agentImageUrl).length;
     await Promise.allSettled(targets.map(async ({ it, i }) => {
-      const url = it.pageImageUrl as string;
+      const url = (it.agentImageUrl ?? it.pageImageUrl) as string;
       const wants = profile?.imageWants ?? [];
       const [detail, facts] = await Promise.all([
         readPropertyImageDetail(url, { timeoutMs: IMAGE_READ_TIMEOUT_MS }),
@@ -122,8 +146,8 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     out.withText = rows.filter((r) => r.pdf_has_text).length;
     out.withBlob = rows.filter((r) => r.pdf_blob_url).length;
     // 画像から読んだ条件は、引用返信・ブレインが同じ表（image_details）から引けるように残す（既存の仕組みと同じ鍵＝画像の URL）
-    const detailRows = rows.filter((r) => r.page_image_url && r.image_lines && r.image_lines.length > 0)
-      .map((r) => ({ image_url: r.page_image_url as string, conversation_id: conversationId, kind: "property", lines: r.image_lines, model: "deepseek-flash", read_at: new Date().toISOString() }));
+    const detailRows = rows.filter((r) => (r.agent_image_url || r.page_image_url) && r.image_lines && r.image_lines.length > 0)
+      .map((r) => ({ image_url: (r.agent_image_url ?? r.page_image_url) as string, conversation_id: conversationId, kind: "property", lines: r.image_lines, model: "deepseek-flash", read_at: new Date().toISOString() }));
     if (detailRows.length > 0) {
       const { error: dErr } = await supabase.from("image_details").upsert(detailRows, { onConflict: "image_url" });
       if (dErr) console.warn("[property-pickups] image_details に残せない:", dErr.message);

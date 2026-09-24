@@ -11,7 +11,7 @@ type Item = {
   id: number; rank: number; property_name: string; room_no: string | null; summary_text: string;
   pdf_blob_url: string | null; pdf_has_text: boolean; verdict: string | null; score: number | null;
   reasons_ja: string[] | null; ad_yen: number | null; profit_yen: number | null; recommended: number; status: string; sent_at: string | null;
-  page_image_url: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
+  page_image_url: string | null; agent_image_url?: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
 };
 type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
@@ -180,7 +180,11 @@ export default function PickupReview() {
                           {it.image_lines && it.image_lines.length > 0 && (
                             <div className="text-[10px] mt-0.5" style={{ color: "#37474f" }}>📷 {it.image_lines.slice(0, 5).join("／")}</div>
                           )}
-                          {it.pdf_blob_url && <a href={it.pdf_blob_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#1565C0" }}>📄 資料を見る{!it.pdf_has_text ? "（文字層なし）" : ""}</a>}
+                          <div className="flex gap-2 flex-wrap">
+                            {it.pdf_blob_url && <a href={it.pdf_blob_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#1565C0" }}>📄 資料を見る{!it.pdf_has_text ? "（文字層なし）" : ""}</a>}
+                            {/* 偶数ページ＝元付業者の資料（AD の記載・ブレインが読んだ側）。お客様には送らない */}
+                            {it.agent_image_url && <a href={it.agent_image_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#6a1b9a" }}>🏢 元付の資料</a>}
+                          </div>
                         </div>
                       </label>
                     );
