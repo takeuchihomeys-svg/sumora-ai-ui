@@ -11,6 +11,7 @@
 import { parseSummaryHead } from "./sent-property-filter";
 import type { Judgment } from "./property-brain";
 import type { PickupEquipment } from "./pickup-equipment";
+import type { PickupTerms } from "./pickup-terms";
 
 export type PickupItemInput = {
   /** 番号付きの説明文（🌟 付きならそれ） */
@@ -30,6 +31,8 @@ export type PickupItemInput = {
   imageFacts?: Record<string, boolean | null> | null;
   /** 2026-09-24 資料の設備欄 × お客様の条件の照合（pickup-equipment.ts の PickupEquipment） */
   equipment?: PickupEquipment | null;
+  /** 2026-09-25 資料の表の募集の条件（敷礼・築年・入居時期・契約・更新料・入居の条件）と希望の照合（pickup-terms.ts） */
+  terms?: PickupTerms | null;
   /**
    * 2026-09-24 竹内「同じ建物だと平米数2㎡以内だと家賃がひくい部屋をここにいれて、他の部屋は売上サポに飛ばさなくて大丈夫」:
    *   pickup-dedupe.ts で落とした部屋に 🌟/🌟★ が付いていた時、残した部屋に引き継ぐ印（説明文の印と強い方を採る）
@@ -72,6 +75,7 @@ export type PickupRow = {
   image_lines: string[] | null;
   image_facts: Record<string, boolean | null> | null;
   equipment: PickupEquipment | null;
+  terms: PickupTerms | null;
 };
 
 /** 説明文の先頭「【1🌟★】」から順位と印を読む */
@@ -121,6 +125,7 @@ export function buildPickupRows(
       image_lines: it.imageLines && it.imageLines.length ? it.imageLines : null,
       image_facts: it.imageFacts ?? null,
       equipment: it.equipment ?? null,
+      terms: it.terms ?? null,
     };
   });
 }

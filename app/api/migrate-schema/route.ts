@@ -2335,6 +2335,9 @@ ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_analysis JSONB;
 -- 2026-09-24 竹内「宅配BOX付きなども条件なのに入れていない。設備欄を見る。202号室なら2階」: 資料の文字層の設備欄を決定論で照らした結果
 --   {facts 要約, match（希望ごとの ○×－）, floor, floorSource, uncovered}（listing-equipment.ts・DeepSeek 0円）
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS equipment JSONB;
+-- 2026-09-25 竹内「敷金礼金と入居時期、組み込みたい」: 資料の表の募集の条件（敷礼・築年・入居時期・契約・更新料・入居の条件）と
+--   お客様の希望（入居時期・楽器・法人…）の照合（listing-terms.ts・pickup-terms.ts・DeepSeek 0円）
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS terms JSONB;
 -- 2026-09-24 竹内「読んだ結果を物件ごとに保存し、2回目以降は画像を読み直さない（希望との照合は文字だけ）」:
 --   画像で分析の物件ごとの事実。unit_key＝文字層の 物件名＋号室＋所在地（PDF の中身は出力日で毎回変わるので鍵にしない）。
 --   fp_hash＝切り出した間取り図の画素の sha256（同じ棟・同じ型の部屋は読み直さない）。prompt_version＝固定の前置きの版（変えたら読み直す）

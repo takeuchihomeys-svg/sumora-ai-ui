@@ -33,6 +33,8 @@
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
 import { isGenericBuildingName } from "./generic-building-name";
 import { EQUIP_LABELS, type EquipmentMatch, type EquipKey } from "./listing-equipment";
+import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
+import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 
 // ─── 型 ──────────────────────────────────────────────────────────────────────
 
@@ -102,6 +104,10 @@ export type CustomerLike = {
   other_requests?: string | null;
   additional_conditions?: string | null;
   pet?: boolean | null;
+  /** 入居時期の自由文（「11月上旬」「即入居」「未定」）。move-in-want.ts で 'YYYY-MM-DD' に直す */
+  move_in_time?: string | null;
+  /** 登録日（年の無い「7月」を何年と読むかの基準） */
+  created_at?: string | null;
 };
 
 /** delivery / source は sent_properties の列（無い呼び出し元は今まで通り全部を送付として扱う） */
@@ -143,6 +149,12 @@ export type CustomerProfile = {
   };
   discountYen: number;
   confidence: "high" | "mid" | "low";
+  /** 入居時期の希望（kind=by・asap の時だけ資料の入居時期と照らす） */
+  moveInWant?: MoveInWant;
+  /** 入居の条件（楽器・法人・外国籍…）。条件欄にその語がある物だけ */
+  conditionWants?: ConditionKey[];
+  /** 条件欄に「更新料」「定期借家・契約期間」「フリーレント」の語がある（札を出すかどうか） */
+  mentions?: { renewal: boolean; contract: boolean; freeRent: boolean };
 };
 
 export type Verdict = "pass" | "hold" | "drop";
@@ -221,7 +233,34 @@ export const REASON_JA: Record<string, string> = {
   IMAGE_SOUTH_FACING_NG: "南向きでない（間取り図）",
   IMAGE_FLOOR_2_PLUS_OK: "2階以上（資料）",
   IMAGE_FLOOR_2_PLUS_NG: "1階（資料）",
+  // 2026-09-25 資料の表の「募集の条件」（listing-terms.ts）。書いていない時は 0点の要確認・drop には使わない
+  MOVE_IN_OK: "入居時期が希望に間に合う（資料）",
+  MOVE_IN_LATE: "入居できるのが希望より2週間超遅い（資料）",
+  MOVE_IN_UNKNOWN: "要確認: 入居時期（相談・居住中・記載なし）",
+  CONTRACT_FIXED: "定期借家（資料）",
+  CONTRACT_NORMAL: "普通借家（資料）",
+  CONTRACT_UNKNOWN: "要確認: 契約の種類",
+  RENEWAL_FEE_NONE: "更新料なし（資料）",
+  RENEWAL_FEE_SET: "更新料あり（資料）",
+  RENEWAL_FEE_UNKNOWN: "要確認: 更新料",
+  FREE_RENT_MATCH: "フリーレントあり（初期費用を抑えたい希望）",
+  FREE_RENT: "フリーレントあり（資料）",
+  FREE_RENT_UNLISTED: "要確認: フリーレント",
 };
+
+/**
+ * 入居の条件（楽器・法人・外国籍…）の理由コード。CONDITION_<KEY>_OK / _NG / _ASK / _UNLISTED。
+ * 2026-09-25: 条件欄にその語がある時だけ付ける。不可は −10 で保留（外す候補にはしない）・可は +3・相談と記載なしは 0点の要確認
+ */
+export const CONDITION_CODE_KEYS: Record<ConditionKey, string> = {
+  instrument: "INSTRUMENT", corporate: "CORPORATE", foreigner: "FOREIGNER", student: "STUDENT", office: "OFFICE",
+  singleOnly: "SINGLE", twoPerson: "TWO_PERSON", roomShare: "ROOM_SHARE", children: "CHILDREN",
+};
+export const CONDITION_OK_POINTS = 3;
+export const CONDITION_NG_POINTS = -10;
+function conditionKeyOfCode(k: string): ConditionKey | null {
+  return (Object.keys(CONDITION_CODE_KEYS) as ConditionKey[]).find((c) => CONDITION_CODE_KEYS[c] === k) ?? null;
+}
 
 /**
  * 資料の設備欄との照合（listing-equipment.ts）の理由コード。EQUIP_<KEY>_OK / _NG / _UNLISTED（KEY は EquipKey の大文字・階の範囲は FLOOR）。
@@ -248,6 +287,17 @@ function equipKeyLabel(key: string): string {
 export function reasonJa(code: string): string {
   if (REASON_JA[code]) return REASON_JA[code];
   if (code === EQUIP_CAP_CODE) return `必須の条件が資料で×（上限${EQUIP_STRONG_NG_CAP}点）`;
+  const cm = code.match(/^CONDITION_(.+?)_(OK|NG|ASK|UNLISTED)$/);
+  if (cm) {
+    const ck = conditionKeyOfCode(cm[1]);
+    const label = ck ? CONDITION_LABELS[ck] : cm[1];
+    switch (cm[2]) {
+      case "OK": return `${label}○（資料）`;
+      case "NG": return `${label}不可（資料）`;
+      case "ASK": return `${label}は相談（要確認）`;
+      default: return `要確認: ${label}`;
+    }
+  }
   const m = code.match(/^EQUIP_(.+?)_(OK_MAX|OK|NG|UNLISTED|ASK)$/);
   if (!m) return code;
   const label = equipKeyLabel(m[1]);
@@ -298,6 +348,11 @@ export const REASON_POINTS: Record<string, number> = {
   ALREADY_SENT: -30,
   AD_UNKNOWN: 0, PROFIT_NEGATIVE: -10, AD_COVERS_DISCOUNT: 10, AD_1M: 5, AD_HIGH: 20, AD_VERY_HIGH: 5,
   PET_NG: -15,
+  // 2026-09-25 資料の表の募集の条件（listing-terms.ts）
+  MOVE_IN_OK: 5, MOVE_IN_LATE: -10, MOVE_IN_UNKNOWN: 0,
+  CONTRACT_FIXED: -5, CONTRACT_NORMAL: 0, CONTRACT_UNKNOWN: 0,
+  RENEWAL_FEE_NONE: 0, RENEWAL_FEE_SET: 0, RENEWAL_FEE_UNKNOWN: 0,
+  FREE_RENT_MATCH: 3, FREE_RENT: 0, FREE_RENT_UNLISTED: 0,
 };
 /** 理由コードの点（画像の読み取り IMAGE_*_OK/_NG も含む）。知らないコードは 0 */
 export function reasonPoints(code: string): number {
@@ -306,6 +361,9 @@ export function reasonPoints(code: string): number {
   if (/^EQUIP_.*_OK$/.test(code)) return EQUIP_OK_POINTS;
   if (/^EQUIP_.*_NG$/.test(code)) return EQUIP_NG_POINTS;
   if (/^EQUIP_/.test(code)) return 0; // _UNLISTED・_ASK・_OK_MAX・上限の印（上限20は reasonPoints の外）
+  if (/^CONDITION_.*_OK$/.test(code)) return CONDITION_OK_POINTS;
+  if (/^CONDITION_.*_NG$/.test(code)) return CONDITION_NG_POINTS;
+  if (/^CONDITION_/.test(code)) return 0; // _ASK・_UNLISTED
   return REASON_POINTS[code] ?? 0;
 }
 
@@ -546,6 +604,34 @@ export function detectImageWants(c: CustomerLike): ImageWantKey[] {
   return out;
 }
 
+/**
+ * 入居の条件（楽器・法人・外国籍…）の希望を条件欄から拾う。NG 欄（ng_points）は見ない（「子供の声NG」は子供の入居ではない）。
+ * 否定（「楽器は使わない」「法人契約ではない」）は外す。語が無ければ照らさない（書いていない条件で物件を疑わない）
+ */
+const CONDITION_WANT_RES: Record<ConditionKey, RegExp> = {
+  instrument: /楽器|ピアノ|ギター|ドラム|バイオリン|DTM/i,
+  corporate: /法人(?:契約|名義)?|社宅/,
+  foreigner: /外国(?:籍|人)|留学生/,
+  student: /学生/,
+  office: /事務所|SOHO/i,
+  singleOnly: /単身/,
+  twoPerson: /二人入居|2人入居|同棲|カップル|夫婦|二人暮らし|2人暮らし/,
+  roomShare: /ルームシェア/,
+  children: /子供|子ども|こども|お子様|お子さん|赤ちゃん|乳児|幼児/,
+};
+const CONDITION_WANT_NEG_RE = /(?:楽器|ピアノ|ギター|法人(?:契約)?|子供|子ども)(?:は|の)?(?:なし|無し|不要|いない|いません|使わない|弾かない|しない|ではない|じゃない)/g;
+
+export function detectConditionWants(c: CustomerLike): ConditionKey[] {
+  const text = toHalfWidth([c.preferences, c.other_requests, c.additional_conditions].map((s) => String(s ?? "")).join("\n")).replace(CONDITION_WANT_NEG_RE, "");
+  return CONDITION_KEYS.filter((k) => CONDITION_WANT_RES[k].test(text));
+}
+
+/** 条件欄（NG 欄も含む）に「更新料」「定期借家・契約期間」「フリーレント」の語があるか */
+export function detectTermMentions(c: CustomerLike): { renewal: boolean; contract: boolean; freeRent: boolean } {
+  const text = [c.preferences, c.other_requests, c.additional_conditions, c.ng_points].map((s) => String(s ?? "")).join("\n");
+  return { renewal: /更新料/.test(text), contract: /定期借家|定借|契約期間|短期/.test(text), freeRent: /フリーレント/.test(text) };
+}
+
 /** 見積書の本文から割引額（円）を読む。「🌟26,500円割引させて頂き」 */
 export function parseDiscountYen(text: string | null | undefined): number | null {
   const t = toHalfWidth(String(text ?? "")).replace(/,/g, "");
@@ -573,6 +659,7 @@ export function buildCustomerProfile(
   sentRows: SentRowLike[] = [],
   patternRows: PatternRowLike[] = [],
   discountYen: number | null = null,
+  opts: { today?: Date | string } = {},
 ): CustomerProfile {
   const notes: string[] = [];
   let rentMax = num(customer.rent_max) ?? num(customer.max_rent);
@@ -629,7 +716,67 @@ export function buildCustomerProfile(
     history: { sentCount: sentRows.length, sentBuildings, rentRatioMedian: median(ratios), sellingPointsSelected },
     discountYen: discountYen != null && discountYen > 0 ? discountYen : DEFAULT_DISCOUNT_YEN,
     confidence,
+    moveInWant: parseMoveInWant(customer.move_in_time, { registeredAt: customer.created_at ?? null, today: opts.today }),
+    conditionWants: detectConditionWants(customer),
+    mentions: detectTermMentions(customer),
   };
+}
+
+/**
+ * 資料の表から読んだ募集の条件（listing-terms.ts）で、説明文・拡張の値が無い所だけ埋める（敷金・礼金・築年）。
+ * 埋めた項目名を返す（画面の「資料から」の印・監査用）。facts を書き換える
+ */
+export function fillFactsFromTerms(facts: PropertyFacts, t: ListingTerms | null | undefined): string[] {
+  if (!t || !t.hasText) return [];
+  const filled: string[] = [];
+  if (facts.depositMonths == null && t.depositMonths != null) { facts.depositMonths = t.depositMonths; filled.push("deposit"); }
+  if (facts.keyMoneyMonths == null && t.keyMoneyMonths != null) { facts.keyMoneyMonths = t.keyMoneyMonths; filled.push("keyMoney"); }
+  if (facts.buildingAge == null && t.buildingAgeYears != null) { facts.buildingAge = t.buildingAgeYears; filled.push("buildingAge"); }
+  return filled;
+}
+
+export type TermsMatch = {
+  /** 入居時期の照合（希望が by・asap の時だけ。それ以外は null） */
+  moveIn: "ok" | "late" | "unknown" | null;
+  /** 入居の条件（条件欄にある物だけ・二人入居は設備の照合で決まっていれば入れない） */
+  conditions: Array<{ key: ConditionKey; status: "ok" | "ng" | "consult" | "unlisted" }>;
+};
+
+/** 募集の条件とお客様の希望の照合（judgeProperty の札と画面の ○× の元・同じ関数） */
+export function matchListingTerms(t: ListingTerms, profile: CustomerProfile, opts: { today?: Date | string; equipment?: EquipmentMatch | null } = {}): TermsMatch {
+  const w = profile.moveInWant;
+  const moveIn = w && (w.kind === "by" || w.kind === "asap") && w.wantBy ? compareMoveIn(t.moveIn, w.wantBy, { today: opts.today }) : null;
+  // 二人入居は設備の照合（listing-equipment の two_person）と重ねない: 設備側で ○/× が決まっていれば terms は付けない。
+  //   設備側が「記載なし」で terms も記載なしなら、設備側の「要確認」1つだけにする（terms で決まった時は judgeProperty が設備側の要確認を外す）
+  const eqTwo = (opts.equipment?.rows ?? []).find((r) => r.want.key === "two_person");
+  const conditions = (profile.conditionWants ?? [])
+    .filter((k) => !(k === "twoPerson" && eqTwo && (eqTwo.result !== "unlisted" || t.conditions.twoPerson.status === "unlisted")))
+    .map((k) => ({ key: k, status: t.conditions[k].status }));
+  return { moveIn, conditions };
+}
+
+/** 募集の条件の札（judgeProperty が足す物・点は reasonPoints） */
+export function termsReasonCodes(t: ListingTerms | null | undefined, profile: CustomerProfile, opts: { today?: Date | string; equipment?: EquipmentMatch | null } = {}): string[] {
+  if (!t || !t.hasText) return [];
+  const out: string[] = [];
+  const m = matchListingTerms(t, profile, opts);
+  if (m.moveIn === "ok") out.push("MOVE_IN_OK");
+  else if (m.moveIn === "late") out.push("MOVE_IN_LATE");
+  else if (m.moveIn === "unknown") out.push("MOVE_IN_UNKNOWN");
+  const men = profile.mentions ?? { renewal: false, contract: false, freeRent: false };
+  if (t.contract.kind === "fixed") out.push("CONTRACT_FIXED");
+  else if (men.contract) out.push(t.contract.kind === "normal" ? "CONTRACT_NORMAL" : "CONTRACT_UNKNOWN");
+  if (men.renewal) {
+    const k = t.renewalFee.kind;
+    out.push(k === "none" ? "RENEWAL_FEE_NONE" : k === "months" || k === "yen" ? "RENEWAL_FEE_SET" : "RENEWAL_FEE_UNKNOWN");
+  }
+  if (t.freeRent) out.push(profile.wantsLowInitialCost ? "FREE_RENT_MATCH" : "FREE_RENT");
+  else if (men.freeRent) out.push("FREE_RENT_UNLISTED");
+  for (const c of m.conditions) {
+    const K = CONDITION_CODE_KEYS[c.key];
+    out.push(`CONDITION_${K}_${c.status === "ok" ? "OK" : c.status === "ng" ? "NG" : c.status === "consult" ? "ASK" : "UNLISTED"}`);
+  }
+  return out;
 }
 
 // ─── 判定 ────────────────────────────────────────────────────────────────────
@@ -649,6 +796,14 @@ const IMAGE_TO_EQUIP: Partial<Record<ImageWantKey, EquipKey>> = {
 export type JudgeOptions = {
   /** 資料の設備欄との照合（listing-equipment.ts の matchEquipment。拡張の判定は説明文から読めた分だけ） */
   equipment?: EquipmentMatch | null;
+  /**
+   * 資料の表から読んだ募集の条件（listing-terms.ts の parseListingTerms）。2026-09-25 売上サポ（recordPickupBatch）だけが渡す。
+   *   入居時期（MOVE_IN_*）・定期借家（CONTRACT_*）・更新料（RENEWAL_FEE_*）・フリーレント（FREE_RENT_*）・入居の条件（CONDITION_*）。
+   *   敷礼・築年は呼ぶ側で fillFactsFromTerms により facts を埋める（既存の INITIAL_COST_*・BUILDING_AGE_* の線のまま）
+   */
+  terms?: ListingTerms | null;
+  /** 入居時期の照合の基準日（既定は今） */
+  today?: Date | string;
 };
 
 export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, index = 0, opts: JudgeOptions = {}): Judgment {
@@ -745,8 +900,17 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   const petDecided = !!eq?.rows.some((r) => r.want.key === "pet" && r.result !== "unlisted");
   if (profile.pet && !petDecided && /ペット不可|ペット×|ペットNG/.test(facts.rawText)) add("PET_NG", -15, "hold");
 
+  // 資料の表の募集の条件（入居時期の遅れ・定期借家・入居の条件の不可は保留・記載なしは 0点の要確認）。drop には使わない
+  const termCodes = termsReasonCodes(opts.terms, profile, { today: opts.today, equipment: eq });
+  for (const code of termCodes) add(code, reasonPoints(code), isHoldCode(code) ? "hold" : undefined);
+  // 二人入居を資料の表（terms）で決めた時は、設備の照合の「二人入居－（記載なし）」を外す（同じ希望を2つの札にしない）
+  const twoDecidedByTerms = termCodes.some((c) => /^CONDITION_TWO_PERSON_(OK|NG|ASK)$/.test(c));
+
   // 資料の設備欄（× は保留・○ は +3 で合計 +15 まで・－ は 0点の要確認）。drop には使わない
-  for (const code of equipmentReasonCodes(eq)) add(code, reasonPoints(code), /_NG$/.test(code) ? "hold" : undefined);
+  for (const code of equipmentReasonCodes(eq)) {
+    if (twoDecidedByTerms && code === "EQUIP_TWO_PERSON_UNLISTED") continue;
+    add(code, reasonPoints(code), /_NG$/.test(code) ? "hold" : undefined);
+  }
 
   // 上限は 130（旧 100）。条件が全部合う物件は AD なしで 88〜100 に達し、100 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
@@ -756,7 +920,7 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
   // 理由の日本語は「外す・保留の理由」を先に、良い点は後に（LINE の1行は先頭2つを見せる）
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^EQUIP_.*_OK$/.test(c));
+  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   const reasonsJa = [...flagCodes, ...positives].map(reasonJa);
   // 設備欄で ○/× が決まった希望は画像で確かめ直さない（同じ希望を二重に数えない）
   const decided = new Set<string>((eq?.rows ?? []).filter((r) => r.result !== "unlisted").map((r) => r.want.key));
@@ -792,7 +956,7 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
     score = Math.min(raw, EQUIP_STRONG_NG_CAP);
   }
   const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || score < 40 ? "hold" : "pass");
-  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c));
+  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   const reasonsJa = [...flagCodes, ...positives].map(reasonJa);
   return { ...j, score, verdict, reasonCodes: codes, flagCodes, reasonsJa };
 }
@@ -801,8 +965,9 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
 export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130"]);
 export const HOLD_REASON_CODES = new Set([
   "RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PROFIT_NEGATIVE", "PET_NG",
+  "MOVE_IN_LATE", "CONTRACT_FIXED", // 2026-09-25 資料の表の募集の条件
 ]);
-const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP)_.*_NG$/.test(c);
+const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP|CONDITION)_.*_NG$/.test(c);
 
 /**
  * 保存済みの判定（理由コード）に、資料の設備欄の照合を付け直す（決定論）。
@@ -820,15 +985,18 @@ export function applyEquipmentMatch(
     const k = (Object.keys(IMAGE_TO_EQUIP) as ImageWantKey[]).find((ik) => c === `IMAGE_${ik.toUpperCase()}_OK` || c === `IMAGE_${ik.toUpperCase()}_NG`);
     return !!k && decided.has(IMAGE_TO_EQUIP[k] as string);
   };
-  const codes = j.reasonCodes.filter((c) => !c.startsWith("EQUIP_") && !imageDecided(c) && !(c === "PET_NG" && decided.has("pet")));
-  codes.push(...equipmentReasonCodes(m));
+  // 設備欄で二人入居が決まったら資料の表の CONDITION_TWO_PERSON_* を外す（二重に数えない・matchListingTerms と同じ決まり）
+  const codes = j.reasonCodes.filter((c) => !c.startsWith("EQUIP_") && !imageDecided(c) && !(c === "PET_NG" && decided.has("pet"))
+    && !(c.startsWith("CONDITION_TWO_PERSON_") && decided.has("two_person")));
+  const twoByTerms = codes.some((c) => /^CONDITION_TWO_PERSON_(OK|NG|ASK)$/.test(c));
+  codes.push(...equipmentReasonCodes(m).filter((c) => !(twoByTerms && c === "EQUIP_TWO_PERSON_UNLISTED")));
   let score = Math.max(0, Math.min(130, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
   if (codes.includes(EQUIP_CAP_CODE)) score = Math.min(score, EQUIP_STRONG_NG_CAP);
   const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c));
+  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   return { score, verdict, reasonCodes: codes, flagCodes, reasonsJa: [...flagCodes, ...positives].map(reasonJa) };
 }
 

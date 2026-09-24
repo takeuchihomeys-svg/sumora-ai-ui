@@ -45,6 +45,12 @@ const CHIP_JA: Record<string, string> = {
   PET_NG: "ペット不可",
   ZERO_ZERO_MATCH: "敷礼0（希望に一致）",
   AD_COVERS_DISCOUNT: "AD で割引をまかなえる",
+  // 2026-09-25 資料の表の募集の条件
+  MOVE_IN_OK: "入居時期に間に合う",
+  MOVE_IN_LATE: "入居が希望より遅い",
+  MOVE_IN_UNKNOWN: "入居時期は要確認",
+  CONTRACT_FIXED: "定期借家",
+  FREE_RENT_MATCH: "フリーレント（希望に一致）",
 };
 
 /** 読めなかった材料（点が動かない理由）。コード → 札の言葉 */

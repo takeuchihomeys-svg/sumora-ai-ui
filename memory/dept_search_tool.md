@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-09-25 売上サポ: 資料の表の敷礼・築年・入居時期・契約・入居の条件を判定に組み込む（竹内「敷金礼金と入居時期、組み込みたい」）
+- きっかけ（9/24「ほかにもれないか」の監査）: 判定の仕組みはあるのに物件側の値が届いていなかった — property_pickups 36行中33行が INITIAL_COST_UNKNOWN（説明文に敷礼が無い）・BUILDING_AGE_* は本番で0行・入居時期はどこでも照らしていない
+- 部品（純関数・DeepSeek 0円）:
+  - `app/lib/listing-terms.ts`（parseListingTerms・termsToBrainData・moveInAvailableFrom・compareMoveIn・formatListingTerms）— **import なし**（未コミットの listing-text.ts への依存を外し、NFKC・部首補助・「‧」・空白の正規化を中に持たせた。listing-equipment の norm と同じ中身・直す時は3か所を揃える）。36行で旧版と完全一致・誤読0（`scripts/audit-listing-terms.ts`）
+  - `app/lib/move-in-want.ts`（parseMoveInWant）: お客様の move_in_time → 'YYYY-MM-DD'。上旬=10日・中旬/半ば=20日・下旬/末/月だけ=末日・月が複数は一番遅い月・すぐ/最短/至急=今日（照合に14日の猶予）・今年中/年内=12/31。**札を付けない**: 目安（◯ヶ月後くらい・◯ヶ月以内・半年以内）・季節・始まりだけ（5月以降・7月末〜）・未定/いつでも/見つかり次第・**過ぎた日**（登録日 created_at 基準で年を決める。5〜7月登録の「7月」は情報が古い）
+    - 全件監査 `scripts/audit-move-in-want.ts`（234人）: by 93／過ぎた日 63／決まっていない 35／すぐ 24／目安・季節 12／始まりだけ 7。値ごとに目で読み読み違い0（初回の「5月登録の4月→来年」は前月までは今年に直した）
+  - `app/lib/pickup-terms.ts`（buildPickupTerms・formatTermsLine・moveInLabel）: 保存形と画面の1行
+- **recordPickupBatch**: pdfText に parseListingTerms → `fillFactsFromTerms`（説明文・拡張の値が無い所だけ敷金・礼金・築年を埋める）→ judgeProperty の `{ terms }` → `property_pickups.terms`（jsonb・本番に適用済み）。落とした部屋の判定にも当てる。ログ `property-pickups:terms`
+- **判定の札**（property-brain.ts・drop には使わない）:
+  - 入居時期（希望が by/asap の時だけ）: `MOVE_IN_OK` +5／`MOVE_IN_LATE` −10 保留（入れる一番早い日が希望日より14日超遅い）／`MOVE_IN_UNKNOWN` 0（相談・居住中・記載なし）
+  - 契約: `CONTRACT_FIXED` −5 保留（定期借家は誰でも）／条件欄に定期借家・契約期間の語がある時だけ `CONTRACT_NORMAL`・`CONTRACT_UNKNOWN` 0
+  - 更新料（語がある時だけ・点0）: `RENEWAL_FEE_NONE`／`_SET`／`_UNKNOWN`。フリーレント: `FREE_RENT_MATCH` +3（初期費用を抑えたい人）／`FREE_RENT` 0／語があるのに記載なし `FREE_RENT_UNLISTED` 0
+  - 入居の条件（条件欄にその語がある時だけ・NG 欄は見ない・「楽器は使わない」等の否定は外す）: `CONDITION_<INSTRUMENT|CORPORATE|FOREIGNER|STUDENT|OFFICE|SINGLE|TWO_PERSON|ROOM_SHARE|CHILDREN>_OK` +3／`_NG` −10 保留／`_ASK` 0／`_UNLISTED` 0。**二人入居は設備の照合（EQUIP_TWO_PERSON_*）と1つだけ**（設備で決まれば terms は付けない・terms で決まれば設備の「記載なし」を外す・applyEquipmentMatch も同じ）
+  - REASON_POINTS・reasonPoints・reasonJa・HOLD_REASON_CODES・画面の短い札（pickup-review-order の CHIP_JA）に入れた
+- **画面**（PickupReview の TermsLine）: 「💴 敷0/礼1ヶ月 築18年 入居:11月上旬 普通2年 更新1ヶ月（資料の表から）」＋「希望: 入居○（希望 11/10まで）法人契約相談 楽器－」。API は terms を返す
+- **拡張の判定**（`/api/property-brain/judge`・PDF なし）は今まで通り（terms を渡さない＝新しい札は付かない）
+- YUMA（scripts/yuma-condition-leak-test.ts --apply → --cleanup 済み・DeepSeek なし・資料 リアプロ #45/#44/#43・itandi #67/#66/#65 → 5行）: 漏れ **16→8種類**。初期費用・敷礼ゼロ（材料なし→届いた・札5/5）・築年（🌟だけ→届いた）・入居時期（札3・残り2は相談で要確認）・定期借家・更新料・フリーレント・楽器・法人 が全部「届いた」。ただしフリーレント・楽器は5件とも「記載なし＝要確認」
+- テスト: listing-terms 89・move-in-want 57・pickup-terms 50（50＋合計＝score・drop なし・二人入居1つ）。関連 listing-equipment 159・pickup-equipment 64・property-brain 88・pickup-review-order 58・property-pickups 44・pickup-dedupe 33
+- 残り: 既存の property_pickups 行の terms は空（付け直しは未実施）／お客様の「築浅」の自由文を年数の希望にしていない／短期解約違約金・保証会社・鍵交換は未計算／audit-condition-coverage.ts と yuma-condition-leak-test.ts は itandi の途中（pickup-rank の enrichSummariesFromPdf）に依存するので itandi と一緒にコミット
+
 ## 2026-09-24 深夜 売上サポ: 資料の設備欄 × お客様の条件を判定に組み込む（竹内「HONOKA さんの場合、宅配BOX付きなども条件なのにそこちゃんと入れていない」「設備面も見るように」「202号室なら2階」）
 - 部品: `app/lib/listing-equipment.ts`（文字層から所在階・設備の有無を決定論で読む・DeepSeek 0円）＋組み込み `app/lib/pickup-equipment.ts`（`buildBatchEquipment`・`toPickupEquipment`・`matchFromSummary`・`floorLabel`・純関数・画面と共用）
 - **recordPickupBatch**（`app/lib/property-pickups-server.ts`）: すでに取っている pdfText に parseListingEquipment → **回の全部の行（同じ建物で落とした部屋も文字層だけ取って含める）**を mergeBuildingEquipment で補う（エレベーター・宅配ボックス・オートロック・ネット無料・駐車場だけ「○〔建〕」）→ parseEquipmentWants(条件欄) と matchEquipment → `property_pickups.equipment`（jsonb・{facts 要約, match, floor, floorSource, uncovered, line}）に保存。判定は設備の照合の後で行う（judgeProperty の第4引数 `{ equipment }`）。ログ `property-pickups:equipment`

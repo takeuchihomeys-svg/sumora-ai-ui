@@ -9,6 +9,7 @@ import { okCountOf, type CustomerBest } from "@/app/lib/pickup-best";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
 import { sortForReview, buildReasonView, formatScoreBreakdown } from "@/app/lib/pickup-review-order";
 import { floorLabel, type PickupEquipment } from "@/app/lib/pickup-equipment";
+import type { PickupTerms } from "@/app/lib/pickup-terms";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -19,6 +20,8 @@ type Item = {
   page_image_url: string | null; agent_image_url?: string | null; trim_image_url?: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
   image_analysis?: { match?: number | null; [k: string]: unknown } | null;
   equipment?: PickupEquipment | null;
+  /** 2026-09-25 資料の表の募集の条件（敷礼・築年・入居時期・契約・更新料）と希望の照合 */
+  terms?: PickupTerms | null;
 };
 type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
@@ -162,6 +165,35 @@ function EquipmentLine({ eq }: { eq: PickupEquipment | null | undefined }) {
       {sel && <div className="mt-0.5 break-words" style={{ color: "#546e7a" }}>
         {sel.label}: {sel.result === "unlisted" ? `資料に記載なし（無いとは限らない）${sel.why && sel.why !== "資料に記載なし" ? `・${sel.why}` : ""}` : sel.why}</div>}
       {uncovered.length > 0 && <div className="mt-0.5 break-words" style={{ color: "#78909c" }}>照らせない条件: {uncovered.join("・")}</div>}
+    </div>
+  );
+}
+
+/**
+ * 資料の表の募集の条件の1行と、希望との照合の札。2026-09-25 竹内「敷金礼金と入居時期、組み込みたい」:
+ *   「💴 敷0/礼1ヶ月 築8年 入居:11月上旬 普通2年 更新1ヶ月」＋「入居○（希望 11月上旬まで）」「楽器不可」（× 赤・△/－ 灰・○ 緑）。
+ *   書いていない条件は「要確認」（不可とは限らない）
+ */
+function TermsLine({ t }: { t: PickupTerms | null | undefined }) {
+  if (!t) return null;
+  const mi = t.want?.moveIn ?? null;
+  const conds = t.want?.conditions ?? [];
+  if (!t.line && !mi && !conds.length) return null;
+  const miChip = mi ? (mi.result === "ok" ? { text: "入居○", color: "#2e7d32" } : mi.result === "late" ? { text: "入居×（希望より遅い）", color: "#c62828" } : { text: "入居 要確認", color: "#90a4ae" }) : null;
+  return (
+    <div className="mt-1 text-[10px] leading-snug">
+      {t.line && <div className="break-words" style={{ color: "#37474f" }}>{t.line}{t.filled?.length ? <span style={{ color: "#90a4ae" }}>（資料の表から）</span> : null}</div>}
+      {(miChip || conds.length > 0) && (
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5">
+          <span style={{ color: "#546e7a" }}>希望:</span>
+          {miChip && mi && <span className="font-bold" style={{ color: miChip.color }} title={mi.wantBy ? `希望 ${mi.wantBy} まで` : undefined}>{miChip.text}{mi.label ? `（希望 ${mi.label}）` : ""}</span>}
+          {conds.map((c) => (
+            <span key={c.key} className="font-bold" style={{ color: c.status === "ng" ? "#c62828" : c.status === "ok" ? "#2e7d32" : c.status === "consult" ? "#ef6c00" : "#90a4ae" }}>
+              {c.label}{c.status === "ng" ? "不可" : c.status === "ok" ? "○" : c.status === "consult" ? "相談" : "－"}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -856,6 +888,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                           <div className="text-[11px] text-[#455a64] mt-0.5 break-words">{body.slice(0, 4).join(" / ")}</div>
                           <ReasonChips it={it} open={!!openBreakdown[it.id]} onToggle={() => setOpenBreakdown((p) => ({ ...p, [it.id]: !p[it.id] }))} />
                           <EquipmentLine eq={it.equipment} />
+                          <TermsLine t={it.terms} />
                           {it.image_lines && it.image_lines.length > 0 && (
                             <div className="text-[10px] mt-0.5" style={{ color: "#37474f" }}>📷 {it.image_lines.slice(0, 5).join("／")}</div>
                           )}

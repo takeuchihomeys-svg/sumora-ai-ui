@@ -9,8 +9,10 @@ import { supabase } from "@/app/lib/supabase";
 import { extractPdfText } from "@/app/lib/pdf-text";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { buildPickupRows, parseAdFromText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
-import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
+import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, fillFactsFromTerms, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
 import { buildBatchEquipment } from "@/app/lib/pickup-equipment";
+import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
+import { buildPickupTerms } from "@/app/lib/pickup-terms";
 import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
 import { readPropertyImageDetail } from "@/app/lib/property-image-read";
 import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
@@ -48,7 +50,7 @@ async function loadProfile(propertyCustomerId: string | null): Promise<{ profile
   if (!propertyCustomerId) return null;
   const since = new Date(Date.now() - 180 * 86400_000).toISOString();
   const [custRes, sentRes, patRes, convsRes] = await Promise.all([
-    supabase.from("property_customers").select("rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet").eq("id", propertyCustomerId).maybeSingle(),
+    supabase.from("property_customers").select("rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet, move_in_time, created_at").eq("id", propertyCustomerId).maybeSingle(),
     supabase.from("sent_properties").select("property_name, rent, delivery, source").eq("property_customer_id", propertyCustomerId).gte("sent_at", since).limit(500),
     supabase.from("property_selection_patterns").select("selling_points, selection_label").eq("property_customer_id", propertyCustomerId).order("created_at", { ascending: false }).limit(60),
     supabase.from("conversations").select("id").eq("property_customer_id", propertyCustomerId).limit(10),
@@ -77,6 +79,9 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     const profile = loaded?.profile ?? null;
     /** 判定の材料（説明文＋AD の補い）。判定は設備の照合（回の全部の行が要る）の後で行う */
     const factsOf = new Map<number, PropertyFacts>();
+    // 2026-09-25 竹内「敷金礼金と入居時期、組み込みたい」: 資料の表（文字層）の募集の条件（listing-terms.ts・決定論・DeepSeek 0円）。
+    //   敷礼・築年は説明文に無い所だけ埋め（INITIAL_COST_UNKNOWN が 36行中33行だった）、入居時期・定期借家・入居の条件は判定の札に
+    const termsOf = new Map<number, { t: ListingTerms; filled: string[] }>();
     const { put } = await import("@vercel/blob");
     const stamp = Date.now();
     const base = `pickups/${input.batchId.replace(/\.pdf$/i, "")}`;
@@ -120,6 +125,10 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         if (ad.adMonths != null) facts.adMonths = ad.adMonths;
         else if (ad.adYen != null) facts.adYen = ad.adYen;
       }
+      if (pdfText) {
+        const t = parseListingTerms(pdfText);
+        termsOf.set(i, { t, filled: fillFactsFromTerms(facts, t) });
+      }
       factsOf.set(i, facts);
       const nDropped = dd.droppedCount.get(i) ?? 0;
       return {
@@ -155,10 +164,16 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       it.equipment = e?.saved ?? null;
       const i = dd.keep[k];
       const facts = factsOf.get(i);
+      const tm = termsOf.get(i);
       if (profile && facts) {
-        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null }); } catch { it.judgment = null; }
+        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null }); } catch { it.judgment = null; }
+      }
+      if (tm && tm.t.hasText) {
+        try { it.terms = buildPickupTerms(tm.t, profile, { equipment: e?.match ?? null, filled: tm.filled }); } catch { it.terms = null; }
       }
     });
+    console.log(JSON.stringify({ tag: "property-pickups:terms", batch: input.batchId.slice(0, 40),
+      rows: items.map((it) => it.terms ? { l: it.terms.line, f: it.terms.filled, mi: it.terms.want.moveIn?.result ?? null, c: it.terms.want.conditions.map((c) => `${c.key}:${c.status}`) } : null) }));
     if (eqBatch.wants.wants.length > 0) {
       console.log(JSON.stringify({ tag: "property-pickups:equipment", batch: input.batchId.slice(0, 40), wants: eqBatch.wants.wants.length, uncovered: eqBatch.wants.uncovered.length,
         rows: items.map((it) => it.equipment ? { ok: it.equipment.ok, ng: it.equipment.ng, un: it.equipment.unlisted, f: it.equipment.floor } : null) }));
@@ -176,8 +191,10 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
           if (ad.adMonths != null) facts.adMonths = ad.adMonths;
           else if (ad.adYen != null) facts.adYen = ad.adYen;
         }
+        const dt = text ? parseListingTerms(text) : null;
+        if (dt) fillFactsFromTerms(facts, dt);
         let judgment: Judgment | null = null;
-        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null }); } catch { judgment = null; }
+        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt }); } catch { judgment = null; }
         droppedAd.push({ pdfUrl, judgment });
       }
     }
