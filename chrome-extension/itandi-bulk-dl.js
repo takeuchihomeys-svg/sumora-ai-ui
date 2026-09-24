@@ -79,40 +79,17 @@
     return "pos_" + btn.getBoundingClientRect().top.toFixed(0);
   }
 
-  // ── 広告費・物件名の抽出 ─────────────────────────────────────────────
+  // ── 物件の事実（物件名・号室・賃料・管理費・間取り・㎡・交通・AD）の抽出 ──────────
+  // 2026-09-24 竹内「賃料と間取りも㎡数取り入れるようにする」「駅名や徒歩数も読み取れているのか」
+  //   旧: class 名（h3・[class*='name'] 等）で物件名を探したが itandi の class は css-xxxx の自動生成で当たらず全件「物件」。
+  //       賃料・間取り・㎡・駅・徒歩は読まず、AD は12段上（一覧全体）から最初の「AD/広告費」を拾うので別の物件の AD を拾い得た。
+  //   新: itandi-row-parse.js（部屋の段＝「円」と「㎡」が入る所、建物の段＝「徒歩」が入る所の文字の並びから読む）
   function extractPropertyInfo(btn) {
-    var el = btn;
-    var name = "";
-    var ad   = null;
-
-    for (var i = 0; i < 12 && el && el !== document.body; i++) {
-      el = el.parentElement;
-      var text = el.textContent;
-
-      // 物件名（まだ取得できていない場合）
-      if (!name) {
-        var nameEl = el.querySelector(
-          "h3,h4,h5,[class*='name'],[class*='title'],[class*='building'],[class*='property-name']"
-        );
-        if (nameEl) name = nameEl.textContent.trim().slice(0, 40);
-      }
-
-      // 広告費: 金額表記（例: 広告費 30,000円 / AD 1ヶ月）
-      if (!ad) {
-        var mYen = text.match(/(?:広告[費料]|AD)[^\d]*([\d,，]+)\s*円/);
-        if (mYen) { ad = mYen[1].replace(/[，,]/g, "") + "円"; }
-      }
-      if (!ad) {
-        var mMonth = text.match(/(?:広告[費料]|AD)[^\d]*([\d.]+)\s*[ヶか]月/);
-        if (mMonth) { ad = "AD " + mMonth[1] + "ヶ月分"; }
-      }
-      if (!ad) {
-        var mPct = text.match(/(?:広告[費料]|AD)[^\d]*([\d.]+)\s*%/);
-        if (mPct) { ad = "AD " + mPct[1] + "%"; }
-      }
-    }
-
-    return { name: name || "物件", ad: ad };
+    var info = null;
+    try { info = self.AxlxItandiRowParse ? self.AxlxItandiRowParse.readFromButton(btn) : null; } catch (e) { info = null; }
+    info = info || {};
+    if (!info.name) info.name = "物件";
+    return info;
   }
 
   // ── 住所から市区を抽出（bulk-dl.js と同じロジック） ──────────────────
@@ -689,12 +666,12 @@
         var sendItems = AxlxSendPairing.prepareItems(captured).items;
         var propertySummaries = sendItems.map(function (it) {
           // download属性の物件名 → extractPropertyInfo の名前 → "物件N" の優先順
-          var fallback = it.info || { name: null, ad: null };
-          var name     = it.name || fallback.name || ("物件" + it.rank);
-          var ad       = fallback.ad;
-          var lines    = ["【" + it.rank + "】" + name];
-          if (ad) lines.push("AD: " + ad);
-          return lines.join("\n");
+          // 2026-09-24: 賃料・管理費・間取り・㎡・号室・交通（駅・徒歩）・AD を一覧の行から入れる（リアプロの説明文と同じ並び）
+          var fi = it.info || {};
+          var pdfName = it.name && it.name !== "物件" ? it.name : null;
+          var infoForSummary = Object.assign({}, fi, { name: fi.name && fi.name !== "物件" ? fi.name : null });
+          if (self.AxlxItandiRowParse) return self.AxlxItandiRowParse.buildSummary(it.rank, pdfName, infoForSummary);
+          return "【" + it.rank + "】" + (pdfName || infoForSummary.name || ("物件" + it.rank));
         });
 
         lineBtn.textContent = "Blobアップ中... (1/" + sendItems.length + ")";
@@ -702,7 +679,8 @@
         // itandi: propertyInfos から構造化候補データを生成（学習ループ用）
         var propertyPool = sendItems.map(function (it) {
           var fi = it.info || {};
-          return { rank: it.rank, name: it.name || fi.name || ("物件" + it.rank), ad_months: fi.ad ? parseInt((fi.ad.match(/\d+/) || [])[0]) || null : null };
+          // 2026-09-24: 旧は「AD 100%」を 100ヶ月と数えていた → 読んだ月数（100% = 1ヶ月）をそのまま使う
+          return { rank: it.rank, name: it.name || fi.name || ("物件" + it.rank), ad_months: fi.adMonths != null ? fi.adMonths : null };
         });
         chrome.runtime.sendMessage({
           type:                "axlx-send-pdf-data-to-line",

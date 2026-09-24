@@ -1788,3 +1788,13 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 → 拡張を**再読み込み**すれば2つとも効く。
    確認は Vercel のログで `merge-pdfs:staff-mode` が出るか、
    `npx tsx --env-file=.env.local scripts/audit-sent-prop-recent.ts` の紐付きが上がるか。
+## 2026-09-24 v2.5.16 itandi の説明文に賃料・間取り・㎡・号室・交通・AD を入れる（itandi-row-parse.js）
+- 竹内「賃料と間取りも㎡数取り入れるようにする。そうじゃないとちゃんと判断できないので」「駅名や徒歩数もリアプロ itandi ともに読み取れているのか」
+- 実態: 旧 extractPropertyInfo は class 名（h3・[class*='name']）で物件名を探し、itandi の class は `itandi-bb-ui__Box css-xxxx`（自動生成）で当たらず **全件「物件」**。賃料・間取り・㎡・駅・徒歩は読まず、説明文は「【n】物件／AD」だけ → LINE グループも「【1】物件 AD 1ヶ月」。AD は12段上（一覧全体 7,000字超）から最初の「AD/広告費」を拾い、別の物件の AD を拾い得た。property_pool の ad_months は「AD 100%」を 100 と数えていた
+- 画面の作り（竹内さんのコンソール出力・2026-09-24）: 「物件資料」ボタン（DIV.CommonButton isDetail）から上へ
+  - 部屋の段 = 最初に「円」と「㎡」が両方入る所（3段上 `itandi-bb-ui__Flex`）: 募集中／物確不要／3日前／**612**／**5.7万円**／管理費／共益費／敷金／礼金／保証金／**1K**／**20.88㎡**／内見開始日／入居可能時期／**13枚**（画像枚数）／**広告費（100%・入力なし）**／取引態様／広告掲載
+  - 建物の段 = 最初に「徒歩」が入る所（8段上）: 写真の枚数／**物件名**／**所在地**／**交通の行（路線 駅 徒歩N分）**／階建・築年／管理会社／（以下 表の見出しと部屋の段）
+- 直し: `chrome-extension/itandi-row-parse.js`（UMD・`self.AxlxItandiRowParse`）を itandi-bulk-dl.js の前に読む（manifest）。class 名に頼らず文字の並びで読む。AD は部屋の段の「N枚」の次の値だけ（100% → 1ヶ月・250% → 2.5ヶ月・円表記は円）
+- 説明文（リアプロと同じ並び・サーバーの parsePropertyFacts が読める）: `【n】物件名／67,000円 [管理費]／1K 20.8㎡／405号室／交通（最大3行）／AD 1ヶ月`
+- テスト: `node chrome-extension/__tests__/itandi-row-parse.test.js`（実物の innerText・18件）
+- ⚠ 拡張の再読み込みが要る（chrome://extensions で更新）。サーバー側でも PDF の文字層から補う（itandi の作業で並行）
