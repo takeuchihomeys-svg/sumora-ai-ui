@@ -44,6 +44,9 @@ console.log("── ★ 元付資料の文字から AD を読む（2026-09-24 �
   t("★ 「AD100%」は1ヶ月", parseAdFromText("AD100%").adMonths === 1);
   t("★ 「ＡＤ１５０％」（全角）は1.5ヶ月", parseAdFromText("ＡＤ１５０％").adMonths === 1.5);
   t("★ 「AD 50,000円」は円", JSON.stringify(parseAdFromText("AD 50,000円")) === JSON.stringify({ adMonths: null, adYen: 50000 }));
+  // 2026-09-24 竹内「250% は家賃の2.5ヶ月分・20,000円は AD の報酬額」（リアプロの AD 列の実物）
+  t("★ 「AD 250%」は2.5ヶ月", parseAdFromText("広告料\nAD 250% [備考有]").adMonths === 2.5);
+  t("★ 「AD 20,000円」は報酬額", JSON.stringify(parseAdFromText("AD 20,000円")) === JSON.stringify({ adMonths: null, adYen: 20000 }));
   t("★ AD の記載が無ければ null", JSON.stringify(parseAdFromText("賃料 58,000円 敷金 1ヶ月")) === JSON.stringify({ adMonths: null, adYen: null }));
   t("★ 空・null は null", parseAdFromText(null).adMonths === null && parseAdFromText("").adYen === null);
   const rows = buildPickupRows({ batchId: "b", propertyCustomerId: null, conversationId: null, customerName: null, site: null },

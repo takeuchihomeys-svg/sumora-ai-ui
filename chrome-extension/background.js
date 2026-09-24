@@ -2367,6 +2367,14 @@ async function _pollAndRunBatch() {
     var json = await res.json();
     if (!json.command) return;
     var cmd = json.command;
+    // 2026-09-24 竹内「ブレインモードにしているのに 11:00 の自動モードが連動していた。ブレインモードならブレインモードのままで、
+    //   AIX モード（自動便）は連動されない」: ブレインモード中は時刻起動の自動便（auto_schedule）を実行しない。
+    //   pending のまま残すと後でモードを戻した時に古い便が走るので、見送りとして閉じる（画面の履歴に理由が残る）
+    if (cmd.command_type !== "stop_all" && cmd.payload && cmd.payload.source === "auto_schedule" && await isBrainModeOn()) {
+      console.log("[batch] ブレインモード中 → 自動便を見送り: " + cmd.id);
+      await _updateBatchCommand(cmd.id, { status: "cancelled", error_message: "ブレインモード中のため自動便（AIX連動）は実行しない", completed_at: new Date().toISOString() });
+      return;
+    }
     // Fix 6: stop_all は batchRunning ロック中でも即時にフラグをセットする。
     // 既存の _runBatchSearch 冒頭でも処理されるが、ここで先行してフラグを立てることで
     // 実行中バッチへのシグナル到達を早める。

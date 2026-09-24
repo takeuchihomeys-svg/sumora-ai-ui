@@ -41,6 +41,12 @@
 - ⚠ Vercel: `next.config.ts` の `outputFileTracingIncludes["/api/merge-pdfs"]` に pdfjs の cmaps・standard_fonts と `@napi-rs/canvas*` を同梱、`serverExternalPackages` に両方。**本番でネイティブが動くかは初回デプロイのログで確認**（落ちれば `[pdf-render] 画像にできない` が出て文字層だけで進む＝止まらない）
 - ⚠ 日本語フォントが PDF に埋め込まれていない時は文字が抜けた画像になる（cmaps/standard_fonts で大半は出る想定・実物で確認）
 - ⚠ **本番の初回（2026-09-24 10:51 JST・ブレインモードの送信）で文字層も画像も全滅**: `Setting up fake worker failed: Cannot find module '.../pdfjs-dist/legacy/build/pdf.worker.mjs'`。disableWorker でも pdfjs は worker ファイルを動的 import する（fake worker）ので、`outputFileTracingIncludes` に `./node_modules/pdfjs-dist/legacy/build/**/*` を足した。記録自体（property_pickups 3行・判定 pass・PDF の Blob）は入っていた＝fail-open は効いた
+- **AD が5件中1件しか取れていなかった**（竹内「今回、他の物件も AD あった」・v2.5.13）: 実物は AD 列が「250% [備考有]」「1ヶ月」「20,000円」。候補プールは5件全部 `read_mode=heuristic` ＝ **見出し行が見つからず**、予備の読み方は「Nヶ月」だけ拾っていた。
+  - 竹内の定義: **250% ＝ 家賃の2.5ヶ月分／20,000円 ＝ AD の報酬額**
+  - 直し①（拡張）: 見出し行の探し方を多段に（同じ table の th/td「AD」→ 親 table 3段 → 前の行を遡る → 文書全体で row より前の最後の「AD」セル → th 最多行）。コンソール `[AXLX bulk-dl] 列見出し(<strategy>)` で当たった手段が分かる。予備の読み方でも「N%」を月数に
+  - 直し②（サーバー・全モード）: merge-pdfs `enrichSummariesWithPdfAd` が、説明文に AD の無い物件だけ資料（元付2ページ目）の文字層から「AD Nヶ月／N円」を足す（🌟 の順位付け・LINE 本文・sent_properties・売上サポの判定が全部これを読む）。ログ `merge-pdfs:ad-from-pdf`
+  - 実機確認: 次の送信でコンソールの `列見出し(...)` と、LINE 本文に 250%→「AD 2.5ヶ月」・20,000円→「AD 20,000円」が出るか
+- **ブレインモード中は自動便（11:00／17:00 の auto_schedule）を実行しない**（竹内「ブレインモードならブレインモードのままで AIX モードは連動されない」・v2.5.13）: background `_pollAndRunBatch` が auto_schedule のコマンドを `cancelled`（理由付き）で閉じる。pending に残すと後でモードを戻した時に古い便が走るため。手動の一括検索・AIX 起点（source=aix）の検索は今まで通り
 - **🌟 の順位付けは DeepSeek**（竹内 2026-09-24「ここ Haiku じゃなくて DeepSeek 使う」）: merge-pdfs `rankAndAnnotateSummaries` → `rankWithDeepSeek`（deepseek-flash・reasoning low・文字だけ・25秒）。文は `buildRankPrompt` で DeepSeek と失敗時の Claude Haiku が同じ物を使う。費用は llm_usage_logs action=property_rank。🌟★ は「お客様の条件への合致→AD→㎡単価→広さ→駅距離」の順で選ぶ（物件検索ブレインの点数とは別の判断・今回は一致していた）
 - 売上サポの見え方（竹内「売上サポに反映されていない。紐付け済みのお客さんの UI が LINE チャットに変わっていない」）: ピックアップは別タブに入っていて一覧からは見えなかった → アナウンス／一覧の行に **「🧠 物件 N件 未確認」** の印を出し、押すとピックアップタブでそのお客様の会話風画面が開く（`PickupReview` の `focusKey`）。タブ名にも未確認のお客様数
 - **印刷用 PDF は物件ごとに2ページ組**（竹内 2026-09-24「奇数ページ＝弊社に帯替えされた資料・偶数ページ＝元付業者の資料で AD の記載がある。1&2・3&4 がセット」）

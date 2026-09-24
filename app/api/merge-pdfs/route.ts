@@ -102,6 +102,39 @@ async function lookupCustomerByName(customerName: string | null | undefined): Pr
   return hits[0].id;
 }
 
+/**
+ * 説明文に AD が無い物件は、資料の文字層（元付の2ページ目に AD が載る）から「AD Nヶ月」を足す。
+ * 拡張の列読みと同じ行の形（"AD 1ヶ月" / "AD 50,000円"）にして、parsePropertyFacts がそのまま読めるようにする。
+ * 文字層の取り出しは純 JS（外部 API なし）。失敗・文字なしは元の説明文のまま（fail-open）。最大10件。
+ */
+async function enrichSummariesWithPdfAd(summaries: string[], pdfBase64List: Array<string | null>): Promise<string[]> {
+  const AD_RE = /(?:^|\n)\s*(?:AD|ＡＤ|広告料)\s*[\d０-９]/;
+  const targets = summaries.map((s, i) => ({ s, i })).filter(({ s, i }) => !AD_RE.test(s) && !!pdfBase64List[i]).slice(0, 10);
+  if (targets.length === 0) return summaries;
+  const out = [...summaries];
+  let added = 0;
+  try {
+    const { extractPdfText } = await import("@/app/lib/pdf-text");
+    const { parseAdFromText } = await import("@/app/lib/property-pickups");
+    await Promise.all(targets.map(async ({ s, i }) => {
+      try {
+        const t = await extractPdfText(pdfBase64List[i] as string, { maxPages: 2, maxChars: 8000 });
+        if (!t.hasText) return;
+        const ad = parseAdFromText(t.text);
+        const line = ad.adMonths != null ? `AD ${String(ad.adMonths).replace(/\.0$/, "")}ヶ月` : ad.adYen != null ? `AD ${ad.adYen.toLocaleString()}円` : null;
+        if (!line) return;
+        out[i] = s.replace(/\s*$/, "") + `\n${line}`;
+        added++;
+      } catch { /* その物件は元のまま */ }
+    }));
+  } catch (e) {
+    console.warn("[merge-pdfs] 資料からの AD 補完をスキップ:", e instanceof Error ? e.message : String(e));
+    return summaries;
+  }
+  console.log(JSON.stringify({ tag: "merge-pdfs:ad-from-pdf", candidates: targets.length, added }));
+  return out;
+}
+
 /** 🌟 の順位付けに渡す文（DeepSeek と、失敗時の Claude で**同じ文**を使う） */
 function buildRankPrompt(summaries: string[], customerConditions?: string | null): string {
   const conditionsBlock = customerConditions
@@ -468,9 +501,14 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        const rankedSummaries = property_summaries && property_summaries.length > 0
-          ? await rankAndAnnotateSummaries(property_summaries, customer_conditions)
+        // 2026-09-24 竹内「今回、他の物件も AD あった」: 表の AD 列から取れなかった物件は、資料（元付の2ページ目）の文字から AD を補う。
+        //   🌟 の順位付け・LINE の本文・送付記録（sent_properties.ad_months）・売上サポの判定が全部この説明文を読むので、ここで足す。
+        const summariesWithAd = property_summaries && property_summaries.length > 0
+          ? await enrichSummariesWithPdfAd(property_summaries, pdfBase64List)
           : property_summaries;
+        const rankedSummaries = summariesWithAd && summariesWithAd.length > 0
+          ? await rankAndAnnotateSummaries(summariesWithAd, customer_conditions)
+          : summariesWithAd;
         const lineText = buildLineMessage(
           blob.url,
           name,

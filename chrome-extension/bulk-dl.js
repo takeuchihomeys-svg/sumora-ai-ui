@@ -610,25 +610,55 @@
   //   ⚠ 見出しの文言・列の並びは実機で確かめていない。見出しが見つからない項目は**今までの読み方に戻る**（推測で別の列を触らない）。
   //   使った読み方は data.read_mode（header / heuristic）に残し、候補プールで率を数えられるようにする。
   var _headerLogged = false;
+  /** セルの文字が「AD」か（th でも td でも） */
+  function _isAdCell(el) { return !!el && el.textContent.replace(/\s+/g, "").toUpperCase() === "AD"; }
+  /**
+   * 見出し行を探す（2026-09-24 実測: 5件全部 read_mode=heuristic ＝ 今までの「row.closest('table') の th」では見つからなかった。
+   *   リアプロは見出しが td だったり、見出しとデータ行が別の table だったりし得る）。順に:
+   *   ① 同じ table の中で「AD」のセル（th/td）がある行 ② 親の table（3段まで） ③ 同じ table 内で row より前の行を遡る
+   *   ④ 文書全体で row より前にある最後の「AD」セルの行。見つかった手段を strategy に残す
+   */
+  function _findHeadRow(row) {
+    var table = row && row.closest("table");
+    var t = table, depth = 0;
+    while (t && depth < 4) {
+      var cells = Array.from(t.querySelectorAll("th,td"));
+      for (var i = 0; i < cells.length; i++) if (_isAdCell(cells[i])) return { headRow: cells[i].parentElement, strategy: depth === 0 ? "same_table" : "parent_table_" + depth };
+      t = t.parentElement ? t.parentElement.closest("table") : null;
+      depth++;
+    }
+    // ③ 前の行を遡る（同じ tbody / table）
+    var prev = row ? row.previousElementSibling : null;
+    while (prev) {
+      var pc = Array.from(prev.querySelectorAll("th,td"));
+      for (var j = 0; j < pc.length; j++) if (_isAdCell(pc[j])) return { headRow: prev, strategy: "previous_row" };
+      prev = prev.previousElementSibling;
+    }
+    // ④ 文書全体: row より前にある最後の「AD」セル
+    if (row) {
+      var all = Array.from(document.querySelectorAll("th,td")).filter(_isAdCell);
+      var last = null;
+      for (var k = 0; k < all.length; k++) {
+        if (all[k].compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) last = all[k];
+      }
+      if (last) return { headRow: last.parentElement, strategy: "document_preceding" };
+    }
+    // 見出しに AD が無い: th が一番多い行
+    if (table) {
+      var best = null, bestN = 0;
+      Array.from(table.querySelectorAll("tr")).forEach(function (tr) {
+        var n = tr.querySelectorAll("th").length;
+        if (n > bestN) { bestN = n; best = tr; }
+      });
+      if (best) return { headRow: best, strategy: "most_th" };
+    }
+    return null;
+  }
   function findHeaderIndex(row) {
     try {
-      var table = row && row.closest("table");
-      if (!table) return null;
-      var ths = Array.from(table.querySelectorAll("th"));
-      if (!ths.length) return null;
-      // AD の th がある行を見出し行とみなす（score-overlay と同じ）。無ければ th が一番多い行
-      var headRow = null;
-      for (var i = 0; i < ths.length; i++) {
-        if (ths[i].textContent.replace(/\s+/g, "").toUpperCase() === "AD") { headRow = ths[i].parentElement; break; }
-      }
-      if (!headRow) {
-        var bestN = 0;
-        Array.from(table.querySelectorAll("tr")).forEach(function (tr) {
-          var n = tr.querySelectorAll("th").length;
-          if (n > bestN) { bestN = n; headRow = tr; }
-        });
-      }
-      if (!headRow) return null;
+      var found = _findHeadRow(row);
+      if (!found) { if (!_headerLogged) { _headerLogged = true; console.log("[AXLX bulk-dl] 列見出し: 見つからない → 今までの読み方"); } return null; }
+      var headRow = found.headRow;
       var labels = Array.from(headRow.children).map(function (c) { return c.textContent.replace(/\s+/g, "").toUpperCase(); });
       var find = function (re) { for (var k = 0; k < labels.length; k++) if (re.test(labels[k])) return k; return -1; };
       var idx = {
@@ -644,7 +674,7 @@
       var any = Object.keys(idx).some(function (k) { return idx[k] >= 0; });
       if (!_headerLogged) {
         _headerLogged = true;
-        console.log("[AXLX bulk-dl] 列見出し: " + (any ? JSON.stringify(idx) + " 見出し=" + JSON.stringify(labels) : "見つからない → 今までの読み方"));
+        console.log("[AXLX bulk-dl] 列見出し(" + found.strategy + "): " + (any ? JSON.stringify(idx) + " 見出し=" + JSON.stringify(labels) : "AD 等の見出しが無い → 今までの読み方"));
       }
       return any ? idx : null;
     } catch (_) { return null; }
@@ -754,8 +784,11 @@
     if (adLine) _adStart = card.texts.length;   // 見出しから取れた時は下の探索をしない
     for (var _ai = _adStart; _ai < card.texts.length; _ai++) {
       var _at = card.texts[_ai].trim();
-      var _am = _at.match(/^(\d+)[ヶか]月$/);
+      var _am = _at.match(/^(\d+(?:\.\d+)?)[ヶか]月$/);
       if (_am) { adLine = "AD " + _at; break; }
+      // 2026-09-24 竹内「250% は家賃の2.5ヶ月分」: リアプロの AD 列は「250%」「100% [備考有]」の形もある（家賃・敷礼のセルに % は無い）
+      var _ap = _at.match(/^(\d+(?:\.\d+)?)\s*[%％]/);
+      if (_ap) { adLine = "AD " + String(parseFloat(_ap[1]) / 100).replace(/\.0$/, "") + "ヶ月"; break; }
     }
     // 旧形式: "AD 2ヶ月" や "広告料 xxxxxx円" が同一セルに入っている場合
     if (!adLine) {
@@ -844,6 +877,9 @@
         // 2026-09-23: 小数（0.5ヶ月・1.5ヶ月）も取る。円形式は ad_yen に分ける（itandi 側の「AD 30,000円→30ヶ月」の変換ミスを繰り返さない）
         var _am2 = _at2.match(/^(\d+(?:\.\d+)?)[ヶか]月$/);
         if (_am2) { data.ad_months = parseFloat(_am2[1]); break; }
+        // 2026-09-24 竹内「250% は家賃の2.5ヶ月分・20,000円は AD の報酬額」: % は月数に
+        var _ap2 = _at2.match(/^(\d+(?:\.\d+)?)\s*[%％]/);
+        if (_ap2) { data.ad_months = parseFloat(_ap2[1]) / 100; break; }
         var _ay2 = /^(AD|広告料)/.test(_at2) ? _at2.replace(/[,，]/g, "").match(/(\d+)\s*円/) : null;
         if (_ay2) { data.ad_yen = parseInt(_ay2[1]); break; }
       }
