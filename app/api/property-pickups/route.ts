@@ -9,6 +9,7 @@ import { pickCustomerBest } from "@/app/lib/pickup-best";
 import { sortForReview } from "@/app/lib/pickup-review-order";
 import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { extractImageWants, dedupeWantsByTopic, imageAnalysisNeed, type ImageWant } from "@/app/lib/image-wants";
+import { loadConditionSummary } from "@/app/lib/condition-summary-server";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,8 @@ type Row = {
   equipment?: Record<string, unknown> | null;
   /** 2026-09-25 資料の表の募集の条件と希望の照合（pickup-terms.ts の PickupTerms） */
   terms?: Record<string, unknown> | null;
+  /** 2026-09-25 物件の場所と希望のエリア・通勤の照合（area-want.ts の PickupLocation） */
+  location?: Record<string, unknown> | null;
 };
 type Note = { id: number; created_at: string; property_customer_id: string; batch_id: string | null; text: string; author: string | null };
 
@@ -189,7 +192,7 @@ async function buildList(since: string) {
 // ── 詳細（開いたお客様1人分・直近 N 回分＋送った履歴） ─────────────────────────────
 async function buildDetail(pcid: string | null, conv: string | null, nBatches: number) {
   let q = supabase.from("property_pickups")
-    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms")
+    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms, location")
     .order("created_at", { ascending: false }).limit(300);
   q = pcid ? q.eq("property_customer_id", pcid) : q.eq("conversation_id", conv as string);
   let sq = supabase.from("sent_properties").select("id, property_name, room_no, channel, delivery, source, sent_at, image_url, pickup_id").order("sent_at", { ascending: false }).limit(40);
@@ -198,11 +201,14 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   const pcRes = pcid
     ? supabase.from("property_customers").select("preferences, ng_points, other_requests, additional_conditions").eq("id", pcid).maybeSingle()
     : Promise.resolve({ data: null });
-  const [pk, notesRes, sentRes, condRes] = await Promise.all([
+  // 2026-09-25 竹内「文章の部分も要約できるように」: 条件の要約（決定論＋保存済みの DeepSeek の要約・ここでは DeepSeek を呼ばない）と照らせない条件
+  const sumRes = pcid ? loadConditionSummary(pcid, { allowLlm: false }).catch(() => null) : Promise.resolve(null);
+  const [pk, notesRes, sentRes, condRes, sum] = await Promise.all([
     q,
     pcid ? supabase.from("property_pickup_notes").select("id, created_at, property_customer_id, batch_id, text, author").eq("property_customer_id", pcid).order("created_at", { ascending: true }).limit(200) : Promise.resolve({ data: [] }),
     sq,
     pcRes,
+    sumRes,
   ]);
   if (pk.error) return { ok: false, error: pk.error.message };
   const rows = (pk.data ?? []) as Row[];
@@ -245,6 +251,7 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       has_more_batches: order.length > nBatches,
       best,
       image_need: imageNeed,
+      condition_summary: sum ? { line: sum.line, uncheckable: sum.uncheckable, ai: sum.ai.length > 0 } : null,
     },
   };
 }

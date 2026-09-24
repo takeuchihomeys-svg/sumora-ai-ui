@@ -17,6 +17,26 @@ import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
 import { readPropertyImageDetail } from "@/app/lib/property-image-read";
 import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
 import { dedupeSameBuilding, dedupeNoteJa } from "@/app/lib/pickup-dedupe";
+import { parseAreaWant, parseCommuteWants, buildPropertyLocation, matchArea, matchCommute, locationReasonCodes, toPickupLocation, type AreaWant, type CommuteWant, type PickupLocation } from "@/app/lib/area-want";
+import { parseListingText } from "@/app/lib/listing-text";
+
+/**
+ * 2026-09-25 自動の読み取り（pickup-auto-analyze）を始めてよい締め切り（recordPickupBatch の開始から）。merge-pdfs の maxDuration 300秒に収める。
+ *   反証レビューで 150→110 秒: recordPickupBatch は merge-pdfs の結合・順位付け・LINE 送信の後（waitUntil）に始まり、その時間も 300秒に入る。
+ *   1件の読み取りは最悪 取得15＋読み40＋読み直し90＋希望の照合30 秒なので、始める線を早めて途中で切られる読みを減らす
+ *   （切られても property_pickups の行は先に入れてあるので記録は残る）
+ */
+const AUTO_ANALYZE_DEADLINE_MS = 110_000;
+
+type LocationWants = { area: AreaWant; commute: CommuteWant[] };
+/** 物件の場所（説明文・文字層）と希望のエリア・通勤を照らす（決定論・DeepSeek 0円） */
+function locateItem(summary: string, pdfText: string | null, w: LocationWants | null): { codes: string[]; saved: PickupLocation | null } {
+  const loc = buildPropertyLocation(summary, pdfText);
+  if (!w) return { codes: [], saved: loc.stations.length || loc.ward ? toPickupLocation(loc, null, []) : null };
+  const area = matchArea(w.area, loc);
+  const commute = matchCommute(w.commute, loc);
+  return { codes: locationReasonCodes(area, commute), saved: toPickupLocation(loc, area, commute) };
+}
 
 /** 画像を読む上限（1回分）。DeepSeek は1枚 約$0.002〜0.004・15〜25秒。10件を並列で読み、merge-pdfs の 90秒に収める */
 const IMAGE_READ_MAX_PER_BATCH = 10;
@@ -46,24 +66,33 @@ async function resolveConversationId(propertyCustomerId: string | null, conversa
 }
 
 /** 判定のプロフィール（judge API と同じ材料）と、設備の希望を読む条件欄（customer） */
-async function loadProfile(propertyCustomerId: string | null): Promise<{ profile: CustomerProfile; customer: CustomerLike } | null> {
+async function loadProfile(propertyCustomerId: string | null): Promise<{ profile: CustomerProfile; customer: CustomerLike; location: LocationWants | null } | null> {
   if (!propertyCustomerId) return null;
   const since = new Date(Date.now() - 180 * 86400_000).toISOString();
   const [custRes, sentRes, patRes, convsRes] = await Promise.all([
-    supabase.from("property_customers").select("rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet, move_in_time, created_at").eq("id", propertyCustomerId).maybeSingle(),
+    // 2026-09-25: 広さ・条件フォームの原文（間取りの「も可」）・エリア・通勤も引く
+    supabase.from("property_customers").select("rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet, move_in_time, created_at, floor_area_min, raw_format_text, desired_area, commute_station, commute_minutes").eq("id", propertyCustomerId).maybeSingle(),
     supabase.from("sent_properties").select("property_name, rent, delivery, source").eq("property_customer_id", propertyCustomerId).gte("sent_at", since).limit(500),
     supabase.from("property_selection_patterns").select("selling_points, selection_label").eq("property_customer_id", propertyCustomerId).order("created_at", { ascending: false }).limit(60),
     supabase.from("conversations").select("id").eq("property_customer_id", propertyCustomerId).limit(10),
   ]);
-  const customer = custRes.data as CustomerLike | null;
+  const customer = custRes.data as (CustomerLike & { desired_area?: string | null; commute_station?: string | null; commute_minutes?: number | null }) | null;
   if (!customer) return null;
   const convIds = ((convsRes.data ?? []) as Array<{ id: string }>).map((c) => c.id);
   const profit = await loadCustomerProfit({ propertyCustomerId, conversationIds: convIds });
-  return { profile: buildCustomerProfile(customer, (sentRes.data ?? []) as SentRowLike[], (patRes.data ?? []) as PatternRowLike[], profit.discountMedianYen), customer };
+  // 2026-09-25 エリア（desired_area＋自由文の「以外・より北」）と通勤（列・自由文の「◯◯まで30分」）
+  const area = parseAreaWant(customer.desired_area, [customer.preferences, customer.other_requests].filter(Boolean).join("\n"));
+  const commute = parseCommuteWants(customer);
+  return {
+    profile: buildCustomerProfile(customer, (sentRes.data ?? []) as SentRowLike[], (patRes.data ?? []) as PatternRowLike[], profit.discountMedianYen),
+    customer,
+    location: area.any || commute.length ? { area, commute } : null,
+  };
 }
 
-export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; deduped: number; noTextDraw: number; error: string | null }> {
-  const out = { rows: 0, withText: 0, withBlob: 0, withImage: 0, imageRead: 0, deduped: 0, noTextDraw: 0, error: null as string | null };
+export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; deduped: number; noTextDraw: number; autoAnalyzed: number; autoLevel: string | null; summaryCalled: boolean; error: string | null }> {
+  const out = { rows: 0, withText: 0, withBlob: 0, withImage: 0, imageRead: 0, deduped: 0, noTextDraw: 0, autoAnalyzed: 0, autoLevel: null as string | null, summaryCalled: false, error: null as string | null };
+  const startedAt = Date.now();
   try {
     if (input.summaries.length === 0) return out;
     // 2026-09-24 竹内「同じ建物だと平米数2㎡以内だと家賃がひくい部屋をここにいれて、他の部屋は売上サポに飛ばさなくて大丈夫。
@@ -82,6 +111,8 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     // 2026-09-25 竹内「敷金礼金と入居時期、組み込みたい」: 資料の表（文字層）の募集の条件（listing-terms.ts・決定論・DeepSeek 0円）。
     //   敷礼・築年は説明文に無い所だけ埋め（INITIAL_COST_UNKNOWN が 36行中33行だった）、入居時期・定期借家・入居の条件は判定の札に
     const termsOf = new Map<number, { t: ListingTerms; filled: string[] }>();
+    // 2026-09-25 竹内「エリアの部分、把握できれば理想」「通勤の部分も沿線の知識」: 物件の場所と希望のエリア・通勤の照合（決定論）
+    const locOf = new Map<number, { codes: string[]; saved: PickupLocation | null }>();
     const { put } = await import("@vercel/blob");
     const stamp = Date.now();
     const base = `pickups/${input.batchId.replace(/\.pdf$/i, "")}`;
@@ -128,8 +159,11 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       if (pdfText) {
         const t = parseListingTerms(pdfText);
         termsOf.set(i, { t, filled: fillFactsFromTerms(facts, t) });
+        // 2026-09-25 広さ（説明文に無い時は資料の文字層の専有面積）
+        if (facts.areaSqm == null) { const a = parseListingText(pdfText).areaSqm; if (a != null) facts.areaSqm = a; }
       }
       factsOf.set(i, facts);
+      locOf.set(i, locateItem(summary, pdfText, loaded?.location ?? null));
       const nDropped = dd.droppedCount.get(i) ?? 0;
       return {
         summary, pdfUrl: input.pdfUrls[i] ?? null, pdfBlobUrl, pdfText, judgment: null, pageImageUrl, agentImageUrl, imageLines: null, imageFacts: null,
@@ -165,8 +199,10 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       const i = dd.keep[k];
       const facts = factsOf.get(i);
       const tm = termsOf.get(i);
+      const lc = locOf.get(i);
+      it.location = lc?.saved ?? null;
       if (profile && facts) {
-        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null }); } catch { it.judgment = null; }
+        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null, locationCodes: lc?.codes ?? null }); } catch { it.judgment = null; }
       }
       if (tm && tm.t.hasText) {
         try { it.terms = buildPickupTerms(tm.t, profile, { equipment: e?.match ?? null, filled: tm.filled }); } catch { it.terms = null; }
@@ -193,8 +229,10 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         }
         const dt = text ? parseListingTerms(text) : null;
         if (dt) fillFactsFromTerms(facts, dt);
+        if (facts.areaSqm == null && text) { const a = parseListingText(text).areaSqm; if (a != null) facts.areaSqm = a; }
+        const dl = locateItem(input.summaries[d.index], text, loaded?.location ?? null);
         let judgment: Judgment | null = null;
-        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt }); } catch { judgment = null; }
+        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt, locationCodes: dl.codes }); } catch { judgment = null; }
         droppedAd.push({ pdfUrl, judgment });
       }
     }
@@ -235,9 +273,16 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       batchId: input.batchId, propertyCustomerId: input.propertyCustomerId, conversationId,
       customerName: input.customerName, site: input.site,
     }, items);
-    const { error } = await supabase.from("property_pickups").insert(rows);
+    let ins = await supabase.from("property_pickups").insert(rows).select("id");
+    // 2026-09-25: location 列を本番に足す前に動いても記録は残す（列が無い時は location を外して入れ直す）
+    if (ins.error && /location/.test(ins.error.message)) {
+      console.warn("[property-pickups] location 列が無いので外して記録:", ins.error.message);
+      ins = await supabase.from("property_pickups").insert(rows.map(({ location: _l, ...r }) => r)).select("id");
+    }
+    const { error } = ins;
     if (error) { out.error = error.message; return out; }
     out.rows = rows.length;
+    const insertedIds = ((ins.data ?? []) as Array<{ id: number }>).map((r) => r.id);
     out.withText = rows.filter((r) => r.pdf_has_text).length;
     out.withBlob = rows.filter((r) => r.pdf_blob_url).length;
     // 画像から読んだ条件は、引用返信・ブレインが同じ表（image_details）から引けるように残す（既存の仕組みと同じ鍵＝画像の URL）
@@ -247,6 +292,20 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       const { error: dErr } = await supabase.from("image_details").upsert(detailRows, { onConflict: "image_url" });
       if (dErr) console.warn("[property-pickups] image_details に残せない:", dErr.message);
     }
+    // 2026-09-25 竹内「売上サポに送られたら、条件指定あれば間取り図とか設備も自動的に読み取る」「文章の部分も要約できるように」:
+    //   ①画像でしか分からない希望があるお客様だけ、この回の物件を「🔍 画像で分析」と同じ形で自動で読む（pickup-auto-analyze）
+    //   ②条件の自由文のうち決定論で読めない節だけ DeepSeek で要約して保存（文が変わっていなければ呼ばない）
+    //   どちらも同じ waitUntil の中（応答は待たせない）・失敗しても記録は残す
+    const [auto, summary] = await Promise.allSettled([
+      import("@/app/lib/pickup-auto-analyze").then(({ autoAnalyzeBatch }) => autoAnalyzeBatch({
+        ids: insertedIds, propertyCustomerId: input.propertyCustomerId, conversationId, deadlineAt: startedAt + AUTO_ANALYZE_DEADLINE_MS,
+      })),
+      input.propertyCustomerId
+        ? import("@/app/lib/condition-summary-server").then(({ loadConditionSummary }) => loadConditionSummary(input.propertyCustomerId, { allowLlm: true, conversationId }))
+        : Promise.resolve(null),
+    ]);
+    if (auto.status === "fulfilled") { out.autoAnalyzed = auto.value.analyzed; out.autoLevel = auto.value.level; }
+    if (summary.status === "fulfilled" && summary.value) out.summaryCalled = summary.value.called;
     return out;
   } catch (e) {
     out.error = e instanceof Error ? e.message : String(e);

@@ -37,6 +37,9 @@ import { extractImageWants, dedupeWantsByTopic, type ImageWant, type WantCheck }
 import { extractPdfText } from "../app/lib/pdf-text";
 import { parseAdFromText } from "../app/lib/property-pickups";
 import { enrichSummariesFromPdf } from "../app/lib/pickup-rank";
+import { parseAreaWant, parseCommuteWants, buildPropertyLocation, matchArea, matchCommute, locationReasonCodes, toPickupLocation, type PickupLocation } from "../app/lib/area-want";
+import { parseListingText } from "../app/lib/listing-text";
+import { buildConditionSummary, uncheckableLabels, formatSummaryLine } from "../app/lib/condition-summary";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const argv = process.argv.slice(2);
@@ -126,8 +129,10 @@ async function fetchBase64(url: string): Promise<string | null> {
 
 // ───────────────────────── 種類ごとに「どこに出たか」 ─────────────────────────
 
-type ResultRow = { site: string; rank: number; summary: string; reasonCodes: string[]; equipment: PickupEquipment | null; analysisChecks?: WantCheck[] | null };
-type Seen = { kind: Kind; inCustomer: string | null; codes: number; noMaterial: number; equip: number; rank: boolean; wants: string[]; analysisDecided: number; shownUncovered: boolean };
+type ResultRow = { site: string; rank: number; summary: string; reasonCodes: string[]; equipment: PickupEquipment | null; analysisChecks?: WantCheck[] | null; location?: PickupLocation | null };
+// 2026-09-25 判定の穴埋め後: judged＝判定がこの種類を読んでいる（札が付かないのは今回の物件が範囲内なだけ 例: 家賃下限）／
+//   uncheckShown＝売上サポの「📝 条件の要約」の照らせない条件に出る（condition-summary）／loc＝📍（property_pickups.location）に照合が出た物件数／notNeeded＝喫煙・家具家電（竹内さんが不要と言った）
+type Seen = { kind: Kind; inCustomer: string | null; codes: number; noMaterial: number; equip: number; rank: boolean; wants: string[]; analysisDecided: number; shownUncovered: boolean; judged: boolean; uncheckShown: boolean; loc: number; notNeeded: boolean };
 
 /**
  * 判定はあるのに物件側の値が読めていない（材料なし）かを種類ごとに見る。説明文を本番と同じ parsePropertyFacts で読む。
@@ -143,7 +148,8 @@ const MATERIAL: Record<string, (summary: string, codes: string[]) => boolean> = 
   floor_plan: (s) => parsePropertyFacts(s).floorPlan != null,
   floor_plan_text_only: (s) => parsePropertyFacts(s).floorPlan != null,
   building_age: (s, codes) => codes.some((c) => /^BUILDING_AGE_/.test(c)) || parsePropertyFacts(s).buildingAge != null,
-  area_sqm: (s) => /d+(?:.d+)?s*(?:㎡|m2|平米)/i.test(s.normalize("NFKC")),
+  // 2026-09-25: 正規表現の「\」が抜けていて常に「材料なし」だった。広さは資料の文字層でも埋める（SQM_ の札が付けば材料あり）
+  area_sqm: (s, codes) => codes.some((c) => /^SQM_(?!UNKNOWN)/.test(c)) || /\d+(?:\.\d+)?\s*(?:㎡|m2|平米)/i.test(s.normalize("NFKC")),
 };
 
 /** 設備の照合の「設備」の種類から外すキー（別の種類で数える） */
@@ -162,36 +168,57 @@ function whereShown(x: Ctx, rows: ResultRow[], wants: ImageWant[]): Seen[] {
     const wantHits = wants.filter((w) => (k.wantRe ? k.wantRe.test(w.text) : false) || (ev.length >= 2 && !/^[a-z_]+=/.test(ev) && w.text.includes(ev.slice(0, 6)))).map((w) => w.id);
     const analysisDecided = rows.filter((r) => (r.analysisChecks ?? []).some((c) => wantHits.includes(c.id) && c.result !== "unknown")).length;
     const shownUncovered = rows.some((r) => (r.equipment?.uncovered ?? []).some((u) => ev && u.includes(ev.slice(0, 4))));
-    return { kind: k, inCustomer, codes, noMaterial, equip, rank, wants: wantHits, analysisDecided, shownUncovered };
+    const judged = !!k.J?.(x);
+    const uncheckShown = !!k.U?.(x);
+    const isLoc = ["area", "area_multi", "area_text", "commute"].includes(k.id);
+    const loc = !isLoc ? 0 : rows.filter((r) => k.id === "commute" ? (r.location?.commute ?? []).length > 0 : !!r.location?.area).length;
+    return { kind: k, inCustomer, codes, noMaterial, equip, rank, wants: wantHits, analysisDecided, shownUncovered, judged, uncheckShown, loc, notNeeded: !!k.notNeeded };
   });
+}
+
+/** 旧基準（2026-09-24 の漏れテスト）: 札・設備・🌟・画像のどこにも出ない＝漏れ（「照らせない条件」の表示だけ・不要も漏れに数えていた） */
+function oldLeak(s: Seen): boolean { return !(s.codes > 0 || s.equip > 0 || s.rank || s.wants.length > 0); }
+/** 今の基準: 札・設備・📍・判定が読んでいる・画像・照らせない条件に表示・🌟・不要 のどれにも無い＝漏れ（audit-condition-coverage と同じ見方） */
+function verdictOf(s: Seen): { leak: boolean; ja: string } {
+  if (s.notNeeded) return { leak: false, ja: "不要（喫煙・家具家電）" };
+  if (s.codes > 0 || s.equip > 0 || s.loc > 0) return { leak: false, ja: s.noMaterial > 0 && s.codes === 0 ? "届いた（札は材料なし）" : "届いた（札・設備・📍）" };
+  if (s.judged) return { leak: false, ja: "判定が読んでいる（今回の物件は札の対象外）" };
+  if (s.wants.length > 0) return { leak: false, ja: "画像で分析の希望" };
+  if (s.uncheckShown || s.shownUncovered) return { leak: false, ja: "照らせない条件に表示" };
+  if (s.rank) return { leak: false, ja: "🌟 の文だけ" };
+  return { leak: true, ja: s.noMaterial > 0 ? "漏れ（判定はあるが材料なし）" : "漏れ" };
 }
 
 function printTable(seen: Seen[], nRows: number, analysis: boolean) {
   console.log(`\n=== 条件の種類ごとに「どこに出たか」（物件 ${nRows}件） ===`);
-  console.log("札=判定の札が付いた物件数（_UNKNOWN は除く） 材料なし=判定はあるが物件側の値が説明文に無い物件数 設備=設備の照合に行が出た物件数 🌟=順位付けに渡る条件の文に入った 画像=画像で分析の希望の番号" + (analysis ? " 分析=画像で分析で ok/ng が決まった物件数" : ""));
-  console.log(["種類", "テスト顧客", "札", "材料なし", "設備", "🌟", "画像", ...(analysis ? ["分析"] : []), "結果"].join("\t"));
+  console.log("札=判定の札が付いた物件数（_UNKNOWN は除く） 材料なし=物件側の値が読めない物件数 設備=設備の照合 📍=場所の照合 🌟=順位付けの文 画像=画像で分析の希望 判定=判定がこの種類を読む 照らせない=📝 の照らせない条件" + (analysis ? " 分析=画像で分析で ok/ng が決まった物件数" : ""));
+  console.log(["種類", "テスト顧客", "札", "材料なし", "設備", "📍", "🌟", "画像", "判定", "照らせない", ...(analysis ? ["分析"] : []), "旧基準", "結果"].join("\t"));
   const leaks: Seen[] = [];
+  const oldLeaks: Seen[] = [];
   for (const s of seen) {
     if (!s.inCustomer) { console.log([s.kind.label, "（入っていない）"].join("\t")); continue; }
-    const reached = s.codes > 0 || s.equip > 0 || s.rank || s.wants.length > 0;
-    const verdict = !reached ? (s.shownUncovered ? "漏れ（「照らせない条件」に表示だけ）" : s.noMaterial > 0 ? "漏れ（判定はあるが材料なし）" : "漏れ")
-      : s.noMaterial > 0 && s.codes === 0 ? "🌟/画像だけ（判定は材料なし）" : "届いた";
-    if (!reached) leaks.push(s);
-    console.log([s.kind.label, s.inCustomer.slice(0, 18), s.codes, s.noMaterial, s.equip, s.rank ? "○" : "－", s.wants.join(",") || "－", ...(analysis ? [s.analysisDecided] : []), verdict].join("\t"));
+    const v = verdictOf(s);
+    if (v.leak) leaks.push(s);
+    if (oldLeak(s)) oldLeaks.push(s);
+    console.log([s.kind.label, s.inCustomer.slice(0, 18), s.codes, s.noMaterial, s.equip, s.loc, s.rank ? "○" : "－", s.wants.join(",") || "－", s.judged ? "○" : "－", s.uncheckShown ? "○" : "－", ...(analysis ? [s.analysisDecided] : []), oldLeak(s) ? "漏れ" : "－", v.ja].join("\t"));
   }
-  console.log(`\n■ 漏れ（どこにも出ない種類）${leaks.length}種類`);
+  console.log(`\n■ 旧基準の漏れ（札・設備・🌟・画像のどこにも出ない）${oldLeaks.length}種類`);
+  for (const s of oldLeaks) console.log(`  - ${s.kind.label} → 今: ${verdictOf(s).ja}`);
+  console.log(`\n■ 今の基準の漏れ（どこにも出ない・表示もされない）${leaks.length}種類`);
   for (const s of leaks) console.log(`  - ${s.kind.label}（テスト顧客: ${s.inCustomer}）— 物件側: ${s.kind.sheet}【${s.kind.readable}】`);
   const noMat = seen.filter((s) => s.inCustomer && s.noMaterial > 0);
   if (noMat.length) {
-    console.log(`
-■ 判定はあるのに物件側の値が説明文に無い（材料なし）種類 ${noMat.length}種類`);
+    console.log(`\n■ 判定はあるのに物件側の値が読めない（材料なし）種類 ${noMat.length}種類`);
     for (const s of noMat) console.log(`  - ${s.kind.label}: ${s.noMaterial}/${nRows}件で読めない（物件側: ${s.kind.sheet}）`);
   }
-  const soft = seen.filter((s) => s.inCustomer && (s.codes > 0 || s.equip > 0 || s.wants.length > 0) === false && s.rank);
-  if (soft.length) {
-    console.log(`\n■ 🌟 の文にだけ入った種類（決定論の判定・設備・画像のどこにも無い＝ DeepSeek の順位付けの気分しだい）${soft.length}種類`);
-    for (const s of soft) console.log(`  - ${s.kind.label}`);
-  }
+}
+
+/** 📝 条件の要約（決定論）と照らせない条件 */
+function printSummary(c: Record<string, unknown>) {
+  const s = buildConditionSummary(c as never);
+  console.log(`\n📝 条件の要約（決定論）: ${formatSummaryLine(s.items) || "（なし）"}`);
+  console.log(`   照らせない条件: ${uncheckableLabels(s).join("・") || "（なし）"}`);
+  console.log(`   読めない節（DeepSeek の要約に回る）: ${[...s.unread, ...s.unchecked].join(" ／ ") || "（なし）"}`);
 }
 
 // ───────────────────────── dry-run（純関数だけ・書かない） ─────────────────────────
@@ -199,6 +226,8 @@ function printTable(seen: Seen[], nRows: number, analysis: boolean) {
 async function dryRun(src: Record<"realpro" | "itandi", SrcRow[]>) {
   const x = buildCtx(TEST_CUSTOMER);
   const profile = buildCustomerProfile(TEST_CUSTOMER);
+  const areaW = parseAreaWant(TEST_CUSTOMER.desired_area as string, [TEST_CUSTOMER.preferences, TEST_CUSTOMER.other_requests].filter(Boolean).join("\n"));
+  const commuteW = parseCommuteWants(TEST_CUSTOMER);
   const rows: ResultRow[] = [];
   for (const site of ["realpro", "itandi"] as const) {
     const list = src[site];
@@ -223,16 +252,23 @@ async function dryRun(src: Record<"realpro" | "itandi", SrcRow[]>) {
       // 本番の recordPickupBatch と同じ: 資料の表の募集の条件で敷礼・築年を埋め、入居時期・契約・入居の条件を判定に渡す
       const terms = texts[k] ? parseListingTerms(texts[k] as string) : null;
       if (terms) fillFactsFromTerms(facts, terms);
-      const j = judgeProperty(facts, profile, k, { equipment: e?.match ?? null, terms });
-      rows.push({ site, rank: k + 1, summary: summaries[k], reasonCodes: j.reasonCodes, equipment: e?.saved ?? null });
+      if (facts.areaSqm == null && texts[k]) { const a = parseListingText(texts[k] as string).areaSqm; if (a != null) facts.areaSqm = a; }
+      // 本番の recordPickupBatch と同じ: 物件の場所（説明文・文字層）× 希望のエリア・通勤（area-want・決定論）
+      const loc = buildPropertyLocation(summaries[k], texts[k]);
+      const am = matchArea(areaW, loc); const cm = matchCommute(commuteW, loc);
+      const j = judgeProperty(facts, profile, k, { equipment: e?.match ?? null, terms, locationCodes: locationReasonCodes(am, cm) });
+      const saved = toPickupLocation(loc, am, cm);
+      rows.push({ site, rank: k + 1, summary: summaries[k], reasonCodes: j.reasonCodes, equipment: e?.saved ?? null, location: saved });
       console.log(`  [${site}] 【${k + 1}】${r.property_name}（資料 #${r.id}・文字層 ${texts[k] ? "あり" : "なし"}） ${j.verdict} ${j.score}点 札: ${j.reasonCodes.join(" ")}`);
       console.log(`      説明文: ${summaries[k].replace(/\n/g, " / ")}`);
       if (e?.saved.line) console.log(`      条件: ${e.saved.line}`);
+      if (saved.line) console.log(`      ${saved.line}`);
     });
   }
   const wants = dedupeWantsByTopic(extractImageWants({ conditions: TEST_CUSTOMER }));
   console.log(`\n🌟 に渡る条件の文: ${buildCustomerConditionsString(TEST_CUSTOMER) ?? "（なし）"}`);
   console.log(`画像で分析の希望（条件欄だけ）: ${wants.map((w) => `${w.id}${w.ng ? "[NG]" : ""}${w.text}`).join(" ／ ")}`);
+  printSummary(TEST_CUSTOMER);
   printTable(whereShown(x, rows, wants), rows.length, false);
 }
 
@@ -284,7 +320,7 @@ async function apply(src: Record<"realpro" | "itandi", SrcRow[]>) {
   }
 
   const { data: made } = await sb.from("property_pickups")
-    .select("id, batch_id, site, rank, property_name, summary_text, pdf_url, pdf_blob_url, pdf_text, pdf_has_text, trim_image_url, page_image_url, image_analysis, reason_codes, reasons_ja, verdict, score, equipment, conversation_id")
+    .select("id, batch_id, site, rank, property_name, summary_text, pdf_url, pdf_blob_url, pdf_text, pdf_has_text, trim_image_url, page_image_url, image_analysis, reason_codes, reasons_ja, verdict, score, equipment, location, conversation_id")
     .like("batch_id", `${BATCH_PREFIX}${stamp}_%`).order("id");
   const madeRows = (made ?? []) as Array<Record<string, unknown>>;
   console.log(`\nproperty_pickups に ${madeRows.length}行（YUMA に${LINK_YUMA ? "付けた" : "付けていない"}）`);
@@ -293,6 +329,8 @@ async function apply(src: Record<"realpro" | "itandi", SrcRow[]>) {
     console.log(`  #${r.id} [${r.site}] 【${r.rank}】${r.property_name} ${r.verdict} ${r.score}点 札: ${((r.reason_codes as string[] | null) ?? []).join(" ")}`);
     if (eq?.line) console.log(`      条件: ${eq.line}`);
     if (eq?.uncovered?.length) console.log(`      照らせない条件: ${eq.uncovered.join("・")}`);
+    const lc = r.location as PickupLocation | null;
+    if (lc?.line) console.log(`      ${lc.line}`);
   }
 
   // 画像で分析（本番の /api/property-pickups/analyze と同じ関数。希望は条件欄だけ＝会話は混ぜない）
@@ -320,7 +358,12 @@ async function apply(src: Record<"realpro" | "itandi", SrcRow[]>) {
   const rows: ResultRow[] = madeRows.map((r) => ({
     site: String(r.site), rank: Number(r.rank), summary: String(r.summary_text ?? ""), reasonCodes: (r.reason_codes as string[] | null) ?? [],
     equipment: (r.equipment as PickupEquipment | null) ?? null, analysisChecks: analysisOf.get(r.id as number) ?? null,
+    location: (r.location as PickupLocation | null) ?? null,
   }));
+  printSummary(TEST_CUSTOMER);
+  const { data: savedSum } = await sb.from("property_customers").select("condition_summary, condition_summary_hash").eq("id", customerId).maybeSingle();
+  const cs = (savedSum as { condition_summary?: { ai?: unknown[]; model?: string | null } | null } | null)?.condition_summary;
+  console.log(`   保存された要約: ${cs ? `あり（DeepSeek の要約 ${cs.ai?.length ?? 0}件・model ${cs.model ?? "なし"}）` : "なし"}`);
   console.log(`\n🌟 に渡る条件の文: ${buildCustomerConditionsString(TEST_CUSTOMER) ?? "（なし）"}`);
   console.log(`画像で分析の希望（条件欄だけ）: ${wants.map((w) => `${w.id}${w.ng ? "[NG]" : ""}${w.text}`).join(" ／ ")}`);
   printTable(whereShown(x, rows, wants), rows.length, WITH_ANALYSIS);

@@ -51,6 +51,22 @@ const CHIP_JA: Record<string, string> = {
   MOVE_IN_UNKNOWN: "入居時期は要確認",
   CONTRACT_FIXED: "定期借家",
   FREE_RENT_MATCH: "フリーレント（希望に一致）",
+  // 2026-09-25 家賃下限・間取りの「も可」・広さ・エリア・通勤
+  RENT_BELOW_MIN: "家賃が下限よりかなり安い",
+  FLOOR_PLAN_ALT_MATCH: "間取り「も可」の型",
+  SQM_UNDER: "広さが希望の9割未満",
+  SQM_UNKNOWN: "広さは要確認",
+  AREA_STATION_MATCH: "希望の駅",
+  AREA_WARD_MATCH: "希望の区・市",
+  AREA_LINE_MATCH: "希望の路線",
+  AREA_NEAR: "希望エリアの近く（2km内）",
+  AREA_CLOSE: "希望エリアに近い",
+  AREA_FAR: "希望エリアから離れている",
+  AREA_EXCLUDED: "希望外のエリア",
+  AREA_UNKNOWN: "場所は要確認",
+  COMMUTE_OK: "通勤が希望の時間内",
+  COMMUTE_OVER: "通勤が希望の時間超",
+  COMMUTE_UNKNOWN: "通勤は要確認",
 };
 
 /** 読めなかった材料（点が動かない理由）。コード → 札の言葉 */

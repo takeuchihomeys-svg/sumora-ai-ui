@@ -2338,6 +2338,13 @@ ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS equipment JSONB;
 -- 2026-09-25 竹内「敷金礼金と入居時期、組み込みたい」: 資料の表の募集の条件（敷礼・築年・入居時期・契約・更新料・入居の条件）と
 --   お客様の希望（入居時期・楽器・法人…）の照合（listing-terms.ts・pickup-terms.ts・DeepSeek 0円）
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS terms JSONB;
+-- 2026-09-25 竹内「エリアの部分、把握できれば理想」「通勤の部分も沿線の知識」: 物件の場所（交通・所在地の区）と希望のエリア・通勤の照合
+--   {stations, ward, wardSource, area:{code,result,anchor,km,why}, commute:[{target,minutes,transfers,…}], line}（area-want.ts・osaka-geo.ts・DeepSeek 0円）
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS location JSONB;
+-- 2026-09-25 竹内「文章の部分も要約できるようにする」: 条件の自由文のうち決定論で読めない節だけ DeepSeek で要約した物（condition-summary-server.ts）
+--   condition_summary_hash＝自由文のハッシュ＋版（文が変わらない限り DeepSeek を呼ばない）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS condition_summary JSONB;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS condition_summary_hash TEXT;
 -- 2026-09-24 竹内「読んだ結果を物件ごとに保存し、2回目以降は画像を読み直さない（希望との照合は文字だけ）」:
 --   画像で分析の物件ごとの事実。unit_key＝文字層の 物件名＋号室＋所在地（PDF の中身は出力日で毎回変わるので鍵にしない）。
 --   fp_hash＝切り出した間取り図の画素の sha256（同じ棟・同じ型の部屋は読み直さない）。prompt_version＝固定の前置きの版（変えたら読み直す）

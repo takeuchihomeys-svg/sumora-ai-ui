@@ -1864,3 +1864,26 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - 費用: 初めて読む資料で 1件 約0.06〜0.07円・2.2〜2.5秒（入力 約3,400 のうち前置き 約2,500 が2件目から命中）。以前の 0.03円より上がった（前置きが長くなり画像が大きくなった分）
 - リアプロの確認: YUMA #9〜11 の帖数（10.2/5.0・11.1/5.4・11.9/4.4）と #9 壁付けは正しい・突き合わせは15件とも ok。リアプロの「Clo.」「クローク」を収納の字の一覧に足した（入れないと収納 0 になっていた）
 - ⚠ 2026-09-25 07:20 に node_modules の pdfjs-dist・rimraf・@napi-rs/canvas の中身が空になっていた（npm の処理が途中で失敗した形）。lock のとおりに `npm install` で戻した（package.json・lock は変わっていない）
+
+## 2026-09-25 売上サポ: 届いた時の自動の読み取り・判定の穴埋め（家賃下限・間取りの「も可」・広さ・築浅・エリア・通勤）・条件の要約
+- 竹内「売上サポに送られたら、条件指定あれば間取り図とか設備も自動的に読み取る」「家賃の下限入れる」「1DKも可…評価は希望の間取りの方が少し高め」「文章の部分も要約」「エリア…大阪の理解」「通勤…沿線の知識。拡張ツールの物件検索のデータベースを使う」「喫煙とかは不要」
+- **自動の読み取り**（app/lib/pickup-auto-analyze.ts・読む物件の選び方は pickup-auto-targets.ts）: recordPickupBatch の最後（同じ waitUntil）で、imageAnalysisNeed が recommended（WIC・対面キッチン・収納・部屋の配置・水回り）のお客様だけ、この回の物件を analyzePickupRow（ボタンと同じ）で読む。外す候補・保存済み・資料なし・推奨の希望が全部設備欄で決まった物件は読まない。最大20件・同時3件・開始から110秒を過ぎたら新しい物件は始めない（反証レビューで150→110）。結果は image_analysis に {…, auto:{at, labels}}。画面は「🔍 自動で読みました（n件・推奨: WIC）」。ボタンは残す
+  - llm_usage_logs の action は **pickup_image_analysis_auto**（analyzePickupRow は itandi 作業中で触れないので、llm-action-scope.ts の AsyncLocalStorage で recordAltUsage の action を読み替え）・conversation_id 入り
+- **判定の穴埋め**（property-brain.ts・点は REASON_POINTS）: RENT_BELOW_MIN（下限の85%未満 −3・情報）／FLOOR_PLAN_ALT_MATCH（「1DKも可」「厳しければ2LDK」「1LDK or 2K」＝+8・本命は +15。条件の記録の古い「間取り:」は最後の1つだけ・フォームの質問の例「(1K、1LDKなど)」は読まない・フォームの「希望」の行は本命）／SQM_OK +3・SQM_UNDER −10 保留（9割未満）・SQM_UNKNOWN 0（列 floor_area_min・間取りの「30平米以上」・自由文の「25平米」）／BUILDING_AGE_TEXT_OK +3（築年の列が空で「新築 3年・築浅 10年・新しめ 15年」の目安・古くても 0点）
+- **エリア・通勤**（area-want.ts・osaka-geo.ts・transit-route.ts・DeepSeek 0円）: AREA_STATION_MATCH +10／WARD +8／LINE +6／NEAR（2km・「周辺」「◯km圏内」「車で15分」は半径）+5／REGION（大阪市内・環状線内・北摂）+3／CLOSE（4km・隣の区）+2／FAR −3 情報（保留にしない）／EXCLUDED（◯◯以外）−10 保留／UNKNOWN 0。COMMUTE_OK +8／SLIGHTLY_OVER 0／OVER −5 情報／INFO（分の指定なし）0／UNKNOWN 0。売上サポの行に「📍 新大阪 徒歩8分・淀川区｜希望の駅（新大阪）｜梅田まで約13分（乗換0回）／希望20分」（property_pickups.location）
+  - 路線・駅→区・町名→区・隣接区は拡張の popup-maps.js を `scripts/build-osaka-transit-data.ts` で写した app/lib/osaka-transit-data.ts（**自動生成・手で編集しない**）。拡張の並びの誤り（御堂筋線の新大阪/西中島南方の順・中央線に森ノ宮なし・片町線・JR東海道線の塚本・大和路線の平野/加美・能勢電の平野が大阪の平野と同じ名前）は osaka-geo.ts の LINE_FIXES で直した。**拡張側は直していない**（拡張の検索で使う並びを変える時は拡張も直す）
+  - 座標は駅 500 全部（按分 25）・区と市 70。所要は距離から（停車0.8分＋1.1分/km）・乗換5分・直通の組は乗換にしない
+- **条件の要約**（condition-summary.ts・condition-summary-server.ts）: 決定論（家賃・間取り・広さ・徒歩・築年・入居・エリア・通勤・設備・入居の条件）＋読めない節だけ DeepSeek（推論なし・温度0・固定の前置き・名前/電話/メール/番地を伏せる）。自由文のハッシュ＋版を property_customers.condition_summary_hash に持ち、文が変わらない限り呼ばない。売上サポに「📝 条件の要約: …」「照らせない条件: 内装: 白基調…」（喫煙・家具家電は出さない）
+- DB: property_pickups.location・property_customers.condition_summary / condition_summary_hash（migrate-schema・本番に適用済み `scripts/apply-pickup-location-columns.ts`）
+- 監査: `scripts/audit-area-commute.ts --customers|--summary|--sample|--pickups`・`scripts/audit-condition-coverage.ts`（U＝照らせない条件に表示・喫煙/家具家電は不要）。全298人で漏れ（人×種類）383 → 123（残りの大半は入居時期の「目安」57）
+- YUMA（テスト顧客2人・片付け済み `scripts/yuma-auto-analyze-test.ts`）: A（WIC・対面キッチン）4件を自動で読み DeepSeek 7回・入力 15,298（命中 12,544）・出力 835・9.5秒、2回目は保存済みで 0回。B（宅配BOX・2階以上だけ）は読まない 0回。条件の要約 1回（2回目は呼ばない）
+- ⚠ 既存の recordPickupBatch の「資料の画像の読み取り」（readPropertyImageDetail＝property_image_detail・推論 low）は希望に関係なく全行で動く（今回は変えていない）。「文字で決まる希望だけのお客様は DeepSeek 0回」はこの自動の読み取りについて
+- テスト: `npx tsx app/lib/__tests__/area-commute.test.ts`（104件）
+- 反証レビュー（2026-09-25）: ①自動の読み取りの保存は `image_analysis IS NULL` の時だけ（読んでいる間にボタンで先に保存された結果を上書きしない）②自動の読み取りを始める線を 150→110秒（merge-pdfs の結合・LINE 送信の時間も 300秒に入る・1件は最悪 約175秒）③座標（梅田＞難波の北・天王寺は難波の東南 等 28組）・路線の隣駅の距離・50＋合計＝点・「も可」＜本命（109 対 102）を確かめて問題なし。⚠ 点の上限 130 に両方が届くと「も可」と本命が同点になりうる
+- YUMA の2回目（2026-09-25 午前・itandi #50/#52/#55・リアプロ #35/#36/#45 を本番と同じ recordPickupBatch に通した）で見つけて直した物:
+  ①「難波より南は避けたい」を「南の希望」と読み、新大阪の物件に「なんばより南の希望に反する」を付けていた → area-want.ts の directionAfter で「より南は避けたい／NG／以外」を反対の向きで持ち、札の文は「なんばより南は避けたいに当たる」（全299人に向きの希望は0人＝既存のお客様への影響なし）
+  ② 売上サポの設備の行の「照らせない条件」に家具家電付きが出ていた → pickup-equipment.ts の NOT_NEEDED_CLAUSE_RE で保存時に外し、PickupReview でも表示時に外す（保存済みの行にも効く）
+  ③ 鍵の無い環境で条件の要約が「呼んだ」扱いになり llm_usage_logs に空の行（status 0）を残していた → condition-summary-server.ts で鍵が無ければ呼ばない（テストで出た4行は消した）
+  ④ yuma-condition-leak-test.ts を今の判定に合わせた（📍・判定が読む・照らせない条件・不要を分けて数える・旧基準も並べる）。広さの「材料なし」の正規表現の \ が抜けていて常に材料なしだったのも直した
+  - 漏れテスト: 旧基準 8→5種類（家賃下限＝判定は読むが今回の物件が下限の85%以上・内装と周辺環境＝照らせない条件に表示・喫煙と家具家電＝不要）→ 今の基準の漏れは 0種類
+  - 自動の読み取り: A（WIC・対面キッチン）5件を読み DeepSeek 10回・入力 未命中 2,812／命中 13,440（83%）・出力 1,147・約0.035円/件、2回目は保存済みで 0回。B（宅配BOX・2階以上だけ）は 2回とも 0回。条件の要約は1人1回（入力363・出力28・約0.008円）、2回目の回・最後の呼び出しでは呼ばない

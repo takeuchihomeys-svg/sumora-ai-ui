@@ -22,6 +22,8 @@ import {
 } from "../app/lib/property-brain";
 import { parseEquipmentWants, type EquipmentWants } from "../app/lib/listing-equipment";
 import { extractImageWants, type ImageWant } from "../app/lib/image-wants";
+import { parseAreaWant, parseCommuteWants, type AreaWant, type CommuteWant } from "../app/lib/area-want";
+import { buildConditionSummary } from "../app/lib/condition-summary";
 
 // ───────────────────────── 🌟 に渡る条件の文（拡張の写し） ─────────────────────────
 
@@ -76,6 +78,10 @@ export type Ctx = {
   eqKeys: Set<string>;
   iw: ImageWant[];
   rank: string | null;
+  /** 2026-09-25 エリア・通勤の希望（area-want）と条件の要約の照らせない条件（condition-summary） */
+  area: AreaWant;
+  commute: CommuteWant[];
+  uncheck: string[];
 };
 
 /** additional_conditions の自動の記録行（「正式条件フォーマット受信 → 物件を検索してください」）を外す */
@@ -93,13 +99,17 @@ export function buildCtx(c: CustomerRow): Ctx {
     profile: buildCustomerProfile(c),
     eq, eqKeys: new Set(eq.wants.map((w) => String(w.key))),
     iw: extractImageWants({ conditions: c }),
+    area: parseAreaWant(c.desired_area, [c.preferences, c.other_requests].filter(Boolean).join("\n")),
+    commute: parseCommuteWants(c),
+    uncheck: (() => { const s = buildConditionSummary(c); return [...s.unread, ...s.unchecked]; })(),
     rank: buildCustomerConditionsString(c as Record<string, unknown>),
   };
 }
 
 // ───────────────────────── 種類の一覧 ─────────────────────────
 
-export type Where = "S" | "J" | "E" | "R" | "I";
+/** U＝売上サポの「照らせない条件」に出す（2026-09-25・資料で決まらない条件は見える所に出す）。X＝竹内さんが不要と言った（喫煙・家具家電） */
+export type Where = "S" | "J" | "E" | "R" | "I" | "U";
 export type Kind = {
   id: string;
   label: string;
@@ -111,6 +121,9 @@ export type Kind = {
   E?: (x: Ctx) => boolean;
   R?: (x: Ctx) => boolean;
   I?: (x: Ctx) => boolean;
+  U?: (x: Ctx) => boolean;
+  /** 竹内さんが不要と言った種類（漏れに数えない） */
+  notNeeded?: boolean;
   /** 判定の札（property_pickups.reason_codes）でこの種類に当たる物 */
   codeRe?: RegExp;
   /** 設備の照合（equipment.match[].key）でこの種類に当たる物 */
@@ -182,7 +195,8 @@ export const KINDS: Kind[] = [
   },
   {
     id: "rent_min", label: "家賃下限", present: (x) => num(x.c.rent_min) ? `rent_min=${x.c.rent_min}` : null,
-    S: () => true, sheet: "賃料", readable: "実装あり",
+    // 2026-09-25: 下限の85%未満で RENT_BELOW_MIN（−3・情報）。上限が入力誤りの人（上限＜下限）は下限も使わない
+    S: () => true, J: (x) => x.profile.rentMin != null || x.profile.notes.includes("RENT_MAX_UNRELIABLE"), codeRe: /^RENT_BELOW_MIN$/, sheet: "賃料", readable: "実装あり",
   },
   {
     id: "admin_fee", label: "管理費込みの予算（総額）", present: (x) => has(ADMIN_RE, x.text),
@@ -207,28 +221,31 @@ export const KINDS: Kind[] = [
   },
   {
     id: "area", label: "エリア（駅・区・路線）", present: (x) => x.c.desired_area ? `desired_area(${String(x.c.desired_area).split(AREA_MULTI_SPLIT).filter(Boolean).length}か所)` : null,
-    S: () => true, R: (x) => /エリア:/.test(x.rank ?? ""), codeRe: /^(AREA_|STATION_)/,
-    sheet: "所在地・交通（listing-text の access は読めている）", readable: "文字層にある（未実装）",
+    S: () => true, R: (x) => /エリア:/.test(x.rank ?? ""), J: (x) => x.area.any, U: (x) => x.area.unread.length > 0, codeRe: /^(AREA_|STATION_)/,
+    sheet: "所在地・交通（area-want.ts・osaka-geo.ts）", readable: "実装あり",
   },
   {
     id: "area_multi", label: "エリアが複数（広げた検索で外れた駅が混ざり得る）", present: (x) => (String(x.c.desired_area ?? "").split(AREA_MULTI_SPLIT).filter((s) => s.trim()).length >= 2 ? String(x.c.desired_area).slice(0, 30) : null),
-    S: () => true, R: (x) => /エリア:/.test(x.rank ?? ""), codeRe: /^(AREA_|STATION_)/, sheet: "所在地・交通", readable: "文字層にある（未実装）",
+    S: () => true, R: (x) => /エリア:/.test(x.rank ?? ""), J: (x) => x.area.any, codeRe: /^(AREA_|STATION_)/, sheet: "所在地・交通", readable: "実装あり",
   },
   {
     id: "area_text", label: "エリアの自由文（◯◯より北・寄り・付近・沿線・◯◯以外）", present: (x) => has(AREA_TEXT_RE, x.text),
-    codeRe: /^(AREA_|STATION_)/, sheet: "所在地・交通", readable: "文字層にある（未実装）",
+    J: (x) => x.area.exclude.stations.length + x.area.exclude.wards.length + x.area.directions.length + x.area.stations.filter((s) => s.radiusKm != null).length + x.area.lines.length + x.area.regions.length > 0 || x.commute.length > 0,
+    U: (x) => x.uncheck.some((u) => /エリア|立地|付近|周辺|沿線|丁目/.test(u)),
+    codeRe: /^(AREA_|STATION_)/, sheet: "所在地・交通", readable: "実装あり",
   },
   {
     id: "station_near", label: "駅近の自由文（徒歩の列が空）", present: (x) => (!num(x.c.walk_minutes) ? has(STATION_NEAR_RE, x.text) : null),
+    U: (x) => x.uncheck.some((u) => /駅近|駅に近|駅から近|駅チカ|近い/.test(u)),
     codeRe: /^WALK_/, sheet: "交通（徒歩）", readable: "実装あり",
   },
   {
     id: "clean", label: "綺麗・内装（リノベ・水回り綺麗）", present: (x) => has(CLEAN_RE, x.text),
-    I: (x) => iwAny(x, CLEAN_RE), wantRe: CLEAN_RE, sheet: "備考（リノベーション済・室内リフォーム）・写真", readable: "一部の資料だけ",
+    I: (x) => iwAny(x, CLEAN_RE), U: (x) => x.uncheck.some((u) => CLEAN_RE.test(u)), wantRe: CLEAN_RE, sheet: "備考（リノベーション済・室内リフォーム）・写真", readable: "一部の資料だけ",
   },
   {
     id: "commute", label: "通勤・通学（駅まで◯分）", present: (x) => x.c.commute_station ? `commute_station(${x.c.commute_minutes ?? "?"}分)` : has(COMMUTE_RE, x.text),
-    S: () => false /* 拡張は「電車で◯分以内」を手動の案内に出すだけ */, codeRe: /COMMUTE/, sheet: "交通（駅名）＋路線図（transit_graph）", readable: "文字層にある（未実装）",
+    S: () => false /* 拡張は「電車で◯分以内」を手動の案内に出すだけ */, J: (x) => x.commute.length > 0, U: (x) => x.uncheck.some((u) => COMMUTE_RE.test(u)), codeRe: /COMMUTE/, sheet: "交通（駅名）＋路線のつながり（transit-route.ts・拡張の路線の辞書）", readable: "実装あり",
   },
   {
     id: "walk", label: "駅徒歩", present: (x) => num(x.c.walk_minutes) ? `walk=${x.c.walk_minutes}` : null,
@@ -240,7 +257,9 @@ export const KINDS: Kind[] = [
   },
   {
     id: "floor_plan_text_only", label: "間取りが自由文・フォームにだけある（列に入っていない 例: 1DKも可）", present: (x) => { const t = floorPlanTextOnly(x); return t.length ? t.join("/") : null; },
-    J: () => false /* judgeProperty は floor_plan 列だけ読む */, I: () => false, codeRe: /^FLOOR_PLAN_/, sheet: "間取り", readable: "実装あり",
+    // 2026-09-25: 「も可」の型は FLOOR_PLAN_ALT_MATCH（+8）・フォームの「希望」の行は本命に。条件の記録の古い「間取り:」は使わない（届かないのはそれ）
+    J: (x) => { const t = floorPlanTextOnly(x); const alt = x.profile.floorPlanAlt?.plans ?? []; return t.every((p) => alt.includes(p) || x.profile.floorPlanWant.plans.includes(p)); },
+    I: () => false, codeRe: /^FLOOR_PLAN_/, sheet: "間取り", readable: "実装あり",
   },
   {
     id: "floor_plan_unparsed", label: "間取りの列が読めない（「広め」「2部屋」等で型が無い）", present: (x) => { const v = x.c.floor_plan ?? x.c.layout; return v && normalizeFloorPlanWant(v).any && !/希望なし|特になし|なし|こだわらない|何でも/.test(v) ? String(v).slice(0, 20) : null; },
@@ -248,7 +267,7 @@ export const KINDS: Kind[] = [
   },
   {
     id: "area_sqm", label: "広さ（㎡以上）", present: (x) => num(x.c.floor_area_min) ? `floor_area_min=${x.c.floor_area_min}` : has(/[0-9０-９]{2}\s*(?:平米|㎡|m2|ｍ２)/, x.text) ?? (normalizeFloorPlanWant(x.c.floor_plan).sqmMin ? `floor_plan に ${normalizeFloorPlanWant(x.c.floor_plan).sqmMin}㎡以上` : null),
-    S: () => true, J: () => false /* FloorPlanWant.sqmMin は読むが matchFloorPlan で使っていない・PropertyFacts に面積が無い */,
+    S: () => true, J: (x) => x.profile.sqmMin != null /* 2026-09-25 SQM_OK/SQM_UNDER（9割未満は保留）・資料の専有面積 */,
     R: (x) => /㎡以上/.test(x.rank ?? ""), I: (x) => iwAny(x, /平米|㎡|広/), codeRe: /^(AREA_SQM|SQM_)/, sheet: "専有面積（説明文「21.09㎡」・文字層）", readable: "文字層にある（未実装）",
   },
   {
@@ -261,7 +280,7 @@ export const KINDS: Kind[] = [
   },
   {
     id: "new_build_text", label: "築浅・新築の自由文（築年の列が空）", present: (x) => (!num(x.c.building_age) ? has(NEWBUILD_RE, x.text) : null),
-    codeRe: /^BUILDING_AGE_/, sheet: "築年（資料の表から読めるが、自由文の「築浅」を年数の希望にしていない）", readable: "文字層にある（未実装）",
+    J: (x) => !!x.profile.ageTextMax, U: (x) => x.uncheck.some((u) => NEWBUILD_RE.test(u)), codeRe: /^BUILDING_AGE_/, sheet: "築年（自由文の築浅・新築 → BUILDING_AGE_TEXT_OK・情報の札）", readable: "実装あり",
   },
   {
     id: "move_in", label: "入居時期", present: (x) => (x.c.move_in_time && !/未定|特になし|なし|いつでも/.test(x.c.move_in_time) ? String(x.c.move_in_time).slice(0, 20) : has(MOVE_IN_TEXT_RE, x.text)),
@@ -299,7 +318,7 @@ export const KINDS: Kind[] = [
   },
   {
     id: "equipment_uncovered", label: "部屋の条件だが設備のキーに当たらない（照らせない条件）", present: (x) => (x.eq.uncovered.length ? x.eq.uncovered.map((u) => u.text.slice(0, 15)).join("/") : null),
-    I: (x) => x.eq.uncovered.some((u) => x.iw.some((w) => w.text.includes(u.text.slice(0, 6)))), sheet: "設備・備考・間取り図", readable: "一部の資料だけ",
+    I: (x) => x.eq.uncovered.some((u) => x.iw.some((w) => w.text.includes(u.text.slice(0, 6)))), U: (x) => x.eq.uncovered.every((u) => x.uncheck.includes(u.text) || /喫煙|タバコ|たばこ|禁煙|家具|家電/.test(u.text)), sheet: "設備・備考・間取り図", readable: "一部の資料だけ",
   },
   {
     id: "parking", label: "駐車場", present: (x) => (eqAny(x, ["parking"]) ? "駐車場" : null),
@@ -321,7 +340,7 @@ export const KINDS: Kind[] = [
   },
   {
     id: "guarantor", label: "保証人・審査・保証会社", present: (x) => has(SCREEN_RE, x.text) ?? (eqAny(x, ["no_guarantor"]) ? "保証人不要" : null),
-    E: (x) => eqAny(x, ["no_guarantor"]), J: (x) => eqAny(x, ["no_guarantor"]), codeRe: /^EQUIP_NO_GUARANTOR_|GUARANT/, equipKeys: ["no_guarantor"],
+    E: (x) => eqAny(x, ["no_guarantor"]), J: (x) => eqAny(x, ["no_guarantor"]), U: (x) => x.uncheck.some((u) => SCREEN_RE.test(u)), codeRe: /^EQUIP_NO_GUARANTOR_|GUARANT/, equipKeys: ["no_guarantor"],
     sheet: "保証会社（itandi「利用必須 , 全保連」）・条件（保証人不要）。審査の通りやすさは資料に無い", readable: "一部の資料だけ",
   },
   {
@@ -330,7 +349,7 @@ export const KINDS: Kind[] = [
     codeRe: /^CONDITION_(CORPORATE|FOREIGNER|STUDENT|OFFICE|SINGLE)_/, sheet: "条件・設備（外国籍可・法人契約可・事務所使用不可・学生限定）", readable: "実装あり",
   },
   {
-    id: "smoking", label: "喫煙", present: (x) => has(SMOKE_RE, x.text), codeRe: /SMOK/, sheet: "条件・備考（禁煙）", readable: "一部の資料だけ",
+    id: "smoking", label: "喫煙", present: (x) => has(SMOKE_RE, x.text), notNeeded: true, codeRe: /SMOK/, sheet: "条件・備考（禁煙）", readable: "一部の資料だけ",
   },
   {
     id: "term", label: "定期借家NG・短期契約", present: (x) => has(TERM_RE, x.text), J: (x) => !!x.profile.mentions?.contract, codeRe: /^CONTRACT_/,
@@ -340,23 +359,23 @@ export const KINDS: Kind[] = [
     id: "renewal", label: "更新料", present: (x) => has(RENEW_RE, x.text), J: (x) => !!x.profile.mentions?.renewal, codeRe: /^RENEWAL_FEE_/, sheet: "更新料（札と根拠の表示だけ・点は0）", readable: "実装あり",
   },
   {
-    id: "furniture", label: "家具家電付き", present: (x) => has(FURN_RE, x.text), I: (x) => iwAny(x, /家具|家電/), sheet: "設備（冷蔵庫・照明器具 等）", readable: "一部の資料だけ",
+    id: "furniture", label: "家具家電付き", present: (x) => has(FURN_RE, x.text), notNeeded: true, I: (x) => iwAny(x, /家具|家電/), sheet: "設備（冷蔵庫・照明器具 等）", readable: "一部の資料だけ",
   },
   {
-    id: "surroundings", label: "周辺環境（スーパー・治安・静か・学区）", present: (x) => has(SURROUND_RE, x.text), sheet: "資料に無い（地図・周辺情報）", readable: "資料に無い",
+    id: "surroundings", label: "周辺環境（スーパー・治安・静か・学区）", present: (x) => has(SURROUND_RE, x.text), U: (x) => x.uncheck.some((u) => SURROUND_RE.test(u)), sheet: "資料に無い（地図・周辺情報）", readable: "資料に無い",
   },
 ];
 
 // ───────────────────────── 集計 ─────────────────────────
 
-export type KindCount = { id: string; label: string; present: number; S: number; J: number; E: number; R: number; I: number; leak: number; searchOnly: number; examples: string[]; sheet: string; readable: string };
+export type KindCount = { id: string; label: string; present: number; S: number; J: number; E: number; R: number; I: number; U: number; leak: number; searchOnly: number; examples: string[]; sheet: string; readable: string; notNeeded: boolean };
 
 export function covered(k: Kind, x: Ctx): Record<Where, boolean> {
-  return { S: !!k.S?.(x), J: !!k.J?.(x), E: !!k.E?.(x), R: !!k.R?.(x), I: !!k.I?.(x) };
+  return { S: !!k.S?.(x), J: !!k.J?.(x), E: !!k.E?.(x), R: !!k.R?.(x), I: !!k.I?.(x), U: !!k.U?.(x) };
 }
 
 export function countKinds(rows: CustomerRow[]): KindCount[] {
-  const out: KindCount[] = KINDS.map((k) => ({ id: k.id, label: k.label, present: 0, S: 0, J: 0, E: 0, R: 0, I: 0, leak: 0, searchOnly: 0, examples: [], sheet: k.sheet, readable: k.readable }));
+  const out: KindCount[] = KINDS.map((k) => ({ id: k.id, label: k.label, present: 0, S: 0, J: 0, E: 0, R: 0, I: 0, U: 0, leak: 0, searchOnly: 0, examples: [], sheet: k.sheet, readable: k.readable, notNeeded: !!k.notNeeded }));
   for (const c of rows) {
     const x = buildCtx(c);
     KINDS.forEach((k, i) => {
@@ -365,8 +384,9 @@ export function countKinds(rows: CustomerRow[]): KindCount[] {
       const o = out[i];
       o.present++;
       const cv = covered(k, x);
-      for (const w of ["S", "J", "E", "R", "I"] as Where[]) if (cv[w]) o[w]++;
-      if (!cv.J && !cv.E && !cv.R && !cv.I) {
+      for (const w of ["S", "J", "E", "R", "I", "U"] as Where[]) if (cv[w]) o[w]++;
+      // 2026-09-25: 売上サポの「照らせない条件」に出る物（U）と、竹内さんが不要と言った種類（喫煙・家具家電）は漏れに数えない
+      if (!cv.J && !cv.E && !cv.R && !cv.I && !cv.U && !k.notNeeded) {
         o.leak++;
         if (cv.S) o.searchOnly++;
         if (o.examples.length < 5) o.examples.push(safe(ev).slice(0, 30));
@@ -386,7 +406,7 @@ export function elsewhereButNowhere(rows: CustomerRow[]): Array<{ kind: string; 
       const one: Ctx = { ...x, c: { id: c.id } as CustomerRow, text: h.text, wantText: h.text, form: "", eqKeys: new Set<string>() };
       const hitKind = KINDS.find((k) => !["rent_max", "rent_min", "floor_plan", "building_age", "walk", "area", "rent_max_unreliable", "equipment", "equipment_uncovered", "floor_plan_unparsed"].includes(k.id) && k.present(one));
       const kid = hitKind?.id ?? "(その他)";
-      const isCovered = hitKind ? (() => { const cv = covered(hitKind, x); return cv.J || cv.E || cv.R || cv.I; })() : false;
+      const isCovered = hitKind ? (() => { const cv = covered(hitKind, x); return cv.J || cv.E || cv.R || cv.I || cv.U || !!hitKind.notNeeded; })() : x.uncheck.some((u) => u.includes(h.text.slice(0, 8)));
       if (isCovered) continue;
       const a = agg.get(kid) ?? { clauses: 0, people: new Set<string>(), examples: [] };
       a.clauses++;
@@ -417,11 +437,11 @@ async function main() {
   }
   const rows = all.filter((r) => !TEST_NAME_RE.test(String(r.customer_name ?? "")));
   console.log(`=== 条件の種類ごとの照らし方（property_customers ${rows.length}人・テスト ${all.length - rows.length}人を除く） ===`);
-  console.log("S=検索（ポータル） J=判定の札 E=設備の照合 R=🌟に渡る条件 I=画像で分析の希望 ／ 漏れ=J・E・R・I のどれにも届かない（うち検索だけ=S は通った）\n");
+  console.log("S=検索（ポータル） J=判定の札 E=設備の照合 R=🌟に渡る条件 I=画像で分析の希望 U=売上サポの「照らせない条件」に出す ／ 漏れ=J・E・R・I・U のどれにも届かない（うち検索だけ=S は通った）・喫煙と家具家電は不要（竹内 9/25）\n");
   const counts = countKinds(rows);
-  console.log(["種類", "人数", "S", "J", "E", "R", "I", "漏れ", "(検索だけ)", "物件側で"].join("\t"));
+  console.log(["種類", "人数", "S", "J", "E", "R", "I", "U", "漏れ", "(検索だけ)", "物件側で"].join("\t"));
   for (const k of counts) {
-    console.log([k.label, k.present, k.S, k.J, k.E, k.R, k.I, k.leak, k.searchOnly, k.readable].join("\t"));
+    console.log([k.label + (k.notNeeded ? "（不要）" : ""), k.present, k.S, k.J, k.E, k.R, k.I, k.U, k.leak, k.searchOnly, k.readable].join("\t"));
   }
 
   console.log("\n■ 漏れの大きい順（漏れ人数 > 0）");

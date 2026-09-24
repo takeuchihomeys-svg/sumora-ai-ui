@@ -36,6 +36,9 @@ export type PickupEquipment = {
   line: string;
 };
 
+/** 竹内 2026-09-25「喫煙やとかは不要」: 喫煙・家具家電は照らさず「照らせない条件」にも出さない（condition-summary の SKIP_CLAUSE_RE と同じ） */
+export const NOT_NEEDED_CLAUSE_RE = /喫煙|タバコ|たばこ|禁煙|家具|家電/;
+
 /** 照合を保存の形にする */
 export function toPickupEquipment(facts: ListingEquipment, m: EquipmentMatch, wants: EquipmentWants): PickupEquipment {
   const f: PickupEquipment["facts"] = {};
@@ -51,7 +54,7 @@ export function toPickupEquipment(facts: ListingEquipment, m: EquipmentMatch, wa
       ...(r.fromBuilding ? { fromBuilding: true as const } : {}),
     })),
     ok: m.ok, ng: m.ng, unlisted: m.unlisted, strongNg: m.strongNg,
-    uncovered: wants.uncovered.map((u) => u.text),
+    uncovered: wants.uncovered.map((u) => u.text).filter((t) => !NOT_NEEDED_CLAUSE_RE.test(t)),
     line: formatEquipmentMatch(m),
   };
 }

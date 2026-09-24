@@ -8,7 +8,7 @@ import type React from "react";
 import { okCountOf, type CustomerBest } from "@/app/lib/pickup-best";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
 import { sortForReview, buildReasonView, formatScoreBreakdown } from "@/app/lib/pickup-review-order";
-import { floorLabel, type PickupEquipment } from "@/app/lib/pickup-equipment";
+import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/lib/pickup-equipment";
 import type { PickupTerms } from "@/app/lib/pickup-terms";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
@@ -22,6 +22,8 @@ type Item = {
   equipment?: PickupEquipment | null;
   /** 2026-09-25 資料の表の募集の条件（敷礼・築年・入居時期・契約・更新料）と希望の照合 */
   terms?: PickupTerms | null;
+  /** 2026-09-25 物件の場所と希望のエリア・通勤の照合（area-want.ts の PickupLocation・画面は line と area.code だけ読む） */
+  location?: { line?: string; area?: { code?: string; why?: string } | null } | null;
 };
 type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
@@ -29,7 +31,9 @@ type LineLite = { profile_image_url: string | null; updated_at: string | null; a
 type SentHist = { id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null };
 type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string; sent_history?: SentHist[]; has_more_batches?: boolean;
   /** 2026-09-24 回をまたいだ一番（画像で分析の点）と、画像で確かめる希望の有無（詳細だけ） */
-  best?: (CustomerBest & { image_url?: string | null; status?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null };
+  best?: (CustomerBest & { image_url?: string | null; status?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null;
+  /** 2026-09-25 条件の要約（決定論＋DeepSeek で読めない節だけ）と照らせない条件。スタッフ向け（お客様には出さない） */
+  condition_summary?: { line: string; uncheckable: string[]; ai: boolean } | null };
 /** 一覧の行（軽い要約だけ。画像・本文は開いた時に読む） */
 type ListCustomer = {
   key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null;
@@ -147,7 +151,8 @@ function EquipmentLine({ eq }: { eq: PickupEquipment | null | undefined }) {
   if (!eq) return null;
   const fl = floorLabel(eq);
   const match = eq.match ?? [];
-  const uncovered = eq.uncovered ?? [];
+  // 喫煙・家具家電は不要（竹内 2026-09-25）。保存済みの古い行にも効くよう表示でも外す
+  const uncovered = (eq.uncovered ?? []).filter((t) => !NOT_NEEDED_CLAUSE_RE.test(t));
   if (!match.length && !fl && !uncovered.length) return null;
   const stop = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); };
   const sel = open != null ? match[open] ?? null : null;
@@ -860,6 +865,20 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 {needRecommended && (
                   <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e0f2f1", color: "#00695c" }}>🔍 画像で確かめたい希望: {needLabels}</div>
                 )}
+                {/* 2026-09-25 竹内「売上サポに送られたら、条件指定あれば間取り図とか設備も自動的に読み取る」: 届いた時に自動で読んだ件数 */}
+                {(() => {
+                  const autos = bb.batch.items.filter((x) => (x.image_analysis as { auto?: unknown } | null)?.auto);
+                  if (!autos.length) return null;
+                  const lab = ((autos[0].image_analysis as { auto?: { labels?: string[] } }).auto?.labels ?? []).join("・");
+                  return <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e8f5e9", color: "#2e7d32" }}>🔍 自動で読みました（{autos.length}件{lab ? `・推奨: ${lab}` : ""}）</div>;
+                })()}
+                {/* 2026-09-25 竹内「文章の部分も要約できるように」: 条件の要約と、資料で照らせない条件（スタッフ向け） */}
+                {open.condition_summary?.line && (
+                  <div className="text-[10px] mb-1 leading-snug break-words" style={{ color: "#455a64" }}>📝 条件の要約: {open.condition_summary.line}</div>
+                )}
+                {open.condition_summary && open.condition_summary.uncheckable.length > 0 && (
+                  <div className="text-[10px] mb-1.5 leading-snug break-words" style={{ color: "#78909c" }}>照らせない条件: {open.condition_summary.uncheckable.join("／")}</div>
+                )}
                 <div className="flex flex-col gap-2">
                   {/* 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」 */}
                   {sortForReview(bb.batch.items).map((it) => {
@@ -889,6 +908,9 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                           <ReasonChips it={it} open={!!openBreakdown[it.id]} onToggle={() => setOpenBreakdown((p) => ({ ...p, [it.id]: !p[it.id] }))} />
                           <EquipmentLine eq={it.equipment} />
                           <TermsLine t={it.terms} />
+                          {it.location?.line && (
+                            <div className="text-[10px] mt-0.5 break-words" style={{ color: it.location.area?.code === "AREA_EXCLUDED" ? "#c62828" : it.location.area?.code === "AREA_FAR" ? "#ef6c00" : "#37474f" }}>{it.location.line}</div>
+                          )}
                           {it.image_lines && it.image_lines.length > 0 && (
                             <div className="text-[10px] mt-0.5" style={{ color: "#37474f" }}>📷 {it.image_lines.slice(0, 5).join("／")}</div>
                           )}

@@ -55,6 +55,8 @@ export type PropertyFacts = {
   floorPlan: string | null;
   /** 築年数（新築 = 0）。不明 = null */
   buildingAge: number | null;
+  /** 2026-09-25 専有面積（㎡）。説明文の「25.62㎡」か資料の文字層。不明 = null */
+  areaSqm?: number | null;
   rawText: string;
 };
 
@@ -84,6 +86,8 @@ export type FloorPlanWant = {
   /** 「30平米以上」 */
   sqmMin: number | null;
   raw: string;
+  /** 2026-09-25 「1DKも可」「(厳しければ2LDK)」の型（本命の plans・範囲には入れない）。無ければ持たない */
+  alt?: string[];
 };
 
 /** 画像（間取り図）でしか分からない希望。true/false/null（読めない） */
@@ -108,6 +112,9 @@ export type CustomerLike = {
   move_in_time?: string | null;
   /** 登録日（年の無い「7月」を何年と読むかの基準） */
   created_at?: string | null;
+  /** 2026-09-25: 広さの下限（㎡）・条件フォームの原文（「1DKも可」が列に入っていない人がいる） */
+  floor_area_min?: number | null;
+  raw_format_text?: string | null;
 };
 
 /** delivery / source は sent_properties の列（無い呼び出し元は今まで通り全部を送付として扱う） */
@@ -155,6 +162,14 @@ export type CustomerProfile = {
   conditionWants?: ConditionKey[];
   /** 条件欄に「更新料」「定期借家・契約期間」「フリーレント」の語がある（札を出すかどうか） */
   mentions?: { renewal: boolean; contract: boolean; freeRent: boolean };
+  /** 2026-09-25 家賃の下限（使える時だけ・上限より小さい） */
+  rentMin?: number | null;
+  /** 2026-09-25 「1DKも可」「厳しければ2LDK」の間取り（本命より少し低い点。本命に入っている型は入れない） */
+  floorPlanAlt?: FloorPlanWant | null;
+  /** 2026-09-25 広さの下限（㎡・列 floor_area_min か間取りの希望の「30平米以上」） */
+  sqmMin?: number | null;
+  /** 2026-09-25 築年の列が空で、自由文に「新築」「築浅」「新しめ」がある時の年数の目安（情報の札だけ） */
+  ageTextMax?: { years: number; word: string } | null;
 };
 
 export type Verdict = "pass" | "hold" | "drop";
@@ -246,6 +261,31 @@ export const REASON_JA: Record<string, string> = {
   FREE_RENT_MATCH: "フリーレントあり（初期費用を抑えたい希望）",
   FREE_RENT: "フリーレントあり（資料）",
   FREE_RENT_UNLISTED: "要確認: フリーレント",
+  // 2026-09-25 竹内「家賃の下限入れる」「1DKも可の場合、1DKも入れるが評価はお客さんの希望の間取りの方が点数少し高め」
+  RENT_BELOW_MIN: "家賃が下限よりかなり安い（下限の85%未満）",
+  FLOOR_PLAN_ALT_MATCH: "間取りが「も可」の型に一致（本命ではない）",
+  SQM_OK: "広さは希望以上",
+  SQM_SLIGHTLY_UNDER: "広さが希望を少し下回る（9割以上）",
+  SQM_UNDER: "広さが希望の9割未満",
+  SQM_UNKNOWN: "要確認: 広さ",
+  BUILDING_AGE_TEXT_OK: "築年が「築浅・新築」の希望に合う",
+  BUILDING_AGE_TEXT_OVER: "築年が「築浅・新築」の希望より古い",
+  // 2026-09-25 竹内「エリアの部分、把握できれば理想」「通勤の部分も沿線の知識」（area-want.ts・osaka-geo.ts・transit-route.ts）
+  AREA_STATION_MATCH: "希望の駅",
+  AREA_WARD_MATCH: "希望の区・市",
+  AREA_LINE_MATCH: "希望の路線の駅",
+  AREA_NEAR: "希望のエリアから2km以内",
+  AREA_REGION_MATCH: "希望の範囲（大阪市内・環状線内 等）",
+  AREA_CLOSE: "希望のエリアに近い（4km以内・隣の区）",
+  AREA_FAR: "希望のエリアから離れている",
+  AREA_EXCLUDED: "希望外のエリア（◯◯以外）",
+  AREA_UNKNOWN: "要確認: 物件の場所",
+  AREA_DIRECTION_NG: "希望の方角（◯◯より北 等）と違う",
+  COMMUTE_OK: "通勤が希望の時間内",
+  COMMUTE_SLIGHTLY_OVER: "通勤が希望を少し超える",
+  COMMUTE_OVER: "通勤が希望の時間を超える",
+  COMMUTE_INFO: "通勤の所要（目安）",
+  COMMUTE_UNKNOWN: "要確認: 通勤の所要",
 };
 
 /**
@@ -353,6 +393,15 @@ export const REASON_POINTS: Record<string, number> = {
   CONTRACT_FIXED: -5, CONTRACT_NORMAL: 0, CONTRACT_UNKNOWN: 0,
   RENEWAL_FEE_NONE: 0, RENEWAL_FEE_SET: 0, RENEWAL_FEE_UNKNOWN: 0,
   FREE_RENT_MATCH: 3, FREE_RENT: 0, FREE_RENT_UNLISTED: 0,
+  // 2026-09-25 家賃下限・間取りの「も可」・広さ・築浅の自由文（下限と築浅は情報の札。保留にしない）
+  RENT_BELOW_MIN: -3,
+  FLOOR_PLAN_ALT_MATCH: 8,
+  SQM_OK: 3, SQM_SLIGHTLY_UNDER: 0, SQM_UNDER: -10, SQM_UNKNOWN: 0,
+  BUILDING_AGE_TEXT_OK: 3, BUILDING_AGE_TEXT_OVER: 0,
+  // 2026-09-25 エリア・通勤（外す候補にしない。以外に当たる時だけ保留）
+  AREA_STATION_MATCH: 10, AREA_WARD_MATCH: 8, AREA_LINE_MATCH: 6, AREA_NEAR: 5, AREA_REGION_MATCH: 3, AREA_CLOSE: 2, AREA_FAR: -3,
+  AREA_EXCLUDED: -10, AREA_UNKNOWN: 0, AREA_DIRECTION_NG: -3,
+  COMMUTE_OK: 8, COMMUTE_SLIGHTLY_OVER: 0, COMMUTE_OVER: -5, COMMUTE_INFO: 0, COMMUTE_UNKNOWN: 0,
 };
 /** 理由コードの点（画像の読み取り IMAGE_*_OK/_NG も含む）。知らないコードは 0 */
 export function reasonPoints(code: string): number {
@@ -474,9 +523,14 @@ export function parsePropertyFacts(summary: string | null | undefined, data?: Pr
   if (age) buildingAge = parseInt(age[1], 10);
   else if (/新築/.test(restText)) buildingAge = 0;
 
+  // 専有面積（「1K 25.62㎡」「21.09m2」）。読めた時だけ持つ（無い行の形は今まで通り）
+  const sq = restText.match(/(\d{1,3}(?:\.\d{1,2})?)\s*(?:㎡|m2|m²|平米)/i);
+  const areaSqm = sq ? parseFloat(sq[1]) : null;
+
   return {
     name, rank: rankM ? parseInt(rankM[1], 10) : num(data?.rank),
     rentYen, adminFeeYen, depositMonths, keyMoneyMonths, adMonths, adYen, walkMinutes, floorPlan, buildingAge,
+    ...(areaSqm != null && areaSqm >= 5 && areaSqm <= 500 ? { areaSqm } : {}),
     rawText: raw,
   };
 }
@@ -527,6 +581,16 @@ export function normalizeFloorPlanWant(text: string | null | undefined): FloorPl
   }
   if (found.length === 0) { out.any = true; return out; }
 
+  // 2026-09-25 竹内「1DKも可の場合、1DKも入れるが評価はお客さんの希望の間取りの方が点数少し高め」:
+  //   「1DKも可」「1DKでもOK」「(厳しければ2LDK)」の型は alt に分ける（本命＝それ以外の型）。全部が「も可」なら本命として読む
+  const isAlt = (f: { start: number; end: number }) =>
+    ALT_AFTER_RE.test(t.slice(f.end, f.end + 14)) || ALT_BEFORE_RE.test(t.slice(Math.max(0, f.start - 10), f.start));
+  const altFound = found.filter(isAlt);
+  if (altFound.length > 0 && altFound.length < found.length) {
+    out.alt = [...new Set(altFound.map((f) => f.plan))];
+    found.splice(0, found.length, ...found.filter((f) => !isAlt(f)));
+  }
+
   for (let i = 0; i < found.length; i++) {
     const f = found[i];
     const after = t.slice(f.end, f.end + 12);
@@ -550,6 +614,71 @@ export function normalizeFloorPlanWant(text: string | null | undefined): FloorPl
     if (!out.plans.includes(f.plan)) out.plans.push(f.plan);
   }
   return out;
+}
+
+/** 間取りの型の後ろの「も可」（「1DKも可」「1DKでもOK」「1DK(7帖以上)も可」「1DKも検討」） */
+const ALT_AFTER_RE = /^\s*(?:[(（][^)）]{0,8}[)）])?\s*(?:も|でも)\s*(?:可|OK|大丈夫|良い|よい|いい|検討|アリ|あり|かまわない|構わない)/;
+/** 間取りの型の前の「厳しければ」「無ければ」「妥協して」 */
+const ALT_BEFORE_RE = /(?:厳しければ|難しければ|無ければ|なければ|妥協して|最悪|第二希望[:：]?)\s*$/;
+
+/**
+ * additional_conditions は条件の記録（「[9/19 18:23|auto] 間取り: 1LDK・2LDK」）が時系列で並ぶ。前の回の間取りは今の希望ではない
+ *   （実例: 「条件を1LDKから1DKに変更」→ 後で 1LDK に戻した）ので、「間取り:」の欄は最後の1つだけ残す
+ */
+function additionalWithoutOldPlans(s: string | null | undefined): string {
+  const lines = String(s ?? "").split("\n");
+  const idx = lines.map((l, i) => (/間取り?\s*[:：]/.test(l) ? i : -1)).filter((i) => i >= 0);
+  const last = idx.length ? idx[idx.length - 1] : -1;
+  return lines.map((l, i) => (i !== last ? l.replace(/間取り?\s*[:：][^/\n]*/g, "") : l)).join("\n");
+}
+/** 条件フォームの原文の間取りの行（「【希望の広さ・間取り】⇒1K 1DK 1LDK」）。質問の例（「間取り(1K、1LDKなど)」）は外す */
+function formPlanLines(s: string | null | undefined): string {
+  return String(s ?? "").split("\n").filter((l) => /間取|広さ/.test(l)).map((l) => l.replace(/[(（][^)）]*など[)）]/g, "")).join("\n");
+}
+/**
+ * 条件フォームの「希望」の行に並べた型（「【希望の広さ・間取り】⇒1K 1DK 1LDK」）は本命（竹内「本命＝列・希望と書かれた方」）。
+ *   列の型が全部その行にある時だけ、行の型を本命に足す（列と食い違う古いフォームは使わない）
+ */
+export function formWantPlans(c: CustomerLike, main: FloorPlanWant): string[] {
+  if (main.any) return [];
+  const out: string[] = [];
+  for (const l of formPlanLines(c.raw_format_text).split("\n")) {
+    if (!/希望/.test(l)) continue;
+    const w = normalizeFloorPlanWant(l.replace(/^[^⇒:：】]*[⇒:：】]/, ""));
+    if (w.any || !main.plans.every((p) => w.plans.includes(p))) continue;
+    for (const p of w.plans) if (!main.plans.includes(p) && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * 2026-09-25: 条件欄の自由文・条件フォームの原文にある間取りの型のうち、本命（floor_plan の列）に入っていない物＝「も可」の型。
+ *   例: 列「1LDK」・自由文「1DKも可」「1LDK or 2K」→ 1DK・2K。NG 欄（ng_points）と「1Kは嫌」「1R NG」は入れない。
+ *   列の中の「も可」（normalizeFloorPlanWant の alt）も合わせる。何も無ければ null
+ */
+export function parseFloorPlanAlt(c: CustomerLike, main: FloorPlanWant): FloorPlanWant | null {
+  const plans: string[] = [...(main.alt ?? [])];
+  const text = [c.preferences, c.other_requests, additionalWithoutOldPlans(c.additional_conditions), formPlanLines(c.raw_format_text)].map((s) => toHalfWidth(String(s ?? "")).toUpperCase()).join("\n");
+  const re = /([1-9])\s*(SLDK|LDK|SDK|DK|SK|K|R)(?![A-Z])/g;
+  const toks: Array<{ plan: string; start: number; end: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const plan = normalizeFloorPlanToken(m[0]);
+    if (plan) toks.push({ plan, start: m.index, end: m.index + m[0].length });
+  }
+  const LIST_SEP_RE = /^\s*(?:OR|か|または|もしくは|、|・|\/|／|,|，|&|と)?\s*$/;
+  for (const k of toks) {
+    const after = text.slice(k.end, k.end + 8);
+    if (/^\s*(?:は|が)?\s*(?:NG|不可|嫌|いや|避け|×|以外|なし|無し|ダメ|だめ|狭|せまい|に住|在住|から)/.test(after)) continue;
+    if (!main.any && matchFloorPlan({ ...main, alt: undefined }, k.plan) === "match") continue;
+    // 「も可」の言い方か、別の型と並べて書いてある時だけ（「今1Kに住んでいて」のような話は入れない）
+    const marked = ALT_AFTER_RE.test(text.slice(k.end, k.end + 14)) || ALT_BEFORE_RE.test(text.slice(Math.max(0, k.start - 10), k.start));
+    const listed = toks.some((o) => o !== k && ((o.end <= k.start && k.start - o.end <= 6 && LIST_SEP_RE.test(text.slice(o.end, k.start))) || (k.end <= o.start && o.start - k.end <= 6 && LIST_SEP_RE.test(text.slice(k.end, o.start)))));
+    if (!marked && !listed) continue;
+    if (!plans.includes(k.plan)) plans.push(k.plan);
+  }
+  if (!plans.length) return null;
+  return { any: false, plans, minRank: null, maxRank: null, sqmMin: null, raw: plans.join("・") };
 }
 
 export type FloorPlanMatch = "match" | "near" | "mismatch" | "unknown";
@@ -632,6 +761,39 @@ export function detectTermMentions(c: CustomerLike): { renewal: boolean; contrac
   return { renewal: /更新料/.test(text), contract: /定期借家|定借|契約期間|短期/.test(text), freeRent: /フリーレント/.test(text) };
 }
 
+/**
+ * 広さの列が空の人の自由文・フォームの「25平米以上」「40㎡」「広さ: 35㎡以上」→ ㎡の下限。
+ *   「以下」「まで」は下限ではないので読まない。条件の記録（additional_conditions）は最後の「広さ:」だけ
+ */
+export function sqmFromText(c: CustomerLike): number | null {
+  const add = String(c.additional_conditions ?? "").split("\n");
+  const lastIdx = add.map((l, i) => (/広さ\s*[:：]/.test(l) ? i : -1)).filter((i) => i >= 0).pop();
+  const addText = add.map((l, i) => (i !== lastIdx ? l.replace(/広さ\s*[:：][^/\n]*/g, "") : l)).join("\n");
+  const text = toHalfWidth([c.preferences, c.other_requests, addText, formPlanLines(c.raw_format_text)].map((s) => String(s ?? "")).join("\n"));
+  for (const m of text.matchAll(/(\d{2,3}(?:\.\d)?)\s*(?:平米|㎡|m2|M2|平方メートル)\s*(以上|〜|~|から|程度|くらい|ぐらい|前後|以下|まで|未満)?/g)) {
+    if (/以下|まで|未満/.test(m[2] ?? "")) continue;
+    const v = parseFloat(m[1]);
+    if (v >= 15 && v <= 150) return v;
+  }
+  return null;
+}
+
+/**
+ * 築年の列が空の人の「新築」「築浅」「新しめ」「築15年以内」（自由文）→ 年数の目安。情報の札だけに使う（線は実送信で確かめていないので点を大きくしない）。
+ *   否定（「新築じゃなくても」「古くても」「築浅にこだわらない」）は読まない
+ */
+export function detectAgeText(c: CustomerLike): { years: number; word: string } | null {
+  const text = toHalfWidth([c.preferences, c.other_requests, c.additional_conditions].map((s) => String(s ?? "")).join("\n"));
+  if (/(?:新築|築浅)(?:じゃ|で)?(?:なくても|は?こだわらない|でなくても)|古くても|築年数?(?:は)?(?:気にしない|こだわらない|問わない)/.test(text)) return null;
+  const n = text.match(/築\s*(\d{1,2})\s*年\s*(?:以内|まで|未満|以下)/);
+  if (n) { const y = parseInt(n[1], 10); if (y > 0 && y <= 60) return { years: y, word: n[0] }; }
+  if (/新築/.test(text)) return { years: 3, word: "新築" };
+  if (/築浅/.test(text)) return { years: 10, word: "築浅" };
+  const w = text.match(/新しめ|新しい物件|比較的新しい|新しい(?:お部屋|部屋|建物|マンション)/);
+  if (w) return { years: 15, word: w[0] };
+  return null;
+}
+
 /** 見積書の本文から割引額（円）を読む。「🌟26,500円割引させて頂き」 */
 export function parseDiscountYen(text: string | null | undefined): number | null {
   const t = toHalfWidth(String(text ?? "")).replace(/,/g, "");
@@ -703,10 +865,21 @@ export function buildCustomerProfile(
   const lim = num(customer.initial_cost_limit);
 
   const confidence: CustomerProfile["confidence"] = rentMax == null ? "low" : (sentRows.length >= 3 ? "high" : "mid");
+  const floorPlanWant = normalizeFloorPlanWant(customer.floor_plan ?? customer.layout);
+  // フォームの「希望」の行に並べた型は本命に足す（列の型が全部入っている時だけ）
+  const fromForm = formWantPlans(customer, floorPlanWant);
+  if (fromForm.length) floorPlanWant.plans = [...floorPlanWant.plans, ...fromForm];
+  const areaMin = num(customer.floor_area_min);
+  const sqmMin = areaMin != null && areaMin >= 10 && areaMin <= 200 ? areaMin : (floorPlanWant.sqmMin ?? sqmFromText(customer));
 
   return {
     rentMax, notes,
-    floorPlanWant: normalizeFloorPlanWant(customer.floor_plan ?? customer.layout),
+    // 下限は上限より小さい時だけ。上限が入力誤り（上限＜下限・3万未満）の人は下限も信じない
+    rentMin: rentMin != null && rentMin >= 10_000 && !notes.includes("RENT_MAX_UNRELIABLE") && (rentMax == null || rentMin < rentMax) ? rentMin : null,
+    floorPlanAlt: parseFloorPlanAlt(customer, floorPlanWant),
+    sqmMin: sqmMin ?? null,
+    ageTextMax: buildingAgeMax != null && buildingAgeMax > 0 ? null : detectAgeText(customer),
+    floorPlanWant,
     walkMax: walkMax != null && walkMax > 0 ? walkMax : null,
     buildingAgeMax: buildingAgeMax != null && buildingAgeMax > 0 ? buildingAgeMax : null,
     initialCostLimit: lim != null && lim > 0 ? lim : null,
@@ -804,7 +977,12 @@ export type JudgeOptions = {
   terms?: ListingTerms | null;
   /** 入居時期の照合の基準日（既定は今） */
   today?: Date | string;
+  /** 2026-09-25 エリア・通勤の札（area-want.ts の locationReasonCodes。売上サポの recordPickupBatch だけが渡す） */
+  locationCodes?: string[] | null;
 };
+
+/** 家賃の下限の線（下限の 85% 未満で情報の札） */
+export const RENT_MIN_RATIO = 0.85;
 
 export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, index = 0, opts: JudgeOptions = {}): Judgment {
   let score = 50;
@@ -835,6 +1013,11 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     const med = profile.history.rentRatioMedian;
     if (med != null && ratio > med + 0.15) add("RENT_ABOVE_USUAL", -5);
   }
+  // 家賃の下限（2026-09-25 竹内「家賃の下限入れる」）: 下限の 85% 未満の時だけ情報の札（−3・保留にしない。安い物件を外す理由にはしない）
+  if (profile.rentMin != null && facts.rentYen != null) {
+    const total = facts.rentYen + (facts.adminFeeYen ?? 0);
+    if (total < profile.rentMin * RENT_MIN_RATIO) add("RENT_BELOW_MIN", reasonPoints("RENT_BELOW_MIN"));
+  }
 
   // 敷金・礼金
   const dep = facts.depositMonths, key = facts.keyMoneyMonths;
@@ -852,10 +1035,22 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
 
   // 間取り
   const fpm = matchFloorPlan(profile.floorPlanWant, facts.floorPlan);
+  // 「1DKも可」の型（本命より少し低い +8）。本命に合う時・型が読めない時は見ない
+  const fpAlt = fpm !== "match" && !!profile.floorPlanAlt && facts.floorPlan != null && matchFloorPlan(profile.floorPlanAlt, facts.floorPlan) === "match";
   if (fpm === "match") add("FLOOR_PLAN_MATCH", 15);
+  else if (fpAlt) add("FLOOR_PLAN_ALT_MATCH", reasonPoints("FLOOR_PLAN_ALT_MATCH"));
   else if (fpm === "near") add("FLOOR_PLAN_NEAR", 5);
   else if (fpm === "mismatch") add("FLOOR_PLAN_MISMATCH", -15, "hold");
   else if (facts.floorPlan == null) missing.push("floor_plan");
+
+  // 広さ（希望の㎡以上）: 9割未満は保留・9割以上は 0点・読めない時は 0点の要確認
+  if (profile.sqmMin != null) {
+    const a = facts.areaSqm ?? null;
+    if (a == null) add("SQM_UNKNOWN", 0);
+    else if (a >= profile.sqmMin) add("SQM_OK", reasonPoints("SQM_OK"));
+    else if (a >= profile.sqmMin * 0.9) add("SQM_SLIGHTLY_UNDER", 0);
+    else add("SQM_UNDER", reasonPoints("SQM_UNDER"), "hold");
+  }
 
   // 徒歩
   if (profile.walkMax != null && facts.walkMinutes != null) {
@@ -870,6 +1065,11 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     else if (facts.buildingAge <= profile.buildingAgeMax + 3) add("BUILDING_AGE_SLIGHTLY_OVER", -3);
     else add("BUILDING_AGE_OVER", -10, "hold");
   } else if (profile.buildingAgeMax != null) missing.push("building_age");
+  // 築年の列が空で自由文に「新築・築浅」: 情報の札だけ（合えば +3・古くても 0点）
+  if (profile.buildingAgeMax == null && profile.ageTextMax && facts.buildingAge != null) {
+    if (facts.buildingAge <= profile.ageTextMax.years) add("BUILDING_AGE_TEXT_OK", reasonPoints("BUILDING_AGE_TEXT_OK"));
+    else add("BUILDING_AGE_TEXT_OVER", 0);
+  }
 
   // 送付済みの建物（サーバーの skip-sent と同じ線。スタッフモードでは呼ばれない）
   //   名前が一般名（「物件」等）の物件は照合しない（どの建物か分からない＝送付済みと判断しない・迷う物は残す側）
@@ -912,6 +1112,12 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     add(code, reasonPoints(code), /_NG$/.test(code) ? "hold" : undefined);
   }
 
+  // エリア・通勤（area-want.ts の locationReasonCodes。呼ぶ側が計算して渡す＝この部品は大きな駅の表を持たない）
+  for (const code of opts.locationCodes ?? []) {
+    if (!/^(?:AREA|COMMUTE)_/.test(code) || codes.includes(code)) continue;
+    add(code, reasonPoints(code), isHoldCode(code) ? "hold" : undefined);
+  }
+
   // 上限は 130（旧 100）。条件が全部合う物件は AD なしで 88〜100 に達し、100 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
   score = Math.max(0, Math.min(130, score));
@@ -920,8 +1126,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
   // 理由の日本語は「外す・保留の理由」を先に、良い点は後に（LINE の1行は先頭2つを見せる）
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
-  const reasonsJa = [...flagCodes, ...positives].map(reasonJa);
+  const positives = codes.filter((c) => isNewPositive(c) || ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const reasonsJa = [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa);
   // 設備欄で ○/× が決まった希望は画像で確かめ直さない（同じ希望を二重に数えない）
   const decided = new Set<string>((eq?.rows ?? []).filter((r) => r.result !== "unlisted").map((r) => r.want.key));
   const imageChecks = profile.imageWants.filter((k) => { const e = IMAGE_TO_EQUIP[k]; return !(e && decided.has(e)); });
@@ -956,9 +1162,18 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
     score = Math.min(raw, EQUIP_STRONG_NG_CAP);
   }
   const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || score < 40 ? "hold" : "pass");
-  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
-  const reasonsJa = [...flagCodes, ...positives].map(reasonJa);
+  const positives = codes.filter((c) => isNewPositive(c) || ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const reasonsJa = [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa);
   return { ...j, score, verdict, reasonCodes: codes, flagCodes, reasonsJa };
+}
+
+/** 2026-09-25 に足した加点の札（理由の日本語に出す） */
+function isNewPositive(c: string): boolean {
+  return /^(?:FLOOR_PLAN_ALT_MATCH|SQM_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|COMMUTE_OK)$/.test(c);
+}
+/** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
+function isNewInfo(c: string): boolean {
+  return /^(?:RENT_BELOW_MIN|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
@@ -966,6 +1181,7 @@ export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130"]);
 export const HOLD_REASON_CODES = new Set([
   "RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PROFIT_NEGATIVE", "PET_NG",
   "MOVE_IN_LATE", "CONTRACT_FIXED", // 2026-09-25 資料の表の募集の条件
+  "SQM_UNDER", "AREA_EXCLUDED", // 2026-09-25 広さの9割未満・希望外のエリア（以外）
 ]);
 const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP|CONDITION)_.*_NG$/.test(c);
 
@@ -996,8 +1212,8 @@ export function applyEquipmentMatch(
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
-  return { score, verdict, reasonCodes: codes, flagCodes, reasonsJa: [...flagCodes, ...positives].map(reasonJa) };
+  const positives = codes.filter((c) => isNewPositive(c) || ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  return { score, verdict, reasonCodes: codes, flagCodes, reasonsJa: [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa) };
 }
 
 // ─── まとめ（LINE の末尾・コンソール用） ─────────────────────────────────────

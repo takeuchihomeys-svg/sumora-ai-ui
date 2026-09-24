@@ -95,7 +95,8 @@ console.log("── 間取りの希望文（実データの上位40種）を範�
   t("ワンルーム → 1R", w10.plans.includes("1R") && matchFloorPlan(w10, "1K") === "near");
 
   const w11 = normalizeFloorPlanWant("3LDK(厳しければ2LDK)");
-  t("3LDK(厳しければ2LDK): 両方一致", matchFloorPlan(w11, "2LDK") === "match" && matchFloorPlan(w11, "3LDK") === "match");
+  // 2026-09-25 竹内「1DKも可の場合、1DKも入れるが評価は希望の間取りの方が少し高め」: 「厳しければ」の型は本命でなく alt（FLOOR_PLAN_ALT_MATCH）
+  t("3LDK(厳しければ2LDK): 3LDK が本命・2LDK は alt", matchFloorPlan(w11, "3LDK") === "match" && matchFloorPlan(w11, "2LDK") !== "match" && JSON.stringify(w11.alt) === JSON.stringify(["2LDK"]));
 }
 
 console.log("── 初期費用を抑えたい（フォームの自由文・実物）");

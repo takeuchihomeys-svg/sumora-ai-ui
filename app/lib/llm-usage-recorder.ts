@@ -366,6 +366,9 @@ export function recordAltUsage(input: {
   //   altRecorder が null のまま＝DeepSeek に回った呼び出しが1行も残らなかった（テストで model を確かめられない）→ その場で書き込みの口を作る
   const r = altRecorder ?? (altRecorder = lazyAltRecorder());
   if (!r) return;
+  // 2026-09-25: 呼んだ場面ごとの action の読み替え（llm-action-scope.ts の runWithActionRename。器は globalThis に置き、ここでは node の部品を import しない）
+  const scope = (globalThis as { __sumoraLlmActionScope?: { getStore(): { rename?: Record<string, string> } | undefined } }).__sumoraLlmActionScope?.getStore();
+  const action = input.action && scope?.rename?.[input.action] ? scope.rename[input.action] : input.action;
   const row: LlmUsageRow = {
     route: r.route(), model: input.model, status: input.status, error_type: input.errorType,
     stream: input.stream ?? false, stop_reason: null,
@@ -376,7 +379,7 @@ export function recordAltUsage(input: {
     sys_key: input.sysHead ? shortHash(input.sysHead.slice(0, 400)) : null,
     sys_head: input.sysHead ? input.sysHead.slice(0, 200) : null,
     duration_ms: Math.max(0, Math.round(input.durationMs)), request_id: null, env: r.env,
-    action: input.action, conversation_id: input.conversationId, sys_key_full: input.sysKeyFull,
+    action, conversation_id: input.conversationId, sys_key_full: input.sysKeyFull,
   };
   try { r.keepAlive(r.insert(row).catch(() => {})); } catch { /* 記録の失敗で本来の応答を止めない */ }
 }
