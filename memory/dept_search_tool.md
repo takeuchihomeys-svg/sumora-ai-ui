@@ -86,6 +86,8 @@
   - `pdf-render.ts` は無いページを丸めず null（1ページしか無い PDF の「2ページ目」を弊社の1ページ目と取り違えない）
 
 ### ③ 売上サポ「ピックアップ」タブ
+- 2026-09-24 夕 竹内「一覧が出るように・開くと履歴・開くとき重い（画像を全部読む）・並びは LINE と連動・幅も LINE と同じ」→ **LINE と同じ左右2列（左 390px・右に会話）**。`GET ?view=list`（要約だけ・ピックアップのあるお客様＋直近30日に物件を送ったお客様・並びは会話の updated_at・30秒ごと／画面に戻った時に取り直す）と `?view=detail&pcid|conv&batches=3`（開いた1人分・直近3回＋「もっと見る」・sent_properties の履歴40件＝🟢ピックアップ／🔵オススメ／⚪共有のみ）。画像は lazy・トリミング画像は2列の小さな表示。売上サポ全体（299件）の読み込みを待たない
+- 同日: sent_properties の delivery/channel を**埋め戻し済み**（22,753行・sent_image_properties 97行）
 - **2026-09-24 午後（YUMA テスト・DeepSeek）で見つけて直した物**:
   - 🌟 の順位付けは**本番でも毎回 Claude Haiku に落ちていた**（callVisionAlt は画像が無いと送らない）→ `callDeepSeek`（文字も通す）に。順位付けの関数は `app/lib/pickup-rank.ts` に移した（テストから本番と同じ関数を呼ぶ）
   - 元付資料の読み取りが **25秒で時間切れ**（実測1枚 27〜40秒）→ 70秒・merge-pdfs の maxDuration 300
