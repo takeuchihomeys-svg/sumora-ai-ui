@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-09-24 夜 売上サポ →「📤 AIXで送る」で AIX に今回の物件の事実を渡す／スマホの点検（竹内「改善する。DeepSeek でテストする」）
+- **売上サポ → AIX の受け渡しに行 ID を足した**: `app/page.tsx` の pickupHandoffRef が画像と同じ並びの property_pickups の行 ID を `aixInitialPickupIds` に持ち、AixModal（`initialPickupIds`）が **画像がセットされた時のまま（同じ File・同じ並び）の時だけ** `body.pickup_ids` で送る。外した・足した時は送らない。手で選んだ画像（onAixMultiImagesSelected）は ID を空にする
+- サーバー（`app/api/aix/action/route.ts`）は pickup_ids を会話 ID で絞って読み、**間取り・家賃だけ**（`app/lib/pickup-send-facts.ts` parsePickupFact・AD／利益／🌟／管理費は読まない）を【今回お送りする物件】として生成に渡す。行の数と画像の枚数が違えば使わない
+- GET /api/property-pickups?ids= の6つの鍵は変えていない（事実はサーバーが自分で読む＝説明文は画面を通らない）
+- **スマホの点検（PickupReview.tsx）で直した穴**: ①会話は古い順なのに開くと一番上（古い方）から出ていた → 開いた時・メモを残した後・キーボードが出た時は一番下へ（画像の遅延読み込みに合わせて 350ms 後にもう一度）②画像を大きく開いている時に端末の「戻る」を押すと会話ごと閉じていた → 画像だけ閉じて履歴を積み直す（LINE と同じ）
+- 点検して問題なかった所: 下の余白（visualViewport か 100dvh の fixed 全画面・親は 100svh）、入力欄（viewport が maximumScale 1 なので 14px でも拡大されない・キーボード時は下の余白 4px）、右スワイプ（入力欄・ボタンからは始めない・スワイプ後 500ms はクリックを止める）、PC の2列（md 以上は static のまま）。**iPhone 実機は未確認**
+- 設計知見: 「AIX の生成は画像を読まない → 今回の物件の事実は売上サポの行から渡す」（AIX・売上サポ）
+
 ## 2026-09-24 夜 スマホの LINE トーク UI・余白・説明文が送られた件（竹内・スクショ2枚）
 
 **① 説明文がお客様に届いた（2枚目）— 送信の出口をサーバーで断った**

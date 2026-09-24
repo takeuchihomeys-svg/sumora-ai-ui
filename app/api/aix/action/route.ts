@@ -67,7 +67,8 @@ import { buildApplicationNote, applicationBulletNote } from "@/app/lib/applicati
 // 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（スタッフの入力をそのまま・骨組みは実送信の形）
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
-import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "@/app/lib/property-send-match";
+import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES, stripUnkeptConfirmPromiseLines } from "@/app/lib/property-send-match";
+import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PICKUP_HISTORY_NOTE, parsePickupFact, buildPickupFactsNote, findPickupSendConflicts, type PickupFact } from "@/app/lib/pickup-send-facts";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
 import { buildConversationClockNote, fixStaleRecentReference, absolutizeRelativeDays, jstDayLabel } from "@/app/lib/relative-date";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す内覧の時間は1つ（お客様が日にちを指定した日だけ空き時間を全部）
@@ -1560,17 +1561,25 @@ async function handleAction(request: NextRequest): Promise<Response> {
       aixLastCustomerAt && !Number.isNaN(Date.parse(aixLastCustomerAt)) ? Date.parse(aixLastCustomerAt) : null,
       Date.now(),
     );
+    // 2026-09-24 竹内「改善する」（YUMA・DeepSeek 実測）: スタッフ行を生のまま渡していたので、
+    //   ①前回の物件送付の文（「1K・家賃7万円以内」「駐車場の空き状況も含めて確認させて頂きます」）を今回の物件に写した（4回中3回）
+    //   ②旧 UI が送った社内の説明文（【1🌟★】…AD 1ヶ月）も LLM に届いていた
+    //   → 入口で、前回の送付に印・社内の説明文は中身ごと伏せる（app/lib/pickup-send-facts.ts）
+    const historyRowsForAix = recentMsgsForHistory
+      .map((m) => {
+        const label = m.sender === "staff" && m.imageUrl ? staffImageLabels.get(m.imageUrl) : undefined;
+        return label ? { ...m, text: `[画像: ${label}の資料・御見積書]` } : m;
+      })
+      .filter((m) => m.text && m.text !== "[画像]" && m.text !== "[動画]")
+      .slice(-20);
+    const labelPastPickup = labelsPastPickupFor(action);
+    const pastPickupSendTexts = labelPastPickup ? historyRowsForAix.filter((m) => isPastPickupSend(m.sender, m.text)).map((m) => m.text) : [];
     const recentHistory = recentMsgsForHistory.length > 0
       ? aixClockNote + "\n\n【直近の会話履歴（この流れを踏まえて文を作ること）】\n" +
-        recentMsgsForHistory
-          .map((m) => {
-            const label = m.sender === "staff" && m.imageUrl ? staffImageLabels.get(m.imageUrl) : undefined;
-            return label ? { ...m, text: `[画像: ${label}の資料・御見積書]` } : m;
-          })
-          .filter((m) => m.text && m.text !== "[画像]" && m.text !== "[動画]")
-          .slice(-20)
-          .map((m) => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`)
-          .join("\n")
+        historyRowsForAix
+          .map((m) => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${labelHistoryTextForAix(m.sender, m.text, { labelPastPickup })}`)
+          .join("\n") +
+        (pastPickupSendTexts.length > 0 ? `\n\n${PAST_PICKUP_HISTORY_NOTE}` : "")
       : "";
 
     // 最新の顧客メッセージ（☆成功返信パターンの類似検索クエリに使用・LL-04）
@@ -2025,8 +2034,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
       }
       // 2026-09-21 竹内「前に送った物件が含まれていないか確認できるように」:
       //   finalize の注意（お客様への返信になっていない等）と**両方**出す（片方で上書きしない）
-      const mergedNotice = [notice, duplicateNotice].filter(Boolean).join("\n");
-      return NextResponse.json({ ok: true, message_text: message, ...(mergedNotice ? { notice: mergedNotice } : {}), ...(suggestTemplateCategory ? { suggest_template_category: suggestTemplateCategory } : {}), ...(extra ?? {}) });
+      // 2026-09-24: 呼び出し側の注意（extra.notice）が finalize・重複の注意を上書きして消していた → 全部つなぐ
+      const { notice: extraNotice, ...extraRest } = (extra ?? {}) as Record<string, unknown> & { notice?: unknown };
+      const mergedNotice = [notice, typeof extraNotice === "string" ? extraNotice : "", pickupSendExitNotice(message), duplicateNotice].filter(Boolean).join("\n");
+      return NextResponse.json({ ok: true, message_text: message, ...(mergedNotice ? { notice: mergedNotice } : {}), ...(suggestTemplateCategory ? { suggest_template_category: suggestTemplateCategory } : {}), ...extraRest });
     };
 
     /**
@@ -2062,6 +2073,31 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const duplicateNotice = PROPERTY_SEND_ACTIONS.has(currentAction)
       ? await buildDuplicateNotice(dupSource(""))
       : "";
+
+    // 2026-09-24 竹内「改善する」: 売上サポから来た AIX【物件ピックアップした】は、どの物件を送るかが分かっている（pickup_ids）。
+    //   AIX の生成は画像を読まないので、今回の物件の事実（間取り・家賃だけ・AD/利益/🌟は読まない）を行から渡す。
+    //   画面が渡した画像の枚数と行の数が同じ時だけ使う（スタッフが画像を外した・足した時は並びが合わない）
+    const pickupFacts: PickupFact[] = await (async () => {
+      if (action !== "property_send" || !conversationId || !Array.isArray(body.pickup_ids)) return [];
+      const ids = (body.pickup_ids as unknown[]).map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0).slice(0, 20);
+      const imgCount = Array.isArray(image_urls) ? (image_urls as unknown[]).length : 0;
+      if (ids.length === 0 || ids.length !== imgCount) return [];
+      try {
+        const { data } = await supabase.from("property_pickups").select("id, summary_text, image_lines")
+          .in("id", ids).eq("conversation_id", conversationId);
+        const byId = new Map(((data ?? []) as Array<{ id: number; summary_text: string | null; image_lines: string[] | null }>).map((r) => [r.id, r]));
+        if (byId.size !== ids.length) return [];
+        return ids.map((id) => parsePickupFact(byId.get(id)!));
+      } catch { return []; }
+    })();
+    if (pickupFacts.length) console.log(JSON.stringify({ tag: "aix:pickup-facts", conversationId, facts: pickupFacts }));
+    // 出口（注意だけ・本文は書き換えない）: 今回の物件と食い違う間取り・家賃上限／前回の送付の約束の写し
+    const pickupSendExitNotice = (text: string): string => {
+      if (action !== "property_send") return "";
+      const notes = findPickupSendConflicts(text, pickupFacts, pastPickupSendTexts, [DEADLINE_SUPPORT_LINE, ...INSERTED_PROMISE_LINES]);
+      if (notes.length) console.log(JSON.stringify({ tag: "aix:pickup-send-conflict", conversationId, notes }));
+      return notes.map((n) => `⚠ ${n}`).join("\n");
+    };
 
     // phrase_dictionary 取得（固定フォーマット出力でないアクションにのみフレーズ注入する）
     const phraseCategoryMap: Record<string, string> = {
@@ -2860,6 +2896,8 @@ ${SMORA_COMMON_RULES}
         : "";
 
       const conditionsInfo = customer_conditions ? String(customer_conditions) : null;
+      // 今回送る物件の事実（売上サポから来た時だけ・間取り・家賃のみ）
+      const pickupFactsNote = buildPickupFactsNote(pickupFacts);
       const conditionsRule = conditionsInfo
         ? `・【最重要】「ご希望のご条件に合ったお部屋」「ご希望の条件に合うお部屋」などの抽象的な表現は絶対に使わない。お客様の具体的な希望条件を文中に自然に織り込むこと
   条件の入れ方（厳守）：
@@ -3047,6 +3085,7 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
         const psmUser = [
           `${name}への物件ピックアップ送付メッセージを作成してください。`,
           conditionsInfo ? `\n\n【お客様の希望条件】\n${conditionsInfo}` : "",
+          pickupFactsNote ? `\n\n${pickupFactsNote}` : "",
           calendarData && !skipViewingInvite ? `\n\n【直近3日の内覧可能時間帯（この情報をそのまま使うこと）】\n${calendarData}` : "",
           vacatingInfo ? `\n\n【退去予定・案内不可の物件情報（必ず全て伝えること）】\n${vacatingInfo}` : "",
           expandedCondNote,
@@ -3071,6 +3110,11 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
         const claims = stripUngroundedClaims(psmText, psmGrounding);
         if (claims.removed.length > 0) { psmText = claims.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, ungroundedRemoved: claims.removed.map((r) => r.slice(0, 40)) })); }
         if (claims.unresolved) notices.push("今回の物件の保証会社・審査の話は入力に無いため確認して書き換えてから送信してください");
+        // 2026-09-24（YUMA・DeepSeek 実測）: お客様に事情（駐車場）があると上を通り抜ける「駐車場の空き状況も含めて確認させて頂きます」を落とす。
+        //   監査 scripts/audit-pickup-confirm-promise.ts: 物件ピックアップの送付 365日 538通（手打ち236）で、この形はスタッフの手打ち0通
+        //   （当たったのは YUMA のテストで AIX が作った1通だけ）＝誤削除0。代理契約の「全て交渉させて頂きます」は形が違うので当たらない
+        const unkept = stripUnkeptConfirmPromiseLines(psmText);
+        if (unkept.removed.length > 0) { psmText = unkept.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, unkeptPromiseRemoved: unkept.removed.map((r) => r.slice(0, 40)) })); }
         // 続いている事情（代理契約 等）の一文が無ければ決定論で差し込む（本番確認: 候補にあっても LLM は 6回中0回しか書かなかった）
         const req = ensureRequirementLine(psmText, threads.requirements);
         if (req.added) { psmText = req.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, requirementLineAdded: req.added })); }
@@ -3097,7 +3141,7 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, pickupPropertyNameRemoved: psmPicked.removed }));
         }
         // 数字の照合: 条件・会話・退去予定・キーワードに無い金額・帖・年・件数は〇〇（送信前チェックで止まる）
-        const psmNotes = [conditionsInfo ?? "", recentHistory, vacatingInfo ?? "", sendKeyword ?? "", calendarData ?? "", expandedCondGuidanceLines.join("\n"), newArrivalCountStr].join("\n");
+        const psmNotes = [conditionsInfo ?? "", pickupFactsNote, recentHistory, vacatingInfo ?? "", sendKeyword ?? "", calendarData ?? "", expandedCondGuidanceLines.join("\n"), newArrivalCountStr].join("\n");
         const masked = maskNumbersNotInNotes(psmText, psmNotes);
         if (masked.unmatched.length > 0) {
           psmText = masked.text;
@@ -3334,6 +3378,7 @@ ${aixPropertySendRules}
       if (keywordRule) userParts.push(keywordRule); // 最優先ブロック（conditionsInfoより前）
       if (conditionsInfo) userParts.push(`\n\n【お客様の希望条件（冒頭に自然に組み込むこと）】\n${conditionsInfo}`);
       else userParts.push("\n\n【お客様の希望条件】材料が無い（会話から読み取れるエリアだけを書き、条件・物件名は作らない）");
+      if (pickupFactsNote) userParts.push(`\n\n${pickupFactsNote}`);
       if (calendarData) userParts.push(`\n\n【直近3日の内覧可能時間帯（calendar_events+daily_tasks合算済み・この情報をそのまま使うこと）】\n${calendarData}`);
       if (vacatingInfo) userParts.push(`\n\n【退去予定・案内不可の物件情報（必ず全て伝えること）】\n${vacatingInfo}`);
       if (expandedCondNote) userParts.push(expandedCondNote);
@@ -3410,11 +3455,13 @@ ${aixPropertySendRules}
           message_text = rawSendText;
           propertySendComponents = null;
         }
+        // 2026-09-24: 果たす予定の無い確認の約束（駐車場・ペット・保証会社）を落とす（会話を合わせると同じ・監査で誤削除0）
+        message_text = stripUnkeptConfirmPromiseLines(message_text).text;
         // ⑦修正: 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         // 2026-09-21 竹内: 物件を送る通は重複の確認を通す
         return finalizeResponse(message_text, propertySendComponents ? { ai_components: propertySendComponents } : undefined);
       }
-      message_text = rawSendText;
+      message_text = stripUnkeptConfirmPromiseLines(rawSendText).text;
 
     // ── 💰 初期費用を説明（会話を合わせる）──────────────────────────
     // 2026-09-19 竹内「初期費用を説明のところ会話を合わせるボタンをつける文もちゃんと会話合わせて生成されるように」
@@ -7039,7 +7086,7 @@ ${GUARANTOR_INFO_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
     //   **ここが物件を送る AIX の本命の出口**（finalizeResponse は早期 return 用で、
     //   物件ピックアップは通らなかった。YUMA 検証でログには判定が出ているのに応答に載らず見つけた）。
     //   finalize の注意と重複の注意は**両方**出す（片方で上書きしない）。
-    const finalNotice = [notice, duplicateNotice].filter(Boolean).join("\n");
+    const finalNotice = [notice, pickupSendExitNotice(cleanedMessage), duplicateNotice].filter(Boolean).join("\n");
     return NextResponse.json({
       ok: true,
       message_text: cleanedMessage,

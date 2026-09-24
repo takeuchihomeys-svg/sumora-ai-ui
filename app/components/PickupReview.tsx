@@ -212,6 +212,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   const openCustomer = (c: { key: string; property_customer_id: string | null; conversation_id: string | null }) => {
     const target = { key: c.key, pcid: c.property_customer_id, conv: c.conversation_id };
     openRef.current = target;
+    stickBottomRef.current = true;   // 開いたら一番下（最新）から（LINE のトーク画面と同じ）
     nBatchesRef.current = 3;
     setNBatches(3);
     setOpenKey(c.key);
@@ -236,7 +237,17 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     clearDetail();
   };
   useEffect(() => {
-    const onPop = () => { if (historyPushedRef.current) { historyPushedRef.current = false; clearDetail(); } };
+    const onPop = () => {
+      if (!historyPushedRef.current) return;
+      // 2026-09-24 点検: 画像を大きく開いている時の「戻る」は画像だけ閉じる（LINE と同じ）。会話まで閉じない → 履歴を積み直す
+      if (lightboxRef.current) {
+        setLightbox(null);
+        try { window.history.pushState({ ...(window.history.state ?? {}), pickupDetail: true }, ""); } catch { historyPushedRef.current = false; }
+        return;
+      }
+      historyPushedRef.current = false;
+      clearDetail();
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -309,6 +320,25 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
 
   // 画像を開く: パソコンは今のまま新しいタブ（余白が出ない）。スマホは LINE と同じライトボックス（縦持ちで A4 横の資料の下に空きが出ない）
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  const lightboxRef = useRef(lightbox);
+  lightboxRef.current = lightbox;
+
+  // 2026-09-24 点検: 会話は古い順（上に「もっと前を見る」）なのに、開いた時に一番上（古い方）から出ていた。
+  //   LINE と同じく開いた時・メモを残した後・キーボードが出た時は一番下（最新と入力欄の上）を見せる。
+  //   画像は遅れて読み込まれて高さが伸びるので、少し後にもう一度合わせる
+  const scrollBoxRef = useRef<HTMLDivElement | null>(null);
+  const stickBottomRef = useRef(false);
+  const scrollToBottom = () => {
+    const go = () => { const el = scrollBoxRef.current; if (el) el.scrollTop = el.scrollHeight; };
+    requestAnimationFrame(go);
+    window.setTimeout(go, 350);
+  };
+  useEffect(() => {
+    if (!detail || !stickBottomRef.current) return;
+    stickBottomRef.current = false;
+    scrollToBottom();
+  }, [detail]);
+  useEffect(() => { if (vp.kb) scrollToBottom(); }, [vp.kb]);
   const openImage = (e: React.MouseEvent, url: string | null | undefined, name: string) => {
     e.stopPropagation();
     if (!url || isDesktop()) return;   // パソコンは <a target=_blank> のまま
@@ -462,6 +492,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
       const json = await res.json() as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error || "失敗");
       setNote("");
+      stickBottomRef.current = true;   // 残したメモ（右の吹き出し）が見えるように
       await load();
     } catch (e) {
       setMsg(`⚠️ ${e instanceof Error ? e.message : String(e)}`);
@@ -514,7 +545,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
           <button onClick={() => void load()} className="text-xs text-[#1565C0] font-bold">{detailLoading ? "…" : "更新"}</button>
         </div>
         {msg && <div className="mx-3 mt-2 text-xs px-3 py-2 rounded-lg shrink-0" style={{ background: "#e3f2fd", color: "#0d47a1" }}>{msg}</div>}
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-4 md:py-3">
+        <div ref={scrollBoxRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-4 md:py-3">
           <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
           {open.has_more_batches && (
             <button onClick={loadMoreBatches} disabled={detailLoading} className="self-center text-[11px] font-bold px-3 py-1 rounded-full bg-white" style={{ color: "#1565C0", border: "1px solid #cfd8dc" }}>

@@ -983,6 +983,8 @@ export default function Home() {
   const [greetingViewingReport, setGreetingViewingReport] = useState("");
   const [greetingViewingReportSaved, setGreetingViewingReportSaved] = useState<string | null>(null);
   const [aixInitialSendImages, setAixInitialSendImages] = useState<File[]>([]);
+  // 2026-09-24: 売上サポから来た時の property_pickups 行 ID（aixInitialSendImages と同じ並び）
+  const [aixInitialPickupIds, setAixInitialPickupIds] = useState<number[]>([]);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -6074,17 +6076,23 @@ export default function Home() {
     void (async () => {
       try {
         const res = await fetch(`/api/property-pickups?ids=${encodeURIComponent(h.ids)}`, { cache: "no-store" });
-        const json = await res.json() as { ok: boolean; items?: Array<{ rank: number; property_name: string; room_no: string | null; image_url: string | null }> };
+        const json = await res.json() as { ok: boolean; items?: Array<{ id: number; rank: number; property_name: string; room_no: string | null; image_url: string | null }> };
         const files: File[] = [];
+        const fileIds: number[] = [];
         for (const it of json.items ?? []) {
           if (!it.image_url) continue;
           try {
             const blob = await (await fetch(it.image_url)).blob();
             files.push(new File([blob], `${it.rank}_${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`, { type: blob.type || "image/jpeg" }));
+            fileIds.push(it.id);
           } catch { /* その1枚は飛ばす */ }
         }
         h.handoffFiles = files;
-        if (files.length) setAixInitialSendImages(files);
+        if (files.length) {
+          // 2026-09-24: 画像と同じ並びの行 ID（AIX が今回の物件の間取り・家賃を知るため）
+          setAixInitialPickupIds(fileIds);
+          setAixInitialSendImages(files);
+        }
       } catch (e) {
         console.warn("[pickup→AIX] 画像を取れない:", e);
       } finally {
@@ -6391,6 +6399,7 @@ export default function Home() {
   const onAixMultiImagesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+    setAixInitialPickupIds([]); // 手で選んだ画像は売上サポの行と結ばない
     setAixInitialSendImages(files);
     setAixModalType("property_send");
     if (aixMultiFileInputRef.current) aixMultiFileInputRef.current.value = "";
@@ -10663,6 +10672,7 @@ export default function Home() {
           initialTemplateSample={pendingTemplateSample ?? undefined}
           initialSendMode={aixInitSendMode}
           initialSendImages={aixInitialSendImages.length > 0 ? aixInitialSendImages : undefined}
+          initialPickupIds={aixModalType === "property_send" && aixInitialPickupIds.length > 0 && aixInitialPickupIds.length === aixInitialSendImages.length ? aixInitialPickupIds : undefined}
           initialViewingSpecificMode={aixInitViewingSpecific}
           initialViewingVacancy={aixInitViewingVacancy}
           initialViewingReschedule={aixInitViewingReschedule}
@@ -10688,6 +10698,7 @@ export default function Home() {
             setAixInitViewingReschedule(false);
             setAixInitSendMode(null);
             setAixInitialSendImages([]);
+            setAixInitialPickupIds([]);
             setAixInitEstimateMulti(false);
             setAixInitAppSubMode(null);
             setAixInitAutoConvMatch(false);

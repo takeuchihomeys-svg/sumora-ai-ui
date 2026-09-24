@@ -328,6 +328,23 @@ function installWrapped(g: { fetch: FetchLike & Record<PropertyKey, unknown> }, 
 type AltRecorder = { insert: (row: LlmUsageRow) => Promise<void>; keepAlive: (p: Promise<unknown>) => void; route: () => string | null; env: string | null };
 let altRecorder: AltRecorder | null = null;
 
+function lazyAltRecorder(): AltRecorder | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (process.env.LLM_USAGE_RECORD === "off" || !url || !key) return null;
+  let warned = false;
+  return {
+    insert: async (row: LlmUsageRow) => {
+      const { createClient } = await import("@supabase/supabase-js");
+      const { error } = await createClient(url, key, { auth: { persistSession: false } }).from("llm_usage_logs").insert(row);
+      if (error && !warned) { warned = true; console.warn("[llm-usage-recorder] insert failed (lazy):", error.message); }
+    },
+    keepAlive: (p: Promise<unknown>) => { import("@vercel/functions").then((m) => m.waitUntil(p)).catch(() => { /* Vercel 以外 */ }); },
+    route: () => null,
+    env: process.env.VERCEL_ENV ?? "local",
+  };
+}
+
 /** 別クラウドの呼び出しを llm_usage_logs に1行残す（記録が使えない時は何もしない） */
 export function recordAltUsage(input: {
   model: string;
@@ -345,7 +362,9 @@ export function recordAltUsage(input: {
   /** 1文字ずつの形（DeepSeek の streaming）か。2026-09-23 から記録（旧は常に false） */
   stream?: boolean;
 }): void {
-  const r = altRecorder;
+  // 2026-09-24: 開発サーバの HMR で llm-alt-provider が包み直した時（willRouteAlt）は、この module が instrumentation の物と別になり
+  //   altRecorder が null のまま＝DeepSeek に回った呼び出しが1行も残らなかった（テストで model を確かめられない）→ その場で書き込みの口を作る
+  const r = altRecorder ?? (altRecorder = lazyAltRecorder());
   if (!r) return;
   const row: LlmUsageRow = {
     route: r.route(), model: input.model, status: input.status, error_type: input.errorType,

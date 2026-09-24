@@ -67,6 +67,8 @@ const REQUIREMENT_LINES: ReadonlyArray<{ re: RegExp; topic: RegExp; line: string
   { re: /駐車場|バイク/, topic: /駐車場|バイク|駐輪/, line: "お気に召されたお部屋駐車場の空き状況も確認させて頂きます！！", insert: false },
   { re: /保証人|保証会社|審査/, topic: /保証人|保証会社|審査/, line: "お気に召されたお部屋の保証会社・審査面も確認させて頂きます！！", insert: false },
 ];
+/** 決定論で差し込む（＝スタッフ実送信が元の）約束の文。前回の送付と同じでも注意しない（pickup-send-facts の出口） */
+export const INSERTED_PROMISE_LINES: readonly string[] = REQUIREMENT_LINES.filter((r) => r.insert).map((r) => r.line);
 export function ensureRequirementLine(text: string, requirements: readonly string[]): { text: string; added: string | null } {
   if (requirements.length === 0) return { text, added: null };
   const joined = requirements.join("\n");
@@ -118,6 +120,27 @@ export function stripUngroundedClaims(text: string, grounding: string): { text: 
   });
   const out = removed.length ? lines.join("\n").replace(/\n{3,}/g, "\n\n").trim() : text;
   return { text: out, removed, unresolved: !screeningGrounded && SCREENING_CLAIM_RE.test(out) };
+}
+
+/**
+ * 2026-09-24 竹内「改善する」（YUMA・DeepSeek 実測）: お客様に事情（駐車場）があると grounding を満たすので、上の stripUngroundedClaims は
+ * 「お気に召されたお部屋ございましたら、駐車場の空き状況も含めて確認させて頂きます！！」「駐車場のことも含めて…確認させて頂きます」を残した。
+ * 2026-09-22「約束を大切に」で差し込みを止めた（実送信0通・下書き12回とも削除）のと同じ形なのに、言い回しを変えて出てくる。
+ * → 物件ピックアップの文の「ペット・駐車場・保証会社・審査 … 確認させて頂きます」の行（ピックアップ行以外）を見つける。
+ *   落とすかどうかは scripts/audit-pickup-confirm-promise.ts（スタッフの手打ちの送付で0通か）で決める
+ */
+const UNKEPT_CONFIRM_TOPIC_RE = /ペット|猫|犬|飼育|駐車場|バイク|駐輪|保証人|保証会社|審査/;
+const UNKEPT_CONFIRM_VERB_RE = /(?:確認|お調べ|お問い合わせ|問い合わせ)(?:も)?させて(?:頂|いただ)きます/;
+export function findUnkeptConfirmPromiseLines(text: string): string[] {
+  return String(text ?? "").split("\n").map((l) => l.trim())
+    .filter((l) => l && UNKEPT_CONFIRM_TOPIC_RE.test(l) && UNKEPT_CONFIRM_VERB_RE.test(l) && !/ピックアップ|募集に(?:で|出)ました/.test(l));
+}
+export function stripUnkeptConfirmPromiseLines(text: string): { text: string; removed: string[] } {
+  const removed = findUnkeptConfirmPromiseLines(text);
+  if (removed.length === 0) return { text, removed };
+  const set = new Set(removed);
+  const out = text.split("\n").filter((l) => !set.has(l.trim())).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return { text: out, removed };
 }
 
 /**

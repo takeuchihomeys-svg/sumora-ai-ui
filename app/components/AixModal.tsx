@@ -80,6 +80,8 @@ interface AixModalProps {
   initialSendMode?: "normal" | "new_arrival" | "widen" | "alternative" | null;
   initialViewingReschedule?: boolean;
   initialSendImages?: File[];
+  /** 2026-09-24: 売上サポから来た時の property_pickups の行 ID（initialSendImages と同じ並び）。画像がそのままの時だけサーバーに渡す */
+  initialPickupIds?: number[];
   initialViewingSpecificMode?: boolean;
   initialViewingVacancy?: boolean;
   initialIsNewArrival?: boolean;
@@ -612,6 +614,7 @@ export default function AixModal({
   initialTemplateSample,
   initialSendMode,
   initialSendImages,
+  initialPickupIds,
   initialViewingSpecificMode,
   initialViewingVacancy,
   initialViewingReschedule,
@@ -2208,6 +2211,12 @@ export default function AixModal({
         if (sendImageFiles.length > 0) {
           const urls = await Promise.all(sendImageFiles.map((f, i) => uploadImageCached(f, i)));
           body.image_urls = urls;
+        }
+        // 2026-09-24 竹内「改善する」: 売上サポから来た物件の行 ID（サーバーが間取り・家賃だけ読む）。
+        //   画像がセットされた時のまま（同じ File・同じ並び）の時だけ渡す＝外した・足した時は渡さない
+        if (initialPickupIds && initialSendImages && initialPickupIds.length === initialSendImages.length
+          && sendImageFiles.length === initialSendImages.length && sendImageFiles.every((f, i) => f === initialSendImages[i])) {
+          body.pickup_ids = initialPickupIds;
         }
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
         body.send_mode = sendMode;

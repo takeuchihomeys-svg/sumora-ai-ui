@@ -227,7 +227,24 @@ export function willRouteAlt(
   const cfg = readAltConfig(env);
   if (!cfg) return false;
   if (opts.autoSend && !cfg.allowAutoSend) return false;
-  return shouldRouteAlt(cfg, resolveRouteName(action, null));
+  const will = shouldRouteAlt(cfg, resolveRouteName(action, null));
+  // 2026-09-24 YUMA テストで見つけた穴（静かに壊れる）: 開発サーバでコードを直すと（HMR）globalThis.fetch が包み直され、
+  //   ここでは「回す」と判断して名前も伏せるのに、実際の呼び出しは Claude に行っていた（DeepSeek のはずの12回が Sonnet）。
+  //   回すと判断した時に包みが外れていれば包み直す。
+  //   ⚠ 開発サーバだけ（2026-09-24 反証）: 本番では Next.js 16 が最初のリクエストで globalThis.fetch を自分の包み（patch-fetch・印を写さない）で
+  //     上書きするので、一番外に印が無い＝「外れた」と誤判定して包みを二重にする。二重だと DeepSeek が失敗した時に
+  //     外側→内側で DeepSeek を2回試し（最大 90秒×2）、alt_failed も2行になる。本番の包みは内側に残っていて回っているので触らない
+  if (will && process.env.NODE_ENV !== "production" && !isAltFetchInstalled()) {
+    console.warn("[llm-alt] fetch の包みが外れていたので包み直します（開発サーバの HMR 等）");
+    installed = false;
+    installAltProvider(env);
+  }
+  return will;
+}
+
+const ALT_FETCH_MARK = "__sumoraAltProvider";
+function isAltFetchInstalled(): boolean {
+  return !!(globalThis.fetch as unknown as Record<string, unknown>)[ALT_FETCH_MARK];
 }
 
 export function resolveRouteName(action: string | null, systemHead: string | null): string | null {
@@ -555,7 +572,7 @@ async function callBedrock(cfg: AltProviderConfig, body: AnthropicBody): Promise
 /** globalThis.fetch を包む（instrumentation.ts から。二重に包まない） */
 let installed = false;
 export function installAltProvider(env: EnvLike = process.env): boolean {
-  if (installed) return true;
+  if (installed && isAltFetchInstalled()) return true;
   const cfg = readAltConfig(env);
   if (!cfg) return false; // 設定が無ければ何もしない＝今までどおり Anthropic
   const original = globalThis.fetch;
@@ -617,6 +634,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       return original(input as RequestInfo, init); // 失敗したら今までどおり Anthropic で返す
     }
   }) as typeof fetch;
+  (globalThis.fetch as unknown as Record<string, unknown>)[ALT_FETCH_MARK] = true;
   installed = true;
   console.log("[llm-alt] installed", JSON.stringify({ provider: cfg.provider, model: cfg.model, actions: [...cfg.actions] }));
   return true;

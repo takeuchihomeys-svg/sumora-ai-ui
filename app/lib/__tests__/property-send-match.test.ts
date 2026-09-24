@@ -1,6 +1,6 @@
 // 2026-09-15 竹内（カイナ事例）: 物件ピックアップの「会話を合わせる」— 会話の糸口の抽出と内覧誘導の除去
 // 実行: npx tsx app/lib/__tests__/property-send-match.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims } from "../property-send-match";
+import { extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, stripUnkeptConfirmPromiseLines } from "../property-send-match";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -172,6 +172,24 @@ it("2026-09-22: ペットの事情だけなら「全て確認させて頂きま�
   expect(r.added === null).toBe(true);
   const p = ensureRequirementLine("〇〇さんお世話になっております！！\nピックアップさせて頂きました！！\nお手隙の際にご査収ください😌！！", ["代理契約でお願いしたいです"]);
   expect(p.added ?? "").toContain("代理契約可能か全て交渉させて頂きます");
+});
+it("2026-09-24: 駐車場の事情があっても「駐車場…確認させて頂きます」は落とす（YUMA の DeepSeek 実物2通・手打ちの送付0/236）", () => {
+  const a = "YUMAさんお待たせ致しました！！\n\n大阪市西区・浪速区周辺からYUMAさんにオススメできるお部屋ピックアップさせて頂きました😊！！\n\nお気に召されたお部屋ございましたら、駐車場の空き状況も含めて確認させて頂きます！！\n\nお手隙の際にご査収ください😌！！";
+  const b = "YUMAさんお待たせ致しました！！\n\n西区・港区周辺からYUMAさんにオススメできるお部屋ピックアップさせて頂きました😊！！\n\n駐車場のことも含めてお気に召されたお部屋ございましたら確認させて頂きます！！\n\nお手隙の際にご査収ください😌！！";
+  for (const t of [a, b]) {
+    const r = stripUnkeptConfirmPromiseLines(t);
+    expect(r.removed.length).toBe(1);
+    expect(r.text).notToContain("駐車場");
+    expect(r.text).toContain("ピックアップさせて頂きました");
+    expect(r.text).toContain("お手隙の際にご査収ください😌！！");
+    expect(r.text.includes("\n\n\n")).toBe(false);
+  }
+});
+it("2026-09-24: 代理契約の交渉・ピックアップ行の中のペット可・審査をかける約束は落とさない", () => {
+  const t = "〇〇さんお世話になっております！！\n\nペット可のお部屋ピックアップさせて頂きました！！\n\nお気に召されたお部屋代理契約可能か全て交渉させて頂きます！！\nお気に召されたお部屋ございましたら審査かけさせて頂きます！！\nお手隙の際にご査収ください😌！！";
+  const r = stripUnkeptConfirmPromiseLines(t);
+  expect(r.removed.length).toBe(0);
+  expect(r.text).toBe(t);
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
