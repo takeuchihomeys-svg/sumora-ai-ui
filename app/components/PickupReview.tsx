@@ -45,12 +45,32 @@ function fmtWhen(iso: string): string {
 /** 会話の1つ（左＝ブレイン／右＝スタッフ） */
 type Bubble =
   | { kind: "brain"; at: string; batch: Batch }
+  | { kind: "trim"; at: string; batch: Batch; items: Item[] }
   | { kind: "staff"; at: string; text: string; sub?: string };
+
+/** 画像を手元に保存（別ドメインの画像は download 属性が効かないので、取ってきて Blob の URL で落とす。取れなければ新しいタブで開く） */
+async function saveImage(url: string, name: string) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(String(res.status));
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  } catch {
+    window.open(url, "_blank", "noopener");
+  }
+}
 
 function buildBubbles(c: Customer): Bubble[] {
   const out: Bubble[] = [];
   for (const b of c.batches) {
     out.push({ kind: "brain", at: b.created_at, batch: b });
+    // 2026-09-24 竹内「トリミングした画像はピックアップの画面内に送られて、そのままスタッフが保存して使えるように」
+    const trimmed = b.items.filter((it) => it.trim_image_url);
+    if (trimmed.length) out.push({ kind: "trim", at: b.created_at + "~", batch: b, items: trimmed });
     const sent = b.items.filter((it) => it.status === "sent");
     const skipped = b.items.filter((it) => it.status === "skipped");
     if (sent.length) {
@@ -144,11 +164,11 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     try {
       const res = await fetch("/api/property-pickups/trim", {
         method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-        body: JSON.stringify({ item_ids: ids }),
+        body: JSON.stringify({ item_ids: ids, force: true }),   // 押すたびに作り直す（直した後にもう一度押せる）
       });
       const json = await res.json() as { ok: boolean; trimmed?: number; items?: Array<{ id: number; error?: string }>; error?: string };
       if (!json.ok) throw new Error(json.error || json.items?.find((x) => x.error)?.error || "失敗");
-      setMsg(`✂️ ${json.trimmed}件をお客様に送る形にトリミングしました。「確認してお客様に送る」で送れます`);
+      setMsg(`✂️ ${json.trimmed}件をお客様に送る形にトリミングしました。下の画像は「💾 保存」で手元に落とせます。「確認してお客様に送る」で送れます`);
       await load();
       onChange?.();
     } catch (e) {
@@ -256,6 +276,29 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                   </div>
                 )}
                 <div className="text-[10px] text-[#b0bec5] mt-1 text-right">{fmtDateTime(bb.at)}</div>
+              </div>
+            </div>
+          ) : bb.kind === "trim" ? (
+            <div key={`t${i}`} className="flex items-end gap-2">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: "#6a1b9a", color: "#fff" }}>✂️</div>
+              <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-white px-3 py-2.5" style={{ boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
+                <div className="text-xs font-bold mb-1">✂️ お客様に送る形にした画像 {bb.items.length}枚（会社の帯なし）</div>
+                <div className="flex flex-col gap-2">
+                  {bb.items.map((it) => (
+                    <div key={`ti${it.id}`} className="rounded-xl overflow-hidden" style={{ border: "1px solid #e0e0e0" }}>
+                      <a href={it.trim_image_url ?? undefined} target="_blank" rel="noreferrer">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={it.trim_image_url ?? undefined} alt={it.property_name} className="w-full block" style={{ maxWidth: 560, background: "#fff" }} />
+                      </a>
+                      <div className="flex items-center justify-between px-2 py-1.5" style={{ background: "#f7f9fb" }}>
+                        <span className="text-[11px] font-bold truncate">【{it.rank}】{it.property_name}{it.room_no ? ` ${it.room_no}号室` : ""}</span>
+                        <button onClick={() => void saveImage(it.trim_image_url as string, `${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`)}
+                          className="text-[11px] font-bold px-2 py-1 rounded-lg shrink-0" style={{ background: "#6a1b9a", color: "#fff" }}>💾 保存</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-[10px] text-[#b0bec5] mt-1 text-right">「確認してお客様に送る」はこの画像を送ります</div>
               </div>
             </div>
           ) : (

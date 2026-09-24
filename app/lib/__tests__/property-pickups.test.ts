@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/property-pickups.test.ts
 import { parseRecommendMark, buildPickupRows, buildCustomerPickupMessage, parseAdFromText, CUSTOMER_PAGE, AGENT_PAGE } from "../property-pickups";
 import { extractPdfText } from "../pdf-text";
-import { renderPdfPageToPng } from "../pdf-render";
+import { renderPdfPageToPng, rewriteFontFamily, japaneseFontPath } from "../pdf-render";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 
 let passed = 0, failed = 0;
@@ -52,6 +52,14 @@ console.log("── ★ 元付資料の文字から AD を読む（2026-09-24 �
   const rows = buildPickupRows({ batchId: "b", propertyCustomerId: null, conversationId: null, customerName: null, site: null },
     [{ summary: "【1】X", pdfUrl: null, pdfBlobUrl: null, pdfText: null, judgment: null, pageImageUrl: "https://blob/p1.png", agentImageUrl: "https://blob/p2.png" }]);
   t("★ 行に弊社(p1)と元付(p2)の画像が別々に残る", rows[0].page_image_url === "https://blob/p1.png" && rows[0].agent_image_url === "https://blob/p2.png");
+}
+
+console.log("── ★ 本番（Linux）で文字が抜けない: 同梱の日本語フォントに家族名を置き換える（2026-09-24 竹内「中の文字もそのままある形に」）");
+{
+  t("★ pdfjs の形 `normal normal 12px \"g_d0_f1\", serif` → Noto Sans JP", rewriteFontFamily('normal normal 12px "g_d0_f1", serif') === 'normal normal 12px "Noto Sans JP", sans-serif');
+  t("★ 小数の px・bold", rewriteFontFamily('italic bold 10.5px "g_d0_f3", sans-serif') === 'italic bold 10.5px "Noto Sans JP", sans-serif');
+  t("★ サイズが無い文字列は触らない", rewriteFontFamily("serif") === "serif");
+  t("★ 同梱フォントがある（public/fonts/NotoSansJP.ttf）", japaneseFontPath() !== null);
 }
 
 console.log("── ★ PDF の文字層（pdf-lib で作った PDF）");

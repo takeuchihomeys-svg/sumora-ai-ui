@@ -9,6 +9,8 @@
 //   next.config.ts の outputFileTracingIncludes で同梱する。無ければ文字が抜けた画像になる（落ちはしない）。
 // ⚠ 失敗は null（呼び出し側は文字層だけで進む）。
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 export type PdfRenderResult = { png: Buffer; width: number; height: number; ms: number };
 
@@ -19,13 +21,50 @@ function pdfjsAssetDir(sub: "cmaps" | "standard_fonts"): string | undefined {
   } catch { return undefined; }
 }
 
+/** 同梱の日本語フォント（public/fonts/NotoSansJP.ttf・OFL）。無ければ null（＝OS のフォント任せ） */
+export const JP_FONT_FAMILY = "Noto Sans JP";
+export function japaneseFontPath(): string | null {
+  try {
+    const p = join(process.cwd(), "public", "fonts", "NotoSansJP.ttf");
+    return existsSync(p) ? p : null;
+  } catch { return null; }
+}
+
+/** ctx.font の家族名部分（"12px" の後ろ）を同梱の日本語フォントに置き換える（純関数・テスト用に export） */
+export function rewriteFontFamily(font: string, family: string = JP_FONT_FAMILY): string {
+  const m = /^([\s\S]*?\d+(?:\.\d+)?(?:px|pt|em|%)\s*)([\s\S]*)$/.exec(font);
+  if (!m) return font;
+  return `${m[1]}"${family}", sans-serif`;
+}
+
+let jpFontRegistered: boolean | null = null;
+/** フォントを1回だけ登録し、ctx.font の setter を包んで家族名を置き換える。フォントが無ければ何もしない */
+export function installJapaneseFontFallback(ctx: { font: string }, fonts: { registerFromPath(path: string, alias?: string): unknown; has(name: string): boolean }): boolean {
+  if (jpFontRegistered === null) {
+    const p = japaneseFontPath();
+    jpFontRegistered = !!p && (fonts.has(JP_FONT_FAMILY) || fonts.registerFromPath(p, JP_FONT_FAMILY) !== null);
+    if (!jpFontRegistered) console.warn("[pdf-render] 日本語フォントを登録できない（public/fonts/NotoSansJP.ttf が無い）→ OS のフォント任せ");
+  }
+  if (!jpFontRegistered) return false;
+  const proto = Object.getPrototypeOf(ctx) as object;
+  const desc = Object.getOwnPropertyDescriptor(proto, "font");
+  if (!desc || !desc.set || !desc.get) return false;
+  const get = desc.get, set = desc.set;
+  Object.defineProperty(ctx, "font", {
+    configurable: true,
+    get() { return get.call(this); },
+    set(v: string) { set.call(this, rewriteFontFamily(String(v))); },
+  });
+  return true;
+}
+
 /** base64 の PDF の page（1始まり）を PNG にする。scale は 1.5（A4 で約 890×1260px）が読み取りと容量の釣り合い */
 export async function renderPdfPageToPng(input: string | Uint8Array, opts?: { page?: number; scale?: number; maxPixels?: number }): Promise<PdfRenderResult | null> {
   const started = Date.now();
   try {
     const bytes = typeof input === "string" ? Uint8Array.from(Buffer.from(input, "base64")) : input;
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const { createCanvas } = await import("@napi-rs/canvas");
+    const { createCanvas, GlobalFonts } = await import("@napi-rs/canvas");
     const cMapUrl = pdfjsAssetDir("cmaps");
     const standardFontDataUrl = pdfjsAssetDir("standard_fonts");
     const task = pdfjs.getDocument({
@@ -49,6 +88,11 @@ export async function renderPdfPageToPng(input: string | Uint8Array, opts?: { pa
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, width, height);
+    // 2026-09-24 竹内「トリミングできているが中の文字が抜けている。文字もそのままある形に」:
+    //   本番（Linux）には日本語フォントが無く、pdfjs が ctx.font に入れる `"g_d0_f1", serif` がどの字形にも当たらず文字が消えた
+    //   （ローカルは Windows のフォントで出ていた）。同梱した Noto Sans JP（public/fonts・OFL）を登録し、ctx.font の家族名を全部それに置き換える
+    //   （pdfjs は Node では FontFace を使わず、埋め込みの有無に関わらず fallback の家族名で描く＝置き換えても崩れない）
+    installJapaneseFontFallback(ctx as unknown as { font: string }, GlobalFonts);
     // pdfjs の型は DOM の canvas を想定しているので、@napi-rs/canvas を同じ形として渡す
     await page.render({ canvasContext: ctx as unknown as CanvasRenderingContext2D, viewport, canvas: canvas as unknown as HTMLCanvasElement }).promise;
     const png = canvas.toBuffer("image/png");
