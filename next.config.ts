@@ -47,6 +47,11 @@ const nextConfig: NextConfig = {
 
   async headers() {
     return [
+      // 2026-09-24 pdf.js の worker は ES モジュール（.mjs）。ブラウザが JS として読めるように型を明示する
+      {
+        source: "/pdfjs/:path*.mjs",
+        headers: [{ key: "Content-Type", value: "text/javascript; charset=utf-8" }],
+      },
       {
         source: "/:path*.html",
         headers: [

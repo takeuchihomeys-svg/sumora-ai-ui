@@ -59,6 +59,7 @@
   - `pdf-render.ts` は無いページを丸めず null（1ページしか無い PDF の「2ページ目」を弊社の1ページ目と取り違えない）
 
 ### ③ 売上サポ「ピックアップ」タブ
+- **トリミングは画面（スタッフの PC）で元の資料を描いて切る**（竹内 2026-09-24「何で元の物件資料で共有できないのか。元の物件資料をトリミングすれば良いだけ」）: リアプロの印刷用 PDF は**フォント埋め込みなし**（開いた PC のフォントで文字を描く）。サーバー（Linux）では文字が抜け、同梱の Noto Sans JP で描くと書体が変わる。→ `app/lib/pdf-trim-browser.ts`（pdfjs-dist をブラウザで・useSystemFonts・worker/CMap/標準フォントは `public/pdfjs/`＝pdfjs-dist 6.3.289 のコピー。**pdfjs-dist を上げたらコピーし直す**）で描いて上86%を切り、JPEG を `/trim {images}` に送って Blob に置くだけ。描けなかった物件だけサーバー側（Noto Sans JP）の予備に回す
 - **✂️ 画像トリミング**（竹内 2026-09-24「押すと選択している物件の PDF 1枚目（弊社帯替え分）がトリミングされて画像となって送られる。形は実際にお客さんに送ってる形」）: `app/lib/pdf-trim.ts`（`cropRectForSheet` 純関数・`trimSheetImage` canvas→JPEG）。形は実送信の画像（messages のスタッフ画像 パレ城北 1324×790 ≒ 元 1548×1093 の上 84.5%）と会社の帯の罫線（86.5%）から **上 86%・左右そのまま**。`POST /api/property-pickups/trim {item_ids}` が PDF（Blob）→1ページ目→切る→Blob（`pickups/trim/…jpg`）→ `trim_image_url`。`/send` は trim_image_url を優先。テスト: `scripts/try-trim-pickup.ts`（ローカルで形を見る）・`scripts/yuma-trim-send-test.ts`（YUMA で本番 API を通す・LLM なし）
 - 2026-09-24 13:05 竹内「ピックアップを一番左にする・順番も LINE と同じに連動・一覧は LINE と同じ UI（アイコン付き）・ブレインモードで送った日時も出す」→ タブ順 ピックアップ／アナウンス／一覧・既定はピックアップ。GET API が conversations（profile_image_url・updated_at・account）を付け **LINE の updated_at 順**で返す（`order_at`）。行は LINE 一覧と同じ形（アイコン＋🧠・名前＋アカウント札・未確認・プレビュー・右に時刻と緑の件数）。届いた日時（`last_pickup_at`＝batch の created_at）を行と会話風の吹き出し「🧠 ブレインモードで M/D HH:MM に届きました」に出す
 ```

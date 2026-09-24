@@ -157,15 +157,35 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   // 2026-09-24 竹内「画像トリミングボタンを付ける。押すと選択している物件の PDF 1枚目（弊社帯替え分）がトリミングされて画像となって送られる」
   //   ここでは切るだけ（切った画像が吹き出しに出る）。送るのは「確認してお客様に送る」（送信は必ずスタッフが確認してから）
   const trim = async (b: Batch) => {
-    const ids = b.items.filter((it) => checked[it.id] && it.status === "pending").map((it) => it.id);
+    const targets = b.items.filter((it) => checked[it.id] && it.status === "pending");
+    const ids = targets.map((it) => it.id);
     if (ids.length === 0) { setMsg("トリミングする物件にチェックを入れてください"); return; }
     setBusy(`trim:${b.batch_id}`);
     setMsg("✂️ トリミング中…（1件 数秒）");
     try {
-      const res = await fetch("/api/property-pickups/trim", {
+      // 2026-09-24 竹内「元の物件資料をトリミングすれば良いだけ」: 元の資料をこのパソコンで描いて切る（いつも見ている資料と同じ見た目）。
+      //   画面側で描けなかった物件だけ、サーバー側で描く予備に回す
+      const { trimPdfPageInBrowser, blobToBase64 } = await import("@/app/lib/pdf-trim-browser");
+      const images: Array<{ id: number; jpeg_base64: string }> = [];
+      const fallbackIds: number[] = [];
+      for (const it of targets) {
+        if (!it.pdf_blob_url) { fallbackIds.push(it.id); continue; }
+        try {
+          const jpeg = await trimPdfPageInBrowser(it.pdf_blob_url);
+          images.push({ id: it.id, jpeg_base64: await blobToBase64(jpeg) });
+        } catch (e) {
+          console.warn("[pickup] 画面で描けない → サーバーに回す:", it.id, e);
+          fallbackIds.push(it.id);
+        }
+      }
+      const post = (payload: object) => fetch("/api/property-pickups/trim", {
         method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-        body: JSON.stringify({ item_ids: ids, force: true }),   // 押すたびに作り直す（直した後にもう一度押せる）
+        body: JSON.stringify(payload),
       });
+      if (images.length > 0 && fallbackIds.length > 0) await post({ item_ids: fallbackIds, force: true });
+      const res = images.length > 0
+        ? await post({ images })
+        : await post({ item_ids: fallbackIds, force: true });   // 押すたびに作り直す
       const json = await res.json() as { ok: boolean; trimmed?: number; items?: Array<{ id: number; error?: string }>; error?: string };
       if (!json.ok) throw new Error(json.error || json.items?.find((x) => x.error)?.error || "失敗");
       setMsg(`✂️ ${json.trimmed}件をお客様に送る形にトリミングしました。下の画像は「💾 保存」で手元に落とせます。「確認してお客様に送る」で送れます`);

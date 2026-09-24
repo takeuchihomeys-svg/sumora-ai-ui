@@ -17,15 +17,39 @@ type Row = { id: number; batch_id: string; pdf_blob_url: string | null; page_ima
 export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
-  const body = await req.json().catch(() => ({})) as { item_ids?: number[]; force?: boolean };
-  const ids = Array.isArray(body.item_ids) ? body.item_ids.filter((n) => Number.isFinite(n)).slice(0, MAX_ITEMS) : [];
-  if (ids.length === 0) return NextResponse.json({ ok: false, error: "item_ids が要ります" }, { status: 400 });
+  // images: 画面（スタッフのパソコン）で元の資料を描いて切った JPEG（base64）。あればそれを置くだけ（主経路・元の資料と同じ見た目）
+  //   2026-09-24 竹内「元の物件資料をトリミングすれば良いだけ」。サーバーで描く道（下）は画面側が使えない時の予備
+  const body = await req.json().catch(() => ({})) as { item_ids?: number[]; force?: boolean; images?: Array<{ id: number; jpeg_base64: string }> };
+  const images = Array.isArray(body.images) ? body.images.filter((x) => Number.isFinite(x?.id) && typeof x?.jpeg_base64 === "string" && x.jpeg_base64.length > 100).slice(0, MAX_ITEMS) : [];
+  const ids = images.length > 0 ? images.map((x) => x.id) : Array.isArray(body.item_ids) ? body.item_ids.filter((n) => Number.isFinite(n)).slice(0, MAX_ITEMS) : [];
+  if (ids.length === 0) return NextResponse.json({ ok: false, error: "item_ids か images が要ります" }, { status: 400 });
 
   const { data, error } = await supabase.from("property_pickups").select("id, batch_id, pdf_blob_url, page_image_url, trim_image_url").in("id", ids);
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   const rows = (data ?? []) as Row[];
   const { put } = await import("@vercel/blob");
   const stamp = Date.now();
+
+  if (images.length > 0) {
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const results = await Promise.all(images.map(async (im) => {
+      const r = byId.get(im.id);
+      if (!r) return { id: im.id, trim_image_url: null, error: "行が無い" };
+      try {
+        const jpeg = Buffer.from(im.jpeg_base64, "base64");
+        if (jpeg[0] !== 0xff || jpeg[1] !== 0xd8) return { id: im.id, trim_image_url: null, error: "JPEG ではない" };
+        const blob = await put(`pickups/trim/${r.batch_id.replace(/\.pdf$/i, "")}_${r.id}_${stamp}.jpg`, jpeg, { access: "public", contentType: "image/jpeg" });
+        const { error: uErr } = await supabase.from("property_pickups").update({ trim_image_url: blob.url }).eq("id", r.id);
+        if (uErr) console.warn("[property-pickups/trim] 保存できない:", uErr.message);
+        return { id: r.id, trim_image_url: blob.url, source: "browser" };
+      } catch (e) {
+        return { id: im.id, trim_image_url: null, error: e instanceof Error ? e.message : String(e) };
+      }
+    }));
+    const okCount = results.filter((x) => x.trim_image_url).length;
+    console.log(JSON.stringify({ tag: "property-pickups:trim", source: "browser", requested: images.length, ok: okCount }));
+    return NextResponse.json({ ok: okCount > 0, items: results, trimmed: okCount });
+  }
 
   const results = await Promise.all(rows.map(async (r) => {
     if (r.trim_image_url && !body.force) return { id: r.id, trim_image_url: r.trim_image_url, reused: true };
