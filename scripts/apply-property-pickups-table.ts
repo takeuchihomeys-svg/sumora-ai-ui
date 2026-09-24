@@ -42,6 +42,8 @@ const STMTS = [
   `ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS agent_image_url TEXT;`,
   `ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS trim_image_url TEXT;`,
   `ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_analysis JSONB;`,
+  // 2026-09-24 資料の設備欄を決定論で照らした結果（listing-equipment.ts）
+  `ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS equipment JSONB;`,
   `CREATE TABLE IF NOT EXISTS property_pickup_notes (
      id BIGSERIAL PRIMARY KEY,
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

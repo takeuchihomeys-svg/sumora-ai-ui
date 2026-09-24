@@ -9,7 +9,8 @@ import { supabase } from "@/app/lib/supabase";
 import { extractPdfText } from "@/app/lib/pdf-text";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { buildPickupRows, parseAdFromText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
-import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, type CustomerLike, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
+import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
+import { buildBatchEquipment } from "@/app/lib/pickup-equipment";
 import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
 import { readPropertyImageDetail } from "@/app/lib/property-image-read";
 import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
@@ -42,8 +43,8 @@ async function resolveConversationId(propertyCustomerId: string | null, conversa
   return ((data ?? [])[0] as { id?: string } | undefined)?.id ?? null;
 }
 
-/** 判定のプロフィール（judge API と同じ材料） */
-async function loadProfile(propertyCustomerId: string | null) {
+/** 判定のプロフィール（judge API と同じ材料）と、設備の希望を読む条件欄（customer） */
+async function loadProfile(propertyCustomerId: string | null): Promise<{ profile: CustomerProfile; customer: CustomerLike } | null> {
   if (!propertyCustomerId) return null;
   const since = new Date(Date.now() - 180 * 86400_000).toISOString();
   const [custRes, sentRes, patRes, convsRes] = await Promise.all([
@@ -56,7 +57,7 @@ async function loadProfile(propertyCustomerId: string | null) {
   if (!customer) return null;
   const convIds = ((convsRes.data ?? []) as Array<{ id: string }>).map((c) => c.id);
   const profit = await loadCustomerProfit({ propertyCustomerId, conversationIds: convIds });
-  return buildCustomerProfile(customer, (sentRes.data ?? []) as SentRowLike[], (patRes.data ?? []) as PatternRowLike[], profit.discountMedianYen);
+  return { profile: buildCustomerProfile(customer, (sentRes.data ?? []) as SentRowLike[], (patRes.data ?? []) as PatternRowLike[], profit.discountMedianYen), customer };
 }
 
 export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; deduped: number; noTextDraw: number; error: string | null }> {
@@ -72,7 +73,10 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       console.log(JSON.stringify({ tag: "property-pickups:dedupe", batch: input.batchId.slice(0, 40), kept: dd.keep.length, dropped: dd.dropped.map((d) => ({ rank: d.rank, name: d.name, area: d.areaSqm, rent: d.rentYen, keptRank: d.keptRank })) }));
     }
     const conversationId = await resolveConversationId(input.propertyCustomerId, input.conversationId);
-    const profile = await loadProfile(input.propertyCustomerId);
+    const loaded = await loadProfile(input.propertyCustomerId);
+    const profile = loaded?.profile ?? null;
+    /** 判定の材料（説明文＋AD の補い）。判定は設備の照合（回の全部の行が要る）の後で行う */
+    const factsOf = new Map<number, PropertyFacts>();
     const { put } = await import("@vercel/blob");
     const stamp = Date.now();
     const base = `pickups/${input.batchId.replace(/\.pdf$/i, "")}`;
@@ -116,13 +120,10 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         if (ad.adMonths != null) facts.adMonths = ad.adMonths;
         else if (ad.adYen != null) facts.adYen = ad.adYen;
       }
-      let judgment: Judgment | null = null;
-      if (profile) {
-        try { judgment = judgeProperty(facts, profile, i); } catch { judgment = null; }
-      }
+      factsOf.set(i, facts);
       const nDropped = dd.droppedCount.get(i) ?? 0;
       return {
-        summary, pdfUrl: input.pdfUrls[i] ?? null, pdfBlobUrl, pdfText, judgment, pageImageUrl, agentImageUrl, imageLines: null, imageFacts: null,
+        summary, pdfUrl: input.pdfUrls[i] ?? null, pdfBlobUrl, pdfText, judgment: null, pageImageUrl, agentImageUrl, imageLines: null, imageFacts: null,
         recommendedOverride: dd.inheritMark.get(i) ?? null,
         extraReasonsJa: nDropped > 0 ? [dedupeNoteJa(nDropped)] : null,
         fallbackRank: i + 1,
@@ -131,23 +132,54 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
 
     // 落とした部屋も LINE グループには送られ sent_properties に記録されている（merge-pdfs）→ AD の補いは落とした部屋にも行う
     //   （売上サポに載せないだけ。見積書の割引と結び付ける材料を失わない）。文字層だけ取る（画像・Blob・DeepSeek は使わない）
+    //   2026-09-24: 落とした部屋の文字層は設備の補い（同じ建物の別の部屋に「宅配BOX」と書いてある）にも使う → 文字層は PDF がある部屋は全部取る
+    const droppedText = new Map<number, string | null>();
+    await Promise.allSettled(dd.dropped.map(async (d) => {
+      const b64 = input.pdfBase64List[d.index] ?? null;
+      if (!b64) return;
+      const t = await extractPdfText(b64, { maxPages: 2, maxChars: 8000 });
+      droppedText.set(d.index, t.text || null);
+    }));
+
+    // 2026-09-24 竹内「宅配BOX付きなども条件なのに入れていない」「設備欄を見る」「202号室なら2階」:
+    //   資料の文字層の設備欄を決定論で読み（DeepSeek 0円）、同じ建物の別の部屋（落とした部屋も）で建物単位の設備を補い、
+    //   お客様の条件欄の希望と照らす。結果は property_pickups.equipment と判定（EQUIP_*）に入れる
+    const eqBatch = buildBatchEquipment([
+      // label は補いの根拠に出す名前（LINE の【n】と同じ番号。落とした部屋は「（省略）」付き）
+      ...items.map((it, k) => ({ key: `k${k}`, pdfText: it.pdfText, label: `【${dd.keep[k] + 1}】` })),
+      ...dd.dropped.map((d) => ({ key: `d${d.index}`, pdfText: droppedText.get(d.index) ?? null, label: `【${d.index + 1}】（省略した部屋）` })),
+    ], loaded?.customer ?? null);
+    const eqOf = new Map(eqBatch.rows.map((r) => [r.key, r]));
+    items.forEach((it, k) => {
+      const e = eqOf.get(`k${k}`);
+      it.equipment = e?.saved ?? null;
+      const i = dd.keep[k];
+      const facts = factsOf.get(i);
+      if (profile && facts) {
+        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null }); } catch { it.judgment = null; }
+      }
+    });
+    if (eqBatch.wants.wants.length > 0) {
+      console.log(JSON.stringify({ tag: "property-pickups:equipment", batch: input.batchId.slice(0, 40), wants: eqBatch.wants.wants.length, uncovered: eqBatch.wants.uncovered.length,
+        rows: items.map((it) => it.equipment ? { ok: it.equipment.ok, ng: it.equipment.ng, un: it.equipment.unlisted, f: it.equipment.floor } : null) }));
+    }
+
     const droppedAd: Array<{ pdfUrl: string; judgment: Judgment | null }> = [];
     if (profile) {
-      await Promise.allSettled(dd.dropped.map(async (d) => {
+      for (const d of dd.dropped) {
         const pdfUrl = input.pdfUrls[d.index] ?? null;
-        if (!pdfUrl) return;
+        if (!pdfUrl) continue;
         const facts = parsePropertyFacts(input.summaries[d.index]);
-        const b64 = input.pdfBase64List[d.index] ?? null;
-        if (facts.adMonths == null && facts.adYen == null && b64) {
-          const t = await extractPdfText(b64, { maxPages: 2, maxChars: 8000 });
-          const ad = parseAdFromText(t.text || null);
+        const text = droppedText.get(d.index) ?? null;
+        if (facts.adMonths == null && facts.adYen == null && text) {
+          const ad = parseAdFromText(text);
           if (ad.adMonths != null) facts.adMonths = ad.adMonths;
           else if (ad.adYen != null) facts.adYen = ad.adYen;
         }
         let judgment: Judgment | null = null;
-        try { judgment = judgeProperty(facts, profile, d.index); } catch { judgment = null; }
+        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null }); } catch { judgment = null; }
         droppedAd.push({ pdfUrl, judgment });
-      }));
+      }
     }
 
     // AD が PDF の文字層から取れたら、送付記録（sent_properties・同じ印刷用 URL の行）にも入れる（見積書の割引と結び付ける材料）
@@ -168,7 +200,8 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     out.withImage = items.filter((it) => it.pageImageUrl || it.agentImageUrl).length;
     await Promise.allSettled(targets.map(async ({ it, i }) => {
       const url = (it.agentImageUrl ?? it.pageImageUrl) as string;
-      const wants = profile?.imageWants ?? [];
+      // 設備欄で ○/× が決まった希望（バストイレ別・独立洗面・南向き・2階以上）は画像で読み直さない（judgeProperty の imageChecks）
+      const wants = it.judgment ? it.judgment.imageChecks : (profile?.imageWants ?? []);
       const [detail, facts] = await Promise.all([
         readPropertyImageDetail(url, { timeoutMs: IMAGE_READ_TIMEOUT_MS }),
         wants.length > 0 ? readFloorPlanFacts(url, wants, { timeoutMs: Math.min(IMAGE_READ_TIMEOUT_MS, 60_000) }) : Promise.resolve(null),

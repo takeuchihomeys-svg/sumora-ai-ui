@@ -2332,6 +2332,9 @@ ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS agent_image_url TEXT;
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS trim_image_url TEXT;
 -- 2026-09-24 竹内「画像で分析ボタン」: DeepSeek が資料の画像から読んだ水回り・キッチン・リビングと洋室の位置関係・収納と、お客様の希望への合い具合
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_analysis JSONB;
+-- 2026-09-24 竹内「宅配BOX付きなども条件なのに入れていない。設備欄を見る。202号室なら2階」: 資料の文字層の設備欄を決定論で照らした結果
+--   {facts 要約, match（希望ごとの ○×－）, floor, floorSource, uncovered}（listing-equipment.ts・DeepSeek 0円）
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS equipment JSONB;
 -- 2026-09-24 竹内「読んだ結果を物件ごとに保存し、2回目以降は画像を読み直さない（希望との照合は文字だけ）」:
 --   画像で分析の物件ごとの事実。unit_key＝文字層の 物件名＋号室＋所在地（PDF の中身は出力日で毎回変わるので鍵にしない）。
 --   fp_hash＝切り出した間取り図の画素の sha256（同じ棟・同じ型の部屋は読み直さない）。prompt_version＝固定の前置きの版（変えたら読み直す）
@@ -2356,6 +2359,8 @@ CREATE TABLE IF NOT EXISTS property_sheet_facts (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_property_sheet_facts_unit ON property_sheet_facts(unit_key, prompt_version);
 CREATE INDEX IF NOT EXISTS idx_property_sheet_facts_fp ON property_sheet_facts(fp_hash, prompt_version);
 ALTER TABLE property_sheet_facts DISABLE ROW LEVEL SECURITY;
+-- 2026-09-24 夜: 希望の文字の照合（DeepSeek）の答えを物件ごとに保存し、2回目は呼ばない（{ 希望の文: {result, why} }）
+ALTER TABLE property_sheet_facts ADD COLUMN IF NOT EXISTS wants_judged JSONB;
 -- スタッフのメモ（売上サポの会話風画面の右側）。2026-09-24 竹内「DeepSeek 側は左・スタッフの会話は右」
 CREATE TABLE IF NOT EXISTS property_pickup_notes (
   id BIGSERIAL PRIMARY KEY,

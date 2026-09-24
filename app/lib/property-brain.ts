@@ -32,6 +32,7 @@
 
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
 import { isGenericBuildingName } from "./generic-building-name";
+import { EQUIP_LABELS, type EquipmentMatch, type EquipKey } from "./listing-equipment";
 
 // ─── 型 ──────────────────────────────────────────────────────────────────────
 
@@ -223,6 +224,65 @@ export const REASON_JA: Record<string, string> = {
 };
 
 /**
+ * 資料の設備欄との照合（listing-equipment.ts）の理由コード。EQUIP_<KEY>_OK / _NG / _UNLISTED（KEY は EquipKey の大文字・階の範囲は FLOOR）。
+ * 2026-09-24 竹内「宅配BOX付きなども条件なのにそこちゃんと入れていない」「設備面も見るように」:
+ *   × は −10 で保留（外す候補にはしない）・必須（strong）の × は上限20点（画像で分析と同じ決まり）・
+ *   ○ と ○〔建〕 は +3（合計 +15 まで。越えた分は _OK_MAX で 0点）・－（記載なし）は 0点で「要確認: 宅配ボックス」の札。
+ *   ペット相談（△）は _ASK で 0点（相談は可とは限らない）
+ */
+export const EQUIP_OK_POINTS = 3;
+export const EQUIP_OK_MAX_TOTAL = 15;
+export const EQUIP_NG_POINTS = -10;
+export const EQUIP_STRONG_NG_CAP = 20;
+export const EQUIP_CAP_CODE = "EQUIP_MUST_NG_CAP";
+
+function equipKeyLabel(key: string): string {
+  // 「無いほうがよい」希望（ロフトNG 等）は KEY_NOT（画面の1行の「ロフトNG○」と同じ言い方にする）
+  if (/_NOT$/.test(key)) return `${equipKeyLabel(key.slice(0, -4))}NG`;
+  const k = key.toLowerCase();
+  if (k === "floor") return "階の希望";
+  return EQUIP_LABELS[k as EquipKey] ?? key;
+}
+
+/** 理由コードの日本語（EQUIP_* は項目名から作る・それ以外は REASON_JA）。知らないコードはそのまま */
+export function reasonJa(code: string): string {
+  if (REASON_JA[code]) return REASON_JA[code];
+  if (code === EQUIP_CAP_CODE) return `必須の条件が資料で×（上限${EQUIP_STRONG_NG_CAP}点）`;
+  const m = code.match(/^EQUIP_(.+?)_(OK_MAX|OK|NG|UNLISTED|ASK)$/);
+  if (!m) return code;
+  const label = equipKeyLabel(m[1]);
+  switch (m[2]) {
+    case "OK": return `${label}○（資料）`;
+    case "OK_MAX": return `${label}○（資料・加点は上限）`;
+    case "NG": return `${label}×（資料）`;
+    case "ASK": return `${label}は相談（要確認）`;
+    default: return `要確認: ${label}`;
+  }
+}
+
+/** 照合の行 → 理由コード（同じコードは1つだけ・○ の加点は合計 +15 まで） */
+export function equipmentReasonCodes(m: EquipmentMatch | null | undefined): string[] {
+  if (!m) return [];
+  const out: string[] = [];
+  let okPts = 0;
+  for (const r of m.rows) {
+    // mode=ng（「ロフトNG」）は別のコード（EQUIP_LOFT_NOT_OK＝ロフトが無い＝希望どおり）。同じ KEY だと「ロフト○」と読めて逆の意味になる
+    const KEY = String(r.want.key).toUpperCase() + (r.want.mode === "ng" ? "_NOT" : "");
+    let code: string;
+    if (r.result === "ng") code = `EQUIP_${KEY}_NG`;
+    else if (r.result === "unlisted") code = `EQUIP_${KEY}_UNLISTED`;
+    else if (r.mark === "△") code = `EQUIP_${KEY}_ASK`;
+    else if (okPts + EQUIP_OK_POINTS <= EQUIP_OK_MAX_TOTAL) code = `EQUIP_${KEY}_OK`;
+    else code = `EQUIP_${KEY}_OK_MAX`;
+    if (out.includes(code)) continue;
+    if (code.endsWith("_OK")) okPts += EQUIP_OK_POINTS;
+    out.push(code);
+  }
+  if (m.strongNg) out.push(EQUIP_CAP_CODE);
+  return out;
+}
+
+/**
  * 理由コードごとの点（judgeProperty の add の点と同じ。基準 50 点に足す・上限 130・下限 0）。
  * 2026-09-24 竹内「今回なんで外されているのか理由が分かれば大きい」: 画面で「どの理由で何点」を出すために表にした。
  *   judgeProperty の点を変えたらここも変える（property-brain.test.ts が全コードで 50＋合計＝score を確かめる）。
@@ -243,6 +303,9 @@ export const REASON_POINTS: Record<string, number> = {
 export function reasonPoints(code: string): number {
   if (/^IMAGE_.*_OK$/.test(code)) return 5;
   if (/^IMAGE_.*_NG$/.test(code)) return -10;
+  if (/^EQUIP_.*_OK$/.test(code)) return EQUIP_OK_POINTS;
+  if (/^EQUIP_.*_NG$/.test(code)) return EQUIP_NG_POINTS;
+  if (/^EQUIP_/.test(code)) return 0; // _UNLISTED・_ASK・_OK_MAX・上限の印（上限20は reasonPoints の外）
   return REASON_POINTS[code] ?? 0;
 }
 
@@ -578,7 +641,17 @@ export function computeAdYen(f: PropertyFacts): number | null {
   return null;
 }
 
-export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, index = 0): Judgment {
+/** 画像（間取り図）で確かめる希望 → 資料の設備欄のキー（設備欄で決まった物は画像で二重に数えない） */
+const IMAGE_TO_EQUIP: Partial<Record<ImageWantKey, EquipKey>> = {
+  bath_toilet_separate: "bath_toilet", separate_washstand: "washbasin", south_facing: "south", floor_2_plus: "floor2",
+};
+
+export type JudgeOptions = {
+  /** 資料の設備欄との照合（listing-equipment.ts の matchEquipment。拡張の判定は説明文から読めた分だけ） */
+  equipment?: EquipmentMatch | null;
+};
+
+export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, index = 0, opts: JudgeOptions = {}): Judgment {
   let score = 50;
   const codes: string[] = [];
   const holds: string[] = [];
@@ -666,22 +739,33 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     if (adMonthsEff != null && adMonthsEff >= 3) add("AD_VERY_HIGH", 5);
   }
 
-  // ペット
-  if (profile.pet && /ペット不可|ペット×|ペットNG/.test(facts.rawText)) add("PET_NG", -15, "hold");
+  // ペット: 設備欄の照合でペットが決まった（可・相談・不可）時はそちら（EQUIP_PET_*）で数え、説明文の語は見ない（二重に数えない）。
+  //   決まらない時（資料が無い・記載なし）だけ今まで通り説明文の「ペット不可」を見る
+  const eq = opts.equipment ?? null;
+  const petDecided = !!eq?.rows.some((r) => r.want.key === "pet" && r.result !== "unlisted");
+  if (profile.pet && !petDecided && /ペット不可|ペット×|ペットNG/.test(facts.rawText)) add("PET_NG", -15, "hold");
+
+  // 資料の設備欄（× は保留・○ は +3 で合計 +15 まで・－ は 0点の要確認）。drop には使わない
+  for (const code of equipmentReasonCodes(eq)) add(code, reasonPoints(code), /_NG$/.test(code) ? "hold" : undefined);
 
   // 上限は 130（旧 100）。条件が全部合う物件は AD なしで 88〜100 に達し、100 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
   score = Math.max(0, Math.min(130, score));
+  // 必須（strong）の条件が資料で × なら上限 20（画像で分析と同じ決まり）
+  if (codes.includes(EQUIP_CAP_CODE)) score = Math.min(score, EQUIP_STRONG_NG_CAP);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
   // 理由の日本語は「外す・保留の理由」を先に、良い点は後に（LINE の1行は先頭2つを見せる）
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c));
-  const reasonsJa = [...flagCodes, ...positives].map((c) => REASON_JA[c] ?? c);
+  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^EQUIP_.*_OK$/.test(c));
+  const reasonsJa = [...flagCodes, ...positives].map(reasonJa);
+  // 設備欄で ○/× が決まった希望は画像で確かめ直さない（同じ希望を二重に数えない）
+  const decided = new Set<string>((eq?.rows ?? []).filter((r) => r.result !== "unlisted").map((r) => r.want.key));
+  const imageChecks = profile.imageWants.filter((k) => { const e = IMAGE_TO_EQUIP[k]; return !(e && decided.has(e)); });
 
   return {
     index, rank: facts.rank, name: facts.name, verdict, score, reasonCodes: codes, flagCodes, reasonsJa,
     confidence: profile.confidence, missing, adYen, profitYen,
-    imageChecks: verdict === "drop" ? [] : profile.imageWants,
+    imageChecks: verdict === "drop" ? [] : imageChecks,
     facts,
   };
 }
@@ -701,10 +785,51 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
     if (v) score += 5; else { score -= 10; hold = true; flagCodes.push(code); }
   }
   score = Math.max(0, Math.min(130, score));   // judgeProperty と同じ上限（AD の上乗せ分）
+  if (codes.includes(EQUIP_CAP_CODE)) {
+    // 必須の × の上限20は画像の加点でも越えない。j.score は既に20に丸めてあるので、そこから引くと 50＋合計 と食い違う
+    //   （例: 素点80→20 に −10 で 10 になる）→ 素点（50＋合計・0〜130）から上限20を掛け直す（反証レビュー 2026-09-24）
+    const raw = Math.max(0, Math.min(130, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
+    score = Math.min(raw, EQUIP_STRONG_NG_CAP);
+  }
   const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || score < 40 ? "hold" : "pass");
-  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^IMAGE_.*_OK$/.test(c));
-  const reasonsJa = [...flagCodes, ...positives].map((c) => REASON_JA[c] ?? c);
+  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c));
+  const reasonsJa = [...flagCodes, ...positives].map(reasonJa);
   return { ...j, score, verdict, reasonCodes: codes, flagCodes, reasonsJa };
+}
+
+/** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
+export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130"]);
+export const HOLD_REASON_CODES = new Set([
+  "RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PROFIT_NEGATIVE", "PET_NG",
+]);
+const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP)_.*_NG$/.test(c);
+
+/**
+ * 保存済みの判定（理由コード）に、資料の設備欄の照合を付け直す（決定論）。
+ * 2026-09-24: 既存の行（HONOKA さんの id 50〜67）は説明文が古い形で、judgeProperty をやり直すと家賃・徒歩・AD の材料が消える
+ *   → 元のコードは残し、①前の EQUIP_* を外す ②設備欄で決まった希望の IMAGE_*（バストイレ別・独立洗面・南向き・2階以上）を外す（二重に数えない）
+ *   ③設備欄でペットが決まったら PET_NG を外す ④新しい EQUIP_* を足す。点は 50＋合計（0〜130・必須の × は上限20）、
+ *   verdict は drop のコードがあれば drop・hold のコードか 40 点未満で hold
+ */
+export function applyEquipmentMatch(
+  j: { reasonCodes: string[] },
+  m: EquipmentMatch | null | undefined,
+): { score: number; verdict: Verdict; reasonCodes: string[]; flagCodes: string[]; reasonsJa: string[] } {
+  const decided = new Set<string>((m?.rows ?? []).filter((r) => r.result !== "unlisted").map((r) => r.want.key));
+  const imageDecided = (c: string) => {
+    const k = (Object.keys(IMAGE_TO_EQUIP) as ImageWantKey[]).find((ik) => c === `IMAGE_${ik.toUpperCase()}_OK` || c === `IMAGE_${ik.toUpperCase()}_NG`);
+    return !!k && decided.has(IMAGE_TO_EQUIP[k] as string);
+  };
+  const codes = j.reasonCodes.filter((c) => !c.startsWith("EQUIP_") && !imageDecided(c) && !(c === "PET_NG" && decided.has("pet")));
+  codes.push(...equipmentReasonCodes(m));
+  let score = Math.max(0, Math.min(130, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
+  if (codes.includes(EQUIP_CAP_CODE)) score = Math.min(score, EQUIP_STRONG_NG_CAP);
+  const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
+  const holds = codes.filter(isHoldCode);
+  const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
+  const flagCodes = [...drops, ...holds];
+  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c));
+  return { score, verdict, reasonCodes: codes, flagCodes, reasonsJa: [...flagCodes, ...positives].map(reasonJa) };
 }
 
 // ─── まとめ（LINE の末尾・コンソール用） ─────────────────────────────────────
@@ -718,7 +843,7 @@ export function countVerdicts(js: Judgment[]): { pass: number; hold: number; dro
 /** 物件ごとの1行（「〇〇（家賃が上限を3割超・送付済み）」） */
 export function formatJudgmentBrief(j: Judgment): string {
   // 外す・保留の物は「なぜ外すか」だけを見せる（良い点を混ぜると読み手が迷う）
-  const src = j.verdict === "pass" ? j.reasonsJa : j.flagCodes.map((c) => REASON_JA[c] ?? c);
+  const src = j.verdict === "pass" ? j.reasonsJa : j.flagCodes.map(reasonJa);
   const why = src.length ? src.slice(0, 2).join("・") : `${j.score}点`;
   return `${j.name}（${why}）`;
 }

@@ -27,6 +27,8 @@ import {
   type Judgment, type PropertyDataLike, type CustomerLike, type SentRowLike, type PatternRowLike,
 } from "@/app/lib/property-brain";
 import { readFloorPlanFacts, PROPERTY_BRAIN_IMAGE_MAX_PER_BATCH } from "@/app/lib/property-brain-image";
+import { parseEquipmentWants } from "@/app/lib/listing-equipment";
+import { matchFromSummary } from "@/app/lib/pickup-equipment";
 // 2026-09-24 竹内「AD − 見積書の割引金額が利益。連動する」: 見積書の記録（estimate_records）から割引・利益の中央値
 import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
 
@@ -114,7 +116,10 @@ export async function POST(req: NextRequest) {
     const profile = buildCustomerProfile(customer, (sentRes.data ?? []) as SentRowLike[], (patRes.data ?? []) as PatternRowLike[], discountYen);
 
     // ── 決定論の判定 ──
-    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i));
+    // 2026-09-24 竹内「設備面も見るように」「202号室なら2階」: ここ（拡張の判定）は PDF が無いので、説明文から読めた分だけ
+    //   （号室から推した階・説明文に書いてある設備）で売上サポと同じ EQUIP_* を付ける。記載なし（要確認）はここでは付けない
+    const equipWants = parseEquipmentWants(customer);
+    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants) }));
 
     // ── 画像でしか分からない有無（要る時だけ・5枚まで・時間で切る） ──
     let imageRead = 0, imageOk = 0;

@@ -10,6 +10,7 @@
 //   ・🌟 の印は merge-pdfs の rankAndAnnotateSummaries が説明文の先頭に付ける「【1🌟★】」「【2🌟】」をそのまま読む（別の判断を作らない）
 import { parseSummaryHead } from "./sent-property-filter";
 import type { Judgment } from "./property-brain";
+import type { PickupEquipment } from "./pickup-equipment";
 
 export type PickupItemInput = {
   /** 番号付きの説明文（🌟 付きならそれ） */
@@ -27,6 +28,8 @@ export type PickupItemInput = {
   agentImageUrl?: string | null;
   imageLines?: string[] | null;
   imageFacts?: Record<string, boolean | null> | null;
+  /** 2026-09-24 資料の設備欄 × お客様の条件の照合（pickup-equipment.ts の PickupEquipment） */
+  equipment?: PickupEquipment | null;
   /**
    * 2026-09-24 竹内「同じ建物だと平米数2㎡以内だと家賃がひくい部屋をここにいれて、他の部屋は売上サポに飛ばさなくて大丈夫」:
    *   pickup-dedupe.ts で落とした部屋に 🌟/🌟★ が付いていた時、残した部屋に引き継ぐ印（説明文の印と強い方を採る）
@@ -68,6 +71,7 @@ export type PickupRow = {
   agent_image_url: string | null;
   image_lines: string[] | null;
   image_facts: Record<string, boolean | null> | null;
+  equipment: PickupEquipment | null;
 };
 
 /** 説明文の先頭「【1🌟★】」から順位と印を読む */
@@ -116,6 +120,7 @@ export function buildPickupRows(
       agent_image_url: it.agentImageUrl ?? null,
       image_lines: it.imageLines && it.imageLines.length ? it.imageLines : null,
       image_facts: it.imageFacts ?? null,
+      equipment: it.equipment ?? null,
     };
   });
 }

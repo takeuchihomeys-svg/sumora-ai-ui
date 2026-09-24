@@ -7,7 +7,7 @@
 //   「外す候補 20 と出てるが、なんで全部外す候補 20 でばらつきないのか。今回なんで外されているのか理由が分かれば大きい」
 //     → 点の横に理由の札（減点・外す理由が先・何点引いたか）。材料が読めずに点が動かない時は「材料なし」も札で出す
 //       （点が横並びの原因は『材料が無い』か『同じ理由が全件に当たった』のどちらか。画面で一目で分かるように）
-import { BASE_SCORE, REASON_JA, reasonPoints } from "./property-brain";
+import { BASE_SCORE, reasonJa, reasonPoints } from "./property-brain";
 
 export type ReviewOrderRow = { id: number; rank: number; recommended: number; score: number | null };
 
@@ -94,8 +94,8 @@ export function buildReasonView(row: { reason_codes?: string[] | null; reasons_j
   for (const code of codes) {
     const p = reasonPoints(code);
     total += p;
-    const label = CHIP_JA[code] ?? REASON_JA[code] ?? code;
-    fromCodes.add(REASON_JA[code] ?? code);
+    const label = CHIP_JA[code] ?? reasonJa(code);
+    fromCodes.add(reasonJa(code));
     if (MISSING_JA[code]) { view.missing.push(MISSING_JA[code]); continue; }
     if (p < 0) view.minus.push({ code, label, points: p, tone: DROP_CODES.has(code) ? "drop" : "minus" });
     else if (p > 0) view.plus.push({ code, label, points: p, tone: "plus" });

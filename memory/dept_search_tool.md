@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-09-24 深夜 売上サポ: 資料の設備欄 × お客様の条件を判定に組み込む（竹内「HONOKA さんの場合、宅配BOX付きなども条件なのにそこちゃんと入れていない」「設備面も見るように」「202号室なら2階」）
+- 部品: `app/lib/listing-equipment.ts`（文字層から所在階・設備の有無を決定論で読む・DeepSeek 0円）＋組み込み `app/lib/pickup-equipment.ts`（`buildBatchEquipment`・`toPickupEquipment`・`matchFromSummary`・`floorLabel`・純関数・画面と共用）
+- **recordPickupBatch**（`app/lib/property-pickups-server.ts`）: すでに取っている pdfText に parseListingEquipment → **回の全部の行（同じ建物で落とした部屋も文字層だけ取って含める）**を mergeBuildingEquipment で補う（エレベーター・宅配ボックス・オートロック・ネット無料・駐車場だけ「○〔建〕」）→ parseEquipmentWants(条件欄) と matchEquipment → `property_pickups.equipment`（jsonb・{facts 要約, match, floor, floorSource, uncovered, line}）に保存。判定は設備の照合の後で行う（judgeProperty の第4引数 `{ equipment }`）。ログ `property-pickups:equipment`
+- **判定**（`app/lib/property-brain.ts`）: `EQUIP_<KEY>_OK` +3（合計 +15 まで・越えた分は `_OK_MAX` 0点）／`_NG` −10 で保留（外す候補には使わない）／`_UNLISTED` 0点で札「要確認: 宅配ボックス」／ペット相談は `_ASK` 0点／必須（strong）の × は `EQUIP_MUST_NG_CAP` で上限20（画像で分析と同じ）。reasonPoints・reasonJa に入れた（50＋合計＝score のテスト込み）
+  - 設備欄で ○/× が決まった希望（バストイレ別・独立洗面・南向き・2階以上）は **imageChecks から外す**＝画像（readFloorPlanFacts）で読み直さない・二重に数えない（費用も減る）
+  - PET_NG（説明文の「ペット不可」）は、設備欄でペットが決まった時だけ EQUIP_PET_* に置き換え（決まらない時は今まで通り）。文字層のある18行で食い違い0
+  - 保存済みの行の付け直しは `applyEquipmentMatch`（元の家賃・徒歩・AD・画像のコードは残す。説明文が古い形の行で judgeProperty をやり直すと材料が消えるため）
+- **拡張の判定**（`app/api/property-brain/judge/route.ts`）: PDF が無いので説明文から読めた分だけ（号室から推した階・説明文に書いてある設備）。記載なし（要確認）は付けない
+- **画面**（`PickupReview.tsx` の EquipmentLine）: 「🏢 9階（所在階）／5階（号室から推定） 条件: 2階以上○ エレベーター○〔建〕 宅配ボックス－ …」（× 赤・－ 灰・○ 緑・△ 橙）。印をタップで根拠（資料の文字）。照らせない条件は「照らせない条件: …」。API（`GET /api/property-pickups`）は equipment を返す
+- 列: `property_pickups.equipment JSONB`（migrate-schema・`scripts/apply-property-pickups-table.ts` で本番に適用済み）
+- 付け直し: `npx tsx --env-file=.env.local scripts/backfill-pickup-equipment.ts --ids=50-67 [--apply] [--backup=<path>]`（既定は dry-run）
+  - **id 50〜67 は dry-run だけ（本番への書き込みは許可が下りず未適用）**。前後（dry-run）: 50 105→105／51 105 hold→101 hold（1階×）／52 105→105／53 100→102／54 105→99（エレベーター・宅配－）／55 115→117／56 100→102／57 90→84／58 120→120／59 120→120／60 65 hold→80 hold／61 90→102／62 55→70／63 90→105（〔建〕で補う）／64 90→99／65 65 hold→64 hold（1階×）／66 90→99／67 90→105
+- テスト: `app/lib/__tests__/pickup-equipment.test.ts`（54件）・pickup-review-order に EQUIP 込みの 50＋合計＝score
+- 残り: 落とした部屋の文字層は保存しないので、既存行の付け直しは保存した行の中でしか〔建〕を補えない／uncovered（防音 等）を文字で聞く buildEquipmentAskPrompt の呼び出しはまだ無い
+
+## 2026-09-24 深夜 売上サポ: 並び順（🌟→点）・外す候補の理由の札・💾 画像保存（一括）・分析結果に画像（竹内「なんで全部外す候補20でばらつきないのか」）
+HONOKA さんの itandi の回（property_pickups id 50〜67）で 18件中15件が「外す候補 20」で横並びだった。
+- **原因（2つ重なっていた）**: ①itandi の説明文は拡張が名前を取れず全件「【n】物件」→ `property-brain` の送付済みの建物（sentBuildings）に「物件」が入り、今回の「物件」全件が ALREADY_SENT（−30・drop）＝ 50−30＝20 ②その「物件」18行は sent_properties の **delivery='shared'・source='line_group'**（同じ回を売上番長グループに共有しただけ）＝ 自分自身の共有で「送付済み」になっていた。お客様に届いた送付ではない
+- **直し（`app/lib/property-brain.ts`）**: 一般名（`app/lib/generic-building-name.ts` の `isGenericBuildingName`＝物件・マンション・物件3・【4】物件…。pickup-dedupe と同じ決まりを1つに）は送付済みに入れず照合もしない。`isCustomerDelivery`（delivery='customer'、または delivery 無し・source≠line_group）の行だけ送付済みに入れる（読み込みは `property-pickups-server.loadProfile`・`/api/property-brain/judge` が delivery・source も select）
+- **管理費**: リアプロの説明文「75,000円 10,000円」の2つ目（言葉なし）を管理費として読む（pickup-dedupe の adminFeeOf と同じ線）。id 34〜45 は全件「家賃は上限内 +15」だったが、実際は家賃＋管理費 81,100〜85,000 で上限 8万を少し超過（0点）
+- **点の表**: `REASON_POINTS`・`reasonPoints(code)`・`BASE_SCORE`（judgeProperty の点と同じ。テストで全コード 50＋合計＝score を確かめる）。画面の「点の内訳」はここから作る
+- **並び順**（`app/lib/pickup-review-order.ts` の `sortForReview`）: 🌟★ → 🌟 → 点の高い順（点なしは最後）→ 同点は元の順位。API（view=detail）と画面の両方で同じ関数。分析結果の吹き出しは画像で分析の点の高い順（要確認・点なしは後ろ）
+- **理由の札**（`buildReasonView`・`formatScoreBreakdown`）: 点の横に「✕ 送付済みの建物 −30」（外す理由＝赤）・減点（橙）・「材料なし: 家賃・敷礼・AD」（灰＝点が動かない理由）・加点（緑）・利益目安。「点の内訳」を押すと「基準50 −30 送付済みの建物 ＋15 家賃は上限内 … ＝ 35」。reason_codes が無い古い行は reasons_ja をそのまま
+- **💾 画像保存**（旧 ✂️ 画像トリミング）: チェックした物件のお客様に送る1ページ目（`pickSaveImageUrl`＝トリミング→文字のある page_image_url。**元付の資料 agent_image_url は選ばない**）。無い物件は先にトリミング。スマホは `navigator.share({ files })`（canShare で確認）→ 共有シート「N枚の画像を保存」で写真へ。画像の用意中に押した操作の有効期限が切れると NotAllowedError → 下に「📲 写真に保存（N枚）」を出してもう一度押してもらう。パソコンは1枚ずつダウンロード（400ms 間隔）。画像は Vercel Blob（Access-Control-Allow-Origin: *）なのでプロキシは不要（実測）。1枚の「💾 保存」もスマホは共有シート
+- **分析結果の吹き出し**: 各物件に送る形の画像（88×62・押すと原寸）とチェック（上の一覧と同じ checked）。下に「この分析から n件を選択中」「点の高い3件だけ選ぶ」「📤 AIXで送る（n件）」「💾 画像保存」＝ 分析で絞った物件をそのまま送る／保存
+- **👑 全体で一番条件に合う**: 画像（1ページ目・押すと原寸・💾 保存）。API の best に `image_url`（pickSaveImageUrl・元付は返さない）を足した
+- **id 50〜67 の付け直し**（本番の行を更新・前の値は scratchpad `pickups_50_67_before.json`）: 前 drop 20 ×15・hold 50・pass 60/65 → 後 pass 90〜120（13件）・hold 65 ×2（AD より割引が大きい）・hold 105（1階＝画像）・pass 55（家賃が上限を少し超過）。材料は PDF の文字層（listing-text の fillSummaryFromListing＝v2.5.16 の説明文と同じ形）＋保存済みの画像の読み取り。**summary_text は変えていない**
+- **リアプロ id 34〜45 の点のばらつき（行は更新していない・試算だけ）**: 直した判定で 80（AD 2ヶ月）／65（AD 1.5ヶ月）の2段。家賃は全件が上限を少し超過（同じ段）・徒歩／敷礼／築年は説明文に無く「材料なし」。→ 点を分けるには材料（交通・敷礼）を説明文に入れるのが先（段の中の家賃の差を点にするかは未決・実送信で線を引いてから）
+- テスト: `app/lib/__tests__/pickup-review-order.test.ts`（58件）
+
 ## 2026-09-24 夜 売上サポ →「📤 AIXで送る」で AIX に今回の物件の事実を渡す／スマホの点検（竹内「改善する。DeepSeek でテストする」）
 - **売上サポ → AIX の受け渡しに行 ID を足した**: `app/page.tsx` の pickupHandoffRef が画像と同じ並びの property_pickups の行 ID を `aixInitialPickupIds` に持ち、AixModal（`initialPickupIds`）が **画像がセットされた時のまま（同じ File・同じ並び）の時だけ** `body.pickup_ids` で送る。外した・足した時は送らない。手で選んだ画像（onAixMultiImagesSelected）は ID を空にする
 - サーバー（`app/api/aix/action/route.ts`）は pickup_ids を会話 ID で絞って読み、**間取り・家賃だけ**（`app/lib/pickup-send-facts.ts` parsePickupFact・AD／利益／🌟／管理費は読まない）を【今回お送りする物件】として生成に渡す。行の数と画像の枚数が違えば使わない

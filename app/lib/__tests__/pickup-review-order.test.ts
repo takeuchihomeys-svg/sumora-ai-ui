@@ -9,6 +9,12 @@ import {
 } from "../property-brain";
 import { sortForReview, compareForReview, buildReasonView, formatScoreBreakdown } from "../pickup-review-order";
 import { pickSaveImageUrl, saveImageFileName } from "../pickup-image-url";
+import { matchEquipment, parseEquipmentWants, parseListingEquipment } from "../listing-equipment";
+
+// 設備欄の照合（itandi の形・1ページ目の文字層の抜粋）。2階以上は必須にして上限20も通す
+const EQ_WANTS = parseEquipmentWants({ preferences: "2階以上必須、エレベーター付き、宅配box付き、独立洗面台、風呂トイレ別、オートロック、室内洗濯機置場" });
+const EQ_UPPER = "仲介\nX 405 号室\n構造 鉄筋コンクリート 階建 / 総⼾数 15 階建 / 180 ⼾\n所在階 4 階 主要採光⾯ ⻄向き\n設備\nバス‧トイレ別 , 独⽴洗⾯台 , 室内\n洗濯機置場 , オートロック , エレベーター , 宅配 BOX\n備考\nー";
+const EQ_GROUND = "仲介\nY 104 号室\n構造 鉄筋コンクリート 階建 / 総⼾数 15 階建 / ー\n所在階 1 階 主要採光⾯ 南東向き\n設備\nバス‧トイレ別 , 独⽴洗⾯台\n備考\nー";
 
 let passed = 0, failed = 0;
 function t(name: string, ok: boolean, extra?: unknown) {
@@ -116,9 +122,19 @@ console.log("■ 点の表（REASON_POINTS）と judgeProperty・applyImageFacts
       // applyImageFacts は judgeProperty の（上限・下限で切った）点に足してもう一度切る
       const raw2 = j.score + withImg.reasonCodes.filter((c) => c.startsWith("IMAGE_")).reduce((a, code) => a + reasonPoints(code), 0);
       if (Math.max(0, Math.min(130, raw2)) !== withImg.score) bad.push({ img: true, codes: withImg.reasonCodes, raw2, score: withImg.score });
+      // 2026-09-24 資料の設備欄の照合（EQUIP_*）も同じ表で数える。必須の × は上限20（EQUIP_MUST_NG_CAP）
+      for (const eqText of [EQ_UPPER, EQ_GROUND]) {
+        const m = matchEquipment(EQ_WANTS, parseListingEquipment(eqText));
+        const je = judgeProperty(parsePropertyFacts(s), p, i, { equipment: m });
+        const rawE = BASE_SCORE + je.reasonCodes.reduce((a, code) => a + reasonPoints(code), 0);
+        let expE = Math.max(0, Math.min(130, rawE));
+        if (je.reasonCodes.includes("EQUIP_MUST_NG_CAP")) expE = Math.min(expE, 20);
+        if (expE !== je.score) bad.push({ eq: true, codes: je.reasonCodes, rawE, score: je.score });
+        if (je.verdict === "drop" && !j.flagCodes.some((c) => c === "ALREADY_SENT" || c === "RENT_OVER_130")) bad.push({ eqDrop: true, codes: je.reasonCodes });
+      }
     }
   }
-  t("全コードで 50＋合計＝score（上限・下限の内側）", bad.length === 0, bad.slice(0, 3));
+  t("全コードで 50＋合計＝score（上限・下限の内側・設備欄の EQUIP_* 込み）", bad.length === 0, bad.slice(0, 3));
   t("ALREADY_SENT は −30", REASON_POINTS.ALREADY_SENT === -30);
 }
 

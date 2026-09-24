@@ -8,6 +8,7 @@ import type React from "react";
 import { okCountOf, type CustomerBest } from "@/app/lib/pickup-best";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
 import { sortForReview, buildReasonView, formatScoreBreakdown } from "@/app/lib/pickup-review-order";
+import { floorLabel, type PickupEquipment } from "@/app/lib/pickup-equipment";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -17,6 +18,7 @@ type Item = {
   reasons_ja: string[] | null; reason_codes?: string[] | null; ad_yen: number | null; profit_yen: number | null; recommended: number; status: string; sent_at: string | null;
   page_image_url: string | null; agent_image_url?: string | null; trim_image_url?: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
   image_analysis?: { match?: number | null; [k: string]: unknown } | null;
+  equipment?: PickupEquipment | null;
 };
 type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
@@ -124,6 +126,42 @@ function ReasonChips({ it, open, onToggle }: { it: Item; open: boolean; onToggle
       </div>
       {open && breakdown && <div className="text-[10px] mt-1 leading-snug break-words" style={{ color: "#546e7a" }}>{breakdown}</div>}
       {v.notes.length > 0 && <div className="text-[10px] text-[#78909c] mt-0.5">{v.notes.join("・")}</div>}
+    </div>
+  );
+}
+
+/** 設備の印の色（○ 緑・× 赤・－ 灰・△ 橙） */
+const equipMarkColor = (result: string, mark: string) =>
+  result === "ng" ? "#c62828" : result === "unlisted" ? "#90a4ae" : mark === "△" ? "#ef6c00" : "#2e7d32";
+
+/**
+ * 資料の設備欄 × お客様の条件の1行。2026-09-24 竹内「宅配BOX付きなども条件なのに入れていない」「設備欄を見る」「202号室なら2階」:
+ *   「条件: 2階以上○ エレベーター○〔建〕 宅配ボックス－」（× 赤・－ 灰・○ 緑）。印をタップすると根拠（資料の文字）を出す。
+ *   所在階は「9階（所在階）」「5階（号室から推定）」。どの設備にも当たらない条件は「照らせない条件」で1行
+ */
+function EquipmentLine({ eq }: { eq: PickupEquipment | null | undefined }) {
+  const [open, setOpen] = useState<number | null>(null);
+  if (!eq) return null;
+  const fl = floorLabel(eq);
+  const match = eq.match ?? [];
+  const uncovered = eq.uncovered ?? [];
+  if (!match.length && !fl && !uncovered.length) return null;
+  const stop = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); };
+  const sel = open != null ? match[open] ?? null : null;
+  return (
+    <div className="mt-1 text-[10px] leading-snug">
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        {fl && <span style={{ color: "#37474f" }}>🏢 {fl}</span>}
+        {match.length > 0 && <span style={{ color: "#546e7a" }}>条件:</span>}
+        {match.map((m, k) => (
+          <button key={`${m.key}-${m.mode}-${k}`} type="button" onClick={(e) => { stop(e); setOpen(open === k ? null : k); }}
+            className="font-bold" style={{ color: equipMarkColor(m.result, m.mark), textDecoration: open === k ? "underline" : "none" }}
+            title={m.why}>{m.label}{m.strong ? "（必須）" : ""}{m.mark}</button>
+        ))}
+      </div>
+      {sel && <div className="mt-0.5 break-words" style={{ color: "#546e7a" }}>
+        {sel.label}: {sel.result === "unlisted" ? `資料に記載なし（無いとは限らない）${sel.why && sel.why !== "資料に記載なし" ? `・${sel.why}` : ""}` : sel.why}</div>}
+      {uncovered.length > 0 && <div className="mt-0.5 break-words" style={{ color: "#78909c" }}>照らせない条件: {uncovered.join("・")}</div>}
     </div>
   );
 }
@@ -817,6 +855,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                           </div>
                           <div className="text-[11px] text-[#455a64] mt-0.5 break-words">{body.slice(0, 4).join(" / ")}</div>
                           <ReasonChips it={it} open={!!openBreakdown[it.id]} onToggle={() => setOpenBreakdown((p) => ({ ...p, [it.id]: !p[it.id] }))} />
+                          <EquipmentLine eq={it.equipment} />
                           {it.image_lines && it.image_lines.length > 0 && (
                             <div className="text-[10px] mt-0.5" style={{ color: "#37474f" }}>📷 {it.image_lines.slice(0, 5).join("／")}</div>
                           )}
