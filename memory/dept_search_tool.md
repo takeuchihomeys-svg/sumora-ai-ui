@@ -35,7 +35,7 @@
 
 ### ③ 売上サポ「ピックアップ」タブ
 ```
-拡張「売上番長に送る」→ merge-pdfs（今まで通りグループへ）→ waitUntil で property_pickups に1回分を記録
+拡張「売上番長に送る」→ merge-pdfs（今まで通りグループへ）→ **ブレインモードの時だけ**（brain_mode=true・通常／スタッフモードは記録しない・竹内 2026-09-24「ブレインモード限定機能」）waitUntil で property_pickups に1回分を記録
   行＝物件: 説明文・🌟（Haiku の順位）・判定（property-brain 純関数）・PDF の文字層・物件ごとの PDF（Blob）
 売上サポ（/conditions）→「ピックアップ」タブ（app/components/PickupReview.tsx）
   → **LINE の一覧と同じ形**でお客様が並ぶ（🏠・名前・「🧠 N件・🌟物件名」・時刻・未確認の数）→ タップで**会話風**

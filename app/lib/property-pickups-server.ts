@@ -3,7 +3,8 @@
 // 判定は property-brain（純関数）。行の作り方は property-pickups.ts（純関数）。ここは材料を引いて書くだけ。失敗しても投げない。
 //
 // 2026-09-24 竹内「ピックアップしたのを一度アプリの売上サポに飛ばして、DeepSeek が送る物件とオススメを判断して共有。
-//   スタッフは確認してお客さんに送るだけ」
+//   スタッフは確認してお客さんに送るだけ」「これはブレインモードで拡張ツールを行った時の限定機能」
+//   → 呼ぶのは merge-pdfs で拡張の brain_mode=true の時だけ（通常・スタッフモードでは記録しない）
 import { supabase } from "@/app/lib/supabase";
 import { extractPdfText } from "@/app/lib/pdf-text";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
