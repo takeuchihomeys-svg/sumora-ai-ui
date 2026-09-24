@@ -152,6 +152,25 @@ console.log("── 判定（決定論・drop は実送信でほぼ0の形だけ
   t("敷礼0・1K・徒歩5・AD2ヶ月 → pass", a.verdict === "pass", a.reasonCodes.join(","));
   t("利益 = AD 116,000 − 42,000", a.profitYen === 74_000);
   t("理由に ZERO_ZERO_MATCH・AD_HIGH", a.reasonCodes.includes("ZERO_ZERO_MATCH") && a.reasonCodes.includes("AD_HIGH"));
+  // 2026-09-24 竹内「AD の価値をもっと上げる。2ヶ月以上（200%以上）なら追加で点数を上げる」
+  {
+    const p = buildCustomerProfile({ rent_max: 90_000, floor_plan: "1LDK" });
+    const base = "【1】X\n80,000円\n1LDK\n敷なし 礼なし\n徒歩5分";
+    const none = judgeProperty(parsePropertyFacts(base), p);
+    const ad1 = judgeProperty(parsePropertyFacts(base + "\nAD 1ヶ月"), p);
+    const ad2 = judgeProperty(parsePropertyFacts(base + "\nAD 2ヶ月"), p);
+    const ad25 = judgeProperty(parsePropertyFacts(base + "\nAD 2.5ヶ月"), p);
+    const ad3 = judgeProperty(parsePropertyFacts(base + "\nAD 3ヶ月"), p);
+    const adYen2 = judgeProperty(parsePropertyFacts(base + "\nAD 160,000円"), p);
+    t("★ AD なし < 1ヶ月 < 2ヶ月 < 3ヶ月 の順に点が上がる", none.score < ad1.score && ad1.score < ad2.score && ad2.score < ad3.score, JSON.stringify([none.score, ad1.score, ad2.score, ad3.score]));
+    t("★ 2ヶ月は1ヶ月より 15 以上高い（報酬の重み・1ヶ月 +5 → 2ヶ月 +20）", ad2.score - ad1.score >= 15, JSON.stringify([ad1.score, ad2.score]));
+    t("★ 2.5ヶ月（250%）も AD_HIGH", ad25.reasonCodes.includes("AD_HIGH") && !ad25.reasonCodes.includes("AD_VERY_HIGH"));
+    t("★ 円だけの AD 160,000（家賃 80,000）は2ヶ月扱い", adYen2.reasonCodes.includes("AD_HIGH") && adYen2.score === ad2.score, JSON.stringify([adYen2.score, ad2.score]));
+    t("★ 理由の日本語に AD が出る", ad2.reasonsJa.includes("ADが高い（2ヶ月以上）") && ad1.reasonsJa.includes("AD 1ヶ月"));
+    // AD が高くても条件の hold は覆らない
+    const overAd = judgeProperty(parsePropertyFacts("【1】高い\n85,000円\n1K\n敷なし 礼なし\n徒歩5分\nAD 3ヶ月"), low);
+    t("★ AD 3ヶ月でも家賃比 1.21 は hold のまま", overAd.verdict === "hold");
+  }
 
   const b = judgeProperty(parsePropertyFacts(SUMMARY_B), low);
   t("敷1礼1（抑えたい人）・1LDK・家賃 77,000/70,000=1.10 → hold（drop ではない）", b.verdict === "hold" && b.reasonCodes.includes("INITIAL_COST_NOT_ZERO"), b.reasonCodes.join(","));

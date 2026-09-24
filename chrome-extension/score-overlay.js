@@ -220,8 +220,10 @@
     var adPctM = t.match(/\bAD\s*([0-9]+(?:\.[0-9]+)?)\s*%/i);
     if (adMo)   adPct = parseFloat(adMo[1]) * 100;
     else if (adPctM) adPct = parseFloat(adPctM[1]);
-    if      (adPct >= 200) score += 15;
-    else if (adPct >= 150) score += 12;
+    // 2026-09-24 竹内「AD の価値をもっと上げる。AD は報酬なので重要。2ヶ月以上（200%以上）なら追加で点数を上げる」
+    if      (adPct >= 300) score += 30;
+    else if (adPct >= 200) score += 25;
+    else if (adPct >= 150) score += 15;
     else if (adPct >= 100) score += 10;
     else if (adPct >=  50) score +=  5;
 

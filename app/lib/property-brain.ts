@@ -191,6 +191,8 @@ export const REASON_JA: Record<string, string> = {
   ALREADY_SENT: "この建物は送付済み",
   AD_UNKNOWN: "ADが読めない",
   AD_HIGH: "ADが高い（2ヶ月以上）",
+  AD_1M: "AD 1ヶ月",
+  AD_VERY_HIGH: "AD 3ヶ月以上",
   AD_COVERS_DISCOUNT: "ADで割引をまかなえる",
   PROFIT_NEGATIVE: "ADより割引が大きい（利益が出ない）",
   PET_NG: "ペット不可の記載",
@@ -594,25 +596,34 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   if (profile.history.sentBuildings.has(normalizeBuildingName(facts.name))) add("ALREADY_SENT", -30, "drop");
 
   // AD と利益（AD円 − 割引）
+  // 2026-09-24 竹内「AD の価値をもっと上げる。AD は報酬なので重要。AD 2ヶ月以上（200%以上）なら追加で点数を上げる」:
+  //   割引をまかなえる +10（旧 +5）／ 1ヶ月以上 +5 ／ 2ヶ月以上 さらに +15（旧 +5）／ 3ヶ月以上 さらに +5。
+  //   条件（家賃・間取り）の hold/drop は AD で覆さない（点は上がるが verdict は変わらない）
   const adYen = computeAdYen(facts);
   let profitYen: number | null = null;
+  // 月数が無く円だけの時は家賃で月数に直す（「AD 160,000円・家賃 80,000円」＝2ヶ月）
+  const adMonthsEff = facts.adMonths ?? (facts.adYen != null && facts.rentYen ? facts.adYen / facts.rentYen : null);
   if (adYen == null) {
     add("AD_UNKNOWN", 0); missing.push("ad");
   } else {
     profitYen = adYen - profile.discountYen;
     if (profitYen < 0) add("PROFIT_NEGATIVE", -10, "hold");
-    else add("AD_COVERS_DISCOUNT", 5);
-    if (facts.adMonths != null && facts.adMonths >= 2) add("AD_HIGH", 5);
+    else add("AD_COVERS_DISCOUNT", 10);
+    if (adMonthsEff != null && adMonthsEff >= 1 && adMonthsEff < 2) add("AD_1M", 5);
+    if (adMonthsEff != null && adMonthsEff >= 2) add("AD_HIGH", 20);
+    if (adMonthsEff != null && adMonthsEff >= 3) add("AD_VERY_HIGH", 5);
   }
 
   // ペット
   if (profile.pet && /ペット不可|ペット×|ペットNG/.test(facts.rawText)) add("PET_NG", -15, "hold");
 
-  score = Math.max(0, Math.min(100, score));
+  // 上限は 130（旧 100）。条件が全部合う物件は AD なしで 88〜100 に達し、100 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
+  //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
+  score = Math.max(0, Math.min(130, score));
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
   // 理由の日本語は「外す・保留の理由」を先に、良い点は後に（LINE の1行は先頭2つを見せる）
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_HIGH", "FLOOR_PLAN_MATCH"].includes(c));
+  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c));
   const reasonsJa = [...flagCodes, ...positives].map((c) => REASON_JA[c] ?? c);
 
   return {
@@ -637,9 +648,9 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
     codes.push(code);
     if (v) score += 5; else { score -= 10; hold = true; flagCodes.push(code); }
   }
-  score = Math.max(0, Math.min(100, score));
+  score = Math.max(0, Math.min(130, score));   // judgeProperty と同じ上限（AD の上乗せ分）
   const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || score < 40 ? "hold" : "pass");
-  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_HIGH", "FLOOR_PLAN_MATCH"].includes(c) || /^IMAGE_.*_OK$/.test(c));
+  const positives = codes.filter((c) => ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^IMAGE_.*_OK$/.test(c));
   const reasonsJa = [...flagCodes, ...positives].map((c) => REASON_JA[c] ?? c);
   return { ...j, score, verdict, reasonCodes: codes, flagCodes, reasonsJa };
 }
