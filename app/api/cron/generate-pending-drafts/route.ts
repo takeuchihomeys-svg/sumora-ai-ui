@@ -3,6 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { detectPlaceholders } from "@/app/lib/validate-reply";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
+// 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数・入口で止める）
+import { decideNightDeferNow } from "@/app/lib/brain-night-defer";
 import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "@/app/lib/brain-meta-restore";
 import { DRAFT_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
@@ -75,6 +77,14 @@ export async function GET(req: NextRequest) {
 
 async function run() {
   const runLogId = await startCronLog("generate-pending-drafts").catch(() => null);
+  // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から分析する」: 夜は下書きの起点を止める（クエリの前に return・クレームもマーカーも残さない）。
+  //   「エラーなしの0件」を静かに壊れる形にしないため reason を cron_run_logs に残す。9:00 から orphaned（updated_at 昇順＝届いた順）が拾う
+  const nightDefer = decideNightDeferNow("cron");
+  if (nightDefer.defer) {
+    const until = new Date(nightDefer.until!).toISOString();
+    await finishCronLog(runLogId, true, { processed: 0, skipped: 0, reason: "night_defer", until });
+    return NextResponse.json({ ok: true, processed: 0, skipped: 0, reason: "night_defer", until });
+  }
   const db = getDb();
   const threshold = new Date(Date.now() - 60 * 1000).toISOString();
   // 10分以上前のpendingは対象外（処理失敗した会話が毎分再処理され続けるのを防ぐ上限）
@@ -107,14 +117,16 @@ async function run() {
     // （インメモリMapはVercelサーバーレスでインスタンス間共有されないため、DBフラグが本命の防波堤）
     .or("draft_attempted_at.is.null,draft_attempted_at.lt." + tenMinutesAgo)
     .gte("updated_at", sevenDaysAgo)
-    .neq("status", "applying")
-    .neq("status", "application")
-    .neq("status", "screening")
-    .neq("status", "contract")
-    .neq("status", "closed_won")
-    .neq("status", "closed_lost")
+    // 2026-09-24 反証: 旧の neq 6連（lost/approved が無い）だと、ループの DRAFT_SKIP_STATUSES / post-apply（badge）でクレーム前に continue する行が
+    //   draft_attempted_at を書かれず7日間ずっと候補に残り、updated_at 昇順にした事で**決定的に先頭**を占めた（実データ: 先頭1位が 09-18 の badge 行）。
+    //   クエリ側で DRAFT_SKIP_STATUSES 全部と is_post_apply（badge）を落とす（NOT IN は旧 neq と同じく NULL status を含めない＝挙動を変えない）。
+    //   申込へ押下・本人確認書類（aix_usage_logs / messages 由来）はクエリで落とせないので、ループ側で draft_attempted_at を書いて10分の除外に乗せる
+    .not("status", "in", `(${[...DRAFT_SKIP_STATUSES].join(",")})`)
+    .or("is_post_apply.is.null,is_post_apply.eq.false")
     // 5回以上失敗した会話は諦める（draft_fail_countがnullの行=未失敗も対象に含める）
     .or("draft_fail_count.is.null,draft_fail_count.lt.5")
+    // 2026-09-24: 古い（長く待ったお客様）から。夜に溜まった会話を 9:00 から届いた順にさばく（旧は順序未指定）
+    .order("updated_at", { ascending: true })
     .limit(3); // 2→3: orphaned救済の件数を増やす
 
   if (orphanedError) {
@@ -178,14 +190,22 @@ async function run() {
     if (!isFirst) await new Promise(r => setTimeout(r, 1000));
     isFirst = false;
 
+    // 2026-09-24 反証: クレーム前に continue する行にも draft_attempted_at を書く（10分の除外に乗せる）。書かないと orphaned（7日以内・updated_at 昇順・3枠）の
+    //   先頭を毎分同じ行が占め、夜に溜まった会話（updated_at が新しい＝末尾）が 9:00 以降も拾われない。ai_draft は触らない・失敗回数も増やさない
+    const backoffPreClaimSkip = async (why: string) => {
+      const { error: bErr } = await db.from("conversations").update({ draft_attempted_at: new Date().toISOString() }).eq("id", convId);
+      if (bErr) console.warn("[generate-pending-drafts] pre-claim skip の backoff 書き込み失敗:", convId, why, bErr.message);
+    };
     // SKIPチェック: DB書き込み（claim）前に確認してクレーム無駄打ちを防ぐ（修正③）
     if (DRAFT_SKIP_STATUSES.has(convStatus) || conv.last_sender !== "customer") {
+      await backoffPreClaimSkip("status_or_sender");
       skipped++;
       continue;
     }
     // 2026-09-23 竹内「申込中は…ここ文生成しなくて大丈夫」: status の遅れに強い判定（app/lib/post-apply.ts）。読めなければ status のまま続行
     try {
-      if (resolvePostApply(await loadPostApplyFacts(db, convId)).postApply) { skipped++; continue; }
+      const pa = resolvePostApply(await loadPostApplyFacts(db, convId));
+      if (pa.postApply) { await backoffPreClaimSkip("post_apply:" + String(pa.reason)); skipped++; continue; }
     } catch (e) {
       console.warn("[generate-pending-drafts] post-apply の記録が読めない → status の判定のまま続行:", e instanceof Error ? e.message : String(e));
     }
@@ -320,7 +340,9 @@ async function run() {
       }
       if (brainStale) {
         try {
-          brainGateDirect = await runBrainAndNotify(convId);
+          // 2026-09-24: targetMessage（お客様の未返信の通）も渡す。渡さないと runConditionBrain（条件ブレイン）が cron 経路では動かず、
+          //   9:00 の一括処理が bg-async 経路より忠実さで劣る（既存の cron 経路の抜けの修正でもある）。origin: cron で夜は brain-core の保険が止める
+          brainGateDirect = await runBrainAndNotify(convId, targetMessage, { origin: "cron" });
           console.log("[generate-pending-drafts] brain serial done:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
         } catch (brainErr) {
           console.warn("[generate-pending-drafts] brain serial failed（DBフェッチにフォールバック）:", convId, String(brainErr));

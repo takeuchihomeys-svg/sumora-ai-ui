@@ -3185,6 +3185,8 @@ ALTER TABLE llm_usage_logs ADD COLUMN IF NOT EXISTS action TEXT;
 ALTER TABLE llm_usage_logs ADD COLUMN IF NOT EXISTS conversation_id TEXT;
 ALTER TABLE llm_usage_logs ADD COLUMN IF NOT EXISTS sys_key_full TEXT;
 CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_action ON llm_usage_logs(action, created_at DESC);
+-- 2026-09-24 brain-warm（brain-sweep の温め）: 「最後のブレイン呼び出し」を sys_key_full 一致で読む（5分毎）。全行スキャンにしないための索引
+CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_sys_key_full_created ON llm_usage_logs(sys_key_full, created_at DESC);
 
 -- 日次の集計（JST の日付）。input_equiv = 入力単価に換算したトークン（読み0.1・5分書き1.25・1時間書き2・出力5）
 -- est_usd は目安: 入力単価（1M トークンあたり）Haiku $1・Sonnet $3・Opus $5 で計算。コンソールの日次費用と照合して単価を直す

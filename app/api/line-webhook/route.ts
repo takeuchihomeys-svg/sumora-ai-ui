@@ -7,6 +7,8 @@ import { classifyByKeywords, classifyByAI, type ConditionIntent } from "@/app/li
 import { mergeConditions, type ConditionFields } from "@/app/lib/condition-merge";
 import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
+// 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数・入口で止める）
+import { decideNightDeferNow } from "@/app/lib/brain-night-defer";
 import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { imageTextForSave, imageTypeForSave } from "@/app/lib/id-document-guard";
 import { recordConditionHistory } from "@/app/lib/condition-history";
@@ -545,6 +547,13 @@ async function handleTextMessage(
   //   analyzeAndSaveBrainMeta 内で従来どおり適用されるため、実質 applying/application/screening のみ走る
   after(async () => {
     try {
+      // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: お客様起点の直接ブレイン（申込以降ステータス）は夜は見送る（DB の select もしない）。
+      //   朝は sweep（suggested_aix_meta null・last_sender=customer）が拾う。スタッフの操作（send-line-message / generate-reply）は別経路で夜も動く
+      const nd = decideNightDeferNow("customer_message");
+      if (nd.defer) {
+        console.log(JSON.stringify({ tag: "brain:night-defer", stage: "webhook-post-apply", conversationId: convId, until: new Date(nd.until!).toISOString() }));
+        return;
+      }
       const { data: convRow } = await db
         .from("conversations")
         .select("status")
@@ -552,7 +561,7 @@ async function handleTextMessage(
         .maybeSingle();
       const convStatus = (convRow?.status as string) || "hearing";
       if (!BG_ASYNC_SKIP_STATUSES.has(convStatus)) return; // bg-async側のbrain直列実行に任せる
-      await runBrainAndNotify(convId);
+      await runBrainAndNotify(convId, undefined, { origin: "customer_message" });
     } catch (e) {
       console.warn("[line-webhook] brain-notify:", e);
     }
@@ -2680,8 +2689,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const inputUpdatedAt = Date.now();
       const convIds = [...new Set(imageJobs.map((j) => j.convId))];
       console.log(JSON.stringify({ tag: "brain:image-trigger", convIds, images: imageJobs.length, readMs: inputUpdatedAt - readStartedAt }));
+      // 2026-09-24: 画像の読み取り（Vision）は夜も行う（本文の書き起こしは朝の分析の材料）。ブレインだけ origin: image_read で夜は見送る（brain-core の保険が止める）
       await Promise.allSettled(convIds.map((cid) =>
-        runBrainAndNotify(cid, undefined, { inputUpdatedAt })
+        runBrainAndNotify(cid, undefined, { inputUpdatedAt, origin: "image_read" })
           .catch((e) => console.warn("[line-webhook] brain notify (image):", cid, e))
       ));
     });
@@ -2702,7 +2712,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const convIds = [...new Set(fileJobs.map((j) => j.convId))].filter((cid) => !imageConvIds.has(cid));
       console.log(JSON.stringify({ tag: "brain:file-trigger", convIds, files: fileJobs.length, names: fileJobs.map((j) => j.fileName) }));
       await Promise.allSettled(convIds.map((cid) =>
-        runBrainAndNotify(cid, undefined, { inputUpdatedAt })
+        runBrainAndNotify(cid, undefined, { inputUpdatedAt, origin: "image_read" })
           .catch((e) => console.warn("[line-webhook] brain notify (file):", cid, e))
       ));
     });

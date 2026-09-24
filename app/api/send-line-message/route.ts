@@ -390,7 +390,8 @@ export async function POST(req: NextRequest) {
             await new Promise((r) => setTimeout(r, 2000));
           }
           await new Promise((r) => setTimeout(r, 2000)); // 会話行の更新（updated_at）が落ち着いてから分析（ウォーターマーク競合を避ける）
-          await runBrainAndNotify(cid, undefined, { forceIncremental: true });
+          // 2026-09-24 竹内「22時〜9時のお客さんは分析せず」: スタッフの宣言送信は夜も動かす（origin: staff・費用は人の操作回数で有界）
+          await runBrainAndNotify(cid, undefined, { forceIncremental: true, origin: "staff" });
         } catch (e) {
           console.warn("[send-line-message] brain after staff promise failed:", e instanceof Error ? e.message : e);
         }

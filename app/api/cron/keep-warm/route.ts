@@ -92,6 +92,9 @@ export async function GET(req: NextRequest) {
       .select("hash, model, system_blocks, human_blocks, chars, use_count, last_used_at, last_warmed_at, warm_count, retired_at, sys0_hash")
       // モデルを変えたら古い prefix は鍵が合わない（別のキャッシュを温めるだけ）ので今のモデルの行だけ
       .eq("model", REPLY_GENERATION_MODEL)
+      // 2026-09-24: ブレインの温め（brain-sweep）が claim 用に同じ表へ 'brain:'+sys_key_full の行を置く（model も同じ "claude-sonnet-5"）。
+      //   use_count 0 で minUseCount に落ちるが、型でも混ぜない（use_count の既定が変わっても返信生成の温めがブレインの行を拾わない）
+      .not("hash", "like", "brain:%")
       .gte("last_used_at", recentCutoff)
       .gte("use_count", KEEP_WARM_DEFAULTS.minUseCount)
       .order("last_used_at", { ascending: false })

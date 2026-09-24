@@ -1,6 +1,21 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-09-23
+最終更新: 2026-09-24
+
+---
+
+## ブレインの前置きの温め（brain-warm・9〜22時）と 22〜9時の見送り（night-defer）（竹内・2026-09-24）— 黄金ルール
+- **竹内さんの言葉**: 「実装する」（前置きの温め）／「22時〜9時のお客さんは分析せずに9時から分析するように仕組化したら他での浪費も防げるのでは？たとえば深夜にお客さんから1通くるだけでも0.5ドル必要となる部分。時間は日本時間に設定する」
+- **実測（導入前）**: ブレインの前置き（system 2ブロック＝完全静的 ≈26.5k＋DB由来 ≈12k・1h キャッシュ）は1時間空くと次の1回が全書き直し $0.24。09-23〜24 で冷えた回 14回。夜のお客様起点の Claude ≈$3.8/夜（うち冷えの上乗せ ≈$1.5/夜）。夜に1通来るとブレイン全書き直し $0.23＋返信生成の全書き直し ≈$0.7 で約 $1＝「0.5ドル」の正体。「26〜27k の変種」は別の前置きではなく system[1]（DB由来）だけ書き直した回（前置きは1種類）
+- **A. 温め（`app/lib/brain-warm.ts`・`brain-sweep` の中）**: 新しい cron は増やさず、5分毎の brain-sweep が**対象0件の時だけ**「最後のブレイン呼び出し／温めから 50〜58 分・JST 9〜22時・1日20回まで」で1回温める（max_tokens 1・user "."・印 `x-sumora-llm-action: brain-warm`・分析結果は保存しない・通知しない）。**本物と1文字も違わない system は brain-core の同じ関数**（`loadBrainSystemInputs → buildBrainSystemBlocks → brainRequestBase`）で作り、温め側で文字列を組み直すのは禁止（keep-warm の「毎回読めているつもりで毎回書いていた」の再発防止。テスト `brain-system-blocks.test.ts` で鍵の一致を固定）。claim は `llm_warm_prefixes`（hash=`brain:`+sys_key_full・use_count 0）で先行。**冷えていたら温めない**（58分超は cold_skip・書き込みは次の本物に払わせる）。温めが cold / no_cache なら 6h retire。「最後の呼び出し」は `llm_usage_logs` を sys_key_full 一致で読む（`conversations.brain_analyzed_at` は skip/cached でも打刻され LLM を呼んだ印ではない・env で絞らない＝local でも同じ鍵なら本番のキャッシュを温めている）
+- **B. 夜の見送り（`app/lib/brain-night-defer.ts`）**: JST 22:00〜8:59 に届いたお客様起点の自動分析（bg-async の direct／画面の自動起動・cron generate-pending-drafts・brain-sweep・webhook の申込以降の直接ブレイン・画像読み取り後のブレイン）は**入口で止める**（brain-core の先頭は保険）。止め方は `decideNightDeferNow(origin)` 1関数（時刻比較のコピペ禁止）。`BrainRunOpts.origin` が名札: `staff`（再生成ボタン・宣言送信）は夜も動く・未指定は走る（fail-open）。見送りは **false を返す・brain_analyzed_at は打刻しない・通知しない・下書きも作らない**（claim も draft_pending_at も触らない）。9:00 から既存の pending-drafts の orphaned（updated_at 昇順に変更＝届いた順）と sweep がそのまま拾う（新カラム・新 cron なし）。画像の読み取り（Vision/DeepSeek）は夜も行う（朝の材料）。cron 経路に targetMessage を渡すようにした（条件ブレインが cron でも動く＝既存の抜けの修正）
+- **自動返信のお客様**: 夜は ai_draft が無いので auto-reply-dispatch は何も見ない → 9:00 以降に分析→下書き→即予約（待ち時間は経過済み）→送信。体感は今（21時以降→翌朝9時台）とほぼ同じ。夜間に多く届いた朝は末尾が 9:20〜9:30 を過ぎる（1〜2件/分）
+- **スタッフ画面**: 夜の会話は要対応に載る・下書きなし・AIX バナーなし。開くと bg-async が `night_defer` → 「準備中」が消えて**再生成ボタン**が出る（generate-reply 手動＝夜も動く）。AIX要対応の通知・カレンダーは 9:00 以降にまとめて出る
+- **環境変数（既定は両方オン・止めるのは "off" の一語だけ）**: `BRAIN_WARM=off`／`BRAIN_WARM_HOURS_JST`（既定 "9-22"・start<end のみ・壊れた値は parseHoursJst の fallback 7-24）／`BRAIN_NIGHT_DEFER=off`／`BRAIN_NIGHT_HOURS_JST`（既定 "22-9"・跨ぎ対応の新 parser・壊れた値は 22-9）。※既存 parseHoursJst は "22-9" を黙って 7-24 に落とすので夜には使わない
+- **見張り（導入後1週間・2〜3日で判断しない）**: A は `llm_usage_logs` action='brain-warm' の kind（hit / dynamic_rewrite / cold）と cache_read×$0.3/M の固定費 vs brain_* の cache_write_1h≥35k（全冷え）の営業時間内件数の前後比較。cold が2回続いたら鍵ずれ（brainRequestBase と callBrain の差分を見る）。B は `npx tsx --env-file=.env.local scripts/peek-night-messages.ts` の「夜ごと・お客様起点／スタッフ起点」でお客様起点が 0 か、`cron_run_logs` の reason=night_defer 件数と 9:00〜9:30 の processed
+- **テスト**: `brain-night-defer.test.ts`（52）・`brain-warm.test.ts`（40）・`brain-system-blocks.test.ts`（21）。npx tsx で env 不要
+- **反証で直した物（2026-09-24・実物のコードで確認した物だけ）**: ①pending-drafts の orphaned は DRAFT_SKIP_STATUSES 全部＋is_post_apply をクエリで落とし、クレーム前に continue する行（申込へ押下・本人確認書類）にも draft_attempted_at を書く（updated_at 昇順で先頭3枠が固定されて夜の会話が拾われない穴。`scripts/peek-orphaned-head.ts` で見る）②sweep も未返信の通を msgText で渡す（条件ブレインが sweep 経路でも動く。9:00 に sweep が cron より先に取る会話の条件変更が落ちていた）③bg-async は after() のブレイン直前と生成直前でも夜判定（21:5x 受理→22:00 跨ぎで T3＋冷えた生成になっていた・自分の claim だけ外す）④温めの送信失敗は claim を戻す（残すと50分 too_soon→本物の TTL 切れ→温めが $0.24 払って retire）⑤「最後の本物」は created_at − duration_ms（リクエスト開始時刻）⑥ai_reply_knowledge の並びに id 昇順（同点4組で system[1] が揺れる）＋同じ鍵で dynamic_rewrite が2回続いたら retire ⑦画面の再生成バナーは night_defer なら「22〜9時は自動作成を止めています」（「失敗」と出さない）⑧llm_usage_logs に (sys_key_full, created_at) の索引（migrate-schema）⑨peek-brain-cost-day は brain-warm を本物（brain_*）に混ぜず kind 別に別行
+- **未確定（竹内さんに聞く）**: 夜にスタッフが会話を開いた時の自動の下書き（source なし＝origin ui）も止めた。22〜23時台は夜の通数の約半分でスタッフも働いているので、開封を許可したい時は bg-async の origin の1行（ui→staff）で変えられる
 
 ---
 
@@ -561,6 +576,7 @@ scripts/audit-pickup-guard.ts               … 指摘が出る率と中身
 - **測り方**: 平均のキャッシュ一致率では効果が見えない（前後で 73.8% → 72.4% と変わらない）。keep-warm が狙うのは TTL 切れの**全書き直し**なので、`cache_write >= 50000` の件数と額で測る
 - 導入時（9/17）の見込み「週≈$22 の節約」は実測では出ていない。日中の自然な通信量だけで既に温まっており、足せる余地がほとんど無かった
 - **戻す時**: Vercel の環境変数に `KEEP_WARM=on`
+- **ブレイン側の温めは別（2026-09-24）**: ブレインの前置きの温めは brain-sweep の中（`BRAIN_WARM=off` で止める・鍵は1種類なので selectWarmTargets を通さない）。返信生成の keep-warm とは別の仕組み。keep-warm の候補クエリは `hash like 'brain:%'` を除外している（同じ `llm_warm_prefixes` を claim にだけ流用しているため）
 
 ---
 
@@ -1294,7 +1310,7 @@ npx tsx --env-file=.env.local scripts/audit-opener-body.ts   # 実送信への�
 - **直し（2段構え）**
   1. `brain-core.ts` の `analysisInFlight`（Map）… 同じ会話の分析が走っている間は**走っている方の Promise を返す**（戦略層の `strategyInFlight` と同じ形・コストゼロ・同一インスタンスの競合を止める）
   2. `brain-analysis-mode.ts` の `isDuplicateRun`（純関数）… DB の `brain_analyzed_at` が**直近45秒以内**なら `"unchanged"`（別インスタンスの並走を止める）
-- **安全側（fail-open）**: `forced`（スタッフの宣言送信直後・画像の読み取り完了）は必ず走る／保存済みの判断が無い会話（初回・失敗直後・brain-sweep の対象）は必ず走る／打刻が無い・読めない・未来（時計のずれ）も走る
+- **安全側（fail-open）**: `forced`（スタッフの宣言送信直後・画像の読み取り完了）は必ず走る／保存済みの判断が無い会話（初回・失敗直後・brain-sweep の対象）は必ず走る／打刻が無い・読めない・未来（時計のずれ）も走る／夜の見送り（2026-09-24・JST 22〜9）は `origin` が staff / 未指定なら走る・見送る時は brain_analyzed_at を打刻しない・戻り値は false（"unchanged" にしない）
 - **本番検証 6/6**（YUMA）: 同時2回→分析1回（`brain:run-coalesced`）／直後の再実行→0回（`brain:duplicate-run-skipped`）＋`"unchanged"`／`forced`→1回走る
 - **検証で踏んだ罠**: 最初 `llm_usage_logs` で回数を数えて誤判定した。**あれは本番の fetch ラッパー（instrumentation.ts）が書くので、ローカル実行では1行も残らない**。ローカルから本番 DB を触る検証では `brain_decision_logs` のような**アプリが書く記録**で数える
 
@@ -2719,6 +2735,7 @@ YUMA の実測で生成全体は 20〜27秒。**ファイナルチェックは�
 - 見積もり（入力単価を1・読み取り0.1・5分書き込み1.25・1時間書き込み2・出力5 とした比）: ブレイン1回あたり 約4割減、返信生成 約1割減、お客様の発言1回分の合計 約3割減（約32%・最終チェックの自動修正の会社ルールのキャッシュを含めて再計算）
 - うちキャッシュによる分（発言1回あたり 約12,900 / 全体の減り 約23,400）: 自動修正の会社ルール（約1.7万トークン・返信生成7回中6回で動く）約7,500・ブレインの DB ブロック 1時間 約2,800・返信生成の絶対原則 約2,600
 - 見つけた損: ブレインの今回発言の層の土台（5分キャッシュ）は5分以内の再利用が約11%で、元を取る約22%に届かず、キャッシュしない方が安い（1回あたり約430）
+- 2026-09-24 追加（brain-warm / night-defer の見張り用）: ブレインの前置き ≈38〜39k（static ≈26.5k＋DB由来 ≈12k）。温め1回（読むだけ）≈$0.012・全冷え1回（cache_write_1h 39k）$0.24・DB 更新による system[1] だけの書き直し（cache_read 26〜27k＋cache_write_1h 12k）$0.07。夜に1通で ≈$1（ブレイン $0.23＋返信生成 ≈$0.7 の全書き直し）
 - 見つけた穴: 最終チェックの会社ルールが 32,281字 → 20,000字で切れていて、後ろの約1.2万字はチェックされていない → 下で修正済み
 
 ## こちらがまだ何も送っていない会話は初回対応 — 条件フォームで proposing に上がっても初回の挨拶（竹内・2026-09-14・朱莉事例・穴:G1）

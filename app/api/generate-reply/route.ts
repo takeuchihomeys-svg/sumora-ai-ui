@@ -5053,7 +5053,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       const analyzedAtMs = brainGate?.brainAnalyzedAt ? new Date(brainGate.brainAnalyzedAt).getTime() : NaN;
       if (Number.isNaN(analyzedAtMs) || Date.now() - analyzedAtMs > 60_000) {
         const convIdForBrain = conversationId;
-        after(() => runBrainAndNotify(convIdForBrain).then(() => {}, (e) => console.warn("[generate-reply] stale brain rerun failed:", convIdForBrain, e instanceof Error ? e.message : e)));
+        // 2026-09-24 竹内「22時〜9時のお客さんは分析せず」: 手動再生成（再生成ボタン）は夜も動かす（origin: staff）。夜に会話を開いたスタッフの唯一の入口
+        after(() => runBrainAndNotify(convIdForBrain, undefined, { origin: "staff" }).then(() => {}, (e) => console.warn("[generate-reply] stale brain rerun failed:", convIdForBrain, e instanceof Error ? e.message : e)));
       }
     }
 

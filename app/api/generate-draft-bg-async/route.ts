@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
+// 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数・入口で止める）
+import { decideNightDeferNow } from "@/app/lib/brain-night-defer";
 import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
@@ -226,6 +228,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: "not_found" });
   }
   if (conv.last_sender !== "customer") return NextResponse.json({ ok: true, skipped: "not_customer_turn" });
+  // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から分析するように仕組化したら他での浪費も防げるのでは？」:
+  //   夜（JST 22〜9）はお客様起点（webhook の direct）と画面の自動起動（先回り・開いた時＝source なし）の下書きを作らない（ブレインも返信生成も）。
+  //   brain-core だけで止めると T3（判断なし）の下書きを夜に作って generate-reply（冷えた書き直し ≈$0.7）が走り逆効果なので、入口で止める。
+  //   claim（draft_attempted_at）も draft_pending_at も触らない → 朝は cron の orphaned / sweep がそのまま拾う（新カラム不要）。
+  //   スタッフの明示操作は再生成ボタン（generate-reply 手動）で夜も動く（page.tsx は night_defer で再生成ボタンを出す）
+  const brainOrigin = source === "direct" ? "customer_message" : "ui";
+  const nightDefer = decideNightDeferNow(brainOrigin);
+  if (nightDefer.defer) {
+    const until = new Date(nightDefer.until!).toISOString();
+    console.log(JSON.stringify({ tag: "brain:night-defer", stage: "bg-async", conversationId: convId, source: source ?? null, until }));
+    return NextResponse.json({ ok: true, skipped: "night_defer", until });
+  }
   // "[AIX誘導中]" センチネルは初回バグで貼られた可能性があるため通過させて再生成を試みる
   // 2026-09-21: "[返信不要]" も同じ扱い（新しいお客様の発言が来たら作り直せるようにする。貼ったまま固まらせない）
   if (conv.ai_draft && conv.ai_draft !== "[AIX誘導中]" && conv.ai_draft !== DRAFT_SENTINEL_NO_REPLY) {
@@ -326,6 +340,14 @@ export async function POST(req: NextRequest) {
   after(async () => {
     // A-9（2026-09-08）: バースト再実行の残予算判定用（maxDuration=300s）
     const bgStartedAt = Date.now();
+    // 2026-09-24 反証: after() の途中で 22:00 を跨いだ時の見送り（同期部の判定と同じ origin・自分の claim だけ外す）
+    const abortIfNightDefer = async (stage: string): Promise<boolean> => {
+      const nd = decideNightDeferNow(brainOrigin);
+      if (!nd.defer) return false;
+      console.log(JSON.stringify({ tag: "brain:night-defer", stage: `bg-async:${stage}`, conversationId: convId, source: source ?? null, until: new Date(nd.until!).toISOString() }));
+      await db.from("conversations").update({ draft_attempted_at: null }).eq("id", convId).eq("draft_attempted_at", claimedAt);
+      return true;
+    };
     try {
       // ── バーストメッセージ対策（LINEからの直接トリガー時のみ）────────────────
       // LINEバースト送信（複数メッセージの短時間連続送信）では、2通目以降が
@@ -417,13 +439,17 @@ export async function POST(req: NextRequest) {
       // ※ cron fallback（generate-pending-drafts）は本ルートを経由せず generate-reply を直接叩く。
       //   そのため cron 側にも同じ brain 直列実行を実装済み（brain_analyzed_at の staleチェック付き
       //   = bg-async で実行済みの会話では再実行せず required 通知の重複を防ぐ）。
+      // 2026-09-24 反証: 夜の判定は同期部（受理時）だけだと、21:5x に受理された要求の after()（バースト 8s・画像の待ち 12s）が 22:00 を跨いだ時に
+      //   brain-core の保険が false を返し、それを「ブレインが判断を返さなかった」（T3）と読んで generate-reply（冷えた書き直し ≈$0.7）を呼んでいた。
+      //   ブレインの直前でもう一度判定し、夜なら自分の claim だけ外して下書きを作らずに終える（draft_pending_at は残す＝朝は cron の orphaned / sweep が拾う）
+      if (await abortIfNightDefer("before-brain")) return;
       let brainGateDirect: BrainGateSnapshot | null = null;
       try {
         // 2026-09-13 監査: 旧は null の理由に関係なく brain_race_timeout_90s と記録していた（分析の省略・分析中の新着・書き込み見送り・失敗も
         //   「打ち切り」に数えられ、原因を分けられなかった）。打ち切りとブレインが判断を返さなかった場合を分けて記録する
         const BRAIN_TIMEOUT = Symbol("brain_timeout");
         const raced = await Promise.race([
-          runBrainAndNotify(convId, targetMessage),
+          runBrainAndNotify(convId, targetMessage, { origin: brainOrigin }),
           // FIX(post-Fable5): 旧値 60_000ms は extended thinking の最悪ケース（最大60s）と同値の境界で、
           // brain 完了と同時にタイムアウトが勝つと T3 フォールバックに落ちていた。
           // 90s に延ばすことで境界衝突を解消（90+180+α < maxDuration=300s で収支は安全）。
@@ -493,7 +519,7 @@ export async function POST(req: NextRequest) {
               if (elapsedMs < 75_000) {
                 try {
                   const rerun = await Promise.race([
-                    runBrainAndNotify(convId, latestTarget),
+                    runBrainAndNotify(convId, latestTarget, { origin: brainOrigin }),
                     new Promise<null>((resolve) => setTimeout(() => resolve(null), 45_000)),
                   ]);
                   console.log("[bg-async] burst brain rerun:", convId, rerun ? "fresh" : "null(T2 fallback)", "elapsedMs:", elapsedMs);
@@ -657,7 +683,7 @@ export async function POST(req: NextRequest) {
           const ts = (m: unknown) => (m as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts ?? null;
           if (brainMissedCustomerMessage(lastCust?.created_at as string | undefined, [ts(seen?.suggested_aix_meta), ts(seen?.last_brain_meta)])) {
             console.log(JSON.stringify({ tag: "brain:catch-up", conversationId: convId, latestCustomerAt: lastCust?.created_at ?? null }));
-            await runBrainAndNotify(convId);
+            await runBrainAndNotify(convId, undefined, { origin: brainOrigin });
           }
         } catch (catchUpErr) {
           console.warn("[bg-async] catch-up brain failed:", convId, String(catchUpErr));
@@ -746,6 +772,9 @@ export async function POST(req: NextRequest) {
           return;
         }
       }
+
+      // 2026-09-24 反証: ブレインの間（最大90s）に 22:00 を跨いだ時、バースト再実行の null（T2）で冷えた返信生成に進まないよう、生成の直前でも判定する
+      if (await abortIfNightDefer("before-generate")) return;
 
       // 180秒タイムアウト: generate-replyはStep1(最大45s)+Step2(最大45s)+余裕=最大90s超。
       // 40秒では重い会話で構造的に常にタイムアウトするため150秒に引き上げ、

@@ -805,6 +805,8 @@ export default function Home() {
   const [showPatternSheet, setShowPatternSheet] = useState(false);
   const [draftPreparing, setDraftPreparing] = useState(false);
   const [draftRetryConvId, setDraftRetryConvId] = useState<string | null>(null);
+  // 2026-09-24 反証: 再生成バナーの理由（fail_limit＝失敗 / night_defer＝22〜9時は自動作成を止めている）。文言を分ける
+  const [draftRetryReason, setDraftRetryReason] = useState<"fail_limit" | "night_defer" | null>(null);
   const [sending, setSending] = useState(false);
   const [starredMsgIds, setStarredMsgIds] = useState<Set<string>>(new Set());
   const [statusSaving, setStatusSaving] = useState(false);
@@ -3048,7 +3050,11 @@ export default function Home() {
           }
         }
         // 2026-09-14: 5回続けて失敗した会話は自動で作り直さない → 再生成ボタン（generate-reply 直接）を出す
-        if (j.skipped === "fail_limit") setDraftRetryConvId(convIdForGen);
+        // 2026-09-24 竹内「22時〜9時のお客さんは分析せず」: 夜（night_defer）は自動の下書きを作らない → 再生成ボタン（手動＝夜も動く）を出す
+        if (j.skipped === "fail_limit" || j.skipped === "night_defer") {
+          setDraftRetryReason(j.skipped);
+          setDraftRetryConvId(convIdForGen);
+        }
         // status / no_text_message（画像・動画のみ）/ not_customer_turn 等 → 生成対象外。エラー表示なしで解除
         setDraftPreparing(false);
       })
@@ -9144,10 +9150,12 @@ export default function Home() {
                 ⛔ {sendBlockedMessage(selectedConversation.sendBlockedReason)}
               </div>
             )}
-            {/* AI文案生成失敗時の再生成バナー */}
+            {/* AI文案生成失敗時の再生成バナー（2026-09-24: 22〜9時の見送りは「失敗」ではないので文言を分ける） */}
             {draftRetryConvId === selectedConversation.id && !replyDraft && (
-              <div className="mx-1 mb-1 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 flex items-center gap-2">
-                <span className="text-[12px] text-red-600 flex-1">⚠️ AI文案の生成に失敗しました</span>
+              <div className={`mx-1 mb-1 rounded-2xl border px-3 py-2 flex items-center gap-2 ${draftRetryReason === "night_defer" ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50"}`}>
+                <span className={`text-[12px] flex-1 ${draftRetryReason === "night_defer" ? "text-amber-700" : "text-red-600"}`}>
+                  {draftRetryReason === "night_defer" ? "🌙 22〜9時は自動作成を止めています。必要なら再生成で作れます" : "⚠️ AI文案の生成に失敗しました"}
+                </span>
                 <button
                   onClick={() => {
                     setDraftRetryConvId(null);

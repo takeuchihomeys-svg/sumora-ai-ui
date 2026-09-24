@@ -42,9 +42,15 @@ async function main() {
   for (const [k, a] of [...byA.entries()].sort((x, y) => y[1].usd - x[1].usd).slice(0, 15)) console.log(`${k}: ${a.n}回 $${a.usd.toFixed(2)} cold ${a.cold}回（差 $${a.coldUsd.toFixed(2)}）`);
 
   // ブレインの cold の時刻分布と、prefix の大きさ（会話ごとに違えば会話別キャッシュ）
-  const brain = claude.filter((r) => (r.action ?? "").startsWith("brain"));
+  // 2026-09-24: 温め（action='brain-warm'）は本物（brain_*）に混ぜない（温めの cold を「ブレインの全冷え」に数えると効果判定が壊れる）
+  const brain = claude.filter((r) => (r.action ?? "").startsWith("brain_"));
   const cold = brain.filter((r) => r.cache_write_1h > 0);
-  console.log(`\n=== ブレイン ${brain.length}回 $${brain.reduce((a, r) => a + usd(r), 0).toFixed(2)}・cold ${cold.length}回 ===`);
+  console.log(`\n=== ブレイン ${brain.length}回 $${brain.reduce((a, r) => a + usd(r), 0).toFixed(2)}・cold ${cold.length}回（brain-warm は別・下に出す） ===`);
+  const warm = claude.filter((r) => r.action === "brain-warm");
+  const warmKind = (r: Row) => (r.cache_write_1h === 0 && r.cache_read > 0 ? "hit" : r.cache_write_1h > 0 && r.cache_read >= 20_000 ? "dynamic_rewrite" : r.cache_write_1h > 0 ? "cold" : "no_cache");
+  const warmByKind = new Map<string, { n: number; usd: number }>();
+  for (const r of warm) { const k = warmKind(r); const a = warmByKind.get(k) ?? { n: 0, usd: 0 }; a.n++; a.usd += usd(r); warmByKind.set(k, a); }
+  console.log(`=== 温め（brain-warm）${warm.length}回 $${warm.reduce((a, r) => a + usd(r), 0).toFixed(2)}: ` + (warm.length ? [...warmByKind.entries()].map(([k, a]) => `${k} ${a.n}回 $${a.usd.toFixed(2)}`).join(" / ") : "なし") + " ===");
   const sizes = new Map<number, number>();
   for (const r of brain) { const s = r.cache_read || r.cache_write_1h; sizes.set(Math.round(s / 1000), (sizes.get(Math.round(s / 1000)) ?? 0) + 1); }
   console.log("prefix の大きさ(千トークン)の分布:", [...sizes.entries()].sort((a, b) => a[0] - b[0]).map(([k, v]) => `${k}k×${v}`).join(" "));
@@ -55,7 +61,7 @@ async function main() {
   for (const r of claude) {
     const k = r.conversation_id ?? "(なし)";
     const p = per.get(k) ?? { usd: 0, n: 0, brain: 0, acts: new Map() };
-    p.usd += usd(r); p.n++; if ((r.action ?? "").startsWith("brain")) p.brain++;
+    p.usd += usd(r); p.n++; if ((r.action ?? "").startsWith("brain_")) p.brain++;
     p.acts.set(r.action ?? "-", (p.acts.get(r.action ?? "-") ?? 0) + 1);
     per.set(k, p);
   }
