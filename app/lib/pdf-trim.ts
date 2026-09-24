@@ -9,7 +9,10 @@
 //   お客様に送っている画像はその帯を落とした「上の部分」＝ 物件の表・写真・間取り図・地図・特記事項。
 //   帯の上の罫線は 1093px 中 y≈945（86.5%）。帯に食い込まないよう 86% で切る（条件の行は残る）。
 //   左右は切らない（元の幅のまま）。
-export const REALPRO_SHEET_KEEP_RATIO = 0.86;
+// 2026-09-24 竹内「トリミングは縦横100%でも大丈夫。PDF 1枚目は帯替えされているから（下の帯は弊社）。元付業者の資料は送らない」
+//   → 既定は 100%（切らない）。上の 86% は実送信から測った値として残す（必要なら keepRatio で渡す）
+export const REALPRO_SHEET_TRIM_RATIO_MEASURED = 0.86;
+export const REALPRO_SHEET_KEEP_RATIO = 1.0;
 
 export type CropRect = { x: number; y: number; width: number; height: number };
 

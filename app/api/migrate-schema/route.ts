@@ -2330,6 +2330,8 @@ ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_facts JSONB;
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS agent_image_url TEXT;
 -- 2026-09-24 竹内「画像トリミングボタン」: お客様に送る形（会社の帯を落とした1ページ目）にトリミングした画像
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS trim_image_url TEXT;
+-- 2026-09-24 竹内「画像で分析ボタン」: DeepSeek が資料の画像から読んだ水回り・キッチン・リビングと洋室の位置関係・収納と、お客様の希望への合い具合
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_analysis JSONB;
 -- スタッフのメモ（売上サポの会話風画面の右側）。2026-09-24 竹内「DeepSeek 側は左・スタッフの会話は右」
 CREATE TABLE IF NOT EXISTS property_pickup_notes (
   id BIGSERIAL PRIMARY KEY,

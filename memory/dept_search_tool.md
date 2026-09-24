@@ -59,6 +59,12 @@
   - `pdf-render.ts` は無いページを丸めず null（1ページしか無い PDF の「2ページ目」を弊社の1ページ目と取り違えない）
 
 ### ③ 売上サポ「ピックアップ」タブ
+- **2026-09-24 午後（YUMA テスト・DeepSeek）で見つけて直した物**:
+  - 🌟 の順位付けは**本番でも毎回 Claude Haiku に落ちていた**（callVisionAlt は画像が無いと送らない）→ `callDeepSeek`（文字も通す）に。順位付けの関数は `app/lib/pickup-rank.ts` に移した（テストから本番と同じ関数を呼ぶ）
+  - 元付資料の読み取りが **25秒で時間切れ**（実測1枚 27〜40秒）→ 70秒・merge-pdfs の maxDuration 300
+- **トリミングは100%**（竹内「縦横100%でも大丈夫。PDF 1枚目は帯替え済み。元付業者の資料は送らない」）: `REALPRO_SHEET_KEEP_RATIO=1.0`（実測の 86% は `REALPRO_SHEET_TRIM_RATIO_MEASURED` に残す）
+- **「確認してお客様に送る」→「📤 AIXで送る（物件ピックアップした）」**: 押すと画像が無い物件は先に画像にし、`/?conv=…&aix=property_send&pickup=<行ID>&batch=…` で LINE 画面を開く → page.tsx が `/api/property-pickups?ids=` の画像（1ページ目だけ・元付は返さない）を File にして AIX【物件ピックアップした】を開く → 送信後（onAfterSend）に `/send {action:"mark_sent"}` で「送った」印
+- **「🔍 画像で分析」**（竹内「水回り・キッチン・リビングと洋室の位置関係・収納（WIC）を判断。一番条件に合った物件がわかる」）: `app/lib/pickup-image-analysis.ts`・`POST /api/property-pickups/analyze`。1物件1回・並列・DeepSeek（deepseek-flash・low・12000）。希望は property_customers の条件欄だけ（名前・電話は入れない）。`image_analysis` JSONB に残し、会話画面に「🔍」の吹き出しと「👑 一番条件に合う」。⚠ 最初「対面キッチン」を推測で書いた（セレニティ）→「設備欄にあるか、間取り図でリビング側を向く時だけ」に締めて直った。WIC は読み直しで揺れた（ダイレ・エヌのシューズ WIC を WIC と読んだ回あり）＝参考として使う
 - **トリミングは画面（スタッフの PC）で元の資料を描いて切る**（竹内 2026-09-24「何で元の物件資料で共有できないのか。元の物件資料をトリミングすれば良いだけ」）: リアプロの印刷用 PDF は**フォント埋め込みなし**（開いた PC のフォントで文字を描く）。サーバー（Linux）では文字が抜け、同梱の Noto Sans JP で描くと書体が変わる。→ `app/lib/pdf-trim-browser.ts`（pdfjs-dist をブラウザで・useSystemFonts・worker/CMap/標準フォントは `public/pdfjs/`＝pdfjs-dist 6.3.289 のコピー。**pdfjs-dist を上げたらコピーし直す**）で描いて上86%を切り、JPEG を `/trim {images}` に送って Blob に置くだけ。描けなかった物件だけサーバー側（Noto Sans JP）の予備に回す
 - **✂️ 画像トリミング**（竹内 2026-09-24「押すと選択している物件の PDF 1枚目（弊社帯替え分）がトリミングされて画像となって送られる。形は実際にお客さんに送ってる形」）: `app/lib/pdf-trim.ts`（`cropRectForSheet` 純関数・`trimSheetImage` canvas→JPEG）。形は実送信の画像（messages のスタッフ画像 パレ城北 1324×790 ≒ 元 1548×1093 の上 84.5%）と会社の帯の罫線（86.5%）から **上 86%・左右そのまま**。`POST /api/property-pickups/trim {item_ids}` が PDF（Blob）→1ページ目→切る→Blob（`pickups/trim/…jpg`）→ `trim_image_url`。`/send` は trim_image_url を優先。テスト: `scripts/try-trim-pickup.ts`（ローカルで形を見る）・`scripts/yuma-trim-send-test.ts`（YUMA で本番 API を通す・LLM なし）
 - 2026-09-24 13:05 竹内「ピックアップを一番左にする・順番も LINE と同じに連動・一覧は LINE と同じ UI（アイコン付き）・ブレインモードで送った日時も出す」→ タブ順 ピックアップ／アナウンス／一覧・既定はピックアップ。GET API が conversations（profile_image_url・updated_at・account）を付け **LINE の updated_at 順**で返す（`order_at`）。行は LINE 一覧と同じ形（アイコン＋🧠・名前＋アカウント札・未確認・プレビュー・右に時刻と緑の件数）。届いた日時（`last_pickup_at`＝batch の created_at）を行と会話風の吹き出し「🧠 ブレインモードで M/D HH:MM に届きました」に出す

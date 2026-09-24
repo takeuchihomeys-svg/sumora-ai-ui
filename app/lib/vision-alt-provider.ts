@@ -107,6 +107,53 @@ export type VisionAltResult = {
 };
 
 /**
+ * 2026-09-24: 文字だけ・画像混じりのどちらでも DeepSeek に投げる素の口（OpenAI 互換の content をそのまま渡す）。
+ *   callVisionAlt は「画像が1枚も無ければ回さない」ので、文字だけの 🌟 の順位付けは毎回 null → Claude に落ちていた
+ *   （YUMA のテストで発見）。文字だけの判断はこちらを使う。失敗は null（呼び出し側が倒す）
+ */
+export async function callDeepSeek(
+  system: string | null,
+  content: string | Array<Record<string, unknown>>,
+  opts?: { apiKey?: string; model?: string; maxTokens?: number; timeoutMs?: number; effort?: string },
+): Promise<VisionAltResult | null> {
+  const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
+  const model = (opts?.model ?? process.env.VISION_ALT_MODEL ?? VISION_ALT_MODEL_DEFAULT).trim();
+  const effort = (opts?.effort ?? VISION_ALT_EFFORT_DEFAULT).trim();
+  if (!apiKey) return null;
+  try {
+    const res = await fetch(VISION_ALT_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        max_tokens: opts?.maxTokens ?? VISION_ALT_MAX_TOKENS,
+        ...(effort ? { reasoning_effort: effort } : {}),
+        messages: [
+          ...(system ? [{ role: "system", content: system }] : []),
+          { role: "user", content },
+        ],
+      }),
+      signal: AbortSignal.timeout(opts?.timeoutMs ?? 60_000),
+    });
+    if (!res.ok) { console.warn("[deepseek] HTTP", res.status, (await res.text().catch(() => "")).slice(0, 200)); return null; }
+    const j = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
+    };
+    const text = String(j.choices?.[0]?.message?.content ?? "").trim();
+    if (!text) return null;
+    return {
+      text,
+      usage: { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0, cacheHit: j.usage?.prompt_cache_hit_tokens ?? 0, cacheMiss: j.usage?.prompt_cache_miss_tokens ?? 0 },
+      model,
+    };
+  } catch (e) {
+    console.warn("[deepseek] 失敗:", e instanceof Error ? e.message : String(e));
+    return null;
+  }
+}
+
+/**
  * DeepSeek に投げる。失敗したら null（呼び出し側が Claude に倒す＝fail-open）。
  * 画像の中身は読み替えられないので、既存の Vision と同じく PII の読み替えは掛からない。
  */

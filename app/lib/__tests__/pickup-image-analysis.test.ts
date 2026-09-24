@@ -1,0 +1,38 @@
+// 2026-09-24 竹内「画像で分析ボタン」— 純関数のテスト
+// 実行: npx tsx app/lib/__tests__/pickup-image-analysis.test.ts
+import { parseAnalysis, pickBest, buildWantsText, buildAnalysisPrompt } from "../pickup-image-analysis";
+import { cropRectForSheet } from "../pdf-trim";
+let passed = 0, failed = 0;
+function t(name: string, ok: boolean, extra?: unknown) {
+  if (ok) { passed++; console.log(`  OK  ${name}`); } else { failed++; console.log(`  NG  ${name}${extra !== undefined ? `\n      ${JSON.stringify(extra).slice(0, 300)}` : ""}`); }
+}
+{
+  const a = parseAnalysis('```json\n{"water":"バス・トイレ別","kitchen":"壁付け","layout":"隣り合う","storage":"CL","match":"62","good":["バストイレ別"],"concern":["WICなし"]}\n```');
+  t("★ コードブロックの JSON を読む・match の文字列を数に", !!a && a.match === 62 && a.kitchen === "壁付け" && a.concern[0] === "WICなし", a);
+  t("★ match が範囲外なら 0〜100 に丸める", parseAnalysis('{"water":"a","match":140}')?.match === 100);
+  t("★ match が null なら null（希望なし）", parseAnalysis('{"water":"a","match":null}')?.match === null);
+  t("★ 何も読めていない返事は失敗（null）", parseAnalysis('{"water":"","kitchen":"","layout":"","storage":"","match":80}') === null);
+  t("★ 壊れた返事は null", parseAnalysis("読めませんでした") === null);
+}
+{
+  const rows = [
+    { id: 1, rank: 1, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 60, good: [], concern: [] } },
+    { id: 2, rank: 2, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 80, good: [], concern: [] } },
+    { id: 3, rank: 3, analysis: { water: "a", kitchen: "", layout: "", storage: "", match: 80, good: [], concern: [] } },
+    { id: 4, rank: 4, analysis: null },
+  ];
+  t("★ 一番合う＝点が最大・同点は順位が上", pickBest(rows)?.id === 2);
+  t("★ 点が1件も無ければ null", pickBest([{ id: 1, rank: 1, analysis: null }]) === null);
+}
+{
+  const w = buildWantsText({ customer_name: "山田太郎", phone: "090", floor_plan: "1LDK", preferences: "独立洗面台", ng_points: "1階NG" }, "WIC が欲しい");
+  t("★ 希望の文は条件の欄だけ（名前・電話は入れない）", !w.includes("山田") && !w.includes("090") && w.includes("独立洗面台") && w.includes("1階NG") && w.includes("WIC が欲しい"), w);
+  t("★ 希望が空なら「（特になし）」", buildAnalysisPrompt("").includes("（特になし）"));
+  t("★ 対面を推測しない指示がある", buildAnalysisPrompt("").includes("推測で「対面」にしない"));
+}
+{
+  t("★ トリミングは既定で100%（1ページ目は帯替え済み）", JSON.stringify(cropRectForSheet(1548, 1093)) === JSON.stringify({ x: 0, y: 0, width: 1548, height: 1093 }));
+  t("★ 86% を渡せば従来の形", cropRectForSheet(1548, 1093, 0.86).height === 940);
+}
+console.log(`\n合計: ${passed}/${passed + failed}`);
+if (failed > 0) process.exit(1);

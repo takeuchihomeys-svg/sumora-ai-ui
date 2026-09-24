@@ -13,7 +13,7 @@ import { buildCustomerPickupMessage } from "@/app/lib/property-pickups";
 export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
-  const body = await req.json().catch(() => ({})) as { batch_id?: string; item_ids?: number[]; action?: "send" | "skip"; message?: string; sent_by?: string };
+  const body = await req.json().catch(() => ({})) as { batch_id?: string; item_ids?: number[]; action?: "send" | "skip" | "mark_sent"; message?: string; sent_by?: string };
   const ids = Array.isArray(body.item_ids) ? body.item_ids.filter((n) => Number.isFinite(n)) : [];
   if (!body.batch_id || ids.length === 0) return NextResponse.json({ ok: false, error: "batch_id と item_ids が要ります" }, { status: 400 });
 
@@ -27,6 +27,12 @@ export async function POST(req: NextRequest) {
   if (rows.length === 0) return NextResponse.json({ ok: false, error: "対象の行が無い" }, { status: 404 });
 
   const now = new Date().toISOString();
+  // 2026-09-24 竹内「AIX で送るにして」: 送信は AIX【物件ピックアップした】が行う。送り終えたら印だけ付ける（LINE には何も送らない）
+  if ((body.action as string) === "mark_sent") {
+    await supabase.from("property_pickups").update({ status: "sent", sent_at: now, sent_by: body.sent_by ?? "aix" }).in("id", rows.map((r) => r.id)).eq("status", "pending");
+    if (rows[0].property_customer_id) await supabase.from("property_customers").update({ last_property_sent_at: now }).eq("id", rows[0].property_customer_id);
+    return NextResponse.json({ ok: true, marked: rows.length });
+  }
   if (body.action === "skip") {
     await supabase.from("property_pickups").update({ status: "skipped", sent_by: body.sent_by ?? null }).in("id", rows.map((r) => r.id));
     return NextResponse.json({ ok: true, skipped: rows.length });

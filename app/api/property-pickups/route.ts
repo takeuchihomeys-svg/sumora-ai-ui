@@ -14,15 +14,28 @@ type Row = {
   verdict: string | null; score: number | null; reasons_ja: string[] | null; ad_yen: number | null; profit_yen: number | null;
   recommended: number; status: string; sent_at: string | null;
   page_image_url: string | null; agent_image_url: string | null; trim_image_url: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
+  image_analysis: Record<string, unknown> | null;
 };
 type Note = { id: number; created_at: string; property_customer_id: string; batch_id: string | null; text: string; author: string | null };
 
 export async function GET(req: NextRequest) {
+  // ?ids=1,2,3 → AIX【物件ピックアップした】に渡す画像（お客様に送る1ページ目だけ。元付＝agent_image_url は返さない）
+  //   2026-09-24 竹内「AIX で送るにして、押したら AIX の物件ピックアップに選択した画像がセットされた状態に」
+  const idsParam = req.nextUrl.searchParams.get("ids");
+  if (idsParam) {
+    const ids = idsParam.split(",").map((s) => Number(s)).filter((n) => Number.isFinite(n)).slice(0, 10);
+    const { data, error } = await supabase.from("property_pickups").select("id, rank, property_name, room_no, conversation_id, trim_image_url, page_image_url, summary_text").in("id", ids);
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    const items = ((data ?? []) as Array<{ id: number; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null; summary_text: string }>)
+      .sort((a, z) => a.rank - z.rank)
+      .map((r) => ({ id: r.id, rank: r.rank, property_name: r.property_name, room_no: r.room_no, conversation_id: r.conversation_id, image_url: r.trim_image_url ?? r.page_image_url, summary_text: r.summary_text }));
+    return NextResponse.json({ ok: true, items });
+  }
   const days = Math.min(90, Math.max(1, Number(req.nextUrl.searchParams.get("days") ?? "30")));
   const since = new Date(Date.now() - days * 86400_000).toISOString();
   const [{ data, error }, notesRes] = await Promise.all([
     supabase.from("property_pickups")
-      .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts")
+      .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis")
       .gte("created_at", since).order("created_at", { ascending: false }).order("rank", { ascending: true }).limit(3000),
     supabase.from("property_pickup_notes").select("id, created_at, property_customer_id, batch_id, text, author").gte("created_at", since).order("created_at", { ascending: true }).limit(2000),
   ]);

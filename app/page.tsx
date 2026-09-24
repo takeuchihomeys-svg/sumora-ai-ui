@@ -6050,6 +6050,44 @@ export default function Home() {
     openAixDirect(type);
   };
 
+  // 2026-09-24 竹内「（売上サポの）AIX で送るを押したら、AIX の物件ピックアップに選択した画像がセットされた状態にする」:
+  //   売上サポは /?conv=<会話>&aix=property_send&pickup=<行ID>&batch=<バッチ> で来る。会話が開いたら、選んだ物件の資料画像
+  //   （PDF 1ページ目＝弊社帯替え。元付の資料は API が返さない）を File にして AIX【物件ピックアップした】を開く。
+  //   送り終えたら（onAfterSend）売上サポの行に「送った」印を付ける
+  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; done: boolean } | null>(null);
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const conv = sp.get("conv"), ids = sp.get("pickup");
+      if (conv && ids && sp.get("aix") === "property_send") pickupHandoffRef.current = { conv, ids, batch: sp.get("batch") ?? "", done: false };
+    } catch { /* 無視 */ }
+  }, []);
+  useEffect(() => {
+    const h = pickupHandoffRef.current;
+    if (!h || h.done || selectedConversation?.id !== h.conv) return;
+    h.done = true;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/property-pickups?ids=${encodeURIComponent(h.ids)}`, { cache: "no-store" });
+        const json = await res.json() as { ok: boolean; items?: Array<{ rank: number; property_name: string; room_no: string | null; image_url: string | null }> };
+        const files: File[] = [];
+        for (const it of json.items ?? []) {
+          if (!it.image_url) continue;
+          try {
+            const blob = await (await fetch(it.image_url)).blob();
+            files.push(new File([blob], `${it.rank}_${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`, { type: blob.type || "image/jpeg" }));
+          } catch { /* その1枚は飛ばす */ }
+        }
+        if (files.length) setAixInitialSendImages(files);
+      } catch (e) {
+        console.warn("[pickup→AIX] 画像を取れない:", e);
+      } finally {
+        void openAixDirect("property_send");
+        try { window.history.replaceState(null, "", `/?conv=${encodeURIComponent(h.conv)}`); } catch { /* 無視 */ }
+      }
+    })();
+  }, [selectedConversation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // 物件オススメ専用ピッカー（新規/追客/新着1件を選択してからAIXを開く）
   const openPropertyRecommendationPicker = (via: "direct" | "withImage") => {
     propertyPickerOpenFnRef.current = via;
@@ -10663,6 +10701,17 @@ export default function Home() {
           onSendCallButton={sendCallButton}
           onDelayedSend={handleDelayedSend}
           onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean }) => {
+            // 2026-09-24: 売上サポから来た AIX【物件ピックアップした】を送り終えたら、ピックアップの行に「送った」印を付ける（LINE には何も送らない）
+            {
+              const h = pickupHandoffRef.current;
+              if (h && h.done && aixModalType === "property_send" && !meta?.scheduled) {
+                pickupHandoffRef.current = null;
+                void fetch("/api/property-pickups/send", {
+                  method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
+                  body: JSON.stringify({ batch_id: h.batch, item_ids: h.ids.split(",").map(Number), action: "mark_sent", sent_by: "aix" }),
+                }).catch(() => {});
+              }
+            }
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;

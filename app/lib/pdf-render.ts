@@ -59,7 +59,7 @@ export function installJapaneseFontFallback(ctx: { font: string }, fonts: { regi
 }
 
 /** base64 の PDF の page（1始まり）を PNG にする。scale は 1.5（A4 で約 890×1260px）が読み取りと容量の釣り合い */
-export async function renderPdfPageToPng(input: string | Uint8Array, opts?: { page?: number; scale?: number; maxPixels?: number }): Promise<PdfRenderResult | null> {
+export async function renderPdfPageToPng(input: string | Uint8Array, opts?: { page?: number; scale?: number; maxPixels?: number; systemFonts?: boolean }): Promise<PdfRenderResult | null> {
   const started = Date.now();
   try {
     const bytes = typeof input === "string" ? Uint8Array.from(Buffer.from(input, "base64")) : input;
@@ -92,7 +92,8 @@ export async function renderPdfPageToPng(input: string | Uint8Array, opts?: { pa
     //   本番（Linux）には日本語フォントが無く、pdfjs が ctx.font に入れる `"g_d0_f1", serif` がどの字形にも当たらず文字が消えた
     //   （ローカルは Windows のフォントで出ていた）。同梱した Noto Sans JP（public/fonts・OFL）を登録し、ctx.font の家族名を全部それに置き換える
     //   （pdfjs は Node では FontFace を使わず、埋め込みの有無に関わらず fallback の家族名で描く＝置き換えても崩れない）
-    installJapaneseFontFallback(ctx as unknown as { font: string }, GlobalFonts);
+    //   systemFonts: true はパソコンのフォントで描く（Windows のテストで「画面で切る」主経路と同じ見た目を作る用）
+    if (!opts?.systemFonts) installJapaneseFontFallback(ctx as unknown as { font: string }, GlobalFonts);
     // pdfjs の型は DOM の canvas を想定しているので、@napi-rs/canvas を同じ形として渡す
     await page.render({ canvasContext: ctx as unknown as CanvasRenderingContext2D, viewport, canvas: canvas as unknown as HTMLCanvasElement }).promise;
     const png = canvas.toBuffer("image/png");

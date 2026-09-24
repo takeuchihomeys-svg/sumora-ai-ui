@@ -12,6 +12,7 @@ type Item = {
   pdf_blob_url: string | null; pdf_has_text: boolean; verdict: string | null; score: number | null;
   reasons_ja: string[] | null; ad_yen: number | null; profit_yen: number | null; recommended: number; status: string; sent_at: string | null;
   page_image_url: string | null; agent_image_url?: string | null; trim_image_url?: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
+  image_analysis?: { match?: number | null; [k: string]: unknown } | null;
 };
 type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
@@ -46,6 +47,7 @@ function fmtWhen(iso: string): string {
 type Bubble =
   | { kind: "brain"; at: string; batch: Batch }
   | { kind: "trim"; at: string; batch: Batch; items: Item[] }
+  | { kind: "analysis"; at: string; batch: Batch; items: Item[]; bestId: number | null }
   | { kind: "staff"; at: string; text: string; sub?: string };
 
 /** 画像を手元に保存（別ドメインの画像は download 属性が効かないので、取ってきて Blob の URL で落とす。取れなければ新しいタブで開く） */
@@ -71,6 +73,13 @@ function buildBubbles(c: Customer): Bubble[] {
     // 2026-09-24 竹内「トリミングした画像はピックアップの画面内に送られて、そのままスタッフが保存して使えるように」
     const trimmed = b.items.filter((it) => it.trim_image_url);
     if (trimmed.length) out.push({ kind: "trim", at: b.created_at + "~", batch: b, items: trimmed });
+    // 🔍 画像で分析の結果（一番合う物件＝点が最大・同点は順位が上）
+    const analyzed = b.items.filter((it) => it.image_analysis);
+    if (analyzed.length) {
+      const scored = analyzed.filter((it) => typeof (it.image_analysis as { match?: unknown })?.match === "number");
+      const best = scored.slice().sort((a, z) => (((z.image_analysis as { match: number }).match) - ((a.image_analysis as { match: number }).match)) || (a.rank - z.rank))[0];
+      out.push({ kind: "analysis", at: b.created_at + "~~", batch: b, items: analyzed, bestId: best?.id ?? null });
+    }
     const sent = b.items.filter((it) => it.status === "sent");
     const skipped = b.items.filter((it) => it.status === "skipped");
     if (sent.length) {
@@ -156,12 +165,12 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
 
   // 2026-09-24 竹内「画像トリミングボタンを付ける。押すと選択している物件の PDF 1枚目（弊社帯替え分）がトリミングされて画像となって送られる」
   //   ここでは切るだけ（切った画像が吹き出しに出る）。送るのは「確認してお客様に送る」（送信は必ずスタッフが確認してから）
-  const trim = async (b: Batch) => {
-    const targets = b.items.filter((it) => checked[it.id] && it.status === "pending");
+  const trim = async (b: Batch, only?: Item[]): Promise<boolean> => {
+    const targets = only ?? b.items.filter((it) => checked[it.id] && it.status === "pending");
     const ids = targets.map((it) => it.id);
-    if (ids.length === 0) { setMsg("トリミングする物件にチェックを入れてください"); return; }
+    if (ids.length === 0) { setMsg("トリミングする物件にチェックを入れてください"); return false; }
     setBusy(`trim:${b.batch_id}`);
-    setMsg("✂️ トリミング中…（1件 数秒）");
+    setMsg("✂️ 物件資料を画像にしています…（1件 数秒）");
     try {
       // 2026-09-24 竹内「元の物件資料をトリミングすれば良いだけ」: 元の資料をこのパソコンで描いて切る（いつも見ている資料と同じ見た目）。
       //   画面側で描けなかった物件だけ、サーバー側で描く予備に回す
@@ -188,14 +197,57 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
         : await post({ item_ids: fallbackIds, force: true });   // 押すたびに作り直す
       const json = await res.json() as { ok: boolean; trimmed?: number; items?: Array<{ id: number; error?: string }>; error?: string };
       if (!json.ok) throw new Error(json.error || json.items?.find((x) => x.error)?.error || "失敗");
-      setMsg(`✂️ ${json.trimmed}件をお客様に送る形にトリミングしました。下の画像は「💾 保存」で手元に落とせます。「確認してお客様に送る」で送れます`);
+      setMsg(`✂️ ${json.trimmed}件の物件資料を画像にしました。下の画像は「💾 保存」で手元に落とせます。「📤 AIXで送る」で送れます`);
       await load();
       onChange?.();
+      return true;
+    } catch (e) {
+      setMsg(`⚠️ ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // 2026-09-24 竹内「画像で分析ボタンを付ける。お客さんの要望【水回り・キッチン・リビングと洋室の位置関係・収納（WIC 等）】を判断できる。
+  //   トリミングした画像の中で一番条件に合った物件がわかる」→ 画像が無い物件は先に画像にしてから DeepSeek が読む
+  const analyze = async (b: Batch) => {
+    let targets = b.items.filter((it) => checked[it.id] && it.status === "pending");
+    if (targets.length === 0) { setMsg("分析する物件にチェックを入れてください"); return; }
+    const noImage = targets.filter((it) => !it.trim_image_url && !it.page_image_url);
+    if (noImage.length > 0 && !(await trim(b, noImage))) return;
+    targets = targets.map((it) => it);
+    setBusy(`analyze:${b.batch_id}`);
+    setMsg(`🔍 ${targets.length}件の資料を画像で分析しています…（1件 30〜40秒・並列）`);
+    try {
+      const res = await fetch("/api/property-pickups/analyze", {
+        method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+        body: JSON.stringify({ item_ids: targets.map((it) => it.id) }),
+      });
+      const json = await res.json() as { ok: boolean; best_id?: number | null; items?: Array<{ id: number; property_name: string; error?: string }>; error?: string };
+      if (!json.ok) throw new Error(json.error || json.items?.find((x) => x.error)?.error || "分析できなかった");
+      const best = json.items?.find((x) => x.id === json.best_id);
+      setMsg(`🔍 分析しました${best ? `。一番条件に合うのは「${best.property_name}」` : ""}`);
+      await load();
     } catch (e) {
       setMsg(`⚠️ ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(null);
     }
+  };
+
+  // 2026-09-24 竹内「確認してお客様に送るの部分を AIX で送るにして。押したら AIX の物件ピックアップに選択した画像がセットされた状態にする
+  //   （トリミングされた画像＝PDF 1枚目の弊社帯替え用が送られる形）。元付業者の資料は送られないようにする」
+  //   → 画像が無い物件は先に画像にし、LINE の会話画面を AIX【物件ピックアップした】に画像をセットして開く（/?conv=…&aix=property_send&pickup=ids）
+  const sendViaAix = async (c: Customer, b: Batch) => {
+    const targets = b.items.filter((it) => checked[it.id] && it.status === "pending");
+    if (targets.length === 0) { setMsg("送る物件にチェックを入れてください"); return; }
+    const convId = c.conversation_id ?? b.conversation_id;
+    if (!convId) { setMsg("このお客様は LINE の会話に紐付いていません（お客さん画面で紐付けてから）"); return; }
+    const noImage = targets.filter((it) => !it.trim_image_url);
+    if (noImage.length > 0 && !(await trim(b, noImage))) return;
+    const ids = targets.map((it) => it.id).join(",");
+    window.location.href = `/?conv=${encodeURIComponent(convId)}&aix=property_send&pickup=${encodeURIComponent(ids)}&batch=${encodeURIComponent(b.batch_id)}`;
   };
 
   const addNote = async (c: Customer) => {
@@ -281,18 +333,28 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                   })}
                 </div>
                 {bb.batch.items.some((it) => it.status === "pending") && (
-                  <div className="flex gap-2 mt-2">
-                    <button disabled={busy === `trim:${bb.batch.batch_id}`} onClick={() => void trim(bb.batch)}
-                      title="選んだ物件の PDF 1ページ目（弊社帯替え）を、お客様に送っている形（会社の帯なし）に切る"
-                      className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy === `trim:${bb.batch.batch_id}` ? 0.6 : 1 }}>
-                      {busy === `trim:${bb.batch.batch_id}` ? "✂️ …" : "✂️ 画像トリミング"}
-                    </button>
-                    <button disabled={busy === bb.batch.batch_id} onClick={() => void act(open, bb.batch, "send")}
-                      className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#1565C0", opacity: busy === bb.batch.batch_id ? 0.6 : 1 }}>
-                      確認してお客様に送る
-                    </button>
-                    <button disabled={busy === bb.batch.batch_id} onClick={() => void act(open, bb.batch, "skip")}
-                      className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#eceff1", color: "#546e7a" }}>見送り</button>
+                  <div className="flex flex-col gap-2 mt-2">
+                    <div className="flex gap-2">
+                      <button disabled={!!busy} onClick={() => void trim(bb.batch)}
+                        title="選んだ物件の PDF 1ページ目（弊社帯替え）を画像にする（元付業者の資料は使わない）"
+                        className="flex-1 px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy ? 0.6 : 1 }}>
+                        {busy === `trim:${bb.batch.batch_id}` ? "✂️ …" : "✂️ 画像トリミング"}
+                      </button>
+                      <button disabled={!!busy} onClick={() => void analyze(bb.batch)}
+                        title="選んだ物件の資料画像を DeepSeek が読み、水回り・キッチン・リビングと洋室の位置関係・収納をお客様の希望に照らして判断"
+                        className="flex-1 px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#e0f2f1", color: "#00695c", opacity: busy ? 0.6 : 1 }}>
+                        {busy === `analyze:${bb.batch.batch_id}` ? "🔍 分析中…" : "🔍 画像で分析"}
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <button disabled={!!busy} onClick={() => void sendViaAix(open, bb.batch)}
+                        title="LINE の会話画面で AIX【物件ピックアップした】を開き、選んだ物件の資料画像（1ページ目）をセットする"
+                        className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy ? 0.6 : 1 }}>
+                        📤 AIXで送る（物件ピックアップした）
+                      </button>
+                      <button disabled={!!busy} onClick={() => void act(open, bb.batch, "skip")}
+                        className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#eceff1", color: "#546e7a" }}>見送り</button>
+                    </div>
                   </div>
                 )}
                 <div className="text-[10px] text-[#b0bec5] mt-1 text-right">{fmtDateTime(bb.at)}</div>
@@ -302,7 +364,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
             <div key={`t${i}`} className="flex items-end gap-2">
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: "#6a1b9a", color: "#fff" }}>✂️</div>
               <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-white px-3 py-2.5" style={{ boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
-                <div className="text-xs font-bold mb-1">✂️ お客様に送る形にした画像 {bb.items.length}枚（会社の帯なし）</div>
+                <div className="text-xs font-bold mb-1">✂️ お客様に送る物件資料の画像 {bb.items.length}枚（PDF 1ページ目・弊社帯替え）</div>
                 <div className="flex flex-col gap-2">
                   {bb.items.map((it) => (
                     <div key={`ti${it.id}`} className="rounded-xl overflow-hidden" style={{ border: "1px solid #e0e0e0" }}>
@@ -318,7 +380,37 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                     </div>
                   ))}
                 </div>
-                <div className="text-[10px] text-[#b0bec5] mt-1 text-right">「確認してお客様に送る」はこの画像を送ります</div>
+                <div className="text-[10px] text-[#b0bec5] mt-1 text-right">「📤 AIXで送る」はこの画像をセットします</div>
+              </div>
+            </div>
+          ) : bb.kind === "analysis" ? (
+            <div key={`a${i}`} className="flex items-end gap-2">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: "#00695c", color: "#fff" }}>🔍</div>
+              <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-white px-3 py-2.5" style={{ boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
+                <div className="text-xs font-bold mb-1">🔍 画像で分析しました（水回り・キッチン・リビングと洋室・収納）</div>
+                {bb.bestId != null && (() => {
+                  const best = bb.items.find((it) => it.id === bb.bestId);
+                  return best ? <div className="text-xs font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e0f2f1", color: "#00695c" }}>👑 一番条件に合う: 【{best.rank}】{best.property_name}（{best.image_analysis?.match}点）</div> : null;
+                })()}
+                <div className="flex flex-col gap-2">
+                  {bb.items.map((it) => {
+                    const a = it.image_analysis as unknown as { water?: string; kitchen?: string; layout?: string; storage?: string; match?: number | null; good?: string[]; concern?: string[] } | null;
+                    if (!a) return null;
+                    return (
+                      <div key={`ai${it.id}`} className="rounded-xl px-2 py-1.5" style={{ background: it.id === bb.bestId ? "#f1f8e9" : "#f7f9fb" }}>
+                        <div className="text-[11px] font-bold">【{it.rank}】{it.property_name}{a.match != null ? `　${a.match}点` : ""}</div>
+                        <div className="text-[10px] text-[#37474f] mt-0.5 leading-relaxed">
+                          {a.water && <div>🚿 水回り: {a.water}</div>}
+                          {a.kitchen && <div>🍳 キッチン: {a.kitchen}</div>}
+                          {a.layout && <div>🛋️ リビングと洋室: {a.layout}</div>}
+                          {a.storage && <div>🧥 収納: {a.storage}</div>}
+                          {a.good && a.good.length > 0 && <div style={{ color: "#2e7d32" }}>◎ {a.good.join("／")}</div>}
+                          {a.concern && a.concern.length > 0 && <div style={{ color: "#c62828" }}>△ {a.concern.join("／")}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           ) : (

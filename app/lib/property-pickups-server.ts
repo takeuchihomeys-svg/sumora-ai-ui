@@ -16,7 +16,8 @@ import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
 
 /** 画像を読む上限（1回分）。DeepSeek は1枚 約$0.002〜0.004・15〜25秒。10件を並列で読み、merge-pdfs の 90秒に収める */
 const IMAGE_READ_MAX_PER_BATCH = 10;
-const IMAGE_READ_TIMEOUT_MS = 25_000;
+// 2026-09-24 YUMA テスト: 元付の資料は1枚 27〜40秒（出力 5,600〜8,700 のほぼ推論）。25秒では3件中2件が時間切れで空だった → 70秒
+const IMAGE_READ_TIMEOUT_MS = 70_000;
 
 export type RecordPickupInput = {
   batchId: string;
@@ -127,7 +128,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       const wants = profile?.imageWants ?? [];
       const [detail, facts] = await Promise.all([
         readPropertyImageDetail(url, { timeoutMs: IMAGE_READ_TIMEOUT_MS }),
-        wants.length > 0 ? readFloorPlanFacts(url, wants, { timeoutMs: Math.min(IMAGE_READ_TIMEOUT_MS, 20_000) }) : Promise.resolve(null),
+        wants.length > 0 ? readFloorPlanFacts(url, wants, { timeoutMs: Math.min(IMAGE_READ_TIMEOUT_MS, 60_000) }) : Promise.resolve(null),
       ]);
       if (detail.kind === "property" && detail.lines.length > 0) { it.imageLines = detail.lines; out.imageRead++; }
       if (facts?.facts) {
