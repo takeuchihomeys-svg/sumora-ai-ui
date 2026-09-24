@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import BottomNav from "@/app/components/BottomNav";
 // 2026-09-24 竹内「ピックアップしたのを一度アプリの売上サポの部分に飛ばして…スタッフは確認してお客さんに送るだけ」
@@ -211,6 +211,39 @@ export default function ConditionsPage() {
 
   // 紐付け済み property_customer_id セット
   const [linkedIds, setLinkedIds] = useState<Set<string>>(new Set());
+
+  // 2026-09-24 竹内「ブレインモードで送ったけど売上サポに反映されていない。紐付け済みのお客さんの UI が LINE チャットに変わっていない」:
+  //   ピックアップは別タブに入っていて、一覧の行からは見えなかった。お客様の行に「🧠 物件 N件」を出し、押すとそのお客様の会話風画面を開く
+  const [pickupPending, setPickupPending] = useState<Map<string, number>>(new Map());
+  const [pickupFocus, setPickupFocus] = useState<string | null>(null);
+  const loadPickupPending = useCallback(async () => {
+    try {
+      const res = await fetch("/api/property-pickups?days=30", { cache: "no-store" });
+      const json = await res.json() as { ok: boolean; customers?: Array<{ property_customer_id: string | null; pending: number }> };
+      if (!json.ok) return;
+      const m = new Map<string, number>();
+      for (const c of json.customers ?? []) if (c.property_customer_id && c.pending > 0) m.set(c.property_customer_id, c.pending);
+      setPickupPending(m);
+    } catch { /* 表示だけなので失敗は無視 */ }
+  }, []);
+  useEffect(() => { void loadPickupPending(); }, [loadPickupPending]);
+  const openPickupFor = (e: React.MouseEvent, customerId: string) => {
+    e.stopPropagation();
+    setPickupFocus(customerId);
+    setTab("pickup");
+  };
+  /** 一覧の行に出す「🧠 物件 N件」（未確認のピックアップがある紐付け済みのお客様だけ） */
+  const pickupChip = (c: Customer) => {
+    const n = pickupPending.get(c.id);
+    if (!n) return null;
+    return (
+      <span role="button" tabIndex={0} onClick={(e) => openPickupFor(e, c.id)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); setPickupFocus(c.id); setTab("pickup"); } }}
+        className="text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 cursor-pointer" style={{ background: "#fff8e1", color: "#e65100", border: "1px solid #ffe082" }}>
+        🧠 物件 {n}件 未確認
+      </span>
+    );
+  };
 
   // クイックアクションシート
   const [quickTarget, setQuickTarget] = useState<Customer | null>(null);
@@ -590,7 +623,16 @@ export default function ConditionsPage() {
                   </span>
                 )}
               </span>
-            ) : t === "list" ? "一覧" : "ピックアップ"}
+            ) : t === "list" ? "一覧" : (
+              <span className="flex items-center justify-center gap-1.5">
+                ピックアップ
+                {pickupPending.size > 0 && (
+                  <span className="text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none" style={{ background: "#e65100" }}>
+                    {pickupPending.size}
+                  </span>
+                )}
+              </span>
+            )}
             {tab === t && (
               <span
                 className="absolute bottom-0 left-4 right-4 h-0.5 rounded-full"
@@ -818,7 +860,7 @@ export default function ConditionsPage() {
       ) : (
         <div className="flex-1 pb-28">
           {/* ── ピックアップタブ（拡張が送った1回分を確認してお客様に送る） ── */}
-          {tab === "pickup" && <PickupReview />}
+          {tab === "pickup" && <PickupReview focusKey={pickupFocus} onChange={() => void loadPickupPending()} />}
           {/* ── アナウンスタブ ── */}
           {tab === "announce" && (
             <div className="mt-2">
@@ -861,6 +903,7 @@ export default function ConditionsPage() {
                                   紐付け済
                                 </span>
                               )}
+                              {pickupChip(c)}
                             </div>
                             <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
                               {(c.desired_area || c.area) && <span>{c.desired_area || c.area}</span>}
@@ -973,6 +1016,7 @@ export default function ConditionsPage() {
                                   紐付け済
                                 </span>
                               )}
+                              {pickupChip(c)}
                               {c.format_received && (
                                 <span className="text-[10px] bg-green-50 text-green-700 font-bold px-1.5 py-0.5 rounded-full">
                                   フォーマット済

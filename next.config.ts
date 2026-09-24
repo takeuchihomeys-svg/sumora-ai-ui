@@ -5,7 +5,9 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/fill-estimate": ["./public/templates/**/*"],
     // 2026-09-24 物件資料の PDF を画像にして DeepSeek に読ませる（pdfjs の CMap・標準フォント＋ @napi-rs/canvas のネイティブ）
-    "/api/merge-pdfs": ["./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/standard_fonts/**/*", "./node_modules/@napi-rs/canvas*/**/*"],
+    //   ⚠ 2026-09-24 本番の初回で `Setting up fake worker failed: Cannot find module '.../pdfjs-dist/legacy/build/pdf.worker.mjs'`:
+    //   disableWorker でも pdfjs は pdf.worker.mjs を動的 import する（fake worker）。動的 import はファイル追跡に乗らないので legacy/build を丸ごと同梱する
+    "/api/merge-pdfs": ["./node_modules/pdfjs-dist/legacy/build/**/*", "./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/standard_fonts/**/*", "./node_modules/@napi-rs/canvas*/**/*"],
   },
   serverExternalPackages: ["@napi-rs/canvas", "pdfjs-dist"],
 

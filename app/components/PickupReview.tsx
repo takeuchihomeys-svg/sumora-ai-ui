@@ -52,9 +52,10 @@ function buildBubbles(c: Customer): Bubble[] {
   return out.sort((a, z) => a.at.localeCompare(z.at));
 }
 
-export default function PickupReview() {
+/** focusKey: 一覧の「🧠 物件 N件」から来た時に、そのお客様（property_customer_id）の会話風画面を最初から開く。onChange: 送った・見送りの後に親の件数を更新 */
+export default function PickupReview({ focusKey = null, onChange }: { focusKey?: string | null; onChange?: () => void } = {}) {
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(focusKey);
   const [checked, setChecked] = useState<Record<number, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>("");
@@ -76,6 +77,16 @@ export default function PickupReview() {
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  // 一覧から来た時: 読み込めたらそのお客様を開き、未確認の物件に既定のチェックを入れる
+  useEffect(() => {
+    if (!focusKey) return;
+    const c = customers.find((x) => x.key === focusKey);
+    if (!c) return;
+    setOpenKey(focusKey);
+    const next: Record<number, boolean> = {};
+    for (const b of c.batches) for (const it of b.items) next[it.id] = it.status === "pending" && it.verdict !== "drop";
+    setChecked(next);
+  }, [focusKey, customers]);
 
   const open = useMemo(() => customers.find((c) => c.key === openKey) ?? null, [customers, openKey]);
   const filtered = useMemo(() => customers.filter((c) => !q || (c.customer_name ?? "").includes(q)), [customers, q]);
@@ -104,6 +115,7 @@ export default function PickupReview() {
       if (!json.ok) throw new Error(json.error || "失敗");
       setMsg(action === "send" ? `✅ ${json.sent}件 送りました` : `${json.skipped}件 見送りにしました`);
       await load();
+      onChange?.();
     } catch (e) {
       setMsg(`⚠️ ${e instanceof Error ? e.message : String(e)}`);
     } finally {
