@@ -31,6 +31,7 @@
 //   影の運用（既定）では drop も落とさず印だけ＝誤削除の実測が溜まってから PROPERTY_BRAIN_DROP=on にする。
 
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
+import { isGenericBuildingName } from "./generic-building-name";
 
 // ─── 型 ──────────────────────────────────────────────────────────────────────
 
@@ -102,7 +103,20 @@ export type CustomerLike = {
   pet?: boolean | null;
 };
 
-export type SentRowLike = { property_name?: string | null; rent?: number | null };
+/** delivery / source は sent_properties の列（無い呼び出し元は今まで通り全部を送付として扱う） */
+export type SentRowLike = { property_name?: string | null; rent?: number | null; delivery?: string | null; source?: string | null };
+
+/**
+ * お客様に届いた送付か（売上番長グループへの共有だけの行は false）。GET /api/property-pickups の送った履歴と同じ線:
+ *   delivery = 'customer'、または delivery が無く source が line_group でない
+ * 2026-09-24: 拡張の「売上番長に送る」は同じ回の物件を delivery='shared' で sent_properties に残す。
+ *   送付済みの照合に入れると、その回の物件が自分自身の共有で「送付済み」になる（id 50〜67 の「物件」18件は全部この共有だった）
+ */
+export function isCustomerDelivery(r: SentRowLike): boolean {
+  if (r.delivery === "shared") return false;
+  if (r.delivery == null && r.source === "line_group") return false;
+  return true;
+}
 export type PatternRowLike = { selling_points?: string[] | null; selection_label?: string | null };
 
 export type CustomerProfile = {
@@ -208,6 +222,30 @@ export const REASON_JA: Record<string, string> = {
   IMAGE_FLOOR_2_PLUS_NG: "1階（資料）",
 };
 
+/**
+ * 理由コードごとの点（judgeProperty の add の点と同じ。基準 50 点に足す・上限 130・下限 0）。
+ * 2026-09-24 竹内「今回なんで外されているのか理由が分かれば大きい」: 画面で「どの理由で何点」を出すために表にした。
+ *   judgeProperty の点を変えたらここも変える（property-brain.test.ts が全コードで 50＋合計＝score を確かめる）。
+ *   画像の読み取り（IMAGE_*）は applyImageFacts: _OK +5・_NG −10（imageReasonPoints）
+ */
+export const BASE_SCORE = 50;
+export const REASON_POINTS: Record<string, number> = {
+  RENT_OK: 15, RENT_SLIGHTLY_OVER: 0, RENT_OVER_110: -20, RENT_OVER_130: -35, RENT_ABOVE_USUAL: -5, RENT_UNKNOWN: 0, RENT_MAX_UNRELIABLE: 0,
+  ZERO_ZERO_MATCH: 20, ZERO_ZERO: 8, INITIAL_COST_NOT_ZERO: -15, INITIAL_COST_OVER_LIMIT: -10, INITIAL_COST_UNKNOWN: 0,
+  FLOOR_PLAN_MATCH: 15, FLOOR_PLAN_NEAR: 5, FLOOR_PLAN_MISMATCH: -15,
+  WALK_OK: 10, WALK_SLIGHTLY_OVER: -5, WALK_OVER: -15,
+  BUILDING_AGE_OK: 5, BUILDING_AGE_SLIGHTLY_OVER: -3, BUILDING_AGE_OVER: -10,
+  ALREADY_SENT: -30,
+  AD_UNKNOWN: 0, PROFIT_NEGATIVE: -10, AD_COVERS_DISCOUNT: 10, AD_1M: 5, AD_HIGH: 20, AD_VERY_HIGH: 5,
+  PET_NG: -15,
+};
+/** 理由コードの点（画像の読み取り IMAGE_*_OK/_NG も含む）。知らないコードは 0 */
+export function reasonPoints(code: string): number {
+  if (/^IMAGE_.*_OK$/.test(code)) return 5;
+  if (/^IMAGE_.*_NG$/.test(code)) return -10;
+  return REASON_POINTS[code] ?? 0;
+}
+
 // ─── 小さな道具 ──────────────────────────────────────────────────────────────
 
 function toHalfWidth(s: string): string {
@@ -265,6 +303,16 @@ export function parsePropertyFacts(summary: string | null | undefined, data?: Pr
   let adminFeeYen: number | null = null;
   const adm = restText.replace(/,/g, "").match(/(?:管理費|共益費)\s*[:：]?\s*(\d+)\s*円/);
   if (adm) adminFeeYen = parseInt(adm[1], 10);
+  else if (/(?:管理費|共益費)[・･‧]?(?:共益費)?\s*[:：]?\s*(?:なし|無し|－|-|0円)/.test(restText)) adminFeeYen = 0;
+  // 2026-09-24: リアプロの説明文は「75,000円 10,000円」（家賃の後ろに管理費が言葉なしで並ぶ）。読まずに家賃だけで上限と比べていた
+  //   （id 34〜45 の全件が「家賃は上限内 +15」・実際は 85,000円で上限 80,000円を超えていた）。
+  //   pickup-dedupe の adminFeeOf と同じ線: 行の1つ目の金額が家賃と同じで、2つ目が家賃より小さく 10万円以下の時だけ
+  if (adminFeeYen == null && rentYen != null) {
+    for (const l of rest) {
+      const amounts = [...l.replace(/,/g, "").matchAll(/(\d+)\s*円/g)].map((m) => parseInt(m[1], 10));
+      if (amounts.length >= 2 && amounts[0] === rentYen && amounts[1] < rentYen && amounts[1] <= 100_000) { adminFeeYen = amounts[1]; break; }
+    }
+  }
 
   // 敷金・礼金（「敷1ヶ月 礼なし」「敷金 なし 礼金 1ヶ月」「敷0 礼0」）
   let depositMonths = num(data?.deposit_months);
@@ -476,7 +524,10 @@ export function buildCustomerProfile(
   const ratios: number[] = [];
   for (const r of sentRows) {
     const n = normalizeBuildingName(r.property_name);
-    if (n) sentBuildings.add(n);
+    // 2026-09-24: 一般名（「物件」＝拡張が itandi で名前を取れなかった送付）は建物が分からないので送付済みに入れない
+    //   （入れると今回の「物件」全件が ALREADY_SENT −30 で外す候補 20 点に横並びになった・HONOKA さんの回 id 50〜67）
+    //   グループに共有しただけの行（delivery='shared'）も入れない（お客様には届いていない・同じ回の共有で自分自身が送付済みになる）
+    if (n && !isGenericBuildingName(r.property_name) && isCustomerDelivery(r)) sentBuildings.add(n);
     const rent = num(r.rent);
     if (rent != null && rent > 0 && rentMax != null) ratios.push(rent / rentMax);
   }
@@ -593,7 +644,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   } else if (profile.buildingAgeMax != null) missing.push("building_age");
 
   // 送付済みの建物（サーバーの skip-sent と同じ線。スタッフモードでは呼ばれない）
-  if (profile.history.sentBuildings.has(normalizeBuildingName(facts.name))) add("ALREADY_SENT", -30, "drop");
+  //   名前が一般名（「物件」等）の物件は照合しない（どの建物か分からない＝送付済みと判断しない・迷う物は残す側）
+  if (!isGenericBuildingName(facts.name) && profile.history.sentBuildings.has(normalizeBuildingName(facts.name))) add("ALREADY_SENT", -30, "drop");
 
   // AD と利益（AD円 − 割引）
   // 2026-09-24 竹内「AD の価値をもっと上げる。AD は報酬なので重要。AD 2ヶ月以上（200%以上）なら追加で点数を上げる」:

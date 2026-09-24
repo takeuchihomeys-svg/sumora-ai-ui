@@ -48,7 +48,7 @@ async function loadProfile(propertyCustomerId: string | null) {
   const since = new Date(Date.now() - 180 * 86400_000).toISOString();
   const [custRes, sentRes, patRes, convsRes] = await Promise.all([
     supabase.from("property_customers").select("rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet").eq("id", propertyCustomerId).maybeSingle(),
-    supabase.from("sent_properties").select("property_name, rent").eq("property_customer_id", propertyCustomerId).gte("sent_at", since).limit(500),
+    supabase.from("sent_properties").select("property_name, rent, delivery, source").eq("property_customer_id", propertyCustomerId).gte("sent_at", since).limit(500),
     supabase.from("property_selection_patterns").select("selling_points, selection_label").eq("property_customer_id", propertyCustomerId).order("created_at", { ascending: false }).limit(60),
     supabase.from("conversations").select("id").eq("property_customer_id", propertyCustomerId).limit(10),
   ]);

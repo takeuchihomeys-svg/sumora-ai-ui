@@ -6,14 +6,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { okCountOf, type CustomerBest } from "@/app/lib/pickup-best";
-import { needsTrimBeforeAnalysis } from "@/app/lib/pickup-image-url";
+import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
+import { sortForReview, buildReasonView, formatScoreBreakdown } from "@/app/lib/pickup-review-order";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
 type Item = {
   id: number; rank: number; property_name: string; room_no: string | null; summary_text: string;
   pdf_blob_url: string | null; pdf_has_text: boolean; verdict: string | null; score: number | null;
-  reasons_ja: string[] | null; ad_yen: number | null; profit_yen: number | null; recommended: number; status: string; sent_at: string | null;
+  reasons_ja: string[] | null; reason_codes?: string[] | null; ad_yen: number | null; profit_yen: number | null; recommended: number; status: string; sent_at: string | null;
   page_image_url: string | null; agent_image_url?: string | null; trim_image_url?: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
   image_analysis?: { match?: number | null; [k: string]: unknown } | null;
 };
@@ -23,7 +24,7 @@ type LineLite = { profile_image_url: string | null; updated_at: string | null; a
 type SentHist = { id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null };
 type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string; sent_history?: SentHist[]; has_more_batches?: boolean;
   /** 2026-09-24 回をまたいだ一番（画像で分析の点）と、画像で確かめる希望の有無（詳細だけ） */
-  best?: CustomerBest | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null };
+  best?: (CustomerBest & { image_url?: string | null; status?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null };
 /** 一覧の行（軽い要約だけ。画像・本文は開いた時に読む） */
 type ListCustomer = {
   key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null;
@@ -89,7 +90,55 @@ type Bubble =
   | { kind: "analysis"; at: string; batch: Batch; items: Item[]; bestId: number | null }
   | { kind: "staff"; at: string; text: string; sub?: string }
   | { kind: "history"; at: string; items: SentHist[] }
-  | { kind: "best"; at: string; best: CustomerBest };
+  | { kind: "best"; at: string; best: NonNullable<Customer["best"]> };
+
+/** 理由の札の色（外す理由＝赤・減点＝橙・加点＝緑・知らせ＝灰） */
+const CHIP_STYLE: Record<string, { bg: string; color: string }> = {
+  drop: { bg: "#ffebee", color: "#b71c1c" }, minus: { bg: "#fff3e0", color: "#e65100" },
+  plus: { bg: "#e8f5e9", color: "#2e7d32" }, info: { bg: "#eceff1", color: "#607d8b" },
+};
+
+/**
+ * 点の横の理由の札。2026-09-24 竹内「今回なんで外されているのか理由が分かれば大きい」:
+ *   外す・減点の理由（何点）を先に、読めなかった材料（点が動かない理由）を灰色で、加点は後ろに。「内訳」で 基準50 からの足し引きを出す
+ */
+function ReasonChips({ it, open, onToggle }: { it: Item; open: boolean; onToggle: () => void }) {
+  const v = buildReasonView(it);
+  const chips = [...v.minus, ...v.plus.slice(0, it.verdict === "pass" ? 3 : 2)];
+  const breakdown = formatScoreBreakdown(v, it.score);
+  if (chips.length === 0 && v.missing.length === 0 && v.notes.length === 0 && it.profit_yen == null) return null;
+  return (
+    <div className="mt-1">
+      <div className="flex flex-wrap items-center gap-1">
+        {chips.map((c) => {
+          const st = CHIP_STYLE[c.tone];
+          return <span key={c.code} className="text-[10px] leading-none px-1.5 py-1 rounded-full font-bold" style={{ background: st.bg, color: st.color }}>
+            {c.tone === "drop" ? "✕ " : ""}{c.label}{c.points !== 0 ? ` ${c.points > 0 ? "+" : "−"}${Math.abs(c.points)}` : ""}</span>;
+        })}
+        {v.missing.length > 0 && <span className="text-[10px] leading-none px-1.5 py-1 rounded-full" style={CHIP_STYLE.info}>材料なし: {v.missing.join("・")}</span>}
+        {it.profit_yen != null && <span className="text-[10px] leading-none px-1.5 py-1 rounded-full" style={CHIP_STYLE.info}>利益目安 {it.profit_yen.toLocaleString()}円</span>}
+        {breakdown && (
+          <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggle(); }}
+            className="text-[10px] leading-none px-1.5 py-1 rounded-full font-bold" style={{ color: "#1565C0", background: "#e3f2fd" }}>{open ? "内訳を閉じる" : "点の内訳"}</button>
+        )}
+      </div>
+      {open && breakdown && <div className="text-[10px] mt-1 leading-snug break-words" style={{ color: "#546e7a" }}>{breakdown}</div>}
+      {v.notes.length > 0 && <div className="text-[10px] text-[#78909c] mt-0.5">{v.notes.join("・")}</div>}
+    </div>
+  );
+}
+
+/** 分析結果の並び: 点の高い順（要確認・点なしは後ろ）→ 🌟 → 順位 */
+function analysisOrder(items: Item[]): Item[] {
+  const m = (x: Item) => {
+    const a = x.image_analysis as { match?: unknown; review?: { status?: string } } | null;
+    if (a?.review?.status === "要確認") return -2;
+    return typeof a?.match === "number" ? a.match : -1;
+  };
+  return items.slice().sort((a, z) => (m(z) - m(a)) || (z.recommended - a.recommended) || (a.rank - z.rank));
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** 画像を手元に保存（別ドメインの画像は download 属性が効かないので、取ってきて Blob の URL で落とす。取れなければ新しいタブで開く） */
 async function saveImage(url: string, name: string) {
@@ -97,6 +146,11 @@ async function saveImage(url: string, name: string) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(String(res.status));
     const blob = await res.blob();
+    // スマホは共有シート（「画像を保存」で写真に入る）。a[download] だと iPhone は「ファイル」に落ちる
+    const file = new File([blob], name, { type: blob.type || "image/jpeg" });
+    if (!isDesktop() && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; } catch (e) { if ((e as { name?: string })?.name === "AbortError") return; }
+    }
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = name;
@@ -160,6 +214,10 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [q, setQ] = useState("");
+  /** 点の内訳を開いている物件 */
+  const [openBreakdown, setOpenBreakdown] = useState<Record<number, boolean>>({});
+  /** iPhone で共有シートを開けなかった時（画像の用意に時間がかかり、押した操作の有効期限が切れた）の「もう一度押す」用 */
+  const [shareReady, setShareReady] = useState<File[] | null>(null);
   const openRef = useRef<{ key: string; pcid: string | null; conv: string | null } | null>(null);
   const nBatchesRef = useRef(3);
   const historyPushedRef = useRef(false);
@@ -343,7 +401,8 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   };
 
   // 画像を開く: パソコンは今のまま新しいタブ（余白が出ない）。スマホは LINE と同じライトボックス（縦持ちで A4 横の資料の下に空きが出ない）
-  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  //   noSave: 元付業者の資料（2ページ目・AD の記載あり）は見るだけで 💾 保存を出さない（写真に入るとお客様に送る事故になる）
+  const [lightbox, setLightbox] = useState<{ url: string; name: string; noSave?: boolean } | null>(null);
   const lightboxRef = useRef(lightbox);
   lightboxRef.current = lightbox;
 
@@ -363,11 +422,11 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     scrollToBottom();
   }, [detail]);
   useEffect(() => { if (vp.kb) scrollToBottom(); }, [vp.kb]);
-  const openImage = (e: React.MouseEvent, url: string | null | undefined, name: string) => {
+  const openImage = (e: React.MouseEvent, url: string | null | undefined, name: string, opts?: { noSave?: boolean }) => {
     e.stopPropagation();
     if (!url || isDesktop()) return;   // パソコンは <a target=_blank> のまま
     e.preventDefault();
-    setLightbox({ url, name });
+    setLightbox({ url, name, noSave: !!opts?.noSave });
   };
   const loadMoreBatches = () => {
     if (!openRef.current) return;
@@ -453,6 +512,93 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     } catch (e) {
       setMsg(`⚠️ ${e instanceof Error ? e.message : String(e)}`);
       return false;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // 2026-09-24 竹内「画像トリミングボタンを画像保存にして、押したら選択しているのが一括で携帯に保存される形にする」:
+  //   保存するのはお客様に送る1ページ目（トリミング → 文字のある page_image_url）だけ。元付の資料（2ページ目）は絶対に使わない（pickSaveImageUrl）。
+  //   送る形の画像が無い物件は先にトリミングしてから保存する。
+  //   スマホ（iPhone Safari）: navigator.share({ files }) で複数枚を共有シートへ →「N枚の画像を保存」で写真に入る。
+  //     画像の取得に時間がかかると押した操作の有効期限が切れて share が NotAllowedError になる → 「📲 写真に保存」をもう一度押してもらう
+  //   パソコン（または share で画像を渡せない端末）: 1枚ずつダウンロード（少し間を空ける＝ブラウザが複数のダウンロードを止めにくい）
+  //   画像は Vercel Blob（公開・Access-Control-Allow-Origin: *）なので、そのまま fetch できる（2026-09-24 実測）
+  const openShareSheet = async (files: File[]): Promise<void> => {
+    try {
+      await navigator.share({ files });
+      setShareReady(null);
+      setMsg(`💾 ${files.length}枚を共有シートに渡しました（「画像を保存」で写真に入ります）`);
+    } catch (e) {
+      const name = (e as { name?: string })?.name;
+      if (name === "AbortError") { setShareReady(null); setMsg("保存を取りやめました"); return; }
+      // 押した操作の有効期限切れ（NotAllowedError）→ もう一度押してもらう。
+      //   それ以外（DataError・TypeError＝この端末では画像を渡せない）はもう一度押しても同じなので、ダウンロードに回す（押す→失敗の繰り返しを防ぐ）
+      if (name === "NotAllowedError") {
+        setShareReady(files);
+        setMsg(`💾 ${files.length}枚の画像を用意しました。下の「📲 写真に保存」を押してください`);
+        return;
+      }
+      setShareReady(null);
+      await downloadFiles(files);
+      setMsg(`💾 ${files.length}枚をダウンロードしました（共有シートが使えませんでした）`);
+    }
+  };
+  /** パソコン（または共有シートで渡せない端末）: 1枚ずつダウンロード（少し間を空ける＝ブラウザが複数のダウンロードを止めにくい） */
+  async function downloadFiles(files: File[]): Promise<void> {
+    for (const f of files) {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(f);
+      a.download = f.name;
+      document.body.appendChild(a); a.click();
+      const href = a.href;
+      setTimeout(() => { URL.revokeObjectURL(href); a.remove(); }, 2000);
+      await sleep(400);
+    }
+  }
+  const saveImages = async (b: Batch | null, targetsIn?: Item[]) => {
+    const targets = targetsIn ?? (b ? b.items.filter((it) => checked[it.id]) : []);
+    if (targets.length === 0) { setMsg("保存する物件にチェックを入れてください"); return; }
+    let list = targets;
+    const needTrim = targets.filter((it) => !pickSaveImageUrl(it));
+    if (needTrim.length > 0 && b) {
+      if (!(await trim(b, needTrim.filter((it) => b.items.some((x) => x.id === it.id))))) return;
+      const fresh = openRef.current ? await loadDetail(openRef.current, nBatchesRef.current, false) : null;
+      const byId = new Map((fresh?.batches ?? []).flatMap((x) => x.items).map((x) => [x.id, x] as const));
+      list = targets.map((t) => byId.get(t.id) ?? t);
+    }
+    const pairs = list.map((it) => ({ it, url: pickSaveImageUrl(it) })).filter((x): x is { it: Item; url: string } => !!x.url);
+    const noImage = list.length - pairs.length;
+    if (pairs.length === 0) { setMsg("保存できる画像がありません（資料の PDF が無い物件です）"); return; }
+    setBusy(`save:${b?.batch_id ?? "best"}`);
+    setShareReady(null);
+    try {
+      const files: File[] = [];
+      const failed: string[] = [];
+      for (const { it, url } of pairs) {
+        setMsg(`💾 画像を用意しています… ${files.length + failed.length}/${pairs.length}`);
+        try {
+          const res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) throw new Error(String(res.status));
+          const blob = await res.blob();
+          const name = saveImageFileName(it, url);
+          files.push(new File([blob], name, { type: blob.type || (name.endsWith(".png") ? "image/png" : "image/jpeg") }));
+        } catch {
+          failed.push(`【${it.rank}】`);
+        }
+      }
+      if (files.length === 0) throw new Error("画像を取得できませんでした");
+      const tail = [noImage ? `画像の無い ${noImage}件は除きました` : "", failed.length ? `取れなかった: ${failed.join("")}` : ""].filter(Boolean).join("・");
+      const canShareFiles = !isDesktop() && typeof navigator.share === "function" && typeof navigator.canShare === "function" && navigator.canShare({ files });
+      if (canShareFiles) {
+        await openShareSheet(files);
+        if (tail) setMsg((m) => `${m}（${tail}）`);
+        return;
+      }
+      await downloadFiles(files);
+      setMsg(`💾 ${files.length}枚をダウンロードしました${tail ? `（${tail}）` : ""}`);
+    } catch (e) {
+      setMsg(`⚠️ ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(null);
     }
@@ -645,7 +791,8 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                   <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e0f2f1", color: "#00695c" }}>🔍 画像で確かめたい希望: {needLabels}</div>
                 )}
                 <div className="flex flex-col gap-2">
-                  {bb.batch.items.map((it) => {
+                  {/* 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」 */}
+                  {sortForReview(bb.batch.items).map((it) => {
                     const v = it.verdict ? VERDICT_JA[it.verdict] : null;
                     const body = it.summary_text.replace(/^【\d+[^】]*】\s*/u, "").split("\n").filter(Boolean);
                     const pending = it.status === "pending";
@@ -669,9 +816,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                             {!pending && <span className="text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}
                           </div>
                           <div className="text-[11px] text-[#455a64] mt-0.5 break-words">{body.slice(0, 4).join(" / ")}</div>
-                          {it.reasons_ja && it.reasons_ja.length > 0 && (
-                            <div className="text-[10px] text-[#78909c] mt-0.5">{it.reasons_ja.slice(0, 3).join("・")}{it.profit_yen != null ? `・利益目安 ${it.profit_yen.toLocaleString()}円` : ""}</div>
-                          )}
+                          <ReasonChips it={it} open={!!openBreakdown[it.id]} onToggle={() => setOpenBreakdown((p) => ({ ...p, [it.id]: !p[it.id] }))} />
                           {it.image_lines && it.image_lines.length > 0 && (
                             <div className="text-[10px] mt-0.5" style={{ color: "#37474f" }}>📷 {it.image_lines.slice(0, 5).join("／")}</div>
                           )}
@@ -679,7 +824,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                             {it.pdf_blob_url && <a href={it.pdf_blob_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#1565C0" }}>📄 資料を見る{!it.pdf_has_text ? "（文字層なし）" : ""}</a>}
                             {/* 偶数ページ＝元付業者の資料（AD の記載・ブレインが読んだ側）。お客様には送らない */}
                             {it.agent_image_url && <a href={it.agent_image_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#6a1b9a" }}
-                              onClick={(e) => openImage(e, it.agent_image_url, `${it.property_name}_元付.png`)}>🏢 元付の資料</a>}
+                              onClick={(e) => openImage(e, it.agent_image_url, `${it.property_name}_元付.png`, { noSave: true })}>🏢 元付の資料</a>}
                           </div>
                         </div>
                       </label>
@@ -697,10 +842,11 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                       </button>
                     )}
                     <div className="flex gap-2">
-                      <button disabled={!!busy} onClick={() => void trim(bb.batch)}
-                        title="選んだ物件の PDF 1ページ目（弊社帯替え）を画像にする（元付業者の資料は使わない）"
+                      {/* 2026-09-24 竹内「画像トリミングボタンを画像保存にして、押したら選択しているのが一括で携帯に保存される形にする」 */}
+                      <button disabled={!!busy} onClick={() => void saveImages(bb.batch)}
+                        title="選んだ物件の資料画像（PDF 1ページ目・弊社帯替え）をまとめて保存する（元付業者の資料は保存しない）"
                         className="flex-1 px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy ? 0.6 : 1 }}>
-                        {busy === `trim:${bb.batch.batch_id}` ? "✂️ …" : "✂️ 画像トリミング"}
+                        {busy === `trim:${bb.batch.batch_id}` || busy === `save:${bb.batch.batch_id}` ? "💾 …" : "💾 画像保存"}
                       </button>
                       {!needRecommended && (
                         <button disabled={!!busy} onClick={() => void analyze(bb.batch)}
@@ -733,7 +879,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 <div className="text-xs font-bold mb-1">✂️ お客様に送る物件資料の画像 {bb.items.length}枚（PDF 1ページ目・弊社帯替え）</div>
                 {/* 重くならないよう小さく並べ、押すと原寸（パソコンは新しいタブ・スマホはライトボックス）。画像は見えた時だけ読む（lazy） */}
                 <div className="grid grid-cols-2 gap-2" style={{ maxWidth: 520 }}>
-                  {bb.items.map((it) => {
+                  {sortForReview(bb.items).map((it) => {
                     const name = `${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`;
                     return (
                     <div key={`ti${it.id}`} className="rounded-xl overflow-hidden" style={{ border: "1px solid #e0e0e0" }}>
@@ -750,7 +896,11 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                     );
                   })}
                 </div>
-                <div className="text-[10px] text-[#b0bec5] mt-1 text-right">「📤 AIXで送る」はこの画像をセットします</div>
+                <div className="flex items-center justify-between gap-2 mt-1.5">
+                  <button disabled={!!busy} onClick={() => void saveImages(bb.batch, bb.items)}
+                    className="text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy ? 0.6 : 1 }}>💾 {bb.items.length}枚まとめて保存</button>
+                  <span className="text-[10px] text-[#b0bec5] text-right">「📤 AIXで送る」はこの画像をセットします</span>
+                </div>
               </div>
               <span className={TIME}>{hm(bb.at)}</span>
             </div>
@@ -768,7 +918,9 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                     {isGlobal ? "👑 一番条件に合う" : "この回で一番"}: 【{best.rank}】{best.property_name}（{best.image_analysis?.match}点）</div> : null;
                 })()}
                 <div className="flex flex-col gap-2">
-                  {bb.items.map((it) => {
+                  {/* 2026-09-24 竹内「分析結果のところに画像を添付。分析によって絞られたのもそのまま使えるように」:
+                      点の高い順に並べ、各物件に送る形の画像（1ページ目）とチェックを付ける。チェックは上の一覧と同じ（下のボタンでそのまま送る・保存） */}
+                  {analysisOrder(bb.items).map((it) => {
                     const a = it.image_analysis as unknown as { water?: string; kitchen?: string; layout?: string; storage?: string; match?: number | null; good?: string[]; concern?: string[];
                       checks?: Array<{ id: string; result: string; why: string }>; wants?: Array<{ id: string; source: string; text: string; ng: boolean; must: boolean }> | string;
                       review?: { status: string; reasons: string[] }; sheet?: { type?: string; crop_mode?: string | null; crop_basis?: string | null; crop_reason?: string | null; source?: string } } | null;
@@ -781,9 +933,26 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                     const sheetNote = a.sheet ? [TYPE_JA[a.sheet.type ?? ""] ?? a.sheet.type, a.sheet.crop_mode ? CROP_JA[a.sheet.crop_mode] ?? a.sheet.crop_mode : null, a.sheet.source ? SRC_JA[a.sheet.source] ?? a.sheet.source : null].filter(Boolean).join("・") : "";
                     const wantList = Array.isArray(a.wants) ? a.wants : [];
                     const MARK: Record<string, string> = { ok: "◎", ng: "×", unknown: "？" };
+                    const aImg = pickSaveImageUrl(it);
+                    const aPending = it.status === "pending";
                     return (
-                      <div key={`ai${it.id}`} className="rounded-xl px-2 py-1.5" style={{ background: it.id === bb.bestId ? "#f1f8e9" : "#f7f9fb" }}>
-                        <div className="text-[11px] font-bold">【{it.rank}】{it.property_name}{a.match != null ? `　${a.match}点` : ""}{needCheck && <span className="ml-1 px-1.5 py-0.5 rounded text-[10px]" style={{ background: "#fff3e0", color: "#e65100" }}>⚠ 要確認</span>}</div>
+                      <div key={`ai${it.id}`} className="rounded-xl px-2 py-1.5" style={{ background: it.id === bb.bestId ? "#f1f8e9" : "#f7f9fb", opacity: aPending ? 1 : 0.6 }}>
+                        <div className="flex gap-2 items-start">
+                        <input type="checkbox" className="mt-1 shrink-0" disabled={!aPending} checked={!!checked[it.id]} aria-label={`【${it.rank}】を選ぶ`}
+                          onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
+                        {aImg ? (
+                          <a href={aImg} target="_blank" rel="noreferrer" className="shrink-0" onClick={(e) => openImage(e, aImg, saveImageFileName(it, aImg))}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={aImg} alt="" loading="lazy" decoding="async" className="rounded-md object-cover" style={{ width: 88, height: 62, border: "1px solid #e0e0e0", background: "#fff", objectPosition: "top" }} />
+                          </a>
+                        ) : (
+                          <div className="shrink-0 rounded-md flex items-center justify-center text-[9px] text-[#90a4ae] text-center" style={{ width: 88, height: 62, border: "1px dashed #cfd8dc" }}>画像は保存時に作成</div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-bold break-words">【{it.rank}】{it.property_name}{it.room_no ? ` ${it.room_no}号室` : ""}{a.match != null ? `　${a.match}点` : ""}{needCheck && <span className="ml-1 px-1.5 py-0.5 rounded text-[10px]" style={{ background: "#fff3e0", color: "#e65100" }}>⚠ 要確認</span>}{!aPending && <span className="ml-1 text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}</div>
+                        {it.recommended > 0 && <div className="text-[10px] font-bold mt-0.5" style={{ color: "#f57f17" }}>{it.recommended === 2 ? "🌟★ 一番オススメ" : "🌟 オススメ"}</div>}
+                        </div>
+                        </div>
                         {needCheck && (a.review?.reasons ?? []).length > 0 && (
                           <div className="text-[10px] mt-0.5 leading-snug" style={{ color: "#e65100" }}>{(a.review?.reasons ?? []).slice(0, 3).map((x, k) => <div key={k}>・{x}</div>)}<div style={{ color: "#90a4ae" }}>（点は出しません。資料が正しい物件か確かめてください）</div></div>
                         )}
@@ -816,6 +985,31 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                     );
                   })}
                 </div>
+                {/* 分析で絞った物件をそのまま使う（チェックは上の一覧と同じ）。点の高い順の上位3件を選ぶ手早い道も */}
+                {(() => {
+                  const pend = analysisOrder(bb.items).filter((it) => it.status === "pending");
+                  if (pend.length === 0) return null;
+                  const sel = pend.filter((it) => checked[it.id]);
+                  const top = pend.filter((it) => typeof (it.image_analysis as { match?: unknown } | null)?.match === "number" && (it.image_analysis as { review?: { status?: string } } | null)?.review?.status !== "要確認").slice(0, 3);
+                  return (
+                    <div className="flex flex-col gap-2 mt-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-[#607d8b]">この分析から {sel.length}件を選択中</span>
+                        {top.length > 0 && (
+                          <button type="button" disabled={!!busy} onClick={() => setChecked((p) => { const n = { ...p }; for (const it of pend) n[it.id] = top.some((t) => t.id === it.id); return n; })}
+                            className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: "#e0f2f1", color: "#00695c" }}>点の高い{top.length}件だけ選ぶ</button>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <button disabled={!!busy || sel.length === 0} onClick={() => void sendViaAix(open, bb.batch, sel)}
+                          className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy || sel.length === 0 ? 0.5 : 1 }}>📤 AIXで送る（{sel.length}件）</button>
+                        <button disabled={!!busy || sel.length === 0} onClick={() => void saveImages(bb.batch, sel)}
+                          className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy || sel.length === 0 ? 0.5 : 1 }}>
+                          {busy === `save:${bb.batch.batch_id}` || busy === `trim:${bb.batch.batch_id}` ? "💾 …" : "💾 画像保存"}</button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               <span className={TIME}>{hm(bb.at)}</span>
             </div>
@@ -834,6 +1028,23 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 <div className="text-[13px] font-bold px-2 py-1.5 rounded-lg" style={{ background: "#fff8e1", color: "#e65100" }}>
                   【{bst.rank}】{bst.property_name}{bst.room_no ? ` ${bst.room_no}号室` : ""}（{bst.match}点）
                 </div>
+                {/* 2026-09-24 竹内「全体で一番条件に合うのところも画像表示する」: お客様に送る1ページ目（元付の資料は出さない）。押すと原寸 */}
+                {(() => {
+                  const bImg = (bItem ? pickSaveImageUrl(bItem) : null) ?? bst.image_url ?? null;
+                  if (!bImg) return null;
+                  const bName = saveImageFileName(bst, bImg);
+                  return (
+                    <div className="mt-1.5 rounded-xl overflow-hidden" style={{ border: "1px solid #e0e0e0", maxWidth: 360 }}>
+                      <a href={bImg} target="_blank" rel="noreferrer" onClick={(e) => openImage(e, bImg, bName)}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={bImg} alt={bst.property_name} loading="lazy" decoding="async" className="w-full block" style={{ aspectRatio: "1.41", objectFit: "cover", objectPosition: "top", background: "#fff" }} />
+                      </a>
+                      <div className="flex justify-end px-2 py-1.5" style={{ background: "#f7f9fb" }}>
+                        <button onClick={() => void saveImage(bImg, bName)} className="text-[11px] font-bold px-2 py-1 rounded-lg" style={{ background: "#6a1b9a", color: "#fff" }}>💾 保存</button>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="text-[10px] text-[#607d8b] mt-1 leading-relaxed">
                   {bst.tied_names.length > 0 && <div>同点: {bst.tied_names.join("・")}</div>}
                   {bst.unscored > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.unscored}件は資料から読めず未判定</div>}
@@ -1018,6 +1229,15 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
         )}
       </div>
     </div>
+    {/* 画像を用意した後に共有シートを開けなかった時（iPhone で押した操作の有効期限切れ）: もう一度押して写真に保存 */}
+    {shareReady && (
+      <div className="fixed inset-x-0 bottom-0 z-[110] flex items-center gap-2 px-3 pt-3 bg-white shadow-[0_-4px_16px_rgba(0,0,0,0.12)]" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
+        <button onClick={() => void openShareSheet(shareReady)} className="flex-1 py-3 rounded-xl text-sm font-bold text-white" style={{ background: "#6a1b9a" }}>
+          📲 写真に保存（{shareReady.length}枚）
+        </button>
+        <button onClick={() => setShareReady(null)} aria-label="閉じる" className="h-11 w-11 shrink-0 rounded-xl text-[#607d8b]" style={{ background: "#eceff1" }}>✕</button>
+      </div>
+    )}
     {/* 画像のライトボックス（スマホ・LINE の page.tsx 14701 と同じ形: 黒い背景・中央・object-contain） */}
     {lightbox && (
       <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90" onClick={() => setLightbox(null)}>
@@ -1025,8 +1245,8 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
         <img src={lightbox.url} alt="" className="max-h-[90svh] max-w-[96vw] rounded-xl object-contain shadow-2xl" onClick={(e) => e.stopPropagation()} />
         <button onClick={() => setLightbox(null)} aria-label="閉じる"
           className="absolute right-4 top-[max(16px,env(safe-area-inset-top))] flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-lg text-white">✕</button>
-        <button onClick={(e) => { e.stopPropagation(); void saveImage(lightbox.url, lightbox.name); }}
-          className="absolute bottom-[max(20px,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full bg-white/20 px-4 py-2 text-sm font-bold text-white">💾 保存</button>
+        {!lightbox.noSave && <button onClick={(e) => { e.stopPropagation(); void saveImage(lightbox.url, lightbox.name); }}
+          className="absolute bottom-[max(20px,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full bg-white/20 px-4 py-2 text-sm font-bold text-white">💾 保存</button>}
       </div>
     )}
     </>

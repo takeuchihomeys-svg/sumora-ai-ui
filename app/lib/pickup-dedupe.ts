@@ -22,6 +22,7 @@ import { normalizePropertyName } from "./property-name-match";
 import { parseRentFromSummary } from "./property-summary-parse";
 import { parsePropertyFacts } from "./property-brain";
 import { parseRecommendMark } from "./property-pickups";
+import { isGenericBuildingName } from "./generic-building-name";
 
 /** 同じ建物で「同じ部屋とみなす」面積の差（㎡）。竹内「平米数2㎡以内」 */
 export const SAME_BUILDING_AREA_DIFF_SQM = 2;
@@ -48,17 +49,9 @@ const ROMAN: Record<string, string> = {
 /**
  * 名前だけでは建物を決められない一般名。2026-09-24 竹内「前回の反証で出た点も直す」: 名前が読めず「物件」になった説明文どうしが
  *   同じ建物と見なされ、別の建物の部屋が落ちる穴があった（parsePropertyFacts は名前が無い時「物件」を入れる）→ 比べない（残す側）
+ * 決まりは generic-building-name.ts に1つ（property-brain の送付済みの照合と同じ線）
  */
-const GENERIC_BUILDING_NAMES = new Set(["物件", "物件名", "建物", "建物名", "マンション", "アパート", "ハイツ", "コーポ", "メゾン", "レジデンス",
-  "貸家", "戸建", "戸建て", "一戸建", "一戸建て", "テラスハウス", "不明", "未定", "名称未設定", "名称なし", "なし", "無し", "-", "－"]);
-
-/** 一般名（または1文字以下）なら true＝同じ建物の判定に使わない */
-export function isGenericBuildingName(name: string | null | undefined): boolean {
-  const raw = String(name ?? "").normalize("NFKC").replace(/^\s*【[^】]*】\s*/, "").replace(/[\s　]/g, "");
-  if (!raw) return true;
-  if (GENERIC_BUILDING_NAMES.has(raw)) return true;
-  return normalizePropertyName(raw).length <= 1;
-}
+export { isGenericBuildingName };
 
 /** 建物の鍵（完全一致で同じ建物）。空なら比べない。一般名（「物件」等）も空＝比べない */
 export function buildingKey(name: string | null | undefined): string {

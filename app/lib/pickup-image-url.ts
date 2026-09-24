@@ -24,3 +24,20 @@ export function needsTrimBeforeAnalysis(r: PickupImageRow): boolean {
   if (r.pdf_blob_url) return false;
   return pickAnalysisImageUrl(r) == null;
 }
+
+/**
+ * 「💾 画像保存」で手元（スマホの写真）に保存する画像。お客様に送る1ページ目（弊社帯替え）だけ。
+ * 2026-09-24 竹内「画像トリミングボタンを画像保存にして、押したら選択しているのが一括で携帯に保存される形にする」:
+ *   トリミング（送る形）→ 文字層が取れた回の1ページ目（page_image_url）→ 無し（null＝先にトリミングしてから保存）。
+ *   ⚠ 元付業者の資料（2ページ目・agent_image_url・AD の記載あり）は**絶対に選ばない**（引数の型にも入れない）
+ */
+export function pickSaveImageUrl(r: { trim_image_url?: string | null; page_image_url?: string | null; pdf_has_text?: boolean | null }): string | null {
+  return pickAnalysisImageUrl({ trim_image_url: r.trim_image_url, page_image_url: r.page_image_url, pdf_has_text: r.pdf_has_text });
+}
+
+/** 保存するファイル名（端末で使えない文字を外す）。「3_エスリード難波AGREA_405.jpg」 */
+export function saveImageFileName(r: { rank: number; property_name: string; room_no?: string | null }, url: string): string {
+  const ext = /\.png(?:$|\?)/i.test(url) ? "png" : "jpg";
+  const base = `${r.rank}_${r.property_name}${r.room_no ? `_${r.room_no}` : ""}`.replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 60);
+  return `${base}.${ext}`;
+}

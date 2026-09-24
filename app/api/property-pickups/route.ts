@@ -6,6 +6,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { toPickupHandoffItem } from "@/app/lib/property-pickups";
 import { pickCustomerBest } from "@/app/lib/pickup-best";
+import { sortForReview } from "@/app/lib/pickup-review-order";
+import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { extractImageWants, dedupeWantsByTopic, imageAnalysisNeed, type ImageWant } from "@/app/lib/image-wants";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +16,7 @@ type Row = {
   id: number; created_at: string; batch_id: string; property_customer_id: string | null; conversation_id: string | null;
   customer_name: string | null; site: string | null; rank: number; property_name: string; room_no: string | null;
   summary_text: string; pdf_url: string | null; pdf_blob_url: string | null; pdf_has_text: boolean;
-  verdict: string | null; score: number | null; reasons_ja: string[] | null; ad_yen: number | null; profit_yen: number | null;
+  verdict: string | null; score: number | null; reasons_ja: string[] | null; reason_codes?: string[] | null; ad_yen: number | null; profit_yen: number | null;
   recommended: number; status: string; sent_at: string | null;
   page_image_url: string | null; agent_image_url: string | null; trim_image_url: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
   image_analysis: Record<string, unknown> | null;
@@ -183,7 +185,7 @@ async function buildList(since: string) {
 // ── 詳細（開いたお客様1人分・直近 N 回分＋送った履歴） ─────────────────────────────
 async function buildDetail(pcid: string | null, conv: string | null, nBatches: number) {
   let q = supabase.from("property_pickups")
-    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis")
+    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis")
     .order("created_at", { ascending: false }).limit(300);
   q = pcid ? q.eq("property_customer_id", pcid) : q.eq("conversation_id", conv as string);
   let sq = supabase.from("sent_properties").select("id, property_name, room_no, channel, delivery, source, sent_at, image_url, pickup_id").order("sent_at", { ascending: false }).limit(40);
@@ -207,13 +209,17 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     if (!b) { b = { batch_id: r.batch_id, created_at: r.created_at, site: r.site, conversation_id: r.conversation_id, items: [] }; byBatch.set(r.batch_id, b); order.push(r.batch_id); }
     b.items.push(r);
   }
-  const batches = order.slice(0, nBatches).map((id) => byBatch.get(id)!).map((b) => ({ ...b, items: b.items.sort((a, z) => a.rank - z.rank) })).sort((a, z) => a.created_at.localeCompare(z.created_at));
+  // 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」: 🌟★ → 🌟 → 点の高い順（同点は元の順位）。画面も同じ関数で並べ直す
+  const batches = order.slice(0, nBatches).map((id) => byBatch.get(id)!).map((b) => ({ ...b, items: sortForReview(b.items) })).sort((a, z) => a.created_at.localeCompare(z.created_at));
   const first = rows[0] ?? null;
   const convId = conv ?? first?.conversation_id ?? null;
   const { data: cv } = convId ? await supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : { data: null };
   const c = cv as { customer_name: string | null; profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null } | null;
   // 2026-09-24 竹内「1番オススメの物件全体の中で」: 回をまたいだ一番（最新の回から 6時間以内の未送信・画像で分析の点）
-  const best = pickCustomerBest(rows);
+  const bestRaw = pickCustomerBest(rows);
+  // 2026-09-24 竹内「全体で一番条件に合うのところも画像表示する」: 一番の物件の画像（お客様に送る1ページ目だけ・元付は返さない）
+  const bestRow = bestRaw ? rows.find((r) => r.id === bestRaw.id) ?? null : null;
+  const best = bestRaw ? { ...bestRaw, image_url: bestRow ? pickSaveImageUrl(bestRow) : null, status: bestRow?.status ?? null } : null;
   // 画像で確かめる希望: 分析済みの回に保存した希望（会話・訴求込み）があればそれ、無ければ条件欄だけで軽く判定
   const savedWants = rows.map((r) => (r.image_analysis as { wants?: unknown } | null)?.wants).find((w): w is ImageWant[] => Array.isArray(w) && w.length > 0) ?? null;
   const cond = (condRes.data ?? null) as { preferences?: string | null; ng_points?: string | null; other_requests?: string | null; additional_conditions?: string | null } | null;
