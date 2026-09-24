@@ -1,38 +1,83 @@
-// app/lib/pickup-image-analysis.ts
-// 「🔍 画像で分析」: 物件資料の画像（お客様に送る1ページ目＝間取り図・写真・設備欄）を DeepSeek が読み、
-//   お客様の希望に照らして 水回り／キッチン／リビングと洋室の位置関係／収納（WIC 等）を判断し、一番合う物件を出す。
+// app/lib/pickup-image-analysis.ts（純関数・DB/DeepSeek 依存なし）
+// 「🔍 画像で分析」: 物件資料の事実（文字層＋切り出した間取り図から読んだ物）とお客様の希望を照らし、点と「要確認」を出す。
 //
 // 2026-09-24 竹内「画像で分析ボタンを付ける。お客さんの要望【水回りの判断・キッチンの判断・リビングと洋室の位置関係・
-//   収納（WIC 等）】を判断できる。お客さんの希望によって必要な場合がある。トリミングした画像の中で一番条件に合った物件がわかる」
-//
-// 設計（設計知見「画像は有無だけ・数値は読まない」「推論モデルは max_tokens を大きく」「失敗は判定を変えない」）:
-//   - 1物件 = 1回の呼び出し（複数枚を1回に入れると物件の取り違えが起きる）。並列
-//   - 読むのは見えている物だけ。金額・面積・帖数の数字は書かせない（誤読が本文に出ると事故）→ 帖数は「広め／普通／狭め」の言葉だけ
-//   - 合い具合（match 0〜100）はお客様の希望に書いてある項目だけで付ける。希望に無い項目は点に入れない
-//   - 送るのは物件資料の画像と「条件の文」だけ（お客様の名前・電話は入れない）
-//
-// 2026-09-24 強化（竹内「希望条件や NG 条件の細かい部分も画像から判断できているか。会話や物件オススメの訴求点から抜けている部分を入れる」）:
-//   - 希望は image-wants.ts が 条件欄・会話・訴求点から「画像で確かめられる物」だけ番号付き（W1…）で集める
-//   - DeepSeek は希望1つずつに ok／ng／unknown（画像で分からない）と根拠を返す（checks）
-//   - 点はモデルに付けさせず、checks から決定論で出す（scoreChecks・NG と必須は2倍・必須に ng なら20点が上限）。
-//     モデルの match は同じ画像でも 50→75 と揺れた（YUMA）
-import { callDeepSeek } from "./vision-alt-provider";
-import { scoreChecksDetail, wantsToText, type ImageWant, type WantCheck } from "./image-wants";
+//   収納（WIC 等）】を判断できる。トリミングした画像の中で一番条件に合った物件がわかる」
+// 2026-09-24 強化（竹内「希望条件や NG 条件の細かい部分も画像から判断できているか」）: 希望は image-wants.ts が W1… で集め、
+//   点はモデルに付けさせず checks から決定論で出す（scoreChecksDetail・NG と必須は2倍・必須に ng なら20点が上限）
+// 2026-09-24 作り直し（竹内「2つの型を使ってプロンプトキャッシュを効かせる」「必要な所だけを切り出して読ませる。表の文字は文字層から」
+//   「物件と一致しているか。食い違いは点を出さず『要確認』」「物件ごとに保存し、2回目以降は画像を読み直さない（希望との照合は文字だけ）」）:
+//   以前: 資料1ページ全体の画像＋希望を1回で DeepSeek（推論 low）に渡し、希望ごとの ok/ng も画像から答えさせていた
+//         （1件 0.2〜1円・出力 1,700〜10,540 で上限 12000 に迫った・希望が変わるたびに画像を読み直す）
+//   今:   画像から読むのは物件の事実だけ（sheet-read-server・型ごとの固定の前置き・推論なし・物件ごとに保存）。
+//         希望との照合はここで文字だけ・決まった手順（sheet-facts.matchWantsWithFacts）。決まらない希望だけ文字で1回聞く（judgeWantsByText）
+import { scoreChecksDetail, type ImageWant, type WantCheck } from "./image-wants";
+import { checkSheetConsistency, describeFacts, matchWantsWithFacts, parseSummaryFacts, type SheetConsistency, type SheetTextFacts } from "./sheet-facts";
+import type { SheetImageFacts } from "./sheet-prompt";
+import { okCountOf } from "./pickup-best";
 
 export type PickupImageAnalysis = {
-  water: string;        // 水回り（バス・トイレ別／独立洗面台／浴室乾燥 等・見える物だけ）
-  kitchen: string;      // キッチン（口数・対面/壁付け・IH/ガス 等）
-  layout: string;       // リビングと洋室の位置関係（隣り合う／廊下を挟む／引き戸で続き間 等）
-  storage: string;      // 収納（WIC・クローゼットの数と位置）
-  match: number | null; // お客様の希望への合い具合 0〜100（checks から決定論で。判定できる希望が無ければ null）
+  water: string;        // 水回り（バス・トイレ別／独立洗面台／浴室乾燥 等）
+  kitchen: string;      // キッチン（対面/壁付け・IH/ガス・口数）
+  layout: string;       // 間取りとリビング・洋室の関係（帖数）
+  storage: string;      // 収納（WIC・収納の数）
+  match: number | null; // 希望への合い具合 0〜100（checks から決定論で。要確認・判定できる希望が無ければ null）
   match_raw?: number | null; // 必須 NG の上限（20）をかける前の点（同点の並べ替えに使う）
   must_fail?: boolean;       // 必須・NG 条件に当たった
+  ok_count?: number;         // 「合う」の数（同点の並べ替えに使う）
   good: string[];       // 希望に合う点
   concern: string[];    // 希望に合わない・気になる点
   checks: WantCheck[];  // 希望1つずつの判定（W1…）
+  /** 物件と資料・読んだ間取り図が一致しているか（要確認なら点を出さない） */
+  review?: SheetConsistency;
+  /** 資料の型・切り出し・保存した読み取り（画面の小さな注記と、2回目以降の引き当て） */
+  sheet?: {
+    type: string; type_by: string; crop_mode: string | null; crop_basis: string | null; crop_reason: string | null;
+    facts_id: number | null; source: string; prompt_version: string; see: string | null;
+  };
 };
 
-export const ANALYSIS_MAX_TOKENS = 12000;
+/**
+ * 事実と希望から分析結果を作る。
+ *   - 説明文・文字層・読んだ間取り図が食い違えば review=要確認・match=null（点を出さない）。照合は文字層だけで行い画像の事実は使わない
+ *   - llmChecks: 決まった手順で決まらなかった希望（undecided）を文字で聞いた答え
+ * 文字層も画像の事実も無ければ null（読めない）
+ */
+export function buildPickupAnalysis(input: {
+  wants: ImageWant[];
+  text: SheetTextFacts;
+  image: SheetImageFacts | null;
+  summary?: string | null;
+  llmChecks?: WantCheck[];
+}): PickupImageAnalysis | null {
+  const { wants, text, image } = input;
+  if (!text.hasText && !image) return null;
+  const review = checkSheetConsistency({ summary: input.summary ?? null, text, image });
+  const trusted = review.status === "ok" ? image : null;
+  const fm = matchWantsWithFacts(wants, text, trusted, parseSummaryFacts(input.summary).madori);
+  const llm = new Map((review.status === "ok" ? input.llmChecks ?? [] : []).map((c) => [c.id, c]));
+  const checks: WantCheck[] = [...fm.checks];
+  for (const id of fm.undecided) checks.push(llm.get(id) ?? { id, result: "unknown", why: "" });
+  const order = new Map(wants.map((w, i) => [w.id, i]));
+  checks.sort((a, z) => (order.get(a.id) ?? 99) - (order.get(z.id) ?? 99));
+  const detail = wants.length ? scoreChecksDetail(wants, checks) : { score: null, raw: null, mustFail: false };
+  const byId = new Map(wants.map((w) => [w.id, w]));
+  const good = checks.filter((c) => c.result === "ok").map((c) => byId.get(c.id)?.text ?? "").filter(Boolean).slice(0, 4);
+  const concern = [
+    ...(review.status === "要確認" ? ["要確認（物件と資料が一致しない）"] : []),
+    ...checks.filter((c) => c.result === "ng").map((c) => byId.get(c.id)?.text ?? ""),
+  ].filter(Boolean).slice(0, 4);
+  const d = describeFacts(text, trusted);
+  const out: PickupImageAnalysis = {
+    ...d,
+    match: review.status === "要確認" ? null : detail.score,
+    match_raw: review.status === "要確認" ? null : detail.raw,
+    must_fail: detail.mustFail,
+    ok_count: checks.filter((c) => c.result === "ok").length,
+    good, concern, checks, review,
+  };
+  return out;
+}
 
 /** 旧: 条件欄をまとめた文（画面の表示用に残す） */
 export function buildWantsText(c: Record<string, unknown> | null | undefined, staffNote?: string | null): string {
@@ -50,82 +95,15 @@ export function buildWantsText(c: Record<string, unknown> | null | undefined, st
 }
 
 /**
- * 2026-09-24 竹内「画像で分析したら費用どれくらい必要なのか？1件あたり、またプロンプトキャッシュされているのか（DeepSeek で）」:
- *   実測（deepseek-flash・effort low・物件資料 1548×1093）: 入力 1,830（指示と希望 839・画像 約991）／出力 1,700〜8,200（ほぼ推論）
- *   1件 $0.0010〜0.0048（中央値 約$0.0017＝約0.25円）。10件で約2〜4円。費用と時間を決めるのは出力（推論）で、入力は1割ほど。
- *   キャッシュ（DeepSeek は自動の前置きキャッシュ・64トークン単位）: 今の並び「固定の指示 → 希望 → 画像」で固定の約640トークンは毎回命中、
- *   同じ物件・同じ希望の読み直しは 91% 命中。画像を先頭にすると命中 0 だった → **固定の指示を必ず先頭に置く（並べ替えない）**。
- *   希望を画像の後ろへ動かす案は「同じ画像で希望だけ変えて読み直す」時しか効かず、入力の費用は全部命中しても1件 約0.03円しか下がらないので入れない。
- *   ⚠ 固定の部分に日時・お客様ごとの値を入れない（前置きが変わるとキャッシュが外れる。pickup-image-analysis.test で見張る）
+ * 一番合う物件（match が最大）。match が1件も無ければ null。
+ * 同点は 上限前の点（match_raw）→「合う」の数が多い方（2026-09-24 竹内「前回の反証で出た点も直す」: 判定できた希望が1つだけで 100点の物件が、
+ *   5つ合って 100点の物件より上に来る事があった）→ 元の順位
  */
-export function buildAnalysisPrompt(wants: ImageWant[] | string): string {
-  const list = typeof wants === "string" ? wants : wantsToText(wants);
-  return `これは賃貸物件の資料（マイソク）の画像です。間取り図・室内写真・設備欄・条件欄・備考を見て、次の JSON だけを返してください（説明文・コードブロック不要）。
-{"water":"","kitchen":"","layout":"","storage":"","checks":[{"id":"W1","result":"ok","why":""}],"good":[],"concern":[]}
-- water: 水回り。バス・トイレ別／独立洗面台／浴室乾燥機／追い焚き／洗濯機置場の位置 など、見える物だけ短く
-- kitchen: キッチン。対面（カウンター）か壁付けか・コンロ（IH/ガス・口数）・システムキッチン など、見える物だけ
-- layout: リビングと洋室の位置関係。隣り合う／廊下や水回りを挟んで離れている／引き戸で続き間 など、間取り図から
-- storage: 収納。ウォークインクローゼット（WIC）・クローゼットの数と、どの部屋にあるか
-- checks: 下の「お客様の希望」の**番号ごとに1つずつ**。result は
-    "ok"（資料で希望どおりと確かめられる）／"ng"（資料で希望に反すると確かめられる。NG の項目なら、その NG に当たる物がある＝ng）／
-    "unknown"（資料からは分からない）。why は資料のどこで確かめたか（例「設備欄: バス・トイレ別」「間取り図: 洋室が LDK の隣」）を短く
-    ・資料に書いていない・見えない事は必ず "unknown"（推測で ok/ng にしない）
-    ・ペットは条件欄・備考の「ペット可／相談／不可」で判断する。「ペット可NG」は「ペット可の物件は嫌」という意味（ペット可・相談なら ng）
-- good: 希望に合う点（短く・最大4つ）／ concern: 希望に合わない・気になる点（短く・最大4つ）
-- 画像に無い事は書かない（分からない項目は ""）。金額・面積・帖数の数字は書かない（広め／普通／狭め の言葉にする）
-- 「対面」「カウンターキッチン」は、設備欄にその言葉があるか、間取り図でキッチンがリビング側を向いている（シンクの前がリビング）時だけ。
-  廊下や壁に沿って置かれていれば「壁付け」。どちらか分からなければ向きは書かない（推測で「対面」にしない）
-- WIC（ウォークインクローゼット）は間取り図・設備欄に「WIC」「W.I.C」「WCL」「ウォークインクロゼット」「納戸」とある物だけ。
-  シューズ用（SIC・シューズWIC・シューズウォークイン）は WIC に数えない（「シューズ用」と分けて書く）
-
-お客様の希望（【出どころ・NG・必須】）:
-${list || "（特になし）"}`;
-}
-
-/** 返事の JSON を読む（崩れた返事は null）。点は wants があれば checks から決定論で出す */
-export function parseAnalysis(text: string, wants: ImageWant[] = []): PickupImageAnalysis | null {
-  const raw = (text ?? "").trim();
-  const block = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  const body = (block ? block[1] : raw).trim();
-  const jsonStr = body.startsWith("{") ? body : (body.match(/\{[\s\S]*\}/)?.[0] ?? "");
-  if (!jsonStr) return null;
-  try {
-    const o = JSON.parse(jsonStr) as Record<string, unknown>;
-    const s = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
-    const arr = (v: unknown) => (Array.isArray(v) ? v : []).map(s).filter(Boolean).slice(0, 4);
-    const ids = new Set(wants.map((w) => w.id));
-    const checks: WantCheck[] = (Array.isArray(o.checks) ? o.checks : [])
-      .map((c) => c as Record<string, unknown>)
-      .map((c) => ({ id: s(c.id).toUpperCase(), result: (["ok", "ng", "unknown"].includes(s(c.result)) ? s(c.result) : "unknown") as WantCheck["result"], why: s(c.why) }))
-      .filter((c) => !wants.length || ids.has(c.id));
-    const m = o.match == null || o.match === "" ? null : Number(o.match);
-    const detail = wants.length ? scoreChecksDetail(wants, checks) : null;
-    const out: PickupImageAnalysis = {
-      water: s(o.water), kitchen: s(o.kitchen), layout: s(o.layout), storage: s(o.storage),
-      match: detail ? detail.score : (m != null && Number.isFinite(m) ? Math.max(0, Math.min(100, Math.round(m))) : null),
-      ...(detail ? { match_raw: detail.raw, must_fail: detail.mustFail } : {}),
-      good: arr(o.good), concern: arr(o.concern), checks,
-    };
-    if (!out.water && !out.kitchen && !out.layout && !out.storage && !checks.length) return null;   // 何も読めていない＝失敗
-    return out;
-  } catch { return null; }
-}
-
-/** 一番合う物件（match が最大・同点は元の順位が上）。match が1件も無ければ null */
 export function pickBest<T extends { id: number; rank: number; analysis: PickupImageAnalysis | null }>(rows: T[]): T | null {
   const scored = rows.filter((r) => r.analysis?.match != null);
   if (!scored.length) return null;
-  // 同点（例: 全件が必須 NG で 20 点）は上限前の点（match_raw）で並べ、それも同じなら元の順位
-  return scored.slice().sort((a, z) => (z.analysis!.match! - a.analysis!.match!) || ((z.analysis!.match_raw ?? 0) - (a.analysis!.match_raw ?? 0)) || (a.rank - z.rank))[0];
+  return scored.slice().sort((a, z) => (z.analysis!.match! - a.analysis!.match!)
+    || ((z.analysis!.match_raw ?? 0) - (a.analysis!.match_raw ?? 0))
+    || (okCountOf(z.analysis) - okCountOf(a.analysis))
+    || (a.rank - z.rank))[0];
 }
-
-/** 1物件を読む。失敗は analysis=null */
-export async function analyzePickupImage(imageUrl: string, wants: ImageWant[] | string, opts?: { timeoutMs?: number }): Promise<{ analysis: PickupImageAnalysis | null; usage?: { input: number; output: number; cacheHit: number }; model?: string }> {
-  const res = await callDeepSeek(null, [
-    { type: "text", text: buildAnalysisPrompt(wants) },
-    { type: "image_url", image_url: { url: imageUrl } },
-  ], { maxTokens: ANALYSIS_MAX_TOKENS, timeoutMs: opts?.timeoutMs ?? 90_000, effort: "low" });
-  if (!res) return { analysis: null };
-  return { analysis: parseAnalysis(res.text, typeof wants === "string" ? [] : wants), usage: { input: res.usage.input, output: res.usage.output, cacheHit: res.usage.cacheHit }, model: res.model };
-}
-

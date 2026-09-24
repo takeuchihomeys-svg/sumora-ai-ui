@@ -114,12 +114,15 @@ export type VisionAltResult = {
 export async function callDeepSeek(
   system: string | null,
   content: string | Array<Record<string, unknown>>,
-  opts?: { apiKey?: string; model?: string; maxTokens?: number; timeoutMs?: number; effort?: string },
+  opts?: { apiKey?: string; model?: string; maxTokens?: number; timeoutMs?: number; effort?: string; thinking?: boolean },
 ): Promise<VisionAltResult | null> {
   const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
   const model = (opts?.model ?? process.env.VISION_ALT_MODEL ?? VISION_ALT_MODEL_DEFAULT).trim();
   const effort = (opts?.effort ?? VISION_ALT_EFFORT_DEFAULT).trim();
   if (!apiKey) return null;
+  // 2026-09-24 竹内「画像で分析」の型の前置き: 推論を切る（thinking: false）と 1件 約0.02円・1.1〜1.6秒（推論 low は 0.35〜0.6円・18〜32秒）。
+  //   推論なしの時は reasoning_effort を送らない（送る形が変わると前置きキャッシュの先頭一致が外れるので、どちらかに固定する）
+  const noThinking = opts?.thinking === false;
   try {
     const res = await fetch(VISION_ALT_ENDPOINT, {
       method: "POST",
@@ -127,7 +130,7 @@ export async function callDeepSeek(
       body: JSON.stringify({
         model,
         max_tokens: opts?.maxTokens ?? VISION_ALT_MAX_TOKENS,
-        ...(effort ? { reasoning_effort: effort } : {}),
+        ...(noThinking ? { thinking: { type: "disabled" } } : effort ? { reasoning_effort: effort } : {}),
         messages: [
           ...(system ? [{ role: "system", content: system }] : []),
           { role: "user", content },
@@ -137,7 +140,7 @@ export async function callDeepSeek(
     });
     if (!res.ok) { console.warn("[deepseek] HTTP", res.status, (await res.text().catch(() => "")).slice(0, 200)); return null; }
     const j = await res.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
     };
     const text = String(j.choices?.[0]?.message?.content ?? "").trim();

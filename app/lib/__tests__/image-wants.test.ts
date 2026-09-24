@@ -48,5 +48,11 @@ t("★ 話題の判定（収納・部屋の配置・水回り）", topicsOf("WIC
   t("★ 点: NG・必須は2倍（ok 1 + ng 1(重み1) → 50）", scoreChecks(ws, [{ id: "W1", result: "ok", why: "" }, { id: "W3", result: "ng", why: "" }]) === 50);
   t("★ 点: 判定できる物が無ければ null", scoreChecks(ws, [{ id: "W1", result: "unknown", why: "" }]) === null);
 }
+{
+  // 2026-09-24 YUMA: 先頭の数字を丸ごと外していて「1階NG」が「階NG」になり落ちていた
+  const w = extractImageWants({ conditions: { ng_points: "1階NG", preferences: "1. 独立洗面台\n2) WIC" } });
+  t("★ 条件欄の「1階NG」は残す（階の希望）", w.some((x) => x.text === "1階NG" && x.ng), w);
+  t("★ 番号（1. 2)）は外す", w.some((x) => x.text === "独立洗面台") && w.some((x) => x.text === "WIC"), w);
+}
 console.log(`\n合計: ${passed}/${passed + failed}`);
 if (failed > 0) process.exit(1);

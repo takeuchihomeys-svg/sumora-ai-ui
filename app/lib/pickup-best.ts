@@ -5,7 +5,8 @@
 //   実例: 同じお客様に 1分以内に3回に分かれて届いた（1件・10件・1件）。👑 は1回分ずつ計算していたので
 //   10件の回に「エステムコート 100点」、1件の回に「ガーディアンズ 100点」と別々の吹き出しに埋もれ、全体の一番がどこにも無かった。
 //   → 最新の回から windowHours（既定 6時間）以内の回を「1つの探し物」として、その中で一番を出す。
-// 並び（pickBest と同じ考え＋回をまたぐ分）: 点 → 上限前の点（match_raw）→ 🌟★/🌟 → 新しい回 → 順位が上
+// 並び（pickBest と同じ考え＋回をまたぐ分）: 点 → 上限前の点（match_raw）→「合う」の数 → 🌟★/🌟 → 新しい回 → 順位が上
+// 2026-09-24 竹内「前回の反証で出た点も直す」: 同点は「合う」の数が多い方を上に（判定できた希望1つで100点の物件が、5つ合って100点の物件より上に来ていた）
 // ⚠ サーバーの部品（DeepSeek・DB）を import しない（画面 PickupReview.tsx からも使う）
 
 export type BestCandidateRow = {
@@ -33,6 +34,8 @@ export type CustomerBest = {
   /** 対象の中で点が付いた件数／分析したが点が付かなかった件数（資料から読めず）／まだ分析していない件数 */
   scored: number;
   unscored: number;
+  /** 物件と資料が一致せず点を出さなかった件数（要確認）。2026-09-24 竹内「食い違いは点を出さず『要確認』」 */
+  needs_check: number;
   not_analyzed: number;
   /** 対象にした回の数 */
   batches: number;
@@ -41,6 +44,17 @@ export type CustomerBest = {
 export const CUSTOMER_BEST_WINDOW_HOURS = 6;
 
 const numOrNull = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+/** 「合う」（ok）の数。ok_count が無い古い結果は checks から数える */
+export function okCountOf(obj: object | null | undefined): number {
+  const a = obj as { ok_count?: unknown; checks?: unknown } | null | undefined;
+  if (!a) return 0;
+  const n = numOrNull(a.ok_count);
+  if (n != null) return n;
+  return Array.isArray(a.checks) ? a.checks.filter((c) => (c as { result?: unknown })?.result === "ok").length : 0;
+}
+
+const isNeedsCheck = (r: BestCandidateRow) => (r.image_analysis?.review as { status?: unknown } | undefined)?.status === "要確認";
 
 /** 全体の一番（点が1件も無ければ null）。rows はお客様1人分（何回分でもよい） */
 export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: { windowHours?: number }): CustomerBest | null {
@@ -54,7 +68,7 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
   const m = (r: BestCandidateRow) => numOrNull(r.image_analysis?.match) as number;
   const raw = (r: BestCandidateRow) => numOrNull(r.image_analysis?.match_raw) ?? m(r);
   const sorted = scored.slice().sort((a, z) =>
-    (m(z) - m(a)) || (raw(z) - raw(a)) || (z.recommended - a.recommended)
+    (m(z) - m(a)) || (raw(z) - raw(a)) || (okCountOf(z.image_analysis) - okCountOf(a.image_analysis)) || (z.recommended - a.recommended)
     || (Date.parse(z.created_at) - Date.parse(a.created_at)) || (a.rank - z.rank) || (a.id - z.id));
   const best = sorted[0];
   const tied = sorted.slice(1).filter((r) => m(r) === m(best));
@@ -63,7 +77,8 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
     match: m(best),
     tied_ids: tied.map((r) => r.id), tied_names: tied.map((r) => r.property_name),
     scored: scored.length,
-    unscored: inWindow.filter((r) => r.image_analysis && numOrNull(r.image_analysis.match) == null).length,
+    unscored: inWindow.filter((r) => r.image_analysis && numOrNull(r.image_analysis.match) == null && !isNeedsCheck(r)).length,
+    needs_check: inWindow.filter(isNeedsCheck).length,
     not_analyzed: inWindow.filter((r) => !r.image_analysis).length,
     batches: new Set(inWindow.map((r) => r.batch_id)).size,
   };

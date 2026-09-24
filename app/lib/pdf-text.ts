@@ -21,6 +21,25 @@ export type PdfTextResult = {
 
 const MIN_TEXT_CHARS = 40;
 
+/**
+ * pdfjs の getTextContent の items を行にする。行の区切りは Y 座標の変化で入れる（表の文字が1行に潰れないように）。
+ * 2026-09-24: 「🔍 画像で分析」の文字層（pdf-sheet-crop.ts）でも同じ行の作り方を使うため export
+ */
+export function textItemsToLines(items: Array<{ str?: string; transform?: number[] }>): string[] {
+  const out: string[] = [];
+  let lastY: number | null = null;
+  const line: string[] = [];
+  for (const it of items) {
+    if (typeof it.str !== "string") continue;
+    const y = Array.isArray(it.transform) ? Math.round(it.transform[5]) : null;
+    if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) { out.push(line.join(" ")); line.length = 0; }
+    if (it.str.trim()) line.push(it.str.trim());
+    if (y !== null) lastY = y;
+  }
+  if (line.length) out.push(line.join(" "));
+  return out;
+}
+
 /** base64 か bytes から、先頭 maxPages ページの文字を取り出す。失敗は text="" で返す（投げない） */
 export async function extractPdfText(input: string | Uint8Array, opts?: { maxPages?: number; maxChars?: number }): Promise<PdfTextResult> {
   const started = Date.now();
@@ -37,17 +56,7 @@ export async function extractPdfText(input: string | Uint8Array, opts?: { maxPag
     for (let p = 1; p <= n; p++) {
       const page = await pdf.getPage(p);
       const tc = await page.getTextContent();
-      // 行の区切りは Y 座標の変化で入れる（表の文字が1行に潰れないように）
-      let lastY: number | null = null;
-      const line: string[] = [];
-      for (const it of tc.items as Array<{ str?: string; transform?: number[] }>) {
-        if (typeof it.str !== "string") continue;
-        const y = Array.isArray(it.transform) ? Math.round(it.transform[5]) : null;
-        if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) { parts.push(line.join(" ")); line.length = 0; }
-        if (it.str.trim()) line.push(it.str.trim());
-        if (y !== null) lastY = y;
-      }
-      if (line.length) parts.push(line.join(" "));
+      parts.push(...textItemsToLines(tc.items as Array<{ str?: string; transform?: number[] }>));
       if (parts.join("\n").length >= maxChars) break;
     }
     const text = parts.join("\n").replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n").trim().slice(0, maxChars);

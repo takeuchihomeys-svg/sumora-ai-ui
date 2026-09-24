@@ -62,5 +62,19 @@ const row = (id: number, batch: string, at: string, rank: number, match: number 
 t("★ 点が1件も無ければ null", pickCustomerBest([row(1, "B1", "2026-09-24T09:00:00Z", 1, null)]) === null);
 t("★ 空は null", pickCustomerBest([]) === null);
 
+// 2026-09-24 竹内「前回の反証で出た点も直す」: 同点は「合う」の数が多い方を上に／要確認は未判定と分けて数える
+{
+  const okc = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `W${i + 1}`, result: "ok" }));
+  const rows = [
+    row(1, "B1", "2026-09-24T09:00:00Z", 1, 100, { image_analysis: { match: 100, match_raw: 100, checks: okc(1) } }),
+    row(2, "B1", "2026-09-24T09:00:00Z", 2, 100, { image_analysis: { match: 100, match_raw: 100, ok_count: 4 } }),
+    row(3, "B1", "2026-09-24T09:00:00Z", 3, null, { image_analysis: { match: null, review: { status: "要確認", reasons: ["物件名が違う"] } } }),
+    row(4, "B1", "2026-09-24T09:00:00Z", 4, null),
+  ];
+  const b = pickCustomerBest(rows);
+  t("★ 同点は「合う」の数が多い方（順位より先）", b?.id === 2, b);
+  t("★ 要確認は needs_check に数え、未判定（unscored）と分ける", b?.needs_check === 1 && b?.unscored === 1, b);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

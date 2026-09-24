@@ -45,8 +45,24 @@ const ROMAN: Record<string, string> = {
   "ⅰ": "I", "ⅱ": "II", "ⅲ": "III", "ⅳ": "IV", "ⅴ": "V", "ⅵ": "VI", "ⅶ": "VII", "ⅷ": "VIII", "ⅸ": "IX", "ⅹ": "X", "ⅺ": "XI", "ⅻ": "XII",
 };
 
-/** 建物の鍵（完全一致で同じ建物）。空なら比べない */
+/**
+ * 名前だけでは建物を決められない一般名。2026-09-24 竹内「前回の反証で出た点も直す」: 名前が読めず「物件」になった説明文どうしが
+ *   同じ建物と見なされ、別の建物の部屋が落ちる穴があった（parsePropertyFacts は名前が無い時「物件」を入れる）→ 比べない（残す側）
+ */
+const GENERIC_BUILDING_NAMES = new Set(["物件", "物件名", "建物", "建物名", "マンション", "アパート", "ハイツ", "コーポ", "メゾン", "レジデンス",
+  "貸家", "戸建", "戸建て", "一戸建", "一戸建て", "テラスハウス", "不明", "未定", "名称未設定", "名称なし", "なし", "無し", "-", "－"]);
+
+/** 一般名（または1文字以下）なら true＝同じ建物の判定に使わない */
+export function isGenericBuildingName(name: string | null | undefined): boolean {
+  const raw = String(name ?? "").normalize("NFKC").replace(/^\s*【[^】]*】\s*/, "").replace(/[\s　]/g, "");
+  if (!raw) return true;
+  if (GENERIC_BUILDING_NAMES.has(raw)) return true;
+  return normalizePropertyName(raw).length <= 1;
+}
+
+/** 建物の鍵（完全一致で同じ建物）。空なら比べない。一般名（「物件」等）も空＝比べない */
 export function buildingKey(name: string | null | undefined): string {
+  if (isGenericBuildingName(name)) return "";
   const s = String(name ?? "").replace(/[Ⅰ-Ⅻⅰ-ⅻ]/g, (c) => ROMAN[c] ?? c).replace(/号棟/g, "棟");
   return normalizePropertyName(s);
 }

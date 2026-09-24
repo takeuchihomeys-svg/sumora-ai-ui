@@ -165,6 +165,22 @@
 - **iPhone のトリミング**: `pdf-trim-browser.ts` が描いた文字の数を数え、資料に文字があるのに 0 なら投げる → サーバーで描く予備（Noto・cMap 直した）に回る。実機の iPhone では未確認
 - **費用**（調査・ローカルから実測）: 画像で分析 1件 $0.0010〜0.0048（中央値 約0.25円）・10件で約2〜4円。キャッシュは固定の指示（約640）が毎回命中・同じ物件の読み直しは91%。並べ替えは効果が小さいので入れていない（固定を先頭に置く見張りのテストだけ）。本番の llm_usage_logs は e5b41fbd（lazyAltRecorder）より前は0件 → 次に押した後に `action=pickup_image_analysis` の行を確かめる
 
+## 2026-09-24 深夜 画像で分析の作り直し — 型の前置きでキャッシュ・間取り図だけ切り出す・物件と一致の確かめ・物件ごとの保存（竹内「2つの型を使ってプロンプトキャッシュ」「必要な所だけ切り出す。表の文字は文字層」「物件のずれ・間取り図と一致しているか。食い違いは要確認」「物件ごとに保存し2回目以降は画像を読み直さない」）
+- **拡張の送り元＝資料の型**: `property_pickups.site` に拡張の送り元が入る（`realpro`＝リアプロ／`itandi`／`reins`）。型は `app/lib/sheet-layout.ts` の `detectSheetType`: site → 無ければ PDF の URL が realnetpro → 文字層の目印（Powered by RealNetPro・物件種目・号室名・間取タイプ・開口部方位）→ 型不明。reins は型なし（1ページ全体）
+- **切り出し**（`planSheetCrop`・サーバーの `app/lib/pdf-sheet-crop.ts` が pdfjs の描画命令から画像の位置を取る）:
+  - リアプロ: 間取り図 x.343 y.296 w.255 h.362（余白 0.003）。**間取り図と地図の位置の両方に画像がある時だけ**切る（資料画像の15%は別の形）→ 無ければ1ページ全体
+  - itandi: 画像の範囲 x.010〜.505・y.085〜.82（表を除く）を1枚。最初の枠の固定は27%で外れるので使わない。⚠ **itandi の PDF の実物は未確認**（property_pickups に site=itandi の行が0件）。YUMA で itandi の物件を1回通して、描画命令の座標と文字層を確かめてから固定する
+  - 室内写真の位置も取るが読ませない（写真の帯を足すと質が下がった）
+- **表の文字は文字層**（`app/lib/sheet-facts.ts` の `parseSheetText`）: 物件名・号室・階・所在地・間取タイプ（括弧の帖数）・専有面積・賃料・方位・備考〜設備〜条件の文。見出しの行（「設 備」）だけを区切りにする（上の注意書きの「設備」に当てない）
+- **固定の前置き**（`app/lib/sheet-prompt.ts`）: 共通の頭（役割・返す形・間違えやすい所・see 欄）→ 型ごとの説明（realpro_floor／itandi_area／page）→ 画像。推論なし（thinking disabled）・max_tokens 600。崩れた／fp_ok=false の時だけ推論 low・12000 で1回読み直す。前置きのハッシュをテストで固定（変えたら `SHEET_PROMPT_VERSION` も上げる）。希望は前置きに入れない
+- **一致の確かめ**（`checkSheetConsistency`）: 説明文と文字層の物件名・賃料・面積・間取り・号室／1・2ページ目の物件名と号室／fp_ok・other_unit／読んだ間取りの型／文字層の帖数と 0.3帖超の差／帖数の合計×1.62 が専有面積超・25%未満／図の中の㎡ → 1つでも違えば **要確認（点を出さない・画像の事実は照合に使わない）**。画面に「⚠ 要確認」と理由、👑 の吹き出しに要確認の件数
+- **物件ごとの保存**: 新しい表 `property_sheet_facts`（migrate-schema と `scripts/apply-property-sheet-facts-table.ts`・本番に作成済み）。引く順: この行の前回（image_analysis.sheet.facts_id）→ 物件の鍵 unit_key（物件名＋号室＋所在地）→ 切り出した画素の sha256（fp_hash・同じ図）→ 読む。PDF の中身は出力日で変わるので鍵にしない。近い画像を同じと見なすハッシュは使わない（別の部屋の事実の使い回しを0に）
+- **希望との照合は文字だけ**（`matchWantsWithFacts`・決まった手順）。設備に当たらない希望（「洋室が小さいのは嫌」等）だけ文字で1回聞く（`judgeWantsByText`・推論なし・要確認の時は聞かない）。1件分は `app/lib/pickup-analyze-server.ts` の `analyzePickupRow`（route と YUMA のスクリプトが同じ関数）
+- **実測（YUMA #9〜11・DeepSeek）**: 1回目 画像の読み 入力 1,469（2件目から命中 1,024）・出力 172〜187・1.3〜2.0秒、文字の照合 入力 560〜890・出力 18〜24。1件 約0.03〜0.04円（以前 0.2〜1円）。2回目（別の希望）は source=saved_unit で画像を読まない。別の鍵・同じ図は saved_fp。説明文を別物件にすると要確認・点なし。llm_usage_logs に conversation_id・sys_head「【🔍 画像で分析・realpro_floor】sheet-v1」。テストで作った property_sheet_facts の4行は消した（image_analysis は書いていない）
+- **前回の反証の直し**: 同点は「合う」の数（ok_count）が多い方を上に（pickBest・pickCustomerBest・画面）／「物件」「マンション」等の一般名は同じ建物の判定から外す（`isGenericBuildingName`）／条件欄の「1階NG」が先頭の数字ごと消えて希望から落ちていた（image-wants の clean）／メモの「ペット可NG」を ng の印が無くても嫌の向きで読む
+- PDF がある物件は画面のトリミング不要（`needsTrimBeforeAnalysis`）。`/api/property-pickups/analyze` を next.config の outputFileTracingIncludes に追加（pdfjs・canvas・フォント）
+- テスト: `pickup-sheet.test.ts`（74）・`pdf-sheet-crop.test.ts`（16・fixture の描画命令と切り出しのハッシュ）・`pickup-image-analysis.test.ts`（23）・`pickup-best`（13）・`pickup-dedupe`（33）・`image-wants`（20）
+
 ## 2026-09-24 利益（AD − 見積書の割引）を物件ごとに残し、物件検索ブレインと連動（竹内）
 
 竹内「物件ピックアップ・物件オススメで送った物件は分かっている。見積書送るの本文から割引も分かる。その物件が送った物件なら AD も理解しているはず。連動する」

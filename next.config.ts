@@ -14,6 +14,8 @@ const nextConfig: NextConfig = {
     "/api/merge-pdfs": ["./node_modules/pdfjs-dist/legacy/build/**/*", "./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/standard_fonts/**/*", "./node_modules/@napi-rs/canvas*/**/*", "./public/fonts/**/*"],
     // 売上サポの「画像トリミング」（PDF 1ページ目を画像にして会社の帯を落とす）も同じ物が要る
     "/api/property-pickups/trim": ["./node_modules/pdfjs-dist/legacy/build/**/*", "./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/standard_fonts/**/*", "./node_modules/@napi-rs/canvas*/**/*", "./public/fonts/**/*"],
+    // 2026-09-24 竹内「必要な所だけを切り出して読ませる。表の文字は文字層から」: 画像で分析もサーバーで PDF の文字層を取り、1ページ目を描いて間取り図を切り出す
+    "/api/property-pickups/analyze": ["./node_modules/pdfjs-dist/legacy/build/**/*", "./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/standard_fonts/**/*", "./node_modules/@napi-rs/canvas*/**/*", "./public/fonts/**/*"],
   },
   serverExternalPackages: ["@napi-rs/canvas", "pdfjs-dist"],
 

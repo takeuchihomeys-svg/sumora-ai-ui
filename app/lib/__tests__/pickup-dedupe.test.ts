@@ -160,5 +160,18 @@ t("★ 面積: 平米", parseAreaSqm("【1】A\n30平米") === 30);
 t("★ 面積: 名前の行の数字は読まない", parseAreaSqm("【1】ヴィラ25㎡\n60,000円") === null);
 t("★ 面積: 1件だけ・空は何もしない", JSON.stringify(dedupeSameBuilding(["【1】A\n60,000円\n1K 20㎡"]).keep) === "[0]" && dedupeSameBuilding([]).keep.length === 0);
 
+// ── 一般名（2026-09-24 竹内「前回の反証で出た点も直す」）──
+{
+  const r = dedupeSameBuilding([
+    "【1】物件\n60,000円\n1K 20.0㎡",
+    "【2】物件\n61,000円\n1K 20.5㎡",
+    "【3】マンション\n62,000円\n1K 20.2㎡",
+    "【4】マンション\n63,000円\n1K 20.3㎡",
+  ]);
+  t("★ 一般名: 「物件」「マンション」どうしは同じ建物と見なさない（全部残す）", JSON.stringify(r.keep) === "[0,1,2,3]", r.keep);
+  t("★ 一般名: 鍵は空・普通の名前は鍵あり", buildingKey("物件") === "" && buildingKey("【2】 マンション") === "" && buildingKey("エスリード難波AGREA") !== "");
+  t("★ 一般名: 「テストレジデンス」は一般名ではない", buildingKey("テストレジデンス") !== "");
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

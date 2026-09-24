@@ -16,7 +16,11 @@ import { trimSheetImage } from "../app/lib/pdf-trim";
 import { enrichSummariesWithPdfAd, rankAndAnnotateSummaries } from "../app/lib/pickup-rank";
 import { readPropertyImageDetail } from "../app/lib/property-image-read";
 import { parseRecommendMark, CUSTOMER_PAGE, AGENT_PAGE } from "../app/lib/property-pickups";
-import { analyzePickupImage, buildWantsText, pickBest } from "../app/lib/pickup-image-analysis";
+// 2026-09-24 画像で分析を作り直した（型の前置き・間取り図の切り出し・物件ごとの保存）→ 本番と同じ analyzePickupRow を使う
+import { pickBest } from "../app/lib/pickup-image-analysis";
+import { analyzePickupRow } from "../app/lib/pickup-analyze-server";
+import { extractImageWants } from "../app/lib/image-wants";
+import type { SheetSourceRow } from "../app/lib/sheet-read-server";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? "").split("=").slice(1).join("=") || null;
@@ -82,18 +86,18 @@ async function main() {
       image_lines: detail.lines.length ? detail.lines : null, image_facts: null,
     });
   }
-  const { data: ins, error } = await sb.from("property_pickups").insert(inserts).select("id, rank, property_name, trim_image_url");
+  const { data: ins, error } = await sb.from("property_pickups").insert(inserts).select("id, rank, site, property_name, conversation_id, summary_text, pdf_url, pdf_blob_url, pdf_text, pdf_has_text, trim_image_url, page_image_url, image_analysis");
   if (error) { console.log("insert 失敗:", error.message); return; }
   console.log(`\nYUMA のピックアップ ${(ins ?? []).length}件を作成（batch=${batchId}）`);
 
   // ⑥ 🔍 画像で分析（本番の /analyze と同じ関数・お客様に送る1ページ目だけを読む）
-  const wants = buildWantsText(null, "水回りはバス・トイレ別と独立洗面台が良い／キッチンは対面が良い／リビングと寝室（洋室）は離れている方が良い／ウォークインクローゼットが欲しい");
+  const wants = extractImageWants({ staffNote: "水回りはバス・トイレ別と独立洗面台が良い／キッチンは対面が良い／リビングと寝室（洋室）は離れている方が良い／ウォークインクローゼットが欲しい" });
   console.log("\n=== 🔍 画像で分析（DeepSeek）===");
-  const analyzed = await Promise.all(((ins ?? []) as Array<{ id: number; rank: number; property_name: string; trim_image_url: string }>).map(async (r) => {
+  const analyzed = await Promise.all(((ins ?? []) as Array<SheetSourceRow & { rank: number; property_name: string; conversation_id: string | null }>).map(async (r) => {
     const t = Date.now();
-    const out = await analyzePickupImage(r.trim_image_url, wants);
+    const out = await analyzePickupRow(r, wants);
     if (out.analysis) await sb.from("property_pickups").update({ image_analysis: { ...out.analysis, wants, analyzed_at: new Date().toISOString() } }).eq("id", r.id);
-    console.log(`\n【${r.rank}】${r.property_name} ${Date.now() - t}ms model=${out.model ?? "-"} ${out.analysis ? `${out.analysis.match}点` : "読めなかった"}`);
+    console.log(`\n【${r.rank}】${r.property_name} ${Date.now() - t}ms source=${out.facts.source} model=${out.usage.map((u) => u.model).join(",") || "-"} ${out.analysis ? `${out.analysis.match}点` : "読めなかった"}`);
     if (out.analysis) {
       const a = out.analysis;
       console.log(`    🚿 ${a.water}\n    🍳 ${a.kitchen}\n    🛋️ ${a.layout}\n    🧥 ${a.storage}\n    ◎ ${a.good.join("／")}\n    △ ${a.concern.join("／")}`);

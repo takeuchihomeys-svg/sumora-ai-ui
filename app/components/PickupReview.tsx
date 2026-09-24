@@ -5,7 +5,7 @@
 //   DeepSeek 側は左・スタッフの会話は右。スタッフは確認してお客さんに送るだけ」
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import type { CustomerBest } from "@/app/lib/pickup-best";
+import { okCountOf, type CustomerBest } from "@/app/lib/pickup-best";
 import { needsTrimBeforeAnalysis } from "@/app/lib/pickup-image-url";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
@@ -120,8 +120,9 @@ function buildBubbles(c: Customer): Bubble[] {
       const scored = analyzed.filter((it) => typeof (it.image_analysis as { match?: unknown })?.match === "number");
       const m = (x: Item) => (x.image_analysis as { match: number }).match;
       const raw = (x: Item) => Number((x.image_analysis as { match_raw?: number | null }).match_raw ?? 0);
-      // 同点（全件が必須 NG で 20 点など）は上限前の点で並べる（pickup-image-analysis.pickBest と同じ）
-      const best = scored.slice().sort((a, z) => (m(z) - m(a)) || (raw(z) - raw(a)) || (a.rank - z.rank))[0];
+      // 同点（全件が必須 NG で 20 点など）は上限前の点 →「合う」の数で並べる（pickup-image-analysis.pickBest と同じ）
+      // 2026-09-24 竹内「前回の反証で出た点も直す」: 同点は「合う」の数が多い方を上に
+      const best = scored.slice().sort((a, z) => (m(z) - m(a)) || (raw(z) - raw(a)) || (okCountOf(z.image_analysis) - okCountOf(a.image_analysis)) || (a.rank - z.rank))[0];
       out.push({ kind: "analysis", at: b.created_at + "~~", batch: b, items: analyzed, bestId: best?.id ?? null });
     }
     const sent = b.items.filter((it) => it.status === "sent");
@@ -476,7 +477,8 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     let done = 0, ok = 0;
     const cut: number[] = [];
     const failed: string[] = [];
-    const progress = () => setMsg(`🔍 画像で分析しています… ${done}/${targets.length}件（1件 10〜40秒・同時${ANALYZE_CONCURRENCY}件。画面を切り替えても結果は保存されます）`);
+    // 2026-09-24 間取り図だけを切り出して推論なしで読む形にした（1件 数秒・2回目以降は保存した読み取りで画像を読まない）
+    const progress = () => setMsg(`🔍 画像で分析しています… ${done}/${targets.length}件（1件 数秒〜20秒・同時${ANALYZE_CONCURRENCY}件。画面を切り替えても結果は保存されます）`);
     progress();
     const queue = targets.slice();
     const worker = async () => {
@@ -768,13 +770,24 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 <div className="flex flex-col gap-2">
                   {bb.items.map((it) => {
                     const a = it.image_analysis as unknown as { water?: string; kitchen?: string; layout?: string; storage?: string; match?: number | null; good?: string[]; concern?: string[];
-                      checks?: Array<{ id: string; result: string; why: string }>; wants?: Array<{ id: string; source: string; text: string; ng: boolean; must: boolean }> | string } | null;
+                      checks?: Array<{ id: string; result: string; why: string }>; wants?: Array<{ id: string; source: string; text: string; ng: boolean; must: boolean }> | string;
+                      review?: { status: string; reasons: string[] }; sheet?: { type?: string; crop_mode?: string | null; crop_basis?: string | null; crop_reason?: string | null; source?: string } } | null;
                     if (!a) return null;
+                    // 2026-09-24 竹内「物件と一致しているか。食い違いは点を出さず『要確認』」: 要確認は点の代わりに理由を出す
+                    const needCheck = a.review?.status === "要確認";
+                    const TYPE_JA: Record<string, string> = { realpro: "リアプロ", itandi: "itandi", unknown: "型不明" };
+                    const CROP_JA: Record<string, string> = { floor: "間取り図を切り出し", image_area: "画像の範囲を切り出し", page: "1ページ全体" };
+                    const SRC_JA: Record<string, string> = { read: "今回読んだ", saved_row: "保存した読み取り", saved_unit: "保存した読み取り（同じ部屋）", saved_fp: "保存した読み取り（同じ図）", none: "文字層だけ" };
+                    const sheetNote = a.sheet ? [TYPE_JA[a.sheet.type ?? ""] ?? a.sheet.type, a.sheet.crop_mode ? CROP_JA[a.sheet.crop_mode] ?? a.sheet.crop_mode : null, a.sheet.source ? SRC_JA[a.sheet.source] ?? a.sheet.source : null].filter(Boolean).join("・") : "";
                     const wantList = Array.isArray(a.wants) ? a.wants : [];
                     const MARK: Record<string, string> = { ok: "◎", ng: "×", unknown: "？" };
                     return (
                       <div key={`ai${it.id}`} className="rounded-xl px-2 py-1.5" style={{ background: it.id === bb.bestId ? "#f1f8e9" : "#f7f9fb" }}>
-                        <div className="text-[11px] font-bold">【{it.rank}】{it.property_name}{a.match != null ? `　${a.match}点` : ""}</div>
+                        <div className="text-[11px] font-bold">【{it.rank}】{it.property_name}{a.match != null ? `　${a.match}点` : ""}{needCheck && <span className="ml-1 px-1.5 py-0.5 rounded text-[10px]" style={{ background: "#fff3e0", color: "#e65100" }}>⚠ 要確認</span>}</div>
+                        {needCheck && (a.review?.reasons ?? []).length > 0 && (
+                          <div className="text-[10px] mt-0.5 leading-snug" style={{ color: "#e65100" }}>{(a.review?.reasons ?? []).slice(0, 3).map((x, k) => <div key={k}>・{x}</div>)}<div style={{ color: "#90a4ae" }}>（点は出しません。資料が正しい物件か確かめてください）</div></div>
+                        )}
+                        {sheetNote && <div className="text-[9px] mt-0.5" style={{ color: "#b0bec5" }}>📐 {sheetNote}{a.sheet?.crop_reason ? `（${a.sheet.crop_reason}）` : ""}</div>}
                         <div className="text-[10px] text-[#37474f] mt-0.5 leading-relaxed">
                           {a.water && <div>🚿 水回り: {a.water}</div>}
                           {a.kitchen && <div>🍳 キッチン: {a.kitchen}</div>}
@@ -824,6 +837,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 <div className="text-[10px] text-[#607d8b] mt-1 leading-relaxed">
                   {bst.tied_names.length > 0 && <div>同点: {bst.tied_names.join("・")}</div>}
                   {bst.unscored > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.unscored}件は資料から読めず未判定</div>}
+                  {(bst.needs_check ?? 0) > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.needs_check}件は要確認（物件と資料が一致しない・点なし）</div>}
                   {bst.not_analyzed > 0 && <div>{bst.not_analyzed}件はまだ画像で分析していません</div>}
                 </div>
                 {bBatch && bItem && bItem.status === "pending" && (

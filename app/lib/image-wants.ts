@@ -38,8 +38,13 @@ export function topicsOf(text: string): string[] {
   return IMAGE_TOPICS.filter((t) => t.re.test(text)).map((t) => t.key);
 }
 
+/**
+ * 先頭の箇条書きの印（「・」「①」「1.」「2)」）を外す。
+ * 2026-09-24 YUMA: 数字を丸ごと外していたので、条件欄の「1階NG」が「階NG」になり希望から落ちていた
+ *   → 数字は後ろに「.」「)」「、」が付く番号の時だけ外す
+ */
 function clean(s: string): string {
-  return s.replace(/\s+/g, " ").replace(/^[・\-－\s①-⑳0-9０-９.．、,)）]+/, "").trim();
+  return s.replace(/\s+/g, " ").replace(/^(?:[・\-－\s①-⑳、,]+|[0-9０-９]{1,2}[.．)）、,](?![0-9０-９])\s*)+/, "").trim();
 }
 
 /** 条件欄の文を句に割る（「、」「・」「／」「改行」「。」） */
@@ -186,7 +191,7 @@ export const WANT_FEATURES: Array<{ key: string; label: string; re: RegExp; stro
   { key: "delivery_box", label: "宅配ボックス", re: /宅配/, strong: false },
   { key: "sunlight", label: "日当たり・向き", re: /日当たり|日あたり|[南東西北]向き|採光/, strong: false },
   { key: "corner", label: "角部屋", re: /角部屋/, strong: false },
-  { key: "floor2", label: "2階以上", re: /[2２二]階以上|1階(?:は|が)?(?:NG|嫌|不可|避け)|高層|上の階/, strong: false },
+  { key: "floor2", label: "2階以上", re: /[2２二]階以上|1階(?:は|が)?(?:NG|嫌|不可|避け|以外)|高層|上の階/, strong: false },
   { key: "loft", label: "ロフト", re: /ロフト/, strong: false },
   { key: "balcony", label: "バルコニー", re: /バルコニー|ベランダ/, strong: false },
 ];
