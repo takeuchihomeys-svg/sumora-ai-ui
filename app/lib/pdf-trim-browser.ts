@@ -6,7 +6,8 @@
 //   サーバー（Linux）には日本語フォントが無く文字が抜け、同梱フォントで描くと書体が変わる。
 //   スタッフの Windows のブラウザで描けば、いつも見ている資料と同じ見た目になる → 画面側で描いて切り、画像だけサーバーに置く。
 // pdf.js の worker・CMap・標準フォントは public/pdfjs に置いた物を使う（pdfjs-dist 6.3.289 と同じ版。上げたらコピーし直す）
-import { cropRectForSheet } from "./pdf-trim";
+// ⚠ ./pdf-trim（サーバー専用・@napi-rs/canvas）を import しない。画面のビルドに fs が引き込まれて本番ビルドが落ちる
+import { cropRectForSheet } from "./pdf-trim-rect";
 
 export const PDFJS_PUBLIC_BASE = "/pdfjs/";
 

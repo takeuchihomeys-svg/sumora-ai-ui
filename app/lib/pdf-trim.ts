@@ -11,17 +11,9 @@
 //   左右は切らない（元の幅のまま）。
 // 2026-09-24 竹内「トリミングは縦横100%でも大丈夫。PDF 1枚目は帯替えされているから（下の帯は弊社）。元付業者の資料は送らない」
 //   → 既定は 100%（切らない）。上の 86% は実送信から測った値として残す（必要なら keepRatio で渡す）
-export const REALPRO_SHEET_TRIM_RATIO_MEASURED = 0.86;
-export const REALPRO_SHEET_KEEP_RATIO = 1.0;
-
-export type CropRect = { x: number; y: number; width: number; height: number };
-
-/** 上から keepRatio の高さを残す矩形（純関数・境界: 1px 以上を保証） */
-export function cropRectForSheet(width: number, height: number, keepRatio: number = REALPRO_SHEET_KEEP_RATIO): CropRect {
-  const r = Number.isFinite(keepRatio) && keepRatio > 0 && keepRatio <= 1 ? keepRatio : REALPRO_SHEET_KEEP_RATIO;
-  const h = Math.max(1, Math.min(height, Math.round(height * r)));
-  return { x: 0, y: 0, width: Math.max(1, width), height: h };
-}
+//   矩形の計算はブラウザと共用するので依存なしの pdf-trim-rect.ts に置く（ここは @napi-rs/canvas を使うサーバー専用）
+import { cropRectForSheet } from "./pdf-trim-rect";
+export { cropRectForSheet, REALPRO_SHEET_KEEP_RATIO, REALPRO_SHEET_TRIM_RATIO_MEASURED, type CropRect } from "./pdf-trim-rect";
 
 /** PNG/JPEG のバッファをトリミングして JPEG にする（LINE は JPEG/PNG どちらも可・JPEG の方が小さい）。失敗は null */
 export async function trimSheetImage(image: Buffer, opts?: { keepRatio?: number; quality?: number }): Promise<{ jpeg: Buffer; width: number; height: number } | null> {
