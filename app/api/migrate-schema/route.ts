@@ -2328,6 +2328,8 @@ ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_lines JSONB;
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_facts JSONB;
 -- 2026-09-24 竹内「奇数ページ＝弊社の帯替え資料・偶数ページ＝元付業者の資料（AD の記載あり）。偶数を画像として判断すれば正確」: 2ページ目の画像
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS agent_image_url TEXT;
+-- 2026-09-24 竹内「画像トリミングボタン」: お客様に送る形（会社の帯を落とした1ページ目）にトリミングした画像
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS trim_image_url TEXT;
 -- スタッフのメモ（売上サポの会話風画面の右側）。2026-09-24 竹内「DeepSeek 側は左・スタッフの会話は右」
 CREATE TABLE IF NOT EXISTS property_pickup_notes (
   id BIGSERIAL PRIMARY KEY,

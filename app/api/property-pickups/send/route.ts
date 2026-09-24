@@ -18,10 +18,12 @@ export async function POST(req: NextRequest) {
   if (!body.batch_id || ids.length === 0) return NextResponse.json({ ok: false, error: "batch_id と item_ids が要ります" }, { status: 400 });
 
   const { data: rowsRaw, error } = await supabase.from("property_pickups")
-    .select("id, batch_id, property_customer_id, conversation_id, summary_text, pdf_blob_url, page_image_url, recommended, status, rank")
+    .select("id, batch_id, property_customer_id, conversation_id, summary_text, pdf_blob_url, page_image_url, trim_image_url, recommended, status, rank")
     .eq("batch_id", body.batch_id).in("id", ids).order("rank", { ascending: true });
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  const rows = (rowsRaw ?? []) as Array<{ id: number; property_customer_id: string | null; conversation_id: string | null; summary_text: string; pdf_blob_url: string | null; page_image_url: string | null; recommended: number; status: string; rank: number }>;
+  const rowsAll = (rowsRaw ?? []) as Array<{ id: number; property_customer_id: string | null; conversation_id: string | null; summary_text: string; pdf_blob_url: string | null; page_image_url: string | null; trim_image_url: string | null; recommended: number; status: string; rank: number }>;
+  // 2026-09-24 竹内「トリミングされて画像となって送られる」: トリミング済みの画像（会社の帯を落とした形）があればそれを送る
+  const rows = rowsAll.map((r) => ({ ...r, page_image_url: r.trim_image_url ?? r.page_image_url }));
   if (rows.length === 0) return NextResponse.json({ ok: false, error: "対象の行が無い" }, { status: 404 });
 
   const now = new Date().toISOString();

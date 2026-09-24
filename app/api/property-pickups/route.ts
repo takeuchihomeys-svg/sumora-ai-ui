@@ -13,7 +13,7 @@ type Row = {
   summary_text: string; pdf_url: string | null; pdf_blob_url: string | null; pdf_has_text: boolean;
   verdict: string | null; score: number | null; reasons_ja: string[] | null; ad_yen: number | null; profit_yen: number | null;
   recommended: number; status: string; sent_at: string | null;
-  page_image_url: string | null; agent_image_url: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
+  page_image_url: string | null; agent_image_url: string | null; trim_image_url: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
 };
 type Note = { id: number; created_at: string; property_customer_id: string; batch_id: string | null; text: string; author: string | null };
 
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
   const [{ data, error }, notesRes] = await Promise.all([
     supabase.from("property_pickups")
-      .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, image_lines, image_facts")
+      .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts")
       .gte("created_at", since).order("created_at", { ascending: false }).order("rank", { ascending: true }).limit(3000),
     supabase.from("property_pickup_notes").select("id, created_at, property_customer_id, batch_id, text, author").gte("created_at", since).order("created_at", { ascending: true }).limit(2000),
   ]);

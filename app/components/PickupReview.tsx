@@ -11,7 +11,7 @@ type Item = {
   id: number; rank: number; property_name: string; room_no: string | null; summary_text: string;
   pdf_blob_url: string | null; pdf_has_text: boolean; verdict: string | null; score: number | null;
   reasons_ja: string[] | null; ad_yen: number | null; profit_yen: number | null; recommended: number; status: string; sent_at: string | null;
-  page_image_url: string | null; agent_image_url?: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
+  page_image_url: string | null; agent_image_url?: string | null; trim_image_url?: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
 };
 type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
@@ -134,6 +134,30 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     }
   };
 
+  // 2026-09-24 竹内「画像トリミングボタンを付ける。押すと選択している物件の PDF 1枚目（弊社帯替え分）がトリミングされて画像となって送られる」
+  //   ここでは切るだけ（切った画像が吹き出しに出る）。送るのは「確認してお客様に送る」（送信は必ずスタッフが確認してから）
+  const trim = async (b: Batch) => {
+    const ids = b.items.filter((it) => checked[it.id] && it.status === "pending").map((it) => it.id);
+    if (ids.length === 0) { setMsg("トリミングする物件にチェックを入れてください"); return; }
+    setBusy(`trim:${b.batch_id}`);
+    setMsg("✂️ トリミング中…（1件 数秒）");
+    try {
+      const res = await fetch("/api/property-pickups/trim", {
+        method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+        body: JSON.stringify({ item_ids: ids }),
+      });
+      const json = await res.json() as { ok: boolean; trimmed?: number; items?: Array<{ id: number; error?: string }>; error?: string };
+      if (!json.ok) throw new Error(json.error || json.items?.find((x) => x.error)?.error || "失敗");
+      setMsg(`✂️ ${json.trimmed}件をお客様に送る形にトリミングしました。「確認してお客様に送る」で送れます`);
+      await load();
+      onChange?.();
+    } catch (e) {
+      setMsg(`⚠️ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const addNote = async (c: Customer) => {
     const text = note.trim();
     if (!text || !c.property_customer_id) return;
@@ -184,10 +208,11 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                     return (
                       <label key={it.id} className="flex gap-2 items-start rounded-xl px-2 py-2" style={{ background: it.recommended > 0 ? "#fff8e1" : "#f7f9fb", opacity: pending ? 1 : 0.6 }}>
                         <input type="checkbox" className="mt-1" disabled={!pending} checked={!!checked[it.id]} onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
-                        {it.page_image_url && (
-                          <a href={it.page_image_url} target="_blank" rel="noreferrer" className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                        {(it.trim_image_url || it.page_image_url) && (
+                          <a href={it.trim_image_url ?? it.page_image_url ?? undefined} target="_blank" rel="noreferrer" className="shrink-0 relative" onClick={(e) => e.stopPropagation()}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={it.page_image_url} alt="" className="rounded-md object-cover" style={{ width: 64, height: 88, border: "1px solid #e0e0e0", background: "#fff" }} />
+                            <img src={it.trim_image_url ?? it.page_image_url ?? undefined} alt="" className="rounded-md object-cover" style={{ width: 88, height: it.trim_image_url ? 62 : 64, border: "1px solid #e0e0e0", background: "#fff" }} />
+                            {it.trim_image_url && <span className="absolute -top-1 -left-1 text-[9px] font-bold px-1 rounded" style={{ background: "#6a1b9a", color: "#fff" }}>✂️ 送る形</span>}
                           </a>
                         )}
                         <div className="flex-1 min-w-0">
@@ -217,6 +242,11 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 </div>
                 {bb.batch.items.some((it) => it.status === "pending") && (
                   <div className="flex gap-2 mt-2">
+                    <button disabled={busy === `trim:${bb.batch.batch_id}`} onClick={() => void trim(bb.batch)}
+                      title="選んだ物件の PDF 1ページ目（弊社帯替え）を、お客様に送っている形（会社の帯なし）に切る"
+                      className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy === `trim:${bb.batch.batch_id}` ? 0.6 : 1 }}>
+                      {busy === `trim:${bb.batch.batch_id}` ? "✂️ …" : "✂️ 画像トリミング"}
+                    </button>
                     <button disabled={busy === bb.batch.batch_id} onClick={() => void act(open, bb.batch, "send")}
                       className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#1565C0", opacity: busy === bb.batch.batch_id ? 0.6 : 1 }}>
                       確認してお客様に送る
