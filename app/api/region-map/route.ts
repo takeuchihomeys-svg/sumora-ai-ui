@@ -12,7 +12,7 @@ export async function GET() {
   const db = getDb();
   const { data, error } = await db
     .from("region_map")
-    .select("token, ward, confidence, source")
+    .select("token, ward, confidence, source, priority")
     .order("created_at", { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -35,9 +35,10 @@ export async function POST(req: Request) {
   }
 
   const db = getDb();
-  // 手動修正は confidence 100（AI学習の80より優先される正解データ）
+  // 手動修正は confidence 100（AI学習の80より優先される正解データ）。
+  // 2026-09-24: priority 100 ＝ 拡張の仕分けでハードコードの駅名より先に「地域」として効く（手直しを学習）
   const { error } = await db.from("region_map").upsert(
-    { token, ward, confidence: 100, source: "manual" },
+    { token, ward, confidence: 100, source: "manual", priority: 100 },
     { onConflict: "token" },
   );
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

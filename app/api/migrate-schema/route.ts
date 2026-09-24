@@ -2287,6 +2287,61 @@ CREATE INDEX IF NOT EXISTS idx_estimate_records_customer ON estimate_records(pro
 CREATE INDEX IF NOT EXISTS idx_estimate_records_conv ON estimate_records(conversation_id, estimated_at DESC);
 ALTER TABLE estimate_records DISABLE ROW LEVEL SECURITY;
 
+-- ── property_pickups: 物件ピックアップの1回分を「売上サポ」で確認して送るための行（2026-09-24）──
+-- 竹内「ピックアップしたのを一度アプリの売上サポに飛ばして、LINE のトーク一覧のように並べ、送る物件とオススメを判断して共有。
+--   スタッフは確認してお客さんに送るだけ」。行＝物件1件。batch_id＝merge-pdfs が Blob に置いた結合 PDF の名前。
+-- pdf_text は PDF の文字層（DeepSeek は PDF を読めないので、文字にして渡す材料）。
+CREATE TABLE IF NOT EXISTS property_pickups (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  batch_id TEXT NOT NULL,
+  property_customer_id UUID,
+  conversation_id TEXT,
+  customer_name TEXT,
+  site TEXT,
+  rank INT NOT NULL DEFAULT 0,
+  property_name TEXT NOT NULL,
+  room_no TEXT,
+  summary_text TEXT NOT NULL,
+  pdf_url TEXT,
+  pdf_blob_url TEXT,
+  pdf_text TEXT,
+  pdf_has_text BOOLEAN NOT NULL DEFAULT false,
+  verdict TEXT,
+  score INT,
+  reason_codes TEXT[],
+  reasons_ja TEXT[],
+  ad_yen INTEGER,
+  profit_yen INTEGER,
+  recommended INT NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  sent_at TIMESTAMPTZ,
+  sent_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_property_pickups_batch ON property_pickups(batch_id, rank);
+CREATE INDEX IF NOT EXISTS idx_property_pickups_status ON property_pickups(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_property_pickups_customer ON property_pickups(property_customer_id, created_at DESC);
+ALTER TABLE property_pickups DISABLE ROW LEVEL SECURITY;
+-- スタッフのメモ（売上サポの会話風画面の右側）。2026-09-24 竹内「DeepSeek 側は左・スタッフの会話は右」
+CREATE TABLE IF NOT EXISTS property_pickup_notes (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  property_customer_id UUID NOT NULL,
+  batch_id TEXT,
+  text TEXT NOT NULL,
+  author TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_property_pickup_notes_customer ON property_pickup_notes(property_customer_id, created_at DESC);
+ALTER TABLE property_pickup_notes DISABLE ROW LEVEL SECURITY;
+
+-- ── region_map / station_map に priority（2026-09-24）──
+-- 竹内「従業員が手直ししたところはデータベースに入って学習されているのか」: 手直し（manual）は priority 100 にして、
+-- 拡張の仕分け（classifyAreaTokens）でハードコードのマップより先に見る（今までは STATION_LINE_MAP にある語は学習で上書きできなかった）
+ALTER TABLE region_map ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 0;
+ALTER TABLE station_map ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 0;
+UPDATE region_map SET priority = 100 WHERE source = 'manual' AND priority = 0;
+UPDATE station_map SET priority = 100 WHERE source = 'manual' AND priority = 0;
+
 -- ③ messages 拡張（画像分類・物件紐付け）
 -- 'estimate' | 'floor_plan' | 'property_photo' | 'id_document' | 'other'
 -- webhook受信時にVisionで1回分類 → brain信号3.5の「全画像=見積書」盲目仮定を解消

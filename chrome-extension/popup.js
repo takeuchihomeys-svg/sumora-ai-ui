@@ -6,6 +6,7 @@ const API_BASE = "https://sumora-ai-ui.vercel.app";
 const LEARNED_WARD_MAP    = {};  // 地名 → 市区
 const LEARNED_STATION_MAP = {};  // 駅名 → { ward, realpro_lines[], itandi_lines[], reins_line }
 const LEARNED_LINE_ORDER  = {};  // 路線名 → 駅配列（順序付き）- DBのline_stationsから起動時にロード
+const LEARNED_OVERRIDE_MAP = {}; // 2026-09-24 従業員の手直し（priority 100）: 語 → "station" | "area"。仕分けで何より先に効く
 
 // ── 駅名エイリアス（ひらがな・略称 → 正式駅名）──────────────────────────────
 // お客様が口語・ひらがな・略称で入力する場合に正式名に変換する。
@@ -145,7 +146,11 @@ async function fetchLearnedMaps() {
       clearTimeout(timer);
       if (regionRes.ok) {
         const d = await regionRes.json();
-        for (const { token, ward } of (d.regions || [])) LEARNED_WARD_MAP[token] = ward;
+        for (const r of (d.regions || [])) {
+          LEARNED_WARD_MAP[r.token] = r.ward;
+          // 2026-09-24 従業員の手直し（priority 100）は仕分けでハードコードの駅名より先に「地域」として効く
+          if ((r.priority || 0) >= 100) LEARNED_OVERRIDE_MAP[r.token] = "area";
+        }
       }
       if (stationRes.ok) {
         const d = await stationRes.json();
@@ -154,6 +159,7 @@ async function fetchLearnedMaps() {
             ward: r.ward, realpro_lines: r.realpro_lines || [],
             itandi_lines: r.itandi_lines || [], reins_line: r.reins_line || null,
           };
+          if ((r.priority || 0) >= 100) LEARNED_OVERRIDE_MAP[r.token] = "station";
         }
       }
       if (lineRes.ok) {
@@ -224,6 +230,33 @@ async function correctLearnedToken(token, ward) {
   }
 }
 
+// 「🚉 駅として登録」: 従業員の手直しを station_map に残す（priority 100・次回から仕分けで最優先）
+async function registerStationToken(token) {
+  try {
+    const res = await fetch(`${API_BASE}/api/station-map`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    delete LEARNED_WARD_MAP[token];
+    LEARNED_OVERRIDE_MAP[token] = "station";
+    if (!LEARNED_STATION_MAP[token]) LEARNED_STATION_MAP[token] = { ward: null, realpro_lines: [], itandi_lines: [], reins_line: null };
+    console.log("[AX] 手直し学習（駅）:", token);
+    if (selectedCustomer && selectedSite) {
+      const _stV3 = document.getElementById("adj-area-station")?.value || "";
+      const _wdV3 = document.getElementById("adj-area-ward")?.value || "";
+      const areaVal = [_stV3, _wdV3].filter(Boolean).join("・") || (selectedCustomer.desired_area || selectedCustomer.area || "");
+      showUnknownWarn(computeUnknownTokens(areaVal));
+      renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+    }
+    return true;
+  } catch (e) {
+    console.warn("[AX] 手直し学習（駅）失敗:", e.message);
+    return false;
+  }
+}
+
 // 「✗ 間違い」押下時: 正しい市区名の入力フォームをインライン表示
 // 入力→保存: 正解をDBに学習（correctLearnedToken）/ わからない: 従来どおり削除＋永久ブロック
 function showCorrectionForm(container, token, type) {
@@ -235,8 +268,16 @@ function showCorrectionForm(container, token, type) {
   div.innerHTML = `「${esc(token)}」の正しい市区名: `
     + `<input type="text" class="tc-input" placeholder="例: 富田林市" style="width:110px;font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:3px">`
     + ` <button class="tc-save" style="font-size:10px;padding:2px 7px;background:#1a73e8;color:#fff;border:none;border-radius:3px;cursor:pointer">✓ 保存して学習</button>`
+    + ` <button class="tc-station" title="この語は駅として扱う（次回から仕分けで最優先）" style="font-size:10px;padding:2px 7px;background:#6a1b9a;color:#fff;border:none;border-radius:3px;cursor:pointer">🚉 駅として登録</button>`
     + ` <button class="tc-block" style="font-size:10px;padding:2px 7px;background:#9e9e9e;color:#fff;border:none;border-radius:3px;cursor:pointer">わからない（今後解決しない）</button>`;
   container.appendChild(div);
+  // 2026-09-24: 駅として登録（station_map に手直しとして残す・priority 100）
+  div.querySelector(".tc-station").addEventListener("click", async () => {
+    const b = div.querySelector(".tc-station");
+    b.disabled = true; b.textContent = "登録中...";
+    const ok = await registerStationToken(token);
+    if (!ok) { b.disabled = false; b.textContent = "登録失敗（再試行）"; }
+  });
   const input = div.querySelector(".tc-input");
   input.focus();
   const save = async () => {
@@ -2791,6 +2832,9 @@ function renderInstrSteps(siteKey, cOverride) {
 function classifyAreaTokens(tokens) {
   const _lineRe = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
   const classified = tokens.map(function(t) {
+    // 2026-09-24 竹内「従業員が手直ししたところは学習されているのか」: 手直し（priority 100）は何より先に効く。
+    //   今まではハードコードの STATION_LINE_MAP にある語（十三 等）を「地域」と覚えさせる経路が無かった
+    if (LEARNED_OVERRIDE_MAP[t]) return { t: t, type: LEARNED_OVERRIDE_MAP[t], reason: "staff_override" };
     if (t.endsWith("線")) return { t: t, type: "station", reason: "route_suffix" };
     if (_lineRe.test(t))  return { t: t, type: "station", reason: "line_prefix" };
     // computeAreaModeBadgeHtml の hasWard 判定と統一（地域バッジ=地域検索）

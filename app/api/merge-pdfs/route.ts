@@ -9,6 +9,7 @@ import {
 } from "@/app/lib/sent-property-filter";
 // 2026-09-21 竹内「ちゃんと物件を読み取ることできてるんかな？」: 家賃は説明文から読み直す
 import { parseRentFromSummary } from "@/app/lib/property-summary-parse";
+import { waitUntil } from "@vercel/functions";
 // 2026-09-24: 送った時の AD を送付記録に残す（見積書の割引と結び付けて利益を出す材料）
 import { parsePropertyFacts } from "@/app/lib/property-brain";
 
@@ -279,6 +280,8 @@ export async function POST(req: NextRequest) {
       conversation_id?: string | null;
       /** 2026-09-21 竹内「スタッフモードで送るときはちゃんとLINEに共有できるように。これを省く（スタッフモード）の時」 */
       staff_mode?: boolean | null;
+      /** 2026-09-23 拡張のブレインモード（記録用・判定は拡張側で済んでいる） */
+      brain_mode?: boolean | null;
     };
 
     const { pdf_data, cookie_str, file_name, send_to_line, customer_name, customer_conditions, site, property_customer_id, conversation_id, staff_mode } = body;
@@ -447,6 +450,23 @@ export async function POST(req: NextRequest) {
           excludedNotice,
         );
         await pushLineMessage(groupId, lineText);
+
+        // 2026-09-24 竹内「ピックアップしたのを一度アプリの売上サポに飛ばして…スタッフは確認してお客さんに送るだけ」:
+        //   1回分を property_pickups に残す（PDF の文字層・判定・🌟・物件ごとの PDF）。応答は待たせない（waitUntil）。
+        //   pdf_urls[i]・property_summaries[i]・pdfBase64List[i] は同じ並び（send-pairing.js が同じ組から作る・ranking は並びを変えない）。
+        {
+          const summariesForPickup = rankedSummaries && rankedSummaries.length > 0 ? rankedSummaries : (property_summaries ?? []);
+          if (summariesForPickup.length > 0 && (resolvedCustomerId || conversation_id)) {
+            const pdfUrlsForPickup = summariesForPickup.map((_, i) => (pdf_urls?.[i] && /realnetpro\.com/.test(pdf_urls[i]) ? pdf_urls[i] : null));
+            const base64ForPickup = summariesForPickup.map((_, i) => pdfBase64List[i] ?? null);
+            const job = import("@/app/lib/property-pickups-server").then(({ recordPickupBatch }) => recordPickupBatch({
+              batchId: name, propertyCustomerId: resolvedCustomerId, conversationId: conversation_id ?? null,
+              customerName: customer_name ?? null, site: site ?? null,
+              summaries: summariesForPickup, pdfUrls: pdfUrlsForPickup, pdfBase64List: base64ForPickup,
+            })).catch((e) => console.warn("[merge-pdfs] property_pickups の記録に失敗:", e instanceof Error ? e.message : String(e)));
+            try { waitUntil(job); } catch { /* Vercel 以外 */ }
+          }
+        }
 
         // 送付物件を sent_properties に記録（source: "line_group" でVision OCR経由と区別）
         // insert失敗してもLINE送信自体は成功として扱う（レスポンスは変えない）

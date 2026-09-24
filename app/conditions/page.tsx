@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import BottomNav from "@/app/components/BottomNav";
+// 2026-09-24 竹内「ピックアップしたのを一度アプリの売上サポの部分に飛ばして…スタッフは確認してお客さんに送るだけ」
+import PickupReview from "@/app/components/PickupReview";
 
 function SendTaskListButton() {
   const [sending, setSending] = useState(false);
@@ -174,7 +176,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export default function ConditionsPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"announce" | "list">("announce");
+  const [tab, setTab] = useState<"announce" | "list" | "pickup">("announce");
   const [listFilter, setListFilter] = useState<Status | "all">("all");
   const [showModal, setShowModal] = useState(false);
   const [editTarget, setEditTarget] = useState<Customer | null>(null);
@@ -572,7 +574,7 @@ export default function ConditionsPage() {
         className="flex sticky z-10 bg-white"
         style={{ top: 53, borderBottom: "1px solid #e9edef" }}
       >
-        {(["announce", "list"] as const).map((t) => (
+        {(["announce", "list", "pickup"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -588,7 +590,7 @@ export default function ConditionsPage() {
                   </span>
                 )}
               </span>
-            ) : "一覧"}
+            ) : t === "list" ? "一覧" : "ピックアップ"}
             {tab === t && (
               <span
                 className="absolute bottom-0 left-4 right-4 h-0.5 rounded-full"
@@ -815,6 +817,8 @@ export default function ConditionsPage() {
         <p className="text-center text-slate-400 py-16 text-sm">読み込み中...</p>
       ) : (
         <div className="flex-1 pb-28">
+          {/* ── ピックアップタブ（拡張が送った1回分を確認してお客様に送る） ── */}
+          {tab === "pickup" && <PickupReview />}
           {/* ── アナウンスタブ ── */}
           {tab === "announce" && (
             <div className="mt-2">

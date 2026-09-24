@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-09-24 ピックアップを「売上サポ」に飛ばして確認→送る／手直しの学習／PDF の文字層（竹内・v2.5.11）
+
+竹内「拡張で地域や駅が分からなかったり従業員が手直ししたところは DB に入って学習されているのか」「PDF は DeepSeek が読めるか」「ピックアップを一度アプリの売上サポに飛ばして、LINE のトーク一覧のように並べ、送る物件とオススメを DeepSeek が判断して共有。スタッフは確認して送るだけ」
+
+### ① 学習の現状（調査・Explore）
+- **分からなかった語は既に DB に残り次回から効く**: `/api/token-resolve`（DB→市名ルール→pg_trgm→DeepSeek→Claude web_search）・`/api/resolve-search-conditions`（一括・DeepSeek）が `region_map`／`station_map`／`unknown_tokens` に書き、拡張は起動時に `LEARNED_*_MAP` へ読む
+- **残らなかった手直し**: 駅／地域ボタンの切替（メモリのみ）・リアプロ画面での駅の選び直し（送信経路なし）・一時調整（localStorage）。残るのは「✗ 間違い→市区名」と「本条件に反映」だけ
+- **ハードコード語は学習で上書きできなかった**（classifyAreaTokens は STATION_LINE_MAP 優先）
+- 溜まるだけで誰も読まない: `unknown_tokens.to_review`・`chrome_extension_feedback`
+
+### ① 直した物
+- `region_map`／`station_map` に **`priority`**（manual＝100）。`/api/station-map` に **POST**（駅として登録）を新設（今まで駅の手動正解 API が無かった）
+- popup.js: `LEARNED_OVERRIDE_MAP`（priority≥100 の語→station/area）を `classifyAreaTokens` の**先頭**で見る（reason=staff_override）。「✗ 間違い」のフォームに **「🚉 駅として登録」** ボタン（`registerStationToken`）
+- ⚠ 一括検索側（background.js／resolution-core.js）はまだ override を見ない（個別検索の popup だけ）。駅／地域ボタンの切替そのものは記録しない（顧客ごとの選択を全体の規則にすると誤る）
+
+### ② PDF
+- DeepSeek の API は**画像だけ**（JPEG/PNG/GIF/WebP・公式仕様 2026-09-24 確認）。PDF は受けない。チャット画面が PDF を読めるのは文字を取り出しているから
+- 今までリアプロの印刷用 PDF は**どの AI にも渡していなかった**（merge-pdfs で結合→Blob→LINE のリンクだけ）
+- `app/lib/pdf-text.ts`（pdfjs-dist・純 JS・文字層を取り出す）。⚠ 印刷用 PDF に文字層があるかは**実物で未確認**（`property_pickups.pdf_has_text` で率を見る）。無ければ画像化（ネイティブ canvas）が次の手
+
+### ③ 売上サポ「ピックアップ」タブ
+```
+拡張「売上番長に送る」→ merge-pdfs（今まで通りグループへ）→ waitUntil で property_pickups に1回分を記録
+  行＝物件: 説明文・🌟（Haiku の順位）・判定（property-brain 純関数）・PDF の文字層・物件ごとの PDF（Blob）
+売上サポ（/conditions）→「ピックアップ」タブ（app/components/PickupReview.tsx）
+  → **LINE の一覧と同じ形**でお客様が並ぶ（🏠・名前・「🧠 N件・🌟物件名」・時刻・未確認の数）→ タップで**会話風**
+     左＝🧠 ブレイン（1回分の物件・🌟・判定・資料リンク・チェック）／右＝スタッフ（送った・見送り・メモ）。下にメモ欄（property_pickup_notes）
+  → チェック（既定: 外す候補以外）→「確認してお客様に送る」→ /api/property-pickups/send → /api/send-line-message（本文＋PDF のリンク）
+  → status=sent・messages に記録・property_customers.last_property_sent_at 更新。「見送り」= skipped
+```
+- ⚠ LINE は PDF を画像として送れないので、今は**説明文＋物件ごとの PDF のリンク**を本文で送る。画像で送る（PDF の画像化）は次の段
+- お客様の会話に紐付いていない（`conversations.property_customer_id` なし）と送れない → 画面に「LINE未紐付け」の印
+- DeepSeek の「送る物件・オススメ」の総合判断はまだ入れていない（判定は決定論・🌟は既存の Haiku）。PDF の文字層が取れると分かってから、文字で「有無」を DeepSeek に聞く段を足す
+- 実機での確かめ方: 拡張を再読み込み（v2.5.11）→ 検索して「売上番長に送る」→ アプリの売上サポ→ピックアップ に並ぶか → 「📄 資料を見る」が開くか → コンソール `property-pickups:record` の withText が 0 でないか
+
 ## 2026-09-24 利益（AD − 見積書の割引）を物件ごとに残し、物件検索ブレインと連動（竹内）
 
 竹内「物件ピックアップ・物件オススメで送った物件は分かっている。見積書送るの本文から割引も分かる。その物件が送った物件なら AD も理解しているはず。連動する」
